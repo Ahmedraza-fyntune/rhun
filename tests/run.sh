@@ -13,6 +13,7 @@ check() { # name cmd...
 }
 check keymap-names-us-ru build/xkb_test tests/data/keymap-names-us-ru.txt
 check keymap-gnome-us build/xkb_test tests/data/keymap-gnome-us.txt
+check keymap-pl-intl build/xkb_test tests/data/keymap-pl-intl.txt
 check doc build/doc_test
 check syntax build/syntax_test
 check themes build/theme_test

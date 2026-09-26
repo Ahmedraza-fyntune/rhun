@@ -88,4 +88,9 @@ cases:
     .long 61, 0, 0x80
     .long 61, 0, 0x81
     .long 50, 0, 1
+    .long 38, 0, 0x80
+    .long 38, 0, 0x81
+    .long 48, 1, 0
+    .long 48, 1, 1
+    .long 48, 0, 0x80
     .long 0, 0, 0

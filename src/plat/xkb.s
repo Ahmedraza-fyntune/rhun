@@ -302,23 +302,38 @@ FN keysym_value
     jne 3f
     add eax, 0x1000000
     jmp .Lkv_ret
-3:  lea r13, [rip + keysym_names]
-4:  cmp byte ptr [r13], 0
-    je 6f
-    mov rdi, rbx
-    mov rsi, r12
-    mov rdx, r13
-    call str_eq_cstr
-    mov rdi, r13
-    push rax
-    call strlen
-    lea r13, [r13 + rax + 1]
-    pop rax
+3:  # binary search by name
+    xor r13d, r13d                  # lo
+    mov r8, [rip + keysym_names_count] # hi
+4:  cmp r13, r8
+    jae 6f
+    lea r9, [r13 + r8]
+    shr r9, 1
+    mov rax, r9
+    shl rax, 4
+    lea rdx, [rip + keysym_names]
+    mov r10, [rdx + rax]            # name
+    xor ecx, ecx
+41: xor eax, eax
+    cmp rcx, r12
+    jae 42f
+    movzx eax, byte ptr [rbx + rcx]
+42: movzx edx, byte ptr [r10 + rcx]
+    cmp eax, edx
+    jne 43f
     test eax, eax
-    jnz 5f
-    add r13, 4
+    jz 5f
+    inc rcx
+    jmp 41b
+43: jb 44f
+    lea r13, [r9 + 1]
     jmp 4b
-5:  mov eax, [r13]
+44: mov r8, r9
+    jmp 4b
+5:  mov rax, r9
+    shl rax, 4
+    lea rdx, [rip + keysym_names]
+    mov eax, [rdx + rax + 8]
     jmp .Lkv_ret
 6:  xor eax, eax
 .Lkv_ret:
@@ -636,21 +651,13 @@ FN keysym_to_unicode
     jb .Lku_none
     cmp eax, 0xff
     jbe .Lku_ret
-    lea ecx, [rax - 0x6a1]
-    cmp ecx, 94
-    ja 1f
-    lea rdx, [rip + cyrillic_unicode]
-    movzx eax, word ptr [rdx + rcx*2]
-    ret
-1:  cmp eax, 0x1000000
+    cmp eax, 0x1000000
     jb 2f
     sub eax, 0x1000000
     cmp eax, 0x10ffff
     ja .Lku_none
     ret
-2:  cmp eax, 0x20ac
-    je .Lku_ret
-    cmp eax, 0xff80
+2:  cmp eax, 0xff80
     je .Lku_space
     lea ecx, [rax - 0xffaa]
     cmp ecx, 0xffb9 - 0xffaa
@@ -661,8 +668,25 @@ FN keysym_to_unicode
     jz .Lku_none
     ret
 3:  cmp eax, 0xffbd
-    jne .Lku_none
+    jne 4f
     mov eax, '='
+    ret
+4:  # legacy keysyms (Latin 2-9, Greek, Cyrillic, Hebrew, Thai, ...): binary search
+    xor ecx, ecx
+    mov rdx, [rip + keysym_ucs_count]
+    lea r8, [rip + keysym_ucs]
+5:  cmp rcx, rdx
+    jae .Lku_none
+    lea r9, [rcx + rdx]
+    shr r9, 1
+    cmp eax, [r8 + r9*8]
+    je 6f
+    jb 7f
+    lea rcx, [r9 + 1]
+    jmp 5b
+7:  mov rdx, r9
+    jmp 5b
+6:  mov eax, [r8 + r9*8 + 4]
     ret
 .Lku_space:
     mov eax, ' '
