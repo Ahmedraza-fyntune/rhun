@@ -478,7 +478,22 @@ FN fuzzy
     sub eax, r13d
     sar eax, 3
     add ebx, eax
-    mov eax, ebx
+    # the query is a prefix of the label (or all of it)
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, r14
+    mov rcx, r15
+    cmp rsi, rcx
+    jb 1f
+    mov rsi, rcx
+    call str_ieq
+    test eax, eax
+    jz 1f
+    add ebx, 40
+    cmp r13, r15
+    jne 1f
+    add ebx, 100
+1:  mov eax, ebx
     EPILOGUE
 .Lfz_fail:
     mov eax, -1

@@ -446,6 +446,8 @@ F DOC_crlf, 4
 F DOC_flags, 4
 F DOC_mtime, 8
 F DOC_version, 8
+F DOC_sold, 8           # syntax states were valid below this line before the last edits
+F DOC_ehi, 8            # highest line touched by edits since then
 ENDSTRUCT DOC_SIZE
 
 STRUCT
@@ -571,6 +573,8 @@ F GR_commentlen, 8
 F GR_flags, 8           # GF_*
 F GR_identx, 32         # extra identifier chars
 F GR_prefixes, 32       # chars that start variables ($) / attributes (@)
+F GR_rstart, 256        # 1 for bytes that can start a region
+F GR_wchar, 256         # 1 for identifier bytes
 ENDSTRUCT GR_SIZE
 .equ GF_NOCASE, 1
 .equ GF_FUNCS, 2

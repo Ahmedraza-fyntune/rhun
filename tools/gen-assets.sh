@@ -10,7 +10,7 @@ emit font_ui assets/fonts/UbuntuSans-Regular.ttf
 # name table of runtime files: pairs of (name ptr, data ptr, data end)
 for kind in themes syntax; do
     i=0
-    for f in $(ls runtime/$kind 2>/dev/null | sort); do
+    for f in $(ls runtime/$kind 2>/dev/null | LC_ALL=C sort); do
         emit "${kind}_$i" "runtime/$kind/$f"
         printf '%s_%d_name: .asciz "%s"\n' "$kind" $i "$f"
         i=$((i+1))

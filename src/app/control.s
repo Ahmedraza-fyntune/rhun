@@ -434,6 +434,71 @@ c_print_state:
     xor eax, eax
     ret
 
+# print-syntax N: class digit per byte of line N
+c_print_syntax:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    call next_int
+    mov r14, rax
+    dec r14
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    cmp r14, [rbx + DOC_nlines]
+    jae 9f
+    mov rdi, rbx
+    mov rsi, r14
+    call syntax_prepare
+    mov rdi, rbx
+    mov rsi, r14
+    call doc_line_text
+    mov r12, rax
+    mov r13, rdx
+    lea rdi, [rip + out]
+    lea rsi, [r13 + r13 + 2]
+    call sb_reserve
+    mov r15, rax
+    # text line, then classes
+    mov rdi, r15
+    mov rsi, r12
+    mov rcx, r13
+    rep movsb
+    mov byte ptr [rdi], 10
+    lea r8, [r15 + r13 + 1]
+    mov rdi, rbx
+    mov rsi, r14
+    mov rdx, r12
+    mov rcx, r13
+    push r8
+    push r8
+    call syntax_line
+    pop r8
+    pop r8
+    xor ecx, ecx
+1:  cmp rcx, r13
+    jae 2f
+    movzx eax, byte ptr [r8 + rcx]
+    lea rdx, [rip + .Ldigits]
+    mov al, [rdx + rax]
+    mov [r8 + rcx], al
+    inc rcx
+    jmp 1b
+2:  lea rax, [r13 + r13 + 1]
+    add [rip + out + SB_len], rax
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+9:  pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    xor eax, eax
+    ret
+
 # control_run_script(path): execute every line, print outputs to stdout
 FN control_run_script
     PROLOGUE
@@ -631,13 +696,15 @@ on_client:
 .Lc_echo: .asciz "echo"
 .Lc_print_doc: .asciz "print-doc"
 .Lc_print_state: .asciz "print-state"
+.Lc_print_syntax: .asciz "print-syntax"
+.Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_scroll, c_scroll, .Lc_open, c_open
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
-    .quad .Lc_print_state, c_print_state, 0, 0
+    .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, 0, 0
 
 .data
 lsock: .long -1

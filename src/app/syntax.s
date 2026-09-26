@@ -246,6 +246,8 @@ add_region:
     mov [rcx + REG_elen], al
     mov eax, [rsp]
     mov [rcx + REG_class], al
+    movzx eax, byte ptr [rcx + REG_start]
+    mov byte ptr [rbx + GR_rstart + rax], 1
     mov eax, [rbp + 16]
     mov [rcx + REG_esc], al
     shr eax, 8
@@ -575,7 +577,25 @@ FN grammar_parse
     mov byte ptr [rdi], 0
     jmp .Lgp_next
 .Lgp_done:
-    mov rax, rbx
+    xor ecx, ecx
+1:  mov edi, ecx
+    push rcx
+    push rcx
+    call is_ident
+    pop rcx
+    pop rcx
+    mov [rbx + GR_wchar + rcx], al
+    inc ecx
+    cmp ecx, 256
+    jb 1b
+    lea rsi, [rbx + GR_identx]
+2:  movzx eax, byte ptr [rsi]
+    test eax, eax
+    jz 3f
+    mov byte ptr [rbx + GR_wchar + rax], 1
+    inc rsi
+    jmp 2b
+3:  mov rax, rbx
     EPILOGUE
 
 # helpers for grammar_parse (use caller frame: [rsp+8..] after return address)
@@ -818,24 +838,9 @@ FN syntax_by_name
 
 # is_word_char(gr, byte) -> 1 if part of identifiers
 is_word_char:
-    push rdi
-    push rsi
-    mov edi, esi
-    call is_ident
-    pop rsi
-    pop rdi
-    test eax, eax
-    jnz 2f
-    lea rdi, [rdi + GR_identx]
-1:  movzx ecx, byte ptr [rdi]
-    test ecx, ecx
-    jz 2f
-    cmp ecx, esi
-    je 3f
-    inc rdi
-    jmp 1b
-3:  mov eax, 1
-2:  ret
+    movzx esi, sil
+    movzx eax, byte ptr [rdi + GR_wchar + rsi]
+    ret
 
 # tokenize(gr, text, len, state, out or 0) -> end state ; classes written per byte to out
 # state: 0, or index+1 of a multi-line region still open at the line start
@@ -906,7 +911,9 @@ FN tokenize
     je .Ltk_blank
     cmp eax, 9
     je .Ltk_blank
-    # regions, in file order
+    # regions, in file order (only when this byte can start one)
+    cmp byte ptr [rbx + GR_rstart + rax], 0
+    je .Ltk_noreg
     xor ecx, ecx
 .Ltk_reg:
     cmp rcx, [rbx + GR_regions + VEC_len]
@@ -1253,15 +1260,9 @@ word_end:
     mov rdx, rsi
 1:  cmp rdx, r13
     jae 2f
-    push rdx
-    push rdx
-    movzx esi, byte ptr [r12 + rdx]
-    mov rdi, rbx
-    call is_word_char
-    pop rdx
-    pop rdx
-    test eax, eax
-    jz 2f
+    movzx eax, byte ptr [r12 + rdx]
+    cmp byte ptr [rbx + GR_wchar + rax], 0
+    je 2f
     inc rdx
     jmp 1b
 2:  ret
@@ -1377,8 +1378,20 @@ FN syntax_prepare
     xor r8d, r8d
     call tokenize
     mov rcx, [rbx + DOC_states]
+    mov edx, [rcx + r14*4]      # state stored before the edits
     mov [rcx + r14*4], eax
     inc qword ptr [rbx + DOC_svalid]
+    # past every edit and equal to the old state: the rest is still valid
+    cmp r14, [rbx + DOC_sold]
+    jae 2b
+    mov rcx, [rbx + DOC_ehi]
+    inc rcx
+    cmp r14, rcx
+    jbe 2b
+    cmp eax, edx
+    jne 2b
+    mov rax, [rbx + DOC_sold]
+    mov [rbx + DOC_svalid], rax
     jmp 2b
 9:  EPILOGUE
 

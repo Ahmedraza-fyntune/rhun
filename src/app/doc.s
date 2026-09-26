@@ -358,6 +358,7 @@ gb_reserve:
 # raw_insert(doc, pos, ptr, len)
 FN raw_insert
     PROLOGUE 16
+    mov qword ptr [rsp], 0
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -441,10 +442,10 @@ FN raw_insert
 6:  mov rax, [rsp]
     add [rbx + DOC_nlines], rax
 .Lri_lines_done:
-    lea rax, [r15 + 1]
-    cmp rax, [rbx + DOC_svalid]
-    jae 7f
-    mov [rbx + DOC_svalid], rax
+    mov rdi, rbx
+    mov rsi, r15
+    mov rdx, [rsp]
+    call states_after_insert
 7:  # markers
     cmp [rbx + DOC_cur], r12
     jbe 8f
@@ -458,7 +459,8 @@ FN raw_insert
 
 # raw_delete(doc, pos, len)
 FN raw_delete
-    PROLOGUE
+    PROLOGUE 16
+    mov qword ptr [rsp], 0
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -485,6 +487,7 @@ FN raw_delete
 2:  mov rax, rcx
     sub rax, r15
     dec rax                     # m
+    mov [rsp], rax
     test rax, rax
     jz 3f
     push rax
@@ -514,10 +517,10 @@ FN raw_delete
     sub [r8 + rcx*8], r13
     inc rcx
     jmp 4b
-5:  lea rax, [r15 + 1]
-    cmp rax, [rbx + DOC_svalid]
-    jae 6f
-    mov [rbx + DOC_svalid], rax
+5:  mov rdi, rbx
+    mov rsi, r15
+    mov rdx, [rsp]
+    call states_after_delete
 6:  # markers
     lea rdi, [rbx + DOC_cur]
     call .Lrd_marker
@@ -537,6 +540,67 @@ FN raw_delete
     jbe 2f
     mov [rdi], r12
 2:  ret
+
+# syntax state bookkeeping after an edit at line L (n lines added / m removed)
+# states_after_insert(doc, L, n)
+states_after_insert:
+    call states_begin
+    lea rax, [rsi + 1]
+    cmp [rdi + DOC_sold], rax
+    jbe 1f
+    add [rdi + DOC_sold], rdx
+1:  mov rax, [rdi + DOC_ehi]
+    cmp rax, rsi
+    jle 2f
+    add rax, rdx
+2:  lea rcx, [rsi + rdx]
+    cmp rax, rcx
+    cmovl rax, rcx
+    mov [rdi + DOC_ehi], rax
+    jmp states_end
+
+# states_after_delete(doc, L, m)
+states_after_delete:
+    call states_begin
+    lea rax, [rsi + 1]
+    cmp [rdi + DOC_sold], rax
+    jbe 1f
+    mov rcx, [rdi + DOC_sold]
+    sub rcx, rdx
+    cmp rcx, rax
+    cmovl rcx, rax
+    mov [rdi + DOC_sold], rcx
+1:  mov rax, [rdi + DOC_ehi]
+    cmp rax, rsi
+    jle 2f
+    sub rax, rdx
+    cmp rax, rsi
+    cmovl rax, rsi
+2:  cmp rax, rsi
+    cmovl rax, rsi
+    mov [rdi + DOC_ehi], rax
+    jmp states_end
+
+# The stored states past svalid must form one chain computed for unchanged text.
+# No old region, or an edit before svalid (which would leave two chains):
+# the current states become the old region and the edit range restarts.
+states_begin:
+    mov rax, [rdi + DOC_svalid]
+    cmp rax, [rdi + DOC_sold]
+    jae 1f
+    lea rcx, [rsi + 1]
+    cmp rcx, rax
+    jae 2f
+1:  mov qword ptr [rdi + DOC_ehi], -1
+    mov [rdi + DOC_sold], rax
+2:  ret
+
+states_end:
+    lea rax, [rsi + 1]
+    cmp rax, [rdi + DOC_svalid]
+    jae 1f
+    mov [rdi + DOC_svalid], rax
+1:  ret
 
 # new_record(doc, kind, pos, len, text, editkind) -> UR*  (handles grouping and redo reset)
 new_record:
