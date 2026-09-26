@@ -21,4 +21,4 @@ int main(void) {
 <eod>
 ab
 <eod>
-tabs=2 active=untitled line=1 col=3 sel=0 dirty=1 lang=C focus=0 theme=rhun-dark
+tabs=1 active=untitled line=1 col=3 sel=0 dirty=1 lang=C focus=0 theme=rhun-dark

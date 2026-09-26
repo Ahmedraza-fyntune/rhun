@@ -6,12 +6,13 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 
 ## Features
 
-- Tabs, file explorer, command palette, fuzzy file finder, find and replace, go to line
+- Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
 - Syntax highlighting for about 50 languages, defined in plain text grammar files
 - 18 color themes, dark and light; add your own
 - Settings page and a readable config file, both applied while running
 - Agents panel: Claude Code and Codex sessions of the project, updated live as the agent works
-- Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines
+- Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
+- Characters missing from the built-in fonts are drawn with the system's fonts
 - Files changed on disk are reloaded, open files are restored per project
 - Wayland with fractional scaling and client-side decorations where the compositor has none; X11 as a fallback
 
@@ -42,9 +43,11 @@ Without a folder the current directory is the project. Without files the previou
 | Ctrl+B | Toggle explorer |
 | Ctrl+Shift+A | Toggle agents panel |
 | Ctrl+F, Ctrl+H | Find, replace |
+| Ctrl+Shift+F | Find in files |
 | Ctrl+G | Go to line |
 | Ctrl+D | Select word, then next match |
 | Ctrl+/ | Toggle comment |
+| Alt+Z | Toggle word wrap |
 | Alt+Up, Alt+Down | Move lines |
 | Ctrl+Shift+D, Ctrl+Shift+K | Duplicate, delete line |
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |

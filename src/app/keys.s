@@ -420,6 +420,7 @@ g_commands:
     COMMAND replace, "Replace", cmd_replace_bar, "ctrl+h"
     COMMAND find_next, "Find Next", cmd_find_next, "F3"
     COMMAND find_prev, "Find Previous", cmd_find_prev, "shift+F3"
+    COMMAND find_in_files, "Find in Files", cmd_find_in_files, "ctrl+shift+f"
     COMMAND goto_line, "Go to Line", cmd_goto_line, "ctrl+g"
     COMMAND settings, "Open Settings", cmd_settings, "ctrl+,"
     COMMAND open_config, "Open Settings File", cmd_open_config, ""

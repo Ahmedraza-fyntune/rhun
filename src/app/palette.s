@@ -1,4 +1,4 @@
-# palette overlay: fuzzy file finder, commands, themes, languages, go to line, one-line prompts
+# palette overlay: fuzzy file finder, commands, themes, languages, go to line, find in files, one-line prompts
 .include "rhun.inc"
 
 .equ PM_NONE, 0
@@ -8,10 +8,14 @@
 .equ PM_LANGS, 4
 .equ PM_GOTO, 5
 .equ PM_PROMPT, 6
+.equ PM_GREP, 7
 
 .equ ID_PAL_ROW, 0x3000
 .equ ID_PAL_FIELD, 0x3fff
 .equ MAXFILES, 50000
+.equ GREP_MAX, 5000             # results
+.equ GREP_FILE_MAX, 8 << 20     # bytes per file
+.equ GREP_TOTAL_MAX, 256 << 20
 
 STRUCT
 F IT_label, 8
@@ -19,6 +23,12 @@ F IT_len, 8
 F IT_detail, 8          # cstr or 0
 F IT_data, 8
 ENDSTRUCT IT_SIZE
+
+STRUCT
+F GF_label, 8           # relative path (in strings)
+F GF_text, 8
+F GF_len, 8
+ENDSTRUCT GF_SIZE
 
 STRUCT
 F RS_item, 4
@@ -43,6 +53,9 @@ scan_depth: .long 0
 scan_prefix: .zero 4096         # relative dir during scan
 scan_plen: .long 0
 tmp: .zero SB_SIZE
+gfiles: .zero VEC_SIZE          # GF: project text files in memory while searching
+gstr: .zero SB_SIZE             # result labels and details
+grep_case: .long 0
 
 .text
 
@@ -60,6 +73,7 @@ FN palette_field
 palette_open:
     PROLOGUE
     mov ebx, edi
+    call grep_release
     mov [rip + pal_mode], ebx
     mov dword ptr [rip + pal_sel], 0
     mov dword ptr [rip + pal_scroll], 0
@@ -96,7 +110,8 @@ FN palette_close
     cmp rdi, [rip + g_theme_cur]
     je 1f
     call theme_apply
-1:  mov dword ptr [rip + pal_mode], PM_NONE
+1:  call grep_release
+    mov dword ptr [rip + pal_mode], PM_NONE
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     mov dword ptr [rip + g_dirty], 1
     pop rbx
@@ -125,6 +140,351 @@ FN cmd_goto_line
     mov edi, PM_GOTO
     jmp palette_open
 1:  ret
+
+# find in files: the selection (one line) is the initial query
+FN cmd_find_in_files
+    PROLOGUE
+    cmp qword ptr [rip + g_project], 0
+    je 9f
+    mov edi, PM_GREP
+    call palette_open
+    call grep_load
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 8f
+    mov rdi, rbx
+    call ed_sel
+    cmp rax, rdx
+    je 8f
+    mov r12, rax
+    mov r13, rdx
+    sub r13, rax
+    cmp r13, 200
+    ja 8f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call doc_range
+    mov r14, rax
+    mov rdi, rax
+    mov rsi, r13
+    lea rdx, [rip + .Lnl]
+    mov ecx, 1
+    call str_find
+    test rax, rax
+    jns 8f
+    lea rdi, [rip + pal_tf]
+    mov rsi, r14
+    mov rdx, r13
+    call tf_set
+    lea rdi, [rip + pal_tf]
+    call tf_select_all
+8:  call palette_filter
+9:  EPILOGUE
+
+# grep_load(): read the project's text files into memory
+grep_load:
+    PROLOGUE 16
+    call load_files
+    mov qword ptr [rsp], 0      # total bytes
+    xor ebx, ebx
+1:  cmp rbx, [rip + items + VEC_len]
+    jae 8f
+    cmp qword ptr [rsp], GREP_TOTAL_MAX
+    jae 8f
+    imul r12, rbx, IT_SIZE
+    add r12, [rip + items + VEC_ptr]
+    mov rdi, [rip + g_project]
+    mov rsi, [r12 + IT_label]
+    call path_join
+    mov r13, rax
+    mov rdi, rax
+    call file_read_all
+    mov r14, rax
+    mov r15, rdx
+    mov rdi, r13
+    call mem_free
+    test r14, r14
+    jz 7f
+    # skip empty, big and binary files
+    test r15, r15
+    jz 6f
+    cmp r15, GREP_FILE_MAX
+    ja 6f
+    mov rdi, r14
+    mov rcx, r15
+    cmp rcx, 8192
+    jbe 2f
+    mov ecx, 8192
+2:  xor eax, eax
+    repne scasb
+    je 6f
+    add [rsp], r15
+    lea rdi, [rip + gfiles]
+    mov esi, GF_SIZE
+    call vec_push
+    mov rcx, [r12 + IT_label]
+    mov [rax + GF_label], rcx
+    mov [rax + GF_text], r14
+    mov [rax + GF_len], r15
+    jmp 7f
+6:  mov rdi, r14
+    call mem_free
+7:  inc rbx
+    jmp 1b
+8:  mov qword ptr [rip + items + VEC_len], 0
+    call sort_gfiles
+    EPILOGUE
+
+# sort_gfiles(): by path, byte order (shell sort)
+sort_gfiles:
+    PROLOGUE 32
+    mov r15, [rip + gfiles + VEC_len]
+    mov rbx, r15
+.Lsg_gap:
+    shr rbx, 1
+    jz .Lsg_done
+    mov r12, rbx                # i
+.Lsg_i:
+    cmp r12, r15
+    jae .Lsg_gap
+    imul rax, r12, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    movups xmm0, [rax]
+    movups [rsp], xmm0
+    mov rcx, [rax + 16]
+    mov [rsp + 16], rcx
+    mov r13, r12                # j
+.Lsg_j:
+    cmp r13, rbx
+    jb .Lsg_put
+    mov r14, r13
+    sub r14, rbx
+    imul rax, r14, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdi, [rax + GF_label]
+    mov rsi, [rsp + GF_label]
+1:  movzx ecx, byte ptr [rdi]
+    movzx edx, byte ptr [rsi]
+    cmp ecx, edx
+    jne 2f
+    test ecx, ecx
+    jz .Lsg_put
+    inc rdi
+    inc rsi
+    jmp 1b
+2:  jb .Lsg_put
+    imul rdx, r13, GF_SIZE
+    add rdx, [rip + gfiles + VEC_ptr]
+    movups xmm0, [rax]
+    movups [rdx], xmm0
+    mov rcx, [rax + 16]
+    mov [rdx + 16], rcx
+    mov r13, r14
+    jmp .Lsg_j
+.Lsg_put:
+    imul rdx, r13, GF_SIZE
+    add rdx, [rip + gfiles + VEC_ptr]
+    movups xmm0, [rsp]
+    movups [rdx], xmm0
+    mov rcx, [rsp + 16]
+    mov [rdx + 16], rcx
+    inc r12
+    jmp .Lsg_i
+.Lsg_done:
+    EPILOGUE
+
+grep_release:
+    push rbx
+    xor ebx, ebx
+1:  cmp rbx, [rip + gfiles + VEC_len]
+    jae 2f
+    imul rax, rbx, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdi, [rax + GF_text]
+    call mem_free
+    inc rbx
+    jmp 1b
+2:  mov qword ptr [rip + gfiles + VEC_len], 0
+    pop rbx
+    ret
+
+# grep_run(): one result per line containing the query; an uppercase letter makes it case-sensitive
+# IT_data = file index << 44 | line << 20 | column
+grep_run:
+    PROLOGUE 64
+    mov qword ptr [rip + items + VEC_len], 0
+    lea rdi, [rip + gstr]
+    call sb_clear
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov [rsp], rax              # query
+    mov [rsp + 8], rdx          # query length
+    cmp rdx, 2
+    jb .Lgr_fix
+    mov dword ptr [rip + grep_case], 0
+    xor ecx, ecx
+1:  cmp rcx, rdx
+    jae 2f
+    movzx r8d, byte ptr [rax + rcx]
+    sub r8d, 'A'
+    cmp r8d, 25
+    ja 11f
+    mov dword ptr [rip + grep_case], 1
+11: inc rcx
+    jmp 1b
+2:  xor ebx, ebx                # file index
+.Lgr_file:
+    cmp rbx, [rip + gfiles + VEC_len]
+    jae .Lgr_fix
+    imul r12, rbx, GF_SIZE
+    add r12, [rip + gfiles + VEC_ptr]
+    xor r13d, r13d              # scan position (lines counted up to here)
+    xor r14d, r14d              # line
+    xor r15d, r15d              # line start
+.Lgr_match:
+    cmp qword ptr [rip + items + VEC_len], GREP_MAX
+    jae .Lgr_fix
+    mov rdi, [r12 + GF_text]
+    add rdi, r13
+    mov rsi, [r12 + GF_len]
+    sub rsi, r13
+    jbe .Lgr_nextfile
+    mov rdx, [rsp]
+    mov rcx, [rsp + 8]
+    cmp dword ptr [rip + grep_case], 0
+    je 3f
+    call str_find
+    jmp 4f
+3:  call str_ifind
+4:  test rax, rax
+    js .Lgr_nextfile
+    add rax, r13
+    mov [rsp + 16], rax         # match
+    mov rdi, [r12 + GF_text]
+5:  cmp r13, rax
+    jae 6f
+    cmp byte ptr [rdi + r13], 10
+    jne 51f
+    inc r14
+    lea r15, [r13 + 1]
+51: inc r13
+    jmp 5b
+6:  mov rcx, [r12 + GF_len]     # r13 = line end; the next search starts there
+7:  cmp r13, rcx
+    jae 8f
+    cmp byte ptr [rdi + r13], 10
+    je 8f
+    inc r13
+    jmp 7b
+8:  # label: the line without its indent, starting near the match when it is far right
+    mov rax, r15
+9:  cmp rax, [rsp + 16]
+    jae 10f
+    movzx ecx, byte ptr [rdi + rax]
+    cmp cl, ' '
+    je 91f
+    cmp cl, 9
+    jne 10f
+91: inc rax
+    jmp 9b
+10: mov rcx, [rsp + 16]
+    sub rcx, rax
+    cmp rcx, 60
+    jbe 12f
+    mov rax, [rsp + 16]
+    sub rax, 40
+101: movzx ecx, byte ptr [rdi + rax]
+    and ecx, 0xc0
+    cmp ecx, 0x80
+    jne 12f
+    inc rax
+    jmp 101b
+12: mov [rsp + 24], rax         # label start
+    lea rcx, [rax + 240]
+    cmp rcx, r13
+    jbe 121f
+    mov rcx, r13
+    jmp 13f
+121: movzx edx, byte ptr [rdi + rcx]
+    and edx, 0xc0
+    cmp edx, 0x80
+    jne 13f
+    inc rcx
+    jmp 121b
+13: sub rcx, rax
+    mov [rsp + 32], rcx         # label length
+    mov rax, [rip + gstr + SB_len]
+    mov [rsp + 40], rax         # label offset
+    lea rdi, [rip + gstr]
+    mov rsi, [r12 + GF_text]
+    add rsi, [rsp + 24]
+    mov rdx, rcx
+    call sb_push
+    # tabs and other control bytes shown as spaces
+    mov rdi, [rip + gstr + SB_ptr]
+    mov rcx, [rsp + 40]
+14: cmp rcx, [rip + gstr + SB_len]
+    jae 15f
+    cmp byte ptr [rdi + rcx], ' '
+    jae 141f
+    mov byte ptr [rdi + rcx], ' '
+141: inc rcx
+    jmp 14b
+15: # detail "path:line"
+    mov rax, [rip + gstr + SB_len]
+    mov [rsp + 48], rax
+    lea rdi, [rip + gstr]
+    mov rsi, [r12 + GF_label]
+    call sb_push_cstr
+    lea rdi, [rip + gstr]
+    mov esi, ':'
+    call sb_push_byte
+    lea rdi, [rip + gstr]
+    lea rsi, [r14 + 1]
+    call sb_push_u64
+    lea rdi, [rip + gstr]
+    xor esi, esi
+    call sb_push_byte
+    # data
+    mov rax, [rsp + 16]
+    sub rax, r15
+    cmp rax, 0xfffff
+    jbe 16f
+    mov eax, 0xfffff
+16: mov rcx, r14
+    shl rcx, 20
+    or rax, rcx
+    mov rcx, rbx
+    shl rcx, 44
+    or rcx, rax
+    mov rdi, [rsp + 40]
+    mov rsi, [rsp + 32]
+    mov rdx, [rsp + 48]
+    call item_add
+    jmp .Lgr_match
+.Lgr_nextfile:
+    inc rbx
+    jmp .Lgr_file
+.Lgr_fix:
+    # offsets -> pointers, results in file order
+    mov qword ptr [rip + results + VEC_len], 0
+    xor ebx, ebx
+1:  cmp rbx, [rip + items + VEC_len]
+    jae 9f
+    imul r12, rbx, IT_SIZE
+    add r12, [rip + items + VEC_ptr]
+    mov rax, [rip + gstr + SB_ptr]
+    add [r12 + IT_label], rax
+    add [r12 + IT_detail], rax
+    lea rdi, [rip + results]
+    mov esi, RS_SIZE
+    call vec_push
+    mov [rax + RS_item], ebx
+    mov dword ptr [rax + RS_score], 0
+    inc rbx
+    jmp 1b
+9:  EPILOGUE
 
 # prompt_open(label cstr, kind, [initial text in pal_path])
 FN prompt_open
@@ -520,7 +880,11 @@ FN fuzzy
 FN palette_filter
     PROLOGUE 16
     mov qword ptr [rip + results + VEC_len], 0
-    cmp dword ptr [rip + pal_mode], PM_GOTO
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 0f
+    call grep_run
+    jmp 5f
+0:  cmp dword ptr [rip + pal_mode], PM_GOTO
     je 9f
     cmp dword ptr [rip + pal_mode], PM_PROMPT
     je 9f
@@ -720,6 +1084,8 @@ palette_accept:
     test rax, rax
     jz .Lpa_close
     mov r12, rax
+    cmp ebx, PM_GREP
+    je .Lpa_grep
     cmp ebx, PM_FILES
     jne 1f
     mov rdi, [rip + g_project]
@@ -858,6 +1224,70 @@ palette_accept:
     mov esi, ebx
     call prompt_done
     jmp .Lpa_ret
+.Lpa_grep:
+    # open the file and select the match
+    mov r13, [r12 + IT_data]
+    mov rax, r13
+    shr rax, 44
+    imul rax, rax, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdi, [rip + g_project]
+    mov rsi, [rax + GF_label]
+    call path_join
+    mov r14, rax
+    call grep_release
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, r14
+    call app_open_file
+    mov rdi, r14
+    call mem_free
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz .Lpa_ret
+    mov rsi, r13
+    shr rsi, 20
+    and esi, 0xffffff
+    mov rax, [rbx + DOC_nlines]
+    dec rax
+    cmp rsi, rax
+    cmova rsi, rax
+    mov [rsp], rsi              # line
+    mov rdi, rbx
+    call doc_line_start
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, [rsp]
+    call doc_line_end
+    mov r15, rax
+    mov eax, r13d
+    and eax, 0xfffff
+    add rax, r14
+    cmp rax, r15
+    cmova rax, r15
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, rax
+    xor edx, edx
+    call ed_set_cursor
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    lea rsi, [r14 + rdx]
+    cmp rsi, r15
+    cmova rsi, r15
+    mov rdi, rbx
+    mov edx, 1
+    call ed_set_cursor
+    mov rax, [rsp]
+    mov ecx, [rip + g_ed_h_lines]
+    shr ecx, 1
+    sub rax, rcx
+    jns 1f
+    xor eax, eax
+1:  shl rax, 8
+    mov [rbx + DOC_scrolly], rax
+    mov dword ptr [rip + g_reveal], 1
+    jmp .Lpa_ret
 .Lpa_close:
     call palette_close
 .Lpa_ret:
@@ -960,7 +1390,10 @@ FN palette_draw
     mov r8d, 0x30000000
     call gfx_fill
     mov edi, 640
-    call sc
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 0f
+    mov edi, 820
+0:  call sc
     mov ecx, [rip + g_cv + CV_w]
     sub ecx, [rip + g_mt + 4*MI_64]
     cmp eax, ecx
@@ -989,6 +1422,10 @@ FN palette_draw
 2:  cmp dword ptr [rip + pal_mode], PM_PROMPT
     je 21f
     cmp dword ptr [rip + pal_mode], PM_GOTO
+    je 21f
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 22f
+    cmp dword ptr [rsp], 0
     jne 22f
 21: add eax, [rip + g_mt + 4*MI_20]
 22: mov [rsp + 4], eax          # card h
@@ -1033,6 +1470,10 @@ FN palette_draw
     cmp eax, PM_PROMPT
     je 4f
     cmp eax, PM_GOTO
+    je 4f
+    cmp eax, PM_GREP
+    jne 5f
+    cmp qword ptr [rip + results + VEC_len], 0
     jne 5f
 4:  lea rdi, [rip + g_face_small]
     mov esi, r13d
@@ -1135,7 +1576,31 @@ FN palette_draw
     M r8d, MI_RADIUS
     COLOR r9d, T_HOVER
     call gfx_round_rect
-10: # label with matched characters highlighted
+10: # detail width
+    mov dword ptr [rsp + 56], 0
+    mov rax, [rsp + 24]
+    mov rdi, [rax + IT_detail]
+    test rdi, rdi
+    jz 101f
+    mov [rsp + 40], rdi
+    call strlen
+    mov [rsp + 48], rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rsp + 40]
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 56], eax
+101: # label with matched characters highlighted, clipped before the detail
+    M eax, MI_16
+    lea edi, [r13 + rax]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    sub edx, eax
+    sub edx, eax
+    sub edx, [rsp + 56]
+    mov ecx, ebx
+    call gfx_clip_push
     mov rax, [rsp + 24]
     mov rdi, [rax + IT_label]
     mov rsi, [rax + IT_len]
@@ -1144,23 +1609,13 @@ FN palette_draw
     mov ecx, [rsp + 20]
     mov r8d, ebx
     call draw_highlighted
+    call gfx_clip_pop
     # detail on the right
-    mov rax, [rsp + 24]
-    mov r8, [rax + IT_detail]
-    test r8, r8
-    jz 11f
-    mov [rsp + 40], r8
-    mov rdi, r8
-    call strlen
-    mov [rsp + 48], rax
-    lea rdi, [rip + g_face_small]
-    mov rsi, [rsp + 40]
-    mov rdx, rax
-    call text_width
+    cmp dword ptr [rsp + 56], 0
+    je 11f
     mov esi, r13d
     add esi, r12d
-    sub esi, eax
-    sub esi, [rip + g_mt + 4*MI_16]
+    sub esi, [rsp + 56]
     lea rdi, [rip + g_face_small]
     mov edx, [rsp + 20]
     mov ecx, ebx
@@ -1184,7 +1639,7 @@ FN palette_draw
 
 # draw_highlighted(label, len, x, y, h): label with query characters in accent
 draw_highlighted:
-    PROLOGUE 48
+    PROLOGUE 64
     mov r12, rdi
     mov r13, rsi
     mov r14d, edx               # x
@@ -1194,12 +1649,31 @@ draw_highlighted:
     call tf_text
     mov [rsp + 8], rax          # query
     mov [rsp + 16], rdx
+    lea rax, [rip + g_face_ui]
+    mov [rsp + 48], rax         # face
+    mov qword ptr [rsp + 40], -1
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 0f
+    # find in files: code font, the literal match highlighted
+    lea rax, [rip + g_face_code]
+    mov [rsp + 48], rax
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [rsp + 8]
+    mov rcx, [rsp + 16]
+    cmp dword ptr [rip + grep_case], 0
+    je 7f
+    call str_find
+    jmp 8f
+7:  call str_ifind
+8:  mov [rsp + 40], rax
+0:  mov rcx, [rsp + 48]
     mov eax, [rsp + 4]
-    sub eax, [rip + g_face_ui + FACE_ascent]
-    sub eax, [rip + g_face_ui + FACE_descent]
+    sub eax, [rcx + FACE_ascent]
+    sub eax, [rcx + FACE_descent]
     sar eax, 1
     add eax, [rsp]
-    add eax, [rip + g_face_ui + FACE_ascent]
+    add eax, [rcx + FACE_ascent]
     mov [rsp + 24], eax         # baseline
     xor ebx, ebx                # label index
     xor r15d, r15d              # query index
@@ -1211,7 +1685,17 @@ draw_highlighted:
     call utf8_decode
     mov [rsp + 32], edx
     COLOR r9d, T_FG
-    cmp r15, [rsp + 16]
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 3f
+    mov rax, [rsp + 40]
+    cmp rbx, rax
+    jb 2f
+    add rax, [rsp + 16]
+    cmp rbx, rax
+    jae 2f
+    COLOR r9d, T_ACCENT
+    jmp 2f
+3:  cmp r15, [rsp + 16]
     jae 2f
     mov rcx, [rsp + 8]
     movzx ecx, byte ptr [rcx + r15]
@@ -1228,7 +1712,7 @@ draw_highlighted:
     jne 2f
     inc r15
     COLOR r9d, T_ACCENT
-2:  lea rdi, [rip + g_face_ui]
+2:  mov rdi, [rsp + 48]
     mov esi, r14d
     mov edx, [rsp + 24]
     lea rcx, [r12 + rbx]
@@ -1257,12 +1741,22 @@ placeholder_text:
     lea rcx, [rip + .Lph_goto]
     cmp eax, PM_GOTO
     je 1f
+    lea rcx, [rip + .Lph_grep]
+    cmp eax, PM_GREP
+    je 1f
     mov rcx, [rip + pal_label]
 1:  mov rax, rcx
     ret
 
 hint_text:
-    lea rax, [rip + .Lhint_goto]
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 2f
+    lea rax, [rip + .Lhint_grep]
+    cmp qword ptr [rip + pal_tf + TF_sb + SB_len], 2
+    jb 1f
+    lea rax, [rip + .Lhint_nomatch]
+    ret
+2:  lea rax, [rip + .Lhint_goto]
     cmp dword ptr [rip + pal_mode], PM_GOTO
     je 1f
     lea rax, [rip + .Lhint_path]
@@ -1284,6 +1778,10 @@ hint_text:
 .Lph_themes: .asciz "Select a color theme"
 .Lph_langs: .asciz "Select a language"
 .Lph_goto: .asciz "Line number"
+.Lph_grep: .asciz "Search in files"
+.Lhint_grep: .asciz "Case-insensitive unless the text has capitals"
+.Lhint_nomatch: .asciz "No matches"
+.Lnl: .ascii "\n"
 .Lhint_goto: .asciz "Enter a line number and press Enter"
 .Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
 .Lhint_delete: .asciz "Type yes and press Enter to delete"
