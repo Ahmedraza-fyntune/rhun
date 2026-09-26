@@ -9,10 +9,13 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 ## Features
 
 - Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
+- Image preview: PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA open in a tab, with zoom and pan
 - Syntax highlighting for about 50 languages, defined in plain text grammar files
 - 39 color themes, dark and light, with a match for every Omarchy theme; add your own
 - Settings page and a readable config file, both applied while running
 - Agents panel: Claude Code and Codex sessions of the project, updated live as the agent works
+- Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs
+- Git: changed lines in the gutter, file status in tabs and the explorer, diffs, and a history of all branches drawn as a graph
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
 - Characters missing from the built-in fonts are drawn with the system's fonts
 - Every XKB layout, dead keys and the Compose key (the system's Compose rules, `~/.XCompose` or `$XCOMPOSEFILE`)
@@ -74,6 +77,9 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+K | Color theme |
 | Ctrl+B | Toggle explorer |
 | Ctrl+Shift+A | Toggle agents panel |
+| Ctrl+\` | Toggle terminal |
+| Ctrl+Shift+\` | New terminal |
+| Ctrl+Shift+G | Toggle git history |
 | Ctrl+F, Ctrl+H | Find, replace |
 | Ctrl+Shift+F | Find in files |
 | Ctrl+G | Go to line |
@@ -84,7 +90,34 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+Shift+D, Ctrl+Shift+K | Duplicate, delete line |
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
 
-All commands are listed in the command palette.
+All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
+
+### Git
+
+In a git repository rhun shows what changed since the last commit. It runs the `git` program in the background, so the editor never waits for it, and follows commits, checkouts and edits made elsewhere, the built-in terminal included.
+
+- The gutter marks added lines green and changed lines amber, and points to deleted lines in red. The marks follow the text as you type, before it is saved.
+- File names in tabs and the explorer take the color of their status. The explorer adds a letter: M modified, A added, U untracked, D deleted, R renamed, C conflict; folders take the color of the changes inside them.
+- Git: Open Changes (also in the explorer's context menu of a changed file) opens the file's diff against HEAD in a read-only tab, with the old and new line numbers and the file's syntax colors.
+- The history (Ctrl+Shift+G, or the branch button in the title bar) shows the latest 3000 commits of all branches as a graph, with branch and tag names. The first row holds the uncommitted changes. The selected commit's message and changed files are shown on the right, with lines added and deleted; clicking a file opens its diff in that commit.
+
+It stays quick on large repositories: the Linux kernel's history (1.5M commits, 96k files) opens in about a tenth of a second.
+
+Git support is on by default; `enabled = false` under `[git]` in the config, or the Git switch in Settings, turns it off.
+
+### Images
+
+PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame), BMP, ICO / CUR, QOI, PNM (PBM, PGM, PPM) and TGA open in an image tab; other binary files are not opened. An image is decoded when its tab is first shown and fits the view without being enlarged; transparent parts show a checkerboard. It is decoded again when the file changes on disk.
+
+| Key / mouse | Action |
+| --- | --- |
+| Ctrl+=, Ctrl+-, `+`, `-` | Zoom in, out (stops at 100% on the way) |
+| Ctrl+0, `0` | Fit to the view |
+| `1`, double click | 100%; double click again to fit |
+| Ctrl+wheel | Zoom at the pointer |
+| Wheel, drag, arrows | Pan |
+
+The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
 ## Configuration
 
@@ -97,6 +130,10 @@ scale = 1.25
 [editor]
 font_size = 15
 tab_width = 4
+[terminal]
+shell = /usr/bin/fish
+[git]
+enabled = false
 [keys]
 ctrl+shift+d = duplicate_line
 alt+z = none
@@ -117,6 +154,8 @@ accent = #f5c2e7
 keyword = #cba6f7
 string = #a6e3a1
 ```
+
+Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors. `git_added`, `git_modified` and `git_deleted` color changes in the gutter, tabs, explorer and diffs.
 
 On Omarchy the theme list starts with Follow Omarchy (`theme = omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
 
@@ -160,7 +199,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll`, `open`, `cmd`, `shot`, `wait`, `resize`, `print-doc`, `print-state`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `resize`, `print-doc`, `print-state`, `print-term`, `print-git`, `print-gitlog`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
@@ -175,11 +214,12 @@ An extension that crashes or hangs cannot take the editor with it.
 
 | Path | |
 | --- | --- |
-| `src/sys.s mem.s lib.s` | syscalls, allocator, strings, UTF-8 |
+| `src/sys.s mem.s lib.s proc.s` | syscalls, allocator, strings, UTF-8, child processes |
 | `src/gfx/` | canvas, TrueType parser, rasterizer, icons |
+| `src/img/` | image decoders: inflate, PNG, JPEG, GIF, BMP / ICO, QOI, PNM, TGA |
 | `src/ui/ui.s` | immediate-mode widgets |
 | `src/plat/` | Wayland, XKB keymaps, X11, headless |
-| `src/app/` | documents, editor, explorer, palette, settings, agents, syntax, themes |
+| `src/app/` | documents, editor, image view, explorer, palette, settings, agents, terminal, git, syntax, themes |
 | `src/mac/` | macOS, native AArch64: entry, Linux system calls on libSystem, FSEvents, the AppKit window |
 | `tools/arm64.py` | the x86-64 to AArch64 translator for Apple silicon |
 | `runtime/` | themes and grammars embedded into the binary |

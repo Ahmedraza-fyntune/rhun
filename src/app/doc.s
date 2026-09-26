@@ -38,6 +38,7 @@ FN doc_new
 FN doc_free
     push rbx
     mov rbx, rdi
+    call git_doc_free
     mov rdi, rbx
     lea rsi, [rbx + DOC_undo]
     call urec_clear
@@ -54,8 +55,12 @@ FN doc_free
     call mem_free
     mov rdi, [rbx + DOC_states]
     call mem_free
+    mov rdi, [rbx + DOC_lhash]
+    call mem_free
     mov rdi, [rbx + DOC_path]
     call mem_free
+    mov rdi, [rbx + DOC_img]
+    call iv_free
     mov rdi, rbx
     call mem_free
     pop rbx
@@ -82,7 +87,7 @@ urec_clear:
     pop rbx
     ret
 
-# lines_reserve(doc, n): capacity for n lines (lines + states)
+# lines_reserve(doc, n): capacity for n lines (starts, states, hashes)
 lines_reserve:
     push rbx
     push r12
@@ -103,6 +108,10 @@ lines_reserve:
     lea rsi, [r12*4]
     call mem_realloc
     mov [rbx + DOC_states], rax
+    mov rdi, [rbx + DOC_lhash]
+    lea rsi, [r12*8]
+    call mem_realloc
+    mov [rbx + DOC_lhash], rax
 1:  pop r12
     pop rbx
     ret
@@ -419,10 +428,18 @@ FN raw_insert
     call memmove
     pop rdx
     shr rdx, 1                  # same count, 4-byte entries
-    mov rcx, [rsp]
+    push rdx
+    mov rcx, [rsp + 8]
     mov rax, [rbx + DOC_states]
     lea rsi, [rax + r15*4 + 4]
     lea rdi, [rsi + rcx*4]
+    call memmove
+    pop rdx
+    shl rdx, 1                  # 8-byte hashes
+    mov rcx, [rsp]
+    mov rax, [rbx + DOC_lhash]
+    lea rsi, [rax + r15*8 + 8]
+    lea rdi, [rsi + rcx*8]
     call memmove
     # fill new starts
     mov r8, [rbx + DOC_lines]
@@ -442,6 +459,13 @@ FN raw_insert
 6:  mov rax, [rsp]
     add [rbx + DOC_nlines], rax
 .Lri_lines_done:
+    # the edited line and the new ones need hashing again
+    mov rax, [rbx + DOC_lhash]
+    lea rdi, [rax + r15*8]
+    mov rcx, [rsp]
+    inc rcx
+    xor eax, eax
+    rep stosq
     mov rdi, rbx
     mov rsi, r15
     mov rdx, [rsp]
@@ -508,6 +532,15 @@ FN raw_delete
     lea rsi, [r9 + rcx*4]
     shl rdx, 2
     call memmove
+    mov rax, [rsp]
+    mov rdx, [rbx + DOC_nlines]
+    lea rcx, [r15 + rax + 1]
+    sub rdx, rcx
+    mov r9, [rbx + DOC_lhash]
+    lea rdi, [r9 + r15*8 + 8]
+    lea rsi, [r9 + rcx*8]
+    shl rdx, 3
+    call memmove
     pop rax
     sub [rbx + DOC_nlines], rax
 3:  mov r8, [rbx + DOC_lines]
@@ -517,7 +550,9 @@ FN raw_delete
     sub [r8 + rcx*8], r13
     inc rcx
     jmp 4b
-5:  mov rdi, rbx
+5:  mov rax, [rbx + DOC_lhash]
+    mov qword ptr [rax + r15*8], 0
+    mov rdi, rbx
     mov rsi, r15
     mov rdx, [rsp]
     call states_after_delete
@@ -987,6 +1022,10 @@ FN doc_load
 81: inc rcx
     jmp 8b
 9:  mov [rbx + DOC_nlines], rdx
+    mov rdi, [rbx + DOC_lhash]
+    mov rcx, rdx
+    xor eax, eax
+    rep stosq
     mov qword ptr [rbx + DOC_svalid], 0
     mov qword ptr [rbx + DOC_savepoint], 0
     xor eax, eax
@@ -1163,6 +1202,37 @@ FN doc_set_text
     call doc_insert
     mov rdi, rbx
     call doc_end_group
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+# doc_replace_all(doc, ptr, len): new contents with no undo history, not modified
+FN doc_replace_all
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov eax, [rbx + DOC_flags]
+    push rax
+    push rax
+    and dword ptr [rbx + DOC_flags], ~DF_READONLY
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call doc_set_text
+    pop rax
+    pop rax
+    mov [rbx + DOC_flags], eax
+    mov rdi, rbx
+    lea rsi, [rbx + DOC_undo]
+    call urec_clear
+    mov rdi, rbx
+    lea rsi, [rbx + DOC_redo]
+    call urec_clear
+    mov qword ptr [rbx + DOC_savepoint], 0
     pop r13
     pop r12
     pop rbx
@@ -1464,4 +1534,6 @@ FN doc_pos_at_col
 wide_ranges:
     .long 0x1100, 0x115f, 0x2e80, 0x303e, 0x3041, 0x33ff, 0x3400, 0x4dbf, 0x4e00, 0x9fff
     .long 0xa000, 0xa4cf, 0xac00, 0xd7a3, 0xf900, 0xfaff, 0xfe30, 0xfe4f, 0xff00, 0xff60
-    .long 0xffe0, 0xffe6, 0x1f300, 0x1f64f, 0x1f900, 0x1f9ff, 0x20000, 0x3fffd, 0, 0
+    .long 0xffe0, 0xffe6, 0x1f300, 0x1f64f, 0x1f900, 0x1f9ff, 0x20000, 0x3fffd, 0x1f680, 0x1f6ff
+    .long 0x1fa70, 0x1faff, 0x231a, 0x231b, 0x26a1, 0x26a1, 0x2705, 0x2705, 0x2728, 0x2728
+    .long 0x274c, 0x274c, 0x2b50, 0x2b50, 0, 0

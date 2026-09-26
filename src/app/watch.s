@@ -1,4 +1,4 @@
-# inotify: explorer refresh, agent sessions, files changed on disk, config reload, Omarchy theme
+# inotify: explorer refresh, agent sessions, files changed on disk, config reload, Omarchy theme, git
 .include "rhun.inc"
 
 .equ WK_EXPLORER, 1
@@ -6,6 +6,7 @@
 .equ WK_DOCS, 4
 .equ WK_CONFIG, 8
 .equ WK_OMARCHY, 16
+.equ WK_GIT, 32
 .equ MAXWD, 4096
 .equ WMASK, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_MODIFY
 
@@ -80,6 +81,9 @@ FN watch_dir
 FN watch_agents_dir
     mov esi, WK_AGENTS
     jmp add_watch
+FN watch_git
+    mov esi, WK_GIT
+    jmp add_watch
 
 # watch_doc(path): watch the directory holding an open file
 FN watch_doc
@@ -128,7 +132,25 @@ on_inotify:
     jae .Lin_ev
     lea rcx, [rip + wd_kinds]
     movzx ecx, byte ptr [rcx + rbx]
-    test ecx, WK_EXPLORER
+    # the work tree changed: git status again
+    test ecx, WK_EXPLORER | WK_DOCS
+    jz 6f
+    push rcx
+    push rcx
+    call git_touch
+    pop rcx
+    pop rcx
+6:  test ecx, WK_GIT
+    jz 7f
+    push rcx
+    push rcx
+    lea rax, [rip + wd_paths]
+    mov rdi, [rax + rbx*8]
+    lea rsi, [r14 + 16]
+    call git_fs_event
+    pop rcx
+    pop rcx
+7:  test ecx, WK_EXPLORER
     jz 1f
     test r15d, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO
     jz 1f
@@ -221,6 +243,8 @@ FN app_reload_doc
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
     jz 9f
+    cmp qword ptr [rbx + DOC_img], 0
+    jne .Lrd_image
     call file_read_all
     test rax, rax
     jz 9f
@@ -263,9 +287,15 @@ FN app_reload_doc
     mov [rbx + DOC_mtime], rax
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
+.Lrd_image:
+    call file_mtime
+    mov [rbx + DOC_mtime], rax
+    mov rdi, [rbx + DOC_img]
+    call iv_reload
+    EPILOGUE
 
 FN cmd_reload_file
-    mov rdi, [rip + g_doc]
+    mov rdi, [rip + g_file]
     test rdi, rdi
     jz 1f
     jmp app_reload_doc

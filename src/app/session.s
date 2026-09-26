@@ -76,9 +76,9 @@ FN session_save
     jae 3f
     mov rdi, rbx
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
     mov r12, [rax + TAB_doc]
+    test r12, r12
+    jz 2f
     cmp qword ptr [r12 + DOC_path], 0
     je 2f
     cmp rbx, [rip + g_tab_cur]
@@ -178,6 +178,8 @@ FN session_restore
     mov rsi, rax
     call parse_u64
     mov rcx, [rip + g_doc]
+    test rcx, rcx
+    jz 7f                       # an image
     push rax
     mov rdi, rcx
     call doc_len

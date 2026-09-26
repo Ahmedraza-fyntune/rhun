@@ -257,6 +257,7 @@ FN cmd_find_prev
 
 # replace_one(): replace the selection if it is a match, then go to the next one
 replace_one:
+    READONLY_RET
     PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -299,6 +300,7 @@ replace_one:
 
 # replace_all(): one undo step
 replace_all:
+    READONLY_RET
     PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx

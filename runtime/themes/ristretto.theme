@@ -36,3 +36,21 @@ inserted    = #adda78
 deleted     = #fd6883
 escape      = #bebffd
 link        = #f38d70
+
+[terminal]
+black          = #2c2525
+red            = #fd6883
+green          = #adda78
+yellow         = #f9cc6c
+blue           = #f38d70
+magenta        = #a8a9eb
+cyan           = #85dacc
+white          = #e6d9db
+bright_black   = #72696a
+bright_red     = #ff8297
+bright_green   = #c8e292
+bright_yellow  = #fcd675
+bright_blue    = #f8a788
+bright_magenta = #bebffd
+bright_cyan    = #9bf1e1
+bright_white   = #e6d9db

@@ -1,6 +1,7 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
-#   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy
+#   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
+#   wait-git | print-git | print-gitlog
 .include "rhun.inc"
 
 .bss
@@ -338,8 +339,18 @@ c_print_window:
 
 c_scroll:
     call next_int
+    push rax
+    push rax
+    call next_arg
+    xor ecx, ecx
+    test rdx, rdx
+    jz 1f
+    mov ecx, MOD_CTRL
+1:  pop rax
+    pop rax
     xor edi, edi
     mov esi, eax
+    mov edx, ecx
     call app_on_scroll
     xor eax, eax
     ret
@@ -383,24 +394,68 @@ c_shot:
 1:  xor eax, eax
     ret
 
+# wait ms: run file watches, programs' output and timers for that long
 c_wait:
+    push r13
+    push r14
+    push r15
     call next_int
-    sub rsp, 24
-    xor edx, edx
-    mov ecx, 1000
-    div rcx
-    mov [rsp], rax
-    imul rdx, rdx, 1000000
-    mov [rsp + 8], rdx
-    mov rdi, rsp
-    xor esi, esi
-    mov eax, 35                 # nanosleep
-    syscall
-    add rsp, 24
-    # let file watches and timers run (agents poll, blink)
-    xor edi, edi
+    mov r13, rax
+    call time_ms
+    add r13, rax
+1:  call time_ms
+    mov rdi, r13
+    sub rdi, rax
+    jle 2f
     call loop_poll
     call app_tick
+    jmp 1b
+2:  xor edi, edi
+    call loop_poll
+    call app_tick
+    pop r15
+    pop r14
+    pop r13
+    xor eax, eax
+    ret
+
+# wait-git: until git has answered (at most 10 s)
+c_wait_git:
+    push r13
+    call time_ms
+    lea r13, [rax + 10000]
+1:  call git_busy
+    test eax, eax
+    jz 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 1b
+2:  pop r13
+    xor eax, eax
+    ret
+
+# print-git: branch, status, change marks of the current file
+c_print_git:
+    lea rdi, [rip + out]
+    call git_dump
+    xor eax, eax
+    ret
+
+# print-gitlog: the history tab's graph and the selected row's files
+c_print_gitlog:
+    lea rdi, [rip + out]
+    call gitview_dump
+    xor eax, eax
+    ret
+
+# print-term: the screen of the current terminal
+c_print_term:
+    lea rdi, [rip + out]
+    call term_dump_current
     xor eax, eax
     ret
 
@@ -459,7 +514,8 @@ c_print_doc:
     xor eax, eax
     ret
 
-# print-state: "tabs=N active=name line=L col=C sel=S dirty=D focus=F lang=X theme=T" (T is omarchy:ID when following)
+# print-state: "tabs=N active=name line=L col=C sel=S dirty=D focus=F lang=X theme=T" (T is omarchy:ID when following);
+#   an image tab has "image=WxH format=F zoom=Z fit=0|1" in place of the cursor and language
 c_print_state:
     push rbx
     push r12
@@ -472,7 +528,7 @@ c_print_state:
     call sb_push_u64
     mov rbx, [rip + g_doc]
     test rbx, rbx
-    jz 1f
+    jz .Lps_image
     lea rdi, [rip + out]
     lea rsi, [rip + .Ls_active]
     call sb_push_cstr
@@ -524,6 +580,23 @@ c_print_state:
     mov rsi, [rax + GR_name]
 2:  lea rdi, [rip + out]
     call sb_push_cstr
+    jmp 1f
+.Lps_image:
+    # an image tab: its size, format and zoom
+    mov rbx, [rip + g_file]
+    test rbx, rbx
+    jz 1f
+    cmp qword ptr [rbx + DOC_img], 0
+    je 1f
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_active]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov rsi, [rbx + DOC_name]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + out]
+    call iv_describe
 1:  lea rdi, [rip + out]
     lea rsi, [rip + .Ls_focus]
     call sb_push_cstr
@@ -540,7 +613,7 @@ c_print_state:
     # following Omarchy: which theme that is
     mov rax, [rip + g_theme_cur]
     cmp rax, [rip + g_follow]
-    jne 1f
+    jne 2f
     lea rdi, [rip + out]
     mov esi, ':'
     call sb_push_byte
@@ -548,6 +621,22 @@ c_print_state:
     call theme_entry
     lea rdi, [rip + out]
     mov rsi, [rax + TH_id]
+    call sb_push_cstr
+2:  # terminals: how many, and whether the panel is hidden
+    call term_count
+    test rax, rax
+    jz 1f
+    mov rbx, rax
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_term]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    call sb_push_u64
+    cmp dword ptr [rip + g_term_open], 0
+    jne 1f
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_hidden]
     call sb_push_cstr
 1:  lea rdi, [rip + out]
     mov esi, 10
@@ -850,6 +939,12 @@ on_client:
 .Lc_xkey: .asciz "xkey"
 .Lc_print_window: .asciz "print-window"
 .Lc_print_cursor: .asciz "print-cursor"
+.Lc_print_term: .asciz "print-term"
+.Lc_print_git: .asciz "print-git"
+.Lc_wait_git: .asciz "wait-git"
+.Lc_print_gitlog: .asciz "print-gitlog"
+.Ls_term: .asciz " term="
+.Ls_hidden: .asciz " hidden"
 .Ls_builtin: .asciz "built-in"
 .Ls_hot: .asciz " hot "
 .Ls_moves: .asciz "moves="
@@ -865,7 +960,8 @@ ctl_table:
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
-    .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, 0, 0
+    .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
+    .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog, 0, 0
 
 .data
 lsock: .long -1

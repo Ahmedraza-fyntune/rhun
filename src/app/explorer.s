@@ -459,7 +459,7 @@ FN cmd_rename_file
     cmp byte ptr [rip + g_explorer_target], 0
     jne 1f
     # fall back to the active document
-    mov rax, [rip + g_doc]
+    mov rax, [rip + g_file]
     test rax, rax
     jz 2f
     mov rsi, [rax + DOC_path]
@@ -606,7 +606,7 @@ explorer_reveal:
     mov rbx, [rip + root]
     test rbx, rbx
     jz 9f
-    mov rax, [rip + g_doc]
+    mov rax, [rip + g_file]
     test rax, rax
     jz 9f
     mov r12, [rax + DOC_path]
@@ -851,7 +851,20 @@ FN explorer_draw
     mov rdi, r14
     call select_target
     mov [rip + menu_node], r14
-    lea rdi, [rip + menu_items]
+    # files with changes: "Open Changes" too
+    lea rax, [rip + menu_items]
+    push rax
+    push rax
+    cmp dword ptr [r14 + N_dir], 0
+    jne 50f
+    mov rdi, [r14 + N_path]
+    call git_status_of
+    test eax, eax
+    jz 50f
+    lea rax, [rip + menu_items_git]
+    mov [rsp], rax
+50: pop rdi
+    pop rax
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
     call ctx_menu_open
@@ -865,7 +878,7 @@ FN explorer_draw
     sub edx, eax
     mov ecx, ebx
     M r8d, MI_RADIUS
-    mov rax, [rip + g_doc]
+    mov rax, [rip + g_file]
     test rax, rax
     jz 52f
     mov rax, [rax + DOC_path]
@@ -948,6 +961,17 @@ FN explorer_draw
 57: call icon_draw
     add r15d, [rip + g_mt + 4*MI_20]
     add r15d, [rip + g_mt + 4*MI_2]
+    # git: name in the status color, the letter at the right for files
+    mov rdi, [r14 + N_path]
+    call git_status_of
+    mov [rsp + 32], eax
+    mov [rsp + 36], edx
+    COLOR eax, T_PANEL_FG
+    mov edi, [rsp + 32]
+    test edi, edi
+    jz 58f
+    call git_code_color
+58: mov [rsp + 40], eax
     mov rdi, [r14 + N_name]
     call strlen
     mov r9, rax
@@ -956,11 +980,27 @@ FN explorer_draw
     mov edx, r13d
     mov ecx, ebx
     mov r8, [r14 + N_name]
-    COLOR eax, T_PANEL_FG
+    mov eax, [rsp + 40]
     push rax
     push rax
     call ui_text_v
     add rsp, 16
+    cmp dword ptr [rsp + 32], 0
+    je 59f
+    cmp dword ptr [r14 + N_dir], 0
+    jne 59f
+    mov eax, [rsp + 32]
+    mov [rsp + 44], eax         # letter, zero-terminated
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    add esi, [rsp + 8]
+    sub esi, [rip + g_mt + 4*MI_24]
+    mov edx, r13d
+    mov ecx, ebx
+    lea r8, [rsp + 44]
+    mov r9d, [rsp + 40]
+    call ui_text_c
+59:
     add r13d, ebx
     inc r12d
     jmp .Lxd_row
@@ -1106,6 +1146,19 @@ FN explorer_menu_draw
 .Lmd_ret:
     EPILOGUE
 
+# open_changes(): diff of the file the menu is for
+open_changes:
+    push rbx
+    lea rdi, [rip + g_explorer_target]
+    call git_rel
+    test rax, rax
+    jz 1f
+    xor edi, edi
+    mov rsi, rax
+    call git_open_diff
+1:  pop rbx
+    ret
+
 cmd_copy_path:
     lea rdi, [rip + g_explorer_target]
     push rdi
@@ -1146,7 +1199,11 @@ FN ctx_menu_open
 .Lm3: .asciz "Rename"
 .Lm4: .asciz "Delete"
 .Lm5: .asciz "Copy Path"
+.Lm6: .asciz "Open Changes"
 .p2align 3
 menu_items:
     .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
+    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, 0, 0
+menu_items_git:
+    .quad .Lm6, open_changes, .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
     .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, 0, 0

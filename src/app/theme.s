@@ -7,7 +7,8 @@
 .globl g_theme, g_theme_dark, g_themes, g_theme_cur
 g_theme: .zero 4 * T_COUNT
 g_theme_dark: .long 0
-defined: .quad 0
+.p2align 3
+defined: .zero 16                # bit per slot given by the theme
 g_themes: .zero VEC_SIZE
 g_theme_cur: .quad 0            # index into g_themes
 it: .zero INI_SIZE
@@ -18,6 +19,7 @@ it: .zero INI_SIZE
 FN theme_load
     PROLOGUE 16
     mov qword ptr [rip + defined], 0
+    mov qword ptr [rip + defined + 8], 0
     mov dword ptr [rip + g_theme_dark], 1
     mov rdx, rsi
     mov rsi, rdi
@@ -66,9 +68,14 @@ FN theme_load
     call theme_derive
     EPILOGUE
 
+# ISDEF slot: carry set when the theme gave the slot
+.macro ISDEF slot
+    bt qword ptr [rip + defined + 8 * ((\slot) / 64)], (\slot) % 64
+.endm
+
 # DERIVE slot, a, b, t  : if slot undefined, slot = mix(color a, color b, t)
 .macro DERIVE slot, a, b, t
-    bt qword ptr [rip + defined], \slot
+    ISDEF \slot
     jc 88f
     mov edi, [rip + g_theme + 4*(\a)]
     mov esi, [rip + g_theme + 4*(\b)]
@@ -78,7 +85,7 @@ FN theme_load
 88:
 .endm
 .macro DERIVE_C slot, a, c, t
-    bt qword ptr [rip + defined], \slot
+    ISDEF \slot
     jc 88f
     mov edi, [rip + g_theme + 4*(\a)]
     mov esi, \c
@@ -88,14 +95,14 @@ FN theme_load
 88:
 .endm
 .macro COPY slot, src
-    bt qword ptr [rip + defined], \slot
+    ISDEF \slot
     jc 88f
     mov eax, [rip + g_theme + 4*(\src)]
     mov [rip + g_theme + 4*(\slot)], eax
 88:
 .endm
 .macro CONST slot, c
-    bt qword ptr [rip + defined], \slot
+    ISDEF \slot
     jc 88f
     mov dword ptr [rip + g_theme + 4*(\slot)], \c
 88:
@@ -144,7 +151,7 @@ theme_derive:
     CONST T_SUCCESS, 0xff98c379
     DERIVE T_MATCH, T_BG, T_WARNING, 70
     # text on accent: black or white by luminance
-    bt qword ptr [rip + defined], T_ACCENT_FG
+    ISDEF T_ACCENT_FG
     jc 1f
     mov eax, [rip + g_theme + 4*T_ACCENT]
     movzx ecx, al               # b
@@ -183,6 +190,26 @@ theme_derive:
     COPY T_SYN + C_DELETED, T_ERROR
     COPY T_SYN + C_ESCAPE, T_SYN + C_CONSTANT
     COPY T_SYN + C_LINK, T_ACCENT
+    # terminal: background and text shades, the others from the syntax colors
+    DERIVE T_TERM + 0, T_BG, T_FG, 40
+    COPY T_TERM + 1, T_ERROR
+    COPY T_TERM + 2, T_SUCCESS
+    COPY T_TERM + 3, T_WARNING
+    COPY T_TERM + 4, T_SYN + C_FUNCTION
+    COPY T_TERM + 5, T_SYN + C_KEYWORD
+    COPY T_TERM + 6, T_SYN + C_BUILTIN
+    DERIVE T_TERM + 7, T_FG, T_BG, 40
+    COPY T_TERM + 8, T_MUTED
+    DERIVE_C T_TERM + 9, T_TERM + 1, 0xffffffff, 50
+    DERIVE_C T_TERM + 10, T_TERM + 2, 0xffffffff, 50
+    DERIVE_C T_TERM + 11, T_TERM + 3, 0xffffffff, 50
+    DERIVE_C T_TERM + 12, T_TERM + 4, 0xffffffff, 50
+    DERIVE_C T_TERM + 13, T_TERM + 5, 0xffffffff, 50
+    DERIVE_C T_TERM + 14, T_TERM + 6, 0xffffffff, 50
+    COPY T_TERM + 15, T_FG
+    COPY T_GIT_ADD, T_SUCCESS
+    COPY T_GIT_MOD, T_WARNING
+    COPY T_GIT_DEL, T_ERROR
     pop rbx
     ret
 
@@ -430,6 +457,8 @@ slot_names:
     .quad .Ls20, .Ls21, .Ls22, .Ls23, .Ls24, .Ls25, .Ls26
     .quad .Lc0, .Lc1, .Lc2, .Lc3, .Lc4, .Lc5, .Lc6, .Lc7, .Lc8, .Lc9
     .quad .Lc10, .Lc11, .Lc12, .Lc13, .Lc14, .Lc15, .Lc16, .Lc17, .Lc18, .Lc19
+    .quad .Lt0, .Lt1, .Lt2, .Lt3, .Lt4, .Lt5, .Lt6, .Lt7, .Lt8, .Lt9
+    .quad .Lt10, .Lt11, .Lt12, .Lt13, .Lt14, .Lt15, .Lg0, .Lg1, .Lg2
 .Ls0: .asciz "bg"
 .Ls1: .asciz "fg"
 .Ls2: .asciz "accent"
@@ -477,3 +506,22 @@ slot_names:
 .Lc17: .asciz "deleted"
 .Lc18: .asciz "escape"
 .Lc19: .asciz "link"
+.Lt0: .asciz "black"
+.Lt1: .asciz "red"
+.Lt2: .asciz "green"
+.Lt3: .asciz "yellow"
+.Lt4: .asciz "blue"
+.Lt5: .asciz "magenta"
+.Lt6: .asciz "cyan"
+.Lt7: .asciz "white"
+.Lt8: .asciz "bright_black"
+.Lt9: .asciz "bright_red"
+.Lt10: .asciz "bright_green"
+.Lt11: .asciz "bright_yellow"
+.Lt12: .asciz "bright_blue"
+.Lt13: .asciz "bright_magenta"
+.Lt14: .asciz "bright_cyan"
+.Lt15: .asciz "bright_white"
+.Lg0: .asciz "git_added"
+.Lg1: .asciz "git_modified"
+.Lg2: .asciz "git_deleted"

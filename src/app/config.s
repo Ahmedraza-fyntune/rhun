@@ -34,12 +34,18 @@ cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
 cfg_word_wrap: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
+.globl cfg_term_font_size, cfg_term_scrollback, cfg_term_h, cfg_term_shell, cfg_git
+cfg_term_font_size: .long 14
+cfg_term_scrollback: .long 10000
+cfg_term_h: .long 260
+cfg_git: .long 1
 .p2align 3
 cfg_theme: .quad cfg_def_theme
 cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
 cfg_exclude: .quad .Ldef_exclude
 cfg_agent_sources: .quad .Ldef_sources
+cfg_term_shell: .quad .Lempty
 
 .bss
 .p2align 3
@@ -543,6 +549,8 @@ cfg_def_theme: .asciz "rhun-dark"
 .Ls_ui: .asciz "ui"
 .Ls_files: .asciz "files"
 .Ls_agents: .asciz "agents"
+.Ls_terminal: .asciz "terminal"
+.Ls_git: .asciz "git"
 
 .macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0
     .quad \sec, 1f, \ptr, 2f, 3f
@@ -587,6 +595,11 @@ g_settings:
     SETTING .Ls_files, restore_session, ST_BOOL, cfg_restore_session, 0, 1, 1, 0, "Restore open files", "Reopen the files from the last session of a project."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
     SETTING .Ls_agents, sources, ST_STR, cfg_agent_sources, 0, 0, 0, 0, "Agent sources", "Which agents to show: claude, codex."
+    SETTING .Ls_terminal, shell, ST_STR, cfg_term_shell, 0, 0, 0, 0, "Shell", "Program the terminal runs. Empty uses $SHELL."
+    SETTING .Ls_terminal, font_size, ST_INT, cfg_term_font_size, 8, 40, 1, 0, "Terminal font size", "Font size of the terminal panel."
+    SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
+    SETTING .Ls_terminal, height, ST_INT, cfg_term_h, 80, 2000, 10, 0, "Terminal height", "Height of the terminal panel in points."
+    SETTING .Ls_git, enabled, ST_BOOL, cfg_git, 0, 1, 1, 0, "Git", "Changes in the gutter, tabs and explorer, and the history view."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""

@@ -30,3 +30,21 @@ attribute      = #df8e1d
 tag            = #8839ef
 heading        = #d20f39
 escape         = #ea76cb
+
+[terminal]
+black          = #eff1f5
+red            = #d20f39
+green          = #40a02b
+yellow         = #df8e1d
+blue           = #1e66f5
+magenta        = #ea76cb
+cyan           = #179299
+white          = #4c4f69
+bright_black   = #acb0be
+bright_red     = #d20f39
+bright_green   = #40a02b
+bright_yellow  = #df8e1d
+bright_blue    = #1e66f5
+bright_magenta = #ea76cb
+bright_cyan    = #179299
+bright_white   = #4c4f69

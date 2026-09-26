@@ -8,6 +8,8 @@
 .equ ID_TOG_SIDE, 0x2004
 .equ ID_TOG_AGENTS, 0x2005
 .equ ID_SETTINGS_BTN, 0x2006
+.equ ID_TOG_TERM, 0x2007
+.equ ID_GIT_BTN, 0x2008
 .equ ID_TAB, 0x2100              # + index
 .equ ID_TABX, 0x2400             # + index
 .equ ID_SPLIT_L, 0x2700
@@ -40,6 +42,9 @@ split_drag: .long 0
 g_editor_rect: .zero 16
 .globl g_title_inset
 g_title_inset: .long 0           # title bar space the platform keeps (macOS window buttons)
+.p2align 3
+.globl g_file
+g_file: .quad 0                  # DOC of the active tab when it shows a file (text or image)
 
 .text
 
@@ -135,52 +140,11 @@ FN app_set_project
     mov rsi, rax
     call path_basename
     mov [rip + g_project_name], rax
-    call read_branch
+    call git_set_project
     call explorer_set_root
     call agents_set_project
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
-
-# read_branch(): g_branch from .git/HEAD
-read_branch:
-    PROLOGUE
-    mov byte ptr [rip + g_branch], 0
-    mov rdi, [rip + g_project]
-    lea rsi, [rip + .Lgit_head]
-    call path_join
-    mov rbx, rax
-    mov rdi, rax
-    call file_read_all
-    mov r12, rax
-    mov r13, rdx
-    mov rdi, rbx
-    call mem_free
-    test r12, r12
-    jz 9f
-    mov rdi, r12
-    mov rsi, r13
-    lea rdx, [rip + .Lrefs_heads]
-    mov ecx, 16
-    call str_find
-    test rax, rax
-    js 8f
-    lea rsi, [r12 + rax + 16]
-    lea rdi, [rip + g_branch]
-    mov ecx, 60
-1:  mov al, [rsi]
-    cmp al, 10
-    je 2f
-    test al, al
-    jz 2f
-    mov [rdi], al
-    inc rsi
-    inc rdi
-    dec ecx
-    jnz 1b
-2:  mov byte ptr [rdi], 0
-8:  mov rdi, r12
-    call mem_free
-9:  EPILOGUE
 
 # ---------------- tabs ----------------
 
@@ -190,19 +154,35 @@ FN tab_at
     add rax, [rip + g_tabs + VEC_ptr]
     ret
 
-# app_sync_doc(): g_doc from the active tab
+# app_sync_doc(): g_doc and g_file from the active tab
 FN app_sync_doc
     mov qword ptr [rip + g_doc], 0
+    mov qword ptr [rip + g_file], 0
     mov rdi, [rip + g_tab_cur]
     test rdi, rdi
     js 1f
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 1f
-    mov rax, [rax + TAB_doc]
-    mov [rip + g_doc], rax
-1:  mov dword ptr [rip + g_dirty], 1
+    mov rcx, [rax + TAB_kind]
+    cmp qword ptr [rax + TAB_doc], 0
+    je 1f
+    mov rdx, [rax + TAB_doc]
+    mov [rip + g_file], rdx
+    cmp rcx, TAB_DOC
+    jne 2f
+    mov [rip + g_doc], rdx
+1:  # the view's copies of an image are only kept while it is shown
+    call iv_cache_free
+2:  mov dword ptr [rip + g_dirty], 1
     ret
+
+# app_image() -> the active image view, or 0
+FN app_image
+    xor eax, eax
+    mov rcx, [rip + g_file]
+    test rcx, rcx
+    jz 1f
+    mov rax, [rcx + DOC_img]
+1:  ret
 
 FN app_activate_tab
     mov [rip + g_tab_cur], rdi
@@ -218,7 +198,7 @@ FN app_update_title
     PROLOGUE
     lea rdi, [rip + tmp_sb]
     call sb_clear
-    mov rbx, [rip + g_doc]
+    mov rbx, [rip + g_file]
     test rbx, rbx
     jz 1f
     lea rdi, [rip + tmp_sb]
@@ -246,9 +226,9 @@ FN app_find_tab
     jae 3f
     mov rdi, rbx
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
     mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 2f
     mov rdi, [rax + DOC_path]
     test rdi, rdi
     jz 2f
@@ -275,9 +255,28 @@ FN app_open_file
     call app_activate_tab
     mov rax, rbx
     EPILOGUE
-1:  call doc_new
+1:  mov r14d, TAB_DOC
+    call doc_new
     mov rbx, rax
-    mov rdi, rax
+    # images open in an image tab, decoded when first shown
+    mov rdi, r12
+    call image_probe
+    test eax, eax
+    jz 11f
+    mov r14d, TAB_IMAGE
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_set_path
+    mov rdi, r12
+    call file_mtime
+    mov [rbx + DOC_mtime], rax
+    call iv_new
+    mov [rbx + DOC_img], rax
+    # follow changes on disk: images are often written by other tools
+    mov rdi, r12
+    call watch_doc
+    jmp 3f
+11: mov rdi, rbx
     mov rsi, r12
     call doc_load
     cmp rax, -1000
@@ -290,6 +289,8 @@ FN app_open_file
     EPILOGUE
 2:  mov rdi, rbx
     call app_detect_lang
+    mov rdi, rbx
+    call git_doc_opened
     # replace an untouched untitled tab
     mov rax, [rip + g_tab_cur]
     test rax, rax
@@ -310,6 +311,7 @@ FN app_open_file
     test rax, rax
     jnz 3f
     mov [rdx + TAB_doc], rbx
+    mov [rdx + TAB_kind], r14
     mov rdi, rcx
     call doc_free
     mov rdi, [rip + g_tab_cur]
@@ -318,7 +320,7 @@ FN app_open_file
     mov rax, r13
     EPILOGUE
 3:  mov rdi, rbx
-    mov esi, TAB_DOC
+    mov esi, r14d
     call app_add_tab
     EPILOGUE
 
@@ -387,9 +389,9 @@ FN app_close_tab_now
     PROLOGUE
     mov r12, rdi
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 1f
     mov rdi, [rax + TAB_doc]
+    test rdi, rdi
+    jz 1f
     call doc_free
 1:  # remove slot
     mov rcx, r12
@@ -477,6 +479,7 @@ FN cmd_prev_tab
 
 # cmd_save(): save, or ask for a path for untitled docs
 FN cmd_save
+    READONLY_RET
     PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -507,6 +510,8 @@ FN app_after_save
 1:  lea rdi, [rip + .Lsaved]
     call app_toast
     call explorer_refresh
+    mov rdi, rbx
+    call git_doc_saved
     # saving the config file applies it right away
     call config_path
     mov rdi, rax
@@ -519,6 +524,7 @@ FN app_after_save
     EPILOGUE
 
 FN cmd_save_as
+    READONLY_RET
     lea rdi, [rip + .Lsave_as]
     mov esi, PROMPT_SAVE_AS
     jmp prompt_open
@@ -592,7 +598,8 @@ FN app_apply_settings
     je 1f
     mov rdi, rax
     call theme_apply
-1:  mov dword ptr [rip + g_dirty], 1
+1:  call git_apply
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # ---------------- platform callbacks ----------------
@@ -619,14 +626,22 @@ FN app_on_button
     mov dword ptr [rip + g_dirty], 1
     ret
 
+# app_on_scroll(dx, dy, mods)
 FN app_on_scroll
+    mov [rip + g_scroll_mods], edx
     call ui_input_scroll
     mov dword ptr [rip + g_dirty], 1
     ret
 
 FN app_on_focus
     mov [rip + g_win_focused], edi
-    call ed_touch
+    # files may have changed while away
+    test edi, edi
+    jz 1f
+    push rdi
+    call git_touch
+    pop rdi
+1:  call ed_touch
     mov dword ptr [rip + g_dirty], 1
     ret
 
@@ -646,7 +661,13 @@ FN app_on_paste
     call tf_insert
     call field_changed
     jmp 9f
-1:  cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+1:  cmp dword ptr [rip + g_focus], FOCUS_TERMINAL
+    jne 2f
+    mov rdi, rbx
+    mov rsi, r12
+    call term_panel_paste
+    jmp 9f
+2:  cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 9f
     mov rdi, rbx
     mov rsi, r12
@@ -742,11 +763,20 @@ FN app_on_key
     jnz 9f
     jmp .Lk_bind
 6:  cmp eax, FOCUS_AGENTS
-    jne .Lk_bind
+    jne 7f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call agents_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+7:  cmp eax, FOCUS_TERMINAL
+    jne .Lk_bind
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call term_panel_key
     test eax, eax
     jnz 9f
 .Lk_bind:
@@ -760,7 +790,28 @@ FN app_on_key
 .Lk_editor:
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 9f
+    call app_image
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call iv_key
+    jmp 9f
+1:  # the history tab takes the arrows
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 8f
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_GIT
+    jne 8f
     mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call gitview_key
+    jmp 9f
+8:  mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call editor_key
@@ -927,7 +978,15 @@ FN app_timeout
     cmp eax, ebx
     jge 2f
 21: mov ebx, eax
-2:  mov eax, ebx
+2:  call git_timeout
+    cmp eax, -1
+    je 3f
+    cmp ebx, -1
+    je 31f
+    cmp eax, ebx
+    jge 3f
+31: mov ebx, eax
+3:  mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -945,6 +1004,8 @@ FN app_tick
     mov qword ptr [rip + g_toast_until], 0
     mov dword ptr [rip + g_dirty], 1
 2:  call agents_tick
+    call term_tick
+    call git_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -1057,16 +1118,47 @@ FN app_render
     mov edx, [rsp + 20]
     mov ecx, [rsp + 24]
     call splitter
-5:  # editor column
+5:  # editor column, the terminal panel under it
     mov edi, [rsp + 28]
     cmp dword ptr [rip + cfg_sidebar], 0
     je 51f
     add edi, [rip + g_mt + 4*MI_1]
-51: mov esi, [rsp + 20]
-    mov edx, [rsp + 32]
-    sub edx, edi
+51: mov [rsp + 40], edi
+    mov eax, [rsp + 32]
+    sub eax, edi
+    mov [rsp + 44], eax         # column w
+    mov eax, [rsp + 24]
+    mov [rsp + 48], eax         # editor h
+    cmp dword ptr [rip + g_term_open], 0
+    je 52f
+    mov edi, [rip + cfg_term_h]
+    call sc
+    M edx, MI_64
     mov ecx, [rsp + 24]
+    sub ecx, edx
+    sub ecx, edx
+    cmp eax, ecx
+    cmovg eax, ecx
+    cmp eax, edx
+    cmovl eax, edx
+    mov [rsp + 52], eax         # panel h
+    mov ecx, [rsp + 24]
+    sub ecx, eax
+    mov [rsp + 48], ecx
+52: mov edi, [rsp + 40]
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 44]
+    mov ecx, [rsp + 48]
     call center_draw
+    cmp dword ptr [rip + g_term_open], 0
+    je 53f
+    mov edi, [rsp + 40]
+    mov esi, [rsp + 20]
+    add esi, [rsp + 48]
+    mov edx, [rsp + 44]
+    mov ecx, [rsp + 52]
+    call term_panel_draw
+53:
     # chrome
     xor edi, edi
     xor esi, esi
@@ -1268,7 +1360,24 @@ FN center_draw
     mov rax, [rip + g_tab_cur]
     mov rdi, rax
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
+    cmp qword ptr [rax + TAB_kind], TAB_IMAGE
+    jne 4f
+    mov rdi, [rax + TAB_doc]
+    mov esi, [rip + g_editor_rect]
+    mov edx, [rip + g_editor_rect + 4]
+    mov ecx, [rip + g_editor_rect + 8]
+    mov r8d, [rip + g_editor_rect + 12]
+    call iv_draw
+    EPILOGUE
+4:  cmp qword ptr [rax + TAB_kind], TAB_GIT
+    jne 1f
+    mov edi, [rip + g_editor_rect]
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call gitview_draw
+    EPILOGUE
+1:  cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
     jne 2f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
@@ -1356,7 +1465,7 @@ FN titlebar_draw
     call ui_text_c
     mov r12d, eax
 5:  # active file, centered
-    mov rbx, [rip + g_doc]
+    mov rbx, [rip + g_file]
     test rbx, rbx
     jz 6f
     mov rdi, rbx
@@ -1463,8 +1572,38 @@ FN titlebar_draw
     mov r9d, IC_SPARK
     call ui_icon_btn
     test eax, UB_CLICK
-    jz 9f
+    jz 81f
     call cmd_toggle_agents
+81: sub r12d, r13d
+    sub r12d, [rip + g_mt + 4*MI_4]
+    mov edi, ID_TOG_TERM
+    mov esi, r12d
+    mov edx, [rsp + 12]
+    sub edx, r13d
+    sar edx, 1
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_TERMINAL
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 82f
+    call cmd_toggle_terminal
+82: cmp dword ptr [rip + g_git_on], 0
+    je 9f
+    sub r12d, r13d
+    sub r12d, [rip + g_mt + 4*MI_4]
+    mov edi, ID_GIT_BTN
+    mov esi, r12d
+    mov edx, [rsp + 12]
+    sub edx, r13d
+    sar edx, 1
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_BRANCH
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 9f
+    call cmd_toggle_git
 9:  # a press on a button must not start a window move: the compositor would take the release
     cmp dword ptr [rip + g_hot], 0
     jne 13f
@@ -1618,12 +1757,15 @@ FN tabs_draw
     mov rdi, rbx
     call tab_at
     mov r15, rax
-    cmp qword ptr [r15 + TAB_kind], TAB_DOC
-    jne 3f
     mov rax, [r15 + TAB_doc]
+    test rax, rax
+    jz 3f
     mov r13, [rax + DOC_name]
     jmp 4f
 3:  lea r13, [rip + .Lsettings]
+    cmp qword ptr [r15 + TAB_kind], TAB_GIT
+    jne 4f
+    lea r13, [rip + .Lgit_tab]
 4:  mov rdi, r13
     call strlen
     mov r14, rax
@@ -1710,7 +1852,18 @@ FN tabs_draw
     sub ecx, [rip + g_mt + 4*MI_16]
     COLOR r8d, T_BORDER
     call gfx_fill
-    # text
+    # text: git status color, else muted (foreground when active)
+    mov rax, [r15 + TAB_doc]
+    test rax, rax
+    jz 80f
+    mov rdi, [rax + DOC_path]
+    xor eax, eax
+    test rdi, rdi
+    jz 80f
+    call git_path_color
+80: mov r9d, eax
+    test eax, eax
+    jnz 81f
     COLOR r9d, T_MUTED
     cmp rbx, [rip + g_tab_cur]
     jne 81f
@@ -1828,7 +1981,17 @@ FN statusbar_draw
     M ecx, MI_1
     COLOR r8d, T_BORDER
     call gfx_fill
-    mov rbx, [rip + g_doc]
+    call app_image
+    test rax, rax
+    jz 1f
+    mov rdi, [rip + g_file]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call iv_status
+    jmp 9f
+1:  mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
     lea rdi, [rip + tmp_sb]
@@ -1898,7 +2061,7 @@ FN statusbar_draw
     mov rdi, rax
     mov esi, [rip + cfg_tab_width]
     call fmt_u64
-    mov byte ptr [rdi + rax], 0
+    mov byte ptr [rdi], 0      # fmt_u64 leaves rdi after the digits
     lea r13, [rsp + 32]
 3:  call .Lsb_item
     lea r13, [rip + .Lplain]
@@ -2365,28 +2528,49 @@ FN cmd_toggle_agents
     ret
 
 FN cmd_zoom_in
+    mov esi, 1
+    call image_zoom
+    jnz 2f
     add dword ptr [rip + cfg_font_size], 1
     cmp dword ptr [rip + cfg_font_size], 40
     jle 1f
     mov dword ptr [rip + cfg_font_size], 40
 1:  mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
-    ret
+2:  ret
 
 FN cmd_zoom_out
+    mov esi, -1
+    call image_zoom
+    jnz 2f
     sub dword ptr [rip + cfg_font_size], 1
     cmp dword ptr [rip + cfg_font_size], 8
     jge 1f
     mov dword ptr [rip + cfg_font_size], 8
 1:  mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
-    ret
+2:  ret
 
 FN cmd_zoom_reset
+    xor esi, esi
+    call image_zoom
+    jnz 1f
     mov dword ptr [rip + cfg_font_size], 14
     mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
-    ret
+1:  ret
+
+# image_zoom(dir) -> ZF clear when an image tab took the zoom command (1 in, -1 out, 0 fit)
+image_zoom:
+    push rsi
+    call app_image
+    pop rsi
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call iv_zoom_cmd
+    or eax, 1
+1:  ret
 
 FN cmd_settings
     PROLOGUE
@@ -2444,6 +2628,7 @@ FN cmd_newline_below
     ret
 
 FN cmd_newline_above
+    READONLY_RET
     push rbx
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -2491,13 +2676,12 @@ FN cmd_move_line_down
 .Lrhun: .asciz "rhun"
 .Lempty: .asciz ""
 .Ldash: .asciz " \342\200\224 "
-.Lgit_head: .asciz ".git/HEAD"
-.Lrefs_heads: .ascii "ref: refs/heads/"
 .Lbinary: .asciz "Binary file, not opened"
 .Lsaved: .asciz "Saved"
 .Lsave_failed: .asciz "Could not save the file"
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
+.Lgit_tab: .asciz "Git"
 .Lln: .asciz "Ln "
 .Lcol: .asciz ", Col "
 .Lsel_open: .asciz "  ("
