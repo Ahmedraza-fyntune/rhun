@@ -395,7 +395,7 @@ class Source:
                 word = st.split(None, 1)[0] if st else ''
                 lw = word.lower()
                 # conditionals are tracked even when inactive
-                if lw in ('.if', '.ifdef', '.ifndef', '.ifne', '.ifeq'):
+                if lw in ('.if', '.ifdef', '.ifndef', '.ifne', '.ifeq', '.ifc', '.ifnc'):
                     if not active:
                         cond.append([False, True])
                         continue
@@ -404,6 +404,9 @@ class Source:
                         v = rest in self.consts or rest in self.lazy
                     elif lw == '.ifndef':
                         v = not (rest in self.consts or rest in self.lazy)
+                    elif lw in ('.ifc', '.ifnc'):
+                        a, _, b = rest.partition(',')
+                        v = (a.strip().strip("'\"") == b.strip().strip("'\"")) == (lw == '.ifc')
                     elif lw == '.ifeq':
                         v = evaluate(rest, self.lookup) == 0
                     else:
@@ -1010,7 +1013,7 @@ class Translator:
             return set(ALL)
         if mn in ('inc', 'dec'):
             return {'Z', 'N', 'V'}
-        if mn in ('bt', 'bts', 'btr', 'btc'):
+        if mn in ('bt', 'bts', 'btr', 'btc', 'clc', 'stc'):
             return {'C'}
         if mn in ('rol', 'ror'):
             return {'C', 'V'}
@@ -1887,12 +1890,15 @@ class Translator:
         self.err(st, 'narrow div')
 
     def i_bt(self, st, ops, need, k):
-        self.bittest(st, ops, need, False)
+        self.bittest(st, ops, need, None)
 
     def i_bts(self, st, ops, need, k):
-        self.bittest(st, ops, need, True)
+        self.bittest(st, ops, need, 'orr')
 
-    def bittest(self, st, ops, need, setbit):
+    def i_btr(self, st, ops, need, k):
+        self.bittest(st, ops, need, 'bic')
+
+    def bittest(self, st, ops, need, op):
         d, b = ops
         bits = self.opsize([d], st)
         X = lambda r: 'x' + r[1:]
@@ -1924,15 +1930,15 @@ class Translator:
             self.emit('mrs x16, nzcv')
             self.emit('bfi x16, x15, #29, #1')
             self.emit('msr nzcv, x16')
-        if setbit:
+        if op:
             self.emit('mov x14, #1')
             self.emit('lsl x14, x14, x12')
             if isinstance(d, Reg):
-                self.emit('orr %s, %s, x14' % (rn(d.i, 64), V))
+                self.emit('%s %s, %s, x14' % (op, rn(d.i, 64), V))
                 if bits == 32:
                     self.emit('mov %s, %s' % (rn(d.i, 32), rn(d.i, 32)))
             else:
-                self.emit('orr x11, %s, x14' % V)
+                self.emit('%s x11, %s, x14' % (op, V))
                 self.store(11, bits, a)
 
     def i_bsr(self, st, ops, need, k):
@@ -1946,6 +1952,138 @@ class Translator:
         self.emit('sub %s, %s, %s' % (rn(11, bits), rn(13, bits), rn(11, bits)))
         self.emit('cmp %s, #0' % S)
         self.emit('csel %s, %s, %s, eq' % (rn(d.i, bits), rn(d.i, bits), rn(11, bits)))
+
+    def i_bsf(self, st, ops, need, k):
+        # the source 0 sets ZF and leaves the destination
+        d, s = ops
+        bits = d.bits
+        if bits < 32:
+            self.err(st, 'narrow bsf')
+        S = self.get(s, bits, 12)
+        self.emit('rbit %s, %s' % (rn(11, bits), S))
+        self.emit('clz %s, %s' % (rn(11, bits), rn(11, bits)))
+        self.emit('cmp %s, #0' % S)
+        self.emit('csel %s, %s, %s, eq' % (rn(d.i, bits), rn(d.i, bits), rn(11, bits)))
+
+    def i_clc(self, st, ops, need, k):
+        # CF is the inverse of ARM's C; the other flags stay
+        if need:
+            self.emit('mrs x16, nzcv')
+            self.emit('orr x16, x16, #0x20000000')
+            self.emit('msr nzcv, x16')
+
+    def i_stc(self, st, ops, need, k):
+        if need:
+            self.emit('mrs x16, nzcv')
+            self.emit('and x16, x16, #0xffffffffdfffffff')
+            self.emit('msr nzcv, x16')
+
+    def i_rep_movsd(self, st, ops, need, k):
+        if self.df:
+            self.err(st, 'backwards movs')
+        self.emit('lsl x3, x3, #2')
+        self.emit('bl x_rep_movsb')
+
+    # -- SSE2 integer: 128-bit registers as NEON vectors; v24 holds a memory operand, v25 is scratch
+    def vsrc(self, o, st):
+        if isinstance(o, Xmm):
+            return o.i
+        if isinstance(o, Mem):
+            self.emit('ldr q24, %s' % self.addr(o, 16))
+            return 24
+        self.err(st, 'bad sse operand')
+
+    def vop(self, st, ops, op, arr):
+        d, s = ops
+        if not isinstance(d, Xmm):
+            self.err(st, 'bad sse operand')
+        si = self.vsrc(s, st)
+        self.emit('%s v%d.%s, v%d.%s, v%d.%s' % (op, d.i, arr, d.i, arr, si, arr))
+
+    def i_por(self, st, ops, need, k):
+        self.vop(st, ops, 'orr', '16b')
+
+    def i_pand(self, st, ops, need, k):
+        self.vop(st, ops, 'and', '16b')
+
+    def i_pxor(self, st, ops, need, k):
+        self.vop(st, ops, 'eor', '16b')
+
+    def i_paddb(self, st, ops, need, k):
+        self.vop(st, ops, 'add', '16b')
+
+    def i_paddw(self, st, ops, need, k):
+        self.vop(st, ops, 'add', '8h')
+
+    def i_pmullw(self, st, ops, need, k):
+        self.vop(st, ops, 'mul', '8h')
+
+    def i_pcmpeqb(self, st, ops, need, k):
+        self.vop(st, ops, 'cmeq', '16b')
+
+    def i_punpcklbw(self, st, ops, need, k):
+        self.vop(st, ops, 'zip1', '16b')
+
+    def i_punpckldq(self, st, ops, need, k):
+        self.vop(st, ops, 'zip1', '4s')
+
+    def i_punpcklqdq(self, st, ops, need, k):
+        self.vop(st, ops, 'zip1', '2d')
+
+    def i_packuswb(self, st, ops, need, k):
+        d, s = ops
+        si = self.vsrc(s, st)
+        self.emit('sqxtun v25.8b, v%d.8h' % d.i)
+        self.emit('sqxtun2 v25.16b, v%d.8h' % si)
+        self.emit('mov v%d.16b, v25.16b' % d.i)
+
+    def vshift_imm(self, st, ops):
+        d, c = ops
+        if not isinstance(d, Xmm) or not isinstance(c, Imm):
+            self.err(st, 'bad sse shift')
+        return d, c.value
+
+    def i_psrlw(self, st, ops, need, k):
+        d, n = self.vshift_imm(st, ops)
+        if n >= 16:
+            self.emit('movi v%d.2d, #0' % d.i)
+        elif n:
+            self.emit('ushr v%d.8h, v%d.8h, #%d' % (d.i, d.i, n))
+
+    def i_psrldq(self, st, ops, need, k):
+        d, n = self.vshift_imm(st, ops)
+        if n >= 16:
+            self.emit('movi v%d.2d, #0' % d.i)
+        elif n:
+            self.emit('movi v25.2d, #0')
+            self.emit('ext v%d.16b, v%d.16b, v25.16b, #%d' % (d.i, d.i, n))
+
+    def i_pshufd(self, st, ops, need, k):
+        d, s, c = ops
+        si = self.vsrc(s, st)
+        for i in range(4):
+            self.emit('ins v25.s[%d], v%d.s[%d]' % (i, si, (c.value >> (2 * i)) & 3))
+        self.emit('mov v%d.16b, v25.16b' % d.i)
+
+    def i_pshuflw(self, st, ops, need, k):
+        # the low four words shuffled, the high quadword copied
+        d, s, c = ops
+        si = self.vsrc(s, st)
+        self.emit('mov v25.16b, v%d.16b' % si)
+        for i in range(4):
+            self.emit('ins v25.h[%d], v%d.h[%d]' % (i, si, (c.value >> (2 * i)) & 3))
+        self.emit('mov v%d.16b, v25.16b' % d.i)
+
+    def i_pmovmskb(self, st, ops, need, k):
+        # the top bit of each byte: shifted down, then folded into the low byte of each half
+        d, s = ops
+        self.emit('ushr v25.16b, v%d.16b, #7' % s.i)
+        self.emit('usra v25.8h, v25.8h, #7')
+        self.emit('usra v25.4s, v25.4s, #14')
+        self.emit('usra v25.2d, v25.2d, #28')
+        self.emit('umov w11, v25.b[0]')
+        self.emit('umov w12, v25.b[8]')
+        self.emit('orr %s, w11, w12, lsl #8' % rn(d.i, 32))
 
     # -- SSE (scalar single precision)
     def fsrc(self, o, st, tmp=24, bits=32):
@@ -2049,6 +2187,11 @@ class Translator:
         si = self.fsrc(s, st)
         self.emit('fcmp s%d, s%d' % (d.i, si))
         self.emit('fccmp s%d, s%d, #4, vc' % (d.i, si))
+        if 'N' in need:
+            # SF is always clear on x86; ARM sets N for less than
+            self.emit('mrs x16, nzcv')
+            self.emit('and x16, x16, #0xffffffff7fffffff')
+            self.emit('msr nzcv, x16')
 
     i_ucomiss = i_comiss
 
