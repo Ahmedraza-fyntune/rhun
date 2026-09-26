@@ -10,6 +10,7 @@
 .equ MF_FAIL, 4                 # not a motion, or it cannot move
 .equ MF_KEEPX, 8                # keeps the preferred column
 .equ MF_EOL, 16                 # $: stays at line ends
+.equ MF_NOADJ, 32               # an operator's w that ends at a line end: no linewise adjustment
 .equ EOL_COL, 0x40000000        # preferred column after $
 .equ NMAX, 100000               # largest count
 .equ KR_SIZE, 12                # recorded key: keysym, cp, mods
@@ -1090,7 +1091,7 @@ vcmd:
     movzx ecx, cl
     mov edi, [rip + v_op]
     mov rsi, rax
-    call vop_chars
+    call vop_range
     jmp .Lc_done
 1:  # visual mode: select it
     cmp dword ptr [rip + g_vim_mode], VM_VISUAL
@@ -1240,7 +1241,7 @@ vcmd:
     mov rsi, [rbx + DOC_cur]
     mov rdx, rax
     xor ecx, ecx
-    call vop_chars
+    call vop_range
     jmp .Lc_done
 .Lc_X:
     mov r12, [rbx + DOC_cur]
@@ -1716,6 +1717,8 @@ vop_motion:
     jmp .Lom_chars
 2:  # exclusive, ending at the start of a later line: stop at the end of the line before,
     # or take whole lines when it began at or before the first non-blank
+    test r14d, MF_NOADJ
+    jnz .Lom_chars
     mov rdi, r13
     call vline
     mov r15, rax
@@ -1748,8 +1751,76 @@ vop_motion:
     mov rsi, r12
     mov rdx, r13
     xor ecx, ecx
+    call vop_range
+    EPILOGUE
+
+# vop_range(op, s, e, inner): vop_chars, but d over more lines with only blanks before s and after
+# e takes the whole lines, as in Vim
+vop_range:
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rsi
+    mov r13, rdx
+    mov r15d, ecx
+    cmp ebx, 'd'
+    jne 6f
+    test r15d, r15d
+    jnz 6f
+    mov rdi, r12
+    call vline
+    mov r14, rax
+    mov rdi, r13
+    call vline
+    cmp rax, r14
+    je 6f
+    mov [rsp], rax
+    mov rdi, r14
+    call vfirst
+    cmp rax, r12
+    jb 6f
+    mov rdi, r13
+    call vblank_to_end
+    test eax, eax
+    jz 6f
+    mov edi, ebx
+    mov rsi, r14
+    mov rdx, [rsp]
+    call vop_lines
+    EPILOGUE
+6:  mov edi, ebx
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, r15d
     call vop_chars
     EPILOGUE
+
+# vblank_to_end(pos) -> 1 when there are only blanks from pos to its line end
+vblank_to_end:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    call vline
+    mov rdi, rax
+    call vend
+    mov r12, rax
+1:  cmp rbx, r12
+    jae 2f
+    mov rdi, rbx
+    call vbyte
+    cmp eax, ' '
+    je 11f
+    cmp eax, 9
+    jne 3f
+11: inc rbx
+    jmp 1b
+2:  mov eax, 1
+    jmp 4f
+3:  xor eax, eax
+4:  pop r13
+    pop r12
+    pop rbx
+    ret
 .Lom_lines:
     mov rdi, r12
     call vline
@@ -2679,29 +2750,33 @@ vmotion:
     call vword_end
     mov r12, rax
     jmp 3b
-5:  mov rdi, r12
+5:  mov [rsp + 8], r12         # the start of the last word moved over
+    mov rdi, r12
     mov esi, [rsp + 16]
     call vword_fwd
     mov r12, rax
     dec r14d
     jnz 5b
-    # an operator stops at the end of the line where the last word ends
+    # an operator stops at the end of the line of the last word moved over
     cmp dword ptr [rip + v_op], 0
     je .Lm_ret
     mov rdi, r12
     call vline
     mov r13, rax
-    mov rdi, [rsp]
+    mov rdi, [rsp + 8]
     call vline
     cmp r13, rax
     jbe .Lm_ret
-    mov rdi, r13
-    call vfirst
-    cmp r12, rax
-    ja .Lm_ret
-    lea rdi, [r13 - 1]
+    mov rdi, rax
     call vend
     mov r12, rax
+    mov r15d, MF_NOADJ
+    # dw on an empty line: the line goes
+    cmp rax, [rsp]
+    jne .Lm_ret
+    cmp dword ptr [rip + v_op], 'd'
+    jne .Lm_ret
+    mov r15d, MF_LINE
     jmp .Lm_ret
 
 .Lm_e:
