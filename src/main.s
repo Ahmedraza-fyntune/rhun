@@ -278,7 +278,7 @@ open_initial:
 .Lo_help: .asciz "--help"
 .Lo_h: .asciz "-h"
 .Lo_version: .asciz "--version"
-.Lversion: .asciz "rhun 0.1\n"
+.Lversion: .asciz "rhun 0.13.55\n"
 .Lusage: .ascii "usage: rhun [folder] [files...]\n"
     .ascii "  --headless WxH   no display; use with --script or --control\n"
     .ascii "  --script FILE    run control commands from FILE and exit\n"
