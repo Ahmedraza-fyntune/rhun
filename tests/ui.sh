@@ -3,6 +3,14 @@
 cd "$(dirname "$0")/.."
 fail=0
 tmp=$(mktemp -d)
+# agent session fixtures under the fake HOME
+slug=$(printf '%s' "$PWD" | sed 's/[^A-Za-z0-9]/-/g')
+mkdir -p "$tmp/.claude/projects/$slug" "$tmp/.codex/sessions/2026/09/26"
+sed "s|@PROJECT@|$PWD|g" tests/data/agents/claude.jsonl > "$tmp/.claude/projects/$slug/s1.jsonl"
+sed "s|@PROJECT@|$PWD|g" tests/data/agents/codex.jsonl > "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
+cp tests/data/agents/other.jsonl "$tmp/.codex/sessions/2026/09/26/rollout-c2.jsonl"
+touch -d '2026-09-26 06:00' "$tmp/.claude/projects/$slug/s1.jsonl"
+touch -d '2026-09-26 07:00' "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
 for s in tests/scripts/*.rsc; do
     n=$(basename "$s" .rsc)
     XDG_CONFIG_HOME=$tmp/config XDG_STATE_HOME=$tmp/state HOME=$tmp \

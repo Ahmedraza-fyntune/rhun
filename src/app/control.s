@@ -499,6 +499,20 @@ c_print_syntax:
     xor eax, eax
     ret
 
+# print-agents [open N]: sessions and the open thread
+c_print_agents:
+    call next_int
+    test rdx, rdx
+    jz 1f
+    dec rax
+    js 1f
+    mov rdi, rax
+    call agents_open
+1:  lea rdi, [rip + out]
+    call agents_dump
+    xor eax, eax
+    ret
+
 # control_run_script(path): execute every line, print outputs to stdout
 FN control_run_script
     PROLOGUE
@@ -697,6 +711,7 @@ on_client:
 .Lc_print_doc: .asciz "print-doc"
 .Lc_print_state: .asciz "print-state"
 .Lc_print_syntax: .asciz "print-syntax"
+.Lc_print_agents: .asciz "print-agents"
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
 ctl_table:
@@ -704,7 +719,7 @@ ctl_table:
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_scroll, c_scroll, .Lc_open, c_open
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
-    .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, 0, 0
+    .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, 0, 0
 
 .data
 lsock: .long -1

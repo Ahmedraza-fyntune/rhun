@@ -660,9 +660,10 @@ text_of:
     mov rdi, rbx
     call json_str
     EPILOGUE
-1:  lea rdi, [rip + tmp]
+1:  mov r14d, eax
+    lea rdi, [rip + tmp]
     call sb_clear
-    cmp eax, JT_ARR
+    cmp r14d, JT_ARR
     jne 8f
     xor r12d, r12d
 2:  mov rdi, rbx
@@ -1010,11 +1011,19 @@ FN ingest_line
     test eax, eax
     jnz 10f
     jmp .Lil_ret
-9:  mov rdi, r13
+9:  # name and arguments are copied out: the arguments are JSON text themselves
+    mov rdi, r13
     lea rsi, [rip + .Lname]
     call json_get
     mov rdi, rax
     call json_str
+    test rax, rax
+    jnz 90f
+    lea rax, [rip + .Ltool]
+    mov edx, 4
+90: mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
     mov [rsp + 16], rax
     mov rdi, r13
     lea rsi, [rip + .Larguments]
@@ -1026,15 +1035,75 @@ FN ingest_line
     call json_get
 91: mov rdi, rax
     call tool_summary
-    mov r8, [rsp + 16]
-    test r8, r8
-    jnz 92f
-    lea r8, [rip + .Ltool]
-92: mov rdi, rbx
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov [rsp + 24], rax
+    mov rdi, rax
+    call strlen
+    mov rdi, [rsp + 24]
+    mov rsi, rax
+    call json_parse
+    test rax, rax
+    jz 93f
+    mov r14, rax
+    mov rdi, rax
+    lea rsi, [rip + .Ls_command]
+    call json_get
+    test rax, rax
+    jz 94f
+    mov r15, rax
+    mov rdi, rax
+    call json_type
+    cmp eax, JT_ARR
+    jne 95f
+    # command array -> words joined by spaces
+    lea rdi, [rip + tmp]
+    call sb_clear
+    xor r14d, r14d
+96: mov rdi, r15
+    call json_len
+    cmp r14d, eax
+    jae 97f
+    test r14d, r14d
+    jz 98f
+    lea rdi, [rip + tmp]
+    mov esi, ' '
+    call sb_push_byte
+98: mov rdi, r15
+    mov esi, r14d
+    call json_at
+    mov rdi, rax
+    call json_str
+    lea rdi, [rip + tmp]
+    mov rsi, rax
+    call sb_push
+    inc r14d
+    jmp 96b
+97: mov rax, [rip + tmp + SB_ptr]
+    mov rdx, [rip + tmp + SB_len]
+    jmp 99f
+95: mov rdi, r15
+    call json_str
+    test rax, rax
+    jnz 99f
+94: mov rdi, r14
+    call tool_summary
+    jmp 99f
+93: mov rdi, [rsp + 24]
+    call strlen
+    mov rdx, rax
+    mov rax, [rsp + 24]
+99: mov rdi, rbx
     mov esi, R_TOOL
     mov rcx, rdx
     mov rdx, rax
+    mov r8, [rsp + 16]
     call add_msg
+    mov rdi, [rsp + 16]
+    call mem_free
+    mov rdi, [rsp + 24]
+    call mem_free
     jmp .Lil_ret
 10: mov rdi, r13
     lea rsi, [rip + .Loutput]
@@ -1240,6 +1309,97 @@ FN cmd_focus_agents
     mov dword ptr [rip + g_focus], FOCUS_AGENTS
     mov dword ptr [rip + g_dirty], 1
     ret
+
+# agents_dump(sb): sessions (kind, title, messages) and the open thread, for tests
+FN agents_dump
+    PROLOGUE
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + sessions + VEC_len]
+    jae 3f
+    mov rax, [rip + sessions + VEC_ptr]
+    mov r12, [rax + rbx*8]
+    lea rsi, [rip + .Lclaude_name]
+    cmp dword ptr [r12 + AS_kind], 2
+    jne 2f
+    lea rsi, [rip + .Lcodex_name]
+2:  mov rdi, r15
+    call sb_push_cstr
+    mov rdi, r15
+    mov esi, ':'
+    call sb_push_byte
+    mov rdi, r15
+    mov esi, ' '
+    call sb_push_byte
+    mov rsi, [r12 + AS_title]
+    test rsi, rsi
+    jnz 21f
+    lea rsi, [rip + .Luntitled]
+21: mov rdi, r15
+    call sb_push_cstr
+    mov rdi, r15
+    mov esi, 10
+    call sb_push_byte
+    inc rbx
+    jmp 1b
+3:  mov rax, [rip + view]
+    test rax, rax
+    js 9f
+    mov rcx, [rip + sessions + VEC_ptr]
+    mov r12, [rcx + rax*8]
+    xor ebx, ebx
+4:  cmp rbx, [r12 + AS_msgs + VEC_len]
+    jae 9f
+    imul r13, rbx, AM_SIZE
+    add r13, [r12 + AS_msgs + VEC_ptr]
+    mov eax, [r13 + AM_role]
+    lea rcx, [rip + role_names]
+    mov rsi, [rcx + rax*8]
+    mov rdi, r15
+    call sb_push_cstr
+    mov rsi, [r13 + AM_name]
+    test rsi, rsi
+    jz 5f
+    mov rdi, r15
+    mov esi, '('
+    call sb_push_byte
+    mov rdi, r15
+    mov rsi, [r13 + AM_name]
+    call sb_push_cstr
+    mov rdi, r15
+    mov esi, ')'
+    call sb_push_byte
+5:  mov rdi, r15
+    mov esi, ' '
+    call sb_push_byte
+    # first line, at most 60 bytes
+    mov rsi, [r13 + AM_text]
+    mov rdx, [r13 + AM_len]
+    xor ecx, ecx
+6:  cmp rcx, rdx
+    jae 7f
+    cmp rcx, 60
+    jae 7f
+    cmp byte ptr [rsi + rcx], 10
+    je 7f
+    inc rcx
+    jmp 6b
+7:  mov rdi, r15
+    mov rdx, rcx
+    call sb_push
+    mov rdi, r15
+    mov esi, 10
+    call sb_push_byte
+    inc rbx
+    jmp 4b
+9:  EPILOGUE
+
+# agents_open(i): open session i (tests / control socket)
+FN agents_open
+    cmp rdi, [rip + sessions + VEC_len]
+    jae 1f
+    jmp open_session
+1:  ret
 
 FN agents_key
     cmp edi, KEY_ESCAPE
@@ -2113,6 +2273,13 @@ draw_msg:
 
 .section .rodata
 .Lhome: .asciz "HOME"
+.Lr0: .asciz "?"
+.Lr1: .asciz "user"
+.Lr2: .asciz "agent"
+.Lr3: .asciz "tool"
+.Lr4: .asciz "result"
+.p2align 3
+role_names: .quad .Lr0, .Lr1, .Lr2, .Lr3, .Lr4
 .Lclaude_projects: .asciz "/.claude/projects/"
 .Lcodex_sessions: .asciz "/.codex/sessions"
 .Ljsonl: .ascii ".jsonl"

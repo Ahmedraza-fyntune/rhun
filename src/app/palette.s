@@ -232,6 +232,18 @@ load_commands:
     mov rdi, r12
     call strlen
     mov r13, rax
+    # shortcut label, formatted once per command
+    mov rax, rbx
+    lea rcx, [rip + g_commands]
+    sub rax, rcx
+    xor edx, edx
+    mov ecx, CMD_SIZE
+    div rcx
+    mov r14, rax
+    lea rcx, [rip + keys_cache]
+    mov rax, [rcx + r14*8]
+    test rax, rax
+    jnz 3f
     mov rdi, rbx
     call keys_for
     test rax, rax
@@ -242,6 +254,8 @@ load_commands:
     pop rdi
     mov rsi, rax
     call mem_dup
+    lea rcx, [rip + keys_cache]
+    mov [rcx + r14*8], rax
 3:  mov rdi, r12
     mov rsi, r13
     mov rdx, rax
@@ -1274,5 +1288,7 @@ hint_text:
 .Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
 .Lhint_delete: .asciz "Type yes and press Enter to delete"
 .bss
+.p2align 3
+keys_cache: .zero 8 * 256
 .globl g_ed_h_lines
 g_ed_h_lines: .long 0
