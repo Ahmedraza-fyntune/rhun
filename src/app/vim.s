@@ -3347,7 +3347,7 @@ vtextobj:
     mov esi, [rsp]
     call vclass
     test eax, eax
-    jnz 6f
+    jnz 60f
 5:  mov rdi, [rsp + 16]
     mov esi, [rsp]
     call vclass
@@ -3355,16 +3355,30 @@ vtextobj:
     jnz .Lto_se
     inc qword ptr [rsp + 16]
     jmp 5b
+60: # (not the indentation of a line's first word)
+    mov rax, [rsp + 8]
+    mov [rsp + 24], rax
+    mov rdi, rax
+    call vline
+    mov rdi, rax
+    call vstart
+    mov [rsp + 32], rax
 6:  mov rax, [rsp + 8]
     test rax, rax
-    jz .Lto_se
+    jz 61f
     lea rdi, [rax - 1]
     mov esi, [rsp]
     call vclass
     test eax, eax
-    jnz .Lto_se
+    jnz 61f
     dec qword ptr [rsp + 8]
     jmp 6b
+61: mov rax, [rsp + 8]
+    cmp rax, [rsp + 32]
+    jne .Lto_se
+    mov rax, [rsp + 24]
+    mov [rsp + 8], rax
+    jmp .Lto_se
 7:  # blanks: and the word after them
     mov rdi, [rsp + 16]
     mov esi, [rsp]
