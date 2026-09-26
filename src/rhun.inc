@@ -293,3 +293,38 @@ F FACE_ascii, 1024  # fast path GL* for cp < 128
 F FACE_embolden, 4
 F FACE_pad2, 4
 ENDSTRUCT FACE_SIZE
+
+# ---- event loop fd watchers ----
+STRUCT
+F PW_fd, 4
+F PW_events, 4
+F PW_handler, 8         # handler(fd, revents, ctx)
+F PW_ctx, 8
+ENDSTRUCT PW_SIZE
+.equ MAX_WATCH, 48
+
+# ---- platform vtable (wayland / x11 / headless) ----
+STRUCT
+F P_flush, 8            # ()
+F P_timeout, 8          # () -> ms or -1
+F P_tick, 8             # ()
+F P_draw, 8             # () renders if possible
+F P_cursor, 8           # (shape)
+F P_clip_set, 8         # (ptr, len)
+F P_clip_get, 8         # () -> async app_on_paste
+F P_move, 8             # ()
+F P_resize, 8           # (edges)
+F P_minimize, 8         # ()
+F P_maximize, 8         # () toggle
+F P_title, 8            # (cstr)
+F P_menu, 8             # (x, y)
+ENDSTRUCT PLAT_SIZE
+
+.equ EDGE_TOP, 1
+.equ EDGE_BOTTOM, 2
+.equ EDGE_LEFT, 4
+.equ EDGE_RIGHT, 8
+
+.macro PCALL fn
+    call [rip + g_plat + \fn]
+.endm
