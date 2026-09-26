@@ -83,6 +83,9 @@ FN main
     T HTML, "<div class=\"x\">a &amp; b</div><!-- c -->"
     T Markdown, "# Title with `code`"
     T Shell, "echo \"$HOME\" | grep -v x # c"
+    T Markdown, "`comment` and **bold** [link](x)"
+    T Markdown, "```sh"
+    T Markdown, "inside fence", 1
     mov rdi, [rip + out + SB_ptr]
     mov rsi, [rip + out + SB_len]
     call log_write

@@ -70,34 +70,34 @@ FN theme_load
 .macro DERIVE slot, a, b, t
     bt qword ptr [rip + defined], \slot
     jc 88f
-    mov edi, [rip + g_theme + 4*\a]
-    mov esi, [rip + g_theme + 4*\b]
+    mov edi, [rip + g_theme + 4*(\a)]
+    mov esi, [rip + g_theme + 4*(\b)]
     mov edx, \t
     call color_mix
-    mov [rip + g_theme + 4*\slot], eax
+    mov [rip + g_theme + 4*(\slot)], eax
 88:
 .endm
 .macro DERIVE_C slot, a, c, t
     bt qword ptr [rip + defined], \slot
     jc 88f
-    mov edi, [rip + g_theme + 4*\a]
+    mov edi, [rip + g_theme + 4*(\a)]
     mov esi, \c
     mov edx, \t
     call color_mix
-    mov [rip + g_theme + 4*\slot], eax
+    mov [rip + g_theme + 4*(\slot)], eax
 88:
 .endm
 .macro COPY slot, src
     bt qword ptr [rip + defined], \slot
     jc 88f
-    mov eax, [rip + g_theme + 4*\src]
-    mov [rip + g_theme + 4*\slot], eax
+    mov eax, [rip + g_theme + 4*(\src)]
+    mov [rip + g_theme + 4*(\slot)], eax
 88:
 .endm
 .macro CONST slot, c
     bt qword ptr [rip + defined], \slot
     jc 88f
-    mov dword ptr [rip + g_theme + 4*\slot], \c
+    mov dword ptr [rip + g_theme + 4*(\slot)], \c
 88:
 .endm
 

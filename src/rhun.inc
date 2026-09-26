@@ -395,7 +395,7 @@ ENDSTRUCT INI_SIZE
 .equ T_COUNT, T_SYN + C_COUNT
 
 .macro COLOR reg, slot
-    mov \reg, [rip + g_theme + 4*\slot]
+    mov \reg, [rip + g_theme + 4*(\slot)]
 .endm
 
 # ---- settings schema ----
@@ -490,7 +490,7 @@ ENDSTRUCT UR_SIZE
 .equ MI_5, 23
 .equ MI_COUNT, 24
 .macro M reg, idx
-    mov \reg, [rip + g_mt + 4*\idx]
+    mov \reg, [rip + g_mt + 4*(\idx)]
 .endm
 
 # ui_btn result bits
@@ -579,6 +579,7 @@ ENDSTRUCT GR_SIZE
 .equ GF_LABELS, 16
 .equ GF_NUMBERS, 32
 .equ GF_OPS, 64
+.equ GF_COLON, 128          # indent after a line ending with ":"
 
 STRUCT
 F REG_start, 16

@@ -399,6 +399,8 @@ FN ed_type
     dec rsi
     mov rdi, rbx
     call doc_byte
+    cmp eax, r12d
+    je .Lty_plain
     mov edi, eax
     call is_ident
     test eax, eax
@@ -538,6 +540,11 @@ FN ed_newline
     je 5f
     cmp al, ':'
     jne 3f
+    mov rcx, [rbx + DOC_lang]
+    test rcx, rcx
+    jz 3f
+    test qword ptr [rcx + GR_flags], GF_COLON
+    jz 3f
 5:  mov [rsp + 24], eax
     call push_indent_unit
     # between a pair "{|}": put the closer on its own line
@@ -1824,6 +1831,7 @@ FN editor_draw
     mov dword ptr [rip + g_reveal], 0
     jmp .Led_noinput
 .Led_dbl:
+    mov dword ptr [rip + g_dragging], 0
     mov rdi, rbx
     mov rsi, r12
     call word_at
@@ -1835,6 +1843,7 @@ FN editor_draw
     mov dword ptr [rip + g_reveal], 0
     jmp .Led_noinput
 .Led_tri:
+    mov dword ptr [rip + g_dragging], 0
     mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
     call cmd_select_line

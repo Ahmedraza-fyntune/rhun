@@ -7,3 +7,4 @@ ident = -
 line = --- keyword
 constants = true false null yes no on off True False Null
 functions = no
+colon_indent = yes

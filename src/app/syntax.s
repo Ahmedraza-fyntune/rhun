@@ -356,6 +356,11 @@ FN grammar_parse
     call .Lgp_flag
     test eax, eax
     jnz .Lgp_next
+    lea rsi, [rip + .Lk_colon]
+    mov r8d, GF_COLON
+    call .Lgp_flag
+    test eax, eax
+    jnz .Lgp_next
     # word lists: "<class>s = words" e.g. keywords, types, constants, builtins, attributes, variables, tags, preprocs
     mov rdi, [rip + it + INI_key]
     mov rsi, [rip + it + INI_keylen]
@@ -1446,6 +1451,7 @@ class_names:
 .Lk_labels: .asciz "labels"
 .Lk_numbers: .asciz "numbers"
 .Lk_operators: .asciz "operators"
+.Lk_colon: .asciz "colon_indent"
 .Lv_insensitive: .asciz "insensitive"
 .Lv_multiline: .ascii "multiline"
 .Lv_bol: .ascii "bol"
