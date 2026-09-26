@@ -429,6 +429,11 @@ x_key:
     call app_on_key
 9:  EPILOGUE
 
+# x_key_test(keycode, state): feed a key press as if it came from the server (control socket)
+FN x_key_test
+    mov [rip + xmods], esi
+    jmp x_key
+
 keysym_is_lower_x:
     lea eax, [rdi - 'a']
     cmp eax, 25
