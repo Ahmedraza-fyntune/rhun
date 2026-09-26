@@ -17,7 +17,10 @@
 
 import os
 import re
+import resource
 import sys
+import threading
+import time
 
 # ---------------------------------------------------------------- registers
 
@@ -1033,8 +1036,10 @@ class Translator:
             need = self.scan(k, w, through)
             self.needs[k] = need
             if 'C' in need:
-                for p in through:
-                    self.c_through.add(p)
+                # an inc/dec the carry passes on its way to a read
+                for p in set(through):
+                    if 'C' in self.scan(p, {'C'}, []):
+                        self.c_through.add(p)
 
     def mark_exports(self, start, flags):
         work = [start]
@@ -1064,14 +1069,22 @@ class Translator:
                         work.append(t)
                 p += 1
 
+    def may_keep_flags(self, st):
+        """writes flags only sometimes: string compares with rcx 0, shifts by cl 0"""
+        if st.name in ('repe cmpsb', 'repz cmpsb', 'repne scasb', 'repnz scasb'):
+            return True
+        return st.name in ('shl', 'sal', 'shr', 'sar', 'rol', 'ror') and len(st.args) > 1 and \
+            st.args[1].strip().lower() == 'cl'
+
     def scan(self, k, track, through):
+        """flags that instructions after k read before they are written; inc/dec passed while the
+        carry was still tracked go to through (on any path: analyze checks them)"""
         need = set()
         work = [(k + 1, frozenset(track))]
         seen = set()
         n = len(self.stmts)
         while work:
             p, tr = work.pop()
-            path = []
             while p < n and tr:
                 if (p, tr) in seen:
                     break
@@ -1083,8 +1096,6 @@ class Translator:
                 r = self.reads(st) & tr
                 if r:
                     need |= r
-                    if 'C' in r:
-                        through.extend(path)
                 mn = st.name
                 if mn.startswith('j'):
                     tgt = st.args[0] if st.args else ''
@@ -1104,8 +1115,9 @@ class Translator:
                     break
                 w = self.writes(st)
                 if w and 'C' in tr and 'C' not in w:
-                    path.append(p)
-                tr = tr - frozenset(w)
+                    through.append(p)
+                if not self.may_keep_flags(st):
+                    tr = tr - frozenset(w)
                 p += 1
         return need
 
@@ -1255,6 +1267,8 @@ class Translator:
             cc = CC[mn[4:]]
             d, s = ops
             bits = d.bits
+            if bits < 32:
+                self.err(st, 'narrow cmov')
             v = self.get(s, bits, 12)
             self.emit('csel %s, %s, %s, %s' % (rn(d.i, bits), v, rn(d.i, bits), cc))
             return
@@ -1442,6 +1456,8 @@ class Translator:
 
     def i_bswap(self, st, ops, need, k):
         d = ops[0]
+        if d.bits < 32:
+            self.err(st, 'narrow bswap')
         self.emit('rev %s, %s' % (rn(d.i, d.bits), rn(d.i, d.bits)))
 
     def i_cdq(self, st, ops, need, k):
@@ -1712,7 +1728,7 @@ class Translator:
     def shift(self, st, mn, ops, need):
         d, c = ops
         bits = self.opsize([d], st)
-        if need and ('C' in need or 'V' in need or bits < 32 or mn in ('rol', 'ror')):
+        if need and ('C' in need or 'V' in need or bits < 32 or mn in ('rol', 'ror') or not isinstance(c, Imm)):
             self.err(st, 'shift flags')
         da = self.addr(d, bits // 8) if isinstance(d, Mem) else None
         op = {'shl': 'lsl', 'sal': 'lsl', 'shr': 'lsr', 'sar': 'asr', 'rol': 'ror', 'ror': 'ror'}[mn]
@@ -1766,6 +1782,8 @@ class Translator:
             self.err(st, 'imul flags')
         if len(ops) == 1:
             return self.widemul(st, ops[0], True)
+        if ops[0].bits < 32:
+            self.err(st, 'narrow imul')
         if len(ops) == 2:
             d, s = ops
             bits = d.bits
@@ -1899,9 +1917,13 @@ class Translator:
                 self.emit('and x12, %s, #%d' % (rn(b.i, 64), bits - 1))
         V = X(self.get(d, bits, 11, a=a))
         if need:
+            # C is the inverse of the bit; ZF stays, as on x86
             self.emit('lsr x15, %s, x12' % V)
             self.emit('and w15, w15, #1')
-            self.emit('cmp wzr, w15')
+            self.emit('eor w15, w15, #1')
+            self.emit('mrs x16, nzcv')
+            self.emit('bfi x16, x15, #29, #1')
+            self.emit('msr nzcv, x16')
         if setbit:
             self.emit('mov x14, #1')
             self.emit('lsl x14, x14, x12')
@@ -1916,6 +1938,8 @@ class Translator:
     def i_bsr(self, st, ops, need, k):
         d, s = ops
         bits = d.bits
+        if bits < 32:
+            self.err(st, 'narrow bsr')
         S = self.get(s, bits, 12)
         self.emit('clz %s, %s' % (rn(11, bits), S))
         self.emit('mov %s, #%d' % (rn(13, bits), bits - 1))
@@ -1977,15 +2001,19 @@ class Translator:
         self.fop(st, ops, 'fdiv')
 
     def i_minss(self, st, ops, need, k):
-        # x86: a < b ? a : b (the second operand on ties and NaN)
+        # x86: a < b ? a : b, the second operand on ties and NaN; flags stay
         d, s = ops
         si = self.fsrc(s, st)
-        self.emit('fmin s%d, s%d, s%d' % (d.i, d.i, si))
+        self.emit('fcmgt s25, s%d, s%d' % (si, d.i))
+        self.emit('bsl v25.8b, v%d.8b, v%d.8b' % (d.i, si))
+        self.emit('ins v%d.s[0], v25.s[0]' % d.i)
 
     def i_maxss(self, st, ops, need, k):
         d, s = ops
         si = self.fsrc(s, st)
-        self.emit('fmax s%d, s%d, s%d' % (d.i, d.i, si))
+        self.emit('fcmgt s25, s%d, s%d' % (d.i, si))
+        self.emit('bsl v25.8b, v%d.8b, v%d.8b' % (d.i, si))
+        self.emit('ins v%d.s[0], v25.s[0]' % d.i)
 
     def i_sqrtss(self, st, ops, need, k):
         d, s = ops
@@ -2016,9 +2044,11 @@ class Translator:
         self.emit('%s s%d, s%d' % (op, d.i, si))
 
     def i_comiss(self, st, ops, need, k):
+        # unordered: x86 sets ZF and CF, so Z=1 C=0 here
         d, s = ops
         si = self.fsrc(s, st)
         self.emit('fcmp s%d, s%d' % (d.i, si))
+        self.emit('fccmp s%d, s%d, #4, vc' % (d.i, si))
 
     i_ucomiss = i_comiss
 
@@ -2050,6 +2080,25 @@ class Translator:
     i_movdqu = i_movups
 
 
+# a translation takes well under a second and 30 MB; past these limits the analysis has run away
+# and would otherwise take the machine's memory with it (the build runs one per core)
+MAX_RSS = 512 << 20
+MAX_SECONDS = 120
+
+
+def guard(name):
+    start = time.monotonic()
+    # ru_maxrss is in bytes on macOS, in kilobytes on Linux
+    unit = 1 if sys.platform == 'darwin' else 1024
+    while True:
+        time.sleep(0.02)
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+        secs = time.monotonic() - start
+        if rss > MAX_RSS or secs > MAX_SECONDS:
+            sys.stderr.write('arm64.py: %s: gave up after %.0f s at %d MB\n' % (name, secs, rss >> 20))
+            os._exit(3)
+
+
 def main(argv):
     inc = []
     defs = {}
@@ -2077,6 +2126,7 @@ def main(argv):
     if len(files) != 2:
         sys.stderr.write('usage: arm64.py [-I DIR] [-D SYM] in.s out.s\n')
         return 2
+    threading.Thread(target=guard, args=(files[0],), daemon=True).start()
     try:
         src = Source(inc, defs)
         src.run(files[0])
