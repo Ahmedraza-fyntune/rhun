@@ -588,8 +588,15 @@ FN xkb_keysym
     mov r10, r9                     # group missing: use group 1
 2:  xor ecx, ecx                    # level
     test edx, MOD_SHIFT
-    jz 3f
+    jz 21f
     mov ecx, 1
+21: test edx, 0x10                  # num lock (mod2): keypad keys swap levels, digits first
+    jz 3f
+    mov eax, [r10 + 4]
+    sub eax, 0xff80
+    cmp eax, 0xffbd - 0xff80
+    ja 3f
+    xor ecx, 1
 3:  test edx, 2                     # caps lock
     jz 4f
     mov eax, [r10]

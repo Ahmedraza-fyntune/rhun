@@ -470,6 +470,16 @@ x_key:
     xor edx, edx
     test eax, 1
     setnz dl
+    # num lock (mod2): keypad keys swap levels, digits first
+    test eax, 0x10
+    jz 12f
+    mov rcx, [rip + kmap]
+    mov ecx, [rcx + r12*4 + 4]
+    sub ecx, 0xff80
+    cmp ecx, 0xffbd - 0xff80
+    ja 12f
+    xor edx, 1
+12:
     # caps lock on letters flips shift
     mov rcx, [rip + kmap]
     mov edi, [rcx + r12*4]
