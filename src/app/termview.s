@@ -120,9 +120,14 @@ FN term_spawn
     call env_make
     mov [rip + env], rax
 1:  # the shell: the setting, $SHELL, /bin/sh
+    mov dword ptr [rsp + 24], 0
     mov rdi, [rip + cfg_term_shell]
     cmp byte ptr [rdi], 0
     jne 2f
+.ifdef MACOS
+    # a login shell, as Terminal starts it: an app from the Dock has only launchd's PATH
+    mov dword ptr [rsp + 24], 1
+.endif
     lea rdi, [rip + .Lshell_env]
     call getenv
     mov rdi, rax
@@ -137,6 +142,12 @@ FN term_spawn
     mov r12, rax                # path
     mov [rsp], rax              # argv
     mov qword ptr [rsp + 8], 0
+    cmp dword ptr [rsp + 24], 0
+    je .Lsp_argv
+    lea rax, [rip + .Llogin]
+    mov [rsp + 8], rax
+    mov qword ptr [rsp + 16], 0
+.Lsp_argv:
     mov edi, 80
     mov esi, 24
     call pty_open
@@ -2096,6 +2107,7 @@ rep_cell: .long -1
 
 .section .rodata
 .Lshell_env: .asciz "SHELL"
+.Llogin: .asciz "-l"
 .Lsh: .asciz "/bin/sh"
 .Lno_shell: .asciz "Could not start a shell"
 .Lword_stop: .asciz "()[]{}<>'\"`,;|&"

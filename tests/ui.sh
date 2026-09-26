@@ -15,6 +15,9 @@ touch -t 202609260700 "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
 limit() { # seconds cmd...
     if command -v timeout >/dev/null; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV' "$@"; fi
 }
+# macOS starts the shell as a login shell, and its /etc/profile gives bash a prompt of its own
+shell=/bin/sh
+[ "$(uname -s)" = Darwin ] && shell=/bin/dash
 for s in tests/scripts/*.rsc; do
     n=$(basename "$s" .rsc)
     # tests/data/NAME.home: a HOME of its own; @HOME@ in the script names it
@@ -30,7 +33,7 @@ for s in tests/scripts/*.rsc; do
         sh "tests/data/$n.setup" "$home" > /dev/null
     fi
     sed "s|@HOME@|$home|g" "$s" > "$tmp/$n.rsc"
-    XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child SHELL=/bin/sh PS1='$ ' \
+    XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child SHELL=$shell PS1='$ ' \
         limit 20 build/rhun "$PWD" --headless 1400x860 --script "$tmp/$n.rsc" > "$tmp/$n.out" 2>&1
     if [ "$1" = update ]; then
         cp "$tmp/$n.out" "tests/data/$n.ui.expected"
