@@ -55,7 +55,8 @@ link build/rhun $objs
 # build/rhun.app, signed ad hoc for this machine (tools/package-mac.sh signs for distribution)
 app=build/rhun.app/Contents
 mkdir -p $app/MacOS $app/Resources
-cp build/rhun $app/MacOS/rhun
+# a new file, not rewritten in place: a running rhun keeps its code pages
+cp build/rhun $app/MacOS/rhun.new && mv -f $app/MacOS/rhun.new $app/MacOS/rhun
 [ -f assets/icons/rhun.icns ] && cp assets/icons/rhun.icns $app/Resources/rhun.icns
 sed "s/@VERSION@/$(sed -n 's/.*"rhun \([0-9.]*\).*/\1/p' src/main.s)/" assets/mac/Info.plist > $app/Info.plist
 codesign -s - -f build/rhun.app 2>/dev/null
