@@ -267,10 +267,14 @@ vsnap:
     pop rbx
     ret
 
-# vclass(pos, big) -> 0 blank, 1 line end, 2 word, 3 punctuation (big: any non-blank is 2)
+# vclass(pos, big) -> 0 blank, 1 line end, 2 word, 3 punctuation, 5 hiragana, 6 katakana,
+# 7 CJK ideographs, 8 hangul (big: any non-blank is 2)
 vclass:
     push rbx
+    push r12
+    push r13
     mov ebx, esi
+    mov r12, rdi
     call vbyte
     cmp eax, 10
     je 1f
@@ -282,20 +286,77 @@ vclass:
     je 2f
     test ebx, ebx
     jnz 3f
-    mov edi, eax
+    # inside a character: the class of the character
+    lea ecx, [rax - 0x80]
+    cmp ecx, 0x3f
+    ja 4f
+    mov rdi, r12
+    call vsnap
+    mov r12, rax
+    mov rdi, rax
+    call vbyte
+    # characters of three bytes from U+3000: scripts of their own, as in Vim
+4:  lea ecx, [rax - 0xe3]
+    cmp ecx, 0xef - 0xe3
+    ja 5f
+    mov r13d, eax
+    and r13d, 0x0f
+    shl r13d, 12
+    lea rdi, [r12 + 1]
+    call vbyte
+    and eax, 0x3f
+    shl eax, 6
+    or r13d, eax
+    lea rdi, [r12 + 2]
+    call vbyte
+    and eax, 0x3f
+    or eax, r13d
+    cmp eax, 0x3040
+    jb 41f
+    mov ecx, 5
+    cmp eax, 0x30a0
+    jb 49f
+    mov ecx, 6
+    cmp eax, 0x3100
+    jb 49f
+    mov ecx, 7
+    cmp eax, 0x3400
+    jb 3f
+    cmp eax, 0x4dc0
+    jb 49f
+    cmp eax, 0x4e00
+    jb 3f
+    cmp eax, 0xa000
+    jb 49f
+    mov ecx, 8
+    cmp eax, 0xac00
+    jb 3f
+    cmp eax, 0xd7a4
+    jb 49f
+    mov ecx, 7
+    cmp eax, 0xf900
+    jb 3f
+    cmp eax, 0xfb00
+    jb 49f
+    jmp 3f
+41: cmp eax, 0x3000             # CJK punctuation
+    jb 3f
+    mov ecx, 3
+49: mov eax, ecx
+    jmp 9f
+5:  mov edi, eax
     call is_ident
     test eax, eax
     jnz 3f
     mov eax, 3
-    pop rbx
-    ret
+    jmp 9f
 1:  mov eax, 1
-    pop rbx
-    ret
+    jmp 9f
 2:  xor eax, eax
-    pop rbx
-    ret
+    jmp 9f
 3:  mov eax, 2
+9:  pop r13
+    pop r12
     pop rbx
     ret
 
