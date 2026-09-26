@@ -465,3 +465,70 @@ FN path_join
     pop rdi
     mov rsi, rax
     jmp mem_dup
+
+# path_normalize(path): in place, absolute paths only: drops "." and "//", resolves ".."
+FN path_normalize
+    cmp byte ptr [rdi], '/'
+    jne 9f
+    mov rsi, rdi                # read
+    mov rdx, rdi                # write (after the leading '/')
+    inc rdx
+    inc rsi
+1:  # skip slashes
+    cmp byte ptr [rsi], '/'
+    jne 2f
+    inc rsi
+    jmp 1b
+2:  cmp byte ptr [rsi], 0
+    je 8f
+    # component [rsi, rcx)
+    mov rcx, rsi
+3:  mov al, [rcx]
+    test al, al
+    jz 4f
+    cmp al, '/'
+    je 4f
+    inc rcx
+    jmp 3b
+4:  mov rax, rcx
+    sub rax, rsi
+    cmp rax, 1
+    jne 5f
+    cmp byte ptr [rsi], '.'
+    jne 6f
+    mov rsi, rcx
+    jmp 1b
+5:  cmp rax, 2
+    jne 6f
+    cmp word ptr [rsi], 0x2e2e  # ".."
+    jne 6f
+    # pop last written component
+    lea r8, [rdi + 1]
+    cmp rdx, r8
+    jbe 51f
+    dec rdx                     # drop trailing '/'
+52: cmp rdx, r8
+    jbe 51f
+    cmp byte ptr [rdx - 1], '/'
+    je 51f
+    dec rdx
+    jmp 52b
+51: mov rsi, rcx
+    jmp 1b
+6:  # copy component + '/'
+    mov al, [rsi]
+    mov [rdx], al
+    inc rsi
+    inc rdx
+    cmp rsi, rcx
+    jb 6b
+    mov byte ptr [rdx], '/'
+    inc rdx
+    jmp 1b
+8:  # drop the trailing '/' (keep "/")
+    lea r8, [rdi + 1]
+    cmp rdx, r8
+    jbe 81f
+    dec rdx
+81: mov byte ptr [rdx], 0
+9:  ret

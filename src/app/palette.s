@@ -981,6 +981,8 @@ FN palette_draw
     call palette_close
     jmp .Lpd_ret
 3:  # input field
+    call placeholder_text
+    mov r10, rax
     M eax, MI_8
     mov [rsp + 8], eax
     lea rdi, [rip + pal_tf]
@@ -991,9 +993,8 @@ FN palette_draw
     sub ecx, eax
     M r8d, MI_32
     mov r9d, 1
-    call placeholder_text
-    push rax
-    push rax
+    push r10
+    push r10
     call ui_textfield
     add rsp, 16
     # hint under the field for prompts / goto

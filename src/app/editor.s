@@ -1681,9 +1681,9 @@ reveal:
     call doc_col_of
     imul eax, [rip + g_cw]
     mov r14d, eax
-    mov ecx, [rip + g_ed_w]
     mov rdi, rbx
     call editor_gutter
+    mov ecx, [rip + g_ed_w]
     sub ecx, eax
     sub ecx, [rip + g_mt + 4*MI_32]
     mov eax, r14d

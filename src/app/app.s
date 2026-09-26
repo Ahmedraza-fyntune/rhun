@@ -2387,8 +2387,16 @@ FN app_open_path
     mov rbx, rax
     mov r13d, 1
     jmp 2f
-1:  xor r13d, r13d
+1:  mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call mem_dup
+    mov rbx, rax
+    mov r13d, 1
 2:  mov rdi, rbx
+    call path_normalize
+    mov rdi, rbx
     call file_is_dir
     test eax, eax
     jz 3f
