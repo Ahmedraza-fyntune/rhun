@@ -8,6 +8,8 @@ github-dark #0d1117 #e6edf3 #010409 #1f3a5f #ff7b72 #a5d6ff #8b949e
 github-light #ffffff #1f2328 #f6f8fa #ddf4ff #cf222e #0a3069 #6e7781 
 gruvbox-dark #282828 #ebdbb2 #1d2021 #504945 #fb4934 #b8bb26 #928374 
 gruvbox-light #fbf1c7 #3c3836 #f2e5bc #ebdbb2 #9d0006 #79740e #928374 
+min-dark #1f1f1f #cccccc #1a1a1a #264f78 #f97583 #ffab70 #6b737c 
+min-light #ffffff #424242 #f6f6f6 #add6ff #d32f2f #22863a #c2c3c5 
 monokai #272822 #f8f8f2 #1e1f1c #49483e #f92672 #e6db74 #75715e 
 nord #2e3440 #d8dee9 #272c36 #434c5e #81a1c1 #a3be8c #616e88 
 one-dark #282c34 #abb2bf #21252b #3e4451 #c678dd #98c379 #5c6370 

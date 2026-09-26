@@ -8,7 +8,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 
 - Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
 - Syntax highlighting for about 50 languages, defined in plain text grammar files
-- 20 color themes, dark and light; add your own
+- 22 color themes, dark and light; add your own
 - Settings page and a readable config file, both applied while running
 - Agents panel: Claude Code and Codex sessions of the project, updated live as the agent works
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
