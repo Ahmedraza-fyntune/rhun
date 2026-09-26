@@ -260,6 +260,12 @@ c_print_window:
     mov esi, [rip + g_quit]
     call sb_push_u64
     lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_csd]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_csd]
+    call sb_push_u64
+    lea rdi, [rip + out]
     mov esi, 10
     call sb_push_byte
     xor eax, eax
@@ -768,6 +774,7 @@ on_client:
 .Ls_maximized: .asciz " maximized="
 .Ls_minimized: .asciz " minimized="
 .Ls_quit: .asciz " quit="
+.Ls_csd: .asciz " csd="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
 ctl_table:

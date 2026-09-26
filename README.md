@@ -13,8 +13,9 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Agents panel: Claude Code and Codex sessions of the project, updated live as the agent works
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
 - Characters missing from the built-in fonts are drawn with the system's fonts
+- Every XKB layout, dead keys and the Compose key (the system's Compose rules, `~/.XCompose` or `$XCOMPOSEFILE`)
 - Files changed on disk are reloaded, open files are restored per project
-- Wayland with fractional scaling and client-side decorations where the compositor has none; X11 as a fallback
+- Wayland with fractional scaling; X11 as a fallback
 
 ## Build
 
@@ -35,6 +36,8 @@ rhun [folder] [files...]
 Without a folder the current directory is the project. Without files the previous session of that project is reopened.
 
 rhun uses Wayland when it can. It falls back to X11 when there is no Wayland compositor, or when the compositor lacks the cursor-shape protocol (older GNOME and wlroots) and XWayland is running. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
+
+On Wayland rhun draws its own title bar with window buttons, except on tiling compositors (Hyprland, Sway, niri, river, dwl, Qtile), where windows stay bare. `decorations = auto | client | server` under `[ui]` overrides this; `client` is rhun's title bar, `server` is the compositor's.
 
 | Key | Action |
 | --- | --- |
