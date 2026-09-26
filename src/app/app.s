@@ -1235,7 +1235,16 @@ FN center_draw
     mov edx, [rsp + 8]
     mov ecx, eax
     call tabs_draw
+    # the strip may have closed the last tab
+    cmp qword ptr [rip + g_tabs + VEC_len], 0
+    jne 3f
     mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call welcome_draw
+    EPILOGUE
+3:  mov edi, [rsp]
     mov esi, [rsp + 4]
     add esi, [rsp + 16]
     mov edx, [rsp + 8]

@@ -1,5 +1,5 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
-#   key ctrl+s | type text | click x y [right] | move x y | down | up | scroll dy
+#   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 .include "rhun.inc"
 
@@ -193,9 +193,13 @@ c_click:
     mov r13d, BTN_LEFT
     test rdx, rdx
     jz 1f
-    cmp byte ptr [rax], 'r'
-    jne 1f
     mov r13d, BTN_RIGHT
+    cmp byte ptr [rax], 'r'
+    je 1f
+    mov r13d, BTN_MIDDLE
+    cmp byte ptr [rax], 'm'
+    je 1f
+    mov r13d, BTN_LEFT
 1:  mov edi, r13d
     mov esi, 1
     xor edx, edx
