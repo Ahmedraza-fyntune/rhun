@@ -109,6 +109,24 @@ LIBC sys_listen, _listen, 32
 LIBC sys_pread, _pread
 LIBC sys_nanosleep, _nanosleep, 32
 LIBC sys_munmap, _munmap, 32
+LIBC sys_dup2, _dup2, 32
+LIBC sys_setsid, _setsid, 32
+LIBC sys_chdir, _chdir, 32
+LIBC sys_execve, _execve, 32
+
+// vfork: a fork, as the child only reads memory before it execs (proc_spawn)
+LIBC sys_vfork, _fork, 32
+
+// wait4(pid, status, options, rusage): Darwin encodes the status alike; rusage is not filled
+sys_wait4:
+    mov x3, #0
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl _wait4
+    sxtw x0, w0
+    bl linux_ret
+    ldp x29, x30, [sp], #16
+    ret
 
 sys_exit:
     bl _exit
@@ -140,6 +158,9 @@ open_flags:
 1:  tst w1, #0x80000
     b.eq 1f
     orr w9, w9, #0x1000000      // O_CLOEXEC
+1:  tst w1, #0x100
+    b.eq 1f
+    orr w9, w9, #0x20000        // O_NOCTTY
 1:  mov w1, w9
     ret
 
@@ -147,6 +168,7 @@ open_flags:
 sys_open:
     stp x29, x30, [sp, #-32]!
     mov x29, sp
+    bl pts_path
     bl open_flags
     str x2, [sp, #16]
     sub sp, sp, #16
@@ -177,6 +199,192 @@ sys_openat:
     sxtw x0, w0
     bl linux_ret
     ldp x29, x30, [sp], #16
+    ret
+
+// pts_path(x0 path) -> x0: the Linux name of a pseudo-terminal, /dev/pts/N, is /dev/ttysNNN here
+pts_path:
+    ADR x9, pts_prefix
+    mov x10, #0
+1:  ldrb w11, [x9, x10]
+    cbz w11, 2f
+    ldrb w12, [x0, x10]
+    cmp w11, w12
+    b.ne 9f
+    add x10, x10, #1
+    b 1b
+2:  mov x11, #0                 // N
+    mov x13, #10
+3:  ldrb w12, [x0, x10]
+    cbz w12, 4f
+    sub w12, w12, #'0'
+    cmp w12, #9
+    b.hi 9f
+    madd x11, x11, x13, x12
+    add x10, x10, #1
+    b 3b
+4:  stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x1, x2, [sp, #16]
+    str x3, [sp, #32]
+    ADR x0, pts_buf
+    mov x1, #32
+    ADR x2, pts_fmt
+    sub sp, sp, #16
+    str x11, [sp]
+    bl _snprintf
+    add sp, sp, #16
+    ADR x0, pts_buf
+    ldp x1, x2, [sp, #16]
+    ldr x3, [sp, #32]
+    ldp x29, x30, [sp], #48
+9:  ret
+
+// ioctl3(w0 fd, x1 request, x2 arg) -> w0: the argument is variadic, so on the stack
+ioctl3:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    sub sp, sp, #16
+    str x2, [sp]
+    bl _ioctl
+    add sp, sp, #16
+    ldp x29, x30, [sp], #16
+    ret
+
+// ioctl(fd, request, arg): the terminal requests rhun makes, in Darwin numbering
+.equ T_TIOCSCTTY, 0x20007461
+.equ T_TIOCSWINSZ, 0x80087467
+.equ T_TIOCGWINSZ, 0x40087468
+.equ T_TIOCPTYGRANT, 0x20007454
+.equ T_TIOCPTYUNLK, 0x20007452
+.equ T_TIOCPTYGNAME, 0x40807453
+.equ T_TIOCGETA, 0x40487413
+.equ T_TIOCSETA, 0x80487414
+.macro IMM32 reg, v
+    mov \reg, #((\v) & 0xffff)
+    movk \reg, #((\v) >> 16), lsl #16
+.endm
+.macro IS req, label
+    IMM32 w9, \req
+    cmp w1, w9
+    b.eq \label
+.endm
+sys_ioctl:
+    stp x29, x30, [sp, #-240]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov w19, w0
+    mov x20, x2
+    IS 0x540e, 1f
+    IS 0x5414, 2f
+    IS 0x5413, 3f
+    IS 0x40045431, 4f
+    IS 0x80045430, 5f
+    IS 0x5401, 6f
+    IS 0x5402, 7f
+    mov x0, #-25                // ENOTTY
+    b 99f
+1:  IMM32 w1, T_TIOCSCTTY
+    b 10f
+2:  IMM32 w1, T_TIOCSWINSZ
+    b 10f
+3:  IMM32 w1, T_TIOCGWINSZ
+10: bl ioctl3
+    b 98f
+4:  // TIOCSPTLCK: unlocking is grantpt and unlockpt; a pty cannot be locked again
+    ldr w9, [x20]
+    mov w0, #0
+    cbnz w9, 98f
+    mov w0, w19
+    IMM32 w1, T_TIOCPTYGRANT
+    bl ioctl3
+    cbnz w0, 98f
+    mov w0, w19
+    IMM32 w1, T_TIOCPTYUNLK
+    bl ioctl3
+    b 98f
+5:  // TIOCGPTN: the number at the end of the slave's name
+    mov w0, w19
+    IMM32 w1, T_TIOCPTYGNAME
+    add x2, sp, #64
+    bl ioctl3
+    cbnz w0, 98f
+    add x9, sp, #64
+    mov x10, #0
+    mov x13, #10
+51: ldrb w11, [x9], #1
+    cbz w11, 52f
+    sub w11, w11, #'0'
+    cmp w11, #9
+    b.hi 53f
+    madd x10, x10, x13, x11
+    b 51b
+53: mov x10, #0                 // not a digit: start over
+    b 51b
+52: str w10, [x20]
+    mov w0, #0
+    b 98f
+6:  // TCGETS: Darwin termios (flags 8 bytes each, c_cc[20], speeds) -> Linux's kernel termios
+    mov w0, w19
+    IMM32 w1, T_TIOCGETA
+    add x2, sp, #64
+    bl ioctl3
+    cbnz w0, 98f
+    add x9, sp, #64
+    mov x10, #0
+61: ldr x11, [x9, x10, lsl #3]  // flag words pass unchanged: rhun only adds IUTF8, the same bit on both
+    str w11, [x20, x10, lsl #2]
+    add x10, x10, #1
+    cmp x10, #4
+    b.lo 61b
+    strb wzr, [x20, #16]        // c_line
+    ADR x12, cc_map
+    mov x10, #0
+62: ldrb w11, [x12, x10]
+    mov w13, #0
+    cmp w11, #0xff
+    b.eq 63f
+    add x13, x9, #32
+    ldrb w13, [x13, x11]
+63: add x14, x20, #17
+    strb w13, [x14, x10]
+    add x10, x10, #1
+    cmp x10, #19
+    b.lo 62b
+    mov w0, #0
+    b 98f
+7:  // TCSETS: onto the current Darwin termios, which keeps the speeds and characters Linux lacks
+    mov w0, w19
+    IMM32 w1, T_TIOCGETA
+    add x2, sp, #64
+    bl ioctl3
+    cbnz w0, 98f
+    add x9, sp, #64
+    mov x10, #0
+71: ldr w11, [x20, x10, lsl #2]
+    str x11, [x9, x10, lsl #3]
+    add x10, x10, #1
+    cmp x10, #4
+    b.lo 71b
+    ADR x12, cc_map
+    mov x10, #0
+72: ldrb w11, [x12, x10]
+    cmp w11, #0xff
+    b.eq 73f
+    add x14, x20, #17
+    ldrb w13, [x14, x10]
+    add x15, x9, #32
+    strb w13, [x15, x11]
+73: add x10, x10, #1
+    cmp x10, #19
+    b.lo 72b
+    mov w0, w19
+    IMM32 w1, T_TIOCSETA
+    add x2, sp, #64
+    bl ioctl3
+98: sxtw x0, w0
+    bl linux_ret
+99: ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #240
     ret
 
 // close(fd): directories being listed close with their DIR
@@ -581,27 +789,34 @@ sys_table:
     SYS 9, sys_mmap
     SYS 11, sys_munmap
     SYS 13, sys_rt_sigaction
+    SYS 16, sys_ioctl
     SYS 17, sys_pread
     SYS 21, sys_access
     SYS 25, sys_mremap
+    SYS 33, sys_dup2
     SYS 35, sys_nanosleep
     SYS 39, sys_getpid
     SYS 41, sys_socket
     SYS 42, sys_connect
     SYS 49, sys_bind
     SYS 50, sys_listen
+    SYS 58, sys_vfork
+    SYS 59, sys_execve
     SYS 60, sys_exit
+    SYS 61, sys_wait4
     SYS 62, sys_kill
     SYS 72, sys_fcntl
     SYS 74, sys_fsync
     SYS 77, sys_ftruncate
     SYS 79, sys_getcwd
+    SYS 80, sys_chdir
     SYS 82, sys_rename
     SYS 83, sys_mkdir
     SYS 84, sys_rmdir
     SYS 87, sys_unlink
     SYS 89, sys_readlink
     SYS 91, sys_fchmod
+    SYS 112, sys_setsid
     SYS 217, sys_getdents64
     SYS 228, sys_clock_gettime
     SYS 231, sys_exit
@@ -612,6 +827,12 @@ sys_table:
     SYS 293, sys_pipe2
     SYS 294, sys_inotify_init1
     .org sys_table + NSYS * 8
+
+pts_prefix: .asciz "/dev/pts/"
+pts_fmt: .asciz "/dev/ttys%03u"
+// Linux c_cc index -> Darwin's (0xff: none): VINTR VQUIT VERASE VKILL VEOF VTIME VMIN VSWTC VSTART
+// VSTOP VSUSP VEOL VREPRINT VDISCARD VWERASE VLNEXT VEOL2, then two unused
+cc_map: .byte 8, 9, 3, 5, 0, 17, 16, 0xff, 12, 13, 10, 1, 6, 15, 4, 14, 2, 0xff, 0xff
 
 // Darwin errno -> Linux errno
 errno_map:
@@ -630,5 +851,6 @@ g_xsp: .quad 0                  // x86 stack pointer when rhun last entered nati
 
 .bss
 .p2align 3
+pts_buf: .zero 32
 dirs: .zero 8 * 1024
 pend: .zero 8 * 1024
