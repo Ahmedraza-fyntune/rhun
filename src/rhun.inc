@@ -19,6 +19,7 @@
 .equ SYS_shmget, 29
 .equ SYS_shmat, 30
 .equ SYS_shmctl, 31
+.equ SYS_dup2, 33
 .equ SYS_getpid, 39
 .equ SYS_socket, 41
 .equ SYS_connect, 42
@@ -27,17 +28,22 @@
 .equ SYS_recvmsg, 47
 .equ SYS_bind, 49
 .equ SYS_listen, 50
+.equ SYS_vfork, 58
+.equ SYS_execve, 59
 .equ SYS_exit, 60
+.equ SYS_wait4, 61
 .equ SYS_kill, 62
 .equ SYS_fcntl, 72
 .equ SYS_fsync, 74
 .equ SYS_ftruncate, 77
 .equ SYS_getcwd, 79
+.equ SYS_chdir, 80
 .equ SYS_rename, 82
 .equ SYS_mkdir, 83
 .equ SYS_unlink, 87
 .equ SYS_readlink, 89
 .equ SYS_fchmod, 91
+.equ SYS_setsid, 112
 .equ SYS_shmdt, 67
 .equ SYS_getdents64, 217
 .equ SYS_clock_gettime, 228
@@ -51,11 +57,13 @@
 .equ SYS_pipe2, 293
 .equ SYS_inotify_init1, 294
 .equ SYS_memfd_create, 319
+.equ SYS_close_range, 436
 
 .equ O_RDONLY, 0
 .equ O_WRONLY, 1
 .equ O_RDWR, 2
 .equ O_CREAT, 0x40
+.equ O_NOCTTY, 0x100
 .equ O_TRUNC, 0x200
 .equ O_APPEND, 0x400
 .equ O_NONBLOCK, 0x800
@@ -97,6 +105,10 @@
 .equ IN_CLOEXEC, 0x80000
 
 .equ EAGAIN, 11
+.equ EIO, 5
+.equ WNOHANG, 1
+.equ SIGHUP, 1
+.equ SIGKILL, 9
 .equ EINTR, 4
 
 # ---- function helpers ----
@@ -311,7 +323,7 @@ F PW_events, 4
 F PW_handler, 8         # handler(fd, revents, ctx)
 F PW_ctx, 8
 ENDSTRUCT PW_SIZE
-.equ MAX_WATCH, 48
+.equ MAX_WATCH, 96
 
 # ---- platform vtable (wayland / x11 / headless) ----
 STRUCT
@@ -402,7 +414,11 @@ ENDSTRUCT INI_SIZE
 .equ C_ESCAPE, 18
 .equ C_LINK, 19
 .equ C_COUNT, 20
-.equ T_COUNT, T_SYN + C_COUNT
+.equ T_TERM, T_SYN + C_COUNT    # 16 terminal colors
+.equ T_GIT_ADD, T_TERM + 16
+.equ T_GIT_MOD, T_TERM + 17
+.equ T_GIT_DEL, T_TERM + 18
+.equ T_COUNT, T_TERM + 19
 
 .macro COLOR reg, slot
     mov \reg, [rip + g_theme + 4*(\slot)]
@@ -554,7 +570,8 @@ ENDSTRUCT TF_SIZE
 .equ IC_CASE, 24
 .equ IC_WORD, 25
 .equ IC_RUNE, 26                # the app mark (Raido)
-.equ IC_COUNT, 27
+.equ IC_BRANCH, 27
+.equ IC_COUNT, 28
 
 # ---- app ----
 .equ TAB_DOC, 1
@@ -572,6 +589,7 @@ ENDSTRUCT TAB_SIZE
 .equ FOCUS_DIALOG, 5
 .equ FOCUS_AGENTS, 6
 .equ FOCUS_PROMPT, 7
+.equ FOCUS_TERMINAL, 8
 
 # grammar (syntax definition)
 STRUCT
@@ -647,3 +665,85 @@ F TH_src, 8             # embedded text or 0
 F TH_len, 8
 F TH_path, 8            # user file path or 0
 ENDSTRUCT TH_SIZE
+
+# ---- terminal ----
+# cell: codepoint | A_* attributes, fg, bg; colors are 0 (default), TC_IDX | index or TC_RGB | rrggbb
+.equ CELL_SIZE, 12
+.equ CP_MASK, 0x1fffff
+.equ A_BOLD, 1 << 21
+.equ A_DIM, 1 << 22
+.equ A_ITALIC, 1 << 23
+.equ A_UNDER, 1 << 24
+.equ A_INVERSE, 1 << 25
+.equ A_HIDDEN, 1 << 26
+.equ A_STRIKE, 1 << 27
+.equ A_WIDE, 1 << 28            # left half of a double-width character
+.equ A_WIDE2, 1 << 29           # its right half
+.equ A_BLINK, 1 << 30
+.equ TC_IDX, 0x01000000
+.equ TC_RGB, 0x02000000
+# line: u32 cells allocated, u32 flags, then the cells
+.equ LN_cap, 0
+.equ LN_flags, 4
+.equ LN_HDR, 8
+.equ LF_WRAPPED, 1              # continues on the next line
+
+# modes
+.equ TMM_WRAP, 1
+.equ TMM_APPCUR, 2
+.equ TMM_ORIGIN, 4
+.equ TMM_HIDE, 8
+.equ TMM_ALT, 16
+.equ TMM_INSERT, 32
+.equ TMM_PASTE, 64
+.equ TMM_SGRMOUSE, 128
+.equ TMM_FOCUS, 256
+.equ TMM_LNM, 512
+.equ TMM_SYNC, 1024
+
+STRUCT
+F TM_cols, 4
+F TM_rows, 4
+F TM_cx, 4
+F TM_cy, 4
+F TM_attr, 4            # attributes for new characters
+F TM_fg, 4
+F TM_bg, 4
+F TM_top, 4             # scroll region, inclusive rows
+F TM_bot, 4
+F TM_modes, 4
+F TM_wrapnext, 4        # the next character goes to a new line
+F TM_state, 4           # parser
+F TM_np, 4
+F TM_params, 64
+F TM_colon, 4           # bit i: parameter i followed a ':'
+F TM_priv, 4            # '?' '>' '<' '=' or 0
+F TM_inter, 4           # intermediate byte or 0
+F TM_utf, 4
+F TM_utfn, 4            # continuation bytes still expected
+F TM_g0, 4              # 1: DEC line drawing
+F TM_g1, 4
+F TM_gl, 4              # 0 G0, 1 G1
+F TM_scx, 4             # saved cursor
+F TM_scy, 4
+F TM_sattr, 4
+F TM_sfg, 4
+F TM_sbg, 4
+F TM_sg0, 4
+F TM_cursor, 4          # DECSCUSR style
+F TM_mouse, 4           # 0, 1000, 1002 or 1003
+F TM_lastcp, 4
+F TM_sbcap, 4
+F TM_sbhead, 4          # oldest line in the ring
+F TM_sblen, 4
+F TM_view, 4            # lines scrolled back
+F TM_tabcap, 4
+F TM_lines, 8           # line pointers of the active screen
+F TM_other, 8           # the inactive screen
+F TM_sb, 8              # scrollback ring
+F TM_total, 8           # lines ever moved into scrollback
+F TM_tabs, 8            # byte per column, 1 = tab stop
+F TM_out, SB_SIZE       # replies for the program
+F TM_str, SB_SIZE       # OSC string
+F TM_title, SB_SIZE
+ENDSTRUCT TM_SIZE

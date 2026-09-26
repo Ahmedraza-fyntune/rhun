@@ -446,6 +446,10 @@ g_commands:
     COMMAND toggle_whitespace, "Toggle Whitespace", cmd_toggle_whitespace, ""
     COMMAND toggle_line_numbers, "Toggle Line Numbers", cmd_toggle_line_numbers, ""
     COMMAND reload_file, "Revert File", cmd_reload_file, ""
+    COMMAND toggle_terminal, "Toggle Terminal", cmd_toggle_terminal, "ctrl+`"
+    COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
+    COMMAND kill_terminal, "Kill Terminal", cmd_kill_terminal, ""
+    COMMAND clear_terminal, "Clear Terminal", cmd_clear_terminal, ""
     .quad 0, 0, 0, 0
 
 .bss

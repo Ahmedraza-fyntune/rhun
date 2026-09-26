@@ -13,6 +13,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - 39 color themes, dark and light, with a match for every Omarchy theme; add your own
 - Settings page and a readable config file, both applied while running
 - Agents panel: Claude Code and Codex sessions of the project, updated live as the agent works
+- Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
 - Characters missing from the built-in fonts are drawn with the system's fonts
 - Every XKB layout, dead keys and the Compose key (the system's Compose rules, `~/.XCompose` or `$XCOMPOSEFILE`)
@@ -57,6 +58,8 @@ On Wayland rhun draws its own title bar with window buttons, except on tiling co
 | Ctrl+K | Color theme |
 | Ctrl+B | Toggle explorer |
 | Ctrl+Shift+A | Toggle agents panel |
+| Ctrl+\` | Toggle terminal |
+| Ctrl+Shift+\` | New terminal |
 | Ctrl+F, Ctrl+H | Find, replace |
 | Ctrl+Shift+F | Find in files |
 | Ctrl+G | Go to line |
@@ -67,7 +70,7 @@ On Wayland rhun draws its own title bar with window buttons, except on tiling co
 | Ctrl+Shift+D, Ctrl+Shift+K | Duplicate, delete line |
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
 
-All commands are listed in the command palette.
+All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
 
 ## Configuration
 
@@ -80,6 +83,8 @@ scale = 1.25
 [editor]
 font_size = 15
 tab_width = 4
+[terminal]
+shell = /usr/bin/fish
 [keys]
 ctrl+shift+d = duplicate_line
 alt+z = none
@@ -100,6 +105,8 @@ accent = #f5c2e7
 keyword = #cba6f7
 string = #a6e3a1
 ```
+
+Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors.
 
 On Omarchy the theme list starts with Follow Omarchy (`theme = omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
 
@@ -143,7 +150,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll`, `open`, `cmd`, `shot`, `wait`, `resize`, `print-doc`, `print-state`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll`, `open`, `cmd`, `shot`, `wait`, `resize`, `print-doc`, `print-state`, `print-term`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
@@ -158,11 +165,11 @@ An extension that crashes or hangs cannot take the editor with it.
 
 | Path | |
 | --- | --- |
-| `src/sys.s mem.s lib.s` | syscalls, allocator, strings, UTF-8 |
+| `src/sys.s mem.s lib.s proc.s` | syscalls, allocator, strings, UTF-8, child processes |
 | `src/gfx/` | canvas, TrueType parser, rasterizer, icons |
 | `src/ui/ui.s` | immediate-mode widgets |
 | `src/plat/` | Wayland, XKB keymaps, X11, headless |
-| `src/app/` | documents, editor, explorer, palette, settings, agents, syntax, themes |
+| `src/app/` | documents, editor, explorer, palette, settings, agents, terminal, syntax, themes |
 | `runtime/` | themes and grammars embedded into the binary |
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
 

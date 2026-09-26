@@ -8,6 +8,8 @@
 .equ ID_TOG_SIDE, 0x2004
 .equ ID_TOG_AGENTS, 0x2005
 .equ ID_SETTINGS_BTN, 0x2006
+.equ ID_TOG_TERM, 0x2007
+.equ ID_GIT_BTN, 0x2008
 .equ ID_TAB, 0x2100              # + index
 .equ ID_TABX, 0x2400             # + index
 .equ ID_SPLIT_L, 0x2700
@@ -644,7 +646,13 @@ FN app_on_paste
     call tf_insert
     call field_changed
     jmp 9f
-1:  cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+1:  cmp dword ptr [rip + g_focus], FOCUS_TERMINAL
+    jne 2f
+    mov rdi, rbx
+    mov rsi, r12
+    call term_panel_paste
+    jmp 9f
+2:  cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 9f
     mov rdi, rbx
     mov rsi, r12
@@ -740,11 +748,20 @@ FN app_on_key
     jnz 9f
     jmp .Lk_bind
 6:  cmp eax, FOCUS_AGENTS
-    jne .Lk_bind
+    jne 7f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call agents_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+7:  cmp eax, FOCUS_TERMINAL
+    jne .Lk_bind
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call term_panel_key
     test eax, eax
     jnz 9f
 .Lk_bind:
@@ -943,6 +960,7 @@ FN app_tick
     mov qword ptr [rip + g_toast_until], 0
     mov dword ptr [rip + g_dirty], 1
 2:  call agents_tick
+    call term_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -1055,16 +1073,47 @@ FN app_render
     mov edx, [rsp + 20]
     mov ecx, [rsp + 24]
     call splitter
-5:  # editor column
+5:  # editor column, the terminal panel under it
     mov edi, [rsp + 28]
     cmp dword ptr [rip + cfg_sidebar], 0
     je 51f
     add edi, [rip + g_mt + 4*MI_1]
-51: mov esi, [rsp + 20]
-    mov edx, [rsp + 32]
-    sub edx, edi
+51: mov [rsp + 40], edi
+    mov eax, [rsp + 32]
+    sub eax, edi
+    mov [rsp + 44], eax         # column w
+    mov eax, [rsp + 24]
+    mov [rsp + 48], eax         # editor h
+    cmp dword ptr [rip + g_term_open], 0
+    je 52f
+    mov edi, [rip + cfg_term_h]
+    call sc
+    M edx, MI_64
     mov ecx, [rsp + 24]
+    sub ecx, edx
+    sub ecx, edx
+    cmp eax, ecx
+    cmovg eax, ecx
+    cmp eax, edx
+    cmovl eax, edx
+    mov [rsp + 52], eax         # panel h
+    mov ecx, [rsp + 24]
+    sub ecx, eax
+    mov [rsp + 48], ecx
+52: mov edi, [rsp + 40]
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 44]
+    mov ecx, [rsp + 48]
     call center_draw
+    cmp dword ptr [rip + g_term_open], 0
+    je 53f
+    mov edi, [rsp + 40]
+    mov esi, [rsp + 20]
+    add esi, [rsp + 48]
+    mov edx, [rsp + 44]
+    mov ecx, [rsp + 52]
+    call term_panel_draw
+53:
     # chrome
     xor edi, edi
     xor esi, esi
@@ -1460,8 +1509,22 @@ FN titlebar_draw
     mov r9d, IC_SPARK
     call ui_icon_btn
     test eax, UB_CLICK
-    jz 9f
+    jz 81f
     call cmd_toggle_agents
+81: sub r12d, r13d
+    sub r12d, [rip + g_mt + 4*MI_4]
+    mov edi, ID_TOG_TERM
+    mov esi, r12d
+    mov edx, [rsp + 12]
+    sub edx, r13d
+    sar edx, 1
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_TERMINAL
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 9f
+    call cmd_toggle_terminal
 9:  # a press on a button must not start a window move: the compositor would take the release
     cmp dword ptr [rip + g_hot], 0
     jne 13f
@@ -1895,7 +1958,7 @@ FN statusbar_draw
     mov rdi, rax
     mov esi, [rip + cfg_tab_width]
     call fmt_u64
-    mov byte ptr [rdi + rax], 0
+    mov byte ptr [rdi], 0      # fmt_u64 leaves rdi after the digits
     lea r13, [rsp + 32]
 3:  call .Lsb_item
     lea r13, [rip + .Lplain]

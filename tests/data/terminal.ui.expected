@@ -1,0 +1,19 @@
+tabs=0 focus=8 theme=rhun-dark term=1
+$ printf 'a\033[31mb\033[0mc\n'
+abc
+$
+
+
+
+
+
+
+
+
+
+cursor 2,2
+tabs=0 focus=0 theme=rhun-dark term=1 hidden
+tabs=0 focus=8 theme=rhun-dark term=1
+tabs=0 focus=8 theme=rhun-dark term=2
+tabs=0 focus=8 theme=rhun-dark term=1
+tabs=0 focus=0 theme=rhun-dark

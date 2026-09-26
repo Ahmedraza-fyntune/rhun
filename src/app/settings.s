@@ -129,6 +129,12 @@ section_title:
     lea rax, [rip + .Lt_files]
     cmp byte ptr [rdi], 'f'
     je 1f
+    lea rax, [rip + .Lt_terminal]
+    cmp byte ptr [rdi], 't'
+    je 1f
+    lea rax, [rip + .Lt_git]
+    cmp byte ptr [rdi], 'g'
+    je 1f
     lea rax, [rip + .Lt_agents]
 1:  ret
 
@@ -802,6 +808,8 @@ FN ui_text_v_fit
 .Lt_editor: .asciz "Editor"
 .Lt_files: .asciz "Files"
 .Lt_agents: .asciz "Agents"
+.Lt_terminal: .asciz "Terminal"
+.Lt_git: .asciz "Git"
 
 .data
 set_edit: .long -1

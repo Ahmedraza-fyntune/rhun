@@ -383,24 +383,35 @@ c_shot:
 1:  xor eax, eax
     ret
 
+# wait ms: run file watches, programs' output and timers for that long
 c_wait:
+    push r13
+    push r14
+    push r15
     call next_int
-    sub rsp, 24
-    xor edx, edx
-    mov ecx, 1000
-    div rcx
-    mov [rsp], rax
-    imul rdx, rdx, 1000000
-    mov [rsp + 8], rdx
-    mov rdi, rsp
-    xor esi, esi
-    mov eax, 35                 # nanosleep
-    syscall
-    add rsp, 24
-    # let file watches and timers run (agents poll, blink)
-    xor edi, edi
+    mov r13, rax
+    call time_ms
+    add r13, rax
+1:  call time_ms
+    mov rdi, r13
+    sub rdi, rax
+    jle 2f
     call loop_poll
     call app_tick
+    jmp 1b
+2:  xor edi, edi
+    call loop_poll
+    call app_tick
+    pop r15
+    pop r14
+    pop r13
+    xor eax, eax
+    ret
+
+# print-term: the screen of the current terminal
+c_print_term:
+    lea rdi, [rip + out]
+    call term_dump_current
     xor eax, eax
     ret
 
@@ -540,7 +551,7 @@ c_print_state:
     # following Omarchy: which theme that is
     mov rax, [rip + g_theme_cur]
     cmp rax, [rip + g_follow]
-    jne 1f
+    jne 2f
     lea rdi, [rip + out]
     mov esi, ':'
     call sb_push_byte
@@ -548,6 +559,22 @@ c_print_state:
     call theme_entry
     lea rdi, [rip + out]
     mov rsi, [rax + TH_id]
+    call sb_push_cstr
+2:  # terminals: how many, and whether the panel is hidden
+    call term_count
+    test rax, rax
+    jz 1f
+    mov rbx, rax
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_term]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    call sb_push_u64
+    cmp dword ptr [rip + g_term_open], 0
+    jne 1f
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_hidden]
     call sb_push_cstr
 1:  lea rdi, [rip + out]
     mov esi, 10
@@ -850,6 +877,9 @@ on_client:
 .Lc_xkey: .asciz "xkey"
 .Lc_print_window: .asciz "print-window"
 .Lc_print_cursor: .asciz "print-cursor"
+.Lc_print_term: .asciz "print-term"
+.Ls_term: .asciz " term="
+.Ls_hidden: .asciz " hidden"
 .Ls_builtin: .asciz "built-in"
 .Ls_hot: .asciz " hot "
 .Ls_moves: .asciz "moves="
@@ -865,7 +895,7 @@ ctl_table:
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
-    .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, 0, 0
+    .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term, 0, 0
 
 .data
 lsock: .long -1
