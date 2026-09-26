@@ -1,6 +1,6 @@
 # heap: power-of-two size classes (32 B .. 64 KiB) carved from 1 MiB chunks,
 # larger blocks get their own mapping. Every block has a 16-byte header:
-#   [0] class index, or mapping size | 1 for large blocks
+#   [0] class index (< 64), or mapping size (>= 4096) for large blocks
 #   [8] requested size
 # mem_alloc returns zeroed memory.
 .include "rhun.inc"
@@ -99,8 +99,7 @@ FN mem_alloc
     and rbx, -4096
     mov rdi, rbx
     call os_map                 # anonymous mappings are zeroed
-    lea rcx, [rbx + 1]
-    mov [rax], rcx
+    mov [rax], rbx
     mov [rax + 8], r12
     add rax, 16
     inc qword ptr [rip + g_mem_live]
@@ -116,8 +115,8 @@ FN mem_free
     dec qword ptr [rip + g_mem_live]
     lea rax, [rdi - 16]
     mov rcx, [rax]
-    test rcx, 1
-    jnz .Lmf_large
+    cmp rcx, 64
+    jae .Lmf_large
     lea rdx, [rip + free_lists]
     mov r8, [rdx + rcx*8]
     mov [rax + 16], r8
@@ -125,20 +124,20 @@ FN mem_free
 1:  ret
 .Lmf_large:
     mov rdi, rax
-    lea rsi, [rcx - 1]
+    mov rsi, rcx
     SYS SYS_munmap
     ret
 
 # mem_capacity(ptr) -> usable bytes
 FN mem_capacity
     mov rcx, [rdi - 16]
-    test rcx, 1
-    jnz 1f
+    cmp rcx, 64
+    jae 1f
     mov eax, 32
     shl rax, cl
     sub rax, 16
     ret
-1:  lea rax, [rcx - 17]
+1:  lea rax, [rcx - 16]
     ret
 
 # mem_realloc(ptr, newsize) -> ptr ; contents preserved up to min(old, new)
@@ -160,11 +159,11 @@ FN mem_realloc
     jmp .Lmr_ret
 .Lmr_grow:
     mov rcx, [rbx - 16]
-    test rcx, 1
-    jz .Lmr_copy
+    cmp rcx, 64
+    jb .Lmr_copy
     # large -> mremap
     lea rdi, [rbx - 16]
-    lea rsi, [rcx - 1]
+    mov rsi, rcx
     lea rdx, [r12 + 16 + 4095]
     and rdx, -4096
     mov r13, rdx
@@ -172,8 +171,7 @@ FN mem_realloc
     SYS SYS_mremap
     cmp rax, -4096
     ja .Lmr_copy                # fall back to copying
-    lea rcx, [r13 + 1]
-    mov [rax], rcx
+    mov [rax], r13
     mov [rax + 8], r12
     add rax, 16
     jmp .Lmr_ret

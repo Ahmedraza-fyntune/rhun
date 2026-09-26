@@ -328,3 +328,137 @@ ENDSTRUCT PLAT_SIZE
 .macro PCALL fn
     call [rip + g_plat + \fn]
 .endm
+
+# ---- key = value file iterator ----
+STRUCT
+F INI_p, 8
+F INI_end, 8
+F INI_sec, 8
+F INI_seclen, 8
+F INI_key, 8
+F INI_keylen, 8
+F INI_val, 8
+F INI_vallen, 8
+ENDSTRUCT INI_SIZE
+
+# ---- theme color slots ----
+.equ T_BG, 0
+.equ T_FG, 1
+.equ T_ACCENT, 2
+.equ T_PANEL, 3
+.equ T_TITLEBAR, 4
+.equ T_BORDER, 5
+.equ T_MUTED, 6
+.equ T_LINENO, 7
+.equ T_LINENO_ACTIVE, 8
+.equ T_LINE_HL, 9
+.equ T_SELECTION, 10
+.equ T_CURSOR, 11
+.equ T_HOVER, 12
+.equ T_ACTIVE, 13
+.equ T_POPUP, 14
+.equ T_INPUT, 15
+.equ T_SCROLLBAR, 16
+.equ T_STATUS, 17
+.equ T_TAB, 18
+.equ T_TAB_ACTIVE, 19
+.equ T_ERROR, 20
+.equ T_WARNING, 21
+.equ T_SUCCESS, 22
+.equ T_MATCH, 23
+.equ T_GUIDE, 24
+.equ T_ACCENT_FG, 25
+.equ T_PANEL_FG, 26
+.equ T_SYN, 27              # + syntax class
+# syntax classes
+.equ C_TEXT, 0
+.equ C_KEYWORD, 1
+.equ C_TYPE, 2
+.equ C_FUNCTION, 3
+.equ C_STRING, 4
+.equ C_NUMBER, 5
+.equ C_COMMENT, 6
+.equ C_CONSTANT, 7
+.equ C_OPERATOR, 8
+.equ C_PUNCT, 9
+.equ C_PREPROC, 10
+.equ C_VARIABLE, 11
+.equ C_BUILTIN, 12
+.equ C_ATTRIBUTE, 13
+.equ C_TAG, 14
+.equ C_HEADING, 15
+.equ C_INSERTED, 16
+.equ C_DELETED, 17
+.equ C_ESCAPE, 18
+.equ C_LINK, 19
+.equ C_COUNT, 20
+.equ T_COUNT, T_SYN + C_COUNT
+
+.macro COLOR reg, slot
+    mov \reg, [rip + g_theme + 4*\slot]
+.endm
+
+# ---- settings schema ----
+.equ ST_BOOL, 0
+.equ ST_INT, 1
+.equ ST_STR, 2
+.equ ST_THEME, 3
+STRUCT
+F SET_sec, 8
+F SET_key, 8
+F SET_ptr, 8
+F SET_label, 8
+F SET_desc, 8
+F SET_type, 4
+F SET_min, 4
+F SET_max, 4
+F SET_step, 4
+F SET_decimal, 4
+F SET_pad, 4
+ENDSTRUCT SET_SIZE
+
+# ---- document ----
+STRUCT
+F DOC_buf, 8
+F DOC_cap, 8
+F DOC_gs, 8             # gap start
+F DOC_ge, 8             # gap end
+F DOC_lines, 8          # u64 line start offsets
+F DOC_nlines, 8
+F DOC_lcap, 8
+F DOC_states, 8         # u32 syntax state at line start
+F DOC_svalid, 8         # states valid for lines < svalid
+F DOC_path, 8           # absolute path or 0
+F DOC_name, 8           # display name
+F DOC_lang, 8           # grammar or 0
+F DOC_undo, VEC_SIZE
+F DOC_redo, VEC_SIZE
+F DOC_cur, 8
+F DOC_anchor, 8
+F DOC_prefx, 8          # preferred column for vertical motion, -1 = none
+F DOC_scrolly, 8        # 1/256 lines
+F DOC_scrollx, 8        # pixels
+F DOC_group, 8
+F DOC_lastedit, 8
+F DOC_lastkind, 8
+F DOC_savepoint, 8
+F DOC_crlf, 4
+F DOC_flags, 4
+F DOC_mtime, 8
+F DOC_version, 8
+ENDSTRUCT DOC_SIZE
+
+STRUCT
+F UR_kind, 8            # 1 insert, 2 delete
+F UR_pos, 8
+F UR_len, 8
+F UR_text, 8
+F UR_group, 8
+F UR_cur, 8
+F UR_anchor, 8
+ENDSTRUCT UR_SIZE
+
+.equ EK_OTHER, 0
+.equ EK_TYPE, 1
+.equ EK_BACK, 2
+.equ EK_DEL, 3

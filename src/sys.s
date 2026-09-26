@@ -359,3 +359,109 @@ FN mkdir_p
     mov esi, 0755
     SYS SYS_mkdir
     EPILOGUE
+
+# dir_each(path, cb, ctx): cb(ctx, name cstr, is_dir) for every entry except . and ..
+# returns 0 or -errno
+FN dir_each
+    PROLOGUE 32
+    mov r12, rsi                # cb
+    mov r13, rdx                # ctx
+    mov r15, rdi                # path
+    mov esi, O_RDONLY | O_DIRECTORY | O_CLOEXEC
+    xor edx, edx
+    SYS SYS_open
+    test rax, rax
+    js .Lde_ret
+    mov ebx, eax
+    mov edi, 32768
+    call mem_alloc
+    mov r14, rax
+.Lde_read:
+    mov edi, ebx
+    mov rsi, r14
+    mov edx, 32768
+    SYS SYS_getdents64
+    test rax, rax
+    jle .Lde_done
+    mov [rsp], rax              # bytes
+    mov qword ptr [rsp + 8], 0  # offset
+.Lde_ent:
+    mov rax, [rsp + 8]
+    cmp rax, [rsp]
+    jae .Lde_read
+    lea rcx, [r14 + rax]
+    movzx edx, word ptr [rcx + 16]
+    add [rsp + 8], rdx
+    lea rsi, [rcx + 19]         # name
+    cmp byte ptr [rsi], '.'
+    jne 1f
+    cmp byte ptr [rsi + 1], 0
+    je .Lde_ent
+    cmp byte ptr [rsi + 1], '.'
+    jne 1f
+    cmp byte ptr [rsi + 2], 0
+    je .Lde_ent
+1:  movzx edx, byte ptr [rcx + 18]
+    cmp edx, 4                  # DT_DIR
+    sete al
+    cmp edx, 0                  # DT_UNKNOWN
+    je 2f
+    cmp edx, 10                 # DT_LNK
+    jne 3f
+2:  # stat to resolve
+    mov [rsp + 16], rsi
+    mov rdi, r15
+    call path_join_tmp
+    mov rdi, rax
+    call file_is_dir
+    mov rsi, [rsp + 16]
+3:  movzx edx, al
+    mov rdi, r13
+    call r12
+    jmp .Lde_ent
+.Lde_done:
+    mov rdi, r14
+    call mem_free
+    mov edi, ebx
+    SYS SYS_close
+    xor eax, eax
+.Lde_ret:
+    EPILOGUE
+
+# path_join_tmp(dir, name) -> static buffer "dir/name"
+FN path_join_tmp
+    push rbx
+    lea rbx, [rip + tmp_path]
+    mov rax, rbx
+1:  mov cl, [rdi]
+    test cl, cl
+    jz 2f
+    mov [rax], cl
+    inc rax
+    inc rdi
+    jmp 1b
+2:  cmp rax, rbx
+    je 3f
+    cmp byte ptr [rax - 1], '/'
+    je 3f
+    mov byte ptr [rax], '/'
+    inc rax
+3:  mov cl, [rsi]
+    mov [rax], cl
+    inc rax
+    inc rsi
+    test cl, cl
+    jnz 3b
+    mov rax, rbx
+    pop rbx
+    ret
+
+# path_join(dir, name) -> new allocated cstr
+FN path_join
+    call path_join_tmp
+    push rax
+    mov rdi, rax
+    call strlen
+    pop rdi
+    mov rsi, rax
+    jmp mem_dup
