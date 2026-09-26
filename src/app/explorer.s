@@ -31,6 +31,7 @@ menu_x: .long 0
 menu_y: .long 0
 .p2align 3
 menu_node: .quad 0
+menu_list: .quad 0
 .globl g_explorer_dir, g_explorer_target
 g_explorer_dir: .zero 4096
 g_explorer_target: .zero 4096
@@ -765,11 +766,10 @@ FN explorer_draw
     mov rdi, r14
     call select_target
     mov [rip + menu_node], r14
-    mov dword ptr [rip + menu_open], 1
-    mov eax, [rip + g_mx]
-    mov [rip + menu_x], eax
-    mov eax, [rip + g_my]
-    mov [rip + menu_y], eax
+    lea rdi, [rip + menu_items]
+    mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call ctx_menu_open
 51: # background: active document, keyboard cursor, hover
     M eax, MI_6
     mov edi, [rsp]
@@ -917,7 +917,7 @@ FN explorer_menu_draw
     call sc
     mov r12d, eax               # w
     M ebx, MI_32                # item h
-    lea r15, [rip + menu_items]
+    mov r15, [rip + menu_list]
     xor ecx, ecx
 1:  cmp qword ptr [r15 + rcx*8], 0
     je 2f
@@ -1032,6 +1032,15 @@ cmd_copy_path:
 
 FN explorer_menu_open
     mov eax, [rip + menu_open]
+    ret
+
+# ctx_menu_open(items, x, y): items are (label, handler) pairs ending with 0
+FN ctx_menu_open
+    mov [rip + menu_list], rdi
+    mov [rip + menu_x], esi
+    mov [rip + menu_y], edx
+    mov dword ptr [rip + menu_open], 1
+    mov dword ptr [rip + g_dirty], 1
     ret
 
 .section .rodata

@@ -70,6 +70,7 @@ FN main
     jmp .Lm_exit
 3:  call loop_run
 .Lm_exit:
+    call session_save
     cmp dword ptr [rip + g_settings_changed], 0
     je 4f
     call config_save

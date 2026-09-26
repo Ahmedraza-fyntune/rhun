@@ -1800,7 +1800,29 @@ FN editor_draw
     movsxd rax, eax
     add [rbx + DOC_scrollx], rax
     mov dword ptr [rip + g_dirty], 1
-3:  # mouse press in the text area
+3:  # right click: menu (moves the cursor unless clicking inside the selection)
+    test dword ptr [rip + g_pressed], 1 << BTN_RIGHT
+    jz 31f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, rbx
+    mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call pos_at_point
+    mov r12, rax
+    mov rdi, rbx
+    call ed_sel
+    cmp r12, rax
+    jb 32f
+    cmp r12, rdx
+    jbe 33f
+32: mov [rbx + DOC_cur], r12
+    mov [rbx + DOC_anchor], r12
+33: lea rdi, [rip + editor_menu]
+    mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call ctx_menu_open
+    jmp .Led_noinput
+31: # mouse press in the text area
     test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Led_noinput
     mov eax, [rip + g_ed_x]
@@ -2344,6 +2366,16 @@ FN ed_blink_timeout
     ret
 
 .section .rodata
+.Lem1: .asciz "Cut"
+.Lem2: .asciz "Copy"
+.Lem3: .asciz "Paste"
+.Lem4: .asciz "Select All"
+.Lem5: .asciz "Toggle Comment"
+.Lem6: .asciz "Go to File"
+.p2align 3
+editor_menu:
+    .quad .Lem1, cmd_cut, .Lem2, cmd_copy, .Lem3, cmd_paste, .Lem4, cmd_select_all
+    .quad .Lem5, cmd_toggle_comment, .Lem6, cmd_quick_open, 0, 0
 pair_open: .asciz "([{\"'`"
 pair_close: .asciz ")]}\"'`"
 .Lspace: .ascii " "

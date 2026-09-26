@@ -943,6 +943,12 @@ FN app_render
     call app_modal_open
     mov [rsp + 8], eax
     mov [rip + g_block], eax
+    call resize_edges
+    mov [rsp + 36], eax
+    test eax, eax
+    jz 1f
+    mov dword ptr [rip + g_block], 1
+1:
     # background
     xor edi, edi
     xor esi, esi
@@ -1060,7 +1066,12 @@ FN app_render
     call palette_draw
     call dialog_draw
     call toast_draw
-    call ui_end
+    mov edi, [rsp + 36]
+    test edi, edi
+    jz 2f
+    call edge_cursor
+    mov [rip + g_cursor], eax
+2:  call ui_end
     # scripted screenshot
     mov rdi, [rip + g_shot_path]
     test rdi, rdi
@@ -1080,6 +1091,69 @@ app_modal_open:
     ret
 1:  mov eax, 1
     ret
+
+# resize_edges() -> EDGE_* bits under the pointer (client-side decorations only); starts a resize on press
+resize_edges:
+    xor eax, eax
+    cmp dword ptr [rip + g_csd], 0
+    je 9f
+    test dword ptr [rip + g_win_states], 1 | 2 | 8
+    jnz 9f
+    mov ecx, [rip + g_mx]
+    mov edx, [rip + g_my]
+    test ecx, ecx
+    js 9f
+    test edx, edx
+    js 9f
+    M r8d, MI_6
+    cmp ecx, r8d
+    jge 1f
+    or eax, EDGE_LEFT
+1:  mov r9d, [rip + g_cv + CV_w]
+    sub r9d, r8d
+    cmp ecx, r9d
+    jl 2f
+    or eax, EDGE_RIGHT
+2:  cmp edx, r8d
+    jge 3f
+    or eax, EDGE_TOP
+3:  mov r9d, [rip + g_cv + CV_h]
+    sub r9d, r8d
+    cmp edx, r9d
+    jl 4f
+    or eax, EDGE_BOTTOM
+4:  test eax, eax
+    jz 9f
+    test dword ptr [rip + g_pressed], 1 << BTN_LEFT
+    jz 9f
+    and dword ptr [rip + g_pressed], ~(1 << BTN_LEFT)
+    push rax
+    push rax
+    mov edi, eax
+    PCALL P_resize
+    pop rax
+    pop rax
+9:  ret
+
+# edge_cursor(edges) -> CUR_*
+edge_cursor:
+    mov eax, CUR_EW
+    cmp edi, EDGE_LEFT
+    je 1f
+    cmp edi, EDGE_RIGHT
+    je 1f
+    mov eax, CUR_NS
+    cmp edi, EDGE_TOP
+    je 1f
+    cmp edi, EDGE_BOTTOM
+    je 1f
+    mov eax, CUR_NWSE
+    cmp edi, EDGE_TOP | EDGE_LEFT
+    je 1f
+    cmp edi, EDGE_BOTTOM | EDGE_RIGHT
+    je 1f
+    mov eax, CUR_NESW
+1:  ret
 
 # splitter(id, x, y, h): drag handle for panel widths
 splitter:
@@ -1792,7 +1866,24 @@ FN statusbar_draw
     test rax, rax
     jz 4f
     mov r13, [rax + GR_name]
-4:  call .Lsb_item
+4:  mov r14d, r12d
+    call .Lsb_item
+    # the language name opens the language picker
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_12]
+    mov ecx, r14d
+    sub ecx, esi
+    add ecx, [rip + g_mt + 4*MI_8]
+    mov edi, ID_STATUS
+    mov edx, [rsp + 4]
+    M r8d, MI_STATUS
+    call ui_btn
+    test eax, UB_HOVER
+    jz 5f
+    mov dword ptr [rip + g_cursor], CUR_POINTER
+5:  test eax, UB_CLICK
+    jz 9f
+    call cmd_select_language
 9:  EPILOGUE
 # right-aligned status item: r13 cstr, r12d right edge (moves left)
 .Lsb_item:
