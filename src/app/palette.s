@@ -12,7 +12,7 @@
 
 .equ ID_PAL_ROW, 0x3000
 .equ ID_PAL_FIELD, 0x3fff
-.equ MAXFILES, 50000
+.equ MAXFILES, 200000
 .equ GREP_MAX, 5000             # results
 .equ GREP_FILE_MAX, 8 << 20     # bytes per file
 .equ GREP_TOTAL_MAX, 256 << 20
@@ -902,7 +902,7 @@ FN palette_filter
     mov r15, rdx
     xor ebx, ebx
 1:  cmp rbx, [rip + items + VEC_len]
-    jae 5f
+    jae 45f
     imul r12, rbx, IT_SIZE
     add r12, [rip + items + VEC_ptr]
     mov rdi, [r12 + IT_label]
@@ -918,25 +918,20 @@ FN palette_filter
     call vec_push
     mov [rax + RS_item], ebx
     mov [rax + RS_score], r13d
-    # insertion sort by score (stable)
-    test r15, r15
-    jz 4f
-    mov rcx, [rip + results + VEC_len]
-    dec rcx
-    mov r8, [rip + results + VEC_ptr]
-2:  test rcx, rcx
-    jz 4f
-    mov eax, [r8 + rcx*8 - 8 + RS_score]
-    cmp eax, r13d
-    jge 4f
-    mov rax, [r8 + rcx*8 - 8]
-    mov rdx, [r8 + rcx*8]
-    mov [r8 + rcx*8 - 8], rdx
-    mov [r8 + rcx*8], rax
-    dec rcx
-    jmp 2b
 4:  inc rbx
     jmp 1b
+45: # best score first, ties in item order: sort (~score << 32 | item) ascending
+    test r15, r15
+    jz 5f
+    mov rdi, [rip + results + VEC_ptr]
+    mov rsi, [rip + results + VEC_len]
+    call rs_flip
+    mov rdi, [rip + results + VEC_ptr]
+    mov rsi, [rip + results + VEC_len]
+    call sort_u64
+    mov rdi, [rip + results + VEC_ptr]
+    mov rsi, [rip + results + VEC_len]
+    call rs_flip
 5:  # keep selection in range
     mov eax, [rip + pal_sel]
     mov rcx, [rip + results + VEC_len]
@@ -946,6 +941,17 @@ FN palette_filter
     mov [rip + pal_sel], eax
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# rs_flip(ptr, n): complement the scores of RS records (their high halves)
+rs_flip:
+    mov rax, 0xffffffff00000000
+1:  test rsi, rsi
+    jz 2f
+    xor [rdi], rax
+    add rdi, 8
+    dec rsi
+    jmp 1b
+2:  ret
 
 FN palette_changed
     cmp dword ptr [rip + pal_mode], PM_THEMES

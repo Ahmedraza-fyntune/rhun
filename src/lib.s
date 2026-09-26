@@ -528,6 +528,64 @@ ident_table:
     .byte 1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0
 .text
 
+# sort_u64(ptr, n): unsigned qwords ascending, in place (heapsort)
+FN sort_u64
+    push rbx
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    cmp r13, 2
+    jb 9f
+    mov rbx, r13
+    shr rbx, 1
+1:  test rbx, rbx
+    jz 2f
+    dec rbx
+    mov rdi, rbx
+    mov rsi, r13
+    call sort_u64_sift
+    jmp 1b
+2:  mov r14, r13
+3:  dec r14
+    jz 9f
+    mov rax, [r12]
+    mov rcx, [r12 + r14*8]
+    mov [r12], rcx
+    mov [r12 + r14*8], rax
+    xor edi, edi
+    mov rsi, r14
+    call sort_u64_sift
+    jmp 3b
+9:  pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+# sort_u64_sift(i, n): sink a[i] into the max-heap a[0..n) (a in r12)
+sort_u64_sift:
+    mov rax, [r12 + rdi*8]
+1:  lea rcx, [rdi*2 + 1]
+    cmp rcx, rsi
+    jae 3f
+    lea rdx, [rcx + 1]
+    cmp rdx, rsi
+    jae 2f
+    mov r8, [r12 + rdx*8]
+    cmp r8, [r12 + rcx*8]
+    jbe 2f
+    mov rcx, rdx
+2:  mov r8, [r12 + rcx*8]
+    cmp r8, rax
+    jbe 3f
+    mov [r12 + rdi*8], r8
+    mov rdi, rcx
+    jmp 1b
+3:  mov [r12 + rdi*8], rax
+    ret
+
 # path_basename(path, len) -> rax ptr, rdx len
 FN path_basename
     lea rax, [rdi + rsi]
