@@ -86,6 +86,8 @@ parse_args:
     jae .Lpa_done
     mov r14, [r12 + rbx*8]
     mov rdi, r14
+    call help_flag
+    mov rdi, r14
     lea rsi, [rip + .Lo_headless]
     call strcmp_eq
     test eax, eax
@@ -138,6 +140,38 @@ parse_args:
     jmp .Lpa_next
 .Lpa_done:
     EPILOGUE
+
+# help_flag(arg): -h/--help prints usage, --version the version; both exit
+help_flag:
+    push rbx
+    mov rbx, rdi
+    lea rsi, [rip + .Lo_version]
+    call strcmp_eq
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + .Lversion]
+    jmp 3f
+1:  mov rdi, rbx
+    lea rsi, [rip + .Lo_help]
+    call strcmp_eq
+    test eax, eax
+    jnz 2f
+    mov rdi, rbx
+    lea rsi, [rip + .Lo_h]
+    call strcmp_eq
+    test eax, eax
+    jz 9f
+2:  lea rdi, [rip + .Lusage]
+3:  push rdi
+    call strlen
+    pop rsi
+    mov rdx, rax
+    mov edi, 1
+    call write_all
+    xor edi, edi
+    call sys_exit
+9:  pop rbx
+    ret
 
 # RHUN_SCALE=1.5 sets the display scale where the platform doesn't report one
 scale_from_env:
@@ -229,5 +263,15 @@ open_initial:
 .Lo_script: .asciz "--script"
 .Lo_control: .asciz "--control"
 .Lo_scale: .asciz "--scale"
+.Lo_help: .asciz "--help"
+.Lo_h: .asciz "-h"
+.Lo_version: .asciz "--version"
+.Lversion: .asciz "rhun 0.1\n"
+.Lusage: .ascii "usage: rhun [folder] [files...]\n"
+    .ascii "  --headless WxH   no display; use with --script or --control\n"
+    .ascii "  --script FILE    run control commands from FILE and exit\n"
+    .ascii "  --control PATH   accept control commands on a unix socket\n"
+    .ascii "  --scale F        display scale where the platform has none\n"
+    .asciz "  --version        print the version\n"
 .p2align 2
 .Lf100: .float 100.0
