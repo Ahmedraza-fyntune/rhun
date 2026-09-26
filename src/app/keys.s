@@ -450,7 +450,8 @@ g_commands:
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
     COMMAND kill_terminal, "Kill Terminal", cmd_kill_terminal, ""
     COMMAND clear_terminal, "Clear Terminal", cmd_clear_terminal, ""
-    COMMAND git_history, "Git: Show History", cmd_git_history, "ctrl+shift+g"
+    COMMAND git_history, "Git: Show History", cmd_git_history, ""
+    COMMAND toggle_git_history, "Toggle Git History", cmd_toggle_git, "ctrl+shift+g"
     COMMAND git_changes, "Git: Open Changes", cmd_git_changes, ""
     .quad 0, 0, 0, 0
 
