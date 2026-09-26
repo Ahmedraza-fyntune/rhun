@@ -2935,6 +2935,7 @@ vmotion:
     mov rdi, rax
     mov rsi, [rsp + 8]
     call find_vim_word
+    mov dword ptr [rip + g_find_word], 1
     jmp .Lm_search
 
 # vbracket(byte) -> eax partner, edx 1 opening / -1 closing / 0 not a bracket

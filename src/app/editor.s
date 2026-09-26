@@ -2520,11 +2520,7 @@ draw_line:
     jbe .Ldl_nofind
     mov rdx, [rip + g_ed_find + SB_ptr]
     mov rcx, [rip + g_ed_find + SB_len]
-    cmp dword ptr [rip + g_ed_find_case], 0
-    je 61f
-    call str_find
-    jmp 62f
-61: call str_ifind
+    call find_raw
 62: test rax, rax
     js .Ldl_nofind
     add r13, rax
