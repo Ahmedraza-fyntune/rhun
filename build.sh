@@ -10,7 +10,10 @@ cmp -s build/assets.s.new build/assets.s || mv build/assets.s.new build/assets.s
 objs=""
 for s in $(find src -name "*.s" | LC_ALL=C sort) build/assets.s; do
     o=build/obj/$(echo "$s" | sed 's|/|_|g; s|\.s$|.o|')
-    if [ ! -f "$o" ] || [ "$s" -nt "$o" ] || [ src/rhun.inc -nt "$o" ]; then
+    stale=
+    # assets.s only names the embedded files; their contents count too
+    [ "$s" = build/assets.s ] && [ -f "$o" ] && [ -n "$(find runtime assets -newer "$o" -print -quit)" ] && stale=1
+    if [ -n "$stale" ] || [ ! -f "$o" ] || [ "$s" -nt "$o" ] || [ src/rhun.inc -nt "$o" ]; then
         as $ASFLAGS -o "$o" "$s"
     fi
     objs="$objs $o"
