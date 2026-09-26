@@ -2694,16 +2694,42 @@ FN cmd_newline_above
     mov rdi, rbx
     mov rsi, r13
     call line_indent
-    cmp rax, 255
+    mov r15, rax
+    cmp rax, 200
     jbe 1f
-    mov eax, 255
+    mov eax, 200
 1:  mov r14, rax
     mov rdi, rbx
     mov rsi, r12
     mov rdx, r14
     lea rcx, [rsp]
     call doc_copy
-    mov byte ptr [rsp + r14], 10
+    # above a closing bracket: one level more (the block's content)
+    lea rsi, [r12 + r15]
+    mov rdi, rbx
+    call doc_byte
+    cmp eax, '}'
+    je 2f
+    cmp eax, ')'
+    je 2f
+    cmp eax, ']'
+    jne 4f
+2:  cmp dword ptr [rip + cfg_insert_spaces], 0
+    jne 3f
+    mov byte ptr [rsp + r14], 9
+    inc r14
+    jmp 4f
+3:  mov ecx, [rip + cfg_tab_width]
+    cmp ecx, 16
+    jbe 31f
+    mov ecx, 16
+31: test ecx, ecx
+    jz 4f
+    mov byte ptr [rsp + r14], ' '
+    inc r14
+    dec ecx
+    jmp 31b
+4:  mov byte ptr [rsp + r14], 10
     mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
     mov rdi, rbx
