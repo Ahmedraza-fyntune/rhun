@@ -66,6 +66,9 @@ v_chgdoc: .quad 0               # document of the change in progress
 v_chglen: .quad 0               # its undo length before the change
 v_putdoc: .quad 0               # document waiting for the clipboard
 v_sfrom: .quad 0                # / ?: where the search began
+v_sanchor: .quad 0              # and the visual selection's other end
+v_sop: .long 0                  # the operator the search is the motion of (d/foo)
+v_sopcount: .long 0
 v_exdoc: .quad 0                # vim_export: the document, its selection before and after
 v_excur: .quad 0
 v_exanchor: .quad 0
@@ -714,7 +717,13 @@ FN vim_key
     jbe .Lvk_no
     cmp dword ptr [rip + g_vim_cmdline], 0
     je 0f
-    call vcmdline_key
+    cmp dword ptr [rip + v_sop], 0
+    je 71f
+    call vrec
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+71: call vcmdline_key
     jmp .Lvk_yes
 0:  cmp dword ptr [rip + g_vim_mode], VM_INSERT
     jne .Lvk_cmd
@@ -957,6 +966,10 @@ vcmd:
     je .Lc_setprefix
     cmp eax, 'g'
     je .Lc_setprefix
+    cmp eax, '/'
+    je .Lc_search
+    cmp eax, '?'
+    je .Lc_search
     jmp .Lc_motion_key
 
 # dd cc yy >> << guu gUU g~~: count lines
@@ -1340,6 +1353,12 @@ vcmd:
 .Lc_search:
     mov rax, [rbx + DOC_cur]
     mov [rip + v_sfrom], rax
+    mov rax, [rbx + DOC_anchor]
+    mov [rip + v_sanchor], rax
+    mov eax, [rip + v_op]
+    mov [rip + v_sop], eax
+    mov eax, [rip + v_opcount]
+    mov [rip + v_sopcount], eax
     lea rdi, [rip + v_pat]
     call sb_clear
     call find_vim_query
@@ -3809,22 +3828,55 @@ vsearch_accept:
     mov rdi, [rip + v_buf + SB_ptr]
     call app_toast
 3:  mov rax, [rip + v_sfrom]
-4:  mov rdi, rax
+    # an operator does nothing without a match
+    mov dword ptr [rip + v_sop], 0
+4:  mov r12, rax
+    mov rax, [rip + v_sfrom]
+    mov [rbx + DOC_cur], rax
+    mov rax, [rip + v_sanchor]
+    mov [rbx + DOC_anchor], rax
+    mov eax, [rip + v_sop]
+    test eax, eax
+    jnz 5f
+    mov rdi, r12
+    cmp dword ptr [rip + g_vim_mode], VM_VISUAL
+    jae 41f
     call vset
+    jmp 9f
+41: xor esi, esi
+    call vmove
+    jmp 9f
+5:  mov dword ptr [rip + v_sop], 0
+    mov [rip + v_op], eax
+    mov eax, [rip + v_sopcount]
+    mov [rip + v_opcount], eax
+    mov rdi, r12
+    xor esi, esi
+    call vop_motion
+    call vcancel
 9:  EPILOGUE
 
 # vsearch_cancel(): back to where the search began; n and N keep the pattern from before
 vsearch_cancel:
+    mov dword ptr [rip + v_sop], 0
     PROLOGUE
     mov rdi, [rip + v_pat + SB_ptr]
     mov rsi, [rip + v_pat + SB_len]
     call find_vim_word
     lea rdi, [rip + g_ed_find]
     call sb_clear
-    cmp qword ptr [rip + g_doc], 0
-    je 9f
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
     mov rdi, [rip + v_sfrom]
+    cmp dword ptr [rip + g_vim_mode], VM_VISUAL
+    jae 1f
     call vset
+    jmp 9f
+1:  mov [rbx + DOC_cur], rdi
+    mov rax, [rip + v_sanchor]
+    mov [rbx + DOC_anchor], rax
+    call ed_touch
 9:  EPILOGUE
 
 # vim_field() -> the command line's text field while it is open (pastes go there), else 0
@@ -4210,6 +4262,10 @@ vk_normal:
     .quad .Lc_ex
     .long 0, 0
 vk_visual:
+    .long '/', 0
+    .quad .Lc_search
+    .long '?', 0
+    .quad .Lc_search
     .long 'v', 0
     .quad .Lv_v
     .long 'V', 0
