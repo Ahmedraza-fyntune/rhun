@@ -109,11 +109,67 @@ vprev:
     mov rsi, rdi
     mov rdi, [rip + g_doc]
     jmp doc_prev_char
-# vlast() -> last line
+# vnl() -> lines as vim has them: the newline at the end of a file starts none (keeps all but rax)
+vnl:
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push r8
+    push r9
+    push r10
+    push r11
+    push rbx
+    mov rbx, [rip + g_doc]
+    mov rax, [rbx + DOC_nlines]
+    cmp rax, 1
+    jbe 9f
+    mov rdi, rbx
+    call doc_len
+    lea rsi, [rax - 1]
+    mov rdi, rbx
+    call doc_byte
+    mov ecx, eax
+    mov rax, [rbx + DOC_nlines]
+    cmp ecx, 10
+    jne 9f
+    dec rax
+9:  pop rbx
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    ret
+
+# vlast() -> last line (keeps all but rax)
 vlast:
+    call vnl
+    dec rax
+    ret
+
+# vlast_text() -> last line of the text, the empty one after a final newline too
+vlast_text:
     mov rax, [rip + g_doc]
     mov rax, [rax + DOC_nlines]
     dec rax
+    ret
+
+# vlen_vim() -> end of the last line (before a final newline)
+vlen_vim:
+    push rbx
+    call vlen
+    mov rbx, rax
+    call vnl
+    mov rcx, [rip + g_doc]
+    cmp rax, [rcx + DOC_nlines]
+    mov rax, rbx
+    je 1f
+    dec rax
+1:  pop rbx
     ret
 
 # vfirst(line) -> first non-blank of the line (its end when blank)
@@ -158,7 +214,11 @@ vclamp:
     push r12
     push r13
     mov rbx, rdi
-    call vlen
+    call vlen_vim
+    cmp rbx, rax
+    jbe 0f
+    mov rbx, rax
+0:  call vlen
     cmp rbx, rax
     jae 1f
     mov rdi, rbx
@@ -1197,8 +1257,10 @@ vcmd:
     test rax, rax
     jns 5f
     xor eax, eax
-5:  mov rcx, [rbx + DOC_nlines]
-    dec rcx
+5:  push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rax, rcx
     cmova rax, rcx
     mov rdi, rbx
@@ -1724,7 +1786,7 @@ vyank:
 vlines_end:
     push rbx
     mov rbx, rdi
-    call vlast
+    call vlast_text
     cmp rbx, rax
     jae 1f
     lea rdi, [rbx + 1]
@@ -1763,7 +1825,7 @@ vdel_lines:
     mov rdi, r13
     call vlines_end
     mov r15, rax
-    call vlast
+    call vlast_text
     cmp r13, rax
     jb 1f
     test r12, r12
@@ -2079,7 +2141,7 @@ vput:
     je 4f
     inc r12
 .Lpt_above:                     # the lines go above line r12 (below the last line when r12 is past it)
-    call vlast
+    call vlast_text
     cmp r12, rax
     ja 5f
 4:  mov rdi, r12
@@ -2182,8 +2244,10 @@ vmotion:
 
 # rax = min(rax, last line)
 .Lm_clampline:
-    mov rcx, [rbx + DOC_nlines]
-    dec rcx
+    push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rax, rcx
     cmova rax, rcx
     ret
@@ -2247,7 +2311,7 @@ vmotion:
     jmp .Lm_ret
 
 .Lm_space:
-    call vlen
+    call vlen_vim
     mov [rsp], rax
 1:  cmp r12, [rsp]
     jae .Lm_ret
@@ -2337,7 +2401,10 @@ vmotion:
     mov rdi, r12
     call vline
     add rax, r14
-    cmp rax, [rbx + DOC_nlines]
+    mov rcx, rax
+    call vnl
+    xchg rax, rcx
+    cmp rax, rcx
     jae .Lm_fail
     jmp .Lm_linefirst
 .Lm_minus:
@@ -2347,8 +2414,7 @@ vmotion:
     js .Lm_fail
     jmp .Lm_linefirst
 .Lm_G:
-    mov rax, [rbx + DOC_nlines]
-    dec rax
+    call vlast
     cmp dword ptr [rip + v_has], 0
     je .Lm_linefirst
     lea rax, [r14 - 1]
@@ -2517,7 +2583,8 @@ vmotion:
     mov rdi, r12
     call vline
     mov r13, rax
-1:  cmp r13, [rbx + DOC_nlines]     # past empty lines, then the paragraph
+1:  call vnl                       # past empty lines, then the paragraph
+    cmp r13, rax
     jae 2f
     mov rdi, r13
     call vempty
@@ -2525,7 +2592,8 @@ vmotion:
     jz 2f
     inc r13
     jmp 1b
-2:  cmp r13, [rbx + DOC_nlines]
+2:  call vnl
+    cmp r13, rax
     jae 3f
     mov rdi, r13
     call vempty
@@ -2535,9 +2603,10 @@ vmotion:
     jmp 2b
 3:  dec r14d
     jnz 1b
-    cmp r13, [rbx + DOC_nlines]
+    call vnl
+    cmp r13, rax
     jb 4f
-    call vlen
+    call vlen_vim
     mov r12, rax
     jmp .Lm_ret
 4:  mov rdi, r13
@@ -2586,8 +2655,10 @@ vmotion:
     sar rax, 8
     mov ecx, [rip + g_ed_h_lines]
     lea rax, [rax + rcx - 1]
-    mov rcx, [rbx + DOC_nlines]
-    dec rcx
+    push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rax, rcx
     jl 1f
     mov rax, rcx
@@ -2603,8 +2674,10 @@ vmotion:
     sar rax, 8
     mov ecx, [rip + g_ed_h_lines]
     lea rdx, [rax + rcx - 1]
-    mov rcx, [rbx + DOC_nlines]
-    dec rcx
+    push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rdx, rcx
     cmovg rdx, rcx
     add rax, rdx
@@ -2680,7 +2753,7 @@ vword_fwd:
     PROLOGUE
     mov r12, rdi
     mov r13d, esi
-    call vlen
+    call vlen_vim
     mov r14, rax
     cmp r12, r14
     jae 9f
@@ -2724,7 +2797,7 @@ vword_end:
     PROLOGUE
     mov rbx, rdi
     mov r13d, esi
-    call vlen
+    call vlen_vim
     mov r14, rax
     mov rdi, rbx
     call vnext
@@ -3741,9 +3814,10 @@ FN vim_ex
 9:  EPILOGUE
 
 .Lm_clampline_g:
-    mov rcx, [rip + g_doc]
-    mov rcx, [rcx + DOC_nlines]
-    dec rcx
+    push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rax, rcx
     cmova rax, rcx
     ret
