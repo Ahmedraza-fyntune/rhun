@@ -1339,10 +1339,15 @@ FN cmd_duplicate_line
     mov [rsp + 8], rcx
     xor r8d, r8d
     call doc_insert
+    # onto the copy; the insert already moved what was past the end of the last line
     mov rax, [rsp + 8]
+    cmp [rbx + DOC_cur], r15
+    ja 1f
     add [rbx + DOC_cur], rax
+1:  cmp [rbx + DOC_anchor], r15
+    ja 2f
     add [rbx + DOC_anchor], rax
-    mov rdi, [rsp]
+2:  mov rdi, [rsp]
     call mem_free
     call ed_touch
 9:  EPILOGUE
