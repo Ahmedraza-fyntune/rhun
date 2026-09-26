@@ -125,13 +125,7 @@ parse_args:
     jz 4f
     inc rbx
     mov rdi, [r12 + rbx*8]
-    call strlen
-    mov rdi, [r12 + rbx*8]
-    mov rsi, rax
-    call parse_decimal
-    cvtsi2ss xmm0, eax
-    divss xmm0, [rip + .Lf100]
-    movss [rip + g_dpi_scale], xmm0
+    call set_scale
     jmp 9f
 4:  lea rdi, [rip + paths]
     mov esi, 8
@@ -180,21 +174,32 @@ scale_from_env:
     call getenv
     test rax, rax
     jz 1f
-    push rax
     mov rdi, rax
+    jmp set_scale
+1:  ret
+
+# set_scale(cstr): "2", "1.5" or "150" (percent); ignored outside 0.5 .. 4
+set_scale:
+    push rbx
+    mov rbx, rdi
     call strlen
-    pop rdi
+    mov rdi, rbx
     mov rsi, rax
     call parse_decimal
     test edx, edx
     jz 1f
     cmp eax, 10
     ja 2f
-    imul eax, eax, 100
-2:  cvtsi2ss xmm0, eax
+    imul eax, eax, 100              # a whole number is a factor
+2:  cmp eax, 50
+    jb 1f
+    cmp eax, 400
+    ja 1f
+    cvtsi2ss xmm0, eax
     divss xmm0, [rip + .Lf100]
     movss [rip + g_dpi_scale], xmm0
-1:  ret
+1:  pop rbx
+    ret
 
 # "WxH"
 parse_size:

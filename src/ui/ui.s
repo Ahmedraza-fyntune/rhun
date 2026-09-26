@@ -49,6 +49,7 @@ FN ui_update_metrics
     cvtsi2ss xmm0, dword ptr [rip + cfg_ui_scale]
     mulss xmm0, [rip + g_dpi_scale]
     divss xmm0, [rip + f_100]
+    maxss xmm0, [rip + f_min_scale]     # fonts need a size of at least a few pixels
     movss [rip + g_s], xmm0
     movd eax, xmm0
     cmp eax, [rip + last_scale]
@@ -1165,6 +1166,7 @@ FN ui_textfield
 .section .rodata
 .p2align 2
 f_100: .float 100.0
+f_min_scale: .float 0.5
 f_big: .float 1.55
 f_huge: .float 3.4
 # logical sizes for MI_* indices
