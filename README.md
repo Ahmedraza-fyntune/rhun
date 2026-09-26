@@ -167,3 +167,7 @@ An extension that crashes or hangs cannot take the editor with it.
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
 
 Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The built-in Iosevka font is under the SIL Open Font License ([assets/fonts/LICENSE-Iosevka.md](assets/fonts/LICENSE-Iosevka.md)).
