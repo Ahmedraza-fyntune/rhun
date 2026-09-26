@@ -201,6 +201,36 @@ print-state
 type :bogus
 key Escape
 print-state
+# as in Vim: . after a visual change, / as a motion, a count after the operator, Esc after o,
+# dw at a line end, d over whole lines, aw after an indentation, ~ on letters outside ASCII
+type 2GVj>.
+print-doc
+type uu
+type 2Gd/baz
+key Return
+print-doc
+type u
+type 6Gd1w.
+print-doc
+type uu
+type 2Go
+key Escape
+print-doc
+type u
+type 6G$bdw
+print-doc
+type u
+type 6G2D
+print-doc
+type u
+type 2G^daw
+print-doc
+type u
+type 6Gié
+key Escape
+type ~
+print-doc
+type uu
 # mouse: a drag is a visual selection, a click ends it
 click 430 108
 print-state

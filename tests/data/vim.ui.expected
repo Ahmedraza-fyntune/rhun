@@ -391,6 +391,77 @@ tabs=1 active=vim.c line=3 col=5 sel=0 dirty=0 lang=C vim=normal focus=0 theme=r
 tabs=1 active=vim.c line=7 col=1 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=7 col=1 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=7 col=1 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
+int main(void) {
+            foo(bar, "baz qux");
+            return 0;
+}
+
+second paragraph
+line two
+
+<eod>
+int main(void) {
+    baz qux");
+    return 0;
+}
+
+second paragraph
+line two
+
+<eod>
+int main(void) {
+    foo(bar, "baz qux");
+    return 0;
+}
+
+
+line two
+
+<eod>
+int main(void) {
+    foo(bar, "baz qux");
+
+    return 0;
+}
+
+second paragraph
+line two
+
+<eod>
+int main(void) {
+    foo(bar, "baz qux");
+    return 0;
+}
+
+second 
+line two
+
+<eod>
+int main(void) {
+    foo(bar, "baz qux");
+    return 0;
+}
+
+
+<eod>
+int main(void) {
+    (bar, "baz qux");
+    return 0;
+}
+
+second paragraph
+line two
+
+<eod>
+int main(void) {
+    foo(bar, "baz qux");
+    return 0;
+}
+
+Ésecond paragraph
+line two
+
+<eod>
 tabs=1 active=vim.c line=2 col=20 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=3 col=13 sel=33 dirty=0 lang=C vim=visual focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=4 col=1 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
