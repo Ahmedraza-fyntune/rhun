@@ -6,10 +6,38 @@
 
 // main(argc, argv, envp): an x86 stack as Linux starts a process, then sys_init and main
 FN _main
-    ENTER
+    ENTER 1024
     mov x19, x0
     mov x20, x1
     mov x21, x2
+    // Finder starts apps in /: the home folder is the project then
+    mov x0, sp
+    mov x1, #1024
+    bl _getcwd
+    cbz x0, 1f
+    ldrh w9, [sp]
+    cmp w9, #'/'
+    b.ne 1f
+    ADR x0, s_home
+    bl _getenv
+    cbz x0, 1f
+    bl _chdir
+1:  // and may pass -psn_ arguments
+    mov x9, #1
+    mov x10, #1
+2:  cmp x9, x19
+    b.hs 4f
+    ldr x11, [x20, x9, lsl #3]
+    ldr w12, [x11]
+    mov w13, #0x702d            // "-psn"
+    movk w13, #0x6e73, lsl #16
+    add x9, x9, #1
+    cmp w12, w13
+    b.eq 2b
+    str x11, [x20, x10, lsl #3]
+    add x10, x10, #1
+    b 2b
+4:  mov x19, x10
     mov x0, #0
     mov x1, #STACK_SIZE
     mov w2, #3                  // PROT_READ | PROT_WRITE
@@ -60,6 +88,10 @@ FN _main
     bl _exit
 9:  mov w0, #111
     bl _exit
+
+.section __TEXT,__cstring,cstring_literals
+s_home: .asciz "HOME"
+.text
 
 // ---- string instructions: rdi x0, rsi x1, rcx x3, rax x8; flags are kept (movs, stos)
 

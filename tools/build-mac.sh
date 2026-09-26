@@ -44,7 +44,7 @@ for s in src/mac/*.s; do
     objs="$objs $o"
 done
 
-LIBS="-framework AppKit -framework QuartzCore -framework IOSurface -framework CoreServices"
+LIBS="-framework AppKit -framework QuartzCore -framework IOSurface -framework CoreServices -framework Carbon"
 link() { # out objs...
     out=$1; shift
     clang -arch arm64 -mmacosx-version-min=$MINOS -o "$out" "$@" $LIBS

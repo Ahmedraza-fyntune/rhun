@@ -994,12 +994,23 @@ v_keyDown:
     XCALL app_on_key
     b Lkd_done
 Lkd_char:
-    // shortcuts: the key's character without modifiers (Shift aside)
+    // shortcuts: the key's character without modifiers (Shift aside); on a layout that is not
+    // Latin, the key's character on the ASCII-capable layout, as Linux takes the first layout
     mov x0, x20
     MSG charactersIgnoringModifiers
     bl first_cp
     mov w24, w0
     cbz w24, Lkd_ime
+    cmp w24, #0x80
+    b.lo 51f
+    tst w22, #MOD_CTRL | MOD_ALT
+    b.eq 51f
+    mov w0, w23
+    ubfx x1, x21, #17, #1       // Shift
+    bl ascii_key
+    cbz w0, 51f
+    mov w24, w0
+51:
     // letters bind lowercase, as rhun looks them up
     tst w22, #MOD_CTRL
     b.ne 6f
@@ -1026,6 +1037,51 @@ Lkd_ime:
     MSG interpretKeyEvents_
 Lkd_done:
     LEAVE
+    ret
+
+// ascii_key(w0 key code, w1 shift) -> the character of the key on the current ASCII-capable
+// keyboard layout, or 0
+ascii_key:
+    ENTER 32
+    mov w19, w0
+    mov w20, w1
+    bl _TISCopyCurrentASCIICapableKeyboardLayoutInputSource
+    cbz x0, 8f
+    mov x21, x0
+    EXT x1, _kTISPropertyUnicodeKeyLayoutData
+    bl _TISGetInputSourceProperty
+    cbz x0, 7f
+    bl _CFDataGetBytePtr
+    mov x22, x0
+    bl _LMGetKbdType
+    mov w4, w0                  // keyboard type
+    mov x0, x22
+    mov w1, w19                 // key code
+    mov w2, #0                  // kUCKeyActionDown
+    lsl w3, w20, #1             // shiftKey >> 8
+    mov w5, #1                  // kUCKeyTranslateNoDeadKeysMask
+    str wzr, [sp]               // dead key state
+    add x6, sp, #0
+    mov x7, #4                  // max length
+    sub sp, sp, #16
+    add x9, sp, #16 + 8
+    str x9, [sp]                // actual length
+    add x9, sp, #16 + 16
+    str x9, [sp, #8]            // characters
+    str xzr, [sp, #16 + 8]
+    bl _UCKeyTranslate
+    add sp, sp, #16
+    mov w23, #0
+    cbnz w0, 7f
+    ldr x9, [sp, #8]
+    cbz x9, 7f
+    ldrh w23, [sp, #16]
+7:  mov x0, x21
+    bl _CFRelease
+    mov w0, w23
+    b 9f
+8:  mov w0, #0
+9:  LEAVE
     ret
 
 // first_cp(NSString) -> first code point or 0
@@ -1943,6 +1999,7 @@ DEFSEL sendEvent_, "sendEvent:"
 DEFSEL modifierFlags, "modifierFlags"
 DEFSEL keyCode, "keyCode"
 DEFSEL charactersIgnoringModifiers, "charactersIgnoringModifiers"
+DEFSEL characters, "characters"
 DEFSEL arrayWithObject_, "arrayWithObject:"
 DEFSEL interpretKeyEvents_, "interpretKeyEvents:"
 DEFSEL isKindOfClass_, "isKindOfClass:"

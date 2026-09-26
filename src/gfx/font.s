@@ -1180,7 +1180,15 @@ fb_state: .zero 16
 .section .rodata
 .p2align 3
 fallback_paths:
+.ifdef MACOS
+    .quad .Lfm1, .Lfm2, .Lfm3, .Lfm4, 0
+.Lfm1: .asciz "/System/Library/Fonts/SFNSMono.ttf"
+.Lfm2: .asciz "/System/Library/Fonts/Apple Symbols.ttf"
+.Lfm3: .asciz "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+.Lfm4: .asciz "/Library/Fonts/Arial Unicode.ttf"
+.else
     .quad .Lfb1, .Lfb2, .Lfb3, .Lfb4, .Lfb5, .Lfb6, .Lfb7, .Lfb8, .Lfb9, 0
+.endif
 .Lfb1: .asciz "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 .Lfb2: .asciz "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
 .Lfb3: .asciz "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
