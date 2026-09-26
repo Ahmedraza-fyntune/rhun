@@ -1892,6 +1892,13 @@ vop_chars:
     cmp r13, r12
     jbe 41f
     dec r13
+    # the line to type on keeps the indentation of the first line
+    mov rdi, r12
+    call vline
+    mov rdi, rax
+    call vfirst
+    cmp rax, r13
+    cmovb r12, rax
 41: mov rdi, r12
     mov rsi, r13
     sub rsi, r12
@@ -1900,7 +1907,10 @@ vop_chars:
     mov esi, 'c'
     mov edx, 1
     call vinsert
-    EPILOGUE
+    test r14d, r14d
+    jz 42f
+    mov dword ptr [rip + v_autoind], 1
+42: EPILOGUE
 .Loc_lines:
     mov rdi, r12
     call vline
