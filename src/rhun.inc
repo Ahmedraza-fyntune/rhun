@@ -403,6 +403,7 @@ ENDSTRUCT INI_SIZE
 .equ ST_INT, 1
 .equ ST_STR, 2
 .equ ST_THEME, 3
+.equ ST_CHOICE, 4              # index into SET_opts: pairs of cstr (config value, label), "" ends
 STRUCT
 F SET_sec, 8
 F SET_key, 8
@@ -415,6 +416,7 @@ F SET_max, 4
 F SET_step, 4
 F SET_decimal, 4
 F SET_pad, 4
+F SET_opts, 8
 ENDSTRUCT SET_SIZE
 
 # ---- document ----

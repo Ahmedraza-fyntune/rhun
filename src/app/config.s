@@ -9,7 +9,7 @@
 .globl cfg_line_numbers, cfg_highlight_line, cfg_indent_guides, cfg_cursor_blink, cfg_whitespace
 .globl cfg_sidebar, cfg_sidebar_w, cfg_agents, cfg_agents_w, cfg_ui_scale, cfg_final_newline
 .globl cfg_trim_trailing, cfg_scroll_past_end, cfg_smooth_caret, cfg_theme, cfg_font, cfg_ui_font
-.globl cfg_exclude, cfg_agent_sources, cfg_restore_session, cfg_auto_pairs, cfg_word_wrap
+.globl cfg_exclude, cfg_agent_sources, cfg_restore_session, cfg_auto_pairs, cfg_word_wrap, cfg_decorations
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
 cfg_line_height: .long 150
@@ -33,6 +33,7 @@ cfg_smooth_caret: .long 1
 cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
 cfg_word_wrap: .long 0
+cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
 .p2align 3
 cfg_theme: .quad .Ldef_theme
 cfg_font: .quad .Lempty
@@ -184,12 +185,56 @@ FN setting_assign
     mov eax, [rbx + SET_max]
 12: mov [r14], eax
     jmp 9f
-2:  # strings: keep a private copy
+2:  cmp eax, ST_CHOICE
+    jne 3f
+    xor r15d, r15d
+21: mov rdi, [rbx + SET_opts]
+    mov esi, r15d
+    call choice_entry
+    test rax, rax
+    jz 9f                       # unknown value: keep the current one
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, rax
+    call str_ieq_cstr
+    test eax, eax
+    jnz 22f
+    inc r15d
+    jmp 21b
+22: mov [r14], r15d
+    jmp 9f
+3:  # strings: keep a private copy
     mov rdi, r12
     mov rsi, r13
     call mem_dup
     mov [r14], rax
 9:  EPILOGUE
+
+# choice_entry(opts, index) -> rax config value, rdx label (rax = 0 past the end)
+FN choice_entry
+    mov rax, rdi
+1:  cmp byte ptr [rax], 0
+    je 8f
+    mov r8, rax
+2:  cmp byte ptr [rax], 0
+    je 3f
+    inc rax
+    jmp 2b
+3:  inc rax
+    mov rdx, rax
+4:  cmp byte ptr [rax], 0
+    je 5f
+    inc rax
+    jmp 4b
+5:  inc rax
+    test esi, esi
+    jz 6f
+    dec esi
+    jmp 1b
+6:  mov rax, r8
+    ret
+8:  xor eax, eax
+    ret
 
 # parse_decimal(ptr, len) -> eax value, edx ok. "1.5" -> 150 (two implied decimals only when a dot is present)
 FN parse_decimal
@@ -365,7 +410,18 @@ FN config_save
     lea esi, [r14 + '0']
     call sb_push_byte
     jmp 5f
-4:  lea rdi, [rsp]
+4:  cmp eax, ST_CHOICE
+    jne 41f
+    mov rdi, [rbx + SET_opts]
+    mov esi, [r13]
+    call choice_entry
+    test rax, rax
+    jz 5f
+    lea rdi, [rsp]
+    mov rsi, rax
+    call sb_push_cstr
+    jmp 5f
+41: lea rdi, [rsp]
     mov rsi, [r13]
     call sb_push_cstr
 5:  lea rdi, [rsp]
@@ -487,9 +543,10 @@ dir_each_cb:
 .Ls_files: .asciz "files"
 .Ls_agents: .asciz "agents"
 
-.macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc
+.macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0
     .quad \sec, 1f, \ptr, 2f, 3f
     .long \type, \min, \max, \step, \dec, 0
+    .quad \opts
     .pushsection .rodata.str, "aMS", @progbits, 1
 1:  .asciz "\key"
 2:  .asciz "\label"
@@ -508,6 +565,7 @@ g_settings:
     SETTING .Ls_ui, sidebar_width, ST_INT, cfg_sidebar_w, 140, 600, 10, 0, "Explorer width", "Width of the file explorer in points."
     SETTING .Ls_ui, agents_panel, ST_BOOL, cfg_agents, 0, 1, 1, 0, "Show agents panel", "Agent sessions on the right (ctrl+shift+a)."
     SETTING .Ls_ui, agents_width, ST_INT, cfg_agents_w, 240, 900, 10, 0, "Agents panel width", "Width of the agents panel in points."
+    SETTING .Ls_ui, decorations, ST_CHOICE, cfg_decorations, 0, 2, 1, 0, "Title bar", "Who draws window buttons on Wayland. Auto leaves tiling desktops bare.", .Ldeco_opts
     SETTING .Ls_editor, font_size, ST_INT, cfg_font_size, 8, 40, 1, 0, "Editor font size", "Font size of the text you edit."
     SETTING .Ls_editor, font, ST_STR, cfg_font, 0, 0, 0, 0, "Editor font", "Path to a monospace .ttf file. Empty uses Ubuntu Sans Mono."
     SETTING .Ls_editor, line_height, ST_INT, cfg_line_height, 100, 250, 5, 1, "Line height", "Multiple of the font size."
@@ -530,3 +588,4 @@ g_settings:
     SETTING .Ls_agents, sources, ST_STR, cfg_agent_sources, 0, 0, 0, 0, "Agent sources", "Which agents to show: claude, codex."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
+.Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""

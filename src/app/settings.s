@@ -383,7 +383,120 @@ FN settings_draw
     je .Lsd_int
     cmp eax, ST_THEME
     je .Lsd_theme
+    cmp eax, ST_CHOICE
+    je .Lsd_choice
     jmp .Lsd_str
+.Lsd_choice:
+    # segmented control, right aligned
+    M eax, MI_32
+    mov edx, r13d
+    sub edx, eax
+    sar edx, 1
+    add edx, r12d
+    mov [rsp + 60], edx         # y
+    mov dword ptr [rsp + 44], 0 # total width
+    mov dword ptr [rsp + 72], 0
+1:  mov rdi, [rbx + SET_opts]
+    mov esi, [rsp + 72]
+    call choice_entry
+    test rax, rax
+    jz 2f
+    call .Lseg_w
+    add [rsp + 44], eax
+    inc dword ptr [rsp + 72]
+    jmp 1b
+2:  mov eax, [rsp + 36]
+    sub eax, [rsp + 44]
+    mov [rsp + 52], eax         # x
+    mov edi, eax
+    mov esi, [rsp + 60]
+    mov edx, [rsp + 44]
+    M ecx, MI_32
+    M r8d, MI_RADIUS
+    COLOR r9d, T_BORDER
+    COLOR eax, T_INPUT
+    push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    mov eax, [rsp + 52]
+    mov [rsp + 76], eax         # segment x
+    mov dword ptr [rsp + 72], 0
+3:  mov rdi, [rbx + SET_opts]
+    mov esi, [rsp + 72]
+    call choice_entry
+    test rax, rax
+    jz .Lsd_next
+    mov [rsp + 80], rdx         # label
+    call .Lseg_w
+    mov [rsp + 88], eax         # w
+    mov edi, [rsp + 40]
+    add edi, [rsp + 72]
+    mov esi, [rsp + 76]
+    mov edx, [rsp + 60]
+    mov ecx, eax
+    M r8d, MI_32
+    call ui_btn
+    mov [rsp + 32], eax
+    mov rax, [rbx + SET_ptr]
+    mov eax, [rax]
+    cmp eax, [rsp + 72]
+    jne 4f
+    COLOR r9d, T_ACTIVE
+    jmp 5f
+4:  test dword ptr [rsp + 32], UB_HOVER
+    jz 6f
+    COLOR r9d, T_HOVER
+5:  mov edi, [rsp + 76]
+    add edi, [rip + g_mt + 4*MI_2]
+    mov esi, [rsp + 60]
+    add esi, [rip + g_mt + 4*MI_2]
+    mov edx, [rsp + 88]
+    sub edx, [rip + g_mt + 4*MI_4]
+    M ecx, MI_32
+    sub ecx, [rip + g_mt + 4*MI_4]
+    M r8d, MI_RADIUS
+    call gfx_round_rect
+6:  COLOR eax, T_MUTED
+    mov rcx, [rbx + SET_ptr]
+    mov ecx, [rcx]
+    cmp ecx, [rsp + 72]
+    jne 7f
+    COLOR eax, T_FG
+7:  lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 76]
+    mov edx, [rsp + 60]
+    mov ecx, [rsp + 88]
+    M r8d, MI_32
+    mov r9, [rsp + 80]
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+    test dword ptr [rsp + 32], UB_CLICK
+    jz 8f
+    mov rax, [rbx + SET_ptr]
+    mov ecx, [rsp + 72]
+    mov [rax], ecx
+    mov rdi, rbx
+    call setting_applied
+8:  mov eax, [rsp + 88]
+    add [rsp + 76], eax
+    inc dword ptr [rsp + 72]
+    jmp 3b
+# .Lseg_w(rdx label) -> eax segment width
+.Lseg_w:
+    push rbx
+    mov rbx, rdx
+    mov rdi, rdx
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    mov rsi, rbx
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_24]
+    pop rbx
+    ret
 .Lsd_bool:
     M eax, MI_14
     add eax, [rip + g_mt + 4*MI_20]

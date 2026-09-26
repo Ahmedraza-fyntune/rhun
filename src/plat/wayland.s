@@ -940,6 +940,7 @@ apply_size:
 # wl_draw(): render into a free buffer and commit
 wl_draw:
     PROLOGUE
+    call deco_sync
     cmp dword ptr [rip + configured], 0
     je .Ldr_ret
     cmp dword ptr [rip + id_frame_cb], 0
@@ -1262,6 +1263,77 @@ is_modifier_key:
     ret
 1:  mov eax, 1
     ret
+
+# deco_sync(): the title bar setting changed, tell the compositor
+deco_sync:
+    push rbx
+    mov eax, [rip + cfg_decorations]
+    cmp eax, [rip + deco_applied]
+    je 9f
+    mov [rip + deco_applied], eax
+    cmp dword ptr [rip + id_deco], 0
+    je 9f
+    call deco_wanted
+    mov [rip + deco_mode], eax
+    MSG [rip + id_deco], 1
+    ARG [rip + deco_mode]
+    END
+9:  pop rbx
+    ret
+
+# deco_wanted() -> 1 rhun draws the title bar, 2 the compositor does.
+# Auto: tiling compositors, which keep windows bare, get server side; everything else gets rhun's own
+deco_wanted:
+    push rbx
+    mov eax, [rip + cfg_decorations]
+    cmp eax, 1
+    je 1f
+    cmp eax, 2
+    je 2f
+    call tiling_desktop
+    test eax, eax
+    jnz 2f
+1:  mov eax, 1
+    pop rbx
+    ret
+2:  mov eax, 2
+    pop rbx
+    ret
+
+# tiling_desktop() -> 1 if XDG_CURRENT_DESKTOP names a tiling compositor
+tiling_desktop:
+    PROLOGUE
+    lea rdi, [rip + .Lenv_desktop]
+    call getenv
+    test rax, rax
+    jz 8f
+    mov r12, rax
+1:  # next ':' separated name
+    xor r13d, r13d
+2:  movzx eax, byte ptr [r12 + r13]
+    test al, al
+    jz 3f
+    cmp al, ':'
+    je 3f
+    inc r13
+    jmp 2b
+3:  lea rbx, [rip + .Ltiling]
+4:  mov rdx, [rbx]
+    test rdx, rdx
+    jz 5f
+    mov rdi, r12
+    mov rsi, r13
+    call str_ieq_cstr
+    test eax, eax
+    jnz 9f
+    add rbx, 8
+    jmp 4b
+5:  cmp byte ptr [r12 + r13], 0
+    je 8f
+    lea r12, [r12 + r13 + 1]
+    jmp 1b
+8:  xor eax, eax
+9:  EPILOGUE
 
 # ---------------- vtable entries ----------------
 
@@ -1650,8 +1722,12 @@ FN wl_open_window
     ARG [rip + id_deco]
     ARG [rip + id_toplevel]
     END
-    MSG [rip + id_deco], 1
-    ARG 2                         # prefer server side
+    mov eax, [rip + cfg_decorations]
+    mov [rip + deco_applied], eax
+    call deco_wanted
+    mov [rip + deco_mode], eax
+    MSG [rip + id_deco], 1        # set_mode
+    ARG [rip + deco_mode]
     END
 2:  cmp dword ptr [rip + id_ddm], 0
     je 3f
@@ -1723,6 +1799,15 @@ global_table:
 .Li_cursor: .asciz "wp_cursor_shape_manager_v1"
 .Li_viewporter: .asciz "wp_viewporter"
 .Li_fscale: .asciz "wp_fractional_scale_manager_v1"
+.p2align 3
+.Ltiling: .quad .Lt_hypr, .Lt_sway, .Lt_niri, .Lt_river, .Lt_dwl, .Lt_qtile, 0
+.Lt_hypr: .asciz "Hyprland"
+.Lt_sway: .asciz "sway"
+.Lt_niri: .asciz "niri"
+.Lt_river: .asciz "river"
+.Lt_dwl: .asciz "dwl"
+.Lt_qtile: .asciz "qtile"
+.Lenv_desktop: .asciz "XDG_CURRENT_DESKTOP"
 .Lenv_display: .asciz "WAYLAND_DISPLAY"
 .Lenv_xdisplay: .asciz "DISPLAY"
 .Lenv_backend: .asciz "RHUN_BACKEND"
@@ -1750,4 +1835,6 @@ rep_delay: .long 400
 paste_fd: .long -1
 .globl g_csd, g_dpi_scale
 g_csd: .long 1
+deco_applied: .long -1
+deco_mode: .long 0
 g_dpi_scale: .float 1.0
