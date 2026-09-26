@@ -54,6 +54,9 @@ scan_prefix: .zero 4096         # relative dir during scan
 scan_plen: .long 0
 tmp: .zero SB_SIZE
 gfiles: .zero VEC_SIZE          # GF: project text files in memory while searching
+ghit: .quad 0                   # per file: 0 when it has no match for the query in gprev
+gprev: .zero 256
+gprev_len: .long 0
 gstr: .zero SB_SIZE             # result labels and details
 grep_case: .long 0
 
@@ -306,8 +309,60 @@ grep_release:
     inc rbx
     jmp 1b
 2:  mov qword ptr [rip + gfiles + VEC_len], 0
+    mov rdi, [rip + ghit]
+    call mem_free
+    mov qword ptr [rip + ghit], 0
+    mov dword ptr [rip + gprev_len], 0
     pop rbx
     ret
+
+# grep_narrow() -> 1 when the query extends the previous one, so files without a match for that
+# (ghit 0) can be skipped; otherwise every file is marked as a maybe. Remembers the query.
+grep_narrow:
+    PROLOGUE
+    cmp qword ptr [rip + ghit], 0
+    jne 1f
+    mov rdi, [rip + gfiles + VEC_len]
+    inc rdi
+    call mem_alloc
+    mov [rip + ghit], rax
+    mov dword ptr [rip + gprev_len], 0
+1:  lea rdi, [rip + pal_tf]
+    call tf_text
+    mov r12, rax
+    mov r13, rdx
+    xor ebx, ebx
+    mov ecx, [rip + gprev_len]
+    test ecx, ecx
+    jz 3f
+    cmp r13, rcx
+    jb 3f
+    xor edx, edx
+    lea r8, [rip + gprev]
+2:  cmp rdx, rcx
+    jae 21f
+    movzx eax, byte ptr [r12 + rdx]
+    cmp al, [r8 + rdx]
+    jne 3f
+    inc rdx
+    jmp 2b
+21: mov ebx, 1
+    jmp 4f
+3:  mov rdi, [rip + ghit]
+    mov esi, 1
+    mov rdx, [rip + gfiles + VEC_len]
+    call memset
+4:  xor eax, eax
+    cmp r13, 255
+    ja 5f
+    lea rdi, [rip + gprev]
+    mov rsi, r12
+    mov rcx, r13
+    rep movsb
+    mov eax, r13d
+5:  mov [rip + gprev_len], eax
+    mov eax, ebx
+    EPILOGUE
 
 # grep_run(): one result per line containing the query; an uppercase letter makes it case-sensitive
 # IT_data = file index << 44 | line << 20 | column
@@ -333,11 +388,19 @@ grep_run:
     mov dword ptr [rip + grep_case], 1
 11: inc rcx
     jmp 1b
-2:  xor ebx, ebx                # file index
+2:  call grep_narrow
+    mov [rsp + 60], eax
+    xor ebx, ebx                # file index
 .Lgr_file:
     cmp rbx, [rip + gfiles + VEC_len]
     jae .Lgr_fix
-    imul r12, rbx, GF_SIZE
+    mov dword ptr [rsp + 56], 0 # a match in this file
+    cmp dword ptr [rsp + 60], 0
+    je 21f
+    mov rax, [rip + ghit]
+    cmp byte ptr [rax + rbx], 0
+    je .Lgr_skip
+21: imul r12, rbx, GF_SIZE
     add r12, [rip + gfiles + VEC_ptr]
     xor r13d, r13d              # scan position (lines counted up to here)
     xor r14d, r14d              # line
@@ -462,8 +525,14 @@ grep_run:
     mov rsi, [rsp + 32]
     mov rdx, [rsp + 48]
     call item_add
+    mov dword ptr [rsp + 56], 1
     jmp .Lgr_match
 .Lgr_nextfile:
+    # searched to its end: whether it has the query
+    mov rax, [rip + ghit]
+    mov ecx, [rsp + 56]
+    mov [rax + rbx], cl
+.Lgr_skip:
     inc rbx
     jmp .Lgr_file
 .Lgr_fix:
