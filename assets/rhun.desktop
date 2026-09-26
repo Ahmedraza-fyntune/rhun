@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=rhun
+GenericName=Code Editor
+Comment=A small and fast code editor written in assembly
+Exec=rhun %F
+Icon=rhun
+Terminal=false
+Categories=Development;TextEditor;
+MimeType=text/plain;inode/directory;
+Keywords=editor;code;text;assembly;
+StartupWMClass=rhun

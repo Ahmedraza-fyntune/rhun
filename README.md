@@ -25,6 +25,7 @@ Requires GNU as and ld (binutils) on x86-64 Linux. Nothing else.
 ./build.sh           # build/rhun with debug symbols
 ./build.sh release   # stripped
 tests/run.sh         # unit tests and scripted UI tests
+tools/install.sh     # release build into ~/.local, with the desktop entry and icon
 ```
 
 ## Run

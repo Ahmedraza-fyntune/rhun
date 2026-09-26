@@ -553,7 +553,8 @@ ENDSTRUCT TF_SIZE
 .equ IC_CHEV_DN2, 23
 .equ IC_CASE, 24
 .equ IC_WORD, 25
-.equ IC_COUNT, 26
+.equ IC_RUNE, 26                # the app mark (Raido)
+.equ IC_COUNT, 27
 
 # ---- app ----
 .equ TAB_DOC, 1

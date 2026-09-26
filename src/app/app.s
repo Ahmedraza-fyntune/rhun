@@ -1941,17 +1941,64 @@ FN welcome_draw
     sub eax, [rip + g_mt + 4*MI_64]
     sub eax, [rip + g_mt + 4*MI_48]
     mov r12d, eax
+    # the rune and "rhun", centered together; the rune is as tall as the h
+    mov eax, [rip + g_face_huge + FACE_px]
+    shl eax, 2
+    xor edx, edx
+    mov ecx, 3
+    div ecx
+    mov [rsp + 20], eax         # icon box
+    imul eax, eax, 43
+    shr eax, 7
+    mov [rsp + 24], eax         # visible rune width
     lea rdi, [rip + g_face_huge]
-    mov esi, [rsp]
+    lea rsi, [rip + .Lrhun]
+    mov edx, 4
+    call text_width
+    mov [rsp + 28], eax
+    mov eax, [rsp + 20]
+    shr eax, 2
+    mov [rsp + 32], eax         # gap
+    add eax, [rsp + 24]
+    add eax, [rsp + 28]
+    mov ecx, [rsp + 8]
+    sub ecx, eax
+    sar ecx, 1
+    add ecx, [rsp]
+    mov [rsp + 36], ecx         # left edge of the group
+    mov esi, [rsp + 20]
+    imul esi, esi, 42
+    sar esi, 7
+    neg esi
+    add esi, ecx                # icon box x
+    M eax, MI_48
+    shr eax, 1
     mov edx, r12d
     sub edx, [rip + g_mt + 4*MI_20]
-    mov ecx, [rsp + 8]
-    M r8d, MI_48
-    lea r9, [rip + .Lrhun]
+    add edx, eax
+    mov eax, [rsp + 20]
+    shr eax, 1
+    sub edx, eax                # icon box y: centered on the text row,
+    mov eax, [rsp + 20]
+    shr eax, 5
+    sub edx, eax                # then up a little to sit on the baseline
+    mov edi, IC_RUNE
+    mov ecx, [rsp + 20]
+    COLOR r8d, T_ACCENT
+    call icon_draw
+    lea rdi, [rip + g_face_huge]
+    mov esi, [rsp + 36]
+    add esi, [rsp + 24]
+    add esi, [rsp + 32]
+    mov edx, r12d
+    sub edx, [rip + g_mt + 4*MI_20]
+    M ecx, MI_48
+    lea r8, [rip + .Lrhun]
+    mov r9d, 4
     COLOR eax, T_FG
     push rax
     push rax
-    call ui_text_center
+    call ui_text_v
     add rsp, 16
     add r12d, [rip + g_mt + 4*MI_40]
     lea rdi, [rip + g_face_small]
