@@ -272,7 +272,7 @@ FN app_open_file
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_mtime
+    call file_stamp
     mov [rbx + DOC_mtime], rax
     call iv_new
     mov [rbx + DOC_img], rax

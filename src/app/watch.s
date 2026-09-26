@@ -220,7 +220,7 @@ doc_changed:
     call tab_at
     mov r12, [rax + TAB_doc]
     mov rdi, rbx
-    call file_mtime
+    call file_stamp
     cmp rax, [r12 + DOC_mtime]
     je 8f
     mov rdi, r12
@@ -283,12 +283,12 @@ FN app_reload_doc
     mov rax, [rbx + DOC_undo + VEC_len]
     mov [rbx + DOC_savepoint], rax
     mov rdi, [rbx + DOC_path]
-    call file_mtime
+    call file_stamp
     mov [rbx + DOC_mtime], rax
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
 .Lrd_image:
-    call file_mtime
+    call file_stamp
     mov [rbx + DOC_mtime], rax
     mov rdi, [rbx + DOC_img]
     call iv_reload

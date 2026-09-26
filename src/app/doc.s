@@ -942,7 +942,7 @@ FN doc_load
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_mtime
+    call file_stamp
     mov [rbx + DOC_mtime], rax
     mov rdi, r12
     call file_read_all
@@ -1170,7 +1170,7 @@ FN doc_save
     mov rax, [rbx + DOC_undo + VEC_len]
     mov [rbx + DOC_savepoint], rax
     mov rdi, [rbx + DOC_path]
-    call file_mtime
+    call file_stamp
     mov [rbx + DOC_mtime], rax
 7:  mov rax, r12
     EPILOGUE
