@@ -55,6 +55,8 @@ FN doc_free
     call mem_free
     mov rdi, [rbx + DOC_states]
     call mem_free
+    mov rdi, [rbx + DOC_lhash]
+    call mem_free
     mov rdi, [rbx + DOC_path]
     call mem_free
     mov rdi, rbx
@@ -83,7 +85,7 @@ urec_clear:
     pop rbx
     ret
 
-# lines_reserve(doc, n): capacity for n lines (lines + states)
+# lines_reserve(doc, n): capacity for n lines (starts, states, hashes)
 lines_reserve:
     push rbx
     push r12
@@ -104,6 +106,10 @@ lines_reserve:
     lea rsi, [r12*4]
     call mem_realloc
     mov [rbx + DOC_states], rax
+    mov rdi, [rbx + DOC_lhash]
+    lea rsi, [r12*8]
+    call mem_realloc
+    mov [rbx + DOC_lhash], rax
 1:  pop r12
     pop rbx
     ret
@@ -420,10 +426,18 @@ FN raw_insert
     call memmove
     pop rdx
     shr rdx, 1                  # same count, 4-byte entries
-    mov rcx, [rsp]
+    push rdx
+    mov rcx, [rsp + 8]
     mov rax, [rbx + DOC_states]
     lea rsi, [rax + r15*4 + 4]
     lea rdi, [rsi + rcx*4]
+    call memmove
+    pop rdx
+    shl rdx, 1                  # 8-byte hashes
+    mov rcx, [rsp]
+    mov rax, [rbx + DOC_lhash]
+    lea rsi, [rax + r15*8 + 8]
+    lea rdi, [rsi + rcx*8]
     call memmove
     # fill new starts
     mov r8, [rbx + DOC_lines]
@@ -443,6 +457,13 @@ FN raw_insert
 6:  mov rax, [rsp]
     add [rbx + DOC_nlines], rax
 .Lri_lines_done:
+    # the edited line and the new ones need hashing again
+    mov rax, [rbx + DOC_lhash]
+    lea rdi, [rax + r15*8]
+    mov rcx, [rsp]
+    inc rcx
+    xor eax, eax
+    rep stosq
     mov rdi, rbx
     mov rsi, r15
     mov rdx, [rsp]
@@ -509,6 +530,15 @@ FN raw_delete
     lea rsi, [r9 + rcx*4]
     shl rdx, 2
     call memmove
+    mov rax, [rsp]
+    mov rdx, [rbx + DOC_nlines]
+    lea rcx, [r15 + rax + 1]
+    sub rdx, rcx
+    mov r9, [rbx + DOC_lhash]
+    lea rdi, [r9 + r15*8 + 8]
+    lea rsi, [r9 + rcx*8]
+    shl rdx, 3
+    call memmove
     pop rax
     sub [rbx + DOC_nlines], rax
 3:  mov r8, [rbx + DOC_lines]
@@ -518,7 +548,9 @@ FN raw_delete
     sub [r8 + rcx*8], r13
     inc rcx
     jmp 4b
-5:  mov rdi, rbx
+5:  mov rax, [rbx + DOC_lhash]
+    mov qword ptr [rax + r15*8], 0
+    mov rdi, rbx
     mov rsi, r15
     mov rdx, [rsp]
     call states_after_delete
@@ -988,6 +1020,10 @@ FN doc_load
 81: inc rcx
     jmp 8b
 9:  mov [rbx + DOC_nlines], rdx
+    mov rdi, [rbx + DOC_lhash]
+    mov rcx, rdx
+    xor eax, eax
+    rep stosq
     mov qword ptr [rbx + DOC_svalid], 0
     mov qword ptr [rbx + DOC_savepoint], 0
     xor eax, eax

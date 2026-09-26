@@ -486,6 +486,7 @@ F DOC_gver, 8           # git: DOC_version the marks were made for
 F DOC_gstate, 4         # GS_*
 F DOC_gseq, 4           # git: request number; answers to older requests are dropped
 F DOC_diff, 8           # diff view: DV* with the kind and numbers of each line
+F DOC_lhash, 8          # hash of each line (for git marks), 0 = not known yet
 ENDSTRUCT DOC_SIZE
 
 # DOC_flags

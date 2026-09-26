@@ -5,7 +5,6 @@
 
 .bss
 .p2align 3
-bhash: .zero VEC_SIZE           # document line hashes (u64 each)
 vbuf: .quad 0                   # V, 2 * DMAX + 3 ints
 trace: .quad 0                  # V after each step: (DMAX + 1)^2 ints at most
 tcap: .quad 0
@@ -100,27 +99,22 @@ FN diff_marks
     jnz 1f
     dec r15
 1:  mov [rsp], r15              # nb
-    lea rsi, [r15*8 + 8]
-    lea rdi, [rip + bhash]
-    mov [rdi + VEC_len], r15
-    cmp rsi, [rdi + VEC_cap]
-    jbe 2f
-    mov [rdi + VEC_cap], rsi
-    mov rdi, [rdi + VEC_ptr]
-    call mem_realloc
-    mov [rip + bhash + VEC_ptr], rax
-2:  xor r12d, r12d
+    # hashes the document keeps for lines not changed since
+    xor r12d, r12d
 3:  cmp r12, r15
     jae 4f
+    mov rcx, [rbx + DOC_lhash]
+    cmp qword ptr [rcx + r12*8], 0
+    jne 2f
     mov rdi, rbx
     mov rsi, r12
     call doc_line_text
     mov rdi, rax
     mov rsi, rdx
     call hash_line
-    mov rcx, [rip + bhash + VEC_ptr]
+    mov rcx, [rbx + DOC_lhash]
     mov [rcx + r12*8], rax
-    inc r12
+2:  inc r12
     jmp 3b
 4:  # marks: a byte per document line, cleared
     mov rsi, [rbx + DOC_nlines]
@@ -150,7 +144,7 @@ FN diff_marks
     rep stosb
     # common start and end
     mov r12, [rbx + DOC_ghash]  # a
-    mov r13, [rip + bhash + VEC_ptr]    # b
+    mov r13, [rbx + DOC_lhash]  # b
     mov r14, [rbx + DOC_gnl]    # na
     xor ecx, ecx
 6:  cmp rcx, r14
