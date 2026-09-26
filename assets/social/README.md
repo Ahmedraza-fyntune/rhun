@@ -10,8 +10,8 @@
 | `banner.png`, `banner@2x.png` | 1500×500 | X header; the bottom left stays free for the avatar |
 | `screenshot-dark.png`, `screenshot-light.png` | 2560×1600 | The editor at 2× |
 
-The SVGs are the sources; the icon is `../icons/rhun.svg`. They use Ubuntu Sans from `../fonts` and embed `window-dark.png`.
+The SVGs are the sources; the icon is `../icons/rhun.svg`. They use Iosevka Fixed from `../fonts` and embed `window-dark.png`.
 
 `./export.sh` renders every PNG from its SVG with headless Chrome or Chromium. `./export.sh --shots` first retakes the screenshots with `build/rhun`, using the scripts and the made-up agent sessions in `demo/`.
 
-Colors: background `#111216`, surface `#1c1e24`, text `#e4e7ee`, secondary `#a3a9b8`, accent `#8aa4ff`. Font: Ubuntu Sans, under the Ubuntu Font Licence (`../fonts/LICENCE-UFL.txt`).
+Colors: background `#111216`, surface `#1c1e24`, text `#e4e7ee`, secondary `#a3a9b8`, accent `#8aa4ff`. Font: Iosevka Fixed, under the SIL Open Font License (`../fonts/LICENSE-Iosevka.md`).

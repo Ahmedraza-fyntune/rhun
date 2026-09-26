@@ -19,7 +19,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 
 ## Build
 
-Requires GNU as and ld (binutils) on x86-64 Linux. Nothing else.
+Linux on x86-64 for now. GNU as and ld (binutils) are all it needs.
 
 ```sh
 ./build.sh           # build/rhun with debug symbols
