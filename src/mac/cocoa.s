@@ -2142,8 +2142,7 @@ FN x_key_test
 
 .data
 .p2align 3
-.globl g_csd, g_dpi_scale, g_win_states, g_xsp
-g_xsp: .quad 0
+.globl g_csd, g_dpi_scale, g_win_states
 app: .quad 0
 win: .quad 0
 view: .quad 0

@@ -12,6 +12,9 @@
 .text
 
 FN x_syscall
+    // AppKit may call back into rhun while poll waits: its x86 stack continues from here
+    adrp x9, g_xsp@PAGE
+    str x28, [x9, g_xsp@PAGEOFF]
     stp x29, x30, [sp, #-16]!
     mov x29, sp
     sub sp, sp, #304
@@ -27,7 +30,6 @@ FN x_syscall
     stp q20, q21, [sp, #240]
     stp q22, q23, [sp, #272]
     mov x3, x6
-    mov x0, x0
     cmp x8, #NSYS
     b.hs 1f
     ADR x9, sys_table
@@ -599,8 +601,9 @@ errno_map:
 
 .data
 .p2align 3
-.globl g_poll_hook
+.globl g_poll_hook, g_xsp
 g_poll_hook: .quad 0
+g_xsp: .quad 0                  // x86 stack pointer when rhun last entered native code
 
 .bss
 .p2align 3
