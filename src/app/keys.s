@@ -92,14 +92,19 @@ combo_token:
 6:  mov eax, [rbx + 8]
     xor edx, edx
     EPILOGUE
-5:  # single character (lowercased)
-    xor eax, eax
+5:  # single character (lowercased), else any keysym name
     xor edx, edx
     cmp r13, 1
     jne 7f
     movzx edi, byte ptr [r12]
     call to_lower
-7:  EPILOGUE
+    xor edx, edx
+    EPILOGUE
+7:  mov rdi, r12
+    mov rsi, r13
+    call keysym_value
+    xor edx, edx
+    EPILOGUE
 
 # str_ieq_cstr(ptr, len, cstr) -> 1 if equal ignoring ascii case
 FN str_ieq_cstr

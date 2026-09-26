@@ -678,6 +678,12 @@ FN app_on_key
     mov dword ptr [rip + g_dirty], 1
     call time_ms
     mov [rip + g_blink_t0], rax
+    # dead keys and the Compose key
+    mov edi, r12d
+    mov esi, r14d
+    call compose_key
+    test eax, eax
+    jnz 9f
     # modal dialog swallows keys
     cmp dword ptr [rip + dlg_kind], 0
     je 1f

@@ -1244,8 +1244,8 @@ key_emit:
 
 # is_modifier_key(xkb keycode) -> 1 if its base keysym is a modifier
 is_modifier_key:
-    xor esi, esi
-    xor edx, edx
+    mov esi, [rip + kb_group]
+    mov edx, [rip + kb_mods]
     call xkb_keysym
     lea ecx, [rax - 0xffe1]
     cmp ecx, 0xffee - 0xffe1
@@ -1253,6 +1253,11 @@ is_modifier_key:
     lea ecx, [rax - 0xfe01]
     cmp ecx, 0x20
     jbe 1f
+    lea ecx, [rax - 0xfe50]         # dead keys
+    cmp ecx, 0xfe93 - 0xfe50
+    jbe 1f
+    cmp eax, 0xff20                 # Multi_key
+    je 1f
     xor eax, eax
     ret
 1:  mov eax, 1
