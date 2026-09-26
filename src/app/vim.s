@@ -2048,8 +2048,14 @@ vyank:
     mov r13, rsi
     mov ebx, edx
     cmp r12, r13
-    jae 9f
-    mov rdi, r12
+    jb 0f
+    # nothing: an empty line when lines were yanked (yy in an empty file)
+    test ebx, ebx
+    jz 9f
+    lea rdi, [rip + v_buf]
+    call sb_clear
+    jmp 73f
+0:  mov rdi, r12
     mov rsi, r13
     call vcopy
     test ebx, ebx
@@ -2058,7 +2064,7 @@ vyank:
     mov rcx, [rip + v_buf + SB_ptr]
     cmp byte ptr [rcx + rax - 1], 10
     je 1f
-    lea rdi, [rip + v_buf]
+73: lea rdi, [rip + v_buf]
     mov esi, 10
     call sb_push_byte
 1:  mov rdi, [rip + v_buf + SB_ptr]
