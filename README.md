@@ -1,6 +1,6 @@
 # rhun
 
-A small, fast code editor for Linux, written in x86-64 assembly.
+A small and fast code editor written in Assembly.
 
 rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets into a pixel buffer and hands that buffer to the display server. It speaks the Wayland and X11 wire protocols directly, without libc, toolkits or libwayland. The result is one static binary (fonts, themes and grammars included) that looks the same on every desktop.
 
