@@ -73,6 +73,9 @@ v_exout: .quad 0, 0
 v_exmode: .long 0
 v_rec: .zero SB_SIZE            # keys of the command in progress (KR_SIZE each)
 v_dot: .zero SB_SIZE            # keys of the last change
+v_vdot: .zero SB_SIZE           # a visual change as normal mode keys, for "." (empty: none)
+v_vdotcount: .long 0            # their count: lines, or characters of one line
+v_vdotop: .long 0
 v_buf: .zero SB_SIZE
 v_stat: .zero 64
 v_tf: .zero TF_SIZE             # the command line
@@ -420,7 +423,7 @@ vsavedot:
     cmp dword ptr [rip + v_replay], 0
     jne 1f
     cmp dword ptr [rip + v_visual], 0
-    jne 1f
+    jne 2f
     push rbx
     lea rdi, [rip + v_dot]
     call sb_clear
@@ -432,6 +435,131 @@ vsavedot:
     mov [rip + v_dotcount], eax
     pop rbx
 1:  ret
+2:  # a visual change: the same operator from the cursor on as many lines or characters
+    push rbx
+    lea rdi, [rip + v_dot]
+    call sb_clear
+    lea rdi, [rip + v_dot]
+    mov rsi, [rip + v_vdot + SB_ptr]
+    mov rdx, [rip + v_vdot + SB_len]
+    call sb_push
+    mov eax, [rip + v_vdotcount]
+    mov [rip + v_dotcount], eax
+    # c: and what was typed
+    cmp qword ptr [rip + v_vdot + SB_len], 0
+    je 3f
+    cmp dword ptr [rip + v_vdotop], 'c'
+    jne 3f
+    mov rsi, [rip + v_insstart]
+    mov rdx, [rip + v_rec + SB_len]
+    sub rdx, rsi
+    jbe 3f
+    add rsi, [rip + v_rec + SB_ptr]
+    lea rdi, [rip + v_dot]
+    call sb_push
+3:  lea rdi, [rip + v_vdot]
+    call sb_clear
+    pop rbx
+    ret
+
+# vdot_visual(op, s, e, lines): v_vdot for a visual change about to be made; s, e are lines when
+# lines is set (the operator doubled with their count: dd >> gUU; J once), else positions of
+# characters on one line (the operator and l, with their count). Characters over more lines,
+# or up to the line end, have no such keys: "." then does nothing.
+vdot_visual:
+    PROLOGUE
+    mov r15d, edi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14d, ecx
+    mov [rip + v_vdotop], edi
+    mov dword ptr [rip + v_vdotcount], 0
+    lea rdi, [rip + v_vdot]
+    call sb_clear
+    cmp r15d, 'y'
+    je 9f
+    test r14d, r14d
+    jz 5f
+    mov rax, r13
+    sub rax, r12
+    inc eax
+    cmp r15d, 'J'
+    jne 1f
+    cmp eax, 2
+    jge 2f
+    mov eax, 2
+    jmp 2f
+1:  mov [rip + v_vdotcount], eax
+    mov edi, r15d
+    call vdot_op
+    mov edi, r15d
+    call vdot_key
+    jmp 9f
+2:  mov [rip + v_vdotcount], eax
+    mov edi, 'J'
+    call vdot_key
+    jmp 9f
+5:  mov rdi, r12
+    call vline
+    mov rbx, rax
+    mov rdi, r13
+    call vline
+    cmp rax, rbx
+    jne 8f
+    mov rdi, rbx
+    call vend
+    cmp r13, rax
+    ja 8f
+    xor ebx, ebx
+    mov r14, r12
+6:  cmp r14, r13
+    jae 7f
+    mov rdi, r14
+    call vnext
+    mov r14, rax
+    inc ebx
+    jmp 6b
+7:  test ebx, ebx
+    jz 8f
+    mov [rip + v_vdotcount], ebx
+    mov edi, r15d
+    call vdot_op
+    mov edi, 'l'
+    call vdot_key
+    jmp 9f
+8:  lea rdi, [rip + v_vdot]
+    call sb_clear
+9:  EPILOGUE
+
+# vdot_op(op): the keys of an operator into v_vdot (gu gU g~ for u U ~)
+vdot_op:
+    push rbx
+    mov ebx, edi
+    cmp ebx, 'u'
+    je 1f
+    cmp ebx, 'U'
+    je 1f
+    cmp ebx, '~'
+    jne 2f
+1:  mov edi, 'g'
+    call vdot_key
+2:  mov edi, ebx
+    call vdot_key
+    pop rbx
+    ret
+
+# vdot_key(cp): a typed key into v_vdot
+vdot_key:
+    sub rsp, 24
+    mov [rsp], edi
+    mov [rsp + 4], edi
+    mov dword ptr [rsp + 8], 0
+    lea rdi, [rip + v_vdot]
+    mov rsi, rsp
+    mov edx, KR_SIZE
+    call sb_push
+    add rsp, 24
+    ret
 
 # vundo_pos(records, redo) -> where the change on top of an undo (redo) list begins, -1 if none
 vundo_pos:
@@ -1334,6 +1462,11 @@ vcmd:
     call vsel_lines
     mov r12, rax
     mov r13, rdx
+    mov edi, 'J'
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, 1
+    call vdot_visual
     call vexit_visual
     mov dword ptr [rip + v_visual], 1
     mov rsi, r13
@@ -1470,6 +1603,11 @@ vvisual_op:
     call vim_sel
     mov r12, rax
     mov r13, rdx
+    mov edi, r15d
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    call vdot_visual
     call vexit_visual
     mov edi, r15d
     mov rsi, r12
@@ -1480,6 +1618,11 @@ vvisual_op:
 1:  call vsel_lines
     mov r12, rax
     mov r13, rdx
+    mov edi, r15d
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, 1
+    call vdot_visual
     call vexit_visual
     mov edi, r15d
     mov rsi, r12
@@ -2007,6 +2150,8 @@ vreplace:
 vvisual_replace:
     PROLOGUE 16
     mov [rsp], edi
+    lea rdi, [rip + v_vdot]
+    call sb_clear
     mov rbx, [rip + g_doc]
     mov rdi, rbx
     call vim_sel
@@ -2167,6 +2312,8 @@ vput:
     call vsetc
     jmp .Lpt_end
 .Lpt_visual:
+    lea rdi, [rip + v_vdot]
+    call sb_clear
     # replace the selection
     mov eax, [rip + v_putmode]
     mov [rip + g_vim_mode], eax
