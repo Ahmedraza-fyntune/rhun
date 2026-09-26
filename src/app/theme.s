@@ -1,15 +1,6 @@
 # themes: parse "key = #rrggbb" files, derive missing colors, registry of built-in + user themes
 .include "rhun.inc"
 
-STRUCT
-F TH_id, 8              # file stem (cstr)
-F TH_name, 8            # display name (cstr)
-F TH_dark, 4
-F TH_pad, 4
-F TH_src, 8             # embedded text or 0
-F TH_len, 8
-F TH_path, 8            # user file path or 0
-ENDSTRUCT TH_SIZE
 
 .bss
 .p2align 3

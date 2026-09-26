@@ -1,0 +1,682 @@
+# settings page (opened as a tab), generated from g_settings
+.include "rhun.inc"
+
+.equ ID_SET_ROW, 0x5000         # + index*4 + part
+.equ ID_SET_OPENFILE, 0x4f00
+.equ ID_SET_SCROLL, 0x4f01
+
+.bss
+.p2align 3
+set_scroll: .long 0
+set_content_h: .long 0
+.p2align 3
+set_tf: .zero TF_SIZE
+buf: .zero 64
+
+.text
+
+FN settings_field
+    cmp dword ptr [rip + set_edit], 0
+    jl 1f
+    lea rax, [rip + set_tf]
+    ret
+1:  xor eax, eax
+    ret
+
+# commit the edited string setting
+commit_edit:
+    PROLOGUE
+    mov eax, [rip + set_edit]
+    test eax, eax
+    js 9f
+    mov dword ptr [rip + set_edit], -1
+    imul rbx, rax, SET_SIZE
+    lea rcx, [rip + g_settings]
+    add rbx, rcx
+    lea rdi, [rip + set_tf]
+    call tf_text
+    mov rdi, rbx
+    mov rsi, rax
+    call setting_assign
+    mov rdi, rbx
+    call setting_applied
+9:  EPILOGUE
+
+# setting_applied(SET*): side effects of a changed value
+FN setting_applied
+    PROLOGUE
+    mov rbx, rdi
+    mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    mov rax, [rbx + SET_ptr]
+    lea rcx, [rip + cfg_font]
+    cmp rax, rcx
+    je 1f
+    lea rcx, [rip + cfg_ui_font]
+    cmp rax, rcx
+    jne 2f
+1:  call app_load_fonts
+    call ui_force_metrics
+    jmp 9f
+2:  lea rcx, [rip + cfg_exclude]
+    cmp rax, rcx
+    jne 3f
+    call explorer_refresh
+    jmp 9f
+3:  lea rcx, [rip + cfg_agent_sources]
+    cmp rax, rcx
+    jne 9f
+    call agents_set_project
+9:  EPILOGUE
+
+# settings_key(keysym, cp, mods) -> 1 if handled
+FN settings_key
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    cmp dword ptr [rip + set_edit], 0
+    jl 5f
+    cmp r12d, KEY_RETURN
+    jne 1f
+    call commit_edit
+    jmp .Lsk_yes
+1:  cmp r12d, KEY_ESCAPE
+    jne 2f
+    mov dword ptr [rip + set_edit], -1
+    jmp .Lsk_yes
+2:  lea rdi, [rip + set_tf]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call tf_key
+    test eax, eax
+    jnz .Lsk_yes
+    xor eax, eax
+    EPILOGUE
+5:  # page navigation
+    cmp r12d, KEY_DOWN
+    jne 6f
+    mov edi, 60
+    call sc
+    add [rip + set_scroll], eax
+    jmp .Lsk_yes
+6:  cmp r12d, KEY_UP
+    jne 7f
+    mov edi, 60
+    call sc
+    sub [rip + set_scroll], eax
+    jmp .Lsk_yes
+7:  cmp r12d, KEY_ESCAPE
+    jne 8f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    jmp .Lsk_yes
+8:  xor eax, eax
+    EPILOGUE
+.Lsk_yes:
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+
+# section_title(sec cstr) -> display name
+section_title:
+    lea rax, [rip + .Lt_appearance]
+    cmp byte ptr [rdi], 'u'
+    je 1f
+    lea rax, [rip + .Lt_editor]
+    cmp byte ptr [rdi], 'e'
+    je 1f
+    lea rax, [rip + .Lt_files]
+    cmp byte ptr [rdi], 'f'
+    je 1f
+    lea rax, [rip + .Lt_agents]
+1:  ret
+
+# format a value for steppers
+fmt_value:
+    # rdi SET* -> buf
+    push rbx
+    mov rbx, rdi
+    mov rax, [rbx + SET_ptr]
+    mov eax, [rax]
+    cmp dword ptr [rbx + SET_decimal], 0
+    jne 1f
+    lea rdi, [rip + buf]
+    mov esi, eax
+    call fmt_u64
+    lea rdi, [rip + buf]
+    mov byte ptr [rdi + rax], 0
+    pop rbx
+    ret
+1:  xor edx, edx
+    mov ecx, 100
+    div ecx
+    push rdx
+    lea rdi, [rip + buf]
+    mov esi, eax
+    call fmt_u64
+    lea rdi, [rip + buf]
+    add rdi, rax
+    mov byte ptr [rdi], '.'
+    inc rdi
+    pop rax
+    xor edx, edx
+    mov ecx, 10
+    div ecx
+    add al, '0'
+    mov [rdi], al
+    inc rdi
+    test edx, edx
+    jz 2f
+    add dl, '0'
+    mov [rdi], dl
+    inc rdi
+2:  mov byte ptr [rdi], 0
+    pop rbx
+    ret
+
+# settings_draw(x, y, w, h)
+FN settings_draw
+    PROLOGUE 96
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    COLOR r8d, T_BG
+    call gfx_fill
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call gfx_clip_push
+    # wheel
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call ui_in
+    test eax, eax
+    jz 1f
+    mov eax, [rip + g_scroll_y]
+    add [rip + set_scroll], eax
+1:  mov eax, [rip + set_content_h]
+    sub eax, [rsp + 12]
+    jns 11f
+    xor eax, eax
+11: cmp [rip + set_scroll], eax
+    jle 12f
+    mov [rip + set_scroll], eax
+12: cmp dword ptr [rip + set_scroll], 0
+    jge 13f
+    mov dword ptr [rip + set_scroll], 0
+13: # column
+    mov edi, 720
+    call sc
+    mov ecx, [rsp + 8]
+    sub ecx, [rip + g_mt + 4*MI_64]
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov [rsp + 16], eax         # column w
+    mov ecx, [rsp + 8]
+    sub ecx, eax
+    sar ecx, 1
+    add ecx, [rsp]
+    mov [rsp + 20], ecx         # column x
+    mov eax, [rsp + 4]
+    add eax, [rip + g_mt + 4*MI_32]
+    sub eax, [rip + set_scroll]
+    mov r12d, eax               # y cursor
+    mov [rsp + 24], eax         # y at top (for content height)
+    # title
+    lea rdi, [rip + g_face_big]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    M ecx, MI_40
+    lea r8, [rip + .Ltitle]
+    COLOR r9d, T_FG
+    call ui_text_c
+    add r12d, [rip + g_mt + 4*MI_40]
+    # config file line + button
+    call config_path
+    mov r8, rax
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    M ecx, MI_28
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    lea rdi, [rip + .Lopen_file]
+    call strlen
+    lea rdi, [rip + g_face_small]
+    lea rsi, [rip + .Lopen_file]
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_24]
+    mov r13d, eax
+    mov esi, [rsp + 20]
+    add esi, [rsp + 16]
+    sub esi, r13d
+    mov [rsp + 28], esi
+    mov edi, ID_SET_OPENFILE
+    mov edx, r12d
+    mov ecx, r13d
+    M r8d, MI_28
+    call ui_btn
+    mov [rsp + 32], eax
+    mov edi, [rsp + 28]
+    mov esi, r12d
+    mov edx, r13d
+    M ecx, MI_28
+    M r8d, MI_RADIUS
+    COLOR r9d, T_BORDER
+    COLOR eax, T_BG
+    test dword ptr [rsp + 32], UB_HOVER
+    jz 2f
+    COLOR eax, T_HOVER
+2:  push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 28]
+    mov edx, r12d
+    mov ecx, r13d
+    M r8d, MI_28
+    lea r9, [rip + .Lopen_file]
+    COLOR eax, T_FG
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+    test dword ptr [rsp + 32], UB_CLICK
+    jz 3f
+    call cmd_open_config
+    jmp .Lsd_end
+3:  add r12d, [rip + g_mt + 4*MI_40]
+    # rows
+    lea rbx, [rip + g_settings]
+    xor r15d, r15d              # index
+    xor r14d, r14d              # previous section ptr
+.Lsd_row:
+    cmp qword ptr [rbx + SET_key], 0
+    je .Lsd_rows_done
+    mov rax, [rbx + SET_sec]
+    cmp rax, r14
+    je 4f
+    mov r14, rax
+    # section header
+    add r12d, [rip + g_mt + 4*MI_16]
+    mov rdi, r14
+    call section_title
+    mov r8, rax
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    M ecx, MI_28
+    COLOR r9d, T_ACCENT
+    call ui_text_c
+    add r12d, [rip + g_mt + 4*MI_32]
+4:  # row card
+    M r13d, MI_64
+    mov edi, [rsp + 20]
+    mov esi, r12d
+    mov edx, [rsp + 16]
+    mov ecx, r13d
+    M r8d, MI_RADIUS
+    COLOR r9d, T_BORDER
+    COLOR eax, T_PANEL
+    push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    # label + description
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 20]
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, r12d
+    add edx, [rip + g_mt + 4*MI_10]
+    M ecx, MI_24
+    mov r8, [rbx + SET_label]
+    COLOR r9d, T_FG
+    call ui_text_c
+    mov rdi, [rbx + SET_desc]
+    call strlen
+    mov r9, rax
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 20]
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, r12d
+    add edx, [rip + g_mt + 4*MI_32]
+    M ecx, MI_20
+    mov r8, [rbx + SET_desc]
+    COLOR r10d, T_MUTED
+    mov r11d, [rsp + 16]
+    sub r11d, [rip + g_mt + 4*MI_64]
+    sub r11d, [rip + g_mt + 4*MI_64]
+    sub r11d, [rip + g_mt + 4*MI_64]
+    push r11
+    push r10
+    call ui_text_v_fit
+    add rsp, 16
+    # control on the right
+    mov eax, [rsp + 20]
+    add eax, [rsp + 16]
+    sub eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 36], eax         # right edge
+    lea eax, [r15*4 + ID_SET_ROW]
+    mov [rsp + 40], eax         # id base
+    mov eax, [rbx + SET_type]
+    cmp eax, ST_BOOL
+    je .Lsd_bool
+    cmp eax, ST_INT
+    je .Lsd_int
+    cmp eax, ST_THEME
+    je .Lsd_theme
+    jmp .Lsd_str
+.Lsd_bool:
+    M eax, MI_14
+    add eax, [rip + g_mt + 4*MI_20]
+    mov esi, [rsp + 36]
+    sub esi, eax
+    mov edx, r13d
+    sub edx, [rip + g_mt + 4*MI_20]
+    sar edx, 1
+    add edx, r12d
+    mov edi, [rsp + 40]
+    mov rax, [rbx + SET_ptr]
+    mov ecx, [rax]
+    call ui_toggle
+    test eax, eax
+    jz .Lsd_next
+    mov rax, [rbx + SET_ptr]
+    xor dword ptr [rax], 1
+    mov rdi, rbx
+    call setting_applied
+    jmp .Lsd_next
+.Lsd_int:
+    # [-] value [+]
+    M eax, MI_28
+    mov [rsp + 44], eax
+    mov esi, [rsp + 36]
+    sub esi, eax
+    mov [rsp + 48], esi         # plus x
+    sub esi, [rip + g_mt + 4*MI_64]
+    mov [rsp + 52], esi         # value x (64 wide)
+    sub esi, eax
+    mov [rsp + 56], esi         # minus x
+    mov edx, r13d
+    sub edx, eax
+    sar edx, 1
+    add edx, r12d
+    mov [rsp + 60], edx         # y
+    # value box
+    mov edi, [rsp + 52]
+    mov esi, edx
+    M edx, MI_64
+    mov ecx, [rsp + 44]
+    M r8d, MI_4
+    COLOR r9d, T_INPUT
+    call gfx_round_rect
+    mov rdi, rbx
+    call fmt_value
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 52]
+    mov edx, [rsp + 60]
+    M ecx, MI_64
+    mov r8d, [rsp + 44]
+    lea r9, [rip + buf]
+    COLOR eax, T_FG
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+    # minus
+    mov edi, [rsp + 40]
+    mov esi, [rsp + 56]
+    mov edx, [rsp + 60]
+    mov ecx, [rsp + 44]
+    mov r8d, ecx
+    mov r9d, IC_MIN
+    call ui_icon_btn
+    test eax, UB_PRESS
+    jz 5f
+    mov rax, [rbx + SET_ptr]
+    mov ecx, [rax]
+    sub ecx, [rbx + SET_step]
+    cmp ecx, [rbx + SET_min]
+    jge 41f
+    mov ecx, [rbx + SET_min]
+41: mov [rax], ecx
+    mov rdi, rbx
+    call setting_applied
+5:  mov edi, [rsp + 40]
+    inc edi
+    mov esi, [rsp + 48]
+    mov edx, [rsp + 60]
+    mov ecx, [rsp + 44]
+    mov r8d, ecx
+    mov r9d, IC_PLUS
+    call ui_icon_btn
+    test eax, UB_PRESS
+    jz .Lsd_next
+    mov rax, [rbx + SET_ptr]
+    mov ecx, [rax]
+    add ecx, [rbx + SET_step]
+    cmp ecx, [rbx + SET_max]
+    jle 51f
+    mov ecx, [rbx + SET_max]
+51: mov [rax], ecx
+    mov rdi, rbx
+    call setting_applied
+    jmp .Lsd_next
+.Lsd_theme:
+    # button showing the theme name, opens the theme picker
+    mov rdi, [rip + g_theme_cur]
+    call theme_entry
+    mov r8, [rax + TH_name]
+    mov [rsp + 64], r8
+    mov rdi, r8
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    mov rsi, [rsp + 64]
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_48]
+    mov [rsp + 44], eax         # w
+    mov esi, [rsp + 36]
+    sub esi, eax
+    mov [rsp + 52], esi
+    M eax, MI_32
+    mov edx, r13d
+    sub edx, eax
+    sar edx, 1
+    add edx, r12d
+    mov [rsp + 60], edx
+    mov edi, [rsp + 40]
+    mov ecx, [rsp + 44]
+    mov r8d, eax
+    call ui_btn
+    mov [rsp + 32], eax
+    mov edi, [rsp + 52]
+    mov esi, [rsp + 60]
+    mov edx, [rsp + 44]
+    M ecx, MI_32
+    M r8d, MI_RADIUS
+    COLOR r9d, T_BORDER
+    COLOR eax, T_INPUT
+    test dword ptr [rsp + 32], UB_HOVER
+    jz 6f
+    COLOR eax, T_HOVER
+6:  push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 52]
+    add esi, [rip + g_mt + 4*MI_12]
+    mov edx, [rsp + 60]
+    M ecx, MI_32
+    mov r8, [rsp + 64]
+    COLOR r9d, T_FG
+    call ui_text_c
+    mov edi, IC_CHEV_DN2
+    mov esi, [rsp + 52]
+    add esi, [rsp + 44]
+    sub esi, [rip + g_mt + 4*MI_32]
+    mov edx, [rsp + 60]
+    M ecx, MI_32
+    mov r8d, ecx
+    COLOR r9d, T_MUTED
+    call ui_icon_center
+    test dword ptr [rsp + 32], UB_CLICK
+    jz .Lsd_next
+    call cmd_select_theme
+    jmp .Lsd_next
+.Lsd_str:
+    mov edi, 300
+    call sc
+    mov [rsp + 44], eax
+    mov esi, [rsp + 36]
+    sub esi, eax
+    mov [rsp + 52], esi
+    M eax, MI_32
+    mov edx, r13d
+    sub edx, eax
+    sar edx, 1
+    add edx, r12d
+    mov [rsp + 60], edx
+    cmp r15d, [rip + set_edit]
+    je 7f
+    # show the current value in a field-looking box; click to edit
+    mov edi, [rsp + 40]
+    mov ecx, [rsp + 44]
+    mov r8d, eax
+    call ui_btn
+    mov [rsp + 32], eax
+    mov edi, [rsp + 52]
+    mov esi, [rsp + 60]
+    mov edx, [rsp + 44]
+    M ecx, MI_32
+    M r8d, MI_RADIUS
+    COLOR r9d, T_BORDER
+    test dword ptr [rsp + 32], UB_HOVER
+    jz 61f
+    COLOR r9d, T_MUTED
+61: COLOR eax, T_INPUT
+    push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    mov rax, [rbx + SET_ptr]
+    mov r8, [rax]
+    mov [rsp + 64], r8
+    mov rdi, r8
+    call strlen
+    mov r9, rax
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 52]
+    add esi, [rip + g_mt + 4*MI_10]
+    mov edx, [rsp + 60]
+    M ecx, MI_32
+    mov r8, [rsp + 64]
+    COLOR eax, T_FG
+    test r9, r9
+    jnz 62f
+    lea r8, [rip + .Lbuiltin]
+    mov r9d, 8
+    COLOR eax, T_MUTED
+62: mov r11d, [rsp + 44]
+    sub r11d, [rip + g_mt + 4*MI_20]
+    push r11
+    push rax
+    call ui_text_v_fit
+    add rsp, 16
+    test dword ptr [rsp + 32], UB_PRESS
+    jz .Lsd_next
+    call commit_edit
+    mov [rip + set_edit], r15d
+    mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    mov dword ptr [rip + set_tf + TF_id], ID_SET_ROW + 3
+    mov rax, [rbx + SET_ptr]
+    mov rsi, [rax]
+    mov rdi, rsi
+    push rsi
+    push rsi
+    call strlen
+    pop rsi
+    pop rsi
+    lea rdi, [rip + set_tf]
+    mov rdx, rax
+    call tf_set
+    lea rdi, [rip + set_tf]
+    call tf_select_all
+    jmp .Lsd_next
+7:  lea rdi, [rip + set_tf]
+    mov esi, [rsp + 52]
+    mov edx, [rsp + 60]
+    mov ecx, [rsp + 44]
+    M r8d, MI_32
+    mov r9d, 1
+    lea rax, [rip + .Lbuiltin]
+    push rax
+    push rax
+    call ui_textfield
+    add rsp, 16
+.Lsd_next:
+    add r12d, r13d
+    add r12d, [rip + g_mt + 4*MI_8]
+    add rbx, SET_SIZE
+    inc r15d
+    jmp .Lsd_row
+.Lsd_rows_done:
+    add r12d, [rip + g_mt + 4*MI_48]
+    sub r12d, [rsp + 24]
+    mov [rip + set_content_h], r12d
+    # clicking elsewhere ends string editing
+    test dword ptr [rip + g_pressed], 1 << BTN_LEFT
+    jz .Lsd_end
+    cmp dword ptr [rip + set_edit], 0
+    jl .Lsd_end
+    mov eax, [rip + g_active]
+    cmp eax, ID_SET_ROW + 3
+    je .Lsd_end
+    call commit_edit
+.Lsd_end:
+    call gfx_clip_pop
+    EPILOGUE
+
+# ui_text_v_fit(face, x, y, h, ptr, len, argb, maxw): text centered vertically, cut with "…"
+FN ui_text_v_fit
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12d, esi
+    mov eax, ecx
+    sub eax, [rbx + FACE_ascent]
+    sub eax, [rbx + FACE_descent]
+    sar eax, 1
+    add eax, edx
+    add eax, [rbx + FACE_ascent]
+    mov edx, eax
+    mov rcx, r8
+    mov r8, r9
+    mov r9d, [rbp + 16]
+    mov eax, [rbp + 24]
+    push rax
+    push rax
+    mov rdi, rbx
+    mov esi, r12d
+    call text_draw_fit
+    add rsp, 16
+    EPILOGUE
+
+.section .rodata
+.Ltitle: .asciz "Settings"
+.Lopen_file: .asciz "Open settings file"
+.Lbuiltin: .asciz "built-in"
+.Lt_appearance: .asciz "Appearance"
+.Lt_editor: .asciz "Editor"
+.Lt_files: .asciz "Files"
+.Lt_agents: .asciz "Agents"
+
+.data
+set_edit: .long -1

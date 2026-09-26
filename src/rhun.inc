@@ -462,3 +462,168 @@ ENDSTRUCT UR_SIZE
 .equ EK_TYPE, 1
 .equ EK_BACK, 2
 .equ EK_DEL, 3
+
+# ---- ui metrics (scaled logical sizes) ----
+.equ MI_1, 0
+.equ MI_2, 1
+.equ MI_3, 2
+.equ MI_4, 3
+.equ MI_6, 4
+.equ MI_8, 5
+.equ MI_10, 6
+.equ MI_12, 7
+.equ MI_14, 8
+.equ MI_16, 9
+.equ MI_20, 10
+.equ MI_24, 11
+.equ MI_28, 12
+.equ MI_32, 13
+.equ MI_40, 14
+.equ MI_48, 15
+.equ MI_TITLE, 16
+.equ MI_TAB, 17
+.equ MI_STATUS, 18
+.equ MI_ROW, 19
+.equ MI_ICON, 20
+.equ MI_RADIUS, 21
+.equ MI_64, 22
+.equ MI_5, 23
+.equ MI_COUNT, 24
+.macro M reg, idx
+    mov \reg, [rip + g_mt + 4*\idx]
+.endm
+
+# ui_btn result bits
+.equ UB_HOVER, 1
+.equ UB_PRESS, 2
+.equ UB_CLICK, 4
+.equ UB_HELD, 8
+.equ UB_RPRESS, 16
+.equ UB_DOUBLE, 32
+
+# single-line text field
+STRUCT
+F TF_sb, SB_SIZE
+F TF_cur, 8
+F TF_anchor, 8
+F TF_scroll, 4
+F TF_id, 4
+ENDSTRUCT TF_SIZE
+
+# icons
+.equ IC_CHEV_R, 0
+.equ IC_CHEV_D, 1
+.equ IC_FOLDER, 2
+.equ IC_FILE, 3
+.equ IC_CLOSE, 4
+.equ IC_SIDEBAR, 5
+.equ IC_PANEL_R, 6
+.equ IC_SLIDERS, 7
+.equ IC_SEARCH, 8
+.equ IC_SPARK, 9
+.equ IC_MIN, 10
+.equ IC_MAX, 11
+.equ IC_RESTORE, 12
+.equ IC_WCLOSE, 13
+.equ IC_DOT, 14
+.equ IC_PLUS, 15
+.equ IC_CHECK, 16
+.equ IC_TERMINAL, 17
+.equ IC_BACK, 18
+.equ IC_USER, 19
+.equ IC_ARROW_DN, 20
+.equ IC_REFRESH, 21
+.equ IC_CHEV_UP, 22
+.equ IC_CHEV_DN2, 23
+.equ IC_CASE, 24
+.equ IC_WORD, 25
+.equ IC_COUNT, 26
+
+# ---- app ----
+.equ TAB_DOC, 1
+.equ TAB_SETTINGS, 2
+STRUCT
+F TAB_kind, 8
+F TAB_doc, 8
+ENDSTRUCT TAB_SIZE
+
+.equ FOCUS_EDITOR, 0
+.equ FOCUS_PALETTE, 1
+.equ FOCUS_FIND, 2
+.equ FOCUS_EXPLORER, 3
+.equ FOCUS_SETTINGS, 4
+.equ FOCUS_DIALOG, 5
+.equ FOCUS_AGENTS, 6
+.equ FOCUS_PROMPT, 7
+
+# grammar (syntax definition)
+STRUCT
+F GR_name, 8
+F GR_files, 8           # space separated patterns
+F GR_first, 8           # first-line prefixes (shebang)
+F GR_regions, VEC_SIZE  # REG items
+F GR_lines, VEC_SIZE    # LR items: line prefix -> class
+F GR_words, 8           # hash table of WORD
+F GR_wcap, 8
+F GR_wn, 8
+F GR_comment, 8         # line comment token (for toggle comment)
+F GR_commentlen, 8
+F GR_flags, 8           # GF_*
+F GR_identx, 32         # extra identifier chars
+F GR_prefixes, 32       # chars that start variables ($) / attributes (@)
+ENDSTRUCT GR_SIZE
+.equ GF_NOCASE, 1
+.equ GF_FUNCS, 2
+.equ GF_CAPTYPES, 4
+.equ GF_MARKUP, 8
+.equ GF_LABELS, 16
+.equ GF_NUMBERS, 32
+.equ GF_OPS, 64
+
+STRUCT
+F REG_start, 16
+F REG_end, 16           # empty = end of line
+F REG_slen, 1
+F REG_elen, 1
+F REG_class, 1
+F REG_esc, 1
+F REG_multi, 1
+F REG_bol, 1            # only at line start (after blanks)
+F REG_pad, 2
+ENDSTRUCT REG_SIZE
+
+# prompt kinds (palette used as a one-line input)
+.equ PROMPT_SAVE_AS, 1
+.equ PROMPT_NEW_FILE, 2
+.equ PROMPT_NEW_FOLDER, 3
+.equ PROMPT_RENAME, 4
+.equ PROMPT_OPEN_FOLDER, 5
+.equ PROMPT_DELETE, 6
+
+# command table entry
+STRUCT
+F CMD_name, 8
+F CMD_title, 8
+F CMD_fn, 8
+F CMD_keys, 8           # default bindings, space separated
+ENDSTRUCT CMD_SIZE
+
+# json
+.equ JT_NULL, 0
+.equ JT_FALSE, 1
+.equ JT_TRUE, 2
+.equ JT_NUM, 3
+.equ JT_STR, 4
+.equ JT_ARR, 5
+.equ JT_OBJ, 6
+
+# theme registry entry
+STRUCT
+F TH_id, 8              # file stem (cstr)
+F TH_name, 8            # display name (cstr)
+F TH_dark, 4
+F TH_pad, 4
+F TH_src, 8             # embedded text or 0
+F TH_len, 8
+F TH_path, 8            # user file path or 0
+ENDSTRUCT TH_SIZE

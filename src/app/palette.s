@@ -1,0 +1,1262 @@
+# palette overlay: fuzzy file finder, commands, themes, languages, go to line, one-line prompts
+.include "rhun.inc"
+
+.equ PM_NONE, 0
+.equ PM_FILES, 1
+.equ PM_COMMANDS, 2
+.equ PM_THEMES, 3
+.equ PM_LANGS, 4
+.equ PM_GOTO, 5
+.equ PM_PROMPT, 6
+
+.equ ID_PAL_ROW, 0x3000
+.equ ID_PAL_FIELD, 0x3fff
+.equ MAXFILES, 50000
+
+STRUCT
+F IT_label, 8
+F IT_len, 8
+F IT_detail, 8          # cstr or 0
+F IT_data, 8
+ENDSTRUCT IT_SIZE
+
+STRUCT
+F RS_item, 4
+F RS_score, 4
+ENDSTRUCT RS_SIZE
+
+.bss
+.p2align 3
+pal_mode: .long 0
+pal_prompt: .long 0             # PROMPT_* when in PM_PROMPT
+pal_sel: .long 0
+pal_scroll: .long 0
+.p2align 3
+pal_tf: .zero TF_SIZE
+items: .zero VEC_SIZE
+results: .zero VEC_SIZE
+strings: .zero SB_SIZE          # label storage for file items
+pal_label: .quad 0              # prompt label
+pal_theme_before: .quad 0
+pal_path: .zero 4096
+scan_depth: .long 0
+scan_prefix: .zero 4096         # relative dir during scan
+scan_plen: .long 0
+tmp: .zero SB_SIZE
+
+.text
+
+FN palette_is_open
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_NONE
+    setne al
+    ret
+
+FN palette_field
+    lea rax, [rip + pal_tf]
+    ret
+
+# palette_open(mode)
+palette_open:
+    PROLOGUE
+    mov ebx, edi
+    mov [rip + pal_mode], ebx
+    mov dword ptr [rip + pal_sel], 0
+    mov dword ptr [rip + pal_scroll], 0
+    mov dword ptr [rip + pal_tf + TF_id], ID_PAL_FIELD
+    lea rdi, [rip + pal_tf]
+    call tf_clear
+    mov qword ptr [rip + items + VEC_len], 0
+    mov dword ptr [rip + g_focus], FOCUS_PALETTE
+    cmp ebx, PM_FILES
+    jne 1f
+    call load_files
+    jmp 8f
+1:  cmp ebx, PM_COMMANDS
+    jne 2f
+    call load_commands
+    jmp 8f
+2:  cmp ebx, PM_THEMES
+    jne 3f
+    call load_themes
+    jmp 8f
+3:  cmp ebx, PM_LANGS
+    jne 8f
+    call load_langs
+8:  call palette_filter
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+FN palette_close
+    push rbx
+    # themes: Esc restores the previous theme
+    cmp dword ptr [rip + pal_mode], PM_THEMES
+    jne 1f
+    mov rdi, [rip + pal_theme_before]
+    cmp rdi, [rip + g_theme_cur]
+    je 1f
+    call theme_apply
+1:  mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov dword ptr [rip + g_dirty], 1
+    pop rbx
+    ret
+
+FN cmd_quick_open
+    mov edi, PM_FILES
+    jmp palette_open
+FN cmd_command_palette
+    mov edi, PM_COMMANDS
+    jmp palette_open
+FN cmd_select_theme
+    mov rax, [rip + g_theme_cur]
+    mov [rip + pal_theme_before], rax
+    mov edi, PM_THEMES
+    jmp palette_open
+FN cmd_select_language
+    cmp qword ptr [rip + g_doc], 0
+    je 1f
+    mov edi, PM_LANGS
+    jmp palette_open
+1:  ret
+FN cmd_goto_line
+    cmp qword ptr [rip + g_doc], 0
+    je 1f
+    mov edi, PM_GOTO
+    jmp palette_open
+1:  ret
+
+# prompt_open(label cstr, kind, [initial text in pal_path])
+FN prompt_open
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12d, esi
+    mov edi, PM_PROMPT
+    call palette_open
+    mov [rip + pal_label], rbx
+    mov [rip + pal_prompt], r12d
+    mov dword ptr [rip + g_focus], FOCUS_PROMPT
+    # initial text: current path for save as / rename, project dir + / for new files
+    lea rdi, [rip + tmp]
+    call sb_clear
+    call prompt_initial
+    lea rdi, [rip + pal_tf]
+    mov rsi, [rip + tmp + SB_ptr]
+    mov rdx, [rip + tmp + SB_len]
+    call tf_set
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+prompt_initial:
+    PROLOGUE
+    mov eax, [rip + pal_prompt]
+    cmp eax, PROMPT_SAVE_AS
+    je 1f
+    cmp eax, PROMPT_RENAME
+    je 3f
+    cmp eax, PROMPT_DELETE
+    je 9f
+    jmp 2f
+1:  mov rax, [rip + g_doc]
+    test rax, rax
+    jz 2f
+    mov rsi, [rax + DOC_path]
+    test rsi, rsi
+    jz 2f
+    lea rdi, [rip + tmp]
+    call sb_push_cstr
+    jmp 9f
+3:  lea rsi, [rip + g_explorer_target]
+    cmp byte ptr [rsi], 0
+    je 9f
+    lea rdi, [rip + tmp]
+    call sb_push_cstr
+    jmp 9f
+2:  # directory: explorer selection dir, else project
+    lea rsi, [rip + g_explorer_dir]
+    cmp byte ptr [rsi], 0
+    jne 4f
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jnz 4f
+    lea rdi, [rip + .Lhome]
+    call getenv
+    mov rsi, rax
+    test rsi, rsi
+    jz 9f
+4:  lea rdi, [rip + tmp]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '/'
+    call sb_push_byte
+9:  EPILOGUE
+
+# ---- item sources ----
+
+item_add:   # (label, len, detail, data)
+    push rbx
+    push r12
+    push r13
+    push r14
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    lea rdi, [rip + items]
+    mov esi, IT_SIZE
+    call vec_push
+    mov [rax + IT_label], rbx
+    mov [rax + IT_len], r12
+    mov [rax + IT_detail], r13
+    mov [rax + IT_data], r14
+    add rsp, 8
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+load_commands:
+    PROLOGUE
+    lea rbx, [rip + g_commands]
+1:  mov r12, [rbx + CMD_title]
+    test r12, r12
+    jz 9f
+    cmp byte ptr [r12], 0
+    je 2f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    mov rdi, rbx
+    call keys_for
+    test rax, rax
+    jz 3f
+    mov rdi, rax
+    push rax
+    call strlen
+    pop rdi
+    mov rsi, rax
+    call mem_dup
+3:  mov rdi, r12
+    mov rsi, r13
+    mov rdx, rax
+    mov rcx, rbx
+    call item_add
+2:  add rbx, CMD_SIZE
+    jmp 1b
+9:  EPILOGUE
+
+load_themes:
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_themes + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call theme_entry
+    mov r12, rax
+    mov rdi, [r12 + TH_name]
+    call strlen
+    lea rdx, [rip + .Ldark]
+    cmp dword ptr [r12 + TH_dark], 0
+    jne 2f
+    lea rdx, [rip + .Llight]
+2:  mov rdi, [r12 + TH_name]
+    mov rsi, rax
+    mov rcx, rbx
+    call item_add
+    inc rbx
+    jmp 1b
+9:  # preselect the current theme
+    mov rax, [rip + g_theme_cur]
+    mov [rip + pal_sel], eax
+    EPILOGUE
+
+load_langs:
+    PROLOGUE
+    lea rdi, [rip + .Lplain]
+    mov esi, 10
+    xor edx, edx
+    xor ecx, ecx
+    call item_add
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_grammars + VEC_len]
+    jae 9f
+    mov rax, [rip + g_grammars + VEC_ptr]
+    mov r12, [rax + rbx*8]
+    mov rdi, [r12 + GR_name]
+    call strlen
+    mov rdi, [r12 + GR_name]
+    mov rsi, rax
+    mov rdx, [r12 + GR_files]
+    mov rcx, r12
+    call item_add
+    inc rbx
+    jmp 1b
+9:  EPILOGUE
+
+# load_files(): walk the project, relative paths
+load_files:
+    PROLOGUE
+    lea rdi, [rip + strings]
+    call sb_clear
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz 9f
+    mov dword ptr [rip + scan_plen], 0
+    mov dword ptr [rip + scan_depth], 0
+    call scan_dir
+    # labels point into strings (stable after the scan): offsets -> pointers
+    xor ebx, ebx
+1:  cmp rbx, [rip + items + VEC_len]
+    jae 9f
+    imul rax, rbx, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    mov rcx, [rip + strings + SB_ptr]
+    add [rax + IT_label], rcx
+    inc rbx
+    jmp 1b
+9:  EPILOGUE
+
+# scan_dir(abs dir): recursion via dir_each callback
+scan_dir:
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rip + scan_depth], 16
+    jae 9f
+    inc dword ptr [rip + scan_depth]
+    mov rdi, rbx
+    lea rsi, [rip + scan_cb]
+    mov rdx, rbx
+    call dir_each
+    dec dword ptr [rip + scan_depth]
+9:  EPILOGUE
+
+# scan_cb(dir, name, is_dir)
+scan_cb:
+    PROLOGUE 16
+    mov r12, rdi                # abs dir
+    mov r13, rsi                # name
+    mov r14d, edx
+    cmp qword ptr [rip + items + VEC_len], MAXFILES
+    jae 9f
+    mov rdi, r13
+    call explorer_excluded
+    test eax, eax
+    jnz 9f
+    # relative path = scan_prefix + name
+    mov ebx, [rip + scan_plen]
+    lea rdi, [rip + scan_prefix]
+    add rdi, rbx
+    mov rsi, r13
+    call cstr_copy
+    lea rcx, [rip + scan_prefix]
+    sub rax, rcx
+    mov r15, rax                # rel len
+    test r14d, r14d
+    jz 1f
+    # directory: recurse
+    cmp r15, 4000
+    jae 9f
+    lea rax, [rip + scan_prefix]
+    mov byte ptr [rax + r15], '/'
+    lea eax, [r15 + 1]
+    mov [rip + scan_plen], eax
+    mov rdi, r12
+    mov rsi, r13
+    call path_join
+    mov [rsp], rax
+    mov rdi, rax
+    call scan_dir
+    mov rdi, [rsp]
+    call mem_free
+    mov [rip + scan_plen], ebx
+    jmp 9f
+1:  # file: store offset now, pointer fixed up after the scan
+    mov rax, [rip + strings + SB_len]
+    mov [rsp], rax
+    lea rdi, [rip + strings]
+    lea rsi, [rip + scan_prefix]
+    mov rdx, r15
+    call sb_push
+    lea rdi, [rip + strings]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rsp]
+    mov rsi, r15
+    xor edx, edx
+    xor ecx, ecx
+    call item_add
+9:  EPILOGUE
+
+# ---- fuzzy matching ----
+
+# fuzzy(label, len, query, qlen) -> score (-1 when not a subsequence)
+FN fuzzy
+    PROLOGUE 16
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov r15, rcx
+    test r15, r15
+    jz .Lfz_empty
+    xor ebx, ebx                # score
+    xor ecx, ecx                # label index
+    xor edx, edx                # query index
+    mov dword ptr [rsp], -2     # last match index
+    # the basename part starts after the last '/'
+    mov r8, r13
+1:  test r8, r8
+    jz 2f
+    cmp byte ptr [r12 + r8 - 1], '/'
+    je 2f
+    dec r8
+    jmp 1b
+2:  mov [rsp + 8], r8
+.Lfz_loop:
+    cmp rdx, r15
+    jae .Lfz_done
+    cmp rcx, r13
+    jae .Lfz_fail
+    movzx eax, byte ptr [r12 + rcx]
+    movzx r9d, byte ptr [r14 + rdx]
+    lea r10d, [rax - 'A']
+    cmp r10d, 25
+    ja 3f
+    or eax, 0x20
+3:  lea r10d, [r9 - 'A']
+    cmp r10d, 25
+    ja 4f
+    or r9d, 0x20
+4:  cmp eax, r9d
+    jne .Lfz_next
+    add ebx, 10
+    # consecutive
+    mov eax, [rsp]
+    inc eax
+    cmp eax, ecx
+    jne 5f
+    add ebx, 15
+5:  # word start
+    test rcx, rcx
+    jz 6f
+    movzx eax, byte ptr [r12 + rcx - 1]
+    cmp al, '/'
+    je 6f
+    cmp al, '_'
+    je 6f
+    cmp al, '-'
+    je 6f
+    cmp al, '.'
+    je 6f
+    cmp al, ' '
+    je 6f
+    # camelCase hump
+    movzx r10d, byte ptr [r12 + rcx]
+    sub r10d, 'A'
+    cmp r10d, 25
+    ja 7f
+    sub eax, 'a'
+    cmp eax, 25
+    ja 7f
+6:  add ebx, 12
+7:  cmp rcx, [rsp + 8]
+    jb 8f
+    add ebx, 6                  # inside the file name
+8:  mov [rsp], ecx
+    inc rdx
+.Lfz_next:
+    inc rcx
+    jmp .Lfz_loop
+.Lfz_done:
+    # prefer shorter labels
+    mov eax, 200
+    sub eax, r13d
+    sar eax, 3
+    add ebx, eax
+    mov eax, ebx
+    EPILOGUE
+.Lfz_fail:
+    mov eax, -1
+    EPILOGUE
+.Lfz_empty:
+    xor eax, eax
+    EPILOGUE
+
+# palette_filter(): results = items matching the query, best first
+FN palette_filter
+    PROLOGUE 16
+    mov qword ptr [rip + results + VEC_len], 0
+    cmp dword ptr [rip + pal_mode], PM_GOTO
+    je 9f
+    cmp dword ptr [rip + pal_mode], PM_PROMPT
+    je 9f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov r14, rax
+    mov r15, rdx
+    xor ebx, ebx
+1:  cmp rbx, [rip + items + VEC_len]
+    jae 5f
+    imul r12, rbx, IT_SIZE
+    add r12, [rip + items + VEC_ptr]
+    mov rdi, [r12 + IT_label]
+    mov rsi, [r12 + IT_len]
+    mov rdx, r14
+    mov rcx, r15
+    call fuzzy
+    test eax, eax
+    js 4f
+    mov r13d, eax
+    lea rdi, [rip + results]
+    mov esi, RS_SIZE
+    call vec_push
+    mov [rax + RS_item], ebx
+    mov [rax + RS_score], r13d
+    # insertion sort by score (stable)
+    test r15, r15
+    jz 4f
+    mov rcx, [rip + results + VEC_len]
+    dec rcx
+    mov r8, [rip + results + VEC_ptr]
+2:  test rcx, rcx
+    jz 4f
+    mov eax, [r8 + rcx*8 - 8 + RS_score]
+    cmp eax, r13d
+    jge 4f
+    mov rax, [r8 + rcx*8 - 8]
+    mov rdx, [r8 + rcx*8]
+    mov [r8 + rcx*8 - 8], rdx
+    mov [r8 + rcx*8], rax
+    dec rcx
+    jmp 2b
+4:  inc rbx
+    jmp 1b
+5:  # keep selection in range
+    mov eax, [rip + pal_sel]
+    mov rcx, [rip + results + VEC_len]
+    cmp rax, rcx
+    jb 9f
+    xor eax, eax
+    mov [rip + pal_sel], eax
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+FN palette_changed
+    cmp dword ptr [rip + pal_mode], PM_THEMES
+    je 1f
+    mov dword ptr [rip + pal_sel], 0
+    mov dword ptr [rip + pal_scroll], 0
+1:  # '>' switches files -> commands
+    cmp dword ptr [rip + pal_mode], PM_FILES
+    jne 2f
+    mov rax, [rip + pal_tf + TF_sb + SB_ptr]
+    test rax, rax
+    jz 2f
+    cmp byte ptr [rax], '>'
+    jne 3f
+    push rbx
+    call cmd_command_palette
+    pop rbx
+    ret
+3:  cmp byte ptr [rax], ':'
+    jne 2f
+    cmp qword ptr [rip + g_doc], 0
+    je 2f
+    mov dword ptr [rip + pal_mode], PM_GOTO
+    lea rdi, [rip + pal_tf]
+    lea rsi, [rax + 1]
+    mov rdx, [rip + pal_tf + TF_sb + SB_len]
+    dec rdx
+    call tf_set
+2:  jmp palette_filter
+
+# selected item -> IT* or 0
+selected_item:
+    mov eax, [rip + pal_sel]
+    cmp rax, [rip + results + VEC_len]
+    jae 1f
+    mov rcx, [rip + results + VEC_ptr]
+    mov eax, [rcx + rax*8 + RS_item]
+    imul rax, rax, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    ret
+1:  xor eax, eax
+    ret
+
+# preview selection (themes)
+preview:
+    cmp dword ptr [rip + pal_mode], PM_THEMES
+    jne 1f
+    call selected_item
+    test rax, rax
+    jz 1f
+    mov rdi, [rax + IT_data]
+    cmp rdi, [rip + g_theme_cur]
+    je 1f
+    jmp theme_apply
+1:  ret
+
+# palette_key(keysym, cp, mods) -> 1 if handled
+FN palette_key
+    PROLOGUE 16
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    cmp r12d, KEY_ESCAPE
+    jne 1f
+    call palette_close
+    jmp .Lpk_yes
+1:  cmp r12d, KEY_UP
+    jne 2f
+    mov eax, [rip + pal_sel]
+    test eax, eax
+    jz .Lpk_yes
+    dec dword ptr [rip + pal_sel]
+    call preview
+    jmp .Lpk_yes
+2:  cmp r12d, KEY_DOWN
+    jne 3f
+    mov eax, [rip + pal_sel]
+    inc eax
+    cmp rax, [rip + results + VEC_len]
+    jae .Lpk_yes
+    mov [rip + pal_sel], eax
+    call preview
+    jmp .Lpk_yes
+3:  cmp r12d, KEY_PAGEDOWN
+    jne 31f
+    mov eax, [rip + pal_sel]
+    add eax, 10
+    mov rcx, [rip + results + VEC_len]
+    dec ecx
+    cmp eax, ecx
+    cmovg eax, ecx
+    test eax, eax
+    jns 32f
+    xor eax, eax
+32: mov [rip + pal_sel], eax
+    call preview
+    jmp .Lpk_yes
+31: cmp r12d, KEY_PAGEUP
+    jne 33f
+    mov eax, [rip + pal_sel]
+    sub eax, 10
+    jns 34f
+    xor eax, eax
+34: mov [rip + pal_sel], eax
+    call preview
+    jmp .Lpk_yes
+33: cmp r12d, KEY_RETURN
+    je 4f
+    cmp r12d, KEY_KP_ENTER
+    jne 5f
+4:  call palette_accept
+    jmp .Lpk_yes
+5:  # text editing keys go to the field
+    mov edi, r12d
+    cmp edi, KEY_TAB
+    je .Lpk_no
+    lea rdi, [rip + pal_tf]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call tf_key
+    test eax, eax
+    jz .Lpk_no
+    # ctrl+c / ctrl+a etc. don't change text; filtering is cheap anyway
+    call palette_changed
+    jmp .Lpk_yes
+.Lpk_no:
+    xor eax, eax
+    EPILOGUE
+.Lpk_yes:
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+
+# palette_accept(): act on the selection / input
+palette_accept:
+    PROLOGUE 16
+    mov ebx, [rip + pal_mode]
+    cmp ebx, PM_GOTO
+    je .Lpa_goto
+    cmp ebx, PM_PROMPT
+    je .Lpa_prompt
+    call selected_item
+    test rax, rax
+    jz .Lpa_close
+    mov r12, rax
+    cmp ebx, PM_FILES
+    jne 1f
+    mov rdi, [rip + g_project]
+    mov rsi, [r12 + IT_label]
+    call path_join
+    mov r13, rax
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, r13
+    call app_open_file
+    mov rdi, r13
+    call mem_free
+    jmp .Lpa_ret
+1:  cmp ebx, PM_COMMANDS
+    jne 2f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rax, [r12 + IT_data]
+    call [rax + CMD_fn]
+    jmp .Lpa_ret
+2:  cmp ebx, PM_THEMES
+    jne 3f
+    mov rdi, [r12 + IT_data]
+    call theme_apply
+    call theme_current_id
+    mov [rip + cfg_theme], rax
+    mov dword ptr [rip + g_settings_changed], 1
+    mov rax, [rip + g_theme_cur]
+    mov [rip + pal_theme_before], rax
+    jmp .Lpa_close
+3:  cmp ebx, PM_LANGS
+    jne .Lpa_close
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Lpa_close
+    mov rcx, [r12 + IT_data]
+    mov [rax + DOC_lang], rcx
+    mov qword ptr [rax + DOC_svalid], 0
+    jmp .Lpa_close
+.Lpa_goto:
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    test rdx, rdx
+    jz .Lpa_close
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz .Lpa_close
+    dec rax
+    jns 4f
+    xor eax, eax
+4:  cmp rax, [rbx + DOC_nlines]
+    jb 5f
+    mov rax, [rbx + DOC_nlines]
+    dec rax
+5:  mov rdi, rbx
+    mov rsi, rax
+    call doc_line_start
+    mov rdi, rbx
+    mov rsi, rax
+    xor edx, edx
+    call ed_set_cursor
+    # center it
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_cur]
+    call doc_line_of
+    mov ecx, [rip + g_ed_h_lines]
+    shr ecx, 1
+    sub rax, rcx
+    jns 6f
+    xor eax, eax
+6:  shl rax, 8
+    mov [rbx + DOC_scrolly], rax
+    mov dword ptr [rip + g_reveal], 0
+    jmp .Lpa_close
+.Lpa_prompt:
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    test rdx, rdx
+    jz .Lpa_close
+    cmp dword ptr [rip + pal_prompt], PROMPT_DELETE
+    jne 70f
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lyes]
+    call str_eq_cstr
+    test eax, eax
+    jz .Lpa_close
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    call explorer_delete_target
+    jmp .Lpa_ret
+70:
+    # absolute path: relative input is taken from the project root
+    lea rdi, [rip + pal_path]
+    cmp byte ptr [rax], '/'
+    je 7f
+    cmp byte ptr [rax], '~'
+    jne 71f
+    push rax
+    push rdx
+    lea rdi, [rip + .Lhome]
+    call getenv
+    mov rsi, rax
+    lea rdi, [rip + pal_path]
+    call cstr_copy
+    mov rdi, rax
+    pop rdx
+    pop rax
+    inc rax
+    dec rdx
+    jmp 7f
+71: mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 7f
+    push rax
+    push rdx
+    call cstr_copy
+    mov byte ptr [rax], '/'
+    lea rdi, [rax + 1]
+    pop rdx
+    pop rax
+7:  mov rsi, rax
+    mov rcx, rdx
+    cmp rcx, 3000
+    jbe 72f
+    mov ecx, 3000
+72: rep movsb
+    mov byte ptr [rdi], 0
+    mov ebx, [rip + pal_prompt]
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    lea rdi, [rip + pal_path]
+    mov esi, ebx
+    call prompt_done
+    jmp .Lpa_ret
+.Lpa_close:
+    call palette_close
+.Lpa_ret:
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# prompt_done(path, kind)
+prompt_done:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    cmp r12d, PROMPT_SAVE_AS
+    jne 1f
+    mov r13, [rip + g_doc]
+    test r13, r13
+    jz 9f
+    mov rdi, r13
+    mov rsi, rbx
+    call doc_set_path
+    mov rdi, r13
+    call doc_save
+    test rax, rax
+    js 8f
+    mov rdi, r13
+    call app_detect_lang
+    mov rdi, r13
+    call app_after_save
+    call app_update_title
+    jmp 9f
+1:  cmp r12d, PROMPT_NEW_FILE
+    jne 2f
+    # create the file if missing, then open it
+    mov rdi, rbx
+    call file_mtime
+    test rax, rax
+    jnz 11f
+    mov rdi, rbx
+    lea rsi, [rip + .Lempty]
+    xor edx, edx
+    call file_write_all
+11: mov rdi, rbx
+    call app_open_file
+    call explorer_refresh
+    jmp 9f
+2:  cmp r12d, PROMPT_NEW_FOLDER
+    jne 3f
+    mov rdi, rbx
+    call mkdir_p
+    call explorer_refresh
+    jmp 9f
+3:  cmp r12d, PROMPT_RENAME
+    jne 4f
+    lea rdi, [rip + g_explorer_target]
+    mov rsi, rbx
+    SYS SYS_rename
+    test rax, rax
+    js 8f
+    # retarget an open tab
+    lea rdi, [rip + g_explorer_target]
+    call app_find_tab
+    test rax, rax
+    js 31f
+    mov rdi, rax
+    call tab_at
+    mov rdi, [rax + TAB_doc]
+    mov rsi, rbx
+    call doc_set_path
+    call app_update_title
+31: call explorer_refresh
+    jmp 9f
+4:  cmp r12d, PROMPT_OPEN_FOLDER
+    jne 5f
+    mov rdi, rbx
+    call file_is_dir
+    test eax, eax
+    jz 8f
+    mov rdi, rbx
+    call app_set_project
+    jmp 9f
+5:  cmp r12d, PROMPT_DELETE
+    jne 9f
+    # the prompt text must be "yes"
+    call explorer_delete_target
+    jmp 9f
+8:  lea rdi, [rip + .Lfailed]
+    call app_toast
+9:  EPILOGUE
+
+# ---- drawing ----
+
+FN palette_draw
+    PROLOGUE 64
+    cmp dword ptr [rip + pal_mode], PM_NONE
+    je .Lpd_ret
+    # scrim + card
+    xor edi, edi
+    xor esi, esi
+    mov edx, [rip + g_cv + CV_w]
+    mov ecx, [rip + g_cv + CV_h]
+    mov r8d, 0x30000000
+    call gfx_fill
+    mov edi, 640
+    call sc
+    mov ecx, [rip + g_cv + CV_w]
+    sub ecx, [rip + g_mt + 4*MI_64]
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov r12d, eax               # w
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, r12d
+    sar eax, 1
+    mov r13d, eax               # x
+    M r14d, MI_TITLE
+    add r14d, [rip + g_mt + 4*MI_8]   # y
+    M ebx, MI_32                # row height
+    # visible rows
+    mov rax, [rip + results + VEC_len]
+    cmp rax, 12
+    jbe 1f
+    mov eax, 12
+1:  mov [rsp], eax              # rows shown
+    mov eax, [rsp]
+    imul eax, ebx
+    M ecx, MI_48
+    add eax, ecx
+    cmp dword ptr [rsp], 0
+    je 2f
+    add eax, [rip + g_mt + 4*MI_12]
+2:  cmp dword ptr [rip + pal_mode], PM_PROMPT
+    je 21f
+    cmp dword ptr [rip + pal_mode], PM_GOTO
+    jne 22f
+21: add eax, [rip + g_mt + 4*MI_20]
+22: mov [rsp + 4], eax          # card h
+    mov edi, r13d
+    mov esi, r14d
+    mov edx, r12d
+    mov ecx, eax
+    call ui_card
+    # click outside closes
+    test dword ptr [rip + g_pressed], 1 << BTN_LEFT
+    jz 3f
+    mov edi, r13d
+    mov esi, r14d
+    mov edx, r12d
+    mov ecx, [rsp + 4]
+    call ui_in
+    test eax, eax
+    jnz 3f
+    call palette_close
+    jmp .Lpd_ret
+3:  # input field
+    M eax, MI_8
+    mov [rsp + 8], eax
+    lea rdi, [rip + pal_tf]
+    lea esi, [r13 + rax]
+    lea edx, [r14 + rax]
+    mov ecx, r12d
+    sub ecx, eax
+    sub ecx, eax
+    M r8d, MI_32
+    mov r9d, 1
+    call placeholder_text
+    push rax
+    push rax
+    call ui_textfield
+    add rsp, 16
+    # hint under the field for prompts / goto
+    M r15d, MI_48
+    add r15d, r14d
+    mov eax, [rip + pal_mode]
+    cmp eax, PM_PROMPT
+    je 4f
+    cmp eax, PM_GOTO
+    jne 5f
+4:  lea rdi, [rip + g_face_small]
+    mov esi, r13d
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, r15d
+    sub edx, [rip + g_mt + 4*MI_4]
+    M ecx, MI_20
+    call hint_text
+    mov r8, rax
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    jmp .Lpd_ret
+5:  # rows
+    mov eax, [rip + pal_sel]
+    cmp eax, [rip + pal_scroll]
+    jge 6f
+    mov [rip + pal_scroll], eax
+6:  mov ecx, [rip + pal_scroll]
+    add ecx, [rsp]
+    cmp eax, ecx
+    jl 7f
+    sub eax, [rsp]
+    inc eax
+    mov [rip + pal_scroll], eax
+7:  # wheel
+    mov eax, [rip + g_scroll_y]
+    test eax, eax
+    jz 71f
+    cdq
+    idiv ebx
+    add [rip + pal_scroll], eax
+    mov eax, [rip + pal_scroll]
+    mov rcx, [rip + results + VEC_len]
+    sub ecx, [rsp]
+    cmp eax, ecx
+    cmovg eax, ecx
+    test eax, eax
+    jns 72f
+    xor eax, eax
+72: mov [rip + pal_scroll], eax
+71: xor ecx, ecx
+    mov [rsp + 12], ecx         # row i
+.Lpd_row:
+    mov ecx, [rsp + 12]
+    cmp ecx, [rsp]
+    jae .Lpd_ret
+    mov eax, [rip + pal_scroll]
+    add eax, ecx
+    mov [rsp + 16], eax         # result index
+    mov rdx, [rip + results + VEC_ptr]
+    mov eax, [rdx + rax*8 + RS_item]
+    imul rax, rax, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    mov [rsp + 24], rax         # item
+    mov eax, ecx
+    imul eax, ebx
+    add eax, r15d
+    mov [rsp + 20], eax         # row y
+    lea edi, [rcx + ID_PAL_ROW]
+    M eax, MI_6
+    lea esi, [r13 + rax]
+    mov edx, [rsp + 20]
+    mov ecx, r12d
+    sub ecx, eax
+    sub ecx, eax
+    mov r8d, ebx
+    call ui_btn
+    mov [rsp + 32], eax
+    test eax, UB_HOVER
+    jz 8f
+    # mouse moved over a row selects it (only on real movement / press)
+    test eax, UB_PRESS
+    jz 8f
+    mov eax, [rsp + 16]
+    mov [rip + pal_sel], eax
+    call preview
+8:  mov eax, [rsp + 16]
+    cmp eax, [rip + pal_sel]
+    jne 9f
+    M eax, MI_6
+    lea edi, [r13 + rax]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    sub edx, eax
+    sub edx, eax
+    mov ecx, ebx
+    M r8d, MI_RADIUS
+    COLOR r9d, T_ACTIVE
+    call gfx_round_rect
+    jmp 10f
+9:  test dword ptr [rsp + 32], UB_HOVER
+    jz 10f
+    M eax, MI_6
+    lea edi, [r13 + rax]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    sub edx, eax
+    sub edx, eax
+    mov ecx, ebx
+    M r8d, MI_RADIUS
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+10: # label with matched characters highlighted
+    mov rax, [rsp + 24]
+    mov rdi, [rax + IT_label]
+    mov rsi, [rax + IT_len]
+    M edx, MI_16
+    add edx, r13d
+    mov ecx, [rsp + 20]
+    mov r8d, ebx
+    call draw_highlighted
+    # detail on the right
+    mov rax, [rsp + 24]
+    mov r8, [rax + IT_detail]
+    test r8, r8
+    jz 11f
+    mov [rsp + 40], r8
+    mov rdi, r8
+    call strlen
+    mov [rsp + 48], rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rsp + 40]
+    mov rdx, rax
+    call text_width
+    mov esi, r13d
+    add esi, r12d
+    sub esi, eax
+    sub esi, [rip + g_mt + 4*MI_16]
+    lea rdi, [rip + g_face_small]
+    mov edx, [rsp + 20]
+    mov ecx, ebx
+    mov r8, [rsp + 40]
+    mov r9, [rsp + 48]
+    COLOR eax, T_MUTED
+    push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+11: test dword ptr [rsp + 32], UB_CLICK
+    jz 12f
+    mov eax, [rsp + 16]
+    mov [rip + pal_sel], eax
+    call palette_accept
+    jmp .Lpd_ret
+12: inc dword ptr [rsp + 12]
+    jmp .Lpd_row
+.Lpd_ret:
+    EPILOGUE
+
+# draw_highlighted(label, len, x, y, h): label with query characters in accent
+draw_highlighted:
+    PROLOGUE 48
+    mov r12, rdi
+    mov r13, rsi
+    mov r14d, edx               # x
+    mov [rsp], ecx              # y
+    mov [rsp + 4], r8d          # h
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov [rsp + 8], rax          # query
+    mov [rsp + 16], rdx
+    mov eax, [rsp + 4]
+    sub eax, [rip + g_face_ui + FACE_ascent]
+    sub eax, [rip + g_face_ui + FACE_descent]
+    sar eax, 1
+    add eax, [rsp]
+    add eax, [rip + g_face_ui + FACE_ascent]
+    mov [rsp + 24], eax         # baseline
+    xor ebx, ebx                # label index
+    xor r15d, r15d              # query index
+1:  cmp rbx, r13
+    jae 9f
+    lea rdi, [r12 + rbx]
+    mov rsi, r13
+    sub rsi, rbx
+    call utf8_decode
+    mov [rsp + 32], edx
+    COLOR r9d, T_FG
+    cmp r15, [rsp + 16]
+    jae 2f
+    mov rcx, [rsp + 8]
+    movzx ecx, byte ptr [rcx + r15]
+    movzx edx, byte ptr [r12 + rbx]
+    mov edi, ecx
+    push rdx
+    call to_lower
+    pop rdi
+    mov ecx, eax
+    push rcx
+    call to_lower
+    pop rcx
+    cmp eax, ecx
+    jne 2f
+    inc r15
+    COLOR r9d, T_ACCENT
+2:  lea rdi, [rip + g_face_ui]
+    mov esi, r14d
+    mov edx, [rsp + 24]
+    lea rcx, [r12 + rbx]
+    mov r8d, [rsp + 32]
+    call text_draw
+    mov r14d, eax
+    mov eax, [rsp + 32]
+    add rbx, rax
+    jmp 1b
+9:  EPILOGUE
+
+placeholder_text:
+    mov eax, [rip + pal_mode]
+    lea rcx, [rip + .Lph_files]
+    cmp eax, PM_FILES
+    je 1f
+    lea rcx, [rip + .Lph_cmds]
+    cmp eax, PM_COMMANDS
+    je 1f
+    lea rcx, [rip + .Lph_themes]
+    cmp eax, PM_THEMES
+    je 1f
+    lea rcx, [rip + .Lph_langs]
+    cmp eax, PM_LANGS
+    je 1f
+    lea rcx, [rip + .Lph_goto]
+    cmp eax, PM_GOTO
+    je 1f
+    mov rcx, [rip + pal_label]
+1:  mov rax, rcx
+    ret
+
+hint_text:
+    lea rax, [rip + .Lhint_goto]
+    cmp dword ptr [rip + pal_mode], PM_GOTO
+    je 1f
+    lea rax, [rip + .Lhint_path]
+    cmp dword ptr [rip + pal_prompt], PROMPT_DELETE
+    jne 1f
+    lea rax, [rip + .Lhint_delete]
+1:  ret
+
+.section .rodata
+.Lhome: .asciz "HOME"
+.Lyes: .asciz "yes"
+.Ldark: .asciz "dark"
+.Llight: .asciz "light"
+.Lplain: .asciz "Plain Text"
+.Lempty: .asciz ""
+.Lfailed: .asciz "That didn't work"
+.Lph_files: .asciz "Search files by name  (> commands, : line)"
+.Lph_cmds: .asciz "Type a command"
+.Lph_themes: .asciz "Select a color theme"
+.Lph_langs: .asciz "Select a language"
+.Lph_goto: .asciz "Line number"
+.Lhint_goto: .asciz "Enter a line number and press Enter"
+.Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
+.Lhint_delete: .asciz "Type yes and press Enter to delete"
+.bss
+.globl g_ed_h_lines
+g_ed_h_lines: .long 0

@@ -1,173 +1,2408 @@
+# application shell: init, tabs, layout, chrome (titlebar, tabs, status bar), input routing
 .include "rhun.inc"
+
+.equ ID_TITLE, 0x2000
+.equ ID_WMIN, 0x2001
+.equ ID_WMAX, 0x2002
+.equ ID_WCLOSE, 0x2003
+.equ ID_TOG_SIDE, 0x2004
+.equ ID_TOG_AGENTS, 0x2005
+.equ ID_SETTINGS_BTN, 0x2006
+.equ ID_TAB, 0x2100              # + index
+.equ ID_TABX, 0x2400             # + index
+.equ ID_SPLIT_L, 0x2700
+.equ ID_SPLIT_R, 0x2701
+.equ ID_DLG, 0x2800              # + button
+.equ ID_STATUS, 0x2900           # + item
+.equ ID_WELCOME, 0x2a00          # + item
+
 .bss
 .p2align 3
-face_a: .zero FACE_SIZE
-mx: .long 0
-my: .long 0
-lastkey: .long 0
-lastcp: .long 0
-lastmods: .long 0
-.p2align 3
-sb: .zero SB_SIZE
-.globl font_m, font_u
-font_m: .quad 0
-font_u: .quad 0
+.globl g_focus, g_win_focused, g_tabs, g_tab_cur, g_project, g_project_name, g_branch
+g_focus: .long 0
+g_tabs: .zero VEC_SIZE
+g_project: .quad 0
+g_project_name: .quad 0
+g_branch: .zero 64
+.globl g_toast, g_toast_until
+g_toast: .zero 256
+g_toast_until: .quad 0
+g_tabscroll: .long 0
+g_side_px: .long 0
+g_agents_px: .long 0
+dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit
+dlg_tab: .quad 0
+.globl g_shot_path
+g_shot_path: .quad 0
+tmp_sb: .zero SB_SIZE
+split_drag: .long 0
+.globl g_editor_rect
+g_editor_rect: .zero 16
+
 .text
+
+# ---------------- init ----------------
+
 FN app_init
+    PROLOGUE 16
+    call config_load
+    call theme_scan
+    mov rdi, [rip + cfg_theme]
+    call theme_find
+    test rax, rax
+    jns 1f
+    xor eax, eax
+1:  mov rdi, rax
+    call theme_apply
+    call app_load_fonts
+    call syntax_load_all
+    call keys_init
+    call explorer_init
+    call agents_init
+    call watch_init
+    EPILOGUE
+
+# app_load_fonts(): built-in fonts unless the config names .ttf files
+FN app_load_fonts
+    PROLOGUE
     lea rdi, [rip + font_mono]
-    xor esi, esi
-    call font_load
-    mov [rip + font_m], rax
+    lea rsi, [rip + font_mono_end]
+    sub rsi, rdi
+    mov rdx, [rip + cfg_font]
+    call load_font_or
+    mov [rip + g_font_code], rax
     lea rdi, [rip + font_ui]
-    xor esi, esi
+    lea rsi, [rip + font_ui_end]
+    sub rsi, rdi
+    mov rdx, [rip + cfg_ui_font]
+    call load_font_or
+    mov [rip + g_font_ui], rax
+    EPILOGUE
+
+# load_font_or(builtin ptr, len, path cstr) -> FONT*
+load_font_or:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    cmp byte ptr [rdx], 0
+    je 1f
+    mov rdi, rdx
+    call file_read_all
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    mov rsi, rdx
     call font_load
-    mov [rip + font_u], rax
+    test rax, rax
+    jnz 2f
+1:  mov rdi, r12
+    mov rsi, r13
+    call font_load
+2:  EPILOGUE
+
+# app_set_project(dir cstr): project root for explorer, agents and session
+FN app_set_project
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rip + g_project]
+    call mem_free
+    mov rdi, rbx
+    call strlen
+    # strip trailing slash
+    cmp rax, 1
+    jbe 1f
+    cmp byte ptr [rbx + rax - 1], '/'
+    jne 1f
+    dec rax
+1:  mov rdi, rbx
+    mov rsi, rax
+    call mem_dup
+    mov [rip + g_project], rax
+    mov rdi, rax
+    call strlen
+    mov rdi, [rip + g_project]
+    mov rsi, rax
+    call path_basename
+    mov [rip + g_project_name], rax
+    call read_branch
+    call explorer_set_root
+    call agents_set_project
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# read_branch(): g_branch from .git/HEAD
+read_branch:
+    PROLOGUE
+    mov byte ptr [rip + g_branch], 0
+    mov rdi, [rip + g_project]
+    lea rsi, [rip + .Lgit_head]
+    call path_join
+    mov rbx, rax
+    mov rdi, rax
+    call file_read_all
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, rbx
+    call mem_free
+    test r12, r12
+    jz 9f
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lrefs_heads]
+    mov ecx, 16
+    call str_find
+    test rax, rax
+    js 8f
+    lea rsi, [r12 + rax + 16]
+    lea rdi, [rip + g_branch]
+    mov ecx, 60
+1:  mov al, [rsi]
+    cmp al, 10
+    je 2f
+    test al, al
+    jz 2f
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    dec ecx
+    jnz 1b
+2:  mov byte ptr [rdi], 0
+8:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
+# ---------------- tabs ----------------
+
+# tab_at(i) -> TAB*
+FN tab_at
+    imul rax, rdi, TAB_SIZE
+    add rax, [rip + g_tabs + VEC_ptr]
     ret
+
+# app_sync_doc(): g_doc from the active tab
+FN app_sync_doc
+    mov qword ptr [rip + g_doc], 0
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 1f
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1f
+    mov rax, [rax + TAB_doc]
+    mov [rip + g_doc], rax
+1:  mov dword ptr [rip + g_dirty], 1
+    ret
+
+FN app_activate_tab
+    mov [rip + g_tab_cur], rdi
+    call app_sync_doc
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov dword ptr [rip + g_tabscroll_reveal], 1
+    call ed_touch
+    jmp app_update_title
+
+# app_update_title(): window title "name — project"
+FN app_update_title
+    PROLOGUE
+    lea rdi, [rip + tmp_sb]
+    call sb_clear
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 1f
+    lea rdi, [rip + tmp_sb]
+    mov rsi, [rbx + DOC_name]
+    call sb_push_cstr
+    lea rdi, [rip + tmp_sb]
+    lea rsi, [rip + .Ldash]
+    call sb_push_cstr
+1:  mov rsi, [rip + g_project_name]
+    test rsi, rsi
+    jnz 2f
+    lea rsi, [rip + .Lrhun]
+2:  lea rdi, [rip + tmp_sb]
+    call sb_push_cstr
+    mov rdi, [rip + tmp_sb + SB_ptr]
+    PCALL P_title
+    EPILOGUE
+
+# app_find_tab(path) -> index or -1
+FN app_find_tab
+    PROLOGUE
+    mov r12, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov rax, [rax + TAB_doc]
+    mov rdi, [rax + DOC_path]
+    test rdi, rdi
+    jz 2f
+    mov rsi, r12
+    call strcmp_eq
+    test eax, eax
+    jnz 4f
+2:  inc rbx
+    jmp 1b
+3:  mov rax, -1
+    EPILOGUE
+4:  mov rax, rbx
+    EPILOGUE
+
+# app_open_file(path) -> tab index or -1
+FN app_open_file
+    PROLOGUE 16
+    mov r12, rdi
+    call app_find_tab
+    test rax, rax
+    js 1f
+    mov rdi, rax
+    mov rbx, rax
+    call app_activate_tab
+    mov rax, rbx
+    EPILOGUE
+1:  call doc_new
+    mov rbx, rax
+    mov rdi, rax
+    mov rsi, r12
+    call doc_load
+    cmp rax, -1000
+    jne 2f
+    mov rdi, rbx
+    call doc_free
+    lea rdi, [rip + .Lbinary]
+    call app_toast
+    mov rax, -1
+    EPILOGUE
+2:  mov rdi, rbx
+    call app_detect_lang
+    # replace an untouched untitled tab
+    mov rax, [rip + g_tab_cur]
+    test rax, rax
+    js 3f
+    mov rdi, rax
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 3f
+    mov rcx, [rax + TAB_doc]
+    cmp qword ptr [rcx + DOC_path], 0
+    jne 3f
+    mov rdi, rcx
+    push rax
+    push rcx
+    call doc_len
+    pop rcx
+    pop rdx
+    test rax, rax
+    jnz 3f
+    mov [rdx + TAB_doc], rbx
+    mov rdi, rcx
+    call doc_free
+    mov rdi, [rip + g_tab_cur]
+    mov r13, rdi
+    call app_activate_tab
+    mov rax, r13
+    EPILOGUE
+3:  mov rdi, rbx
+    mov esi, TAB_DOC
+    call app_add_tab
+    EPILOGUE
+
+# app_add_tab(doc, kind) -> index (inserted after the current tab, activated)
+FN app_add_tab
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    lea rdi, [rip + g_tabs]
+    mov esi, TAB_SIZE
+    call vec_push
+    mov r13, [rip + g_tabs + VEC_len]
+    dec r13                     # new slot index
+    mov r14, [rip + g_tab_cur]
+    inc r14                     # insert position
+    # shift [r14, r13) right by one
+    mov rcx, r13
+1:  cmp rcx, r14
+    jbe 2f
+    mov rdi, rcx
+    call tab_at
+    mov rdx, [rax - TAB_SIZE + TAB_kind]
+    mov [rax + TAB_kind], rdx
+    mov rdx, [rax - TAB_SIZE + TAB_doc]
+    mov [rax + TAB_doc], rdx
+    dec rcx
+    jmp 1b
+2:  mov rdi, r14
+    call tab_at
+    mov [rax + TAB_kind], r12
+    mov [rax + TAB_doc], rbx
+    mov rdi, r14
+    call app_activate_tab
+    mov rax, r14
+    EPILOGUE
+
+# app_detect_lang(doc)
+FN app_detect_lang
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rbx
+    xor esi, esi
+    call doc_line_text
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jnz 1f
+    lea rdi, [rip + .Lempty]
+1:  mov rsi, r12
+    mov rdx, r13
+    call syntax_detect
+    mov [rbx + DOC_lang], rax
+    mov qword ptr [rbx + DOC_svalid], 0
+    EPILOGUE
+
+# app_new_file()
+FN cmd_new_file
+    call doc_new
+    mov rdi, rax
+    mov esi, TAB_DOC
+    jmp app_add_tab
+
+# app_close_tab_now(i): close without asking
+FN app_close_tab_now
+    PROLOGUE
+    mov r12, rdi
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1f
+    mov rdi, [rax + TAB_doc]
+    call doc_free
+1:  # remove slot
+    mov rcx, r12
+2:  lea rdx, [rcx + 1]
+    cmp rdx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rcx
+    call tab_at
+    mov rdx, [rax + TAB_SIZE + TAB_kind]
+    mov [rax + TAB_kind], rdx
+    mov rdx, [rax + TAB_SIZE + TAB_doc]
+    mov [rax + TAB_doc], rdx
+    inc rcx
+    jmp 2b
+3:  dec qword ptr [rip + g_tabs + VEC_len]
+    mov rax, [rip + g_tab_cur]
+    cmp rax, r12
+    jb 4f
+    ja 5f
+    # closed the active one: keep index (next tab) or step back
+    cmp rax, [rip + g_tabs + VEC_len]
+    jb 4f
+5:  dec rax
+4:  mov rdi, rax
+    cmp qword ptr [rip + g_tabs + VEC_len], 0
+    jne 6f
+    mov rdi, -1
+6:  mov [rip + g_tab_cur], rdi
+    call app_sync_doc
+    call app_update_title
+    EPILOGUE
+
+# app_close_tab(i): ask when modified
+FN app_close_tab
+    PROLOGUE
+    mov rbx, rdi
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1f
+    mov rdi, [rax + TAB_doc]
+    call doc_dirty
+    test eax, eax
+    jz 1f
+    mov [rip + dlg_tab], rbx
+    mov dword ptr [rip + dlg_kind], 1
+    mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    mov rdi, rbx
+    call app_activate_tab
+    mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    EPILOGUE
+1:  mov rdi, rbx
+    call app_close_tab_now
+    EPILOGUE
+
+FN cmd_close_tab
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 1f
+    jmp app_close_tab
+1:  ret
+
+FN cmd_next_tab
+    mov rax, [rip + g_tab_cur]
+    test rax, rax
+    js 1f
+    inc rax
+    cmp rax, [rip + g_tabs + VEC_len]
+    jb 2f
+    xor eax, eax
+2:  mov rdi, rax
+    jmp app_activate_tab
+1:  ret
+
+FN cmd_prev_tab
+    mov rax, [rip + g_tab_cur]
+    test rax, rax
+    js 1f
+    dec rax
+    jns 2f
+    mov rax, [rip + g_tabs + VEC_len]
+    dec rax
+2:  mov rdi, rax
+    jmp app_activate_tab
+1:  ret
+
+# cmd_save(): save, or ask for a path for untitled docs
+FN cmd_save
+    PROLOGUE
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    cmp qword ptr [rbx + DOC_path], 0
+    jne 1f
+    call cmd_save_as
+    jmp 9f
+1:  mov rdi, rbx
+    call doc_save
+    test rax, rax
+    js 2f
+    mov rdi, rbx
+    call app_after_save
+    jmp 9f
+2:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+9:  EPILOGUE
+
+# app_after_save(doc): re-detect language, config reload, explorer refresh
+FN app_after_save
+    PROLOGUE
+    mov rbx, rdi
+    cmp qword ptr [rbx + DOC_lang], 0
+    jne 1f
+    mov rdi, rbx
+    call app_detect_lang
+1:  lea rdi, [rip + .Lsaved]
+    call app_toast
+    call explorer_refresh
+    # saving the config file applies it right away
+    call config_path
+    mov rdi, rax
+    mov rsi, [rbx + DOC_path]
+    call strcmp_eq
+    test eax, eax
+    jz 2f
+    call app_reload_config
+2:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+FN cmd_save_as
+    lea rdi, [rip + .Lsave_as]
+    mov esi, PROMPT_SAVE_AS
+    jmp prompt_open
+
+FN cmd_quit
+    PROLOGUE
+    # first modified doc -> ask
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov rdi, [rax + TAB_doc]
+    call doc_dirty
+    test eax, eax
+    jz 2f
+    mov [rip + dlg_tab], rbx
+    mov dword ptr [rip + dlg_kind], 2
+    mov rdi, rbx
+    call app_activate_tab
+    mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    EPILOGUE
+2:  inc rbx
+    jmp 1b
+3:  call session_save
+    mov dword ptr [rip + g_quit], 1
+    EPILOGUE
+
+FN app_on_close
+    jmp cmd_quit
+
+# app_toast(cstr)
+FN app_toast
+    push rbx
+    mov rsi, rdi
+    lea rdi, [rip + g_toast]
+    mov ecx, 250
+1:  mov al, [rsi]
+    mov [rdi], al
+    test al, al
+    jz 2f
+    inc rsi
+    inc rdi
+    dec ecx
+    jnz 1b
+    mov byte ptr [rdi], 0
+2:  call time_ms
+    add rax, 2200
+    mov [rip + g_toast_until], rax
+    mov dword ptr [rip + g_dirty], 1
+    pop rbx
+    ret
+
+# app_reload_config(): re-read config and apply theme/fonts/sizes
+FN app_reload_config
+    PROLOGUE
+    call config_load
+    call app_apply_settings
+    EPILOGUE
+
+# app_apply_settings(): push current cfg_* values into the running app
+FN app_apply_settings
+    PROLOGUE
+    mov rdi, [rip + cfg_theme]
+    call theme_find
+    test rax, rax
+    js 1f
+    cmp rax, [rip + g_theme_cur]
+    je 1f
+    mov rdi, rax
+    call theme_apply
+1:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# ---------------- platform callbacks ----------------
+
 FN app_on_resize
     mov dword ptr [rip + g_dirty], 1
     ret
-FN app_on_close
-    mov dword ptr [rip + g_quit], 1
-    ret
+
 FN app_on_motion
-    mov [rip + mx], edi
-    mov [rip + my], esi
+    call ui_input_motion
     mov dword ptr [rip + g_dirty], 1
-    mov edi, CUR_TEXT
-    cmp dword ptr [rip + my], 80
-    jge 1f
-    mov edi, CUR_DEFAULT
-1:  PCALL P_cursor
     ret
+
 FN app_on_pointer_leave
+    mov dword ptr [rip + g_mx], -10000
+    mov dword ptr [rip + g_my], -10000
+    mov dword ptr [rip + g_dirty], 1
     ret
+
+# app_on_button(btn, pressed, mods)
 FN app_on_button
-    cmp edi, BTN_LEFT
-    jne 1f
-    cmp esi, 1
-    jne 1f
-    cmp dword ptr [rip + my], 80
-    jge 1f
-    PCALL P_move
-1:  ret
+    mov [rip + g_mods], edx
+    call ui_input_button
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
 FN app_on_scroll
+    call ui_input_scroll
+    mov dword ptr [rip + g_dirty], 1
     ret
+
 FN app_on_focus
+    mov [rip + g_win_focused], edi
+    call ed_touch
     mov dword ptr [rip + g_dirty], 1
     ret
-FN app_on_key
-    mov [rip + lastkey], edi
-    mov [rip + lastcp], esi
-    mov [rip + lastmods], edx
-    mov dword ptr [rip + g_dirty], 1
-    cmp edi, KEY_ESCAPE
-    jne 1f
-    mov dword ptr [rip + g_quit], 1
-1:  ret
+
+# app_on_paste(ptr, len): route to the focused text target
 FN app_on_paste
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdi, rbx
+    mov rsi, r12
+    call focused_field
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    mov rsi, rbx
+    mov rdx, r12
+    call tf_insert
+    call field_changed
+    jmp 9f
+1:  cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    jne 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call ed_paste
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# focused_field() -> TF* that has keyboard focus, or 0
+focused_field:
+    mov eax, [rip + g_focus]
+    cmp eax, FOCUS_PALETTE
+    je palette_field
+    cmp eax, FOCUS_PROMPT
+    je palette_field
+    cmp eax, FOCUS_FIND
+    je find_field
+    cmp eax, FOCUS_SETTINGS
+    je settings_field
+    xor eax, eax
     ret
-FN app_timeout
-    mov eax, -1
+
+# field_changed(): notify the owner of the focused field
+field_changed:
+    mov eax, [rip + g_focus]
+    cmp eax, FOCUS_PALETTE
+    je palette_changed
+    cmp eax, FOCUS_PROMPT
+    je palette_changed
+    cmp eax, FOCUS_FIND
+    je find_changed
     ret
-FN app_tick
-    ret
-FN app_render
-    PROLOGUE 32
-    movss xmm0, [rip + g_dpi_scale]
-    mulss xmm0, [rip + f15]
-    cvtss2si edx, xmm0
-    lea rdi, [rip + face_a]
-    mov rsi, [rip + font_m]
-    cmp edx, [rip + face_a + FACE_px]
+
+# app_on_key(keysym, cp, mods)
+FN app_on_key
+    PROLOGUE 16
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    mov [rip + g_mods], edx
+    mov dword ptr [rip + g_dirty], 1
+    call time_ms
+    mov [rip + g_blink_t0], rax
+    # modal dialog swallows keys
+    cmp dword ptr [rip + dlg_kind], 0
     je 1f
-    call face_init
-1:  xor edi, edi
+    mov edi, r12d
+    call dialog_key
+    jmp 9f
+1:  # focused components get the first chance
+    mov eax, [rip + g_focus]
+    cmp eax, FOCUS_PALETTE
+    je 2f
+    cmp eax, FOCUS_PROMPT
+    jne 3f
+2:  mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call palette_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+3:  cmp eax, FOCUS_FIND
+    jne 4f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call find_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+4:  cmp eax, FOCUS_SETTINGS
+    jne 5f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call settings_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+5:  cmp eax, FOCUS_EXPLORER
+    jne 6f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call explorer_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+6:  cmp eax, FOCUS_AGENTS
+    jne .Lk_bind
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call agents_key
+    test eax, eax
+    jnz 9f
+.Lk_bind:
+    mov edi, r12d
+    mov esi, r14d
+    call keys_lookup
+    test rax, rax
+    jz .Lk_editor
+    call rax
+    jmp 9f
+.Lk_editor:
+    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    jne 9f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call editor_key
+9:  EPILOGUE
+
+# editor_key(keysym, cp, mods): keys not bound to commands
+FN editor_key
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    cmp qword ptr [rip + g_doc], 0
+    je 9f
+    mov r15d, r14d
+    and r15d, MOD_SHIFT         # extend selection
+    xor ebx, ebx                # word modifier
+    test r14d, MOD_CTRL
+    setnz bl
+    mov eax, r12d
+    cmp eax, KEY_LEFT
+    jne 1f
+    lea edi, [rbx*8 - 0]
+    mov edi, 0
+    test ebx, ebx
+    jz 11f
+    mov edi, 6
+11: mov esi, r15d
+    call ed_move
+    jmp 9f
+1:  cmp eax, KEY_RIGHT
+    jne 2f
+    mov edi, 1
+    test ebx, ebx
+    jz 21f
+    mov edi, 7
+21: mov esi, r15d
+    call ed_move
+    jmp 9f
+2:  cmp eax, KEY_UP
+    jne 3f
+    test ebx, ebx
+    jnz 31f
+    mov edi, 2
+    mov esi, r15d
+    call ed_move
+    jmp 9f
+31: mov rax, [rip + g_doc]
+    sub qword ptr [rax + DOC_scrolly], 256
+    jmp 9f
+3:  cmp eax, KEY_DOWN
+    jne 4f
+    test ebx, ebx
+    jnz 41f
+    mov edi, 3
+    mov esi, r15d
+    call ed_move
+    jmp 9f
+41: mov rax, [rip + g_doc]
+    add qword ptr [rax + DOC_scrolly], 256
+    jmp 9f
+4:  cmp eax, KEY_HOME
+    jne 5f
+    mov edi, 4
+    test ebx, ebx
+    jz 51f
+    mov edi, 10
+51: mov esi, r15d
+    call ed_move
+    jmp 9f
+5:  cmp eax, KEY_END
+    jne 6f
+    mov edi, 5
+    test ebx, ebx
+    jz 61f
+    mov edi, 11
+61: mov esi, r15d
+    call ed_move
+    jmp 9f
+6:  cmp eax, KEY_PAGEUP
+    jne 7f
+    mov edi, 8
+    mov esi, r15d
+    call ed_move
+    jmp 9f
+7:  cmp eax, KEY_PAGEDOWN
+    jne 8f
+    mov edi, 9
+    mov esi, r15d
+    call ed_move
+    jmp 9f
+8:  cmp eax, KEY_BACKSPACE
+    jne 81f
+    mov edi, ebx
+    call ed_backspace
+    jmp 9f
+81: cmp eax, KEY_DELETE
+    jne 82f
+    mov edi, ebx
+    call ed_delete_fwd
+    jmp 9f
+82: cmp eax, KEY_RETURN
+    je 83f
+    cmp eax, KEY_KP_ENTER
+    jne 84f
+83: call ed_newline
+    jmp 9f
+84: cmp eax, KEY_TAB
+    jne 85f
+    test r14d, MOD_SHIFT
+    jnz 86f
+    call ed_tab
+    jmp 9f
+85: cmp eax, KEY_ISO_LEFT_TAB
+    jne 87f
+86: mov edi, -1
+    call ed_indent
+    jmp 9f
+87: cmp eax, KEY_ESCAPE
+    jne 88f
+    # collapse selection
+    mov rax, [rip + g_doc]
+    mov rcx, [rax + DOC_cur]
+    mov [rax + DOC_anchor], rcx
+    lea rdi, [rip + g_ed_find]
+    call sb_clear
+    jmp 9f
+88: # printable
+    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    jnz 9f
+    cmp r13d, 32
+    jb 9f
+    cmp r13d, 127
+    je 9f
+    mov edi, r13d
+    call ed_type
+9:  EPILOGUE
+
+# ---------------- timers ----------------
+
+FN app_timeout
+    PROLOGUE
+    call ed_blink_timeout
+    mov ebx, eax
+    # toast expiry
+    mov rax, [rip + g_toast_until]
+    test rax, rax
+    jz 1f
+    push rax
+    call time_ms
+    pop rcx
+    sub rcx, rax
+    jns 11f
+    xor ecx, ecx
+11: cmp ebx, -1
+    je 12f
+    cmp ecx, ebx
+    jge 1f
+12: mov ebx, ecx
+1:  call agents_timeout
+    cmp eax, -1
+    je 2f
+    cmp ebx, -1
+    je 21f
+    cmp eax, ebx
+    jge 2f
+21: mov ebx, eax
+2:  mov eax, ebx
+    EPILOGUE
+
+FN app_tick
+    PROLOGUE
+    call ed_blink_timeout
+    test eax, eax
+    jnz 1f
+    mov dword ptr [rip + g_dirty], 1
+1:  mov rax, [rip + g_toast_until]
+    test rax, rax
+    jz 2f
+    call time_ms
+    cmp rax, [rip + g_toast_until]
+    jb 2f
+    mov qword ptr [rip + g_toast_until], 0
+    mov dword ptr [rip + g_dirty], 1
+2:  call agents_tick
+    EPILOGUE
+
+# ---------------- rendering ----------------
+
+FN app_render
+    PROLOGUE 64
+    call ui_update_metrics
+    call ui_begin
+    mov eax, [rip + g_cv + CV_w]
+    mov [rsp], eax              # W
+    mov eax, [rip + g_cv + CV_h]
+    mov [rsp + 4], eax          # H
+    # modal layers block the base UI
+    call app_modal_open
+    mov [rsp + 8], eax
+    mov [rip + g_block], eax
+    # background
+    xor edi, edi
     xor esi, esi
-    mov edx, [rip + g_cv + CV_w]
-    mov ecx, [rip + g_cv + CV_h]
-    mov r8d, 0xff1e2127
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    COLOR r8d, T_BG
     call gfx_fill
+    # panel sizes
+    mov edi, [rip + cfg_sidebar_w]
+    call sc
+    mov [rip + g_side_px], eax
+    mov edi, [rip + cfg_agents_w]
+    call sc
+    mov [rip + g_agents_px], eax
+    # keep the editor at least 240pt wide
+    mov edi, 240
+    call sc
+    mov ecx, [rsp]
+    sub ecx, eax
+    xor edx, edx
+    cmp dword ptr [rip + cfg_sidebar], 0
+    je 1f
+    mov edx, [rip + g_side_px]
+1:  cmp dword ptr [rip + cfg_agents], 0
+    je 2f
+    add edx, [rip + g_agents_px]
+2:  cmp edx, ecx
+    jle 3f
+    # shrink the agents panel first, then the sidebar
+    sub edx, ecx
+    mov eax, [rip + g_agents_px]
+    sub eax, edx
+    mov [rip + g_agents_px], eax
+3:  M eax, MI_TITLE
+    mov [rsp + 12], eax         # title h
+    M eax, MI_STATUS
+    mov ecx, [rsp + 4]
+    sub ecx, eax
+    mov [rsp + 16], ecx         # status y
+    # body box
+    mov eax, [rsp + 12]
+    mov [rsp + 20], eax         # body y
+    mov ecx, [rsp + 16]
+    sub ecx, eax
+    mov [rsp + 24], ecx         # body h
+    mov dword ptr [rsp + 28], 0 # body x
+    mov eax, [rsp]
+    mov [rsp + 32], eax         # body right
+    # sidebar
+    cmp dword ptr [rip + cfg_sidebar], 0
+    je 4f
+    xor edi, edi
+    mov esi, [rsp + 20]
+    mov edx, [rip + g_side_px]
+    mov ecx, [rsp + 24]
+    call explorer_draw
+    mov eax, [rip + g_side_px]
+    mov [rsp + 28], eax
+    # border + splitter
+    mov edi, eax
+    mov esi, [rsp + 20]
+    M edx, MI_1
+    mov ecx, [rsp + 24]
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov edi, ID_SPLIT_L
+    mov esi, [rsp + 28]
+    mov edx, [rsp + 20]
+    mov ecx, [rsp + 24]
+    call splitter
+4:  cmp dword ptr [rip + cfg_agents], 0
+    je 5f
+    mov edi, [rsp]
+    sub edi, [rip + g_agents_px]
+    mov [rsp + 32], edi
+    mov esi, [rsp + 20]
+    mov edx, [rip + g_agents_px]
+    mov ecx, [rsp + 24]
+    call agents_draw
+    mov edi, [rsp + 32]
+    mov esi, [rsp + 20]
+    M edx, MI_1
+    mov ecx, [rsp + 24]
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov edi, ID_SPLIT_R
+    mov esi, [rsp + 32]
+    mov edx, [rsp + 20]
+    mov ecx, [rsp + 24]
+    call splitter
+5:  # editor column
+    mov edi, [rsp + 28]
+    cmp dword ptr [rip + cfg_sidebar], 0
+    je 51f
+    add edi, [rip + g_mt + 4*MI_1]
+51: mov esi, [rsp + 20]
+    mov edx, [rsp + 32]
+    sub edx, edi
+    mov ecx, [rsp + 24]
+    call center_draw
+    # chrome
+    xor edi, edi
+    xor esi, esi
+    mov edx, [rsp]
+    mov ecx, [rsp + 12]
+    call titlebar_draw
+    xor edi, edi
+    mov esi, [rsp + 16]
+    mov edx, [rsp]
+    M ecx, MI_STATUS
+    call statusbar_draw
+    # overlays (not blocked)
+    mov dword ptr [rip + g_block], 0
+    call explorer_menu_draw
+    call palette_draw
+    call dialog_draw
+    call toast_draw
+    call ui_end
+    # scripted screenshot
+    mov rdi, [rip + g_shot_path]
+    test rdi, rdi
+    jz 9f
+    mov qword ptr [rip + g_shot_path], 0
+    call shot_write
+9:  EPILOGUE
+
+# app_modal_open() -> 1 when a modal layer should block the base ui
+app_modal_open:
+    cmp dword ptr [rip + dlg_kind], 0
+    jne 1f
+    call explorer_menu_open
+    test eax, eax
+    jnz 1f
+    call palette_is_open
+    ret
+1:  mov eax, 1
+    ret
+
+# splitter(id, x, y, h): drag handle for panel widths
+splitter:
+    PROLOGUE 16
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    M eax, MI_3
+    mov esi, r12d
+    sub esi, eax
+    mov edi, ebx
+    xchg esi, edi
+    mov edi, ebx
+    mov esi, r12d
+    sub esi, eax
+    mov edx, r13d
+    lea ecx, [rax + rax + 1]
+    mov r8d, r14d
+    call ui_btn
+    test eax, UB_HOVER | UB_HELD
+    jz 1f
+    mov dword ptr [rip + g_cursor], CUR_EW
+1:  test eax, UB_HELD
+    jz 9f
+    # new width in logical points
+    mov eax, [rip + g_mx]
+    cmp ebx, ID_SPLIT_L
+    jne 2f
+    cvtsi2ss xmm0, eax
+    divss xmm0, [rip + g_s]
+    cvtss2si eax, xmm0
+    cmp eax, 140
+    jge 11f
+    mov eax, 140
+11: cmp eax, 600
+    jle 12f
+    mov eax, 600
+12: mov [rip + cfg_sidebar_w], eax
+    jmp 3f
+2:  mov ecx, [rip + g_cv + CV_w]
+    sub ecx, eax
+    cvtsi2ss xmm0, ecx
+    divss xmm0, [rip + g_s]
+    cvtss2si eax, xmm0
+    cmp eax, 240
+    jge 21f
+    mov eax, 240
+21: cmp eax, 900
+    jle 22f
+    mov eax, 900
+22: mov [rip + cfg_agents_w], eax
+3:  mov dword ptr [rip + g_dirty], 1
+    mov dword ptr [rip + g_settings_changed], 1
+9:  EPILOGUE
+
+# center_draw(x, y, w, h): tabs + editor / settings / welcome
+FN center_draw
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    cmp qword ptr [rip + g_tabs + VEC_len], 0
+    jne 1f
+    call welcome_draw
+    EPILOGUE
+1:  M eax, MI_TAB
+    mov [rsp + 16], eax
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, eax
+    call tabs_draw
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    add esi, [rsp + 16]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    sub ecx, [rsp + 16]
+    mov [rip + g_editor_rect], edi
+    mov [rip + g_editor_rect + 4], esi
+    mov [rip + g_editor_rect + 8], edx
+    mov [rip + g_editor_rect + 12], ecx
+    mov rax, [rip + g_tab_cur]
+    mov rdi, rax
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
+    jne 2f
+    mov edi, [rip + g_editor_rect]
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call settings_draw
+    EPILOGUE
+2:  mov rbx, [rip + g_doc]
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_scrolly]
+    shr rsi, 8
+    mov eax, [rip + g_editor_rect + 12]
+    xor edx, edx
+    div dword ptr [rip + g_lh]
+    lea rsi, [rsi + rax + 2]
+    call syntax_prepare
+    mov edi, [rip + g_editor_rect]
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call editor_draw
+    call find_draw
+    EPILOGUE
+
+# titlebar_draw(x, y, w, h)
+FN titlebar_draw
+    PROLOGUE 48
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    COLOR r8d, T_TITLEBAR
+    call gfx_fill
+    mov edi, [rsp]
+    mov esi, [rsp + 12]
+    dec esi
+    mov edx, [rsp + 8]
+    M ecx, MI_1
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    # move / maximize / menu on empty title area
+    mov edi, ID_TITLE
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    test eax, UB_DOUBLE
+    jz 1f
+    PCALL P_maximize
+    jmp 2f
+1:  test eax, UB_PRESS
+    jz 11f
+    PCALL P_move
+    jmp 2f
+11: test eax, UB_RPRESS
+    jz 2f
+    mov edi, [rip + g_mx]
+    mov esi, [rip + g_my]
+    PCALL P_menu
+2:  M r12d, MI_8
+    # sidebar toggle
+    M r13d, MI_32
+    mov edi, ID_TOG_SIDE
+    mov esi, r12d
+    mov edx, [rsp + 12]
+    sub edx, r13d
+    sar edx, 1
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_SIDEBAR
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 3f
+    call cmd_toggle_sidebar
+3:  add r12d, r13d
+    add r12d, [rip + g_mt + 4*MI_8]
+    # project name
+    mov r8, [rip + g_project_name]
+    test r8, r8
+    jnz 4f
+    lea r8, [rip + .Lrhun]
+4:  lea rdi, [rip + g_face_ui]
+    mov esi, r12d
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    COLOR r9d, T_FG
+    call ui_text_c
+    mov r12d, eax
+    # branch
+    cmp byte ptr [rip + g_branch], 0
+    je 5f
+    add r12d, [rip + g_mt + 4*MI_10]
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    lea r8, [rip + g_branch]
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    mov r12d, eax
+5:  # active file, centered
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 6f
+    mov rdi, rbx
+    call doc_rel_path
+    mov [rsp + 16], rax
+    mov [rsp + 24], rdx
+    lea rdi, [rip + g_face_small]
+    mov rsi, rax
+    call text_width
+    mov esi, [rsp + 8]
+    sub esi, eax
+    sar esi, 1
+    cmp esi, r12d
+    jle 6f
+    lea rdi, [rip + g_face_small]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    mov r8, [rsp + 16]
+    mov r9, [rsp + 24]
+    COLOR eax, T_MUTED
+    push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+6:  # right side buttons
+    mov r12d, [rsp + 8]
+    cmp dword ptr [rip + g_csd], 0
+    je 7f
+    # window controls: close, maximize, minimize (right to left)
+    M r13d, MI_48
+    sub r12d, r13d
+    mov edi, ID_WCLOSE
+    mov esi, r12d
+    xor edx, edx
+    mov ecx, r13d
+    mov r8d, [rsp + 12]
+    call ui_btn
+    mov ebx, eax
+    COLOR r14d, T_MUTED
+    test ebx, UB_HOVER
+    jz 61f
+    mov edi, r12d
+    xor esi, esi
+    mov edx, r13d
+    mov ecx, [rsp + 12]
+    dec ecx
+    mov r8d, 0xffe0434f
+    call gfx_fill
+    mov r14d, 0xffffffff
+61: mov edi, IC_WCLOSE
+    mov esi, r12d
+    xor edx, edx
+    mov ecx, r13d
+    mov r8d, [rsp + 12]
+    mov r9d, r14d
+    call ui_icon_center
+    test ebx, UB_CLICK
+    jz 62f
+    call cmd_quit
+62: sub r12d, r13d
+    mov edi, ID_WMAX
+    mov esi, r12d
+    mov r14d, IC_MAX
+    test dword ptr [rip + g_win_states], 1
+    jz 63f
+    mov r14d, IC_RESTORE
+63: call .Ltb_wbtn
+    test eax, UB_CLICK
+    jz 64f
+    PCALL P_maximize
+64: sub r12d, r13d
+    mov edi, ID_WMIN
+    mov esi, r12d
+    mov r14d, IC_MIN
+    call .Ltb_wbtn
+    test eax, UB_CLICK
+    jz 7f
+    PCALL P_minimize
+7:  # settings + agents toggles
+    M r13d, MI_32
+    sub r12d, r13d
+    sub r12d, [rip + g_mt + 4*MI_8]
+    mov edi, ID_SETTINGS_BTN
+    mov esi, r12d
+    mov edx, [rsp + 12]
+    sub edx, r13d
+    sar edx, 1
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_SLIDERS
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 8f
+    call cmd_settings
+8:  sub r12d, r13d
+    sub r12d, [rip + g_mt + 4*MI_4]
+    mov edi, ID_TOG_AGENTS
+    mov esi, r12d
+    mov edx, [rsp + 12]
+    sub edx, r13d
+    sar edx, 1
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_SPARK
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 9f
+    call cmd_toggle_agents
+9:  EPILOGUE
+# window control button helper: edi id, esi x, r13d w, r14d icon -> eax UB bits
+.Ltb_wbtn:
+    push rbx
+    push r15
+    sub rsp, 8
+    mov r15d, esi
+    xor edx, edx
+    mov ecx, r13d
+    mov r8d, [rsp + 24 + 8 + 12]
+    call ui_btn
+    mov ebx, eax
+    test ebx, UB_HOVER
+    jz 1f
+    mov edi, r15d
+    xor esi, esi
+    mov edx, r13d
+    mov ecx, [rsp + 24 + 8 + 12]
+    dec ecx
+    COLOR r8d, T_HOVER
+    call gfx_fill
+1:  mov edi, r14d
+    mov esi, r15d
+    xor edx, edx
+    mov ecx, r13d
+    mov r8d, [rsp + 24 + 8 + 12]
+    COLOR r9d, T_MUTED
+    test ebx, UB_HOVER
+    jz 2f
+    COLOR r9d, T_FG
+2:  call ui_icon_center
+    mov eax, ebx
+    add rsp, 8
+    pop r15
+    pop rbx
+    ret
+
+# doc_rel_path(doc) -> rax ptr, rdx len : path relative to the project when inside it
+FN doc_rel_path
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rbx + DOC_path]
+    test r12, r12
+    jnz 1f
+    mov rax, [rbx + DOC_name]
+    mov rdi, rax
+    push rax
+    call strlen
+    mov rdx, rax
+    pop rax
+    EPILOGUE
+1:  mov rdi, r12
+    call strlen
+    mov r13, rax
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz 2f
+    call strlen
+    mov r14, rax
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [rip + g_project]
+    mov rcx, r14
+    call str_starts
+    test eax, eax
+    jz 2f
+    cmp r14, r13
+    jae 2f
+    cmp byte ptr [r12 + r14], '/'
+    jne 2f
+    lea rax, [r12 + r14 + 1]
+    mov rdx, r13
+    sub rdx, r14
+    dec rdx
+    EPILOGUE
+2:  mov rax, r12
+    mov rdx, r13
+    EPILOGUE
+
+# tabs_draw(x, y, w, h)
+FN tabs_draw
+    PROLOGUE 64
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    COLOR r8d, T_TAB
+    call gfx_fill
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    add esi, [rsp + 12]
+    sub esi, [rip + g_mt + 4*MI_1]
+    mov edx, [rsp + 8]
+    M ecx, MI_1
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call gfx_clip_push
+    # wheel scrolls the strip
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call ui_in
+    test eax, eax
+    jz 1f
+    mov eax, [rip + g_scroll_y]
+    add eax, [rip + g_scroll_x]
+    add [rip + g_tabscroll], eax
+1:  cmp dword ptr [rip + g_tabscroll], 0
+    jge 2f
+    mov dword ptr [rip + g_tabscroll], 0
+2:  mov r12d, [rsp]
+    sub r12d, [rip + g_tabscroll]
+    xor ebx, ebx
+.Ltd_tab:
+    cmp rbx, [rip + g_tabs + VEC_len]
+    jae .Ltd_done
+    # label
+    mov rdi, rbx
+    call tab_at
+    mov r15, rax
+    cmp qword ptr [r15 + TAB_kind], TAB_DOC
+    jne 3f
+    mov rax, [r15 + TAB_doc]
+    mov r13, [rax + DOC_name]
+    jmp 4f
+3:  lea r13, [rip + .Lsettings]
+4:  mov rdi, r13
+    call strlen
+    mov r14, rax
+    lea rdi, [rip + g_face_ui]
+    mov rsi, r13
+    mov rdx, r14
+    call text_width
+    add eax, [rip + g_mt + 4*MI_40]
+    add eax, [rip + g_mt + 4*MI_12]
+    mov [rsp + 16], eax         # tab width
+    # reveal the active tab
+    cmp rbx, [rip + g_tab_cur]
+    jne 5f
+    cmp dword ptr [rip + g_tabscroll_reveal], 0
+    je 5f
+    mov dword ptr [rip + g_tabscroll_reveal], 0
+    mov ecx, r12d
+    sub ecx, [rsp]
+    jns 41f
+    add [rip + g_tabscroll], ecx
+    add r12d, ecx
+    sub r12d, ecx
+    mov dword ptr [rip + g_dirty], 1
+41: mov ecx, r12d
+    add ecx, eax
+    mov edx, [rsp]
+    add edx, [rsp + 8]
+    sub ecx, edx
+    jle 5f
+    add [rip + g_tabscroll], ecx
+    mov dword ptr [rip + g_dirty], 1
+5:  # interaction
+    lea edi, [rbx + ID_TAB]
+    mov esi, r12d
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 16]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    mov [rsp + 20], eax
+    test eax, UB_PRESS
+    jz 6f
+    mov rdi, rbx
+    call app_activate_tab
+6:  test dword ptr [rsp + 20], UB_HOVER
+    jz 61f
+    test dword ptr [rip + g_pressed], 1 << BTN_MIDDLE
+    jz 61f
+    mov rdi, rbx
+    call app_close_tab
+    jmp .Ltd_done
+61: # background
+    cmp rbx, [rip + g_tab_cur]
+    jne 7f
+    mov edi, r12d
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 16]
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_TAB_ACTIVE
+    call gfx_fill
+    mov edi, r12d
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 16]
+    M ecx, MI_2
+    COLOR r8d, T_ACCENT
+    call gfx_fill
+    jmp 8f
+7:  test dword ptr [rsp + 20], UB_HOVER
+    jz 8f
+    mov edi, r12d
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 16]
+    mov ecx, [rsp + 12]
+    sub ecx, [rip + g_mt + 4*MI_1]
+    COLOR r8d, T_HOVER
+    call gfx_fill
+8:  # separator
+    mov edi, r12d
+    add edi, [rsp + 16]
+    sub edi, [rip + g_mt + 4*MI_1]
+    mov esi, [rsp + 4]
+    add esi, [rip + g_mt + 4*MI_8]
+    M edx, MI_1
+    mov ecx, [rsp + 12]
+    sub ecx, [rip + g_mt + 4*MI_16]
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    # text
+    COLOR r9d, T_MUTED
+    cmp rbx, [rip + g_tab_cur]
+    jne 81f
+    COLOR r9d, T_FG
+81: lea rdi, [rip + g_face_ui]
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    mov r8, r13
+    push r9
+    push r9
+    mov r9, r14
+    call ui_text_v
+    add rsp, 16
+    # close button / modified dot
+    M r13d, MI_20
+    mov esi, r12d
+    add esi, [rsp + 16]
+    sub esi, r13d
+    sub esi, [rip + g_mt + 4*MI_8]
+    mov [rsp + 24], esi
+    mov edx, [rsp + 12]
+    sub edx, r13d
+    sar edx, 1
+    add edx, [rsp + 4]
+    mov [rsp + 28], edx
+    lea edi, [rbx + ID_TABX]
+    mov ecx, r13d
+    mov r8d, r13d
+    call ui_btn
+    mov [rsp + 32], eax
+    xor r14d, r14d              # modified?
+    cmp qword ptr [r15 + TAB_kind], TAB_DOC
+    jne 82f
+    mov rdi, [r15 + TAB_doc]
+    call doc_dirty
+    mov r14d, eax
+82: test dword ptr [rsp + 32], UB_HOVER
+    jnz 84f
+    test r14d, r14d
+    jz 83f
+    # dot
+    M ecx, MI_8
+    mov edi, [rsp + 24]
+    mov esi, [rsp + 28]
+    mov eax, r13d
+    sub eax, ecx
+    sar eax, 1
+    add edi, eax
+    add esi, eax
+    mov edx, ecx
+    mov r8d, ecx
+    shr r8d, 1
+    COLOR r9d, T_FG
+    cmp rbx, [rip + g_tab_cur]
+    je 821f
+    COLOR r9d, T_MUTED
+821:call gfx_round_rect
+    jmp .Ltd_next
+83: cmp rbx, [rip + g_tab_cur]
+    jne 841f
+    test dword ptr [rsp + 20], UB_HOVER
+    jz 841f
+84: # x
+    test dword ptr [rsp + 32], UB_HOVER
+    jz 85f
+    mov edi, [rsp + 24]
+    mov esi, [rsp + 28]
+    mov edx, r13d
+    mov ecx, r13d
+    M r8d, MI_4
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+85: mov edi, IC_CLOSE
+    mov esi, [rsp + 24]
+    mov edx, [rsp + 28]
+    mov ecx, r13d
+    mov r8d, r13d
+    COLOR r9d, T_MUTED
+    call ui_icon_center
+    test dword ptr [rsp + 32], UB_CLICK
+    jz .Ltd_next
+    mov rdi, rbx
+    call app_close_tab
+    jmp .Ltd_done
+841:
+.Ltd_next:
+    add r12d, [rsp + 16]
+    inc rbx
+    jmp .Ltd_tab
+.Ltd_done:
+    # clamp scroll so the strip cannot scroll past its end
+    mov eax, r12d
+    add eax, [rip + g_tabscroll]
+    sub eax, [rsp]
+    sub eax, [rsp + 8]
+    jg 9f
+    mov dword ptr [rip + g_tabscroll], 0
+9:  call gfx_clip_pop
+    EPILOGUE
+
+# statusbar_draw(x, y, w, h)
+FN statusbar_draw
+    PROLOGUE 64
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    COLOR r8d, T_STATUS
+    call gfx_fill
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    M ecx, MI_1
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    lea rdi, [rip + tmp_sb]
+    call sb_clear
+    # "Ln x, Col y"
+    lea rdi, [rip + tmp_sb]
+    lea rsi, [rip + .Lln]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_cur]
+    call doc_line_of
+    lea rdi, [rip + tmp_sb]
+    lea rsi, [rax + 1]
+    call sb_push_u64
+    lea rdi, [rip + tmp_sb]
+    lea rsi, [rip + .Lcol]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_cur]
+    call doc_col_of
+    lea rdi, [rip + tmp_sb]
+    lea esi, [rax + 1]
+    call sb_push_u64
+    mov rdi, rbx
+    call ed_sel
+    sub rdx, rax
+    jz 1f
+    mov r12, rdx
+    lea rdi, [rip + tmp_sb]
+    lea rsi, [rip + .Lsel_open]
+    call sb_push_cstr
+    lea rdi, [rip + tmp_sb]
+    mov rsi, r12
+    call sb_push_u64
+    lea rdi, [rip + tmp_sb]
+    lea rsi, [rip + .Lsel_close]
+    call sb_push_cstr
+1:  lea rdi, [rip + g_face_small]
+    M esi, MI_12
+    add esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    mov r8, [rip + tmp_sb + SB_ptr]
+    mov r9, [rip + tmp_sb + SB_len]
+    COLOR eax, T_MUTED
+    push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+    # right side: language, indentation, eol, encoding
+    mov r12d, [rsp]
+    add r12d, [rsp + 8]
+    sub r12d, [rip + g_mt + 4*MI_12]
+    lea r13, [rip + .Lutf8]
+    call .Lsb_item
+    lea r13, [rip + .Llf]
+    cmp dword ptr [rbx + DOC_crlf], 0
+    je 2f
+    lea r13, [rip + .Lcrlf]
+2:  call .Lsb_item
+    lea r13, [rip + .Ltabs]
+    cmp dword ptr [rip + cfg_insert_spaces], 0
+    je 3f
+    lea rdi, [rsp + 32]
+    lea rsi, [rip + .Lspaces]
+    call cstr_copy
+    mov rdi, rax
+    mov esi, [rip + cfg_tab_width]
+    call fmt_u64
+    mov byte ptr [rdi + rax], 0
+    lea r13, [rsp + 32]
+3:  call .Lsb_item
+    lea r13, [rip + .Lplain]
+    mov rax, [rbx + DOC_lang]
+    test rax, rax
+    jz 4f
+    mov r13, [rax + GR_name]
+4:  call .Lsb_item
+9:  EPILOGUE
+# right-aligned status item: r13 cstr, r12d right edge (moves left)
+.Lsb_item:
+    push rbx
+    mov rdi, r13
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, r13
+    mov rdx, rax
+    call text_width
+    sub r12d, eax
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    mov edx, [rsp + 16 + 4]
+    mov ecx, [rsp + 16 + 12]
+    mov r8, r13
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    sub r12d, [rip + g_mt + 4*MI_20]
+    pop rbx
+    ret
+
+# welcome_draw(x, y, w, h)
+FN welcome_draw
+    PROLOGUE 48
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    COLOR r8d, T_BG
+    call gfx_fill
+    # wordmark
+    mov eax, [rsp + 12]
+    shr eax, 1
+    add eax, [rsp + 4]
+    sub eax, [rip + g_mt + 4*MI_64]
+    sub eax, [rip + g_mt + 4*MI_48]
+    mov r12d, eax
+    lea rdi, [rip + g_face_big]
+    mov esi, [rsp]
+    mov edx, r12d
+    mov ecx, [rsp + 8]
+    M r8d, MI_40
+    lea r9, [rip + .Lrhun]
+    COLOR eax, T_FG
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+    add r12d, [rip + g_mt + 4*MI_40]
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    mov edx, r12d
+    mov ecx, [rsp + 8]
+    M r8d, MI_20
+    lea r9, [rip + .Ltagline]
+    COLOR eax, T_MUTED
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+    add r12d, [rip + g_mt + 4*MI_48]
+    # shortcut rows
+    lea rbx, [rip + welcome_rows]
+    xor r15d, r15d
+1:  mov r13, [rbx]
+    test r13, r13
+    jz 9f
+    M r14d, MI_32
+    # row: label right-aligned to the center, keys left-aligned after it
+    mov eax, [rsp + 8]
+    shr eax, 1
+    add eax, [rsp]
+    mov [rsp + 16], eax         # center x
+    mov rdi, r13
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    mov rsi, r13
+    mov rdx, rax
+    call text_width
+    mov esi, [rsp + 16]
+    sub esi, eax
+    sub esi, [rip + g_mt + 4*MI_12]
+    # clickable
+    lea edi, [r15 + ID_WELCOME]
+    push rsi
+    push rsi
+    mov esi, [rsp + 16 + 16]
+    sub esi, [rip + g_mt + 4*MI_64]
+    sub esi, [rip + g_mt + 4*MI_64]
+    sub esi, [rip + g_mt + 4*MI_32]
+    mov edx, r12d
+    M ecx, MI_64
+    shl ecx, 2
+    mov r8d, r14d
+    call ui_btn
+    mov [rsp + 40 + 16], eax
+    pop rsi
+    pop rsi
+    COLOR r9d, T_MUTED
+    test dword ptr [rsp + 40], UB_HOVER
+    jz 2f
+    COLOR r9d, T_FG
+2:  lea rdi, [rip + g_face_ui]
+    mov edx, r12d
+    mov ecx, r14d
+    mov r8, r13
+    call ui_text_c
+    # key chip
+    mov r13, [rbx + 8]
+    mov rdi, r13
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, r13
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_16]
+    mov edx, eax
+    mov edi, [rsp + 16]
+    add edi, [rip + g_mt + 4*MI_12]
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_6]
+    mov ecx, r14d
+    sub ecx, [rip + g_mt + 4*MI_12]
+    M r8d, MI_4
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 16]
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, r12d
+    mov ecx, r14d
+    mov r8, r13
+    COLOR r9d, T_FG
+    call ui_text_c
+    test dword ptr [rsp + 40], UB_CLICK
+    jz 3f
+    call [rbx + 16]
+3:  add r12d, r14d
+    add rbx, 24
+    inc r15d
+    jmp 1b
+9:  EPILOGUE
+
+# ---------------- dialog ----------------
+
+FN dialog_draw
+    PROLOGUE 64
+    cmp dword ptr [rip + dlg_kind], 0
+    je .Ldd_ret
+    # scrim
     xor edi, edi
     xor esi, esi
     mov edx, [rip + g_cv + CV_w]
-    mov ecx, 80
-    mov r8d, 0xff16181d
+    mov ecx, [rip + g_cv + CV_h]
+    mov r8d, 0x60000000
     call gfx_fill
-    lea rdi, [rip + sb]
+    mov edi, 420
+    call sc
+    mov r12d, eax               # w
+    mov edi, 150
+    call sc
+    mov r13d, eax               # h
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, r12d
+    sar eax, 1
+    mov r14d, eax               # x
+    mov eax, [rip + g_cv + CV_h]
+    sub eax, r13d
+    sar eax, 1
+    sub eax, [rip + g_mt + 4*MI_48]
+    mov r15d, eax               # y
+    mov edi, r14d
+    mov esi, r15d
+    mov edx, r12d
+    mov ecx, r13d
+    call ui_card
+    # title
+    lea rdi, [rip + tmp_sb]
     call sb_clear
-    lea rdi, [rip + sb]
-    lea rsi, [rip + s_key]
+    lea rdi, [rip + tmp_sb]
+    lea rsi, [rip + .Ldlg_q]
     call sb_push_cstr
-    lea rdi, [rip + sb]
-    mov esi, [rip + lastkey]
-    call sb_push_u64
-    lea rdi, [rip + sb]
-    lea rsi, [rip + s_cp]
+    mov rdi, [rip + dlg_tab]
+    call tab_at
+    mov rax, [rax + TAB_doc]
+    lea rdi, [rip + tmp_sb]
+    mov rsi, [rax + DOC_name]
     call sb_push_cstr
-    lea rdi, [rip + sb]
-    mov esi, [rip + lastcp]
-    call sb_push_utf8
-    lea rdi, [rip + sb]
-    lea rsi, [rip + s_mods]
-    call sb_push_cstr
-    lea rdi, [rip + sb]
-    mov esi, [rip + lastmods]
-    call sb_push_u64
-    lea rdi, [rip + sb]
-    lea rsi, [rip + s_mouse]
-    call sb_push_cstr
-    lea rdi, [rip + sb]
-    mov esi, [rip + mx]
-    call sb_push_u64
-    lea rdi, [rip + sb]
-    mov esi, ','
+    lea rdi, [rip + tmp_sb]
+    mov esi, '?'
     call sb_push_byte
-    lea rdi, [rip + sb]
-    mov esi, [rip + my]
-    call sb_push_u64
-    lea rdi, [rip + sb]
-    lea rsi, [rip + s_size]
-    call sb_push_cstr
-    lea rdi, [rip + sb]
-    mov esi, [rip + g_cv + CV_w]
-    call sb_push_u64
-    lea rdi, [rip + sb]
-    mov esi, 'x'
-    call sb_push_byte
-    lea rdi, [rip + sb]
-    mov esi, [rip + g_cv + CV_h]
-    call sb_push_u64
-    lea rdi, [rip + sb]
-    lea rsi, [rip + s_csd]
-    call sb_push_cstr
-    lea rdi, [rip + sb]
-    mov esi, [rip + g_csd]
-    call sb_push_u64
-    lea rdi, [rip + face_a]
-    mov esi, 20
-    mov edx, 130
-    mov rcx, [rip + sb + SB_ptr]
-    mov r8, [rip + sb + SB_len]
-    mov r9d, 0xffdcdfe4
-    call text_draw
-    mov edi, [rip + mx]
-    sub edi, 6
-    mov esi, [rip + my]
-    sub esi, 6
-    mov edx, 12
-    mov ecx, 12
-    mov r8d, 6
-    mov r9d, 0xff61afef
-    call gfx_round_rect
-    lea rdi, [rip + dump]
-    call shot_write
+    lea rdi, [rip + g_face_ui]
+    mov esi, r14d
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, r15d
+    add edx, [rip + g_mt + 4*MI_16]
+    M ecx, MI_24
+    mov r8, [rip + tmp_sb + SB_ptr]
+    COLOR r9d, T_FG
+    call ui_text_c
+    lea rdi, [rip + g_face_small]
+    mov esi, r14d
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, r15d
+    add edx, [rip + g_mt + 4*MI_40]
+    M ecx, MI_24
+    lea r8, [rip + .Ldlg_msg]
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    # buttons: Save (primary), Don't Save, Cancel
+    M ebx, MI_32
+    mov eax, r15d
+    add eax, r13d
+    sub eax, ebx
+    sub eax, [rip + g_mt + 4*MI_16]
+    mov [rsp], eax              # button y
+    mov eax, r14d
+    add eax, r12d
+    sub eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 4], eax          # right edge
+    xor ecx, ecx
+    mov [rsp + 8], ecx
+.Ldd_btn:
+    mov ecx, [rsp + 8]
+    cmp ecx, 3
+    jae .Ldd_ret
+    lea rax, [rip + dlg_labels]
+    mov r13, [rax + rcx*8]
+    mov rdi, r13
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    mov rsi, r13
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_32]
+    mov [rsp + 12], eax         # button w
+    mov esi, [rsp + 4]
+    sub esi, eax
+    mov [rsp + 16], esi
+    mov [rsp + 4], esi
+    mov eax, [rip + g_mt + 4*MI_8]
+    sub [rsp + 4], eax
+    mov edi, [rsp + 8]
+    add edi, ID_DLG
+    mov edx, [rsp]
+    mov ecx, [rsp + 12]
+    mov r8d, ebx
+    call ui_btn
+    mov [rsp + 20], eax
+    # style: last drawn (index 2) is the primary Save button
+    mov edi, [rsp + 16]
+    mov esi, [rsp]
+    mov edx, [rsp + 12]
+    mov ecx, ebx
+    M r8d, MI_RADIUS
+    cmp dword ptr [rsp + 8], 2
+    jne 1f
+    COLOR r9d, T_ACCENT
+    COLOR eax, T_ACCENT
+    jmp 2f
+1:  COLOR r9d, T_BORDER
+    COLOR eax, T_POPUP
+    test dword ptr [rsp + 20], UB_HOVER
+    jz 2f
+    COLOR eax, T_HOVER
+2:  push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    COLOR eax, T_FG
+    cmp dword ptr [rsp + 8], 2
+    jne 3f
+    COLOR eax, T_ACCENT_FG
+3:  lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 16]
+    mov edx, [rsp]
+    mov ecx, [rsp + 12]
+    mov r8d, ebx
+    mov r9, r13
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+    test dword ptr [rsp + 20], UB_CLICK
+    jz 4f
+    mov edi, [rsp + 8]
+    call dialog_choose
+    jmp .Ldd_ret
+4:  inc dword ptr [rsp + 8]
+    jmp .Ldd_btn
+.Ldd_ret:
     EPILOGUE
+
+# dialog_choose(i): 0 cancel, 1 don't save, 2 save
+dialog_choose:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, [rip + dlg_kind]
+    mov dword ptr [rip + dlg_kind], 0
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    test ebx, ebx
+    jz 9f
+    cmp ebx, 2
+    jne 1f
+    mov rdi, [rip + dlg_tab]
+    call tab_at
+    mov rdi, [rax + TAB_doc]
+    cmp qword ptr [rdi + DOC_path], 0
+    je 2f
+    call doc_save
+    test rax, rax
+    js 9f
+    jmp 1f
+2:  call cmd_save_as
+    jmp 9f
+1:  mov rdi, [rip + dlg_tab]
+    call app_close_tab_now
+    cmp r12d, 2
+    jne 9f
+    call cmd_quit
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# dialog_key(keysym)
+dialog_key:
+    cmp edi, KEY_ESCAPE
+    jne 1f
+    xor edi, edi
+    jmp dialog_choose
+1:  cmp edi, KEY_RETURN
+    jne 2f
+    mov edi, 2
+    jmp dialog_choose
+2:  ret
+
+# ---------------- toast ----------------
+
+toast_draw:
+    PROLOGUE 16
+    cmp qword ptr [rip + g_toast_until], 0
+    je 9f
+    lea rdi, [rip + g_toast]
+    call strlen
+    mov r13, rax
+    lea rdi, [rip + g_face_small]
+    lea rsi, [rip + g_toast]
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_24]
+    mov r12d, eax               # w
+    M ebx, MI_28                # h
+    mov edi, [rip + g_editor_rect]
+    add edi, [rip + g_editor_rect + 8]
+    sub edi, r12d
+    sub edi, [rip + g_mt + 4*MI_24]
+    mov [rsp], edi
+    mov esi, [rip + g_cv + CV_h]
+    sub esi, [rip + g_mt + 4*MI_STATUS]
+    sub esi, ebx
+    sub esi, [rip + g_mt + 4*MI_12]
+    mov [rsp + 4], esi
+    mov edx, r12d
+    mov ecx, ebx
+    call ui_card
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, r12d
+    mov r8d, ebx
+    lea r9, [rip + g_toast]
+    COLOR eax, T_FG
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+9:  EPILOGUE
+
+# ---------------- misc commands ----------------
+
+FN cmd_toggle_sidebar
+    xor dword ptr [rip + cfg_sidebar], 1
+    mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+FN cmd_toggle_agents
+    xor dword ptr [rip + cfg_agents], 1
+    mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+FN cmd_zoom_in
+    add dword ptr [rip + cfg_font_size], 1
+    cmp dword ptr [rip + cfg_font_size], 40
+    jle 1f
+    mov dword ptr [rip + cfg_font_size], 40
+1:  mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+FN cmd_zoom_out
+    sub dword ptr [rip + cfg_font_size], 1
+    cmp dword ptr [rip + cfg_font_size], 8
+    jge 1f
+    mov dword ptr [rip + cfg_font_size], 8
+1:  mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+FN cmd_zoom_reset
+    mov dword ptr [rip + cfg_font_size], 14
+    mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+FN cmd_settings
+    PROLOGUE
+    # focus an existing settings tab
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 2f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
+    je 3f
+    inc rbx
+    jmp 1b
+2:  xor edi, edi
+    mov esi, TAB_SETTINGS
+    call app_add_tab
+    jmp 4f
+3:  mov rdi, rbx
+    call app_activate_tab
+4:  mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    EPILOGUE
+
+FN cmd_open_config
+    PROLOGUE
+    call config_path
+    mov rbx, rax
+    mov rdi, rax
+    call file_mtime
+    test rax, rax
+    jnz 1f
+    call config_save
+1:  mov rdi, rbx
+    call app_open_file
+    EPILOGUE
+
+FN cmd_toggle_whitespace
+    xor dword ptr [rip + cfg_whitespace], 1
+    mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+FN cmd_toggle_line_numbers
+    xor dword ptr [rip + cfg_line_numbers], 1
+    mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+FN cmd_newline_below
+    push rbx
+    mov rdi, 5
+    xor esi, esi
+    call ed_move
+    call ed_newline
+    pop rbx
+    ret
+
+FN cmd_newline_above
+    push rbx
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 1f
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_cur]
+    call doc_line_of
+    test rax, rax
+    jz 2f
+    # end of the previous line, then newline
+    mov rdi, rbx
+    lea rsi, [rax - 1]
+    call doc_line_end
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+    call ed_newline
+    jmp 1f
+2:  # first line: insert an empty line above
+    mov qword ptr [rbx + DOC_cur], 0
+    mov qword ptr [rbx + DOC_anchor], 0
+    mov rdi, rbx
+    lea rsi, [rip + .Lnl]
+    mov edx, 1
+    xor ecx, ecx
+    call ed_insert
+    mov qword ptr [rbx + DOC_cur], 0
+    mov qword ptr [rbx + DOC_anchor], 0
+1:  pop rbx
+    ret
+
+FN cmd_indent
+    mov edi, 1
+    jmp ed_indent
+FN cmd_outdent
+    mov edi, -1
+    jmp ed_indent
+FN cmd_move_line_up
+    mov edi, -1
+    jmp ed_move_lines
+FN cmd_move_line_down
+    mov edi, 1
+    jmp ed_move_lines
+
 .section .rodata
-f15: .float 15.0
-s_key: .asciz "key="
-s_cp: .asciz " char="
-s_mods: .asciz " mods="
-s_mouse: .asciz "  mouse="
-s_size: .asciz "  size="
-s_csd: .asciz "  csd="
-dump: .asciz "/tmp/claude-1000/-home-vsh-code-rhun/a5190e87-52e7-4684-9a0c-3782228f8c9e/scratchpad/wl.ppm"
+.Lrhun: .asciz "rhun"
+.Lempty: .asciz ""
+.Ldash: .asciz " \342\200\224 "
+.Lgit_head: .asciz ".git/HEAD"
+.Lrefs_heads: .ascii "ref: refs/heads/"
+.Lbinary: .asciz "Binary file, not opened"
+.Lsaved: .asciz "Saved"
+.Lsave_failed: .asciz "Could not save the file"
+.Lsave_as: .asciz "Save as"
+.Lsettings: .asciz "Settings"
+.Lln: .asciz "Ln "
+.Lcol: .asciz ", Col "
+.Lsel_open: .asciz "  ("
+.Lsel_close: .asciz " selected)"
+.Lutf8: .asciz "UTF-8"
+.Llf: .asciz "LF"
+.Lcrlf: .asciz "CRLF"
+.Ltabs: .asciz "Tabs"
+.Lspaces: .asciz "Spaces: "
+.Lplain: .asciz "Plain Text"
+.Ltagline: .asciz "a small, fast editor written in assembly"
+.Ldlg_q: .asciz "Save changes to "
+.Ldlg_msg: .asciz "Your changes will be lost if you don't save them."
+.Lnl: .ascii "\n"
+.Lw1: .asciz "Open file"
+.Lk1: .asciz "Ctrl+P"
+.Lw2: .asciz "Command palette"
+.Lk2: .asciz "Ctrl+Shift+P"
+.Lw3: .asciz "New file"
+.Lk3: .asciz "Ctrl+N"
+.Lw4: .asciz "Settings"
+.Lk4: .asciz "Ctrl+,"
+.Lw5: .asciz "Toggle explorer"
+.Lk5: .asciz "Ctrl+B"
+.Lw6: .asciz "Toggle agents"
+.Lk6: .asciz "Ctrl+Shift+A"
+.Ld0: .asciz "Cancel"
+.Ld1: .asciz "Don't Save"
+.Ld2: .asciz "Save"
+.p2align 3
+welcome_rows:
+    .quad .Lw1, .Lk1, cmd_quick_open
+    .quad .Lw2, .Lk2, cmd_command_palette
+    .quad .Lw3, .Lk3, cmd_new_file
+    .quad .Lw4, .Lk4, cmd_settings
+    .quad .Lw5, .Lk5, cmd_toggle_sidebar
+    .quad .Lw6, .Lk6, cmd_toggle_agents
+    .quad 0
+dlg_labels: .quad .Ld0, .Ld1, .Ld2
+
+.data
+g_win_focused: .long 1
+.p2align 3
+g_tab_cur: .quad -1
+.bss
+.globl g_settings_changed
+g_settings_changed: .long 0
+g_tabscroll_reveal: .long 0
+
+.text
+# app_open_path(path): folder -> project, file -> tab (relative paths use the cwd)
+FN app_open_path
+    PROLOGUE 16
+    mov rbx, rdi
+    # absolute path
+    cmp byte ptr [rbx], '/'
+    je 1f
+    sub rsp, 4096
+    mov rdi, rsp
+    mov esi, 4000
+    SYS SYS_getcwd
+    mov rdi, rsp
+    mov rsi, rbx
+    call path_join
+    add rsp, 4096
+    mov rbx, rax
+    mov r13d, 1
+    jmp 2f
+1:  xor r13d, r13d
+2:  mov rdi, rbx
+    call file_is_dir
+    test eax, eax
+    jz 3f
+    mov rdi, rbx
+    call app_set_project
+    jmp 8f
+3:  mov rdi, rbx
+    call app_open_file
+    test rax, rax
+    js 8f
+    mov rdi, rbx
+    call watch_doc
+8:  test r13d, r13d
+    jz 9f
+    mov rdi, rbx
+    call mem_free
+9:  EPILOGUE

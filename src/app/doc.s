@@ -205,6 +205,18 @@ FN doc_range
     pop rbx
     ret
 
+# doc_contiguous(doc) -> pointer to the whole text (moves the gap to the end)
+FN doc_contiguous
+    push rbx
+    mov rbx, rdi
+    call doc_len
+    mov rdi, rbx
+    mov rsi, rax
+    call gb_move_gap
+    mov rax, [rbx + DOC_buf]
+    pop rbx
+    ret
+
 # doc_line_of(doc, pos) -> line
 FN doc_line_of
     mov r8, [rdi + DOC_lines]
