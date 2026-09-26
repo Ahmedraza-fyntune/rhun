@@ -243,6 +243,8 @@ FN app_reload_doc
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
     jz 9f
+    cmp qword ptr [rbx + DOC_img], 0
+    jne .Lrd_image
     call file_read_all
     test rax, rax
     jz 9f
@@ -285,9 +287,15 @@ FN app_reload_doc
     mov [rbx + DOC_mtime], rax
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
+.Lrd_image:
+    call file_mtime
+    mov [rbx + DOC_mtime], rax
+    mov rdi, [rbx + DOC_img]
+    call iv_reload
+    EPILOGUE
 
 FN cmd_reload_file
-    mov rdi, [rip + g_doc]
+    mov rdi, [rip + g_file]
     test rdi, rdi
     jz 1f
     jmp app_reload_doc

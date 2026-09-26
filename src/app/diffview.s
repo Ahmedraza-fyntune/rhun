@@ -602,10 +602,10 @@ FN diffview_line
     pop rbx
 9:  ret
 
-# cmd_git_changes(): the changes of the current file
+# cmd_git_changes(): the changes of the current file (text or image)
 FN cmd_git_changes
     PROLOGUE
-    mov rbx, [rip + g_doc]
+    mov rbx, [rip + g_file]
     test rbx, rbx
     jz 9f
     mov rdi, [rbx + DOC_path]

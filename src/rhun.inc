@@ -487,6 +487,7 @@ F DOC_gstate, 4         # GS_*
 F DOC_gseq, 4           # git: request number; answers to older requests are dropped
 F DOC_diff, 8           # diff view: DV* with the kind and numbers of each line
 F DOC_lhash, 8          # hash of each line (for git marks), 0 = not known yet
+F DOC_img, 8            # image view of a TAB_IMAGE document, or 0
 ENDSTRUCT DOC_SIZE
 
 # DOC_flags
@@ -651,10 +652,32 @@ ENDSTRUCT TF_SIZE
 .equ IC_BRANCH, 27
 .equ IC_COUNT, 28
 
+# ---- images ----
+.equ IMF_PNG, 1
+.equ IMF_JPEG, 2
+.equ IMF_GIF, 3
+.equ IMF_BMP, 4
+.equ IMF_ICO, 5
+.equ IMF_QOI, 6
+.equ IMF_PNM, 7
+.equ IMF_TGA, 8
+.equ IMG_MAXDIM, 32768
+.equ IMG_MAXPX, 1 << 26
+
+# decoded image
+STRUCT
+F IMG_px, 8             # premultiplied ARGB, w * h (mem_alloc_try)
+F IMG_w, 4
+F IMG_h, 4
+F IMG_fmt, 4            # IMF_*
+F IMG_opaque, 4         # 1 when every pixel is opaque
+ENDSTRUCT IMG_SIZE
+
 # ---- app ----
 .equ TAB_DOC, 1
 .equ TAB_SETTINGS, 2
-.equ TAB_GIT, 3
+.equ TAB_IMAGE, 3               # TAB_doc is a DOC without text; DOC_img holds the view
+.equ TAB_GIT, 4
 STRUCT
 F TAB_kind, 8
 F TAB_doc, 8

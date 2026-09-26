@@ -40,6 +40,8 @@ tmp_sb: .zero SB_SIZE
 split_drag: .long 0
 .globl g_editor_rect
 g_editor_rect: .zero 16
+.globl g_file
+g_file: .quad 0                  # DOC of the active tab when it shows a file (text or image)
 
 .text
 
@@ -149,19 +151,35 @@ FN tab_at
     add rax, [rip + g_tabs + VEC_ptr]
     ret
 
-# app_sync_doc(): g_doc from the active tab
+# app_sync_doc(): g_doc and g_file from the active tab
 FN app_sync_doc
     mov qword ptr [rip + g_doc], 0
+    mov qword ptr [rip + g_file], 0
     mov rdi, [rip + g_tab_cur]
     test rdi, rdi
     js 1f
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 1f
-    mov rax, [rax + TAB_doc]
-    mov [rip + g_doc], rax
-1:  mov dword ptr [rip + g_dirty], 1
+    mov rcx, [rax + TAB_kind]
+    cmp qword ptr [rax + TAB_doc], 0
+    je 1f
+    mov rdx, [rax + TAB_doc]
+    mov [rip + g_file], rdx
+    cmp rcx, TAB_DOC
+    jne 2f
+    mov [rip + g_doc], rdx
+1:  # the view's copies of an image are only kept while it is shown
+    call iv_cache_free
+2:  mov dword ptr [rip + g_dirty], 1
     ret
+
+# app_image() -> the active image view, or 0
+FN app_image
+    xor eax, eax
+    mov rcx, [rip + g_file]
+    test rcx, rcx
+    jz 1f
+    mov rax, [rcx + DOC_img]
+1:  ret
 
 FN app_activate_tab
     mov [rip + g_tab_cur], rdi
@@ -177,7 +195,7 @@ FN app_update_title
     PROLOGUE
     lea rdi, [rip + tmp_sb]
     call sb_clear
-    mov rbx, [rip + g_doc]
+    mov rbx, [rip + g_file]
     test rbx, rbx
     jz 1f
     lea rdi, [rip + tmp_sb]
@@ -205,9 +223,9 @@ FN app_find_tab
     jae 3f
     mov rdi, rbx
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
     mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 2f
     mov rdi, [rax + DOC_path]
     test rdi, rdi
     jz 2f
@@ -234,9 +252,28 @@ FN app_open_file
     call app_activate_tab
     mov rax, rbx
     EPILOGUE
-1:  call doc_new
+1:  mov r14d, TAB_DOC
+    call doc_new
     mov rbx, rax
-    mov rdi, rax
+    # images open in an image tab, decoded when first shown
+    mov rdi, r12
+    call image_probe
+    test eax, eax
+    jz 11f
+    mov r14d, TAB_IMAGE
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_set_path
+    mov rdi, r12
+    call file_mtime
+    mov [rbx + DOC_mtime], rax
+    call iv_new
+    mov [rbx + DOC_img], rax
+    # follow changes on disk: images are often written by other tools
+    mov rdi, r12
+    call watch_doc
+    jmp 3f
+11: mov rdi, rbx
     mov rsi, r12
     call doc_load
     cmp rax, -1000
@@ -271,6 +308,7 @@ FN app_open_file
     test rax, rax
     jnz 3f
     mov [rdx + TAB_doc], rbx
+    mov [rdx + TAB_kind], r14
     mov rdi, rcx
     call doc_free
     mov rdi, [rip + g_tab_cur]
@@ -279,7 +317,7 @@ FN app_open_file
     mov rax, r13
     EPILOGUE
 3:  mov rdi, rbx
-    mov esi, TAB_DOC
+    mov esi, r14d
     call app_add_tab
     EPILOGUE
 
@@ -348,9 +386,9 @@ FN app_close_tab_now
     PROLOGUE
     mov r12, rdi
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 1f
     mov rdi, [rax + TAB_doc]
+    test rdi, rdi
+    jz 1f
     call doc_free
 1:  # remove slot
     mov rcx, r12
@@ -585,7 +623,9 @@ FN app_on_button
     mov dword ptr [rip + g_dirty], 1
     ret
 
+# app_on_scroll(dx, dy, mods)
 FN app_on_scroll
+    mov [rip + g_scroll_mods], edx
     call ui_input_scroll
     mov dword ptr [rip + g_dirty], 1
     ret
@@ -747,7 +787,16 @@ FN app_on_key
 .Lk_editor:
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 9f
-    # the history tab takes the arrows
+    call app_image
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call iv_key
+    jmp 9f
+1:  # the history tab takes the arrows
     mov rdi, [rip + g_tab_cur]
     test rdi, rdi
     js 8f
@@ -1308,7 +1357,16 @@ FN center_draw
     mov rax, [rip + g_tab_cur]
     mov rdi, rax
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_GIT
+    cmp qword ptr [rax + TAB_kind], TAB_IMAGE
+    jne 4f
+    mov rdi, [rax + TAB_doc]
+    mov esi, [rip + g_editor_rect]
+    mov edx, [rip + g_editor_rect + 4]
+    mov ecx, [rip + g_editor_rect + 8]
+    mov r8d, [rip + g_editor_rect + 12]
+    call iv_draw
+    EPILOGUE
+4:  cmp qword ptr [rax + TAB_kind], TAB_GIT
     jne 1f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
@@ -1403,7 +1461,7 @@ FN titlebar_draw
     call ui_text_c
     mov r12d, eax
 5:  # active file, centered
-    mov rbx, [rip + g_doc]
+    mov rbx, [rip + g_file]
     test rbx, rbx
     jz 6f
     mov rdi, rbx
@@ -1695,9 +1753,9 @@ FN tabs_draw
     mov rdi, rbx
     call tab_at
     mov r15, rax
-    cmp qword ptr [r15 + TAB_kind], TAB_DOC
-    jne 3f
     mov rax, [r15 + TAB_doc]
+    test rax, rax
+    jz 3f
     mov r13, [rax + DOC_name]
     jmp 4f
 3:  lea r13, [rip + .Lsettings]
@@ -1791,10 +1849,9 @@ FN tabs_draw
     COLOR r8d, T_BORDER
     call gfx_fill
     # text: git status color, else muted (foreground when active)
-    xor eax, eax
-    cmp qword ptr [r15 + TAB_kind], TAB_DOC
-    jne 80f
     mov rax, [r15 + TAB_doc]
+    test rax, rax
+    jz 80f
     mov rdi, [rax + DOC_path]
     xor eax, eax
     test rdi, rdi
@@ -1920,7 +1977,17 @@ FN statusbar_draw
     M ecx, MI_1
     COLOR r8d, T_BORDER
     call gfx_fill
-    mov rbx, [rip + g_doc]
+    call app_image
+    test rax, rax
+    jz 1f
+    mov rdi, [rip + g_file]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call iv_status
+    jmp 9f
+1:  mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
     lea rdi, [rip + tmp_sb]
@@ -2457,28 +2524,49 @@ FN cmd_toggle_agents
     ret
 
 FN cmd_zoom_in
+    mov esi, 1
+    call image_zoom
+    jnz 2f
     add dword ptr [rip + cfg_font_size], 1
     cmp dword ptr [rip + cfg_font_size], 40
     jle 1f
     mov dword ptr [rip + cfg_font_size], 40
 1:  mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
-    ret
+2:  ret
 
 FN cmd_zoom_out
+    mov esi, -1
+    call image_zoom
+    jnz 2f
     sub dword ptr [rip + cfg_font_size], 1
     cmp dword ptr [rip + cfg_font_size], 8
     jge 1f
     mov dword ptr [rip + cfg_font_size], 8
 1:  mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
-    ret
+2:  ret
 
 FN cmd_zoom_reset
+    xor esi, esi
+    call image_zoom
+    jnz 1f
     mov dword ptr [rip + cfg_font_size], 14
     mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
-    ret
+1:  ret
+
+# image_zoom(dir) -> ZF clear when an image tab took the zoom command (1 in, -1 out, 0 fit)
+image_zoom:
+    push rsi
+    call app_image
+    pop rsi
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call iv_zoom_cmd
+    or eax, 1
+1:  ret
 
 FN cmd_settings
     PROLOGUE

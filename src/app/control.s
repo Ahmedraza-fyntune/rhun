@@ -1,5 +1,5 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
-#   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy
+#   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog
 .include "rhun.inc"
@@ -339,8 +339,18 @@ c_print_window:
 
 c_scroll:
     call next_int
+    push rax
+    push rax
+    call next_arg
+    xor ecx, ecx
+    test rdx, rdx
+    jz 1f
+    mov ecx, MOD_CTRL
+1:  pop rax
+    pop rax
     xor edi, edi
     mov esi, eax
+    mov edx, ecx
     call app_on_scroll
     xor eax, eax
     ret
@@ -504,7 +514,8 @@ c_print_doc:
     xor eax, eax
     ret
 
-# print-state: "tabs=N active=name line=L col=C sel=S dirty=D focus=F lang=X theme=T" (T is omarchy:ID when following)
+# print-state: "tabs=N active=name line=L col=C sel=S dirty=D focus=F lang=X theme=T" (T is omarchy:ID when following);
+#   an image tab has "image=WxH format=F zoom=Z fit=0|1" in place of the cursor and language
 c_print_state:
     push rbx
     push r12
@@ -517,7 +528,7 @@ c_print_state:
     call sb_push_u64
     mov rbx, [rip + g_doc]
     test rbx, rbx
-    jz 1f
+    jz .Lps_image
     lea rdi, [rip + out]
     lea rsi, [rip + .Ls_active]
     call sb_push_cstr
@@ -569,6 +580,23 @@ c_print_state:
     mov rsi, [rax + GR_name]
 2:  lea rdi, [rip + out]
     call sb_push_cstr
+    jmp 1f
+.Lps_image:
+    # an image tab: its size, format and zoom
+    mov rbx, [rip + g_file]
+    test rbx, rbx
+    jz 1f
+    cmp qword ptr [rbx + DOC_img], 0
+    je 1f
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_active]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov rsi, [rbx + DOC_name]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + out]
+    call iv_describe
 1:  lea rdi, [rip + out]
     lea rsi, [rip + .Ls_focus]
     call sb_push_cstr

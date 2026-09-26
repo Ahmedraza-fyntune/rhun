@@ -1079,7 +1079,8 @@ on_pointer:
     mov esi, r13d
     jmp 4f
 3:  mov edi, r13d
-4:  call app_on_scroll
+4:  mov edx, [rip + kb_mods]
+    call app_on_scroll
     jmp .Lp_ret
 .Lp_source:
     mov eax, [r12]
