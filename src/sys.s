@@ -378,6 +378,30 @@ FN mkdir_p
     SYS SYS_mkdir
     EPILOGUE
 
+# mkdir_parent(path): create the directories a file path lives in (the path is restored)
+FN mkdir_parent
+    push rbx
+    push r12
+    push r13
+    mov r12, rdi
+    call strlen
+    lea rbx, [r12 + rax]
+1:  cmp rbx, r12
+    jbe 9f
+    dec rbx
+    cmp byte ptr [rbx], '/'
+    jne 1b
+    cmp rbx, r12
+    je 9f
+    mov byte ptr [rbx], 0
+    mov rdi, r12
+    call mkdir_p
+    mov byte ptr [rbx], '/'
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
+
 # dir_each(path, cb, ctx): cb(ctx, name cstr, is_dir) for every entry except . and ..
 # returns 0 or -errno
 FN dir_each

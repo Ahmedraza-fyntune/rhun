@@ -36,6 +36,8 @@ menu_list: .quad 0
 g_exp_reveal: .long 0             # reveal the active file on the next draw
 g_explorer_dir: .zero 4096
 g_explorer_target: .zero 4096
+g_menu_cmd: .long 0               # a context menu item is running
+delete_label: .zero 256
 
 .text
 
@@ -456,29 +458,64 @@ FN cmd_new_folder
     jmp prompt_open
 
 FN cmd_rename_file
-    cmp byte ptr [rip + g_explorer_target], 0
-    jne 1f
-    # fall back to the active document
-    mov rax, [rip + g_file]
-    test rax, rax
-    jz 2f
-    mov rsi, [rax + DOC_path]
-    test rsi, rsi
-    jz 2f
-    lea rdi, [rip + g_explorer_target]
-    call cstr_copy
-1:  lea rdi, [rip + .Lrename]
+    call file_target
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + .Lrename]
     mov esi, PROMPT_RENAME
     jmp prompt_open
-2:  ret
+1:  ret
 
 FN cmd_delete_file
-    cmp byte ptr [rip + g_explorer_target], 0
-    je 1f
-    lea rdi, [rip + .Ldelete]
+    push rbx
+    call file_target
+    test eax, eax
+    jz 1f
+    # "Delete NAME? Type yes"
+    lea rdi, [rip + g_explorer_target]
+    call strlen
+    lea rdi, [rip + g_explorer_target]
+    mov rsi, rax
+    call path_basename
+    mov rbx, rax
+    cmp rdx, 200
+    jbe 2f
+    mov edx, 200
+2:  lea rdi, [rip + delete_label]
+    lea rsi, [rip + .Ldelete_a]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, rbx
+    mov rcx, rdx
+    rep movsb
+    lea rsi, [rip + .Ldelete_b]
+    call cstr_copy
+    lea rdi, [rip + delete_label]
     mov esi, PROMPT_DELETE
+    pop rbx
     jmp prompt_open
-1:  ret
+1:  pop rbx
+    ret
+
+# file_target() -> 1 with g_explorer_target set to the file a rename or delete is for: the explorer's
+# item when its menu or the explorer itself has the command, otherwise the open file
+file_target:
+    cmp dword ptr [rip + g_menu_cmd], 0
+    jne 1f
+    cmp dword ptr [rip + g_focus], FOCUS_EXPLORER
+    je 1f
+    mov rax, [rip + g_file]
+    test rax, rax
+    jz 1f
+    mov rsi, [rax + DOC_path]
+    test rsi, rsi
+    jz 1f
+    lea rdi, [rip + g_explorer_target]
+    call cstr_copy
+1:  xor eax, eax
+    cmp byte ptr [rip + g_explorer_target], 0
+    setne al
+    ret
 
 FN cmd_open_folder
     lea rdi, [rip + .Lopen_folder]
@@ -1138,7 +1175,9 @@ FN explorer_menu_draw
     mov ecx, [rsp + 12]
     shl ecx, 4
     mov rax, [r15 + rcx + 8]
+    mov dword ptr [rip + g_menu_cmd], 1
     call rax
+    mov dword ptr [rip + g_menu_cmd], 0
     jmp .Lmd_ret
 5:  add [rsp + 8], ebx
     inc dword ptr [rsp + 12]
@@ -1191,7 +1230,8 @@ FN ctx_menu_open
 .Lnew_file: .asciz "New file"
 .Lnew_folder: .asciz "New folder"
 .Lrename: .asciz "Rename"
-.Ldelete: .asciz "Delete? Type yes"
+.Ldelete_a: .asciz "Delete "
+.Ldelete_b: .asciz "? Type yes"
 .Lopen_folder: .asciz "Open folder"
 .Lnot_deleted: .asciz "Could not delete (folders must be empty)"
 .Lm1: .asciz "New File"

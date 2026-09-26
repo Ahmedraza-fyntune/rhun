@@ -1315,6 +1315,8 @@ prompt_done:
     mov rdi, r13
     mov rsi, rbx
     call doc_set_path
+    mov rdi, rbx
+    call mkdir_parent
     mov rdi, r13
     call doc_save
     test rax, rax
@@ -1327,11 +1329,13 @@ prompt_done:
     jmp 9f
 1:  cmp r12d, PROMPT_NEW_FILE
     jne 2f
-    # create the file if missing, then open it
+    # create the file (and its folders) if missing, then open it
     mov rdi, rbx
     call file_mtime
     test rax, rax
     jnz 11f
+    mov rdi, rbx
+    call mkdir_parent
     mov rdi, rbx
     lea rsi, [rip + .Lempty]
     xor edx, edx
