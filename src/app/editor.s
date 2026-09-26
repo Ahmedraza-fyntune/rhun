@@ -1080,15 +1080,19 @@ FN ed_paste
     mov rdi, rbx
     mov rsi, rax
     call doc_line_start
+    mov r14, rax
     mov rdi, rbx
     mov rsi, rax
     mov rdx, r12
     mov rcx, r13
     xor r8d, r8d
     call doc_insert
+    # the insert moved a cursor past the line start; one at the line start stays before the text
+    cmp [rbx + DOC_cur], r14
+    jne 2f
     add [rbx + DOC_cur], r13
     add [rbx + DOC_anchor], r13
-    call ed_touch
+2:  call ed_touch
     jmp 9f
 1:  mov rdi, rbx
     mov rsi, r12
