@@ -1283,27 +1283,11 @@ FN titlebar_draw
     M ecx, MI_1
     COLOR r8d, T_BORDER
     call gfx_fill
-    # move / maximize / menu on empty title area
-    mov edi, ID_TITLE
-    mov esi, [rsp]
-    mov edx, [rsp + 4]
-    mov ecx, [rsp + 8]
-    mov r8d, [rsp + 12]
-    call ui_btn
-    test eax, UB_DOUBLE
-    jz 1f
-    PCALL P_maximize
-    jmp 2f
-1:  test eax, UB_PRESS
-    jz 11f
-    PCALL P_move
-    jmp 2f
-11: test eax, UB_RPRESS
-    jz 2f
-    mov edi, [rip + g_mx]
-    mov esi, [rip + g_my]
-    PCALL P_menu
-2:  M r12d, MI_8
+    # buttons first; the empty title area (move, maximize, menu) is handled at the end
+    mov eax, [rip + g_hot]
+    mov [rsp + 32], eax
+    mov dword ptr [rip + g_hot], 0
+    M r12d, MI_8
     # sidebar toggle
     M r13d, MI_32
     mov edi, ID_TOG_SIDE
@@ -1454,7 +1438,35 @@ FN titlebar_draw
     test eax, UB_CLICK
     jz 9f
     call cmd_toggle_agents
-9:  EPILOGUE
+9:  # a press on a button must not start a window move: the compositor would take the release
+    cmp dword ptr [rip + g_hot], 0
+    jne 13f
+    mov edi, ID_TITLE
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    test eax, UB_DOUBLE
+    jz 11f
+    PCALL P_maximize
+    jmp 13f
+11: test eax, UB_PRESS
+    jz 12f
+    PCALL P_move
+    and dword ptr [rip + g_mdown], ~(1 << BTN_LEFT)   # the release goes to the compositor
+    mov dword ptr [rip + g_active], 0
+    jmp 13f
+12: test eax, UB_RPRESS
+    jz 13f
+    mov edi, [rip + g_mx]
+    mov esi, [rip + g_my]
+    PCALL P_menu
+13: cmp dword ptr [rip + g_hot], 0
+    jne 14f
+    mov eax, [rsp + 32]
+    mov [rip + g_hot], eax
+14: EPILOGUE
 # window control button helper: edi id, esi x, r13d w, r14d icon -> eax UB bits
 .Ltb_wbtn:
     push rbx

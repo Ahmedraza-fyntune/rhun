@@ -8,6 +8,11 @@ hw: .long 0
 hh: .long 0
 .p2align 3
 hclip: .zero SB_SIZE
+# window requests, recorded for tests; a move grabs the pointer like a compositor does
+.globl g_hl_grab, g_hl_moves, g_hl_minimized
+g_hl_grab: .long 0
+g_hl_moves: .long 0
+g_hl_minimized: .long 0
 
 .text
 
@@ -30,6 +35,12 @@ FN headless_init
     mov [rip + g_plat + P_clip_set], rax
     lea rax, [rip + hl_clip_get]
     mov [rip + g_plat + P_clip_get], rax
+    lea rax, [rip + hl_move]
+    mov [rip + g_plat + P_move], rax
+    lea rax, [rip + hl_minimize]
+    mov [rip + g_plat + P_minimize], rax
+    lea rax, [rip + hl_maximize]
+    mov [rip + g_plat + P_maximize], rax
     mov dword ptr [rip + g_headless], 1
     mov dword ptr [rip + g_csd], 1
     mov edi, r12d
@@ -62,6 +73,20 @@ FN headless_resize
     ret
 
 hl_nop:
+    ret
+
+hl_move:
+    inc dword ptr [rip + g_hl_moves]
+    mov dword ptr [rip + g_hl_grab], 1
+    ret
+
+hl_minimize:
+    inc dword ptr [rip + g_hl_minimized]
+    ret
+
+hl_maximize:
+    xor dword ptr [rip + g_win_states], 1
+    mov dword ptr [rip + g_dirty], 1
     ret
 
 hl_timeout:

@@ -202,13 +202,21 @@ c_click:
     call app_on_button
     call flush_frame
     mov edi, r13d
-    xor esi, esi
-    xor edx, edx
-    call app_on_button
+    call release
     pop rax
     pop rax
     xor eax, eax
     ret
+
+# release(button): unless a window move took the pointer (headless records that)
+release:
+    cmp dword ptr [rip + g_hl_grab], 0
+    je 1f
+    mov dword ptr [rip + g_hl_grab], 0
+    ret
+1:  xor esi, esi
+    xor edx, edx
+    jmp app_on_button
 
 c_down:
     mov edi, BTN_LEFT
@@ -220,9 +228,40 @@ c_down:
 
 c_up:
     mov edi, BTN_LEFT
-    xor esi, esi
-    xor edx, edx
-    call app_on_button
+    call release
+    xor eax, eax
+    ret
+
+# print-window: window requests seen by the headless platform
+c_print_window:
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_moves]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_hl_moves]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_maximized]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_win_states]
+    and esi, 1
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_minimized]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_hl_minimized]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_quit]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_quit]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
     xor eax, eax
     ret
 
@@ -724,6 +763,11 @@ on_client:
 .Lc_print_syntax: .asciz "print-syntax"
 .Lc_print_agents: .asciz "print-agents"
 .Lc_xkey: .asciz "xkey"
+.Lc_print_window: .asciz "print-window"
+.Ls_moves: .asciz "moves="
+.Ls_maximized: .asciz " maximized="
+.Ls_minimized: .asciz " minimized="
+.Ls_quit: .asciz " quit="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
 ctl_table:
@@ -731,7 +775,8 @@ ctl_table:
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_scroll, c_scroll, .Lc_open, c_open
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
-    .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey, 0, 0
+    .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
+    .quad .Lc_print_window, c_print_window, 0, 0
 
 .data
 lsock: .long -1
