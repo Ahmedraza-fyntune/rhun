@@ -779,6 +779,13 @@ FN vim_key
     jbe 31f
     mov ecx, NMAX
 31: mov [rip + v_count], ecx
+    # a count inside the command (d3w) is part of it for "."; one before it is v_cmdcount
+    cmp qword ptr [rip + v_rec + SB_len], 0
+    je .Lvk_yes
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call vrec
     jmp .Lvk_yes
 4:  cmp qword ptr [rip + v_rec + SB_len], 0
     jne 5f
