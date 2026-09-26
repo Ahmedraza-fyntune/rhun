@@ -16,6 +16,7 @@
 .equ GREP_MAX, 5000             # results
 .equ GREP_FILE_MAX, 8 << 20     # bytes per file
 .equ GREP_TOTAL_MAX, 256 << 20
+.equ GREP_BLOCK, 32 << 20        # file texts are read into mappings this big, unmapped after
 
 STRUCT
 F IT_label, 8
@@ -55,6 +56,9 @@ scan_plen: .long 0
 tmp: .zero SB_SIZE
 gfiles: .zero VEC_SIZE          # GF: project text files in memory while searching
 ghit: .quad 0                   # per file: 0 when it has no match for the query in gprev
+gblocks: .zero VEC_SIZE         # mappings holding the file texts (pointers)
+gblock_ptr: .quad 0             # free space in the last one
+gblock_end: .quad 0
 gprev: .zero 256
 gprev_len: .long 0
 gstr: .zero SB_SIZE             # result labels and details
@@ -202,26 +206,13 @@ grep_load:
     call path_join
     mov r13, rax
     mov rdi, rax
-    call file_read_all
+    call grep_read
     mov r14, rax
     mov r15, rdx
     mov rdi, r13
     call mem_free
     test r14, r14
     jz 7f
-    # skip empty, big and binary files
-    test r15, r15
-    jz 6f
-    cmp r15, GREP_FILE_MAX
-    ja 6f
-    mov rdi, r14
-    mov rcx, r15
-    cmp rcx, 8192
-    jbe 2f
-    mov ecx, 8192
-2:  xor eax, eax
-    repne scasb
-    je 6f
     add [rsp], r15
     lea rdi, [rip + gfiles]
     mov esi, GF_SIZE
@@ -230,9 +221,6 @@ grep_load:
     mov [rax + GF_label], rcx
     mov [rax + GF_text], r14
     mov [rax + GF_len], r15
-    jmp 7f
-6:  mov rdi, r14
-    call mem_free
 7:  inc rbx
     jmp 1b
 8:  mov qword ptr [rip + items + VEC_len], 0
@@ -297,18 +285,93 @@ sort_gfiles:
 .Lsg_done:
     EPILOGUE
 
+# grep_read(path) -> rax text (NUL-terminated) or 0 for an empty, big or binary file, rdx length;
+# the text goes into the current GREP_BLOCK mapping
+grep_read:
+    PROLOGUE
+    call file_open_read
+    test rax, rax
+    js 8f
+    mov ebx, eax
+    mov edi, eax
+    call file_size
+    test rax, rax
+    jle 7f
+    cmp rax, GREP_FILE_MAX
+    ja 7f
+    mov r12, rax
+    mov rax, [rip + gblock_ptr]
+    lea rcx, [rax + r12 + 1]
+    test rax, rax
+    jz 1f
+    cmp rcx, [rip + gblock_end]
+    jbe 2f
+1:  mov edi, GREP_BLOCK
+    call os_map
+    mov [rip + gblock_ptr], rax
+    lea rcx, [rax + GREP_BLOCK]
+    mov [rip + gblock_end], rcx
+    mov r13, rax
+    lea rdi, [rip + gblocks]
+    mov esi, 8
+    call vec_push
+    mov [rax], r13
+2:  mov r13, [rip + gblock_ptr]
+    xor r14d, r14d
+3:  cmp r14, r12
+    jae 4f
+    mov edi, ebx
+    lea rsi, [r13 + r14]
+    mov rdx, r12
+    sub rdx, r14
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 3b
+    test rax, rax
+    jle 4f
+    add r14, rax
+    jmp 3b
+4:  mov byte ptr [r13 + r14], 0
+    mov edi, ebx
+    SYS SYS_close
+    # binary: a NUL in the first 8 KiB
+    test r14, r14
+    jz 8f
+    mov rdi, r13
+    mov rcx, r14
+    cmp rcx, 8192
+    jbe 5f
+    mov ecx, 8192
+5:  xor eax, eax
+    repne scasb
+    je 8f
+    lea rax, [r13 + r14 + 1]
+    mov [rip + gblock_ptr], rax
+    mov rax, r13
+    mov rdx, r14
+    EPILOGUE
+7:  mov edi, ebx
+    SYS SYS_close
+8:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
 grep_release:
     push rbx
+    # the texts go back to the system with their mappings
     xor ebx, ebx
-1:  cmp rbx, [rip + gfiles + VEC_len]
+1:  cmp rbx, [rip + gblocks + VEC_len]
     jae 2f
-    imul rax, rbx, GF_SIZE
-    add rax, [rip + gfiles + VEC_ptr]
-    mov rdi, [rax + GF_text]
-    call mem_free
+    mov rax, [rip + gblocks + VEC_ptr]
+    mov rdi, [rax + rbx*8]
+    mov esi, GREP_BLOCK
+    SYS SYS_munmap
     inc rbx
     jmp 1b
-2:  mov qword ptr [rip + gfiles + VEC_len], 0
+2:  mov qword ptr [rip + gblocks + VEC_len], 0
+    mov qword ptr [rip + gblock_ptr], 0
+    mov qword ptr [rip + gblock_end], 0
+    mov qword ptr [rip + gfiles + VEC_len], 0
     mov rdi, [rip + ghit]
     call mem_free
     mov qword ptr [rip + ghit], 0
