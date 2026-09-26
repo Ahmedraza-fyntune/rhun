@@ -565,12 +565,27 @@ wl_dispatch:
     jmp .Ld_ret
 
 .Ld_seat:
+    # capabilities: a keyboard or pointer can go away (unplugged, a KVM switch) and come back,
+    # each time as a new object
     test r12d, r12d
     jnz .Ld_ret
     mov eax, [r13]
     test eax, 1
-    jz 1f
+    jnz 2f
     cmp dword ptr [rip + id_pointer], 0
+    je 1f
+    cmp dword ptr [rip + id_cursor_dev], 0
+    je 21f
+    MSG [rip + id_cursor_dev], 0  # destroy
+    END
+    mov dword ptr [rip + id_cursor_dev], 0
+21: cmp dword ptr [rip + seat_ver], 3
+    jb 22f
+    MSG [rip + id_pointer], 1     # release
+    END
+22: mov dword ptr [rip + id_pointer], 0
+    jmp 1f
+2:  cmp dword ptr [rip + id_pointer], 0
     jne 1f
     call wl_new_id
     mov [rip + id_pointer], eax
@@ -587,7 +602,7 @@ wl_dispatch:
     END
 1:  mov eax, [r13]
     test eax, 2
-    jz .Ld_ret
+    jz 3f
     cmp dword ptr [rip + id_keyboard], 0
     jne .Ld_ret
     call wl_new_id
@@ -595,6 +610,15 @@ wl_dispatch:
     MSG [rip + id_seat], 1
     ARG [rip + id_keyboard]
     END
+    jmp .Ld_ret
+3:  cmp dword ptr [rip + id_keyboard], 0
+    je .Ld_ret
+    cmp dword ptr [rip + seat_ver], 3
+    jb 31f
+    MSG [rip + id_keyboard], 0    # release
+    END
+31: mov dword ptr [rip + id_keyboard], 0
+    mov dword ptr [rip + rep_key], 0
     jmp .Ld_ret
 
 .Ld_fscale:
