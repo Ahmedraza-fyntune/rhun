@@ -594,6 +594,7 @@ FN app_toast
 FN app_reload_config
     PROLOGUE
     call config_load
+    call keys_reload
     call app_apply_settings
     EPILOGUE
 

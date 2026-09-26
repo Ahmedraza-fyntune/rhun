@@ -179,6 +179,11 @@ FN cmd_find
 3:  mov rax, rbx
     EPILOGUE
 
+# keys_reload(): bindings from scratch, after the config file changed
+FN keys_reload
+    mov qword ptr [rip + bindings + VEC_len], 0
+    jmp keys_init
+
 # keys_init(): defaults, then [keys] overrides ("combo = command", command "none" unbinds)
 FN keys_init
     PROLOGUE
