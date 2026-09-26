@@ -236,15 +236,26 @@ FN settings_draw
     COLOR r9d, T_FG
     call ui_text_c
     add r12d, [rip + g_mt + 4*MI_40]
-    # config file line + button
+    # config file line (cut before the button) + button
     call config_path
-    mov r8, rax
+    mov [rsp + 40], rax
+    mov rdi, rax
+    call strlen
+    mov r9, rax
     lea rdi, [rip + g_face_small]
     mov esi, [rsp + 20]
     mov edx, r12d
     M ecx, MI_28
-    COLOR r9d, T_MUTED
-    call ui_text_c
+    mov r8, [rsp + 40]
+    COLOR r10d, T_MUTED
+    mov r11d, [rsp + 16]
+    sub r11d, [rip + g_mt + 4*MI_64]
+    sub r11d, [rip + g_mt + 4*MI_64]
+    sub r11d, [rip + g_mt + 4*MI_32]
+    push r11
+    push r10
+    call ui_text_v_fit
+    add rsp, 16
     lea rdi, [rip + .Lopen_file]
     call strlen
     lea rdi, [rip + g_face_small]
