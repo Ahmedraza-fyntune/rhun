@@ -1169,6 +1169,37 @@ FN doc_set_text
     pop rbx
     ret
 
+# doc_replace_all(doc, ptr, len): new contents with no undo history, not modified
+FN doc_replace_all
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov eax, [rbx + DOC_flags]
+    push rax
+    push rax
+    and dword ptr [rbx + DOC_flags], ~DF_READONLY
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call doc_set_text
+    pop rax
+    pop rax
+    mov [rbx + DOC_flags], eax
+    mov rdi, rbx
+    lea rsi, [rbx + DOC_undo]
+    call urec_clear
+    mov rdi, rbx
+    lea rsi, [rbx + DOC_redo]
+    call urec_clear
+    mov qword ptr [rbx + DOC_savepoint], 0
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
 # ---- motion helpers ----
 
 # doc_next_char(doc, pos) -> pos after one utf-8 character

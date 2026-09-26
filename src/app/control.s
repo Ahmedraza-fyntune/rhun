@@ -1,7 +1,7 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
 #   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
-#   wait-git | print-git
+#   wait-git | print-git | print-gitlog
 .include "rhun.inc"
 
 .bss
@@ -432,6 +432,13 @@ c_wait_git:
 c_print_git:
     lea rdi, [rip + out]
     call git_dump
+    xor eax, eax
+    ret
+
+# print-gitlog: the history tab's graph and the selected row's files
+c_print_gitlog:
+    lea rdi, [rip + out]
+    call gitview_dump
     xor eax, eax
     ret
 
@@ -907,6 +914,7 @@ on_client:
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
+.Lc_print_gitlog: .asciz "print-gitlog"
 .Ls_term: .asciz " term="
 .Ls_hidden: .asciz " hidden"
 .Ls_builtin: .asciz "built-in"
@@ -925,7 +933,7 @@ ctl_table:
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
-    .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, 0, 0
+    .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog, 0, 0
 
 .data
 lsock: .long -1

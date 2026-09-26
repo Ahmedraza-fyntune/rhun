@@ -492,6 +492,60 @@ ENDSTRUCT DOC_SIZE
 .equ DF_GROUP, 1
 .equ DF_READONLY, 2              # diff views
 
+# return 0 at once when the document is read-only: g_doc, or the one in reg
+.macro READONLY_RET reg=0
+.ifc \reg,0
+    push rax
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Lro\@
+    test dword ptr [rax + DOC_flags], DF_READONLY
+    pop rax
+    jz .Lro2\@
+    xor eax, eax
+    ret
+.Lro\@:
+    pop rax
+.Lro2\@:
+.else
+    test dword ptr [\reg + DOC_flags], DF_READONLY
+    jz .Lro\@
+    xor eax, eax
+    ret
+.Lro\@:
+.endif
+.endm
+
+# diff view: DOC_diff
+STRUCT
+F DV_lines, 8           # DL per line
+F DV_n, 8
+F DV_name, 8            # tab title
+F DV_rev, 8             # commit, or 0 for the work tree
+F DV_path, 8            # path in the work tree
+F DV_maxno, 4           # largest line number
+F DV_pad, 4
+ENDSTRUCT DV_SIZE
+STRUCT
+F DL_kind, 4            # DK_*
+F DL_old, 4             # line number before, 0 none
+F DL_new, 4             # line number after, 0 none
+ENDSTRUCT DL_SIZE
+.equ DK_CTX, 0
+.equ DK_ADD, 1
+.equ DK_DEL, 2
+.equ DK_HUNK, 3
+.equ DK_INFO, 4
+
+# a changed file in the history view
+STRUCT
+F GF_path, 8
+F GF_code, 4
+F GF_add, 4             # lines added, -1 binary, -2 unknown
+F GF_del, 4
+F GF_pad, 4
+ENDSTRUCT GF_SIZE
+
 # git state of a document
 .equ GS_NONE, 0
 .equ GS_ASKED, 1
@@ -599,6 +653,7 @@ ENDSTRUCT TF_SIZE
 # ---- app ----
 .equ TAB_DOC, 1
 .equ TAB_SETTINGS, 2
+.equ TAB_GIT, 3
 STRUCT
 F TAB_kind, 8
 F TAB_doc, 8

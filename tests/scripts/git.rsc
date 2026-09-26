@@ -1,4 +1,4 @@
-# git: status of the work tree, change marks of open files, refresh after a commit
+# git: status, change marks, diff views, history, refresh after a commit, the setting
 open @HOME@/repo
 wait-git
 print-git
@@ -18,6 +18,31 @@ print-git
 open @HOME@/repo/crlf.txt
 wait-git
 print-git
+# changes of the file against HEAD; the view is read-only
+cmd git_changes
+wait-git
+print-state
+print-doc
+type x
+key BackSpace
+key ctrl+shift+k
+print-state
+# history: graph, the files of a commit, a commit's diff
+cmd git_history
+wait-git
+print-state
+print-gitlog
+key Down
+key Down
+key Down
+key Down
+wait-git
+print-gitlog
+click 780 226
+wait-git
+print-state
+print-doc
+# a commit from the terminal: status, marks and history follow
 cmd toggle_terminal
 wait 300
 type git commit -qam 'Commit all'
@@ -25,8 +50,13 @@ key Return
 wait 1500
 wait-git
 print-git
-cmd prev_tab
+print-gitlog
+cmd toggle_terminal
+key ctrl+Tab
+key ctrl+Tab
+print-state
 print-git
+# turning git off in the config file
 cmd open_config
 key ctrl+End
 key Return

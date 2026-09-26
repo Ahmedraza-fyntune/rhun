@@ -45,12 +45,55 @@ A staged.txt
 U new.txt
 U notes/
 marks .~.
+tabs=3 active=crlf.txt (changes) line=1 col=1 sel=0 dirty=0 lang=none focus=0 theme=rhun-dark
+@@ -1,2 +1,2 @@
+x
+y
+Y
+<eod>
+tabs=3 active=crlf.txt (changes) line=1 col=1 sel=0 dirty=0 lang=none focus=0 theme=rhun-dark
+tabs=4 focus=0 theme=rhun-dark
+*  Uncommitted changes <
+*\ Merge feature (HEAD -> main)
+*| Six
+|* Feature work (feature)
+*/ Return one (tag: v1)
+*  First
+    M a.txt
+    M crlf.txt
+    D src/main.c
+    A staged.txt
+    U new.txt
+    U notes/
+*  Uncommitted changes
+*\ Merge feature (HEAD -> main)
+*| Six
+|* Feature work (feature)
+*/ Return one (tag: v1) <
+*  First
+    M src/main.c +1 -1
+tabs=5 active=main.c (c44e7a0) line=1 col=1 sel=0 dirty=0 lang=C focus=0 theme=rhun-dark
+@@ -1,4 +1,4 @@
+int main(void)
+{
+    return 0;
+    return 1;
+}
+<eod>
+git on branch=main
+U new.txt
+U notes/
+*  Uncommitted changes
+*  Commit all (HEAD -> main)
+*\ Merge feature
+*| Six
+|* Feature work (feature)
+*/ Return one (tag: v1) <
+*  First
+    M src/main.c +1 -1
+tabs=5 active=crlf.txt line=1 col=1 sel=0 dirty=0 lang=none focus=0 theme=rhun-dark term=1 hidden
 git on branch=main
 U new.txt
 U notes/
 marks ...
-git on branch=main
-U new.txt
-U notes/
-marks -.....
 git off branch=main

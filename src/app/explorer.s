@@ -851,7 +851,20 @@ FN explorer_draw
     mov rdi, r14
     call select_target
     mov [rip + menu_node], r14
-    lea rdi, [rip + menu_items]
+    # files with changes: "Open Changes" too
+    lea rax, [rip + menu_items]
+    push rax
+    push rax
+    cmp dword ptr [r14 + N_dir], 0
+    jne 50f
+    mov rdi, [r14 + N_path]
+    call git_status_of
+    test eax, eax
+    jz 50f
+    lea rax, [rip + menu_items_git]
+    mov [rsp], rax
+50: pop rdi
+    pop rax
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
     call ctx_menu_open
@@ -1133,6 +1146,19 @@ FN explorer_menu_draw
 .Lmd_ret:
     EPILOGUE
 
+# open_changes(): diff of the file the menu is for
+open_changes:
+    push rbx
+    lea rdi, [rip + g_explorer_target]
+    call git_rel
+    test rax, rax
+    jz 1f
+    xor edi, edi
+    mov rsi, rax
+    call git_open_diff
+1:  pop rbx
+    ret
+
 cmd_copy_path:
     lea rdi, [rip + g_explorer_target]
     push rdi
@@ -1169,7 +1195,11 @@ FN ctx_menu_open
 .Lm3: .asciz "Rename"
 .Lm4: .asciz "Delete"
 .Lm5: .asciz "Copy Path"
+.Lm6: .asciz "Open Changes"
 .p2align 3
 menu_items:
     .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
+    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, 0, 0
+menu_items_git:
+    .quad .Lm6, open_changes, .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
     .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, 0, 0

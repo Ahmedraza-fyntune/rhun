@@ -52,6 +52,7 @@ FN ed_set_cursor
 
 # ed_delete_sel(doc, editkind) -> 1 if something was deleted
 FN ed_delete_sel
+    READONLY_RET rdi
     push rbx
     push r12
     push r13
@@ -78,6 +79,7 @@ FN ed_delete_sel
 
 # ed_insert(doc, ptr, len, editkind): replace selection with text, cursor after it
 FN ed_insert
+    READONLY_RET rdi
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
@@ -360,6 +362,7 @@ page_lines:
 
 # ed_type(cp): insert a typed character (auto-pairs, closing bracket overtype)
 FN ed_type
+    READONLY_RET
     PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -515,6 +518,7 @@ FN ed_type
 
 # ed_newline(): newline keeping indentation, extra level after an opening bracket or ':'
 FN ed_newline
+    READONLY_RET
     PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -648,6 +652,7 @@ push_indent_unit:
 
 # ed_backspace(word)
 FN ed_backspace
+    READONLY_RET
     PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -764,6 +769,7 @@ FN ed_backspace
 
 # ed_delete_fwd(word)
 FN ed_delete_fwd
+    READONLY_RET
     PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -831,6 +837,7 @@ sel_lines:
 
 # ed_indent(dir): +1 indent selected lines, -1 outdent
 FN ed_indent
+    READONLY_RET
     PROLOGUE 48
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -910,6 +917,7 @@ push_indent_unit_rsp:
 
 # ed_tab(): indent selection spanning lines, else insert indentation at the cursor
 FN ed_tab
+    READONLY_RET
     PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1023,6 +1031,7 @@ FN cmd_copy
 1:  ret
 
 FN cmd_cut
+    READONLY_RET
     push rbx
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1047,6 +1056,7 @@ FN cmd_paste
 
 # ed_paste(ptr, len): line-wise when the clipboard came from a whole-line copy of ours
 FN ed_paste
+    READONLY_RET
     PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1286,6 +1296,7 @@ FN doc_search
     EPILOGUE
 
 FN cmd_duplicate_line
+    READONLY_RET
     PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1333,6 +1344,7 @@ FN cmd_duplicate_line
 9:  EPILOGUE
 
 FN cmd_delete_line
+    READONLY_RET
     PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1382,6 +1394,7 @@ FN cmd_delete_line
 
 # ed_move_lines(dir): move selected lines up (-1) or down (1)
 FN ed_move_lines
+    READONLY_RET
     PROLOGUE 48
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1498,6 +1511,7 @@ FN ed_move_lines
 
 # toggle line comments using the grammar's comment token
 FN cmd_toggle_comment
+    READONLY_RET
     PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1609,6 +1623,7 @@ FN cmd_toggle_comment
     EPILOGUE
 
 FN cmd_undo
+    READONLY_RET
     mov rdi, [rip + g_doc]
     test rdi, rdi
     jz 1f
@@ -1617,6 +1632,7 @@ FN cmd_undo
 1:  ret
 
 FN cmd_redo
+    READONLY_RET
     mov rdi, [rip + g_doc]
     test rdi, rdi
     jz 1f
@@ -1628,6 +1644,8 @@ FN cmd_redo
 
 # editor_metrics(doc) -> eax gutter width
 editor_gutter:
+    cmp qword ptr [rdi + DOC_diff], 0
+    jne diffview_gutter
     cmp dword ptr [rip + cfg_line_numbers], 0
     je 2f
     mov rax, [rdi + DOC_nlines]
@@ -1852,6 +1870,8 @@ draw_wrapped:
     COLOR r8d, T_LINE_HL
     call gfx_fill
 12: # line number on the first row
+    cmp qword ptr [rbx + DOC_diff], 0
+    jne .Ldw_diff
     cmp dword ptr [rip + cfg_line_numbers], 0
     je 1f
     lea rdi, [rsp + 40]
@@ -1929,6 +1949,19 @@ draw_wrapped:
 .Ldw_next:
     inc r12
     jmp .Ldw_line
+.Ldw_diff:
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    imul ecx, r14d
+    call diffview_line
+    test eax, eax
+    jz 13b
+    mov eax, [rip + g_lh]
+    imul eax, r14d
+    add r13d, eax
+    jmp .Ldw_next
 .Ldw_ret:
     mov dword ptr [rip + dl_from], 0
     mov dword ptr [rip + dl_to], -1
@@ -2233,6 +2266,8 @@ FN editor_draw
     COLOR r8d, T_LINE_HL
     call gfx_fill
 1:  # line number
+    cmp qword ptr [rbx + DOC_diff], 0
+    jne .Led_diffline
     cmp dword ptr [rip + cfg_line_numbers], 0
     je 2f
     lea rdi, [rsp + 40]
@@ -2281,9 +2316,19 @@ FN editor_draw
     lea rcx, [rsp + 16]
     call draw_line
     call gfx_clip_pop
+.Led_adv:
     add r13d, [rip + g_lh]
     inc r12
     jmp .Led_line
+.Led_diffline:
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    call diffview_line
+    test eax, eax
+    jz 21b
+    jmp .Led_adv
 .Led_lines_done:
     # caret
     mov rdi, rbx

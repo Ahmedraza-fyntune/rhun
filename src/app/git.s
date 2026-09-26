@@ -82,6 +82,7 @@ FN git_set_project
     lea rbx, [rip + refsdir]
     call free_path
     call docs_reset
+    call gitview_reset
     cmp qword ptr [rip + g_project], 0
     je 9f
     call find_repo
@@ -402,11 +403,13 @@ FN git_run
     mov [rsp], rax
     lea rax, [rip + .Lno_locks]
     mov [rsp + 8], rax
-    lea rax, [rip + .Ldash_c]
+    lea rax, [rip + .Lliteral]
     mov [rsp + 16], rax
-    lea rax, [rip + .Lquotepath]
+    lea rax, [rip + .Ldash_c]
     mov [rsp + 24], rax
-    mov ecx, 4
+    lea rax, [rip + .Lquotepath]
+    mov [rsp + 32], rax
+    mov ecx, 5
     xor edx, edx
 1:  mov rax, [rbx + rdx*8]
     mov [rsp + rcx*8], rax
@@ -414,7 +417,7 @@ FN git_run
     jz 2f
     inc rcx
     inc rdx
-    cmp rcx, MAXARGS + 4
+    cmp rcx, MAXARGS + 5
     jb 1b
     mov qword ptr [rsp + rcx*8], 0
 2:  mov rdi, rsp
@@ -912,10 +915,41 @@ FN git_status_of
     call git_rel
     test rax, rax
     jz 8f
-    mov rbx, rax
-    mov r12, rdx
     mov rdi, rax
     mov rsi, rdx
+    call status_rel
+    jmp 9f
+8:  xor eax, eax
+    xor edx, edx
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
+
+# git_status_rel(ptr, len) -> git_status_of for a path in the work tree
+FN git_status_rel
+    push rbx
+    push r12
+    push r13
+    xor eax, eax
+    xor edx, edx
+    cmp dword ptr [rip + g_git_on], 0
+    je 9f
+    cmp qword ptr [rip + sused], 0
+    je 9f
+    call status_rel
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
+
+# status_rel(ptr, len) -> eax code, edx folder kind (the table is not empty)
+status_rel:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
     call st_find
     cmp byte ptr [rax + GE_code], 0
     jne 7f
@@ -1319,6 +1353,7 @@ FN git_doc_marks
 9:  ret
 
 # git_doc_free(doc): its git data; answers still on their way forget it
+#   (jobs that answer for documents have a ctx of: count, then (doc, request number) pairs)
 FN git_doc_free
     PROLOGUE
     mov rbx, rdi
@@ -1327,7 +1362,7 @@ FN git_doc_free
     mov rdi, [rbx + DOC_gmarks]
     call mem_free
     mov rdi, [rbx + DOC_diff]
-    call mem_free
+    call diffview_free
     xor r12d, r12d
 1:  cmp r12, [rip + jobs + VEC_len]
     jae 9f
@@ -1336,8 +1371,11 @@ FN git_doc_free
     inc r12
     lea rcx, [rip + on_bases]
     cmp [rax + JB_cb], rcx
+    je 11f
+    lea rcx, [rip + diffview_answer]
+    cmp [rax + JB_cb], rcx
     jne 1b
-    mov rax, [rax + JB_ctx]
+11: mov rax, [rax + JB_ctx]
     xor ecx, ecx
 2:  cmp rcx, [rax]
     jae 1b
@@ -1348,6 +1386,46 @@ FN git_doc_free
     mov qword ptr [rax + rdx + 16], 0
 3:  inc rcx
     jmp 2b
+9:  EPILOGUE
+
+# git_changes_list(vec): the status as GF records (path points into the status, valid until it changes)
+FN git_changes_list
+    PROLOGUE
+    mov rbx, rdi
+    mov qword ptr [rbx + VEC_len], 0
+    mov r12, [rip + stbuf + SB_ptr]
+    test r12, r12
+    jz 9f
+    mov r13, [rip + stbuf + SB_len]
+    add r13, r12
+1:  lea rax, [r12 + 3]
+    cmp rax, r13
+    ja 9f
+    movzx edi, byte ptr [r12]
+    movzx esi, byte ptr [r12 + 1]
+    movzx r15d, dil
+    call classify
+    mov r14d, eax
+    lea r12, [r12 + 3]
+    test eax, eax
+    jz 2f
+    mov rdi, rbx
+    mov esi, GF_SIZE
+    call vec_push
+    mov [rax + GF_path], r12
+    mov [rax + GF_code], r14d
+    mov dword ptr [rax + GF_add], -2
+2:  mov rdi, r12
+    call strlen
+    lea r12, [r12 + rax + 1]
+    cmp r15d, 'R'
+    je 3f
+    cmp r15d, 'C'
+    jne 1b
+3:  mov rdi, r12
+    call strlen
+    lea r12, [r12 + rax + 1]
+    jmp 1b
 9:  EPILOGUE
 
 # ---------------- scripts ----------------
@@ -1468,6 +1546,7 @@ FN git_dump
 .Lnl: .ascii "\n"
 .Lhead_colon: .asciz "HEAD:"
 .Lno_locks: .asciz "--no-optional-locks"
+.Lliteral: .asciz "--literal-pathspecs"
 .Ldash_c: .asciz "-c"
 .Lquotepath: .asciz "core.quotepath=off"
 .Lstatus: .asciz "status"

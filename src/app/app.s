@@ -438,6 +438,7 @@ FN cmd_prev_tab
 
 # cmd_save(): save, or ask for a path for untitled docs
 FN cmd_save
+    READONLY_RET
     PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -482,6 +483,7 @@ FN app_after_save
     EPILOGUE
 
 FN cmd_save_as
+    READONLY_RET
     lea rdi, [rip + .Lsave_as]
     mov esi, PROMPT_SAVE_AS
     jmp prompt_open
@@ -745,7 +747,19 @@ FN app_on_key
 .Lk_editor:
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 9f
+    # the history tab takes the arrows
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 8f
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_GIT
+    jne 8f
     mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call gitview_key
+    jmp 9f
+8:  mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call editor_key
@@ -1294,7 +1308,15 @@ FN center_draw
     mov rax, [rip + g_tab_cur]
     mov rdi, rax
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
+    cmp qword ptr [rax + TAB_kind], TAB_GIT
+    jne 1f
+    mov edi, [rip + g_editor_rect]
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call gitview_draw
+    EPILOGUE
+1:  cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
     jne 2f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
@@ -1502,8 +1524,24 @@ FN titlebar_draw
     mov r9d, IC_TERMINAL
     call ui_icon_btn
     test eax, UB_CLICK
-    jz 9f
+    jz 82f
     call cmd_toggle_terminal
+82: cmp dword ptr [rip + g_git_on], 0
+    je 9f
+    sub r12d, r13d
+    sub r12d, [rip + g_mt + 4*MI_4]
+    mov edi, ID_GIT_BTN
+    mov esi, r12d
+    mov edx, [rsp + 12]
+    sub edx, r13d
+    sar edx, 1
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_BRANCH
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 9f
+    call cmd_toggle_git
 9:  # a press on a button must not start a window move: the compositor would take the release
     cmp dword ptr [rip + g_hot], 0
     jne 13f
@@ -1663,6 +1701,9 @@ FN tabs_draw
     mov r13, [rax + DOC_name]
     jmp 4f
 3:  lea r13, [rip + .Lsettings]
+    cmp qword ptr [r15 + TAB_kind], TAB_GIT
+    jne 4f
+    lea r13, [rip + .Lgit_tab]
 4:  mov rdi, r13
     call strlen
     mov r14, rax
@@ -2495,6 +2536,7 @@ FN cmd_newline_below
     ret
 
 FN cmd_newline_above
+    READONLY_RET
     push rbx
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -2547,6 +2589,7 @@ FN cmd_move_line_down
 .Lsave_failed: .asciz "Could not save the file"
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
+.Lgit_tab: .asciz "Git"
 .Lln: .asciz "Ln "
 .Lcol: .asciz ", Col "
 .Lsel_open: .asciz "  ("
