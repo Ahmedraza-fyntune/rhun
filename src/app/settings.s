@@ -70,8 +70,10 @@ FN setting_applied
     jmp 9f
 4:  lea rcx, [rip + cfg_git]
     cmp rax, rcx
-    jne 9f
+    jne 5f
     call git_apply
+    jmp 9f
+5:  call vim_sync
 9:  EPILOGUE
 
 # settings_key(keysym, cp, mods) -> 1 if handled

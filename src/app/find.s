@@ -18,7 +18,9 @@ find_sub: .long 0               # 0 find field, 1 replace field
 find_case: .long 0
 match_count: .long 0
 match_index: .long 0
+vim_srch: .long 0               # opened as vim's / (1) or ? (-1)
 .p2align 3
+vim_from: .quad 0               # the cursor then
 tf_find: .zero TF_SIZE
 tf_repl: .zero TF_SIZE
 buf: .zero 64
@@ -84,6 +86,7 @@ FN cmd_replace_bar
 
 close_bar:
     mov dword ptr [rip + find_open], 0
+    mov dword ptr [rip + vim_srch], 0
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     lea rdi, [rip + g_ed_find]
     call sb_clear
@@ -356,6 +359,8 @@ replace_all:
 FN find_changed
     cmp dword ptr [rip + find_sub], 0
     jne 1f
+    cmp dword ptr [rip + vim_srch], 0
+    jne vim_changed
     call update_matches
     # incremental: jump to the first match at or after the selection start
     mov rax, [rip + g_doc]
@@ -377,7 +382,19 @@ FN find_key
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
+    cmp dword ptr [rip + vim_srch], 0
+    je 83f
     cmp r12d, KEY_ESCAPE
+    jne 81f
+    call vim_cancel
+    jmp .Lfk_yes
+81: cmp r12d, KEY_RETURN
+    je 82f
+    cmp r12d, KEY_KP_ENTER
+    jne 83f
+82: call vim_accept
+    jmp .Lfk_yes
+83: cmp r12d, KEY_ESCAPE
     jne 1f
     call close_bar
     jmp .Lfk_yes
@@ -432,6 +449,171 @@ FN find_key
 .Lfk_yes:
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
+    EPILOGUE
+
+# ---- vim search ----
+
+# find_vim_open(dir): the bar as vim's / (1) or ? (-1) prompt; Enter moves to the match
+FN find_vim_open
+    push rbx
+    mov [rip + vim_srch], edi
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    mov rcx, [rax + DOC_cur]
+    mov [rip + vim_from], rcx
+    mov [rax + DOC_anchor], rcx
+1:  mov dword ptr [rip + repl_open], 0
+    call open_bar
+    pop rbx
+    ret
+
+# vim_changed(): the query changed: select the first match after (before) where the search began
+vim_changed:
+    PROLOGUE
+    call update_matches
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov rdi, [rip + vim_from]
+    mov esi, [rip + vim_srch]
+    call find_vim_step
+    mov rcx, [rip + vim_from]
+    mov [rbx + DOC_anchor], rcx
+    mov [rbx + DOC_cur], rcx
+    test rax, rax
+    js 1f
+    mov [rbx + DOC_anchor], rax
+    add rax, [rip + tf_find + TF_sb + SB_len]
+    mov [rbx + DOC_cur], rax
+1:  call ed_touch
+9:  EPILOGUE
+
+# vim_accept(): Enter: the cursor goes to the selected match (an empty query repeats the last search)
+vim_accept:
+    PROLOGUE
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 8f
+    mov rdi, rbx
+    call ed_sel
+    cmp rax, rdx
+    jne 1f
+    mov rdi, [rip + vim_from]
+    mov esi, [rip + vim_srch]
+    call find_vim_step
+    test rax, rax
+    jns 1f
+    mov rax, [rip + vim_from]
+1:  mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+    mov qword ptr [rbx + DOC_prefx], -1
+8:  call close_bar
+    # matches stay marked until Esc
+    call update_matches
+    call ed_touch
+    EPILOGUE
+
+# vim_cancel(): Esc: back to where the search began
+vim_cancel:
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    mov rcx, [rip + vim_from]
+    mov [rax + DOC_cur], rcx
+    mov [rax + DOC_anchor], rcx
+1:  call close_bar
+    jmp ed_touch
+
+# find_vim_word(ptr, len): search for this text (vim * and #)
+FN find_vim_word
+    push rbx
+    mov rdx, rsi
+    mov rsi, rdi
+    lea rdi, [rip + tf_find]
+    call tf_set
+    call update_matches
+    pop rbx
+    ret
+
+# find_vim_step(pos, dir) -> the first match after pos (dir 1) or the last one before it (-1), wrapping; -1 if none
+FN find_vim_step
+    PROLOGUE 32
+    mov r14, rdi
+    mov [rsp], esi
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz .Lvs_none
+    call update_matches
+    lea rdi, [rip + tf_find]
+    call tf_text
+    mov r12, rax
+    mov r13, rdx
+    test r13, r13
+    jz .Lvs_none
+    mov rdi, rbx
+    call doc_len
+    mov r15, rax
+    mov rdi, rbx
+    call doc_contiguous
+    mov [rsp + 8], rax
+    cmp dword ptr [rsp], 0
+    jl .Lvs_back
+    # forward from pos + 1, then from the start
+    lea rcx, [r14 + 1]
+    cmp rcx, r15
+    jae 2f
+    mov [rsp + 16], rcx
+    mov rdi, [rsp + 8]
+    add rdi, rcx
+    mov rsi, r15
+    sub rsi, rcx
+    mov rdx, r12
+    mov rcx, r13
+    call find_raw
+    test rax, rax
+    js 2f
+    add rax, [rsp + 16]
+    EPILOGUE
+2:  mov rdi, [rsp + 8]
+    mov rsi, r15
+    mov rdx, r12
+    mov rcx, r13
+    call find_raw
+    EPILOGUE
+.Lvs_back:
+    # the last match starting before pos, else the last one
+    mov qword ptr [rsp + 16], -1
+    mov qword ptr [rsp + 24], -1
+    xor ecx, ecx
+3:  mov rdi, [rsp + 8]
+    add rdi, rcx
+    mov rsi, r15
+    sub rsi, rcx
+    jbe 5f
+    mov rdx, r12
+    push rcx
+    push rcx
+    mov rcx, r13
+    call find_raw
+    pop rcx
+    pop rcx
+    test rax, rax
+    js 5f
+    add rcx, rax
+    mov [rsp + 24], rcx
+    cmp rcx, r14
+    jae 4f
+    mov [rsp + 16], rcx
+4:  inc rcx
+    jmp 3b
+5:  mov rax, [rsp + 16]
+    test rax, rax
+    jns 6f
+    mov rax, [rsp + 24]
+6:  EPILOGUE
+.Lvs_none:
+    mov rax, -1
     EPILOGUE
 
 # find_draw(): overlay at the top right of the editor

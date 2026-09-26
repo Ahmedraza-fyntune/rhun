@@ -514,7 +514,7 @@ c_print_doc:
     xor eax, eax
     ret
 
-# print-state: "tabs=N active=name line=L col=C sel=S dirty=D focus=F lang=X theme=T" (T is omarchy:ID when following);
+# print-state: "tabs=N active=name line=L col=C sel=S dirty=D lang=X [vim=M] focus=F theme=T" (T is omarchy:ID when following);
 #   an image tab has "image=WxH format=F zoom=Z fit=0|1" in place of the cursor and language
 c_print_state:
     push rbx
@@ -557,7 +557,7 @@ c_print_state:
     lea rsi, [rip + .Ls_sel]
     call sb_push_cstr
     mov rdi, rbx
-    call ed_sel
+    call vim_sel
     sub rdx, rax
     lea rdi, [rip + out]
     mov rsi, rdx
@@ -579,6 +579,15 @@ c_print_state:
     jz 2f
     mov rsi, [rax + GR_name]
 2:  lea rdi, [rip + out]
+    call sb_push_cstr
+    cmp dword ptr [rip + cfg_vim], 0
+    je 1f
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_vim]
+    call sb_push_cstr
+    call vim_mode_name
+    lea rdi, [rip + out]
+    mov rsi, rax
     call sb_push_cstr
     jmp 1f
 .Lps_image:
@@ -917,6 +926,7 @@ on_client:
 .Ls_dirty: .asciz " dirty="
 .Ls_lang: .asciz " lang="
 .Ls_focus: .asciz " focus="
+.Ls_vim: .asciz " vim="
 .Ls_theme: .asciz " theme="
 .Lc_key: .asciz "key"
 .Lc_type: .asciz "type"

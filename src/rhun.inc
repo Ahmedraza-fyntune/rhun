@@ -740,6 +740,12 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_OPEN_FOLDER, 5
 .equ PROMPT_DELETE, 6
 
+# vim modes (g_vim_mode)
+.equ VM_NORMAL, 0
+.equ VM_INSERT, 1
+.equ VM_VISUAL, 2
+.equ VM_VLINE, 3
+
 # command table entry
 STRUCT
 F CMD_name, 8

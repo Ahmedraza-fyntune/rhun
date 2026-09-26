@@ -501,6 +501,7 @@ g_commands:
     COMMAND toggle_word_wrap, "Toggle Word Wrap", cmd_toggle_word_wrap, "alt+z"
     COMMAND toggle_whitespace, "Toggle Whitespace", cmd_toggle_whitespace, ""
     COMMAND toggle_line_numbers, "Toggle Line Numbers", cmd_toggle_line_numbers, ""
+    COMMAND toggle_vim, "Toggle Vim Mode", cmd_toggle_vim, ""
     COMMAND reload_file, "Revert File", cmd_reload_file, ""
     COMMAND toggle_terminal, "Toggle Terminal", cmd_toggle_terminal, "ctrl+`"
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"

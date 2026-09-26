@@ -73,6 +73,7 @@ FN app_init
     call app_load_fonts
     call syntax_load_all
     call keys_init
+    call vim_sync
     call explorer_init
     call agents_init
     call watch_init
@@ -185,6 +186,9 @@ FN app_image
 1:  ret
 
 FN app_activate_tab
+    push rdi
+    call vim_leave
+    pop rdi
     mov [rip + g_tab_cur], rdi
     mov dword ptr [rip + g_exp_reveal], 1
     call app_sync_doc
@@ -389,9 +393,15 @@ FN app_close_tab_now
     PROLOGUE
     mov r12, rdi
     call tab_at
-    mov rdi, [rax + TAB_doc]
-    test rdi, rdi
+    mov rbx, [rax + TAB_doc]
+    test rbx, rbx
     jz 1f
+    cmp r12, [rip + g_tab_cur]
+    jne 11f
+    call vim_leave
+11: mov rdi, rbx
+    call vim_forget
+    mov rdi, rbx
     call doc_free
 1:  # remove slot
     mov rcx, r12
@@ -599,6 +609,7 @@ FN app_apply_settings
     mov rdi, rax
     call theme_apply
 1:  call git_apply
+    call vim_sync
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -650,6 +661,9 @@ FN app_on_paste
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    call vim_paste
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     call focused_field
@@ -686,6 +700,8 @@ focused_field:
     je find_field
     cmp eax, FOCUS_SETTINGS
     je settings_field
+    cmp eax, FOCUS_EDITOR
+    je vim_field
     xor eax, eax
     ret
 
@@ -780,7 +796,15 @@ FN app_on_key
     test eax, eax
     jnz 9f
 .Lk_bind:
+    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    jne 1f
     mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call vim_key
+    test eax, eax
+    jnz 9f
+1:  mov edi, r12d
     mov esi, r14d
     call keys_lookup
     test rax, rax
@@ -2016,7 +2040,7 @@ FN statusbar_draw
     lea esi, [rax + 1]
     call sb_push_u64
     mov rdi, rbx
-    call ed_sel
+    call vim_sel
     sub rdx, rax
     jz 1f
     mov r12, rdx
@@ -2029,9 +2053,31 @@ FN statusbar_draw
     lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Lsel_close]
     call sb_push_cstr
-1:  lea rdi, [rip + g_face_small]
-    M esi, MI_12
+1:  M esi, MI_12
     add esi, [rsp]
+    mov [rsp + 16], esi
+    # vim: the command line in place of the position, else the mode and the keys typed so far
+    cmp dword ptr [rip + cfg_vim], 0
+    je 11f
+    cmp dword ptr [rip + g_vim_cmdline], 0
+    je 10f
+    mov edi, [rsp + 16]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call vim_cmdline_draw
+    jmp 12f
+10: call vim_status
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 16]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    mov r8, rax
+    COLOR r9d, T_ACCENT
+    call ui_text_c
+    add eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 16], eax
+11: lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 16]
     mov edx, [rsp + 4]
     mov ecx, [rsp + 12]
     mov r8, [rip + tmp_sb + SB_ptr]
@@ -2041,7 +2087,7 @@ FN statusbar_draw
     push rax
     call ui_text_v
     add rsp, 16
-    # right side: language, indentation, eol, encoding
+12: # right side: language, indentation, eol, encoding
     mov r12d, [rsp]
     add r12d, [rsp + 8]
     sub r12d, [rip + g_mt + 4*MI_12]

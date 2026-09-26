@@ -1836,7 +1836,7 @@ draw_wrapped:
     PROLOGUE 64
     mov rbx, rdi
     mov rdi, rbx
-    call ed_sel
+    call vim_sel
     mov [rsp + 16], rax
     mov [rsp + 24], rdx
     mov rdi, rbx
@@ -2096,6 +2096,7 @@ FN editor_draw
     test dword ptr [rip + g_pressed], 1 << BTN_RIGHT
     jz 31f
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    call vim_export
     mov rdi, rbx
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
@@ -2126,6 +2127,7 @@ FN editor_draw
     mov [rip + g_active], edi
     mov dword ptr [rip + g_dragging], 1
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    call vim_click
     mov rdi, rbx
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
@@ -2196,7 +2198,13 @@ FN editor_draw
     mov esi, [rip + g_lh]
     shr esi, 2
     call drag_scroll
-4:  cmp dword ptr [rip + g_reveal], 0
+4:  cmp dword ptr [rip + cfg_vim], 0
+    je 45f
+    cmp dword ptr [rip + g_dragging], 0
+    jne 45f
+    mov rdi, rbx
+    call vim_view
+45: cmp dword ptr [rip + g_reveal], 0
     je 7f
     mov dword ptr [rip + g_reveal], 0
     mov rdi, rbx
@@ -2246,7 +2254,7 @@ FN editor_draw
     call doc_line_of
     mov [rsp + 8], rax          # cursor line
     mov rdi, rbx
-    call ed_sel
+    call vim_sel
     mov [rsp + 16], rax         # sel start
     mov [rsp + 24], rdx         # sel end
     mov dword ptr [rsp + 32], 0 # last indent (for blank lines)
@@ -2841,8 +2849,11 @@ bracket_kind:
 # draw_caret(doc): at the position recorded by draw_line
 draw_caret:
     PROLOGUE 16
+    mov rbx, rdi
     cmp dword ptr [rip + g_caret_ok], 0
     je 9f
+    cmp dword ptr [rip + g_vim_cmdline], 0
+    jne 9f
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 9f
     cmp dword ptr [rip + g_win_focused], 0
@@ -2859,7 +2870,18 @@ draw_caret:
 1:  mov edi, [rip + g_caret_x]
     cmp edi, [rip + g_ed_tx]
     jl 9f
-    mov esi, [rip + g_caret_y]
+    # vim: a block over the character outside insert mode
+    cmp dword ptr [rip + cfg_vim], 0
+    je 11f
+    mov eax, [rip + g_vim_mode]
+    cmp eax, VM_INSERT
+    je 11f
+    cmp eax, VM_NORMAL
+    jne draw_block
+    mov rax, [rbx + DOC_cur]
+    cmp rax, [rbx + DOC_anchor]
+    je draw_block
+11: mov esi, [rip + g_caret_y]
     M edx, MI_2
     cmp dword ptr [rip + cfg_smooth_caret], 0
     jne 2f
@@ -2868,6 +2890,91 @@ draw_caret:
     COLOR r8d, T_CURSOR
     call gfx_fill
 9:  EPILOGUE
+
+# draw_block: tail of draw_caret (rbx doc): the character at the cursor in the background color on the cursor color
+draw_block:
+    mov r12, [rbx + DOC_cur]
+    mov rdi, rbx
+    call doc_len
+    mov r13, rax
+    sub r13, r12                # bytes left
+    mov r14d, [rip + g_cw]      # width
+    xor r15d, r15d              # bytes to draw
+    test r13, r13
+    jz 3f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 4
+    cmp r13, 4
+    cmovb rdx, r13
+    mov [rsp + 8], rdx
+    call doc_range
+    mov [rsp], rax
+    movzx ecx, byte ptr [rax]
+    cmp ecx, ' '
+    jbe 3f
+    mov rdi, rax
+    mov rsi, [rsp + 8]
+    call utf8_decode
+    mov r15d, edx
+    mov edi, eax
+    call cp_width
+    imul r14d, eax
+    # doc_range may reuse its scratch buffer: keep the bytes
+    mov rsi, [rsp]
+    xor ecx, ecx
+4:  mov al, [rsi + rcx]
+    mov [rsp + 8 + rcx], al
+    inc ecx
+    cmp ecx, r15d
+    jb 4b
+3:  mov edi, [rip + g_caret_x]
+    mov esi, [rip + g_caret_y]
+    mov edx, r14d
+    mov ecx, [rip + g_lh]
+    COLOR r8d, T_CURSOR
+    call gfx_fill
+    test r15d, r15d
+    jz 9f
+    lea rdi, [rip + g_face_code]
+    mov esi, [rip + g_caret_x]
+    mov edx, [rip + g_caret_y]
+    add edx, [rip + g_base]
+    lea rcx, [rsp + 8]
+    mov r8d, r15d
+    COLOR r9d, T_BG
+    call text_draw
+9:  EPILOGUE
+
+# ed_clip_set(ptr, len, linewise): the text becomes the clipboard; linewise text pastes as whole lines
+FN ed_clip_set
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14d, edx
+    lea rdi, [rip + clip_sb]
+    call sb_clear
+    lea rdi, [rip + clip_sb]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov rdi, [rip + clip_sb + SB_ptr]
+    mov rsi, [rip + clip_sb + SB_len]
+    PCALL P_clip_set
+    mov [rip + g_clip_line], r14d
+    EPILOGUE
+
+# ed_clip_linewise(ptr, len) -> 1 when the text is our last whole-line copy
+FN ed_clip_linewise
+    xor eax, eax
+    cmp dword ptr [rip + g_clip_line], 0
+    je 1f
+    cmp rsi, [rip + clip_sb + SB_len]
+    jne 1f
+    mov rdx, rsi
+    mov rsi, [rip + clip_sb + SB_ptr]
+    jmp memeq
+1:  ret
 
 # ed_blink_timeout() -> ms until the caret toggles, -1 if not blinking
 FN ed_blink_timeout
