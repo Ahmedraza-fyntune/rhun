@@ -701,8 +701,43 @@ text_of:
     lea rax, [rip + .Lempty]
 9:  EPILOGUE
 
-# tool_summary(input jv) -> rax ptr, rdx len : the most telling field of a tool input
+# tool_summary(input jv) -> rax ptr, rdx len : the most telling field of a tool input,
+# paths inside the project shown relative to it
 tool_summary:
+    push rbx
+    push r12
+    push r13
+    call tool_field
+    mov rbx, rax
+    mov r12, rdx
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz 1f
+    call strlen
+    mov r13, rax
+    lea rax, [r13 + 1]
+    cmp r12, rax
+    jbe 1f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, [rip + g_project]
+    mov rcx, r13
+    call str_starts
+    test eax, eax
+    jz 1f
+    cmp byte ptr [rbx + r13], '/'
+    jne 1f
+    lea rbx, [rbx + r13 + 1]
+    sub r12, r13
+    dec r12
+1:  mov rax, rbx
+    mov rdx, r12
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+tool_field:
     PROLOGUE
     mov rbx, rdi
     call json_type
