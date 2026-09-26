@@ -1,0 +1,56 @@
+git on branch=main
+M a.txt
+M crlf.txt
+D src/main.c
+A staged.txt
+U new.txt
+U notes/
+git on branch=main
+M a.txt
+M crlf.txt
+D src/main.c
+A staged.txt
+U new.txt
+U notes/
+marks .~.-.+.
+git on branch=main
+M a.txt
+M crlf.txt
+D src/main.c
+A staged.txt
+U new.txt
+U notes/
+marks .~.-.+++
+git on branch=main
+M a.txt
+M crlf.txt
+D src/main.c
+A staged.txt
+U new.txt
+U notes/
+marks .~.-.+.
+git on branch=main
+M a.txt
+M crlf.txt
+D src/main.c
+A staged.txt
+U new.txt
+U notes/
+marks ~.-.+.
+git on branch=main
+M a.txt
+M crlf.txt
+D src/main.c
+A staged.txt
+U new.txt
+U notes/
+marks .~.
+git on branch=main
+U new.txt
+U notes/
+marks ...
+git on branch=main
+U new.txt
+U notes/
+marks -.....
+git off branch=main

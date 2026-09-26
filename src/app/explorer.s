@@ -948,6 +948,17 @@ FN explorer_draw
 57: call icon_draw
     add r15d, [rip + g_mt + 4*MI_20]
     add r15d, [rip + g_mt + 4*MI_2]
+    # git: name in the status color, the letter at the right for files
+    mov rdi, [r14 + N_path]
+    call git_status_of
+    mov [rsp + 32], eax
+    mov [rsp + 36], edx
+    COLOR eax, T_PANEL_FG
+    mov edi, [rsp + 32]
+    test edi, edi
+    jz 58f
+    call git_code_color
+58: mov [rsp + 40], eax
     mov rdi, [r14 + N_name]
     call strlen
     mov r9, rax
@@ -956,11 +967,27 @@ FN explorer_draw
     mov edx, r13d
     mov ecx, ebx
     mov r8, [r14 + N_name]
-    COLOR eax, T_PANEL_FG
+    mov eax, [rsp + 40]
     push rax
     push rax
     call ui_text_v
     add rsp, 16
+    cmp dword ptr [rsp + 32], 0
+    je 59f
+    cmp dword ptr [r14 + N_dir], 0
+    jne 59f
+    mov eax, [rsp + 32]
+    mov [rsp + 44], eax         # letter, zero-terminated
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    add esi, [rsp + 8]
+    sub esi, [rip + g_mt + 4*MI_24]
+    mov edx, r13d
+    mov ecx, ebx
+    lea r8, [rsp + 44]
+    mov r9d, [rsp + 40]
+    call ui_text_c
+59:
     add r13d, ebx
     inc r12d
     jmp .Lxd_row

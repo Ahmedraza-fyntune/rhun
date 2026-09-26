@@ -247,10 +247,20 @@ FN proc_wait
 
 # run_piped(argv, envp, cwd) -> rax pid (or -errno), edx fd to read the program's output from (nonblocking)
 FN run_piped
-    PROLOGUE 16
+    xor ecx, ecx
+    xor r8d, r8d
+    jmp run_piped_input
+
+# run_piped_input(argv, envp, cwd, ptr, len): run_piped with ptr/len (at most 60 KiB) on the program's input
+FN run_piped_input
+    PROLOGUE 32
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
+    mov [rsp + 16], rcx
+    mov [rsp + 24], r8
+    mov dword ptr [rsp + 8], -1         # input pipe
+    mov dword ptr [rsp + 12], -1
     lea rdi, [rip + .Ldevnull]
     mov esi, O_RDWR | O_CLOEXEC
     xor edx, edx
@@ -258,15 +268,24 @@ FN run_piped
     test rax, rax
     js 9f
     mov ebx, eax
-    lea rdi, [rsp]
+    mov r15d, eax                       # the program's input
+    cmp qword ptr [rsp + 24], 0
+    je 1f
+    lea rdi, [rsp + 8]
     mov esi, O_CLOEXEC
     SYS SYS_pipe2
     test rax, rax
     js 8f
+    mov r15d, [rsp + 8]
+1:  lea rdi, [rsp]
+    mov esi, O_CLOEXEC
+    SYS SYS_pipe2
+    test rax, rax
+    js 6f
     mov rdi, r12
     mov rsi, r13
     mov rdx, r14
-    mov ecx, ebx
+    mov ecx, r15d
     mov r8d, [rsp + 4]
     mov r9d, ebx
     push 0
@@ -278,7 +297,31 @@ FN run_piped
     SYS SYS_close
     mov edi, ebx
     SYS SYS_close
+    mov edi, [rsp + 8]
+    test edi, edi
+    js 3f
+    SYS SYS_close
+    # the input fits the pipe, so this does not wait for the program
     test r15, r15
+    js 21f
+    mov r12, [rsp + 16]
+    mov r13, [rsp + 24]
+2:  test r13, r13
+    jz 21f
+    mov edi, [rsp + 12]
+    mov rsi, r12
+    mov rdx, r13
+    SYS SYS_write
+    cmp rax, -EINTR
+    je 2b
+    test rax, rax
+    jle 21f
+    add r12, rax
+    sub r13, rax
+    jmp 2b
+21: mov edi, [rsp + 12]
+    SYS SYS_close
+3:  test r15, r15
     js 7f
     mov edi, [rsp]
     mov esi, F_SETFL
@@ -288,6 +331,17 @@ FN run_piped
     mov edx, [rsp]
     EPILOGUE
 7:  mov edi, [rsp]
+    SYS SYS_close
+    mov rax, r15
+    EPILOGUE
+6:  mov r15, rax
+    mov edi, [rsp + 8]
+    test edi, edi
+    js 61f
+    SYS SYS_close
+    mov edi, [rsp + 12]
+    SYS SYS_close
+61: mov edi, ebx
     SYS SYS_close
     mov rax, r15
     EPILOGUE

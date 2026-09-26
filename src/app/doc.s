@@ -38,6 +38,7 @@ FN doc_new
 FN doc_free
     push rbx
     mov rbx, rdi
+    call git_doc_free
     mov rdi, rbx
     lea rsi, [rbx + DOC_undo]
     call urec_clear

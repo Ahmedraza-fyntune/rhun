@@ -135,52 +135,11 @@ FN app_set_project
     mov rsi, rax
     call path_basename
     mov [rip + g_project_name], rax
-    call read_branch
+    call git_set_project
     call explorer_set_root
     call agents_set_project
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
-
-# read_branch(): g_branch from .git/HEAD
-read_branch:
-    PROLOGUE
-    mov byte ptr [rip + g_branch], 0
-    mov rdi, [rip + g_project]
-    lea rsi, [rip + .Lgit_head]
-    call path_join
-    mov rbx, rax
-    mov rdi, rax
-    call file_read_all
-    mov r12, rax
-    mov r13, rdx
-    mov rdi, rbx
-    call mem_free
-    test r12, r12
-    jz 9f
-    mov rdi, r12
-    mov rsi, r13
-    lea rdx, [rip + .Lrefs_heads]
-    mov ecx, 16
-    call str_find
-    test rax, rax
-    js 8f
-    lea rsi, [r12 + rax + 16]
-    lea rdi, [rip + g_branch]
-    mov ecx, 60
-1:  mov al, [rsi]
-    cmp al, 10
-    je 2f
-    test al, al
-    jz 2f
-    mov [rdi], al
-    inc rsi
-    inc rdi
-    dec ecx
-    jnz 1b
-2:  mov byte ptr [rdi], 0
-8:  mov rdi, r12
-    call mem_free
-9:  EPILOGUE
 
 # ---------------- tabs ----------------
 
@@ -290,6 +249,8 @@ FN app_open_file
     EPILOGUE
 2:  mov rdi, rbx
     call app_detect_lang
+    mov rdi, rbx
+    call git_doc_opened
     # replace an untouched untitled tab
     mov rax, [rip + g_tab_cur]
     test rax, rax
@@ -507,6 +468,8 @@ FN app_after_save
 1:  lea rdi, [rip + .Lsaved]
     call app_toast
     call explorer_refresh
+    mov rdi, rbx
+    call git_doc_saved
     # saving the config file applies it right away
     call config_path
     mov rdi, rax
@@ -592,7 +555,8 @@ FN app_apply_settings
     je 1f
     mov rdi, rax
     call theme_apply
-1:  mov dword ptr [rip + g_dirty], 1
+1:  call git_apply
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # ---------------- platform callbacks ----------------
@@ -626,7 +590,13 @@ FN app_on_scroll
 
 FN app_on_focus
     mov [rip + g_win_focused], edi
-    call ed_touch
+    # files may have changed while away
+    test edi, edi
+    jz 1f
+    push rdi
+    call git_touch
+    pop rdi
+1:  call ed_touch
     mov dword ptr [rip + g_dirty], 1
     ret
 
@@ -942,7 +912,15 @@ FN app_timeout
     cmp eax, ebx
     jge 2f
 21: mov ebx, eax
-2:  mov eax, ebx
+2:  call git_timeout
+    cmp eax, -1
+    je 3f
+    cmp ebx, -1
+    je 31f
+    cmp eax, ebx
+    jge 3f
+31: mov ebx, eax
+3:  mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -961,6 +939,7 @@ FN app_tick
     mov dword ptr [rip + g_dirty], 1
 2:  call agents_tick
     call term_tick
+    call git_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -1770,7 +1749,19 @@ FN tabs_draw
     sub ecx, [rip + g_mt + 4*MI_16]
     COLOR r8d, T_BORDER
     call gfx_fill
-    # text
+    # text: git status color, else muted (foreground when active)
+    xor eax, eax
+    cmp qword ptr [r15 + TAB_kind], TAB_DOC
+    jne 80f
+    mov rax, [r15 + TAB_doc]
+    mov rdi, [rax + DOC_path]
+    xor eax, eax
+    test rdi, rdi
+    jz 80f
+    call git_path_color
+80: mov r9d, eax
+    test eax, eax
+    jnz 81f
     COLOR r9d, T_MUTED
     cmp rbx, [rip + g_tab_cur]
     jne 81f
@@ -2551,8 +2542,6 @@ FN cmd_move_line_down
 .Lrhun: .asciz "rhun"
 .Lempty: .asciz ""
 .Ldash: .asciz " \342\200\224 "
-.Lgit_head: .asciz ".git/HEAD"
-.Lrefs_heads: .ascii "ref: refs/heads/"
 .Lbinary: .asciz "Binary file, not opened"
 .Lsaved: .asciz "Saved"
 .Lsave_failed: .asciz "Could not save the file"

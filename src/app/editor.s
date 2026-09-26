@@ -1817,6 +1817,9 @@ draw_wrapped:
     call doc_line_of
     mov [rsp + 8], rax          # cursor line
     mov rdi, rbx
+    call git_doc_marks
+    mov [rsp], rax
+    mov rdi, rbx
     call top_offset
     mov r13d, [rip + g_ed_y]
     sub r13d, eax               # y of the first row of the top line
@@ -1872,7 +1875,17 @@ draw_wrapped:
     lea rcx, [rsp + 40]
     mov r8, r15
     call text_draw
-1:  xor r15d, r15d              # row
+1:  mov rax, [rsp]
+    test rax, rax
+    jz 13f
+    movzx edi, byte ptr [rax + r12]
+    test edi, edi
+    jz 13f
+    mov esi, r13d
+    mov edx, [rip + g_lh]
+    imul edx, r14d
+    call mark_draw
+13: xor r15d, r15d              # row
 .Ldw_row:
     cmp r15d, r14d
     jae .Ldw_next
@@ -1921,6 +1934,61 @@ draw_wrapped:
     mov dword ptr [rip + dl_to], -1
     mov dword ptr [rip + dl_last], 1
     EPILOGUE
+
+# mark_draw(mark, y, h): git change bar left of the text
+mark_draw:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, [rip + g_ed_tx]
+    sub r14d, [rip + g_mt + 4*MI_12]
+    test ebx, GM_ADD | GM_MOD
+    jz 1f
+    COLOR r8d, T_GIT_ADD
+    test ebx, GM_MOD
+    jz 11f
+    COLOR r8d, T_GIT_MOD
+11: mov edi, r14d
+    mov esi, r12d
+    M edx, MI_3
+    mov ecx, r13d
+    call gfx_fill
+1:  test ebx, GM_DELUP
+    jz 2f
+    mov esi, r12d
+    call del_wedge
+2:  test ebx, GM_DELDOWN
+    jz 9f
+    lea esi, [r12 + r13]
+    call del_wedge
+9:  EPILOGUE
+# del_wedge(y in esi): a small triangle pointing into the text where lines were deleted (r14d x)
+del_wedge:
+    push rbx
+    push r12
+    push r15
+    mov r12d, esi
+    M r15d, MI_4
+    xor ebx, ebx
+1:  cmp ebx, r15d
+    jge 2f
+    mov edi, r14d
+    add edi, ebx
+    mov ecx, r15d
+    sub ecx, ebx                # half height of this column
+    mov esi, r12d
+    sub esi, ecx
+    add ecx, ecx
+    mov edx, 1
+    COLOR r8d, T_GIT_DEL
+    call gfx_fill
+    inc ebx
+    jmp 1b
+2:  pop r15
+    pop r12
+    pop rbx
+    ret
 
 # editor_draw(x, y, w, h)
 FN editor_draw
@@ -2140,6 +2208,9 @@ FN editor_draw
     mov [rsp + 16], rax         # sel start
     mov [rsp + 24], rdx         # sel end
     mov dword ptr [rsp + 32], 0 # last indent (for blank lines)
+    mov rdi, rbx
+    call git_doc_marks
+    mov [rsp + 96], rax
 .Led_line:
     cmp r12, [rbx + DOC_nlines]
     jae .Led_lines_done
@@ -2185,7 +2256,17 @@ FN editor_draw
     lea rcx, [rsp + 40]
     mov r8, r14
     call text_draw
-2:  # text area clip
+2:  # git change mark
+    mov rax, [rsp + 96]
+    test rax, rax
+    jz 21f
+    movzx edi, byte ptr [rax + r12]
+    test edi, edi
+    jz 21f
+    mov esi, r13d
+    mov edx, [rip + g_lh]
+    call mark_draw
+21: # text area clip
     mov edi, [rip + g_ed_tx]
     sub edi, [rip + g_mt + 4*MI_4]
     mov esi, [rip + g_ed_y]

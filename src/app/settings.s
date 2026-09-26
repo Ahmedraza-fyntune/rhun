@@ -65,8 +65,13 @@ FN setting_applied
     jmp 9f
 3:  lea rcx, [rip + cfg_agent_sources]
     cmp rax, rcx
-    jne 9f
+    jne 4f
     call agents_set_project
+    jmp 9f
+4:  lea rcx, [rip + cfg_git]
+    cmp rax, rcx
+    jne 9f
+    call git_apply
 9:  EPILOGUE
 
 # settings_key(keysym, cp, mods) -> 1 if handled

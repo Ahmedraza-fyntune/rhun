@@ -1,6 +1,7 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
 #   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
+#   wait-git | print-git
 .include "rhun.inc"
 
 .bss
@@ -405,6 +406,32 @@ c_wait:
     pop r15
     pop r14
     pop r13
+    xor eax, eax
+    ret
+
+# wait-git: until git has answered (at most 10 s)
+c_wait_git:
+    push r13
+    call time_ms
+    lea r13, [rax + 10000]
+1:  call git_busy
+    test eax, eax
+    jz 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 1b
+2:  pop r13
+    xor eax, eax
+    ret
+
+# print-git: branch, status, change marks of the current file
+c_print_git:
+    lea rdi, [rip + out]
+    call git_dump
     xor eax, eax
     ret
 
@@ -878,6 +905,8 @@ on_client:
 .Lc_print_window: .asciz "print-window"
 .Lc_print_cursor: .asciz "print-cursor"
 .Lc_print_term: .asciz "print-term"
+.Lc_print_git: .asciz "print-git"
+.Lc_wait_git: .asciz "wait-git"
 .Ls_term: .asciz " term="
 .Ls_hidden: .asciz " hidden"
 .Ls_builtin: .asciz "built-in"
@@ -895,7 +924,8 @@ ctl_table:
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
-    .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term, 0, 0
+    .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
+    .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, 0, 0
 
 .data
 lsock: .long -1
