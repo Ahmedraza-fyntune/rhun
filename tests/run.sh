@@ -17,5 +17,6 @@ check keymap-pl-intl build/xkb_test tests/data/keymap-pl-intl.txt
 check doc build/doc_test
 check syntax build/syntax_test
 check themes build/theme_test
+check images build/image_test $(ls tests/data/images/* | LC_ALL=C sort)
 [ -x tests/ui.sh ] && { tests/ui.sh || fail=1; }
 exit $fail

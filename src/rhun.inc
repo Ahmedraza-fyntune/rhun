@@ -462,6 +462,7 @@ F DOC_mtime, 8
 F DOC_version, 8
 F DOC_sold, 8           # syntax states were valid below this line before the last edits
 F DOC_ehi, 8            # highest line touched by edits since then
+F DOC_img, 8            # image view of a TAB_IMAGE document, or 0
 ENDSTRUCT DOC_SIZE
 
 STRUCT
@@ -556,9 +557,31 @@ ENDSTRUCT TF_SIZE
 .equ IC_RUNE, 26                # the app mark (Raido)
 .equ IC_COUNT, 27
 
+# ---- images ----
+.equ IMF_PNG, 1
+.equ IMF_JPEG, 2
+.equ IMF_GIF, 3
+.equ IMF_BMP, 4
+.equ IMF_ICO, 5
+.equ IMF_QOI, 6
+.equ IMF_PNM, 7
+.equ IMF_TGA, 8
+.equ IMG_MAXDIM, 32768
+.equ IMG_MAXPX, 1 << 26
+
+# decoded image
+STRUCT
+F IMG_px, 8             # premultiplied ARGB, w * h (mem_alloc_try)
+F IMG_w, 4
+F IMG_h, 4
+F IMG_fmt, 4            # IMF_*
+F IMG_opaque, 4         # 1 when every pixel is opaque
+ENDSTRUCT IMG_SIZE
+
 # ---- app ----
 .equ TAB_DOC, 1
 .equ TAB_SETTINGS, 2
+.equ TAB_IMAGE, 3               # TAB_doc is a DOC without text; DOC_img holds the view
 STRUCT
 F TAB_kind, 8
 F TAB_doc, 8

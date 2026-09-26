@@ -108,6 +108,40 @@ FN mem_alloc
     pop rbx
     ret
 
+# mem_alloc_try(size) -> ptr or 0: like mem_alloc, but a large block that cannot be mapped is not fatal
+FN mem_alloc_try
+    lea rax, [rdi + 16]
+    cmp rax, MEM_MAXSMALL
+    jbe mem_alloc
+    mov rax, 1 << 40
+    cmp rdi, rax
+    jae 1f
+    push rbx
+    push r12
+    mov r12, rdi
+    lea rbx, [rdi + 16 + 4095]
+    and rbx, -4096
+    xor edi, edi
+    mov rsi, rbx
+    mov edx, PROT_READ | PROT_WRITE
+    mov r10d, MAP_PRIVATE | MAP_ANONYMOUS
+    mov r8, -1
+    xor r9d, r9d
+    SYS SYS_mmap
+    cmp rax, -4096
+    ja 2f
+    mov [rax], rbx
+    mov [rax + 8], r12
+    add rax, 16
+    inc qword ptr [rip + g_mem_live]
+    pop r12
+    pop rbx
+    ret
+2:  pop r12
+    pop rbx
+1:  xor eax, eax
+    ret
+
 # mem_free(ptr)
 FN mem_free
     test rdi, rdi
