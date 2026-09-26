@@ -2109,6 +2109,8 @@ FN editor_draw
     call syntax_prepare
     # ---- lines ----
     mov qword ptr [rip + cls_doc], 0
+    mov rdi, rbx
+    call match_brackets
     mov dword ptr [rip + g_caret_ok], 0
     mov dword ptr [rip + dl_from], 0
     mov dword ptr [rip + dl_to], -1
@@ -2259,7 +2261,7 @@ FN editor_draw
 
 # draw_line(doc, line, y, selrange*): draws bytes [dl_from, dl_to) of the line as one visual row
 draw_line:
-    PROLOGUE 112
+    PROLOGUE 128
     mov rbx, rdi
     mov r12, rsi
     mov [rsp], edx              # y
@@ -2421,6 +2423,37 @@ draw_line:
 63: add r13, [rip + g_ed_find + SB_len]
     jmp 6b
 .Ldl_nofind:
+    # ---- bracket pair ----
+    mov qword ptr [rsp + 112], 0
+.Ldl_br:
+    mov rcx, [rsp + 112]
+    cmp rcx, 2
+    jae .Ldl_nobr
+    inc qword ptr [rsp + 112]
+    lea rax, [rip + g_br]
+    mov rax, [rax + rcx*8]
+    sub rax, [rsp + 24]
+    js .Ldl_br
+    cmp rax, [rsp + 96]
+    jb .Ldl_br
+    cmp rax, [rsp + 32]
+    jae .Ldl_br
+    mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, rax
+    call seg_cols
+    imul eax, [rip + g_cw]
+    add eax, [rsp + 40]
+    mov edi, eax
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_1]
+    mov edx, [rip + g_cw]
+    mov ecx, [rip + g_lh]
+    sub ecx, [rip + g_mt + 4*MI_2]
+    COLOR r8d, T_MUTED
+    call draw_box
+    jmp .Ldl_br
+.Ldl_nobr:
     # ---- caret position ----
     mov rax, [rbx + DOC_cur]
     sub rax, [rsp + 24]
@@ -2550,6 +2583,126 @@ draw_line:
 .Ldl_ret:
     EPILOGUE
 
+# draw_box(x, y, w, h, argb): 1px outline, softened
+draw_box:
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    mov r15d, ecx
+    mov ebx, r8d
+    and ebx, 0xffffff
+    or ebx, 0xa0000000
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, [rip + g_border]
+    mov r8d, ebx
+    call gfx_fill
+    mov edi, r12d
+    lea esi, [r13 + r15]
+    sub esi, [rip + g_border]
+    mov edx, r14d
+    mov ecx, [rip + g_border]
+    mov r8d, ebx
+    call gfx_fill
+    mov edi, r12d
+    mov esi, r13d
+    add esi, [rip + g_border]
+    mov edx, [rip + g_border]
+    mov ecx, r15d
+    sub ecx, [rip + g_border]
+    sub ecx, [rip + g_border]
+    mov r8d, ebx
+    call gfx_fill
+    lea edi, [r12 + r14]
+    sub edi, [rip + g_border]
+    mov esi, r13d
+    add esi, [rip + g_border]
+    mov edx, [rip + g_border]
+    mov ecx, r15d
+    sub ecx, [rip + g_border]
+    sub ecx, [rip + g_border]
+    mov r8d, ebx
+    call gfx_fill
+    EPILOGUE
+
+# match_brackets(doc): g_br = the bracket at or before the cursor and its partner, else -1
+match_brackets:
+    PROLOGUE 32
+    mov rbx, rdi
+    mov qword ptr [rip + g_br], -1
+    mov qword ptr [rip + g_br + 8], -1
+    cmp dword ptr [rip + cfg_match_brackets], 0
+    je 9f
+    mov r12, [rbx + DOC_cur]
+    cmp r12, [rbx + DOC_anchor]
+    jne 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_byte
+    call bracket_kind
+    test edx, edx
+    jnz 1f
+    test r12, r12
+    jz 9f
+    dec r12
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_byte
+    call bracket_kind
+    test edx, edx
+    jz 9f
+1:  mov r13d, eax               # this bracket
+    mov r14d, ecx               # its partner
+    movsxd r15, edx             # direction
+    mov [rsp], r12
+    mov qword ptr [rsp + 8], 0  # depth
+    mov qword ptr [rsp + 16], 100000
+2:  dec qword ptr [rsp + 16]
+    js 9f
+    add r12, r15
+    js 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_byte
+    test eax, eax
+    jz 9f
+    cmp eax, r13d
+    jne 3f
+    inc qword ptr [rsp + 8]
+    jmp 2b
+3:  cmp eax, r14d
+    jne 2b
+    dec qword ptr [rsp + 8]
+    jns 2b
+    mov rax, [rsp]
+    mov [rip + g_br], rax
+    mov [rip + g_br + 8], r12
+9:  EPILOGUE
+
+# bracket_kind(eax byte) -> eax byte, ecx partner, edx +1 opening / -1 closing / 0 none
+bracket_kind:
+    lea r8, [rip + .Lbrackets]
+    xor edx, edx
+1:  movzx ecx, byte ptr [r8 + rdx]
+    test ecx, ecx
+    jz 3f
+    cmp eax, ecx
+    je 2f
+    inc edx
+    jmp 1b
+2:  test edx, 1
+    jnz 4f
+    movzx ecx, byte ptr [r8 + rdx + 1]
+    mov edx, 1
+    ret
+4:  movzx ecx, byte ptr [r8 + rdx - 1]
+    mov edx, -1
+    ret
+3:  xor edx, edx
+    ret
+
 # draw_caret(doc): at the position recorded by draw_line
 draw_caret:
     PROLOGUE 16
@@ -2621,8 +2774,11 @@ pair_close: .asciz ")]}\"'`"
 .Lspace: .ascii " "
 .Ltab_arrow: .ascii "\342\206\222"
 .Lmiddot: .ascii "\302\267"
+.Lbrackets: .asciz "()[]{}"
 .data
 dl_to: .long -1
+.p2align 3
+g_br: .quad -1, -1
 .bss
 .p2align 3
 sel_word_a: .quad 0
