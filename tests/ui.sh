@@ -9,8 +9,12 @@ mkdir -p "$tmp/.claude/projects/$slug" "$tmp/.codex/sessions/2026/09/26"
 sed "s|@PROJECT@|$PWD|g" tests/data/agents/claude.jsonl > "$tmp/.claude/projects/$slug/s1.jsonl"
 sed "s|@PROJECT@|$PWD|g" tests/data/agents/codex.jsonl > "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
 cp tests/data/agents/other.jsonl "$tmp/.codex/sessions/2026/09/26/rollout-c2.jsonl"
-touch -d '2026-09-26 06:00' "$tmp/.claude/projects/$slug/s1.jsonl"
-touch -d '2026-09-26 07:00' "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
+touch -t 202609260600 "$tmp/.claude/projects/$slug/s1.jsonl"
+touch -t 202609260700 "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
+# timeout(1) is not everywhere
+limit() { # seconds cmd...
+    if command -v timeout >/dev/null; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV' "$@"; fi
+}
 for s in tests/scripts/*.rsc; do
     n=$(basename "$s" .rsc)
     # tests/data/NAME.home: a HOME of its own; @HOME@ in the script names it
@@ -21,7 +25,7 @@ for s in tests/scripts/*.rsc; do
     fi
     sed "s|@HOME@|$home|g" "$s" > "$tmp/$n.rsc"
     XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child \
-        timeout 20 build/rhun "$PWD" --headless 1400x860 --script "$tmp/$n.rsc" > "$tmp/$n.out" 2>&1
+        limit 20 build/rhun "$PWD" --headless 1400x860 --script "$tmp/$n.rsc" > "$tmp/$n.out" 2>&1
     if [ "$1" = update ]; then
         cp "$tmp/$n.out" "tests/data/$n.ui.expected"
     fi
