@@ -195,6 +195,7 @@ FN app_sync_doc
 
 FN app_activate_tab
     mov [rip + g_tab_cur], rdi
+    mov dword ptr [rip + g_exp_reveal], 1
     call app_sync_doc
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     mov dword ptr [rip + g_tabscroll_reveal], 1

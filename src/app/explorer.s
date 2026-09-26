@@ -32,7 +32,8 @@ menu_y: .long 0
 .p2align 3
 menu_node: .quad 0
 menu_list: .quad 0
-.globl g_explorer_dir, g_explorer_target
+.globl g_explorer_dir, g_explorer_target, g_exp_reveal
+g_exp_reveal: .long 0             # reveal the active file on the next draw
 g_explorer_dir: .zero 4096
 g_explorer_target: .zero 4096
 
@@ -599,6 +600,82 @@ FN explorer_key
     xor eax, eax
     EPILOGUE
 
+# explorer_reveal(): open the folders down to the active file and put the cursor on it
+explorer_reveal:
+    PROLOGUE
+    mov rbx, [rip + root]
+    test rbx, rbx
+    jz 9f
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 9f
+    mov r12, [rax + DOC_path]
+    test r12, r12
+    jz 9f
+    # only files under the project
+    mov rdi, [rbx + N_path]
+    xor ecx, ecx
+1:  movzx eax, byte ptr [rdi + rcx]
+    test eax, eax
+    jz 2f
+    cmp al, [r12 + rcx]
+    jne 9f
+    inc rcx
+    jmp 1b
+2:  cmp byte ptr [r12 + rcx], '/'
+    jne 9f
+    lea r12, [r12 + rcx + 1]
+.Lrv_comp:
+    xor r13d, r13d
+3:  movzx eax, byte ptr [r12 + r13]
+    test eax, eax
+    jz 4f
+    cmp eax, '/'
+    je 4f
+    inc r13
+    jmp 3b
+4:  test r13, r13
+    jz 9f
+    mov rdi, rbx
+    call node_load
+    xor r14d, r14d
+5:  cmp r14, [rbx + N_kids + VEC_len]
+    jae 9f
+    mov rax, [rbx + N_kids + VEC_ptr]
+    mov r15, [rax + r14*8]
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [r15 + N_name]
+    call str_eq_cstr
+    test eax, eax
+    jnz 6f
+    inc r14
+    jmp 5b
+6:  cmp byte ptr [r12 + r13], 0
+    je 7f
+    cmp dword ptr [r15 + N_open], 0
+    jne 61f
+    mov dword ptr [r15 + N_open], 1
+    mov rdi, r15
+    call node_load
+    mov rdi, [r15 + N_path]
+    call watch_dir
+61: mov rbx, r15
+    lea r12, [r12 + r13 + 1]
+    jmp .Lrv_comp
+7:  call rebuild_rows
+    xor ecx, ecx
+8:  cmp rcx, [rip + rows + VEC_len]
+    jae 9f
+    mov rax, [rip + rows + VEC_ptr]
+    cmp [rax + rcx*8], r15
+    je 81f
+    inc rcx
+    jmp 8b
+81: mov [rip + exp_cursor], ecx
+    call reveal_cursor
+9:  EPILOGUE
+
 reveal_cursor:
     M ecx, MI_ROW
     mov eax, [rip + exp_cursor]
@@ -627,6 +704,14 @@ FN explorer_draw
     mov [rip + exp_rect + 4], esi
     mov [rip + exp_rect + 8], edx
     mov [rip + exp_rect + 12], ecx
+    cmp dword ptr [rip + g_exp_reveal], 0
+    je 1f
+    mov dword ptr [rip + g_exp_reveal], 0
+    call explorer_reveal
+1:  mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
     COLOR r8d, T_PANEL
     call gfx_fill
     mov edi, [rsp]

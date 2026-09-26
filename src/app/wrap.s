@@ -1,5 +1,5 @@
 # soft wrap: lines are split into visual rows at the editor width (breaking after spaces)
-# scroll position in wrap mode: DOC_scrolly = line << 8 | fraction of that line's height
+# scroll position in wrap mode: top line = DOC_scrolly >> 8, DOC_woff = 1/256 rows into it (see top_offset)
 .include "rhun.inc"
 
 .equ MAXROWS, 65536
