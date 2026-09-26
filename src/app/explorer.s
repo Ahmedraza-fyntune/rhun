@@ -1017,10 +1017,15 @@ FN explorer_draw
     mov edx, r13d
     mov ecx, ebx
     mov r8, [r14 + N_name]
+    # names cut with an ellipsis before the status letter
+    mov r10d, [rsp]
+    add r10d, [rsp + 8]
+    sub r10d, [rip + g_mt + 4*MI_28]
+    sub r10d, r15d
     mov eax, [rsp + 40]
+    push r10
     push rax
-    push rax
-    call ui_text_v
+    call ui_text_v_fit
     add rsp, 16
     cmp dword ptr [rsp + 32], 0
     je 59f
