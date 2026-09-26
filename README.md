@@ -14,6 +14,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Settings page and a readable config file, both applied while running
 - Agents panel: Claude Code and Codex sessions of the project, updated live as the agent works
 - Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs
+- Git: changed lines in the gutter, file status in tabs and the explorer, diffs, and a history of all branches drawn as a graph
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
 - Characters missing from the built-in fonts are drawn with the system's fonts
 - Every XKB layout, dead keys and the Compose key (the system's Compose rules, `~/.XCompose` or `$XCOMPOSEFILE`)
@@ -60,6 +61,7 @@ On Wayland rhun draws its own title bar with window buttons, except on tiling co
 | Ctrl+Shift+A | Toggle agents panel |
 | Ctrl+\` | Toggle terminal |
 | Ctrl+Shift+\` | New terminal |
+| Ctrl+Shift+G | Git history |
 | Ctrl+F, Ctrl+H | Find, replace |
 | Ctrl+Shift+F | Find in files |
 | Ctrl+G | Go to line |
@@ -70,7 +72,7 @@ On Wayland rhun draws its own title bar with window buttons, except on tiling co
 | Ctrl+Shift+D, Ctrl+Shift+K | Duplicate, delete line |
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
 
-All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
+All commands are listed in the command palette. Git: Open Changes shows the current file's changes against HEAD; the explorer's context menu has it for changed files. In the history, the first row holds uncommitted changes, and clicking a file opens its diff. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
 
 ## Configuration
 
@@ -85,6 +87,8 @@ font_size = 15
 tab_width = 4
 [terminal]
 shell = /usr/bin/fish
+[git]
+enabled = false
 [keys]
 ctrl+shift+d = duplicate_line
 alt+z = none
@@ -106,7 +110,7 @@ keyword = #cba6f7
 string = #a6e3a1
 ```
 
-Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors.
+Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors. `git_added`, `git_modified` and `git_deleted` color changes in the gutter, tabs, explorer and diffs.
 
 On Omarchy the theme list starts with Follow Omarchy (`theme = omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
 
@@ -150,7 +154,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll`, `open`, `cmd`, `shot`, `wait`, `resize`, `print-doc`, `print-state`, `print-term`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `resize`, `print-doc`, `print-state`, `print-term`, `print-git`, `print-gitlog`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
@@ -169,7 +173,7 @@ An extension that crashes or hangs cannot take the editor with it.
 | `src/gfx/` | canvas, TrueType parser, rasterizer, icons |
 | `src/ui/ui.s` | immediate-mode widgets |
 | `src/plat/` | Wayland, XKB keymaps, X11, headless |
-| `src/app/` | documents, editor, explorer, palette, settings, agents, terminal, syntax, themes |
+| `src/app/` | documents, editor, explorer, palette, settings, agents, terminal, git, syntax, themes |
 | `runtime/` | themes and grammars embedded into the binary |
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
 
