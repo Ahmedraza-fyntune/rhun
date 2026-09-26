@@ -438,6 +438,8 @@ F DOC_anchor, 8
 F DOC_prefx, 8          # preferred column for vertical motion, -1 = none
 F DOC_scrolly, 8        # 1/256 lines
 F DOC_scrollx, 8        # pixels
+F DOC_wtop, 8           # wrapped view: line that DOC_woff belongs to
+F DOC_woff, 8           # wrapped view: 1/256 rows into that line (used while scrolly is on DOC_wtop)
 F DOC_group, 8
 F DOC_lastedit, 8
 F DOC_lastkind, 8

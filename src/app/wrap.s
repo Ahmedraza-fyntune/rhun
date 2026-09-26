@@ -303,62 +303,72 @@ line_px:
     pop rbx
     ret
 
-# scroll_by_px(doc, dy): move the wrapped view by dy pixels
+# scroll_by_px(doc, dy): move the wrapped view by dy pixels (kept in 1/256 rows so small steps add up)
 FN scroll_by_px
     PROLOGUE 16
     mov rbx, rdi
     movsxd r15, esi
+    test r15, r15
+    jz 9f
+    mov rax, r15
+    shl rax, 8
+    cqo
+    movsxd rcx, dword ptr [rip + g_lh]
+    idiv rcx
+    test rax, rax
+    jnz 1f
+    mov eax, 1
+    test r15, r15
+    jns 1f
+    mov rax, -1
+1:  mov r15, rax                # delta
     mov r12, [rbx + DOC_scrolly]
-    mov r13, r12
     shr r12, 8                  # line
-    and r13d, 255               # fraction
+    xor r13d, r13d              # offset into it
+    cmp r12, [rbx + DOC_wtop]
+    jne 2f
+    mov r13, [rbx + DOC_woff]
+2:  add r13, r15
     mov rdi, rbx
     mov rsi, r12
-    call line_px
-    mov r14d, eax
-    imul r13d, eax
-    shr r13d, 8                 # px into the line
-    movsxd r13, r13d
-    add r13, r15
+    call line_breaks
+    shl eax, 8
+    mov r14d, eax               # size of the line
 .Lsp_loop:
     test r13, r13
-    jns 1f
+    jns 3f
     test r12, r12
-    jz 2f
+    jz 4f
     dec r12
     mov rdi, rbx
     mov rsi, r12
-    call line_px
+    call line_breaks
+    shl eax, 8
     mov r14d, eax
     add r13, rax
     jmp .Lsp_loop
-2:  xor r13d, r13d
-    jmp 3f
-1:  cmp r13, r14
-    jl 3f
+4:  xor r13d, r13d
+    jmp 6f
+3:  cmp r13, r14
+    jl 6f
     lea rax, [r12 + 1]
     cmp rax, [rbx + DOC_nlines]
-    jae 4f
+    jae 5f
     sub r13, r14
     inc r12
     mov rdi, rbx
     mov rsi, r12
-    call line_px
+    call line_breaks
+    shl eax, 8
     mov r14d, eax
     jmp .Lsp_loop
-4:  xor r13d, r13d
-3:  mov rax, r13
-    shl rax, 8
-    xor edx, edx
-    div r14
-    cmp eax, 255
-    jbe 5f
-    mov eax, 255
-5:  shl r12, 8
-    or r12, rax
+5:  lea r13, [r14 - 256]        # last line: its last row on top at most
+6:  mov [rbx + DOC_woff], r13
+    mov [rbx + DOC_wtop], r12
+    shl r12, 8
     mov [rbx + DOC_scrolly], r12
     mov dword ptr [rip + g_dirty], 1
-    EPILOGUE
+9:  EPILOGUE
 
 # wrap_clamp(doc): without scroll_past_end keep the view filled down to the last row
 FN wrap_clamp
@@ -404,11 +414,18 @@ FN top_offset
     sub rsp, 8
     mov rbx, rdi
     mov rsi, [rbx + DOC_scrolly]
-    mov r12, rsi
     shr rsi, 8
-    call line_px
-    and r12d, 255
-    imul eax, r12d
+    xor r12d, r12d
+    cmp rsi, [rbx + DOC_wtop]
+    jne 1f
+    mov r12, [rbx + DOC_woff]
+    call line_breaks
+    shl eax, 8
+    cmp r12, rax
+    jb 1f
+    lea r12, [rax - 256]
+1:  mov rax, r12
+    imul eax, [rip + g_lh]
     shr eax, 8
     add rsp, 8
     pop r12
@@ -482,25 +499,11 @@ FN reveal_wrap
 
 # set_top_row(doc, line, row): scroll so that row of line is the first visible
 set_top_row:
-    push rbx
-    push r12
-    push r13
-    mov rbx, rdi
-    mov r12, rsi
-    mov r13d, edx
-    call line_breaks
-    mov ecx, eax
-    mov eax, r13d
-    shl eax, 8
-    lea eax, [rax + rcx - 1]    # round up so the row starts exactly at the top
-    xor edx, edx
-    div ecx
-    shl r12, 8
-    or r12, rax
-    mov [rbx + DOC_scrolly], r12
-    pop r13
-    pop r12
-    pop rbx
+    mov [rdi + DOC_wtop], rsi
+    shl edx, 8
+    mov [rdi + DOC_woff], rdx
+    shl rsi, 8
+    mov [rdi + DOC_scrolly], rsi
     ret
 
 # wrap_pos_at(doc, px, py) -> position under the point
@@ -613,6 +616,7 @@ FN cmd_toggle_word_wrap
     jz 1f
     mov qword ptr [rax + DOC_scrollx], 0
     and qword ptr [rax + DOC_scrolly], -256
+    mov qword ptr [rax + DOC_woff], 0
 1:  mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_reveal], 1
     mov dword ptr [rip + g_dirty], 1
