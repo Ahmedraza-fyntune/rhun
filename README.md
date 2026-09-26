@@ -1,5 +1,7 @@
 # rhun
 
+![rhun](assets/social/github@2x.png)
+
 A small and fast code editor written in Assembly.
 
 rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets into a pixel buffer and hands that buffer to the display server. It speaks the Wayland and X11 wire protocols directly, without libc, toolkits or libwayland. The result is one static binary (fonts, themes and grammars included) that looks the same on every desktop.
@@ -16,6 +18,11 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Every XKB layout, dead keys and the Compose key (the system's Compose rules, `~/.XCompose` or `$XCOMPOSEFILE`)
 - Files changed on disk are reloaded, open files are restored per project
 - Wayland with fractional scaling; X11 as a fallback
+
+<p>
+  <img src="assets/social/screenshot-dark.png" width="49%" alt="rhun, dark theme">
+  <img src="assets/social/screenshot-light.png" width="49%" alt="rhun, light theme">
+</p>
 
 ## Build
 
@@ -136,7 +143,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right]`, `move`, `down`, `up`, `scroll`, `open`, `cmd`, `shot`, `wait`, `resize`, `print-doc`, `print-state`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll`, `open`, `cmd`, `shot`, `wait`, `resize`, `print-doc`, `print-state`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
