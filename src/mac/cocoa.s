@@ -68,10 +68,19 @@
     LEAVE
     XRET
 .endm
-// method called by AppKit that may run translated code
+// method called by AppKit that may run translated code: the x86 stack continues from g_xsp,
+// which is back where it was on return, or it would sink with every callback AppKit makes
+// without returning to rhun's loop (a live resize draws from setFrameSize:)
 .macro IMP size=0
-    ENTER \size
+    ENTER \size + 16
     LDX x28, g_xsp
+    stur x28, [x29, #-16]
+.endm
+.macro IMPRET
+    ldur x9, [x29, #-16]
+    STX x9, g_xsp
+    LEAVE
+    ret
 .endm
 
 // ---------------------------------------------------------------- window
@@ -1042,8 +1051,7 @@ Lkd_ime:
     mov x0, x19
     MSG interpretKeyEvents_
 Lkd_done:
-    LEAVE
-    ret
+    IMPRET
 
 // ascii_key(w0 key code, w1 shift) -> the character of the key on the current ASCII-capable
 // keyboard layout, or 0
@@ -1174,8 +1182,7 @@ v_insertText:
     XCALL app_on_key
     b 2b
 9:  STW wzr, key_mods
-    LEAVE
-    ret
+    IMPRET
 
 // setMarkedText:selectedRange:replacementRange:: composition in progress
 v_setMarkedText:
@@ -1329,8 +1336,7 @@ v_mouseDown:
     mov x0, x19
     mov w2, #1
     bl mouse
-    LEAVE
-    ret
+    IMPRET
 
 v_mouseUp:
     IMP
@@ -1340,8 +1346,7 @@ v_mouseUp:
     mov w1, #1
 1:  mov w2, #0
     bl mouse
-    LEAVE
-    ret
+    IMPRET
 
 v_rightMouseDown:
     IMP
@@ -1349,8 +1354,7 @@ v_rightMouseDown:
     mov w1, #3
     mov w2, #1
     bl mouse
-    LEAVE
-    ret
+    IMPRET
 
 v_rightMouseUp:
     IMP
@@ -1358,8 +1362,7 @@ v_rightMouseUp:
     mov w1, #3
     mov w2, #0
     bl mouse
-    LEAVE
-    ret
+    IMPRET
 
 v_otherMouseDown:
     IMP
@@ -1372,8 +1375,7 @@ v_otherMouseDown:
     mov w1, #2
     mov w2, #1
     bl mouse
-9:  LEAVE
-    ret
+9:  IMPRET
 
 v_otherMouseUp:
     IMP
@@ -1386,8 +1388,7 @@ v_otherMouseUp:
     mov w1, #2
     mov w2, #0
     bl mouse
-9:  LEAVE
-    ret
+9:  IMPRET
 
 v_mouseMoved:
     IMP
@@ -1395,14 +1396,12 @@ v_mouseMoved:
     mov w1, #0
     mov w2, #0
     bl mouse
-    LEAVE
-    ret
+    IMPRET
 
 v_mouseExited:
     IMP
     XCALL app_on_pointer_leave
-    LEAVE
-    ret
+    IMPRET
 
 // scrollWheel:: trackpads give points, wheels give lines
 v_scrollWheel:
@@ -1440,8 +1439,7 @@ v_scrollWheel:
     cbz w9, 9f
     XCALL app_on_scroll
 9:  ldp d8, d9, [sp]
-    LEAVE
-    ret
+    IMPRET
 
 // cursorUpdate:: the cursor rhun asked for
 v_cursorUpdate:
@@ -1501,16 +1499,14 @@ v_setFrameSize:
     cbz x9, 9f
     bl update_size
     bl render
-9:  LEAVE
-    ret
+9:  IMPRET
 
 v_viewDidChangeBackingProperties:
     IMP
     bl update_size
     mov w9, #1
     STW w9, g_dirty
-    LEAVE
-    ret
+    IMPRET
 
 // ---------------------------------------------------------------- window and app delegates
 
@@ -1518,40 +1514,35 @@ w_shouldClose:
     IMP
     XCALL app_on_close
     mov w0, #0
-    LEAVE
-    ret
+    IMPRET
 
 w_becomeKey:
     IMP
     mov w0, #1
     XCALL app_on_focus
     bl update_size
-    LEAVE
-    ret
+    IMPRET
 
 w_resignKey:
     IMP
     mov w0, #0
     XCALL app_on_focus
     bl update_size
-    LEAVE
-    ret
+    IMPRET
 
 w_changed:
     IMP
     bl update_size
     mov w9, #1
     STW w9, g_dirty
-    LEAVE
-    ret
+    IMPRET
 
 // applicationShouldTerminate: rhun asks about unsaved files and quits itself
 a_shouldTerminate:
     IMP
     XCALL app_on_close
     mov x0, #0                  // NSTerminateCancel
-    LEAVE
-    ret
+    IMPRET
 
 // application:openURLs:: files and folders from Finder and the Dock
 a_openURLs:
@@ -1573,8 +1564,7 @@ a_openURLs:
     b 1b
 9:  mov w9, #1
     STW w9, g_dirty
-    LEAVE
-    ret
+    IMPRET
 
 a_reopen:
     ENTER
@@ -1590,8 +1580,7 @@ a_settings:
     XCALL cmd_settings
     mov w9, #1
     STW w9, g_dirty
-    LEAVE
-    ret
+    IMPRET
 
 // ---------------------------------------------------------------- classes and menu
 

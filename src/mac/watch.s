@@ -61,28 +61,32 @@ FN sys_inotify_init1
 FN sys_inotify_add_watch
     ENTER 16
     mov x19, x1
-    // the same path is the same watch
+    mov x0, x19
+    mov x1, #0
+    bl _realpath
+    cbz x0, 5f
+    mov x23, x0
+    // the same directory is the same watch, however it is spelled
     mov x20, #0
     ADR x21, watches
     ADR x9, nwatch
     ldr w22, [x9]
 1:  cmp w20, w22
     b.hs 2f
-    add x9, x21, x20, lsl #4
-    add x9, x9, x20, lsl #3
-    ldr x0, [x9, #W_path]
-    mov x1, x19
+    mov x9, #W_SIZE
+    madd x9, x9, x20, x21
+    ldr x0, [x9, #W_real]
+    mov x1, x23
     bl _strcmp
-    cbz w0, 7f
+    cbz w0, 3f
     add x20, x20, #1
     b 1b
+3:  mov x0, x23
+    bl _free
+    b 7f
 2:  cmp w22, #MAXW
     b.hs 6f
-    mov x0, x19
-    mov x1, #0
-    bl _realpath
-    cbz x0, 5f
-    mov x23, x0
+    mov x0, x23
     bl _strlen
     mov x24, x0
     mov x0, x19
@@ -106,7 +110,9 @@ FN sys_inotify_add_watch
 5:  mov x0, #-1
     bl linux_ret_errno
     b 9f
-6:  mov x0, #-28                // ENOSPC
+6:  mov x0, x23
+    bl _free
+    mov x0, #-28                // ENOSPC
 9:  LEAVE
     ret
 
@@ -120,6 +126,13 @@ restart:
     ADR x9, stream
     ldr x19, [x9]
     cbz x19, 1f
+    // the new stream starts after the last event of this one
+    mov x0, x19
+    bl _FSEventStreamGetLatestEventId
+    cmp x0, #0
+    csinv x0, x0, xzr, ne       // none yet: from now
+    ADR x9, since
+    str x0, [x9]
     mov x0, x19
     bl _FSEventStreamStop
     mov x0, x19
@@ -159,7 +172,8 @@ restart:
     ADR x1, on_events
     mov x2, #0
     mov x3, x20
-    mov x4, #-1                 // kFSEventStreamEventIdSinceNow
+    ADR x9, since
+    ldr x4, [x9]                // kFSEventStreamEventIdSinceNow at first
     ldr d0, f_latency
     mov w5, #0x12               // file events, no defer
     bl _FSEventStreamCreate
@@ -299,6 +313,7 @@ s_queue: .asciz "rhun.watch"
 .data
 .p2align 3
 stream: .quad 0
+since: .quad -1
 queue: .quad 0
 fds: .long -1, -1
 nwatch: .long 0

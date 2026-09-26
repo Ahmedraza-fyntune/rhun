@@ -189,6 +189,8 @@ sys_close:
     ldr x10, [x9, w0, uxtw #3]
     cbz x10, 1f
     str xzr, [x9, w0, uxtw #3]
+    ADR x9, pend
+    str xzr, [x9, w0, uxtw #3]
     mov x0, x10
     bl _closedir
     b 2f
@@ -253,7 +255,9 @@ STAT sys_stat, _stat
 STAT sys_lstat, _lstat
 STAT sys_fstat, _fstat
 
-// getdents64(fd, buf, count): readdir on a DIR kept per descriptor
+// getdents64(fd, buf, count): readdir on a DIR kept per descriptor; an entry that does not fit
+// waits in pend (readdir's buffer stays valid until the next call) instead of telldir/seekdir,
+// which is linear in the position on Darwin
 sys_getdents64:
     ENTER 16
     mov w19, w0
@@ -261,7 +265,7 @@ sys_getdents64:
     mov x21, x2
     mov x22, #0                 // bytes written
     cmp w19, #1024
-    b.hs 8f
+    b.hs 6f
     ADR x9, dirs
     ldr x23, [x9, w19, uxtw #3]
     cbnz x23, 1f
@@ -271,19 +275,20 @@ sys_getdents64:
     mov x23, x0
     ADR x9, dirs
     str x23, [x9, w19, uxtw #3]
-1:  mov x0, x23
-    bl _telldir
-    mov x24, x0
+1:  ADR x9, pend
+    ldr x25, [x9, w19, uxtw #3]
+    str xzr, [x9, w19, uxtw #3]
+    cbnz x25, 2f
     mov x0, x23
     bl _readdir
     cbz x0, 7f
     mov x25, x0
-    ldrh w26, [x25, #18]        // d_namlen
+2:  ldrh w26, [x25, #18]        // d_namlen
     add x27, x26, #19 + 1 + 7   // header, name, NUL, rounded to 8
     and x27, x27, #~7
     add x9, x22, x27
     cmp x9, x21
-    b.hi 6f
+    b.hi 5f
     add x0, x20, x22
     ldr x9, [x25, #0]
     str x9, [x0, #0]            // d_ino
@@ -300,11 +305,10 @@ sys_getdents64:
     strb wzr, [x9, x26]
     add x22, x22, x27
     b 1b
-6:  mov x0, x23                 // no room: read it next time
-    mov x1, x24
-    bl _seekdir
+5:  ADR x9, pend               // no room: next time
+    str x25, [x9, w19, uxtw #3]
     cbnz x22, 7f
-    mov x0, #-22                // EINVAL: buffer too small
+6:  mov x0, #-22                // EINVAL: buffer too small, or a descriptor past the table
     b 9f
 7:  mov x0, x22
     b 9f
@@ -398,7 +402,8 @@ sockaddr_mac:
     add w10, w10, #1
     cmp w10, #103
     b.lo 1b
-    strb wzr, [x12, x10]
+    mov x1, #0                  // too long: no address
+    ret
 2:  add w2, w10, #3
     strb w2, [x9]
     mov w13, #1
@@ -408,14 +413,18 @@ sockaddr_mac:
 
 .macro SOCKADDR name, fn
 \name:
-    stp x29, x30, [sp, #-128]!
+    stp x29, x30, [sp, #-144]!
     mov x29, sp
+    str x0, [sp, #128]
     add x9, sp, #16
     bl sockaddr_mac
+    mov x0, #-36                // ENAMETOOLONG
+    cbz x1, 9f
+    ldr x0, [sp, #128]
     bl \fn
     sxtw x0, w0
     bl linux_ret
-    ldp x29, x30, [sp], #128
+9:  ldp x29, x30, [sp], #144
     ret
 .endm
 SOCKADDR sys_bind, _bind
@@ -431,9 +440,23 @@ sys_accept4:
     bl _accept
     sxtw x0, w0
     bl linux_ret
+    tbnz x0, #63, 9f
+    // Darwin passes the listener's O_NONBLOCK on; Linux does not
+    str x0, [sp, #24]
+    ldr x9, [sp, #16]
+    tst w9, #0x800
+    cset w9, ne
+    lsl w9, w9, #2              // O_NONBLOCK or nothing
+    sub sp, sp, #16
+    str x9, [sp]
+    mov w1, #4                  // F_SETFL
+    bl _fcntl
+    add sp, sp, #16
+    ldr x0, [sp, #24]
     ldr x1, [sp, #16]
+    and w1, w1, #0x80000        // O_CLOEXEC
     bl set_fl
-    ldp x29, x30, [sp], #32
+9:  ldp x29, x30, [sp], #32
     ret
 
 // pipe2(fds, flags)
@@ -608,3 +631,4 @@ g_xsp: .quad 0                  // x86 stack pointer when rhun last entered nati
 .bss
 .p2align 3
 dirs: .zero 8 * 1024
+pend: .zero 8 * 1024
