@@ -607,7 +607,9 @@ vcode:
     jnz 8f
     test edx, MOD_CTRL
     jz 2f
-    # ctrl keys of vim; the others keep their bindings
+    # ctrl keys of vim; the others, and all with shift (ctrl+shift+d), keep their bindings
+    test edx, MOD_SHIFT
+    jnz 8f
     mov eax, edi
     lea ecx, [rax - 'A']
     cmp ecx, 25
