@@ -117,7 +117,7 @@ vprev:
     mov rsi, rdi
     mov rdi, [rip + g_doc]
     jmp doc_prev_char
-# vnl() -> lines as vim has them: the newline at the end of a file starts none (keeps all but rax)
+# vnl() -> lines as vim has them: the newline at the end of a file (DF_EOL) starts none (keeps all but rax)
 vnl:
     push rdi
     push rsi
@@ -132,6 +132,8 @@ vnl:
     mov rax, [rbx + DOC_nlines]
     cmp rax, 1
     jbe 9f
+    test dword ptr [rbx + DOC_flags], DF_EOL
+    jz 9f
     mov rdi, rbx
     call doc_len
     lea rsi, [rax - 1]

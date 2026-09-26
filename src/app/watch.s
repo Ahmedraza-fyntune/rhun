@@ -271,6 +271,8 @@ FN app_reload_doc
     mov rsi, r12
     mov rdx, r13
     call doc_set_text
+    mov rdi, rbx
+    call doc_note_eol
     mov rdi, r12
     call mem_free
     mov rdi, rbx

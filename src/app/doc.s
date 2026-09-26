@@ -933,6 +933,23 @@ FN doc_set_path
     pop rbx
     ret
 
+# doc_note_eol(doc): DF_EOL as the text ends now (read from or written to the file)
+FN doc_note_eol
+    and dword ptr [rdi + DOC_flags], ~DF_EOL
+    push rbx
+    mov rbx, rdi
+    call doc_len
+    test rax, rax
+    jz 1f
+    lea rsi, [rax - 1]
+    mov rdi, rbx
+    call doc_byte
+    cmp eax, 10
+    jne 1f
+    or dword ptr [rbx + DOC_flags], DF_EOL
+1:  pop rbx
+    ret
+
 # doc_load(doc, path) -> 0 ok, -2 missing (doc keeps path), -1000 binary, other -errno
 FN doc_load
     PROLOGUE 16
@@ -1028,6 +1045,8 @@ FN doc_load
     rep stosq
     mov qword ptr [rbx + DOC_svalid], 0
     mov qword ptr [rbx + DOC_savepoint], 0
+    mov rdi, rbx
+    call doc_note_eol
     xor eax, eax
     EPILOGUE
 .Ldl_missing:
@@ -1172,6 +1191,8 @@ FN doc_save
     mov rdi, [rbx + DOC_path]
     call file_stamp
     mov [rbx + DOC_mtime], rax
+    mov rdi, rbx
+    call doc_note_eol
 7:  mov rax, r12
     EPILOGUE
 .Lds_nopath:
