@@ -9,6 +9,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 ## Features
 
 - Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
+- Image preview: PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA open in a tab, with zoom and pan
 - Syntax highlighting for about 50 languages, defined in plain text grammar files
 - 39 color themes, dark and light, with a match for every Omarchy theme; add your own
 - Settings page and a readable config file, both applied while running
@@ -68,6 +69,20 @@ On Wayland rhun draws its own title bar with window buttons, except on tiling co
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
 
 All commands are listed in the command palette.
+
+### Images
+
+PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame), BMP, ICO / CUR, QOI, PNM (PBM, PGM, PPM) and TGA open in an image tab; other binary files are not opened. An image is decoded when its tab is first shown and fits the view without being enlarged; transparent parts show a checkerboard. It is decoded again when the file changes on disk.
+
+| Key / mouse | Action |
+| --- | --- |
+| Ctrl+=, Ctrl+-, `+`, `-` | Zoom in, out (stops at 100% on the way) |
+| Ctrl+0, `0` | Fit to the view |
+| `1`, double click | 100%; double click again to fit |
+| Ctrl+wheel | Zoom at the pointer |
+| Wheel, drag, arrows | Pan |
+
+The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
 ## Configuration
 
@@ -143,7 +158,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll`, `open`, `cmd`, `shot`, `wait`, `resize`, `print-doc`, `print-state`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `resize`, `print-doc`, `print-state`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
@@ -160,9 +175,10 @@ An extension that crashes or hangs cannot take the editor with it.
 | --- | --- |
 | `src/sys.s mem.s lib.s` | syscalls, allocator, strings, UTF-8 |
 | `src/gfx/` | canvas, TrueType parser, rasterizer, icons |
+| `src/img/` | image decoders: inflate, PNG, JPEG, GIF, BMP / ICO, QOI, PNM, TGA |
 | `src/ui/ui.s` | immediate-mode widgets |
 | `src/plat/` | Wayland, XKB keymaps, X11, headless |
-| `src/app/` | documents, editor, explorer, palette, settings, agents, syntax, themes |
+| `src/app/` | documents, editor, image view, explorer, palette, settings, agents, syntax, themes |
 | `runtime/` | themes and grammars embedded into the binary |
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
 

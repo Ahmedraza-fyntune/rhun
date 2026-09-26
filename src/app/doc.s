@@ -56,6 +56,8 @@ FN doc_free
     call mem_free
     mov rdi, [rbx + DOC_path]
     call mem_free
+    mov rdi, [rbx + DOC_img]
+    call iv_free
     mov rdi, rbx
     call mem_free
     pop rbx

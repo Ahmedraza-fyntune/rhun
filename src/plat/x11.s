@@ -259,7 +259,8 @@ x_message:
     cmp eax, 6
     jne 13f
     neg edi
-13: call app_on_scroll
+13: mov edx, [rip + xmods]
+    call app_on_scroll
     jmp .Lxm_ret
 1:  call x_btn
     mov esi, 1

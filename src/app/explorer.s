@@ -459,7 +459,7 @@ FN cmd_rename_file
     cmp byte ptr [rip + g_explorer_target], 0
     jne 1f
     # fall back to the active document
-    mov rax, [rip + g_doc]
+    mov rax, [rip + g_file]
     test rax, rax
     jz 2f
     mov rsi, [rax + DOC_path]
@@ -606,7 +606,7 @@ explorer_reveal:
     mov rbx, [rip + root]
     test rbx, rbx
     jz 9f
-    mov rax, [rip + g_doc]
+    mov rax, [rip + g_file]
     test rax, rax
     jz 9f
     mov r12, [rax + DOC_path]
@@ -865,7 +865,7 @@ FN explorer_draw
     sub edx, eax
     mov ecx, ebx
     M r8d, MI_RADIUS
-    mov rax, [rip + g_doc]
+    mov rax, [rip + g_file]
     test rax, rax
     jz 52f
     mov rax, [rax + DOC_path]
