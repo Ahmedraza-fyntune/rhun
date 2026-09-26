@@ -8,6 +8,8 @@
 .p2align 3
 out: .zero SB_SIZE
 cbuf: .zero SB_SIZE
+oc_busy: .long 0                # running the client's lines
+oc_eof: .long 0                 # the client closed meanwhile
 addr: .zero 110
 .globl g_headless
 g_headless: .long 0
@@ -791,7 +793,13 @@ FN control_run_script
 FN control_listen
     PROLOGUE
     mov rbx, rdi
-    mov edi, AF_UNIX
+    # sun_path holds 104 bytes on macOS, 108 on Linux
+    call strlen
+    cmp rax, 103
+    jbe 1f
+    lea rdi, [rip + .Llong_path]
+    call die
+1:  mov edi, AF_UNIX
     mov esi, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK
     xor edx, edx
     SYS SYS_socket
@@ -810,8 +818,10 @@ FN control_listen
     mov edx, 110
     SYS SYS_bind
     test rax, rax
-    js 9f
-    mov edi, [rip + lsock]
+    jns 2f
+    lea rdi, [rip + .Lno_listen]
+    call die
+2:  mov edi, [rip + lsock]
     mov esi, 4
     SYS SYS_listen
     mov edi, [rip + lsock]
@@ -860,14 +870,19 @@ on_client:
     mov edx, 4096
     SYS SYS_read
     test rax, rax
-    jle .Loc_close
+    jle 7f
     add [rip + cbuf + SB_len], rax
+    # a command that waits (wait-git) runs the loop, which comes back here: the lines after it
+    # are only read now and run when it is done
+    cmp dword ptr [rip + oc_busy], 0
+    jne 9f
+    mov dword ptr [rip + oc_busy], 1
 .Loc_lines:
     mov r12, [rip + cbuf + SB_ptr]
     mov r13, [rip + cbuf + SB_len]
     xor ecx, ecx
 1:  cmp rcx, r13
-    jae 9f
+    jae 8f
     cmp byte ptr [r12 + rcx], 10
     je 2f
     inc rcx
@@ -904,6 +919,18 @@ on_client:
     mov [rip + cbuf + SB_len], rdx
     call memmove
     jmp .Loc_lines
+8:  mov dword ptr [rip + oc_busy], 0
+    cmp dword ptr [rip + oc_eof], 0
+    je 9f
+    mov dword ptr [rip + oc_eof], 0
+    jmp .Loc_close
+7:  cmp dword ptr [rip + oc_busy], 0
+    je .Loc_close
+    # the client left while a command waits: close when it is done
+    mov dword ptr [rip + oc_eof], 1
+    mov edi, ebx
+    call watch_remove
+    jmp 9f
 .Loc_close:
     mov edi, ebx
     call watch_remove
@@ -913,6 +940,8 @@ on_client:
 9:  EPILOGUE
 
 .section .rodata
+.Llong_path: .asciz "rhun: the control socket path is too long (at most 103 bytes)"
+.Lno_listen: .asciz "rhun: cannot create the control socket"
 .Lunknown: .asciz "unknown command\n"
 .Leod: .asciz "\n<eod>\n"
 .Lok: .ascii "ok\n"
