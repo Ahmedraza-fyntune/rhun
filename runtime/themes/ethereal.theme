@@ -1,0 +1,38 @@
+name = Ethereal
+kind = dark
+
+bg                 = #060b1e
+fg                 = #ffcead
+accent             = #7d82d9
+panel              = #040816
+border             = #030610
+selection          = #252e56
+line_highlight     = #121525
+line_number        = #6d7db6
+line_number_active = #ffcead
+cursor             = #ffcead
+error              = #ed5b5a
+warning            = #e9bb4f
+success            = #92a593
+
+[syntax]
+text        = #ffcead
+keyword     = #ead7e7
+type        = #e9bb4f
+function    = #7d82d9
+string      = #92a593
+number      = #eb8b54
+comment     = #6d7db6
+constant    = #f7dc9c
+operator    = #ffcead
+punctuation = #836d66
+preproc     = #a3bfd1
+variable    = #ffcead
+builtin     = #a3bfd1
+attribute   = #a3bfd1
+tag         = #e9bb4f
+heading     = #7d82d9
+inserted    = #92a593
+deleted     = #ed5b5a
+escape      = #ead7e7
+link        = #7d82d9

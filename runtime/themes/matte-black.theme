@@ -1,0 +1,38 @@
+name = Matte Black
+kind = dark
+
+bg                 = #121212
+fg                 = #bebebe
+accent             = #e68e0d
+panel              = #0d0d0d
+border             = #090909
+selection          = #333333
+line_highlight     = #212121
+line_number        = #333333
+line_number_active = #f59e0b
+cursor             = #f59e0b
+error              = #d35f5f
+warning            = #f59e0b
+success            = #ffc107
+
+[syntax]
+text        = #eaeaea
+keyword     = #059669
+type        = #fbbf24
+function    = #dc2626
+string      = #eaeaea
+number      = #efbf04
+comment     = #8a8a8d
+constant    = #d97706
+operator    = #bebebe
+punctuation = #8a8a8d
+preproc     = #fbbf24
+variable    = #d97706
+builtin     = #3b82f6
+attribute   = #d97706
+tag         = #059669
+heading     = #d97706
+inserted    = #10b981
+deleted     = #b91c1c
+escape      = #efbf04
+link        = #f59e0b

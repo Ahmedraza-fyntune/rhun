@@ -1,0 +1,38 @@
+name = Lumon
+kind = dark
+
+bg                 = #16242d
+fg                 = #d6e2ee
+accent             = #8bc9eb
+panel              = #101b21
+border             = #0b1216
+selection          = #243d56
+line_highlight     = #202e37
+line_number        = #304860
+line_number_active = #d6e2ee
+cursor             = #f2fcff
+error              = #4d86b0
+warning            = #6fa4c9
+success            = #5e95bc
+
+[syntax]
+text        = #c7d2de
+keyword     = #9fcfe9
+type        = #86b6da
+function    = #9fcfe9
+string      = #79abd2
+number      = #8fb9dc
+comment     = #416b8b
+constant    = #9fcfe9
+operator    = #c7d2de
+punctuation = #8fb9dc
+preproc     = #b5deef
+variable    = #c7d2de
+builtin     = #b5deef
+attribute   = #b5deef
+tag         = #6e9fca
+heading     = #92c7e7
+inserted    = #79abd2
+deleted     = #6e9fca
+escape      = #b5deef
+link        = #92c7e7

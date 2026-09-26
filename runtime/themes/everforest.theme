@@ -1,0 +1,38 @@
+name = Everforest
+kind = dark
+
+bg                 = #2d353b
+fg                 = #d3c6aa
+accent             = #7fbbb3
+panel              = #21272c
+border             = #181d20
+selection          = #3d484d
+line_highlight     = #343f44
+line_number        = #475258
+line_number_active = #d3c6aa
+cursor             = #d3c6aa
+error              = #e67e80
+warning            = #dbbc7f
+success            = #a7c080
+
+[syntax]
+text        = #d3c6aa
+keyword     = #e67e80
+type        = #dbbc7f
+function    = #a7c080
+string      = #83c092
+number      = #d699b6
+comment     = #859289
+constant    = #d699b6
+operator    = #e69875
+punctuation = #9da9a0
+preproc     = #d699b6
+variable    = #d3c6aa
+builtin     = #d699b6
+attribute   = #d699b6
+tag         = #e69875
+heading     = #e69875
+inserted    = #a7c080
+deleted     = #e67e80
+escape      = #a7c080
+link        = #7fbbb3

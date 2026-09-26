@@ -1,0 +1,38 @@
+name = Lupine
+kind = light
+
+bg                 = #fafafa
+fg                 = #212121
+accent             = #3264eb
+panel              = #ececec
+border             = #dedede
+selection          = #d0d0d0
+line_highlight     = #efefef
+line_number        = #9e9e9e
+line_number_active = #212121
+cursor             = #000000
+error              = #c900c4
+warning            = #026fde
+success            = #4a2fd0
+
+[syntax]
+text        = #212121
+keyword     = #b363ff
+type        = #026fde
+function    = #3264eb
+string      = #4a2fd0
+number      = #026fde
+comment     = #9e9e9e
+constant    = #358fff
+operator    = #212121
+punctuation = #8e8e8e
+preproc     = #0c67de
+variable    = #212121
+builtin     = #0c67de
+attribute   = #0c67de
+tag         = #026fde
+heading     = #3264eb
+inserted    = #4a2fd0
+deleted     = #c900c4
+escape      = #b363ff
+link        = #3264eb
