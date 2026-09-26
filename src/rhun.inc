@@ -478,7 +478,27 @@ F DOC_mtime, 8
 F DOC_version, 8
 F DOC_sold, 8           # syntax states were valid below this line before the last edits
 F DOC_ehi, 8            # highest line touched by edits since then
+F DOC_gbase, 8          # git: the file at HEAD, or 0
+F DOC_ghash, 8          # git: hashes of its lines
+F DOC_gnl, 8            # git: their count
+F DOC_gmarks, 8         # git: GM_* per line
+F DOC_gmcap, 8
+F DOC_gver, 8           # git: DOC_version the marks were made for
+F DOC_gstate, 4         # GS_*
+F DOC_gseq, 4           # git: request number; answers to older requests are dropped
+F DOC_diff, 8           # diff view: DV* with the kind and numbers of each line
 ENDSTRUCT DOC_SIZE
+
+# git state of a document
+.equ GS_NONE, 0
+.equ GS_ASKED, 1
+.equ GS_BASE, 2
+.equ GS_NOBASE, 3
+# gutter marks per line
+.equ GM_ADD, 1
+.equ GM_MOD, 2
+.equ GM_DELUP, 4                # lines deleted above
+.equ GM_DELDOWN, 8              # lines deleted below the last line
 
 STRUCT
 F UR_kind, 8            # 1 insert, 2 delete

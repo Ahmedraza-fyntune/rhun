@@ -18,5 +18,6 @@ check doc build/doc_test
 check syntax build/syntax_test
 check themes build/theme_test
 check term build/term_test
+check diff build/diff_test
 [ -x tests/ui.sh ] && { tests/ui.sh || fail=1; }
 exit $fail
