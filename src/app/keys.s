@@ -436,6 +436,7 @@ g_commands:
     COMMAND zoom_in, "Zoom In", cmd_zoom_in, "ctrl+= ctrl++"
     COMMAND zoom_out, "Zoom Out", cmd_zoom_out, "ctrl+-"
     COMMAND zoom_reset, "Reset Zoom", cmd_zoom_reset, "ctrl+0"
+    COMMAND toggle_word_wrap, "Toggle Word Wrap", cmd_toggle_word_wrap, "alt+z"
     COMMAND toggle_whitespace, "Toggle Whitespace", cmd_toggle_whitespace, ""
     COMMAND toggle_line_numbers, "Toggle Line Numbers", cmd_toggle_line_numbers, ""
     COMMAND reload_file, "Revert File", cmd_reload_file, ""

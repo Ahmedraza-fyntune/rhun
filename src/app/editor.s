@@ -272,6 +272,8 @@ FN ed_move
     call page_lines
     mov r15, rax
 .Lmv_vert:
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne .Lmv_wrap
     cmp qword ptr [rbx + DOC_prefx], -1
     jne 3f
     mov rdi, rbx
@@ -297,6 +299,33 @@ FN ed_move
     mov rdx, [rbx + DOC_prefx]
     call doc_pos_at_col
     mov r14, rax
+    jmp .Lmv_set_v
+.Lmv_wrap:
+    # one visual row at a time; r15 = signed row count
+    cmp qword ptr [rbx + DOC_prefx], -1
+    jne 41f
+    mov rdi, rbx
+    call cursor_row
+    mov [rbx + DOC_prefx], rcx
+41: mov rax, [rbx + DOC_cur]
+    mov [rsp], rax
+    mov [rbx + DOC_cur], r14
+42: test r15, r15
+    jz 44f
+    mov esi, 1
+    mov rax, r15
+    test rax, rax
+    jns 43f
+    mov rsi, -1
+43: sub r15, rsi
+    mov rdi, rbx
+    mov rdx, [rbx + DOC_prefx]
+    call wrap_move
+    mov [rbx + DOC_cur], rax
+    jmp 42b
+44: mov r14, [rbx + DOC_cur]
+    mov rax, [rsp]
+    mov [rbx + DOC_cur], rax
     jmp .Lmv_set_v
 .Lmv_set_h:
     mov qword ptr [rbx + DOC_prefx], -1
@@ -1626,6 +1655,8 @@ clamp_scroll:
     mov rax, [rdi + DOC_nlines]
     cmp dword ptr [rip + cfg_scroll_past_end], 0
     jne 1f
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne wrap_clamp
     # last line at the bottom
     mov ecx, [rip + g_ed_h]
     xor edx, edx
@@ -1718,6 +1749,8 @@ reveal:
 
 # pos_at_point(doc, px, py) -> pos
 pos_at_point:
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne wrap_pos_at
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
@@ -1755,6 +1788,139 @@ pos_at_point:
     mov edx, eax
     call doc_pos_at_col
 9:  EPILOGUE
+
+# drag_scroll(rbx doc, esi px)
+drag_scroll:
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 1f
+    mov rdi, rbx
+    jmp scroll_by_px
+1:  movsxd rax, esi
+    shl rax, 8
+    cqo
+    movsxd rcx, dword ptr [rip + g_lh]
+    idiv rcx
+    add [rbx + DOC_scrolly], rax
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+# draw_wrapped(doc): visible lines as wrapped rows
+draw_wrapped:
+    PROLOGUE 64
+    mov rbx, rdi
+    mov rdi, rbx
+    call ed_sel
+    mov [rsp + 16], rax
+    mov [rsp + 24], rdx
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_cur]
+    call doc_line_of
+    mov [rsp + 8], rax          # cursor line
+    mov rdi, rbx
+    call top_offset
+    mov r13d, [rip + g_ed_y]
+    sub r13d, eax               # y of the first row of the top line
+    mov r12, [rbx + DOC_scrolly]
+    shr r12, 8
+.Ldw_line:
+    cmp r12, [rbx + DOC_nlines]
+    jae .Ldw_ret
+    mov eax, [rip + g_ed_y]
+    add eax, [rip + g_ed_h]
+    cmp r13d, eax
+    jge .Ldw_ret
+    mov rdi, rbx
+    mov rsi, r12
+    call line_breaks
+    mov r14d, eax               # rows
+    # current line highlight across all its rows
+    cmp dword ptr [rip + cfg_highlight_line], 0
+    je 12f
+    cmp r12, [rsp + 8]
+    jne 12f
+    mov rax, [rsp + 16]
+    cmp rax, [rsp + 24]
+    jne 12f
+    mov edi, [rip + g_ed_x]
+    mov esi, r13d
+    mov edx, [rip + g_ed_w]
+    mov ecx, [rip + g_lh]
+    imul ecx, r14d
+    COLOR r8d, T_LINE_HL
+    call gfx_fill
+12: # line number on the first row
+    cmp dword ptr [rip + cfg_line_numbers], 0
+    je 1f
+    lea rdi, [rsp + 40]
+    lea rsi, [r12 + 1]
+    call fmt_u64
+    mov r15, rax
+    lea rdi, [rip + g_face_code]
+    lea rsi, [rsp + 40]
+    mov rdx, rax
+    call text_width
+    mov esi, [rip + g_ed_tx]
+    sub esi, eax
+    sub esi, [rip + g_mt + 4*MI_16]
+    COLOR r9d, T_LINENO
+    cmp r12, [rsp + 8]
+    jne 11f
+    COLOR r9d, T_LINENO_ACTIVE
+11: lea rdi, [rip + g_face_code]
+    mov edx, r13d
+    add edx, [rip + g_base]
+    lea rcx, [rsp + 40]
+    mov r8, r15
+    call text_draw
+1:  xor r15d, r15d              # row
+.Ldw_row:
+    cmp r15d, r14d
+    jae .Ldw_next
+    mov eax, r13d
+    add eax, [rip + g_lh]
+    cmp eax, [rip + g_ed_y]
+    jl .Ldw_rownext
+    mov eax, [rip + g_ed_y]
+    add eax, [rip + g_ed_h]
+    cmp r13d, eax
+    jge .Ldw_ret
+    lea rax, [rip + wb_starts]
+    mov ecx, [rax + r15*4]
+    mov [rip + dl_from], ecx
+    mov ecx, [rax + r15*4 + 4]
+    mov [rip + dl_to], ecx
+    lea eax, [r15 + 1]
+    xor ecx, ecx
+    cmp eax, r14d
+    sete cl
+    mov [rip + dl_last], ecx
+    # draw_line re-reads the line text, keep the row table
+    mov edi, [rip + g_ed_tx]
+    sub edi, [rip + g_mt + 4*MI_4]
+    mov esi, [rip + g_ed_y]
+    mov edx, [rip + g_ed_x]
+    add edx, [rip + g_ed_w]
+    sub edx, edi
+    mov ecx, [rip + g_ed_h]
+    call gfx_clip_push
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    lea rcx, [rsp + 16]
+    call draw_line
+    call gfx_clip_pop
+.Ldw_rownext:
+    add r13d, [rip + g_lh]
+    inc r15d
+    jmp .Ldw_row
+.Ldw_next:
+    inc r12
+    jmp .Ldw_line
+.Ldw_ret:
+    mov dword ptr [rip + dl_from], 0
+    mov dword ptr [rip + dl_to], -1
+    mov dword ptr [rip + dl_last], 1
+    EPILOGUE
 
 # editor_draw(x, y, w, h)
 FN editor_draw
@@ -1795,7 +1961,13 @@ FN editor_draw
     mov eax, [rip + g_scroll_y]
     test eax, eax
     jz 2f
-    movsxd rax, eax
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 11f
+    mov rdi, rbx
+    mov esi, eax
+    call scroll_by_px
+    jmp 2f
+11: movsxd rax, eax
     shl rax, 8
     cqo
     movsxd rcx, dword ptr [rip + g_lh]
@@ -1805,6 +1977,8 @@ FN editor_draw
 2:  mov eax, [rip + g_scroll_x]
     test eax, eax
     jz 3f
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne 3f
     movsxd rax, eax
     add [rbx + DOC_scrollx], rax
     mov dword ptr [rip + g_dirty], 1
@@ -1900,19 +2074,27 @@ FN editor_draw
     mov eax, [rip + g_my]
     cmp eax, [rip + g_ed_y]
     jge 61f
-    sub qword ptr [rbx + DOC_scrolly], 64
-    mov dword ptr [rip + g_dirty], 1
-61: mov ecx, [rip + g_ed_y]
+    mov esi, [rip + g_lh]
+    shr esi, 2
+    neg esi
+    call drag_scroll
+61: mov eax, [rip + g_my]
+    mov ecx, [rip + g_ed_y]
     add ecx, [rip + g_ed_h]
     cmp eax, ecx
     jl 4f
-    add qword ptr [rbx + DOC_scrolly], 64
-    mov dword ptr [rip + g_dirty], 1
+    mov esi, [rip + g_lh]
+    shr esi, 2
+    call drag_scroll
 4:  cmp dword ptr [rip + g_reveal], 0
     je 7f
     mov dword ptr [rip + g_reveal], 0
     mov rdi, rbx
-    call reveal
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 71f
+    call reveal_wrap
+    jmp 7f
+71: call reveal
 7:  mov rdi, rbx
     call clamp_scroll
     # syntax states for everything visible
@@ -1926,7 +2108,18 @@ FN editor_draw
     mov rdi, rbx
     call syntax_prepare
     # ---- lines ----
-    mov rax, [rbx + DOC_scrolly]
+    mov qword ptr [rip + cls_doc], 0
+    mov dword ptr [rip + g_caret_ok], 0
+    mov dword ptr [rip + dl_from], 0
+    mov dword ptr [rip + dl_to], -1
+    mov dword ptr [rip + dl_last], 1
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 72f
+    mov qword ptr [rbx + DOC_scrollx], 0
+    mov rdi, rbx
+    call draw_wrapped
+    jmp .Led_lines_done
+72: mov rax, [rbx + DOC_scrolly]
     mov rcx, rax
     shr rax, 8
     mov r12, rax                # first line
@@ -2064,9 +2257,9 @@ FN editor_draw
 .Led_ret:
     EPILOGUE
 
-# draw_line(doc, line, y, selrange*)
+# draw_line(doc, line, y, selrange*): draws bytes [dl_from, dl_to) of the line as one visual row
 draw_line:
-    PROLOGUE 96
+    PROLOGUE 112
     mov rbx, rdi
     mov r12, rsi
     mov [rsp], edx              # y
@@ -2080,15 +2273,34 @@ draw_line:
     mov [rsp + 24], rax         # line start pos
     mov rdi, rbx
     mov rsi, r12
-    call doc_line_end
-    mov [rsp + 32], rax         # line end pos
-    # text (stable copy: doc_line_text may use a scratch buffer)
-    mov rdi, rbx
-    mov rsi, r12
     call doc_line_text
     mov r14, rax
     mov r15, rdx
-    # classes
+    # segment
+    mov eax, [rip + dl_to]
+    cmp rax, r15
+    jbe 1f
+    mov rax, r15
+1:  mov [rsp + 32], rax         # to (offset)
+    mov eax, [rip + dl_from]
+    mov [rsp + 96], rax         # from (offset)
+    # classes for the whole line (cached across the rows of one line)
+    cmp [rip + cls_doc], rbx
+    jne 2f
+    cmp [rip + cls_line], r12
+    jne 2f
+    mov rax, [rbx + DOC_version]
+    cmp [rip + cls_ver], rax
+    jne 2f
+    mov rax, [rbx + DOC_svalid]
+    cmp [rip + cls_svalid], rax
+    je 3f
+2:  mov [rip + cls_doc], rbx
+    mov [rip + cls_line], r12
+    mov rax, [rbx + DOC_version]
+    mov [rip + cls_ver], rax
+    mov rax, [rbx + DOC_svalid]
+    mov [rip + cls_svalid], rax
     lea rdi, [rip + classes]
     mov qword ptr [rdi + SB_len], 0
     lea rsi, [r15 + 16]
@@ -2099,40 +2311,47 @@ draw_line:
     mov rcx, r15
     mov r8, [rip + classes + SB_ptr]
     call syntax_line
-    # x origin
+3:  # x origin
     mov eax, [rip + g_ed_tx]
     sub eax, [rbx + DOC_scrollx]
     mov [rsp + 40], eax
-    # selection background
+    # ---- selection ----
     mov rax, [rsp + 8]
     cmp rax, [rsp + 16]
     je .Ldl_nosel
-    mov rcx, [rsp + 32]
+    mov rcx, [rsp + 24]
+    add rcx, [rsp + 96]         # row start pos
+    mov rdx, [rsp + 24]
+    add rdx, [rsp + 32]         # row end pos
     cmp rax, rcx
+    cmovb rax, rcx              # a = max(S, row start)
+    mov r8, [rsp + 16]
+    xor r9d, r9d                # extra cell for the newline
+    cmp r8, rdx
+    jbe 4f
+    mov r8, rdx                 # b = min(E, row end)
+    cmp dword ptr [rip + dl_last], 0
+    je 4f
+    mov r9d, 1
+4:  cmp rax, r8
     ja .Ldl_nosel
-    mov rdx, [rsp + 16]
-    cmp rdx, [rsp + 24]
-    jb .Ldl_nosel
-    # clamp to line
-    mov rsi, [rsp + 24]
-    cmp rax, rsi
-    cmovb rax, rsi
-    mov [rsp + 48], rax
-    mov rdi, rbx
-    mov rsi, rax
-    call doc_col_of
+    jb 5f
+    test r9d, r9d
+    jz .Ldl_nosel
+5:  mov [rsp + 48], r8
+    mov [rsp + 60], r9d
+    mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, rax
+    sub rdx, [rsp + 24]
+    mov [rsp + 104], rdx
+    call seg_cols
     mov [rsp + 56], eax         # start col
-    mov rax, [rsp + 16]
-    mov rcx, [rsp + 32]
-    xor edx, edx
-    cmp rax, rcx
-    jbe 1f
-    mov rax, rcx
-    mov edx, 1                  # selection continues past the newline
-1:  mov [rsp + 60], edx
-    mov rdi, rbx
-    mov rsi, rax
-    call doc_col_of
+    mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, [rsp + 48]
+    sub rdx, [rsp + 24]
+    call seg_cols
     add eax, [rsp + 60]
     sub eax, [rsp + 56]
     imul eax, [rip + g_cw]
@@ -2145,35 +2364,47 @@ draw_line:
     COLOR r8d, T_SELECTION
     call gfx_fill
 .Ldl_nosel:
-    # find matches
+    # ---- find matches ----
     mov rcx, [rip + g_ed_find + SB_len]
     test rcx, rcx
     jz .Ldl_nofind
     xor r13d, r13d
-2:  lea rdi, [r14 + r13]
+6:  lea rdi, [r14 + r13]
     mov rsi, r15
     sub rsi, r13
     jbe .Ldl_nofind
     mov rdx, [rip + g_ed_find + SB_ptr]
     mov rcx, [rip + g_ed_find + SB_len]
     cmp dword ptr [rip + g_ed_find_case], 0
-    je 21f
+    je 61f
     call str_find
-    jmp 22f
-21: call str_ifind
-22: test rax, rax
+    jmp 62f
+61: call str_ifind
+62: test rax, rax
     js .Ldl_nofind
     add r13, rax
-    mov rsi, [rsp + 24]
-    add rsi, r13
-    mov [rsp + 48], rsi
-    mov rdi, rbx
-    call doc_col_of
+    # clip [m, m+n) to the row
+    mov rax, r13
+    mov rdx, r13
+    add rdx, [rip + g_ed_find + SB_len]
+    mov rcx, [rsp + 96]
+    cmp rax, rcx
+    cmovb rax, rcx
+    mov rcx, [rsp + 32]
+    cmp rdx, rcx
+    cmova rdx, rcx
+    cmp rax, rdx
+    jae 63f
+    mov [rsp + 48], rdx
+    mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, rax
+    call seg_cols
     mov [rsp + 56], eax
-    mov rsi, [rsp + 48]
-    add rsi, [rip + g_ed_find + SB_len]
-    mov rdi, rbx
-    call doc_col_of
+    mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, [rsp + 48]
+    call seg_cols
     sub eax, [rsp + 56]
     imul eax, [rip + g_cw]
     mov edx, eax
@@ -2187,22 +2418,41 @@ draw_line:
     M r8d, MI_3
     COLOR r9d, T_MATCH
     call gfx_round_rect
-    add r13, [rip + g_ed_find + SB_len]
-    jmp 2b
+63: add r13, [rip + g_ed_find + SB_len]
+    jmp 6b
 .Ldl_nofind:
-    # glyphs
-    xor r13d, r13d              # byte index
+    # ---- caret position ----
+    mov rax, [rbx + DOC_cur]
+    sub rax, [rsp + 24]
+    js 7f
+    cmp rax, [rsp + 96]
+    jb 7f
+    cmp rax, [rsp + 32]
+    jb 71f
+    ja 7f
+    cmp dword ptr [rip + dl_last], 0
+    je 7f
+71: mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, rax
+    call seg_cols
+    imul eax, [rip + g_cw]
+    add eax, [rsp + 40]
+    mov [rip + g_caret_x], eax
+    mov eax, [rsp]
+    mov [rip + g_caret_y], eax
+    mov dword ptr [rip + g_caret_ok], 1
+7:  # ---- glyphs ----
+    mov r13, [rsp + 96]         # byte index
     mov dword ptr [rsp + 64], 0 # column
-    mov dword ptr [rsp + 68], 1 # still in leading blanks
     mov eax, [rsp]
     add eax, [rip + g_base]
     mov [rsp + 72], eax         # baseline
     mov eax, [rip + g_cv + CV_cx1]
     mov [rsp + 76], eax
 .Ldl_glyph:
-    cmp r13, r15
+    cmp r13, [rsp + 32]
     jae .Ldl_guides
-    # stop past the right edge
     mov eax, [rsp + 64]
     imul eax, [rip + g_cw]
     add eax, [rsp + 40]
@@ -2211,7 +2461,7 @@ draw_line:
     mov [rsp + 80], eax         # x
     movzx eax, byte ptr [r14 + r13]
     cmp al, 9
-    jne 3f
+    jne 8f
     mov eax, [rsp + 64]
     xor edx, edx
     div dword ptr [rip + cfg_tab_width]
@@ -2219,7 +2469,7 @@ draw_line:
     sub eax, edx
     mov [rsp + 84], eax
     cmp dword ptr [rip + cfg_whitespace], 0
-    je 31f
+    je 81f
     lea rdi, [rip + g_face_code]
     mov esi, [rsp + 80]
     mov edx, [rsp + 72]
@@ -2227,14 +2477,14 @@ draw_line:
     mov r8d, 3
     COLOR r9d, T_GUIDE
     call text_draw
-31: mov eax, [rsp + 84]
+81: mov eax, [rsp + 84]
     add [rsp + 64], eax
     inc r13
     jmp .Ldl_glyph
-3:  cmp al, ' '
-    jne 4f
+8:  cmp al, ' '
+    jne 9f
     cmp dword ptr [rip + cfg_whitespace], 0
-    je 32f
+    je 82f
     lea rdi, [rip + g_face_code]
     mov esi, [rsp + 80]
     mov edx, [rsp + 72]
@@ -2242,23 +2492,19 @@ draw_line:
     mov r8d, 2
     COLOR r9d, T_GUIDE
     call text_draw
-32: inc dword ptr [rsp + 64]
+82: inc dword ptr [rsp + 64]
     inc r13
     jmp .Ldl_glyph
-4:  mov dword ptr [rsp + 68], 0
-    lea rdi, [r14 + r13]
+9:  lea rdi, [r14 + r13]
     mov rsi, r15
     sub rsi, r13
     call utf8_decode
     mov [rsp + 84], edx         # byte length
     mov [rsp + 88], eax         # codepoint
-    # color by class
     mov rcx, [rip + classes + SB_ptr]
     movzx ecx, byte ptr [rcx + r13]
     lea rdx, [rip + g_theme]
     mov r9d, [rdx + rcx*4 + 4*T_SYN]
-    mov [rsp + 92], r9d
-    lea rdi, [r14 + r13]
     mov r8d, [rsp + 84]
     lea rdi, [rip + g_face_code]
     mov esi, [rsp + 80]
@@ -2274,17 +2520,19 @@ draw_line:
 .Ldl_guides:
     cmp dword ptr [rip + cfg_indent_guides], 0
     je .Ldl_ret
+    cmp qword ptr [rsp + 96], 0
+    jne .Ldl_ret
     # indent columns of this line (blank lines reuse the previous one)
     mov rdi, rbx
     mov rsi, r12
     call line_indent
     cmp rax, r15
-    jne 5f
+    jne 10f
     mov edx, [rip + last_indent]
-5:  mov [rip + last_indent], edx
+10: mov [rip + last_indent], edx
     mov ecx, [rip + cfg_tab_width]
     mov [rsp + 64], ecx
-6:  mov eax, [rsp + 64]
+11: mov eax, [rsp + 64]
     cmp eax, [rip + last_indent]
     jg .Ldl_ret
     sub eax, [rip + cfg_tab_width]
@@ -2298,14 +2546,15 @@ draw_line:
     call gfx_fill
     mov eax, [rip + cfg_tab_width]
     add [rsp + 64], eax
-    jmp 6b
+    jmp 11b
 .Ldl_ret:
     EPILOGUE
 
-# draw_caret(doc)
+# draw_caret(doc): at the position recorded by draw_line
 draw_caret:
     PROLOGUE 16
-    mov rbx, rdi
+    cmp dword ptr [rip + g_caret_ok], 0
+    je 9f
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 9f
     cmp dword ptr [rip + g_win_focused], 0
@@ -2319,27 +2568,10 @@ draw_caret:
     div rcx
     cmp rdx, 530
     jae 9f
-1:  mov rdi, rbx
-    mov rsi, [rbx + DOC_cur]
-    call doc_line_of
-    mov r12, rax
-    mov rax, [rbx + DOC_scrolly]
-    imul rax, [rip + g_lh]
-    sar rax, 8
-    mov r13, r12
-    imul r13d, [rip + g_lh]
-    sub r13d, eax
-    add r13d, [rip + g_ed_y]
-    mov rdi, rbx
-    mov rsi, [rbx + DOC_cur]
-    call doc_col_of
-    imul eax, [rip + g_cw]
-    add eax, [rip + g_ed_tx]
-    sub eax, [rbx + DOC_scrollx]
-    mov edi, eax
+1:  mov edi, [rip + g_caret_x]
     cmp edi, [rip + g_ed_tx]
     jl 9f
-    mov esi, r13d
+    mov esi, [rip + g_caret_y]
     M edx, MI_2
     cmp dword ptr [rip + cfg_smooth_caret], 0
     jne 2f
@@ -2389,11 +2621,24 @@ pair_close: .asciz ")]}\"'`"
 .Lspace: .ascii " "
 .Ltab_arrow: .ascii "\342\206\222"
 .Lmiddot: .ascii "\302\267"
+.data
+dl_to: .long -1
 .bss
 .p2align 3
 sel_word_a: .quad 0
 sel_word_b: .quad 0
 last_indent: .long 0
+.globl g_ed_x, g_ed_y, g_ed_w, g_ed_h, g_ed_tx
+g_caret_x: .long 0
+g_caret_y: .long 0
+g_caret_ok: .long 0
+dl_from: .long 0
+dl_last: .long 0
+.p2align 3
+cls_doc: .quad 0
+cls_line: .quad 0
+cls_ver: .quad 0
+cls_svalid: .quad 0
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0
