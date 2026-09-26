@@ -3,12 +3,13 @@
 # run in the x86-64 Linux binary, in Docker, and in a translated one built from the same sources
 # for Linux (no .ifdef MACOS); their states, documents and screenshots must be identical.
 # usage: tests/compare-linux.sh [SESSIONS]   (default 20; needs Docker that runs linux/amd64)
+#   KEEP=1 keeps the work directory with both outputs
 set -e
 cd "$(dirname "$0")/.."
 n=${1:-20}
 tools/build-mac.sh >/dev/null
 work=$(cd "$(mktemp -d)" && pwd -P)
-trap 'rm -rf "$work"' EXIT
+if [ -n "$KEEP" ]; then echo "work: $work"; else trap 'rm -rf "$work"' EXIT; fi
 
 # translated, as for Linux
 mkdir -p "$work/obj"
@@ -44,7 +45,8 @@ for s in "$work"/scripts/*.rsc; do
     mkdir -p "$work/home"
     sed "s|OUTDIR|$out|g" "$s" > "$work/home/s.rsc"
     cd "$work/tree"
-    HOME=$work/home XDG_CONFIG_HOME=$work/home/config XDG_STATE_HOME=$work/home/state \
+    # no shell: its output would arrive at different times (the terminal has tests of its own)
+    HOME=$work/home XDG_CONFIG_HOME=$work/home/config XDG_STATE_HOME=$work/home/state SHELL=/nonexistent \
         "$bin" "$work/tree" --headless 1400x860 --script "$work/home/s.rsc" > "$out/$n.out" 2>&1 || echo "exit $?" >> "$out/$n.out"
 done
 EOF

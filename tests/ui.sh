@@ -30,7 +30,7 @@ for s in tests/scripts/*.rsc; do
         sh "tests/data/$n.setup" "$home" > /dev/null
     fi
     sed "s|@HOME@|$home|g" "$s" > "$tmp/$n.rsc"
-    XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child SHELL=/bin/sh \
+    XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child SHELL=/bin/sh PS1='$ ' \
         limit 20 build/rhun "$PWD" --headless 1400x860 --script "$tmp/$n.rsc" > "$tmp/$n.out" 2>&1
     if [ "$1" = update ]; then
         cp "$tmp/$n.out" "tests/data/$n.ui.expected"

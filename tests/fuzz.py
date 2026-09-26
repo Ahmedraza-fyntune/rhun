@@ -19,7 +19,9 @@ KEYS = ('Return BackSpace Delete Tab shift+Tab Escape Up Down Left Right Home En
 WORDS = ['if (x) {', 'return 0;', 'hello world', 'fn main() {}', '# heading', '"str', '(a, b)', 'x = [1, 2',
          'été naïve', 'tab\there', '  indent', '// c']
 FILES = ['src/main.s', 'src/lib.s', 'README.md', 'tests/data/lines.c', 'runtime/syntax/c.syn',
-         'tools/arm64.py', 'src/app/doc.s', 'tests/data/prose.md', 'runtime/themes/nord.theme', 'build.sh']
+         'tools/arm64.py', 'src/app/doc.s', 'tests/data/prose.md', 'runtime/themes/nord.theme', 'build.sh',
+         'tests/data/images/rgba.png', 'tests/data/images/baseline-420.jpg', 'tests/data/images/progressive-gray.jpg',
+         'tests/data/images/interlaced-transparent.gif', 'tests/data/images/palette8.bmp', 'tests/data/images/rle.tga']
 
 
 def script(seed, steps):
