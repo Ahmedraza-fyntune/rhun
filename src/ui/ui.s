@@ -518,13 +518,15 @@ FN ui_toggle
     mov r8d, r15d
     shr r8d, 1
     call gfx_round_rect
-    # knob
+    # knob: white, or the text-on-accent color when on
     M eax, MI_3
     mov edi, r12d
     add edi, eax
+    mov r9d, 0xffffffff
     test r14d, r14d
     jz 2f
     add edi, [rip + g_mt + 4*MI_14]
+    COLOR r9d, T_ACCENT_FG
 2:  lea esi, [r13 + rax]
     mov edx, r15d
     sub edx, eax
@@ -532,7 +534,6 @@ FN ui_toggle
     mov ecx, edx
     mov r8d, edx
     shr r8d, 1
-    mov r9d, 0xffffffff
     call gfx_round_rect
     mov eax, [rsp]
     and eax, UB_PRESS
