@@ -1,0 +1,11 @@
+name = Scala
+files = *.scala *.sc *.sbt
+comment = //
+block = /* */
+mstring = """ \
+string = " \
+string = ' \
+prefix = @a
+captypes = yes
+keywords = abstract case catch class def do else extends final finally for forSome if implicit import lazy match new object override package private protected return sealed super this throw trait try type val var while with yield given using enum then export
+constants = true false null

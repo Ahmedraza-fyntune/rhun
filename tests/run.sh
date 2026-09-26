@@ -14,5 +14,6 @@ check() { # name cmd...
 check keymap-names-us-ru build/xkb_test tests/data/keymap-names-us-ru.txt
 check keymap-gnome-us build/xkb_test tests/data/keymap-gnome-us.txt
 check doc build/doc_test
+check syntax build/syntax_test
 [ -x tests/ui.sh ] && { tests/ui.sh || fail=1; }
 exit $fail

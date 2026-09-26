@@ -1,0 +1,9 @@
+name = YAML
+files = *.yaml *.yml .clang-format .clang-tidy
+comment = #
+string = " \
+string = '
+ident = -
+line = --- keyword
+constants = true false null yes no on off True False Null
+functions = no

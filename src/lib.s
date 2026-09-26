@@ -122,12 +122,12 @@ FN str_starts
     xor eax, eax
     cmp rsi, rcx
     jb 1f
+    test rcx, rcx
+    jz 2f
     mov rsi, rdx
     repe cmpsb
-    sete al
-    test rcx, rcx
-    jnz 1f
-    mov eax, 1
+    jne 1f
+2:  mov eax, 1
 1:  ret
 
 # str_ends(s, slen, suffix, sfxlen) -> 1 if s ends with suffix
