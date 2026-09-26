@@ -739,11 +739,27 @@ render_glyph:
     mov esi, r12d
     call font_glyph_index
     mov r15d, eax               # gid
-    mov rdi, r14
-    mov esi, eax
+    movss xmm0, [rbx + FACE_scale]
+    movss [rsp + 8], xmm0       # scale for this glyph's font
+    test eax, eax
+    jnz 1f
+    cmp r12d, 0x80
+    jb 1f
+    mov edi, r12d
+    call fallback_glyph
+    test rax, rax
+    jz 1f
+    mov r14, rax
+    mov r15d, edx
+    cvtsi2ss xmm0, dword ptr [rbx + FACE_px]
+    cvtsi2ss xmm1, dword ptr [r14 + FONT_upem]
+    divss xmm0, xmm1
+    movss [rsp + 8], xmm0
+1:  mov rdi, r14
+    mov esi, r15d
     call font_advance
     cvtsi2ss xmm0, eax
-    mulss xmm0, [rbx + FACE_scale]
+    mulss xmm0, [rsp + 8]
     mulss xmm0, [rip + f_64]
     cvtss2si eax, xmm0
     mov [r13 + GL_adv], eax
@@ -759,7 +775,7 @@ render_glyph:
     test ecx, ecx
     jz .Lrg_done
     # scale points and find bbox (y flipped later)
-    movss xmm8, [rbx + FACE_scale]
+    movss xmm8, [rsp + 8]
     movss xmm4, [rip + f_big]   # minx
     movss xmm5, [rip + f_nbig]  # maxx
     movss xmm6, [rip + f_big]   # miny
@@ -828,6 +844,50 @@ render_glyph:
     call raster_end
 .Lrg_done:
     mov rax, r13
+    EPILOGUE
+
+# fallback_glyph(cp) -> rax FONT* and edx glyph id from the first system font that has cp, or 0
+fallback_glyph:
+    PROLOGUE 16
+    mov r12d, edi
+    xor ebx, ebx
+1:  lea rax, [rip + fallback_paths]
+    mov rdi, [rax + rbx*8]
+    test rdi, rdi
+    jz 8f
+    lea rcx, [rip + fb_state]
+    movzx eax, byte ptr [rcx + rbx]
+    cmp eax, 2
+    je 5f                       # missing
+    cmp eax, 1
+    je 3f
+    # first use: load it
+    mov byte ptr [rcx + rbx], 2
+    call file_read_all
+    test rax, rax
+    jz 5f
+    mov rdi, rax
+    mov rsi, rdx
+    call font_load
+    test rax, rax
+    jz 5f
+    lea rcx, [rip + fb_fonts]
+    mov [rcx + rbx*8], rax
+    lea rcx, [rip + fb_state]
+    mov byte ptr [rcx + rbx], 1
+3:  lea rcx, [rip + fb_fonts]
+    mov r13, [rcx + rbx*8]
+    mov rdi, r13
+    mov esi, r12d
+    call font_glyph_index
+    test eax, eax
+    jz 5f
+    mov edx, eax
+    mov rax, r13
+    EPILOGUE
+5:  inc ebx
+    jmp 1b
+8:  xor eax, eax
     EPILOGUE
 
 # raster_contours(): feed ol_* (pixel space) to the rasterizer
@@ -1112,7 +1172,24 @@ FN text_draw_fit
     call text_draw
     EPILOGUE
 
+.bss
+.p2align 3
+fb_fonts: .zero 8 * 16
+fb_state: .zero 16
+
 .section .rodata
+.p2align 3
+fallback_paths:
+    .quad .Lfb1, .Lfb2, .Lfb3, .Lfb4, .Lfb5, .Lfb6, .Lfb7, .Lfb8, .Lfb9, 0
+.Lfb1: .asciz "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+.Lfb2: .asciz "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
+.Lfb3: .asciz "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+.Lfb4: .asciz "/usr/share/fonts/TTF/DejaVuSans.ttf"
+.Lfb5: .asciz "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf"
+.Lfb6: .asciz "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf"
+.Lfb7: .asciz "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf"
+.Lfb8: .asciz "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
+.Lfb9: .asciz "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc"
 .p2align 2
 xform_identity: .float 1.0, 0.0, 0.0, 1.0, 0.0, 0.0
 f_inv16384: .float 0.00006103515625
