@@ -38,6 +38,8 @@ tmp_sb: .zero SB_SIZE
 split_drag: .long 0
 .globl g_editor_rect
 g_editor_rect: .zero 16
+.globl g_title_inset
+g_title_inset: .long 0           # title bar space the platform keeps (macOS window buttons)
 
 .text
 
@@ -1312,6 +1314,7 @@ FN titlebar_draw
     mov [rsp + 32], eax
     mov dword ptr [rip + g_hot], 0
     M r12d, MI_8
+    add r12d, [rip + g_title_inset]
     # sidebar toggle
     M r13d, MI_32
     mov edi, ID_TOG_SIDE
@@ -2510,17 +2513,26 @@ FN cmd_move_line_down
 .Ldlg_msg: .asciz "Your changes will be lost if you don't save them."
 .Lnl: .ascii "\n"
 .Lw1: .asciz "Open file"
-.Lk1: .asciz "Ctrl+P"
 .Lw2: .asciz "Command palette"
-.Lk2: .asciz "Ctrl+Shift+P"
 .Lw3: .asciz "New file"
-.Lk3: .asciz "Ctrl+N"
 .Lw4: .asciz "Settings"
-.Lk4: .asciz "Ctrl+,"
 .Lw5: .asciz "Toggle explorer"
-.Lk5: .asciz "Ctrl+B"
 .Lw6: .asciz "Toggle agents"
+.ifdef MACOS
+.Lk1: .asciz "\342\214\230P"
+.Lk2: .asciz "\342\207\247\342\214\230P"
+.Lk3: .asciz "\342\214\230N"
+.Lk4: .asciz "\342\214\230,"
+.Lk5: .asciz "\342\214\230B"
+.Lk6: .asciz "\342\207\247\342\214\230A"
+.else
+.Lk1: .asciz "Ctrl+P"
+.Lk2: .asciz "Ctrl+Shift+P"
+.Lk3: .asciz "Ctrl+N"
+.Lk4: .asciz "Ctrl+,"
+.Lk5: .asciz "Ctrl+B"
 .Lk6: .asciz "Ctrl+Shift+A"
+.endif
 .Ld0: .asciz "Cancel"
 .Ld1: .asciz "Don't Save"
 .Ld2: .asciz "Save"

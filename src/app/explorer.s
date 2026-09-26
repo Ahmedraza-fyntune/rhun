@@ -1130,7 +1130,11 @@ FN ctx_menu_open
 
 .section .rodata
 .Lheader: .asciz "EXPLORER"
+.ifdef MACOS
+.Lno_folder: .asciz "No folder open (\342\207\247\342\214\230O)"
+.else
 .Lno_folder: .asciz "No folder open (Ctrl+Shift+O)"
+.endif
 .Lnew_file: .asciz "New file"
 .Lnew_folder: .asciz "New folder"
 .Lrename: .asciz "Rename"

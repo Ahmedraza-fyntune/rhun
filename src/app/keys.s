@@ -268,6 +268,45 @@ FN keys_for
     jmp 1b
 2:  lea r13, [rip + keybuf]
     mov r14d, [r12 + KB_mods]
+.ifdef MACOS
+    # macOS: symbols in the order of its menus, Command for Ctrl; Ctrl+Tab stays Control
+    test r14d, MOD_CTRL
+    jz 21f
+    cmp dword ptr [r12 + KB_key], KEY_TAB
+    jne 21f
+    lea rsi, [rip + .Lmac_control]
+    mov rdi, r13
+    call cstr_copy
+    mov r13, rax
+    and r14d, ~MOD_CTRL
+21: test r14d, MOD_ALT
+    jz 22f
+    lea rsi, [rip + .Lmac_option]
+    mov rdi, r13
+    call cstr_copy
+    mov r13, rax
+22: test r14d, MOD_SHIFT
+    jz 23f
+    lea rsi, [rip + .Lmac_shift]
+    mov rdi, r13
+    call cstr_copy
+    mov r13, rax
+23: test r14d, MOD_CTRL
+    jz 24f
+    lea rsi, [rip + .Lmac_command]
+    mov rdi, r13
+    call cstr_copy
+    mov r13, rax
+24: # arrows as arrows
+    mov eax, [r12 + KB_key]
+    lea rbx, [rip + mac_key_syms]
+25: cmp qword ptr [rbx], 0
+    je 6f
+    cmp [rbx + 8], eax
+    je 72f
+    add rbx, 16
+    jmp 25b
+.endif
     test r14d, MOD_CTRL
     jz 3f
     lea rsi, [rip + .Lctrl]
@@ -326,6 +365,19 @@ FN cmd_none
 .p2align 3
 none_cmd: .quad .Lnone, .Lnone, cmd_none, .Lnone
 .Lnone: .asciz ""
+.ifdef MACOS
+.Lmac_control: .asciz "\342\214\203"
+.Lmac_option: .asciz "\342\214\245"
+.Lmac_shift: .asciz "\342\207\247"
+.Lmac_command: .asciz "\342\214\230"
+.Lmac_up: .asciz "\342\206\221"
+.Lmac_down: .asciz "\342\206\223"
+.Lmac_left: .asciz "\342\206\220"
+.Lmac_right: .asciz "\342\206\222"
+.p2align 3
+mac_key_syms:
+    .quad .Lmac_up, KEY_UP, .Lmac_down, KEY_DOWN, .Lmac_left, KEY_LEFT, .Lmac_right, KEY_RIGHT, 0, 0
+.endif
 .Lctrl: .asciz "Ctrl+"
 .Lshift: .asciz "Shift+"
 .Lalt: .asciz "Alt+"

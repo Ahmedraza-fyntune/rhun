@@ -341,6 +341,7 @@ sys_rt_sigaction:
     ret
 
 // set_fl(w0 fd, w1 Linux flags): O_NONBLOCK and O_CLOEXEC after the fact; keeps x0
+.globl set_fl
 set_fl:
     stp x29, x30, [sp, #-32]!
     mov x29, sp

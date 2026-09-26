@@ -51,6 +51,14 @@ link() { # out objs...
 }
 link build/rhun $objs
 [ "$1" = release ] && strip -x build/rhun
+
+# build/rhun.app, signed ad hoc for this machine (tools/package-mac.sh signs for distribution)
+app=build/rhun.app/Contents
+mkdir -p $app/MacOS $app/Resources
+cp build/rhun $app/MacOS/rhun
+[ -f assets/icons/rhun.icns ] && cp assets/icons/rhun.icns $app/Resources/rhun.icns
+sed "s/@VERSION@/$(sed -n 's/.*"rhun \([0-9.]*\).*/\1/p' src/main.s)/" assets/mac/Info.plist > $app/Info.plist
+codesign -s - -f build/rhun.app 2>/dev/null
 if [ "$1" = test ]; then
     lib=$(echo $objs | tr ' ' '\n' | grep -v 'src_main.o')
     for t in tests/*.s; do
