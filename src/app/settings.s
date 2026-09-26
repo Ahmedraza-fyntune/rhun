@@ -363,6 +363,13 @@ FN settings_draw
     mov r8, [rbx + SET_label]
     COLOR r9d, T_FG
     call ui_text_c
+    # the description stops short of the control
+    mov rdi, rbx
+    call desc_room
+    mov r11d, [rsp + 16]
+    sub r11d, eax
+    sub r11d, [rip + g_mt + 4*MI_16]
+    mov [rsp + 36], r11d
     mov rdi, [rbx + SET_desc]
     call strlen
     mov r9, rax
@@ -374,10 +381,7 @@ FN settings_draw
     M ecx, MI_20
     mov r8, [rbx + SET_desc]
     COLOR r10d, T_MUTED
-    mov r11d, [rsp + 16]
-    sub r11d, [rip + g_mt + 4*MI_64]
-    sub r11d, [rip + g_mt + 4*MI_64]
-    sub r11d, [rip + g_mt + 4*MI_64]
+    mov r11d, [rsp + 36]
     push r11
     push r10
     call ui_text_v_fit
@@ -781,6 +785,43 @@ FN settings_draw
     call commit_edit
 .Lsd_end:
     call gfx_clip_pop
+    EPILOGUE
+
+# desc_room(setting) -> eax: the width of its control with the gaps around it
+desc_room:
+    PROLOGUE
+    mov rbx, rdi
+    mov eax, [rbx + SET_type]
+    cmp eax, ST_CHOICE
+    je 2f
+    cmp eax, ST_BOOL
+    je 1f
+    cmp eax, ST_INT
+    je 1f
+    cmp eax, ST_THEME
+    je 1f
+    # a text field
+    mov edi, 300
+    call sc
+    add eax, [rip + g_mt + 4*MI_32]
+    EPILOGUE
+1:  mov eax, [rip + g_mt + 4*MI_64]
+    imul eax, eax, 3
+    sub eax, [rip + g_mt + 4*MI_16]
+    EPILOGUE
+2:  xor r12d, r12d
+    xor r13d, r13d
+3:  mov rdi, [rbx + SET_opts]
+    mov esi, r13d
+    call choice_entry
+    test rax, rax
+    jz 4f
+    call .Lseg_w
+    add r12d, eax
+    inc r13d
+    jmp 3b
+4:  mov eax, r12d
+    add eax, [rip + g_mt + 4*MI_32]
     EPILOGUE
 
 # ui_text_v_fit(face, x, y, h, ptr, len, argb, maxw): text centered vertically, cut with "…"
