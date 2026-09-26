@@ -4,7 +4,7 @@
 
 A small and fast code editor written in Assembly.
 
-rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets into a pixel buffer and hands that buffer to the display server. It speaks the Wayland and X11 wire protocols directly, without libc, toolkits or libwayland. The result is one static binary (fonts, themes and grammars included) that looks the same on every desktop.
+rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets into a pixel buffer and hands that buffer to the display server. On Linux it speaks the Wayland and X11 wire protocols directly, without libc, toolkits or libwayland. On macOS the same code runs natively on Apple silicon in an AppKit window. The result is one binary (fonts, themes and grammars included) that looks the same on every desktop.
 
 ## Features
 
@@ -18,6 +18,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Every XKB layout, dead keys and the Compose key (the system's Compose rules, `~/.XCompose` or `$XCOMPOSEFILE`)
 - Files changed on disk are reloaded, open files are restored per project
 - Wayland with fractional scaling; X11 as a fallback
+- macOS on Apple silicon: Retina displays, input methods and dead keys, full screen, signed and notarized
 
 <p>
   <img src="assets/social/screenshot-dark.png" width="49%" alt="rhun, dark theme">
@@ -26,14 +27,28 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 
 ## Build
 
-Linux on x86-64 for now. GNU as and ld (binutils) are all it needs.
+Linux on x86-64 needs GNU as and ld (binutils). macOS on Apple silicon needs the Xcode command line tools (`xcode-select --install`).
 
 ```sh
-./build.sh           # build/rhun with debug symbols
+./build.sh           # build/rhun with debug symbols (and build/rhun.app on macOS)
 ./build.sh release   # stripped
 tests/run.sh         # unit tests and scripted UI tests
-tools/install.sh     # release build into ~/.local, with the desktop entry and icon
+tools/install.sh     # release build into ~/.local, with the desktop entry and icon;
+                     # on macOS rhun.app into /Applications and the rhun command into ~/.local/bin
 ```
+
+### macOS
+
+rhun is written in x86-64 assembly, and the sources stay the one description of the editor. On macOS `tools/arm64.py` translates them to AArch64 at build time, instruction by instruction: x86 registers live in fixed AArch64 registers, the x86 stack keeps its layout, and flags are computed only where they are read. `src/mac/` holds what is native to the Mac: the process entry, the Linux system calls rhun makes, carried out on libSystem, file watching on FSEvents, and the AppKit window, which shows each frame through an IOSurface. The tests pass on both systems, and the screenshots of the scripted tests are identical to the Linux ones pixel for pixel.
+
+A release for distribution outside the App Store is signed with a Developer ID and the hardened runtime, notarized by Apple and packed in a disk image:
+
+```sh
+xcrun notarytool store-credentials rhun-notary --apple-id YOUR_APPLE_ID --team-id TEAM_ID   # once
+tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.dmg
+```
+
+`RHUN_SIGN_ID` picks another signing identity, `RHUN_NOTARIZE=0` signs without notarizing. `tools/mac-icon.py` draws `assets/icons/rhun.icns` from the Linux icon.
 
 ## Run
 
@@ -48,6 +63,8 @@ rhun uses Wayland when it can and falls back to X11 when there is no Wayland com
 The mouse pointer is the desktop's: the compositor draws it when it supports the cursor-shape protocol; otherwise rhun loads your Xcursor theme (`XCURSOR_THEME`, `XCURSOR_SIZE`, `~/.icons/default`, `/usr/share/icons/default`).
 
 On Wayland rhun draws its own title bar with window buttons, except on tiling compositors (Hyprland, Sway, niri, river, dwl, Qtile), where windows stay bare. `decorations = auto | client | server` under `[ui]` overrides this; `client` is rhun's title bar, `server` is the compositor's.
+
+On macOS the title bar is rhun's too, with the window buttons in it. Command works as Ctrl (and so does Control), Option as Alt; Command with the arrows goes to the line or document ends and Option with the arrows and Backspace works by words, as elsewhere on the Mac. Option still types its characters where it has no binding, and input methods and dead keys work as in any Mac app. On a layout that is not Latin, shortcuts use the key's letter. Started from Finder or the Dock, rhun opens your home folder; files and folders can be opened with it from Finder.
 
 | Key | Action |
 | --- | --- |
@@ -163,10 +180,12 @@ An extension that crashes or hangs cannot take the editor with it.
 | `src/ui/ui.s` | immediate-mode widgets |
 | `src/plat/` | Wayland, XKB keymaps, X11, headless |
 | `src/app/` | documents, editor, explorer, palette, settings, agents, syntax, themes |
+| `src/mac/` | macOS, native AArch64: entry, Linux system calls on libSystem, FSEvents, the AppKit window |
+| `tools/arm64.py` | the x86-64 to AArch64 translator for Apple silicon |
 | `runtime/` | themes and grammars embedded into the binary |
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
 
-Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`.
+Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`; macOS fills it from `src/mac/cocoa.s`. Code that differs by system is in `.ifdef MACOS` blocks.
 
 ## License
 

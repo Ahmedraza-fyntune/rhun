@@ -2785,6 +2785,7 @@ sel_word_a: .quad 0
 sel_word_b: .quad 0
 last_indent: .long 0
 .globl g_ed_x, g_ed_y, g_ed_w, g_ed_h, g_ed_tx
+.globl g_caret_x, g_caret_y, g_caret_ok
 g_caret_x: .long 0
 g_caret_y: .long 0
 g_caret_ok: .long 0

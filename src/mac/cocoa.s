@@ -1213,15 +1213,40 @@ v_validAttributes:
     ldp x29, x30, [sp], #16
     ret
 
-// firstRectForCharacterRange:actualRange: -> where the candidate window goes: the pointer
+// firstRectForCharacterRange:actualRange: -> where the candidate window goes: under the
+// caret while the editor has the focus, else at the pointer
 v_firstRect:
-    stp x29, x30, [sp, #-16]!
-    mov x29, sp
-    CLS x0, NSEvent
+    ENTER 32
+    stp d8, d9, [sp]
+    LDW w9, g_caret_ok
+    cbz w9, 8f
+    LDW w9, g_focus             // FOCUS_EDITOR
+    cbnz w9, 8f
+    LDW d8, scale
+    LDW w9, g_lh
+    scvtf d9, w9
+    fdiv d9, d9, d8
+    LDW w9, g_caret_x
+    scvtf d0, w9
+    fdiv d0, d0, d8
+    LDW w9, g_caret_y
+    scvtf d1, w9
+    fdiv d1, d1, d8
+    fadd d1, d1, d9
+    LDX x0, view
+    mov x2, #0
+    MSG convertPoint_toView_
+    LDX x0, win
+    MSG convertPointToScreen_
+    fmov d2, xzr
+    fmov d3, d9
+    b 9f
+8:  CLS x0, NSEvent
     MSG mouseLocation
     fmov d2, xzr
     fmov d3, xzr
-    ldp x29, x30, [sp], #16
+9:  ldp d8, d9, [sp]
+    LEAVE
     ret
 
 v_characterIndex:
@@ -2009,6 +2034,8 @@ DEFSEL array, "array"
 DEFSEL mouseLocation, "mouseLocation"
 DEFSEL locationInWindow, "locationInWindow"
 DEFSEL convertPoint_fromView_, "convertPoint:fromView:"
+DEFSEL convertPoint_toView_, "convertPoint:toView:"
+DEFSEL convertPointToScreen_, "convertPointToScreen:"
 DEFSEL buttonNumber, "buttonNumber"
 DEFSEL scrollingDeltaX, "scrollingDeltaX"
 DEFSEL scrollingDeltaY, "scrollingDeltaY"
