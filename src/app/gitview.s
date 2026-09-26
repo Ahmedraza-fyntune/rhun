@@ -38,6 +38,8 @@ det_time: .quad 0
 det_msg: .quad 0
 maskbuf: .quad 0
 maskcap: .quad 0
+htab: .quad 0                   # commit index + 1 by hash
+hcap: .quad 0
 tmp: .zero SB_SIZE
 log_state: .long 0              # 0 nothing yet, 2 shown, 3 no commits
 loading: .long 0
@@ -52,6 +54,8 @@ list_h: .long 0
 det_scroll: .long 0
 det_h: .long 0                  # content height of the details
 det_state: .long 0              # 0 none, 1 loading, 2 shown
+det_running: .long 0
+ns_running: .long 0
 files_ver: .long 0
 .p2align 3
 seg: .zero 64                   # aa_seg floats
@@ -142,6 +146,8 @@ FN gitview_reset
     mov dword ptr [rip + loading], 0
     mov dword ptr [rip + log_again], 0
     mov dword ptr [rip + det_state], 0
+    mov dword ptr [rip + det_running], 0
+    mov dword ptr [rip + ns_running], 0
     mov dword ptr [rip + wip], 0
     mov dword ptr [rip + sel], 0
     mov dword ptr [rip + list_scroll], 0
@@ -199,6 +205,7 @@ on_log:
     mov rdx, r12
     call sb_push
     call parse_log
+    call build_index
     mov dword ptr [rip + log_state], 2
     call layout
     call restore_sel
@@ -311,6 +318,94 @@ parse_log:
     mov dword ptr [rax + CM_np], 1
 9:  EPILOGUE
 
+# build_index(): htab from the commits' hashes
+build_index:
+    PROLOGUE
+    mov rax, [rip + commits + VEC_len]
+    add rax, rax
+    mov ecx, 64
+2:  cmp rcx, rax
+    jae 3f
+    add rcx, rcx
+    jmp 2b
+3:  cmp rcx, [rip + hcap]
+    jbe 4f
+    mov [rip + hcap], rcx
+    mov rdi, [rip + htab]
+    lea rsi, [rcx*4]
+    call mem_realloc
+    mov [rip + htab], rax
+4:  mov rdi, [rip + htab]
+    mov rcx, [rip + hcap]
+    xor eax, eax
+    rep stosd
+    mov ebx, 1
+5:  cmp rbx, [rip + commits + VEC_len]
+    jae 9f
+    imul r12, rbx, CM_SIZE
+    add r12, [rip + commits + VEC_ptr]
+    mov rdi, [r12 + CM_hash]
+    call hash_slot
+    lea rcx, [rbx + 1]
+    mov [rax], ecx
+    inc rbx
+    jmp 5b
+9:  EPILOGUE
+
+# hash_slot(hash) -> slot of htab for it (holding its index + 1, or 0)
+hash_slot:
+    push rbx
+    push r12
+    push r13
+    mov r12, rdi
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    call hash_line
+    mov r13, [rip + hcap]
+    dec r13
+    and rax, r13
+    mov rbx, rax
+1:  mov rax, [rip + htab]
+    lea rax, [rax + rbx*4]
+    mov ecx, [rax]
+    test ecx, ecx
+    jz 9f
+    imul rcx, rcx, CM_SIZE
+    add rcx, [rip + commits + VEC_ptr]
+    mov rdi, [rcx - CM_SIZE + CM_hash]
+    mov rsi, r12
+    push rax
+    push rax
+    call strcmp_eq
+    mov ecx, eax
+    pop rax
+    pop rax
+    test ecx, ecx
+    jnz 9f
+    inc rbx
+    and rbx, r13
+    jmp 1b
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
+
+# shown_above(hash, row) -> 1 when that commit's row came before (dates out of order)
+shown_above:
+    push rbx
+    mov rbx, rsi
+    call hash_slot
+    mov ecx, [rax]
+    xor eax, eax
+    test ecx, ecx
+    jz 1f
+    dec ecx
+    cmp rcx, rbx
+    setb al
+1:  pop rbx
+    ret
+
 # next_field(p) -> the field after p (its 0x1f becomes 0), or the end of the record
 next_field:
     mov rax, rdi
@@ -397,21 +492,31 @@ layout:
     btr r13, rax
     mov qword ptr [rcx + rax*8], 0
     jmp 4b
-5:  # parents: the first goes on in this lane
+5:  # parents: the first goes on in this lane; one shown above already gets no line
     xor r13d, r13d
     mov r15, [r12 + CM_parent]
     test r15, r15
     jz 8f
+    mov rdi, r15
+    mov rsi, rbx
+    call shown_above
+    test eax, eax
+    jnz 51f
     lea rcx, [rip + lanes]
     mov [rcx + r14*8], r15
     bts r13, r14
-    mov eax, [r12 + CM_np]
+51: mov eax, [r12 + CM_np]
     mov [rsp], eax
 6:  dec dword ptr [rsp]
     jle 8f
     mov rdi, r15
     call strlen
     lea r15, [r15 + rax + 1]
+    mov rdi, r15
+    mov rsi, rbx
+    call shown_above
+    test eax, eax
+    jnz 6b
     # joins a lane that leads there already, or takes a free one
     mov rdi, r15
     call lane_of
@@ -549,6 +654,14 @@ select_row:
     mov dword ptr [rip + det_state], 1
     mov dword ptr [rip + det_scroll], 0
     mov qword ptr [rip + files + VEC_len], 0
+    call details_fetch
+9:  EPILOGUE
+
+# details_fetch(): "show" for det_hash; one at a time, the one running asks again when it ends
+details_fetch:
+    cmp dword ptr [rip + det_running], 0
+    jne 9f
+    push rbx
     lea rax, [rip + det_hash]
     mov [rip + args_show_rev], rax
     lea rdi, [rip + args_show]
@@ -557,26 +670,34 @@ select_row:
     xor ecx, ecx
     xor r8d, r8d
     call git_run
-9:  EPILOGUE
+    mov [rip + det_running], eax
+    pop rbx
+9:  ret
 
 # on_details(ctx, ptr, len, status): "hash\x1fparents\x1fauthor\x1ftime\x1fmessage\x1e", raw entries, numstat
 on_details:
     PROLOGUE 16
+    mov dword ptr [rip + det_running], 0
     mov rbx, rsi
     mov r12, rdx
-    # for the commit still selected?
+    # for the commit still selected? if not, ask for that one
     lea rdi, [rip + det_hash]
     call strlen
     test rax, rax
     jz 9f
     cmp rax, r12
-    ja 9f
+    ja 1f
     mov rdi, rbx
     lea rsi, [rip + det_hash]
     mov rdx, rax
     call memeq
     test eax, eax
-    jz 9f
+    jnz 2f
+1:  cmp dword ptr [rip + det_state], 1
+    jne 9f
+    call details_fetch
+    jmp 9f
+2:
     lea rdi, [rip + det]
     call sb_clear
     lea rdi, [rip + det]
@@ -613,9 +734,8 @@ on_details:
     mov rsi, rax
     call parse_u64
     mov [rip + det_time], rax
-    # files: ":mode mode id id X\0path\0" then "added\tdeleted\tpath\0"
+    # files: ":mode mode id id X\0path\0"
     lea rbx, [r13 + 1]
-    xor r15d, r15d              # numstat entries seen
 .Lod_ent:
     cmp rbx, r12
     jae 8f
@@ -627,7 +747,7 @@ on_details:
 3:  inc rbx
     jmp .Lod_ent
 4:  cmp eax, ':'
-    jne 5f
+    jne 7f
     mov rdi, rbx
     call strlen
     lea r13, [rbx + rax]        # the NUL after the status letter
@@ -644,26 +764,6 @@ on_details:
     mov [rax + GF_path], rbx
     mov [rax + GF_code], r14d
     mov dword ptr [rax + GF_add], -2
-    jmp 7f
-5:  # numstat of the next file
-    cmp r15, [rip + files + VEC_len]
-    jae 7f
-    imul r13, r15, GF_SIZE
-    add r13, [rip + files + VEC_ptr]
-    inc r15
-    mov dword ptr [r13 + GF_add], -1
-    cmp eax, '-'
-    je 7f
-    mov rdi, rbx
-    mov rsi, r12
-    sub rsi, rbx
-    call parse_u64
-    mov [r13 + GF_add], eax
-    lea rdi, [rbx + rdx + 1]    # after the tab
-    mov rsi, r12
-    sub rsi, rdi
-    call parse_u64
-    mov [r13 + GF_del], eax
 7:  # to the next entry
     mov rdi, rbx
     call strlen
@@ -671,6 +771,85 @@ on_details:
     jmp .Lod_ent
 8:  mov dword ptr [rip + det_state], 2
     mov dword ptr [rip + g_dirty], 1
+    call numstat_fetch
+9:  EPILOGUE
+
+# numstat_fetch(): lines added and deleted per file of det_hash, one job at a time
+numstat_fetch:
+    cmp dword ptr [rip + ns_running], 0
+    jne 9f
+    push rbx
+    lea rax, [rip + det_hash]
+    mov [rip + args_numstat_rev], rax
+    lea rdi, [rip + args_numstat]
+    lea rsi, [rip + on_numstat]
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call git_run
+    mov [rip + ns_running], eax
+    pop rbx
+9:  ret
+
+# on_numstat(ctx, ptr, len, status): "hash\0\n" then "added\tdeleted\tpath\0" in the order of the files
+on_numstat:
+    PROLOGUE
+    mov dword ptr [rip + ns_running], 0
+    mov rbx, rsi
+    lea r12, [rsi + rdx]
+    lea rdi, [rip + det_hash]
+    call strlen
+    mov r13, rax
+    test rax, rax
+    jz 9f
+    lea rcx, [rbx + rax]
+    cmp rcx, r12
+    ja 1f
+    mov rdi, rbx
+    lea rsi, [rip + det_hash]
+    mov rdx, r13
+    call memeq
+    test eax, eax
+    jnz 2f
+1:  # another commit is selected now
+    cmp dword ptr [rip + det_state], 2
+    jne 9f
+    call numstat_fetch
+    jmp 9f
+2:  add rbx, r13
+    xor r15d, r15d              # file
+3:  cmp rbx, r12
+    jae 8f
+    movzx eax, byte ptr [rbx]
+    test eax, eax
+    jz 4f
+    cmp eax, 10
+    jne 5f
+4:  inc rbx
+    jmp 3b
+5:  cmp r15, [rip + files + VEC_len]
+    jae 8f
+    imul r14, r15, GF_SIZE
+    add r14, [rip + files + VEC_ptr]
+    inc r15
+    mov dword ptr [r14 + GF_add], -1
+    cmp eax, '-'
+    je 6f
+    mov rdi, rbx
+    mov rsi, r12
+    sub rsi, rbx
+    call parse_u64
+    mov [r14 + GF_add], eax
+    lea rdi, [rbx + rdx + 1]    # after the tab
+    mov rsi, r12
+    sub rsi, rdi
+    call parse_u64
+    mov [r14 + GF_del], eax
+6:  mov rdi, rbx
+    call strlen
+    lea rbx, [rbx + rax + 1]
+    jmp 3b
+8:  mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
 
 # ---------------- drawing ----------------
@@ -820,10 +999,15 @@ draw_list:
 24: cmp eax, SHOW_LANES
     jbe 25f
     mov eax, SHOW_LANES
-25: cmp eax, [rip + nlanes]
-    jbe 26f
+25: # more lanes than that: the last column stands for the rest
+    mov ecx, eax
+    cmp eax, [rip + nlanes]
+    jb 26f
     mov eax, [rip + nlanes]
-26: mov [rip + show_lanes], eax
+    mov ecx, eax
+    inc ecx
+26: dec ecx
+    mov [rip + show_lanes], ecx
     imul eax, [rip + g_mt + 4*MI_16]
     add eax, [rip + g_mt + 4*MI_8]
     mov [rsp + 20], eax
@@ -915,14 +1099,11 @@ draw_list:
     mov edi, 90
     call sc
     sub [rsp + 28], eax
-    # the author when there is room
-    mov eax, [rsp + 8]
-    mov edi, 560
-    push rax
-    push rax
+    # the author when the subject keeps room
+    mov edi, 450
     call sc
-    pop rcx
-    pop rcx
+    mov ecx, [rsp + 28]
+    sub ecx, r12d
     cmp ecx, eax
     jl 5f
     mov edi, 150
@@ -943,7 +1124,14 @@ draw_list:
     mov r8, [r14 + CM_author]
     call ui_text_v_fit
     add rsp, 16
-5:  # ref chips, then the subject
+5:  # ref chips (at most 40% of the room), then the subject
+    mov eax, [rsp + 28]
+    sub eax, r12d
+    imul eax, eax, 2
+    xor edx, edx
+    mov ecx, 5
+    div ecx
+    lea r8d, [r12 + rax]
     mov rdi, [r14 + CM_refs]
     mov esi, r12d
     mov edx, r13d
@@ -1036,8 +1224,11 @@ draw_graph:
     add eax, [rsp + 4]
     mov [rsp + 16], eax         # center y
     mov edi, [rbx + CM_lane]
-    call lane_x
-    mov [rsp + 20], eax         # node x
+    cmp edi, [rip + show_lanes]
+    jbe 1f
+    mov edi, [rip + show_lanes]
+1:  call lane_x
+    mov [rsp + 20], eax         # node x (the last column for lanes not shown)
     xor r12d, r12d
 .Ldg_lane:
     cmp r12d, [rip + show_lanes]
@@ -1094,8 +1285,20 @@ draw_graph:
 .Ldg_node:
     mov eax, [rbx + CM_lane]
     cmp eax, [rip + show_lanes]
-    jae 9f
-    mov edi, [rbx + CM_lane]
+    jb 6f
+    # in a lane not shown: a small muted dot in the last column
+    COLOR r9d, T_MUTED
+    M r12d, MI_3
+    mov edi, [rsp + 20]
+    sub edi, r12d
+    mov esi, [rsp + 16]
+    sub esi, r12d
+    lea edx, [r12 + r12]
+    mov ecx, edx
+    mov r8d, r12d
+    call gfx_round_rect
+    jmp 9f
+6:  mov edi, [rbx + CM_lane]
     call lane_color
     mov r14d, eax
     M r12d, MI_5                # radius
@@ -1336,13 +1539,14 @@ fmt_age:
     sub rax, r12
     EPILOGUE
 
-# chips(refs, x, y, h) -> x after the branch and tag names
+# chips(refs, x, y, h, right) -> x after the branch and tag names that fit left of right
 chips:
     PROLOGUE 32
     mov rbx, rdi
     mov r12d, esi
     mov r13d, edx
     mov r14d, ecx
+    mov [rsp + 24], r8d
 .Lch_ref:
     cmp byte ptr [rbx], 0
     je .Lch_done
@@ -1388,6 +1592,9 @@ chips:
     M ecx, MI_6
     lea eax, [rax + rcx*2]
     mov [rsp + 12], eax         # chip width
+    add eax, r12d
+    cmp eax, [rsp + 24]
+    jg .Lch_done
     # chip
     COLOR r9d, T_HOVER
     cmp dword ptr [rsp + 8], 1
@@ -2000,12 +2207,12 @@ FN gitview_dump
 .Lremotes: .asciz "--remotes"
 .Ltags: .asciz "--tags"
 .Lhead: .asciz "HEAD"
-.Ldate_order: .asciz "--date-order"
 .Lmax: .asciz "-n3000"
 .Llog_format: .asciz "--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s%x1e"
 .Lshow: .asciz "show"
 .Lshow_format: .asciz "--format=%H%x1f%P%x1f%an <%ae>%x1f%at%x1f%B%x1e"
 .Lraw: .asciz "--raw"
+.Lhash_format: .asciz "--format=%H"
 .Lnumstat: .asciz "--numstat"
 .Lz: .asciz "-z"
 .Lno_renames: .asciz "--no-renames"
@@ -2016,12 +2223,16 @@ age_units:
     .quad 60, .Lminute, 3600, .Lhour, 86400, .Lday, 604800, .Lweek
     .quad 2592000, .Lmonth, 31536000, .Lyear, 0, 0
 args_log:
-    .quad .Llog, .Lbranches, .Lremotes, .Ltags, .Lhead, .Ldate_order, .Lmax, .Llog_format, 0
+    .quad .Llog, .Lbranches, .Lremotes, .Ltags, .Lhead, .Lmax, .Llog_format, 0
 lane_slots:
     .byte T_ACCENT, T_TERM + 2, T_TERM + 5, T_TERM + 3, T_TERM + 6, T_TERM + 1, T_TERM + 4, T_TERM + 13
 .data
 .p2align 3
 args_show:
-    .quad .Lshow, .Lshow_format, .Lraw, .Lnumstat, .Lz, .Lno_renames, .Ldash_m, .Lfirst_parent
+    .quad .Lshow, .Lshow_format, .Lraw, .Lz, .Lno_renames, .Ldash_m, .Lfirst_parent
 args_show_rev:
+    .quad 0, 0
+args_numstat:
+    .quad .Lshow, .Lhash_format, .Lnumstat, .Lz, .Lno_renames, .Ldash_m, .Lfirst_parent
+args_numstat_rev:
     .quad 0, 0
