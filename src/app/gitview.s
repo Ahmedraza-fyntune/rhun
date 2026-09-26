@@ -1617,7 +1617,24 @@ draw_details:
     add r15, [rip + files + VEC_ptr]
     M eax, MI_28
     mov [rsp + 20], eax         # row h
-    lea edi, [rbx + ID_GV_FILE]
+    # rows out of sight only add their height
+    mov eax, [rsp + 4]
+    add eax, [rsp + 12]
+    cmp r13d, eax
+    jl 91f
+    mov rax, [rip + files + VEC_len]
+    sub rax, rbx
+    imul eax, [rsp + 20]
+    add r13d, eax
+    jmp .Ldd_end_content
+91: mov eax, r13d
+    add eax, [rsp + 20]
+    cmp eax, [rsp + 4]
+    jg 92f
+    add r13d, [rsp + 20]
+    inc rbx
+    jmp .Ldd_file
+92: lea edi, [rbx + ID_GV_FILE]
     mov esi, [rsp]
     mov edx, r13d
     mov ecx, [rsp + 8]
