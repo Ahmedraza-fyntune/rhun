@@ -194,12 +194,6 @@ FN mac_open_window
     bl kq_init
     bl hook_titlebar
     bl update_size
-    mov x0, x20
-    mov x2, #0
-    MSG makeKeyAndOrderFront_
-    LDX x0, app
-    mov x2, #1
-    MSG activateIgnoringOtherApps_
     ldr x0, [sp]
     bl _objc_autoreleasePoolPop
     XLEAVE
@@ -450,6 +444,18 @@ render:
     CLS x0, CATransaction
     MSG commit
     bl follow_theme
+    // the window appears with its first frame
+    LDW w9, shown
+    cbnz w9, 31f
+    mov w9, #1
+    STW w9, shown
+    LDX x0, win
+    mov x2, #0
+    MSG makeKeyAndOrderFront_
+    LDX x0, app
+    mov x2, #1
+    MSG activateIgnoringOtherApps_
+31:
     // title bar height follows rhun's ui scale
     ADR x9, g_mt
     ldr w9, [x9, #4 * 16]
@@ -2175,4 +2181,5 @@ pending: .long 0
 appearance: .long 0
 tl_h: .long 0
 tl_px: .long 0
+shown: .long 0
 kq: .long -1
