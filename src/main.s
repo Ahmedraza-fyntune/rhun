@@ -30,15 +30,30 @@ FN main
     call app_init
     cmp dword ptr [rip + opt_headless], 0
     jne .Lm_headless
-    call wl_connect
+    # RHUN_BACKEND=x11 skips Wayland
+    lea rdi, [rip + .Lenv_backend]
+    call getenv
+    test rax, rax
+    jz 1f
+    cmp byte ptr [rax], 'x'
+    je 2f
+1:  call wl_connect
     test eax, eax
-    jnz 1f
-    lea rdi, [rip + .Lno_display]
-    call die
-1:  lea rdi, [rip + .Ltitle]
+    jz 2f
+    lea rdi, [rip + .Ltitle]
     call wl_open_window
     jmp .Lm_open
+2:  call x_connect
+    test eax, eax
+    jnz 3f
+    lea rdi, [rip + .Lno_display]
+    call die
+3:  call scale_from_env
+    lea rdi, [rip + .Ltitle]
+    call x_open_window
+    jmp .Lm_open
 .Lm_headless:
+    call scale_from_env
     mov edi, [rip + opt_w]
     mov esi, [rip + opt_h]
     call headless_init
@@ -124,6 +139,28 @@ parse_args:
 .Lpa_done:
     EPILOGUE
 
+# RHUN_SCALE=1.5 sets the display scale where the platform doesn't report one
+scale_from_env:
+    lea rdi, [rip + .Lenv_scale]
+    call getenv
+    test rax, rax
+    jz 1f
+    push rax
+    mov rdi, rax
+    call strlen
+    pop rdi
+    mov rsi, rax
+    call parse_decimal
+    test edx, edx
+    jz 1f
+    cmp eax, 10
+    ja 2f
+    imul eax, eax, 100
+2:  cvtsi2ss xmm0, eax
+    divss xmm0, [rip + .Lf100]
+    movss [rip + g_dpi_scale], xmm0
+1:  ret
+
 # "WxH"
 parse_size:
     push rbx
@@ -185,7 +222,9 @@ open_initial:
 
 .section .rodata
 .Ltitle: .asciz "rhun"
-.Lno_display: .asciz "rhun: no Wayland display (WAYLAND_DISPLAY), use --headless"
+.Lno_display: .asciz "rhun: no Wayland or X11 display found"
+.Lenv_backend: .asciz "RHUN_BACKEND"
+.Lenv_scale: .asciz "RHUN_SCALE"
 .Lo_headless: .asciz "--headless"
 .Lo_script: .asciz "--script"
 .Lo_control: .asciz "--control"

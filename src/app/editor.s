@@ -1882,6 +1882,7 @@ FN editor_draw
     mov eax, [rip + g_ed_h]
     xor edx, edx
     div dword ptr [rip + g_lh]
+    mov [rip + g_ed_h_lines], eax
     lea rsi, [rsi + rax + 2]
     mov rdi, rbx
     call syntax_prepare

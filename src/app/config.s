@@ -8,7 +8,7 @@
 .globl cfg_line_numbers, cfg_highlight_line, cfg_indent_guides, cfg_cursor_blink, cfg_whitespace
 .globl cfg_sidebar, cfg_sidebar_w, cfg_agents, cfg_agents_w, cfg_ui_scale, cfg_final_newline
 .globl cfg_trim_trailing, cfg_scroll_past_end, cfg_smooth_caret, cfg_theme, cfg_font, cfg_ui_font
-.globl cfg_exclude, cfg_agent_sources, cfg_restore_session, cfg_auto_pairs, cfg_word_wrap
+.globl cfg_exclude, cfg_agent_sources, cfg_restore_session, cfg_auto_pairs
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
 cfg_line_height: .long 150
@@ -30,7 +30,6 @@ cfg_scroll_past_end: .long 1
 cfg_smooth_caret: .long 1
 cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
-cfg_word_wrap: .long 0
 .p2align 3
 cfg_theme: .quad .Ldef_theme
 cfg_font: .quad .Lempty

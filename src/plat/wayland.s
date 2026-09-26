@@ -1070,7 +1070,7 @@ on_pointer:
     mov r13d, eax
     cmp dword ptr [rip + axis_src], 0
     jne 2f
-    imul r13d, r13d, 4            # wheel: ~3 lines per notch
+    imul r13d, r13d, 5            # wheel: ~3 lines per notch
 2:  xor edi, edi
     xor esi, esi
     cmp dword ptr [r12 + 4], 0
@@ -1210,10 +1210,26 @@ on_keyboard:
 # key_emit(xkb keycode)
 key_emit:
     push rbx
+    push r12
+    sub rsp, 8
+    mov r12d, edi
     mov esi, [rip + kb_group]
     mov edx, [rip + kb_mods]
     call xkb_keysym
     mov ebx, eax
+    # shortcuts on a non-latin layout: use the first layout's key
+    test dword ptr [rip + kb_mods], MOD_CTRL | MOD_ALT | MOD_SUPER
+    jz 1f
+    cmp ebx, 0x100
+    jb 1f
+    cmp ebx, 0xfe00
+    jae 1f
+    mov edi, r12d
+    xor esi, esi
+    mov edx, [rip + kb_mods]
+    call xkb_keysym
+    mov ebx, eax
+1:
     mov edi, eax
     call keysym_to_unicode
     mov edi, ebx
@@ -1221,6 +1237,8 @@ key_emit:
     mov edx, [rip + kb_mods]
     and edx, MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER
     call app_on_key
+    add rsp, 8
+    pop r12
     pop rbx
     ret
 
