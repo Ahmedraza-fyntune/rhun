@@ -1703,7 +1703,15 @@ reveal:
 6:  movsxd rax, r14d
     cmp rax, [rbx + DOC_scrollx]
     jge 7f
-    mov [rbx + DOC_scrollx], rax
+    # going left: back to column 0 when the cursor fits, else center it
+    movsxd rdx, ecx
+    xor esi, esi
+    cmp rax, rdx
+    jl 61f
+    sar rdx, 1
+    mov rsi, rax
+    sub rsi, rdx
+61: mov [rbx + DOC_scrollx], rsi
 7:  mov rdi, rbx
     call clamp_scroll
     EPILOGUE

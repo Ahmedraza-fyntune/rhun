@@ -607,7 +607,8 @@ FN settings_draw
     call commit_edit
     mov [rip + set_edit], r15d
     mov dword ptr [rip + g_focus], FOCUS_SETTINGS
-    mov dword ptr [rip + set_tf + TF_id], ID_SET_ROW + 3
+    mov eax, [rsp + 40]
+    mov [rip + set_tf + TF_id], eax
     mov rax, [rbx + SET_ptr]
     mov rsi, [rax]
     mov rdi, rsi
@@ -649,7 +650,7 @@ FN settings_draw
     cmp dword ptr [rip + set_edit], 0
     jl .Lsd_end
     mov eax, [rip + g_active]
-    cmp eax, ID_SET_ROW + 3
+    cmp eax, [rip + set_tf + TF_id]
     je .Lsd_end
     call commit_edit
 .Lsd_end:

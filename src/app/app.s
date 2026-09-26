@@ -1922,11 +1922,12 @@ FN welcome_draw
     sub eax, [rip + g_mt + 4*MI_64]
     sub eax, [rip + g_mt + 4*MI_48]
     mov r12d, eax
-    lea rdi, [rip + g_face_big]
+    lea rdi, [rip + g_face_huge]
     mov esi, [rsp]
     mov edx, r12d
+    sub edx, [rip + g_mt + 4*MI_20]
     mov ecx, [rsp + 8]
-    M r8d, MI_40
+    M r8d, MI_48
     lea r9, [rip + .Lrhun]
     COLOR eax, T_FG
     push rax

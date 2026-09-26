@@ -27,6 +27,8 @@ g_face_ui: .zero FACE_SIZE
 g_face_small: .zero FACE_SIZE
 g_face_big: .zero FACE_SIZE
 g_face_code: .zero FACE_SIZE
+.globl g_face_huge
+g_face_huge: .zero FACE_SIZE
 last_scale: .long 0
 last_code_px: .long 0
 last_ui_px: .long 0
@@ -90,6 +92,13 @@ FN ui_update_metrics
     mulss xmm0, [rip + g_s]
     cvtss2si edx, xmm0
     lea rdi, [rip + g_face_big]
+    mov rsi, [rip + g_font_ui]
+    call face_init
+    cvtsi2ss xmm0, dword ptr [rip + cfg_ui_font_size]
+    mulss xmm0, [rip + f_huge]
+    mulss xmm0, [rip + g_s]
+    cvtss2si edx, xmm0
+    lea rdi, [rip + g_face_huge]
     mov rsi, [rip + g_font_ui]
     call face_init
 3:  # code face + line metrics
@@ -1157,6 +1166,7 @@ FN ui_textfield
 .p2align 2
 f_100: .float 100.0
 f_big: .float 1.55
+f_huge: .float 3.4
 # logical sizes for MI_* indices
 metric_values:
     .long 1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48
