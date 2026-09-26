@@ -2127,7 +2127,8 @@ vdel_lines:
     call vdelete
     EPILOGUE
 
-# vcase(op, s, e): u lower, U upper, ~ swapped case (ASCII letters); the cursor stays
+# vcase(op, s, e): u lower, U upper, ~ swapped case (ASCII, and the letters of two bytes in UTF-8:
+# Latin-1, Latin Extended-A, Greek, Cyrillic); the cursor stays
 vcase:
     PROLOGUE 16
     mov rax, [rip + g_doc]
@@ -2150,7 +2151,40 @@ vcase:
 1:  cmp rcx, r14
     jae 5f
     movzx eax, byte ptr [rbx + rcx]
-    lea esi, [rax - 'A']
+    # a character of two bytes
+    lea esi, [rax - 0xc0]
+    cmp esi, 0x1f
+    ja 11f
+    lea rsi, [rcx + 1]
+    cmp rsi, r14
+    jae 4f
+    movzx esi, byte ptr [rbx + rcx + 1]
+    and eax, 0x1f
+    shl eax, 6
+    and esi, 0x3f
+    or eax, esi
+    push rcx
+    push rdx
+    mov edi, eax
+    mov esi, r15d
+    call ucase
+    pop rdx
+    pop rcx
+    mov esi, eax
+    shr esi, 6
+    or esi, 0xc0
+    and eax, 0x3f
+    or eax, 0x80
+    cmp sil, [rbx + rcx]
+    jne 12f
+    cmp al, [rbx + rcx + 1]
+    je 13f
+12: mov [rbx + rcx], sil
+    mov [rbx + rcx + 1], al
+    mov edx, 1
+13: add rcx, 2
+    jmp 1b
+11: lea esi, [rax - 'A']
     cmp esi, 25
     jbe 2f
     lea esi, [rax - 'a']
@@ -2181,6 +2215,121 @@ vcase:
     mov rcx, [rsp + 8]
     mov [rax + DOC_anchor], rcx
 9:  EPILOGUE
+
+# ucase(cp, op) -> cp lower (op u), upper (U) or swapped (~), for letters of U+00C0..U+045F;
+# cp itself otherwise
+ucase:
+    mov eax, edi
+    xor ecx, ecx                # partner
+    xor edx, edx                # 1 upper, 2 lower
+    cmp edi, 0xc0
+    jb 9f
+    cmp edi, 0xde               # Latin-1
+    ja 1f
+    cmp edi, 0xd7
+    je 9f
+    lea ecx, [rdi + 0x20]
+    mov edx, 1
+    jmp 8f
+1:  cmp edi, 0xe0
+    jb 9f
+    cmp edi, 0xfe
+    ja 2f
+    cmp edi, 0xf7
+    je 9f
+    lea ecx, [rdi - 0x20]
+    mov edx, 2
+    jmp 8f
+2:  cmp edi, 0xff
+    jne 21f
+    mov ecx, 0x178
+    mov edx, 2
+    jmp 8f
+21: cmp edi, 0x178
+    jne 22f
+    mov ecx, 0xff
+    mov edx, 1
+    jmp 8f
+22: cmp edi, 0x17e              # Latin Extended-A: pairs
+    ja 3f
+    cmp edi, 0x130
+    je 9f
+    cmp edi, 0x131
+    je 9f
+    cmp edi, 0x138
+    je 9f
+    cmp edi, 0x149
+    je 9f
+    # odd upper case from 0x139 to 0x148 and from 0x179, even elsewhere
+    mov r8d, 0                  # parity of the upper case letter
+    cmp edi, 0x139
+    jb 23f
+    cmp edi, 0x148
+    jbe 24f
+    cmp edi, 0x179
+    jb 23f
+24: mov r8d, 1
+23: mov ecx, edi
+    and ecx, 1
+    cmp ecx, r8d
+    jne 25f
+    mov edx, 1                  # upper: the next one is its lower case
+    lea ecx, [rdi + 1]
+    jmp 8f
+25: mov edx, 2
+    lea ecx, [rdi - 1]
+    jmp 8f
+3:  cmp edi, 0x391              # Greek
+    jb 9f
+    cmp edi, 0x3a9
+    ja 31f
+    cmp edi, 0x3a2
+    je 9f
+    lea ecx, [rdi + 0x20]
+    mov edx, 1
+    jmp 8f
+31: cmp edi, 0x3b1
+    jb 9f
+    cmp edi, 0x3c9
+    ja 4f
+    lea ecx, [rdi - 0x20]
+    cmp edi, 0x3c2              # final sigma
+    jne 32f
+    mov ecx, 0x3a3
+32: mov edx, 2
+    jmp 8f
+4:  cmp edi, 0x400              # Cyrillic
+    jb 9f
+    cmp edi, 0x40f
+    ja 41f
+    lea ecx, [rdi + 0x50]
+    mov edx, 1
+    jmp 8f
+41: cmp edi, 0x42f
+    ja 42f
+    lea ecx, [rdi + 0x20]
+    mov edx, 1
+    jmp 8f
+42: cmp edi, 0x44f
+    ja 43f
+    lea ecx, [rdi - 0x20]
+    mov edx, 2
+    jmp 8f
+43: cmp edi, 0x45f
+    ja 9f
+    lea ecx, [rdi - 0x50]
+    mov edx, 2
+8:  cmp esi, '~'
+    je 81f
+    cmp esi, 'U'
+    jne 82f
+    cmp edx, 2
+    jne 9f
+81: mov eax, ecx
+    ret
+82: cmp edx, 1
+    je 81b
+9:  ret
 
 # vjoin(line, joins): join the next lines to this one
 vjoin:
