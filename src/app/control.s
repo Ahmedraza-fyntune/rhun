@@ -232,6 +232,67 @@ c_up:
     xor eax, eax
     ret
 
+# print-cursor SHAPE SIZE: which cursor image the theme lookup picks
+c_print_cursor:
+    push r13
+    push r14
+    sub rsp, 8
+    call next_int
+    mov r13d, eax
+    call next_int
+    mov r14d, eax
+    mov edi, r13d
+    mov esi, r14d
+    lea rdx, [rip + pc_xc]
+    call xcursor_load
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + out]
+    mov rsi, [rip + g_xcursor_found + SB_ptr]
+    call sb_push_cstr
+    jmp 2f
+1:  mov edi, r13d
+    mov esi, r14d
+    lea rdx, [rip + pc_xc]
+    call xcursor_builtin
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_builtin]
+    call sb_push_cstr
+2:  lea rdi, [rip + out]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + out]
+    mov esi, [rip + pc_xc + XC_w]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 'x'
+    call sb_push_byte
+    lea rdi, [rip + out]
+    mov esi, [rip + pc_xc + XC_h]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_hot]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + pc_xc + XC_xhot]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, ','
+    call sb_push_byte
+    lea rdi, [rip + out]
+    mov esi, [rip + pc_xc + XC_yhot]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, [rip + pc_xc + XC_file]
+    call mem_free
+    add rsp, 8
+    pop r14
+    pop r13
+    xor eax, eax
+    ret
+
 # print-window: window requests seen by the headless platform
 c_print_window:
     lea rdi, [rip + out]
@@ -770,6 +831,9 @@ on_client:
 .Lc_print_agents: .asciz "print-agents"
 .Lc_xkey: .asciz "xkey"
 .Lc_print_window: .asciz "print-window"
+.Lc_print_cursor: .asciz "print-cursor"
+.Ls_builtin: .asciz "built-in"
+.Ls_hot: .asciz " hot "
 .Ls_moves: .asciz "moves="
 .Ls_maximized: .asciz " maximized="
 .Ls_minimized: .asciz " minimized="
@@ -783,8 +847,11 @@ ctl_table:
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
-    .quad .Lc_print_window, c_print_window, 0, 0
+    .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, 0, 0
 
 .data
 lsock: .long -1
 csock: .long -1
+.bss
+.p2align 3
+pc_xc: .zero XC_SIZE

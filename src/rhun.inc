@@ -219,6 +219,16 @@ ENDSTRUCT RECT_SIZE
 .equ CUR_NWSE, 5
 .equ CUR_NESW, 6
 
+# cursor image (xcursor_load / xcursor_builtin)
+STRUCT
+F XC_file, 8            # mem_free when done
+F XC_pixels, 8          # premultiplied ARGB, w * h
+F XC_w, 4
+F XC_h, 4
+F XC_xhot, 4
+F XC_yhot, 4
+ENDSTRUCT XC_SIZE
+
 # ---- big-endian loads (font tables) ----
 .macro LDBE16 r32, r16, mem
     movzx \r32, word ptr \mem

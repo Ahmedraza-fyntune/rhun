@@ -35,7 +35,9 @@ rhun [folder] [files...]
 
 Without a folder the current directory is the project. Without files the previous session of that project is reopened.
 
-rhun uses Wayland when it can. It falls back to X11 when there is no Wayland compositor, or when the compositor lacks the cursor-shape protocol (older GNOME and wlroots) and XWayland is running. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
+rhun uses Wayland when it can and falls back to X11 when there is no Wayland compositor. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
+
+The mouse pointer is the desktop's: the compositor draws it when it supports the cursor-shape protocol; otherwise rhun loads your Xcursor theme (`XCURSOR_THEME`, `XCURSOR_SIZE`, `~/.icons/default`, `/usr/share/icons/default`).
 
 On Wayland rhun draws its own title bar with window buttons, except on tiling compositors (Hyprland, Sway, niri, river, dwl, Qtile), where windows stay bare. `decorations = auto | client | server` under `[ui]` overrides this; `client` is rhun's title bar, `server` is the compositor's.
 

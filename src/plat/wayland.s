@@ -1335,6 +1335,209 @@ tiling_desktop:
 8:  xor eax, eax
 9:  EPILOGUE
 
+# theme_cursor(shape): the compositor cannot draw named cursors; show the theme's image on our own surface
+theme_cursor:
+    PROLOGUE 16
+    mov ebx, edi
+    cmp dword ptr [rip + id_pointer], 0
+    je 9f
+    # integer buffer scale: fractional outputs get the next larger image
+    movss xmm0, [rip + g_dpi_scale]
+    cvttss2si eax, xmm0
+    cvtsi2ss xmm1, eax
+    comiss xmm0, xmm1
+    jbe 1f
+    inc eax
+1:  cmp eax, 1
+    jge 2f
+    mov eax, 1
+2:  cmp eax, 4
+    jle 3f
+    mov eax, 4
+3:  cmp eax, [rip + cur_bs]
+    je 4f
+    mov [rip + cur_bs], eax
+    call cursor_drop
+4:  lea rax, [rip + cur_ids]
+    cmp dword ptr [rax + rbx*4], 0
+    jne 5f
+    mov edi, ebx
+    call cursor_make
+    lea rax, [rip + cur_ids]
+    cmp dword ptr [rax + rbx*4], 0
+    je 9f
+5:  cmp dword ptr [rip + cur_surf], 0
+    jne 6f
+    call wl_new_id
+    mov [rip + cur_surf], eax
+    MSG [rip + id_compositor], 0  # create_surface
+    ARG [rip + cur_surf]
+    END
+6:  MSG [rip + cur_surf], 8       # set_buffer_scale
+    ARG [rip + cur_bs]
+    END
+    lea rax, [rip + cur_ids]
+    mov r12d, [rax + rbx*4]
+    MSG [rip + cur_surf], 1       # attach
+    ARG r12d
+    ARG 0
+    ARG 0
+    END
+    MSG [rip + cur_surf], 2       # damage
+    ARG 0
+    ARG 0
+    ARG 4096
+    ARG 4096
+    END
+    MSG [rip + cur_surf], 6       # commit
+    END
+    lea rax, [rip + cur_hx]
+    mov r12d, [rax + rbx*4]
+    lea rax, [rip + cur_hy]
+    mov r13d, [rax + rbx*4]
+    MSG [rip + id_pointer], 0     # set_cursor
+    ARG [rip + enter_serial]
+    ARG [rip + cur_surf]
+    ARG r12d
+    ARG r13d
+    END
+9:  EPILOGUE
+
+# cursor_make(shape): wl_buffer for the theme image (or the built-in one) at the current scale
+cursor_make:
+    PROLOGUE 32
+    mov ebx, edi
+    call xcursor_size
+    imul eax, [rip + cur_bs]
+    mov r12d, eax
+    mov edi, ebx
+    mov esi, r12d
+    lea rdx, [rip + xcur]
+    call xcursor_load
+    test eax, eax
+    jnz 1f
+    mov edi, ebx
+    mov esi, r12d
+    lea rdx, [rip + xcur]
+    call xcursor_builtin
+1:  # buffer size must be a multiple of the scale
+    mov ecx, [rip + cur_bs]
+    mov eax, [rip + xcur + XC_w]
+    add eax, ecx
+    dec eax
+    xor edx, edx
+    div ecx
+    imul eax, ecx
+    mov r13d, eax               # W
+    mov eax, [rip + xcur + XC_h]
+    add eax, ecx
+    dec eax
+    xor edx, edx
+    div ecx
+    imul eax, ecx
+    mov r14d, eax               # H
+    imul eax, r13d
+    shl rax, 2
+    mov [rsp], rax              # bytes
+    lea rdi, [rip + .Lcursor_name]
+    mov esi, 1                  # MFD_CLOEXEC
+    SYS SYS_memfd_create
+    test rax, rax
+    js 8f
+    mov r15d, eax
+    mov edi, r15d
+    mov rsi, [rsp]
+    SYS SYS_ftruncate
+    xor edi, edi
+    mov rsi, [rsp]
+    mov edx, PROT_READ | PROT_WRITE
+    mov r10d, MAP_SHARED
+    mov r8d, r15d
+    xor r9d, r9d
+    SYS SYS_mmap
+    cmp rax, -4096
+    ja 7f
+    mov [rsp + 8], rax
+    # rows into the (zeroed) padded buffer
+    xor ecx, ecx
+2:  cmp ecx, [rip + xcur + XC_h]
+    jae 3f
+    mov [rsp + 16], ecx
+    mov eax, ecx
+    imul eax, r13d
+    mov rdi, [rsp + 8]
+    lea rdi, [rdi + rax*4]
+    mov eax, ecx
+    imul eax, [rip + xcur + XC_w]
+    mov rsi, [rip + xcur + XC_pixels]
+    lea rsi, [rsi + rax*4]
+    mov ecx, [rip + xcur + XC_w]
+    shl ecx, 2
+    rep movsb
+    mov ecx, [rsp + 16]
+    inc ecx
+    jmp 2b
+3:  call wl_new_id
+    mov [rsp + 16], eax         # pool
+    MSG [rip + id_shm], 0         # create_pool
+    ARG [rsp + 16]
+    ARG [rsp]
+    END
+    mov edi, r15d
+    call wl_flush_fd
+    call wl_new_id
+    lea rcx, [rip + cur_ids]
+    mov [rcx + rbx*4], eax
+    mov [rsp + 20], eax
+    MSG [rsp + 16], 0             # create_buffer
+    ARG [rsp + 20]
+    ARG 0
+    ARG r13d
+    ARG r14d
+    lea eax, [r13*4]
+    ARG eax
+    ARG 0                         # ARGB8888
+    END
+    MSG [rsp + 16], 1             # pool destroy (the buffer keeps it)
+    END
+    # hotspot in surface coordinates
+    mov eax, [rip + xcur + XC_xhot]
+    xor edx, edx
+    div dword ptr [rip + cur_bs]
+    lea rcx, [rip + cur_hx]
+    mov [rcx + rbx*4], eax
+    mov eax, [rip + xcur + XC_yhot]
+    xor edx, edx
+    div dword ptr [rip + cur_bs]
+    lea rcx, [rip + cur_hy]
+    mov [rcx + rbx*4], eax
+    mov rdi, [rsp + 8]
+    mov rsi, [rsp]
+    SYS SYS_munmap
+7:  mov edi, r15d
+    SYS SYS_close
+8:  mov rdi, [rip + xcur + XC_file]
+    call mem_free
+    EPILOGUE
+
+# cursor_drop(): forget cursor buffers (the scale changed)
+cursor_drop:
+    push rbx
+    xor ebx, ebx
+1:  lea rax, [rip + cur_ids]
+    mov eax, [rax + rbx*4]
+    test eax, eax
+    jz 2f
+    MSG eax, 0                    # wl_buffer.destroy
+    END
+    lea rax, [rip + cur_ids]
+    mov dword ptr [rax + rbx*4], 0
+2:  inc ebx
+    cmp ebx, 7
+    jb 1b
+    pop rbx
+    ret
+
 # ---------------- vtable entries ----------------
 
 wl_timeout:
@@ -1376,9 +1579,9 @@ wl_tick:
 wl_set_cursor:
     cmp edi, [rip + cur_shape]
     je 1f
-    cmp dword ptr [rip + id_cursor_dev], 0
-    je 1f
     mov [rip + cur_shape], edi
+    cmp dword ptr [rip + id_cursor_dev], 0
+    je theme_cursor
     push rbx
     lea rax, [rip + cursor_shapes]
     movzx ebx, byte ptr [rax + rdi]
@@ -1643,20 +1846,7 @@ FN wl_connect
     je .Lwc_close
     cmp dword ptr [rip + id_wm_base], 0
     je .Lwc_close
-    # no cursor-shape protocol means no pointer image: prefer XWayland (RHUN_BACKEND=wayland keeps Wayland)
-    cmp dword ptr [rip + id_cursor_mgr], 0
-    jne 6f
-    lea rdi, [rip + .Lenv_xdisplay]
-    call getenv
-    test rax, rax
-    jz 6f
-    lea rdi, [rip + .Lenv_backend]
-    call getenv
-    test rax, rax
-    jz .Lwc_close
-    cmp byte ptr [rax], 'w'
-    jne .Lwc_close
-6:  mov eax, 1
+    mov eax, 1
     EPILOGUE
 .Lwc_close:
     mov edi, [rip + wl_fd]
@@ -1809,11 +1999,10 @@ global_table:
 .Lt_qtile: .asciz "qtile"
 .Lenv_desktop: .asciz "XDG_CURRENT_DESKTOP"
 .Lenv_display: .asciz "WAYLAND_DISPLAY"
-.Lenv_xdisplay: .asciz "DISPLAY"
-.Lenv_backend: .asciz "RHUN_BACKEND"
 .Lenv_runtime: .asciz "XDG_RUNTIME_DIR"
 .Ldefault_display: .asciz "wayland-0"
 .Lmemfd_name: .asciz "rhun-shm"
+.Lcursor_name: .asciz "rhun-cursor"
 .Lapp_id: .asciz "rhun"
 .Lkmdump: .asciz "RHUN_DUMP_KEYMAP"
 .Lmime_utf8: .asciz "text/plain;charset=utf-8"
@@ -1836,5 +2025,12 @@ paste_fd: .long -1
 .globl g_csd, g_dpi_scale
 g_csd: .long 1
 deco_applied: .long -1
+cur_bs: .long 0
+cur_surf: .long 0
+cur_ids: .zero 4 * 7
+cur_hx: .zero 4 * 7
+cur_hy: .zero 4 * 7
+.p2align 3
+xcur: .zero XC_SIZE
 deco_mode: .long 0
 g_dpi_scale: .float 1.0
