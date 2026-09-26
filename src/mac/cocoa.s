@@ -1433,10 +1433,17 @@ v_scrollWheel:
     fsub d2, d8, d0
     fsub d3, d9, d1
     stp d2, d3, [x9]
-    fcvtzs w0, d0
-    fcvtzs w1, d1
-    orr w9, w0, w1
+    fcvtzs w20, d0
+    fcvtzs w21, d1
+    orr w9, w20, w21
     cbz w9, 9f
+    // with Command or Control an image zooms
+    mov x0, x19
+    MSG modifierFlags
+    bl ns_mods
+    mov w2, w0
+    mov w0, w20
+    mov w1, w21
     XCALL app_on_scroll
 9:  ldp d8, d9, [sp]
     IMPRET
