@@ -62,7 +62,7 @@ On Wayland rhun draws its own title bar with window buttons, except on tiling co
 | Ctrl+Shift+A | Toggle agents panel |
 | Ctrl+\` | Toggle terminal |
 | Ctrl+Shift+\` | New terminal |
-| Ctrl+Shift+G | Git history |
+| Ctrl+Shift+G | Toggle git history |
 | Ctrl+F, Ctrl+H | Find, replace |
 | Ctrl+Shift+F | Find in files |
 | Ctrl+G | Go to line |
@@ -73,7 +73,20 @@ On Wayland rhun draws its own title bar with window buttons, except on tiling co
 | Ctrl+Shift+D, Ctrl+Shift+K | Duplicate, delete line |
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
 
-All commands are listed in the command palette. Git: Open Changes shows the current file's changes against HEAD; the explorer's context menu has it for changed files. In the history, the first row holds uncommitted changes, and clicking a file opens its diff. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
+All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
+
+### Git
+
+In a git repository rhun shows what changed since the last commit. It runs the `git` program in the background, so the editor never waits for it, and follows commits, checkouts and edits made elsewhere, the built-in terminal included.
+
+- The gutter marks added lines green and changed lines amber, and points to deleted lines in red. The marks follow the text as you type, before it is saved.
+- File names in tabs and the explorer take the color of their status. The explorer adds a letter: M modified, A added, U untracked, D deleted, R renamed, C conflict; folders take the color of the changes inside them.
+- Git: Open Changes (also in the explorer's context menu of a changed file) opens the file's diff against HEAD in a read-only tab, with the old and new line numbers and the file's syntax colors.
+- The history (Ctrl+Shift+G, or the branch button in the title bar) shows the latest 3000 commits of all branches as a graph, with branch and tag names. The first row holds the uncommitted changes. The selected commit's message and changed files are shown on the right, with lines added and deleted; clicking a file opens its diff in that commit.
+
+It stays quick on large repositories: the Linux kernel's history (1.5M commits, 96k files) opens in about a tenth of a second.
+
+Git support is on by default; `enabled = false` under `[git]` in the config, or the Git switch in Settings, turns it off.
 
 ### Images
 
