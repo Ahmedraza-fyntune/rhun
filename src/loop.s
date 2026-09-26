@@ -86,7 +86,18 @@ FN loop_run
     cmp eax, ebx
     jl 2f
 3:  mov eax, ebx
-2:  mov r15d, eax
+2:  mov edi, eax
+    call loop_poll
+    PCALL P_tick
+    call app_tick
+    jmp .Llr_loop
+.Llr_ret:
+    EPILOGUE
+
+# loop_poll(timeout_ms): wait for watched fds (-1 forever, 0 not at all), run their handlers
+FN loop_poll
+    PROLOGUE
+    mov r15d, edi
     # pollfd array
     xor ecx, ecx
     lea r8, [rip + watches]
@@ -105,22 +116,22 @@ FN loop_run
     movsxd rdx, r15d
     SYS SYS_poll
     test rax, rax
-    js .Llr_after
+    js .Llp_ret
     # dispatch; iterate backwards so removals during handlers are safe
     mov r12d, [rip + nwatch]
-.Llr_disp:
+.Llp_disp:
     dec r12d
-    js .Llr_after
+    js .Llp_ret
     lea r9, [rip + pollfds]
     movzx esi, word ptr [r9 + r12*8 + 6]
     test esi, esi
-    jz .Llr_disp
+    jz .Llp_disp
     mov edi, [r9 + r12*8]
     # find watch by fd (array may have changed)
     lea r8, [rip + watches]
     xor ecx, ecx
 6:  cmp ecx, [rip + nwatch]
-    jae .Llr_disp
+    jae .Llp_disp
     imul eax, ecx, PW_SIZE
     cmp [r8 + rax + PW_fd], edi
     je 7f
@@ -128,10 +139,6 @@ FN loop_run
     jmp 6b
 7:  mov rdx, [r8 + rax + PW_ctx]
     call [r8 + rax + PW_handler]
-    jmp .Llr_disp
-.Llr_after:
-    PCALL P_tick
-    call app_tick
-    jmp .Llr_loop
-.Llr_ret:
+    jmp .Llp_disp
+.Llp_ret:
     EPILOGUE

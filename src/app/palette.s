@@ -633,14 +633,22 @@ load_themes:
     mov rdi, rbx
     call theme_entry
     mov r12, rax
-    mov rdi, [r12 + TH_name]
-    call strlen
-    lea rdx, [rip + .Ldark]
+    lea r13, [rip + .Ldark]
     cmp dword ptr [r12 + TH_dark], 0
     jne 2f
-    lea rdx, [rip + .Llight]
-2:  mov rdi, [r12 + TH_name]
+    lea r13, [rip + .Llight]
+2:  cmp rbx, [rip + g_follow]
+    jne 3f
+    # "Follow Omarchy" shows the theme it stands for
+    call omarchy_target
+    mov rdi, rax
+    call theme_entry
+    mov r13, [rax + TH_name]
+3:  mov rdi, [r12 + TH_name]
+    call strlen
+    mov rdi, [r12 + TH_name]
     mov rsi, rax
+    mov rdx, r13
     mov rcx, rbx
     call item_add
     inc rbx

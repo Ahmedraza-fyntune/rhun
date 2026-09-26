@@ -397,7 +397,9 @@ c_wait:
     mov eax, 35                 # nanosleep
     syscall
     add rsp, 24
-    # let timers run (agents poll, blink)
+    # let file watches and timers run (agents poll, blink)
+    xor edi, edi
+    call loop_poll
     call app_tick
     xor eax, eax
     ret
@@ -457,7 +459,7 @@ c_print_doc:
     xor eax, eax
     ret
 
-# print-state: "tabs=N active=name line=L col=C sel=S dirty=D focus=F lang=X theme=T"
+# print-state: "tabs=N active=name line=L col=C sel=S dirty=D focus=F lang=X theme=T" (T is omarchy:ID when following)
 c_print_state:
     push rbx
     push r12
@@ -535,7 +537,19 @@ c_print_state:
     lea rdi, [rip + out]
     mov rsi, rax
     call sb_push_cstr
+    # following Omarchy: which theme that is
+    mov rax, [rip + g_theme_cur]
+    cmp rax, [rip + g_follow]
+    jne 1f
     lea rdi, [rip + out]
+    mov esi, ':'
+    call sb_push_byte
+    mov rdi, [rip + g_follow_target]
+    call theme_entry
+    lea rdi, [rip + out]
+    mov rsi, [rax + TH_id]
+    call sb_push_cstr
+1:  lea rdi, [rip + out]
     mov esi, 10
     call sb_push_byte
     add rsp, 8

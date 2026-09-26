@@ -1,10 +1,11 @@
-# inotify: explorer refresh, agent sessions, files changed on disk, config reload
+# inotify: explorer refresh, agent sessions, files changed on disk, config reload, Omarchy theme
 .include "rhun.inc"
 
 .equ WK_EXPLORER, 1
 .equ WK_AGENTS, 2
 .equ WK_DOCS, 4
 .equ WK_CONFIG, 8
+.equ WK_OMARCHY, 16
 .equ MAXWD, 4096
 .equ WMASK, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_MODIFY
 
@@ -34,6 +35,12 @@ FN watch_init
     call config_dir
     mov rdi, rax
     mov esi, WK_CONFIG
+    call add_watch
+    call omarchy_dir
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov esi, WK_OMARCHY
     call add_watch
 9:  EPILOGUE
 
@@ -141,15 +148,29 @@ on_inotify:
     pop rcx
     pop rcx
 3:  test ecx, WK_CONFIG
-    jz .Lin_ev
+    jz 31f
     test r15d, IN_CLOSE_WRITE | IN_MOVED_TO
-    jz .Lin_ev
+    jz 31f
+    push rcx
+    push rcx
     lea rdi, [r14 + 16]
     lea rsi, [rip + .Lconfig]
     call strcmp_eq
     test eax, eax
-    jz .Lin_ev
+    jz 30f
     call app_reload_config
+30: pop rcx
+    pop rcx
+31: test ecx, WK_OMARCHY
+    jz .Lin_ev
+    test r15d, IN_CLOSE_WRITE | IN_MOVED_TO
+    jz .Lin_ev
+    lea rdi, [r14 + 16]
+    lea rsi, [rip + .Ltheme_name]
+    call strcmp_eq
+    test eax, eax
+    jz .Lin_ev
+    call omarchy_changed
     jmp .Lin_ev
 .Lin_done:
     cmp dword ptr [rsp], 0
@@ -252,4 +273,5 @@ FN cmd_reload_file
 
 .section .rodata
 .Lconfig: .asciz "config"
+.Ltheme_name: .asciz "theme.name"
 .Lchanged: .asciz "File changed on disk (unsaved edits kept)"

@@ -35,7 +35,7 @@ cfg_auto_pairs: .long 1
 cfg_word_wrap: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
 .p2align 3
-cfg_theme: .quad .Ldef_theme
+cfg_theme: .quad cfg_def_theme
 cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
 cfg_exclude: .quad .Ldef_exclude
@@ -517,7 +517,8 @@ dir_each_cb:
 9:  EPILOGUE
 
 .section .rodata
-.Ldef_theme: .asciz "rhun-dark"
+.globl cfg_def_theme
+cfg_def_theme: .asciz "rhun-dark"
 .Lempty: .asciz ""
 .Ldef_exclude: .asciz ".git node_modules target build .cache __pycache__ .venv .idea .DS_Store"
 .Ldef_sources: .asciz "claude codex"

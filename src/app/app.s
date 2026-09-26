@@ -47,11 +47,20 @@ FN app_init
     PROLOGUE 16
     call config_load
     call theme_scan
-    mov rdi, [rip + cfg_theme]
+    # on Omarchy, follow its theme until one is picked
+    cmp qword ptr [rip + g_follow], 0
+    js 2f
+    lea rax, [rip + cfg_def_theme]
+    cmp [rip + cfg_theme], rax
+    jne 2f
+    lea rax, [rip + omarchy_id]
+    mov [rip + cfg_theme], rax
+2:  mov rdi, [rip + cfg_theme]
     call theme_find
     test rax, rax
     jns 1f
-    xor eax, eax
+    lea rdi, [rip + cfg_def_theme]
+    call theme_find
 1:  mov rdi, rax
     call theme_apply
     call app_load_fonts

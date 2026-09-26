@@ -13,8 +13,15 @@ touch -d '2026-09-26 06:00' "$tmp/.claude/projects/$slug/s1.jsonl"
 touch -d '2026-09-26 07:00' "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
 for s in tests/scripts/*.rsc; do
     n=$(basename "$s" .rsc)
-    XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$tmp XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child \
-        timeout 20 build/rhun "$PWD" --headless 1400x860 --script "$s" > "$tmp/$n.out" 2>&1
+    # tests/data/NAME.home: a HOME of its own; @HOME@ in the script names it
+    home=$tmp
+    if [ -d "tests/data/$n.home" ]; then
+        home=$tmp/home-$n
+        cp -r "tests/data/$n.home" "$home"
+    fi
+    sed "s|@HOME@|$home|g" "$s" > "$tmp/$n.rsc"
+    XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child \
+        timeout 20 build/rhun "$PWD" --headless 1400x860 --script "$tmp/$n.rsc" > "$tmp/$n.out" 2>&1
     if [ "$1" = update ]; then
         cp "$tmp/$n.out" "tests/data/$n.ui.expected"
     fi

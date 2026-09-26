@@ -186,9 +186,10 @@ theme_derive:
     pop rbx
     ret
 
-# theme_scan(): register built-in themes and ~/.config/rhun/themes/*.theme
+# theme_scan(): register "Follow Omarchy" (on Omarchy), built-in themes and ~/.config/rhun/themes/*.theme
 FN theme_scan
     PROLOGUE 16
+    call omarchy_register
     xor ebx, ebx
 .Lts_builtin:
     cmp rbx, [rip + themes_count]
@@ -376,7 +377,13 @@ FN theme_apply
     jb 1f
     xor edi, edi
 1:  mov [rip + g_theme_cur], rdi
-    imul rbx, rdi, TH_SIZE
+    cmp rdi, [rip + g_follow]
+    jne 3f
+    # "Follow Omarchy": colors of the theme Omarchy has set
+    call omarchy_target
+    mov [rip + g_follow_target], rax
+    mov rdi, rax
+3:  imul rbx, rdi, TH_SIZE
     add rbx, [rip + g_themes + VEC_ptr]
     mov rdi, rbx
     call theme_text
