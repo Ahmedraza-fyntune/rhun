@@ -34,6 +34,8 @@ rhun [folder] [files...]
 
 Without a folder the current directory is the project. Without files the previous session of that project is reopened.
 
+rhun uses Wayland when it can. It falls back to X11 when there is no Wayland compositor, or when the compositor lacks the cursor-shape protocol (older GNOME and wlroots) and XWayland is running. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
+
 | Key | Action |
 | --- | --- |
 | Ctrl+P | Go to file |

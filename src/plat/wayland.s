@@ -1566,7 +1566,20 @@ FN wl_connect
     je .Lwc_close
     cmp dword ptr [rip + id_wm_base], 0
     je .Lwc_close
-    mov eax, 1
+    # no cursor-shape protocol means no pointer image: prefer XWayland (RHUN_BACKEND=wayland keeps Wayland)
+    cmp dword ptr [rip + id_cursor_mgr], 0
+    jne 6f
+    lea rdi, [rip + .Lenv_xdisplay]
+    call getenv
+    test rax, rax
+    jz 6f
+    lea rdi, [rip + .Lenv_backend]
+    call getenv
+    test rax, rax
+    jz .Lwc_close
+    cmp byte ptr [rax], 'w'
+    jne .Lwc_close
+6:  mov eax, 1
     EPILOGUE
 .Lwc_close:
     mov edi, [rip + wl_fd]
@@ -1706,6 +1719,8 @@ global_table:
 .Li_viewporter: .asciz "wp_viewporter"
 .Li_fscale: .asciz "wp_fractional_scale_manager_v1"
 .Lenv_display: .asciz "WAYLAND_DISPLAY"
+.Lenv_xdisplay: .asciz "DISPLAY"
+.Lenv_backend: .asciz "RHUN_BACKEND"
 .Lenv_runtime: .asciz "XDG_RUNTIME_DIR"
 .Ldefault_display: .asciz "wayland-0"
 .Lmemfd_name: .asciz "rhun-shm"
