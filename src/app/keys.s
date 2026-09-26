@@ -269,12 +269,16 @@ FN keys_for
 2:  lea r13, [rip + keybuf]
     mov r14d, [r12 + KB_mods]
 .ifdef MACOS
-    # macOS: symbols in the order of its menus, Command for Ctrl; Ctrl+Tab stays Control
+    # macOS: symbols in the order of its menus, Command for Ctrl; Ctrl+Tab and Ctrl+` stay
+    # Control, as Command-Tab and Command-` belong to the system
     test r14d, MOD_CTRL
     jz 21f
-    cmp dword ptr [r12 + KB_key], KEY_TAB
+    mov eax, [r12 + KB_key]
+    cmp eax, KEY_TAB
+    je 20f
+    cmp eax, '`'
     jne 21f
-    lea rsi, [rip + .Lmac_control]
+20: lea rsi, [rip + .Lmac_control]
     mov rdi, r13
     call cstr_copy
     mov r13, rax

@@ -578,6 +578,27 @@ FN term_panel_key
     mov rbx, rax
     test r14d, MOD_SUPER
     jnz .Ltk_no
+.ifdef MACOS
+    # Command copies, pastes and runs rhun's shortcuts; Control types control characters
+    cmp dword ptr [rip + g_mac_cmd], 0
+    je .Ltk_ctl
+    test r14d, MOD_CTRL
+    jz .Ltk_ctl
+    cmp r12d, 0x80
+    jae .Ltk_ctl
+    mov eax, r12d
+    or eax, 0x20
+    cmp eax, 'c'
+    jne .Ltk_cmd_v
+    call cmd_term_copy
+    jmp .Ltk_yes
+.Ltk_cmd_v:
+    cmp eax, 'v'
+    jne .Ltk_no
+    call cmd_term_paste
+    jmp .Ltk_yes
+.Ltk_ctl:
+.endif
     mov eax, r14d
     and eax, MOD_CTRL | MOD_SHIFT
     cmp eax, MOD_CTRL | MOD_SHIFT

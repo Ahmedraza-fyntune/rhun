@@ -941,6 +941,11 @@ v_keyDown:
     bl ns_mods
     mov w22, w0                 // rhun mods
     STW w22, key_mods
+    // Command without Control: the terminal leaves it to rhun
+    ubfx x9, x21, #20, #1       // Command
+    ubfx x10, x21, #18, #1      // Control
+    bic w9, w9, w10
+    STW w9, g_mac_cmd
     // text being composed: the input method gets every key
     LDW w9, marked
     cbnz w9, Lkd_ime
@@ -1051,6 +1056,7 @@ Lkd_ime:
     mov x0, x19
     MSG interpretKeyEvents_
 Lkd_done:
+    STW wzr, g_mac_cmd
     IMPRET
 
 // ascii_key(w0 key code, w1 shift) -> the character of the key on the current ASCII-capable
@@ -2171,6 +2177,8 @@ cur: .long 0
 cursor: .long -1
 marked: .long 0
 key_mods: .long 0
+.globl g_mac_cmd
+g_mac_cmd: .long 0              // the key being handled has Command, not Control
 key_handled: .long 0
 left_as: .long 1
 pending: .long 0
