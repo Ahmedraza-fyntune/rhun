@@ -1943,9 +1943,9 @@ FN welcome_draw
     mov r12d, eax
     # the rune and "rhun", centered together; the rune is as tall as the h
     mov eax, [rip + g_face_huge + FACE_px]
-    shl eax, 2
+    imul eax, eax, 11
     xor edx, edx
-    mov ecx, 3
+    mov ecx, 9
     div ecx
     mov [rsp + 20], eax         # icon box
     imul eax, eax, 43

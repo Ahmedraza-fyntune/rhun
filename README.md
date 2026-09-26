@@ -155,6 +155,6 @@ An extension that crashes or hangs cannot take the editor with it.
 | `src/plat/` | Wayland, XKB keymaps, X11, headless |
 | `src/app/` | documents, editor, explorer, palette, settings, agents, syntax, themes |
 | `runtime/` | themes and grammars embedded into the binary |
-| `assets/fonts/` | Ubuntu Sans and Ubuntu Sans Mono (Ubuntu Font Licence) |
+| `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
 
 Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`.

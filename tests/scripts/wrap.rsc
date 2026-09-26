@@ -14,7 +14,7 @@ key shift+Down
 key shift+Down
 print-state
 key Escape
-click 700 422
+click 700 380
 print-state
 type Q
 print-state
