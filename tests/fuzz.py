@@ -11,13 +11,15 @@ CMDS = ('quick_open command_palette new_file save_as close_tab next_tab prev_tab
         'indent outdent toggle_comment newline_below newline_above find replace find_next find_prev '
         'find_in_files goto_line settings select_theme select_language toggle_sidebar toggle_agents '
         'focus_explorer focus_agents new_folder rename_file zoom_in zoom_out zoom_reset toggle_word_wrap '
-        'toggle_whitespace toggle_line_numbers').split()
+        'toggle_whitespace toggle_line_numbers toggle_vim').split()
 KEYS = ('Return BackSpace Delete Tab shift+Tab Escape Up Down Left Right Home End Page_Up Page_Down '
         'ctrl+Left ctrl+Right shift+Down shift+Right shift+End ctrl+shift+Left alt+Up alt+Down ctrl+z '
         'ctrl+shift+z ctrl+d ctrl+slash ctrl+a ctrl+c ctrl+v ctrl+x ctrl+Home ctrl+End F1 ctrl+Tab ctrl+p '
         'ctrl+g ctrl+f ctrl+h').split()
 WORDS = ['if (x) {', 'return 0;', 'hello world', 'fn main() {}', '# heading', '"str', '(a, b)', 'x = [1, 2',
-         'été naïve', 'tab\there', '  indent', '// c']
+         'été naïve', 'tab\there', '  indent', '// c',
+         # vim keys when vim mode is on
+         'dd', 'yyp', 'ciwx', '3x', 'vjd', 'u', '.', 'dap', 'gg', 'G', '>>', 'A;', 'o', 'wd$', ':noh', '/re', 'n']
 FILES = ['src/main.s', 'src/lib.s', 'README.md', 'tests/data/lines.c', 'runtime/syntax/c.syn',
          'tools/arm64.py', 'src/app/doc.s', 'tests/data/prose.md', 'runtime/themes/nord.theme', 'build.sh',
          'tests/data/images/rgba.png', 'tests/data/images/baseline-420.jpg', 'tests/data/images/progressive-gray.jpg',
