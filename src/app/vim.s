@@ -41,7 +41,7 @@ v_sdir: .long 1                 # direction of the last search; n follows it
 .p2align 3
 .globl g_vim_mode, g_vim_cmdline
 g_vim_mode: .long 0
-g_vim_cmdline: .long 0          # typing a command after ':'
+g_vim_cmdline: .long 0          # the key that opened the command line (: / ?), 0 when closed
 v_on: .long 0                   # cfg_vim when last applied
 v_count: .long 0                # count being typed
 v_opcount: .long 0              # count typed before the operator
@@ -65,6 +65,7 @@ v_insstart: .quad 0             # offset in v_rec of the first key typed in inse
 v_chgdoc: .quad 0               # document of the change in progress
 v_chglen: .quad 0               # its undo length before the change
 v_putdoc: .quad 0               # document waiting for the clipboard
+v_sfrom: .quad 0                # / ?: where the search began
 v_exdoc: .quad 0                # vim_export: the document, its selection before and after
 v_excur: .quad 0
 v_exanchor: .quad 0
@@ -75,6 +76,7 @@ v_dot: .zero SB_SIZE            # keys of the last change
 v_buf: .zero SB_SIZE
 v_stat: .zero 64
 v_tf: .zero TF_SIZE             # the command line
+v_pat: .zero SB_SIZE            # / ?: the pattern before, back when the search is cancelled
 
 .text
 
@@ -1146,21 +1148,22 @@ vcmd:
     jmp .Lc_done
 
 .Lc_search:
-    mov edi, 1
-    cmp r15d, '?'
-    jne 1f
-    mov edi, -1
-1:  mov [rip + v_sdir], edi
-    call find_vim_open
-    jmp .Lc_done
-
+    mov rax, [rbx + DOC_cur]
+    mov [rip + v_sfrom], rax
+    lea rdi, [rip + v_pat]
+    call sb_clear
+    call find_vim_query
+    lea rdi, [rip + v_pat]
+    mov rsi, rax
+    call sb_push
+    jmp 2f
 .Lc_ex:
     cmp dword ptr [rip + g_vim_mode], VM_VISUAL
-    jb 1f
+    jb 2f
     call vexit_visual
-1:  lea rdi, [rip + v_tf]
+2:  mov [rip + g_vim_cmdline], r15d
+    lea rdi, [rip + v_tf]
     call tf_clear
-    mov dword ptr [rip + g_vim_cmdline], 1
     jmp .Lc_done
 
 # ctrl+d, ctrl+u: half a page, the view goes along
@@ -3234,6 +3237,8 @@ FN vim_sel
 FN vim_view
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 1f
+    cmp dword ptr [rip + g_vim_cmdline], 0
+    jne 1f
     cmp dword ptr [rip + g_vim_mode], VM_NORMAL
     je 2f
 1:  ret
@@ -3313,11 +3318,11 @@ FN vim_export
     call vcancel
 9:  EPILOGUE
 
-# vim_click(): a click without shift ends visual mode
+# vim_click(): a click closes the command line; without shift it ends visual mode
 FN vim_click
     cmp dword ptr [rip + cfg_vim], 0
     je 1f
-    mov dword ptr [rip + g_vim_cmdline], 0
+    call vcmdline_close
     test dword ptr [rip + g_mods], MOD_SHIFT
     jnz 1f
     cmp dword ptr [rip + g_vim_mode], VM_VISUAL
@@ -3330,7 +3335,7 @@ FN vim_click
 vleave:
     push rbx
     mov qword ptr [rip + v_putdoc], 0
-    mov dword ptr [rip + g_vim_cmdline], 0
+    call vcmdline_close
     call vcancel
     mov eax, [rip + g_vim_mode]
     mov dword ptr [rip + g_vim_mode], VM_NORMAL
@@ -3383,11 +3388,15 @@ FN cmd_toggle_vim
     mov dword ptr [rip + g_dirty], 1
     jmp vim_sync
 
-# vim_mode_name() -> "normal", "insert", "visual", "vline", or "command" on the command line
+# vim_mode_name() -> "normal", "insert", "visual", "vline", "command" after ':', "search" after / and ?
 FN vim_mode_name
+    mov ecx, [rip + g_vim_cmdline]
     lea rax, [rip + .Lm_command]
-    cmp dword ptr [rip + g_vim_cmdline], 0
-    jne 1f
+    cmp ecx, ':'
+    je 1f
+    lea rax, [rip + .Ls_search]
+    test ecx, ecx
+    jnz 1f
     mov eax, [rip + g_vim_mode]
     lea rcx, [rip + .Lmode_names]
     mov rax, [rcx + rax*8]
@@ -3446,7 +3455,7 @@ FN vim_status
 
 # ---- the : command line ----
 
-# vcmdline_key(keysym, cp, mods): Enter runs the command; Esc, or Backspace on nothing, closes it
+# vcmdline_key(keysym, cp, mods): Enter runs the command or search; Esc, or Backspace on nothing, closes it
 vcmdline_key:
     PROLOGUE
     mov r12d, edi
@@ -3471,16 +3480,130 @@ vcmdline_key:
     mov edx, r13d
     mov ecx, r14d
     call tf_key
+    call vim_field_changed
     EPILOGUE
-2:  mov dword ptr [rip + g_vim_cmdline], 0
+2:  call vcmdline_close
     EPILOGUE
-3:  mov dword ptr [rip + g_vim_cmdline], 0
+3:  mov eax, [rip + g_vim_cmdline]
+    mov dword ptr [rip + g_vim_cmdline], 0
+    cmp eax, ':'
+    jne 5f
     lea rdi, [rip + v_tf]
     call tf_text
     mov rdi, rax
     mov rsi, rdx
     call vim_ex
     EPILOGUE
+5:  mov edi, eax
+    call vsearch_accept
+    EPILOGUE
+
+# vcmdline_close(): closed without Enter; a search goes back to where it began
+vcmdline_close:
+    mov eax, [rip + g_vim_cmdline]
+    mov dword ptr [rip + g_vim_cmdline], 0
+    test eax, eax
+    jz 1f
+    cmp eax, ':'
+    jne vsearch_cancel
+1:  ret
+
+# vim_field_changed(): the text of a / or ? search changed: the cursor to the first match from where
+# it began (? before it), the matches marked
+FN vim_field_changed
+    mov eax, [rip + g_vim_cmdline]
+    test eax, eax
+    jz 1f
+    cmp eax, ':'
+    jne 2f
+1:  ret
+2:  PROLOGUE
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    lea rdi, [rip + v_tf]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    call find_vim_word
+    mov r12, [rip + v_sfrom]
+    mov [rbx + DOC_cur], r12
+    mov [rbx + DOC_anchor], r12
+    cmp qword ptr [rip + v_tf + TF_sb + SB_len], 0
+    je 8f
+    mov rdi, r12
+    mov esi, 1
+    cmp dword ptr [rip + g_vim_cmdline], '?'
+    jne 3f
+    mov esi, -1
+3:  call find_vim_step
+    test rax, rax
+    js 8f
+    mov [rbx + DOC_anchor], rax
+    add rax, [rip + v_tf + TF_sb + SB_len]
+    mov [rbx + DOC_cur], rax
+8:  call ed_touch
+9:  EPILOGUE
+
+# vsearch_accept(key): Enter after / or ?: to the match; with nothing typed, the last pattern again
+vsearch_accept:
+    PROLOGUE
+    mov r13d, 1
+    cmp edi, '?'
+    jne 1f
+    mov r13d, -1
+1:  mov [rip + v_sdir], r13d
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    cmp qword ptr [rip + v_tf + TF_sb + SB_len], 0
+    jne 2f
+    mov rdi, [rip + v_pat + SB_ptr]
+    mov rsi, [rip + v_pat + SB_len]
+    call find_vim_word
+2:  mov rdi, [rip + v_sfrom]
+    mov esi, r13d
+    call find_vim_step
+    test rax, rax
+    jns 4f
+    # not found: say so, stay
+    call find_vim_query
+    test rdx, rdx
+    jz 3f
+    mov r12, rax
+    mov r13, rdx
+    lea rdi, [rip + v_buf]
+    call sb_clear
+    lea rdi, [rip + v_buf]
+    lea rsi, [rip + .Lnot_found]
+    call sb_push_cstr
+    lea rdi, [rip + v_buf]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    lea rdi, [rip + v_buf]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + v_buf + SB_ptr]
+    call app_toast
+3:  mov rax, [rip + v_sfrom]
+4:  mov rdi, rax
+    call vset
+9:  EPILOGUE
+
+# vsearch_cancel(): back to where the search began; n and N keep the pattern from before
+vsearch_cancel:
+    PROLOGUE
+    mov rdi, [rip + v_pat + SB_ptr]
+    mov rsi, [rip + v_pat + SB_len]
+    call find_vim_word
+    lea rdi, [rip + g_ed_find]
+    call sb_clear
+    cmp qword ptr [rip + g_doc], 0
+    je 9f
+    mov rdi, [rip + v_sfrom]
+    call vset
+9:  EPILOGUE
 
 # vim_field() -> the command line's text field while it is open (pastes go there), else 0
 FN vim_field
@@ -3490,17 +3613,19 @@ FN vim_field
     lea rax, [rip + v_tf]
 1:  ret
 
-# vim_cmdline_draw(x, y, h): ':' and the command typed so far, in the status bar
+# vim_cmdline_draw(x, y, h): ':' (or / ?) and what was typed after it, in the status bar
 FN vim_cmdline_draw
     PROLOGUE 16
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
+    mov eax, [rip + g_vim_cmdline]
+    mov [rsp], eax
     lea rdi, [rip + g_face_small]
     mov esi, r12d
     mov edx, r13d
     mov ecx, r14d
-    lea r8, [rip + .Lcolon]
+    lea r8, [rsp]
     COLOR r9d, T_FG
     call ui_text_c
     mov r15d, eax
@@ -3710,7 +3835,6 @@ vx_ebang:
     jmp cmd_reload_file
 
 .section .rodata
-.Lcolon: .asciz ":"
 .Lspace: .ascii " "
 .Lnl: .ascii "\n"
 .Lbrackets: .asciz "()[]{}"
@@ -3726,6 +3850,8 @@ vx_ebang:
 .Lm_visual: .asciz "visual"
 .Lm_vline: .asciz "vline"
 .Lm_command: .asciz "command"
+.Ls_search: .asciz "search"
+.Lnot_found: .asciz "Pattern not found: "
 .Lt_normal: .asciz "NORMAL"
 .Lt_insert: .asciz "INSERT"
 .Lt_visual: .asciz "VISUAL"

@@ -162,7 +162,7 @@ type u
 type ggxp
 print-doc
 type uu
-# search
+# search, on the command line
 type /ba
 print-state
 key Return
@@ -172,6 +172,15 @@ print-state
 type N
 print-state
 type ?in
+key Return
+print-state
+type /
+key Return
+print-state
+type /qu
+key Escape
+print-state
+type /zzz
 key Return
 print-state
 type gg*

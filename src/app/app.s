@@ -714,6 +714,8 @@ field_changed:
     je palette_changed
     cmp eax, FOCUS_FIND
     je find_changed
+    cmp eax, FOCUS_EDITOR
+    je vim_field_changed
     ret
 
 # app_on_key(keysym, cp, mods)

@@ -377,11 +377,14 @@ second paragraph
 line two
 
 <eod>
-tabs=1 active=vim.c line=2 col=11 sel=2 dirty=0 lang=C vim=normal focus=2 theme=rhun-dark
+tabs=1 active=vim.c line=2 col=11 sel=2 dirty=0 lang=C vim=search focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=2 col=9 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=2 col=15 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=2 col=9 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=1 col=7 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
+tabs=1 active=vim.c line=7 col=2 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
+tabs=1 active=vim.c line=7 col=2 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
+tabs=1 active=vim.c line=7 col=2 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=1 col=1 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=1 col=1 sel=0 dirty=0 lang=C vim=command focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=3 col=5 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
