@@ -2678,35 +2678,43 @@ FN cmd_newline_below
 
 FN cmd_newline_above
     READONLY_RET
-    push rbx
+    PROLOGUE 272
     mov rbx, [rip + g_doc]
     test rbx, rbx
-    jz 1f
+    jz 9f
+    # an empty line above with the indentation of this one, the cursor at its end
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
     call doc_line_of
-    test rax, rax
-    jz 2f
-    # end of the previous line, then newline
+    mov r13, rax
     mov rdi, rbx
-    lea rsi, [rax - 1]
-    call doc_line_end
-    mov [rbx + DOC_cur], rax
-    mov [rbx + DOC_anchor], rax
-    call ed_newline
-    jmp 1f
-2:  # first line: insert an empty line above
-    mov qword ptr [rbx + DOC_cur], 0
-    mov qword ptr [rbx + DOC_anchor], 0
+    mov rsi, rax
+    call doc_line_start
+    mov r12, rax
     mov rdi, rbx
-    lea rsi, [rip + .Lnl]
-    mov edx, 1
+    mov rsi, r13
+    call line_indent
+    cmp rax, 255
+    jbe 1f
+    mov eax, 255
+1:  mov r14, rax
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r14
+    lea rcx, [rsp]
+    call doc_copy
+    mov byte ptr [rsp + r14], 10
+    mov [rbx + DOC_cur], r12
+    mov [rbx + DOC_anchor], r12
+    mov rdi, rbx
+    lea rsi, [rsp]
+    lea rdx, [r14 + 1]
     xor ecx, ecx
     call ed_insert
-    mov qword ptr [rbx + DOC_cur], 0
-    mov qword ptr [rbx + DOC_anchor], 0
-1:  pop rbx
-    ret
+    lea rax, [r12 + r14]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+9:  EPILOGUE
 
 FN cmd_indent
     mov edi, 1

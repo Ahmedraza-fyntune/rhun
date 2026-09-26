@@ -57,6 +57,7 @@ v_visual: .long 0               # the change began in visual mode: "." does not 
 v_replay: .long 0               # typing the keys of "." again
 v_inscount: .long 0             # 3ihi<Esc> types "hi" three times
 v_inskey: .long 0               # the key that began insert mode
+v_autoind: .long 0              # insert mode began on a line with only the indent o O cc S gave it
 v_putkind: .long 0              # p or P waiting for the clipboard
 v_putcount: .long 0
 v_putmode: .long 0
@@ -606,6 +607,7 @@ vcommit:
 
 # vinsert(pos, key, count): insert mode at pos (vbegin was called)
 vinsert:
+    mov dword ptr [rip + v_autoind], 0
     mov [rip + v_inskey], esi
     mov [rip + v_inscount], edx
     mov rax, [rip + v_rec + SB_len]
@@ -645,7 +647,34 @@ vesc_insert:
     call vfeed_edit
     jmp 2b
 3:  mov dword ptr [rip + g_vim_mode], VM_NORMAL
-    mov r12, [rbx + DOC_cur]
+    cmp dword ptr [rip + v_autoind], 0
+    je 31f
+    mov dword ptr [rip + v_autoind], 0
+    mov rdi, [rbx + DOC_cur]
+    call vline
+    mov r13, rax
+    mov rdi, rax
+    call vstart
+    mov r12, rax
+    mov rdi, r13
+    call vend
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    mov rsi, rax
+    mov rdi, rbx
+    call line_indent
+    add rax, r12
+    cmp rax, r13
+    jne 31f
+    cmp r13, r12
+    je 31f
+    mov rdi, r12
+    mov rsi, r13
+    sub rsi, r12
+    call vdelete
+31: mov r12, [rbx + DOC_cur]
     mov rdi, r12
     call vline
     mov rdi, rax
@@ -730,6 +759,13 @@ FN vim_key
     # insert mode: all but Esc goes on to the editor, recorded for "."
     call vrec
     cmp r12d, KEY_ESCAPE
+    je 72f
+    cmp r12d, '['
+    jne 71f
+    test r14d, MOD_CTRL
+    jnz 72f
+71: mov dword ptr [rip + v_autoind], 0
+72: cmp r12d, KEY_ESCAPE
     je 1f
     cmp r12d, '['
     jne .Lvk_no
@@ -1188,6 +1224,7 @@ vcmd:
 1:  mov rdi, [rbx + DOC_cur]
     mov edx, [rip + v_n]
     call vinsert
+    mov dword ptr [rip + v_autoind], 1
     jmp .Lc_done
 
 .Lc_x:
@@ -1894,6 +1931,7 @@ vop_lines:
     mov esi, 'c'
     mov edx, 1
     call vinsert
+    mov dword ptr [rip + v_autoind], 1
     jmp 9f
 5:  # indent: count times in visual mode
     mov r14d, 1
