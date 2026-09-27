@@ -1,16 +1,20 @@
 # entry: arguments, platform selection, main loop
-#   rhun [PATH...] [--headless WxH] [--scale F] [--script FILE] [--control SOCKET]
+#   rhun [PATH...] [--wait] [--headless WxH] [--scale F] [--script FILE] [--control SOCKET]
 .include "rhun.inc"
+
+.equ TCGETS, 0x5401
 
 .bss
 .p2align 3
 sigact: .zero 32
 opt_headless: .long 0
+opt_wait: .long 0
 .p2align 3
 opt_script: .quad 0
 opt_control: .quad 0
 paths: .zero VEC_SIZE
 cwd: .zero 4096
+self_path: .zero 4096
 
 .data
 opt_w: .long 1280
@@ -26,6 +30,7 @@ FN main
     mov r10d, 8
     SYS SYS_rt_sigaction
     call parse_args
+    call detach
     call raster_init
     call app_init
     cmp dword ptr [rip + opt_headless], 0
@@ -128,6 +133,13 @@ parse_args:
     mov [rip + opt_control], rax
     jmp 9f
 3:  mov rdi, r14
+    lea rsi, [rip + .Lo_wait]
+    call strcmp_eq
+    test eax, eax
+    jz 31f
+    mov dword ptr [rip + opt_wait], 1
+    jmp 9f
+31: mov rdi, r14
     lea rsi, [rip + .Lo_scale]
     call strcmp_eq
     test eax, eax
@@ -144,6 +156,106 @@ parse_args:
     jmp .Lpa_next
 .Lpa_done:
     EPILOGUE
+
+# detach(): started from a terminal, rhun goes on as a fresh copy in a session of its own that reads
+# and writes /dev/null, and this one exits: the shell gets its prompt back, and closing the terminal
+# does not close rhun. Not with --wait (EDITOR="rhun --wait" for git), not for scripting, and on
+# Linux not without a display, so that the error is seen. A copy rather than a fork, because on
+# macOS a forked process cannot use CoreFoundation, which the loader has already started. The
+# copy's input and output are no terminal, so it stays.
+detach:
+    PROLOGUE 64
+    mov eax, [rip + opt_headless]
+    or eax, [rip + opt_wait]
+    jnz 9f
+    cmp qword ptr [rip + opt_script], 0
+    jne 9f
+    cmp qword ptr [rip + opt_control], 0
+    jne 9f
+    # a terminal on stdin, stdout or stderr
+    xor ebx, ebx
+1:  mov edi, ebx
+    mov esi, TCGETS
+    lea rdx, [rsp]
+    SYS SYS_ioctl
+    test rax, rax
+    jz 2f
+    inc ebx
+    cmp ebx, 3
+    jb 1b
+    jmp 9f
+2:
+.ifdef MACOS
+    lea rdi, [rip + self_path]
+    mov esi, 4096
+    call mac_exe_path
+    test rax, rax
+    js 9f
+.else
+    lea rdi, [rip + .Lenv_wayland]
+    call getenv
+    test rax, rax
+    jnz 3f
+    lea rdi, [rip + .Lenv_display]
+    call getenv
+    test rax, rax
+    jz 9f
+3:  lea rdi, [rip + .Lself_exe]
+    lea rsi, [rip + self_path]
+    mov edx, 4095
+    SYS SYS_readlink
+    test rax, rax
+    jle 9f
+    lea rcx, [rip + self_path]
+    mov byte ptr [rcx + rax], 0
+.endif
+    lea rdi, [rip + .Ldevnull]
+    mov esi, O_RDWR | O_CLOEXEC
+    xor edx, edx
+    SYS SYS_open
+    test rax, rax
+    js 9f
+    mov ebx, eax
+    # a pipe whose write end the copy closes once it is in its new session (proc_spawn closes all
+    # but 0-2 after setsid): this one exits only then. On macOS vfork is a fork, and a copy still in
+    # the terminal's process group would go with it when the terminal signals the group.
+    lea rdi, [rsp]
+    mov esi, O_CLOEXEC
+    SYS SYS_pipe2
+    test rax, rax
+    js 8f
+    # the same arguments, run from the path of this program
+    mov rax, [rip + g_argv]
+    lea rcx, [rip + self_path]
+    mov [rax], rcx
+    mov rdi, rax
+    mov rsi, [rip + g_envp]
+    xor edx, edx
+    mov ecx, ebx
+    mov r8d, ebx
+    mov r9d, ebx
+    push 1                      # a new session; the terminal ioctl on /dev/null fails, so none
+    push 1
+    call proc_spawn
+    add rsp, 16
+    mov r12, rax
+    mov edi, [rsp + 4]
+    SYS SYS_close
+    test r12, r12
+    jle 7f                      # it did not start: stay
+6:  mov edi, [rsp]
+    lea rsi, [rsp + 8]
+    mov edx, 1
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 6b
+    xor edi, edi
+    call sys_exit
+7:  mov edi, [rsp]
+    SYS SYS_close
+8:  mov edi, ebx
+    SYS SYS_close
+9:  EPILOGUE
 
 # help_flag(arg): -h/--help prints usage, --version the version; both exit
 help_flag:
@@ -286,12 +398,18 @@ open_initial:
 .Lo_script: .asciz "--script"
 .Lo_control: .asciz "--control"
 .Lo_scale: .asciz "--scale"
+.Lo_wait: .asciz "--wait"
+.Ldevnull: .asciz "/dev/null"
+.Lself_exe: .asciz "/proc/self/exe"
+.Lenv_wayland: .asciz "WAYLAND_DISPLAY"
+.Lenv_display: .asciz "DISPLAY"
 .Lo_help: .asciz "--help"
 .Lo_h: .asciz "-h"
 .Lo_version: .asciz "--version"
 .Lversion: .asciz "rhun "
 .Lnl: .asciz "\n"
 .Lusage: .ascii "usage: rhun [folder] [files...]\n"
+    .ascii "  --wait           stay in the terminal until rhun is closed (for EDITOR)\n"
     .ascii "  --headless WxH   no display; use with --script or --control\n"
     .ascii "  --script FILE    run control commands from FILE and exit\n"
     .ascii "  --control PATH   accept control commands on a unix socket\n"

@@ -91,6 +91,8 @@ rhun [folder] [files...]
 
 Without a folder the current directory is the project. Without files the previous session of that project is reopened.
 
+Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.
+
 rhun uses Wayland when it can and falls back to X11 when there is no Wayland compositor. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
 
 The mouse pointer is the desktop's: the compositor draws it when it supports the cursor-shape protocol; otherwise rhun loads your Xcursor theme (`XCURSOR_THEME`, `XCURSOR_SIZE`, `~/.icons/default`, `/usr/share/icons/default`).
