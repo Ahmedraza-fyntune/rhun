@@ -1,5 +1,5 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
-#   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy [ctrl]
+#   key ctrl+s | type text | click x y [right|middle] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | wait-update | print-update
 .include "rhun.inc"
@@ -212,6 +212,40 @@ c_click:
     call release
     pop rax
     pop rax
+    xor eax, eax
+    ret
+
+# tap x y: a click posted at x y that leaves the pointer where it was, all before the next frame
+# (a synthetic click, a mouse faster than the frames): no frame sees the pointer over x y
+c_tap:
+    push r13
+    push r14
+    push r15
+    mov r13d, [rip + g_mx]
+    mov r14d, [rip + g_my]
+    call next_int
+    mov r15d, eax
+    call next_int
+    mov edi, r15d
+    mov esi, eax
+    call app_on_motion
+    mov edi, BTN_LEFT
+    mov esi, 1
+    xor edx, edx
+    call app_on_button
+    mov edi, BTN_LEFT
+    xor esi, esi
+    xor edx, edx
+    call app_on_button
+    mov edi, r13d
+    mov esi, r14d
+    call app_on_motion
+    call flush_frame
+    # the button came up before the frame: a move asked for now has no release to take
+    mov dword ptr [rip + g_hl_grab], 0
+    pop r15
+    pop r14
+    pop r13
     xor eax, eax
     ret
 
@@ -1038,6 +1072,7 @@ on_client:
 .Lc_type: .asciz "type"
 .Lc_move: .asciz "move"
 .Lc_click: .asciz "click"
+.Lc_tap: .asciz "tap"
 .Lc_down: .asciz "down"
 .Lc_up: .asciz "up"
 .Lc_scroll: .asciz "scroll"
@@ -1075,7 +1110,7 @@ on_client:
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
 ctl_table:
-    .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click
+    .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_scroll, c_scroll, .Lc_open, c_open
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
