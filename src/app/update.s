@@ -20,7 +20,7 @@ up_checked: .quad 0             # unix seconds of the last answer
 up_pid: .long 0
 up_kind: .long 0                # UP_JOB_* running, 0 for none
 up_manual: .long 0              # the check was asked for: its result is reported
-.globl g_update_state, g_restart, g_update_desc, g_update_label
+.globl g_update_state, g_restart, g_update_desc, g_version_text
 g_update_state: .long 0         # UP_*
 g_restart: .long 0              # quitting starts the new version
 up_latest: .zero 32             # the latest version known
@@ -29,7 +29,7 @@ up_item: .zero 64
 up_target: .zero 4096           # what the installer replaces and the restart runs
 up_exec: .zero 4096 + 32        # the program the restart runs
 g_update_desc: .zero 256        # the Check now row's text in Settings
-g_update_label: .zero 48        # and its label: this rhun's version
+g_version_text: .zero 48        # "Version X" of this rhun: the Check now row's label, the welcome screen
 .data
 up_fd: .long -1
 
@@ -40,7 +40,7 @@ up_fd: .long -1
 # update_init(): what the last check found, and the first automatic check
 FN update_init
     PROLOGUE INI_SIZE
-    lea rdi, [rip + g_update_label]
+    lea rdi, [rip + g_version_text]
     lea rsi, [rip + .Ld_version]
     call cstr_copy
     mov rdi, rax
@@ -1164,7 +1164,7 @@ ver_fields:
 .Le_reply: .asciz "unexpected reply"
 .Le_nodl: .asciz "needs curl or wget"
 .Lt_failed: .asciz "Couldn't check for updates: "
-.Lt_rhun: .asciz "rhun "
+.Lt_rhun: .asciz "rh\303\273n "
 .Lt_latest: .asciz " is the latest"
 .Lt_rebuild: .asciz " is available; pull and rebuild to update"
 .Li_update: .asciz "Update to "
@@ -1197,7 +1197,7 @@ ver_fields:
 .Ls_checking: .asciz "checking"
 .p2align 3
 up_names: .quad .Ls_idle, .Ls_available, .Ls_installing, .Ls_ready
-.Lt_source: .asciz "This rhun was built from source; pull and rebuild to update"
+.Lt_source: .asciz "This rh\303\273n was built from source; pull and rebuild to update"
 .Lt_update_failed: .asciz "Update failed: "
 .Ldownload_v: .asciz "/download/v"
 .Linstall_sh: .asciz "/install.sh"

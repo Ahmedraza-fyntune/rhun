@@ -16,6 +16,7 @@
 .equ ID_SPLIT_R, 0x2701
 .equ ID_DLG, 0x2800              # + button
 .equ ID_STATUS, 0x2900           # + item
+.equ RHUN_LEN, 5                 # bytes of "rhûn", the name on the welcome screen
 .equ ID_WELCOME, 0x2a00          # + item
 
 .bss
@@ -2268,7 +2269,7 @@ FN welcome_draw
     sub eax, [rip + g_mt + 4*MI_64]
     sub eax, [rip + g_mt + 4*MI_48]
     mov r12d, eax
-    # the rune and "rhun", centered together; the rune is as tall as the h
+    # the rune and "rhûn", centered together; the rune is as tall as the h
     mov eax, [rip + g_face_huge + FACE_px]
     imul eax, eax, 11
     xor edx, edx
@@ -2280,7 +2281,7 @@ FN welcome_draw
     mov [rsp + 24], eax         # visible rune width
     lea rdi, [rip + g_face_huge]
     lea rsi, [rip + .Lrhun]
-    mov edx, 4
+    mov edx, RHUN_LEN
     call text_width
     mov [rsp + 28], eax
     mov eax, [rsp + 20]
@@ -2321,7 +2322,7 @@ FN welcome_draw
     sub edx, [rip + g_mt + 4*MI_20]
     M ecx, MI_48
     lea r8, [rip + .Lrhun]
-    mov r9d, 4
+    mov r9d, RHUN_LEN
     COLOR eax, T_FG
     push rax
     push rax
@@ -2333,7 +2334,7 @@ FN welcome_draw
     mov edx, r12d
     mov ecx, [rsp + 8]
     M r8d, MI_20
-    lea r9, [rip + .Ltagline]
+    lea r9, [rip + g_version_text]
     COLOR eax, T_MUTED
     push rax
     push rax
@@ -2853,7 +2854,7 @@ FN cmd_move_line_down
     jmp ed_move_lines
 
 .section .rodata
-.Lrhun: .asciz "rhun"
+.Lrhun: .asciz "rh\303\273n"      # the name as it is written in the interface
 .Lempty: .asciz ""
 .Ldash: .asciz " \342\200\224 "
 .Lbinary: .asciz "Binary file, not opened"
@@ -2873,7 +2874,6 @@ FN cmd_move_line_down
 .Ltabs: .asciz "Tabs"
 .Lspaces: .asciz "Spaces: "
 .Lplain: .asciz "Plain Text"
-.Ltagline: .asciz "a small, fast editor written in assembly"
 .Ldlg_q: .asciz "Save changes to "
 .Ldlg_msg: .asciz "Your changes will be lost if you don't save them."
 .Lnl: .ascii "\n"
