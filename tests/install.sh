@@ -65,11 +65,13 @@ if [ "${1:-}" = http ]; then
     sleep 1
 fi
 
-# inst ARGS...: install.sh in the scratch HOME; status in $st, output in $w/out
+# inst ARGS...: install.sh in the scratch HOME, with the variables that name config folders pointing
+# there too (CI runners set XDG_CONFIG_HOME); status in $st, output in $w/out
 inst() {
     st=0
-    env HOME="$H" SHELL=/bin/zsh PATH="$w/shim:$PATH" RHUN_RELEASES_URL="$url" RHUN_TEAM_ID="not set" \
-        XDG_CURRENT_DESKTOP= sh "$root/install.sh" "$@" > "$w/out" 2>&1 || st=$?
+    env -u ZDOTDIR HOME="$H" XDG_CONFIG_HOME="$H/.config" SHELL=/bin/zsh PATH="$w/shim:$PATH" \
+        RHUN_RELEASES_URL="$url" RHUN_TEAM_ID="not set" XDG_CURRENT_DESKTOP= \
+        sh "$root/install.sh" "$@" > "$w/out" 2>&1 || st=$?
 }
 case_failed=
 t() { # WHAT CMD...: CMD must succeed
@@ -124,8 +126,8 @@ finds() {
 
 begin fresh
 st=0
-cat install.sh | env HOME="$H" SHELL=/bin/zsh PATH="$PATH" RHUN_RELEASES_URL="$url" RHUN_TEAM_ID="not set" \
-    XDG_CURRENT_DESKTOP= sh -s -- "$@" > "$w/out" 2>&1 || st=$?
+cat install.sh | env -u ZDOTDIR HOME="$H" XDG_CONFIG_HOME="$H/.config" SHELL=/bin/zsh PATH="$PATH" \
+    RHUN_RELEASES_URL="$url" RHUN_TEAM_ID="not set" XDG_CURRENT_DESKTOP= sh -s -- "$@" > "$w/out" 2>&1 || st=$?
 t "exit $st" [ $st = 0 ]
 t "rhun --version" [ "$("$bin" --version 2>&1)" = "rhun 1.0.0" ]
 t "said where" said "rhun 1.0.0 is installed"
