@@ -1,6 +1,8 @@
 #!/bin/sh
 # macOS release: rhun.app signed with a Developer ID (hardened runtime), notarized and stapled, in
-# build/rhun-VERSION-macos-arm64.zip (for install.sh and updates) and build/rhun-VERSION-macos-arm64.dmg
+# build/rhun-VERSION-macos-arm64.zip (for install.sh and updates) and build/rhun-VERSION-macos-arm64.dmg.
+# Signed only (RHUN_NOTARIZE=0), there is no disk image: downloaded in a browser, an app Apple has not
+# notarized does not open; install.sh and updates download with curl, so the signature is enough there
 # usage: tools/package-mac.sh
 #   RHUN_SIGN_ID          signing identity (default: the first Developer ID Application certificate)
 #   RHUN_NOTARY_PROFILE   notarytool keychain profile (default rhun-notary), stored once with
@@ -8,7 +10,7 @@
 #   RHUN_NOTARY_KEY, RHUN_NOTARY_KEY_ID, RHUN_NOTARY_ISSUER
 #                         an App Store Connect API key (the .p8 file, its key id, the issuer id) in
 #                         place of the profile; the release workflow uses these
-#   RHUN_NOTARIZE=0       sign only
+#   RHUN_NOTARIZE=0       sign only, and no disk image
 set -e
 cd "$(dirname "$0")/.."
 id=${RHUN_SIGN_ID:-$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' | head -1)}
@@ -50,6 +52,9 @@ fi
 rm -f "$zip"
 ditto -c -k --keepParent "$app" "$zip"
 
+echo "$zip"
+[ "$notarize" = 1 ] || exit 0
+
 # the disk image: the app and a link to Applications
 stage=$(mktemp -d)
 cp -R "$app" "$stage/"
@@ -58,11 +63,8 @@ rm -f "$dmg"
 hdiutil create -quiet -volname rhun -srcfolder "$stage" -format UDZO -o "$dmg"
 rm -rf "$stage"
 codesign --force --timestamp --sign "$id" "$dmg"
-if [ "$notarize" = 1 ]; then
-    submit "$dmg"
-    xcrun stapler staple "$dmg"
-    spctl --assess --type execute --verbose=2 "$app"
-    spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
-fi
-echo "$zip"
+submit "$dmg"
+xcrun stapler staple "$dmg"
+spctl --assess --type execute --verbose=2 "$app"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
 echo "$dmg"

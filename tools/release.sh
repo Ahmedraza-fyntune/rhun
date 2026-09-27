@@ -1,6 +1,6 @@
 #!/bin/sh
 # cuts a release: VERSION, a commit, the tag vVERSION, pushed; .github/workflows/release.yml then
-# builds, tests, signs, notarizes and publishes it
+# builds, tests, signs and publishes it (and notarizes the Mac app when the RHUN_NOTARIZE variable is 1)
 # usage: tools/release.sh VERSION   (0.14.0; with a dash, 0.14.0-rc1, it is published as a prerelease,
 #                                    which rhun and install.sh do not take for the latest)
 set -eu

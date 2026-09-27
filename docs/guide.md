@@ -18,7 +18,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Every XKB layout, dead keys and the Compose key (the system's Compose rules, `~/.XCompose` or `$XCOMPOSEFILE`)
 - Files changed on disk are reloaded, open files are restored per project
 - Wayland with fractional scaling; X11 as a fallback
-- macOS on Apple silicon: Retina displays, input methods and dead keys, full screen, signed and notarized
+- macOS on Apple silicon: Retina displays, input methods and dead keys, full screen, signed with a Developer ID
 - Installs with one command and updates itself from GitHub releases
 
 ## Install and update
@@ -70,16 +70,16 @@ A release for distribution outside the App Store is signed with a Developer ID a
 
 ```sh
 xcrun notarytool store-credentials rhun-notary --apple-id YOUR_APPLE_ID --team-id TEAM_ID   # once
-tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.dmg
+tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.zip and .dmg
 ```
 
-`RHUN_SIGN_ID` picks another signing identity, `RHUN_NOTARIZE=0` signs without notarizing. `tools/mac-icon.py` draws `assets/icons/rhun.icns` from the Linux icon, `tools/png-icons.py` the PNG icons for Linux.
+`RHUN_SIGN_ID` picks another signing identity. `RHUN_NOTARIZE=0` signs without notarizing and makes no disk image: macOS opens an app downloaded in a browser only when Apple has notarized it, while `install.sh` and updates download with curl, which needs only the signature. `tools/mac-icon.py` draws `assets/icons/rhun.icns` from the Linux icon, `tools/png-icons.py` the PNG icons for Linux.
 
 ### Releases
 
-`VERSION` holds the version. `tools/release.sh 0.14.0` writes it, commits, tags `v0.14.0` and pushes; the tag starts `.github/workflows/release.yml`, which tests and builds both systems, signs and notarizes the Mac app, and publishes the release with the archives, `SHA256SUMS`, `VERSION` and `install.sh`. The release stays a draft until everything is uploaded, so rhun and the installer never see a version without its files. A version with a dash (`0.14.0-rc1`) is published as a prerelease, which they do not take for the latest.
+`VERSION` holds the version. `tools/release.sh 0.14.0` writes it, commits, tags `v0.14.0` and pushes; the tag starts `.github/workflows/release.yml`, which tests and builds both systems, signs the Mac app, and publishes the release with the archives, `SHA256SUMS`, `VERSION` and `install.sh`. The release stays a draft until everything is uploaded, so rhun and the installer never see a version without its files. A version with a dash (`0.14.0-rc1`) is published as a prerelease, which they do not take for the latest.
 
-The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PASSWORD` (the Developer ID Application certificate with its key, exported as .p12, base64), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` (an App Store Connect API key for notarization, the .p8 in base64).
+The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PASSWORD` (the Developer ID Application certificate with its key, exported as .p12, base64), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` (an App Store Connect API key for notarization, the .p8 in base64). The Mac app is notarized, and the release gets a disk image, only when the repository variable `RHUN_NOTARIZE` is `1` (Settings → Secrets and variables → Actions → Variables); otherwise the release does not wait on Apple.
 
 `tests/update.sh` runs rhun's updater against a fake release folder, and `tests/install.sh` the installer; `RHUN_RELEASES_URL` points both at another place for the releases.
 
