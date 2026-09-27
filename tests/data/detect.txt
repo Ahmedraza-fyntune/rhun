@@ -1,0 +1,8 @@
+Makefile
+a.py
+b.py
+script	#!/usr/bin/env python3
+Gemfile
+Rakefile
+x.conf
+notes.xyz

@@ -720,6 +720,8 @@ F GR_identx, 32         # extra identifier chars
 F GR_prefixes, 32       # chars that start variables ($) / attributes (@)
 F GR_rstart, 256        # 1 for bytes that can start a region
 F GR_wchar, 256         # 1 for identifier bytes
+F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it), or 0
+F GR_srclen, 8
 ENDSTRUCT GR_SIZE
 .equ GF_NOCASE, 1
 .equ GF_FUNCS, 2

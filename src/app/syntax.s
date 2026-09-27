@@ -28,6 +28,9 @@ g_grammars: .zero VEC_SIZE      # GR* items
 it: .zero INI_SIZE
 cur_gr: .quad 0
 dummy: .zero SB_SIZE
+.globl g_grammars_parsed, g_grammar_warnings
+g_grammars_parsed: .long 0      # built-in grammars parsed so far (they are parsed when first used)
+g_grammar_warnings: .long 0     # unknown keys and class names the parser met
 
 .text
 
@@ -261,12 +264,23 @@ add_region:
 
 # grammar_parse(text, len) -> GR*
 FN grammar_parse
-    PROLOGUE 96
+    PROLOGUE
     mov r12, rdi
     mov r13, rsi
     mov edi, GR_SIZE
     call mem_alloc
-    mov rbx, rax
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call grammar_fill
+    EPILOGUE
+
+# grammar_fill(gr, text, len) -> gr: the grammar in text, into gr
+FN grammar_fill
+    PROLOGUE 96
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
     mov qword ptr [rbx + GR_flags], GF_FUNCS | GF_NUMBERS | GF_OPS
     lea rax, [rip + .Lnone]
     mov [rbx + GR_name], rax
@@ -367,13 +381,13 @@ FN grammar_parse
     mov rdi, [rip + it + INI_key]
     mov rsi, [rip + it + INI_keylen]
     cmp rsi, 2
-    jb .Lgp_next
+    jb .Lgp_warn
     cmp byte ptr [rdi + rsi - 1], 's'
-    jne .Lgp_next
+    jne .Lgp_warn
     dec rsi
     call class_by_name
     test eax, eax
-    js .Lgp_next
+    js .Lgp_warn
     mov ecx, eax
     mov rdi, rbx
     mov rsi, r14
@@ -381,6 +395,9 @@ FN grammar_parse
     call add_words
     jmp .Lgp_next
 
+.Lgp_warn:
+    inc dword ptr [rip + g_grammar_warnings]
+    jmp .Lgp_next
 .Lgp_name:
     mov rdi, r14
     mov rsi, r15
@@ -438,8 +455,11 @@ FN grammar_parse
     mov rsi, rax
     call class_by_name
     test eax, eax
-    js 3f
+    js 32f
     mov r9d, eax
+    jmp 3f
+32: inc dword ptr [rip + g_grammar_warnings]
+    mov r9d, C_COMMENT
 3:  mov rdi, rbx
     mov rsi, [rsp]
     mov rdx, [rsp + 8]
@@ -484,7 +504,7 @@ FN grammar_parse
     mov rsi, [rsp + 40]
     call class_by_name
     test eax, eax
-    js .Lgp_next
+    js .Lgp_warn
     mov [rsp + 48], eax
     # flags from the rest of the value
     xor ecx, ecx
@@ -547,7 +567,7 @@ FN grammar_parse
     mov rsi, [rsp + 24]
     call class_by_name
     test eax, eax
-    js .Lgp_next
+    js .Lgp_warn
     mov [rsp + 48], eax
     lea rdi, [rbx + GR_lines]
     mov esi, LR_SIZE
@@ -663,19 +683,30 @@ FN grammar_parse
     pop r12
     ret
 
-# syntax_load_all(): built-in grammars then ~/.config/rhun/syntax/*.syn (user files override by name)
+# syntax_load_all(): built-in grammars (registered, parsed when first used), then
+# ~/.config/rhun/syntax/*.syn (parsed; user files override by name)
 FN syntax_load_all
     PROLOGUE
     xor ebx, ebx
 1:  cmp rbx, [rip + syntax_count]
     jae 2f
-    imul rax, rbx, 24
-    lea rcx, [rip + syntax_table]
-    mov rdi, [rcx + rax + 8]
-    mov rsi, [rcx + rax + 16]
-    sub rsi, rdi
-    call grammar_parse
+    mov edi, GR_SIZE
+    call mem_alloc
     mov r12, rax
+    imul rcx, rbx, 48
+    lea rax, [rip + syntax_table]
+    add rcx, rax
+    mov rax, [rcx + 8]
+    mov [r12 + GR_src], rax
+    mov rdx, [rcx + 16]
+    sub rdx, rax
+    mov [r12 + GR_srclen], rdx
+    mov rax, [rcx + 24]
+    mov [r12 + GR_name], rax
+    mov rax, [rcx + 32]
+    mov [r12 + GR_files], rax
+    mov rax, [rcx + 40]
+    mov [r12 + GR_first], rax
     lea rdi, [rip + g_grammars]
     mov esi, 8
     call vec_push
@@ -712,6 +743,23 @@ load_user_grammar:
 2:  mov [rdi], r12
 9:  EPILOGUE
 
+# syntax_ready(gr or 0) -> gr: a built-in grammar is parsed the first time it is used
+FN syntax_ready
+    PROLOGUE
+    mov rbx, rdi
+    test rbx, rbx
+    jz 9f
+    mov rsi, [rbx + GR_src]
+    test rsi, rsi
+    jz 9f
+    mov qword ptr [rbx + GR_src], 0
+    mov rdi, rbx
+    mov rdx, [rbx + GR_srclen]
+    call grammar_fill
+    inc dword ptr [rip + g_grammars_parsed]
+9:  mov rax, rbx
+    EPILOGUE
+
 # pattern_match(name, nlen, pat, plen) -> 1 if "*.ext" suffix or exact name matches
 pattern_match:
     test rcx, rcx
@@ -725,7 +773,7 @@ pattern_match:
 3:  xor eax, eax
     ret
 
-# syntax_detect(path cstr, first line ptr, len) -> GR* or 0
+# syntax_detect(path cstr, first line ptr, len) -> GR* or 0, parsed
 FN syntax_detect
     PROLOGUE 32
     mov [rsp + 16], rsi
@@ -802,13 +850,14 @@ FN syntax_detect
 6:  inc r12
     jmp 4b
 .Lsd_found:
-    mov rax, r13
+    mov rdi, r13
+    call syntax_ready
     EPILOGUE
 .Lsd_none:
     xor eax, eax
     EPILOGUE
 
-# syntax_by_name(ptr, len) -> GR* or 0 (case-insensitive)
+# syntax_by_name(ptr, len) -> GR* or 0 (case-insensitive), parsed
 FN syntax_by_name
     PROLOGUE
     mov r12, rdi
@@ -831,7 +880,8 @@ FN syntax_by_name
     jmp 1b
 2:  xor eax, eax
     EPILOGUE
-3:  mov rax, r14
+3:  mov rdi, r14
+    call syntax_ready
     EPILOGUE
 
 # ---- tokenizer ----

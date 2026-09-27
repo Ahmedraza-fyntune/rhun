@@ -9,7 +9,6 @@ region = __ __ keyword
 region = [ ] link
 line = # heading
 line = > comment
-line = ---
 functions = no
 numbers = no
 operators = no

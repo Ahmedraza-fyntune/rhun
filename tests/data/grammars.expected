@@ -1,0 +1,10 @@
+loaded: 0 parsed
+checked 51 grammars
+Makefile -> Makefile (parsed 1)
+a.py -> Python (parsed 2)
+b.py -> Python (parsed 2)
+script -> Python (parsed 2)
+Gemfile -> Ruby (parsed 3)
+Rakefile -> Ruby (parsed 3)
+x.conf -> INI (parsed 4)
+notes.xyz -> plain (parsed 4)

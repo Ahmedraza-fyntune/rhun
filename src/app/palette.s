@@ -1264,12 +1264,13 @@ palette_accept:
     jmp .Lpa_close
 3:  cmp ebx, PM_LANGS
     jne .Lpa_close
-    mov rax, [rip + g_doc]
-    test rax, rax
-    jz .Lpa_close
-    mov rcx, [r12 + IT_data]
-    mov [rax + DOC_lang], rcx
-    mov qword ptr [rax + DOC_svalid], 0
+    cmp qword ptr [rip + g_doc], 0
+    je .Lpa_close
+    mov rdi, [r12 + IT_data]
+    call syntax_ready
+    mov rcx, [rip + g_doc]
+    mov [rcx + DOC_lang], rax
+    mov qword ptr [rcx + DOC_svalid], 0
     jmp .Lpa_close
 .Lpa_goto:
     lea rdi, [rip + pal_tf]
