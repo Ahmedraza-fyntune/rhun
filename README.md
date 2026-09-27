@@ -30,7 +30,15 @@ Keep your terminal beside your code, and browse Git history without leaving the 
 
 ## Get rhun
 
-The first release will include prebuilt downloads and an install script for Linux (x86-64) and macOS (Apple silicon).
+On Linux (x86-64) or macOS (Apple silicon), run:
+
+```sh
+curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
+```
+
+No curl? `wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh` does the same.
+
+rhun shows up with your other apps, and `rhun` starts it from a terminal. It keeps itself up to date: when a new version is out, the status bar offers it.
 
 [Usage, shortcuts, and configuration](docs/guide.md)
 

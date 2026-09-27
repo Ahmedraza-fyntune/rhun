@@ -19,6 +19,34 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Files changed on disk are reloaded, open files are restored per project
 - Wayland with fractional scaling; X11 as a fallback
 - macOS on Apple silicon: Retina displays, input methods and dead keys, full screen, signed and notarized
+- Installs with one command and updates itself from GitHub releases
+
+## Install and update
+
+```sh
+curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
+wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh   # without curl
+```
+
+The installer needs no root. It checks the download against the release's SHA-256 checksums, and on macOS also that the app is signed by rhun's developer.
+
+- Linux: `~/.local/bin/rhun`, the desktop entry in `~/.local/share/applications` (it starts rhun by its full path) and the icons in `~/.local/share/icons/hicolor`; the desktop's menu and icon caches are refreshed.
+- macOS: `rhun.app` in `/Applications` (`~/Applications` when that is not writable), and a `rhun` command in `~/.local/bin`.
+- When that `bin` folder is not on your PATH, one marked line adding it goes into your shell's startup file (`~/.zshrc`, `~/.bashrc`, fish's `conf.d/rhun.fish`).
+
+Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --version 0.14.0`:
+
+| Option | |
+| --- | --- |
+| `--version X` | install X instead of the latest release |
+| `--prefix DIR` | Linux: install under DIR instead of `~/.local` |
+| `--app-dir DIR` | macOS: put rhun.app in DIR |
+| `--no-modify-path` | leave shell startup files alone |
+| `--uninstall` | remove rhun and the PATH line; your settings in `~/.config/rhun` stay |
+
+rhun looks for a new version a few seconds after it starts and once a day while it runs. The check is one HTTPS request to github.com for a small text file, made with curl (or wget) in the background, so it never slows rhun down. When there is a newer version, the status bar shows **Update to X**: clicking it installs the update in the background, and **Restart to update** then restarts rhun into it, asking about unsaved files first and reopening the project. Check for Updates, Install Update and Restart to Update are in the command palette too.
+
+**Check for updates** in Settings (`check = false` under `[updates]`) turns the automatic check off; **Check now** below it still works. A rhun built from source checks only when asked and never replaces itself.
 
 ## Build
 
@@ -45,7 +73,15 @@ xcrun notarytool store-credentials rhun-notary --apple-id YOUR_APPLE_ID --team-i
 tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.dmg
 ```
 
-`RHUN_SIGN_ID` picks another signing identity, `RHUN_NOTARIZE=0` signs without notarizing. `tools/mac-icon.py` draws `assets/icons/rhun.icns` from the Linux icon.
+`RHUN_SIGN_ID` picks another signing identity, `RHUN_NOTARIZE=0` signs without notarizing. `tools/mac-icon.py` draws `assets/icons/rhun.icns` from the Linux icon, `tools/png-icons.py` the PNG icons for Linux.
+
+### Releases
+
+`VERSION` holds the version. `tools/release.sh 0.14.0` writes it, commits, tags `v0.14.0` and pushes; the tag starts `.github/workflows/release.yml`, which tests and builds both systems, signs and notarizes the Mac app, and publishes the release with the archives, `SHA256SUMS`, `VERSION` and `install.sh`. The release stays a draft until everything is uploaded, so rhun and the installer never see a version without its files. A version with a dash (`0.14.0-rc1`) is published as a prerelease, which they do not take for the latest.
+
+The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PASSWORD` (the Developer ID Application certificate with its key, exported as .p12, base64), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` (an App Store Connect API key for notarization, the .p8 in base64).
+
+`tests/update.sh` runs rhun's updater against a fake release folder, and `tests/install.sh` the installer; `RHUN_RELEASES_URL` points both at another place for the releases.
 
 ## Run
 
@@ -208,7 +244,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `resize`, `print-doc`, `print-state`, `print-term`, `print-git`, `print-gitlog`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-update`, `resize`, `print-doc`, `print-state`, `print-term`, `print-git`, `print-gitlog`, `print-update`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
