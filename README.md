@@ -2,6 +2,18 @@
 
 ![rhun](assets/social/github@2x.png)
 
+## Get rhun
+
+On Linux (x86-64) or macOS (Apple silicon), run:
+
+```sh
+curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
+```
+
+No curl? `wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh` does the same.
+
+rhun shows up with your other apps, and `rhun` starts it from a terminal. It keeps itself up to date: when a new version is out, the status bar offers it.
+
 A small, very fast code editor for Linux and macOS, written in assembly.
 
 When coding agents do more of the heavy lifting, you may not need everything that comes with VS Code or Zed. You need to read and edit code, run commands, find files, and check what changed.
@@ -27,18 +39,6 @@ Keep your terminal beside your code, and browse Git history without leaving the 
   <img src="assets/social/screenshot-terminal.png" width="49%" alt="Code and the built-in terminal in rhun">
   <img src="assets/social/screenshot-git.png" width="49%" alt="Git history and changed files in rhun">
 </p>
-
-## Get rhun
-
-On Linux (x86-64) or macOS (Apple silicon), run:
-
-```sh
-curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
-```
-
-No curl? `wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh` does the same.
-
-rhun shows up with your other apps, and `rhun` starts it from a terminal. It keeps itself up to date: when a new version is out, the status bar offers it.
 
 [Usage, shortcuts, and configuration](docs/guide.md)
 
