@@ -81,7 +81,7 @@ aaa 0
 <!-- a comment -->
 666666666666666666 0
 <ul class="list">{items.map(i => <li>{i}</li>)}</ul>
-9ee0ddddd94444449aaaaaaaaaaaaaaaaaaaaaaa99ee90099ee9 0
+9ee0ddddd9444444900000000000000009ee900099ee90099ee9 0
 == awk.syn
 # AWK sample
 666666666666 0

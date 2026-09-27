@@ -8,4 +8,3 @@ functions = no
 numbers = no
 operators = no
 region = --- --- preproc multiline bol
-region = { } preproc
