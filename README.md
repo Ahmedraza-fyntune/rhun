@@ -10,7 +10,11 @@ On Linux (x86-64) or macOS (Apple silicon), run:
 curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
 ```
 
-No curl? `wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh` does the same.
+Or using `wget` 
+
+```sh
+wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
+```
 
 rhun shows up with your other apps, and `rhun` starts it from a terminal. It keeps itself up to date: when a new version is out, the status bar offers it.
 
