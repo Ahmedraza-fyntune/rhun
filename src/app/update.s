@@ -27,6 +27,7 @@ up_latest: .zero 32             # the latest version known
 up_error: .zero 256             # why the last check or install failed
 up_item: .zero 64
 up_target: .zero 4096           # what the installer replaces and the restart runs
+up_exec: .zero 4096 + 32        # the program the restart runs
 g_update_desc: .zero 256        # the Check now row's text in Settings
 g_update_label: .zero 48        # and its label: this rhun's version
 .data
@@ -961,82 +962,66 @@ FN update_click
     jmp cmd_restart_to_update
 2:  ret
 
-# update_restart(): after the loop, with g_restart: the new version takes this one's place and opens
-# the project (the session brings back its files); returns only when it could not be started
+# update_restart(): after the loop, with g_restart: the new version takes this one's place, with the
+# same environment and in the same terminal, and opens the project (the session brings back its
+# files); returns only when it could not be started. On macOS too, rather than through open(1):
+# Launch Services would start it with launchd's environment, and XDG_CONFIG_HOME and the like set
+# for this rhun would be lost.
 FN update_restart
-    PROLOGUE 64
+    PROLOGUE 32
     cmp byte ptr [rip + up_target], 0
     je 9f
+    lea rdi, [rip + up_exec]
+    lea rsi, [rip + up_target]
+    call cstr_copy
 .ifdef MACOS
-    # through Launch Services, as a launch from the Dock; a test's target runs in place instead
+    # the program in the bundle, unless a test names a program
+    mov rbx, rax
     lea rdi, [rip + .Lenv_target]
     call up_env
     test rax, rax
-    jnz 5f
-    lea rax, [rip + .Lopen]
-    mov [rsp], rax
-    lea rax, [rip + .Lopen_n]
-    mov [rsp + 8], rax
-    lea rax, [rip + .Lopen_a]
-    mov [rsp + 16], rax
-    lea rax, [rip + up_target]
-    mov [rsp + 24], rax
-    lea rax, [rip + .Lopen_args]
-    mov [rsp + 32], rax
-    mov rax, [rip + g_project]
-    mov [rsp + 40], rax
-    mov qword ptr [rsp + 48], 0
-    lea rdi, [rsp]
-    mov rsi, [rip + g_envp]
-    xor edx, edx
-    xor ecx, ecx
-    mov r8d, 1
-    mov r9d, 2
-    push 0
-    push 0
-    call proc_spawn
-    add rsp, 16
-    test rax, rax
-    jle 9f
-    mov edi, eax
-    xor esi, esi
-    call proc_wait
-    jmp 9f
-.else
-    call up_close_fds
+    jnz 1f
+    mov rdi, rbx
+    lea rsi, [rip + .Lbundle_exe]
+    call cstr_copy
+1:
 .endif
-5:  lea rax, [rip + up_target]
+    call up_fds_cloexec
+    lea rax, [rip + up_exec]
     mov [rsp], rax
     mov rax, [rip + g_project]
     mov [rsp + 8], rax
     mov qword ptr [rsp + 16], 0
-    lea rdi, [rip + up_target]
+    lea rdi, [rip + up_exec]
     lea rsi, [rsp]
     mov rdx, [rip + g_envp]
     SYS SYS_execve
 9:  EPILOGUE
 
+# up_fds_cloexec(): nothing of this process goes on in the new one: the display connection, pipes,
+# terminals (whose shells then end); marked close-on-exec rather than closed, as other threads (on
+# macOS) may still use them until the exec
+up_fds_cloexec:
+    push rbx
 .ifdef MACOS
 .else
-# up_close_fds(): nothing of this process goes on in the new one: the display connection, pipes,
-# terminals
-up_close_fds:
-    push rbx
     mov edi, 3
     mov esi, -1
-    xor edx, edx
+    mov edx, 4                  # CLOSE_RANGE_CLOEXEC
     SYS SYS_close_range
     test rax, rax
     jz 9f
+.endif
     mov ebx, 3
 1:  mov edi, ebx
-    SYS SYS_close
+    mov esi, 2                  # F_SETFD
+    mov edx, 1                  # FD_CLOEXEC
+    SYS SYS_fcntl
     inc ebx
     cmp ebx, 1024
     jb 1b
 9:  pop rbx
     ret
-.endif
 
 # ---------------- versions ----------------
 
@@ -1229,7 +1214,4 @@ up_names: .quad .Ls_idle, .Ls_available, .Ls_installing, .Ls_ready
 .Lcontents: .asciz "/Contents/MacOS/"
 .Lself_exe: .asciz "/proc/self/exe"
 .Ldeleted: .asciz " (deleted)"
-.Lopen: .asciz "/usr/bin/open"
-.Lopen_n: .asciz "-n"
-.Lopen_a: .asciz "-a"
-.Lopen_args: .asciz "--args"
+.Lbundle_exe: .asciz "/Contents/MacOS/rhun"

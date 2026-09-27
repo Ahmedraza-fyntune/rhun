@@ -197,8 +197,8 @@ The status bar shows a right-aligned, clickable item in AVAILABLE (`Update to 0.
 
 - restart_to_update sets `g_restart` and runs `cmd_quit` (`src/app/app.s`): the Save / Don't Save / Cancel dialog for each unsaved file, then `session_save`. Cancel clears `g_restart`.
 - After `loop_run` returns, `src/main.s` checks `g_restart`. The new rhun gets one argument, the absolute path of the project folder, and session restore reopens the files. Original arguments are not reused: they may be relative, and `open` starts apps in `/`.
-  - **Linux:** close every descriptor above 2, the display connection included (`close_range`, falling back to a loop), then `execve` the target with the environment. Same pid, same terminal.
-  - **macOS:** spawn `/usr/bin/open -n -a <bundle> --args <project folder>`, then exit, so Launch Services and the Dock see a normal launch.
+  - **Both systems:** mark every descriptor above 2 close-on-exec (the display connection included; `close_range` with `CLOSE_RANGE_CLOEXEC` on Linux, `fcntl` on both), then `execve` the target (on macOS the bundle's `Contents/MacOS/rhun`) with the environment. Same pid, same terminal, same environment.
+  - Not `open -n -a` on macOS, as first planned: Launch Services starts the app with launchd's environment, so a rhun started from a terminal with `XDG_CONFIG_HOME` or the like would come back reading another config. macOS replaces the task on exec, so the old window server connection goes with it; checked end to end with signed builds.
 - Terminal-panel shells end, as with any restart.
 
 ### Control commands for tests
