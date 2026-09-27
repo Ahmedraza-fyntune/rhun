@@ -3,9 +3,11 @@
 cd "$(dirname "$0")/.."
 ./build.sh test || exit 1
 fail=0
+tmp=$(mktemp) || exit 1
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
 check() { # name cmd...
     name=$1; shift
-    if "$@" 2>&1 | cmp -s - "tests/data/$name.expected"; then
+    if "$@" > "$tmp" 2>&1 && cmp -s "$tmp" "tests/data/$name.expected"; then
         echo "ok   $name"
     else
         echo "FAIL $name"; fail=1
@@ -21,6 +23,13 @@ check term build/term_test
 check diff build/diff_test
 check images build/image_test $(ls tests/data/images/* | LC_ALL=C sort)
 check cpu build/cpu_test
+check cols build/cols_test
 check strfind build/str_test tests/data/strfind.txt
+sh tests/files.sh || fail=1
+if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
+    status=0
+    sh tests/file-faults.sh || status=$?
+    [ "$status" = 0 ] || [ "$status" = 77 ] || fail=1
+fi
 [ -x tests/ui.sh ] && { tests/ui.sh || fail=1; }
 exit $fail

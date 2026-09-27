@@ -33,8 +33,13 @@ for s in tests/scripts/*.rsc; do
         sh "tests/data/$n.setup" "$home" > /dev/null
     fi
     sed "s|@HOME@|$home|g" "$s" > "$tmp/$n.rsc"
+    status=0
     XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child SHELL=$shell PS1='$ ' \
-        limit 20 build/rhun "$PWD" --headless 1400x860 --script "$tmp/$n.rsc" > "$tmp/$n.out" 2>&1
+        limit 20 build/rhun "$PWD" --headless 1400x860 --script "$tmp/$n.rsc" > "$tmp/$n.out" 2>&1 || status=$?
+    if [ "$status" != 0 ]; then
+        echo "FAIL ui/$n (exit $status)"; fail=1
+        continue
+    fi
     if [ "$1" = update ]; then
         cp "$tmp/$n.out" "tests/data/$n.ui.expected"
     fi

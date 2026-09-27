@@ -2513,6 +2513,9 @@ draw_line:
     mov rcx, [rip + g_ed_find + SB_len]
     test rcx, rcx
     jz .Ldl_nofind
+    mov rax, [rsp + 96]
+    mov [rsp + 112], rax        # byte offset whose column is known
+    mov dword ptr [rsp + 120], 0
     xor r13d, r13d
 6:  lea rdi, [r14 + r13]
     mov rsi, r15
@@ -2524,6 +2527,8 @@ draw_line:
 62: test rax, rax
     js .Ldl_nofind
     add r13, rax
+    cmp r13, [rsp + 32]
+    jae .Ldl_nofind
     # clip [m, m+n) to the row
     mov rax, r13
     mov rdx, r13
@@ -2537,15 +2542,25 @@ draw_line:
     cmp rax, rdx
     jae 63f
     mov [rsp + 48], rdx
+    mov [rsp + 104], rax
     mov rdi, r14
-    mov rsi, [rsp + 96]
+    mov rsi, [rsp + 112]
     mov rdx, rax
-    call seg_cols
+    mov ecx, [rsp + 120]
+    call seg_cols_from
     mov [rsp + 56], eax
+    imul eax, [rip + g_cw]
+    add eax, [rsp + 40]
+    cmp eax, [rip + g_cv + CV_cx1]
+    jge .Ldl_nofind             # later matches are also outside the view
     mov rdi, r14
-    mov rsi, [rsp + 96]
+    mov rsi, [rsp + 104]
     mov rdx, [rsp + 48]
-    call seg_cols
+    mov ecx, [rsp + 56]
+    call seg_cols_from
+    mov [rsp + 120], eax
+    mov rcx, [rsp + 48]
+    mov [rsp + 112], rcx
     sub eax, [rsp + 56]
     imul eax, [rip + g_cw]
     mov edx, eax

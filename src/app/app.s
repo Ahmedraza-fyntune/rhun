@@ -284,10 +284,19 @@ FN app_open_file
     mov rsi, r12
     call doc_load
     cmp rax, -1000
-    jne 2f
+    je .Lof_binary
+    cmp rax, -2                # a missing file can be created; other read errors cannot
+    je 2f
+    test rax, rax
+    jns 2f
+    lea r15, [rip + .Lopen_failed]
+    jmp .Lof_failed
+.Lof_binary:
+    lea r15, [rip + .Lbinary]
+.Lof_failed:
     mov rdi, rbx
     call doc_free
-    lea rdi, [rip + .Lbinary]
+    mov rdi, r15
     call app_toast
     mov rax, -1
     EPILOGUE
@@ -2760,6 +2769,7 @@ FN cmd_move_line_down
 .Lempty: .asciz ""
 .Ldash: .asciz " \342\200\224 "
 .Lbinary: .asciz "Binary file, not opened"
+.Lopen_failed: .asciz "Could not read the file"
 .Lsaved: .asciz "Saved"
 .Lsave_failed: .asciz "Could not save the file"
 .Lsave_as: .asciz "Save as"

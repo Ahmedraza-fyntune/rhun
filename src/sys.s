@@ -10,6 +10,7 @@ g_envp: .quad 0
 ts_buf: .zero 16
 stat_buf: .zero 144
 tmp_path: .zero 4096
+save_serial: .quad 0
 
 .text
 
@@ -228,7 +229,7 @@ FN file_is_dir
 1:  xor eax, eax
     ret
 
-# file_read_all(path) -> rax=ptr (NUL-terminated, mem_alloc'd) rdx=len; rax=0 on error
+# file_read_all(path) -> rax=ptr (NUL-terminated, mem_alloc'd) rdx=len; rax=0, rdx=-errno on error
 FN file_read_all
     PROLOGUE
     call file_open_read
@@ -239,6 +240,13 @@ FN file_read_all
     call file_size
     test rax, rax
     js .Lfr_close_fail
+    mov ecx, [rip + stat_buf + 24]
+    and ecx, 0xf000
+    cmp ecx, 0x4000             # a directory can report size zero, so read would never reject it
+    jne 1f
+    mov rax, -21               # EISDIR
+    jmp .Lfr_close_fail
+1:
     mov r12, rax            # size
     lea rdi, [rax + 1]
     call mem_alloc
@@ -267,65 +275,156 @@ FN file_read_all
     mov rdx, r14
     EPILOGUE
 .Lfr_free_fail:
+    mov r15, rax
     mov rdi, r13
     call mem_free
+    jmp .Lfr_close
 .Lfr_close_fail:
+    mov r15, rax
+.Lfr_close:
     mov edi, ebx
     SYS SYS_close
+    mov rax, r15
 .Lfr_fail:
+    mov rdx, rax
     xor eax, eax
-    xor edx, edx
     EPILOGUE
 
 # file_write_all(path, ptr, len) -> 0 or -errno
-# writes path.rhun-tmp then renames over path, keeping the original mode
+# Follow final symlinks, then replace the target through an exclusively created sibling.
 FN file_write_all
-    PROLOGUE
-    mov r12, rdi
+    PROLOGUE 8208              # target path, link text, existing-file flag
     mov r13, rsi
     mov r14, rdx
-    # mode of existing file (default 0644)
+    mov r12, rdi
+    call strlen
+    cmp rax, 4096
+    jae .Lfw_toolong
+    mov rsi, r12
+    mov rdi, rsp
+    call cstr_copy
+    mov r12, rsp
+    mov ebx, 40
+.Lfw_resolve:
+    mov rdi, r12
+    lea rsi, [rsp + 4096]
+    mov edx, 4096
+    SYS SYS_readlink
+    cmp rax, -22               # EINVAL: not a symlink
+    je .Lfw_stat
+    cmp rax, -2                # ENOENT: a new file (including a dangling link's target)
+    je .Lfw_stat
+    test rax, rax
+    js .Lfw_ret
+    cmp rax, 4096
+    jae .Lfw_toolong
+    test ebx, ebx
+    jz .Lfw_loop
+    dec ebx
+    mov byte ptr [rsp + rax + 4096], 0
+    mov r15, rax
+    cmp byte ptr [rsp + 4096], '/'
+    je 1f
+    # Relative link text replaces the basename, retaining its directory and any symlinks in it.
+    mov rdi, r12
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    call path_basename
+    mov rdi, rax
+    sub rax, r12
+    add rax, r15
+    cmp rax, 4096
+    jae .Lfw_toolong
+    jmp 2f
+1:  mov rdi, r12
+2:  lea rsi, [rsp + 4096]
+    call cstr_copy
+    jmp .Lfw_resolve
+.Lfw_stat:
+    mov dword ptr [rsp + 8192], 0
     mov r15d, 0644
+    mov rdi, r12
     lea rsi, [rip + stat_buf]
     mov eax, 4
     syscall
+    cmp rax, -2
+    je 1f
     test rax, rax
-    js 1f
+    js .Lfw_ret
+    mov ecx, [rip + stat_buf + 24]
+    and ecx, 0xf000
+    mov rax, -21               # EISDIR
+    cmp ecx, 0x4000
+    je .Lfw_ret
+    mov rax, -22               # EINVAL: do not replace devices, pipes or sockets
+    cmp ecx, 0x8000
+    jne .Lfw_ret
+    mov dword ptr [rsp + 8192], 1
     mov r15d, [rip + stat_buf + 24]
     and r15d, 07777
-1:
-    # tmp path = path + ".rhun-tmp"
+1:  mov ebx, 128                # bounded retries if stale temporary files exist
+.Lfw_temp:
     mov rdi, r12
     call strlen
+    mov rdi, r12
+    mov rsi, rax
+    call path_basename
+    sub rax, r12                # directory prefix, including its trailing slash
     cmp rax, 4000
     ja .Lfw_toolong
     mov rcx, rax
     lea rdi, [rip + tmp_path]
     mov rsi, r12
     rep movsb
+    lea rsi, [rip + .Ltmp_prefix]
+    call cstr_copy
+    mov rdi, rax
+    SYS SYS_getpid
+    mov rsi, rax
+    call fmt_u64
+    mov byte ptr [rdi], '-'
+    inc rdi
+    inc qword ptr [rip + save_serial]
+    mov rsi, [rip + save_serial]
+    call fmt_u64
     lea rsi, [rip + .Ltmp_suffix]
-    mov ecx, 10
-    rep movsb
+    call cstr_copy
     lea rdi, [rip + tmp_path]
-    mov esi, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
+    mov esi, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
     mov edx, r15d
     SYS SYS_open
-    test rax, rax
+    cmp rax, -17               # EEXIST: never truncate or follow an existing entry
+    jne 1f
+    dec ebx
+    jnz .Lfw_temp
+1:  test rax, rax
     js .Lfw_ret
     mov ebx, eax
-    mov edi, eax
+    cmp dword ptr [rsp + 8192], 0
+    je 2f                      # for a new file, keep the mode limited by umask
+    mov edi, ebx
     mov esi, r15d
     SYS SYS_fchmod
-    mov edi, ebx
+    test rax, rax
+    js .Lfw_err_close
+2:  mov edi, ebx
     mov rsi, r13
     mov rdx, r14
     call write_all
     test rax, rax
     js .Lfw_err_close
+.Lfw_sync:
     mov edi, ebx
     SYS SYS_fsync
+    cmp rax, -EINTR
+    je .Lfw_sync
+    test rax, rax
+    js .Lfw_err_close
     mov edi, ebx
     SYS SYS_close
+    test rax, rax
+    js .Lfw_unlink
     lea rdi, [rip + tmp_path]
     mov rsi, r12
     SYS SYS_rename
@@ -346,11 +445,15 @@ FN file_write_all
 .Lfw_ret:
     EPILOGUE
 .Lfw_toolong:
-    mov rax, -36
+    mov rax, -36               # ENAMETOOLONG
+    EPILOGUE
+.Lfw_loop:
+    mov rax, -40               # ELOOP
     EPILOGUE
 
 .section .rodata
-.Ltmp_suffix: .asciz ".rhun-tmp"
+.Ltmp_prefix: .asciz ".rhun-"
+.Ltmp_suffix: .asciz ".tmp"
 .text
 
 # mkdir_p(path) : creates path and parents (path buffer is modified then restored)
