@@ -40,3 +40,18 @@ payroll.cbl
 script.tcl
 report.awk
 .vimrc
+contract.sol
+app.vala
+Main.hx
+hello.raku
+family.prolog
+octave-script	#!/usr/bin/octave
+chip.sv
+adder.vhdl
+kernel.cu
+proof.lean
+Main.idr
+run.bat
+greet.applescript
+x.🔥
+hello.janet

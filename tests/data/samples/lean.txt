@@ -1,0 +1,11 @@
+-- double a natural number
+/- returns
+   twice n -/
+def double (n : Nat) : Nat :=
+  n + n
+
+theorem double_eq (n : Nat) : double n = n + n := by
+  rfl
+
+def greet (name : String) : String :=
+  "hello, " ++ name

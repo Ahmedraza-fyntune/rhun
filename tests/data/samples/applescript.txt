@@ -1,0 +1,11 @@
+#!/usr/bin/osascript
+-- greets the user
+(* asks for a name
+   then says hello *)
+set userName to "World"
+tell application "System Events"
+    display dialog "Hello, " & userName
+end tell
+if userName is "" then
+    say "no name given"
+end if

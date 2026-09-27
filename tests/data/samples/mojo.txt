@@ -1,0 +1,11 @@
+#!/usr/bin/env mojo
+# adds two integers
+"""computes the
+   sum of a and b"""
+fn add(a: Int, b: Int) -> Int:
+    var total: Int = a + b
+    return total
+
+struct Point:
+    var x: Float64
+    var y: Float64
