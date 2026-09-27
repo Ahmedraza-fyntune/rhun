@@ -1037,11 +1037,8 @@ FN app_timeout
 
 FN app_tick
     PROLOGUE
-    call ed_blink_timeout
-    test eax, eax
-    jnz 1f
-    mov dword ptr [rip + g_dirty], 1
-1:  mov rax, [rip + g_toast_until]
+    call ed_blink_tick
+    mov rax, [rip + g_toast_until]
     test rax, rax
     jz 2f
     call time_ms

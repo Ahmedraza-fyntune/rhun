@@ -9,10 +9,11 @@ hh: .long 0
 .p2align 3
 hclip: .zero SB_SIZE
 # window requests, recorded for tests; a move grabs the pointer like a compositor does
-.globl g_hl_grab, g_hl_moves, g_hl_minimized
+.globl g_hl_grab, g_hl_moves, g_hl_minimized, g_hl_frames
 g_hl_grab: .long 0
 g_hl_moves: .long 0
 g_hl_minimized: .long 0
+g_hl_frames: .long 0            # frames drawn, for tests
 
 .text
 
@@ -101,6 +102,7 @@ hl_draw:
     mov ecx, esi
     call gfx_set_target
     mov dword ptr [rip + g_dirty], 0
+    inc dword ptr [rip + g_hl_frames]
     call app_render
     pop rbx
     ret

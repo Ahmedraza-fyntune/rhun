@@ -3,6 +3,8 @@
 
 .equ ID_EDITOR, 0x1001
 .equ ID_EDSCROLL, 0x1002
+.equ BLINK_MS, 530              # each half of the caret's blink
+.equ BLINK_FOR, 30000           # it blinks this long after the last caret activity, then stays on
 
 .bss
 .p2align 3
@@ -17,6 +19,7 @@ g_ed_tx: .long 0                # x of column 0 (before horizontal scroll)
 g_dragging: .long 0
 .p2align 3
 g_blink_t0: .quad 0
+blink_seen: .long 0             # the half of the blink the last frame was asked for
 classes: .zero SB_SIZE          # per-byte syntax class for the line being drawn
 clip_sb: .zero SB_SIZE
 .globl g_ed_find, g_ed_find_case
@@ -2869,15 +2872,12 @@ draw_caret:
     jne 9f
     cmp dword ptr [rip + g_win_focused], 0
     je 9f
-    cmp dword ptr [rip + cfg_cursor_blink], 0
+    # off in the odd halves of the blink, on when it does not blink
+    call ed_blink_phase
+    cmp eax, -1
     je 1f
-    call time_ms
-    sub rax, [rip + g_blink_t0]
-    xor edx, edx
-    mov ecx, 1060
-    div rcx
-    cmp rdx, 530
-    jae 9f
+    test eax, 1
+    jnz 9f
 1:  mov edi, [rip + g_caret_x]
     cmp edi, [rip + g_ed_tx]
     jl 9f
@@ -2987,8 +2987,9 @@ FN ed_clip_linewise
     jmp memeq
 1:  ret
 
-# ed_blink_timeout() -> ms until the caret toggles, -1 if not blinking
-FN ed_blink_timeout
+# blink_elapsed() -> ms since the last caret activity, -1 if the caret does not blink (turned off,
+# not focused, BLINK_FOR idle)
+blink_elapsed:
     cmp qword ptr [rip + g_doc], 0
     je 1f
     cmp dword ptr [rip + cfg_cursor_blink], 0
@@ -2999,17 +3000,41 @@ FN ed_blink_timeout
     je 1f
     call time_ms
     sub rax, [rip + g_blink_t0]
-    # stop blinking after 30s idle
-    cmp rax, 30000
-    ja 1f
+    cmp rax, BLINK_FOR
+    jbe 2f
+1:  mov rax, -1
+2:  ret
+
+# ed_blink_timeout() -> ms until the caret toggles, -1 if not blinking
+FN ed_blink_timeout
+    call blink_elapsed
+    test rax, rax
+    js 1f
     xor edx, edx
-    mov ecx, 530
+    mov ecx, BLINK_MS
     div rcx
-    mov eax, 530
+    mov eax, BLINK_MS
     sub eax, edx
-    ret
-1:  mov eax, -1
-    ret
+1:  ret
+
+# ed_blink_phase() -> the half of the blink the caret is in (odd: off), -1 if not blinking
+FN ed_blink_phase
+    call blink_elapsed
+    test rax, rax
+    js 1f
+    xor edx, edx
+    mov ecx, BLINK_MS
+    div rcx
+1:  ret
+
+# ed_blink_tick(): a frame each time the caret turns on or off, and when it stops blinking
+FN ed_blink_tick
+    call ed_blink_phase
+    cmp eax, [rip + blink_seen]
+    je 1f
+    mov [rip + blink_seen], eax
+    mov dword ptr [rip + g_dirty], 1
+1:  ret
 
 .section .rodata
 .Lem1: .asciz "Cut"

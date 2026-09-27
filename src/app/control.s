@@ -396,7 +396,8 @@ c_shot:
 1:  xor eax, eax
     ret
 
-# wait ms: run file watches, programs' output and timers for that long
+# wait ms: run file watches, programs' output and timers for that long, drawing frames as they are
+# due, as the event loop does
 c_wait:
     push r13
     push r14
@@ -406,11 +407,19 @@ c_wait:
     call time_ms
     add r13, rax
 1:  call time_ms
-    mov rdi, r13
-    sub rdi, rax
+    mov r14, r13
+    sub r14, rax
     jle 2f
+    call app_timeout
+    cmp eax, -1
+    je 3f
+    cmp rax, r14
+    jae 3f
+    mov r14d, eax
+3:  mov edi, r14d
     call loop_poll
     call app_tick
+    call flush_frame
     jmp 1b
 2:  xor edi, edi
     call loop_poll
@@ -456,6 +465,21 @@ c_wait_update:
     call app_tick
     jmp 1b
 2:  pop r13
+    xor eax, eax
+    ret
+
+# print-frames: frames drawn since the last print-frames
+c_print_frames:
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_frames]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_hl_frames]
+    call sb_push_u64
+    mov dword ptr [rip + g_hl_frames], 0
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
     xor eax, eax
     ret
 
@@ -1037,6 +1061,8 @@ on_client:
 .Lc_print_gitlog: .asciz "print-gitlog"
 .Lc_wait_update: .asciz "wait-update"
 .Lc_print_update: .asciz "print-update"
+.Lc_print_frames: .asciz "print-frames"
+.Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
 .Ls_hidden: .asciz " hidden"
 .Ls_builtin: .asciz "built-in"
@@ -1056,7 +1082,8 @@ ctl_table:
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
-    .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update, 0, 0
+    .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
+    .quad .Lc_print_frames, c_print_frames, 0, 0
 
 .data
 lsock: .long -1
