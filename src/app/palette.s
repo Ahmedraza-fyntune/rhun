@@ -1,4 +1,5 @@
-# palette overlay: fuzzy file finder, commands, themes, languages, go to line, find in files, one-line prompts
+# palette overlay: fuzzy file finder, commands, themes, languages, go to line, find in files, one-line prompts,
+# the path browser (Open File, Open Folder)
 .include "rhun.inc"
 
 .equ PM_NONE, 0
@@ -9,6 +10,7 @@
 .equ PM_GOTO, 5
 .equ PM_PROMPT, 6
 .equ PM_GREP, 7
+.equ PM_BROWSE, 8
 
 .equ ID_PAL_ROW, 0x3000
 .equ ID_PAL_FIELD, 0x3fff
@@ -17,6 +19,9 @@
 .equ GREP_FILE_MAX, 8 << 20     # bytes per file
 .equ GREP_TOTAL_MAX, 256 << 20
 .equ GREP_BLOCK, 32 << 20        # file texts are read into mappings this big, unmapped after
+.equ BRW_MAX, 20000             # entries of a folder in the path browser
+.equ BRW_DIR, 1                 # IT_data of the path browser: a folder
+.equ BRW_HERE, 2                # the "Open <folder>" row
 
 STRUCT
 F IT_label, 8
@@ -63,6 +68,12 @@ gprev: .zero 256
 gprev_len: .long 0
 gstr: .zero SB_SIZE             # result labels and details
 grep_case: .long 0
+pal_mods: .long 0               # modifiers of the key that accepts
+pal_nohl: .long 0               # the row being drawn shows no matched characters
+brw_kind: .long 0               # the path browser picks: 0 a file, 1 a folder
+brw_dir: .zero 4096             # the folder it lists
+brw_next: .zero 4096
+brw_label: .zero 4096
 
 .text
 
@@ -147,6 +158,14 @@ FN cmd_goto_line
     mov edi, PM_GOTO
     jmp palette_open
 1:  ret
+
+FN cmd_open_file
+    xor edi, edi
+    jmp browse_open
+
+FN cmd_open_folder
+    mov edi, 1
+    jmp browse_open
 
 # find in files: the selection (one line) is the initial query
 FN cmd_find_in_files
@@ -907,6 +926,480 @@ scan_cb:
     call item_add
 9:  EPILOGUE
 
+# ---- path browser ----
+
+# browse_open(folder): Open File (0) or Open Folder (1), starting in the project folder
+browse_open:
+    PROLOGUE
+    mov ebx, edi
+    mov [rip + brw_kind], ebx
+    mov byte ptr [rip + brw_dir], 0
+    mov edi, PM_BROWSE
+    call palette_open
+    lea rax, [rip + .Lph_open_file]
+    test ebx, ebx
+    jz 1f
+    lea rax, [rip + .Lph_open_folder]
+1:  mov [rip + pal_label], rax
+    # the field: the project folder, the home folder as ~, and a '/'
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jnz 2f
+    lea rdi, [rip + .Lhome]
+    call getenv
+    mov rsi, rax
+    test rsi, rsi
+    jnz 2f
+    lea rsi, [rip + .Lroot]
+2:  lea rdi, [rip + brw_label]
+    call path_tilde
+    cmp byte ptr [rax - 1], '/'
+    je 3f
+    mov byte ptr [rax], '/'
+    inc rax
+3:  lea rsi, [rip + brw_label]
+    sub rax, rsi
+    lea rdi, [rip + pal_tf]
+    mov rdx, rax
+    call tf_set
+    call palette_changed
+    EPILOGUE
+
+# browse_split() -> rax field text, rdx its length through the last '/' (0 without one), rcx its length
+browse_split:
+    push rbx
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rcx, rdx
+    mov rbx, rdx
+1:  test rbx, rbx
+    jz 2f
+    cmp byte ptr [rax + rbx - 1], '/'
+    je 2f
+    dec rbx
+    jmp 1b
+2:  mov rdx, rbx
+    pop rbx
+    ret
+
+# browse_expand(dst, ptr, len): the folder a path in the field names, absolute and normalized: ~ is
+# the home folder, and a path without a leading / or ~ is in the project
+browse_expand:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    cmp r13, 3000
+    jbe 1f
+    mov r13d, 3000
+1:  test r13, r13
+    jz 3f
+    cmp byte ptr [r12], '/'
+    jne 11f
+    mov rdi, rbx
+    jmp 5f
+11: cmp byte ptr [r12], '~'
+    jne 3f
+    cmp r13, 1
+    je 2f
+    cmp byte ptr [r12 + 1], '/'
+    jne 3f
+2:  # ~: the home folder
+    inc r12
+    dec r13
+    lea rdi, [rip + .Lhome]
+    call getenv
+    mov rdi, rbx
+    test rax, rax
+    jz 5f
+    mov rsi, rax
+    call cstr_copy
+    mov rdi, rax
+    jmp 5f
+3:  # in the project, or the home folder without one
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jnz 4f
+    lea rdi, [rip + .Lhome]
+    call getenv
+    mov rsi, rax
+    test rsi, rsi
+    jnz 4f
+    lea rsi, [rip + .Lempty]
+4:  mov rdi, rbx
+    call cstr_copy
+    mov byte ptr [rax], '/'
+    lea rdi, [rax + 1]
+5:  mov rsi, r12
+    mov rcx, r13
+    rep movsb
+    mov byte ptr [rdi], 0
+    # a relative home: taken as from the root
+    cmp byte ptr [rbx], '/'
+    je 6f
+    lea rdi, [rip + brw_label]
+    mov rsi, rbx
+    call cstr_copy
+    mov byte ptr [rbx], '/'
+    lea rdi, [rbx + 1]
+    lea rsi, [rip + brw_label]
+    call cstr_copy
+6:  mov rdi, rbx
+    call path_normalize
+    EPILOGUE
+
+# browse_filter(): the folder the field names is listed (again when it changed); the rows are the
+# entries matching what follows the last '/', best first. Hidden entries need a query starting
+# with '.'. Picking a folder, "Open <folder>" always leads.
+browse_filter:
+    PROLOGUE 16
+    call browse_split
+    mov r12, rax
+    mov r13, rdx
+    mov r14, rcx
+    lea rdi, [rip + brw_next]
+    mov rsi, r12
+    mov rdx, r13
+    call browse_expand
+    lea rdi, [rip + brw_next]
+    lea rsi, [rip + brw_dir]
+    call strcmp_eq
+    test eax, eax
+    jnz 1f
+    lea rdi, [rip + brw_dir]
+    lea rsi, [rip + brw_next]
+    call cstr_copy
+    call browse_load
+1:  lea r15, [r12 + r13]        # query
+    sub r14, r13
+    xor ebx, ebx
+    cmp qword ptr [rip + items + VEC_len], 0
+    je 2f
+    mov rax, [rip + items + VEC_ptr]
+    test qword ptr [rax + IT_data], BRW_HERE
+    jz 2f
+    lea rdi, [rip + results]
+    mov esi, RS_SIZE
+    call vec_push
+    mov dword ptr [rax + RS_item], 0
+    mov dword ptr [rax + RS_score], 0
+    mov ebx, 1
+2:  mov [rsp], rbx              # leading rows
+3:  cmp rbx, [rip + items + VEC_len]
+    jae 5f
+    imul r12, rbx, IT_SIZE
+    add r12, [rip + items + VEC_ptr]
+    mov rdi, [r12 + IT_label]
+    cmp byte ptr [rdi], '.'
+    jne 31f
+    test r14, r14
+    jz 4f
+    cmp byte ptr [r15], '.'
+    jne 4f
+31: mov rsi, [r12 + IT_len]
+    mov rdx, r15
+    mov rcx, r14
+    call fuzzy
+    test eax, eax
+    js 4f
+    mov r13d, eax
+    lea rdi, [rip + results]
+    mov esi, RS_SIZE
+    call vec_push
+    mov [rax + RS_item], ebx
+    mov [rax + RS_score], r13d
+4:  inc rbx
+    jmp 3b
+5:  test r14, r14
+    jz 6f
+    mov rax, [rsp]
+    mov rdi, [rip + results + VEC_ptr]
+    lea rdi, [rdi + rax*8]
+    mov rsi, [rip + results + VEC_len]
+    sub rsi, rax
+    mov [rsp + 8], rdi
+    mov rbx, rsi
+    call rs_flip
+    mov rdi, [rsp + 8]
+    mov rsi, rbx
+    call sort_u64
+    mov rdi, [rsp + 8]
+    mov rsi, rbx
+    call rs_flip
+6:  # the selection: the leading row, or the best match of a query
+    xor eax, eax
+    test r14, r14
+    jz 7f
+    mov rcx, [rsp]
+    cmp [rip + results + VEC_len], rcx
+    jbe 7f
+    mov eax, ecx
+7:  mov [rip + pal_sel], eax
+    EPILOGUE
+
+# browse_load(): the entries of brw_dir, folders first ("name/"), then files (none when picking a
+# folder), by name; picking a folder, the "Open <folder>" row first
+browse_load:
+    PROLOGUE
+    mov qword ptr [rip + items + VEC_len], 0
+    lea rdi, [rip + strings]
+    call sb_clear
+    lea rdi, [rip + brw_dir]
+    call file_is_dir
+    test eax, eax
+    jz 9f
+    xor ebx, ebx                # items before the sorted ones
+    cmp dword ptr [rip + brw_kind], 0
+    je 1f
+    lea rdi, [rip + strings]
+    lea rsi, [rip + .Lopen_here]
+    call sb_push_cstr
+    lea rdi, [rip + brw_label]
+    lea rsi, [rip + brw_dir]
+    call path_tilde
+    lea rdi, [rip + strings]
+    lea rsi, [rip + brw_label]
+    call sb_push_cstr
+    mov r12, [rip + strings + SB_len]
+    lea rdi, [rip + strings]
+    xor esi, esi
+    call sb_push_byte
+    xor edi, edi
+    mov rsi, r12
+    xor edx, edx
+    mov ecx, BRW_HERE
+    call item_add
+    mov ebx, 1
+1:  lea rdi, [rip + brw_dir]
+    lea rsi, [rip + browse_cb]
+    xor edx, edx
+    call dir_each
+    # labels point into strings (stable now): offsets -> pointers
+    xor ecx, ecx
+2:  cmp rcx, [rip + items + VEC_len]
+    jae 3f
+    imul rax, rcx, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    mov rdx, [rip + strings + SB_ptr]
+    add [rax + IT_label], rdx
+    inc rcx
+    jmp 2b
+3:  mov rdi, rbx
+    call browse_sort
+9:  EPILOGUE
+
+# browse_cb(ctx, name, is_dir)
+browse_cb:
+    PROLOGUE 16
+    mov r12, rsi
+    mov r13d, edx
+    cmp qword ptr [rip + items + VEC_len], BRW_MAX
+    jae 9f
+    test r13d, r13d
+    jnz 1f
+    cmp dword ptr [rip + brw_kind], 0
+    jne 9f
+1:  mov rax, [rip + strings + SB_len]
+    mov [rsp], rax
+    lea rdi, [rip + strings]
+    mov rsi, r12
+    call sb_push_cstr
+    test r13d, r13d
+    jz 2f
+    lea rdi, [rip + strings]
+    mov esi, '/'
+    call sb_push_byte
+2:  mov rax, [rip + strings + SB_len]
+    sub rax, [rsp]
+    mov [rsp + 8], rax
+    lea rdi, [rip + strings]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    xor edx, edx
+    mov ecx, r13d
+    call item_add
+9:  EPILOGUE
+
+# browse_sort(first): the items from first on, folders first, then by name ignoring case (shell sort)
+browse_sort:
+    PROLOGUE 48
+    mov r15, [rip + items + VEC_len]
+    cmp r15, rdi
+    jbe 9f
+    sub r15, rdi                # n
+    imul rax, rdi, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    mov [rsp + 32], rax         # a
+    mov rbx, r15                # gap
+.Lbs_gap:
+    shr rbx, 1
+    jz 9f
+    mov r12, rbx                # i
+.Lbs_i:
+    cmp r12, r15
+    jae .Lbs_gap
+    imul rax, r12, IT_SIZE
+    add rax, [rsp + 32]
+    movups xmm0, [rax]
+    movups xmm1, [rax + 16]
+    movups [rsp], xmm0
+    movups [rsp + 16], xmm1
+    mov r13, r12                # j
+.Lbs_j:
+    cmp r13, rbx
+    jb .Lbs_put
+    mov r14, r13
+    sub r14, rbx
+    imul rsi, r14, IT_SIZE
+    add rsi, [rsp + 32]
+    lea rdi, [rsp]
+    call it_less
+    test eax, eax
+    jz .Lbs_put
+    imul rax, r14, IT_SIZE
+    add rax, [rsp + 32]
+    imul rdx, r13, IT_SIZE
+    add rdx, [rsp + 32]
+    movups xmm0, [rax]
+    movups xmm1, [rax + 16]
+    movups [rdx], xmm0
+    movups [rdx + 16], xmm1
+    mov r13, r14
+    jmp .Lbs_j
+.Lbs_put:
+    imul rdx, r13, IT_SIZE
+    add rdx, [rsp + 32]
+    movups xmm0, [rsp]
+    movups xmm1, [rsp + 16]
+    movups [rdx], xmm0
+    movups [rdx + 16], xmm1
+    inc r12
+    jmp .Lbs_i
+9:  EPILOGUE
+
+# it_less(a, b) -> 1 if item a sorts before item b: folders first, then by name ignoring case
+it_less:
+    mov eax, [rdi + IT_data]
+    and eax, BRW_DIR
+    mov ecx, [rsi + IT_data]
+    and ecx, BRW_DIR
+    cmp eax, ecx
+    je 1f
+    seta al
+    movzx eax, al
+    ret
+1:  mov rdi, [rdi + IT_label]
+    mov rsi, [rsi + IT_label]
+2:  movzx eax, byte ptr [rdi]
+    movzx ecx, byte ptr [rsi]
+    lea edx, [rax - 'A']
+    cmp edx, 25
+    ja 3f
+    or eax, 0x20
+3:  lea edx, [rcx - 'A']
+    cmp edx, 25
+    ja 4f
+    or ecx, 0x20
+4:  cmp eax, ecx
+    jne 5f
+    test eax, eax
+    jz 6f
+    inc rdi
+    inc rsi
+    jmp 2b
+5:  setb al
+    movzx eax, al
+    ret
+6:  xor eax, eax
+    ret
+
+# browse_complete(item): the field becomes the listed folder (written plainly) and the item's name;
+# for a folder that goes into it
+browse_complete:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + brw_label]
+    lea rsi, [rip + brw_dir]
+    call path_tilde
+    cmp byte ptr [rax - 1], '/'
+    je 1f
+    mov byte ptr [rax], '/'
+    mov byte ptr [rax + 1], 0
+1:  lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + brw_label]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + IT_label]
+    mov rdx, [rbx + IT_len]
+    call sb_push
+    lea rdi, [rip + pal_tf]
+    mov rsi, [rip + tmp + SB_ptr]
+    mov rdx, [rip + tmp + SB_len]
+    call tf_set
+    call palette_changed
+    EPILOGUE
+
+# pal_query() -> rax, rdx: what the items are matched against (the path browser: after the last '/')
+pal_query:
+    cmp dword ptr [rip + pal_mode], PM_BROWSE
+    je 1f
+    lea rdi, [rip + pal_tf]
+    jmp tf_text
+1:  call browse_split
+    add rax, rdx
+    sub rcx, rdx
+    mov rdx, rcx
+    ret
+
+# palette_print(sb): the field, then the rows ("> " marks the selected one), or "none"
+FN palette_print
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rip + pal_mode], PM_NONE
+    jne 1f
+    lea rsi, [rip + .Lpp_none]
+    call sb_push_cstr
+    EPILOGUE
+1:  lea rsi, [rip + .Lpp_field]
+    call sb_push_cstr
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rdi, rbx
+    mov rsi, rax
+    call sb_push
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    xor r12d, r12d
+2:  cmp r12, [rip + results + VEC_len]
+    jae 9f
+    cmp r12, 20
+    jae 9f
+    lea rsi, [rip + .Lpp_row]
+    cmp r12d, [rip + pal_sel]
+    jne 3f
+    lea rsi, [rip + .Lpp_sel]
+3:  mov rdi, rbx
+    call sb_push_cstr
+    mov rax, [rip + results + VEC_ptr]
+    mov eax, [rax + r12*8 + RS_item]
+    imul rax, rax, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    mov rdi, rbx
+    mov rsi, [rax + IT_label]
+    mov rdx, [rax + IT_len]
+    call sb_push
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    inc r12
+    jmp 2b
+9:  EPILOGUE
+
 # ---- fuzzy matching ----
 
 # fuzzy(label, len, query, qlen) -> score (-1 when not a subsequence)
@@ -1020,6 +1513,11 @@ FN fuzzy
 FN palette_filter
     PROLOGUE 16
     mov qword ptr [rip + results + VEC_len], 0
+    cmp dword ptr [rip + pal_mode], PM_BROWSE
+    jne .Lpf_grep
+    call browse_filter
+    jmp 5f
+.Lpf_grep:
     cmp dword ptr [rip + pal_mode], PM_GREP
     jne 0f
     call grep_run
@@ -1146,6 +1644,7 @@ FN palette_key
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
+    mov [rip + pal_mods], edx
     cmp r12d, KEY_ESCAPE
     jne 1f
     call palette_close
@@ -1199,7 +1698,19 @@ FN palette_key
 5:  # text editing keys go to the field
     mov edi, r12d
     cmp edi, KEY_TAB
-    je .Lpk_no
+    jne 51f
+    # the path browser: Tab takes the selected name
+    cmp dword ptr [rip + pal_mode], PM_BROWSE
+    jne .Lpk_no
+    call selected_item
+    test rax, rax
+    jz .Lpk_yes
+    test qword ptr [rax + IT_data], BRW_HERE
+    jnz .Lpk_yes
+    mov rdi, rax
+    call browse_complete
+    jmp .Lpk_yes
+51:
     lea rdi, [rip + pal_tf]
     mov esi, r12d
     mov edx, r13d
@@ -1226,6 +1737,8 @@ palette_accept:
     je .Lpa_goto
     cmp ebx, PM_PROMPT
     je .Lpa_prompt
+    cmp ebx, PM_BROWSE
+    je .Lpa_browse
     call selected_item
     test rax, rax
     jz .Lpa_close
@@ -1435,6 +1948,53 @@ palette_accept:
     mov [rbx + DOC_scrolly], rax
     mov dword ptr [rip + g_reveal], 1
     jmp .Lpa_ret
+.Lpa_browse:
+    call selected_item
+    test rax, rax
+    jz .Lpa_ret
+    mov r12, rax
+    mov rax, [r12 + IT_data]
+    test eax, BRW_HERE
+    jnz .Lpa_here
+    test eax, BRW_DIR
+    jz .Lpa_file
+    # a folder: the browser goes into it; picking a folder, Ctrl+Enter opens it
+    cmp dword ptr [rip + brw_kind], 0
+    je 1f
+    test dword ptr [rip + pal_mods], MOD_CTRL
+    jnz 2f
+1:  mov rdi, r12
+    call browse_complete
+    jmp .Lpa_ret
+2:  lea rdi, [rip + brw_dir]
+    mov rsi, [r12 + IT_label]
+    call path_join_tmp
+    lea rdi, [rip + brw_next]
+    mov rsi, rax
+    call cstr_copy
+    lea rdi, [rip + brw_next]
+    call path_normalize
+    jmp .Lpa_switch
+.Lpa_here:
+    lea rdi, [rip + brw_next]
+    lea rsi, [rip + brw_dir]
+    call cstr_copy
+.Lpa_switch:
+    call palette_close
+    lea rdi, [rip + brw_next]
+    call app_switch_project
+    jmp .Lpa_ret
+.Lpa_file:
+    lea rdi, [rip + brw_dir]
+    mov rsi, [r12 + IT_label]
+    call path_join
+    mov r13, rax
+    call palette_close
+    mov rdi, r13
+    call app_open_path
+    mov rdi, r13
+    call mem_free
+    jmp .Lpa_ret
 .Lpa_close:
     call palette_close
 .Lpa_ret:
@@ -1509,16 +2069,7 @@ prompt_done:
     call app_update_title
 31: call explorer_refresh
     jmp 9f
-4:  cmp r12d, PROMPT_OPEN_FOLDER
-    jne 5f
-    mov rdi, rbx
-    call file_is_dir
-    test eax, eax
-    jz 8f
-    mov rdi, rbx
-    call app_set_project
-    jmp 9f
-5:  cmp r12d, PROMPT_DELETE
+4:  cmp r12d, PROMPT_DELETE
     jne 9f
     # the prompt text must be "yes"
     call explorer_delete_target
@@ -1575,8 +2126,10 @@ FN palette_draw
     cmp dword ptr [rip + pal_mode], PM_GOTO
     je 21f
     cmp dword ptr [rip + pal_mode], PM_GREP
+    je 20f
+    cmp dword ptr [rip + pal_mode], PM_BROWSE
     jne 22f
-    cmp dword ptr [rsp], 0
+20: cmp dword ptr [rsp], 0
     jne 22f
 21: add eax, [rip + g_mt + 4*MI_20]
 22: mov [rsp + 4], eax          # card h
@@ -1623,8 +2176,10 @@ FN palette_draw
     cmp eax, PM_GOTO
     je 4f
     cmp eax, PM_GREP
+    je 41f
+    cmp eax, PM_BROWSE
     jne 5f
-    cmp qword ptr [rip + results + VEC_len], 0
+41: cmp qword ptr [rip + results + VEC_len], 0
     jne 5f
 4:  lea rdi, [rip + g_face_small]
     mov esi, r13d
@@ -1742,7 +2297,15 @@ FN palette_draw
     call text_width
     add eax, [rip + g_mt + 4*MI_16]
     mov [rsp + 56], eax
-101: # label with matched characters highlighted, clipped before the detail
+101: # label with matched characters highlighted, clipped before the detail; not the path
+    # browser's "Open <folder>"
+    mov rax, [rsp + 24]
+    xor ecx, ecx
+    cmp dword ptr [rip + pal_mode], PM_BROWSE
+    jne 102f
+    test qword ptr [rax + IT_data], BRW_HERE
+    setnz cl
+102:mov [rip + pal_nohl], ecx
     M eax, MI_16
     lea edi, [r13 + rax]
     mov esi, [rsp + 20]
@@ -1781,6 +2344,7 @@ FN palette_draw
     jz 12f
     mov eax, [rsp + 16]
     mov [rip + pal_sel], eax
+    mov dword ptr [rip + pal_mods], 0
     call palette_accept
     jmp .Lpd_ret
 12: inc dword ptr [rsp + 12]
@@ -1796,10 +2360,13 @@ draw_highlighted:
     mov r14d, edx               # x
     mov [rsp], ecx              # y
     mov [rsp + 4], r8d          # h
-    lea rdi, [rip + pal_tf]
-    call tf_text
+    call pal_query
     mov [rsp + 8], rax          # query
     mov [rsp + 16], rdx
+    cmp dword ptr [rip + pal_nohl], 0
+    je .Ldh_query
+    mov qword ptr [rsp + 16], 0
+.Ldh_query:
     lea rax, [rip + g_face_ui]
     mov [rsp + 48], rax         # face
     mov qword ptr [rsp + 40], -1
@@ -1900,6 +2467,9 @@ placeholder_text:
     ret
 
 hint_text:
+    lea rax, [rip + .Lhint_nomatch]
+    cmp dword ptr [rip + pal_mode], PM_BROWSE
+    je 1f
     cmp dword ptr [rip + pal_mode], PM_GREP
     jne 2f
     lea rax, [rip + .Lhint_grep]
@@ -1936,6 +2506,14 @@ hint_text:
 .Lhint_goto: .asciz "Enter a line number and press Enter"
 .Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
 .Lhint_delete: .asciz "Type yes and press Enter to delete"
+.Lph_open_file: .asciz "Open a file"
+.Lph_open_folder: .asciz "Open a folder"
+.Lopen_here: .asciz "Open "
+.Lroot: .asciz "/"
+.Lpp_none: .asciz "none\n"
+.Lpp_field: .asciz "field="
+.Lpp_row: .asciz "  "
+.Lpp_sel: .asciz "> "
 .bss
 .p2align 3
 keys_cache: .zero 8 * 256

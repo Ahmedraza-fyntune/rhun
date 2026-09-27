@@ -5,6 +5,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 ## Features
 
 - Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
+- Project menu in the title bar: open a folder or a file from anywhere on disk, or a recent folder
 - Image preview: PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA open in a tab, with zoom and pan
 - Syntax highlighting for about 125 languages, defined in plain text grammar files
 - 39 color themes, dark and light, with a match for every Omarchy theme; add your own
@@ -89,7 +90,7 @@ The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PAS
 rhun [folder] [files...]
 ```
 
-Without a folder the current directory is the project. Without files the previous session of that project is reopened.
+Without a folder the current directory is the project. Without files the previous session of that project is reopened. Started from an app launcher, the project is usually your home folder; the project menu in the title bar opens another (see [Folders and files](#folders-and-files)).
 
 Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.
 
@@ -104,6 +105,8 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Key | Action |
 | --- | --- |
 | Ctrl+P | Go to file |
+| Ctrl+O | Open file |
+| Ctrl+Shift+O | Open folder |
 | Ctrl+Shift+P, F1 | Command palette |
 | Ctrl+, | Settings |
 | Ctrl+K | Color theme |
@@ -123,6 +126,16 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
 
 All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
+
+### Folders and files
+
+Clicking the project name in the title bar opens the project menu: Open Folder…, Open File… and the folders of up to 9 recent sessions, newest first. Opening a folder turns the window to it: rhun remembers the open files, asks about unsaved ones, and brings back the folder's last session. Running terminals keep running; new ones start in the new folder.
+
+Open Folder and Open File show a browser in the palette. It starts in the project folder, and its field holds a path: the list shows what is in the folder before the last `/`, narrowed by what follows it.
+
+- Enter goes into a folder or opens a file, Tab completes the name, and Backspace past a `/` goes up.
+- A path can be typed or pasted, as in `/etc/` or `~/code/`. Hidden entries show once the name typed starts with a dot.
+- Open Folder lists only folders, led by **Open** and the folder shown. Ctrl+Enter opens the selected folder without going into it.
 
 ### Git
 
@@ -254,7 +267,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-update`, `resize`, `print-doc`, `print-state`, `print-term`, `print-git`, `print-gitlog`, `print-update`, `print-frames`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-palette`, `print-menu`, `print-term`, `print-git`, `print-gitlog`, `print-update`, `print-frames`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 

@@ -10,6 +10,8 @@
 .equ ID_SETTINGS_BTN, 0x2006
 .equ ID_TOG_TERM, 0x2007
 .equ ID_GIT_BTN, 0x2008
+.equ ID_PROJECT_BTN, 0x2009
+.equ PM_RECENT, 3                 # the project menu's first recent folder
 .equ ID_TAB, 0x2100              # + index
 .equ ID_TABX, 0x2400             # + index
 .equ ID_SPLIT_L, 0x2700
@@ -33,8 +35,12 @@ g_toast_until: .quad 0
 g_tabscroll: .long 0
 g_side_px: .long 0
 g_agents_px: .long 0
-dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit
+dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project
 dlg_tab: .quad 0
+switch_pending: .long 0          # a project switch waits on unsaved files
+switch_path: .zero 4096
+.p2align 3
+pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folders, the end
 .globl g_shot_path
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
@@ -148,6 +154,129 @@ FN app_set_project
     call agents_set_project
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# app_switch_project(path): this window takes up another folder. The project's open files are
+# remembered, unsaved ones are asked about (Cancel keeps the project), then they are closed and the
+# folder opens with its last session.
+FN app_switch_project
+    PROLOGUE
+    mov rbx, rdi
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 1f
+    call strcmp_eq
+    test eax, eax
+    jnz 9f
+1:  mov rdi, rbx
+    call strlen
+    cmp rax, 4000
+    ja 9f
+    lea rdi, [rip + switch_path]
+    mov rsi, rbx
+    call cstr_copy
+    # before the questions: an answer closes that file
+    call session_save
+    mov dword ptr [rip + switch_pending], 1
+    call switch_continue
+9:  EPILOGUE
+
+# switch_continue(): the next unsaved file asks first; with none left the project changes
+switch_continue:
+    PROLOGUE
+    cmp dword ptr [rip + switch_pending], 0
+    je 9f
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov rdi, [rax + TAB_doc]
+    call doc_dirty
+    test eax, eax
+    jz 2f
+    mov [rip + dlg_tab], rbx
+    mov dword ptr [rip + dlg_kind], 3
+    mov rdi, rbx
+    call app_activate_tab
+    mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    jmp 9f
+2:  inc rbx
+    jmp 1b
+3:  mov dword ptr [rip + switch_pending], 0
+4:  mov rdi, [rip + g_tabs + VEC_len]
+    test rdi, rdi
+    jz 5f
+    dec rdi
+    call app_close_tab_now
+    jmp 4b
+5:  mov byte ptr [rip + g_explorer_dir], 0
+    mov byte ptr [rip + g_explorer_target], 0
+    lea rdi, [rip + switch_path]
+    call app_set_project
+    call session_restore
+    call app_update_title
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# project_menu_open(x, y): Open Folder, Open File and the recent folders, under the project name
+project_menu_open:
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    lea rbx, [rip + pm_items]
+    lea rax, [rip + .Lpm_folder]
+    mov [rbx], rax
+    lea rax, [rip + cmd_open_folder]
+    mov [rbx + 8], rax
+    lea rax, [rip + .Lpm_file]
+    mov [rbx + 16], rax
+    lea rax, [rip + cmd_open_file]
+    mov [rbx + 24], rax
+    add rbx, 32
+    call session_recent
+    mov r14d, eax
+    test r14d, r14d
+    jz 2f
+    # a line, then the folders
+    lea rax, [rip + .Lpm_line]
+    mov [rbx], rax
+    mov qword ptr [rbx + 8], 0
+    add rbx, 16
+    xor r15d, r15d
+1:  cmp r15d, r14d
+    jae 2f
+    mov eax, r15d
+    shl eax, 12
+    lea rcx, [rip + g_recent_label]
+    add rcx, rax
+    mov [rbx], rcx
+    lea rax, [rip + recent_open]
+    mov [rbx + 8], rax
+    add rbx, 16
+    inc r15d
+    jmp 1b
+2:  mov qword ptr [rbx], 0
+    mov qword ptr [rbx + 8], 0
+    lea rdi, [rip + pm_items]
+    mov esi, r12d
+    mov edx, r13d
+    call ctx_menu_open
+    mov dword ptr [rip + g_menu_keys], 1
+    EPILOGUE
+
+# recent_open(): the recent folder picked in the project menu (the items after the line)
+recent_open:
+    mov eax, [rip + g_menu_index]
+    sub eax, PM_RECENT
+    js 1f
+    shl eax, 12
+    lea rdi, [rip + g_recent_path]
+    add rdi, rax
+    jmp app_switch_project
+1:  ret
 
 # ---------------- tabs ----------------
 
@@ -752,7 +881,15 @@ FN app_on_key
     mov edi, r12d
     call dialog_key
     jmp 9f
-1:  # focused components get the first chance
+1:  # Esc closes a context menu
+    cmp r12d, KEY_ESCAPE
+    jne 10f
+    call explorer_menu_open
+    test eax, eax
+    jz 10f
+    call ctx_menu_close
+    jmp 9f
+10: # focused components get the first chance
     mov eax, [rip + g_focus]
     cmp eax, FOCUS_PALETTE
     je 2f
@@ -1484,22 +1621,81 @@ FN titlebar_draw
     call cmd_toggle_sidebar
 3:  add r12d, r13d
     add r12d, [rip + g_mt + 4*MI_8]
-    # project name
-    mov r8, [rip + g_project_name]
-    test r8, r8
+    # project name and a chevron: the button for the project menu
+    mov rax, [rip + g_project_name]
+    test rax, rax
     jnz 4f
-    lea r8, [rip + .Lrhun]
-4:  lea rdi, [rip + g_face_ui]
+    lea rax, [rip + .Lrhun]
+4:  mov [rsp + 16], rax
+    mov rdi, rax
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    mov rsi, [rsp + 16]
+    mov rdx, rax
+    call text_width
+    mov r14d, r12d
+    sub r14d, [rip + g_mt + 4*MI_6]   # x
+    mov r15d, eax
+    add r15d, [rip + g_mt + 4*MI_6]
+    add r15d, [rip + g_mt + 4*MI_6]
+    add r15d, [rip + g_mt + 4*MI_4]
+    add r15d, [rip + g_mt + 4*MI_12]  # w
+    mov edi, ID_PROJECT_BTN
+    mov esi, r14d
+    M r8d, MI_28
+    mov edx, [rsp + 12]
+    sub edx, r8d
+    sar edx, 1
+    mov ecx, r15d
+    call ui_btn
+    mov ebx, eax
+    # hovered, or its menu open
+    test ebx, UB_HOVER
+    jnz 41f
+    call ctx_menu_list
+    lea rcx, [rip + pm_items]
+    cmp rax, rcx
+    jne 42f
+41: mov edi, r14d
+    M ecx, MI_28
+    mov esi, [rsp + 12]
+    sub esi, ecx
+    sar esi, 1
+    mov edx, r15d
+    M r8d, MI_RADIUS
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+42: lea rdi, [rip + g_face_ui]
     mov esi, r12d
     mov edx, [rsp + 4]
     mov ecx, [rsp + 12]
+    mov r8, [rsp + 16]
     COLOR r9d, T_FG
     call ui_text_c
-    mov r12d, eax
-    # branch
+    mov esi, eax
+    add esi, [rip + g_mt + 4*MI_4]
+    M ecx, MI_12
+    mov edx, [rsp + 12]
+    sub edx, ecx
+    sar edx, 1
+    add edx, [rsp + 4]
+    mov edi, IC_CHEV_D
+    COLOR r8d, T_MUTED
+    test ebx, UB_HOVER
+    jz 43f
+    COLOR r8d, T_FG
+43: call icon_draw
+    lea r12d, [r14 + r15]
+    test ebx, UB_CLICK
+    jz 44f
+    mov edi, r14d
+    mov esi, [rsp + 4]
+    add esi, [rsp + 12]
+    call project_menu_open
+44: # branch
     cmp byte ptr [rip + g_branch], 0
     je 5f
-    add r12d, [rip + g_mt + 4*MI_10]
+    add r12d, [rip + g_mt + 4*MI_4]
     lea rdi, [rip + g_face_small]
     mov esi, r12d
     mov edx, [rsp + 4]
@@ -2594,12 +2790,17 @@ dialog_choose:
     jmp 8f
 1:  mov rdi, [rip + dlg_tab]
     call app_close_tab_now
-    cmp r12d, 2
+    cmp r12d, 3
+    jne 11f
+    call switch_continue
+    jmp 9f
+11: cmp r12d, 2
     jne 9f
     call cmd_quit
     jmp 9f
-8:  # not quitting after all: no restart into an update either
+8:  # not quitting after all: no restart into an update either, and no other project
     mov dword ptr [rip + g_restart], 0
+    mov dword ptr [rip + switch_pending], 0
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -2874,12 +3075,14 @@ FN cmd_move_line_down
 .Ldlg_q: .asciz "Save changes to "
 .Ldlg_msg: .asciz "Your changes will be lost if you don't save them."
 .Lnl: .ascii "\n"
-.Lw1: .asciz "Open file"
+.Lw1: .asciz "Go to file"
 .Lw2: .asciz "Command palette"
 .Lw3: .asciz "New file"
 .Lw4: .asciz "Settings"
 .Lw5: .asciz "Toggle explorer"
 .Lw6: .asciz "Toggle agents"
+.Lw7: .asciz "Open file"
+.Lw8: .asciz "Open folder"
 .ifdef MACOS
 .Lk1: .asciz "\342\214\230P"
 .Lk2: .asciz "\342\207\247\342\214\230P"
@@ -2887,6 +3090,8 @@ FN cmd_move_line_down
 .Lk4: .asciz "\342\214\230,"
 .Lk5: .asciz "\342\214\230B"
 .Lk6: .asciz "\342\207\247\342\214\230A"
+.Lk7: .asciz "\342\214\230O"
+.Lk8: .asciz "\342\207\247\342\214\230O"
 .else
 .Lk1: .asciz "Ctrl+P"
 .Lk2: .asciz "Ctrl+Shift+P"
@@ -2894,7 +3099,12 @@ FN cmd_move_line_down
 .Lk4: .asciz "Ctrl+,"
 .Lk5: .asciz "Ctrl+B"
 .Lk6: .asciz "Ctrl+Shift+A"
+.Lk7: .asciz "Ctrl+O"
+.Lk8: .asciz "Ctrl+Shift+O"
 .endif
+.Lpm_folder: .asciz "Open Folder\342\200\246"
+.Lpm_file: .asciz "Open File\342\200\246"
+.Lpm_line: .asciz ""
 .Ld0: .asciz "Cancel"
 .Ld1: .asciz "Don't Save"
 .Ld2: .asciz "Save"
@@ -2903,6 +3113,8 @@ welcome_rows:
     .quad .Lw1, .Lk1, cmd_quick_open
     .quad .Lw2, .Lk2, cmd_command_palette
     .quad .Lw3, .Lk3, cmd_new_file
+    .quad .Lw7, .Lk7, cmd_open_file
+    .quad .Lw8, .Lk8, cmd_open_folder
     .quad .Lw4, .Lk4, cmd_settings
     .quad .Lw5, .Lk5, cmd_toggle_sidebar
     .quad .Lw6, .Lk6, cmd_toggle_agents

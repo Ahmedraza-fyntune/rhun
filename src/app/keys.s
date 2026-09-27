@@ -179,6 +179,18 @@ FN cmd_find
 3:  mov rax, rbx
     EPILOGUE
 
+# cmd_for_fn(fn) -> the command that runs fn, or 0
+FN cmd_for_fn
+    lea rax, [rip + g_commands]
+1:  cmp qword ptr [rax + CMD_name], 0
+    je 2f
+    cmp [rax + CMD_fn], rdi
+    je 3f
+    add rax, CMD_SIZE
+    jmp 1b
+2:  xor eax, eax
+3:  ret
+
 # keys_reload(): bindings from scratch, after the config file changed
 FN keys_reload
     mov qword ptr [rip + bindings + VEC_len], 0
@@ -496,6 +508,7 @@ g_commands:
     COMMAND toggle_agents, "Toggle Agents Panel", cmd_toggle_agents, "ctrl+shift+a"
     COMMAND focus_explorer, "Focus File Explorer", cmd_focus_explorer, "ctrl+shift+e"
     COMMAND focus_agents, "Focus Agents Panel", cmd_focus_agents, ""
+    COMMAND open_file, "Open File", cmd_open_file, "ctrl+o"
     COMMAND open_folder, "Open Folder", cmd_open_folder, "ctrl+shift+o"
     COMMAND new_folder, "New Folder", cmd_new_folder, ""
     COMMAND rename_file, "Rename File", cmd_rename_file, "F2"

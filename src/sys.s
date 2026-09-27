@@ -681,3 +681,53 @@ FN path_normalize
     dec rdx
 81: mov byte ptr [rdx], 0
 9:  ret
+
+# path_tilde(dst, src) -> end of dst (its NUL): src, with the home folder at its start written as ~
+FN path_tilde
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdi, rsi
+    call strlen
+    mov r13, rax
+    lea rdi, [rip + .Lhome_env]
+    call getenv
+    test rax, rax
+    jz 8f
+    mov r14, rax
+    mov rdi, rax
+    call strlen
+    mov r15, rax
+    test r15, r15
+    jz 8f
+    cmp byte ptr [r14 + r15 - 1], '/'
+    jne 1f
+    dec r15
+1:  # a home of "/" is no shorter as ~
+    test r15, r15
+    jz 8f
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, r14
+    mov rcx, r15
+    call str_starts
+    test eax, eax
+    jz 8f
+    # the whole home: the path ends there or goes on with a '/'
+    movzx eax, byte ptr [r12 + r15]
+    test eax, eax
+    jz 2f
+    cmp eax, '/'
+    jne 8f
+2:  mov byte ptr [rbx], '~'
+    lea rdi, [rbx + 1]
+    lea rsi, [r12 + r15]
+    call cstr_copy
+    EPILOGUE
+8:  mov rdi, rbx
+    mov rsi, r12
+    call cstr_copy
+    EPILOGUE
+
+.section .rodata
+.Lhome_env: .asciz "HOME"
