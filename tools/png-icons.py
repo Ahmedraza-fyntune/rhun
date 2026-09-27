@@ -4,6 +4,9 @@
 # usage: tools/png-icons.py
 import importlib.util
 import os
+import sys
+
+sys.dont_write_bytecode = True
 
 here = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location('mac_icon', os.path.join(here, 'mac-icon.py'))
