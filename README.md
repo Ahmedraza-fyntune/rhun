@@ -22,13 +22,13 @@ rhun shows up with your other apps, and `rhun` starts it from a terminal. It kee
 
 When coding agents do more of the heavy lifting, you may not need everything that comes with VS Code or Zed. You need to read and edit code, run commands, find files, and check what changed.
 
-rhun has the parts you use every day:
+`rhun` is perfect for such tasks: it is blazing fast, has a minimal memory and disk space footprint, and ships with everything you need:
 
-- **Edit code.** Tabs, syntax highlighting, find and replace, and optional Vim mode.
-- **Use your terminal.** Run your shell, tools, and coding agents right beside the code.
-- **Check Git.** See changed files, read diffs, and browse commit history.
-- **Find things.** Jump to a file or search across the whole project.
-- **Follow your agents.** See Claude Code and Codex sessions as they work.
+- **Code editing:** Tabs, syntax highlighting, find and replace, and optional Vim mode.
+- **Built-in terminal:** Run your shell, tools, and coding agents right beside the code.
+- **Git:** See changed files, read diffs, and browse commit history.
+- **Fuzzy search:** Jump to a file or search across the whole project.
+- **Agents panel:** See Claude Code and Codex sessions as they work.
 
 <p>
   <img src="assets/social/screenshot-dark.png" width="49%" alt="rhun, dark theme">
