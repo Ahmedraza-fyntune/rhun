@@ -4,3 +4,4 @@ rule cc
 build out.o: cc src.c
 default out.o
 include common.ninja
+pool link_pool depth = 4

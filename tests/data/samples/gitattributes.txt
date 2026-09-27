@@ -4,3 +4,4 @@
 *.sh text eol=lf
 docs/** linguist-documentation
 build/* export-ignore linguist-generated
+*.txt conflict-marker-size=32

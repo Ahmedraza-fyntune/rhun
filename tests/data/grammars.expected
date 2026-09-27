@@ -19,6 +19,8 @@ end Main;
 == apache.syn
 # enable rewriting
 666666666666666666 0
+Listen 8080
+11111105555 0
 RewriteEngine On
 1111111111111000 0
 <Directory /var/www/html>
@@ -385,6 +387,8 @@ docs/** linguist-documentation
 00008880dddddddddddddddddddddd 0
 build/* export-ignore linguist-generated
 00000880ddddddddddddd0dddddddddddddddddd 0
+*.txt conflict-marker-size=32
+89000000000000000000000000855 0
 == gleam.syn
 // Gleam sample
 666666666666666 0
@@ -596,8 +600,8 @@ alias b := build
 1111100088000000 0
 build:
 333338 0
-    cargo build --release
-0000000000000000880000000 0
+    cargo build --release -j 4
+000000000000000088000000008005 0
 doc := """
 0000880444 2
 multi-line text
@@ -784,6 +788,8 @@ default out.o
 1111111000000 0
 include common.ninja
 11111110000000000000 0
+pool link_pool depth = 4
+111100000000000000000805 0
 == objc.syn
 // Simple Objective-C greeter
 66666666666666666666666666666 0
