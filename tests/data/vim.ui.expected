@@ -462,6 +462,9 @@ int main(void) {
 line two
 
 <eod>
+tabs=1 active=vim.c line=8 col=12 sel=0 dirty=1 lang=C vim=normal focus=0 theme=rhun-dark
+tabs=1 active=vim.c line=8 col=8 sel=3 dirty=1 lang=C vim=normal focus=2 theme=rhun-dark
+tabs=1 active=vim.c line=8 col=12 sel=0 dirty=1 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=2 col=20 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=3 col=13 sel=33 dirty=0 lang=C vim=visual focus=0 theme=rhun-dark
 tabs=1 active=vim.c line=4 col=1 sel=0 dirty=0 lang=C vim=normal focus=0 theme=rhun-dark

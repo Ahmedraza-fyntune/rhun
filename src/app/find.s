@@ -37,6 +37,7 @@ FN find_field
 # open with the selection (single line) as the query
 open_bar:
     PROLOGUE
+    mov dword ptr [rip + g_find_word], 0
     mov dword ptr [rip + find_open], 1
     mov dword ptr [rip + find_sub], 0
     mov dword ptr [rip + tf_find + TF_id], ID_FIND_TF
@@ -204,7 +205,7 @@ find_raw_word:
     cmp r8, [rsp]
     jbe 3f
     movzx edi, byte ptr [r8 - 1]
-    call word_byte
+    call is_ident
     test eax, eax
     jnz 4f
 3:  lea r8, [r12 + rbx]
@@ -212,7 +213,7 @@ find_raw_word:
     cmp r8, [rsp + 8]
     jae 5f
     movzx edi, byte ptr [r8]
-    call word_byte
+    call is_ident
     test eax, eax
     jz 5f
 4:  inc rbx
@@ -232,24 +233,6 @@ find_raw_word:
     pop rsi
     pop rdi
     ret
-
-# word_byte(byte) -> 1 for a letter, digit, _ or a byte of a non-ASCII character
-word_byte:
-    mov eax, 1
-    cmp edi, 0x80
-    jae 1f
-    cmp edi, '_'
-    je 1f
-    lea ecx, [rdi - '0']
-    cmp ecx, 9
-    jbe 1f
-    mov ecx, edi
-    or ecx, 0x20
-    sub ecx, 'a'
-    cmp ecx, 25
-    jbe 1f
-    xor eax, eax
-1:  ret
 
 # goto_match(dir): select next (1) / previous (-1) match from the cursor
 goto_match:
@@ -540,17 +523,13 @@ FN find_vim_query
     lea rdi, [rip + tf_find]
     jmp tf_text
 
-# find_vim_word(ptr, len): search for this text, its matches marked
+# find_vim_word(ptr, len, word): the text searched for (word: whole words only); find_vim_step marks the matches
 FN find_vim_word
-    mov dword ptr [rip + g_find_word], 0
-    push rbx
+    mov [rip + g_find_word], edx
     mov rdx, rsi
     mov rsi, rdi
     lea rdi, [rip + tf_find]
-    call tf_set
-    call update_matches
-    pop rbx
-    ret
+    jmp tf_set
 
 # find_vim_step(pos, dir) -> the first match after pos (dir 1) or the last one before it (-1), wrapping; -1 if none
 FN find_vim_step

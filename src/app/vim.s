@@ -85,6 +85,7 @@ v_buf: .zero SB_SIZE
 v_stat: .zero 64
 v_tf: .zero TF_SIZE             # the command line
 v_pat: .zero SB_SIZE            # / ?: the pattern before, back when the search is cancelled
+v_patword: .long 0              # and whether it was a whole word (* #)
 
 .text
 
@@ -1467,6 +1468,8 @@ vcmd:
     mov [rip + v_sop], eax
     mov eax, [rip + v_opcount]
     mov [rip + v_sopcount], eax
+    mov eax, [rip + g_find_word]
+    mov [rip + v_patword], eax
     lea rdi, [rip + v_pat]
     call sb_clear
     call find_vim_query
@@ -3237,8 +3240,8 @@ vmotion:
     call doc_range
     mov rdi, rax
     mov rsi, [rsp + 8]
+    mov edx, 1
     call find_vim_word
-    mov dword ptr [rip + g_find_word], 1
     jmp .Lm_search
 
 # vbracket(byte) -> eax partner, edx 1 opening / -1 closing / 0 not a bracket
@@ -4129,12 +4132,11 @@ FN vim_field_changed
     call tf_text
     mov rdi, rax
     mov rsi, rdx
+    xor edx, edx
     call find_vim_word
     mov r12, [rip + v_sfrom]
     mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
-    cmp qword ptr [rip + v_tf + TF_sb + SB_len], 0
-    je 8f
     mov rdi, r12
     mov esi, 1
     cmp dword ptr [rip + g_vim_cmdline], '?'
@@ -4164,6 +4166,7 @@ vsearch_accept:
     jne 2f
     mov rdi, [rip + v_pat + SB_ptr]
     mov rsi, [rip + v_pat + SB_len]
+    mov edx, [rip + v_patword]
     call find_vim_word
 2:  mov rdi, [rip + v_sfrom]
     mov esi, r13d
@@ -4225,6 +4228,7 @@ vsearch_cancel:
     PROLOGUE
     mov rdi, [rip + v_pat + SB_ptr]
     mov rsi, [rip + v_pat + SB_len]
+    mov edx, [rip + v_patword]
     call find_vim_word
     lea rdi, [rip + g_ed_find]
     call sb_clear

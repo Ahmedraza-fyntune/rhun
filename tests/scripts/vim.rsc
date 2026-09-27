@@ -231,6 +231,22 @@ key Escape
 type ~
 print-doc
 type uu
+# * finds whole words, also after a / that was given up; the find bar finds any text
+type Gofoo foobar foo
+key Escape
+type 0*
+print-state
+type 0l
+cmd find
+key Return
+print-state
+key Escape
+key Escape
+type 0*/bar
+key Escape
+type 0n
+print-state
+type u
 # mouse: a drag is a visual selection, a click ends it
 click 430 108
 print-state
