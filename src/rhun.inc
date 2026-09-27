@@ -63,6 +63,7 @@
 .equ O_WRONLY, 1
 .equ O_RDWR, 2
 .equ O_CREAT, 0x40
+.equ O_EXCL, 0x80
 .equ O_NOCTTY, 0x100
 .equ O_TRUNC, 0x200
 .equ O_APPEND, 0x400

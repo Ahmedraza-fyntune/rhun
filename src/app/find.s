@@ -399,9 +399,24 @@ replace_all:
 1:  mov rdi, rbx
     call doc_len
     mov r14, rax
+    mov rdx, r14
+    sub rdx, r15
+    jbe 2f
+    # After a replacement the remaining text is beyond the gap. Search it directly,
+    # without moving the whole suffix to the front for every match.
+    cmp dword ptr [rip + g_find_word], 0
+    jne .Lra_word
+    mov rdi, rbx
+    mov rsi, r15
+    call doc_range
+    mov rdi, rax
+    jmp .Lra_search
+.Lra_word:
+    # Whole-word matching uses the contiguous document's bounds for adjacent bytes.
     mov rdi, rbx
     call doc_contiguous
     lea rdi, [rax + r15]
+.Lra_search:
     mov rsi, r14
     sub rsi, r15
     jbe 2f

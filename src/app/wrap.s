@@ -218,6 +218,9 @@ FN pos_in_row
 
 # seg_cols(text, from, to) -> visual columns of text[from..to) with tab stops relative to from
 FN seg_cols
+    xor ecx, ecx
+# seg_cols_from(text, from, to, column at from) -> column at to, keeping the row's tab stops
+FN seg_cols_from
     push rbx
     push r12
     push r13
@@ -226,7 +229,7 @@ FN seg_cols
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
-    xor ebx, ebx
+    mov ebx, ecx
 1:  cmp r13, r14
     jae 9f
     movzx eax, byte ptr [r12 + r13]

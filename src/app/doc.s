@@ -950,6 +950,32 @@ FN doc_note_eol
 1:  pop rbx
     ret
 
+# doc_normalize_eol(doc, text, len) -> normalized length; only CRs followed by LF are removed
+FN doc_normalize_eol
+    mov dword ptr [rdi + DOC_crlf], 0
+    mov r9, rdx
+    xor ecx, ecx
+    xor edx, edx                # write index
+3:  cmp rcx, r9
+    jae 5f
+    movzx eax, byte ptr [rsi + rcx]
+    cmp al, 13
+    jne 4f
+    lea r8, [rcx + 1]
+    cmp r8, r9
+    jae 4f
+    cmp byte ptr [rsi + r8], 10
+    jne 4f
+    mov dword ptr [rdi + DOC_crlf], 1
+    inc rcx
+    jmp 3b
+4:  mov [rsi + rdx], al
+    inc rcx
+    inc rdx
+    jmp 3b
+5:  mov rax, rdx
+    ret
+
 # doc_load(doc, path) -> 0 ok, -2 missing (doc keeps path), -1000 binary, other -errno
 FN doc_load
     PROLOGUE 16
@@ -964,7 +990,7 @@ FN doc_load
     mov rdi, r12
     call file_read_all
     test rax, rax
-    jz .Ldl_missing
+    jz .Ldl_error
     mov r13, rax
     mov r14, rdx
     # binary check (NUL in the first 8 KiB)
@@ -978,27 +1004,11 @@ FN doc_load
     jz 2f
     repne scasb
     je .Ldl_binary
-2:  # CRLF -> LF
-    xor ecx, ecx
-    xor edx, edx                # write index
-3:  cmp rcx, r14
-    jae 5f
-    movzx eax, byte ptr [r13 + rcx]
-    cmp al, 13
-    jne 4f
-    lea r8, [rcx + 1]
-    cmp r8, r14
-    jae 4f
-    cmp byte ptr [r13 + r8], 10
-    jne 4f
-    mov dword ptr [rbx + DOC_crlf], 1
-    inc rcx
-    jmp 3b
-4:  mov [r13 + rdx], al
-    inc rcx
-    inc rdx
-    jmp 3b
-5:  mov r14, rdx
+2:  mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r14
+    call doc_normalize_eol
+    mov r14, rax
     # install as buffer with the gap at the end
     mov rdi, [rbx + DOC_buf]
     call mem_free
@@ -1049,8 +1059,8 @@ FN doc_load
     call doc_note_eol
     xor eax, eax
     EPILOGUE
-.Ldl_missing:
-    mov rax, -2
+.Ldl_error:
+    mov rax, rdx
     EPILOGUE
 .Ldl_binary:
     mov rdi, r13
@@ -1142,7 +1152,11 @@ FN doc_save
     call doc_len
     mov r12, rax
     lea rdi, [rsp]
-    lea rsi, [rax + rax]
+    mov rsi, rax
+    cmp dword ptr [rbx + DOC_crlf], 0
+    je 1f
+    add rsi, rax
+1:
     call sb_reserve
     mov r13, rax
     mov rdi, rbx

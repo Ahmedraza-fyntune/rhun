@@ -249,23 +249,11 @@ FN app_reload_doc
     test rax, rax
     jz 9f
     mov r12, rax
-    mov r13, rdx
-    # drop CRs of CRLF files
-    cmp dword ptr [rbx + DOC_crlf], 0
-    je 2f
-    xor ecx, ecx
-    xor edx, edx
-1:  cmp rcx, r13
-    jae 11f
-    movzx eax, byte ptr [r12 + rcx]
-    inc rcx
-    cmp al, 13
-    je 1b
-    mov [r12 + rdx], al
-    inc rdx
-    jmp 1b
-11: mov r13, rdx
-2:  mov r14, [rbx + DOC_cur]
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_normalize_eol
+    mov r13, rax
+    mov r14, [rbx + DOC_cur]
     mov r15, [rbx + DOC_scrolly]
     mov rdi, rbx
     mov rsi, r12
