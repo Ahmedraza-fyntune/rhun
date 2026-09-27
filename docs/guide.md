@@ -81,6 +81,10 @@ tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.zip and .dmg
 
 The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PASSWORD` (the Developer ID Application certificate with its key, exported as .p12, base64), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` (an App Store Connect API key for notarization, the .p8 in base64). The Mac app is notarized, and the release gets a disk image, only when the repository variable `RHUN_NOTARIZE` is `1` (Settings → Secrets and variables → Actions → Variables); otherwise the release does not wait on Apple.
 
+### Website
+
+`site/` is the website, published on GitHub Pages by `.github/workflows/pages.yml` on every push to main that changes it (Settings → Pages → Source: GitHub Actions). `site/build.sh OUT` builds it: the page with the latest release's version filled in, the brand font, icon and social card from `assets/`, and this guide as `guide.md` and `llms-full.txt`. `site/shots/take.sh` retakes the screenshots on Linux: it builds rhun in a Debian container and runs the scripts in `site/shots/scripts/` headless, on a clone of main and the demo project in `site/shots/demo/`, then writes `site/img/*.webp` (it needs Docker and `cwebp`).
+
 `tests/update.sh` runs rhun's updater against a fake release folder, and `tests/install.sh` the installer; `RHUN_RELEASES_URL` points both at another place for the releases.
 
 ## Run

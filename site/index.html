@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rhun — a small, fast code editor written in assembly</title>
+<meta name="description" content="rhun is a tiny, very fast code editor for Linux and macOS, written in assembly: 127 languages, a built-in terminal, Git, fuzzy search and an agents panel.">
+<link rel="canonical" href="https://vshvedov.github.io/rhun/">
+<meta name="theme-color" content="#111216">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="author" content="Vladyslav Shvedov">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="rhun">
+<meta property="og:title" content="rhun — a small, fast code editor written in assembly">
+<meta property="og:description" content="A tiny code editor for Linux and macOS: 127 languages, a terminal, Git and an agents panel, in one binary under 700 KB.">
+<meta property="og:url" content="https://vshvedov.github.io/rhun/">
+<meta property="og:image" content="https://vshvedov.github.io/rhun/img/card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="rhun, a small and fast code editor written in assembly">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="rhun — a small, fast code editor written in assembly">
+<meta name="twitter:description" content="A tiny code editor for Linux and macOS: 127 languages, a terminal, Git and an agents panel, in one binary under 700 KB.">
+<meta name="twitter:image" content="https://vshvedov.github.io/rhun/img/card.png">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preload" href="fonts/IosevkaFixed-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="alternate" type="text/markdown" href="guide.md" title="rhun guide">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://vshvedov.github.io/rhun/#app",
+      "name": "rhun",
+      "alternateName": "rhûn",
+      "description": "A small, very fast code editor for Linux and macOS, written in assembly. Tabs, syntax highlighting for 127 languages, a built-in terminal, Git history and diffs, fuzzy search, Vim mode and an agents panel for Claude Code and Codex.",
+      "url": "https://vshvedov.github.io/rhun/",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Code editor",
+      "operatingSystem": "Linux (x86-64), macOS (Apple silicon)",
+      "softwareVersion": "@VERSION@",
+      "downloadUrl": "https://github.com/vshvedov/rhun/releases/latest",
+      "installUrl": "https://github.com/vshvedov/rhun/releases/latest/download/install.sh",
+      "license": "https://opensource.org/licenses/MIT",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": { "@type": "Person", "name": "Vladyslav Shvedov", "url": "https://github.com/vshvedov" },
+      "sameAs": ["https://github.com/vshvedov/rhun"],
+      "image": "https://vshvedov.github.io/rhun/img/card.png",
+      "screenshot": [
+        "https://vshvedov.github.io/rhun/img/hero.webp",
+        "https://vshvedov.github.io/rhun/img/terminal.webp",
+        "https://vshvedov.github.io/rhun/img/git.webp",
+        "https://vshvedov.github.io/rhun/img/palette.webp"
+      ],
+      "featureList": [
+        "Tabs, file explorer, command palette and fuzzy file finder",
+        "Syntax highlighting for 127 languages and file formats",
+        "Find and replace, find in files, go to line",
+        "Built-in terminal with 24-bit color, mouse and scrollback",
+        "Git: changed lines, file status, diffs and a history graph of all branches",
+        "Agents panel: live Claude Code and Codex sessions of the project",
+        "Optional Vim mode",
+        "39 dark and light color themes",
+        "Image preview with zoom and pan",
+        "Installs with one command and updates itself from GitHub releases"
+      ]
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "name": "rhun",
+      "codeRepository": "https://github.com/vshvedov/rhun",
+      "programmingLanguage": "x86-64 assembly",
+      "license": "https://opensource.org/licenses/MIT",
+      "targetProduct": { "@id": "https://vshvedov.github.io/rhun/#app" }
+    },
+    {
+      "@type": "WebSite",
+      "name": "rhun",
+      "url": "https://vshvedov.github.io/rhun/"
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "What is rhun?", "acceptedAnswer": { "@type": "Answer", "text": "A small, very fast code editor for Linux and macOS, written in assembly, with a built-in terminal, Git, fuzzy search and an agents panel for Claude Code and Codex." } },
+        { "@type": "Question", "name": "Is rhun free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. It is free and open source under the MIT license." } },
+        { "@type": "Question", "name": "Which systems does rhun run on?", "acceptedAnswer": { "@type": "Answer", "text": "Linux on x86-64 (Wayland or X11) and macOS on Apple silicon. There is no Windows version." } },
+        { "@type": "Question", "name": "How do I install rhun?", "acceptedAnswer": { "@type": "Answer", "text": "Run curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh. No root needed." } },
+        { "@type": "Question", "name": "How does rhun update?", "acceptedAnswer": { "@type": "Answer", "text": "It checks GitHub once a day in the background. The status bar offers a new version, installs it and restarts into it." } },
+        { "@type": "Question", "name": "How do I uninstall rhun?", "acceptedAnswer": { "@type": "Answer", "text": "Run the same installer with sh -s -- --uninstall. Your settings in ~/.config/rhun stay." } },
+        { "@type": "Question", "name": "Does rhun work with Claude Code and Codex?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Run them in the built-in terminal; the agents panel follows their sessions live." } },
+        { "@type": "Question", "name": "Why is rhun written in assembly?", "acceptedAnswer": { "@type": "Answer", "text": "To stay small and fast: one static binary under 700 KB on Linux, with no libc, toolkit or runtime." } }
+      ]
+    }
+  ]
+}
+</script>
+<style>
+@font-face {
+  font-family: "Iosevka Fixed";
+  src: url("fonts/IosevkaFixed-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+:root {
+  --bg: #111216;
+  --surface: #1c1e24;
+  --surface-2: #23262e;
+  --border: #2c2f39;
+  --text: #e4e7ee;
+  --muted: #a3a9b8;
+  --accent: #8aa4ff;
+  --accent-soft: rgba(138, 164, 255, 0.14);
+  --mono: "Iosevka Fixed", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --wide: 1140px;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); color-scheme: dark; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.65 var(--mono);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img { display: block; max-width: 100%; height: auto; }
+code { font-family: var(--mono); }
+.wrap { max-width: var(--wide); margin: 0 auto; padding: 0 16px; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 16px; top: 12px; background: var(--surface); padding: 6px 10px; border-radius: 6px; z-index: 10; }
+
+/* header */
+header.top {
+  position: sticky; top: 0; z-index: 5;
+  background: rgba(17, 18, 22, 0.86);
+  backdrop-filter: saturate(140%) blur(10px);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+header.top .wrap { display: flex; align-items: center; gap: 24px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 20px; }
+.brand:hover { text-decoration: none; }
+.brand svg { width: 30px; height: 30px; }
+nav.links { display: flex; gap: 20px; margin-left: auto; font-size: 15px; }
+nav.links a { color: var(--muted); }
+nav.links a:hover { color: var(--text); text-decoration: none; }
+.gh { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text) !important; }
+.gh svg { width: 16px; height: 16px; fill: currentColor; }
+@media (max-width: 760px) { nav.links a.opt { display: none; } }
+
+/* hero */
+.hero { padding: 72px 0 24px; text-align: center; }
+.eyebrow { display: inline-block; color: var(--accent); background: var(--accent-soft); border: 1px solid rgba(138, 164, 255, 0.3); border-radius: 999px; padding: 4px 14px; font-size: 14px; }
+h1 { font-size: clamp(34px, 5.6vw, 60px); line-height: 1.12; margin: 22px auto 16px; max-width: 21ch; font-weight: 400; letter-spacing: -0.5px; }
+h1 .acc { color: var(--accent); }
+.lede { color: var(--muted); font-size: clamp(17px, 2.1vw, 20px); max-width: 60ch; margin: 0 auto; }
+.facts { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin: 26px 0 0; padding: 0; list-style: none; }
+.facts li { font-size: 14px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; background: var(--surface); }
+.install { max-width: 760px; margin: 34px auto 0; text-align: left; }
+.cmd { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 12px 12px 16px; margin: 10px 0; }
+.cmd code { flex: 1; overflow-x: auto; white-space: nowrap; font-size: 15px; scrollbar-width: none; }
+.cmd code::-webkit-scrollbar { display: none; }
+p code, td code { overflow-wrap: anywhere; }
+.cmd code .p { color: var(--muted); user-select: none; }
+.copy { flex: none; font: 13px var(--mono); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+.copy:hover { border-color: var(--accent); }
+.copy[data-done] { color: var(--accent); }
+.note { color: var(--muted); font-size: 15px; margin: 8px 2px 0; }
+.shot { margin: 56px auto 0; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; background: var(--surface); box-shadow: 0 40px 120px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(138, 164, 255, 0.06), 0 0 90px rgba(138, 164, 255, 0.08); }
+
+/* sections */
+section { padding: 88px 0 0; }
+h2 { font-size: clamp(26px, 3.6vw, 38px); font-weight: 400; margin: 0 0 14px; letter-spacing: -0.3px; }
+h2 .acc { color: var(--accent); }
+h3 { font-size: 21px; font-weight: 400; margin: 0 0 10px; }
+.sub { color: var(--muted); max-width: 70ch; margin: 0 0 30px; }
+.feature { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 40px; align-items: center; padding: 64px 0 0; }
+.feature.flip { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+.feature.flip .text { order: 2; }
+.feature p { color: var(--muted); margin: 0 0 12px; }
+.feature ul { color: var(--muted); margin: 0; padding-left: 18px; }
+.feature li { margin: 4px 0; }
+.feature kbd, .faq kbd { font: 13px var(--mono); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; }
+figure { margin: 0; }
+.frame { border-radius: 10px; border: 1px solid var(--border); overflow: hidden; background: var(--surface); box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5); }
+.frame a { display: block; }
+figcaption { color: var(--muted); font-size: 14px; margin-top: 10px; }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.feature .pair { grid-template-columns: minmax(0, 1fr); }
+.pair > *, .gallery > *, .feature > *, .stats > * { min-width: 0; }
+.frame img { width: 100%; }
+@media (max-width: 880px) {
+  .feature, .feature.flip { grid-template-columns: 1fr; gap: 22px; }
+  .feature.flip .text { order: 0; }
+  .pair { grid-template-columns: minmax(0, 1fr); }
+}
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); gap: 18px; }
+.gallery figcaption b { color: var(--text); font-weight: 400; }
+.names { color: var(--muted); font-size: 15px; margin: 26px 0 0; }
+.names b { color: var(--text); font-weight: 400; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 26px 0 0; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.stat .n { font-size: 32px; color: var(--accent); line-height: 1.1; }
+.stat .l { color: var(--muted); font-size: 15px; margin-top: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; margin: 18px 0 0; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--text); font-weight: 400; }
+td { color: var(--muted); }
+td code { color: var(--text); }
+.tablewrap { overflow-x: auto; }
+.faq details { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 0 18px; margin: 10px 0; }
+.faq summary { cursor: pointer; padding: 16px 0; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; color: var(--accent); }
+.faq details[open] summary::after { content: "−"; }
+.faq details p { color: var(--muted); margin: 0 0 16px; }
+.cta { text-align: center; padding: 96px 0 0; }
+footer { margin: 96px 0 0; border-top: 1px solid var(--border); padding: 28px 0 44px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 26px; align-items: center; }
+footer nav { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-left: auto; }
+footer a { color: var(--muted); }
+footer a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="rhun home">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="4" y="4" width="56" height="56" rx="12.5" fill="#1c1e24" stroke="#2c2f39"/><path d="M25 17.1v29.8M25 17.1l12.25 7.9-12.25 7.9 14 14" fill="none" stroke="#8aa4ff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      rhun
+    </a>
+    <nav class="links" aria-label="Sections">
+      <a class="opt" href="#features">Features</a>
+      <a class="opt" href="#themes">Themes</a>
+      <a href="#install">Install</a>
+      <a class="opt" href="#faq">FAQ</a>
+      <a class="gh" href="https://github.com/vshvedov/rhun"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap">
+
+<section class="hero" aria-labelledby="title">
+  <span class="eyebrow">Version @VERSION@ · Linux and macOS · MIT</span>
+  <h1 id="title">A small, fast code editor, written in <span class="acc">assembly</span></h1>
+  <p class="lede">rhun is a tiny code editor for Linux and macOS, built for reading, editing and running code beside your coding agents.</p>
+  <ul class="facts" aria-label="At a glance">
+    <li>&lt; 700 KB binary</li>
+    <li>127 languages</li>
+    <li>39 themes</li>
+    <li>Free and open source</li>
+  </ul>
+  <div class="install" id="get">
+    <div class="cmd"><code><span class="p">$ </span>curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy</button></div>
+    <p class="note">Linux x86-64 or macOS on Apple silicon. No root needed; rhun keeps itself up to date.</p>
+  </div>
+  <div class="shot">
+    <img src="img/hero.webp" srcset="img/hero-800.webp 800w, img/hero.webp 1600w" sizes="(min-width: 1172px) 1140px, calc(100vw - 32px)" width="1600" height="1000" fetchpriority="high" alt="rhun on Linux with the Rhun Dark theme: the file explorer, an assembly file with syntax highlighting, and the agents panel showing a Claude Code session">
+  </div>
+</section>
+
+<section id="why" aria-labelledby="why-h">
+  <h2 id="why-h">Why rhun</h2>
+  <p class="sub">When coding agents do the heavy lifting, you don't need everything VS Code or Zed carries. You need to read and edit code, run commands, find files and see what changed. rhun does that, instantly.</p>
+</section>
+
+<section id="features" aria-labelledby="features-h">
+  <h2 id="features-h">Everything you need, <span class="acc">nothing you don't</span></h2>
+  <p class="sub">Every screenshot here is rhun running on Linux. On a Mac, Command works as Ctrl.</p>
+
+  <article class="feature" aria-labelledby="f-edit">
+    <div class="text">
+      <h3 id="f-edit">Editing that keeps up</h3>
+      <p>Tabs, syntax highlighting, find and replace <kbd>Ctrl H</kbd>, find in files, word wrap and an optional Vim mode.</p>
+    </div>
+    <figure>
+      <div class="frame"><a href="img/find.webp"><img src="img/find-800.webp" srcset="img/find-800.webp 800w, img/find.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Find and replace in rhun: the replace bar over an assembly file, with the matches highlighted"></a></div>
+      <figcaption>Find and replace.</figcaption>
+    </figure>
+  </article>
+
+  <article class="feature flip" aria-labelledby="f-term">
+    <div class="text">
+      <h3 id="f-term">A terminal beside the code</h3>
+      <p>Open a shell with <kbd>Ctrl `</kbd> for builds, tests or a coding agent: 24-bit color, mouse and full-screen programs.</p>
+    </div>
+    <figure>
+      <div class="frame"><a href="img/terminal.webp"><img src="img/terminal-800.webp" srcset="img/terminal-800.webp 800w, img/terminal.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="The terminal panel in rhun: building rhun, printing its version and the git log, under the editor"></a></div>
+      <figcaption>rhun building itself: the binary is 690,928 bytes.</figcaption>
+    </figure>
+  </article>
+
+  <article class="feature" aria-labelledby="f-git">
+    <div class="text">
+      <h3 id="f-git">Git, built in</h3>
+      <p>Changed lines in the gutter, diffs against HEAD, and every branch's history as a graph <kbd>Ctrl Shift G</kbd>.</p>
+    </div>
+    <figure>
+      <div class="frame"><a href="img/git.webp"><img src="img/git-800.webp" srcset="img/git-800.webp 800w, img/git.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Git history in rhun: the commit graph with tags and the uncommitted changes"></a></div>
+      <div class="frame" style="margin-top:16px"><a href="img/diff.webp"><img src="img/diff-800.webp" srcset="img/diff-800.webp 800w, img/diff.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="A diff in rhun: the changed line in red and green with old and new line numbers"></a></div>
+      <figcaption>History and changes.</figcaption>
+    </figure>
+  </article>
+
+  <article class="feature flip" aria-labelledby="f-search">
+    <div class="text">
+      <h3 id="f-search">Find anything</h3>
+      <p>Go to File <kbd>Ctrl P</kbd>, the command palette <kbd>Ctrl Shift P</kbd> and find in files <kbd>Ctrl Shift F</kbd>, all fuzzy and instant.</p>
+    </div>
+    <figure>
+      <div class="frame"><a href="img/quickopen.webp"><img src="img/quickopen-800.webp" srcset="img/quickopen-800.webp 800w, img/quickopen.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Go to File in rhun: a fuzzy file search listing files that match edit"></a></div>
+      <figcaption>Go to File.</figcaption>
+    </figure>
+  </article>
+
+  <div class="pair" style="margin-top:28px">
+    <figure>
+      <div class="frame"><a href="img/palette.webp"><img src="img/palette-800.webp" srcset="img/palette-800.webp 800w, img/palette.webp 1600w" sizes="(min-width: 880px) 560px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="The command palette in rhun listing the toggle commands with their shortcuts"></a></div>
+      <figcaption>Command palette.</figcaption>
+    </figure>
+    <figure>
+      <div class="frame"><a href="img/search.webp"><img src="img/search-800.webp" srcset="img/search-800.webp 800w, img/search.webp 1600w" sizes="(min-width: 880px) 560px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Find in files in rhun: matches across the project with their files and lines"></a></div>
+      <figcaption>Find in files.</figcaption>
+    </figure>
+  </div>
+
+  <article class="feature" aria-labelledby="f-agents">
+    <div class="text">
+      <h3 id="f-agents">Watch your agents work</h3>
+      <p>The agents panel follows the project's Claude Code and Codex sessions live <kbd>Ctrl Shift A</kbd>.</p>
+    </div>
+    <figure>
+      <div class="frame"><a href="img/agents.webp"><img src="img/agents-800.webp" srcset="img/agents-800.webp 800w, img/agents.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="The agents panel in rhun following a Codex session: the request, the agent's replies and its tool calls"></a></div>
+      <figcaption>A Codex session, live.</figcaption>
+    </figure>
+  </article>
+
+  <article class="feature flip" aria-labelledby="f-vim">
+    <div class="text">
+      <h3 id="f-vim">Vim mode, if you want it</h3>
+      <p>Normal, insert and visual modes, operators, text objects, counts, <kbd>.</kbd> and <kbd>:</kbd> commands. Off by default.</p>
+    </div>
+    <figure>
+      <div class="frame"><a href="img/vim.webp"><img src="img/vim-800.webp" srcset="img/vim-800.webp 800w, img/vim.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Vim mode in rhun: a block cursor in normal mode and a substitute command typed on the command line"></a></div>
+      <figcaption>Normal mode and the command line.</figcaption>
+    </figure>
+  </article>
+
+  <article class="feature" aria-labelledby="f-settings">
+    <div class="text">
+      <h3 id="f-settings">Settings you can read</h3>
+      <p>A settings page and a plain config file, both applied while rhun runs.</p>
+    </div>
+    <figure>
+      <div class="frame"><a href="img/settings.webp"><img src="img/settings-800.webp" srcset="img/settings-800.webp 800w, img/settings.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="The settings page in rhun: theme, interface zoom, font and panel options"></a></div>
+      <figcaption>Settings.</figcaption>
+    </figure>
+  </article>
+
+  <article class="feature flip" aria-labelledby="f-images">
+    <div class="text">
+      <h3 id="f-images">Images in a tab</h3>
+      <p>PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA, with zoom and pan.</p>
+    </div>
+    <figure>
+      <div class="frame"><a href="img/image.webp"><img src="img/image-800.webp" srcset="img/image-800.webp 800w, img/image.webp 1600w" sizes="(min-width: 880px) 640px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="An image open in a rhun tab: the rhun social card, with its size and format in the status bar"></a></div>
+      <figcaption>Image preview.</figcaption>
+    </figure>
+  </article>
+</section>
+
+<section id="themes" aria-labelledby="themes-h">
+  <h2 id="themes-h">39 themes, <span class="acc">dark and light</span></h2>
+  <p class="sub">Switch with <kbd>Ctrl Shift T</kbd>, follow Omarchy, or write your own in three lines.</p>
+  <div class="pair" style="margin-bottom:18px">
+    <figure>
+      <div class="frame"><a href="img/hero.webp"><img src="img/hero-800.webp" srcset="img/hero-800.webp 800w, img/hero.webp 1600w" sizes="(min-width: 880px) 560px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="rhun with the Rhun Dark theme"></a></div>
+      <figcaption><b>Rhun Dark</b></figcaption>
+    </figure>
+    <figure>
+      <div class="frame"><a href="img/hero-light.webp"><img src="img/hero-light-800.webp" srcset="img/hero-light-800.webp 800w, img/hero-light.webp 1600w" sizes="(min-width: 880px) 560px, 100vw" width="1600" height="1000" loading="lazy" decoding="async" alt="rhun with the Rhun Light theme"></a></div>
+      <figcaption><b>Rhun Light</b></figcaption>
+    </figure>
+  </div>
+  <div class="gallery">
+    <figure><div class="frame"><a href="img/theme-tokyo-night.webp"><img src="img/theme-tokyo-night-800.webp" width="800" height="500" loading="lazy" decoding="async" alt="rhun with the Tokyo Night theme, editing Rust"></a></div><figcaption><b>Tokyo Night</b> · Rust</figcaption></figure>
+    <figure><div class="frame"><a href="img/theme-catppuccin-mocha.webp"><img src="img/theme-catppuccin-mocha-800.webp" width="800" height="500" loading="lazy" decoding="async" alt="rhun with the Catppuccin Mocha theme, editing Python"></a></div><figcaption><b>Catppuccin Mocha</b> · Python</figcaption></figure>
+    <figure><div class="frame"><a href="img/theme-gruvbox-dark.webp"><img src="img/theme-gruvbox-dark-800.webp" width="800" height="500" loading="lazy" decoding="async" alt="rhun with the Gruvbox Dark theme, editing Go"></a></div><figcaption><b>Gruvbox Dark</b> · Go</figcaption></figure>
+    <figure><div class="frame"><a href="img/theme-nord.webp"><img src="img/theme-nord-800.webp" width="800" height="500" loading="lazy" decoding="async" alt="rhun with the Nord theme, editing a TypeScript React component"></a></div><figcaption><b>Nord</b> · TypeScript</figcaption></figure>
+    <figure><div class="frame"><a href="img/theme-rose-pine-dawn.webp"><img src="img/theme-rose-pine-dawn-800.webp" width="800" height="500" loading="lazy" decoding="async" alt="rhun with the Rosé Pine Dawn theme, editing an ERB template"></a></div><figcaption><b>Rosé Pine Dawn</b> · ERB</figcaption></figure>
+    <figure><div class="frame"><a href="img/theme-dracula.webp"><img src="img/theme-dracula-800.webp" width="800" height="500" loading="lazy" decoding="async" alt="rhun with the Dracula theme, editing SQL"></a></div><figcaption><b>Dracula</b> · SQL</figcaption></figure>
+    <figure><div class="frame"><a href="img/theme-github-light.webp"><img src="img/theme-github-light-800.webp" width="800" height="500" loading="lazy" decoding="async" alt="rhun with the GitHub Light theme, editing Ruby"></a></div><figcaption><b>GitHub Light</b> · Ruby</figcaption></figure>
+    <figure><div class="frame"><a href="img/theme-kanagawa.webp"><img src="img/theme-kanagawa-800.webp" width="800" height="500" loading="lazy" decoding="async" alt="rhun with the Kanagawa theme, editing Elixir"></a></div><figcaption><b>Kanagawa</b> · Elixir</figcaption></figure>
+  </div>
+  <p class="names"><b>All built-in themes:</b> Ayu Light, Catppuccin Latte, Catppuccin Mocha, Dracula, Elflord Dark, Elflord Light, Ethereal, Everforest, Flexoki Light, GitHub Dark, GitHub Light, Gruvbox Dark, Gruvbox Light, Hackerman, Kanagawa, Last Horizon, Lumon, Lupine, Matte Black, Miasma, Min Dark, Min Light, Monokai, Nord, One Dark, One Light, Osaka Jade, Retro 82, Rhun Dark, Rhun Light, Ristretto, Rosé Pine, Rosé Pine Dawn, Solarized Dark, Solarized Light, Solitude, Tokyo Night, Vantablack, White.</p>
+</section>
+
+<section id="languages" aria-labelledby="languages-h">
+  <h2 id="languages-h">127 languages and file formats</h2>
+  <p class="sub">Each grammar is a small text file; add your own in <code>~/.config/rhun/syntax/</code>.</p>
+  <p class="names"><b>Built in:</b> Ada, Apache, AppleScript, AsciiDoc, Assembly, Astro, AWK, Batch, BibTeX, Blade, C, C#, C++, Cap'n Proto, Clojure, CMake, COBOL, Crontab, Crystal, CSS, CUDA, CUE, D, Dart, Dhall, Diff, Dockerfile, dotenv, EJS, Elixir, Elm, ERB, Erlang, F#, Fish, Fortran, Git attributes, Git commit, Gleam, GLSL, Go, GraphQL, Graphviz, Groovy, HAML, Handlebars, Haskell, Haxe, HCL, HTML, HTTP, Idris, Ignore files, INI, Janet, Java, JavaScript, Jinja, JSON, Jsonnet, Julia, Just, KDL, Kotlin, LaTeX, Lean, Liquid, Lua, Makefile, Markdown, MATLAB, Mermaid, Meson, Mojo, Nginx, Nim, Ninja, Nix, Objective-C, OCaml, Odin, Org, Pascal, Perl, PHP, Pkl, PlantUML, PowerShell, Prisma, Prolog, Properties, Protocol Buffers, Pug, Puppet, PureScript, Python, R, Raku, Razor, Rego, reStructuredText, RON, Ruby, Rust, Scala, Shell, Slim, Solidity, SQL, SSH config, Starlark, Swift, Tcl, Thrift, TOML, Twig, TypeScript, Typst, V, Vala, Verilog, VHDL, Vim script, Visual Basic, XML, YAML and Zig.</p>
+</section>
+
+<section id="fast" aria-labelledby="fast-h">
+  <h2 id="fast-h">Small on purpose</h2>
+  <p class="sub">Written in x86-64 assembly. rhun draws every pixel itself and speaks Wayland, X11 or AppKit directly.</p>
+  <div class="stats">
+    <div class="stat"><div class="n">&lt; 700 KB</div><div class="l">The whole editor on Linux</div></div>
+    <div class="stat"><div class="n">0</div><div class="l">Runtime dependencies</div></div>
+    <div class="stat"><div class="n">~1 ms</div><div class="l">To draw a 2560 × 1600 frame</div></div>
+    <div class="stat"><div class="n">1 command</div><div class="l">To install; it updates itself</div></div>
+  </div>
+</section>
+
+<section id="install" aria-labelledby="install-h">
+  <h2 id="install-h">Install rhun</h2>
+  <div class="cmd"><code><span class="p">$ </span>curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy</button></div>
+  <div class="cmd"><code><span class="p">$ </span>wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-copy="wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy</button></div>
+  <p class="note">On Linux rhun goes to <code>~/.local</code> with a desktop entry; on macOS to <code>/Applications</code>. Either way <code>rhun</code> starts it from a terminal. The installer checks SHA-256 checksums (and the signature on macOS). Uninstall with <code>sh -s -- --uninstall</code>. More in the <a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">guide</a>.</p>
+</section>
+
+<section id="faq" class="faq" aria-labelledby="faq-h">
+  <h2 id="faq-h">Questions</h2>
+  <details><summary>What is rhun?</summary><p>A small, very fast code editor for Linux and macOS, written in assembly, with a built-in terminal, Git, fuzzy search and an agents panel for Claude Code and Codex.</p></details>
+  <details><summary>Is rhun free?</summary><p>Yes. It is free and open source under the MIT license.</p></details>
+  <details><summary>Which systems does rhun run on?</summary><p>Linux on x86-64 (Wayland or X11) and macOS on Apple silicon. There is no Windows version.</p></details>
+  <details><summary>How do I install rhun?</summary><p>Run <code>curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code>. No root needed.</p></details>
+  <details><summary>How does rhun update?</summary><p>It checks GitHub once a day in the background. The status bar offers a new version, installs it and restarts into it.</p></details>
+  <details><summary>How do I uninstall rhun?</summary><p>Run the same installer with <code>sh -s -- --uninstall</code>. Your settings in <code>~/.config/rhun</code> stay.</p></details>
+  <details><summary>Does rhun work with Claude Code and Codex?</summary><p>Yes. Run them in the built-in terminal; the agents panel follows their sessions live.</p></details>
+  <details><summary>Why is rhun written in assembly?</summary><p>To stay small and fast: one static binary under 700 KB on Linux, with no libc, toolkit or runtime.</p></details>
+</section>
+
+<section class="cta" aria-labelledby="cta-h">
+  <h2 id="cta-h">Try it in ten seconds</h2>
+  <div class="install">
+    <div class="cmd"><code><span class="p">$ </span>curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy</button></div>
+  </div>
+  <p class="note"><a href="https://github.com/vshvedov/rhun">GitHub</a> · <a href="https://github.com/vshvedov/rhun/releases">Releases</a> · <a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Guide</a></p>
+</section>
+
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>rhun @VERSION@ · MIT license · Built-in fonts under the SIL Open Font License</span>
+    <nav aria-label="Links">
+      <a href="https://github.com/vshvedov/rhun">GitHub</a>
+      <a href="https://github.com/vshvedov/rhun/releases">Releases</a>
+      <a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Guide</a>
+      <a href="https://github.com/vshvedov/rhun/issues">Issues</a>
+      <a href="llms.txt">llms.txt</a>
+    </nav>
+  </div>
+</footer>
+<script>
+document.querySelectorAll("button.copy").forEach(function (b) {
+  b.addEventListener("click", function () {
+    navigator.clipboard.writeText(b.dataset.copy).then(function () {
+      b.textContent = "Copied";
+      b.setAttribute("data-done", "");
+      setTimeout(function () { b.textContent = "Copy"; b.removeAttribute("data-done"); }, 1600);
+    });
+  });
+});
+</script>
+</body>
+</html>
