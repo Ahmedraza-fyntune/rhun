@@ -3,9 +3,6 @@
 """computes the
    sum of a and b"""
 fn add(a: Int, b: Int) -> Int:
-    var total: Int = a + b
+    var total: Int = a + b + 1
     return total
-
 struct Point:
-    var x: Float64
-    var y: Float64

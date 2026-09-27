@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
-
 contract Token {
-    mapping(address => uint256) public balances;
-    /* transfer to a new
-       owner */
-    function transfer(address to, uint256 amount) public returns (bool) {
-        require(balances[msg.sender] >= amount, "insufficient");
-        balances[to] += amount;
-        return true;
-    }
+    uint256 public total = 100;
+    function greet() public pure returns (string memory) {
+        require(total > 0, "no supply");
+        return "ok"; }
 }

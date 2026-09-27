@@ -3,9 +3,6 @@
 (* asks for a name
    then says hello *)
 set userName to "World"
-tell application "System Events"
-    display dialog "Hello, " & userName
-end tell
-if userName is "" then
-    say "no name given"
-end if
+set count to 3
+display dialog "Hello, " & userName & count
+say "done"

@@ -42,18 +42,12 @@ DocumentRoot "/var/www/html"
 666666666666666666666 0
 set userName to "World"
 11100000000001104444444 0
-tell application "System Events"
-11110000000000000444444444444444 0
-    display dialog "Hello, " & userName
-0000ccccccc0cccccc044444444408000000000 0
-end tell
-11101111 0
-if userName is "" then
-1100000000001104401111 0
-    say "no name given"
-0000ccc0444444444444444 0
-end if
-111011 0
+set count to 3
+11100000001105 0
+display dialog "Hello, " & userName & count
+ccccccc0cccccc04444444440800000000008000000 0
+say "done"
+ccc0444444 0
 == asciidoc.syn
 = Document Title
 ffffffffffffffff 0
@@ -555,24 +549,18 @@ dist/
 66666666666666666666 0
 # greet a person by name
 666666666666666666666666 0
-(defn greet [name]
-011110000000000000 0
-  (print "Hello, " name "!"))
-00000000044444444400000044400 0
+(defn greet [name count]
+011110000000000000000000 0
+  (print "Hello, " name " x" count))
+000000000444444444000000444400000000 0
 
  0
 (def msg `a raw
 011100000444444 3
 multi-line string`)
 4444444444444444440 0
-
- 0
-(if true
-01107777 0
-  (greet "World")
-00000000044444440 0
-  (greet :nobody))
-000000000bbbbbbb00 0
+(greet "World" 3)
+00000004444444050 0
 == jinja.syn
 <div class="a">
 9eee0ddddd94449 0
@@ -665,14 +653,8 @@ def double (n : Nat) : Nat :=
 11103333330900802229080222088 0
   n + n
 0000800 0
-
- 0
-theorem double_eq (n : Nat) : double n = n + n := by
-1111111033333333309008022290800000000008000800088011 0
-  rfl
-00000 0
-
- 0
+def answer : Nat := 42
+1110000000080222088055 0
 def greet (name : String) : String :=
 1110333330900000802222229080222222088 0
   "hello, " ++ name
@@ -766,18 +748,12 @@ multi-line text
 44444444444444444444 0
 fn add(a: Int, b: Int) -> Int:
 110333908022290080222908802228 0
-    var total: Int = a + b
-00001110000008022208000800 0
+    var total: Int = a + b + 1
+000011100000080222080008000805 0
     return total
 0000111111000000 0
-
- 0
 struct Point:
 1111110222228 0
-    var x: Float64
-000011100802222222 0
-    var y: Float64
-000011100802222222 0
 == nginx.syn
 # main server block
 6666666666666666666 0
@@ -923,14 +899,10 @@ likes(alice, bob).
 333339000009000099 0
 likes(bob, 'Carl').
 3333390009044444499 0
-
- 0
-parent(tom, bob).
-33333390009000099 0
+age(alice, 30).
+333900000905599 0
 sibling(X, Y) :- parent(Z, X), parent(Z, Y), X \= Y.
 3333333909009088033333390900990333333909009900008009 0
-
- 0
 ?- likes(alice, W), write(W), nl.
 88033333900000900990ccccc90990cc9 0
 == properties.syn
@@ -1001,7 +973,7 @@ answer = 42
 sub greet(Str $name) {
 11103333392220bbbbb909 0
     say "Hello, $name!";
-000000004444444444444449 0
+0000ccc04444444444444449 0
 }
 9 0
 
@@ -1108,26 +1080,16 @@ edddddddddddd00000000 0
 6666666666666666666666666666666 0
 pragma solidity ^0.8.19;
 aaaaaaaaaaaaaaaaaaaaaaaa 0
-
- 0
 contract Token {
 1111111102222209 0
-    mapping(address => uint256) public balances;
-000022222229222222208802222222901111110000000009 0
-    /* transfer to a new
-000066666666666666666666 2
-       owner */
-666666666666666 0
-    function transfer(address to, uint256 amount) public returns (bool) {
-0000111111110333333339222222200090222222200000009011111101111111092222909 0
-        require(balances[msg.sender] >= amount, "insufficient");
-0000000011111119000000009ccc900000090880000000904444444444444499 0
-        balances[to] += amount;
-0000000000000000900908800000009 0
-        return true;
-00000000111111077779 0
-    }
-00009 0
+    uint256 public total = 100;
+0000222222201111110000000805559 0
+    function greet() public pure returns (string memory) {
+0000111111110333339901111110111101111111092222220111111909 0
+        require(total > 0, "no supply");
+0000000011111119000000805904444444444499 0
+        return "ok"; }
+0000000011111104444909 0
 }
 9 0
 == sshconfig.syn
@@ -1235,6 +1197,10 @@ public class Greeter : Object {
 66666666666666 0
     public string name { get; set; }
 000011111102222220000009011190111909 0
+    public string path = """C:\path\""";
+0000111111022222200000080444444444444449 0
+    public int total = 5;
+0000111111022200000008059 0
 
  0
     public void greet(int times) {
@@ -1302,24 +1268,14 @@ endmodule
 6666666666666 0
 entity half_adder is
 11111100000000000011 0
-    port (a, b : in std_logic;
-000011110909000801102222222229 0
-          sum, carry : out std_logic);
-00000000000009000000080111022222222299 0
+    generic (WIDTH : integer := 8);
+00001111111090000008022222220880599 0
+    port (a, b : in std_logic; sum, carry : out std_logic);
+00001111090900080110222222222900009000000080111022222222299 0
 end entity half_adder;
 1110111111000000000009 0
-
- 0
-architecture rtl of half_adder is
-111111111111000001100000000000011 0
-begin
-11111 0
-    sum <= a xor b;
-0000000088000111009 0
-    carry <= a and b;
-000000000088000111009 0
-end architecture rtl;
-111011111111111100009 0
+architecture rtl of half_adder is begin sum <= a xor b; end architecture;
+1111111111110000011000000000000110111110000088000111009011101111111111119 0
 == vim.syn
 " Vim script sample
 6666666666666666666 0
