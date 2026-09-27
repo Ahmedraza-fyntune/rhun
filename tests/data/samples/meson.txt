@@ -6,4 +6,5 @@ endif
 count = 3
 doc = '''
 multi-line text
+raw text \
 '''

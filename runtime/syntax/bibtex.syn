@@ -1,5 +1,6 @@
 name = BibTeX
 files = *.bib
+case = insensitive
 comment = %
 ident = @
 string = "

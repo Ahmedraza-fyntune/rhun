@@ -5,4 +5,7 @@ let main argv =
        comment *)
     let msg = "Hello, world!"
     printfn "%s %d" msg 42
+    let raw = """
+    text \
+    """
     0

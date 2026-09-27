@@ -4,6 +4,7 @@ case = insensitive
 region = REM eol comment bol
 region = rem eol comment bol
 region = :: eol comment bol
+comment = ::
 string = "
 prefix = %v
 line = :: comment

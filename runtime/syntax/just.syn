@@ -3,6 +3,6 @@ files = justfile Justfile .justfile *.just
 comment = #
 mstring = """ \
 string = " \
-string = ' \
+string = '
 labels = yes
 keywords = set alias export import mod if else

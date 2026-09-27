@@ -9,5 +9,4 @@ numbers = no
 operators = no
 region = <%# %> comment multiline
 region = <%= %> preproc multiline
-region = <%- -%> preproc multiline
 region = <% %> preproc multiline

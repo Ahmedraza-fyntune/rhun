@@ -2,6 +2,7 @@ name = Pug
 files = *.pug *.jade
 prefix = .a #a
 region = //- eol comment bol
+comment = //-
 region = // eol comment bol
 region = - eol preproc bol
 region = #{ } preproc

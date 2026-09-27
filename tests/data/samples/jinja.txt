@@ -2,3 +2,5 @@
 {# a comment
    spanning lines #}
 {%- if user -%} hi {{ user.name }} {%- endif -%}
+{%- for x in items %}
+<p>plain text</p>

@@ -57,6 +57,8 @@ ffffffffffffffff 0
 66666666666666666666 0
 Some *bold* text and `monospace` code.
 00000111111000000000044444444444000000 0
+* a bullet item
+000000000000000 0
 ////
 6666 2
 block comment continues
@@ -306,6 +308,10 @@ DEBUG_MODE=$ENABLE_DEBUG
 aaaaaaaaaaaaaaaaa 0
 <p class="a"><%= "hi " + x %></p>
 9e0ddddd94449aaaaaaaaaaaaaaaa99e9 0
+<%_ x %>
+aaaaaaaa 0
+<p>plain text</p>
+9e9000000000099e9 0
 == elm.syn
 -- Elm sample
 6666666666666 0
@@ -330,6 +336,10 @@ answer = 42
 aaaaaaaaaaaaa 0
 <p class="a"><%= "hi #{x}" %></p>
 9e0ddddd94449aaaaaaaaaaaaaaaa99e9 0
+<%- x %>
+aaaaaaaa 0
+<p>plain text</p>
+9e9000000000099e9 0
 == fortran.syn
 ! Fortran sample
 6666666666666666 0
@@ -360,6 +370,12 @@ let main argv =
 00001110000080444444444444444 0
     printfn "%s %d" msg 42
 0000ccccccc044444440000055 0
+    let raw = """
+00001110000080444 3
+    text \
+4444444444 3
+    """
+4444444 0
     0
 00005 0
 == gitattributes.syn
@@ -438,7 +454,7 @@ eeeeddddddddd 0
   - x = 1
 00aaaaaaa 0
   %p.greeting= "hi #{x}" if x
-00eeddddddddd8044444444401100 0
+00eeddddddddd8044444444400000 0
   / not rendered
 0066666666666666 0
   :javascript
@@ -558,6 +574,10 @@ multi-line string`)
 66666666666666666666 0
 {%- if user -%} hi {{ user.name }} {%- endif -%}
 aaaaaaaaaaaaaaa0000aaaaaaaaaaaaaaa0aaaaaaaaaaaaa 0
+{%- for x in items %}
+aaaaaaaaaaaaaaaaaaaaa 0
+<p>plain text</p>
+9e9000000000099e9 0
 == jsonnet.syn
 // jsonnet config
 66666666666666666 0
@@ -723,6 +743,8 @@ doc = '''
 000080444 2
 multi-line text
 444444444444444 2
+raw text \
+4444444444 2
 '''
 444 0
 == mojo.syn
