@@ -234,3 +234,38 @@ FN x_udiv128
 3:  subs x9, x9, #1
     b.ne 2b
     ret
+
+// mac_exe_path(buf, size) -> x8: the length of the running program's real path, written to buf with
+// a NUL, or -1
+FN mac_exe_path
+    ENTER 1040
+    mov x19, x0
+    mov x20, x1
+    mov w9, #1024
+    str w9, [sp]
+    add x0, sp, #16
+    mov x1, sp
+    bl __NSGetExecutablePath
+    cbnz w0, 8f
+    add x0, sp, #16
+    mov x1, #0
+    bl _realpath
+    cbz x0, 8f
+    mov x21, x0
+    bl _strlen
+    cmp x0, x20
+    b.hs 7f
+    mov x22, x0
+    mov x0, x19
+    mov x1, x21
+    add x2, x22, #1
+    bl _memcpy
+    mov x0, x21
+    bl _free
+    mov x8, x22
+    b 9f
+7:  mov x0, x21
+    bl _free
+8:  mov x8, #-1
+9:  LEAVE
+    XRET

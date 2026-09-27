@@ -515,6 +515,9 @@ g_commands:
     COMMAND git_history, "Git: Show History", cmd_git_history, ""
     COMMAND toggle_git_history, "Toggle Git History", cmd_toggle_git, "ctrl+shift+g"
     COMMAND git_changes, "Git: Open Changes", cmd_git_changes, ""
+    COMMAND check_for_updates, "Check for Updates", cmd_check_for_updates, ""
+    COMMAND install_update, "Install Update", cmd_install_update, ""
+    COMMAND restart_to_update, "Restart to Update", cmd_restart_to_update, ""
     .quad 0, 0, 0, 0
 
 .bss

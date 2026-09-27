@@ -446,6 +446,12 @@ F SET_pad, 4
 F SET_opts, 8
 ENDSTRUCT SET_SIZE
 
+# ---- updates (g_update_state) ----
+.equ UP_IDLE, 0
+.equ UP_AVAILABLE, 1            # a newer release to install
+.equ UP_INSTALLING, 2
+.equ UP_READY, 3                # installed; a restart runs it
+
 # ---- document ----
 STRUCT
 F DOC_buf, 8

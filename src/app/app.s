@@ -77,6 +77,7 @@ FN app_init
     call explorer_init
     call agents_init
     call watch_init
+    call update_init
     EPILOGUE
 
 # app_load_fonts(): built-in fonts unless the config names .ttf files
@@ -1022,7 +1023,15 @@ FN app_timeout
     cmp eax, ebx
     jge 3f
 31: mov ebx, eax
-3:  mov eax, ebx
+3:  call update_timeout
+    cmp eax, -1
+    je 4f
+    cmp ebx, -1
+    je 41f
+    cmp eax, ebx
+    jge 4f
+41: mov ebx, eax
+4:  mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -1042,6 +1051,7 @@ FN app_tick
 2:  call agents_tick
     call term_tick
     call git_tick
+    call update_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -2495,7 +2505,7 @@ dialog_choose:
     mov dword ptr [rip + dlg_kind], 0
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     test ebx, ebx
-    jz 9f
+    jz 8f
     cmp ebx, 2
     jne 1f
     mov rdi, [rip + dlg_tab]
@@ -2505,15 +2515,18 @@ dialog_choose:
     je 2f
     call doc_save
     test rax, rax
-    js 9f
+    js 8f
     jmp 1f
 2:  call cmd_save_as
-    jmp 9f
+    jmp 8f
 1:  mov rdi, [rip + dlg_tab]
     call app_close_tab_now
     cmp r12d, 2
     jne 9f
     call cmd_quit
+    jmp 9f
+8:  # not quitting after all: no restart into an update either
+    mov dword ptr [rip + g_restart], 0
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 

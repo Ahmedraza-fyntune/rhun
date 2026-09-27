@@ -80,7 +80,10 @@ FN main
     cmp dword ptr [rip + g_settings_changed], 0
     je 4f
     call config_save
-4:  xor eax, eax
+4:  cmp dword ptr [rip + g_restart], 0
+    je 5f
+    call update_restart
+5:  xor eax, eax
     EPILOGUE
 
 parse_args:

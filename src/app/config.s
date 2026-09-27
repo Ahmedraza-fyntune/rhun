@@ -41,6 +41,8 @@ cfg_term_font_size: .long 14
 cfg_term_scrollback: .long 10000
 cfg_term_h: .long 260
 cfg_git: .long 1
+.globl cfg_update_check
+cfg_update_check: .long 1
 .p2align 3
 cfg_theme: .quad cfg_def_theme
 cfg_font: .quad .Lempty

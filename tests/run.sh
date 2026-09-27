@@ -28,6 +28,7 @@ check strfind build/str_test tests/data/strfind.txt
 check versions build/update_test tests/data/versions.txt
 if [ "$(build/rhun --version)" = "rhun $(cat VERSION)" ]; then echo "ok   version"; else echo "FAIL version"; fail=1; fi
 sh tests/files.sh || fail=1
+sh tests/update.sh || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?

@@ -1,7 +1,7 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
 #   key ctrl+s | type text | click x y [right|middle] | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
-#   wait-git | print-git | print-gitlog
+#   wait-git | print-git | print-gitlog | wait-update | print-update
 .include "rhun.inc"
 
 .bss
@@ -437,6 +437,32 @@ c_wait_git:
     call app_tick
     jmp 1b
 2:  pop r13
+    xor eax, eax
+    ret
+
+# wait-update: until the update check or install is done (at most 30 s)
+c_wait_update:
+    push r13
+    call time_ms
+    lea r13, [rax + 30000]
+1:  call update_busy
+    test eax, eax
+    jz 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 1b
+2:  pop r13
+    xor eax, eax
+    ret
+
+# print-update: the updater's state, the running and the latest version, the last error
+c_print_update:
+    lea rdi, [rip + out]
+    call update_dump
     xor eax, eax
     ret
 
@@ -1009,6 +1035,8 @@ on_client:
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
 .Lc_print_gitlog: .asciz "print-gitlog"
+.Lc_wait_update: .asciz "wait-update"
+.Lc_print_update: .asciz "print-update"
 .Ls_term: .asciz " term="
 .Ls_hidden: .asciz " hidden"
 .Ls_builtin: .asciz "built-in"
@@ -1027,7 +1055,8 @@ ctl_table:
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
-    .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog, 0, 0
+    .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
+    .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update, 0, 0
 
 .data
 lsock: .long -1
