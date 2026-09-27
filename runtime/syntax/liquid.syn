@@ -1,0 +1,14 @@
+name = Liquid
+files = *.liquid
+block = <!-- -->
+string = "
+string = '
+markup = yes
+functions = no
+numbers = no
+operators = no
+region = {%comment%} {%endcomment%} comment multiline
+region = {%- -%} preproc multiline
+region = {% %} preproc multiline
+region = {{- -}} preproc multiline
+region = {{ }} preproc multiline

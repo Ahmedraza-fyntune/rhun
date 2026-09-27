@@ -10,3 +10,16 @@ a.rb
 notes.txt
 CMakeLists.txt
 a.json5
+page.html.erb
+index.haml
+index.slim
+index.pug
+theme.liquid
+layout.jinja2
+page.twig
+notes.mustache
+index.ejs
+a.blade.php
+a.php
+Index.cshtml
+page.astro

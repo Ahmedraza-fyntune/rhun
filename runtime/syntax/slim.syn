@@ -1,0 +1,11 @@
+name = Slim
+files = *.slim
+prefix = .a #a
+region = /! eol comment bol
+region = / eol comment bol
+region = = eol preproc bol
+region = - eol preproc bol
+region = | eol text bol
+tags = html head body div span p a ul ol li table tr td th thead tbody form input button label img script style link meta title h1 h2 h3 h4 h5 h6 section article nav header footer
+string = "
+string = '

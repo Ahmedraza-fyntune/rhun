@@ -1,0 +1,11 @@
+name = HAML
+files = *.haml
+prefix = %t .a #a
+region = -# eol comment bol
+region = / eol comment bol
+region = = eol preproc bol
+region = - eol preproc bol
+region = : eol preproc bol
+string = "
+string = '
+keywords = if elsif else unless while until for do end def class module return yield begin rescue ensure case when then in true false nil self and or not

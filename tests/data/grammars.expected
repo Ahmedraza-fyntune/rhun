@@ -1,5 +1,137 @@
 loaded: 0 parsed
-checked 51 grammars
+== astro.syn
+---
+aaa 4
+const items = ["a", "b"];
+aaaaaaaaaaaaaaaaaaaaaaaaa 4
+---
+aaa 0
+<!-- a comment -->
+666666666666666666 0
+<ul class="list">{items.map(i => <li>{i}</li>)}</ul>
+9ee0ddddd94444449aaaaaaaaaaaaaaaaaaaaaaa99ee90099ee9 0
+== blade.syn
+<div class="a">
+9eee0ddddd94449 0
+{{-- a comment
+66666666666666 4
+   spanning lines --}}
+6666666666666666666666 0
+@if($user)
+aaaaaaaaaa 0
+  <p>{{ $user->name }}</p>
+009e9aaaaaaaaaaaaaaaaa99e9 0
+@endif
+aaaaaa 0
+== ejs.syn
+<html>
+9eeee9 0
+<%# a comment %>
+6666666666666666 0
+<% const x = 1 %>
+aaaaaaaaaaaaaaaaa 0
+<p class="a"><%= "hi " + x %></p>
+9e0ddddd94449aaaaaaaaaaaaaaaa99e9 0
+== erb.syn
+<html>
+9eeee9 0
+<%# a comment %>
+6666666666666666 0
+<%- x = 1 -%>
+aaaaaaaaaaaaa 0
+<p class="a"><%= "hi #{x}" %></p>
+9e0ddddd94449aaaaaaaaaaaaaaaa99e9 0
+== haml.syn
+-# a comment
+666666666666 0
+%div.box#main
+eeeeddddddddd 0
+  - x = 1
+00aaaaaaa 0
+  %p.greeting= "hi #{x}" if x
+00eeddddddddd8044444444401100 0
+  / not rendered
+0066666666666666 0
+  :javascript
+00aaaaaaaaaaa 0
+== handlebars.syn
+<div class="a">
+9eee0ddddd94449 0
+{{!-- a comment
+666666666666666 4
+   spanning lines --}}
+6666666666666666666666 0
+{{#if user}} hi {{{rawHtml}}} {{/if}}
+aaaaaaaaaaaa0000aaaaaaaaaaaaa0aaaaaaa 0
+== jinja.syn
+<div class="a">
+9eee0ddddd94449 0
+{# a comment
+666666666666 4
+   spanning lines #}
+66666666666666666666 0
+{%- if user -%} hi {{ user.name }} {%- endif -%}
+aaaaaaaaaaaaaaa0000aaaaaaaaaaaaaaa0aaaaaaaaaaaaa 0
+== liquid.syn
+<div class="a">
+9eee0ddddd94449 0
+{%comment%}
+66666666666 4
+  a comment
+66666666666 4
+{%endcomment%}
+66666666666666 0
+{%- if user -%} hi {{ user.name }} {%- endif -%}
+aaaaaaaaaaaaaaa0000aaaaaaaaaaaaaaa0aaaaaaaaaaaaa 0
+== pug.syn
+//- a comment
+6666666666666 0
+extends layout
+11111110000000 0
+- var x = 1
+aaaaaaaaaaa 0
+p.greeting#hi Welcome #{x}
+edddddddddddd000000000aaaa 0
+  if x
+001100 0
+    span done
+0000eeee00000 0
+== razor.syn
+<div class="a">
+9eee0ddddd94449 0
+@* a comment
+666666666666 4
+   spanning lines *@
+66666666666666666666 0
+@model MyApp.Models.Item
+aaaaaaaaaaaaaaaaaaaaaaaa 0
+@{ var total = 1; }
+aaaaaaaaaaaaaaaaaaa 0
+@if (total > 0) { <p>@(total)</p> }
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0
+== slim.syn
+/! rendered comment
+6666666666666666666 0
+doctype html
+00000000eeee 0
+p.greeting#hi Welcome
+edddddddddddd00000000 0
+  - items = [1, 2]
+00aaaaaaaaaaaaaaaa 0
+  = render "partial"
+00aaaaaaaaaaaaaaaaaa 0
+  | plain text line
+0000000000000000000 0
+== twig.syn
+<div class="a">
+9eee0ddddd94449 0
+{# a comment
+666666666666 4
+   spanning lines #}
+66666666666666666666 0
+{%- if user -%} hi {{ user.name }} {%- endif -%}
+aaaaaaaaaaaaaaa0000aaaaaaaaaaaaaaa0aaaaaaaaaaaaa 0
+checked 63 grammars
 Makefile -> Makefile (parsed 1)
 a.py -> Python (parsed 2)
 b.py -> Python (parsed 2)
@@ -12,3 +144,16 @@ a.rb -> Custom (parsed 4)
 notes.txt -> Custom (parsed 4)
 CMakeLists.txt -> CMake (parsed 5)
 a.json5 -> JSON (parsed 6)
+page.html.erb -> ERB (parsed 7)
+index.haml -> HAML (parsed 8)
+index.slim -> Slim (parsed 9)
+index.pug -> Pug (parsed 10)
+theme.liquid -> Liquid (parsed 11)
+layout.jinja2 -> Jinja (parsed 12)
+page.twig -> Twig (parsed 13)
+notes.mustache -> Handlebars (parsed 14)
+index.ejs -> EJS (parsed 15)
+a.blade.php -> Blade (parsed 16)
+a.php -> PHP (parsed 17)
+Index.cshtml -> Razor (parsed 18)
+page.astro -> Astro (parsed 19)
