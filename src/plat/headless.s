@@ -90,9 +90,13 @@ hl_maximize:
     mov dword ptr [rip + g_dirty], 1
     ret
 
+# hl_timeout(): at once when the last frame asked for another, otherwise forever
 hl_timeout:
+    xor eax, eax
+    cmp dword ptr [rip + g_dirty], 0
+    jne 1f
     mov eax, -1
-    ret
+1:  ret
 
 hl_draw:
     push rbx

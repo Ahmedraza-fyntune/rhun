@@ -393,9 +393,13 @@ tb_layout:
 
 // ---------------------------------------------------------------- drawing
 
-// render(): draw a frame into a free surface and show it
+// render(): draw a frame into a free surface and show it. With every surface still on the window
+// server the frame waits: drawing into one would show it half drawn. pace tells p_timeout when to
+// come back for a frame still due: at once when the frame asked for another, soon when it waited
 render:
     ENTER 32
+    mov w9, #-1
+    STW w9, pace
     LDW w19, pw
     LDW w20, ph
     cbz w19, 9f
@@ -421,6 +425,9 @@ render:
     add w22, w22, #1
     cmp w22, #NSURS
     b.lo 2b
+    mov w9, #2
+    STW w9, pace
+    b 9f
 3:  STW w21, cur
     mov x0, x23
     mov w1, #0
@@ -438,6 +445,10 @@ render:
     XCALL gfx_set_target
     STW wzr, g_dirty
     XCALL app_render
+    LDW w9, g_dirty
+    cbz w9, 30f
+    STW wzr, pace
+30:
     mov x0, x23
     mov w1, #0
     mov x2, #0
@@ -634,9 +645,14 @@ title_double_click:
 p_nop:
     XRET
 
+// p_timeout: forever, unless a frame is still due (render's pace)
 p_timeout:
     mov x8, #-1
-    XRET
+    LDW w9, g_dirty
+    cbz w9, 1f
+    LDW w9, pace
+    sxtw x8, w9
+1:  XRET
 
 p_draw:
     XENTRY
@@ -2174,6 +2190,7 @@ ph: .long 0
 sw: .long 0
 sh: .long 0
 cur: .long 0
+pace: .long -1                  // ms until render should try again for a frame still due, -1 never
 cursor: .long -1
 marked: .long 0
 key_mods: .long 0
