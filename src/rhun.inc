@@ -431,6 +431,8 @@ ENDSTRUCT INI_SIZE
 .equ ST_STR, 2
 .equ ST_THEME, 3
 .equ ST_CHOICE, 4              # index into SET_opts: pairs of cstr (config value, label), "" ends
+.equ ST_ACTION, 5              # a button: SET_ptr is the function it calls, SET_desc a buffer that
+                               # changes; not in the config file
 STRUCT
 F SET_sec, 8
 F SET_key, 8

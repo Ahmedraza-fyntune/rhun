@@ -2027,13 +2027,23 @@ FN statusbar_draw
     M ecx, MI_1
     COLOR r8d, T_BORDER
     call gfx_fill
+    # the updater's item at the right end; the rest keeps left of it
+    mov edi, [rsp]
+    add edi, [rsp + 8]
+    sub edi, [rip + g_mt + 4*MI_12]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call statusbar_update
+    mov [rsp + 20], eax
     call app_image
     test rax, rax
     jz 1f
     mov rdi, [rip + g_file]
     mov esi, [rsp]
     mov edx, [rsp + 4]
-    mov ecx, [rsp + 8]
+    mov ecx, [rsp + 20]
+    add ecx, [rip + g_mt + 4*MI_12]
+    sub ecx, [rsp]
     mov r8d, [rsp + 12]
     call iv_status
     jmp 9f
@@ -2110,9 +2120,7 @@ FN statusbar_draw
     call ui_text_v
     add rsp, 16
 12: # right side: language, indentation, eol, encoding
-    mov r12d, [rsp]
-    add r12d, [rsp + 8]
-    sub r12d, [rip + g_mt + 4*MI_12]
+    mov r12d, [rsp + 20]
     lea r13, [rip + .Lutf8]
     call .Lsb_item
     lea r13, [rip + .Llf]
@@ -2156,6 +2164,73 @@ FN statusbar_draw
     jz 9f
     call cmd_select_language
 9:  EPILOGUE
+# statusbar_update(right, y, h) -> eax the right edge left of it: the updater's item, when it has one
+statusbar_update:
+    PROLOGUE 16
+    mov r12d, edi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    call update_item
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    mov rdi, rax
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, r13
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_16]
+    mov r14d, eax               # w
+    sub r12d, eax               # x
+    mov eax, [rsp]
+    add eax, [rip + g_mt + 4*MI_3]
+    mov [rsp + 8], eax          # box y
+    mov eax, [rsp + 4]
+    sub eax, [rip + g_mt + 4*MI_6]
+    mov [rsp + 12], eax         # box h
+    mov edi, ID_STATUS + 1
+    mov esi, r12d
+    mov edx, [rsp + 8]
+    mov ecx, r14d
+    mov r8d, [rsp + 12]
+    call ui_btn
+    mov r15d, eax
+    test eax, UB_HOVER
+    jz 1f
+    mov dword ptr [rip + g_cursor], CUR_POINTER
+1:  mov edi, r12d
+    mov esi, [rsp + 8]
+    mov edx, r14d
+    mov ecx, [rsp + 12]
+    M r8d, MI_RADIUS
+    COLOR r9d, T_ACCENT
+    COLOR eax, T_STATUS
+    test r15d, UB_HOVER
+    jz 2f
+    COLOR eax, T_HOVER
+2:  push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    mov edx, [rsp + 8]
+    mov ecx, r14d
+    mov r8d, [rsp + 12]
+    mov r9, r13
+    COLOR eax, T_ACCENT
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+    test r15d, UB_CLICK
+    jz 3f
+    call update_click
+3:  sub r12d, [rip + g_mt + 4*MI_20]
+9:  mov eax, r12d
+    EPILOGUE
+
 # right-aligned status item: r13 cstr, r12d right edge (moves left)
 .Lsb_item:
     push rbx

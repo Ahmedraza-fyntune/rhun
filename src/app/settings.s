@@ -73,7 +73,12 @@ FN setting_applied
     jne 5f
     call git_apply
     jmp 9f
-5:  call vim_sync
+5:  lea rcx, [rip + cfg_update_check]
+    cmp rax, rcx
+    jne 6f
+    call update_apply
+    jmp 9f
+6:  call vim_sync
 9:  EPILOGUE
 
 # settings_key(keysym, cp, mods) -> 1 if handled
@@ -127,6 +132,9 @@ FN settings_key
 
 # section_title(sec cstr) -> display name
 section_title:
+    lea rax, [rip + .Lt_updates]
+    cmp word ptr [rdi], 0x7075          # "up"
+    je 1f
     lea rax, [rip + .Lt_appearance]
     cmp byte ptr [rdi], 'u'
     je 1f
@@ -222,7 +230,8 @@ FN settings_draw
 12: cmp dword ptr [rip + set_scroll], 0
     jge 13f
     mov dword ptr [rip + set_scroll], 0
-13: # column
+13: call update_desc_refresh
+    # column
     mov edi, 720
     call sc
     mov ecx, [rsp + 8]
@@ -402,7 +411,62 @@ FN settings_draw
     je .Lsd_theme
     cmp eax, ST_CHOICE
     je .Lsd_choice
+    cmp eax, ST_ACTION
+    je .Lsd_action
     jmp .Lsd_str
+.Lsd_action:
+    # a button, right aligned
+    lea rdi, [rip + .Lcheck_now]
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + .Lcheck_now]
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_32]
+    mov [rsp + 44], eax         # w
+    mov esi, [rsp + 36]
+    sub esi, eax
+    mov [rsp + 52], esi         # x
+    M eax, MI_32
+    mov edx, r13d
+    sub edx, eax
+    sar edx, 1
+    add edx, r12d
+    mov [rsp + 60], edx         # y
+    mov edi, [rsp + 40]
+    mov ecx, [rsp + 44]
+    mov r8d, eax
+    call ui_btn
+    mov [rsp + 32], eax
+    mov edi, [rsp + 52]
+    mov esi, [rsp + 60]
+    mov edx, [rsp + 44]
+    M ecx, MI_32
+    M r8d, MI_RADIUS
+    COLOR r9d, T_BORDER
+    COLOR eax, T_INPUT
+    test dword ptr [rsp + 32], UB_HOVER
+    jz 1f
+    COLOR eax, T_HOVER
+1:  push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 52]
+    mov edx, [rsp + 60]
+    mov ecx, [rsp + 44]
+    M r8d, MI_32
+    lea r9, [rip + .Lcheck_now]
+    COLOR eax, T_FG
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+    test dword ptr [rsp + 32], UB_CLICK
+    jz .Lsd_next
+    call [rbx + SET_ptr]
+    jmp .Lsd_next
 .Lsd_choice:
     # segmented control, right aligned
     M eax, MI_32
@@ -794,6 +858,8 @@ desc_room:
     mov eax, [rbx + SET_type]
     cmp eax, ST_CHOICE
     je 2f
+    cmp eax, ST_ACTION
+    je 5f
     cmp eax, ST_BOOL
     je 1f
     cmp eax, ST_INT
@@ -822,6 +888,14 @@ desc_room:
     jmp 3b
 4:  mov eax, r12d
     add eax, [rip + g_mt + 4*MI_32]
+    EPILOGUE
+5:  lea rdi, [rip + .Lcheck_now]
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + .Lcheck_now]
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_64]
     EPILOGUE
 
 # ui_text_v_fit(face, x, y, h, ptr, len, argb, maxw): text centered vertically, cut with "…"
@@ -858,6 +932,8 @@ FN ui_text_v_fit
 .Lt_agents: .asciz "Agents"
 .Lt_terminal: .asciz "Terminal"
 .Lt_git: .asciz "Git"
+.Lt_updates: .asciz "Updates"
+.Lcheck_now: .asciz "Check now"
 
 .data
 set_edit: .long -1

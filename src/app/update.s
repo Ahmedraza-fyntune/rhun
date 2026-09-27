@@ -20,7 +20,7 @@ up_checked: .quad 0             # unix seconds of the last answer
 up_pid: .long 0
 up_kind: .long 0                # UP_JOB_* running, 0 for none
 up_manual: .long 0              # the check was asked for: its result is reported
-.globl g_update_state, g_restart, g_update_desc
+.globl g_update_state, g_restart, g_update_desc, g_update_label
 g_update_state: .long 0         # UP_*
 g_restart: .long 0              # quitting starts the new version
 up_latest: .zero 32             # the latest version known
@@ -28,6 +28,7 @@ up_error: .zero 256             # why the last check or install failed
 up_item: .zero 64
 up_target: .zero 4096           # what the installer replaces and the restart runs
 g_update_desc: .zero 256        # the Check now row's text in Settings
+g_update_label: .zero 48        # and its label: this rhun's version
 .data
 up_fd: .long -1
 
@@ -38,6 +39,12 @@ up_fd: .long -1
 # update_init(): what the last check found, and the first automatic check
 FN update_init
     PROLOGUE INI_SIZE
+    lea rdi, [rip + g_update_label]
+    lea rsi, [rip + .Ld_version]
+    call cstr_copy
+    mov rdi, rax
+    lea rsi, [rip + rhun_version]
+    call cstr_copy
     call up_state_path
     test rax, rax
     jz 5f
@@ -545,7 +552,7 @@ FN update_desc_refresh
     jmp 8f
 3:  cmp eax, UP_AVAILABLE
     jne 4f
-    lea rdi, [rip + .Lt_rhun]
+    lea rdi, [rip + .Ld_version]
     call up_push
     lea rdi, [rip + up_latest]
     call up_push
@@ -573,8 +580,6 @@ FN update_desc_refresh
     jmp 8f
 6:  cmp qword ptr [rip + up_checked], 0
     je 7f
-    lea rdi, [rip + rhun_version]
-    call up_push
     lea rdi, [rip + .Ld_latest]
     call up_push
     call up_push_age
@@ -1187,7 +1192,8 @@ ver_fields:
 .Ld_available: .asciz " is available"
 .Ld_failed: .asciz "Couldn't check: "
 .Ld_source: .asciz " is available (built from source)"
-.Ld_latest: .asciz " is the latest (checked "
+.Ld_latest: .asciz "The latest version (checked "
+.Ld_version: .asciz "Version "
 .Ld_close: .asciz ")"
 .Ld_never: .asciz "Not checked yet"
 .Ld_now: .asciz "just now"

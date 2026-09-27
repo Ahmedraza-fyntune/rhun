@@ -133,6 +133,8 @@ setting_find:
     lea rbx, [rip + g_settings]
 1:  cmp qword ptr [rbx + SET_key], 0
     je 3f
+    cmp dword ptr [rbx + SET_type], ST_ACTION
+    je 2f
     mov rdi, r12
     mov rsi, r13
     mov rdx, [rbx + SET_sec]
@@ -371,6 +373,8 @@ FN config_save
 .Lcs_next:
     cmp qword ptr [rbx + SET_key], 0
     je .Lcs_keys
+    cmp dword ptr [rbx + SET_type], ST_ACTION
+    je .Lcs_skip
     mov rax, [rbx + SET_sec]
     cmp rax, r12
     je 1f
@@ -451,6 +455,7 @@ FN config_save
 5:  lea rdi, [rsp]
     mov esi, 10
     call sb_push_byte
+.Lcs_skip:
     add rbx, SET_SIZE
     jmp .Lcs_next
 .Lcs_keys:
@@ -569,6 +574,7 @@ cfg_def_theme: .asciz "rhun-dark"
 .Ls_agents: .asciz "agents"
 .Ls_terminal: .asciz "terminal"
 .Ls_git: .asciz "git"
+.Ls_updates: .asciz "updates"
 
 .macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0
     .quad \sec, 1f, \ptr, 2f, 3f
@@ -578,6 +584,16 @@ cfg_def_theme: .asciz "rhun-dark"
 1:  .asciz "\key"
 2:  .asciz "\label"
 3:  .asciz "\desc"
+    .popsection
+.endm
+
+# a button row: fn runs on a click; label and desc point at text that may change
+.macro SETTING_ACTION sec, key, fn, label, desc
+    .quad \sec, 1f, \fn, \label, \desc
+    .long ST_ACTION, 0, 0, 0, 0, 0
+    .quad 0
+    .pushsection .rodata.str, "aMS", @progbits, 1
+1:  .asciz "\key"
     .popsection
 .endm
 
@@ -619,6 +635,8 @@ g_settings:
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
     SETTING .Ls_terminal, height, ST_INT, cfg_term_h, 80, 2000, 10, 0, "Terminal height", "Height of the terminal panel in points."
     SETTING .Ls_git, enabled, ST_BOOL, cfg_git, 0, 1, 1, 0, "Git", "Changes in the gutter, tabs and explorer, and the history view."
+    SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
+    SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_update_label, g_update_desc
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
