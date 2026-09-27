@@ -775,7 +775,8 @@ pattern_match:
 
 # syntax_detect(path cstr, first line ptr, len) -> GR* or 0, parsed: the grammar whose files pattern
 # fits the file name best (an exact name, else the longest *.suffix; the first on a tie, so user
-# grammars win), else one with a first_line word in the first line
+# grammars win), else the grammar whose first_line word found in the first line is longest (the
+# first grammar on a tie)
 FN syntax_detect
     PROLOGUE 48
     mov [rsp + 16], rsi
@@ -836,10 +837,13 @@ FN syntax_detect
     test r13, r13
     jnz .Lsd_found
 .Lsd_first:
-    # shebang / first line prefixes
+    # a first_line word found anywhere in the first line ("#!/usr/bin/env python3"): the longest
+    # wins (tclsh over sh), the first grammar on a tie
+    xor ebx, ebx
+    mov qword ptr [rsp + 32], -1
     xor r12d, r12d
 4:  cmp r12, [rip + g_grammars + VEC_len]
-    jae .Lsd_none
+    jae 7f
     mov rax, [rip + g_grammars + VEC_ptr]
     mov r13, [rax + r12*8]
     mov r14, [r13 + GR_first]
@@ -855,17 +859,25 @@ FN syntax_detect
     sub r15, rcx
     test rdx, rdx
     jz 6f
-    # match anywhere in the first line (e.g. "#!/usr/bin/env python3")
+    mov [rsp + 40], rdx
     mov rdi, [rsp + 16]
     mov rsi, [rsp + 24]
     mov rcx, rdx
     mov rdx, rax
     call str_find
     test rax, rax
-    jns .Lsd_found
+    js 5b
+    mov rax, [rsp + 40]
+    cmp rax, [rsp + 32]
+    jle 5b
+    mov [rsp + 32], rax
+    mov rbx, r13
     jmp 5b
 6:  inc r12
     jmp 4b
+7:  mov r13, rbx
+    test r13, r13
+    jz .Lsd_none
 .Lsd_found:
     mov rdi, r13
     call syntax_ready
