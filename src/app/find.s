@@ -11,6 +11,8 @@
 .equ ID_REPL_ALL, 0x3a07
 
 .bss
+.globl g_find_word
+g_find_word: .long 0            # * and #: matches are whole words
 .p2align 3
 find_open: .long 0
 repl_open: .long 0
@@ -35,6 +37,7 @@ FN find_field
 # open with the selection (single line) as the query
 open_bar:
     PROLOGUE
+    mov dword ptr [rip + g_find_word], 0
     mov dword ptr [rip + find_open], 1
     mov dword ptr [rip + find_sub], 0
     mov dword ptr [rip + tf_find + TF_id], ID_FIND_TF
@@ -147,11 +150,89 @@ update_matches:
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
+# find_raw(hay, hlen, needle, nlen) -> index or -1: a match as the find bar (and vim) has them
+.globl find_raw
 find_raw:
+    cmp dword ptr [rip + g_find_word], 0
+    jne find_raw_word
+find_raw_plain:
     cmp dword ptr [rip + find_case], 0
     je 1f
     jmp str_find
 1:  jmp str_ifind
+
+# find_raw_word(hay, hlen, needle, nlen): the first match with no letter, digit, _ or non-ASCII
+# byte right before or after it in the document (* and #); keeps registers as str_find does
+find_raw_word:
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    PROLOGUE 16
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov r15, rcx
+    # the bounds of the text: the document's when hay lies in it
+    mov [rsp], rdi
+    lea rax, [rdi + rsi]
+    mov [rsp + 8], rax
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    mov rcx, [rax + DOC_buf]
+    mov rdx, rcx
+    add rdx, [rax + DOC_gs]
+    cmp r12, rcx
+    jb 1f
+    lea r8, [r12 + r13]
+    cmp r8, rdx
+    ja 1f
+    mov [rsp], rcx
+    mov [rsp + 8], rdx
+1:  xor ebx, ebx
+2:  lea rdi, [r12 + rbx]
+    mov rsi, r13
+    sub rsi, rbx
+    jbe 8f
+    mov rdx, r14
+    mov rcx, r15
+    call find_raw_plain
+    test rax, rax
+    js 8f
+    lea rbx, [rax + rbx]        # the match
+    lea r8, [r12 + rbx]
+    cmp r8, [rsp]
+    jbe 3f
+    movzx edi, byte ptr [r8 - 1]
+    call is_ident
+    test eax, eax
+    jnz 4f
+3:  lea r8, [r12 + rbx]
+    add r8, r15
+    cmp r8, [rsp + 8]
+    jae 5f
+    movzx edi, byte ptr [r8]
+    call is_ident
+    test eax, eax
+    jz 5f
+4:  inc rbx
+    jmp 2b
+5:  mov rax, rbx
+    jmp 9f
+8:  mov rax, -1
+9:  lea rsp, [rbp - 40]
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    ret
 
 # goto_match(dir): select next (1) / previous (-1) match from the cursor
 goto_match:
@@ -354,6 +435,7 @@ replace_all:
 9:  EPILOGUE
 
 FN find_changed
+    mov dword ptr [rip + g_find_word], 0
     cmp dword ptr [rip + find_sub], 0
     jne 1f
     call update_matches
@@ -441,16 +523,13 @@ FN find_vim_query
     lea rdi, [rip + tf_find]
     jmp tf_text
 
-# find_vim_word(ptr, len): search for this text, its matches marked
+# find_vim_word(ptr, len, word): the text searched for (word: whole words only); find_vim_step marks the matches
 FN find_vim_word
-    push rbx
+    mov [rip + g_find_word], edx
     mov rdx, rsi
     mov rsi, rdi
     lea rdi, [rip + tf_find]
-    call tf_set
-    call update_matches
-    pop rbx
-    ret
+    jmp tf_set
 
 # find_vim_step(pos, dir) -> the first match after pos (dir 1) or the last one before it (-1), wrapping; -1 if none
 FN find_vim_step

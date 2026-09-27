@@ -272,7 +272,7 @@ FN app_open_file
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_mtime
+    call file_stamp
     mov [rbx + DOC_mtime], rax
     call iv_new
     mov [rbx + DOC_img], rax
@@ -594,6 +594,7 @@ FN app_toast
 FN app_reload_config
     PROLOGUE
     call config_load
+    call keys_reload
     call app_apply_settings
     EPILOGUE
 
@@ -2677,35 +2678,69 @@ FN cmd_newline_below
 
 FN cmd_newline_above
     READONLY_RET
-    push rbx
+    PROLOGUE 272
     mov rbx, [rip + g_doc]
     test rbx, rbx
-    jz 1f
+    jz 9f
+    # an empty line above with the indentation of this one, the cursor at its end
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
     call doc_line_of
-    test rax, rax
-    jz 2f
-    # end of the previous line, then newline
+    mov r13, rax
     mov rdi, rbx
-    lea rsi, [rax - 1]
-    call doc_line_end
-    mov [rbx + DOC_cur], rax
-    mov [rbx + DOC_anchor], rax
-    call ed_newline
-    jmp 1f
-2:  # first line: insert an empty line above
-    mov qword ptr [rbx + DOC_cur], 0
-    mov qword ptr [rbx + DOC_anchor], 0
+    mov rsi, rax
+    call doc_line_start
+    mov r12, rax
     mov rdi, rbx
-    lea rsi, [rip + .Lnl]
-    mov edx, 1
+    mov rsi, r13
+    call line_indent
+    mov r15, rax
+    cmp rax, 200
+    jbe 1f
+    mov eax, 200
+1:  mov r14, rax
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r14
+    lea rcx, [rsp]
+    call doc_copy
+    # above a closing bracket: one level more (the block's content)
+    lea rsi, [r12 + r15]
+    mov rdi, rbx
+    call doc_byte
+    cmp eax, '}'
+    je 2f
+    cmp eax, ')'
+    je 2f
+    cmp eax, ']'
+    jne 4f
+2:  cmp dword ptr [rip + cfg_insert_spaces], 0
+    jne 3f
+    mov byte ptr [rsp + r14], 9
+    inc r14
+    jmp 4f
+3:  mov ecx, [rip + cfg_tab_width]
+    cmp ecx, 16
+    jbe 31f
+    mov ecx, 16
+31: test ecx, ecx
+    jz 4f
+    mov byte ptr [rsp + r14], ' '
+    inc r14
+    dec ecx
+    jmp 31b
+4:  mov byte ptr [rsp + r14], 10
+    mov [rbx + DOC_cur], r12
+    mov [rbx + DOC_anchor], r12
+    mov rdi, rbx
+    lea rsi, [rsp]
+    lea rdx, [r14 + 1]
     xor ecx, ecx
     call ed_insert
-    mov qword ptr [rbx + DOC_cur], 0
-    mov qword ptr [rbx + DOC_anchor], 0
-1:  pop rbx
-    ret
+    lea rax, [r12 + r14]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+9:  EPILOGUE
 
 FN cmd_indent
     mov edi, 1

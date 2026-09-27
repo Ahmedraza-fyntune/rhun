@@ -3,6 +3,7 @@
 
 .equ XOUT, 65536
 .equ XIN, 262144
+.equ PEND_MAX, 256              # keys waiting for a new keymap
 .equ EVMASK, 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040 | 0x8000 | 0x20000 | 0x200000
 # KeyPress KeyRelease ButtonPress ButtonRelease EnterWindow LeaveWindow PointerMotion Exposure StructureNotify FocusChange
 
@@ -153,6 +154,17 @@ x_process:
     mov esi, r13d
     call x_message
     add ebx, r13d
+    cmp dword ptr [rip + keymap_stale], 0
+    je 1b
+    # a new keymap: load it before the messages after this one
+    mov ecx, [rip + xin_len]
+    sub ecx, ebx
+    mov [rip + xin_len], ecx
+    lea rdi, [rip + xin]
+    lea rsi, [rdi + rbx]
+    rep movsb
+    call x_keymap_refresh
+    xor ebx, ebx
     jmp 1b
 8:  # keep the tail
     mov ecx, [rip + xin_len]
@@ -162,6 +174,32 @@ x_process:
     lea rsi, [rdi + rbx]
     rep movsb
     EPILOGUE
+
+# x_keymap_refresh(): load the keymap until it is current, then the keys that waited for it
+x_keymap_refresh:
+    push rbx
+    mov dword ptr [rip + keymap_busy], 1
+1:  cmp dword ptr [rip + keymap_stale], 0
+    je 2f
+    mov dword ptr [rip + keymap_stale], 0
+    call x_load_keymap
+    jmp 1b
+2:  xor ebx, ebx
+3:  cmp ebx, [rip + pend_n]
+    jae 4f
+    lea rax, [rip + pend]
+    mov ecx, [rax + rbx*8 + 4]
+    mov [rip + xmods], ecx
+    mov edi, [rax + rbx*8]
+    call x_key
+    inc ebx
+    cmp dword ptr [rip + keymap_stale], 0
+    jne 1b
+    jmp 3b
+4:  mov dword ptr [rip + pend_n], 0
+    mov dword ptr [rip + keymap_busy], 0
+    pop rbx
+    ret
 
 # x_message(ptr, len)
 x_message:
@@ -202,6 +240,11 @@ x_message:
     je .Lxm_client
     cmp eax, 34
     je .Lxm_mapping
+    # XKB NewKeyboardNotify (0) and MapNotify (1): a client using XKB gets no MappingNotify for these
+    cmp eax, [rip + xkb_event]
+    jne .Lxm_ret
+    cmp byte ptr [rbx + 1], 1
+    jbe .Lxm_mapping
     jmp .Lxm_ret
 .Lxm_error:
     # ignore: errors are non-fatal for us (e.g. a stale property)
@@ -231,9 +274,21 @@ x_message:
     jmp .Lxm_ret
 .Lxm_key:
     movzx eax, word ptr [rbx + 28]
-    mov [rip + xmods], eax
     movzx edi, byte ptr [rbx + 1]
+    # the keymap changed: keys wait for the new one (programs that type by remapping a spare key)
+    mov ecx, [rip + keymap_stale]
+    or ecx, [rip + keymap_busy]
+    jnz 1f
+    mov [rip + xmods], eax
     call x_key
+    jmp .Lxm_ret
+1:  mov ecx, [rip + pend_n]
+    cmp ecx, PEND_MAX
+    jae .Lxm_ret
+    lea rdx, [rip + pend]
+    mov [rdx + rcx*8], edi
+    mov [rdx + rcx*8 + 4], eax
+    inc dword ptr [rip + pend_n]
     jmp .Lxm_ret
 .Lxm_bpress:
     movzx eax, word ptr [rbx + 28]
@@ -385,7 +440,9 @@ x_key:
     mov ebx, edi
     sub ebx, [rip + min_kc]
     imul ebx, [rip + kpk]
-    # column: group (state bits 13-14) * 2 + shift
+    # columns: group 1 levels 1-2, group 2 levels 1-2, group 1 levels 3-4, group 2 levels 3-4;
+    # the group is in state bits 13-14 (XKB is on), AltGr (level 3) sets Mod5
+    xor edx, edx
     mov ecx, [rip + xmods]
     shr ecx, 13
     and ecx, 3
@@ -396,12 +453,33 @@ x_key:
     # shortcuts use the first layout
     test dword ptr [rip + xmods], 4 | 8 | 64
     jnz 1f
-    add ebx, 2
-1:  mov r12d, ebx               # base column
+    mov edx, 2
+1:  test dword ptr [rip + xmods], 0x80
+    jz 11f
+    lea ecx, [rdx + 6]
+    cmp ecx, [rip + kpk]
+    ja 11f
+    lea ecx, [rbx + rdx + 4]
+    mov rax, [rip + kmap]
+    cmp dword ptr [rax + rcx*4], 0
+    je 11f
+    add edx, 4
+11: add ebx, edx
+    mov r12d, ebx               # base column
     mov eax, [rip + xmods]
     xor edx, edx
     test eax, 1
     setnz dl
+    # num lock (mod2): keypad keys swap levels, digits first
+    test eax, 0x10
+    jz 12f
+    mov rcx, [rip + kmap]
+    mov ecx, [rcx + r12*4 + 4]
+    sub ecx, 0xff80
+    cmp ecx, 0xffbd - 0xff80
+    ja 12f
+    xor edx, 1
+12:
     # caps lock on letters flips shift
     mov rcx, [rip + kmap]
     mov edi, [rcx + r12*4]
@@ -899,6 +977,60 @@ x_big_requests:
     mov dword ptr [rip + big_req], 1
 9:  EPILOGUE
 
+# XKB on: key events then carry the layout group in state bits 13-14
+x_xkb_use:
+    PROLOGUE 32
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, 32
+    call memset
+    mov byte ptr [rsp], 98      # QueryExtension
+    mov word ptr [rsp + 2], 5   # 8 + 12 bytes name
+    mov word ptr [rsp + 4], 9
+    lea rdi, [rsp + 8]
+    lea rsi, [rip + .Lxkb]
+    mov ecx, 9
+    rep movsb
+    lea rdi, [rsp]
+    mov esi, 20
+    call x_req
+    mov eax, [rip + seq]
+    and eax, 0xffff
+    mov [rip + want_seq], eax
+    call x_wait_reply
+    cmp byte ptr [rip + reply_buf + 8], 0
+    je 9f
+    movzx eax, byte ptr [rip + reply_buf + 10]
+    mov [rip + xkb_event], eax
+    movzx eax, byte ptr [rip + reply_buf + 9]
+    mov byte ptr [rsp], al
+    mov byte ptr [rsp + 1], 0   # UseExtension
+    mov word ptr [rsp + 2], 2
+    mov word ptr [rsp + 4], 1   # version 1.0
+    mov word ptr [rsp + 6], 0
+    lea rdi, [rsp]
+    mov esi, 8
+    call x_req
+    mov eax, [rip + seq]
+    and eax, 0xffff
+    mov [rip + want_seq], eax
+    call x_wait_reply
+    cmp byte ptr [rip + reply_buf + 1], 0
+    je 9f
+    # layout changes arrive as XKB events: select NewKeyboardNotify and MapNotify
+    mov byte ptr [rsp + 1], 1   # SelectEvents (byte 0 still holds the major opcode)
+    mov word ptr [rsp + 2], 4
+    mov word ptr [rsp + 4], 0x100   # the core keyboard
+    mov word ptr [rsp + 6], 3   # affectWhich
+    mov word ptr [rsp + 8], 0   # clear
+    mov word ptr [rsp + 10], 3  # selectAll (MapNotify takes its parts from affectMap and map)
+    mov word ptr [rsp + 12], 7  # affectMap: key types, keysyms, modifier map
+    mov word ptr [rsp + 14], 7  # map
+    lea rdi, [rsp]
+    mov esi, 16
+    call x_req
+9:  EPILOGUE
+
 # keyboard mapping (synchronous)
 x_load_keymap:
     PROLOGUE 16
@@ -987,6 +1119,7 @@ FN x_open_window
     PROLOGUE 64
     mov r15, rdi
     call x_big_requests
+    call x_xkb_use
     call x_load_keymap
     lea rdi, [rip + .La_wm_protocols]
     call x_intern
@@ -1131,10 +1264,8 @@ x_timeout:
 
 x_tick:
     cmp dword ptr [rip + keymap_stale], 0
-    je 1f
-    mov dword ptr [rip + keymap_stale], 0
-    jmp x_load_keymap
-1:  ret
+    jne x_keymap_refresh
+    ret
 
 FN x_title
     push rbx
@@ -1521,6 +1652,7 @@ x_minimize:
 .Lsock_prefix: .asciz "/tmp/.X11-unix/X"
 .Lmit: .ascii "MIT-MAGIC-COOKIE-1\0\0"
 .Lbigreq: .ascii "BIG-REQUESTS"
+.Lxkb: .ascii "XKEYBOARD\0\0\0"
 .Lclosed: .asciz "rhun: X11 connection closed"
 .La_wm_protocols: .asciz "WM_PROTOCOLS"
 .La_wm_delete: .asciz "WM_DELETE_WINDOW"
@@ -1540,6 +1672,11 @@ cursor_glyphs: .byte 68, 152, 60, 108, 116, 14, 12
 .bss
 paste_wait: .long 0
 keymap_stale: .long 0
+keymap_busy: .long 0            # loading it, or replaying keys that waited for it
+pend_n: .long 0
+.p2align 3
+pend: .zero PEND_MAX * 8        # keycode, state
+xkb_event: .long 0              # first event code of XKEYBOARD, 0 without it
 
 .data
 xfd: .long -1

@@ -12,10 +12,11 @@
 
 .equ ID_PAL_ROW, 0x3000
 .equ ID_PAL_FIELD, 0x3fff
-.equ MAXFILES, 50000
+.equ MAXFILES, 200000
 .equ GREP_MAX, 5000             # results
 .equ GREP_FILE_MAX, 8 << 20     # bytes per file
 .equ GREP_TOTAL_MAX, 256 << 20
+.equ GREP_BLOCK, 32 << 20        # file texts are read into mappings this big, unmapped after
 
 STRUCT
 F IT_label, 8
@@ -54,6 +55,12 @@ scan_prefix: .zero 4096         # relative dir during scan
 scan_plen: .long 0
 tmp: .zero SB_SIZE
 gfiles: .zero VEC_SIZE          # GF: project text files in memory while searching
+ghit: .quad 0                   # per file: 0 when it has no match for the query in gprev
+gblocks: .zero VEC_SIZE         # mappings holding the file texts (pointers)
+gblock_ptr: .quad 0             # free space in the last one
+gblock_end: .quad 0
+gprev: .zero 256
+gprev_len: .long 0
 gstr: .zero SB_SIZE             # result labels and details
 grep_case: .long 0
 
@@ -199,26 +206,13 @@ grep_load:
     call path_join
     mov r13, rax
     mov rdi, rax
-    call file_read_all
+    call grep_read
     mov r14, rax
     mov r15, rdx
     mov rdi, r13
     call mem_free
     test r14, r14
     jz 7f
-    # skip empty, big and binary files
-    test r15, r15
-    jz 6f
-    cmp r15, GREP_FILE_MAX
-    ja 6f
-    mov rdi, r14
-    mov rcx, r15
-    cmp rcx, 8192
-    jbe 2f
-    mov ecx, 8192
-2:  xor eax, eax
-    repne scasb
-    je 6f
     add [rsp], r15
     lea rdi, [rip + gfiles]
     mov esi, GF_SIZE
@@ -227,9 +221,6 @@ grep_load:
     mov [rax + GF_label], rcx
     mov [rax + GF_text], r14
     mov [rax + GF_len], r15
-    jmp 7f
-6:  mov rdi, r14
-    call mem_free
 7:  inc rbx
     jmp 1b
 8:  mov qword ptr [rip + items + VEC_len], 0
@@ -294,20 +285,147 @@ sort_gfiles:
 .Lsg_done:
     EPILOGUE
 
+# grep_read(path) -> rax text (NUL-terminated) or 0 for an empty, big or binary file, rdx length;
+# the text goes into the current GREP_BLOCK mapping
+grep_read:
+    PROLOGUE
+    call file_open_read
+    test rax, rax
+    js 8f
+    mov ebx, eax
+    mov edi, eax
+    call file_size
+    test rax, rax
+    jle 7f
+    cmp rax, GREP_FILE_MAX
+    ja 7f
+    mov r12, rax
+    mov rax, [rip + gblock_ptr]
+    lea rcx, [rax + r12 + 1]
+    test rax, rax
+    jz 1f
+    cmp rcx, [rip + gblock_end]
+    jbe 2f
+1:  mov edi, GREP_BLOCK
+    call os_map
+    mov [rip + gblock_ptr], rax
+    lea rcx, [rax + GREP_BLOCK]
+    mov [rip + gblock_end], rcx
+    mov r13, rax
+    lea rdi, [rip + gblocks]
+    mov esi, 8
+    call vec_push
+    mov [rax], r13
+2:  mov r13, [rip + gblock_ptr]
+    xor r14d, r14d
+3:  cmp r14, r12
+    jae 4f
+    mov edi, ebx
+    lea rsi, [r13 + r14]
+    mov rdx, r12
+    sub rdx, r14
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 3b
+    test rax, rax
+    jle 4f
+    add r14, rax
+    jmp 3b
+4:  mov byte ptr [r13 + r14], 0
+    mov edi, ebx
+    SYS SYS_close
+    # binary: a NUL in the first 8 KiB
+    test r14, r14
+    jz 8f
+    mov rdi, r13
+    mov rcx, r14
+    cmp rcx, 8192
+    jbe 5f
+    mov ecx, 8192
+5:  xor eax, eax
+    repne scasb
+    je 8f
+    lea rax, [r13 + r14 + 1]
+    mov [rip + gblock_ptr], rax
+    mov rax, r13
+    mov rdx, r14
+    EPILOGUE
+7:  mov edi, ebx
+    SYS SYS_close
+8:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
 grep_release:
     push rbx
+    # the texts go back to the system with their mappings
     xor ebx, ebx
-1:  cmp rbx, [rip + gfiles + VEC_len]
+1:  cmp rbx, [rip + gblocks + VEC_len]
     jae 2f
-    imul rax, rbx, GF_SIZE
-    add rax, [rip + gfiles + VEC_ptr]
-    mov rdi, [rax + GF_text]
-    call mem_free
+    mov rax, [rip + gblocks + VEC_ptr]
+    mov rdi, [rax + rbx*8]
+    mov esi, GREP_BLOCK
+    SYS SYS_munmap
     inc rbx
     jmp 1b
-2:  mov qword ptr [rip + gfiles + VEC_len], 0
+2:  mov qword ptr [rip + gblocks + VEC_len], 0
+    mov qword ptr [rip + gblock_ptr], 0
+    mov qword ptr [rip + gblock_end], 0
+    mov qword ptr [rip + gfiles + VEC_len], 0
+    mov rdi, [rip + ghit]
+    call mem_free
+    mov qword ptr [rip + ghit], 0
+    mov dword ptr [rip + gprev_len], 0
     pop rbx
     ret
+
+# grep_narrow() -> 1 when the query extends the previous one, so files without a match for that
+# (ghit 0) can be skipped; otherwise every file is marked as a maybe. Remembers the query.
+grep_narrow:
+    PROLOGUE
+    cmp qword ptr [rip + ghit], 0
+    jne 1f
+    mov rdi, [rip + gfiles + VEC_len]
+    inc rdi
+    call mem_alloc
+    mov [rip + ghit], rax
+    mov dword ptr [rip + gprev_len], 0
+1:  lea rdi, [rip + pal_tf]
+    call tf_text
+    mov r12, rax
+    mov r13, rdx
+    xor ebx, ebx
+    mov ecx, [rip + gprev_len]
+    test ecx, ecx
+    jz 3f
+    cmp r13, rcx
+    jb 3f
+    xor edx, edx
+    lea r8, [rip + gprev]
+2:  cmp rdx, rcx
+    jae 21f
+    movzx eax, byte ptr [r12 + rdx]
+    cmp al, [r8 + rdx]
+    jne 3f
+    inc rdx
+    jmp 2b
+21: mov ebx, 1
+    jmp 4f
+3:  mov rdi, [rip + ghit]
+    mov esi, 1
+    mov rdx, [rip + gfiles + VEC_len]
+    call memset
+4:  xor eax, eax
+    cmp r13, 255
+    ja 5f
+    lea rdi, [rip + gprev]
+    mov rsi, r12
+    mov rcx, r13
+    rep movsb
+    mov eax, r13d
+5:  mov [rip + gprev_len], eax
+    mov eax, ebx
+    EPILOGUE
 
 # grep_run(): one result per line containing the query; an uppercase letter makes it case-sensitive
 # IT_data = file index << 44 | line << 20 | column
@@ -333,11 +451,19 @@ grep_run:
     mov dword ptr [rip + grep_case], 1
 11: inc rcx
     jmp 1b
-2:  xor ebx, ebx                # file index
+2:  call grep_narrow
+    mov [rsp + 60], eax
+    xor ebx, ebx                # file index
 .Lgr_file:
     cmp rbx, [rip + gfiles + VEC_len]
     jae .Lgr_fix
-    imul r12, rbx, GF_SIZE
+    mov dword ptr [rsp + 56], 0 # a match in this file
+    cmp dword ptr [rsp + 60], 0
+    je 21f
+    mov rax, [rip + ghit]
+    cmp byte ptr [rax + rbx], 0
+    je .Lgr_skip
+21: imul r12, rbx, GF_SIZE
     add r12, [rip + gfiles + VEC_ptr]
     xor r13d, r13d              # scan position (lines counted up to here)
     xor r14d, r14d              # line
@@ -462,8 +588,14 @@ grep_run:
     mov rsi, [rsp + 32]
     mov rdx, [rsp + 48]
     call item_add
+    mov dword ptr [rsp + 56], 1
     jmp .Lgr_match
 .Lgr_nextfile:
+    # searched to its end: whether it has the query
+    mov rax, [rip + ghit]
+    mov ecx, [rsp + 56]
+    mov [rax + rbx], cl
+.Lgr_skip:
     inc rbx
     jmp .Lgr_file
 .Lgr_fix:
@@ -902,7 +1034,7 @@ FN palette_filter
     mov r15, rdx
     xor ebx, ebx
 1:  cmp rbx, [rip + items + VEC_len]
-    jae 5f
+    jae 45f
     imul r12, rbx, IT_SIZE
     add r12, [rip + items + VEC_ptr]
     mov rdi, [r12 + IT_label]
@@ -918,25 +1050,20 @@ FN palette_filter
     call vec_push
     mov [rax + RS_item], ebx
     mov [rax + RS_score], r13d
-    # insertion sort by score (stable)
-    test r15, r15
-    jz 4f
-    mov rcx, [rip + results + VEC_len]
-    dec rcx
-    mov r8, [rip + results + VEC_ptr]
-2:  test rcx, rcx
-    jz 4f
-    mov eax, [r8 + rcx*8 - 8 + RS_score]
-    cmp eax, r13d
-    jge 4f
-    mov rax, [r8 + rcx*8 - 8]
-    mov rdx, [r8 + rcx*8]
-    mov [r8 + rcx*8 - 8], rdx
-    mov [r8 + rcx*8], rax
-    dec rcx
-    jmp 2b
 4:  inc rbx
     jmp 1b
+45: # best score first, ties in item order: sort (~score << 32 | item) ascending
+    test r15, r15
+    jz 5f
+    mov rdi, [rip + results + VEC_ptr]
+    mov rsi, [rip + results + VEC_len]
+    call rs_flip
+    mov rdi, [rip + results + VEC_ptr]
+    mov rsi, [rip + results + VEC_len]
+    call sort_u64
+    mov rdi, [rip + results + VEC_ptr]
+    mov rsi, [rip + results + VEC_len]
+    call rs_flip
 5:  # keep selection in range
     mov eax, [rip + pal_sel]
     mov rcx, [rip + results + VEC_len]
@@ -946,6 +1073,17 @@ FN palette_filter
     mov [rip + pal_sel], eax
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# rs_flip(ptr, n): complement the scores of RS records (their high halves)
+rs_flip:
+    mov rax, 0xffffffff00000000
+1:  test rsi, rsi
+    jz 2f
+    xor [rdi], rax
+    add rdi, 8
+    dec rsi
+    jmp 1b
+2:  ret
 
 FN palette_changed
     cmp dword ptr [rip + pal_mode], PM_THEMES
@@ -1315,6 +1453,8 @@ prompt_done:
     mov rdi, r13
     mov rsi, rbx
     call doc_set_path
+    mov rdi, rbx
+    call mkdir_parent
     mov rdi, r13
     call doc_save
     test rax, rax
@@ -1327,11 +1467,13 @@ prompt_done:
     jmp 9f
 1:  cmp r12d, PROMPT_NEW_FILE
     jne 2f
-    # create the file if missing, then open it
+    # create the file (and its folders) if missing, then open it
     mov rdi, rbx
     call file_mtime
     test rax, rax
     jnz 11f
+    mov rdi, rbx
+    call mkdir_parent
     mov rdi, rbx
     lea rsi, [rip + .Lempty]
     xor edx, edx

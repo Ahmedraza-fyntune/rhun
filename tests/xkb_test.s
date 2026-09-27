@@ -69,7 +69,7 @@ FN main
 .section .rodata
 arrow: .asciz " -> "
 .p2align 2
-# keycode, group, mods (1 shift, 2 caps, 0x80 level3)
+# keycode, group, mods (1 shift, 2 caps, 0x10 num lock, 0x80 level3)
 cases:
     .long 38, 0, 0
     .long 38, 0, 1
@@ -93,4 +93,9 @@ cases:
     .long 48, 1, 0
     .long 48, 1, 1
     .long 48, 0, 0x80
+    .long 87, 0, 0
+    .long 87, 0, 0x10
+    .long 87, 0, 0x11
+    .long 91, 0, 0x10
+    .long 38, 0, 0x10
     .long 0, 0, 0

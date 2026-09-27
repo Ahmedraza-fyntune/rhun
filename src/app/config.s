@@ -288,6 +288,20 @@ FN parse_decimal
 # config_load(): read the config file if present
 FN config_load
     PROLOGUE 16
+    # [keys] lines come from this read only
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_keylines + VEC_len]
+    jae 2f
+    mov r12, rbx
+    shl r12, 5
+    add r12, [rip + g_keylines + VEC_ptr]
+    mov rdi, [r12]
+    call mem_free
+    mov rdi, [r12 + 16]
+    call mem_free
+    inc rbx
+    jmp 1b
+2:  mov qword ptr [rip + g_keylines + VEC_len], 0
     call config_path
     mov rdi, rax
     call file_read_all

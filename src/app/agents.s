@@ -13,6 +13,7 @@ F AS_loaded, 4          # messages parsed (opened at least once)
 F AS_titled, 4          # has a custom title
 F AS_pad, 4
 F AS_changed, 8         # time_ms of the last growth
+F AS_stamp, 8           # file_stamp, to see every write
 ENDSTRUCT AS_SIZE
 
 STRUCT
@@ -216,6 +217,9 @@ add_session:
     mov rdi, rax
     call file_mtime
     mov [rbx + AS_mtime], rax
+    mov rdi, [rbx + AS_path]
+    call file_stamp
+    mov [rbx + AS_stamp], rax
     lea rdi, [rip + sessions]
     mov esi, 8
     call vec_push
@@ -1250,9 +1254,12 @@ FN agents_poll
     mov rax, [rip + sessions + VEC_ptr]
     mov r12, [rax + rbx*8]
     mov rdi, [r12 + AS_path]
-    call file_mtime
-    cmp rax, [r12 + AS_mtime]
+    call file_stamp
+    cmp rax, [r12 + AS_stamp]
     je 2f
+    mov [r12 + AS_stamp], rax
+    mov rdi, [r12 + AS_path]
+    call file_mtime
     mov [r12 + AS_mtime], rax
     mov r13d, 1
     call time_ms

@@ -8,6 +8,8 @@
 .p2align 3
 out: .zero SB_SIZE
 cbuf: .zero SB_SIZE
+oc_busy: .long 0                # running the client's lines
+oc_eof: .long 0                 # the client closed meanwhile
 addr: .zero 110
 .globl g_headless
 g_headless: .long 0
@@ -791,7 +793,13 @@ FN control_run_script
 FN control_listen
     PROLOGUE
     mov rbx, rdi
-    mov edi, AF_UNIX
+    # sun_path holds 104 bytes on macOS, 108 on Linux
+    call strlen
+    cmp rax, 103
+    jbe 1f
+    lea rdi, [rip + .Llong_path]
+    call die
+1:  mov edi, AF_UNIX
     mov esi, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK
     xor edx, edx
     SYS SYS_socket
@@ -810,8 +818,10 @@ FN control_listen
     mov edx, 110
     SYS SYS_bind
     test rax, rax
-    js 9f
-    mov edi, [rip + lsock]
+    jns 2f
+    lea rdi, [rip + .Lno_listen]
+    call die
+2:  mov edi, [rip + lsock]
     mov esi, 4
     SYS SYS_listen
     mov edi, [rip + lsock]
@@ -831,7 +841,24 @@ on_accept:
     test rax, rax
     js 9f
     mov ebx, eax
-    # one client at a time: drop the previous one
+    # while the client's command waits, the new one waits for it to finish
+    cmp dword ptr [rip + oc_busy], 0
+    je 2f
+    mov edi, [rip + oc_next]
+    mov [rip + oc_next], ebx
+    test edi, edi
+    js 9f
+    SYS SYS_close
+    jmp 9f
+2:  mov edi, ebx
+    call oc_install
+9:  pop rbx
+    ret
+
+# oc_install(fd): the client from now on; one at a time, the previous one is dropped
+oc_install:
+    push rbx
+    mov ebx, edi
     mov edi, [rip + csock]
     test edi, edi
     js 1f
@@ -860,14 +887,22 @@ on_client:
     mov edx, 4096
     SYS SYS_read
     test rax, rax
-    jle .Loc_close
+    jle 7f
     add [rip + cbuf + SB_len], rax
+    # a command that waits (wait-git) runs the loop, which comes back here: the lines after it
+    # are only read now and run when it is done
+    cmp dword ptr [rip + oc_busy], 0
+    jne 9f
+    mov dword ptr [rip + oc_busy], 1
 .Loc_lines:
+    mov edi, [rip + oc_next]
+    test edi, edi
+    jns .Loc_next
     mov r12, [rip + cbuf + SB_ptr]
     mov r13, [rip + cbuf + SB_len]
     xor ecx, ecx
 1:  cmp rcx, r13
-    jae 9f
+    jae 8f
     cmp byte ptr [r12 + rcx], 10
     je 2f
     inc rcx
@@ -904,6 +939,18 @@ on_client:
     mov [rip + cbuf + SB_len], rdx
     call memmove
     jmp .Loc_lines
+8:  mov dword ptr [rip + oc_busy], 0
+    cmp dword ptr [rip + oc_eof], 0
+    je 9f
+    mov dword ptr [rip + oc_eof], 0
+    jmp .Loc_close
+7:  cmp dword ptr [rip + oc_busy], 0
+    je .Loc_close
+    # the client left while a command waits: close when it is done
+    mov dword ptr [rip + oc_eof], 1
+    mov edi, ebx
+    call watch_remove
+    jmp 9f
 .Loc_close:
     mov edi, ebx
     call watch_remove
@@ -911,8 +958,17 @@ on_client:
     SYS SYS_close
     mov dword ptr [rip + csock], -1
 9:  EPILOGUE
+    # a client came while a command waited: it replaces this one
+.Loc_next:
+    mov dword ptr [rip + oc_next], -1
+    mov dword ptr [rip + oc_busy], 0
+    mov dword ptr [rip + oc_eof], 0
+    call oc_install
+    EPILOGUE
 
 .section .rodata
+.Llong_path: .asciz "rhun: the control socket path is too long (at most 103 bytes)"
+.Lno_listen: .asciz "rhun: cannot create the control socket"
 .Lunknown: .asciz "unknown command\n"
 .Leod: .asciz "\n<eod>\n"
 .Lok: .ascii "ok\n"
@@ -976,6 +1032,7 @@ ctl_table:
 .data
 lsock: .long -1
 csock: .long -1
+oc_next: .long -1               # a client that came while oc_busy
 .bss
 .p2align 3
 pc_xc: .zero XC_SIZE

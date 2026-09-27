@@ -10,6 +10,7 @@
 .equ MF_FAIL, 4                 # not a motion, or it cannot move
 .equ MF_KEEPX, 8                # keeps the preferred column
 .equ MF_EOL, 16                 # $: stays at line ends
+.equ MF_NOADJ, 32               # an operator's w that ends at a line end: no linewise adjustment
 .equ EOL_COL, 0x40000000        # preferred column after $
 .equ NMAX, 100000               # largest count
 .equ KR_SIZE, 12                # recorded key: keysym, cp, mods
@@ -57,6 +58,7 @@ v_visual: .long 0               # the change began in visual mode: "." does not 
 v_replay: .long 0               # typing the keys of "." again
 v_inscount: .long 0             # 3ihi<Esc> types "hi" three times
 v_inskey: .long 0               # the key that began insert mode
+v_autoind: .long 0              # insert mode began on a line with only the indent o O cc S gave it
 v_putkind: .long 0              # p or P waiting for the clipboard
 v_putcount: .long 0
 v_putmode: .long 0
@@ -66,6 +68,9 @@ v_chgdoc: .quad 0               # document of the change in progress
 v_chglen: .quad 0               # its undo length before the change
 v_putdoc: .quad 0               # document waiting for the clipboard
 v_sfrom: .quad 0                # / ?: where the search began
+v_sanchor: .quad 0              # and the visual selection's other end
+v_sop: .long 0                  # the operator the search is the motion of (d/foo)
+v_sopcount: .long 0
 v_exdoc: .quad 0                # vim_export: the document, its selection before and after
 v_excur: .quad 0
 v_exanchor: .quad 0
@@ -73,10 +78,14 @@ v_exout: .quad 0, 0
 v_exmode: .long 0
 v_rec: .zero SB_SIZE            # keys of the command in progress (KR_SIZE each)
 v_dot: .zero SB_SIZE            # keys of the last change
+v_vdot: .zero SB_SIZE           # a visual change as normal mode keys, for "." (empty: none)
+v_vdotcount: .long 0            # their count: lines, or characters of one line
+v_vdotop: .long 0
 v_buf: .zero SB_SIZE
 v_stat: .zero 64
 v_tf: .zero TF_SIZE             # the command line
 v_pat: .zero SB_SIZE            # / ?: the pattern before, back when the search is cancelled
+v_patword: .long 0              # and whether it was a whole word (* #)
 
 .text
 
@@ -109,11 +118,69 @@ vprev:
     mov rsi, rdi
     mov rdi, [rip + g_doc]
     jmp doc_prev_char
-# vlast() -> last line
+# vnl() -> lines as vim has them: the newline at the end of a file (DF_EOL) starts none (keeps all but rax)
+vnl:
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push r8
+    push r9
+    push r10
+    push r11
+    push rbx
+    mov rbx, [rip + g_doc]
+    mov rax, [rbx + DOC_nlines]
+    cmp rax, 1
+    jbe 9f
+    test dword ptr [rbx + DOC_flags], DF_EOL
+    jz 9f
+    mov rdi, rbx
+    call doc_len
+    lea rsi, [rax - 1]
+    mov rdi, rbx
+    call doc_byte
+    mov ecx, eax
+    mov rax, [rbx + DOC_nlines]
+    cmp ecx, 10
+    jne 9f
+    dec rax
+9:  pop rbx
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    ret
+
+# vlast() -> last line (keeps all but rax)
 vlast:
+    call vnl
+    dec rax
+    ret
+
+# vlast_text() -> last line of the text, the empty one after a final newline too
+vlast_text:
     mov rax, [rip + g_doc]
     mov rax, [rax + DOC_nlines]
     dec rax
+    ret
+
+# vlen_vim() -> end of the last line (before a final newline)
+vlen_vim:
+    push rbx
+    call vlen
+    mov rbx, rax
+    call vnl
+    mov rcx, [rip + g_doc]
+    cmp rax, [rcx + DOC_nlines]
+    mov rax, rbx
+    je 1f
+    dec rax
+1:  pop rbx
     ret
 
 # vfirst(line) -> first non-blank of the line (its end when blank)
@@ -158,7 +225,11 @@ vclamp:
     push r12
     push r13
     mov rbx, rdi
-    call vlen
+    call vlen_vim
+    cmp rbx, rax
+    jbe 0f
+    mov rbx, rax
+0:  call vlen
     cmp rbx, rax
     jae 1f
     mov rdi, rbx
@@ -197,10 +268,14 @@ vsnap:
     pop rbx
     ret
 
-# vclass(pos, big) -> 0 blank, 1 line end, 2 word, 3 punctuation (big: any non-blank is 2)
+# vclass(pos, big) -> 0 blank, 1 line end, 2 word, 3 punctuation, 5 hiragana, 6 katakana,
+# 7 CJK ideographs, 8 hangul (big: any non-blank is 2)
 vclass:
     push rbx
+    push r12
+    push r13
     mov ebx, esi
+    mov r12, rdi
     call vbyte
     cmp eax, 10
     je 1f
@@ -212,20 +287,77 @@ vclass:
     je 2f
     test ebx, ebx
     jnz 3f
-    mov edi, eax
+    # inside a character: the class of the character
+    lea ecx, [rax - 0x80]
+    cmp ecx, 0x3f
+    ja 4f
+    mov rdi, r12
+    call vsnap
+    mov r12, rax
+    mov rdi, rax
+    call vbyte
+    # characters of three bytes from U+3000: scripts of their own, as in Vim
+4:  lea ecx, [rax - 0xe3]
+    cmp ecx, 0xef - 0xe3
+    ja 5f
+    mov r13d, eax
+    and r13d, 0x0f
+    shl r13d, 12
+    lea rdi, [r12 + 1]
+    call vbyte
+    and eax, 0x3f
+    shl eax, 6
+    or r13d, eax
+    lea rdi, [r12 + 2]
+    call vbyte
+    and eax, 0x3f
+    or eax, r13d
+    cmp eax, 0x3040
+    jb 41f
+    mov ecx, 5
+    cmp eax, 0x30a0
+    jb 49f
+    mov ecx, 6
+    cmp eax, 0x3100
+    jb 49f
+    mov ecx, 7
+    cmp eax, 0x3400
+    jb 3f
+    cmp eax, 0x4dc0
+    jb 49f
+    cmp eax, 0x4e00
+    jb 3f
+    cmp eax, 0xa000
+    jb 49f
+    mov ecx, 8
+    cmp eax, 0xac00
+    jb 3f
+    cmp eax, 0xd7a4
+    jb 49f
+    mov ecx, 7
+    cmp eax, 0xf900
+    jb 3f
+    cmp eax, 0xfb00
+    jb 49f
+    jmp 3f
+41: cmp eax, 0x3000             # CJK punctuation
+    jb 3f
+    mov ecx, 3
+49: mov eax, ecx
+    jmp 9f
+5:  mov edi, eax
     call is_ident
     test eax, eax
     jnz 3f
     mov eax, 3
-    pop rbx
-    ret
+    jmp 9f
 1:  mov eax, 1
-    pop rbx
-    ret
+    jmp 9f
 2:  xor eax, eax
-    pop rbx
-    ret
+    jmp 9f
 3:  mov eax, 2
+9:  pop r13
+    pop r12
     pop rbx
     ret
 
@@ -360,7 +492,7 @@ vsavedot:
     cmp dword ptr [rip + v_replay], 0
     jne 1f
     cmp dword ptr [rip + v_visual], 0
-    jne 1f
+    jne 2f
     push rbx
     lea rdi, [rip + v_dot]
     call sb_clear
@@ -372,6 +504,131 @@ vsavedot:
     mov [rip + v_dotcount], eax
     pop rbx
 1:  ret
+2:  # a visual change: the same operator from the cursor on as many lines or characters
+    push rbx
+    lea rdi, [rip + v_dot]
+    call sb_clear
+    lea rdi, [rip + v_dot]
+    mov rsi, [rip + v_vdot + SB_ptr]
+    mov rdx, [rip + v_vdot + SB_len]
+    call sb_push
+    mov eax, [rip + v_vdotcount]
+    mov [rip + v_dotcount], eax
+    # c: and what was typed
+    cmp qword ptr [rip + v_vdot + SB_len], 0
+    je 3f
+    cmp dword ptr [rip + v_vdotop], 'c'
+    jne 3f
+    mov rsi, [rip + v_insstart]
+    mov rdx, [rip + v_rec + SB_len]
+    sub rdx, rsi
+    jbe 3f
+    add rsi, [rip + v_rec + SB_ptr]
+    lea rdi, [rip + v_dot]
+    call sb_push
+3:  lea rdi, [rip + v_vdot]
+    call sb_clear
+    pop rbx
+    ret
+
+# vdot_visual(op, s, e, lines): v_vdot for a visual change about to be made; s, e are lines when
+# lines is set (the operator doubled with their count: dd >> gUU; J once), else positions of
+# characters on one line (the operator and l, with their count). Characters over more lines,
+# or up to the line end, have no such keys: "." then does nothing.
+vdot_visual:
+    PROLOGUE
+    mov r15d, edi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14d, ecx
+    mov [rip + v_vdotop], edi
+    mov dword ptr [rip + v_vdotcount], 0
+    lea rdi, [rip + v_vdot]
+    call sb_clear
+    cmp r15d, 'y'
+    je 9f
+    test r14d, r14d
+    jz 5f
+    mov rax, r13
+    sub rax, r12
+    inc eax
+    cmp r15d, 'J'
+    jne 1f
+    cmp eax, 2
+    jge 2f
+    mov eax, 2
+    jmp 2f
+1:  mov [rip + v_vdotcount], eax
+    mov edi, r15d
+    call vdot_op
+    mov edi, r15d
+    call vdot_key
+    jmp 9f
+2:  mov [rip + v_vdotcount], eax
+    mov edi, 'J'
+    call vdot_key
+    jmp 9f
+5:  mov rdi, r12
+    call vline
+    mov rbx, rax
+    mov rdi, r13
+    call vline
+    cmp rax, rbx
+    jne 8f
+    mov rdi, rbx
+    call vend
+    cmp r13, rax
+    ja 8f
+    xor ebx, ebx
+    mov r14, r12
+6:  cmp r14, r13
+    jae 7f
+    mov rdi, r14
+    call vnext
+    mov r14, rax
+    inc ebx
+    jmp 6b
+7:  test ebx, ebx
+    jz 8f
+    mov [rip + v_vdotcount], ebx
+    mov edi, r15d
+    call vdot_op
+    mov edi, 'l'
+    call vdot_key
+    jmp 9f
+8:  lea rdi, [rip + v_vdot]
+    call sb_clear
+9:  EPILOGUE
+
+# vdot_op(op): the keys of an operator into v_vdot (gu gU g~ for u U ~)
+vdot_op:
+    push rbx
+    mov ebx, edi
+    cmp ebx, 'u'
+    je 1f
+    cmp ebx, 'U'
+    je 1f
+    cmp ebx, '~'
+    jne 2f
+1:  mov edi, 'g'
+    call vdot_key
+2:  mov edi, ebx
+    call vdot_key
+    pop rbx
+    ret
+
+# vdot_key(cp): a typed key into v_vdot
+vdot_key:
+    sub rsp, 24
+    mov [rsp], edi
+    mov [rsp + 4], edi
+    mov dword ptr [rsp + 8], 0
+    lea rdi, [rip + v_vdot]
+    mov rsi, rsp
+    mov edx, KR_SIZE
+    call sb_push
+    add rsp, 24
+    ret
 
 # vundo_pos(records, redo) -> where the change on top of an undo (redo) list begins, -1 if none
 vundo_pos:
@@ -415,6 +672,7 @@ vcommit:
 
 # vinsert(pos, key, count): insert mode at pos (vbegin was called)
 vinsert:
+    mov dword ptr [rip + v_autoind], 0
     mov [rip + v_inskey], esi
     mov [rip + v_inscount], edx
     mov rax, [rip + v_rec + SB_len]
@@ -454,7 +712,34 @@ vesc_insert:
     call vfeed_edit
     jmp 2b
 3:  mov dword ptr [rip + g_vim_mode], VM_NORMAL
-    mov r12, [rbx + DOC_cur]
+    cmp dword ptr [rip + v_autoind], 0
+    je 31f
+    mov dword ptr [rip + v_autoind], 0
+    mov rdi, [rbx + DOC_cur]
+    call vline
+    mov r13, rax
+    mov rdi, rax
+    call vstart
+    mov r12, rax
+    mov rdi, r13
+    call vend
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    mov rsi, rax
+    mov rdi, rbx
+    call line_indent
+    add rax, r12
+    cmp rax, r13
+    jne 31f
+    cmp r13, r12
+    je 31f
+    mov rdi, r12
+    mov rsi, r13
+    sub rsi, r12
+    call vdelete
+31: mov r12, [rbx + DOC_cur]
     mov rdi, r12
     call vline
     mov rdi, rax
@@ -526,13 +811,26 @@ FN vim_key
     jbe .Lvk_no
     cmp dword ptr [rip + g_vim_cmdline], 0
     je 0f
-    call vcmdline_key
+    cmp dword ptr [rip + v_sop], 0
+    je 71f
+    call vrec
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+71: call vcmdline_key
     jmp .Lvk_yes
 0:  cmp dword ptr [rip + g_vim_mode], VM_INSERT
     jne .Lvk_cmd
     # insert mode: all but Esc goes on to the editor, recorded for "."
     call vrec
     cmp r12d, KEY_ESCAPE
+    je 72f
+    cmp r12d, '['
+    jne 71f
+    test r14d, MOD_CTRL
+    jnz 72f
+71: mov dword ptr [rip + v_autoind], 0
+72: cmp r12d, KEY_ESCAPE
     je 1f
     cmp r12d, '['
     jne .Lvk_no
@@ -582,6 +880,13 @@ FN vim_key
     jbe 31f
     mov ecx, NMAX
 31: mov [rip + v_count], ecx
+    # a count inside the command (d3w) is part of it for "."; one before it is v_cmdcount
+    cmp qword ptr [rip + v_rec + SB_len], 0
+    je .Lvk_yes
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call vrec
     jmp .Lvk_yes
 4:  cmp qword ptr [rip + v_rec + SB_len], 0
     jne 5f
@@ -607,7 +912,9 @@ vcode:
     jnz 8f
     test edx, MOD_CTRL
     jz 2f
-    # ctrl keys of vim; the others keep their bindings
+    # ctrl keys of vim; the others, and all with shift (ctrl+shift+d), keep their bindings
+    test edx, MOD_SHIFT
+    jnz 8f
     mov eax, edi
     lea ecx, [rax - 'A']
     cmp ecx, 25
@@ -767,6 +1074,10 @@ vcmd:
     je .Lc_setprefix
     cmp eax, 'g'
     je .Lc_setprefix
+    cmp eax, '/'
+    je .Lc_search
+    cmp eax, '?'
+    je .Lc_search
     jmp .Lc_motion_key
 
 # dd cc yy >> << guu gUU g~~: count lines
@@ -844,7 +1155,7 @@ vcmd:
     movzx ecx, cl
     mov edi, [rip + v_op]
     mov rsi, rax
-    call vop_chars
+    call vop_range
     jmp .Lc_done
 1:  # visual mode: select it
     cmp dword ptr [rip + g_vim_mode], VM_VISUAL
@@ -978,6 +1289,7 @@ vcmd:
 1:  mov rdi, [rbx + DOC_cur]
     mov edx, [rip + v_n]
     call vinsert
+    mov dword ptr [rip + v_autoind], 1
     jmp .Lc_done
 
 .Lc_x:
@@ -993,7 +1305,7 @@ vcmd:
     mov rsi, [rbx + DOC_cur]
     mov rdx, rax
     xor ecx, ecx
-    call vop_chars
+    call vop_range
     jmp .Lc_done
 .Lc_X:
     mov r12, [rbx + DOC_cur]
@@ -1150,6 +1462,14 @@ vcmd:
 .Lc_search:
     mov rax, [rbx + DOC_cur]
     mov [rip + v_sfrom], rax
+    mov rax, [rbx + DOC_anchor]
+    mov [rip + v_sanchor], rax
+    mov eax, [rip + v_op]
+    mov [rip + v_sop], eax
+    mov eax, [rip + v_opcount]
+    mov [rip + v_sopcount], eax
+    mov eax, [rip + g_find_word]
+    mov [rip + v_patword], eax
     lea rdi, [rip + v_pat]
     call sb_clear
     call find_vim_query
@@ -1195,8 +1515,10 @@ vcmd:
     test rax, rax
     jns 5f
     xor eax, eax
-5:  mov rcx, [rbx + DOC_nlines]
-    dec rcx
+5:  push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rax, rcx
     cmova rax, rcx
     mov rdi, rbx
@@ -1270,6 +1592,11 @@ vcmd:
     call vsel_lines
     mov r12, rax
     mov r13, rdx
+    mov edi, 'J'
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, 1
+    call vdot_visual
     call vexit_visual
     mov dword ptr [rip + v_visual], 1
     mov rsi, r13
@@ -1406,6 +1733,11 @@ vvisual_op:
     call vim_sel
     mov r12, rax
     mov r13, rdx
+    mov edi, r15d
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    call vdot_visual
     call vexit_visual
     mov edi, r15d
     mov rsi, r12
@@ -1416,6 +1748,11 @@ vvisual_op:
 1:  call vsel_lines
     mov r12, rax
     mov r13, rdx
+    mov edi, r15d
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, 1
+    call vdot_visual
     call vexit_visual
     mov edi, r15d
     mov rsi, r12
@@ -1446,6 +1783,8 @@ vop_motion:
     jmp .Lom_chars
 2:  # exclusive, ending at the start of a later line: stop at the end of the line before,
     # or take whole lines when it began at or before the first non-blank
+    test r14d, MF_NOADJ
+    jnz .Lom_chars
     mov rdi, r13
     call vline
     mov r15, rax
@@ -1478,8 +1817,76 @@ vop_motion:
     mov rsi, r12
     mov rdx, r13
     xor ecx, ecx
+    call vop_range
+    EPILOGUE
+
+# vop_range(op, s, e, inner): vop_chars, but d over more lines with only blanks before s and after
+# e takes the whole lines, as in Vim
+vop_range:
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rsi
+    mov r13, rdx
+    mov r15d, ecx
+    cmp ebx, 'd'
+    jne 6f
+    test r15d, r15d
+    jnz 6f
+    mov rdi, r12
+    call vline
+    mov r14, rax
+    mov rdi, r13
+    call vline
+    cmp rax, r14
+    je 6f
+    mov [rsp], rax
+    mov rdi, r14
+    call vfirst
+    cmp rax, r12
+    jb 6f
+    mov rdi, r13
+    call vblank_to_end
+    test eax, eax
+    jz 6f
+    mov edi, ebx
+    mov rsi, r14
+    mov rdx, [rsp]
+    call vop_lines
+    EPILOGUE
+6:  mov edi, ebx
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, r15d
     call vop_chars
     EPILOGUE
+
+# vblank_to_end(pos) -> 1 when there are only blanks from pos to its line end
+vblank_to_end:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    call vline
+    mov rdi, rax
+    call vend
+    mov r12, rax
+1:  cmp rbx, r12
+    jae 2f
+    mov rdi, rbx
+    call vbyte
+    cmp eax, ' '
+    je 11f
+    cmp eax, 9
+    jne 3f
+11: inc rbx
+    jmp 1b
+2:  mov eax, 1
+    jmp 4f
+3:  xor eax, eax
+4:  pop r13
+    pop r12
+    pop rbx
+    ret
 .Lom_lines:
     mov rdi, r12
     call vline
@@ -1551,6 +1958,13 @@ vop_chars:
     cmp r13, r12
     jbe 41f
     dec r13
+    # the line to type on keeps the indentation of the first line
+    mov rdi, r12
+    call vline
+    mov rdi, rax
+    call vfirst
+    cmp rax, r13
+    cmovb r12, rax
 41: mov rdi, r12
     mov rsi, r13
     sub rsi, r12
@@ -1559,7 +1973,10 @@ vop_chars:
     mov esi, 'c'
     mov edx, 1
     call vinsert
-    EPILOGUE
+    test r14d, r14d
+    jz 42f
+    mov dword ptr [rip + v_autoind], 1
+42: EPILOGUE
 .Loc_lines:
     mov rdi, r12
     call vline
@@ -1661,6 +2078,7 @@ vop_lines:
     mov esi, 'c'
     mov edx, 1
     call vinsert
+    mov dword ptr [rip + v_autoind], 1
     jmp 9f
 5:  # indent: count times in visual mode
     mov r14d, 1
@@ -1696,8 +2114,14 @@ vyank:
     mov r13, rsi
     mov ebx, edx
     cmp r12, r13
-    jae 9f
-    mov rdi, r12
+    jb 0f
+    # nothing: an empty line when lines were yanked (yy in an empty file)
+    test ebx, ebx
+    jz 9f
+    lea rdi, [rip + v_buf]
+    call sb_clear
+    jmp 73f
+0:  mov rdi, r12
     mov rsi, r13
     call vcopy
     test ebx, ebx
@@ -1706,7 +2130,7 @@ vyank:
     mov rcx, [rip + v_buf + SB_ptr]
     cmp byte ptr [rcx + rax - 1], 10
     je 1f
-    lea rdi, [rip + v_buf]
+73: lea rdi, [rip + v_buf]
     mov esi, 10
     call sb_push_byte
 1:  mov rdi, [rip + v_buf + SB_ptr]
@@ -1722,7 +2146,7 @@ vyank:
 vlines_end:
     push rbx
     mov rbx, rdi
-    call vlast
+    call vlast_text
     cmp rbx, rax
     jae 1f
     lea rdi, [rbx + 1]
@@ -1761,7 +2185,7 @@ vdel_lines:
     mov rdi, r13
     call vlines_end
     mov r15, rax
-    call vlast
+    call vlast_text
     cmp r13, rax
     jb 1f
     test r12, r12
@@ -1775,7 +2199,8 @@ vdel_lines:
     call vdelete
     EPILOGUE
 
-# vcase(op, s, e): u lower, U upper, ~ swapped case (ASCII letters); the cursor stays
+# vcase(op, s, e): u lower, U upper, ~ swapped case (ASCII, and the letters of two bytes in UTF-8:
+# Latin-1, Latin Extended-A, Greek, Cyrillic); the cursor stays
 vcase:
     PROLOGUE 16
     mov rax, [rip + g_doc]
@@ -1798,7 +2223,40 @@ vcase:
 1:  cmp rcx, r14
     jae 5f
     movzx eax, byte ptr [rbx + rcx]
-    lea esi, [rax - 'A']
+    # a character of two bytes
+    lea esi, [rax - 0xc0]
+    cmp esi, 0x1f
+    ja 11f
+    lea rsi, [rcx + 1]
+    cmp rsi, r14
+    jae 4f
+    movzx esi, byte ptr [rbx + rcx + 1]
+    and eax, 0x1f
+    shl eax, 6
+    and esi, 0x3f
+    or eax, esi
+    push rcx
+    push rdx
+    mov edi, eax
+    mov esi, r15d
+    call ucase
+    pop rdx
+    pop rcx
+    mov esi, eax
+    shr esi, 6
+    or esi, 0xc0
+    and eax, 0x3f
+    or eax, 0x80
+    cmp sil, [rbx + rcx]
+    jne 12f
+    cmp al, [rbx + rcx + 1]
+    je 13f
+12: mov [rbx + rcx], sil
+    mov [rbx + rcx + 1], al
+    mov edx, 1
+13: add rcx, 2
+    jmp 1b
+11: lea esi, [rax - 'A']
     cmp esi, 25
     jbe 2f
     lea esi, [rax - 'a']
@@ -1829,6 +2287,121 @@ vcase:
     mov rcx, [rsp + 8]
     mov [rax + DOC_anchor], rcx
 9:  EPILOGUE
+
+# ucase(cp, op) -> cp lower (op u), upper (U) or swapped (~), for letters of U+00C0..U+045F;
+# cp itself otherwise
+ucase:
+    mov eax, edi
+    xor ecx, ecx                # partner
+    xor edx, edx                # 1 upper, 2 lower
+    cmp edi, 0xc0
+    jb 9f
+    cmp edi, 0xde               # Latin-1
+    ja 1f
+    cmp edi, 0xd7
+    je 9f
+    lea ecx, [rdi + 0x20]
+    mov edx, 1
+    jmp 8f
+1:  cmp edi, 0xe0
+    jb 9f
+    cmp edi, 0xfe
+    ja 2f
+    cmp edi, 0xf7
+    je 9f
+    lea ecx, [rdi - 0x20]
+    mov edx, 2
+    jmp 8f
+2:  cmp edi, 0xff
+    jne 21f
+    mov ecx, 0x178
+    mov edx, 2
+    jmp 8f
+21: cmp edi, 0x178
+    jne 22f
+    mov ecx, 0xff
+    mov edx, 1
+    jmp 8f
+22: cmp edi, 0x17e              # Latin Extended-A: pairs
+    ja 3f
+    cmp edi, 0x130
+    je 9f
+    cmp edi, 0x131
+    je 9f
+    cmp edi, 0x138
+    je 9f
+    cmp edi, 0x149
+    je 9f
+    # odd upper case from 0x139 to 0x148 and from 0x179, even elsewhere
+    mov r8d, 0                  # parity of the upper case letter
+    cmp edi, 0x139
+    jb 23f
+    cmp edi, 0x148
+    jbe 24f
+    cmp edi, 0x179
+    jb 23f
+24: mov r8d, 1
+23: mov ecx, edi
+    and ecx, 1
+    cmp ecx, r8d
+    jne 25f
+    mov edx, 1                  # upper: the next one is its lower case
+    lea ecx, [rdi + 1]
+    jmp 8f
+25: mov edx, 2
+    lea ecx, [rdi - 1]
+    jmp 8f
+3:  cmp edi, 0x391              # Greek
+    jb 9f
+    cmp edi, 0x3a9
+    ja 31f
+    cmp edi, 0x3a2
+    je 9f
+    lea ecx, [rdi + 0x20]
+    mov edx, 1
+    jmp 8f
+31: cmp edi, 0x3b1
+    jb 9f
+    cmp edi, 0x3c9
+    ja 4f
+    lea ecx, [rdi - 0x20]
+    cmp edi, 0x3c2              # final sigma
+    jne 32f
+    mov ecx, 0x3a3
+32: mov edx, 2
+    jmp 8f
+4:  cmp edi, 0x400              # Cyrillic
+    jb 9f
+    cmp edi, 0x40f
+    ja 41f
+    lea ecx, [rdi + 0x50]
+    mov edx, 1
+    jmp 8f
+41: cmp edi, 0x42f
+    ja 42f
+    lea ecx, [rdi + 0x20]
+    mov edx, 1
+    jmp 8f
+42: cmp edi, 0x44f
+    ja 43f
+    lea ecx, [rdi - 0x20]
+    mov edx, 2
+    jmp 8f
+43: cmp edi, 0x45f
+    ja 9f
+    lea ecx, [rdi - 0x50]
+    mov edx, 2
+8:  cmp esi, '~'
+    je 81f
+    cmp esi, 'U'
+    jne 82f
+    cmp edx, 2
+    jne 9f
+81: mov eax, ecx
+    ret
+82: cmp edx, 1
+    je 81b
+9:  ret
 
 # vjoin(line, joins): join the next lines to this one
 vjoin:
@@ -1943,6 +2516,8 @@ vreplace:
 vvisual_replace:
     PROLOGUE 16
     mov [rsp], edi
+    lea rdi, [rip + v_vdot]
+    call sb_clear
     mov rbx, [rip + g_doc]
     mov rdi, rbx
     call vim_sel
@@ -2077,7 +2652,7 @@ vput:
     je 4f
     inc r12
 .Lpt_above:                     # the lines go above line r12 (below the last line when r12 is past it)
-    call vlast
+    call vlast_text
     cmp r12, rax
     ja 5f
 4:  mov rdi, r12
@@ -2103,6 +2678,8 @@ vput:
     call vsetc
     jmp .Lpt_end
 .Lpt_visual:
+    lea rdi, [rip + v_vdot]
+    call sb_clear
     # replace the selection
     mov eax, [rip + v_putmode]
     mov [rip + g_vim_mode], eax
@@ -2180,8 +2757,10 @@ vmotion:
 
 # rax = min(rax, last line)
 .Lm_clampline:
-    mov rcx, [rbx + DOC_nlines]
-    dec rcx
+    push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rax, rcx
     cmova rax, rcx
     ret
@@ -2245,7 +2824,7 @@ vmotion:
     jmp .Lm_ret
 
 .Lm_space:
-    call vlen
+    call vlen_vim
     mov [rsp], rax
 1:  cmp r12, [rsp]
     jae .Lm_ret
@@ -2335,7 +2914,10 @@ vmotion:
     mov rdi, r12
     call vline
     add rax, r14
-    cmp rax, [rbx + DOC_nlines]
+    mov rcx, rax
+    call vnl
+    xchg rax, rcx
+    cmp rax, rcx
     jae .Lm_fail
     jmp .Lm_linefirst
 .Lm_minus:
@@ -2345,8 +2927,7 @@ vmotion:
     js .Lm_fail
     jmp .Lm_linefirst
 .Lm_G:
-    mov rax, [rbx + DOC_nlines]
-    dec rax
+    call vlast
     cmp dword ptr [rip + v_has], 0
     je .Lm_linefirst
     lea rax, [r14 - 1]
@@ -2400,29 +2981,33 @@ vmotion:
     call vword_end
     mov r12, rax
     jmp 3b
-5:  mov rdi, r12
+5:  mov [rsp + 8], r12         # the start of the last word moved over
+    mov rdi, r12
     mov esi, [rsp + 16]
     call vword_fwd
     mov r12, rax
     dec r14d
     jnz 5b
-    # an operator stops at the end of the line where the last word ends
+    # an operator stops at the end of the line of the last word moved over
     cmp dword ptr [rip + v_op], 0
     je .Lm_ret
     mov rdi, r12
     call vline
     mov r13, rax
-    mov rdi, [rsp]
+    mov rdi, [rsp + 8]
     call vline
     cmp r13, rax
     jbe .Lm_ret
-    mov rdi, r13
-    call vfirst
-    cmp r12, rax
-    ja .Lm_ret
-    lea rdi, [r13 - 1]
+    mov rdi, rax
     call vend
     mov r12, rax
+    mov r15d, MF_NOADJ
+    # dw on an empty line: the line goes
+    cmp rax, [rsp]
+    jne .Lm_ret
+    cmp dword ptr [rip + v_op], 'd'
+    jne .Lm_ret
+    mov r15d, MF_LINE
     jmp .Lm_ret
 
 .Lm_e:
@@ -2515,7 +3100,8 @@ vmotion:
     mov rdi, r12
     call vline
     mov r13, rax
-1:  cmp r13, [rbx + DOC_nlines]     # past empty lines, then the paragraph
+1:  call vnl                       # past empty lines, then the paragraph
+    cmp r13, rax
     jae 2f
     mov rdi, r13
     call vempty
@@ -2523,7 +3109,8 @@ vmotion:
     jz 2f
     inc r13
     jmp 1b
-2:  cmp r13, [rbx + DOC_nlines]
+2:  call vnl
+    cmp r13, rax
     jae 3f
     mov rdi, r13
     call vempty
@@ -2533,9 +3120,10 @@ vmotion:
     jmp 2b
 3:  dec r14d
     jnz 1b
-    cmp r13, [rbx + DOC_nlines]
+    call vnl
+    cmp r13, rax
     jb 4f
-    call vlen
+    call vlen_vim
     mov r12, rax
     jmp .Lm_ret
 4:  mov rdi, r13
@@ -2584,8 +3172,10 @@ vmotion:
     sar rax, 8
     mov ecx, [rip + g_ed_h_lines]
     lea rax, [rax + rcx - 1]
-    mov rcx, [rbx + DOC_nlines]
-    dec rcx
+    push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rax, rcx
     jl 1f
     mov rax, rcx
@@ -2601,8 +3191,10 @@ vmotion:
     sar rax, 8
     mov ecx, [rip + g_ed_h_lines]
     lea rdx, [rax + rcx - 1]
-    mov rcx, [rbx + DOC_nlines]
-    dec rcx
+    push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rdx, rcx
     cmovg rdx, rcx
     add rax, rdx
@@ -2648,6 +3240,7 @@ vmotion:
     call doc_range
     mov rdi, rax
     mov rsi, [rsp + 8]
+    mov edx, 1
     call find_vim_word
     jmp .Lm_search
 
@@ -2678,7 +3271,7 @@ vword_fwd:
     PROLOGUE
     mov r12, rdi
     mov r13d, esi
-    call vlen
+    call vlen_vim
     mov r14, rax
     cmp r12, r14
     jae 9f
@@ -2722,7 +3315,7 @@ vword_end:
     PROLOGUE
     mov rbx, rdi
     mov r13d, esi
-    call vlen
+    call vlen_vim
     mov r14, rax
     mov rdi, rbx
     call vnext
@@ -2975,7 +3568,7 @@ vtextobj:
     mov esi, [rsp]
     call vclass
     test eax, eax
-    jnz 6f
+    jnz 60f
 5:  mov rdi, [rsp + 16]
     mov esi, [rsp]
     call vclass
@@ -2983,16 +3576,30 @@ vtextobj:
     jnz .Lto_se
     inc qword ptr [rsp + 16]
     jmp 5b
+60: # (not the indentation of a line's first word)
+    mov rax, [rsp + 8]
+    mov [rsp + 24], rax
+    mov rdi, rax
+    call vline
+    mov rdi, rax
+    call vstart
+    mov [rsp + 32], rax
 6:  mov rax, [rsp + 8]
     test rax, rax
-    jz .Lto_se
+    jz 61f
     lea rdi, [rax - 1]
     mov esi, [rsp]
     call vclass
     test eax, eax
-    jnz .Lto_se
+    jnz 61f
     dec qword ptr [rsp + 8]
     jmp 6b
+61: mov rax, [rsp + 8]
+    cmp rax, [rsp + 32]
+    jne .Lto_se
+    mov rax, [rsp + 24]
+    mov [rsp + 8], rax
+    jmp .Lto_se
 7:  # blanks: and the word after them
     mov rdi, [rsp + 16]
     mov esi, [rsp]
@@ -3525,12 +4132,11 @@ FN vim_field_changed
     call tf_text
     mov rdi, rax
     mov rsi, rdx
+    xor edx, edx
     call find_vim_word
     mov r12, [rip + v_sfrom]
     mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
-    cmp qword ptr [rip + v_tf + TF_sb + SB_len], 0
-    je 8f
     mov rdi, r12
     mov esi, 1
     cmp dword ptr [rip + g_vim_cmdline], '?'
@@ -3560,6 +4166,7 @@ vsearch_accept:
     jne 2f
     mov rdi, [rip + v_pat + SB_ptr]
     mov rsi, [rip + v_pat + SB_len]
+    mov edx, [rip + v_patword]
     call find_vim_word
 2:  mov rdi, [rip + v_sfrom]
     mov esi, r13d
@@ -3587,22 +4194,56 @@ vsearch_accept:
     mov rdi, [rip + v_buf + SB_ptr]
     call app_toast
 3:  mov rax, [rip + v_sfrom]
-4:  mov rdi, rax
+    # an operator does nothing without a match
+    mov dword ptr [rip + v_sop], 0
+4:  mov r12, rax
+    mov rax, [rip + v_sfrom]
+    mov [rbx + DOC_cur], rax
+    mov rax, [rip + v_sanchor]
+    mov [rbx + DOC_anchor], rax
+    mov eax, [rip + v_sop]
+    test eax, eax
+    jnz 5f
+    mov rdi, r12
+    cmp dword ptr [rip + g_vim_mode], VM_VISUAL
+    jae 41f
     call vset
+    jmp 9f
+41: xor esi, esi
+    call vmove
+    jmp 9f
+5:  mov dword ptr [rip + v_sop], 0
+    mov [rip + v_op], eax
+    mov eax, [rip + v_sopcount]
+    mov [rip + v_opcount], eax
+    mov rdi, r12
+    xor esi, esi
+    call vop_motion
+    call vcancel
 9:  EPILOGUE
 
 # vsearch_cancel(): back to where the search began; n and N keep the pattern from before
 vsearch_cancel:
+    mov dword ptr [rip + v_sop], 0
     PROLOGUE
     mov rdi, [rip + v_pat + SB_ptr]
     mov rsi, [rip + v_pat + SB_len]
+    mov edx, [rip + v_patword]
     call find_vim_word
     lea rdi, [rip + g_ed_find]
     call sb_clear
-    cmp qword ptr [rip + g_doc], 0
-    je 9f
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
     mov rdi, [rip + v_sfrom]
+    cmp dword ptr [rip + g_vim_mode], VM_VISUAL
+    jae 1f
     call vset
+    jmp 9f
+1:  mov [rbx + DOC_cur], rdi
+    mov rax, [rip + v_sanchor]
+    mov [rbx + DOC_anchor], rax
+    call ed_touch
 9:  EPILOGUE
 
 # vim_field() -> the command line's text field while it is open (pastes go there), else 0
@@ -3739,9 +4380,10 @@ FN vim_ex
 9:  EPILOGUE
 
 .Lm_clampline_g:
-    mov rcx, [rip + g_doc]
-    mov rcx, [rcx + DOC_nlines]
-    dec rcx
+    push rax
+    call vlast
+    mov rcx, rax
+    pop rax
     cmp rax, rcx
     cmova rax, rcx
     ret
@@ -3987,6 +4629,10 @@ vk_normal:
     .quad .Lc_ex
     .long 0, 0
 vk_visual:
+    .long '/', 0
+    .quad .Lc_search
+    .long '?', 0
+    .quad .Lc_search
     .long 'v', 0
     .quad .Lv_v
     .long 'V', 0

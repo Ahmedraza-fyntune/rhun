@@ -146,99 +146,149 @@ FN str_ends
 2:  mov eax, 1
     ret
 
-# str_find(hay, hlen, needle, nlen) -> index or -1
+# str_find(hay, hlen, needle, nlen) -> index or -1 (0 for an empty needle)
+# str_ifind: the same, ascii case-insensitive
+# Both keep every register but rax and r8-r11. Candidates for the first needle byte are found
+# 16 bytes at a time.
 FN str_find
     push rbx
+    xor ebx, ebx
+    jmp str_find_any
+FN str_ifind
+    push rbx
+    mov ebx, 1
+str_find_any:
     push r12
-    test rcx, rcx
-    jz .Lsf_zero
-    mov r8, rsi
-    sub r8, rcx                 # last start
-    jb .Lsf_none
-    xor r9d, r9d
-    movzx r10d, byte ptr [rdx]
-.Lsf_loop:
-    cmp r9, r8
-    ja .Lsf_none
-    cmp r10b, [rdi + r9]
-    jne .Lsf_next
-    mov r11, 1
-.Lsf_cmp:
-    cmp r11, rcx
-    jae .Lsf_found
-    lea rbx, [r9 + r11]
-    movzx eax, byte ptr [rdi + rbx]
-    cmp al, [rdx + r11]
-    jne .Lsf_next
-    inc r11
-    jmp .Lsf_cmp
-.Lsf_next:
-    inc r9
-    jmp .Lsf_loop
-.Lsf_found:
-    mov rax, r9
-    pop r12
-    pop rbx
-    ret
-.Lsf_zero:
+    push r13
+    push r14
+    push r15
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    sub rsp, 80
+    movups [rsp], xmm0
+    movups [rsp + 16], xmm1
+    movups [rsp + 32], xmm2
+    movups [rsp + 48], xmm3
+    mov r12, rdi                # haystack
+    mov r13, rsi                # -> last start
+    mov r14, rdx                # needle
+    mov r15, rcx                # needle length
     xor eax, eax
-    pop r12
-    pop rbx
-    ret
+    test r15, r15
+    jz .Lsf_ret
+    sub r13, r15
+    jb .Lsf_none
+    # the first needle byte; a letter in both cases when case-insensitive
+    movzx r8d, byte ptr [r14]
+    mov r9d, r8d
+    test ebx, ebx
+    jz 2f
+    lea r10d, [r8 - 'A']
+    cmp r10d, 25
+    jbe 1f
+    lea r10d, [r8 - 'a']
+    cmp r10d, 25
+    ja 2f
+1:  or r8d, 0x20
+    lea r9d, [r8 - 0x20]
+2:  mov [rsp + 64], r8d
+    mov [rsp + 68], r9d
+    movd xmm1, r8d
+    punpcklbw xmm1, xmm1
+    pshuflw xmm1, xmm1, 0
+    pshufd xmm1, xmm1, 0
+    movd xmm2, r9d
+    punpcklbw xmm2, xmm2
+    pshuflw xmm2, xmm2, 0
+    pshufd xmm2, xmm2, 0
+    xor r10d, r10d              # next start to try
+.Lsf_block:
+    lea r11, [r10 + 15]
+    cmp r11, r13
+    ja .Lsf_tail
+    movups xmm0, [r12 + r10]
+    movups xmm3, xmm0
+    pcmpeqb xmm0, xmm1
+    pcmpeqb xmm3, xmm2
+    por xmm0, xmm3
+    pmovmskb r11d, xmm0
+3:  test r11d, r11d
+    jz 4f
+    bsf ecx, r11d
+    btr r11d, ecx
+    lea rdi, [r10 + rcx]
+    call str_find_at
+    test eax, eax
+    jz 3b
+    mov rax, rdi
+    jmp .Lsf_ret
+4:  add r10, 16
+    jmp .Lsf_block
+.Lsf_tail:
+    cmp r10, r13
+    ja .Lsf_none
+    movzx eax, byte ptr [r12 + r10]
+    cmp eax, [rsp + 64]
+    je 5f
+    cmp eax, [rsp + 68]
+    jne 6f
+5:  mov rdi, r10
+    call str_find_at
+    test eax, eax
+    jz 6f
+    mov rax, r10
+    jmp .Lsf_ret
+6:  inc r10
+    jmp .Lsf_tail
 .Lsf_none:
     mov rax, -1
+.Lsf_ret:
+    movups xmm0, [rsp]
+    movups xmm1, [rsp + 16]
+    movups xmm2, [rsp + 32]
+    movups xmm3, [rsp + 48]
+    add rsp, 80
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    pop r15
+    pop r14
+    pop r13
     pop r12
     pop rbx
     ret
 
-# str_ifind: same as str_find, ascii case-insensitive
-FN str_ifind
-    push rbx
-    push r12
-    push r13
-    test rcx, rcx
-    jz .Lsif_zero
-    mov r8, rsi
-    sub r8, rcx
-    jb .Lsif_none
-    xor r9d, r9d
-.Lsif_loop:
-    cmp r9, r8
-    ja .Lsif_none
-    xor r11d, r11d
-.Lsif_cmp:
-    cmp r11, rcx
-    jae .Lsif_found
-    lea rbx, [r9 + r11]
-    movzx eax, byte ptr [rdi + rbx]
-    movzx r12d, byte ptr [rdx + r11]
-    lea r13d, [rax - 'A']
-    cmp r13d, 25
-    ja 1f
-    or eax, 0x20
-1:  lea r13d, [r12 - 'A']
-    cmp r13d, 25
+# str_find_at(start in rdi) -> eax 1 if the needle (r14, r15; ebx 1 case-insensitive) is at
+# haystack r12 + rdi past its first byte; uses rax, rdx, rsi, r8
+str_find_at:
+    mov esi, 1
+1:  cmp rsi, r15
+    jae 4f
+    lea rax, [rdi + rsi]
+    movzx eax, byte ptr [r12 + rax]
+    movzx edx, byte ptr [r14 + rsi]
+    cmp eax, edx
+    je 3f
+    test ebx, ebx
+    jz 5f
+    lea r8d, [rax - 'A']
+    cmp r8d, 25
     ja 2f
-    or r12d, 0x20
-2:  cmp eax, r12d
-    jne .Lsif_next
-    inc r11
-    jmp .Lsif_cmp
-.Lsif_next:
-    inc r9
-    jmp .Lsif_loop
-.Lsif_found:
-    mov rax, r9
-    jmp .Lsif_ret
-.Lsif_zero:
-    xor eax, eax
-    jmp .Lsif_ret
-.Lsif_none:
-    mov rax, -1
-.Lsif_ret:
-    pop r13
-    pop r12
-    pop rbx
+    or eax, 0x20
+2:  lea r8d, [rdx - 'A']
+    cmp r8d, 25
+    ja 21f
+    or edx, 0x20
+21: cmp eax, edx
+    jne 5f
+3:  inc rsi
+    jmp 1b
+4:  mov eax, 1
+    ret
+5:  xor eax, eax
     ret
 
 # fmt_u64(buf, value) -> len
@@ -527,6 +577,64 @@ ident_table:
     .byte 0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
     .byte 1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0
 .text
+
+# sort_u64(ptr, n): unsigned qwords ascending, in place (heapsort)
+FN sort_u64
+    push rbx
+    push r12
+    push r13
+    push r14
+    mov r12, rdi
+    mov r13, rsi
+    cmp r13, 2
+    jb 9f
+    mov rbx, r13
+    shr rbx, 1
+1:  test rbx, rbx
+    jz 2f
+    dec rbx
+    mov rdi, rbx
+    mov rsi, r13
+    call sort_u64_sift
+    jmp 1b
+2:  mov r14, r13
+3:  dec r14
+    jz 9f
+    mov rax, [r12]
+    mov rcx, [r12 + r14*8]
+    mov [r12], rcx
+    mov [r12 + r14*8], rax
+    xor edi, edi
+    mov rsi, r14
+    call sort_u64_sift
+    jmp 3b
+9:  pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+# sort_u64_sift(i, n): sink a[i] into the max-heap a[0..n) (a in r12)
+sort_u64_sift:
+    mov rax, [r12 + rdi*8]
+1:  lea rcx, [rdi*2 + 1]
+    cmp rcx, rsi
+    jae 3f
+    lea rdx, [rcx + 1]
+    cmp rdx, rsi
+    jae 2f
+    mov r8, [r12 + rdx*8]
+    cmp r8, [r12 + rcx*8]
+    jbe 2f
+    mov rcx, rdx
+2:  mov r8, [r12 + rcx*8]
+    cmp r8, rax
+    jbe 3f
+    mov [r12 + rdi*8], r8
+    mov rdi, rcx
+    jmp 1b
+3:  mov [r12 + rdi*8], rax
+    ret
 
 # path_basename(path, len) -> rax ptr, rdx len
 FN path_basename

@@ -201,6 +201,52 @@ print-state
 type :bogus
 key Escape
 print-state
+# as in Vim: . after a visual change, / as a motion, a count after the operator, Esc after o,
+# dw at a line end, d over whole lines, aw after an indentation, ~ on letters outside ASCII
+type 2GVj>.
+print-doc
+type uu
+type 2Gd/baz
+key Return
+print-doc
+type u
+type 6Gd1w.
+print-doc
+type uu
+type 2Go
+key Escape
+print-doc
+type u
+type 6G$bdw
+print-doc
+type u
+type 6G2D
+print-doc
+type u
+type 2G^daw
+print-doc
+type u
+type 6Gié
+key Escape
+type ~
+print-doc
+type uu
+# * finds whole words, also after a / that was given up; the find bar finds any text
+type Gofoo foobar foo
+key Escape
+type 0*
+print-state
+type 0l
+cmd find
+key Return
+print-state
+key Escape
+key Escape
+type 0*/bar
+key Escape
+type 0n
+print-state
+type u
 # mouse: a drag is a visual selection, a click ends it
 click 430 108
 print-state

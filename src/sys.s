@@ -183,6 +183,24 @@ FN file_size
     mov rax, [rip + stat_buf + 48]
 1:  ret
 
+# file_stamp(path) -> changes whenever the file is written: mtime in nanoseconds and the size
+# (0 if it is missing); follows symlinks
+FN file_stamp
+    lea rsi, [rip + stat_buf]
+    mov eax, 4                  # stat
+    syscall
+    test rax, rax
+    js 1f
+    mov rax, [rip + stat_buf + 88]
+    imul rax, rax, 1000000000
+    add rax, [rip + stat_buf + 96]
+    mov rdx, [rip + stat_buf + 48]
+    rol rdx, 32
+    xor rax, rdx
+    ret
+1:  xor eax, eax
+    ret
+
 # file_mtime(path) -> unix seconds (0 on error)
 FN file_mtime
     lea rsi, [rip + stat_buf]
@@ -359,6 +377,30 @@ FN mkdir_p
     mov esi, 0755
     SYS SYS_mkdir
     EPILOGUE
+
+# mkdir_parent(path): create the directories a file path lives in (the path is restored)
+FN mkdir_parent
+    push rbx
+    push r12
+    push r13
+    mov r12, rdi
+    call strlen
+    lea rbx, [r12 + rax]
+1:  cmp rbx, r12
+    jbe 9f
+    dec rbx
+    cmp byte ptr [rbx], '/'
+    jne 1b
+    cmp rbx, r12
+    je 9f
+    mov byte ptr [rbx], 0
+    mov rdi, r12
+    call mkdir_p
+    mov byte ptr [rbx], '/'
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
 
 # dir_each(path, cb, ctx): cb(ctx, name cstr, is_dir) for every entry except . and ..
 # returns 0 or -errno
