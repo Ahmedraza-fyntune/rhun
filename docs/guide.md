@@ -32,7 +32,7 @@ The installer needs no root. It checks the download against the release's SHA-25
 
 - Linux: `~/.local/bin/rhun`, the desktop entry in `~/.local/share/applications` (it starts rhun by its full path) and the icons in `~/.local/share/icons/hicolor`; the desktop's menu and icon caches are refreshed.
 - macOS: `rhun.app` in `/Applications` (`~/Applications` when that is not writable), and a `rhun` command in `~/.local/bin`.
-- When that `bin` folder is not on your PATH, one marked line adding it goes into your shell's startup file (`~/.zshrc`, `~/.bashrc`, fish's `conf.d/rhun.fish`).
+- So that `rhun` starts from any terminal, every shell you use gets that `bin` folder on its PATH, in a block marked `# rhun`: your login shell, `$SHELL`, and each shell with a configuration in your home folder (zsh `.zshrc`, bash `.bashrc` and `.bash_profile`, sh, dash and ksh `.profile`, fish `conf.d/rhun.fish`, nushell `env.nu`, tcsh `.tcshrc`). The lines check PATH first, so nothing is added twice.
 
 Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --version 0.14.0`:
 

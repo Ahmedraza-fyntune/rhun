@@ -105,6 +105,22 @@ fi
 
 release 1.0.0
 echo 1.0.0 > "$w/rel/latest/download/VERSION"
+# the user has bash (with a line of their own), fish and tcsh besides zsh, their $SHELL
+printf 'alias ll="ls -l"\n' > "$H/.bashrc"
+cp "$H/.bashrc" "$w/bashrc.orig"
+mkdir -p "$H/.config/fish"
+: > "$H/.tcshrc"
+
+# finds SHELL-BIN RCFILE: that shell, reading the file with PATH as a desktop gives it, finds rhun
+finds() {
+    case $1 in
+    fish) out=$(env -i HOME="$H" PATH=/usr/bin:/bin fish -c "source '$2'; source '$2'; command -v rhun; string join \n \$PATH" 2>&1) ;;
+    tcsh) out=$(env -i HOME="$H" PATH=/usr/bin:/bin tcsh -f -c "source '$2'; source '$2'; which rhun; echo \$PATH | tr : '\\n'" 2>&1) ;;
+    *) out=$(env -i HOME="$H" PATH=/usr/bin:/bin "$1" -c ". '$2'; . '$2'; command -v rhun; echo \"\$PATH\" | tr : '\\n'" 2>&1) ;;
+    esac
+    printf '%s\n' "$out" | grep -qxF "$H/.local/bin/rhun" &&
+        [ "$(printf '%s\n' "$out" | grep -cxF "$H/.local/bin")" = 1 ]
+}
 
 begin fresh
 st=0
@@ -123,6 +139,21 @@ else
     t "the wrapper starts the app" grep -qF "$target/Contents/MacOS/rhun" "$bin"
 fi
 t "PATH in .zshrc" [ "$(grep -c '^# rhun$' "$H/.zshrc")" = 1 ]
+t "PATH in .bashrc" [ "$(grep -c '^# rhun$' "$H/.bashrc")" = 1 ]
+t "PATH for fish" grep -qF "$H/.local/bin" "$H/.config/fish/conf.d/rhun.fish"
+t "PATH in .tcshrc" [ "$(grep -c '^# rhun$' "$H/.tcshrc")" = 1 ]
+t "the user's line stays" grep -qxF 'alias ll="ls -l"' "$H/.bashrc"
+for sh in zsh bash dash fish tcsh; do
+    command -v $sh >/dev/null 2>&1 || continue
+    case $sh in
+    zsh) rc=$H/.zshrc ;;
+    bash) rc=$H/.bashrc ;;
+    dash) rc=$H/.bashrc ;;
+    fish) rc=$H/.config/fish/conf.d/rhun.fish ;;
+    tcsh) rc=$H/.tcshrc ;;
+    esac
+    t "$sh finds rhun" finds $sh "$rc"
+done
 inst "$@"
 t "again: exit $st" [ $st = 0 ]
 t "again: PATH once" [ "$(grep -c '^# rhun$' "$H/.zshrc")" = 1 ]
@@ -211,7 +242,9 @@ if [ $os = linux ]; then
     t "desktop entry gone" [ ! -e "$H/.local/share/applications/rhun.desktop" ]
     t "icons gone" [ ! -e "$H/.local/share/icons/hicolor/512x512/apps/rhun.png" ]
 fi
-t "PATH lines gone" sh -c "! grep -q '^# rhun' '$H/.zshrc'"
+t "PATH lines gone" sh -c "! grep -q '^# rhun' '$H/.zshrc' '$H/.tcshrc'"
+t ".bashrc as it was" cmp -s "$H/.bashrc" "$w/bashrc.orig"
+t "fish file gone" [ ! -e "$H/.config/fish/conf.d/rhun.fish" ]
 t "settings kept" [ -f "$H/.config/rhun/config" ]
 end
 

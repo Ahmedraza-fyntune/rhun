@@ -8,7 +8,8 @@
 #   --prefix DIR            Linux: install under DIR (default ~/.local)
 #   --app-dir DIR           macOS: where rhun.app goes (default /Applications, or ~/Applications
 #                           when that is not writable)
-#   --no-modify-path        leave shell startup files alone
+#   --no-modify-path        leave shell startup files alone (by default every shell the user has
+#                           gets rhun's folder on PATH: zsh, bash, sh, fish, nushell, tcsh)
 #   --uninstall             remove what the installer put in place (settings stay)
 #   --update --target PATH  what rhun runs to update itself: replace the installation at PATH (the
 #                           binary, or on macOS the .app) with --version
@@ -223,41 +224,116 @@ default_app_dir() {
 
 # ---------------- PATH ----------------
 
-# add_path BIN: BIN into PATH in the shell's startup file, between "# rhun" and "# rhun end"
+# login_shell: the user's login shell from the user database, else $SHELL
+login_shell() {
+    s=''
+    if [ "$os" = mac ]; then
+        s=$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{ print $2 }') || true
+    elif have getent; then
+        s=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7) || true
+    fi
+    basename "${s:-${SHELL:-sh}}"
+}
+
+nu_dir() { # the nushell configuration folder, when there is one
+    for d in "${XDG_CONFIG_HOME:-$HOME/.config}/nushell" "$HOME/Library/Application Support/nushell"; do
+        if [ -d "$d" ]; then
+            echo "$d"
+            return 0
+        fi
+    done
+}
+
+# user_shells: the shells to set up, one per line: the login shell, $SHELL, and every shell with a
+# configuration in HOME
+user_shells() {
+    {
+        login_shell
+        basename "${SHELL:-sh}"
+        if [ -f "${ZDOTDIR:-$HOME}/.zshrc" ] || [ -f "$HOME/.zshenv" ] || [ -f "$HOME/.zprofile" ]; then echo zsh; fi
+        if [ -f "$HOME/.bashrc" ] || [ -f "$HOME/.bash_profile" ]; then echo bash; fi
+        if [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/fish" ]; then echo fish; fi
+        if [ -n "$(nu_dir)" ]; then echo nu; fi
+        if [ -f "$HOME/.tcshrc" ] || [ -f "$HOME/.cshrc" ]; then echo tcsh; fi
+    } | awk 'NF && !seen[$0]++'
+}
+
+# add_path BIN: BIN on PATH in every shell the user has, each in its own startup file, as a block
+# between "# rhun" and "# rhun end"; a line that is already there is not added again, and the
+# lines check PATH first, so nothing is doubled where the system puts BIN on PATH itself
 add_path() {
-    case ":$PATH:" in *":$1:"*) return 0 ;; esac
-    hint="add $1 to PATH to start rhun from a terminal"
     if [ -z "$modify_path" ]; then
-        say "$hint"
+        say "to start rhun from a terminal, add $1 to PATH"
         return 0
     fi
-    case "$(basename "${SHELL:-sh}")" in
-    zsh) add_path_to "$HOME/.zshrc" "$1" ;;
-    bash)
-        add_path_to "$HOME/.bashrc" "$1"
-        if [ "$os" = mac ]; then add_path_to "$HOME/.bash_profile" "$1"; fi
-        ;;
-    fish)
-        f=$HOME/.config/fish/conf.d/rhun.fish
-        mkdir -p "$(dirname "$f")"
-        printf '# rhun\nfish_add_path "%s"\n# rhun end\n' "$1" > "$f"
-        say "added $1 to PATH in $f; open a new terminal to use it"
-        ;;
-    *) say "$hint" ;;
+    done_shells=''
+    for sh in $(user_shells); do
+        case $sh in
+        zsh) add_posix "${ZDOTDIR:-$HOME}/.zshrc" "$1" zsh ;;
+        bash)
+            add_posix "$HOME/.bashrc" "$1" bash
+            # login shells (macOS Terminal, a console login) read .bash_profile
+            if [ "$os" = mac ] || [ -f "$HOME/.bash_profile" ]; then add_posix "$HOME/.bash_profile" "$1" ''; fi
+            ;;
+        sh | dash | ksh | mksh | yash | ash | busybox) add_posix "$HOME/.profile" "$1" "$sh" ;;
+        fish)
+            f=${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/rhun.fish
+            mkdir -p "$(dirname "$f")"
+            # shellcheck disable=SC2016 # $PATH is fish's
+            printf '# rhun\nif not contains -- "%s" $PATH\n    set -gx PATH "%s" $PATH\nend\n# rhun end\n' "$1" "$1" > "$f"
+            done_shells="$done_shells fish"
+            ;;
+        nu)
+            d=$(nu_dir)
+            if [ -n "$d" ]; then
+                add_block "$d/env.nu" "\$env.PATH = (\$env.PATH | split row (char esep) | prepend '$1' | uniq)"
+                done_shells="$done_shells nu"
+            fi
+            ;;
+        tcsh | csh)
+            f=$HOME/.tcshrc
+            if [ ! -f "$f" ] && { [ -f "$HOME/.cshrc" ] || [ "$sh" = csh ]; }; then f=$HOME/.cshrc; fi
+            add_block "$f" "if ( \" \$path \" !~ *\" $1 \"* ) set path = ( \"$1\" \$path )"
+            done_shells="$done_shells $sh"
+            ;;
+        *) say "$sh: add $1 to PATH to start rhun from it" ;;
+        esac
+    done
+    if [ -n "$done_shells" ]; then
+        say "rhun is on PATH in new terminals ($(echo "$done_shells" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ $//'))"
+    fi
+    case ":$PATH:" in
+    *":$1:"*) ;;
+    *) say "in this terminal, start it as $1/rhun or open a new one" ;;
     esac
 }
 
-add_path_to() { # FILE BIN
-    if [ -f "$1" ] && grep -q '^# rhun$' "$1"; then return 0; fi
+# add_posix FILE BIN SHELL: the block for sh, bash, zsh and the like; SHELL names the shell for the
+# message
+add_posix() {
     # shellcheck disable=SC2016 # $PATH is for the shell that reads the file
-    printf '\n# rhun\nexport PATH="%s:$PATH"\n# rhun end\n' "$2" >> "$1"
-    say "added $2 to PATH in $1; open a new terminal to use it"
+    add_block "$1" "$(printf 'case ":$PATH:" in *":%s:"*) ;; *) export PATH="%s:$PATH" ;; esac' "$2" "$2")"
+    if [ -n "$3" ]; then done_shells="$done_shells $3"; fi
 }
 
-# remove_path_from FILE: the lines add_path wrote
+# add_block FILE TEXT: TEXT between the markers at the end of FILE, unless FILE has them already
+add_block() {
+    if [ -f "$1" ] && grep -q '^# rhun$' "$1"; then return 0; fi
+    mkdir -p "$(dirname "$1")"
+    if [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ]; then echo >> "$1"; fi
+    if [ -s "$1" ]; then echo >> "$1"; fi
+    printf '# rhun\n%s\n# rhun end\n' "$2" >> "$1"
+}
+
+# remove_path_from FILE: the block add_block wrote, and the empty line before it
 remove_path_from() {
     if [ -f "$1" ] && grep -q '^# rhun$' "$1"; then
-        awk '/^# rhun$/ { skip = 1; next } /^# rhun end$/ { skip = 0; next } !skip' "$1" > "$tmp/rc"
+        awk 'skip { if ($0 == "# rhun end") skip = 0; next }
+            $0 == "# rhun" { skip = 1; held = 0; next }
+            held { print ""; held = 0 }
+            $0 == "" { held = 1; next }
+            { print }
+            END { if (held) print "" }' "$1" > "$tmp/rc"
         cat "$tmp/rc" > "$1"
     fi
 }
@@ -328,10 +404,13 @@ uninstall() {
         fi
         say "rhun is removed"
     fi
-    remove_path_from "$HOME/.zshrc"
-    remove_path_from "$HOME/.bashrc"
-    remove_path_from "$HOME/.bash_profile"
-    rm -f "$HOME/.config/fish/conf.d/rhun.fish"
+    for f in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" \
+        "$HOME/.tcshrc" "$HOME/.cshrc"; do
+        remove_path_from "$f"
+    done
+    d=$(nu_dir)
+    if [ -n "$d" ]; then remove_path_from "$d/env.nu"; fi
+    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/rhun.fish"
     say "your settings are still in ${XDG_CONFIG_HOME:-$HOME/.config}/rhun"
 }
 
