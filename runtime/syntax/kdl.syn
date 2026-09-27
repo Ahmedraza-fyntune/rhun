@@ -1,0 +1,7 @@
+name = KDL
+files = *.kdl
+comment = //
+block = /* */
+string = " \
+ident = -
+constants = true false null

@@ -1,0 +1,10 @@
+// Pkl config sample
+module example
+
+class Person {
+  name: String
+  age: Int = 42
+  bio = """
+    hello
+    """
+}

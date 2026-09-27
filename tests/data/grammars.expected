@@ -146,6 +146,19 @@ aaaaaaaaaa 0
 009e9aaaaaaaaaaaaaaaaa99e9 0
 @endif
 aaaaaa 0
+== capnp.syn
+# Cap'n Proto schema
+66666666666666666666 0
+struct Person {
+111111000000009 0
+  name @0 :Text;
+0000000050822229 0
+  age @1 :UInt32 = 0;
+000000050822222208059 0
+  active @2 :Bool = true;
+0000000000508222208077779 0
+}
+9 0
 == cobol.syn
       *> COBOL sample
 000000666666666666666 0
@@ -163,6 +176,19 @@ aaaaaa 0
 00000001111111110111111119 0
            DISPLAY "Hello, COBOL!".
 00000000000111111104444444444444449 0
+== crontab.syn
+# crontab example
+66666666666666666 0
+MAILTO=admin
+000000800000 0
+0 3 * * * /usr/bin/backup.sh
+5050808080800080008000000900 0
+@daily /usr/bin/cleanup.sh
+11111108000800080000000900 0
+@reboot /usr/bin/startup.sh
+111111108000800080000000900 0
+15 */2 * * 1-5 echo "check"
+550885080805850000000000000 0
 == crystal.syn
 # Crystal sample
 6666666666666666 0
@@ -213,6 +239,35 @@ int main() {
 0000111111059 0
 }
 9 0
+== cue.syn
+// CUE schema example
+666666666666666666666 0
+package main
+111111100000 0
+
+ 0
+message: """
+000000080444 0
+    Hello
+000000000 0
+    World
+000000000 0
+    """
+0000444 0
+
+ 0
+#Config: {
+0000000809 0
+    name:  string
+00000000800222222 0
+    count: 3
+000000000805 0
+    ok:    true
+000000800007777 0
+    extra: null
+000000000807777 0
+}
+9 0
 == d.syn
 // D sample
 66666666666 0
@@ -230,6 +285,23 @@ void main() {
 0000ccccccc944444905599 0
 }
 9 0
+== dhall.syn
+-- Dhall config
+666666666666666 0
+{- block comment -} let ok : Bool = True
+6666666666666666666011100008022220807777 0
+
+ 0
+in  { name = "demo", count = 3, empty = None Text
+1100900000080444444900000008059000000080777702222 0
+    , doc = ''
+00009000008044 4
+        hello
+4444444444444 4
+        ''
+4444444444 0
+    }
+00009 0
 == dotenv.syn
 # database configuration
 666666666666666666666666 0
@@ -336,6 +408,25 @@ pub fn greet(x: Int) -> String {
 009 0
 }
 9 0
+== graphviz.syn
+// Graph example
+6666666666666666 0
+digraph G {
+11111110009 0
+    rankdir=LR;
+000000000008009 0
+    node [shape=box];
+000011110900000800099 0
+    a -> b [label="edge"];
+00000088000900000844444499 0
+    subgraph cluster_0 {
+000011111111000000000009 0
+        c -> d;
+000000000088009 0
+    }
+00009 0
+}
+9 0
 == groovy.syn
 // Groovy sample
 6666666666666666 0
@@ -404,6 +495,25 @@ class Main {
 00009 0
 }
 9 0
+== http.syn
+### Get user
+ffffffffffff 0
+# Fetch user by id
+666666666666666666 0
+GET https://api.example.com/users/{{userId}}
+1110000008880009000000090008000008bbbbbbbbbb 0
+Accept: application/json
+000000800000000000080000 0
+
+ 0
+### Create user
+fffffffffffffff 0
+POST https://api.example.com/users
+1111000000888000900000009000800000 0
+
+ 0
+{"name": "Ada"}
+944444480444449 0
 == idris.syn
 -- adds one to a Nat
 66666666666666666666 0
@@ -506,6 +616,27 @@ multi-line text
 444444444444444 2
 """
 444 0
+== kdl.syn
+// Package manifest
+6666666666666666666 0
+package {
+000000009 0
+    name "kdl-demo"
+0000000004444444444 0
+    version "1.0.0"
+0000000000004444444 0
+    enabled true
+0000000000007777 0
+    replicas 3
+00000000000005 0
+    parent null
+000000000007777 0
+}
+9 0
+/* multi-line
+6666666666666 2
+   comment */
+6666666666666 0
 == latex.syn
 % Example document
 666666666666666666 0
@@ -586,6 +717,25 @@ function r = fact(n)
 0000cccc944444499 0
 end
 111 0
+== mermaid.syn
+%% Mermaid sequence diagram
+666666666666666666666666666 0
+sequenceDiagram
+111111111111111 0
+    participant Alice
+000011111111111000000 0
+    participant Bob
+0000111111111110000 0
+    Alice->>Bob: Hello "Bob"
+0000000008880008000000044444 0
+    loop Every minute
+000011110000000000000 0
+        Bob-->>Alice: Pong
+00000000000888800000800000 0
+    end
+0000111 0
+    note right of Bob: done
+000011110000000000000800000 0
 == meson.syn
 # project setup
 666666666666666 0
@@ -707,6 +857,61 @@ begin
 00ccccccc9444444444900000099 0
 end.
 1119 0
+== pkl.syn
+// Pkl config sample
+66666666666666666666 0
+module example
+11111100000000 0
+
+ 0
+class Person {
+11111000000009 0
+  name: String
+00000080222222 0
+  age: Int = 42
+000008022208055 0
+  bio = """
+00000080444 0
+    hello
+000000000 0
+    """
+0000444 0
+}
+9 0
+== plantuml.syn
+@startuml
+aaaaaaaaa 0
+' PlantUML sequence example
+666666666666666666666666666 0
+actor User
+1111100000 0
+participant "Web Server" as Server
+1111111111104444444444440110000000 0
+User -> Server: request
+00000880000000800000000 0
+/' block
+66666666 2
+   comment '/
+6666666666666 0
+note right of Server: handles it
+11110000000000000000800000000000 0
+@enduml
+aaaaaaa 0
+== prisma.syn
+// Prisma schema example
+666666666666666666666666 0
+model User {
+111110000009 0
+  id    Int     @id @default(autoincrement())
+0000000022200000ddd0dddddddd93333333333333999 0
+  name  String
+00000000222222 0
+  email String  @unique
+0000000022222200ddddddd 0
+  admin Boolean @default(false)
+0000000022222220dddddddd9777779 0
+}
+9 0
 == prolog.syn
 % classic family relations
 66666666666666666666666666 0
@@ -754,6 +959,25 @@ edddddddddddd000000000aaaa 0
 001100 0
     span done
 0000eeee00000 0
+== puppet.syn
+# Puppet manifest example
+6666666666666666666666666 0
+class webserver {
+11111000000000009 0
+  $port = 8080
+00bbbbb0805555 0
+
+ 0
+  service { 'nginx':
+00000000009044444448 0
+    ensure => running,
+0000000000088000000009 0
+    enable => true,
+0000000000088077779 0
+  }
+009 0
+}
+9 0
 == purescript.syn
 -- PureScript sample
 66666666666666666666 0
@@ -805,6 +1029,50 @@ aaaaaaaaaaaaaaaaaaaaaaaa 0
 aaaaaaaaaaaaaaaaaaa 0
 @if (total > 0) { <p>@(total)</p> }
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0
+== rego.syn
+# Rego policy example
+666666666666666666666 0
+package example.authz
+111111100000000900000 0
+
+ 0
+default allow := false
+1111111000000088077777 0
+
+ 0
+allow if {
+0000001109 0
+    some role in input.user.roles
+00001111000000110ccccc90000900000 0
+    role == "admin"
+0000000008804444444 0
+}
+9 0
+
+ 0
+pattern := `raw text`
+000000008804444444444 0
+== ron.syn
+// RON example config
+666666666666666666666 0
+GameConfig(
+33333333339 0
+    title: "My Game",
+000000000804444444449 0
+    fullscreen: true,
+000000000000008077779 0
+    resolution: (1920, 1080),
+00000000000000809555590555599 0
+    player: Some('a'),
+0000000000807777944499 0
+    save: None,
+000000008077779 0
+)
+9 0
+/* trailing
+66666666666 2
+   comment */
+6666666666666 0
 == rst.syn
 Title
 00000 0
@@ -862,6 +1130,23 @@ contract Token {
 00009 0
 }
 9 0
+== sshconfig.syn
+# SSH client config example
+666666666666666666666666666 0
+Host example
+111100000000 0
+    HostName example.com
+000011111111000000009000 0
+    User deploy
+000011110000000 0
+    Port 2222
+0000111105555 0
+    IdentityFile ~/.ssh/id_ed25519
+0000111111111111088900080000000000 0
+    ForwardAgent yes
+00001111111111110777 0
+    StrictHostKeyChecking no
+0000111111111111111111111077 0
 == starlark.syn
 # build file
 666666666666 0
@@ -890,6 +1175,23 @@ proc greet {name} {
 00000000cccc0444444444444444 0
     }
 00009 0
+}
+9 0
+== thrift.syn
+// Thrift IDL example
+666666666666666666666 0
+namespace py example
+11111111100000000000 0
+
+ 0
+struct Person {
+111111000000009 0
+  1: required string name,
+00580111111110222222000009 0
+  2: optional i32 age = 0,
+00580111111110222000008059 0
+  3: bool active = true,
+005802222000000008077779 0
 }
 9 0
 == twig.syn
@@ -1037,7 +1339,7 @@ endfunction
 11111111111 0
 call Greet('World')
 1111033333944444449 0
-checked 111 grammars
+checked 127 grammars
 Makefile -> Makefile (parsed 1)
 a.py -> Python (parsed 2)
 b.py -> Python (parsed 2)
@@ -1112,3 +1414,19 @@ BUILD.bazel -> Starlark (parsed 64)
 meson.build -> Meson (parsed 65)
 build.ninja -> Ninja (parsed 66)
 justfile -> Just (parsed 67)
+demo.kdl -> KDL (parsed 68)
+config.ron -> RON (parsed 69)
+schema.cue -> CUE (parsed 70)
+config.dhall -> Dhall (parsed 71)
+PklProject -> Pkl (parsed 72)
+policy.rego -> Rego (parsed 73)
+service.thrift -> Thrift (parsed 74)
+schema.capnp -> Cap'n Proto (parsed 75)
+schema.prisma -> Prisma (parsed 76)
+site.pp -> Puppet (parsed 77)
+ssh_config -> SSH config (parsed 78)
+crontab -> Crontab (parsed 79)
+requests.http -> HTTP (parsed 80)
+graph.dot -> Graphviz (parsed 81)
+diagram.mmd -> Mermaid (parsed 82)
+diagram.puml -> PlantUML (parsed 83)

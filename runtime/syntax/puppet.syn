@@ -1,0 +1,10 @@
+name = Puppet
+files = *.pp
+comment = #
+block = /* */
+string = " \
+string = ' \
+prefix = $v
+keywords = class define node inherits if elsif else unless case default include require contain and or in
+types = File Package Service Exec User Group Notify Cron
+constants = true false undef

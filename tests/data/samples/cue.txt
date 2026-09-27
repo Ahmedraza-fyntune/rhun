@@ -1,0 +1,14 @@
+// CUE schema example
+package main
+
+message: """
+    Hello
+    World
+    """
+
+#Config: {
+    name:  string
+    count: 3
+    ok:    true
+    extra: null
+}

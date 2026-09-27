@@ -1,0 +1,9 @@
+@startuml
+' PlantUML sequence example
+actor User
+participant "Web Server" as Server
+User -> Server: request
+/' block
+   comment '/
+note right of Server: handles it
+@enduml

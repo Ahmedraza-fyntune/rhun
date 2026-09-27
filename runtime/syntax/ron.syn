@@ -1,0 +1,8 @@
+name = RON
+files = *.ron
+comment = //
+block = /* */
+string = " \
+string = ' \
+captypes = yes
+constants = true false Some None
