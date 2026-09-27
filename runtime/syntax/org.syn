@@ -1,0 +1,10 @@
+name = Org
+files = *.org
+region = #+BEGIN_SRC #+END_SRC string multiline
+region = #+begin_src #+end_src string multiline
+comment = #
+region = = = string
+region = ~ ~ string
+line = * heading
+functions = no
+numbers = no

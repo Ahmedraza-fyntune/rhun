@@ -1,0 +1,6 @@
+name = BibTeX
+files = *.bib
+comment = %
+ident = @
+string = "
+keywords = @article @book @inproceedings @incollection @conference @phdthesis @mastersthesis @techreport @manual @proceedings @misc @online @unpublished

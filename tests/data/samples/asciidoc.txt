@@ -1,0 +1,8 @@
+= Document Title
+// a regular comment
+Some *bold* text and `monospace` code.
+////
+block comment continues
+////
+----
+listing block continues

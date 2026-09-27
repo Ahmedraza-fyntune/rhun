@@ -1,0 +1,5 @@
+name = Git attributes
+files = .gitattributes
+comment = #
+ident = -
+attributes = text binary eol diff merge filter export-ignore linguist-generated linguist-vendored linguist-detectable linguist-documentation
