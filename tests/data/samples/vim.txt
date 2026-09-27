@@ -1,0 +1,9 @@
+" Vim script sample
+let g:count = 42
+if exists('g:count')
+    let g:count = v:true
+endif
+function! Greet(name)
+    echo "Hello, " . a:name
+endfunction
+call Greet('World')

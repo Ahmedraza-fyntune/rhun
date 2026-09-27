@@ -1,0 +1,8 @@
+name = Gleam
+files = *.gleam
+comment = //
+string = " \
+captypes = yes
+keywords = as assert case const external fn if import let opaque pub todo type use
+types = Int Float String Bool List Result Option BitArray
+constants = True False Nil
