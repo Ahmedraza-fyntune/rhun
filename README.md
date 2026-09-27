@@ -21,6 +21,13 @@ rhun has the parts you use every day:
 
 Pick from 39 light and dark themes. On Omarchy, choose **Follow Omarchy** and rhun switches themes with your desktop.
 
+Keep your terminal beside your code, and browse Git history without leaving the editor.
+
+<p>
+  <img src="assets/social/screenshot-terminal.png" width="49%" alt="Code and the built-in terminal in rhun">
+  <img src="assets/social/screenshot-git.png" width="49%" alt="Git history and changed files in rhun">
+</p>
+
 ## Get rhun
 
 The first release will include prebuilt downloads and an install script for Linux (x86-64) and macOS (Apple silicon).
