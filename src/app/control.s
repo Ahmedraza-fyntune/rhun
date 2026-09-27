@@ -841,7 +841,24 @@ on_accept:
     test rax, rax
     js 9f
     mov ebx, eax
-    # one client at a time: drop the previous one
+    # while the client's command waits, the new one waits for it to finish
+    cmp dword ptr [rip + oc_busy], 0
+    je 2f
+    mov edi, [rip + oc_next]
+    mov [rip + oc_next], ebx
+    test edi, edi
+    js 9f
+    SYS SYS_close
+    jmp 9f
+2:  mov edi, ebx
+    call oc_install
+9:  pop rbx
+    ret
+
+# oc_install(fd): the client from now on; one at a time, the previous one is dropped
+oc_install:
+    push rbx
+    mov ebx, edi
     mov edi, [rip + csock]
     test edi, edi
     js 1f
@@ -878,6 +895,9 @@ on_client:
     jne 9f
     mov dword ptr [rip + oc_busy], 1
 .Loc_lines:
+    mov edi, [rip + oc_next]
+    test edi, edi
+    jns .Loc_next
     mov r12, [rip + cbuf + SB_ptr]
     mov r13, [rip + cbuf + SB_len]
     xor ecx, ecx
@@ -938,6 +958,13 @@ on_client:
     SYS SYS_close
     mov dword ptr [rip + csock], -1
 9:  EPILOGUE
+    # a client came while a command waited: it replaces this one
+.Loc_next:
+    mov dword ptr [rip + oc_next], -1
+    mov dword ptr [rip + oc_busy], 0
+    mov dword ptr [rip + oc_eof], 0
+    call oc_install
+    EPILOGUE
 
 .section .rodata
 .Llong_path: .asciz "rhun: the control socket path is too long (at most 103 bytes)"
@@ -1005,6 +1032,7 @@ ctl_table:
 .data
 lsock: .long -1
 csock: .long -1
+oc_next: .long -1               # a client that came while oc_busy
 .bss
 .p2align 3
 pc_xc: .zero XC_SIZE
