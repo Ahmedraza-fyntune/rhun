@@ -1258,12 +1258,12 @@ line""";
 666666666666666666666 0
 REM legacy comment
 666666666666666666 0
-#If DEBUG Then
+#if DEBUG then
 aaaaaaaaaaaaaa 0
     Dim count As Integer = 42
 00001110000000110222222208055 0
-#End If
-0111011 0
+#end if
+aaaaaaa 0
 Sub Main()
 1110333399 0
     Console.WriteLine("Hi " & "there")
@@ -1325,18 +1325,14 @@ end architecture rtl;
 6666666666666666666 0
 let g:count = 42
 1110000000008055 0
+    " indented comment
+0000666666666666666666 0
 if exists('g:count')
 110cccccc94444444449 0
-    let g:count = v:true
-000011100000000080777777 0
+    echo "hello"
+0000111104444444 0
 endif
 11111 0
-function! Greet(name)
-111111118033333900009 0
-    echo "Hello, " . a:name
-000011110000000900090000000 0
-endfunction
-11111111111 0
 call Greet('World')
 1111033333944444449 0
 checked 127 grammars

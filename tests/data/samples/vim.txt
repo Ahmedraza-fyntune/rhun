@@ -1,9 +1,7 @@
 " Vim script sample
 let g:count = 42
+    " indented comment
 if exists('g:count')
-    let g:count = v:true
+    echo "hello"
 endif
-function! Greet(name)
-    echo "Hello, " . a:name
-endfunction
 call Greet('World')

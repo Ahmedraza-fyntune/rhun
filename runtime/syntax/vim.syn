@@ -1,6 +1,7 @@
 name = Vim script
 files = *.vim .vimrc _vimrc .gvimrc .exrc
-line = " comment
+region = " eol comment bol
+string = "
 string = '
 prefix = &v $v @v
 ident = :#
