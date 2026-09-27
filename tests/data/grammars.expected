@@ -240,28 +240,16 @@ int main() {
 666666666666666666666 0
 package main
 111111100000 0
-
- 0
-message: """
-000000080444 0
-    Hello
-000000000 0
-    World
-000000000 0
-    """
-0000444 0
-
- 0
 #Config: {
 0000000809 0
-    name:  string
-00000000800222222 0
-    count: 3
-000000000805 0
-    ok:    true
-000000800007777 0
-    extra: null
-000000000807777 0
+    name: "demo", version: string, count: 3, ok: true
+00000000804444449000000008022222290000008059000807777 0
+    doc: """
+000000080444 2
+        hello
+4444444444444 2
+        """
+44444444444 0
 }
 9 0
 == d.syn
@@ -415,8 +403,8 @@ digraph G {
 000000000008009 0
     node [shape=box];
 000011110900000800099 0
-    a -> b [label="edge"];
-00000088000900000844444499 0
+    a -> b [label="edge", weight=2];
+000000880009000008444444900000008599 0
     subgraph cluster_0 {
 000011111111000000000009 0
         c -> d;
@@ -502,16 +490,12 @@ GET https://api.example.com/users/{{userId}}
 1110000008880009000000090008000008bbbbbbbbbb 0
 Accept: application/json
 000000800000000000080000 0
-
- 0
 ### Create user
 fffffffffffffff 0
 POST https://api.example.com/users
 1111000000888000900000009000800000 0
-
- 0
-{"name": "Ada"}
-944444480444449 0
+{"name": "Ada", "age": 30}
+94444448044444904444480559 0
 == idris.syn
 -- adds one to a Nat
 66666666666666666666 0
@@ -714,8 +698,8 @@ sequenceDiagram
 0000111111111110000 0
     Alice->>Bob: Hello "Bob"
 0000000008880008000000044444 0
-    loop Every minute
-000011110000000000000 0
+    loop Every 5 minutes
+000011110000000500000000 0
         Bob-->>Alice: Pong
 00000000000888800000800000 0
     end
@@ -842,22 +826,18 @@ end.
 == pkl.syn
 // Pkl config sample
 66666666666666666666 0
-module example
-11111100000000 0
-
- 0
 class Person {
 11111000000009 0
-  name: String
-00000080222222 0
+  name: String = "Ada"
+0000008022222208044444 0
   age: Int = 42
 000008022208055 0
   bio = """
-00000080444 0
+00000080444 3
     hello
-000000000 0
+444444444 3
     """
-0000444 0
+4444444 0
 }
 9 0
 == plantuml.syn
@@ -869,8 +849,8 @@ actor User
 1111100000 0
 participant "Web Server" as Server
 1111111111104444444444440110000000 0
-User -> Server: request
-00000880000000800000000 0
+User -> Server: request 1
+0000088000000080000000005 0
 /' block
 66666666 2
    comment '/
@@ -886,8 +866,10 @@ model User {
 111110000009 0
   id    Int     @id @default(autoincrement())
 0000000022200000ddd0dddddddd93333333333333999 0
-  name  String
-00000000222222 0
+  name  String  @default("Ada")
+0000000022222200dddddddd9444449 0
+  age   Int     @default(0)
+0000000022200000dddddddd959 0
   email String  @unique
 0000000022222200ddddddd 0
   admin Boolean @default(false)
@@ -947,7 +929,7 @@ class webserver {
 
  0
   service { 'nginx':
-00000000009044444448 0
+00222222209044444448 0
     ensure => running,
 0000000000088000000009 0
     enable => true,
@@ -1012,22 +994,16 @@ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0
 666666666666666666666 0
 package example.authz
 111111100000000900000 0
-
- 0
 default allow := false
 1111111000000088077777 0
-
- 0
 allow if {
 0000001109 0
     some role in input.user.roles
 00001111000000110ccccc90000900000 0
-    role == "admin"
-0000000008804444444 0
+    role == "admin"; input.user.age >= 18
+000000000880444444490ccccc900009000088055 0
 }
 9 0
-
- 0
 pattern := `raw text`
 000000008804444444444 0
 == ron.syn

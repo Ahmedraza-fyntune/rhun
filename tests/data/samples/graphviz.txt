@@ -2,7 +2,7 @@
 digraph G {
     rankdir=LR;
     node [shape=box];
-    a -> b [label="edge"];
+    a -> b [label="edge", weight=2];
     subgraph cluster_0 {
         c -> d;
     }

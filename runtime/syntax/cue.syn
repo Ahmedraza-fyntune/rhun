@@ -1,9 +1,9 @@
 name = CUE
 files = *.cue
 comment = //
+mstring = """ \
 string = " \
 string = ' \
-mstring = """ \
 keywords = package import let if for in
 types = bool int float number string bytes
 constants = true false null

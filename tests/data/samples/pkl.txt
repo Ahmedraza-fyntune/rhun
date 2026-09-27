@@ -1,8 +1,6 @@
 // Pkl config sample
-module example
-
 class Person {
-  name: String
+  name: String = "Ada"
   age: Int = 42
   bio = """
     hello
