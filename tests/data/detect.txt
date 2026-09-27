@@ -6,3 +6,7 @@ Gemfile
 Rakefile
 x.conf
 notes.xyz
+a.rb
+notes.txt
+CMakeLists.txt
+a.json5

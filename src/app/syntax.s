@@ -773,9 +773,11 @@ pattern_match:
 3:  xor eax, eax
     ret
 
-# syntax_detect(path cstr, first line ptr, len) -> GR* or 0, parsed
+# syntax_detect(path cstr, first line ptr, len) -> GR* or 0, parsed: the grammar whose files pattern
+# fits the file name best (an exact name, else the longest *.suffix; the first on a tie, so user
+# grammars win), else one with a first_line word in the first line
 FN syntax_detect
-    PROLOGUE 32
+    PROLOGUE 48
     mov [rsp + 16], rsi
     mov [rsp + 24], rdx
     mov rbx, rdi
@@ -785,10 +787,12 @@ FN syntax_detect
     call path_basename
     mov [rsp], rax
     mov [rsp + 8], rdx
+    xor ebx, ebx                # the best grammar so far
+    mov qword ptr [rsp + 32], -1    # its score
     xor r12d, r12d
 .Lsd_gr:
     cmp r12, [rip + g_grammars + VEC_len]
-    jae .Lsd_first
+    jae .Lsd_best
     mov rax, [rip + g_grammars + VEC_ptr]
     mov r13, [rax + r12*8]
     mov r14, [r13 + GR_files]
@@ -811,13 +815,26 @@ FN syntax_detect
     mov rcx, rdx
     mov rdx, rax
     call pattern_match
-    pop rdx
-    pop rdx
+    pop rdx                     # the pattern's length
+    pop rcx                     # the pattern
     test eax, eax
-    jnz .Lsd_found
+    jz 1b
+    # an exact name beats any pattern, a longer suffix a shorter one
+    mov rax, rdx
+    cmp byte ptr [rcx], '*'
+    je 2f
+    mov eax, 0x10000
+2:  cmp rax, [rsp + 32]
+    jle 1b
+    mov [rsp + 32], rax
+    mov rbx, r13
     jmp 1b
 3:  inc r12
     jmp .Lsd_gr
+.Lsd_best:
+    mov r13, rbx
+    test r13, r13
+    jnz .Lsd_found
 .Lsd_first:
     # shebang / first line prefixes
     xor r12d, r12d
@@ -1080,7 +1097,8 @@ FN tokenize
     mov eax, C_TEXT
     jmp .Ltk_one
 .Ltk_prefix:
-    # "prefix = $v @a #p" : prefix char + class letter (v variable, a attribute, p preproc at line start)
+    # "prefix = $v @a #p %t" : prefix char + class letter (v variable, a attribute, p preproc at line
+    # start, t tag)
     lea rdi, [rbx + GR_prefixes]
 9:  movzx edx, byte ptr [rdi]
     test edx, edx
@@ -1098,8 +1116,11 @@ FN tokenize
 91: movzx edx, byte ptr [rdi + 1]
     mov r8d, C_VARIABLE
     cmp edx, 'a'
-    jne 92f
+    jne 94f
     mov r8d, C_ATTRIBUTE
+94: cmp edx, 't'
+    jne 92f
+    mov r8d, C_TAG
 92: cmp edx, 'p'
     jne 93f
     cmp rsi, [rip + tk_bol]
