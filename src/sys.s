@@ -660,13 +660,17 @@ FN path_normalize
     jmp 52b
 51: mov rsi, rcx
     jmp 1b
-6:  # copy component + '/'
+6:  # copy component, then '/' only when the path goes on: with nothing dropped the write position
+    # is the read position, and a '/' there would overwrite the terminating NUL and have the
+    # bytes after the path read as more of it
     mov al, [rsi]
     mov [rdx], al
     inc rsi
     inc rdx
     cmp rsi, rcx
     jb 6b
+    cmp byte ptr [rsi], 0
+    je 81f
     mov byte ptr [rdx], '/'
     inc rdx
     jmp 1b
