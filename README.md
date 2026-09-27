@@ -14,7 +14,7 @@ No curl? `wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/in
 
 rhun shows up with your other apps, and `rhun` starts it from a terminal. It keeps itself up to date: when a new version is out, the status bar offers it.
 
-A small, very fast code editor for Linux and macOS, written in assembly.
+## Why rhun
 
 When coding agents do more of the heavy lifting, you may not need everything that comes with VS Code or Zed. You need to read and edit code, run commands, find files, and check what changed.
 
