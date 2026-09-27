@@ -3,6 +3,7 @@ files = *.slim
 prefix = .a #a
 region = /! eol comment bol
 region = / eol comment bol
+toggle_comment = /
 region = = eol preproc bol
 region = - eol preproc bol
 region = | eol text bol

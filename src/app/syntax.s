@@ -309,6 +309,9 @@ FN grammar_fill
     lea rsi, [rip + .Lk_comment]
     call .Lgp_key
     jnz .Lgp_comment
+    lea rsi, [rip + .Lk_toggle]
+    call .Lgp_key
+    jnz .Lgp_toggle
     lea rsi, [rip + .Lk_block]
     call .Lgp_key
     jnz .Lgp_block
@@ -416,9 +419,15 @@ FN grammar_fill
     call mem_dup
     mov [rbx + GR_first], rax
     jmp .Lgp_next
+.Lgp_toggle:
+    # toggle_comment = <token> ; only the toggle-comment token, for comments that count only at a
+    # line's start (colored by a bol region): no region of its own
+    mov dword ptr [rsp + 16], 0
+    jmp 1f
 .Lgp_comment:
-    # comment = <token> ; also the toggle-comment token (first one wins)
-    mov rdi, r14
+    # comment = <token> ; also the toggle-comment token (the first comment or toggle_comment wins)
+    mov dword ptr [rsp + 16], 1
+1:  mov rdi, r14
     mov rsi, r15
     call next_word
     test rdx, rdx
@@ -433,7 +442,9 @@ FN grammar_fill
     mov [rbx + GR_comment], rax
     mov rax, [rsp + 8]
     mov [rbx + GR_commentlen], rax
-2:  mov rdi, rbx
+2:  cmp dword ptr [rsp + 16], 0
+    je .Lgp_next
+    mov rdi, rbx
     mov rsi, [rsp]
     mov rdx, [rsp + 8]
     xor ecx, ecx
@@ -1533,6 +1544,7 @@ class_names:
 .Lk_files: .asciz "files"
 .Lk_first: .asciz "first_line"
 .Lk_comment: .asciz "comment"
+.Lk_toggle: .asciz "toggle_comment"
 .Lk_block: .asciz "block"
 .Lk_string: .asciz "string"
 .Lk_mstring: .asciz "mstring"
