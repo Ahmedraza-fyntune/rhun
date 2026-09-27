@@ -681,7 +681,12 @@ FN cmd_save_as
 
 FN cmd_quit
     PROLOGUE
-    # first modified doc -> ask
+    # the session first, once: each answer to a question closes that file
+    cmp dword ptr [rip + g_session_final], 0
+    jne 4f
+    call session_save
+    mov dword ptr [rip + g_session_final], 1
+4:  # first modified doc -> ask
     xor ebx, ebx
 1:  cmp rbx, [rip + g_tabs + VEC_len]
     jae 3f
@@ -701,8 +706,7 @@ FN cmd_quit
     EPILOGUE
 2:  inc rbx
     jmp 1b
-3:  call session_save
-    mov dword ptr [rip + g_quit], 1
+3:  mov dword ptr [rip + g_quit], 1
     EPILOGUE
 
 FN app_on_close
@@ -2798,9 +2802,11 @@ dialog_choose:
     jne 9f
     call cmd_quit
     jmp 9f
-8:  # not quitting after all: no restart into an update either, and no other project
+8:  # not quitting after all: no restart into an update either, no other project, and the session
+    # is saved again when it comes to that
     mov dword ptr [rip + g_restart], 0
     mov dword ptr [rip + switch_pending], 0
+    mov dword ptr [rip + g_session_final], 0
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 

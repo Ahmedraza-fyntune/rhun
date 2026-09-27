@@ -11,6 +11,8 @@ rc_dir: .zero SB_SIZE
 recent_time: .zero 8 * RECENT_MAX
 recent_n: .long 0
 rc_path: .zero 4096
+.globl g_session_final
+g_session_final: .long 0        # saved for quitting: later saves would miss the files asked about
 .globl g_recent_path, g_recent_label
 g_recent_path: .zero 4096 * RECENT_MAX
 g_recent_label: .zero 4096 * RECENT_MAX
@@ -213,6 +215,8 @@ FN session_save
     PROLOGUE
     cmp dword ptr [rip + cfg_restore_session], 0
     je 9f
+    cmp dword ptr [rip + g_session_final], 0
+    jne 9f
     call session_file
     test rax, rax
     jz 9f
