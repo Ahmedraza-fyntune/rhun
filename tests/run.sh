@@ -25,6 +25,7 @@ check images build/image_test $(ls tests/data/images/* | LC_ALL=C sort)
 check cpu build/cpu_test
 check cols build/cols_test
 check strfind build/str_test tests/data/strfind.txt
+check versions build/update_test tests/data/versions.txt
 if [ "$(build/rhun --version)" = "rhun $(cat VERSION)" ]; then echo "ok   version"; else echo "FAIL version"; fail=1; fi
 sh tests/files.sh || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
