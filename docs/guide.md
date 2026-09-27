@@ -6,7 +6,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 
 - Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
 - Image preview: PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA open in a tab, with zoom and pan
-- Syntax highlighting for about 50 languages, defined in plain text grammar files
+- Syntax highlighting for about 125 languages, defined in plain text grammar files
 - 39 color themes, dark and light, with a match for every Omarchy theme; add your own
 - Settings page and a readable config file, both applied while running
 - Agents panel: Claude Code and Codex sessions of the project, updated live as the agent works
@@ -207,6 +207,8 @@ Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_wh
 On Omarchy the theme list starts with Follow Omarchy (`theme = omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
 
 ### Languages
+
+Built-in languages: Ada, Apache, AppleScript, AsciiDoc, Assembly, Astro, AWK, Batch, BibTeX, Blade, C, C#, C++, Cap'n Proto, Clojure, CMake, COBOL, Crontab, Crystal, CSS, CUDA, CUE, D, Dart, Dhall, Diff, Dockerfile, dotenv, EJS, Elixir, Elm, ERB, Erlang, F#, Fish, Fortran, Git attributes, Git Commit, Gleam, GLSL, Go, GraphQL, Graphviz, Groovy, HAML, Handlebars, Haskell, Haxe, HCL, HTML, HTTP, Idris, Ignore, INI, Janet, Java, JavaScript, Jinja, JSON, Jsonnet, Julia, Just, KDL, Kotlin, LaTeX, Lean, Liquid, Lua, Makefile, Markdown, MATLAB, Mermaid, Meson, Mojo, Nginx, Nim, Ninja, Nix, Objective-C, OCaml, Odin, Org, Pascal, Perl, PHP, Pkl, PlantUML, PowerShell, Prisma, Prolog, Properties, Protocol Buffers, Pug, Puppet, PureScript, Python, R, Raku, Razor, Rego, reStructuredText, RON, Ruby, Rust, Scala, Shell, Slim, Solidity, SQL, SSH config, Starlark, Swift, Tcl, Thrift, TOML, Twig, TypeScript, Typst, V, Vala, Verilog, VHDL, Vim script, Visual Basic, XML, YAML, Zig.
 
 A grammar is a `name.syn` file in `~/.config/rhun/syntax/`; user grammars take precedence over built-in ones.
 
