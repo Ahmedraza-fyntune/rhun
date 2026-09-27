@@ -23,3 +23,7 @@ for kind in themes syntax; do
         j=$((j+1))
     done
 done
+# the version (VERSION) and whether this is a release build (RHUN_DIST=1, set by the release workflow)
+dist=0
+[ "${RHUN_DIST:-}" = 1 ] && dist=1
+printf '.globl rhun_version, rhun_dist\nrhun_version: .asciz "%s"\n.p2align 2\nrhun_dist: .long %d\n' "$(cat VERSION)" "$dist"

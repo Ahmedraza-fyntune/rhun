@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")/.."
 mkdir -p build/obj build/a64
 tools/gen-assets.sh > build/assets.s.new
-cmp -s build/assets.s.new build/assets.s || mv build/assets.s.new build/assets.s
+cmp -s build/assets.s.new build/assets.s || { mv build/assets.s.new build/assets.s; rm -f build/obj/build_assets.o; }
 MINOS=12.0
 ASFLAGS="-arch arm64 -mmacosx-version-min=$MINOS"
 
@@ -58,7 +58,8 @@ mkdir -p $app/MacOS $app/Resources
 # a new file, not rewritten in place: a running rhun keeps its code pages
 cp build/rhun $app/MacOS/rhun.new && mv -f $app/MacOS/rhun.new $app/MacOS/rhun
 [ -f assets/icons/rhun.icns ] && cp assets/icons/rhun.icns $app/Resources/rhun.icns
-sed "s/@VERSION@/$(sed -n 's/.*"rhun \([0-9.]*\).*/\1/p' src/main.s)/" assets/mac/Info.plist > $app/Info.plist
+# the bundle versions are numbers only: a prerelease suffix (-rc1) is left out
+sed "s/@VERSION@/$(sed "s/-.*//" VERSION)/" assets/mac/Info.plist > $app/Info.plist
 codesign -s - -f build/rhun.app 2>/dev/null
 if [ "$1" = test ]; then
     lib=$(echo $objs | tr ' ' '\n' | grep -v 'src_main.o')

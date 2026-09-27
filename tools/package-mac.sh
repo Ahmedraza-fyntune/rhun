@@ -18,7 +18,7 @@ if [ "$notarize" = 1 ] && ! xcrun notarytool history --keychain-profile "$profil
     echo "or run with RHUN_NOTARIZE=0 to sign only" >&2
     exit 1
 fi
-version=$(sed -n 's/.*"rhun \([0-9.]*\).*/\1/p' src/main.s)
+version=$(cat VERSION)
 app=build/rhun.app
 dmg=build/rhun-$version-macos-arm64.dmg
 

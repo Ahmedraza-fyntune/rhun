@@ -151,6 +151,10 @@ help_flag:
     test eax, eax
     jz 1f
     lea rdi, [rip + .Lversion]
+    call out_cstr
+    lea rdi, [rip + rhun_version]
+    call out_cstr
+    lea rdi, [rip + .Lnl]
     jmp 3f
 1:  mov rdi, rbx
     lea rsi, [rip + .Lo_help]
@@ -163,16 +167,20 @@ help_flag:
     test eax, eax
     jz 9f
 2:  lea rdi, [rip + .Lusage]
-3:  push rdi
-    call strlen
-    pop rsi
-    mov rdx, rax
-    mov edi, 1
-    call write_all
+3:  call out_cstr
     xor edi, edi
     call sys_exit
 9:  pop rbx
     ret
+
+# out_cstr(s): to stdout
+out_cstr:
+    push rdi
+    call strlen
+    pop rsi
+    mov rdx, rax
+    mov edi, 1
+    jmp write_all
 
 # RHUN_SCALE=1.5 sets the display scale where the platform doesn't report one
 scale_from_env:
@@ -278,7 +286,8 @@ open_initial:
 .Lo_help: .asciz "--help"
 .Lo_h: .asciz "-h"
 .Lo_version: .asciz "--version"
-.Lversion: .asciz "rhun 0.13.55\n"
+.Lversion: .asciz "rhun "
+.Lnl: .asciz "\n"
 .Lusage: .ascii "usage: rhun [folder] [files...]\n"
     .ascii "  --headless WxH   no display; use with --script or --control\n"
     .ascii "  --script FILE    run control commands from FILE and exit\n"

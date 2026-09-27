@@ -7,7 +7,7 @@ mkdir -p build/obj
 ASFLAGS="--64 -I src -I build"
 [ "$1" = release ] || ASFLAGS="$ASFLAGS -g"
 tools/gen-assets.sh > build/assets.s.new
-cmp -s build/assets.s.new build/assets.s || mv build/assets.s.new build/assets.s
+cmp -s build/assets.s.new build/assets.s || { mv build/assets.s.new build/assets.s; rm -f build/obj/build_assets.o; }
 objs=""
 for s in $(find src -name "*.s" ! -path "src/mac/*" | LC_ALL=C sort) build/assets.s; do
     o=build/obj/$(echo "$s" | sed 's|/|_|g; s|\.s$|.o|')
