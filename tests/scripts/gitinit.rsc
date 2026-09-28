@@ -9,6 +9,17 @@ print-scm
 key Return
 print-state
 type First
+key Escape
+# what scrolled out of the panel takes no clicks: here Commit All is under the tab strip
+resize 1400 260
+move 850 200
+scroll 600
+click 850 50
+wait-git
+print-state
+print-scm
+resize 1400 860
+key Return
 key ctrl+Return
 wait-git
 print-git

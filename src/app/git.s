@@ -405,7 +405,8 @@ FN git_fs_event
 FN git_run
     xor r9d, r9d
     jmp run_git
-# git_run_all(args, cb, ctx, input ptr, input len): git_run whose output has git's error messages too
+# git_run_all(args, cb, ctx, input ptr, input len): git_run whose output has git's error messages too, and
+#   that has no terminal to ask on (ssh fails instead of waiting for a password nobody sees)
 FN git_run_all
     mov r9d, 1
 run_git:

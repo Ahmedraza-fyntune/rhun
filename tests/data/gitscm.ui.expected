@@ -41,6 +41,10 @@ action=commit
 message=Merge branch 'main' of ../remote
     STAGED CHANGES
     M a.txt
+action=commit-all
+message=Merge branch 'main' of ../remote
+    CHANGES
+    M a.txt
 *  No uncommitted changes <
 *\ Merge branch 'main' of ../remote (HEAD -> main)
 *| Say uno

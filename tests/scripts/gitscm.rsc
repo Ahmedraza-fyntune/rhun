@@ -57,6 +57,12 @@ wait-git
 cmd git_stage_all
 wait-git
 print-scm
+# Unstage All keeps the merge going
+cmd git_unstage_all
+wait-git
+print-scm
+cmd git_stage_all
+wait-git
 cmd git_commit
 wait-git
 print-gitlog

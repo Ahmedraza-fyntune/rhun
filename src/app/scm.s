@@ -11,6 +11,7 @@
 .equ ID_SCM_GROUP, ID_SCM + 0x10        # + group * 4 + button
 .equ ID_SCM_FILE, ID_SCM + 0x100        # + file * 4 + button
 .equ MAX_LINES, 10                      # of the message shown at once
+.equ MAX_MSG, 60000                     # the message fits the pipe to git: rhun never waits to write it
 .equ ENABLED, 0x100                     # with the UB_* bits of a button that takes clicks
 
 # steps of an operation: what git runs (seq_*: steps, then 0)
@@ -62,7 +63,7 @@ pan: .zero 16                           # the panel: x, y, w, h
 in_x: .long 0                           # its content
 in_w: .long 0
 op: .long 0                             # OP_*
-no_rebase: .long 0                      # pull.rebase and pull.ff are not set: pull merges
+pull_merge: .long 0                     # neither pull.rebase nor pull.ff is set: pull merges
 scroll: .long 0
 content_h: .long 0
 merge_seen: .long 0                     # the merge's message went into the message box
@@ -92,6 +93,9 @@ commit:
     call ready
     test eax, eax
     jz 9f
+    lea rdi, [rip + .Llong]
+    cmp qword ptr [rip + tf_msg + TF_sb + SB_len], MAX_MSG
+    ja 8f
     call sync_list
     lea rsi, [rip + seq_amend]
     test ebx, ebx
@@ -170,8 +174,20 @@ FN cmd_git_discard_all
     lea rdi, [rip + .Lnothing_discard]
     call app_toast
     jmp 9f
-1:  lea rax, [rip + seq_discard_all]
-    mov [rip + confirm_seq], rax
+1:  # tracked files go back only when some changed (checkout fails with none to restore)
+    lea rax, [rip + seq_clean_all]
+    xor ecx, ecx
+2:  cmp rcx, [rip + list + VEC_len]
+    jae 4f
+    imul rdx, rcx, GF_SIZE
+    add rdx, [rip + list + VEC_ptr]
+    inc rcx
+    cmp dword ptr [rdx + GF_group], GG_CHANGES
+    jne 2b
+    cmp dword ptr [rdx + GF_code], 'U'
+    je 2b
+    lea rax, [rip + seq_discard_all]
+4:  mov [rip + confirm_seq], rax
     lea rdi, [rip + .Lq_all]
     lea rsi, [rip + .Lq_all_text]
     lea rdx, [rip + .Lb_discard_all]
@@ -529,10 +545,15 @@ run_step:
     mov rsi, r13
     call op_done
     EPILOGUE
-1:  # its arguments, then what the step adds
+1:  # its arguments, then what the step adds; a merge as configuration, so branch.<name>.rebase wins
     lea rax, [rip + step_args]
     mov rsi, [rax + rbx*8]
-    lea r13, [rip + argv]
+    cmp ebx, S_PULL
+    jne 11f
+    cmp dword ptr [rip + pull_merge], 0
+    je 11f
+    lea rsi, [rip + args_pull_merge]
+11: lea r13, [rip + argv]
 2:  mov rax, [rsi]
     test rax, rax
     jz 3f
@@ -563,15 +584,7 @@ run_step:
     mov r14, rax
     mov r15, rdx
     jmp 8f
-5:  cmp ebx, S_PULL
-    jne 6f
-    cmp dword ptr [rip + no_rebase], 0
-    je 8f
-    lea rax, [rip + .Lno_rebase]
-    mov [r13], rax
-    add r13, 8
-    jmp 8f
-6:  cmp ebx, S_PUBLISH
+5:  cmp ebx, S_PUBLISH
     jne 7f
     lea rax, [rip + remote]
     mov [r13], rax
@@ -598,8 +611,15 @@ run_step:
     xor edx, edx
     mov rcx, r14
     mov r8, r15
+    # the steps whose output is read take it without git's messages
+    cmp ebx, S_REMOTES
+    je 81f
+    cmp ebx, S_PULL_CFG
+    je 81f
     call git_run_all
-    test eax, eax
+    jmp 82f
+81: call git_run
+82: test eax, eax
     jnz 9f
     lea rdi, [rip + .Le_failed]
     call fail_with
@@ -621,14 +641,10 @@ on_step:
     xor eax, eax
     test r14d, r14d
     setnz al
-    mov [rip + no_rebase], eax
+    mov [rip + pull_merge], eax
     xor r14d, r14d
     jmp 5f
-1:  cmp ebx, S_CHECKOUT_ALL
-    jne 2f
-    xor r14d, r14d              # nothing tracked to restore is no failure
-    jmp 5f
-2:  cmp ebx, S_REMOTES
+1:  cmp ebx, S_REMOTES
     jne 5f
     test r14d, r14d
     jnz 5f
@@ -939,9 +955,14 @@ FN scm_draw
     call pan_args
     call ui_in
     mov [rsp], eax              # the pointer is over the panel
+    # else what scrolled out of it takes no clicks (the clip only cuts the drawing)
+    mov ecx, [rip + g_block]
+    mov [rsp + 4], ecx
     test eax, eax
-    jz 1f
-    mov eax, [rip + g_scroll_y]
+    jnz 10f
+    mov dword ptr [rip + g_block], 1
+    jmp 1f
+10: mov eax, [rip + g_scroll_y]
     add [rip + scroll], eax
 1:  mov eax, [rip + content_h]
     sub eax, [rip + pan + 12]
@@ -1033,6 +1054,8 @@ FN scm_draw
     add eax, [rip + g_mt + 4*MI_8]
     mov [rip + content_h], eax
     call gfx_clip_pop
+    mov eax, [rsp + 4]
+    mov [rip + g_block], eax
     mov eax, [rip + pan + 12]
     push rax
     mov eax, [rip + content_h]
@@ -1884,6 +1907,7 @@ FN scm_dump_files
 .Lnothing: .asciz "No changes to commit"
 .Lnothing_discard: .asciz "No changes to discard"
 .Lno_message: .asciz "Type a commit message first"
+.Llong: .asciz "The commit message is too long"
 .Lno_remote: .asciz "No remote to publish to: add one with git remote add"
 .Le_rejected: .asciz "Push rejected: pull first to bring in the remote's changes"
 .Le_conflict: .asciz "Merge conflicts: resolve them, stage the files, then commit"
@@ -1970,7 +1994,8 @@ FN scm_dump_files
 .Lget_regexp: .asciz "--get-regexp"
 .Lpull_keys: .asciz "^pull\\.(rebase|ff)$"
 .Lpull: .asciz "pull"
-.Lno_rebase: .asciz "--no-rebase"
+.Lpull_merge: .asciz "pull.rebase=false"
+.Ldash_c: .asciz "-c"
 .Lpush: .asciz "push"
 .Ldash_u: .asciz "-u"
 .Lremote: .asciz "remote"
@@ -1989,19 +2014,21 @@ args_commit: .quad .Lcommit, .Ldash_q, .Ldash_f, .Ldash, 0
 args_amend: .quad .Lcommit, .Ldash_q, .Lamend, 0
 args_pull_cfg: .quad .Lconfig, .Lget_regexp, .Lpull_keys, 0
 args_pull: .quad .Lpull, .Lno_edit, 0
+args_pull_merge: .quad .Ldash_c, .Lpull_merge, .Lpull, .Lno_edit, 0
 args_push: .quad .Lpush, 0
 args_remote: .quad .Lremote, 0
 args_publish: .quad .Lpush, .Ldash_u, 0
 args_fetch: .quad .Lfetch, 0
 args_add: .quad .Ladd, .Ldash_a, 0
 args_reset: .quad .Lreset, .Ldash_q, 0
+args_reset_all: .quad .Lreset, .Ldash_q, .Ldashdash, .Ldot, 0
 args_checkout: .quad .Lcheckout, .Ldash_q, 0
 args_checkout_all: .quad .Lcheckout, .Ldash_q, .Ldashdash, .Ldot, 0
 args_clean: .quad .Lclean, .Lforce, .Ldash_d, .Ldash_q, 0
 # by S_*
 step_args:
     .quad 0, args_add_all, args_commit, args_amend, args_pull_cfg, args_pull, args_push, args_remote
-    .quad args_publish, args_fetch, args_add, args_reset, args_reset, args_checkout, args_checkout_all
+    .quad args_publish, args_fetch, args_add, args_reset, args_reset_all, args_checkout, args_checkout_all
     .quad args_clean, args_clean
 # by OP_*
 done_toasts:
@@ -2041,3 +2068,4 @@ seq_unstage_all: .byte S_RESET_ALL, 0
 seq_discard: .byte S_CHECKOUT, 0
 seq_discard_new: .byte S_CLEAN, 0
 seq_discard_all: .byte S_CHECKOUT_ALL, S_CLEAN_ALL, 0
+seq_clean_all: .byte S_CLEAN_ALL, 0
