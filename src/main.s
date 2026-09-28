@@ -387,6 +387,7 @@ open_initial:
     jne 6f
     call session_restore
 6:  call app_update_title
+    mov dword ptr [rip + g_started], 1
     EPILOGUE
 
 .section .rodata

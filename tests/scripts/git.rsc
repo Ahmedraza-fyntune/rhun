@@ -1,5 +1,5 @@
 # git: status, change marks, diff views, history, refresh after a commit, the setting
-open @HOME@/repo
+# start: @HOME@/repo
 wait-git
 print-git
 open @HOME@/repo/a.txt
