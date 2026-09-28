@@ -213,6 +213,19 @@ FN file_mtime
 1:  xor eax, eax
     ret
 
+# file_mtime_ns(path) -> when it was last written, in nanoseconds since the epoch (0 on error)
+FN file_mtime_ns
+    lea rsi, [rip + stat_buf]
+    SYS SYS_lstat
+    test rax, rax
+    js 1f
+    mov rax, [rip + stat_buf + 88]
+    imul rax, rax, 1000000000
+    add rax, [rip + stat_buf + 96]
+    ret
+1:  xor eax, eax
+    ret
+
 # file_is_dir(path) -> 1/0
 FN file_is_dir
     lea rsi, [rip + stat_buf]
