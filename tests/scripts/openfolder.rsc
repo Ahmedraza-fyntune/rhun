@@ -1,6 +1,6 @@
 # Open Folder and the project menu: the window takes up another folder, asking about unsaved files
 # first; each folder comes back with its last session. The menu lists the recent folders.
-open @HOME@/work/alpha
+# start: @HOME@/work/alpha
 open @HOME@/work/alpha/a.txt
 type x
 cmd open_folder

@@ -1,6 +1,6 @@
 # Open File: a browser from the project folder. Enter goes into a folder, Backspace past a / goes up,
 # hidden entries need a leading dot, Tab takes a name; a file outside the project opens in a tab
-open @HOME@/work/alpha
+# start: @HOME@/work/alpha
 cmd open_file
 print-palette
 type s

@@ -3149,8 +3149,9 @@ g_win_focused: .long 1
 .p2align 3
 g_tab_cur: .quad -1
 .bss
-.globl g_settings_changed
+.globl g_settings_changed, g_started
 g_settings_changed: .long 0
+g_started: .long 0              # the command line is open: later folders switch the project
 g_tabscroll_reveal: .long 0
 
 .text
@@ -3185,8 +3186,16 @@ FN app_open_path
     call file_is_dir
     test eax, eax
     jz 3f
+    # once started, a folder (Finder, the Dock, :e, open) takes up the window the way Open Folder
+    # does: the project's session is saved and its unsaved files are asked about first
     mov rdi, rbx
-    call app_set_project
+    cmp dword ptr [rip + g_started], 0
+    je 21f
+    cmp qword ptr [rip + g_project], 0
+    je 21f
+    call app_switch_project
+    jmp 8f
+21: call app_set_project
     jmp 8f
 3:  mov rdi, rbx
     call app_open_file
