@@ -555,8 +555,17 @@ F GF_path, 8
 F GF_code, 4
 F GF_add, 4             # lines added, -1 binary, -2 unknown
 F GF_del, 4
-F GF_pad, 4
+F GF_group, 4           # work tree: GG_*
 ENDSTRUCT GF_SIZE
+# groups of the work tree's changes, in the order they are shown
+.equ GG_MERGE, 1                # conflicts
+.equ GG_STAGED, 2
+.equ GG_CHANGES, 3              # not staged, untracked
+
+# what HEAD is (g_git_head)
+.equ HD_BRANCH, 0
+.equ HD_DETACHED, 1
+.equ HD_UNBORN, 2               # a branch without commits yet
 
 # git state of a document
 .equ GS_NONE, 0
@@ -622,13 +631,15 @@ ENDSTRUCT UR_SIZE
 .equ UB_RPRESS, 16
 .equ UB_DOUBLE, 32
 
-# single-line text field
+# single-line text field (a text area has lines)
 STRUCT
 F TF_sb, SB_SIZE
 F TF_cur, 8
 F TF_anchor, 8
 F TF_scroll, 4
 F TF_id, 4
+F TF_top, 4             # text area: the first line shown
+F TF_pad, 4
 ENDSTRUCT TF_SIZE
 
 # icons
@@ -660,7 +671,10 @@ ENDSTRUCT TF_SIZE
 .equ IC_WORD, 25
 .equ IC_RUNE, 26                # the app mark (Raido)
 .equ IC_BRANCH, 27
-.equ IC_COUNT, 28
+.equ IC_ARROW_UP, 28
+.equ IC_MINUS, 29
+.equ IC_DISCARD, 30
+.equ IC_COUNT, 31
 
 # ---- images ----
 .equ IMF_PNG, 1
@@ -702,6 +716,7 @@ ENDSTRUCT TAB_SIZE
 .equ FOCUS_AGENTS, 6
 .equ FOCUS_PROMPT, 7
 .equ FOCUS_TERMINAL, 8
+.equ FOCUS_SCM, 9               # the commit message
 
 # grammar (syntax definition)
 STRUCT

@@ -35,8 +35,13 @@ g_toast_until: .quad 0
 g_tabscroll: .long 0
 g_side_px: .long 0
 g_agents_px: .long 0
-dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project
+dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm
 dlg_tab: .quad 0
+.p2align 3
+dlg_title: .quad 0               # app_confirm: the question, a line under it, the button, its function
+dlg_text: .quad 0
+dlg_ok: .quad 0
+dlg_fn: .quad 0
 switch_pending: .long 0          # a project switch waits on unsaved files
 switch_path: .zero 4096
 .p2align 3
@@ -825,7 +830,14 @@ FN app_on_paste
     call vim_paste
     test eax, eax
     jnz 9f
+    # the commit message keeps line breaks
+    cmp dword ptr [rip + g_focus], FOCUS_SCM
+    jne 0f
     mov rdi, rbx
+    mov rsi, r12
+    call scm_paste
+    jmp 9f
+0:  mov rdi, rbx
     mov rsi, r12
     call focused_field
     test rax, rax
@@ -959,11 +971,20 @@ FN app_on_key
     jnz 9f
     jmp .Lk_bind
 7:  cmp eax, FOCUS_TERMINAL
-    jne .Lk_bind
+    jne 71f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call term_panel_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+71: cmp eax, FOCUS_SCM
+    jne .Lk_bind
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call scm_key
     test eax, eax
     jnz 9f
 .Lk_bind:
@@ -2672,7 +2693,13 @@ FN dialog_draw
     # title
     lea rdi, [rip + tmp_sb]
     call sb_clear
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 1f
     lea rdi, [rip + tmp_sb]
+    mov rsi, [rip + dlg_title]
+    call sb_push_cstr
+    jmp 2f
+1:  lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Ldlg_q]
     call sb_push_cstr
     mov rdi, [rip + dlg_tab]
@@ -2684,6 +2711,11 @@ FN dialog_draw
     lea rdi, [rip + tmp_sb]
     mov esi, '?'
     call sb_push_byte
+2:  mov eax, r12d
+    sub eax, [rip + g_mt + 4*MI_40]
+    push rax
+    COLOR eax, T_FG
+    push rax
     lea rdi, [rip + g_face_ui]
     mov esi, r14d
     add esi, [rip + g_mt + 4*MI_20]
@@ -2691,15 +2723,19 @@ FN dialog_draw
     add edx, [rip + g_mt + 4*MI_16]
     M ecx, MI_24
     mov r8, [rip + tmp_sb + SB_ptr]
-    COLOR r9d, T_FG
-    call ui_text_c
-    lea rdi, [rip + g_face_small]
+    mov r9, [rip + tmp_sb + SB_len]
+    call ui_text_v_fit
+    add rsp, 16
+    lea r8, [rip + .Ldlg_msg]
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 3f
+    mov r8, [rip + dlg_text]
+3:  lea rdi, [rip + g_face_small]
     mov esi, r14d
     add esi, [rip + g_mt + 4*MI_20]
     mov edx, r15d
     add edx, [rip + g_mt + 4*MI_40]
     M ecx, MI_24
-    lea r8, [rip + .Ldlg_msg]
     COLOR r9d, T_MUTED
     call ui_text_c
     # buttons: Save (primary), Don't Save, Cancel
@@ -2721,7 +2757,15 @@ FN dialog_draw
     jae .Ldd_ret
     lea rax, [rip + dlg_labels]
     mov r13, [rax + rcx*8]
-    mov rdi, r13
+    # a question: Cancel and its button
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 0f
+    cmp ecx, 1
+    je 4f
+    cmp ecx, 2
+    jne 0f
+    mov r13, [rip + dlg_ok]
+0:  mov rdi, r13
     call strlen
     lea rdi, [rip + g_face_ui]
     mov rsi, r13
@@ -2786,14 +2830,20 @@ FN dialog_draw
 .Ldd_ret:
     EPILOGUE
 
-# dialog_choose(i): 0 cancel, 1 don't save, 2 save
+# dialog_choose(i): 0 cancel, 1 don't save, 2 save (or app_confirm's button)
 dialog_choose:
     PROLOGUE
     mov ebx, edi
     mov r12d, [rip + dlg_kind]
     mov dword ptr [rip + dlg_kind], 0
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
-    test ebx, ebx
+    cmp r12d, 4
+    jne 0f
+    cmp ebx, 2
+    jne 9f
+    call [rip + dlg_fn]
+    jmp 9f
+0:  test ebx, ebx
     jz 8f
     cmp ebx, 2
     jne 1f
@@ -2837,6 +2887,18 @@ dialog_key:
     mov edi, 2
     jmp dialog_choose
 2:  ret
+
+# app_confirm(question cstr, line cstr, button cstr, fn): a dialog with Cancel and the button, which calls
+#   fn; the strings must last while it is open
+FN app_confirm
+    mov [rip + dlg_title], rdi
+    mov [rip + dlg_text], rsi
+    mov [rip + dlg_ok], rdx
+    mov [rip + dlg_fn], rcx
+    mov dword ptr [rip + dlg_kind], 4
+    mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    mov dword ptr [rip + g_dirty], 1
+    ret
 
 # ---------------- toast ----------------
 

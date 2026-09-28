@@ -249,16 +249,20 @@ FN proc_wait
 FN run_piped
     xor ecx, ecx
     xor r8d, r8d
+    xor r9d, r9d
     jmp run_piped_input
 
-# run_piped_input(argv, envp, cwd, ptr, len): run_piped with ptr/len (at most 60 KiB) on the program's input
+# run_piped_input(argv, envp, cwd, ptr, len, errors): run_piped with ptr/len (at most 60 KiB) on the
+#   program's input; errors 1 sends its error output down the same pipe (else it goes to /dev/null) and
+#   runs it in a session of its own, without a terminal to ask for passwords on
 FN run_piped_input
-    PROLOGUE 32
+    PROLOGUE 48
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
     mov [rsp + 16], rcx
     mov [rsp + 24], r8
+    mov [rsp + 32], r9d
     mov dword ptr [rsp + 8], -1         # input pipe
     mov dword ptr [rsp + 12], -1
     lea rdi, [rip + .Ldevnull]
@@ -288,8 +292,12 @@ FN run_piped_input
     mov ecx, r15d
     mov r8d, [rsp + 4]
     mov r9d, ebx
-    push 0
-    push 0
+    cmp dword ptr [rsp + 32], 0
+    je 11f
+    mov r9d, r8d
+11: mov eax, [rsp + 32]
+    push rax
+    push rax
     call proc_spawn
     add rsp, 16
     mov r15, rax
