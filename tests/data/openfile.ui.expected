@@ -29,3 +29,4 @@ field=~/work/alpha/
   a.txt
   b.txt
 none
+tabs=2 active=todo.txt line=1 col=1 sel=0 dirty=0 lang=none focus=0 theme=rhun-dark

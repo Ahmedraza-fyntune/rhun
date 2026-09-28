@@ -1126,14 +1126,17 @@ browse_filter:
     mov rdi, [rsp + 8]
     mov rsi, rbx
     call rs_flip
-6:  # the selection: the leading row, or the best match of a query
+6:  # the selection: the leading row, or the best match of a query; a query that matches nothing
+    # leaves no rows, so Enter can't open the folder above a typo
     xor eax, eax
     test r14, r14
     jz 7f
     mov rcx, [rsp]
     cmp [rip + results + VEC_len], rcx
-    jbe 7f
-    mov eax, ecx
+    ja 61f
+    mov qword ptr [rip + results + VEC_len], 0
+    jmp 7f
+61: mov eax, ecx
 7:  mov [rip + pal_sel], eax
     EPILOGUE
 

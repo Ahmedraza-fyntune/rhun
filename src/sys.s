@@ -229,6 +229,20 @@ FN file_is_dir
 1:  xor eax, eax
     ret
 
+# file_type(path) -> the S_IFMT bits of its mode (0x8000 a regular file, 0x4000 a folder...), 0 if
+# missing; follows symlinks
+FN file_type
+    lea rsi, [rip + stat_buf]
+    mov eax, 4          # stat (follows symlinks)
+    syscall
+    test rax, rax
+    js 1f
+    mov eax, [rip + stat_buf + 24]
+    and eax, 0xf000
+    ret
+1:  xor eax, eax
+    ret
+
 # file_read_all(path) -> rax=ptr (NUL-terminated, mem_alloc'd) rdx=len; rax=0, rdx=-errno on error
 FN file_read_all
     PROLOGUE

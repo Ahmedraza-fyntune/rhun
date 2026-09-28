@@ -174,8 +174,9 @@ FN app_switch_project
     lea rdi, [rip + switch_path]
     mov rsi, rbx
     call cstr_copy
-    # before the questions: an answer closes that file
+    # before the questions: an answer closes that file, and a quit meanwhile must not save again
     call session_save
+    mov dword ptr [rip + g_session_final], 1
     mov dword ptr [rip + switch_pending], 1
     call switch_continue
 9:  EPILOGUE
@@ -215,6 +216,8 @@ switch_continue:
     mov byte ptr [rip + g_explorer_target], 0
     lea rdi, [rip + switch_path]
     call app_set_project
+    # the new project saves its own session
+    mov dword ptr [rip + g_session_final], 0
     call session_restore
     call app_update_title
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
@@ -390,7 +393,19 @@ FN app_open_file
     call app_activate_tab
     mov rax, rbx
     EPILOGUE
-1:  mov r14d, TAB_DOC
+1:  # regular files only: opening a pipe or a device blocks until the other end comes (a missing
+    # file can still be created)
+    mov rdi, r12
+    call file_type
+    test eax, eax
+    jz 12f
+    cmp eax, 0x8000
+    je 12f
+    lea rdi, [rip + .Lnot_regular]
+    call app_toast
+    mov rax, -1
+    EPILOGUE
+12: mov r14d, TAB_DOC
     call doc_new
     mov rbx, rax
     # images open in an image tab, decoded when first shown
@@ -3063,6 +3078,7 @@ FN cmd_move_line_down
 .Ldash: .asciz " \342\200\224 "
 .Lbinary: .asciz "Binary file, not opened"
 .Lopen_failed: .asciz "Could not read the file"
+.Lnot_regular: .asciz "Not a regular file, not opened"
 .Lsaved: .asciz "Saved"
 .Lsave_failed: .asciz "Could not save the file"
 .Lsave_as: .asciz "Save as"

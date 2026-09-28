@@ -35,5 +35,7 @@ tabs=1 active=a.txt line=1 col=2 sel=0 dirty=0 lang=none focus=0 theme=rhun-dark
 xone
 
 <eod>
+field=~/work/alpha/zz
+project=~/work/alpha
 project=~/work/Gamma
 tabs=0 focus=0 theme=rhun-dark

@@ -8,3 +8,4 @@ printf 'int main(void)\n{\n    return 0;\n}\n' > work/alpha/src/main.c
 echo b > work/alpha/b.txt
 echo readme > work/beta/readme.md
 echo todo > notes/todo.txt
+mkfifo pipe

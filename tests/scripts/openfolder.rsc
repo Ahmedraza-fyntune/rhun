@@ -33,6 +33,13 @@ click 100 134
 print-project
 print-state
 print-doc
+# a name that matches nothing leaves no row: Enter does not take up the folder above it
+cmd open_folder
+type zz
+print-palette
+key Return
+print-project
+key Escape
 # Ctrl+Enter opens the selected folder instead of going into it
 cmd open_folder
 key BackSpace

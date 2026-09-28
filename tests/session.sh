@@ -1,6 +1,7 @@
 #!/bin/sh
 # The session remembers the open files when rhun quits, also those it asked about before quitting
-# (each answer closes that file), and a quit that was cancelled leaves the next one to save it.
+# (each answer closes that file), and a quit that was cancelled leaves the next one to save it; a quit
+# while a folder switch asks keeps the session the switch saved.
 set -u
 cd "$(dirname "$0")/.."
 w=$(mktemp -d)
@@ -26,9 +27,20 @@ fresh
 run asked "open $w/p/a.txt" 'type x' "open $w/p/b.txt" 'type y' "open $w/p/c.txt" \
     'cmd quit' 'key Return' 'click 466 295'
 check asked "tabs=3 active=c.txt"
+if [ "$(cat "$w/p/a.txt")" = xa ] && [ "$(cat "$w/p/b.txt")" = b ]; then echo "ok   session/answers"
+else echo "FAIL session/answers: a.txt '$(cat "$w/p/a.txt")', b.txt '$(cat "$w/p/b.txt")'"; fail=1; fi
 
 # Cancel: no quit, and the next quit saves the session as it is then
 fresh
-run cancelled "open $w/p/a.txt" 'type x' 'cmd quit' 'key Escape' "open $w/p/b.txt" "open $w/p/c.txt" quit
+run cancelled "open $w/p/a.txt" 'type x' 'cmd quit' 'key Escape' print-window "open $w/p/b.txt" "open $w/p/c.txt" quit
+if grep -q ' quit=0 ' "$w/cancelled"; then echo "ok   session/kept-running"; else echo "FAIL session/kept-running"; fail=1; fi
 check cancelled "tabs=3 active=c.txt"
+
+# a quit while switching folders asks: Save for the first file, then the quit keeps the session the
+# switch saved before its first question
+fresh
+mkdir -p "$w/q"
+run switching "open $w/p/a.txt" 'type x' "open $w/p/b.txt" 'type y' "open $w/p/c.txt" \
+    'cmd open_folder' 'key ctrl+a' "type $w/q/" 'key Return' 'key Return' 'cmd quit' 'key Return'
+check switching "tabs=3 active=c.txt"
 exit $fail

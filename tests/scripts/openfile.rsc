@@ -30,4 +30,7 @@ click 100 94
 print-palette
 key Escape
 print-palette
+# a pipe is not opened: that would wait for a writer
+open @HOME@/pipe
+print-state
 quit
