@@ -1397,7 +1397,17 @@ scan_region_end:
     movzx eax, byte ptr [r12 + r11]
     cmp eax, r10d
     jne 2f
-    add r11, 2
+    # an escape that is the end doubles: only a second one right after it escapes
+    movzx ecx, byte ptr [r15 + REG_end]
+    cmp eax, ecx
+    jne 7f
+    lea rax, [r11 + 1]
+    cmp rax, r13
+    jae 2f
+    movzx ecx, byte ptr [r12 + rax]
+    cmp ecx, r10d
+    jne 2f
+7:  add r11, 2
     jmp 1b
 2:  push r9
     push r10

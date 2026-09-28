@@ -2,7 +2,12 @@ name = C#
 files = *.cs *.csx
 comment = //
 block = /* */
-region = @" " string multiline
+region = """" """" string multiline
+region = """ """ string multiline
+region = $"""" """" string multiline
+region = $""" """ string multiline
+region = @" " string multiline escape="
+region = @$" " string multiline escape="
 region = $" " string escape=\
 string = " \
 string = ' \
