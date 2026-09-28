@@ -1,12 +1,57 @@
 # remembers the open files of a project (~/.local/state/rhun/<project path>.session)
 .include "rhun.inc"
 
+.equ RECENT_MAX, 9
+
 .bss
 .p2align 3
 path_sb: .zero SB_SIZE
 out: .zero SB_SIZE
+rc_dir: .zero SB_SIZE
+recent_time: .zero 8 * RECENT_MAX
+recent_n: .long 0
+rc_path: .zero 4096
+.globl g_session_final
+g_session_final: .long 0        # saved for quitting: later saves would miss the files asked about
+.globl g_recent_path, g_recent_label
+g_recent_path: .zero 4096 * RECENT_MAX
+g_recent_label: .zero 4096 * RECENT_MAX
 
 .text
+
+# state_dir(sb) -> 1 with "$XDG_STATE_HOME/rhun" (or "$HOME/.local/state/rhun") in sb, created;
+# 0 without a home
+state_dir:
+    PROLOGUE
+    mov rbx, rdi
+    call sb_clear
+    lea rdi, [rip + .Lstate]
+    call getenv
+    test rax, rax
+    jz 1f
+    mov rdi, rbx
+    mov rsi, rax
+    call sb_push_cstr
+    jmp 2f
+1:  lea rdi, [rip + .Lhome]
+    call getenv
+    test rax, rax
+    jz 8f
+    mov rdi, rbx
+    mov rsi, rax
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + .Llocal_state]
+    call sb_push_cstr
+2:  mov rdi, rbx
+    lea rsi, [rip + .Lrhun_dir]
+    call sb_push_cstr
+    mov rdi, [rbx + SB_ptr]
+    call mkdir_p
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # session_file() -> cstr path for the current project, or 0
 session_file:
@@ -16,29 +61,10 @@ session_file:
     mov rbx, [rip + g_project]
     test rbx, rbx
     jz 8f
-    lea rdi, [rip + .Lstate]
-    call getenv
-    test rax, rax
-    jz 1f
     lea rdi, [rip + path_sb]
-    mov rsi, rax
-    call sb_push_cstr
-    jmp 2f
-1:  lea rdi, [rip + .Lhome]
-    call getenv
-    test rax, rax
+    call state_dir
+    test eax, eax
     jz 8f
-    lea rdi, [rip + path_sb]
-    mov rsi, rax
-    call sb_push_cstr
-    lea rdi, [rip + path_sb]
-    lea rsi, [rip + .Llocal_state]
-    call sb_push_cstr
-2:  lea rdi, [rip + path_sb]
-    lea rsi, [rip + .Lrhun_dir]
-    call sb_push_cstr
-    mov rdi, [rip + path_sb + SB_ptr]
-    call mkdir_p
     lea rdi, [rip + path_sb]
     mov esi, '/'
     call sb_push_byte
@@ -60,11 +86,137 @@ session_file:
 8:  xor eax, eax
     EPILOGUE
 
+# session_recent() -> count: the folders of the latest sessions into g_recent_path, newest first,
+# and as shown (the home folder as ~) into g_recent_label. The open project and folders that are
+# gone are left out.
+FN session_recent
+    PROLOGUE
+    mov dword ptr [rip + recent_n], 0
+    lea rdi, [rip + rc_dir]
+    call state_dir
+    test eax, eax
+    jz 9f
+    mov rdi, [rip + rc_dir + SB_ptr]
+    lea rsi, [rip + recent_cb]
+    xor edx, edx
+    call dir_each
+    xor ebx, ebx
+1:  cmp ebx, [rip + recent_n]
+    jae 9f
+    mov eax, ebx
+    shl eax, 12
+    lea rdi, [rip + g_recent_label]
+    add rdi, rax
+    lea rsi, [rip + g_recent_path]
+    add rsi, rax
+    call path_tilde
+    inc ebx
+    jmp 1b
+9:  mov eax, [rip + recent_n]
+    EPILOGUE
+
+# recent_cb(ctx, name, is_dir): a session file ("%home%me%project.session") ranks its folder by
+# when it was written
+recent_cb:
+    PROLOGUE
+    mov r12, rsi
+    test edx, edx
+    jnz 9f
+    mov rdi, rsi
+    call strlen
+    mov r13, rax
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lext]
+    mov ecx, 8
+    call str_ends
+    test eax, eax
+    jz 9f
+    sub r13, 8
+    jz 9f
+    cmp r13, 4000
+    ja 9f
+    cmp byte ptr [r12], '%'
+    jne 9f
+    # the folder: every % was a /
+    lea rdi, [rip + rc_path]
+    xor ecx, ecx
+1:  cmp rcx, r13
+    jae 2f
+    mov al, [r12 + rcx]
+    cmp al, '%'
+    jne 11f
+    mov al, '/'
+11: mov [rdi + rcx], al
+    inc rcx
+    jmp 1b
+2:  mov byte ptr [rdi + rcx], 0
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 3f
+    call strcmp_eq
+    test eax, eax
+    jnz 9f
+3:  lea rdi, [rip + rc_path]
+    call file_is_dir
+    test eax, eax
+    jz 9f
+    mov rdi, [rip + rc_dir + SB_ptr]
+    mov rsi, r12
+    call path_join_tmp
+    mov rdi, rax
+    call file_mtime
+    mov r14, rax
+    # its place: before the first older one
+    mov ebx, [rip + recent_n]
+    xor r15d, r15d
+4:  cmp r15d, ebx
+    jae 5f
+    lea rdx, [rip + recent_time]
+    cmp r14, [rdx + r15*8]
+    ja 5f
+    inc r15d
+    jmp 4b
+5:  cmp r15d, RECENT_MAX
+    jae 9f
+    lea eax, [rbx + 1]
+    cmp eax, RECENT_MAX
+    jbe 6f
+    mov eax, RECENT_MAX
+6:  mov [rip + recent_n], eax
+    # the later ones move down; past RECENT_MAX the oldest falls off
+    lea r13d, [rax - 1]
+7:  cmp r13d, r15d
+    jbe 8f
+    lea rdx, [rip + recent_time]
+    mov rax, [rdx + r13*8 - 8]
+    mov [rdx + r13*8], rax
+    mov eax, r13d
+    shl eax, 12
+    lea rdi, [rip + g_recent_path]
+    add rdi, rax
+    lea rsi, [rdi - 4096]
+    mov edx, 4096
+    call memcpy
+    dec r13d
+    jmp 7b
+8:  lea rdx, [rip + recent_time]
+    mov [rdx + r15*8], r14
+    mov eax, r15d
+    shl eax, 12
+    lea rdi, [rip + g_recent_path]
+    add rdi, rax
+    lea rsi, [rip + rc_path]
+    call cstr_copy
+9:  EPILOGUE
+
 # session_save(): "path<TAB>cursor" per open file, "*" marks the active one
 FN session_save
     PROLOGUE
     cmp dword ptr [rip + cfg_restore_session], 0
     je 9f
+    cmp dword ptr [rip + g_session_final], 0
+    jne 9f
     call session_file
     test rax, rax
     jz 9f

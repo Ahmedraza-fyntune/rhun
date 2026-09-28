@@ -26,11 +26,11 @@ for s in tests/scripts/*.rsc; do
         home=$tmp/home-$n
         cp -r "tests/data/$n.home" "$home"
     fi
-    # tests/data/NAME.setup: a script that fills that HOME
+    # tests/data/NAME.setup: a script that fills that HOME (and gets the state directory too)
     if [ -f "tests/data/$n.setup" ]; then
         home=$tmp/home-$n
         mkdir -p "$home"
-        sh "tests/data/$n.setup" "$home" > /dev/null
+        sh "tests/data/$n.setup" "$home" "$tmp/state-$n" > /dev/null
     fi
     sed "s|@HOME@|$home|g" "$s" > "$tmp/$n.rsc"
     status=0

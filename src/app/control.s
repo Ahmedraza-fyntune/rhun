@@ -1,7 +1,8 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
 #   key ctrl+s | type text | click x y [right|middle] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
-#   wait-git | print-git | print-gitlog | wait-update | print-update
+#   wait-git | print-git | print-gitlog | wait-update | print-update | print-project | print-palette
+#   print-menu
 .include "rhun.inc"
 
 .bss
@@ -535,6 +536,39 @@ c_print_git:
 c_print_gitlog:
     lea rdi, [rip + out]
     call gitview_dump
+    xor eax, eax
+    ret
+
+# print-project: the project folder (the home folder as ~)
+c_print_project:
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_project]
+    call sb_push_cstr
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 1f
+    lea rdi, [rip + pp_buf]
+    call path_tilde
+    lea rdi, [rip + out]
+    lea rsi, [rip + pp_buf]
+    call sb_push_cstr
+1:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    ret
+
+# print-palette: the palette's field and rows
+c_print_palette:
+    lea rdi, [rip + out]
+    call palette_print
+    xor eax, eax
+    ret
+
+# print-menu: the open context menu's items
+c_print_menu:
+    lea rdi, [rip + out]
+    call menu_print
     xor eax, eax
     ret
 
@@ -1097,6 +1131,10 @@ on_client:
 .Lc_wait_update: .asciz "wait-update"
 .Lc_print_update: .asciz "print-update"
 .Lc_print_frames: .asciz "print-frames"
+.Lc_print_project: .asciz "print-project"
+.Lc_print_palette: .asciz "print-palette"
+.Lc_print_menu: .asciz "print-menu"
+.Ls_project: .asciz "project="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
 .Ls_hidden: .asciz " hidden"
@@ -1118,7 +1156,8 @@ ctl_table:
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
-    .quad .Lc_print_frames, c_print_frames, 0, 0
+    .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
+    .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu, 0, 0
 
 .data
 lsock: .long -1
@@ -1127,3 +1166,4 @@ oc_next: .long -1               # a client that came while oc_busy
 .bss
 .p2align 3
 pc_xc: .zero XC_SIZE
+pp_buf: .zero 4096

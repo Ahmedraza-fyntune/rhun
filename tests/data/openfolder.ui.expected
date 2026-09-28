@@ -1,0 +1,41 @@
+field=~/work/alpha/
+> Open ~/work/alpha
+  src/
+field=~/work/alpha/../
+> Open ~/work
+  alpha/
+  beta/
+  Gamma/
+field=~/work/alpha/../b
+  Open ~/work
+> beta/
+field=~/work/beta/
+> Open ~/work/beta
+tabs=1 active=a.txt line=1 col=2 sel=0 dirty=1 lang=none focus=5 theme=rhun-dark
+project=~/work/alpha
+tabs=1 active=a.txt line=1 col=2 sel=0 dirty=1 lang=none focus=0 theme=rhun-dark
+Open Folder…
+Open File…
+-
+~/work/Gamma
+~/notes
+~/work/beta
+none
+tabs=1 active=a.txt line=1 col=2 sel=0 dirty=1 lang=none focus=5 theme=rhun-dark
+project=~/notes
+tabs=0 focus=0 theme=rhun-dark
+Open Folder…
+Open File…
+-
+~/work/alpha
+~/work/Gamma
+~/work/beta
+project=~/work/alpha
+tabs=1 active=a.txt line=1 col=2 sel=0 dirty=0 lang=none focus=0 theme=rhun-dark
+xone
+
+<eod>
+field=~/work/alpha/zz
+project=~/work/alpha
+project=~/work/Gamma
+tabs=0 focus=0 theme=rhun-dark

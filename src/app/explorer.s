@@ -37,6 +37,9 @@ g_exp_reveal: .long 0             # reveal the active file on the next draw
 g_explorer_dir: .zero 4096
 g_explorer_target: .zero 4096
 g_menu_cmd: .long 0               # a context menu item is running
+.globl g_menu_keys, g_menu_index
+g_menu_keys: .long 0              # the open menu shows its commands' shortcuts
+g_menu_index: .long 0             # the item that was clicked, while its handler runs
 delete_label: .zero 256
 
 .text
@@ -516,11 +519,6 @@ file_target:
     cmp byte ptr [rip + g_explorer_target], 0
     setne al
     ret
-
-FN cmd_open_folder
-    lea rdi, [rip + .Lopen_folder]
-    mov esi, PROMPT_OPEN_FOLDER
-    jmp prompt_open
 
 # explorer_delete_target(): remove a file or an empty directory
 FN explorer_delete_target
@@ -1075,26 +1073,43 @@ FN cmd_new_file_prompt
     mov esi, PROMPT_NEW_FILE
     jmp prompt_open
 
-# explorer_menu_draw(): context menu overlay
+# explorer_menu_draw(): context menu overlay. An item without a handler is a separating line; with
+# g_menu_keys set the items show their commands' shortcuts on the right.
 FN explorer_menu_draw
     PROLOGUE 32
     cmp dword ptr [rip + menu_open], 0
     je .Lmd_ret
+    M ebx, MI_32                # item h
+    mov r15, [rip + menu_list]
+    # size: the widest item, the items' heights
     mov edi, 200
     call sc
     mov r12d, eax               # w
-    M ebx, MI_32                # item h
-    mov r15, [rip + menu_list]
-    xor ecx, ecx
-1:  cmp qword ptr [r15 + rcx*8], 0
-    je 2f
-    add ecx, 2
-    jmp 1b
-2:  shr ecx, 1
-    mov r13d, ecx
-    imul ecx, ebx
-    add ecx, [rip + g_mt + 4*MI_12]
-    mov r14d, ecx               # h
+    M r14d, MI_12               # h
+    xor r13d, r13d
+.Lmd_size:
+    mov eax, r13d
+    shl eax, 4
+    cmp qword ptr [r15 + rax], 0
+    je .Lmd_sized
+    cmp qword ptr [r15 + rax + 8], 0
+    jne 1f
+    add r14d, [rip + g_mt + 4*MI_8]
+    inc r13d
+    jmp .Lmd_size
+1:  add r14d, ebx
+    mov edi, r13d
+    call item_width
+    add eax, [rip + g_mt + 4*MI_32]
+    cmp eax, r12d
+    cmovg r12d, eax
+    inc r13d
+    jmp .Lmd_size
+.Lmd_sized:
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, [rip + g_mt + 4*MI_16]
+    cmp r12d, eax
+    cmovg r12d, eax
     mov eax, [rip + menu_x]
     mov ecx, [rip + g_cv + CV_w]
     sub ecx, r12d
@@ -1133,14 +1148,33 @@ FN explorer_menu_draw
     jmp .Lmd_ret
 3:  mov eax, [rsp + 4]
     add eax, [rip + g_mt + 4*MI_6]
-    mov [rsp + 8], eax
+    mov [rsp + 8], eax          # item y
     xor ecx, ecx
-    mov [rsp + 12], ecx
+    mov [rsp + 12], ecx         # item index
 .Lmd_item:
     mov ecx, [rsp + 12]
-    cmp ecx, r13d
-    jae .Lmd_ret
-    lea edi, [rcx + ID_MENU]
+    shl ecx, 4
+    cmp qword ptr [r15 + rcx], 0
+    je .Lmd_ret
+    cmp qword ptr [r15 + rcx + 8], 0
+    jne 31f
+    # a line across the middle
+    M esi, MI_8
+    shr esi, 1
+    add esi, [rsp + 8]
+    mov edi, [rsp]
+    add edi, [rip + g_mt + 4*MI_12]
+    mov edx, r12d
+    sub edx, [rip + g_mt + 4*MI_24]
+    M ecx, MI_1
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov eax, [rip + g_mt + 4*MI_8]
+    add [rsp + 8], eax
+    inc dword ptr [rsp + 12]
+    jmp .Lmd_item
+31: mov edi, [rsp + 12]
+    add edi, ID_MENU
     M eax, MI_6
     mov esi, [rsp]
     add esi, eax
@@ -1164,7 +1198,42 @@ FN explorer_menu_draw
     M r8d, MI_RADIUS
     COLOR r9d, T_HOVER
     call gfx_round_rect
-4:  mov ecx, [rsp + 12]
+4:  # the shortcut, right-aligned
+    mov dword ptr [rsp + 20], 0 # its width and a gap
+    mov edi, [rsp + 12]
+    call item_keys
+    test rax, rax
+    jz 41f
+    mov [rsp + 24], rax
+    mov rdi, rax
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rsp + 24]
+    mov rdx, rax
+    call text_width
+    mov [rsp + 20], eax
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    add esi, r12d
+    sub esi, [rip + g_mt + 4*MI_16]
+    sub esi, eax
+    mov edx, [rsp + 8]
+    mov ecx, ebx
+    mov r8, [rsp + 24]
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    mov eax, [rip + g_mt + 4*MI_16]
+    add [rsp + 20], eax
+41: # the label, clipped before the shortcut
+    mov edi, [rsp]
+    add edi, [rip + g_mt + 4*MI_16]
+    mov esi, [rsp + 8]
+    mov edx, r12d
+    sub edx, [rip + g_mt + 4*MI_32]
+    sub edx, [rsp + 20]
+    mov ecx, ebx
+    call gfx_clip_push
+    mov ecx, [rsp + 12]
     shl ecx, 4
     mov r8, [r15 + rcx]
     lea rdi, [rip + g_face_ui]
@@ -1174,10 +1243,12 @@ FN explorer_menu_draw
     mov ecx, ebx
     COLOR r9d, T_FG
     call ui_text_c
+    call gfx_clip_pop
     test dword ptr [rsp + 16], UB_CLICK
     jz 5f
     mov dword ptr [rip + menu_open], 0
     mov ecx, [rsp + 12]
+    mov [rip + g_menu_index], ecx
     shl ecx, 4
     mov rax, [r15 + rcx + 8]
     mov dword ptr [rip + g_menu_cmd], 1
@@ -1189,6 +1260,52 @@ FN explorer_menu_draw
     jmp .Lmd_item
 .Lmd_ret:
     EPILOGUE
+
+# item_width(i) -> width of the menu item's label, with its shortcut and the gap before it
+item_width:
+    PROLOGUE
+    mov r12d, edi
+    mov rax, [rip + menu_list]
+    mov ecx, r12d
+    shl ecx, 4
+    mov rbx, [rax + rcx]
+    mov rdi, rbx
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    mov rsi, rbx
+    mov rdx, rax
+    call text_width
+    mov r13d, eax
+    mov edi, r12d
+    call item_keys
+    test rax, rax
+    jz 1f
+    mov rbx, rax
+    mov rdi, rax
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, rbx
+    mov rdx, rax
+    call text_width
+    add r13d, eax
+    add r13d, [rip + g_mt + 4*MI_32]
+1:  mov eax, r13d
+    EPILOGUE
+
+# item_keys(i) -> the shortcut of the command the menu item runs (with g_menu_keys), or 0
+item_keys:
+    xor eax, eax
+    cmp dword ptr [rip + g_menu_keys], 0
+    je 1f
+    mov rax, [rip + menu_list]
+    shl edi, 4
+    mov rdi, [rax + rdi + 8]
+    call cmd_for_fn
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    jmp keys_for
+1:  ret
 
 # open_changes(): diff of the file the menu is for
 open_changes:
@@ -1222,8 +1339,48 @@ FN ctx_menu_open
     mov [rip + menu_x], esi
     mov [rip + menu_y], edx
     mov dword ptr [rip + menu_open], 1
+    mov dword ptr [rip + g_menu_keys], 0
     mov dword ptr [rip + g_dirty], 1
     ret
+
+FN ctx_menu_close
+    mov dword ptr [rip + menu_open], 0
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+# ctx_menu_list() -> the items of the open menu, or 0
+FN ctx_menu_list
+    xor eax, eax
+    cmp dword ptr [rip + menu_open], 0
+    je 1f
+    mov rax, [rip + menu_list]
+1:  ret
+
+# menu_print(sb): the open menu's labels, a line each ("-" for a separating line), or "none"
+FN menu_print
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rip + menu_open], 0
+    jne 1f
+    lea rsi, [rip + .Lp_none]
+    call sb_push_cstr
+    EPILOGUE
+1:  mov r12, [rip + menu_list]
+2:  mov r13, [r12]
+    test r13, r13
+    jz 9f
+    cmp qword ptr [r12 + 8], 0
+    jne 3f
+    lea r13, [rip + .Lp_line]
+3:  mov rdi, rbx
+    mov rsi, r13
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    add r12, 16
+    jmp 2b
+9:  EPILOGUE
 
 .section .rodata
 .Lheader: .asciz "EXPLORER"
@@ -1237,7 +1394,8 @@ FN ctx_menu_open
 .Lrename: .asciz "Rename"
 .Ldelete_a: .asciz "Delete "
 .Ldelete_b: .asciz "? Type yes"
-.Lopen_folder: .asciz "Open folder"
+.Lp_none: .asciz "none\n"
+.Lp_line: .asciz "-"
 .Lnot_deleted: .asciz "Could not delete (folders must be empty)"
 .Lm1: .asciz "New File"
 .Lm2: .asciz "New Folder"
