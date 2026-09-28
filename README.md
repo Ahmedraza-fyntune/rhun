@@ -26,7 +26,7 @@ When coding agents do more of the heavy lifting, you may not need everything tha
 
 - **Code editing:** Tabs, syntax highlighting, find and replace, and optional Vim mode.
 - **Built-in terminal:** Run your shell, tools, and coding agents right beside the code.
-- **Git:** See changed files, read diffs, and browse commit history.
+- **Git:** Stage, commit, pull and push, see changed files, read diffs, and browse commit history.
 - **Fuzzy search:** Jump to a file or search across the whole project.
 - **Agents panel:** See Claude Code and Codex sessions as they work.
 

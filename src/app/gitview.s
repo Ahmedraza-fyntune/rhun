@@ -41,10 +41,9 @@ maskcap: .quad 0
 htab: .quad 0                   # commit index + 1 by hash
 hcap: .quad 0
 tmp: .zero SB_SIZE
-log_state: .long 0              # 0 nothing yet, 2 shown, 3 no commits
+log_state: .long 0              # 0 nothing yet, 2 shown
 loading: .long 0
 log_again: .long 0
-wip: .long 0                    # the first row is the work tree
 nlanes: .long 0
 show_lanes: .long 0             # lanes drawn
 sel: .long 0
@@ -56,7 +55,6 @@ det_h: .long 0                  # content height of the details
 det_state: .long 0              # 0 none, 1 loading, 2 shown
 det_running: .long 0
 ns_running: .long 0
-files_ver: .long 0
 .p2align 3
 seg: .zero 64                   # aa_seg floats
 
@@ -64,20 +62,14 @@ seg: .zero 64                   # aa_seg floats
 
 # ---------------- rows ----------------
 
-# nrows() -> eax
+# nrows() -> eax; the first row is the work tree
 nrows:
     mov rax, [rip + commits + VEC_len]
-    test rax, rax
-    jz 1f
-    dec eax
-    add eax, [rip + wip]
-1:  ret
+    ret
 
 # row_cm(row) -> CM*
 row_cm:
     mov eax, edi
-    inc eax
-    sub eax, [rip + wip]
     imul rax, rax, CM_SIZE
     add rax, [rip + commits + VEC_ptr]
     ret
@@ -138,6 +130,24 @@ FN cmd_toggle_git
     pop rbx
     ret
 
+# gitview_show_wip(): the history tab with the work tree selected
+FN gitview_show_wip
+    push rbx
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 1f
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_GIT
+    je 2f
+1:  call cmd_git_history
+2:  mov byte ptr [rip + sel_hash], 0
+    cmp dword ptr [rip + log_state], 2
+    jne 3f
+    xor edi, edi
+    call select_row
+3:  pop rbx
+    ret
+
 # gitview_reset(): another repository
 FN gitview_reset
     mov qword ptr [rip + commits + VEC_len], 0
@@ -148,7 +158,6 @@ FN gitview_reset
     mov dword ptr [rip + det_state], 0
     mov dword ptr [rip + det_running], 0
     mov dword ptr [rip + ns_running], 0
-    mov dword ptr [rip + wip], 0
     mov dword ptr [rip + sel], 0
     mov dword ptr [rip + list_scroll], 0
     mov dword ptr [rip + det_scroll], 0
@@ -192,24 +201,22 @@ on_log:
     mov dword ptr [rip + loading], 0
     mov rbx, rsi
     mov r12, rdx
-    test ecx, ecx
-    jz 1f
-    # no commits yet
-    mov dword ptr [rip + log_state], 3
-    mov qword ptr [rip + commits + VEC_len], 0
-    jmp 2f
-1:  lea rdi, [rip + logbuf]
+    mov r13d, ecx
+    lea rdi, [rip + logbuf]
     call sb_clear
+    # no commits yet: the work tree alone
+    test r13d, r13d
+    jnz 1f
     lea rdi, [rip + logbuf]
     mov rsi, rbx
     mov rdx, r12
     call sb_push
-    call parse_log
+1:  call parse_log
     call build_index
     mov dword ptr [rip + log_state], 2
     call layout
     call restore_sel
-2:  cmp dword ptr [rip + log_again], 0
+    cmp dword ptr [rip + log_again], 0
     je 3f
     mov dword ptr [rip + log_again], 0
     call gitview_load
@@ -444,8 +451,7 @@ layout:
     mov ecx, 8 * LANES
     rep stosb
     mov dword ptr [rip + nlanes], 1
-    mov ebx, 1
-    sub ebx, [rip + wip]
+    xor ebx, ebx
 .Lly_row:
     cmp rbx, [rip + commits + VEC_len]
     jae .Lly_done
@@ -633,13 +639,10 @@ select_row:
     mov rax, [rbx + CM_hash]
     cmp byte ptr [rax], 0
     jne 1f
-    # the work tree: its files come from the status
+    # the work tree: the source control panel shows it
     mov byte ptr [rip + det_hash], 0
     mov dword ptr [rip + det_state], 2
-    mov eax, [rip + g_git_ver]
-    dec eax
-    mov [rip + files_ver], eax
-    mov dword ptr [rip + det_scroll], 0
+    mov qword ptr [rip + files + VEC_len], 0
     EPILOGUE
 1:  lea rdi, [rip + det_hash]
     mov rsi, [rbx + CM_hash]
@@ -863,18 +866,7 @@ FN gitview_draw
     mov [rsp + 12], ecx
     COLOR r8d, T_BG
     call gfx_fill
-    # the work tree row comes and goes with the status
-    xor eax, eax
-    cmp dword ptr [rip + g_git_changes], 0
-    setne al
-    cmp eax, [rip + wip]
-    je 1f
-    mov [rip + wip], eax
-    cmp dword ptr [rip + log_state], 2
-    jne 1f
-    call layout
-    call restore_sel
-1:  lea r9, [rip + .Lgit_off]
+    lea r9, [rip + .Lgit_off]
     cmp dword ptr [rip + cfg_git], 0
     je 11f
     lea r9, [rip + .Lno_repo]
@@ -884,10 +876,7 @@ FN gitview_draw
     je 2f
     lea r9, [rip + .Lloading]
     cmp dword ptr [rip + loading], 0
-    jne 11f
-    lea r9, [rip + .Lno_commits]
-    cmp dword ptr [rip + log_state], 3
-    jne 9f
+    je 9f
 11: lea rdi, [rip + g_face_ui]
     mov esi, [rsp]
     mov edx, [rsp + 4]
@@ -1157,7 +1146,17 @@ draw_list:
     add rsp, 16
     jmp .Ldl_next
 .Ldl_wip:
+    cmp dword ptr [rip + g_git_changes], 0
+    jne 1f
     lea rdi, [rip + g_face_ui]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r15d
+    lea r8, [rip + .Lclean]
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    jmp .Ldl_next
+1:  lea rdi, [rip + g_face_ui]
     mov esi, r12d
     mov edx, r13d
     mov ecx, r15d
@@ -1646,13 +1645,28 @@ chips:
     mov eax, r12d
     EPILOGUE
 
-# draw_details(x, y, w, h): the selected row's message and changed files
+# draw_details(x, y, w, h): the selected row's message and changed files, source control for the work tree
 draw_details:
     PROLOGUE 96
     mov [rsp], edi
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
+    mov edi, [rip + sel]
+    call row_cm
+    mov rax, [rax + CM_hash]
+    cmp byte ptr [rax], 0
+    jne 2f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call scm_draw
+    EPILOGUE
+2:  mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
     COLOR r8d, T_PANEL
     call gfx_fill
     mov edi, [rsp]
@@ -1695,21 +1709,6 @@ draw_details:
     mov edi, [rip + sel]
     call row_cm
     mov r14, rax
-    mov rax, [r14 + CM_hash]
-    cmp byte ptr [rax], 0
-    jne .Ldd_commit
-    # the work tree
-    mov eax, [rip + g_git_ver]
-    cmp eax, [rip + files_ver]
-    je 2f
-    mov [rip + files_ver], eax
-    lea rdi, [rip + files]
-    call git_changes_list
-2:  lea r8, [rip + .Lwip]
-    mov rbx, 0
-    call .Ldd_title
-    jmp .Ldd_files
-.Ldd_commit:
     mov r8, [r14 + CM_subject]
     call .Ldd_title
     # id, author, age
@@ -1864,19 +1863,13 @@ draw_details:
     call gfx_round_rect
 5:  test dword ptr [rsp + 24], UB_CLICK
     jz 6f
-    # the file's diff: in this commit, or in the work tree (not for untracked folders)
+    # the file's diff in this commit
     mov rdi, [r15 + GF_path]
     call strlen
     mov rdx, rax
-    mov rcx, [r15 + GF_path]
-    cmp byte ptr [rcx + rax - 1], '/'
-    je 6f
     mov rsi, [r15 + GF_path]
     mov rdi, [r14 + CM_hash]
-    cmp byte ptr [rdi], 0
-    jne 51f
-    xor edi, edi
-51: call git_open_diff
+    call git_open_diff
     jmp .Ldd_end_content
 6:  # letter, path, +added -deleted
     mov eax, [r15 + GF_code]
@@ -2058,8 +2051,19 @@ FN gitview_key
     xor ebx, ebx
     jmp .Lgk_set
 6:  cmp r12d, KEY_END
-    jne .Lgk_no
+    jne 61f
     lea ebx, [r13 - 1]
+    jmp .Lgk_set
+61: # Enter on the work tree: to the commit message
+    cmp r12d, KEY_RETURN
+    je 62f
+    cmp r12d, KEY_KP_ENTER
+    jne .Lgk_no
+62: test ebx, ebx
+    jnz .Lgk_no
+    call scm_focus
+    mov eax, 1
+    EPILOGUE
 .Lgk_set:
     test ebx, ebx
     jns 7f
@@ -2111,8 +2115,14 @@ FN gitview_dump
 3:  mov rdi, rbx
     mov esi, ' '
     call sb_push_byte
-    mov rdi, rbx
     mov rsi, [r14 + CM_subject]
+    mov rax, [r14 + CM_hash]
+    cmp byte ptr [rax], 0
+    jne 31f
+    cmp dword ptr [rip + g_git_changes], 0
+    jne 31f
+    lea rsi, [rip + .Lclean]
+31: mov rdi, rbx
     call sb_push_cstr
     mov rax, [r14 + CM_refs]
     cmp byte ptr [rax], 0
@@ -2137,7 +2147,19 @@ FN gitview_dump
     inc r13d
     jmp .Lgd_row
 .Lgd_files:
-    xor r13d, r13d
+    # the work tree: its changes by group
+    call nrows
+    test eax, eax
+    jz 51f
+    mov edi, [rip + sel]
+    call row_cm
+    mov rax, [rax + CM_hash]
+    cmp byte ptr [rax], 0
+    jne 51f
+    mov rdi, rbx
+    call scm_dump_files
+    jmp 9f
+51: xor r13d, r13d
 6:  cmp r13, [rip + files + VEC_len]
     jae 9f
     imul r14, r13, GF_SIZE
@@ -2180,8 +2202,8 @@ FN gitview_dump
 .Lgit_off: .asciz "Git is turned off in settings"
 .Lempty: .asciz ""
 .Lwip: .asciz "Uncommitted changes"
+.Lclean: .asciz "No uncommitted changes"
 .Lloading: .asciz "Loading..."
-.Lno_commits: .asciz "No commits yet"
 .Lnow: .asciz "just now"
 .Lago: .asciz " ago"
 .Lhead_arrow: .ascii "HEAD -> "

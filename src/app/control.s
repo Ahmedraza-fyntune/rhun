@@ -1,7 +1,7 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
 #   key ctrl+s | type text | click x y [right|middle] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
-#   wait-git | print-git | print-gitlog | wait-update | print-update | print-project | print-palette
+#   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
 #   print-menu
 .include "rhun.inc"
 
@@ -536,6 +536,13 @@ c_print_git:
 c_print_gitlog:
     lea rdi, [rip + out]
     call gitview_dump
+    xor eax, eax
+    ret
+
+# print-scm: the source control panel: its button, the commit message, the last error, the changes
+c_print_scm:
+    lea rdi, [rip + out]
+    call scm_dump
     xor eax, eax
     ret
 
@@ -1128,6 +1135,7 @@ on_client:
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
 .Lc_print_gitlog: .asciz "print-gitlog"
+.Lc_print_scm: .asciz "print-scm"
 .Lc_wait_update: .asciz "wait-update"
 .Lc_print_update: .asciz "print-update"
 .Lc_print_frames: .asciz "print-frames"
@@ -1155,6 +1163,7 @@ ctl_table:
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
+    .quad .Lc_print_scm, c_print_scm
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu, 0, 0

@@ -28,9 +28,14 @@ ENDSTRUCT GE_SIZE
 .bss
 .p2align 3
 .globl g_git_on, g_git_ver, g_git_changes, g_git_root, g_git_rootlen
+.globl g_git_head, g_git_ahead, g_git_behind, g_git_upstream
 g_git_on: .long 0               # the setting is on, there is a repository and a git program
 g_git_ver: .long 0              # changes with every new status
 g_git_changes: .long 0          # entries in the status
+g_git_head: .long 0             # HD_*
+g_git_ahead: .long 0            # commits of HEAD its upstream does not have
+g_git_behind: .long 0           # and the other way round
+g_git_upstream: .zero 256       # "origin/main", "" when the branch has none
 gen: .long 0
 bin_tried: .long 0
 st_running: .long 0
@@ -83,6 +88,7 @@ FN git_set_project
     call free_path
     call docs_reset
     call gitview_reset
+    call scm_reset
     cmp qword ptr [rip + g_project], 0
     je 9f
     call find_repo
@@ -371,6 +377,12 @@ FN git_fs_event
     call strcmp_eq
     test eax, eax
     jnz 5f
+    # a fetch moved the remote branches: the history and what is ahead and behind
+    mov rdi, r12
+    lea rsi, [rip + .Lfetch_head]
+    call strcmp_eq
+    test eax, eax
+    jnz 5f
     jmp 9f
 3:  mov rdi, rbx
     mov rsi, [rip + logsdir]
@@ -391,7 +403,14 @@ FN git_fs_event
 # git_run(args, cb, ctx, input ptr, input len) -> 1 if started
 #   args: 0-terminated list after "git"; it runs in the work tree; ctx is 0 or mem_alloc'd (freed after cb)
 FN git_run
-    PROLOGUE 240                # argv
+    xor r9d, r9d
+    jmp run_git
+# git_run_all(args, cb, ctx, input ptr, input len): git_run whose output has git's error messages too
+FN git_run_all
+    mov r9d, 1
+run_git:
+    PROLOGUE 256                # argv, then the errors flag
+    mov [rsp + 240], r9d
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -425,6 +444,7 @@ FN git_run
     mov rdx, [rip + g_git_root]
     mov rcx, r14
     mov r8, r15
+    mov r9d, [rsp + 240]
     call run_piped_input
     test rax, rax
     jle 8f
@@ -552,6 +572,17 @@ touch:
     pop rbx
 9:  ret
 
+# git_refresh(kind): git_touch (1) or git_touch_head (3) without waiting: after rhun's own changes
+FN git_refresh
+    cmp dword ptr [rip + g_git_on], 0
+    je 9f
+    or [rip + touch_kind], edi
+    push rbx
+    call time_ms
+    mov [rip + touch_at], rax
+    pop rbx
+9:  ret
+
 # git_timeout() -> ms until the next refresh, or -1
 FN git_timeout
     mov rax, [rip + touch_at]
@@ -621,10 +652,14 @@ status_clear:
 1:  mov qword ptr [rip + sused], 0
     mov dword ptr [rip + sudirs], 0
     mov dword ptr [rip + g_git_changes], 0
+    mov dword ptr [rip + g_git_head], HD_BRANCH
+    mov dword ptr [rip + g_git_ahead], 0
+    mov dword ptr [rip + g_git_behind], 0
+    mov byte ptr [rip + g_git_upstream], 0
     inc dword ptr [rip + g_git_ver]
     ret
 
-# on_status(ctx, ptr, len, status): "XY path\0" records of status --porcelain -z
+# on_status(ctx, ptr, len, status): the branch ("## ..."), then "XY path\0" records of status --porcelain -z
 on_status:
     PROLOGUE 16
     mov dword ptr [rip + st_running], 0
@@ -633,7 +668,18 @@ on_status:
     mov rbx, rsi
     mov r12, rdx
     call status_clear
-    lea rdi, [rip + stbuf]
+    cmp r12, 3
+    jb 1f
+    cmp word ptr [rbx], 0x2323      # "##"
+    jne 1f
+    mov rdi, rbx
+    call parse_branch
+    inc rax                         # and its NUL
+    cmp rax, r12
+    cmova rax, r12
+    add rbx, rax
+    sub r12, rax
+1:  lea rdi, [rip + stbuf]
     mov rsi, rbx
     mov rdx, r12
     call sb_push
@@ -700,6 +746,107 @@ on_status:
     call git_touch
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# parse_branch(record) -> rax its length: "## main...origin/main [ahead 1, behind 2]", "## main",
+#   "## HEAD (no branch)", "## No commits yet on main" into g_git_head, _upstream, _ahead, _behind
+parse_branch:
+    PROLOGUE
+    mov rbx, rdi
+    call strlen
+    mov r12, rax
+    lea r13, [rbx + 3]
+    lea r14, [rbx + rax]
+    cmp r13, r14
+    ja 9f
+    mov r15, r14
+    sub r15, r13                # length after "## "
+    mov rdi, r13
+    mov rsi, r15
+    lea rdx, [rip + .Lb_unborn]
+    mov ecx, 18
+    call str_starts
+    test eax, eax
+    jnz 1f
+    mov rdi, r13
+    mov rsi, r15
+    lea rdx, [rip + .Lb_initial]
+    mov ecx, 18
+    call str_starts
+    test eax, eax
+    jz 2f
+1:  mov dword ptr [rip + g_git_head], HD_UNBORN
+    jmp 9f
+2:  mov rdi, r13
+    mov rsi, r15
+    lea rdx, [rip + .Lb_detached]
+    mov ecx, 16
+    call str_starts
+    test eax, eax
+    jz 3f
+    mov dword ptr [rip + g_git_head], HD_DETACHED
+    jmp 9f
+3:  # the upstream follows "..." up to a space
+    mov rdi, r13
+    mov rsi, r15
+    lea rdx, [rip + .Lb_dots]
+    mov ecx, 3
+    call str_find
+    test rax, rax
+    js 9f
+    lea rsi, [r13 + rax + 3]
+    lea rdi, [rip + g_git_upstream]
+    mov ecx, 255
+4:  cmp rsi, r14
+    jae 5f
+    mov al, [rsi]
+    cmp al, ' '
+    je 5f
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    dec ecx
+    jnz 4b
+5:  mov byte ptr [rdi], 0
+    mov r13, rsi
+    mov r15, r14
+    sub r15, r13
+    mov rdi, r13
+    mov rsi, r15
+    lea rdx, [rip + .Lb_ahead]
+    lea rcx, [rip + g_git_ahead]
+    call count_after
+    mov rdi, r13
+    mov rsi, r15
+    lea rdx, [rip + .Lb_behind]
+    lea rcx, [rip + g_git_behind]
+    call count_after
+9:  mov rax, r12
+    EPILOGUE
+
+# count_after(ptr, len, word, dest): the number after word ("ahead ") in ptr/len into dest
+count_after:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov rdi, rdx
+    call strlen
+    mov r15, rax
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, r15
+    call str_find
+    test rax, rax
+    js 9f
+    lea rdi, [rbx + rax]
+    add rdi, r15
+    lea rsi, [rbx + r12]
+    sub rsi, rdi
+    call parse_u64
+    mov [r14], eax
+9:  EPILOGUE
 
 # classify(X, Y) -> one letter for the two status columns, 0 to skip
 classify:
@@ -1388,11 +1535,14 @@ FN git_doc_free
     jmp 2b
 9:  EPILOGUE
 
-# git_changes_list(vec): the status as GF records (path points into the status, valid until it changes)
-FN git_changes_list
-    PROLOGUE
+# git_scm_list(vec): the status as GF records by group: conflicts, staged, then not staged (a file can
+#   be in both of these); paths point into the status, valid until it changes
+FN git_scm_list
+    PROLOGUE 16
     mov rbx, rdi
     mov qword ptr [rbx + VEC_len], 0
+    mov dword ptr [rsp], GG_MERGE
+.Lsl_group:
     mov r12, [rip + stbuf + SB_ptr]
     test r12, r12
     jz 9f
@@ -1400,11 +1550,12 @@ FN git_changes_list
     add r13, r12
 1:  lea rax, [r12 + 3]
     cmp rax, r13
-    ja 9f
+    ja 8f
     movzx edi, byte ptr [r12]
     movzx esi, byte ptr [r12 + 1]
     movzx r15d, dil
-    call classify
+    mov edx, [rsp]
+    call group_code
     mov r14d, eax
     lea r12, [r12 + 3]
     test eax, eax
@@ -1415,6 +1566,8 @@ FN git_changes_list
     mov [rax + GF_path], r12
     mov [rax + GF_code], r14d
     mov dword ptr [rax + GF_add], -2
+    mov ecx, [rsp]
+    mov [rax + GF_group], ecx
 2:  mov rdi, r12
     call strlen
     lea r12, [r12 + rax + 1]
@@ -1426,6 +1579,81 @@ FN git_changes_list
     call strlen
     lea r12, [r12 + rax + 1]
     jmp 1b
+8:  inc dword ptr [rsp]
+    cmp dword ptr [rsp], GG_CHANGES
+    jbe .Lsl_group
+9:  EPILOGUE
+
+# group_code(X, Y, group) -> the letter of a status record in that group, 0 when not in it
+group_code:
+    xor eax, eax
+    cmp edi, '!'
+    je 9f
+    # conflicts: either side unmerged, or both added or both deleted
+    mov ecx, 1
+    cmp edi, 'U'
+    je 1f
+    cmp esi, 'U'
+    je 1f
+    cmp edi, esi
+    jne 2f
+    cmp edi, 'A'
+    je 1f
+    cmp edi, 'D'
+    je 1f
+2:  xor ecx, ecx
+1:  cmp edx, GG_MERGE
+    jne 3f
+    test ecx, ecx
+    jz 9f
+    mov eax, 'C'
+    ret
+3:  test ecx, ecx
+    jnz 9f
+    cmp edx, GG_STAGED
+    jne 5f
+    # the index: X
+    cmp edi, ' '
+    je 9f
+    cmp edi, '?'
+    je 9f
+    mov eax, edi
+    jmp 6f
+5:  # the work tree: Y, untracked files
+    mov eax, 'U'
+    cmp edi, '?'
+    je 9f
+    xor eax, eax
+    cmp esi, ' '
+    je 9f
+    mov eax, esi
+6:  cmp eax, 'T'                # type changes
+    jne 7f
+    mov eax, 'M'
+7:  cmp eax, 'C'                # copies are new files
+    jne 9f
+    mov eax, 'A'
+9:  ret
+
+# git_merge_msg() -> rax the message of the merge in progress (mem_free it), rdx its length; rax 0 if none
+FN git_merge_msg
+    PROLOGUE
+    xor eax, eax
+    xor edx, edx
+    mov rdi, [rip + gitdir]
+    test rdi, rdi
+    jz 9f
+    lea rsi, [rip + .Lmerge_msg]
+    call path_join
+    mov rbx, rax
+    mov rdi, rax
+    call file_read_all
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, rbx
+    call mem_free
+    mov rax, r12
+    mov rdx, r13
 9:  EPILOGUE
 
 # ---------------- scripts ----------------
@@ -1448,7 +1676,27 @@ FN git_dump
     mov rdi, rbx
     lea rsi, [rip + g_branch]
     call sb_push_cstr
+    cmp byte ptr [rip + g_git_upstream], 0
+    je 1f
     mov rdi, rbx
+    lea rsi, [rip + .Ld_upstream]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + g_git_upstream]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_ahead]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [rip + g_git_ahead]
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_behind]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [rip + g_git_behind]
+    call sb_push_u64
+1:  mov rdi, rbx
     mov esi, 10
     call sb_push_byte
     # status records in git's order
@@ -1545,6 +1793,18 @@ FN git_dump
 .Llock: .ascii ".lock"
 .Lnl: .ascii "\n"
 .Lhead_colon: .asciz "HEAD:"
+.Lfetch_head: .asciz "FETCH_HEAD"
+.Lmerge_msg: .asciz "MERGE_MSG"
+.Lbranch_opt: .asciz "--branch"
+.Lb_unborn: .ascii "No commits yet on "
+.Lb_initial: .ascii "Initial commit on "
+.Lb_detached: .ascii "HEAD (no branch)"
+.Lb_dots: .ascii "..."
+.Lb_ahead: .asciz "ahead "
+.Lb_behind: .asciz "behind "
+.Ld_upstream: .asciz " upstream="
+.Ld_ahead: .asciz " ahead="
+.Ld_behind: .asciz " behind="
 .Lno_locks: .asciz "--no-optional-locks"
 .Lliteral: .asciz "--literal-pathspecs"
 .Ldash_c: .asciz "-c"
@@ -1556,12 +1816,13 @@ FN git_dump
 .Lbatch: .asciz "--batch"
 .Lenv_locks: .asciz "GIT_OPTIONAL_LOCKS=0"
 .Lenv_prompt: .asciz "GIT_TERMINAL_PROMPT=0"
+.Lenv_editor: .asciz "GIT_EDITOR=:"         # a merge or rebase never waits on an editor
 .Ld_git: .asciz "git "
 .Ld_on: .asciz "on"
 .Ld_off: .asciz "off"
 .Ld_branch: .asciz " branch="
 .Ld_marks: .asciz "marks "
 .p2align 3
-env_extras: .quad .Lenv_locks, .Lenv_prompt, 0
-args_status: .quad .Lstatus, .Lporcelain, .Ldash_z, 0
+env_extras: .quad .Lenv_locks, .Lenv_prompt, .Lenv_editor, 0
+args_status: .quad .Lstatus, .Lporcelain, .Ldash_z, .Lbranch_opt, 0
 args_batch: .quad .Lcat_file, .Lbatch, 0

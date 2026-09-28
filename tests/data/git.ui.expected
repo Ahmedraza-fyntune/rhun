@@ -59,10 +59,12 @@ tabs=4 focus=0 theme=rhun-dark
 |* Feature work (feature)
 */ Return one (tag: v1)
 *  First
-    M a.txt
-    M crlf.txt
+    STAGED CHANGES
     D src/main.c
     A staged.txt
+    CHANGES
+    M a.txt
+    M crlf.txt
     U new.txt
     U notes/
 *  Uncommitted changes

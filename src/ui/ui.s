@@ -757,11 +757,18 @@ tf_remove:
 
 # tf_insert(tf, ptr, len): replaces selection; newlines become spaces
 FN tf_insert
+    xor ecx, ecx
+    jmp tf_insert_as
+# tf_insert_raw(tf, ptr, len): tf_insert that keeps the bytes as they are
+tf_insert_raw:
+    mov ecx, 1
+tf_insert_as:
     push rbx
     push r12
     push r13
     push r14
-    sub rsp, 8
+    push r15
+    mov r15d, ecx
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -783,6 +790,8 @@ FN tf_insert
 1:  cmp rcx, r13
     jae 2f
     movzx eax, byte ptr [r12 + rcx]
+    test r15d, r15d
+    jnz 12f
     cmp al, 10
     je 11f
     cmp al, 13
@@ -798,7 +807,7 @@ FN tf_insert
     add r14, r13
     mov [rbx + TF_cur], r14
     mov [rbx + TF_anchor], r14
-    add rsp, 8
+    pop r15
     pop r14
     pop r13
     pop r12
@@ -837,13 +846,13 @@ tf_word_left:
 1:  test rax, rax
     jz 3f
     cmp byte ptr [r8 + rax - 1], ' '
-    jne 2f
+    ja 2f
     dec rax
     jmp 1b
 2:  test rax, rax
     jz 3f
     cmp byte ptr [r8 + rax - 1], ' '
-    je 3f
+    jbe 3f
     cmp byte ptr [r8 + rax - 1], '/'
     je 3f
     dec rax
@@ -856,13 +865,13 @@ tf_word_right:
 1:  cmp rax, r9
     jae 3f
     cmp byte ptr [r8 + rax], ' '
-    jne 2f
+    ja 2f
     inc rax
     jmp 1b
 2:  cmp rax, r9
     jae 3f
     cmp byte ptr [r8 + rax], ' '
-    je 3f
+    jbe 3f
     cmp byte ptr [r8 + rax], '/'
     je 31f
     inc rax
@@ -1185,6 +1194,474 @@ FN ui_textfield
     mov eax, [rsp + 20]
     EPILOGUE
 
+# ---- text area: a text field of several lines ----
+
+# ln_start(ptr, pos) -> rax start of the line holding pos
+ln_start:
+    mov rax, rsi
+1:  test rax, rax
+    jz 2f
+    cmp byte ptr [rdi + rax - 1], 10
+    je 2f
+    dec rax
+    jmp 1b
+2:  ret
+
+# ln_end(ptr, len, pos) -> rax the line break ending the line of pos, or len
+ln_end:
+    mov rax, rdx
+1:  cmp rax, rsi
+    jae 2f
+    cmp byte ptr [rdi + rax], 10
+    je 2f
+    inc rax
+    jmp 1b
+2:  ret
+
+# ln_index(ptr, pos) -> eax the line of pos: line breaks before it
+ln_index:
+    xor eax, eax
+    xor ecx, ecx
+1:  cmp rcx, rsi
+    jae 2f
+    cmp byte ptr [rdi + rcx], 10
+    jne 3f
+    inc eax
+3:  inc rcx
+    jmp 1b
+2:  ret
+
+# ln_nth(ptr, len, n) -> rax start of line n (len past the last line)
+ln_nth:
+    xor eax, eax
+1:  test edx, edx
+    jz 2f
+    cmp rax, rsi
+    jae 2f
+    cmp byte ptr [rdi + rax], 10
+    jne 3f
+    dec edx
+3:  inc rax
+    jmp 1b
+2:  ret
+
+# ta_lines(tf) -> eax lines of its text
+FN ta_lines
+    push rbx
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    call ln_index
+    inc eax
+    pop rbx
+    ret
+
+# ta_line_h() -> eax height of a line of a text area
+FN ta_line_h
+    mov eax, [rip + g_face_ui + FACE_lineh]
+    add eax, [rip + g_mt + 4*MI_3]
+    ret
+
+# ta_insert(tf, ptr, len): replaces the selection; CR LF and CR become line breaks, tabs spaces
+FN ta_insert
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    lea rdi, [rip + ta_buf]
+    call sb_clear
+    xor r14d, r14d
+1:  cmp r14, r13
+    jae 4f
+    movzx esi, byte ptr [r12 + r14]
+    inc r14
+    cmp esi, 13
+    jne 2f
+    mov esi, 10
+    cmp r14, r13
+    jae 3f
+    cmp byte ptr [r12 + r14], 10
+    jne 3f
+    inc r14                     # CR LF
+    jmp 3f
+2:  cmp esi, 9
+    jne 3f
+    mov esi, ' '
+3:  lea rdi, [rip + ta_buf]
+    call sb_push_byte
+    jmp 1b
+4:  mov rdi, rbx
+    mov rsi, [rip + ta_buf + SB_ptr]
+    mov rdx, [rip + ta_buf + SB_len]
+    call tf_insert_raw
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# ta_key(tf, keysym, cp, mods) -> 1 if handled: tf_key, and Enter breaks the line, Up and Down go
+#   across lines, Home and End (without Ctrl) to the ends of the line
+FN ta_key
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    cmp r12d, KEY_RETURN
+    je 1f
+    cmp r12d, KEY_KP_ENTER
+    jne 2f
+1:  test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    jnz .Ltak_no
+    mov rdi, rbx
+    lea rsi, [rip + ta_nl]
+    mov edx, 1
+    call tf_insert_raw
+    jmp .Ltak_yes
+2:  test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    jnz .Ltak_tf
+    mov rdi, rbx
+    call tf_text
+    mov r15, rax
+    mov [rsp], rdx              # length
+    cmp r12d, KEY_HOME
+    jne 3f
+    mov rdi, r15
+    mov rsi, [rbx + TF_cur]
+    call ln_start
+    jmp .Ltak_move
+3:  cmp r12d, KEY_END
+    jne 4f
+    mov rdi, r15
+    mov rsi, [rsp]
+    mov rdx, [rbx + TF_cur]
+    call ln_end
+    jmp .Ltak_move
+4:  cmp r12d, KEY_UP
+    je 5f
+    cmp r12d, KEY_DOWN
+    jne .Ltak_tf
+5:  # the same x on the line above or below
+    mov rdi, r15
+    mov rsi, [rbx + TF_cur]
+    call ln_start
+    mov [rsp + 16], rax
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [r15 + rax]
+    mov rdx, [rbx + TF_cur]
+    sub rdx, rax
+    call text_width
+    mov r13d, eax
+    cmp r12d, KEY_UP
+    jne 6f
+    mov rax, [rsp + 16]
+    test rax, rax
+    jz .Ltak_move               # the first line: to its start
+    lea rsi, [rax - 1]          # the line above ends at its break
+    mov [rsp + 8], rsi
+    mov rdi, r15
+    call ln_start
+    jmp 7f
+6:  mov rdi, r15
+    mov rsi, [rsp]
+    mov rdx, [rbx + TF_cur]
+    call ln_end
+    cmp rax, [rsp]
+    jae .Ltak_move              # the last line: to its end
+    inc rax
+    mov [rsp + 16], rax
+    mov rdi, r15
+    mov rsi, [rsp]
+    mov rdx, rax
+    call ln_end
+    mov [rsp + 8], rax
+    mov rax, [rsp + 16]
+7:  mov [rsp + 16], rax         # line start, [rsp + 8] its end
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [r15 + rax]
+    mov rdx, [rsp + 8]
+    sub rdx, rax
+    mov ecx, r13d
+    call text_fit
+    add rax, [rsp + 16]
+.Ltak_move:
+    mov [rbx + TF_cur], rax
+    test r14d, MOD_SHIFT
+    jnz .Ltak_yes
+    mov [rbx + TF_anchor], rax
+.Ltak_yes:
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+.Ltak_tf:
+    mov rdi, rbx
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call tf_key
+    EPILOGUE
+.Ltak_no:
+    xor eax, eax
+    EPILOGUE
+
+# ui_textarea(tf, x, y, w, h, focused, placeholder): draw a text area (ta_lines lines of ta_line_h, or
+#   fewer shown with the cursor's in view), the mouse places the cursor -> UB bits
+FN ui_textarea
+    PROLOGUE 96
+    mov rbx, rdi
+    mov [rsp], esi              # x
+    mov [rsp + 4], edx          # y
+    mov [rsp + 8], ecx          # w
+    mov [rsp + 12], r8d         # h
+    mov [rsp + 16], r9d         # focused
+    mov rax, [rbp + 16]
+    mov [rsp + 24], rax         # placeholder
+    call ta_line_h
+    mov [rsp + 32], eax         # line h
+    M eax, MI_10
+    add eax, [rsp]
+    mov [rsp + 36], eax         # text x
+    M eax, MI_6
+    add eax, [rsp + 4]
+    mov [rsp + 40], eax         # first line y
+    mov eax, [rsp + 12]
+    sub eax, [rip + g_mt + 4*MI_12]
+    mov ecx, 1
+    jle 1f
+    xor edx, edx
+    div dword ptr [rsp + 32]
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov ecx, eax
+1:  mov [rsp + 44], ecx         # lines shown
+    mov edi, [rbx + TF_id]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    mov [rsp + 20], eax
+    test eax, UB_HOVER
+    jz 2f
+    mov dword ptr [rip + g_cursor], CUR_TEXT
+2:  mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    M r8d, MI_RADIUS
+    COLOR r9d, T_BORDER
+    cmp dword ptr [rsp + 16], 0
+    je 3f
+    COLOR r9d, T_ACCENT
+3:  COLOR eax, T_INPUT
+    push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    mov rdi, rbx
+    call tf_text
+    mov r14, rax
+    mov r15, rdx
+    # the mouse places the cursor
+    test dword ptr [rsp + 20], UB_PRESS | UB_HELD
+    jz 5f
+    mov eax, [rip + g_my]
+    sub eax, [rsp + 40]
+    jns 41f
+    xor eax, eax
+41: xor edx, edx
+    div dword ptr [rsp + 32]
+    add eax, [rbx + TF_top]
+    mov edx, eax
+    mov rdi, r14
+    mov rsi, r15
+    call ln_nth
+    mov r12, rax
+    mov rdi, r14
+    mov rsi, r15
+    mov rdx, rax
+    call ln_end
+    mov r13, rax
+    mov ecx, [rip + g_mx]
+    sub ecx, [rsp + 36]
+    add ecx, [rbx + TF_scroll]
+    mov eax, 0
+    js 42f
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [r14 + r12]
+    mov rdx, r13
+    sub rdx, r12
+    call text_fit
+42: add rax, r12
+    mov [rbx + TF_cur], rax
+    test dword ptr [rsp + 20], UB_PRESS
+    jz 5f
+    mov [rbx + TF_anchor], rax
+5:  # the cursor's line and x
+    mov rdi, r14
+    mov rsi, [rbx + TF_cur]
+    call ln_index
+    mov [rsp + 72], eax
+    mov rdi, r14
+    mov rsi, [rbx + TF_cur]
+    call ln_start
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [r14 + rax]
+    mov rdx, [rbx + TF_cur]
+    sub rdx, rax
+    call text_width
+    mov [rsp + 52], eax
+    # keep it in view: across
+    mov ecx, [rsp + 8]
+    sub ecx, [rip + g_mt + 4*MI_24]
+    sub eax, [rbx + TF_scroll]
+    cmp eax, ecx
+    jle 51f
+    mov eax, [rsp + 52]
+    sub eax, ecx
+    mov [rbx + TF_scroll], eax
+51: mov eax, [rsp + 52]
+    cmp eax, [rbx + TF_scroll]
+    jge 52f
+    mov [rbx + TF_scroll], eax
+52: # and down, with no lines left empty below the text
+    mov eax, [rsp + 72]
+    cmp eax, [rbx + TF_top]
+    jge 53f
+    mov [rbx + TF_top], eax
+53: sub eax, [rsp + 44]
+    inc eax
+    cmp eax, [rbx + TF_top]
+    jle 54f
+    mov [rbx + TF_top], eax
+54: mov rdi, r14
+    mov rsi, r15
+    call ln_index
+    inc eax
+    sub eax, [rsp + 44]
+    jns 55f
+    xor eax, eax
+55: cmp [rbx + TF_top], eax
+    jle 56f
+    mov [rbx + TF_top], eax
+56: mov edi, [rsp]
+    add edi, [rip + g_mt + 4*MI_2]
+    mov esi, [rsp + 4]
+    add esi, [rip + g_mt + 4*MI_2]
+    mov edx, [rsp + 8]
+    sub edx, [rip + g_mt + 4*MI_4]
+    mov ecx, [rsp + 12]
+    sub ecx, [rip + g_mt + 4*MI_4]
+    call gfx_clip_push
+    mov eax, [rsp + 36]
+    sub eax, [rbx + TF_scroll]
+    mov [rsp + 36], eax
+    test r15, r15
+    jnz 6f
+    # placeholder
+    mov r8, [rsp + 24]
+    test r8, r8
+    jz .Lta_caret
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 36]
+    mov edx, [rsp + 40]
+    mov ecx, [rsp + 32]
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    jmp .Lta_caret
+6:  mov rdi, rbx
+    call tf_sel
+    mov [rsp + 56], rax
+    mov [rsp + 64], rdx
+    mov edx, [rbx + TF_top]
+    mov [rsp + 48], edx
+    mov rdi, r14
+    mov rsi, r15
+    call ln_nth
+    mov r12, rax                # line start
+    mov eax, [rsp + 40]
+    mov [rsp + 76], eax         # line y
+.Lta_line:
+    mov eax, [rsp + 48]
+    sub eax, [rbx + TF_top]
+    cmp eax, [rsp + 44]
+    jg .Lta_caret
+    mov rdi, r14
+    mov rsi, r15
+    mov rdx, r12
+    call ln_end
+    mov r13, rax                # line end
+    # the selection on this line, and a little more when it goes on past the break
+    mov rax, [rsp + 56]
+    cmp rax, [rsp + 64]
+    je 8f
+    cmp [rsp + 64], r12
+    jbe 8f
+    cmp rax, r13
+    ja 8f
+    cmp rax, r12
+    cmovb rax, r12
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [r14 + r12]
+    mov rdx, rax
+    sub rdx, r12
+    call text_width
+    mov [rsp + 88], eax
+    mov rdx, [rsp + 64]
+    cmp rdx, r13
+    cmova rdx, r13
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [r14 + r12]
+    sub rdx, r12
+    call text_width
+    cmp [rsp + 64], r13
+    jbe 71f
+    add eax, [rip + g_face_ui + FACE_cellw]
+71: sub eax, [rsp + 88]
+    jle 8f
+    mov edx, eax
+    mov edi, [rsp + 36]
+    add edi, [rsp + 88]
+    mov esi, [rsp + 76]
+    mov ecx, [rsp + 32]
+    COLOR r8d, T_SELECTION
+    call gfx_fill
+8:  mov r9, r13
+    sub r9, r12
+    jz 81f
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 36]
+    mov edx, [rsp + 76]
+    mov ecx, [rsp + 32]
+    lea r8, [r14 + r12]
+    COLOR eax, T_FG
+    push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+81: cmp r13, r15
+    jae .Lta_caret
+    lea r12, [r13 + 1]
+    inc dword ptr [rsp + 48]
+    mov eax, [rsp + 32]
+    add [rsp + 76], eax
+    jmp .Lta_line
+.Lta_caret:
+    cmp dword ptr [rsp + 16], 0
+    je 9f
+    mov eax, [rsp + 72]
+    sub eax, [rbx + TF_top]
+    imul eax, [rsp + 32]
+    add eax, [rsp + 40]
+    mov esi, eax
+    mov edi, [rsp + 36]
+    add edi, [rsp + 52]
+    M edx, MI_2
+    mov ecx, [rsp + 32]
+    COLOR r8d, T_CURSOR
+    call gfx_fill
+9:  call gfx_clip_pop
+    mov eax, [rsp + 20]
+    EPILOGUE
+
 .section .rodata
 .p2align 2
 f_100: .float 100.0
@@ -1197,8 +1674,11 @@ metric_values:
     .long 40, 36, 26, 28, 16, 6, 64, 5
 .globl empty_str
 empty_str: .byte 0
+ta_nl: .ascii "\n"
 .bss
 grab_dy: .long 0
+.p2align 3
+ta_buf: .zero SB_SIZE
 .data
 g_mx: .long -10000
 g_my: .long -10000
