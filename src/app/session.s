@@ -8,7 +8,7 @@
 path_sb: .zero SB_SIZE
 out: .zero SB_SIZE
 rc_dir: .zero SB_SIZE
-recent_time: .zero 8 * RECENT_MAX
+recent_time: .zero 8 * RECENT_MAX     # when each was written, in nanoseconds
 recent_n: .long 0
 rc_path: .zero 4096
 .globl g_session_final
@@ -53,7 +53,9 @@ state_dir:
 8:  xor eax, eax
     EPILOGUE
 
-# session_file() -> cstr path for the current project, or 0
+# session_file() -> cstr path for the current project, or 0. The name is the project's path with
+# every / as % and every % as %%25: never %% otherwise, as a path has no //, so no two folders share
+# a name, and a path without % keeps the name it always had
 session_file:
     PROLOGUE
     lea rdi, [rip + path_sb]
@@ -71,11 +73,18 @@ session_file:
 3:  movzx esi, byte ptr [rbx]
     test esi, esi
     jz 4f
+    cmp esi, '%'
+    je 32f
     cmp esi, '/'
     jne 31f
     mov esi, '%'
 31: lea rdi, [rip + path_sb]
     call sb_push_byte
+    inc rbx
+    jmp 3b
+32: lea rdi, [rip + path_sb]
+    lea rsi, [rip + .Lpercent]
+    call sb_push_cstr
     inc rbx
     jmp 3b
 4:  lea rdi, [rip + path_sb]
@@ -116,7 +125,7 @@ FN session_recent
     EPILOGUE
 
 # recent_cb(ctx, name, is_dir): a session file ("%home%me%project.session") ranks its folder by
-# when it was written
+# when it was written, to the nanosecond: switching folders writes several within a second
 recent_cb:
     PROLOGUE
     mov r12, rsi
@@ -138,19 +147,29 @@ recent_cb:
     ja 9f
     cmp byte ptr [r12], '%'
     jne 9f
-    # the folder: every % was a /
+    # the folder: %%25 was a %, any other % a / (see session_file); ".session" ends a match
     lea rdi, [rip + rc_path]
     xor ecx, ecx
+    xor edx, edx
 1:  cmp rcx, r13
     jae 2f
     mov al, [r12 + rcx]
+    inc rcx
     cmp al, '%'
     jne 11f
     mov al, '/'
-11: mov [rdi + rcx], al
-    inc rcx
+    cmp byte ptr [r12 + rcx], '%'
+    jne 11f
+    cmp byte ptr [r12 + rcx + 1], '2'
+    jne 11f
+    cmp byte ptr [r12 + rcx + 2], '5'
+    jne 11f
+    mov al, '%'
+    add rcx, 3
+11: mov [rdi + rdx], al
+    inc rdx
     jmp 1b
-2:  mov byte ptr [rdi + rcx], 0
+2:  mov byte ptr [rdi + rdx], 0
     mov rsi, [rip + g_project]
     test rsi, rsi
     jz 3f
@@ -165,7 +184,7 @@ recent_cb:
     mov rsi, r12
     call path_join_tmp
     mov rdi, rax
-    call file_mtime
+    call file_mtime_ns
     mov r14, rax
     # its place: before the first older one
     mov ebx, [rip + recent_n]
@@ -357,4 +376,5 @@ FN session_restore
 .Llocal_state: .asciz "/.local/state"
 .Lrhun_dir: .asciz "/rhun"
 .Lext: .asciz ".session"
+.Lpercent: .asciz "%%25"
 .Lempty: .asciz ""
