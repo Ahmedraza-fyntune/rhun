@@ -637,8 +637,9 @@ FN app_on_motion
     ret
 
 FN app_on_pointer_leave
-    mov dword ptr [rip + g_mx], -10000
-    mov dword ptr [rip + g_my], -10000
+    mov edi, -10000
+    mov esi, -10000
+    call ui_input_motion
     mov dword ptr [rip + g_dirty], 1
     ret
 

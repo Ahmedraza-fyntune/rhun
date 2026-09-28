@@ -22,6 +22,9 @@ last_press_x: .long 0
 last_press_y: .long 0
 g_press_x: .long 0
 g_press_y: .long 0
+held_mx: .long 0                # a pointer move waiting for the frame of a press
+held_my: .long 0
+held_move: .long 0
 .p2align 3
 g_face_ui: .zero FACE_SIZE
 g_face_small: .zero FACE_SIZE
@@ -156,9 +159,18 @@ FN sc
 
 # ---- input (called from platform callbacks) ----
 
+# ui_input_motion(x, y): while a press waits for its frame the pointer stays where the press was
+# made, and the move lands after that frame; otherwise a synthetic click, or a mouse faster than
+# the frames, has the press hit tested wherever the pointer went next
 FN ui_input_motion
+    cmp dword ptr [rip + g_pressed], 0
+    jne 1f
     mov [rip + g_mx], edi
     mov [rip + g_my], esi
+    ret
+1:  mov [rip + held_mx], edi
+    mov [rip + held_my], esi
+    mov dword ptr [rip + held_move], 1
     ret
 
 # ui_input_button(btn, pressed)
@@ -241,7 +253,16 @@ FN ui_end
     mov dword ptr [rip + g_released], 0
     mov dword ptr [rip + g_scroll_x], 0
     mov dword ptr [rip + g_scroll_y], 0
-    mov edi, [rip + g_cursor]
+    # the move held back for this frame's press, and a frame that shows it
+    cmp dword ptr [rip + held_move], 0
+    je 2f
+    mov dword ptr [rip + held_move], 0
+    mov eax, [rip + held_mx]
+    mov [rip + g_mx], eax
+    mov eax, [rip + held_my]
+    mov [rip + g_my], eax
+    mov dword ptr [rip + g_dirty], 1
+2:  mov edi, [rip + g_cursor]
     PCALL P_cursor
     ret
 
