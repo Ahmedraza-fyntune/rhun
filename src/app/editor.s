@@ -1788,8 +1788,9 @@ pos_at_point:
     # line
     mov eax, r13d
     sub eax, [rip + g_ed_y]
-    mov rcx, [rbx + DOC_scrolly]
-    imul rcx, [rip + g_lh]
+    # g_lh is 32 bits: a 64-bit multiply would take g_cw along as its high half
+    movsxd rcx, dword ptr [rip + g_lh]
+    imul rcx, [rbx + DOC_scrolly]
     sar rcx, 8
     add eax, ecx
     jns 1f
