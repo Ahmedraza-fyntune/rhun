@@ -6,7 +6,6 @@
 
 .equ UP_FIRST, 5000             # ms after startup: the first automatic check
 .equ UP_EVERY, 86400000         # ms between automatic checks
-.equ UP_THROTTLE, 3600          # s: an automatic check this soon after an answer uses that answer
 .equ UP_JOB_CHECK, 1
 .equ UP_JOB_INSTALL, 2
 
@@ -137,16 +136,7 @@ FN update_tick
 1:  cmp dword ptr [rip + up_kind], 0
     jne 9f
     mov dword ptr [rip + up_manual], 0
-    # an answer from less than an hour ago (another window, a restart) stands
-    cmp byte ptr [rip + up_latest], 0
-    je 2f
-    call time_now
-    sub rax, [rip + up_checked]
-    cmp rax, UP_THROTTLE
-    jae 2f
-    call up_decide
-    jmp 9f
-2:  call up_start_check
+    call up_start_check
 9:  EPILOGUE
 
 FN cmd_check_for_updates
