@@ -17,6 +17,8 @@ printf 'one\ntwo\nthree\n' > a.txt
 git add a.txt
 git commit -q -m First
 git push -q -u origin main 2>/dev/null
+# origin/HEAD from the start: git fetch makes it anyway since git 2.48, so every version shows the same
+git remote set-head origin main
 cd ..
 git clone -q remote.git other
 cd other

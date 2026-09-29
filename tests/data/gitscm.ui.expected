@@ -48,12 +48,12 @@ message=Merge branch 'main' of ../remote
 *  No uncommitted changes <
 *\ Merge branch 'main' of ../remote (HEAD -> main)
 *| Say uno
-|* Shout one (origin/main)
+|* Shout one (origin/main, origin/HEAD)
 */ First
 *  No uncommitted changes <
 *\ Merge the remote (HEAD -> main)
 *| Say uno
-|* Shout one (origin/main)
+|* Shout one (origin/main, origin/HEAD)
 */ First
 git on branch=main upstream=origin/main ahead=2 behind=0
 git on branch=main upstream=origin/main ahead=0 behind=0
