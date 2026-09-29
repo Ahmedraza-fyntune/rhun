@@ -12,7 +12,7 @@ Facts:
 
 ## Docs
 
-- [Guide](https://vshvedov.github.io/rhun/guide.md): features, install and update, usage, shortcuts, configuration, grammars and themes
+- [Guide](https://rhun.app/guide.md): features, install and update, usage, shortcuts, configuration, grammars and themes
 - [README](https://github.com/vshvedov/rhun/blob/main/README.md): overview
 
 ## Get it
@@ -23,4 +23,4 @@ Facts:
 ## Optional
 
 - [Source code](https://github.com/vshvedov/rhun): x86-64 assembly, MIT license
-- [Full text for LLMs](https://vshvedov.github.io/rhun/llms-full.txt): this file followed by the complete guide
+- [Full text for LLMs](https://rhun.app/llms-full.txt): this file followed by the complete guide

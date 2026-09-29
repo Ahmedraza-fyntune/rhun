@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://vshvedov.github.io/rhun/sitemap.xml
+Sitemap: https://rhun.app/sitemap.xml
