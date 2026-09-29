@@ -48,10 +48,10 @@ run garbage '<html>' '' "$w/target" '' "$check" wait-update print-update
 expect garbage "state=idle current=$cur latest= error=unexpected reply"
 run missing '' '' "$w/target" '' "$check" wait-update print-update
 expect missing "state=idle current=$cur latest= error=download failed"
-# the saved answer stands within the hour, and is asked again after it
-run throttled 99.0.0 "checked=$now
-latest=98.0.0" "$w/target" '' 'wait 5500' wait-update print-update
-expect throttled "state=available current=$cur latest=98.0.0 error="
+# every start asks again, however recent the saved answer: a release may have come out since
+run fresh 99.0.0 "checked=$now
+latest=$cur" "$w/target" '' 'wait 5500' wait-update print-update
+expect fresh "state=available current=$cur latest=99.0.0 error="
 run stale 99.0.0 "checked=1
 latest=98.0.0" "$w/target" '' 'wait 5500' wait-update print-update
 expect stale "state=available current=$cur latest=99.0.0 error="
