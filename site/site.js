@@ -67,5 +67,5 @@
   });
 
   // Keep the page usable if WebGL or the sculpture module is unavailable.
-  import("./hero.js").catch(() => {});
+  import("./hero.js?v=@ASSET_VERSION@").catch(() => {});
 })();
