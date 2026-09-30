@@ -374,11 +374,15 @@ start:
     mov [rsp + 8], rax
     lea rax, [rip + .Lnoninteractive]
     mov [rsp + 16], rax
-    lea rax, [rip + .Lcommand]
+    lea rax, [rip + .Loutputformat]
     mov [rsp + 24], rax
-    lea rax, [rip + commit_ai_script]
+    lea rax, [rip + .Ltext]
     mov [rsp + 32], rax
-    mov qword ptr [rsp + 40], 0
+    lea rax, [rip + .Lcommand]
+    mov [rsp + 40], rax
+    lea rax, [rip + commit_ai_script]
+    mov [rsp + 48], rax
+    mov qword ptr [rsp + 56], 0
 .else
     xor r12d, r12d
     lea rax, [rip + .Lshell]
@@ -664,6 +668,8 @@ describe:
 .Lollama: .asciz "ollama"
 .ifdef WINDOWS
 .Lshell: .asciz "powershell.exe"
+.Loutputformat: .asciz "-OutputFormat"
+.Ltext: .asciz "Text"
 .Lnoprofile: .asciz "-NoProfile"
 .Lnoninteractive: .asciz "-NonInteractive"
 .Lcommand: .asciz "-EncodedCommand"

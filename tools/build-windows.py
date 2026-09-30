@@ -45,7 +45,10 @@ def assets():
     import base64
     import gzip
     packed = base64.b64encode(gzip.compress((ROOT / 'runtime/ai/commit.ps1').read_bytes(), mtime=0)).decode('ascii')
-    bootstrap = ("$b=[Convert]::FromBase64String('" + packed + "');"
+    # New-Object can load a module before the helper starts. Suppress its first-use
+    # progress here so PowerShell cannot mix CLIXML progress into the draft pipe.
+    bootstrap = ("$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';"
+                 "$b=[Convert]::FromBase64String('" + packed + "');"
                  "$m=New-Object IO.MemoryStream(,$b);"
                  "$g=New-Object IO.Compression.GzipStream($m,[IO.Compression.CompressionMode]::Decompress);"
                  "$r=New-Object IO.StreamReader($g);& ([scriptblock]::Create($r.ReadToEnd()))")
