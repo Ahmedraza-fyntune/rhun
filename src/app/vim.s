@@ -4456,8 +4456,7 @@ vx_e:
     call mem_dup
     mov r12, rax
     mov r13, rax
-    cmp byte ptr [r12], '/'
-    je 1f
+    PATH_ABSOLUTE r12, 1f
     mov rdi, [rip + g_project]
     test rdi, rdi
     jz 1f

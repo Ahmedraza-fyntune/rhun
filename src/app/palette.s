@@ -970,6 +970,10 @@ browse_split:
     push rbx
     lea rdi, [rip + pal_tf]
     call tf_text
+.ifdef WINDOWS
+    mov rdi, rax
+    call win_slashes
+.endif
     mov rcx, rdx
     mov rbx, rdx
 1:  test rbx, rbx
@@ -994,8 +998,9 @@ browse_expand:
     mov r13d, 3000
 1:  test r13, r13
     jz 3f
-    cmp byte ptr [r12], '/'
-    jne 11f
+    PATH_ABSOLUTE r12, 12f
+    jmp 11f
+12:
     mov rdi, rbx
     jmp 5f
 11: cmp byte ptr [r12], '~'
@@ -1035,8 +1040,7 @@ browse_expand:
     rep movsb
     mov byte ptr [rdi], 0
     # a relative home: taken as from the root
-    cmp byte ptr [rbx], '/'
-    je 6f
+    PATH_ABSOLUTE rbx, 6f
     lea rdi, [rip + brw_label]
     mov rsi, rbx
     call cstr_copy
@@ -1845,9 +1849,12 @@ palette_accept:
     jmp .Lpa_ret
 70:
     # absolute path: relative input is taken from the project root
+.ifdef WINDOWS
+    mov rdi, rax
+    call win_slashes
+.endif
     lea rdi, [rip + pal_path]
-    cmp byte ptr [rax], '/'
-    je 7f
+    PATH_ABSOLUTE rax, 7f
     cmp byte ptr [rax], '~'
     jne 71f
     push rax
@@ -1880,6 +1887,10 @@ palette_accept:
     mov ecx, 3000
 72: rep movsb
     mov byte ptr [rdi], 0
+.ifdef WINDOWS
+    lea rdi, [rip + pal_path]
+    call path_normalize
+.endif
     mov ebx, [rip + pal_prompt]
     mov dword ptr [rip + pal_mode], PM_NONE
     mov dword ptr [rip + g_focus], FOCUS_EDITOR

@@ -538,8 +538,12 @@ g_commands:
     COMMAND git_unstage_all, "Git: Unstage All Changes", cmd_git_unstage_all, ""
     COMMAND git_discard_all, "Git: Discard All Changes", cmd_git_discard_all, ""
     COMMAND check_for_updates, "Check for Updates", cmd_check_for_updates, ""
+.ifdef WINDOWS
+    COMMAND install_update, "Open Update Download", cmd_install_update, ""
+.else
     COMMAND install_update, "Install Update", cmd_install_update, ""
     COMMAND restart_to_update, "Restart to Update", cmd_restart_to_update, ""
+.endif
     .quad 0, 0, 0, 0
 
 .bss

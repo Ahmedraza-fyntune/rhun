@@ -2,10 +2,10 @@
   "use strict";
 
   const descriptions = {
-    hero: ["Just open it and start.", "rhun with a file explorer, syntax highlighting, and a live coding agent session"],
-    terminal: ["Your terminal, right here.", "The built-in terminal in rhun, showing a build and Git log below the editor"],
-    git: ["Every branch. Every change.", "Git history in rhun with a commit graph, tags, and uncommitted changes"],
-    agents: ["Claude Code and Codex, alongside your code.", "The agents panel in rhun following a live Codex session"]
+    hero: "rhun with a file explorer, syntax highlighting, and a live coding agent session",
+    terminal: "The built-in terminal in rhun, showing a build and Git log below the editor",
+    git: "Git history in rhun with a commit graph, tags, and uncommitted changes",
+    agents: "The agents panel in rhun following a live Codex session"
   };
   let selectedTheme = "hero";
   let selectedThemeLabel = "Rhun Dark";
@@ -25,11 +25,9 @@
       document.querySelector(".theme-controls").hidden = name !== "themes";
       if (name === "themes") {
         setScreenshot(document.querySelector("#editor-image"), document.querySelector("#editor-link"), selectedTheme, `rhun in the ${selectedThemeLabel} theme`);
-        document.querySelector("#view-description").textContent = "Find your colors.";
         return;
       }
-      setScreenshot(document.querySelector("#editor-image"), document.querySelector("#editor-link"), name, descriptions[name][1]);
-      document.querySelector("#view-description").textContent = descriptions[name][0];
+      setScreenshot(document.querySelector("#editor-image"), document.querySelector("#editor-link"), name, descriptions[name]);
     });
   });
 

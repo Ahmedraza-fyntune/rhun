@@ -1,6 +1,6 @@
 # rhun guide
 
-rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets into a pixel buffer and hands that buffer to the display server. On Linux it speaks the Wayland and X11 wire protocols directly, without libc, toolkits or libwayland. On macOS the same code runs natively on Apple silicon in an AppKit window. The result is one binary (fonts, themes and grammars included) that looks the same on every desktop.
+rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets into a pixel buffer and hands that buffer to the display server. On Linux it speaks the Wayland and X11 wire protocols directly, without libc, toolkits or libwayland. On macOS the same code runs natively on Apple silicon in an AppKit window. On Windows it runs as native x64 assembly in a Win32 window. Fonts, themes and grammars are built in on all three platforms.
 
 ## Features
 
@@ -20,9 +20,12 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Files changed on disk are reloaded, open files are restored per project
 - Wayland with fractional scaling; X11 as a fallback
 - macOS on Apple silicon: Retina displays, input methods and dead keys, full screen, signed with a Developer ID
-- Installs with one command and updates itself from GitHub releases
+- Windows x64: native window, Unicode paths and clipboard, per-monitor scaling, and a ConPTY terminal
+- Installs from GitHub releases; updates itself on Linux and macOS
 
 ## Install and update
+
+On Linux and macOS:
 
 ```sh
 curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
@@ -45,7 +48,7 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--no-modify-path` | leave shell startup files alone |
 | `--uninstall` | remove rhun and the PATH line; your settings in `~/.config/rhun` stay |
 
-rhun looks for a new version a few seconds after it starts and once a day while it runs. The check is one HTTPS request to github.com for a small text file, made with curl (or wget) in the background, so it never slows rhun down. When there is a newer version, the status bar shows **Update to X**: clicking it installs the update in the background, and **Restart to update** then restarts rhun into it, asking about unsaved files first and reopening the project. Check for Updates, Install Update and Restart to Update are in the command palette too.
+rhun looks for a new version a few seconds after it starts and once a day while it runs. The check is one HTTPS request to github.com for a small text file, made with curl (or wget) in the background. On Linux and macOS, when there is a newer version, the status bar shows **Update to X**: clicking it installs the update in the background, and **Restart to update** then restarts rhun into it, asking about unsaved files first and reopening the project. Check for Updates, Install Update and Restart to Update are in the command palette too. Windows shows **Download X**, which opens the release page; close rhun and rerun the installer to update.
 
 **Check for updates** in Settings (`check = false` under `[updates]`) turns the automatic check off; **Check now** below it still works. A rhun built from source checks only when asked and never replaces itself.
 
@@ -76,9 +79,38 @@ tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.zip and .dmg
 
 `RHUN_SIGN_ID` picks another signing identity. `RHUN_NOTARIZE=0` signs without notarizing and makes no disk image: macOS opens an app downloaded in a browser only when Apple has notarized it, while `install.sh` and updates download with curl, which needs only the signature. `tools/mac-icon.py` draws `assets/icons/rhun.icns` from the Linux icon, `tools/png-icons.py` the PNG icons for Linux.
 
+### Windows
+
+The Windows build targets Windows 10 version 1809 or later and Windows 11, on x64. Native ARM64 and Windows code signing are not included in 0.16.0. Windows may display an unknown-publisher warning for the unsigned download.
+
+Download `rhun-VERSION-windows-x86_64.zip` from [Releases](https://github.com/vshvedov/rhun/releases/latest), extract it, and open `rhun.exe`. Keep `rhun.com` beside it for terminal use. Alternatively, download `install.ps1` from that release and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Close rhun and rerun the installer to update. Uninstalling keeps settings and sessions.
+
+Use `rhun` or `rhun.com` from a terminal. Normal launches return the prompt immediately. Use `rhun --wait` when another program needs to wait for the editor. `rhun.com --version`, `--headless`, and `--script` preserve console output. The Unix `--control` socket is not available on Windows; use a script file instead.
+
+Settings, themes and grammars live under `%APPDATA%\rhun`; saved sessions live under `%LOCALAPPDATA%\rhun`. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` override those parent directories. `HOME` defaults to `%USERPROFILE%`. Session filenames encode drive letters, separators and Windows filename restrictions. A project path whose encoded session filename exceeds 240 bytes opens normally but shows a warning and does not persist a session.
+
+The terminal starts `powershell.exe` by default. A configured shell must be a native executable, such as `pwsh.exe` or Git Bash. Install Git for Windows and make `git.exe` available on PATH for Git features. The update check uses `curl.exe`, included with supported Windows versions. Input methods use Windows text input; Ctrl and Alt shortcuts use the current keyboard layout, and AltGr remains available for typing.
+
+Build on Windows, macOS or Linux with Python 3 and LLVM (`llvm-mc`, `llvm-dlltool`, `llvm-rc`, and `lld-link`). On Windows, use the complete `clang+llvm-*-x86_64-pc-windows-msvc` archive from [LLVM releases](https://github.com/llvm/llvm-project/releases), since the normal installer omits `llvm-mc`. `tools/setup-windows-llvm.ps1` downloads and verifies a pinned archive into `build/llvm`. Set `LLVM_BIN` if the tools are not on PATH. No C compiler, Windows SDK or C runtime is needed; the editor and its Windows adapters are assembly.
+
+```sh
+python3 tools/build-windows.py test
+python3 tools/package-windows.py
+```
+
+Outputs are in `build/windows`, separate from Mac and Linux builds. On Windows use `python` in place of `python3`, then run `python tests/windows.py` and `python tests/windows-install.py`. The Windows workflow runs these checks on Windows Server 2022, including file sharing, symlinks, ConPTY, native window input and installer failures. This CI target does not validate the oldest supported Windows client. For development on Linux, `tests/windows.py --wine /path/to/wine64` runs the compatible subset; it explicitly skips the native Windows checks.
+
+`src/win/` maps the core's file and process operations to Unicode Windows APIs, presents the shared renderer through a DIB, and integrates directory notifications and ConPTY with the event loop. The PE files reserve and commit a 32 MiB stack because the shared assembly uses large frames without Windows stack probes.
+
 ### Releases
 
-`VERSION` holds the version. `tools/release.sh 0.14.0` writes it, commits, tags `v0.14.0` and pushes; the tag starts `.github/workflows/release.yml`, which tests and builds both systems, signs the Mac app, and publishes the release with the archives, `SHA256SUMS`, `VERSION` and `install.sh`. The release stays a draft until everything is uploaded, so rhun and the installer never see a version without its files. A version with a dash (`0.14.0-rc1`) is published as a prerelease, which they do not take for the latest.
+`VERSION` holds the version. `tools/release.sh 0.16.0` writes it, commits, tags `v0.16.0` and pushes; the tag starts `.github/workflows/release.yml`, which tests and builds Linux, macOS and Windows, signs the Mac app, and publishes the release with the archives, `SHA256SUMS`, `VERSION`, `install.sh` and `install.ps1`. The release stays a draft until everything is uploaded, so rhun and the installer never see a version without its files. A version with a dash (`0.16.0-rc1`) is published as a prerelease, which they do not take for the latest.
 
 The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PASSWORD` (the Developer ID Application certificate with its key, exported as .p12, base64), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` (an App Store Connect API key for notarization, the .p8 in base64). The Mac app is notarized, and the release gets a disk image, only when the repository variable `RHUN_NOTARIZE` is `1` (Settings → Secrets and variables → Actions → Variables); otherwise the release does not wait on Apple.
 
@@ -300,12 +332,13 @@ An extension that crashes or hangs cannot take the editor with it.
 | `src/ui/ui.s` | immediate-mode widgets |
 | `src/plat/` | Wayland, XKB keymaps, X11, headless |
 | `src/app/` | documents, editor, vim keys, image view, explorer, palette, settings, agents, terminal, git, syntax, themes |
+| `src/win/` | Windows x64 assembly: Unicode APIs, Win32 window, directory notifications, ConPTY |
 | `src/mac/` | macOS, native AArch64: entry, Linux system calls on libSystem, FSEvents, the AppKit window |
 | `tools/arm64.py` | the x86-64 to AArch64 translator for Apple silicon |
 | `runtime/` | themes and grammars embedded into the binary |
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
 
-Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`; macOS fills it from `src/mac/cocoa.s`. Code that differs by system is in `.ifdef MACOS` blocks.
+Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`; macOS fills it from `src/mac/cocoa.s`. Code that differs by system is in `.ifdef MACOS` or `.ifdef WINDOWS` blocks.
 
 ## License
 

@@ -46,10 +46,12 @@ next_int:
 2:  pop rbx
     ret
 
-# render if needed (headless draws synchronously)
+# Render if needed. Headless and the Windows DIB renderer draw synchronously.
 flush_frame:
+.ifndef WINDOWS
     cmp dword ptr [rip + g_headless], 0
     je 1f
+.endif
     cmp dword ptr [rip + g_dirty], 0
     je 1f
     PCALL P_draw
@@ -90,6 +92,15 @@ FN control_exec
     PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
+.ifdef WINDOWS
+    # The script reader splits at LF; accept the CR left by Windows text editors.
+    test r12, r12
+    jz 8f
+    cmp byte ptr [rbx + r12 - 1], 13
+    jne 8f
+    dec r12
+8:
+.endif
     lea rdi, [rip + out]
     call sb_clear
     call next_arg
@@ -916,6 +927,10 @@ FN control_run_script
 
 # control_listen(path): accept connections, one command per line, reply "ok"/"error"
 FN control_listen
+.ifdef WINDOWS
+    lea rdi, [rip + .Lwindows_control]
+    jmp die
+.endif
     PROLOGUE
     mov rbx, rdi
     # sun_path holds 104 bytes on macOS, 108 on Linux
@@ -1176,3 +1191,5 @@ oc_next: .long -1               # a client that came while oc_busy
 .p2align 3
 pc_xc: .zero XC_SIZE
 pp_buf: .zero 4096
+
+CSTR .Lwindows_control, "rhun: --control is unavailable on Windows; use --script FILE"

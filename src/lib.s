@@ -652,6 +652,23 @@ FN path_basename
 
 # path_dirlen(path, len) -> length of directory part (without trailing /)
 FN path_dirlen
+.ifdef WINDOWS
+    push rbx
+    call path_rootlen
+    mov rbx, rax
+    mov rax, rsi
+1:  test rax, rax
+    jz 2f
+    cmp byte ptr [rdi + rax - 1], '/'
+    je 3f
+    dec rax
+    jmp 1b
+3:  dec rax
+2:  cmp rax, rbx
+    cmovb rax, rbx
+    pop rbx
+    ret
+.endif
     mov rax, rsi
 1:  test rax, rax
     jz 2f
@@ -686,3 +703,35 @@ FN path_ext
 2:  mov rax, r9
     xor edx, edx
     ret
+
+# path_rootlen(path) -> 0 for a relative path; preserve drive and UNC share boundaries.
+FN path_rootlen
+    xor eax, eax
+.ifdef WINDOWS
+    cmp byte ptr [rdi], 0
+    je 9f
+    cmp byte ptr [rdi + 1], ':'
+    jne 1f
+    cmp byte ptr [rdi + 2], '/'
+    jne 9f
+    mov eax, 3
+    ret
+1:  cmp word ptr [rdi], 0x2f2f
+    jne 3f
+    mov eax, 2
+    mov ecx, 2
+2:  cmp byte ptr [rdi + rax], 0
+    je 9f
+    cmp byte ptr [rdi + rax], '/'
+    jne 21f
+    dec ecx
+    jz 22f
+21: inc rax
+    jmp 2b
+22: inc rax
+    ret
+3:
+.endif
+    cmp byte ptr [rdi], '/'
+    sete al
+9:  ret

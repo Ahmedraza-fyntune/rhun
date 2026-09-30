@@ -16,7 +16,15 @@ Or using `wget`
 wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
 ```
 
-rhun shows up with your other apps, and `rhun` starts it from a terminal. It keeps itself up to date: when a new version is out, the status bar offers it.
+rhun shows up with your other apps, and `rhun` starts it from a terminal. When a new version is out, the status bar offers it.
+
+On Windows 10 (1809 or later) or Windows 11, download the **windows-x86_64.zip** from [Releases](https://github.com/vshvedov/rhun/releases/latest), extract it, and open `rhun.exe`. For a Start menu shortcut and the `rhun` command, run the [Windows installer](https://github.com/vshvedov/rhun/releases/latest/download/install.ps1) in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+Close rhun and rerun the installer to update on Windows. See the [Windows guide](docs/guide.md#windows) for paths, build instructions, and first-release limitations.
 
 ## Why rhun
 

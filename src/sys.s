@@ -189,7 +189,7 @@ FN file_size
 FN file_stamp
     lea rsi, [rip + stat_buf]
     mov eax, 4                  # stat
-    syscall
+    XSYS
     test rax, rax
     js 1f
     mov rax, [rip + stat_buf + 88]
@@ -230,7 +230,7 @@ FN file_mtime_ns
 FN file_is_dir
     lea rsi, [rip + stat_buf]
     mov eax, 4          # stat (follows symlinks)
-    syscall
+    XSYS
     test rax, rax
     js 1f
     mov eax, [rip + stat_buf + 24]
@@ -247,7 +247,7 @@ FN file_is_dir
 FN file_type
     lea rsi, [rip + stat_buf]
     mov eax, 4          # stat (follows symlinks)
-    syscall
+    XSYS
     test rax, rax
     js 1f
     mov eax, [rip + stat_buf + 24]
@@ -350,8 +350,8 @@ FN file_write_all
     dec ebx
     mov byte ptr [rsp + rax + 4096], 0
     mov r15, rax
-    cmp byte ptr [rsp + 4096], '/'
-    je 1f
+    lea rax, [rsp + 4096]
+    PATH_ABSOLUTE rax, 1f
     # Relative link text replaces the basename, retaining its directory and any symlinks in it.
     mov rdi, r12
     call strlen
@@ -374,7 +374,7 @@ FN file_write_all
     mov rdi, r12
     lea rsi, [rip + stat_buf]
     mov eax, 4
-    syscall
+    XSYS
     cmp rax, -2
     je 1f
     test rax, rax
@@ -605,6 +605,9 @@ FN path_join_tmp
     push rbx
     lea rbx, [rip + tmp_path]
     mov rax, rbx
+.ifdef WINDOWS
+    PATH_ABSOLUTE rsi, 3f
+.endif
 1:  mov cl, [rdi]
     test cl, cl
     jz 2f
@@ -640,6 +643,9 @@ FN path_join
 
 # path_normalize(path): in place, absolute paths only: drops "." and "//", resolves ".."
 FN path_normalize
+.ifdef WINDOWS
+    jmp win_path_normalize
+.endif
     cmp byte ptr [rdi], '/'
     jne 9f
     mov rsi, rdi                # read

@@ -1410,7 +1410,7 @@ x_writev2:
     lea rsi, [rip + iov2]
     mov edx, 2
     mov eax, 20                 # writev
-    syscall
+    XSYS
     cmp rax, -EINTR
     je 1b
     cmp rax, -EAGAIN

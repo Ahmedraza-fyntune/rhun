@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rhun: a small, fast code editor written in assembly</title>
-<meta name="description" content="rhun is a tiny, very fast code editor for Linux and macOS, written in assembly: 127 languages, a built-in terminal, Git, fuzzy search and an agents panel.">
+<meta name="description" content="rhun is a tiny, very fast code editor for Linux, macOS and Windows, written in assembly: 127 languages, a built-in terminal, Git, fuzzy search and an agents panel.">
 <link rel="canonical" href="https://rhun.app/">
 <meta name="theme-color" content="#111216">
 <meta name="color-scheme" content="dark">
@@ -13,7 +13,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="rhun">
 <meta property="og:title" content="rhun: a small, fast code editor written in assembly">
-<meta property="og:description" content="A tiny code editor for Linux and macOS: 127 languages, a terminal, Git and an agents panel, in one binary under 700 KB.">
+<meta property="og:description" content="A tiny code editor for Linux, macOS and Windows: 127 languages, a terminal, Git and an agents panel, with fonts and themes built in.">
 <meta property="og:url" content="https://rhun.app/">
 <meta property="og:image" content="https://rhun.app/img/card.png">
 <meta property="og:image:width" content="1200">
@@ -21,7 +21,7 @@
 <meta property="og:image:alt" content="rhun, a small and fast code editor written in assembly">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="rhun: a small, fast code editor written in assembly">
-<meta name="twitter:description" content="A tiny code editor for Linux and macOS: 127 languages, a terminal, Git and an agents panel, in one binary under 700 KB.">
+<meta name="twitter:description" content="A tiny code editor for Linux, macOS and Windows: 127 languages, a terminal, Git and an agents panel, with fonts and themes built in.">
 <meta name="twitter:image" content="https://rhun.app/img/card.png">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -38,11 +38,11 @@
       "@id": "https://rhun.app/#app",
       "name": "rhun",
       "alternateName": "rh\u00fbn",
-      "description": "A small, very fast code editor for Linux and macOS, written in assembly. Tabs, syntax highlighting for 127 languages, a built-in terminal, Git history and diffs, fuzzy search, Vim mode and an agents panel for Claude Code and Codex.",
+      "description": "A small, very fast code editor for Linux, macOS and Windows, written in assembly. Tabs, syntax highlighting for 127 languages, a built-in terminal, Git history and diffs, fuzzy search, Vim mode and an agents panel for Claude Code and Codex.",
       "url": "https://rhun.app/",
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Code editor",
-      "operatingSystem": "Linux (x86-64), macOS (Apple silicon)",
+      "operatingSystem": "Linux (x86-64), macOS (Apple silicon), Windows (x64)",
       "softwareVersion": "@VERSION@",
       "downloadUrl": "https://github.com/vshvedov/rhun/releases/latest",
       "installUrl": "https://github.com/vshvedov/rhun/releases/latest/download/install.sh",
@@ -116,13 +116,12 @@
     <div class="wrap hero-stage">
       <div class="hero-art" aria-hidden="true"><img class="art-fallback" src="img/fold.jpg?v=@ASSET_VERSION@" width="600" height="520" alt="" fetchpriority="high"></div>
       <div class="hero-copy">
-        <p class="eyebrow">AN EDITOR FOR LINUX &amp; macOS</p>
+        <p class="eyebrow">AN EDITOR FOR LINUX, macOS &amp; WINDOWS</p>
         <h1 id="title">Less weight.<br>More <span class="accent">flow.</span></h1>
         <p class="hero-description">A small, fast code editor.<br>Written in assembly.</p>
         <div class="hero-actions"><a class="button button-primary" href="#install">Get rhun <span aria-hidden="true">↗</span></a></div>
       </div>
     </div>
-    <div class="wrap hero-bottom"><a href="#features" class="explore"><span aria-hidden="true">↓</span> TAKE A LOOK</a><div class="hero-meta"><a class="version" href="https://github.com/vshvedov/rhun/releases/latest">v@VERSION@ <span aria-hidden="true">↗</span></a><button class="motion-toggle" type="button" hidden aria-pressed="true">Pause motion</button></div></div>
   </section>
 
   <section class="showcase" id="features" aria-labelledby="features-h">
@@ -139,7 +138,6 @@
         <span class="preview-label">THIS IS RHUN <span aria-hidden="true">↙</span></span>
       </div>
       <figure class="editor-preview"><a id="editor-link" href="img/hero.webp" aria-label="Open full size editor screenshot"><img id="editor-image" src="img/hero.webp" srcset="img/hero-800.webp 800w, img/hero.webp 1600w" sizes="(min-width: 1328px) 1200px, calc(100vw - 64px)" width="1600" height="1000" alt="rhun with a file explorer, syntax highlighting, and a live coding agent session" loading="lazy"></a></figure>
-      <div class="preview-caption"><p id="view-description" aria-live="polite">Just open it and start.</p><span>&lt;700 KB ON LINUX</span></div>
       <div class="theme-controls" id="themes" hidden>
         <div class="theme-picker" role="group" aria-label="Preview a color theme">
           <button type="button" data-theme="hero" aria-label="Rhun Dark" aria-pressed="true" style="--swatch:#24262e;--swatch-accent:#8aa4ff"></button>
@@ -155,8 +153,8 @@
   </section>
   <section class="install-section" id="install" aria-labelledby="install-h">
     <div class="wrap install-layout">
-      <div><h2 id="install-h">Make yourself at home.</h2><p>Linux x86-64 &amp; macOS Apple silicon.</p><a class="text-link" href="https://github.com/vshvedov/rhun/releases/latest">Download a release <span aria-hidden="true">↗</span></a></div>
-      <div class="install-box" id="get"><div class="install-box-heading"><span>OR INSTALL FROM YOUR TERMINAL</span><span aria-hidden="true">&gt;_</span></div><div class="command"><span class="prompt" aria-hidden="true">$</span><code id="install-command">curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></div><button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command <span aria-hidden="true">↗</span></button><span class="copy-status" role="status" aria-live="polite"></span></div>
+      <div><h2 id="install-h">Make yourself at home.</h2><p>Linux x86-64, macOS Apple silicon &amp; Windows x64.</p><a class="text-link" href="https://github.com/vshvedov/rhun/releases/latest">Download a release <span aria-hidden="true">↗</span></a></div>
+      <div class="install-box" id="get"><div class="install-box-heading"><span>LINUX &amp; macOS TERMINAL</span><span aria-hidden="true">&gt;_</span></div><div class="command"><span class="prompt" aria-hidden="true">$</span><code id="install-command">curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></div><button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command <span aria-hidden="true">↗</span></button><span class="copy-status" role="status" aria-live="polite"></span></div>
     </div>
   </section>
 </main>

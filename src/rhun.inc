@@ -116,7 +116,9 @@
 .macro FN name
     .text
     .globl \name
+    .ifndef WINDOWS
     .type \name, @function
+    .endif
     .p2align 4
 \name:
 .endm
@@ -131,6 +133,10 @@
     push r14
     push r15
     sub rsp, 8 + \frame
+.ifdef WINDOWS
+    # Shared leaf callers need not align the internal stack. Win32 calls always must.
+    and rsp, -16
+.endif
 .endm
 
 .macro EPILOGUE
@@ -146,7 +152,15 @@
 
 .macro SYS num
     mov eax, \num
+    XSYS
+.endm
+
+.macro XSYS
+    .ifdef WINDOWS
+    call win_syscall
+    .else
     syscall
+    .endif
 .endm
 
 # ---- struct layout ----
@@ -881,3 +895,22 @@ F TM_out, SB_SIZE       # replies for the program
 F TM_str, SB_SIZE       # OSC string
 F TM_title, SB_SIZE
 ENDSTRUCT TM_SIZE
+
+# Branch on rooted paths without clobbering registers.
+.macro PATH_ABSOLUTE reg, target
+    cmp byte ptr [\reg], '/'
+    je \target
+.ifdef WINDOWS
+    cmp byte ptr [\reg], 92
+    je \target
+    cmp byte ptr [\reg], 0
+    je .Lpath_relative\@
+    cmp byte ptr [\reg + 1], ':'
+    jne .Lpath_relative\@
+    cmp byte ptr [\reg + 2], '/'
+    je \target
+    cmp byte ptr [\reg + 2], 92
+    je \target
+.Lpath_relative\@:
+.endif
+.endm

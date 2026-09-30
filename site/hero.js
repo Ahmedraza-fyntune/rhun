@@ -58,9 +58,8 @@ function foldedBand() {
 function initialize() {
   const stage = document.querySelector('.hero-stage');
   const art = document.querySelector('.hero-art');
-  const toggle = document.querySelector('.motion-toggle');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  if (!stage || !art || !toggle) return;
+  if (!stage || !art) return;
 
   let renderer;
   try {
@@ -104,21 +103,12 @@ function initialize() {
   let frame = 0;
   let last = 0;
   let phase = 0;
-  let paused = false;
   let hovering = false;
   let pointerX = 0;
   let pointerY = 0;
   let x = 0;
   let y = 0;
   let energy = 0;
-  let alternatePose = false;
-
-  function updateToggle() {
-    toggle.setAttribute('aria-pressed', String(reducedMotion.matches ? alternatePose : !paused));
-    toggle.textContent = reducedMotion.matches
-      ? (alternatePose ? 'Reset sculpture' : 'Rotate sculpture')
-      : (paused ? 'Resume motion' : 'Pause motion');
-  }
 
   function pose() {
     if (lost) return;
@@ -141,7 +131,6 @@ function initialize() {
     camera.updateProjectionMatrix();
     pose();
     art.classList.add('is-ready');
-    toggle.hidden = false;
   }
 
   function cancelFrame() {
@@ -152,7 +141,7 @@ function initialize() {
 
   function animate(now) {
     frame = 0;
-    if (!visible || document.hidden || lost || paused || reducedMotion.matches) return;
+    if (!visible || document.hidden || lost || reducedMotion.matches) return;
     // Thirty frames per second keeps the slow movement light on the GPU.
     const elapsed = last ? now - last : 1000 / 30;
     if (elapsed < 1000 / 30 - 1) {
@@ -175,14 +164,14 @@ function initialize() {
   }
 
   function wake() {
-    if (!frame && visible && !document.hidden && !lost && !paused && !reducedMotion.matches) {
+    if (!frame && visible && !document.hidden && !lost && !reducedMotion.matches) {
       last = 0;
       frame = requestAnimationFrame(animate);
     }
   }
 
   art.addEventListener('pointermove', event => {
-    if (event.pointerType === 'touch' || reducedMotion.matches || paused) return;
+    if (event.pointerType === 'touch' || reducedMotion.matches) return;
     hovering = true;
     const rect = art.getBoundingClientRect();
     pointerX = ((event.clientX - rect.left) / rect.width - .5) * 2;
@@ -191,21 +180,6 @@ function initialize() {
   });
   art.addEventListener('pointerleave', () => {
     hovering = false;
-  });
-  toggle.addEventListener('click', () => {
-    if (reducedMotion.matches) {
-      alternatePose = !alternatePose;
-      x = alternatePose ? .6 : 0;
-      y = alternatePose ? -.25 : 0;
-      energy = alternatePose ? 1 : 0;
-      pose();
-    } else {
-      paused = !paused;
-      hovering = false;
-      if (paused) cancelFrame();
-      else wake();
-    }
-    updateToggle();
   });
 
   new ResizeObserver(resize).observe(art);
@@ -229,9 +203,8 @@ function initialize() {
   });
   reducedMotion.addEventListener('change', () => {
     cancelFrame();
-    hovering = alternatePose = false;
+    hovering = false;
     x = y = energy = phase = 0;
-    updateToggle();
     pose();
     wake();
   });
@@ -242,7 +215,6 @@ function initialize() {
     hovering = false;
     art.classList.remove('is-ready');
     renderer.domElement.hidden = true;
-    toggle.hidden = true;
   });
   renderer.domElement.addEventListener('webglcontextrestored', () => {
     lost = false;
@@ -252,7 +224,6 @@ function initialize() {
     resize();
     wake();
   });
-  updateToggle();
   resize();
 }
 

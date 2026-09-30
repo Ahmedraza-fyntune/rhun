@@ -71,6 +71,46 @@ session_file:
     mov esi, '/'
     call sb_push_byte
 3:  movzx esi, byte ptr [rbx]
+.ifdef WINDOWS
+    test esi, esi
+    jz 4f
+    cmp esi, 32
+    jb 35f
+    cmp esi, '%'
+    je 35f
+    cmp esi, ':'
+    je 35f
+    cmp esi, '/'
+    je 35f
+    cmp esi, 92
+    je 35f
+    cmp esi, '<'
+    je 35f
+    cmp esi, '>'
+    je 35f
+    cmp esi, '"'
+    je 35f
+    cmp esi, '|'
+    je 35f
+    cmp esi, '?'
+    je 35f
+    cmp esi, '*'
+    jne 31f
+35: mov r12d, esi
+    lea rdi, [rip + path_sb]
+    mov esi, '%'
+    call sb_push_byte
+    mov esi, r12d
+    shr esi, 4
+    lea rax, [rip + .Lwin_hex]
+    movzx esi, byte ptr [rax + rsi]
+    lea rdi, [rip + path_sb]
+    call sb_push_byte
+    and r12d, 15
+    lea rax, [rip + .Lwin_hex]
+    movzx esi, byte ptr [rax + r12]
+    jmp 31f
+.endif
     test esi, esi
     jz 4f
     cmp esi, '%'
@@ -87,7 +127,19 @@ session_file:
     call sb_push_cstr
     inc rbx
     jmp 3b
-4:  lea rdi, [rip + path_sb]
+4:
+.ifdef WINDOWS
+    mov rdi, [rip + path_sb + SB_ptr]
+    mov rsi, [rip + path_sb + SB_len]
+    call path_basename
+    cmp rdx, 240
+    jbe 41f
+    lea rdi, [rip + .Lwin_long_session]
+    call app_toast
+    jmp 8f
+41:
+.endif
+    lea rdi, [rip + path_sb]
     lea rsi, [rip + .Lext]
     call sb_push_cstr
     mov rax, [rip + path_sb + SB_ptr]
@@ -145,6 +197,37 @@ recent_cb:
     jz 9f
     cmp r13, 4000
     ja 9f
+.ifdef WINDOWS
+    lea rdi, [rip + rc_path]
+    xor ecx, ecx
+    xor edx, edx
+1:  cmp rcx, r13
+    jae 2f
+    mov al, [r12 + rcx]
+    inc rcx
+    cmp al, '%'
+    jne 11f
+    lea r8, [rcx + 2]
+    cmp r8, r13
+    ja 9f
+    movzx eax, byte ptr [r12 + rcx]
+    call session_unhex
+    cmp eax, 15
+    ja 9f
+    mov r8d, eax
+    shl r8d, 4
+    movzx eax, byte ptr [r12 + rcx + 1]
+    call session_unhex
+    cmp eax, 15
+    ja 9f
+    or eax, r8d
+    test eax, eax
+    jz 9f
+    add rcx, 2
+11: mov [rdi + rdx], al
+    inc rdx
+    jmp 1b
+.else
     cmp byte ptr [r12], '%'
     jne 9f
     # the folder: %%25 was a %, any other % a / (see session_file); ".session" ends a match
@@ -169,6 +252,7 @@ recent_cb:
 11: mov [rdi + rdx], al
     inc rdx
     jmp 1b
+.endif
 2:  mov byte ptr [rdi + rdx], 0
     mov rsi, [rip + g_project]
     test rsi, rsi
@@ -378,3 +462,23 @@ FN session_restore
 .Lext: .asciz ".session"
 .Lpercent: .asciz "%%25"
 .Lempty: .asciz ""
+
+.ifdef WINDOWS
+.text
+session_unhex:
+    cmp al, '0'
+    jb 9f
+    cmp al, '9'
+    jbe 1f
+    or al, 32
+    sub eax, 'a' - 10
+    cmp eax, 10
+    jb 9f
+    ret
+1:  sub eax, '0'
+    ret
+9:  mov eax, -1
+    ret
+CSTR .Lwin_hex, "0123456789ABCDEF"
+CSTR .Lwin_long_session, "This project path is too long to save its session"
+.endif

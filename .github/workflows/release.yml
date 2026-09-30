@@ -100,8 +100,53 @@ jobs:
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/rhun.keychain-db" 2>/dev/null || true
 
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: The tag is VERSION
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME.Substring(1) -ne (Get-Content VERSION -Raw).Trim()) { exit 1 }
+      - uses: actions/cache/restore@v4
+        id: llvm-cache
+        with:
+          path: build/llvm
+          key: llvm-windows-x64-23.1.2
+      - name: LLVM
+        shell: pwsh
+        timeout-minutes: 20
+        run: tools/setup-windows-llvm.ps1
+      - uses: actions/cache/save@v4
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        with:
+          path: build/llvm
+          key: llvm-windows-x64-23.1.2
+      - name: Build
+        env:
+          RHUN_DIST: '1'
+        id: build
+        run: python tools/build-windows.py test
+      - name: Native tests
+        run: python tests/windows.py
+      - name: Package
+        id: package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python tools/package-windows.py
+      - name: Installer tests
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: python tests/windows-install.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build/windows/rhun-*-windows-x86_64.zip
+          if-no-files-found: error
+
   publish:
-    needs: [linux, macos]
+    needs: [linux, macos, windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +158,7 @@ jobs:
           merge-multiple: true
       - name: Checksums, version and installer
         run: |
-          cp install.sh dist/
+          cp install.sh install.ps1 dist/
           cat VERSION > dist/VERSION
           (cd dist && sha256sum rhun-* > SHA256SUMS && cat SHA256SUMS)
       - name: Release notes
