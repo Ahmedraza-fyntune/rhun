@@ -102,21 +102,21 @@ function initialize() {
   let lost = false;
   let frame = 0;
   let last = 0;
-  let demoStart = 0;
-  let targetX = 0;
-  let targetY = 0;
-  let targetEnergy = 0;
+  let phase = 0;
+  let paused = false;
+  let hovering = false;
+  let pointerX = 0;
+  let pointerY = 0;
   let x = 0;
   let y = 0;
   let energy = 0;
   let alternatePose = false;
 
   function updateToggle() {
-    const playing = Boolean(demoStart || alternatePose);
-    toggle.setAttribute('aria-pressed', String(playing));
+    toggle.setAttribute('aria-pressed', String(reducedMotion.matches ? alternatePose : !paused));
     toggle.textContent = reducedMotion.matches
       ? (alternatePose ? 'Reset sculpture' : 'Rotate sculpture')
-      : (demoStart ? 'Pause motion' : 'Play motion');
+      : (paused ? 'Resume motion' : 'Pause motion');
   }
 
   function pose() {
@@ -149,101 +149,96 @@ function initialize() {
     last = 0;
   }
 
-  function reset() {
-    demoStart = 0;
-    alternatePose = false;
-    targetX = targetY = targetEnergy = 0;
-    updateToggle();
-  }
-
   function animate(now) {
     frame = 0;
-    if (!visible || document.hidden || lost) return;
-    const elapsed = Math.min(50, last ? now - last : 16);
-    last = now;
-    if (demoStart) {
-      const time = (now - demoStart) / 1000;
-      if (time > 5.6) reset();
-      else {
-        targetX = Math.sin(time * 1.35) * .8;
-        targetY = Math.cos(time * 1.05) * .4;
-        targetEnergy = .8;
-      }
+    if (!visible || document.hidden || lost || paused || reducedMotion.matches) return;
+    // Thirty frames per second keeps the slow movement light on the GPU.
+    const elapsed = last ? now - last : 1000 / 30;
+    if (elapsed < 1000 / 30 - 1) {
+      frame = requestAnimationFrame(animate);
+      return;
     }
-    const easing = reducedMotion.matches ? 1 : 1 - Math.exp(-elapsed / 150);
+    const delta = Math.min(elapsed, 64);
+    last = now;
+    phase += delta / 1000;
+    // Keep the idle phase running during hover so leaving never restarts the loop.
+    const targetX = hovering ? pointerX : Math.sin(phase * .20) * .50;
+    const targetY = hovering ? pointerY : Math.sin(phase * .16 + .5) * .23;
+    const targetEnergy = hovering ? 1 : .22 + Math.sin(phase * .24) * .14;
+    const easing = 1 - Math.exp(-delta / (hovering ? 150 : 650));
     x += (targetX - x) * easing;
     y += (targetY - y) * easing;
     energy += (targetEnergy - energy) * easing;
     pose();
-    if (demoStart || Math.abs(targetX - x) + Math.abs(targetY - y) + Math.abs(targetEnergy - energy) > .001) {
-      frame = requestAnimationFrame(animate);
-    }
+    frame = requestAnimationFrame(animate);
   }
 
   function wake() {
-    if (!frame && visible && !document.hidden && !lost) {
+    if (!frame && visible && !document.hidden && !lost && !paused && !reducedMotion.matches) {
       last = 0;
       frame = requestAnimationFrame(animate);
     }
   }
 
   art.addEventListener('pointermove', event => {
-    if (event.pointerType === 'touch' || reducedMotion.matches) return;
-    demoStart = 0;
-    updateToggle();
+    if (event.pointerType === 'touch' || reducedMotion.matches || paused) return;
+    hovering = true;
     const rect = art.getBoundingClientRect();
-    targetX = ((event.clientX - rect.left) / rect.width - .5) * 2;
-    targetY = ((event.clientY - rect.top) / rect.height - .5) * 2;
-    targetEnergy = 1;
+    pointerX = ((event.clientX - rect.left) / rect.width - .5) * 2;
+    pointerY = ((event.clientY - rect.top) / rect.height - .5) * 2;
     wake();
   });
   art.addEventListener('pointerleave', () => {
-    if (demoStart || reducedMotion.matches) return;
-    reset();
-    wake();
+    hovering = false;
   });
   toggle.addEventListener('click', () => {
     if (reducedMotion.matches) {
       alternatePose = !alternatePose;
-      targetX = alternatePose ? .6 : 0;
-      targetY = alternatePose ? -.25 : 0;
-      targetEnergy = alternatePose ? 1 : 0;
-    } else if (demoStart) {
-      reset();
+      x = alternatePose ? .6 : 0;
+      y = alternatePose ? -.25 : 0;
+      energy = alternatePose ? 1 : 0;
+      pose();
     } else {
-      demoStart = performance.now();
+      paused = !paused;
+      hovering = false;
+      if (paused) cancelFrame();
+      else wake();
     }
     updateToggle();
-    wake();
   });
 
   new ResizeObserver(resize).observe(art);
   new IntersectionObserver(entries => {
     visible = entries[0].isIntersecting;
     if (!visible) {
+      hovering = false;
       cancelFrame();
-      reset();
-      x = y = energy = 0;
-    } else resize();
+    } else {
+      resize();
+      wake();
+    }
   }).observe(art);
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      cancelFrame();
-      reset();
-      x = y = energy = 0;
-    } else resize();
+    hovering = false;
+    if (document.hidden) cancelFrame();
+    else {
+      resize();
+      wake();
+    }
   });
   reducedMotion.addEventListener('change', () => {
     cancelFrame();
-    reset();
-    x = y = energy = 0;
+    hovering = alternatePose = false;
+    x = y = energy = phase = 0;
+    updateToggle();
     pose();
+    wake();
   });
   renderer.domElement.addEventListener('webglcontextlost', event => {
     event.preventDefault();
     lost = true;
     cancelFrame();
-    reset();
+    hovering = false;
     art.classList.remove('is-ready');
     renderer.domElement.hidden = true;
     toggle.hidden = true;
@@ -254,6 +249,7 @@ function initialize() {
     scene.environment.dispose();
     scene.environment = studio(renderer);
     resize();
+    wake();
   });
   updateToggle();
   resize();
