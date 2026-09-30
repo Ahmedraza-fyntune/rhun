@@ -92,7 +92,7 @@ def main():
     resource.write_text(f'1 24 "{manifest.as_posix()}"\n1 ICON "{icon.as_posix()}"\n', encoding='utf-8')
     res = OUT / 'rhun.res'
     # Relative paths avoid llvm-rc interpreting a POSIX absolute path as a /flag.
-    run([rc, '/fo', res.relative_to(ROOT), resource.relative_to(ROOT)])
+    run([rc, '/no-preprocess', '/C', '65001', '/fo', res.relative_to(ROOT), resource.relative_to(ROOT)])
     exclude = {'src/start.s', 'src/plat/wayland.s', 'src/plat/x11.s'}
     sources = [p for p in sorted((ROOT / 'src').rglob('*.s'))
                if 'mac' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).as_posix() not in exclude]

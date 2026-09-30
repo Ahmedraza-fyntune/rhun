@@ -17,13 +17,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: llvm-cache
         with:
           path: build/llvm
           key: llvm-windows-x64-23.1.2
       - name: LLVM
         shell: pwsh
+        timeout-minutes: 20
         run: tools/setup-windows-llvm.ps1
+      - uses: actions/cache/save@v4
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        with:
+          path: build/llvm
+          key: llvm-windows-x64-23.1.2
       - name: Build
         run: python tools/build-windows.py test
       - name: Native tests

@@ -87,7 +87,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
             reader = threading.Thread(target=lambda: ready.append(process.stdout.readline()), daemon=True)
             reader.start()
             reader.join(timeout=10)
-            assert ready and b'active=' in ready[0], 'editor did not become ready'
+            assert ready and ready[0].startswith(b'tabs='), 'editor did not become ready'
             install(success=False)
             assert process.poll() is None
         finally:

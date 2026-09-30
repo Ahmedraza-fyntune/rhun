@@ -111,13 +111,20 @@ jobs:
         shell: pwsh
         run: |
           if ($env:GITHUB_REF_NAME.Substring(1) -ne (Get-Content VERSION -Raw).Trim()) { exit 1 }
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: llvm-cache
         with:
           path: build/llvm
           key: llvm-windows-x64-23.1.2
       - name: LLVM
         shell: pwsh
+        timeout-minutes: 20
         run: tools/setup-windows-llvm.ps1
+      - uses: actions/cache/save@v4
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        with:
+          path: build/llvm
+          key: llvm-windows-x64-23.1.2
       - name: Build
         env:
           RHUN_DIST: '1'
