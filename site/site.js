@@ -21,6 +21,9 @@
     button.addEventListener("click", () => {
       const name = button.dataset.view;
       viewButtons.forEach(item => item.setAttribute("aria-pressed", String(item === button)));
+      document.querySelectorAll("[data-description]").forEach(item => {
+        item.hidden = item.dataset.description !== name;
+      });
       document.querySelector(".theme-controls").hidden = name !== "themes";
       if (name === "themes") {
         setScreenshot(document.querySelector("#editor-image"), selectedTheme, `rhun in the ${selectedThemeLabel} theme`);
@@ -51,7 +54,7 @@
         await navigator.clipboard.writeText(button.dataset.copy);
         status.textContent = "Copied. Paste it into your terminal to install.";
         button.textContent = "Copied ✓";
-        resetTimer = setTimeout(() => { button.textContent = "Copy command ↗"; }, 2200);
+        resetTimer = setTimeout(() => { button.textContent = "Copy command"; }, 2200);
       } catch {
         status.textContent = "Select and copy the command above to install.";
         const selection = window.getSelection();

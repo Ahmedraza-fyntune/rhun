@@ -74,6 +74,7 @@
         "Find and replace, find in files, go to line",
         "Built-in terminal with 24-bit color, mouse and scrollback",
         "Git: changed lines, file status, diffs and a history graph of all branches",
+        "Optional AI commit messages with local open-weight models or existing Claude Code and Codex subscriptions",
         "Agents panel: live Claude Code and Codex sessions of the project",
         "Optional Vim mode",
         "39 dark and light color themes",
@@ -106,9 +107,9 @@
   <div class="wrap nav-inner">
     <a class="brand" href="./" aria-label="rhun home"><img class="brand-icon" src="favicon.svg?v=@ASSET_VERSION@" width="40" height="40" alt="">rhun<span class="brand-dot">.</span></a>
     <nav class="links" aria-label="Main navigation">
-      <a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Docs <span aria-hidden="true">↗</span></a><a href="https://github.com/vshvedov/rhun">GitHub <span aria-hidden="true">↗</span></a>
+      <a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Docs</a><a href="https://github.com/vshvedov/rhun">GitHub</a>
     </nav>
-    <a class="button nav-cta" href="#install">Get rhun <span aria-hidden="true">↗</span></a>
+    <a class="button nav-cta" href="#install">Get rhun</a>
   </div>
 </header>
 <main id="main">
@@ -138,6 +139,13 @@
           <button type="button" class="view-button" data-view="themes" aria-pressed="false">Themes</button>
         </div>
       </div>
+      <div class="view-description" aria-live="polite">
+        <p data-description="hero">Tabs, syntax highlighting, fuzzy search, and optional Vim mode.</p>
+        <p data-description="terminal" hidden>Run builds, shell commands, and coding agents beside your code.</p>
+        <p data-description="git" hidden>Review diffs, stage changes, and commit. Draft messages with local open-weight models or Claude Code and Codex using your existing subscriptions. AI is optional.</p>
+        <p data-description="agents" hidden>Follow your project’s Claude Code and Codex sessions as they work.</p>
+        <p data-description="themes" hidden>Choose from 39 light and dark themes. Preview a few here.</p>
+      </div>
       <div class="theme-controls" id="themes" hidden>
         <div class="theme-picker" role="group" aria-label="Preview a color theme">
           <button type="button" data-theme="hero" aria-label="Rhun Dark" aria-pressed="true" style="--swatch:#24262e;--swatch-accent:#8aa4ff"></button>
@@ -153,11 +161,11 @@
   </section>
   <section class="install-section" id="install" aria-labelledby="install-h">
     <div class="wrap install-layout">
-      <div><h2 id="install-h">Make yourself at home.</h2><p>Windows, Linux &amp; macOS.</p><a class="text-link" href="https://github.com/vshvedov/rhun/releases/latest">Download a release <span aria-hidden="true">↗</span></a></div>
-      <div class="install-box" id="get"><div class="install-box-heading"><span>TERMINAL INSTALL · LINUX &amp; macOS</span><span aria-hidden="true">&gt;_</span></div><div class="command"><span class="prompt" aria-hidden="true">$</span><code id="install-command">curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></div><button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command <span aria-hidden="true">↗</span></button><span class="copy-status" role="status" aria-live="polite"></span></div>
+      <div><h2 id="install-h">Make yourself at home.</h2><p>Windows, Linux &amp; macOS.</p><a class="text-link" href="https://github.com/vshvedov/rhun/releases/latest">Download a release</a></div>
+      <div class="install-box" id="get"><div class="install-box-heading"><span>Terminal install · Linux &amp; macOS</span><span aria-hidden="true">&gt;_</span></div><div class="command"><span class="prompt" aria-hidden="true">$</span><code id="install-command">curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></div><button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span><p class="windows-install"><strong>Windows:</strong> <a href="https://github.com/vshvedov/rhun/releases/download/v@VERSION@/rhun-@VERSION@-windows-x86_64.zip">Download the ZIP</a>, extract it, and open <code>rhun.exe</code>.</p></div>
     </div>
   </section>
 </main>
-<footer><div class="wrap footer-bottom"><a class="brand" href="./" aria-label="rhun home">rhun<span class="brand-dot">.</span></a><span>v@VERSION@ <span>·</span> Open source. MIT.</span><nav aria-label="Footer"><a href="https://github.com/vshvedov/rhun">GitHub ↗</a><a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Docs ↗</a><a href="#main">Back to top ↑</a></nav></div><details class="wrap font-licenses"><summary>Font licenses</summary><a href="fonts/LICENSE-InstrumentSans.txt">Instrument Sans</a> &amp; <a href="fonts/LICENSE-Iosevka.md">Iosevka</a>, SIL Open Font License.</details></footer>
+<footer><div class="wrap footer-bottom"><a class="brand" href="./" aria-label="rhun home">rhun<span class="brand-dot">.</span></a><span>v@VERSION@ <span>·</span> Open source. MIT.</span><nav aria-label="Footer"><a href="https://github.com/vshvedov/rhun">GitHub</a><a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Docs</a><a href="#main">Back to top</a></nav></div><details class="wrap font-licenses"><summary>Font licenses</summary><a href="fonts/LICENSE-InstrumentSans.txt">Instrument Sans</a> &amp; <a href="fonts/LICENSE-Iosevka.md">Iosevka</a>, SIL Open Font License.</details></footer>
 </body>
 </html>
