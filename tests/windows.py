@@ -219,11 +219,12 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                     run('platform_test.exe', 'font', path, 'cjk')
     check('fonts/collection-and-invalid-offset', fonts)
 
-    def terminal():
-        result = run('platform_test.exe', 'pty', env=environment('terminal'))
-        assert b'RHUN_CONPTY_OK' in result.stdout, result.stdout
+    def terminal(mode, marker):
+        result = run('platform_test.exe', mode, env=environment('terminal-' + mode))
+        assert marker in result.stdout, result.stdout
     if not args.wine:
-        check('terminal/conpty-create-resize-output-close', terminal)
+        check('terminal/conpty-cmd-create-resize-output-close', lambda: terminal('pty', b'RHUN_CONPTY_OK'))
+        check('terminal/conpty-powershell-input-output-close', lambda: terminal('pty-input', b'RHUN_INPUT_OK'))
 
     def script_file(name, text):
         path = temp / (name + '.rsc')

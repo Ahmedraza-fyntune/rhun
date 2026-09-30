@@ -5,6 +5,7 @@ buf: .zero 65536
 .text
 FN main
     PROLOGUE 80
+    mov dword ptr [rsp + 72], 0
     mov rax, [rip + g_argv]
     cmp qword ptr [rip + g_argc], 2
     jb .Lfail
@@ -19,6 +20,15 @@ FN main
     call strcmp_eq
     test eax, eax
     jnz .Lpty_run
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lpty_input]
+    call strcmp_eq
+    test eax, eax
+    jz 1f
+    mov dword ptr [rsp + 72], 1
+    jmp .Lpty_run
+1:
     mov rax, [rip + g_argv]
     mov rdi, [rax + 8]
     lea rsi, [rip + .Lfont]
@@ -62,10 +72,16 @@ FN main
     jmp .Lread_start
 .Lpty_run:
     lea rdi, [rip + .Lcmd]
+    cmp dword ptr [rsp + 72], 0
+    je 1f
+    lea rdi, [rip + .Lpowershell]
+1:
     call proc_which
     test rax, rax
     jz .Lfail
     mov [rsp], rax
+    cmp dword ptr [rsp + 72], 0
+    jne .Lpty_shell
     lea rax, [rip + .Ld]
     mov [rsp + 8], rax
     lea rax, [rip + .Lq]
@@ -75,6 +91,14 @@ FN main
     lea rax, [rip + .Lcommand]
     mov [rsp + 32], rax
     mov qword ptr [rsp + 40], 0
+    jmp .Lpty_open
+.Lpty_shell:
+    lea rax, [rip + .Lnologo]
+    mov [rsp + 8], rax
+    lea rax, [rip + .Lnoprofile]
+    mov [rsp + 16], rax
+    mov qword ptr [rsp + 24], 0
+.Lpty_open:
     mov edi, 80
     mov esi, 24
     call pty_open
@@ -105,6 +129,15 @@ FN main
     call mem_free
     test r12, r12
     js .Lclose_fail
+    cmp dword ptr [rsp + 72], 0
+    je 1f
+    mov edi, r13d
+    lea rsi, [rip + .Linput]
+    mov edx, .Linput_end - .Linput
+    SYS SYS_write
+    cmp rax, .Linput_end - .Linput
+    jne .Lclose_fail
+1:
     mov dword ptr [rsp + 64], 1
 .Lread_start:
     call time_ms
@@ -237,6 +270,7 @@ print_line:
 .section .rodata
 .Lecho: .asciz "echo"
 .Lpty: .asciz "pty"
+.Lpty_input: .asciz "pty-input"
 .Lfont: .asciz "font"
 .Llink: .asciz "link"
 .Lempty: .asciz ""
@@ -252,3 +286,9 @@ print_line:
 .Lq: .asciz "/q"
 .Lc: .asciz "/c"
 .Lcommand: .asciz "echo RHUN_CONPTY_OK"
+.Lpowershell: .asciz "powershell.exe"
+.Lnologo: .asciz "-NoLogo"
+.Lnoprofile: .asciz "-NoProfile"
+# Concatenation prevents the echoed input itself from satisfying the output assertion.
+.Linput: .ascii "$marker='RHUN_'+'INPUT_OK'; Write-Output $marker\r\nexit\r\n"
+.Linput_end:
