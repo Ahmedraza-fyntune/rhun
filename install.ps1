@@ -54,7 +54,7 @@ if (Test-Path -LiteralPath $InstallDir) {
         throw "The installation folder contains other files. Move them before updating: $InstallDir"
     }
 }
-$running = @(Get-Process rhun -ErrorAction SilentlyContinue | Where-Object {
+$running = @(Get-Process -Name rhun,rhun.com -ErrorAction SilentlyContinue | Where-Object {
     $_.Path -and ([IO.Path]::GetDirectoryName($_.Path) -ieq $InstallDir)
 })
 if ($running.Count -gt 0) { throw 'Close rhun before updating or uninstalling it.' }

@@ -271,7 +271,6 @@ FN proc_spawn
     inc r12
     cmp r12, 3
     jb 5b
-    mov dword ptr [rsp + 156], 0x100  # STARTF_USESTDHANDLES
     mov rax, [rsp + 232]
     mov [rsp + 176], rax
     mov rax, [rsp + 240]
@@ -279,6 +278,9 @@ FN proc_spawn
     mov rax, [rsp + 248]
     mov [rsp + 192], rax
 .Lspawn_attrs:
+    # Explicit NULL stdio for a pseudoconsole prevents Windows from duplicating the
+    # parent's redirected handles into the child, even when inheritance is disabled.
+    mov dword ptr [rsp + 156], 0x100  # STARTF_USESTDHANDLES
     xor ecx, ecx
     mov edx, 1
     xor r8d, r8d

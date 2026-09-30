@@ -88,7 +88,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
             reader.start()
             reader.join(timeout=10)
             assert ready and ready[0].startswith(b'tabs='), 'editor did not become ready'
-            install(success=False)
+            refusal = install(success=False)
+            assert b'Close rhun before updating' in refusal.stdout, refusal.stdout
             assert process.poll() is None
         finally:
             process.kill()
@@ -96,7 +97,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         print('ok   install/running-editor-preserved', flush=True)
         install('-Uninstall')
         assert not destination.exists()
-        assert not list(destination.parent.glob('.rhun-*')), 'staging or backup directory leaked'
+        leftovers = list(destination.parent.glob('.rhun-*'))
+        assert not leftovers, f'staging or backup directories leaked: {leftovers}'
         after_path = subprocess.check_output(['powershell.exe', '-NoProfile', '-Command',
             "[Environment]::GetEnvironmentVariable('Path', 'User')"])
         assert before_path == after_path, 'NoModifyPath changed the user PATH'
