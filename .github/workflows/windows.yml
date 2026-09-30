@@ -17,13 +17,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: build/llvm
+          key: llvm-windows-x64-23.1.2
       - name: LLVM
         shell: pwsh
-        run: |
-          if (-not (Test-Path 'C:\Program Files\LLVM\bin\llvm-mc.exe')) {
-            choco install llvm --yes --no-progress
-          }
-          'C:\Program Files\LLVM\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
+        run: tools/setup-windows-llvm.ps1
       - name: Build
         run: python tools/build-windows.py test
       - name: Native tests
