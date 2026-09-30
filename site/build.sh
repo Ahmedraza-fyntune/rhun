@@ -18,6 +18,8 @@ for f in index.html 404.html robots.txt sitemap.xml llms.txt; do
     sed -e "s/@VERSION@/$version/g" -e "s/@DATE@/$date/g" "site/$f" > "$out/$f"
 done
 cp site/img/*.webp "$out/img/"
+cp site/style.css site/site.js "$out/"
+cp site/fonts/* "$out/fonts/"
 cp assets/social/card.png "$out/img/card.png"
 cp assets/icons/rhun.svg "$out/favicon.svg"
 cp assets/icons/rhun-256.png "$out/apple-touch-icon.png"
