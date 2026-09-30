@@ -10,11 +10,10 @@
   let selectedTheme = "hero";
   let selectedThemeLabel = "Rhun Dark";
 
-  function setScreenshot(image, link, name, alt) {
+  function setScreenshot(image, name, alt) {
     image.srcset = `img/${name}-800.webp 800w, img/${name}.webp 1600w`;
     image.src = `img/${name}.webp`;
     image.alt = alt;
-    link.href = `img/${name}.webp`;
   }
 
   const viewButtons = document.querySelectorAll("[data-view]");
@@ -24,10 +23,10 @@
       viewButtons.forEach(item => item.setAttribute("aria-pressed", String(item === button)));
       document.querySelector(".theme-controls").hidden = name !== "themes";
       if (name === "themes") {
-        setScreenshot(document.querySelector("#editor-image"), document.querySelector("#editor-link"), selectedTheme, `rhun in the ${selectedThemeLabel} theme`);
+        setScreenshot(document.querySelector("#editor-image"), selectedTheme, `rhun in the ${selectedThemeLabel} theme`);
         return;
       }
-      setScreenshot(document.querySelector("#editor-image"), document.querySelector("#editor-link"), name, descriptions[name]);
+      setScreenshot(document.querySelector("#editor-image"), name, descriptions[name]);
     });
   });
 
@@ -38,7 +37,7 @@
       themeButtons.forEach(item => item.setAttribute("aria-pressed", String(item === button)));
       selectedTheme = button.dataset.theme;
       selectedThemeLabel = label;
-      setScreenshot(document.querySelector("#editor-image"), document.querySelector("#editor-link"), selectedTheme, `rhun in the ${label} theme`);
+      setScreenshot(document.querySelector("#editor-image"), selectedTheme, `rhun in the ${label} theme`);
       document.querySelector("#theme-name").textContent = label;
     });
   });
@@ -64,6 +63,6 @@
     });
   });
 
-  // Keep the page usable if WebGL or the sculpture module is unavailable.
+  // The editor preview remains usable without its optional lighting effect.
   import("./hero.js?v=@ASSET_VERSION@").catch(() => {});
 })();
