@@ -26,6 +26,12 @@ FN main
     test eax, eax
     jnz .Lfont_run
     mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Llink]
+    call strcmp_eq
+    test eax, eax
+    jnz .Llink_run
+    mov rax, [rip + g_argv]
     mov rax, [rax]
     mov [rsp], rax
     lea rax, [rip + .Lecho]
@@ -198,6 +204,22 @@ FN main
     jz .Lfail
     xor eax, eax
     EPILOGUE
+
+.Llink_run:
+    cmp qword ptr [rip + g_argc], 3
+    jb .Lfail
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 16]
+    lea rsi, [rip + buf]
+    mov edx, 65535
+    SYS SYS_readlink
+    test rax, rax
+    js .Lfail
+    lea rdi, [rip + buf]
+    mov byte ptr [rdi + rax], 0
+    call print_line
+    xor eax, eax
+    EPILOGUE
 print_line:
     push rbx
     mov rbx, rdi
@@ -216,6 +238,7 @@ print_line:
 .Lecho: .asciz "echo"
 .Lpty: .asciz "pty"
 .Lfont: .asciz "font"
+.Llink: .asciz "link"
 .Lempty: .asciz ""
 .Lspaces: .asciz "two words"
 .Lquotes: .asciz "a\\\"b\\"

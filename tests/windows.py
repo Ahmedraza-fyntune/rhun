@@ -28,7 +28,7 @@ failures = []
 
 
 def winpath(path):
-    value = str(Path(path).resolve()).replace('\\', '/')
+    value = os.path.abspath(path).replace('\\', '/')
     return 'Z:' + value if args.wine else value
 
 
@@ -91,7 +91,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         check(name, lambda name=name, exe=exe, file=file:
               golden(name, exe + '_test', ['tests/data/' + file + '.txt']))
     check('images', lambda: golden('images', 'image_test',
-                                  sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests/data/images').iterdir())))
+                                  sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / 'tests/data/images').iterdir())))
     check('grammars', lambda: golden('grammars', 'grammar_test',
                                      ['tests/data/detect.txt', 'tests/data/samples']))
     check('prefix-tag', lambda: golden('prefix-tag', 'grammar_test',
@@ -115,7 +115,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         paths = ['C:/', 'C:/a/../', 'C:/a/../../b', r'C:\a\..\b',
                  '//server/share/', '//server/share/a/../../b', '//server/share/a/../',
                  'C:/a//./b/../c', 'relative/../path']
-        source.write_text('\n'.join(paths) + '\n', encoding='utf-8')
+        source.write_text('\n'.join(paths) + '\n', encoding='utf-8', newline='\n')
         equal(run('path_test.exe', winpath(source)).stdout,
               b'C:/\nC:/\nC:/b\nC:/b\n//server/share/\n//server/share/b\n//server/share/\nC:/a/c\nrelative/../path\n')
     check('paths/drive-and-unc', roots)
@@ -183,13 +183,15 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         target.write_bytes(b'original\n')
         link = temp / 'link.txt'
         os.symlink(target, link)
+        equal(run('platform_test.exe', 'link', winpath(link)).stdout, (winpath(target) + '\n').encode())
         run('file_test.exe', 'write', winpath(link))
-        assert link.is_symlink()
+        assert link.is_symlink(), 'saving replaced the symlink itself'
         equal(target.read_bytes(), b'saved\n')
         dangling = temp / 'dangling.txt'
         os.symlink(temp / 'absent-target.txt', dangling)
-        assert run('file_test.exe', 'write', winpath(dangling), success=False).returncode != 0
-        assert dangling.is_symlink()
+        assert run('platform_test.exe', 'link', winpath(dangling), success=False).returncode != 0, 'dangling symlink unexpectedly resolved'
+        assert run('file_test.exe', 'write', winpath(dangling), success=False).returncode != 0, 'saving a dangling symlink succeeded'
+        assert dangling.is_symlink(), 'saving replaced the dangling symlink itself'
     if not args.wine:
         check('files/symlinks', symlinks)
 

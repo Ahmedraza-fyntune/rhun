@@ -49,13 +49,18 @@ FN proc_which
     EPILOGUE
 
 # Windows CRT command-line quoting, also understood by CommandLineToArgvW. Quote empty
-# arguments and those with spaces or quotes. Leave simple switches bare for cmd.exe.
+# arguments and those with spaces or quotes. Always quote argv[0], since cmd.exe otherwise
+# treats forward slashes in its executable path as switches. Leave simple switches bare.
 FN win_commandline
     PROLOGUE 32
     mov r12, rdi
     mov qword ptr [rsp], 0
     mov qword ptr [rsp + 8], 0
     mov qword ptr [rsp + 16], 0
+    mov r13, [r12]
+    test r13, r13
+    jz .Lcmd_end
+    jmp .Lcmd_quote
 .Lcmd_arg:
     mov r13, [r12]
     test r13, r13
