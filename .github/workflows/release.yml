@@ -128,12 +128,16 @@ jobs:
       - name: Build
         env:
           RHUN_DIST: '1'
+        id: build
         run: python tools/build-windows.py test
       - name: Native tests
         run: python tests/windows.py
       - name: Package
+        id: package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python tools/package-windows.py
       - name: Installer tests
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: python tests/windows-install.py
       - uses: actions/upload-artifact@v4
         with:

@@ -32,12 +32,16 @@ jobs:
           path: build/llvm
           key: llvm-windows-x64-23.1.2
       - name: Build
+        id: build
         run: python tools/build-windows.py test
       - name: Native tests
         run: python tests/windows.py
       - name: Package
+        id: package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python tools/package-windows.py
       - name: Installer tests
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: python tests/windows-install.py
       - uses: actions/upload-artifact@v4
         with:

@@ -142,6 +142,7 @@ FN main
 .Lread_start:
     call time_ms
     mov r15, rax
+    mov [rsp + 56], rax
     mov dword ptr [rsp + 68], -1
 .Lread:
     mov edi, r13d
@@ -160,6 +161,8 @@ FN main
     lea rsi, [rip + buf]
     mov rdx, rax
     call write_all
+    call time_ms
+    mov [rsp + 56], rax
 .Lwait:
     cmp dword ptr [rsp + 68], -1
     jne 1f
@@ -167,11 +170,18 @@ FN main
     mov esi, 1
     call proc_wait
     mov [rsp + 68], eax
+    test eax, eax
+    js 1f
+    call time_ms
+    mov [rsp + 56], rax
 1:  call time_ms
+    mov rdx, rax
     sub rax, r15
     cmp rax, 10000
     jae .Lclose_fail
-    cmp rax, 500
+    # ConPTY can deliver final output after the child exits. Drain until it is quiet.
+    sub rdx, [rsp + 56]
+    cmp rdx, 500
     jb 2f
     cmp dword ptr [rsp + 68], 0
     je .Ldone
