@@ -525,12 +525,12 @@ FN explorer_delete_target
     push rbx
     lea rdi, [rip + g_explorer_target]
     mov eax, 87                 # unlink
-    syscall
+    XSYS
     test rax, rax
     jns 1f
     lea rdi, [rip + g_explorer_target]
     mov eax, 84                 # rmdir
-    syscall
+    XSYS
     test rax, rax
     jns 1f
     lea rdi, [rip + .Lnot_deleted]

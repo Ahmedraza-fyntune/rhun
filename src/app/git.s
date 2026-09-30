@@ -162,7 +162,9 @@ find_repo:
     jnz .Lfr_file
     mov rdi, rbx
     call mem_free
-    cmp r13, 1
+    mov rdi, r12
+    call path_rootlen
+    cmp r13, rax
     jbe .Lfr_none
     mov rdi, r12
     mov rsi, r13
@@ -196,8 +198,7 @@ find_repo:
 2:  mov byte ptr [rcx], 0
     cmp rcx, rsi
     je .Lfr_bad
-    cmp byte ptr [rsi], '/'
-    je 3f
+    PATH_ABSOLUTE rsi, 3f
     mov rdi, r12
     call path_join
     jmp 4f

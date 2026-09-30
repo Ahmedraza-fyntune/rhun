@@ -35,6 +35,11 @@ FN main
     call app_init
     cmp dword ptr [rip + opt_headless], 0
     jne .Lm_headless
+.ifdef WINDOWS
+    lea rdi, [rip + .Ltitle]
+    call win_open_window
+    jmp .Lm_open
+.else
 .ifdef MACOS
     lea rdi, [rip + .Ltitle]
     call mac_open_window
@@ -62,6 +67,7 @@ FN main
     lea rdi, [rip + .Ltitle]
     call x_open_window
     jmp .Lm_open
+.endif
 .endif
 .Lm_headless:
     call scale_from_env
@@ -172,6 +178,10 @@ detach:
     jne 9f
     cmp qword ptr [rip + opt_control], 0
     jne 9f
+    .ifdef WINDOWS
+    call win_detach
+    jmp 9f
+    .endif
     # a terminal on stdin, stdout or stderr
     xor ebx, ebx
 1:  mov edi, ebx

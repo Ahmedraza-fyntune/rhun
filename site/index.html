@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rhun: a small, fast code editor written in assembly</title>
-<meta name="description" content="rhun is a tiny, very fast code editor for Linux and macOS, written in assembly: 127 languages, a built-in terminal, Git, fuzzy search and an agents panel.">
+<meta name="description" content="rhun is a tiny, very fast code editor for Linux, macOS and Windows, written in assembly: 127 languages, a built-in terminal, Git, fuzzy search and an agents panel.">
 <link rel="canonical" href="https://rhun.app/">
 <meta name="theme-color" content="#111216">
 <meta name="color-scheme" content="dark">
@@ -13,7 +13,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="rhun">
 <meta property="og:title" content="rhun: a small, fast code editor written in assembly">
-<meta property="og:description" content="A tiny code editor for Linux and macOS: 127 languages, a terminal, Git and an agents panel, in one binary under 700 KB.">
+<meta property="og:description" content="A tiny code editor for Linux, macOS and Windows: 127 languages, a terminal, Git and an agents panel, with fonts and themes built in.">
 <meta property="og:url" content="https://rhun.app/">
 <meta property="og:image" content="https://rhun.app/img/card.png">
 <meta property="og:image:width" content="1200">
@@ -21,7 +21,7 @@
 <meta property="og:image:alt" content="rhun, a small and fast code editor written in assembly">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="rhun: a small, fast code editor written in assembly">
-<meta name="twitter:description" content="A tiny code editor for Linux and macOS: 127 languages, a terminal, Git and an agents panel, in one binary under 700 KB.">
+<meta name="twitter:description" content="A tiny code editor for Linux, macOS and Windows: 127 languages, a terminal, Git and an agents panel, with fonts and themes built in.">
 <meta name="twitter:image" content="https://rhun.app/img/card.png">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -38,11 +38,11 @@
       "@id": "https://rhun.app/#app",
       "name": "rhun",
       "alternateName": "rh\u00fbn",
-      "description": "A small, very fast code editor for Linux and macOS, written in assembly. Tabs, syntax highlighting for 127 languages, a built-in terminal, Git history and diffs, fuzzy search, Vim mode and an agents panel for Claude Code and Codex.",
+      "description": "A small, very fast code editor for Linux, macOS and Windows, written in assembly. Tabs, syntax highlighting for 127 languages, a built-in terminal, Git history and diffs, fuzzy search, Vim mode and an agents panel for Claude Code and Codex.",
       "url": "https://rhun.app/",
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Code editor",
-      "operatingSystem": "Linux (x86-64), macOS (Apple silicon)",
+      "operatingSystem": "Linux (x86-64), macOS (Apple silicon), Windows (x64)",
       "softwareVersion": "@VERSION@",
       "downloadUrl": "https://github.com/vshvedov/rhun/releases/latest",
       "installUrl": "https://github.com/vshvedov/rhun/releases/latest/download/install.sh",
@@ -113,7 +113,7 @@
 </header>
 <main id="main">
   <section class="hero" aria-labelledby="title">
-    <div class="wrap hero-topline"><span class="eyebrow"><span class="status-dot"></span> AN EDITOR FOR LINUX &amp; macOS</span><a class="version" href="https://github.com/vshvedov/rhun/releases/latest">v@VERSION@ <span aria-hidden="true">↗</span></a></div>
+    <div class="wrap hero-topline"><span class="eyebrow"><span class="status-dot"></span> AN EDITOR FOR LINUX, macOS &amp; WINDOWS</span><a class="version" href="https://github.com/vshvedov/rhun/releases/latest">v@VERSION@ <span aria-hidden="true">↗</span></a></div>
     <div class="code-art" aria-hidden="true"><canvas id="code-field"></canvas><svg class="art-fallback" viewBox="0 0 1000 380"><text x="500" y="320" text-anchor="middle" fill="currentColor" font-family="Instrument Sans, Arial, sans-serif" font-size="360" font-weight="700">rhun</text></svg></div>
     <div class="wrap hero-copy">
       <h1 id="title">Less weight.<br>More <span class="accent">flow</span>.</h1>
@@ -152,8 +152,8 @@
   </section>
   <section class="install-section" id="install" aria-labelledby="install-h">
     <div class="wrap install-layout">
-      <div><h2 id="install-h">Make yourself at home.</h2><p>Linux x86-64 &amp; macOS Apple silicon.</p><a class="text-link" href="https://github.com/vshvedov/rhun/releases/latest">Download a release <span aria-hidden="true">↗</span></a></div>
-      <div class="install-box" id="get"><div class="install-box-heading"><span>OR INSTALL FROM YOUR TERMINAL</span><span aria-hidden="true">&gt;_</span></div><div class="command"><span class="prompt" aria-hidden="true">$</span><code id="install-command">curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></div><button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command <span aria-hidden="true">↗</span></button><span class="copy-status" role="status" aria-live="polite"></span></div>
+      <div><h2 id="install-h">Make yourself at home.</h2><p>Linux x86-64, macOS Apple silicon &amp; Windows x64.</p><a class="text-link" href="https://github.com/vshvedov/rhun/releases/latest">Download a release <span aria-hidden="true">↗</span></a></div>
+      <div class="install-box" id="get"><div class="install-box-heading"><span>LINUX &amp; macOS TERMINAL</span><span aria-hidden="true">&gt;_</span></div><div class="command"><span class="prompt" aria-hidden="true">$</span><code id="install-command">curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></div><button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command <span aria-hidden="true">↗</span></button><span class="copy-status" role="status" aria-live="polite"></span></div>
     </div>
   </section>
 </main>

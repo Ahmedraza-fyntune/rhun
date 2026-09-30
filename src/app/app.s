@@ -138,8 +138,17 @@ FN app_set_project
     call mem_free
     mov rdi, rbx
     call strlen
-    # strip trailing slash
+    # strip trailing slash, retaining the complete filesystem root
+.ifdef WINDOWS
+    mov r12, rax
+    mov rdi, rbx
+    call path_rootlen
+    mov rcx, rax
+    mov rax, r12
+    cmp rax, rcx
+.else
     cmp rax, 1
+.endif
     jbe 1f
     cmp byte ptr [rbx + rax - 1], '/'
     jne 1f
@@ -169,7 +178,11 @@ FN app_switch_project
     mov rsi, [rip + g_project]
     test rsi, rsi
     jz 1f
+.ifdef WINDOWS
+    call win_path_equal
+.else
     call strcmp_eq
+.endif
     test eax, eax
     jnz 9f
 1:  mov rdi, rbx
@@ -376,7 +389,11 @@ FN app_find_tab
     test rdi, rdi
     jz 2f
     mov rsi, r12
+.ifdef WINDOWS
+    call win_path_equal
+.else
     call strcmp_eq
+.endif
     test eax, eax
     jnz 4f
 2:  inc rbx
@@ -686,7 +703,11 @@ FN app_after_save
     call config_path
     mov rdi, rax
     mov rsi, [rbx + DOC_path]
+.ifdef WINDOWS
+    call win_path_equal
+.else
     call strcmp_eq
+.endif
     test eax, eax
     jz 2f
     call app_reload_config
@@ -3220,10 +3241,18 @@ g_tabscroll_reveal: .long 0
 # app_open_path(path): folder -> project, file -> tab (relative paths use the cwd)
 FN app_open_path
     PROLOGUE 16
+.ifdef WINDOWS
+    call win_fullpath
+    test rax, rax
+    jnz 91f
+    EPILOGUE
+91: mov rbx, rax
+    mov r13d, 1
+    jmp 2f
+.endif
     mov rbx, rdi
     # absolute path
-    cmp byte ptr [rbx], '/'
-    je 1f
+    PATH_ABSOLUTE rbx, 1f
     sub rsp, 4096
     mov rdi, rsp
     mov esi, 4000

@@ -88,6 +88,7 @@ env_overridden:
     ret
 
 # proc_which(name) -> path to run (mem_free it), or 0; names with a slash are taken as they are
+.ifndef WINDOWS
 FN proc_which
     PROLOGUE
     mov rbx, rdi
@@ -152,8 +153,11 @@ FN proc_which
 8:  xor eax, eax
     EPILOGUE
 
+.endif
+
 # proc_spawn(argv, envp, cwd, fd_in, fd_out, fd_err, ctty) -> pid or -errno
 #   argv[0] is the path to run; cwd may be 0; ctty makes fd_in the controlling terminal of a new session
+.ifndef WINDOWS
 FN proc_spawn
     PROLOGUE 32
     mov r12, rdi
@@ -213,6 +217,8 @@ FN proc_spawn
     mov edi, 127
     SYS SYS_exit
 9:  EPILOGUE
+
+.endif
 
 # proc_wait(pid, nohang) -> exit status (128 + signal when killed), -1 still running, -2 unknown pid
 FN proc_wait
@@ -360,6 +366,7 @@ FN run_piped_input
 9:  EPILOGUE
 
 # pty_open(cols, rows) -> eax master (nonblocking), edx slave; eax < 0 on failure
+.ifndef WINDOWS
 FN pty_open
     PROLOGUE 64
     mov r12d, edi
@@ -422,7 +429,10 @@ FN pty_open
 9:  mov eax, -1
     EPILOGUE
 
+.endif
+
 # pty_resize(master, cols, rows, width px, height px)
+.ifndef WINDOWS
 FN pty_resize
     sub rsp, 24
     mov [rsp], dx               # rows
@@ -434,6 +444,8 @@ FN pty_resize
     SYS SYS_ioctl
     add rsp, 24
     ret
+
+.endif
 
 .section .rodata
 .Lslash: .ascii "/"

@@ -460,9 +460,25 @@ codex_matches:
     lea rsi, [rip + .Lcwd]
     call json_get
     mov rdi, rax
+.ifdef WINDOWS
+    call json_str
+    test rax, rax
+    jz 7f
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov r14, rax
+    mov rdi, rax
+    mov rsi, [rip + g_project]
+    call win_path_equal
+    mov r13d, eax
+    mov rdi, r14
+    call mem_free
+.else
     mov rsi, [rip + g_project]
     call json_is
     mov r13d, eax
+.endif
 7:  mov rdi, rbx
     call mem_free
     mov eax, r13d
@@ -1184,7 +1200,7 @@ FN session_update
     mov rdx, r14
     mov r10, [rbx + AS_off]
     mov eax, 17                 # pread64
-    syscall
+    XSYS
     test rax, rax
     jle 8f
     add [rbx + AS_off], rax

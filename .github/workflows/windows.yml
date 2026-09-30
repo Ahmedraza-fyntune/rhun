@@ -1,0 +1,39 @@
+name: windows
+
+on:
+  push:
+    branches: [main, 'feat/windows*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: LLVM
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files\LLVM\bin\llvm-mc.exe')) {
+            choco install llvm --yes --no-progress
+          }
+          'C:\Program Files\LLVM\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Build
+        run: python tools/build-windows.py test
+      - name: Native tests
+        run: python tests/windows.py
+      - name: Package
+        run: python tools/package-windows.py
+      - name: Installer tests
+        run: python tests/windows-install.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: build/windows/rhun-*-windows-x86_64.zip
+          if-no-files-found: error

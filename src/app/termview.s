@@ -2129,7 +2129,11 @@ rep_cell: .long -1
 .section .rodata
 .Lshell_env: .asciz "SHELL"
 .Llogin: .asciz "-l"
+.ifdef WINDOWS
+.Lsh: .asciz "powershell.exe"
+.else
 .Lsh: .asciz "/bin/sh"
+.endif
 .Lno_shell: .asciz "Could not start a shell"
 .Lword_stop: .asciz "()[]{}<>'\"`,;|&"
 .Lenv_term: .asciz "TERM=xterm-256color"

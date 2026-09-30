@@ -725,6 +725,9 @@ up_base:
 
 # cmd_install_update(): the release's install.sh replaces this installation with up_latest
 FN cmd_install_update
+.ifdef WINDOWS
+    jmp win_download_page
+.endif
     PROLOGUE 64                 # argv
     cmp dword ptr [rip + g_update_state], UP_AVAILABLE
     jne 9f
@@ -1157,14 +1160,22 @@ ver_fields:
 .Lt_rhun: .asciz "rh\303\273n "
 .Lt_latest: .asciz " is the latest"
 .Lt_rebuild: .asciz " is available; pull and rebuild to update"
+.ifdef WINDOWS
+.Li_update: .asciz "Download "
+.else
 .Li_update: .asciz "Update to "
+.endif
 .Li_updating: .asciz "Updating\342\200\246"
 .Li_restart: .asciz "Restart to update"
 .Ld_checking: .asciz "Checking\342\200\246"
 .Ld_installing: .asciz "Installing "
 .Ld_dots: .asciz "\342\200\246"
 .Ld_installed: .asciz " is installed; restart to use it"
+.ifdef WINDOWS
+.Ld_available: .asciz " is available; close rhun before installing"
+.else
 .Ld_available: .asciz " is available"
+.endif
 .Ld_failed: .asciz "Couldn't check: "
 .Ld_source: .asciz " is available (built from source)"
 .Ld_latest: .asciz "The latest version (checked "

@@ -34,8 +34,29 @@ FN font_load
     call mem_alloc
     mov rbx, rax
     mov [rbx + FONT_data], r12
-    LDBE16 ecx, cx, [r12 + 4]   # numTables
-    lea r14, [r12 + 12]
+    cmp r13, 12
+    jb .Lfl_fail
+    mov r14, r12
+    cmp dword ptr [r12], 0x66637474 # ttcf, first face in a TrueType collection
+    jne 1f
+    cmp r13, 16
+    jb .Lfl_fail
+    LDBE32 eax, [r12 + 8]
+    test eax, eax
+    jz .Lfl_fail
+    LDBE32 eax, [r12 + 12]
+    lea rdx, [rax + 12]
+    cmp rdx, r13
+    ja .Lfl_fail
+    add r14, rax
+1:  LDBE16 ecx, cx, [r14 + 4]   # numTables
+    add r14, 12
+    mov eax, ecx
+    shl rax, 4
+    add rax, r14
+    sub rax, r12
+    cmp rax, r13
+    ja .Lfl_fail
 .Lfl_tab:
     test ecx, ecx
     jz .Lfl_parsed
@@ -863,7 +884,11 @@ fallback_glyph:
     je 3f
     # first use: load it
     mov byte ptr [rcx + rbx], 2
+.ifdef WINDOWS
+    call win_read_font
+.else
     call file_read_all
+.endif
     test rax, rax
     jz 5f
     mov rdi, rax
@@ -1180,6 +1205,14 @@ fb_state: .zero 16
 .section .rodata
 .p2align 3
 fallback_paths:
+.ifdef WINDOWS
+    .quad .Lfw1, .Lfw2, .Lfw3, .Lfw4, .Lfw5, 0
+.Lfw1: .asciz "Fonts/segoeui.ttf"
+.Lfw2: .asciz "Fonts/seguisym.ttf"
+.Lfw3: .asciz "Fonts/seguiemj.ttf"
+.Lfw4: .asciz "Fonts/msgothic.ttc"
+.Lfw5: .asciz "Fonts/msyh.ttc"
+.else
 .ifdef MACOS
     .quad .Lfm1, .Lfm2, .Lfm3, .Lfm4, 0
 .Lfm1: .asciz "/System/Library/Fonts/SFNSMono.ttf"
@@ -1188,6 +1221,7 @@ fallback_paths:
 .Lfm4: .asciz "/Library/Fonts/Arial Unicode.ttf"
 .else
     .quad .Lfb1, .Lfb2, .Lfb3, .Lfb4, .Lfb5, .Lfb6, .Lfb7, .Lfb8, .Lfb9, 0
+.endif
 .endif
 .Lfb1: .asciz "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 .Lfb2: .asciz "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
