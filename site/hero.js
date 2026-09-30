@@ -4,17 +4,17 @@ const TAU = Math.PI * 2;
 
 function studio(renderer) {
   const room = new THREE.Scene();
-  room.add(new THREE.Mesh(new THREE.BoxGeometry(18,18,18), new THREE.MeshBasicMaterial({color:0x141722,side:THREE.BackSide})));
+  room.add(new THREE.Mesh(new THREE.BoxGeometry(18,18,18), new THREE.MeshBasicMaterial({color:0x181818,side:THREE.BackSide})));
   function panel(w,h,x,y,z,r,g,b) {
     const material = new THREE.MeshBasicMaterial(); material.color.setRGB(r,g,b);
     const plane = new THREE.Mesh(new THREE.PlaneGeometry(w,h),material);
     plane.position.set(x,y,z); plane.lookAt(0,0,0); room.add(plane);
   }
-  panel(2.2,7,-4,2,4,7,8,11);
-  panel(1.1,8,4,1,2,3,4.5,10);
-  panel(6,2,-1,6,-2,5,6,10);
-  panel(3,3,0,-4,3,0.6,1,3);
-  panel(.35,7,1,2,-5,4,5,9);
+  panel(2.2,7,-4,2,4,8,8,8);
+  panel(1.1,8,4,1,2,6,6,6);
+  panel(6,2,-1,6,-2,6,6,6);
+  panel(3,3,0,-4,3,1,1,1);
+  panel(.35,7,1,2,-5,5,5,5);
   const generator = new THREE.PMREMGenerator(renderer);
   const texture = generator.fromScene(room,.025).texture;
   generator.dispose();
@@ -81,16 +81,17 @@ function initialize() {
   camera.position.set(0, 0, 8);
   const sculpture = new THREE.Group();
   scene.add(sculpture);
-  scene.add(new THREE.HemisphereLight(0xcad7ff, 0x11131c, 1.6));
-  const key = new THREE.DirectionalLight(0xcbd6ff, 3.3);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x141414, 1.6));
+  const key = new THREE.DirectionalLight(0xffffff, 3.3);
   key.position.set(-3, 4, 5);
   scene.add(key);
-  const fill = new THREE.DirectionalLight(0x718cff, 3);
+  const fill = new THREE.DirectionalLight(0xffffff, 3);
   fill.position.set(4, -1, 2);
   scene.add(fill);
 
+  const brandAccent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
   const material = new THREE.MeshPhysicalMaterial({
-    color: 0x8aa4ff, metalness: 1, roughness: .19,
+    color: brandAccent, metalness: .72, roughness: .23,
     clearcoat: 1, clearcoatRoughness: .15, envMapIntensity: 1.3,
     side: THREE.DoubleSide
   });

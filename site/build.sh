@@ -13,7 +13,7 @@ case $version in
 *-*) version=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*' 2>/dev/null | sed 's/^v//') ;;
 esac
 date=$(date -u +%Y-%m-%d)
-asset_version=$(cat site/style.css site/site.js site/hero.js | cksum | cut -d ' ' -f 1)
+asset_version=$(cat site/style.css site/site.js site/hero.js site/img/fold.jpg | cksum | cut -d ' ' -f 1)
 mkdir -p "$out/img" "$out/fonts" "$out/vendor"
 for f in index.html 404.html robots.txt sitemap.xml llms.txt; do
     sed -e "s/@VERSION@/$version/g" -e "s/@DATE@/$date/g" -e "s/@ASSET_VERSION@/$asset_version/g" "site/$f" > "$out/$f"
