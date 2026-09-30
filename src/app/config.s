@@ -41,6 +41,8 @@ cfg_term_font_size: .long 14
 cfg_term_scrollback: .long 10000
 cfg_term_h: .long 260
 cfg_git: .long 1
+.globl cfg_commit_ai, cfg_commit_model
+cfg_commit_ai: .long 0
 .globl cfg_update_check
 cfg_update_check: .long 1
 .p2align 3
@@ -50,6 +52,7 @@ cfg_ui_font: .quad .Lempty
 cfg_exclude: .quad .Ldef_exclude
 cfg_agent_sources: .quad .Ldef_sources
 cfg_term_shell: .quad .Lempty
+cfg_commit_model: .quad .Ldefault_model
 
 .bss
 .p2align 3
@@ -576,8 +579,13 @@ cfg_def_theme: .asciz "rhun-dark"
 .Ls_git: .asciz "git"
 .Ls_updates: .asciz "updates"
 
-.macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0
-    .quad \sec, 1f, \ptr, 2f, 3f
+.macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0, live_desc=0
+    .quad \sec, 1f, \ptr, 2f
+.ifc \live_desc,0
+    .quad 3f
+.else
+    .quad \live_desc
+.endif
     .long \type, \min, \max, \step, \dec, 0
     .quad \opts
     .pushsection .rodata.str, "aMS", @progbits, 1
@@ -635,8 +643,15 @@ g_settings:
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
     SETTING .Ls_terminal, height, ST_INT, cfg_term_h, 80, 2000, 10, 0, "Terminal height", "Height of the terminal panel in points."
     SETTING .Ls_git, enabled, ST_BOOL, cfg_git, 0, 1, 1, 0, "Git", "Changes in the gutter, tabs and explorer, and the history view."
+    SETTING .Ls_git, commit_ai, ST_CHOICE, cfg_commit_ai, 0, 3, 1, 0, "Commit message AI", "Optional. Cloud providers use your subscription.", .Lai_opts, g_ai_provider_desc
+    SETTING .Ls_git, commit_model, ST_STR, cfg_commit_model, 0, 0, 0, 0, "Local model", "Ollama model name. Default download: about 1 GB."
+    SETTING_ACTION .Ls_git, ai_setup, cmd_ai_model_files, .Lai_setup, g_ai_local_desc
     SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
     SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_version_text, g_update_desc
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
+
+.Ldefault_model: .asciz "qwen2.5-coder:1.5b"
+.Lai_opts: .asciz "off", "Off", "claude", "Claude Code", "codex", "Codex", "ollama", "Local (Ollama)", ""
+.Lai_setup: .asciz "Local model files"

@@ -8,6 +8,7 @@
 .equ ID_SCM_MAIN, ID_SCM + 1            # the button under the message
 .equ ID_SCM_PULL, ID_SCM + 2            # Pull, Push, Fetch
 .equ ID_SCM_SCROLL, ID_SCM + 5
+.equ ID_SCM_AI, ID_SCM + 6
 .equ ID_SCM_GROUP, ID_SCM + 0x10        # + group * 4 + button
 .equ ID_SCM_FILE, ID_SCM + 0x100        # + file * 4 + button
 .equ MAX_LINES, 10                      # of the message shown at once
@@ -51,6 +52,7 @@
 
 .bss
 .p2align 3
+ai_draft: .zero SB_SIZE
 tf_msg: .zero TF_SIZE                   # the commit message
 list: .zero VEC_SIZE                    # GF of the status by group
 seq: .quad 0                            # the running operation's step
@@ -326,6 +328,7 @@ FN scm_paste
 # scm_reset(): another repository
 FN scm_reset
     push rbx
+    call ai_cancel_generation
     mov dword ptr [rip + op], OP_NONE
     mov dword ptr [rip + list_ver], -1
     mov qword ptr [rip + list + VEC_len], 0
@@ -346,6 +349,84 @@ FN scm_reset
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
 1:  pop rbx
     ret
+
+# Capture the user's draft before starting. Result insertion requires exact equality.
+FN cmd_git_generate_message
+    PROLOGUE
+    cmp dword ptr [rip + g_ai_kind], 3
+    jne 1f
+    call ai_cancel_generation
+    jmp 9f
+1:  cmp dword ptr [rip + cfg_commit_ai], 0
+    jne 2f
+    lea rdi, [rip + .Lai_off]
+    call app_toast
+    jmp 9f
+2:  call ready
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + ai_draft]
+    call sb_clear
+    lea rdi, [rip + tf_msg]
+    call tf_text
+    lea rdi, [rip + ai_draft]
+    mov rsi, rax
+    call sb_push
+    call ai_generate
+9:  EPILOGUE
+
+FN scm_ai_result
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    lea rdi, [rip + tf_msg]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    mov rdx, [rip + ai_draft + SB_ptr]
+    mov rcx, [rip + ai_draft + SB_len]
+    call str_eq
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + tf_msg]
+    mov rsi, r12
+    mov rdx, r13
+    call tf_set
+    mov dword ptr [rip + g_dirty], 1
+    jmp 9f
+1:  lea rdi, [rip + .Lai_edited]
+    call app_toast
+9:  EPILOGUE
+
+# draw_ai(y): a compact button beside the message, with a stable width while running.
+draw_ai:
+    PROLOGUE
+    mov r13d, edi
+    lea rdi, [rip + lbl]
+    call sb_clear
+    lea rsi, [rip + .Lai_label]
+    cmp dword ptr [rip + g_ai_kind], 3
+    jne 1f
+    lea rsi, [rip + .Lai_cancel]
+1:  lea rdi, [rip + lbl]
+    call sb_push_cstr
+    mov edi, ID_SCM_AI
+    mov esi, [rip + in_x]
+    mov edx, r13d
+    add esi, [rip + in_w]
+    M ecx, MI_64
+    add ecx, [rip + g_mt + 4*MI_16]
+    sub esi, ecx
+    M r8d, MI_32
+    mov r9d, IC_SPARK
+    cmp dword ptr [rip + g_ai_kind], 3
+    jne 2f
+    mov r9d, IC_CLOSE
+2:  call draw_button
+    test eax, eax
+    jz 9f
+    call cmd_git_generate_message
+9:  EPILOGUE
 
 # ---------------- the changes ----------------
 
@@ -519,6 +600,11 @@ merge_message:
 # op_begin(op, seq): runs the steps of seq one after another
 op_begin:
     PROLOGUE
+    push rdi
+    push rsi
+    call ai_cancel_generation
+    pop rsi
+    pop rdi
     cmp dword ptr [rip + op], OP_NONE
     jne 9f
     cmp dword ptr [rip + g_git_on], 0
@@ -1008,7 +1094,12 @@ FN scm_draw
     mov esi, [rip + in_x]
     mov edx, r13d
     mov ecx, [rip + in_w]
-    mov r8d, ebx
+    cmp dword ptr [rip + cfg_commit_ai], 0
+    je 21f
+    sub ecx, [rip + g_mt + 4*MI_64]
+    sub ecx, [rip + g_mt + 4*MI_16]
+    sub ecx, [rip + g_mt + 4*MI_8]
+21: mov r8d, ebx
     xor r9d, r9d
     cmp dword ptr [rip + g_focus], FOCUS_SCM
     jne 2f
@@ -1019,7 +1110,15 @@ FN scm_draw
     jz 3f
     mov dword ptr [rip + g_focus], FOCUS_SCM
     mov dword ptr [rsp], 0
-3:  add r13d, ebx
+3:  # AI shares the message row and stays at its top as the draft grows.
+    cmp dword ptr [rip + cfg_commit_ai], 0
+    je 31f
+    mov edi, r13d
+    call draw_ai
+    M eax, MI_32
+    cmp ebx, eax
+    cmovl ebx, eax
+31: add r13d, ebx
     add r13d, [rip + g_mt + 4*MI_8]
     # Commit, Sync Changes or Publish Branch
     mov edi, r13d
@@ -2069,3 +2168,8 @@ seq_discard: .byte S_CHECKOUT, 0
 seq_discard_new: .byte S_CLEAN, 0
 seq_discard_all: .byte S_CHECKOUT_ALL, S_CLEAN_ALL, 0
 seq_clean_all: .byte S_CLEAN_ALL, 0
+
+.Lai_label: .asciz "AI"
+.Lai_cancel: .asciz "Cancel"
+.Lai_off: .asciz "Choose a commit message AI provider in Settings first."
+.Lai_edited: .asciz "Your draft changed while generating, so it was kept."

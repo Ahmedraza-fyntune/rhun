@@ -42,6 +42,16 @@ def assets():
         lines.extend([f'.globl {label}, {label}_end', '.p2align 4',
                       f'{label}: .incbin "{path.as_posix()}"', f'{label}_end: .byte 0'])
 
+    import base64
+    import gzip
+    packed = base64.b64encode(gzip.compress((ROOT / 'runtime/ai/commit.ps1').read_bytes(), mtime=0)).decode('ascii')
+    bootstrap = ("$b=[Convert]::FromBase64String('" + packed + "');"
+                 "$m=New-Object IO.MemoryStream(,$b);"
+                 "$g=New-Object IO.Compression.GzipStream($m,[IO.Compression.CompressionMode]::Decompress);"
+                 "$r=New-Object IO.StreamReader($g);& ([scriptblock]::Create($r.ReadToEnd()))")
+    script = base64.b64encode(bootstrap.encode('utf-16le')).decode('ascii')
+    assert len(script) < 30000, 'AI helper exceeds the Windows command-line budget'
+    lines += ['.globl commit_ai_script', 'commit_ai_script: .asciz "' + script + '"']
     emit('font_mono', ROOT / 'assets/fonts/IosevkaFixed-Regular.ttf')
     lines += ['.globl font_ui, font_ui_end', '.set font_ui,font_mono',
               '.set font_ui_end,font_mono_end']

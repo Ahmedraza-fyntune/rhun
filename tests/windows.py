@@ -99,6 +99,10 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     check('version', lambda: equal(run('rhun.com', '--version').stdout,
                                   b'rhun ' + (ROOT / 'VERSION').read_bytes().strip() + b'\n'))
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
+    if not args.wine:
+        check('ui/palette-scroll', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/palette-scroll.py')], check=True,
+            env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
 
     def ui(name):
         result = run('rhun.com', winpath(ROOT), '--headless', '1400x860', '--script',
@@ -340,6 +344,42 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     if not args.wine:
         check('agents/windows-session-paths', agents)
         check('git/status-and-diff', git)
+
+    def commit_ai(provider, cancel=False):
+        name = 'commit-ai-' + provider + ('-cancel' if cancel else '')
+        project = temp / (name + " 'quoted $; café")
+        project.mkdir()
+        for arguments in [('init', '-b', 'main'), ('config', 'user.name', 'Test'),
+                          ('config', 'user.email', 'test@example.invalid')]:
+            subprocess.run(['git', '-C', str(project), *arguments], check=True, capture_output=True)
+        (project / 'new.txt').write_text('new content\n', encoding='utf-8')
+        env = environment(name)
+        config = temp / name / 'config/rhun'
+        config.mkdir(parents=True)
+        (config / 'config').write_text('[git]\ncommit_ai = ' + provider + '\n', encoding='utf-8')
+        bindir = temp / name / 'bin'
+        bindir.mkdir()
+        shutil.copy2(OUT / 'ai_cli_test.exe', bindir / (provider + '.exe'))
+        env['PATH'] = str(bindir.resolve()) + ';' + env['PATH']
+        env['OPENAI_API_KEY'] = 'must-not-be-used'
+        lines = 'wait-git\nwait-ai\ncmd git_generate_message\n'
+        if cancel:
+            env['RHUN_AI_TEST_DELAY'] = '1'
+            lines += 'wait 500\ncmd ai_cancel\n'
+        lines += 'wait-ai\nprint-scm\nprint-ai\n'
+        output = run('rhun.com', winpath(project), '--headless', '1400x860', '--script',
+                     script_file(name, lines), env=env, timeout=40).stdout
+        if cancel:
+            assert b'Describe Windows changes' not in output and b'Cancelled' in output, output
+        else:
+            assert b'message=Describe Windows changes' in output, output
+
+    if not args.wine:
+        for provider in ('claude', 'codex'):
+            check('ai/' + provider + '-subscription-cli', lambda provider=provider: commit_ai(provider))
+        check('ai/cancel', lambda: commit_ai('claude', cancel=True))
+        check('ai/local-model-protocol', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/commit-ai-windows.py')], check=True))
 
     def native_window():
         project = temp / 'native window'

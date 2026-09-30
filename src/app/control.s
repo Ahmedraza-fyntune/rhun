@@ -514,6 +514,35 @@ c_wait_update:
     xor eax, eax
     ret
 
+# wait-ai: bounded test/control wait, including deferred detection.
+c_wait_ai:
+    push r13
+    call time_ms
+    lea r13, [rax + 30000]
+1:  call ai_timeout
+    cmp eax, -1
+    je 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 1b
+2:  pop r13
+    xor eax, eax
+    ret
+
+c_print_ai:
+    lea rdi, [rip + out]
+    lea rsi, [rip + g_ai_desc]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    ret
+
 # print-frames: frames drawn since the last print-frames
 c_print_frames:
     lea rdi, [rip + out]
@@ -1151,6 +1180,8 @@ on_client:
 .Lc_wait_git: .asciz "wait-git"
 .Lc_print_gitlog: .asciz "print-gitlog"
 .Lc_print_scm: .asciz "print-scm"
+.Lc_wait_ai: .asciz "wait-ai"
+.Lc_print_ai: .asciz "print-ai"
 .Lc_wait_update: .asciz "wait-update"
 .Lc_print_update: .asciz "print-update"
 .Lc_print_frames: .asciz "print-frames"
@@ -1179,6 +1210,7 @@ ctl_table:
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
     .quad .Lc_print_scm, c_print_scm
+    .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu, 0, 0

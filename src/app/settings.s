@@ -46,6 +46,7 @@ commit_edit:
 FN setting_applied
     PROLOGUE
     mov rbx, rdi
+    call ai_apply
     mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
     mov rax, [rbx + SET_ptr]
@@ -416,10 +417,13 @@ FN settings_draw
     jmp .Lsd_str
 .Lsd_action:
     # a button, right aligned
-    lea rdi, [rip + .Lcheck_now]
+    mov rdi, rbx
+    call action_label
+    mov [rsp + 64], rax
+    mov rdi, rax
     call strlen
     lea rdi, [rip + g_face_ui]
-    lea rsi, [rip + .Lcheck_now]
+    mov rsi, [rsp + 64]
     mov rdx, rax
     call text_width
     add eax, [rip + g_mt + 4*MI_32]
@@ -457,7 +461,7 @@ FN settings_draw
     mov edx, [rsp + 60]
     mov ecx, [rsp + 44]
     M r8d, MI_32
-    lea r9, [rip + .Lcheck_now]
+    mov r9, [rsp + 64]
     COLOR eax, T_FG
     push rax
     push rax
@@ -851,6 +855,30 @@ FN settings_draw
     call gfx_clip_pop
     EPILOGUE
 
+# action_label(setting): cached state only; no detection during drawing.
+action_label:
+    lea rax, [rip + .Lcheck_now]
+    lea rcx, [rip + cmd_ai_model_files]
+    cmp [rdi + SET_ptr], rcx
+    jne 1f
+    lea rax, [rip + .Lsetup_now]
+    cmp dword ptr [rip + cfg_commit_ai], 3
+    jne 1f
+    lea rax, [rip + .Lcancel_ai]
+    cmp dword ptr [rip + g_ai_kind], 2
+    je 1f
+    lea rax, [rip + .Ldeleting_model]
+    cmp dword ptr [rip + g_ai_kind], 4
+    je 1f
+    lea rax, [rip + .Lchecking_model]
+    cmp dword ptr [rip + g_ai_kind], 1
+    je 1f
+    lea rax, [rip + .Ldelete_model]
+    cmp dword ptr [rip + g_ai_model_ready], 1
+    je 1f
+    lea rax, [rip + .Lsetup_now]
+1:  ret
+
 # desc_room(setting) -> eax: the width of its control with the gaps around it
 desc_room:
     PROLOGUE
@@ -889,10 +917,13 @@ desc_room:
 4:  mov eax, r12d
     add eax, [rip + g_mt + 4*MI_32]
     EPILOGUE
-5:  lea rdi, [rip + .Lcheck_now]
+5:  mov rdi, rbx
+    call action_label
+    mov r12, rax
+    mov rdi, rax
     call strlen
     lea rdi, [rip + g_face_ui]
-    lea rsi, [rip + .Lcheck_now]
+    mov rsi, r12
     mov rdx, rax
     call text_width
     add eax, [rip + g_mt + 4*MI_64]
@@ -937,3 +968,9 @@ FN ui_text_v_fit
 
 .data
 set_edit: .long -1
+
+.Lsetup_now: .asciz "Download"
+.Ldelete_model: .asciz "Delete"
+.Ldeleting_model: .asciz "Deleting..."
+.Lchecking_model: .asciz "Checking..."
+.Lcancel_ai: .asciz "Cancel"

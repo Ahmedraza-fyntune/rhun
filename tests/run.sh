@@ -32,8 +32,10 @@ dups=$(grep -h '^files' runtime/syntax/*.syn | sed 's/^files *= *//' | tr ' ' '\
 if [ -z "$dups" ]; then echo "ok   grammar-patterns"; else echo "FAIL grammar-patterns: $dups"; fail=1; fi
 check prefix-tag build/grammar_test --try tests/data/prefix-tag.syn tests/data/prefix-tag.txt
 if [ "$(build/rhun --version)" = "rhun $(cat VERSION)" ]; then echo "ok   version"; else echo "FAIL version"; fail=1; fi
+python3 tests/palette-scroll.py || fail=1
 sh tests/files.sh || fail=1
 sh tests/update.sh || fail=1
+python3 tests/commit-ai.py || fail=1
 sh tests/detach.sh || fail=1
 sh tests/blink.sh || fail=1
 sh tests/session.sh || fail=1

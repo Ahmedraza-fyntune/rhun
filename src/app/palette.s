@@ -47,6 +47,8 @@ pal_mode: .long 0
 pal_prompt: .long 0             # PROMPT_* when in PM_PROMPT
 pal_sel: .long 0
 pal_scroll: .long 0
+pal_reveal: .long 0             # reveal selection after keyboard navigation/filtering only
+pal_wheel: .long 0              # accumulate wheel pixels smaller than a row
 .p2align 3
 pal_tf: .zero TF_SIZE
 items: .zero VEC_SIZE
@@ -1519,6 +1521,8 @@ FN fuzzy
 # palette_filter(): results = items matching the query, best first
 FN palette_filter
     PROLOGUE 16
+    mov dword ptr [rip + pal_reveal], 1
+    mov dword ptr [rip + pal_wheel], 0
     mov qword ptr [rip + results + VEC_len], 0
     cmp dword ptr [rip + pal_mode], PM_BROWSE
     jne .Lpf_grep
@@ -1658,6 +1662,8 @@ FN palette_key
     jmp .Lpk_yes
 1:  cmp r12d, KEY_UP
     jne 2f
+    mov dword ptr [rip + pal_reveal], 1
+    mov dword ptr [rip + pal_wheel], 0
     mov eax, [rip + pal_sel]
     test eax, eax
     jz .Lpk_yes
@@ -1666,6 +1672,8 @@ FN palette_key
     jmp .Lpk_yes
 2:  cmp r12d, KEY_DOWN
     jne 3f
+    mov dword ptr [rip + pal_reveal], 1
+    mov dword ptr [rip + pal_wheel], 0
     mov eax, [rip + pal_sel]
     inc eax
     cmp rax, [rip + results + VEC_len]
@@ -1675,6 +1683,8 @@ FN palette_key
     jmp .Lpk_yes
 3:  cmp r12d, KEY_PAGEDOWN
     jne 31f
+    mov dword ptr [rip + pal_reveal], 1
+    mov dword ptr [rip + pal_wheel], 0
     mov eax, [rip + pal_sel]
     add eax, 10
     mov rcx, [rip + results + VEC_len]
@@ -1689,6 +1699,8 @@ FN palette_key
     jmp .Lpk_yes
 31: cmp r12d, KEY_PAGEUP
     jne 33f
+    mov dword ptr [rip + pal_reveal], 1
+    mov dword ptr [rip + pal_wheel], 0
     mov eax, [rip + pal_sel]
     sub eax, 10
     jns 34f
@@ -2206,7 +2218,10 @@ FN palette_draw
     COLOR r9d, T_MUTED
     call ui_text_c
     jmp .Lpd_ret
-5:  # rows
+5:  # Mouse scrolling owns the viewport until selection changes explicitly.
+    cmp dword ptr [rip + pal_reveal], 0
+    je .Lpd_wheel
+    mov dword ptr [rip + pal_reveal], 0
     mov eax, [rip + pal_sel]
     cmp eax, [rip + pal_scroll]
     jge 6f
@@ -2218,23 +2233,47 @@ FN palette_draw
     sub eax, [rsp]
     inc eax
     mov [rip + pal_scroll], eax
-7:  # wheel
-    mov eax, [rip + g_scroll_y]
-    test eax, eax
-    jz 71f
-    cdq
-    idiv ebx
+7:
+.Lpd_wheel:
+    movsxd rax, dword ptr [rip + g_scroll_y]
+    test rax, rax
+    jz .Lpd_clamp
+    movsxd rdx, dword ptr [rip + pal_wheel]
+    add rax, rdx
+    cqo
+    idiv rbx
+    mov [rip + pal_wheel], edx
     add [rip + pal_scroll], eax
+.Lpd_clamp:
+    # Clamp on every frame, including after filtering shrinks the result list.
     mov eax, [rip + pal_scroll]
     mov rcx, [rip + results + VEC_len]
     sub ecx, [rsp]
     cmp eax, ecx
-    cmovg eax, ecx
+    jle .Lpd_top
+    mov eax, ecx
+    mov dword ptr [rip + pal_wheel], 0
+.Lpd_top:
     test eax, eax
-    jns 72f
+    jns .Lpd_edge_remainder
     xor eax, eax
-72: mov [rip + pal_scroll], eax
-71: xor ecx, ecx
+    mov dword ptr [rip + pal_wheel], 0
+.Lpd_edge_remainder:
+    # Do not retain outward wheel motion at an edge: reversing responds at once.
+    test eax, eax
+    jnz .Lpd_bottom_remainder
+    cmp dword ptr [rip + pal_wheel], 0
+    jge .Lpd_bottom_remainder
+    mov dword ptr [rip + pal_wheel], 0
+.Lpd_bottom_remainder:
+    cmp eax, ecx
+    jne .Lpd_scroll_ready
+    cmp dword ptr [rip + pal_wheel], 0
+    jle .Lpd_scroll_ready
+    mov dword ptr [rip + pal_wheel], 0
+.Lpd_scroll_ready:
+    mov [rip + pal_scroll], eax
+    xor ecx, ecx
     mov [rsp + 12], ecx         # row i
 .Lpd_row:
     mov ecx, [rsp + 12]

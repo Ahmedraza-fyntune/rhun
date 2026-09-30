@@ -90,6 +90,7 @@ FN app_init
     call agents_init
     call watch_init
     call update_init
+    call ai_apply
     EPILOGUE
 
 # app_load_fonts(): built-in fonts unless the config names .ttf files
@@ -795,6 +796,7 @@ FN app_apply_settings
     mov rdi, rax
     call theme_apply
 1:  call git_apply
+    call ai_apply
     call vim_sync
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1231,7 +1233,15 @@ FN app_timeout
     cmp eax, ebx
     jge 4f
 41: mov ebx, eax
-4:  mov eax, ebx
+4:  call ai_timeout
+    cmp eax, -1
+    je 5f
+    cmp ebx, -1
+    je 51f
+    cmp eax, ebx
+    jge 5f
+51: mov ebx, eax
+5:  mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -1249,6 +1259,7 @@ FN app_tick
     call term_tick
     call git_tick
     call update_tick
+    call ai_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -2694,6 +2705,24 @@ FN dialog_draw
     mov edi, 420
     call sc
     mov r12d, eax               # w
+    # Confirmation details can include model names or file paths. Size to the
+    # content where space allows, and fit the line inside the visible dialog.
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 8f
+    mov rdi, [rip + dlg_text]
+    call strlen
+    mov rdx, rax
+    mov rsi, [rip + dlg_text]
+    lea rdi, [rip + g_face_small]
+    call text_width
+    add eax, [rip + g_mt + 4*MI_40]
+    cmp eax, r12d
+    cmovg r12d, eax
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, [rip + g_mt + 4*MI_40]
+    cmp r12d, eax
+    cmovg r12d, eax
+8:
     mov edi, 150
     call sc
     mov r13d, eax               # h
@@ -2751,14 +2780,24 @@ FN dialog_draw
     cmp dword ptr [rip + dlg_kind], 4
     jne 3f
     mov r8, [rip + dlg_text]
-3:  lea rdi, [rip + g_face_small]
+3:  mov [rsp + 16], r8
+    mov rdi, r8
+    call strlen
+    mov r9, rax
+    mov eax, r12d
+    sub eax, [rip + g_mt + 4*MI_40]
+    push rax
+    COLOR eax, T_MUTED
+    push rax
+    lea rdi, [rip + g_face_small]
     mov esi, r14d
     add esi, [rip + g_mt + 4*MI_20]
     mov edx, r15d
     add edx, [rip + g_mt + 4*MI_40]
     M ecx, MI_24
-    COLOR r9d, T_MUTED
-    call ui_text_c
+    mov r8, [rsp + 32]
+    call ui_text_v_fit
+    add rsp, 16
     # buttons: Save (primary), Don't Save, Cancel
     M ebx, MI_32
     mov eax, r15d
@@ -3041,7 +3080,10 @@ FN cmd_settings
 3:  mov rdi, rbx
     call app_activate_tab
 4:  mov dword ptr [rip + g_focus], FOCUS_SETTINGS
-    EPILOGUE
+    cmp dword ptr [rip + cfg_commit_ai], 0
+    je 5f
+    call cmd_ai_detect
+5:  EPILOGUE
 
 FN cmd_open_config
     PROLOGUE
