@@ -58,6 +58,18 @@ $running = @(Get-Process -Name rhun,rhun.com -ErrorAction SilentlyContinue | Whe
     $_.Path -and ([IO.Path]::GetDirectoryName($_.Path) -ieq $InstallDir)
 })
 if ($running.Count -gt 0) { throw 'Close rhun before updating or uninstalling it.' }
+# Process metadata is not always available. Loaded PE files cannot be opened for writing.
+foreach ($name in @('rhun.exe', 'rhun.com')) {
+    $file = Join-Path $InstallDir $name
+    if (Test-Path -LiteralPath $file) {
+        try {
+            $probe = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            $probe.Dispose()
+        } catch {
+            throw 'Close rhun before updating or uninstalling it, and check that its files are writable.'
+        }
+    }
+}
 
 if ($Uninstall) {
     if (Test-Path -LiteralPath $InstallDir) {

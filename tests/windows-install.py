@@ -90,6 +90,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
             assert ready and ready[0].startswith(b'tabs='), 'editor did not become ready'
             refusal = install(success=False)
             assert b'Close rhun before updating' in refusal.stdout, refusal.stdout
+            refusal = install('-Uninstall', success=False)
+            assert b'Close rhun before updating' in refusal.stdout, refusal.stdout
             assert process.poll() is None
         finally:
             process.kill()
