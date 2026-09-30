@@ -129,16 +129,7 @@ FN main
     call mem_free
     test r12, r12
     js .Lclose_fail
-    cmp dword ptr [rsp + 72], 0
-    je 1f
-    mov edi, r13d
-    lea rsi, [rip + .Linput]
-    mov edx, .Linput_end - .Linput
-    SYS SYS_write
-    cmp rax, .Linput_end - .Linput
-    jne .Lclose_fail
-1:
-    mov dword ptr [rsp + 64], 1
+    mov dword ptr [rsp + 64], 0
 .Lread_start:
     call time_ms
     mov r15, rax
@@ -157,10 +148,72 @@ FN main
     jnz .Lclose_fail
     jmp .Ldone
 .Lwrite:
+    mov rbx, rax
     mov edi, 1
     lea rsi, [rip + buf]
     mov rdx, rax
     call write_all
+    cmp dword ptr [rsp + 72], 2
+    je .Lmarker_scan_start
+    cmp dword ptr [rsp + 72], 1
+    jne .Lactivity
+    # Type only after PowerShell's prompt, matching a user's input after startup.
+    # Carry the previous byte across reads in case the prompt ends between two chunks.
+    lea rsi, [rip + buf]
+    mov rcx, rbx
+.Lprompt_scan:
+    movzx eax, byte ptr [rsi]
+    cmp dword ptr [rsp + 64], '>'
+    mov [rsp + 64], eax
+    jne 1f
+    cmp al, ' '
+    je .Lsend_input
+1:  inc rsi
+    dec rcx
+    jnz .Lprompt_scan
+    jmp .Lactivity
+.Lsend_input:
+    mov dword ptr [rsp + 72], 2
+    mov dword ptr [rsp + 64], 0
+    mov edi, r13d
+    lea rsi, [rip + .Linput]
+    mov edx, .Linput_end - .Linput
+    SYS SYS_write
+    cmp rax, .Linput_end - .Linput
+    jne .Lclose_fail
+    jmp .Lactivity
+.Lmarker_scan_start:
+    lea rsi, [rip + buf]
+    lea rdi, [rip + .Lmarker]
+    mov rcx, rbx
+.Lmarker_scan:
+    movzx edx, byte ptr [rsi]
+    mov eax, [rsp + 64]
+    cmp dl, [rdi + rax]
+    jne 1f
+    inc eax
+    mov [rsp + 64], eax
+    cmp eax, .Lmarker_end - .Lmarker
+    je .Lsend_exit
+    jmp 2f
+1:  xor eax, eax
+    cmp dl, 'R'
+    sete al
+    mov [rsp + 64], eax
+2:  inc rsi
+    dec rcx
+    jnz .Lmarker_scan
+    jmp .Lactivity
+.Lsend_exit:
+    # Keep the shell alive until its command result has actually arrived.
+    mov dword ptr [rsp + 72], 3
+    mov edi, r13d
+    lea rsi, [rip + .Lexit]
+    mov edx, 5
+    SYS SYS_write
+    cmp rax, 5
+    jne .Lclose_fail
+.Lactivity:
     call time_ms
     mov [rsp + 56], rax
 .Lwait:
@@ -300,5 +353,8 @@ print_line:
 .Lnologo: .asciz "-NoLogo"
 .Lnoprofile: .asciz "-NoProfile"
 # Concatenation prevents the echoed input itself from satisfying the output assertion.
-.Linput: .ascii "$marker='RHUN_'+'INPUT_OK'; Write-Output $marker\r\nexit\r\n"
+.Linput: .ascii "$marker='RHUN_'+'INPUT_OK'; Write-Output $marker\r"
 .Linput_end:
+.Lmarker: .ascii "RHUN_INPUT_OK"
+.Lmarker_end:
+.Lexit: .ascii "exit\r"

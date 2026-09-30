@@ -100,7 +100,13 @@ try {
     $pattern = '(?m)^([0-9a-fA-F]{64})\s+\*?' + [Regex]::Escape($asset) + '\r?$'
     $matchesFound = [Regex]::Matches($checksums, $pattern)
     if ($matchesFound.Count -ne 1) { throw 'The archive checksum is missing or ambiguous.' }
-    $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+    # Use .NET directly, including when Windows PowerShell inherits PowerShell 7's module path.
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($archive)
+        try { $actual = [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '') }
+        finally { $stream.Dispose() }
+    } finally { $hasher.Dispose() }
     if ($actual -ine $matchesFound[0].Groups[1].Value) { throw 'The archive checksum does not match.' }
     $parent = Split-Path -Parent $InstallDir
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
