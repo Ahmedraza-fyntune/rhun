@@ -224,7 +224,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     check('fonts/collection-and-invalid-offset', fonts)
 
     def terminal(mode, marker):
-        result = run('platform_test.exe', mode, env=environment('terminal-' + mode))
+        # The helper allows 30s for the prompt, then 10s each for command output and exit.
+        result = run('platform_test.exe', mode, env=environment('terminal-' + mode), timeout=60)
         assert marker in result.stdout, result.stdout
     if not args.wine:
         check('terminal/conpty-cmd-create-resize-output-close', lambda: terminal('pty', b'RHUN_CONPTY_OK'))

@@ -194,6 +194,8 @@ FN main
 .Lsend_input:
     mov dword ptr [rsp + 72], 2
     mov dword ptr [rsp + 64], 0
+    call time_ms
+    mov r15, rax
     mov edi, r13d
     lea rsi, [rip + .Linput]
     mov edx, .Linput_end - .Linput
@@ -226,6 +228,8 @@ FN main
 .Lsend_exit:
     # Keep the shell alive until its command result has actually arrived.
     mov dword ptr [rsp + 72], 3
+    call time_ms
+    mov r15, rax
     mov edi, r13d
     lea rsi, [rip + .Lexit]
     mov edx, 5
@@ -249,8 +253,14 @@ FN main
 1:  call time_ms
     mov rdx, rax
     sub rax, r15
-    cmp rax, 10000
-    jae .Lclose_fail
+    # PowerShell's cold startup can approach ten seconds on hosted Windows runners.
+    # Give the prompt its own budget, then bound command execution and exit separately.
+    mov ecx, 10000
+    cmp dword ptr [rsp + 72], 1
+    jne 3f
+    mov ecx, 30000
+3:  cmp rax, rcx
+    jae .Ltimeout
     # ConPTY can deliver final output after the child exits. Drain until it is quiet.
     sub rdx, [rsp + 56]
     cmp rdx, 500
@@ -273,6 +283,22 @@ FN main
     SYS SYS_close
     mov eax, [rsp + 68]
     EPILOGUE
+.Ltimeout:
+    lea rdi, [rip + .Ltimeout_process]
+    cmp dword ptr [rsp + 72], 1
+    jne 1f
+    lea rdi, [rip + .Ltimeout_prompt]
+1:  cmp dword ptr [rsp + 72], 2
+    jne 2f
+    lea rdi, [rip + .Ltimeout_output]
+2:  cmp dword ptr [rsp + 72], 3
+    jne 3f
+    lea rdi, [rip + .Ltimeout_exit]
+3:  call print_line
+    cmp dword ptr [rsp + 68], -1
+    je .Lclose_fail
+    lea rdi, [rip + .Ltimeout_exited]
+    call print_line
 .Lclose_fail:
     mov edi, r13d
     SYS SYS_close
@@ -381,3 +407,8 @@ print_line:
 .Lmarker: .ascii "RHUN_INPUT_OK"
 .Lmarker_end:
 .Lexit: .ascii "exit\r"
+.Ltimeout_process: .asciz "\nTimed out waiting for process output/exit (10s)"
+.Ltimeout_prompt: .asciz "\nTimed out waiting for PowerShell prompt (30s)"
+.Ltimeout_output: .asciz "\nTimed out waiting for PowerShell command output (10s)"
+.Ltimeout_exit: .asciz "\nTimed out waiting for PowerShell exit (10s)"
+.Ltimeout_exited: .asciz "Child had already exited before the terminal check completed"
