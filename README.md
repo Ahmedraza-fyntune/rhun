@@ -28,7 +28,7 @@ Close rhun and rerun the installer to update on Windows. See the [Windows guide]
 
 ## Why rhun
 
-When coding agents do more of the heavy lifting, you may not need everything that comes with VS Code or Zed. You need to read and edit code, run commands, find files, and check what changed.
+When coding agents do more of the heavy lifting, you may not need everything that comes with vim, VS Code or Zed. You need to read and edit code, run commands, find files, and check what changed.
 
 `rhun` is perfect for such tasks: it is blazing fast, has a minimal memory and disk space footprint, and ships with everything you need:
 
