@@ -684,6 +684,77 @@ FN win_download_page
     API ShellExecuteW
     EPILOGUE
 
+# win_open_link(UTF-8 URL): use the registered browser or mail application.
+FN win_open_link
+    PROLOGUE 96
+    call win_wide
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    xor ecx, ecx
+    API CoInitialize
+    mov r14d, eax
+    mov rcx, [rip + win_hwnd]
+    lea rdx, [rip + .Lopen]
+    mov r8, rbx
+    xor r9d, r9d
+    mov qword ptr [rsp + 32], 0
+    mov qword ptr [rsp + 40], 1
+    API ShellExecuteW
+    mov r12, rax
+    mov rdi, rbx
+    call mem_free
+    test r14d, r14d
+    js 1f
+    API CoUninitialize
+1:
+    cmp r12, 32
+    ja 9f
+8:  call desktop_failed
+9:  EPILOGUE
+
+# Select files and directories in their parent folder, with Unicode paths intact.
+FN win_reveal
+    PROLOGUE 96
+    call win_wide
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov rcx, rax
+1:  cmp word ptr [rcx], 0
+    je 2f
+    cmp word ptr [rcx], '/'
+    jne 11f
+    mov word ptr [rcx], 92
+11: add rcx, 2
+    jmp 1b
+2:  xor ecx, ecx
+    API CoInitialize
+    mov r14d, eax
+    mov rcx, rbx
+    API ILCreateFromPathW
+    mov r12, rax
+    mov rdi, rbx
+    call mem_free
+    mov ebx, -1
+    test r12, r12
+    jz 3f
+    mov rcx, r12
+    xor edx, edx
+    xor r8d, r8d
+    xor r9d, r9d
+    API SHOpenFolderAndSelectItems
+    mov ebx, eax
+    mov rcx, r12
+    API ILFree
+3:  test r14d, r14d
+    js 4f
+    API CoUninitialize
+4:  test ebx, ebx
+    jns 9f
+8:  call desktop_failed
+9:  EPILOGUE
+
 .section .rdata,"dr"
 .p2align 3
 win_platform:

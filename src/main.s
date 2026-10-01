@@ -377,7 +377,18 @@ open_initial:
     jmp 1b
 2:  test r12d, r12d
     jnz 3f
-    # no folder given: the current directory is the project
+    # With no paths, optionally reopen the last project; explicit paths always win.
+    cmp qword ptr [rip + paths + VEC_len], 0
+    jne 21f
+    cmp dword ptr [rip + cfg_restore_project], 0
+    je 21f
+    call session_last_project
+    test rax, rax
+    jz 21f
+    mov rdi, rax
+    call app_set_project
+    jmp 3f
+21: # no folder given: the current directory is the project
     lea rdi, [rip + cwd]
     mov esi, 4096
     SYS SYS_getcwd

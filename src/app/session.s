@@ -8,6 +8,8 @@
 path_sb: .zero SB_SIZE
 out: .zero SB_SIZE
 rc_dir: .zero SB_SIZE
+last_path: .zero SB_SIZE
+last_project: .zero 4096
 recent_time: .zero 8 * RECENT_MAX     # when each was written, in nanoseconds
 recent_n: .long 0
 rc_path: .zero 4096
@@ -51,6 +53,69 @@ state_dir:
     mov eax, 1
     EPILOGUE
 8:  xor eax, eax
+    EPILOGUE
+
+# Keep the last opened project independently of the restore-open-files preference.
+last_project_file:
+    push rbx
+    lea rdi, [rip + last_path]
+    call state_dir
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + last_path]
+    lea rsi, [rip + .Llast_project]
+    call sb_push_cstr
+    mov rax, [rip + last_path + SB_ptr]
+1:  pop rbx
+    ret
+
+FN session_remember_project
+    PROLOGUE
+    mov rbx, [rip + g_project]
+    test rbx, rbx
+    jz 9f
+    call last_project_file
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, rbx
+    call strlen
+    mov rdx, rax
+    mov rsi, rbx
+    mov rdi, r12
+    call file_write_all
+9:  EPILOGUE
+
+# session_last_project() -> existing directory in a static buffer, or 0.
+FN session_last_project
+    PROLOGUE
+    call last_project_file
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    call file_read_all
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    test rdx, rdx
+    jz 8f
+    cmp rdx, 4095
+    ja 8f
+    lea rdi, [rip + last_project]
+    mov byte ptr [rdi + rdx], 0
+    mov rsi, rbx
+    call memcpy
+    mov rdi, rbx
+    call mem_free
+    lea rdi, [rip + last_project]
+    call file_is_dir
+    test eax, eax
+    jz 9f
+    lea rax, [rip + last_project]
+    EPILOGUE
+8:  mov rdi, rbx
+    call mem_free
+9:  xor eax, eax
     EPILOGUE
 
 # session_file() -> cstr path for the current project, or 0. The name is the project's path with
@@ -460,6 +525,7 @@ FN session_restore
 .Llocal_state: .asciz "/.local/state"
 .Lrhun_dir: .asciz "/rhun"
 .Lext: .asciz ".session"
+.Llast_project: .asciz "/last-project"
 .Lpercent: .asciz "%%25"
 .Lempty: .asciz ""
 

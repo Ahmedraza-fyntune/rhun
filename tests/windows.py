@@ -100,6 +100,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                                   b'rhun ' + (ROOT / 'VERSION').read_bytes().strip() + b'\n'))
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
     if not args.wine:
+        check('desktop/startup', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/desktop-ux.py')], check=True,
+            env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
         check('ui/palette-scroll', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/palette-scroll.py')], check=True,
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))

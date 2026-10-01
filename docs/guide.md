@@ -128,6 +128,10 @@ rhun [folder] [files...]
 
 Without a folder the current directory is the project. Without files the previous session of that project is reopened. Started from an app launcher, the project is usually your home folder; the project menu in the title bar opens another (see [Folders and files](#folders-and-files)).
 
+Enable **Reopen last project** in Settings > Files to start in the last opened project when launching from a desktop shortcut, the Dock, or without path arguments. The config key is `restore_project = true` under `[files]`. Explicit file or folder arguments take precedence. If the saved folder no longer exists, rhun uses the current directory. This preference is independent of **Restore open files**.
+
+Settings includes links to [rhun.app](https://rhun.app) and [vlad@omniprag.com](mailto:vlad@omniprag.com) for feedback and bug reports. Both are also available from the command palette.
+
 Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.
 
 rhun uses Wayland when it can and falls back to X11 when there is no Wayland compositor. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
@@ -164,6 +168,8 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
 
 ### Folders and files
+
+Right-click a file or directory in the explorer and choose **Show in Finder** (macOS), **Show in Explorer** (Windows), or **Open in File Manager** (Linux). Finder and Explorer select the item in its parent folder. Linux opens the containing folder through `xdg-open`, using your desktop's default file manager. The command palette also has **Show File in System File Manager** for the active file.
 
 Clicking the project name in the title bar opens the project menu: Open Folder…, Open File… and the folders of up to 9 recent sessions, newest first. Opening a folder turns the window to it: rhun remembers the open files, asks about unsaved ones, and brings back the folder's last session. The same happens to a folder opened from Finder or the Dock, or with `:e`. Running terminals keep running; new ones start in the new folder.
 

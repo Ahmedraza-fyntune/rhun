@@ -1329,6 +1329,16 @@ cmd_copy_path:
     PCALL P_clip_set
     ret
 
+FN cmd_reveal_file
+    push rbx
+    call file_target
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + g_explorer_target]
+    call desktop_reveal
+1:  pop rbx
+    ret
+
 FN explorer_menu_open
     mov eax, [rip + menu_open]
     ret
@@ -1403,10 +1413,19 @@ FN menu_print
 .Lm4: .asciz "Delete"
 .Lm5: .asciz "Copy Path"
 .Lm6: .asciz "Open Changes"
+.ifdef MACOS
+.Lm_reveal: .asciz "Show in Finder"
+.else
+.ifdef WINDOWS
+.Lm_reveal: .asciz "Show in Explorer"
+.else
+.Lm_reveal: .asciz "Open in File Manager"
+.endif
+.endif
 .p2align 3
 menu_items:
     .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
-    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, 0, 0
+    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, .Lm_reveal, cmd_reveal_file, 0, 0
 menu_items_git:
     .quad .Lm6, open_changes, .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
-    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, 0, 0
+    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, .Lm_reveal, cmd_reveal_file, 0, 0

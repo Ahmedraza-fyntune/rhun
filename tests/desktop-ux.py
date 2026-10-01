@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Startup project precedence and desktop actions, with isolated user state."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
+
+with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
+    work = Path(temporary).resolve()
+    project = work / 'project café with spaces'
+    other = work / 'other'
+    project.mkdir()
+    other.mkdir()
+    file = project / "file ' $test.txt"
+    file.write_text('hello\n')
+    config = work / 'config/rhun/config'
+    config.parent.mkdir(parents=True)
+    env = dict(os.environ, HOME=work.as_posix(), XDG_CONFIG_HOME=(work / 'config').as_posix(),
+               XDG_STATE_HOME=(work / 'state').as_posix())
+
+    def configure(enabled=True, tabs=True):
+        config.write_text('[files]\nrestore_project = ' + str(enabled).lower() +
+                          '\nrestore_session = ' + str(tabs).lower() +
+                          '\n[updates]\ncheck = false\n[git]\nenabled = false\n')
+
+    def run(paths=(), lines=('print-project', 'print-state', 'quit')):
+        script = work / 'commands.rsc'
+        script.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        result = subprocess.run([str(EXE), *map(str, paths), '--headless', '1000x700',
+                                 '--script', str(script)], cwd=other, env=env,
+                                capture_output=True, timeout=20, check=True)
+        return result.stdout.decode('utf-8')
+
+    def check_project(output, name):
+        assert f'project=~/{name}\n' in output, output
+
+    configure()
+    run([project, file])
+    output = run()
+    check_project(output, project.name)
+    assert 'tabs=1 ' in output, output
+    print('ok   desktop/restore-project-and-tabs')
+
+    check_project(run([other]), other.name)
+    run([project])
+    check_project(run([file]), other.name)
+    print('ok   desktop/explicit-folder-and-file-win')
+
+    configure(tabs=False)
+    run([project])
+    output = run()
+    check_project(output, project.name)
+    assert 'tabs=0 ' in output, output
+    print('ok   desktop/project-without-tab-restoration')
+
+    configure(enabled=False)
+    check_project(run(), other.name)
+    configure()
+    marker = work / 'state/rhun/last-project'
+    marker.write_text((work / 'missing').as_posix())
+    check_project(run(), other.name)
+    marker.write_text('')
+    check_project(run(), other.name)
+    marker.unlink()
+    check_project(run(), other.name)
+    print('ok   desktop/disabled-missing-empty-first-launch')
+
+    # A project switch is remembered immediately, including without saved tabs.
+    configure(tabs=False)
+    run([other], [f'open {project.as_posix()}', 'quit'])
+    check_project(run(), project.name)
+    print('ok   desktop/switched-project')
+
+    # Never open real desktop applications in the automated suite.
+    if os.name != 'nt':
+        bin_dir = work / 'bin'
+        bin_dir.mkdir()
+        opener = bin_dir / ('open' if sys.platform == 'darwin' else 'xdg-open')
+        opener.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$RHUN_DESKTOP_LOG"\n')
+        opener.chmod(0o755)
+        log = work / 'opened'
+        env.update(PATH=str(bin_dir) + os.pathsep + os.environ.get('PATH', ''),
+                   RHUN_DESKTOP_LOG=str(log))
+        run([project, file], ['cmd website', 'wait 200', 'cmd feedback', 'wait 200',
+                              'cmd reveal_file', 'wait 200', 'quit'])
+        expected = ['https://rhun.app', 'mailto:vlad@omniprag.com?subject=rhun%20feedback']
+        expected += ['-R', file.as_posix()] if sys.platform == 'darwin' else [project.as_posix()]
+        assert log.read_text().splitlines() == expected, log.read_text()
+        print('ok   desktop/links-and-literal-file-path')
+
+        log.unlink()
+        with config.open('a') as settings:
+            settings.write('[ui]\nagents_panel = false\n')
+        run([project], ['cmd settings', 'click 300 202', 'wait 200',
+                        'click 420 230', 'wait 200', 'quit'])
+        assert log.read_text().splitlines() == [
+            'https://rhun.app', 'mailto:vlad@omniprag.com?subject=rhun%20feedback'], log.read_text()
+        print('ok   desktop/settings-links')
+
+        # The menu operates on a directory as well as a file, with the same path rules.
+        log.unlink()
+        directory = project / 'a folder café'
+        directory.mkdir()
+        output = run([project], ['click 50 86 right', 'print-menu', 'click 110 265',
+                                  'wait 200', 'quit'])
+        label = 'Show in Finder' if sys.platform == 'darwin' else 'Open in File Manager'
+        assert label in output, output
+        expected = ['-R', directory.as_posix()] if sys.platform == 'darwin' else [project.as_posix()]
+        assert log.read_text().splitlines() == expected, log.read_text()
+        print('ok   desktop/directory-context-menu-action')

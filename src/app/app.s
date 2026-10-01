@@ -167,6 +167,7 @@ FN app_set_project
     call git_set_project
     call explorer_set_root
     call agents_set_project
+    call session_remember_project
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 

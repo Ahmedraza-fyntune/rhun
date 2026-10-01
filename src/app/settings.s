@@ -327,6 +327,26 @@ FN settings_draw
     call cmd_open_config
     jmp .Lsd_end
 3:  add r12d, [rip + g_mt + 4*MI_40]
+    mov edi, 0x4f02
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    mov ecx, [rsp + 16]
+    lea r8, [rip + .Lwebsite]
+    call settings_link
+    test eax, UB_CLICK
+    jz 31f
+    call cmd_website
+31: add r12d, [rip + g_mt + 4*MI_28]
+    mov edi, 0x4f03
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    mov ecx, [rsp + 16]
+    lea r8, [rip + .Lfeedback]
+    call settings_link
+    test eax, UB_CLICK
+    jz 32f
+    call cmd_feedback
+32: add r12d, [rip + g_mt + 4*MI_40]
     # rows
     lea rbx, [rip + g_settings]
     xor r15d, r15d              # index
@@ -855,6 +875,50 @@ FN settings_draw
     call gfx_clip_pop
     EPILOGUE
 
+# settings_link(id, x, y, max_width, label) -> button flags
+settings_link:
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    mov rbx, r8
+    mov rdi, r8
+    call strlen
+    mov r12, rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, rbx
+    mov rdx, r12
+    call text_width
+    cmp eax, [rsp + 12]
+    cmovg eax, [rsp + 12]
+    mov ecx, eax
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    M r8d, MI_28
+    call ui_btn
+    mov r13d, eax
+    test eax, UB_HOVER
+    jz 1f
+    mov edi, CUR_POINTER
+    call ui_set_cursor
+1:
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    M ecx, MI_28
+    mov r8, rbx
+    mov r9, r12
+    COLOR eax, T_ACCENT
+    mov r10d, [rsp + 12]
+    push r10
+    push rax
+    call ui_text_v_fit
+    add rsp, 16
+    mov eax, r13d
+    EPILOGUE
+
 # action_label(setting): cached state only; no detection during drawing.
 action_label:
     lea rax, [rip + .Lcheck_now]
@@ -964,6 +1028,8 @@ FN ui_text_v_fit
 .Lt_terminal: .asciz "Terminal"
 .Lt_git: .asciz "Git"
 .Lt_updates: .asciz "Updates"
+.Lwebsite: .asciz "https://rhun.app"
+.Lfeedback: .asciz "Feedback and bug reports: vlad@omniprag.com"
 .Lcheck_now: .asciz "Check now"
 
 .data
