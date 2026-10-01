@@ -229,6 +229,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     if not args.wine:
         check('terminal/conpty-cmd-create-resize-output-close', lambda: terminal('pty', b'RHUN_CONPTY_OK'))
         check('terminal/conpty-powershell-input-output-close', lambda: terminal('pty-input', b'RHUN_INPUT_OK'))
+        check('terminal/conpty-powershell-slow-start', lambda: terminal('pty-input-slow-start', b'RHUN_INPUT_OK'))
 
     def script_file(name, text):
         path = temp / (name + '.rsc')

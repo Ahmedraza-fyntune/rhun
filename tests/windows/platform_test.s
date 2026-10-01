@@ -6,6 +6,7 @@ buf: .zero 65536
 FN main
     PROLOGUE 80
     mov dword ptr [rsp + 72], 0
+    mov dword ptr [rsp + 76], 0
     mov rax, [rip + g_argv]
     cmp qword ptr [rip + g_argc], 2
     jb .Lfail
@@ -25,7 +26,15 @@ FN main
     lea rsi, [rip + .Lpty_input]
     call strcmp_eq
     test eax, eax
+    jnz .Lpty_input_run
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lpty_input_slow]
+    call strcmp_eq
+    test eax, eax
     jz 1f
+    mov dword ptr [rsp + 76], 1
+.Lpty_input_run:
     mov dword ptr [rsp + 72], 1
     jmp .Lpty_run
 1:
@@ -98,6 +107,16 @@ FN main
     lea rax, [rip + .Lnoprofile]
     mov [rsp + 16], rax
     mov qword ptr [rsp + 24], 0
+    cmp dword ptr [rsp + 76], 0
+    je .Lpty_open
+    # Reproduce a cold startup that takes longer than the original ten-second limit.
+    lea rax, [rip + .Lnoexit]
+    mov [rsp + 24], rax
+    lea rax, [rip + .Lpscommand]
+    mov [rsp + 32], rax
+    lea rax, [rip + .Lslow_start]
+    mov [rsp + 40], rax
+    mov qword ptr [rsp + 48], 0
 .Lpty_open:
     mov edi, 80
     mov esi, 24
@@ -334,6 +353,7 @@ print_line:
 .Lecho: .asciz "echo"
 .Lpty: .asciz "pty"
 .Lpty_input: .asciz "pty-input"
+.Lpty_input_slow: .asciz "pty-input-slow-start"
 .Lfont: .asciz "font"
 .Llink: .asciz "link"
 .Lempty: .asciz ""
@@ -352,6 +372,9 @@ print_line:
 .Lpowershell: .asciz "powershell.exe"
 .Lnologo: .asciz "-NoLogo"
 .Lnoprofile: .asciz "-NoProfile"
+.Lnoexit: .asciz "-NoExit"
+.Lpscommand: .asciz "-Command"
+.Lslow_start: .asciz "Start-Sleep -Milliseconds 11000"
 # Concatenation prevents the echoed input itself from satisfying the output assertion.
 .Linput: .ascii "$marker='RHUN_'+'INPUT_OK'; Write-Output $marker\r"
 .Linput_end:
