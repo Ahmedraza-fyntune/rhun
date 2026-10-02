@@ -36,6 +36,8 @@ check prefix-tag build/grammar_test --try tests/data/prefix-tag.syn tests/data/p
 if [ "$(build/rhun --version)" = "rhun $(cat VERSION)" ]; then echo "ok   version"; else echo "FAIL version"; fail=1; fi
 python3 tests/palette-scroll.py || fail=1
 python3 tests/commit-wrap.py || fail=1
+python3 tests/terminal-tabs.py || fail=1
+python3 tests/focused-zoom.py || fail=1
 sh tests/files.sh || fail=1
 sh tests/update.sh || fail=1
 python3 tests/commit-ai.py || fail=1

@@ -167,6 +167,8 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 
 All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
 
+Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independently. On macOS use Command+Plus, Command+Minus and Command+0; on Linux and Windows use Ctrl+Plus, Ctrl+Minus and Ctrl+0. Settings > Terminal > Font size controls the terminal separately from Settings > Editor > Font size.
+
 ### Folders and files
 
 Right-click a file or directory in the explorer and choose **Show in Finder** (macOS), **Show in Explorer** (Windows), or **Open in File Manager** (Linux). Finder and Explorer select the item in its parent folder. Linux opens the containing folder through `xdg-open`, using your desktop's default file manager. The command palette also has **Show File in System File Manager** for the active file.
@@ -264,6 +266,7 @@ font_size = 15
 tab_width = 4
 [terminal]
 shell = /usr/bin/fish
+font_size = 14
 [git]
 enabled = false
 [keys]

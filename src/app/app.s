@@ -3019,36 +3019,45 @@ FN cmd_toggle_agents
 
 FN cmd_zoom_in
     mov esi, 1
-    call image_zoom
-    jnz 2f
-    add dword ptr [rip + cfg_font_size], 1
-    cmp dword ptr [rip + cfg_font_size], 40
-    jle 1f
-    mov dword ptr [rip + cfg_font_size], 40
-1:  mov dword ptr [rip + g_settings_changed], 1
-    mov dword ptr [rip + g_dirty], 1
-2:  ret
+    jmp zoom_focused
 
 FN cmd_zoom_out
     mov esi, -1
-    call image_zoom
-    jnz 2f
-    sub dword ptr [rip + cfg_font_size], 1
-    cmp dword ptr [rip + cfg_font_size], 8
-    jge 1f
-    mov dword ptr [rip + cfg_font_size], 8
-1:  mov dword ptr [rip + g_settings_changed], 1
-    mov dword ptr [rip + g_dirty], 1
-2:  ret
+    jmp zoom_focused
 
 FN cmd_zoom_reset
     xor esi, esi
+    jmp zoom_focused
+
+# zoom_focused(dir): zoom only the focused terminal, otherwise the editor or image.
+zoom_focused:
+    cmp dword ptr [rip + g_focus], FOCUS_TERMINAL
+    je .Lzoom_term
     call image_zoom
-    jnz 1f
-    mov dword ptr [rip + cfg_font_size], 14
+    jnz .Lzoom_done
+    lea rdi, [rip + cfg_font_size]
+    mov edx, 8
+    mov ecx, 40
+    jmp .Lzoom_font
+.Lzoom_term:
+    lea rdi, [rip + cfg_term_font_size]
+    mov edx, 9
+    mov ecx, 24
+.Lzoom_font:
+    mov eax, 14                # reset either font to its default size
+    test esi, esi
+    jz 1f
+    mov eax, [rdi]
+    add eax, esi
+    cmp eax, edx
+    cmovl eax, edx
+    cmp eax, ecx
+    cmovg eax, ecx
+1:  mov [rdi], eax
     mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
-1:  ret
+.Lzoom_done:
+    ret
 
 # image_zoom(dir) -> ZF clear when an image tab took the zoom command (1 in, -1 out, 0 fit)
 image_zoom:

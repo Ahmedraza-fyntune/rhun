@@ -516,7 +516,7 @@ g_commands:
     COMMAND new_folder, "New Folder", cmd_new_folder, ""
     COMMAND rename_file, "Rename File", cmd_rename_file, "F2"
     COMMAND delete_file, "Delete File", cmd_delete_file, ""
-    COMMAND zoom_in, "Zoom In", cmd_zoom_in, "ctrl+= ctrl++"
+    COMMAND zoom_in, "Zoom In", cmd_zoom_in, "ctrl+= ctrl++ ctrl+shift+= ctrl+shift++"
     COMMAND zoom_out, "Zoom Out", cmd_zoom_out, "ctrl+-"
     COMMAND zoom_reset, "Reset Zoom", cmd_zoom_reset, "ctrl+0"
     COMMAND toggle_word_wrap, "Toggle Word Wrap", cmd_toggle_word_wrap, "alt+z"

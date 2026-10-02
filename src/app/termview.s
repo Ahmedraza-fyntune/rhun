@@ -11,10 +11,10 @@ ENDSTRUCT TS_SIZE
 
 .equ ID_TSPLIT, 0x6000
 .equ ID_TNEW, 0x6002
-.equ ID_TKILL, 0x6003
 .equ ID_THIDE, 0x6004
 .equ ID_TSCROLL, 0x6005
 .equ ID_TTAB, 0x6100            # + index
+.equ ID_TTABX, 0x6200           # + index
 .equ MAX_SESS, 16
 .equ RBUF, 65536
 .equ MAX_ZOMB, 16
@@ -566,7 +566,8 @@ FN term_panel_paste
 # ---------------- keys ----------------
 
 # term_panel_key(keysym, cp, mods) -> 1 if the terminal took the key
-#   ctrl+shift combinations, ctrl+` and tab switching stay with rhun; ctrl+shift+c/v copy and paste
+#   zoom, ctrl+shift combinations, ctrl+` and tab switching stay with rhun;
+#   ctrl+shift+c/v copy and paste
 FN term_panel_key
     PROLOGUE
     mov r12d, edi
@@ -598,6 +599,21 @@ FN term_panel_key
     call cmd_term_paste
     jmp .Ltk_yes
 .Ltk_ctl:
+.endif
+.ifndef MACOS
+    # Zoom bindings belong to the focused panel, including user remappings.
+    mov edi, r12d
+    mov esi, r14d
+    call keys_lookup
+    lea rcx, [rip + cmd_zoom_in]
+    cmp rax, rcx
+    je .Ltk_no
+    lea rcx, [rip + cmd_zoom_out]
+    cmp rax, rcx
+    je .Ltk_no
+    lea rcx, [rip + cmd_zoom_reset]
+    cmp rax, rcx
+    je .Ltk_no
 .endif
     mov eax, r14d
     and eax, MOD_CTRL | MOD_SHIFT
@@ -839,15 +855,39 @@ header_draw:
     push r13
     push r14
     push r15
-    sub rsp, 24
+    sub rsp, 56
     # panel rect: [rbp + 16] x, +20 y, +24 w, +28 h
     M r15d, MI_28               # header height
+    # Keep tabs and their hit targets clear of the new/hide controls.
+    mov eax, [rip + g_block]
+    mov [rsp + 20], eax
+    mov edi, [rbp + 16]
+    mov esi, [rbp + 20]
+    mov edx, [rbp + 24]
+    sub edx, [rip + g_mt + 4*MI_48]
+    sub edx, [rip + g_mt + 4*MI_12]
+    lea eax, [rdi + rdx]
+    mov [rsp + 24], eax         # right edge of the tab strip
+    mov ecx, r15d
+    call gfx_clip_push
+    mov edi, [rbp + 16]
+    mov esi, [rbp + 20]
+    mov edx, [rsp + 24]
+    sub edx, edi
+    mov ecx, r15d
+    call ui_in
+    test eax, eax
+    jnz 9f
+    mov dword ptr [rip + g_block], 1
+9:
     mov r12d, [rbp + 16]
     add r12d, [rip + g_mt + 4*MI_8]
     xor ebx, ebx
 .Lhd_tab:
     cmp rbx, [rip + sessions + VEC_len]
     jae .Lhd_buttons
+    cmp r12d, [rsp + 24]
+    jge .Lhd_buttons
     mov rdi, rbx
     call sess
     mov r13, rax
@@ -875,10 +915,18 @@ header_draw:
     cmp r14d, eax
     cmovg r14d, eax
     add r14d, [rip + g_mt + 4*MI_20]    # tab width
+    add r14d, [rip + g_mt + 4*MI_28]    # close button and right padding
+    mov edi, r12d
+    mov esi, [rbp + 20]
+    mov edx, r14d
+    mov ecx, r15d
+    call ui_in
+    mov [rsp + 28], eax         # hover anywhere on this tab
     lea edi, [rbx + ID_TTAB]
     mov esi, r12d
     mov edx, [rbp + 20]
     mov ecx, r14d
+    sub ecx, [rip + g_mt + 4*MI_28]    # closing an inactive tab must not activate it
     mov r8d, r15d
     call ui_btn
     mov [rsp + 16], eax
@@ -887,7 +935,7 @@ header_draw:
     mov [rip + cur], rbx
     mov dword ptr [rip + g_focus], FOCUS_TERMINAL
     mov dword ptr [rip + sel_on], 0
-2:  test dword ptr [rsp + 16], UB_HOVER
+2:  cmp dword ptr [rsp + 28], 0
     jz 3f
     test dword ptr [rip + g_pressed], 1 << BTN_MIDDLE
     jz 3f
@@ -915,7 +963,7 @@ header_draw:
     pop r9
     pop r9
     jmp 5f
-4:  test dword ptr [rsp + 16], UB_HOVER
+4:  cmp dword ptr [rsp + 28], 0
     jz 5f
     COLOR r9d, T_FG
 5:  mov eax, r15d
@@ -929,6 +977,7 @@ header_draw:
     add esi, [rip + g_mt + 4*MI_10]
     mov eax, r14d
     sub eax, [rip + g_mt + 4*MI_20]
+    sub eax, [rip + g_mt + 4*MI_28]
     push rax
     push rax
     lea rdi, [rip + g_face_small]
@@ -936,11 +985,34 @@ header_draw:
     mov r8, [rsp + 24]
     call text_draw_fit
     add rsp, 16
+    # Each tab owns its close button, visible while the tab is hovered.
+    cmp dword ptr [rsp + 28], 0
+    je .Lhd_next
+    lea edi, [rbx + ID_TTABX]
+    lea esi, [r12 + r14]
+    sub esi, [rip + g_mt + 4*MI_28]
+    mov edx, r15d
+    sub edx, [rip + g_mt + 4*MI_20]
+    sar edx, 1
+    add edx, [rbp + 20]
+    M ecx, MI_20
+    mov r8d, ecx
+    mov r9d, IC_CLOSE
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz .Lhd_next
+    mov rdi, r13
+    call session_end
+    jmp .Lhd_buttons
+.Lhd_next:
     add r12d, r14d
     inc rbx
     jmp .Lhd_tab
 .Lhd_buttons:
-    # right side: new, close, hide
+    call gfx_clip_pop
+    mov eax, [rsp + 20]
+    mov [rip + g_block], eax
+    # right side: new and hide
     M r13d, MI_24
     mov r12d, [rbp + 16]
     add r12d, [rbp + 24]
@@ -963,18 +1035,6 @@ header_draw:
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
 1:  sub r12d, r13d
     sub r12d, [rip + g_mt + 4*MI_4]
-    mov edi, ID_TKILL
-    mov esi, r12d
-    mov edx, r14d
-    mov ecx, r13d
-    mov r8d, r13d
-    mov r9d, IC_CLOSE
-    call ui_icon_btn
-    test eax, UB_CLICK
-    jz 2f
-    call cmd_kill_terminal
-2:  sub r12d, r13d
-    sub r12d, [rip + g_mt + 4*MI_4]
     mov edi, ID_TNEW
     mov esi, r12d
     mov edx, r14d
@@ -985,7 +1045,7 @@ header_draw:
     test eax, UB_CLICK
     jz 3f
     call cmd_new_terminal
-3:  add rsp, 24
+3:  add rsp, 56
     pop r15
     pop r14
     pop r13

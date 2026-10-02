@@ -64,6 +64,19 @@ emit_key:
     push r13
     mov ebx, edi
     mov r12d, esi
+.ifdef MACOS
+    # Scripted Command keys use the same Ctrl flag and provenance as Cocoa events.
+    xor eax, eax
+    test r12d, MOD_SUPER
+    jz 9f
+    mov eax, 1
+    test r12d, MOD_CTRL
+    jz 8f
+    xor eax, eax               # Command with Control stays terminal control input
+8:  and r12d, ~MOD_SUPER
+    or r12d, MOD_CTRL
+9:  mov [rip + g_mac_cmd], eax
+.endif
     xor r13d, r13d
     cmp ebx, 0x20
     jb 1f
@@ -82,6 +95,9 @@ emit_key:
     mov esi, r13d
     mov edx, r12d
     call app_on_key
+.ifdef MACOS
+    mov dword ptr [rip + g_mac_cmd], 0
+.endif
     pop r13
     pop r12
     pop rbx
