@@ -62,9 +62,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
     check_project(run(), other.name)
     configure()
     marker = work / 'state/rhun/last-project'
-    marker.write_text((work / 'missing').as_posix())
+    marker.write_text((work / 'missing').as_posix(), encoding='utf-8')
     check_project(run(), other.name)
-    marker.write_text('')
+    marker.write_text('', encoding='utf-8')
     check_project(run(), other.name)
     marker.unlink()
     check_project(run(), other.name)
@@ -80,7 +80,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
     # Simulate that write, then verify that quitting remembers this project's folder.
     run([project], [f'open {marker.as_posix()}', 'key ctrl+a',
                     f'type {other.as_posix()}', 'cmd save', 'quit'])
-    assert marker.read_text() == project.as_posix(), marker.read_text()
+    # The marker is UTF-8; Windows would otherwise decode it in the ANSI code page.
+    remembered = marker.read_text(encoding='utf-8')
+    assert remembered == project.as_posix(), remembered
     check_project(run(), project.name)
     print('ok   desktop/last-closed-project')
 
