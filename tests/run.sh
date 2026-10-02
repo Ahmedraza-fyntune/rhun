@@ -25,6 +25,7 @@ check diff build/diff_test
 check images build/image_test $(ls tests/data/images/* | LC_ALL=C sort)
 check cpu build/cpu_test
 check cols build/cols_test
+check textarea build/textarea_test
 check strfind build/str_test tests/data/strfind.txt
 check versions build/update_test tests/data/versions.txt
 check paths build/path_test tests/data/paths.txt
@@ -34,6 +35,7 @@ if [ -z "$dups" ]; then echo "ok   grammar-patterns"; else echo "FAIL grammar-pa
 check prefix-tag build/grammar_test --try tests/data/prefix-tag.syn tests/data/prefix-tag.txt
 if [ "$(build/rhun --version)" = "rhun $(cat VERSION)" ]; then echo "ok   version"; else echo "FAIL version"; fail=1; fi
 python3 tests/palette-scroll.py || fail=1
+python3 tests/commit-wrap.py || fail=1
 sh tests/files.sh || fail=1
 sh tests/update.sh || fail=1
 python3 tests/commit-ai.py || fail=1

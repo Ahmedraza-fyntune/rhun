@@ -84,7 +84,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
               (ROOT / 'tests/data' / (name + '.expected')).read_bytes())
 
     for name, exe in [('cpu', 'cpu'), ('doc', 'doc'), ('syntax', 'syntax'), ('themes', 'theme'),
-                      ('term', 'term'), ('diff', 'diff'), ('cols', 'cols'), ('config', 'config')]:
+                      ('term', 'term'), ('diff', 'diff'), ('cols', 'cols'), ('config', 'config'),
+                      ('textarea', 'textarea')]:
         check(name, lambda name=name, exe=exe: golden(name, exe + '_test'))
     for name, exe, file in [('strfind', 'str', 'strfind'), ('versions', 'update', 'versions'),
                             ('keymap-names-us-ru', 'xkb', 'keymap-names-us-ru'),
@@ -107,6 +108,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
         check('ui/palette-scroll', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/palette-scroll.py')], check=True,
+            env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
+        check('ui/commit-wrap', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/commit-wrap.py')], check=True,
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
 
     def ui(name):

@@ -652,7 +652,9 @@ F TF_cur, 8
 F TF_anchor, 8
 F TF_scroll, 4
 F TF_id, 4
-F TF_top, 4             # text area: the first line shown
+F TF_top, 4             # text area: the first visual row shown
+F TF_width, 4           # text area: available text width in pixels
+F TF_prefx, 4           # text area: preferred x for vertical motion, -1 = none
 F TF_pad, 4
 ENDSTRUCT TF_SIZE
 

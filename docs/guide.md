@@ -126,9 +126,9 @@ The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PAS
 rhun [folder] [files...]
 ```
 
-Without a folder the current directory is the project. Without files the previous session of that project is reopened. Started from an app launcher, the project is usually your home folder; the project menu in the title bar opens another (see [Folders and files](#folders-and-files)).
+Without files the previous session of the selected project is reopened. The project menu in the title bar opens another folder (see [Folders and files](#folders-and-files)).
 
-Enable **Reopen last project** in Settings > Files to start in the last opened project when launching from a desktop shortcut, the Dock, or without path arguments. The config key is `restore_project = true` under `[files]`. Explicit file or folder arguments take precedence. If the saved folder no longer exists, rhun uses the current directory. This preference is independent of **Restore open files**.
+**Reopen last project** in Settings > Files is on by default. When launching from a desktop shortcut, the Dock, or without path arguments, rhun reopens the project you closed with. The config key is `restore_project = true` under `[files]`. Explicit file or folder arguments take precedence. If this setting is off, no project is saved yet, or the saved folder no longer exists, rhun uses the current directory (usually your home folder when launched from the desktop). This preference is independent of **Restore open files**.
 
 Settings includes links to [rhun.app](https://rhun.app) and [vlad@omniprag.com](mailto:vlad@omniprag.com) for feedback and bug reports. Both are also available from the command palette.
 

@@ -12,7 +12,7 @@
 .globl cfg_exclude, cfg_agent_sources, cfg_restore_session, cfg_auto_pairs, cfg_word_wrap, cfg_decorations
 .globl cfg_vim
 .globl cfg_restore_project
-cfg_restore_project: .long 0
+cfg_restore_project: .long 1
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
 cfg_line_height: .long 150
@@ -641,7 +641,7 @@ g_settings:
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
     SETTING .Ls_files, restore_session, ST_BOOL, cfg_restore_session, 0, 1, 1, 0, "Restore open files", "Reopen the files from the last session of a project."
-    SETTING .Ls_files, restore_project, ST_BOOL, cfg_restore_project, 0, 1, 1, 0, "Reopen last project", "Start in the last project when no file or folder is given."
+    SETTING .Ls_files, restore_project, ST_BOOL, cfg_restore_project, 0, 1, 1, 0, "Reopen last project", "Reopen the project you closed with when no file or folder is given."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
     SETTING .Ls_agents, sources, ST_STR, cfg_agent_sources, 0, 0, 0, 0, "Agent sources", "Which agents to show: claude, codex."
     SETTING .Ls_terminal, shell, ST_STR, cfg_term_shell, 0, 0, 0, 0, "Shell", "Program the terminal runs. Empty uses $SHELL."

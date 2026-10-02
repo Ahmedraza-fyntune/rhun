@@ -1077,9 +1077,16 @@ FN scm_draw
     mov edi, r13d
     call draw_branch
     add r13d, [rip + g_mt + 4*MI_32]
-    # the message, up to MAX_LINES lines high
+    # The message always wraps, up to MAX_LINES visual rows high.
+    mov esi, [rip + in_w]
+    cmp dword ptr [rip + cfg_commit_ai], 0
+    je 20f
+    sub esi, [rip + g_mt + 4*MI_64]
+    sub esi, [rip + g_mt + 4*MI_16]
+    sub esi, [rip + g_mt + 4*MI_8]
+20: mov [rsp + 8], esi
     lea rdi, [rip + tf_msg]
-    call ta_lines
+    call ta_layout
     mov ecx, MAX_LINES
     cmp eax, ecx
     cmova eax, ecx
@@ -1093,13 +1100,8 @@ FN scm_draw
     lea rdi, [rip + tf_msg]
     mov esi, [rip + in_x]
     mov edx, r13d
-    mov ecx, [rip + in_w]
-    cmp dword ptr [rip + cfg_commit_ai], 0
-    je 21f
-    sub ecx, [rip + g_mt + 4*MI_64]
-    sub ecx, [rip + g_mt + 4*MI_16]
-    sub ecx, [rip + g_mt + 4*MI_8]
-21: mov r8d, ebx
+    mov ecx, [rsp + 24]         # field width, saved before the placeholder pushes
+    mov r8d, ebx
     xor r9d, r9d
     cmp dword ptr [rip + g_focus], FOCUS_SCM
     jne 2f

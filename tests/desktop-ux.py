@@ -22,9 +22,10 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
     env = dict(os.environ, HOME=work.as_posix(), XDG_CONFIG_HOME=(work / 'config').as_posix(),
                XDG_STATE_HOME=(work / 'state').as_posix())
 
-    def configure(enabled=True, tabs=True):
-        config.write_text('[files]\nrestore_project = ' + str(enabled).lower() +
-                          '\nrestore_session = ' + str(tabs).lower() +
+    def configure(enabled=None, tabs=True):
+        restore = '' if enabled is None else 'restore_project = ' + str(enabled).lower() + '\n'
+        config.write_text('[files]\n' + restore +
+                          'restore_session = ' + str(tabs).lower() +
                           '\n[updates]\ncheck = false\n[git]\nenabled = false\n')
 
     def run(paths=(), lines=('print-project', 'print-state', 'quit')):
@@ -43,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
     output = run()
     check_project(output, project.name)
     assert 'tabs=1 ' in output, output
-    print('ok   desktop/restore-project-and-tabs')
+    print('ok   desktop/default-restore-project-and-tabs')
 
     check_project(run([other]), other.name)
     run([project])
@@ -74,6 +75,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
     run([other], [f'open {project.as_posix()}', 'quit'])
     check_project(run(), project.name)
     print('ok   desktop/switched-project')
+
+    # Another instance can replace the marker while this project is still open.
+    # Simulate that write, then verify that quitting remembers this project's folder.
+    run([project], [f'open {marker.as_posix()}', 'key ctrl+a',
+                    f'type {other.as_posix()}', 'cmd save', 'quit'])
+    assert marker.read_text() == project.as_posix(), marker.read_text()
+    check_project(run(), project.name)
+    print('ok   desktop/last-closed-project')
 
     # Never open real desktop applications in the automated suite.
     if os.name != 'nt':

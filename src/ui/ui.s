@@ -686,6 +686,7 @@ FN tf_set
     call sb_push
     mov [rbx + TF_cur], r13
     mov [rbx + TF_anchor], r13
+    mov dword ptr [rbx + TF_prefx], -1
     pop r13
     pop r12
     pop rbx
@@ -807,6 +808,7 @@ tf_insert_as:
     add r14, r13
     mov [rbx + TF_cur], r14
     mov [rbx + TF_anchor], r14
+    mov dword ptr [rbx + TF_prefx], -1
     pop r15
     pop r14
     pop r13
@@ -1032,6 +1034,7 @@ FN tf_key
     jnz .Ltk_yes
     mov [rbx + TF_anchor], r15
 .Ltk_yes:
+    mov dword ptr [rbx + TF_prefx], -1
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
     EPILOGUE
@@ -1218,42 +1221,140 @@ ln_end:
     jmp 1b
 2:  ret
 
-# ln_index(ptr, pos) -> eax the line of pos: line breaks before it
-ln_index:
-    xor eax, eax
-    xor ecx, ecx
-1:  cmp rcx, rsi
-    jae 2f
-    cmp byte ptr [rdi + rcx], 10
-    jne 3f
-    inc eax
-3:  inc rcx
-    jmp 1b
-2:  ret
+# ta_layout(tf, outer width) -> eax visual rows; wrapping is always on
+FN ta_layout
+    sub esi, [rip + g_mt + 4*MI_24]
+    mov eax, 1
+    cmp esi, eax
+    cmovl esi, eax
+    cmp esi, [rdi + TF_width]
+    je 1f
+    mov [rdi + TF_width], esi
+    mov dword ptr [rdi + TF_prefx], -1
+1:  jmp ta_lines
 
-# ln_nth(ptr, len, n) -> rax start of line n (len past the last line)
-ln_nth:
-    xor eax, eax
-1:  test edx, edx
-    jz 2f
-    cmp rax, rsi
-    jae 2f
-    cmp byte ptr [rdi + rax], 10
-    jne 3f
-    dec edx
-3:  inc rax
-    jmp 1b
-2:  ret
-
-# ta_lines(tf) -> eax lines of its text
+# ta_lines(tf) -> eax visual rows, rebuilding the shared row ranges (start, end).
+# Explicit newlines separate rows; soft breaks preserve every byte of the message.
 FN ta_lines
-    push rbx
+    PROLOGUE 16
+    mov rbx, rdi
+    mov qword ptr [rip + ta_rows + VEC_len], 0
     call tf_text
-    mov rdi, rax
-    mov rsi, rdx
-    call ln_index
-    inc eax
-    pop rbx
+    mov r12, rax
+    mov r13, rdx
+    xor r14d, r14d              # row start
+.Ltl_line:
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, r14
+    call ln_end
+    mov r15, rax                # logical line end
+.Ltl_row:
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [r12 + r14]
+    mov rdx, r15
+    sub rdx, r14
+    mov ecx, [rbx + TF_width]
+    test ecx, ecx
+    jnz 1f
+    mov ecx, 1048576            # before the first layout, keep explicit lines
+1:  call text_fit
+    add rax, r14
+    cmp rax, r15
+    jae .Ltl_end
+    cmp rax, r14
+    jne 2f
+    # A glyph wider than the field still occupies one row, never half a codepoint.
+    lea rdi, [r12 + r14]
+    mov rsi, r15
+    sub rsi, r14
+    call utf8_decode
+    lea rax, [r14 + rdx]
+    jmp .Ltl_emit
+2:  # Prefer a word boundary within the prefix that fits.
+    mov rcx, rax
+3:  cmp rcx, r14
+    jbe .Ltl_emit
+    cmp byte ptr [r12 + rcx - 1], ' '
+    je 4f
+    dec rcx
+    jmp 3b
+4:  mov rax, rcx
+.Ltl_emit:
+    mov [rsp], rax
+    lea rdi, [rip + ta_rows]
+    mov esi, 16
+    call vec_push
+    mov [rax], r14
+    mov rcx, [rsp]
+    mov [rax + 8], rcx
+    mov r14, rcx
+    cmp r14, r15
+    jb .Ltl_row
+    jmp .Ltl_next
+.Ltl_end:
+    mov rax, r15
+    jmp .Ltl_emit
+.Ltl_next:
+    cmp r15, r13
+    jae .Ltl_done
+    lea r14, [r15 + 1]
+    jmp .Ltl_line
+.Ltl_done:
+    mov rax, [rip + ta_rows + VEC_len]
+    EPILOGUE
+
+# ta_row_of(pos) -> row in the last layout; a soft break belongs to the next row
+FN ta_row_of
+    mov r8, [rip + ta_rows + VEC_ptr]
+    xor eax, eax
+    mov rcx, [rip + ta_rows + VEC_len]
+1:  mov rdx, rcx
+    sub rdx, rax
+    cmp rdx, 1
+    jbe 3f
+    lea rdx, [rax + rcx]
+    shr rdx, 1
+    mov r9, rdx
+    shl r9, 4
+    cmp [r8 + r9], rdi
+    ja 2f
+    mov rax, rdx
+    jmp 1b
+2:  mov rcx, rdx
+    jmp 1b
+3:  ret
+
+# ta_row_bounds(row) -> rax start, rdx end; out-of-range rows use the last row
+FN ta_row_bounds
+    mov rax, [rip + ta_rows + VEC_len]
+    dec rax
+    cmp rdi, rax
+    cmovb rax, rdi
+    shl rax, 4
+    add rax, [rip + ta_rows + VEC_ptr]
+    mov rdx, [rax + 8]
+    mov rax, [rax]
+    ret
+
+# ta_row_limit(tf, row) -> last caret position belonging to that row
+FN ta_row_limit
+    push rbx
+    mov rbx, rdi
+    mov rdi, rsi
+    call ta_row_bounds
+    mov rax, rdx
+    inc rsi
+    cmp rsi, [rip + ta_rows + VEC_len]
+    jae 1f
+    shl rsi, 4
+    add rsi, [rip + ta_rows + VEC_ptr]
+    cmp [rsi], rax
+    jne 1f                     # explicit newline: its position is on this row
+    mov rdi, rbx
+    mov rsi, rax
+    call tf_prev
+1:  pop rbx
     ret
 
 # ta_line_h() -> eax height of a line of a text area
@@ -1297,8 +1398,8 @@ FN ta_insert
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
-# ta_key(tf, keysym, cp, mods) -> 1 if handled: tf_key, and Enter breaks the line, Up and Down go
-#   across lines, Home and End (without Ctrl) to the ends of the line
+# ta_key(tf, keysym, cp, mods) -> 1 if handled: Up/Down cross visual rows;
+# Home/End keep their logical-line behavior, and Enter inserts an explicit newline
 FN ta_key
     PROLOGUE 32
     mov rbx, rdi
@@ -1324,12 +1425,14 @@ FN ta_key
     mov [rsp], rdx              # length
     cmp r12d, KEY_HOME
     jne 3f
+    mov dword ptr [rbx + TF_prefx], -1
     mov rdi, r15
     mov rsi, [rbx + TF_cur]
     call ln_start
     jmp .Ltak_move
 3:  cmp r12d, KEY_END
     jne 4f
+    mov dword ptr [rbx + TF_prefx], -1
     mov rdi, r15
     mov rsi, [rsp]
     mov rdx, [rbx + TF_cur]
@@ -1339,42 +1442,40 @@ FN ta_key
     je 5f
     cmp r12d, KEY_DOWN
     jne .Ltak_tf
-5:  # the same x on the line above or below
-    mov rdi, r15
-    mov rsi, [rbx + TF_cur]
-    call ln_start
+5:  mov rdi, rbx
+    call ta_lines
+    mov rdi, [rbx + TF_cur]
+    call ta_row_of
+    mov [rsp + 24], rax         # current visual row
+    mov rdi, rax
+    call ta_row_bounds
     mov [rsp + 16], rax
+    cmp dword ptr [rbx + TF_prefx], -1
+    jne 51f
     lea rdi, [rip + g_face_ui]
     lea rsi, [r15 + rax]
     mov rdx, [rbx + TF_cur]
     sub rdx, rax
     call text_width
-    mov r13d, eax
+    mov [rbx + TF_prefx], eax
+51: mov r13d, [rbx + TF_prefx]
+    mov rsi, [rsp + 24]
     cmp r12d, KEY_UP
     jne 6f
-    mov rax, [rsp + 16]
-    test rax, rax
-    jz .Ltak_move               # the first line: to its start
-    lea rsi, [rax - 1]          # the line above ends at its break
-    mov [rsp + 8], rsi
-    mov rdi, r15
-    call ln_start
+    test rsi, rsi
+    jz 8f
+    dec rsi
     jmp 7f
-6:  mov rdi, r15
-    mov rsi, [rsp]
-    mov rdx, [rbx + TF_cur]
-    call ln_end
-    cmp rax, [rsp]
-    jae .Ltak_move              # the last line: to its end
-    inc rax
-    mov [rsp + 16], rax
-    mov rdi, r15
-    mov rsi, [rsp]
-    mov rdx, rax
-    call ln_end
+6:  inc rsi
+    cmp rsi, [rip + ta_rows + VEC_len]
+    jae 9f
+7:  mov [rsp + 24], rsi
+    mov rdi, rbx
+    call ta_row_limit
     mov [rsp + 8], rax
-    mov rax, [rsp + 16]
-7:  mov [rsp + 16], rax         # line start, [rsp + 8] its end
+    mov rdi, [rsp + 24]
+    call ta_row_bounds
+    mov [rsp + 16], rax
     lea rdi, [rip + g_face_ui]
     lea rsi, [r15 + rax]
     mov rdx, [rsp + 8]
@@ -1382,6 +1483,10 @@ FN ta_key
     mov ecx, r13d
     call text_fit
     add rax, [rsp + 16]
+    jmp .Ltak_move
+8:  xor eax, eax               # above the first row: to the message start
+    jmp .Ltak_move
+9:  mov rax, [rsp]             # below the last row: to the message end
 .Ltak_move:
     mov [rbx + TF_cur], rax
     test r14d, MOD_SHIFT
@@ -1402,8 +1507,8 @@ FN ta_key
     xor eax, eax
     EPILOGUE
 
-# ui_textarea(tf, x, y, w, h, focused, placeholder): draw a text area (ta_lines lines of ta_line_h, or
-#   fewer shown with the cursor's in view), the mouse places the cursor -> UB bits
+# ui_textarea(tf, x, y, w, h, focused, placeholder): always wrap at the available
+# width, keeping the caret's visual row in view; the mouse places the cursor -> UB bits
 FN ui_textarea
     PROLOGUE 96
     mov rbx, rdi
@@ -1414,6 +1519,11 @@ FN ui_textarea
     mov [rsp + 16], r9d         # focused
     mov rax, [rbp + 16]
     mov [rsp + 24], rax         # placeholder
+    mov rdi, rbx
+    mov esi, [rsp + 8]
+    call ta_layout
+    mov [rsp + 80], eax         # total visual rows
+    mov dword ptr [rbx + TF_scroll], 0
     call ta_line_h
     mov [rsp + 32], eax         # line h
     M eax, MI_10
@@ -1470,16 +1580,14 @@ FN ui_textarea
 41: xor edx, edx
     div dword ptr [rsp + 32]
     add eax, [rbx + TF_top]
-    mov edx, eax
-    mov rdi, r14
-    mov rsi, r15
-    call ln_nth
-    mov r12, rax
-    mov rdi, r14
-    mov rsi, r15
-    mov rdx, rax
-    call ln_end
+    mov [rsp + 48], eax
+    mov esi, eax
+    mov rdi, rbx
+    call ta_row_limit
     mov r13, rax
+    mov edi, [rsp + 48]
+    call ta_row_bounds
+    mov r12, rax
     mov ecx, [rip + g_mx]
     sub ecx, [rsp + 36]
     add ecx, [rbx + TF_scroll]
@@ -1492,37 +1600,23 @@ FN ui_textarea
     call text_fit
 42: add rax, r12
     mov [rbx + TF_cur], rax
+    mov dword ptr [rbx + TF_prefx], -1
     test dword ptr [rsp + 20], UB_PRESS
     jz 5f
     mov [rbx + TF_anchor], rax
 5:  # the cursor's line and x
-    mov rdi, r14
-    mov rsi, [rbx + TF_cur]
-    call ln_index
+    mov rdi, [rbx + TF_cur]
+    call ta_row_of
     mov [rsp + 72], eax
-    mov rdi, r14
-    mov rsi, [rbx + TF_cur]
-    call ln_start
+    mov rdi, rax
+    call ta_row_bounds
     lea rdi, [rip + g_face_ui]
     lea rsi, [r14 + rax]
     mov rdx, [rbx + TF_cur]
     sub rdx, rax
     call text_width
     mov [rsp + 52], eax
-    # keep it in view: across
-    mov ecx, [rsp + 8]
-    sub ecx, [rip + g_mt + 4*MI_24]
-    sub eax, [rbx + TF_scroll]
-    cmp eax, ecx
-    jle 51f
-    mov eax, [rsp + 52]
-    sub eax, ecx
-    mov [rbx + TF_scroll], eax
-51: mov eax, [rsp + 52]
-    cmp eax, [rbx + TF_scroll]
-    jge 52f
-    mov [rbx + TF_scroll], eax
-52: # and down, with no lines left empty below the text
+    # Keep the caret's visual row in view, with no empty rows below the text.
     mov eax, [rsp + 72]
     cmp eax, [rbx + TF_top]
     jge 53f
@@ -1532,10 +1626,7 @@ FN ui_textarea
     cmp eax, [rbx + TF_top]
     jle 54f
     mov [rbx + TF_top], eax
-54: mov rdi, r14
-    mov rsi, r15
-    call ln_index
-    inc eax
+54: mov eax, [rsp + 80]
     sub eax, [rsp + 44]
     jns 55f
     xor eax, eax
@@ -1571,24 +1662,22 @@ FN ui_textarea
     call tf_sel
     mov [rsp + 56], rax
     mov [rsp + 64], rdx
-    mov edx, [rbx + TF_top]
-    mov [rsp + 48], edx
-    mov rdi, r14
-    mov rsi, r15
-    call ln_nth
-    mov r12, rax                # line start
+    mov eax, [rbx + TF_top]
+    mov [rsp + 48], eax
     mov eax, [rsp + 40]
     mov [rsp + 76], eax         # line y
 .Lta_line:
     mov eax, [rsp + 48]
     sub eax, [rbx + TF_top]
     cmp eax, [rsp + 44]
-    jg .Lta_caret
-    mov rdi, r14
-    mov rsi, r15
-    mov rdx, r12
-    call ln_end
-    mov r13, rax                # line end
+    jge .Lta_caret
+    mov eax, [rsp + 48]
+    cmp eax, [rsp + 80]
+    jae .Lta_caret
+    mov edi, eax
+    call ta_row_bounds
+    mov r12, rax                # row start
+    mov r13, rdx                # row end
     # the selection on this line, and a little more when it goes on past the break
     mov rax, [rsp + 56]
     cmp rax, [rsp + 64]
@@ -1614,6 +1703,10 @@ FN ui_textarea
     call text_width
     cmp [rsp + 64], r13
     jbe 71f
+    cmp r13, r15
+    jae 71f
+    cmp byte ptr [r14 + r13], 10
+    jne 71f
     add eax, [rip + g_face_ui + FACE_cellw]
 71: sub eax, [rsp + 88]
     jle 8f
@@ -1639,7 +1732,6 @@ FN ui_textarea
     add rsp, 16
 81: cmp r13, r15
     jae .Lta_caret
-    lea r12, [r13 + 1]
     inc dword ptr [rsp + 48]
     mov eax, [rsp + 32]
     add [rsp + 76], eax
@@ -1679,6 +1771,7 @@ ta_nl: .ascii "\n"
 grab_dy: .long 0
 .p2align 3
 ta_buf: .zero SB_SIZE
+ta_rows: .zero VEC_SIZE
 .data
 g_mx: .long -10000
 g_my: .long -10000
