@@ -1068,10 +1068,11 @@ FN ed_paste
     mov r13, rsi
     test r13, r13
     jz 9f
-    cmp dword ptr [rip + g_clip_line], 0
-    je 1f
-    cmp r13, [rip + clip_sb + SB_len]
-    jne 1f
+    mov rdi, r12
+    mov rsi, r13
+    call ed_clip_linewise
+    test eax, eax
+    jz 1f
     mov rdi, rbx
     call ed_sel
     cmp rax, rdx
@@ -1510,9 +1511,17 @@ FN ed_move_lines
     inc rax
     add r15, rax
     add [rsp + 32], rax
-4:  mov [rbx + DOC_cur], r15
-    mov rax, [rsp + 32]
-    mov [rbx + DOC_anchor], rax
+4:  # A selection ending at the next line's start includes a newline. At EOF,
+    # the moved block has no following newline, so that endpoint must stop there.
+    mov rdi, rbx
+    call doc_len
+    cmp r15, rax
+    cmova r15, rax
+    mov [rbx + DOC_cur], r15
+    mov rcx, [rsp + 32]
+    cmp rcx, rax
+    cmova rcx, rax
+    mov [rbx + DOC_anchor], rcx
     mov rdi, rbx
     call doc_end_group
     mov rdi, r14

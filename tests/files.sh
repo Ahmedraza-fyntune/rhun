@@ -119,6 +119,14 @@ check sh -c '"$1" reload "$2" "$3" > "$4"' sh "$bin" "$work/reload" "$work/repla
 check cmp -s "$work/reload" "$work/replacement"
 check cmp -s "$work/out" "$work/replacement"
 
+case=reload-binary
+printf 'before\r\n' > "$work/reload"
+printf 'binary\000data\r\n' > "$work/replacement"
+printf 'before\n' > "$work/text"
+check sh -c '"$1" reload-binary "$2" "$3" > "$4"' sh "$bin" "$work/reload" "$work/replacement" "$work/out"
+check cmp -s "$work/reload" "$work/replacement"
+check cmp -s "$work/out" "$work/text"
+
 case=load-directory
 if "$bin" load "$work/directory"; then check false; fi
 check "$bin" app-error "$work/directory"

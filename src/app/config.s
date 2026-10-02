@@ -297,6 +297,7 @@ FN parse_decimal
 # config_load(): read the config file if present
 FN config_load
     PROLOGUE 16
+    xor r15d, r15d              # owned input buffer, if the config exists
     # [keys] lines come from this read only
     xor ebx, ebx
 1:  cmp rbx, [rip + g_keylines + VEC_len]
@@ -361,6 +362,8 @@ FN config_load
     call setting_assign
     jmp .Lcl_next
 .Lcl_ret:
+    mov rdi, r15
+    call mem_free
     EPILOGUE
 
 # config_save(): write every setting (and custom keys) back to the file

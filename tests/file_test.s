@@ -1,8 +1,8 @@
-# File I/O driver for files.sh: write PATH, load PATH, reload PATH REPLACEMENT.
+# File I/O driver for files.sh: write PATH, load PATH, reload[-binary] PATH REPLACEMENT.
 .include "rhun.inc"
 .text
 FN main
-    PROLOGUE
+    PROLOGUE 32
     cmp qword ptr [rip + g_argc], 3
     jb .Lfail
     mov rax, [rip + g_argv]
@@ -24,6 +24,14 @@ FN main
     js .Lfail_doc
     cmp r14d, 'r'
     jne .Ldump
+    mov rax, [rbx + DOC_mtime]
+    mov [rsp], rax
+    mov rax, [rbx + DOC_version]
+    mov [rsp + 8], rax
+    mov rax, [rbx + DOC_undo + VEC_len]
+    mov [rsp + 16], rax
+    mov rax, [rbx + DOC_crlf]   # includes DOC_flags
+    mov [rsp + 24], rax
     cmp qword ptr [rip + g_argc], 4
     jb .Lfail_doc
     mov rax, [rip + g_argv]
@@ -42,6 +50,10 @@ FN main
     js .Lfail_doc
     mov rdi, rbx
     call app_reload_doc
+    mov rax, [rip + g_argv]
+    mov rax, [rax + 8]
+    cmp byte ptr [rax + 6], '-' # reject a binary reload, retaining all document state
+    je .Lreject_reload
     mov rdi, rbx
     call doc_save
     test rax, rax
@@ -61,6 +73,24 @@ FN main
     call doc_free
     mov rax, r12
     jmp .Lresult
+.Lreject_reload:
+    mov rax, [rsp]
+    cmp [rbx + DOC_mtime], rax
+    jne .Lfail_doc
+    mov rax, [rsp + 8]
+    cmp [rbx + DOC_version], rax
+    jne .Lfail_doc
+    mov rax, [rsp + 16]
+    cmp [rbx + DOC_undo + VEC_len], rax
+    jne .Lfail_doc
+    mov rax, [rsp + 24]
+    cmp [rbx + DOC_crlf], rax
+    jne .Lfail_doc
+    mov rdi, rbx
+    call doc_dirty
+    test eax, eax
+    jnz .Lfail_doc
+    jmp .Ldump
 .Lwrite:
     mov rdi, r12
     lea rsi, [rip + .Ltext]

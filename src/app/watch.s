@@ -249,8 +249,15 @@ FN app_reload_doc
     test rax, rax
     jz 9f
     mov r12, rax
+    mov r13, rdx
+    mov rdi, r12
+    mov rsi, r13
+    call doc_is_binary
+    test eax, eax
+    jnz .Lrd_binary
     mov rdi, rbx
     mov rsi, r12
+    mov rdx, r13
     call doc_normalize_eol
     mov r13, rax
     mov r14, [rbx + DOC_cur]
@@ -277,6 +284,10 @@ FN app_reload_doc
     mov [rbx + DOC_mtime], rax
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
+.Lrd_binary:
+    mov rdi, r12
+    call mem_free
+    EPILOGUE
 .Lrd_image:
     call file_stamp
     mov [rbx + DOC_mtime], rax

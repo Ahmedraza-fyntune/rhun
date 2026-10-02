@@ -78,11 +78,13 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         env = environment(name)
         if name == 'grammars':
             env['XDG_CONFIG_HOME'] = winpath(ROOT / 'tests/data/config')
+        if name == 'config':
+            env['XDG_CONFIG_HOME'] = winpath(ROOT / 'tests/data/config-reload')
         equal(run(exe + '.exe', *arguments, env=env).stdout,
               (ROOT / 'tests/data' / (name + '.expected')).read_bytes())
 
     for name, exe in [('cpu', 'cpu'), ('doc', 'doc'), ('syntax', 'syntax'), ('themes', 'theme'),
-                      ('term', 'term'), ('diff', 'diff'), ('cols', 'cols')]:
+                      ('term', 'term'), ('diff', 'diff'), ('cols', 'cols'), ('config', 'config')]:
         check(name, lambda name=name, exe=exe: golden(name, exe + '_test'))
     for name, exe, file in [('strfind', 'str', 'strfind'), ('versions', 'update', 'versions'),
                             ('keymap-names-us-ru', 'xkb', 'keymap-names-us-ru'),
@@ -112,7 +114,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                      'tests/scripts/' + name + '.rsc', env=environment('ui-' + name))
         equal(result.stdout, (ROOT / 'tests/data' / (name + '.ui.expected')).read_bytes())
 
-    for name in ['editing', 'find', 'replace', 'tabs', 'vim', 'wrap', 'togglecomment',
+    for name in ['editing', 'clipboard', 'movelines', 'find', 'replace', 'tabs', 'vim', 'wrap', 'togglecomment',
                  'highlight', 'image', 'mouse', 'cursor', 'compose', 'contextmenu',
                  'titlebar', 'titlebar-tap']:
         check('ui/' + name, lambda name=name: ui(name))
@@ -145,6 +147,10 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         source.write_bytes(b'before\r\n')
         replacement.write_bytes(b'a\rb\r\nc\r\n')
         equal(run('file_test.exe', 'reload', winpath(source), winpath(replacement)).stdout, b'a\rb\nc\n')
+        equal(source.read_bytes(), replacement.read_bytes())
+        source.write_bytes(b'before\r\n')
+        replacement.write_bytes(b'binary\0data\r\n')
+        equal(run('file_test.exe', 'reload-binary', winpath(source), winpath(replacement)).stdout, b'before\n')
         equal(source.read_bytes(), replacement.read_bytes())
         long_file = folder / ('x' * 251 + '.txt')
         long_file.write_bytes(b'original\n')

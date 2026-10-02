@@ -976,6 +976,19 @@ FN doc_normalize_eol
 5:  mov rax, rdx
     ret
 
+# doc_is_binary(text, len) -> 1 if the first 8 KiB contains a NUL
+FN doc_is_binary
+    mov rcx, rsi
+    cmp rcx, 8192
+    jbe 1f
+    mov ecx, 8192
+1:  xor eax, eax
+    test rcx, rcx
+    jz 2f
+    repne scasb
+    sete al
+2:  ret
+
 # doc_load(doc, path) -> 0 ok, -2 missing (doc keeps path), -1000 binary, other -errno
 FN doc_load
     PROLOGUE 16
@@ -993,18 +1006,12 @@ FN doc_load
     jz .Ldl_error
     mov r13, rax
     mov r14, rdx
-    # binary check (NUL in the first 8 KiB)
-    mov rcx, r14
-    cmp rcx, 8192
-    jbe 1f
-    mov ecx, 8192
-1:  mov rdi, r13
-    xor eax, eax
-    test rcx, rcx
-    jz 2f
-    repne scasb
-    je .Ldl_binary
-2:  mov rdi, rbx
+    mov rdi, r13
+    mov rsi, r14
+    call doc_is_binary
+    test eax, eax
+    jnz .Ldl_binary
+    mov rdi, rbx
     mov rsi, r13
     mov rdx, r14
     call doc_normalize_eol
