@@ -574,7 +574,8 @@ c_print_frames:
     xor eax, eax
     ret
 
-# print-update: the updater's state, the running and the latest version, the last error
+# print-update: the updater's state, the running and the latest version, the last error, and the
+# Check now row's text in Settings on a second line (desc=)
 c_print_update:
     lea rdi, [rip + out]
     call update_dump

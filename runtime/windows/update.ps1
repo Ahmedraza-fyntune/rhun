@@ -17,6 +17,8 @@ $options = @{
 try {
     if ($env:RHUN_UP_ACTION -eq 'prepare') {
         & $installer @options -PrepareUpdate
+    } elseif ($env:RHUN_UP_ACTION -eq 'discard') {
+        & $installer @options -DiscardUpdate
     } elseif ($env:RHUN_UP_ACTION -eq 'apply') {
         & $installer @options -ApplyUpdate
         # Start-Process joins ArgumentList as command text. A Windows project directory

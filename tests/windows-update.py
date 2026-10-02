@@ -26,7 +26,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
-    temp = Path(temporary)
+    # resolve(): the runner's TEMP is an 8.3 short path, but running editors report the long one
+    temp = Path(temporary).resolve()
     portable = temp / "Portable café ' $ &" / 'rhun'
     portable.mkdir(parents=True)
     project = temp / "Project café ' $ &"
@@ -61,15 +62,24 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
                RHUN_RELEASES_URL=f'http://127.0.0.1:{server.server_port}/releases',
                RHUN_UPDATE_TARGET=str(portable / 'rhun.com'))
 
-    def run(name, lines, environment=env):
+    def run(name, lines, environment=env, cwd=None):
         script = temp / (name + '.rsc')
-        script.write_text('\n'.join(lines) + '\n')
+        # UTF-8 as rhun reads it: the ANSI code page would garble the project's path
+        script.write_text('\n'.join(lines) + '\n', encoding='utf-8')
         return subprocess.run([str(portable / 'rhun.com'), str(project), '--headless', '800x600',
-                               '--script', str(script)], env=environment,
+                               '--script', str(script)], env=environment, cwd=cwd,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
 
+    def stages_gone(seconds=30):
+        # the helper deletes a stage once its editor has exited
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if not list(portable.parent.glob('.rhun-update-*')):
+                return True
+            time.sleep(0.2)
+        return False
+
     check = ['cmd check_for_updates', 'wait-update']
-    stages = []
     try:
         # Release CI builds opt into self-updating; development CI checks the source guard.
         if os.environ.get('RHUN_DIST') != '1':
@@ -92,12 +102,47 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
         result = run('cancel', [*check, 'cmd install_update', 'wait-update', 'open ' + str(project / 'example.txt'),
                                 'type changed', 'cmd restart_to_update', 'key Escape', 'print-update'])
         assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
+        assert f'desc={LATEST} is downloaded; restart to install it'.encode() in result.stdout, result.stdout
         assert (portable / 'rhun.exe').read_bytes() == original
-        stages = list(portable.parent.glob('.rhun-update-*'))
-        assert len(stages) == 1 and (stages[0] / 'update.json').exists()
-        shutil.rmtree(stages[0])
-        stages = []
         print('ok   update/cancel-restart-keeps-running-version', flush=True)
+        # Quitting without the restart leaves no staged copy behind.
+        assert stages_gone(), list(portable.parent.glob('.rhun-update-*'))
+        assert (portable / 'rhun.exe').read_bytes() == original
+        print('ok   update/quit-discards-staged-download', flush=True)
+
+        # Preparing removes what crashed or interrupted editors left (a stage whose process is gone,
+        # an hour-old swap) and keeps a recent one, which may be another installer's.
+        stale = portable.parent / '.rhun-update-999999999'
+        (stale / 'backup').mkdir(parents=True)
+        (stale / 'update.json').write_text('{}')
+        old_swap = portable.parent / ('.rhun-stage-' + 'a' * 32)
+        new_swap = portable.parent / ('.rhun-stage-' + 'b' * 32)
+        old_swap.mkdir()
+        new_swap.mkdir()
+        hour_ago = time.time() - 7200
+        os.utime(old_swap, (hour_ago, hour_ago))
+        # Programs are found on PATH only, never in the working directory: a project there could
+        # plant powershell.exe. This one would leave a mark.
+        planted = temp / 'planted'
+        planted.mkdir()
+        mark = temp / 'planted-ran.txt'
+        source = ('public static class P { public static void Main() { System.IO.File.WriteAllText('
+                  'System.Environment.GetEnvironmentVariable("PLANTED_MARK"), "ran"); } }')
+        subprocess.run([os.path.join(os.environ['SystemRoot'], r'System32\WindowsPowerShell\v1.0\powershell.exe'),
+                        '-NoProfile', '-Command',
+                        'Add-Type -TypeDefinition $env:SOURCE -OutputAssembly $env:OUT -OutputType ConsoleApplication'],
+                       env=dict(os.environ, SOURCE=source, OUT=str(planted / 'powershell.exe')),
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        assert (planted / 'powershell.exe').exists()
+        result = run('stale', [*check, 'cmd install_update', 'wait-update', 'print-update'],
+                     dict(env, PLANTED_MARK=str(mark)), cwd=planted)
+        assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
+        assert not mark.exists(), 'a powershell.exe in the working directory ran'
+        assert not stale.exists() and not old_swap.exists() and new_swap.exists()
+        shutil.rmtree(new_swap)
+        assert stages_gone()
+        print('ok   update/prepare-removes-stale-stages', flush=True)
+        print('ok   update/programs-come-from-path-only', flush=True)
 
         result = run('restart', [*check, 'cmd install_update', 'wait-update', 'print-update',
                                  'cmd restart_to_update'])

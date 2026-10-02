@@ -11,6 +11,8 @@ mkdir -p "$w/proj" "$w/rel/latest/download" "$w/rel/download/v99.0.0"
 # the release's installer: records its arguments; fails when the case asks
 cat > "$w/rel/download/v99.0.0/install.sh" <<'EOF'
 printf '%s\n' "$@" > "$STUB_LOG"
+# a newer release appears while this one installs
+if [ -n "${STUB_BUMP:-}" ]; then printf '99.0.1\n' > "$STUB_BUMP"; fi
 if [ -n "${STUB_FAIL:-}" ]; then echo "downloading"; echo "rhun install: stub failure"; exit 3; fi
 EOF
 # the installation: restarting runs it
@@ -31,7 +33,7 @@ run() {
     [ -n "$seed" ] && printf '%s\n' "$seed" > "$w/state/rhun/update"
     printf '%s\n' "$@" > "$w/$c.rsc"
     env HOME="$w/home" XDG_CONFIG_HOME="$w/config" XDG_STATE_HOME="$w/state" \
-        RHUN_RELEASES_URL="file://$w/rel" RHUN_UPDATE_TARGET="$target" STUB_LOG="$w/stub.log" STUB_FAIL="$stubfail" \
+        RHUN_RELEASES_URL="file://$w/rel" RHUN_UPDATE_TARGET="$target" STUB_LOG="$w/stub.log" STUB_FAIL="$stubfail" STUB_BUMP="${bump:-}" \
         build/rhun "$w/proj" --headless 800x600 --script "$w/$c.rsc" > "$w/$c.out" 2>&1
 }
 expect() { # CASE LINE
@@ -69,6 +71,14 @@ if [ "$(tr '\n' ' ' < "$w/stub.log")" = "--update --target $w/target --version 9
 else
     echo "FAIL update/install-args"; cat "$w/stub.log"; fail=1
 fi
+expect install "desc=99.0.0 is installed; restart to use it"
+# a later check finds a newer release; what was installed, and what a restart runs, is still 99.0.0
+bump=$w/rel/latest/download/VERSION
+run install-newer 99.0.0 '' "$w/target" '' "$check" wait-update 'cmd install_update' wait-update \
+    "$check" wait-update print-update
+bump=
+expect install-newer "state=ready current=$cur latest=99.0.1 error="
+expect install-newer "desc=99.0.0 is installed; restart to use it"
 run install-fail 99.0.0 '' "$w/target" 1 "$check" wait-update 'cmd install_update' wait-update print-update
 expect install-fail "state=available current=$cur latest=99.0.0 error=rhun install: stub failure"
 run restart 99.0.0 '' "$w/target" '' "$check" wait-update 'cmd install_update' wait-update 'cmd restart_to_update'

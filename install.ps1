@@ -10,6 +10,7 @@ param(
     # Internal updater modes. Preparation never changes a running installation.
     [switch]$PrepareUpdate,
     [switch]$ApplyUpdate,
+    [switch]$DiscardUpdate,
     [string]$UpdateStage,
     [int]$WaitPid
 )
@@ -34,14 +35,50 @@ function File-Sha256([string]$Path) {
     } finally { $hasher.Dispose() }
 }
 
-if ($PrepareUpdate -or $ApplyUpdate) {
-    if ($Uninstall -or ($PrepareUpdate -and $ApplyUpdate) -or -not $UpdateStage -or $WaitPid -le 0) { throw 'Invalid update arguments.' }
+# Removes a folder without following links: a junction is removed, never its target.
+function Remove-Folder([string]$Path) { [IO.Directory]::Delete($Path, $true) }
+
+# Staged updates whose editor is gone (it quit or crashed before restarting, or its process ID now
+# belongs to another program), and interrupted downloads and swaps older than an hour.
+function Remove-StaleUpdates([string]$Parent) {
+    $hourAgo = [DateTime]::UtcNow.AddHours(-1)
+    foreach ($dir in @(Get-ChildItem -LiteralPath $Parent -Directory -Force -Filter '.rhun-update-*')) {
+        if ($dir.Name -notmatch '^\.rhun-update-(\d{1,9})$') { continue }
+        $process = Get-Process -Id ([int]$Matches[1]) -ErrorAction SilentlyContinue
+        if ($process -and $process.ProcessName -match '^rhun(\.com)?$') {
+            # A running editor's pending update stays, unless the folder is older than the
+            # process: then the editor that staged it is gone and its ID was reused.
+            $started = $null
+            try { $started = $process.StartTime.ToUniversalTime() } catch { }
+            if (-not $started -or $started -le $dir.CreationTimeUtc) { continue }
+        }
+        Remove-Folder $dir.FullName
+    }
+    foreach ($dir in @(Get-ChildItem -LiteralPath $Parent -Directory -Force) +
+                     @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Force -Filter 'rhun-download-*')) {
+        if ($dir.Name -match '^(\.rhun-stage-|\.rhun-old-|rhun-download-)[0-9a-f]{32}$' -and $dir.LastWriteTimeUtc -lt $hourAgo) {
+            Remove-Folder $dir.FullName
+        }
+    }
+}
+
+if ($PrepareUpdate -or $ApplyUpdate -or $DiscardUpdate) {
+    $modes = @($PrepareUpdate, $ApplyUpdate, $DiscardUpdate | Where-Object { $_ }).Count
+    if ($Uninstall -or $modes -ne 1 -or -not $UpdateStage -or $WaitPid -le 0) { throw 'Invalid update arguments.' }
     $expectedStage = Join-Path (Split-Path -Parent $InstallDir) ('.rhun-update-' + $WaitPid)
     $UpdateStage = [IO.Path]::GetFullPath($UpdateStage).TrimEnd('\', '/')
     if ($UpdateStage -ine $expectedStage) { throw 'Invalid update staging directory.' }
     if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'rhun.exe') -PathType Leaf)) {
         throw 'The running installation was not found.'
     }
+}
+
+if ($DiscardUpdate) {
+    # The editor quit without restarting: its staged download goes once it has exited.
+    $parentProcess = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
+    if ($parentProcess) { [void]$parentProcess.WaitForExit(60000) }
+    if (Test-Path -LiteralPath $UpdateStage) { Remove-Folder $UpdateStage }
+    return
 }
 
 if ($ApplyUpdate) {
@@ -193,6 +230,7 @@ try {
     if ($actual -ine $matchesFound[0].Groups[1].Value) { throw 'The archive checksum does not match.' }
     $parent = Split-Path -Parent $InstallDir
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    if ($PrepareUpdate) { Remove-StaleUpdates $parent }
     $stage = Join-Path $parent ('.rhun-stage-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -214,7 +252,7 @@ try {
         }
         @{ target = $InstallDir; version = $Version; hashes = $hashes } | ConvertTo-Json |
             Set-Content -LiteralPath (Join-Path $stage 'update.json') -Encoding UTF8
-        # Never remove a pre-existing staging directory supplied by another process.
+        # Stale stages are gone (Remove-StaleUpdates); one that appeared since is not ours to remove.
         if (Test-Path -LiteralPath $UpdateStage) { throw 'An update is already staged for this editor.' }
         Move-Item -LiteralPath $stage -Destination $UpdateStage
         $stage = $null

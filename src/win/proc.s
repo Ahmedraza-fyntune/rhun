@@ -17,13 +17,34 @@
 children: .zero CHILD_SIZE * CHILD_MAX
 
 .text
+# proc_which(name) -> path to run (mem_free it), or 0. Like the Unix one it searches PATH only:
+# SearchPathW's default order puts the application folder and the current directory first, where a
+# project could plant powershell.exe or git.exe.
 FN proc_which
     PROLOGUE 8320
     call win_wide
     mov rbx, rax
     test rax, rax
     jz 8f
-    xor ecx, ecx
+    lea rcx, [rip + .Lpath_var]
+    xor edx, edx
+    xor r8d, r8d
+    API GetEnvironmentVariableW # the size PATH needs, with its NUL
+    mov r13d, eax
+    test eax, eax
+    jz 7f
+    lea rdi, [r13 + r13 + 2]
+    call mem_alloc
+    mov r14, rax
+    mov word ptr [r14], 0
+    lea rcx, [rip + .Lpath_var]
+    mov rdx, r14
+    mov r8d, r13d
+    API GetEnvironmentVariableW
+    cmp eax, r13d               # PATH changed meanwhile and no longer fits: search nothing
+    jb 1f
+    mov word ptr [r14], 0
+1:  mov rcx, r14
     mov rdx, rbx
     lea r8, [rip + .Lexe]
     mov r9d, 4096
@@ -32,6 +53,8 @@ FN proc_which
     mov qword ptr [rsp + 40], 0
     API SearchPathW
     mov r12d, eax
+    mov rdi, r14
+    call mem_free
     mov rdi, rbx
     call mem_free
     test r12d, r12d
@@ -45,6 +68,8 @@ FN proc_which
     mov rdi, rax
     call win_slashes
     EPILOGUE
+7:  mov rdi, rbx
+    call mem_free
 8:  xor eax, eax
     EPILOGUE
 
@@ -785,6 +810,7 @@ pty_shutdown:
 
 .section .rdata,"dr"
 .Lexe: .short '.', 'e', 'x', 'e', 0
+.Lpath_var: .short 'P', 'A', 'T', 'H', 0
 
 # Console entry launches the GUI sibling unless --wait or scripting kept it attached.
 FN win_detach

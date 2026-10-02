@@ -96,7 +96,9 @@ FN main
 4:  cmp dword ptr [rip + g_restart], 0
     je 5f
     call update_restart
-5:  xor eax, eax
+    jmp 6f
+5:  call update_discard
+6:  xor eax, eax
     EPILOGUE
 
 parse_args:

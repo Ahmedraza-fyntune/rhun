@@ -23,7 +23,7 @@ up_manual: .long 0              # the check was asked for: its result is reporte
 g_update_state: .long 0         # UP_*
 g_restart: .long 0              # quitting starts the new version
 up_latest: .zero 32             # the latest version known
-up_ready_version: .zero 32      # the staged Windows version, pinned across subsequent checks
+up_ready_version: .zero 32      # the version being installed or ready, pinned across later checks
 up_error: .zero 256             # why the last check or install failed
 up_item: .zero 64
 up_target: .zero 4096           # what the installer replaces and the restart runs
@@ -531,14 +531,14 @@ FN update_desc_refresh
     jne 2f
     lea rdi, [rip + .Ld_installing]
     call up_push
-    lea rdi, [rip + up_latest]
+    lea rdi, [rip + up_ready_version]
     call up_push
     lea rdi, [rip + .Ld_dots]
     call up_push
     jmp 8f
 2:  cmp eax, UP_READY
     jne 3f
-    lea rdi, [rip + up_latest]
+    lea rdi, [rip + up_ready_version]
     call up_push
     lea rdi, [rip + .Ld_installed]
     call up_push
@@ -664,6 +664,17 @@ FN update_dump
     call sb_push_cstr
     mov rdi, rbx
     lea rsi, [rip + up_error]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    # and the Check now row's text in Settings
+    call update_desc_refresh
+    mov rdi, rbx
+    lea rsi, [rip + .Lp_desc]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + g_update_desc]
     call sb_push_cstr
     mov rdi, rbx
     mov esi, 10
@@ -811,6 +822,10 @@ FN cmd_install_update
     jz 6f
     mov byte ptr [rip + up_error], 0
     mov dword ptr [rip + g_update_state], UP_INSTALLING
+    # later checks may move up_latest; what is being installed stays this version
+    lea rdi, [rip + up_ready_version]
+    lea rsi, [rip + up_latest]
+    call cstr_copy
     jmp 9f
 6:  lea rdi, [rip + .Le_start]
     call up_install_failed
@@ -828,11 +843,6 @@ up_install_done:
     PROLOGUE
     test edi, edi
     jnz 1f
-.ifdef WINDOWS
-    lea rdi, [rip + up_ready_version]
-    lea rsi, [rip + up_latest]
-    call cstr_copy
-.endif
     mov dword ptr [rip + g_update_state], UP_READY
     EPILOGUE
 1:  mov r12, [rip + up_out + SB_ptr]
@@ -1027,6 +1037,29 @@ FN update_restart
     mov rdx, [rip + g_envp]
     SYS SYS_execve
 9:  EPILOGUE
+.endif
+
+# update_discard(): quitting without Restart to update. On Windows the download staged for the
+# restart is deleted by the helper once this rhun has exited; elsewhere the update is in place.
+FN update_discard
+.ifdef WINDOWS
+    PROLOGUE
+    cmp dword ptr [rip + g_update_state], UP_READY
+    jne 9f
+    call up_base
+    mov rcx, rax
+    lea rdi, [rip + .Ldiscard]
+    lea rsi, [rip + up_ready_version]
+    lea rdx, [rip + up_target]
+    call win_update_command
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call win_update_launch
+9:  EPILOGUE
+.else
+    ret
 .endif
 
 # up_fds_cloexec(): nothing of this process goes on in the new one: the display connection, pipes,
@@ -1225,6 +1258,7 @@ ver_fields:
 .Lp_current: .asciz " current="
 .Lp_latest: .asciz " latest="
 .Lp_error: .asciz " error="
+.Lp_desc: .asciz "desc="
 .Ls_idle: .asciz "idle"
 .Ls_available: .asciz "available"
 .Ls_installing: .asciz "installing"
@@ -1252,3 +1286,4 @@ up_names: .quad .Ls_idle, .Ls_available, .Ls_installing, .Ls_ready
 .Lbundle_exe: .asciz "/Contents/MacOS/rhun"
 .Lprepare: .asciz "prepare"
 .Lapply: .asciz "apply"
+.Ldiscard: .asciz "discard"
