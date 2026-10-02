@@ -167,7 +167,7 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+Shift+D, Ctrl+Shift+K | Duplicate, delete line |
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
 
-All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, and Shift keeps the mouse for selecting when a program uses it.
+All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, Ctrl+Tab and Ctrl+Shift+Tab switch between terminals, and Shift keeps the mouse for selecting when a program uses it. A command run from the palette acts where its shortcut would: Zoom In with the terminal focused zooms the terminal.
 
 Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independently. On macOS use Command+Plus, Command+Minus and Command+0; on Linux and Windows use Ctrl+Plus, Ctrl+Minus and Ctrl+0. Settings > Terminal > Font size controls the terminal separately from Settings > Editor > Font size.
 

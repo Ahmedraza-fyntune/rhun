@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,13 @@ class TerminalTabs(unittest.TestCase):
                           '[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
 
     def tearDown(self):
+        # Windows releases the folder only once every pseudoconsole's shell has exited.
+        for _ in range(50):
+            try:
+                self.tmp.cleanup()
+                return
+            except OSError:
+                time.sleep(0.2)
         self.tmp.cleanup()
 
     def run_editor(self, actions, width=1000):
@@ -103,6 +111,29 @@ class TerminalTabs(unittest.TestCase):
         self.assertEqual(len(states), 2, output)
         self.assertIn('term=4', states[0])
         self.assertIn('term=4 hidden', states[1])
+
+    def test_overflowing_tabs_keep_the_current_one_reachable(self):
+        # 16 terminals cannot all fit 600 px: the strip scrolls to the current one, and
+        # Next/Previous Tab cycle terminals while the terminal has focus.
+        lines = []
+        for index in range(16):
+            lines += ['cmd new_terminal', 'wait 250', f"type print('SESSION_{index}')",
+                      'key Return', 'wait 150']
+        # from the last terminal, the next one wraps to the first and the strip follows
+        lines += ['move 300 100', 'key ctrl+Tab', 'click 20 428', 'print-term',
+                  'key ctrl+Tab', 'print-term',
+                  # back to the last: the leftmost tab shown is no longer the first terminal
+                  'key ctrl+shift+Tab', 'key ctrl+shift+Tab', 'click 20 428', 'print-term', 'quit']
+        script = self.home / 'commands.rsc'
+        script.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        result = subprocess.run([str(EXE), str(self.home), '--headless', '600x700',
+                                 '--script', str(script)], env=self.env, capture_output=True,
+                                text=True, encoding='utf-8', timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        shown = [line for line in result.stdout.splitlines() if line.startswith('SESSION_')]
+        self.assertEqual(len(shown), 3, result.stdout)
+        self.assertEqual(shown[:2], ['SESSION_0', 'SESSION_1'])
+        self.assertNotEqual(shown[2], 'SESSION_0')
 
 
 if __name__ == '__main__':

@@ -49,6 +49,7 @@ pal_sel: .long 0
 pal_scroll: .long 0
 pal_reveal: .long 0             # reveal selection after keyboard navigation/filtering only
 pal_wheel: .long 0              # accumulate wheel pixels smaller than a row
+pal_focus_before: .long 0       # g_focus when the palette opened
 .p2align 3
 pal_tf: .zero TF_SIZE
 items: .zero VEC_SIZE
@@ -101,7 +102,12 @@ palette_open:
     lea rdi, [rip + pal_tf]
     call tf_clear
     mov qword ptr [rip + items + VEC_len], 0
-    mov dword ptr [rip + g_focus], FOCUS_PALETTE
+    # switching modes keeps the focus the palette was opened from
+    mov eax, [rip + g_focus]
+    cmp eax, FOCUS_PALETTE
+    je 1f
+    mov [rip + pal_focus_before], eax
+1:  mov dword ptr [rip + g_focus], FOCUS_PALETTE
     cmp ebx, PM_FILES
     jne 1f
     call load_files
@@ -132,9 +138,21 @@ FN palette_close
     call theme_apply
 1:  call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
-    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    call pal_return_focus
     mov dword ptr [rip + g_dirty], 1
     pop rbx
+    ret
+
+# pal_return_focus(): back to the terminal the palette was opened from, otherwise to the editor,
+# so a command from the palette acts where its shortcut would
+pal_return_focus:
+    mov eax, FOCUS_EDITOR
+    cmp dword ptr [rip + pal_focus_before], FOCUS_TERMINAL
+    jne 1f
+    cmp dword ptr [rip + g_term_open], 0
+    je 1f
+    mov eax, FOCUS_TERMINAL
+1:  mov [rip + g_focus], eax
     ret
 
 FN cmd_quick_open
@@ -1780,7 +1798,7 @@ palette_accept:
 1:  cmp ebx, PM_COMMANDS
     jne 2f
     mov dword ptr [rip + pal_mode], PM_NONE
-    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    call pal_return_focus
     mov rax, [r12 + IT_data]
     call [rax + CMD_fn]
     jmp .Lpa_ret

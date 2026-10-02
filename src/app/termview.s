@@ -28,6 +28,7 @@ env: .quad 0
 g_face_term: .zero FACE_SIZE
 g_term_open: .long 0
 last_px: .long 0
+tab_scroll: .long 0             # first session tab shown when they do not all fit
 .p2align 3
 last_font: .quad 0
 tcw: .long 0                    # cell size
@@ -485,6 +486,21 @@ FN cmd_new_terminal
     mov dword ptr [rip + g_focus], FOCUS_TERMINAL
 1:  ret
 
+# term_cycle(dir): the next (1) or previous (-1) terminal, wrapping around
+FN term_cycle
+    mov ecx, [rip + sessions + VEC_len]
+    test ecx, ecx
+    jz 9f
+    mov eax, [rip + cur]
+    add eax, esi
+    add eax, ecx
+    xor edx, edx
+    div ecx
+    mov [rip + cur], rdx
+    mov dword ptr [rip + sel_on], 0
+    mov dword ptr [rip + g_dirty], 1
+9:  ret
+
 FN cmd_kill_terminal
     call cur_sess
     test rax, rax
@@ -882,7 +898,57 @@ header_draw:
 9:
     mov r12d, [rbp + 16]
     add r12d, [rip + g_mt + 4*MI_8]
-    xor ebx, ebx
+    # Tabs share the strip down to the narrowest that still shows a label and a close button;
+    # past that the strip scrolls just enough to keep the current tab in view.
+    mov edi, 32                 # about five characters of a title
+    call sc
+    add eax, [rip + g_mt + 4*MI_20]
+    add eax, [rip + g_mt + 4*MI_28]
+    mov r13d, eax               # narrowest tab
+    mov r14d, [rsp + 24]
+    sub r14d, r12d              # room for the tabs
+    mov [rsp + 32], r13d        # widest tab
+    mov dword ptr [rsp + 36], 0 # first tab shown
+    mov rcx, [rip + sessions + VEC_len]
+    test ecx, ecx
+    jz 8f
+    mov eax, 1                  # tabs that fit: at least the current one
+    test r14d, r14d
+    jle 1f
+    mov eax, r14d
+    xor edx, edx
+    div ecx
+    cmp eax, r13d
+    jl 7f
+    mov [rsp + 32], eax         # all fit
+    jmp 8f
+7:  mov eax, r14d
+    xor edx, edx
+    div r13d
+    cmp eax, 1
+    jge 1f
+    mov eax, 1
+1:  mov edx, [rip + tab_scroll]
+    mov r8, [rip + cur]
+    cmp r8d, edx                # the current tab left of the view
+    cmovl edx, r8d
+    lea r9d, [rdx + rax - 1]
+    cmp r8d, r9d                # or right of it
+    jle 2f
+    mov edx, r8d
+    sub edx, eax
+    inc edx
+2:  mov r9d, ecx
+    sub r9d, eax                # no empty room at the end
+    cmp edx, r9d
+    cmovg edx, r9d
+    xor r9d, r9d
+    test edx, edx
+    cmovl edx, r9d
+    mov [rsp + 36], edx
+8:  mov eax, [rsp + 36]
+    mov [rip + tab_scroll], eax
+    mov ebx, eax
 .Lhd_tab:
     cmp rbx, [rip + sessions + VEC_len]
     jae .Lhd_buttons
@@ -916,6 +982,12 @@ header_draw:
     cmovg r14d, eax
     add r14d, [rip + g_mt + 4*MI_20]    # tab width
     add r14d, [rip + g_mt + 4*MI_28]    # close button and right padding
+    mov eax, [rsp + 32]
+    cmp r14d, eax
+    cmovg r14d, eax
+    lea eax, [r12 + r14]        # never a tab cut off, with its close button out of reach
+    cmp eax, [rsp + 24]
+    jg .Lhd_buttons
     mov edi, r12d
     mov esi, [rbp + 20]
     mov edx, r14d

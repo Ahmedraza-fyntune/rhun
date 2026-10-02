@@ -643,6 +643,9 @@ FN cmd_close_tab
 1:  ret
 
 FN cmd_next_tab
+    mov esi, 1
+    cmp dword ptr [rip + g_focus], FOCUS_TERMINAL   # in the terminal: the next terminal
+    je term_cycle
     mov rax, [rip + g_tab_cur]
     test rax, rax
     js 1f
@@ -655,6 +658,9 @@ FN cmd_next_tab
 1:  ret
 
 FN cmd_prev_tab
+    mov esi, -1
+    cmp dword ptr [rip + g_focus], FOCUS_TERMINAL
+    je term_cycle
     mov rax, [rip + g_tab_cur]
     test rax, rax
     js 1f
@@ -3036,23 +3042,21 @@ zoom_focused:
     call image_zoom
     jnz .Lzoom_done
     lea rdi, [rip + cfg_font_size]
-    mov edx, 8
-    mov ecx, 40
     jmp .Lzoom_font
 .Lzoom_term:
     lea rdi, [rip + cfg_term_font_size]
-    mov edx, 9
-    mov ecx, 24
 .Lzoom_font:
     mov eax, 14                # reset either font to its default size
     test esi, esi
     jz 1f
     mov eax, [rdi]
     add eax, esi
+    mov edx, 8                 # both font size settings range over 8..40
     cmp eax, edx
     cmovl eax, edx
-    cmp eax, ecx
-    cmovg eax, ecx
+    mov edx, 40
+    cmp eax, edx
+    cmovg eax, edx
 1:  mov [rdi], eax
     mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1

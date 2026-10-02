@@ -72,12 +72,26 @@ class FocusedZoom(unittest.TestCase):
         self.assertEqual(self.sizes(), (17, 14))
 
     def test_each_font_uses_its_setting_limits(self):
-        self.configure(editor=40, terminal=24)
+        # Both settings range over 8..40; zooming never moves a size the other way.
+        self.configure(editor=40, terminal=40)
         self.run_editor([f'key {MOD}+=', *self.terminal(), f'key {MOD}+='])
-        self.assertEqual(self.sizes(), (40, 24))
-        self.configure(editor=8, terminal=9)
+        self.assertEqual(self.sizes(), (40, 40))
+        self.configure(editor=8, terminal=8)
         self.run_editor([f'key {MOD}+-', *self.terminal(), f'key {MOD}+-'])
-        self.assertEqual(self.sizes(), (8, 9))
+        self.assertEqual(self.sizes(), (8, 8))
+        self.configure(editor=30, terminal=30)
+        self.run_editor([f'key {MOD}+=', *self.terminal(), f'key {MOD}+='])
+        self.assertEqual(self.sizes(), (31, 31))
+
+    def test_palette_zoom_follows_the_focus_it_was_opened_from(self):
+        palette = ['cmd command_palette', 'type zoom in', 'key Return']
+        self.run_editor([*self.terminal(), *palette])
+        self.assertEqual(self.sizes(), (17, 13))
+        self.run_editor([*self.terminal(), 'click 100 100', *palette])
+        self.assertEqual(self.sizes(), (18, 13))
+        # Esc returns to the terminal too
+        self.run_editor([*self.terminal(), 'cmd command_palette', 'key Escape', f'key {MOD}+='])
+        self.assertEqual(self.sizes(), (18, 14))
 
     def test_terminal_focus_leaves_visible_image_zoom(self):
         output = self.run_editor([*self.terminal(), f'key {MOD}+=', 'print-state'],
