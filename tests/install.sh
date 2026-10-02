@@ -131,6 +131,8 @@ cat install.sh | env -u ZDOTDIR HOME="$H" XDG_CONFIG_HOME="$H/.config" SHELL=/bi
 t "exit $st" [ $st = 0 ]
 t "rhun --version" [ "$("$bin" --version 2>&1)" = "rhun 1.0.0" ]
 t "said where" said "rhun 1.0.0 is installed"
+t "version download feedback" said "downloading VERSION"
+t "checksum download feedback" said "downloading SHA256SUMS"
 if [ $os = linux ]; then
     t "Exec is the binary's path" grep -qxF "Exec=$bin %F" "$H/.local/share/applications/rhun.desktop"
     t "icons" [ -f "$H/.local/share/icons/hicolor/scalable/apps/rhun.svg" ]
@@ -250,4 +252,5 @@ t "fish file gone" [ ! -e "$H/.config/fish/conf.d/rhun.fish" ]
 t "settings kept" [ -f "$H/.config/rhun/config" ]
 end
 
+python3 tests/install-download.py || fail=1
 exit $fail

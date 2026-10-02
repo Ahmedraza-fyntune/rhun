@@ -84,14 +84,26 @@ downloader() {
 
 # fetch URL FILE
 fetch() {
+    # latest_version captures stdout, so download feedback belongs on stderr.
+    say "downloading ${2##*/}" >&2
     if [ "$dl" = curl ]; then
-        if [ -n "${RHUN_RELEASES_URL:-}" ]; then
-            curl -fsSL -o "$2" "$1"
-        else
-            curl -fsSL --proto =https --proto-redir =https -o "$2" "$1"
-        fi
+        url=$1 file=$2
+        set -- -fsSL
+        if [ -z "$quiet" ] && [ -t 2 ]; then set -- -fL --progress-bar; fi
+        # Bound connection setup and stalled transfers, without limiting healthy downloads.
+        set -- "$@" --connect-timeout 10 --speed-limit 1 --speed-time 30 --retry 3
+        if [ -z "${RHUN_RELEASES_URL:-}" ]; then set -- "$@" --proto =https --proto-redir =https; fi
+        curl "$@" -o "$file" "$url"
     else
-        wget -q -O "$2" "$1"
+        url=$1 file=$2
+        set -- -nv
+        if [ -n "$quiet" ]; then
+            set -- -q
+        elif [ -t 2 ]; then
+            set --
+        fi
+        wget "$@" --dns-timeout=10 --connect-timeout=10 --read-timeout=30 --tries=4 \
+            --retry-on-http-error=429,500,502,503,504 -O "$file" "$url"
     fi
 }
 
