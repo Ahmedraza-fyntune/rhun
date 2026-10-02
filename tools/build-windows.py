@@ -55,6 +55,19 @@ def assets():
     script = base64.b64encode(bootstrap.encode('utf-16le')).decode('ascii')
     assert len(script) < 30000, 'AI helper exceeds the Windows command-line budget'
     lines += ['.globl commit_ai_script', 'commit_ai_script: .asciz "' + script + '"']
+    installer = (ROOT / 'install.ps1').read_text(encoding='utf-8')
+    assert "\n'@" not in installer, 'Installer contains the embedding here-string delimiter'
+    update = ("$installer=[scriptblock]::Create(@'\n" + installer + "\n'@);" +
+              (ROOT / 'runtime/windows/update.ps1').read_text(encoding='utf-8'))
+    packed_update = base64.b64encode(gzip.compress(update.encode(), mtime=0)).decode('ascii')
+    bootstrap_update = ("$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';"
+                        "$b=[Convert]::FromBase64String('" + packed_update + "');"
+                        "$m=New-Object IO.MemoryStream(,$b);"
+                        "$g=New-Object IO.Compression.GzipStream($m,[IO.Compression.CompressionMode]::Decompress);"
+                        "$r=New-Object IO.StreamReader($g);& ([scriptblock]::Create($r.ReadToEnd()))")
+    encoded_update = base64.b64encode(bootstrap_update.encode('utf-16le')).decode('ascii')
+    assert len(encoded_update) < 30000, 'Update helper exceeds the Windows command-line budget'
+    lines += ['.globl windows_update_script', 'windows_update_script: .asciz "' + encoded_update + '"']
     emit('font_mono', ROOT / 'assets/fonts/IosevkaFixed-Regular.ttf')
     lines += ['.globl font_ui, font_ui_end', '.set font_ui,font_mono',
               '.set font_ui_end,font_mono_end']

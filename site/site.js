@@ -59,7 +59,7 @@
         status.textContent = "Select and copy the command above to install.";
         const selection = window.getSelection();
         const range = document.createRange();
-        range.selectNodeContents(document.querySelector("#install-command"));
+        range.selectNodeContents(button.parentElement.querySelector(".command code"));
         selection.removeAllRanges();
         selection.addRange(range);
       }

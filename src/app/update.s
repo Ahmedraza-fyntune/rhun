@@ -1,5 +1,5 @@
-# updates: the latest version from the GitHub releases, checked in the background with curl or wget;
-# the release's install.sh installs it, and rhun restarts into it
+# updates: the latest version from GitHub releases, checked in the background with curl or wget.
+# Unix uses the release's install.sh; Windows stages with the embedded PowerShell installer.
 #   RHUN_RELEASES_URL   another place for the releases (tests use file://)
 #   RHUN_UPDATE_TARGET  the installation to update and restart into (tests)
 .include "rhun.inc"
@@ -23,6 +23,7 @@ up_manual: .long 0              # the check was asked for: its result is reporte
 g_update_state: .long 0         # UP_*
 g_restart: .long 0              # quitting starts the new version
 up_latest: .zero 32             # the latest version known
+up_ready_version: .zero 32      # the staged Windows version, pinned across subsequent checks
 up_error: .zero 256             # why the last check or install failed
 up_item: .zero 64
 up_target: .zero 4096           # what the installer replaces and the restart runs
@@ -264,8 +265,9 @@ up_start_check:
 
 # up_spawn(argv) -> 1 when the program runs; on_up_job collects its output
 up_spawn:
-    PROLOGUE
     mov rsi, [rip + g_envp]
+up_spawn_env:
+    PROLOGUE
     xor edx, edx
     call run_piped
     test rax, rax
@@ -723,11 +725,8 @@ up_base:
 
 # ---------------- installing ----------------
 
-# cmd_install_update(): the release's install.sh replaces this installation with up_latest
+# cmd_install_update(): install or stage up_latest in the background
 FN cmd_install_update
-.ifdef WINDOWS
-    jmp win_download_page
-.endif
     PROLOGUE 64                 # argv
     cmp dword ptr [rip + g_update_state], UP_AVAILABLE
     jne 9f
@@ -745,6 +744,20 @@ FN cmd_install_update
     test rax, rax
     jz 8f
     mov r13, rax
+.ifdef WINDOWS
+    call up_base
+    mov rcx, rax
+    lea rdi, [rip + .Lprepare]
+    lea rsi, [rip + up_latest]
+    mov rdx, r13
+    call win_update_command
+    test rax, rax
+    jz 6f
+    mov rdi, rax
+    mov rsi, rdx
+    mov dword ptr [rip + up_kind], UP_JOB_INSTALL
+    call up_spawn_env
+.else
     lea rdi, [rip + up_sb]
     call sb_clear
     call up_base
@@ -793,6 +806,7 @@ FN cmd_install_update
     mov dword ptr [rip + up_kind], UP_JOB_INSTALL
     lea rdi, [rsp]
     call up_spawn
+.endif
     test eax, eax
     jz 6f
     mov byte ptr [rip + up_error], 0
@@ -814,6 +828,11 @@ up_install_done:
     PROLOGUE
     test edi, edi
     jnz 1f
+.ifdef WINDOWS
+    lea rdi, [rip + up_ready_version]
+    lea rsi, [rip + up_latest]
+    call cstr_copy
+.endif
     mov dword ptr [rip + g_update_state], UP_READY
     EPILOGUE
 1:  mov r12, [rip + up_out + SB_ptr]
@@ -961,6 +980,24 @@ FN update_click
 # Launch Services would start it with launchd's environment, and XDG_CONFIG_HOME and the like set
 # for this rhun would be lost.
 FN update_restart
+.ifdef WINDOWS
+    PROLOGUE
+    call up_base
+    mov rcx, rax
+    lea rdi, [rip + .Lapply]
+    lea rsi, [rip + up_ready_version]
+    lea rdx, [rip + up_target]
+    call win_update_command
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call win_update_launch
+    test eax, eax
+    jnz 8f
+9:  call win_update_error
+8:  EPILOGUE
+.else
     PROLOGUE 32
     cmp byte ptr [rip + up_target], 0
     je 9f
@@ -990,6 +1027,7 @@ FN update_restart
     mov rdx, [rip + g_envp]
     SYS SYS_execve
 9:  EPILOGUE
+.endif
 
 # up_fds_cloexec(): nothing of this process goes on in the new one: the display connection, pipes,
 # terminals (whose shells then end); marked close-on-exec rather than closed, as other threads (on
@@ -1160,22 +1198,18 @@ ver_fields:
 .Lt_rhun: .asciz "rh\303\273n "
 .Lt_latest: .asciz " is the latest"
 .Lt_rebuild: .asciz " is available; pull and rebuild to update"
-.ifdef WINDOWS
-.Li_update: .asciz "Download "
-.else
 .Li_update: .asciz "Update to "
-.endif
 .Li_updating: .asciz "Updating\342\200\246"
 .Li_restart: .asciz "Restart to update"
 .Ld_checking: .asciz "Checking\342\200\246"
 .Ld_installing: .asciz "Installing "
 .Ld_dots: .asciz "\342\200\246"
-.Ld_installed: .asciz " is installed; restart to use it"
 .ifdef WINDOWS
-.Ld_available: .asciz " is available; close rhun before installing"
+.Ld_installed: .asciz " is downloaded; restart to install it"
 .else
-.Ld_available: .asciz " is available"
+.Ld_installed: .asciz " is installed; restart to use it"
 .endif
+.Ld_available: .asciz " is available"
 .Ld_failed: .asciz "Couldn't check: "
 .Ld_source: .asciz " is available (built from source)"
 .Ld_latest: .asciz "The latest version (checked "
@@ -1216,3 +1250,5 @@ up_names: .quad .Ls_idle, .Ls_available, .Ls_installing, .Ls_ready
 .Lself_exe: .asciz "/proc/self/exe"
 .Ldeleted: .asciz " (deleted)"
 .Lbundle_exe: .asciz "/Contents/MacOS/rhun"
+.Lprepare: .asciz "prepare"
+.Lapply: .asciz "apply"

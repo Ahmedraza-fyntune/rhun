@@ -1,5 +1,6 @@
 LIBRARY user32.dll
 EXPORTS
+    MessageBoxW
     GetKeyboardState
     SetKeyboardState
     BeginPaint

@@ -139,6 +139,11 @@ jobs:
       - name: Installer tests
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: python tests/windows-install.py
+      - name: Updater tests
+        env:
+          RHUN_DIST: '1'
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: python tests/windows-update.py
       - uses: actions/upload-artifact@v4
         with:
           name: windows

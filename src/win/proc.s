@@ -148,7 +148,7 @@ FN win_commandline
     EPILOGUE
 
 # envp UTF-8 strings -> double-NUL UTF-16 block. Windows accepts an unsorted block.
-win_environment:
+FN win_environment
     PROLOGUE 32
     mov r12, rdi
     xor eax, eax

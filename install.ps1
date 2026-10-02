@@ -6,7 +6,12 @@ param(
     [string]$ReleasesUrl = 'https://github.com/vshvedov/rhun/releases',
     [switch]$NoModifyPath,
     [switch]$NoShortcut,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    # Internal updater modes. Preparation never changes a running installation.
+    [switch]$PrepareUpdate,
+    [switch]$ApplyUpdate,
+    [string]$UpdateStage,
+    [int]$WaitPid
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -19,6 +24,77 @@ if ([Environment]::OSVersion.Version.Build -lt 17763) {
 $InstallDir = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\', '/')
 $knownFiles = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1', '.rhun-install')
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'rhun.lnk'
+
+function File-Sha256([string]$Path) {
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($Path)
+        try { return [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '') }
+        finally { $stream.Dispose() }
+    } finally { $hasher.Dispose() }
+}
+
+if ($PrepareUpdate -or $ApplyUpdate) {
+    if ($Uninstall -or ($PrepareUpdate -and $ApplyUpdate) -or -not $UpdateStage -or $WaitPid -le 0) { throw 'Invalid update arguments.' }
+    $expectedStage = Join-Path (Split-Path -Parent $InstallDir) ('.rhun-update-' + $WaitPid)
+    $UpdateStage = [IO.Path]::GetFullPath($UpdateStage).TrimEnd('\', '/')
+    if ($UpdateStage -ine $expectedStage) { throw 'Invalid update staging directory.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'rhun.exe') -PathType Leaf)) {
+        throw 'The running installation was not found.'
+    }
+}
+
+if ($ApplyUpdate) {
+    $receipt = Get-Content -LiteralPath (Join-Path $UpdateStage 'update.json') -Raw | ConvertFrom-Json
+    if ($receipt.target -ine $InstallDir -or $receipt.version -cne $Version) { throw 'Invalid staged update.' }
+    $files = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1')
+    foreach ($name in $files) {
+        $destination = Join-Path $InstallDir $name
+        if (Test-Path -LiteralPath $destination) {
+            $item = Get-Item -LiteralPath $destination -Force
+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'The update destination contains a directory or link in place of an application file.'
+            }
+        }
+        $actual = File-Sha256 (Join-Path $UpdateStage $name)
+        if ($actual -ine $receipt.hashes.$name) { throw 'The staged update checksum does not match.' }
+    }
+    $parentProcess = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
+    if ($parentProcess -and -not $parentProcess.WaitForExit(60000)) { throw 'The editor did not close.' }
+    # Check every binary before changing any files. Another editor instance may still own them.
+    foreach ($name in @('rhun.exe', 'rhun.com')) {
+        $path = Join-Path $InstallDir $name
+        if (Test-Path -LiteralPath $path) {
+            $probe = [IO.File]::Open($path, 'Open', 'ReadWrite', 'None')
+            $probe.Dispose()
+        }
+    }
+    $backupDir = Join-Path $UpdateStage 'backup'
+    New-Item -ItemType Directory -Path $backupDir | Out-Null
+    $changed = @()
+    try {
+        foreach ($name in $files) {
+            $destination = Join-Path $InstallDir $name
+            if (Test-Path -LiteralPath $destination) {
+                Move-Item -LiteralPath $destination -Destination (Join-Path $backupDir $name)
+            }
+            $changed += $name
+            Move-Item -LiteralPath (Join-Path $UpdateStage $name) -Destination $destination
+        }
+        $marker = Join-Path $InstallDir '.rhun-install'
+        if (Test-Path -LiteralPath $marker) { [IO.File]::WriteAllText($marker, "rhun $Version`n") }
+    } catch {
+        foreach ($name in $changed) {
+            $destination = Join-Path $InstallDir $name
+            if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Force }
+            $old = Join-Path $backupDir $name
+            if (Test-Path -LiteralPath $old) { Move-Item -LiteralPath $old -Destination $destination }
+        }
+        throw
+    }
+    Remove-Item -LiteralPath $UpdateStage -Recurse -Force
+    return
+}
 
 function Update-UserPath([bool]$Remove) {
     $value = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -43,7 +119,7 @@ function Read-ReleaseText([string]$Url) {
 }
 
 # The directory swap below owns only an existing rhun installation, never an arbitrary folder.
-if (Test-Path -LiteralPath $InstallDir) {
+if (-not $PrepareUpdate -and (Test-Path -LiteralPath $InstallDir)) {
     if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'rhun.exe') -PathType Leaf)) {
         throw "The destination is not a rhun installation: $InstallDir"
     }
@@ -57,9 +133,9 @@ if (Test-Path -LiteralPath $InstallDir) {
 $running = @(Get-Process -Name rhun,rhun.com -ErrorAction SilentlyContinue | Where-Object {
     $_.Path -and ([IO.Path]::GetDirectoryName($_.Path) -ieq $InstallDir)
 })
-if ($running.Count -gt 0) { throw 'Close rhun before updating or uninstalling it.' }
+if (-not $PrepareUpdate -and $running.Count -gt 0) { throw 'Close rhun before updating or uninstalling it.' }
 # Process metadata is not always available. Loaded PE files cannot be opened for writing.
-foreach ($name in @('rhun.exe', 'rhun.com')) {
+foreach ($name in @('rhun.exe', 'rhun.com') | Where-Object { -not $PrepareUpdate }) {
     $file = Join-Path $InstallDir $name
     if (Test-Path -LiteralPath $file) {
         try {
@@ -113,12 +189,7 @@ try {
     $matchesFound = [Regex]::Matches($checksums, $pattern)
     if ($matchesFound.Count -ne 1) { throw 'The archive checksum is missing or ambiguous.' }
     # Use .NET directly, including when Windows PowerShell inherits PowerShell 7's module path.
-    $hasher = [Security.Cryptography.SHA256]::Create()
-    try {
-        $stream = [IO.File]::OpenRead($archive)
-        try { $actual = [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '') }
-        finally { $stream.Dispose() }
-    } finally { $hasher.Dispose() }
+    $actual = File-Sha256 $archive
     if ($actual -ine $matchesFound[0].Groups[1].Value) { throw 'The archive checksum does not match.' }
     $parent = Split-Path -Parent $InstallDir
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
@@ -136,6 +207,20 @@ try {
     } finally { $zip.Dispose() }
     $reported = & (Join-Path $stage 'rhun.com') --version
     if ($LASTEXITCODE -ne 0 -or $reported -cne "rhun $Version") { throw 'The staged executable has the wrong version.' }
+    if ($PrepareUpdate) {
+        $hashes = @{}
+        foreach ($name in @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1')) {
+            $hashes[$name] = File-Sha256 (Join-Path $stage $name)
+        }
+        @{ target = $InstallDir; version = $Version; hashes = $hashes } | ConvertTo-Json |
+            Set-Content -LiteralPath (Join-Path $stage 'update.json') -Encoding UTF8
+        # Never remove a pre-existing staging directory supplied by another process.
+        if (Test-Path -LiteralPath $UpdateStage) { throw 'An update is already staged for this editor.' }
+        Move-Item -LiteralPath $stage -Destination $UpdateStage
+        $stage = $null
+        Write-Output 'The update is ready to install when rhun restarts.'
+        return
+    }
     [IO.File]::WriteAllText((Join-Path $stage '.rhun-install'), "rhun $Version`n")
     if (Test-Path -LiteralPath $InstallDir) {
         $backup = Join-Path $parent ('.rhun-old-' + [Guid]::NewGuid().ToString('N'))

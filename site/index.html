@@ -141,10 +141,10 @@
       </div>
       <div class="view-description" aria-live="polite">
         <p data-description="hero">Tabs, syntax highlighting, fuzzy search, and optional Vim mode.</p>
-        <p data-description="terminal" hidden>Run builds, shell commands, and coding agents beside your code.</p>
-        <p data-description="git" hidden>Review diffs, stage changes, and commit. Draft messages with local open-weight models or Claude Code and Codex using your existing subscriptions. AI is optional.</p>
+        <p data-description="terminal" hidden>Built-in terminal emulator with 24-bit color, scrollback, mouse reporting, and alternate-screen support.</p>
+        <p data-description="git" hidden>Built-in Git with staging, diffs, commit history, and commit message generation using a local model or your Claude Code or Codex subscription.</p>
         <p data-description="agents" hidden>Follow your project’s Claude Code and Codex sessions as they work.</p>
-        <p data-description="themes" hidden>Choose from 39 light and dark themes. Preview a few here.</p>
+        <p data-description="themes" hidden>39 built-in light and dark themes, customizable editor and terminal colors, and automatic theme switching with Omarchy.</p>
       </div>
       <div class="theme-controls" id="themes" hidden>
         <div class="theme-picker" role="group" aria-label="Preview a color theme">
@@ -154,18 +154,35 @@
           <button type="button" data-theme="theme-gruvbox-dark" aria-label="Gruvbox Dark" aria-pressed="false" style="--swatch:#3c3836;--swatch-accent:#fabd2f"></button>
           <button type="button" data-theme="theme-rose-pine-dawn" aria-label="Rosé Pine Dawn" aria-pressed="false" style="--swatch:#f2e9e1;--swatch-accent:#b4637a"></button>
           <button type="button" data-theme="theme-github-light" aria-label="GitHub Light" aria-pressed="false" style="--swatch:#ffffff;--swatch-accent:#0969da"></button>
+          <button type="button" data-theme="theme-nord" aria-label="Nord" aria-pressed="false" style="--swatch:#2e3440;--swatch-accent:#88c0d0"></button>
+          <button type="button" data-theme="theme-dracula" aria-label="Dracula" aria-pressed="false" style="--swatch:#282a36;--swatch-accent:#bd93f9"></button>
+          <button type="button" data-theme="theme-elflord-dark" aria-label="Elflord Dark" aria-pressed="false" style="--swatch:#000000;--swatch-accent:#ffff00"></button>
         </div>
-        <p class="theme-name" id="theme-name" aria-live="polite">Rhun Dark</p><span class="theme-count">6 OF 39 THEMES</span>
+        <p class="theme-name" id="theme-name" aria-live="polite">Rhun Dark</p><span class="theme-count">9 OF 39 THEMES</span>
       </div>
     </div>
   </section>
   <section class="install-section" id="install" aria-labelledby="install-h">
+    <svg class="os-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+      <symbol id="os-windows" viewBox="0 0 24 24"><path d="M3 4h8v7H3zm10 0h8v7h-8zM3 13h8v7H3zm10 0h8v7h-8z"/></symbol>
+      <symbol id="os-linux" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2c-3 0-4.5 2.3-4.5 5.5v2C6 12 4.5 15 5 18l-3 2 6 2 2-2h4l2 2 6-2-3-2c.5-3-1-6-2.5-8.5v-2C16.5 4.3 15 2 12 2zm-1.5 4a.8.8 0 1 0 0 1.6.8.8 0 0 0 0-1.6zm3 0a.8.8 0 1 0 0 1.6.8.8 0 0 0 0-1.6zM12 11c-2 0-3.5 3-3.5 5.5 0 1.7 1.5 2.5 3.5 2.5s3.5-.8 3.5-2.5C15.5 14 14 11 12 11z"/><path d="m10 8.5 2-1 2 1-2 1.5z"/></symbol>
+      <symbol id="os-macos" viewBox="0 0 24 24"><path d="M16.5 2c.1 1.5-.5 2.7-1.3 3.5-.9.9-2 1.4-3.2 1.3-.1-1.3.6-2.7 1.4-3.5.9-.8 2.1-1.3 3.1-1.3zM19.8 8.3c-1.6-1.8-3.8-1.9-5.1-1.4-1 .3-1.8.7-2.6.7-.9 0-1.7-.5-2.9-.7C6.8 6.4 4.5 8 4 10.5c-.8 3.7 1.3 8.5 3.4 10.7.9.9 1.8 1.1 3 .6 1.1-.5 2.3-.6 3.5 0 1.3.5 2.2.3 3.1-.7 1.1-1.3 2-2.8 2.5-4.2-3.2-1.4-3.9-5.7.3-8.6z"/></symbol>
+    </svg>
     <div class="wrap install-layout">
-      <div><h2 id="install-h">Make yourself at home.</h2><p>Windows, Linux &amp; macOS.</p><a class="text-link" href="https://github.com/vshvedov/rhun/releases/latest">Download a release</a></div>
-      <div class="install-box" id="get"><div class="install-box-heading"><span>Terminal install · Linux &amp; macOS</span><span aria-hidden="true">&gt;_</span></div><div class="command"><span class="prompt" aria-hidden="true">$</span><code id="install-command">curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></div><button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span><p class="windows-install"><strong>Windows:</strong> <a href="https://github.com/vshvedov/rhun/releases/download/v@VERSION@/rhun-@VERSION@-windows-x86_64.zip">Download the ZIP</a>, extract it, and open <code>rhun.exe</code>.</p></div>
+      <div><h2 id="install-h">Install</h2><p class="supported-os"><span><svg class="os-icon" aria-hidden="true" focusable="false"><use href="#os-windows"/></svg>Windows</span><span><svg class="os-icon" aria-hidden="true" focusable="false"><use href="#os-linux"/></svg>Linux</span><span><svg class="os-icon" aria-hidden="true" focusable="false"><use href="#os-macos"/></svg>macOS</span></p><a class="button install-download" href="https://github.com/vshvedov/rhun/releases/latest">Download a release</a></div>
+      <div class="install-box" id="get">
+        <div class="install-box-heading"><span class="install-os-label">Terminal install · <span><svg class="os-icon" aria-hidden="true" focusable="false"><use href="#os-linux"/></svg>Linux</span> &amp; <span><svg class="os-icon" aria-hidden="true" focusable="false"><use href="#os-macos"/></svg>macOS</span></span><span aria-hidden="true">&gt;_</span></div>
+        <div class="command"><span class="prompt" aria-hidden="true">$</span><code id="install-command">curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></div>
+        <button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span>
+        <div class="windows-install">
+          <div class="install-box-heading"><span class="install-os-label">Terminal install · <span><svg class="os-icon" aria-hidden="true" focusable="false"><use href="#os-windows"/></svg>Windows PowerShell</span></span><span aria-hidden="true">&gt;_</span></div>
+          <div class="command"><span class="prompt" aria-hidden="true">&gt;</span><code>powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;&amp; ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))&quot;</code></div>
+          <button class="copy button" type="button" data-copy="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;&amp; ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))&quot;">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span>
+        </div>
+      </div>
     </div>
   </section>
 </main>
-<footer><div class="wrap footer-bottom"><a class="brand" href="./" aria-label="rhun home">rhun<span class="brand-dot">.</span></a><span>v@VERSION@ <span>·</span> Open source. MIT.</span><nav aria-label="Footer"><a href="https://github.com/vshvedov/rhun">GitHub</a><a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Docs</a><a href="#main">Back to top</a></nav></div><details class="wrap font-licenses"><summary>Font licenses</summary><a href="fonts/LICENSE-InstrumentSans.txt">Instrument Sans</a> &amp; <a href="fonts/LICENSE-Iosevka.md">Iosevka</a>, SIL Open Font License.</details></footer>
+<footer><div class="wrap footer-bottom"><a class="brand" href="./" aria-label="rhun home">rhun<span class="brand-dot">.</span></a><span>v@VERSION@ <span>·</span> Open source. MIT. No telemetry.</span><nav aria-label="Footer"><a href="https://github.com/vshvedov/rhun">GitHub</a><a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Docs</a><a href="#main">Back to top</a></nav></div><details class="wrap font-licenses"><summary>Font licenses</summary><a href="fonts/LICENSE-InstrumentSans.txt">Instrument Sans</a> &amp; <a href="fonts/LICENSE-Iosevka.md">Iosevka</a>, SIL Open Font License.</details></footer>
 </body>
 </html>

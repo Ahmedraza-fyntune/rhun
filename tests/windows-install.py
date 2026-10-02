@@ -77,6 +77,12 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         install(target=arbitrary, success=False)
         assert (arbitrary / 'data').read_bytes() == b'keep this too'
         print('ok   install/unrelated-files-preserved', flush=True)
+        # A PE overlay distinguishes the old executables from the incoming release,
+        # while leaving them runnable for the running-file and rollback checks.
+        for name in ('rhun.exe', 'rhun.com'):
+            with (destination / name).open('ab') as stream:
+                stream.write(b'old installation test overlay')
+        old_console = (destination / 'rhun.com').read_bytes()
         script = temp / 'running.rsc'
         script.write_text('print-state\nwait 30000\nquit\n')
         process = subprocess.Popen([str(destination / 'rhun.com'), str(temp), '--headless', '800x600',
@@ -93,9 +99,78 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
             refusal = install('-Uninstall', success=False)
             assert b'Close rhun before updating' in refusal.stdout, refusal.stdout
             assert process.poll() is None
+            # A portable folder can contain personal files. Preparation must leave it intact.
+            unrelated.write_bytes(b'keep this')
+            staged = destination.parent / ('.rhun-update-' + str(process.pid))
+            options = ('-Version', VERSION, '-UpdateStage', str(staged), '-WaitPid', str(process.pid))
+            old = (destination / 'rhun.exe').read_bytes()
+            checksums.write_text(f'{"0" * 64}  {ASSET}\n')
+            install(*options, '-PrepareUpdate', success=False)
+            assert not staged.exists()
+            checksums.write_text(f'{digest}  {ASSET}\n')
+            install(*options, '-PrepareUpdate')
+            assert process.poll() is None
+            assert (destination / 'rhun.exe').read_bytes() == old
+            assert unrelated.read_bytes() == b'keep this'
+            assert (staged / 'update.json').is_file()
+            install(*options, '-PrepareUpdate', success=False)
+            assert (staged / 'update.json').is_file()
+            print('ok   update/prepare-while-running-and-preserve-portable-files', flush=True)
         finally:
             process.kill()
             process.wait()
+        # A tampered stage must fail before changing the old editor.
+        staged_license = staged / 'LICENSE'
+        license_bytes = staged_license.read_bytes()
+        staged_license.write_bytes(b'tampered')
+        install(*options, '-ApplyUpdate', success=False)
+        assert (destination / 'rhun.exe').read_bytes() == old
+        staged_license.write_bytes(license_bytes)
+        # A second editor instance must prevent apply even after the initiating one exits.
+        other = subprocess.Popen([str(destination / 'rhun.com'), str(temp), '--headless', '800x600',
+            '--script', str(script)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=dict(os.environ, XDG_CONFIG_HOME=str(temp / 'other-config'), XDG_STATE_HOME=str(temp / 'other-state')))
+        try:
+            ready = []
+            reader = threading.Thread(target=lambda: ready.append(other.stdout.readline()), daemon=True)
+            reader.start()
+            reader.join(timeout=10)
+            assert ready and ready[0].startswith(b'tabs='), 'second editor did not become ready'
+            install(*options, '-ApplyUpdate', success=False)
+            assert (destination / 'rhun.exe').read_bytes() == old
+            assert (destination / 'rhun.com').read_bytes() == old_console
+            assert (staged / 'update.json').exists()
+        finally:
+            other.kill()
+            other.wait()
+        print('ok   update/second-editor-prevents-apply', flush=True)
+        # Force failure after the first replacement to exercise rollback of both executables.
+        locked = destination / 'LICENSE'
+        lock_script = temp / 'lock.ps1'
+        lock_script.write_text("$f=[IO.File]::Open($args[0], 'Open', 'Read', 'None'); 'ready'; Start-Sleep 30")
+        locker = subprocess.Popen(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(lock_script), str(locked)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            assert locker.stdout.readline().strip() == b'ready'
+            install(*options, '-ApplyUpdate', success=False)
+            assert (destination / 'rhun.exe').read_bytes() == old
+            assert (destination / 'rhun.com').read_bytes() == old_console
+            version()
+            assert unrelated.read_bytes() == b'keep this'
+        finally:
+            locker.kill()
+            locker.wait()
+        # Failed apply retains recovery data; discard it before a fresh preparation.
+        shutil.rmtree(staged)
+        install(*options, '-PrepareUpdate')
+        install(*options, '-ApplyUpdate')
+        version()
+        assert (destination / 'rhun.exe').read_bytes() != old
+        assert (destination / 'rhun.com').read_bytes() != old_console
+        assert unrelated.read_bytes() == b'keep this'
+        assert not staged.exists()
+        unrelated.unlink()
+        print('ok   update/tamper-detection-rollback-and-apply', flush=True)
         print('ok   install/running-editor-preserved', flush=True)
         install('-Uninstall')
         assert not destination.exists()

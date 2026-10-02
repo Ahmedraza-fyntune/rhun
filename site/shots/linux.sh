@@ -51,6 +51,13 @@ SH
 chmod 755 /tmp/shoot.sh
 s() { su dev -c "HOME=/home/dev SHELL=/bin/bash /tmp/shoot.sh $*"; }
 r=$repo
+# Retake one theme without replacing unrelated screenshots.
+if [ -n "${THEME:-}" ]; then
+    case "$THEME" in *[!a-z0-9-]*) echo 'Invalid theme name' >&2; exit 1 ;; esac
+    [ -f "$repo/runtime/themes/$THEME.theme" ] || { echo 'Unknown theme' >&2; exit 1; }
+    s theme-$THEME $THEME $home/shop src/main.rs gallery.rsc ui.agents_panel=false
+    exit 0
+fi
 # features, in the brand's themes
 s hero rhun-dark $r src/app/wrap.s hero.rsc
 s hero-light rhun-light $r src/app/wrap.s hero.rsc
@@ -75,3 +82,4 @@ s theme-rose-pine-dawn rose-pine-dawn $d templates/order.html.erb gallery.rsc ui
 s theme-dracula dracula $d db/schema.sql gallery.rsc ui.agents_panel=false
 s theme-github-light github-light $d app/models/order.rb gallery.rsc ui.agents_panel=false
 s theme-kanagawa kanagawa $d lib/notifier.ex gallery.rsc ui.agents_panel=false
+s theme-elflord-dark elflord-dark $d src/main.rs gallery.rsc ui.agents_panel=false
