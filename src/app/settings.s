@@ -1029,7 +1029,7 @@ FN ui_text_v_fit
 .Lt_git: .asciz "Git"
 .Lt_updates: .asciz "Updates"
 .Lwebsite: .asciz "https://rhun.app"
-.Lfeedback: .asciz "Feedback and bug reports: vlad@omniprag.com"
+.Lfeedback: .asciz "Feedback and bug reports: hi@rhun.app"
 .Lcheck_now: .asciz "Check now"
 
 .data

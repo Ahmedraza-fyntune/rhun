@@ -96,7 +96,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
                    RHUN_DESKTOP_LOG=str(log))
         run([project, file], ['cmd website', 'wait 200', 'cmd feedback', 'wait 200',
                               'cmd reveal_file', 'wait 200', 'quit'])
-        expected = ['https://rhun.app', 'mailto:vlad@omniprag.com?subject=rhun%20feedback']
+        expected = ['https://rhun.app', 'mailto:hi@rhun.app?subject=rhun%20feedback']
         expected += ['-R', file.as_posix()] if sys.platform == 'darwin' else [project.as_posix()]
         assert log.read_text().splitlines() == expected, log.read_text()
         print('ok   desktop/links-and-literal-file-path')
@@ -107,7 +107,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
         run([project], ['cmd settings', 'click 300 202', 'wait 200',
                         'click 420 230', 'wait 200', 'quit'])
         assert log.read_text().splitlines() == [
-            'https://rhun.app', 'mailto:vlad@omniprag.com?subject=rhun%20feedback'], log.read_text()
+            'https://rhun.app', 'mailto:hi@rhun.app?subject=rhun%20feedback'], log.read_text()
         print('ok   desktop/settings-links')
 
         # The menu operates on a directory as well as a file, with the same path rules.

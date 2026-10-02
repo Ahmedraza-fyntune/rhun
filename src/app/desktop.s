@@ -117,7 +117,7 @@ FN desktop_failed
 
 .section .rodata
 .Lwebsite: .asciz "https://rhun.app"
-.Lfeedback: .asciz "mailto:vlad@omniprag.com?subject=rhun%20feedback"
+.Lfeedback: .asciz "mailto:hi@rhun.app?subject=rhun%20feedback"
 .Lfailed: .asciz "Could not open the desktop application"
 .ifdef MACOS
 .Lopener: .asciz "open"
