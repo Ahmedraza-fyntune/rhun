@@ -46,6 +46,7 @@ sh tests/detach.sh || fail=1
 sh tests/blink.sh || fail=1
 sh tests/session.sh || fail=1
 python3 tests/desktop-ux.py || fail=1
+python3 tests/x11-auth.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?
