@@ -33,6 +33,7 @@
 .equ SYS_exit, 60
 .equ SYS_wait4, 61
 .equ SYS_kill, 62
+.equ SYS_uname, 63
 .equ SYS_fcntl, 72
 .equ SYS_fsync, 74
 .equ SYS_ftruncate, 77

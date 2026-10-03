@@ -4,6 +4,8 @@
 .equ XOUT, 65536
 .equ XIN, 262144
 .equ PEND_MAX, 256              # keys waiting for a new keymap
+.equ AUTH_FAMILY_LOCAL, 256
+.equ AUTH_FAMILY_WILD, 65535
 .equ EVMASK, 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040 | 0x8000 | 0x20000 | 0x200000
 # KeyPress KeyRelease ButtonPress ButtonRelease EnterWindow LeaveWindow PointerMotion Exposure StructureNotify FocusChange
 
@@ -701,8 +703,20 @@ x_change_prop:
 
 # read_auth(display number cstr) -> tmp holds cookie (16 bytes) ; eax = 1 if found
 read_auth:
-    PROLOGUE 16
+    PROLOGUE 448
     mov [rsp], rdi
+    # utsname is 6 * 65 bytes, with nodename at +65. Its sysname is unused.
+    lea rdi, [rsp + 16]
+    SYS SYS_uname
+    test rax, rax
+    js 1f
+    lea rax, [rsp + 81]         # nodename
+    jmp 2f
+1:  xor eax, eax
+2:  mov [rsp + 16], rax         # hostname pointer, or zero if uname failed
+    lea rdi, [rip + .Lxauth_hostname]
+    call getenv
+    mov [rsp + 432], rax        # optional local hostname used by the session
     lea rdi, [rip + .Lxauth_env]
     call getenv
     test rax, rax
@@ -724,11 +738,17 @@ read_auth:
 .Lra_entry:
     lea rax, [r12 + 2]
     cmp rax, r15
-    jae .Lra_free
-    add r12, 2                  # family
+    jae .Lra_fallback
+    movzx eax, word ptr [r12]   # family
+    rol ax, 8
+    mov [rsp + 408], rax
+    add r12, 2
     # address
     movzx eax, word ptr [r12]
     rol ax, 8
+    mov [rsp + 424], rax        # address length
+    lea rcx, [r12 + 2]
+    mov [rsp + 416], rcx        # address
     lea r12, [r12 + rax + 2]
     # number
     movzx r13d, word ptr [r12]
@@ -750,6 +770,26 @@ read_auth:
     ja .Lra_free
     cmp edx, 16
     jne .Lra_entry
+    # Local sockets use this hostname's entry, or an entry for any family/address.
+    cmp qword ptr [rsp + 408], AUTH_FAMILY_WILD
+    je .Lra_match
+    cmp qword ptr [rsp + 408], AUTH_FAMILY_LOCAL
+    jne .Lra_entry
+    push r8
+    push rcx
+    xor eax, eax
+    mov rdx, [rsp + 16 + 16]
+    test rdx, rdx
+    jz .Lra_local_done
+    mov rdi, [rsp + 416 + 16]
+    mov rsi, [rsp + 424 + 16]
+    call str_eq_cstr
+.Lra_local_done:
+    pop rcx
+    pop r8
+    test eax, eax
+    jz .Lra_entry
+.Lra_match:
     push r8
     push rcx
     mov rdi, rcx
@@ -783,6 +823,15 @@ read_auth:
     call mem_free
     mov eax, 1
     EPILOGUE
+.Lra_fallback:
+    # Retry with the session's hostname only when no normal or wildcard entry matched.
+    mov rax, [rsp + 432]
+    test rax, rax
+    jz .Lra_free
+    mov [rsp + 16], rax
+    mov qword ptr [rsp + 432], 0
+    mov r12, rbx
+    jmp .Lra_entry
 .Lra_free:
     mov rdi, rbx
     call mem_free
@@ -1651,6 +1700,7 @@ x_minimize:
 .section .rodata
 .Ldisplay_env: .asciz "DISPLAY"
 .Lxauth_env: .asciz "XAUTHORITY"
+.Lxauth_hostname: .asciz "XAUTHLOCALHOSTNAME"
 .Lhome: .asciz "HOME"
 .Lxauth_file: .asciz ".Xauthority"
 .Lsock_prefix: .asciz "/tmp/.X11-unix/X"
