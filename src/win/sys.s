@@ -464,6 +464,31 @@ FN ws_stat
     mov rax, r13
 9:  EPILOGUE
 
+# win_file_is_real_dir(path) -> 1 for a directory without a reparse point, 0 otherwise, or -errno
+FN win_file_is_real_dir
+    PROLOGUE 96
+    call win_wide
+    mov rbx, rax
+    test rax, rax
+    jz 8f
+    mov rcx, rax
+    API GetFileAttributesW
+    cmp eax, -1
+    je 7f
+    and eax, 0x410             # FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT
+    cmp eax, 0x10
+    sete al
+    movzx r12d, al
+    jmp 2f
+7:  call win_error
+    mov r12, rax
+2:  mov rdi, rbx
+    call mem_free
+    mov rax, r12
+    EPILOGUE
+8:  mov rax, -22
+    EPILOGUE
+
 FN ws_access
     PROLOGUE 96
     call win_wide

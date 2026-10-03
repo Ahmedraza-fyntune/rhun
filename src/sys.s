@@ -483,6 +483,114 @@ FN file_write_all
 .Ltmp_suffix: .asciz ".tmp"
 .text
 
+# file_remove_tree(path) -> 0 or -errno. Remove links themselves, including directory links.
+FN file_remove_tree
+    PROLOGUE 192               # lstat (144), collection context: path, vector, error (48)
+    mov rbx, rdi
+    SYS SYS_unlink
+    test rax, rax
+    jns .Lrm_ret
+    mov rdi, rbx
+    mov eax, 84                 # rmdir also removes Windows directory links and junctions
+    XSYS
+    test rax, rax
+    jns .Lrm_ret
+    mov r12, rax
+    # Only descend into real directories. Never traverse a link after a failed removal.
+    mov rdi, rbx
+.ifdef WINDOWS
+    call win_file_is_real_dir
+    test rax, rax
+    js .Lrm_ret
+    jz .Lrm_original_error
+.else
+    lea rsi, [rsp]
+    SYS SYS_lstat
+    test rax, rax
+    js .Lrm_ret
+    mov eax, [rsp + 24]
+    and eax, 0170000
+    cmp eax, 0040000
+    jne .Lrm_original_error
+.endif
+    mov [rsp + 144], rbx
+    mov qword ptr [rsp + 152], 0
+    mov qword ptr [rsp + 160], 0
+    mov qword ptr [rsp + 168], 0
+    mov qword ptr [rsp + 176], 0
+    lea rdx, [rsp + 144]
+    lea rsi, [rip + remove_collect]
+    mov rdi, rbx
+    call dir_each_names
+    mov r12, rax
+    test rax, rax
+    js .Lrm_free
+    mov r12, [rsp + 176]
+    test r12, r12
+    js .Lrm_free
+    # Enumerate first, then recurse so nested calls do not retain enumeration buffers or handles.
+    xor r13d, r13d
+.Lrm_child:
+    cmp r13, [rsp + 160]
+    jae .Lrm_parent
+    mov rax, [rsp + 152]
+    mov rdi, [rax + r13*8]
+    call file_remove_tree
+    mov r12, rax
+    test rax, rax
+    js .Lrm_free
+    inc r13
+    jmp .Lrm_child
+.Lrm_parent:
+    mov rdi, rbx
+    mov eax, 84
+    XSYS
+    mov r12, rax
+.Lrm_free:
+    xor r13d, r13d
+.Lrm_free_child:
+    cmp r13, [rsp + 160]
+    jae .Lrm_free_vec
+    mov rax, [rsp + 152]
+    mov rdi, [rax + r13*8]
+    call mem_free
+    inc r13
+    jmp .Lrm_free_child
+.Lrm_free_vec:
+    lea rdi, [rsp + 152]
+    call vec_free
+.Lrm_original_error:
+    mov rax, r12
+.Lrm_ret:
+    EPILOGUE
+
+# remove_collect(ctx, name): include hidden and explorer-excluded entries too
+remove_collect:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    cmp qword ptr [rbx + 32], 0
+    jne 9f
+    mov rdi, [rbx]
+    call strlen
+    mov r13, rax
+    mov rdi, r12
+    call strlen
+    lea rax, [rax + r13 + 1]
+    cmp rax, 4096
+    jae 8f
+    mov rdi, [rbx]
+    mov rsi, r12
+    call path_join
+    mov r12, rax
+    lea rdi, [rbx + 8]
+    mov esi, 8
+    call vec_push
+    mov [rax], r12
+9:  EPILOGUE
+8:  mov qword ptr [rbx + 32], -36  # ENAMETOOLONG
+    EPILOGUE
+
 # mkdir_p(path) : creates path and parents (path buffer is modified then restored)
 FN mkdir_p
     PROLOGUE
@@ -535,7 +643,15 @@ FN mkdir_parent
 # dir_each(path, cb, ctx): cb(ctx, name cstr, is_dir) for every entry except . and ..
 # returns 0 or -errno
 FN dir_each
-    PROLOGUE 32
+    xor ecx, ecx
+    jmp .Lde_start
+
+# dir_each_names(path, cb, ctx): cb(ctx, name cstr), without resolving entry types or links
+FN dir_each_names
+    mov ecx, 1
+.Lde_start:
+    PROLOGUE 48
+    mov [rsp + 32], ecx
     mov r12, rsi                # cb
     mov r13, rdx                # ctx
     mov r15, rdi                # path
@@ -573,7 +689,9 @@ FN dir_each
     jne 1f
     cmp byte ptr [rsi + 2], 0
     je .Lde_ent
-1:  movzx edx, byte ptr [rcx + 18]
+1:  cmp dword ptr [rsp + 32], 0
+    jne .Lde_callback
+    movzx edx, byte ptr [rcx + 18]
     cmp edx, 4                  # DT_DIR
     sete al
     cmp edx, 0                  # DT_UNKNOWN
@@ -588,15 +706,17 @@ FN dir_each
     call file_is_dir
     mov rsi, [rsp + 16]
 3:  movzx edx, al
+.Lde_callback:
     mov rdi, r13
     call r12
     jmp .Lde_ent
 .Lde_done:
+    mov [rsp + 24], rax
     mov rdi, r14
     call mem_free
     mov edi, ebx
     SYS SYS_close
-    xor eax, eax
+    mov rax, [rsp + 24]
 .Lde_ret:
     EPILOGUE
 
