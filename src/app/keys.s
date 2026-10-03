@@ -545,6 +545,7 @@ g_commands:
     COMMAND git_stage_all, "Git: Stage All Changes", cmd_git_stage_all, ""
     COMMAND git_unstage_all, "Git: Unstage All Changes", cmd_git_unstage_all, ""
     COMMAND git_discard_all, "Git: Discard All Changes", cmd_git_discard_all, ""
+    COMMAND git_reset_all, "Git: Reset All Changes", cmd_git_reset_all, ""
     COMMAND check_for_updates, "Check for Updates", cmd_check_for_updates, ""
     COMMAND install_update, "Install Update", cmd_install_update, ""
     COMMAND restart_to_update, "Restart to Update", cmd_restart_to_update, ""
