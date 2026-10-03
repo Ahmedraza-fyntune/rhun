@@ -50,6 +50,7 @@ INTERPOSE(write);
 
 static ssize_t test_read(int fd, void *buf, size_t len) {
     if (fd == target_fd && fault("read")) return -1;
+    if (fd == target_fd && fault("short-read") && len > 7) len = 7;
     return read(fd, buf, len);
 }
 INTERPOSE(read);

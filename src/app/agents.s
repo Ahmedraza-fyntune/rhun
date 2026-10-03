@@ -105,7 +105,7 @@ FN agents_set_project
     mov rsi, [rip + g_project]
     test rsi, rsi
     jz 9f
-    # ~/.claude/projects/<path with every non-alphanumeric char as '-'>
+    # ~/.claude/projects/<path with every non-alphanumeric UTF-16 unit as '-'>
     lea rdi, [rip + tmp]
     call sb_clear
     lea rdi, [rip + .Lhome]
@@ -119,9 +119,17 @@ FN agents_set_project
     lea rsi, [rip + .Lclaude_projects]
     call sb_push_cstr
     mov r12, [rip + g_project]
-3:  movzx eax, byte ptr [r12]
-    test eax, eax
-    jz 4f
+    mov rdi, r12
+    call strlen
+    lea r13, [r12 + rax]
+3:  cmp r12, r13
+    jae 4f
+    mov rdi, r12
+    mov rsi, r13
+    sub rsi, r12
+    call utf8_decode
+    add r12, rdx
+    mov r14d, eax
     mov esi, eax
     lea ecx, [rax - '0']
     cmp ecx, 9
@@ -133,7 +141,12 @@ FN agents_set_project
     mov esi, '-'
 31: lea rdi, [rip + tmp]
     call sb_push_byte
-    inc r12
+    # Claude's JS regex has no Unicode flag: supplementary characters take two '-'.
+    cmp r14d, 0xffff
+    jbe 3b
+    lea rdi, [rip + tmp]
+    mov esi, '-'
+    call sb_push_byte
     jmp 3b
 4:  mov rdi, [rip + tmp + SB_ptr]
     mov rsi, [rip + tmp + SB_len]
@@ -430,25 +443,77 @@ read_head:
     xor edx, edx
     EPILOGUE
 
+# read_first_line(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
+# Read through newline or EOF, rejecting lines longer than max and read errors.
+read_first_line:
+    PROLOGUE
+    lea r12, [rsi + 1]          # one extra byte distinguishes max bytes from overflow
+    call file_open_read
+    test rax, rax
+    js 9f
+    mov ebx, eax
+    mov r14d, 4096             # grow only for unusually large metadata
+    cmp r14, r12
+    cmova r14, r12
+    lea rdi, [r14 + 1]
+    call mem_alloc
+    mov r13, rax
+    xor r15d, r15d
+1:  mov edi, ebx
+    lea rsi, [r13 + r15]
+    mov rdx, r14
+    sub rdx, r15
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 1b
+    test rax, rax
+    js 8f
+    jz 6f                      # EOF also completes a line without a trailing newline
+    mov rcx, r15
+    add r15, rax
+2:  cmp rcx, r15
+    jae 3f
+    cmp byte ptr [r13 + rcx], 10
+    je 5f
+    inc rcx
+    jmp 2b
+3:  cmp r15, r12
+    jae 8f                     # no newline within max + 1 bytes
+    cmp r15, r14
+    jb 1b                      # continue after a short read
+    add r14, r14
+    cmp r14, r12
+    cmova r14, r12
+    mov rdi, r13
+    lea rsi, [r14 + 1]
+    call mem_realloc
+    mov r13, rax
+    jmp 1b
+5:  mov r15, rcx
+6:  mov byte ptr [r13 + r15], 0
+    mov edi, ebx
+    SYS SYS_close
+    mov rax, r13
+    mov rdx, r15
+    EPILOGUE
+8:  mov edi, ebx
+    SYS SYS_close
+    mov rdi, r13
+    call mem_free
+9:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
 # codex_matches(path) -> 1 if the session_meta cwd equals the project
 codex_matches:
     PROLOGUE
-    mov esi, 16384
-    call read_head
+    mov esi, 1 << 20            # bound metadata reads to 1 MiB, excluding newline
+    call read_first_line
     test rax, rax
     jz 8f
     mov rbx, rax
-    # first line
-    mov rcx, rdx
-    xor r12d, r12d
-1:  cmp r12, rcx
-    jae 2f
-    cmp byte ptr [rbx + r12], 10
-    je 2f
-    inc r12
-    jmp 1b
-2:  mov rdi, rbx
-    mov rsi, r12
+    mov rdi, rbx
+    mov rsi, rdx
     call json_parse
     xor r13d, r13d
     test rax, rax
