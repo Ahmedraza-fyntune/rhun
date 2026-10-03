@@ -9,6 +9,7 @@
 .equ ID_SCM_PULL, ID_SCM + 2            # Pull, Push, Fetch
 .equ ID_SCM_SCROLL, ID_SCM + 5
 .equ ID_SCM_AI, ID_SCM + 6
+.equ ID_SCM_RESET, ID_SCM + 7
 .equ ID_SCM_GROUP, ID_SCM + 0x10        # + group * 4 + button
 .equ ID_SCM_FILE, ID_SCM + 0x100        # + file * 4 + button
 .equ MAX_LINES, 10                      # of the message shown at once
@@ -32,6 +33,7 @@
 .equ S_CHECKOUT_ALL, 14
 .equ S_CLEAN, 15
 .equ S_CLEAN_ALL, 16
+.equ S_RESET_HARD, 17
 
 # operations, one at a time
 .equ OP_NONE, 0
@@ -42,6 +44,7 @@
 .equ OP_FETCH, 5
 .equ OP_PUBLISH, 6
 .equ OP_INDEX, 7                        # stage, unstage, discard
+.equ OP_RESET, 8
 
 # the button under the message
 .equ MB_NONE, 0                         # Commit, with nothing to commit
@@ -75,6 +78,7 @@ remote: .zero 256                       # to publish to
 err: .zero 256                          # what went wrong last
 op_path: .zero 4096
 question: .zero 4200
+reset_root: .zero 4096                  # the repository named by the reset confirmation
 .data
 list_ver: .long -1                      # g_git_ver of the list
 
@@ -164,6 +168,39 @@ FN cmd_git_unstage_all
     mov edi, OP_INDEX
     lea rsi, [rip + seq_unstage_all]
     jmp start
+
+# Reset the index and work tree, then remove untracked files and directories.
+FN cmd_git_reset_all
+    PROLOGUE
+    call ready
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + g_git_rootlen], 4096
+    jae 9f
+    lea rdi, [rip + reset_root]
+    mov rsi, [rip + g_git_root]
+    call cstr_copy
+    lea rdi, [rip + .Lq_reset]
+    lea rsi, [rip + .Lq_reset_text]
+    lea rdx, [rip + .Lb_reset]
+    lea rcx, [rip + reset_confirmed]
+    call app_confirm
+9:  EPILOGUE
+
+reset_confirmed:
+    push rbx
+    mov rdi, [rip + g_git_root]
+    test rdi, rdi
+    jz 9f
+    lea rsi, [rip + reset_root]
+    call strcmp_eq
+    test eax, eax
+    jz 9f
+    mov edi, OP_RESET
+    lea rsi, [rip + seq_reset_all]
+    call start
+9:  pop rbx
+    ret
 
 FN cmd_git_discard_all
     PROLOGUE
@@ -819,6 +856,10 @@ op_finish:
     je 1f
     mov edi, 3
 1:  call git_refresh
+    cmp ebx, OP_RESET
+    jne 2f
+    call explorer_refresh
+2:
     mov dword ptr [rip + g_dirty], 1
     pop rbx
     ret
@@ -1130,6 +1171,11 @@ FN scm_draw
     # Pull, Push, Fetch
     mov edi, r13d
     call draw_remote
+    add r13d, [rip + g_mt + 4*MI_28]
+    add r13d, [rip + g_mt + 4*MI_8]
+    # Reset staged and unstaged changes together, after confirmation.
+    mov edi, r13d
+    call draw_reset
     add r13d, [rip + g_mt + 4*MI_28]
     add r13d, [rip + g_mt + 4*MI_8]
     # what went wrong last
@@ -1540,6 +1586,27 @@ draw_remote:
 4:  call cmd_git_fetch
 5:  inc ebx
     jmp 1b
+9:  EPILOGUE
+
+# draw_reset(y): always available when idle, including untracked empty directories.
+draw_reset:
+    PROLOGUE
+    mov r13d, edi
+    lea rdi, [rip + lbl]
+    call sb_clear
+    lea rdi, [rip + lbl]
+    lea rsi, [rip + .Lb_reset]
+    call sb_push_cstr
+    mov edi, ID_SCM_RESET
+    mov esi, [rip + in_x]
+    mov edx, r13d
+    mov ecx, [rip + in_w]
+    M r8d, MI_28
+    mov r9d, IC_REFRESH
+    call draw_button
+    test eax, eax
+    jz 9f
+    call cmd_git_reset_all
 9:  EPILOGUE
 
 # draw_button(id, x, y, w, h, icon) -> 1 when clicked: a button with the icon and the label in lbl, taking
@@ -2028,6 +2095,10 @@ FN scm_dump_files
 .Lt_synced: .asciz "Synced"
 .Lt_fetched: .asciz "Fetched"
 .Lt_published: .asciz "Branch published"
+.Lt_reset: .asciz "All changes reset"
+.Lq_reset: .asciz "Reset all changes?"
+.Lq_reset_text: .asciz "Staged and unstaged changes will be lost. New files and folders will be deleted."
+.Lb_reset: .asciz "Reset All Changes"
 .Lq_discard: .asciz "Discard changes in "
 .Lq_discard_text: .asciz "Its changes that are not staged will be lost."
 .Lq_delete: .asciz "Delete "
@@ -2059,6 +2130,7 @@ FN scm_dump_files
 .Lw_sync: .asciz "Syncing\342\200\246"
 .Lw_fetch: .asciz "Fetching\342\200\246"
 .Lw_publish: .asciz "Publishing\342\200\246"
+.Lw_reset: .asciz "Resetting\342\200\246"
 .Lr_pull: .asciz "Pull"
 .Lr_push: .asciz "Push"
 .Lr_fetch: .asciz "Fetch"
@@ -2081,6 +2153,7 @@ FN scm_dump_files
 .Ln_fetching: .asciz "fetching"
 .Ln_publishing: .asciz "publishing"
 .Ln_staging: .asciz "staging"
+.Ln_resetting: .asciz "resetting"
 .Lorigin: .ascii "origin"
 # git's arguments
 .Ladd: .asciz "add"
@@ -2102,6 +2175,7 @@ FN scm_dump_files
 .Lremote: .asciz "remote"
 .Lfetch: .asciz "fetch"
 .Lreset: .asciz "reset"
+.Lhard: .asciz "--hard"
 .Lcheckout: .asciz "checkout"
 .Lclean: .asciz "clean"
 .Ldash_d: .asciz "-d"
@@ -2123,6 +2197,7 @@ args_fetch: .quad .Lfetch, 0
 args_add: .quad .Ladd, .Ldash_a, 0
 args_reset: .quad .Lreset, .Ldash_q, 0
 args_reset_all: .quad .Lreset, .Ldash_q, .Ldashdash, .Ldot, 0
+args_reset_hard: .quad .Lreset, .Lhard, .Ldash_q, 0
 args_checkout: .quad .Lcheckout, .Ldash_q, 0
 args_checkout_all: .quad .Lcheckout, .Ldash_q, .Ldashdash, .Ldot, 0
 args_clean: .quad .Lclean, .Lforce, .Ldash_d, .Ldash_q, 0
@@ -2130,15 +2205,15 @@ args_clean: .quad .Lclean, .Lforce, .Ldash_d, .Ldash_q, 0
 step_args:
     .quad 0, args_add_all, args_commit, args_amend, args_pull_cfg, args_pull, args_push, args_remote
     .quad args_publish, args_fetch, args_add, args_reset, args_reset_all, args_checkout, args_checkout_all
-    .quad args_clean, args_clean
+    .quad args_clean, args_clean, args_reset_hard
 # by OP_*
 done_toasts:
-    .quad 0, 0, .Lt_pulled, .Lt_pushed, .Lt_synced, .Lt_fetched, .Lt_published, 0
+    .quad 0, 0, .Lt_pulled, .Lt_pushed, .Lt_synced, .Lt_fetched, .Lt_published, 0, .Lt_reset
 busy_labels:
-    .quad 0, .Lw_commit, .Lw_pull, .Lw_push, .Lw_sync, .Lw_fetch, .Lw_publish, 0
+    .quad 0, .Lw_commit, .Lw_pull, .Lw_push, .Lw_sync, .Lw_fetch, .Lw_publish, 0, .Lw_reset
 op_names:
     .quad .Ln_none, .Ln_committing, .Ln_pulling, .Ln_pushing, .Ln_syncing, .Ln_fetching, .Ln_publishing
-    .quad .Ln_staging
+    .quad .Ln_staging, .Ln_resetting
 # by MB_*
 main_labels:
     .quad .Lm_commit, .Lm_commit, .Lm_commit_all, .Lm_sync, .Lm_publish
@@ -2170,6 +2245,7 @@ seq_discard: .byte S_CHECKOUT, 0
 seq_discard_new: .byte S_CLEAN, 0
 seq_discard_all: .byte S_CHECKOUT_ALL, S_CLEAN_ALL, 0
 seq_clean_all: .byte S_CLEAN_ALL, 0
+seq_reset_all: .byte S_RESET_HARD, S_CLEAN_ALL, 0
 
 .Lai_label: .asciz "AI"
 .Lai_cancel: .asciz "Cancel"

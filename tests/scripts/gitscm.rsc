@@ -14,14 +14,14 @@ cmd git_pull
 wait-git
 print-scm
 # + on a hovered file stages it, - unstages it (the error goes with the next command)
-click 992 350
+click 992 386
 wait-git
 print-scm
-click 992 278
+click 992 314
 wait-git
 print-scm
 # discarding a new file deletes it, after asking
-click 966 306
+click 966 342
 print-state
 key Return
 wait-git
