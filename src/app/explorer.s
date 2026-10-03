@@ -41,6 +41,7 @@ g_menu_cmd: .long 0               # a context menu item is running
 g_menu_keys: .long 0              # the open menu shows its commands' shortcuts
 g_menu_index: .long 0             # the item that was clicked, while its handler runs
 delete_label: .zero 256
+delete_path: .zero 4096          # the path named by the open confirmation
 
 .text
 
@@ -474,7 +475,10 @@ FN cmd_delete_file
     call file_target
     test eax, eax
     jz 1f
-    # "Delete NAME? Type yes"
+    lea rdi, [rip + delete_path]
+    lea rsi, [rip + g_explorer_target]
+    call cstr_copy
+    # "Delete NAME?"
     lea rdi, [rip + g_explorer_target]
     call strlen
     lea rdi, [rip + g_explorer_target]
@@ -494,9 +498,11 @@ FN cmd_delete_file
     lea rsi, [rip + .Ldelete_b]
     call cstr_copy
     lea rdi, [rip + delete_label]
-    mov esi, PROMPT_DELETE
+    lea rsi, [rip + .Ldelete_text]
+    lea rdx, [rip + .Lm4]
+    lea rcx, [rip + explorer_delete_target]
     pop rbx
-    jmp prompt_open
+    jmp app_confirm
 1:  pop rbx
     ret
 
@@ -520,25 +526,22 @@ file_target:
     setne al
     ret
 
-# explorer_delete_target(): remove a file or an empty directory
+# explorer_delete_target(): remove the confirmed file or directory and its contents
 FN explorer_delete_target
     push rbx
-    lea rdi, [rip + g_explorer_target]
-    mov eax, 87                 # unlink
-    XSYS
-    test rax, rax
-    jns 1f
-    lea rdi, [rip + g_explorer_target]
-    mov eax, 84                 # rmdir
-    XSYS
-    test rax, rax
+    lea rdi, [rip + delete_path]
+    call file_remove_tree
+    mov rbx, rax
+    # A failed deletion can still have removed some children.
+    call explorer_refresh
+    test rbx, rbx
     jns 1f
     lea rdi, [rip + .Lnot_deleted]
     call app_toast
     pop rbx
     ret
 1:  mov byte ptr [rip + g_explorer_target], 0
-    call explorer_refresh
+    mov byte ptr [rip + delete_path], 0
     pop rbx
     ret
 
@@ -1403,10 +1406,11 @@ FN menu_print
 .Lnew_folder: .asciz "New folder"
 .Lrename: .asciz "Rename"
 .Ldelete_a: .asciz "Delete "
-.Ldelete_b: .asciz "? Type yes"
+.Ldelete_b: .asciz "?"
+.Ldelete_text: .asciz "This permanently deletes the item and any folder contents."
 .Lp_none: .asciz "none\n"
 .Lp_line: .asciz "-"
-.Lnot_deleted: .asciz "Could not delete (folders must be empty)"
+.Lnot_deleted: .asciz "Could not delete. Check permissions and whether files are in use."
 .Lm1: .asciz "New File"
 .Lm2: .asciz "New Folder"
 .Lm3: .asciz "Rename"
