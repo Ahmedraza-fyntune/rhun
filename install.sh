@@ -93,6 +93,12 @@ fetch() {
         # Bound connection setup and stalled transfers, without limiting healthy downloads.
         set -- "$@" --connect-timeout 10 --speed-limit 1 --speed-time 30 --retry 3
         if [ -z "${RHUN_RELEASES_URL:-}" ]; then set -- "$@" --proto =https --proto-redir =https; fi
+        if [ -n "$quiet" ]; then
+            # Recovered retries stay quiet; report diagnostics only when downloading fails.
+            curl "$@" -o "$file" "$url" 2>"$tmp/download-errors" && return 0
+            cat "$tmp/download-errors" >&2
+            return 1
+        fi
         curl "$@" -o "$file" "$url"
     else
         url=$1 file=$2
