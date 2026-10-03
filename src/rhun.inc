@@ -781,7 +781,6 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_NEW_FILE, 2
 .equ PROMPT_NEW_FOLDER, 3
 .equ PROMPT_RENAME, 4
-.equ PROMPT_DELETE, 6
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0

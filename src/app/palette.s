@@ -689,8 +689,6 @@ prompt_initial:
     je 1f
     cmp eax, PROMPT_RENAME
     je 3f
-    cmp eax, PROMPT_DELETE
-    je 9f
     jmp 2f
 1:  mov rax, [rip + g_doc]
     test rax, rax
@@ -1865,19 +1863,6 @@ palette_accept:
     call tf_text
     test rdx, rdx
     jz .Lpa_close
-    cmp dword ptr [rip + pal_prompt], PROMPT_DELETE
-    jne 70f
-    mov rdi, rax
-    mov rsi, rdx
-    lea rdx, [rip + .Lyes]
-    call str_eq_cstr
-    test eax, eax
-    jz .Lpa_close
-    mov dword ptr [rip + pal_mode], PM_NONE
-    mov dword ptr [rip + g_focus], FOCUS_EDITOR
-    call explorer_delete_target
-    jmp .Lpa_ret
-70:
     # absolute path: relative input is taken from the project root
 .ifdef WINDOWS
     mov rdi, rax
@@ -2094,7 +2079,7 @@ prompt_done:
     call explorer_refresh
     jmp 9f
 3:  cmp r12d, PROMPT_RENAME
-    jne 4f
+    jne 9f
     lea rdi, [rip + g_explorer_target]
     mov rsi, rbx
     SYS SYS_rename
@@ -2112,11 +2097,6 @@ prompt_done:
     call doc_set_path
     call app_update_title
 31: call explorer_refresh
-    jmp 9f
-4:  cmp r12d, PROMPT_DELETE
-    jne 9f
-    # the prompt text must be "yes"
-    call explorer_delete_target
     jmp 9f
 8:  lea rdi, [rip + .Lfailed]
     call app_toast
@@ -2552,14 +2532,10 @@ hint_text:
     cmp dword ptr [rip + pal_mode], PM_GOTO
     je 1f
     lea rax, [rip + .Lhint_path]
-    cmp dword ptr [rip + pal_prompt], PROMPT_DELETE
-    jne 1f
-    lea rax, [rip + .Lhint_delete]
 1:  ret
 
 .section .rodata
 .Lhome: .asciz "HOME"
-.Lyes: .asciz "yes"
 .Ldark: .asciz "dark"
 .Llight: .asciz "light"
 .Lplain: .asciz "Plain Text"
@@ -2576,7 +2552,6 @@ hint_text:
 .Lnl: .ascii "\n"
 .Lhint_goto: .asciz "Enter a line number and press Enter"
 .Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
-.Lhint_delete: .asciz "Type yes and press Enter to delete"
 .Lph_open_file: .asciz "Open a file"
 .Lph_open_folder: .asciz "Open a folder"
 .Lopen_here: .asciz "Open "
