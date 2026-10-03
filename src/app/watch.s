@@ -180,6 +180,9 @@ on_inotify:
     call strcmp_eq
     test eax, eax
     jz 30f
+    call config_changed         # not for a write rhun has already read, or made itself
+    test eax, eax
+    jz 30f
     call app_reload_config
 30: pop rcx
     pop rcx

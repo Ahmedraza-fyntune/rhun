@@ -58,6 +58,8 @@ cfg_commit_model: .quad .Ldefault_model
 
 .bss
 .p2align 3
+cfg_seen_mtime: .quad 0         # the config file's mtime (ns) when rhun last read or wrote it
+.p2align 3
 cfg_path_buf: .zero 1024
 cfg_dir_buf: .zero 1024
 .globl g_keylines
@@ -312,6 +314,11 @@ FN config_load
     inc rbx
     jmp 1b
 2:  mov qword ptr [rip + g_keylines + VEC_len], 0
+    # taken before the read: a write that lands during it still counts as a change
+    call config_path
+    mov rdi, rax
+    call file_mtime_ns
+    mov [rip + cfg_seen_mtime], rax
     call config_path
     mov rdi, rax
     call file_read_all
@@ -501,9 +508,27 @@ FN config_save
     mov rdx, [rsp + SB_len]
     call file_write_all
     mov rbx, rax
+    call config_path
+    mov rdi, rax
+    call file_mtime_ns
+    mov [rip + cfg_seen_mtime], rax
     lea rdi, [rsp]
     call sb_free
     mov rax, rbx
+    EPILOGUE
+
+# config_changed() -> 1 when the config file is not the one rhun last read or wrote. A watcher can
+# report a write late, after rhun has started and read it (macOS FSEvents does); reloading then
+# would undo settings changed since.
+FN config_changed
+    PROLOGUE
+    call config_path
+    mov rdi, rax
+    call file_mtime_ns
+    xor ecx, ecx
+    cmp rax, [rip + cfg_seen_mtime]
+    setne cl
+    mov eax, ecx
     EPILOGUE
 
 # config_dir_each(subdir, ext, cb): cb(path, name) for ~/.config/rhun/<subdir>/*<ext>
