@@ -279,7 +279,14 @@ FN ws_read
     API ReadFile
     test eax, eax
     jz .Lread_pipe_end
-    mov eax, [rsp + 96]
+    mov r12d, [rsp + 96]
+    cmp dword ptr [rbx + FD_kind], FD_PTY
+    jne 6f
+    test r12d, r12d
+    jz 6f
+    mov rdi, rbx
+    call win_pty_output
+6:  mov eax, r12d
     EPILOGUE
 .Lread_pipe_end:
     API GetLastError

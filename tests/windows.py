@@ -256,6 +256,25 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         path.write_text(text, encoding='utf-8', newline='\n')
         return winpath(path)
 
+    def cls_keeps_prompt():
+        # The pseudoconsole is created at 80x24 and resized to the panel before its first output;
+        # if that resize is lost, cls repaints 24 rows into the smaller grid and the prompt scrolls away.
+        project = temp / 'cls'
+        project.mkdir()
+        env = environment('cls')
+        config = temp / 'cls' / 'config' / 'rhun' / 'config'
+        config.parent.mkdir(parents=True)
+        config.write_text('[terminal]\nshell = C:/Windows/System32/cmd.exe\n'
+                          '[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
+        script = script_file('cls', 'cmd new_terminal\nwait 3000\ntype echo before\nkey Return\nwait 1500\n'
+                                    'type cls\nkey Return\nwait 3000\nprint-term\nquit\n')
+        out = run('rhun.com', winpath(project), '--headless', '1000x700', '--script', script, env=env).stdout
+        screen = out.decode('utf-8', 'replace').splitlines()
+        assert b'before' not in out, out
+        assert any(line.rstrip().endswith('>') for line in screen[:3]), out
+    if not args.wine:
+        check('terminal/cls-keeps-prompt', cls_keeps_prompt)
+
     def session():
         project = temp / 'project space % café'
         project.mkdir()

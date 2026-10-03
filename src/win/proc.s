@@ -10,6 +10,8 @@
 .equ PT_head, 40
 .equ PT_tail, 44
 .equ PT_stop, 48
+.equ PT_size, 52                # the COORD last asked for by pty_resize
+.equ PT_seen, 56                # the console has produced output
 .equ PT_data, 64
 .equ PT_SIZE, 65600
 .bss
@@ -632,6 +634,9 @@ FN pty_open
     mov eax, -1
     EPILOGUE
 
+# ConPTY drops a resize made before the console's first output (it reports success all the same)
+# and keeps the size it was created with: its later repaints, as after cls, then scroll the grid.
+# The size is kept, and win_pty_output asks again once the console has produced output.
 FN pty_resize
     PROLOGUE 96
     mov r12d, esi
@@ -644,6 +649,21 @@ FN pty_resize
     mov edx, r13d
     shl edx, 16
     mov dx, r12w
+    mov [rax + PT_size], edx
+    API ResizePseudoConsole
+9:  EPILOGUE
+
+# win_pty_output(fd entry): the first output of a pseudoconsole; a size asked for earlier is applied now
+FN win_pty_output
+    PROLOGUE 32
+    mov rax, [rdi + FD_aux]
+    cmp dword ptr [rax + PT_seen], 0
+    jne 9f
+    mov dword ptr [rax + PT_seen], 1
+    mov edx, [rax + PT_size]
+    test edx, edx
+    jz 9f
+    mov rcx, [rax + PT_pc]
     API ResizePseudoConsole
 9:  EPILOGUE
 
