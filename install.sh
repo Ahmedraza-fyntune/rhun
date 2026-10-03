@@ -25,12 +25,38 @@ RELEASES=https://github.com/vshvedov/rhun/releases
 TEAM_ID=G29V3JRMJJ
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
+output_style() {
+    bold='' dim='' cyan='' green='' red='' reset=''
+    if [ -t 2 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then
+        bold=$(printf '\033[1m') dim=$(printf '\033[2m')
+        cyan=$(printf '\033[36m') green=$(printf '\033[32m') red=$(printf '\033[31m')
+        reset=$(printf '\033[0m')
+    fi
+}
+
 say() {
-    if [ -z "$quiet" ]; then printf '%s\n' "$*"; fi
+    if [ -z "$quiet" ]; then printf '  %s›%s %s\n' "$cyan" "$reset" "$*" >&2; fi
+}
+
+banner() {
+    printf '\n%s%s' "$bold" "$cyan" >&2
+    cat <<'EOF' >&2
+         _       ^
+    _ __| |__  _   _ _ __
+   | '__| '_ \| | | | '_ \
+   | |  | | | | |_| | | | |
+   |_|  |_| |_|\__,_|_| |_|
+EOF
+    printf '%s\n  %srhûn installer%s\n\n' "$reset" "$dim" "$reset" >&2
+}
+
+installed() {
+    printf '\n  %s✓%s %srhun %s is installed%s\n  %s%s%s\n\n' \
+        "$green" "$reset" "$bold" "$version" "$reset" "$dim" "$1" "$reset" >&2
 }
 
 fail() {
-    printf 'rhun install: %s\n' "$*" >&2
+    printf '  %s✗%s rhun install: %s\n' "$red" "$reset" "$*" >&2
     exit 1
 }
 
@@ -55,14 +81,14 @@ platform() {
     case "$(uname -s)" in
     Linux)
         case "$(uname -m)" in
-        x86_64 | amd64) os=linux; ending=linux-x86_64.tar.gz ;;
+        x86_64 | amd64) os=linux; ending=linux-x86_64.tar.gz; platform_name='Linux, x86-64' ;;
         *) fail "$msg; this is Linux on $(uname -m)" ;;
         esac
         ;;
     Darwin)
         # a shell under Rosetta says x86_64: ask the hardware
         if [ "$(uname -m)" = arm64 ] || [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
-            os=mac; ending=macos-arm64.zip
+            os=mac; ending=macos-arm64.zip; platform_name='macOS, Apple silicon'
         else
             fail "$msg; this Mac has an Intel processor"
         fi
@@ -82,14 +108,13 @@ downloader() {
     fi
 }
 
-# fetch URL FILE
+# fetch URL FILE [progress]
 fetch() {
-    # latest_version captures stdout, so download feedback belongs on stderr.
-    say "downloading ${2##*/}" >&2
+    progress=${3:-}
     if [ "$dl" = curl ]; then
         url=$1 file=$2
         set -- -fsSL
-        if [ -z "$quiet" ] && [ -t 2 ]; then set -- -fL --progress-bar; fi
+        if [ -z "$quiet" ] && [ -t 2 ] && [ "$progress" = progress ]; then set -- -fL --progress-bar; fi
         # Bound connection setup and stalled transfers, without limiting healthy downloads.
         set -- "$@" --connect-timeout 10 --speed-limit 1 --speed-time 30 --retry 3
         if [ -z "${RHUN_RELEASES_URL:-}" ]; then set -- "$@" --proto =https --proto-redir =https; fi
@@ -105,11 +130,16 @@ fetch() {
         set -- -nv
         if [ -n "$quiet" ]; then
             set -- -q
-        elif [ -t 2 ]; then
-            set --
+        elif [ -t 2 ] && [ "$progress" = progress ]; then
+            set -- -nv --show-progress
+            wget "$@" --dns-timeout=10 --connect-timeout=10 --read-timeout=30 --tries=4 \
+                --retry-on-http-error=429,500,502,503,504 -O "$file" "$url"
+            return $?
         fi
         wget "$@" --dns-timeout=10 --connect-timeout=10 --read-timeout=30 --tries=4 \
-            --retry-on-http-error=429,500,502,503,504 -O "$file" "$url"
+            --retry-on-http-error=429,500,502,503,504 -O "$file" "$url" 2>"$tmp/download-errors" && return 0
+        cat "$tmp/download-errors" >&2
+        return 1
     fi
 }
 
@@ -118,6 +148,7 @@ valid_version() {
 }
 
 latest_version() {
+    say 'Checking latest release'
     fetch "$base/latest/download/VERSION" "$tmp/VERSION" || fail "could not find the latest release at $base"
     tr -d ' \r\n' < "$tmp/VERSION"
 }
@@ -125,7 +156,9 @@ latest_version() {
 # download: the archive of $version into $tmp, checked against the release's SHA256SUMS
 download() {
     name=rhun-$version-$ending
-    fetch "$base/download/v$version/$name" "$tmp/$name" || fail "could not download $name; is $version a release?"
+    say "Downloading rhun $version"
+    fetch "$base/download/v$version/$name" "$tmp/$name" progress || fail "could not download $name; is $version a release?"
+    say 'Checking download integrity'
     fetch "$base/download/v$version/SHA256SUMS" "$tmp/SHA256SUMS" || fail "could not download the checksums of $version"
     want=$(awk -v f="$name" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
     [ -n "$want" ] || fail "$name is not in the checksums of $version"
@@ -137,6 +170,7 @@ download() {
         fail "needs sha256sum or shasum to check the download"
     fi
     [ "$got" = "$want" ] || fail "$name does not match its checksum; nothing was installed"
+    say 'Download verified'
 }
 
 # installed_version TARGET: the version the installation reports, or nothing
@@ -151,6 +185,7 @@ installed_version() {
 # ---------------- Linux ----------------
 
 unpack_linux() {
+    say 'Unpacking archive'
     mkdir "$tmp/x"
     tar -xzf "$tmp/$name" -C "$tmp/x" || fail "could not unpack $name"
     src=$tmp/x/rhun-$version
@@ -206,10 +241,12 @@ refresh_desktop() {
 # ---------------- macOS ----------------
 
 unpack_mac() {
+    say 'Unpacking archive'
     mkdir "$tmp/x"
     ditto -x -k "$tmp/$name" "$tmp/x" || fail "could not unpack $name"
     src=$tmp/x/rhun.app
     [ -d "$src" ] || fail "$name has no rhun.app"
+    say 'Verifying app signature'
     codesign --verify --strict --deep "$src" 2>/dev/null || fail "the signature of rhun.app is not valid; nothing was installed"
     team=$(codesign -dv "$src" 2>&1 | sed -n 's/^TeamIdentifier=//p')
     [ "$team" = "${RHUN_TEAM_ID:-$TEAM_ID}" ] || fail "rhun.app is not signed by rhun's developer ($team); nothing was installed"
@@ -359,22 +396,25 @@ remove_path_from() {
 # ---------------- what the options ask ----------------
 
 install_fresh() {
+    printf '\n  %sInstalling rhun %s%s%s (%s)\n\n' "$bold" "$cyan" "$version" "$reset" "$platform_name" >&2
     download
     if [ "$os" = linux ]; then
         prefix=${prefix:-$HOME/.local}
         unpack_linux
+        say 'Installing binary and desktop entry'
         place_binary "$prefix/bin/rhun"
         place_desktop "$prefix" "$prefix/bin/rhun"
         add_path "$prefix/bin"
-        say "rhun $version is installed in $prefix"
+        installed "$prefix"
         say "start it from your applications, or run: rhun [folder]"
     else
         appdir=${appdir:-$(default_app_dir)}
         unpack_mac
+        say 'Installing app and terminal command'
         place_app "$appdir/rhun.app"
         place_wrapper "$appdir/rhun.app"
         add_path "$HOME/.local/bin"
-        say "rhun $version is installed in $appdir"
+        installed "$appdir"
         say "start it from Launchpad or Spotlight, or run: rhun [folder]"
     fi
 }
@@ -434,6 +474,7 @@ uninstall() {
 
 main() {
     version='' prefix='' appdir='' modify_path=1 mode=install target='' quiet=''
+    output_style
     while [ $# -gt 0 ]; do
         case $1 in
         --version) version=${2:-}; shift ;;
@@ -456,6 +497,9 @@ main() {
     if [ "$mode" = uninstall ]; then
         uninstall
         return 0
+    fi
+    if [ -z "$quiet" ]; then
+        banner
     fi
     base=${RHUN_RELEASES_URL:-$RELEASES}
     downloader

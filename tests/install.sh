@@ -131,8 +131,11 @@ cat install.sh | env -u ZDOTDIR HOME="$H" XDG_CONFIG_HOME="$H/.config" SHELL=/bi
 t "exit $st" [ $st = 0 ]
 t "rhun --version" [ "$("$bin" --version 2>&1)" = "rhun 1.0.0" ]
 t "said where" said "rhun 1.0.0 is installed"
-t "version download feedback" said "downloading VERSION"
-t "checksum download feedback" said "downloading SHA256SUMS"
+t "release discovery feedback" said "Checking latest release"
+t "resolved version feedback" said "Installing rhun 1.0.0"
+t "archive download feedback" said "Downloading rhun 1.0.0"
+t "checksum feedback" said "Download verified"
+t "no metadata filename feedback" sh -c '! grep -qF "VERSION" "$1"' sh "$w/out"
 if [ $os = linux ]; then
     t "Exec is the binary's path" grep -qxF "Exec=$bin %F" "$H/.local/share/applications/rhun.desktop"
     t "icons" [ -f "$H/.local/share/icons/hicolor/scalable/apps/rhun.svg" ]
@@ -162,6 +165,8 @@ inst "$@"
 t "again: exit $st" [ $st = 0 ]
 t "again: PATH once" [ "$(grep -c '^# rhun$' "$H/.zshrc")" = 1 ]
 end
+
+python3 tests/install-output.py "$url" || fail=1
 
 release 99.0.0
 begin update

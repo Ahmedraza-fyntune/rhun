@@ -70,9 +70,9 @@ class Downloads(unittest.TestCase):
                 self.assertEqual(result.returncode, 0 if quiet and transient else 1, result.stderr)
                 self.assertEqual(result.stdout, "")
                 if quiet:
-                    self.assertNotIn("downloading VERSION", result.stderr)
+                    self.assertNotIn("Checking latest release", result.stderr)
                 else:
-                    self.assertIn("downloading VERSION", result.stderr)
+                    self.assertIn("Checking latest release", result.stderr)
                 if transient:
                     self.assertEqual(len(requests), 2, result.stderr)
                     if quiet:
