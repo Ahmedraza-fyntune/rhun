@@ -18,6 +18,9 @@
 .equ ID_SPLIT_R, 0x2701
 .equ ID_DLG, 0x2800              # + button
 .equ ID_STATUS, 0x2900           # + item
+.equ TIP_DELAY, 500              # ms of steady hover before a titlebar tooltip shows
+.equ ID_EXP_NEW, 0x3f00          # kept in sync with explorer.s
+.equ ID_EXP_REFRESH, 0x3f01
 .equ RHUN_LEN, 5                 # bytes of "rhûn", the name on the welcome screen
 .equ ID_WELCOME, 0x2a00          # + item
 
@@ -32,6 +35,17 @@ g_branch: .zero 64
 .globl g_toast, g_toast_until
 g_toast: .zero 256
 g_toast_until: .quad 0
+tip_id: .long 0                  # titlebar button with an armed/visible tooltip, 0 = none
+tip_cand: .long 0                # hovered button this frame, collected in titlebar_draw
+tip_x: .long 0                   # its x and width, for anchoring the tooltip
+tip_w: .long 0
+tip_bottom: .long 0              # titlebar bottom (tooltip top = bottom + gap)
+tip_cx: .long 0
+tip_cy: .long 0                   # candidate anchor: button bottom the tooltip hangs from
+tip_cw: .long 0
+tip_shown: .long 0               # 1 once the debounce expired and a redraw was requested
+.p2align 3
+tip_since: .quad 0               # time_ms when tip_id started hovering (debounce)
 g_tabscroll: .long 0
 g_side_px: .long 0
 g_agents_px: .long 0
@@ -1248,11 +1262,23 @@ FN app_timeout
     cmp eax, ebx
     jge 5f
 51: mov ebx, eax
-5:  mov eax, ebx
+5:  push rbx
+    call tip_timeout
+    mov ecx, eax
+    pop rbx
+    cmp ecx, -1
+    je 6f
+    cmp ebx, -1
+    je 61f
+    cmp ecx, ebx
+    jge 6f
+61: mov ebx, ecx
+6:  mov eax, ebx
     EPILOGUE
 
 FN app_tick
     PROLOGUE
+    call tip_tick
     call ed_blink_tick
     mov rax, [rip + g_toast_until]
     test rax, rax
@@ -1275,6 +1301,7 @@ FN app_render
     PROLOGUE 64
     call ui_update_metrics
     call ui_begin
+    mov dword ptr [rip + tip_cand], 0   # hovered-button candidates are collected below
     mov eax, [rip + g_cv + CV_w]
     mov [rsp], eax              # W
     mov eax, [rip + g_cv + CV_h]
@@ -1437,6 +1464,7 @@ FN app_render
     call palette_draw
     call dialog_draw
     call toast_draw
+    call tip_draw
     mov edi, [rsp + 36]
     test edi, edi
     jz 2f
@@ -1696,6 +1724,14 @@ FN titlebar_draw
     mov r8d, r13d
     mov r9d, IC_SIDEBAR
     call ui_icon_btn
+    mov [rsp + 36], eax
+    mov edi, ID_TOG_SIDE
+    mov esi, r12d
+    M edx, MI_TITLE
+    mov ecx, r13d
+    mov r8d, [rsp + 36]
+    call tip_note
+    mov eax, [rsp + 36]
     test eax, UB_CLICK
     jz 3f
     call cmd_toggle_sidebar
@@ -1877,6 +1913,14 @@ FN titlebar_draw
     mov r8d, r13d
     mov r9d, IC_SLIDERS
     call ui_icon_btn
+    mov [rsp + 36], eax
+    mov edi, ID_SETTINGS_BTN
+    mov esi, r12d
+    M edx, MI_TITLE
+    mov ecx, r13d
+    mov r8d, [rsp + 36]
+    call tip_note
+    mov eax, [rsp + 36]
     test eax, UB_CLICK
     jz 8f
     call cmd_settings
@@ -1891,6 +1935,14 @@ FN titlebar_draw
     mov r8d, r13d
     mov r9d, IC_SPARK
     call ui_icon_btn
+    mov [rsp + 36], eax
+    mov edi, ID_TOG_AGENTS
+    mov esi, r12d
+    M edx, MI_TITLE
+    mov ecx, r13d
+    mov r8d, [rsp + 36]
+    call tip_note
+    mov eax, [rsp + 36]
     test eax, UB_CLICK
     jz 81f
     call cmd_toggle_agents
@@ -1905,6 +1957,14 @@ FN titlebar_draw
     mov r8d, r13d
     mov r9d, IC_TERMINAL
     call ui_icon_btn
+    mov [rsp + 36], eax
+    mov edi, ID_TOG_TERM
+    mov esi, r12d
+    M edx, MI_TITLE
+    mov ecx, r13d
+    mov r8d, [rsp + 36]
+    call tip_note
+    mov eax, [rsp + 36]
     test eax, UB_CLICK
     jz 82f
     call cmd_toggle_terminal
@@ -1921,10 +1981,19 @@ FN titlebar_draw
     mov r8d, r13d
     mov r9d, IC_BRANCH
     call ui_icon_btn
+    mov [rsp + 36], eax
+    mov edi, ID_GIT_BTN
+    mov esi, r12d
+    M edx, MI_TITLE
+    mov ecx, r13d
+    mov r8d, [rsp + 36]
+    call tip_note
+    mov eax, [rsp + 36]
     test eax, UB_CLICK
     jz 9f
     call cmd_toggle_git
-9:  # a press on a button must not start a window move: the compositor would take the release
+9:  call tip_commit
+    # a press on a button must not start a window move: the compositor would take the release
     cmp dword ptr [rip + g_hot], 0
     jne 13f
     mov edi, ID_TITLE
@@ -2967,6 +3036,219 @@ FN app_confirm
     mov dword ptr [rip + g_dirty], 1
     ret
 
+# ---------------- titlebar tooltips (debounced hover) ----------------
+
+# tip_note(id, x, y_bottom, w, flags): remember a hovered button for this frame
+FN tip_note
+    test r8d, UB_HOVER
+    jz 1f
+    mov [rip + tip_cand], edi
+    mov [rip + tip_cx], esi
+    mov [rip + tip_cy], edx
+    mov [rip + tip_cw], ecx
+1:  ret
+
+# tip_commit(): fold this frame's hovered button into the debounced tooltip state.
+# A new button restarts the delay; steady hover keeps it; no hover hides at once.
+FN tip_commit
+    push rbx
+    # a press or drag hides the tooltip and restarts the hover once released
+    cmp dword ptr [rip + g_mdown], 0
+    jne .Ltip_clear
+    test dword ptr [rip + g_pressed], 1 << BTN_LEFT
+    jnz .Ltip_clear
+    mov eax, [rip + tip_cand]
+    cmp eax, [rip + tip_id]
+    je .Ltip_same
+    mov [rip + tip_id], eax
+    mov dword ptr [rip + tip_shown], 0
+    test eax, eax
+    jz .Ltip_done
+    mov eax, [rip + tip_cx]
+    mov [rip + tip_x], eax
+    mov eax, [rip + tip_cy]
+    mov [rip + tip_bottom], eax
+    mov eax, [rip + tip_cw]
+    mov [rip + tip_w], eax
+    call time_ms
+    mov [rip + tip_since], rax
+    jmp .Ltip_done
+.Ltip_same:
+    test eax, eax
+    jz .Ltip_done
+    # keep the anchor with the layout (e.g. branch label shifts buttons)
+    mov ebx, [rip + tip_cx]
+    cmp ebx, [rip + tip_x]
+    jne 1f
+    mov ebx, [rip + tip_cy]
+    cmp ebx, [rip + tip_bottom]
+    jne 1f
+    mov ebx, [rip + tip_cw]
+    cmp ebx, [rip + tip_w]
+    je .Ltip_done
+1:  mov eax, [rip + tip_cx]
+    mov [rip + tip_x], eax
+    mov eax, [rip + tip_cy]
+    mov [rip + tip_bottom], eax
+    mov eax, [rip + tip_cw]
+    mov [rip + tip_w], eax
+    jmp .Ltip_done
+.Ltip_clear:
+    mov dword ptr [rip + tip_cand], 0
+    cmp dword ptr [rip + tip_id], 0
+    je .Ltip_done
+    mov dword ptr [rip + tip_id], 0
+    mov dword ptr [rip + tip_shown], 0
+.Ltip_done:
+    pop rbx
+    ret
+
+# tip_timeout() -> eax ms until the pending tooltip shows, or -1
+FN tip_timeout
+    cmp dword ptr [rip + tip_id], 0
+    je 2f
+    cmp dword ptr [rip + tip_shown], 0
+    jne 2f
+    cmp dword ptr [rip + g_mdown], 0
+    jne 2f
+    push rbx
+    call time_ms
+    mov rbx, rax
+    sub rbx, [rip + tip_since]
+    cmp rbx, TIP_DELAY
+    jge 1f
+    mov eax, TIP_DELAY
+    sub eax, ebx
+    pop rbx
+    ret
+1:  pop rbx
+2:  mov eax, -1
+    ret
+
+# tip_tick(): wake up once when the debounce expires so the tooltip appears
+FN tip_tick
+    cmp dword ptr [rip + tip_id], 0
+    je 1f
+    cmp dword ptr [rip + tip_shown], 0
+    jne 1f
+    cmp dword ptr [rip + g_mdown], 0
+    jne 1f
+    push rbx
+    call time_ms
+    sub rax, [rip + tip_since]
+    cmp rax, TIP_DELAY
+    jl 2f
+    mov dword ptr [rip + tip_shown], 1
+    mov dword ptr [rip + g_dirty], 1
+2:  pop rbx
+1:  ret
+
+# tip_text(id) -> rax cstr for the tooltip, or 0
+tip_text:
+    cmp edi, ID_GIT_BTN
+    jne 1f
+    lea rax, [rip + .Ltip_git]
+    ret
+1:  cmp edi, ID_TOG_TERM
+    jne 2f
+    lea rax, [rip + .Ltip_term]
+    ret
+2:  cmp edi, ID_TOG_AGENTS
+    jne 3f
+    lea rax, [rip + .Ltip_agents]
+    ret
+3:  cmp edi, ID_SETTINGS_BTN
+    jne 4f
+    lea rax, [rip + .Ltip_settings]
+    ret
+4:  cmp edi, ID_TOG_SIDE
+    jne 5f
+    lea rax, [rip + .Ltip_side]
+    ret
+5:  cmp edi, ID_EXP_NEW
+    jne 6f
+    lea rax, [rip + .Ltip_exp_new]
+    ret
+6:  cmp edi, ID_EXP_REFRESH
+    jne 7f
+    lea rax, [rip + .Ltip_exp_refresh]
+    ret
+7:  xor eax, eax
+    ret
+
+# tip_draw(): the tooltip itself, on top of everything else
+FN tip_draw
+    PROLOGUE 32
+    cmp dword ptr [rip + tip_id], 0
+    je 9f
+    cmp dword ptr [rip + tip_shown], 0
+    je 9f
+    cmp dword ptr [rip + g_mdown], 0
+    jne 9f
+    # no tooltip over an open menu/dialog: it would overlap the menu
+    call ctx_menu_list
+    test rax, rax
+    jnz 9f
+    mov edi, [rip + tip_id]
+    call tip_text
+    test rax, rax
+    jz 9f
+    mov [rsp], rax
+    mov rdi, rax
+    call strlen
+    mov [rsp + 8], rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rsp]
+    mov rdx, rax
+    call text_width
+    mov r12d, eax
+    add r12d, [rip + g_mt + 4*MI_8]
+    add r12d, [rip + g_mt + 4*MI_8]
+    M ebx, MI_24
+    # x = button center - w/2, clamped into the window
+    mov esi, [rip + tip_x]
+    mov eax, [rip + tip_w]
+    shr eax, 1
+    add esi, eax
+    mov eax, r12d
+    shr eax, 1
+    sub esi, eax
+    M eax, MI_4
+    cmp esi, eax
+    jge 1f
+    mov esi, eax
+1:  mov eax, [rip + g_cv + CV_w]
+    sub eax, r12d
+    sub eax, [rip + g_mt + 4*MI_4]
+    cmp esi, eax
+    jle 2f
+    mov esi, eax
+    M eax, MI_4
+    cmp esi, eax
+    jge 2f
+    mov esi, eax
+2:  mov [rsp + 16], esi
+    mov eax, [rip + tip_bottom]
+    add eax, [rip + g_mt + 4*MI_4]
+    mov [rsp + 20], eax
+    mov edi, esi
+    mov esi, eax
+    mov edx, r12d
+    mov ecx, ebx
+    call ui_card
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 16]
+    mov edx, [rsp + 20]
+    mov ecx, r12d
+    mov r8d, ebx
+    mov r9, [rsp]
+    COLOR eax, T_FG
+    push rax
+    push rax
+    call ui_text_center
+    add rsp, 16
+9:  EPILOGUE
+
 # ---------------- toast ----------------
 
 toast_draw:
@@ -3223,6 +3505,13 @@ FN cmd_move_line_down
 .Lsave_failed: .asciz "Could not save the file"
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
+.Ltip_git: .asciz "Git history"
+.Ltip_term: .asciz "Terminal"
+.Ltip_agents: .asciz "Agents"
+.Ltip_settings: .asciz "Settings"
+.Ltip_side: .asciz "File explorer"
+.Ltip_exp_new: .asciz "New file"
+.Ltip_exp_refresh: .asciz "Refresh explorer"
 .Lgit_tab: .asciz "Git"
 .Lln: .asciz "Ln "
 .Lcol: .asciz ", Col "
