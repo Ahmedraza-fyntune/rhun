@@ -122,8 +122,9 @@ esac
     assert not (temp / 'calls').exists()
     output = run('--make-default')
     calls = (temp / 'calls').read_text().splitlines()
-    assert 'default rhun.desktop text/plain' in calls
-    assert 'default rhun.desktop application/json' in calls
+    defaults = [line.split() for line in calls if line.startswith('default ')]
+    assert len(defaults) == 1 and defaults[0][1] == 'rhun.desktop', calls
+    assert {'text/plain', 'application/json'} <= set(defaults[0][2:])
     assert not any('image/' in line or 'inode/' in line for line in calls)
     assert b'rhun is the default editor' in output
     print('ok   associations/linux-opt-in-and-configure-without-download', flush=True)

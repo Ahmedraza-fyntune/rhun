@@ -170,7 +170,7 @@ on_inotify:
     mov dword ptr [rsp + 4], 1
 2:  test ecx, WK_DOCS
     jz 3f
-    test r15d, IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE
+    test r15d, IN_CLOSE_WRITE | IN_MOVED_TO
     jz 3f
     push rcx
     push rcx
@@ -375,11 +375,10 @@ reload_changed:
     je 9f                      # includes our own saves
     cmp rax, [rbx + DOC_disk_seen]
     je 9f
-    mov [rbx + DOC_disk_seen], rax
     mov rdi, rbx
     call doc_dirty
     test eax, eax
-    jnz 7f
+    jnz 7f                     # the stamp stays unseen: a later clean state still loads it
     mov rdi, rbx
     call app_reload_doc
     test eax, eax
@@ -396,6 +395,24 @@ reload_changed:
     mov qword ptr [rbx + DOC_disk_until], 0
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
+
+# watch_doc_clean(doc): undo or redo back to the saved state loads a version kept out by local edits
+FN watch_doc_clean
+    test dword ptr [rdi + DOC_flags], DF_DISK_CHANGED
+    jz 9f
+    cmp qword ptr [rdi + DOC_reload_at], 0
+    jne 9f
+    push rbx
+    mov rbx, rdi
+    call doc_dirty
+    test eax, eax
+    jnz 8f
+    call time_ms
+    add rax, RELOAD_DELAY_MS
+    mov [rbx + DOC_reload_at], rax
+    call tick_at
+8:  pop rbx
+9:  ret
 
 # disk_range(doc, new text, length) -> changed in eax, prefix in rdx, old end in rcx, new end in r8.
 # Find a common prefix and suffix directly in the gap buffer, with no second file-sized allocation
@@ -479,7 +496,7 @@ disk_range:
     mov eax, 1
     EPILOGUE
 
-# app_reload_doc(doc) -> 1 if text changed, 0 if identical or unreadable; keep cursor and scroll
+# app_reload_doc(doc) -> 1 if text changed, 0 if identical, unreadable or an image; keep cursor and scroll
 FN app_reload_doc
     PROLOGUE 32
     mov rbx, rdi
@@ -539,27 +556,17 @@ FN app_reload_doc
     mov rdi, rbx
     call doc_end_group
     mov rdi, rbx
-    call doc_note_eol
-    mov rdi, r12
-    call mem_free
-    mov rdi, rbx
     call doc_len
     cmp r14, rax
     cmova r14, rax
     mov [rbx + DOC_cur], r14
     mov [rbx + DOC_anchor], r14
     mov [rbx + DOC_scrolly], r15
-    mov rax, [rbx + DOC_undo + VEC_len]
-    mov [rbx + DOC_savepoint], rax
-    mov rax, [rsp + 24]
-    mov [rbx + DOC_mtime], rax
-    mov [rbx + DOC_disk_seen], rax
-    and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
-    mov qword ptr [rbx + DOC_disk_until], 0
-    mov dword ptr [rip + g_dirty], 1
-    mov eax, 1
-    EPILOGUE
+    mov dword ptr [rsp], 1
+    jmp .Lrd_done
 .Lrd_same:
+    mov dword ptr [rsp], 0
+.Lrd_done:
     mov rdi, r12
     call mem_free
     mov rdi, rbx
@@ -572,6 +579,8 @@ FN app_reload_doc
     and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
     mov qword ptr [rbx + DOC_disk_until], 0
     mov dword ptr [rip + g_dirty], 1
+    mov eax, [rsp]
+    EPILOGUE
 9:  xor eax, eax
     EPILOGUE
 .Lrd_unstable:
@@ -597,7 +606,7 @@ FN app_reload_doc
     mov rdi, [rbx + DOC_img]
     call iv_reload
     mov dword ptr [rip + g_dirty], 1
-    mov eax, 1
+    xor eax, eax               # the editor fade has nothing to show for an image
     EPILOGUE
 
 FN cmd_reload_file

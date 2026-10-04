@@ -29,7 +29,8 @@ a thin highlight at the top also signals changes outside the visible lines.
 **Animate changed text** in Settings > Editor is on by default. Turn it off to hide both highlights;
 files still reload. The config key is `animate_disk_changes = true` under `[editor]`.
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
-command palette to load the disk version, or save to keep your version.
+command palette to load the disk version, or save to keep your version. Undoing back to the saved
+state loads the disk version too.
 
 ## Install and update
 

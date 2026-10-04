@@ -841,6 +841,8 @@ FN doc_undo
     mov [rbx + DOC_anchor], rax
     mov qword ptr [rbx + DOC_lastkind], EK_OTHER
     mov qword ptr [rbx + DOC_prefx], -1
+    mov rdi, rbx
+    call watch_doc_clean
     mov eax, 1
     EPILOGUE
 .Lu_none:
@@ -898,6 +900,8 @@ FN doc_redo
     mov [rbx + DOC_anchor], rax
     mov qword ptr [rbx + DOC_lastkind], EK_OTHER
     mov qword ptr [rbx + DOC_prefx], -1
+    mov rdi, rbx
+    call watch_doc_clean
     mov eax, 1
     EPILOGUE
 .Lr_none:

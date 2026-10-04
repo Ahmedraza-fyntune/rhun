@@ -331,11 +331,11 @@ choose_default_editor() {
             return 0
         fi
         missed=0
+        # one call for every type: each xdg-mime run rewrites mimeapps.list
+        # shellcheck disable=SC2086
+        xdg-mime default rhun.desktop $types || true
         for type in $types; do
-            if ! xdg-mime default rhun.desktop "$type" ||
-                [ "$(xdg-mime query default "$type" 2>/dev/null)" != rhun.desktop ]; then
-                missed=$((missed + 1))
-            fi
+            [ "$(xdg-mime query default "$type" 2>/dev/null)" = rhun.desktop ] || missed=$((missed + 1))
         done
         if [ "$missed" = 0 ]; then
             say 'rhun is the default editor for the registered text types'
@@ -356,6 +356,7 @@ function run(argv) {
     argv[1].split(' ').forEach(function(ext) {
         var uti = $.UTTypeCreatePreferredIdentifierForTag($('public.filename-extension'), $(ext), $('public.text'));
         if (!uti) return;
+        if ($.UTTypeConformsTo(uti, $('public.image'))) return; // svg: images keep their viewer
         var name = ObjC.unwrap(ObjC.castRefToObject(uti));
         if (seen[name]) return;
         seen[name] = true;

@@ -226,6 +226,21 @@ class LiveReload(unittest.TestCase):
         self.assertEqual(self.document(), 'after café\n')
         self.assertEqual(self.warning_strip(self.shot('reverted')).count(warning), 0)
 
+    def test_undo_back_to_saved_state_loads_the_disk_version(self):
+        self.start()
+        self.open_quick()
+        self.command('type local_')
+        self.external_write()
+        self.settle()
+        self.assertEqual(self.document(), 'local_before\n')
+        warning = bytes.fromhex('f2c46f')
+        self.assertGreater(self.warning_strip(self.shot('conflict')).count(warning), 100)
+        self.command('cmd undo')
+        self.settle()
+        self.assertEqual(self.document(), 'after café\n')
+        self.assertIn('dirty=0', self.command('print-state'))
+        self.assertEqual(self.warning_strip(self.shot('resolved')).count(warning), 0)
+
     def test_local_edits_started_during_debounce_stay(self):
         self.start(self.file)
         self.external_write()
@@ -393,14 +408,30 @@ class LiveReload(unittest.TestCase):
         self.assertEqual(self.document(), 'local_before\n')
         self.assertNotEqual(self.warning_strip(self.shot('conflict')), baseline)
 
-    def test_settings_switch_persists_and_controls_next_launch(self):
-        self.start(self.file)
+    def toggle_animation_in_settings(self, expected):
+        """Click the Animate changed text switch, then check that no other setting moved."""
+        config = self.work / 'config/rhun/config'
+
+        def settings():
+            pairs = (line.partition(' = ') for line in config.read_text().splitlines())
+            return {key: value for key, sep, value in pairs if sep}
+        before = settings()
         self.command('cmd settings')
         self.command('move 500 350')
         self.command('scroll 1200')
         self.command('click 827 308')
         self.command('quit')
         self.process.wait(timeout=5)
+        after = settings()
+        # The whole configuration is written on exit; only a value that moved means a wrong click.
+        moved = sorted(key for key in before if key in after and before[key] != after[key])
+        self.assertEqual(after.get('animate_disk_changes'), expected, after)
+        self.assertLessEqual(set(moved), {'animate_disk_changes'},
+                             f'the click at 827 308 toggled another setting: {moved}')
+
+    def test_settings_switch_persists_and_controls_next_launch(self):
+        self.start(self.file)
+        self.toggle_animation_in_settings('false')
         config = self.work / 'config/rhun/config'
         self.assertIn('animate_disk_changes = false\n', config.read_text())
         self.stop()
@@ -410,12 +441,7 @@ class LiveReload(unittest.TestCase):
         self.settle()
         self.assertEqual(self.document(), 'after café\n')
         self.assertEqual(self.editor_edge(self.shot('changed')), baseline)
-        self.command('cmd settings')
-        self.command('move 500 350')
-        self.command('scroll 1200')
-        self.command('click 827 308')
-        self.command('quit')
-        self.process.wait(timeout=5)
+        self.toggle_animation_in_settings('true')
         self.assertIn('animate_disk_changes = true\n', config.read_text())
 
     def test_binary_replacement_keeps_text(self):
