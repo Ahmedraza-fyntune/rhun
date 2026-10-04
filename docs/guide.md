@@ -55,20 +55,18 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--prefix DIR` | Linux: install under DIR instead of `~/.local` |
 | `--app-dir DIR` | macOS: put rhun.app in DIR |
 | `--no-modify-path` | leave shell startup files alone |
-| `--make-default` | use rhun as the default editor for registered text, source and configuration types |
-| `--no-make-default` | skip the default-editor question |
 | `--configure-files` | configure an existing installation without downloading or replacing it |
 | `--uninstall` | remove rhun and the PATH line; your settings in `~/.config/rhun` stay |
 
-Interactive installations offer a default-editor choice, with **No** as the default. When there is
-no terminal, installation keeps your defaults unless you pass `--make-default`. Supported images
-and folders appear in Open With, but the default-editor choice leaves their associations alone.
+Installation prints a command you can run manually to make rhun your default editor. It does not
+ask about or change your defaults. Supported images and folders appear in Open With; the manual
+default-editor command leaves their associations alone.
 On Linux, changing defaults needs `xdg-mime` from xdg-utils and a desktop-visible installation
 prefix. On macOS, associations are requested through Launch Services; if a request fails, use
 Finder's Get Info > Open with > rhun > Change All for that type.
 
-Updates refresh file handler registration without asking about or changing defaults. Existing users
-can make the choice later without reinstalling:
+Updates refresh file handler registration without asking about or changing defaults. The separate
+`--configure-files --make-default` command enables defaults without reinstalling:
 
 ```sh
 curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh -s -- --configure-files --make-default
@@ -106,7 +104,7 @@ xcrun notarytool store-credentials rhun-notary --apple-id YOUR_APPLE_ID --team-i
 tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.zip and .dmg
 ```
 
-`RHUN_SIGN_ID` picks another signing identity. `RHUN_NOTARIZE=0` signs without notarizing and makes no disk image: macOS opens an app downloaded in a browser only when Apple has notarized it, while `install.sh` and updates download with curl, which needs only the signature. `tools/mac-icon.py` draws `assets/icons/rhun.icns` from the Linux icon, `tools/png-icons.py` the PNG icons for Linux.
+`RHUN_SIGN_ID` picks another signing identity. `RHUN_NOTARIZE=0` signs without notarizing for local use and makes no disk image. Distribution builds (`RHUN_DIST=1`) require notarization: Developer ID signing alone does not satisfy Gatekeeper. `tools/verify-mac-release.sh ZIP DMG` checks the signatures, stapled tickets, versions and Gatekeeper acceptance of both downloads, including a quarantined app extracted from the ZIP. `tools/mac-icon.py` draws `assets/icons/rhun.icns` from the Linux icon, `tools/png-icons.py` the PNG icons for Linux.
 
 ### Windows
 
@@ -123,10 +121,10 @@ The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, a
 The script is also included in the ZIP. To install from a downloaded script, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`. No administrator access or package manager is needed.
 
 Installation registers text, source, configuration and supported image extensions in Open With and
-Default Apps for the current user. It offers to open Windows Settings so you can choose defaults;
-Windows requires you to confirm them there. `-MakeDefault` opens that page explicitly,
-`-NoMakeDefault` skips the question, and `-NoFileAssociations` skips registration too and remembers
-that choice across updates. Images remain an optional separate choice in Windows Settings.
+Default Apps for the current user. It prints a command you can run manually to open Windows Settings
+and choose defaults. Installation never asks about defaults or opens that page.
+`-NoFileAssociations` skips registration and remembers that choice across updates. Images remain an
+optional separate choice in Windows Settings.
 
 Existing users can run the installed `install.ps1` with `-ConfigureFiles -MakeDefault`, or pass those
 options to the downloaded installer. Add `-InstallDir DIR` for a custom or portable installation.
@@ -156,7 +154,7 @@ Outputs are in `build/windows`, separate from Mac and Linux builds. On Windows u
 
 `VERSION` holds the version. `tools/release.sh 0.16.0` writes it, commits, tags `v0.16.0` and pushes; the tag starts `.github/workflows/release.yml`, which tests and builds Linux, macOS and Windows, signs the Mac app, and publishes the release with the archives, `SHA256SUMS`, `VERSION`, `install.sh` and `install.ps1`. The release stays a draft until everything is uploaded, so rhun and the installer never see a version without its files. A version with a dash (`0.16.0-rc1`) is published as a prerelease, which they do not take for the latest.
 
-The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PASSWORD` (the Developer ID Application certificate with its key, exported as .p12, base64), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` (an App Store Connect API key for notarization, the .p8 in base64). The Mac app is notarized, and the release gets a disk image, only when the repository variable `RHUN_NOTARIZE` is `1` (Settings → Secrets and variables → Actions → Variables); otherwise the release does not wait on Apple.
+The workflow needs five repository secrets: `MACOS_CERT_P12` and `MACOS_CERT_PASSWORD` (the Developer ID Application certificate with its key, exported as .p12, base64), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` (an App Store Connect API key for notarization, the .p8 in base64). Every Mac release is notarized by Apple and includes a ZIP and disk image with stapled tickets. The packaged downloads must pass signature, ticket and Gatekeeper checks before upload. Missing credentials, rejected notarization or failed verification stop publication.
 
 ### Website
 

@@ -31,6 +31,9 @@ $knownFiles = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1', '.rhun-install
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'rhun.lnk'
 
 if ($MakeDefault -and ($NoMakeDefault -or $NoFileAssociations)) { throw 'Conflicting default editor options.' }
+if ($MakeDefault -and -not $ConfigureFiles) {
+    throw 'MakeDefault requires ConfigureFiles. Install rhun first, then run the printed command.'
+}
 if ($ConfigureFiles -and ($Uninstall -or $PrepareUpdate -or $ApplyUpdate -or $DiscardUpdate)) {
     throw 'ConfigureFiles cannot be combined with uninstall or update modes.'
 }
@@ -144,20 +147,23 @@ function Remove-FileAssociations {
 
 function Choose-DefaultEditor {
     if ($NoMakeDefault -or $NoFileAssociations) { return }
-    $choose = [bool]$MakeDefault
-    if (-not $choose -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) {
-        $answer = Read-Host 'Choose rhun as the default editor in Windows Settings? [y/N]'
-        $choose = $answer -match '^(y|yes)$'
-    }
-    if ($choose) {
+    if ($MakeDefault) {
         Write-Output 'In Default Apps, select rhun and choose the text types to open with it. Images are optional.'
         $uri = if ([Environment]::OSVersion.Version.Build -ge 22000) {
             'ms-settings:defaultapps?registeredAppUser=rhun'
         } else { 'ms-settings:defaultapps' }
         Start-Process $uri
     } else {
-        Write-Output 'To choose defaults later, rerun install.ps1 with -ConfigureFiles -MakeDefault.'
+        Show-DefaultEditorCommand
     }
+}
+
+function Show-DefaultEditorCommand {
+    if ($NoFileAssociations) { return }
+    $script = (Join-Path $InstallDir 'install.ps1').Replace("'", "''")
+    $directory = $InstallDir.Replace("'", "''")
+    Write-Output 'To choose rhun as your default editor, run this command manually:'
+    Write-Output "  powershell -NoProfile -ExecutionPolicy Bypass -File '$script' -ConfigureFiles -MakeDefault -InstallDir '$directory'"
 }
 # END FILE ASSOCIATION FUNCTIONS
 
@@ -453,7 +459,7 @@ try {
         $link.Save()
     }
     Write-Output "Installed rhun $Version in $InstallDir. Open a new terminal to use the rhun command."
-    try { Register-FileAssociations; Choose-DefaultEditor }
+    try { Register-FileAssociations; Show-DefaultEditorCommand }
     catch { Write-Warning "File association setup failed: $($_.Exception.Message)" }
 } finally {
     if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }

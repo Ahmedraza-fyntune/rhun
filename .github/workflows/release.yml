@@ -2,8 +2,7 @@
 # a draft and published last, so releases/latest never points at one without its files.
 # Secrets: MACOS_CERT_P12, MACOS_CERT_PASSWORD (Developer ID Application certificate, base64 .p12)
 # and APPLE_API_KEY_P8, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID (App Store Connect API key, base64 .p8).
-# The Mac app is notarized, and a disk image added, only when the repository variable RHUN_NOTARIZE is
-# 1: the release does not wait on Apple otherwise (install.sh and updates need only the signature).
+# Every Mac release is notarized and stapled, and its ZIP and disk image pass Gatekeeper before upload.
 name: release
 
 on:
@@ -76,19 +75,25 @@ jobs:
           security find-identity -v -p codesigning "$kc"
       - name: Tests
         run: tests/run.sh
-      - name: Build and sign (and notarize, when RHUN_NOTARIZE is 1)
+      - name: Build, sign and notarize
+        timeout-minutes: 45
         env:
-          RHUN_NOTARIZE: ${{ vars.RHUN_NOTARIZE == '1' && '1' || '0' }}
+          RHUN_NOTARIZE: '1'
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           RHUN_NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           RHUN_NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: |
-          if [ "$RHUN_NOTARIZE" = 1 ]; then
-            export RHUN_NOTARY_KEY="$RUNNER_TEMP/notary.p8"
-            printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$RHUN_NOTARY_KEY"
-          fi
+          : "${APPLE_API_KEY_P8:?missing APPLE_API_KEY_P8 secret}"
+          : "${RHUN_NOTARY_KEY_ID:?missing APPLE_API_KEY_ID secret}"
+          : "${RHUN_NOTARY_ISSUER:?missing APPLE_API_ISSUER_ID secret}"
+          export RHUN_NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+          trap 'rm -f "$RHUN_NOTARY_KEY"' EXIT
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$RHUN_NOTARY_KEY"
           RHUN_DIST=1 tools/package-mac.sh
-          rm -f "$RUNNER_TEMP/notary.p8"
+      - name: Verify packaged Mac downloads
+        run: |
+          v=$(cat VERSION)
+          tools/verify-mac-release.sh "build/rhun-$v-macos-arm64.zip" "build/rhun-$v-macos-arm64.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -163,6 +168,11 @@ jobs:
           merge-multiple: true
       - name: Checksums, version and installer
         run: |
+          v=$(cat VERSION)
+          test -s "dist/rhun-$v-linux-x86_64.tar.gz"
+          test -s "dist/rhun-$v-macos-arm64.zip"
+          test -s "dist/rhun-$v-macos-arm64.dmg"
+          test -s "dist/rhun-$v-windows-x86_64.zip"
           cp install.sh install.ps1 dist/
           cat VERSION > dist/VERSION
           (cd dist && sha256sum rhun-* > SHA256SUMS && cat SHA256SUMS)

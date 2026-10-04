@@ -78,6 +78,8 @@ def main():
             assert b'rhun 1.0.0 is installed' in output, output
             assert b'Checking latest release' in output, output
             assert b'Download verified' in output, output
+            assert b'--configure-files --make-default' in output, output
+            assert b'[y/N]' not in output, output
             assert b"| '__| '_ " in output, output
             assert b'VERSION' not in output and b'SHA256SUMS' not in output, output
             print(f'ok   install/output-{label}')
@@ -89,7 +91,7 @@ def main():
 
         target = home / 'apps/rhun.app' if sys.platform == 'darwin' else home / '.local/bin/rhun'
         output = run_installer(sys.argv[1], home, terminal=True,
-                               options=['--update', '--target', str(target), '--make-default'])
+                               options=['--update', '--target', str(target)])
         assert output == b'', output
         print('ok   install/output-quiet-terminal-update')
 

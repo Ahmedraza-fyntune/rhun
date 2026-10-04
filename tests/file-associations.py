@@ -29,6 +29,11 @@ $ErrorActionPreference = 'Stop'
 $associationRoot = 'HKCU:\Software\rhun-association-test-' + [Guid]::NewGuid().ToString('N')
 $InstallDir = "C:\Program files café ' $ &\rhun"
 $NoFileAssociations = $false
+$NoMakeDefault = $false
+$MakeDefault = $false
+$openedSettings = @()
+function Start-Process($FilePath) { $script:openedSettings += $FilePath }
+function Read-Host { throw 'The installer must not prompt for defaults' }
 function Notify-FileAssociations { } # No shell refresh for the test registry subtree.
 function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
 try {
@@ -42,6 +47,13 @@ try {
     Assert ((Get-ItemPropertyValue -LiteralPath "$associationRoot\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.txt\UserChoice" -Name 'ProgId') -eq 'Other.Text') 'UserChoice changed'
     Assert ((Get-ItemPropertyValue -LiteralPath "$associationRoot\rhun\Capabilities\FileAssociations" -Name '.md') -eq 'rhun.Text') 'Text registration missing'
     Assert ((Get-ItemPropertyValue -LiteralPath "$associationRoot\rhun\Capabilities\FileAssociations" -Name '.qoi') -eq 'rhun.Image') 'Image registration missing'
+    $instructions = Choose-DefaultEditor | Out-String
+    Assert ($openedSettings.Count -eq 0) 'Opened Settings without a manual request'
+    Assert ($instructions.Contains('-ExecutionPolicy Bypass -File')) 'Manual command missing'
+    Assert ($instructions.Contains($InstallDir.Replace("'", "''"))) 'Manual command path quoting failed'
+    $MakeDefault = $true
+    Choose-DefaultEditor | Out-Null
+    Assert ($openedSettings.Count -eq 1) 'Manual request did not open Settings'
     Register-FileAssociations
     $InstallDir = 'C:\Other rhun'
     Remove-FileAssociations
@@ -104,6 +116,7 @@ esac
         'gtk-update-icon-cache': '#!/bin/sh\nexit 0\n',
         'xdg-desktop-menu': '#!/bin/sh\nexit 0\n',
         'osascript': '#!/bin/sh\nprintf "%s\\n" "$@" > "$RHUN_ASSOC_TEST/mac-args"\ncat > "$RHUN_ASSOC_TEST/mac-script"\n',
+        'curl': '#!/bin/sh\ncat "$RHUN_ASSOC_TEST/install.sh"\n',
     }.items():
         path = shim / name
         path.write_text(content)
@@ -118,9 +131,18 @@ esac
 
     run('--no-make-default')
     assert not (temp / 'calls').exists()
-    run()
+    output = run()
     assert not (temp / 'calls').exists()
-    output = run('--make-default')
+
+    def run_printed_command(output):
+        commands = [line.strip().decode() for line in output.splitlines() if line.startswith(b'  curl -fsSL ')]
+        assert len(commands) == 1, output
+        result = subprocess.run(['sh', '-c', commands[0]], env=env, stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=15)
+        assert result.returncode == 0, result.stderr.decode()
+        return result.stderr
+
+    output = run_printed_command(output)
     calls = (temp / 'calls').read_text().splitlines()
     defaults = [line.split() for line in calls if line.startswith('default ')]
     assert len(defaults) == 1 and defaults[0][1] == 'rhun.desktop', calls
@@ -137,7 +159,13 @@ esac
     assert b'Some default associations were not changed' in output
     print('ok   associations/missing-install-and-desktop-failure', flush=True)
 
-    # A piped installer reads its choice from /dev/tty, not from the script on stdin.
+    result = subprocess.run(['sh', str(installer), '--make-default'], env=env,
+                            stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
+    assert result.returncode != 0 and b'requires --configure-files' in result.stderr, result.stderr
+    assert b'Downloading' not in result.stderr
+    print('ok   associations/install-cannot-change-defaults', flush=True)
+
+    # A piped installer with a terminal still prints instructions without asking for input.
     master, slave = pty.openpty()
     def terminal_session():
         os.setsid()
@@ -149,7 +177,6 @@ esac
     process.stdin.write(installer.read_bytes())
     process.stdin.close()
     output = bytearray()
-    replied = False
     deadline = time.monotonic() + 15
     try:
         while time.monotonic() < deadline:
@@ -164,17 +191,15 @@ esac
             if not chunk:
                 break
             output.extend(chunk)
-            if b'[y/N]' in output and not replied:
-                os.write(master, b'n\n')
-                replied = True
-        assert replied and process.wait(timeout=5) == 0, output
+        assert process.wait(timeout=5) == 0, output
+        assert b'[y/N]' not in output and b'--configure-files --make-default' in output, output
         assert not (temp / 'calls').exists()
     finally:
         os.close(master)
         if process.poll() is None:
             process.kill()
             process.wait()
-    print('ok   associations/piped-installer-terminal-choice', flush=True)
+    print('ok   associations/piped-installer-no-terminal-prompt', flush=True)
 
     # Mac requests use argument data and the bundle ID, never interpolated script code.
     (shim / 'uname').write_text('#!/bin/sh\ncase "$1" in -s) echo Darwin;; -m) echo arm64;; esac\n')
@@ -182,7 +207,9 @@ esac
     (appdir / 'rhun.app').mkdir(parents=True)
     run('--app-dir', str(appdir), '--no-make-default')
     assert not (temp / 'mac-args').exists()
-    run('--app-dir', str(appdir), '--make-default')
+    output = run('--app-dir', str(appdir))
+    assert not (temp / 'mac-args').exists()
+    run_printed_command(output)
     args = (temp / 'mac-args').read_text().splitlines()
     assert args[:3] == ['-l', 'JavaScript', '-']
     assert args[3] == str(appdir / 'rhun.app')

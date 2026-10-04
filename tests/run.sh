@@ -28,6 +28,7 @@ check cols build/cols_test
 check textarea build/textarea_test
 check strfind build/str_test tests/data/strfind.txt
 check versions build/update_test tests/data/versions.txt
+python3 tests/mac-package.py || fail=1
 check paths build/path_test tests/data/paths.txt
 check grammars env HOME=/nonexistent XDG_CONFIG_HOME=tests/data/config build/grammar_test tests/data/detect.txt tests/data/samples
 dups=$(grep -h '^files' runtime/syntax/*.syn | sed 's/^files *= *//' | tr ' ' '\n' | grep -v '^$' | sort | uniq -d)

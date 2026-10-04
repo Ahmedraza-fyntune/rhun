@@ -70,9 +70,8 @@ usage: install.sh [options]   (curl -fsSL .../install.sh | sh -s -- [options])
   --prefix DIR            Linux: install under DIR (default ~/.local)
   --app-dir DIR           macOS: where rhun.app goes (default /Applications)
   --no-modify-path        leave shell startup files alone
-  --make-default          use rhun for text, source and configuration files
-  --no-make-default       skip the default-editor question
   --configure-files       configure an existing installation without downloading it
+                          add --make-default to make rhun the default editor manually
   --uninstall             remove what the installer put in place (settings stay)
 EOF
 }
@@ -290,20 +289,21 @@ text_extensions() {
     # END TEXT EXTENSIONS
 }
 
+quote_arg() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")"
+}
+
+print_default_editor_command() {
+    url=$base/latest/download/install.sh
+    [ -z "$version" ] || url=$base/download/v$version/install.sh
+    if [ "$os" = linux ]; then option=--prefix; destination=$prefix; else option=--app-dir; destination=$appdir; fi
+    say 'To use rhun as your default editor, run this command manually:'
+    printf '  curl -fsSL %s | sh -s -- --configure-files --make-default %s %s\n' \
+        "$(quote_arg "$url")" "$option" "$(quote_arg "$destination")" >&2
+}
+
 choose_default_editor() {
-    if [ "$make_default" = ask ]; then
-        # stdin may be the installer itself (curl | sh). Only read from a real terminal.
-        if [ -t 2 ] && ( : </dev/tty ) 2>/dev/null; then
-            printf '\n  Use rhun as the default editor for text, source and configuration files? [y/N] ' >&2
-            answer=''
-            read -r answer </dev/tty || true
-            case "$answer" in y | Y | yes | YES) make_default=yes ;; *) make_default=no ;; esac
-        else
-            make_default=no
-            say 'To choose rhun as your default editor later, rerun with --configure-files --make-default'
-        fi
-    fi
-    [ "$make_default" = yes ] || return 0
+    if [ "$make_default" != yes ]; then print_default_editor_command; return 0; fi
     if [ "$os" = linux ]; then
         desktop=$prefix/share/applications/rhun.desktop
         [ -f "$desktop" ] || fail "no desktop entry at $desktop; rerun the installer"
@@ -531,7 +531,7 @@ install_fresh() {
         installed "$appdir"
         say "start it from Launchpad or Spotlight, or run: rhun [folder]"
     fi
-    choose_default_editor
+    print_default_editor_command
 }
 
 update() {
@@ -588,7 +588,7 @@ uninstall() {
 }
 
 main() {
-    version='' prefix='' appdir='' modify_path=1 mode=install target='' quiet='' make_default=ask
+    version='' prefix='' appdir='' modify_path=1 mode=install target='' quiet='' make_default=no
     output_style
     while [ $# -gt 0 ]; do
         case $1 in
@@ -607,8 +607,12 @@ main() {
         esac
         shift
     done
+    if [ "$make_default" = yes ] && [ "$mode" != configure ]; then
+        fail '--make-default requires --configure-files; install rhun first, then run the printed command'
+    fi
     [ -n "${HOME:-}" ] || fail "HOME is not set"
     platform
+    base=${RHUN_RELEASES_URL:-$RELEASES}
     tmp=$(mktemp -d 2>/dev/null || mktemp -d -t rhun)
     trap 'rm -rf "$tmp"' EXIT
     trap 'exit 1' HUP INT TERM
@@ -623,7 +627,6 @@ main() {
     if [ -z "$quiet" ]; then
         banner
     fi
-    base=${RHUN_RELEASES_URL:-$RELEASES}
     downloader
     if [ -z "$version" ]; then version=$(latest_version); fi
     valid_version "$version" || fail "$version is not a version"
