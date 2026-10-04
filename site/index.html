@@ -7,7 +7,8 @@
 <meta name="description" content="A small, fast code editor for Windows, Linux and macOS. Written in assembly.">
 <link rel="canonical" href="https://rhun.app/">
 <meta name="theme-color" content="#111216">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light dark">
+<script src="theme.js?v=@ASSET_VERSION@"></script>
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="author" content="Vladyslav Shvedov">
 <meta property="og:type" content="website">
@@ -110,10 +111,16 @@
       <a href="https://github.com/vshvedov/rhun/blob/main/docs/guide.md">Docs</a><a href="https://github.com/vshvedov/rhun">GitHub</a>
     </nav>
     <a class="button nav-cta" href="#install">Get rhun</a>
+    <div class="appearance" role="group" aria-label="Website appearance">
+      <button type="button" data-appearance="auto" aria-pressed="true" title="Follow system appearance">Auto</button>
+      <button type="button" data-appearance="light" aria-pressed="false" title="Light appearance">Light</button>
+      <button type="button" data-appearance="dark" aria-pressed="false" title="Dark appearance">Dark</button>
+    </div>
   </div>
 </header>
 <main id="main">
   <section class="hero" aria-labelledby="title">
+    <div class="pixel-field" aria-hidden="true"><canvas id="pixel-canvas"></canvas></div>
     <div class="wrap hero-stage">
       <div class="hero-copy">
         <p class="eyebrow">AI does the heavy lifting. Keep your code editor light.</p>
@@ -132,7 +139,7 @@
         <div class="editor-light" aria-hidden="true"></div>
         <img id="editor-image" src="img/hero.webp" srcset="img/hero-800.webp 800w, img/hero.webp 1600w" sizes="(min-width: 1376px) 1280px, (max-width: 760px) calc(100vw - 32px), calc(100vw - 96px)" width="1600" height="1000" alt="rhun with a file explorer, syntax highlighting, and a live coding agent session" fetchpriority="high" decoding="async" draggable="false">
         <button type="button" class="promo-play" aria-label="Play rhun video" aria-haspopup="dialog" aria-controls="promo-lightbox">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 11 7-11 7V5Z"/></svg>
         </button>
       </figure>
       </div>
@@ -170,7 +177,7 @@
   </section>
   <dialog class="promo-lightbox" id="promo-lightbox" aria-labelledby="promo-title">
     <div class="promo-header">
-      <h2 id="promo-title">rhûn</h2>
+      <h2 id="promo-title">rhun: a small, fast code editor.</h2>
       <button type="button" class="promo-close" aria-label="Close video" autofocus>
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M6 18 18 6"/></svg>
       </button>

@@ -31,16 +31,28 @@
     document.body.classList.remove("video-open");
   });
 
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let currentView = "hero";
+  function editorScreenshot() {
+    return document.documentElement.dataset.colorScheme === "light" ? "hero-light" : "hero";
+  }
+  document.addEventListener("appearancechange", () => {
+    if (currentView === "hero") setScreenshot(document.querySelector("#editor-image"), editorScreenshot(), descriptions.hero);
+  });
+  setScreenshot(document.querySelector("#editor-image"), editorScreenshot(), descriptions.hero);
+
   function setScreenshot(image, name, alt) {
     image.srcset = `img/${name}-800.webp 800w, img/${name}.webp 1600w`;
     image.src = `img/${name}.webp`;
     image.alt = alt;
+    if (!reducedMotion.matches) image.animate([{ opacity: .5 }, { opacity: 1 }], { duration: 300, easing: "ease-out" });
   }
 
   const viewButtons = document.querySelectorAll("[data-view]");
   viewButtons.forEach(button => {
     button.addEventListener("click", () => {
       const name = button.dataset.view;
+      currentView = name;
       playButton.hidden = name !== "hero";
       viewButtons.forEach(item => item.setAttribute("aria-pressed", String(item === button)));
       document.querySelectorAll("[data-description]").forEach(item => {
@@ -51,7 +63,7 @@
         setScreenshot(document.querySelector("#editor-image"), selectedTheme, `rhun in the ${selectedThemeLabel} theme`);
         return;
       }
-      setScreenshot(document.querySelector("#editor-image"), name, descriptions[name]);
+      setScreenshot(document.querySelector("#editor-image"), name === "hero" ? editorScreenshot() : name, descriptions[name]);
     });
   });
 

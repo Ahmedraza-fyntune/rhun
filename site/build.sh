@@ -13,14 +13,14 @@ case $version in
 *-*) version=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*' 2>/dev/null | sed 's/^v//') ;;
 esac
 date=$(date -u +%Y-%m-%d)
-asset_version=$(cat site/style.css site/site.js site/hero.js site/img/hero.webp assets/icons/rhun.svg | cksum | cut -d ' ' -f 1)
+asset_version=$(cat site/theme.js site/style.css site/site.js site/hero.js site/img/hero.webp assets/icons/rhun.svg | cksum | cut -d ' ' -f 1)
 mkdir -p "$out/img" "$out/fonts" "$out/video"
 for f in index.html 404.html robots.txt sitemap.xml llms.txt; do
     sed -e "s/@VERSION@/$version/g" -e "s/@DATE@/$date/g" -e "s/@ASSET_VERSION@/$asset_version/g" "site/$f" > "$out/$f"
 done
 cp site/img/*.webp "$out/img/"
 cp site/video/*.mp4 "$out/video/"
-cp site/style.css "$out/"
+cp site/style.css site/theme.js "$out/"
 sed "s/@ASSET_VERSION@/$asset_version/g" site/hero.js > "$out/hero.js"
 sed "s/@ASSET_VERSION@/$asset_version/g" site/site.js > "$out/site.js"
 cp site/fonts/* "$out/fonts/"
