@@ -38,6 +38,8 @@ id_deco_mgr: .long 0
 id_cursor_mgr: .long 0
 id_viewporter: .long 0
 id_fscale_mgr: .long 0
+id_activation: .long 0
+activation_sent: .long 0
 id_sync: .long 0
 sync_done: .long 0
 compositor_ver: .long 0
@@ -1009,6 +1011,7 @@ wl_draw:
     END
     MSG [rip + id_surface], 6     # commit
     END
+    call wl_activate
 .Ldr_ret:
     EPILOGUE
 
@@ -1880,6 +1883,31 @@ FN wl_connect
     xor eax, eax
     EPILOGUE
 
+# Use the desktop launcher's token once the surface is mapped, then remove it
+# from the environment so terminals and other children cannot reuse it.
+wl_activate:
+    PROLOGUE
+    cmp dword ptr [rip + activation_sent], 0
+    jne 9f
+    mov dword ptr [rip + activation_sent], 1
+    lea rdi, [rip + .Lenv_activation]
+    call getenv
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    cmp byte ptr [rbx], 0
+    je 8f
+    cmp dword ptr [rip + id_activation], 0
+    je 8f
+    MSG [rip + id_activation], 2
+    mov rdi, rbx
+    call wl_put_str
+    ARG [rip + id_surface]
+    END
+8:  lea rdi, [rip + .Lenv_activation]
+    call env_unset
+9:  EPILOGUE
+
 # wl_open_window(title cstr): create the toplevel and install the vtable
 FN wl_open_window
     PROLOGUE 16
@@ -2004,6 +2032,7 @@ global_table:
     .quad .Li_cursor, id_cursor_mgr, 1
     .quad .Li_viewporter, id_viewporter, 1
     .quad .Li_fscale, id_fscale_mgr, 1
+    .quad .Li_activation, id_activation, 1
     .quad 0, 0, 0
 .Li_compositor: .asciz "wl_compositor"
 .Li_shm: .asciz "wl_shm"
@@ -2014,6 +2043,7 @@ global_table:
 .Li_cursor: .asciz "wp_cursor_shape_manager_v1"
 .Li_viewporter: .asciz "wp_viewporter"
 .Li_fscale: .asciz "wp_fractional_scale_manager_v1"
+.Li_activation: .asciz "xdg_activation_v1"
 .p2align 3
 .Ltiling: .quad .Lt_hypr, .Lt_sway, .Lt_niri, .Lt_river, .Lt_dwl, .Lt_qtile, 0
 .Lt_hypr: .asciz "Hyprland"
@@ -2025,6 +2055,7 @@ global_table:
 .Lenv_desktop: .asciz "XDG_CURRENT_DESKTOP"
 .Lenv_display: .asciz "WAYLAND_DISPLAY"
 .Lenv_runtime: .asciz "XDG_RUNTIME_DIR"
+.Lenv_activation: .asciz "XDG_ACTIVATION_TOKEN"
 .Ldefault_display: .asciz "wayland-0"
 .Lmemfd_name: .asciz "rhun-shm"
 .Lcursor_name: .asciz "rhun-cursor"

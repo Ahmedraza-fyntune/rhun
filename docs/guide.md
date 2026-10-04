@@ -28,6 +28,14 @@ into one reload. In the active editor, the changed region briefly fades back to 
 a thin highlight at the top also signals changes outside the visible lines.
 **Animate changed text** in Settings > Editor is on by default. Turn it off to hide both highlights;
 files still reload. The config key is `animate_disk_changes = true` under `[editor]`.
+
+Opening files from a file manager or with `rhun file.rb` starts the regular editor with those files
+as tabs, without restoring a previous project. The window comes to the foreground. If rhun is
+already running on macOS, Finder opens files as tabs in that window and brings it forward, keeping
+unsaved edits. Opening a folder still restores that folder's session; starting without a path can
+restore the last project.
+Use `rhun --empty` to start with an empty window. Updating and restarting preserves standalone file tabs,
+including image tabs, and keeps an empty window empty.
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
 command palette to load the disk version, or save to keep your version. Undoing back to the saved
 state loads the disk version too.
@@ -59,8 +67,8 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--uninstall` | remove rhun and the PATH line; your settings in `~/.config/rhun` stay |
 
 Installation prints a command you can run manually to make rhun your default editor. It does not
-ask about or change your defaults. Supported images and folders appear in Open With; the manual
-default-editor command leaves their associations alone.
+ask about or change your defaults. Supported images, folders and HTML documents appear in Open With;
+the manual default-editor command leaves browser, image and folder associations alone.
 On Linux, changing defaults needs `xdg-mime` from xdg-utils and a desktop-visible installation
 prefix. On macOS, associations are requested through Launch Services; if a request fails, use
 Finder's Get Info > Open with > rhun > Change All for that type.

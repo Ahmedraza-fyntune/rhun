@@ -17,8 +17,10 @@ FN win_update_command
     mov [rsp + 24], rcx
     mov rdi, [rip + wu_env]
     call mem_free
+    mov qword ptr [rip + wu_env], 0
     mov rdi, [rip + wu_shell]
     call mem_free
+    mov qword ptr [rip + wu_shell], 0
     xor r12d, r12d
 1:  lea rbx, [rip + wu_fields]
     imul rax, r12, SB_SIZE
@@ -40,7 +42,32 @@ FN win_update_command
     mov rdi, rbx
     call sb_push_u64
     jmp 5f
-3:  mov rsi, [rip + g_project]
+3:  # The restart opens a project session or the standalone window's saved file paths.
+    mov rdi, [rsp + 16]
+    call app_restart_paths
+    mov r13, rax
+    cmp qword ptr [rax + 8], 0
+    je 6f
+    lea rdi, [rax + 8]          # Start-Process receives arguments without argv[0].
+    call win_commandline
+    mov r14, rax
+    test rax, rax
+    jz .Larguments_failed
+    mov rdi, rax
+    call win_utf8
+    mov r15, rax
+    mov rdi, r14
+    call mem_free
+    test r15, r15
+    jz .Larguments_failed
+    mov rdi, rbx
+    mov rsi, r15
+    call sb_push_cstr
+    mov rdi, r15
+    call mem_free
+6:  mov rdi, r13
+    call mem_free
+    jmp 5f
 4:  mov rdi, rbx
     call sb_push_cstr
 5:  mov rdi, rbx
@@ -78,6 +105,11 @@ FN win_update_command
     mov rdx, [rip + wu_env]
     mov rax, rbx
 9:  EPILOGUE
+.Larguments_failed:
+    mov rdi, r13
+    call mem_free
+    xor eax, eax
+    EPILOGUE
 
 # win_update_launch(argv, envp) -> 1 if the detached updater started, 0 otherwise.
 FN win_update_launch
@@ -159,8 +191,8 @@ FN win_update_error
 .Lexe: .asciz "RHUN_UP_EXE="
 .Lurl: .asciz "RHUN_UP_URL="
 .Lpid: .asciz "RHUN_UP_PID="
-.Lproject: .asciz "RHUN_UP_PROJECT="
+.Larguments: .asciz "RHUN_UP_ARGS="
 .Ltitle: .short 'r', 'h', 'u', 'n', 0
 .Lfailed: .short 'T', 'h', 'e', ' ', 'u', 'p', 'd', 'a', 't', 'e', 'r', ' ', 'c', 'o', 'u', 'l', 'd', ' ', 'n', 'o', 't', ' ', 's', 't', 'a', 'r', 't', '.', ' ', 'R', 'e', 'o', 'p', 'e', 'n', ' ', 'r', 'h', 'u', 'n', ' ', 'a', 'n', 'd', ' ', 't', 'r', 'y', ' ', 'a', 'g', 'a', 'i', 'n', '.', 0
 .p2align 3
-.Lprefixes: .quad .Laction, .Lversion, .Lexe, .Lurl, .Lpid, .Lproject
+.Lprefixes: .quad .Laction, .Lversion, .Lexe, .Lurl, .Lpid, .Larguments

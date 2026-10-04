@@ -48,8 +48,33 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
 
     check_project(run([other]), other.name)
     run([project])
-    check_project(run([file]), other.name)
+    marker = work / 'state/rhun/last-project'
+    previous = marker.read_bytes()
+    output = run([file])
+    assert 'project=\n' in output, output
+    assert 'tabs=1 active=' + file.name in output, output
+    assert marker.read_bytes() == previous
+    output = run([file, other / 'second.rb'])
+    assert 'project=\n' in output and 'tabs=2 ' in output, output
+    assert marker.read_bytes() == previous
     print('ok   desktop/explicit-folder-and-file-win')
+    output = run(['--empty'])
+    assert 'project=\n' in output and 'tabs=0 ' in output, output
+    assert marker.read_bytes() == previous
+    print('ok   desktop/explicit-empty-window')
+
+    stored = other / 'stored.rb'
+    stored.write_text('stored\n')
+    run([other, stored])
+    output = run([file], ['type pending', f'open {other.as_posix()}', 'print-project', 'print-state',
+                        'key Escape', 'print-project', 'cmd save', f'open {other.as_posix()}',
+                        'print-project', 'print-state', 'quit'])
+    assert output.count('project=\n') == 2, output
+    assert 'dirty=1 ' in output, output
+    check_project(output, other.name)
+    assert 'tabs=1 active=stored.rb' in output, output
+    print('ok   desktop/standalone-folder-switch-preserves-edits-and-restores-session')
+    run([project])
 
     configure(tabs=False)
     run([project])

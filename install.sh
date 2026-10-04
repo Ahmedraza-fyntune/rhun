@@ -10,8 +10,8 @@
 #                           when that is not writable)
 #   --no-modify-path        leave shell startup files alone (by default every shell the user has
 #                           gets rhun's folder on PATH: zsh, bash, sh, fish, nushell, tcsh)
-#   --make-default          use rhun for text, source and configuration files
-#   --no-make-default       skip the interactive default-editor choice
+#   --make-default          with --configure-files: use rhun for text, source and configuration files
+#   --no-make-default       accepted for compatibility; installation never prompts for defaults
 #   --configure-files       configure an existing installation without downloading it
 #   --uninstall             remove what the installer put in place (settings stay)
 #   --update --target PATH  what rhun runs to update itself: replace the installation at PATH (the
@@ -297,9 +297,10 @@ print_default_editor_command() {
     url=$base/latest/download/install.sh
     [ -z "$version" ] || url=$base/download/v$version/install.sh
     if [ "$os" = linux ]; then option=--prefix; destination=$prefix; else option=--app-dir; destination=$appdir; fi
+    printf '\n%s%s  Optional: default editor\n  ========================%s\n' "$bold" "$cyan" "$reset" >&2
     say 'To use rhun as your default editor, run this command manually:'
-    printf '  curl -fsSL %s | sh -s -- --configure-files --make-default %s %s\n' \
-        "$(quote_arg "$url")" "$option" "$(quote_arg "$destination")" >&2
+    printf '%s%s  curl -fsSL %s | sh -s -- --configure-files --make-default %s %s%s\n\n' \
+        "$bold" "$green" "$(quote_arg "$url")" "$option" "$(quote_arg "$destination")" "$reset" >&2
 }
 
 choose_default_editor() {
@@ -325,7 +326,8 @@ choose_default_editor() {
             say "Default editor was not changed: add $prefix/share to your desktop's XDG_DATA_DIRS first"
             return 0
         fi
-        types=$(sed -n 's/^MimeType=//p' "$desktop" | tr ';' '\n' | sed '/^$/d; /^inode\//d; /^image\//d')
+        types=$(sed -n 's/^MimeType=//p' "$desktop" | tr ';' '\n' | \
+            sed '/^$/d; /^inode\//d; /^image\//d; /^text\/html$/d; /^application\/xhtml+xml$/d; /^x-scheme-handler\//d')
         if [ -z "$types" ]; then
             say 'Default editor was not changed: the desktop entry has no text types; update rhun first'
             return 0
@@ -338,7 +340,7 @@ choose_default_editor() {
             [ "$(xdg-mime query default "$type" 2>/dev/null)" = rhun.desktop ] || missed=$((missed + 1))
         done
         if [ "$missed" = 0 ]; then
-            say 'rhun is the default editor for the registered text types'
+            say 'rhun is the default editor for text and code files; browser and image defaults are kept'
         else
             say "Some default associations were not changed ($missed); choose them in your desktop settings"
         fi
@@ -353,10 +355,12 @@ function run(argv) {
     if (!bundle || ObjC.unwrap(bundle.bundleIdentifier) !== 'com.r13.rhun')
         throw new Error('The installed rhun app was not found');
     var seen = {}, failures = [];
+    var preserveTypes = ['public.image', 'public.html', 'public.xhtml', 'public.url'];
     argv[1].split(' ').forEach(function(ext) {
         var uti = $.UTTypeCreatePreferredIdentifierForTag($('public.filename-extension'), $(ext), $('public.text'));
         if (!uti) return;
-        if ($.UTTypeConformsTo(uti, $('public.image'))) return; // svg: images keep their viewer
+        // HTML viewing is tied to the default browser. Keep browser and image handlers intact.
+        if (preserveTypes.some(function(type) { return $.UTTypeConformsTo(uti, $(type)); })) return;
         var name = ObjC.unwrap(ObjC.castRefToObject(uti));
         if (seen[name]) return;
         seen[name] = true;
@@ -371,7 +375,7 @@ JXA
         then
             say 'Some defaults could not be changed. In Finder, use Get Info > Open with > rhun > Change All for those types'
         else
-            say 'rhun is the default editor for the supported text extensions'
+            say 'rhun is the default editor for text and code files; browser and image defaults are kept'
         fi
     fi
 }

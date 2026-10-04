@@ -424,44 +424,198 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         check('ai/local-model-protocol', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/commit-ai-windows.py')], check=True))
 
-    def native_window():
-        project = temp / 'native window'
-        project.mkdir()
-        file = project / 'input.txt'
-        file.write_bytes(b'native\n')
-        screenshot = temp / 'window.ppm'
-        script = script_file('window', 'print-state\nwait 2500\ncmd select_all\ncmd copy\n'
-                             'key ctrl+End\ncmd paste\ncmd save\n'
-                             f'shot {winpath(screenshot)}\nprint-doc\nquit\n')
-        process = subprocess.Popen(command('rhun.exe', winpath(project), winpath(file), '--script', script),
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment('window'))
+    def native_user():
         user = ctypes.WinDLL('user32', use_last_error=True)
         callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
         user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user.GetForegroundWindow.argtypes = []
+        user.GetForegroundWindow.restype = wintypes.HWND
+        user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user.IsWindowVisible.argtypes = [wintypes.HWND]
+        user.IsIconic.argtypes = [wintypes.HWND]
+        user.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
         user.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         user.SendMessageW.restype = wintypes.LPARAM
+        user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        return user, callback_type
+
+    def native_title(user, window):
+        title = ctypes.create_unicode_buffer(1024)
+        user.GetWindowTextW(window, title, len(title))
+        return title.value
+
+    def native_find_window(user, callback_type, *, pid=None, name=None, timeout=10):
         found = []
         @callback_type
         def enum(window, unused):
-            pid = wintypes.DWORD()
-            user.GetWindowThreadProcessId(window, ctypes.byref(pid))
-            if pid.value == process.pid:
-                found.append(window)
+            owner = wintypes.DWORD()
+            user.GetWindowThreadProcessId(window, ctypes.byref(owner))
+            if pid is not None and owner.value != pid:
+                return True
+            classname = ctypes.create_unicode_buffer(80)
+            user.GetClassNameW(window, classname, len(classname))
+            if classname.value == 'rhunWindow' and (name is None or native_title(user, window).startswith(name)):
+                found.append((window, owner.value))
             return True
+        deadline = time.monotonic() + timeout
+        while not found and time.monotonic() < deadline:
+            user.EnumWindows(enum, 0)
+            if not found:
+                time.sleep(0.03)
+        assert found, 'native editor window did not appear'
+        assert len(found) == 1, f'expected one editor window, found {found}'
+        return found[0]
+
+    def native_assert_foreground(user, window):
+        deadline = time.monotonic() + 2
+        while user.GetForegroundWindow() != window and time.monotonic() < deadline:
+            time.sleep(0.03)
+        assert user.IsWindowVisible(window), 'editor window stayed hidden'
+        assert not user.IsIconic(window), 'editor window stayed minimized'
+        foreground = user.GetForegroundWindow()
+        assert foreground == window, f'editor HWND {window} is not foreground HWND {foreground}'
+
+    def native_file_launch(show):
+        name = 'native-file-' + str(show)
+        project = temp / name / 'previous project'
+        project.mkdir(parents=True)
+        previous = project / 'previous.txt'
+        previous.write_bytes(b'previous\n')
+        file = temp / name / 'standalone café.rb'
+        file.write_bytes(b'puts :standalone\n')
+        env = environment(name)
+        config = Path(env['XDG_CONFIG_HOME']) / 'rhun/config'
+        config.parent.mkdir(parents=True)
+        config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
+        run('rhun.com', winpath(project), winpath(previous), '--headless', '1000x700',
+            '--script', script_file(name + '-seed', 'quit\n'), env=env)
+        marker = Path(env['XDG_STATE_HOME']) / 'rhun/last-project'
+        remembered = marker.read_bytes()
+        script = script_file(name, 'print-project\nprint-state\nwait 5000\n'
+                             'cmd next_tab\nprint-state\nquit\n')
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = show
+        process = subprocess.Popen(command('rhun.exe', winpath(file), '--script', script),
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   env=env, startupinfo=startup)
+        user, callback_type = native_user()
+        try:
+            first = []
+            reader = threading.Thread(target=lambda: first.extend(
+                [process.stdout.readline(), process.stdout.readline()]), daemon=True)
+            reader.start()
+            reader.join(timeout=10)
+            assert len(first) == 2 and first[0] == b'project=\n', first
+            assert b'tabs=1 active=' + file.name.encode() in first[1], first
+            window, _ = native_find_window(user, callback_type, pid=process.pid)
+            native_assert_foreground(user, window)
+            output = process.communicate(timeout=10)[0]
+            assert process.returncode == 0, output
+            assert b'tabs=1 active=' + file.name.encode() in output, output
+            equal(marker.read_bytes(), remembered)
+            equal(file.read_bytes(), b'puts :standalone\n')
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+    def native_cli_file_launch():
+        name = 'native-cli-file'
+        project = temp / name / 'previous project'
+        project.mkdir(parents=True)
+        previous = project / 'previous.txt'
+        previous.write_bytes(b'previous\n')
+        file = temp / name / 'standalone cli café.rb'
+        file.write_bytes(b'puts :cli\n')
+        env = environment(name)
+        config = Path(env['XDG_CONFIG_HOME']) / 'rhun/config'
+        config.parent.mkdir(parents=True)
+        config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
+        run('rhun.com', winpath(project), winpath(previous), '--headless', '1000x700',
+            '--script', script_file(name + '-seed', 'quit\n'), env=env)
+        marker = Path(env['XDG_STATE_HOME']) / 'rhun/last-project'
+        remembered = marker.read_bytes()
+        user, callback_type = native_user()
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = 7  # keep the temporary console minimized and inactive
+        process = subprocess.Popen(command('rhun.com', winpath(file)), env=env,
+                                   startupinfo=startup, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        window = None
+        try:
+            # No --script or --wait: the console entry must exit after spawning the GUI sibling.
+            assert process.wait(timeout=10) == 0, 'console launcher failed'
+            window, gui_pid = native_find_window(user, callback_type, name=file.name)
+            assert gui_pid != process.pid, 'console entry did not respawn the GUI'
+            title = native_title(user, window)
+            assert title.endswith('rhûn') and project.name not in title, title
+            native_assert_foreground(user, window)
+            user.PostMessageW(window, 0x10, 0, 0)  # WM_CLOSE
+            deadline = time.monotonic() + 5
+            while user.IsWindowVisible(window) and time.monotonic() < deadline:
+                time.sleep(0.03)
+            assert not user.IsWindowVisible(window), 'standalone editor did not close'
+            equal(marker.read_bytes(), remembered)
+            equal(file.read_bytes(), b'puts :cli\n')
+        finally:
+            if window is not None:
+                user.PostMessageW(window, 0x10, 0, 0)
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+    def native_window(preserve=False):
+        name = 'window-preserve' if preserve else 'window'
+        project = temp / ('native ' + name)
+        project.mkdir()
+        file = project / 'input.txt'
+        file.write_bytes(b'native\n')
+        screenshot = temp / (name + '.ppm')
+        script = script_file(name, f'print-state\nwait {7000 if preserve else 2500}\ncmd select_all\ncmd copy\n'
+                             'key ctrl+End\ncmd paste\ncmd save\n'
+                             f'shot {winpath(screenshot)}\nprint-doc\nquit\n')
+        env = environment(name)
+        config = Path(env['XDG_CONFIG_HOME']) / 'rhun/config'
+        config.parent.mkdir(parents=True)
+        config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
+        process = subprocess.Popen(command('rhun.exe', winpath(project), winpath(file), '--script', script),
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+        user, callback_type = native_user()
         try:
             first = []
             reader = threading.Thread(target=lambda: first.append(process.stdout.readline()), daemon=True)
             reader.start()
             reader.join(timeout=10)
             assert first and b'active=input.txt' in first[0], 'document did not become ready'
-            deadline = time.monotonic() + 2
-            while not found and time.monotonic() < deadline:
-                user.EnumWindows(enum, 0)
-                time.sleep(0.03)
-            assert found, 'native window did not appear'
+            window, _ = native_find_window(user, callback_type, pid=process.pid, timeout=2)
             # Input goes through the real window procedure and UTF-16 surrogate handling.
             for code in [ord('Ω'), 0xD83D, 0xDE00]:
-                user.SendMessageW(found[0], 0x102, code, 0)
+                user.SendMessageW(window, 0x102, code, 0)
+            if preserve:
+                user.ShowWindow(window, 6)  # minimize the project while its changes are unsaved
+                assert user.IsIconic(window), 'project window did not minimize'
+                standalone = temp / 'preserve standalone café.rb'
+                standalone.write_bytes(b'puts :separate\n')
+                child_script = script_file('preserve-file', 'print-project\nprint-state\nwait 3000\nquit\n')
+                child = subprocess.Popen(command('rhun.exe', winpath(standalone), '--script', child_script),
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+                try:
+                    child_window, _ = native_find_window(user, callback_type, pid=child.pid,
+                                                        name=standalone.name)
+                    native_assert_foreground(user, child_window)
+                    assert user.IsIconic(window), 'file launch restored the other project window'
+                    equal(file.read_bytes(), b'native\n')
+                    child_output = child.communicate(timeout=10)[0]
+                    assert child.returncode == 0, child_output
+                    assert child_output.startswith(b'project=\ntabs=1 active=' + standalone.name.encode()), child_output
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait()
             output = process.communicate(timeout=15)[0]
             assert process.returncode == 0, output
             equal(file.read_bytes(), 'Ω😀native\nΩ😀native\n'.encode())
@@ -472,6 +626,10 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                 process.kill()
                 process.wait()
     if not args.wine:
+        check('window/file-only-background-start-foreground', lambda: native_file_launch(4))
+        check('window/file-only-minimized-start-foreground', lambda: native_file_launch(7))
+        check('window/file-only-cli-respawn-foreground', native_cli_file_launch)
+        check('window/file-launch-preserves-minimized-unsaved-project', lambda: native_window(preserve=True))
         check('window/unicode-input-clipboard-save-and-render', native_window)
     else:
         print('skip native readonly, sharing, symlinks, ConPTY and desktop tests under Wine', flush=True)

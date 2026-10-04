@@ -44,6 +44,7 @@ cursor_font: .long 0
 a_wm_protocols: .long 0
 a_wm_delete: .long 0
 a_net_wm_name: .long 0
+a_net_active: .long 0
 a_utf8: .long 0
 a_clipboard: .long 0
 a_targets: .long 0
@@ -1179,6 +1180,9 @@ FN x_open_window
     lea rdi, [rip + .La_net_wm_name]
     call x_intern
     mov [rip + a_net_wm_name], eax
+    lea rdi, [rip + .La_net_active]
+    call x_intern
+    mov [rip + a_net_active], eax
     lea rdi, [rip + .La_utf8]
     call x_intern
     mov [rip + a_utf8], eax
@@ -1269,6 +1273,7 @@ FN x_open_window
     lea rdi, [rsp]
     mov esi, 8
     call x_req
+    call x_activate
     call x_flush
     mov dword ptr [rip + g_csd], 0
     call x_resize_fb
@@ -1643,6 +1648,29 @@ x_serve_selection:
     EPILOGUE
 
 # _NET_WM_STATE toggle (maximize) via a client message to the root window
+x_activate:
+    PROLOGUE 48
+    mov rdi, rsp
+    xor esi, esi
+    mov edx, 44
+    call memset
+    mov byte ptr [rsp], 25      # SendEvent
+    mov word ptr [rsp + 2], 11
+    mov eax, [rip + root]
+    mov [rsp + 4], eax
+    mov dword ptr [rsp + 8], 0x180000
+    mov byte ptr [rsp + 12], 33 # ClientMessage
+    mov byte ptr [rsp + 13], 32
+    mov eax, [rip + win]
+    mov [rsp + 16], eax
+    mov eax, [rip + a_net_active]
+    mov [rsp + 20], eax
+    mov dword ptr [rsp + 24], 1 # normal application, CurrentTime
+    mov rdi, rsp
+    mov esi, 44
+    call x_req
+    EPILOGUE
+
 x_maximize:
     sub rsp, 56
     mov byte ptr [rsp], 25      # SendEvent
@@ -1716,6 +1744,7 @@ x_minimize:
 .La_targets: .asciz "TARGETS"
 .La_sel_prop: .asciz "RHUN_SELECTION"
 .La_net_wm_state: .asciz "_NET_WM_STATE"
+.La_net_active: .asciz "_NET_ACTIVE_WINDOW"
 .La_max_h: .asciz "_NET_WM_STATE_MAXIMIZED_HORZ"
 .La_max_v: .asciz "_NET_WM_STATE_MAXIMIZED_VERT"
 .La_change_state: .asciz "WM_CHANGE_STATE"

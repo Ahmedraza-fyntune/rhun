@@ -162,8 +162,19 @@ function Show-DefaultEditorCommand {
     if ($NoFileAssociations) { return }
     $script = (Join-Path $InstallDir 'install.ps1').Replace("'", "''")
     $directory = $InstallDir.Replace("'", "''")
+    $command = "  powershell -NoProfile -ExecutionPolicy Bypass -File '$script' -ConfigureFiles -MakeDefault -InstallDir '$directory'"
+    $color = -not [Console]::IsOutputRedirected -and -not (Test-Path Env:NO_COLOR) -and $env:TERM -ne 'dumb'
+    Write-Output ''
+    if ($color) {
+        Write-Host '  Optional: default editor' -ForegroundColor Cyan
+        Write-Host '  ========================' -ForegroundColor Cyan
+    } else {
+        Write-Output '  Optional: default editor'
+        Write-Output '  ========================'
+    }
     Write-Output 'To choose rhun as your default editor, run this command manually:'
-    Write-Output "  powershell -NoProfile -ExecutionPolicy Bypass -File '$script' -ConfigureFiles -MakeDefault -InstallDir '$directory'"
+    if ($color) { Write-Host $command -ForegroundColor Green } else { Write-Output $command }
+    Write-Output ''
 }
 # END FILE ASSOCIATION FUNCTIONS
 

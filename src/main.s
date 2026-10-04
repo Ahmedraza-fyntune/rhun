@@ -9,10 +9,10 @@
 sigact: .zero 32
 opt_headless: .long 0
 opt_wait: .long 0
+opt_empty: .long 0
 .p2align 3
 opt_script: .quad 0
 opt_control: .quad 0
-paths: .zero VEC_SIZE
 cwd: .zero 4096
 self_path: .zero 4096
 
@@ -158,7 +158,14 @@ parse_args:
     mov rdi, [r12 + rbx*8]
     call set_scale
     jmp 9f
-4:  lea rdi, [rip + paths]
+4:  mov rdi, r14
+    lea rsi, [rip + .Lo_empty]
+    call strcmp_eq
+    test eax, eax
+    jz 41f
+    mov dword ptr [rip + opt_empty], 1
+    jmp 9f
+41: lea rdi, [rip + g_start_paths]
     mov esi, 8
     call vec_push
     mov [rax], r14
@@ -364,13 +371,14 @@ parse_size:
     ret
 
 # open_initial(): project folder and files from the command line
+
 open_initial:
     PROLOGUE
     xor r12d, r12d              # got a directory
     xor ebx, ebx
-1:  cmp rbx, [rip + paths + VEC_len]
+1:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 2f
-    mov rax, [rip + paths + VEC_ptr]
+    mov rax, [rip + g_start_paths + VEC_ptr]
     mov rdi, [rax + rbx*8]
     call file_is_dir
     test eax, eax
@@ -381,8 +389,10 @@ open_initial:
 2:  test r12d, r12d
     jnz 3f
     # With no paths, optionally reopen the last project; explicit paths always win.
-    cmp qword ptr [rip + paths + VEC_len], 0
-    jne 21f
+    cmp qword ptr [rip + g_start_paths + VEC_len], 0
+    jne 3f                    # explicit files are ordinary tabs without a project
+    cmp dword ptr [rip + opt_empty], 0
+    jne 3f
     cmp dword ptr [rip + cfg_restore_project], 0
     je 21f
     call session_last_project
@@ -391,7 +401,7 @@ open_initial:
     mov rdi, rax
     call app_set_project
     jmp 3f
-21: # no folder given: the current directory is the project
+21: # bare launch: the current directory is the project
     lea rdi, [rip + cwd]
     mov esi, 4096
     SYS SYS_getcwd
@@ -400,19 +410,34 @@ open_initial:
     lea rdi, [rip + cwd]
     call app_set_project
 3:  xor ebx, ebx
-4:  cmp rbx, [rip + paths + VEC_len]
+4:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 5f
-    mov rax, [rip + paths + VEC_ptr]
+    mov rax, [rip + g_start_paths + VEC_ptr]
     mov rdi, [rax + rbx*8]
     call app_open_path
     inc rbx
     jmp 4b
 5:  # nothing opened: bring back the last session
+    cmp dword ptr [rip + opt_empty], 0
+    jne 6f
+    test r12d, r12d
+    jnz 51f
+    cmp qword ptr [rip + g_start_paths + VEC_len], 0
+    jne 6f                    # file-only launches never restore a project session
+51:
     cmp qword ptr [rip + g_tabs + VEC_len], 0
     jne 6f
     call session_restore
 6:  call app_update_title
     mov dword ptr [rip + g_started], 1
+.ifdef WINDOWS
+    cmp dword ptr [rip + opt_headless], 0
+    jne 7f
+    cmp qword ptr [rip + g_start_paths + VEC_len], 0
+    je 7f
+    call win_activate
+7:
+.endif
     EPILOGUE
 
 .section .rodata
@@ -425,6 +450,7 @@ open_initial:
 .Lo_control: .asciz "--control"
 .Lo_scale: .asciz "--scale"
 .Lo_wait: .asciz "--wait"
+.Lo_empty: .asciz "--empty"
 .Ldevnull: .asciz "/dev/null"
 .Lself_exe: .asciz "/proc/self/exe"
 .Lenv_wayland: .asciz "WAYLAND_DISPLAY"
@@ -436,6 +462,7 @@ open_initial:
 .Lnl: .asciz "\n"
 .Lusage: .ascii "usage: rhun [folder] [files...]\n"
     .ascii "  --wait           stay in the terminal until rhun is closed (for EDITOR)\n"
+    .ascii "  --empty          start without restoring a project or tabs\n"
     .ascii "  --headless WxH   no display; use with --script or --control\n"
     .ascii "  --script FILE    run control commands from FILE and exit\n"
     .ascii "  --control PATH   accept control commands on a unix socket\n"

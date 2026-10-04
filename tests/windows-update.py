@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Exercise the editor's embedded Windows updater and detached restart with local releases."""
 import functools
+import ctypes
+from ctypes import wintypes
 import hashlib
 import http.server
 import os
@@ -62,11 +64,12 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
                RHUN_RELEASES_URL=f'http://127.0.0.1:{server.server_port}/releases',
                RHUN_UPDATE_TARGET=str(portable / 'rhun.com'))
 
-    def run(name, lines, environment=env, cwd=None):
+    def run(name, lines, environment=env, cwd=None, paths=None, installation=portable):
         script = temp / (name + '.rsc')
         # UTF-8 as rhun reads it: the ANSI code page would garble the project's path
         script.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-        return subprocess.run([str(portable / 'rhun.com'), str(project), '--headless', '800x600',
+        launch_paths = [project] if paths is None else paths
+        return subprocess.run([str(installation / 'rhun.com'), *map(str, launch_paths), '--headless', '800x600',
                                '--script', str(script)], env=environment, cwd=cwd,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
 
@@ -78,6 +81,88 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
                 return True
             time.sleep(0.2)
         return False
+
+    def restarted_window(installation, expected_name):
+        deadline = time.monotonic() + 20
+        ids = []
+        while not ids and time.monotonic() < deadline:
+            ids = subprocess.check_output(['powershell.exe', '-NoProfile', '-Command',
+                "Get-Process -Name rhun -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:TEST_EXE } | Select-Object -ExpandProperty Id"],
+                env=dict(os.environ, TEST_EXE=str(installation / 'rhun.exe'))).split()
+            if not ids:
+                time.sleep(0.2)
+        assert ids, 'updated editor did not restart'
+        user = ctypes.WinDLL('user32', use_last_error=True)
+        found = []
+        callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+        user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        def inspect_window(window, _):
+            owner = wintypes.DWORD()
+            user.GetWindowThreadProcessId(window, ctypes.byref(owner))
+            if owner.value in [int(value) for value in ids]:
+                title = ctypes.create_unicode_buffer(4096)
+                user.GetWindowTextW(window, title, len(title))
+                if expected_name in title.value:
+                    found.append(window)
+            return True
+        deadline = time.monotonic() + 10
+        while not found and time.monotonic() < deadline:
+            user.EnumWindows(callback_type(inspect_window), 0)
+            if not found:
+                time.sleep(0.1)
+        assert found, 'updated editor did not reopen the requested path'
+        return user, found[0], ids
+
+    def stop_restarted(ids):
+        for process_id in ids:
+            subprocess.run(['taskkill', '/F', '/PID', process_id.decode()], check=True, stdout=subprocess.PIPE)
+
+    def standalone_restart(name, paths, before=(), after=(), expected=None):
+        # Each scenario applies the same synthetic release to a fresh portable installation.
+        installation = temp / (name + " portable café ' $ &") / 'rhun'
+        installation.mkdir(parents=True)
+        for filename in ('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1'):
+            shutil.copyfile(portable / filename, installation / filename)
+        restart_env = dict(env, RHUN_UPDATE_TARGET=str(installation / 'rhun.com'))
+        result = run(name, [*check, 'cmd install_update', 'wait-update', 'print-update',
+                     *before, 'cmd restart_to_update', *after], restart_env,
+                     paths=paths, installation=installation)
+        assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
+        reopened = list(paths) if expected is None else expected
+        user, window, ids = restarted_window(installation, reopened[-1].name if reopened else 'rhûn')
+        try:
+            title = ctypes.create_unicode_buffer(4096)
+            if reopened:
+                user.GetForegroundWindow.restype = wintypes.HWND
+                deadline = time.monotonic() + 2
+                while user.GetForegroundWindow() != window and time.monotonic() < deadline:
+                    time.sleep(0.03)
+                assert user.GetForegroundWindow() == window, 'restarted standalone editor is not foreground'
+                user.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t]
+                # Cycle the native shortcut to verify every requested text or image tab, and no others.
+                for file in reopened:
+                    user.keybd_event(0x11, 0, 0, 0)
+                    user.keybd_event(0x22, 0, 0, 0)
+                    user.keybd_event(0x22, 0, 2, 0)
+                    user.keybd_event(0x11, 0, 2, 0)
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        user.GetWindowTextW(window, title, len(title))
+                        if file.name in title.value:
+                            break
+                        time.sleep(0.03)
+                    assert file.name in title.value and title.value.endswith('rhûn'), title.value
+            else:
+                user.GetWindowTextW(window, title, len(title))
+                assert title.value == 'rhûn', f'empty restart restored a project or tab: {title.value}'
+            reported = subprocess.check_output([str(installation / 'rhun.com'), '--version']).strip()
+            assert reported == ('rhun ' + LATEST).encode(), reported
+            assert marker.read_bytes() == remembered_project
+            assert not list(installation.parent.glob('.rhun-update-*'))
+        finally:
+            stop_restarted(ids)
 
     check = ['cmd check_for_updates', 'wait-update']
     try:
@@ -109,6 +194,33 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
         assert stages_gone(), list(portable.parent.glob('.rhun-update-*'))
         assert (portable / 'rhun.exe').read_bytes() == original
         print('ok   update/quit-discards-staged-download', flush=True)
+
+        standalone_directory = temp / "Standalone café ' $ &"
+        standalone_directory.mkdir()
+        standalone_files = [standalone_directory / "first café ' $ &.rb",
+                            standalone_directory / 'second café % ; (value).rb']
+        for file in standalone_files:
+            file.write_bytes(b'puts :standalone\n')
+        marker = temp / 'state/rhun/last-project'
+        remembered_project = marker.read_bytes()
+        result = run('standalone-cancel', [*check, 'cmd install_update', 'wait-update', 'type changed',
+                     'cmd restart_to_update', 'key Escape', 'print-project', 'print-state', 'print-update'],
+                     paths=standalone_files)
+        assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
+        assert b'project=\ntabs=2 active=' + standalone_files[-1].name.encode() in result.stdout, result.stdout
+        assert (portable / 'rhun.exe').read_bytes() == original
+        assert marker.read_bytes() == remembered_project
+        assert all(file.read_bytes() == b'puts :standalone\n' for file in standalone_files)
+        assert stages_gone(), list(portable.parent.glob('.rhun-update-*'))
+        print('ok   update/standalone-tabs-prepare-cancel-and-discard', flush=True)
+
+        result = run('standalone-empty', ['cmd close_tab', 'cmd close_tab', *check, 'cmd install_update',
+                     'wait-update', 'print-project', 'print-state', 'print-update'], paths=standalone_files)
+        assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
+        assert b'project=\ntabs=0 ' in result.stdout, result.stdout
+        assert marker.read_bytes() == remembered_project
+        assert stages_gone(), list(portable.parent.glob('.rhun-update-*'))
+        print('ok   update/standalone-empty-window-prepare-and-discard', flush=True)
 
         # Preparing removes what crashed or interrupted editors left (a stage whose process is gone,
         # an hour-old swap) and keeps a recent one, which may be another installer's.
@@ -144,6 +256,25 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
         print('ok   update/prepare-removes-stale-stages', flush=True)
         print('ok   update/programs-come-from-path-only', flush=True)
 
+        standalone_restart('standalone-restart', standalone_files, before=['type saved_'], after=['key Return'])
+        assert standalone_files[-1].read_bytes() == b'saved_puts :standalone\n'
+        print('ok   update/standalone-tabs-detached-restart', flush=True)
+
+        standalone_restart('empty-restart', standalone_files,
+                           before=['cmd close_tab', 'cmd close_tab'], expected=[])
+        print('ok   update/standalone-empty-window-detached-restart', flush=True)
+
+        image = standalone_directory / "image café ' $ &.png"
+        image.write_bytes((ROOT / 'tests/data/images/rgba.png').read_bytes())
+        image_bytes = image.read_bytes()
+        standalone_restart('image-restart', [image])
+        assert image.read_bytes() == image_bytes
+        print('ok   update/standalone-image-detached-restart', flush=True)
+
+        standalone_restart('mixed-restart', [standalone_files[0], image, standalone_files[-1]])
+        assert image.read_bytes() == image_bytes
+        print('ok   update/standalone-mixed-tabs-detached-restart', flush=True)
+
         result = run('restart', [*check, 'cmd install_update', 'wait-update', 'print-update',
                                  'cmd restart_to_update'])
         assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
@@ -162,45 +293,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
         assert reported == ('rhun ' + LATEST).encode(), reported
         assert personal.read_bytes() == b'keep this'
         assert not (portable / '.rhun-install').exists(), 'portable update registered an installation'
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            ids = subprocess.check_output(['powershell.exe', '-NoProfile', '-Command',
-                "Get-Process -Name rhun -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:TEST_EXE } | Select-Object -ExpandProperty Id"],
-                env=dict(os.environ, TEST_EXE=str(portable / 'rhun.exe'))).split()
-            if ids:
-                break
-            time.sleep(0.2)
-        assert ids, 'updated editor did not restart'
         # Read the native title to verify the original project reopened after restart.
-        import ctypes
-        from ctypes import wintypes
-        user = ctypes.WinDLL('user32', use_last_error=True)
-        found = []
-        callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        user.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
-        user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
-        user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-        def inspect_window(window, _):
-            owner = wintypes.DWORD()
-            user.GetWindowThreadProcessId(window, ctypes.byref(owner))
-            if owner.value in [int(value) for value in ids]:
-                title = ctypes.create_unicode_buffer(4096)
-                user.GetWindowTextW(window, title, len(title))
-                if project.name in title.value:
-                    found.append(title.value)
-            return True
-        deadline = time.monotonic() + 10
-        while not found and time.monotonic() < deadline:
-            user.EnumWindows(callback_type(inspect_window), 0)
-            time.sleep(0.1)
-        assert found, 'updated editor did not reopen the project'
-        for process_id in ids:
-            subprocess.run(['taskkill', '/F', '/PID', process_id.decode()], check=True, stdout=subprocess.PIPE)
+        _, _, ids = restarted_window(portable, project.name)
+        stop_restarted(ids)
         print('ok   update/detached-apply-version-and-restart', flush=True)
     finally:
         # Kill any surviving recovery dialog or editor before TemporaryDirectory removes PE files.
         subprocess.run(['powershell.exe', '-NoProfile', '-Command',
             "Get-Process -Name rhun,rhun.com -ErrorAction SilentlyContinue | Where-Object { $_.Path -like ($env:TEST_DIR + '*') } | Stop-Process -Force"],
-            env=dict(os.environ, TEST_DIR=str(portable)), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            env=dict(os.environ, TEST_DIR=str(temp)), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         server.shutdown()
         server.server_close()

@@ -35,6 +35,9 @@
 g_focus: .long 0
 g_tabs: .zero VEC_SIZE
 g_project: .quad 0
+.globl g_start_paths
+g_start_paths: .zero VEC_SIZE
+restart_paths: .quad 0
 g_project_name: .quad 0
 g_branch: .zero 64
 .globl g_toast, g_toast_until
@@ -319,6 +322,106 @@ recent_open:
 
 # ---------------- tabs ----------------
 
+# app_restart_paths(executable) -> allocated argv. Project sessions reopen by folder;
+# standalone windows keep their normal file tabs across an update restart.
+FN app_restart_paths
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rip + g_restart], 0
+    je 8f
+    mov r12, [rip + restart_paths]
+    test r12, r12
+    jz 8f
+    xor r13d, r13d
+5:  inc r13
+    cmp qword ptr [r12 + r13*8], 0
+    jne 5b
+    lea rdi, [r13*8 + 8]
+    call mem_alloc
+    mov r14, rax
+    mov rdi, rax
+    mov rsi, r12
+    lea rdx, [r13*8 + 8]
+    call memcpy
+    mov [r14], rbx
+    mov rax, r14
+    EPILOGUE
+8:
+    mov rdi, [rip + g_tabs + VEC_len]
+    add rdi, 3
+    shl rdi, 3
+    call mem_alloc
+    mov r14, rax
+    mov [r14], rbx
+    mov r13d, 1
+    mov rax, [rip + g_project]
+    test rax, rax
+    jz 1f
+    mov [r14 + r13*8], rax
+    inc r13
+    jmp 4f
+1:  xor r12d, r12d
+2:  cmp r12, [rip + g_tabs + VEC_len]
+    jae 4f
+    mov rdi, r12
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    je 21f
+    cmp qword ptr [rax + TAB_kind], TAB_IMAGE
+    jne 3f
+21:
+    mov rax, [rax + TAB_doc]
+    mov rax, [rax + DOC_path]
+    test rax, rax
+    jz 3f
+    mov [r14 + r13*8], rax
+    inc r13
+3:  inc r12
+    jmp 2b
+4:  cmp r13d, 1
+    jne 41f
+    lea rax, [rip + .Lrestart_empty]
+    mov [r14 + r13*8], rax
+    inc r13
+41: mov qword ptr [r14 + r13*8], 0
+    mov rax, r14
+    EPILOGUE
+
+# Snapshot before quit confirmations close dirty tabs. Owned path copies survive
+# those closes; cancelling and requesting another restart replaces the snapshot.
+FN app_remember_restart
+    PROLOGUE
+    mov r12, [rip + restart_paths]
+    test r12, r12
+    jz 3f
+    mov r13d, 1
+1:  mov rdi, [r12 + r13*8]
+    test rdi, rdi
+    jz 2f
+    call mem_free
+    inc r13
+    jmp 1b
+2:  mov rdi, r12
+    call mem_free
+3:  mov qword ptr [rip + restart_paths], 0
+    lea rdi, [rip + .Lrhun]
+    call app_restart_paths
+    mov r12, rax
+    mov r13d, 1
+4:  mov rbx, [r12 + r13*8]
+    test rbx, rbx
+    jz 5f
+    mov rdi, rbx
+    call strlen
+    lea rsi, [rax + 1]
+    mov rdi, rbx
+    call mem_dup
+    mov [r12 + r13*8], rax
+    inc r13
+    jmp 4b
+5:  mov [rip + restart_paths], r12
+    EPILOGUE
+
 # tab_at(i) -> TAB*
 FN tab_at
     imul rax, rdi, TAB_SIZE
@@ -422,6 +525,24 @@ FN app_find_tab
 4:  mov rax, rbx
     EPILOGUE
 
+# app_open_startup_path(path): initial desktop events follow argv startup precedence.
+FN app_open_startup_path
+    # Finder delivers its initial URLs during AppKit startup. Queue them with argv so
+    # the same project/session precedence applies; later events open ordinary tabs.
+    cmp dword ptr [rip + g_started], 0
+    jne app_open_path
+    PROLOGUE
+    mov rbx, rdi
+    call strlen
+    lea rsi, [rax + 1]
+    mov rdi, rbx
+    call mem_dup
+    mov rbx, rax
+    lea rdi, [rip + g_start_paths]
+    mov esi, 8
+    call vec_push
+    mov [rax], rbx
+    EPILOGUE
 # app_open_file(path) -> tab index or -1
 FN app_open_file
     PROLOGUE 16
@@ -3486,6 +3607,7 @@ FN cmd_move_line_down
 .section .rodata
 .Lrhun: .asciz "rh\303\273n"      # the name as it is written in the interface
 .Lempty: .asciz ""
+.Lrestart_empty: .asciz "--empty"
 .Ldash: .asciz " \342\200\224 "
 .Lbinary: .asciz "Binary file, not opened"
 .Lopen_failed: .asciz "Could not read the file"
@@ -3626,8 +3748,6 @@ FN app_open_path
     # does: the project's session is saved and its unsaved files are asked about first
     mov rdi, rbx
     cmp dword ptr [rip + g_started], 0
-    je 21f
-    cmp qword ptr [rip + g_project], 0
     je 21f
     call app_switch_project
     jmp 8f

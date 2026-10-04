@@ -34,7 +34,7 @@ run() {
     printf '%s\n' "$@" > "$w/$c.rsc"
     env HOME="$w/home" XDG_CONFIG_HOME="$w/config" XDG_STATE_HOME="$w/state" \
         RHUN_RELEASES_URL="file://$w/rel" RHUN_UPDATE_TARGET="$target" STUB_LOG="$w/stub.log" STUB_FAIL="$stubfail" STUB_BUMP="${bump:-}" \
-        build/rhun "$w/proj" --headless 800x600 --script "$w/$c.rsc" > "$w/$c.out" 2>&1
+        build/rhun "${launch:-$w/proj}" --headless 800x600 --script "$w/$c.rsc" > "$w/$c.out" 2>&1
 }
 expect() { # CASE LINE
     if grep -qxF "$2" "$w/$1.out"; then echo "ok   update/$1"; else echo "FAIL update/$1"; cat "$w/$1.out"; fail=1; fi
@@ -86,5 +86,47 @@ if [ "$(cat "$w/restart.log" 2>/dev/null)" = "restarted $w/proj" ]; then
     echo "ok   update/restart"
 else
     echo "FAIL update/restart"; cat "$w/restart.out"; fail=1
+fi
+printf 'first\n' > "$w/first café.rb"
+printf 'second\n' > "$w/second file.rb"
+launch=$w/first\ café.rb
+run restart-files 99.0.0 '' "$w/target" '' "open $w/second file.rb" "$check" wait-update \
+    'cmd install_update' wait-update 'cmd restart_to_update'
+if [ "$(cat "$w/restart.log" 2>/dev/null)" = "restarted $w/first café.rb $w/second file.rb" ]; then
+    echo "ok   update/restart-standalone-tabs"
+else
+    echo "FAIL update/restart-standalone-tabs"; cat "$w/restart-files.out"; fail=1
+fi
+run restart-edited-files 99.0.0 '' "$w/target" '' "open $w/second file.rb" 'cmd prev_tab' 'type edited' \
+    "$check" wait-update 'cmd install_update' wait-update 'cmd restart_to_update' 'key Escape' \
+    'cmd restart_to_update' 'key Return'
+if [ "$(cat "$w/restart.log" 2>/dev/null)" = "restarted $w/first café.rb $w/second file.rb" ] && \
+   [ "$(cat "$w/first café.rb")" = editedfirst ]; then
+    echo "ok   update/restart-edited-standalone-tabs-after-cancel"
+else
+    echo "FAIL update/restart-edited-standalone-tabs-after-cancel"; cat "$w/restart-edited-files.out"; fail=1
+fi
+run restart-empty 99.0.0 '' "$w/target" '' 'cmd close_tab' "$check" wait-update \
+    'cmd install_update' wait-update 'cmd restart_to_update'
+if [ "$(cat "$w/restart.log" 2>/dev/null)" = 'restarted --empty' ]; then
+    echo "ok   update/restart-empty-standalone-window"
+else
+    echo "FAIL update/restart-empty-standalone-window"; cat "$w/restart-empty.out"; fail=1
+fi
+image=$(pwd -P)/assets/icons/rhun-256.png
+launch=$image
+run restart-image 99.0.0 '' "$w/target" '' "$check" wait-update 'cmd install_update' wait-update 'cmd restart_to_update'
+if [ "$(cat "$w/restart.log" 2>/dev/null)" = "restarted $image" ]; then
+    echo "ok   update/restart-image-tab"
+else
+    echo "FAIL update/restart-image-tab"; cat "$w/restart-image.out"; fail=1
+fi
+launch=$w/first\ café.rb
+run restart-mixed 99.0.0 '' "$w/target" '' "open $image" "$check" wait-update \
+    'cmd install_update' wait-update 'cmd restart_to_update'
+if [ "$(cat "$w/restart.log" 2>/dev/null)" = "restarted $w/first café.rb $image" ]; then
+    echo "ok   update/restart-text-and-image-tabs"
+else
+    echo "FAIL update/restart-text-and-image-tabs"; cat "$w/restart-mixed.out"; fail=1
 fi
 exit $fail

@@ -50,6 +50,7 @@ try {
     $instructions = Choose-DefaultEditor | Out-String
     Assert ($openedSettings.Count -eq 0) 'Opened Settings without a manual request'
     Assert ($instructions.Contains('-ExecutionPolicy Bypass -File')) 'Manual command missing'
+    Assert ($instructions.Contains('Optional: default editor')) 'Manual command heading missing'
     Assert ($instructions.Contains($InstallDir.Replace("'", "''"))) 'Manual command path quoting failed'
     $MakeDefault = $true
     Choose-DefaultEditor | Out-Null
@@ -148,6 +149,7 @@ esac
     assert len(defaults) == 1 and defaults[0][1] == 'rhun.desktop', calls
     assert {'text/plain', 'application/json'} <= set(defaults[0][2:])
     assert not any('image/' in line or 'inode/' in line for line in calls)
+    assert not {'text/html', 'application/xhtml+xml'} & set(defaults[0][2:]), defaults
     assert b'rhun is the default editor' in output
     print('ok   associations/linux-opt-in-and-configure-without-download', flush=True)
     (temp / 'calls').unlink()
@@ -219,3 +221,5 @@ esac
     output = run('--app-dir', str(appdir), '--make-default')
     assert b'Some defaults could not be changed' in output
     print('ok   associations/mac-opt-in-arguments-and-failure', flush=True)
+
+subprocess.run([sys.executable, str(ROOT / 'tests/mac-defaults.py')], check=True)

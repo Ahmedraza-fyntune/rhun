@@ -56,6 +56,32 @@ FN getenv
     pop rbx
     ret
 
+# env_unset(name): remove an inherited entry before spawning other programs.
+FN env_unset
+    PROLOGUE
+    mov rbx, rdi
+    call strlen
+    mov r12, rax
+    mov rdi, rbx
+    call getenv
+    test rax, rax
+    jz 9f
+    sub rax, r12
+    dec rax
+    mov rdx, [rip + g_envp]
+1:  cmp qword ptr [rdx], 0
+    je 9f
+    cmp [rdx], rax
+    je 2f
+    add rdx, 8
+    jmp 1b
+2:  mov rcx, [rdx + 8]
+    mov [rdx], rcx
+    add rdx, 8
+    test rcx, rcx
+    jnz 2b
+9:  EPILOGUE
+
 FN sys_exit
     SYS SYS_exit_group
 

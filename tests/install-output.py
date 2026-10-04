@@ -79,6 +79,9 @@ def main():
             assert b'Checking latest release' in output, output
             assert b'Download verified' in output, output
             assert b'--configure-files --make-default' in output, output
+            assert b'Optional: default editor' in output and b'========================' in output, output
+            if colored:
+                assert b'\x1b[32m  curl -fsSL ' in output, output
             assert b'[y/N]' not in output, output
             assert b"| '__| '_ " in output, output
             assert b'VERSION' not in output and b'SHA256SUMS' not in output, output

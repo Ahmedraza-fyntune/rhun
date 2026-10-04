@@ -967,6 +967,7 @@ FN cmd_restart_to_update
     push rbx
     cmp dword ptr [rip + g_update_state], UP_READY
     jne 9f
+    call app_remember_restart
     # quitting asks about unsaved files; Cancel there clears g_restart
     mov dword ptr [rip + g_restart], 1
     call cmd_quit
@@ -1027,15 +1028,15 @@ FN update_restart
 1:
 .endif
     call up_fds_cloexec
-    lea rax, [rip + up_exec]
-    mov [rsp], rax
-    mov rax, [rip + g_project]
-    mov [rsp + 8], rax
-    mov qword ptr [rsp + 16], 0
     lea rdi, [rip + up_exec]
-    lea rsi, [rsp]
+    call app_restart_paths
+    mov rbx, rax
+    lea rdi, [rip + up_exec]
+    mov rsi, rbx
     mov rdx, [rip + g_envp]
     SYS SYS_execve
+    mov rdi, rbx
+    call mem_free
 9:  EPILOGUE
 .endif
 

@@ -115,6 +115,8 @@ FN mac_open_window
     bl make_menu
     LDX x0, app
     MSG finishLaunching
+    // Deliver the launch Apple event before choosing a project or restoring tabs.
+    bl drain
     // window
     LDX x0, cls_window
     MSG alloc
@@ -1588,18 +1590,32 @@ a_openURLs:
     MSG objectAtIndex_
     MSG fileSystemRepresentation
     cbz x0, 2f
-    XCALL app_open_path
+    XCALL app_open_startup_path
 2:  add x21, x21, #1
     b 1b
 9:  mov w9, #1
     STW w9, g_dirty
+    bl activate_window
     IMPRET
 
-a_reopen:
+activate_window:
     ENTER
+    LDX x0, win
+    cbz x0, 9f                // initial URLs arrive before the window exists
+    mov x2, #0
+    MSG deminiaturize_
+    LDX x0, app
+    mov x2, #1
+    MSG activateIgnoringOtherApps_
     LDX x0, win
     mov x2, #0
     MSG makeKeyAndOrderFront_
+9:  LEAVE
+    ret
+
+a_reopen:
+    ENTER
+    bl activate_window
     mov w0, #1
     LEAVE
     ret
@@ -1987,6 +2003,7 @@ DEFSEL sharedApplication, "sharedApplication"
 DEFSEL setActivationPolicy_, "setActivationPolicy:"
 DEFSEL setDelegate_, "setDelegate:"
 DEFSEL finishLaunching, "finishLaunching"
+DEFSEL deminiaturize_, "deminiaturize:"
 DEFSEL initWithContentRect_styleMask_backing_defer_, "initWithContentRect:styleMask:backing:defer:"
 DEFSEL setTitlebarAppearsTransparent_, "setTitlebarAppearsTransparent:"
 DEFSEL setTitleVisibility_, "setTitleVisibility:"

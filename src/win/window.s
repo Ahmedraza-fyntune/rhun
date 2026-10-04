@@ -78,6 +78,23 @@ FN win_open_window
 8:  lea rdi, [rip + .Lwindow_error]
     call die
 
+# An explicit file launch brings its window forward, including a minimized startup state.
+FN win_activate
+    PROLOGUE 96
+    mov rcx, [rip + win_hwnd]
+    test rcx, rcx
+    jz 9f
+    API IsIconic
+    mov edx, 5                 # SW_SHOW, retaining maximized windows
+    test eax, eax
+    jz 1f
+    mov edx, 9                 # SW_RESTORE
+1:  mov rcx, [rip + win_hwnd]
+    API ShowWindow
+    mov rcx, [rip + win_hwnd]
+    API SetForegroundWindow
+9:  EPILOGUE
+
 win_dpi:
     test eax, eax
     jz 9f

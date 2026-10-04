@@ -5,6 +5,14 @@ $ProgressPreference = 'SilentlyContinue'
 $exe = [IO.Path]::GetFullPath($env:RHUN_UP_EXE)
 $directory = Split-Path -Parent $exe
 $stage = Join-Path (Split-Path -Parent $directory) ('.rhun-update-' + $env:RHUN_UP_PID)
+$restart = @{
+    FilePath = $exe
+    WorkingDirectory = $env:USERPROFILE
+}
+if (-not [string]::IsNullOrEmpty($env:RHUN_UP_ARGS)) {
+    # The editor supplies Windows command-line quoting. Treat it as argument data.
+    $restart.ArgumentList = $env:RHUN_UP_ARGS
+}
 $options = @{
     InstallDir = $directory
     Version = $env:RHUN_UP_VERSION
@@ -21,18 +29,14 @@ try {
         & $installer @options -DiscardUpdate
     } elseif ($env:RHUN_UP_ACTION -eq 'apply') {
         & $installer @options -ApplyUpdate
-        # Start-Process joins ArgumentList as command text. A Windows project directory
-        # cannot contain quotes; double a trailing backslash before the closing quote.
-        $project = $env:RHUN_UP_PROJECT.Replace('/', '\').TrimEnd('\') + '\'
-        $argument = '"' + $project + '\"'
-        Start-Process -FilePath $exe -ArgumentList $argument -WorkingDirectory $env:USERPROFILE
+        Start-Process @restart
     } else { throw 'Invalid update action.' }
 } catch {
     if ($env:RHUN_UP_ACTION -eq 'apply') {
         # The editor has exited. Keep the failed stage and show a visible recovery message.
         Add-Type -AssemblyName System.Windows.Forms
         [Windows.Forms.MessageBox]::Show("The update could not be installed. $($_.Exception.Message)`nThe previous installation and the update files are in $directory and $stage.", 'rhun update') | Out-Null
-        if (Test-Path -LiteralPath $exe) { Start-Process -FilePath $exe }
+        if (Test-Path -LiteralPath $exe) { Start-Process @restart }
     }
     Write-Output $_.Exception.Message
     exit 1
