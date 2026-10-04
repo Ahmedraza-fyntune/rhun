@@ -13,8 +13,6 @@ F N_depth, 4
 ENDSTRUCT N_SIZE
 
 .equ ID_EXP_ROW, 0x4000
-.equ ID_EXP_NEW, 0x3f00
-.equ ID_EXP_REFRESH, 0x3f01
 .equ ID_EXP_SCROLL, 0x3f02
 .equ ID_MENU, 0x3f10
 
@@ -782,15 +780,13 @@ FN explorer_draw
     mov r8d, r12d
     mov r9d, IC_REFRESH
     call ui_icon_btn
-    mov [rsp + 32], eax
+    mov r8d, eax
     mov edi, ID_EXP_REFRESH
     mov esi, [rsp + 16]
     mov edx, [rsp + 4]
     add edx, r15d
     mov ecx, r12d
-    mov r8d, [rsp + 32]
-    call tip_note
-    mov eax, [rsp + 32]
+    call tip_note               # keeps the button flags in eax
     test eax, UB_CLICK
     jz 1f
     call explorer_refresh
@@ -805,16 +801,14 @@ FN explorer_draw
     mov r8d, r12d
     mov r9d, IC_PLUS
     call ui_icon_btn
-    mov [rsp + 32], eax
+    mov r8d, eax
     mov edi, ID_EXP_NEW
     mov esi, [rsp + 16]
     sub esi, r12d
     mov edx, [rsp + 4]
     add edx, r15d
     mov ecx, r12d
-    mov r8d, [rsp + 32]
-    call tip_note
-    mov eax, [rsp + 32]
+    call tip_note               # keeps the button flags in eax
     test eax, UB_CLICK
     jz 2f
     call cmd_new_file_prompt

@@ -318,7 +318,7 @@ FN keys_for
     mov rdi, r13
     call cstr_copy
     mov r13, rax
-24: # arrows as arrows
+24: # arrows as arrows, punctuation as itself ("⌘,")
     mov eax, [r12 + KB_key]
     lea rbx, [rip + mac_key_syms]
 25: cmp qword ptr [rbx], 0
@@ -395,9 +395,12 @@ none_cmd: .quad .Lnone, .Lnone, cmd_none, .Lnone
 .Lmac_down: .asciz "\342\206\223"
 .Lmac_left: .asciz "\342\206\220"
 .Lmac_right: .asciz "\342\206\222"
+.Lmac_comma: .asciz ","
+.Lmac_plus: .asciz "+"
 .p2align 3
 mac_key_syms:
-    .quad .Lmac_up, KEY_UP, .Lmac_down, KEY_DOWN, .Lmac_left, KEY_LEFT, .Lmac_right, KEY_RIGHT, 0, 0
+    .quad .Lmac_up, KEY_UP, .Lmac_down, KEY_DOWN, .Lmac_left, KEY_LEFT, .Lmac_right, KEY_RIGHT
+    .quad .Lmac_comma, ',', .Lmac_plus, '+', 0, 0
 .endif
 .Lctrl: .asciz "Ctrl+"
 .Lshift: .asciz "Shift+"

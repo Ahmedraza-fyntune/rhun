@@ -467,25 +467,43 @@ FN ui_icon_btn
 
 # ui_card(x, y, w, h): floating surface with soft shadow and border
 FN ui_card
+    PROLOGUE
+    M r8d, MI_12
+    M r9d, MI_4
+    M eax, MI_RADIUS
+    add eax, [rip + g_mt + 4*MI_2]
+    push rax
+    push rax
+    call ui_card_shadow
+    add rsp, 16
+    EPILOGUE
+
+# ui_card_shadow(x, y, w, h, spread, drop, [stack] radius): a popup with corners of radius and a
+# shadow reaching spread around it and drop below it. Tooltips use a small shadow and the button
+# radius; menus and dialogs take the ui_card defaults.
+FN ui_card_shadow
     PROLOGUE 16
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
     mov r15d, ecx
+    mov [rsp], r9d
+    mov eax, [rbp + 16]
+    mov [rsp + 4], eax
     # shadow: a few expanding translucent rounded rects
-    M ebx, MI_12
+    mov ebx, r8d
 .Lcard_sh:
     test ebx, ebx
-    jz .Lcard_body
+    jle .Lcard_body
     mov edi, r12d
     sub edi, ebx
     mov esi, r13d
     sub esi, ebx
-    M eax, MI_4
-    add esi, eax
+    add esi, [rsp]
     lea edx, [r14 + rbx*2]
     lea ecx, [r15 + rbx*2]
-    M r8d, MI_RADIUS
+    mov r8d, [rsp + 4]          # shadow corners grow with the spread, from the body's
+    sub r8d, [rip + g_mt + 4*MI_2]
     add r8d, ebx
     mov r9d, 0x07000000
     cmp dword ptr [rip + g_theme_dark], 0
@@ -500,8 +518,7 @@ FN ui_card
     mov esi, r13d
     mov edx, r14d
     mov ecx, r15d
-    M r8d, MI_RADIUS
-    add r8d, [rip + g_mt + 4*MI_2]
+    mov r8d, [rsp + 4]
     COLOR r9d, T_BORDER
     COLOR eax, T_POPUP
     push rax

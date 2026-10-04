@@ -705,6 +705,10 @@ ENDSTRUCT TF_SIZE
 .equ IC_OPENAI, 32
 .equ IC_COUNT, 33
 
+# explorer header buttons; the title bar's tooltips name them too
+.equ ID_EXP_NEW, 0x3f00
+.equ ID_EXP_REFRESH, 0x3f01
+
 # ---- images ----
 .equ IMF_PNG, 1
 .equ IMF_JPEG, 2

@@ -6,7 +6,7 @@
 .p2align 2
 .globl cfg_font_size, cfg_ui_font_size, cfg_line_height, cfg_tab_width, cfg_insert_spaces
 .globl cfg_match_brackets
-.globl cfg_animate_disk_changes
+.globl cfg_animate_disk_changes, cfg_tooltips
 .globl cfg_line_numbers, cfg_highlight_line, cfg_indent_guides, cfg_cursor_blink, cfg_whitespace
 .globl cfg_sidebar, cfg_sidebar_w, cfg_agents, cfg_agents_w, cfg_ui_scale, cfg_final_newline
 .globl cfg_trim_trailing, cfg_scroll_past_end, cfg_smooth_caret, cfg_theme, cfg_font, cfg_ui_font
@@ -22,6 +22,7 @@ cfg_insert_spaces: .long 1
 cfg_line_numbers: .long 1
 cfg_highlight_line: .long 1
 cfg_animate_disk_changes: .long 1
+cfg_tooltips: .long 1
 cfg_match_brackets: .long 1
 cfg_indent_guides: .long 1
 cfg_cursor_blink: .long 1
@@ -648,6 +649,7 @@ g_settings:
     SETTING .Ls_ui, sidebar_width, ST_INT, cfg_sidebar_w, 140, 600, 10, 0, "Explorer width", "Width of the file explorer in points."
     SETTING .Ls_ui, agents_panel, ST_BOOL, cfg_agents, 0, 1, 1, 0, "Show agents panel", "Agent sessions on the right (ctrl+shift+a)."
     SETTING .Ls_ui, agents_width, ST_INT, cfg_agents_w, 240, 900, 10, 0, "Agents panel width", "Width of the agents panel in points."
+    SETTING .Ls_ui, tooltips, ST_BOOL, cfg_tooltips, 0, 1, 1, 0, "Tooltips", "Show a button's name and shortcut on hover."
     SETTING .Ls_ui, decorations, ST_CHOICE, cfg_decorations, 0, 2, 1, 0, "Title bar", "Who draws window buttons on Wayland. Auto leaves tiling desktops bare.", .Ldeco_opts
     SETTING .Ls_editor, font_size, ST_INT, cfg_font_size, 8, 40, 1, 0, "Editor font size", "Font size of the text you edit."
     SETTING .Ls_editor, font, ST_STR, cfg_font, 0, 0, 0, 0, "Editor font", "Path to a monospace .ttf file. Empty uses the built-in Iosevka."
