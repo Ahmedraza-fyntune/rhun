@@ -1,0 +1,37 @@
+name: desktop launches
+
+on:
+  push:
+    branches: [main, 'feat/windows-desktop*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq binutils curl git python3 xvfb openbox xdotool x11-utils sway gcc pkg-config libwayland-dev wayland-protocols
+      - name: Build
+        run: ./build.sh test
+      - name: Desktop behavior
+        run: python3 tests/desktop-ux.py
+      - name: Native file launches
+        run: |
+          python3 tests/linux-launch.py
+          python3 tests/linux-launch.py --wayland
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: ./build.sh test
+      - name: Desktop behavior
+        run: python3 tests/desktop-ux.py
+      - name: Finder file launches
+        run: python3 tests/mac-launch.py

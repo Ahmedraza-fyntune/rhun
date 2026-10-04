@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path
-import shlex
 import socket
 import subprocess
 import sys
@@ -71,28 +70,38 @@ with tempfile.TemporaryDirectory(prefix='rhun-launch-') as directory:
             compositor = work / 'sway.conf'
             compositor.write_text('output * resolution 1280x800\n'
                                   'focus_on_window_activation focus\nno_focus [app_id="rhun"]\n')
-            start(['sway', '-c', str(compositor)])
+            start(['sway', '-d', '-c', str(compositor)])
             until(lambda: bool(list(runtime.glob('sway-ipc.*.sock'))), 'Sway did not start')
             env['SWAYSOCK'] = str(next(runtime.glob('sway-ipc.*.sock')))
             env['WAYLAND_DISPLAY'] = next(p.name for p in runtime.glob('wayland-*') if not p.name.endswith('.lock'))
-            start(['foot'])
             def nodes(tree):
                 yield tree
                 for child in tree.get('nodes', []) + tree.get('floating_nodes', []):
                     yield from nodes(child)
             def tree():
                 return list(nodes(json.loads(output(['swaymsg', '-t', 'get_tree', '-r']))))
-            until(lambda: any(n.get('app_id') == 'foot' and n.get('focused') for n in tree()), 'competitor did not focus')
-            launcher = work / 'launch.sh'
-            launcher.write_text('#!/bin/sh\nprintf "%s" "$XDG_ACTIVATION_TOKEN" > ' + shlex.quote(str(work / 'token')) +
-                                '\nprintf "%s" "$$" > ' + shlex.quote(str(work / 'launcher-pid')) + '\nexec sleep 30\n')
-            output(['swaymsg', 'exec', shlex.join(['/bin/sh', str(launcher)])])
-            until(lambda: (work / 'token').exists(), 'launcher did not run')
+            protocols = Path(output(['pkg-config', '--variable=pkgdatadir', 'wayland-protocols']))
+            protocol_sources = []
+            for name, xml in [('xdg-shell', protocols / 'stable/xdg-shell/xdg-shell.xml'),
+                              ('xdg-activation', protocols / 'staging/xdg-activation/xdg-activation-v1.xml')]:
+                subprocess.run(['wayland-scanner', 'client-header', str(xml),
+                                str(work / (name + '-client-protocol.h'))], check=True)
+                source = work / (name + '-protocol.c')
+                subprocess.run(['wayland-scanner', 'private-code', str(xml), str(source)], check=True)
+                protocol_sources.append(str(source))
+            launcher = work / 'launcher'
+            subprocess.run(['cc', '-I', str(work), str(ROOT / 'tests/wayland-launcher.c'),
+                            *protocol_sources, '-lwayland-client', '-o', str(launcher)], check=True)
+            start([str(launcher), str(work / 'token')])
+            until(lambda: any(n.get('app_id') == 'rhun-launcher' and n.get('focused') for n in tree()),
+                  'competitor did not focus')
+            until(lambda: (work / 'token').exists(), 'focused launcher did not provide a token')
             token = (work / 'token').read_text()
-            assert token, 'Sway did not pass an activation token'
-            # Pass the token across processes, as a file manager does. Launching rhun
-            # directly via Sway would also focus it by parent PID and mask missing
-            # activation-protocol support.
+            assert token, 'focused launcher returned an empty activation token'
+            # The focused client supplies its surface and focus serial, as a file
+            # manager does. A swaymsg exec token cannot activate mapped windows in
+            # Sway 1.9. Launch independently so parent PID matching cannot hide a
+            # missing activation request.
             env['XDG_ACTIVATION_TOKEN'] = token
             start([str(EXE), str(file), '--control', str(control)])
             active = lambda: any(n.get('app_id') == 'rhun' and n.get('focused') for n in tree())
@@ -143,6 +152,16 @@ with tempfile.TemporaryDirectory(prefix='rhun-launch-') as directory:
         until(active, 'file launch did not bring rhun to the foreground')
         command('quit')
         print('ok   linux/' + ('wayland-token' if wayland else 'x11') + '-file-tab-and-foreground')
+    except BaseException:
+        if wayland and env.get('SWAYSOCK'):
+            result = subprocess.run(['swaymsg', '-t', 'get_tree', '-r'], env=env,
+                                    capture_output=True, text=True)
+            print('Sway tree:', result.stdout or result.stderr, file=sys.stderr)
+        for process, log in zip(processes, logs):
+            log.flush()
+            print('Process ' + str(process.args) + ':', file=sys.stderr)
+            print(Path(log.name).read_text(), file=sys.stderr)
+        raise
     finally:
         if reader:
             reader.close()
@@ -150,11 +169,6 @@ with tempfile.TemporaryDirectory(prefix='rhun-launch-') as directory:
             client.close()
         if wayland and env.get('SWAYSOCK'):
             subprocess.run(['swaymsg', '[app_id="rhun"]', 'kill'], env=env, capture_output=True)
-            if (work / 'launcher-pid').exists():
-                try:
-                    os.kill(int((work / 'launcher-pid').read_text()), 15)
-                except ProcessLookupError:
-                    pass
         for process in reversed(processes):
             if process.poll() is None:
                 process.terminate()
