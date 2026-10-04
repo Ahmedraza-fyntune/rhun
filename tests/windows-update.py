@@ -86,8 +86,10 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
         deadline = time.monotonic() + 20
         ids = []
         while not ids and time.monotonic() < deadline:
+            # The helper can be between the old process exiting and the new one starting.
+            # PowerShell otherwise exits with status 1 when Get-Process finds no rhun.
             ids = subprocess.check_output(['powershell.exe', '-NoProfile', '-Command',
-                "Get-Process -Name rhun -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:TEST_EXE } | Select-Object -ExpandProperty Id"],
+                "Get-Process -Name rhun -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:TEST_EXE } | Select-Object -ExpandProperty Id; exit 0"],
                 env=dict(os.environ, TEST_EXE=str(installation / 'rhun.exe'))).split()
             if not ids:
                 time.sleep(0.2)
