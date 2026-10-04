@@ -73,6 +73,18 @@ h1 .accent { color: var(--accent); }
 .editor-preview { --light-x: 50%; --light-y: 10%; --tilt-x: 0deg; --tilt-y: 0deg; position: relative; margin: 0; padding: 1px; overflow: hidden; isolation: isolate; border-radius: 12px; background: radial-gradient(ellipse 70% 60% at var(--light-x) var(--light-y), #a9baffaa, #414654 50%, #2c2f39 100%); box-shadow: 0 40px 90px -35px #000b, 0 1px 0 #c2ceff26 inset; transform: rotateX(var(--tilt-x)) rotateY(var(--tilt-y)); }
 .editor-preview img { width: 100%; border-radius: 11px; background: #17181c; }
 .editor-light { position: absolute; inset: 1px; border-radius: 11px; z-index: 1; pointer-events: none; background: radial-gradient(ellipse 65% 65% at var(--light-x) var(--light-y), #becaff0c, transparent 70%); }
+.promo-play { position: absolute; inset: 0; margin: auto; z-index: 2; display: grid; place-items: center; width: clamp(60px, 7vw, 88px); height: clamp(60px, 7vw, 88px); padding: 0; border: 1px solid #c2ceff80; border-radius: 50%; color: #fff; background: rgb(17 18 22 / 82%); backdrop-filter: blur(8px); box-shadow: 0 8px 32px #0008; transition: background .2s, border-color .2s, scale .2s; }
+.promo-play svg { width: 40%; height: 40%; margin-left: 5%; fill: currentColor; }
+.promo-play:hover { background: #8aa4ff; border-color: #b8c7ff; color: var(--bg); scale: 1.06; }
+body.video-open { overflow: hidden; }
+.promo-lightbox { width: min(1120px, calc(100% - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; overflow: auto; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: 0 24px 100px #000b; }
+.promo-lightbox::backdrop { background: rgb(0 0 0 / 85%); backdrop-filter: blur(8px); }
+.promo-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 12px 10px 20px; }
+.promo-header h2 { font-size: 16px; letter-spacing: 0; }
+.promo-close { display: grid; place-items: center; width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; }
+.promo-close:hover { color: var(--text); background: var(--surface-2); }
+.promo-close svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.promo-video { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: calc(100dvh - 98px); background: #000; }
 .showcase-toolbar { display: flex; justify-content: center; margin: 34px auto 0; }
 .view-switcher { display: inline-flex; gap: 4px; padding: 5px; border: 1px solid var(--line); background: #17191f; border-radius: 12px; }
 .view-button { background: transparent; border: 1px solid transparent; padding: 9px 23px; border-radius: 7px; color: var(--muted); font-size: 13px; transition: background .2s, color .2s, border-color .2s; }

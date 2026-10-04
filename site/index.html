@@ -77,7 +77,7 @@
         "Optional AI commit messages with local open-weight models or existing Claude Code and Codex subscriptions",
         "Agents panel: live Claude Code and Codex sessions of the project",
         "Optional Vim mode",
-        "39 dark and light color themes",
+        "40 dark and light color themes",
         "Image preview with zoom and pan",
         "Installs with one command and updates itself from GitHub releases"
       ]
@@ -128,7 +128,13 @@
     <div class="wrap">
       <h2 id="features-h" class="sr-only">Explore rhun</h2>
       <div class="editor-stage">
-      <figure class="editor-preview"><div class="editor-light" aria-hidden="true"></div><img id="editor-image" src="img/hero.webp" srcset="img/hero-800.webp 800w, img/hero.webp 1600w" sizes="(min-width: 1376px) 1280px, (max-width: 760px) calc(100vw - 32px), calc(100vw - 96px)" width="1600" height="1000" alt="rhun with a file explorer, syntax highlighting, and a live coding agent session" fetchpriority="high" decoding="async" draggable="false"></figure>
+      <figure class="editor-preview">
+        <div class="editor-light" aria-hidden="true"></div>
+        <img id="editor-image" src="img/hero.webp" srcset="img/hero-800.webp 800w, img/hero.webp 1600w" sizes="(min-width: 1376px) 1280px, (max-width: 760px) calc(100vw - 32px), calc(100vw - 96px)" width="1600" height="1000" alt="rhun with a file explorer, syntax highlighting, and a live coding agent session" fetchpriority="high" decoding="async" draggable="false">
+        <button type="button" class="promo-play" aria-label="Play rhun video" aria-haspopup="dialog" aria-controls="promo-lightbox">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+      </figure>
       </div>
       <div class="showcase-toolbar">
         <div class="view-switcher" role="group" aria-label="Editor views">
@@ -144,7 +150,7 @@
         <p data-description="terminal" hidden>Built-in terminal emulator with 24-bit color, scrollback, mouse reporting, and alternate-screen support.</p>
         <p data-description="git" hidden>Built-in Git with staging, diffs, commit history, and commit message generation using a local model or your Claude Code or Codex subscription.</p>
         <p data-description="agents" hidden>...and in the Darkness bind them: follow your project’s Claude Code and Codex sessions as they work.</p>
-        <p data-description="themes" hidden>39 built-in light and dark themes, customizable editor and terminal colors, and automatic theme switching with Omarchy.</p>
+        <p data-description="themes" hidden>Multiple built-in light and dark themes, customizable editor and terminal colors, and automatic theme switching with Omarchy.</p>
       </div>
       <div class="theme-controls" id="themes" hidden>
         <div class="theme-picker" role="group" aria-label="Preview a color theme">
@@ -158,10 +164,21 @@
           <button type="button" data-theme="theme-dracula" aria-label="Dracula" aria-pressed="false" style="--swatch:#282a36;--swatch-accent:#bd93f9"></button>
           <button type="button" data-theme="theme-elflord-dark" aria-label="Elflord Dark" aria-pressed="false" style="--swatch:#000000;--swatch-accent:#ffff00"></button>
         </div>
-        <p class="theme-name" id="theme-name" aria-live="polite">Rhun Dark</p><span class="theme-count">9 OF 39 THEMES</span>
+        <p class="theme-name" id="theme-name" aria-live="polite">Rhun Dark</p><span class="theme-count">9 OF 40 THEMES</span>
       </div>
     </div>
   </section>
+  <dialog class="promo-lightbox" id="promo-lightbox" aria-labelledby="promo-title">
+    <div class="promo-header">
+      <h2 id="promo-title">rhûn</h2>
+      <button type="button" class="promo-close" aria-label="Close video" autofocus>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M6 18 18 6"/></svg>
+      </button>
+    </div>
+    <video class="promo-video" controls playsinline preload="none" src="video/rhun-promo-1080p-v5.mp4" aria-label="rhun promotional video">
+      <p><a href="video/rhun-promo-1080p-v5.mp4">Download the rhun video</a>.</p>
+    </video>
+  </dialog>
   <section class="install-section" id="install" aria-labelledby="install-h">
     <svg class="os-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
       <symbol id="os-windows" viewBox="0 0 24 24"><path d="M3 4h8v7H3zm10 0h8v7h-8zM3 13h8v7H3zm10 0h8v7h-8z"/></symbol>

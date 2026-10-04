@@ -9,6 +9,27 @@
   };
   let selectedTheme = "hero";
   let selectedThemeLabel = "Rhun Dark";
+  const playButton = document.querySelector(".promo-play");
+  const lightbox = document.querySelector("#promo-lightbox");
+  const video = lightbox.querySelector("video");
+
+  playButton.addEventListener("click", () => {
+    lightbox.showModal();
+    document.body.classList.add("video-open");
+    video.play().catch(() => {});
+  });
+  lightbox.querySelector(".promo-close").addEventListener("click", () => lightbox.close());
+  lightbox.addEventListener("click", event => {
+    if (event.target !== lightbox) return;
+    const bounds = lightbox.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom) lightbox.close();
+  });
+  lightbox.addEventListener("close", () => {
+    video.pause();
+    video.currentTime = 0;
+    document.body.classList.remove("video-open");
+  });
 
   function setScreenshot(image, name, alt) {
     image.srcset = `img/${name}-800.webp 800w, img/${name}.webp 1600w`;
@@ -20,6 +41,7 @@
   viewButtons.forEach(button => {
     button.addEventListener("click", () => {
       const name = button.dataset.view;
+      playButton.hidden = name !== "hero";
       viewButtons.forEach(item => item.setAttribute("aria-pressed", String(item === button)));
       document.querySelectorAll("[data-description]").forEach(item => {
         item.hidden = item.dataset.description !== name;

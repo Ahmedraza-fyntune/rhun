@@ -333,14 +333,30 @@ FN settings_draw
     mov ecx, [rsp + 16]
     lea r8, [rip + .Lwebsite]
     call settings_link
+    add edx, [rip + g_mt + 4*MI_16]
+    mov [rsp + 28], edx
     test eax, UB_CLICK
     jz 31f
     call cmd_website
-31: add r12d, [rip + g_mt + 4*MI_28]
-    mov edi, 0x4f03
-    mov esi, [rsp + 20]
+31: mov edi, 0x4f04
+    mov esi, [rsp + 28]
     mov edx, r12d
     mov ecx, [rsp + 16]
+    add ecx, [rsp + 20]
+    sub ecx, esi
+    lea r8, [rip + .Lemail]
+    call settings_link
+    add edx, [rip + g_mt + 4*MI_16]
+    mov [rsp + 28], edx
+    test eax, UB_CLICK
+    jz 311f
+    call cmd_email
+311: mov edi, 0x4f03
+    mov esi, [rsp + 28]
+    mov edx, r12d
+    mov ecx, [rsp + 16]
+    add ecx, [rsp + 20]
+    sub ecx, esi
     lea r8, [rip + .Lfeedback]
     call settings_link
     test eax, UB_CLICK
@@ -875,9 +891,12 @@ FN settings_draw
     call gfx_clip_pop
     EPILOGUE
 
-# settings_link(id, x, y, max_width, label) -> button flags
+# settings_link(id, x, y, max_width, label) -> eax button flags, edx right edge
 settings_link:
     PROLOGUE 32
+    xor eax, eax
+    test ecx, ecx
+    cmovs ecx, eax
     mov [rsp], edi
     mov [rsp + 4], esi
     mov [rsp + 8], edx
@@ -893,6 +912,8 @@ settings_link:
     cmp eax, [rsp + 12]
     cmovg eax, [rsp + 12]
     mov ecx, eax
+    add eax, [rsp + 4]
+    mov [rsp + 16], eax
     mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 8]
@@ -917,6 +938,7 @@ settings_link:
     call ui_text_v_fit
     add rsp, 16
     mov eax, r13d
+    mov edx, [rsp + 16]
     EPILOGUE
 
 # action_label(setting): cached state only; no detection during drawing.
@@ -1029,7 +1051,8 @@ FN ui_text_v_fit
 .Lt_git: .asciz "Git"
 .Lt_updates: .asciz "Updates"
 .Lwebsite: .asciz "https://rhun.app"
-.Lfeedback: .asciz "Feedback and bug reports: hi@rhun.app"
+.Lemail: .asciz "hi@rhun.app"
+.Lfeedback: .asciz "Feedback and issues: GitHub"
 .Lcheck_now: .asciz "Check now"
 
 .data

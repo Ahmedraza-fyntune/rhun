@@ -509,6 +509,7 @@ g_commands:
     COMMAND focus_explorer, "Focus File Explorer", cmd_focus_explorer, "ctrl+shift+e"
     COMMAND reveal_file, "Show File in System File Manager", cmd_reveal_file, ""
     COMMAND website, "Open rhun Website", cmd_website, ""
+    COMMAND email, "Email rhun", cmd_email, ""
     COMMAND feedback, "Send Feedback or Report a Bug", cmd_feedback, ""
     COMMAND focus_agents, "Focus Agents Panel", cmd_focus_agents, ""
     COMMAND open_file, "Open File", cmd_open_file, "ctrl+o"

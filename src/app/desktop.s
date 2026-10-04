@@ -10,6 +10,10 @@ FN cmd_feedback
     lea rdi, [rip + .Lfeedback]
     jmp desktop_open
 
+FN cmd_email
+    lea rdi, [rip + .Lemail]
+    jmp desktop_open
+
 .ifdef WINDOWS
 FN desktop_open
     jmp win_open_link
@@ -117,7 +121,8 @@ FN desktop_failed
 
 .section .rodata
 .Lwebsite: .asciz "https://rhun.app"
-.Lfeedback: .asciz "mailto:hi@rhun.app?subject=rhun%20feedback"
+.Lfeedback: .asciz "https://github.com/vshvedov/rhun/issues"
+.Lemail: .asciz "mailto:hi@rhun.app?subject=rhun%20feedback"
 .Lfailed: .asciz "Could not open the desktop application"
 .ifdef MACOS
 .Lopener: .asciz "open"

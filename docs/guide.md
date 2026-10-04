@@ -8,9 +8,9 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Project menu in the title bar: open a folder or a file from anywhere on disk, or a recent folder
 - Image preview: PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA open in a tab, with zoom and pan
 - Syntax highlighting for about 125 languages, defined in plain text grammar files
-- 39 color themes, dark and light, with a match for every Omarchy theme; add your own
+- 40 color themes, dark and light, with a match for every Omarchy theme; add your own
 - Settings page and a readable config file, both applied while running
-- Agents panel: Claude Code and Codex sessions of the project, updated live as the agent works
+- Agents panel: Claude Code and Codex sessions of the project, with theme-colored provider badges and icons, updated live as the agent works
 - Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs
 - Git: changed lines in the gutter, file status in tabs and the explorer, diffs, a history of all branches drawn as a graph, and source control as in VS Code: stage, commit, pull, push
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
@@ -132,7 +132,7 @@ Without files the previous session of the selected project is reopened. The proj
 
 **Reopen last project** in Settings > Files is on by default. When launching from a desktop shortcut, the Dock, or without path arguments, rhun reopens the project you closed with. The config key is `restore_project = true` under `[files]`. Explicit file or folder arguments take precedence. If this setting is off, no project is saved yet, or the saved folder no longer exists, rhun uses the current directory (usually your home folder when launched from the desktop). This preference is independent of **Restore open files**.
 
-Settings includes links to [rhun.app](https://rhun.app) and [hi@rhun.app](mailto:hi@rhun.app) for feedback and bug reports. Both are also available from the command palette.
+Settings includes links to [rhun.app](https://rhun.app), [hi@rhun.app](mailto:hi@rhun.app), and [GitHub issues](https://github.com/vshvedov/rhun/issues) for feedback and bug reports in a single row. The email link follows the website and opens the default email app. All three are also available from the command palette.
 
 Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.
 
@@ -282,6 +282,8 @@ alt+z = none
 Key names are those of the command palette entries in snake case (see `src/app/keys.s`). `none` removes a binding.
 
 ### Themes
+
+Choose **Turbo Pascal** in the theme picker (Ctrl+K Ctrl+Shift+T) for a blue editor with yellow text, white keywords and the DOS terminal palette. To select it in the configuration file, set `theme = turbo-pascal` under `[ui]`.
 
 A theme is a `name.theme` file in `~/.config/rhun/themes/`. Colors not given are derived from `bg`, `fg` and `accent`, so a theme can be three lines. See `runtime/themes/` for all keys.
 

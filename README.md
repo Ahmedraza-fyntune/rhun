@@ -43,7 +43,7 @@ When coding agents do more of the heavy lifting, you may not need everything tha
   <img src="assets/social/screenshot-light.png" width="49%" alt="rhun, light theme">
 </p>
 
-Pick from 39 light and dark themes. On Omarchy, choose **Follow Omarchy** and rhun switches themes with your desktop.
+Pick from 40 light and dark themes, including Turbo Pascal's blue and yellow editor colors. On Omarchy, choose **Follow Omarchy** and rhun switches themes with your desktop.
 
 Keep your terminal beside your code, and browse Git history without leaving the editor.
 

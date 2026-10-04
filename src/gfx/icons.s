@@ -5,7 +5,7 @@
 
 .bss
 .p2align 4
-pts: .zero 8 * 64
+pts: .zero 8 * 256
 cache_key: .zero 4 * ICACHE      # icon | size << 8
 cache_ptr: .zero 8 * ICACHE
 cache_n: .long 0
@@ -17,13 +17,16 @@ prev_y: .long 0
 
 .text
 
-# emit_poly(n, dir): rasterize pts[0..n) with canonical (dir>0) or reversed (dir<0) winding
+# emit_poly(n, dir): canonical (>0), reversed (<0), or original (=0) winding
 emit_poly:
     push rbx
     push r12
     push r13
     mov ebx, edi
     mov r12d, esi
+    mov r13d, 1
+    test r12d, r12d
+    jz .Lep_points             # preserve the winding of filled SVG contours
     # signed area
     xorps xmm7, xmm7
     xor ecx, ecx
@@ -50,6 +53,7 @@ emit_poly:
     setns dl
     cmp eax, edx
     sete r13b                   # forward if orientation matches
+.Lep_points:
     xor ecx, ecx
 3:  cmp ecx, ebx
     jae 9f
@@ -209,6 +213,8 @@ icon_render:
     je .Lir_d
     cmp al, 'P'
     je .Lir_p
+    cmp al, 'F'
+    je .Lir_f
     jmp .Lir_done
 .Lir_w:
     COORD xmm0, [r12]
@@ -266,6 +272,11 @@ icon_render:
     call disc
     jmp .Lir_op
 .Lir_p:
+    mov dword ptr [rsp + 12], 1
+    jmp .Lir_poly
+.Lir_f:
+    mov dword ptr [rsp + 12], 0
+.Lir_poly:
     movzx r13d, byte ptr [r12]
     inc r12
     lea r8, [rip + pts]
@@ -280,7 +291,7 @@ icon_render:
     inc ecx
     jmp 1b
 2:  mov edi, r13d
-    mov esi, 1
+    mov esi, [rsp + 12]
     call emit_poly
     jmp .Lir_op
 .Lir_done:

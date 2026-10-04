@@ -1540,6 +1540,69 @@ FN agents_key
 
 # ---------- drawing ----------
 
+# agent_badge(kind, x, y) -> right edge; 14 px icon and small text in a 20 px badge
+agent_badge:
+    PROLOGUE 16
+    mov r12d, esi
+    mov r13d, edx
+    lea r15, [rip + .Lclaude_name]
+    mov dword ptr [rsp], IC_CLAUDE
+    COLOR ebx, T_WARNING
+    COLOR eax, T_ACCENT
+    cmp ebx, eax
+    jne 1f
+    COLOR ebx, T_SUCCESS        # some themes share their warning and accent colors
+1:
+    cmp edi, 2
+    jne 3f
+    lea r15, [rip + .Lcodex_name]
+    mov dword ptr [rsp], IC_OPENAI
+    COLOR ebx, T_ACCENT
+3:  COLOR edi, T_PANEL
+    mov esi, ebx
+    mov edx, 48
+    call color_mix
+    mov [rsp + 4], eax
+    COLOR eax, T_FG
+    mov [rsp + 8], eax
+    mov rdi, r15
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, r15
+    mov rdx, rax
+    call text_width
+    mov r14d, eax
+    add r14d, [rip + g_mt + 4*MI_14]
+    add r14d, [rip + g_mt + 4*MI_4]
+    add r14d, [rip + g_mt + 4*MI_12]
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    M ecx, MI_20
+    M r8d, MI_4
+    mov r9d, [rsp + 4]
+    call gfx_round_rect
+    mov edi, [rsp]
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_6]
+    mov edx, r13d
+    add edx, [rip + g_mt + 4*MI_3]
+    M ecx, MI_14
+    mov r8d, [rsp + 8]
+    call icon_draw
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_6]
+    add esi, [rip + g_mt + 4*MI_14]
+    add esi, [rip + g_mt + 4*MI_4]
+    mov edx, r13d
+    M ecx, MI_20
+    mov r8, r15
+    mov r9d, [rsp + 8]
+    call ui_text_c
+    lea eax, [r12 + r14]
+    EPILOGUE
+
 # rel_time(unix seconds) -> cstr in buf ("now", "5m", "3h", "2d")
 rel_time:
     push rbx
@@ -1951,15 +2014,16 @@ list_draw:
     push r10
     call ui_text_v_fit
     add rsp, 16
-    # meta line: agent · time
+    # meta line: provider badge, then time and activity
+    mov edi, [r14 + AS_kind]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_32]
+    mov edx, r13d
+    add edx, [rip + g_mt + 4*MI_28]
+    call agent_badge
+    mov [rsp + 40], eax
     lea rdi, [rip + tmp]
     call sb_clear
-    lea rsi, [rip + .Lclaude_name]
-    cmp dword ptr [r14 + AS_kind], 2
-    jne 7f
-    lea rsi, [rip + .Lcodex_name]
-7:  lea rdi, [rip + tmp]
-    call sb_push_cstr
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Ldot]
     call sb_push_cstr
@@ -1976,17 +2040,20 @@ list_draw:
     lea rsi, [rip + .Llive]
     call sb_push_cstr
 8:  lea rdi, [rip + g_face_small]
-    mov esi, [rsp]
-    add esi, [rip + g_mt + 4*MI_32]
+    mov esi, [rsp + 40]
     mov edx, r13d
     add edx, [rip + g_mt + 4*MI_28]
     M ecx, MI_20
     mov r8, [rip + tmp + SB_ptr]
     mov r9, [rip + tmp + SB_len]
-    COLOR eax, T_MUTED
-    push rax
-    push rax
-    call ui_text_v
+    COLOR r10d, T_MUTED
+    mov r11d, [rsp]
+    add r11d, [rsp + 8]
+    sub r11d, esi
+    sub r11d, [rip + g_mt + 4*MI_16]
+    push r11
+    push r10
+    call ui_text_v_fit
     add rsp, 16
     test dword ptr [rsp + 24], UB_CLICK
     jz .Lld_next

@@ -691,7 +691,9 @@ ENDSTRUCT TF_SIZE
 .equ IC_ARROW_UP, 28
 .equ IC_MINUS, 29
 .equ IC_DISCARD, 30
-.equ IC_COUNT, 31
+.equ IC_CLAUDE, 31
+.equ IC_OPENAI, 32
+.equ IC_COUNT, 33
 
 # ---- images ----
 .equ IMF_PNG, 1
