@@ -6,6 +6,10 @@ param(
     [string]$ReleasesUrl = 'https://github.com/vshvedov/rhun/releases',
     [switch]$NoModifyPath,
     [switch]$NoShortcut,
+    [switch]$MakeDefault,
+    [switch]$NoMakeDefault,
+    [switch]$NoFileAssociations,
+    [switch]$ConfigureFiles,
     [switch]$Uninstall,
     # Internal updater modes. Preparation never changes a running installation.
     [switch]$PrepareUpdate,
@@ -25,6 +29,152 @@ if ([Environment]::OSVersion.Version.Build -lt 17763) {
 $InstallDir = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\', '/')
 $knownFiles = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1', '.rhun-install')
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'rhun.lnk'
+
+if ($MakeDefault -and ($NoMakeDefault -or $NoFileAssociations)) { throw 'Conflicting default editor options.' }
+if ($ConfigureFiles -and ($Uninstall -or $PrepareUpdate -or $ApplyUpdate -or $DiscardUpdate)) {
+    throw 'ConfigureFiles cannot be combined with uninstall or update modes.'
+}
+
+# BEGIN FILE ASSOCIATION FUNCTIONS
+$associationRoot = 'HKCU:\Software'
+# BEGIN TEXT EXTENSIONS
+$textExtensions = @(
+    'ada', 'adb', 'adoc', 'ads', 'applescript', 'asciidoc', 'asm', 'astro', 'atom', 'awk',
+    'bash', 'bat', 'bazel', 'bib', 'bzl', 'c', 'capnp', 'cbl', 'cc', 'cfg',
+    'cjs', 'cl', 'clj', 'cljc', 'cljs', 'cls', 'cmake', 'cmd', 'cob', 'cobol',
+    'comp', 'conf', 'cpp', 'cppm', 'cpy', 'cr', 'cron', 'crontab', 'cs', 'cshtml',
+    'csproj', 'css', 'csx', 'cts', 'cu', 'cue', 'cuh', 'cxx', 'd', 'dart',
+    'ddl', 'desktop', 'dhall', 'di', 'diff', 'djhtml', 'dockerfile', 'dot', 'dpk', 'dpr',
+    'dtx', 'ebuild', 'editorconfig', 'edn', 'ejs', 'el', 'elm', 'env', 'erb', 'erl',
+    'escript', 'ex', 'exs', 'f', 'f03', 'f08', 'f77', 'f90', 'f95', 'fish',
+    'fnl', 'for', 'frag', 'fs', 'fsi', 'fsproj', 'fsscript', 'fsx', 'gemspec', 'geojson',
+    'geom', 'gleam', 'glsl', 'go', 'gql', 'gradle', 'graphql', 'groovy', 'gv', 'gvy',
+    'h', 'haml', 'handlebars', 'hbs', 'hcl', 'hh', 'hlsl', 'hpp', 'hrl', 'hs',
+    'htm', 'html', 'http', 'hx', 'hxx', 'idr', 'inc', 'ini', 'ipp', 'itcl',
+    'iuml', 'ixx', 'j2', 'jade', 'janet', 'java', 'jinja', 'jinja2', 'jl', 'js',
+    'json', 'json5', 'jsonc', 'jsonl', 'jsonnet', 'jsx', 'just', 'kdl', 'ksh', 'kt',
+    'kts', 'lean', 'less', 'lhs', 'libsonnet', 'lidr', 'liquid', 'lisp', 'log', 'lpr',
+    'ltx', 'lua', 'm', 'mak', 'markdown', 'md', 'mdx', 'mermaid', 'metal', 'mjs',
+    'mk', 'ml', 'mli', 'mll', 'mly', 'mm', 'mmd', 'mojo', 'mount', 'mts',
+    'mustache', 'nasm', 'ndjson', 'nginx', 'nim', 'nimble', 'nims', 'ninja', 'nix', 'njk',
+    'nomad', 'nunjucks', 'odin', 'org', 'p6', 'pas', 'patch', 'php', 'phtml', 'pkl',
+    'pl', 'pl6', 'plantuml', 'plist', 'pm', 'pm6', 'pp', 'prisma', 'prolog', 'properties',
+    'props', 'proto', 'ps1', 'psd1', 'psm1', 'psql', 'pu', 'pug', 'puml', 'purs',
+    'py', 'pyi', 'pyw', 'r', 'rake', 'raku', 'rakumod', 'rakutest', 'razor', 'rb',
+    'rego', 'rest', 'rhtml', 'rkt', 'rmd', 'rockspec', 'ron', 'rs', 'rss', 'rst',
+    's', 'sass', 'sbt', 'sc', 'scala', 'scm', 'scss', 'service', 'sh', 'slim',
+    'socket', 'sol', 'sql', 'ss', 'star', 'sty', 'sv', 'svelte', 'svg', 'svh',
+    'swift', 'syn', 't', 'target', 'targets', 'tcl', 'tesc', 'tese', 'tex', 'text',
+    'tf', 'tfvars', 'theme', 'thrift', 'timer', 'tk', 'toml', 'tpp', 'ts', 'tsx',
+    'twig', 'txt', 'typ', 'v', 'vala', 'vapi', 'vb', 'vbs', 'vcxproj', 'vert',
+    'vh', 'vhd', 'vhdl', 'vim', 'vsh', 'vue', 'webmanifest', 'wgsl', 'wsdl', 'xaml',
+    'xhtml', 'xml', 'xsd', 'xsl', 'xslt', 'yaml', 'yml', 'zig', 'zon', 'zsh'
+)
+# END TEXT EXTENSIONS
+$imageExtensions = @('png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'cur', 'qoi', 'pbm', 'pgm', 'ppm', 'pnm', 'tga')
+
+function Set-AssociationValue([string]$Key, [string]$Name, [string]$Value) {
+    if (-not (Test-Path -LiteralPath $Key)) { New-Item -Path $Key -Force | Out-Null }
+    New-ItemProperty -LiteralPath $Key -Name $Name -Value $Value -PropertyType String -Force | Out-Null
+}
+
+function Notify-FileAssociations {
+    if (-not ('Rhun.ShellAssociations' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+namespace Rhun {
+    public static class ShellAssociations {
+        [DllImport("shell32.dll")]
+        public static extern void SHChangeNotify(uint eventId, uint flags, IntPtr item1, IntPtr item2);
+    }
+}
+"@
+    }
+    [Rhun.ShellAssociations]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+}
+
+function Register-FileAssociations {
+    if ($NoFileAssociations) { return }
+    $exe = Join-Path $InstallDir 'rhun.exe'
+    $capabilities = "$associationRoot\rhun\Capabilities"
+    Set-AssociationValue $capabilities 'ApplicationName' 'rhun'
+    Set-AssociationValue $capabilities 'ApplicationDescription' 'Edit text, source and configuration files; view images.'
+    Set-AssociationValue $capabilities 'ApplicationIcon' ('"' + $exe + '",0')
+    Set-AssociationValue $capabilities 'InstallDir' $InstallDir
+    foreach ($kind in @('Text', 'Image')) {
+        $progId = 'rhun.' + $kind
+        $key = "$associationRoot\Classes\$progId"
+        $description = if ($kind -eq 'Text') { 'rhun text document' } else { 'rhun image' }
+        Set-AssociationValue $key '(default)' $description
+        Set-AssociationValue "$key\DefaultIcon" '(default)' ('"' + $exe + '",0')
+        Set-AssociationValue "$key\shell\open\command" '(default)' ('"' + $exe + '" "%1"')
+        $extensions = if ($kind -eq 'Text') { $textExtensions } else { $imageExtensions }
+        foreach ($extension in $extensions) {
+            Set-AssociationValue "$associationRoot\Classes\.$extension\OpenWithProgids" $progId ''
+            Set-AssociationValue "$capabilities\FileAssociations" ('.' + $extension) $progId
+        }
+    }
+    Set-AssociationValue "$associationRoot\RegisteredApplications" 'rhun' 'Software\rhun\Capabilities'
+    Notify-FileAssociations
+}
+
+function Remove-FileAssociations {
+    if ($NoFileAssociations) { return }
+    $capabilities = "$associationRoot\rhun\Capabilities"
+    if (-not (Test-Path -LiteralPath $capabilities)) { return }
+    $owner = Get-ItemPropertyValue -LiteralPath $capabilities -Name 'InstallDir' -ErrorAction SilentlyContinue
+    if ($owner -ine $InstallDir) { return } # Another installation owns the current registration.
+    foreach ($extension in @($textExtensions) + @($imageExtensions)) {
+        $key = "$associationRoot\Classes\.$extension\OpenWithProgids"
+        if (Test-Path -LiteralPath $key) {
+            foreach ($progId in @('rhun.Text', 'rhun.Image')) {
+                Remove-ItemProperty -LiteralPath $key -Name $progId -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    foreach ($progId in @('rhun.Text', 'rhun.Image')) {
+        $key = "$associationRoot\Classes\$progId"
+        if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force }
+    }
+    Remove-Item -LiteralPath $capabilities -Recurse -Force
+    Remove-ItemProperty -LiteralPath "$associationRoot\RegisteredApplications" -Name 'rhun' -ErrorAction SilentlyContinue
+    Notify-FileAssociations
+}
+
+function Choose-DefaultEditor {
+    if ($NoMakeDefault -or $NoFileAssociations) { return }
+    $choose = [bool]$MakeDefault
+    if (-not $choose -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) {
+        $answer = Read-Host 'Choose rhun as the default editor in Windows Settings? [y/N]'
+        $choose = $answer -match '^(y|yes)$'
+    }
+    if ($choose) {
+        Write-Output 'In Default Apps, select rhun and choose the text types to open with it. Images are optional.'
+        $uri = if ([Environment]::OSVersion.Version.Build -ge 22000) {
+            'ms-settings:defaultapps?registeredAppUser=rhun'
+        } else { 'ms-settings:defaultapps' }
+        Start-Process $uri
+    } else {
+        Write-Output 'To choose defaults later, rerun install.ps1 with -ConfigureFiles -MakeDefault.'
+    }
+}
+# END FILE ASSOCIATION FUNCTIONS
+
+if ($ConfigureFiles) {
+    if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'rhun.exe') -PathType Leaf)) {
+        throw "No rhun installation at $InstallDir. Set -InstallDir or run the installer."
+    }
+    Register-FileAssociations
+    $marker = Join-Path $InstallDir '.rhun-install'
+    if (Test-Path -LiteralPath $marker) {
+        $receipt = [IO.File]::ReadAllText($marker).Replace("file-associations: no`n", '')
+        if ($NoFileAssociations) { $receipt += "file-associations: no`n" }
+        [IO.File]::WriteAllText($marker, $receipt)
+    }
+    Choose-DefaultEditor
+    return
+}
 
 function File-Sha256([string]$Path) {
     $hasher = [Security.Cryptography.SHA256]::Create()
@@ -119,7 +269,13 @@ if ($ApplyUpdate) {
             Move-Item -LiteralPath (Join-Path $UpdateStage $name) -Destination $destination
         }
         $marker = Join-Path $InstallDir '.rhun-install'
-        if (Test-Path -LiteralPath $marker) { [IO.File]::WriteAllText($marker, "rhun $Version`n") }
+        if (Test-Path -LiteralPath $marker) {
+            $receipt = "rhun $Version`n"
+            if ([IO.File]::ReadAllText($marker).Contains('file-associations: no')) {
+                $receipt += "file-associations: no`n"
+            }
+            [IO.File]::WriteAllText($marker, $receipt)
+        }
     } catch {
         foreach ($name in $changed) {
             $destination = Join-Path $InstallDir $name
@@ -130,6 +286,15 @@ if ($ApplyUpdate) {
         throw
     }
     Remove-Item -LiteralPath $UpdateStage -Recurse -Force
+    # Installed copies gain new handlers on update. Portable copies stay unregistered.
+    $capabilities = "$associationRoot\rhun\Capabilities"
+    $registeredHere = (Test-Path -LiteralPath $capabilities) -and
+        ((Get-ItemPropertyValue -LiteralPath $capabilities -Name 'InstallDir' -ErrorAction SilentlyContinue) -ieq $InstallDir)
+    $installed = Test-Path -LiteralPath (Join-Path $InstallDir '.rhun-install')
+    $optedOut = $installed -and ([IO.File]::ReadAllText((Join-Path $InstallDir '.rhun-install')).Contains('file-associations: no'))
+    if (-not $optedOut -and ($installed -or $registeredHere)) {
+        try { Register-FileAssociations } catch { Write-Warning "File association registration failed: $($_.Exception.Message)" }
+    }
     return
 }
 
@@ -185,6 +350,7 @@ foreach ($name in @('rhun.exe', 'rhun.com') | Where-Object { -not $PrepareUpdate
 }
 
 if ($Uninstall) {
+    Remove-FileAssociations
     if (Test-Path -LiteralPath $InstallDir) {
         foreach ($name in $knownFiles) {
             $file = Join-Path $InstallDir $name
@@ -259,7 +425,9 @@ try {
         Write-Output 'The update is ready to install when rhun restarts.'
         return
     }
-    [IO.File]::WriteAllText((Join-Path $stage '.rhun-install'), "rhun $Version`n")
+    $receipt = "rhun $Version`n"
+    if ($NoFileAssociations) { $receipt += "file-associations: no`n" }
+    [IO.File]::WriteAllText((Join-Path $stage '.rhun-install'), $receipt)
     if (Test-Path -LiteralPath $InstallDir) {
         $backup = Join-Path $parent ('.rhun-old-' + [Guid]::NewGuid().ToString('N'))
         Move-Item -LiteralPath $InstallDir -Destination $backup
@@ -285,6 +453,8 @@ try {
         $link.Save()
     }
     Write-Output "Installed rhun $Version in $InstallDir. Open a new terminal to use the rhun command."
+    try { Register-FileAssociations; Choose-DefaultEditor }
+    catch { Write-Warning "File association setup failed: $($_.Exception.Message)" }
 } finally {
     if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
     Remove-Item -LiteralPath $temporary -Recurse -Force

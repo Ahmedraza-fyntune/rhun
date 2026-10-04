@@ -10,6 +10,9 @@
 #                           when that is not writable)
 #   --no-modify-path        leave shell startup files alone (by default every shell the user has
 #                           gets rhun's folder on PATH: zsh, bash, sh, fish, nushell, tcsh)
+#   --make-default          use rhun for text, source and configuration files
+#   --no-make-default       skip the interactive default-editor choice
+#   --configure-files       configure an existing installation without downloading it
 #   --uninstall             remove what the installer put in place (settings stay)
 #   --update --target PATH  what rhun runs to update itself: replace the installation at PATH (the
 #                           binary, or on macOS the .app) with --version
@@ -67,6 +70,9 @@ usage: install.sh [options]   (curl -fsSL .../install.sh | sh -s -- [options])
   --prefix DIR            Linux: install under DIR (default ~/.local)
   --app-dir DIR           macOS: where rhun.app goes (default /Applications)
   --no-modify-path        leave shell startup files alone
+  --make-default          use rhun for text, source and configuration files
+  --no-make-default       skip the default-editor question
+  --configure-files       configure an existing installation without downloading it
   --uninstall             remove what the installer put in place (settings stay)
 EOF
 }
@@ -277,6 +283,113 @@ default_app_dir() {
     if [ -w /Applications ]; then echo /Applications; else echo "$HOME/Applications"; fi
 }
 
+# Text extensions are kept in sync with the built-in grammars by tools/file-associations.py.
+text_extensions() {
+    # BEGIN TEXT EXTENSIONS
+    echo 'ada adb adoc ads applescript asciidoc asm astro atom awk bash bat bazel bib bzl c capnp cbl cc cfg cjs cl clj cljc cljs cls cmake cmd cob cobol comp conf cpp cppm cpy cr cron crontab cs cshtml csproj css csx cts cu cue cuh cxx d dart ddl desktop dhall di diff djhtml dockerfile dot dpk dpr dtx ebuild editorconfig edn ejs el elm env erb erl escript ex exs f f03 f08 f77 f90 f95 fish fnl for frag fs fsi fsproj fsscript fsx gemspec geojson geom gleam glsl go gql gradle graphql groovy gv gvy h haml handlebars hbs hcl hh hlsl hpp hrl hs htm html http hx hxx idr inc ini ipp itcl iuml ixx j2 jade janet java jinja jinja2 jl js json json5 jsonc jsonl jsonnet jsx just kdl ksh kt kts lean less lhs libsonnet lidr liquid lisp log lpr ltx lua m mak markdown md mdx mermaid metal mjs mk ml mli mll mly mm mmd mojo mount mts mustache nasm ndjson nginx nim nimble nims ninja nix njk nomad nunjucks odin org p6 pas patch php phtml pkl pl pl6 plantuml plist pm pm6 pp prisma prolog properties props proto ps1 psd1 psm1 psql pu pug puml purs py pyi pyw r rake raku rakumod rakutest razor rb rego rest rhtml rkt rmd rockspec ron rs rss rst s sass sbt sc scala scm scss service sh slim socket sol sql ss star sty sv svelte svg svh swift syn t target targets tcl tesc tese tex text tf tfvars theme thrift timer tk toml tpp ts tsx twig txt typ v vala vapi vb vbs vcxproj vert vh vhd vhdl vim vsh vue webmanifest wgsl wsdl xaml xhtml xml xsd xsl xslt yaml yml zig zon zsh'
+    # END TEXT EXTENSIONS
+}
+
+choose_default_editor() {
+    if [ "$make_default" = ask ]; then
+        # stdin may be the installer itself (curl | sh). Only read from a real terminal.
+        if [ -t 2 ] && ( : </dev/tty ) 2>/dev/null; then
+            printf '\n  Use rhun as the default editor for text, source and configuration files? [y/N] ' >&2
+            answer=''
+            read -r answer </dev/tty || true
+            case "$answer" in y | Y | yes | YES) make_default=yes ;; *) make_default=no ;; esac
+        else
+            make_default=no
+            say 'To choose rhun as your default editor later, rerun with --configure-files --make-default'
+        fi
+    fi
+    [ "$make_default" = yes ] || return 0
+    if [ "$os" = linux ]; then
+        desktop=$prefix/share/applications/rhun.desktop
+        [ -f "$desktop" ] || fail "no desktop entry at $desktop; rerun the installer"
+        if ! have xdg-mime; then
+            say 'Default editor was not changed: install xdg-utils or choose rhun in your desktop settings'
+            return 0
+        fi
+        # xdg-mime resolves desktop IDs through XDG_DATA_HOME and XDG_DATA_DIRS.
+        # Custom prefixes must be visible to the desktop too, not just to this process.
+        data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+        visible=no
+        [ "$prefix/share" = "$data_home" ] && visible=yes
+        old_ifs=$IFS; IFS=:
+        for data_dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+            [ "$prefix/share" = "$data_dir" ] && visible=yes
+        done
+        IFS=$old_ifs
+        if [ "$visible" = no ]; then
+            say "Default editor was not changed: add $prefix/share to your desktop's XDG_DATA_DIRS first"
+            return 0
+        fi
+        types=$(sed -n 's/^MimeType=//p' "$desktop" | tr ';' '\n' | sed '/^$/d; /^inode\//d; /^image\//d')
+        if [ -z "$types" ]; then
+            say 'Default editor was not changed: the desktop entry has no text types; update rhun first'
+            return 0
+        fi
+        missed=0
+        for type in $types; do
+            if ! xdg-mime default rhun.desktop "$type" ||
+                [ "$(xdg-mime query default "$type" 2>/dev/null)" != rhun.desktop ]; then
+                missed=$((missed + 1))
+            fi
+        done
+        if [ "$missed" = 0 ]; then
+            say 'rhun is the default editor for the registered text types'
+        else
+            say "Some default associations were not changed ($missed); choose them in your desktop settings"
+        fi
+    else
+        [ -d "$appdir/rhun.app" ] || fail "no rhun.app in $appdir; set --app-dir or rerun the installer"
+        # Use Launch Services, rather than writing its private preferences. Arguments are data.
+        if ! osascript -l JavaScript - "$appdir/rhun.app" "$(text_extensions)" <<'JXA'
+ObjC.import('Foundation');
+ObjC.import('CoreServices');
+function run(argv) {
+    var bundle = $.NSBundle.bundleWithPath(argv[0]);
+    if (!bundle || ObjC.unwrap(bundle.bundleIdentifier) !== 'com.r13.rhun')
+        throw new Error('The installed rhun app was not found');
+    var seen = {}, failures = [];
+    argv[1].split(' ').forEach(function(ext) {
+        var uti = $.UTTypeCreatePreferredIdentifierForTag($('public.filename-extension'), $(ext), $('public.text'));
+        if (!uti) return;
+        var name = ObjC.unwrap(ObjC.castRefToObject(uti));
+        if (seen[name]) return;
+        seen[name] = true;
+        var result = $.LSSetDefaultRoleHandlerForContentType(uti, 0xffffffff, bundle.bundleIdentifier);
+        var handler = $.LSCopyDefaultRoleHandlerForContentType(uti, 0xffffffff);
+        if (result !== 0 || !handler || ObjC.unwrap(ObjC.castRefToObject(handler)) !== 'com.r13.rhun')
+            failures.push(ext);
+    });
+    if (failures.length) throw new Error('Could not change defaults for: ' + failures.join(', '));
+}
+JXA
+        then
+            say 'Some defaults could not be changed. In Finder, use Get Info > Open with > rhun > Change All for those types'
+        else
+            say 'rhun is the default editor for the supported text extensions'
+        fi
+    fi
+}
+
+configure_files() {
+    if [ "$os" = linux ]; then
+        prefix=${prefix:-$HOME/.local}
+        [ -x "$prefix/bin/rhun" ] || fail "no rhun in $prefix; set --prefix or run the installer"
+        refresh_desktop "$prefix"
+    else
+        if [ -z "$appdir" ]; then
+            if [ -d /Applications/rhun.app ]; then appdir=/Applications; else appdir=$HOME/Applications; fi
+        fi
+        [ -d "$appdir/rhun.app" ] || fail "no rhun.app in $appdir; set --app-dir or run the installer"
+        if [ -x "$LSREGISTER" ]; then "$LSREGISTER" -f "$appdir/rhun.app" >/dev/null 2>&1 || true; fi
+    fi
+    choose_default_editor
+}
+
 # ---------------- PATH ----------------
 
 # login_shell: the user's login shell from the user database, else $SHELL
@@ -417,6 +530,7 @@ install_fresh() {
         installed "$appdir"
         say "start it from Launchpad or Spotlight, or run: rhun [folder]"
     fi
+    choose_default_editor
 }
 
 update() {
@@ -473,7 +587,7 @@ uninstall() {
 }
 
 main() {
-    version='' prefix='' appdir='' modify_path=1 mode=install target='' quiet=''
+    version='' prefix='' appdir='' modify_path=1 mode=install target='' quiet='' make_default=ask
     output_style
     while [ $# -gt 0 ]; do
         case $1 in
@@ -481,6 +595,9 @@ main() {
         --prefix) prefix=${2:-}; shift ;;
         --app-dir) appdir=${2:-}; shift ;;
         --no-modify-path) modify_path= ;;
+        --make-default) make_default=yes ;;
+        --no-make-default) make_default=no ;;
+        --configure-files) mode=configure ;;
         --uninstall) mode=uninstall ;;
         --update) mode=update; quiet=1 ;;
         --target) target=${2:-}; shift ;;
@@ -496,6 +613,10 @@ main() {
     trap 'exit 1' HUP INT TERM
     if [ "$mode" = uninstall ]; then
         uninstall
+        return 0
+    fi
+    if [ "$mode" = configure ]; then
+        configure_files
         return 0
     fi
     if [ -z "$quiet" ]; then

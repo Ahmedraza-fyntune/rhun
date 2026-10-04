@@ -1891,7 +1891,12 @@ draw_wrapped:
     imul ecx, r14d
     COLOR r8d, T_LINE_HL
     call gfx_fill
-12: # line number on the first row
+12: mov rdi, r12
+    mov esi, r13d
+    mov edx, [rip + g_lh]
+    imul edx, r14d
+    call draw_disk_range
+    # line number on the first row
     cmp qword ptr [rbx + DOC_diff], 0
     jne .Ldw_diff
     cmp dword ptr [rip + cfg_line_numbers], 0
@@ -2058,11 +2063,13 @@ FN editor_draw
     call gfx_fill
     test rbx, rbx
     jz .Led_ret
+    call disk_colors
     mov edi, [rip + g_ed_x]
     mov esi, [rip + g_ed_y]
     mov edx, [rip + g_ed_w]
     mov ecx, [rip + g_ed_h]
     call gfx_clip_push
+    call disk_warning
     mov rdi, rbx
     call editor_gutter
     mov [rsp], eax              # gutter width
@@ -2295,7 +2302,11 @@ FN editor_draw
     mov ecx, [rip + g_lh]
     COLOR r8d, T_LINE_HL
     call gfx_fill
-1:  # line number
+1:  mov rdi, r12
+    mov esi, r13d
+    mov edx, [rip + g_lh]
+    call draw_disk_range
+    # line number
     cmp qword ptr [rbx + DOC_diff], 0
     jne .Led_diffline
     cmp dword ptr [rip + cfg_line_numbers], 0
@@ -2411,9 +2422,104 @@ FN editor_draw
     movsxd rcx, dword ptr [rip + g_lh]
     idiv rcx
     mov [rbx + DOC_scrolly], rax
-91: call gfx_clip_pop
+91: # a thin edge also signals changes outside the visible lines, without moving the view
+    mov r8d, [rip + disk_edge]
+    test r8d, r8d
+    jz 92f
+    mov edi, [rip + g_ed_x]
+    mov esi, [rip + g_ed_y]
+    mov edx, [rip + g_ed_w]
+    M ecx, MI_2
+    call gfx_fill
+92: call gfx_clip_pop
 .Led_ret:
     EPILOGUE
+
+# disk_colors(): compute the active file's fade once per frame
+disk_colors:
+    mov dword ptr [rip + disk_edge], 0
+    mov dword ptr [rip + disk_tint], 0
+    mov rax, [rip + g_doc]
+    cmp qword ptr [rax + DOC_disk_until], 0
+    je 2f
+    push rbx
+    mov rbx, rax
+    call time_ms
+    mov rcx, [rbx + DOC_disk_until]
+    sub rcx, rax
+    jle 1f
+    imul rax, rcx, 255
+    xor edx, edx
+    mov ecx, DISK_FADE_MS
+    div rcx
+    cmp eax, 255
+    jbe 3f
+    mov eax, 255
+3:  COLOR ecx, T_ACCENT
+    and ecx, 0x00ffffff
+    mov edx, eax
+    shl edx, 24
+    or edx, ecx
+    mov [rip + disk_edge], edx
+    shr eax, 2                 # line tint starts at 25% opacity, beneath text and selection
+    shl eax, 24
+    or eax, ecx
+    mov [rip + disk_tint], eax
+1:  pop rbx
+2:  ret
+
+# draw_disk_range(line, y, height): one inexpensive range check per visible logical line
+draw_disk_range:
+    mov r8d, [rip + disk_tint]
+    test r8d, r8d
+    jz 1f
+    mov rax, [rip + g_doc]
+    cmp rdi, [rax + DOC_disk_lo]
+    jb 1f
+    cmp rdi, [rax + DOC_disk_hi]
+    jae 1f
+    mov ecx, edx
+    mov edi, [rip + g_ed_x]
+    mov edx, [rip + g_ed_w]
+    jmp gfx_fill
+1:  ret
+
+# disk_warning(): an inline warning only for a conflict; keep all local edits in the code view
+disk_warning:
+    PROLOGUE
+    mov rax, [rip + g_doc]
+    test dword ptr [rax + DOC_flags], DF_DISK_CHANGED
+    jz 9f
+    M ebx, MI_28
+    mov eax, ebx
+    add eax, ebx
+    cmp [rip + g_ed_h], eax
+    jl 9f
+    mov edi, [rip + g_ed_x]
+    mov esi, [rip + g_ed_y]
+    mov edx, [rip + g_ed_w]
+    mov ecx, ebx
+    COLOR r8d, T_PANEL
+    call gfx_fill
+    lea rdi, [rip + g_face_small]
+    mov esi, [rip + g_ed_x]
+    add esi, [rip + g_mt + 4*MI_12]
+    mov edx, [rip + g_ed_y]
+    mov ecx, ebx
+    lea r8, [rip + .Ldisk_warning]
+    COLOR r9d, T_WARNING
+    call ui_text_c
+    mov edi, [rip + g_ed_x]
+    mov esi, [rip + g_ed_y]
+    add esi, ebx
+    sub esi, [rip + g_mt + 4*MI_1]
+    mov edx, [rip + g_ed_w]
+    M ecx, MI_1
+    COLOR r8d, T_WARNING
+    call gfx_fill
+    add [rip + g_ed_y], ebx
+    sub [rip + g_ed_h], ebx
+9:  EPILOGUE
 
 # draw_line(doc, line, y, selrange*): draws bytes [dl_from, dl_to) of the line as one visual row
 draw_line:
@@ -3048,6 +3154,7 @@ FN ed_blink_tick
 
 .section .rodata
 .Lem1: .asciz "Cut"
+.Ldisk_warning: .asciz "Changed on disk. Unsaved edits kept."
 .Lem2: .asciz "Copy"
 .Lem3: .asciz "Paste"
 .Lem4: .asciz "Select All"
@@ -3070,6 +3177,8 @@ g_br: .quad -1, -1
 .bss
 .p2align 3
 sel_word_a: .quad 0
+disk_edge: .long 0
+disk_tint: .long 0
 sel_word_b: .quad 0
 last_indent: .long 0
 .globl g_ed_x, g_ed_y, g_ed_w, g_ed_h, g_ed_tx

@@ -89,7 +89,7 @@ def main():
 
         target = home / 'apps/rhun.app' if sys.platform == 'darwin' else home / '.local/bin/rhun'
         output = run_installer(sys.argv[1], home, terminal=True,
-                               options=['--update', '--target', str(target)])
+                               options=['--update', '--target', str(target), '--make-default'])
         assert output == b'', output
         print('ok   install/output-quiet-terminal-update')
 

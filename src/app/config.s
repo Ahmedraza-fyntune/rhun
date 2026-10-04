@@ -6,6 +6,7 @@
 .p2align 2
 .globl cfg_font_size, cfg_ui_font_size, cfg_line_height, cfg_tab_width, cfg_insert_spaces
 .globl cfg_match_brackets
+.globl cfg_animate_disk_changes
 .globl cfg_line_numbers, cfg_highlight_line, cfg_indent_guides, cfg_cursor_blink, cfg_whitespace
 .globl cfg_sidebar, cfg_sidebar_w, cfg_agents, cfg_agents_w, cfg_ui_scale, cfg_final_newline
 .globl cfg_trim_trailing, cfg_scroll_past_end, cfg_smooth_caret, cfg_theme, cfg_font, cfg_ui_font
@@ -20,6 +21,7 @@ cfg_tab_width: .long 4
 cfg_insert_spaces: .long 1
 cfg_line_numbers: .long 1
 cfg_highlight_line: .long 1
+cfg_animate_disk_changes: .long 1
 cfg_match_brackets: .long 1
 cfg_indent_guides: .long 1
 cfg_cursor_blink: .long 1
@@ -654,6 +656,7 @@ g_settings:
     SETTING .Ls_editor, insert_spaces, ST_BOOL, cfg_insert_spaces, 0, 1, 1, 0, "Indent with spaces", "Tab key inserts spaces instead of a tab character."
     SETTING .Ls_editor, line_numbers, ST_BOOL, cfg_line_numbers, 0, 1, 1, 0, "Line numbers", "Show line numbers in the gutter."
     SETTING .Ls_editor, highlight_line, ST_BOOL, cfg_highlight_line, 0, 1, 1, 0, "Highlight current line", "Tint the line under the cursor."
+    SETTING .Ls_editor, animate_disk_changes, ST_BOOL, cfg_animate_disk_changes, 0, 1, 1, 0, "Animate changed text", "Briefly highlight text changed on disk by agents or other tools."
     SETTING .Ls_editor, match_brackets, ST_BOOL, cfg_match_brackets, 0, 1, 1, 0, "Match brackets", "Outline the bracket at the cursor and its partner."
     SETTING .Ls_editor, indent_guides, ST_BOOL, cfg_indent_guides, 0, 1, 1, 0, "Indent guides", "Thin vertical lines at indentation levels."
     SETTING .Ls_editor, word_wrap, ST_BOOL, cfg_word_wrap, 0, 1, 1, 0, "Word wrap", "Wrap long lines at the edge of the editor (alt+z)."

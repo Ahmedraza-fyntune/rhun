@@ -930,6 +930,14 @@ FN doc_set_path
     mov rdi, rax
     call path_basename
     mov [rbx + DOC_name], rax
+    mov qword ptr [rbx + DOC_reload_at], 0
+    mov qword ptr [rbx + DOC_disk_seen], 0
+    mov qword ptr [rbx + DOC_disk_until], 0
+    and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
+    # Every path assignment participates: explorer, pickers, restored tabs, images and rename.
+    mov rdi, [rbx + DOC_path]
+    call watch_doc
+    mov [rbx + DOC_wd], rax
     pop rbx
     ret
 
@@ -1214,6 +1222,12 @@ FN doc_save
     mov [rbx + DOC_mtime], rax
     mov rdi, rbx
     call doc_note_eol
+    and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
+    mov qword ptr [rbx + DOC_disk_seen], 0
+    # Save As can create a directory that did not exist when the path was assigned.
+    mov rdi, [rbx + DOC_path]
+    call watch_doc
+    mov [rbx + DOC_wd], rax
 7:  mov rax, r12
     EPILOGUE
 .Lds_nopath:

@@ -9,13 +9,14 @@
 .equ WK_GIT, 32
 .equ MAXWD, 4096
 .equ WMASK, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_MODIFY
+.equ RELOAD_DELAY_MS, 100
 
 .bss
 .p2align 3
 wd_paths: .zero 8 * MAXWD
 wd_kinds: .zero MAXWD
 evbuf: .zero 16384
-tmp: .zero SB_SIZE
+next_tick: .quad 0              # earliest pending reload or fade frame; 0 means no timer
 .data
 ino_fd: .long -1
 
@@ -45,11 +46,12 @@ FN watch_init
     call add_watch
 9:  EPILOGUE
 
-# add_watch(path, kind)
+# add_watch(path, kind) -> descriptor or -1
 add_watch:
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
+    mov r13, -1
     mov edi, [rip + ino_fd]
     test edi, edi
     js 9f
@@ -73,7 +75,8 @@ add_watch:
     call mem_dup
     lea rcx, [rip + wd_paths]
     mov [rcx + r13*8], rax
-9:  EPILOGUE
+9:  mov rax, r13
+    EPILOGUE
 
 FN watch_dir
     mov esi, WK_EXPLORER
@@ -85,16 +88,21 @@ FN watch_git
     mov esi, WK_GIT
     jmp add_watch
 
-# watch_doc(path): watch the directory holding an open file
+# watch_doc(path) -> directory watch descriptor or -1
 FN watch_doc
     PROLOGUE
     mov rbx, rdi
+    mov r13, -1
     call strlen
     mov rdi, rbx
     mov rsi, rax
     call path_dirlen
     test rax, rax
-    jz 9f
+    jnz 1f
+    cmp byte ptr [rbx], '/'
+    jne 9f
+    mov eax, 1                 # a file directly under the filesystem root
+1:
     mov rdi, rbx
     mov rsi, rax
     call mem_dup
@@ -102,9 +110,11 @@ FN watch_doc
     mov rdi, rax
     mov esi, WK_DOCS
     call add_watch
+    mov r13, rax
     mov rdi, r12
     call mem_free
-9:  EPILOGUE
+9:  mov rax, r13
+    EPILOGUE
 
 on_inotify:
     PROLOGUE 16
@@ -160,7 +170,7 @@ on_inotify:
     mov dword ptr [rsp + 4], 1
 2:  test ecx, WK_DOCS
     jz 3f
-    test r15d, IN_CLOSE_WRITE | IN_MOVED_TO
+    test r15d, IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE
     jz 3f
     push rcx
     push rcx
@@ -206,53 +216,290 @@ on_inotify:
     call agents_on_change
 5:  EPILOGUE
 
-# doc_changed(wd, name): reload an unmodified open document whose file changed
+# doc_changed(wd, name): queue an open file; agents often replace it several times in one burst
 doc_changed:
     PROLOGUE
-    lea rax, [rip + wd_paths]
-    mov rdi, [rax + rdi*8]
-    test rdi, rdi
-    jz 9f
-    call path_join
-    mov rbx, rax
-    mov rdi, rax
-    call app_find_tab
-    test rax, rax
-    js 8f
-    mov rdi, rax
+    mov r14d, edi
+    mov r15, rsi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
     call tab_at
     mov r12, [rax + TAB_doc]
-    mov rdi, rbx
-    call file_stamp
-    cmp rax, [r12 + DOC_mtime]
+    test r12, r12
+    jz 8f
+    cmp [r12 + DOC_wd], r14
+    jne 8f
+    cmp qword ptr [r12 + DOC_path], 0
     je 8f
+    mov rdi, [r12 + DOC_name]
+    mov rsi, r15
+.ifdef WINDOWS
+    call win_path_equal
+.else
+    call strcmp_eq
+.endif
+    test eax, eax
+    jz 8f
+    cmp qword ptr [r12 + DOC_reload_at], 0
+    jne 8f                     # one reload per 100 ms, even during a continuous stream of writes
+    call time_ms
+    add rax, RELOAD_DELAY_MS
+    mov [r12 + DOC_reload_at], rax
+    call tick_at
+8:  inc rbx
+    jmp 1b
+9:  EPILOGUE
+
+# tick_at(time): keep only the earliest deadline
+tick_at:
+    mov rcx, [rip + next_tick]
+    test rcx, rcx
+    jz 1f
+    cmp rax, rcx
+    jae 2f
+1:  mov [rip + next_tick], rax
+2:  ret
+
+# watch_apply_settings(): disabling the fade clears it from every tab and keeps reload timers
+FN watch_apply_settings
+    cmp dword ptr [rip + cfg_animate_disk_changes], 0
+    jne 9f
+    PROLOGUE
+    mov qword ptr [rip + next_tick], 0
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 8f
+    mov rdi, rbx
+    call tab_at
+    mov rdx, [rax + TAB_doc]
+    test rdx, rdx
+    jz 2f
+    mov qword ptr [rdx + DOC_disk_until], 0
+    mov rax, [rdx + DOC_reload_at]
+    test rax, rax
+    jz 2f
+    call tick_at
+2:  inc rbx
+    jmp 1b
+8:  EPILOGUE
+9:  ret
+
+# watch_show(): resume a still-visible fade when returning to its tab
+FN watch_show
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_disk_until], 0
+    je 1f
+    sub rsp, 8
+    call time_ms
+    call tick_at
+    add rsp, 8
+1:  ret
+
+# watch_timeout() -> ms until a pending reload or the editor fade needs a frame, -1 when idle
+FN watch_timeout
+    mov rax, [rip + next_tick]
+    test rax, rax
+    jz 1f
+    push rax
+    call time_ms
+    pop rcx
+    sub rcx, rax
+    xor eax, eax
+    test rcx, rcx
+    cmovg rax, rcx
+    ret
+1:  mov eax, -1
+    ret
+
+# watch_tick(): only scan tabs while reloads or fades are pending, never poll files while idle
+FN watch_tick
+    PROLOGUE
+    cmp qword ptr [rip + next_tick], 0
+    je 9f
+    call time_ms
+    mov r13, rax
+    cmp rax, [rip + next_tick]
+    jb 9f
+    mov qword ptr [rip + next_tick], 0
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    mov r12, [rax + TAB_doc]
+    test r12, r12
+    jz 8f
+    mov rax, [r12 + DOC_reload_at]
+    test rax, rax
+    jz 3f
+    cmp rax, r13
+    ja 2f
+    mov qword ptr [r12 + DOC_reload_at], 0
     mov rdi, r12
+    call reload_changed
+    jmp 3f
+2:  call tick_at
+3:  mov rax, [r12 + DOC_disk_until]
+    test rax, rax
+    jz 8f
+    cmp r12, [rip + g_doc]
+    jne 8f                     # background reloads do not animate an unrelated editor
+    mov dword ptr [rip + g_dirty], 1
+    cmp rax, r13
+    ja 4f
+    mov qword ptr [r12 + DOC_disk_until], 0
+    jmp 8f
+4:  lea rcx, [r13 + DISK_FRAME_MS]
+    cmp rax, rcx
+    cmova rax, rcx
+    call tick_at
+8:  inc rbx
+    jmp 1b
+9:  EPILOGUE
+
+# reload_changed(doc): compare the stamp after the burst, checking dirty state at reload time
+reload_changed:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jz 9f
+    call file_stamp
+    test rax, rax
+    jz 9f                      # a removed file keeps its current contents
+    cmp rax, [rbx + DOC_mtime]
+    je 9f                      # includes our own saves
+    cmp rax, [rbx + DOC_disk_seen]
+    je 9f
+    mov [rbx + DOC_disk_seen], rax
+    mov rdi, rbx
     call doc_dirty
     test eax, eax
     jnz 7f
-    mov rdi, r12
+    mov rdi, rbx
     call app_reload_doc
-    jmp 8f
-7:  lea rdi, [rip + .Lchanged]
-    call app_toast
-8:  mov rdi, rbx
-    call mem_free
+    test eax, eax
+    jz 9f
+    cmp rbx, [rip + g_doc]
+    jne 9f
+    cmp dword ptr [rip + cfg_animate_disk_changes], 0
+    je 9f
+    call time_ms
+    add rax, DISK_FADE_MS
+    mov [rbx + DOC_disk_until], rax
+    jmp 9f
+7:  or dword ptr [rbx + DOC_flags], DF_DISK_CHANGED
+    mov qword ptr [rbx + DOC_disk_until], 0
+    mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
 
-# app_reload_doc(doc): replace contents from disk, keep the cursor near where it was
+# disk_range(doc, new text, length) -> changed in eax, prefix in rdx, old end in rcx, new end in r8.
+# Find a common prefix and suffix directly in the gap buffer, with no second file-sized allocation
+# or full diff.
+disk_range:
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call doc_len
+    mov r14, rax               # old end
+    mov r15, r13               # new end
+    mov r8, [rbx + DOC_buf]
+    mov r9, [rbx + DOC_gs]
+    mov r10, [rbx + DOC_ge]
+    sub r10, r9                # gap size
+    xor ecx, ecx               # common prefix
+1:  cmp rcx, r14
+    jae 3f
+    cmp rcx, r13
+    jae 3f
+    mov rdx, rcx
+    cmp rdx, r9
+    jb 2f
+    add rdx, r10
+2:  mov al, [r8 + rdx]
+    cmp al, [r12 + rcx]
+    jne 3f
+    inc rcx
+    jmp 1b
+3:  cmp rcx, r14
+    jne 4f
+    cmp rcx, r13
+    jne 4f
+    mov qword ptr [rbx + DOC_disk_lo], 0
+    mov qword ptr [rbx + DOC_disk_hi], 0
+    xor eax, eax
+    EPILOGUE
+4:  cmp r14, rcx
+    jbe 6f
+    cmp r15, rcx
+    jbe 6f
+    lea rdx, [r14 - 1]
+    cmp rdx, r9
+    jb 5f
+    add rdx, r10
+5:  mov al, [r8 + rdx]
+    cmp al, [r12 + r15 - 1]
+    jne 6f
+    dec r14
+    dec r15
+    jmp 4b
+6:  mov [rsp], rcx
+    mov [rsp + 8], r14
+    mov [rsp + 16], r15
+    xor eax, eax               # line of the first changed byte
+    xor edx, edx
+7:  cmp rdx, rcx
+    jae 8f
+    cmp byte ptr [r12 + rdx], 10
+    jne 71f
+    inc rax
+71: inc rdx
+    jmp 7b
+8:  mov [rbx + DOC_disk_lo], rax
+    cmp r15, rcx
+    jbe 10f                    # a deletion: pulse the surviving line at that position
+    dec r15                    # exclude an unchanged line after a replaced newline
+9:  cmp rdx, r15
+    jae 10f
+    cmp byte ptr [r12 + rdx], 10
+    jne 91f
+    inc rax
+91: inc rdx
+    jmp 9b
+10: inc rax
+    mov [rbx + DOC_disk_hi], rax
+    mov rdx, [rsp]
+    mov rcx, [rsp + 8]
+    mov r8, [rsp + 16]
+    mov eax, 1
+    EPILOGUE
+
+# app_reload_doc(doc) -> 1 if text changed, 0 if identical or unreadable; keep cursor and scroll
 FN app_reload_doc
-    PROLOGUE
+    PROLOGUE 32
     mov rbx, rdi
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
     jz 9f
     cmp qword ptr [rbx + DOC_img], 0
     jne .Lrd_image
+    call file_stamp
+    mov [rsp + 24], rax        # stamp belongs to the bytes read, not a later replacement
+    mov rdi, [rbx + DOC_path]
     call file_read_all
     test rax, rax
     jz 9f
     mov r12, rax
     mov r13, rdx
+    mov rdi, [rbx + DOC_path]
+    call file_stamp
+    cmp rax, [rsp + 24]
+    jne .Lrd_unstable          # a concurrent writer replaced or changed it while we read
     mov rdi, r12
     mov rsi, r13
     call doc_is_binary
@@ -263,12 +510,34 @@ FN app_reload_doc
     mov rdx, r13
     call doc_normalize_eol
     mov r13, rax
-    mov r14, [rbx + DOC_cur]
-    mov r15, [rbx + DOC_scrolly]
     mov rdi, rbx
     mov rsi, r12
     mov rdx, r13
-    call doc_set_text
+    call disk_range
+    test eax, eax
+    jz .Lrd_same
+    mov [rsp], rdx
+    mov [rsp + 8], rcx
+    mov [rsp + 16], r8
+    mov r14, [rbx + DOC_cur]
+    mov r15, [rbx + DOC_scrolly]
+    mov rdi, rbx
+    call doc_begin_group
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    sub rdx, rsi
+    xor ecx, ecx
+    call doc_delete
+    mov rdi, rbx
+    mov rsi, [rsp]
+    lea rdx, [r12 + rsi]
+    mov rcx, [rsp + 16]
+    sub rcx, rsi
+    xor r8d, r8d
+    call doc_insert
+    mov rdi, rbx
+    call doc_end_group
     mov rdi, rbx
     call doc_note_eol
     mov rdi, r12
@@ -282,20 +551,53 @@ FN app_reload_doc
     mov [rbx + DOC_scrolly], r15
     mov rax, [rbx + DOC_undo + VEC_len]
     mov [rbx + DOC_savepoint], rax
-    mov rdi, [rbx + DOC_path]
-    call file_stamp
+    mov rax, [rsp + 24]
     mov [rbx + DOC_mtime], rax
+    mov [rbx + DOC_disk_seen], rax
+    and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
+    mov qword ptr [rbx + DOC_disk_until], 0
     mov dword ptr [rip + g_dirty], 1
-9:  EPILOGUE
+    mov eax, 1
+    EPILOGUE
+.Lrd_same:
+    mov rdi, r12
+    call mem_free
+    mov rdi, rbx
+    call doc_note_eol
+    mov rax, [rbx + DOC_undo + VEC_len]
+    mov [rbx + DOC_savepoint], rax
+    mov rax, [rsp + 24]
+    mov [rbx + DOC_mtime], rax
+    mov [rbx + DOC_disk_seen], rax
+    and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
+    mov qword ptr [rbx + DOC_disk_until], 0
+    mov dword ptr [rip + g_dirty], 1
+9:  xor eax, eax
+    EPILOGUE
+.Lrd_unstable:
+    mov rdi, r12
+    call mem_free
+    mov qword ptr [rbx + DOC_disk_seen], 0
+    call time_ms
+    add rax, RELOAD_DELAY_MS
+    mov [rbx + DOC_reload_at], rax
+    call tick_at
+    xor eax, eax
+    EPILOGUE
 .Lrd_binary:
     mov rdi, r12
     call mem_free
+    xor eax, eax
     EPILOGUE
 .Lrd_image:
     call file_stamp
     mov [rbx + DOC_mtime], rax
+    mov [rbx + DOC_disk_seen], rax
+    and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
     mov rdi, [rbx + DOC_img]
     call iv_reload
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
     EPILOGUE
 
 FN cmd_reload_file
@@ -308,4 +610,3 @@ FN cmd_reload_file
 .section .rodata
 .Lconfig: .asciz "config"
 .Ltheme_name: .asciz "theme.name"
-.Lchanged: .asciz "File changed on disk (unsaved edits kept)"

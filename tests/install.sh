@@ -6,6 +6,7 @@
 set -u
 cd "$(dirname "$0")/.."
 root=$PWD
+python3 tests/file-associations.py || exit 1
 w=$(cd "$(mktemp -d)" && pwd -P)
 server=
 trap 'if [ -n "$server" ]; then kill $server 2>/dev/null; fi; chmod -R u+w "$w" 2>/dev/null; rm -rf "$w"' EXIT

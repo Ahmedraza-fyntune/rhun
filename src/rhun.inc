@@ -512,12 +512,22 @@ F DOC_gseq, 4           # git: request number; answers to older requests are dro
 F DOC_diff, 8           # diff view: DV* with the kind and numbers of each line
 F DOC_lhash, 8          # hash of each line (for git marks), 0 = not known yet
 F DOC_img, 8            # image view of a TAB_IMAGE document, or 0
+F DOC_wd, 8             # directory watch descriptor, -1 when unavailable
+F DOC_reload_at, 8      # external writes coalesce before a reload, 0 when none is pending
+F DOC_disk_seen, 8      # last external stamp handled
+F DOC_disk_until, 8     # editor's external reload highlight fades until this time
+F DOC_disk_lo, 8        # first changed line in the reloaded text
+F DOC_disk_hi, 8        # line past the changed range (deletions highlight their surviving neighbor)
 ENDSTRUCT DOC_SIZE
+
+.equ DISK_FADE_MS, 800
+.equ DISK_FRAME_MS, 50
 
 # DOC_flags
 .equ DF_GROUP, 1
 .equ DF_READONLY, 2              # diff views
 .equ DF_EOL, 4                   # the text ended in a newline when read or saved: vim has no line after it
+.equ DF_DISK_CHANGED, 8          # external contents differ and unsaved edits were kept
 
 # return 0 at once when the document is read-only: g_doc, or the one in reg
 .macro READONLY_RET reg=0

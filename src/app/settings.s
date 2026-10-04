@@ -47,6 +47,7 @@ FN setting_applied
     PROLOGUE
     mov rbx, rdi
     call ai_apply
+    call watch_apply_settings
     mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
     mov rax, [rbx + SET_ptr]

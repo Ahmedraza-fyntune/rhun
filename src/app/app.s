@@ -346,6 +346,7 @@ FN app_activate_tab
     mov [rip + g_tab_cur], rdi
     mov dword ptr [rip + g_exp_reveal], 1
     call app_sync_doc
+    call watch_show
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     mov dword ptr [rip + g_tabscroll_reveal], 1
     call ed_touch
@@ -446,9 +447,6 @@ FN app_open_file
     mov [rbx + DOC_mtime], rax
     call iv_new
     mov [rbx + DOC_img], rax
-    # follow changes on disk: images are often written by other tools
-    mov rdi, r12
-    call watch_doc
     jmp 3f
 11: mov rdi, rbx
     mov rsi, r12
@@ -805,6 +803,7 @@ FN app_apply_settings
 1:  call git_apply
     call ai_apply
     call vim_sync
+    call watch_apply_settings
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -1248,11 +1247,20 @@ FN app_timeout
     cmp eax, ebx
     jge 5f
 51: mov ebx, eax
-5:  mov eax, ebx
+5:  call watch_timeout
+    cmp eax, -1
+    je 6f
+    cmp ebx, -1
+    je 61f
+    cmp eax, ebx
+    jge 6f
+61: mov ebx, eax
+6:  mov eax, ebx
     EPILOGUE
 
 FN app_tick
     PROLOGUE
+    call watch_tick
     call ed_blink_tick
     mov rax, [rip + g_toast_until]
     test rax, rax
@@ -3346,10 +3354,6 @@ FN app_open_path
     jmp 8f
 3:  mov rdi, rbx
     call app_open_file
-    test rax, rax
-    js 8f
-    mov rdi, rbx
-    call watch_doc
 8:  test r13d, r13d
     jz 9f
     mov rdi, rbx

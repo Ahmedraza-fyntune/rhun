@@ -10,7 +10,7 @@ On Linux (x86-64) or macOS (Apple silicon), run:
 curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
 ```
 
-Or using `wget` 
+Or use `wget`:
 
 ```sh
 wget -qO- https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh
@@ -24,13 +24,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create
 
 ## Why rhun
 
-When coding agents do more of the heavy lifting, you may not need everything that comes with Vim, VS Code or Zed. You need to read and edit code, run commands, find files, and check what changed.
+When coding agents do more of the heavy lifting, you may not need everything that comes with Vim, Sublime, VS Code, or Zed. You need to read and edit code, run commands, find files, and check what changed.
 
 `rhun` is perfect for such tasks: it is blazing fast, has a minimal memory and disk space footprint, and ships with everything you need:
 
 - **Code editing:** Tabs, syntax highlighting, find and replace, and optional Vim mode.
 - **Built-in terminal:** Run your shell, tools, and coding agents right beside the code.
-- **Git:** Stage, commit, pull and push, see changed files, read diffs, and browse commit history. Optionally draft commit messages with your Claude or Codex subscription, or a local Ollama model.
+- **Git:** Stage, commit, pull, and push; see changed files, read diffs, and browse commit history. Optionally draft commit messages with your Claude or Codex subscription, or a local Ollama model.
 - **Fuzzy search:** Jump to a file or search across the whole project.
 - **Agents panel:** See Claude Code and Codex sessions as they work.
 
@@ -39,7 +39,7 @@ When coding agents do more of the heavy lifting, you may not need everything tha
   <img src="assets/social/screenshot-light.png" width="49%" alt="rhun, light theme">
 </p>
 
-Pick from 40 light and dark themes. On Omarchy, choose **Follow Omarchy** and rhun switches themes with your desktop.
+Pick from 40 light and dark themes. On Omarchy, choose **Follow Omarchy**, and rhun switches themes with your desktop.
 
 Fast built-in terminal:
 
@@ -52,11 +52,13 @@ Fast built-in terminal:
 
 ## Contribute
 
-`rhun` welcomes new contributors, PR requests are open to everyone: it doesn't matter if a bugfix or a usable addition was created manually or using AI - every fix matter. 
-Be reasonable, don't change the core functionality, add a quality grounding to your PR.
+`rhun` welcomes new contributors. Pull requests are open to everyone: it doesn't matter whether a bug fix or a useful addition was created manually or using AI. Every fix matters.
+Be reasonable, don't change the core functionality, and include a clear rationale for your PR.
 
-As `rhun` doesn't use any telemethry (and will *never* use one), the only way of getting the bugreports are users. Faced a crash? Something's not right? Please file a [bug report](https://github.com/vshvedov/rhun/issues) or fix yourself and PR.
+As `rhun` doesn't use any telemetry (and will *never* use it), we rely on users to report bugs. Encountered a crash? Something's not right? Please file a [bug report](https://github.com/vshvedov/rhun/issues) or fix it yourself and submit a PR.
 
-[MIT license](LICENSE). 
+A great place to start a new topic is rhun's [Product Hunt forum](https://www.producthunt.com/p/rhun). It's also the place where you can read human-written updates.
+
+[MIT license](LICENSE).
 
 Built-in font: [SIL Open Font License](assets/fonts/LICENSE-Iosevka.md).

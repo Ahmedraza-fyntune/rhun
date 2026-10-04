@@ -7,12 +7,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 
 ROOT = Path(__file__).resolve().parent.parent
 if os.name != 'nt':
     raise SystemExit('Run installer tests on Windows.')
+subprocess.run([sys.executable, str(ROOT / 'tests/file-associations.py')], check=True)
 VERSION = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
 ASSET = f'rhun-{VERSION}-windows-x86_64.zip'
 
@@ -44,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
     def install(*options, success=True, target=destination):
         result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
             '-File', str(ROOT / 'install.ps1'), '-InstallDir', str(target), '-ReleasesUrl', url,
-            '-NoModifyPath', '-NoShortcut', *options], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            '-NoModifyPath', '-NoShortcut', '-NoFileAssociations', *options], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=60)
         assert (result.returncode == 0) == success, result.stdout.decode(errors='replace')
         return result
@@ -56,6 +58,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         install()  # latest lookup and first install, including a Unicode destination
         version()
         assert (destination / '.rhun-install').is_file()
+        assert 'file-associations: no' in (destination / '.rhun-install').read_text()
         install('-Version', VERSION)
         version()
         print('ok   install/latest-version-and-reinstall', flush=True)
@@ -165,6 +168,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         install(*options, '-PrepareUpdate')
         install(*options, '-ApplyUpdate')
         version()
+        assert 'file-associations: no' in (destination / '.rhun-install').read_text()
         assert (destination / 'rhun.exe').read_bytes() != old
         assert (destination / 'rhun.com').read_bytes() != old_console
         assert unrelated.read_bytes() == b'keep this'

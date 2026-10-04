@@ -23,6 +23,14 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Windows x64: native window, Unicode paths and clipboard, per-monitor scaling, and a ConPTY terminal
 - Installs from GitHub releases; updates itself on Windows, Linux and macOS
 
+Open files follow edits made by agents and other tools. Writes arriving within 100 ms are grouped
+into one reload. In the active editor, the changed region briefly fades back to its normal background;
+a thin highlight at the top also signals changes outside the visible lines.
+**Animate changed text** in Settings > Editor is on by default. Turn it off to hide both highlights;
+files still reload. The config key is `animate_disk_changes = true` under `[editor]`.
+If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
+command palette to load the disk version, or save to keep your version.
+
 ## Install and update
 
 On Linux and macOS:
@@ -46,7 +54,27 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--prefix DIR` | Linux: install under DIR instead of `~/.local` |
 | `--app-dir DIR` | macOS: put rhun.app in DIR |
 | `--no-modify-path` | leave shell startup files alone |
+| `--make-default` | use rhun as the default editor for registered text, source and configuration types |
+| `--no-make-default` | skip the default-editor question |
+| `--configure-files` | configure an existing installation without downloading or replacing it |
 | `--uninstall` | remove rhun and the PATH line; your settings in `~/.config/rhun` stay |
+
+Interactive installations offer a default-editor choice, with **No** as the default. When there is
+no terminal, installation keeps your defaults unless you pass `--make-default`. Supported images
+and folders appear in Open With, but the default-editor choice leaves their associations alone.
+On Linux, changing defaults needs `xdg-mime` from xdg-utils and a desktop-visible installation
+prefix. On macOS, associations are requested through Launch Services; if a request fails, use
+Finder's Get Info > Open with > rhun > Change All for that type.
+
+Updates refresh file handler registration without asking about or changing defaults. Existing users
+can make the choice later without reinstalling:
+
+```sh
+curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh -s -- --configure-files --make-default
+```
+
+Use `--prefix` or `--app-dir` too if rhun is installed somewhere else. This configures the metadata
+already installed, so update rhun first to get the expanded file type list.
 
 rhun looks for a new version a few seconds after it starts and once a day while it runs. The check is one HTTPS request to github.com for a small text file, made with curl (or wget) in the background. When there is a newer version, the status bar shows **Update to X**: clicking it installs the update in the background, and **Restart to update** then restarts rhun into it, asking about unsaved files first and reopening the project. Check for Updates, Install Update and Restart to Update are in the command palette too. On Windows, PowerShell downloads and verifies the release while rhun runs, and stages it in a `.rhun-update-` folder beside the installation; it is installed after rhun exits for the restart. Closing rhun without restarting deletes the staged download, and the next update clears what an interrupted one left behind. Both ZIP and terminal installations can update in place. The installation folder and the folder that contains it must be writable, and other instances using that installation must be closed. Unrelated files in a portable folder are kept. Versions up to 0.16.3 cannot update themselves on Windows: install the next version once with the installer or the ZIP.
 
@@ -92,6 +120,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create
 The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Use the status bar to download an update and restart into it, or close rhun and rerun the installer. Automatic checks are enabled for release builds, with installation and restart initiated by you. Uninstalling keeps settings and sessions.
 
 The script is also included in the ZIP. To install from a downloaded script, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`. No administrator access or package manager is needed.
+
+Installation registers text, source, configuration and supported image extensions in Open With and
+Default Apps for the current user. It offers to open Windows Settings so you can choose defaults;
+Windows requires you to confirm them there. `-MakeDefault` opens that page explicitly,
+`-NoMakeDefault` skips the question, and `-NoFileAssociations` skips registration too and remembers
+that choice across updates. Images remain an optional separate choice in Windows Settings.
+
+Existing users can run the installed `install.ps1` with `-ConfigureFiles -MakeDefault`, or pass those
+options to the downloaded installer. Add `-InstallDir DIR` for a custom or portable installation.
+This needs no download, binary replacement or editor restart. The first update from an older Windows
+version may use the old embedded installer, so run this step once after upgrading to register the new
+handlers. Later updates refresh registration for installed copies without changing defaults or
+opening Settings. Portable copies stay unregistered unless you explicitly configure them.
 
 Use `rhun` or `rhun.com` from a terminal. Normal launches return the prompt immediately. Use `rhun --wait` when another program needs to wait for the editor. `rhun.com --version`, `--headless`, and `--script` preserve console output. The Unix `--control` socket is not available on Windows; use a script file instead.
 
