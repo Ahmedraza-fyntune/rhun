@@ -283,6 +283,14 @@ FN ui_in
     add esi, ecx
     cmp r9d, esi
     jge 1f
+    cmp r8d, [rip + g_cv + CV_cx0]
+    jl 1f
+    cmp r8d, [rip + g_cv + CV_cx1]
+    jge 1f
+    cmp r9d, [rip + g_cv + CV_cy0]
+    jl 1f
+    cmp r9d, [rip + g_cv + CV_cy1]
+    jge 1f
     mov eax, 1
 1:  ret
 
@@ -388,7 +396,12 @@ FN ui_text_center
     mov r15, r9
     mov eax, [rbp + 16]
     mov [rsp + 4], eax
-    mov rdi, r9
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, [rsp]
+    call gfx_clip_push
+    mov rdi, r15
     call strlen
     mov [rsp + 8], rax
     mov rdi, rbx
@@ -409,6 +422,9 @@ FN ui_text_center
     push rax
     call ui_text_v
     add rsp, 16
+    mov [rsp + 16], eax
+    call gfx_clip_pop
+    mov eax, [rsp + 16]
     EPILOGUE
 
 # ui_icon_center(icon, x, y, w, h, argb): icon (MI_ICON sized) centered in the box
@@ -418,6 +434,12 @@ FN ui_icon_center
     mov ebx, edi
     mov r12d, r9d
     M eax, MI_ICON
+    cmp eax, ecx
+    cmovg eax, ecx
+    cmp eax, r8d
+    cmovg eax, r8d
+    test eax, eax
+    jle 1f
     sub ecx, eax
     sar ecx, 1
     add esi, ecx
@@ -428,7 +450,7 @@ FN ui_icon_center
     mov ecx, eax
     mov r8d, r12d
     call icon_draw
-    pop r12
+1:  pop r12
     pop rbx
     ret
 
@@ -617,7 +639,13 @@ FN ui_scrollbar
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
     mov r8d, [rsp + 16]
+    cmp dword ptr [rip + g_block], 0
+    jne .Lsb_blocked
     call ui_btn
+    jmp .Lsb_input_ready
+.Lsb_blocked:
+    xor eax, eax
+.Lsb_input_ready:
     mov [rsp + 20], eax
     test eax, UB_PRESS
     jz 1f

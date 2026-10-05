@@ -58,10 +58,14 @@ cfg_exclude: .quad .Ldef_exclude
 cfg_agent_sources: .quad .Ldef_sources
 cfg_term_shell: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
+.Lcfg_strings_end:
 
 .bss
 .p2align 3
 cfg_seen_mtime: .quad 0         # the config file's mtime (ns) when rhun last read or wrote it
+# One owned allocation per string slot above. cfg_theme may separately borrow
+# a theme registry ID, so the current value alone does not identify its owner.
+cfg_owned_strings: .zero .Lcfg_strings_end - cfg_theme
 .p2align 3
 cfg_path_buf: .zero 1024
 cfg_dir_buf: .zero 1024
@@ -225,11 +229,20 @@ FN setting_assign
     jmp 21b
 22: mov [r14], r15d
     jmp 9f
-3:  # strings: keep a private copy
+3:  # Copy first: the input may be the current setting's own allocation.
     mov rdi, r12
     mov rsi, r13
     call mem_dup
-    mov [r14], rax
+    mov r15, rax
+    lea rax, [rip + cfg_theme]
+    mov rcx, r14
+    sub rcx, rax
+    lea r12, [rip + cfg_owned_strings]
+    add r12, rcx
+    mov rdi, [r12]
+    call mem_free
+    mov [r12], r15
+    mov [r14], r15
 9:  EPILOGUE
 
 # choice_entry(opts, index) -> rax config value, rdx label (rax = 0 past the end)

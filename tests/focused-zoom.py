@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,15 @@ class FocusedZoom(unittest.TestCase):
         self.configure()
 
     def tearDown(self):
+        # A Windows pseudoconsole's shell can exit just after the editor process.
+        for _ in range(50 if os.name == 'nt' else 1):
+            try:
+                self.tmp.cleanup()
+                return
+            except PermissionError:
+                if os.name != 'nt':
+                    raise
+                time.sleep(0.2)
         self.tmp.cleanup()
 
     def configure(self, editor=17, terminal=12, keys=''):

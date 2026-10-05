@@ -144,18 +144,6 @@ FN log_u64
     add rsp, 40
     ret
 
-# log_hex(v)
-FN log_hex
-    sub rsp, 40
-    mov rsi, rdi
-    mov rdi, rsp
-    call fmt_hex
-    mov rdi, rsp
-    mov rsi, rax
-    call log_write
-    add rsp, 40
-    ret
-
 FN log_nl
     push 10
     mov rdi, rsp

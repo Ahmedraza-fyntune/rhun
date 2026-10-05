@@ -200,7 +200,7 @@ fmt_value:
 
 # settings_draw(x, y, w, h)
 FN settings_draw
-    PROLOGUE 96
+    PROLOGUE 112
     mov [rsp], edi
     mov [rsp + 4], esi
     mov [rsp + 8], edx
@@ -240,7 +240,23 @@ FN settings_draw
     sub ecx, [rip + g_mt + 4*MI_64]
     cmp eax, ecx
     cmovg eax, ecx
-    mov [rsp + 16], eax         # column w
+    mov dword ptr [rsp + 96], 0 # stacked narrow layout
+    mov edi, 640
+    push rax
+    push rax
+    call sc
+    pop rcx
+    pop rcx
+    cmp ecx, eax
+    jge 14f
+    mov dword ptr [rsp + 96], 1
+    mov ecx, [rsp + 8]
+    sub ecx, [rip + g_mt + 4*MI_16]
+14: mov eax, 1
+    cmp ecx, eax
+    cmovl ecx, eax
+    mov [rsp + 16], ecx         # column w
+    mov eax, ecx
     mov ecx, [rsp + 8]
     sub ecx, eax
     sar ecx, 1
@@ -389,6 +405,24 @@ FN settings_draw
     add r12d, [rip + g_mt + 4*MI_32]
 4:  # row card
     M r13d, MI_64
+    cmp dword ptr [rsp + 96], 0
+    je 43f
+    add r13d, [rip + g_mt + 4*MI_48]
+    cmp dword ptr [rbx + SET_type], ST_CHOICE
+    jne 43f
+    mov dword ptr [rsp + 72], 0
+41: mov rdi, [rbx + SET_opts]
+    mov esi, [rsp + 72]
+    call choice_entry
+    test rax, rax
+    jz 42f
+    inc dword ptr [rsp + 72]
+    jmp 41b
+42: mov r13d, [rsp + 72]
+    imul r13d, [rip + g_mt + 4*MI_32]
+    add r13d, [rip + g_mt + 4*MI_64]
+    add r13d, [rip + g_mt + 4*MI_16]
+43:
     mov edi, [rsp + 20]
     mov esi, r12d
     mov edx, [rsp + 16]
@@ -401,6 +435,11 @@ FN settings_draw
     call gfx_frame
     add rsp, 16
     # label + description
+    mov edi, [rsp + 20]
+    mov esi, r12d
+    mov edx, [rsp + 16]
+    M ecx, MI_64
+    call gfx_clip_push
     lea rdi, [rip + g_face_ui]
     mov esi, [rsp + 20]
     add esi, [rip + g_mt + 4*MI_16]
@@ -416,7 +455,11 @@ FN settings_draw
     mov r11d, [rsp + 16]
     sub r11d, eax
     sub r11d, [rip + g_mt + 4*MI_16]
-    mov [rsp + 36], r11d
+    cmp dword ptr [rsp + 96], 0
+    je 44f
+    mov r11d, [rsp + 16]
+    sub r11d, [rip + g_mt + 4*MI_32]
+44: mov [rsp + 36], r11d
     mov rdi, [rbx + SET_desc]
     call strlen
     mov r9, rax
@@ -433,7 +476,17 @@ FN settings_draw
     push r10
     call ui_text_v_fit
     add rsp, 16
-    # control on the right
+    call gfx_clip_pop
+    cmp dword ptr [rsp + 96], 0
+    je 45f
+    add r12d, [rip + g_mt + 4*MI_64]
+    sub r13d, [rip + g_mt + 4*MI_64]
+45: # control on the right
+    mov edi, [rsp + 20]
+    mov esi, r12d
+    mov edx, [rsp + 16]
+    mov ecx, r13d
+    call gfx_clip_push
     mov eax, [rsp + 20]
     add eax, [rsp + 16]
     sub eax, [rip + g_mt + 4*MI_16]
@@ -464,6 +517,7 @@ FN settings_draw
     mov rdx, rax
     call text_width
     add eax, [rip + g_mt + 4*MI_32]
+    call .Lsd_control_width
     mov [rsp + 44], eax         # w
     mov esi, [rsp + 36]
     sub esi, eax
@@ -515,7 +569,11 @@ FN settings_draw
     sub edx, eax
     sar edx, 1
     add edx, r12d
-    mov [rsp + 60], edx         # y
+    cmp dword ptr [rsp + 96], 0
+    je 11f
+    mov edx, r12d
+    add edx, [rip + g_mt + 4*MI_8]
+11: mov [rsp + 60], edx         # y
     mov dword ptr [rsp + 44], 0 # total width
     mov dword ptr [rsp + 72], 0
 1:  mov rdi, [rbx + SET_opts]
@@ -527,7 +585,12 @@ FN settings_draw
     add [rsp + 44], eax
     inc dword ptr [rsp + 72]
     jmp 1b
-2:  mov eax, [rsp + 36]
+2:  cmp dword ptr [rsp + 96], 0
+    je 21f
+    mov eax, [rsp + 16]
+    sub eax, [rip + g_mt + 4*MI_32]
+    mov [rsp + 44], eax
+21: mov eax, [rsp + 36]
     sub eax, [rsp + 44]
     mov [rsp + 52], eax         # x
     mov edi, eax
@@ -551,7 +614,10 @@ FN settings_draw
     jz .Lsd_next
     mov [rsp + 80], rdx         # label
     call .Lseg_w
-    mov [rsp + 88], eax         # w
+    cmp dword ptr [rsp + 96], 0
+    je 31f
+    mov eax, [rsp + 44]
+31: mov [rsp + 88], eax         # w
     mov edi, [rsp + 40]
     add edi, [rsp + 72]
     mov esi, [rsp + 76]
@@ -602,9 +668,14 @@ FN settings_draw
     mov [rax], ecx
     mov rdi, rbx
     call setting_applied
-8:  mov eax, [rsp + 88]
+8:  cmp dword ptr [rsp + 96], 0
+    je 81f
+    M eax, MI_32
+    add [rsp + 60], eax
+    jmp 82f
+81: mov eax, [rsp + 88]
     add [rsp + 76], eax
-    inc dword ptr [rsp + 72]
+82: inc dword ptr [rsp + 72]
     jmp 3b
 # .Lseg_w(rdx label) -> eax segment width
 .Lseg_w:
@@ -728,6 +799,7 @@ FN settings_draw
     mov rdx, rax
     call text_width
     add eax, [rip + g_mt + 4*MI_48]
+    call .Lsd_control_width
     mov [rsp + 44], eax         # w
     mov esi, [rsp + 36]
     sub esi, eax
@@ -781,6 +853,7 @@ FN settings_draw
 .Lsd_str:
     mov edi, 300
     call sc
+    call .Lsd_control_width
     mov [rsp + 44], eax
     mov esi, [rsp + 36]
     sub esi, eax
@@ -870,6 +943,7 @@ FN settings_draw
     call ui_textfield
     add rsp, 16
 .Lsd_next:
+    call gfx_clip_pop
     add r12d, r13d
     add r12d, [rip + g_mt + 4*MI_8]
     add rbx, SET_SIZE
@@ -891,6 +965,17 @@ FN settings_draw
 .Lsd_end:
     call gfx_clip_pop
     EPILOGUE
+
+# eax requested control width -> bounded width inside the column.
+.Lsd_control_width:
+    mov ecx, [rsp + 8 + 16]
+    sub ecx, [rip + g_mt + 4*MI_32]
+    mov edx, 1
+    cmp ecx, edx
+    cmovl ecx, edx
+    cmp eax, ecx
+    cmovg eax, ecx
+    ret
 
 # settings_link(id, x, y, max_width, label) -> eax button flags, edx right edge
 settings_link:
