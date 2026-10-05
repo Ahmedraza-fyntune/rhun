@@ -2462,13 +2462,31 @@ FN tabs_draw
     mov ecx, [rsp + 12]
     COLOR r8d, T_TAB_ACTIVE
     call gfx_fill
+    # the active tab opens into the editor: borders at both sides run the full height and join
+    # the strip's bottom line (the left one is the previous tab's separator column)
+    mov edi, r12d
+    sub edi, [rip + g_mt + 4*MI_1]
+    mov esi, [rsp + 4]
+    M edx, MI_1
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov edi, r12d
+    add edi, [rsp + 16]
+    sub edi, [rip + g_mt + 4*MI_1]
+    mov esi, [rsp + 4]
+    M edx, MI_1
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_BORDER
+    call gfx_fill
     mov edi, r12d
     mov esi, [rsp + 4]
     mov edx, [rsp + 16]
+    sub edx, [rip + g_mt + 4*MI_1]
     M ecx, MI_2
     COLOR r8d, T_ACCENT
     call gfx_fill
-    jmp 8f
+    jmp 86f
 7:  test dword ptr [rsp + 20], UB_HOVER
     jz 8f
     mov edi, r12d
@@ -2489,7 +2507,7 @@ FN tabs_draw
     sub ecx, [rip + g_mt + 4*MI_16]
     COLOR r8d, T_BORDER
     call gfx_fill
-    # text: git status color, else muted (foreground when active)
+86: # text: git status color, else muted (foreground when active)
     mov rax, [r15 + TAB_doc]
     test rax, rax
     jz 80f
