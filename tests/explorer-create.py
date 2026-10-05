@@ -55,6 +55,20 @@ with tempfile.TemporaryDirectory(prefix='rhun-create-') as temporary:
     assert (project / 'assets' / 'icons').is_dir()
     print('ok   explorer/new-folder-button')
 
+    # The hint keeps its distance from the field: the card is 640 wide from x 180 and 48 down, the
+    # title takes 32, the field 32 more from 88, so its lower border is row 119. The rows just under
+    # it, where the hint's text starts, stay the card's color.
+    shot = work / 'prompt.ppm'
+    run([NEW_FOLDER, f'shot {shot.as_posix()}'])
+    magic, size, maximum, pixels = shot.read_bytes().split(b'\n', 3)
+    width = int(size.split()[0])
+    def pixel(x, y):
+        return pixels[(y * width + x) * 3:(y * width + x) * 3 + 3]
+    card = pixel(700, 123)
+    assert all(pixel(x, y) == card for y in range(120, 126) for x in range(196, 600)), 'hint touches the field'
+    assert any(pixel(x, y) != card for y in range(126, 144) for x in range(196, 600)), 'no hint under the field'
+    print('ok   explorer/prompt-hint-spacing')
+
     # The empty space's menu creates in the project folder, even after a folder's row was selected.
     output = run(['click 50 86', EMPTY, 'print-menu', ITEM[1], 'print-palette', 'type empty-space',
                   'key Return'])

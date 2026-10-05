@@ -2589,16 +2589,15 @@ hint_text:
 2:  lea rax, [rip + .Lhint_goto]
     cmp dword ptr [rip + pal_mode], PM_GOTO
     je 1f
-    # prompts: what Enter does
-    mov ecx, [rip + pal_prompt]
+    # prompts: what Enter does (only rax changes: the caller has the hint's box in the others)
     lea rax, [rip + .Lhint_new_file]
-    cmp ecx, PROMPT_NEW_FILE
+    cmp dword ptr [rip + pal_prompt], PROMPT_NEW_FILE
     je 1f
     lea rax, [rip + .Lhint_new_folder]
-    cmp ecx, PROMPT_NEW_FOLDER
+    cmp dword ptr [rip + pal_prompt], PROMPT_NEW_FOLDER
     je 1f
     lea rax, [rip + .Lhint_rename]
-    cmp ecx, PROMPT_RENAME
+    cmp dword ptr [rip + pal_prompt], PROMPT_RENAME
     je 1f
     lea rax, [rip + .Lhint_path]
 1:  ret
