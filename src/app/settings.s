@@ -360,9 +360,22 @@ FN settings_draw
     sub ecx, esi
     lea r8, [rip + .Lfeedback]
     call settings_link
+    add edx, [rip + g_mt + 4*MI_16]
+    mov [rsp + 28], edx
+    test eax, UB_CLICK
+    jz 312f
+    call cmd_feedback
+312: mov edi, 0x4f05
+    mov esi, [rsp + 28]
+    mov edx, r12d
+    mov ecx, [rsp + 16]
+    add ecx, [rsp + 20]
+    sub ecx, esi
+    lea r8, [rip + .Ldiscord]
+    call settings_link
     test eax, UB_CLICK
     jz 32f
-    call cmd_feedback
+    call cmd_discord
 32: add r12d, [rip + g_mt + 4*MI_40]
     # rows
     lea rbx, [rip + g_settings]
@@ -1054,6 +1067,7 @@ FN ui_text_v_fit
 .Lwebsite: .asciz "https://rhun.app"
 .Lemail: .asciz "hi@rhun.app"
 .Lfeedback: .asciz "Feedback and issues: GitHub"
+.Ldiscord: .asciz "Discord"
 .Lcheck_now: .asciz "Check now"
 
 .data

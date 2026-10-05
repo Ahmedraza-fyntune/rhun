@@ -167,10 +167,12 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
         with config.open('a') as settings:
             settings.write('[ui]\nagents_panel = false\n')
         run([project], ['cmd settings', 'click 300 202', 'wait 200',
-                        'click 410 202', 'wait 200', 'click 510 202', 'wait 200', 'quit'])
+                        'click 410 202', 'wait 200', 'click 510 202', 'wait 200',
+                        'click 670 202', 'wait 200', 'quit'])
         assert log.read_text().splitlines() == [
             'https://rhun.app', 'mailto:hi@rhun.app?subject=rhun%20feedback',
-            'https://github.com/vshvedov/rhun/issues'], log.read_text()
+            'https://github.com/vshvedov/rhun/issues',
+            'https://discord.gg/Aj4drpFbWf'], log.read_text()
         print('ok   desktop/settings-links')
 
         # The menu operates on a directory as well as a file, with the same path rules.
