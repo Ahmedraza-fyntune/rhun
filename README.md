@@ -2,6 +2,9 @@
 
 ![rhun](assets/social/github@2x.png)
 
+[![Join the Discord community](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/Aj4drpFbWf)
+[![Find rhun on Product Hunt](https://img.shields.io/badge/Product%20Hunt-Find%20rhun-DA552F?style=for-the-badge&logo=producthunt&logoColor=white)](https://www.producthunt.com/products/rhun)
+
 ## Get rhun
 
 On Linux (x86-64) or macOS (Apple silicon), run:
