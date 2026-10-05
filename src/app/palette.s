@@ -26,6 +26,7 @@
 .equ BRW_MAX, 20000             # entries of a folder in the path browser
 .equ BRW_DIR, 1                 # IT_data of the path browser: a folder
 .equ BRW_HERE, 2                # the "Open <folder>" row
+.equ BRW_NEW, 4                 # and "Open <folder> in a new window" under it
 
 STRUCT
 F IT_label, 8
@@ -1171,17 +1172,19 @@ browse_filter:
 1:  lea r15, [r12 + r13]        # query
     sub r14, r13
     xor ebx, ebx
-    cmp qword ptr [rip + items + VEC_len], 0
-    je 2f
-    mov rax, [rip + items + VEC_ptr]
-    test qword ptr [rax + IT_data], BRW_HERE
+21: cmp rbx, [rip + items + VEC_len]
+    jae 2f
+    imul rax, rbx, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    test qword ptr [rax + IT_data], BRW_HERE | BRW_NEW
     jz 2f
     lea rdi, [rip + results]
     mov esi, RS_SIZE
     call vec_push
-    mov dword ptr [rax + RS_item], 0
+    mov [rax + RS_item], ebx
     mov dword ptr [rax + RS_score], 0
-    mov ebx, 1
+    inc ebx
+    jmp 21b
 2:  mov [rsp], rbx              # leading rows
 3:  cmp rbx, [rip + items + VEC_len]
     jae 5f
@@ -1239,7 +1242,7 @@ browse_filter:
     EPILOGUE
 
 # browse_load(): the entries of brw_dir, folders first ("name/"), then files (none when picking a
-# folder), by name; picking a folder, the "Open <folder>" row first
+# folder), by name; picking a folder, the "Open <folder>" and "... in a new window" rows first
 browse_load:
     PROLOGUE
     mov qword ptr [rip + items + VEC_len], 0
@@ -1270,7 +1273,30 @@ browse_load:
     xor edx, edx
     mov ecx, BRW_HERE
     call item_add
-    mov ebx, 1
+    lea r13, [r12 + 1]
+    lea rdi, [rip + strings]
+    lea rsi, [rip + .Lopen_here]
+    call sb_push_cstr
+    lea rdi, [rip + strings]
+    lea rsi, [rip + brw_label]
+    call sb_push_cstr
+    lea rdi, [rip + strings]
+    lea rsi, [rip + .Lopen_new]
+    call sb_push_cstr
+    mov rsi, [rip + strings + SB_len]
+    sub rsi, r13
+    lea rdi, [rip + strings]
+    push rsi
+    push rsi
+    xor esi, esi
+    call sb_push_byte
+    pop rsi
+    pop rsi
+    mov rdi, r13
+    xor edx, edx
+    mov ecx, BRW_NEW
+    call item_add
+    mov ebx, 2
 1:  lea rdi, [rip + brw_dir]
     lea rsi, [rip + browse_cb]
     xor edx, edx
@@ -1832,7 +1858,7 @@ FN palette_key
     call selected_item
     test rax, rax
     jz .Lpk_yes
-    test qword ptr [rax + IT_data], BRW_HERE
+    test qword ptr [rax + IT_data], BRW_HERE | BRW_NEW
     jnz .Lpk_yes
     mov rdi, rax
     call browse_complete
@@ -2077,6 +2103,8 @@ palette_accept:
     mov rax, [r12 + IT_data]
     test eax, BRW_HERE
     jnz .Lpa_here
+    test eax, BRW_NEW
+    jnz .Lpa_new
     test eax, BRW_DIR
     jz .Lpa_file
     # a folder: the browser goes into it; picking a folder, Ctrl+Enter opens it
@@ -2104,6 +2132,15 @@ palette_accept:
     call palette_close
     lea rdi, [rip + brw_next]
     call app_switch_project
+    jmp .Lpa_ret
+.Lpa_new:
+    # another rhun opens it; this window keeps its project
+    lea rdi, [rip + brw_next]
+    lea rsi, [rip + brw_dir]
+    call cstr_copy
+    call palette_close
+    lea rdi, [rip + brw_next]
+    call app_new_window
     jmp .Lpa_ret
 .Lpa_file:
     lea rdi, [rip + brw_dir]
@@ -2483,12 +2520,12 @@ FN palette_draw
     add eax, [rip + g_mt + 4*MI_16]
     mov [rsp + 56], eax
 101: # label with matched characters highlighted, clipped before the detail; not the path
-    # browser's "Open <folder>"
+    # browser's "Open <folder>" rows
     mov rax, [rsp + 24]
     xor ecx, ecx
     cmp dword ptr [rip + pal_mode], PM_BROWSE
     jne 102f
-    test qword ptr [rax + IT_data], BRW_HERE
+    test qword ptr [rax + IT_data], BRW_HERE | BRW_NEW
     setnz cl
 102:mov [rip + pal_nohl], ecx
     M eax, MI_16
@@ -2743,6 +2780,7 @@ hint_text:
 .Lph_open_file: .asciz "Open a file"
 .Lph_open_folder: .asciz "Open a folder"
 .Lopen_here: .asciz "Open "
+.Lopen_new: .asciz " in a new window"
 .Lroot: .asciz "/"
 .Lpp_none: .asciz "none\n"
 .Lpp_field: .asciz "field="

@@ -45,6 +45,7 @@ python3 tests/live-reload.py || fail=1
 python3 tests/tooltips.py || fail=1
 python3 tests/terminal-tabs.py || fail=1
 python3 tests/terminal-panel.py || fail=1
+python3 tests/new-window.py || fail=1
 python3 tests/focused-zoom.py || fail=1
 python3 tests/agents.py || fail=1
 sh tests/files.sh || fail=1

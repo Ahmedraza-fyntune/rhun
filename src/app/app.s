@@ -72,6 +72,7 @@ dlg_ok: .quad 0
 dlg_fn: .quad 0
 switch_pending: .long 0          # a project switch waits on unsaved files
 switch_path: .zero 4096
+nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
 pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folders, the end
 .globl g_shot_path
@@ -200,6 +201,103 @@ set_project:
     call session_remember_project
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# app_new_window(folder): another rhun opens the folder in a window of its own (on macOS with a Dock
+# icon of its own) and this one keeps its project. It runs this program with the same environment,
+# in a session of its own as a copy started from a terminal is, and is reaped when it quits.
+# RHUN_NEW_WINDOW names another program to run (tests); without it a headless rhun starts none.
+FN app_new_window
+.ifdef WINDOWS
+    PROLOGUE
+    cmp dword ptr [rip + g_headless], 0
+    jne 8f
+    call win_new_window
+    test eax, eax
+    jnz 9f
+8:  lea rdi, [rip + .Lnew_window_failed]
+    call app_toast
+9:  EPILOGUE
+.else
+    PROLOGUE 32
+    mov rbx, rdi
+    lea rdi, [rip + .Lenv_new_window]
+    call getenv
+    test rax, rax
+    jz 2f
+    cmp byte ptr [rax], 0
+    je 2f
+    mov r12, rax
+    mov rdi, rax
+    call strlen
+    cmp rax, 4096
+    jae 8f
+    lea rdi, [rip + nw_exe]
+    mov rsi, r12
+    call cstr_copy
+    jmp 3f
+2:  cmp dword ptr [rip + g_headless], 0
+    jne 8f
+.ifdef MACOS
+    lea rdi, [rip + nw_exe]
+    mov esi, 4096
+    call mac_exe_path
+    test rax, rax
+    js 8f
+.else
+    lea rdi, [rip + .Lproc_self_exe]
+    lea rsi, [rip + nw_exe]
+    mov edx, 4095
+    SYS SYS_readlink
+    test rax, rax
+    jle 8f
+    lea rcx, [rip + nw_exe]
+    mov byte ptr [rcx + rax], 0
+    # " (deleted)": an update replaced the file, and the new version opens the folder
+    mov r12, rax
+    lea rdi, [rip + nw_exe]
+    mov rsi, rax
+    lea rdx, [rip + .Ldeleted]
+    mov ecx, 10
+    call str_ends
+    test eax, eax
+    jz 1f
+    lea rcx, [rip + nw_exe]
+    mov byte ptr [rcx + r12 - 10], 0
+1:
+.endif
+3:  lea rdi, [rip + .Ldevnull]
+    mov esi, O_RDWR | O_CLOEXEC
+    xor edx, edx
+    SYS SYS_open
+    test rax, rax
+    js 8f
+    mov r12d, eax
+    lea rax, [rip + nw_exe]
+    mov [rsp], rax
+    mov [rsp + 8], rbx
+    mov qword ptr [rsp + 16], 0
+    lea rdi, [rsp]
+    mov rsi, [rip + g_envp]
+    xor edx, edx
+    mov ecx, r12d
+    mov r8d, r12d
+    mov r9d, r12d
+    push 1                      # a new session; the terminal ioctl on /dev/null fails, so none
+    push 1
+    call proc_spawn
+    add rsp, 16
+    mov r13, rax
+    mov edi, r12d
+    SYS SYS_close
+    test r13, r13
+    jle 8f
+    mov edi, r13d
+    call reap_later
+    EPILOGUE
+8:  lea rdi, [rip + .Lnew_window_failed]
+    call app_toast
+    EPILOGUE
+.endif
 
 # app_switch_project(path): this window takes up another folder. The project's open files are
 # remembered, unsaved ones are asked about (Cancel keeps the project), then they are closed and the
@@ -4080,6 +4178,15 @@ tip_table:
 .Lk8: .asciz "Ctrl+Shift+O"
 .endif
 .Lpm_folder: .asciz "Open Folder\342\200\246"
+.Lnew_window_failed: .asciz "Could not open a new window"
+.ifndef WINDOWS
+.Lenv_new_window: .asciz "RHUN_NEW_WINDOW"
+.Ldevnull: .asciz "/dev/null"
+.ifndef MACOS
+.Lproc_self_exe: .asciz "/proc/self/exe"
+.Ldeleted: .asciz " (deleted)"
+.endif
+.endif
 .Lpm_file: .asciz "Open File\342\200\246"
 .Lpm_line: .asciz ""
 .Ld0: .asciz "Cancel"
