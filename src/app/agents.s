@@ -31,7 +31,7 @@ ENDSTRUCT AM_SIZE
 .equ R_TOOL, 3
 .equ R_RESULT, 4
 
-.equ ID_AG_ROW, 0x6000
+.equ ID_AG_ROW, 0x400000          # + session: a range of its own, as the list has no end
 .equ ID_AG_BACK, 0x5f00
 .equ ID_AG_REFRESH, 0x5f01
 .equ ID_AG_SCROLL, 0x5f02

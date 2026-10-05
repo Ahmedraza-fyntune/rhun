@@ -12,7 +12,7 @@
 .equ PM_GREP, 7
 .equ PM_BROWSE, 8
 
-.equ ID_PAL_ROW, 0x3000
+.equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
 .equ MAXFILES, 200000
 .equ GREP_MAX, 5000             # results
