@@ -26,7 +26,8 @@
 .equ TT_text, 8
 .equ TT_fn, 16
 .equ TT_SIZE, 24
-.equ RHUN_LEN, 5                 # bytes of "rhûn", the name on the welcome screen
+.equ TIP_TEXT_MAX, 4400          # bytes of a tip_note_text tooltip (a git command with a file's path)
+.equ RHUN_LEN, 5                # bytes of "rhûn", the name on the welcome screen
 .equ ID_WELCOME, 0x2a00          # + item
 
 .bss
@@ -57,6 +58,8 @@ tip_cw: .long 0
 tip_state: .long 0               # TIP_PENDING, TIP_SHOWN, or TIP_DISMISSED by a key press
 .p2align 3
 tip_since: .quad 0               # time_ms when the pointer reached tip_id
+tip_text_id: .long 0             # the button whose tooltip is in tip_text (tip_note_text)
+tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
 g_side_px: .long 0
 g_agents_px: .long 0
@@ -3458,6 +3461,30 @@ FN tip_note
 1:  mov eax, r8d
     ret
 
+# tip_note_text(id, x, y_bottom, w, flags, cstr) -> flags: tip_note for a button whose tooltip says
+#   what it does now (a git command with its file); the text is copied and needs no tip_table entry
+FN tip_note_text
+    test r8d, UB_HOVER
+    jz 9f
+    mov [rip + tip_cand], edi
+    mov [rip + tip_cx], esi
+    mov [rip + tip_cy], edx
+    mov [rip + tip_cw], ecx
+    mov [rip + tip_text_id], edi
+    lea rdi, [rip + tip_text]
+    mov ecx, TIP_TEXT_MAX - 1
+1:  mov al, [r9]
+    test al, al
+    jz 2f
+    mov [rdi], al
+    inc rdi
+    inc r9
+    dec ecx
+    jnz 1b
+2:  mov byte ptr [rdi], 0
+9:  mov eax, r8d
+    ret
+
 # tip_commit(): a new button restarts the delay, the same button keeps it, none hides at once;
 # so do a press, a drag, and the setting being off
 FN tip_commit
@@ -3536,10 +3563,12 @@ tip_find:
 2:  xor eax, eax
 3:  ret
 
-# tip_draw(): the tooltip on top of everything: its text, then "(shortcut)" of the button's
-# command as keys_for formats it (the user's binding, macOS symbols on the Mac)
-FN tip_draw
-    PROLOGUE 128                   # [rsp + 40] "(shortcut)", at most 2 + 63 bytes
+# tip_current() -> rax the text of the tooltip on screen, or 0; rdx its tip_table entry, 0 for the
+#   text of a tip_note_text button
+tip_current:
+    PROLOGUE
+    xor ebx, ebx
+    xor r12d, r12d
     cmp dword ptr [rip + tip_id], 0
     je 9f
     cmp dword ptr [rip + tip_state], TIP_SHOWN
@@ -3548,13 +3577,49 @@ FN tip_draw
     test rax, rax
     jnz 9f
     mov edi, [rip + tip_id]
+    lea rbx, [rip + tip_text]
+    cmp edi, [rip + tip_text_id]
+    je 9f
+    xor ebx, ebx
     call tip_find
     test rax, rax
     jz 9f
-    mov rcx, [rax + TT_text]
-    mov [rsp], rcx
+    mov r12, rax
+    mov rbx, [rax + TT_text]
+9:  mov rax, rbx
+    mov rdx, r12
+    EPILOGUE
+
+# tip_print(sb): "tip=" and the text of the tooltip on screen (nothing when there is none)
+FN tip_print
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Ltip_eq]
+    call sb_push_cstr
+    call tip_current
+    test rax, rax
+    jz 1f
+    mov rdi, rbx
+    mov rsi, rax
+    call sb_push_cstr
+1:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
+# tip_draw(): the tooltip on top of everything: its text, then "(shortcut)" of the button's
+# command as keys_for formats it (the user's binding, macOS symbols on the Mac); a text wider
+# than the window is cut with "…"
+FN tip_draw
+    PROLOGUE 128                   # [rsp + 40] "(shortcut)", at most 2 + 63 bytes
+    call tip_current
+    test rax, rax
+    jz 9f
+    mov [rsp], rax
     mov qword ptr [rsp + 24], 0    # "(shortcut)", or 0
-    mov rdi, [rax + TT_fn]
+    test rdx, rdx
+    jz 3f
+    mov rdi, [rdx + TT_fn]
     test rdi, rdi
     jz 3f
     call cmd_for_fn
@@ -3574,6 +3639,7 @@ FN tip_draw
     mov [rsp + 24], rax
 3:  mov rdi, [rsp]
     call strlen
+    mov [rsp + 8], rax             # text length
     lea rdi, [rip + g_face_small]
     mov rsi, [rsp]
     mov rdx, rax
@@ -3592,7 +3658,15 @@ FN tip_draw
     call text_width
     add r12d, eax
     add r12d, [rip + g_mt + 4*MI_8]
-4:  M ebx, MI_24
+4:  # no wider than the window: the text gives up what does not fit
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, [rip + g_mt + 4*MI_8]
+    mov ecx, r12d
+    sub ecx, eax
+    jle 41f
+    sub [rsp + 32], ecx
+    mov r12d, eax
+41: M ebx, MI_24
     # centered under the button, kept inside the window
     mov esi, [rip + tip_cx]
     mov eax, [rip + tip_cw]
@@ -3632,14 +3706,19 @@ FN tip_draw
     push rax
     call ui_card_shadow
     add rsp, 16
+    mov eax, [rsp + 32]
+    push rax
+    COLOR eax, T_FG
+    push rax
     lea rdi, [rip + g_face_small]
-    mov esi, [rsp + 16]
+    mov esi, [rsp + 16 + 16]
     add esi, [rip + g_mt + 4*MI_8]
-    mov edx, [rsp + 20]
+    mov edx, [rsp + 20 + 16]
     mov ecx, ebx
-    mov r8, [rsp]
-    COLOR r9d, T_FG
-    call ui_text_c
+    mov r8, [rsp + 16]
+    mov r9, [rsp + 8 + 16]
+    call ui_text_v_fit
+    add rsp, 16
     cmp qword ptr [rsp + 24], 0
     je 9f
     lea rdi, [rip + g_face_small]
@@ -3932,6 +4011,7 @@ tip_table:
 .Ltip_exp_new: .asciz "New file"
 .Ltip_exp_new_folder: .asciz "New folder"
 .Ltip_exp_refresh: .asciz "Refresh explorer"
+.Ltip_eq: .asciz "tip="
 .Lgit_tab: .asciz "Git"
 .Lln: .asciz "Ln "
 .Lcol: .asciz ", Col "

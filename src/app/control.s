@@ -674,6 +674,13 @@ c_print_menu:
     xor eax, eax
     ret
 
+# print-tip: the text of the tooltip on screen, "tip=" when there is none
+c_print_tip:
+    lea rdi, [rip + out]
+    call tip_print
+    xor eax, eax
+    ret
+
 # print-term: the screen of the current terminal
 c_print_term:
     lea rdi, [rip + out]
@@ -1244,6 +1251,7 @@ on_client:
 .Lc_print_project: .asciz "print-project"
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
+.Lc_print_tip: .asciz "print-tip"
 .Ls_project: .asciz "project="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
@@ -1270,7 +1278,8 @@ ctl_table:
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
-    .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu, 0, 0
+    .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
+    .quad .Lc_print_tip, c_print_tip, 0, 0
 
 .data
 lsock: .long -1
