@@ -97,6 +97,16 @@ FN agents_set_project
     inc rbx
     jmp 1b
 2:  mov qword ptr [rip + sessions + VEC_len], 0
+    # rejected Codex paths belong to the previous project's scan
+    xor ebx, ebx
+21: cmp rbx, [rip + rejected + VEC_len]
+    jae 22f
+    mov rax, [rip + rejected + VEC_ptr]
+    mov rdi, [rax + rbx*8]
+    call mem_free
+    inc rbx
+    jmp 21b
+22: mov qword ptr [rip + rejected + VEC_len], 0
     mov qword ptr [rip + view], -1
     mov dword ptr [rip + list_scroll], 0
     mov rdi, [rip + claude_dir]
