@@ -206,11 +206,11 @@ function File-Sha256([string]$Path) {
 function Remove-Folder([string]$Path) { [IO.Directory]::Delete($Path, $true) }
 
 # Just after the staged rhun.com ran, Windows or a scan can hold a file in the stage for a moment:
-# its move retries access denied, sharing and lock violations for five seconds.
+# its move is retried for five seconds while it can still happen (the error does not say why).
 function Move-StagedFolder([string]$Path, [string]$Destination) {
     for ($i = 1; ; $i++) {
         try { Move-Item -LiteralPath $Path -Destination $Destination; return }
-        catch { if ($i -ge 20 -or (($_.Exception.GetBaseException().HResult -band 0xFFFF) -notin 5, 32, 33)) { throw } }
+        catch { if ($i -ge 20 -or (Test-Path -LiteralPath $Destination) -or -not (Test-Path -LiteralPath $Path)) { throw } }
         Start-Sleep -Milliseconds 250
     }
 }
