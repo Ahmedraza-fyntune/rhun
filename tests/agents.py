@@ -186,6 +186,41 @@ class CodexDiscovery(unittest.TestCase):
         data = self.metadata() + b'\n' + b'x' * (META_LIMIT + 1) + b'\n'
         self.assertEqual(self.run_editor(data), 'Codex: Untitled session\n')
 
+    def test_project_switch_reconsiders_codex_sessions(self):
+        other = self.home / 'other project 日本'
+        other.mkdir()
+        projects = (self.project, other)
+        listings = {}
+        for index, project in enumerate(projects):
+            codex = self.session.parent / f'rollout-project-{index}.jsonl'
+            codex.write_bytes(self.metadata(20197, project.as_posix()) + b'\n' +
+                              self.message('user', 'Codex ' + project.name))
+            claude = self.home / '.claude/projects' / claude_slug(project.as_posix()) / 'claude.jsonl'
+            claude.parent.mkdir(parents=True)
+            claude.write_text(json.dumps({'type': 'user', 'message': {
+                'role': 'user', 'content': 'Claude ' + project.name}}) + '\n', encoding='utf-8')
+            # Make the provider order deterministic in each project's listing.
+            os.utime(codex, (2000000000, 2000000000))
+            os.utime(claude, (1999999999, 1999999999))
+            listings[project] = ('Codex: Codex ' + project.name + '\n' +
+                                 'Claude Code: Claude ' + project.name + '\n')
+
+        for start, target in (projects, projects[::-1]):
+            with self.subTest(start=start.name):
+                lines = ['print-agents']
+                expected = listings[start]
+                for project in (target, start, target, start):
+                    lines += [f'open {project.as_posix()}', 'print-agents',
+                              'click 1258 60', 'print-agents']
+                    expected += listings[project] * 2
+                script = self.home / 'commands.rsc'
+                script.write_text('\n'.join(lines + ['quit']) + '\n', encoding='utf-8')
+                result = subprocess.run([str(EXE), start.as_posix(), '--headless', '1280x800',
+                                         '--scale', '1', '--script', script.as_posix()], env=self.env,
+                                        capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
+                self.assertEqual(result.stdout.decode('utf-8'), expected)
+
     def test_refresh_without_a_project(self):
         # An empty window, or one waiting on a file (--wait), has no project to match codex sessions
         # against. The panel's refresh button still scans; the matcher must not read a null project.
