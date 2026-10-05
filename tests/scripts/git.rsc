@@ -44,10 +44,11 @@ print-state
 print-doc
 # a commit from the terminal: status, marks and history follow
 cmd toggle_terminal
-wait 300
-type git commit -qam 'Commit all'
+wait-term $
+type git commit -qam 'Commit all' && printf 'commit %s\n' done
 key Return
-wait 1500
+wait-term commit done
+wait 300
 wait-git
 print-git
 print-gitlog

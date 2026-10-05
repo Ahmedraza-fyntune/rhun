@@ -9,6 +9,7 @@
 .p2align 3
 out: .zero SB_SIZE
 cbuf: .zero SB_SIZE
+tbuf: .zero SB_SIZE
 oc_busy: .long 0                # running the client's lines
 oc_eof: .long 0                 # the client closed meanwhile
 addr: .zero 110
@@ -456,6 +457,43 @@ c_shot:
     je 1f
     PCALL P_draw
 1:  xor eax, eax
+    ret
+
+# wait-term TEXT: until the current terminal's screen shows TEXT (10 s at most): a shell's prompt,
+# or what a command printed, rather than a guess at how long it takes
+c_wait_term:
+    push r13
+    push r14
+    push r15
+    mov r14, rbx
+    mov r15, r12
+    call time_ms
+    lea r13, [rax + 10000]
+1:  lea rdi, [rip + tbuf]
+    call sb_clear
+    lea rdi, [rip + tbuf]
+    call term_dump_current
+    mov rsi, [rip + tbuf + SB_len]
+    cmp rsi, r15
+    jb 3f
+    mov rdi, [rip + tbuf + SB_ptr]
+    mov rdx, r14
+    mov rcx, r15
+    call str_find
+    test rax, rax
+    jns 2f
+3:  call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    call flush_frame
+    jmp 1b
+2:  pop r15
+    pop r14
+    pop r13
+    xor eax, eax
     ret
 
 # wait ms: run file watches, programs' output and timers for that long, drawing frames as they are
@@ -1195,6 +1233,7 @@ on_client:
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
+.Lc_wait_term: .asciz "wait-term"
 .Lc_print_gitlog: .asciz "print-gitlog"
 .Lc_print_scm: .asciz "print-scm"
 .Lc_wait_ai: .asciz "wait-ai"
@@ -1226,6 +1265,7 @@ ctl_table:
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
+    .quad .Lc_wait_term, c_wait_term
     .quad .Lc_print_scm, c_print_scm
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
