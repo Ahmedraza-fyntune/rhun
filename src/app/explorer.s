@@ -28,6 +28,7 @@ openset: .zero VEC_SIZE         # paths kept open across refresh (cstr*)
 menu_open: .long 0
 menu_x: .long 0
 menu_y: .long 0
+menu_press: .long 0             # the presses of the frame that opened the menu
 .p2align 3
 menu_node: .quad 0
 menu_list: .quad 0
@@ -1195,9 +1196,12 @@ FN explorer_menu_draw
     mov edx, r12d
     mov ecx, r14d
     call ui_card
-    # click outside closes (after this frame's clicks were handled)
+    # click outside closes (after this frame's clicks were handled), but not the press that opened
+    # the menu: a right press, or a tap whose release opened it in the same frame
     test dword ptr [rip + g_pressed], (1 << BTN_LEFT) | (1 << BTN_RIGHT)
     jz 3f
+    cmp dword ptr [rip + menu_press], 0
+    jne 3f
     mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, r12d
@@ -1205,14 +1209,7 @@ FN explorer_menu_draw
     call ui_in
     test eax, eax
     jnz 3f
-    # the right press that opened the menu is in the same frame: keep it
-    mov eax, [rip + g_mx]
-    cmp eax, [rip + menu_x]
-    jne 21f
-    mov eax, [rip + g_my]
-    cmp eax, [rip + menu_y]
-    je 3f
-21: mov dword ptr [rip + menu_open], 0
+    mov dword ptr [rip + menu_open], 0
     jmp .Lmd_ret
 3:  mov eax, [rsp + 4]
     add eax, [rip + g_mt + 4*MI_6]
@@ -1327,6 +1324,7 @@ FN explorer_menu_draw
     inc dword ptr [rsp + 12]
     jmp .Lmd_item
 .Lmd_ret:
+    mov dword ptr [rip + menu_press], 0
     EPILOGUE
 
 # item_width(i) -> width of the menu item's label, with its shortcut and the gap before it
@@ -1434,6 +1432,9 @@ FN ctx_menu_open
     mov [rip + menu_list], rdi
     mov [rip + menu_x], esi
     mov [rip + menu_y], edx
+    mov eax, [rip + g_pressed]
+    and eax, (1 << BTN_LEFT) | (1 << BTN_RIGHT)
+    mov [rip + menu_press], eax
     mov dword ptr [rip + menu_open], 1
     mov dword ptr [rip + g_menu_keys], 0
     mov dword ptr [rip + g_dirty], 1

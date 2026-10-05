@@ -28,6 +28,11 @@ as a platform pass.
   click targets. Optional status details are omitted when they would overlap
   the cursor label. A clipped branch button cannot take an updater click.
   Pixel comparisons and long linked-worktree cases check these boundaries.
+- The project menu stays open after a click whose press and release reach the
+  window before the next frame, such as a trackpad tap. The release opens the
+  menu under the button, and that frame's press no longer counts as a click
+  outside it. Before the fix, the menu drew one empty frame and closed. The
+  titlebar tap script failed before the fix.
 - The macOS Replace shortcut displays Control-H, matching the working shortcut.
   Command-H retains the native application Hide action. Shortcut hint tests and
   a native Replace invocation verify the correction.
