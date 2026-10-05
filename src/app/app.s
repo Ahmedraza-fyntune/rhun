@@ -458,7 +458,8 @@ project_menu_open:
     mov dword ptr [rip + g_menu_keys], 1
     EPILOGUE
 
-# recent_open(): the recent folder picked in the project menu (the items after the line)
+# recent_open(): the recent folder picked in the project menu (the items after the line): this window
+# takes it up, or with Shift held another window opens it
 recent_open:
     mov eax, [rip + g_menu_index]
     sub eax, PM_RECENT
@@ -466,6 +467,8 @@ recent_open:
     shl eax, 12
     lea rdi, [rip + g_recent_path]
     add rdi, rax
+    test dword ptr [rip + g_mods], MOD_SHIFT
+    jnz app_new_window
     jmp app_switch_project
 1:  ret
 

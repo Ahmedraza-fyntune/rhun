@@ -222,10 +222,16 @@ c_click:
     call app_on_motion
     call flush_frame
     call next_arg
+    mov dword ptr [rip + click_mods], 0
     mov r13d, BTN_LEFT
     test rdx, rdx
     jz 1f
-    mov r13d, BTN_RIGHT
+    # shift: a left click with Shift held, pressed and released
+    cmp byte ptr [rax], 's'
+    jne 2f
+    mov dword ptr [rip + click_mods], MOD_SHIFT
+    jmp 1f
+2:  mov r13d, BTN_RIGHT
     cmp byte ptr [rax], 'r'
     je 1f
     mov r13d, BTN_MIDDLE
@@ -234,10 +240,11 @@ c_click:
     mov r13d, BTN_LEFT
 1:  mov edi, r13d
     mov esi, 1
-    xor edx, edx
+    mov edx, [rip + click_mods]
     call app_on_button
     call flush_frame
     mov edi, r13d
+    mov esi, [rip + click_mods]
     call release
     pop rax
     pop rax
@@ -279,13 +286,14 @@ c_tap:
     ret
 
 # release(button): unless a window move took the pointer (headless records that)
+# release(button, mods)
 release:
     cmp dword ptr [rip + g_hl_grab], 0
     je 1f
     mov dword ptr [rip + g_hl_grab], 0
     ret
-1:  xor esi, esi
-    xor edx, edx
+1:  mov edx, esi
+    xor esi, esi
     jmp app_on_button
 
 c_down:
@@ -298,6 +306,7 @@ c_down:
 
 c_up:
     mov edi, BTN_LEFT
+    xor esi, esi
     call release
     xor eax, eax
     ret
@@ -1298,6 +1307,7 @@ oc_next: .long -1               # a client that came while oc_busy
 .bss
 .p2align 3
 pc_xc: .zero XC_SIZE
+click_mods: .long 0             # c_click: the modifiers its press and release carry
 pp_buf: .zero 4096
 
 CSTR .Lwindows_control, "rhun: --control is unavailable on Windows; use --script FILE"
