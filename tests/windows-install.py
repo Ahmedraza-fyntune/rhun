@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 if os.name != 'nt':
@@ -51,6 +52,37 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         assert (result.returncode == 0) == success, result.stdout.decode(errors='replace')
         return result
 
+    def install_while_stage_held(*options, ready):
+        """install, with LICENSE in its staging folder held open from before the folder is to move into
+        place (ready: the file written just before that) until a second after, as Windows or a scan of
+        the staged rhun.com can right after it runs: the move waits for the file instead of failing"""
+        held = []
+
+        def hold():
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                stages = list(destination.parent.glob('.rhun-stage-*'))
+                try:
+                    handle = open(stages[0] / 'LICENSE', 'rb') if stages else None
+                except OSError:  # not extracted yet
+                    handle = None
+                if handle is None:
+                    time.sleep(0.005)
+                    continue
+                with handle:
+                    while not (stages[0] / ready).exists() and time.monotonic() < deadline:
+                        time.sleep(0.005)
+                    time.sleep(1)
+                    held.append(stages[0].exists())
+                return
+
+        holder = threading.Thread(target=hold, daemon=True)
+        holder.start()
+        result = install(*options)
+        holder.join(timeout=60)
+        assert held == [True], f'the staging folder was not held while it was to move: {held}'
+        return result
+
     def version():
         assert subprocess.check_output([str(destination / 'rhun.com'), '--version']).strip() == ('rhun ' + VERSION).encode()
 
@@ -59,7 +91,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         version()
         assert (destination / '.rhun-install').is_file()
         assert 'file-associations: no' in (destination / '.rhun-install').read_text()
-        install('-Version', VERSION)
+        install_while_stage_held('-Version', VERSION, ready='.rhun-install')
         version()
         print('ok   install/latest-version-and-reinstall', flush=True)
         checksums.write_text(f'{"0" * 64}  {ASSET}\n')
@@ -111,7 +143,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
             install(*options, '-PrepareUpdate', success=False)
             assert not staged.exists()
             checksums.write_text(f'{digest}  {ASSET}\n')
-            install(*options, '-PrepareUpdate')
+            install_while_stage_held(*options, '-PrepareUpdate', ready='update.json')
             assert process.poll() is None
             assert (destination / 'rhun.exe').read_bytes() == old
             assert unrelated.read_bytes() == b'keep this'

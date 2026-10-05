@@ -832,6 +832,71 @@ pty_shutdown:
 .Lexe: .short '.', 'e', 'x', 'e', 0
 .Lpath_var: .short 'P', 'A', 'T', 'H', 0
 
+# win_new_window(folder) -> 1 when started: rhun.exe opens the folder in a window of its own. Not
+# through proc_spawn, whose job object would close it with this one.
+FN win_new_window
+    PROLOGUE 8464
+    # locals: startup 96..199, process info 208..231, this program 240..8431, argv 8440..8463
+    mov [rsp + 8432], rdi
+    xor ecx, ecx
+    lea rdx, [rsp + 240]
+    mov r8d, 4096
+    API GetModuleFileNameW
+    test eax, eax
+    jz 8f
+    cmp eax, 4096
+    jae 8f
+    cmp eax, 4
+    jb 8f
+    lea rbx, [rsp + 240]
+    # the console rhun.com starts the window's rhun.exe
+    lea rdx, [rbx + rax*2 - 6]
+    mov word ptr [rdx], 'e'
+    mov word ptr [rdx + 2], 'x'
+    mov word ptr [rdx + 4], 'e'
+    mov rax, [rip + g_argv]
+    mov rax, [rax]
+    mov [rsp + 8440], rax
+    mov rax, [rsp + 8432]
+    mov [rsp + 8448], rax
+    mov qword ptr [rsp + 8456], 0
+    lea rdi, [rsp + 8440]
+    call win_commandline
+    mov r12, rax
+    test rax, rax
+    jz 8f
+    lea rdi, [rsp + 96]
+    xor esi, esi
+    mov edx, 136
+    call memset
+    mov dword ptr [rsp + 96], 104
+    mov rcx, rbx
+    mov rdx, r12
+    xor r8d, r8d
+    xor r9d, r9d
+    mov qword ptr [rsp + 32], 0
+    mov qword ptr [rsp + 40], 8   # DETACHED_PROCESS
+    mov qword ptr [rsp + 48], 0
+    mov qword ptr [rsp + 56], 0
+    lea rax, [rsp + 96]
+    mov [rsp + 64], rax
+    lea rax, [rsp + 208]
+    mov [rsp + 72], rax
+    API CreateProcessW
+    mov r13d, eax
+    mov rdi, r12
+    call mem_free
+    test r13d, r13d
+    jz 8f
+    mov rcx, [rsp + 208]
+    API CloseHandle
+    mov rcx, [rsp + 216]
+    API CloseHandle
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # Console entry launches the GUI sibling unless --wait or scripting kept it attached.
 FN win_detach
     PROLOGUE 8432

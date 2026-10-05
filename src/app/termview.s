@@ -422,6 +422,17 @@ session_end:
 6:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
+# reap_later(pid): another child to reap once it exits (term_tick): an editor window app_new_window
+# started
+FN reap_later
+    mov eax, [rip + nzomb]
+    cmp eax, MAX_ZOMB
+    jae 1f
+    lea rcx, [rip + zombies]
+    mov [rcx + rax*4], edi
+    inc dword ptr [rip + nzomb]
+1:  ret
+
 # term_tick(): reap shells that took their time to exit
 FN term_tick
     push rbx

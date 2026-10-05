@@ -19,6 +19,23 @@ EXPLORER_NEW_FOLDER = (190, 60, (100, 82, 300, 112))
 # the branch at the left end of the status bar (774 to 800): its tooltip is above it
 STATUS_BRANCH = (40, 787, (0, 740, 300, 772))
 AWAY = (640, 400)
+# the Git tab's work tree panel with the explorer hidden: each button, and the commands it runs
+GIT_BUTTONS = (
+    (1223, 132, 'Writes the message from git diff --cached'),
+    (1024, 172, 'git commit -q -F - < message'),
+    (860, 210, 'git -c pull.rebase=false pull --no-edit'),
+    (1022, 210, 'git push'),
+    (1184, 210, 'git fetch'),
+    (1024, 246, 'git reset --hard -q && git clean -f -d -q'),
+    (1252, 286, 'git reset -q -- .'),
+    (1252, 314, 'git reset -q -- file.txt'),
+    (1226, 350, 'git checkout -q -- . && git clean -f -d -q'),
+    (1252, 350, 'git add -A'),
+    (1252, 378, 'git add -A -- b.txt'),
+    (1226, 378, 'git checkout -q -- b.txt'),
+    (1252, 406, "git add -A -- 'it'\\''s new.txt'"),
+    (1226, 406, "git clean -f -d -q -- 'it'\\''s new.txt'"),
+)
 
 
 @unittest.skipIf(os.name == 'nt', 'the control socket is Unix only')
@@ -32,7 +49,7 @@ class Tooltips(unittest.TestCase):
         self.config = self.work / 'config/rhun/config'
         self.config.parent.mkdir(parents=True)
         self.env = dict(os.environ, HOME=str(self.work), XDG_CONFIG_HOME=str(self.work / 'config'),
-                        XDG_STATE_HOME=str(self.work / 'state'))
+                        XDG_STATE_HOME=str(self.work / 'state'), GIT_CONFIG_NOSYSTEM='1')
         self.process = self.client = self.reader = None
 
     def tearDown(self):
@@ -46,10 +63,14 @@ class Tooltips(unittest.TestCase):
                 closable.close()
         self.tmp.cleanup()
 
-    def start(self, tooltips=None):
+    def start(self, tooltips=None, git=False):
         setting = '' if tooltips is None else f'tooltips = {str(tooltips).lower()}\n'
+        # git: the Git tab without the explorer, and the AI button (Ollama is not asked)
+        git_setting = 'enabled = true\ncommit_ai = ollama\n' if git else 'enabled = false\n'
+        if git:
+            setting += 'sidebar = false\n'
         self.config.write_text('[files]\nrestore_session = false\nrestore_project = false\n'
-                               '[updates]\ncheck = false\n[git]\nenabled = false\n'
+                               '[updates]\ncheck = false\n[git]\n' + git_setting +
                                '[editor]\ncursor_blink = false\n'
                                '[ui]\nagents_panel = false\n' + setting, encoding='utf-8')
         control = self.work / 'control'
@@ -154,6 +175,46 @@ class Tooltips(unittest.TestCase):
         for button in (TERMINAL, EXPLORER_NEW):
             before, after = self.hover(button, 700)
             self.assertEqual(before, after, button)
+
+    def git(self, *args, cwd=None):
+        subprocess.run(['git', *args], cwd=cwd or self.project, env=self.env, check=True,
+                       capture_output=True)
+
+    def test_git_panel_buttons_show_the_commands_they_run(self):
+        remote = self.work / 'remote.git'
+        self.git('init', '-q', '--bare', str(remote), cwd=self.work)
+        (self.project / 'b.txt').write_text('b\n', encoding='utf-8')
+        self.git('init', '-q', '-b', 'main')
+        self.git('config', 'user.name', 'rhun')
+        self.git('config', 'user.email', 'rhun@example.com')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'one')
+        self.git('remote', 'add', 'origin', str(remote))
+        self.git('push', '-q', '-u', 'origin', 'main')
+        # one file staged, one changed, one new whose name a shell would split
+        (self.project / 'file.txt').write_text('staged\n', encoding='utf-8')
+        self.git('add', 'file.txt')
+        (self.project / 'b.txt').write_text('changed\n', encoding='utf-8')
+        (self.project / "it's new.txt").write_text('new\n', encoding='utf-8')
+        self.start(git=True)
+        self.command('wait-git')
+        self.command('cmd git_history')
+        self.command('wait-git')
+        for x, y, text in GIT_BUTTONS:
+            self.command('move %d %d' % AWAY)
+            self.command('wait 60')
+            self.command(f'move {x} {y}')
+            self.command('wait 650')
+            self.assertEqual(self.command('print-tip'), f'tip={text}\n', (x, y))
+        # with pull.rebase set, a pull leaves it to git
+        self.git('config', 'pull.rebase', 'true')
+        (self.project / 'file.txt').write_text('staged again\n', encoding='utf-8')
+        self.command('wait-git')
+        self.command('move %d %d' % AWAY)
+        self.command('wait 60')
+        self.command('move 860 210')
+        self.command('wait 650')
+        self.assertEqual(self.command('print-tip'), 'tip=git pull --no-edit\n')
 
     def test_no_frames_while_shown_and_idle(self):
         self.start()

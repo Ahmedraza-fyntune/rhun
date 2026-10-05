@@ -222,10 +222,16 @@ c_click:
     call app_on_motion
     call flush_frame
     call next_arg
+    mov dword ptr [rip + click_mods], 0
     mov r13d, BTN_LEFT
     test rdx, rdx
     jz 1f
-    mov r13d, BTN_RIGHT
+    # shift: a left click with Shift held, pressed and released
+    cmp byte ptr [rax], 's'
+    jne 2f
+    mov dword ptr [rip + click_mods], MOD_SHIFT
+    jmp 1f
+2:  mov r13d, BTN_RIGHT
     cmp byte ptr [rax], 'r'
     je 1f
     mov r13d, BTN_MIDDLE
@@ -234,10 +240,11 @@ c_click:
     mov r13d, BTN_LEFT
 1:  mov edi, r13d
     mov esi, 1
-    xor edx, edx
+    mov edx, [rip + click_mods]
     call app_on_button
     call flush_frame
     mov edi, r13d
+    mov esi, [rip + click_mods]
     call release
     pop rax
     pop rax
@@ -279,13 +286,14 @@ c_tap:
     ret
 
 # release(button): unless a window move took the pointer (headless records that)
+# release(button, mods)
 release:
     cmp dword ptr [rip + g_hl_grab], 0
     je 1f
     mov dword ptr [rip + g_hl_grab], 0
     ret
-1:  xor esi, esi
-    xor edx, edx
+1:  mov edx, esi
+    xor esi, esi
     jmp app_on_button
 
 c_down:
@@ -298,6 +306,7 @@ c_down:
 
 c_up:
     mov edi, BTN_LEFT
+    xor esi, esi
     call release
     xor eax, eax
     ret
@@ -549,6 +558,14 @@ c_wait_git:
     xor eax, eax
     ret
 
+# wait-grep: until find in files has read the project's files
+c_wait_grep:
+    push r13
+    call palette_read_all
+    pop r13
+    xor eax, eax
+    ret
+
 # wait-update: until the update check or install is done (at most 30 s)
 c_wait_update:
     push r13
@@ -671,6 +688,13 @@ c_print_palette:
 c_print_menu:
     lea rdi, [rip + out]
     call menu_print
+    xor eax, eax
+    ret
+
+# print-tip: the text of the tooltip on screen, "tip=" when there is none
+c_print_tip:
+    lea rdi, [rip + out]
+    call tip_print
     xor eax, eax
     ret
 
@@ -1233,6 +1257,7 @@ on_client:
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
+.Lc_wait_grep: .asciz "wait-grep"
 .Lc_wait_term: .asciz "wait-term"
 .Lc_print_gitlog: .asciz "print-gitlog"
 .Lc_print_scm: .asciz "print-scm"
@@ -1244,6 +1269,7 @@ on_client:
 .Lc_print_project: .asciz "print-project"
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
+.Lc_print_tip: .asciz "print-tip"
 .Ls_project: .asciz "project="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
@@ -1265,12 +1291,14 @@ ctl_table:
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
+    .quad .Lc_wait_grep, c_wait_grep
     .quad .Lc_wait_term, c_wait_term
     .quad .Lc_print_scm, c_print_scm
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
-    .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu, 0, 0
+    .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
+    .quad .Lc_print_tip, c_print_tip, 0, 0
 
 .data
 lsock: .long -1
@@ -1279,6 +1307,7 @@ oc_next: .long -1               # a client that came while oc_busy
 .bss
 .p2align 3
 pc_xc: .zero XC_SIZE
+click_mods: .long 0             # c_click: the modifiers its press and release carry
 pp_buf: .zero 4096
 
 CSTR .Lwindows_control, "rhun: --control is unavailable on Windows; use --script FILE"

@@ -1165,8 +1165,9 @@ draw_list:
     call ui_text_c
     add eax, [rip + g_mt + 4*MI_8]
     mov r12d, eax
+    call scm_changes            # as many as the panel lists, a new folder's files each
+    mov esi, eax
     lea rdi, [rsp + 48]
-    mov esi, [rip + g_git_changes]
     call fmt_u64
     mov byte ptr [rdi], 0
     lea rdi, [rip + g_face_small]
@@ -2124,6 +2125,23 @@ FN gitview_dump
     lea rsi, [rip + .Lclean]
 31: mov rdi, rbx
     call sb_push_cstr
+    # and how many, as the row shows them
+    mov rax, [r14 + CM_hash]
+    cmp byte ptr [rax], 0
+    jne 32f
+    call scm_changes
+    test eax, eax
+    jz 32f
+    push rax
+    push rax
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    pop rsi
+    pop rax
+    mov rdi, rbx
+    call sb_push_u64
+32:
     mov rax, [r14 + CM_refs]
     cmp byte ptr [rax], 0
     je 4f

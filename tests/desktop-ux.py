@@ -168,7 +168,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
             settings.write('[ui]\nagents_panel = false\n')
         run([project], ['cmd settings', 'click 300 202', 'wait 200',
                         'click 410 202', 'wait 200', 'click 510 202', 'wait 200',
-                        'click 670 202', 'wait 200', 'quit'])
+                        'click 695 202', 'wait 200', 'quit'])
         assert log.read_text().splitlines() == [
             'https://rhun.app', 'mailto:hi@rhun.app?subject=rhun%20feedback',
             'https://github.com/vshvedov/rhun/issues',

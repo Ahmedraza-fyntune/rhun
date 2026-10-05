@@ -12,7 +12,7 @@ F N_loaded, 4
 F N_depth, 4
 ENDSTRUCT N_SIZE
 
-.equ ID_EXP_ROW, 0x4000
+.equ ID_EXP_ROW, 0x300000         # + row: a range of its own, as the tree has no end
 .equ ID_EXP_SCROLL, 0x3f02
 .equ ID_EXP_EMPTY, 0x3f04
 .equ ID_MENU, 0x3f10

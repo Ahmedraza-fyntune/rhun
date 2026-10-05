@@ -26,7 +26,8 @@
 .equ TT_text, 8
 .equ TT_fn, 16
 .equ TT_SIZE, 24
-.equ RHUN_LEN, 5                 # bytes of "rhûn", the name on the welcome screen
+.equ TIP_TEXT_MAX, 4400          # bytes of a tip_note_text tooltip (a git command with a file's path)
+.equ RHUN_LEN, 5                # bytes of "rhûn", the name on the welcome screen
 .equ ID_WELCOME, 0x2a00          # + item
 
 .bss
@@ -57,6 +58,8 @@ tip_cw: .long 0
 tip_state: .long 0               # TIP_PENDING, TIP_SHOWN, or TIP_DISMISSED by a key press
 .p2align 3
 tip_since: .quad 0               # time_ms when the pointer reached tip_id
+tip_text_id: .long 0             # the button whose tooltip is in tip_text (tip_note_text)
+tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
 g_side_px: .long 0
 g_agents_px: .long 0
@@ -69,6 +72,7 @@ dlg_ok: .quad 0
 dlg_fn: .quad 0
 switch_pending: .long 0          # a project switch waits on unsaved files
 switch_path: .zero 4096
+nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
 pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folders, the end
 .globl g_shot_path
@@ -197,6 +201,103 @@ set_project:
     call session_remember_project
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# app_new_window(folder): another rhun opens the folder in a window of its own (on macOS with a Dock
+# icon of its own) and this one keeps its project. It runs this program with the same environment,
+# in a session of its own as a copy started from a terminal is, and is reaped when it quits.
+# RHUN_NEW_WINDOW names another program to run (tests); without it a headless rhun starts none.
+FN app_new_window
+.ifdef WINDOWS
+    PROLOGUE
+    cmp dword ptr [rip + g_headless], 0
+    jne 8f
+    call win_new_window
+    test eax, eax
+    jnz 9f
+8:  lea rdi, [rip + .Lnew_window_failed]
+    call app_toast
+9:  EPILOGUE
+.else
+    PROLOGUE 32
+    mov rbx, rdi
+    lea rdi, [rip + .Lenv_new_window]
+    call getenv
+    test rax, rax
+    jz 2f
+    cmp byte ptr [rax], 0
+    je 2f
+    mov r12, rax
+    mov rdi, rax
+    call strlen
+    cmp rax, 4096
+    jae 8f
+    lea rdi, [rip + nw_exe]
+    mov rsi, r12
+    call cstr_copy
+    jmp 3f
+2:  cmp dword ptr [rip + g_headless], 0
+    jne 8f
+.ifdef MACOS
+    lea rdi, [rip + nw_exe]
+    mov esi, 4096
+    call mac_exe_path
+    test rax, rax
+    js 8f
+.else
+    lea rdi, [rip + .Lproc_self_exe]
+    lea rsi, [rip + nw_exe]
+    mov edx, 4095
+    SYS SYS_readlink
+    test rax, rax
+    jle 8f
+    lea rcx, [rip + nw_exe]
+    mov byte ptr [rcx + rax], 0
+    # " (deleted)": an update replaced the file, and the new version opens the folder
+    mov r12, rax
+    lea rdi, [rip + nw_exe]
+    mov rsi, rax
+    lea rdx, [rip + .Ldeleted]
+    mov ecx, 10
+    call str_ends
+    test eax, eax
+    jz 1f
+    lea rcx, [rip + nw_exe]
+    mov byte ptr [rcx + r12 - 10], 0
+1:
+.endif
+3:  lea rdi, [rip + .Ldevnull]
+    mov esi, O_RDWR | O_CLOEXEC
+    xor edx, edx
+    SYS SYS_open
+    test rax, rax
+    js 8f
+    mov r12d, eax
+    lea rax, [rip + nw_exe]
+    mov [rsp], rax
+    mov [rsp + 8], rbx
+    mov qword ptr [rsp + 16], 0
+    lea rdi, [rsp]
+    mov rsi, [rip + g_envp]
+    xor edx, edx
+    mov ecx, r12d
+    mov r8d, r12d
+    mov r9d, r12d
+    push 1                      # a new session; the terminal ioctl on /dev/null fails, so none
+    push 1
+    call proc_spawn
+    add rsp, 16
+    mov r13, rax
+    mov edi, r12d
+    SYS SYS_close
+    test r13, r13
+    jle 8f
+    mov edi, r13d
+    call reap_later
+    EPILOGUE
+8:  lea rdi, [rip + .Lnew_window_failed]
+    call app_toast
+    EPILOGUE
+.endif
 
 # app_switch_project(path): this window takes up another folder. The project's open files are
 # remembered, unsaved ones are asked about (Cancel keeps the project), then they are closed and the
@@ -357,7 +458,8 @@ project_menu_open:
     mov dword ptr [rip + g_menu_keys], 1
     EPILOGUE
 
-# recent_open(): the recent folder picked in the project menu (the items after the line)
+# recent_open(): the recent folder picked in the project menu (the items after the line): this window
+# takes it up, or with Shift held another window opens it
 recent_open:
     mov eax, [rip + g_menu_index]
     sub eax, PM_RECENT
@@ -365,6 +467,8 @@ recent_open:
     shl eax, 12
     lea rdi, [rip + g_recent_path]
     add rdi, rax
+    test dword ptr [rip + g_mods], MOD_SHIFT
+    jnz app_new_window
     jmp app_switch_project
 1:  ret
 
@@ -1464,7 +1568,15 @@ FN app_timeout
     cmp eax, ebx
     jge 7f
 71: mov ebx, eax
-7:  mov eax, ebx
+7:  call palette_timeout
+    cmp eax, -1
+    je 8f
+    cmp ebx, -1
+    je 81f
+    cmp eax, ebx
+    jge 8f
+81: mov ebx, eax
+8:  mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -1485,6 +1597,7 @@ FN app_tick
     call git_tick
     call update_tick
     call ai_tick
+    call palette_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -1625,11 +1738,27 @@ FN app_render
     mov ecx, [rsp + 24]
     sub ecx, eax
     mov [rsp + 48], ecx
-52: mov edi, [rsp + 40]
+52: # the terminal's top edge (term_panel_draw: MI_3 either side of it) is its handle, so the editor
+    # above it does not take a press there too
+    cmp dword ptr [rip + g_term_open], 0
+    je 54f
+    mov eax, [rsp + 40]
+    mov [rip + g_hole], eax
+    mov eax, [rsp + 20]
+    add eax, [rsp + 48]
+    sub eax, [rip + g_mt + 4*MI_3]
+    mov [rip + g_hole + 4], eax
+    mov eax, [rsp + 44]
+    mov [rip + g_hole + 8], eax
+    M eax, MI_3
+    lea eax, [rax + rax + 1]
+    mov [rip + g_hole + 12], eax
+54: mov edi, [rsp + 40]
     mov esi, [rsp + 20]
     mov edx, [rsp + 44]
     mov ecx, [rsp + 48]
     call center_draw
+    mov dword ptr [rip + g_hole + 12], 0
     cmp dword ptr [rip + g_term_open], 0
     je 53f
     mov edi, [rsp + 40]
@@ -2462,13 +2591,31 @@ FN tabs_draw
     mov ecx, [rsp + 12]
     COLOR r8d, T_TAB_ACTIVE
     call gfx_fill
+    # the active tab opens into the editor: borders at both sides run the full height and join
+    # the strip's bottom line (the left one is the previous tab's separator column)
+    mov edi, r12d
+    sub edi, [rip + g_mt + 4*MI_1]
+    mov esi, [rsp + 4]
+    M edx, MI_1
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov edi, r12d
+    add edi, [rsp + 16]
+    sub edi, [rip + g_mt + 4*MI_1]
+    mov esi, [rsp + 4]
+    M edx, MI_1
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_BORDER
+    call gfx_fill
     mov edi, r12d
     mov esi, [rsp + 4]
     mov edx, [rsp + 16]
+    sub edx, [rip + g_mt + 4*MI_1]
     M ecx, MI_2
     COLOR r8d, T_ACCENT
     call gfx_fill
-    jmp 8f
+    jmp 86f
 7:  test dword ptr [rsp + 20], UB_HOVER
     jz 8f
     mov edi, r12d
@@ -2489,7 +2636,7 @@ FN tabs_draw
     sub ecx, [rip + g_mt + 4*MI_16]
     COLOR r8d, T_BORDER
     call gfx_fill
-    # text: git status color, else muted (foreground when active)
+86: # text: git status color, else muted (foreground when active)
     mov rax, [r15 + TAB_doc]
     test rax, rax
     jz 80f
@@ -3440,6 +3587,30 @@ FN tip_note
 1:  mov eax, r8d
     ret
 
+# tip_note_text(id, x, y_bottom, w, flags, cstr) -> flags: tip_note for a button whose tooltip says
+#   what it does now (a git command with its file); the text is copied and needs no tip_table entry
+FN tip_note_text
+    test r8d, UB_HOVER
+    jz 9f
+    mov [rip + tip_cand], edi
+    mov [rip + tip_cx], esi
+    mov [rip + tip_cy], edx
+    mov [rip + tip_cw], ecx
+    mov [rip + tip_text_id], edi
+    lea rdi, [rip + tip_text]
+    mov ecx, TIP_TEXT_MAX - 1
+1:  mov al, [r9]
+    test al, al
+    jz 2f
+    mov [rdi], al
+    inc rdi
+    inc r9
+    dec ecx
+    jnz 1b
+2:  mov byte ptr [rdi], 0
+9:  mov eax, r8d
+    ret
+
 # tip_commit(): a new button restarts the delay, the same button keeps it, none hides at once;
 # so do a press, a drag, and the setting being off
 FN tip_commit
@@ -3518,10 +3689,12 @@ tip_find:
 2:  xor eax, eax
 3:  ret
 
-# tip_draw(): the tooltip on top of everything: its text, then "(shortcut)" of the button's
-# command as keys_for formats it (the user's binding, macOS symbols on the Mac)
-FN tip_draw
-    PROLOGUE 128                   # [rsp + 40] "(shortcut)", at most 2 + 63 bytes
+# tip_current() -> rax the text of the tooltip on screen, or 0; rdx its tip_table entry, 0 for the
+#   text of a tip_note_text button
+tip_current:
+    PROLOGUE
+    xor ebx, ebx
+    xor r12d, r12d
     cmp dword ptr [rip + tip_id], 0
     je 9f
     cmp dword ptr [rip + tip_state], TIP_SHOWN
@@ -3530,13 +3703,49 @@ FN tip_draw
     test rax, rax
     jnz 9f
     mov edi, [rip + tip_id]
+    lea rbx, [rip + tip_text]
+    cmp edi, [rip + tip_text_id]
+    je 9f
+    xor ebx, ebx
     call tip_find
     test rax, rax
     jz 9f
-    mov rcx, [rax + TT_text]
-    mov [rsp], rcx
+    mov r12, rax
+    mov rbx, [rax + TT_text]
+9:  mov rax, rbx
+    mov rdx, r12
+    EPILOGUE
+
+# tip_print(sb): "tip=" and the text of the tooltip on screen (nothing when there is none)
+FN tip_print
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Ltip_eq]
+    call sb_push_cstr
+    call tip_current
+    test rax, rax
+    jz 1f
+    mov rdi, rbx
+    mov rsi, rax
+    call sb_push_cstr
+1:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
+# tip_draw(): the tooltip on top of everything: its text, then "(shortcut)" of the button's
+# command as keys_for formats it (the user's binding, macOS symbols on the Mac); a text wider
+# than the window is cut with "…"
+FN tip_draw
+    PROLOGUE 128                   # [rsp + 40] "(shortcut)", at most 2 + 63 bytes
+    call tip_current
+    test rax, rax
+    jz 9f
+    mov [rsp], rax
     mov qword ptr [rsp + 24], 0    # "(shortcut)", or 0
-    mov rdi, [rax + TT_fn]
+    test rdx, rdx
+    jz 3f
+    mov rdi, [rdx + TT_fn]
     test rdi, rdi
     jz 3f
     call cmd_for_fn
@@ -3556,6 +3765,7 @@ FN tip_draw
     mov [rsp + 24], rax
 3:  mov rdi, [rsp]
     call strlen
+    mov [rsp + 8], rax             # text length
     lea rdi, [rip + g_face_small]
     mov rsi, [rsp]
     mov rdx, rax
@@ -3574,7 +3784,15 @@ FN tip_draw
     call text_width
     add r12d, eax
     add r12d, [rip + g_mt + 4*MI_8]
-4:  M ebx, MI_24
+4:  # no wider than the window: the text gives up what does not fit
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, [rip + g_mt + 4*MI_8]
+    mov ecx, r12d
+    sub ecx, eax
+    jle 41f
+    sub [rsp + 32], ecx
+    mov r12d, eax
+41: M ebx, MI_24
     # centered under the button, kept inside the window
     mov esi, [rip + tip_cx]
     mov eax, [rip + tip_cw]
@@ -3614,14 +3832,19 @@ FN tip_draw
     push rax
     call ui_card_shadow
     add rsp, 16
+    mov eax, [rsp + 32]
+    push rax
+    COLOR eax, T_FG
+    push rax
     lea rdi, [rip + g_face_small]
-    mov esi, [rsp + 16]
+    mov esi, [rsp + 16 + 16]
     add esi, [rip + g_mt + 4*MI_8]
-    mov edx, [rsp + 20]
+    mov edx, [rsp + 20 + 16]
     mov ecx, ebx
-    mov r8, [rsp]
-    COLOR r9d, T_FG
-    call ui_text_c
+    mov r8, [rsp + 16]
+    mov r9, [rsp + 8 + 16]
+    call ui_text_v_fit
+    add rsp, 16
     cmp qword ptr [rsp + 24], 0
     je 9f
     lea rdi, [rip + g_face_small]
@@ -3914,6 +4137,7 @@ tip_table:
 .Ltip_exp_new: .asciz "New file"
 .Ltip_exp_new_folder: .asciz "New folder"
 .Ltip_exp_refresh: .asciz "Refresh explorer"
+.Ltip_eq: .asciz "tip="
 .Lgit_tab: .asciz "Git"
 .Lln: .asciz "Ln "
 .Lcol: .asciz ", Col "
@@ -3957,6 +4181,15 @@ tip_table:
 .Lk8: .asciz "Ctrl+Shift+O"
 .endif
 .Lpm_folder: .asciz "Open Folder\342\200\246"
+.Lnew_window_failed: .asciz "Could not open a new window"
+.ifndef WINDOWS
+.Lenv_new_window: .asciz "RHUN_NEW_WINDOW"
+.Ldevnull: .asciz "/dev/null"
+.ifndef MACOS
+.Lproc_self_exe: .asciz "/proc/self/exe"
+.Ldeleted: .asciz " (deleted)"
+.endif
+.endif
 .Lpm_file: .asciz "Open File\342\200\246"
 .Lpm_line: .asciz ""
 .Ld0: .asciz "Cancel"

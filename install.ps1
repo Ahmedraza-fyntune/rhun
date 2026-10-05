@@ -205,6 +205,16 @@ function File-Sha256([string]$Path) {
 # Removes a folder without following links: a junction is removed, never its target.
 function Remove-Folder([string]$Path) { [IO.Directory]::Delete($Path, $true) }
 
+# Just after the staged rhun.com ran, Windows or a scan can hold a file in the stage for a moment:
+# its move is retried for five seconds while it can still happen (the error does not say why).
+function Move-StagedFolder([string]$Path, [string]$Destination) {
+    for ($i = 1; ; $i++) {
+        try { Move-Item -LiteralPath $Path -Destination $Destination; return }
+        catch { if ($i -ge 20 -or (Test-Path -LiteralPath $Destination) -or -not (Test-Path -LiteralPath $Path)) { throw } }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
 # Staged updates whose editor is gone (it quit or crashed before restarting, or its process ID now
 # belongs to another program), and interrupted downloads and swaps older than an hour.
 function Remove-StaleUpdates([string]$Parent) {
@@ -437,7 +447,7 @@ try {
             Set-Content -LiteralPath (Join-Path $stage 'update.json') -Encoding UTF8
         # Stale stages are gone (Remove-StaleUpdates); one that appeared since is not ours to remove.
         if (Test-Path -LiteralPath $UpdateStage) { throw 'An update is already staged for this editor.' }
-        Move-Item -LiteralPath $stage -Destination $UpdateStage
+        Move-StagedFolder $stage $UpdateStage
         $stage = $null
         Write-Output 'The update is ready to install when rhun restarts.'
         return
@@ -450,7 +460,7 @@ try {
         Move-Item -LiteralPath $InstallDir -Destination $backup
     }
     try {
-        Move-Item -LiteralPath $stage -Destination $InstallDir
+        Move-StagedFolder $stage $InstallDir
         $stage = $null
     } catch {
         if ($backup -and -not (Test-Path -LiteralPath $InstallDir)) {

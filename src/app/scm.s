@@ -58,10 +58,16 @@
 ai_draft: .zero SB_SIZE
 tf_msg: .zero TF_SIZE                   # the commit message
 list: .zero VEC_SIZE                    # GF of the status by group
+xlist: .zero VEC_SIZE                   # expand_folders builds the list in it, then they swap
+ubuf: .zero SB_SIZE                     # git ls-files --others: the untracked files, NUL after each
+u_want: .long 0                         # g_git_ver when the running ls-files started
+u_running: .long 0
+u_extra: .long 0                        # rows expand_folders added: a folder's files, less its row
 seq: .quad 0                            # the running operation's step
 confirm_seq: .quad 0                    # what a confirmed discard runs
 lbl: .zero SB_SIZE
 tmp: .zero SB_SIZE
+tips: .zero SB_SIZE                     # the hovered button's tooltip
 argv: .zero 8 * 12
 counts: .zero 4 * 4                     # files per group
 pan: .zero 16                           # the panel: x, y, w, h
@@ -73,6 +79,7 @@ scroll: .long 0
 content_h: .long 0
 merge_seen: .long 0                     # the merge's message went into the message box
 rm_running: .long 0
+pc_running: .long 0                     # pull_check runs
 has_remote: .long 0
 remote: .zero 256                       # to publish to
 err: .zero 256                          # what went wrong last
@@ -81,6 +88,7 @@ question: .zero 4200
 reset_root: .zero 4096                  # the repository named by the reset confirmation
 .data
 list_ver: .long -1                      # g_git_ver of the list
+u_ver: .long -1                         # g_git_ver of ubuf
 
 .text
 
@@ -213,26 +221,31 @@ FN cmd_git_discard_all
     lea rdi, [rip + .Lnothing_discard]
     call app_toast
     jmp 9f
-1:  # tracked files go back only when some changed (checkout fails with none to restore)
-    lea rax, [rip + seq_clean_all]
-    xor ecx, ecx
-2:  cmp rcx, [rip + list + VEC_len]
-    jae 4f
-    imul rdx, rcx, GF_SIZE
-    add rdx, [rip + list + VEC_ptr]
-    inc rcx
-    cmp dword ptr [rdx + GF_group], GG_CHANGES
-    jne 2b
-    cmp dword ptr [rdx + GF_code], 'U'
-    je 2b
-    lea rax, [rip + seq_discard_all]
-4:  mov [rip + confirm_seq], rax
+1:  call discard_all_seq
+    mov [rip + confirm_seq], rax
     lea rdi, [rip + .Lq_all]
     lea rsi, [rip + .Lq_all_text]
     lea rdx, [rip + .Lb_discard_all]
     lea rcx, [rip + confirmed]
     call app_confirm
 9:  EPILOGUE
+
+# discard_all_seq() -> rax what discarding all changes runs: tracked files go back only when some
+#   changed (checkout fails with none to restore)
+discard_all_seq:
+    lea rax, [rip + seq_clean_all]
+    xor ecx, ecx
+1:  cmp rcx, [rip + list + VEC_len]
+    jae 9f
+    imul rdx, rcx, GF_SIZE
+    add rdx, [rip + list + VEC_ptr]
+    inc rcx
+    cmp dword ptr [rdx + GF_group], GG_CHANGES
+    jne 1b
+    cmp dword ptr [rdx + GF_code], 'U'
+    je 1b
+    lea rax, [rip + seq_discard_all]
+9:  ret
 
 # start(op, seq): an operation when none runs
 start:
@@ -377,6 +390,12 @@ FN scm_reset
     mov byte ptr [rip + remote], 0
     mov dword ptr [rip + has_remote], 0
     mov dword ptr [rip + rm_running], 0
+    mov dword ptr [rip + pc_running], 0
+    mov dword ptr [rip + u_running], 0
+    mov dword ptr [rip + u_ver], -1
+    mov dword ptr [rip + u_extra], 0
+    lea rdi, [rip + ubuf]
+    call sb_clear
     mov dword ptr [rip + merge_seen], 0
     mov dword ptr [rip + scroll], 0
     lea rdi, [rip + tf_msg]
@@ -476,6 +495,7 @@ sync_list:
     mov [rip + list_ver], eax
     lea rdi, [rip + list]
     call git_scm_list
+    call expand_folders
     lea rdi, [rip + counts]
     xor eax, eax
     mov ecx, 16
@@ -495,8 +515,248 @@ sync_list:
     test eax, eax
     jz 3f
     call remotes_check
-3:  call merge_message
+3:  call pull_check
+    call merge_message
 9:  EPILOGUE
+
+# expand_folders(): git status gives a new folder as one row ("dir/"), which has no diff to show; the
+#   row gives way to the untracked files in it (git ls-files --others, by the same ignore rules), each
+#   with its changes. The last answer serves while a newer one is asked for; before the first the
+#   folder stays.
+expand_folders:
+    PROLOGUE 16
+    mov dword ptr [rip + u_extra], 0
+    mov dword ptr [rsp], 0      # untracked folders found
+    xor ebx, ebx
+1:  cmp rbx, [rip + list + VEC_len]
+    jae 2f
+    imul r12, rbx, GF_SIZE
+    add r12, [rip + list + VEC_ptr]
+    mov rdi, r12
+    call is_new_folder
+    test eax, eax
+    jz 11f
+    mov dword ptr [rsp], 1
+    # These folders may never have been opened in the explorer. Watch them before ls-files runs.
+    mov rdi, [r12 + GF_path]
+    call watch_untracked
+11: inc rbx
+    jmp 1b
+2:  cmp dword ptr [rsp], 0
+    je 9f
+    # A project can be inside the repository: new sibling folders still affect the Git panel.
+    mov rdi, [rip + g_git_root]
+    call watch_worktree
+    mov eax, [rip + g_git_ver]
+    cmp eax, [rip + u_ver]
+    je 3f
+    call untracked_check
+3:  cmp qword ptr [rip + ubuf + SB_len], 0
+    je 9f
+    mov qword ptr [rip + xlist + VEC_len], 0
+    xor ebx, ebx
+4:  cmp rbx, [rip + list + VEC_len]
+    jae 8f
+    imul r12, rbx, GF_SIZE
+    add r12, [rip + list + VEC_ptr]
+    inc rbx
+    mov rdi, r12
+    call is_new_folder
+    test eax, eax
+    jz 7f
+    # its files, as ls-files gave them (sorted, so they stay in the status's order)
+    mov r13, [r12 + GF_path]
+    mov rdi, r13
+    call strlen
+    mov r14, rax
+    mov dword ptr [rsp], 0      # files found
+    mov r15, [rip + ubuf + SB_ptr]
+5:  mov rax, [rip + ubuf + SB_ptr]
+    add rax, [rip + ubuf + SB_len]
+    cmp r15, rax
+    jae 6f
+    mov rdi, r15
+    call strlen
+    mov [rsp + 8], rax
+    cmp rax, r14
+    jb 51f
+    mov rdi, r15
+    mov rsi, r13
+    mov rdx, r14
+    call memeq
+    test eax, eax
+    jz 51f
+    mov rdi, r15
+    call watch_untracked
+    lea rdi, [rip + xlist]
+    mov esi, GF_SIZE
+    call vec_push
+    mov [rax + GF_path], r15
+    mov dword ptr [rax + GF_code], 'U'
+    mov dword ptr [rax + GF_add], -2
+    mov dword ptr [rax + GF_del], 0
+    mov dword ptr [rax + GF_group], GG_CHANGES
+    inc dword ptr [rsp]
+51: mov rax, [rsp + 8]
+    lea r15, [r15 + rax + 1]
+    jmp 5b
+6:  mov eax, [rsp]
+    test eax, eax
+    jz 7f
+    dec eax
+    add [rip + u_extra], eax
+    jmp 4b
+7:  # any other row (and a folder ls-files has nothing in) as it is
+    lea rdi, [rip + xlist]
+    mov esi, GF_SIZE
+    call vec_push
+    movups xmm0, [r12]
+    movups [rax], xmm0
+    mov rcx, [r12 + 16]
+    mov [rax + 16], rcx
+    jmp 4b
+8:  mov rax, [rip + list + VEC_ptr]
+    mov rcx, [rip + xlist + VEC_ptr]
+    mov [rip + list + VEC_ptr], rcx
+    mov [rip + xlist + VEC_ptr], rax
+    mov rax, [rip + list + VEC_cap]
+    mov rcx, [rip + xlist + VEC_cap]
+    mov [rip + list + VEC_cap], rcx
+    mov [rip + xlist + VEC_cap], rax
+    mov rax, [rip + xlist + VEC_len]
+    mov [rip + list + VEC_len], rax
+    mov qword ptr [rip + xlist + VEC_len], 0
+9:  EPILOGUE
+
+# watch_untracked(relative path): every parent below the repository root, including ancestors
+#   without files directly in them. A folder row ends in '/', so its own directory is watched too.
+watch_untracked:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rip + g_git_root]
+    call strlen
+    mov r12, rax
+    mov rdi, [rip + g_git_root]
+    mov rsi, rbx
+    call path_join
+    mov rbx, rax
+    lea r13, [rax + r12]
+    cmp byte ptr [r13], '/'
+    jne 1f
+    inc r13
+1:  cmp byte ptr [r13], 0
+    je 3f
+    cmp byte ptr [r13], '/'
+    jne 2f
+    mov byte ptr [r13], 0
+    mov rdi, rbx
+    call watch_worktree
+    mov byte ptr [r13], '/'
+2:  inc r13
+    jmp 1b
+3:  mov rdi, rbx
+    call mem_free
+    EPILOGUE
+
+# scm_changes() -> eax the changed files the panel lists (a file both staged and changed once): the
+#   history's "Uncommitted changes" count, the same as the panel's when a new folder shows its files
+FN scm_changes
+    push rbx
+    call sync_list
+    mov eax, [rip + g_git_changes]
+    add eax, [rip + u_extra]
+    pop rbx
+    ret
+
+# is_new_folder(gf) -> 1 for an untracked folder's row ("dir/")
+is_new_folder:
+    push rbx
+    mov rbx, rdi
+    xor eax, eax
+    cmp dword ptr [rbx + GF_code], 'U'
+    jne 9f
+    cmp dword ptr [rbx + GF_group], GG_CHANGES
+    jne 9f
+    mov rdi, [rbx + GF_path]
+    call strlen
+    test rax, rax
+    jz 8f
+    mov rcx, [rbx + GF_path]
+    cmp byte ptr [rcx + rax - 1], '/'
+    sete al
+    movzx eax, al
+    jmp 9f
+8:  xor eax, eax
+9:  pop rbx
+    ret
+
+# untracked_check(): the untracked files, for expand_folders
+untracked_check:
+    cmp dword ptr [rip + u_running], 0
+    jne 9f
+    push rbx
+    mov eax, [rip + g_git_ver]
+    mov [rip + u_want], eax
+    lea rdi, [rip + args_untracked]
+    lea rsi, [rip + on_untracked]
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call git_run
+    mov [rip + u_running], eax
+    pop rbx
+9:  ret
+
+# on_untracked(ctx, ptr, len, status): the list is made again with them (an error leaves the folders)
+on_untracked:
+    push rbx
+    push r12
+    push r13
+    mov r12, rsi
+    mov r13, rdx
+    mov ebx, ecx
+    mov dword ptr [rip + u_running], 0
+    lea rdi, [rip + ubuf]
+    call sb_clear
+    test ebx, ebx
+    jnz 1f
+    lea rdi, [rip + ubuf]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+1:  mov eax, [rip + u_want]
+    mov [rip + u_ver], eax
+    mov dword ptr [rip + list_ver], -1
+    mov dword ptr [rip + g_dirty], 1
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+# pull_check(): is pull.rebase or pull.ff set, for the pull the tooltips show (a pull asks again)
+pull_check:
+    cmp dword ptr [rip + pc_running], 0
+    jne 9f
+    push rbx
+    lea rdi, [rip + args_pull_cfg]
+    lea rsi, [rip + on_pull_cfg]
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call git_run
+    mov [rip + pc_running], eax
+    pop rbx
+9:  ret
+
+# on_pull_cfg(ctx, ptr, len, status): git config finds neither key and exits 1: a pull merges
+on_pull_cfg:
+    mov dword ptr [rip + pc_running], 0
+    xor eax, eax
+    test ecx, ecx
+    setnz al
+    mov [rip + pull_merge], eax
+    mov dword ptr [rip + g_dirty], 1
+    ret
 
 # remotes_check(): the remotes, for Publish Branch
 remotes_check:
@@ -1451,6 +1711,13 @@ draw_main:
     mov ecx, [rip + in_w]
     mov r8d, r15d
     call ui_btn
+    mov r9d, eax
+    mov edi, ID_SCM_MAIN
+    mov esi, [rip + in_x]
+    mov edx, r13d
+    mov ecx, [rip + in_w]
+    mov r8d, r15d
+    call note_tip
     or eax, ENABLED
 4:  mov [rsp], eax
     COLOR r12d, T_ACCENT
@@ -1628,6 +1895,13 @@ draw_button:
     mov ecx, r14d
     mov r8d, r15d
     call ui_btn
+    mov r9d, eax
+    mov edi, [rsp]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    mov r8d, r15d
+    call note_tip
     or eax, ENABLED
 1:  mov ebx, eax
     COLOR eax, T_PANEL
@@ -1819,6 +2093,7 @@ draw_group:
 # group_button(id, icon) -> 1 when clicked: an icon button at r12d on the row at r13d
 group_button:
     push rbx
+    mov ebx, edi
     mov r9d, esi
     mov esi, r12d
     mov edx, r13d
@@ -1826,6 +2101,14 @@ group_button:
     M ecx, MI_24
     mov r8d, ecx
     call ui_icon_btn
+    mov r9d, eax
+    mov edi, ebx
+    mov esi, r12d
+    mov edx, r13d
+    add edx, [rip + g_mt + 4*MI_2]
+    M ecx, MI_24
+    mov r8d, ecx
+    call note_tip
     and eax, UB_CLICK
     shr eax, 2
     pop rbx
@@ -1950,15 +2233,283 @@ draw_file:
 # file_button(id, x, -, -, -, icon) -> 1 when clicked: an icon button on the row at r13d
 file_button:
     push rbx
+    push r12
+    sub rsp, 8
+    mov ebx, edi
+    mov r12d, esi
     mov edx, r13d
     add edx, [rip + g_mt + 4*MI_2]
     M ecx, MI_24
     mov r8d, ecx
     call ui_icon_btn
+    mov r9d, eax
+    mov edi, ebx
+    mov esi, r12d
+    mov edx, r13d
+    add edx, [rip + g_mt + 4*MI_2]
+    M ecx, MI_24
+    mov r8d, ecx
+    call note_tip
     and eax, UB_CLICK
     shr eax, 2
+    add rsp, 8
+    pop r12
     pop rbx
     ret
+
+# ---------------- tooltips: the git commands a click runs ----------------
+
+# note_tip(id, x, y, w, h, flags) -> flags: the tooltip of a hovered button
+note_tip:
+    PROLOGUE 16
+    mov [rsp], r9d
+    test r9d, UB_HOVER
+    jz 9f
+    mov ebx, edi
+    mov r12d, esi
+    lea r13d, [rdx + r8]        # its bottom
+    mov r14d, ecx
+    call tip_for
+    test rax, rax
+    jz 9f
+    mov r9, rax
+    mov edi, ebx
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    mov r8d, [rsp]
+    call tip_note_text
+9:  mov eax, [rsp]
+    EPILOGUE
+
+# tip_for(id) -> rax the tooltip of a button that takes clicks: the git commands it runs, or 0
+tip_for:
+    PROLOGUE
+    xor esi, esi                # the file, for a file's buttons
+    cmp edi, ID_SCM_FILE
+    jae 5f
+    cmp edi, ID_SCM_GROUP
+    jae 4f
+    cmp edi, ID_SCM_MAIN
+    jne 1f
+    call main_button
+    lea rcx, [rip + main_seqs]
+    mov rdi, [rcx + rax*8]
+    test rdi, rdi
+    jz 8f
+    jmp 7f
+1:  cmp edi, ID_SCM_PULL
+    jne 11f
+    lea rdi, [rip + seq_pull]
+    jmp 7f
+11: cmp edi, ID_SCM_PULL + 1
+    jne 12f
+    # a branch without an upstream is published
+    call unpublished
+    lea rdi, [rip + seq_push]
+    test eax, eax
+    jz 7f
+    lea rdi, [rip + seq_publish]
+    jmp 7f
+12: cmp edi, ID_SCM_PULL + 2
+    jne 13f
+    lea rdi, [rip + seq_fetch]
+    jmp 7f
+13: cmp edi, ID_SCM_RESET
+    jne 14f
+    lea rdi, [rip + seq_reset_all]
+    jmp 7f
+14: cmp edi, ID_SCM_AI
+    jne 8f
+    # what the helper reads (runtime/ai/commit.sh); it changes nothing
+    lea rax, [rip + .Ltip_ai_stop]
+    cmp dword ptr [rip + g_ai_kind], 3
+    je 9f
+    lea rax, [rip + .Ltip_ai_staged]
+    cmp dword ptr [rip + counts + 4*GG_STAGED], 0
+    jne 9f
+    lea rax, [rip + .Ltip_ai_all]
+    jmp 9f
+4:  # a group's buttons
+    sub edi, ID_SCM_GROUP
+    mov eax, edi
+    shr eax, 2
+    and edi, 3
+    cmp eax, GG_STAGED
+    jne 41f
+    test edi, edi
+    jnz 8f
+    lea rdi, [rip + seq_unstage_all]
+    jmp 7f
+41: cmp eax, GG_CHANGES
+    jne 8f
+    test edi, edi
+    jnz 42f
+    lea rdi, [rip + seq_stage_all]
+    jmp 7f
+42: call discard_all_seq
+    mov rdi, rax
+    xor esi, esi
+    jmp 7f
+5:  # a file's: stage (or unstage), discard
+    sub edi, ID_SCM_FILE
+    mov ecx, edi
+    and ecx, 3
+    shr edi, 2
+    cmp rdi, [rip + list + VEC_len]
+    jae 8f
+    imul rdx, rdi, GF_SIZE
+    add rdx, [rip + list + VEC_ptr]
+    mov rsi, [rdx + GF_path]
+    cmp ecx, 1
+    jne 51f
+    lea rdi, [rip + seq_unstage]
+    cmp dword ptr [rdx + GF_group], GG_STAGED
+    je 7f
+    lea rdi, [rip + seq_stage]
+    jmp 7f
+51: cmp ecx, 2
+    jne 8f
+    lea rdi, [rip + seq_discard]
+    cmp dword ptr [rdx + GF_code], 'U'
+    jne 7f
+    lea rdi, [rip + seq_discard_new]
+7:  call tip_seq
+    mov rax, [rip + tips + SB_ptr]
+    jmp 9f
+8:  xor eax, eax
+9:  EPILOGUE
+
+# tip_seq(seq, path): the steps of seq as a shell line into tips, its queries (git config, git remote)
+#   left out; the arguments as run_step gives them (path: the file of a file's button)
+tip_seq:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    lea rdi, [rip + tips]
+    call sb_clear
+1:  movzx r13d, byte ptr [rbx]
+    test r13d, r13d
+    jz 9f
+    inc rbx
+    cmp r13d, S_PULL_CFG
+    je 1b
+    cmp r13d, S_REMOTES
+    je 1b
+    cmp qword ptr [rip + tips + SB_len], 0
+    je 2f
+    lea rdi, [rip + tips]
+    lea rsi, [rip + .Ltip_and]
+    call sb_push_cstr
+2:  lea rdi, [rip + tips]
+    lea rsi, [rip + .Ltip_git]
+    call sb_push_cstr
+    lea rax, [rip + step_args]
+    mov r14, [rax + r13*8]
+    cmp r13d, S_PULL
+    jne 3f
+    cmp dword ptr [rip + pull_merge], 0
+    je 3f
+    lea r14, [rip + args_pull_merge]
+3:  mov rdi, [r14]
+    test rdi, rdi
+    jz 4f
+    call tip_arg
+    add r14, 8
+    jmp 3b
+4:  # what run_step adds: the message on standard input, where to publish, the file
+    cmp r13d, S_COMMIT
+    jne 5f
+    lea rdi, [rip + tips]
+    lea rsi, [rip + .Ltip_message]
+    call sb_push_cstr
+    jmp 1b
+5:  cmp r13d, S_PUBLISH
+    jne 6f
+    lea rdi, [rip + remote]
+    cmp byte ptr [rdi], 0
+    jne 51f
+    lea rdi, [rip + tips]
+    lea rsi, [rip + .Ltip_remote]
+    call sb_push_cstr
+    jmp 52f
+51: call tip_arg
+52: lea rdi, [rip + .Lhead]
+    call tip_arg
+    jmp 1b
+6:  cmp r13d, S_ADD
+    je 61f
+    cmp r13d, S_RESET
+    je 61f
+    cmp r13d, S_CHECKOUT
+    je 61f
+    cmp r13d, S_CLEAN
+    jne 1b
+61: test r12, r12
+    jz 1b
+    lea rdi, [rip + .Ldashdash]
+    call tip_arg
+    mov rdi, r12
+    call tip_arg
+    jmp 1b
+9:  lea rdi, [rip + tips]
+    xor esi, esi
+    call sb_push_byte           # a C string for tip_note_text
+    EPILOGUE
+
+# tip_arg(cstr): a space and the argument onto tips, in single quotes when a shell would split or
+#   expand it (a ' inside as '\'')
+tip_arg:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + tips]
+    mov esi, ' '
+    call sb_push_byte
+    # plain: letters, digits and -_./+=,:@%
+    mov rax, rbx
+1:  movzx ecx, byte ptr [rax]
+    test ecx, ecx
+    jz 7f
+    inc rax
+    mov edx, ecx
+    or edx, 0x20
+    sub edx, 'a'
+    cmp edx, 26
+    jb 1b
+    lea edx, [rcx - '0']
+    cmp edx, 10
+    jb 1b
+    lea rdx, [rip + .Ltip_plain]
+2:  cmp byte ptr [rdx], 0
+    je 3f
+    cmp [rdx], cl
+    je 1b
+    inc rdx
+    jmp 2b
+3:  lea rdi, [rip + tips]
+    mov esi, 0x27
+    call sb_push_byte
+4:  movzx esi, byte ptr [rbx]
+    test esi, esi
+    jz 6f
+    inc rbx
+    cmp esi, 0x27
+    jne 5f
+    lea rdi, [rip + tips]
+    lea rsi, [rip + .Ltip_quote]
+    call sb_push_cstr
+    jmp 4b
+5:  lea rdi, [rip + tips]
+    call sb_push_byte
+    jmp 4b
+6:  lea rdi, [rip + tips]
+    mov esi, 0x27
+    call sb_push_byte
+    EPILOGUE
+7:  lea rdi, [rip + tips]
+    mov rsi, rbx
+    call sb_push_cstr
+    EPILOGUE
 
 # ---------------- scripts ----------------
 
@@ -2183,6 +2734,19 @@ FN scm_dump_files
 .Ldashdash: .asciz "--"
 .Ldot: .asciz "."
 .Lhead: .asciz "HEAD"
+.Lls_files: .asciz "ls-files"
+.Lothers: .asciz "--others"
+.Lexclude_std: .asciz "--exclude-standard"
+.Lnul_z: .asciz "-z"
+.Ltip_git: .asciz "git"
+.Ltip_and: .asciz " && "
+.Ltip_message: .asciz " < message"
+.Ltip_remote: .asciz " <remote>"
+.Ltip_plain: .asciz "-_./+=,:@%"
+.Ltip_quote: .asciz "'\\''"
+.Ltip_ai_staged: .asciz "Writes the message from git diff --cached"
+.Ltip_ai_all: .asciz "Writes the message from all changes (git add -A on a temporary index)"
+.Ltip_ai_stop: .asciz "Stops writing the message; your draft stays"
 .p2align 3
 args_add_all: .quad .Ladd, .Ldash_a, 0
 args_commit: .quad .Lcommit, .Ldash_q, .Ldash_f, .Ldash, 0
@@ -2194,6 +2758,7 @@ args_push: .quad .Lpush, 0
 args_remote: .quad .Lremote, 0
 args_publish: .quad .Lpush, .Ldash_u, 0
 args_fetch: .quad .Lfetch, 0
+args_untracked: .quad .Lls_files, .Lothers, .Lexclude_std, .Lnul_z, 0
 args_add: .quad .Ladd, .Ldash_a, 0
 args_reset: .quad .Lreset, .Ldash_q, 0
 args_reset_all: .quad .Lreset, .Ldash_q, .Ldashdash, .Ldot, 0
@@ -2217,6 +2782,9 @@ op_names:
 # by MB_*
 main_labels:
     .quad .Lm_commit, .Lm_commit, .Lm_commit_all, .Lm_sync, .Lm_publish
+# by MB_*: what the button runs, for its tooltip
+main_seqs:
+    .quad 0, seq_commit, seq_commit_all, seq_sync, seq_publish
 mb_names:
     .quad .Ln_none, .Ln_commit, .Ln_commit_all, .Ln_sync, .Ln_publish
 # by GG_*
