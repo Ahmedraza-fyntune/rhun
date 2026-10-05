@@ -147,7 +147,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-launch-') as directory:
                 assert reply not in ('', 'error\n'), (line, reply)
                 parts.append(reply)
         assert 'tabs=1 active=opened.rb' in command('print-state')
-        assert command('print-project') == 'project=\n'
+        # the file's folder is the project, but not remembered as the last one
+        assert command('print-project') == 'project=' + str(work) + '\n'
         assert marker.read_bytes() == previous
         until(active, 'file launch did not bring rhun to the foreground')
         command('quit')

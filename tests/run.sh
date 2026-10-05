@@ -53,6 +53,7 @@ python3 tests/desktop-ux.py || fail=1
 python3 tests/mac-launch.py || fail=1
 python3 tests/x11-auth.py || fail=1
 python3 tests/explorer-delete.py || fail=1
+python3 tests/explorer-create.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?

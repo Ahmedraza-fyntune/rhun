@@ -8,7 +8,6 @@
 .p2align 3
 sigact: .zero 32
 opt_headless: .long 0
-opt_wait: .long 0
 opt_empty: .long 0
 .p2align 3
 opt_script: .quad 0
@@ -147,7 +146,7 @@ parse_args:
     call strcmp_eq
     test eax, eax
     jz 31f
-    mov dword ptr [rip + opt_wait], 1
+    mov dword ptr [rip + g_wait], 1
     jmp 9f
 31: mov rdi, r14
     lea rsi, [rip + .Lo_scale]
@@ -183,7 +182,7 @@ parse_args:
 detach:
     PROLOGUE 64
     mov eax, [rip + opt_headless]
-    or eax, [rip + opt_wait]
+    or eax, [rip + g_wait]
     jnz 9f
     cmp qword ptr [rip + opt_script], 0
     jne 9f

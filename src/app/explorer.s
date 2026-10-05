@@ -14,6 +14,7 @@ ENDSTRUCT N_SIZE
 
 .equ ID_EXP_ROW, 0x4000
 .equ ID_EXP_SCROLL, 0x3f02
+.equ ID_EXP_EMPTY, 0x3f04
 .equ ID_MENU, 0x3f10
 
 .bss
@@ -792,6 +793,29 @@ FN explorer_draw
     call explorer_refresh
 1:  mov esi, [rsp + 16]
     sub esi, r12d
+    mov edi, ID_EXP_NEW_FOLDER
+    mov edx, r15d
+    sub edx, r12d
+    sar edx, 1
+    add edx, [rsp + 4]
+    mov ecx, r12d
+    mov r8d, r12d
+    mov r9d, IC_FOLDER_PLUS
+    call ui_icon_btn
+    mov r8d, eax
+    mov edi, ID_EXP_NEW_FOLDER
+    mov esi, [rsp + 16]
+    sub esi, r12d
+    mov edx, [rsp + 4]
+    add edx, r15d
+    mov ecx, r12d
+    call tip_note               # keeps the button flags in eax
+    test eax, UB_CLICK
+    jz 11f
+    call cmd_new_folder
+11: mov esi, [rsp + 16]
+    sub esi, r12d
+    sub esi, r12d
     mov edi, ID_EXP_NEW
     mov edx, r15d
     sub edx, r12d
@@ -799,11 +823,12 @@ FN explorer_draw
     add edx, [rsp + 4]
     mov ecx, r12d
     mov r8d, r12d
-    mov r9d, IC_PLUS
+    mov r9d, IC_FILE_PLUS
     call ui_icon_btn
     mov r8d, eax
     mov edi, ID_EXP_NEW
     mov esi, [rsp + 16]
+    sub esi, r12d
     sub esi, r12d
     mov edx, [rsp + 4]
     add edx, r15d
@@ -1061,7 +1086,19 @@ FN explorer_draw
     inc r12d
     jmp .Lxd_row
 .Lxd_rows_done:
-    call gfx_clip_pop
+    # the empty space below the rows: the project folder's menu, without Rename and Delete
+    mov edi, ID_EXP_EMPTY
+    mov esi, [rsp]
+    mov edx, r13d
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 20]
+    add r8d, [rsp + 24]
+    sub r8d, r13d
+    call ui_btn
+    test eax, UB_RPRESS
+    jz 1f
+    call root_menu_open
+1:  call gfx_clip_pop
     # scrollbar
     mov rax, [rip + rows + VEC_len]
     imul eax, ebx
@@ -1088,6 +1125,21 @@ FN cmd_new_file_prompt
     lea rdi, [rip + .Lnew_file]
     mov esi, PROMPT_NEW_FILE
     jmp prompt_open
+
+# root_menu_open(): the menu of the project folder itself. New files and folders go in it; the rename
+# and delete target is left alone, so a later Rename or Delete never takes the whole project.
+root_menu_open:
+    PROLOGUE
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 9f
+    lea rdi, [rip + g_explorer_dir]
+    call cstr_copy
+    lea rdi, [rip + menu_items_root]
+    mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call ctx_menu_open
+9:  EPILOGUE
 
 # explorer_menu_draw(): context menu overlay. An item without a handler is a separating line; with
 # g_menu_keys set the items show their commands' shortcuts on the right.
@@ -1345,6 +1397,24 @@ cmd_copy_path:
     PCALL P_clip_set
     ret
 
+copy_project_path:
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz 1f
+    push rdi
+    call strlen
+    pop rdi
+    mov rsi, rax
+    PCALL P_clip_set
+1:  ret
+
+reveal_project:
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz 1f
+    jmp desktop_reveal
+1:  ret
+
 FN cmd_reveal_file
     push rbx
     call file_target
@@ -1446,3 +1516,6 @@ menu_items:
 menu_items_git:
     .quad .Lm6, open_changes, .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
     .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, .Lm_reveal, cmd_reveal_file, 0, 0
+menu_items_root:
+    .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm5, copy_project_path
+    .quad .Lm_reveal, reveal_project, 0, 0

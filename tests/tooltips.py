@@ -14,7 +14,10 @@ EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 # 1280x800 at scale 1: a button, and the strip below it where its tooltip appears
 TERMINAL = (1040, 20, (960, 40, 1140, 80))
 SETTINGS = (1112, 20, (1020, 40, 1200, 80))
-EXPLORER_NEW = (190, 60, (100, 82, 300, 112))
+EXPLORER_NEW = (162, 60, (72, 82, 272, 112))
+EXPLORER_NEW_FOLDER = (190, 60, (100, 82, 300, 112))
+# the branch at the left end of the status bar (774 to 800): its tooltip is above it
+STATUS_BRANCH = (40, 787, (0, 740, 300, 772))
 AWAY = (640, 400)
 
 
@@ -98,11 +101,20 @@ class Tooltips(unittest.TestCase):
 
     def test_appears_after_the_delay_for_title_bar_and_explorer(self):
         self.start()
-        for button in (TERMINAL, SETTINGS, EXPLORER_NEW):
+        for button in (TERMINAL, SETTINGS, EXPLORER_NEW, EXPLORER_NEW_FOLDER):
             before, early = self.hover(button, 200)
             self.assertEqual(before, early, button)
             self.command('wait 500')
             self.assertNotEqual(before, self.strip(button[2], 'late'), button)
+
+    def test_status_bar_branch_shows_it_above(self):
+        (self.project / '.git').mkdir()
+        (self.project / '.git' / 'HEAD').write_text('ref: refs/heads/topic\n', encoding='utf-8')
+        self.start()
+        before, early = self.hover(STATUS_BRANCH, 200)
+        self.assertEqual(before, early)
+        self.command('wait 500')
+        self.assertNotEqual(before, self.strip(STATUS_BRANCH[2], 'late'))
 
     def test_leaving_and_pressing_hide_it(self):
         self.start()

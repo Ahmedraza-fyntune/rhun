@@ -50,18 +50,28 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
     run([project])
     marker = work / 'state/rhun/last-project'
     previous = marker.read_bytes()
-    output = run([file])
-    assert 'project=\n' in output, output
+    # A file opened without a folder brings its folder in as the project: the explorer shows it and
+    # new files start there. It is not remembered as the last project.
+    output = run([file], ['print-project', 'print-state', 'cmd new_folder', 'print-palette',
+                          'key Escape', 'quit'])
+    check_project(output, project.name)
     assert 'tabs=1 active=' + file.name in output, output
+    assert f'prompt=New folder\nfield={project.as_posix()}/\n' in output, output
     assert marker.read_bytes() == previous
     output = run([file, other / 'second.rb'])
-    assert 'project=\n' in output and 'tabs=2 ' in output, output
+    check_project(output, project.name)
+    assert 'tabs=2 ' in output, output
     assert marker.read_bytes() == previous
     print('ok   desktop/explicit-folder-and-file-win')
     output = run(['--empty'])
     assert 'project=\n' in output and 'tabs=0 ' in output, output
     assert marker.read_bytes() == previous
     print('ok   desktop/explicit-empty-window')
+    # A program waiting for the editor (EDITOR="rhun --wait") gets just the file.
+    output = run(['--wait', file])
+    assert 'project=\n' in output and 'tabs=1 active=' + file.name in output, output
+    assert marker.read_bytes() == previous
+    print('ok   desktop/wait-file-without-project')
 
     stored = other / 'stored.rb'
     stored.write_text('stored\n')
@@ -69,12 +79,35 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
     output = run([file], ['type pending', f'open {other.as_posix()}', 'print-project', 'print-state',
                         'key Escape', 'print-project', 'cmd save', f'open {other.as_posix()}',
                         'print-project', 'print-state', 'quit'])
-    assert output.count('project=\n') == 2, output
+    assert output.count(f'project=~/{project.name}\n') == 2, output
     assert 'dirty=1 ' in output, output
     check_project(output, other.name)
     assert 'tabs=1 active=stored.rb' in output, output
     print('ok   desktop/standalone-folder-switch-preserves-edits-and-restores-session')
     run([project])
+
+    # The folder of a file launch keeps its own session: the launch neither restores nor saves it.
+    extra = project / 'extra.txt'
+    extra.write_text('extra\n')
+    run([project, file, extra])
+    sessions = list((work / 'state/rhun').glob('*project*.session'))
+    assert len(sessions) == 1, sessions
+    saved = sessions[0].read_bytes()
+    loose = project / 'loose.txt'
+    loose.write_text('loose\n')
+    output = run([loose], ['print-project', 'print-state', 'type x', 'cmd save', 'quit'])
+    check_project(output, project.name)
+    assert 'tabs=1 active=loose.txt' in output, output
+    assert sessions[0].read_bytes() == saved
+    assert marker.read_text(encoding='utf-8') == project.as_posix()
+    print('ok   desktop/file-folder-keeps-its-session')
+    # Opening that folder makes it the project: its session joins the open file and is saved again.
+    output = run([loose], [f'open {project.as_posix()}', 'print-project', 'print-state', 'quit'])
+    check_project(output, project.name)
+    assert 'tabs=3 ' in output, output
+    assert b'loose.txt' in sessions[0].read_bytes(), sessions[0].read_bytes()
+    print('ok   desktop/opening-the-file-folder-adopts-it')
+    run([project, file])
 
     configure(tabs=False)
     run([project])

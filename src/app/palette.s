@@ -1389,7 +1389,18 @@ FN palette_print
     lea rsi, [rip + .Lpp_none]
     call sb_push_cstr
     EPILOGUE
-1:  lea rsi, [rip + .Lpp_field]
+1:  cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 11f
+    lea rsi, [rip + .Lpp_prompt]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + pal_label]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, rbx
+11: lea rsi, [rip + .Lpp_field]
     call sb_push_cstr
     lea rdi, [rip + pal_tf]
     call tf_text
@@ -2156,7 +2167,10 @@ FN palette_draw
 20: cmp dword ptr [rsp], 0
     jne 22f
 21: add eax, [rip + g_mt + 4*MI_20]
-22: mov [rsp + 4], eax          # card h
+22: cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 23f
+    add eax, [rip + g_mt + 4*MI_32]   # the title
+23: mov [rsp + 4], eax          # card h
     mov edi, r13d
     mov esi, r14d
     mov edx, r12d
@@ -2174,7 +2188,14 @@ FN palette_draw
     jnz 3f
     call palette_close
     jmp .Lpd_ret
-3:  # input field
+3:  # a prompt says what the path is for above the field
+    cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 31f
+    mov edi, r13d
+    mov esi, r14d
+    call prompt_title
+    add r14d, [rip + g_mt + 4*MI_32]
+31: # input field
     call placeholder_text
     mov r10, rax
     M eax, MI_8
@@ -2403,6 +2424,43 @@ FN palette_draw
 .Lpd_ret:
     EPILOGUE
 
+# prompt_title(x, y): the prompt's label ("New file", "New folder", ...) with its icon, in the top
+# MI_32 of the card
+prompt_title:
+    PROLOGUE
+    mov r12d, edi
+    M r13d, MI_8
+    add r13d, esi               # box y
+    M r14d, MI_24               # box h
+    mov eax, [rip + pal_prompt]
+    mov edi, IC_FILE
+    cmp eax, PROMPT_NEW_FILE
+    jne 1f
+    mov edi, IC_FILE_PLUS
+1:  cmp eax, PROMPT_NEW_FOLDER
+    jne 2f
+    mov edi, IC_FOLDER_PLUS
+2:  M ecx, MI_16
+    mov esi, r12d
+    add esi, ecx
+    mov edx, r14d
+    sub edx, ecx
+    sar edx, 1
+    add edx, r13d
+    COLOR r8d, T_ACCENT
+    call icon_draw
+    lea rdi, [rip + g_face_ui]
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_16]
+    add esi, [rip + g_mt + 4*MI_16]
+    add esi, [rip + g_mt + 4*MI_8]
+    mov edx, r13d
+    mov ecx, r14d
+    mov r8, [rip + pal_label]
+    COLOR r9d, T_FG
+    call ui_text_c
+    EPILOGUE
+
 # draw_highlighted(label, len, x, y, h): label with query characters in accent
 draw_highlighted:
     PROLOGUE 64
@@ -2531,6 +2589,17 @@ hint_text:
 2:  lea rax, [rip + .Lhint_goto]
     cmp dword ptr [rip + pal_mode], PM_GOTO
     je 1f
+    # prompts: what Enter does
+    mov ecx, [rip + pal_prompt]
+    lea rax, [rip + .Lhint_new_file]
+    cmp ecx, PROMPT_NEW_FILE
+    je 1f
+    lea rax, [rip + .Lhint_new_folder]
+    cmp ecx, PROMPT_NEW_FOLDER
+    je 1f
+    lea rax, [rip + .Lhint_rename]
+    cmp ecx, PROMPT_RENAME
+    je 1f
     lea rax, [rip + .Lhint_path]
 1:  ret
 
@@ -2552,12 +2621,16 @@ hint_text:
 .Lnl: .ascii "\n"
 .Lhint_goto: .asciz "Enter a line number and press Enter"
 .Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
+.Lhint_new_file: .asciz "Enter creates the file, Esc cancels"
+.Lhint_new_folder: .asciz "Enter creates the folder, Esc cancels"
+.Lhint_rename: .asciz "Enter renames, Esc cancels"
 .Lph_open_file: .asciz "Open a file"
 .Lph_open_folder: .asciz "Open a folder"
 .Lopen_here: .asciz "Open "
 .Lroot: .asciz "/"
 .Lpp_none: .asciz "none\n"
 .Lpp_field: .asciz "field="
+.Lpp_prompt: .asciz "prompt="
 .Lpp_row: .asciz "  "
 .Lpp_sel: .asciz "> "
 .bss

@@ -28,7 +28,7 @@ ENDSTRUCT GE_SIZE
 .bss
 .p2align 3
 .globl g_git_on, g_git_ver, g_git_changes, g_git_root, g_git_rootlen
-.globl g_git_head, g_git_ahead, g_git_behind, g_git_upstream
+.globl g_git_head, g_git_ahead, g_git_behind, g_git_upstream, g_worktree
 g_git_on: .long 0               # the setting is on, there is a repository and a git program
 g_git_ver: .long 0              # changes with every new status
 g_git_changes: .long 0          # entries in the status
@@ -36,6 +36,7 @@ g_git_head: .long 0             # HD_*
 g_git_ahead: .long 0            # commits of HEAD its upstream does not have
 g_git_behind: .long 0           # and the other way round
 g_git_upstream: .zero 256       # "origin/main", "" when the branch has none
+g_worktree: .zero 64            # the folder of a linked work tree, "" in the main one
 gen: .long 0
 bin_tried: .long 0
 st_running: .long 0
@@ -75,6 +76,7 @@ FN git_set_project
     mov qword ptr [rip + touch_at], 0
     call status_clear
     mov byte ptr [rip + g_branch], 0
+    mov byte ptr [rip + g_worktree], 0
     lea rbx, [rip + g_git_root]
     mov rdi, [rbx]
     call mem_free
@@ -255,6 +257,7 @@ watch_repo:
 2:  mov byte ptr [r12 + r13], 0
     test r13, r13
     jz 21f
+    call read_worktree
     mov rdi, r14
     mov rsi, r12
     cmp byte ptr [r12], '/'
@@ -279,6 +282,22 @@ watch_repo:
     call watch_git
     mov rdi, [rip + refsdir]
     call watch_git
+    EPILOGUE
+
+# read_worktree(): g_worktree from the work tree's folder name
+read_worktree:
+    PROLOGUE
+    mov rdi, [rip + g_git_root]
+    mov rsi, [rip + g_git_rootlen]
+    call path_basename
+    cmp rdx, 63
+    jbe 1f
+    mov edx, 63
+1:  lea rdi, [rip + g_worktree]
+    mov rsi, rax
+    mov rcx, rdx
+    rep movsb
+    mov byte ptr [rdi], 0
     EPILOGUE
 
 # git_read_branch(): g_branch from HEAD, the short commit id when detached
@@ -1678,7 +1697,15 @@ FN git_dump
     mov rdi, rbx
     lea rsi, [rip + g_branch]
     call sb_push_cstr
-    cmp byte ptr [rip + g_git_upstream], 0
+    cmp byte ptr [rip + g_worktree], 0
+    je 2f
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_worktree]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + g_worktree]
+    call sb_push_cstr
+2:  cmp byte ptr [rip + g_git_upstream], 0
     je 1f
     mov rdi, rbx
     lea rsi, [rip + .Ld_upstream]
@@ -1823,6 +1850,7 @@ FN git_dump
 .Ld_on: .asciz "on"
 .Ld_off: .asciz "off"
 .Ld_branch: .asciz " branch="
+.Ld_worktree: .asciz " worktree="
 .Ld_marks: .asciz "marks "
 .p2align 3
 env_extras: .quad .Lenv_locks, .Lenv_prompt, .Lenv_editor, 0

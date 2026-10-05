@@ -701,13 +701,16 @@ ENDSTRUCT TF_SIZE
 .equ IC_ARROW_UP, 28
 .equ IC_MINUS, 29
 .equ IC_DISCARD, 30
-.equ IC_CLAUDE, 31
-.equ IC_OPENAI, 32
-.equ IC_COUNT, 33
+.equ IC_FILE_PLUS, 31
+.equ IC_FOLDER_PLUS, 32
+.equ IC_CLAUDE, 33
+.equ IC_OPENAI, 34
+.equ IC_COUNT, 35
 
 # explorer header buttons; the title bar's tooltips name them too
 .equ ID_EXP_NEW, 0x3f00
 .equ ID_EXP_REFRESH, 0x3f01
+.equ ID_EXP_NEW_FOLDER, 0x3f03
 
 # ---- images ----
 .equ IMF_PNG, 1

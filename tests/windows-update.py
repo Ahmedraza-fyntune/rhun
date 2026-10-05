@@ -117,6 +117,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
         assert found, 'updated editor did not reopen the requested path'
         return user, found[0], ids
 
+    def adopted(output, folder):
+        # print-project names the folder the files were opened from (the home folder as ~)
+        for line in output.split(b'\n'):
+            if line.startswith(b'project='):
+                value = line[len(b'project='):].strip().decode('utf-8')
+                return bool(value) and Path(value).expanduser().resolve() == Path(folder).resolve()
+        return False
+
     def stop_restarted(ids):
         for process_id in ids:
             subprocess.run(['taskkill', '/F', '/PID', process_id.decode()], check=True, stdout=subprocess.PIPE)
@@ -155,7 +163,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
                         if file.name in title.value:
                             break
                         time.sleep(0.03)
-                    assert file.name in title.value and title.value.endswith('rhûn'), title.value
+                    # a file opened by itself brings its folder in as the project
+                    assert file.name in title.value and title.value.endswith(reopened[0].parent.name), title.value
             else:
                 user.GetWindowTextW(window, title, len(title))
                 assert title.value == 'rhûn', f'empty restart restored a project or tab: {title.value}'
@@ -209,7 +218,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
                      'cmd restart_to_update', 'key Escape', 'print-project', 'print-state', 'print-update'],
                      paths=standalone_files)
         assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
-        assert b'project=\ntabs=2 active=' + standalone_files[-1].name.encode() in result.stdout, result.stdout
+        assert b'\ntabs=2 active=' + standalone_files[-1].name.encode() in result.stdout, result.stdout
+        assert adopted(result.stdout, standalone_directory), result.stdout
         assert (portable / 'rhun.exe').read_bytes() == original
         assert marker.read_bytes() == remembered_project
         assert all(file.read_bytes() == b'puts :standalone\n' for file in standalone_files)
@@ -219,7 +229,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
         result = run('standalone-empty', ['cmd close_tab', 'cmd close_tab', *check, 'cmd install_update',
                      'wait-update', 'print-project', 'print-state', 'print-update'], paths=standalone_files)
         assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
-        assert b'project=\ntabs=0 ' in result.stdout, result.stdout
+        assert b'\ntabs=0 ' in result.stdout and adopted(result.stdout, standalone_directory), result.stdout
         assert marker.read_bytes() == remembered_project
         assert stages_gone(), list(portable.parent.glob('.rhun-update-*'))
         print('ok   update/standalone-empty-window-prepare-and-discard', flush=True)

@@ -74,6 +74,8 @@ FN session_remember_project
     mov rbx, [rip + g_project]
     test rbx, rbx
     jz 9f
+    cmp dword ptr [rip + g_project_adopted], 0
+    jne 9f
     call last_project_file
     test rax, rax
     jz 9f
@@ -383,6 +385,8 @@ FN session_save
     PROLOGUE
     cmp dword ptr [rip + cfg_restore_session], 0
     je 9f
+    cmp dword ptr [rip + g_project_adopted], 0
+    jne 9f
     cmp dword ptr [rip + g_session_final], 0
     jne 9f
     call session_file

@@ -30,10 +30,15 @@ a thin highlight at the top also signals changes outside the visible lines.
 files still reload. The config key is `animate_disk_changes = true` under `[editor]`.
 
 Opening files from a file manager or with `rhun file.rb` starts the regular editor with those files
-as tabs, without restoring a previous project. The window comes to the foreground. If rhun is
-already running on macOS, Finder opens files as tabs in that window and brings it forward, keeping
-unsaved edits. Opening a folder still restores that folder's session; starting without a path can
-restore the last project.
+as tabs, and the first file's folder becomes the project: the explorer shows it, and new files and
+terminals start there. That folder is not remembered as the last project, and its saved session is
+neither restored nor overwritten; open the folder itself (Open Folder) to bring its session back and
+make it the project you return to. A window without a project, such as `rhun --empty`, takes up the
+folder of the first file opened in it the same way. `rhun --wait file` (for programs that wait for
+an editor) opens just the file. The window comes to the foreground. If rhun is already running on
+macOS, Finder opens files as tabs in that window and brings it forward, keeping unsaved edits.
+Opening a folder still restores that folder's session; starting without a path can restore the last
+project.
 Use `rhun --empty` to start with an empty window. Updating and restarting preserves standalone file tabs,
 including image tabs, and keeps an empty window empty.
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
@@ -225,6 +230,12 @@ Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independe
 
 ### Folders and files
 
+The explorer's header has **New File** and **New Folder** buttons. They create in the folder of the
+item last selected in the explorer, or in the project folder; the prompt names what it creates and
+holds the path, which can include folders that do not exist yet. Right-click a file or folder for its
+menu; right-click the empty space below the list for the project folder's: New File, New Folder,
+Copy Path and Show in Finder (Show in Explorer, Open in File Manager).
+
 Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder permanently removes its contents, including hidden files. Links are removed without deleting their targets.
 
 Right-click a file or directory in the explorer and choose **Show in Finder** (macOS), **Show in Explorer** (Windows), or **Open in File Manager** (Linux). Finder and Explorer select the item in its parent folder. Linux opens the containing folder through `xdg-open`, using your desktop's default file manager. The command palette also has **Show File in System File Manager** for the active file.
@@ -244,7 +255,8 @@ In a git repository rhun shows what changed since the last commit. It runs the `
 - The gutter marks added lines green and changed lines amber, and points to deleted lines in red. The marks follow the text as you type, before it is saved.
 - File names in tabs and the explorer take the color of their status. The explorer adds a letter: M modified, A added, U untracked, D deleted, R renamed, C conflict; folders take the color of the changes inside them.
 - Git: Open Changes (also in the explorer's context menu of a changed file) opens the file's diff against HEAD in a read-only tab, with the old and new line numbers and the file's syntax colors.
-- The history (Ctrl+Shift+G, or the branch button in the title bar) shows the latest 3000 commits of all branches as a graph, with branch and tag names. The selected commit's message and changed files are shown on the right, with lines added and deleted; clicking a file opens its diff in that commit.
+- The status bar shows the current branch at its left end (the short commit id when detached), and in a linked work tree (`git worktree add`) the work tree's folder too, as in `main · worktree hotfix`.
+- The history (Ctrl+Shift+G, the branch button in the title bar, or the branch in the status bar) shows the latest 3000 commits of all branches as a graph, with branch and tag names. The selected commit's message and changed files are shown on the right, with lines added and deleted; clicking a file opens its diff in that commit.
 - The first row of the history is the work tree. Selected, it shows source control on the right, as VS Code does:
   - The branch and its upstream, and the commit message: Enter breaks the line, Ctrl+Enter commits, Esc leaves it. Enter on the work tree row goes to it.
   - **Commit** takes the staged changes; with nothing staged it is **Commit All** and stages every change first. With nothing to commit the button syncs instead: **Sync Changes** pulls, then pushes, and a branch without an upstream gets **Publish Branch**.

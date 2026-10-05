@@ -58,6 +58,14 @@ def equal(actual, expected):
         raise AssertionError(f'expected {expected[:500]!r}, got {actual[:500]!r}')
 
 
+def same_folder(line, folder):
+    # print-project's line names the folder; a file opened by itself brings its folder in as the
+    # project (the home folder as ~). TEMP can be an 8.3 short path while rhun reports the long one.
+    assert line.startswith(b'project='), line
+    value = line[len(b'project='):].strip().decode('utf-8')
+    assert value and Path(value).expanduser().resolve() == Path(folder).resolve(), (value, folder)
+
+
 with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     temp = Path(temporary)
 
@@ -120,6 +128,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
         check('agents/metadata', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/agents.py')], check=True,
+            env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
+        check('explorer/create', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/explorer-create.py')], check=True,
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
 
     def ui(name):
@@ -509,7 +520,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                 [process.stdout.readline(), process.stdout.readline()]), daemon=True)
             reader.start()
             reader.join(timeout=10)
-            assert len(first) == 2 and first[0] == b'project=\n', first
+            assert len(first) == 2, first
+            same_folder(first[0], file.parent)
             assert b'tabs=1 active=' + file.name.encode() in first[1], first
             window, _ = native_find_window(user, callback_type, pid=process.pid)
             native_assert_foreground(user, window)
@@ -552,7 +564,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             window, gui_pid = native_find_window(user, callback_type, name=file.name)
             assert gui_pid != process.pid, 'console entry did not respawn the GUI'
             title = native_title(user, window)
-            assert title.endswith('rhûn') and project.name not in title, title
+            assert title.endswith(file.parent.name) and project.name not in title, title
             native_assert_foreground(user, window)
             user.PostMessageW(window, 0x10, 0, 0)  # WM_CLOSE
             deadline = time.monotonic() + 5
@@ -611,7 +623,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                     equal(file.read_bytes(), b'native\n')
                     child_output = child.communicate(timeout=10)[0]
                     assert child.returncode == 0, child_output
-                    assert child_output.startswith(b'project=\ntabs=1 active=' + standalone.name.encode()), child_output
+                    lines = child_output.split(b'\n')
+                    same_folder(lines[0], standalone.parent)
+                    assert lines[1].startswith(b'tabs=1 active=' + standalone.name.encode()), child_output
                 finally:
                     if child.poll() is None:
                         child.kill()

@@ -35,6 +35,12 @@
 g_focus: .long 0
 g_tabs: .zero VEC_SIZE
 g_project: .quad 0
+# the project is the folder of a file opened without one: it is not remembered as the last project
+# and its session is not saved, so the folder's own session stays as it was
+.globl g_project_adopted, g_wait
+g_project_adopted: .long 0
+g_wait: .long 0                 # --wait: a program waits for the editor
+.p2align 3
 .globl g_start_paths
 g_start_paths: .zero VEC_SIZE
 restart_paths: .quad 0
@@ -152,6 +158,8 @@ load_font_or:
 
 # app_set_project(dir cstr): project root for explorer, agents and session
 FN app_set_project
+    mov dword ptr [rip + g_project_adopted], 0
+set_project:
     PROLOGUE
     mov rbx, rdi
     mov rdi, [rip + g_project]
@@ -205,7 +213,7 @@ FN app_switch_project
     call strcmp_eq
 .endif
     test eax, eax
-    jnz 9f
+    jnz 8f
 1:  mov rdi, rbx
     call strlen
     cmp rax, 4000
@@ -218,6 +226,46 @@ FN app_switch_project
     mov dword ptr [rip + g_session_final], 1
     mov dword ptr [rip + switch_pending], 1
     call switch_continue
+    jmp 9f
+8:  # the same folder: a file's folder becomes the project itself, its last session joining the tabs
+    cmp dword ptr [rip + g_project_adopted], 0
+    je 9f
+    mov dword ptr [rip + g_project_adopted], 0
+    call session_remember_project
+    call session_restore
+    call app_update_title
+9:  EPILOGUE
+
+# app_adopt_folder(file): a file opened in a window without a project brings in its folder as one,
+# for the explorer, new files, git and the terminal (see g_project_adopted). Not with --wait: a
+# program waiting for an editor (git's commit message) wants just the file.
+app_adopt_folder:
+    PROLOGUE
+    cmp qword ptr [rip + g_project], 0
+    jne 9f
+    cmp dword ptr [rip + g_wait], 0
+    jne 9f
+    mov rbx, rdi
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_dirlen
+    test rax, rax
+    jnz 1f
+    mov eax, 1                  # "/"
+1:  mov rdi, rbx
+    mov rsi, rax
+    call mem_dup
+    mov r12, rax
+    mov rdi, rax
+    call file_is_dir
+    test eax, eax
+    jz 8f
+    mov dword ptr [rip + g_project_adopted], 1
+    mov rdi, r12
+    call set_project
+8:  mov rdi, r12
+    call mem_free
 9:  EPILOGUE
 
 # switch_continue(): the next unsaved file asks first; with none left the project changes
@@ -357,6 +405,8 @@ FN app_restart_paths
     mov rax, [rip + g_project]
     test rax, rax
     jz 1f
+    cmp dword ptr [rip + g_project_adopted], 0
+    jne 1f                      # a file's folder comes back with the file
     mov [r14 + r13*8], rax
     inc r13
     jmp 4f
@@ -1936,19 +1986,7 @@ FN titlebar_draw
     mov esi, [rsp + 4]
     add esi, [rsp + 12]
     call project_menu_open
-44: # branch
-    cmp byte ptr [rip + g_branch], 0
-    je 5f
-    add r12d, [rip + g_mt + 4*MI_4]
-    lea rdi, [rip + g_face_small]
-    mov esi, r12d
-    mov edx, [rsp + 4]
-    mov ecx, [rsp + 12]
-    lea r8, [rip + g_branch]
-    COLOR r9d, T_MUTED
-    call ui_text_c
-    mov r12d, eax
-5:  # active file, centered
+44: # active file, centered (the branch is in the status bar)
     mov rbx, [rip + g_file]
     test rbx, rbx
     jz 6f
@@ -2497,15 +2535,22 @@ FN statusbar_draw
     mov edx, [rsp + 12]
     call statusbar_update
     mov [rsp + 20], eax
+    # the branch at the left end; the file's items follow it
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call statusbar_branch
+    mov [rsp + 24], eax
     call app_image
     test rax, rax
     jz 1f
     mov rdi, [rip + g_file]
-    mov esi, [rsp]
+    mov esi, [rsp + 24]
+    sub esi, [rip + g_mt + 4*MI_12]
     mov edx, [rsp + 4]
     mov ecx, [rsp + 20]
     add ecx, [rip + g_mt + 4*MI_12]
-    sub ecx, [rsp]
+    sub ecx, esi
     mov r8d, [rsp + 12]
     call iv_status
     jmp 9f
@@ -2547,8 +2592,7 @@ FN statusbar_draw
     lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Lsel_close]
     call sb_push_cstr
-1:  M esi, MI_12
-    add esi, [rsp]
+1:  mov esi, [rsp + 24]
     mov [rsp + 16], esi
     # vim: the command line in place of the position, else the mode and the keys typed so far
     cmp dword ptr [rip + cfg_vim], 0
@@ -2626,6 +2670,110 @@ FN statusbar_draw
     jz 9f
     call cmd_select_language
 9:  EPILOGUE
+# statusbar_branch(x, y, h) -> eax the x where the file's items start: the branch and, in a linked
+# work tree, its folder at the left end; a click opens the history
+statusbar_branch:
+    PROLOGUE 160                # [rsp + 16] the text
+    mov [rsp], esi              # y
+    mov [rsp + 4], edx          # h
+    M r12d, MI_12
+    add r12d, edi               # x
+    cmp byte ptr [rip + g_branch], 0
+    je 9f
+    # "main", or "main · worktree NAME"
+    lea rdi, [rsp + 16]
+    lea rsi, [rip + g_branch]
+    call cstr_copy
+    cmp byte ptr [rip + g_worktree], 0
+    je 1f
+    mov rdi, rax
+    lea rsi, [rip + .Lsb_worktree]
+    call cstr_copy
+    mov rdi, rax
+    lea rsi, [rip + g_worktree]
+    call cstr_copy
+1:  lea rdi, [rsp + 16]
+    call strlen
+    mov r14, rax
+    lea rdi, [rip + g_face_small]
+    lea rsi, [rsp + 16]
+    mov rdx, rax
+    call text_width
+    M r13d, MI_14               # icon size
+    lea r15d, [rax + r13]
+    add r15d, [rip + g_mt + 4*MI_6]   # the icon, a gap, the text
+    # the button: MI_6 more on each side, inset from the bar like the updater's item
+    mov eax, r15d
+    add eax, [rip + g_mt + 4*MI_12]
+    mov [rsp + 8], eax          # w
+    mov eax, [rsp + 4]
+    sub eax, [rip + g_mt + 4*MI_6]
+    mov [rsp + 12], eax         # h
+    mov edi, ID_STATUS + 2
+    mov esi, r12d
+    sub esi, [rip + g_mt + 4*MI_6]
+    mov edx, [rsp]
+    add edx, [rip + g_mt + 4*MI_3]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    mov ebx, eax
+    test ebx, UB_HOVER
+    jz 2f
+    mov dword ptr [rip + g_cursor], CUR_POINTER
+    mov edi, r12d
+    sub edi, [rip + g_mt + 4*MI_6]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_3]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    M r8d, MI_RADIUS
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+2:  mov edi, ID_STATUS + 2
+    mov esi, r12d
+    sub esi, [rip + g_mt + 4*MI_6]
+    mov edx, [rsp]
+    add edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, ebx
+    call tip_note
+    mov edi, IC_BRANCH
+    mov esi, r12d
+    mov edx, [rsp + 4]
+    sub edx, r13d
+    sar edx, 1
+    add edx, [rsp]
+    mov ecx, r13d
+    COLOR r8d, T_MUTED
+    test ebx, UB_HOVER
+    jz 3f
+    COLOR r8d, T_FG
+3:  call icon_draw
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    add esi, r13d
+    add esi, [rip + g_mt + 4*MI_6]
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    lea r8, [rsp + 16]
+    mov r9, r14
+    COLOR eax, T_MUTED
+    test ebx, UB_HOVER
+    jz 4f
+    COLOR eax, T_FG
+4:  push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+    test ebx, UB_CLICK
+    jz 5f
+    call cmd_toggle_git
+5:  add r12d, r15d
+    add r12d, [rip + g_mt + 4*MI_20]
+9:  mov eax, r12d
+    EPILOGUE
+
 # statusbar_update(right, y, h) -> eax the right edge left of it: the updater's item, when it has one
 statusbar_update:
     PROLOGUE 16
@@ -3325,7 +3473,15 @@ FN tip_draw
     mov [rsp + 16], esi
     mov eax, [rip + tip_cy]
     add eax, [rip + g_mt + 4*MI_4]
-    mov [rsp + 20], eax
+    # no room below (the status bar's buttons): above the button instead
+    lea ecx, [rax + rbx]
+    cmp ecx, [rip + g_cv + CV_h]
+    jle 5f
+    mov eax, [rip + tip_cy]
+    sub eax, [rip + g_mt + 4*MI_STATUS]
+    sub eax, [rip + g_mt + 4*MI_4]
+    sub eax, ebx
+5:  mov [rsp + 20], eax
     mov edi, esi
     mov esi, eax
     mov edx, r12d
@@ -3625,7 +3781,9 @@ tip_table:
     .quad ID_SETTINGS_BTN, .Ltip_settings, cmd_settings
     .quad ID_TOG_SIDE, .Ltip_side, cmd_toggle_sidebar
     .quad ID_EXP_NEW, .Ltip_exp_new, 0
+    .quad ID_EXP_NEW_FOLDER, .Ltip_exp_new_folder, 0
     .quad ID_EXP_REFRESH, .Ltip_exp_refresh, 0
+    .quad ID_STATUS + 2, .Ltip_git, cmd_toggle_git
     .quad 0, 0, 0
 .Ltip_git: .asciz "Git history"
 .Ltip_term: .asciz "Terminal"
@@ -3633,12 +3791,14 @@ tip_table:
 .Ltip_settings: .asciz "Settings"
 .Ltip_side: .asciz "File explorer"
 .Ltip_exp_new: .asciz "New file"
+.Ltip_exp_new_folder: .asciz "New folder"
 .Ltip_exp_refresh: .asciz "Refresh explorer"
 .Lgit_tab: .asciz "Git"
 .Lln: .asciz "Ln "
 .Lcol: .asciz ", Col "
 .Lsel_open: .asciz "  ("
 .Lsel_close: .asciz " selected)"
+.Lsb_worktree: .asciz " \302\267 worktree "
 .Lutf8: .asciz "UTF-8"
 .Llf: .asciz "LF"
 .Lcrlf: .asciz "CRLF"
@@ -3754,6 +3914,8 @@ FN app_open_path
 21: call app_set_project
     jmp 8f
 3:  mov rdi, rbx
+    call app_adopt_folder
+    mov rdi, rbx
     call app_open_file
 8:  test r13d, r13d
     jz 9f

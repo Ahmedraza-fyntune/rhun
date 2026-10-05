@@ -93,7 +93,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-launch-', dir='/tmp') as directory
         command('wait 200')
         state = command('print-state')
         assert 'tabs=1 active=' + file.name in unicodedata.normalize('NFC', state), state
-        assert command('print-project') == 'project=\n'
+        # the file's folder is the project, but not remembered as the last one
+        assert unicodedata.normalize('NFC', command('print-project')) == 'project=' + work.as_posix() + '\n'
         assert marker.read_bytes() == previous
         until(lambda: jxa('$.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier.js') == identifier,
               'file launch did not activate rhun')

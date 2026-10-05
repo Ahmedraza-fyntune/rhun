@@ -187,8 +187,9 @@ class CodexDiscovery(unittest.TestCase):
         self.assertEqual(self.run_editor(data), 'Codex: Untitled session\n')
 
     def test_refresh_without_a_project(self):
-        # A file-only or empty window has no project to match codex sessions against.
-        # The panel's refresh button still scans; the matcher must not read a null project.
+        # An empty window, or one waiting on a file (--wait), has no project to match codex sessions
+        # against. The panel's refresh button still scans; the matcher must not read a null project.
+        # A file opened by itself brings in its folder as the project.
         self.session.write_bytes(self.metadata() + b'\n' + self.message('user', 'Codex session'))
         file = self.project / 'standalone.txt'
         file.write_text('standalone\n', encoding='utf-8')
@@ -197,7 +198,8 @@ class CodexDiscovery(unittest.TestCase):
         # from the right edge, 28 points square.
         script.write_text('print-project\nclick 1258 60\nwait 300\nprint-agents\nquit\n', encoding='utf-8')
         for name, paths, expected in (('project', [self.project.as_posix()], 'Codex: Codex session\n'),
-                                      ('file', [file.as_posix()], ''),
+                                      ('file', [file.as_posix()], 'Codex: Codex session\n'),
+                                      ('wait', ['--wait', file.as_posix()], ''),
                                       ('empty', ['--empty'], '')):
             with self.subTest(window=name):
                 result = subprocess.run([str(EXE), *paths, '--headless', '1280x800', '--scale', '1',
@@ -205,7 +207,7 @@ class CodexDiscovery(unittest.TestCase):
                                         capture_output=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
                 output = result.stdout.decode('utf-8')
-                project = 'project=~/' + self.project.name + '\n' if name == 'project' else 'project=\n'
+                project = 'project=~/' + self.project.name + '\n' if name in ('project', 'file') else 'project=\n'
                 self.assertEqual(output, project + expected)
 
 
