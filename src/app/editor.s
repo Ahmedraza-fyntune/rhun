@@ -2076,6 +2076,9 @@ FN editor_draw
     add eax, [rip + g_ed_x]
     mov [rip + g_ed_tx], eax
     # ---- input ----
+    call find_blocks_editor
+    test eax, eax
+    jnz .Led_noinput
     mov edi, [rip + g_ed_x]
     mov esi, [rip + g_ed_y]
     mov edx, [rip + g_ed_w]
@@ -2393,6 +2396,12 @@ FN editor_draw
     add eax, [rip + g_ed_h]
     sub eax, [rip + g_lh]
 81: mov [rsp + 48], eax         # content px
+    mov eax, [rip + g_block]
+    mov [rsp + 104], eax
+    call find_blocks_editor
+    or [rip + g_block], eax
+    mov eax, [rip + g_block]
+    mov [rsp + 108], eax
     mov rax, [rbx + DOC_scrolly]
     imul eax, [rip + g_lh]
     sar eax, 8
@@ -2412,7 +2421,11 @@ FN editor_draw
     lea r9, [rsp + 52 + 16]
     call ui_scrollbar
     add rsp, 16
+    mov eax, [rsp + 104]
+    mov [rip + g_block], eax
     # scrollbar drag writes pixels back
+    cmp dword ptr [rsp + 108], 0
+    jne 91f
     cmp dword ptr [rip + g_active], ID_EDSCROLL
     jne 91f
     mov eax, [rsp + 52]

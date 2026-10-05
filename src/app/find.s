@@ -626,19 +626,20 @@ FN find_vim_step
     mov rax, -1
     EPILOGUE
 
-# find_draw(): overlay at the top right of the editor
-FN find_draw
-    PROLOGUE 48
-    cmp dword ptr [rip + find_open], 0
-    je .Lfd_ret
-    cmp qword ptr [rip + g_doc], 0
-    je .Lfd_ret
+# find_rect() -> edi x, esi y, edx w, ecx h. Drawing and input share geometry.
+find_rect:
+    PROLOGUE
     mov edi, 470
     call sc
     mov ecx, [rip + g_editor_rect + 8]
     sub ecx, [rip + g_mt + 4*MI_40]
     cmp eax, ecx
-    cmovg eax, ecx
+    jle 2f
+    mov eax, [rip + g_editor_rect + 8]
+    sub eax, [rip + g_mt + 4*MI_16]
+2:  mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
     mov r12d, eax               # w
     M r13d, MI_48               # h
     cmp dword ptr [rip + repl_open], 0
@@ -647,13 +648,47 @@ FN find_draw
 1:  mov r14d, [rip + g_editor_rect]
     add r14d, [rip + g_editor_rect + 8]
     sub r14d, r12d
-    sub r14d, [rip + g_mt + 4*MI_24]      # x
+    mov edi, 470
+    call sc
+    cmp r12d, eax
+    je 3f
+    sub r14d, [rip + g_mt + 4*MI_8]
+    jmp 4f
+3:  sub r14d, [rip + g_mt + 4*MI_24]
+4:                                      # x
     mov r15d, [rip + g_editor_rect + 4]
     add r15d, [rip + g_mt + 4*MI_8]       # y
     mov edi, r14d
     mov esi, r15d
     mov edx, r12d
     mov ecx, r13d
+    EPILOGUE
+
+# find_blocks_editor() -> 1 when the pointer is over the open find overlay.
+FN find_blocks_editor
+    xor eax, eax
+    cmp dword ptr [rip + find_open], 0
+    je 1f
+    cmp qword ptr [rip + g_doc], 0
+    je 1f
+    PROLOGUE
+    call find_rect
+    call ui_in
+    EPILOGUE
+1:  ret
+
+# find_draw(): overlay at the top right of the editor
+FN find_draw
+    PROLOGUE 48
+    cmp dword ptr [rip + find_open], 0
+    je .Lfd_ret
+    cmp qword ptr [rip + g_doc], 0
+    je .Lfd_ret
+    call find_rect
+    mov r14d, edi
+    mov r15d, esi
+    mov r12d, edx
+    mov r13d, ecx
     call ui_card
     # layout: field | count | Aa | up | down | close
     M ebx, MI_32                # button size
@@ -664,6 +699,29 @@ FN find_draw
     sub eax, ebx
     sub eax, [rip + g_mt + 4*MI_64]
     sub eax, [rip + g_mt + 4*MI_20]
+    mov dword ptr [rsp + 24], 1 # show match count when it fits
+    cmp eax, [rip + g_mt + 4*MI_40]
+    jge 1f
+    mov dword ptr [rsp + 24], 0
+    add eax, [rip + g_mt + 4*MI_64]
+    add eax, [rip + g_mt + 4*MI_4]
+    cmp eax, [rip + g_mt + 4*MI_40]
+    jge 1f
+    mov eax, r12d
+    sub eax, [rip + g_mt + 4*MI_16]
+    sub eax, [rip + g_mt + 4*MI_40]
+    sar eax, 2
+    mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov ebx, eax
+    mov eax, r12d
+    lea ecx, [rbx*4]
+    sub eax, ecx
+    sub eax, [rip + g_mt + 4*MI_16]
+1:  mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
     mov [rsp], eax              # field w
     M eax, MI_8
     lea esi, [r14 + rax]
@@ -712,6 +770,13 @@ FN find_draw
     call fmt_u64
     mov byte ptr [rdi], 0
 5:
+    cmp dword ptr [rsp + 24], 0
+    je 51f
+    mov edi, [rsp + 12]
+    mov esi, [rsp + 8]
+    M edx, MI_64
+    mov ecx, ebx
+    call gfx_clip_push
     lea rdi, [rip + g_face_small]
     mov esi, [rsp + 12]
     mov edx, [rsp + 8]
@@ -719,11 +784,14 @@ FN find_draw
     lea r8, [rip + buf]
     COLOR r9d, T_MUTED
     call ui_text_c
+    call gfx_clip_pop
     # toggles and arrows after the count
-    mov r12d, [rsp + 12]
+51: mov r12d, [rsp + 12]
+    cmp dword ptr [rsp + 24], 0
+    je 52f
     add r12d, [rip + g_mt + 4*MI_64]
     add r12d, [rip + g_mt + 4*MI_4]
-    # Aa toggle
+52: # Aa toggle
     mov edi, ID_FIND_CASE
     mov esi, r12d
     mov edx, [rsp + 8]
@@ -828,6 +896,13 @@ FN find_draw
     mov dword ptr [rip + find_sub], 1
     mov dword ptr [rip + g_focus], FOCUS_FIND
 13: mov r12d, [rsp + 12]
+    mov eax, [rip + g_editor_rect]
+    add eax, [rip + g_editor_rect + 8]
+    sub eax, [rip + g_mt + 4*MI_8]
+    sub eax, r12d
+    sub eax, [rip + g_mt + 4*MI_8]
+    sar eax, 1
+    mov [rsp + 28], eax
     mov edi, ID_REPL_ONE
     lea r8, [rip + .Lrepl]
     call text_button
@@ -858,6 +933,8 @@ text_button:
     mov rdx, rax
     call text_width
     add eax, [rip + g_mt + 4*MI_20]
+    cmp eax, [rbp + 16 + 28]
+    cmovg eax, [rbp + 16 + 28]
     mov r15d, eax
     mov edi, r13d
     mov esi, r12d

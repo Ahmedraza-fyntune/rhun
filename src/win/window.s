@@ -180,6 +180,21 @@ win_title:
     call mem_free
 9:  EPILOGUE
 
+# Clipboard managers can hold the clipboard briefly after a content change.
+win_clip_open:
+    PROLOGUE 64
+    mov ebx, 20
+1:  mov rcx, [rip + win_hwnd]
+    API OpenClipboard
+    test eax, eax
+    jnz 9f
+    dec ebx
+    jz 9f
+    mov ecx, 25
+    API Sleep
+    jmp 1b
+9:  EPILOGUE
+
 win_clip_set:
     PROLOGUE 96
     # Copy a counted UTF-8 string before conversion; embedded editor buffers are not NUL terminated.
@@ -212,8 +227,7 @@ win_clip_set:
     call memcpy
     mov rcx, r13
     API GlobalUnlock
-    mov rcx, [rip + win_hwnd]
-    API OpenClipboard
+    call win_clip_open
     test eax, eax
     jz 7f
     API EmptyClipboard
@@ -236,8 +250,7 @@ win_clip_set:
 
 win_clip_get:
     PROLOGUE 96
-    mov rcx, [rip + win_hwnd]
-    API OpenClipboard
+    call win_clip_open
     test eax, eax
     jz 9f
     mov ecx, 13
@@ -690,17 +703,6 @@ FN ws_poll
 .Lpoll_done:
     EPILOGUE
 
-FN win_download_page
-    PROLOGUE 96
-    mov rcx, [rip + win_hwnd]
-    lea rdx, [rip + .Lopen]
-    lea r8, [rip + .Ldownloads]
-    xor r9d, r9d
-    mov qword ptr [rsp + 32], 0
-    mov qword ptr [rsp + 40], 1
-    API ShellExecuteW
-    EPILOGUE
-
 # win_open_link(UTF-8 URL): use the registered browser or mail application.
 FN win_open_link
     PROLOGUE 96
@@ -789,8 +791,6 @@ win_platform:
     .long 112,KEY_F1,113,KEY_F1+1,114,KEY_F1+2,115,KEY_F1+3,116,KEY_F1+4,117,KEY_F1+5
     .long 118,KEY_F1+6,119,KEY_F1+7,120,KEY_F1+8,121,KEY_F1+9,122,KEY_F1+10,123,KEY_F1+11,0,0
 .Lwindow_error: .asciz "rhun: could not create a Windows window"
-.Ldownloads:
-    .short 104,116,116,112,115,58,47,47,103,105,116,104,117,98,46,99,111,109,47,118,115,104,118,101,100,111,118,47,114,104,117,110,47,114,101,108,101,97,115,101,115,47,108,97,116,101,115,116,0
 
 .data
 .globl g_csd,g_dpi_scale,g_win_states

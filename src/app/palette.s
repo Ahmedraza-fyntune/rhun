@@ -2134,7 +2134,12 @@ FN palette_draw
     mov ecx, [rip + g_cv + CV_w]
     sub ecx, [rip + g_mt + 4*MI_64]
     cmp eax, ecx
-    cmovg eax, ecx
+    jle 24f
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, [rip + g_mt + 4*MI_16]
+24: mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
     mov r12d, eax               # w
     mov eax, [rip + g_cv + CV_w]
     sub eax, r12d
@@ -2149,7 +2154,21 @@ FN palette_draw
     jbe 1f
     mov eax, 12
 1:  mov [rsp], eax              # rows shown
-    mov eax, [rsp]
+    # Keep the card in the viewport and reveal selection in the fitted rows.
+    mov eax, [rip + g_cv + CV_h]
+    sub eax, r14d
+    sub eax, [rip + g_mt + 4*MI_8]
+    sub eax, [rip + g_mt + 4*MI_48]
+    sub eax, [rip + g_mt + 4*MI_12]
+    cdq
+    idiv ebx
+    mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
+    cmp eax, [rsp]
+    jge 25f
+    mov [rsp], eax
+25: mov eax, [rsp]
     imul eax, ebx
     M ecx, MI_48
     add eax, ecx
@@ -2171,6 +2190,14 @@ FN palette_draw
     jne 23f
     add eax, [rip + g_mt + 4*MI_32]   # the title
 23: mov [rsp + 4], eax          # card h
+    mov ecx, [rip + g_cv + CV_h]
+    sub ecx, [rip + g_mt + 4*MI_8]
+    sub ecx, eax
+    cmp r14d, ecx
+    cmovg r14d, ecx
+    xor ecx, ecx
+    cmp r14d, ecx
+    cmovl r14d, ecx
     mov edi, r13d
     mov esi, r14d
     mov edx, r12d

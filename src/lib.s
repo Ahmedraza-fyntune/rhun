@@ -37,13 +37,6 @@ FN memset
     mov rax, r8
     ret
 
-# memset32(dst, u32, count)
-FN memset32
-    mov eax, esi
-    mov rcx, rdx
-    rep stosd
-    ret
-
 # memeq(a, b, n) -> 1 if equal
 FN memeq
     mov rcx, rdx
@@ -545,16 +538,6 @@ FN is_ident
     ret
 1:  mov eax, 1
     ret
-
-# is_space(byte) -> 1 for space/tab
-FN is_space
-    xor eax, eax
-    cmp dil, ' '
-    je 1f
-    cmp dil, 9
-    jne 2f
-1:  mov eax, 1
-2:  ret
 
 # to_lower(byte) -> byte
 FN to_lower

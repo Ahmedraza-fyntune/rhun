@@ -42,7 +42,7 @@ FN ws_watch_add
 2:  cmp ebx, WW_MAX
     jae 9f
     mov rdi, r12
-    call win_wide
+    call win_file_path
     mov r14, rax
     test rax, rax
     jz 9f

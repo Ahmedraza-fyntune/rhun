@@ -1,5 +1,138 @@
 .include "win.inc"
 .text
+# win_file_path(UTF-8 path) -> allocated UTF-16 filesystem path, or 0.
+# Preserve ordinary short paths and explicit device namespaces. Resolve ordinary
+# long paths before adding the extended prefix, which does not interpret dot components.
+FN win_file_path
+    PROLOGUE 8320
+    call win_wide
+    mov rbx, rax
+    test rax, rax
+    jz .Lfp_fail
+    xor r12d, r12d
+.Lfp_len:
+    cmp word ptr [rbx + r12*2], 0
+    je .Lfp_kind
+    inc r12d
+    jmp .Lfp_len
+.Lfp_kind:
+    cmp r12d, 4
+    jb .Lfp_resolve
+    movzx eax, word ptr [rbx]
+    cmp eax, '/'
+    je 1f
+    cmp eax, 92
+    jne .Lfp_drive
+1:  movzx eax, word ptr [rbx + 2]
+    cmp eax, '/'
+    je 2f
+    cmp eax, 92
+    jne .Lfp_resolve
+2:  movzx eax, word ptr [rbx + 4]
+    cmp eax, '?'
+    je 3f
+    cmp eax, '.'
+    jne .Lfp_absolute
+3:  movzx eax, word ptr [rbx + 6]
+    cmp eax, '/'
+    je .Lfp_namespace
+    cmp eax, 92
+    je .Lfp_namespace
+    jmp .Lfp_absolute
+.Lfp_drive:
+    cmp word ptr [rbx + 2], ':'
+    jne .Lfp_resolve
+    movzx eax, word ptr [rbx + 4]
+    cmp eax, '/'
+    je .Lfp_absolute
+    cmp eax, 92
+    jne .Lfp_resolve
+.Lfp_absolute:
+    # CreateDirectory also needs room below MAX_PATH for a short-name suffix.
+    cmp r12d, 248
+    jb .Lfp_original
+.Lfp_resolve:
+    mov rcx, rbx
+    mov edx, 4096
+    lea r8, [rsp + 96]
+    xor r9d, r9d
+    API GetFullPathNameW
+    test eax, eax
+    jz .Lfp_release
+    cmp eax, 4096
+    jae .Lfp_release
+    cmp eax, 248
+    jb .Lfp_original
+    mov r12d, eax
+    mov r14d, 4               # drive prefix adds four wide characters
+    lea r15, [rsp + 96]
+    cmp word ptr [r15], 92
+    jne .Lfp_allocate
+    cmp word ptr [r15 + 2], 92
+    jne .Lfp_release
+    # A relative path can resolve inside an already extended current directory.
+    cmp word ptr [r15 + 6], 92
+    jne 7f
+    cmp word ptr [r15 + 4], '?'
+    je .Lfp_resolved_namespace
+    cmp word ptr [r15 + 4], '.'
+    je .Lfp_resolved_namespace
+7:  mov r14d, 6               # UNC replaces two slashes with \\?\UNC\
+    add r15, 4
+.Lfp_allocate:
+    lea edi, [r12 + r14 + 1]
+    add edi, edi
+    call mem_alloc
+    mov r13, rax
+    mov rax, 0x005c003f005c005c  # \\?\
+    mov [r13], rax
+    lea rdi, [r13 + 8]
+    cmp r14d, 6
+    jne 4f
+    mov rax, 0x005c0043004e0055  # UNC\
+    mov [rdi], rax
+    add rdi, 8
+    sub r12d, 2
+4:  mov rsi, r15
+    lea edx, [r12*2 + 2]
+    call memcpy
+    mov rdi, rbx
+    call mem_free
+    mov rax, r13
+    EPILOGUE
+.Lfp_resolved_namespace:
+    lea edi, [r12*2 + 2]
+    call mem_alloc
+    mov r13, rax
+    mov rdi, rax
+    mov rsi, r15
+    lea edx, [r12*2 + 2]
+    call memcpy
+    mov rdi, rbx
+    call mem_free
+    mov rax, r13
+    EPILOGUE
+.Lfp_namespace:
+    # Core paths can use '/', including paths already carrying a namespace.
+    xor ecx, ecx
+5:  movzx eax, word ptr [rbx + rcx*2]
+    test eax, eax
+    jz .Lfp_original
+    cmp eax, '/'
+    jne 6f
+    mov word ptr [rbx + rcx*2], 92
+6:  inc rcx
+    jmp 5b
+.Lfp_original:
+    mov rax, rbx
+    EPILOGUE
+.Lfp_release:
+    mov rdi, rbx
+    call mem_free
+.Lfp_fail:
+    xor eax, eax
+    EPILOGUE
+
 # Read a system font without assuming which drive holds Windows.
 FN win_read_font
     PROLOGUE 8320

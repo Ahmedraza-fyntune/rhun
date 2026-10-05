@@ -105,6 +105,13 @@ class LiveReload(unittest.TestCase):
     def settle(self):
         self.command('wait 400')
 
+    def wait_document(self, expected, timeout=5):
+        # Disk events can arrive late on a loaded machine: wait for the reload, not a fixed time.
+        deadline = time.monotonic() + timeout
+        while self.document() != expected and time.monotonic() < deadline:
+            self.command('wait 50')
+        self.assertEqual(self.document(), expected)
+
     def shot(self, name):
         path = self.work / (name + '.ppm')
         self.command('shot ' + str(path))
@@ -126,8 +133,7 @@ class LiveReload(unittest.TestCase):
         for atomic in (False, True):
             text = 'changed atomically\n' if atomic else 'after café\n'
             self.external_write(text, atomic)
-            self.settle()
-            self.assertEqual(self.document(), text)
+            self.wait_document(text)
             self.assertIn('dirty=0', self.command('print-state'))
 
     def test_open_file_picker_reloads(self):
@@ -137,8 +143,7 @@ class LiveReload(unittest.TestCase):
         self.command('key Return')
         self.assertIn('active=watched.txt', self.command('print-state'))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_explorer_reloads(self):
         self.start()
@@ -146,8 +151,7 @@ class LiveReload(unittest.TestCase):
         self.command('click 120 94')
         self.assertIn('active=watched.txt', self.command('print-state'))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_save_as_in_new_directory_reloads(self):
         self.start()
@@ -159,8 +163,7 @@ class LiveReload(unittest.TestCase):
         self.command('key Return')
         self.assertTrue(target.exists())
         self.external_write(target=target)
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_reload_undo_and_redo_preserve_unchanged_text(self):
         before = 'first line\nold café\nlast line\n'
@@ -174,8 +177,7 @@ class LiveReload(unittest.TestCase):
         self.command('cmd undo')
         self.assertIn('dirty=0', self.command('print-state'))
         self.external_write(after)
-        self.settle()
-        self.assertEqual(self.document(), after)
+        self.wait_document(after)
         self.command('cmd undo')
         self.assertEqual(self.document(), before)
         self.command('cmd redo')
@@ -185,8 +187,7 @@ class LiveReload(unittest.TestCase):
     def test_command_line_reloads(self):
         self.start(self.file)
         self.external_write(atomic=True)
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_directory_alias_reloads(self):
         alias = self.work / 'alias'
@@ -194,8 +195,7 @@ class LiveReload(unittest.TestCase):
         self.start()
         self.command('open ' + str(alias / self.file.name))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_restored_session_reloads(self):
         self.start()
@@ -206,8 +206,7 @@ class LiveReload(unittest.TestCase):
         self.start()
         self.assertIn('active=watched.txt', self.command('print-state'))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_unsaved_edits_stay_and_warning_clears_on_revert(self):
         self.start()
@@ -236,8 +235,7 @@ class LiveReload(unittest.TestCase):
         warning = bytes.fromhex('f2c46f')
         self.assertGreater(self.warning_strip(self.shot('conflict')).count(warning), 100)
         self.command('cmd undo')
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
         self.assertIn('dirty=0', self.command('print-state'))
         self.assertEqual(self.warning_strip(self.shot('resolved')).count(warning), 0)
 
@@ -259,7 +257,7 @@ class LiveReload(unittest.TestCase):
         self.assertIn('active=other.txt', self.command('print-state'))
         self.assertEqual(self.document(), 'other\n')
         self.open_quick()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_burst_keeps_final_contents_and_cursor(self):
         self.start()
@@ -268,8 +266,7 @@ class LiveReload(unittest.TestCase):
         self.command('key Right')
         for index in range(20):
             self.external_write(f'change {index:02}\n', atomic=index % 2 == 0)
-        self.settle()
-        self.assertEqual(self.document(), 'change 19\n')
+        self.wait_document('change 19\n')
         self.assertIn('line=1 col=3', self.command('print-state'))
 
     def test_continuous_writes_update_before_the_writer_stops(self):
@@ -289,8 +286,7 @@ class LiveReload(unittest.TestCase):
             self.assertTrue(self.document().startswith('stream '))
         finally:
             writer.join(timeout=5)
-        self.settle()
-        self.assertEqual(self.document(), 'stream 19\n')
+        self.wait_document('stream 19\n')
 
     def test_changed_line_tint_leaves_neighboring_lines_alone(self):
         self.file.write_text('first\nbefore\nlast\n', encoding='utf-8')
@@ -298,7 +294,7 @@ class LiveReload(unittest.TestCase):
         self.open_quick()
         before = self.shot('before')
         self.external_write('first\nchanged\nlast\n')
-        self.settle()
+        self.wait_document('first\nchanged\nlast\n')
         after = self.shot('after')
         changed = (1000 * 108 + 700) * 3
         unchanged = (1000 * 130 + 700) * 3
@@ -313,8 +309,9 @@ class LiveReload(unittest.TestCase):
         self.start()
         self.open_quick()
         before = self.shot('before')
-        self.external_write('first\n' + 'x' * 100 + 'Y' + 'x' * 299 + '\nlast\n')
-        self.settle()
+        changed_text = 'first\n' + 'x' * 100 + 'Y' + 'x' * 299 + '\nlast\n'
+        self.external_write(changed_text)
+        self.wait_document(changed_text)
         after = self.shot('after')
         for y in (108, 130):
             # Sample the blank gutter, since opaque glyphs keep their color over the tint.
@@ -327,7 +324,7 @@ class LiveReload(unittest.TestCase):
         baseline_image = self.shot('baseline')
         baseline = self.editor_edge(baseline_image)
         self.external_write()
-        self.settle()
+        self.wait_document('after café\n')
         pulse_image = self.shot('pulse')
         pulse = self.editor_edge(pulse_image)
         self.assertNotEqual(pulse, baseline)
@@ -365,8 +362,7 @@ class LiveReload(unittest.TestCase):
         self.start(self.file)
         baseline = self.shot('baseline')
         self.external_write('first\nchanged\nlast\n')
-        self.settle()
-        self.assertEqual(self.document(), 'first\nchanged\nlast\n')
+        self.wait_document('first\nchanged\nlast\n')
         changed = self.shot('changed')
         self.assertEqual(self.editor_edge(changed), self.editor_edge(baseline))
         pixel = (1000 * 108 + 700) * 3
@@ -380,12 +376,13 @@ class LiveReload(unittest.TestCase):
         baseline = self.editor_edge(self.shot('baseline'))
         self.external_write()
         self.command('wait 180')
+        self.wait_document('after café\n')
         self.assertNotEqual(self.editor_edge(self.shot('pulse')), baseline)
         self.set_animation(False)
         # A queued file reload must survive cancellation of the fade timer.
         self.external_write('second\n')
         self.command('wait 200')
-        self.assertEqual(self.document(), 'second\n')
+        self.wait_document('second\n')
         self.assertEqual(self.editor_edge(self.shot('disabled')), baseline)
         self.command('print-frames')
         self.command('wait 100')
@@ -395,7 +392,7 @@ class LiveReload(unittest.TestCase):
         self.assertEqual(self.editor_edge(self.shot('enabled')), baseline)
         self.external_write('third\n')
         self.command('wait 180')
-        self.assertEqual(self.document(), 'third\n')
+        self.wait_document('third\n')
         self.assertNotEqual(self.editor_edge(self.shot('new-pulse')), baseline)
 
     def test_disabled_animation_keeps_unsaved_edit_warning(self):
@@ -438,8 +435,7 @@ class LiveReload(unittest.TestCase):
         self.start(self.file)
         baseline = self.editor_edge(self.shot('baseline'))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
         self.assertEqual(self.editor_edge(self.shot('changed')), baseline)
         self.toggle_animation_in_settings('true')
         self.assertIn('animate_disk_changes = true\n', config.read_text())

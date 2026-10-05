@@ -757,6 +757,15 @@ FN app_close_tab_now
     PROLOGUE
     mov r12, rdi
     call tab_at
+    xor r13d, r13d
+    cmp r12, [rip + g_tab_cur]
+    jne .Lclose_focus_saved
+    cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
+    jne .Lclose_focus_saved
+    cmp dword ptr [rip + g_focus], FOCUS_SETTINGS
+    jne .Lclose_focus_saved
+    mov r13d, 1
+.Lclose_focus_saved:
     mov rbx, [rax + TAB_doc]
     test rbx, rbx
     jz 1f
@@ -794,6 +803,10 @@ FN app_close_tab_now
     jne 6f
     mov rdi, -1
 6:  mov [rip + g_tab_cur], rdi
+    test r13d, r13d
+    jz .Lclose_focus_restored
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+.Lclose_focus_restored:
     call app_sync_doc
     call app_update_title
     EPILOGUE
@@ -1873,7 +1886,7 @@ FN center_draw
 
 # titlebar_draw(x, y, w, h)
 FN titlebar_draw
-    PROLOGUE 48
+    PROLOGUE 80
     mov [rsp], edi
     mov [rsp + 4], esi
     mov [rsp + 8], edx
@@ -1891,10 +1904,54 @@ FN titlebar_draw
     mov eax, [rip + g_hot]
     mov [rsp + 32], eax
     mov dword ptr [rip + g_hot], 0
-    M r12d, MI_8
+    # Scale button widths and gaps together only when the toolbar cannot fit.
+    M eax, MI_32
+    mov [rsp + 40], eax         # button width
+    M eax, MI_8
+    mov [rsp + 44], eax         # outer gap
+    M eax, MI_4
+    mov [rsp + 48], eax         # inner gap
+    M eax, MI_48
+    mov [rsp + 52], eax         # window control width
+    M eax, MI_6
+    mov [rsp + 56], eax         # project padding
+    mov ecx, 160
+    cmp dword ptr [rip + g_csd], 0
+    je 21f
+    add ecx, 144
+21: cmp dword ptr [rip + g_git_on], 0
+    je 22f
+    add ecx, 36
+22: mov eax, [rsp + 40]
+    imul eax, ecx
+    mov edx, [rsp + 8]
+    sub edx, [rip + g_title_inset]
+    imul edx, edx, 32
+    cmp edx, eax
+    jge 23f
+    mov eax, edx
+    cdq
+    idiv ecx
+    mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov [rsp + 40], eax
+    mov ecx, eax
+    shr ecx, 2
+    mov [rsp + 44], ecx
+    mov ecx, eax
+    shr ecx, 3
+    mov [rsp + 48], ecx
+    lea ecx, [rax + rax*2]
+    shr ecx, 1
+    mov [rsp + 52], ecx
+    imul ecx, eax, 3
+    shr ecx, 4
+    mov [rsp + 56], ecx
+23: mov r12d, [rsp + 44]
     add r12d, [rip + g_title_inset]
     # sidebar toggle
-    M r13d, MI_32
+    mov r13d, [rsp + 40]
     mov edi, ID_TOG_SIDE
     mov esi, r12d
     mov edx, [rsp + 12]
@@ -1914,7 +1971,26 @@ FN titlebar_draw
     jz 3f
     call cmd_toggle_sidebar
 3:  add r12d, r13d
-    add r12d, [rip + g_mt + 4*MI_8]
+    add r12d, [rsp + 44]
+    # Reserve the right toolbar before sizing the project label and its hitbox.
+    mov eax, [rsp + 40]
+    imul eax, eax, 3
+    add eax, [rsp + 44]
+    add eax, [rsp + 44]
+    add eax, [rsp + 48]
+    add eax, [rsp + 48]
+    cmp dword ptr [rip + g_git_on], 0
+    je 31f
+    add eax, [rsp + 40]
+    add eax, [rsp + 48]
+31: cmp dword ptr [rip + g_csd], 0
+    je 32f
+    mov ecx, [rsp + 52]
+    imul ecx, ecx, 3
+    add eax, ecx
+32: mov ecx, [rsp + 8]
+    sub ecx, eax
+    mov [rsp + 36], ecx        # left edge of the toolbar, with a gap
     # project name and a chevron: the button for the project menu
     mov rax, [rip + g_project_name]
     test rax, rax
@@ -1928,12 +2004,23 @@ FN titlebar_draw
     mov rdx, rax
     call text_width
     mov r14d, r12d
-    sub r14d, [rip + g_mt + 4*MI_6]   # x
+    sub r14d, [rsp + 56]   # x
     mov r15d, eax
-    add r15d, [rip + g_mt + 4*MI_6]
-    add r15d, [rip + g_mt + 4*MI_6]
-    add r15d, [rip + g_mt + 4*MI_4]
+    add r15d, [rsp + 56]
+    add r15d, [rsp + 56]
+    add r15d, [rsp + 48]
     add r15d, [rip + g_mt + 4*MI_12]  # w
+    mov eax, [rsp + 36]
+    sub eax, r14d
+    test eax, eax
+    jle 44f
+    cmp r15d, eax
+    cmovg r15d, eax
+    mov edi, r14d
+    mov esi, [rsp + 4]
+    mov edx, r15d
+    mov ecx, [rsp + 12]
+    call gfx_clip_push
     mov edi, ID_PROJECT_BTN
     mov esi, r14d
     M r8d, MI_28
@@ -1967,7 +2054,7 @@ FN titlebar_draw
     COLOR r9d, T_FG
     call ui_text_c
     mov esi, eax
-    add esi, [rip + g_mt + 4*MI_4]
+    add esi, [rsp + 48]
     M ecx, MI_12
     mov edx, [rsp + 12]
     sub edx, ecx
@@ -1979,6 +2066,7 @@ FN titlebar_draw
     jz 43f
     COLOR r8d, T_FG
 43: call icon_draw
+    call gfx_clip_pop
     lea r12d, [r14 + r15]
     test ebx, UB_CLICK
     jz 44f
@@ -2002,6 +2090,9 @@ FN titlebar_draw
     sar esi, 1
     cmp esi, r12d
     jle 6f
+    add eax, esi
+    cmp eax, [rsp + 36]
+    jg 6f
     lea rdi, [rip + g_face_small]
     mov edx, [rsp + 4]
     mov ecx, [rsp + 12]
@@ -2017,7 +2108,7 @@ FN titlebar_draw
     cmp dword ptr [rip + g_csd], 0
     je 7f
     # window controls: close, maximize, minimize (right to left)
-    M r13d, MI_48
+    mov r13d, [rsp + 52]
     sub r12d, r13d
     mov edi, ID_WCLOSE
     mov esi, r12d
@@ -2067,9 +2158,9 @@ FN titlebar_draw
     jz 7f
     PCALL P_minimize
 7:  # settings + agents toggles
-    M r13d, MI_32
+    mov r13d, [rsp + 40]
     sub r12d, r13d
-    sub r12d, [rip + g_mt + 4*MI_8]
+    sub r12d, [rsp + 44]
     mov edi, ID_SETTINGS_BTN
     mov esi, r12d
     mov edx, [rsp + 12]
@@ -2089,7 +2180,7 @@ FN titlebar_draw
     jz 8f
     call cmd_settings
 8:  sub r12d, r13d
-    sub r12d, [rip + g_mt + 4*MI_4]
+    sub r12d, [rsp + 48]
     mov edi, ID_TOG_AGENTS
     mov esi, r12d
     mov edx, [rsp + 12]
@@ -2109,7 +2200,7 @@ FN titlebar_draw
     jz 81f
     call cmd_toggle_agents
 81: sub r12d, r13d
-    sub r12d, [rip + g_mt + 4*MI_4]
+    sub r12d, [rsp + 48]
     mov edi, ID_TOG_TERM
     mov esi, r12d
     mov edx, [rsp + 12]
@@ -2131,7 +2222,7 @@ FN titlebar_draw
 82: cmp dword ptr [rip + g_git_on], 0
     je 9f
     sub r12d, r13d
-    sub r12d, [rip + g_mt + 4*MI_4]
+    sub r12d, [rsp + 48]
     mov edi, ID_GIT_BTN
     mov esi, r12d
     mov edx, [rsp + 12]
@@ -2535,10 +2626,20 @@ FN statusbar_draw
     mov edx, [rsp + 12]
     call statusbar_update
     mov [rsp + 20], eax
+    # Keep branch and position glyphs out of the updater's reserved area.
+    mov edx, eax
+    sub edx, [rsp]
+    add edx, [rip + g_mt + 4*MI_12]
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov ecx, [rsp + 12]
+    call gfx_clip_push
     # the branch at the left end; the file's items follow it
     mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
+    mov ecx, [rsp + 20]
+    add ecx, [rip + g_mt + 4*MI_12]
     call statusbar_branch
     mov [rsp + 24], eax
     call app_image
@@ -2603,6 +2704,8 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call vim_cmdline_draw
+    mov eax, [rsp + 20]
+    mov [rsp + 28], eax        # command line occupies the available status area
     jmp 12f
 10: call vim_status
     lea rdi, [rip + g_face_small]
@@ -2625,6 +2728,8 @@ FN statusbar_draw
     push rax
     call ui_text_v
     add rsp, 16
+    add eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 28], eax        # optional metadata must stay after the position
 12: # right side: language, indentation, eol, encoding
     mov r12d, [rsp + 20]
     lea r13, [rip + .Lutf8]
@@ -2653,6 +2758,8 @@ FN statusbar_draw
     mov r13, [rax + GR_name]
 4:  mov r14d, r12d
     call .Lsb_item
+    cmp r12d, r14d
+    je 9f                     # no picker hitbox for a label that did not fit
     # the language name opens the language picker
     mov esi, r12d
     add esi, [rip + g_mt + 4*MI_12]
@@ -2669,13 +2776,15 @@ FN statusbar_draw
 5:  test eax, UB_CLICK
     jz 9f
     call cmd_select_language
-9:  EPILOGUE
-# statusbar_branch(x, y, h) -> eax the x where the file's items start: the branch and, in a linked
+9:  call gfx_clip_pop
+    EPILOGUE
+# statusbar_branch(x, y, h, right) -> eax the x where the file's items start: the branch and, in a linked
 # work tree, its folder at the left end; a click opens the history
 statusbar_branch:
-    PROLOGUE 160                # [rsp + 16] the text
+    PROLOGUE 176                # [rsp + 16..159] text, [rsp + 160] right bound
     mov [rsp], esi              # y
     mov [rsp + 4], edx          # h
+    mov [rsp + 160], ecx        # bound the hitbox before the updater
     M r12d, MI_12
     add r12d, edi               # x
     cmp byte ptr [rip + g_branch], 0
@@ -2705,6 +2814,14 @@ statusbar_branch:
     # the button: MI_6 more on each side, inset from the bar like the updater's item
     mov eax, r15d
     add eax, [rip + g_mt + 4*MI_12]
+    mov ecx, [rsp + 160]
+    sub ecx, r12d
+    add ecx, [rip + g_mt + 4*MI_6]
+    xor edx, edx
+    test ecx, ecx
+    cmovl ecx, edx
+    cmp eax, ecx
+    cmovg eax, ecx
     mov [rsp + 8], eax          # w
     mov eax, [rsp + 4]
     sub eax, [rip + g_mt + 4*MI_6]
@@ -2850,6 +2967,10 @@ statusbar_update:
     mov rsi, r13
     mov rdx, rax
     call text_width
+    mov edx, r12d
+    sub edx, eax
+    cmp edx, [rsp + 16 + 28]
+    jl 9f                     # leave room for the cursor label and earlier items
     sub r12d, eax
     lea rdi, [rip + g_face_small]
     mov esi, r12d
@@ -2859,7 +2980,7 @@ statusbar_update:
     COLOR r9d, T_MUTED
     call ui_text_c
     sub r12d, [rip + g_mt + 4*MI_20]
-    pop rbx
+9:  pop rbx
     ret
 
 # welcome_draw(x, y, w, h)

@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
 
     for name, exe in [('cpu', 'cpu'), ('doc', 'doc'), ('syntax', 'syntax'), ('themes', 'theme'),
                       ('term', 'term'), ('diff', 'diff'), ('cols', 'cols'), ('config', 'config'),
-                      ('textarea', 'textarea')]:
+                      ('textarea', 'textarea'), ('ui-clip', 'ui_clip'), ('keys', 'keys'), ('config-strings', 'config_strings')]:
         check(name, lambda name=name, exe=exe: golden(name, exe + '_test'))
     for name, exe, file in [('strfind', 'str', 'strfind'), ('versions', 'update', 'versions'),
                             ('keymap-names-us-ru', 'xkb', 'keymap-names-us-ru'),
@@ -111,6 +111,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                                   b'rhun ' + (ROOT / 'VERSION').read_bytes().strip() + b'\n'))
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
     if not args.wine:
+        check('files/long-paths', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/windows-longpaths.py')], check=True))
+        check('clipboard/contention-copy-and-paste', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
+        for name in ('settings-ui', 'editor-matrix', 'stress'):
+            check('ui/' + name, lambda name=name: subprocess.run(
+                [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
+                env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
         check('desktop/startup', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/desktop-ux.py')], check=True,
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
@@ -177,9 +185,15 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         equal(run('file_test.exe', 'reload-binary', winpath(source), winpath(replacement)).stdout, b'before\n')
         equal(source.read_bytes(), replacement.read_bytes())
         long_file = folder / ('x' * 251 + '.txt')
-        long_file.write_bytes(b'original\n')
-        run('file_test.exe', 'write', winpath(long_file))
-        equal(long_file.read_bytes(), b'saved\n')
+        # Access the fixture independently of the runner's LongPathsEnabled policy.
+        # The editor still receives the ordinary path and must handle its length.
+        fixture_path = long_file if args.wine else Path('\\\\?\\' + str(long_file.resolve()))
+        try:
+            fixture_path.write_bytes(b'original\n')
+            run('file_test.exe', 'write', winpath(long_file))
+            equal(fixture_path.read_bytes(), b'saved\n')
+        finally:
+            fixture_path.unlink(missing_ok=True)
         assert not list(folder.glob('.rhun-backup-*')), 'recovery directory left after successful save'
         assert not list(folder.glob('.rhun-*.tmp')), 'temporary file left after save'
     check('files/unicode-crlf-replacement', files)

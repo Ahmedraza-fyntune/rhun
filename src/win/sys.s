@@ -96,7 +96,7 @@ FN ws_open
     jz 1f
     lea rbx, [rip + .Lnul]
 1:  mov rdi, rbx
-    call win_wide
+    call win_file_path
     mov rbx, rax
     test rax, rax
     jz .Lopen_invalid
@@ -467,7 +467,7 @@ FN ws_stat
 # win_file_is_real_dir(path) -> 1 for a directory without a reparse point, 0 otherwise, or -errno
 FN win_file_is_real_dir
     PROLOGUE 96
-    call win_wide
+    call win_file_path
     mov rbx, rax
     test rax, rax
     jz 8f
@@ -491,7 +491,7 @@ FN win_file_is_real_dir
 
 FN ws_access
     PROLOGUE 96
-    call win_wide
+    call win_file_path
     test rax, rax
     jz 8f
     mov rbx, rax
@@ -553,7 +553,7 @@ FN ws_cwd
 .macro PATH_API name, api
 FN \name
     PROLOGUE 96
-    call win_wide
+    call win_file_path
     mov rbx, rax
     test rax, rax
     jz 8f
@@ -600,10 +600,10 @@ FN ws_rename
     mov r12, rsi
     mov qword ptr [rsp + 96], 0
     mov qword ptr [rsp + 104], 0
-    call win_wide
+    call win_file_path
     mov rbx, rax
     mov rdi, r12
-    call win_wide
+    call win_file_path
     mov r12, rax
     test rbx, rbx
     jz 8f
@@ -728,7 +728,7 @@ win_backup:
     mov rsi, [rip + backup_serial]
     call sb_push_u64
     mov rdi, [rsp + 96]
-    call win_wide
+    call win_file_path
     mov rbx, rax
     test rax, rax
     jz 7f
@@ -750,7 +750,7 @@ win_backup:
     lea rsi, [rip + .Loriginal]
     call sb_push_cstr
     mov rdi, [rsp + 96]
-    call win_wide
+    call win_file_path
     mov r14, rax
     test rax, rax
     jnz 4f
@@ -791,7 +791,7 @@ FN ws_readlink
     jae 8f
     jmp 4f
 1:  mov rdi, rbx
-    call win_wide
+    call win_file_path
     mov r14, rax
     test rax, rax
     jz 8f

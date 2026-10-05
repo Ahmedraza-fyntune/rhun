@@ -13,11 +13,6 @@ wb_cols: .long 0
 
 .text
 
-# wrap_active() -> 1 when the active document wraps
-FN wrap_active
-    mov eax, [rip + cfg_word_wrap]
-    ret
-
 # wrap_cols() -> text columns available
 FN wrap_cols
     mov eax, [rip + g_ed_w]
