@@ -730,6 +730,29 @@ FN win_open_link
 8:  call desktop_failed
 9:  EPILOGUE
 
+# win_new_window(): launch a new rhun instance with --empty
+FN win_new_window
+    PROLOGUE 8320
+    xor ecx, ecx
+    lea rdx, [rsp + 96]
+    mov r8d, 4096
+    API GetModuleFileNameW
+    test eax, eax
+    jz 8f
+    cmp eax, 4096
+    jae 8f
+    mov rcx, [rip + win_hwnd]
+    lea rdx, [rip + .Lopen]
+    lea r8, [rsp + 96]
+    lea r9, [rip + .Lwin_empty_param]
+    mov qword ptr [rsp + 32], 0
+    mov qword ptr [rsp + 40], 1
+    API ShellExecuteW
+    cmp rax, 32
+    ja 9f
+8:  call desktop_failed
+9:  EPILOGUE
+
 # Select files and directories in their parent folder, with Unicode paths intact.
 FN win_reveal
     PROLOGUE 96
@@ -780,6 +803,7 @@ win_platform:
 .Lclass: .short 'r','h','u','n','W','i','n','d','o','w',0
 .Ltitle: .short 'r','h','u','n',0
 .Lopen: .short 'o','p','e','n',0
+.Lwin_empty_param: .short '-','-','e','m','p','t','y',0
 .Ldpi96: .float 96.0
 .Lcursors: .long 32512,32513,32649,32644,32645,32642,32643
 .Lkeys:
