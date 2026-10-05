@@ -526,17 +526,28 @@ sync_list:
 expand_folders:
     PROLOGUE 16
     mov dword ptr [rip + u_extra], 0
+    mov dword ptr [rsp], 0      # untracked folders found
     xor ebx, ebx
 1:  cmp rbx, [rip + list + VEC_len]
-    jae 9f
-    imul rdi, rbx, GF_SIZE
-    add rdi, [rip + list + VEC_ptr]
+    jae 2f
+    imul r12, rbx, GF_SIZE
+    add r12, [rip + list + VEC_ptr]
+    mov rdi, r12
     call is_new_folder
     test eax, eax
-    jnz 2f
-    inc rbx
+    jz 11f
+    mov dword ptr [rsp], 1
+    # These folders may never have been opened in the explorer. Watch them before ls-files runs.
+    mov rdi, [r12 + GF_path]
+    call watch_untracked
+11: inc rbx
     jmp 1b
-2:  mov eax, [rip + g_git_ver]
+2:  cmp dword ptr [rsp], 0
+    je 9f
+    # A project can be inside the repository: new sibling folders still affect the Git panel.
+    mov rdi, [rip + g_git_root]
+    call watch_worktree
+    mov eax, [rip + g_git_ver]
     cmp eax, [rip + u_ver]
     je 3f
     call untracked_check
@@ -575,6 +586,8 @@ expand_folders:
     call memeq
     test eax, eax
     jz 51f
+    mov rdi, r15
+    call watch_untracked
     lea rdi, [rip + xlist]
     mov esi, GF_SIZE
     call vec_push
@@ -614,6 +627,36 @@ expand_folders:
     mov [rip + list + VEC_len], rax
     mov qword ptr [rip + xlist + VEC_len], 0
 9:  EPILOGUE
+
+# watch_untracked(relative path): every parent below the repository root, including ancestors
+#   without files directly in them. A folder row ends in '/', so its own directory is watched too.
+watch_untracked:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rip + g_git_root]
+    call strlen
+    mov r12, rax
+    mov rdi, [rip + g_git_root]
+    mov rsi, rbx
+    call path_join
+    mov rbx, rax
+    lea r13, [rax + r12]
+    cmp byte ptr [r13], '/'
+    jne 1f
+    inc r13
+1:  cmp byte ptr [r13], 0
+    je 3f
+    cmp byte ptr [r13], '/'
+    jne 2f
+    mov byte ptr [r13], 0
+    mov rdi, rbx
+    call watch_worktree
+    mov byte ptr [r13], '/'
+2:  inc r13
+    jmp 1b
+3:  mov rdi, rbx
+    call mem_free
+    EPILOGUE
 
 # scm_changes() -> eax the changed files the panel lists (a file both staged and changed once): the
 #   history's "Uncommitted changes" count, the same as the panel's when a new folder shows its files

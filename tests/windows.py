@@ -128,6 +128,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         check('ui/commit-wrap', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/commit-wrap.py')], check=True,
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
+        check('git/untracked-refresh', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/git-untracked.py')], check=True,
+            env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
         check('ui/terminal-tabs', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/terminal-tabs.py')], check=True,
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))

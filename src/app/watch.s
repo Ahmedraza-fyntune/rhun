@@ -7,6 +7,7 @@
 .equ WK_CONFIG, 8
 .equ WK_OMARCHY, 16
 .equ WK_GIT, 32
+.equ WK_WORKTREE, 64
 .equ MAXWD, 4096
 .equ WMASK, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_MODIFY
 .equ RELOAD_DELAY_MS, 100
@@ -87,6 +88,9 @@ FN watch_agents_dir
 FN watch_git
     mov esi, WK_GIT
     jmp add_watch
+FN watch_worktree
+    mov esi, WK_WORKTREE
+    jmp add_watch
 
 # watch_doc(path) -> directory watch descriptor or -1
 FN watch_doc
@@ -143,7 +147,7 @@ on_inotify:
     lea rcx, [rip + wd_kinds]
     movzx ecx, byte ptr [rcx + rbx]
     # the work tree changed: git status again
-    test ecx, WK_EXPLORER | WK_DOCS
+    test ecx, WK_EXPLORER | WK_DOCS | WK_WORKTREE
     jz 6f
     push rcx
     push rcx
