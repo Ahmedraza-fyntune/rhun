@@ -299,6 +299,9 @@ FN agents_scan
 # codex: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl, newest first, filtered by cwd
 codex_scan:
     PROLOGUE
+    # a window without a project (rhun file, --empty) has nothing to match sessions against
+    cmp qword ptr [rip + g_project], 0
+    je 9f
     lea rdi, [rip + tmp]
     call sb_clear
     lea rdi, [rip + .Lhome]

@@ -186,6 +186,28 @@ class CodexDiscovery(unittest.TestCase):
         data = self.metadata() + b'\n' + b'x' * (META_LIMIT + 1) + b'\n'
         self.assertEqual(self.run_editor(data), 'Codex: Untitled session\n')
 
+    def test_refresh_without_a_project(self):
+        # A file-only or empty window has no project to match codex sessions against.
+        # The panel's refresh button still scans; the matcher must not read a null project.
+        self.session.write_bytes(self.metadata() + b'\n' + self.message('user', 'Codex session'))
+        file = self.project / 'standalone.txt'
+        file.write_text('standalone\n', encoding='utf-8')
+        script = self.home / 'commands.rsc'
+        # 1280x800 at scale 1: the refresh button sits in the 40-point panel header, 8 points
+        # from the right edge, 28 points square.
+        script.write_text('print-project\nclick 1258 60\nwait 300\nprint-agents\nquit\n', encoding='utf-8')
+        for name, paths, expected in (('project', [self.project.as_posix()], 'Codex: Codex session\n'),
+                                      ('file', [file.as_posix()], ''),
+                                      ('empty', ['--empty'], '')):
+            with self.subTest(window=name):
+                result = subprocess.run([str(EXE), *paths, '--headless', '1280x800', '--scale', '1',
+                                         '--script', script.as_posix()], env=self.env,
+                                        capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
+                output = result.stdout.decode('utf-8')
+                project = 'project=~/' + self.project.name + '\n' if name == 'project' else 'project=\n'
+                self.assertEqual(output, project + expected)
+
 
 if __name__ == '__main__':
     unittest.main()
