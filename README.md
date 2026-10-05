@@ -4,7 +4,7 @@
 
 [![Join the Discord community](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/Aj4drpFbWf)
 [![Find rhun on Product Hunt](https://img.shields.io/badge/Product%20Hunt-Find%20rhun-DA552F?style=for-the-badge&logo=producthunt&logoColor=white)](https://www.producthunt.com/products/rhun)
-[![Follow r13 on X](https://img.shields.io/badge/X-Follow%20r13-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/r13)
+[![Follow updates on X](https://img.shields.io/badge/X-FOLLOW%20UPDATES-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/r13)
 
 ## Get rhun
 
