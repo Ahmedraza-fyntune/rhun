@@ -1364,12 +1364,14 @@ FN editor_key
     jmp 9f
 87: cmp eax, KEY_ESCAPE
     jne 88f
-    # collapse selection
+    # collapse selection and clear secondary cursors
     mov rax, [rip + g_doc]
     mov rcx, [rax + DOC_cur]
     mov [rax + DOC_anchor], rcx
+    mov qword ptr [rax + DOC_cursors + VEC_len], 0
     lea rdi, [rip + g_ed_find]
     call sb_clear
+    call ed_touch
     jmp 9f
 88: # printable
     test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER

@@ -518,7 +518,15 @@ F DOC_disk_seen, 8      # last external stamp handled
 F DOC_disk_until, 8     # editor's external reload highlight fades until this time
 F DOC_disk_lo, 8        # first changed line in the reloaded text
 F DOC_disk_hi, 8        # line past the changed range (deletions highlight their surviving neighbor)
+F DOC_cursors, VEC_SIZE # secondary cursors (CURS elements)
 ENDSTRUCT DOC_SIZE
+
+# ---- secondary cursor ----
+STRUCT
+F CURS_cur, 8
+F CURS_anchor, 8
+F CURS_prefx, 8
+ENDSTRUCT CURS_SIZE
 
 .equ DISK_FADE_MS, 800
 .equ DISK_FRAME_MS, 50
