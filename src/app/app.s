@@ -1467,7 +1467,15 @@ FN app_timeout
     cmp eax, ebx
     jge 7f
 71: mov ebx, eax
-7:  mov eax, ebx
+7:  call palette_timeout
+    cmp eax, -1
+    je 8f
+    cmp ebx, -1
+    je 81f
+    cmp eax, ebx
+    jge 8f
+81: mov ebx, eax
+8:  mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -1488,6 +1496,7 @@ FN app_tick
     call git_tick
     call update_tick
     call ai_tick
+    call palette_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
