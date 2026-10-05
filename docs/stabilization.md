@@ -32,7 +32,8 @@ as a platform pass.
   window before the next frame, such as a trackpad tap. The release opens the
   menu under the button, and that frame's press no longer counts as a click
   outside it. Before the fix, the menu drew one empty frame and closed. The
-  titlebar tap script failed before the fix.
+  titlebar tap script failed before the fix. Repeated taps on a physical
+  macOS trackpad with tap-to-click keep the menu open.
 - The macOS Replace shortcut displays Control-H, matching the working shortcut.
   Command-H retains the native application Hide action. Shortcut hint tests and
   a native Replace invocation verify the correction.
