@@ -1637,11 +1637,27 @@ FN app_render
     mov ecx, [rsp + 24]
     sub ecx, eax
     mov [rsp + 48], ecx
-52: mov edi, [rsp + 40]
+52: # the terminal's top edge (term_panel_draw: MI_3 either side of it) is its handle, so the editor
+    # above it does not take a press there too
+    cmp dword ptr [rip + g_term_open], 0
+    je 54f
+    mov eax, [rsp + 40]
+    mov [rip + g_hole], eax
+    mov eax, [rsp + 20]
+    add eax, [rsp + 48]
+    sub eax, [rip + g_mt + 4*MI_3]
+    mov [rip + g_hole + 4], eax
+    mov eax, [rsp + 44]
+    mov [rip + g_hole + 8], eax
+    M eax, MI_3
+    lea eax, [rax + rax + 1]
+    mov [rip + g_hole + 12], eax
+54: mov edi, [rsp + 40]
     mov esi, [rsp + 20]
     mov edx, [rsp + 44]
     mov ecx, [rsp + 48]
     call center_draw
+    mov dword ptr [rip + g_hole + 12], 0
     cmp dword ptr [rip + g_term_open], 0
     je 53f
     mov edi, [rsp + 40]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The terminal panel's height follows only its own top edge: not a press on another panel's row
-that shares its widget id."""
+that shares its widget id, and a drag of the edge leaves the editor above it alone."""
 import os
 from pathlib import Path
 import re
@@ -13,6 +13,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 HEIGHT = 260
+# 1280x800 at scale 1: the status bar starts at 774, so the panel's top edge is at 774 - HEIGHT
+EDGE = 774 - HEIGHT
 # the agents panel (380 wide on the right): its first session row
 AGENT_ROW = (1000, 105)
 
@@ -76,6 +78,17 @@ class TerminalPanel(unittest.TestCase):
         self.run_editor([f'move {x} {y}', 'wait 50', 'down', 'wait 50', f'move {x} {y + 4}',
                           'wait 50', 'up', 'wait 50'], agents=True)
         self.assertEqual(self.height(), HEIGHT)
+
+    def test_dragging_the_edge_leaves_the_editor_alone(self):
+        # pressed just above the line, inside the editor's last rows, and dragged down 100: the
+        # height follows the pointer, from the edge to the status bar
+        out = self.run_editor([f'move 600 {EDGE - 2}', 'wait 50', 'down', 'wait 50',
+                               f'move 600 {EDGE + 40}', 'wait 50', f'move 600 {EDGE + 98}',
+                               'wait 300', 'up', 'wait 50', 'print-state'])
+        state = [line for line in out.splitlines() if line.startswith('tabs=')][-1]
+        self.assertIn('line=1 col=1 sel=0', state)
+        self.assertEqual(self.height(), HEIGHT - 98)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
