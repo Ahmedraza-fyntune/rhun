@@ -11,6 +11,7 @@ ENDSTRUCT TS_SIZE
 
 .equ ID_TSPLIT, 0x6000
 .equ ID_TNEW, 0x6002
+.equ ID_TLINK, 0x6003           # the link under the pointer, for its tooltip
 .equ ID_THIDE, 0x6004
 .equ ID_TSCROLL, 0x6005
 .equ ID_TTAB, 0x6100            # + index
@@ -18,6 +19,8 @@ ENDSTRUCT TS_SIZE
 .equ MAX_SESS, 16
 .equ RBUF, 65536
 .equ MAX_ZOMB, 16
+.equ LMAX, 4096                 # cells of a line searched for a link
+.equ LROWS, 16                  # rows of a wrapped line before the pointer's, and after
 
 .bss
 .p2align 3
@@ -51,6 +54,21 @@ sel_e: .quad 0
 scroll_px: .long 0
 zombies: .zero 4 * MAX_ZOMB
 nzomb: .long 0
+link_on: .long 0                # the link under the pointer: 1 a URL, 2 a file (link_find)
+link_line: .long 0              # a file's :LINE:COL, 0 when not given
+link_col: .long 0
+ln_n: .long 0                   # cells of the pointer's line in lcp
+ln_hit: .long 0                 # the one under the pointer, or -1
+ln_r0: .long 0                  # the line's first row (term_row numbering)
+ln_cwd: .long 0                 # lcwd is known for this link_find
+.p2align 3
+ln_sess: .quad 0
+link_s: .quad 0                 # the link's first cell: absolute line << 16 | column
+link_e: .quad 0                 # and its last
+link_sb: .zero SB_SIZE          # the URL, or the file's absolute path
+lcp: .zero 4 * LMAX             # the pointer's line: code points
+lpos: .zero 4 * LMAX            # and their cells: row from the first << 16 | column
+lcwd: .zero 4096
 .p2align 3
 tmp: .zero SB_SIZE
 rbuf: .zero RBUF
@@ -771,6 +789,7 @@ FN term_panel_draw
     mov dword ptr [rip + g_settings_changed], 1
     mov dword ptr [rip + g_dirty], 1
 2:  call header_draw
+    mov dword ptr [rip + link_on], 0
     call cur_sess
     test rax, rax
     jz .Lpd_ret
@@ -1177,6 +1196,17 @@ grid_input:
     imul ecx, [rip + tlh]
     call ui_in
     mov r13d, eax               # pointer over the grid
+    # the link under it, unless a selection is being dragged
+    mov dword ptr [rip + link_on], 0
+    test r13d, r13d
+    jz 0f
+    cmp dword ptr [rip + sel_drag], 0
+    jne 0f
+    call link_find
+    cmp dword ptr [rip + link_on], 0
+    je 0f
+    call link_tip
+0:
     # the program asked for the mouse; shift keeps it for selecting
     xor r14d, r14d
     cmp dword ptr [r12 + TM_mouse], 0
@@ -1263,7 +1293,15 @@ grid_input:
     call report_press
 41: test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Lgi_drag
-    mov dword ptr [rip + g_focus], FOCUS_TERMINAL
+    # Cmd+click (macOS: Command is Ctrl here) or Ctrl+click on a link follows it, before a program
+    # that asked for the mouse gets the press
+    test dword ptr [rip + g_mods], MOD_CTRL
+    jz 42f
+    cmp dword ptr [rip + link_on], 0
+    je 42f
+    call link_open
+    jmp .Lgi_ret
+42: mov dword ptr [rip + g_focus], FOCUS_TERMINAL
     test r14d, r14d
     jz 5f
     xor esi, esi
@@ -1704,6 +1742,15 @@ draw_grid:
     mov ecx, eax
     call draw_char
     call char_lines
+    # the link under the pointer is underlined
+    cmp dword ptr [rip + link_on], 0
+    je .Ldg_ch_next
+    mov rdi, [rsp + 16]
+    mov esi, r14d
+    call link_in
+    test eax, eax
+    jz .Ldg_ch_next
+    call link_underline
 .Ldg_ch_next:
     inc r14d
     jmp .Ldg_ch
@@ -2248,6 +2295,782 @@ pl_edge:
     add rsp, 136
     ret
 
+# ---------------- links ----------------
+# Cmd+click on macOS, Ctrl+click elsewhere (as in VS Code) follows the link under the pointer: an
+# http(s) URL opens in the default browser, the path of a file that exists in a tab (at its
+# :LINE:COL). The pointer's line is read from the cells, wrapped rows joined; while the pointer is
+# on a link it is underlined and its tooltip names the click.
+
+# link_find(): the link under the pointer into link_* (rbx session, r12 term)
+link_find:
+    PROLOGUE 16
+    mov dword ptr [rip + link_on], 0
+    mov [rip + ln_sess], rbx
+    mov dword ptr [rip + ln_cwd], 0
+    call cell_at
+    mov [rsp], eax              # column
+    sub edx, [r12 + TM_view]
+    mov [rsp + 4], edx          # term row
+    # back to the first row of the line
+    mov r13d, edx
+    mov r14d, LROWS
+1:  dec r14d
+    jz 2f
+    lea esi, [r13 - 1]
+    mov rdi, r12
+    call term_row
+    test rax, rax
+    jz 2f
+    test dword ptr [rax + LN_flags], LF_WRAPPED
+    jz 2f
+    dec r13d
+    jmp 1b
+2:  mov [rip + ln_r0], r13d
+    mov dword ptr [rip + ln_n], 0
+    mov dword ptr [rip + ln_hit], -1
+    xor r15d, r15d              # rows read
+3:  mov rdi, r12
+    mov esi, r13d
+    call term_row
+    test rax, rax
+    jz .Llf_built
+    mov rbx, rax
+    mov ecx, [r12 + TM_cols]
+    cmp ecx, [rbx + LN_cap]
+    jle 31f
+    mov ecx, [rbx + LN_cap]
+31: mov [rsp + 8], ecx          # cells of this row
+    xor r14d, r14d
+4:  cmp r14d, [rsp + 8]
+    jae 6f
+    mov ecx, [rip + ln_n]
+    cmp ecx, LMAX
+    jae .Llf_built
+    movsxd rax, r14d
+    lea rax, [rax + rax*2]
+    mov eax, [rbx + rax*4 + LN_HDR]
+    test eax, A_WIDE2
+    jnz 44f
+    and eax, CP_MASK
+    cmp eax, ' '
+    jae 41f
+    mov eax, ' '
+41: lea rdx, [rip + lcp]
+    mov [rdx + rcx*4], eax
+    mov eax, r15d
+    shl eax, 16
+    or eax, r14d
+    lea rdx, [rip + lpos]
+    mov [rdx + rcx*4], eax
+    inc dword ptr [rip + ln_n]
+    jmp 45f
+44: dec ecx                     # the right half of a wide character: its left half
+45: cmp r13d, [rsp + 4]
+    jne 5f
+    cmp r14d, [rsp]
+    jne 5f
+    mov [rip + ln_hit], ecx
+5:  inc r14d
+    jmp 4b
+6:  test dword ptr [rbx + LN_flags], LF_WRAPPED
+    jz .Llf_built
+    inc r13d
+    inc r15d
+    cmp r15d, LROWS * 2
+    jb 3b
+.Llf_built:
+    mov rbx, [rip + ln_sess]
+    cmp dword ptr [rip + ln_hit], 0
+    jl .Llf_ret
+    call link_url
+    test eax, eax
+    jnz .Llf_ret
+    call link_path
+.Llf_ret:
+    EPILOGUE
+
+# link_url() -> 1 when the pointer is on an http(s) URL: the nearest scheme at or before it, up to the
+#   first character a URL cannot hold, less trailing punctuation and closing brackets it did not open
+link_url:
+    PROLOGUE 16
+    lea rbx, [rip + lcp]
+    mov r13d, [rip + ln_hit]
+    mov edi, [rbx + r13*4]
+    call url_char
+    test eax, eax
+    jz 8f
+    mov r14d, r13d              # the run of URL characters around the pointer
+1:  test r14d, r14d
+    jz 2f
+    mov edi, [rbx + r14*4 - 4]
+    call url_char
+    test eax, eax
+    jz 2f
+    dec r14d
+    jmp 1b
+2:  lea r15d, [r13 + 1]
+3:  cmp r15d, [rip + ln_n]
+    jae 4f
+    mov edi, [rbx + r15*4]
+    call url_char
+    test eax, eax
+    jz 4f
+    inc r15d
+    jmp 3b
+4:  mov [rsp], r13d             # the scheme
+5:  mov ecx, [rsp]
+    cmp ecx, r14d
+    jl 8f
+    mov edi, ecx
+    mov esi, r15d
+    lea rdx, [rip + .Lhttps]
+    call lmatch
+    test eax, eax
+    jnz 6f
+    mov edi, [rsp]
+    mov esi, r15d
+    lea rdx, [rip + .Lhttp]
+    call lmatch
+    test eax, eax
+    jnz 6f
+    dec dword ptr [rsp]
+    jmp 5b
+6:  add eax, [rsp]
+    mov [rsp + 4], eax          # after the scheme
+7:  cmp r15d, [rsp + 4]
+    jbe 8f
+    mov edi, [rbx + r15*4 - 4]
+    lea rsi, [rip + .Lurl_trail]
+    call char_in
+    test eax, eax
+    jnz 71f
+    mov edi, [rsp]
+    mov esi, r15d
+    mov edx, '('
+    mov ecx, ')'
+    cmp dword ptr [rbx + r15*4 - 4], ')'
+    je 72f
+    mov edx, '['
+    mov ecx, ']'
+    cmp dword ptr [rbx + r15*4 - 4], ']'
+    jne 9f
+72: call unbalanced
+    test eax, eax
+    jz 9f
+71: dec r15d
+    jmp 7b
+9:  cmp r13d, r15d
+    jae 8f                      # on what was trimmed
+    mov edi, [rsp]
+    mov esi, r15d
+    call link_text
+    mov dword ptr [rip + link_line], 0
+    mov dword ptr [rip + link_col], 0
+    mov edi, 1
+    mov esi, [rsp]
+    mov edx, r15d
+    call link_set
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# link_path() -> 1 when the pointer is on the path of a regular file: the word as it is, then without
+#   trailing punctuation and a :LINE or :LINE:COL, then without an ls -F type mark
+link_path:
+    PROLOGUE 32
+    lea rbx, [rip + lcp]
+    mov r13d, [rip + ln_hit]
+    mov edi, [rbx + r13*4]
+    call path_char
+    test eax, eax
+    jz .Llp_no
+    mov r14d, r13d              # the word around the pointer
+1:  test r14d, r14d
+    jz 2f
+    mov edi, [rbx + r14*4 - 4]
+    call path_char
+    test eax, eax
+    jz 2f
+    dec r14d
+    jmp 1b
+2:  lea r15d, [r13 + 1]
+3:  cmp r15d, [rip + ln_n]
+    jae 4f
+    mov edi, [rbx + r15*4]
+    call path_char
+    test eax, eax
+    jz 4f
+    inc r15d
+    jmp 3b
+4:  mov dword ptr [rsp + 8], 0  # line
+    mov dword ptr [rsp + 12], 0 # column
+    mov [rsp + 16], r15d        # end of the underline
+    mov edi, r14d
+    mov esi, r15d
+    call link_try
+    test eax, eax
+    jnz .Llp_yes
+    mov [rsp], r15d             # without trailing punctuation
+5:  mov ecx, [rsp]
+    cmp ecx, r14d
+    jbe .Llp_no
+    mov edi, [rbx + rcx*4 - 4]
+    lea rsi, [rip + .Lpath_trail]
+    call char_in
+    test eax, eax
+    jz 51f
+    dec dword ptr [rsp]
+    jmp 5b
+51: mov eax, [rsp]
+    mov [rsp + 4], eax          # end of the name
+    mov [rsp + 16], eax
+    # :LINE, or :LINE:COL
+    mov edi, r14d
+    mov esi, eax
+    call digits_back
+    cmp eax, [rsp]
+    je 6f
+    cmp eax, r14d
+    jbe 6f
+    cmp dword ptr [rbx + rax*4 - 4], ':'
+    jne 6f
+    mov [rsp + 20], eax
+    dec eax
+    mov [rsp + 4], eax
+    mov edi, [rsp + 20]
+    mov esi, [rsp]
+    call lnum
+    mov [rsp + 8], eax
+    mov edi, r14d
+    mov esi, [rsp + 4]
+    call digits_back
+    cmp eax, [rsp + 4]
+    je 6f
+    cmp eax, r14d
+    jbe 6f
+    cmp dword ptr [rbx + rax*4 - 4], ':'
+    jne 6f
+    mov [rsp + 20], eax
+    mov eax, [rsp + 8]
+    mov [rsp + 12], eax         # that was the column
+    mov edi, [rsp + 20]
+    mov esi, [rsp + 4]
+    call lnum
+    mov [rsp + 8], eax
+    mov eax, [rsp + 20]
+    dec eax
+    mov [rsp + 4], eax
+6:  mov esi, [rsp + 4]
+    cmp esi, r15d
+    je 7f                       # the word as it is: tried
+    mov edi, r14d
+    call link_try
+    test eax, eax
+    jnz .Llp_yes
+7:  # ls -F: a type mark after the name
+    mov dword ptr [rsp + 8], 0
+    mov dword ptr [rsp + 12], 0
+    mov eax, [rsp]
+    dec eax
+    cmp eax, r14d
+    jbe .Llp_no
+    mov [rsp + 16], eax
+    mov edi, [rbx + rax*4]
+    lea rsi, [rip + .Lls_marks]
+    call char_in
+    test eax, eax
+    jz .Llp_no
+    mov edi, r14d
+    mov esi, [rsp + 16]
+    call link_try
+    test eax, eax
+    jz .Llp_no
+.Llp_yes:
+    cmp r13d, [rsp + 16]
+    jae .Llp_no                 # on what was trimmed
+    mov eax, [rsp + 8]
+    mov [rip + link_line], eax
+    mov eax, [rsp + 12]
+    mov [rip + link_col], eax
+    mov edi, 2
+    mov esi, r14d
+    mov edx, [rsp + 16]
+    call link_set
+    mov eax, 1
+    EPILOGUE
+.Llp_no:
+    xor eax, eax
+    EPILOGUE
+
+# link_try(first, end) -> 1 when cells [first, end) name a regular file: its absolute path into link_sb
+#   (~/ is the home folder; a relative path starts from term_cwd, else from the project's folder, as
+#   output from before a cd and paths from a repository's root do)
+link_try:
+    PROLOGUE
+    cmp edi, esi
+    jae 8f
+    call link_text
+    mov rbx, [rip + link_sb + SB_ptr]
+    cmp word ptr [rbx], 0x2f7e  # "~/"
+    jne 1f
+    lea rdi, [rip + .Lhome]
+    call getenv
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    lea rsi, [rbx + 2]
+    call path_join
+    jmp 3f
+1:  PATH_ABSOLUTE rbx, 2f
+    call term_cwd
+    cmp byte ptr [rax], 0
+    je 4f
+    mov rdi, rax
+    mov rsi, rbx
+    call path_join
+    mov rdi, rax
+    call link_check
+    test eax, eax
+    jnz 9f
+4:  mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz 8f
+    mov rsi, rbx
+    call path_join
+    jmp 3f
+2:  mov rdi, rbx
+    call strlen
+    mov rsi, rax
+    mov rdi, rbx
+    call mem_dup
+3:  mov rdi, rax
+    call link_check
+9:  EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# link_check(path) -> 1 when the path (allocated, freed here) is a regular file: it goes into link_sb
+link_check:
+    push rbx
+    mov rbx, rdi
+    call path_normalize
+    mov rdi, rbx
+    call file_type
+    cmp eax, 0x8000
+    jne 1f
+    lea rdi, [rip + link_sb]
+    call sb_clear
+    lea rdi, [rip + link_sb]
+    mov rsi, rbx
+    call sb_push_cstr
+    mov rdi, rbx
+    call mem_free
+    mov eax, 1
+    pop rbx
+    ret
+1:  mov rdi, rbx
+    call mem_free
+    xor eax, eax
+    pop rbx
+    ret
+
+# term_cwd() -> lcwd: where relative paths printed in the terminal start: the shell's current folder,
+#   else the project, else rhun's own (asked once per link_find)
+term_cwd:
+    lea rax, [rip + lcwd]
+    cmp dword ptr [rip + ln_cwd], 0
+    jne 9f
+    PROLOGUE
+    mov dword ptr [rip + ln_cwd], 1
+    mov rax, [rip + ln_sess]
+    mov edi, [rax + TS_pid]
+    lea rsi, [rip + lcwd]
+    mov edx, 4096
+    call proc_cwd
+    test rax, rax
+    jg 8f
+    mov byte ptr [rip + lcwd], 0
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 1f
+    lea rdi, [rip + lcwd]
+    call cstr_copy
+    jmp 8f
+1:
+.ifndef WINDOWS
+    lea rdi, [rip + lcwd]
+    mov esi, 4096
+    SYS SYS_getcwd
+    test rax, rax
+    jg 8f
+    mov byte ptr [rip + lcwd], 0
+.endif
+8:  lea rax, [rip + lcwd]
+    EPILOGUE
+9:  ret
+
+# link_text(first, end): cells [first, end) of the line as UTF-8 into link_sb
+link_text:
+    push rbx
+    push r12
+    push r13
+    mov ebx, edi
+    mov r12d, esi
+    lea rdi, [rip + link_sb]
+    call sb_clear
+1:  cmp ebx, r12d
+    jae 2f
+    lea rax, [rip + lcp]
+    mov esi, [rax + rbx*4]
+    lea rdi, [rip + link_sb]
+    call sb_push_utf8
+    inc ebx
+    jmp 1b
+2:  lea rdi, [rip + link_sb]
+    xor esi, esi
+    call sb_push_byte           # a C string, also when empty
+    dec qword ptr [rip + link_sb + SB_len]
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+# link_set(kind, first, end): the link is cells [first, end) of the line (r12 term)
+link_set:
+    mov [rip + link_on], edi
+    lea r8, [rip + lpos]
+    movsxd rax, dword ptr [rip + ln_r0]
+    add rax, [r12 + TM_total]   # the absolute line of the first row
+    mov ecx, [r8 + rsi*4]
+    mov r9d, ecx
+    shr r9d, 16
+    add r9, rax
+    shl r9, 16
+    and ecx, 0xffff
+    or r9, rcx
+    mov [rip + link_s], r9
+    dec edx
+    mov ecx, [r8 + rdx*4]
+    mov r9d, ecx
+    shr r9d, 16
+    add r9, rax
+    shl r9, 16
+    and ecx, 0xffff
+    or r9, rcx
+    mov [rip + link_e], r9
+    ret
+
+# link_in(abs line, col) -> eax 1 if the cell is part of the link under the pointer
+link_in:
+    xor eax, eax
+    cmp dword ptr [rip + link_on], 0
+    je 9f
+    shl rdi, 16
+    or rdi, rsi
+    cmp rdi, [rip + link_s]
+    jb 9f
+    cmp rdi, [rip + link_e]
+    ja 9f
+    mov eax, 1
+9:  ret
+
+# link_underline(): the link's line under the cell r15 at [rsp + 36 + 8], row y [rsp + 24 + 8], in its
+#   color [rsp + 32 + 8] (draw_grid's frame, as char_lines)
+link_underline:
+    mov edx, [rip + tcw]
+    test dword ptr [r15], A_WIDE
+    jz 1f
+    add edx, edx
+1:  mov edi, [rsp + 36 + 8]
+    mov esi, [rsp + 24 + 8]
+    add esi, [rip + tbase]
+    inc esi
+    M ecx, MI_1
+    mov r8d, [rsp + 32 + 8]
+    jmp gfx_fill
+
+# link_tip(): the link's tooltip, under its cells on the pointer's row (r12 term)
+link_tip:
+    PROLOGUE
+    call cell_at
+    mov r13d, edx               # screen row
+    mov eax, edx
+    sub eax, [r12 + TM_view]
+    movsxd rax, eax
+    add rax, [r12 + TM_total]   # its absolute line
+    xor r14d, r14d              # the link's first column on it
+    mov rcx, [rip + link_s]
+    mov rdx, rcx
+    shr rdx, 16
+    cmp rdx, rax
+    jne 1f
+    movzx r14d, cx
+1:  mov r15d, [rip + gcols]     # and its end
+    mov rcx, [rip + link_e]
+    mov rdx, rcx
+    shr rdx, 16
+    cmp rdx, rax
+    jne 2f
+    movzx r15d, cx
+    inc r15d
+2:  mov edi, ID_TLINK
+    mov esi, r14d
+    imul esi, [rip + tcw]
+    add esi, [rip + gx]
+    lea edx, [r13 + 1]
+    imul edx, [rip + tlh]
+    add edx, [rip + gy]
+    mov ecx, r15d
+    sub ecx, r14d
+    imul ecx, [rip + tcw]
+    mov r8d, UB_HOVER
+    lea r9, [rip + .Ltip_url]
+    cmp dword ptr [rip + link_on], 1
+    je 3f
+    lea r9, [rip + .Ltip_file]
+3:  call tip_note_text
+    EPILOGUE
+
+# link_open(): follow the link under the pointer: a URL in the default browser, a file in a tab
+link_open:
+    PROLOGUE
+    cmp dword ptr [rip + link_on], 1
+    jne 1f
+    mov rdi, [rip + link_sb + SB_ptr]
+    call desktop_open
+    jmp 9f
+1:  mov rdi, [rip + link_sb + SB_ptr]
+    call strlen
+    mov rsi, rax
+    mov rdi, [rip + link_sb + SB_ptr]
+    call mem_dup
+    mov rbx, rax
+    mov r12d, [rip + link_line]
+    mov r13d, [rip + link_col]
+    mov rdi, rbx
+    call app_open_file
+    mov r14, rax
+    mov rdi, rbx
+    call mem_free
+    test r14, r14
+    js 9f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    # at :LINE:COL, in a text tab
+    test r12d, r12d
+    jz 9f
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    cmp qword ptr [rbx + DOC_img], 0
+    jne 9f
+    lea rsi, [r12 - 1]
+    mov rax, [rbx + DOC_nlines]
+    dec rax
+    cmp rsi, rax
+    cmova rsi, rax
+    mov r14, rsi
+    mov rdi, rbx
+    call doc_line_start
+    mov r15, rax
+    mov rdi, rbx
+    mov rsi, r14
+    call doc_line_end
+    lea ecx, [r13 - 1]
+    test ecx, ecx
+    jns 2f
+    xor ecx, ecx
+2:  add rcx, r15
+    cmp rcx, rax
+    cmova rcx, rax
+    mov rdi, rbx
+    mov rsi, rcx
+    xor edx, edx
+    call ed_set_cursor
+    mov ecx, [rip + g_ed_h_lines]
+    shr ecx, 1
+    mov rax, r14
+    sub rax, rcx
+    jns 3f
+    xor eax, eax
+3:  shl rax, 8
+    mov [rbx + DOC_scrolly], rax
+    mov dword ptr [rip + g_reveal], 1
+9:  mov dword ptr [rip + link_on], 0
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# url_char(cp), path_char(cp) -> 1 for a character a URL, or a path in a line of output, can hold
+url_char:
+    lea rsi, [rip + .Lurl_stop]
+    jmp 1f
+path_char:
+    lea rsi, [rip + .Lpath_stop]
+1:  xor eax, eax
+    cmp edi, ' '
+    jbe 2f
+    cmp edi, 0x7f
+    je 2f
+    call char_in
+    xor eax, 1
+2:  ret
+
+# char_in(cp, ascii cstr) -> 1 if the set has it
+char_in:
+    xor eax, eax
+1:  movzx ecx, byte ptr [rsi]
+    test ecx, ecx
+    jz 2f
+    inc rsi
+    cmp edi, ecx
+    jne 1b
+    mov eax, 1
+2:  ret
+
+# lmatch(pos, end, lowercase ascii cstr) -> its length when the line has it at pos (any case), else 0
+lmatch:
+    lea r8, [rip + lcp]
+    xor eax, eax
+1:  movzx ecx, byte ptr [rdx + rax]
+    test ecx, ecx
+    jz 3f
+    lea r9d, [rdi + rax]
+    cmp r9d, esi
+    jae 2f
+    mov r9d, [r8 + r9*4]
+    lea r10d, [r9 - 'A']
+    cmp r10d, 25
+    ja 11f
+    or r9d, 0x20
+11: cmp r9d, ecx
+    jne 2f
+    inc eax
+    jmp 1b
+2:  xor eax, eax
+3:  ret
+
+# unbalanced(first, end, open, close) -> 1 when cells [first, end) close more brackets than they open
+unbalanced:
+    lea r8, [rip + lcp]
+    xor eax, eax
+1:  cmp edi, esi
+    jae 3f
+    mov r9d, [r8 + rdi*4]
+    cmp r9d, edx
+    jne 2f
+    inc eax
+2:  cmp r9d, ecx
+    jne 21f
+    dec eax
+21: inc edi
+    jmp 1b
+3:  shr eax, 31
+    ret
+
+# digits_back(first, end) -> eax where the digits ending at end start (end when there are none)
+digits_back:
+    lea r8, [rip + lcp]
+    mov eax, esi
+1:  cmp eax, edi
+    jbe 2f
+    mov ecx, [r8 + rax*4 - 4]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja 2f
+    dec eax
+    jmp 1b
+2:  ret
+
+# lnum(first, end) -> eax the number in cells [first, end) (digits), at most 100000000
+lnum:
+    lea r8, [rip + lcp]
+    xor eax, eax
+1:  cmp edi, esi
+    jae 2f
+    mov ecx, [r8 + rdi*4]
+    sub ecx, '0'
+    imul eax, eax, 10
+    add eax, ecx
+    cmp eax, 100000000
+    jae 2f
+    inc edi
+    jmp 1b
+2:  ret
+
+# term_link_dump(sb): "link=url URL", "link=file PATH[:LINE[:COL]]" for the link under the pointer, or
+#   "link=" (print-link)
+FN term_link_dump
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Llink_eq]
+    call sb_push_cstr
+    cmp dword ptr [rip + g_term_open], 0
+    je 9f
+    mov eax, [rip + link_on]
+    test eax, eax
+    jz 9f
+    lea rsi, [rip + .Llink_url]
+    cmp eax, 1
+    je 1f
+    lea rsi, [rip + .Llink_file]
+1:  mov rdi, rbx
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + link_sb + SB_ptr]
+    call sb_push_cstr
+    mov r12d, [rip + link_line]
+    test r12d, r12d
+    jz 9f
+    mov rdi, rbx
+    mov esi, ':'
+    call sb_push_byte
+    mov rdi, rbx
+    mov esi, r12d
+    call sb_push_u64
+    mov r12d, [rip + link_col]
+    test r12d, r12d
+    jz 9f
+    mov rdi, rbx
+    mov esi, ':'
+    call sb_push_byte
+    mov rdi, rbx
+    mov esi, r12d
+    call sb_push_u64
+9:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
+# term_cell_dump(row, col, sb): "X Y", the middle of a cell of the terminal's grid (print-term-cell)
+FN term_cell_dump
+    PROLOGUE
+    mov rbx, rdx
+    mov eax, [rip + tcw]
+    imul esi, eax
+    shr eax, 1
+    add esi, eax
+    add esi, [rip + gx]
+    mov r12d, esi
+    mov eax, [rip + tlh]
+    imul edi, eax
+    shr eax, 1
+    add edi, eax
+    add edi, [rip + gy]
+    mov r13d, edi
+    mov rdi, rbx
+    mov esi, r12d
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, rbx
+    mov esi, r13d
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
 # term_dump_current(sb): the current terminal's screen, for scripts
 FN term_dump_current
     push rbx
@@ -2279,6 +3102,24 @@ rep_cell: .long -1
 .endif
 .Lno_shell: .asciz "Could not start a shell"
 .Lword_stop: .asciz "()[]{}<>'\"`,;|&"
+.Lurl_stop: .asciz "\"'<>`{}|\\^"
+.Lpath_stop: .asciz "\"'<>`|()[]{},;"
+.Lurl_trail: .asciz ".,;:!?*"
+.Lpath_trail: .asciz ".,:;!?"
+.Lls_marks: .asciz "*@="
+.Lhttps: .asciz "https://"
+.Lhttp: .asciz "http://"
+.Lhome: .asciz "HOME"
+.Llink_eq: .asciz "link="
+.Llink_url: .asciz "url "
+.Llink_file: .asciz "file "
+.ifdef MACOS
+.Ltip_url: .asciz "Follow link (\342\214\230 click)"
+.Ltip_file: .asciz "Open file (\342\214\230 click)"
+.else
+.Ltip_url: .asciz "Follow link (Ctrl+click)"
+.Ltip_file: .asciz "Open file (Ctrl+click)"
+.endif
 .Lenv_term: .asciz "TERM=xterm-256color"
 .Lenv_color: .asciz "COLORTERM=truecolor"
 .Lenv_prog: .asciz "TERM_PROGRAM=rhun"

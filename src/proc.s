@@ -48,6 +48,38 @@ FN proc_self_path
 .Lproc_self: .asciz "/proc/self/exe"
 .text
 
+# proc_cwd(pid, buf, capacity) -> length of the process's current folder, written to buf with a NUL, or
+#   negative (a terminal's shell: relative paths in its output start there)
+FN proc_cwd
+.ifdef MACOS
+    jmp mac_pid_cwd
+.else
+.ifdef WINDOWS
+    mov rax, -1
+    ret
+.else
+    PROLOGUE 48
+    mov r12, rsi
+    mov r13, rdx
+    mov dword ptr [rsp], 0x6f72702f     # "/proc/"
+    mov word ptr [rsp + 4], 0x2f63
+    mov esi, edi
+    lea rdi, [rsp + 6]
+    call fmt_u64
+    lea rcx, [rsp + rax + 6]
+    mov dword ptr [rcx], 0x6477632f     # "/cwd"
+    mov byte ptr [rcx + 4], 0
+    mov rdi, rsp
+    mov rsi, r12
+    lea rdx, [r13 - 1]
+    SYS SYS_readlink
+    test rax, rax
+    jle 9f
+    mov byte ptr [r12 + rax], 0
+9:  EPILOGUE
+.endif
+.endif
+
 # env_make(extras): the environment with extras ("NAME=value", 0-terminated list) set -> envp
 FN env_make
     PROLOGUE 16

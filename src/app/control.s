@@ -1,5 +1,5 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
-#   key ctrl+s | type text | click x y [right|middle] | tap x y | move x y | down | up | scroll dy [ctrl]
+#   key ctrl+s | type text | click x y [right|middle|shift|ctrl] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
 #   print-menu
@@ -228,8 +228,13 @@ c_click:
     jz 1f
     # shift: a left click with Shift held, pressed and released
     cmp byte ptr [rax], 's'
-    jne 2f
+    jne 21f
     mov dword ptr [rip + click_mods], MOD_SHIFT
+    jmp 1f
+    # ctrl: Ctrl+click, which is Cmd+click on macOS (Command arrives as Ctrl)
+21: cmp byte ptr [rax], 'c'
+    jne 2f
+    mov dword ptr [rip + click_mods], MOD_CTRL
     jmp 1f
 2:  mov r13d, BTN_RIGHT
     cmp byte ptr [rax], 'r'
@@ -734,6 +739,25 @@ c_print_tip:
 c_print_term:
     lea rdi, [rip + out]
     call term_dump_current
+    xor eax, eax
+    ret
+
+# print-link: the terminal's link under the pointer, "link=" when there is none
+c_print_link:
+    lea rdi, [rip + out]
+    call term_link_dump
+    xor eax, eax
+    ret
+
+# print-term-cell ROW COL: "X Y", the middle of that cell of the terminal
+c_print_term_cell:
+    call next_int
+    push rax
+    call next_int
+    pop rdi
+    mov esi, eax
+    lea rdx, [rip + out]
+    call term_cell_dump
     xor eax, eax
     ret
 
@@ -1306,6 +1330,8 @@ on_client:
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
 .Lc_print_tip: .asciz "print-tip"
+.Lc_print_link: .asciz "print-link"
+.Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
@@ -1335,7 +1361,8 @@ ctl_table:
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
-    .quad .Lc_print_tip, c_print_tip, 0, 0
+    .quad .Lc_print_tip, c_print_tip, .Lc_print_link, c_print_link
+    .quad .Lc_print_term_cell, c_print_term_cell, 0, 0
 
 .data
 lsock: .long -1
