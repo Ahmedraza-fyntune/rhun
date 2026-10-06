@@ -434,6 +434,23 @@ c_print_shape:
     xor eax, eax
     ret
 
+# print-scroll: the document's vertical scroll offset in 1/256 lines
+c_print_scroll:
+    push rbx
+    mov rbx, [rip + g_doc]
+    xor esi, esi
+    test rbx, rbx
+    jz 1f
+    mov rsi, [rbx + DOC_scrolly]
+1:  lea rdi, [rip + out]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    xor eax, eax
+    ret
+
 c_scroll:
     call next_int
     push rax
@@ -443,6 +460,15 @@ c_scroll:
     test rdx, rdx
     jz 1f
     mov ecx, MOD_CTRL
+    cmp rdx, 3
+    jne 1f
+    cmp byte ptr [rax], 'a'
+    jne 1f
+    cmp byte ptr [rax + 1], 'l'
+    jne 1f
+    cmp byte ptr [rax + 2], 't'
+    jne 1f
+    mov ecx, MOD_ALT
 1:  pop rax
     pop rax
     xor edi, edi
@@ -1279,6 +1305,7 @@ on_client:
 .Lc_print_window: .asciz "print-window"
 .Lc_print_cursor: .asciz "print-cursor"
 .Lc_print_shape: .asciz "print-shape"
+.Lc_print_scroll: .asciz "print-scroll"
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
@@ -1314,7 +1341,7 @@ ctl_table:
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
-    .quad .Lc_print_shape, c_print_shape
+    .quad .Lc_print_shape, c_print_shape, .Lc_print_scroll, c_print_scroll
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
     .quad .Lc_wait_grep, c_wait_grep

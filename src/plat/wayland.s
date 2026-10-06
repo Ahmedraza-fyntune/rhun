@@ -1099,14 +1099,16 @@ on_pointer:
     cmp dword ptr [rip + axis_src], 0
     jne 2f
     imul r13d, r13d, 5            # wheel: ~3 lines per notch
-2:  xor edi, edi
+    jmp 3f
+2:  imul r13d, r13d, 3            # continuous sources (touchpad): ~3x, like other editors
+3:  xor edi, edi
     xor esi, esi
     cmp dword ptr [r12 + 4], 0
-    jne 3f
+    jne 4f
     mov esi, r13d
-    jmp 4f
-3:  mov edi, r13d
-4:  mov edx, [rip + kb_mods]
+    jmp 5f
+4:  mov edi, r13d
+5:  mov edx, [rip + kb_mods]
     call app_on_scroll
     jmp .Lp_ret
 .Lp_source:

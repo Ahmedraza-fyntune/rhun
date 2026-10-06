@@ -42,6 +42,9 @@ cfg_auto_pairs: .long 1
 cfg_word_wrap: .long 0
 cfg_vim: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
+.globl cfg_scroll_sens, cfg_fast_sens
+cfg_scroll_sens: .long 100       # scroll_sensitivity: multiplier in hundredths
+cfg_fast_sens: .long 400         # fast_scroll_sensitivity: multiplier while alt is held
 .globl cfg_term_font_size, cfg_term_scrollback, cfg_term_h, cfg_term_shell, cfg_git
 cfg_term_font_size: .long 14
 cfg_term_scrollback: .long 10000
@@ -666,6 +669,8 @@ g_settings:
     SETTING .Ls_ui, tooltips, ST_BOOL, cfg_tooltips, 0, 1, 1, 0, "Tooltips", "Show a button's name and shortcut on hover."
     SETTING .Ls_ui, auto_hide_scrollbars, ST_BOOL, cfg_autohide_scrollbars, 0, 1, 1, 0, "Auto-hide scrollbars", "Show scrollbars only while scrolling or under the pointer."
     SETTING .Ls_ui, decorations, ST_CHOICE, cfg_decorations, 0, 2, 1, 0, "Title bar", "Who draws window buttons on Wayland. Auto leaves tiling desktops bare.", .Ldeco_opts
+    SETTING .Ls_ui, scroll_sensitivity, ST_INT, cfg_scroll_sens, 10, 1000, 10, 1, "Scroll sensitivity", "Scroll speed multiplier. 1.0 is the default."
+    SETTING .Ls_ui, fast_scroll_sensitivity, ST_INT, cfg_fast_sens, 10, 1000, 10, 1, "Fast scroll sensitivity", "Multiplier used while alt is held during a scroll."
     SETTING .Ls_editor, font_size, ST_INT, cfg_font_size, 8, 40, 1, 0, "Editor font size", "Font size of the text you edit."
     SETTING .Ls_editor, font, ST_STR, cfg_font, 0, 0, 0, 0, "Editor font", "Path to a monospace .ttf file. Empty uses the built-in Iosevka."
     SETTING .Ls_editor, line_height, ST_INT, cfg_line_height, 100, 250, 5, 1, "Line height", "Multiple of the font size."

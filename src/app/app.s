@@ -1143,6 +1143,21 @@ FN app_on_button
 # app_on_scroll(dx, dy, mods)
 FN app_on_scroll
     mov [rip + g_scroll_mods], edx
+    mov ecx, [rip + cfg_scroll_sens]
+    test edx, MOD_ALT
+    jz 1f
+    mov ecx, [rip + cfg_fast_sens]
+1:  imul edi, ecx
+    imul esi, ecx
+    mov ecx, 100
+    mov eax, edi
+    cdq
+    idiv ecx
+    mov edi, eax
+    mov eax, esi
+    cdq
+    idiv ecx
+    mov esi, eax
     call ui_input_scroll
     mov dword ptr [rip + g_dirty], 1
     ret
