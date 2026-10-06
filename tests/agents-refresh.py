@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Routine agent discovery runs quietly: the panel shows its loading state only for a run the user
-asked for."""
+asked for, and a folder without a repository is not rediscovered when a file in it is saved."""
 import glob
 import json
 import os
@@ -136,6 +136,24 @@ class AgentsRefresh(unittest.TestCase):
         self.command('cmd toggle_agents')
         self.command('wait-agents')
         self.assertEqual(self.command('print-agents-page'), 'shown=1 total=1 loading=0 error=0\n')
+
+    def test_saving_in_a_plain_folder_runs_no_discovery(self):
+        self.start()
+        before = self.cache()
+        (self.project / 'note.txt').write_text('saved\n', encoding='utf-8')
+        self.command('wait 1500')
+        self.assertEqual(self.cache(), before, 'a file saved in the folder ran discovery again')
+
+    def test_a_change_in_the_repository_runs_discovery_again(self):
+        # worktree registrations live under .git: a change there is followed
+        subprocess.run(['git', 'init', '-q', '-b', 'main', str(self.project)], env=self.env, check=True)
+        self.start()
+        before = self.cache()
+        (self.project / '.git/rhun-probe').write_text('registered\n', encoding='utf-8')
+        deadline = time.monotonic() + 10
+        while self.cache() == before and time.monotonic() < deadline:
+            self.command('wait 100')
+        self.assertNotEqual(self.cache(), before, 'a change under .git did not run discovery')
 
 
 if __name__ == '__main__':

@@ -104,7 +104,9 @@ FN agents_set_project
     mov dword ptr [rip + index_error], 0
     mov qword ptr [rip + last_scan], 0
     mov qword ptr [rip + index_debounce], 0
-    call git_repository_id
+    # the repository's worktree registrations (.git/worktrees) add roots: a change there runs
+    # discovery again; a folder without a repository has none to watch
+    call git_common_dir
     test rax, rax
     jz 1f
     mov rdi, rax

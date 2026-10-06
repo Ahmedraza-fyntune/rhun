@@ -74,6 +74,11 @@ FN git_repository_id
     mov rax, [rip + g_project]
 1:  ret
 
+# git_common_dir() -> the repository's common .git directory, or 0 outside a repository
+FN git_common_dir
+    mov rax, [rip + commondir]
+    ret
+
 # git_set_project(): find the repository of g_project and start over
 FN git_set_project
     PROLOGUE
