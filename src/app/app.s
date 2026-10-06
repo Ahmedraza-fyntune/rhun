@@ -1576,6 +1576,14 @@ FN app_timeout
     cmp eax, ebx
     jge 8f
 81: mov ebx, eax
+    call sb_timeout
+    cmp eax, -1
+    je 8f
+    cmp ebx, -1
+    je 82f
+    cmp eax, ebx
+    jge 8f
+82: mov ebx, eax
 8:  mov eax, ebx
     EPILOGUE
 
@@ -1583,6 +1591,7 @@ FN app_tick
     PROLOGUE
     call watch_tick
     call tip_tick
+    call sb_tick
     call ed_blink_tick
     mov rax, [rip + g_toast_until]
     test rax, rax
@@ -1895,9 +1904,24 @@ splitter:
     lea ecx, [rax + rax + 1]
     mov r8d, r14d
     call ui_btn
-    test eax, UB_HOVER | UB_HELD
+    test eax, UB_PRESS
+    jz 4f
+    and dword ptr [rip + g_pressed], ~(1 << BTN_LEFT)   # the press is the drag's; the editor must not take it too
+4:  test eax, UB_HOVER | UB_HELD
     jz 1f
     mov dword ptr [rip + g_cursor], CUR_EW
+    mov [rsp], eax                  # feedback line over the divider
+    M edx, MI_2
+    mov edi, edx
+    sar edi, 1
+    neg edi
+    add edi, r12d
+    mov esi, r13d
+    mov ecx, r14d
+    xor r8d, r8d
+    COLOR r9d, T_ACCENT
+    call gfx_round_rect
+    mov eax, [rsp]
 1:  test eax, UB_HELD
     jz 9f
     # new width in logical points
@@ -3624,11 +3648,16 @@ FN tip_commit
     mov eax, [rip + tip_cand]
 1:  cmp eax, [rip + tip_id]
     je 9f
+    mov ecx, [rip + tip_state]
     mov [rip + tip_id], eax
     mov dword ptr [rip + tip_state], TIP_PENDING
     test eax, eax
     jz 9f
-    sub rsp, 8
+    cmp ecx, TIP_SHOWN              # straight from a shown tip to another button: no second delay
+    jne 2f
+    mov dword ptr [rip + tip_state], TIP_SHOWN
+    jmp 9f
+2:  sub rsp, 8
     call time_ms
     add rsp, 8
     mov [rip + tip_since], rax

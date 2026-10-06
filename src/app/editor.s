@@ -2089,6 +2089,8 @@ FN editor_draw
     mov eax, [rip + g_mx]
     cmp eax, [rip + g_ed_tx]
     jl 1f
+    cmp dword ptr [rip + g_cursor], CUR_DEFAULT
+    jne 1f
     mov dword ptr [rip + g_cursor], CUR_TEXT
 1:  # wheel
     mov eax, [rip + g_scroll_y]
@@ -2141,6 +2143,8 @@ FN editor_draw
 31: # mouse press in the text area
     test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Led_noinput
+    cmp dword ptr [rip + g_active], 0     # another widget already claimed this press
+    jne .Led_noinput
     mov eax, [rip + g_ed_x]
     add eax, [rip + g_ed_w]
     sub eax, [rip + g_mt + 4*MI_12]

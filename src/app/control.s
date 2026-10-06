@@ -411,6 +411,16 @@ c_print_window:
     xor eax, eax
     ret
 
+c_print_shape:
+    lea rdi, [rip + out]
+    mov esi, [rip + g_cursor]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    ret
+
 c_scroll:
     call next_int
     push rax
@@ -1254,6 +1264,7 @@ on_client:
 .Lc_xkey: .asciz "xkey"
 .Lc_print_window: .asciz "print-window"
 .Lc_print_cursor: .asciz "print-cursor"
+.Lc_print_shape: .asciz "print-shape"
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
@@ -1289,6 +1300,7 @@ ctl_table:
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
+    .quad .Lc_print_shape, c_print_shape
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
     .quad .Lc_wait_grep, c_wait_grep

@@ -1188,6 +1188,8 @@ grid_input:
     jz .Lgi_drag
     test r14d, r14d
     jnz 2f
+    cmp dword ptr [rip + g_cursor], CUR_DEFAULT
+    jne 2f
     mov dword ptr [rip + g_cursor], CUR_TEXT
 2:  # wheel
     mov eax, [rip + g_scroll_y]
@@ -1263,6 +1265,8 @@ grid_input:
     call report_press
 41: test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Lgi_drag
+    cmp dword ptr [rip + g_active], 0     # another widget already claimed this press
+    jne .Lgi_drag
     mov dword ptr [rip + g_focus], FOCUS_TERMINAL
     test r14d, r14d
     jz 5f

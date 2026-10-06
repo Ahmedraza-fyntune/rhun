@@ -28,6 +28,10 @@ g_press_y: .long 0
 held_mx: .long 0                # a pointer move waiting for the frame of a press
 held_my: .long 0
 held_move: .long 0
+.equ SB_MAX, 8                  # scrollbars tracked for the scroll-flash
+.equ SB_SHOW_MS, 800            # ms a thumb stays visible after its offset last moved
+# sb_flash slot: +0 scroll-offset ptr, +8 last offset px (+pad), +16 show-until ms; 24B each
+sb_flash: .zero SB_MAX * 24
 .p2align 3
 g_face_ui: .zero FACE_SIZE
 g_face_small: .zero FACE_SIZE
@@ -495,7 +499,10 @@ FN ui_icon_btn
     mov ecx, r15d
     M r8d, MI_RADIUS
     COLOR r9d, T_HOVER
-    call gfx_round_rect
+    test dword ptr [rsp + 4], UB_HELD
+    jz 11f
+    COLOR r9d, T_ACTIVE
+11: call gfx_round_rect
 1:  mov edi, ebx
     mov esi, r12d
     mov edx, r13d
@@ -669,7 +676,14 @@ FN ui_scrollbar
     xor eax, eax
 .Lsb_input_ready:
     mov [rsp + 20], eax
-    test eax, UB_PRESS
+    test eax, UB_HELD
+    jnz 7f                  # this scrollbar's own drag
+    test eax, UB_HOVER
+    jz 1f
+    cmp dword ptr [rip + g_active], 0
+    jne 1f                  # another widget is dragging: keep its cursor
+7:  mov dword ptr [rip + g_cursor], CUR_ARROW
+1:  test eax, UB_PRESS
     jz 1f
     # grab offset inside thumb (or jump so the thumb centers on the mouse)
     mov eax, [rip + g_my]
@@ -703,17 +717,51 @@ FN ui_scrollbar
     cmovg eax, ecx
     mov [r15], eax
     mov dword ptr [rip + g_dirty], 1
-4:  # draw thumb (thin, wider when hovered or dragged)
+4:  # scroll flash: keep the thumb visible briefly after the offset last moved (keyed by
+    # the offset pointer, so each scrollbar flashes only for its own scrolls)
+    lea rdx, [rip + sb_flash]
+    xor ecx, ecx
+61: cmp [rdx], r15
+    je 62f
+    cmp qword ptr [rdx], 0
+    jne 63f
+    mov [rdx], r15
+    mov eax, [r15]                  # seed, don't flash, on first sight
+    mov [rdx + 8], eax
+    jmp 62f
+63: add rdx, 24
+    inc ecx
+    cmp ecx, SB_MAX
+    jl 61b
+    xor edx, edx                    # table full: no flash for this bar
+62: mov [rsp + 24], rdx
+    sub rsp, 8
+    call time_ms                    # rax = now
+    add rsp, 8
+    mov rdx, [rsp + 24]
+    xor ecx, ecx
+    test rdx, rdx
+    jz 68f
+    mov r10d, [r15]
+    cmp r10d, [rdx + 8]
+    je 67f
+    mov [rdx + 8], r10d
+    lea r10, [rax + SB_SHOW_MS]
+    mov [rdx + 16], r10
+67: cmp rax, [rdx + 16]
+    jge 68f
+    mov ecx, 1
+68: mov [rsp + 28], ecx
+    # draw thumb while hovered or dragged, or during the scroll flash
+    test dword ptr [rsp + 20], UB_HOVER | UB_HELD
+    jnz 71f
+    cmp dword ptr [rsp + 28], 0
+    jz .Lsb_ret
+71:
     COLOR r9d, T_SCROLLBAR
     mov ecx, [rsp + 12]
     M eax, MI_6
-    test dword ptr [rsp + 20], UB_HOVER | UB_HELD
-    jnz 6f
-    mov r9d, r9d
-    and r9d, 0x00ffffff
-    or r9d, 0xa0000000
-    M eax, MI_4
-6:  mov edx, eax
+    mov edx, eax
     mov edi, [rsp + 4]
     add edi, ecx
     sub edi, eax
@@ -725,6 +773,59 @@ FN ui_scrollbar
     call gfx_round_rect
 .Lsb_ret:
     EPILOGUE
+
+# sb_tick(): expire scroll-flash windows that have passed
+FN sb_tick
+    push rbx
+    push r12
+    sub rsp, 8
+    call time_ms
+    mov r12, rax
+    lea rbx, [rip + sb_flash]
+    mov ecx, SB_MAX
+1:  mov rax, [rbx + 16]
+    test rax, rax
+    jz 2f
+    cmp r12, rax
+    jb 2f
+    mov qword ptr [rbx + 16], 0
+    mov dword ptr [rip + g_dirty], 1
+2:  add rbx, 24
+    dec ecx
+    jnz 1b
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# sb_timeout() -> ms until the oldest scroll-flash window closes, or -1
+FN sb_timeout
+    push rbx
+    push r12
+    sub rsp, 8
+    call time_ms
+    mov r12, rax
+    lea rbx, [rip + sb_flash]
+    mov ecx, SB_MAX
+    mov edx, -1
+1:  mov rax, [rbx + 16]
+    test rax, rax
+    jz 2f
+    sub rax, r12
+    jle 2f                          # already due: sb_tick clears it
+    cmp edx, -1
+    je 3f
+    cmp eax, edx
+    jge 2f
+3:  mov edx, eax
+2:  add rbx, 24
+    dec ecx
+    jnz 1b
+    mov eax, edx
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
 
 # ---- text field ----
 
