@@ -986,6 +986,22 @@ FN settings_draw
     call commit_edit
 .Lsd_end:
     call gfx_clip_pop
+    # scrollbar on the view's right edge
+    mov eax, [rip + set_content_h]
+    mov ecx, [rsp + 12]
+    push rcx
+    push rax
+    mov edi, ID_SET_SCROLL
+    mov esi, [rsp + 16]
+    add esi, [rsp + 16 + 8]
+    M eax, MI_12
+    sub esi, eax
+    mov edx, [rsp + 16 + 4]
+    mov ecx, eax
+    mov r8d, [rsp + 16 + 12]
+    lea r9, [rip + set_scroll]
+    call ui_scrollbar
+    add rsp, 16
     EPILOGUE
 
 # eax requested control width -> bounded width inside the column.
