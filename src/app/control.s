@@ -434,9 +434,12 @@ c_print_shape:
     xor eax, eax
     ret
 
-# print-scroll: the document's vertical scroll offset in 1/256 lines
+# print-scroll: "y=N", the document's vertical scroll offset in 1/256 lines
 c_print_scroll:
     push rbx
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Lps_y]
+    call sb_push_cstr
     mov rbx, [rip + g_doc]
     xor esi, esi
     test rbx, rbx
@@ -1306,6 +1309,7 @@ on_client:
 .Lc_print_cursor: .asciz "print-cursor"
 .Lc_print_shape: .asciz "print-shape"
 .Lc_print_scroll: .asciz "print-scroll"
+.Lps_y: .asciz "y="
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"

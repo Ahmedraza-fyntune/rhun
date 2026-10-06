@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,13 @@ class SidebarSplit(unittest.TestCase):
                         XDG_STATE_HOME=(self.work / 'state').as_posix())
 
     def tearDown(self):
+        # Windows releases the folder only once the terminal's shell has exited.
+        for _ in range(50):
+            try:
+                self.tmp.cleanup()
+                return
+            except OSError:
+                time.sleep(0.2)
         self.tmp.cleanup()
 
     def run_editor(self, actions, agents=False, autohide=True):

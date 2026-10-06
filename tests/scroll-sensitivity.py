@@ -46,9 +46,9 @@ class ScrollSensitivity(unittest.TestCase):
 
     def scroll_offset(self, scroll_cmd, extra=''):
         self.config.write_text(CONFIG.format(extra=extra), encoding='utf-8')
-        out = self.run_editor(['wait 200', 'move 500 400', scroll_cmd,
-                               'wait 60', 'print-scroll'])
-        return int(out.strip())
+        commands = scroll_cmd if isinstance(scroll_cmd, list) else [scroll_cmd]
+        out = self.run_editor(['wait 200', 'move 500 400', *commands, 'wait 60', 'print-scroll'])
+        return int(out.strip().rpartition('=')[2])
 
     def test_default_scrolls(self):
         self.assertGreater(self.scroll_offset('scroll 600'), 0)
@@ -73,6 +73,15 @@ class ScrollSensitivity(unittest.TestCase):
         base = self.scroll_offset('scroll 600')
         slow = self.scroll_offset('scroll 600', 'scroll_sensitivity = 0.5\n')
         self.assertAlmostEqual(slow / base, 0.5, delta=0.05)
+
+    def test_small_steps_add_up(self):
+        # a trackpad's one-pixel steps: at 0.5 every other one scrolls a pixel instead of none
+        base = self.scroll_offset(['scroll 1'] * 120)
+        slow = self.scroll_offset(['scroll 1'] * 120, 'scroll_sensitivity = 0.5\n')
+        fast = self.scroll_offset(['scroll 1'] * 120, 'scroll_sensitivity = 1.5\n')
+        self.assertGreater(base, 0)
+        self.assertAlmostEqual(slow / base, 0.5, delta=0.05)
+        self.assertAlmostEqual(fast / base, 1.5, delta=0.05)
 
 
 if __name__ == '__main__':

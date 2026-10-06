@@ -81,6 +81,8 @@ cur_shape: .long 0
 ptr_x: .long 0             # fixed 24.8 logical
 ptr_y: .long 0
 axis_src: .long 0
+.p2align 3
+axis_rem: .quad 0, 0       # what is left of a pixel, vertical and horizontal
 
 kb_group: .long 0
 kb_mods: .long 0
@@ -1093,15 +1095,31 @@ on_pointer:
     call app_on_button
     jmp .Lp_ret
 .Lp_axis:
-    mov edi, [r12 + 8]            # fixed value
-    call fixed_to_phys
+    # in 1/(256 * 120) physical pixels: the wheel scrolls ~3 lines a notch, a touchpad 3x the
+    # finger's travel, and what falls short of a pixel carries to the next event
+    movsxd rax, dword ptr [r12 + 8]   # fixed 24.8 logical
+    mov ecx, 5
+    mov edx, 3
+    mov esi, [rip + axis_src]
+    dec esi
+    cmp esi, 1                    # finger or continuous
+    cmovbe ecx, edx
+    imul rax, rcx
+    mov ecx, [rip + scale120]
+    test ecx, ecx
+    jnz 1f
+    imul ecx, dword ptr [rip + int_scale], 120
+1:  imul rax, rcx
+    mov ecx, [r12 + 4]            # 0 vertical, 1 horizontal
+    and ecx, 1
+    lea rsi, [rip + axis_rem]
+    add rax, [rsi + rcx*8]
+    cqo
+    mov edi, 256 * 120
+    idiv rdi
+    mov [rsi + rcx*8], rdx
     mov r13d, eax
-    cmp dword ptr [rip + axis_src], 0
-    jne 2f
-    imul r13d, r13d, 5            # wheel: ~3 lines per notch
-    jmp 3f
-2:  imul r13d, r13d, 3            # continuous sources (touchpad): ~3x, like other editors
-3:  xor edi, edi
+    xor edi, edi
     xor esi, esi
     cmp dword ptr [r12 + 4], 0
     jne 4f
