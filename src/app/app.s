@@ -21,6 +21,7 @@
 .equ TIP_DELAY, 500              # ms of steady hover before a tooltip shows
 .equ TIP_PENDING, 0
 .equ TIP_SHOWN, 1
+.equ TIP_GRACE, 400               # ms after a tooltip hides that the next one shows at once
 .equ TIP_DISMISSED, 2
 .equ TT_id, 0                    # tip_table entry: button, text, handler
 .equ TT_text, 8
@@ -58,6 +59,7 @@ tip_cw: .long 0
 tip_state: .long 0               # TIP_PENDING, TIP_SHOWN, or TIP_DISMISSED by a key press
 .p2align 3
 tip_since: .quad 0               # time_ms when the pointer reached tip_id
+tip_left: .quad 0                # time_ms when the pointer left a shown tooltip
 tip_text_id: .long 0             # the button whose tooltip is in tip_text (tip_note_text)
 tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
@@ -79,6 +81,8 @@ pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folder
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
 split_drag: .long 0
+split_l_bits: .long 0           # UB_* of the dividers, hit tested before the panels
+split_r_bits: .long 0
 .globl g_editor_rect
 g_editor_rect: .zero 16
 .globl g_title_inset
@@ -1576,6 +1580,14 @@ FN app_timeout
     cmp eax, ebx
     jge 8f
 81: mov ebx, eax
+    call sb_timeout
+    cmp eax, -1
+    je 8f
+    cmp ebx, -1
+    je 82f
+    cmp eax, ebx
+    jge 8f
+82: mov ebx, eax
 8:  mov eax, ebx
     EPILOGUE
 
@@ -1583,6 +1595,7 @@ FN app_tick
     PROLOGUE
     call watch_tick
     call tip_tick
+    call sb_tick
     call ed_blink_tick
     mov rax, [rip + g_toast_until]
     test rax, rax
@@ -1669,6 +1682,27 @@ FN app_render
     mov dword ptr [rsp + 28], 0 # body x
     mov eax, [rsp]
     mov [rsp + 32], eax         # body right
+    # the dividers take their strips first: the panels either side are drawn before them
+    mov dword ptr [rip + split_l_bits], 0
+    mov dword ptr [rip + split_r_bits], 0
+    cmp dword ptr [rip + cfg_sidebar], 0
+    je 31f
+    mov edi, ID_SPLIT_L
+    mov esi, [rip + g_side_px]
+    mov edx, [rsp + 20]
+    mov ecx, [rsp + 24]
+    call splitter_hit
+    mov [rip + split_l_bits], eax
+31: cmp dword ptr [rip + cfg_agents], 0
+    je 32f
+    mov edi, ID_SPLIT_R
+    mov esi, [rsp]
+    sub esi, [rip + g_agents_px]
+    mov edx, [rsp + 20]
+    mov ecx, [rsp + 24]
+    call splitter_hit
+    mov [rip + split_r_bits], eax
+32:
     # sidebar
     cmp dword ptr [rip + cfg_sidebar], 0
     je 4f
@@ -1686,11 +1720,6 @@ FN app_render
     mov ecx, [rsp + 24]
     COLOR r8d, T_BORDER
     call gfx_fill
-    mov edi, ID_SPLIT_L
-    mov esi, [rsp + 28]
-    mov edx, [rsp + 20]
-    mov ecx, [rsp + 24]
-    call splitter
 4:  cmp dword ptr [rip + cfg_agents], 0
     je 5f
     mov edi, [rsp]
@@ -1706,11 +1735,6 @@ FN app_render
     mov ecx, [rsp + 24]
     COLOR r8d, T_BORDER
     call gfx_fill
-    mov edi, ID_SPLIT_R
-    mov esi, [rsp + 32]
-    mov edx, [rsp + 20]
-    mov ecx, [rsp + 24]
-    call splitter
 5:  # editor column, the terminal panel under it
     mov edi, [rsp + 28]
     cmp dword ptr [rip + cfg_sidebar], 0
@@ -1767,7 +1791,24 @@ FN app_render
     mov edx, [rsp + 44]
     mov ecx, [rsp + 52]
     call term_panel_draw
-53:
+53: # the dividers over everything in the body: their line and cursor win
+    cmp dword ptr [rip + cfg_sidebar], 0
+    je 55f
+    mov edi, ID_SPLIT_L
+    mov esi, [rsp + 28]
+    mov edx, [rsp + 20]
+    mov ecx, [rsp + 24]
+    mov r8d, [rip + split_l_bits]
+    call splitter
+55: cmp dword ptr [rip + cfg_agents], 0
+    je 56f
+    mov edi, ID_SPLIT_R
+    mov esi, [rsp + 32]
+    mov edx, [rsp + 20]
+    mov ecx, [rsp + 24]
+    mov r8d, [rip + split_r_bits]
+    call splitter
+56:
     # chrome
     xor edi, edi
     xor esi, esi
@@ -1876,28 +1917,42 @@ edge_cursor:
     mov eax, CUR_NESW
 1:  ret
 
-# splitter(id, x, y, h): drag handle for panel widths
+# splitter_hit(id, x, y, h) -> UB_* bits: the divider's strip, MI_3 either side of x; it keeps its press
+splitter_hit:
+    PROLOGUE
+    M eax, MI_3
+    sub esi, eax
+    lea r8d, [rax + rax + 1]
+    xchg ecx, r8d
+    call ui_btn
+    test eax, UB_PRESS
+    jz 1f
+    and dword ptr [rip + g_pressed], ~(1 << BTN_LEFT)   # the press is the drag's; nothing under it takes it too
+1:  EPILOGUE
+
+# splitter(id, x, y, h, bits): cursor, line and drag of a divider hit tested by splitter_hit
 splitter:
     PROLOGUE 16
     mov ebx, edi
     mov r12d, esi
     mov r13d, edx
     mov r14d, ecx
-    M eax, MI_3
-    mov esi, r12d
-    sub esi, eax
-    mov edi, ebx
-    xchg esi, edi
-    mov edi, ebx
-    mov esi, r12d
-    sub esi, eax
-    mov edx, r13d
-    lea ecx, [rax + rax + 1]
-    mov r8d, r14d
-    call ui_btn
-    test eax, UB_HOVER | UB_HELD
+    mov eax, r8d
+4:  test eax, UB_HOVER | UB_HELD
     jz 1f
     mov dword ptr [rip + g_cursor], CUR_EW
+    mov [rsp], eax                  # feedback line over the divider
+    M edx, MI_2
+    mov edi, edx
+    sar edi, 1
+    neg edi
+    add edi, r12d
+    mov esi, r13d
+    mov ecx, r14d
+    xor r8d, r8d
+    COLOR r9d, T_ACCENT
+    call gfx_round_rect
+    mov eax, [rsp]
 1:  test eax, UB_HELD
     jz 9f
     # new width in logical points
@@ -3624,14 +3679,29 @@ FN tip_commit
     mov eax, [rip + tip_cand]
 1:  cmp eax, [rip + tip_id]
     je 9f
+    mov ecx, [rip + tip_state]
     mov [rip + tip_id], eax
     mov dword ptr [rip + tip_state], TIP_PENDING
-    test eax, eax
-    jz 9f
-    sub rsp, 8
+    push rax
+    push rcx
     call time_ms
-    add rsp, 8
-    mov [rip + tip_since], rax
+    mov rdx, rax
+    pop rcx
+    pop rax
+    cmp ecx, TIP_SHOWN              # leaving a shown tip: the next one within TIP_GRACE skips the delay
+    jne 3f
+    mov [rip + tip_left], rdx
+3:  test eax, eax
+    jz 9f
+    cmp ecx, TIP_SHOWN
+    je 4f
+    mov rcx, rdx
+    sub rcx, [rip + tip_left]
+    cmp rcx, TIP_GRACE
+    jb 4f
+    mov [rip + tip_since], rdx
+    ret
+4:  mov dword ptr [rip + tip_state], TIP_SHOWN
 9:  ret
 
 # tip_dismiss(): a key press hides the tooltip until the pointer reaches another button
