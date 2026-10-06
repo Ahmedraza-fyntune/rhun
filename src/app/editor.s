@@ -3468,8 +3468,8 @@ hscroll_clamp:
     mov [rbx + DOC_scrollx], rax
 2:  ret
 
-# editor_scroll_dump(sb): "x=PX max=PX track=X,Y,W,H" of the active document's horizontal scroll
-#   (print-scroll; max 0 and no track without the scrollbar)
+# editor_scroll_dump(sb): "x=PX y=N max=PX track=X,Y,W,H", the active document's scroll, y in
+#   1/256 lines (print-scroll; max 0 and no track without the horizontal scrollbar)
 FN editor_scroll_dump
     PROLOGUE
     mov rbx, rdi
@@ -3481,6 +3481,16 @@ FN editor_scroll_dump
     jz 1f
     mov rsi, [rax + DOC_scrollx]
 1:  mov rdi, rbx
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Lsd_y]
+    call sb_push_cstr
+    xor esi, esi
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 4f
+    mov rsi, [rax + DOC_scrolly]
+4:  mov rdi, rbx
     call sb_push_u64
     mov rdi, rbx
     lea rsi, [rip + .Lsd_max]
@@ -3516,6 +3526,7 @@ FN editor_scroll_dump
 
 .section .rodata
 .Lsd_x: .asciz "x="
+.Lsd_y: .asciz " y="
 .Lsd_max: .asciz " max="
 .Lsd_track: .asciz " track="
 .text

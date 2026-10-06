@@ -37,6 +37,7 @@ BOOLS = {
 INTS = {
     ('ui', 'scale'): (.5, 3., .1), ('ui', 'font_size'): (9, 24, 1),
     ('ui', 'sidebar_width'): (140, 600, 10), ('ui', 'agents_width'): (240, 900, 10),
+    ('ui', 'scroll_sensitivity'): (.1, 10., .1), ('ui', 'fast_scroll_sensitivity'): (.1, 10., .1),
     ('editor', 'font_size'): (8, 40, 1), ('editor', 'line_height'): (1., 2.5, .05),
     ('editor', 'tab_width'): (1, 16, 1), ('terminal', 'font_size'): (8, 40, 1),
     ('terminal', 'scrollback'): (0, 100000, 1000), ('terminal', 'height'): (80, 2000, 10),
@@ -75,7 +76,7 @@ class SettingsUI(unittest.TestCase):
             k + ' = ' + v + '\n' for k, v in values.items()) for s, values in data.items()),
             encoding='utf-8')
 
-    def run_editor(self, actions, height=3800, width=1400):
+    def run_editor(self, actions, height=4200, width=1400):
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join(['cmd settings', *actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), self.work.as_posix(), '--headless', f'{width}x{height}',

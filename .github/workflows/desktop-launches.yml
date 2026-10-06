@@ -33,6 +33,10 @@ jobs:
         run: |
           python3 tests/linux-launch.py
           python3 tests/linux-launch.py --wayland
+      - name: Native wheel and touchpad scrolling
+        run: |
+          python3 tests/linux-scroll.py
+          python3 tests/linux-scroll.py --wayland
       - uses: actions/upload-artifact@v4
         if: always()
         with:

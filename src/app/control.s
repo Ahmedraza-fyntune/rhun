@@ -448,6 +448,15 @@ c_scroll:
     test rdx, rdx
     jz 1f
     mov ecx, MOD_CTRL
+    cmp rdx, 3
+    jne 1f
+    cmp byte ptr [rax], 'a'
+    jne 1f
+    cmp byte ptr [rax + 1], 'l'
+    jne 1f
+    cmp byte ptr [rax + 2], 't'
+    jne 1f
+    mov ecx, MOD_ALT
 1:  pop rax
     pop rax
     xor edi, edi
@@ -467,7 +476,7 @@ c_scroll_x:
     xor eax, eax
     ret
 
-# print-scroll: "x=PX max=PX track=X,Y,W,H" of the editor's horizontal scroll
+# print-scroll: "x=PX y=N max=PX track=X,Y,W,H", the editor's scroll (y in 1/256 lines)
 c_print_scroll:
     lea rdi, [rip + out]
     call editor_scroll_dump
