@@ -12,6 +12,7 @@ win_cursor: .quad 0
 win_class: .zero 80
 win_bmi: .zero 44
 win_message: .zero 48
+wheel_rem: .long 0, 0       # half a pixel left from the wheel, vertical and horizontal
 .text
 
 FN win_open_window
@@ -341,6 +342,8 @@ FN win_mods
 4:  mov eax, ebx
     EPILOGUE
 
+# the window procedure (tests/windows/wheel_test.s sends it messages)
+.globl win_wndproc
 win_wndproc:
     CALLBACK 96
     mov rbx, rcx
@@ -489,16 +492,28 @@ win_wndproc:
 .Lwm_scroll:
     call win_mods
     mov edx, eax
+    # 120 a notch scrolls 60 px. A precision touchpad sends smaller steps: what falls short of a
+    # pixel carries to the next message, so they add up and both directions round alike.
     shr r13, 16
-    movsx esi, r13w
-    neg esi
-    sar esi, 1
-    xor edi, edi
+    movsx eax, r13w
+    xor ecx, ecx
     cmp r12d, 0x20e
-    jne 1f
-    mov edi, esi
-    neg edi
+    sete cl                       # 0 vertical, 1 horizontal
+    lea r8, [rip + wheel_rem]
+    add eax, [r8 + rcx*4]
+    mov edi, eax
+    shr edi, 31
+    add edi, eax
+    sar edi, 1                    # halved toward zero
+    lea r9d, [rdi + rdi]
+    sub eax, r9d
+    mov [r8 + rcx*4], eax
     xor esi, esi
+    test ecx, ecx
+    jnz 1f                        # tilted right scrolls right
+    mov esi, edi
+    neg esi                       # turned away scrolls up
+    xor edi, edi
 1:  call app_on_scroll
     jmp .Lwm_zero
 .Lwm_char:
