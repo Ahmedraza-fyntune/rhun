@@ -178,6 +178,17 @@ FN agent_index_main
     PROLOGUE
     mov rbx, [rip + g_argv]
     mov rax, [rbx + 16]
+.ifdef WINDOWS
+    # the project as the app spells it (C:/...): the worker can be started by other programs too
+    mov rdi, rax
+    call win_fullpath
+    test rax, rax
+    jz .Lindex_bad
+    mov r12, rax
+    mov rdi, rax
+    call path_normalize
+    mov rax, r12
+.endif
     mov [rip + g_project], rax
     mov rdi, [rbx + 24]
     call strlen

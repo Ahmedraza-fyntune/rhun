@@ -190,6 +190,9 @@ find_repo:
     mov r13, rax
     test rax, rax
     jnz .Lfr_try
+    # only a path rooted at / has / above it: a relative or C:\ one would try its first letter forever
+    cmp byte ptr [r12], '/'
+    jne .Lfr_none
     mov r13d, 1                 # "/"
     jmp .Lfr_try
 .Lfr_file:
