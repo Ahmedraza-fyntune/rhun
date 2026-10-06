@@ -53,6 +53,34 @@ replies:
 1:  pop rbx
     ret
 
+# feed_cstr(str): bytes for the terminal in rbx
+feed_cstr:
+    push r12
+    mov r12, rdi
+    call strlen
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, rax
+    call term_feed
+    pop r12
+    ret
+
+# press(table): keysym, cp, mods entries until a zero keysym, for the terminal in rbx
+press:
+    push r12
+    mov r12, rdi
+1:  mov esi, [r12]
+    test esi, esi
+    jz 2f
+    mov rdi, rbx
+    mov edx, [r12 + 4]
+    mov ecx, [r12 + 8]
+    call term_key
+    add r12, 12
+    jmp 1b
+2:  pop r12
+    ret
+
 # cell(t, row, col): attributes and colors
 cell:
     push rbx
@@ -244,6 +272,31 @@ FN main
     call replies
     mov rdi, rbx
     call term_free
+    # kitty keyboard protocol: queries, keys with flag 1, the alternate screen's own flags,
+    # pops, sets, a full stack, then legacy keys again
+    mov edi, 20
+    mov esi, 3
+    mov edx, 10
+    call term_new
+    mov rbx, rax
+    lea rdi, [rip + .Lkk_on]
+    call feed_cstr
+    lea rdi, [rip + kk_keys]
+    call press
+    mov rdi, rbx
+    call replies
+    lea rdi, [rip + .Lkk_stack]
+    call feed_cstr
+    mov rdi, rbx
+    call replies
+    lea rdi, [rip + .Lkk_full]
+    call feed_cstr
+    lea rdi, [rip + kk_legacy]
+    call press
+    mov rdi, rbx
+    call replies
+    mov rdi, rbx
+    call term_free
     mov rdi, 1
     mov rsi, [rip + out + SB_ptr]
     mov rdx, [rip + out + SB_len]
@@ -258,6 +311,12 @@ FN main
 .Lappcur: .ascii "\033[?1h"
 .Lbpm: .ascii "\033[?2004h"
 .Lpaste: .ascii "a\nb\033c\r\n"
+.Lkk_on: .asciz "\033[?u\033[>7u\033[?u"
+.Lkk_stack: .ascii "\033[?1049h\033[?u\033[>1u\033[?u\033[?1049l\033[?u"
+    .ascii "\033[<u\033[?u\033[<u\033[?u\033[=1u\033[?u\033[=1;3u\033[?u\033[=1;2u\033[?u"
+    .asciz "\033[=8;2u\033[?u\033[<9u\033[?u"
+.Lkk_full: .ascii "\033[>1u\033[>1u\033[>1u\033[>1u\033[>1u\033[>1u\033[>1u\033[>1u\033[>1u"
+    .asciz "\033[<8u\033[?u\033[<u\033[?u"
 # cols, rows, bytes
 t1: .byte 20, 3
     .asciz "hello\r\nworld"
@@ -299,6 +358,32 @@ c_scroll: .byte 10, 3
 cases: .quad t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, 0
 .p2align 2
 # keysym, cp, mods (-1: switch to application cursor keys)
+# with kitty flag 1
+kk_keys:
+    .long KEY_RETURN, 0, 0
+    .long KEY_RETURN, 0, MOD_SHIFT
+    .long KEY_RETURN, 0, MOD_ALT
+    .long KEY_RETURN, 0, MOD_CTRL
+    .long KEY_KP_ENTER, 0, MOD_SHIFT
+    .long KEY_TAB, 0, 0
+    .long KEY_ISO_LEFT_TAB, 0, MOD_SHIFT
+    .long KEY_BACKSPACE, 0, MOD_CTRL
+    .long KEY_ESCAPE, 0, 0
+    .long 'c', 'c', MOD_CTRL
+    .long 'x', 'x', MOD_ALT
+    .long 'A', 'A', MOD_SHIFT | MOD_ALT
+    .long ' ', ' ', MOD_CTRL
+    .long 'q', 'q', 0
+    .long 'Q', 'Q', MOD_SHIFT
+    .long KEY_UP, 0, MOD_ALT
+    .long 0, 0, 0
+# after the last pop
+kk_legacy:
+    .long KEY_RETURN, 0, MOD_SHIFT
+    .long KEY_RETURN, 0, MOD_ALT
+    .long 'c', 'c', MOD_CTRL
+    .long KEY_ESCAPE, 0, 0
+    .long 0, 0, 0
 keys:
     .long KEY_UP, 0, 0
     .long KEY_UP, 0, MOD_CTRL

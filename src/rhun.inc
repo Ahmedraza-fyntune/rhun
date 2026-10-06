@@ -873,6 +873,11 @@ ENDSTRUCT TH_SIZE
 .equ TMM_LNM, 512
 .equ TMM_SYNC, 1024
 
+# kitty keyboard protocol, per screen: +0 the flags in effect, +4 pushes kept, +8 the pushed flags
+.equ KK_DEPTH, 8
+.equ KK_BLOCK, 8 + 4 * KK_DEPTH
+.equ KK_SUPPORTED, 1            # disambiguate escape codes
+.equ KK_SIZE, 2 * KK_BLOCK      # the main and the alternate screen
 STRUCT
 F TM_cols, 4
 F TM_rows, 4
@@ -904,6 +909,7 @@ F TM_sbg, 4
 F TM_sg0, 4
 F TM_cursor, 4          # DECSCUSR style
 F TM_mouse, 4           # 0, 1000, 1002 or 1003
+F TM_kk, KK_SIZE        # kitty keyboard flags of the main and the alternate screen
 F TM_lastcp, 4
 F TM_sbcap, 4
 F TM_sbhead, 4          # oldest line in the ring

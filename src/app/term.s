@@ -941,7 +941,11 @@ alt_screen:
     mov dword ptr [rbx + TM_view], 0
     test edi, edi
     jz 9f
-2:  # a fresh alternate screen
+2:  # a fresh alternate screen, without keyboard flags left from an earlier program
+    lea rdi, [rbx + TM_kk + KK_BLOCK]
+    xor eax, eax
+    mov ecx, KK_BLOCK / 4
+    rep stosd
     xor edi, edi
     mov esi, [rbx + TM_rows]
     jmp erase_rows
@@ -952,6 +956,10 @@ alt_screen:
 full_reset:
     xor edi, edi
     call alt_screen
+    lea rdi, [rbx + TM_kk]
+    xor eax, eax
+    mov ecx, KK_SIZE / 4
+    rep stosd
     mov dword ptr [rbx + TM_modes], TMM_WRAP
     xor eax, eax
     mov [rbx + TM_attr], eax
@@ -974,6 +982,14 @@ full_reset:
     xor edi, edi
     mov esi, [rbx + TM_rows]
     jmp erase_rows
+
+# kk_block() -> rax: the active screen's kitty keyboard flags (TM_kk)
+kk_block:
+    lea rax, [rbx + TM_kk]
+    test dword ptr [rbx + TM_modes], TMM_ALT
+    jz 1f
+    add rax, KK_BLOCK
+1:  ret
 
 # ---------------- replies ----------------
 
@@ -1483,6 +1499,8 @@ csi_dispatch:
     jne .Lcd_gt
     cmp dword ptr [rbx + TM_inter], '$'
     je .Lcd_decrqm
+    cmp r12d, 'u'
+    je .Lcd_kk_query
     cmp r12d, 'h'
     je 1f
     cmp r12d, 'l'
@@ -1526,7 +1544,9 @@ csi_dispatch:
     jmp .Lcd_ret
 .Lcd_gt:
     cmp eax, '>'
-    jne .Lcd_ret
+    jne .Lcd_lt
+    cmp r12d, 'u'
+    je .Lcd_kk_push
     cmp r12d, 'c'
     jne 1f
     lea rdi, [rip + .Lr_da2]
@@ -1536,6 +1556,96 @@ csi_dispatch:
     jne .Lcd_ret
     lea rdi, [rip + .Lr_version]
     call reply_cstr
+    jmp .Lcd_ret
+.Lcd_lt:
+    cmp r12d, 'u'
+    jne .Lcd_ret
+    cmp eax, '<'
+    je .Lcd_kk_pop
+    cmp eax, '='
+    je .Lcd_kk_set
+    jmp .Lcd_ret
+
+# kitty keyboard protocol (sw.kovidgoyal.net/kitty/keyboard-protocol): only the flags in
+# KK_SUPPORTED are kept, so a query tells the program which of its requests took
+.Lcd_kk_query:
+    # CSI ? u: the flags in effect
+    call kk_block
+    mov r13d, [rax]
+    lea rdi, [rip + .Lr_rqm]
+    call reply_cstr
+    mov edi, r13d
+    call reply_num
+    mov edi, 'u'
+    call reply_byte
+    jmp .Lcd_ret
+.Lcd_kk_push:
+    # CSI > flags u: keep the flags in effect, then use these; a full stack loses its oldest
+    xor edi, edi
+    xor esi, esi
+    call param
+    and eax, KK_SUPPORTED
+    mov r13d, eax
+    call kk_block
+    mov r14, rax
+    mov ecx, [r14 + 4]
+    cmp ecx, KK_DEPTH
+    jb 2f
+    xor ecx, ecx
+1:  mov eax, [r14 + 12 + rcx*4]
+    mov [r14 + 8 + rcx*4], eax
+    inc ecx
+    cmp ecx, KK_DEPTH - 1
+    jb 1b
+2:  mov eax, [r14]
+    mov [r14 + 8 + rcx*4], eax
+    inc ecx
+    mov [r14 + 4], ecx
+    mov [r14], r13d
+    jmp .Lcd_ret
+.Lcd_kk_pop:
+    # CSI < n u: undo n pushes; popping past the first leaves no flags
+    xor edi, edi
+    mov esi, 1
+    call param
+    mov r13d, eax
+    call kk_block
+    mov r14, rax
+1:  test r13d, r13d
+    jz .Lcd_ret
+    mov ecx, [r14 + 4]
+    test ecx, ecx
+    jz 2f
+    dec ecx
+    mov [r14 + 4], ecx
+    mov eax, [r14 + 8 + rcx*4]
+    mov [r14], eax
+    dec r13d
+    jmp 1b
+2:  mov dword ptr [r14], 0
+    jmp .Lcd_ret
+.Lcd_kk_set:
+    # CSI = flags ; mode u: mode 1 sets them, 2 adds them, 3 removes them
+    xor edi, edi
+    xor esi, esi
+    call param
+    and eax, KK_SUPPORTED
+    mov r13d, eax
+    mov edi, 1
+    mov esi, 1
+    call param
+    mov r15d, eax
+    call kk_block
+    cmp r15d, 2
+    je 2f
+    cmp r15d, 3
+    je 3f
+    mov [rax], r13d
+    jmp .Lcd_ret
+2:  or [rax], r13d
+    jmp .Lcd_ret
+3:  not r13d
+    and [rax], r13d
     jmp .Lcd_ret
 
 .Lcsi_ich:
@@ -2703,7 +2813,10 @@ FN term_key
 2:  test r14d, MOD_CTRL
     jz 3f
     add r15d, 4
-3:  lea rcx, [rip + key_seqs]
+3:  call kk_block
+    mov eax, [rax]
+    mov [rsp], eax
+    lea rcx, [rip + key_seqs]
 4:  mov eax, [rcx]
     test eax, eax
     jz .Lk_plain
@@ -2754,6 +2867,56 @@ FN term_key
     call reply_byte
     jmp .Lk_yes
 .Lk_plain:
+    # disambiguated (kitty flag 1): Escape, modified Enter, Tab and Backspace, and a character with
+    # ctrl or alt become CSI code ; modifiers u. Plain Enter, Tab and Backspace stay as they were.
+    test dword ptr [rsp], 1
+    jz .Lk_legacy
+    mov eax, r12d
+    mov ecx, 27
+    cmp eax, KEY_ESCAPE
+    je .Lk_csiu
+    mov ecx, 13
+    cmp eax, KEY_RETURN
+    je 1f
+    cmp eax, KEY_KP_ENTER
+    je 1f
+    mov ecx, 9
+    cmp eax, KEY_TAB
+    je 1f
+    cmp eax, KEY_ISO_LEFT_TAB
+    je 1f
+    mov ecx, 127
+    cmp eax, KEY_BACKSPACE
+    je 1f
+    test r13d, r13d
+    jz .Lk_legacy
+    test r14d, MOD_CTRL | MOD_ALT
+    jz .Lk_legacy
+    # the key's own codepoint: a letter in lower case
+    mov ecx, r13d
+    lea eax, [rcx - 'A']
+    cmp eax, 25
+    ja .Lk_csiu
+    add ecx, 32
+    jmp .Lk_csiu
+1:  cmp r15d, 1
+    je .Lk_legacy
+.Lk_csiu:
+    mov [rsp + 4], ecx
+    lea rdi, [rip + .Lr_csi]
+    call reply_cstr
+    mov edi, [rsp + 4]
+    call reply_num
+    cmp r15d, 1
+    je 2f
+    mov edi, ';'
+    call reply_byte
+    mov edi, r15d
+    call reply_num
+2:  mov edi, 'u'
+    call reply_byte
+    jmp .Lk_yes
+.Lk_legacy:
     mov eax, r12d
     cmp eax, KEY_RETURN
     je 1f
