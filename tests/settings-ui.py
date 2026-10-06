@@ -27,7 +27,7 @@ for line in (ROOT / 'src/app/config.s').read_text(encoding='utf-8').splitlines()
 
 # These values are the public settings contract, independent of UI step logic.
 BOOLS = {
-    'ui': 'sidebar agents_panel tooltips',
+    'ui': 'sidebar agents_panel tooltips auto_hide_scrollbars',
     'editor': ('insert_spaces line_numbers highlight_line animate_disk_changes match_brackets '
                'indent_guides word_wrap whitespace cursor_blink smooth_caret auto_pairs '
                'scroll_past_end vim_mode'),

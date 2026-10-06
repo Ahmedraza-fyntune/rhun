@@ -754,15 +754,20 @@ FN ui_scrollbar
     jge 68f
     mov ecx, 1
 68: mov [rsp + 28], ecx
-    # draw thumb while hovered or dragged, or during the scroll flash
+    # the full thumb while hovered or dragged, or during the scroll flash; otherwise none, or a
+    # faint thin one when scrollbars do not auto-hide
+    COLOR r9d, T_SCROLLBAR
+    M eax, MI_6
     test dword ptr [rsp + 20], UB_HOVER | UB_HELD
     jnz 71f
     cmp dword ptr [rsp + 28], 0
-    jz .Lsb_ret
-71:
-    COLOR r9d, T_SCROLLBAR
-    mov ecx, [rsp + 12]
-    M eax, MI_6
+    jne 71f
+    cmp dword ptr [rip + cfg_autohide_scrollbars], 0
+    jne .Lsb_ret
+    and r9d, 0x00ffffff
+    or r9d, 0xa0000000
+    M eax, MI_4
+71: mov ecx, [rsp + 12]
     mov edx, eax
     mov edi, [rsp + 4]
     add edi, ecx

@@ -189,6 +189,9 @@ Hovering a title bar or explorer button for half a second shows its name and, fo
 current shortcut in your platform's notation. Once one is showing, the next button's appears at once.
 **Tooltips** in Settings > Appearance turns them off (`tooltips = false` under `[ui]`).
 
+Scrollbars stay out of sight until you scroll or point at them. **Auto-hide scrollbars** in
+Settings > Appearance keeps a faint one in view instead (`auto_hide_scrollbars = false` under `[ui]`).
+
 Settings includes links to [rhun.app](https://rhun.app), [hi@rhun.app](mailto:hi@rhun.app), and [GitHub issues](https://github.com/vshvedov/rhun/issues) for feedback and bug reports in a single row. The email link follows the website and opens the default email app. All three are also available from the command palette.
 
 Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.

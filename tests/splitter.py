@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Panel dividers keep their presses and cursors, scrollbars hide when idle, and nearby tooltips
-skip the delay. A press inside a divider's strip resizes the panel and must not turn into a text
-selection, open the file under it or lose the next click."""
+"""Panel dividers keep their presses and cursors, scrollbars hide when idle (unless that setting is
+off), and nearby tooltips skip the delay. A press inside a divider's strip resizes the panel and
+must not turn into a text selection, open the file under it or lose the next click."""
 import os
 from pathlib import Path
 import subprocess
@@ -33,12 +33,13 @@ class SidebarSplit(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_editor(self, actions, agents=False):
+    def run_editor(self, actions, agents=False, autohide=True):
         self.config.write_text('[ui]\nsidebar = true\nsidebar_width = 240\nagents_panel = %s\n'
+                               'auto_hide_scrollbars = %s\n'
                                '[editor]\ncursor_blink = false\n'
                                '[files]\nrestore_session = false\nrestore_project = false\n'
                                '[updates]\ncheck = false\n[git]\nenabled = false\n'
-                               % str(agents).lower(), encoding='utf-8')
+                               % (str(agents).lower(), str(autohide).lower()), encoding='utf-8')
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join([*actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), self.proj.as_posix(), self.file.as_posix(),
@@ -214,6 +215,16 @@ class SidebarSplit(unittest.TestCase):
         v = self.values(['wait 500', 'print-frames', 'move 500 400', 'scroll 300', 'wait 1500',
                          'print-frames', 'wait 1500', 'echo idle=', 'print-frames'])
         self.assertEqual(v['idle'], 'frames=0')
+
+    def test_without_auto_hide_a_faint_thumb_stays(self):
+        hidden, = self.shots(['wait 200', 'move 500 400', 'wait 60', 'shot{0}'])
+        shown, hover = self.shots(['wait 200', 'move 500 400', 'wait 60', 'shot{0}',
+                                   'move 990 300', 'wait 60', 'shot{1}'], autohide=False)
+        resting = self.changed(hidden, shown)
+        self.assertTrue(resting, 'no thumb at rest with auto_hide_scrollbars = false')
+        self.assertTrue(all(x >= 985 for x, _ in resting))
+        # the hovered thumb is wider than the resting one
+        self.assertGreater(len(self.changed(hidden, hover)), len(resting))
 
     # tooltips and buttons
 
