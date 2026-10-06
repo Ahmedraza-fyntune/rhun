@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
@@ -149,40 +150,49 @@ with tempfile.TemporaryDirectory(prefix='rhun-desktop-') as temporary:
         bin_dir = work / 'bin'
         bin_dir.mkdir()
         opener = bin_dir / ('open' if sys.platform == 'darwin' else 'xdg-open')
-        opener.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$RHUN_DESKTOP_LOG"\n')
+        # a call: its arguments a line each, then an empty line
+        opener.write_text('#!/bin/sh\nprintf "%s\\n" "$@" "" >> "$RHUN_DESKTOP_LOG"\n')
         opener.chmod(0o755)
         log = work / 'opened'
         env.update(PATH=str(bin_dir) + os.pathsep + os.environ.get('PATH', ''),
                    RHUN_DESKTOP_LOG=str(log))
-        run([project, file], ['cmd website', 'wait 200', 'cmd email', 'wait 200',
-                              'cmd feedback', 'wait 200',
-                              'cmd reveal_file', 'wait 200', 'quit'])
-        expected = ['https://rhun.app', 'mailto:hi@rhun.app?subject=rhun%20feedback',
-                    'https://github.com/vshvedov/rhun/issues']
-        expected += ['-R', file.as_posix()] if sys.platform == 'darwin' else [project.as_posix()]
-        assert log.read_text().splitlines() == expected, log.read_text()
+
+        def opens(paths, lines):
+            """the output, and the opener's calls once there is one. rhun starts the opener and
+            goes on, so each action gets a run of its own: nothing depends on which process ends
+            first"""
+            log.unlink(missing_ok=True)
+            output = run(paths, [*lines, 'quit'])
+            deadline = time.monotonic() + 10
+            while not (log.exists() and log.read_text().endswith('\n\n')):
+                assert time.monotonic() < deadline, f'{lines} opened nothing'
+                time.sleep(.02)
+            return output, [call.split('\n') for call in log.read_text().split('\n\n')[:-1]]
+
+        links = [('website', 'https://rhun.app'), ('email', 'mailto:hi@rhun.app?subject=rhun%20feedback'),
+                 ('feedback', 'https://github.com/vshvedov/rhun/issues')]
+        for name, url in links:
+            calls = opens([project, file], ['cmd ' + name])[1]
+            assert calls == [[url]], (name, calls)
+        reveal = ['-R', file.as_posix()] if sys.platform == 'darwin' else [project.as_posix()]
+        calls = opens([project, file], ['cmd reveal_file'])[1]
+        assert calls == [reveal], calls
         print('ok   desktop/links-and-literal-file-path')
 
-        log.unlink()
         with config.open('a') as settings:
             settings.write('[ui]\nagents_panel = false\n')
-        run([project], ['cmd settings', 'click 300 202', 'wait 200',
-                        'click 410 202', 'wait 200', 'click 510 202', 'wait 200',
-                        'click 695 202', 'wait 200', 'quit'])
-        assert log.read_text().splitlines() == [
-            'https://rhun.app', 'mailto:hi@rhun.app?subject=rhun%20feedback',
-            'https://github.com/vshvedov/rhun/issues',
-            'https://discord.gg/Aj4drpFbWf'], log.read_text()
+        buttons = [*links, ('discord', 'https://discord.gg/Aj4drpFbWf')]
+        for x, (_, url) in zip((300, 410, 510, 695), buttons):
+            calls = opens([project], ['cmd settings', f'click {x} 202'])[1]
+            assert calls == [[url]], (x, calls)
         print('ok   desktop/settings-links')
 
         # The menu operates on a directory as well as a file, with the same path rules.
-        log.unlink()
         directory = project / 'a folder café'
         directory.mkdir()
-        output = run([project], ['click 50 86 right', 'print-menu', 'click 110 265',
-                                  'wait 200', 'quit'])
+        output, calls = opens([project], ['click 50 86 right', 'print-menu', 'click 110 265'])
         label = 'Show in Finder' if sys.platform == 'darwin' else 'Open in File Manager'
         assert label in output, output
         expected = ['-R', directory.as_posix()] if sys.platform == 'darwin' else [project.as_posix()]
-        assert log.read_text().splitlines() == expected, log.read_text()
+        assert calls == [expected], calls
         print('ok   desktop/directory-context-menu-action')
