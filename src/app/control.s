@@ -558,6 +558,38 @@ c_wait_git:
     xor eax, eax
     ret
 
+# wait-agents: async metadata discovery, without blocking the event loop (at most 30 s).
+c_wait_agents:
+    push r13
+    call agents_request_now
+    call time_ms
+    lea r13, [rax + 30000]
+1:  call agents_busy
+    test eax, eax
+    jz 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    call agents_request_now
+    jmp 1b
+2:  pop r13
+    xor eax, eax
+    ret
+
+c_agents_more:
+    call agents_more
+    xor eax, eax
+    ret
+
+c_agents_page:
+    lea rdi, [rip + out]
+    call agents_page_dump
+    xor eax, eax
+    ret
+
 # wait-grep: until find in files has read the project's files
 c_wait_grep:
     push r13
@@ -969,6 +1001,7 @@ c_print_syntax:
 
 # print-agents [open N]: sessions and the open thread
 c_print_agents:
+    call c_wait_agents
     call next_int
     test rdx, rdx
     jz 1f
@@ -1257,6 +1290,9 @@ on_client:
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
+.Lc_wait_agents: .asciz "wait-agents"
+.Lc_agents_more: .asciz "agents-more"
+.Lc_agents_page: .asciz "print-agents-page"
 .Lc_wait_grep: .asciz "wait-grep"
 .Lc_wait_term: .asciz "wait-term"
 .Lc_print_gitlog: .asciz "print-gitlog"
@@ -1292,6 +1328,7 @@ ctl_table:
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
     .quad .Lc_wait_grep, c_wait_grep
+    .quad .Lc_wait_agents, c_wait_agents, .Lc_agents_more, c_agents_more, .Lc_agents_page, c_agents_page
     .quad .Lc_wait_term, c_wait_term
     .quad .Lc_print_scm, c_print_scm
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai

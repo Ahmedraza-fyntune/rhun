@@ -1105,6 +1105,7 @@ FN app_apply_settings
     mov rdi, rax
     call theme_apply
 1:  call git_apply
+    call agents_apply_settings
     call ai_apply
     call vim_sync
     call watch_apply_settings

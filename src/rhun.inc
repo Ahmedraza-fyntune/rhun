@@ -935,3 +935,29 @@ ENDSTRUCT TM_SIZE
 .Lpath_relative\@:
 .endif
 .endm
+
+# ---- agent session metadata and transcript state ----
+STRUCT
+F AS_path, 8
+F AS_title, 8
+F AS_mtime, 8
+F AS_off, 8             # bytes parsed
+F AS_msgs, VEC_SIZE     # AM
+F AS_part, SB_SIZE      # incomplete trailing line
+F AS_kind, 4            # 1 claude, 2 codex
+F AS_loaded, 4          # messages parsed (opened at least once)
+F AS_titled, 4          # has a custom title
+F AS_pad, 4
+F AS_changed, 8         # time_ms of the last growth
+F AS_stamp, 8           # file_stamp, to see every write
+F AS_index_title, 8    # parent: last title returned by the metadata index
+F AS_recency, 8        # nanosecond mtime used for ordering
+F AS_cwd, 8            # worker cache: originating checkout
+F AS_seen, 8           # worker cache: present in this scan
+F AS_worktree, 8        # linked checkout's name, or 0 for the main checkout
+F AS_prefix_hash, 8     # worker: bounded prefix identity for append detection
+F AS_title_off, 8       # worker: bytes covered by the last successful title read
+F AS_title_rev, 8       # identity of the last indexed custom title record
+F AS_record_off, 8      # worker: current title record's newline offset plus one
+F AS_replaced, 8        # worker page: metadata came from a replaced or truncated log
+ENDSTRUCT AS_SIZE

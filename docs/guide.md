@@ -10,7 +10,8 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Syntax highlighting for about 125 languages, defined in plain text grammar files
 - 40 color themes, dark and light, with a match for every Omarchy theme; add your own
 - Settings page and a readable config file, both applied while running
-- Agents panel: Claude Code and Codex sessions of the project, with theme-colored provider badges and icons, updated live as the agent works
+- Agents panel: Claude Code and Codex sessions of the project and its Git worktrees, with theme-colored provider badges and icons, updated live as the agent works. Worktree sessions show a branch icon and the worktree name in a badge beside the provider. The list starts with the 50 most recently active sessions across both providers and related worktrees. Load more adds 50. Discovery runs in the background and reuses a saved metadata index; routine refreshes pause while the panel is hidden.
+  Git worktree registrations supply the checkout roots. Rhun remembers verified worktree paths in repository-specific state, so their Claude Code and Codex history stays visible after the checkouts are deleted or Git prunes their registrations. Nested Claude worktree history can also be recovered from its exact recorded path without prior Rhun state. If another repository takes over a remembered checkout path, Rhun keeps previously verified sessions and excludes new sessions from that repository. When Git metadata is stored outside the main checkout and contains no reference to its path, open the main checkout to include its sessions.
 - Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs
 - Git: changed lines in the gutter, file status in tabs and the explorer, diffs, a history of all branches drawn as a graph, and source control as in VS Code: stage, commit, pull, push
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
@@ -105,6 +106,14 @@ tests/run.sh         # unit tests and scripted UI tests
 tools/install.sh     # release build into ~/.local, with the desktop entry and icon;
                      # on macOS rhun.app into /Applications and the rhun command into ~/.local/bin
 ```
+
+To test agents against a project's local Claude Code and Codex history after building:
+
+```sh
+python3 tests/agents-real.py --project /path/to/project --output /tmp/agents-audit
+```
+
+Use a new output directory. The audit compares discovery with an independent inventory, checks every existing Git checkout registered to the repository and metadata-verified historical nested worktrees, and tests pagination and resumed sessions using temporary copies. It reads the original sessions and keeps test state separate. `--copies` controls the number of copies per session (default 8); choose enough to produce more than 100 sessions. The output includes a report and native UI screenshots. On macOS it also measures agents-panel polling, indexing, and rendering.
 
 ### macOS
 
@@ -413,7 +422,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle|shift]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle|shift]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 

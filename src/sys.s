@@ -199,7 +199,7 @@ FN file_size
 1:  ret
 
 # file_stamp(path) -> changes whenever the file is written: mtime in nanoseconds and the size
-# (0 if it is missing); follows symlinks
+# (0 if it is missing); follows symlinks. Also returns size in rdx, mtime_ns in rcx.
 FN file_stamp
     lea rsi, [rip + stat_buf]
     mov eax, 4                  # stat
@@ -209,11 +209,15 @@ FN file_stamp
     mov rax, [rip + stat_buf + 88]
     imul rax, rax, 1000000000
     add rax, [rip + stat_buf + 96]
+    mov rcx, rax
     mov rdx, [rip + stat_buf + 48]
     rol rdx, 32
     xor rax, rdx
+    ror rdx, 32
     ret
 1:  xor eax, eax
+    xor edx, edx
+    xor ecx, ecx
     ret
 
 # file_mtime(path) -> unix seconds (0 on error)

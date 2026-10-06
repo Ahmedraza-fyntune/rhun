@@ -75,7 +75,7 @@ class TerminalPanel(unittest.TestCase):
         (sessions / 's1.jsonl').write_text(fixture.replace('@PROJECT@', self.project.as_posix()),
                                            encoding='utf-8')
         x, y = AGENT_ROW
-        self.run_editor([f'move {x} {y}', 'wait 50', 'down', 'wait 50', f'move {x} {y + 4}',
+        self.run_editor(['wait-agents', f'move {x} {y}', 'wait 50', 'down', 'wait 50', f'move {x} {y + 4}',
                           'wait 50', 'up', 'wait 50'], agents=True)
         self.assertEqual(self.height(), HEIGHT)
 

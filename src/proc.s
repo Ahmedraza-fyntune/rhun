@@ -16,6 +16,38 @@ tmp_path: .zero 4096
 
 .text
 
+# proc_self_path(buf, capacity) -> length or negative error.
+FN proc_self_path
+.ifdef MACOS
+    jmp mac_exe_path
+.else
+.ifdef WINDOWS
+    mov rdx, rsi
+    dec rdx
+    mov rsi, rdi
+    lea rdi, [rip + .Lproc_self]
+    SYS SYS_readlink
+    test rax, rax
+    jle 1f
+    mov byte ptr [rsi + rax], 0
+1:  ret
+.else
+    # Keep launching the running inode even after an atomic application update.
+    cmp rsi, 15
+    jb 1f
+    lea rsi, [rip + .Lproc_self]
+    call cstr_copy
+    mov eax, 14
+    ret
+1:  mov eax, -22
+    ret
+.endif
+.endif
+
+.section .rodata
+.Lproc_self: .asciz "/proc/self/exe"
+.text
+
 # env_make(extras): the environment with extras ("NAME=value", 0-terminated list) set -> envp
 FN env_make
     PROLOGUE 16
