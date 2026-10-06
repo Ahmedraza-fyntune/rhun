@@ -304,6 +304,19 @@ c_down:
     xor eax, eax
     ret
 
+# up-down: a release and the next press before one frame, as a busy event queue delivers them
+c_updown:
+    mov edi, BTN_LEFT
+    xor esi, esi
+    xor edx, edx
+    call app_on_button
+    mov edi, BTN_LEFT
+    mov esi, 1
+    xor edx, edx
+    call app_on_button
+    xor eax, eax
+    ret
+
 c_up:
     mov edi, BTN_LEFT
     xor esi, esi
@@ -1248,6 +1261,7 @@ on_client:
 .Lc_click: .asciz "click"
 .Lc_tap: .asciz "tap"
 .Lc_down: .asciz "down"
+.Lc_updown: .asciz "up-down"
 .Lc_up: .asciz "up"
 .Lc_scroll: .asciz "scroll"
 .Lc_open: .asciz "open"
@@ -1296,7 +1310,7 @@ on_client:
 .p2align 3
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
-    .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_scroll, c_scroll, .Lc_open, c_open
+    .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey

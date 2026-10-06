@@ -28,9 +28,9 @@ g_press_y: .long 0
 held_mx: .long 0                # a pointer move waiting for the frame of a press
 held_my: .long 0
 held_move: .long 0
-.equ SB_MAX, 8                  # scrollbars tracked for the scroll-flash
+.equ SB_MAX, 16                 # scrollbars tracked for the scroll-flash
 .equ SB_SHOW_MS, 800            # ms a thumb stays visible after its offset last moved
-# sb_flash slot: +0 scroll-offset ptr, +8 last offset px (+pad), +16 show-until ms; 24B each
+# sb_flash slot: +0 scrollbar id, +8 last offset px (+pad), +16 show-until ms; 24B each
 sb_flash: .zero SB_MAX * 24
 .p2align 3
 g_face_ui: .zero FACE_SIZE
@@ -717,15 +717,16 @@ FN ui_scrollbar
     cmovg eax, ecx
     mov [r15], eax
     mov dword ptr [rip + g_dirty], 1
-4:  # scroll flash: keep the thumb visible briefly after the offset last moved (keyed by
-    # the offset pointer, so each scrollbar flashes only for its own scrolls)
+4:  # scroll flash: keep the thumb visible briefly after the offset last moved (keyed by the
+    # scrollbar's id: an offset on the caller's stack moves with its depth)
     lea rdx, [rip + sb_flash]
+    mov r11d, [rsp]                 # the scrollbar's id
     xor ecx, ecx
-61: cmp [rdx], r15
+61: cmp [rdx], r11
     je 62f
     cmp qword ptr [rdx], 0
     jne 63f
-    mov [rdx], r15
+    mov [rdx], r11
     mov eax, [r15]                  # seed, don't flash, on first sight
     mov [rdx + 8], eax
     jmp 62f
@@ -733,15 +734,16 @@ FN ui_scrollbar
     inc ecx
     cmp ecx, SB_MAX
     jl 61b
-    xor edx, edx                    # table full: no flash for this bar
+    xor edx, edx                    # table full: keep the thumb shown
 62: mov [rsp + 24], rdx
     sub rsp, 8
     call time_ms                    # rax = now
     add rsp, 8
     mov rdx, [rsp + 24]
-    xor ecx, ecx
+    mov ecx, 1
     test rdx, rdx
     jz 68f
+    xor ecx, ecx
     mov r10d, [r15]
     cmp r10d, [rdx + 8]
     je 67f

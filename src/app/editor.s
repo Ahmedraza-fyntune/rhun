@@ -2143,8 +2143,6 @@ FN editor_draw
 31: # mouse press in the text area
     test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Led_noinput
-    cmp dword ptr [rip + g_active], 0     # another widget already claimed this press
-    jne .Led_noinput
     mov eax, [rip + g_ed_x]
     add eax, [rip + g_ed_w]
     sub eax, [rip + g_mt + 4*MI_12]

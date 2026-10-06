@@ -557,8 +557,6 @@ view_input:
     mov dword ptr [rip + g_dirty], 1
 3:  test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Lvi_drag
-    cmp dword ptr [rip + g_active], 0     # another widget already claimed this press
-    jne .Lvi_drag
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     cmp dword ptr [rip + g_clicks], 2
     jne 5f
