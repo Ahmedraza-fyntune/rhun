@@ -12,6 +12,8 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+# NTFS keeps file times in steps of 100 ns; elsewhere they are exact to the nanosecond
+TICK = 100 if os.name == 'nt' else 1
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 META_LIMIT = 1 << 20
 
@@ -353,8 +355,8 @@ class CodexDiscovery(unittest.TestCase):
         self.init_repo()
         worktree = self.add_worktree('relative-tree')
         self.worktree_sessions(worktree)
-        admin = Path((worktree / '.git').read_text().strip().removeprefix('gitdir: '))
-        (admin / 'gitdir').write_text(os.path.relpath(worktree / '.git', admin) + '\n')
+        admin = Path((worktree / '.git').read_text(encoding='utf-8').strip().removeprefix('gitdir: '))
+        (admin / 'gitdir').write_text(os.path.relpath(worktree / '.git', admin) + '\n', encoding='utf-8')
         main = self.project
         for opened in (main, worktree):
             with self.subTest(opened=str(opened)):
@@ -622,7 +624,7 @@ class CodexDiscovery(unittest.TestCase):
         for index in range(count):
             path = self.session.parent / f'rollout-{index:04}.jsonl'
             path.write_bytes(self.metadata() + b'\n' + self.message('user', f'Session {index:04}'))
-            os.utime(path, ns=(1700000000000000000 + index, 1700000000000000000 + index))
+            os.utime(path, ns=(1700000000000000000 + TICK * index, 1700000000000000000 + TICK * index))
             paths.append(path)
         return paths
 
@@ -694,6 +696,17 @@ class CodexDiscovery(unittest.TestCase):
             stream.write(self.message('assistant', 'Resumed'))
         self.assertEqual(self.worker()[-1][2][0]['title'], 'Session 0000')
 
+    def test_worker_finishes_with_a_project_path_spelled_another_way(self):
+        # Another program can start the worker with a relative path, or a C:\ path on Windows: the
+        # search for the repository above it once tried the path's first letter forever.
+        self.make_history(2)
+        for project in (self.project.name, str(self.project)):
+            with self.subTest(project=project):
+                result = subprocess.run([str(EXE), '--agent-index', project, '50', 'claude,codex'],
+                                        cwd=self.home, env=self.env, capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(result.stdout.startswith(b'RAHPREV3'))
+
     def test_mixed_sources_and_worktrees_share_one_recent_page(self):
         self.init_repo()
         tree = self.add_worktree('history-tree')
@@ -704,10 +717,10 @@ class CodexDiscovery(unittest.TestCase):
             path = directory / f'claude-{index:04}.jsonl'
             path.write_text(json.dumps({'type': 'user', 'message': {
                 'role': 'user', 'content': f'Claude {index:04}'}}) + '\n')
-            os.utime(path, ns=(1700000000000000000 + 2 * index,
-                              1700000000000000000 + 2 * index))
-            os.utime(paths[index], ns=(1700000000000000001 + 2 * index,
-                                      1700000000000000001 + 2 * index))
+            os.utime(path, ns=(1700000000000000000 + TICK * 2 * index,
+                              1700000000000000000 + TICK * 2 * index))
+            os.utime(paths[index], ns=(1700000000000000000 + TICK * (2 * index + 1),
+                                      1700000000000000000 + TICK * (2 * index + 1)))
         rows = self.worker()[-1][2]
         self.assertEqual(len(rows), 50)
         self.assertEqual([row['kind'] for row in rows], [2, 1] * 25)
@@ -835,6 +848,7 @@ class CodexDiscovery(unittest.TestCase):
                 cache.write_bytes(damaged)
                 self.assertEqual(len(self.worker()[-1][2]), 2)
 
+    @unittest.skipIf(os.name == 'nt', 'Windows cannot rename a folder while rhun watches one inside it')
     def test_worker_failure_reports_error_and_keeps_previous_rows(self):
         self.make_history(3)
         script = self.home / 'commands.rsc'
