@@ -415,8 +415,8 @@ class LiveReload(unittest.TestCase):
         before = settings()
         self.command('cmd settings')
         self.command('move 500 350')
-        self.command('scroll 1200')
-        self.command('click 827 452')
+        self.command('scroll 1500')
+        self.command('click 827 296')
         self.command('quit')
         self.process.wait(timeout=5)
         after = settings()
@@ -424,7 +424,7 @@ class LiveReload(unittest.TestCase):
         moved = sorted(key for key in before if key in after and before[key] != after[key])
         self.assertEqual(after.get('animate_disk_changes'), expected, after)
         self.assertLessEqual(set(moved), {'animate_disk_changes'},
-                             f'the click at 827 380 toggled another setting: {moved}')
+                             f'the click at 827 296 toggled another setting: {moved}')
 
     def test_settings_switch_persists_and_controls_next_launch(self):
         self.start(self.file)

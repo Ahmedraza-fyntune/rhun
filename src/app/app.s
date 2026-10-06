@@ -57,6 +57,7 @@ tip_cx: .long 0                  # its x, the y its tooltip hangs from, and its 
 tip_cy: .long 0
 tip_cw: .long 0
 tip_state: .long 0               # TIP_PENDING, TIP_SHOWN, or TIP_DISMISSED by a key press
+scroll_rem: .long 0, 0           # what scroll sensitivity left of a pixel, x and y, in hundredths
 .p2align 3
 tip_since: .quad 0               # time_ms when the pointer reached tip_id
 tip_left: .quad 0                # time_ms when the pointer left a shown tooltip
@@ -1143,9 +1144,34 @@ FN app_on_button
 # app_on_scroll(dx, dy, mods)
 FN app_on_scroll
     mov [rip + g_scroll_mods], edx
+    mov ecx, [rip + cfg_scroll_sens]
+    test edx, MOD_ALT
+    jz 1f
+    mov ecx, [rip + cfg_fast_sens]
+    # in hundredths; what the division leaves carries to the next scroll, so a trackpad's
+    # small steps add up instead of rounding away
+1:  imul edi, ecx
+    add edi, [rip + scroll_rem]
+    imul esi, ecx
+    add esi, [rip + scroll_rem + 4]
+    mov ecx, 100
+    mov eax, edi
+    cdq
+    idiv ecx
+    mov edi, eax
+    mov [rip + scroll_rem], edx
+    mov eax, esi
+    cdq
+    idiv ecx
+    mov esi, eax
+    mov [rip + scroll_rem + 4], edx
+    # less than a pixel so far: nothing to draw
+    mov eax, edi
+    or eax, esi
+    jz 2f
     call ui_input_scroll
     mov dword ptr [rip + g_dirty], 1
-    ret
+2:  ret
 
 FN app_on_focus
     mov [rip + g_win_focused], edi

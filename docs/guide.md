@@ -192,6 +192,10 @@ current shortcut in your platform's notation. Once one is showing, the next butt
 Scrollbars stay out of sight until you scroll or point at them. **Auto-hide scrollbars** in
 Settings > Appearance keeps a faint one in view instead (`auto_hide_scrollbars = false` under `[ui]`).
 
+**Scroll sensitivity** in Settings > Appearance multiplies how far the wheel and touchpad scroll
+(`scroll_sensitivity = 1.0` under `[ui]`, from 0.1 to 10). While Alt is held, **Fast scroll
+sensitivity** applies instead (`fast_scroll_sensitivity = 4.0`).
+
 Settings includes links to [rhun.app](https://rhun.app), [hi@rhun.app](mailto:hi@rhun.app), and [GitHub issues](https://github.com/vshvedov/rhun/issues) for feedback and bug reports in a single row. The email link follows the website and opens the default email app. All three are also available from the command palette.
 
 Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.
@@ -416,7 +420,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle|shift]`, `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle|shift]`, `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [ctrl|alt]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-scroll` (`y=`, the document's scroll offset in 1/256 lines), `print-project`, `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
