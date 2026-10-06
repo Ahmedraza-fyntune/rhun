@@ -51,6 +51,8 @@ index_pid: .long 0
 index_pending: .long 0
 index_final: .long 0
 index_error: .long 0
+index_loud: .long 0            # the next run was asked for (agents_scan): shown as loading
+index_shown: .long 0           # the running worker shows as loading; routine runs are silent
 last_visible: .long 0
 .p2align 3
 index_debounce: .quad 0
@@ -134,6 +136,8 @@ FN agents_shutdown
     mov [rax], rcx
 2:  mov dword ptr [rip + index_pid], 0
     mov dword ptr [rip + index_pending], 0
+    mov dword ptr [rip + index_loud], 0
+    mov dword ptr [rip + index_shown], 0
     mov dword ptr [rip + index_final], 0
     lea rdi, [rip + incoming]
     call agent_records_free
@@ -168,8 +172,11 @@ FN agents_busy
     or eax, [rip + index_pending]
     ret
 
+# agents_scan(): a run asked for (the refresh button, Load more, a retry, a new project), shown as
+# loading until its page. Routine runs set index_pending alone and show nothing.
 FN agents_scan
     mov dword ptr [rip + index_pending], 1
+    mov dword ptr [rip + index_loud], 1
     cmp qword ptr [rip + g_project], 0
     je 1f
     cmp dword ptr [rip + cfg_agents], 0
@@ -178,11 +185,17 @@ FN agents_scan
     jne 2f
     jmp index_start
 1:  mov dword ptr [rip + index_pending], 0
+    mov dword ptr [rip + index_loud], 0
 2:  ret
 
+# index_loading() -> 1 while the panel shows loading: a run asked for is pending or going
+index_loading:
+    mov eax, [rip + index_shown]
+    or eax, [rip + index_loud]
+    ret
+
+# agents_more(): 50 more rows; while a routine run is going, the larger page follows it
 FN agents_more
-    cmp dword ptr [rip + index_pid], 0
-    jne 1f
     mov rax, [rip + page_count]
     cmp rax, [rip + total_count]
     jae 1f
@@ -194,6 +207,9 @@ index_start:
     PROLOGUE 64
     mov dword ptr [rip + index_pending], 0
     mov dword ptr [rip + index_final], 0
+    mov eax, [rip + index_loud]
+    mov [rip + index_shown], eax
+    mov dword ptr [rip + index_loud], 0
     call time_ms
     mov [rip + last_scan], rax
     mov [rip + index_started], rax
@@ -233,9 +249,13 @@ index_start:
     lea rdx, [rip + index_read]
     xor ecx, ecx
     call watch_add
+    # a routine run changes nothing on screen until its page
+    cmp dword ptr [rip + index_shown], 0
+    je 9f
     call index_dirty
-    EPILOGUE
+9:  EPILOGUE
 .Lindex_start_fail:
+    mov dword ptr [rip + index_shown], 0
     mov dword ptr [rip + index_error], 1
     call index_dirty
     EPILOGUE
@@ -345,6 +365,7 @@ index_finish:
     cmp eax, -1
     je 9f
     mov dword ptr [rip + index_pid], 0
+    mov dword ptr [rip + index_shown], 0
     mov ebx, eax
     call time_ms
     mov [rip + last_scan], rax
@@ -1744,7 +1765,7 @@ FN agents_page_dump
     mov rdi, r12
     lea rsi, [rip + .Lpage_loading]
     call sb_push_cstr
-    call agents_busy
+    call index_loading           # what the panel shows; wait-agents waits for any run
     mov rdi, r12
     xor esi, esi
     test eax, eax
@@ -2322,8 +2343,9 @@ list_draw:
     add edx, r15d
     M ecx, MI_24
     lea r8, [rip + .Lnone]
-    cmp dword ptr [rip + index_pid], 0
-    je 110f
+    call index_loading
+    test eax, eax
+    jz 110f
     lea r8, [rip + .Lloading]
 110: cmp dword ptr [rip + index_error], 0
     je 111f
@@ -3059,8 +3081,9 @@ page_footer:
     mov rax, [rip + page_count]
     cmp rax, [rip + total_count]
     jb 1f
-    cmp dword ptr [rip + index_pid], 0
-    jne 1f
+    call index_loading
+    test eax, eax
+    jnz 1f
     cmp dword ptr [rip + index_error], 0
     je 5f
 1:  M eax, MI_48
@@ -3078,8 +3101,10 @@ page_footer:
     mov r8d, [rsp + 12]
     call ui_btn
     mov [rsp + 24], eax
-    cmp dword ptr [rip + index_pid], 0
-    jne 3f
+    call index_loading
+    test eax, eax
+    jnz 3f
+    mov eax, [rsp + 24]
     test eax, UB_CLICK
     jz 3f
     cmp dword ptr [rip + index_error], 0
@@ -3096,15 +3121,17 @@ page_footer:
     mov ecx, [rsp + 20]
     mov r8d, [rsp + 12]
     lea r9, [rip + .Lload_more]
-    COLOR eax, T_ACCENT
     cmp dword ptr [rip + index_error], 0
     je 4f
     lea r9, [rip + .Lfooter_error]
-4:  cmp dword ptr [rip + index_pid], 0
-    je 41f
+4:  call index_loading
+    test eax, eax
+    jz 41f
     lea r9, [rip + .Lrefreshing]
     COLOR eax, T_MUTED
-41: push rax
+    jmp 42f
+41: COLOR eax, T_ACCENT
+42: push rax
     push rax
     call ui_text_center
     add rsp, 16
