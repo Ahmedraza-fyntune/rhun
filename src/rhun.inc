@@ -517,6 +517,8 @@ F DOC_reload_at, 8      # external writes coalesce before a reload, 0 when none 
 F DOC_disk_seen, 8      # last external stamp handled
 F DOC_disk_until, 8     # editor's external reload highlight fades until this time
 F DOC_disk_lo, 8        # first changed line in the reloaded text
+F DOC_wcols, 8          # editor: columns of the widest line (doc_widest)
+F DOC_wkey, 8           # the text and tab width they were measured for, 0 = not yet
 F DOC_disk_hi, 8        # line past the changed range (deletions highlight their surviving neighbor)
 ENDSTRUCT DOC_SIZE
 

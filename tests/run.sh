@@ -64,6 +64,7 @@ python3 tests/explorer-delete.py || fail=1
 python3 tests/explorer-create.py || fail=1
 python3 tests/settings-ui.py || fail=1
 python3 tests/editor-matrix.py || fail=1
+python3 tests/editor-hscroll.py || fail=1
 python3 tests/stress.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0

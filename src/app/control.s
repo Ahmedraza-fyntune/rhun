@@ -434,6 +434,23 @@ c_scroll:
     xor eax, eax
     ret
 
+# scroll-x dx: a sideways wheel or trackpad
+c_scroll_x:
+    call next_int
+    mov edi, eax
+    xor esi, esi
+    xor edx, edx
+    call app_on_scroll
+    xor eax, eax
+    ret
+
+# print-scroll: "x=PX max=PX track=X,Y,W,H" of the editor's horizontal scroll
+c_print_scroll:
+    lea rdi, [rip + out]
+    call editor_scroll_dump
+    xor eax, eax
+    ret
+
 c_open:
     mov rdi, rbx
     mov rsi, r12
@@ -1331,6 +1348,8 @@ on_client:
 .Lc_print_menu: .asciz "print-menu"
 .Lc_print_tip: .asciz "print-tip"
 .Lc_print_link: .asciz "print-link"
+.Lc_print_scroll: .asciz "print-scroll"
+.Lc_scroll_x: .asciz "scroll-x"
 .Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
 .Ls_frames: .asciz "frames="
@@ -1362,7 +1381,8 @@ ctl_table:
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
     .quad .Lc_print_tip, c_print_tip, .Lc_print_link, c_print_link
-    .quad .Lc_print_term_cell, c_print_term_cell, 0, 0
+    .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
+    .quad .Lc_scroll_x, c_scroll_x, 0, 0
 
 .data
 lsock: .long -1

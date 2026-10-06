@@ -726,6 +726,105 @@ FN ui_scrollbar
 .Lsb_ret:
     EPILOGUE
 
+# ui_hscrollbar(id, x, y, w, h, *offset(i32 px), content, view): ui_scrollbar along x, its thumb at the
+# bottom of the track
+FN ui_hscrollbar
+    PROLOGUE 48
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    mov [rsp + 16], r8d
+    mov r15, r9
+    mov r12d, [rbp + 16]        # content
+    mov r13d, [rbp + 24]        # view
+    cmp r12d, r13d
+    jle .Lhs_ret
+    # thumb width = max(w * view / content, 24)
+    mov eax, [rsp + 12]
+    imul eax, r13d
+    cdq
+    idiv r12d
+    M ecx, MI_24
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov r14d, eax               # thumb w
+    # thumb x = x + (w - thumb) * off / (content - view)
+    mov eax, [rsp + 12]
+    sub eax, r14d
+    imul eax, [r15]
+    mov ecx, r12d
+    sub ecx, r13d
+    cdq
+    idiv ecx
+    add eax, [rsp + 4]
+    mov ebx, eax                # thumb x
+    # interaction on the whole track
+    xor eax, eax
+    cmp dword ptr [rip + g_block], 0
+    jne 0f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    mov r8d, [rsp + 16]
+    call ui_btn
+0:  mov [rsp + 20], eax
+    test eax, UB_PRESS
+    jz 1f
+    # grab offset inside thumb (or jump so the thumb centers on the mouse)
+    mov eax, [rip + g_mx]
+    sub eax, ebx
+    js 2f
+    cmp eax, r14d
+    jl 3f
+2:  mov eax, r14d
+    shr eax, 1
+3:  mov [rip + grab_dx], eax
+1:  test dword ptr [rsp + 20], UB_HELD
+    jz 4f
+    # offset = (mx - grab - x) * (content - view) / (w - thumb)
+    mov eax, [rip + g_mx]
+    sub eax, [rip + grab_dx]
+    sub eax, [rsp + 4]
+    mov ecx, r12d
+    sub ecx, r13d
+    imul eax, ecx
+    mov ecx, [rsp + 12]
+    sub ecx, r14d
+    jle 4f
+    cdq
+    idiv ecx
+    test eax, eax
+    jns 5f
+    xor eax, eax
+5:  mov ecx, r12d
+    sub ecx, r13d
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov [r15], eax
+    mov dword ptr [rip + g_dirty], 1
+4:  # draw thumb (thin, thicker when hovered or dragged)
+    COLOR r9d, T_SCROLLBAR
+    M eax, MI_6
+    test dword ptr [rsp + 20], UB_HOVER | UB_HELD
+    jnz 6f
+    and r9d, 0x00ffffff
+    or r9d, 0xa0000000
+    M eax, MI_4
+6:  mov ecx, eax                # thickness
+    mov edi, ebx
+    mov esi, [rsp + 8]
+    add esi, [rsp + 16]
+    sub esi, eax
+    sub esi, [rip + g_mt + 4*MI_3]
+    mov edx, r14d
+    mov r8d, eax
+    shr r8d, 1
+    call gfx_round_rect
+.Lhs_ret:
+    EPILOGUE
+
 # ---- text field ----
 
 # tf_text(tf) -> rax ptr, rdx len
@@ -1836,6 +1935,7 @@ empty_str: .byte 0
 ta_nl: .ascii "\n"
 .bss
 grab_dy: .long 0
+grab_dx: .long 0
 .p2align 3
 ta_buf: .zero SB_SIZE
 ta_rows: .zero VEC_SIZE
