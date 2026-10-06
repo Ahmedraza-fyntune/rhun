@@ -2103,6 +2103,8 @@ FN editor_draw
     mov eax, [rip + g_mx]
     cmp eax, [rip + g_ed_tx]
     jl 1f
+    cmp dword ptr [rip + g_cursor], CUR_DEFAULT
+    jne 1f
     mov dword ptr [rip + g_cursor], CUR_TEXT
 1:  # wheel
     mov eax, [rip + g_scroll_y]

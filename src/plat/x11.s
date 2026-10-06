@@ -1134,7 +1134,7 @@ x_cursor_init:
     mov esi, 20
     call x_req
     xor ebx, ebx
-1:  cmp ebx, 7
+1:  cmp ebx, 8
     jae 9f
     call x_new_id
     lea rcx, [rip + cursors]
@@ -1492,7 +1492,7 @@ x_set_cursor:
     cmp edi, [rip + cur_shape]
     je 1f
     mov [rip + cur_shape], edi
-    cmp edi, 7
+    cmp edi, 8
     jae 1f
     lea rax, [rip + cursors]
     mov eax, [rax + rdi*4]
@@ -1750,7 +1750,7 @@ x_minimize:
 .La_change_state: .asciz "WM_CHANGE_STATE"
 .Lwm_class: .ascii "rhun\0rhun\0"
 # CUR_* -> X cursor font glyphs: left_ptr xterm hand2 sb_h_double_arrow sb_v_double_arrow bottom_right_corner bottom_left_corner
-cursor_glyphs: .byte 68, 152, 60, 108, 116, 14, 12
+cursor_glyphs: .byte 68, 152, 60, 108, 116, 14, 12, 68
 
 .bss
 paste_wait: .long 0

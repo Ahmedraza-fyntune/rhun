@@ -1561,7 +1561,7 @@ cursor_drop:
     lea rax, [rip + cur_ids]
     mov dword ptr [rax + rbx*4], 0
 2:  inc ebx
-    cmp ebx, 7
+    cmp ebx, 8
     jb 1b
     pop rbx
     ret
@@ -2069,7 +2069,7 @@ global_table:
 .Lsend_err: .asciz "rhun: wayland send failed"
 .Lshm_err: .asciz "rhun: shm buffer allocation failed"
 # CUR_* -> wp_cursor_shape_device_v1 shapes
-cursor_shapes: .byte 1, 9, 4, 26, 27, 29, 28
+cursor_shapes: .byte 1, 9, 4, 26, 27, 29, 28, 1
 .p2align 2
 f_120: .float 120.0
 
@@ -2083,9 +2083,9 @@ g_csd: .long 1
 deco_applied: .long -1
 cur_bs: .long 0
 cur_surf: .long 0
-cur_ids: .zero 4 * 7
-cur_hx: .zero 4 * 7
-cur_hy: .zero 4 * 7
+cur_ids: .zero 4 * 8
+cur_hx: .zero 4 * 8
+cur_hy: .zero 4 * 8
 .p2align 3
 xcur: .zero XC_SIZE
 deco_mode: .long 0

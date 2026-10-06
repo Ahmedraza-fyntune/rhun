@@ -246,6 +246,7 @@ ENDSTRUCT RECT_SIZE
 .equ CUR_NS, 4
 .equ CUR_NWSE, 5
 .equ CUR_NESW, 6
+.equ CUR_ARROW, 7               # the arrow shape again, but claimed: unlike CUR_DEFAULT it is not "unset"
 
 # cursor image (xcursor_load / xcursor_builtin)
 STRUCT

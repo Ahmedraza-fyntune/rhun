@@ -114,7 +114,7 @@ class Tooltips(unittest.TestCase):
         """The strip under the button before hovering, and after hovering for wait ms."""
         x, y, box = button
         self.command('move %d %d' % AWAY)
-        self.command('wait 60')
+        self.command('wait 500')      # past TIP_GRACE: the next button waits again
         before = self.strip(box, 'before')
         self.command(f'move {x} {y}')
         self.command(f'wait {wait}')

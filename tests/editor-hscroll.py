@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The editor's horizontal scrollbar (issue 49): with word wrap off, lines wider than the text area get a
 bar along its bottom. Dragging or clicking it scrolls without moving the caret, a sideways wheel stops at
-the widest line, and word wrap or short lines leave no bar."""
+the widest line, and word wrap or short lines leave no bar. Like the other scrollbars it hides at rest unless
+auto_hide_scrollbars is off."""
 import os
 from pathlib import Path
 import socket
@@ -95,11 +96,16 @@ class EditorHScroll(unittest.TestCase):
         self.assertEqual(x, 0)
         self.assertGreater(limit, 0)
         tx, ty, tw, th = track
-        # the thumb is drawn along the bottom of the text area, at its left end
-        pixels = self.shot()
+        # scrollbars hide at rest; over the track the thumb shows along the bottom of the text area,
+        # at its left end
         row = ty + th - 5
         def pixel(px):
             return pixels[(row * 1280 + px) * 3:(row * 1280 + px) * 3 + 3]
+        pixels = self.shot()
+        self.assertEqual(pixel(tx + 10), pixel(tx + tw - 10))
+        self.command(f'move {tx + tw // 2} {ty + th - 5}')
+        self.command('wait 50')
+        pixels = self.shot()
         self.assertNotEqual(pixel(tx + 10), pixel(tx + tw - 10))
         before = self.state()
         # a drag of the thumb scrolls, and the caret stays where it was
@@ -169,6 +175,45 @@ class EditorHScroll(unittest.TestCase):
         self.assertGreater(limits[0], 0)
         self.assertEqual(limits, [limits[0]] * 3)
 
+    def track_colors(self):
+        """the distinct colors along the bar's track: one while it is hidden"""
+        _, _, (tx, ty, tw, th) = self.scroll()
+        row = ty + th - 5
+        pixels = self.shot()
+        return {pixels[(row * 1280 + x) * 3:(row * 1280 + x) * 3 + 3] for x in range(tx + 2, tx + tw - 2)}
+
+    def test_the_bar_flashes_on_a_sideways_scroll_and_hides_by_itself(self):
+        self.start()
+        self.command('move 640 300')
+        self.command('wait 50')
+        self.assertEqual(len(self.track_colors()), 1)
+        self.command('scroll-x 300')
+        self.command('wait 50')
+        self.assertGreater(len(self.track_colors()), 1)
+        # nothing else happens: rhun wakes up on its own to hide the thumb, then stays idle
+        self.command('print-frames')
+        time.sleep(1.3)
+        self.assertEqual(self.command('print-frames'), 'frames=1\n')
+        time.sleep(1)
+        self.assertEqual(self.command('print-frames'), 'frames=0\n')
+        self.assertEqual(len(self.track_colors()), 1)
+
+    def test_the_track_takes_the_arrow_cursor(self):
+        self.start()
+        _, _, (tx, ty, tw, th) = self.scroll()
+        self.command(f'move {tx + tw // 2} {ty + th // 2}')
+        self.command('wait 50')
+        self.assertEqual(self.command('print-shape'), '7\n')
+
+    def test_without_auto_hide_a_faint_thumb_stays(self):
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text(encoding='utf-8') + 'auto_hide_scrollbars = false\n',
+                          encoding='utf-8')
+        self.start()
+        self.command('move 640 300')
+        self.command('wait 50')
+        self.assertGreater(len(self.track_colors()), 1)
+
     def test_a_large_text_is_measured_again_once_editing_pauses(self):
         # past a megabyte, typing widens the bar from the lines on screen; a narrower text shows
         # once editing pauses, without a frame of its own afterwards
@@ -183,7 +228,7 @@ class EditorHScroll(unittest.TestCase):
         self.assertGreater(self.scroll()[1], 0)
         for _ in range(300):
             self.command('key BackSpace')
-        self.command('wait 700')
+        self.command('wait 900')        # past the measure and the scroll flash's last frame
         self.assertEqual(self.scroll(), (0, 0, None))
         self.command('print-frames')
         self.command('wait 1500')

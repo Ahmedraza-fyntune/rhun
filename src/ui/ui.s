@@ -28,6 +28,10 @@ g_press_y: .long 0
 held_mx: .long 0                # a pointer move waiting for the frame of a press
 held_my: .long 0
 held_move: .long 0
+.equ SB_MAX, 16                 # scrollbars tracked for the scroll-flash
+.equ SB_SHOW_MS, 800            # ms a thumb stays visible after its offset last moved
+# sb_flash slot: +0 scrollbar id, +8 last offset px (+pad), +16 show-until ms; 24B each
+sb_flash: .zero SB_MAX * 24
 .p2align 3
 g_face_ui: .zero FACE_SIZE
 g_face_small: .zero FACE_SIZE
@@ -495,7 +499,10 @@ FN ui_icon_btn
     mov ecx, r15d
     M r8d, MI_RADIUS
     COLOR r9d, T_HOVER
-    call gfx_round_rect
+    test dword ptr [rsp + 4], UB_HELD
+    jz 11f
+    COLOR r9d, T_ACTIVE
+11: call gfx_round_rect
 1:  mov edi, ebx
     mov esi, r12d
     mov edx, r13d
@@ -669,6 +676,9 @@ FN ui_scrollbar
     xor eax, eax
 .Lsb_input_ready:
     mov [rsp + 20], eax
+    mov edi, eax
+    call sb_cursor
+    mov eax, [rsp + 20]
     test eax, UB_PRESS
     jz 1f
     # grab offset inside thumb (or jump so the thumb centers on the mouse)
@@ -703,17 +713,15 @@ FN ui_scrollbar
     cmovg eax, ecx
     mov [r15], eax
     mov dword ptr [rip + g_dirty], 1
-4:  # draw thumb (thin, wider when hovered or dragged)
-    COLOR r9d, T_SCROLLBAR
+4:  mov edi, [rsp]
+    mov rsi, r15
+    mov edx, [rsp + 20]
+    call sb_thumb
+    test eax, eax
+    jz .Lsb_ret
+    mov r9d, edx
     mov ecx, [rsp + 12]
-    M eax, MI_6
-    test dword ptr [rsp + 20], UB_HOVER | UB_HELD
-    jnz 6f
-    mov r9d, r9d
-    and r9d, 0x00ffffff
-    or r9d, 0xa0000000
-    M eax, MI_4
-6:  mov edx, eax
+    mov edx, eax
     mov edi, [rsp + 4]
     add edi, ecx
     sub edi, eax
@@ -770,6 +778,9 @@ FN ui_hscrollbar
     mov r8d, [rsp + 16]
     call ui_btn
 0:  mov [rsp + 20], eax
+    mov edi, eax
+    call sb_cursor
+    mov eax, [rsp + 20]
     test eax, UB_PRESS
     jz 1f
     # grab offset inside thumb (or jump so the thumb centers on the mouse)
@@ -804,15 +815,14 @@ FN ui_hscrollbar
     cmovg eax, ecx
     mov [r15], eax
     mov dword ptr [rip + g_dirty], 1
-4:  # draw thumb (thin, thicker when hovered or dragged)
-    COLOR r9d, T_SCROLLBAR
-    M eax, MI_6
-    test dword ptr [rsp + 20], UB_HOVER | UB_HELD
-    jnz 6f
-    and r9d, 0x00ffffff
-    or r9d, 0xa0000000
-    M eax, MI_4
-6:  mov ecx, eax                # thickness
+4:  mov edi, [rsp]
+    mov rsi, r15
+    mov edx, [rsp + 20]
+    call sb_thumb
+    test eax, eax
+    jz .Lhs_ret
+    mov r9d, edx
+    mov ecx, eax                # thickness
     mov edi, ebx
     mov esi, [rsp + 8]
     add esi, [rsp + 16]
@@ -824,6 +834,118 @@ FN ui_hscrollbar
     call gfx_round_rect
 .Lhs_ret:
     EPILOGUE
+
+# sb_tick(): expire scroll-flash windows that have passed
+FN sb_tick
+    push rbx
+    push r12
+    sub rsp, 8
+    call time_ms
+    mov r12, rax
+    lea rbx, [rip + sb_flash]
+    mov ecx, SB_MAX
+1:  mov rax, [rbx + 16]
+    test rax, rax
+    jz 2f
+    cmp r12, rax
+    jb 2f
+    mov qword ptr [rbx + 16], 0
+    mov dword ptr [rip + g_dirty], 1
+2:  add rbx, 24
+    dec ecx
+    jnz 1b
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# sb_timeout() -> ms until the oldest scroll-flash window closes, or -1
+FN sb_timeout
+    push rbx
+    push r12
+    sub rsp, 8
+    call time_ms
+    mov r12, rax
+    lea rbx, [rip + sb_flash]
+    mov ecx, SB_MAX
+    mov edx, -1
+1:  mov rax, [rbx + 16]
+    test rax, rax
+    jz 2f
+    sub rax, r12
+    jle 2f                          # already due: sb_tick clears it
+    cmp edx, -1
+    je 3f
+    cmp eax, edx
+    jge 2f
+3:  mov edx, eax
+2:  add rbx, 24
+    dec ecx
+    jnz 1b
+    mov eax, edx
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# sb_cursor(bits): the arrow over a scrollbar or while its thumb is dragged, but not over another
+# widget's drag
+sb_cursor:
+    test edi, UB_HELD
+    jnz 1f
+    test edi, UB_HOVER
+    jz 2f
+    cmp dword ptr [rip + g_active], 0
+    jne 2f
+1:  mov dword ptr [rip + g_cursor], CUR_ARROW
+2:  ret
+
+# sb_thumb(id, *offset, bits) -> eax thumb thickness (0: none), edx its color. The full thumb while
+# hovered or dragged, or for SB_SHOW_MS after the offset last moved; otherwise none, or a faint thin
+# one when scrollbars do not auto-hide. Each scrollbar id keeps its own sb_flash slot (an offset on
+# the caller's stack moves with its depth, so the id is the key).
+sb_thumb:
+    PROLOGUE
+    mov ebx, edx
+    mov r12, rsi
+    mov r14d, edi
+    lea r13, [rip + sb_flash]
+    xor ecx, ecx
+1:  cmp [r13], r14
+    je 3f
+    cmp qword ptr [r13], 0
+    jne 2f
+    mov [r13], r14
+    mov eax, [r12]                  # seed, don't flash, on first sight
+    mov [r13 + 8], eax
+    jmp 3f
+2:  add r13, 24
+    inc ecx
+    cmp ecx, SB_MAX
+    jl 1b
+    jmp 5f                          # table full: keep the thumb shown
+3:  call time_ms
+    mov ecx, [r12]
+    cmp ecx, [r13 + 8]
+    je 4f
+    mov [r13 + 8], ecx
+    lea rdx, [rax + SB_SHOW_MS]
+    mov [r13 + 16], rdx
+4:  test ebx, UB_HOVER | UB_HELD
+    jnz 5f
+    cmp rax, [r13 + 16]
+    jl 5f
+    xor eax, eax
+    cmp dword ptr [rip + cfg_autohide_scrollbars], 0
+    jne 9f
+    COLOR edx, T_SCROLLBAR
+    and edx, 0x00ffffff
+    or edx, 0xa0000000
+    M eax, MI_4
+    jmp 9f
+5:  COLOR edx, T_SCROLLBAR
+    M eax, MI_6
+9:  EPILOGUE
 
 # ---- text field ----
 
