@@ -218,7 +218,7 @@ class SettingsUI(unittest.TestCase):
         returned = self.work / 'returned.ppm'
         output = self.run_editor(['move 900 400', f'shot {top.as_posix()}',
                                   'scroll 10000', f'shot {shot.as_posix()}',
-                                  'scroll -10000', f'shot {returned.as_posix()}',
+                                  'scroll -10000', 'wait 900', f'shot {returned.as_posix()}',
                                   'click 995 162', 'print-state'], height=700)
         self.assertNotEqual(top.read_bytes(), shot.read_bytes(), 'scroll never reached lower rows')
         self.assertEqual(top.read_bytes(), returned.read_bytes(), 'scroll never returned to top')
