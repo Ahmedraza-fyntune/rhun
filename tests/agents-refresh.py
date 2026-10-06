@@ -69,6 +69,10 @@ class AgentsRefresh(unittest.TestCase):
         self.reader = self.client.makefile('r', encoding='utf-8')
         self.command('cmd focus_agents')
         self.command('wait-agents')
+        # macOS can report the session file this test wrote before rhun started once rhun watches its
+        # folder (after the first page): one more refresh, 150 ms later. Let it run before measuring.
+        self.command('wait 600')
+        self.command('wait-agents')
         self.assertEqual(self.command('print-agents-page'), 'shown=1 total=1 loading=0 error=0\n')
 
     def command(self, line):

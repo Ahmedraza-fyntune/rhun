@@ -43,7 +43,7 @@ class TerminalLinks(unittest.TestCase):
                           '[ui]\nagents_panel = false\nsidebar = false\n'
                           '[terminal]\nshell = /bin/sh\n', encoding='utf-8')
         self.env = dict(os.environ, HOME=str(self.work), XDG_CONFIG_HOME=str(self.work / 'config'),
-                        XDG_STATE_HOME=str(self.work / 'state'), PS1='$ ', ENV='',
+                        XDG_STATE_HOME=str(self.work / 'state'), PS1='$ ', ENV='', HISTFILE='/dev/null',
                         PATH=bin_dir.as_posix() + os.pathsep + os.environ.get('PATH', ''))
         control = self.work / 'control'
         self.process = subprocess.Popen([str(EXE), str(self.project), '--headless', '1280x800',
@@ -71,6 +71,13 @@ class TerminalLinks(unittest.TestCase):
         self.reader.close()
         self.client.close()
         self.process.stderr.close()
+        # the shell goes on a moment after rhun and can still write in its home folder
+        for _ in range(50):
+            try:
+                self.tmp.cleanup()
+                return
+            except OSError:
+                time.sleep(0.1)
         self.tmp.cleanup()
 
     def command(self, line):
