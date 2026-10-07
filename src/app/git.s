@@ -310,20 +310,14 @@ watch_repo:
     call watch_git
     EPILOGUE
 
-# git_each_worktree(cb, ctx): cb(ctx, root, linked) for this repository's checkouts.
-# Git's registrations cover worktrees outside the project, including agent-managed checkouts.
-FN git_each_worktree
-    xor edx, edx
-    jmp each_worktree
-
-# Session history also needs registered roots whose checkout has been removed.
+# git_each_agent_worktree(cb, ctx): cb(ctx, root, linked) for this repository's checkouts. Git's
+# registrations cover worktrees outside the project, including agent-managed checkouts, and those whose
+# checkout has been removed (session history still names them). The agents panel watches the
+# registrations itself (agents_watch_repo): this runs in the index worker, which watches nothing.
 FN git_each_agent_worktree
-    mov edx, 1
-each_worktree:
     PROLOGUE 32
     mov [rsp], rdi
     mov [rsp + 8], rsi
-    mov [rsp + 24], edx
     mov rsi, [rip + g_git_root]
     test rsi, rsi
     jz 9f
@@ -363,13 +357,9 @@ each_worktree:
     mov rdi, r12
     call mem_free
 2:  mov rdi, rbx
-    call watch_agents_dir       # creation of the first worktrees directory
-    mov rdi, rbx
     lea rsi, [rip + .Lworktrees]
     call path_join
     mov [rsp + 16], rax
-    mov rdi, rax
-    call watch_agents_dir
     mov rdi, [rsp + 16]
     lea rsi, [rip + worktree_cb]
     mov rdx, rsp
@@ -387,8 +377,6 @@ worktree_cb:
     call path_join
     mov r12, rax                # registration directory
     mov rdi, rax
-    call watch_agents_dir       # worktree moves update its gitdir file
-    mov rdi, r12
     lea rsi, [rip + .Lgitdir_file]
     call path_join
     mov r13, rax
@@ -422,18 +410,11 @@ worktree_cb:
     mov rsi, rax
     call path_dirlen
     mov byte ptr [r13 + rax], 0
-    mov rdi, r13
-    call file_is_dir
-    test eax, eax
-    jnz 5f
-    cmp dword ptr [rbx + 24], 0
-    je 6f                      # other Git surfaces need existing checkouts
-5:
     mov rdi, [rbx + 8]
     mov rsi, r13
     mov edx, 1
     call qword ptr [rbx]
-6:  mov rdi, r13
+    mov rdi, r13
     call mem_free
 7:  mov rdi, r14
     call mem_free

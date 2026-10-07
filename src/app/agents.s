@@ -24,6 +24,9 @@ ENDSTRUCT AM_SIZE
 .equ ID_AG_FOLLOW, 0x5f04
 .equ ID_AG_MORE, 0x5f05
 
+.equ ROUTINE_GAP, 2000          # ms from one routine discovery run to the next
+.equ INDEX_TIMEOUT, 60000       # ms a discovery run may take before it is stopped
+
 .bss
 .p2align 3
 sessions: .zero VEC_SIZE        # AS*
@@ -57,9 +60,12 @@ last_visible: .long 0
 .p2align 3
 index_debounce: .quad 0
 index_started: .quad 0
+index_runs: .quad 0             # workers started (print-agents-runs)
 sources_hash: .quad 0
 .data
 index_fd: .long -1
+common_wd: .long -1             # the watch of the common .git folder (agents_watch_repo)
+registry_wd: .long -1           # and of its worktrees folder
 .bss
 
 
@@ -104,14 +110,11 @@ FN agents_set_project
     mov dword ptr [rip + index_error], 0
     mov qword ptr [rip + last_scan], 0
     mov qword ptr [rip + index_debounce], 0
-    # the repository's worktree registrations (.git/worktrees) add roots: a change there runs
-    # discovery again; a folder without a repository has none to watch
-    call git_common_dir
-    test rax, rax
-    jz 1f
-    mov rdi, rax
-    call watch_agents_dir
-1:
+    # the previous project's folders no longer run this one's discovery
+    call watch_forget_agents
+    mov dword ptr [rip + common_wd], -1
+    mov dword ptr [rip + registry_wd], -1
+    call agents_watch_repo
     call agents_scan
     call index_dirty
     EPILOGUE
@@ -244,6 +247,7 @@ index_start:
     jle .Lindex_start_fail
     mov [rip + index_pid], eax
     mov [rip + index_fd], edx
+    inc qword ptr [rip + index_runs]
     lea rdi, [rip + index_out]
     call sb_clear
     mov edi, [rip + index_fd]
@@ -1617,12 +1621,14 @@ FN agents_poll
     call poll_session
     inc rbx
     jmp 1b
-3:  mov rbx, [rip + view]
-    test rbx, rbx
+3:  mov rbx, [rip + view]     # the open conversation, unless the rows above had it (it can be
+    test rbx, rbx               # pinned past a short page, at page_count)
     js 4f
+    cmp rbx, [rip + page_count]
+    jae 31f
     cmp rbx, 50
     jb 4f
-    mov rax, [rip + sessions + VEC_ptr]
+31: mov rax, [rip + sessions + VEC_ptr]
     mov r12, [rax + rbx*8]
     call poll_session
 4:  test r13d, r13d
@@ -1655,9 +1661,88 @@ poll_session:
 9:  ret
 
 FN agents_on_change
+    call agents_watch_repo      # a new worktree's registration folder too
     call time_ms
     add rax, 150
     mov [rip + index_debounce], rax
+    ret
+
+# agents_watch_repo(): the repository's worktree registrations add roots, so the panel watches them: the
+# common .git folder (for its worktrees entry), .git/worktrees (a worktree added or removed) and each
+# registration's folder (its gitdir names a moved worktree). A folder without a repository has none.
+agents_watch_repo:
+    PROLOGUE
+    call git_common_dir
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, rax
+    call watch_agents_dir
+    mov [rip + common_wd], eax
+    mov rdi, rbx
+    lea rsi, [rip + .Lworktrees_entry]
+    call path_join
+    mov r12, rax
+    mov rdi, rax
+    call watch_agents_dir
+    mov [rip + registry_wd], eax
+    mov rdi, r12
+    lea rsi, [rip + registration_cb]
+    mov rdx, r12
+    call dir_each
+    mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
+registration_cb:
+    test edx, edx
+    jz 1f
+    push rbx
+    call path_join
+    mov rbx, rax
+    mov rdi, rax
+    call watch_agents_dir
+    mov rdi, rbx
+    call mem_free
+    pop rbx
+1:  ret
+
+# agents_event(wd, name, mask) -> 1 when an event in a watched folder can change the sessions listed: in
+# the common .git folder its worktrees entry alone, any registration added or removed, a registration's
+# gitdir (a moved worktree), a session file created, removed or renamed. Growth is polled, and the rest
+# of Git's activity (index, HEAD, refs) or of a shared Codex day folder changes nothing here.
+FN agents_event
+    push rbx
+    push r12
+    push r13
+    mov ebx, edi
+    mov r12, rsi
+    mov r13d, edx
+    mov eax, 1
+    cmp ebx, [rip + registry_wd]
+    je 9f
+    mov rdi, r12
+    lea rsi, [rip + .Lworktrees_entry]
+    cmp ebx, [rip + common_wd]
+    je 1f
+    lea rsi, [rip + .Lgitdir_entry]
+1:  call strcmp_eq
+    test eax, eax
+    jnz 9f
+    cmp ebx, [rip + common_wd]
+    je 9f
+    test r13d, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO
+    jz 9f
+    mov rdi, r12
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    lea rdx, [rip + .Ljsonl_entry]
+    mov ecx, 6
+    call str_ends
+9:  pop r13
+    pop r12
+    pop rbx
     ret
 
 FN agents_timeout
@@ -1681,7 +1766,14 @@ FN agents_timeout
     cmovl rcx, rdx
 2:  cmp dword ptr [rip + index_pending], 0
     je 4f
-    xor ecx, ecx
+    xor edx, edx                # a run asked for starts at once
+    cmp dword ptr [rip + index_loud], 0
+    jne 21f
+    mov rdx, [rip + last_scan]  # a routine one once ROUTINE_GAP has passed since the last run
+    add rdx, ROUTINE_GAP
+    sub rdx, rax
+21: cmp rdx, rcx
+    cmovl rcx, rdx
 4:  xor eax, eax
     test rcx, rcx
     cmovns rax, rcx
@@ -1695,7 +1787,20 @@ FN agents_tick
     PROLOGUE
     call index_reap
     call index_finish
-    cmp qword ptr [rip + g_project], 0
+    # a worker that does not finish (blocked on a FIFO named .jsonl, or a hung network home) would keep
+    # every later run from starting: stop it and report the failure
+    cmp dword ptr [rip + index_pid], 0
+    je 7f
+    call time_ms
+    sub rax, [rip + index_started]
+    cmp rax, INDEX_TIMEOUT
+    jb 7f
+    call agents_shutdown
+    mov dword ptr [rip + index_error], 1
+    call time_ms
+    mov [rip + last_scan], rax
+    call index_dirty
+7:  cmp qword ptr [rip + g_project], 0
     je 9f
     cmp dword ptr [rip + cfg_agents], 0
     jne 0f
@@ -1729,7 +1834,15 @@ FN agents_tick
     jne 9f
     cmp dword ptr [rip + index_pending], 0
     je 9f
-    call index_start
+    # a run asked for starts now; a routine one (a session grew, a folder changed) waits until
+    # ROUTINE_GAP after the last, so a live conversation does not run discovery back to back
+    cmp dword ptr [rip + index_loud], 0
+    jne 4f
+    mov rax, rbx
+    sub rax, [rip + last_scan]
+    cmp rax, ROUTINE_GAP
+    jb 9f
+4:  call index_start
 9:  EPILOGUE
 
 # Explicit control waits can load sessions even while the panel is hidden.
@@ -1783,6 +1896,21 @@ FN agents_page_dump
     mov esi, 10
     call sb_push_byte
     EPILOGUE
+
+# agents_runs_dump(sb): "runs=N", the discovery runs started so far (print-agents-runs)
+FN agents_runs_dump
+    push rbx
+    mov rbx, rdi
+    lea rsi, [rip + .Lpage_runs]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + index_runs]
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    ret
 
 # open_session(i)
 open_session:
@@ -2345,13 +2473,13 @@ list_draw:
     add edx, r15d
     M ecx, MI_24
     lea r8, [rip + .Lnone]
-    call index_loading
-    test eax, eax
-    jz 110f
-    lea r8, [rip + .Lloading]
-110: cmp dword ptr [rip + index_error], 0
-    je 111f
+    cmp dword ptr [rip + index_error], 0
+    je 110f
     lea r8, [rip + .Lfailed]
+110: call index_loading          # a run asked for shows as loading, also a retry after a failure,
+    test eax, eax               # as the footer does
+    jz 111f
+    lea r8, [rip + .Lloading]
 111:
     cmp qword ptr [rip + g_project], 0
     jne 11f
@@ -3039,12 +3167,16 @@ th_follow: .long 1
 
 .section .rodata
 .Lindex_arg: .asciz "--agent-index"
+.Lworktrees_entry: .asciz "worktrees"
+.Lgitdir_entry: .asciz "gitdir"
+.Ljsonl_entry: .ascii ".jsonl"
 
 .section .rodata
 .Lpage_shown: .asciz "shown="
 .Lpage_total: .asciz " total="
 .Lpage_loading: .asciz " loading="
 .Lpage_error: .asciz " error="
+.Lpage_runs: .asciz "runs="
 
 .section .rodata
 .Lloading: .asciz "Loading sessions..."

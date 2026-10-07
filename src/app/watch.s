@@ -79,6 +79,17 @@ add_watch:
 9:  mov rax, r13
     EPILOGUE
 
+# watch_forget_agents(): no folder watched so far reports to the agents panel (a new project's folders
+# are added again; the kernel keeps the watches of folders other kinds still use)
+FN watch_forget_agents
+    lea rax, [rip + wd_kinds]
+    xor ecx, ecx
+1:  and byte ptr [rax + rcx], 0xff - WK_AGENTS
+    inc ecx
+    cmp ecx, MAXWD
+    jb 1b
+    ret
+
 FN watch_dir
     mov esi, WK_EXPLORER
     jmp add_watch
@@ -170,6 +181,16 @@ on_inotify:
     jz 1f
     mov dword ptr [rsp], 1
 1:  test ecx, WK_AGENTS
+    jz 2f
+    push rcx
+    push rcx
+    mov edi, ebx
+    lea rsi, [r14 + 16]
+    mov edx, r15d
+    call agents_event           # only what can change the sessions listed
+    pop rcx
+    pop rcx
+    test eax, eax
     jz 2f
     mov dword ptr [rsp + 4], 1
 2:  test ecx, WK_DOCS

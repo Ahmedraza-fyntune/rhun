@@ -644,6 +644,13 @@ c_agents_page:
     xor eax, eax
     ret
 
+# print-agents-runs: "runs=N", discovery runs started so far
+c_agents_runs:
+    lea rdi, [rip + out]
+    call agents_runs_dump
+    xor eax, eax
+    ret
+
 # wait-grep: until find in files has read the project's files
 c_wait_grep:
     push r13
@@ -1368,6 +1375,7 @@ on_client:
 .Lc_wait_agents: .asciz "wait-agents"
 .Lc_agents_more: .asciz "agents-more"
 .Lc_agents_page: .asciz "print-agents-page"
+.Lc_agents_runs: .asciz "print-agents-runs"
 .Lc_wait_grep: .asciz "wait-grep"
 .Lc_wait_term: .asciz "wait-term"
 .Lc_print_gitlog: .asciz "print-gitlog"
@@ -1409,6 +1417,7 @@ ctl_table:
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
     .quad .Lc_wait_grep, c_wait_grep
     .quad .Lc_wait_agents, c_wait_agents, .Lc_agents_more, c_agents_more, .Lc_agents_page, c_agents_page
+    .quad .Lc_agents_runs, c_agents_runs
     .quad .Lc_wait_term, c_wait_term
     .quad .Lc_print_scm, c_print_scm
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai

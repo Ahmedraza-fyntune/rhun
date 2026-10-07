@@ -26,6 +26,7 @@ member_file: .zero SB_SIZE
 repository: .quad 0
 history_records: .zero VEC_SIZE
 table: .quad 0
+cache_hash: .quad 0             # of the cache's records as loaded (cache_load), 0 without one
 page_limit: .quad 0
 scan_failed: .long 0
 .text
@@ -871,6 +872,12 @@ cache_load:
     call agent_records_decode
     test eax, eax
     jz 8f
+    lea rdi, [rbx + r13 + 8]    # what cache_save would write again unchanged
+    mov rsi, r12
+    sub rsi, r13
+    sub rsi, 8
+    call hash_line
+    mov [rip + cache_hash], rax
     xor r13d, r13d
 1:  cmp r13, [rip + entries + VEC_len]
     jae 8f
@@ -966,6 +973,11 @@ cache_save:
 31: inc rbx
     jmp 3b
 4:  call packet_finish
+    mov rdi, [rip + packet + SB_ptr]
+    mov rsi, [rip + packet + SB_len]
+    call hash_line
+    cmp rax, [rip + cache_hash]
+    je 9f                       # unchanged since loaded: not written (and synced) again on every run
     mov rdi, [rip + cache_file + SB_ptr]
     call keyed_save
 9:  EPILOGUE

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Routine agent discovery runs quietly: the panel shows its loading state only for a run the user
-asked for, and a folder without a repository is not rediscovered when a file in it is saved."""
+asked for, a file saved in the folder runs no discovery, and of a repository's activity only a
+worktree registered does."""
 import glob
 import json
 import os
@@ -85,8 +86,14 @@ class AgentsRefresh(unittest.TestCase):
             self.assertNotIn(reply, ('', 'error\n'), line)
             output.append(reply)
 
+    def runs(self):
+        """Discovery runs started so far."""
+        reply = self.command('print-agents-runs')
+        self.assertTrue(reply.startswith('runs='), reply)
+        return int(reply[5:])
+
     def cache(self):
-        """The index worker writes its cache anew on every run: another inode, a later time."""
+        """The index worker writes its cache anew when it changed: another inode, a later time."""
         files = glob.glob(str(self.work / 'state/rhun/agents-index-v5-*'))
         self.assertEqual(len(files), 1, files)
         stat = os.stat(files[0])
@@ -143,21 +150,33 @@ class AgentsRefresh(unittest.TestCase):
 
     def test_saving_in_a_plain_folder_runs_no_discovery(self):
         self.start()
-        before = self.cache()
+        before = self.runs()
         (self.project / 'note.txt').write_text('saved\n', encoding='utf-8')
         self.command('wait 1500')
-        self.assertEqual(self.cache(), before, 'a file saved in the folder ran discovery again')
+        self.assertEqual(self.runs(), before, 'a file saved in the folder ran discovery again')
 
-    def test_a_change_in_the_repository_runs_discovery_again(self):
-        # worktree registrations live under .git: a change there is followed
+    def test_a_worktree_registered_runs_discovery_again_other_git_activity_does_not(self):
+        # worktree registrations live under .git: one added is followed, the first (which creates
+        # .git/worktrees) and the next (inside it); the rest of Git's activity there changes no session.
+        # Each must come well before the routine run, 10 s after the last.
+        def git(*args):
+            subprocess.run(['git', '-C', str(self.project), '-c', 'user.name=t', '-c', 'user.email=t@t',
+                            *args], env=self.env, check=True, capture_output=True)
         subprocess.run(['git', 'init', '-q', '-b', 'main', str(self.project)], env=self.env, check=True)
+        git('commit', '-q', '--allow-empty', '-m', 'start')
         self.start()
-        before = self.cache()
-        (self.project / '.git/rhun-probe').write_text('registered\n', encoding='utf-8')
-        deadline = time.monotonic() + 10
-        while self.cache() == before and time.monotonic() < deadline:
-            self.command('wait 100')
-        self.assertNotEqual(self.cache(), before, 'a change under .git did not run discovery')
+        before = self.runs()
+        (self.project / '.git/rhun-probe').write_text('not a registration\n', encoding='utf-8')
+        self.command('wait 1500')
+        self.assertEqual(self.runs(), before, 'a change under .git that registers nothing ran discovery')
+        for name in ('first', 'second'):
+            git('worktree', 'add', '-q', str(self.work / name))
+            deadline = time.monotonic() + 6
+            while self.runs() == before and time.monotonic() < deadline:
+                self.command('wait 100')
+            self.assertGreater(self.runs(), before, f'the {name} worktree did not run discovery')
+            self.command('wait-agents')
+            before = self.runs()
 
 
 if __name__ == '__main__':
