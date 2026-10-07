@@ -66,7 +66,7 @@ tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
 g_side_px: .long 0
 g_agents_px: .long 0
-dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm
+dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm, 5 close all
 dlg_tab: .quad 0
 .p2align 3
 dlg_title: .quad 0               # app_confirm: the question, a line under it, the button, its function
@@ -948,6 +948,38 @@ FN cmd_close_tab
     js 1f
     jmp app_close_tab
 1:  ret
+
+# cmd_close_all: close every tab. Each dirty doc asks first; the answer closes it
+# and rescans here, like cmd_quit's loop. A cancel leaves everything as it was.
+FN cmd_close_all
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov rdi, [rax + TAB_doc]
+    call doc_dirty
+    test eax, eax
+    jz 2f
+    mov [rip + dlg_tab], rbx
+    mov dword ptr [rip + dlg_kind], 5
+    mov rdi, rbx
+    call app_activate_tab
+    mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    EPILOGUE
+2:  inc rbx
+    jmp 1b
+3:  mov rax, [rip + g_tabs + VEC_len]
+    test rax, rax
+    jz 4f
+    dec rax
+    mov rdi, rax
+    call app_close_tab_now
+    jmp 3b
+4:  EPILOGUE
 
 FN cmd_next_tab
     mov esi, 1
@@ -3627,8 +3659,12 @@ dialog_choose:
     call switch_continue
     jmp 9f
 11: cmp r12d, 2
-    jne 9f
+    jne 12f
     call cmd_quit
+    jmp 9f
+12: cmp r12d, 5
+    jne 9f
+    call cmd_close_all
     jmp 9f
 8:  # not quitting after all: no restart into an update either, no other project, and the session
     # is saved again when it comes to that

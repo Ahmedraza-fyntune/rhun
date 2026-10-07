@@ -166,6 +166,20 @@ class EditorMatrix(unittest.TestCase):
         self.assertIn('tabs=0 focus=0 ', output)
         self.assertIn('resumed\n<eod>', output)
 
+    def test_close_all_tabs(self):
+        output = self.run_editor(['cmd settings', 'cmd close_all_tabs', 'print-state'])
+        self.assertIn('tabs=0', output)
+
+        output = self.run_editor(['type x', 'cmd settings', 'cmd close_all_tabs',
+            'print-state', 'key Escape', 'print-state',
+            'cmd close_all_tabs', 'key Return', 'print-state'])
+        states = [line for line in output.splitlines() if line.startswith('tabs=')]
+        self.assertIn('tabs=2 ', states[0])
+        self.assertIn('focus=5 ', states[0])
+        self.assertIn('tabs=2 ', states[1])
+        self.assertIn('dirty=1 ', states[1])
+        self.assertIn('tabs=0 ', states[2])
+
     def test_closing_inactive_tabs_preserves_focus(self):
         output = self.run_editor(['cmd settings', 'cmd prev_tab', 'cmd find',
             'type cat', 'click 170 58 middle', 'print-state', 'key Escape',
