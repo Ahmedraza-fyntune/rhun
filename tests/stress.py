@@ -92,6 +92,26 @@ class Stress(unittest.TestCase):
         self.assertNotIn('> node_modules', output)
         self.assertNotIn('  node_modules', output)
 
+    def test_scrollbar_drag_maps_proportionally_on_a_huge_file(self):
+        # issue 58: past ~441k lines the 32-bit px conversion overflowed and a scrollbar
+        # drag landed back near the top instead of where the thumb was taken
+        file = self.work / 'huge.txt'
+        with file.open('w', encoding='utf-8') as f:
+            f.write('line\n' * 600_000)
+        # The track is 12px at the window's right edge; the 6px resize-edge zone
+        # swallows presses past x = W-6, so aim for the strip's middle.
+        output = self.run_editor('scrollbar-drag-600k-lines', [
+            'move 991 200', 'wait 50', 'down', 'wait 50', 'move 991 400', 'wait 50',
+            'up', 'wait 50', 'print-scroll',
+            'move 991 400', 'wait 50', 'down', 'wait 50', 'move 991 650', 'wait 50',
+            'up', 'wait 50', 'print-scroll'], file)
+        ys = [int(part[2:]) for line in output.splitlines() if line.startswith('x=')
+              for part in line.split() if part.startswith('y=')]
+        self.assertEqual(len(ys), 2, output)
+        mid, low = (y / 256 for y in ys)
+        self.assertTrue(200_000 < mid < 450_000, f'drag to ~half -> line {mid:.0f} (600k lines)')
+        self.assertTrue(500_000 < low <= 600_000, f'drag near bottom -> line {low:.0f}')
+
     def test_repeated_palette_and_tab_lifecycle(self):
         file = self.work / 'stable.txt'
         file.write_text('stable\n', encoding='utf-8')

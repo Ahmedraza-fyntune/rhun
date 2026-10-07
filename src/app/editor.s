@@ -2427,13 +2427,19 @@ FN editor_draw
     call gfx_fill
 8:  # scrollbar
     mov rax, [rbx + DOC_nlines]
-    add eax, 1
-    imul eax, [rip + g_lh]
+    inc rax
+    movsxd rcx, dword ptr [rip + g_lh]
+    imul rax, rcx
     cmp dword ptr [rip + cfg_scroll_past_end], 0
     je 81f
-    add eax, [rip + g_ed_h]
-    sub eax, [rip + g_lh]
-81: mov [rsp + 48], eax         # content px
+    movsxd rcx, dword ptr [rip + g_ed_h]
+    add rax, rcx
+    movsxd rcx, dword ptr [rip + g_lh]
+    sub rax, rcx
+81: mov ecx, 0x7fffffff         # ui_scrollbar's content is i32 px
+    cmp rax, rcx
+    cmovg rax, rcx
+    mov [rsp + 48], eax         # content px
     mov eax, [rip + g_block]
     mov [rsp + 104], eax
     call find_blocks_editor
@@ -2441,8 +2447,12 @@ FN editor_draw
     mov eax, [rip + g_block]
     mov [rsp + 108], eax
     mov rax, [rbx + DOC_scrolly]
-    imul eax, [rip + g_lh]
-    sar eax, 8
+    movsxd rcx, dword ptr [rip + g_lh]
+    imul rax, rcx               # 64 bits: a million lines' offset overflows 32
+    sar rax, 8
+    mov ecx, 0x7fffffff
+    cmp rax, rcx
+    cmovg rax, rcx
     mov [rsp + 52], eax         # offset px
     mov eax, [rip + g_ed_h]
     push rax
