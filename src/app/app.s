@@ -1110,6 +1110,7 @@ FN app_apply_settings
     mov rdi, rax
     call theme_apply
 1:  call git_apply
+    call agents_apply_settings
     call ai_apply
     call vim_sync
     call watch_apply_settings
@@ -1606,15 +1607,23 @@ FN app_timeout
     cmp eax, ebx
     jge 8f
 81: mov ebx, eax
-    call sb_timeout
+8:  call editor_timeout
     cmp eax, -1
-    je 8f
-    cmp ebx, -1
     je 82f
+    cmp ebx, -1
+    je 83f
     cmp eax, ebx
-    jge 8f
-82: mov ebx, eax
-8:  mov eax, ebx
+    jge 82f
+83: mov ebx, eax
+82: call sb_timeout
+    cmp eax, -1
+    je 84f
+    cmp ebx, -1
+    je 85f
+    cmp eax, ebx
+    jge 84f
+85: mov ebx, eax
+84: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -1637,6 +1646,7 @@ FN app_tick
     call update_tick
     call ai_tick
     call palette_tick
+    call editor_tick
     EPILOGUE
 
 # ---------------- rendering ----------------

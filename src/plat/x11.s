@@ -504,11 +504,17 @@ x_key:
     mov edi, eax
     call keysym_to_unicode
     mov r15d, eax
+    # and the key's unshifted character, the base column's (g_key_base)
+    mov rcx, [rip + kmap]
+    mov edi, [rcx + r12*4]
+    call keysym_to_unicode
+    mov [rip + g_key_base], eax
     mov edx, [rip + xmods]
     call x_mods
     mov edi, r14d
     mov esi, r15d
     call app_on_key
+    mov dword ptr [rip + g_key_base], 0
 9:  EPILOGUE
 
 # x_key_test(keycode, state): feed a key press as if it came from the server (control socket)

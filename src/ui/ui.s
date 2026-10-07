@@ -655,11 +655,15 @@ FN ui_scrollbar
     # thumb y = y + (h - thumb) * off / (content - view)
     mov eax, [rsp + 16]
     sub eax, r14d
-    imul eax, [r15]
+    movsxd rax, eax
+    mov ecx, [r15]
+    movsxd rcx, ecx
+    imul rax, rcx               # 64 bits: a long text's offset times the track overflows 32
     mov ecx, r12d
     sub ecx, r13d
-    cdq
-    idiv ecx
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
     add eax, [rsp + 8]
     mov ebx, eax                # thumb y
     # interaction on the whole track
@@ -676,14 +680,10 @@ FN ui_scrollbar
     xor eax, eax
 .Lsb_input_ready:
     mov [rsp + 20], eax
-    test eax, UB_HELD
-    jnz 7f                  # this scrollbar's own drag
-    test eax, UB_HOVER
-    jz 1f
-    cmp dword ptr [rip + g_active], 0
-    jne 1f                  # another widget is dragging: keep its cursor
-7:  mov dword ptr [rip + g_cursor], CUR_ARROW
-1:  test eax, UB_PRESS
+    mov edi, eax
+    call sb_cursor
+    mov eax, [rsp + 20]
+    test eax, UB_PRESS
     jz 1f
     # grab offset inside thumb (or jump so the thumb centers on the mouse)
     mov eax, [rip + g_my]
@@ -700,74 +700,35 @@ FN ui_scrollbar
     mov eax, [rip + g_my]
     sub eax, [rip + grab_dy]
     sub eax, [rsp + 8]
+    movsxd rax, eax
     mov ecx, r12d
     sub ecx, r13d
-    imul eax, ecx
+    movsxd rcx, ecx
+    imul rax, rcx               # in 64 bits, as the thumb's position
     mov ecx, [rsp + 16]
     sub ecx, r14d
     jle 4f
-    cdq
-    idiv ecx
-    test eax, eax
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
+    test rax, rax
     jns 5f
     xor eax, eax
 5:  mov ecx, r12d
     sub ecx, r13d
-    cmp eax, ecx
-    cmovg eax, ecx
+    movsxd rcx, ecx
+    cmp rax, rcx
+    cmovg rax, rcx
     mov [r15], eax
     mov dword ptr [rip + g_dirty], 1
-4:  # scroll flash: keep the thumb visible briefly after the offset last moved (keyed by the
-    # scrollbar's id: an offset on the caller's stack moves with its depth)
-    lea rdx, [rip + sb_flash]
-    mov r11d, [rsp]                 # the scrollbar's id
-    xor ecx, ecx
-61: cmp [rdx], r11
-    je 62f
-    cmp qword ptr [rdx], 0
-    jne 63f
-    mov [rdx], r11
-    mov eax, [r15]                  # seed, don't flash, on first sight
-    mov [rdx + 8], eax
-    jmp 62f
-63: add rdx, 24
-    inc ecx
-    cmp ecx, SB_MAX
-    jl 61b
-    xor edx, edx                    # table full: keep the thumb shown
-62: mov [rsp + 24], rdx
-    sub rsp, 8
-    call time_ms                    # rax = now
-    add rsp, 8
-    mov rdx, [rsp + 24]
-    mov ecx, 1
-    test rdx, rdx
-    jz 68f
-    xor ecx, ecx
-    mov r10d, [r15]
-    cmp r10d, [rdx + 8]
-    je 67f
-    mov [rdx + 8], r10d
-    lea r10, [rax + SB_SHOW_MS]
-    mov [rdx + 16], r10
-67: cmp rax, [rdx + 16]
-    jge 68f
-    mov ecx, 1
-68: mov [rsp + 28], ecx
-    # the full thumb while hovered or dragged, or during the scroll flash; otherwise none, or a
-    # faint thin one when scrollbars do not auto-hide
-    COLOR r9d, T_SCROLLBAR
-    M eax, MI_6
-    test dword ptr [rsp + 20], UB_HOVER | UB_HELD
-    jnz 71f
-    cmp dword ptr [rsp + 28], 0
-    jne 71f
-    cmp dword ptr [rip + cfg_autohide_scrollbars], 0
-    jne .Lsb_ret
-    and r9d, 0x00ffffff
-    or r9d, 0xa0000000
-    M eax, MI_4
-71: mov ecx, [rsp + 12]
+4:  mov edi, [rsp]
+    mov rsi, r15
+    mov edx, [rsp + 20]
+    call sb_thumb
+    test eax, eax
+    jz .Lsb_ret
+    mov r9d, edx
+    mov ecx, [rsp + 12]
     mov edx, eax
     mov edi, [rsp + 4]
     add edi, ecx
@@ -779,6 +740,115 @@ FN ui_scrollbar
     shr r8d, 1
     call gfx_round_rect
 .Lsb_ret:
+    EPILOGUE
+
+# ui_hscrollbar(id, x, y, w, h, *offset(i32 px), content, view): ui_scrollbar along x, its thumb at the
+# bottom of the track
+FN ui_hscrollbar
+    PROLOGUE 48
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    mov [rsp + 16], r8d
+    mov r15, r9
+    mov r12d, [rbp + 16]        # content
+    mov r13d, [rbp + 24]        # view
+    cmp r12d, r13d
+    jle .Lhs_ret
+    # thumb width = max(w * view / content, 24)
+    mov eax, [rsp + 12]
+    imul eax, r13d
+    cdq
+    idiv r12d
+    M ecx, MI_24
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov r14d, eax               # thumb w
+    # thumb x = x + (w - thumb) * off / (content - view)
+    mov eax, [rsp + 12]
+    sub eax, r14d
+    movsxd rax, eax
+    mov ecx, [r15]
+    movsxd rcx, ecx
+    imul rax, rcx               # 64 bits: a long text's offset times the track overflows 32
+    mov ecx, r12d
+    sub ecx, r13d
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
+    add eax, [rsp + 4]
+    mov ebx, eax                # thumb x
+    # interaction on the whole track
+    xor eax, eax
+    cmp dword ptr [rip + g_block], 0
+    jne 0f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    mov r8d, [rsp + 16]
+    call ui_btn
+0:  mov [rsp + 20], eax
+    mov edi, eax
+    call sb_cursor
+    mov eax, [rsp + 20]
+    test eax, UB_PRESS
+    jz 1f
+    # grab offset inside thumb (or jump so the thumb centers on the mouse)
+    mov eax, [rip + g_mx]
+    sub eax, ebx
+    js 2f
+    cmp eax, r14d
+    jl 3f
+2:  mov eax, r14d
+    shr eax, 1
+3:  mov [rip + grab_dx], eax
+1:  test dword ptr [rsp + 20], UB_HELD
+    jz 4f
+    # offset = (mx - grab - x) * (content - view) / (w - thumb)
+    mov eax, [rip + g_mx]
+    sub eax, [rip + grab_dx]
+    sub eax, [rsp + 4]
+    movsxd rax, eax
+    mov ecx, r12d
+    sub ecx, r13d
+    movsxd rcx, ecx
+    imul rax, rcx               # in 64 bits, as the thumb's position
+    mov ecx, [rsp + 12]
+    sub ecx, r14d
+    jle 4f
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
+    test rax, rax
+    jns 5f
+    xor eax, eax
+5:  mov ecx, r12d
+    sub ecx, r13d
+    movsxd rcx, ecx
+    cmp rax, rcx
+    cmovg rax, rcx
+    mov [r15], eax
+    mov dword ptr [rip + g_dirty], 1
+4:  mov edi, [rsp]
+    mov rsi, r15
+    mov edx, [rsp + 20]
+    call sb_thumb
+    test eax, eax
+    jz .Lhs_ret
+    mov r9d, edx
+    mov ecx, eax                # thickness
+    mov edi, ebx
+    mov esi, [rsp + 8]
+    add esi, [rsp + 16]
+    sub esi, eax
+    sub esi, [rip + g_mt + 4*MI_3]
+    mov edx, r14d
+    mov r8d, eax
+    shr r8d, 1
+    call gfx_round_rect
+.Lhs_ret:
     EPILOGUE
 
 # sb_tick(): expire scroll-flash windows that have passed
@@ -833,6 +903,65 @@ FN sb_timeout
     pop r12
     pop rbx
     ret
+
+# sb_cursor(bits): the arrow over a scrollbar or while its thumb is dragged, but not over another
+# widget's drag
+sb_cursor:
+    test edi, UB_HELD
+    jnz 1f
+    test edi, UB_HOVER
+    jz 2f
+    cmp dword ptr [rip + g_active], 0
+    jne 2f
+1:  mov dword ptr [rip + g_cursor], CUR_ARROW
+2:  ret
+
+# sb_thumb(id, *offset, bits) -> eax thumb thickness (0: none), edx its color. The full thumb while
+# hovered or dragged, or for SB_SHOW_MS after the offset last moved; otherwise none, or a faint thin
+# one when scrollbars do not auto-hide. Each scrollbar id keeps its own sb_flash slot (an offset on
+# the caller's stack moves with its depth, so the id is the key).
+sb_thumb:
+    PROLOGUE
+    mov ebx, edx
+    mov r12, rsi
+    mov r14d, edi
+    lea r13, [rip + sb_flash]
+    xor ecx, ecx
+1:  cmp [r13], r14
+    je 3f
+    cmp qword ptr [r13], 0
+    jne 2f
+    mov [r13], r14
+    mov eax, [r12]                  # seed, don't flash, on first sight
+    mov [r13 + 8], eax
+    jmp 3f
+2:  add r13, 24
+    inc ecx
+    cmp ecx, SB_MAX
+    jl 1b
+    jmp 5f                          # table full: keep the thumb shown
+3:  call time_ms
+    mov ecx, [r12]
+    cmp ecx, [r13 + 8]
+    je 4f
+    mov [r13 + 8], ecx
+    lea rdx, [rax + SB_SHOW_MS]
+    mov [r13 + 16], rdx
+4:  test ebx, UB_HOVER | UB_HELD
+    jnz 5f
+    cmp rax, [r13 + 16]
+    jl 5f
+    xor eax, eax
+    cmp dword ptr [rip + cfg_autohide_scrollbars], 0
+    jne 9f
+    COLOR edx, T_SCROLLBAR
+    and edx, 0x00ffffff
+    or edx, 0xa0000000
+    M eax, MI_4
+    jmp 9f
+5:  COLOR edx, T_SCROLLBAR
+    M eax, MI_6
+9:  EPILOGUE
 
 # ---- text field ----
 
@@ -1944,6 +2073,7 @@ empty_str: .byte 0
 ta_nl: .ascii "\n"
 .bss
 grab_dy: .long 0
+grab_dx: .long 0
 .p2align 3
 ta_buf: .zero SB_SIZE
 ta_rows: .zero VEC_SIZE

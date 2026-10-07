@@ -23,6 +23,7 @@ g_recent_label: .zero 4096 * RECENT_MAX
 
 # state_dir(sb) -> 1 with "$XDG_STATE_HOME/rhun" (or "$HOME/.local/state/rhun") in sb, created;
 # 0 without a home
+FN session_state_dir
 state_dir:
     PROLOGUE
     mov rbx, rdi

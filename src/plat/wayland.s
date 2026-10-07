@@ -1260,9 +1260,10 @@ on_keyboard:
 key_emit:
     push rbx
     push r12
-    sub rsp, 8
+    push r13
     mov r12d, edi
-    mov esi, [rip + kb_group]
+    mov r13d, [rip + kb_group]
+    mov esi, r13d
     mov edx, [rip + kb_mods]
     call xkb_keysym
     mov ebx, eax
@@ -1273,20 +1274,30 @@ key_emit:
     jb 1f
     cmp ebx, 0xfe00
     jae 1f
+    xor r13d, r13d
     mov edi, r12d
     xor esi, esi
     mov edx, [rip + kb_mods]
     call xkb_keysym
     mov ebx, eax
-1:
+1:  # and the key's unshifted character in that layout, neither Shift nor Caps Lock (g_key_base)
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, [rip + kb_mods]
+    and edx, -4
+    call xkb_keysym
     mov edi, eax
+    call keysym_to_unicode
+    mov [rip + g_key_base], eax
+    mov edi, ebx
     call keysym_to_unicode
     mov edi, ebx
     mov esi, eax
     mov edx, [rip + kb_mods]
     and edx, MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER
     call app_on_key
-    add rsp, 8
+    mov dword ptr [rip + g_key_base], 0
+    pop r13
     pop r12
     pop rbx
     ret

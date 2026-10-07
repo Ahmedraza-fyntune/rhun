@@ -3,6 +3,10 @@
 
 .equ ID_EDITOR, 0x1001
 .equ ID_EDSCROLL, 0x1002
+.equ ID_EDHSCROLL, 0x1004          # along the bottom, when lines do not wrap
+.equ WIDEST_FULL, 1 << 20       # bytes measured again on every change (about a millisecond)
+.equ WIDEST_VISIBLE, 1 << 16    # total bytes measured from visible lines while editing a large text
+.equ WIDEST_PAUSE, 400          # ms without edits before a longer text is measured again
 .equ BLINK_MS, 530              # each half of the caret's blink
 .equ BLINK_FOR, 30000           # it blinks this long after the last caret activity, then stays on
 
@@ -17,6 +21,15 @@ g_ed_w: .long 0
 g_ed_h: .long 0
 g_ed_tx: .long 0                # x of column 0 (before horizontal scroll)
 g_dragging: .long 0
+hs_on: .long 0                  # the horizontal scrollbar is shown (hscroll_measure)
+hs_content: .long 0             # px: the widest line and a margin
+hs_view: .long 0                # px: the text area
+hs_off: .long 0                 # px: DOC_scrollx for the scrollbar
+hs_track: .zero 16              # x, y, w, h
+ww_col: .long 0                 # widest_span: columns of the current line
+ww_max: .long 0                 # and of the widest so far
+.p2align 3
+widest_due: .quad 0             # time_ms when a long text paused in doc_widest is measured, 0 none
 .p2align 3
 g_blink_t0: .quad 0
 blink_seen: .long 0             # the half of the blink the last frame was asked for
@@ -1756,6 +1769,14 @@ reveal:
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
     call doc_col_of
+    mov r14d, eax
+    # A long line's width may be deferred while typing. The caret's column is already known:
+    # keep the scrollbar's extent wide enough for it without another scan of that line.
+    cmp rax, [rbx + DOC_wcols]
+    jbe 51f
+    mov [rbx + DOC_wcols], rax
+    call hscroll_extent
+51: mov eax, r14d
     imul eax, [rip + g_cw]
     mov r14d, eax
     mov rdi, rbx
@@ -2075,6 +2096,8 @@ FN editor_draw
     mov [rsp], eax              # gutter width
     add eax, [rip + g_ed_x]
     mov [rip + g_ed_tx], eax
+    mov edi, [rsp]
+    call hscroll_measure
     # ---- input ----
     call find_blocks_editor
     test eax, eax
@@ -2148,6 +2171,18 @@ FN editor_draw
     sub eax, [rip + g_mt + 4*MI_12]
     cmp [rip + g_mx], eax
     jge .Led_noinput
+    # nor the horizontal one's along the bottom of the text
+    cmp dword ptr [rip + hs_on], 0
+    je 311f
+    mov eax, [rip + g_ed_y]
+    add eax, [rip + g_ed_h]
+    sub eax, [rip + g_mt + 4*MI_12]
+    cmp [rip + g_my], eax
+    jl 311f
+    mov eax, [rip + g_mx]
+    cmp eax, [rip + g_ed_tx]
+    jge .Led_noinput
+311:
     mov edi, ID_EDITOR
     mov [rip + g_active], edi
     mov dword ptr [rip + g_dragging], 1
@@ -2190,6 +2225,7 @@ FN editor_draw
     call cmd_select_line
     mov dword ptr [rip + g_reveal], 0
 .Led_noinput:
+    call hscroll_clamp           # a wheel or trackpad stops at the widest line
     # drag selection
     cmp dword ptr [rip + g_dragging], 0
     je 4f
@@ -2437,7 +2473,51 @@ FN editor_draw
     movsxd rcx, dword ptr [rip + g_lh]
     idiv rcx
     mov [rbx + DOC_scrolly], rax
-91: # a thin edge also signals changes outside the visible lines, without moving the view
+91: # horizontal scrollbar: the widest line against the text area, when lines do not wrap
+    cmp dword ptr [rip + hs_on], 0
+    je 93f
+    mov rax, [rbx + DOC_scrollx]
+    mov [rip + hs_off], eax
+    mov eax, [rip + g_block]
+    mov [rsp + 104], eax
+    call find_blocks_editor
+    or [rip + g_block], eax
+    mov eax, [rip + g_block]
+    mov [rsp + 108], eax
+    mov eax, [rip + g_ed_tx]
+    mov [rip + hs_track], eax
+    mov eax, [rip + g_ed_y]
+    add eax, [rip + g_ed_h]
+    sub eax, [rip + g_mt + 4*MI_12]
+    mov [rip + hs_track + 4], eax
+    mov eax, [rip + g_ed_x]
+    add eax, [rip + g_ed_w]
+    sub eax, [rip + g_mt + 4*MI_12]     # the corner stays the vertical one's
+    sub eax, [rip + g_ed_tx]
+    mov [rip + hs_track + 8], eax
+    M eax, MI_12
+    mov [rip + hs_track + 12], eax
+    mov eax, [rip + hs_view]
+    push rax
+    mov eax, [rip + hs_content]
+    push rax
+    mov edi, ID_EDHSCROLL
+    mov esi, [rip + hs_track]
+    mov edx, [rip + hs_track + 4]
+    mov ecx, [rip + hs_track + 8]
+    mov r8d, [rip + hs_track + 12]
+    lea r9, [rip + hs_off]
+    call ui_hscrollbar
+    add rsp, 16
+    mov eax, [rsp + 104]
+    mov [rip + g_block], eax
+    cmp dword ptr [rsp + 108], 0
+    jne 93f
+    cmp dword ptr [rip + g_active], ID_EDHSCROLL
+    jne 93f
+    movsxd rax, dword ptr [rip + hs_off]
+    mov [rbx + DOC_scrollx], rax
+93: # a thin edge also signals changes outside the visible lines, without moving the view
     mov r8d, [rip + disk_edge]
     test r8d, r8d
     jz 92f
@@ -3185,6 +3265,306 @@ pair_close: .asciz ")]}\"'`"
 .Ltab_arrow: .ascii "\342\206\222"
 .Lmiddot: .ascii "\302\267"
 .Lbrackets: .asciz "()[]{}"
+
+.text
+# ---------------- the widest line (horizontal scrollbar) ----------------
+
+# doc_widest(doc) -> rax columns of its widest line, tabs and wide characters as drawn; measured
+#   again when its text or the tab width changed. Past WIDEST_FULL bytes the whole text is measured
+#   once editing pauses; meanwhile short lines on screen and the caret can only widen it.
+FN doc_widest
+    PROLOGUE 16
+    mov rbx, rdi
+    call doc_len
+    mov [rsp], rax
+    mov rcx, 0x9e3779b97f4a7c15
+    mov rdx, [rbx + DOC_version]
+    imul rdx, rcx
+    add rdx, [rbx + DOC_nlines]
+    imul rdx, rcx
+    add rdx, rax
+    imul rdx, rcx
+    mov eax, [rip + cfg_tab_width]
+    add rdx, rax
+    or rdx, 1                   # never 0, the key of a document not measured yet
+    cmp rdx, [rbx + DOC_wkey]
+    je 8f
+    mov [rsp + 8], rdx
+    cmp qword ptr [rsp], WIDEST_FULL
+    jbe 7f
+    call time_ms
+    sub rax, [rbx + DOC_lastedit]
+    cmp rax, WIDEST_PAUSE
+    jae 7f
+    mov rax, [rbx + DOC_lastedit]
+    add rax, WIDEST_PAUSE
+    mov [rip + widest_due], rax
+    call widest_visible
+    cmp rax, [rbx + DOC_wcols]
+    jbe 8f
+    mov [rbx + DOC_wcols], rax
+    jmp 8f
+7:  mov rdx, [rsp + 8]
+    mov [rbx + DOC_wkey], rdx
+    mov dword ptr [rip + ww_col], 0
+    mov dword ptr [rip + ww_max], 0
+    # the gap buffer's two runs of text
+    mov rdi, [rbx + DOC_buf]
+    mov rsi, [rbx + DOC_gs]
+    call widest_span
+    mov rdi, [rbx + DOC_buf]
+    add rdi, [rbx + DOC_ge]
+    mov rsi, [rbx + DOC_cap]
+    sub rsi, [rbx + DOC_ge]
+    call widest_span
+    mov eax, [rip + ww_col]     # the last line has no newline
+    cmp eax, [rip + ww_max]
+    jae 1f
+    mov eax, [rip + ww_max]
+1:  mov [rbx + DOC_wcols], rax
+8:  mov rax, [rbx + DOC_wcols]
+    EPILOGUE
+
+# editor_timeout() -> ms until a long text whose editing paused is measured again (a frame does it),
+#   or -1
+FN editor_timeout
+    mov rax, [rip + widest_due]
+    test rax, rax
+    jz 1f
+    sub rsp, 8
+    call time_ms
+    add rsp, 8
+    mov rcx, [rip + widest_due]
+    sub rcx, rax
+    xor eax, eax
+    test rcx, rcx
+    cmovg eax, ecx
+    ret
+1:  mov eax, -1
+    ret
+
+# editor_tick(): the frame that measures it
+FN editor_tick
+    cmp qword ptr [rip + widest_due], 0
+    je 1f
+    sub rsp, 8
+    call time_ms
+    add rsp, 8
+    cmp rax, [rip + widest_due]
+    jb 1f
+    mov qword ptr [rip + widest_due], 0
+    mov dword ptr [rip + g_dirty], 1
+1:  ret
+
+# widest_visible() -> rax columns of the widest measured line on screen (rbx doc).
+# Long lines retain their cached extent until the pause: measuring even one whole minified line
+# would scan megabytes on every edit. All lines measured in this frame share a byte budget.
+widest_visible:
+    PROLOGUE 16
+    mov qword ptr [rsp], WIDEST_VISIBLE
+    xor r14d, r14d
+    mov r12, [rbx + DOC_scrolly]
+    sar r12, 8                  # first line
+    jns 1f
+    xor r12d, r12d
+1:  mov eax, [rip + g_ed_h]
+    xor edx, edx
+    mov ecx, [rip + g_lh]
+    test ecx, ecx
+    jz 9f
+    div ecx
+    lea r13, [r12 + rax + 2]    # past the last
+    cmp r13, [rbx + DOC_nlines]
+    jbe 2f
+    mov r13, [rbx + DOC_nlines]
+2:
+3:  cmp r12, r13
+    jae 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_start
+    mov r15, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_end
+    mov rcx, rax
+    sub rcx, r15
+    cmp rcx, [rsp]
+    ja 4f
+    sub [rsp], rcx
+    mov rdi, rbx
+    mov rsi, rax
+    call doc_col_of
+    cmp eax, r14d
+    cmova r14d, eax
+4:  inc r12
+    jmp 3b
+9:  mov eax, r14d
+    EPILOGUE
+
+# widest_span(ptr, len): ww_col and ww_max through these bytes (as doc_col_of counts columns)
+widest_span:
+    PROLOGUE
+    mov rbx, rdi
+    lea r12, [rdi + rsi]
+    mov r13d, [rip + ww_col]
+    mov r14d, [rip + ww_max]
+    mov r15d, [rip + cfg_tab_width]
+    test r15d, r15d
+    jnz 1f
+    mov r15d, 1
+1:  cmp rbx, r12
+    jae 9f
+    movzx eax, byte ptr [rbx]
+    cmp eax, 10
+    je 3f
+    cmp eax, 9
+    je 4f
+    cmp eax, 0x80
+    jae 5f
+    inc r13d
+    inc rbx
+    jmp 1b
+3:  cmp r13d, r14d
+    cmova r14d, r13d
+    xor r13d, r13d
+    inc rbx
+    jmp 1b
+4:  mov eax, r13d
+    xor edx, edx
+    div r15d
+    mov eax, r15d
+    sub eax, edx
+    add r13d, eax
+    inc rbx
+    jmp 1b
+5:  mov rdi, rbx
+    mov rsi, r12
+    sub rsi, rbx
+    call utf8_decode
+    test rdx, rdx
+    jnz 6f
+    mov edx, 1
+6:  add rbx, rdx
+    mov edi, eax
+    call cp_width
+    add r13d, eax
+    jmp 1b
+9:  mov [rip + ww_col], r13d
+    mov [rip + ww_max], r14d
+    EPILOGUE
+
+# hscroll_measure(gutter w): hs_on, hs_content, hs_view for the active document: the widest line and
+#   a margin against the text area, when lines do not wrap (rbx doc)
+hscroll_measure:
+    PROLOGUE
+    mov r12d, edi
+    mov dword ptr [rip + hs_on], 0
+    mov dword ptr [rip + hs_content], 0
+    mov eax, [rip + g_ed_w]
+    sub eax, r12d
+    mov [rip + hs_view], eax
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne 9f
+    mov rdi, rbx
+    call doc_widest
+    call hscroll_extent
+9:  EPILOGUE
+
+# hscroll_extent(columns): update the track's content width from a measured width or caret column.
+# rax is the column count; hs_view was set by hscroll_measure for this frame.
+hscroll_extent:
+    mov ecx, [rip + g_cw]
+    imul rax, rcx
+    mov ecx, [rip + g_mt + 4*MI_32]     # as reveal keeps the caret off the edge
+    add rax, rcx
+    mov ecx, 0x3fffffff                 # pixels stay positive in 32 bits however long the line
+    cmp rax, rcx
+    cmova rax, rcx
+    mov [rip + hs_content], eax
+    cmp eax, [rip + hs_view]
+    setg al
+    movzx eax, al
+    mov [rip + hs_on], eax
+    ret
+
+# hscroll_clamp(): the view goes no further right than the widest line (rbx doc)
+hscroll_clamp:
+    mov eax, [rip + hs_content]
+    sub eax, [rip + hs_view]
+    jns 1f
+    xor eax, eax
+1:  cmp dword ptr [rip + cfg_word_wrap], 0
+    jne 2f
+    movsxd rax, eax
+    cmp [rbx + DOC_scrollx], rax
+    jle 2f
+    mov [rbx + DOC_scrollx], rax
+2:  ret
+
+# editor_scroll_dump(sb): "x=PX y=N max=PX track=X,Y,W,H", the active document's scroll, y in
+#   1/256 lines (print-scroll; max 0 and no track without the horizontal scrollbar)
+FN editor_scroll_dump
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Lsd_x]
+    call sb_push_cstr
+    xor esi, esi
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    mov rsi, [rax + DOC_scrollx]
+1:  mov rdi, rbx
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Lsd_y]
+    call sb_push_cstr
+    xor esi, esi
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 4f
+    mov rsi, [rax + DOC_scrolly]
+4:  mov rdi, rbx
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Lsd_max]
+    call sb_push_cstr
+    xor esi, esi
+    cmp dword ptr [rip + hs_on], 0
+    je 2f
+    mov esi, [rip + hs_content]
+    sub esi, [rip + hs_view]
+2:  mov rdi, rbx
+    call sb_push_u64
+    cmp dword ptr [rip + hs_on], 0
+    je 9f
+    mov rdi, rbx
+    lea rsi, [rip + .Lsd_track]
+    call sb_push_cstr
+    xor r12d, r12d
+3:  lea rax, [rip + hs_track]
+    mov esi, [rax + r12*4]
+    mov rdi, rbx
+    call sb_push_u64
+    inc r12d
+    cmp r12d, 4
+    jae 9f
+    mov rdi, rbx
+    mov esi, ','
+    call sb_push_byte
+    jmp 3b
+9:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
+.section .rodata
+.Lsd_x: .asciz "x="
+.Lsd_y: .asciz " y="
+.Lsd_max: .asciz " max="
+.Lsd_track: .asciz " track="
+.text
+
 .data
 dl_to: .long -1
 .p2align 3

@@ -110,6 +110,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     check('version', lambda: equal(run('rhun.com', '--version').stdout,
                                   b'rhun ' + (ROOT / 'VERSION').read_bytes().strip() + b'\n'))
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
+    check('input/wheel-and-touchpad-steps', lambda: run('wheel_test.exe'))
     if not args.wine:
         check('files/long-paths', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/windows-longpaths.py')], check=True))

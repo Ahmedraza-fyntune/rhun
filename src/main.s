@@ -28,6 +28,17 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
+    cmp qword ptr [rip + g_argc], 5
+    jne 1f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lagent_worker]
+    call strcmp_eq
+    test eax, eax
+    jz 1f
+    call agent_index_main
+    EPILOGUE
+1:
     call parse_args
     call detach
     call raster_init
@@ -86,6 +97,7 @@ FN main
     jmp .Lm_exit
 3:  call loop_run
 .Lm_exit:
+    call agents_shutdown
     call ai_shutdown
     call session_remember_project
     call session_save
@@ -100,6 +112,9 @@ FN main
 6:  xor eax, eax
     EPILOGUE
 
+.section .rodata
+.Lagent_worker: .asciz "--agent-index"
+.text
 parse_args:
     PROLOGUE
     mov r12, [rip + g_argv]

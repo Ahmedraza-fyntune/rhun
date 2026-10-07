@@ -47,6 +47,7 @@ sudirs: .long 0                 # untracked folders in the table
 g_git_root: .quad 0             # work tree
 g_git_rootlen: .quad 0
 gitdir: .quad 0
+commondir: .quad 0
 logsdir: .quad 0
 refsdir: .quad 0
 git_bin: .quad 0
@@ -64,6 +65,19 @@ docs: .zero VEC_SIZE
 .text
 
 # ---------------- repository ----------------
+
+# Shared identity for all checkouts of a repository, or the standalone project.
+FN git_repository_id
+    mov rax, [rip + commondir]
+    test rax, rax
+    jnz 1f
+    mov rax, [rip + g_project]
+1:  ret
+
+# git_common_dir() -> the repository's common .git directory, or 0 outside a repository
+FN git_common_dir
+    mov rax, [rip + commondir]
+    ret
 
 # git_set_project(): find the repository of g_project and start over
 FN git_set_project
@@ -83,6 +97,8 @@ FN git_set_project
     mov qword ptr [rbx], 0
     mov qword ptr [rip + g_git_rootlen], 0
     lea rbx, [rip + gitdir]
+    call free_path
+    lea rbx, [rip + commondir]
     call free_path
     lea rbx, [rip + logsdir]
     call free_path
@@ -174,6 +190,9 @@ find_repo:
     mov r13, rax
     test rax, rax
     jnz .Lfr_try
+    # only a path rooted at / has / above it: a relative or C:\ one would try its first letter forever
+    cmp byte ptr [r12], '/'
+    jne .Lfr_none
     mov r13d, 1                 # "/"
     jmp .Lfr_try
 .Lfr_file:
@@ -260,8 +279,9 @@ watch_repo:
     call read_worktree
     mov rdi, r14
     mov rsi, r12
-    cmp byte ptr [r12], '/'
-    jne 22f
+    PATH_ABSOLUTE r12, 23f
+    jmp 22f
+23:
     lea rdi, [rip + .Lroot]
 22: call path_join
     mov r15, rax
@@ -271,6 +291,12 @@ watch_repo:
 21: mov rdi, r12
     call mem_free
 3:  mov rdi, r14
+    call strlen
+    mov rdi, r14
+    mov rsi, rax
+    call mem_dup
+    mov [rip + commondir], rax
+    mov rdi, r14
     lea rsi, [rip + .Lrefs_heads]
     call path_join
     mov [rip + refsdir], rax
@@ -283,6 +309,118 @@ watch_repo:
     mov rdi, [rip + refsdir]
     call watch_git
     EPILOGUE
+
+# git_each_agent_worktree(cb, ctx): cb(ctx, root, linked) for this repository's checkouts. Git's
+# registrations cover worktrees outside the project, including agent-managed checkouts, and those whose
+# checkout has been removed (session history still names them). The agents panel watches the
+# registrations itself (agents_watch_repo): this runs in the index worker, which watches nothing.
+FN git_each_agent_worktree
+    PROLOGUE 32
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov rsi, [rip + g_git_root]
+    test rsi, rsi
+    jz 9f
+    xor edx, edx
+    cmp byte ptr [rip + g_worktree], 0
+    setne dl
+    mov rdi, [rsp + 8]
+    call qword ptr [rsp]
+    mov rbx, [rip + commondir]
+    test rbx, rbx
+    jz 9f
+    # In a normal repository the common .git directory sits inside the main checkout.
+    mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_basename
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Ldotgit]
+    call str_eq_cstr
+    test eax, eax
+    jz 2f
+    mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_dirlen
+    mov rdi, rbx
+    mov rsi, rax
+    call mem_dup
+    mov r12, rax
+    mov rdi, [rsp + 8]
+    mov rsi, r12
+    xor edx, edx
+    call qword ptr [rsp]
+    mov rdi, r12
+    call mem_free
+2:  mov rdi, rbx
+    lea rsi, [rip + .Lworktrees]
+    call path_join
+    mov [rsp + 16], rax
+    mov rdi, [rsp + 16]
+    lea rsi, [rip + worktree_cb]
+    mov rdx, rsp
+    call dir_each
+    mov rdi, [rsp + 16]
+    call mem_free
+9:  EPILOGUE
+
+worktree_cb:
+    PROLOGUE
+    test edx, edx
+    jz 9f
+    mov rbx, rdi                # [callback, context, registrations directory]
+    mov rdi, [rbx + 16]
+    call path_join
+    mov r12, rax                # registration directory
+    mov rdi, rax
+    lea rsi, [rip + .Lgitdir_file]
+    call path_join
+    mov r13, rax
+    mov rdi, rax
+    call file_read_all
+    mov r14, rax
+    mov r15, rdx
+    mov rdi, r13
+    call mem_free
+    test r14, r14
+    jz 8f
+1:  test r15, r15
+    jz 7f
+    cmp byte ptr [r14 + r15 - 1], ' '
+    ja 2f
+    dec r15
+    jmp 1b
+2:  mov byte ptr [r14 + r15], 0
+    mov rdi, r12
+    mov rsi, r14
+    PATH_ABSOLUTE r14, 3f
+    jmp 4f
+3:  lea rdi, [rip + .Lroot]
+4:  call path_join
+    mov r13, rax
+    mov rdi, rax
+    call path_normalize
+    mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call path_dirlen
+    mov byte ptr [r13 + rax], 0
+    mov rdi, [rbx + 8]
+    mov rsi, r13
+    mov edx, 1
+    call qword ptr [rbx]
+    mov rdi, r13
+    call mem_free
+7:  mov rdi, r14
+    call mem_free
+8:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
 
 # read_worktree(): g_worktree from the work tree's folder name
 read_worktree:
@@ -1812,6 +1950,8 @@ FN git_dump
 .Lgitdir_pfx: .ascii "gitdir: "
 .Llogs: .asciz "logs"
 .Lcommondir: .asciz "commondir"
+.Lworktrees: .asciz "worktrees"
+.Lgitdir_file: .asciz "gitdir"
 .Lrefs_heads: .asciz "refs/heads"
 .Lrefs_heads_pfx: .ascii "refs/heads/"
 .Lref_pfx: .ascii "ref:"

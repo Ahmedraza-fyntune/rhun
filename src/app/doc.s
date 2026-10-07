@@ -1533,6 +1533,36 @@ FN doc_col_of
 9:  mov eax, ebx
     EPILOGUE
 
+# doc_pos_at_char(doc, line, index) -> byte position at a zero-based source character, clamped to
+# the line end. Tabs, combining marks and wide glyphs each count once, independent of display width.
+FN doc_pos_at_char
+    PROLOGUE 16
+    mov rbx, rdi
+    mov [rsp], rdx
+    mov r12, rsi
+    call doc_line_start
+    mov [rsp + 8], rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_text
+    mov r14, rax
+    mov r15, rdx
+    xor r13d, r13d
+1:  cmp qword ptr [rsp], 0
+    je 9f
+    cmp r13, r15
+    jae 9f
+    lea rdi, [r14 + r13]
+    mov rsi, r15
+    sub rsi, r13
+    call utf8_decode
+    add r13, rdx
+    dec qword ptr [rsp]
+    jmp 1b
+9:  mov rax, [rsp + 8]
+    add rax, r13
+    EPILOGUE
+
 # doc_pos_at_col(doc, line, col) -> pos nearest to visual column
 FN doc_pos_at_col
     PROLOGUE 16

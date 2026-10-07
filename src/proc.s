@@ -16,6 +16,70 @@ tmp_path: .zero 4096
 
 .text
 
+# proc_self_path(buf, capacity) -> length or negative error.
+FN proc_self_path
+.ifdef MACOS
+    jmp mac_exe_path
+.else
+.ifdef WINDOWS
+    mov rdx, rsi
+    dec rdx
+    mov rsi, rdi
+    lea rdi, [rip + .Lproc_self]
+    SYS SYS_readlink
+    test rax, rax
+    jle 1f
+    mov byte ptr [rsi + rax], 0
+1:  ret
+.else
+    # Keep launching the running inode even after an atomic application update.
+    cmp rsi, 15
+    jb 1f
+    lea rsi, [rip + .Lproc_self]
+    call cstr_copy
+    mov eax, 14
+    ret
+1:  mov eax, -22
+    ret
+.endif
+.endif
+
+.section .rodata
+.Lproc_self: .asciz "/proc/self/exe"
+.text
+
+# proc_cwd(pid, buf, capacity) -> length of the process's current folder, written to buf with a NUL, or
+#   negative (a terminal's shell: relative paths in its output start there)
+FN proc_cwd
+.ifdef MACOS
+    jmp mac_pid_cwd
+.else
+.ifdef WINDOWS
+    mov rax, -1
+    ret
+.else
+    PROLOGUE 48
+    mov r12, rsi
+    mov r13, rdx
+    mov dword ptr [rsp], 0x6f72702f     # "/proc/"
+    mov word ptr [rsp + 4], 0x2f63
+    mov esi, edi
+    lea rdi, [rsp + 6]
+    call fmt_u64
+    lea rcx, [rsp + rax + 6]
+    mov dword ptr [rcx], 0x6477632f     # "/cwd"
+    mov byte ptr [rcx + 4], 0
+    mov rdi, rsp
+    mov rsi, r12
+    lea rdx, [r13 - 1]
+    SYS SYS_readlink
+    test rax, rax
+    jle 9f
+    mov byte ptr [r12 + rax], 0
+9:  EPILOGUE
+.endif
+.endif
+
 # env_make(extras): the environment with extras ("NAME=value", 0-terminated list) set -> envp
 FN env_make
     PROLOGUE 16

@@ -48,7 +48,7 @@ class ScrollSensitivity(unittest.TestCase):
         self.config.write_text(CONFIG.format(extra=extra), encoding='utf-8')
         commands = scroll_cmd if isinstance(scroll_cmd, list) else [scroll_cmd]
         out = self.run_editor(['wait 200', 'move 500 400', *commands, 'wait 60', 'print-scroll'])
-        return int(out.strip().rpartition('=')[2])
+        return int(dict(part.split('=') for part in out.split())['y'])
 
     def test_default_scrolls(self):
         self.assertGreater(self.scroll_offset('scroll 600'), 0)

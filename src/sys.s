@@ -199,7 +199,7 @@ FN file_size
 1:  ret
 
 # file_stamp(path) -> changes whenever the file is written: mtime in nanoseconds and the size
-# (0 if it is missing); follows symlinks
+# (0 if it is missing); follows symlinks. Also returns size in rdx, mtime_ns in rcx.
 FN file_stamp
     lea rsi, [rip + stat_buf]
     mov eax, 4                  # stat
@@ -209,11 +209,15 @@ FN file_stamp
     mov rax, [rip + stat_buf + 88]
     imul rax, rax, 1000000000
     add rax, [rip + stat_buf + 96]
+    mov rcx, rax
     mov rdx, [rip + stat_buf + 48]
     rol rdx, 32
     xor rax, rdx
+    ror rdx, 32
     ret
 1:  xor eax, eax
+    xor edx, edx
+    xor ecx, ecx
     ret
 
 # file_mtime(path) -> unix seconds (0 on error)
@@ -268,6 +272,21 @@ FN file_type
     and eax, 0xf000
     ret
 1:  xor eax, eax
+    ret
+
+# file_id(path) -> rax inode, rdx device (both 0 if it is missing); follows symlinks, so every spelling
+# of one folder (through a symlink such as macOS's /tmp, or in another case) has one id
+FN file_id
+    lea rsi, [rip + stat_buf]
+    mov eax, 4          # stat
+    XSYS
+    test rax, rax
+    js 1f
+    mov rax, [rip + stat_buf + 8]
+    mov rdx, [rip + stat_buf]
+    ret
+1:  xor eax, eax
+    xor edx, edx
     ret
 
 # file_read_all(path) -> rax=ptr (NUL-terminated, mem_alloc'd) rdx=len; rax=0, rdx=-errno on error
@@ -765,15 +784,46 @@ FN path_join_tmp
     pop rbx
     ret
 
-# path_join(dir, name) -> new allocated cstr
+# path_join(dir, name) -> new allocated cstr, as path_join_tmp joins them but of any length (a name
+# from file contents or a terminal line can be longer than tmp_path)
 FN path_join
-    call path_join_tmp
-    push rax
-    mov rdi, rax
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+.ifdef WINDOWS
+    PATH_ABSOLUTE rsi, 3f
+.endif
     call strlen
-    pop rdi
+    mov r14, rax                # dir bytes
+    mov rdi, r13
+    call strlen
+    mov r15, rax                # name bytes
+    lea rdi, [r14 + r15 + 2]
+    call mem_alloc
+    mov rbx, rax
+    mov rdi, rax
+    mov rsi, r12
+    mov rcx, r14
+    rep movsb
+    test r14, r14
+    jz 1f
+    cmp byte ptr [r12 + r14 - 1], '/'
+    je 1f
+    mov byte ptr [rdi], '/'
+    inc rdi
+1:  mov rsi, r13
+    lea rcx, [r15 + 1]          # and its NUL
+    rep movsb
+    mov rax, rbx
+    EPILOGUE
+.ifdef WINDOWS
+3:  mov rdi, r13                # a rooted name stands alone
+    call strlen
+    mov rdi, r13
     mov rsi, rax
-    jmp mem_dup
+    call mem_dup
+    EPILOGUE
+.endif
 
 # path_normalize(path): in place, absolute paths only: drops "." and "//", resolves ".."
 FN path_normalize

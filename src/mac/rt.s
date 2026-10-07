@@ -235,6 +235,35 @@ FN x_udiv128
     b.ne 2b
     ret
 
+// mac_pid_cwd(pid, buf, size) -> x8: the length of the process's current folder, written to buf with a
+// NUL, or -1 (proc_pidinfo PROC_PIDVNODEPATHINFO: pvi_cdir.vip_path, 152 bytes into its 2352)
+FN mac_pid_cwd
+    ENTER 2368
+    mov x19, x1
+    mov x20, x2
+    mov w1, #9
+    mov x2, #0
+    mov x3, sp
+    mov w4, #2352
+    bl _proc_pidinfo
+    cmp w0, #2352
+    b.ne 8f
+    add x0, sp, #152
+    bl _strlen
+    cbz x0, 8f
+    cmp x0, x20
+    b.hs 8f
+    mov x21, x0
+    mov x0, x19
+    add x1, sp, #152
+    add x2, x21, #1
+    bl _memcpy
+    mov x8, x21
+    b 9f
+8:  mov x8, #-1
+9:  LEAVE
+    XRET
+
 // mac_exe_path(buf, size) -> x8: the length of the running program's real path, written to buf with
 // a NUL, or -1
 FN mac_exe_path

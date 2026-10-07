@@ -518,6 +518,8 @@ F DOC_reload_at, 8      # external writes coalesce before a reload, 0 when none 
 F DOC_disk_seen, 8      # last external stamp handled
 F DOC_disk_until, 8     # editor's external reload highlight fades until this time
 F DOC_disk_lo, 8        # first changed line in the reloaded text
+F DOC_wcols, 8          # editor: columns of the widest line (doc_widest)
+F DOC_wkey, 8           # the text and tab width they were measured for, 0 = not yet
 F DOC_disk_hi, 8        # line past the changed range (deletions highlight their surviving neighbor)
 ENDSTRUCT DOC_SIZE
 
@@ -871,6 +873,11 @@ ENDSTRUCT TH_SIZE
 .equ TMM_LNM, 512
 .equ TMM_SYNC, 1024
 
+# kitty keyboard protocol, per screen: +0 the flags in effect, +4 pushes kept, +8 the pushed flags
+.equ KK_DEPTH, 8
+.equ KK_BLOCK, 8 + 4 * KK_DEPTH
+.equ KK_SUPPORTED, 1            # disambiguate escape codes
+.equ KK_SIZE, 2 * KK_BLOCK      # the main and the alternate screen
 STRUCT
 F TM_cols, 4
 F TM_rows, 4
@@ -902,6 +909,7 @@ F TM_sbg, 4
 F TM_sg0, 4
 F TM_cursor, 4          # DECSCUSR style
 F TM_mouse, 4           # 0, 1000, 1002 or 1003
+F TM_kk, KK_SIZE        # kitty keyboard flags of the main and the alternate screen
 F TM_lastcp, 4
 F TM_sbcap, 4
 F TM_sbhead, 4          # oldest line in the ring
@@ -936,3 +944,29 @@ ENDSTRUCT TM_SIZE
 .Lpath_relative\@:
 .endif
 .endm
+
+# ---- agent session metadata and transcript state ----
+STRUCT
+F AS_path, 8
+F AS_title, 8
+F AS_mtime, 8
+F AS_off, 8             # bytes parsed
+F AS_msgs, VEC_SIZE     # AM
+F AS_part, SB_SIZE      # incomplete trailing line
+F AS_kind, 4            # 1 claude, 2 codex
+F AS_loaded, 4          # messages parsed (opened at least once)
+F AS_titled, 4          # has a custom title
+F AS_pad, 4
+F AS_changed, 8         # time_ms of the last growth
+F AS_stamp, 8           # file_stamp, to see every write
+F AS_index_title, 8    # parent: last title returned by the metadata index
+F AS_recency, 8        # nanosecond mtime used for ordering
+F AS_cwd, 8            # worker cache: originating checkout
+F AS_seen, 8           # worker cache: present in this scan
+F AS_worktree, 8        # linked checkout's name, or 0 for the main checkout
+F AS_prefix_hash, 8     # worker: bounded prefix identity for append detection
+F AS_title_off, 8       # worker: bytes covered by the last successful title read
+F AS_title_rev, 8       # identity of the last indexed custom title record
+F AS_record_off, 8      # worker: current title record's newline offset plus one
+F AS_replaced, 8        # worker page: metadata came from a replaced or truncated log
+ENDSTRUCT AS_SIZE

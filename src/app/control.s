@@ -1,5 +1,5 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
-#   key ctrl+s | type text | click x y [right|middle] | tap x y | move x y | down | up | scroll dy [ctrl]
+#   key ctrl+s | type text | click x y [right|middle|shift|ctrl] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
 #   print-menu
@@ -228,8 +228,13 @@ c_click:
     jz 1f
     # shift: a left click with Shift held, pressed and released
     cmp byte ptr [rax], 's'
-    jne 2f
+    jne 21f
     mov dword ptr [rip + click_mods], MOD_SHIFT
+    jmp 1f
+    # ctrl: Ctrl+click, which is Cmd+click on macOS (Command arrives as Ctrl)
+21: cmp byte ptr [rax], 'c'
+    jne 2f
+    mov dword ptr [rip + click_mods], MOD_CTRL
     jmp 1f
 2:  mov r13d, BTN_RIGHT
     cmp byte ptr [rax], 'r'
@@ -434,26 +439,6 @@ c_print_shape:
     xor eax, eax
     ret
 
-# print-scroll: "y=N", the document's vertical scroll offset in 1/256 lines
-c_print_scroll:
-    push rbx
-    lea rdi, [rip + out]
-    lea rsi, [rip + .Lps_y]
-    call sb_push_cstr
-    mov rbx, [rip + g_doc]
-    xor esi, esi
-    test rbx, rbx
-    jz 1f
-    mov rsi, [rbx + DOC_scrolly]
-1:  lea rdi, [rip + out]
-    call sb_push_u64
-    lea rdi, [rip + out]
-    mov esi, 10
-    call sb_push_byte
-    pop rbx
-    xor eax, eax
-    ret
-
 c_scroll:
     call next_int
     push rax
@@ -478,6 +463,23 @@ c_scroll:
     mov esi, eax
     mov edx, ecx
     call app_on_scroll
+    xor eax, eax
+    ret
+
+# scroll-x dx: a sideways wheel or trackpad
+c_scroll_x:
+    call next_int
+    mov edi, eax
+    xor esi, esi
+    xor edx, edx
+    call app_on_scroll
+    xor eax, eax
+    ret
+
+# print-scroll: "x=PX y=N max=PX track=X,Y,W,H", the editor's scroll (y in 1/256 lines)
+c_print_scroll:
+    lea rdi, [rip + out]
+    call editor_scroll_dump
     xor eax, eax
     ret
 
@@ -607,6 +609,45 @@ c_wait_git:
     call app_tick
     jmp 1b
 2:  pop r13
+    xor eax, eax
+    ret
+
+# wait-agents: async metadata discovery, without blocking the event loop (at most 30 s).
+c_wait_agents:
+    push r13
+    call agents_request_now
+    call time_ms
+    lea r13, [rax + 30000]
+1:  call agents_busy
+    test eax, eax
+    jz 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    call agents_request_now
+    jmp 1b
+2:  pop r13
+    xor eax, eax
+    ret
+
+c_agents_more:
+    call agents_more
+    xor eax, eax
+    ret
+
+c_agents_page:
+    lea rdi, [rip + out]
+    call agents_page_dump
+    xor eax, eax
+    ret
+
+# print-agents-runs: "runs=N", discovery runs started so far
+c_agents_runs:
+    lea rdi, [rip + out]
+    call agents_runs_dump
     xor eax, eax
     ret
 
@@ -754,6 +795,25 @@ c_print_tip:
 c_print_term:
     lea rdi, [rip + out]
     call term_dump_current
+    xor eax, eax
+    ret
+
+# print-link: the terminal's link under the pointer, "link=" when there is none
+c_print_link:
+    lea rdi, [rip + out]
+    call term_link_dump
+    xor eax, eax
+    ret
+
+# print-term-cell ROW COL: "X Y", the middle of that cell of the terminal
+c_print_term_cell:
+    call next_int
+    push rax
+    call next_int
+    pop rdi
+    mov esi, eax
+    lea rdx, [rip + out]
+    call term_cell_dump
     xor eax, eax
     ret
 
@@ -1021,6 +1081,7 @@ c_print_syntax:
 
 # print-agents [open N]: sessions and the open thread
 c_print_agents:
+    call c_wait_agents
     call next_int
     test rdx, rdx
     jz 1f
@@ -1308,11 +1369,13 @@ on_client:
 .Lc_print_window: .asciz "print-window"
 .Lc_print_cursor: .asciz "print-cursor"
 .Lc_print_shape: .asciz "print-shape"
-.Lc_print_scroll: .asciz "print-scroll"
-.Lps_y: .asciz "y="
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
+.Lc_wait_agents: .asciz "wait-agents"
+.Lc_agents_more: .asciz "agents-more"
+.Lc_agents_page: .asciz "print-agents-page"
+.Lc_agents_runs: .asciz "print-agents-runs"
 .Lc_wait_grep: .asciz "wait-grep"
 .Lc_wait_term: .asciz "wait-term"
 .Lc_print_gitlog: .asciz "print-gitlog"
@@ -1326,6 +1389,10 @@ on_client:
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
 .Lc_print_tip: .asciz "print-tip"
+.Lc_print_link: .asciz "print-link"
+.Lc_print_scroll: .asciz "print-scroll"
+.Lc_scroll_x: .asciz "scroll-x"
+.Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
@@ -1345,17 +1412,21 @@ ctl_table:
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
-    .quad .Lc_print_shape, c_print_shape, .Lc_print_scroll, c_print_scroll
+    .quad .Lc_print_shape, c_print_shape
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
     .quad .Lc_wait_grep, c_wait_grep
+    .quad .Lc_wait_agents, c_wait_agents, .Lc_agents_more, c_agents_more, .Lc_agents_page, c_agents_page
+    .quad .Lc_agents_runs, c_agents_runs
     .quad .Lc_wait_term, c_wait_term
     .quad .Lc_print_scm, c_print_scm
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
-    .quad .Lc_print_tip, c_print_tip, 0, 0
+    .quad .Lc_print_tip, c_print_tip, .Lc_print_link, c_print_link
+    .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
+    .quad .Lc_scroll_x, c_scroll_x, 0, 0
 
 .data
 lsock: .long -1
