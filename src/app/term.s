@@ -22,6 +22,13 @@
     lea \out, [\line + \out*4 + LN_HDR]
 .endm
 
+.bss
+.p2align 2
+# the unshifted character of the key being handled, set by a platform around its key event (0 when it
+# has none): the kitty keyboard protocol names a key by it, Ctrl+Shift+2 as 2 with Shift
+.globl g_key_base
+g_key_base: .long 0
+
 .text
 
 # ---------------- setup ----------------
@@ -2892,9 +2899,13 @@ FN term_key
     jz .Lk_legacy
     test r14d, MOD_CTRL | MOD_ALT
     jz .Lk_legacy
-    # the key's own codepoint: a letter in lower case
+    # the key's own codepoint: unshifted (a letter in lower case, 2 for Ctrl+Shift+2 where the platform
+    # tells the key's base character)
+    mov ecx, [rip + g_key_base]
+    test ecx, ecx
+    jnz 15f
     mov ecx, r13d
-    lea eax, [rcx - 'A']
+15: lea eax, [rcx - 'A']
     cmp eax, 25
     ja .Lk_csiu
     add ecx, 32

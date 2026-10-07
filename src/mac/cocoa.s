@@ -1059,10 +1059,15 @@ Lkd_char:
     mov w1, w22
     XCALL keys_lookup
     cbz x8, Lkd_ime
-6:  mov w0, w24
+6:  mov w0, w23               // and the key's unshifted character (g_key_base)
+    mov w1, #0
+    bl ascii_key
+    STW w0, g_key_base
+    mov w0, w24
     mov w1, w24
     mov w2, w22
     XCALL app_on_key
+    STW wzr, g_key_base
     b Lkd_done
 Lkd_ime:
     // the input method: plain text, dead keys, composed input
