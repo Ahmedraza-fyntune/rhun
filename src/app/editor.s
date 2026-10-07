@@ -1818,15 +1818,17 @@ pos_at_point:
     # line
     mov eax, r13d
     sub eax, [rip + g_ed_y]
+    movsxd rax, eax
     # g_lh is 32 bits: a 64-bit multiply would take g_cw along as its high half
     movsxd rcx, dword ptr [rip + g_lh]
     imul rcx, [rbx + DOC_scrolly]
     sar rcx, 8
-    add eax, ecx
+    add rax, rcx                # 64 bits: past 2^31 px a 32-bit sum went negative, to line 1
     jns 1f
     xor eax, eax
-1:  xor edx, edx
-    div dword ptr [rip + g_lh]
+1:  movsxd rcx, dword ptr [rip + g_lh]
+    xor edx, edx
+    div rcx
     mov r14, rax
     cmp r14, [rbx + DOC_nlines]
     jb 2f
@@ -2425,7 +2427,8 @@ FN editor_draw
     mov ecx, [rip + g_ed_h]
     COLOR r8d, T_BORDER
     call gfx_fill
-8:  # scrollbar
+8:  # scrollbar: px in 64 bits, a million lines' offset overflows 32. ui_scrollbar takes i32, so a
+    # document past 2^31 px goes in units of 2^k px, the whole of it still under the thumb.
     mov rax, [rbx + DOC_nlines]
     inc rax
     movsxd rcx, dword ptr [rip + g_lh]
@@ -2436,10 +2439,14 @@ FN editor_draw
     add rax, rcx
     movsxd rcx, dword ptr [rip + g_lh]
     sub rax, rcx
-81: mov ecx, 0x7fffffff         # ui_scrollbar's content is i32 px
-    cmp rax, rcx
-    cmovg rax, rcx
-    mov [rsp + 48], eax         # content px
+81: xor ecx, ecx
+82: cmp rax, 0x7fffffff
+    jle 83f
+    shr rax, 1
+    inc ecx
+    jmp 82b
+83: mov [rsp + 48], eax         # content
+    mov [rsp + 56], ecx         # k
     mov eax, [rip + g_block]
     mov [rsp + 104], eax
     call find_blocks_editor
@@ -2448,13 +2455,14 @@ FN editor_draw
     mov [rsp + 108], eax
     mov rax, [rbx + DOC_scrolly]
     movsxd rcx, dword ptr [rip + g_lh]
-    imul rax, rcx               # 64 bits: a million lines' offset overflows 32
+    imul rax, rcx
     sar rax, 8
-    mov ecx, 0x7fffffff
-    cmp rax, rcx
-    cmovg rax, rcx
-    mov [rsp + 52], eax         # offset px
+    mov ecx, [rsp + 56]
+    sar rax, cl
+    mov [rsp + 52], eax         # offset
+    mov [rsp + 60], eax         # as drawn: a frame that leaves it writes nothing back
     mov eax, [rip + g_ed_h]
+    shr eax, cl
     push rax
     mov eax, [rsp + 48 + 8]
     push rax
@@ -2471,13 +2479,18 @@ FN editor_draw
     add rsp, 16
     mov eax, [rsp + 104]
     mov [rip + g_block], eax
-    # scrollbar drag writes pixels back
+    # scrollbar drag writes pixels back when it moved them; the release frame leaves the offset,
+    # and a round trip through px would round the scroll down
     cmp dword ptr [rsp + 108], 0
     jne 91f
     cmp dword ptr [rip + g_active], ID_EDSCROLL
     jne 91f
     mov eax, [rsp + 52]
+    cmp eax, [rsp + 60]
+    je 91f
     movsxd rax, eax
+    mov ecx, [rsp + 56]
+    shl rax, cl
     shl rax, 8
     cqo
     movsxd rcx, dword ptr [rip + g_lh]
