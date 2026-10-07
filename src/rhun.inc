@@ -521,7 +521,15 @@ F DOC_disk_lo, 8        # first changed line in the reloaded text
 F DOC_wcols, 8          # editor: columns of the widest line (doc_widest)
 F DOC_wkey, 8           # the text and tab width they were measured for, 0 = not yet
 F DOC_disk_hi, 8        # line past the changed range (deletions highlight their surviving neighbor)
+F DOC_cursors, VEC_SIZE # secondary cursors (CURS elements)
 ENDSTRUCT DOC_SIZE
+
+# ---- secondary cursor ----
+STRUCT
+F CURS_cur, 8
+F CURS_anchor, 8
+F CURS_prefx, 8
+ENDSTRUCT CURS_SIZE
 
 .equ DISK_FADE_MS, 800
 .equ DISK_FRAME_MS, 50

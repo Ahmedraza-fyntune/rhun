@@ -13,6 +13,10 @@
 .bss
 .p2align 3
 .globl g_doc, g_reveal, g_blink_t0
+.globl cmd_select_all_matches, cmd_cursor_up, cmd_cursor_down
+.globl cursors_clear, cursors_add, cursors_normalize
+.globl ed_multi_type, ed_multi_backspace, ed_multi_delete_fwd, ed_multi_newline, ed_multi_move
+.globl g_carets_buf, g_carets_cnt
 g_doc: .quad 0
 g_reveal: .long 0
 g_ed_x: .long 0
@@ -38,6 +42,11 @@ clip_sb: .zero SB_SIZE
 .globl g_ed_find, g_ed_find_case
 g_ed_find: .zero SB_SIZE        # find highlight text (set by the find bar)
 g_ed_find_case: .long 0
+.p2align 3
+g_carets_buf: .space 8 * 1024
+g_carets_cnt: .long 0
+.p2align 3
+g_curs_scratch: .zero VEC_SIZE
 
 .text
 
@@ -168,10 +177,13 @@ FN line_indent
 
 # ed_move(kind, extend) ; kind: 0 left 1 right 2 up 3 down 4 home 5 end 6 wordl 7 wordr 8 pgup 9 pgdn 10 docstart 11 docend
 FN ed_move
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Lmv_fast_ret
+    cmp qword ptr [rax + DOC_cursors + VEC_len], 0
+    jne ed_multi_move
     PROLOGUE 16
-    mov rbx, [rip + g_doc]
-    test rbx, rbx
-    jz .Lmv_ret
+    mov rbx, rax
     mov r12d, edi
     mov r13d, esi
     mov r14, [rbx + DOC_cur]
@@ -358,6 +370,8 @@ FN ed_move
 6:  call ed_touch
 .Lmv_ret:
     EPILOGUE
+.Lmv_fast_ret:
+    ret
 .Lmv_table:
 
 # page_lines() -> visible lines - 1 (at least 1)
@@ -379,10 +393,13 @@ page_lines:
 # ed_type(cp): insert a typed character (auto-pairs, closing bracket overtype)
 FN ed_type
     READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Lty_fast_ret
+    cmp qword ptr [rax + DOC_cursors + VEC_len], 0
+    jne ed_multi_type
     PROLOGUE 32
-    mov rbx, [rip + g_doc]
-    test rbx, rbx
-    jz .Lty_ret
+    mov rbx, rax
     mov r12d, edi
     mov edi, r12d
     lea rsi, [rsp]
@@ -531,14 +548,19 @@ FN ed_type
     call ed_insert
 .Lty_ret:
     EPILOGUE
+.Lty_fast_ret:
+    ret
 
 # ed_newline(): newline keeping indentation, extra level after an opening bracket or ':'
 FN ed_newline
     READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Lnl_fast_ret
+    cmp qword ptr [rax + DOC_cursors + VEC_len], 0
+    jne ed_multi_newline
     PROLOGUE 32
-    mov rbx, [rip + g_doc]
-    test rbx, rbx
-    jz .Lnl_ret
+    mov rbx, rax
     lea rdi, [rsp]
     xor esi, esi
     mov edx, SB_SIZE
@@ -646,6 +668,8 @@ FN ed_newline
     call sb_free
 .Lnl_ret:
     EPILOGUE
+.Lnl_fast_ret:
+    ret
 
 # push_indent_unit(): append one indentation unit to the sb at [rsp+8] of the caller frame
 push_indent_unit:
@@ -669,10 +693,13 @@ push_indent_unit:
 # ed_backspace(word)
 FN ed_backspace
     READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Lbs_fast_ret
+    cmp qword ptr [rax + DOC_cursors + VEC_len], 0
+    jne ed_multi_backspace
     PROLOGUE 16
-    mov rbx, [rip + g_doc]
-    test rbx, rbx
-    jz 9f
+    mov rbx, rax
     mov r12d, edi
     mov rdi, rbx
     mov esi, EK_BACK
@@ -782,14 +809,19 @@ FN ed_backspace
 8:  mov qword ptr [rbx + DOC_prefx], -1
     call ed_touch
 9:  EPILOGUE
+.Lbs_fast_ret:
+    ret
 
 # ed_delete_fwd(word)
 FN ed_delete_fwd
     READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Ldel_fast_ret
+    cmp qword ptr [rax + DOC_cursors + VEC_len], 0
+    jne ed_multi_delete_fwd
     PROLOGUE
-    mov rbx, [rip + g_doc]
-    test rbx, rbx
-    jz 9f
+    mov rbx, rax
     mov r12d, edi
     mov rdi, rbx
     mov esi, EK_DEL
@@ -816,6 +848,8 @@ FN ed_delete_fwd
 8:  mov qword ptr [rbx + DOC_prefx], -1
     call ed_touch
 9:  EPILOGUE
+.Ldel_fast_ret:
+    ret
 
 # sel_lines(doc) -> rax first line, rdx last line (selection end at column 0 excluded)
 sel_lines:
@@ -938,7 +972,12 @@ FN ed_tab
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
-    mov rdi, rbx
+    cmp qword ptr [rbx + DOC_cursors + VEC_len], 0
+    jz 10f
+    mov edi, 9
+    call ed_multi_type
+    jmp 9f
+10: mov rdi, rbx
     call ed_sel
     cmp rax, rdx
     je 1f
@@ -976,6 +1015,8 @@ FN ed_tab
 
 # selection text or whole current line (with newline) -> clip_sb ; eax = 1 if it was a whole line
 copy_to_clip:
+    cmp qword ptr [rdi + DOC_cursors + VEC_len], 0
+    jne copy_multi_to_clip
     PROLOGUE
     mov rbx, rdi
     lea rdi, [rip + clip_sb]
@@ -1073,14 +1114,17 @@ FN cmd_paste
 # ed_paste(ptr, len): line-wise when the clipboard came from a whole-line copy of ours
 FN ed_paste
     READONLY_RET
+    test rsi, rsi
+    jz .Lpst_fast_ret
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Lpst_fast_ret
+    cmp qword ptr [rax + DOC_cursors + VEC_len], 0
+    jne ed_multi_paste
     PROLOGUE
-    mov rbx, [rip + g_doc]
-    test rbx, rbx
-    jz 9f
+    mov rbx, rax
     mov r12, rdi
     mov r13, rsi
-    test r13, r13
-    jz 9f
     mov rdi, r12
     mov rsi, r13
     call ed_clip_linewise
@@ -1117,6 +1161,8 @@ FN ed_paste
     xor ecx, ecx
     call ed_insert
 9:  EPILOGUE
+.Lpst_fast_ret:
+    ret
 
 FN cmd_select_all
     mov rdi, [rip + g_doc]
@@ -1204,14 +1250,18 @@ FN word_at
 
 # ctrl+d: select word, or the next occurrence of the selection
 FN cmd_select_next
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
     mov rdi, rbx
     call ed_sel
     cmp rax, rdx
-    jne 1f
+    jne .Lsn_has_sel
+    cmp qword ptr [rbx + DOC_cursors + VEC_len], 0
+    jne .Lsn_has_sel
+
+    # No selection currently: select word at cursor
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
     call word_at
@@ -1221,22 +1271,1331 @@ FN cmd_select_next
     mov [rbx + DOC_cur], rdx
     call ed_touch
     jmp 9f
-1:  mov r12, rax
-    mov r13, rdx
-    mov rsi, r13
-    sub rsi, r12
+
+.Lsn_has_sel:
     mov rdi, rbx
-    mov rdx, r13                # search from end of selection
-    mov rcx, r12
+    call cursors_collect_all
+    test rax, rax
+    jz 9f
+    mov r12, [rdx + CURS_cur]
+    mov r13, [rdx + CURS_anchor]
+    mov rax, r12
+    cmp r13, rax
+    cmovb rax, r13             # needle start
+    mov rdx, r12
+    cmp r13, rdx
+    cmova rdx, r13             # needle end
+    cmp rax, rdx
+    je 9f
+    mov r14, rax               # needle pos
+    mov r15, rdx
+    sub r15, r14               # needle len
+
+    # Find maximum end position among all cursors
+    mov rcx, [rip + g_curs_scratch + VEC_len]
+    mov r8, [rip + g_curs_scratch + VEC_ptr]
+    xor rsi, rsi
+.Lsn_find_max:
+    test rcx, rcx
+    jz .Lsn_do_search
+    mov rax, [r8 + CURS_cur]
+    mov rdx, [r8 + CURS_anchor]
+    cmp rdx, rax
+    cmova rax, rdx
+    cmp rax, rsi
+    cmova rsi, rax
+    add r8, CURS_SIZE
+    dec rcx
+    jmp .Lsn_find_max
+
+.Lsn_do_search:
+    mov rdi, rbx
+    mov rdx, rsi               # from
+    mov rsi, r15               # needle len
+    mov rcx, r14               # needle pos in doc
     call find_in_doc
     test rax, rax
     js 9f
-    mov [rbx + DOC_anchor], rax
-    add rax, r13
-    sub rax, r12
-    mov [rbx + DOC_cur], rax
+
+    # Check if match rax already exists
+    mov r12, rax
+    mov rcx, [rip + g_curs_scratch + VEC_len]
+    mov r8, [rip + g_curs_scratch + VEC_ptr]
+.Lsn_check_dup:
+    test rcx, rcx
+    jz .Lsn_add_match
+    mov rax, [r8 + CURS_cur]
+    mov rdx, [r8 + CURS_anchor]
+    cmp rdx, rax
+    cmovb rax, rdx
+    cmp rax, r12
+    je 9f
+    add r8, CURS_SIZE
+    dec rcx
+    jmp .Lsn_check_dup
+
+.Lsn_add_match:
+    mov rdi, rbx
+    lea rsi, [r12 + r15]
+    mov rdx, r12
+    mov rcx, -1
+    call cursors_add
+    mov rdi, rbx
+    call cursors_normalize
     call ed_touch
 9:  EPILOGUE
+
+# ctrl+shift+l: select all occurrences of selection
+FN cmd_select_all_matches
+    PROLOGUE 48
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov rdi, rbx
+    call ed_sel
+    cmp rax, rdx
+    jne .Lsam_has_sel
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_cur]
+    call word_at
+    cmp rax, rdx
+    je 9f
+    mov [rbx + DOC_anchor], rax
+    mov [rbx + DOC_cur], rdx
+.Lsam_has_sel:
+    mov rdi, rbx
+    call ed_sel
+    cmp rax, rdx
+    je 9f
+    mov r12, rax                # start
+    mov r13, rdx
+    sub r13, r12                # len
+    lea rdi, [r13 + 1]
+    call mem_alloc
+    mov [rsp], rax              # needle buf
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, rax
+    call doc_copy
+
+    mov qword ptr [rbx + DOC_cursors + VEC_len], 0
+
+    mov rdi, rbx
+    call doc_contiguous
+    mov [rsp + 8], rax          # doc text
+    mov rdi, rbx
+    call doc_len
+    mov [rsp + 16], rax         # doc len
+
+    xor r14, r14                # search offset
+.Lsam_loop:
+    cmp r14, [rsp + 16]
+    jae .Lsam_done
+    mov rdi, [rsp + 8]
+    add rdi, r14
+    mov rsi, [rsp + 16]
+    sub rsi, r14
+    mov rdx, [rsp]
+    mov rcx, r13
+    call str_find
+    test rax, rax
+    js .Lsam_done
+    add rax, r14                # match pos
+    mov r15, rax
+    cmp r15, r12
+    je .Lsam_next
+    mov rdi, rbx
+    lea rsi, [r15 + r13]
+    mov rdx, r15
+    mov rcx, -1
+    call cursors_add
+.Lsam_next:
+    add r15, r13
+    mov r14, r15
+    jmp .Lsam_loop
+
+.Lsam_done:
+    mov rdi, [rsp]
+    call mem_free
+    mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# ctrl+alt+Up: add cursor above
+FN cmd_cursor_up
+    PROLOGUE 32
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov rdi, rbx
+    call cursors_collect_all
+    test rax, rax
+    jz 9f
+    mov r12, [rdx + CURS_cur]
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    test rax, rax
+    jz 9f
+    dec rax
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_col_of
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r14
+    call doc_pos_at_col
+    mov rdi, rbx
+    mov rsi, rax
+    mov rdx, rax
+    mov rcx, r14
+    call cursors_add
+    mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# ctrl+alt+Down: add cursor below
+FN cmd_cursor_down
+    PROLOGUE 32
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov rdi, rbx
+    call cursors_collect_all
+    test rax, rax
+    jz 9f
+    dec rax
+    imul rax, rax, CURS_SIZE
+    add rax, rdx
+    mov r12, [rax + CURS_cur]
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    inc rax
+    cmp rax, [rbx + DOC_nlines]
+    jae 9f
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_col_of
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r14
+    call doc_pos_at_col
+    mov rdi, rbx
+    mov rsi, rax
+    mov rdx, rax
+    mov rcx, r14
+    call cursors_add
+    mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# cursors_clear(doc)
+FN cursors_clear
+    mov qword ptr [rdi + DOC_cursors + VEC_len], 0
+    ret
+
+# cursors_add(doc, cur, anchor, prefx)
+FN cursors_add
+    PROLOGUE 32
+    mov rbx, rdi
+    mov [rsp], rsi
+    mov [rsp + 8], rdx
+    mov [rsp + 16], rcx
+    lea rdi, [rbx + DOC_cursors]
+    mov esi, CURS_SIZE
+    call vec_push
+    mov rcx, [rsp]
+    mov [rax + CURS_cur], rcx
+    mov rcx, [rsp + 8]
+    mov [rax + CURS_anchor], rcx
+    mov rcx, [rsp + 16]
+    mov [rax + CURS_prefx], rcx
+    EPILOGUE
+
+# cursors_collect_all(doc) -> rax = count, rdx = ptr in g_curs_scratch
+cursors_collect_all:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov qword ptr [rip + g_curs_scratch + VEC_len], 0
+
+    # Push primary cursor
+    lea rdi, [rip + g_curs_scratch]
+    mov esi, CURS_SIZE
+    call vec_push
+    mov rcx, [rbx + DOC_cur]
+    mov [rax + CURS_cur], rcx
+    mov rcx, [rbx + DOC_anchor]
+    mov [rax + CURS_anchor], rcx
+    mov rcx, [rbx + DOC_prefx]
+    mov [rax + CURS_prefx], rcx
+
+    # Push all secondary cursors
+    mov r12, [rbx + DOC_cursors + VEC_len]
+    test r12, r12
+    jz .Lcca_sort
+    xor r13, r13
+.Lcca_copy_loop:
+    cmp r13, r12
+    jae .Lcca_sort
+    imul r14, r13, CURS_SIZE
+    add r14, [rbx + DOC_cursors + VEC_ptr]
+    lea rdi, [rip + g_curs_scratch]
+    mov esi, CURS_SIZE
+    call vec_push
+    mov rcx, [r14 + CURS_cur]
+    mov [rax + CURS_cur], rcx
+    mov rcx, [r14 + CURS_anchor]
+    mov [rax + CURS_anchor], rcx
+    mov rcx, [r14 + CURS_prefx]
+    mov [rax + CURS_prefx], rcx
+    inc r13
+    jmp .Lcca_copy_loop
+
+.Lcca_sort:
+    mov r12, [rip + g_curs_scratch + VEC_len]
+    mov r13, [rip + g_curs_scratch + VEC_ptr]
+    cmp r12, 1
+    jbe .Lcca_done
+
+    # Insertion sort by min(cur, anchor)
+    mov r14, 1
+.Lcca_isort_outer:
+    cmp r14, r12
+    jae .Lcca_dedup
+    imul rax, r14, CURS_SIZE
+    add rax, r13
+    mov r8, [rax + CURS_cur]
+    mov r9, [rax + CURS_anchor]
+    mov r10, [rax + CURS_prefx]
+    mov r11, r8
+    cmp r9, r11
+    cmovb r11, r9
+
+    mov r15, r14
+.Lcca_isort_inner:
+    test r15, r15
+    jz .Lcca_isort_place
+    lea rax, [r15 - 1]
+    imul rax, rax, CURS_SIZE
+    add rax, r13
+    mov rcx, [rax + CURS_cur]
+    mov rdx, [rax + CURS_anchor]
+    mov rsi, rcx
+    cmp rdx, rsi
+    cmovb rsi, rdx
+    cmp rsi, r11
+    jbe .Lcca_isort_place
+
+    imul rdi, r15, CURS_SIZE
+    add rdi, r13
+    mov [rdi + CURS_cur], rcx
+    mov [rdi + CURS_anchor], rdx
+    mov rax, [rax + CURS_prefx]
+    mov [rdi + CURS_prefx], rax
+    dec r15
+    jmp .Lcca_isort_inner
+
+.Lcca_isort_place:
+    imul rdi, r15, CURS_SIZE
+    add rdi, r13
+    mov [rdi + CURS_cur], r8
+    mov [rdi + CURS_anchor], r9
+    mov [rdi + CURS_prefx], r10
+    inc r14
+    jmp .Lcca_isort_outer
+
+.Lcca_dedup:
+    xor r15, r15
+    mov r14, 1
+.Lcca_dedup_loop:
+    cmp r14, r12
+    jae .Lcca_dedup_done
+    imul rax, r15, CURS_SIZE
+    add rax, r13
+    imul rdx, r14, CURS_SIZE
+    add rdx, r13
+
+    mov rcx, [rax + CURS_cur]
+    mov r8, [rax + CURS_anchor]
+    mov rsi, rcx
+    cmp r8, rsi
+    cmovb rsi, r8              # min1
+    mov rdi, rcx
+    cmp r8, rdi
+    cmova rdi, r8              # max1
+
+    mov rcx, [rdx + CURS_cur]
+    mov r8, [rdx + CURS_anchor]
+    mov r9, rcx
+    cmp r8, r9
+    cmovb r9, r8               # min2
+    mov r10, rcx
+    cmp r8, r10
+    cmova r10, r8              # max2
+
+    cmp rsi, rdi
+    jne 1f
+    cmp r9, r10
+    jne 1f
+    cmp rsi, r9
+    je .Lcca_skip_item
+    jmp .Lcca_keep_item
+
+1:  cmp rdi, r9
+    jb .Lcca_keep_item
+    cmp r10, rdi
+    cmova rdi, r10
+    mov [rax + CURS_cur], rdi
+    mov [rax + CURS_anchor], rsi
+    jmp .Lcca_skip_item
+
+.Lcca_keep_item:
+    inc r15
+    imul rdi, r15, CURS_SIZE
+    add rdi, r13
+    mov rcx, [rdx + CURS_cur]
+    mov [rdi + CURS_cur], rcx
+    mov rcx, [rdx + CURS_anchor]
+    mov [rdi + CURS_anchor], rcx
+    mov rcx, [rdx + CURS_prefx]
+    mov [rdi + CURS_prefx], rcx
+
+.Lcca_skip_item:
+    inc r14
+    jmp .Lcca_dedup_loop
+
+.Lcca_dedup_done:
+    inc r15
+    mov [rip + g_curs_scratch + VEC_len], r15
+
+.Lcca_done:
+    mov rax, [rip + g_curs_scratch + VEC_len]
+    mov rdx, [rip + g_curs_scratch + VEC_ptr]
+    EPILOGUE
+
+# cursors_normalize(doc)
+FN cursors_normalize
+    PROLOGUE 16
+    mov rbx, rdi
+    call cursors_collect_all
+    test rax, rax
+    jz 9f
+    mov r12, rax                # count
+    mov r13, rdx                # ptr
+
+    # Write back primary cursor
+    mov rcx, [r13 + CURS_cur]
+    mov [rbx + DOC_cur], rcx
+    mov rcx, [r13 + CURS_anchor]
+    mov [rbx + DOC_anchor], rcx
+    mov rcx, [r13 + CURS_prefx]
+    mov [rbx + DOC_prefx], rcx
+
+    # Write back secondaries
+    mov qword ptr [rbx + DOC_cursors + VEC_len], 0
+    cmp r12, 1
+    jbe 9f
+    mov r14, 1
+.Lcn_loop:
+    cmp r14, r12
+    jae 9f
+    imul rax, r14, CURS_SIZE
+    add rax, r13
+    mov rdi, rbx
+    mov rsi, [rax + CURS_cur]
+    mov rdx, [rax + CURS_anchor]
+    mov rcx, [rax + CURS_prefx]
+    call cursors_add
+    inc r14
+    jmp .Lcn_loop
+9:  EPILOGUE
+
+# cursors_move_one(doc, cur, anchor, prefx, kind, extend) -> rax = new_cur, rdx = new_anchor, rcx = new_prefx
+cursors_move_one:
+    PROLOGUE 48
+    mov [rsp], r9d              # extend
+    mov rbx, rdi
+    mov r12, rsi                # cur
+    mov r13, rdx                # anchor
+    mov r14, rcx                # prefx
+    mov r15d, r8d               # kind
+
+    # Selection collapse on left/right without extend
+    test r9d, r9d
+    jnz .Lcmo_dispatch
+    cmp r15d, 1
+    ja .Lcmo_dispatch
+    cmp r12, r13
+    je .Lcmo_dispatch
+    mov rax, r12
+    cmp r13, rax
+    cmovb rax, r13             # min(cur, anchor)
+    test r15d, r15d
+    jz .Lcmo_set_cur           # left: min
+    mov rax, r12
+    cmp r13, rax
+    cmova rax, r13             # right: max
+    jmp .Lcmo_set_cur
+
+.Lcmo_dispatch:
+    cmp r15d, 0
+    je .Lcmo_left
+    cmp r15d, 1
+    je .Lcmo_right
+    cmp r15d, 2
+    je .Lcmo_up
+    cmp r15d, 3
+    je .Lcmo_down
+    cmp r15d, 4
+    je .Lcmo_home
+    cmp r15d, 5
+    je .Lcmo_end
+    cmp r15d, 6
+    je .Lcmo_wordl
+    cmp r15d, 7
+    je .Lcmo_wordr
+    cmp r15d, 8
+    je .Lcmo_pgup
+    cmp r15d, 9
+    je .Lcmo_pgdn
+    cmp r15d, 10
+    je .Lcmo_start
+    jmp .Lcmo_endd
+
+.Lcmo_left:
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_prev_char
+    jmp .Lcmo_set_cur
+
+.Lcmo_right:
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_next_char
+    jmp .Lcmo_set_cur
+
+.Lcmo_wordl:
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_word_left
+    jmp .Lcmo_set_cur
+
+.Lcmo_wordr:
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_word_right
+    jmp .Lcmo_set_cur
+
+.Lcmo_home:
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    mov r15, rax
+    mov rdi, rbx
+    mov rsi, r15
+    call doc_line_start
+    mov [rsp + 8], rax
+    mov rdi, rbx
+    mov rsi, r15
+    call line_indent
+    add rax, [rsp + 8]
+    cmp rax, r12
+    je 1f
+    jmp .Lcmo_set_cur
+1:  mov rax, [rsp + 8]
+    jmp .Lcmo_set_cur
+
+.Lcmo_end:
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    mov rdi, rbx
+    mov rsi, rax
+    call doc_line_end
+    jmp .Lcmo_set_cur
+
+.Lcmo_start:
+    xor eax, eax
+    jmp .Lcmo_set_cur
+
+.Lcmo_endd:
+    mov rdi, rbx
+    call doc_len
+    jmp .Lcmo_set_cur
+
+.Lcmo_up:
+    mov r15, -1
+    jmp .Lcmo_vert
+
+.Lcmo_down:
+    mov r15, 1
+    jmp .Lcmo_vert
+
+.Lcmo_pgup:
+    call page_lines
+    neg rax
+    mov r15, rax
+    jmp .Lcmo_vert
+
+.Lcmo_pgdn:
+    call page_lines
+    mov r15, rax
+
+.Lcmo_vert:
+    cmp r14, -1
+    jne 2f
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_col_of
+    mov r14, rax
+2:  mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    add rax, r15
+    jns 3f
+    xor eax, eax
+    jmp .Lcmo_vert_done
+3:  cmp rax, [rbx + DOC_nlines]
+    jb 4f
+    mov rdi, rbx
+    call doc_len
+    jmp .Lcmo_vert_done
+4:  mov rdi, rbx
+    mov rsi, rax
+    mov rdx, r14
+    call doc_pos_at_col
+.Lcmo_vert_done:
+    mov rdx, r13
+    cmp dword ptr [rsp], 0
+    cmove rdx, rax
+    mov rcx, r14
+    EPILOGUE
+
+.Lcmo_set_cur:
+    mov rdx, r13
+    cmp dword ptr [rsp], 0
+    cmove rdx, rax
+    mov rcx, -1
+    EPILOGUE
+
+# ed_multi_move(kind, extend)
+FN ed_multi_move
+    PROLOGUE 32
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov [rsp], edi              # kind
+    mov [rsp + 8], esi          # extend
+
+    # Move primary cursor
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_cur]
+    mov rdx, [rbx + DOC_anchor]
+    mov rcx, [rbx + DOC_prefx]
+    mov r8d, [rsp]
+    mov r9d, [rsp + 8]
+    call cursors_move_one
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rdx
+    mov [rbx + DOC_prefx], rcx
+
+    # Move all secondary cursors
+    mov r12, [rbx + DOC_cursors + VEC_len]
+    test r12, r12
+    jz .Lmm_done
+    mov r14, [rbx + DOC_cursors + VEC_ptr]
+    xor r13, r13
+.Lmm_loop:
+    cmp r13, r12
+    jae .Lmm_done
+    mov rdi, rbx
+    mov rsi, [r14 + CURS_cur]
+    mov rdx, [r14 + CURS_anchor]
+    mov rcx, [r14 + CURS_prefx]
+    mov r8d, [rsp]
+    mov r9d, [rsp + 8]
+    call cursors_move_one
+    mov [r14 + CURS_cur], rax
+    mov [r14 + CURS_anchor], rdx
+    mov [r14 + CURS_prefx], rcx
+    add r14, CURS_SIZE
+    inc r13
+    jmp .Lmm_loop
+
+.Lmm_done:
+    mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# ed_multi_type(cp)
+FN ed_multi_type
+    PROLOGUE 48
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov r12d, edi               # cp
+    mov edi, r12d
+    lea rsi, [rsp]
+    call utf8_encode
+    mov r13, rax                # utf8 len
+
+    mov rdi, rbx
+    call cursors_collect_all
+    mov r14, rax                # count
+    mov r15, rdx                # ptr
+    test r14, r14
+    jz 9f
+
+    # Group contiguous typing within 1500ms together
+    call time_ms
+    mov rcx, rax
+    sub rcx, [rbx + DOC_lastedit]
+    cmp qword ptr [rbx + DOC_lastkind], EK_TYPE
+    jne .Lmt_new_group
+    cmp rcx, 1500
+    ja .Lmt_new_group
+    cmp byte ptr [rsp], ' '
+    je .Lmt_new_group
+    cmp byte ptr [rsp], 10
+    je .Lmt_new_group
+    or dword ptr [rbx + DOC_flags], 1
+    jmp .Lmt_group_ready
+
+.Lmt_new_group:
+    inc qword ptr [rbx + DOC_group]
+    or dword ptr [rbx + DOC_flags], 1
+
+.Lmt_group_ready:
+    mov r12, r14
+.Lmt_loop:
+    test r12, r12
+    jz .Lmt_done
+    dec r12
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov r8, [rax + CURS_cur]
+    mov r9, [rax + CURS_anchor]
+    mov rsi, r8
+    cmp r9, rsi
+    cmovb rsi, r9               # start
+    mov rdi, r8
+    cmp r9, rdi
+    cmova rdi, r9               # end
+    mov rcx, rdi
+    sub rcx, rsi                # sel_len
+
+    test rcx, rcx
+    jz 1f
+    push rsi
+    push rcx
+    mov rdi, rbx
+    mov rdx, rcx
+    mov ecx, EK_TYPE
+    call doc_delete
+    pop rcx
+    pop rsi
+1:  push rsi
+    push rcx
+    mov rdi, rbx
+    lea rdx, [rsp + 16]
+    mov rcx, r13
+    mov r8d, EK_TYPE
+    call doc_insert
+    pop rcx
+    pop rsi
+
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rdx, rsi
+    add rdx, r13
+    mov [rax + CURS_anchor], rdx
+    mov rdx, r13
+    sub rdx, rcx
+    mov [rax + CURS_prefx], rdx
+    jmp .Lmt_loop
+
+.Lmt_done:
+    and dword ptr [rbx + DOC_flags], -2
+    mov qword ptr [rbx + DOC_lastkind], EK_TYPE
+    call time_ms
+    mov [rbx + DOC_lastedit], rax
+
+    xor rsi, rsi
+    xor r12, r12
+.Lmt_shift:
+    cmp r12, r14
+    jae .Lmt_writeback
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rdx, [rax + CURS_anchor]
+    add rdx, rsi
+    mov [rax + CURS_cur], rdx
+    mov [rax + CURS_anchor], rdx
+    add rsi, [rax + CURS_prefx]
+    mov qword ptr [rax + CURS_prefx], -1
+    inc r12
+    jmp .Lmt_shift
+
+.Lmt_writeback:
+    mov rax, [r15 + CURS_cur]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+    mov qword ptr [rbx + DOC_prefx], -1
+    lea rax, [r14 - 1]
+    mov [rbx + DOC_cursors + VEC_len], rax
+    cmp r14, 1
+    jbe 2f
+    mov rdi, [rbx + DOC_cursors + VEC_ptr]
+    lea rsi, [r15 + CURS_SIZE]
+    imul rdx, rax, CURS_SIZE
+    call memcpy
+2:  mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# ed_multi_backspace(word)
+FN ed_multi_backspace
+    PROLOGUE 32
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov [rsp], edi              # word
+
+    mov rdi, rbx
+    call cursors_collect_all
+    mov r14, rax                # count
+    mov r15, rdx                # ptr
+    test r14, r14
+    jz 9f
+
+    mov rdi, rbx
+    call doc_begin_group
+
+    mov r12, r14
+.Lmb_loop:
+    test r12, r12
+    jz .Lmb_done
+    dec r12
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov r8, [rax + CURS_cur]
+    mov r9, [rax + CURS_anchor]
+    mov rsi, r8
+    cmp r9, rsi
+    cmovb rsi, r9               # start
+    mov rdi, r8
+    cmp r9, rdi
+    cmova rdi, r9               # end
+    mov rcx, rdi
+    sub rcx, rsi                # sel_len
+
+    test rcx, rcx
+    jz 1f
+    push rsi
+    push rcx
+    mov rdi, rbx
+    mov rdx, rcx
+    mov ecx, EK_BACK
+    call doc_delete
+    pop rcx
+    pop rsi
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov [rax + CURS_anchor], rsi
+    neg rcx
+    mov [rax + CURS_prefx], rcx
+    jmp .Lmb_loop
+
+1:  test rsi, rsi
+    jz 2f
+    mov [rsp + 8], rsi
+    cmp dword ptr [rsp], 0
+    je 11f
+    mov rdi, rbx
+    mov rsi, [rsp + 8]
+    call doc_word_left
+    jmp 12f
+11: mov rdi, rbx
+    mov rsi, [rsp + 8]
+    call doc_prev_char
+12: mov r13, rax                # prev pos
+    mov rdx, [rsp + 8]
+    sub rdx, r13                # del len
+    mov rdi, rbx
+    mov rsi, r13
+    mov ecx, EK_BACK
+    push rdx
+    call doc_delete
+    pop rdx
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov [rax + CURS_anchor], r13
+    neg rdx
+    mov [rax + CURS_prefx], rdx
+    jmp .Lmb_loop
+
+2:  imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov qword ptr [rax + CURS_anchor], 0
+    mov qword ptr [rax + CURS_prefx], 0
+    jmp .Lmb_loop
+
+.Lmb_done:
+    mov rdi, rbx
+    call doc_end_group
+
+    xor rsi, rsi
+    xor r12, r12
+.Lmb_shift:
+    cmp r12, r14
+    jae .Lmb_writeback
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rdx, [rax + CURS_anchor]
+    add rdx, rsi
+    mov [rax + CURS_cur], rdx
+    mov [rax + CURS_anchor], rdx
+    add rsi, [rax + CURS_prefx]
+    mov qword ptr [rax + CURS_prefx], -1
+    inc r12
+    jmp .Lmb_shift
+
+.Lmb_writeback:
+    mov rax, [r15 + CURS_cur]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+    mov qword ptr [rbx + DOC_prefx], -1
+    lea rax, [r14 - 1]
+    mov [rbx + DOC_cursors + VEC_len], rax
+    cmp r14, 1
+    jbe 3f
+    mov rdi, [rbx + DOC_cursors + VEC_ptr]
+    lea rsi, [r15 + CURS_SIZE]
+    imul rdx, rax, CURS_SIZE
+    call memcpy
+3:  mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# ed_multi_delete_fwd(word)
+FN ed_multi_delete_fwd
+    PROLOGUE 32
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov [rsp], edi              # word
+
+    mov rdi, rbx
+    call cursors_collect_all
+    mov r14, rax                # count
+    mov r15, rdx                # ptr
+    test r14, r14
+    jz 9f
+
+    mov rdi, rbx
+    call doc_begin_group
+
+    mov r12, r14
+.Lmdf_loop:
+    test r12, r12
+    jz .Lmdf_done
+    dec r12
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov r8, [rax + CURS_cur]
+    mov r9, [rax + CURS_anchor]
+    mov rsi, r8
+    cmp r9, rsi
+    cmovb rsi, r9               # start
+    mov rdi, r8
+    cmp r9, rdi
+    cmova rdi, r9               # end
+    mov rcx, rdi
+    sub rcx, rsi                # sel_len
+
+    test rcx, rcx
+    jz 1f
+    push rsi
+    push rcx
+    mov rdi, rbx
+    mov rdx, rcx
+    mov ecx, EK_DEL
+    call doc_delete
+    pop rcx
+    pop rsi
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov [rax + CURS_anchor], rsi
+    neg rcx
+    mov [rax + CURS_prefx], rcx
+    jmp .Lmdf_loop
+
+1:  mov [rsp + 8], rsi
+    mov rdi, rbx
+    call doc_len
+    cmp [rsp + 8], rax
+    jae 2f
+    cmp dword ptr [rsp], 0
+    je 11f
+    mov rdi, rbx
+    mov rsi, [rsp + 8]
+    call doc_word_right
+    jmp 12f
+11: mov rdi, rbx
+    mov rsi, [rsp + 8]
+    call doc_next_char
+12: mov r13, rax                # next pos
+    mov rdx, r13
+    sub rdx, [rsp + 8]          # del len
+    mov rdi, rbx
+    mov rsi, [rsp + 8]
+    mov ecx, EK_DEL
+    push rdx
+    call doc_delete
+    pop rdx
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rcx, [rsp + 8]
+    mov [rax + CURS_anchor], rcx
+    neg rdx
+    mov [rax + CURS_prefx], rdx
+    jmp .Lmdf_loop
+
+2:  imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rcx, [rsp + 8]
+    mov [rax + CURS_anchor], rcx
+    mov qword ptr [rax + CURS_prefx], 0
+    jmp .Lmdf_loop
+
+.Lmdf_done:
+    mov rdi, rbx
+    call doc_end_group
+
+    xor rsi, rsi
+    xor r12, r12
+.Lmdf_shift:
+    cmp r12, r14
+    jae .Lmdf_writeback
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rdx, [rax + CURS_anchor]
+    add rdx, rsi
+    mov [rax + CURS_cur], rdx
+    mov [rax + CURS_anchor], rdx
+    add rsi, [rax + CURS_prefx]
+    mov qword ptr [rax + CURS_prefx], -1
+    inc r12
+    jmp .Lmdf_shift
+
+.Lmdf_writeback:
+    mov rax, [r15 + CURS_cur]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+    mov qword ptr [rbx + DOC_prefx], -1
+    lea rax, [r14 - 1]
+    mov [rbx + DOC_cursors + VEC_len], rax
+    cmp r14, 1
+    jbe 3f
+    mov rdi, [rbx + DOC_cursors + VEC_ptr]
+    lea rsi, [r15 + CURS_SIZE]
+    imul rdx, rax, CURS_SIZE
+    call memcpy
+3:  mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# ed_multi_newline()
+FN ed_multi_newline
+    PROLOGUE 48
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+
+    mov rdi, rbx
+    call cursors_collect_all
+    mov r14, rax                # count
+    mov r15, rdx                # ptr
+    test r14, r14
+    jz 9f
+
+    mov rdi, rbx
+    call doc_begin_group
+
+    mov r12, r14
+.Lmn_loop:
+    test r12, r12
+    jz .Lmn_done
+    dec r12
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov r8, [rax + CURS_cur]
+    mov r9, [rax + CURS_anchor]
+    mov rsi, r8
+    cmp r9, rsi
+    cmovb rsi, r9               # start
+    mov rdi, r8
+    cmp r9, rdi
+    cmova rdi, r9               # end
+    mov rcx, rdi
+    sub rcx, rsi                # sel_len
+
+    test rcx, rcx
+    jz 1f
+    push rsi
+    push rcx
+    mov rdi, rbx
+    mov rdx, rcx
+    mov ecx, EK_OTHER
+    call doc_delete
+    pop rcx
+    pop rsi
+1:  push rsi
+    push rcx
+    mov byte ptr [rsp + 16], 10 # newline '\n'
+    mov rdi, rbx
+    lea rdx, [rsp + 16]
+    mov rcx, 1
+    mov r8d, EK_OTHER
+    call doc_insert
+    pop rcx                     # sel_len
+    pop rsi                     # start
+
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    lea rdx, [rsi + 1]
+    mov [rax + CURS_anchor], rdx # local pos
+    mov rdx, 1
+    sub rdx, rcx                # delta = 1 - sel_len
+    mov [rax + CURS_prefx], rdx
+    jmp .Lmn_loop
+
+.Lmn_done:
+    mov rdi, rbx
+    call doc_end_group
+
+    xor rsi, rsi
+    xor r12, r12
+.Lmn_shift:
+    cmp r12, r14
+    jae .Lmn_writeback
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rdx, [rax + CURS_anchor]
+    add rdx, rsi
+    mov [rax + CURS_cur], rdx
+    mov [rax + CURS_anchor], rdx
+    add rsi, [rax + CURS_prefx]
+    mov qword ptr [rax + CURS_prefx], -1
+    inc r12
+    jmp .Lmn_shift
+
+.Lmn_writeback:
+    mov rax, [r15 + CURS_cur]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+    mov qword ptr [rbx + DOC_prefx], -1
+    lea rax, [r14 - 1]
+    mov [rbx + DOC_cursors + VEC_len], rax
+    cmp r14, 1
+    jbe 2f
+    mov rdi, [rbx + DOC_cursors + VEC_ptr]
+    lea rsi, [r15 + CURS_SIZE]
+    imul rdx, rax, CURS_SIZE
+    call memcpy
+2:  mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# ed_multi_paste(ptr, len)
+FN ed_multi_paste
+    PROLOGUE 48
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    mov [rsp], rdi              # paste ptr
+    mov [rsp + 8], rsi          # paste len
+    test rsi, rsi
+    jz 9f
+
+    mov rdi, rbx
+    call cursors_collect_all
+    mov r14, rax                # count
+    mov r15, rdx                # ptr
+    test r14, r14
+    jz 9f
+
+    mov rdi, rbx
+    call doc_begin_group
+
+    mov r12, r14
+.Lmp_loop:
+    test r12, r12
+    jz .Lmp_done
+    dec r12
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov r8, [rax + CURS_cur]
+    mov r9, [rax + CURS_anchor]
+    mov rsi, r8
+    cmp r9, rsi
+    cmovb rsi, r9               # start
+    mov rdi, r8
+    cmp r9, rdi
+    cmova rdi, r9               # end
+    mov rcx, rdi
+    sub rcx, rsi                # sel_len
+
+    test rcx, rcx
+    jz 1f
+    push rsi
+    push rcx
+    mov rdi, rbx
+    mov rdx, rcx
+    xor ecx, ecx
+    call doc_delete
+    pop rcx
+    pop rsi
+1:  push rsi
+    push rcx
+    mov rdi, rbx
+    mov rdx, [rsp + 16]         # paste ptr
+    mov rcx, [rsp + 24]         # paste len
+    xor r8d, r8d
+    call doc_insert
+    pop rcx                     # sel_len
+    pop rsi                     # start
+
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rdx, [rsp + 8]          # paste len
+    lea r8, [rsi + rdx]
+    mov [rax + CURS_anchor], r8 # local pos
+    sub rdx, rcx                # paste_len - sel_len
+    mov [rax + CURS_prefx], rdx
+    jmp .Lmp_loop
+
+.Lmp_done:
+    mov rdi, rbx
+    call doc_end_group
+
+    xor rsi, rsi
+    xor r12, r12
+.Lmp_shift:
+    cmp r12, r14
+    jae .Lmp_writeback
+    imul rax, r12, CURS_SIZE
+    add rax, r15
+    mov rdx, [rax + CURS_anchor]
+    add rdx, rsi
+    mov [rax + CURS_cur], rdx
+    mov [rax + CURS_anchor], rdx
+    add rsi, [rax + CURS_prefx]
+    mov qword ptr [rax + CURS_prefx], -1
+    inc r12
+    jmp .Lmp_shift
+
+.Lmp_writeback:
+    mov rax, [r15 + CURS_cur]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+    mov qword ptr [rbx + DOC_prefx], -1
+    lea rax, [r14 - 1]
+    mov [rbx + DOC_cursors + VEC_len], rax
+    cmp r14, 1
+    jbe 2f
+    mov rdi, [rbx + DOC_cursors + VEC_ptr]
+    lea rsi, [r15 + CURS_SIZE]
+    imul rdx, rax, CURS_SIZE
+    call memcpy
+2:  mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+9:  EPILOGUE
+
+# copy_multi_to_clip: copies all selections to clipboard separated by newlines
+copy_multi_to_clip:
+    PROLOGUE
+    mov rbx, rdi
+    call cursors_collect_all
+    mov r12, rax                # count
+    mov r13, rdx                # ptr
+    test r12, r12
+    jz .Lcmc_none
+    lea rdi, [rip + clip_sb]
+    call sb_clear
+    xor r14, r14                # i
+.Lcmc_loop:
+    cmp r14, r12
+    jae .Lcmc_done
+    imul rax, r14, CURS_SIZE
+    add rax, r13
+    mov rsi, [rax + CURS_cur]
+    mov rdx, [rax + CURS_anchor]
+    mov r8, rsi
+    cmp rdx, r8
+    cmovb r8, rdx               # start
+    mov r9, rsi
+    cmp rdx, r9
+    cmova r9, rdx               # end
+    mov r15, r9
+    sub r15, r8                 # len
+    test r15, r15
+    jz .Lcmc_next
+    cmp qword ptr [rip + clip_sb + SB_len], 0
+    jz 2f
+    lea rdi, [rip + clip_sb]
+    mov esi, 10
+    call sb_push_byte
+2:  lea rdi, [rip + clip_sb]
+    mov rsi, r15
+    call sb_reserve
+    mov rcx, rax
+    mov rdi, rbx
+    mov rsi, r8
+    mov rdx, r15
+    call doc_copy
+    add [rip + clip_sb + SB_len], r15
+.Lcmc_next:
+    inc r14
+    jmp .Lcmc_loop
+.Lcmc_done:
+    cmp qword ptr [rip + clip_sb + SB_len], 0
+    jz .Lcmc_none
+    mov rdi, [rip + clip_sb + SB_ptr]
+    mov rsi, [rip + clip_sb + SB_len]
+    PCALL P_clip_set
+    xor eax, eax
+    mov [rip + g_clip_line], eax
+    EPILOGUE
+.Lcmc_none:
+    xor eax, eax
+    EPILOGUE
+
+# ed_record_caret(x, y)
+ed_record_caret:
+    mov ecx, [rip + g_carets_cnt]
+    cmp ecx, 1024
+    jge 1f
+    lea r8, [rip + g_carets_buf]
+    mov [r8 + rcx*8], edi
+    mov [r8 + rcx*8 + 4], esi
+    inc dword ptr [rip + g_carets_cnt]
+1:  ret
 
 # find_in_doc(doc, needle_len, from, needle_pos_in_doc) -> match pos or -1 (wraps)
 find_in_doc:
@@ -2158,6 +3517,7 @@ FN editor_draw
     jbe 33f
 32: mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
+    mov qword ptr [rbx + DOC_cursors + VEC_len], 0
 33: lea rdi, [rip + editor_menu]
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
@@ -2193,6 +3553,25 @@ FN editor_draw
     mov edx, [rip + g_my]
     call pos_at_point
     mov r12, rax
+    test dword ptr [rip + g_mods], MOD_ALT
+    jz 311f
+    # Alt + Click: add cursor at clicked position
+    mov dword ptr [rip + g_dragging], 0
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r12
+    mov rcx, -1
+    call cursors_add
+    mov rdi, rbx
+    call cursors_normalize
+    call ed_touch
+    mov dword ptr [rip + g_reveal], 0
+    jmp .Led_noinput
+311:
+    test dword ptr [rip + g_mods], MOD_SHIFT
+    jnz 312f
+    mov qword ptr [rbx + DOC_cursors + VEC_len], 0
+312:
     mov eax, [rip + g_clicks]
     cmp eax, 2
     je .Led_dbl
@@ -2207,6 +3586,7 @@ FN editor_draw
     mov dword ptr [rip + g_reveal], 0
     jmp .Led_noinput
 .Led_dbl:
+    mov qword ptr [rbx + DOC_cursors + VEC_len], 0
     mov dword ptr [rip + g_dragging], 0
     mov rdi, rbx
     mov rsi, r12
@@ -2219,6 +3599,7 @@ FN editor_draw
     mov dword ptr [rip + g_reveal], 0
     jmp .Led_noinput
 .Led_tri:
+    mov qword ptr [rbx + DOC_cursors + VEC_len], 0
     mov dword ptr [rip + g_dragging], 0
     mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
@@ -2291,6 +3672,7 @@ FN editor_draw
     mov rdi, rbx
     call match_brackets
     mov dword ptr [rip + g_caret_ok], 0
+    mov dword ptr [rip + g_carets_cnt], 0
     mov dword ptr [rip + dl_from], 0
     mov dword ptr [rip + dl_to], -1
     mov dword ptr [rip + dl_last], 1
@@ -2723,6 +4105,72 @@ draw_line:
     COLOR r8d, T_SELECTION
     call gfx_fill
 .Ldl_nosel:
+    cmp qword ptr [rbx + DOC_cursors + VEC_len], 0
+    jz .Ldl_sec_sel_done
+    xor r13, r13
+.Ldl_sec_sel_loop:
+    cmp r13, [rbx + DOC_cursors + VEC_len]
+    jae .Ldl_sec_sel_done
+    imul rax, r13, CURS_SIZE
+    add rax, [rbx + DOC_cursors + VEC_ptr]
+    mov rsi, [rax + CURS_cur]
+    mov rdx, [rax + CURS_anchor]
+    mov rax, rsi
+    cmp rdx, rax
+    cmovb rax, rdx
+    mov r8, rsi
+    cmp rdx, r8
+    cmova r8, rdx
+    cmp rax, r8
+    je .Ldl_sec_sel_next
+
+    mov rcx, [rsp + 24]
+    add rcx, [rsp + 96]
+    mov rdx, [rsp + 24]
+    add rdx, [rsp + 32]
+    cmp rax, rcx
+    cmovb rax, rcx
+    xor r9d, r9d
+    cmp r8, rdx
+    jbe 41f
+    mov r8, rdx
+    cmp dword ptr [rip + dl_last], 0
+    je 41f
+    mov r9d, 1
+41: cmp rax, r8
+    ja .Ldl_sec_sel_next
+    jb 51f
+    test r9d, r9d
+    jz .Ldl_sec_sel_next
+51: mov [rsp + 48], r8
+    mov [rsp + 60], r9d
+    mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, rax
+    sub rdx, [rsp + 24]
+    mov [rsp + 104], rdx
+    call seg_cols
+    mov [rsp + 56], eax
+    mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, [rsp + 48]
+    sub rdx, [rsp + 24]
+    call seg_cols
+    add eax, [rsp + 60]
+    sub eax, [rsp + 56]
+    imul eax, [rip + g_cw]
+    mov edx, eax
+    mov edi, [rsp + 56]
+    imul edi, [rip + g_cw]
+    add edi, [rsp + 40]
+    mov esi, [rsp]
+    mov ecx, [rip + g_lh]
+    COLOR r8d, T_SELECTION
+    call gfx_fill
+.Ldl_sec_sel_next:
+    inc r13
+    jmp .Ldl_sec_sel_loop
+.Ldl_sec_sel_done:
     # ---- find matches ----
     mov rcx, [rip + g_ed_find + SB_len]
     test rcx, rcx
@@ -2843,7 +4291,40 @@ draw_line:
     mov eax, [rsp]
     mov [rip + g_caret_y], eax
     mov dword ptr [rip + g_caret_ok], 1
-7:  # ---- glyphs ----
+    mov edi, [rip + g_caret_x]
+    mov esi, [rip + g_caret_y]
+    call ed_record_caret
+7:  cmp qword ptr [rbx + DOC_cursors + VEC_len], 0
+    jz .Ldl_sec_caret_done
+    xor r13, r13
+.Ldl_sec_caret_loop:
+    cmp r13, [rbx + DOC_cursors + VEC_len]
+    jae .Ldl_sec_caret_done
+    imul rax, r13, CURS_SIZE
+    add rax, [rbx + DOC_cursors + VEC_ptr]
+    mov rax, [rax + CURS_cur]
+    sub rax, [rsp + 24]
+    js .Ldl_sec_cnext
+    cmp rax, [rsp + 96]
+    jb .Ldl_sec_cnext
+    cmp rax, [rsp + 32]
+    jb 72f
+    ja .Ldl_sec_cnext
+    cmp dword ptr [rip + dl_last], 0
+    je .Ldl_sec_cnext
+72: mov rdi, r14
+    mov rsi, [rsp + 96]
+    mov rdx, rax
+    call seg_cols
+    imul eax, [rip + g_cw]
+    add eax, [rsp + 40]
+    mov edi, eax
+    mov esi, [rsp]
+    call ed_record_caret
+.Ldl_sec_cnext:
+    inc r13
+    jmp .Ldl_sec_caret_loop
+.Ldl_sec_caret_done:  # ---- glyphs ----
     mov r13, [rsp + 96]         # byte index
     mov dword ptr [rsp + 64], 0 # column
     mov eax, [rsp]
@@ -3073,7 +4554,7 @@ bracket_kind:
 
 # draw_caret(doc): at the position recorded by draw_line
 draw_caret:
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, rdi
     cmp dword ptr [rip + g_caret_ok], 0
     je 9f
@@ -3103,13 +4584,37 @@ draw_caret:
     mov rax, [rbx + DOC_cur]
     cmp rax, [rbx + DOC_anchor]
     je draw_block
-11: mov esi, [rip + g_caret_y]
-    M edx, MI_2
+11: M edx, MI_2
     cmp dword ptr [rip + cfg_smooth_caret], 0
     jne 2f
     M edx, MI_1
 2:  mov ecx, [rip + g_lh]
     COLOR r8d, T_CURSOR
+    mov r12d, [rip + g_carets_cnt]
+    test r12d, r12d
+    jz .Ldc_fallback
+    mov [rsp], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 16], r8d
+    xor r13d, r13d
+.Ldc_loop:
+    cmp r13d, r12d
+    jae 9f
+    lea rax, [rip + g_carets_buf]
+    mov edi, [rax + r13*8]
+    mov esi, [rax + r13*8 + 4]
+    cmp edi, [rip + g_ed_tx]
+    jl .Ldc_next
+    mov edx, [rsp]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 16]
+    call gfx_fill
+.Ldc_next:
+    inc r13d
+    jmp .Ldc_loop
+.Ldc_fallback:
+    mov edi, [rip + g_caret_x]
+    mov esi, [rip + g_caret_y]
     call gfx_fill
 9:  EPILOGUE
 

@@ -28,6 +28,9 @@ FN doc_new
     mov qword ptr [rax], 0
     mov qword ptr [rbx + DOC_nlines], 1
     mov qword ptr [rbx + DOC_prefx], -1
+    mov qword ptr [rbx + DOC_cursors + VEC_ptr], 0
+    mov qword ptr [rbx + DOC_cursors + VEC_len], 0
+    mov qword ptr [rbx + DOC_cursors + VEC_cap], 0
     lea rax, [rip + .Luntitled]
     mov [rbx + DOC_name], rax
     mov rax, rbx
@@ -48,6 +51,8 @@ FN doc_free
     lea rdi, [rbx + DOC_undo]
     call vec_free
     lea rdi, [rbx + DOC_redo]
+    call vec_free
+    lea rdi, [rbx + DOC_cursors]
     call vec_free
     mov rdi, [rbx + DOC_buf]
     call mem_free
