@@ -262,7 +262,7 @@ FN mac_pid_cwd
     b 9f
 8:  mov x8, #-1
 9:  LEAVE
-    ret
+    XRET
 
 // mac_exe_path(buf, size) -> x8: the length of the running program's real path, written to buf with
 // a NUL, or -1
