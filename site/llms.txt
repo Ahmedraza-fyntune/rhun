@@ -12,7 +12,8 @@ Facts:
 
 ## Docs
 
-- [Guide](https://rhun.app/guide.md): features, install and update, usage, shortcuts, configuration, grammars and themes
+- [Docs](https://rhun.app/docs/): short guides to getting started, editing, the terminal, agents, Git, and customization
+- [Full guide](https://rhun.app/guide.md): features, install and update, usage, shortcuts, configuration, grammars and themes
 - [README](https://github.com/vshvedov/rhun/blob/main/README.md): overview
 
 ## Get it
