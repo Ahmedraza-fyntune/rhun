@@ -135,6 +135,7 @@ claude_root:
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lclaude_projects]
     call sb_push_cstr
+    mov r15, [rip + tmp + SB_len]
     mov rdi, [rip + tmp + SB_ptr]
     mov r12, [rbx + AW_path]
     mov rdi, r12
@@ -166,7 +167,13 @@ claude_root:
     mov esi, '-'
     call sb_push_byte
     jmp 3b
-4:  mov rdi, [rip + tmp + SB_ptr]
+    # A folder name over 255 bytes cannot exist (a deep checkout): no folder rather than an open,
+    # which Windows fails as an invalid name, not as one too long
+4:  mov rax, [rip + tmp + SB_len]
+    sub rax, r15
+    cmp rax, 255
+    ja 9f
+    mov rdi, [rip + tmp + SB_ptr]
     mov rsi, [rip + tmp + SB_len]
     call mem_dup
     mov [rbx + AW_claude], rax
@@ -1012,9 +1019,8 @@ keyed_save:
 
 # Directory errors (I/O, a sources folder that is a file) preserve the previous UI snapshot. Absent
 # directories are normal, and so is one that can never be read: no permission (a day folder that
-# `sudo codex` made), a name too long for the file system (the Claude folder of a long checkout
-# path, which Claude cannot have made either), a symlink loop. Failing on those would fail every
-# run, also for the sources that can be read.
+# `sudo codex` made), a name too long for the file system, a symlink loop. Failing on those would
+# fail every run, also for the sources that can be read.
 scan_dir:
     call dir_each
     test rax, rax
