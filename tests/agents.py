@@ -169,6 +169,56 @@ class CodexDiscovery(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             self.assertTrue(all(r['cwd'] == str(tree) and r['badge'] == 'finished' for r in rows))
 
+    def test_deleted_worktree_session_leaves_the_page_without_failing_discovery(self):
+        # A transcript deleted after it was cached (Claude's cleanup, Codex archiving) has no identity
+        # left to check: it drops out, and later runs do not fail on it.
+        self.init_repo()
+        tree = self.add_worktree('cleaned-tree')
+        self.worktree_sessions(tree)
+        self.assertEqual(len(self.worker()[-1][2]), 2)
+        claude, = self.home.glob('.claude/projects/*/claude.jsonl')
+        claude.unlink()
+        for _ in range(2):
+            self.assertEqual([r['kind'] for r in self.worker()[-1][2]], [2])
+
+    @unittest.skipIf(os.name == 'nt' or os.geteuid() == 0, 'a folder without permissions is readable here')
+    def test_unreadable_session_folder_is_skipped_without_failing_discovery(self):
+        # A day folder that `sudo codex` left unreadable cannot be read on any run: the rest is listed.
+        self.session.write_bytes(self.metadata() + b'\n' + self.message('user', 'Readable'))
+        locked = self.home / '.codex/sessions/2026/10/03'
+        locked.mkdir(parents=True)
+        (locked / 'rollout-locked.jsonl').write_bytes(self.metadata() + b'\n')
+        locked.chmod(0)
+        try:
+            self.assertEqual([r['title'] for r in self.worker()[-1][2]], ['Readable'])
+        finally:
+            locked.chmod(0o755)
+
+    def test_project_path_too_long_for_a_claude_folder_still_lists_its_sessions(self):
+        # The Claude folder of a checkout this deep has a name longer than any file name: Claude cannot
+        # have made it, and it is no failure.
+        self.project = self.home / ('d' * 100) / ('e' * 100) / ('f' * 60) / 'project'
+        self.project.mkdir(parents=True)
+        (self.home / '.claude/projects').mkdir(parents=True)   # so the name, not a parent, is missing
+        self.session.write_bytes(self.metadata() + b'\n' + self.message('user', 'Deep'))
+        self.assertGreater(len(claude_slug(str(self.project))), 255)
+        self.assertEqual([r['title'] for r in self.worker()[-1][2]], ['Deep'])
+
+    @unittest.skipIf(os.name == 'nt', 'symbolic links need privileges on Windows')
+    def test_project_opened_through_a_symlink_keeps_its_worktree_sessions(self):
+        # Git writes a worktree's links as real paths, while the project can be spelled through a
+        # symlink (macOS's /tmp is /private/tmp): it is one repository either way.
+        self.init_repo()
+        tree = self.add_worktree('linked-tree')
+        self.worktree_sessions(tree)
+        link = self.home / 'project-link'
+        link.symlink_to(self.project)
+        self.project = link
+        for _ in range(2):
+            rows = self.worker()[-1][2]
+            self.assertEqual(sorted((r['kind'], r['cwd'], r['badge']) for r in rows),
+                             [(1, str(tree), tree.name), (2, str(tree), tree.name)])
+
     def test_replaced_session_identity_cannot_inherit_worktree_membership(self):
         self.init_repo()
         tree = self.add_worktree('reused-session-path')

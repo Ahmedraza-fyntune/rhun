@@ -295,6 +295,8 @@ cache_path:
     call session_state_dir
     test eax, eax
     jz 9f
+    mov rdi, [rip + cache_file + SB_ptr]
+    call stale_temps
     lea rdi, [rip + history_file]
     mov rsi, [rip + cache_file + SB_ptr]
     call sb_push_cstr
@@ -329,6 +331,62 @@ cache_path:
     mov rsi, rsp
     mov rdx, [rsp + 24]
     call sb_push
+    mov rdi, [rip + history_dir + SB_ptr]
+    call stale_temps
+9:  EPILOGUE
+
+# stale_temps(dir): remove the temporary files (.rhun-PID-N.tmp) of saves that never finished, an hour
+# old or more. The app stops a worker at once (a project switch, quitting), also in the middle of a save:
+# what it leaves, as large as the cache, nothing else would remove.
+stale_temps:
+    PROLOGUE 16
+    mov [rsp], rdi
+    call time_now
+    mov [rsp + 8], rax
+    mov rdi, [rsp]
+    lea rsi, [rip + stale_cb]
+    mov rdx, rsp
+    call dir_each
+    EPILOGUE
+
+stale_cb:
+    PROLOGUE
+    test edx, edx
+    jnz 9f
+    mov r12, rdi                # [dir, now]
+    mov r13, rsi
+    mov rdi, rsi
+    call strlen
+    mov r14, rax
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .Ltemp_prefix]
+    mov ecx, 6
+    call str_starts
+    test eax, eax
+    jz 9f
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .Ltemp_suffix]
+    mov ecx, 4
+    call str_ends
+    test eax, eax
+    jz 9f
+    mov rdi, [r12]
+    mov rsi, r13
+    call path_join
+    mov rbx, rax
+    mov rdi, rax
+    call file_mtime
+    test rax, rax
+    jz 8f
+    add rax, 3600
+    cmp rax, [r12 + 8]
+    ja 8f                       # a save may still be going on
+    mov rdi, rbx
+    SYS SYS_unlink
+8:  mov rdi, rbx
+    call mem_free
 9:  EPILOGUE
 
 # Repository-scoped worktree identities survive transcript cache rebuilds and Git pruning.
@@ -549,6 +607,12 @@ member_key:
     jnz 10f
     test rdx, rdx
     jns 9f
+    # a transcript deleted since it was cached (cleanup, archiving) has no identity: unknown, not a
+    # failure, or the provisional page would fail every run and the cache never drop it
+    cmp rdx, -2                 # ENOENT
+    je 9f
+    cmp rdx, -20                # ENOTDIR
+    je 9f
     mov dword ptr [rip + scan_failed], 1
     jmp 9f
 10:
@@ -934,12 +998,24 @@ keyed_save:
     call file_write_all
 9:  EPILOGUE
 
-# directory errors preserve the previous UI snapshot. Absent directories are normal.
+# Directory errors (I/O, a sources folder that is a file) preserve the previous UI snapshot. Absent
+# directories are normal, and so is one that can never be read: no permission (a day folder that
+# `sudo codex` made), a name too long for the file system (the Claude folder of a long checkout
+# path, which Claude cannot have made either), a symlink loop. Failing on those would fail every
+# run, also for the sources that can be read.
 scan_dir:
     call dir_each
     test rax, rax
     jns 1f
     cmp rax, -2                # ENOENT
+    je 1f
+    cmp rax, -1                # EPERM
+    je 1f
+    cmp rax, -13               # EACCES
+    je 1f
+    cmp rax, -36               # ENAMETOOLONG
+    je 1f
+    cmp rax, -40               # ELOOP
     je 1f
     mov dword ptr [rip + scan_failed], 1
 1:  ret
@@ -1393,11 +1469,7 @@ verify_roots:
     mov rsi, [rip + repository]
     test rdi, rdi
     jz 6f
-.ifdef WINDOWS
-    call win_path_equal
-.else
-    call strcmp_eq
-.endif
+    call same_dir
     test eax, eax
     jnz 7f
 6:  mov qword ptr [r12 + AW_guard], 1
@@ -1406,6 +1478,37 @@ verify_roots:
 8:  mov [rip + g_project], r15
     call git_set_project
     EPILOGUE
+
+# same_dir(a, b) -> 1 when both paths name one folder: the same spelling, or the same folder on disk.
+# Git writes a worktree's links as real paths, while the project may be spelled through a symlink
+# (macOS's /tmp is /private/tmp): the spellings of one repository differ.
+same_dir:
+.ifdef WINDOWS
+    jmp win_path_equal
+.else
+    PROLOGUE 16
+    mov r12, rdi
+    mov r13, rsi
+    call strcmp_eq
+    test eax, eax
+    jnz 9f
+    mov rdi, r12
+    call file_id
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    mov rdi, r13
+    call file_id
+    test rax, rax
+    jz 8f
+    cmp rax, [rsp]
+    jne 8f
+    cmp rdx, [rsp + 8]
+    jne 8f
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+9:  EPILOGUE
+.endif
 
 # collect_matches(final): re-match cached cwd against known repository roots.
 collect_matches:
@@ -1621,6 +1724,8 @@ sort_sift:
 .Lhistory_dir_prefix: .asciz "/agents-worktrees-v2-"
 .Lhistory_suffix: .asciz ".root"
 .Lmember_suffix: .asciz ".member"
+.Ltemp_prefix: .ascii ".rhun-"
+.Ltemp_suffix: .ascii ".tmp"
 .Lsession_id: .asciz "session_id"
 .Lid: .asciz "id"
 .Lclaude_session_id: .asciz "sessionId"
@@ -1663,8 +1768,11 @@ claude_cwd:
     test rsi, rsi
     jz 6f
     cmp rsi, [rsp + 8]
-    jae 6f
-    mov eax, 262144
+    ja 6f                       # it shrank
+    jb 5f
+    cmp rsi, 262144             # the same size: unchanged (a touch) only if the hash covers it all
+    ja 6f
+5:  mov eax, 262144
     cmp rsi, rax
     cmova rsi, rax
     cmp rsi, r13
@@ -1674,8 +1782,13 @@ claude_cwd:
     cmp rax, [r14 + AS_prefix_hash]
     jne 6f
     mov dword ptr [rsp + 16], 1
+    # the prefix the next run checks is the size this stat saw (the stamp's), not what was read: a
+    # line appended since the stat would make the next append look like a rewrite
 6:  mov rdi, r12
     mov rsi, r13
+    mov rax, [rsp + 8]
+    cmp rsi, rax
+    cmova rsi, rax
     call hash_line
     mov [rsp + 40], rax
     mov qword ptr [rsp + 48], -1  # head first, then bounded streaming if needed

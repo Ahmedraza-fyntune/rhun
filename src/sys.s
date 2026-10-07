@@ -274,6 +274,21 @@ FN file_type
 1:  xor eax, eax
     ret
 
+# file_id(path) -> rax inode, rdx device (both 0 if it is missing); follows symlinks, so every spelling
+# of one folder (through a symlink such as macOS's /tmp, or in another case) has one id
+FN file_id
+    lea rsi, [rip + stat_buf]
+    mov eax, 4          # stat
+    XSYS
+    test rax, rax
+    js 1f
+    mov rax, [rip + stat_buf + 8]
+    mov rdx, [rip + stat_buf]
+    ret
+1:  xor eax, eax
+    xor edx, edx
+    ret
+
 # file_read_all(path) -> rax=ptr (NUL-terminated, mem_alloc'd) rdx=len; rax=0, rdx=-errno on error
 FN file_read_all
     PROLOGUE
