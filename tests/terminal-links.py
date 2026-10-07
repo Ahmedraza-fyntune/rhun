@@ -170,6 +170,25 @@ class TerminalLinks(unittest.TestCase):
         self.command('type Z')
         self.assertIn('éZéé x\n', self.command('print-doc'))
 
+    def test_source_columns_ignore_tabs_and_character_display_width(self):
+        # rustc's short diagnostic for the third case is :2:10, before "missing".
+        # Tabs, wide glyphs, combining marks and supplementary characters each count once.
+        cases = [('\tlet x = missing;', 10), ('let 日 = missing;', 9),
+                 ('\tlet 日 = missing;', 10), ('e\u0301x', 3), ('😀x', 2), ('abc', 99)]
+        for index, (line, column) in enumerate(cases):
+            with self.subTest(line=line, column=column):
+                if index:
+                    self.command('cmd toggle_terminal')  # return focus from the editor
+                name = f'column-{index}.txt'
+                (self.project / name).write_text('header\n' + line + '\nnext\n', encoding='utf-8')
+                self.run_line(f'echo {name}:2:{column}: diagnostic', 'diagnostic')
+                x, y = self.cell(name + ':2')
+                self.command(f'click {x} {y} ctrl')
+                self.command('type Z')
+                offset = min(column - 1, len(line))
+                expected = 'header\n' + line[:offset] + 'Z' + line[offset:] + '\nnext\n'
+                self.assertIn(expected, self.command('print-doc'))
+
     def test_a_word_longer_than_a_path_is_no_link(self):
         # an unbroken run of thousands of characters (a hex or base64 blob) across wrapped rows
         self.run_line("head -c 6000 /dev/zero | tr '\\0' a; echo", 'aaaa')

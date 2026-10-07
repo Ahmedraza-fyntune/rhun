@@ -5,6 +5,7 @@
 .equ ID_EDSCROLL, 0x1002
 .equ ID_EDHSCROLL, 0x1004          # along the bottom, when lines do not wrap
 .equ WIDEST_FULL, 1 << 20       # bytes measured again on every change (about a millisecond)
+.equ WIDEST_VISIBLE, 1 << 16    # total bytes measured from visible lines while editing a large text
 .equ WIDEST_PAUSE, 400          # ms without edits before a longer text is measured again
 .equ BLINK_MS, 530              # each half of the caret's blink
 .equ BLINK_FOR, 30000           # it blinks this long after the last caret activity, then stays on
@@ -1768,6 +1769,14 @@ reveal:
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
     call doc_col_of
+    mov r14d, eax
+    # A long line's width may be deferred while typing. The caret's column is already known:
+    # keep the scrollbar's extent wide enough for it without another scan of that line.
+    cmp rax, [rbx + DOC_wcols]
+    jbe 51f
+    mov [rbx + DOC_wcols], rax
+    call hscroll_extent
+51: mov eax, r14d
     imul eax, [rip + g_cw]
     mov r14d, eax
     mov rdi, rbx
@@ -3262,7 +3271,7 @@ pair_close: .asciz ")]}\"'`"
 
 # doc_widest(doc) -> rax columns of its widest line, tabs and wide characters as drawn; measured
 #   again when its text or the tab width changed. Past WIDEST_FULL bytes the whole text is measured
-#   once editing pauses; meanwhile the lines on screen can only widen it.
+#   once editing pauses; meanwhile short lines on screen and the caret can only widen it.
 FN doc_widest
     PROLOGUE 16
     mov rbx, rdi
@@ -3347,9 +3356,13 @@ FN editor_tick
     mov dword ptr [rip + g_dirty], 1
 1:  ret
 
-# widest_visible() -> rax columns of the widest line on screen (rbx doc)
+# widest_visible() -> rax columns of the widest measured line on screen (rbx doc).
+# Long lines retain their cached extent until the pause: measuring even one whole minified line
+# would scan megabytes on every edit. All lines measured in this frame share a byte budget.
 widest_visible:
-    PROLOGUE
+    PROLOGUE 16
+    mov qword ptr [rsp], WIDEST_VISIBLE
+    xor r14d, r14d
     mov r12, [rbx + DOC_scrolly]
     sar r12, 8                  # first line
     jns 1f
@@ -3364,18 +3377,27 @@ widest_visible:
     cmp r13, [rbx + DOC_nlines]
     jbe 2f
     mov r13, [rbx + DOC_nlines]
-2:  xor r14d, r14d
+2:
 3:  cmp r12, r13
     jae 9f
     mov rdi, rbx
     mov rsi, r12
+    call doc_line_start
+    mov r15, rax
+    mov rdi, rbx
+    mov rsi, r12
     call doc_line_end
+    mov rcx, rax
+    sub rcx, r15
+    cmp rcx, [rsp]
+    ja 4f
+    sub [rsp], rcx
     mov rdi, rbx
     mov rsi, rax
     call doc_col_of
     cmp eax, r14d
     cmova r14d, eax
-    inc r12
+4:  inc r12
     jmp 3b
 9:  mov eax, r14d
     EPILOGUE
@@ -3446,6 +3468,12 @@ hscroll_measure:
     jne 9f
     mov rdi, rbx
     call doc_widest
+    call hscroll_extent
+9:  EPILOGUE
+
+# hscroll_extent(columns): update the track's content width from a measured width or caret column.
+# rax is the column count; hs_view was set by hscroll_measure for this frame.
+hscroll_extent:
     mov ecx, [rip + g_cw]
     imul rax, rcx
     mov ecx, [rip + g_mt + 4*MI_32]     # as reveal keeps the caret off the edge
@@ -3455,9 +3483,10 @@ hscroll_measure:
     cmova rax, rcx
     mov [rip + hs_content], eax
     cmp eax, [rip + hs_view]
-    jle 9f
-    mov dword ptr [rip + hs_on], 1
-9:  EPILOGUE
+    setg al
+    movzx eax, al
+    mov [rip + hs_on], eax
+    ret
 
 # hscroll_clamp(): the view goes no further right than the widest line (rbx doc)
 hscroll_clamp:

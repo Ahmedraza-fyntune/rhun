@@ -6,6 +6,7 @@ auto_hide_scrollbars is off."""
 import os
 from pathlib import Path
 import socket
+import statistics
 import subprocess
 import tempfile
 import time
@@ -143,6 +144,44 @@ class EditorHScroll(unittest.TestCase):
         x, _, _ = self.scroll()
         self.assertGreater(x, limit * 6 // 10)
         self.assertLess(x, limit * 9 // 10)
+
+    def test_typing_at_the_start_of_a_long_line_does_not_scan_its_tail(self):
+        # Compare typing with redrawing the same line and gap position. Both already copy the
+        # visible line across the gap; width measurement must not add a full scan per edit.
+        (self.project / 'minified.txt').write_text('x' * 20000000 + '\n', encoding='utf-8')
+        self.start('minified.txt')
+        self.command('type x')
+        self.command('wait 600')  # move the gap to the start, then let its width settle
+
+        def frame_time(typing):
+            samples = []
+            for index in range(12):
+                started = time.perf_counter()
+                self.command('type x' if typing else f'move {600 + index % 2} 400')
+                self.command('wait 0')  # finish the frame for this edit
+                samples.append(time.perf_counter() - started)
+            return statistics.median(samples)
+
+        redraw = frame_time(False)
+        initial = self.scroll()[1]
+        typing = frame_time(True)
+        self.assertLess(typing, max(0.020, redraw * 2),
+                        f'long-line median: redraw {redraw:.4f}s, typing {typing:.4f}s')
+        self.command('wait 600')
+        self.assertGreater(self.scroll()[1], initial, 'paused measurement missed the added text')
+
+    def test_typing_at_the_end_of_a_long_line_keeps_the_caret_within_the_scroll(self):
+        (self.project / 'minified.txt').write_text('x' * 2000000 + '\n', encoding='utf-8')
+        self.start('minified.txt')
+        initial = self.scroll()[1]
+        self.command('key End')
+        self.command('type ' + 'w' * 300)
+        self.command('wait 0')
+        x, limit, _ = self.scroll()
+        self.assertGreater(limit, initial)
+        self.assertLessEqual(x, limit)
+        self.command('wait 50')
+        self.assertEqual(self.scroll()[0], x, 'an idle frame moved the caret out of view')
 
     def test_sideways_scrolling_stops_at_the_widest_line(self):
         self.start()

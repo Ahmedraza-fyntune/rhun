@@ -2885,15 +2885,15 @@ link_open:
     cmp rsi, rax
     cmova rsi, rax
     mov r14, rsi
-    # the column counts characters as drawn (tabs, wide ones), not bytes: the caret lands on a
-    # character, never inside one's UTF-8 bytes
+    # Source-character columns, as in rustc diagnostics: tabs and wide glyphs each count once.
+    # The resulting byte position always lands on a UTF-8 character boundary.
     lea edx, [r13 - 1]
     test edx, edx
     jns 2f
     xor edx, edx
 2:  mov rdi, rbx
     mov rsi, r14
-    call doc_pos_at_col
+    call doc_pos_at_char
     mov rdi, rbx
     mov rsi, rax
     xor edx, edx

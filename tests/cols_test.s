@@ -50,6 +50,9 @@ FN main
     inc dword ptr [rsp]
     cmp dword ptr [rsp], 8
     jbe .Lwidth
+    call source_columns
+    test eax, eax
+    jz .Lfail
     lea rdi, [rip + ok]
     call log_cstr
     xor eax, eax
@@ -57,7 +60,57 @@ FN main
 .Lfail:
     mov eax, 1
     EPILOGUE
+
+# Source columns stay independent of tabs and glyph width, including across the gap buffer.
+source_columns:
+    PROLOGUE
+    call doc_new
+    mov rbx, rax
+    mov rdi, rax
+    lea rsi, [rip + source]
+    mov edx, source_end - source
+    call doc_set_text
+    xor r15d, r15d
+1:  xor r12d, r12d
+2:  mov rdi, rbx
+    mov esi, 1
+    mov rdx, r12
+    cmp r12, 7
+    jne 3f
+    mov edx, 100              # clamp to the line end, not into the next line
+3:  call doc_pos_at_char
+    lea rcx, [rip + source_positions]
+    cmp rax, [rcx + r12*8]
+    jne 8f
+    inc r12
+    cmp r12, 8
+    jb 2b
+    test r15d, r15d
+    jnz 7f
+    mov rdi, rbx
+    mov esi, 14
+    lea rdx, [rip + source]
+    mov ecx, 1
+    call raw_insert
+    mov rdi, rbx
+    mov esi, 14
+    mov edx, 1
+    call raw_delete
+    inc r15d
+    jmp 1b
+7:  mov rdi, rbx
+    call doc_free
+    mov eax, 1
+    EPILOGUE
+8:  mov rdi, rbx
+    call doc_free
+    xor eax, eax
+    EPILOGUE
 .section .rodata
 text: .ascii "a\tbc\t\344\270\255\t\303\251x\t\360\237\230\200\tend"
 text_end:
+source: .ascii "header\n\t\346\227\245e\314\201\360\237\230\200x\nend"
+source_end:
+.p2align 3
+source_positions: .quad 7, 8, 11, 12, 14, 18, 19, 19
 ok: .asciz "ok\n"
