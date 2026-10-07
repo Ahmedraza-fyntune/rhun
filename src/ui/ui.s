@@ -655,11 +655,15 @@ FN ui_scrollbar
     # thumb y = y + (h - thumb) * off / (content - view)
     mov eax, [rsp + 16]
     sub eax, r14d
-    imul eax, [r15]
+    movsxd rax, eax
+    mov ecx, [r15]
+    movsxd rcx, ecx
+    imul rax, rcx               # 64 bits: a long text's offset times the track overflows 32
     mov ecx, r12d
     sub ecx, r13d
-    cdq
-    idiv ecx
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
     add eax, [rsp + 8]
     mov ebx, eax                # thumb y
     # interaction on the whole track
@@ -696,21 +700,25 @@ FN ui_scrollbar
     mov eax, [rip + g_my]
     sub eax, [rip + grab_dy]
     sub eax, [rsp + 8]
+    movsxd rax, eax
     mov ecx, r12d
     sub ecx, r13d
-    imul eax, ecx
+    movsxd rcx, ecx
+    imul rax, rcx               # in 64 bits, as the thumb's position
     mov ecx, [rsp + 16]
     sub ecx, r14d
     jle 4f
-    cdq
-    idiv ecx
-    test eax, eax
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
+    test rax, rax
     jns 5f
     xor eax, eax
 5:  mov ecx, r12d
     sub ecx, r13d
-    cmp eax, ecx
-    cmovg eax, ecx
+    movsxd rcx, ecx
+    cmp rax, rcx
+    cmovg rax, rcx
     mov [r15], eax
     mov dword ptr [rip + g_dirty], 1
 4:  mov edi, [rsp]
@@ -760,11 +768,15 @@ FN ui_hscrollbar
     # thumb x = x + (w - thumb) * off / (content - view)
     mov eax, [rsp + 12]
     sub eax, r14d
-    imul eax, [r15]
+    movsxd rax, eax
+    mov ecx, [r15]
+    movsxd rcx, ecx
+    imul rax, rcx               # 64 bits: a long text's offset times the track overflows 32
     mov ecx, r12d
     sub ecx, r13d
-    cdq
-    idiv ecx
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
     add eax, [rsp + 4]
     mov ebx, eax                # thumb x
     # interaction on the whole track
@@ -798,21 +810,25 @@ FN ui_hscrollbar
     mov eax, [rip + g_mx]
     sub eax, [rip + grab_dx]
     sub eax, [rsp + 4]
+    movsxd rax, eax
     mov ecx, r12d
     sub ecx, r13d
-    imul eax, ecx
+    movsxd rcx, ecx
+    imul rax, rcx               # in 64 bits, as the thumb's position
     mov ecx, [rsp + 12]
     sub ecx, r14d
     jle 4f
-    cdq
-    idiv ecx
-    test eax, eax
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
+    test rax, rax
     jns 5f
     xor eax, eax
 5:  mov ecx, r12d
     sub ecx, r13d
-    cmp eax, ecx
-    cmovg eax, ecx
+    movsxd rcx, ecx
+    cmp rax, rcx
+    cmovg rax, rcx
     mov [r15], eax
     mov dword ptr [rip + g_dirty], 1
 4:  mov edi, [rsp]

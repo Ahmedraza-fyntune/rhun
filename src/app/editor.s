@@ -3446,8 +3446,13 @@ hscroll_measure:
     jne 9f
     mov rdi, rbx
     call doc_widest
-    imul eax, [rip + g_cw]
-    add eax, [rip + g_mt + 4*MI_32]     # as reveal keeps the caret off the edge
+    mov ecx, [rip + g_cw]
+    imul rax, rcx
+    mov ecx, [rip + g_mt + 4*MI_32]     # as reveal keeps the caret off the edge
+    add rax, rcx
+    mov ecx, 0x3fffffff                 # pixels stay positive in 32 bits however long the line
+    cmp rax, rcx
+    cmova rax, rcx
     mov [rip + hs_content], eax
     cmp eax, [rip + hs_view]
     jle 9f

@@ -127,6 +127,23 @@ class EditorHScroll(unittest.TestCase):
         pixels = self.shot()
         self.assertNotEqual(pixel(tx + tw - 10), pixel(tx + 10))
 
+    def test_a_very_long_line_scrolls_in_proportion(self):
+        # one line of 400,000 columns, as a minified file has: the track's pixels times the scroll in
+        # pixels is past 32 bits, and a drag still goes where the thumb is taken
+        (self.project / 'long.txt').write_text('x' * 400000 + '\n', encoding='utf-8')
+        self.start('long.txt')
+        _, limit, (tx, ty, tw, th) = self.scroll()
+        self.assertGreater(limit * tw, 2**31)
+        self.command(f'move {tx + 10} {ty + th - 5}')
+        self.command('wait 50')
+        self.command('down')
+        self.command(f'move {tx + tw * 3 // 4} {ty + th - 5}')
+        self.command('wait 50')
+        self.command('up')
+        x, _, _ = self.scroll()
+        self.assertGreater(x, limit * 6 // 10)
+        self.assertLess(x, limit * 9 // 10)
+
     def test_sideways_scrolling_stops_at_the_widest_line(self):
         self.start()
         _, limit, _ = self.scroll()
