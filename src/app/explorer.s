@@ -1102,8 +1102,13 @@ FN explorer_draw
 1:  call gfx_clip_pop
     # scrollbar
     mov rax, [rip + rows + VEC_len]
-    imul eax, ebx
-    add eax, [rip + g_mt + 4*MI_16]
+    movsxd rcx, ebx
+    imul rax, rcx               # 64 bits before the i32 content cap
+    movsxd rcx, dword ptr [rip + g_mt + 4*MI_16]
+    add rax, rcx
+    mov ecx, 0x7fffffff
+    cmp rax, rcx
+    cmovg rax, rcx
     mov ecx, [rsp + 24]
     push rcx
     push rax
