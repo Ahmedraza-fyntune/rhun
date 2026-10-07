@@ -175,7 +175,9 @@ class EditorHScroll(unittest.TestCase):
         self.start('minified.txt')
         initial = self.scroll()[1]
         self.command('key End')
-        self.command('type ' + 'w' * 300)
+        # The control command redraws after every character. A short burst exercises the
+        # deferred extent without making hundreds of full-line caret scans in one request.
+        self.command('type ' + 'w' * 16)
         self.command('wait 0')
         x, limit, _ = self.scroll()
         self.assertGreater(limit, initial)
