@@ -2318,7 +2318,11 @@ link_find:
     mov r14d, LROWS
 1:  dec r14d
     jz 2f
-    lea esi, [r13 - 1]
+    test dword ptr [r12 + TM_modes], TMM_ALT
+    jz 11f
+    test r13d, r13d             # the alternate screen has no scrollback: above its first row is the
+    jle 2f                      # main screen's
+11: lea esi, [r13 - 1]
     mov rdi, r12
     call term_row
     test rax, rax
@@ -2341,13 +2345,20 @@ link_find:
     cmp ecx, [rbx + LN_cap]
     jle 31f
     mov ecx, [rbx + LN_cap]
-31: mov [rsp + 8], ecx          # cells of this row
+31: mov [rsp + 8], ecx          # cells kept of this row
+    test dword ptr [rbx + LN_flags], LF_WRAPPED
+    jz 32f
+    mov ecx, [r12 + TM_cols]    # a wrapped row ran to the edge; scrollback drops trailing blanks, so
+32: mov [rsp + 12], ecx         # those count as blanks again, not as the next row's first cells
     xor r14d, r14d
-4:  cmp r14d, [rsp + 8]
+4:  cmp r14d, [rsp + 12]
     jae 6f
     mov ecx, [rip + ln_n]
     cmp ecx, LMAX
     jae .Llf_built
+    mov eax, ' '
+    cmp r14d, [rsp + 8]
+    jae 41f
     movsxd rax, r14d
     lea rax, [rax + rax*2]
     mov eax, [rbx + rax*4 + LN_HDR]
@@ -2613,6 +2624,8 @@ link_try:
     cmp edi, esi
     jae 8f
     call link_text
+    cmp qword ptr [rip + link_sb + SB_len], 4095
+    ja 8f                       # longer than any path
     mov rbx, [rip + link_sb + SB_ptr]
     cmp word ptr [rbx], 0x2f7e  # "~/"
     jne 1f
@@ -2872,21 +2885,17 @@ link_open:
     cmp rsi, rax
     cmova rsi, rax
     mov r14, rsi
-    mov rdi, rbx
-    call doc_line_start
-    mov r15, rax
-    mov rdi, rbx
-    mov rsi, r14
-    call doc_line_end
-    lea ecx, [r13 - 1]
-    test ecx, ecx
+    # the column counts characters as drawn (tabs, wide ones), not bytes: the caret lands on a
+    # character, never inside one's UTF-8 bytes
+    lea edx, [r13 - 1]
+    test edx, edx
     jns 2f
-    xor ecx, ecx
-2:  add rcx, r15
-    cmp rcx, rax
-    cmova rcx, rax
+    xor edx, edx
+2:  mov rdi, rbx
+    mov rsi, r14
+    call doc_pos_at_col
     mov rdi, rbx
-    mov rsi, rcx
+    mov rsi, rax
     xor edx, edx
     call ed_set_cursor
     mov ecx, [rip + g_ed_h_lines]

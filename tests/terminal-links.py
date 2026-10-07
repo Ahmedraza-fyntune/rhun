@@ -160,6 +160,22 @@ class TerminalLinks(unittest.TestCase):
         self.command(f'click {x} {y} ctrl')
         self.assertIn('active=notes.txt line=3 col=6 ', self.state())
 
+    def test_column_counts_characters_not_bytes(self):
+        # rustc and tsc count characters: :1:2 is after the first é, not inside its two UTF-8 bytes
+        (self.project / 'utf.txt').write_text('ééé x\n', encoding='utf-8')
+        self.run_line('echo utf.txt:1:2: here', 'here')
+        x, y = self.cell('utf.txt:1')
+        self.command(f'click {x} {y} ctrl')
+        self.assertIn('active=utf.txt line=1 col=2 ', self.state())
+        self.command('type Z')
+        self.assertIn('éZéé x\n', self.command('print-doc'))
+
+    def test_a_word_longer_than_a_path_is_no_link(self):
+        # an unbroken run of thousands of characters (a hex or base64 blob) across wrapped rows
+        self.run_line("head -c 6000 /dev/zero | tr '\\0' a; echo", 'aaaa')
+        self.assertEqual(self.link_at('aaaa'), 'link=')
+        self.assertIn('term=1', self.state())
+
     def test_absolute_and_home_paths(self):
         (self.work / 'home.txt').write_text('home\n', encoding='utf-8')
         notes = (self.project / 'notes.txt').as_posix()
