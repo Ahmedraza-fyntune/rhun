@@ -493,6 +493,35 @@ class CodexDiscovery(unittest.TestCase):
                          'Codex: Read the large session\n'
                          'user Read the large session\nagent The session is visible\n')
 
+    def test_result_text_stays_inside_its_box(self):
+        # A result's box insets its text, which was measured at the full width of the thread: where the
+        # inset made it wrap once more, the last line drew below the box. With the result last, the lowest
+        # row drawn in the panel has to be the box's edge, not glyphs.
+        output = ('The secret word is pelican.\n\n<subagent_meta>id=01a11c28-9a69-7190-aa70-689d17128c42, '
+                  'tool_calls=1, turns=1, duration_ms=3356</subagent_meta>')
+        call = {'type': 'response_item', 'payload': {'type': 'function_call', 'name': 'spawn_subagent',
+                                                      'arguments': json.dumps({'description': 'Read it'})}}
+        result = {'type': 'response_item', 'payload': {'type': 'function_call_output', 'output': output}}
+        self.session.write_bytes(self.metadata() + b'\n' + self.message('user', 'Spawn a subagent') +
+                                 json.dumps(call).encode() + b'\n' + json.dumps(result).encode() + b'\n')
+        for width in (250, 290, 390):   # where the inset takes one more line
+            with self.subTest(width=width):
+                (self.home / 'config/rhun/config').write_text(
+                    '[updates]\ncheck = false\n[git]\nenabled = false\n'
+                    f'[ui]\nagents_panel = true\nagents_width = {width}\n', encoding='utf-8')
+                shot = self.home / f'result-{width}.ppm'
+                self.run_commands(['print-agents 1', f'shot {shot.as_posix()}'])
+                magic, dimensions, depth, pixels = shot.read_bytes().split(b'\n', 3)
+                self.assertEqual((magic, dimensions, depth), (b'P6', b'1280 800', b'255'))
+                def at(x, y):
+                    return pixels[(y * 1280 + x) * 3:(y * 1280 + x) * 3 + 3]
+                background = at(1274, 720)
+                columns = range(1280 - width + 4, 1268)
+                drawn = [(y, [at(x, y) for x in columns if at(x, y) != background]) for y in range(100, 740)]
+                y, row = [line for line in drawn if line[1]][-1]
+                self.assertGreater(row.count(max(set(row), key=row.count)), len(columns) // 2,
+                                   f'text drawn below the result box, at y={y}')
+
     def test_large_session_updates_while_open(self):
         self.session.write_bytes(self.metadata(20197) + b'\n' + self.message('user', 'Live session'))
         script = self.home / 'commands.rsc'

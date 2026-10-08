@@ -2629,7 +2629,8 @@ msg_height:
 9:  mov [rbx + AM_h], eax
     EPILOGUE
 
-# wr_setup(WR*) using rbx = msg, r12d = width
+# wr_setup(WR*) using rbx = msg, r12d = width. Measuring (msg_height) and drawing (draw_msg) share it,
+# so a message wraps the same in both.
 wr_setup:
     mov rax, [rbx + AM_text]
     mov [rdi + WR_text], rax
@@ -2642,6 +2643,9 @@ wr_setup:
     jne 1f
     lea rax, [rip + g_face_small]
     mov ecx, [rip + g_face_small + FACE_lineh]
+    mov edx, r12d               # a result's box insets its text
+    sub edx, [rip + g_mt + 4*MI_16]
+    mov [rdi + WR_w], edx
 1:  mov [rdi + WR_face], rax
     add ecx, [rip + g_mt + 4*MI_3]
     mov [rdi + WR_lh], ecx
@@ -3332,7 +3336,6 @@ draw_msg:
     push r12
     push r12
     mov r12d, [r14 + 32]
-    sub r12d, [rip + g_mt + 4*MI_16]
     call wr_setup
     pop r12
     pop r12
