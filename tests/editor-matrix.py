@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,13 @@ class EditorMatrix(unittest.TestCase):
                         XDG_STATE_HOME=(self.work / 'state').as_posix())
 
     def tearDown(self):
+        # Windows releases the folder only once the terminal's shell has exited.
+        for _ in range(50):
+            try:
+                self.tmp.cleanup()
+                return
+            except OSError:
+                time.sleep(0.2)
         self.tmp.cleanup()
 
     def run_editor(self, actions, path=None, size='1000x700', scale='1', project=None):
@@ -165,6 +173,73 @@ class EditorMatrix(unittest.TestCase):
             'print-state', 'cmd new_file', 'type resumed', 'print-doc'])
         self.assertIn('tabs=0 focus=0 ', output)
         self.assertIn('resumed\n<eod>', output)
+
+    def test_close_all_tabs(self):
+        output = self.run_editor(['cmd settings', 'cmd close_all_tabs', 'print-state'])
+        self.assertIn('tabs=0', output)
+
+        output = self.run_editor(['type x', 'cmd settings', 'cmd close_all_tabs',
+            'print-state', 'key Escape', 'print-state',
+            'cmd close_all_tabs', 'key Return', 'print-state'])
+        states = [line for line in output.splitlines() if line.startswith('tabs=')]
+        self.assertIn('tabs=2 ', states[0])
+        self.assertIn('focus=5 ', states[0])
+        self.assertIn('tabs=2 ', states[1])
+        self.assertIn('dirty=1 ', states[1])
+        self.assertIn('tabs=0 ', states[2])
+
+    def test_close_all_tabs_asks_for_each_modified_file(self):
+        # Don't Save on the first modified file, then the next one asks; Save writes it and every
+        # tab closes
+        other = self.work / 'other.txt'
+        other.write_text('other\n', encoding='utf-8')
+        output = self.run_editor(['type a', 'open ' + other.as_posix(), 'type b', 'cmd settings',
+            'cmd close_all_tabs', 'print-state', 'click 566 345', 'print-state', 'key Return',
+            'print-state'])
+        states = [line for line in output.splitlines() if line.startswith('tabs=')]
+        self.assertIn('tabs=3 active=words.txt ', states[0])
+        self.assertIn('focus=5 ', states[0])
+        self.assertIn('tabs=2 active=other.txt ', states[1])
+        self.assertIn('focus=5 ', states[1])
+        self.assertIn('tabs=0 ', states[2])
+        self.assertEqual(self.file.read_text(encoding='utf-8'), 'cat Cat cat\nβeta beta\n')
+        self.assertEqual(other.read_text(encoding='utf-8'), 'bother\n')
+
+        # an untitled file's Save opens Save As, and closing stops there
+        output = self.run_editor(['cmd new_file', 'type u', 'cmd close_all_tabs', 'key Return',
+            'print-state'])
+        self.assertIn('tabs=2 active=untitled ', output)
+        self.assertIn('focus=7 ', output)
+
+    @unittest.skipIf(os.name == 'nt' or (hasattr(os, 'geteuid') and os.geteuid() == 0),
+                     'a read-only folder does not stop Windows or root from writing')
+    def test_close_all_tabs_stops_where_a_save_fails(self):
+        locked = self.work / 'locked'
+        locked.mkdir()
+        (locked / 'note.txt').write_text('note\n', encoding='utf-8')
+        locked.chmod(0o555)
+        try:
+            output = self.run_editor(['open ' + (locked / 'note.txt').as_posix(), 'type x',
+                'cmd close_all_tabs', 'key Return', 'print-state', 'print-toast'])
+        finally:
+            locked.chmod(0o755)
+        self.assertIn('tabs=2 ', output)
+        self.assertIn('dirty=1 ', output)
+        self.assertIn('toast=Could not save the file\n', output)
+        self.assertEqual((locked / 'note.txt').read_text(encoding='utf-8'), 'note\n')
+
+    def test_close_all_tabs_keys_stay_in_the_terminal(self):
+        # Ctrl+Shift+W closes a tab in other terminals; in rhun's it goes to the program, so the
+        # editor keeps its tabs. The palette still closes them from there.
+        if os.name != 'nt':
+            self.env['SHELL'] = '/bin/sh'
+        output = self.run_editor(['cmd settings', 'cmd toggle_terminal', 'key ctrl+shift+w',
+            'key super+shift+w', 'print-state', 'cmd command_palette', 'type Close All Tabs',
+            'key Return', 'print-state'])
+        states = [line for line in output.splitlines() if line.startswith('tabs=')]
+        self.assertIn('tabs=2 ', states[0])
+        self.assertIn('focus=8 ', states[0])
+        self.assertIn('tabs=0 ', states[1])
 
     def test_closing_inactive_tabs_preserves_focus(self):
         output = self.run_editor(['cmd settings', 'cmd prev_tab', 'cmd find',

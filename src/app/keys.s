@@ -481,6 +481,7 @@ g_commands:
     COMMAND save, "Save", cmd_save, "ctrl+s"
     COMMAND save_as, "Save As", cmd_save_as, "ctrl+shift+s"
     COMMAND close_tab, "Close Tab", cmd_close_tab, "ctrl+w ctrl+F4"
+    COMMAND close_all_tabs, "Close All Tabs", cmd_close_all, "ctrl+shift+w"
     COMMAND next_tab, "Next Tab", cmd_next_tab, "ctrl+Tab ctrl+PageDown"
     COMMAND prev_tab, "Previous Tab", cmd_prev_tab, "ctrl+shift+Tab ctrl+PageUp"
     COMMAND quit, "Quit", cmd_quit, "ctrl+q"

@@ -611,19 +611,38 @@ FN term_panel_paste
 # ---------------- keys ----------------
 
 # term_panel_key(keysym, cp, mods) -> 1 if the terminal took the key
-#   zoom, ctrl+shift combinations, ctrl+` and tab switching stay with rhun;
-#   ctrl+shift+c/v copy and paste
+#   zoom, ctrl+shift combinations, ctrl+` and tab switching stay with rhun, but Close All Tabs'
+#   keys go to the program; ctrl+shift+c/v copy and paste
 FN term_panel_key
     PROLOGUE
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
+    test r14d, MOD_SUPER
+    jnz .Ltk_no
+    # Close All Tabs' keys are the terminal's, where Ctrl+Shift+W closes a tab in other terminals:
+    # the program gets them as if unbound (with Command on macOS, or before the terminal has
+    # started, they do nothing). The palette still runs the command.
+    mov edi, r12d
+    mov esi, r14d
+    call keys_lookup
+    lea rcx, [rip + cmd_close_all]
+    cmp rax, rcx
+    jne .Ltk_unbound
+    call cur_sess
+    test rax, rax
+    jz .Ltk_yes
+    mov rbx, rax
+.ifdef MACOS
+    cmp dword ptr [rip + g_mac_cmd], 0
+    jne .Ltk_yes
+.endif
+    jmp .Ltk_send
+.Ltk_unbound:
     call cur_sess
     test rax, rax
     jz .Ltk_no
     mov rbx, rax
-    test r14d, MOD_SUPER
-    jnz .Ltk_no
 .ifdef MACOS
     # Command copies, pastes and runs rhun's shortcuts; Control types control characters
     cmp dword ptr [rip + g_mac_cmd], 0
@@ -704,7 +723,9 @@ FN term_panel_key
 4:  mov edi, eax
     call view_scroll
     jmp .Ltk_yes
-5:  mov rdi, [rbx + TS_term]
+5:
+.Ltk_send:
+    mov rdi, [rbx + TS_term]
     mov esi, r12d
     mov edx, r13d
     mov ecx, r14d
