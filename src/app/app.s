@@ -379,33 +379,13 @@ switch_continue:
     PROLOGUE
     cmp dword ptr [rip + switch_pending], 0
     je 9f
-    xor ebx, ebx
-1:  cmp rbx, [rip + g_tabs + VEC_len]
-    jae 3f
-    mov rdi, rbx
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+    mov edi, 3
+    call ask_unsaved
     test eax, eax
-    jz 2f
-    mov [rip + dlg_tab], rbx
-    mov dword ptr [rip + dlg_kind], 3
-    mov rdi, rbx
-    call app_activate_tab
-    mov dword ptr [rip + g_focus], FOCUS_DIALOG
-    jmp 9f
-2:  inc rbx
-    jmp 1b
-3:  mov dword ptr [rip + switch_pending], 0
-4:  mov rdi, [rip + g_tabs + VEC_len]
-    test rdi, rdi
-    jz 5f
-    dec rdi
-    call app_close_tab_now
-    jmp 4b
-5:  mov byte ptr [rip + g_explorer_dir], 0
+    jnz 9f
+    mov dword ptr [rip + switch_pending], 0
+    call close_tabs_now
+    mov byte ptr [rip + g_explorer_dir], 0
     mov byte ptr [rip + g_explorer_target], 0
     lea rdi, [rip + switch_path]
     call app_set_project
@@ -949,10 +929,21 @@ FN cmd_close_tab
     jmp app_close_tab
 1:  ret
 
-# cmd_close_all: close every tab. Each dirty doc asks first; the answer closes it
-# and rescans here, like cmd_quit's loop. A cancel leaves everything as it was.
+# cmd_close_all: close every tab. The first modified doc asks, and each answer that closes it comes
+# back here for the next; a cancel stops, with the tabs not closed yet still open
 FN cmd_close_all
     PROLOGUE
+    mov edi, 5
+    call ask_unsaved
+    test eax, eax
+    jnz 9f
+    call close_tabs_now
+9:  EPILOGUE
+
+# ask_unsaved(kind) -> eax 1 when the first modified doc asks, in dialog kind (dlg_kind), else 0
+ask_unsaved:
+    PROLOGUE
+    mov r12d, edi
     xor ebx, ebx
 1:  cmp rbx, [rip + g_tabs + VEC_len]
     jae 3f
@@ -965,21 +956,27 @@ FN cmd_close_all
     test eax, eax
     jz 2f
     mov [rip + dlg_tab], rbx
-    mov dword ptr [rip + dlg_kind], 5
+    mov [rip + dlg_kind], r12d
     mov rdi, rbx
     call app_activate_tab
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    mov eax, 1
     EPILOGUE
 2:  inc rbx
     jmp 1b
-3:  mov rax, [rip + g_tabs + VEC_len]
-    test rax, rax
-    jz 4f
-    dec rax
-    mov rdi, rax
+3:  xor eax, eax
+    EPILOGUE
+
+# close_tabs_now(): close every tab without asking, the last first
+close_tabs_now:
+    PROLOGUE
+1:  mov rdi, [rip + g_tabs + VEC_len]
+    test rdi, rdi
+    jz 9f
+    dec rdi
     call app_close_tab_now
-    jmp 3b
-4:  EPILOGUE
+    jmp 1b
+9:  EPILOGUE
 
 FN cmd_next_tab
     mov esi, 1
@@ -1074,28 +1071,13 @@ FN cmd_quit
     jne 4f
     call session_save
     mov dword ptr [rip + g_session_final], 1
-4:  # first modified doc -> ask
-    xor ebx, ebx
-1:  cmp rbx, [rip + g_tabs + VEC_len]
-    jae 3f
-    mov rdi, rbx
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+4:  # the first modified doc asks; with none, quit
+    mov edi, 2
+    call ask_unsaved
     test eax, eax
-    jz 2f
-    mov [rip + dlg_tab], rbx
-    mov dword ptr [rip + dlg_kind], 2
-    mov rdi, rbx
-    call app_activate_tab
-    mov dword ptr [rip + g_focus], FOCUS_DIALOG
-    EPILOGUE
-2:  inc rbx
-    jmp 1b
-3:  mov dword ptr [rip + g_quit], 1
-    EPILOGUE
+    jnz 9f
+    mov dword ptr [rip + g_quit], 1
+9:  EPILOGUE
 
 FN app_on_close
     jmp cmd_quit

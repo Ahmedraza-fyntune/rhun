@@ -180,6 +180,29 @@ class EditorMatrix(unittest.TestCase):
         self.assertIn('dirty=1 ', states[1])
         self.assertIn('tabs=0 ', states[2])
 
+    def test_close_all_tabs_asks_for_each_modified_file(self):
+        # Don't Save on the first modified file, then the next one asks; Save writes it and every
+        # tab closes
+        other = self.work / 'other.txt'
+        other.write_text('other\n', encoding='utf-8')
+        output = self.run_editor(['type a', 'open ' + other.as_posix(), 'type b', 'cmd settings',
+            'cmd close_all_tabs', 'print-state', 'click 566 345', 'print-state', 'key Return',
+            'print-state'])
+        states = [line for line in output.splitlines() if line.startswith('tabs=')]
+        self.assertIn('tabs=3 active=words.txt ', states[0])
+        self.assertIn('focus=5 ', states[0])
+        self.assertIn('tabs=2 active=other.txt ', states[1])
+        self.assertIn('focus=5 ', states[1])
+        self.assertIn('tabs=0 ', states[2])
+        self.assertEqual(self.file.read_text(encoding='utf-8'), 'cat Cat cat\nβeta beta\n')
+        self.assertEqual(other.read_text(encoding='utf-8'), 'bother\n')
+
+        # an untitled file's Save opens Save As, and closing stops there
+        output = self.run_editor(['cmd new_file', 'type u', 'cmd close_all_tabs', 'key Return',
+            'print-state'])
+        self.assertIn('tabs=2 active=untitled ', output)
+        self.assertIn('focus=7 ', output)
+
     @unittest.skipIf(os.name == 'nt' or (hasattr(os, 'geteuid') and os.geteuid() == 0),
                      'a read-only folder does not stop Windows or root from writing')
     def test_close_all_tabs_stops_where_a_save_fails(self):
