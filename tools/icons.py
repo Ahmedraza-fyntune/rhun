@@ -75,16 +75,21 @@ assert len(ICONS) <= 256, len(ICONS)
 COLORS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'cyan', 'grey', 'white']
 
 def file_icon(icon, color, where):
-    assert icon in FILE_ICONS, '%s: no icon %s' % (where, icon)
+    # as src/app/fileicon.s reads them: names in any case, and gray for grey
+    names = {name.lower(): name for name in FILE_ICONS}
+    assert icon.lower() in names, '%s: no icon %s' % (where, icon)
+    color = 'grey' if color.lower() == 'gray' else color.lower()
     assert color in COLORS, '%s: no color %s' % (where, color)
-    return FILE_ICONS[icon], COLORS.index(color)
+    return FILE_ICONS[names[icon.lower()]], COLORS.index(color)
 
-# grammars name their icon at run time (icon = name color); check the built-in ones here
+# grammars name their icon at run time (icon = name color, grey when the color is left out); check
+# the built-in ones here
 for f in sorted(os.listdir(os.path.join(root, 'runtime/syntax'))):
     for line in open(os.path.join(root, 'runtime/syntax', f), encoding='utf-8'):
         key, eq, value = line.partition('=')
-        if eq and key.strip() == 'icon':
-            file_icon(*value.split(), f)
+        words = value.split()
+        if eq and key.strip() == 'icon' and words:
+            file_icon(words[0], words[1] if len(words) > 1 else 'grey', f)
 # types.txt: patterns, then icon and color; whole names first, as file_icon tries them first
 types = []
 for n, line in enumerate(open(os.path.join(root, 'assets/icons/files/types.txt'), encoding='utf-8')):

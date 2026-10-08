@@ -399,6 +399,19 @@ with tempfile.TemporaryDirectory(prefix='rhun-appearance-') as directory:
             state = rhun.state()
             assert (state['dark'], state['light']) == ('nord', 'nord'), state
             rhun.close()
+            # also when a source XSETTINGS outranks answers before it: settings.ini's light theme,
+            # then XSETTINGS' dark one with the window
+            config.write_text(config_text.replace('[ui]\n', '[ui]\ntheme = github-light\n', 1))
+            settings_ini('gtk-theme-name=Adwaita\n')
+            xs.write_text('Net/ThemeName "Greybird-dark"\n')
+            manager.send_signal(signal.SIGHUP)
+            time.sleep(.5)
+            rhun = Rhun(env)
+            rhun.expect('dark', 'github-light', 'an old config, settings.ini light, XSETTINGS dark')
+            state = rhun.state()
+            assert (state['dark'], state['light']) == ('github-light', 'github-light'), state
+            rhun.close()
+            (gtk3 / 'settings.ini').unlink()
             stop(manager)
             config.write_text(config_text)
             rhun = Rhun(env)

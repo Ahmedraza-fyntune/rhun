@@ -163,6 +163,13 @@ class Appearance(unittest.TestCase):
                               'print-appearance'], config='[ui]\ntheme = nord\n')
         self.assertEqual((states[0]['dark'], states[0]['light'], states[0]['shown']),
                          ('everforest', 'rhun-light', 'rhun-light'))
+        # a light theme, the mode light after all: the dark mode's setting is as when light was known
+        # at once
+        state, = self.states(['appearance light', 'print-appearance'],
+                             config='[ui]\ntheme = github-light\n')
+        self.assertEqual(state['shown'], 'github-light')
+        self.assertEqual((self.saved()['dark_theme'], self.saved()['light_theme']),
+                         ('rhun-dark', 'github-light'))
 
     def test_escape_keeps_the_fallback_of_a_missing_theme(self):
         states = self.states(['print-appearance', 'cmd select_theme', 'type github', 'key Down',
@@ -177,6 +184,47 @@ class Appearance(unittest.TestCase):
         state, = self.states(['print-appearance'], system='dark',
                              config='[ui]\ndark_theme = nope\nlight_theme = nope\n')
         self.assertEqual(state['shown'], 'rhun-dark')
+        # and when the system's mode changes to it while rhun runs
+        state, = self.states(['appearance light', 'print-appearance'], system='dark',
+                             config='[ui]\nlight_theme = nope\n')
+        self.assertEqual(state['shown'], 'rhun-light')
+
+    def test_leaving_the_theme_list_for_another_list(self):
+        # a preview, or a change of the system's mode the open list held back, does not outlive it
+        for actions, shown in ((['type github', 'key Down'], 'rhun-dark'),
+                               (['appearance light'], 'rhun-light')):
+            with self.subTest(actions=actions):
+                state, = self.states(['cmd select_theme', *actions, 'cmd quick_open', 'key Escape',
+                                      'print-appearance'], system='dark')
+                self.assertEqual(state['shown'], shown)
+
+    def edit_config(self, *lines):
+        actions = ['cmd open_config', 'cmd select_all', 'key BackSpace']
+        for line in (*lines, '[updates]', 'check = false'):
+            actions += ['type ' + line, 'key Return']
+        return actions + ['cmd save']
+
+    def test_old_config_edited_to_the_old_default(self):
+        # written in while rhun runs, rhun-dark is picked, not the old default left in the file
+        states = self.states(['print-appearance', *self.edit_config('[ui]', 'theme = rhun-dark'),
+                              'print-appearance'], config='[ui]\ntheme = nord\n', system='dark')
+        self.assertEqual([s['shown'] for s in states], ['nord', 'rhun-dark'])
+
+    def test_follow_system_turned_off_in_the_file(self):
+        # theme becomes the theme shown, as in Settings
+        states = self.states(['print-appearance',
+                              *self.edit_config('[ui]', 'follow_system = false', 'theme = rhun-dark',
+                                                'light_theme = github-light'),
+                              'print-appearance'],
+                             config='[ui]\nlight_theme = github-light\n', system='light')
+        self.assertEqual([s['shown'] for s in states], ['github-light', 'github-light'])
+        self.assertEqual(states[1]['theme'], 'github-light')
+        # unless theme was changed too
+        states = self.states(['print-appearance',
+                              *self.edit_config('[ui]', 'follow_system = false', 'theme = nord'),
+                              'print-appearance'],
+                             config='[ui]\nlight_theme = github-light\n', system='light')
+        self.assertEqual([s['shown'] for s in states], ['github-light', 'nord'])
 
     def test_saving_the_config_applies_it(self):
         lines = ['cmd open_config', 'cmd select_all', 'key BackSpace']

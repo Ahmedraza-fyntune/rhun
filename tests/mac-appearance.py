@@ -2,6 +2,7 @@
 """Follow system dark mode on macOS: a copy of the app follows the system's appearance as it
 changes, and shows the change on screen. It switches the whole system's appearance (and back), so
 it runs only with RHUN_TEST_SYSTEM_APPEARANCE=1, as CI sets it."""
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -20,6 +21,7 @@ if os.environ.get('RHUN_TEST_SYSTEM_APPEARANCE') != '1':
     print('skip mac/appearance (switches the system appearance: set RHUN_TEST_SYSTEM_APPEARANCE=1)')
     sys.exit(0)
 ROOT = Path(__file__).resolve().parents[1]
+LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 # SkyLight's switch, which System Settings uses, for when System Events may not be scripted
 HELPER = r'''
 #include <dlfcn.h>
@@ -41,6 +43,13 @@ def until(predicate, message, seconds=15):
             return
         time.sleep(.05)
     raise AssertionError(message)
+
+
+def find_pid(identifier):
+    return int(subprocess.check_output(['osascript', '-l', 'JavaScript', '-e',
+        "ObjC.import('AppKit'); var apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier("
+        + json.dumps(identifier) + '); Number(apps.count) ? Number(apps.objectAtIndex(0).processIdentifier) : 0'],
+        text=True).strip())
 
 
 def system_dark():
@@ -89,11 +98,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-appearance-', dir='/tmp') as direc
     control = work / 'control'
     original = system_dark()
     client = None
+    process_id = 0
     try:
         subprocess.run(['open', '-n', '-a', str(bundle), '--env', 'HOME=' + str(work),
                         '--env', 'XDG_CONFIG_HOME=' + str(work / 'config'),
                         '--env', 'XDG_STATE_HOME=' + str(work / 'state'),
                         '--args', str(work / 'project'), '--control', str(control)], check=True)
+        until(lambda: find_pid(identifier) != 0, 'the app did not launch')
+        process_id = find_pid(identifier)
         until(control.exists, 'the control socket did not appear')
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(15)
@@ -142,10 +154,19 @@ with tempfile.TemporaryDirectory(prefix='rhun-appearance-', dir='/tmp') as direc
         set_dark(original)
         expect(original)
         command('quit')
+        # it saves its session and settings into the folder that goes next
+        until(lambda: find_pid(identifier) == 0, 'the app did not quit')
+        process_id = 0
         print('ok   mac/appearance-follows-the-system')
     finally:
         if system_dark() != original:
             set_dark(original)
         if client is not None:
             client.close()
+        if process_id:
+            try:
+                os.kill(process_id, 15)
+            except ProcessLookupError:
+                pass
+        subprocess.run([LSREGISTER, '-u', str(bundle)], check=False, capture_output=True)
         subprocess.run(['defaults', 'delete', identifier], capture_output=True)

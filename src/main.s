@@ -66,6 +66,9 @@ FN main
 1:  call wl_connect
     test eax, eax
     jz 2f
+    # no XSETTINGS on Wayland: the system's mode from the other sources is final
+    mov edi, -1
+    call linux_xsettings
     lea rdi, [rip + .Ltitle]
     call wl_open_window
     jmp .Lm_open

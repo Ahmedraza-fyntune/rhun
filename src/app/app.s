@@ -1094,10 +1094,27 @@ FN app_toast
 # app_reload_config(): re-read config and apply theme/fonts/sizes
 FN app_reload_config
     PROLOGUE
+    mov ebx, [rip + cfg_follow_system]
+    mov rdi, [rip + cfg_theme]
+    call theme_find
+    mov r12, rax
     call config_load
     xor edi, edi
     call theme_settings_init
-    call keys_reload
+    # follow_system turned off in the file: theme becomes the theme shown, as in Settings, unless
+    # theme was changed too
+    test ebx, ebx
+    jz 1f
+    cmp dword ptr [rip + cfg_follow_system], 0
+    jne 1f
+    mov rdi, [rip + cfg_theme]
+    call theme_find
+    cmp rax, r12
+    jne 1f
+    lea rdi, [rip + cfg_theme]
+    mov rsi, [rip + g_theme_cur]
+    call theme_set
+1:  call keys_reload
     call app_apply_settings
     EPILOGUE
 

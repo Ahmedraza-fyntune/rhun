@@ -32,6 +32,8 @@ db_len: .quad 0                 # bytes in db_in
 db_skip: .quad 0                # bytes of a message too big for db_in still to drop
 answers: .long 0                # bit 0: the color-scheme Read was answered, bit 1: gtk-theme
 reporting: .long 0              # after startup, changes go to theme_system_changed
+authing: .long 0                # the bus has not answered AUTH by the end of startup's wait
+xs_known: .long 0               # XSETTINGS was read (X11, with the window) or there is none (Wayland)
 cfg_root: .zero 1024            # $XDG_CONFIG_HOME or ~/.config, or empty
 path_buf: .zero 1100
 ino_buf: .zero 4096
@@ -51,9 +53,11 @@ FN linux_appearance_init
     mov dword ptr [rip + reporting], 1
     EPILOGUE
 
-# linux_xsettings(dark): XSETTINGS' theme name is a dark one (1), another (0), or there is none (-1)
+# linux_xsettings(dark): XSETTINGS' theme name is a dark one (1), another (0), or there is none (-1),
+# as the X11 window reads it; Wayland, which has none, says -1 once it has connected
 FN linux_xsettings
     mov [rip + xs_name], edi
+    mov dword ptr [rip + xs_known], 1
     jmp report
 
 # linux_name_dark(ptr, len) -> 1 if a GTK theme's name has "dark" in it, in any case
@@ -95,6 +99,10 @@ combine:
     # GTK: prefer-dark, else the theme's name from XSETTINGS, the portal or settings.ini
     mov eax, 1
     cmp dword ptr [rip + ini_prefer], 1
+    je 9f
+    # XSETTINGS outranks the rest, so they wait for it: unknown until then
+    mov eax, -1
+    cmp dword ptr [rip + xs_known], 0
     je 9f
     mov eax, [rip + xs_name]
     test eax, eax
@@ -311,7 +319,10 @@ db_open:
     call db_auth
     test eax, eax
     jz 8f
-    call db_send
+    jns 3f
+    mov dword ptr [rip + authing], 1    # a busy bus: its answer to AUTH comes to db_readable
+    jmp 2f
+3:  call db_send
     test eax, eax
     jz 8f
 1:  cmp dword ptr [rip + answers], 3
@@ -361,7 +372,19 @@ db_readable:
 1:  call db_read
     test rax, rax
     jle 8f
-    call db_process
+    cmp dword ptr [rip + authing], 0
+    je 2f
+    # the bus answers AUTH late: once it takes us, the requests
+    call db_auth_line
+    test eax, eax
+    jz 9f
+    js 8f
+    mov dword ptr [rip + authing], 0
+    call db_send
+    test eax, eax
+    jz 8f
+    EPILOGUE
+2:  call db_process
     call report
     EPILOGUE
 8:  call db_close               # the bus went away: what it said last stays
@@ -576,7 +599,8 @@ db_read:
 1:  mov eax, 1                  # full: db_process makes room
     ret
 
-# db_auth(deadline) -> 1 when the bus takes us: AUTH EXTERNAL with our uid, its decimal digits in hex
+# db_auth(deadline) -> 1 when the bus takes us, 0 when it refuses or fails, -1 when it has not
+# answered by the deadline: AUTH EXTERNAL with our uid, its decimal digits in hex
 db_auth:
     PROLOGUE 96
     mov r12, rdi
@@ -611,26 +635,42 @@ db_auth:
 2:  mov rdi, r12
     call db_poll
     test eax, eax
-    jz 8f
+    jz 7f
     call db_read
     test rax, rax
     jle 8f
-    mov rcx, [rip + db_len]
-    lea rdi, [rip + db_in]
-    cmp byte ptr [rdi + rcx - 1], 10
-    je 3f
-    cmp rcx, 1000
-    jb 2b
-    jmp 8f
-3:  mov qword ptr [rip + db_len], 0
-    cmp word ptr [rdi], 0x4b4f  # "OK "
-    jne 8f
-    cmp byte ptr [rdi + 2], ' '
-    jne 8f
-    mov eax, 1
+    call db_auth_line
+    test eax, eax
+    jz 2b
+    js 8f
+    EPILOGUE
+7:  mov eax, -1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
+
+# db_auth_line() -> eax 1 when db_in holds the bus's "OK <guid>" line, 0 while the line is not whole,
+# -1 for another answer
+db_auth_line:
+    mov rcx, [rip + db_len]
+    lea rdi, [rip + db_in]
+    xor eax, eax
+    test rcx, rcx
+    jz 9f
+    cmp byte ptr [rdi + rcx - 1], 10
+    je 3f
+    cmp rcx, 1000
+    jb 9f
+    mov eax, -1
+    ret
+3:  mov qword ptr [rip + db_len], 0
+    mov eax, -1
+    cmp word ptr [rdi], 0x4b4f  # "OK "
+    jne 9f
+    cmp byte ptr [rdi + 2], ' '
+    jne 9f
+    mov eax, 1
+9:  ret
 
 # db_send() -> 1 once BEGIN and the requests are written
 db_send:

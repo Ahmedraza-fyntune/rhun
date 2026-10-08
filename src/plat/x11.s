@@ -268,8 +268,6 @@ x_message:
     movzx eax, word ptr [rbx + 2]
     cmp eax, [rip + want_seq]
     jne .Lxm_ret
-    cmp dword ptr [rip + paste_wait], 0
-    jne .Lxm_ret
     lea rdi, [rip + reply_buf]
     mov rsi, rbx
     mov ecx, 32
@@ -281,7 +279,18 @@ x_message:
     jmp .Lxm_ret
 .Lxm_reply:
     movzx eax, word ptr [rbx + 2]
-    cmp eax, [rip + want_seq]
+    # a paste reply is handled right here (the buffer moves after this). It has a sequence number of
+    # its own, as it may come while a synchronous request (want_seq) waits for its reply.
+    cmp dword ptr [rip + paste_wait], 0
+    je 1f
+    cmp eax, [rip + paste_seq]
+    jne 1f
+    mov dword ptr [rip + paste_wait], 0
+    lea rdi, [rbx + 32]
+    mov esi, [rbx + 16]         # value length in format units (format 8)
+    call app_on_paste
+    jmp .Lxm_ret
+1:  cmp eax, [rip + want_seq]
     jne .Lxm_ret
     lea rdi, [rip + reply_buf]
     mov rsi, rbx
@@ -293,14 +302,6 @@ x_message:
     sub eax, 32
     mov [rip + reply_extra_len], rax
     mov dword ptr [rip + got_reply], 1
-    # a paste reply is handled right here (the buffer moves after this)
-    cmp dword ptr [rip + paste_wait], 0
-    je .Lxm_ret
-    mov dword ptr [rip + paste_wait], 0
-    mov dword ptr [rip + want_seq], -1
-    mov rdi, [rip + reply_extra]
-    mov esi, [rbx + 16]         # value length in format units (format 8)
-    call app_on_paste
     jmp .Lxm_ret
 .Lxm_key:
     movzx eax, word ptr [rbx + 28]
@@ -1411,15 +1412,16 @@ x_timeout:
 1:  ret
 
 x_tick:
-    cmp dword ptr [rip + xs_stale], 0
-    je 1f
-    # not while a paste's reply is awaited: its request has want_seq
-    cmp dword ptr [rip + paste_wait], 0
-    jne 1f
     push rbx
+1:  cmp dword ptr [rip + xs_stale], 0
+    je 2f
     call xs_refresh
-    pop rbx
-1:  cmp dword ptr [rip + keymap_stale], 0
+    # the messages that came after its reply in the same read (nothing else reads them before the
+    # next one), which may change XSETTINGS again
+    call x_process
+    jmp 1b
+2:  pop rbx
+    cmp dword ptr [rip + keymap_stale], 0
     jne x_keymap_refresh
     ret
 
@@ -1840,7 +1842,7 @@ x_get_paste:
     call x_req
     mov eax, [rip + seq]
     and eax, 0xffff
-    mov [rip + want_seq], eax
+    mov [rip + paste_seq], eax
     mov dword ptr [rip + paste_wait], 1
     add rsp, 40
     ret
@@ -2020,6 +2022,7 @@ cursor_glyphs: .byte 68, 152, 60, 108, 116, 14, 12, 68
 
 .bss
 paste_wait: .long 0
+paste_seq: .long 0              # the sequence number of the paste's GetProperty, while paste_wait
 keymap_stale: .long 0
 keymap_busy: .long 0            # loading it, or replaying keys that waited for it
 pend_n: .long 0

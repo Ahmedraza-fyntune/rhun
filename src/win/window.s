@@ -67,7 +67,9 @@ FN win_open_window
     test rax, rax
     jz 8f
     mov [rip + win_hwnd], rax
-    mov rdi, rax
+    # a mode change since win_appearance_init reached no window of rhun's: read the mode again
+    call win_setting_changed
+    mov rdi, [rip + win_hwnd]
     xor esi, esi
     call win_title_theme
     mov rcx, [rip + win_hwnd]

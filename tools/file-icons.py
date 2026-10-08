@@ -71,6 +71,8 @@ def cubic(out, p0, p1, p2, p3, tol, depth=0):
 
 def arc(out, p0, rx, ry, rot, large, sweep, p1, tol):
     """SVG endpoint arc to the center form, then points along the ellipse"""
+    if p0 == p1:
+        return              # an arc that ends where it starts is left out (SVG)
     if not rx or not ry:
         out.append(p1)
         return
@@ -373,10 +375,13 @@ def glyph(path):
 
 def main():
     names = sys.argv[1:] or sorted(p.stem for p in FILES.glob('*.svg'))
-    data = {}
+    out = FILES / 'contours.json'
+    # icons named on the command line replace theirs; the others stay
+    data = json.loads(out.read_text()) if sys.argv[1:] and out.exists() else {}
     for name in names:
         data[name] = glyph(FILES / (name + '.svg'))
-    (FILES / 'contours.json').write_text(json.dumps(data, separators=(',', ':')) + '\n')
+    data = dict(sorted(data.items()))
+    out.write_text(json.dumps(data, separators=(',', ':')) + '\n')
     print('%d icons, %d points' % (len(data), sum(len(c) for v in data.values() for c in v)))
 
 
