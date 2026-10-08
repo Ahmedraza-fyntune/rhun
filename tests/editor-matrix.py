@@ -180,6 +180,19 @@ class EditorMatrix(unittest.TestCase):
         self.assertIn('dirty=1 ', states[1])
         self.assertIn('tabs=0 ', states[2])
 
+    def test_close_all_tabs_keys_stay_in_the_terminal(self):
+        # Ctrl+Shift+W closes a tab in other terminals; in rhun's it goes to the program, so the
+        # editor keeps its tabs. The palette still closes them from there.
+        if os.name != 'nt':
+            self.env['SHELL'] = '/bin/sh'
+        output = self.run_editor(['cmd settings', 'cmd toggle_terminal', 'key ctrl+shift+w',
+            'key super+shift+w', 'print-state', 'cmd command_palette', 'type Close All Tabs',
+            'key Return', 'print-state'])
+        states = [line for line in output.splitlines() if line.startswith('tabs=')]
+        self.assertIn('tabs=2 ', states[0])
+        self.assertIn('focus=8 ', states[0])
+        self.assertIn('tabs=0 ', states[1])
+
     def test_closing_inactive_tabs_preserves_focus(self):
         output = self.run_editor(['cmd settings', 'cmd prev_tab', 'cmd find',
             'type cat', 'click 170 58 middle', 'print-state', 'key Escape',
