@@ -1,5 +1,6 @@
 name = Python
 files = *.py *.pyi *.pyw SConstruct SConscript
+icon = python blue
 first_line = python
 comment = #
 mstring = """ \

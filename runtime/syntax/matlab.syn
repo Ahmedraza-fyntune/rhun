@@ -1,4 +1,5 @@
 name = MATLAB
+icon = code orange
 first_line = octave
 region = %{ %} comment multiline bol
 comment = %

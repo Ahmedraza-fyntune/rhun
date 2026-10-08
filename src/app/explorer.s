@@ -10,6 +10,7 @@ F N_dir, 4
 F N_open, 4
 F N_loaded, 4
 F N_depth, 4
+F N_icon, 4                      # file_icon's icon | color slot << 8 | 0x80000000, 0 until drawn
 ENDSTRUCT N_SIZE
 
 .equ ID_EXP_ROW, 0x300000         # + row: a range of its own, as the tree has no end
@@ -1022,20 +1023,34 @@ FN explorer_draw
 55: add r15d, [rip + g_mt + 4*MI_16]
     add r15d, [rip + g_mt + 4*MI_2]
     M ecx, MI_16
-    mov edi, IC_FILE
-    cmp dword ptr [r14 + N_dir], 0
-    je 56f
     mov edi, IC_FOLDER
-56: mov esi, r15d
+    COLOR r8d, T_ACCENT
+    cmp dword ptr [r14 + N_dir], 0
+    jne 57f
+    # a file: the icon of its name and type, looked up once
+    mov eax, [r14 + N_icon]
+    test eax, eax
+    jnz 56f
+    mov rdi, [r14 + N_name]
+    push rcx
+    call file_icon
+    pop rcx
+    shl edx, 8
+    or eax, edx
+    or eax, 0x80000000
+    mov [r14 + N_icon], eax
+56: mov edi, eax
+    and edi, 0xff
+    shr eax, 8
+    and eax, 0xff
+    lea rdx, [rip + g_theme]
+    mov r8d, [rdx + rax*4]
+57: mov esi, r15d
     mov edx, ebx
     sub edx, ecx
     sar edx, 1
     add edx, r13d
-    COLOR r8d, T_MUTED
-    cmp dword ptr [r14 + N_dir], 0
-    je 57f
-    COLOR r8d, T_ACCENT
-57: call icon_draw
+    call icon_draw
     add r15d, [rip + g_mt + 4*MI_20]
     add r15d, [rip + g_mt + 4*MI_2]
     # git: name in the status color, the letter at the right for files

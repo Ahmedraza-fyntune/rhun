@@ -1,5 +1,6 @@
 name = AsciiDoc
 files = *.adoc *.asciidoc
+icon = default blue
 line = = heading
 region = ---- ---- string multiline bol
 region = //// //// comment multiline bol

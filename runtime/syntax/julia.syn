@@ -1,5 +1,6 @@
 name = Julia
 files = *.jl
+icon = julia purple
 region = #= =# comment multiline
 comment = #
 mstring = """ \

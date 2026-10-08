@@ -4,7 +4,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 
 ## Features
 
-- Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
+- Tabs, file explorer with file type icons, command palette, fuzzy file finder, find and replace, find in files, go to line
 - Project menu in the title bar: open a folder or a file from anywhere on disk, or a recent folder, in this window or a new one
 - Image preview: PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA open in a tab, with zoom and pan
 - Syntax highlighting for about 125 languages, defined in plain text grammar files
@@ -250,6 +250,11 @@ Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independe
 
 ### Folders and files
 
+The explorer shows each file with the icon of its language or type, in the theme's colors: the
+grammar the file name gets gives the language's icon, and `assets/icons/files/types.txt` gives the
+icons of images, archives, fonts, documents, and names such as `LICENSE` or `package.json`. The
+glyphs are from Seti UI (MIT).
+
 The explorer's header has **New File** and **New Folder** buttons. They create in the folder of the
 item last selected in the explorer, or in the project folder; the prompt names what it creates and
 holds the path, which can include folders that do not exist yet. Right-click a file or folder for its
@@ -383,6 +388,8 @@ string = #a6e3a1
 
 Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors. `git_added`, `git_modified` and `git_deleted` color changes in the gutter, tabs, explorer and diffs.
 
+The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
+
 On Omarchy the theme list starts with Follow Omarchy (`theme = omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
 
 ### Languages
@@ -394,6 +401,7 @@ A grammar is a `name.syn` file in `~/.config/rhun/syntax/`; your grammars win a 
 ```ini
 name = Example
 files = *.ex Examplefile
+icon = code purple
 first_line = example
 comment = //
 block = /* */
@@ -416,6 +424,8 @@ case = insensitive
 `comment`, `block`, `string` and `mstring` are shorthands for `region = start end class [multiline] [bol] [escape=X]`. An escape that is the end itself is doubled: with `escape="`, `""` stands for one quote. Classes: text keyword type function string number comment constant operator punctuation preproc variable builtin attribute tag heading inserted deleted escape link. Words not in a list are colored as functions when followed by `(`, and with `captypes` as types when capitalized.
 
 `comment` also gives the token Toggle Comment adds in front of the selected lines. Where a comment counts only at a line's first non-blank, color it with a `bol` region and give the token with `toggle_comment`, which colors nothing itself (a `comment` would also color the token in the middle of a line). The first `comment` or `toggle_comment` sets the token.
+
+`icon` gives the explorer's icon for the grammar's files: an icon from `assets/icons/files/` (without `.svg`, such as `rust` or `config`; `code` for a language with none) and a color, one of red orange yellow green blue purple pink cyan grey white (grey if left out). Without it the files get the default icon.
 
 `prefix` lists characters that start a colored word, each followed by a letter: `v` variable, `a` attribute, `t` tag, `p` preproc (at the start of a line only). A file gets the grammar whose `files` fit its name best: an exact name first, then the longest `*.suffix`; your grammars win a tie. Only when no pattern fits does rhun look for a `first_line` word in the file's first line; the longest one found wins.
 
@@ -459,9 +469,10 @@ An extension that crashes or hangs cannot take the editor with it.
 | `tools/arm64.py` | the x86-64 to AArch64 translator for Apple silicon |
 | `runtime/` | themes and grammars embedded into the binary |
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
+| `assets/icons/files/` | the explorer's file icons, from Seti UI (MIT), and the file types they go with |
 
 Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`; macOS fills it from `src/mac/cocoa.s`. Code that differs by system is in `.ifdef MACOS` or `.ifdef WINDOWS` blocks.
 
 ## License
 
-MIT, see [LICENSE](../LICENSE). The built-in Iosevka font is under the SIL Open Font License ([assets/fonts/LICENSE-Iosevka.md](../assets/fonts/LICENSE-Iosevka.md)).
+MIT, see [LICENSE](../LICENSE). The built-in Iosevka font is under the SIL Open Font License ([assets/fonts/LICENSE-Iosevka.md](../assets/fonts/LICENSE-Iosevka.md)). The file icons are from Seti UI, MIT licensed ([assets/icons/files/LICENSE-Seti.md](../assets/icons/files/LICENSE-Seti.md)).

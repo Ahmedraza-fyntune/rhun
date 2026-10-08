@@ -63,4 +63,7 @@ FN main
     EPILOGUE
 .section .rodata
 .p2align 2
-slots: .long T_BG, T_FG, T_PANEL, T_SELECTION, T_SYN + C_KEYWORD, T_SYN + C_STRING, T_SYN + C_COMMENT, -1
+slots: .long T_BG, T_FG, T_PANEL, T_SELECTION, T_SYN + C_KEYWORD, T_SYN + C_STRING, T_SYN + C_COMMENT
+    # the file icon colors, red to white
+    .long T_ICON, T_ICON + 1, T_ICON + 2, T_ICON + 3, T_ICON + 4, T_ICON + 5, T_ICON + 6, T_ICON + 7
+    .long T_ICON + 8, T_ICON + 9, -1

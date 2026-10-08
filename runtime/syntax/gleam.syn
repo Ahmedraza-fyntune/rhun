@@ -1,5 +1,6 @@
 name = Gleam
 files = *.gleam
+icon = code pink
 comment = //
 string = " \
 captypes = yes

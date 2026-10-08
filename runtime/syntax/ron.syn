@@ -1,5 +1,6 @@
 name = RON
 files = *.ron
+icon = config orange
 comment = //
 block = /* */
 string = " \

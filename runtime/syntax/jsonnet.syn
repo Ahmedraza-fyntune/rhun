@@ -1,5 +1,6 @@
 name = Jsonnet
 files = *.jsonnet *.libsonnet
+icon = json purple
 comment = //
 comment = #
 block = /* */

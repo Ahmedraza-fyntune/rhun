@@ -1,5 +1,6 @@
 name = Zig
 files = *.zig *.zon
+icon = zig orange
 comment = //
 string = " \
 string = ' \

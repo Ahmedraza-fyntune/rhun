@@ -1,5 +1,6 @@
 name = HTTP
 files = *.http *.rest
+icon = code green
 comment = #
 region = // eol comment bol
 line = ### heading

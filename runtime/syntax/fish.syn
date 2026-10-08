@@ -1,5 +1,6 @@
 name = Fish
 files = *.fish
+icon = shell green
 first_line = fish
 comment = #
 string = " \

@@ -1,5 +1,6 @@
 name = Makefile
 files = Makefile makefile GNUmakefile *.mk *.mak
+icon = makefile orange
 comment = #
 string = " \
 string = ' \

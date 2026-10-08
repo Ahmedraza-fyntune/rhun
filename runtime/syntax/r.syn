@@ -1,5 +1,6 @@
 name = R
 files = *.r *.R *.Rmd
+icon = R blue
 comment = #
 string = " \
 string = ' \

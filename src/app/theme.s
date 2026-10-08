@@ -108,6 +108,16 @@ FN theme_load
 88:
 .endm
 
+# LEGIBLE slot: a derived color moved toward the text until it has 3:1 contrast on the panel
+.macro LEGIBLE slot
+    ISDEF \slot
+    jc 88f
+    mov edi, [rip + g_theme + 4*(\slot)]
+    call legible
+    mov [rip + g_theme + 4*(\slot)], eax
+88:
+.endm
+
 theme_derive:
     push rbx
     CONST T_BG, 0xff1e1f24
@@ -207,9 +217,89 @@ theme_derive:
     DERIVE_C T_TERM + 13, T_TERM + 5, 0xffffffff, 50
     DERIVE_C T_TERM + 14, T_TERM + 6, 0xffffffff, 50
     COPY T_TERM + 15, T_FG
+    # file icons: hues from the terminal colors, moved toward the text until they stand out on the panel
+    COPY T_ICON + 0, T_TERM + 1
+    DERIVE T_ICON + 1, T_TERM + 1, T_TERM + 3, 128
+    COPY T_ICON + 2, T_TERM + 3
+    COPY T_ICON + 3, T_TERM + 2
+    COPY T_ICON + 4, T_TERM + 4
+    COPY T_ICON + 5, T_TERM + 5
+    DERIVE T_ICON + 6, T_TERM + 5, T_TERM + 1, 128
+    COPY T_ICON + 7, T_TERM + 6
+    COPY T_ICON + 8, T_MUTED
+    COPY T_ICON + 9, T_PANEL_FG
+    LEGIBLE T_ICON + 0
+    LEGIBLE T_ICON + 1
+    LEGIBLE T_ICON + 2
+    LEGIBLE T_ICON + 3
+    LEGIBLE T_ICON + 4
+    LEGIBLE T_ICON + 5
+    LEGIBLE T_ICON + 6
+    LEGIBLE T_ICON + 7
     COPY T_GIT_ADD, T_SUCCESS
     COPY T_GIT_MOD, T_WARNING
     COPY T_GIT_DEL, T_ERROR
+    pop rbx
+    ret
+
+# luma(argb) -> eax: 54 r^2 + 183 g^2 + 18 b^2, relative luminance with squares for the curve
+luma:
+    mov eax, edi
+    and eax, 0xff
+    imul eax, eax
+    imul eax, eax, 18
+    mov ecx, edi
+    shr ecx, 8
+    and ecx, 0xff
+    imul ecx, ecx
+    imul ecx, ecx, 183
+    add eax, ecx
+    mov ecx, edi
+    shr ecx, 16
+    and ecx, 0xff
+    imul ecx, ecx
+    imul ecx, ecx, 54
+    add eax, ecx
+    ret
+
+# legible(argb) -> eax: the color mixed toward the text, in up to 7 steps, until the brighter of it
+# and the panel is 3 times as bright as the other (WCAG's 3:1 for graphics: (hi + .05) / (lo + .05))
+.equ LUMA_MAX, 255 * 65025
+legible:
+    push rbx
+    push r12
+    push r13
+    mov ebx, edi
+    mov r12d, 8
+1:  mov edi, ebx
+    call luma
+    mov r13d, eax
+    mov edi, [rip + g_theme + 4*T_PANEL]
+    call luma
+    mov ecx, eax
+    cmp r13d, ecx
+    jae 2f
+    mov eax, r13d
+    mov r13d, ecx
+    mov ecx, eax
+2:  imul r13, r13, 20               # 20 hi + max >= 3 (20 lo + max)
+    add r13, LUMA_MAX
+    imul rcx, rcx, 20
+    add rcx, LUMA_MAX
+    imul rcx, rcx, 3
+    cmp r13, rcx
+    jae 9f
+    dec r12d
+    jz 9f
+    mov edi, ebx
+    mov esi, [rip + g_theme + 4*T_FG]
+    mov edx, 48
+    call color_mix
+    mov ebx, eax
+    jmp 1b
+9:  mov eax, ebx
+    pop r13
+    pop r12
     pop rbx
     ret
 
@@ -459,6 +549,7 @@ slot_names:
     .quad .Lc10, .Lc11, .Lc12, .Lc13, .Lc14, .Lc15, .Lc16, .Lc17, .Lc18, .Lc19
     .quad .Lt0, .Lt1, .Lt2, .Lt3, .Lt4, .Lt5, .Lt6, .Lt7, .Lt8, .Lt9
     .quad .Lt10, .Lt11, .Lt12, .Lt13, .Lt14, .Lt15, .Lg0, .Lg1, .Lg2
+    .quad .Li0, .Li1, .Li2, .Li3, .Li4, .Li5, .Li6, .Li7, .Li8, .Li9
 .Ls0: .asciz "bg"
 .Ls1: .asciz "fg"
 .Ls2: .asciz "accent"
@@ -525,3 +616,13 @@ slot_names:
 .Lg0: .asciz "git_added"
 .Lg1: .asciz "git_modified"
 .Lg2: .asciz "git_deleted"
+.Li0: .asciz "icon_red"
+.Li1: .asciz "icon_orange"
+.Li2: .asciz "icon_yellow"
+.Li3: .asciz "icon_green"
+.Li4: .asciz "icon_blue"
+.Li5: .asciz "icon_purple"
+.Li6: .asciz "icon_pink"
+.Li7: .asciz "icon_cyan"
+.Li8: .asciz "icon_grey"
+.Li9: .asciz "icon_white"

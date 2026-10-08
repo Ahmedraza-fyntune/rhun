@@ -1,5 +1,6 @@
 name = Graphviz
 files = *.dot *.gv
+icon = code grey
 comment = //
 comment = #
 block = /* */

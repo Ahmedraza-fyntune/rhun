@@ -1,5 +1,6 @@
 name = CUE
 files = *.cue
+icon = config purple
 comment = //
 mstring = """ \
 string = " \

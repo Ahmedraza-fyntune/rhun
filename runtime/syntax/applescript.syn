@@ -1,5 +1,6 @@
 name = AppleScript
 files = *.applescript
+icon = apple white
 first_line = osascript
 comment = --
 comment = #
