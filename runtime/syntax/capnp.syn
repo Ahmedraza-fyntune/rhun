@@ -1,5 +1,6 @@
 name = Cap'n Proto
 files = *.capnp
+icon = code grey
 comment = #
 string = " \
 keywords = struct enum interface union group using import const annotation extends

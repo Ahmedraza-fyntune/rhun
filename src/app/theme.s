@@ -7,11 +7,18 @@
 .globl g_theme, g_theme_dark, g_themes, g_theme_cur
 g_theme: .zero 4 * T_COUNT
 g_theme_dark: .long 0
+applied: .long 0                # a theme has been applied
 .p2align 3
+pending: .quad 0                # an old config's theme while the system's mode is still unknown
+pending_dark: .quad 0           # and the dark mode's setting before the unknown mode took it
 defined: .zero 16                # bit per slot given by the theme
 g_themes: .zero VEC_SIZE
 g_theme_cur: .quad 0            # index into g_themes
 it: .zero INI_SIZE
+
+.data
+.globl g_sys_dark
+g_sys_dark: .long -1            # the system's dark mode as the platform reports it: 1 on, 0 off, -1 unknown
 
 .text
 
@@ -105,6 +112,29 @@ FN theme_load
     ISDEF \slot
     jc 88f
     mov dword ptr [rip + g_theme + 4*(\slot)], \c
+88:
+.endm
+
+# HUE slot, term, c: the terminal color the theme gives, else the color c. Without a [terminal]
+# section, terminal blue, magenta and cyan are syntax colors (function, keyword, builtin), not hues.
+.macro HUE slot, term, c
+    ISDEF \slot
+    jc 88f
+    mov eax, \c
+    ISDEF \term
+    jnc 87f
+    mov eax, [rip + g_theme + 4*(\term)]
+87: mov [rip + g_theme + 4*(\slot)], eax
+88:
+.endm
+
+# LEGIBLE slot: a derived color moved toward the text until it has 3:1 contrast on the panel
+.macro LEGIBLE slot
+    ISDEF \slot
+    jc 88f
+    mov edi, [rip + g_theme + 4*(\slot)]
+    call legible
+    mov [rip + g_theme + 4*(\slot)], eax
 88:
 .endm
 
@@ -207,9 +237,89 @@ theme_derive:
     DERIVE_C T_TERM + 13, T_TERM + 5, 0xffffffff, 50
     DERIVE_C T_TERM + 14, T_TERM + 6, 0xffffffff, 50
     COPY T_TERM + 15, T_FG
+    # file icons: hues from the terminal colors, moved toward the text until they stand out on the panel
+    COPY T_ICON + 0, T_TERM + 1
+    DERIVE T_ICON + 1, T_TERM + 1, T_TERM + 3, 128
+    COPY T_ICON + 2, T_TERM + 3
+    COPY T_ICON + 3, T_TERM + 2
+    HUE T_ICON + 4, T_TERM + 4, 0xff3b8eea
+    HUE T_ICON + 5, T_TERM + 5, 0xffbc3fbc
+    DERIVE T_ICON + 6, T_ICON + 5, T_TERM + 1, 128
+    HUE T_ICON + 7, T_TERM + 6, 0xff11a8cd
+    COPY T_ICON + 8, T_MUTED
+    COPY T_ICON + 9, T_PANEL_FG
+    LEGIBLE T_ICON + 0
+    LEGIBLE T_ICON + 1
+    LEGIBLE T_ICON + 2
+    LEGIBLE T_ICON + 3
+    LEGIBLE T_ICON + 4
+    LEGIBLE T_ICON + 5
+    LEGIBLE T_ICON + 6
+    LEGIBLE T_ICON + 7
     COPY T_GIT_ADD, T_SUCCESS
     COPY T_GIT_MOD, T_WARNING
     COPY T_GIT_DEL, T_ERROR
+    pop rbx
+    ret
+
+# luma(argb) -> eax: 54 r^2 + 183 g^2 + 18 b^2, relative luminance with squares for the curve
+luma:
+    mov eax, edi
+    and eax, 0xff
+    imul eax, eax
+    imul eax, eax, 18
+    mov ecx, edi
+    shr ecx, 8
+    and ecx, 0xff
+    imul ecx, ecx
+    imul ecx, ecx, 183
+    add eax, ecx
+    mov ecx, edi
+    shr ecx, 16
+    and ecx, 0xff
+    imul ecx, ecx
+    imul ecx, ecx, 54
+    add eax, ecx
+    ret
+
+# legible(argb) -> eax: the color mixed toward the text, in up to 7 steps, until the brighter of it
+# and the panel is 3 times as bright as the other (WCAG's 3:1 for graphics: (hi + .05) / (lo + .05))
+.equ LUMA_MAX, 255 * 65025
+legible:
+    push rbx
+    push r12
+    push r13
+    mov ebx, edi
+    mov r12d, 8
+1:  mov edi, ebx
+    call luma
+    mov r13d, eax
+    mov edi, [rip + g_theme + 4*T_PANEL]
+    call luma
+    mov ecx, eax
+    cmp r13d, ecx
+    jae 2f
+    mov eax, r13d
+    mov r13d, ecx
+    mov ecx, eax
+2:  imul r13, r13, 20               # 20 hi + max >= 3 (20 lo + max)
+    add r13, LUMA_MAX
+    imul rcx, rcx, 20
+    add rcx, LUMA_MAX
+    imul rcx, rcx, 3
+    cmp r13, rcx
+    jae 9f
+    dec r12d
+    jz 9f
+    mov edi, ebx
+    mov esi, [rip + g_theme + 4*T_FG]
+    mov edx, 48
+    call color_mix
+    mov ebx, eax
+    jmp 1b
+9:  mov eax, ebx
+    pop r13
+    pop r12
     pop rbx
     ret
 
@@ -404,6 +514,7 @@ FN theme_apply
     jb 1f
     xor edi, edi
 1:  mov [rip + g_theme_cur], rdi
+    mov dword ptr [rip + applied], 1
     cmp rdi, [rip + g_follow]
     jne 3f
     # "Follow Omarchy": colors of the theme Omarchy has set
@@ -444,7 +555,220 @@ FN theme_entry
     add rax, [rip + g_themes + VEC_ptr]
     ret
 
+# Three settings name themes: theme, and with follow_system on, dark_theme and light_theme for the
+# system's dark and light mode (VS Code's workbench.colorTheme, preferredDarkColorTheme and
+# preferredLightColorTheme with window.autoDetectColorScheme). A mode the system does not report
+# counts as dark, rhun's default.
+
+# theme_slot() -> the setting (cfg_theme, cfg_dark_theme or cfg_light_theme) whose theme is shown
+FN theme_slot
+    lea rax, [rip + cfg_theme]
+    cmp dword ptr [rip + cfg_follow_system], 0
+    je 1f
+    lea rax, [rip + cfg_dark_theme]
+    cmp dword ptr [rip + g_sys_dark], 0
+    jne 1f
+    lea rax, [rip + cfg_light_theme]
+1:  ret
+
+# slot_default(slot) -> the built-in theme a setting falls back to
+slot_default:
+    lea rax, [rip + cfg_def_theme]
+    lea rcx, [rip + cfg_light_theme]
+    cmp rdi, rcx
+    jne 1f
+    lea rax, [rip + cfg_def_light_theme]
+1:  ret
+
+# theme_slot_index(slot) -> registry index of the setting's theme, or of its default when it names
+# none rhun has
+FN theme_slot_index
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rdi]
+    call theme_find
+    test rax, rax
+    jns 9f
+    mov rdi, rbx
+    call slot_default
+    mov rdi, rax
+    call theme_find
+    test rax, rax
+    jns 9f
+    xor eax, eax
+9:  pop rbx
+    ret
+
+# theme_apply_config(): show the theme the settings name, or the setting's default when rhun has
+# no theme of that name (themes are read once, at startup), as a restart would
+FN theme_apply_config
+    PROLOGUE
+    call theme_slot
+    mov rdi, rax
+    call theme_slot_index
+    cmp dword ptr [rip + applied], 0
+    je 1f
+    cmp rax, [rip + g_theme_cur]
+    je 9f
+1:  mov rdi, rax
+    call theme_apply
+9:  EPILOGUE
+
+# theme_set(slot, index): a theme picked for a setting; settings borrow the registry's names
+FN theme_set
+    push rbx
+    mov qword ptr [rip + pending], 0
+    mov rbx, rdi
+    mov rdi, rsi
+    call theme_entry
+    mov rax, [rax + TH_id]
+    mov [rbx], rax
+    mov dword ptr [rip + g_settings_changed], 1
+    pop rbx
+    ret
+
+# theme_system_changed(dark): the platform reports the system's dark mode (1 on, 0 off, -1 unknown)
+FN theme_system_changed
+    PROLOGUE
+    cmp edi, [rip + g_sys_dark]
+    je 9f
+    mov [rip + g_sys_dark], edi
+    mov dword ptr [rip + g_dirty], 1
+    # the first mode known after an old config's theme moved: that theme is this mode's too
+    mov rax, [rip + pending]
+    test rax, rax
+    jz 1f
+    test edi, edi
+    js 1f
+    mov qword ptr [rip + pending], 0
+    lea rcx, [rip + cfg_dark_theme]
+    lea rdx, [rip + cfg_light_theme]
+    cmovz rcx, rdx
+    mov [rcx], rax
+    # light: the dark mode's setting, which took the theme while the mode was unknown, is as before
+    jnz 2f
+    mov rax, [rip + pending_dark]
+    mov [rip + cfg_dark_theme], rax
+2:  mov dword ptr [rip + g_settings_changed], 1
+1:
+    cmp dword ptr [rip + cfg_follow_system], 0
+    je 9f
+    # the theme list shows its own choice, and applies the settings when it closes
+    call palette_picks_theme
+    test eax, eax
+    jnz 9f
+    call theme_apply_config
+9:  EPILOGUE
+
+# theme_follow_toggled(): follow_system changed. Turned off, theme becomes the theme shown, so that
+# nothing changes on screen; turned on, the theme for the system's mode shows.
+FN theme_follow_toggled
+    PROLOGUE
+    cmp dword ptr [rip + cfg_follow_system], 0
+    jne 1f
+    lea rdi, [rip + cfg_theme]
+    mov rsi, [rip + g_theme_cur]
+    call theme_set
+1:  call theme_apply_config
+    EPILOGUE
+
+# theme_settings_init(startup): settings from before dark_theme and light_theme name one theme, which
+# becomes the theme for its kind and for the system's current mode, so that nothing changes on
+# screen; except rhun-dark at startup, the old default, which leaves the new defaults (written in
+# while rhun runs, it was picked). A mode not yet known (X11's XSETTINGS is read with the window, a
+# portal may answer late) gets it when it is, unless a theme is picked first; until then it shows
+# as dark, and the dark mode's setting gets its own theme back if the mode is light. On Omarchy, a
+# config without theme settings follows Omarchy in all three (only at startup: Follow Omarchy is the
+# default there until a theme is picked).
+FN theme_settings_init
+    PROLOGUE
+    mov r12d, edi
+    mov qword ptr [rip + pending], 0
+    mov eax, [rip + cfg_theme_keys]
+    test eax, eax
+    jnz 1f
+    test edi, edi
+    jz 9f
+    cmp qword ptr [rip + g_follow], 0
+    js 9f
+    lea rax, [rip + omarchy_id]
+    mov [rip + cfg_theme], rax
+    mov [rip + cfg_dark_theme], rax
+    mov [rip + cfg_light_theme], rax
+    jmp 9f
+1:  cmp eax, 1
+    jne 9f
+    mov rdi, [rip + cfg_theme]
+    call theme_find
+    test rax, rax
+    js 9f
+    mov rbx, rax
+    cmp rax, [rip + g_follow]
+    je 3f
+    cmp qword ptr [rip + g_follow], 0
+    jns 2f                      # on Omarchy, rhun-dark was picked: the default was Follow Omarchy
+    test r12d, r12d
+    jz 2f
+    mov rdi, [rip + cfg_theme]
+    lea rsi, [rip + cfg_def_theme]
+    call strcmp_eq
+    test eax, eax
+    jnz 9f
+2:  # the setting for its kind, and the one for the system's mode
+    mov rdi, rbx
+    call theme_entry
+    lea rdi, [rip + cfg_dark_theme]
+    lea rcx, [rip + cfg_light_theme]
+    cmp dword ptr [rax + TH_dark], 0
+    cmove rdi, rcx
+    mov rsi, rbx
+    call theme_set
+    mov rax, [rip + cfg_dark_theme]
+    mov [rip + pending_dark], rax
+    lea rdi, [rip + cfg_dark_theme]
+    lea rcx, [rip + cfg_light_theme]
+    cmp dword ptr [rip + g_sys_dark], 0
+    cmove rdi, rcx
+    mov rsi, rbx
+    call theme_set
+    cmp dword ptr [rip + g_sys_dark], 0
+    jge 9f
+    mov rdi, rbx
+    call theme_entry
+    mov rax, [rax + TH_id]
+    mov [rip + pending], rax
+    jmp 9f
+3:  # Follow Omarchy picks dark and light itself
+    lea rdi, [rip + cfg_dark_theme]
+    mov rsi, rbx
+    call theme_set
+    lea rdi, [rip + cfg_light_theme]
+    mov rsi, rbx
+    call theme_set
+9:  EPILOGUE
+
+# Toggle Light/Dark Theme: theme becomes light_theme when a dark one shows, otherwise dark_theme.
+# While the theme follows the system it says so instead, as VS Code does.
+FN cmd_toggle_light_dark
+    PROLOGUE
+    cmp dword ptr [rip + cfg_follow_system], 0
+    je 1f
+    lea rdi, [rip + .Lfollows]
+    call app_toast
+    EPILOGUE
+1:  lea rdi, [rip + cfg_light_theme]
+    lea rax, [rip + cfg_dark_theme]
+    cmp dword ptr [rip + g_theme_dark], 0
+    cmove rdi, rax
+    call theme_slot_index
+    lea rdi, [rip + cfg_theme]
+    mov rsi, rax
+    call theme_set
+    call theme_apply_config
+    EPILOGUE
+
 .section .rodata
+.Lfollows: .asciz "The theme follows the system's dark mode (Settings)"
 .Lkind: .asciz "kind"
 .Lname: .asciz "name"
 .Llight: .asciz "light"
@@ -459,6 +783,7 @@ slot_names:
     .quad .Lc10, .Lc11, .Lc12, .Lc13, .Lc14, .Lc15, .Lc16, .Lc17, .Lc18, .Lc19
     .quad .Lt0, .Lt1, .Lt2, .Lt3, .Lt4, .Lt5, .Lt6, .Lt7, .Lt8, .Lt9
     .quad .Lt10, .Lt11, .Lt12, .Lt13, .Lt14, .Lt15, .Lg0, .Lg1, .Lg2
+    .quad .Li0, .Li1, .Li2, .Li3, .Li4, .Li5, .Li6, .Li7, .Li8, .Li9
 .Ls0: .asciz "bg"
 .Ls1: .asciz "fg"
 .Ls2: .asciz "accent"
@@ -525,3 +850,13 @@ slot_names:
 .Lg0: .asciz "git_added"
 .Lg1: .asciz "git_modified"
 .Lg2: .asciz "git_deleted"
+.Li0: .asciz "icon_red"
+.Li1: .asciz "icon_orange"
+.Li2: .asciz "icon_yellow"
+.Li3: .asciz "icon_green"
+.Li4: .asciz "icon_blue"
+.Li5: .asciz "icon_purple"
+.Li6: .asciz "icon_pink"
+.Li7: .asciz "icon_cyan"
+.Li8: .asciz "icon_grey"
+.Li9: .asciz "icon_white"

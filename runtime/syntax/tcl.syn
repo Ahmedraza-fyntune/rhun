@@ -1,5 +1,6 @@
 name = Tcl
 files = *.tcl *.tk *.itcl
+icon = code red
 first_line = tclsh wish
 comment = #
 string = " \

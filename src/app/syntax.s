@@ -286,6 +286,8 @@ FN grammar_fill
     mov [rbx + GR_name], rax
     mov [rbx + GR_files], rax
     mov [rbx + GR_first], rax
+    mov [rbx + GR_icon], rax
+    mov qword ptr [rbx + GR_ficon], 0
     lea rdi, [rip + it]
     mov rsi, r12
     mov rdx, r13
@@ -306,6 +308,9 @@ FN grammar_fill
     lea rsi, [rip + .Lk_first]
     call .Lgp_key
     jnz .Lgp_first
+    lea rsi, [rip + .Lk_icon]
+    call .Lgp_key
+    jnz .Lgp_icon
     lea rsi, [rip + .Lk_comment]
     call .Lgp_key
     jnz .Lgp_comment
@@ -418,6 +423,12 @@ FN grammar_fill
     mov rsi, r15
     call mem_dup
     mov [rbx + GR_first], rax
+    jmp .Lgp_next
+.Lgp_icon:
+    mov rdi, r14
+    mov rsi, r15
+    call mem_dup
+    mov [rbx + GR_icon], rax
     jmp .Lgp_next
 .Lgp_toggle:
     # toggle_comment = <token> ; only the toggle-comment token, for comments that count only at a
@@ -704,7 +715,7 @@ FN syntax_load_all
     mov edi, GR_SIZE
     call mem_alloc
     mov r12, rax
-    imul rcx, rbx, 48
+    imul rcx, rbx, 56
     lea rax, [rip + syntax_table]
     add rcx, rax
     mov rax, [rcx + 8]
@@ -718,6 +729,8 @@ FN syntax_load_all
     mov [r12 + GR_files], rax
     mov rax, [rcx + 40]
     mov [r12 + GR_first], rax
+    mov rax, [rcx + 48]
+    mov [r12 + GR_icon], rax
     lea rdi, [rip + g_grammars]
     mov esi, 8
     call vec_push
@@ -784,27 +797,19 @@ pattern_match:
 3:  xor eax, eax
     ret
 
-# syntax_detect(path cstr, first line ptr, len) -> GR* or 0, parsed: the grammar whose files pattern
-# fits the file name best (an exact name, else the longest *.suffix; the first on a tie, so user
-# grammars win), else the grammar whose first_line word found in the first line is longest (the
-# first grammar on a tie)
-FN syntax_detect
-    PROLOGUE 48
-    mov [rsp + 16], rsi
-    mov [rsp + 24], rdx
-    mov rbx, rdi
-    call strlen
-    mov rdi, rbx
-    mov rsi, rax
-    call path_basename
-    mov [rsp], rax
-    mov [rsp + 8], rdx
+# syntax_for_name(name, len) -> GR* or 0, not parsed yet, rdx SN_EXACT for an exact name: the grammar
+# whose files pattern fits the file name best (an exact name, else the longest *.suffix; the first on
+# a tie, so user grammars win)
+FN syntax_for_name
+    PROLOGUE 32
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
     xor ebx, ebx                # the best grammar so far
-    mov qword ptr [rsp + 32], -1    # its score
+    mov qword ptr [rsp + 16], -1    # its score
     xor r12d, r12d
-.Lsd_gr:
+.Lsn_gr:
     cmp r12, [rip + g_grammars + VEC_len]
-    jae .Lsd_best
+    jae .Lsn_done
     mov rax, [rip + g_grammars + VEC_ptr]
     mov r13, [rax + r12*8]
     mov r14, [r13 + GR_files]
@@ -835,16 +840,35 @@ FN syntax_detect
     mov rax, rdx
     cmp byte ptr [rcx], '*'
     je 2f
-    mov eax, 0x10000
-2:  cmp rax, [rsp + 32]
+    mov eax, SN_EXACT
+2:  cmp rax, [rsp + 16]
     jle 1b
-    mov [rsp + 32], rax
+    mov [rsp + 16], rax
     mov rbx, r13
     jmp 1b
 3:  inc r12
-    jmp .Lsd_gr
-.Lsd_best:
-    mov r13, rbx
+    jmp .Lsn_gr
+.Lsn_done:
+    mov rax, rbx
+    mov rdx, [rsp + 16]
+    EPILOGUE
+
+# syntax_detect(path cstr, first line ptr, len) -> GR* or 0, parsed: the grammar for the file name
+# (syntax_for_name), else the grammar whose first_line word found in the first line is longest (the
+# first grammar on a tie)
+FN syntax_detect
+    PROLOGUE 48
+    mov [rsp + 16], rsi
+    mov [rsp + 24], rdx
+    mov rbx, rdi
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_basename
+    mov rdi, rax
+    mov rsi, rdx
+    call syntax_for_name
+    mov r13, rax
     test r13, r13
     jnz .Lsd_found
 .Lsd_first:
@@ -1553,6 +1577,7 @@ class_names:
 .Lk_name: .asciz "name"
 .Lk_files: .asciz "files"
 .Lk_first: .asciz "first_line"
+.Lk_icon: .asciz "icon"
 .Lk_comment: .asciz "comment"
 .Lk_toggle: .asciz "toggle_comment"
 .Lk_block: .asciz "block"

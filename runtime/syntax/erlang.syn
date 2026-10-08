@@ -1,5 +1,6 @@
 name = Erlang
 files = *.erl *.hrl *.escript rebar.config
+icon = code red
 comment = %
 string = " \
 string = ' \

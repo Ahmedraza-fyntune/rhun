@@ -1,5 +1,6 @@
 name = CSS
 files = *.css *.scss *.sass *.less
+icon = css blue
 comment = //
 block = /* */
 string = " \

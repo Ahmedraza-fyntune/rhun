@@ -1,16 +1,29 @@
 Codex: Fix the tab bar scrolling
-Claude Code: Status bar work
+Claude: Status bar work
+Grok: Word count in the status bar
 Codex: Fix the tab bar scrolling
-Claude Code: Status bar work
+Claude: Status bar work
+Grok: Word count in the status bar
 user Fix the tab bar scrolling
 tool(shell) ls
 result README.md
 agent The strip now clamps.
 Codex: Fix the tab bar scrolling
-Claude Code: Status bar work
+Claude: Status bar work
+Grok: Word count in the status bar
 user Add a status bar
 agent I'll look at the layout code first.
 tool(Bash) grep -n status src/app/app.s
 result 123: statusbar_draw
 tool(Edit) src/app/app.s
 agent Done — the status bar shows "Ln, Col".
+Codex: Fix the tab bar scrolling
+Claude: Status bar work
+Grok: Word count in the status bar
+user Add a word count to the status bar
+agent I'll find the status bar code.
+tool(grep) statusbar_draw
+result src/app/app.s:123: statusbar_draw
+tool(search_replace) src/app/app.s
+result call draw_position
+agent Done: the status bar counts words.

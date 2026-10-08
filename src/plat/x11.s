@@ -53,6 +53,12 @@ a_net_wm_state: .long 0
 a_max_h: .long 0
 a_max_v: .long 0
 a_wm_change_state: .long 0
+a_xs_selection: .long 0         # _XSETTINGS_S0, owned by the XSETTINGS manager
+a_xs_settings: .long 0
+a_manager: .long 0
+a_gtk_variant: .long 0
+xs_owner: .long 0               # the manager's window, whose property changes rhun selects
+xs_stale: .long 0               # XSETTINGS changed: read again on the next tick
 # pending synchronous reply
 got_reply: .long 0
 .p2align 3
@@ -67,6 +73,9 @@ addr: .zero 110
 tmp: .zero SB_SIZE
 iov2: .zero 32
 mh: .zero 56
+
+.data
+variant_dark: .long -1          # the _GTK_THEME_VARIANT last set: 1 dark, 0 light
 
 .text
 
@@ -243,6 +252,10 @@ x_message:
     je .Lxm_client
     cmp eax, 34
     je .Lxm_mapping
+    cmp eax, 28
+    je .Lxm_property
+    cmp eax, 17
+    je .Lxm_destroy
     # XKB NewKeyboardNotify (0) and MapNotify (1): a client using XKB gets no MappingNotify for these
     cmp eax, [rip + xkb_event]
     jne .Lxm_ret
@@ -250,11 +263,34 @@ x_message:
     jbe .Lxm_mapping
     jmp .Lxm_ret
 .Lxm_error:
-    # ignore: errors are non-fatal for us (e.g. a stale property)
+    # errors are non-fatal for us (e.g. a stale property), but one answering the request a reply is
+    # awaited for ends the wait: reply_buf then starts with 0
+    movzx eax, word ptr [rbx + 2]
+    cmp eax, [rip + want_seq]
+    jne .Lxm_ret
+    lea rdi, [rip + reply_buf]
+    mov rsi, rbx
+    mov ecx, 32
+    rep movsb
+    lea rax, [rbx + 32]
+    mov [rip + reply_extra], rax
+    mov qword ptr [rip + reply_extra_len], 0
+    mov dword ptr [rip + got_reply], 1
     jmp .Lxm_ret
 .Lxm_reply:
     movzx eax, word ptr [rbx + 2]
-    cmp eax, [rip + want_seq]
+    # a paste reply is handled right here (the buffer moves after this). It has a sequence number of
+    # its own, as it may come while a synchronous request (want_seq) waits for its reply.
+    cmp dword ptr [rip + paste_wait], 0
+    je 1f
+    cmp eax, [rip + paste_seq]
+    jne 1f
+    mov dword ptr [rip + paste_wait], 0
+    lea rdi, [rbx + 32]
+    mov esi, [rbx + 16]         # value length in format units (format 8)
+    call app_on_paste
+    jmp .Lxm_ret
+1:  cmp eax, [rip + want_seq]
     jne .Lxm_ret
     lea rdi, [rip + reply_buf]
     mov rsi, rbx
@@ -266,14 +302,6 @@ x_message:
     sub eax, 32
     mov [rip + reply_extra_len], rax
     mov dword ptr [rip + got_reply], 1
-    # a paste reply is handled right here (the buffer moves after this)
-    cmp dword ptr [rip + paste_wait], 0
-    je .Lxm_ret
-    mov dword ptr [rip + paste_wait], 0
-    mov dword ptr [rip + want_seq], -1
-    mov rdi, [rip + reply_extra]
-    mov esi, [rbx + 16]         # value length in format units (format 8)
-    call app_on_paste
     jmp .Lxm_ret
 .Lxm_key:
     movzx eax, word ptr [rbx + 28]
@@ -355,6 +383,10 @@ x_message:
     mov dword ptr [rip + g_dirty], 1
     jmp .Lxm_ret
 .Lxm_configure:
+    # ours, not the root's (rhun selects the root's structure events for XSETTINGS managers)
+    mov eax, [rbx + 8]
+    cmp eax, [rip + win]
+    jne .Lxm_ret
     movzx eax, word ptr [rbx + 20]
     movzx ecx, word ptr [rbx + 22]
     cmp eax, [rip + win_w]
@@ -381,7 +413,15 @@ x_message:
     jmp .Lxm_ret
 .Lxm_client:
     mov eax, [rbx + 8]
-    cmp eax, [rip + a_wm_protocols]
+    cmp eax, [rip + a_manager]
+    jne 1f
+    # a new XSETTINGS manager announces itself to the root
+    mov eax, [rbx + 16]
+    cmp eax, [rip + a_xs_selection]
+    jne .Lxm_ret
+    mov dword ptr [rip + xs_stale], 1
+    jmp .Lxm_ret
+1:  cmp eax, [rip + a_wm_protocols]
     jne .Lxm_ret
     mov eax, [rbx + 12]
     cmp eax, [rip + a_wm_delete]
@@ -390,6 +430,27 @@ x_message:
     jmp .Lxm_ret
 .Lxm_mapping:
     call x_load_keymap_async
+    jmp .Lxm_ret
+.Lxm_property:
+    # the XSETTINGS manager's settings changed
+    mov eax, [rbx + 4]
+    test eax, eax
+    jz .Lxm_ret
+    cmp eax, [rip + xs_owner]
+    jne .Lxm_ret
+    mov eax, [rbx + 8]
+    cmp eax, [rip + a_xs_settings]
+    jne .Lxm_ret
+    mov dword ptr [rip + xs_stale], 1
+    jmp .Lxm_ret
+.Lxm_destroy:
+    # the manager quit
+    mov eax, [rbx + 8]
+    test eax, eax
+    jz .Lxm_ret
+    cmp eax, [rip + xs_owner]
+    jne .Lxm_ret
+    mov dword ptr [rip + xs_stale], 1
 .Lxm_ret:
     EPILOGUE
 
@@ -1213,6 +1274,18 @@ FN x_open_window
     lea rdi, [rip + .La_change_state]
     call x_intern
     mov [rip + a_wm_change_state], eax
+    lea rdi, [rip + .La_xs_selection]
+    call x_intern
+    mov [rip + a_xs_selection], eax
+    lea rdi, [rip + .La_xs_settings]
+    call x_intern
+    mov [rip + a_xs_settings], eax
+    lea rdi, [rip + .La_manager]
+    call x_intern
+    mov [rip + a_manager], eax
+    lea rdi, [rip + .La_gtk_variant]
+    call x_intern
+    mov [rip + a_gtk_variant], eax
     call x_cursor_init
     # window
     call x_new_id
@@ -1271,6 +1344,18 @@ FN x_open_window
     call x_change_prop
     mov rdi, r15
     call x_title
+    # the root's structure events bring MANAGER messages: an XSETTINGS manager starting later
+    mov byte ptr [rsp], 2       # ChangeWindowAttributes
+    mov byte ptr [rsp + 1], 0
+    mov word ptr [rsp + 2], 4
+    mov eax, [rip + root]
+    mov [rsp + 4], eax
+    mov dword ptr [rsp + 8], 0x800      # CWEventMask
+    mov dword ptr [rsp + 12], 0x20000   # StructureNotify
+    lea rdi, [rsp]
+    mov esi, 16
+    call x_req
+    call xs_refresh
     # map
     mov byte ptr [rsp], 8       # MapWindow
     mov word ptr [rsp + 2], 2
@@ -1327,9 +1412,178 @@ x_timeout:
 1:  ret
 
 x_tick:
+    push rbx
+1:  cmp dword ptr [rip + xs_stale], 0
+    je 2f
+    call xs_refresh
+    # the messages that came after its reply in the same read (nothing else reads them before the
+    # next one), which may change XSETTINGS again
+    call x_process
+    jmp 1b
+2:  pop rbx
     cmp dword ptr [rip + keymap_stale], 0
     jne x_keymap_refresh
     ret
+
+# x_variant(): _GTK_THEME_VARIANT "dark" or "light" like the theme, for title bars window managers
+# draw (Mutter's on X11)
+x_variant:
+    mov eax, [rip + g_theme_dark]
+    cmp eax, [rip + variant_dark]
+    je 9f
+    mov [rip + variant_dark], eax
+    push rbx
+    lea r8, [rip + .Lvariant_light]
+    mov r9d, 5
+    test eax, eax
+    jz 1f
+    lea r8, [rip + .Lvariant_dark]
+    mov r9d, 4
+1:  mov edi, [rip + win]
+    mov esi, [rip + a_gtk_variant]
+    mov edx, [rip + a_utf8]
+    mov ecx, 8
+    call x_change_prop
+    pop rbx
+9:  ret
+
+# xs_refresh(): the XSETTINGS manager's theme name for the system's dark mode (linux_xsettings).
+# Synchronous requests, so never while messages are being handled (x_tick and x_open_window).
+xs_refresh:
+    PROLOGUE 32
+    mov dword ptr [rip + xs_stale], 0
+    mov byte ptr [rsp], 23      # GetSelectionOwner
+    mov byte ptr [rsp + 1], 0
+    mov word ptr [rsp + 2], 2
+    mov eax, [rip + a_xs_selection]
+    mov [rsp + 4], eax
+    lea rdi, [rsp]
+    mov esi, 8
+    call x_req
+    mov eax, [rip + seq]
+    and eax, 0xffff
+    mov [rip + want_seq], eax
+    call x_wait_reply
+    cmp byte ptr [rip + reply_buf], 1
+    jne 8f
+    mov r12d, [rip + reply_buf + 8]
+    test r12d, r12d
+    jz 8f
+    cmp r12d, [rip + xs_owner]
+    je 1f
+    mov [rip + xs_owner], r12d
+    # its property changes, and its window going away
+    mov byte ptr [rsp], 2       # ChangeWindowAttributes
+    mov byte ptr [rsp + 1], 0
+    mov word ptr [rsp + 2], 4
+    mov [rsp + 4], r12d
+    mov dword ptr [rsp + 8], 0x800      # CWEventMask
+    mov dword ptr [rsp + 12], 0x420000  # PropertyChange | StructureNotify
+    lea rdi, [rsp]
+    mov esi, 16
+    call x_req
+1:  mov byte ptr [rsp], 20      # GetProperty
+    mov byte ptr [rsp + 1], 0
+    mov word ptr [rsp + 2], 6
+    mov [rsp + 4], r12d
+    mov eax, [rip + a_xs_settings]
+    mov [rsp + 8], eax
+    mov dword ptr [rsp + 12], 0         # AnyPropertyType
+    mov dword ptr [rsp + 16], 0
+    mov dword ptr [rsp + 20], 16384     # up to 64 KiB
+    lea rdi, [rsp]
+    mov esi, 24
+    call x_req
+    mov eax, [rip + seq]
+    and eax, 0xffff
+    mov [rip + want_seq], eax
+    call x_wait_reply
+    cmp byte ptr [rip + reply_buf], 1
+    jne 8f                      # an error: the window is gone
+    mov edi, -1
+    cmp byte ptr [rip + reply_buf + 1], 8
+    jne 7f
+    mov rdi, [rip + reply_extra]
+    mov esi, [rip + reply_buf + 16]
+    cmp rsi, [rip + reply_extra_len]
+    jbe 2f
+    mov rsi, [rip + reply_extra_len]
+2:  call xs_theme_dark
+    mov edi, eax
+7:  call linux_xsettings
+    EPILOGUE
+8:  mov dword ptr [rip + xs_owner], 0
+    mov edi, -1
+    call linux_xsettings
+    EPILOGUE
+
+# xs_theme_dark(data, len) -> eax: XSETTINGS' Net/ThemeName names a dark theme (1), another (0), or
+# is not there (-1). Settings: type, pad, name length (16 bits), the name padded to 4, a serial;
+# then an integer (4 bytes), a string (length, bytes padded to 4) or a color (8 bytes).
+xs_theme_dark:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov eax, -1
+    cmp r12, 12
+    jb 9f
+    cmp byte ptr [rbx], 0       # LSBFirst: what managers on this machine write
+    jne 9f
+    mov r13d, [rbx + 8]         # how many
+    mov r14d, 12
+1:  mov eax, -1
+    test r13d, r13d
+    jz 9f
+    dec r13d
+    lea rax, [r14 + 4]
+    cmp rax, r12
+    ja 8f
+    movzx r15d, byte ptr [rbx + r14]
+    movzx ecx, word ptr [rbx + r14 + 2]
+    lea rdx, [r14 + 4]          # the name
+    lea rax, [rcx + 3]
+    and rax, -4
+    lea r8, [rdx + rax + 4]     # the value
+    cmp r8, r12
+    ja 8f
+    cmp r15d, 1
+    jne 3f
+    # a string: its length, then the bytes
+    lea rax, [r8 + 4]
+    cmp rax, r12
+    ja 8f
+    mov r9d, [rbx + r8]
+    lea r10, [r8 + 4]
+    lea rax, [r10 + r9]
+    cmp rax, r12
+    ja 8f
+    lea rax, [r9 + 3]
+    and rax, -4
+    lea r14, [r10 + rax]
+    cmp ecx, 13
+    jne 1b
+    lea rdi, [rbx + rdx]
+    mov rsi, rcx
+    lea rdx, [rip + .Lnet_theme]
+    push r9
+    push r10
+    call str_eq_cstr
+    pop r10
+    pop r9
+    test eax, eax
+    jz 1b
+    lea rdi, [rbx + r10]
+    mov rsi, r9
+    call linux_name_dark
+    jmp 9f
+3:  # an integer or a color
+    lea r14, [r8 + 4]
+    cmp r15d, 2
+    jne 1b
+    lea r14, [r8 + 8]
+    jmp 1b
+8:  mov eax, -1
+9:  EPILOGUE
 
 FN x_title
     push rbx
@@ -1392,6 +1646,7 @@ x_draw:
     call gfx_set_target
     mov dword ptr [rip + g_dirty], 0
     call app_render
+    call x_variant
     call x_flush
     # rows per request
     mov eax, [rip + max_req]
@@ -1587,7 +1842,7 @@ x_get_paste:
     call x_req
     mov eax, [rip + seq]
     and eax, 0xffff
-    mov [rip + want_seq], eax
+    mov [rip + paste_seq], eax
     mov dword ptr [rip + paste_wait], 1
     add rsp, 40
     ret
@@ -1754,12 +2009,20 @@ x_minimize:
 .La_max_h: .asciz "_NET_WM_STATE_MAXIMIZED_HORZ"
 .La_max_v: .asciz "_NET_WM_STATE_MAXIMIZED_VERT"
 .La_change_state: .asciz "WM_CHANGE_STATE"
+.La_xs_selection: .asciz "_XSETTINGS_S0"
+.La_xs_settings: .asciz "_XSETTINGS_SETTINGS"
+.La_manager: .asciz "MANAGER"
+.La_gtk_variant: .asciz "_GTK_THEME_VARIANT"
+.Lnet_theme: .asciz "Net/ThemeName"
+.Lvariant_dark: .ascii "dark"
+.Lvariant_light: .ascii "light"
 .Lwm_class: .ascii "rhun\0rhun\0"
 # CUR_* -> X cursor font glyphs: left_ptr xterm hand2 sb_h_double_arrow sb_v_double_arrow bottom_right_corner bottom_left_corner
 cursor_glyphs: .byte 68, 152, 60, 108, 116, 14, 12, 68
 
 .bss
 paste_wait: .long 0
+paste_seq: .long 0              # the sequence number of the paste's GetProperty, while paste_wait
 keymap_stale: .long 0
 keymap_busy: .long 0            # loading it, or replaying keys that waited for it
 pend_n: .long 0

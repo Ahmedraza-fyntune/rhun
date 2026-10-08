@@ -1,5 +1,6 @@
 name = Puppet
 files = *.pp
+icon = puppet yellow
 comment = #
 block = /* */
 string = " \

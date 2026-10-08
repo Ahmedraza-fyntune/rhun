@@ -1,5 +1,6 @@
 name = Janet
 files = *.janet
+icon = code purple
 first_line = janet
 comment = #
 string = " \

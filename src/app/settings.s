@@ -80,8 +80,35 @@ FN setting_applied
     jne 6f
     call update_apply
     jmp 9f
-6:  call vim_sync
+6:  lea rcx, [rip + cfg_follow_system]
+    cmp rax, rcx
+    jne 7f
+    call theme_follow_toggled
+    jmp 9f
+7:  call vim_sync
 9:  EPILOGUE
+
+# setting_shown(SET*) -> 1 if its row is on the page: Theme without Follow system dark mode, the dark
+# and light mode's themes with it
+setting_shown:
+    mov rax, [rdi + SET_ptr]
+    mov ecx, [rip + cfg_follow_system]
+    lea rdx, [rip + cfg_theme]
+    cmp rax, rdx
+    je 1f
+    xor ecx, 1
+    lea rdx, [rip + cfg_dark_theme]
+    cmp rax, rdx
+    je 1f
+    lea rdx, [rip + cfg_light_theme]
+    cmp rax, rdx
+    je 1f
+    mov eax, 1
+    ret
+1:  xor eax, eax
+    test ecx, ecx
+    sete al
+    ret
 
 # settings_key(keysym, cp, mods) -> 1 if handled
 FN settings_key
@@ -409,6 +436,10 @@ FN settings_draw
 .Lsd_row:
     cmp qword ptr [rbx + SET_key], 0
     je .Lsd_rows_done
+    mov rdi, rbx
+    call setting_shown
+    test eax, eax
+    jz .Lsd_skip
     mov rax, [rbx + SET_sec]
     cmp rax, r14
     je 4f
@@ -809,8 +840,10 @@ FN settings_draw
     call setting_applied
     jmp .Lsd_next
 .Lsd_theme:
-    # button showing the theme name, opens the theme picker
-    mov rdi, [rip + g_theme_cur]
+    # button showing the setting's theme, opens the theme list for it
+    mov rdi, [rbx + SET_ptr]
+    call theme_slot_index
+    mov rdi, rax
     call theme_entry
     mov r8, [rax + TH_name]
     mov [rsp + 64], r8
@@ -870,7 +903,8 @@ FN settings_draw
     call ui_icon_center
     test dword ptr [rsp + 32], UB_CLICK
     jz .Lsd_next
-    call cmd_select_theme
+    mov rdi, [rbx + SET_ptr]
+    call cmd_select_theme_for
     jmp .Lsd_next
 .Lsd_str:
     mov edi, 300
@@ -968,6 +1002,7 @@ FN settings_draw
     call gfx_clip_pop
     add r12d, r13d
     add r12d, [rip + g_mt + 4*MI_8]
+.Lsd_skip:
     add rbx, SET_SIZE
     inc r15d
     jmp .Lsd_row

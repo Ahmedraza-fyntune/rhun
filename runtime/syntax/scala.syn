@@ -1,5 +1,6 @@
 name = Scala
 files = *.scala *.sc *.sbt
+icon = scala red
 comment = //
 block = /* */
 mstring = """ \

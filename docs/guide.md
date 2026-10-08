@@ -4,14 +4,15 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 
 ## Features
 
-- Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
+- Tabs, file explorer with file type icons, command palette, fuzzy file finder, find and replace, find in files, go to line
 - Project menu in the title bar: open a folder or a file from anywhere on disk, or a recent folder, in this window or a new one
 - Image preview: PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA open in a tab, with zoom and pan
 - Syntax highlighting for about 125 languages, defined in plain text grammar files
-- 40 color themes, dark and light, with a match for every Omarchy theme; add your own
+- 40 color themes, dark and light, with a match for every Omarchy theme; add your own. A dark and a light theme switch with the system's dark mode on macOS, Windows and Linux, as in VS Code
 - Settings page and a readable config file, both applied while running
-- Agents panel: Claude Code and Codex sessions of the project and its Git worktrees, with theme-colored provider badges and icons, updated live as the agent works. Worktree sessions show a branch icon and the worktree name in a badge beside the provider. The list starts with the 50 most recently active sessions across both providers and related worktrees. Load more adds 50. Discovery runs in the background and reuses a saved metadata index; routine refreshes are silent, and pause while the panel is hidden.
-  Git worktree registrations supply the checkout roots. Rhun remembers verified worktree paths in repository-specific state, so their Claude Code and Codex history stays visible after the checkouts are deleted or Git prunes their registrations. Nested Claude worktree history can also be recovered from its exact recorded path without prior Rhun state. If another repository takes over a remembered checkout path, Rhun keeps previously verified sessions and excludes new sessions from that repository. When Git metadata is stored outside the main checkout and contains no reference to its path, open the main checkout to include its sessions.
+- Agents panel: Claude Code, Codex and Grok Build sessions of the project and its Git worktrees, with theme-colored provider badges and icons, updated live as the agent works. Worktree sessions show a branch icon and the worktree name in a badge beside the provider. The list starts with the 50 most recently active sessions across all providers and related worktrees. Load more adds 50. Discovery runs in the background and reuses a saved metadata index; routine refreshes are silent, and pause while the panel is hidden.
+  Grok Build sessions come from `~/.grok/sessions` (`$GROK_HOME/sessions` when set) with the titles Grok gives them; one shows once it has a prompt, and a subagent's session stays inside its parent's. The clones Grok makes with `grok --worktree` are not Git worktrees of the project, so their sessions are not listed. `[agents] sources` picks the providers: `claude codex grok` by default.
+  Git worktree registrations supply the checkout roots. Rhun remembers verified worktree paths in repository-specific state, so their agent history stays visible after the checkouts are deleted or Git prunes their registrations. Nested Claude worktree history can also be recovered from its exact recorded path without prior Rhun state. If another repository takes over a remembered checkout path, Rhun keeps previously verified sessions and excludes new sessions from that repository. When Git metadata is stored outside the main checkout and contains no reference to its path, open the main checkout to include its sessions.
 - Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs; Cmd+click (Ctrl+click on Linux and Windows) opens links in the browser and files in a tab
 - Git: changed lines in the gutter, file status in tabs and the explorer, diffs, a history of all branches drawn as a graph, and source control as in VS Code: stage, commit, pull, push
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap; without it, lines wider than the editor get a horizontal scrollbar along its bottom
@@ -251,6 +252,11 @@ Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independe
 
 ### Folders and files
 
+The explorer shows each file with the icon of its language or type, in the theme's colors: the
+grammar the file name gets gives the language's icon, and `assets/icons/files/types.txt` gives the
+icons of images, archives, fonts, documents, and names such as `LICENSE` or `package.json`. The
+glyphs are from Seti UI (MIT).
+
 The explorer's header has **New File** and **New Folder** buttons. They create in the folder of the
 item last selected in the explorer, or in the project folder; the prompt names what it creates and
 holds the path, which can include folders that do not exist yet. Right-click a file or folder for its
@@ -349,7 +355,8 @@ Registers, marks, macros, ranges and `:s`, visual block and replace mode are not
 
 ```ini
 [ui]
-theme = tokyo-night
+dark_theme = tokyo-night
+light_theme = github-light
 scale = 1.25
 [editor]
 font_size = 15
@@ -368,7 +375,17 @@ Key names are those of the command palette entries in snake case (see `src/app/k
 
 ### Themes
 
-Choose **Turbo Pascal** in the theme picker (Ctrl+K Ctrl+Shift+T) for a blue editor with yellow text, white keywords and the DOS terminal palette. To select it in the configuration file, set `theme = turbo-pascal` under `[ui]`.
+The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K Ctrl+Shift+T), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
+
+rhun reads the mode as VS Code does and switches as soon as the system does:
+
+- macOS: System Settings > Appearance, Auto included.
+- Windows: the app mode in Settings > Personalization > Colors. The title bar is dark with a dark theme.
+- Linux: the XDG desktop portal's color scheme over D-Bus: GNOME, KDE Plasma, Cinnamon and COSMIC, and Sway, Hyprland and other window managers with xdg-desktop-portal-gtk (`gsettings set org.gnome.desktop.interface color-scheme prefer-dark`). Without a dark or light answer there the GTK theme decides: `gtk-application-prefer-dark-theme`, or a theme name with "dark" in it, from XSETTINGS (Xfce, MATE, LXDE, xsettingsd), the portal or `~/.config/gtk-3.0/settings.ini` (lxappearance, nwg-look). On X11 the window's `_GTK_THEME_VARIANT` tells the window manager whether the theme is dark.
+
+When the system says nothing, the dark theme shows. A configuration from before 0.17.8 names one `theme`: it becomes the theme for its kind and for the mode the system is in, so the editor looks the same until you pick another.
+
+Choose **Turbo Pascal** in the theme picker for a blue editor with yellow text, white keywords and the DOS terminal palette. To select it in the configuration file, set `dark_theme = turbo-pascal` under `[ui]` (or `theme`, with `follow_system = false`).
 
 A theme is a `name.theme` file in `~/.config/rhun/themes/`. Colors not given are derived from `bg`, `fg` and `accent`, so a theme can be three lines. See `runtime/themes/` for all keys.
 
@@ -384,7 +401,9 @@ string = #a6e3a1
 
 Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors. `git_added`, `git_modified` and `git_deleted` color changes in the gutter, tabs, explorer and diffs.
 
-On Omarchy the theme list starts with Follow Omarchy (`theme = omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
+The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
+
+On Omarchy the theme list starts with Follow Omarchy (`omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there, for both modes, until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
 
 ### Languages
 
@@ -395,6 +414,7 @@ A grammar is a `name.syn` file in `~/.config/rhun/syntax/`; your grammars win a 
 ```ini
 name = Example
 files = *.ex Examplefile
+icon = code purple
 first_line = example
 comment = //
 block = /* */
@@ -418,6 +438,8 @@ case = insensitive
 
 `comment` also gives the token Toggle Comment adds in front of the selected lines. Where a comment counts only at a line's first non-blank, color it with a `bol` region and give the token with `toggle_comment`, which colors nothing itself (a `comment` would also color the token in the middle of a line). The first `comment` or `toggle_comment` sets the token.
 
+`icon` gives the explorer's icon for the grammar's files: an icon from `assets/icons/files/` (without `.svg`, such as `rust` or `config`; `code` for a language with none) and a color, one of red orange yellow green blue purple pink cyan grey white (grey if left out). Without it the files get the default icon.
+
 `prefix` lists characters that start a colored word, each followed by a letter: `v` variable, `a` attribute, `t` tag, `p` preproc (at the start of a line only). A file gets the grammar whose `files` fit its name best: an exact name first, then the longest `*.suffix`; your grammars win a tie. Only when no pattern fits does rhun look for a `first_line` word in the file's first line; the longest one found wins.
 
 ## Scripting
@@ -434,7 +456,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle|shift|ctrl]` (ctrl is Cmd+click on macOS), `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [ctrl|alt]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents-runs` (discovery runs started so far), `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-term-cell ROW COL` (the middle of that terminal cell), `print-link` (the terminal link under the pointer), `print-scroll` (the editor's horizontal scroll, its vertical one in 1/256 lines, the horizontal limit and the scrollbar's track), `scroll-x dx` (a sideways wheel), `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle|shift|ctrl]` (ctrl is Cmd+click on macOS), `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [ctrl|alt]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents-runs` (discovery runs started so far), `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-term-cell ROW COL` (the middle of that terminal cell), `print-link` (the terminal link under the pointer), `print-scroll` (the editor's horizontal scroll, its vertical one in 1/256 lines, the horizontal limit and the scrollbar's track), `scroll-x dx` (a sideways wheel), `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `appearance dark|light|unknown` (the system's dark mode changes, as a platform reports it), `print-appearance` (that mode, `follow_system`, the three theme settings and the theme shown), `echo`, `quit`. A headless run takes the system's mode from `RHUN_APPEARANCE` (`dark` or `light`). `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
@@ -453,16 +475,17 @@ An extension that crashes or hangs cannot take the editor with it.
 | `src/gfx/` | canvas, TrueType parser, rasterizer, icons |
 | `src/img/` | image decoders: inflate, PNG, JPEG, GIF, BMP / ICO, QOI, PNM, TGA |
 | `src/ui/ui.s` | immediate-mode widgets |
-| `src/plat/` | Wayland, XKB keymaps, X11, headless |
+| `src/plat/` | Wayland, XKB keymaps, X11, headless, the system's dark mode (desktop portal over D-Bus, GTK settings) |
 | `src/app/` | documents, editor, vim keys, image view, explorer, palette, settings, agents, terminal, git, syntax, themes |
 | `src/win/` | Windows x64 assembly: Unicode APIs, Win32 window, directory notifications, ConPTY |
 | `src/mac/` | macOS, native AArch64: entry, Linux system calls on libSystem, FSEvents, the AppKit window |
 | `tools/arm64.py` | the x86-64 to AArch64 translator for Apple silicon |
 | `runtime/` | themes and grammars embedded into the binary |
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
+| `assets/icons/files/` | the explorer's file icons, from Seti UI (MIT), and the file types they go with |
 
 Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`; macOS fills it from `src/mac/cocoa.s`. Code that differs by system is in `.ifdef MACOS` or `.ifdef WINDOWS` blocks.
 
 ## License
 
-MIT, see [LICENSE](../LICENSE). The built-in Iosevka font is under the SIL Open Font License ([assets/fonts/LICENSE-Iosevka.md](../assets/fonts/LICENSE-Iosevka.md)).
+MIT, see [LICENSE](../LICENSE). The built-in Iosevka font is under the SIL Open Font License ([assets/fonts/LICENSE-Iosevka.md](../assets/fonts/LICENSE-Iosevka.md)). The file icons are from Seti UI, MIT licensed ([assets/icons/files/LICENSE-Seti.md](../assets/icons/files/LICENSE-Seti.md)).

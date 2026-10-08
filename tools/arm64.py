@@ -1140,6 +1140,7 @@ class Translator:
                 out.append('%s:' % self.ren(st.name))
                 continue
             if st.kind == 'dir':
+                self.cur = k            # 1f and 1b in data count from here too
                 r = self.directive(st, sect, stack)
                 if r is not None:
                     sect = r

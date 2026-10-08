@@ -27,7 +27,7 @@ for line in (ROOT / 'src/app/config.s').read_text(encoding='utf-8').splitlines()
 
 # These values are the public settings contract, independent of UI step logic.
 BOOLS = {
-    'ui': 'sidebar agents_panel tooltips auto_hide_scrollbars',
+    'ui': 'follow_system sidebar agents_panel tooltips auto_hide_scrollbars',
     'editor': ('insert_spaces line_numbers highlight_line animate_disk_changes match_brackets '
                'indent_guides word_wrap whitespace cursor_blink smooth_caret auto_pairs '
                'scroll_past_end vim_mode'),
@@ -51,8 +51,13 @@ CHOICES = {('ui', 'decorations'): ('auto', 'client', 'server'),
            ('git', 'commit_ai'): ('off', 'claude', 'codex', 'ollama')}
 
 
+# Theme shows without Follow system dark mode, the dark and light mode's themes with it.
+THEME_ROWS = {('ui', 'theme'): False, ('ui', 'dark_theme'): True, ('ui', 'light_theme'): True}
+
+
 class SettingsUI(unittest.TestCase):
     def setUp(self):
+        self.follow = True
         self.tmp = tempfile.TemporaryDirectory(prefix='rhun-settings-')
         self.work = Path(self.tmp.name).resolve()
         self.config = self.work / 'config/rhun/config'
@@ -72,6 +77,7 @@ class SettingsUI(unittest.TestCase):
                 'files': {'restore_session': 'false', 'restore_project': 'false'}}
         if section:
             data.setdefault(section, {})[key] = str(value)
+        self.follow = data['ui'].get('follow_system', 'true') == 'true'
         self.config.write_text(''.join('[' + s + ']\n' + ''.join(
             k + ' = ' + v + '\n' for k, v in values.items()) for s, values in data.items()),
             encoding='utf-8')
@@ -91,9 +97,14 @@ class SettingsUI(unittest.TestCase):
         config.read(self.config, encoding='utf-8')
         return config.get(section, key)
 
+    def shown(self, section, key):
+        return THEME_ROWS.get((section, key), self.follow) == self.follow
+
     def row_y(self, section, key):
         y, previous = 228, None
         for sec, name, _ in ROWS:
+            if not self.shown(sec, name):
+                continue
             if sec != previous:
                 y += 48
                 previous = sec
@@ -105,6 +116,8 @@ class SettingsUI(unittest.TestCase):
     def compact_row_y(self, section, key):
         y, previous = 228, None
         for sec, name, kind in ROWS:
+            if not self.shown(sec, name):
+                continue
             if sec != previous:
                 y += 48
                 previous = sec
@@ -132,7 +145,7 @@ class SettingsUI(unittest.TestCase):
     def test_inventory_requires_cases_for_every_setting(self):
         expected = {(s, k) for s, names in BOOLS.items() for k in names.split()}
         expected |= set(INTS) | set(STRINGS) | set(CHOICES)
-        expected |= {('ui', 'theme'), ('git', 'ai_setup'), ('updates', 'check_now')}
+        expected |= set(THEME_ROWS) | {('git', 'ai_setup'), ('updates', 'check_now')}
         self.assertEqual(expected, {(s, k) for s, k, _ in ROWS})
 
     def test_every_boolean_toggles_both_ways(self):
@@ -167,7 +180,8 @@ class SettingsUI(unittest.TestCase):
                         column = 1400 - round(16 * scale)
                     right = (1400 + column) // 2 - round(16 * scale)
                     x = right - round((14 if direction == '+' else 106) * scale)
-                    y = round((484 if compact else self.row_y(section, key)) * scale)
+                    y = round((self.compact_row_y(section, key) if compact else
+                               self.row_y(section, key)) * scale)
                     self.run_editor([f'click {x} {y}'])
                     self.assertAlmostEqual(float(self.value(section, key)), expected, places=2)
 
@@ -195,7 +209,7 @@ class SettingsUI(unittest.TestCase):
                     self.assertEqual(self.value(section, key), option)
 
     def test_theme_button_preview_cancel_and_accept(self):
-        self.configure()
+        self.configure('ui', 'follow_system', 'false')
         y = self.row_y('ui', 'theme')
         output = self.run_editor([f'click 1000 {y}', 'type github', 'key Down', 'print-state',
                                   'key Escape', 'print-state', f'click 1000 {y}',
@@ -205,6 +219,42 @@ class SettingsUI(unittest.TestCase):
         self.assertIn('theme=rhun-dark', states[1])
         self.assertIn('theme=github-light', states[2])
         self.assertEqual(self.value('ui', 'theme'), 'github-light')
+
+    def test_dark_and_light_theme_buttons_pick_for_their_mode(self):
+        # The system is dark: the light mode's list previews its pick, then the dark theme is back.
+        self.configure()
+        self.env['RHUN_APPEARANCE'] = 'dark'
+        y = self.row_y('ui', 'light_theme')
+        output = self.run_editor([f'click 1000 {y}', 'print-state', 'type github', 'key Down',
+                                  'print-state', 'key Return', 'print-state'])
+        states = [line for line in output.splitlines() if line.startswith('tabs=')]
+        self.assertIn('theme=rhun-light', states[0])
+        self.assertIn('theme=github-light', states[1])
+        self.assertIn('theme=rhun-dark', states[2])
+        self.assertEqual(self.value('ui', 'light_theme'), 'github-light')
+        self.assertEqual(self.value('ui', 'dark_theme'), 'rhun-dark')
+        self.assertEqual(self.value('ui', 'theme'), 'rhun-dark')
+        self.configure()
+        output = self.run_editor([f'click 1000 {self.row_y("ui", "dark_theme")}', 'type nord',
+                                  'key Return', 'print-state'])
+        self.assertIn('theme=nord', output)
+        self.assertEqual(self.value('ui', 'dark_theme'), 'nord')
+        self.assertEqual(self.value('ui', 'light_theme'), 'rhun-light')
+
+    def test_follow_off_keeps_the_theme_shown(self):
+        self.configure()
+        self.env['RHUN_APPEARANCE'] = 'light'
+        output = self.run_editor([f'click 1027 {self.row_y("ui", "follow_system")}', 'print-state',
+                                  'print-appearance'])
+        self.assertIn('theme=rhun-light', output)
+        self.assertEqual(self.value('ui', 'follow_system'), 'false')
+        self.assertEqual(self.value('ui', 'theme'), 'rhun-light')
+        # the Theme row is back where the dark mode's theme was
+        self.follow = False
+        output = self.run_editor([f'click 1000 {self.row_y("ui", "theme")}', 'type nord',
+                                  'key Return', 'print-state'])
+        self.assertIn('theme=nord', output)
+        self.assertEqual(self.value('ui', 'theme'), 'nord')
 
     def test_open_settings_file_button(self):
         self.configure()

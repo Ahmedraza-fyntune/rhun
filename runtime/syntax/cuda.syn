@@ -1,5 +1,6 @@
 name = CUDA
 files = *.cu *.cuh
+icon = cu green
 comment = //
 block = /* */
 region = R"( )" string multiline

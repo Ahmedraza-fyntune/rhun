@@ -156,7 +156,7 @@ FN agent_records_decode
     jb .Ldecode_fail
     mov rax, [r12]
     dec rax
-    cmp rax, 1
+    cmp rax, 2                  # kinds 1 to 3
     ja .Ldecode_fail
     cmp qword ptr [r12 + 8], 7
     ja .Ldecode_fail

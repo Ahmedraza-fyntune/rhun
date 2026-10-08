@@ -610,6 +610,74 @@ follow_theme:
     ret
 
 // title_double_click(): what the user set for a double click on a title bar
+// mac_appearance_init(): the system's dark mode into g_sys_dark, before the first theme, and its
+// changes to theme_system_changed later. NSApplication's effectiveAppearance follows the system
+// (rhun sets the appearance of its window only) and can be observed for changes.
+FN mac_appearance_init
+    XENTRY
+    bl _objc_autoreleasePoolPush
+    mov x19, x0
+    CLS x0, NSApplication
+    MSG sharedApplication
+    STX x0, app
+    ADR x0, s_NSObject
+    ADR x1, s_RhunAppearanceObserver
+    ADR x2, observer_methods
+    bl make_class
+    MSG new
+    mov x20, x0
+    CLS x0, NSString
+    ADR x2, s_effectiveAppearance
+    MSG stringWithUTF8String_
+    mov x3, x0
+    LDX x0, app
+    mov x2, x20
+    mov x4, #0
+    mov x5, #0
+    MSG addObserver_forKeyPath_options_context_
+    bl system_dark
+    STW w0, g_sys_dark
+    mov x0, x19
+    bl _objc_autoreleasePoolPop
+    XLEAVE
+
+// system_dark() -> w0 1 if the application's appearance is a dark one
+system_dark:
+    ENTER 16
+    LDX x0, app
+    MSG effectiveAppearance
+    mov x19, x0
+    EXT x9, _NSAppearanceNameAqua
+    EXT x10, _NSAppearanceNameDarkAqua
+    stp x9, x10, [sp]
+    CLS x0, NSArray
+    mov x2, sp
+    mov x3, #2
+    MSG arrayWithObjects_count_
+    mov x2, x0
+    mov x0, x19
+    MSG bestMatchFromAppearancesWithNames_
+    cbz x0, 8f
+    EXT x2, _NSAppearanceNameDarkAqua
+    MSG isEqualToString_
+    and w0, w0, #1
+    LEAVE
+    ret
+8:  mov w0, #0
+    LEAVE
+    ret
+
+// observeValueForKeyPath:ofObject:change:context: on effectiveAppearance
+o_appearance:
+    IMP
+    bl _objc_autoreleasePoolPush
+    mov x19, x0
+    bl system_dark
+    XCALL theme_system_changed
+    mov x0, x19
+    bl _objc_autoreleasePoolPop
+    IMPRET
+
 title_double_click:
     ENTER
     CLS x0, NSUserDefaults
@@ -1940,6 +2008,9 @@ windel_methods:
     METHOD windowDidExitFullScreen_, w_changed, t_v_id
     METHOD windowDidChangeBackingProperties_, w_changed, t_v_id
     .quad 0
+observer_methods:
+    METHOD observeValueForKeyPath_ofObject_change_context_, o_appearance, t_observe
+    .quad 0
 appdel_methods:
     METHOD applicationShouldTerminate_, a_shouldTerminate, t_Q_id
     METHOD application_openURLs_, a_openURLs, t_v_id_id
@@ -1956,6 +2027,7 @@ t_Q_id: .asciz "Q@:@"
 t_v: .asciz "v@:"
 t_v_id: .asciz "v@:@"
 t_v_id_id: .asciz "v@:@@"
+t_observe: .asciz "v@:@@@^v"
 t_v_sel: .asciz "v@::"
 t_v_size: .asciz "v@:{CGSize=dd}"
 t_id: .asciz "@@:"
@@ -1972,6 +2044,8 @@ s_NSTextInputClient: .asciz "NSTextInputClient"
 s_RhunView: .asciz "RhunView"
 s_RhunWindowDelegate: .asciz "RhunWindowDelegate"
 s_RhunAppDelegate: .asciz "RhunAppDelegate"
+s_RhunAppearanceObserver: .asciz "RhunAppearanceObserver"
+s_effectiveAppearance: .asciz "effectiveAppearance"
 s_RhunTitlebarView: .asciz "RhunTitlebarView"
 s_autosave: .asciz "rhun"
 s_dblclick: .asciz "AppleActionOnDoubleClick"
@@ -2050,6 +2124,12 @@ DEFSEL miniaturize_, "miniaturize:"
 DEFSEL zoom_, "zoom:"
 DEFSEL appearanceNamed_, "appearanceNamed:"
 DEFSEL setAppearance_, "setAppearance:"
+DEFSEL effectiveAppearance, "effectiveAppearance"
+DEFSEL arrayWithObjects_count_, "arrayWithObjects:count:"
+DEFSEL bestMatchFromAppearancesWithNames_, "bestMatchFromAppearancesWithNames:"
+DEFSEL isEqualToString_, "isEqualToString:"
+DEFSEL addObserver_forKeyPath_options_context_, "addObserver:forKeyPath:options:context:"
+DEFSEL observeValueForKeyPath_ofObject_change_context_, "observeValueForKeyPath:ofObject:change:context:"
 DEFSEL standardUserDefaults, "standardUserDefaults"
 DEFSEL stringForKey_, "stringForKey:"
 DEFSEL UTF8String, "UTF8String"

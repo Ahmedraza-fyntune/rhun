@@ -83,7 +83,7 @@ def assets():
                     key, sep, value = line.partition('=')
                     if sep:
                         values[key.strip()] = value.strip()
-                for key in ('name', 'files', 'first_line'):
+                for key in ('name', 'files', 'first_line', 'icon'):
                     data = values.get(key, '').encode() + b'\0'
                     lines += [f'{label}_g{key}: .byte ' + ','.join(map(str, data))]
         lines += [f'.globl {kind}_table, {kind}_count', '.p2align 3',
@@ -92,7 +92,7 @@ def assets():
             label = f'{kind}_{i}'
             fields = [label + '_name', label, label + '_end']
             if kind == 'syntax':
-                fields += [label + '_g' + key for key in ('name', 'files', 'first_line')]
+                fields += [label + '_g' + key for key in ('name', 'files', 'first_line', 'icon')]
             lines += ['.quad ' + ','.join(fields)]
     version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
     lines += ['.globl rhun_version, rhun_dist', f'rhun_version: .asciz "{version}"',
@@ -119,7 +119,7 @@ def main():
     res = OUT / 'rhun.res'
     # Relative paths avoid llvm-rc interpreting a POSIX absolute path as a /flag.
     run([rc, '/no-preprocess', '/C', '65001', '/fo', res.relative_to(ROOT), resource.relative_to(ROOT)])
-    exclude = {'src/start.s', 'src/plat/wayland.s', 'src/plat/x11.s'}
+    exclude = {'src/start.s', 'src/plat/wayland.s', 'src/plat/x11.s', 'src/plat/appearance.s'}
     sources = [p for p in sorted((ROOT / 'src').rglob('*.s'))
                if 'mac' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).as_posix() not in exclude]
     generated = OUT / 'assets.s'

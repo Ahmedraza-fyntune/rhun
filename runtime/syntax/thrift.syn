@@ -1,5 +1,6 @@
 name = Thrift
 files = *.thrift
+icon = code orange
 comment = //
 comment = #
 block = /* */

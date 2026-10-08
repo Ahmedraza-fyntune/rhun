@@ -37,6 +37,7 @@ check grammars env HOME=/nonexistent XDG_CONFIG_HOME=tests/data/config build/gra
 dups=$(grep -h '^files' runtime/syntax/*.syn | sed 's/^files *= *//' | tr ' ' '\n' | grep -v '^$' | sort | uniq -d)
 if [ -z "$dups" ]; then echo "ok   grammar-patterns"; else echo "FAIL grammar-patterns: $dups"; fail=1; fi
 check prefix-tag build/grammar_test --try tests/data/prefix-tag.syn tests/data/prefix-tag.txt
+check fileicons env HOME=/nonexistent XDG_CONFIG_HOME=tests/data/fileicons-config build/fileicon_test tests/data/fileicons.txt
 if [ "$(build/rhun --version)" = "rhun $(cat VERSION)" ]; then echo "ok   version"; else echo "FAIL version"; fail=1; fi
 python3 tests/palette-scroll.py || fail=1
 python3 tests/commit-wrap.py || fail=1
@@ -64,6 +65,7 @@ python3 tests/x11-auth.py || fail=1
 python3 tests/explorer-delete.py || fail=1
 python3 tests/explorer-create.py || fail=1
 python3 tests/settings-ui.py || fail=1
+python3 tests/appearance.py || fail=1
 python3 tests/editor-matrix.py || fail=1
 python3 tests/editor-hscroll.py || fail=1
 python3 tests/splitter.py || fail=1

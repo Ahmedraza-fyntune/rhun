@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             [sys.executable, str(ROOT / 'tests/windows-longpaths.py')], check=True))
         check('clipboard/contention-copy-and-paste', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
-        for name in ('settings-ui', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity'):
+        for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity'):
             check('ui/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
@@ -391,6 +391,13 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         codex.write_text((ROOT / 'tests/data/agents/codex.jsonl').read_text(encoding='utf-8').replace('@PROJECT@', json.dumps(spelling)[1:-1]), encoding='utf-8')
         os.utime(claude, (1700000000, 1700000000))
         os.utime(codex, (1700000100, 1700000100))
+        # Grok Build names the cwd in summary.json, here in the backslash spelling
+        grok = home / '.grok/sessions/project/01a11c1e-808b-7263-a007-7a09593740c9'
+        grok.mkdir(parents=True)
+        (grok / 'updates.jsonl').write_text((ROOT / 'tests/data/agents/grok.jsonl').read_text(encoding='utf-8').replace('@PROJECT@', winpath(project)), encoding='utf-8')
+        (grok / 'summary.json').write_text((ROOT / 'tests/data/agents/grok.json').read_text(encoding='utf-8').replace('@PROJECT@', json.dumps(winpath(project).replace('/', '\\'))[1:-1]), encoding='utf-8')
+        os.utime(grok / 'updates.jsonl', (1699999900, 1699999900))
+        env.pop('GROK_HOME', None)
         output = run('rhun.com', winpath(project), '--headless', '1400x860', '--script',
                      'tests/scripts/agents.rsc', env=env).stdout
         equal(output, (ROOT / 'tests/data/agents.ui.expected').read_bytes())

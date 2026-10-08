@@ -35,14 +35,28 @@ def contours(filename):
     x, y, width, height = map(float, svg.attrib['viewBox'].split())
     scale = 112 / max(width, height)
     result = []
+
+    def close(contour):
+        rounded = []
+        for point in contour:
+            point = tuple(round(v) for v in point)
+            if not rounded or point != rounded[-1]:
+                rounded.append(point)
+        if rounded[-1] == rounded[0]:
+            rounded.pop()
+        assert 3 <= len(rounded) <= 255
+        assert all(0 <= v <= 128 for point in rounded for v in point)
+        result.append(rounded)
+
     for element in svg.iter('{http://www.w3.org/2000/svg}path'):
         path = SvgPath(element.attrib['d'])
         points = iter(zip(path.points[::2], path.points[1::2]))
         contour = []
         for operation in path.operators:
             if operation in (0, 1):  # move, line
-                if operation == 0:
-                    assert not contour, 'all contours must be closed'
+                if operation == 0 and contour:
+                    close(contour)  # a fill closes a subpath that has no Z
+                    contour = []
                 px, py = next(points)
                 contour.append((64 + (px - x - width / 2) * scale,
                                 64 + (py - y - height / 2) * scale))
@@ -53,20 +67,11 @@ def contours(filename):
                 flatten(contour[-1], controls, contour)
             else:
                 assert operation == 3, operation  # close
-                rounded = []
-                for point in contour:
-                    point = tuple(round(v) for v in point)
-                    if not rounded or point != rounded[-1]:
-                        rounded.append(point)
-                if rounded[-1] == rounded[0]:
-                    rounded.pop()
-                assert 3 <= len(rounded) <= 255
-                assert all(0 <= v <= 128 for point in rounded for v in point)
-                result.append(rounded)
+                close(contour)
                 contour = []
-        assert not contour, 'all contours must be closed'
+        if contour:
+            close(contour)
     return result
 
-
-data = {name: contours(ASSETS / f'{name.lower()}.svg') for name in ('CLAUDE', 'OPENAI')}
+data = {name: contours(ASSETS / f'{name.lower()}.svg') for name in ('CLAUDE', 'OPENAI', 'GROK')}
 (ASSETS / 'contours.json').write_text(json.dumps(data, separators=(',', ':')) + '\n')

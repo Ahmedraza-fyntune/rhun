@@ -1,4 +1,4 @@
-# agents panel: Claude Code and Codex sessions of the current project, live
+# agents panel: Claude Code, Codex and Grok Build sessions of the current project, live
 .include "rhun.inc"
 
 STRUCT
@@ -996,11 +996,28 @@ add_msg:
     je 5f
     cmp r8d, 13
     je 4b
+    cmp r8d, 27
+    je 41f
     cmp r8d, 32
     jae 5f
     mov r8d, ' '
 5:  mov [rax + rdx], r8b
     inc rdx
+    jmp 4b
+    # an escape sequence (the colors of a command's output) shows nothing: a CSI one up to its final
+    # byte, any other the escape alone
+41: cmp rcx, r14
+    jae 4b
+    cmp byte ptr [r13 + rcx], '['
+    jne 4b
+    inc rcx
+42: cmp rcx, r14
+    jae 4b
+    movzx r8d, byte ptr [r13 + rcx]
+    inc rcx
+    sub r8d, 0x40
+    cmp r8d, 0x3e
+    ja 42b
     jmp 4b
 6:  mov byte ptr [rax + rdx], 0
     mov rcx, [rsp]
@@ -1142,6 +1159,8 @@ FN ingest_line
     mov r12, rax
     cmp dword ptr [rbx + AS_kind], 2
     je .Lil_codex
+    cmp dword ptr [rbx + AS_kind], 3
+    je .Lil_grok
     # ---- claude ----
     mov rdi, r12
     lea rsi, [rip + .Ltype]
@@ -1518,8 +1537,231 @@ FN ingest_line
     mov rdx, rax
     xor r8d, r8d
     call add_msg
+    jmp .Lil_ret
+    # ---- grok build: {"params": {"update": {"sessionUpdate": kind, ...}}}, whole messages ----
+.Lil_grok:
+    mov rdi, r12
+    lea rsi, [rip + .Lparams]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Lupdate]
+    call json_get
+    mov r13, rax
+    mov rdi, rax
+    lea rsi, [rip + .Lsession_update]
+    call json_get
+    mov r14, rax
+    mov rdi, rax
+    lea rsi, [rip + .Lgk_user]
+    call json_is
+    test eax, eax
+    jnz 110f
+    cmp dword ptr [rsp], 0
+    je .Lil_ret                 # a title comes from a prompt only
+    mov rdi, r14
+    lea rsi, [rip + .Lgk_agent]
+    call json_is
+    test eax, eax
+    jnz 111f
+    mov rdi, r14
+    lea rsi, [rip + .Lgk_tool]
+    call json_is
+    test eax, eax
+    jnz 113f
+    mov rdi, r14
+    lea rsi, [rip + .Lgk_tool_update]
+    call json_is
+    test eax, eax
+    jnz 114f
+    jmp .Lil_ret                # thoughts, plans, modes, hooks, usage
+110: mov rdi, r13
+    lea rsi, [rip + .Lcontent]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Ltext]
+    call json_get
+    mov rdi, rax
+    call json_str
+    test rdx, rdx
+    jz .Lil_ret
+    mov [rsp + 8], rax
+    mov [rsp + 16], rdx
+    mov rdi, rbx
+    mov rsi, rax
+    xor ecx, ecx
+    call set_title
+    mov esi, R_USER
+    jmp 112f
+111: mov rdi, r13
+    lea rsi, [rip + .Lcontent]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Ltext]
+    call json_get
+    mov rdi, rax
+    call json_str
+    test rdx, rdx
+    jz .Lil_ret
+    mov [rsp + 8], rax
+    mov [rsp + 16], rdx
+    mov esi, R_ASSIST
+112: cmp dword ptr [rsp], 0
+    je .Lil_ret
+    mov rdi, rbx
+    mov rdx, [rsp + 8]
+    mov rcx, [rsp + 16]
+    xor r8d, r8d
+    call add_msg
+    jmp .Lil_ret
+    # a tool call: its title is the tool's name, rawInput its arguments as an object
+113: mov rdi, r13
+    lea rsi, [rip + .Ltitle]
+    call json_get
+    mov rdi, rax
+    call json_str
+    test rdx, rdx
+    jnz 1131f
+    lea rax, [rip + .Ltool]
+1131: mov [rsp + 16], rax
+    mov rdi, r13
+    lea rsi, [rip + .Lraw_input]
+    call json_get
+    mov rdi, rax
+    call tool_summary
+    mov rdi, rbx
+    mov esi, R_TOOL
+    mov rcx, rdx
+    mov rdx, rax
+    mov r8, [rsp + 16]
+    call add_msg
+    jmp .Lil_ret
+    # its result: the update that completes (or fails) the call, with text parts and diffs
+114: mov rdi, r13
+    lea rsi, [rip + .Lstatus]
+    call json_get
+    mov r14, rax
+    mov rdi, rax
+    lea rsi, [rip + .Lgk_completed]
+    call json_is
+    test eax, eax
+    jnz 115f
+    mov rdi, r14
+    lea rsi, [rip + .Lgk_failed]
+    call json_is
+    test eax, eax
+    jz .Lil_ret                 # progress: the call's kind, title or locations
+115: mov rdi, r13
+    lea rsi, [rip + .Lcontent]
+    call json_get
+    mov r14, rax
+    lea rdi, [rip + tmp]
+    call sb_clear
+    xor r15d, r15d
+116: mov rdi, r14
+    call json_len
+    cmp r15d, eax
+    jae 118f
+    mov rdi, r14
+    mov esi, r15d
+    call json_at
+    mov [rsp + 8], rax
+    mov rdi, rax
+    lea rsi, [rip + .Lcontent]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Ltext]
+    call json_get
+    test rax, rax
+    jnz 1161f
+    mov rdi, [rsp + 8]
+    lea rsi, [rip + .Lnew_text]
+    call json_get
+1161: mov rdi, rax
+    call json_str
+    test rdx, rdx
+    jz 117f
+    push rax
+    push rdx
+    cmp qword ptr [rip + tmp + SB_len], 0
+    je 1162f
+    lea rdi, [rip + tmp]
+    mov esi, 10
+    call sb_push_byte
+1162: pop rdx
+    pop rsi
+    lea rdi, [rip + tmp]
+    call sb_push
+117: inc r15d
+    jmp 116b
+118: cmp qword ptr [rip + tmp + SB_len], 0
+    je .Lil_ret
+    mov rdi, rbx
+    mov esi, R_RESULT
+    mov rdx, [rip + tmp + SB_ptr]
+    mov rcx, [rip + tmp + SB_len]
+    xor r8d, r8d
+    call add_msg
 .Lil_ret:
     EPILOGUE
+
+# agent_grok_summary(log) -> summary.json beside a Grok Build session's log, parsed (the JSON arena), or 0
+FN agent_grok_summary
+    PROLOGUE
+    mov rbx, rdi
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_dirlen
+    mov r12, rax
+    lea rdi, [rip + line]
+    call sb_clear
+    lea rdi, [rip + line]
+    mov rsi, rbx
+    mov rdx, r12
+    call sb_push
+    lea rdi, [rip + line]
+    lea rsi, [rip + .Lgrok_summary]
+    call sb_push_cstr
+    mov rdi, [rip + line + SB_ptr]
+    mov esi, 1 << 20
+    call agent_read_head
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, rax
+    mov rsi, rdx
+    call json_parse
+    mov rbx, rax
+    mov rdi, r12
+    call mem_free
+    mov rax, rbx
+9:  EPILOGUE
+
+# agent_grok_title(s): Grok Build's title for the session (generated, or set with /rename) replaces the one
+# from its first prompt
+FN agent_grok_title
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + AS_path]
+    call agent_grok_summary
+    mov rdi, rax
+    lea rsi, [rip + .Lgenerated_title]
+    call json_get
+    mov rdi, rax
+    call json_str
+    test rdx, rdx
+    jz 9f
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, [rbx + AS_title]
+    call mem_free
+    mov qword ptr [rbx + AS_title], 0
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    call set_title
+9:  EPILOGUE
 
 # session_update(s): parse bytes appended since the last read
 FN session_update
@@ -1944,8 +2186,11 @@ FN agents_dump
     mov r12, [rax + rbx*8]
     lea rsi, [rip + .Lclaude_name]
     cmp dword ptr [r12 + AS_kind], 2
-    jne 2f
+    jne 23f
     lea rsi, [rip + .Lcodex_name]
+23: cmp dword ptr [r12 + AS_kind], 3
+    jne 2f
+    lea rsi, [rip + .Lgrok_name]
 2:  mov rdi, r15
     call sb_push_cstr
     mov rsi, [r12 + AS_worktree]
@@ -2070,7 +2315,12 @@ agent_badge:
     lea r15, [rip + .Lcodex_name]
     mov dword ptr [rsp], IC_OPENAI
     COLOR ebx, T_ACCENT
-3:  COLOR edi, T_PANEL
+3:  cmp edi, 3
+    jne 4f
+    lea r15, [rip + .Lgrok_name]
+    mov dword ptr [rsp], IC_GROK
+    COLOR ebx, T_FG             # xAI's mark is black and white
+4:  COLOR edi, T_PANEL
     mov esi, ebx
     mov edx, 48
     call color_mix
@@ -2379,7 +2629,8 @@ msg_height:
 9:  mov [rbx + AM_h], eax
     EPILOGUE
 
-# wr_setup(WR*) using rbx = msg, r12d = width
+# wr_setup(WR*) using rbx = msg, r12d = width. Measuring (msg_height) and drawing (draw_msg) share it,
+# so a message wraps the same in both.
 wr_setup:
     mov rax, [rbx + AM_text]
     mov [rdi + WR_text], rax
@@ -2392,6 +2643,9 @@ wr_setup:
     jne 1f
     lea rax, [rip + g_face_small]
     mov ecx, [rip + g_face_small + FACE_lineh]
+    mov edx, r12d               # a result's box insets its text
+    sub edx, [rip + g_mt + 4*MI_16]
+    mov [rdi + WR_w], edx
 1:  mov [rdi + WR_face], rax
     add ecx, [rip + g_mt + 4*MI_3]
     mov [rdi + WR_lh], ecx
@@ -3082,7 +3336,6 @@ draw_msg:
     push r12
     push r12
     mov r12d, [r14 + 32]
-    sub r12d, [rip + g_mt + 4*MI_16]
     call wr_setup
     pop r12
     pop r12
@@ -3116,8 +3369,9 @@ role_names: .quad .Lr0, .Lr1, .Lr2, .Lr3, .Lr4
 .Lnoproj: .asciz "Open a folder to see its agent sessions"
 .Luntitled: .asciz "Untitled session"
 .Lempty_thread: .asciz "Nothing here yet"
-.Lclaude_name: .asciz "Claude Code"
+.Lclaude_name: .asciz "Claude"
 .Lcodex_name: .asciz "Codex"
+.Lgrok_name: .asciz "Grok"
 .Lworktree_dump: .asciz " [worktree: "
 .Ldot: .asciz "  \302\267  "
 .Llive: .asciz "  \302\267  live"
@@ -3156,10 +3410,27 @@ role_names: .quad .Lr0, .Lr1, .Lr2, .Lr3, .Lr4
 .Ls_description: .asciz "description"
 .Ls_prompt: .asciz "prompt"
 .Ls_query: .asciz "query"
+.Ls_target_file: .asciz "target_file"
+.Ls_target_directory: .asciz "target_directory"
+.Lparams: .asciz "params"
+.Lupdate: .asciz "update"
+.Lsession_update: .asciz "sessionUpdate"
+.Lgk_user: .asciz "user_message_chunk"
+.Lgk_agent: .asciz "agent_message_chunk"
+.Lgk_tool: .asciz "tool_call"
+.Lgk_tool_update: .asciz "tool_call_update"
+.Ltitle: .asciz "title"
+.Lraw_input: .asciz "rawInput"
+.Lstatus: .asciz "status"
+.Lgk_completed: .asciz "completed"
+.Lgk_failed: .asciz "failed"
+.Lnew_text: .asciz "newText"
+.Lgenerated_title: .asciz "generated_title"
+.Lgrok_summary: .asciz "/summary.json"
 .p2align 3
 summary_keys:
-    .quad .Ls_command, .Ls_file_path, .Ls_path, .Ls_pattern, .Ls_url, .Ls_description
-    .quad .Ls_prompt, .Ls_query, 0
+    .quad .Ls_command, .Ls_file_path, .Ls_target_file, .Ls_path, .Ls_target_directory, .Ls_pattern
+    .quad .Ls_url, .Ls_description, .Ls_prompt, .Ls_query, 0
 
 .data
 view: .quad -1

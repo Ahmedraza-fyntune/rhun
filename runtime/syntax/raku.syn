@@ -1,5 +1,6 @@
 name = Raku
 files = *.raku *.rakumod *.rakutest *.p6 *.pm6 *.pl6
+icon = code yellow
 first_line = raku perl6
 comment = #
 string = " \

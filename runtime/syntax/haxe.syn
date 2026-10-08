@@ -1,5 +1,6 @@
 name = Haxe
 files = *.hx
+icon = haxe orange
 comment = //
 block = /* */
 string = " \

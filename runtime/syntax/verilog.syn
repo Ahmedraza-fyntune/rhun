@@ -1,5 +1,6 @@
 name = Verilog
 files = *.sv *.svh *.vh
+icon = code green
 comment = //
 block = /* */
 string = " \

@@ -10,7 +10,7 @@ emit commit_ai_script runtime/ai/commit.sh
 emit font_mono assets/fonts/IosevkaFixed-Regular.ttf
 printf '.globl font_ui, font_ui_end\n.set font_ui, font_mono\n.set font_ui_end, font_mono_end\n' 
 # name table of runtime files: (name ptr, data ptr, data end); a grammar's entry also has its name,
-# files and first_line, for syntax_load_all to register it without parsing
+# files, first_line and icon, for syntax_load_all to register it without parsing
 for kind in themes syntax; do
     list=$(ls runtime/$kind 2>/dev/null | LC_ALL=C sort)
     i=0
@@ -37,6 +37,7 @@ for kind in themes syntax; do
             printf "syntax_%d_gname: .asciz \"%s\"\n", n, esc(v["name"])
             printf "syntax_%d_gfiles: .asciz \"%s\"\n", n, esc(v["files"])
             printf "syntax_%d_gfirst: .asciz \"%s\"\n", n, esc(v["first_line"])
+            printf "syntax_%d_gicon: .asciz \"%s\"\n", n, esc(v["icon"])
             n++
         }
         FNR == 1 { flush(); f = FILENAME; split("", v) }
@@ -44,7 +45,7 @@ for kind in themes syntax; do
             eq = index($0, "=")
             if (eq == 0) next
             key = substr($0, 1, eq - 1); gsub(/^[ \t\r]+|[ \t\r]+$/, "", key)
-            if (key != "name" && key != "files" && key != "first_line") next
+            if (key != "name" && key != "files" && key != "first_line" && key != "icon") next
             val = substr($0, eq + 1); gsub(/^[ \t\r]+|[ \t\r]+$/, "", val)
             v[key] = val
         }
@@ -54,7 +55,7 @@ for kind in themes syntax; do
     j=0
     while [ $j -lt $i ]; do
         if [ $kind = syntax ]; then
-            printf '.quad syntax_%d_name, syntax_%d, syntax_%d_end, syntax_%d_gname, syntax_%d_gfiles, syntax_%d_gfirst\n' $j $j $j $j $j $j
+            printf '.quad syntax_%d_name, syntax_%d, syntax_%d_end, syntax_%d_gname, syntax_%d_gfiles, syntax_%d_gfirst, syntax_%d_gicon\n' $j $j $j $j $j $j $j
         else
             printf '.quad %s_%d_name, %s_%d, %s_%d_end\n' $kind $j $kind $j $kind $j
         fi

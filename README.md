@@ -36,14 +36,14 @@ When coding agents do more of the heavy lifting, you may not need everything tha
 - **Built-in terminal:** Run your shell, tools, and coding agents right beside the code.
 - **Git:** Stage, commit, pull, and push; see changed files, read diffs, and browse commit history. Optionally draft commit messages with your Claude or Codex subscription, or a local Ollama model.
 - **Fuzzy search:** Jump to a file or search across the whole project.
-- **Agents panel:** See Claude Code and Codex sessions as they work.
+- **Agents panel:** See Claude Code, Codex, and Grok Build sessions as they work.
 
 <p>
   <img src="assets/social/screenshot-dark.png" width="49%" alt="rhun, dark theme">
   <img src="assets/social/screenshot-light.png" width="49%" alt="rhun, light theme">
 </p>
 
-Pick from 40 light and dark themes. On Omarchy, choose **Follow Omarchy**, and rhun switches themes with your desktop.
+Pick from 40 light and dark themes, one for each mode: rhun switches with your system's dark mode. On Omarchy, choose **Follow Omarchy**, and rhun switches themes with your desktop.
 
 Fast built-in terminal:
 

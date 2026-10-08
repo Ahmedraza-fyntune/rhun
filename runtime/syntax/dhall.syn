@@ -1,5 +1,6 @@
 name = Dhall
 files = *.dhall
+icon = config green
 comment = --
 block = {- -}
 string = " \

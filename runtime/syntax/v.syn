@@ -1,5 +1,6 @@
 name = V
 files = *.v *.vsh
+icon = code blue
 comment = //
 block = /* */
 string = " \

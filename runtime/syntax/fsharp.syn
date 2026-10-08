@@ -1,5 +1,6 @@
 name = F#
 files = *.fs *.fsi *.fsx *.fsscript
+icon = f-sharp blue
 comment = //
 block = (* *)
 mstring = """

@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Tools
         timeout-minutes: 10
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq binutils curl wget git python3 xvfb openbox xdotool x11-utils sway gcc pkg-config libwayland-dev wayland-protocols strace zsh fish tcsh
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq binutils curl wget git python3 xvfb openbox xdotool x11-utils sway gcc pkg-config libwayland-dev wayland-protocols strace zsh fish tcsh dbus xsettingsd xdg-desktop-portal xdg-desktop-portal-gtk dconf-service dconf-cli libglib2.0-bin gsettings-desktop-schemas
       - name: Build
         run: ./build.sh test
       - name: Full editor tests
@@ -37,6 +37,10 @@ jobs:
         run: |
           python3 tests/linux-scroll.py
           python3 tests/linux-scroll.py --wayland
+      - name: System dark mode (portal, XSETTINGS, settings.ini)
+        run: |
+          python3 tests/linux-appearance.py
+          python3 tests/linux-appearance.py --wayland
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -62,6 +66,10 @@ jobs:
           sh tests/install.sh
           python3 tests/install-download.py
           python3 tests/mac-defaults.py
+      - name: System dark mode
+        env:
+          RHUN_TEST_SYSTEM_APPEARANCE: '1'
+        run: python3 tests/mac-appearance.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

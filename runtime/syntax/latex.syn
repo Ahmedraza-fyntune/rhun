@@ -1,5 +1,6 @@
 name = LaTeX
 files = *.tex *.sty *.cls *.ltx *.dtx
+icon = tex blue
 comment = %
 ident = \@
 region = $ $ string

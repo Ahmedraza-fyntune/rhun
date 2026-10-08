@@ -435,7 +435,8 @@ ENDSTRUCT INI_SIZE
 .equ T_GIT_ADD, T_TERM + 16
 .equ T_GIT_MOD, T_TERM + 17
 .equ T_GIT_DEL, T_TERM + 18
-.equ T_COUNT, T_TERM + 19
+.equ T_ICON, T_TERM + 19        # file icons: red orange yellow green blue purple pink cyan grey white
+.equ T_COUNT, T_ICON + 10
 
 .macro COLOR reg, slot
     mov \reg, [rip + g_theme + 4*(\slot)]
@@ -706,9 +707,121 @@ ENDSTRUCT TF_SIZE
 .equ IC_DISCARD, 30
 .equ IC_FILE_PLUS, 31
 .equ IC_FOLDER_PLUS, 32
+# icons from SVG files (tools/icons.py)
 .equ IC_CLAUDE, 33
 .equ IC_OPENAI, 34
-.equ IC_COUNT, 35
+.equ IC_GROK, 35
+.equ IC_F_R, 36
+.equ IC_F_APPLE, 37
+.equ IC_F_ASM, 38
+.equ IC_F_AUDIO, 39
+.equ IC_F_BABEL, 40
+.equ IC_F_BAZEL, 41
+.equ IC_F_C, 42
+.equ IC_F_C_SHARP, 43
+.equ IC_F_CLOCK, 44
+.equ IC_F_CLOJURE, 45
+.equ IC_F_CODE, 46
+.equ IC_F_CONFIG, 47
+.equ IC_F_CPP, 48
+.equ IC_F_CRYSTAL, 49
+.equ IC_F_CSS, 50
+.equ IC_F_CSV, 51
+.equ IC_F_CU, 52
+.equ IC_F_D, 53
+.equ IC_F_DART, 54
+.equ IC_F_DB, 55
+.equ IC_F_DEFAULT, 56
+.equ IC_F_DOCKER, 57
+.equ IC_F_EDITORCONFIG, 58
+.equ IC_F_EJS, 59
+.equ IC_F_ELIXIR, 60
+.equ IC_F_ELM, 61
+.equ IC_F_ESLINT, 62
+.equ IC_F_ETHEREUM, 63
+.equ IC_F_F_SHARP, 64
+.equ IC_F_FAVICON, 65
+.equ IC_F_FONT, 66
+.equ IC_F_GIT, 67
+.equ IC_F_GO2, 68
+.equ IC_F_GRADLE, 69
+.equ IC_F_GRAILS, 70
+.equ IC_F_GRAPHQL, 71
+.equ IC_F_HAML, 72
+.equ IC_F_HASKELL, 73
+.equ IC_F_HAXE, 74
+.equ IC_F_HEROKU, 75
+.equ IC_F_HEX, 76
+.equ IC_F_HTML, 77
+.equ IC_F_HTML_ERB, 78
+.equ IC_F_IGNORED, 79
+.equ IC_F_ILLUSTRATOR, 80
+.equ IC_F_IMAGE, 81
+.equ IC_F_INFO, 82
+.equ IC_F_JAVA, 83
+.equ IC_F_JAVASCRIPT, 84
+.equ IC_F_JENKINS, 85
+.equ IC_F_JINJA, 86
+.equ IC_F_JSON, 87
+.equ IC_F_JULIA, 88
+.equ IC_F_KOTLIN, 89
+.equ IC_F_LESS, 90
+.equ IC_F_LICENSE, 91
+.equ IC_F_LIQUID, 92
+.equ IC_F_LOCK, 93
+.equ IC_F_LUA, 94
+.equ IC_F_MAKEFILE, 95
+.equ IC_F_MARKDOWN, 96
+.equ IC_F_MAVEN, 97
+.equ IC_F_MUSTACHE, 98
+.equ IC_F_NIM, 99
+.equ IC_F_NOTEBOOK, 100
+.equ IC_F_NPM, 101
+.equ IC_F_OCAML, 102
+.equ IC_F_PDF, 103
+.equ IC_F_PERL, 104
+.equ IC_F_PHOTOSHOP, 105
+.equ IC_F_PHP, 106
+.equ IC_F_POWERSHELL, 107
+.equ IC_F_PRISMA, 108
+.equ IC_F_PROLOG, 109
+.equ IC_F_PUG, 110
+.equ IC_F_PUPPET, 111
+.equ IC_F_PURESCRIPT, 112
+.equ IC_F_PYTHON, 113
+.equ IC_F_REACT, 114
+.equ IC_F_RUBY, 115
+.equ IC_F_RUST, 116
+.equ IC_F_SASS, 117
+.equ IC_F_SCALA, 118
+.equ IC_F_SHELL, 119
+.equ IC_F_SLIM, 120
+.equ IC_F_SVELTE, 121
+.equ IC_F_SVG, 122
+.equ IC_F_SWIFT, 123
+.equ IC_F_TERRAFORM, 124
+.equ IC_F_TEX, 125
+.equ IC_F_TODO, 126
+.equ IC_F_TSCONFIG, 127
+.equ IC_F_TWIG, 128
+.equ IC_F_TYPESCRIPT, 129
+.equ IC_F_VALA, 130
+.equ IC_F_VIDEO, 131
+.equ IC_F_VITE, 132
+.equ IC_F_VUE, 133
+.equ IC_F_WASM, 134
+.equ IC_F_WAT, 135
+.equ IC_F_WEBPACK, 136
+.equ IC_F_WINDOWS, 137
+.equ IC_F_WORD, 138
+.equ IC_F_XLS, 139
+.equ IC_F_XML, 140
+.equ IC_F_YARN, 141
+.equ IC_F_YML, 142
+.equ IC_F_ZIG, 143
+.equ IC_F_ZIP, 144
+.equ IC_COUNT, 145
+# end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
 .equ ID_EXP_NEW, 0x3f00
@@ -762,6 +875,7 @@ STRUCT
 F GR_name, 8
 F GR_files, 8           # space separated patterns
 F GR_first, 8           # first-line prefixes (shebang)
+F GR_icon, 8            # explorer icon: icon and color names
 F GR_regions, VEC_SIZE  # REG items
 F GR_lines, VEC_SIZE    # LR items: line prefix -> class
 F GR_words, 8           # hash table of WORD
@@ -776,7 +890,9 @@ F GR_rstart, 256        # 1 for bytes that can start a region
 F GR_wchar, 256         # 1 for identifier bytes
 F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it), or 0
 F GR_srclen, 8
+F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
 ENDSTRUCT GR_SIZE
+.equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
 .equ GF_FUNCS, 2
 .equ GF_CAPTYPES, 4
@@ -953,7 +1069,7 @@ F AS_mtime, 8
 F AS_off, 8             # bytes parsed
 F AS_msgs, VEC_SIZE     # AM
 F AS_part, SB_SIZE      # incomplete trailing line
-F AS_kind, 4            # 1 claude, 2 codex
+F AS_kind, 4            # 1 claude, 2 codex, 3 grok
 F AS_loaded, 4          # messages parsed (opened at least once)
 F AS_titled, 4          # has a custom title
 F AS_pad, 4

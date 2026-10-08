@@ -1,5 +1,6 @@
 name = PHP
 files = *.php *.phtml
+icon = php purple
 first_line = php
 comment = //
 comment = #

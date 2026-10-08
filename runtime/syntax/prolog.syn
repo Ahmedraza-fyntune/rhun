@@ -1,5 +1,6 @@
 name = Prolog
 files = *.prolog
+icon = prolog orange
 first_line = swipl
 comment = %
 block = /* */

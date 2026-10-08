@@ -1,5 +1,6 @@
 name = Pug
 files = *.pug *.jade
+icon = pug red
 prefix = .a #a
 region = //- eol comment bol
 region = // eol comment bol

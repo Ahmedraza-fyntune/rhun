@@ -1,5 +1,6 @@
 name = SQL
 files = *.sql *.psql *.ddl
+icon = db pink
 comment = --
 block = /* */
 string = '

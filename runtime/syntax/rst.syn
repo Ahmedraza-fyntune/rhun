@@ -1,5 +1,6 @@
 name = reStructuredText
 files = *.rst
+icon = default blue
 line = .. preproc
 line = === heading
 line = --- heading

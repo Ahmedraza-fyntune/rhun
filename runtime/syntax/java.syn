@@ -1,5 +1,6 @@
 name = Java
 files = *.java
+icon = java red
 comment = //
 block = /* */
 mstring = """ \

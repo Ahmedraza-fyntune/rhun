@@ -1,5 +1,6 @@
 name = HAML
 files = *.haml
+icon = haml red
 prefix = %t .a #a
 region = -# eol comment bol
 region = / eol comment bol

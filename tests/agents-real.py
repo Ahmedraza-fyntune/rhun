@@ -103,8 +103,10 @@ def context(base, name, home):
     config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n'
                       '[editor]\ncursor_blink = false\n[files]\nrestore_session = false\n'
                       'restore_project = false\n')
-    return folder, dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(folder / 'config'),
-                        XDG_STATE_HOME=str(folder / 'state'), SHELL='/nonexistent')
+    env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(folder / 'config'),
+               XDG_STATE_HOME=str(folder / 'state'), SHELL='/nonexistent')
+    env.pop('GROK_HOME', None)
+    return folder, env
 
 
 def decode(packet):
@@ -173,7 +175,7 @@ def check_rows(packet, reference, main, limit):
 
 
 def labels(rows):
-    return [('Claude Code' if row['kind'] == 1 else 'Codex') +
+    return [{1: 'Claude', 2: 'Codex', 3: 'Grok'}[row['kind']] +
             (' [worktree: ' + row['badge'] + ']' if row['badge'] else '') +
             ': ' + (row['title'] or 'Untitled session') for row in rows]
 

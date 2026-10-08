@@ -1,5 +1,6 @@
 name = Groovy
 files = *.groovy *.gradle *.gvy Jenkinsfile
+icon = grails green
 first_line = groovy
 comment = //
 block = /* */

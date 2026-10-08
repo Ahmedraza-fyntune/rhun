@@ -1,5 +1,6 @@
 name = Pascal
 files = *.pas *.dpr *.lpr *.dpk
+icon = code yellow
 case = insensitive
 comment = //
 region = {$ } preproc

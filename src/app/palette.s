@@ -61,7 +61,7 @@ items: .zero VEC_SIZE
 results: .zero VEC_SIZE
 strings: .zero SB_SIZE          # label storage for file items
 pal_label: .quad 0              # prompt label
-pal_theme_before: .quad 0
+pal_theme_slot: .quad 0         # the theme setting the theme list picks for (theme_slot)
 pal_path: .zero 4096
 scan_depth: .long 0
 scan_prefix: .zero 4096         # relative dir during scan
@@ -104,7 +104,13 @@ FN palette_field
 palette_open:
     PROLOGUE
     mov ebx, edi
-    call grep_release
+    # from the theme list to another list (its shortcut): the settings' theme again, as on closing
+    cmp dword ptr [rip + pal_mode], PM_THEMES
+    jne 1f
+    cmp ebx, PM_THEMES
+    je 1f
+    call theme_apply_config
+1:  call grep_release
     mov [rip + pal_mode], ebx
     mov dword ptr [rip + pal_sel], 0
     mov dword ptr [rip + pal_scroll], 0
@@ -134,18 +140,20 @@ palette_open:
     jne 8f
     call load_langs
 8:  call palette_filter
-    mov dword ptr [rip + g_dirty], 1
+    # the theme list shows its setting's theme, which need not be the one shown (the light mode's
+    # theme from Settings while the system is dark)
+    cmp ebx, PM_THEMES
+    jne 9f
+    call preview
+9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 FN palette_close
     push rbx
-    # themes: Esc restores the previous theme
+    # themes: the settings' theme again, after a preview or a change of the system's mode
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
-    mov rdi, [rip + pal_theme_before]
-    cmp rdi, [rip + g_theme_cur]
-    je 1f
-    call theme_apply
+    call theme_apply_config
 1:  call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
@@ -171,11 +179,24 @@ FN cmd_quick_open
 FN cmd_command_palette
     mov edi, PM_COMMANDS
     jmp palette_open
+# Select Color Theme picks for the setting in use: theme, or the dark or light mode's theme
+# while the theme follows the system (VS Code saves it in the same place)
 FN cmd_select_theme
-    mov rax, [rip + g_theme_cur]
-    mov [rip + pal_theme_before], rax
+    call theme_slot
+    mov rdi, rax
+    jmp cmd_select_theme_for
+# cmd_select_theme_for(setting): the theme list for one theme setting (Settings' buttons)
+FN cmd_select_theme_for
+    mov [rip + pal_theme_slot], rdi
     mov edi, PM_THEMES
     jmp palette_open
+
+# palette_picks_theme() -> 1 while the theme list is open
+FN palette_picks_theme
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_THEMES
+    sete al
+    ret
 FN cmd_select_language
     cmp qword ptr [rip + g_doc], 0
     je 1f
@@ -899,8 +920,9 @@ load_themes:
     call item_add
     inc rbx
     jmp 1b
-9:  # preselect the current theme
-    mov rax, [rip + g_theme_cur]
+9:  # preselect the setting's theme
+    mov rdi, [rip + pal_theme_slot]
+    call theme_slot_index
     mov [rip + pal_sel], eax
     EPILOGUE
 
@@ -1920,13 +1942,10 @@ palette_accept:
     jmp .Lpa_ret
 2:  cmp ebx, PM_THEMES
     jne 3f
-    mov rdi, [r12 + IT_data]
-    call theme_apply
-    call theme_current_id
-    mov [rip + cfg_theme], rax
-    mov dword ptr [rip + g_settings_changed], 1
-    mov rax, [rip + g_theme_cur]
-    mov [rip + pal_theme_before], rax
+    # saved in the list's setting; closing shows the theme the settings now choose
+    mov rdi, [rip + pal_theme_slot]
+    mov rsi, [r12 + IT_data]
+    call theme_set
     jmp .Lpa_close
 3:  cmp ebx, PM_LANGS
     jne .Lpa_close
@@ -2709,9 +2728,19 @@ placeholder_text:
     lea rcx, [rip + .Lph_cmds]
     cmp eax, PM_COMMANDS
     je 1f
-    lea rcx, [rip + .Lph_themes]
     cmp eax, PM_THEMES
+    jne 2f
+    lea rcx, [rip + .Lph_dark]
+    lea rax, [rip + cfg_dark_theme]
+    cmp [rip + pal_theme_slot], rax
     je 1f
+    lea rcx, [rip + .Lph_light]
+    lea rax, [rip + cfg_light_theme]
+    cmp [rip + pal_theme_slot], rax
+    je 1f
+    lea rcx, [rip + .Lph_themes]
+    jmp 1f
+2:
     lea rcx, [rip + .Lph_langs]
     cmp eax, PM_LANGS
     je 1f
@@ -2765,6 +2794,8 @@ hint_text:
 .Lph_files: .asciz "Search files by name  (> commands, : line)"
 .Lph_cmds: .asciz "Type a command"
 .Lph_themes: .asciz "Select a color theme"
+.Lph_dark: .asciz "Select a theme for dark mode"
+.Lph_light: .asciz "Select a theme for light mode"
 .Lph_langs: .asciz "Select a language"
 .Lph_goto: .asciz "Line number"
 .Lph_grep: .asciz "Search in files"

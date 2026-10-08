@@ -10,6 +10,7 @@ F N_dir, 4
 F N_open, 4
 F N_loaded, 4
 F N_depth, 4
+F N_icon, 4                      # file_icon's icon | color slot << 8 | 0x80000000, 0 until drawn
 ENDSTRUCT N_SIZE
 
 .equ ID_EXP_ROW, 0x300000         # + row: a range of its own, as the tree has no end
@@ -1022,20 +1023,34 @@ FN explorer_draw
 55: add r15d, [rip + g_mt + 4*MI_16]
     add r15d, [rip + g_mt + 4*MI_2]
     M ecx, MI_16
-    mov edi, IC_FILE
-    cmp dword ptr [r14 + N_dir], 0
-    je 56f
     mov edi, IC_FOLDER
-56: mov esi, r15d
+    COLOR r8d, T_ACCENT
+    cmp dword ptr [r14 + N_dir], 0
+    jne 57f
+    # a file: the icon of its name and type, looked up once
+    mov eax, [r14 + N_icon]
+    test eax, eax
+    jnz 56f
+    mov rdi, [r14 + N_name]
+    push rcx
+    call file_icon
+    pop rcx
+    shl edx, 8
+    or eax, edx
+    or eax, 0x80000000
+    mov [r14 + N_icon], eax
+56: mov edi, eax
+    and edi, 0xff
+    shr eax, 8
+    and eax, 0xff
+    lea rdx, [rip + g_theme]
+    mov r8d, [rdx + rax*4]
+57: mov esi, r15d
     mov edx, ebx
     sub edx, ecx
     sar edx, 1
     add edx, r13d
-    COLOR r8d, T_MUTED
-    cmp dword ptr [r14 + N_dir], 0
-    je 57f
-    COLOR r8d, T_ACCENT
-57: call icon_draw
+    call icon_draw
     add r15d, [rip + g_mt + 4*MI_20]
     add r15d, [rip + g_mt + 4*MI_2]
     # git: name in the status color, the letter at the right for files
@@ -1150,7 +1165,7 @@ root_menu_open:
 # explorer_menu_draw(): context menu overlay. An item without a handler is a separating line; with
 # g_menu_keys set the items show their commands' shortcuts on the right.
 FN explorer_menu_draw
-    PROLOGUE 32
+    PROLOGUE 48
     cmp dword ptr [rip + menu_open], 0
     je .Lmd_ret
     M ebx, MI_32                # item h
@@ -1215,17 +1230,19 @@ FN explorer_menu_draw
     test eax, eax
     jnz 3f
     mov dword ptr [rip + menu_open], 0
+    mov dword ptr [rip + g_dirty], 1    # a frame without it
     jmp .Lmd_ret
 3:  mov eax, [rsp + 4]
     add eax, [rip + g_mt + 4*MI_6]
     mov [rsp + 8], eax          # item y
     xor ecx, ecx
     mov [rsp + 12], ecx         # item index
+    mov dword ptr [rsp + 32], -1    # the item clicked in this frame
 .Lmd_item:
     mov ecx, [rsp + 12]
     shl ecx, 4
     cmp qword ptr [r15 + rcx], 0
-    je .Lmd_ret
+    je .Lmd_done
     cmp qword ptr [r15 + rcx + 8], 0
     jne 31f
     # a line across the middle
@@ -1316,18 +1333,25 @@ FN explorer_menu_draw
     call gfx_clip_pop
     test dword ptr [rsp + 16], UB_CLICK
     jz 5f
-    mov dword ptr [rip + menu_open], 0
     mov ecx, [rsp + 12]
+    mov [rsp + 32], ecx
+5:  add [rsp + 8], ebx
+    inc dword ptr [rsp + 12]
+    jmp .Lmd_item
+.Lmd_done:
+    # A clicked item's command runs once the whole menu is drawn (this frame is shown whole, not cut
+    # after that item), and the next frame, without the menu, follows at once.
+    mov ecx, [rsp + 32]
+    test ecx, ecx
+    js .Lmd_ret
+    mov dword ptr [rip + menu_open], 0
+    mov dword ptr [rip + g_dirty], 1
     mov [rip + g_menu_index], ecx
     shl ecx, 4
     mov rax, [r15 + rcx + 8]
     mov dword ptr [rip + g_menu_cmd], 1
     call rax
     mov dword ptr [rip + g_menu_cmd], 0
-    jmp .Lmd_ret
-5:  add [rsp + 8], ebx
-    inc dword ptr [rsp + 12]
-    jmp .Lmd_item
 .Lmd_ret:
     mov dword ptr [rip + menu_press], 0
     EPILOGUE
