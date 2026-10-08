@@ -62,6 +62,7 @@ results: .zero VEC_SIZE
 strings: .zero SB_SIZE          # label storage for file items
 pal_label: .quad 0              # prompt label
 pal_theme_slot: .quad 0         # the theme setting the theme list picks for (theme_slot)
+pal_theme_before: .quad 0       # the theme shown when it opened
 pal_path: .zero 4096
 scan_depth: .long 0
 scan_prefix: .zero 4096         # relative dir during scan
@@ -144,10 +145,17 @@ palette_open:
 
 FN palette_close
     push rbx
-    # themes: the settings' theme again, after a preview or a change of the system's mode
+    # themes: the settings' theme again, after a preview or a change of the system's mode, or the
+    # theme shown before when the setting names none rhun has
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
     call theme_apply_config
+    test eax, eax
+    jnz 1f
+    mov rdi, [rip + pal_theme_before]
+    cmp rdi, [rip + g_theme_cur]
+    je 1f
+    call theme_apply
 1:  call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
@@ -182,6 +190,8 @@ FN cmd_select_theme
 # cmd_select_theme_for(setting): the theme list for one theme setting (Settings' buttons)
 FN cmd_select_theme_for
     mov [rip + pal_theme_slot], rdi
+    mov rax, [rip + g_theme_cur]
+    mov [rip + pal_theme_before], rax
     mov edi, PM_THEMES
     jmp palette_open
 

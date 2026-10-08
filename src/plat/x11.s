@@ -1413,6 +1413,9 @@ x_timeout:
 x_tick:
     cmp dword ptr [rip + xs_stale], 0
     je 1f
+    # not while a paste's reply is awaited: its request has want_seq
+    cmp dword ptr [rip + paste_wait], 0
+    jne 1f
     push rbx
     call xs_refresh
     pop rbx

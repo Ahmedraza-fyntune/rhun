@@ -9,6 +9,7 @@ g_theme: .zero 4 * T_COUNT
 g_theme_dark: .long 0
 applied: .long 0                # a theme has been applied
 .p2align 3
+pending: .quad 0                # an old config's theme while the system's mode is still unknown
 defined: .zero 16                # bit per slot given by the theme
 g_themes: .zero VEC_SIZE
 g_theme_cur: .quad 0            # index into g_themes
@@ -584,16 +585,19 @@ FN theme_slot_index
 9:  pop rbx
     ret
 
-# theme_apply_config(): show the theme the settings choose. A name rhun has no theme for keeps the
-# one shown (a theme file still being written), at startup the setting's default.
+# theme_apply_config() -> 1 when the settings name a theme rhun has: show that theme. A name rhun
+# has no theme for keeps the one shown (a theme file still being written), at startup the
+# setting's default.
 FN theme_apply_config
     PROLOGUE
     call theme_slot
     mov rbx, rax
     mov rdi, [rax]
     call theme_find
+    mov r12d, 1
     test rax, rax
     jns 1f
+    xor r12d, r12d
     cmp dword ptr [rip + applied], 0
     jne 9f
     mov rdi, rbx
@@ -604,11 +608,13 @@ FN theme_apply_config
     je 9f
 2:  mov rdi, rax
     call theme_apply
-9:  EPILOGUE
+9:  mov eax, r12d
+    EPILOGUE
 
 # theme_set(slot, index): a theme picked for a setting; settings borrow the registry's names
 FN theme_set
     push rbx
+    mov qword ptr [rip + pending], 0
     mov rbx, rdi
     mov rdi, rsi
     call theme_entry
@@ -625,6 +631,19 @@ FN theme_system_changed
     je 9f
     mov [rip + g_sys_dark], edi
     mov dword ptr [rip + g_dirty], 1
+    # the first mode known after an old config's theme moved: that theme is this mode's too
+    mov rax, [rip + pending]
+    test rax, rax
+    jz 1f
+    test edi, edi
+    js 1f
+    mov qword ptr [rip + pending], 0
+    lea rcx, [rip + cfg_dark_theme]
+    lea rdx, [rip + cfg_light_theme]
+    cmovz rcx, rdx
+    mov [rcx], rax
+    mov dword ptr [rip + g_settings_changed], 1
+1:
     cmp dword ptr [rip + cfg_follow_system], 0
     je 9f
     # the theme list shows its own choice, and applies the settings when it closes
@@ -648,11 +667,13 @@ FN theme_follow_toggled
 
 # theme_settings_init(startup): settings from before dark_theme and light_theme name one theme, which
 # becomes the theme for its kind and for the system's current mode, so that nothing changes on
-# screen; except rhun-dark, the old default, which leaves the new defaults. On Omarchy, a config
-# without theme settings follows Omarchy in all three (only at startup: Follow Omarchy is the
-# default there until a theme is picked).
+# screen; except rhun-dark, the old default, which leaves the new defaults. A mode not yet known
+# (X11's XSETTINGS is read with the window, a portal may answer late) gets it when it is, unless a
+# theme is picked first. On Omarchy, a config without theme settings follows Omarchy in all three
+# (only at startup: Follow Omarchy is the default there until a theme is picked).
 FN theme_settings_init
     PROLOGUE
+    mov qword ptr [rip + pending], 0
     mov eax, [rip + cfg_theme_keys]
     test eax, eax
     jnz 1f
@@ -696,6 +717,12 @@ FN theme_settings_init
     cmove rdi, rcx
     mov rsi, rbx
     call theme_set
+    cmp dword ptr [rip + g_sys_dark], 0
+    jge 9f
+    mov rdi, rbx
+    call theme_entry
+    mov rax, [rax + TH_id]
+    mov [rip + pending], rax
     jmp 9f
 3:  # Follow Omarchy picks dark and light itself
     lea rdi, [rip + cfg_dark_theme]

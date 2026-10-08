@@ -149,6 +149,27 @@ class Appearance(unittest.TestCase):
         self.assertEqual((state['dark'], state['light'], state['shown']),
                          ('rhun-dark', 'rhun-light', 'rhun-light'))
 
+    def test_old_configs_wait_for_a_mode_reported_later(self):
+        # X11's XSETTINGS is read with the window and a portal may answer late: the mode found then
+        # gets the old theme too, so the screen stays the same
+        states = self.states(['print-appearance', 'appearance light', 'print-appearance',
+                              'appearance dark', 'appearance light', 'print-appearance'],
+                             config='[ui]\ntheme = nord\n')
+        self.assertEqual([(s['system'], s['shown']) for s in states],
+                         [('unknown', 'nord'), ('light', 'nord'), ('light', 'nord')])
+        self.assertEqual((self.saved()['dark_theme'], self.saved()['light_theme']), ('nord', 'nord'))
+        # unless a theme was picked first
+        states = self.states(['cmd select_theme', 'type everforest', 'key Return', 'appearance light',
+                              'print-appearance'], config='[ui]\ntheme = nord\n')
+        self.assertEqual((states[0]['dark'], states[0]['light'], states[0]['shown']),
+                         ('everforest', 'rhun-light', 'rhun-light'))
+
+    def test_escape_keeps_the_fallback_of_a_missing_theme(self):
+        states = self.states(['print-appearance', 'cmd select_theme', 'type github', 'key Down',
+                              'print-appearance', 'key Escape', 'print-appearance'],
+                             config='[ui]\ndark_theme = nope\n')
+        self.assertEqual([s['shown'] for s in states], ['rhun-dark', 'github-light', 'rhun-dark'])
+
     def test_unknown_theme_names_fall_back(self):
         state, = self.states(['print-appearance'], system='light',
                              config='[ui]\ndark_theme = nope\nlight_theme = nope\n')

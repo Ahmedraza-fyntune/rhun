@@ -376,6 +376,24 @@ with tempfile.TemporaryDirectory(prefix='rhun-appearance-') as directory:
             rhun.expect('dark', 'rhun-dark', 'a manager started later')
             stop(manager)
             rhun.expect('unknown', 'rhun-dark', 'the manager quit')
+            rhun.close()
+            # a config from before dark_theme and light_theme keeps its theme, though XSETTINGS is
+            # read only with the window, after the config
+            config_text = config.read_text()
+            config.write_text(config_text.replace('[ui]\n', '[ui]\ntheme = nord\n', 1))
+            xs.write_text('Net/ThemeName "Greybird"\n')
+            manager = start(['xsettingsd', '-c', str(xs)])
+            until(lambda: subprocess.run(['xprop', '-root', '_XSETTINGS_S0'], env=env,
+                                         capture_output=True).returncode == 0, 'no manager')
+            time.sleep(.5)
+            rhun = Rhun(env)
+            rhun.expect('light', 'nord', 'an old config with a light XSETTINGS theme')
+            state = rhun.state()
+            assert (state['dark'], state['light']) == ('nord', 'nord'), state
+            rhun.close()
+            stop(manager)
+            config.write_text(config_text)
+            rhun = Rhun(env)
             print('ok   ' + NAME + '/xsettings')
         else:
             print('skip ' + NAME + '/xsettings')
