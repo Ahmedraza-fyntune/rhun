@@ -3,8 +3,9 @@
 assets/icons/files/contours.json on the 128x128 icon grid; tools/icons.py turns them into icon
 programs. Python 3 standard library only.
 
-The SVGs are glyph sources: every shape is filled with one color, as in the Seti font. Even-odd
-paths are reoriented by nesting depth, since the rasterizer fills nonzero."""
+The SVGs are glyph sources: every shape is filled with one color, as in the Seti font, except that a
+white shape cuts out what it covers, as it shows in the SVG. Even-odd paths are reoriented by nesting
+depth, since the rasterizer fills nonzero."""
 import json
 import math
 import re
@@ -235,8 +236,11 @@ def evenodd(contours):
     return out
 
 
+WHITE = ('#fff', '#ffffff', 'white')
+
+
 def shapes(svg, tol):
-    """(contours, fill rule) per filled shape, in the user units of the root viewBox"""
+    """(contours, fill rule, white) per filled shape, in the user units of the root viewBox"""
     ns = lambda tag: tag.split('}')[-1]
     defs = {e.attrib['id']: e for e in svg.iter() if 'id' in e.attrib}
     out = []
@@ -245,12 +249,13 @@ def shapes(svg, tol):
         m = re.search(name + r'\s*:\s*([^;]+)', e.attrib.get('style', ''))
         return m.group(1).strip() if m else e.attrib.get(name)
 
-    def walk(e, m, rule):
+    def walk(e, m, rule, fill):
         tag = ns(e.tag)
         if tag in ('defs', 'style', 'title', 'desc', 'linearGradient', 'radialGradient', 'clipPath', 'mask'):
             return
         m = matmul(m, transform(e.attrib.get('transform')))
         rule = style(e, 'fill-rule') or rule
+        fill = style(e, 'fill') or fill
         # the font ignores colors, so an inherited fill="none" does not hide a shape; a shape's
         # own fill="none" is an outline guide or a background
         if style(e, 'display') == 'none' or (tag not in ('svg', 'g') and style(e, 'fill') == 'none'):
@@ -258,7 +263,7 @@ def shapes(svg, tol):
         if tag == 'use':
             ref = e.attrib.get('{http://www.w3.org/1999/xlink}href') or e.attrib.get('href')
             m = matmul(m, (1, 0, 0, 1, float(e.attrib.get('x', 0)), float(e.attrib.get('y', 0))))
-            walk(defs[ref[1:]], m, rule)
+            walk(defs[ref[1:]], m, rule, fill)
             return
         scale = math.sqrt(abs(m[0] * m[3] - m[1] * m[2])) or 1
         t = tol / scale
@@ -282,15 +287,23 @@ def shapes(svg, tol):
                 cs = [list(zip(v[::2], v[1::2]))]
         elif tag in ('svg', 'g'):
             for k in e:
-                walk(k, m, rule)
+                walk(k, m, rule, fill)
             return
         else:
             raise ValueError('element ' + tag)
         cs = [[(m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]) for x, y in c] for c in cs]
-        out.append((cs, rule or 'nonzero'))
+        out.append((cs, rule or 'nonzero', (fill or '').strip().lower() in WHITE))
 
-    walk(svg, (1, 0, 0, 1, 0, 0), None)
+    walk(svg, (1, 0, 0, 1, 0, 0), None, None)
     return out
+
+
+def winding(p, contours):
+    w = 0
+    for c in contours:
+        if inside(p, c):
+            w += 1 if area(c) > 0 else -1
+    return w
 
 
 def glyph(path):
@@ -309,7 +322,7 @@ def glyph(path):
     k = 128 / (hi - lo)
     found = shapes(svg, TOL * size / 32 / k)
     # a glyph that reaches past the box shrinks about the middle until it fits
-    units = [((px - x) / size * 32, (py - y) / size * 32) for cs, _ in found for c in cs for px, py in c]
+    units = [((px - x) / size * 32, (py - y) / size * 32) for cs, _, _ in found for c in cs for px, py in c]
     reach = max([16 - v for p in units for v in p] + [v - 16 for p in units for v in p] + [0])
     fit = min(1, (hi - lo) / 2 / reach) if reach else 1
 
@@ -317,11 +330,22 @@ def glyph(path):
         ux, uy = (p[0] - x) / size * 32, (p[1] - y) / size * 32
         return ((16 + (ux - 16) * fit) - lo) * k, ((16 + (uy - 16) * fit) - lo) * k
 
+    # with white shapes, every shape is oriented by nesting and the white ones reversed, so they
+    # cancel what they cover; overlapping white shapes would fill again
+    cuts = any(white for _, _, white in found)
+    if cuts:
+        holes = [c for cs, _, white in found if white for c in evenodd(cs)]
+        for j in range(64):
+            for i in range(64):
+                p = (x + (i + .5) * size / 64, y + (j + .5) * size / 64)
+                assert winding(p, holes) <= 1, (path.name, 'white shapes overlap')
     result = []
-    for cs, rule in found:
+    for cs, rule, white in found:
         cs = [[grid(p) for p in c] for c in cs]
-        if rule == 'evenodd':
+        if rule == 'evenodd' or cuts:
             cs = evenodd(cs)
+        if white:
+            cs = [c[::-1] for c in cs]
         for c in cs:
             pts = []
             for px, py in c:

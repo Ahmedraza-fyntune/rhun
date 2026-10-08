@@ -2,9 +2,11 @@
 
 The explorer shows each file with the glyph of its language or type. The glyphs are from
 [Seti UI](https://github.com/jesseweed/seti-ui) by Jesse Weed, MIT licensed
-([LICENSE-Seti.md](LICENSE-Seti.md)), copied unchanged from commit
-`2d6c5e68b4ded73c92dac291845ee44e1182d511` (2025-10-28). `code.svg` is rhun's own, for languages
-Seti has no glyph for. Names and marks of languages and tools belong to their owners.
+([LICENSE-Seti.md](LICENSE-Seti.md)), copied from commit
+`2d6c5e68b4ded73c92dac291845ee44e1182d511` (2025-10-28). They are unchanged but for `zip.svg`, whose
+zipper teeth stop at its stem: white shapes cut out what they cover, and must not overlap. `code.svg`
+is rhun's own, for languages Seti has no glyph for. Names and marks of languages and tools belong to
+their owners.
 
 A language's icon is the `icon` key of its grammar in `runtime/syntax` (`icon = rust orange`);
 [types.txt](types.txt) maps the other files, and names that beat their grammar's icon. The color is
