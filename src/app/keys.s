@@ -511,6 +511,7 @@ g_commands:
     COMMAND settings, "Open Settings", cmd_settings, "ctrl+,"
     COMMAND open_config, "Open Settings File", cmd_open_config, ""
     COMMAND select_theme, "Select Color Theme", cmd_select_theme, "ctrl+k ctrl+shift+t"
+    COMMAND toggle_light_dark_theme, "Toggle Light/Dark Theme", cmd_toggle_light_dark, ""
     COMMAND select_language, "Change Language Mode", cmd_select_language, ""
     COMMAND toggle_sidebar, "Toggle File Explorer", cmd_toggle_sidebar, "ctrl+b"
     COMMAND toggle_agents, "Toggle Agents Panel", cmd_toggle_agents, "ctrl+shift+a"

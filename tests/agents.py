@@ -937,6 +937,8 @@ class CodexDiscovery(unittest.TestCase):
                 rows.append(match.groups())
         y, previous = 228, None
         for section, key, _ in rows:
+            if (section, key) == ('ui', 'theme'):
+                continue                # shown only without Follow system dark mode
             if section != previous:
                 y += 48
                 previous = section

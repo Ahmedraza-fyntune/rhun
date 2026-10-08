@@ -7,11 +7,16 @@
 .globl g_theme, g_theme_dark, g_themes, g_theme_cur
 g_theme: .zero 4 * T_COUNT
 g_theme_dark: .long 0
+applied: .long 0                # a theme has been applied
 .p2align 3
 defined: .zero 16                # bit per slot given by the theme
 g_themes: .zero VEC_SIZE
 g_theme_cur: .quad 0            # index into g_themes
 it: .zero INI_SIZE
+
+.data
+.globl g_sys_dark
+g_sys_dark: .long -1            # the system's dark mode as the platform reports it: 1 on, 0 off, -1 unknown
 
 .text
 
@@ -494,6 +499,7 @@ FN theme_apply
     jb 1f
     xor edi, edi
 1:  mov [rip + g_theme_cur], rdi
+    mov dword ptr [rip + applied], 1
     cmp rdi, [rip + g_follow]
     jne 3f
     # "Follow Omarchy": colors of the theme Omarchy has set
@@ -534,7 +540,194 @@ FN theme_entry
     add rax, [rip + g_themes + VEC_ptr]
     ret
 
+# Three settings name themes: theme, and with follow_system on, dark_theme and light_theme for the
+# system's dark and light mode (VS Code's workbench.colorTheme, preferredDarkColorTheme and
+# preferredLightColorTheme with window.autoDetectColorScheme). A mode the system does not report
+# counts as dark, rhun's default.
+
+# theme_slot() -> the setting (cfg_theme, cfg_dark_theme or cfg_light_theme) whose theme is shown
+FN theme_slot
+    lea rax, [rip + cfg_theme]
+    cmp dword ptr [rip + cfg_follow_system], 0
+    je 1f
+    lea rax, [rip + cfg_dark_theme]
+    cmp dword ptr [rip + g_sys_dark], 0
+    jne 1f
+    lea rax, [rip + cfg_light_theme]
+1:  ret
+
+# slot_default(slot) -> the built-in theme a setting falls back to
+slot_default:
+    lea rax, [rip + cfg_def_theme]
+    lea rcx, [rip + cfg_light_theme]
+    cmp rdi, rcx
+    jne 1f
+    lea rax, [rip + cfg_def_light_theme]
+1:  ret
+
+# theme_slot_index(slot) -> registry index of the setting's theme, or of its default when it names
+# none rhun has
+FN theme_slot_index
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rdi]
+    call theme_find
+    test rax, rax
+    jns 9f
+    mov rdi, rbx
+    call slot_default
+    mov rdi, rax
+    call theme_find
+    test rax, rax
+    jns 9f
+    xor eax, eax
+9:  pop rbx
+    ret
+
+# theme_apply_config(): show the theme the settings choose. A name rhun has no theme for keeps the
+# one shown (a theme file still being written), at startup the setting's default.
+FN theme_apply_config
+    PROLOGUE
+    call theme_slot
+    mov rbx, rax
+    mov rdi, [rax]
+    call theme_find
+    test rax, rax
+    jns 1f
+    cmp dword ptr [rip + applied], 0
+    jne 9f
+    mov rdi, rbx
+    call theme_slot_index
+1:  cmp dword ptr [rip + applied], 0
+    je 2f
+    cmp rax, [rip + g_theme_cur]
+    je 9f
+2:  mov rdi, rax
+    call theme_apply
+9:  EPILOGUE
+
+# theme_set(slot, index): a theme picked for a setting; settings borrow the registry's names
+FN theme_set
+    push rbx
+    mov rbx, rdi
+    mov rdi, rsi
+    call theme_entry
+    mov rax, [rax + TH_id]
+    mov [rbx], rax
+    mov dword ptr [rip + g_settings_changed], 1
+    pop rbx
+    ret
+
+# theme_system_changed(dark): the platform reports the system's dark mode (1 on, 0 off, -1 unknown)
+FN theme_system_changed
+    PROLOGUE
+    cmp edi, [rip + g_sys_dark]
+    je 9f
+    mov [rip + g_sys_dark], edi
+    mov dword ptr [rip + g_dirty], 1
+    cmp dword ptr [rip + cfg_follow_system], 0
+    je 9f
+    # the theme list shows its own choice, and applies the settings when it closes
+    call palette_picks_theme
+    test eax, eax
+    jnz 9f
+    call theme_apply_config
+9:  EPILOGUE
+
+# theme_follow_toggled(): follow_system changed. Turned off, theme becomes the theme shown, so that
+# nothing changes on screen; turned on, the theme for the system's mode shows.
+FN theme_follow_toggled
+    PROLOGUE
+    cmp dword ptr [rip + cfg_follow_system], 0
+    jne 1f
+    lea rdi, [rip + cfg_theme]
+    mov rsi, [rip + g_theme_cur]
+    call theme_set
+1:  call theme_apply_config
+    EPILOGUE
+
+# theme_settings_init(startup): settings from before dark_theme and light_theme name one theme, which
+# becomes the theme for its kind and for the system's current mode, so that nothing changes on
+# screen; except rhun-dark, the old default, which leaves the new defaults. On Omarchy, a config
+# without theme settings follows Omarchy in all three (only at startup: Follow Omarchy is the
+# default there until a theme is picked).
+FN theme_settings_init
+    PROLOGUE
+    mov eax, [rip + cfg_theme_keys]
+    test eax, eax
+    jnz 1f
+    test edi, edi
+    jz 9f
+    cmp qword ptr [rip + g_follow], 0
+    js 9f
+    lea rax, [rip + omarchy_id]
+    mov [rip + cfg_theme], rax
+    mov [rip + cfg_dark_theme], rax
+    mov [rip + cfg_light_theme], rax
+    jmp 9f
+1:  cmp eax, 1
+    jne 9f
+    mov rdi, [rip + cfg_theme]
+    call theme_find
+    test rax, rax
+    js 9f
+    mov rbx, rax
+    cmp rax, [rip + g_follow]
+    je 3f
+    cmp qword ptr [rip + g_follow], 0
+    jns 2f                      # on Omarchy, rhun-dark was picked: the default was Follow Omarchy
+    mov rdi, [rip + cfg_theme]
+    lea rsi, [rip + cfg_def_theme]
+    call strcmp_eq
+    test eax, eax
+    jnz 9f
+2:  # the setting for its kind, and the one for the system's mode
+    mov rdi, rbx
+    call theme_entry
+    lea rdi, [rip + cfg_dark_theme]
+    lea rcx, [rip + cfg_light_theme]
+    cmp dword ptr [rax + TH_dark], 0
+    cmove rdi, rcx
+    mov rsi, rbx
+    call theme_set
+    lea rdi, [rip + cfg_dark_theme]
+    lea rcx, [rip + cfg_light_theme]
+    cmp dword ptr [rip + g_sys_dark], 0
+    cmove rdi, rcx
+    mov rsi, rbx
+    call theme_set
+    jmp 9f
+3:  # Follow Omarchy picks dark and light itself
+    lea rdi, [rip + cfg_dark_theme]
+    mov rsi, rbx
+    call theme_set
+    lea rdi, [rip + cfg_light_theme]
+    mov rsi, rbx
+    call theme_set
+9:  EPILOGUE
+
+# Toggle Light/Dark Theme: theme becomes light_theme when a dark one shows, otherwise dark_theme.
+# While the theme follows the system it says so instead, as VS Code does.
+FN cmd_toggle_light_dark
+    PROLOGUE
+    cmp dword ptr [rip + cfg_follow_system], 0
+    je 1f
+    lea rdi, [rip + .Lfollows]
+    call app_toast
+    EPILOGUE
+1:  lea rdi, [rip + cfg_light_theme]
+    lea rax, [rip + cfg_dark_theme]
+    cmp dword ptr [rip + g_theme_dark], 0
+    cmove rdi, rax
+    call theme_slot_index
+    lea rdi, [rip + cfg_theme]
+    mov rsi, rax
+    call theme_set
+    call theme_apply_config
+    EPILOGUE
+
 .section .rodata
+.Lfollows: .asciz "The theme follows the system's dark mode (Settings)"
 .Lkind: .asciz "kind"
 .Lname: .asciz "name"
 .Llight: .asciz "light"

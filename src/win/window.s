@@ -67,7 +67,10 @@ FN win_open_window
     test rax, rax
     jz 8f
     mov [rip + win_hwnd], rax
-    mov rcx, rax
+    mov rdi, rax
+    xor esi, esi
+    call win_title_theme
+    mov rcx, [rip + win_hwnd]
     API GetDpiForWindow
     call win_dpi
     mov rcx, [rip + win_hwnd]
@@ -136,6 +139,9 @@ win_draw:
     call gfx_set_target
     mov dword ptr [rip + g_dirty], 0
     call app_render
+    mov rdi, [rip + win_hwnd]
+    mov esi, 1
+    call win_title_theme
     mov rcx, [rip + win_hwnd]
     API GetDC
     test rax, rax
@@ -364,6 +370,8 @@ win_wndproc:
     je .Lwm_cursor
     cmp edx, 0x2e0
     je .Lwm_dpi
+    cmp edx, 0x1a
+    je .Lwm_setting
     cmp edx, 0x200
     je .Lwm_motion
     cmp edx, 0x201
@@ -393,6 +401,10 @@ win_wndproc:
 .Lwm_close:
     call app_on_close
     jmp .Lwm_zero
+.Lwm_setting:
+    # WM_SETTINGCHANGE: the system's dark mode among others
+    call win_setting_changed
+    jmp .Lwm_default
 .Lwm_size:
     cmp r13d, 1
     je .Lwm_zero

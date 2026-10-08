@@ -39,6 +39,10 @@ jobs:
         env:
           RHUN_TEST_ARTIFACTS: build/stabilization/windows
         run: python tests/windows.py
+      - name: System dark mode
+        env:
+          RHUN_TEST_SYSTEM_APPEARANCE: '1'
+        run: python tests/windows-appearance.py
       - name: Package
         id: package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

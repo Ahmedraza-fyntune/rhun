@@ -13,6 +13,7 @@
 .globl cfg_exclude, cfg_agent_sources, cfg_restore_session, cfg_auto_pairs, cfg_word_wrap, cfg_decorations
 .globl cfg_vim
 .globl cfg_restore_project
+.globl cfg_follow_system, cfg_dark_theme, cfg_light_theme, cfg_theme_keys
 cfg_restore_project: .long 1
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
@@ -42,6 +43,7 @@ cfg_auto_pairs: .long 1
 cfg_word_wrap: .long 0
 cfg_vim: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
+cfg_follow_system: .long 1       # dark_theme or light_theme as the system's dark mode is on or off
 .globl cfg_scroll_sens, cfg_fast_sens
 cfg_scroll_sens: .long 100       # scroll_sensitivity: multiplier in hundredths
 cfg_fast_sens: .long 400         # fast_scroll_sensitivity: multiplier while alt is held
@@ -56,6 +58,8 @@ cfg_commit_ai: .long 0
 cfg_update_check: .long 1
 .p2align 3
 cfg_theme: .quad cfg_def_theme
+cfg_dark_theme: .quad cfg_def_theme
+cfg_light_theme: .quad cfg_def_light_theme
 cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
 cfg_exclude: .quad .Ldef_exclude
@@ -67,7 +71,8 @@ cfg_commit_model: .quad .Ldefault_model
 .bss
 .p2align 3
 cfg_seen_mtime: .quad 0         # the config file's mtime (ns) when rhun last read or wrote it
-# One owned allocation per string slot above. cfg_theme may separately borrow
+cfg_theme_keys: .long 0         # theme keys the last read found: 1 theme, 2 dark_theme, 4 light_theme
+# One owned allocation per string slot above. The theme slots may separately borrow
 # a theme registry ID, so the current value alone does not identify its owner.
 cfg_owned_strings: .zero .Lcfg_strings_end - cfg_theme
 .p2align 3
@@ -320,6 +325,7 @@ FN parse_decimal
 FN config_load
     PROLOGUE 16
     xor r15d, r15d              # owned input buffer, if the config exists
+    mov dword ptr [rip + cfg_theme_keys], 0
     # [keys] lines come from this read only
     xor ebx, ebx
 1:  cmp rbx, [rip + g_keylines + VEC_len]
@@ -383,7 +389,17 @@ FN config_load
     call setting_find
     test rax, rax
     jz .Lcl_next
-    mov rdi, rax
+    # which theme keys the file has: a file from before dark_theme and light_theme has theme only
+    mov rcx, [rax + SET_ptr]
+    lea rdx, [rip + cfg_theme]
+    sub rcx, rdx
+    shr rcx, 3
+    cmp rcx, 2
+    ja 2f
+    mov edx, 1
+    shl edx, cl
+    or [rip + cfg_theme_keys], edx
+2:  mov rdi, rax
     mov rsi, [rip + it + INI_val]
     mov rdx, [rip + it + INI_vallen]
     call setting_assign
@@ -599,8 +615,9 @@ dir_each_cb:
 9:  EPILOGUE
 
 .section .rodata
-.globl cfg_def_theme
+.globl cfg_def_theme, cfg_def_light_theme
 cfg_def_theme: .asciz "rhun-dark"
+cfg_def_light_theme: .asciz "rhun-light"
 .Lempty: .asciz ""
 .Ldef_exclude: .asciz ".git node_modules target build .cache __pycache__ .venv .idea .DS_Store"
 .Ldef_sources: .asciz "claude codex"
@@ -658,7 +675,10 @@ cfg_def_theme: .asciz "rhun-dark"
 .p2align 3
 .globl g_settings
 g_settings:
+    SETTING .Ls_ui, follow_system, ST_BOOL, cfg_follow_system, 0, 1, 1, 0, "Follow system dark mode", "Switch themes with the system's dark mode."
     SETTING .Ls_ui, theme, ST_THEME, cfg_theme, 0, 0, 0, 0, "Theme", "Color theme for the editor and the interface."
+    SETTING .Ls_ui, dark_theme, ST_THEME, cfg_dark_theme, 0, 0, 0, 0, "Dark theme", "Theme while the system is in dark mode."
+    SETTING .Ls_ui, light_theme, ST_THEME, cfg_light_theme, 0, 0, 0, 0, "Light theme", "Theme while the system is in light mode."
     SETTING .Ls_ui, scale, ST_INT, cfg_ui_scale, 50, 300, 10, 1, "Interface zoom", "Scales everything on top of the display scale."
     SETTING .Ls_ui, font_size, ST_INT, cfg_ui_font_size, 9, 24, 1, 0, "Interface font size", "Font size of panels, tabs and menus."
     SETTING .Ls_ui, font, ST_STR, cfg_ui_font, 0, 0, 0, 0, "Interface font", "Path to a .ttf file. Empty uses the built-in Iosevka."

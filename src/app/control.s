@@ -770,6 +770,70 @@ c_print_project:
     xor eax, eax
     ret
 
+# appearance dark|light|unknown: the system's dark mode changes, as a platform reports it
+c_appearance:
+    call next_arg
+    mov edi, -1
+    test rdx, rdx
+    jz 1f
+    cmp byte ptr [rax], 'u'
+    je 1f
+    xor edi, edi
+    cmp byte ptr [rax], 'l'
+    je 1f
+    mov edi, 1
+1:  call theme_system_changed
+    xor eax, eax
+    ret
+
+# print-appearance: the system's mode, follow_system, the three theme settings and the theme shown
+c_print_appearance:
+    push rbx
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_system]
+    call sb_push_cstr
+    lea rsi, [rip + .Ls_unknown]
+    lea rax, [rip + .Ls_dark]
+    lea rcx, [rip + .Ls_light]
+    mov edx, [rip + g_sys_dark]
+    cmp edx, 1
+    cmove rsi, rax
+    test edx, edx
+    cmovz rsi, rcx
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_follow]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + cfg_follow_system]
+    call sb_push_u64
+    lea rbx, [rip + appearance_rows]
+1:  mov rsi, [rbx]
+    test rsi, rsi
+    jz 2f
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    mov rax, [rbx + 8]
+    lea rdi, [rip + out]
+    mov rsi, [rax]
+    call sb_push_cstr
+    add rbx, 16
+    jmp 1b
+2:  lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_shown]
+    call sb_push_cstr
+    call theme_current_id
+    lea rdi, [rip + out]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    xor eax, eax
+    ret
+
 # print-palette: the palette's field and rows
 c_print_palette:
     lea rdi, [rip + out]
@@ -1410,6 +1474,8 @@ on_client:
 .Lc_print_link: .asciz "print-link"
 .Lc_print_scroll: .asciz "print-scroll"
 .Lc_scroll_x: .asciz "scroll-x"
+.Lc_appearance: .asciz "appearance"
+.Lc_print_appearance: .asciz "print-appearance"
 .Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
 .Ls_toast: .asciz "toast="
@@ -1423,6 +1489,15 @@ on_client:
 .Ls_minimized: .asciz " minimized="
 .Ls_quit: .asciz " quit="
 .Ls_csd: .asciz " csd="
+.Ls_system: .asciz "system="
+.Ls_unknown: .asciz "unknown"
+.Ls_dark: .asciz "dark"
+.Ls_light: .asciz "light"
+.Ls_follow: .asciz " follow="
+.Ls_theme_eq: .asciz " theme="
+.Ls_dark_eq: .asciz " dark="
+.Ls_light_eq: .asciz " light="
+.Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
 ctl_table:
@@ -1445,7 +1520,10 @@ ctl_table:
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
     .quad .Lc_print_tip, c_print_tip, .Lc_print_toast, c_print_toast, .Lc_print_link, c_print_link
     .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
-    .quad .Lc_scroll_x, c_scroll_x, 0, 0
+    .quad .Lc_scroll_x, c_scroll_x
+    .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance, 0, 0
+appearance_rows:
+    .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 
 .data
 lsock: .long -1

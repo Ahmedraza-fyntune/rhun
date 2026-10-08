@@ -416,7 +416,7 @@ class LiveReload(unittest.TestCase):
         self.command('cmd settings')
         self.command('move 500 350')
         self.command('scroll 1500')
-        self.command('click 827 296')
+        self.command('click 827 440')
         self.command('quit')
         self.process.wait(timeout=5)
         after = settings()

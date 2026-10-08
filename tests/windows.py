@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             [sys.executable, str(ROOT / 'tests/windows-longpaths.py')], check=True))
         check('clipboard/contention-copy-and-paste', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
-        for name in ('settings-ui', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity'):
+        for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity'):
             check('ui/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
