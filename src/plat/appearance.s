@@ -163,15 +163,12 @@ user_path:
     lea rax, [rip + path_buf]
 9:  EPILOGUE
 
-# ini_read(): settings.ini as GTK reads it, the user's files over the system's
+# ini_read(): the user's settings.ini, gtk-3.0's over gtk-4.0's. Those in /etc are a distribution's
+# defaults (Ubuntu's names Adwaita), not a mode anyone chose, so a desktop nobody set up stays dark.
 ini_read:
     PROLOGUE
     mov dword ptr [rip + ini_prefer], -1
     mov dword ptr [rip + ini_name], -1
-    lea rdi, [rip + .Lsys_xdg_ini]
-    call ini_file
-    lea rdi, [rip + .Lsys_ini]
-    call ini_file
     lea rdi, [rip + .Lgtk4_ini]
     call user_path
     test rax, rax
@@ -1001,8 +998,6 @@ set_scheme:
 .Lpath_eq: .asciz "path="
 .Labstract_eq: .asciz "abstract="
 .Lauth: .asciz "AUTH EXTERNAL "
-.Lsys_xdg_ini: .asciz "/etc/xdg/gtk-3.0/settings.ini"
-.Lsys_ini: .asciz "/etc/gtk-3.0/settings.ini"
 .Lgtk3_ini: .asciz "/gtk-3.0/settings.ini"
 .Lgtk4_ini: .asciz "/gtk-4.0/settings.ini"
 .Lgtk3_dir: .asciz "/gtk-3.0"
