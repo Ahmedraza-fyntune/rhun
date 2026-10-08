@@ -66,7 +66,7 @@ tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
 g_side_px: .long 0
 g_agents_px: .long 0
-dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm
+dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm, 5 close all
 dlg_tab: .quad 0
 .p2align 3
 dlg_title: .quad 0               # app_confirm: the question, a line under it, the button, its function
@@ -379,33 +379,13 @@ switch_continue:
     PROLOGUE
     cmp dword ptr [rip + switch_pending], 0
     je 9f
-    xor ebx, ebx
-1:  cmp rbx, [rip + g_tabs + VEC_len]
-    jae 3f
-    mov rdi, rbx
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+    mov edi, 3
+    call ask_unsaved
     test eax, eax
-    jz 2f
-    mov [rip + dlg_tab], rbx
-    mov dword ptr [rip + dlg_kind], 3
-    mov rdi, rbx
-    call app_activate_tab
-    mov dword ptr [rip + g_focus], FOCUS_DIALOG
-    jmp 9f
-2:  inc rbx
-    jmp 1b
-3:  mov dword ptr [rip + switch_pending], 0
-4:  mov rdi, [rip + g_tabs + VEC_len]
-    test rdi, rdi
-    jz 5f
-    dec rdi
-    call app_close_tab_now
-    jmp 4b
-5:  mov byte ptr [rip + g_explorer_dir], 0
+    jnz 9f
+    mov dword ptr [rip + switch_pending], 0
+    call close_tabs_now
+    mov byte ptr [rip + g_explorer_dir], 0
     mov byte ptr [rip + g_explorer_target], 0
     lea rdi, [rip + switch_path]
     call app_set_project
@@ -949,6 +929,55 @@ FN cmd_close_tab
     jmp app_close_tab
 1:  ret
 
+# cmd_close_all: close every tab. The first modified doc asks, and each answer that closes it comes
+# back here for the next; a cancel stops, with the tabs not closed yet still open
+FN cmd_close_all
+    PROLOGUE
+    mov edi, 5
+    call ask_unsaved
+    test eax, eax
+    jnz 9f
+    call close_tabs_now
+9:  EPILOGUE
+
+# ask_unsaved(kind) -> eax 1 when the first modified doc asks, in dialog kind (dlg_kind), else 0
+ask_unsaved:
+    PROLOGUE
+    mov r12d, edi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov rdi, [rax + TAB_doc]
+    call doc_dirty
+    test eax, eax
+    jz 2f
+    mov [rip + dlg_tab], rbx
+    mov [rip + dlg_kind], r12d
+    mov rdi, rbx
+    call app_activate_tab
+    mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    mov eax, 1
+    EPILOGUE
+2:  inc rbx
+    jmp 1b
+3:  xor eax, eax
+    EPILOGUE
+
+# close_tabs_now(): close every tab without asking, the last first
+close_tabs_now:
+    PROLOGUE
+1:  mov rdi, [rip + g_tabs + VEC_len]
+    test rdi, rdi
+    jz 9f
+    dec rdi
+    call app_close_tab_now
+    jmp 1b
+9:  EPILOGUE
+
 FN cmd_next_tab
     mov esi, 1
     cmp dword ptr [rip + g_focus], FOCUS_TERMINAL   # in the terminal: the next terminal
@@ -1042,28 +1071,13 @@ FN cmd_quit
     jne 4f
     call session_save
     mov dword ptr [rip + g_session_final], 1
-4:  # first modified doc -> ask
-    xor ebx, ebx
-1:  cmp rbx, [rip + g_tabs + VEC_len]
-    jae 3f
-    mov rdi, rbx
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+4:  # the first modified doc asks; with none, quit
+    mov edi, 2
+    call ask_unsaved
     test eax, eax
-    jz 2f
-    mov [rip + dlg_tab], rbx
-    mov dword ptr [rip + dlg_kind], 2
-    mov rdi, rbx
-    call app_activate_tab
-    mov dword ptr [rip + g_focus], FOCUS_DIALOG
-    EPILOGUE
-2:  inc rbx
-    jmp 1b
-3:  mov dword ptr [rip + g_quit], 1
-    EPILOGUE
+    jnz 9f
+    mov dword ptr [rip + g_quit], 1
+9:  EPILOGUE
 
 FN app_on_close
     jmp cmd_quit
@@ -3616,7 +3630,7 @@ dialog_choose:
     je 2f
     call doc_save
     test rax, rax
-    js 8f
+    js 7f
     jmp 1f
 2:  call cmd_save_as
     jmp 8f
@@ -3627,9 +3641,16 @@ dialog_choose:
     call switch_continue
     jmp 9f
 11: cmp r12d, 2
-    jne 9f
+    jne 12f
     call cmd_quit
     jmp 9f
+12: cmp r12d, 5
+    jne 9f
+    call cmd_close_all
+    jmp 9f
+7:  # the file stays open and modified: say why
+    lea rdi, [rip + .Lsave_failed]
+    call app_toast
 8:  # not quitting after all: no restart into an update either, no other project, and the session
     # is saved again when it comes to that
     mov dword ptr [rip + g_restart], 0
