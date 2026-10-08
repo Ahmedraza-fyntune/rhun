@@ -5,10 +5,14 @@ fail=0
 tmp=$(mktemp -d)
 # agent session fixtures under the fake HOME
 slug=$(printf '%s' "$PWD" | sed 's/[^A-Za-z0-9]/-/g')
-mkdir -p "$tmp/.claude/projects/$slug" "$tmp/.codex/sessions/2026/09/26"
+grok=$tmp/.grok/sessions/project/01a11c1e-808b-7263-a007-7a09593740c9
+mkdir -p "$tmp/.claude/projects/$slug" "$tmp/.codex/sessions/2026/09/26" "$grok"
 sed "s|@PROJECT@|$PWD|g" tests/data/agents/claude.jsonl > "$tmp/.claude/projects/$slug/s1.jsonl"
 sed "s|@PROJECT@|$PWD|g" tests/data/agents/codex.jsonl > "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
 cp tests/data/agents/other.jsonl "$tmp/.codex/sessions/2026/09/26/rollout-c2.jsonl"
+sed "s|@PROJECT@|$PWD|g" tests/data/agents/grok.jsonl > "$grok/updates.jsonl"
+sed "s|@PROJECT@|$PWD|g" tests/data/agents/grok.json > "$grok/summary.json"
+touch -t 202609260500 "$grok/updates.jsonl"
 touch -t 202609260600 "$tmp/.claude/projects/$slug/s1.jsonl"
 touch -t 202609260700 "$tmp/.codex/sessions/2026/09/26/rollout-c1.jsonl"
 # timeout(1) is not everywhere
@@ -36,7 +40,7 @@ for s in tests/scripts/*.rsc; do
     # "# start: FOLDER" in the script: rhun starts in that folder rather than in the repository
     start=$(sed -n 's/^# start: //p' "$tmp/$n.rsc")
     status=0
-    XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child SHELL=$shell PS1='$ ' \
+    XDG_CONFIG_HOME=$tmp/config-$n XDG_STATE_HOME=$tmp/state-$n HOME=$home GROK_HOME= XCOMPOSEFILE=$PWD/tests/data/compose.txt XCURSOR_PATH=tests/data/icons XCURSOR_THEME=child SHELL=$shell PS1='$ ' \
         limit 20 build/rhun "${start:-$PWD}" --headless 1400x860 --script "$tmp/$n.rsc" > "$tmp/$n.out" 2>&1 || status=$?
     if [ "$status" != 0 ]; then
         echo "FAIL ui/$n (exit $status)"; fail=1

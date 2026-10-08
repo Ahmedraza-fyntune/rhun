@@ -631,6 +631,8 @@ member_key:
     call json_parse
     cmp dword ptr [r12 + AS_kind], 1
     je 1f
+    cmp dword ptr [r12 + AS_kind], 3
+    je 5f
     mov rdi, rax
     lea rsi, [rip + .Lpayload]
     call json_get
@@ -645,6 +647,13 @@ member_key:
     call json_get
     jmp 2f
 1:  mov rdi, rax
+    lea rsi, [rip + .Lclaude_session_id]
+    call json_get
+    jmp 2f
+5:  mov rdi, rax
+    lea rsi, [rip + .Lparams]
+    call json_get
+    mov rdi, rax
     lea rsi, [rip + .Lclaude_session_id]
     call json_get
 2:  mov rdi, rax
@@ -1064,11 +1073,11 @@ scan_sources:
 3:  lea rdi, [rip + .Lcodex]
     call has_source
     test eax, eax
-    jz 9f
+    jz 5f
     lea rdi, [rip + .Lhome]
     call getenv
     test rax, rax
-    jz 9f
+    jz 5f
     mov rdi, rax
     lea rsi, [rip + .Lcodex_sessions]
     call path_join
@@ -1076,6 +1085,20 @@ scan_sources:
     mov rdi, rax
     xor esi, esi
     call codex_walk
+    mov rdi, rbx
+    call mem_free
+5:  lea rdi, [rip + .Lgrok]
+    call has_source
+    test eax, eax
+    jz 9f
+    call grok_sessions
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, rax
+    lea rsi, [rip + grok_group_cb]
+    mov rdx, rbx
+    call scan_dir
     mov rdi, rbx
     call mem_free
 9:  EPILOGUE
@@ -1213,6 +1236,66 @@ codex_cb:
     call mem_free
     EPILOGUE
 
+# grok_sessions() -> Grok Build's sessions folder (owned): $GROK_HOME/sessions, or ~/.grok/sessions; 0
+# without a home
+grok_sessions:
+    PROLOGUE
+    lea rdi, [rip + .Lgrok_home]
+    call getenv
+    lea rsi, [rip + .Lsessions]
+    test rax, rax
+    jz 1f
+    cmp byte ptr [rax], 0
+    jne 2f
+1:  lea rdi, [rip + .Lhome]
+    call getenv
+    test rax, rax
+    jz 9f
+    lea rsi, [rip + .Lgrok_sessions]
+2:  mov rdi, rax
+    call path_join
+9:  EPILOGUE
+
+# sessions/<the cwd, URL-encoded>/<session id>/updates.jsonl: the folder name is not decoded, as a long
+# one is a slug and a hash instead; summary.json beside the log names the cwd (grok_cwd)
+grok_group_cb:
+    PROLOGUE
+    test edx, edx
+    jz 9f
+    call path_join
+    mov rbx, rax
+    mov rdi, rax
+    lea rsi, [rip + grok_session_cb]
+    mov rdx, rbx
+    call scan_dir
+    mov rdi, rbx
+    call mem_free
+9:  EPILOGUE
+
+grok_session_cb:
+    PROLOGUE
+    test edx, edx
+    jz 9f
+    call path_join
+    mov rbx, rax
+    mov rdi, rax
+    lea rsi, [rip + .Lgrok_log]
+    call path_join
+    mov r12, rax
+    mov rdi, rbx
+    call mem_free
+    mov rdi, r12
+    call file_stamp
+    test rax, rax
+    jz 8f                       # a folder without its log yet
+    mov rdi, r12
+    mov esi, 3
+    xor edx, edx
+    call index_file
+8:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
 # index_file(path, kind, Claude cwd or 0): hash lookup and stat, parse changed metadata only.
 index_file:
     PROLOGUE 32
@@ -1279,8 +1362,12 @@ index_file:
     call mem_dup
     jmp 4f
 3:  mov rdi, r12
+    cmp r13d, 3
+    je 33f
     call codex_cwd
-    test edx, edx
+    jmp 34f
+33: call grok_cwd
+34: test edx, edx
     jz 9f
 4:  mov [rsp + 16], rax
     cmp dword ptr [rsp + 24], 0
@@ -1356,6 +1443,64 @@ codex_cwd:
     mov edx, 1
     EPILOGUE
 9:  xor edx, edx
+    EPILOGUE
+
+# grok_cwd(log) -> owned cwd, edx 1 when read (0: retry). A Grok Build session is listed once its log has
+# a prompt (the interface makes the folder at its start), and a subagent's session (its parent's task)
+# never is: both get an empty cwd, which matches no checkout and which scans keep until the log changes.
+grok_cwd:
+    PROLOGUE
+    mov rbx, rdi
+    mov esi, 262144
+    call agent_read_head
+    test rax, rax
+    jz 8f
+    mov r12, rax
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lgrok_prompt]
+    mov ecx, 20
+    call str_find
+    mov r13, rax
+    mov rdi, r12
+    call mem_free
+    test r13, r13
+    js 6f
+    mov rdi, rbx
+    call agent_grok_summary
+    test rax, rax
+    jz 8f                       # being written: the next scan reads it again
+    mov r12, rax
+    mov rdi, rax
+    lea rsi, [rip + .Lsession_kind]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Lsubagent]
+    call json_is
+    test eax, eax
+    jnz 6f
+    mov rdi, r12
+    lea rsi, [rip + .Linfo]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Lcwd]
+    call json_get
+    mov rdi, rax
+    call json_str
+    test rdx, rdx
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov edx, 1
+    EPILOGUE
+6:  lea rdi, [rip + .Lempty]
+    xor esi, esi
+    call mem_dup
+    mov edx, 1
+    EPILOGUE
+8:  xor eax, eax
+    xor edx, edx
     EPILOGUE
 
 # Recover an exact nested checkout path from session metadata, without relying on its slug.
@@ -1547,6 +1692,9 @@ collect_matches:
     cmp dword ptr [r12 + AS_kind], 1
     je 2f
     lea rdi, [rip + .Lcodex]
+    cmp dword ptr [r12 + AS_kind], 2
+    je 2f
+    lea rdi, [rip + .Lgrok]
 2:  call has_source
     test eax, eax
     jz .Lmatch_skip
@@ -1637,7 +1785,12 @@ collect_matches:
     xor rax, [r12 + AS_recency]
     ror rax, 32
     mov [r12 + AS_title_off], rax
-7:  inc rbx
+    # Grok Build titles a session itself, in summary.json: that file changes without the log
+7:  cmp dword ptr [r12 + AS_kind], 3
+    jne 71f
+    mov rdi, r12
+    call agent_grok_title
+71: inc rbx
     jmp 6b
 9:  EPILOGUE
 
@@ -1735,6 +1888,17 @@ sort_sift:
 .Ljsonl: .ascii ".jsonl"
 .Lclaude: .asciz "claude"
 .Lcodex: .asciz "codex"
+.Lgrok: .asciz "grok"
+.Lgrok_home: .asciz "GROK_HOME"
+.Lsessions: .asciz "sessions"
+.Lgrok_sessions: .asciz ".grok/sessions"
+.Lgrok_log: .asciz "updates.jsonl"
+.Lgrok_prompt: .ascii "\"user_message_chunk\""
+.Lsession_kind: .asciz "session_kind"
+.Lsubagent: .asciz "subagent"
+.Linfo: .asciz "info"
+.Lparams: .asciz "params"
+.Lempty: .asciz ""
 .Lpayload: .asciz "payload"
 .Lcwd: .asciz "cwd"
 .Lcache_prefix: .asciz "/agents-index-v5-"
