@@ -344,6 +344,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-appearance-') as directory:
         rhun.expect('dark', 'rhun-dark', 'settings.ini with a dark theme name')
         (gtk3 / 'settings.ini').unlink()
         rhun.expect('unknown', 'rhun-dark', 'settings.ini removed')
+        # a config folder that does not exist yet
+        late = work / 'late/config'
+        later = Rhun(dict(env, XDG_CONFIG_HOME=str(late)))
+        later.expect('unknown', 'rhun-dark', 'no config folder')
+        (late / 'gtk-3.0').mkdir(parents=True, exist_ok=True)
+        (late / 'gtk-3.0/settings.ini').write_text('[Settings]\ngtk-theme-name=Adwaita\n')
+        later.expect('light', 'rhun-light', 'settings.ini in a config folder made later')
+        later.close()
         if not wayland:
             window = subprocess.check_output(['xdotool', 'search', '--class', '^rhun$'], env=env,
                                              text=True).split()[0]

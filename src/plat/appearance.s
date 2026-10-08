@@ -245,15 +245,30 @@ ini_watch:
     call watch_add
 9:  EPILOGUE
 
-# ini_add_watches(): the config folder (for gtk-3.0 and gtk-4.0 appearing) and those folders.
-# Adding a watch again only renews it.
+# ini_add_watches(): the config folder (for gtk-3.0 and gtk-4.0 appearing), or while it does not
+# exist the nearest folder above it (for it appearing), and the gtk folders. Adding a watch again
+# only renews it.
 ini_add_watches:
     PROLOGUE
-    mov edi, [rip + ino_fd]
+    lea rdi, [rip + path_buf]
     lea rsi, [rip + cfg_root]
+    call cstr_copy
+1:  mov edi, [rip + ino_fd]
+    lea rsi, [rip + path_buf]
     mov edx, IN_CREATE | IN_MOVED_TO | IN_ONLYDIR
     SYS SYS_inotify_add_watch
-    lea rdi, [rip + .Lgtk3_dir]
+    test rax, rax
+    jns 3f
+    lea rdi, [rip + path_buf]
+    call strlen
+    lea rcx, [rip + path_buf]
+2:  dec rax
+    jle 3f                      # nothing above it but /
+    cmp byte ptr [rcx + rax], '/'
+    jne 2b
+    mov byte ptr [rcx + rax], 0
+    jmp 1b
+3:  lea rdi, [rip + .Lgtk3_dir]
     call user_path
     mov edi, [rip + ino_fd]
     mov rsi, rax
