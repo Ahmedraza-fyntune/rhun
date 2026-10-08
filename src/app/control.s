@@ -791,6 +791,23 @@ c_print_tip:
     xor eax, eax
     ret
 
+# print-toast: the message on screen, "toast=" when there is none
+c_print_toast:
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_toast]
+    call sb_push_cstr
+    call time_ms
+    cmp rax, [rip + g_toast_until]
+    jae 1f
+    lea rdi, [rip + out]
+    lea rsi, [rip + g_toast]
+    call sb_push_cstr
+1:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    ret
+
 # print-term: the screen of the current terminal
 c_print_term:
     lea rdi, [rip + out]
@@ -1389,11 +1406,13 @@ on_client:
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
 .Lc_print_tip: .asciz "print-tip"
+.Lc_print_toast: .asciz "print-toast"
 .Lc_print_link: .asciz "print-link"
 .Lc_print_scroll: .asciz "print-scroll"
 .Lc_scroll_x: .asciz "scroll-x"
 .Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
+.Ls_toast: .asciz "toast="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
 .Ls_hidden: .asciz " hidden"
@@ -1424,7 +1443,7 @@ ctl_table:
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
-    .quad .Lc_print_tip, c_print_tip, .Lc_print_link, c_print_link
+    .quad .Lc_print_tip, c_print_tip, .Lc_print_toast, c_print_toast, .Lc_print_link, c_print_link
     .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
     .quad .Lc_scroll_x, c_scroll_x, 0, 0
 

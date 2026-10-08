@@ -180,6 +180,23 @@ class EditorMatrix(unittest.TestCase):
         self.assertIn('dirty=1 ', states[1])
         self.assertIn('tabs=0 ', states[2])
 
+    @unittest.skipIf(os.name == 'nt' or (hasattr(os, 'geteuid') and os.geteuid() == 0),
+                     'a read-only folder does not stop Windows or root from writing')
+    def test_close_all_tabs_stops_where_a_save_fails(self):
+        locked = self.work / 'locked'
+        locked.mkdir()
+        (locked / 'note.txt').write_text('note\n', encoding='utf-8')
+        locked.chmod(0o555)
+        try:
+            output = self.run_editor(['open ' + (locked / 'note.txt').as_posix(), 'type x',
+                'cmd close_all_tabs', 'key Return', 'print-state', 'print-toast'])
+        finally:
+            locked.chmod(0o755)
+        self.assertIn('tabs=2 ', output)
+        self.assertIn('dirty=1 ', output)
+        self.assertIn('toast=Could not save the file\n', output)
+        self.assertEqual((locked / 'note.txt').read_text(encoding='utf-8'), 'note\n')
+
     def test_close_all_tabs_keys_stay_in_the_terminal(self):
         # Ctrl+Shift+W closes a tab in other terminals; in rhun's it goes to the program, so the
         # editor keeps its tabs. The palette still closes them from there.

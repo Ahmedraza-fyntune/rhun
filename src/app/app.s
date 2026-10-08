@@ -3648,7 +3648,7 @@ dialog_choose:
     je 2f
     call doc_save
     test rax, rax
-    js 8f
+    js 7f
     jmp 1f
 2:  call cmd_save_as
     jmp 8f
@@ -3666,6 +3666,9 @@ dialog_choose:
     jne 9f
     call cmd_close_all
     jmp 9f
+7:  # the file stays open and modified: say why
+    lea rdi, [rip + .Lsave_failed]
+    call app_toast
 8:  # not quitting after all: no restart into an update either, no other project, and the session
     # is saved again when it comes to that
     mov dword ptr [rip + g_restart], 0
