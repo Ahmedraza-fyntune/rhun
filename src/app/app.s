@@ -76,7 +76,10 @@ dlg_fn: .quad 0
 dlg_cancel: .quad 0              # app_confirm's Cancel calls this when it is set
 ro_doc: .quad 0                  # ask_readonly: the file asked about, and the question
 ro_kind: .long 0                 # a close or quit that asked about it (dlg_kind), carried on after Overwrite
+ro_close: .long 0                # vim's :wq asked: Overwrite closes the file too
 ro_title: .zero 256
+ro_path: .zero 4096              # Save As onto a read-only file: that path
+ro_dir: .zero 4096
 switch_pending: .long 0          # a project switch waits on unsaved files
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
@@ -1006,8 +1009,17 @@ FN cmd_prev_tab
 
 # cmd_save(): save, or ask for a path for untitled docs; a read-only file asks before it is replaced
 FN cmd_save
+    xor edi, edi
+    jmp save_doc
+
+# app_save_close(): vim's :wq: save, and close the file once it is saved (after Overwrite, for a
+#   read-only one)
+FN app_save_close
+    mov edi, 1
+save_doc:
     READONLY_RET
     PROLOGUE
+    mov r13d, edi
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1019,6 +1031,7 @@ FN cmd_save
     call doc_readonly
     test eax, eax
     jz 3f
+    mov [rip + ro_close], r13d
     mov rdi, rbx
     lea rsi, [rip + save_readonly_confirmed]
     call ask_readonly
@@ -1029,12 +1042,15 @@ FN cmd_save
     js 2f
     mov rdi, rbx
     call app_after_save
+    test r13d, r13d
+    jz 9f
+    call cmd_close_tab
     jmp 9f
 2:  lea rdi, [rip + .Lsave_failed]
     call app_toast
 9:  EPILOGUE
 
-# save_readonly_confirmed(): Overwrite, for cmd_save
+# save_readonly_confirmed(): Overwrite, for cmd_save and :wq
 save_readonly_confirmed:
     PROLOGUE
     mov rbx, [rip + ro_doc]
@@ -1046,55 +1062,155 @@ save_readonly_confirmed:
     js 2f
     mov rdi, rbx
     call app_after_save
+    cmp dword ptr [rip + ro_close], 0
+    je 9f
+    call cmd_close_tab
     jmp 9f
 2:  lea rdi, [rip + .Lsave_failed]
     call app_toast
 9:  EPILOGUE
 
-# doc_readonly(doc) -> eax 1 when its file is there but says not to write it (no write permission, or
-#   the read-only attribute on Windows); a save would still replace it, its folder being writable
+# doc_readonly(doc) -> eax 1 when saving it would replace a file that says not to write it: path_readonly
+#   for the file a symlink leads to, or the file itself
 FN doc_readonly
-    mov rdi, [rdi + DOC_path]
-    xor eax, eax
-    test rdi, rdi
-    jz 1f
-    sub rsp, 8
+    mov rax, [rdi + DOC_real]
+    test rax, rax
+    jnz 1f
+    mov rax, [rdi + DOC_path]
+    test rax, rax
+    jz 2f
+1:  mov rdi, rax
+    jmp path_readonly
+2:  xor eax, eax
+    ret
+
+# path_readonly(path) -> eax 1 when the file there says not to write it (no write permission, or the
+#   read-only attribute on Windows) while its folder takes a new file, so a save would replace it
+#   anyway; in a folder that does not, a save fails as any other
+FN path_readonly
+    PROLOGUE
+    mov rbx, rdi
     mov esi, 2                  # W_OK
     SYS SYS_access
-    add rsp, 8
     cmp rax, -13                # EACCES
-    sete al
-    movzx eax, al
-1:  ret
+    jne 8f
+    mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_dirlen
+    test rax, rax
+    jnz 1f
+    cmp byte ptr [rbx], '/'
+    jne 7f
+    mov eax, 1
+1:  cmp rax, 4096
+    jae 7f
+    lea rdi, [rip + ro_dir]
+    mov rsi, rbx
+    mov rcx, rax
+    rep movsb
+    mov byte ptr [rdi], 0
+    lea rdi, [rip + ro_dir]
+    mov esi, 2
+    SYS SYS_access
+    test rax, rax
+    jnz 8f
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # doc_save_readonly(doc) -> doc_save's result: a read-only file is replaced and stays read-only. On
-#   Windows, where a read-only file cannot be replaced, the attribute is off while it is written.
+#   Windows, where a read-only file cannot be replaced, the attribute is off while it is written (on
+#   the file a symlink leads to, which is the one written).
 FN doc_save_readonly
 .ifdef WINDOWS
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + DOC_path]
+    mov r13, [rbx + DOC_real]
+    test r13, r13
+    jnz 1f
+    mov r13, [rbx + DOC_path]
+1:  mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call mem_dup                # the doc's paths are made again by the save
+    mov r13, rax
+    mov rdi, r13
     mov esi, 0666
     SYS SYS_chmod
     mov rdi, rbx
     call doc_save
     mov r12, rax
-    mov rdi, [rbx + DOC_path]
+    mov rdi, r13
     mov esi, 0444
     SYS SYS_chmod
+    mov rdi, r13
+    call mem_free
     mov rax, r12
     EPILOGUE
 .else
     jmp doc_save
 .endif
 
+# app_save_as_readonly(path): Save As onto a read-only file asks first, as a save does
+FN app_save_as_readonly
+    PROLOGUE
+    mov rbx, rdi
+    call strlen
+    cmp rax, 4096
+    jae 9f
+    lea rdi, [rip + ro_path]
+    mov rsi, rbx
+    call cstr_copy
+    mov rax, [rip + g_doc]
+    mov [rip + ro_doc], rax
+    lea rdi, [rip + ro_path]
+    call strlen
+    lea rdi, [rip + ro_path]
+    mov rsi, rax
+    call path_basename
+    mov rdi, rax
+    lea rsi, [rip + save_as_readonly_confirmed]
+    call ask_readonly_named
+9:  EPILOGUE
+
+# save_as_readonly_confirmed(): Overwrite, for Save As
+save_as_readonly_confirmed:
+    PROLOGUE
+    mov rbx, [rip + ro_doc]
+    test rbx, rbx
+    jz 9f
+    cmp rbx, [rip + g_doc]
+    jne 9f
+    mov rdi, rbx
+    lea rsi, [rip + ro_path]
+    call doc_set_path
+    mov rdi, rbx
+    call doc_save_readonly
+    test rax, rax
+    js 2f
+    mov rdi, rbx
+    call app_detect_lang
+    mov rdi, rbx
+    call app_after_save
+    call app_update_title
+    jmp 9f
+2:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+9:  EPILOGUE
+
 # ask_readonly(doc, fn): "Overwrite read-only NAME?", whose button calls fn
 ask_readonly:
-    PROLOGUE
     mov [rip + ro_doc], rdi
+    mov rdi, [rdi + DOC_name]
+# ask_readonly_named(name, fn): the same for a file of that name
+ask_readonly_named:
+    PROLOGUE
     mov r12, rsi
-    mov rbx, [rdi + DOC_name]
-    mov rdi, rbx
+    mov rbx, rdi
     call strlen
     cmp rax, 200
     jbe 1f

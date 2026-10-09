@@ -131,6 +131,55 @@ class ReadOnlySave(unittest.TestCase):
         self.assertEqual(self.other.read_bytes(), b'ther\n')
         self.assert_read_only(self.note, b'before\n')
 
+    def test_save_as_onto_a_read_only_file_asks(self):
+        other = self.other
+        os.chmod(other, 0o444)
+        actions = ['type x', 'cmd save_as', 'key ctrl+a', 'type ' + other.as_posix(), 'key Return', 'print-state']
+        lines = self.run_editor([self.note], actions + ['key Escape', 'print-state'])
+        self.assertIn(DIALOG, lines[0])
+        self.assertEqual(self.state(lines[1], 'active'), 'note.txt')
+        self.assert_read_only(other, b'other\n')
+        lines = self.run_editor([self.note], actions + ['key Return', 'print-state'])
+        self.assertEqual(self.state(lines[1], 'active'), 'other.txt')
+        self.assertEqual(self.state(lines[1], 'dirty'), '0')
+        self.assert_read_only(other, b'xbefore\n')
+        self.assert_read_only(self.note, b'before\n')
+
+    @unittest.skipIf(os.name == 'nt', 'a folder that takes no new file is POSIX permissions')
+    def test_a_folder_that_takes_no_new_file_fails_as_before(self):
+        # Overwrite could not work there: no question, and the save fails as any other
+        os.chmod(self.work, 0o555)
+        try:
+            lines = self.run_editor([self.note], ['type x', 'cmd save', 'print-state', 'print-toast'])
+        finally:
+            os.chmod(self.work, 0o755)
+        self.assertNotIn(DIALOG, lines[0])
+        self.assertEqual(lines[1], 'toast=Could not save the file')
+        self.assert_read_only(self.note, b'before\n')
+
+    def test_vim_write_quit_closes_it_after_overwrite(self):
+        lines = self.run_editor([self.note, self.other], [
+            'cmd toggle_vim', 'cmd prev_tab', 'type x', 'type :wq', 'key Return', 'print-state', 'key Return',
+            'print-state'])
+        self.assertIn(DIALOG, lines[0])
+        self.assertEqual(self.state(lines[0], 'tabs'), '2')
+        self.assertEqual(self.state(lines[1], 'tabs'), '1')
+        self.assertEqual(self.state(lines[1], 'active'), 'other.txt')
+        self.assert_read_only(self.note, b'efore\n')
+
+    def test_a_cancelled_quit_saves_the_session_again(self):
+        # Cancel in the question after Save stops the quit, so the next quit saves the session again,
+        # with the file opened in between
+        self.config.write_text(CONFIG.replace('restore_session = false', 'restore_session = true'),
+                               encoding='utf-8')
+        self.run_editor([self.work, self.note], [
+            'type x', 'cmd quit', 'key Return', 'key Escape', 'open ' + self.other.as_posix(),
+            'cmd quit', 'key Return', 'key Return', 'wait 100'])
+        sessions = list((self.home / 'state').rglob('*'))
+        text = b''.join(path.read_bytes() for path in sessions if path.is_file())
+        self.assertIn(b'other.txt', text)
+        self.assert_read_only(self.note, b'xbefore\n')
+
     def test_save_as_writes_a_new_file(self):
         copy = self.work / 'copy.txt'
         lines = self.run_editor([self.note], ['type x', 'cmd save_as', 'key ctrl+a',

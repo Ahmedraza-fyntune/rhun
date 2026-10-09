@@ -284,12 +284,14 @@ docs_lost:
 9:  EPILOGUE
 
 # docs_wake(): open files waiting for their folder try again; one that has it now is compared with
-#   the disk, as it may have been written before its folder was watched
+#   the disk, as it may have been written before its folder was watched. With none still waiting,
+#   no folder reports for them.
 docs_wake:
     PROLOGUE
     xor ebx, ebx
+    xor r13d, r13d              # one still waits
 1:  cmp rbx, [rip + g_tabs + VEC_len]
-    jae 9f
+    jae 7f
     mov rdi, rbx
     call tab_at
     mov r12, [rax + TAB_doc]
@@ -306,8 +308,15 @@ docs_wake:
 2:  mov rdi, r12
     call watch_doc
     cmp qword ptr [r12 + DOC_wd], 0
+    jl 3f
+    cmp qword ptr [r12 + DOC_real], 0
+    je 4f
+    cmp qword ptr [r12 + DOC_wd2], 0
+    jge 4f
+3:  mov r13d, 1
+    cmp qword ptr [r12 + DOC_wd], 0
     jl 8f
-    cmp qword ptr [r12 + DOC_reload_at], 0
+4:  cmp qword ptr [r12 + DOC_reload_at], 0
     jne 8f
     call time_ms
     add rax, RELOAD_DELAY_MS
@@ -315,6 +324,14 @@ docs_wake:
     call tick_at
 8:  inc rbx
     jmp 1b
+7:  test r13d, r13d
+    jnz 9f
+    lea rax, [rip + wd_kinds]
+    xor ecx, ecx
+6:  and byte ptr [rax + rcx], 0xff - WK_WAIT
+    inc ecx
+    cmp ecx, MAXWD
+    jb 6b
 9:  EPILOGUE
 
 on_inotify:
@@ -615,9 +632,19 @@ reload_changed:
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
     jz 9f
-    mov rdi, rbx
+    # a symlink, or a file that is one now: what it leads to, and that folder's watch, again
+    cmp qword ptr [rbx + DOC_real], 0
+    jne 1f
+    sub rsp, 16
+    mov rsi, rsp
+    mov edx, 1
+    SYS SYS_readlink
+    add rsp, 16
+    test rax, rax
+    js 2f
+1:  mov rdi, rbx
     call watch_doc
-    mov rdi, [rbx + DOC_path]
+2:  mov rdi, [rbx + DOC_path]
     call file_stamp
     test rax, rax
     jz 9f                      # a removed file keeps its current contents

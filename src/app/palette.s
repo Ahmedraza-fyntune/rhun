@@ -2188,7 +2188,15 @@ prompt_done:
     mov r13, [rip + g_doc]
     test r13, r13
     jz 9f
-    mov rdi, r13
+    # onto a read-only file: ask first
+    mov rdi, rbx
+    call path_readonly
+    test eax, eax
+    jz 0f
+    mov rdi, rbx
+    call app_save_as_readonly
+    jmp 9f
+0:  mov rdi, r13
     mov rsi, rbx
     call doc_set_path
     mov rdi, rbx

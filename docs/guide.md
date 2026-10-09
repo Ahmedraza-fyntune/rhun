@@ -51,8 +51,10 @@ If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Re
 command palette to load the disk version, or save to keep your version. Undoing back to the saved
 state loads the disk version too.
 Saving a read-only file asks first: **Overwrite** replaces it and it stays read-only, **Cancel** leaves
-it as it is, and Save As writes a copy elsewhere. Save in the question about unsaved files when
-closing or quitting asks the same, and Vim's `:wa` leaves read-only files unsaved.
+it as it is, and Save As writes a copy elsewhere. Save As onto a read-only file and Save in the
+question about unsaved files when closing or quitting ask the same; Vim's `:wq` closes the file after
+Overwrite, and `:wa` leaves read-only files unsaved. In a folder that takes no new file, a save fails
+as any other.
 
 ## Install and update
 

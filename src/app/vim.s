@@ -4399,17 +4399,7 @@ vx_qbang:
     jmp app_close_tab_now
 1:  ret
 vx_wq:
-    push rbx
-    call cmd_save
-    mov rdi, [rip + g_doc]
-    test rdi, rdi
-    jz 1f
-    call doc_dirty
-    test eax, eax
-    jnz 1f
-    call cmd_close_tab
-1:  pop rbx
-    ret
+    jmp app_save_close
 vx_qabang:
     call session_save
     mov dword ptr [rip + g_quit], 1
