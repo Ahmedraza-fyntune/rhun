@@ -159,9 +159,12 @@ function Choose-DefaultEditor {
     }
 }
 
-# The editor programs such as git ask for: rhun.com, which keeps the console until rhun closes. Forward
-# slashes, so that git's sh takes the path as it is.
-function Get-EditorValue { '"' + (Join-Path $InstallDir 'rhun.com').Replace('\', '/') + '" --wait' }
+# The editor programs such as git ask for: rhun.com, which keeps the console until rhun closes. Git's sh
+# reads it: forward slashes, and $ and ` escaped, so that the double quotes keep the path as it is.
+function Get-EditorValue {
+    $path = (Join-Path $InstallDir 'rhun.com').Replace('\', '/').Replace('$', '\$').Replace('`', '\`')
+    '"' + $path + '" --wait'
+}
 function Get-UserVariable([string]$Name) { [Environment]::GetEnvironmentVariable($Name, 'User') }
 function Set-UserVariable([string]$Name, $Value) { [Environment]::SetEnvironmentVariable($Name, $Value, 'User') }
 

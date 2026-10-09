@@ -65,7 +65,7 @@ try {
     Choose-DefaultEditor | Out-Null
     Assert ($openedSettings.Count -eq 1) 'Manual request did not open Settings'
     # the editor git asks for: rhun.com, quoted, with forward slashes for git's sh
-    $editor = '"C:/Program files café '' $ &/rhun/rhun.com" --wait'
+    $editor = '"C:/Program files café '' \$ &/rhun/rhun.com" --wait'
     Assert ($userVariables['VISUAL'] -ceq $editor) "VISUAL is $($userVariables['VISUAL'])"
     Assert ($userVariables['EDITOR'] -ceq $editor) "EDITOR is $($userVariables['EDITOR'])"
     $userVariables.Clear()
@@ -79,6 +79,10 @@ try {
     Remove-TerminalEditor
     Assert (-not $userVariables.ContainsKey('VISUAL')) 'Uninstall left VISUAL'
     Assert ($userVariables['EDITOR'] -eq 'notepad') 'Uninstall removed an editor of the user'
+    $installed = $InstallDir
+    $InstallDir = 'C:\a`b $HOME\rhun'
+    Assert ((Get-EditorValue) -ceq '"C:/a\`b \$HOME/rhun/rhun.com" --wait') "The editor is $(Get-EditorValue)"
+    $InstallDir = $installed
     'ok   associations/windows-editor-variables'
     Register-FileAssociations
     $InstallDir = 'C:\Other rhun'
@@ -259,7 +263,11 @@ esac
     (home / '.config/fish').mkdir(parents=True, exist_ok=True)
     (home / '.config/nushell').mkdir(parents=True, exist_ok=True)
     fish_file = home / '.config/fish/conf.d/rhun-editor.fish'
-    value = "'" + str(executable) + "' --wait"        # the path has a space: quoted for git's sh
+
+    def quoted(path):
+        """PATH as sh reads it in single quotes"""
+        return "'" + str(path).replace("'", "'\"'\"'") + "'"
+    value = quoted(executable) + ' --wait'        # the path has a space: quoted for git's sh
 
     def editor_in(shell, rc, extra):
         """VISUAL and EDITOR as SHELL exports them after reading RC, with EXTRA in its environment"""
@@ -276,14 +284,16 @@ esac
         result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=15)
         return result.stdout.splitlines()
 
-    def check_shells(display, none):
-        """each shell reads VALUE where a window can open (DISPLAY), and keeps its own editor without"""
+    def check_shells(display, none, expected=None):
+        """each shell reads EXPECTED (VALUE) where a window can open (DISPLAY), and keeps its own
+        editor without"""
+        expected = expected or value
         for shell, rc in (('zsh', home / '.zshrc'), ('bash', home / '.bashrc'), ('dash', home / '.bashrc'),
                           ('tcsh', home / '.tcshrc'), ('fish', fish_file),
                           ('nu', home / '.config/nushell/env.nu')):
             if not shutil.which(shell):
                 continue
-            assert editor_in(shell, rc, display) == [value, value], (shell, editor_in(shell, rc, display))
+            assert editor_in(shell, rc, display) == [expected, expected], (shell, editor_in(shell, rc, display))
             kept = ['vi'] if rc.name == '.bashrc' else []
             assert editor_in(shell, rc, none) == kept, (shell, editor_in(shell, rc, none))
 
@@ -324,12 +334,26 @@ esac
     output = run('--make-default', '--no-modify-path')
     assert b'set VISUAL and EDITOR to: ' + value.encode() in output, output
     assert blocks(home / '.zshrc') == 0
+    # a ! in the path: csh would take it for history unless escaped
+    bang = temp / 'opt !x'
+    (bang / 'bin').mkdir(parents=True)
+    shutil.copy2(executable, bang / 'bin/rhun')
+    (bang / 'share/applications').mkdir(parents=True)
+    shutil.copy2(desktop, bang / 'share/applications/rhun.desktop')
+    run('--make-default', '--prefix', str(bang))
+    check_shells({'DISPLAY': ':0'}, {}, quoted(bang / 'bin/rhun') + ' --wait')
     print('ok   associations/editor-variables-linux', flush=True)
 
-    # macOS: everywhere but SSH sessions, through the terminal command
+    # macOS: everywhere but SSH sessions, through the terminal command when it starts this app (as
+    # place_wrapper writes it), else through the app's own program
     (shim / 'uname').write_text('#!/bin/sh\ncase "$1" in -s) echo Darwin;; -m) echo arm64;; esac\n')
+    ssh = {'SSH_CONNECTION': '192.0.2.1 50000 192.0.2.2 22'}
+    executable.write_text(f'#!/bin/sh\nexec "{appdir}/rhun.app/Contents/MacOS/rhun" "$@"\n')
     run('--app-dir', str(appdir), '--make-default')
-    check_shells({}, {'SSH_CONNECTION': '192.0.2.1 50000 192.0.2.2 22'})
+    check_shells({}, ssh)
+    executable.write_text('#!/bin/sh\nexec "/Applications/Elsewhere/rhun.app/Contents/MacOS/rhun" "$@"\n')
+    run('--app-dir', str(appdir), '--make-default')
+    check_shells({}, ssh, quoted(appdir / 'rhun.app/Contents/MacOS/rhun') + ' --wait')
     print('ok   associations/editor-variables-mac', flush=True)
 
     # --uninstall takes the blocks away, and leaves the user's lines

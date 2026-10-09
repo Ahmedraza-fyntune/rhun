@@ -310,8 +310,8 @@ choose_default_editor() {
     set_file_defaults
     if [ "$os" = linux ]; then
         set_editor "$prefix/bin/rhun"
-    elif [ -x "$HOME/.local/bin/rhun" ]; then
-        set_editor "$HOME/.local/bin/rhun"
+    elif [ -x "$HOME/.local/bin/rhun" ] && grep -qF "\"$appdir/rhun.app/Contents/MacOS/rhun\"" "$HOME/.local/bin/rhun"; then
+        set_editor "$HOME/.local/bin/rhun"     # the terminal command, when it starts this app
     else
         set_editor "$appdir/rhun.app/Contents/MacOS/rhun"
     fi
@@ -447,7 +447,9 @@ set_editor() {
         tcsh | csh)
             f=$HOME/.tcshrc
             if [ ! -f "$f" ] && { [ -f "$HOME/.cshrc" ] || [ "$sh" = csh ]; }; then f=$HOME/.cshrc; fi
-            put_editor "$f" "$(printf 'if %s then\n    setenv VISUAL %s\n    setenv EDITOR %s\nendif' "$csh_test" "$q" "$q")" "$sh"
+            # csh expands history (!) even in single quotes, unless a backslash comes first
+            cq=$(printf '%s' "$q" | sed 's/!/\\!/g')
+            put_editor "$f" "$(printf 'if %s then\n    setenv VISUAL %s\n    setenv EDITOR %s\nendif' "$csh_test" "$cq" "$cq")" "$sh"
             ;;
         *) say "$sh: set VISUAL and EDITOR to $value to edit commit messages in rhun" ;;
         esac
