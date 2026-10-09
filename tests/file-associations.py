@@ -259,7 +259,11 @@ esac
     env.pop('GIT_EDITOR', None)
     (home / '.zshrc').write_text('alias ll="ls -l"\n')
     (home / '.bashrc').write_text('export EDITOR=vi\n')
-    (home / '.profile').write_text('export X=1\n')     # what bash reads as a login shell here
+    # what bash reads as a login shell here; with bash the login shell or SHELL (as on CI), the Mac
+    # runs above gave it a .bash_profile, which would come first
+    for name in ('.bash_profile', '.bash_login'):
+        (home / name).unlink(missing_ok=True)
+    (home / '.profile').write_text('export X=1\n')
     (home / '.tcshrc').write_text('')
     (home / '.config/fish').mkdir(parents=True, exist_ok=True)
     (home / '.config/nushell').mkdir(parents=True, exist_ok=True)
