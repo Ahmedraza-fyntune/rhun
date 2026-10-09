@@ -454,10 +454,36 @@ FN scm_ai_result
     call app_toast
 9:  EPILOGUE
 
+# ai_width() -> eax: the Generate button's width, room for its wider label (Generate or Cancel) and
+# the icon, so it keeps its width while running
+ai_width:
+    PROLOGUE
+    lea rdi, [rip + .Lai_label]
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + .Lai_label]
+    mov rdx, rax
+    call text_width
+    mov ebx, eax
+    lea rdi, [rip + .Lai_cancel]
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + .Lai_cancel]
+    mov rdx, rax
+    call text_width
+    cmp eax, ebx
+    cmovl eax, ebx
+    add eax, [rip + g_mt + 4*MI_ICON]
+    add eax, [rip + g_mt + 4*MI_6]
+    add eax, [rip + g_mt + 4*MI_24]
+    EPILOGUE
+
 # draw_ai(y): a compact button beside the message, with a stable width while running.
 draw_ai:
     PROLOGUE
     mov r13d, edi
+    call ai_width
+    mov r12d, eax
     lea rdi, [rip + lbl]
     call sb_clear
     lea rsi, [rip + .Lai_label]
@@ -470,8 +496,7 @@ draw_ai:
     mov esi, [rip + in_x]
     mov edx, r13d
     add esi, [rip + in_w]
-    M ecx, MI_64
-    add ecx, [rip + g_mt + 4*MI_16]
+    mov ecx, r12d
     sub esi, ecx
     M r8d, MI_32
     mov r9d, IC_SPARK
@@ -1382,8 +1407,9 @@ FN scm_draw
     mov esi, [rip + in_w]
     cmp dword ptr [rip + cfg_commit_ai], 0
     je 20f
-    sub esi, [rip + g_mt + 4*MI_64]
-    sub esi, [rip + g_mt + 4*MI_16]
+    call ai_width
+    mov esi, [rip + in_w]
+    sub esi, eax
     sub esi, [rip + g_mt + 4*MI_8]
 20: mov [rsp + 8], esi
     lea rdi, [rip + tf_msg]
@@ -1413,7 +1439,7 @@ FN scm_draw
     jz 3f
     mov dword ptr [rip + g_focus], FOCUS_SCM
     mov dword ptr [rsp], 0
-3:  # AI shares the message row and stays at its top as the draft grows.
+3:  # Generate shares the message row and stays at its top as the draft grows.
     cmp dword ptr [rip + cfg_commit_ai], 0
     je 31f
     mov edi, r13d
@@ -2815,7 +2841,7 @@ seq_discard_all: .byte S_CHECKOUT_ALL, S_CLEAN_ALL, 0
 seq_clean_all: .byte S_CLEAN_ALL, 0
 seq_reset_all: .byte S_RESET_HARD, S_CLEAN_ALL, 0
 
-.Lai_label: .asciz "AI"
+.Lai_label: .asciz "Generate"
 .Lai_cancel: .asciz "Cancel"
 .Lai_off: .asciz "Choose a commit message AI provider in Settings first."
 .Lai_edited: .asciz "Your draft changed while generating, so it was kept."
