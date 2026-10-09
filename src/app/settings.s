@@ -85,7 +85,18 @@ FN setting_applied
     jne 7f
     call theme_follow_toggled
     jmp 9f
-7:  call vim_sync
+    # a panel's setting changed here holds in this window too, even where a file launch hid it
+7:  mov edi, 1
+    lea rcx, [rip + cfg_sidebar]
+    cmp rax, rcx
+    je 71f
+    mov edi, 2
+    lea rcx, [rip + cfg_agents]
+    cmp rax, rcx
+    jne 72f
+71: call app_reveal_panel
+    jmp 9f
+72: call vim_sync
 9:  EPILOGUE
 
 # setting_shown(SET*) -> 1 if its row is on the page: Theme without Follow system dark mode, the dark

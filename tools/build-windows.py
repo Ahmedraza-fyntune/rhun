@@ -35,6 +35,22 @@ def run(args):
     subprocess.run([str(a) for a in args], cwd=ROOT, check=True)
 
 
+def without_comments(text):
+    """PowerShell TEXT without its whole-line comments, here-strings as they are: the update helper,
+    the installer included, has to fit a command line"""
+    assert '<#' not in text, 'a block comment would have to go as a whole'
+    lines, here = [], False
+    for line in text.split('\n'):
+        if here:
+            here = not line.startswith(('"@', "'@"))
+        elif line.rstrip().endswith(('@"', "@'")):
+            here = True
+        elif line.lstrip().startswith('#'):
+            continue
+        lines.append(line)
+    return '\n'.join(lines)
+
+
 def assets():
     lines = ['.section .rdata,"dr"']
 
@@ -55,10 +71,10 @@ def assets():
     script = base64.b64encode(bootstrap.encode('utf-16le')).decode('ascii')
     assert len(script) < 30000, 'AI helper exceeds the Windows command-line budget'
     lines += ['.globl commit_ai_script', 'commit_ai_script: .asciz "' + script + '"']
-    installer = (ROOT / 'install.ps1').read_text(encoding='utf-8')
+    installer = without_comments((ROOT / 'install.ps1').read_text(encoding='utf-8'))
     assert "\n'@" not in installer, 'Installer contains the embedding here-string delimiter'
     update = ("$installer=[scriptblock]::Create(@'\n" + installer + "\n'@);" +
-              (ROOT / 'runtime/windows/update.ps1').read_text(encoding='utf-8'))
+              without_comments((ROOT / 'runtime/windows/update.ps1').read_text(encoding='utf-8')))
     packed_update = base64.b64encode(gzip.compress(update.encode(), mtime=0)).decode('ascii')
     bootstrap_update = ("$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';"
                         "$b=[Convert]::FromBase64String('" + packed_update + "');"

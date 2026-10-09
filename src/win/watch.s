@@ -2,6 +2,9 @@
 # Keeping enumeration state across reads avoids losing filenames when a notification burst is
 # larger than the core's event buffer. No notification buffer can overflow, and all work runs
 # on the main thread. File stamps in app/watch.s suppress reloads of unchanged documents.
+# Each notification opens the directory at that path again, so a directory removed and made again
+# is followed; one that is gone reports IN_IGNORED, as inotify does, and adding it again later
+# watches it again.
 .include "win.inc"
 .equ WW_SIZE, 24
 .equ WW_MAX, 4096
@@ -36,25 +39,25 @@ FN ws_watch_add
     mov rsi, r12
     call strcmp_eq
     test eax, eax
-    jnz 8f
+    jnz 7f
     inc ebx
     jmp 1b
+7:  # watched before: once its directory was gone, it is watched again if it is there now
+    cmp qword ptr [r13 + 8], 0
+    jne 8f
+    mov rdi, r12
+    call ww_open
+    test rax, rax
+    jz 9f
+    mov [r13 + 8], rax
+    jmp 8f
 2:  cmp ebx, WW_MAX
     jae 9f
     mov rdi, r12
-    call win_file_path
-    mov r14, rax
+    call ww_open
+    mov r15, rax
     test rax, rax
     jz 9f
-    mov rcx, rax
-    xor edx, edx
-    mov r8d, 0x1f
-    API FindFirstChangeNotificationW
-    mov r15, rax
-    mov rdi, r14
-    call mem_free
-    cmp r15, -1
-    je 9f
     mov rdi, r12
     call strlen
     mov rdi, r12
@@ -69,6 +72,26 @@ FN ws_watch_add
 8:  mov eax, ebx
     EPILOGUE
 9:  mov rax, -2
+    EPILOGUE
+
+# ww_open(path) -> change notification handle of that directory, or 0
+ww_open:
+    PROLOGUE 96
+    call win_file_path
+    mov rbx, rax
+    xor r12d, r12d
+    test rax, rax
+    jz 9f
+    mov rcx, rax
+    xor edx, edx
+    mov r8d, 0x1f
+    API FindFirstChangeNotificationW
+    cmp rax, -1
+    je 8f
+    mov r12, rax
+8:  mov rdi, rbx
+    call mem_free
+9:  mov rax, r12
     EPILOGUE
 
 FN win_watch_ready
@@ -90,18 +113,22 @@ FN win_watch_ready
     jz 3f
 2:  inc ebx
     jmp 1b
-3:  # Rearm before enumerating, so changes during enumeration remain signaled.
-    mov rcx, [r12 + 8]
-    API FindNextChangeNotification
-    test eax, eax
-    jnz 4f
+3:  # Rearm before enumerating, so changes during enumeration remain signaled: with a handle on the
+    # directory at that path now, which a removed one made again is not
     mov rcx, [r12 + 8]
     API FindCloseChangeNotification
     mov qword ptr [r12 + 8], 0
-4:  mov [rip + ww_active], ebx
-    mov dword ptr [rip + ww_parent], 1
+    mov rdi, [r12]
+    call ww_open
+    mov [r12 + 8], rax
+    mov [rip + ww_active], ebx
     mov dword ptr [rip + ww_bytes], 0
     mov dword ptr [rip + ww_cursor], 0
+    mov dword ptr [rip + ww_fd], -1
+    mov dword ptr [rip + ww_parent], 2      # gone: IN_IGNORED and no entries
+    test rax, rax
+    jz 8f
+    mov dword ptr [rip + ww_parent], 1
     mov rdi, [r12]
     mov esi, O_DIRECTORY | O_CLOEXEC
     xor edx, edx
@@ -129,7 +156,11 @@ FN win_watch_read
     lea rdx, [r12 + r14]
     mov eax, [rip + ww_active]
     mov [rdx], eax
-    mov dword ptr [rdx + 4], IN_CREATE | IN_DELETE | IN_MOVED_TO
+    mov eax, IN_CREATE | IN_DELETE | IN_MOVED_TO
+    cmp dword ptr [rip + ww_parent], 2
+    jne 1f
+    or eax, IN_IGNORED
+1:  mov [rdx + 4], eax
     mov dword ptr [rdx + 8], 0
     mov dword ptr [rdx + 12], 8
     mov qword ptr [rdx + 16], 0

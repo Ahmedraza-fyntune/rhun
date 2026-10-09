@@ -73,6 +73,13 @@ dlg_title: .quad 0               # app_confirm: the question, a line under it, t
 dlg_text: .quad 0
 dlg_ok: .quad 0
 dlg_fn: .quad 0
+dlg_cancel: .quad 0              # app_confirm's Cancel calls this when it is set
+ro_doc: .quad 0                  # ask_readonly: the file asked about, and the question
+ro_kind: .long 0                 # a close or quit that asked about it (dlg_kind), carried on after Overwrite
+ro_close: .long 0                # vim's :wq asked: Overwrite closes the file too
+ro_title: .zero 256
+ro_path: .zero 4096              # Save As onto a read-only file: that path
+ro_dir: .zero 4096
 switch_pending: .long 0          # a project switch waits on unsaved files
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
@@ -99,6 +106,7 @@ g_file: .quad 0                  # DOC of the active tab when it shows a file (t
 FN app_init
     PROLOGUE 16
     call config_load
+    call app_sync_panels
     call theme_scan
     mov edi, 1
     call theme_settings_init
@@ -155,9 +163,11 @@ load_font_or:
 # app_set_project(dir cstr): project root for explorer, agents and session
 FN app_set_project
     mov dword ptr [rip + g_project_adopted], 0
+    mov dword ptr [rip + panels_hidden], 0 # a folder opened as such shows its panels
 set_project:
     PROLOGUE
     mov rbx, rdi
+    call app_sync_panels
     mov rdi, [rip + g_project]
     call mem_free
     mov rdi, rbx
@@ -324,6 +334,8 @@ FN app_switch_project
     cmp dword ptr [rip + g_project_adopted], 0
     je 9f
     mov dword ptr [rip + g_project_adopted], 0
+    mov dword ptr [rip + panels_hidden], 0
+    call app_sync_panels
     call session_remember_project
     call session_restore
     call app_update_title
@@ -995,10 +1007,19 @@ FN cmd_prev_tab
     jmp app_activate_tab
 1:  ret
 
-# cmd_save(): save, or ask for a path for untitled docs
+# cmd_save(): save, or ask for a path for untitled docs; a read-only file asks before it is replaced
 FN cmd_save
+    xor edi, edi
+    jmp save_doc
+
+# app_save_close(): vim's :wq: save, and close the file once it is saved (after Overwrite, for a
+#   read-only one)
+FN app_save_close
+    mov edi, 1
+save_doc:
     READONLY_RET
     PROLOGUE
+    mov r13d, edi
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1007,15 +1028,229 @@ FN cmd_save
     call cmd_save_as
     jmp 9f
 1:  mov rdi, rbx
+    call doc_readonly
+    test eax, eax
+    jz 3f
+    mov [rip + ro_close], r13d
+    mov rdi, rbx
+    lea rsi, [rip + save_readonly_confirmed]
+    call ask_readonly
+    jmp 9f
+3:  mov rdi, rbx
     call doc_save
     test rax, rax
     js 2f
     mov rdi, rbx
     call app_after_save
+    test r13d, r13d
+    jz 9f
+    call cmd_close_tab
     jmp 9f
 2:  lea rdi, [rip + .Lsave_failed]
     call app_toast
 9:  EPILOGUE
+
+# save_readonly_confirmed(): Overwrite, for cmd_save and :wq
+save_readonly_confirmed:
+    PROLOGUE
+    mov rbx, [rip + ro_doc]
+    cmp rbx, [rip + g_doc]
+    jne 9f
+    mov rdi, rbx
+    call doc_save_readonly
+    test rax, rax
+    js 2f
+    mov rdi, rbx
+    call app_after_save
+    cmp dword ptr [rip + ro_close], 0
+    je 9f
+    call cmd_close_tab
+    jmp 9f
+2:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+9:  EPILOGUE
+
+# doc_readonly(doc) -> eax 1 when saving it would replace a file that says not to write it: file_readonly,
+#   with a symlink followed as it is now, as the save will
+FN doc_readonly
+    mov rdi, [rdi + DOC_path]
+    test rdi, rdi
+    jnz file_readonly
+    xor eax, eax
+    ret
+
+# file_readonly(path) -> path_readonly for the file a symlink there leads to (the one a save writes),
+#   or for the path itself
+FN file_readonly
+    PROLOGUE
+    mov rbx, rdi
+    xor esi, esi
+    call link_target
+    mov r12, rax
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call path_readonly
+    mov ebx, eax
+    mov rdi, r12
+    call mem_free
+    mov eax, ebx
+    EPILOGUE
+1:  mov rdi, rbx
+    call path_readonly
+    EPILOGUE
+
+# path_readonly(path) -> eax 1 when the file there says not to write it (no write permission, or the
+#   read-only attribute on Windows) while its folder takes a new file, so a save would replace it
+#   anyway; in a folder that does not, a save fails as any other
+FN path_readonly
+    PROLOGUE
+    mov rbx, rdi
+    mov esi, 2                  # W_OK
+    SYS SYS_access
+    cmp rax, -13                # EACCES
+    jne 8f
+    mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_dirlen
+    test rax, rax
+    jnz 1f
+    cmp byte ptr [rbx], '/'
+    jne 7f
+    mov eax, 1
+1:  cmp rax, 4096
+    jae 7f
+    lea rdi, [rip + ro_dir]
+    mov rsi, rbx
+    mov rcx, rax
+    rep movsb
+    mov byte ptr [rdi], 0
+    lea rdi, [rip + ro_dir]
+    mov esi, 2
+    SYS SYS_access
+    test rax, rax
+    jnz 8f
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# doc_save_readonly(doc) -> doc_save's result: a read-only file is replaced and stays read-only. On
+#   Windows, where a read-only file cannot be replaced, the attribute is off while it is written (on
+#   the file a symlink leads to, which is the one written).
+FN doc_save_readonly
+.ifdef WINDOWS
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + DOC_path]
+    xor esi, esi
+    call link_target            # as the save will follow it
+    mov r13, rax
+    test rax, rax
+    jnz 1f
+    mov r13, [rbx + DOC_path]
+    mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call mem_dup                # the doc's paths are made again by the save
+    mov r13, rax
+1:
+    mov rdi, r13
+    mov esi, 0666
+    SYS SYS_chmod
+    mov rdi, rbx
+    call doc_save
+    mov r12, rax
+    mov rdi, r13
+    mov esi, 0444
+    SYS SYS_chmod
+    mov rdi, r13
+    call mem_free
+    mov rax, r12
+    EPILOGUE
+.else
+    jmp doc_save
+.endif
+
+# app_save_as_readonly(path): Save As onto a read-only file asks first, as a save does
+FN app_save_as_readonly
+    PROLOGUE
+    mov rbx, rdi
+    call strlen
+    cmp rax, 4096
+    jae 9f
+    lea rdi, [rip + ro_path]
+    mov rsi, rbx
+    call cstr_copy
+    mov rax, [rip + g_doc]
+    mov [rip + ro_doc], rax
+    lea rdi, [rip + ro_path]
+    call strlen
+    lea rdi, [rip + ro_path]
+    mov rsi, rax
+    call path_basename
+    mov rdi, rax
+    lea rsi, [rip + save_as_readonly_confirmed]
+    call ask_readonly_named
+9:  EPILOGUE
+
+# save_as_readonly_confirmed(): Overwrite, for Save As
+save_as_readonly_confirmed:
+    PROLOGUE
+    mov rbx, [rip + ro_doc]
+    test rbx, rbx
+    jz 9f
+    cmp rbx, [rip + g_doc]
+    jne 9f
+    mov rdi, rbx
+    lea rsi, [rip + ro_path]
+    call doc_set_path
+    mov rdi, rbx
+    call doc_save_readonly
+    test rax, rax
+    js 2f
+    mov rdi, rbx
+    call app_detect_lang
+    mov rdi, rbx
+    call app_after_save
+    call app_update_title
+    jmp 9f
+2:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+9:  EPILOGUE
+
+# ask_readonly(doc, fn): "Overwrite read-only NAME?", whose button calls fn
+ask_readonly:
+    mov [rip + ro_doc], rdi
+    mov rdi, [rdi + DOC_name]
+# ask_readonly_named(name, fn): the same for a file of that name
+ask_readonly_named:
+    PROLOGUE
+    mov r12, rsi
+    mov rbx, rdi
+    call strlen
+    cmp rax, 200
+    jbe 1f
+    mov eax, 200
+1:  mov r13, rax
+    lea rdi, [rip + ro_title]
+    lea rsi, [rip + .Lro_a]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, rbx
+    mov rcx, r13
+    rep movsb
+    lea rsi, [rip + .Lro_b]
+    call cstr_copy
+    lea rdi, [rip + ro_title]
+    lea rsi, [rip + .Lro_text]
+    lea rdx, [rip + .Lro_button]
+    mov rcx, r12
+    call app_confirm
+    EPILOGUE
 
 # app_after_save(doc): re-detect language, config reload, explorer refresh
 FN app_after_save
@@ -1122,6 +1357,7 @@ FN app_reload_config
 FN app_apply_settings
     PROLOGUE
     call theme_apply_config
+    call app_sync_panels
     call git_apply
     call agents_apply_settings
     call ai_apply
@@ -1703,10 +1939,10 @@ FN app_render
     mov ecx, [rsp]
     sub ecx, eax
     xor edx, edx
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 1f
     mov edx, [rip + g_side_px]
-1:  cmp dword ptr [rip + cfg_agents], 0
+1:  cmp dword ptr [rip + g_show_agents], 0
     je 2f
     add edx, [rip + g_agents_px]
 2:  cmp edx, ecx
@@ -1734,7 +1970,7 @@ FN app_render
     # the dividers take their strips first: the panels either side are drawn before them
     mov dword ptr [rip + split_l_bits], 0
     mov dword ptr [rip + split_r_bits], 0
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 31f
     mov edi, ID_SPLIT_L
     mov esi, [rip + g_side_px]
@@ -1742,7 +1978,7 @@ FN app_render
     mov ecx, [rsp + 24]
     call splitter_hit
     mov [rip + split_l_bits], eax
-31: cmp dword ptr [rip + cfg_agents], 0
+31: cmp dword ptr [rip + g_show_agents], 0
     je 32f
     mov edi, ID_SPLIT_R
     mov esi, [rsp]
@@ -1753,7 +1989,7 @@ FN app_render
     mov [rip + split_r_bits], eax
 32:
     # sidebar
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 4f
     xor edi, edi
     mov esi, [rsp + 20]
@@ -1769,7 +2005,7 @@ FN app_render
     mov ecx, [rsp + 24]
     COLOR r8d, T_BORDER
     call gfx_fill
-4:  cmp dword ptr [rip + cfg_agents], 0
+4:  cmp dword ptr [rip + g_show_agents], 0
     je 5f
     mov edi, [rsp]
     sub edi, [rip + g_agents_px]
@@ -1786,7 +2022,7 @@ FN app_render
     call gfx_fill
 5:  # editor column, the terminal panel under it
     mov edi, [rsp + 28]
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 51f
     add edi, [rip + g_mt + 4*MI_1]
 51: mov [rsp + 40], edi
@@ -1841,7 +2077,7 @@ FN app_render
     mov ecx, [rsp + 52]
     call term_panel_draw
 53: # the dividers over everything in the body: their line and cursor win
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 55f
     mov edi, ID_SPLIT_L
     mov esi, [rsp + 28]
@@ -1849,7 +2085,7 @@ FN app_render
     mov ecx, [rsp + 24]
     mov r8d, [rip + split_l_bits]
     call splitter
-55: cmp dword ptr [rip + cfg_agents], 0
+55: cmp dword ptr [rip + g_show_agents], 0
     je 56f
     mov edi, ID_SPLIT_R
     mov esi, [rsp + 32]
@@ -3614,9 +3850,15 @@ dialog_choose:
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     cmp r12d, 4
     jne 0f
+    mov rax, [rip + dlg_cancel]
+    mov qword ptr [rip + dlg_cancel], 0
     cmp ebx, 2
-    jne 9f
-    call [rip + dlg_fn]
+    je 5f
+    test rax, rax
+    jz 9f
+    call rax
+    jmp 9f
+5:  call [rip + dlg_fn]
     jmp 9f
 0:  test ebx, ebx
     jz 8f
@@ -3624,37 +3866,83 @@ dialog_choose:
     jne 1f
     mov rdi, [rip + dlg_tab]
     call tab_at
-    mov rdi, [rax + TAB_doc]
-    cmp qword ptr [rdi + DOC_path], 0
+    mov rbx, [rax + TAB_doc]
+    cmp qword ptr [rbx + DOC_path], 0
     je 2f
+    mov rdi, rbx
+    call doc_readonly
+    test eax, eax
+    jnz 6f
+    mov rdi, rbx
     call doc_save
     test rax, rax
     js 7f
     jmp 1f
 2:  call cmd_save_as
     jmp 8f
-1:  mov rdi, [rip + dlg_tab]
-    call app_close_tab_now
-    cmp r12d, 3
-    jne 11f
-    call switch_continue
+6:  # a read-only file asks first: Overwrite saves it and goes on, Cancel stops here
+    mov [rip + ro_kind], r12d
+    mov rdi, rbx
+    lea rsi, [rip + close_readonly_confirmed]
+    call ask_readonly
+    lea rax, [rip + unsaved_kept]
+    mov [rip + dlg_cancel], rax
     jmp 9f
-11: cmp r12d, 2
-    jne 12f
-    call cmd_quit
-    jmp 9f
-12: cmp r12d, 5
-    jne 9f
-    call cmd_close_all
+1:  mov edi, r12d
+    call unsaved_done
     jmp 9f
 7:  # the file stays open and modified: say why
     lea rdi, [rip + .Lsave_failed]
     call app_toast
-8:  # not quitting after all: no restart into an update either, no other project, and the session
-    # is saved again when it comes to that
+8:  call unsaved_kept
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# unsaved_done(kind): the file asked about (dlg_tab) is saved or let go: close it and go on with what
+#   asked (dlg_kind)
+unsaved_done:
+    push rbx
+    mov ebx, edi
+    mov rdi, [rip + dlg_tab]
+    call app_close_tab_now
+    cmp ebx, 3
+    jne 1f
+    pop rbx
+    jmp switch_continue
+1:  cmp ebx, 2
+    jne 2f
+    pop rbx
+    jmp cmd_quit
+2:  cmp ebx, 5
+    jne 3f
+    pop rbx
+    jmp cmd_close_all
+3:  pop rbx
+    ret
+
+# unsaved_kept(): not quitting after all: no restart into an update either, no other project, and the
+#   session is saved again when it comes to that
+unsaved_kept:
     mov dword ptr [rip + g_restart], 0
     mov dword ptr [rip + switch_pending], 0
     mov dword ptr [rip + g_session_final], 0
+    ret
+
+# close_readonly_confirmed(): Overwrite, for a close or quit that asked to save a read-only file
+close_readonly_confirmed:
+    PROLOGUE
+    mov rdi, [rip + dlg_tab]
+    call tab_at
+    mov rdi, [rax + TAB_doc]
+    call doc_save_readonly
+    test rax, rax
+    js 1f
+    mov edi, [rip + ro_kind]
+    call unsaved_done
+    jmp 9f
+1:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+    call unsaved_kept
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -3677,6 +3965,7 @@ FN app_confirm
     mov [rip + dlg_text], rsi
     mov [rip + dlg_ok], rdx
     mov [rip + dlg_fn], rcx
+    mov qword ptr [rip + dlg_cancel], 0
     mov dword ptr [rip + dlg_kind], 4
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
     mov dword ptr [rip + g_dirty], 1
@@ -4030,14 +4319,52 @@ toast_draw:
 # ---------------- misc commands ----------------
 
 FN cmd_toggle_sidebar
-    xor dword ptr [rip + cfg_sidebar], 1
-    mov dword ptr [rip + g_settings_changed], 1
-    mov dword ptr [rip + g_dirty], 1
-    ret
+    mov eax, 1
+    lea rcx, [rip + cfg_sidebar]
+    jmp toggle_panel
 
 FN cmd_toggle_agents
-    xor dword ptr [rip + cfg_agents], 1
+    mov eax, 2
+    lea rcx, [rip + cfg_agents]
+    jmp toggle_panel
+
+# toggle_panel(bit eax, setting rcx): a panel hidden in this window alone comes back, and the setting
+# turns on only if it was off; any other panel flips its setting
+toggle_panel:
+    test [rip + panels_hidden], eax
+    jz 1f
+    not eax
+    and [rip + panels_hidden], eax
+    cmp dword ptr [rcx], 0
+    jne app_sync_panels
+1:  xor dword ptr [rcx], 1
     mov dword ptr [rip + g_settings_changed], 1
+    jmp app_sync_panels
+
+# app_hide_panels(): a window started with files alone is for editing them: the explorer and the
+# agents panel stay out of it, whatever the settings say, until shown or a folder is opened
+FN app_hide_panels
+    mov dword ptr [rip + panels_hidden], 3
+    jmp app_sync_panels
+
+# app_reveal_panel(bit): 1 the explorer, 2 the agents panel follows its setting again in this window
+FN app_reveal_panel
+    not edi
+    and [rip + panels_hidden], edi
+    jmp app_sync_panels
+
+# app_sync_panels(): g_show_side and g_show_agents from the settings and panels_hidden
+FN app_sync_panels
+    mov eax, [rip + cfg_sidebar]
+    test dword ptr [rip + panels_hidden], 1
+    jz 1f
+    xor eax, eax
+1:  mov [rip + g_show_side], eax
+    mov eax, [rip + cfg_agents]
+    test dword ptr [rip + panels_hidden], 2
+    jz 2f
+    xor eax, eax
+2:  mov [rip + g_show_agents], eax
     mov dword ptr [rip + g_dirty], 1
     ret
 
@@ -4240,6 +4567,10 @@ FN cmd_move_line_down
 .Lnot_regular: .asciz "Not a regular file, not opened"
 .Lsaved: .asciz "Saved"
 .Lsave_failed: .asciz "Could not save the file"
+.Lro_a: .asciz "Overwrite read-only "
+.Lro_b: .asciz "?"
+.Lro_text: .asciz "The file is read-only. Overwriting replaces it, and it stays read-only."
+.Lro_button: .asciz "Overwrite"
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
 .p2align 3
@@ -4336,9 +4667,14 @@ dlg_labels: .quad .Ld0, .Ld1, .Ld2
 
 .data
 g_win_focused: .long 1
+# the panels this window shows: the settings, less those panels_hidden takes away (app_sync_panels)
+.globl g_show_side, g_show_agents
+g_show_side: .long 1
+g_show_agents: .long 1
 .p2align 3
 g_tab_cur: .quad -1
 .bss
+panels_hidden: .long 0          # 1 the explorer, 2 the agents panel: hidden in a window started with files
 .globl g_settings_changed, g_started
 g_settings_changed: .long 0
 g_started: .long 0              # the command line is open: later folders switch the project

@@ -252,28 +252,45 @@ ini_watch:
 
 # ini_add_watches(): the config folder (for gtk-3.0 and gtk-4.0 appearing), or while it does not
 # exist the nearest folder above it (for it appearing), and the gtk folders. Adding a watch again
-# only renews it.
+# only renews it. A folder made below the one found before its watch began sends nothing (mkdir -p
+# makes them all at once), so the search runs again until it ends at the same watch twice: the
+# same folder, watched since the last search looked below it, not one made again in its place.
 ini_add_watches:
     PROLOGUE
-    lea rdi, [rip + path_buf]
+    lea rdi, [rip + cfg_root]
+    call strlen
+    mov r14d, eax               # the config folder's length
+    mov r12d, -1                # the watch the last search ended at
+    mov r13d, 16                # searches at most, should folders keep coming and going
+0:  lea rdi, [rip + path_buf]
     lea rsi, [rip + cfg_root]
     call cstr_copy
 1:  mov edi, [rip + ino_fd]
     lea rsi, [rip + path_buf]
     mov edx, IN_CREATE | IN_MOVED_TO | IN_ONLYDIR
     SYS SYS_inotify_add_watch
+    mov ebx, eax                # the watch, if it took
     test rax, rax
     jns 3f
     lea rdi, [rip + path_buf]
     call strlen
     lea rcx, [rip + path_buf]
 2:  dec rax
-    jle 3f                      # nothing above it but /
+    jle 4f                      # nothing above it but /
     cmp byte ptr [rcx + rax], '/'
     jne 2b
     mov byte ptr [rcx + rax], 0
     jmp 1b
-3:  lea rdi, [rip + .Lgtk3_dir]
+3:  lea rdi, [rip + path_buf]
+    call strlen
+    cmp eax, r14d
+    jae 4f                      # the config folder itself
+    cmp ebx, r12d
+    je 4f                       # the same watch as the last search: nothing new below it
+    mov r12d, ebx
+    dec r13d
+    jnz 0b
+4:  lea rdi, [rip + .Lgtk3_dir]
     call user_path
     mov edi, [rip + ino_fd]
     mov rsi, rax

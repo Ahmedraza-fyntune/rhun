@@ -43,6 +43,7 @@
 .equ SYS_mkdir, 83
 .equ SYS_unlink, 87
 .equ SYS_readlink, 89
+.equ SYS_chmod, 90
 .equ SYS_fchmod, 91
 .equ SYS_setsid, 112
 .equ SYS_shmdt, 67
@@ -102,6 +103,8 @@
 .equ IN_MOVED_TO, 0x80
 .equ IN_CREATE, 0x100
 .equ IN_DELETE, 0x200
+.equ IN_MOVE_SELF, 0x800
+.equ IN_IGNORED, 0x8000
 .equ IN_ONLYDIR, 0x1000000
 .equ IN_NONBLOCK, 0x800
 .equ IN_CLOEXEC, 0x80000
@@ -522,6 +525,10 @@ F DOC_disk_lo, 8        # first changed line in the reloaded text
 F DOC_wcols, 8          # editor: columns of the widest line (doc_widest)
 F DOC_wkey, 8           # the text and tab width they were measured for, 0 = not yet
 F DOC_disk_hi, 8        # line past the changed range (deletions highlight their surviving neighbor)
+F DOC_real, 8           # a symlink's file: its path (owned) and name, and its folder's watch, or 0
+F DOC_rname, 8
+F DOC_wd2, 8
+F DOC_hops, 8           # the symlinks it leads through before that file (watch.s), or 0
 ENDSTRUCT DOC_SIZE
 
 .equ DISK_FADE_MS, 800

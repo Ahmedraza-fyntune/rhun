@@ -676,8 +676,10 @@ class CodexDiscovery(unittest.TestCase):
         file.write_text('standalone\n', encoding='utf-8')
         script = self.home / 'commands.rsc'
         # 1280x800 at scale 1: the refresh button sits in the 40-point panel header, 8 points
-        # from the right edge, 28 points square.
-        script.write_text('print-project\nclick 1258 60\nwait 300\nprint-agents\nquit\n', encoding='utf-8')
+        # from the right edge, 28 points square. A window started with a file hides the panel, so
+        # focus_agents shows it first.
+        script.write_text('print-project\ncmd focus_agents\nprint-panels\nclick 1258 60\nwait 300\n'
+                          'print-agents\nquit\n', encoding='utf-8')
         for name, paths, expected in (('project', [self.project.as_posix()], 'Codex: Codex session\n'),
                                       ('file', [file.as_posix()], 'Codex: Codex session\n'),
                                       ('wait', ['--wait', file.as_posix()], ''),
@@ -689,7 +691,8 @@ class CodexDiscovery(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
                 output = result.stdout.decode('utf-8')
                 project = 'project=~/' + self.project.name + '\n' if name in ('project', 'file') else 'project=\n'
-                self.assertEqual(output, project + expected)
+                self.assertEqual(output, project + 'explorer=0 agents=1 term=0\n' * (name in ('file', 'wait')) +
+                                 'explorer=1 agents=1 term=0\n' * (name in ('project', 'empty')) + expected)
 
     def run_commands(self, commands, timeout=20):
         script = self.home / 'commands.rsc'

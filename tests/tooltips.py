@@ -63,8 +63,8 @@ class Tooltips(unittest.TestCase):
                 closable.close()
         self.tmp.cleanup()
 
-    def start(self, tooltips=None, git=False):
-        setting = '' if tooltips is None else f'tooltips = {str(tooltips).lower()}\n'
+    def start(self, tooltips=None, git=False, size='1280x800', ui=''):
+        setting = ('' if tooltips is None else f'tooltips = {str(tooltips).lower()}\n') + ui
         # git: the Git tab without the explorer, and the AI button (Ollama is not asked)
         git_setting = 'enabled = true\ncommit_ai = ollama\n' if git else 'enabled = false\n'
         if git:
@@ -74,7 +74,7 @@ class Tooltips(unittest.TestCase):
                                '[editor]\ncursor_blink = false\n'
                                '[ui]\nagents_panel = false\n' + setting, encoding='utf-8')
         control = self.work / 'control'
-        self.process = subprocess.Popen([str(EXE), str(self.project), '--headless', '1280x800',
+        self.process = subprocess.Popen([str(EXE), str(self.project), '--headless', size,
                                          '--scale', '1', '--control', str(control)], env=self.env,
                                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         self.client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -215,6 +215,28 @@ class Tooltips(unittest.TestCase):
         self.command('move 860 210')
         self.command('wait 650')
         self.assertEqual(self.command('print-tip'), 'tip=git pull --no-edit\n')
+
+    def generate_tip(self, font, x, y):
+        """Generate's tooltip at x y, in the work tree's panel at its narrowest (260 of a window 600
+        wide), with the interface font at FONT"""
+        self.git('init', '-q', '-b', 'main')
+        self.git('add', 'file.txt')
+        self.start(git=True, size='600x500', ui=f'font_size = {font}\n')
+        self.command('wait-git')
+        self.command('cmd git_history')
+        self.command('wait-git')
+        self.command('move %d %d' % AWAY)
+        self.command('wait 60')
+        self.command(f'move {x} {y}')
+        self.command('wait 650')
+        self.assertEqual(self.command('print-tip'), 'tip=Writes the message from git diff --cached\n')
+
+    def test_generate_beside_a_narrow_message(self):
+        self.generate_tip(13, 535, 132)
+
+    def test_generate_under_a_message_it_would_crowd(self):
+        # with the largest interface font, beside the message it would leave it narrower than itself
+        self.generate_tip(24, 470, 187)
 
     def test_no_frames_while_shown_and_idle(self):
         self.start()

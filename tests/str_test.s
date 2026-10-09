@@ -1,5 +1,6 @@
 # str_find and str_ifind on the cases in a file, one per line: "f" or "i", a tab, the text, a tab,
-# the string to find; prints the index found (-1 for none) for each
+# the string to find; prints the index found (-1 for none) for each. "e" compares the two with
+# str_ieq instead and prints 1 when they are equal ignoring case, else 0.
 .include "rhun.inc"
 .bss
 .p2align 3
@@ -37,7 +38,11 @@ FN main
     mov rsi, r15
     sub rsi, rbx
     mov rdi, rbx
-    cmp r14d, 'i'
+    cmp r14d, 'e'
+    jne 0f
+    call str_ieq
+    jmp 7f
+0:  cmp r14d, 'i'
     je 6f
     call str_find
     jmp 7f

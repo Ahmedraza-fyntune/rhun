@@ -454,8 +454,8 @@ row_node:
 FN cmd_focus_explorer
     mov dword ptr [rip + cfg_sidebar], 1
     mov dword ptr [rip + g_focus], FOCUS_EXPLORER
-    mov dword ptr [rip + g_dirty], 1
-    ret
+    mov edi, 1
+    jmp app_reveal_panel
 
 FN cmd_new_folder
     lea rdi, [rip + .Lnew_folder]

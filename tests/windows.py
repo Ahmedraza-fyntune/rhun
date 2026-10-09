@@ -116,7 +116,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             [sys.executable, str(ROOT / 'tests/windows-longpaths.py')], check=True))
         check('clipboard/contention-copy-and-paste', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
-        for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity'):
+        for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity',
+                     'file-launch', 'readonly-save'):
             check('ui/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
@@ -150,7 +151,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                      'tests/scripts/' + name + '.rsc', env=environment('ui-' + name))
         equal(result.stdout, (ROOT / 'tests/data' / (name + '.ui.expected')).read_bytes())
 
-    for name in ['editing', 'clipboard', 'movelines', 'find', 'replace', 'tabs', 'vim', 'wrap', 'togglecomment',
+    for name in ['editing', 'clipboard', 'movelines', 'find', 'findcase', 'replace', 'tabs', 'vim', 'wrap', 'togglecomment',
                  'highlight', 'image', 'mouse', 'cursor', 'compose', 'contextmenu',
                  'titlebar', 'titlebar-tap']:
         check('ui/' + name, lambda name=name: ui(name))
@@ -376,6 +377,128 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                 process.wait()
     check('watch/mixed-case-dedup-and-atomic-replacement', watcher)
 
+    def follow(name, open_path, steps):
+        """Opens open_path, then runs each step (a function) once the editor shows what the step before
+        it expects; each step returns the text it should then show."""
+        project = temp / name
+        script = script_file(name, f'open {winpath(open_path)}\nprint-state\n' +
+                             'wait 150\nprint-doc\n' * 120 + 'quit\n')
+        process = subprocess.Popen(command('rhun.com', winpath(project), winpath(open_path), '--headless',
+                                           '1000x700', '--script', script), stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, env=environment(name))
+
+        def documents():
+            text = b''
+            for line in process.stdout:
+                line = line.replace(b'\r\n', b'\n')
+                if line == b'<eod>\n':
+                    yield text.removesuffix(b'\n')
+                    text = b''
+                else:
+                    text += line
+        try:
+            first = process.stdout.readline()
+            assert b'tabs=1 active=' in first, first
+            shown = documents()
+            for step in steps:
+                expected = step()
+                last = None
+                for last in shown:
+                    if last == expected:
+                        break
+                else:
+                    raise AssertionError(f'never showed {expected!r}, last {last!r}')
+        finally:
+            process.kill()
+            process.wait()
+
+    def folder_made_again():
+        sub = temp / 'remade' / 'sub' / 'deeper'
+        sub.mkdir(parents=True)
+        note = sub / 'note.txt'
+        note.write_bytes(b'before\n')
+
+        def remade():
+            note.unlink()
+            sub.rmdir()
+            sub.mkdir()
+            note.write_bytes(b'after\n')
+            return b'after\n'
+
+        def written():
+            note.write_bytes(b'again\n')
+            return b'again\n'
+
+        def both_levels():
+            shutil.rmtree(temp / 'remade' / 'sub')
+            time.sleep(0.5)
+            (temp / 'remade' / 'sub').mkdir()
+            time.sleep(0.5)
+            sub.mkdir()
+            time.sleep(0.5)
+            note.write_bytes(b'third\n')
+            return b'third\n'
+        follow('remade', note, [remade, written, both_levels])
+    check('watch/folder-made-again', folder_made_again)
+
+    def symlink_elsewhere():
+        project = temp / 'linked'
+        elsewhere = temp / 'linked-elsewhere'
+        project.mkdir()
+        elsewhere.mkdir()
+        real = elsewhere / 'real.txt'
+        real.write_bytes(b'before\n')
+        link = project / 'link.txt'
+        os.symlink(real, link)
+
+        def written():
+            real.write_bytes(b'written\n')
+            return b'written\n'
+
+        def replaced():
+            replacement = elsewhere / 'replacement.tmp'
+            replacement.write_bytes(b'replaced\n')
+            os.replace(replacement, real)
+            return b'replaced\n'
+        def link_on_the_way():
+            # link -> hop -> real: the symlink on the way pointed to a file in a folder not watched yet,
+            # so only the hop's folder tells
+            other = temp / 'linked-other' / 'other.txt'
+            other.parent.mkdir()
+            other.write_bytes(b'other\n')
+            time.sleep(0.5)
+            hop.unlink()
+            os.symlink(other, hop)
+            return b'other\n'
+        hop = temp / 'linked-hops' / 'hop.txt'
+        hop.parent.mkdir()
+        os.symlink(real, hop)
+        os.unlink(link)
+        os.symlink(hop, link)
+        follow('linked', link, [written, replaced, link_on_the_way])
+
+    def file_becomes_symlink():
+        project = temp / 'relinked'
+        project.mkdir()
+        plain = project / 'plain.txt'
+        plain.write_bytes(b'plain\n')
+        real = temp / 'relinked-elsewhere' / 'real.txt'
+        real.parent.mkdir()
+        real.write_bytes(b'real\n')
+
+        def relinked():
+            plain.unlink()
+            os.symlink(real, plain)
+            return b'real\n'
+
+        def written():
+            real.write_bytes(b'real changed\n')
+            return b'real changed\n'
+        follow('relinked', plain, [relinked, written])
+    if not args.wine:
+        check('watch/symlink-to-another-folder', symlink_elsewhere)
+        check('watch/file-replaced-by-symlink', file_becomes_symlink)
+
     def agents():
         env = environment('agents')
         home = Path(env['HOME'])
@@ -530,7 +653,13 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             '--script', script_file(name + '-seed', 'quit\n'), env=env)
         marker = Path(env['XDG_STATE_HOME']) / 'rhun/last-project'
         remembered = marker.read_bytes()
-        script = script_file(name, 'print-project\nprint-state\nwait 5000\n'
+        # a file launch is a quick edit: no explorer or agents panel; CI keeps the window's picture
+        shot = ''
+        if os.environ.get('RHUN_TEST_ARTIFACTS'):
+            visual = Path(os.environ['RHUN_TEST_ARTIFACTS']).resolve() / 'visual'
+            visual.mkdir(parents=True, exist_ok=True)
+            shot = 'shot ' + (visual / (name + '.ppm')).as_posix() + '\n'
+        script = script_file(name, 'print-project\nprint-state\nprint-panels\nwait 5000\n' + shot +
                              'cmd next_tab\nprint-state\nquit\n')
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -542,12 +671,13 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         try:
             first = []
             reader = threading.Thread(target=lambda: first.extend(
-                [process.stdout.readline(), process.stdout.readline()]), daemon=True)
+                [process.stdout.readline() for _ in range(3)]), daemon=True)
             reader.start()
             reader.join(timeout=10)
-            assert len(first) == 2, first
+            assert len(first) == 3, first
             same_folder(first[0], file.parent)
             assert b'tabs=1 active=' + file.name.encode() in first[1], first
+            assert first[2].strip() == b'explorer=0 agents=0 term=0', first
             window, _ = native_find_window(user, callback_type, pid=process.pid)
             native_assert_foreground(user, window)
             output = process.communicate(timeout=10)[0]
@@ -664,7 +794,44 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             if process.poll() is None:
                 process.kill()
                 process.wait()
+    def native_issue_pictures():
+        """In a real window: find ignoring case beyond ASCII, and the question before a read-only file is
+        replaced; CI keeps their pictures"""
+        name = 'native-issues'
+        project = temp / name
+        project.mkdir()
+        # below the find bar, which covers the first lines of a narrow editor
+        (project / 'case.txt').write_bytes('\n\n\n\nÉté été ÉTÉ\nПривет ПРИВЕТ яблоко ЯБЛОКО\n'.encode())
+        readonly = project / 'readonly.txt'
+        readonly.write_bytes(b'This file is read-only.\n')
+        os.chmod(readonly, 0o444)
+        env = environment(name)
+        config = Path(env['XDG_CONFIG_HOME']) / 'rhun/config'
+        config.parent.mkdir(parents=True)
+        config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
+        visual = temp / name / 'shots'
+        if os.environ.get('RHUN_TEST_ARTIFACTS'):
+            visual = Path(os.environ['RHUN_TEST_ARTIFACTS']).resolve() / 'visual'
+        visual.mkdir(parents=True, exist_ok=True)
+        find_shot, readonly_shot = visual / 'native-find.ppm', visual / 'native-readonly.ppm'
+        script = script_file(name, f'wait 1500\nopen {winpath(project / "case.txt")}\nkey ctrl+f\ntype été\n'
+                                   f'wait 300\nprint-state\nshot {find_shot.as_posix()}\nkey Escape\n'
+                                   f'open {winpath(readonly)}\nkey End\ntype  typed\nkey ctrl+s\nwait 300\n'
+                                   f'print-state\nshot {readonly_shot.as_posix()}\nkey Escape\nquit\n')
+        try:
+            output = run('rhun.exe', winpath(project), '--script', script, env=env).stdout
+            lines = output.decode('utf-8', 'replace').splitlines()
+            assert 'active=case.txt line=5 col=4 sel=5' in lines[0], output
+            assert 'active=readonly.txt' in lines[1] and 'focus=5' in lines[1], output
+            equal(readonly.read_bytes(), b'This file is read-only.\n')
+            for shot in (find_shot, readonly_shot):
+                pixels = shot.read_bytes()
+                assert pixels.startswith(b'P6\n') and len(set(pixels[100:])) > 16, shot
+        finally:
+            os.chmod(readonly, 0o644)
+
     if not args.wine:
+        check('window/issue-pictures-find-and-readonly', native_issue_pictures)
         check('window/file-only-background-start-foreground', lambda: native_file_launch(4))
         check('window/file-only-minimized-start-foreground', lambda: native_file_launch(7))
         check('window/file-only-cli-respawn-foreground', native_cli_file_launch)

@@ -97,7 +97,7 @@ FN agents_set_project
     mov rdi, [rip + cfg_agent_sources]
     call hash_line
     mov [rip + sources_hash], rax
-    mov eax, [rip + cfg_agents]
+    mov eax, [rip + g_show_agents]
     mov [rip + last_visible], eax
     lea rdi, [rip + pool]
     call agent_records_free
@@ -184,7 +184,7 @@ FN agents_scan
     mov dword ptr [rip + index_loud], 1
     cmp qword ptr [rip + g_project], 0
     je 1f
-    cmp dword ptr [rip + cfg_agents], 0
+    cmp dword ptr [rip + g_show_agents], 0
     je 2f
     cmp dword ptr [rip + index_pid], 0
     jne 2f
@@ -579,7 +579,7 @@ apply_page:
     call vec_push
     mov [rax], r12             # pin outside the page, hidden from the list
 10: mov qword ptr [r12 + AS_seen], 1
-    cmp dword ptr [rip + cfg_agents], 0
+    cmp dword ptr [rip + g_show_agents], 0
     je 11f
     mov rdi, r12
     call observe_session
@@ -635,7 +635,7 @@ apply_page:
     EPILOGUE
 
 index_dirty:
-    cmp dword ptr [rip + cfg_agents], 0
+    cmp dword ptr [rip + g_show_agents], 0
     je 1f
     mov dword ptr [rip + g_dirty], 1
 1:  ret
@@ -1994,7 +1994,7 @@ FN agents_timeout
     jne 1f
     cmp qword ptr [rip + g_project], 0
     je 3f
-    cmp dword ptr [rip + cfg_agents], 0
+    cmp dword ptr [rip + g_show_agents], 0
     je 3f
     call time_ms
     mov rcx, [rip + last_poll]
@@ -2044,7 +2044,7 @@ FN agents_tick
     call index_dirty
 7:  cmp qword ptr [rip + g_project], 0
     je 9f
-    cmp dword ptr [rip + cfg_agents], 0
+    cmp dword ptr [rip + g_show_agents], 0
     jne 0f
     mov dword ptr [rip + last_visible], 0
     jmp 9f
@@ -2093,7 +2093,7 @@ FN agents_request_now
     je 1f
     cmp dword ptr [rip + index_pid], 0
     jne 1f
-    cmp dword ptr [rip + cfg_agents], 0
+    cmp dword ptr [rip + g_show_agents], 0
     je 2f
     cmp dword ptr [rip + last_visible], 0
     jne 2f
@@ -2172,8 +2172,8 @@ open_session:
 FN cmd_focus_agents
     mov dword ptr [rip + cfg_agents], 1
     mov dword ptr [rip + g_focus], FOCUS_AGENTS
-    mov dword ptr [rip + g_dirty], 1
-    ret
+    mov edi, 2
+    jmp app_reveal_panel
 
 # agents_dump(sb): sessions (kind, title, messages) and the open thread, for tests
 FN agents_dump

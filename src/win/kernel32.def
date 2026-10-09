@@ -14,6 +14,7 @@ EXPORTS
     CreateThread
     DeleteFileW
     DeleteProcThreadAttributeList
+    DeviceIoControl
     DuplicateHandle
     ExitProcess
     FindClose
@@ -57,6 +58,7 @@ EXPORTS
     SetCurrentDirectoryW
     SetEnvironmentVariableW
     SetEvent
+    SetFileAttributesW
     SetFilePointerEx
     SetInformationJobObject
     Sleep

@@ -296,8 +296,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
             try:
                 if (portable / 'rhun.exe').read_bytes() != original and not list(portable.parent.glob('.rhun-update-*')):
                     break
-            except FileNotFoundError:
-                pass  # The old file has been moved aside and its replacement is next.
+            except (FileNotFoundError, PermissionError):
+                pass  # The old file has been moved aside and its replacement is next, or is being written.
             time.sleep(0.1)
         else:
             raise AssertionError('detached updater did not install the release')

@@ -352,6 +352,19 @@ with tempfile.TemporaryDirectory(prefix='rhun-appearance-') as directory:
         (late / 'gtk-3.0/settings.ini').write_text('[Settings]\ngtk-theme-name=Adwaita\n')
         later.expect('light', 'rhun-light', 'settings.ini in a config folder made later')
         later.close()
+        # made at once (mkdir -p) and removed, again and again: a folder made just before rhun began
+        # to watch the one above it is found all the same (missed about 1 round in 20 before)
+        deep = work / 'deep'
+        root = deep / 'a/b/config'
+        again = Rhun(dict(env, XDG_CONFIG_HOME=str(root)))
+        again.expect('unknown', 'rhun-dark', 'no config folder yet')
+        for n in range(1, 61):
+            (root / 'gtk-3.0').mkdir(parents=True)
+            (root / 'gtk-3.0/settings.ini').write_text('[Settings]\ngtk-theme-name=Adwaita\n')
+            again.expect('light', 'rhun-light', f'a config folder made at once, round {n}')
+            shutil.rmtree(deep)
+            again.expect('unknown', 'rhun-dark', f'that folder removed, round {n}')
+        again.close()
         if not wayland:
             window = subprocess.check_output(['xdotool', 'search', '--class', '^rhun$'], env=env,
                                              text=True).split()[0]

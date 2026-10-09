@@ -26,14 +26,18 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Installs from GitHub releases; updates itself on Windows, Linux and macOS
 
 Open files follow edits made by agents and other tools. Writes arriving within 100 ms are grouped
-into one reload. In the active editor, the changed region briefly fades back to its normal background;
+into one reload. A file opened through a symlink follows the file it leads to, in whatever folder,
+and the link pointed elsewhere. When a file's folder is removed or moved away, the file keeps its
+text, and it follows the file again once a folder is back at that path. In the active editor, the changed region briefly fades back to its normal background;
 a thin highlight at the top also signals changes outside the visible lines.
 **Animate changed text** in Settings > Editor is on by default. Turn it off to hide both highlights;
 files still reload. The config key is `animate_disk_changes = true` under `[editor]`.
 
-Opening files from a file manager or with `rhun file.rb` starts the regular editor with those files
-as tabs, and the first file's folder becomes the project: the explorer shows it, and new files and
-terminals start there. That folder is not remembered as the last project, and its saved session is
+Opening files from a file manager or with `rhun file.rb` starts a quick edit: the window shows just
+those files as tabs, without the explorer or the agents panel, whatever Settings say; that is never
+saved to Settings. Ctrl+B and Ctrl+Shift+A bring a panel back, and opening a folder in the window
+shows both again. The first file's folder becomes the project: the explorer shows it, and new
+files and terminals start there. That folder is not remembered as the last project, and its saved session is
 neither restored nor overwritten; open the folder itself (Open Folder) to bring its session back and
 make it the project you return to. A window without a project, such as `rhun --empty`, takes up the
 folder of the first file opened in it the same way. `rhun --wait file` (for programs that wait for
@@ -46,6 +50,11 @@ including image tabs, and keeps an empty window empty.
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
 command palette to load the disk version, or save to keep your version. Undoing back to the saved
 state loads the disk version too.
+Saving a read-only file asks first: **Overwrite** replaces it and it stays read-only, **Cancel** leaves
+it as it is, and Save As writes a copy elsewhere. Save As onto a read-only file and Save in the
+question about unsaved files when closing or quitting ask the same; Vim's `:wq` closes the file after
+Overwrite, and `:wa` leaves read-only files unsaved. In a folder that takes no new file, a save fails
+as any other.
 
 ## Install and update
 
@@ -71,7 +80,7 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--app-dir DIR` | macOS: put rhun.app in DIR |
 | `--no-modify-path` | leave shell startup files alone |
 | `--configure-files` | configure an existing installation without downloading or replacing it |
-| `--uninstall` | remove rhun and the PATH line; your settings in `~/.config/rhun` stay |
+| `--uninstall` | remove rhun, the PATH line and the editor lines; your settings in `~/.config/rhun` stay |
 
 Installation prints a command you can run manually to make rhun your default editor. It does not
 ask about or change your defaults. Supported images, folders and HTML documents appear in Open With;
@@ -79,6 +88,13 @@ the manual default-editor command leaves browser, image and folder associations 
 On Linux, changing defaults needs `xdg-mime` from xdg-utils and a desktop-visible installation
 prefix. On macOS, associations are requested through Launch Services; if a request fails, use
 Finder's Get Info > Open with > rhun > Change All for that type.
+
+The default-editor command also makes rhun the editor that programs such as git ask for: every shell
+you use gets `VISUAL` and `EDITOR` set to `rhun --wait` (by its full path), in a block marked
+`# rhun editor` (fish: `conf.d/rhun-editor.fish`). Only where a window can open: on Linux when there
+is a display (`DISPLAY` or `WAYLAND_DISPLAY`), on macOS outside SSH sessions; elsewhere your shell
+keeps the editor it had. git's own `core.editor` and `GIT_EDITOR` still come first, and the command
+says so when one is set. With `--no-modify-path` it only prints the value to set.
 
 Updates refresh file handler registration without asking about or changing defaults. The separate
 `--configure-files --make-default` command enables defaults without reinstalling:
@@ -145,7 +161,10 @@ The script is also included in the ZIP. To install from a downloaded script, run
 
 Installation registers text, source, configuration and supported image extensions in Open With and
 Default Apps for the current user. It prints a command you can run manually to open Windows Settings
-and choose defaults. Installation never asks about defaults or opens that page.
+and choose defaults. Installation never asks about defaults or opens that page. That command also
+sets your user `VISUAL` and `EDITOR` to `rhun.com --wait` (by its full path), so git opens commit
+messages in rhun; with `-NoModifyPath` it only prints the value. Uninstalling removes them while they
+still name rhun.
 `-NoFileAssociations` skips registration and remembers that choice across updates. Images remain an
 optional separate choice in Windows Settings.
 
@@ -208,7 +227,7 @@ sensitivity** applies instead (`fast_scroll_sensitivity = 4.0`).
 
 Settings includes links to [rhun.app](https://rhun.app), [hi@rhun.app](mailto:hi@rhun.app), and [GitHub issues](https://github.com/vshvedov/rhun/issues) for feedback and bug reports in a single row. The email link follows the website and opens the default email app. All three are also available from the command palette.
 
-Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.
+Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`, which the installer's default-editor command sets for you.
 
 rhun uses Wayland when it can and falls back to X11 when there is no Wayland compositor. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
 
@@ -241,6 +260,8 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+Shift+D, Ctrl+Shift+K | Duplicate, delete line |
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
 | Ctrl+Shift+W | Close all tabs |
+
+Find, replace and find in files ignore case until their Aa is on, in every script: `été` finds `Été`, `яблоко` finds `ЯБЛОКО` and `οδος` finds `ΟΔΟΣ`. Accented letters stay apart from plain ones, so `ete` does not find `été`.
 
 All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Ctrl+Shift+W goes to the program instead of closing the editor's tabs, Shift+PageUp and Shift+PageDown scroll back, Ctrl+Tab and Ctrl+Shift+Tab switch between terminals, and Shift keeps the mouse for selecting when a program uses it. A command run from the palette acts where its shortcut would: Zoom In with the terminal focused zooms the terminal.
 
@@ -300,7 +321,7 @@ Git support is on by default; `enabled = false` under `[git]` in the config, or 
 
 #### Commit message AI
 
-In Settings under Git, choose one **Commit message AI** provider: **Off** (the default), **Claude Code**, **Codex**, or **Local (Ollama)**. With a provider enabled, the work tree's commit controls include a sparkle **AI** button. Click it to draft a message, edit the result, then commit as usual. Click **Cancel** beside the message input to stop. Generation never commits or stages files. If your draft, repository, selected provider, or changes move while it runs, rhun keeps your draft.
+In Settings under Git, choose one **Commit message AI** provider: **Off** (the default), **Claude Code**, **Codex**, or **Local (Ollama)**. With a provider enabled, the work tree's commit controls include a sparkle **Generate** button. Click it to draft a message, edit the result, then commit as usual. Click **Cancel** beside the message input to stop. Generation never commits or stages files. If your draft, repository, selected provider, or changes move while it runs, rhun keeps your draft.
 
 Claude Code and Codex use their installed CLI and saved subscription sign-in. Install the relevant CLI and run `claude auth login` or `codex login` in the terminal first. rhun checks the authentication mode and rejects API-key sign-in. It uses `claude -p` or `codex exec`, with tools restricted, in a temporary directory. Recent CLI versions are required. These requests use your subscription allowance and are subject to its limits; they are not unlimited free calls. The diff is sent to the selected provider only when you request generation. There is no automatic fallback to another provider.
 
@@ -456,7 +477,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle|shift|ctrl]` (ctrl is Cmd+click on macOS), `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [ctrl|alt]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents-runs` (discovery runs started so far), `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-term-cell ROW COL` (the middle of that terminal cell), `print-link` (the terminal link under the pointer), `print-scroll` (the editor's horizontal scroll, its vertical one in 1/256 lines, the horizontal limit and the scrollbar's track), `scroll-x dx` (a sideways wheel), `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `appearance dark|light|unknown` (the system's dark mode changes, as a platform reports it), `print-appearance` (that mode, `follow_system`, the three theme settings and the theme shown), `echo`, `quit`. A headless run takes the system's mode from `RHUN_APPEARANCE` (`dark` or `light`). `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle|shift|ctrl]` (ctrl is Cmd+click on macOS), `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [ctrl|alt]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents-runs` (discovery runs started so far), `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-panels` (whether the explorer, the agents panel and the terminal are shown), `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-term-cell ROW COL` (the middle of that terminal cell), `print-link` (the terminal link under the pointer), `print-scroll` (the editor's horizontal scroll, its vertical one in 1/256 lines, the horizontal limit and the scrollbar's track), `scroll-x dx` (a sideways wheel), `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `appearance dark|light|unknown` (the system's dark mode changes, as a platform reports it), `print-appearance` (that mode, `follow_system`, the three theme settings and the theme shown), `echo`, `quit`. A headless run takes the system's mode from `RHUN_APPEARANCE` (`dark` or `light`). `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
