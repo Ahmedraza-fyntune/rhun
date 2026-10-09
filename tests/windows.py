@@ -461,9 +461,12 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             os.replace(replacement, real)
             return b'replaced\n'
         def link_on_the_way():
-            # link -> hop -> real: the symlink on the way pointed elsewhere
-            other = elsewhere / 'other.txt'
+            # link -> hop -> real: the symlink on the way pointed to a file in a folder not watched yet,
+            # so only the hop's folder tells
+            other = temp / 'linked-other' / 'other.txt'
+            other.parent.mkdir()
             other.write_bytes(b'other\n')
+            time.sleep(0.5)
             hop.unlink()
             os.symlink(other, hop)
             return b'other\n'
