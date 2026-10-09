@@ -73,6 +73,7 @@ counts: .zero 4 * 4                     # files per group
 pan: .zero 16                           # the panel: x, y, w, h
 in_x: .long 0                           # its content
 in_w: .long 0
+ai_row: .long 0                         # Generate has a row of its own, under the message
 op: .long 0                             # OP_*
 pull_merge: .long 0                     # neither pull.rebase nor pull.ff is set: pull merges
 scroll: .long 0
@@ -478,12 +479,17 @@ ai_width:
     add eax, [rip + g_mt + 4*MI_24]
     EPILOGUE
 
-# draw_ai(y): a compact button beside the message, with a stable width while running.
+# draw_ai(y): a compact button beside the message, with a stable width while running; on a row of its
+# own (ai_row), as wide as the panel's content.
 draw_ai:
     PROLOGUE
     mov r13d, edi
     call ai_width
     mov r12d, eax
+    cmp dword ptr [rip + ai_row], 0
+    je 3f
+    mov r12d, [rip + in_w]
+3:
     lea rdi, [rip + lbl]
     call sb_clear
     lea rsi, [rip + .Lai_label]
@@ -1403,14 +1409,20 @@ FN scm_draw
     mov edi, r13d
     call draw_branch
     add r13d, [rip + g_mt + 4*MI_32]
-    # The message always wraps, up to MAX_LINES visual rows high.
+    # The message always wraps, up to MAX_LINES visual rows high. Generate takes its side of the row,
+    # unless that would leave the message narrower than the button: then it goes under the message.
     mov esi, [rip + in_w]
+    mov dword ptr [rip + ai_row], 0
     cmp dword ptr [rip + cfg_commit_ai], 0
     je 20f
     call ai_width
     mov esi, [rip + in_w]
     sub esi, eax
     sub esi, [rip + g_mt + 4*MI_8]
+    cmp esi, eax
+    jge 20f
+    mov esi, [rip + in_w]
+    mov dword ptr [rip + ai_row], 1
 20: mov [rsp + 8], esi
     lea rdi, [rip + tf_msg]
     call ta_layout
@@ -1442,11 +1454,21 @@ FN scm_draw
 3:  # Generate shares the message row and stays at its top as the draft grows.
     cmp dword ptr [rip + cfg_commit_ai], 0
     je 31f
+    cmp dword ptr [rip + ai_row], 0
+    jne 30f
     mov edi, r13d
     call draw_ai
     M eax, MI_32
     cmp ebx, eax
     cmovl ebx, eax
+    jmp 31f
+30: # or the row under it
+    mov edi, r13d
+    add edi, ebx
+    add edi, [rip + g_mt + 4*MI_8]
+    call draw_ai
+    add ebx, [rip + g_mt + 4*MI_8]
+    add ebx, [rip + g_mt + 4*MI_32]
 31: add r13d, ebx
     add r13d, [rip + g_mt + 4*MI_8]
     # Commit, Sync Changes or Publish Branch
