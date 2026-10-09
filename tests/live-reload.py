@@ -480,6 +480,40 @@ class LiveReload(unittest.TestCase):
         self.assertEqual(other.read_text(encoding='utf-8'), 'xother changed\n')
         self.assertIn('dirty=0', self.command('print-state'))
 
+    def test_symlink_chains_and_files_that_become_symlinks(self):
+        # link -> hop -> real: the symlink on the way pointed elsewhere is followed too
+        elsewhere = self.work / 'elsewhere'
+        elsewhere.mkdir()
+        real, other = elsewhere / 'real.txt', elsewhere / 'other.txt'
+        real.write_text('real\n', encoding='utf-8')
+        other.write_text('other\n', encoding='utf-8')
+        hops = self.work / 'hops'
+        hops.mkdir()
+        hop = hops / 'hop.txt'
+        hop.symlink_to(real)
+        link = self.project / 'link.txt'
+        link.symlink_to(hop)
+        plain = self.project / 'plain.txt'
+        plain.write_text('plain\n', encoding='utf-8')
+        self.start(link, plain)
+        self.command('cmd prev_tab')
+        self.assertIn('active=link.txt', self.command('print-state'))
+        swap = hops / 'swap.tmp'
+        swap.symlink_to(other)
+        os.replace(swap, hop)
+        self.wait_document('other\n')
+        self.external_write('other changed\n', target=other)
+        self.wait_document('other changed\n')
+        # an open file replaced by a symlink: the file it leads to is followed from then on
+        self.command('cmd next_tab')
+        self.assertIn('active=plain.txt', self.command('print-state'))
+        swap = self.project / 'swap.tmp'
+        swap.symlink_to(real)
+        os.replace(swap, plain)
+        self.wait_document('real\n')
+        self.external_write('real changed\n', target=real)
+        self.wait_document('real changed\n')
+
     def test_reload_follows_a_folder_made_again(self):
         sub = self.project / 'sub/deeper'
         sub.mkdir(parents=True)

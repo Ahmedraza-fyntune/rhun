@@ -1084,6 +1084,27 @@ FN doc_readonly
 2:  xor eax, eax
     ret
 
+# file_readonly(path) -> path_readonly for the file a symlink there leads to (the one a save writes),
+#   or for the path itself
+FN file_readonly
+    PROLOGUE
+    mov rbx, rdi
+    xor esi, esi
+    call link_target
+    mov r12, rax
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call path_readonly
+    mov ebx, eax
+    mov rdi, r12
+    call mem_free
+    mov eax, ebx
+    EPILOGUE
+1:  mov rdi, rbx
+    call path_readonly
+    EPILOGUE
+
 # path_readonly(path) -> eax 1 when the file there says not to write it (no write permission, or the
 #   read-only attribute on Windows) while its folder takes a new file, so a save would replace it
 #   anyway; in a folder that does not, a save fails as any other

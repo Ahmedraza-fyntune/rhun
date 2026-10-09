@@ -61,6 +61,8 @@ FN doc_free
     call mem_free
     mov rdi, [rbx + DOC_real]
     call mem_free
+    mov rdi, rbx
+    call watch_hops_free
     mov rdi, [rbx + DOC_img]
     call iv_free
     mov rdi, rbx

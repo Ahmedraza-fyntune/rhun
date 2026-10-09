@@ -528,6 +528,7 @@ F DOC_disk_hi, 8        # line past the changed range (deletions highlight their
 F DOC_real, 8           # a symlink's file: its path (owned) and name, and its folder's watch, or 0
 F DOC_rname, 8
 F DOC_wd2, 8
+F DOC_hops, 8           # the symlinks it leads through before that file (watch.s), or 0
 ENDSTRUCT DOC_SIZE
 
 .equ DISK_FADE_MS, 800

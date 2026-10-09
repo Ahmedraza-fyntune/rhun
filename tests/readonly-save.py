@@ -146,6 +146,25 @@ class ReadOnlySave(unittest.TestCase):
         self.assert_read_only(self.note, b'before\n')
 
     @unittest.skipIf(os.name == 'nt', 'a folder that takes no new file is POSIX permissions')
+    def test_save_as_onto_a_symlink_asks_for_the_file_it_leads_to(self):
+        # the link is in a folder that takes no new file; the read-only file it leads to is not
+        locked = self.home / 'locked'
+        locked.mkdir()
+        (locked / 'link.txt').symlink_to(self.other)
+        os.chmod(self.other, 0o444)
+        os.chmod(locked, 0o555)
+        try:
+            lines = self.run_editor([self.note], ['type x', 'cmd save_as', 'key ctrl+a',
+                                                  'type ' + (locked / 'link.txt').as_posix(), 'key Return',
+                                                  'print-state', 'key Return', 'print-state'])
+        finally:
+            os.chmod(locked, 0o755)
+        self.assertIn(DIALOG, lines[0])
+        self.assertEqual(self.state(lines[1], 'dirty'), '0')
+        self.assert_read_only(self.other, b'xbefore\n')
+        self.assertTrue((locked / 'link.txt').is_symlink())
+
+    @unittest.skipIf(os.name == 'nt', 'a folder that takes no new file is POSIX permissions')
     def test_a_folder_that_takes_no_new_file_fails_as_before(self):
         # Overwrite could not work there: no question, and the save fails as any other
         os.chmod(self.work, 0o555)

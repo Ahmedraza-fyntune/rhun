@@ -2188,9 +2188,9 @@ prompt_done:
     mov r13, [rip + g_doc]
     test r13, r13
     jz 9f
-    # onto a read-only file: ask first
+    # onto a read-only file (or a symlink to one): ask first
     mov rdi, rbx
-    call path_readonly
+    call file_readonly
     test eax, eax
     jz 0f
     mov rdi, rbx

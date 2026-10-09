@@ -460,9 +460,41 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             replacement.write_bytes(b'replaced\n')
             os.replace(replacement, real)
             return b'replaced\n'
-        follow('linked', link, [written, replaced])
+        def link_on_the_way():
+            # link -> hop -> real: the symlink on the way pointed elsewhere
+            other = elsewhere / 'other.txt'
+            other.write_bytes(b'other\n')
+            hop.unlink()
+            os.symlink(other, hop)
+            return b'other\n'
+        hop = temp / 'linked-hops' / 'hop.txt'
+        hop.parent.mkdir()
+        os.symlink(real, hop)
+        os.unlink(link)
+        os.symlink(hop, link)
+        follow('linked', link, [written, replaced, link_on_the_way])
+
+    def file_becomes_symlink():
+        project = temp / 'relinked'
+        project.mkdir()
+        plain = project / 'plain.txt'
+        plain.write_bytes(b'plain\n')
+        real = temp / 'relinked-elsewhere' / 'real.txt'
+        real.parent.mkdir()
+        real.write_bytes(b'real\n')
+
+        def relinked():
+            plain.unlink()
+            os.symlink(real, plain)
+            return b'real\n'
+
+        def written():
+            real.write_bytes(b'real changed\n')
+            return b'real changed\n'
+        follow('relinked', plain, [relinked, written])
     if not args.wine:
         check('watch/symlink-to-another-folder', symlink_elsewhere)
+        check('watch/file-replaced-by-symlink', file_becomes_symlink)
 
     def agents():
         env = environment('agents')
@@ -765,7 +797,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         name = 'native-issues'
         project = temp / name
         project.mkdir()
-        (project / 'case.txt').write_bytes('Été été ÉTÉ\nПривет ПРИВЕТ яблоко ЯБЛОКО\n'.encode())
+        # below the find bar, which covers the first lines of a narrow editor
+        (project / 'case.txt').write_bytes('\n\nÉté été ÉTÉ\nПривет ПРИВЕТ яблоко ЯБЛОКО\n'.encode())
         readonly = project / 'readonly.txt'
         readonly.write_bytes(b'This file is read-only.\n')
         os.chmod(readonly, 0o444)
@@ -785,7 +818,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         try:
             output = run('rhun.exe', winpath(project), '--script', script, env=env).stdout
             lines = output.decode('utf-8', 'replace').splitlines()
-            assert 'active=case.txt line=1 col=4 sel=5' in lines[0], output
+            assert 'active=case.txt line=3 col=4 sel=5' in lines[0], output
             assert 'active=readonly.txt' in lines[1] and 'focus=5' in lines[1], output
             equal(readonly.read_bytes(), b'This file is read-only.\n')
             for shot in (find_shot, readonly_shot):
