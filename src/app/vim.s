@@ -4414,10 +4414,11 @@ vx_qabang:
     call session_save
     mov dword ptr [rip + g_quit], 1
     ret
-# wa: every changed file that has a path
+# wa: every changed file that has a path, but read-only files (as in Vim)
 vx_wa:
     PROLOGUE
     xor ebx, ebx
+    xor r13d, r13d              # a read-only file was left
 1:  cmp rbx, [rip + g_tabs + VEC_len]
     jae 9f
     mov rdi, rbx
@@ -4435,13 +4436,23 @@ vx_wa:
     test eax, eax
     jz 1b
     mov rdi, r12
+    call doc_readonly
+    test eax, eax
+    jz 2f
+    mov r13d, 1
+    jmp 1b
+2:  mov rdi, r12
     call doc_save
     test rax, rax
     js 1b
     mov rdi, r12
     call app_after_save
     jmp 1b
-9:  EPILOGUE
+9:  test r13d, r13d
+    jz 8f
+    lea rdi, [rip + .Lro_left]
+    call app_toast
+8:  EPILOGUE
 vx_wqa:
     call vx_wa
     jmp cmd_quit
@@ -4480,6 +4491,7 @@ vx_ebang:
 .Lnl: .ascii "\n"
 .Lbrackets: .asciz "()[]{}"
 .Lnot_cmd: .asciz "Not an editor command: "
+.Lro_left: .asciz "Read-only files were not saved (:w asks to overwrite)"
 # text objects: key, opening, closing
 .Lobj_pairs:
     .byte '(', '(', ')', ')', '(', ')', 'b', '(', ')'

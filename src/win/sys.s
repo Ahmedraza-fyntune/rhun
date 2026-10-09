@@ -489,8 +489,10 @@ FN win_file_is_real_dir
 8:  mov rax, -22
     EPILOGUE
 
+# access(path, mode): W_OK fails with EACCES for a file with the read-only attribute
 FN ws_access
     PROLOGUE 96
+    mov r13d, esi
     call win_file_path
     test rax, rax
     jz 8f
@@ -501,7 +503,47 @@ FN ws_access
     cmp eax, -1
     je 1f
     xor r12d, r12d
+    test r13d, 2
+    jz 2f
+    and eax, 0x11               # read-only, and not a folder
+    cmp eax, 1
+    jne 2f
+    mov r12, -13
     jmp 2f
+1:  call win_error
+    mov r12, rax
+2:  mov rdi, rbx
+    call mem_free
+    mov rax, r12
+    EPILOGUE
+8:  mov rax, -22
+    EPILOGUE
+
+# chmod(path, mode): only the owner's write permission means anything, as the read-only attribute
+FN ws_chmod
+    PROLOGUE 96
+    mov r13d, esi
+    call win_file_path
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov rcx, rax
+    API GetFileAttributesW
+    cmp eax, -1
+    je 1f
+    and eax, ~0x81              # neither read-only nor normal, which must be alone
+    test r13d, 0200
+    jnz 3f
+    or eax, 1
+3:  mov edx, 0x80
+    test eax, eax
+    cmovz eax, edx
+    mov rcx, rbx
+    mov edx, eax
+    API SetFileAttributesW
+    xor r12d, r12d
+    test eax, eax
+    jnz 2f
 1:  call win_error
     mov r12, rax
 2:  mov rdi, rbx

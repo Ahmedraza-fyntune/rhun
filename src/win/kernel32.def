@@ -57,6 +57,7 @@ EXPORTS
     SetCurrentDirectoryW
     SetEnvironmentVariableW
     SetEvent
+    SetFileAttributesW
     SetFilePointerEx
     SetInformationJobObject
     Sleep

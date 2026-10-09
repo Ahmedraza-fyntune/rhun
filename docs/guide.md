@@ -48,6 +48,9 @@ including image tabs, and keeps an empty window empty.
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
 command palette to load the disk version, or save to keep your version. Undoing back to the saved
 state loads the disk version too.
+Saving a read-only file asks first: **Overwrite** replaces it and it stays read-only, **Cancel** leaves
+it as it is, and Save As writes a copy elsewhere. Save in the question about unsaved files when
+closing or quitting asks the same, and Vim's `:wa` leaves read-only files unsaved.
 
 ## Install and update
 

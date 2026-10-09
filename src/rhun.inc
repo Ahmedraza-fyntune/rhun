@@ -43,6 +43,7 @@
 .equ SYS_mkdir, 83
 .equ SYS_unlink, 87
 .equ SYS_readlink, 89
+.equ SYS_chmod, 90
 .equ SYS_fchmod, 91
 .equ SYS_setsid, 112
 .equ SYS_shmdt, 67

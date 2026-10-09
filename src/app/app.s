@@ -73,6 +73,10 @@ dlg_title: .quad 0               # app_confirm: the question, a line under it, t
 dlg_text: .quad 0
 dlg_ok: .quad 0
 dlg_fn: .quad 0
+dlg_cancel: .quad 0              # app_confirm's Cancel calls this when it is set
+ro_doc: .quad 0                  # ask_readonly: the file asked about, and the question
+ro_kind: .long 0                 # a close or quit that asked about it (dlg_kind), carried on after Overwrite
+ro_title: .zero 256
 switch_pending: .long 0          # a project switch waits on unsaved files
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
@@ -1000,7 +1004,7 @@ FN cmd_prev_tab
     jmp app_activate_tab
 1:  ret
 
-# cmd_save(): save, or ask for a path for untitled docs
+# cmd_save(): save, or ask for a path for untitled docs; a read-only file asks before it is replaced
 FN cmd_save
     READONLY_RET
     PROLOGUE
@@ -1012,6 +1016,14 @@ FN cmd_save
     call cmd_save_as
     jmp 9f
 1:  mov rdi, rbx
+    call doc_readonly
+    test eax, eax
+    jz 3f
+    mov rdi, rbx
+    lea rsi, [rip + save_readonly_confirmed]
+    call ask_readonly
+    jmp 9f
+3:  mov rdi, rbx
     call doc_save
     test rax, rax
     js 2f
@@ -1021,6 +1033,88 @@ FN cmd_save
 2:  lea rdi, [rip + .Lsave_failed]
     call app_toast
 9:  EPILOGUE
+
+# save_readonly_confirmed(): Overwrite, for cmd_save
+save_readonly_confirmed:
+    PROLOGUE
+    mov rbx, [rip + ro_doc]
+    cmp rbx, [rip + g_doc]
+    jne 9f
+    mov rdi, rbx
+    call doc_save_readonly
+    test rax, rax
+    js 2f
+    mov rdi, rbx
+    call app_after_save
+    jmp 9f
+2:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+9:  EPILOGUE
+
+# doc_readonly(doc) -> eax 1 when its file is there but says not to write it (no write permission, or
+#   the read-only attribute on Windows); a save would still replace it, its folder being writable
+FN doc_readonly
+    mov rdi, [rdi + DOC_path]
+    xor eax, eax
+    test rdi, rdi
+    jz 1f
+    sub rsp, 8
+    mov esi, 2                  # W_OK
+    SYS SYS_access
+    add rsp, 8
+    cmp rax, -13                # EACCES
+    sete al
+    movzx eax, al
+1:  ret
+
+# doc_save_readonly(doc) -> doc_save's result: a read-only file is replaced and stays read-only. On
+#   Windows, where a read-only file cannot be replaced, the attribute is off while it is written.
+FN doc_save_readonly
+.ifdef WINDOWS
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + DOC_path]
+    mov esi, 0666
+    SYS SYS_chmod
+    mov rdi, rbx
+    call doc_save
+    mov r12, rax
+    mov rdi, [rbx + DOC_path]
+    mov esi, 0444
+    SYS SYS_chmod
+    mov rax, r12
+    EPILOGUE
+.else
+    jmp doc_save
+.endif
+
+# ask_readonly(doc, fn): "Overwrite read-only NAME?", whose button calls fn
+ask_readonly:
+    PROLOGUE
+    mov [rip + ro_doc], rdi
+    mov r12, rsi
+    mov rbx, [rdi + DOC_name]
+    mov rdi, rbx
+    call strlen
+    cmp rax, 200
+    jbe 1f
+    mov eax, 200
+1:  mov r13, rax
+    lea rdi, [rip + ro_title]
+    lea rsi, [rip + .Lro_a]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, rbx
+    mov rcx, r13
+    rep movsb
+    lea rsi, [rip + .Lro_b]
+    call cstr_copy
+    lea rdi, [rip + ro_title]
+    lea rsi, [rip + .Lro_text]
+    lea rdx, [rip + .Lro_button]
+    mov rcx, r12
+    call app_confirm
+    EPILOGUE
 
 # app_after_save(doc): re-detect language, config reload, explorer refresh
 FN app_after_save
@@ -3620,9 +3714,15 @@ dialog_choose:
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     cmp r12d, 4
     jne 0f
+    mov rax, [rip + dlg_cancel]
+    mov qword ptr [rip + dlg_cancel], 0
     cmp ebx, 2
-    jne 9f
-    call [rip + dlg_fn]
+    je 5f
+    test rax, rax
+    jz 9f
+    call rax
+    jmp 9f
+5:  call [rip + dlg_fn]
     jmp 9f
 0:  test ebx, ebx
     jz 8f
@@ -3630,37 +3730,83 @@ dialog_choose:
     jne 1f
     mov rdi, [rip + dlg_tab]
     call tab_at
-    mov rdi, [rax + TAB_doc]
-    cmp qword ptr [rdi + DOC_path], 0
+    mov rbx, [rax + TAB_doc]
+    cmp qword ptr [rbx + DOC_path], 0
     je 2f
+    mov rdi, rbx
+    call doc_readonly
+    test eax, eax
+    jnz 6f
+    mov rdi, rbx
     call doc_save
     test rax, rax
     js 7f
     jmp 1f
 2:  call cmd_save_as
     jmp 8f
-1:  mov rdi, [rip + dlg_tab]
-    call app_close_tab_now
-    cmp r12d, 3
-    jne 11f
-    call switch_continue
+6:  # a read-only file asks first: Overwrite saves it and goes on, Cancel stops here
+    mov [rip + ro_kind], r12d
+    mov rdi, rbx
+    lea rsi, [rip + close_readonly_confirmed]
+    call ask_readonly
+    lea rax, [rip + unsaved_kept]
+    mov [rip + dlg_cancel], rax
     jmp 9f
-11: cmp r12d, 2
-    jne 12f
-    call cmd_quit
-    jmp 9f
-12: cmp r12d, 5
-    jne 9f
-    call cmd_close_all
+1:  mov edi, r12d
+    call unsaved_done
     jmp 9f
 7:  # the file stays open and modified: say why
     lea rdi, [rip + .Lsave_failed]
     call app_toast
-8:  # not quitting after all: no restart into an update either, no other project, and the session
-    # is saved again when it comes to that
+8:  call unsaved_kept
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# unsaved_done(kind): the file asked about (dlg_tab) is saved or let go: close it and go on with what
+#   asked (dlg_kind)
+unsaved_done:
+    push rbx
+    mov ebx, edi
+    mov rdi, [rip + dlg_tab]
+    call app_close_tab_now
+    cmp ebx, 3
+    jne 1f
+    pop rbx
+    jmp switch_continue
+1:  cmp ebx, 2
+    jne 2f
+    pop rbx
+    jmp cmd_quit
+2:  cmp ebx, 5
+    jne 3f
+    pop rbx
+    jmp cmd_close_all
+3:  pop rbx
+    ret
+
+# unsaved_kept(): not quitting after all: no restart into an update either, no other project, and the
+#   session is saved again when it comes to that
+unsaved_kept:
     mov dword ptr [rip + g_restart], 0
     mov dword ptr [rip + switch_pending], 0
     mov dword ptr [rip + g_session_final], 0
+    ret
+
+# close_readonly_confirmed(): Overwrite, for a close or quit that asked to save a read-only file
+close_readonly_confirmed:
+    PROLOGUE
+    mov rdi, [rip + dlg_tab]
+    call tab_at
+    mov rdi, [rax + TAB_doc]
+    call doc_save_readonly
+    test rax, rax
+    js 1f
+    mov edi, [rip + ro_kind]
+    call unsaved_done
+    jmp 9f
+1:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+    call unsaved_kept
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -3683,6 +3829,7 @@ FN app_confirm
     mov [rip + dlg_text], rsi
     mov [rip + dlg_ok], rdx
     mov [rip + dlg_fn], rcx
+    mov qword ptr [rip + dlg_cancel], 0
     mov dword ptr [rip + dlg_kind], 4
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
     mov dword ptr [rip + g_dirty], 1
@@ -4284,6 +4431,10 @@ FN cmd_move_line_down
 .Lnot_regular: .asciz "Not a regular file, not opened"
 .Lsaved: .asciz "Saved"
 .Lsave_failed: .asciz "Could not save the file"
+.Lro_a: .asciz "Overwrite read-only "
+.Lro_b: .asciz "?"
+.Lro_text: .asciz "The file is read-only. Overwriting replaces it, and it stays read-only."
+.Lro_button: .asciz "Overwrite"
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
 .p2align 3
