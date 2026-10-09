@@ -259,6 +259,7 @@ esac
     env.pop('GIT_EDITOR', None)
     (home / '.zshrc').write_text('alias ll="ls -l"\n')
     (home / '.bashrc').write_text('export EDITOR=vi\n')
+    (home / '.profile').write_text('export X=1\n')     # what bash reads as a login shell here
     (home / '.tcshrc').write_text('')
     (home / '.config/fish').mkdir(parents=True, exist_ok=True)
     (home / '.config/nushell').mkdir(parents=True, exist_ok=True)
@@ -281,7 +282,9 @@ esac
             command = ['nu', '--no-config-file', '-c', f'source "{rc}"; ^printenv VISUAL; ^printenv EDITOR']
         else:
             command = [shell, '-c', '. "$1"; ' + show, shell, str(rc)]
-        result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=15)
+        # stdin from /dev/null: on a socket bash takes itself for an ssh session and reads .bashrc too
+        result = subprocess.run(command, env=environment, stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, timeout=15)
         return result.stdout.splitlines()
 
     def check_shells(display, none, expected=None):
@@ -289,7 +292,7 @@ esac
         editor without"""
         expected = expected or value
         for shell, rc in (('zsh', home / '.zshrc'), ('bash', home / '.bashrc'), ('dash', home / '.bashrc'),
-                          ('tcsh', home / '.tcshrc'), ('fish', fish_file),
+                          ('bash', home / '.profile'), ('tcsh', home / '.tcshrc'), ('fish', fish_file),
                           ('nu', home / '.config/nushell/env.nu')):
             if not shutil.which(shell):
                 continue
@@ -304,12 +307,14 @@ esac
     (shim / 'xdg-mime').write_text('#!/bin/sh\nexit 1\n')     # files stay as they were; the editor does not
     output = run('--make-default')
     assert b'such as git, open rhun in new terminals' in output, output
-    for rc in (home / '.zshrc', home / '.bashrc', home / '.tcshrc', home / '.config/nushell/env.nu'):
+    for rc in (home / '.zshrc', home / '.bashrc', home / '.profile', home / '.tcshrc',
+               home / '.config/nushell/env.nu'):
         assert blocks(rc) == 1, (rc, rc.read_text())
     assert blocks(fish_file) == 1
+    assert not (home / '.bash_profile').exists()       # it would hide .profile from bash
     assert (home / '.zshrc').read_text().startswith('alias ll="ls -l"\n')
     check_shells({'DISPLAY': ':0'}, {})
-    check_shells({'WAYLAND_DISPLAY': 'wayland-0'}, {})
+    check_shells({'WAYLAND_DISPLAY': 'wayland-0'}, {'DISPLAY': '', 'WAYLAND_DISPLAY': ''})
     # as git runs it: through sh, with the file after the editor's words
     note = temp / 'COMMIT_EDITMSG'
     note.write_text('')
@@ -361,10 +366,12 @@ esac
     result = subprocess.run(['sh', str(installer), '--uninstall', '--prefix', str(prefix)], env=env,
                             stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
     assert result.returncode == 0, result.stderr.decode()
-    for rc in (home / '.zshrc', home / '.bashrc', home / '.tcshrc', home / '.config/nushell/env.nu'):
+    for rc in (home / '.zshrc', home / '.bashrc', home / '.profile', home / '.tcshrc',
+               home / '.config/nushell/env.nu'):
         assert blocks(rc) == 0, (rc, rc.read_text())
     assert not fish_file.exists()
     assert (home / '.bashrc').read_text() == 'export EDITOR=vi\n', (home / '.bashrc').read_text()
+    assert (home / '.profile').read_text() == 'export X=1\n', (home / '.profile').read_text()
     print('ok   associations/editor-variables-uninstall', flush=True)
 
 subprocess.run([sys.executable, str(ROOT / 'tests/mac-defaults.py')], check=True)

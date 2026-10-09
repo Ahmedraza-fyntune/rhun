@@ -410,14 +410,19 @@ set_editor() {
     q=$(quote_arg "$value")
     if [ "$os" = linux ]; then
         posix_test='[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]'
-        fish_test='set -q DISPLAY; or set -q WAYLAND_DISPLAY'
+        fish_test='test -n "$DISPLAY$WAYLAND_DISPLAY"'
         nu_test='($env.DISPLAY? | is-not-empty) or ($env.WAYLAND_DISPLAY? | is-not-empty)'
-        csh_test='( $?DISPLAY || $?WAYLAND_DISPLAY )'
+        # csh substitutes a whole line before it runs, so an unset variable is read only in its own if
+        csh_pre='set rhun_display = ""\nif ( $?DISPLAY ) then\n    set rhun_display = "$DISPLAY"\nendif\nif ( $?WAYLAND_DISPLAY ) then\n    set rhun_display = "$rhun_display$WAYLAND_DISPLAY"\nendif\n'
+        csh_test='( "$rhun_display" != "" )'
+        csh_post='\nunset rhun_display'
     else
         posix_test='[ -z "${SSH_CONNECTION:-}" ]'
         fish_test='not set -q SSH_CONNECTION'
         nu_test='($env.SSH_CONNECTION? | is-empty)'
+        csh_pre=''
         csh_test='( ! $?SSH_CONNECTION )'
+        csh_post=''
     fi
     posix="if $posix_test; then export VISUAL=$q EDITOR=$q; fi"
     done_shells=''
@@ -426,7 +431,8 @@ set_editor() {
         zsh) put_editor "${ZDOTDIR:-$HOME}/.zshrc" "$posix" zsh ;;
         bash)
             put_editor "$HOME/.bashrc" "$posix" bash
-            if [ "$os" = mac ] || [ -f "$HOME/.bash_profile" ]; then put_editor "$HOME/.bash_profile" "$posix" ''; fi
+            login=$(bash_login)
+            if [ -n "$login" ]; then put_editor "$login" "$posix" ''; fi
             ;;
         sh | dash | ksh | mksh | yash | ash | busybox) put_editor "$HOME/.profile" "$posix" "$sh" ;;
         fish)
@@ -449,7 +455,8 @@ set_editor() {
             if [ ! -f "$f" ] && { [ -f "$HOME/.cshrc" ] || [ "$sh" = csh ]; }; then f=$HOME/.cshrc; fi
             # csh expands history (!) even in single quotes, unless a backslash comes first
             cq=$(printf '%s' "$q" | sed 's/!/\\!/g')
-            put_editor "$f" "$(printf 'if %s then\n    setenv VISUAL %s\n    setenv EDITOR %s\nendif' "$csh_test" "$cq" "$cq")" "$sh"
+            put_editor "$f" "$(printf "${csh_pre}if %s then\\n    setenv VISUAL %s\\n    setenv EDITOR %s\\nendif$csh_post" \
+                "$csh_test" "$cq" "$cq")" "$sh"
             ;;
         *) say "$sh: set VISUAL and EDITOR to $value to edit commit messages in rhun" ;;
         esac
@@ -510,6 +517,19 @@ nu_dir() { # the nushell configuration folder, when there is one
     done
 }
 
+# bash_login: the file bash reads as a login shell (macOS Terminal, a console login): the first of
+# .bash_profile, .bash_login and .profile there is; on macOS, whose terminals start login shells,
+# .bash_profile when there is none
+bash_login() {
+    for f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+        if [ -f "$f" ]; then
+            echo "$f"
+            return 0
+        fi
+    done
+    if [ "$os" = mac ]; then echo "$HOME/.bash_profile"; fi
+}
+
 # user_shells: the shells to set up, one per line: the login shell, $SHELL, and every shell with a
 # configuration in HOME
 user_shells() {
@@ -538,8 +558,8 @@ add_path() {
         zsh) add_posix "${ZDOTDIR:-$HOME}/.zshrc" "$1" zsh ;;
         bash)
             add_posix "$HOME/.bashrc" "$1" bash
-            # login shells (macOS Terminal, a console login) read .bash_profile
-            if [ "$os" = mac ] || [ -f "$HOME/.bash_profile" ]; then add_posix "$HOME/.bash_profile" "$1" ''; fi
+            login=$(bash_login)
+            if [ -n "$login" ]; then add_posix "$login" "$1" ''; fi
             ;;
         sh | dash | ksh | mksh | yash | ash | busybox) add_posix "$HOME/.profile" "$1" "$sh" ;;
         fish)
@@ -676,8 +696,8 @@ uninstall() {
         fi
         say "rhun is removed"
     fi
-    for f in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" \
-        "$HOME/.tcshrc" "$HOME/.cshrc"; do
+    for f in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" \
+        "$HOME/.profile" "$HOME/.tcshrc" "$HOME/.cshrc"; do
         remove_block "$f"
         remove_block "$f" 'rhun editor'
     done
