@@ -439,8 +439,11 @@ open_initial:
     jnz 3f
     # With no paths, optionally reopen the last project; explicit paths always win.
     cmp qword ptr [rip + g_start_paths + VEC_len], 0
-    jne 3f                    # explicit files are ordinary tabs without a project
-    cmp dword ptr [rip + opt_empty], 0
+    je 20f
+    # explicit files are ordinary tabs without a project, and a quick edit: no explorer or agents
+    call app_hide_panels
+    jmp 3f
+20: cmp dword ptr [rip + opt_empty], 0
     jne 3f
     cmp dword ptr [rip + cfg_restore_project], 0
     je 21f

@@ -99,6 +99,7 @@ g_file: .quad 0                  # DOC of the active tab when it shows a file (t
 FN app_init
     PROLOGUE 16
     call config_load
+    call app_sync_panels
     call theme_scan
     mov edi, 1
     call theme_settings_init
@@ -155,9 +156,11 @@ load_font_or:
 # app_set_project(dir cstr): project root for explorer, agents and session
 FN app_set_project
     mov dword ptr [rip + g_project_adopted], 0
+    mov dword ptr [rip + panels_hidden], 0 # a folder opened as such shows its panels
 set_project:
     PROLOGUE
     mov rbx, rdi
+    call app_sync_panels
     mov rdi, [rip + g_project]
     call mem_free
     mov rdi, rbx
@@ -324,6 +327,8 @@ FN app_switch_project
     cmp dword ptr [rip + g_project_adopted], 0
     je 9f
     mov dword ptr [rip + g_project_adopted], 0
+    mov dword ptr [rip + panels_hidden], 0
+    call app_sync_panels
     call session_remember_project
     call session_restore
     call app_update_title
@@ -1122,6 +1127,7 @@ FN app_reload_config
 FN app_apply_settings
     PROLOGUE
     call theme_apply_config
+    call app_sync_panels
     call git_apply
     call agents_apply_settings
     call ai_apply
@@ -1703,10 +1709,10 @@ FN app_render
     mov ecx, [rsp]
     sub ecx, eax
     xor edx, edx
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 1f
     mov edx, [rip + g_side_px]
-1:  cmp dword ptr [rip + cfg_agents], 0
+1:  cmp dword ptr [rip + g_show_agents], 0
     je 2f
     add edx, [rip + g_agents_px]
 2:  cmp edx, ecx
@@ -1734,7 +1740,7 @@ FN app_render
     # the dividers take their strips first: the panels either side are drawn before them
     mov dword ptr [rip + split_l_bits], 0
     mov dword ptr [rip + split_r_bits], 0
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 31f
     mov edi, ID_SPLIT_L
     mov esi, [rip + g_side_px]
@@ -1742,7 +1748,7 @@ FN app_render
     mov ecx, [rsp + 24]
     call splitter_hit
     mov [rip + split_l_bits], eax
-31: cmp dword ptr [rip + cfg_agents], 0
+31: cmp dword ptr [rip + g_show_agents], 0
     je 32f
     mov edi, ID_SPLIT_R
     mov esi, [rsp]
@@ -1753,7 +1759,7 @@ FN app_render
     mov [rip + split_r_bits], eax
 32:
     # sidebar
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 4f
     xor edi, edi
     mov esi, [rsp + 20]
@@ -1769,7 +1775,7 @@ FN app_render
     mov ecx, [rsp + 24]
     COLOR r8d, T_BORDER
     call gfx_fill
-4:  cmp dword ptr [rip + cfg_agents], 0
+4:  cmp dword ptr [rip + g_show_agents], 0
     je 5f
     mov edi, [rsp]
     sub edi, [rip + g_agents_px]
@@ -1786,7 +1792,7 @@ FN app_render
     call gfx_fill
 5:  # editor column, the terminal panel under it
     mov edi, [rsp + 28]
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 51f
     add edi, [rip + g_mt + 4*MI_1]
 51: mov [rsp + 40], edi
@@ -1841,7 +1847,7 @@ FN app_render
     mov ecx, [rsp + 52]
     call term_panel_draw
 53: # the dividers over everything in the body: their line and cursor win
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 55f
     mov edi, ID_SPLIT_L
     mov esi, [rsp + 28]
@@ -1849,7 +1855,7 @@ FN app_render
     mov ecx, [rsp + 24]
     mov r8d, [rip + split_l_bits]
     call splitter
-55: cmp dword ptr [rip + cfg_agents], 0
+55: cmp dword ptr [rip + g_show_agents], 0
     je 56f
     mov edi, ID_SPLIT_R
     mov esi, [rsp + 32]
@@ -4030,14 +4036,52 @@ toast_draw:
 # ---------------- misc commands ----------------
 
 FN cmd_toggle_sidebar
-    xor dword ptr [rip + cfg_sidebar], 1
-    mov dword ptr [rip + g_settings_changed], 1
-    mov dword ptr [rip + g_dirty], 1
-    ret
+    mov eax, 1
+    lea rcx, [rip + cfg_sidebar]
+    jmp toggle_panel
 
 FN cmd_toggle_agents
-    xor dword ptr [rip + cfg_agents], 1
+    mov eax, 2
+    lea rcx, [rip + cfg_agents]
+    jmp toggle_panel
+
+# toggle_panel(bit eax, setting rcx): a panel hidden in this window alone comes back, and the setting
+# turns on only if it was off; any other panel flips its setting
+toggle_panel:
+    test [rip + panels_hidden], eax
+    jz 1f
+    not eax
+    and [rip + panels_hidden], eax
+    cmp dword ptr [rcx], 0
+    jne app_sync_panels
+1:  xor dword ptr [rcx], 1
     mov dword ptr [rip + g_settings_changed], 1
+    jmp app_sync_panels
+
+# app_hide_panels(): a window started with files alone is for editing them: the explorer and the
+# agents panel stay out of it, whatever the settings say, until shown or a folder is opened
+FN app_hide_panels
+    mov dword ptr [rip + panels_hidden], 3
+    jmp app_sync_panels
+
+# app_reveal_panel(bit): 1 the explorer, 2 the agents panel follows its setting again in this window
+FN app_reveal_panel
+    not edi
+    and [rip + panels_hidden], edi
+    jmp app_sync_panels
+
+# app_sync_panels(): g_show_side and g_show_agents from the settings and panels_hidden
+FN app_sync_panels
+    mov eax, [rip + cfg_sidebar]
+    test dword ptr [rip + panels_hidden], 1
+    jz 1f
+    xor eax, eax
+1:  mov [rip + g_show_side], eax
+    mov eax, [rip + cfg_agents]
+    test dword ptr [rip + panels_hidden], 2
+    jz 2f
+    xor eax, eax
+2:  mov [rip + g_show_agents], eax
     mov dword ptr [rip + g_dirty], 1
     ret
 
@@ -4336,9 +4380,14 @@ dlg_labels: .quad .Ld0, .Ld1, .Ld2
 
 .data
 g_win_focused: .long 1
+# the panels this window shows: the settings, less those panels_hidden takes away (app_sync_panels)
+.globl g_show_side, g_show_agents
+g_show_side: .long 1
+g_show_agents: .long 1
 .p2align 3
 g_tab_cur: .quad -1
 .bss
+panels_hidden: .long 0          # 1 the explorer, 2 the agents panel: hidden in a window started with files
 .globl g_settings_changed, g_started
 g_settings_changed: .long 0
 g_started: .long 0              # the command line is open: later folders switch the project

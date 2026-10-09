@@ -770,6 +770,28 @@ c_print_project:
     xor eax, eax
     ret
 
+# print-panels: whether this window shows the explorer, the agents panel and the terminal
+c_print_panels:
+    push rbx
+    lea rbx, [rip + panel_rows]
+1:  mov rsi, [rbx]
+    test rsi, rsi
+    jz 2f
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    mov rax, [rbx + 8]
+    lea rdi, [rip + out]
+    mov esi, [rax]
+    call sb_push_u64
+    add rbx, 16
+    jmp 1b
+2:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    xor eax, eax
+    ret
+
 # appearance dark|light|unknown: the system's dark mode changes, as a platform reports it
 c_appearance:
     call next_arg
@@ -1467,6 +1489,7 @@ on_client:
 .Lc_print_update: .asciz "print-update"
 .Lc_print_frames: .asciz "print-frames"
 .Lc_print_project: .asciz "print-project"
+.Lc_print_panels: .asciz "print-panels"
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
 .Lc_print_tip: .asciz "print-tip"
@@ -1478,6 +1501,8 @@ on_client:
 .Lc_print_appearance: .asciz "print-appearance"
 .Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
+.Ls_explorer_eq: .asciz "explorer="
+.Ls_agents_eq: .asciz " agents="
 .Ls_toast: .asciz "toast="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
@@ -1517,6 +1542,7 @@ ctl_table:
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
+    .quad .Lc_print_panels, c_print_panels
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
     .quad .Lc_print_tip, c_print_tip, .Lc_print_toast, c_print_toast, .Lc_print_link, c_print_link
     .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
@@ -1524,6 +1550,8 @@ ctl_table:
     .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
+panel_rows:
+    .quad .Ls_explorer_eq, g_show_side, .Ls_agents_eq, g_show_agents, .Ls_term, g_term_open, 0
 
 .data
 lsock: .long -1
