@@ -978,6 +978,12 @@ FN win_readlink_one
     cmp dword ptr [rdx + 4], 0x005c003f
     jne 3f
     add rdx, 8
+    cmp dword ptr [rdx], 0x004e0055         # UNC\server\share: \\server\share
+    jne 3f
+    cmp dword ptr [rdx + 4], 0x005c0043
+    jne 3f
+    add rdx, 4
+    mov word ptr [rdx], 92
 3:  mov rdi, rdx
     call win_utf8
     test rax, rax
