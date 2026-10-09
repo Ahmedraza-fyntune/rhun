@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,8 +32,15 @@ $InstallDir = "C:\Program files café ' $ &\rhun"
 $NoFileAssociations = $false
 $NoMakeDefault = $false
 $MakeDefault = $false
+$NoModifyPath = $false
 $openedSettings = @()
 function Start-Process($FilePath) { $script:openedSettings += $FilePath }
+# VISUAL and EDITOR go to a table, never the user's environment
+$userVariables = @{}
+function Get-UserVariable([string]$Name) { $script:userVariables[$Name] }
+function Set-UserVariable([string]$Name, $Value) {
+    if ($null -eq $Value) { $script:userVariables.Remove($Name) } else { $script:userVariables[$Name] = $Value }
+}
 function Read-Host { throw 'The installer must not prompt for defaults' }
 function Notify-FileAssociations { } # No shell refresh for the test registry subtree.
 function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
@@ -52,9 +60,26 @@ try {
     Assert ($instructions.Contains('-ExecutionPolicy Bypass -File')) 'Manual command missing'
     Assert ($instructions.Contains('Optional: default editor')) 'Manual command heading missing'
     Assert ($instructions.Contains($InstallDir.Replace("'", "''"))) 'Manual command path quoting failed'
+    Assert ($userVariables.Count -eq 0) 'Set the editor without a manual request'
     $MakeDefault = $true
     Choose-DefaultEditor | Out-Null
     Assert ($openedSettings.Count -eq 1) 'Manual request did not open Settings'
+    # the editor git asks for: rhun.com, quoted, with forward slashes for git's sh
+    $editor = '"C:/Program files café '' $ &/rhun/rhun.com" --wait'
+    Assert ($userVariables['VISUAL'] -ceq $editor) "VISUAL is $($userVariables['VISUAL'])"
+    Assert ($userVariables['EDITOR'] -ceq $editor) "EDITOR is $($userVariables['EDITOR'])"
+    $userVariables.Clear()
+    $NoModifyPath = $true
+    $said = Set-TerminalEditor | Out-String
+    Assert ($userVariables.Count -eq 0) 'NoModifyPath changed the environment'
+    Assert ($said.Contains($editor)) 'NoModifyPath did not say what to set'
+    $NoModifyPath = $false
+    Set-TerminalEditor | Out-Null
+    $userVariables['EDITOR'] = 'notepad'
+    Remove-TerminalEditor
+    Assert (-not $userVariables.ContainsKey('VISUAL')) 'Uninstall left VISUAL'
+    Assert ($userVariables['EDITOR'] -eq 'notepad') 'Uninstall removed an editor of the user'
+    'ok   associations/windows-editor-variables'
     Register-FileAssociations
     $InstallDir = 'C:\Other rhun'
     Remove-FileAssociations
@@ -221,5 +246,101 @@ esac
     output = run('--app-dir', str(appdir), '--make-default')
     assert b'Some defaults could not be changed' in output
     print('ok   associations/mac-opt-in-arguments-and-failure', flush=True)
+
+    # --make-default also makes rhun the editor programs ask for (git's commit message): VISUAL and
+    # EDITOR in every shell's startup file, only where a window can open, and gone on --uninstall.
+    # The stand-in rhun writes a message into the file it is given and notes its arguments.
+    executable.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$RHUN_ASSOC_TEST/editor-args"\n'
+                          'for last; do :; done\n[ "$1" = --wait ] && printf "from rhun\\n" > "$last"\nexit 0\n')
+    env.pop('GIT_EDITOR', None)
+    (home / '.zshrc').write_text('alias ll="ls -l"\n')
+    (home / '.bashrc').write_text('export EDITOR=vi\n')
+    (home / '.tcshrc').write_text('')
+    (home / '.config/fish').mkdir(parents=True, exist_ok=True)
+    (home / '.config/nushell').mkdir(parents=True, exist_ok=True)
+    fish_file = home / '.config/fish/conf.d/rhun-editor.fish'
+    value = "'" + str(executable) + "' --wait"        # the path has a space: quoted for git's sh
+
+    def editor_in(shell, rc, extra):
+        """VISUAL and EDITOR as SHELL exports them after reading RC, with EXTRA in its environment"""
+        environment = dict(HOME=str(home), PATH='/usr/bin:/bin', **extra)
+        show = 'printenv VISUAL; printenv EDITOR'
+        if shell == 'tcsh':
+            command = ['tcsh', '-f', '-c', f'source "{rc}"; {show}']
+        elif shell == 'fish':
+            command = ['fish', '-c', f'source $argv[1]; {show}', str(rc)]
+        elif shell == 'nu':
+            command = ['nu', '--no-config-file', '-c', f'source "{rc}"; ^printenv VISUAL; ^printenv EDITOR']
+        else:
+            command = [shell, '-c', '. "$1"; ' + show, shell, str(rc)]
+        result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=15)
+        return result.stdout.splitlines()
+
+    def check_shells(display, none):
+        """each shell reads VALUE where a window can open (DISPLAY), and keeps its own editor without"""
+        for shell, rc in (('zsh', home / '.zshrc'), ('bash', home / '.bashrc'), ('dash', home / '.bashrc'),
+                          ('tcsh', home / '.tcshrc'), ('fish', fish_file),
+                          ('nu', home / '.config/nushell/env.nu')):
+            if not shutil.which(shell):
+                continue
+            assert editor_in(shell, rc, display) == [value, value], (shell, editor_in(shell, rc, display))
+            kept = ['vi'] if rc.name == '.bashrc' else []
+            assert editor_in(shell, rc, none) == kept, (shell, editor_in(shell, rc, none))
+
+    def blocks(path):
+        return path.read_text().splitlines().count('# rhun editor') if path.exists() else 0
+
+    (shim / 'uname').write_text('#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; esac\n')
+    (shim / 'xdg-mime').write_text('#!/bin/sh\nexit 1\n')     # files stay as they were; the editor does not
+    output = run('--make-default')
+    assert b'such as git, open rhun in new terminals' in output, output
+    for rc in (home / '.zshrc', home / '.bashrc', home / '.tcshrc', home / '.config/nushell/env.nu'):
+        assert blocks(rc) == 1, (rc, rc.read_text())
+    assert blocks(fish_file) == 1
+    assert (home / '.zshrc').read_text().startswith('alias ll="ls -l"\n')
+    check_shells({'DISPLAY': ':0'}, {})
+    check_shells({'WAYLAND_DISPLAY': 'wayland-0'}, {})
+    # as git runs it: through sh, with the file after the editor's words
+    note = temp / 'COMMIT_EDITMSG'
+    note.write_text('')
+    subprocess.run(['sh', '-c', value + ' "$@"', value, str(note)], env=env, check=True)
+    assert (temp / 'editor-args').read_text().splitlines() == ['--wait', str(note)]
+    assert note.read_text() == 'from rhun\n'
+    if shutil.which('git'):
+        repo = temp / 'repo'
+        subprocess.run(['git', 'init', '-q', str(repo)], env=env, check=True)
+        subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                        'commit', '-q', '--allow-empty'], env=dict(env, EDITOR=value, VISUAL=value), check=True)
+        log = subprocess.run(['git', '-C', str(repo), 'log', '-1', '--format=%s'], env=env,
+                             capture_output=True, text=True, check=True)
+        assert log.stdout == 'from rhun\n', log
+    # once more: the block is replaced, not added again
+    subprocess.run(['git', 'config', '--global', 'core.editor', 'vim'], env=env, check=True)
+    output = run('--make-default')
+    assert b"git's core.editor (vim) still comes first" in output, output
+    assert blocks(home / '.zshrc') == 1 and blocks(home / '.bashrc') == 1
+    # without startup files to change, it only says what to set
+    (home / '.zshrc').write_text('')
+    output = run('--make-default', '--no-modify-path')
+    assert b'set VISUAL and EDITOR to: ' + value.encode() in output, output
+    assert blocks(home / '.zshrc') == 0
+    print('ok   associations/editor-variables-linux', flush=True)
+
+    # macOS: everywhere but SSH sessions, through the terminal command
+    (shim / 'uname').write_text('#!/bin/sh\ncase "$1" in -s) echo Darwin;; -m) echo arm64;; esac\n')
+    run('--app-dir', str(appdir), '--make-default')
+    check_shells({}, {'SSH_CONNECTION': '192.0.2.1 50000 192.0.2.2 22'})
+    print('ok   associations/editor-variables-mac', flush=True)
+
+    # --uninstall takes the blocks away, and leaves the user's lines
+    (shim / 'uname').write_text('#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; esac\n')
+    result = subprocess.run(['sh', str(installer), '--uninstall', '--prefix', str(prefix)], env=env,
+                            stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr.decode()
+    for rc in (home / '.zshrc', home / '.bashrc', home / '.tcshrc', home / '.config/nushell/env.nu'):
+        assert blocks(rc) == 0, (rc, rc.read_text())
+    assert not fish_file.exists()
+    assert (home / '.bashrc').read_text() == 'export EDITOR=vi\n', (home / '.bashrc').read_text()
+    print('ok   associations/editor-variables-uninstall', flush=True)
 
 subprocess.run([sys.executable, str(ROOT / 'tests/mac-defaults.py')], check=True)

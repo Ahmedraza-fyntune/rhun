@@ -153,8 +153,40 @@ function Choose-DefaultEditor {
             'ms-settings:defaultapps?registeredAppUser=rhun'
         } else { 'ms-settings:defaultapps' }
         Start-Process $uri
+        Set-TerminalEditor
     } else {
         Show-DefaultEditorCommand
+    }
+}
+
+# The editor programs such as git ask for: rhun.com, which keeps the console until rhun closes. Forward
+# slashes, so that git's sh takes the path as it is.
+function Get-EditorValue { '"' + (Join-Path $InstallDir 'rhun.com').Replace('\', '/') + '" --wait' }
+function Get-UserVariable([string]$Name) { [Environment]::GetEnvironmentVariable($Name, 'User') }
+function Set-UserVariable([string]$Name, $Value) { [Environment]::SetEnvironmentVariable($Name, $Value, 'User') }
+
+# Set-TerminalEditor: VISUAL and EDITOR for the user, so that git opens commit messages in rhun
+function Set-TerminalEditor {
+    $value = Get-EditorValue
+    if ($NoModifyPath) {
+        Write-Output "To edit commit messages in rhun, set VISUAL and EDITOR to: $value"
+        return
+    }
+    Set-UserVariable 'VISUAL' $value
+    Set-UserVariable 'EDITOR' $value
+    Write-Output 'Programs that ask for an editor, such as git, open rhun in new terminals (VISUAL and EDITOR).'
+    if ($env:GIT_EDITOR) { Write-Output "GIT_EDITOR ($env:GIT_EDITOR) still comes first for git." }
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $core = & git config --global --get core.editor 2>$null
+        if ($core) { Write-Output "git's core.editor ($core) still comes first; git config --global --unset core.editor uses rhun." }
+    }
+}
+
+# Remove-TerminalEditor: VISUAL and EDITOR, where they still name this installation
+function Remove-TerminalEditor {
+    $value = Get-EditorValue
+    foreach ($name in 'VISUAL', 'EDITOR') {
+        if ((Get-UserVariable $name) -eq $value) { Set-UserVariable $name $null }
     }
 }
 
@@ -172,7 +204,7 @@ function Show-DefaultEditorCommand {
         Write-Output '  Optional: default editor'
         Write-Output '  ========================'
     }
-    Write-Output 'To choose rhun as your default editor, run this command manually:'
+    Write-Output 'To choose rhun as your default editor, for files and for git, run this command manually:'
     if ($color) { Write-Host $command -ForegroundColor Green } else { Write-Output $command }
     Write-Output ''
 }
@@ -378,6 +410,7 @@ foreach ($name in @('rhun.exe', 'rhun.com') | Where-Object { -not $PrepareUpdate
 
 if ($Uninstall) {
     Remove-FileAssociations
+    Remove-TerminalEditor
     if (Test-Path -LiteralPath $InstallDir) {
         foreach ($name in $knownFiles) {
             $file = Join-Path $InstallDir $name

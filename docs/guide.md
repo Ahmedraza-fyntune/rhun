@@ -73,7 +73,7 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--app-dir DIR` | macOS: put rhun.app in DIR |
 | `--no-modify-path` | leave shell startup files alone |
 | `--configure-files` | configure an existing installation without downloading or replacing it |
-| `--uninstall` | remove rhun and the PATH line; your settings in `~/.config/rhun` stay |
+| `--uninstall` | remove rhun, the PATH line and the editor lines; your settings in `~/.config/rhun` stay |
 
 Installation prints a command you can run manually to make rhun your default editor. It does not
 ask about or change your defaults. Supported images, folders and HTML documents appear in Open With;
@@ -81,6 +81,13 @@ the manual default-editor command leaves browser, image and folder associations 
 On Linux, changing defaults needs `xdg-mime` from xdg-utils and a desktop-visible installation
 prefix. On macOS, associations are requested through Launch Services; if a request fails, use
 Finder's Get Info > Open with > rhun > Change All for that type.
+
+The default-editor command also makes rhun the editor that programs such as git ask for: every shell
+you use gets `VISUAL` and `EDITOR` set to `rhun --wait` (by its full path), in a block marked
+`# rhun editor` (fish: `conf.d/rhun-editor.fish`). Only where a window can open: on Linux when there
+is a display (`DISPLAY` or `WAYLAND_DISPLAY`), on macOS outside SSH sessions; elsewhere your shell
+keeps the editor it had. git's own `core.editor` and `GIT_EDITOR` still come first, and the command
+says so when one is set. With `--no-modify-path` it only prints the value to set.
 
 Updates refresh file handler registration without asking about or changing defaults. The separate
 `--configure-files --make-default` command enables defaults without reinstalling:
@@ -147,7 +154,10 @@ The script is also included in the ZIP. To install from a downloaded script, run
 
 Installation registers text, source, configuration and supported image extensions in Open With and
 Default Apps for the current user. It prints a command you can run manually to open Windows Settings
-and choose defaults. Installation never asks about defaults or opens that page.
+and choose defaults. Installation never asks about defaults or opens that page. That command also
+sets your user `VISUAL` and `EDITOR` to `rhun.com --wait` (by its full path), so git opens commit
+messages in rhun; with `-NoModifyPath` it only prints the value. Uninstalling removes them while they
+still name rhun.
 `-NoFileAssociations` skips registration and remembers that choice across updates. Images remain an
 optional separate choice in Windows Settings.
 
@@ -210,7 +220,7 @@ sensitivity** applies instead (`fast_scroll_sensitivity = 4.0`).
 
 Settings includes links to [rhun.app](https://rhun.app), [hi@rhun.app](mailto:hi@rhun.app), and [GitHub issues](https://github.com/vshvedov/rhun/issues) for feedback and bug reports in a single row. The email link follows the website and opens the default email app. All three are also available from the command palette.
 
-Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.
+Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`, which the installer's default-editor command sets for you.
 
 rhun uses Wayland when it can and falls back to X11 when there is no Wayland compositor. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
 

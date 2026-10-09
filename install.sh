@@ -10,7 +10,8 @@
 #                           when that is not writable)
 #   --no-modify-path        leave shell startup files alone (by default every shell the user has
 #                           gets rhun's folder on PATH: zsh, bash, sh, fish, nushell, tcsh)
-#   --make-default          with --configure-files: use rhun for text, source and configuration files
+#   --make-default          with --configure-files: use rhun for text, source and configuration files,
+#                           and as the editor programs such as git ask for (VISUAL and EDITOR)
 #   --no-make-default       accepted for compatibility; installation never prompts for defaults
 #   --configure-files       configure an existing installation without downloading it
 #   --uninstall             remove what the installer put in place (settings stay)
@@ -72,6 +73,7 @@ usage: install.sh [options]   (curl -fsSL .../install.sh | sh -s -- [options])
   --no-modify-path        leave shell startup files alone
   --configure-files       configure an existing installation without downloading it
                           add --make-default to make rhun the default editor manually
+                          (files, and VISUAL and EDITOR for git and the like)
   --uninstall             remove what the installer put in place (settings stay)
 EOF
 }
@@ -298,13 +300,25 @@ print_default_editor_command() {
     [ -z "$version" ] || url=$base/download/v$version/install.sh
     if [ "$os" = linux ]; then option=--prefix; destination=$prefix; else option=--app-dir; destination=$appdir; fi
     printf '\n%s%s  Optional: default editor\n  ========================%s\n' "$bold" "$cyan" "$reset" >&2
-    say 'To use rhun as your default editor, run this command manually:'
+    say 'To use rhun as your default editor, for files and for git, run this command manually:'
     printf '%s%s  curl -fsSL %s | sh -s -- --configure-files --make-default %s %s%s\n\n' \
         "$bold" "$green" "$(quote_arg "$url")" "$option" "$(quote_arg "$destination")" "$reset" >&2
 }
 
 choose_default_editor() {
     if [ "$make_default" != yes ]; then print_default_editor_command; return 0; fi
+    set_file_defaults
+    if [ "$os" = linux ]; then
+        set_editor "$prefix/bin/rhun"
+    elif [ -x "$HOME/.local/bin/rhun" ]; then
+        set_editor "$HOME/.local/bin/rhun"
+    else
+        set_editor "$appdir/rhun.app/Contents/MacOS/rhun"
+    fi
+}
+
+# set_file_defaults: rhun opens text, source and configuration files
+set_file_defaults() {
     if [ "$os" = linux ]; then
         desktop=$prefix/share/applications/rhun.desktop
         [ -f "$desktop" ] || fail "no desktop entry at $desktop; rerun the installer"
@@ -378,6 +392,83 @@ JXA
             say 'rhun is the default editor for text and code files; browser and image defaults are kept'
         fi
     fi
+}
+
+# set_editor EXE: programs that wait for an editor (git's commit message, crontab -e) open rhun: VISUAL
+# and EDITOR are "EXE --wait" in every shell the user has, between "# rhun editor" and "# rhun editor
+# end" in its startup file. Only where a window can open (a display on Linux, outside SSH on macOS):
+# a session without one keeps the editor it had, rather than one that cannot start.
+set_editor() {
+    case $1 in
+    *[!A-Za-z0-9/._+@%:,~-]*) value="$(quote_arg "$1") --wait" ;;
+    *) value="$1 --wait" ;;
+    esac
+    if [ -z "$modify_path" ]; then
+        say "to edit commit messages in rhun, set VISUAL and EDITOR to: $value"
+        return 0
+    fi
+    q=$(quote_arg "$value")
+    if [ "$os" = linux ]; then
+        posix_test='[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]'
+        fish_test='set -q DISPLAY; or set -q WAYLAND_DISPLAY'
+        nu_test='($env.DISPLAY? | is-not-empty) or ($env.WAYLAND_DISPLAY? | is-not-empty)'
+        csh_test='( $?DISPLAY || $?WAYLAND_DISPLAY )'
+    else
+        posix_test='[ -z "${SSH_CONNECTION:-}" ]'
+        fish_test='not set -q SSH_CONNECTION'
+        nu_test='($env.SSH_CONNECTION? | is-empty)'
+        csh_test='( ! $?SSH_CONNECTION )'
+    fi
+    posix="if $posix_test; then export VISUAL=$q EDITOR=$q; fi"
+    done_shells=''
+    for sh in $(user_shells); do
+        case $sh in
+        zsh) put_editor "${ZDOTDIR:-$HOME}/.zshrc" "$posix" zsh ;;
+        bash)
+            put_editor "$HOME/.bashrc" "$posix" bash
+            if [ "$os" = mac ] || [ -f "$HOME/.bash_profile" ]; then put_editor "$HOME/.bash_profile" "$posix" ''; fi
+            ;;
+        sh | dash | ksh | mksh | yash | ash | busybox) put_editor "$HOME/.profile" "$posix" "$sh" ;;
+        fish)
+            f=${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/rhun-editor.fish
+            mkdir -p "$(dirname "$f")"
+            printf '# rhun editor\nif %s\n    set -gx VISUAL %s\n    set -gx EDITOR %s\nend\n# rhun editor end\n' \
+                "$fish_test" "$q" "$q" > "$f"
+            done_shells="$done_shells fish"
+            ;;
+        nu)
+            d=$(nu_dir)
+            if [ -n "$d" ]; then
+                # a double-quoted nushell string: its single quotes cannot hold a quoted path
+                nq=\"$(printf '%s' "$value" | sed 's/[\\"]/\\&/g')\"
+                put_editor "$d/env.nu" "load-env (if $nu_test { {VISUAL: $nq, EDITOR: $nq} } else { {} })" nu
+            fi
+            ;;
+        tcsh | csh)
+            f=$HOME/.tcshrc
+            if [ ! -f "$f" ] && { [ -f "$HOME/.cshrc" ] || [ "$sh" = csh ]; }; then f=$HOME/.cshrc; fi
+            put_editor "$f" "$(printf 'if %s then\n    setenv VISUAL %s\n    setenv EDITOR %s\nendif' "$csh_test" "$q" "$q")" "$sh"
+            ;;
+        *) say "$sh: set VISUAL and EDITOR to $value to edit commit messages in rhun" ;;
+        esac
+    done
+    if [ -n "$done_shells" ]; then
+        say "programs that ask for an editor, such as git, open rhun in new terminals ($(echo "$done_shells" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ $//'))"
+    fi
+    if [ -n "${GIT_EDITOR:-}" ]; then
+        say "GIT_EDITOR ($GIT_EDITOR) still comes first for git"
+    fi
+    if have git && core=$(git config --global --get core.editor 2>/dev/null) && [ -n "$core" ]; then
+        say "git's core.editor ($core) still comes first; git config --global --unset core.editor uses rhun"
+    fi
+}
+
+# put_editor FILE TEXT SHELL: the editor block in FILE, in place of one from before (rhun may have
+# moved); SHELL names the shell for the message
+put_editor() {
+    remove_block "$1" 'rhun editor'
+    add_block "$1" "$2" 'rhun editor'
+    if [ -n "$3" ]; then done_shells="$done_shells $3"; fi
 }
 
 configure_files() {
@@ -489,20 +580,22 @@ add_posix() {
     if [ -n "$3" ]; then done_shells="$done_shells $3"; fi
 }
 
-# add_block FILE TEXT: TEXT between the markers at the end of FILE, unless FILE has them already
+# add_block FILE TEXT [NAME]: TEXT between "# NAME" and "# NAME end" (NAME is rhun unless given) at
+# the end of FILE, unless FILE has them already
 add_block() {
-    if [ -f "$1" ] && grep -q '^# rhun$' "$1"; then return 0; fi
+    if [ -f "$1" ] && grep -qxF "# ${3:-rhun}" "$1"; then return 0; fi
     mkdir -p "$(dirname "$1")"
     if [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ]; then echo >> "$1"; fi
     if [ -s "$1" ]; then echo >> "$1"; fi
-    printf '# rhun\n%s\n# rhun end\n' "$2" >> "$1"
+    printf '# %s\n%s\n# %s end\n' "${3:-rhun}" "$2" "${3:-rhun}" >> "$1"
 }
 
-# remove_path_from FILE: the block add_block wrote, and the empty line before it
-remove_path_from() {
-    if [ -f "$1" ] && grep -q '^# rhun$' "$1"; then
-        awk 'skip { if ($0 == "# rhun end") skip = 0; next }
-            $0 == "# rhun" { skip = 1; held = 0; next }
+# remove_block FILE [NAME]: the block add_block wrote, and the empty line before it
+remove_block() {
+    if [ -f "$1" ] && grep -qxF "# ${2:-rhun}" "$1"; then
+        awk -v start="# ${2:-rhun}" -v stop="# ${2:-rhun} end" '
+            skip { if ($0 == stop) skip = 0; next }
+            $0 == start { skip = 1; held = 0; next }
             held { print ""; held = 0 }
             $0 == "" { held = 1; next }
             { print }
@@ -583,11 +676,16 @@ uninstall() {
     fi
     for f in "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" \
         "$HOME/.tcshrc" "$HOME/.cshrc"; do
-        remove_path_from "$f"
+        remove_block "$f"
+        remove_block "$f" 'rhun editor'
     done
     d=$(nu_dir)
-    if [ -n "$d" ]; then remove_path_from "$d/env.nu"; fi
-    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/rhun.fish"
+    if [ -n "$d" ]; then
+        remove_block "$d/env.nu"
+        remove_block "$d/env.nu" 'rhun editor'
+    fi
+    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/rhun.fish" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/rhun-editor.fish"
     say "your settings are still in ${XDG_CONFIG_HOME:-$HOME/.config}/rhun"
 }
 
