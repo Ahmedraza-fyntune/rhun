@@ -26,7 +26,9 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Installs from GitHub releases; updates itself on Windows, Linux and macOS
 
 Open files follow edits made by agents and other tools. Writes arriving within 100 ms are grouped
-into one reload. In the active editor, the changed region briefly fades back to its normal background;
+into one reload. A file opened through a symlink follows the file it leads to, in whatever folder,
+and the link pointed elsewhere. When a file's folder is removed or moved away, the file keeps its
+text, and it follows the file again once a folder is back at that path. In the active editor, the changed region briefly fades back to its normal background;
 a thin highlight at the top also signals changes outside the visible lines.
 **Animate changed text** in Settings > Editor is on by default. Turn it off to hide both highlights;
 files still reload. The config key is `animate_disk_changes = true` under `[editor]`.

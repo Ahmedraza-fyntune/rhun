@@ -2,6 +2,7 @@
 """External writes reload open files, keep local edits, and briefly mark the affected code."""
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -446,6 +447,84 @@ class LiveReload(unittest.TestCase):
         self.file.write_bytes(b'binary\x00data\n')
         self.settle()
         self.assertEqual(self.document(), 'before\n')
+
+    def test_symlink_reloads_when_the_file_it_leads_to_changes(self):
+        # the file is in another folder, under another name, behind a relative link and an absolute one
+        elsewhere = self.work / 'elsewhere'
+        elsewhere.mkdir()
+        real = elsewhere / 'real.txt'
+        real.write_text('before\n', encoding='utf-8')
+        (self.work / 'hop.txt').symlink_to(real)
+        link = self.project / 'link.txt'
+        link.symlink_to(Path('..') / 'hop.txt')
+        self.start(link)
+        self.assertIn('active=link.txt', self.command('print-state'))
+        self.external_write('written\n', target=real)
+        self.wait_document('written\n')
+        self.external_write('replaced\n', atomic=True, target=real)
+        self.wait_document('replaced\n')
+        self.assertTrue(link.is_symlink())
+        # the link itself pointed elsewhere, then that file written
+        other = elsewhere / 'other.txt'
+        other.write_text('other\n', encoding='utf-8')
+        relinked = self.project / 'relink.tmp'
+        relinked.symlink_to(other)
+        os.replace(relinked, link)
+        self.wait_document('other\n')
+        self.external_write('other changed\n', target=other)
+        self.wait_document('other changed\n')
+        # saving writes the file it leads to, and that is not a change from outside
+        self.command('type x')
+        self.command('cmd save')
+        self.settle()
+        self.assertEqual(other.read_text(encoding='utf-8'), 'xother changed\n')
+        self.assertIn('dirty=0', self.command('print-state'))
+
+    def test_reload_follows_a_folder_made_again(self):
+        sub = self.project / 'sub/deeper'
+        sub.mkdir(parents=True)
+        note = sub / 'note.txt'
+        note.write_text('before\n', encoding='utf-8')
+        self.start(note)
+        # the folder removed and made again at once, then the file written twice
+        note.unlink()
+        sub.rmdir()
+        sub.mkdir()
+        self.external_write('after\n', target=note)
+        self.wait_document('after\n')
+        self.external_write('again\n', target=note)
+        self.wait_document('again\n')
+        # two levels removed: the file waits while they are gone, and they come back one at a time
+        shutil.rmtree(self.project / 'sub')
+        self.settle()
+        self.assertEqual(self.document(), 'again\n')
+        (self.project / 'sub').mkdir()
+        self.settle()
+        sub.mkdir()
+        self.settle()
+        self.external_write('third\n', atomic=True, target=note)
+        self.wait_document('third\n')
+        self.external_write('fourth\n', target=note)
+        self.wait_document('fourth\n')
+        # all at once, the file written in the same moment
+        shutil.rmtree(self.project / 'sub')
+        sub.mkdir(parents=True)
+        self.external_write('fifth\n', target=note)
+        self.wait_document('fifth\n')
+        # its folder moved away and made again; then the old one moved back in its place
+        moved = self.project / 'sub/moved'
+        os.rename(sub, moved)
+        sub.mkdir()
+        self.external_write('sixth\n', target=note)
+        self.wait_document('sixth\n')
+        (moved / 'note.txt').write_text('moved\n', encoding='utf-8')
+        self.settle()
+        self.assertEqual(self.document(), 'sixth\n')
+        shutil.rmtree(sub)
+        os.rename(moved, sub)
+        self.wait_document('moved\n')
+        self.external_write('seventh\n', target=note)
+        self.wait_document('seventh\n')
 
 
 if __name__ == '__main__':

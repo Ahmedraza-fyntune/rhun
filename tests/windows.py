@@ -377,6 +377,93 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                 process.wait()
     check('watch/mixed-case-dedup-and-atomic-replacement', watcher)
 
+    def follow(name, open_path, steps):
+        """Opens open_path, then runs each step (a function) once the editor shows what the step before
+        it expects; each step returns the text it should then show."""
+        project = temp / name
+        script = script_file(name, f'open {winpath(open_path)}\nprint-state\n' +
+                             'wait 150\nprint-doc\n' * 120 + 'quit\n')
+        process = subprocess.Popen(command('rhun.com', winpath(project), winpath(open_path), '--headless',
+                                           '1000x700', '--script', script), stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, env=environment(name))
+
+        def documents():
+            text = b''
+            for line in process.stdout:
+                line = line.replace(b'\r\n', b'\n')
+                if line == b'<eod>\n':
+                    yield text.removesuffix(b'\n')
+                    text = b''
+                else:
+                    text += line
+        try:
+            first = process.stdout.readline()
+            assert b'tabs=1 active=' in first, first
+            shown = documents()
+            for step in steps:
+                expected = step()
+                last = None
+                for last in shown:
+                    if last == expected:
+                        break
+                else:
+                    raise AssertionError(f'never showed {expected!r}, last {last!r}')
+        finally:
+            process.kill()
+            process.wait()
+
+    def folder_made_again():
+        sub = temp / 'remade' / 'sub' / 'deeper'
+        sub.mkdir(parents=True)
+        note = sub / 'note.txt'
+        note.write_bytes(b'before\n')
+
+        def remade():
+            note.unlink()
+            sub.rmdir()
+            sub.mkdir()
+            note.write_bytes(b'after\n')
+            return b'after\n'
+
+        def written():
+            note.write_bytes(b'again\n')
+            return b'again\n'
+
+        def both_levels():
+            shutil.rmtree(temp / 'remade' / 'sub')
+            time.sleep(0.5)
+            (temp / 'remade' / 'sub').mkdir()
+            time.sleep(0.5)
+            sub.mkdir()
+            time.sleep(0.5)
+            note.write_bytes(b'third\n')
+            return b'third\n'
+        follow('remade', note, [remade, written, both_levels])
+    check('watch/folder-made-again', folder_made_again)
+
+    def symlink_elsewhere():
+        project = temp / 'linked'
+        elsewhere = temp / 'linked-elsewhere'
+        project.mkdir()
+        elsewhere.mkdir()
+        real = elsewhere / 'real.txt'
+        real.write_bytes(b'before\n')
+        link = project / 'link.txt'
+        os.symlink(real, link)
+
+        def written():
+            real.write_bytes(b'written\n')
+            return b'written\n'
+
+        def replaced():
+            replacement = elsewhere / 'replacement.tmp'
+            replacement.write_bytes(b'replaced\n')
+            os.replace(replacement, real)
+            return b'replaced\n'
+        follow('linked', link, [written, replaced])
+    if not args.wine:
+        check('watch/symlink-to-another-folder', symlink_elsewhere)
+
     def agents():
         env = environment('agents')
         home = Path(env['HOME'])

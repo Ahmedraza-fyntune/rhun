@@ -8,8 +8,9 @@
 .equ WK_OMARCHY, 16
 .equ WK_GIT, 32
 .equ WK_WORKTREE, 64
+.equ WK_WAIT, 128               # the nearest folder there is above an open file's missing folder
 .equ MAXWD, 4096
-.equ WMASK, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_MODIFY
+.equ WMASK, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_MODIFY | IN_MOVE_SELF
 .equ RELOAD_DELAY_MS, 100
 
 .bss
@@ -17,6 +18,7 @@
 wd_paths: .zero 8 * MAXWD
 wd_kinds: .zero MAXWD
 evbuf: .zero 16384
+wait_path: .zero 4096
 next_tick: .quad 0              # earliest pending reload or fade frame; 0 means no timer
 .data
 ino_fd: .long -1
@@ -103,11 +105,47 @@ FN watch_worktree
     mov esi, WK_WORKTREE
     jmp add_watch
 
-# watch_doc(path) -> directory watch descriptor or -1
+# watch_doc(doc): watch the folder of its file (DOC_wd) and, when the file is a symlink, the folder of
+#   the file it leads to (DOC_real, DOC_rname, DOC_wd2). A folder that is not there is -1, and the
+#   nearest folder above it is watched for it to come.
 FN watch_doc
     PROLOGUE
     mov rbx, rdi
+    mov qword ptr [rbx + DOC_wd], -1
+    mov qword ptr [rbx + DOC_wd2], -1
+    mov rdi, [rbx + DOC_real]
+    call mem_free
+    mov qword ptr [rbx + DOC_real], 0
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jz 9f
+    call watch_file_dir
+    mov [rbx + DOC_wd], rax
+    mov rdi, [rbx + DOC_path]
+    call link_target
+    test rax, rax
+    jz 9f
+    mov [rbx + DOC_real], rax
+    mov rdi, rax
+    call strlen
+    mov rdi, [rbx + DOC_real]
+    mov rsi, rax
+    call path_basename
+    mov [rbx + DOC_rname], rax
+    mov rdi, [rbx + DOC_real]
+    call watch_file_dir
+    mov [rbx + DOC_wd2], rax
+9:  EPILOGUE
+
+# watch_file_dir(path) -> the watch of the file's folder, or -1 while it is not there, its nearest
+#   folder that is then watched (WK_WAIT). That search runs again until it ends at the same watch
+#   twice, so a folder made meanwhile is not missed.
+watch_file_dir:
+    PROLOGUE
+    mov rbx, rdi
     mov r13, -1
+    mov r14, -1                 # the folder waited on last
+    mov r15d, 16
     call strlen
     mov rdi, rbx
     mov rsi, rax
@@ -116,25 +154,174 @@ FN watch_doc
     jnz 1f
     cmp byte ptr [rbx], '/'
     jne 9f
-    mov eax, 1                 # a file directly under the filesystem root
-1:
-    mov rdi, rbx
-    mov rsi, rax
-    call mem_dup
+    mov eax, 1                  # a file directly under the filesystem root
+1:  cmp rax, 4096
+    jae 9f
     mov r12, rax
-    mov rdi, rax
+0:  lea rdi, [rip + wait_path]
+    mov rsi, rbx
+    mov rcx, r12
+    rep movsb
+    mov byte ptr [rdi], 0
+    lea rdi, [rip + wait_path]
     mov esi, WK_DOCS
     call add_watch
-    mov r13, rax
-    mov rdi, r12
-    call mem_free
+    test rax, rax
+    jns 8f
+    # up to the nearest folder there is
+2:  lea rdi, [rip + wait_path]
+    call strlen
+    mov rcx, rax
+    lea rdi, [rip + wait_path]
+    mov rsi, rax
+    push rcx
+    push rcx
+    call path_dirlen
+    pop rcx
+    pop rcx
+    test rax, rax
+    jnz 3f
+    cmp byte ptr [rip + wait_path], '/'
+    jne 9f
+    mov eax, 1
+3:  cmp rax, rcx
+    jae 9f
+    lea rdx, [rip + wait_path]
+    mov byte ptr [rdx + rax], 0
+    lea rdi, [rip + wait_path]
+    mov esi, WK_WAIT
+    call add_watch
+    test rax, rax
+    js 2b
+    cmp rax, r14
+    je 9f
+    mov r14, rax
+    dec r15d
+    jnz 0b
+    jmp 9f
+8:  mov r13, rax
 9:  mov rax, r13
     EPILOGUE
+
+# link_target(path) -> a new copy of the path a symlink at path leads to, through further symlinks,
+#   or 0 when path is not one; the file there need not exist
+link_target:
+    PROLOGUE 8192
+    mov rbx, rdi
+    call strlen
+    cmp rax, 4096
+    jae 8f
+    mov rdi, rsp
+    mov rsi, rbx
+    call cstr_copy
+    mov r12d, 40
+    xor r13d, r13d              # a link was followed
+1:  mov rdi, rsp
+    lea rsi, [rsp + 4096]
+    mov edx, 4095
+    SYS SYS_readlink
+    test rax, rax
+    js 5f                       # not a symlink, or not there: the path reached
+    cmp rax, 4095
+    jae 8f
+    dec r12d
+    jz 8f
+    mov r13d, 1
+    mov byte ptr [rsp + rax + 4096], 0
+    mov r14, rax
+    lea rax, [rsp + 4096]
+    PATH_ABSOLUTE rax, 3f
+    # relative link text replaces the name, in the link's folder
+    mov rdi, rsp
+    call strlen
+    mov rdi, rsp
+    mov rsi, rax
+    call path_basename
+    mov rdi, rax
+    sub rax, rsp
+    add rax, r14
+    cmp rax, 4096
+    jae 8f
+    jmp 4f
+3:  mov rdi, rsp
+4:  lea rsi, [rsp + 4096]
+    call cstr_copy
+    jmp 1b
+5:  test r13d, r13d
+    jz 8f
+    mov rdi, rsp
+    call strlen
+    mov rdi, rsp
+    mov rsi, rax
+    call mem_dup
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# docs_lost(wd): open files whose folder that watch was have none now (the folder was removed, or
+#   moved: the watch follows it, not the path)
+docs_lost:
+    PROLOGUE
+    mov r14d, edi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    mov r12, [rax + TAB_doc]
+    test r12, r12
+    jz 8f
+    cmp [r12 + DOC_wd], r14
+    jne 2f
+    mov qword ptr [r12 + DOC_wd], -1
+2:  cmp qword ptr [r12 + DOC_real], 0
+    je 8f
+    cmp [r12 + DOC_wd2], r14
+    jne 8f
+    mov qword ptr [r12 + DOC_wd2], -1
+8:  inc rbx
+    jmp 1b
+9:  EPILOGUE
+
+# docs_wake(): open files waiting for their folder try again; one that has it now is compared with
+#   the disk, as it may have been written before its folder was watched
+docs_wake:
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    mov r12, [rax + TAB_doc]
+    test r12, r12
+    jz 8f
+    cmp qword ptr [r12 + DOC_path], 0
+    je 8f
+    cmp qword ptr [r12 + DOC_wd], 0
+    jl 2f
+    cmp qword ptr [r12 + DOC_real], 0
+    je 8f
+    cmp qword ptr [r12 + DOC_wd2], 0
+    jge 8f
+2:  mov rdi, r12
+    call watch_doc
+    cmp qword ptr [r12 + DOC_wd], 0
+    jl 8f
+    cmp qword ptr [r12 + DOC_reload_at], 0
+    jne 8f
+    call time_ms
+    add rax, RELOAD_DELAY_MS
+    mov [r12 + DOC_reload_at], rax
+    call tick_at
+8:  inc rbx
+    jmp 1b
+9:  EPILOGUE
 
 on_inotify:
     PROLOGUE 16
     mov dword ptr [rsp], 0      # explorer refresh wanted
     mov dword ptr [rsp + 4], 0  # agents changed
+    mov dword ptr [rsp + 8], 0  # open files wait for a folder that may be there now
 .Lin_read:
     mov edi, [rip + ino_fd]
     lea rsi, [rip + evbuf]
@@ -157,15 +344,32 @@ on_inotify:
     jae .Lin_ev
     lea rcx, [rip + wd_kinds]
     movzx ecx, byte ptr [rcx + rbx]
+    # a folder an open file needs was removed or moved away (its watch goes with it), or one above
+    # a missing folder changed
+    test ecx, WK_DOCS | WK_WAIT
+    jz 6f
+    test r15d, IN_IGNORED | IN_MOVE_SELF
+    jz 61f
+    push rcx
+    push rcx
+    mov edi, ebx
+    call docs_lost
+    pop rcx
+    pop rcx
+    mov dword ptr [rsp + 8], 1
+61: test ecx, WK_WAIT
+    jz 6f
+    mov dword ptr [rsp + 8], 1
+6:
     # the work tree changed: git status again
     test ecx, WK_EXPLORER | WK_DOCS | WK_WORKTREE
-    jz 6f
+    jz 62f
     push rcx
     push rcx
     call git_touch
     pop rcx
     pop rcx
-6:  test ecx, WK_GIT
+62: test ecx, WK_GIT
     jz 7f
     push rcx
     push rcx
@@ -233,7 +437,10 @@ on_inotify:
     call omarchy_changed
     jmp .Lin_ev
 .Lin_done:
-    cmp dword ptr [rsp], 0
+    cmp dword ptr [rsp + 8], 0
+    je 3f
+    call docs_wake
+3:  cmp dword ptr [rsp], 0
     je 4f
     call explorer_refresh
 4:  cmp dword ptr [rsp + 4], 0
@@ -241,7 +448,8 @@ on_inotify:
     call agents_on_change
 5:  EPILOGUE
 
-# doc_changed(wd, name): queue an open file; agents often replace it several times in one burst
+# doc_changed(wd, name): queue an open file, named in its folder or, for a symlink, in the folder of
+#   the file it leads to; agents often replace it several times in one burst
 doc_changed:
     PROLOGUE
     mov r14d, edi
@@ -254,10 +462,10 @@ doc_changed:
     mov r12, [rax + TAB_doc]
     test r12, r12
     jz 8f
-    cmp [r12 + DOC_wd], r14
-    jne 8f
     cmp qword ptr [r12 + DOC_path], 0
     je 8f
+    cmp [r12 + DOC_wd], r14
+    jne 2f
     mov rdi, [r12 + DOC_name]
     mov rsi, r15
 .ifdef WINDOWS
@@ -266,8 +474,21 @@ doc_changed:
     call strcmp_eq
 .endif
     test eax, eax
+    jnz 3f
+2:  cmp qword ptr [r12 + DOC_real], 0
+    je 8f
+    cmp [r12 + DOC_wd2], r14
+    jne 8f
+    mov rdi, [r12 + DOC_rname]
+    mov rsi, r15
+.ifdef WINDOWS
+    call win_path_equal
+.else
+    call strcmp_eq
+.endif
+    test eax, eax
     jz 8f
-    cmp qword ptr [r12 + DOC_reload_at], 0
+3:  cmp qword ptr [r12 + DOC_reload_at], 0
     jne 8f                     # one reload per 100 ms, even during a continuous stream of writes
     call time_ms
     add rax, RELOAD_DELAY_MS
@@ -386,13 +607,17 @@ FN watch_tick
     jmp 1b
 9:  EPILOGUE
 
-# reload_changed(doc): compare the stamp after the burst, checking dirty state at reload time
+# reload_changed(doc): compare the stamp after the burst, checking dirty state at reload time; a
+#   symlink may lead elsewhere now
 reload_changed:
     PROLOGUE
     mov rbx, rdi
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
     jz 9f
+    mov rdi, rbx
+    call watch_doc
+    mov rdi, [rbx + DOC_path]
     call file_stamp
     test rax, rax
     jz 9f                      # a removed file keeps its current contents
