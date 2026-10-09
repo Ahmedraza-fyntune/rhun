@@ -84,31 +84,27 @@ FN str_eq_cstr
     sete al
 3:  ret
 
-# str_ieq(a, alen, b, blen) -> 1 if equal ignoring ascii case
+# str_ieq(a, alen, b, blen) -> 1 if equal ignoring case (str_ifind's); keeps rbx, rbp and r11-r15
 FN str_ieq
     xor eax, eax
     cmp rsi, rcx
-    jne 3f
-1:  test rsi, rsi
-    jz 2f
-    movzx r8d, byte ptr [rdi]
-    movzx r9d, byte ptr [rdx]
-    lea r10d, [r8 - 'A']
-    cmp r10d, 25
-    ja 4f
-    or r8d, 0x20
-4:  lea r10d, [r9 - 'A']
-    cmp r10d, 25
-    ja 5f
-    or r9d, 0x20
-5:  cmp r8d, r9d
-    jne 3f
-    inc rdi
-    inc rdx
-    dec rsi
-    jmp 1b
-2:  mov eax, 1
-3:  ret
+    jne 9f
+    push rbx
+    push r12
+    push r14
+    push r15
+    mov r12, rdi
+    mov r14, rdx
+    mov r15, rsi
+    xor edi, edi
+    xor r9d, r9d
+    mov ebx, 1
+    call str_find_at
+    pop r15
+    pop r14
+    pop r12
+    pop rbx
+9:  ret
 
 # str_starts(s, slen, prefix, plen) -> 1 if s starts with prefix
 FN str_starts
@@ -140,9 +136,11 @@ FN str_ends
     ret
 
 # str_find(hay, hlen, needle, nlen) -> index or -1 (0 for an empty needle)
-# str_ifind: the same, ascii case-insensitive
+# str_ifind: the same, ignoring case: ASCII letters, and the other characters case_fold folds to a
+# character of as many bytes, so a match is always nlen bytes long
 # Both keep every register but rax and r8-r11. Candidates for the first needle byte are found
-# 16 bytes at a time.
+# 16 bytes at a time; ignoring case, a needle starting with a character of several bytes has every
+# first byte of a character that long as a candidate.
 FN str_find
     push rbx
     xor ebx, ebx
@@ -159,11 +157,12 @@ str_find_any:
     push rsi
     push rdx
     push rcx
-    sub rsp, 80
+    sub rsp, 96
     movups [rsp], xmm0
     movups [rsp + 16], xmm1
     movups [rsp + 32], xmm2
     movups [rsp + 48], xmm3
+    movups [rsp + 80], xmm4
     mov r12, rdi                # haystack
     mov r13, rsi                # -> last start
     mov r14, rdx                # needle
@@ -173,12 +172,37 @@ str_find_any:
     jz .Lsf_ret
     sub r13, r15
     jb .Lsf_none
-    # the first needle byte; a letter in both cases when case-insensitive
+    # the first needle byte; a letter in both cases when case-insensitive. A candidate is a byte that,
+    # masked with r11d, is r8d or r9d; it is compared from needle byte r9 on (later 0 or 1)
     movzx r8d, byte ptr [r14]
     mov r9d, r8d
+    mov r11d, 0xff
+    mov dword ptr [rsp + 76], 1
     test ebx, ebx
     jz 2f
-    lea r10d, [r8 - 'A']
+    cmp r8d, 0xc2
+    jb 0f
+    # a character of several bytes: the first byte of any character as long
+    mov dword ptr [rsp + 76], 0
+    mov r9d, 0xc0
+    mov r11d, 0xe0
+    cmp r8d, 0xe0
+    jb 3f
+    mov r9d, 0xe0
+    mov r11d, 0xf0
+    cmp r8d, 0xf0
+    jb 3f
+    mov r9d, 0xf0
+    mov r11d, 0xf8
+    cmp r8d, 0xf5
+    jb 3f
+    mov dword ptr [rsp + 76], 1  # not a character: that byte
+    mov r9d, r8d
+    mov r11d, 0xff
+    jmp 2f
+3:  mov r8d, r9d
+    jmp 2f
+0:  lea r10d, [r8 - 'A']
     cmp r10d, 25
     jbe 1f
     lea r10d, [r8 - 'a']
@@ -188,6 +212,7 @@ str_find_any:
     lea r9d, [r8 - 0x20]
 2:  mov [rsp + 64], r8d
     mov [rsp + 68], r9d
+    mov [rsp + 72], r11d
     movd xmm1, r8d
     punpcklbw xmm1, xmm1
     pshuflw xmm1, xmm1, 0
@@ -196,12 +221,18 @@ str_find_any:
     punpcklbw xmm2, xmm2
     pshuflw xmm2, xmm2, 0
     pshufd xmm2, xmm2, 0
+    movd xmm4, r11d
+    punpcklbw xmm4, xmm4
+    pshuflw xmm4, xmm4, 0
+    pshufd xmm4, xmm4, 0
+    mov r9d, [rsp + 76]
     xor r10d, r10d              # next start to try
 .Lsf_block:
     lea r11, [r10 + 15]
     cmp r11, r13
     ja .Lsf_tail
     movups xmm0, [r12 + r10]
+    pand xmm0, xmm4
     movups xmm3, xmm0
     pcmpeqb xmm0, xmm1
     pcmpeqb xmm3, xmm2
@@ -223,6 +254,7 @@ str_find_any:
     cmp r10, r13
     ja .Lsf_none
     movzx eax, byte ptr [r12 + r10]
+    and eax, [rsp + 72]
     cmp eax, [rsp + 64]
     je 5f
     cmp eax, [rsp + 68]
@@ -242,7 +274,8 @@ str_find_any:
     movups xmm1, [rsp + 16]
     movups xmm2, [rsp + 32]
     movups xmm3, [rsp + 48]
-    add rsp, 80
+    movups xmm4, [rsp + 80]
+    add rsp, 96
     pop rcx
     pop rdx
     pop rsi
@@ -255,15 +288,19 @@ str_find_any:
     ret
 
 # str_find_at(start in rdi) -> eax 1 if the needle (r14, r15; ebx 1 case-insensitive) is at
-# haystack r12 + rdi past its first byte; uses rax, rdx, rsi, r8
+# haystack r12 + rdi from needle byte r9 on; uses rax, rdx, rsi, r8
 str_find_at:
-    mov esi, 1
+    mov rsi, r9
 1:  cmp rsi, r15
     jae 4f
     lea rax, [rdi + rsi]
     movzx eax, byte ptr [r12 + rax]
     movzx edx, byte ptr [r14 + rsi]
-    cmp eax, edx
+    test ebx, ebx
+    jz 22f
+    cmp edx, 0xc0
+    jae 6f                      # a character of several bytes, as a whole
+22: cmp eax, edx
     je 3f
     test ebx, ebx
     jz 5f
@@ -282,6 +319,72 @@ str_find_at:
 4:  mov eax, 1
     ret
 5:  xor eax, eax
+    ret
+6:  call char_ieq
+    test rax, rax
+    jz 5b
+    add rsi, rax
+    jmp 1b
+
+# char_ieq -> rax: the length of the needle's character at r14 + rsi (its first byte 0xc0 or more)
+# when the haystack at r12 + rdi + rsi has it, in either case, else 0; a byte that does not start a
+# character matches only itself. Keeps every register but rax, rdx and r8.
+char_ieq:
+    push rbx
+    push rcx
+    push rdi
+    push rsi
+    push r9
+    push r10
+    push r11
+    sub rsp, 16
+    lea rbx, [r12 + rdi]
+    add rbx, rsi                # the haystack's character
+    lea rdi, [r14 + rsi]
+    neg rsi
+    add rsi, r15                # needle bytes left
+    call utf8_decode
+    cmp edx, 1
+    je 7f
+    mov [rsp], eax
+    mov [rsp + 4], edx
+    xor ecx, ecx
+1:  movzx eax, byte ptr [rdi + rcx]
+    cmp al, [rbx + rcx]
+    jne 2f
+    inc ecx
+    cmp ecx, edx
+    jb 1b
+    mov eax, edx                # the same bytes
+    jmp 9f
+2:  mov rdi, rbx
+    mov esi, edx                # the haystack has at least as many bytes here
+    call utf8_decode
+    cmp edx, [rsp + 4]
+    jne 8f
+    mov edi, eax
+    call case_fold
+    mov [rsp + 8], eax
+    mov edi, [rsp]
+    call case_fold
+    cmp eax, [rsp + 8]
+    jne 8f
+    mov eax, [rsp + 4]
+    jmp 9f
+7:  movzx eax, byte ptr [rdi]
+    cmp al, [rbx]
+    jne 8f
+    mov eax, 1
+    jmp 9f
+8:  xor eax, eax
+9:  add rsp, 16
+    pop r11
+    pop r10
+    pop r9
+    pop rsi
+    pop rdi
+    pop rcx
+    pop rbx
     ret
 
 # fmt_u64(buf, value) -> len
