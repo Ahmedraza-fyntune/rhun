@@ -269,7 +269,11 @@ FN link_target
 1:  mov rdi, rsp
     lea rsi, [rsp + 4096]
     mov edx, 4095
+.ifdef WINDOWS
+    call win_readlink_one       # one symlink at a time, as readlink does here
+.else
     SYS SYS_readlink
+.endif
     test rax, rax
     js 5f                       # not a symlink, or not there: the path reached
     cmp rax, 4095
@@ -530,7 +534,7 @@ on_inotify:
     mov dword ptr [rsp + 4], 1
 2:  test ecx, WK_DOCS
     jz 3f
-    test r15d, IN_CLOSE_WRITE | IN_MOVED_TO
+    test r15d, IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE     # a symlink made in place (ln -sf) too
     jz 3f
     push rcx
     push rcx

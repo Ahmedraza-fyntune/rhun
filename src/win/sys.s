@@ -906,6 +906,110 @@ FN ws_readlink
 82: mov rax, -40               # unresolved reparse point, fail closed
     EPILOGUE
 
+# win_readlink_one(path, buf, size) -> length or -errno: readlink as POSIX has it, for one symlink or
+#   junction: the target it names, relative or absolute, with forward slashes; -22 (EINVAL) for anything
+#   else. ws_readlink gives the end of a whole chain instead.
+FN win_readlink_one
+    PROLOGUE 16480
+    mov r12, rsi
+    mov r13, rdx
+    call win_file_path
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov rcx, rax
+    API GetFileAttributesW
+    cmp eax, -1
+    je 6f
+    test eax, 0x400
+    jz 5f
+    # the reparse point itself, not what it leads to
+    mov rcx, rbx
+    mov edx, 0x80               # FILE_READ_ATTRIBUTES
+    mov r8d, 7
+    xor r9d, r9d
+    mov qword ptr [rsp + 32], 3             # OPEN_EXISTING
+    mov qword ptr [rsp + 40], 0x02200000    # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+    mov qword ptr [rsp + 48], 0
+    API CreateFileW
+    mov r14, rax
+    mov rdi, rbx
+    call mem_free
+    cmp r14, -1
+    je 7f
+    mov rcx, r14
+    mov edx, 0x900a8            # FSCTL_GET_REPARSE_POINT
+    xor r8d, r8d
+    xor r9d, r9d
+    lea rax, [rsp + 96]
+    mov [rsp + 32], rax
+    mov qword ptr [rsp + 40], 16384
+    lea rax, [rsp + 88]
+    mov [rsp + 48], rax
+    mov qword ptr [rsp + 56], 0
+    API DeviceIoControl
+    mov r15d, eax
+    mov rcx, r14
+    API CloseHandle
+    test r15d, r15d
+    jz 81f
+    lea rsi, [rsp + 96]
+    lea rdx, [rsi + 20]
+    cmp dword ptr [rsi], 0xa000000c         # IO_REPARSE_TAG_SYMLINK
+    je 1f
+    lea rdx, [rsi + 16]
+    cmp dword ptr [rsi], 0xa0000003         # IO_REPARSE_TAG_MOUNT_POINT (a junction)
+    jne 81f
+    # the name to show, or the one the system uses
+1:  movzx eax, word ptr [rsi + 12]
+    movzx ecx, word ptr [rsi + 14]
+    test ecx, ecx
+    jnz 2f
+    movzx eax, word ptr [rsi + 8]
+    movzx ecx, word ptr [rsi + 10]
+2:  add rax, rcx
+    cmp rax, 16000
+    ja 81f
+    sub rax, rcx
+    add rdx, rax
+    mov word ptr [rdx + rcx], 0
+    cmp dword ptr [rdx], 0x003f005c         # \??\ before the system's name
+    jne 3f
+    cmp dword ptr [rdx + 4], 0x005c003f
+    jne 3f
+    add rdx, 8
+3:  mov rdi, rdx
+    call win_utf8
+    test rax, rax
+    jz 81f
+    mov rbx, rax
+    mov rdi, rax
+    call win_slashes
+    mov rdi, rbx
+    call strlen
+    mov r15, -36
+    cmp rax, r13
+    jae 4f
+    mov r15, rax
+    mov rdi, r12
+    mov rsi, rbx
+    mov rdx, rax
+    call memcpy
+4:  mov rdi, rbx
+    call mem_free
+    mov rax, r15
+    EPILOGUE
+5:  mov rdi, rbx
+    call mem_free
+81: mov rax, -22
+    EPILOGUE
+6:  mov rdi, rbx
+    call mem_free
+7:  call win_error
+    EPILOGUE
+8:  mov rax, -22
+    EPILOGUE
+
 FN ws_pipe
     PROLOGUE 128
     mov rbx, rdi

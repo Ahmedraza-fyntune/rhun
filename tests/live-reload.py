@@ -504,6 +504,16 @@ class LiveReload(unittest.TestCase):
         self.wait_document('other\n')
         self.external_write('other changed\n', target=other)
         self.wait_document('other changed\n')
+        # replaced as ln -sf does it, removed and made again: the symlink on the way, then the link
+        hop.unlink()
+        hop.symlink_to(real)
+        self.wait_document('real\n')
+        link.unlink()
+        link.symlink_to(other)
+        self.wait_document('other changed\n')
+        link.unlink()
+        link.symlink_to(hop)
+        self.wait_document('real\n')
         # an open file replaced by a symlink: the file it leads to is followed from then on
         self.command('cmd next_tab')
         self.assertIn('active=plain.txt', self.command('print-state'))

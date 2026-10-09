@@ -1070,18 +1070,13 @@ save_readonly_confirmed:
     call app_toast
 9:  EPILOGUE
 
-# doc_readonly(doc) -> eax 1 when saving it would replace a file that says not to write it: path_readonly
-#   for the file a symlink leads to, or the file itself
+# doc_readonly(doc) -> eax 1 when saving it would replace a file that says not to write it: file_readonly,
+#   with a symlink followed as it is now, as the save will
 FN doc_readonly
-    mov rax, [rdi + DOC_real]
-    test rax, rax
-    jnz 1f
-    mov rax, [rdi + DOC_path]
-    test rax, rax
-    jz 2f
-1:  mov rdi, rax
-    jmp path_readonly
-2:  xor eax, eax
+    mov rdi, [rdi + DOC_path]
+    test rdi, rdi
+    jnz file_readonly
+    xor eax, eax
     ret
 
 # file_readonly(path) -> path_readonly for the file a symlink there leads to (the one a save writes),
@@ -1149,16 +1144,20 @@ FN doc_save_readonly
 .ifdef WINDOWS
     PROLOGUE
     mov rbx, rdi
-    mov r13, [rbx + DOC_real]
-    test r13, r13
+    mov rdi, [rbx + DOC_path]
+    xor esi, esi
+    call link_target            # as the save will follow it
+    mov r13, rax
+    test rax, rax
     jnz 1f
     mov r13, [rbx + DOC_path]
-1:  mov rdi, r13
+    mov rdi, r13
     call strlen
     mov rdi, r13
     mov rsi, rax
     call mem_dup                # the doc's paths are made again by the save
     mov r13, rax
+1:
     mov rdi, r13
     mov esi, 0666
     SYS SYS_chmod
