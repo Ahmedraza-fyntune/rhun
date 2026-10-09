@@ -152,8 +152,8 @@ esac
         path.write_text(content)
         path.chmod(0o755)
 
-    def run(*options, success=True):
-        result = subprocess.run(['sh', str(installer), '--configure-files', *options], env=env,
+    def run(*options, success=True, cwd=None):
+        result = subprocess.run(['sh', str(installer), '--configure-files', *options], env=env, cwd=cwd,
                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
         assert (result.returncode == 0) == success, result.stderr.decode()
         assert b'Downloading' not in result.stderr
@@ -339,13 +339,14 @@ esac
     output = run('--make-default', '--no-modify-path')
     assert b'set VISUAL and EDITOR to: ' + value.encode() in output, output
     assert blocks(home / '.zshrc') == 0
-    # a ! in the path: csh would take it for history unless escaped
-    bang = temp / 'opt !x'
+    # a ! in the path: csh would take it for history unless escaped; given relative to the current
+    # folder, and named from anywhere
+    bang = temp.resolve() / 'opt !x'
     (bang / 'bin').mkdir(parents=True)
     shutil.copy2(executable, bang / 'bin/rhun')
     (bang / 'share/applications').mkdir(parents=True)
     shutil.copy2(desktop, bang / 'share/applications/rhun.desktop')
-    run('--make-default', '--prefix', str(bang))
+    run('--make-default', '--prefix', bang.name, cwd=bang.parent)
     check_shells({'DISPLAY': ':0'}, {}, quoted(bang / 'bin/rhun') + ' --wait')
     print('ok   associations/editor-variables-linux', flush=True)
 

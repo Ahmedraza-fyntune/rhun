@@ -734,6 +734,9 @@ main() {
     if [ "$make_default" = yes ] && [ "$mode" != configure ]; then
         fail '--make-default requires --configure-files; install rhun first, then run the printed command'
     fi
+    # PATH, the desktop entry, the macOS command and EDITOR name these folders from anywhere
+    case $prefix in '' | /*) ;; *) prefix=$(pwd)/$prefix ;; esac
+    case $appdir in '' | /*) ;; *) appdir=$(pwd)/$appdir ;; esac
     [ -n "${HOME:-}" ] || fail "HOME is not set"
     platform
     base=${RHUN_RELEASES_URL:-$RELEASES}
