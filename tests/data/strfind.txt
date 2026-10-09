@@ -1788,3 +1788,16 @@ i	Ａяµ0Ÿǅ_�ı_éＡ��éKǄẠKµZẠkèAIϴ�ϴϴ�я𐐨azжÉKKꭰ	�
 e	σϑ𐐀	�
 e	ΣA�Ꭰθiµi_ZI0�μЖꭰß�μ�𐐀_K�0ϑϴᎠaẠＡ�_AaiＡẞKµ	kΜ
 i	èµǆ	�ǆ
+i	мир дом мир дом мир дом мир дом мир дом мир дом ЯБЛОКО	яблоко
+i	мир дом мир дом мир дом мир дом мир дом мир дом яблонь ЯБЛОКО	Яблоко
+i	xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxЯблоко	ЯБЛОКО
+i	ééééééééééééééééééééééééééééééééÉTÉ	été
+i	жжжжжжжжжжжжжжжжжжжжжжжжжжжжжжΣΟΦΟΣ	σοφος
+i	жжжжжжжжжжжжжжжжжжжжжжжжжжжжжжσοφοσ	ςοφος
+i	жжжжжжжжжжжжжжжжжжжжжжжжжжжжжжΘΕΑ	ϑεα
+i	abababababababababababababababababababab中文中文	中文
+i	ababababababababababababababababababababẠẢ ạả	ạả
+i	abababababababababababababababababababab𐐀𐐁	𐐨𐐩
+i	ababababababababababababababababababababᎠᎡ	ꭰꭱ
+i	яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя	яяяб
+i	ЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯЯб	яяяБ

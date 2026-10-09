@@ -139,8 +139,9 @@ FN str_ends
 # str_ifind: the same, ignoring case: ASCII letters, and the other characters case_fold folds to a
 # character of as many bytes, so a match is always nlen bytes long
 # Both keep every register but rax and r8-r11. Candidates for the first needle byte are found
-# 16 bytes at a time; ignoring case, a needle starting with a character of several bytes has every
-# first byte of a character that long as a candidate.
+# 16 bytes at a time. Ignoring case, a needle starting with a character of several bytes looks for the
+# first two bytes of it and of the one other character that folds as it does (я and Я), or, when
+# there are more (ς, σ and Σ), for every first byte of a character as long.
 FN str_find
     push rbx
     xor ebx, ebx
@@ -157,12 +158,16 @@ str_find_any:
     push rsi
     push rdx
     push rcx
-    sub rsp, 96
+    sub rsp, 160
     movups [rsp], xmm0
     movups [rsp + 16], xmm1
     movups [rsp + 32], xmm2
     movups [rsp + 48], xmm3
     movups [rsp + 80], xmm4
+    movups [rsp + 96], xmm5
+    movups [rsp + 112], xmm6
+    movups [rsp + 128], xmm7
+    mov dword ptr [rsp + 144], 0    # 1: candidates by their first two bytes
     mov r12, rdi                # haystack
     mov r13, rsi                # -> last start
     mov r14, rdx                # needle
@@ -182,7 +187,46 @@ str_find_any:
     jz 2f
     cmp r8d, 0xc2
     jb 0f
-    # a character of several bytes: the first byte of any character as long
+    cmp r8d, 0xf5
+    jae 2f                      # not a character: that byte
+    # a character of several bytes: its first two bytes and those of the other character folding as
+    # it does
+    mov rdi, r14
+    mov rsi, r15
+    call utf8_decode
+    cmp edx, 1
+    je 5f
+    mov edi, eax
+    call case_fold
+    mov edi, eax
+    call fold_variants
+    test eax, eax
+    jz 6f
+    mov dword ptr [rsp + 144], 1
+    mov dword ptr [rsp + 76], 0
+    mov r11d, 0xff
+    movzx r8d, dl
+    mov r9d, edx
+    shr r9d, 16
+    and r9d, 0xff
+    mov eax, edx
+    shr eax, 8
+    and eax, 0xff
+    movd xmm5, eax
+    punpcklbw xmm5, xmm5
+    pshuflw xmm5, xmm5, 0
+    pshufd xmm5, xmm5, 0
+    shr edx, 24
+    movd xmm6, edx
+    punpcklbw xmm6, xmm6
+    pshuflw xmm6, xmm6, 0
+    pshufd xmm6, xmm6, 0
+    jmp 2f
+5:  movzx r8d, byte ptr [r14]   # not a character: that byte
+    mov r9d, r8d
+    jmp 2f
+    # more: the first byte of any character as long
+6:  movzx r8d, byte ptr [r14]
     mov dword ptr [rsp + 76], 0
     mov r9d, 0xc0
     mov r11d, 0xe0
@@ -227,6 +271,8 @@ str_find_any:
     pshufd xmm4, xmm4, 0
     mov r9d, [rsp + 76]
     xor r10d, r10d              # next start to try
+    cmp dword ptr [rsp + 144], 0
+    jne .Lsf_pairs
 .Lsf_block:
     lea r11, [r10 + 15]
     cmp r11, r13
@@ -250,6 +296,35 @@ str_find_any:
     jmp .Lsf_ret
 4:  add r10, 16
     jmp .Lsf_block
+    # by the first two bytes (a needle of two bytes or more: the second load stays in the haystack)
+.Lsf_pairs:
+    lea r11, [r10 + 15]
+    cmp r11, r13
+    ja .Lsf_tail
+    movups xmm0, [r12 + r10]
+    movups xmm4, xmm0
+    movups xmm3, [r12 + r10 + 1]
+    movups xmm7, xmm3
+    pcmpeqb xmm0, xmm1
+    pcmpeqb xmm4, xmm2
+    pcmpeqb xmm3, xmm5
+    pcmpeqb xmm7, xmm6
+    pand xmm0, xmm3
+    pand xmm4, xmm7
+    por xmm0, xmm4
+    pmovmskb r11d, xmm0
+3:  test r11d, r11d
+    jz 4f
+    bsf ecx, r11d
+    btr r11d, ecx
+    lea rdi, [r10 + rcx]
+    call str_find_at
+    test eax, eax
+    jz 3b
+    mov rax, rdi
+    jmp .Lsf_ret
+4:  add r10, 16
+    jmp .Lsf_pairs
 .Lsf_tail:
     cmp r10, r13
     ja .Lsf_none
@@ -275,7 +350,10 @@ str_find_any:
     movups xmm2, [rsp + 32]
     movups xmm3, [rsp + 48]
     movups xmm4, [rsp + 80]
-    add rsp, 96
+    movups xmm5, [rsp + 96]
+    movups xmm6, [rsp + 112]
+    movups xmm7, [rsp + 128]
+    add rsp, 160
     pop rcx
     pop rdx
     pop rsi
