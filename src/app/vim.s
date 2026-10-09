@@ -4399,7 +4399,13 @@ vx_qbang:
     jmp app_close_tab_now
 1:  ret
 vx_wq:
-    jmp app_save_close
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    test dword ptr [rax + DOC_flags], DF_READONLY
+    jnz 2f
+1:  jmp app_save_close
+2:  jmp cmd_close_tab              # a view that is never saved (a diff) only closes
 vx_qabang:
     call session_save
     mov dword ptr [rip + g_quit], 1

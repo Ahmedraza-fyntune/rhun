@@ -4,6 +4,7 @@ Closing or quitting with it modified asks the same after Save; vim's :wa leaves 
 writable files save as before."""
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -39,7 +40,10 @@ class ReadOnlySave(unittest.TestCase):
 
     def tearDown(self):
         for path in self.work.rglob('*'):
-            os.chmod(path, 0o644)
+            try:
+                os.chmod(path, 0o755 if path.is_dir() else 0o644)
+            except OSError:
+                pass
         for _ in range(50):
             try:
                 self.tmp.cleanup()
@@ -185,6 +189,25 @@ class ReadOnlySave(unittest.TestCase):
         self.assertEqual(self.state(lines[1], 'tabs'), '1')
         self.assertEqual(self.state(lines[1], 'active'), 'other.txt')
         self.assert_read_only(self.note, b'efore\n')
+
+    @unittest.skipIf(not shutil.which('git'), 'needs git')
+    def test_vim_write_quit_closes_a_diff_view(self):
+        # a diff view is read-only in the editor's own way: :wq has nothing to save and closes it
+        env = dict(self.env, GIT_CONFIG_NOSYSTEM='1')
+        def git(*args):
+            subprocess.run(['git', *args], cwd=self.work, env=env, check=True, capture_output=True)
+        git('init', '-q')
+        git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'add', 'other.txt')
+        git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'one')
+        self.other.write_bytes(b'other changed\n')
+        self.config.write_text(CONFIG.replace('[git]\nenabled = false\n', '[git]\nenabled = true\n'),
+                               encoding='utf-8')
+        lines = self.run_editor([self.work, self.other], [
+            'wait-git', 'cmd git_changes', 'wait-git', 'print-state', 'cmd toggle_vim', 'type :wq',
+            'key Return', 'print-state'])
+        self.assertEqual(self.state(lines[0], 'tabs'), '2')
+        self.assertEqual(self.state(lines[1], 'tabs'), '1')
+        self.assertEqual(self.state(lines[1], 'active'), 'other.txt')
 
     def test_a_cancelled_quit_saves_the_session_again(self):
         # Cancel in the question after Save stops the quit, so the next quit saves the session again,
