@@ -531,7 +531,13 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             '--script', script_file(name + '-seed', 'quit\n'), env=env)
         marker = Path(env['XDG_STATE_HOME']) / 'rhun/last-project'
         remembered = marker.read_bytes()
-        script = script_file(name, 'print-project\nprint-state\nwait 5000\n'
+        # a file launch is a quick edit: no explorer or agents panel; CI keeps the window's picture
+        shot = ''
+        if os.environ.get('RHUN_TEST_ARTIFACTS'):
+            visual = Path(os.environ['RHUN_TEST_ARTIFACTS']).resolve() / 'visual'
+            visual.mkdir(parents=True, exist_ok=True)
+            shot = 'shot ' + (visual / (name + '.ppm')).as_posix() + '\n'
+        script = script_file(name, 'print-project\nprint-state\nprint-panels\nwait 5000\n' + shot +
                              'cmd next_tab\nprint-state\nquit\n')
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -543,12 +549,13 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         try:
             first = []
             reader = threading.Thread(target=lambda: first.extend(
-                [process.stdout.readline(), process.stdout.readline()]), daemon=True)
+                [process.stdout.readline() for _ in range(3)]), daemon=True)
             reader.start()
             reader.join(timeout=10)
-            assert len(first) == 2, first
+            assert len(first) == 3, first
             same_folder(first[0], file.parent)
             assert b'tabs=1 active=' + file.name.encode() in first[1], first
+            assert first[2].strip() == b'explorer=0 agents=0 term=0', first
             window, _ = native_find_window(user, callback_type, pid=process.pid)
             native_assert_foreground(user, window)
             output = process.communicate(timeout=10)[0]
