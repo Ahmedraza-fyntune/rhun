@@ -801,7 +801,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         project = temp / name
         project.mkdir()
         # below the find bar, which covers the first lines of a narrow editor
-        (project / 'case.txt').write_bytes('\n\nÉté été ÉTÉ\nПривет ПРИВЕТ яблоко ЯБЛОКО\n'.encode())
+        (project / 'case.txt').write_bytes('\n\n\n\nÉté été ÉTÉ\nПривет ПРИВЕТ яблоко ЯБЛОКО\n'.encode())
         readonly = project / 'readonly.txt'
         readonly.write_bytes(b'This file is read-only.\n')
         os.chmod(readonly, 0o444)
@@ -821,7 +821,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         try:
             output = run('rhun.exe', winpath(project), '--script', script, env=env).stdout
             lines = output.decode('utf-8', 'replace').splitlines()
-            assert 'active=case.txt line=3 col=4 sel=5' in lines[0], output
+            assert 'active=case.txt line=5 col=4 sel=5' in lines[0], output
             assert 'active=readonly.txt' in lines[1] and 'focus=5' in lines[1], output
             equal(readonly.read_bytes(), b'This file is read-only.\n')
             for shot in (find_shot, readonly_shot):
