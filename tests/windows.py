@@ -759,7 +759,43 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             if process.poll() is None:
                 process.kill()
                 process.wait()
+    def native_issue_pictures():
+        """In a real window: find ignoring case beyond ASCII, and the question before a read-only file is
+        replaced; CI keeps their pictures"""
+        name = 'native-issues'
+        project = temp / name
+        project.mkdir()
+        (project / 'case.txt').write_bytes('Été été ÉTÉ\nПривет ПРИВЕТ яблоко ЯБЛОКО\n'.encode())
+        readonly = project / 'readonly.txt'
+        readonly.write_bytes(b'This file is read-only.\n')
+        os.chmod(readonly, 0o444)
+        env = environment(name)
+        config = Path(env['XDG_CONFIG_HOME']) / 'rhun/config'
+        config.parent.mkdir(parents=True)
+        config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
+        visual = temp / name / 'shots'
+        if os.environ.get('RHUN_TEST_ARTIFACTS'):
+            visual = Path(os.environ['RHUN_TEST_ARTIFACTS']).resolve() / 'visual'
+        visual.mkdir(parents=True, exist_ok=True)
+        find_shot, readonly_shot = visual / 'native-find.ppm', visual / 'native-readonly.ppm'
+        script = script_file(name, f'wait 1500\nopen {winpath(project / "case.txt")}\nkey ctrl+f\ntype été\n'
+                                   f'wait 300\nprint-state\nshot {find_shot.as_posix()}\nkey Escape\n'
+                                   f'open {winpath(readonly)}\nkey End\ntype  typed\nkey ctrl+s\nwait 300\n'
+                                   f'print-state\nshot {readonly_shot.as_posix()}\nkey Escape\nquit\n')
+        try:
+            output = run('rhun.exe', winpath(project), '--script', script, env=env).stdout
+            lines = output.decode('utf-8', 'replace').splitlines()
+            assert 'active=case.txt line=1 col=4 sel=5' in lines[0], output
+            assert 'active=readonly.txt' in lines[1] and 'focus=5' in lines[1], output
+            equal(readonly.read_bytes(), b'This file is read-only.\n')
+            for shot in (find_shot, readonly_shot):
+                pixels = shot.read_bytes()
+                assert pixels.startswith(b'P6\n') and len(set(pixels[100:])) > 16, shot
+        finally:
+            os.chmod(readonly, 0o644)
+
     if not args.wine:
+        check('window/issue-pictures-find-and-readonly', native_issue_pictures)
         check('window/file-only-background-start-foreground', lambda: native_file_launch(4))
         check('window/file-only-minimized-start-foreground', lambda: native_file_launch(7))
         check('window/file-only-cli-respawn-foreground', native_cli_file_launch)
