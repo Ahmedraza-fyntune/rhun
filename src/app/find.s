@@ -234,7 +234,7 @@ find_raw_word:
     pop rdi
     ret
 
-# goto_match(dir): select next (1) / previous (-1) match from the cursor
+# goto_match(dir): select next (1) / previous (-1) match from the cursor, then count the matches
 goto_match:
     PROLOGUE 32
     mov [rsp + 24], edi
@@ -322,8 +322,8 @@ goto_match:
     add rax, r13
     mov [rbx + DOC_cur], rax
     call ed_touch
-    call update_matches
-9:  EPILOGUE
+9:  call update_matches         # the count and highlights, whether or not it found one
+    EPILOGUE
 
 FN cmd_find_next
     cmp qword ptr [rip + tf_find + TF_sb + SB_len], 0
@@ -453,11 +453,11 @@ FN find_changed
     mov dword ptr [rip + g_find_word], 0
     cmp dword ptr [rip + find_sub], 0
     jne 1f
-    call update_matches
-    # incremental: jump to the first match at or after the selection start
+    # incremental: jump to the first match at or after the selection start (goto_match counts the
+    # matches once it is there: one pass over the document a keystroke, not two)
     mov rax, [rip + g_doc]
     test rax, rax
-    jz 1f
+    jz update_matches
     mov rcx, [rax + DOC_cur]
     mov rdx, [rax + DOC_anchor]
     cmp rcx, rdx
