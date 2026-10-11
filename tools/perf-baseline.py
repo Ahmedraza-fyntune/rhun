@@ -95,12 +95,14 @@ def measure(exe, work, runs):
     results['startup, empty folder (ms)'] = b.median([f['empty']]) * 1000
     results['startup, folder of 20,000 files (ms)'] = b.median([f['folder']]) * 1000
     results['open a 20 MB file (ms)'] = b.median([f['big']]) * 1000
+    # each step is two moves, a frame each
     results['editor frame, 2560x1600 @2x (ms)'] = b.per_step(
-        [f['code']], [], ['move 500 600', 'move 501 600'], 50, size='2560x1600', scale='2')
+        [f['code']], [], ['move 500 600', 'move 501 600'], 50, size='2560x1600', scale='2') / 2
     results['palette frame, 2560x1600 @2x (ms)'] = b.per_step(
-        [f['code']], ['cmd command_palette'], ['move 500 900', 'move 501 900'], 50, size='2560x1600', scale='2')
+        [f['code']], ['cmd command_palette'], ['move 500 900', 'move 501 900'], 50, size='2560x1600',
+        scale='2') / 2
     results['frame, caret at the end of a 2.7 MB line (ms)'] = b.per_step(
-        [f['line']], ['key End'], ['move 500 600', 'move 501 600'], 20)
+        [f['line']], ['key End'], ['move 500 600', 'move 501 600'], 20) / 2
     results['find field keystroke, 1M lines (ms)'] = b.per_step(
         [f['lines']], ['cmd find'], ['type e', 'key BackSpace'], 5) / 2
     results['replace all, 80,000 matches (ms)'] = (
