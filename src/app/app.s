@@ -3138,7 +3138,7 @@ FN tabs_draw
     jz 61f
     mov rdi, rbx
     call app_close_tab
-    jmp .Ltd_done
+    jmp .Ltd_closed
 61: # background
     cmp rbx, [rip + g_tab_cur]
     jne 7f
@@ -3290,21 +3290,28 @@ FN tabs_draw
     jz .Ltd_next
     mov rdi, rbx
     call app_close_tab
-    jmp .Ltd_done
+    jmp .Ltd_closed
 841:
 .Ltd_next:
     add r12d, [rsp + 16]
     inc rbx
     jmp .Ltd_tab
 .Ltd_done:
-    # clamp scroll so the strip cannot scroll past its end
+    # the strip cannot scroll past its end (a wheel, a tab closed); measured as it is drawn, so a
+    # change shows in the next frame
     mov eax, r12d
     add eax, [rip + g_tabscroll]
     sub eax, [rsp]
     sub eax, [rsp + 8]
-    jg 9f
-    mov dword ptr [rip + g_tabscroll], 0
-9:  call gfx_clip_pop
+    xor ecx, ecx
+    cmp eax, ecx
+    cmovl eax, ecx
+    cmp [rip + g_tabscroll], eax
+    jle .Ltd_closed
+    mov [rip + g_tabscroll], eax
+    mov dword ptr [rip + g_dirty], 1
+.Ltd_closed:                    # a tab closed while drawn: the strip is measured again next frame
+    call gfx_clip_pop
     EPILOGUE
 
 # statusbar_draw(x, y, w, h)

@@ -174,6 +174,15 @@ class EditorMatrix(unittest.TestCase):
         self.assertIn('tabs=0 focus=0 ', output)
         self.assertIn('resumed\n<eod>', output)
 
+    def test_closing_a_tab_puts_the_strip_back(self):
+        # at this zoom the settings tab scrolls the strip; once it closes, the strip's own end
+        # clamps the scroll as it is drawn, and the frame that shows it must follow by itself
+        output = self.run_editor(['cmd settings', 'wait 100', 'cmd close_tab', 'print-frames',
+                                  'wait 100', 'print-frames', 'print-state'], size='640x480', scale='3')
+        frames = [int(line[7:]) for line in output.splitlines() if line.startswith('frames=')]
+        self.assertIn('active=words.txt ', output)
+        self.assertGreaterEqual(frames[1], 1, output)
+
     def test_close_all_tabs(self):
         output = self.run_editor(['cmd settings', 'cmd close_all_tabs', 'print-state'])
         self.assertIn('tabs=0', output)
