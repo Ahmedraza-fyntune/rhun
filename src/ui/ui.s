@@ -250,7 +250,13 @@ FN ui_begin
     ret
 
 FN ui_end
-    # clear active when left button is up
+    # handlers ran for a press or a release during this frame, after part of it was drawn (a panel
+    # hidden, a field given the keyboard): another frame shows what they changed
+    mov eax, [rip + g_pressed]
+    or eax, [rip + g_released]
+    jz 0f
+    mov dword ptr [rip + g_dirty], 1
+0:  # clear active when left button is up
     test dword ptr [rip + g_mdown], 1 << BTN_LEFT
     jnz 1f
     mov dword ptr [rip + g_active], 0

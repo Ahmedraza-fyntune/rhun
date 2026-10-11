@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The terminal panel's height follows only its own top edge: not a press on another panel's row
-that shares its widget id, and a drag of the edge leaves the editor above it alone."""
+that shares its widget id, and a drag of the edge leaves the editor above it alone. Its hide button
+hides it at once."""
 import os
 from pathlib import Path
 import re
@@ -88,6 +89,15 @@ class TerminalPanel(unittest.TestCase):
         state = [line for line in out.splitlines() if line.startswith('tabs=')][-1]
         self.assertIn('line=1 col=1 sel=0', state)
         self.assertEqual(self.height(), HEIGHT - 98)
+
+    def test_the_hide_button_hides_the_panel_at_once(self):
+        # the click is handled while the panel is drawn: the frame without it must follow by
+        # itself, not with the next caret blink or pointer move (here nothing blinks)
+        out = self.run_editor([f'click 1260 {EDGE + 14}', 'print-frames', 'wait 100', 'print-frames',
+                               'print-panels'])
+        frames = [int(line[7:]) for line in out.splitlines() if line.startswith('frames=')]
+        self.assertIn('term=0', out)
+        self.assertGreaterEqual(frames[1], 1, out)
 
 
 if __name__ == '__main__':
