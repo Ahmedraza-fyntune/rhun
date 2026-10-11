@@ -24,7 +24,7 @@ CONFIG = ('[editor]\ncursor_blink = false\n'
 
 def settings_row_y(key):
     """The middle of a [ui] row in Settings, laid out as tests/settings-ui.py does (Follow system on)."""
-    y, previous = 228, None
+    y, previous = 268, None
     for line in (ROOT / 'src/app/config.s').read_text(encoding='utf-8').splitlines():
         match = re.match(r'\s+SETTING(?:_ACTION)? \.Ls_(\w+), (\w+), (\w+)', line)
         if not match or match.group(2) == 'theme':
