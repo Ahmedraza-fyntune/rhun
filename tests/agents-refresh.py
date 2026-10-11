@@ -124,7 +124,8 @@ class AgentsRefresh(unittest.TestCase):
 
     def test_an_idle_panel_draws_when_a_label_changes(self):
         # written 55 s before: the row says "now" until the session is a minute old, then "1m ago"
-        written = time.time() - 55
+        # (in whole seconds, as rhun counts them)
+        written = int(time.time()) - 55
         os.utime(self.session, (written, written))
         self.start()
         self.command('print-frames')
