@@ -141,13 +141,16 @@ class ShiftWheel(unittest.TestCase):
         self.command('wait-term done1001')
         x, y = self.command('print-term-cell 1 4').split()
         self.command(f'move {x} {y}')
-        # print-term shows the live screen: the scrollback shows in pictures
+        # print-term shows the live screen: the scrollback shows in pictures, taken once the thumb's
+        # flash after a scroll (or after output, when frames saw the scrollback grow) has passed
+        self.command('wait 900')
         bottom = self.shot()
         self.command('scroll -200 shift')
         up = self.shot()
         self.assertNotEqual(up, bottom)
         # the same as the wheel without Shift
         self.command('scroll 2000')
+        self.command('wait 900')
         self.assertEqual(self.shot(), bottom)
         self.command('scroll -200')
         self.assertEqual(self.shot(), up)
