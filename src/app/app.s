@@ -89,6 +89,7 @@ pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folder
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
 split_grab: .long 0             # a divider's drag: the pointer's distance from it at the press
+split_moved: .long 0            # and whether the pointer has moved since
 split_l_bits: .long 0           # UB_* of the dividers, hit tested before the panels
 split_r_bits: .long 0
 .globl g_editor_rect
@@ -2454,6 +2455,7 @@ splitter:
 41: mov ecx, [rip + g_mx]
     sub ecx, eax
     mov [rip + split_grab], ecx
+    mov dword ptr [rip + split_moved], 0
     jmp 3f
 5:  test eax, UB_HELD
     jz 9f
@@ -2463,12 +2465,17 @@ splitter:
     mov eax, [rip + g_mx]
     sub eax, r12d
     mov [rip + split_grab], eax
+    mov dword ptr [rip + split_moved], 0
     jmp 9f
-6:  # a click that does not move leaves the width alone (even one the layout narrowed)
+6:  # a click that does not move leaves the width alone (even one the layout narrowed); once the
+    # pointer has moved, the divider follows it back to where it was pressed too
     mov eax, [rip + g_mx]
+    cmp dword ptr [rip + split_moved], 0
+    jne 7f
     cmp eax, [rip + g_press_x]
     je 9f
-    # new width in logical points
+    mov dword ptr [rip + split_moved], 1
+7:  # new width in logical points
     sub eax, [rip + split_grab]
     cmp ebx, ID_SPLIT_L
     jne 2f

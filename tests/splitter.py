@@ -129,6 +129,12 @@ class SidebarSplit(unittest.TestCase):
                         agents=True, agents_w=900)
         self.assertEqual(self.config_value('agents_width'), 900)
 
+    def test_a_drag_back_to_the_press_follows_it(self):
+        # the press point is not special once the pointer has moved: the divider comes back with it
+        self.run_editor(['wait 200', 'move 242 400', 'down', 'wait 60', 'move 330 400', 'wait 60',
+                         'move 242 400', 'wait 60', 'up', 'wait 60'])
+        self.assertEqual(self.config_value('sidebar_width'), 240)
+
     def test_double_click_resets_the_width(self):
         self.run_editor(['wait 200', 'move 300 400', 'down', 'up', 'down', 'up', 'wait 60'], sidebar=300)
         self.assertEqual(self.config_value('sidebar_width'), 240)
