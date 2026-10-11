@@ -667,14 +667,53 @@ FN app_find_tab
 4:  mov rax, rbx
     EPILOGUE
 
-# app_path_inside(path, dir) -> 1 when path is dir or names something inside it, compared as
-#   app_find_tab compares paths
-FN app_path_inside
+# app_path_inside(path, dir) -> eax 1 when path is dir or names something inside it, compared as
+#   app_find_tab compares paths, and rdx the length of path's part that names dir
 .ifdef WINDOWS
+# Windows: each part of path that ends at a separator (or all of it), after its root, against dir by
+# win_path_equal: spellings that are the same without case may differ in length
+FN app_path_inside
     PROLOGUE 4096
+    mov r12, rdi
+    mov r13, rsi
+    call strlen
+    mov r15, rax
+    mov rdi, r12
+    call path_rootlen
+    mov r14, rax
+    test r14, r14
+    jnz 1f
+    mov r14d, 1
+1:  cmp r14, r15
+    ja 8f
+    je 2f
+    movzx eax, byte ptr [r12 + r14]
+    cmp eax, '/'
+    je 2f
+    cmp eax, 92
+    je 2f
+3:  inc r14
+    jmp 1b
+2:  cmp r14, 4096
+    jae 8f
+    mov rdi, rsp
+    mov rsi, r12
+    mov rcx, r14
+    rep movsb
+    mov byte ptr [rdi], 0
+    mov rdi, rsp
+    mov rsi, r13
+    call win_path_equal
+    test eax, eax
+    jz 3b
+    mov eax, 1
+    mov rdx, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 .else
+FN app_path_inside
     PROLOGUE
-.endif
     mov r12, rdi
     mov r13, rsi
     mov rdi, rsi
@@ -697,34 +736,18 @@ FN app_path_inside
     jz 2f
     cmp eax, '/'
     je 2f
-.ifdef WINDOWS
-    cmp eax, 92
-    je 2f
-.endif
     cmp byte ptr [r13 + r14 - 1], '/'   # under a root such as /
     jne 8f
-2:
-.ifdef WINDOWS
-    cmp r14, 4096
-    jae 8f
-    mov rdi, rsp
-    mov rsi, r12
-    mov rcx, r14
-    rep movsb
-    mov byte ptr [rdi], 0
-    mov rdi, rsp
-    mov rsi, r13
-    call win_path_equal
-.else
-    mov rdi, r12
+2:  mov rdi, r12
     mov rsi, r15
     mov rdx, r13
     mov rcx, r14
     call str_starts
-.endif
+    mov rdx, r14
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
+.endif
 
 # app_retarget_tabs(old, new): after a rename, the tabs of old, or of the files inside it when it
 #   is a folder, take their paths under new
@@ -732,14 +755,7 @@ FN app_retarget_tabs
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
-    call strlen
-    mov r14, rax
-    cmp r14, 1
-    jbe 1f
-    cmp byte ptr [r12 + r14 - 1], '/'
-    jne 1f
-    dec r14
-1:  xor ebx, ebx
+    xor ebx, ebx
 2:  cmp rbx, [rip + g_tabs + VEC_len]
     jae 9f
     mov rdi, rbx
@@ -754,6 +770,7 @@ FN app_retarget_tabs
     call app_path_inside
     test eax, eax
     jz 3f
+    mov r14, rdx                # the tab's own spelling of old ends there
     lea rdi, [rip + tmp_sb]
     call sb_clear
     mov rdi, r13                # the new name without a separator at its end ("e/" in the prompt)

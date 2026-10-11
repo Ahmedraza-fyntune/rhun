@@ -464,6 +464,32 @@ FN ws_stat
     mov rax, r13
 9:  EPILOGUE
 
+# win_file_missing(path) -> 1 if no directory entry is there, not even a link: GetFileAttributesW
+#   reads a link's own attributes; 0 if one is or that cannot be told (access denied)
+FN win_file_missing
+    PROLOGUE 96
+    call win_file_path
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov rcx, rax
+    API GetFileAttributesW
+    xor r12d, r12d
+    cmp eax, -1
+    jne 2f
+    call win_error
+    cmp rax, -2
+    je 1f
+    cmp rax, -20
+    jne 2f
+1:  mov r12d, 1
+2:  mov rdi, rbx
+    call mem_free
+    mov eax, r12d
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # win_file_is_real_dir(path) -> 1 for a directory without a reparse point, 0 otherwise, or -errno
 FN win_file_is_real_dir
     PROLOGUE 96

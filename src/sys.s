@@ -223,6 +223,9 @@ FN file_stamp
 # file_missing(path) -> 1 if nothing is there, not even a link (ENOENT, ENOTDIR); 0 if something is or
 #   that cannot be told (EACCES: a folder on the way that cannot be searched)
 FN file_missing
+.ifdef WINDOWS
+    jmp win_file_missing            # its lstat is stat: it would follow a link to a missing target
+.endif
     lea rsi, [rip + stat_buf]
     SYS SYS_lstat
     xor ecx, ecx
