@@ -291,7 +291,14 @@ FN file_id
 
 # file_read_all(path) -> rax=ptr (NUL-terminated, mem_alloc'd) rdx=len; rax=0, rdx=-errno on error
 FN file_read_all
+    xor esi, esi
+    jmp file_read_all_extra
+
+# file_read_all_extra(path, extra) -> as file_read_all, with room for extra bytes after the text (a
+#   document's gap, which then needs no copy of the whole file to grow into)
+FN file_read_all_extra
     PROLOGUE
+    mov r15, rsi
     call file_open_read
     test rax, rax
     js .Lfr_fail
@@ -308,7 +315,7 @@ FN file_read_all
     jmp .Lfr_close_fail
 1:
     mov r12, rax            # size
-    lea rdi, [rax + 1]
+    lea rdi, [rax + r15 + 1]
     call mem_alloc
     mov r13, rax            # buf
     xor r14d, r14d          # read so far

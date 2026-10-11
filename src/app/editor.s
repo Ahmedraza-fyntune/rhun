@@ -3372,7 +3372,8 @@ pair_close: .asciz ")]}\"'`"
 
 # doc_widest(doc) -> rax columns of its widest line, tabs and wide characters as drawn; measured
 #   again when its text or the tab width changed. Past WIDEST_FULL bytes the whole text is measured
-#   once editing pauses; meanwhile short lines on screen and the caret can only widen it.
+#   once editing pauses, and on the frame after its first; meanwhile short lines on screen and the
+#   caret can only widen it.
 FN doc_widest
     PROLOGUE 16
     mov rbx, rdi
@@ -3393,14 +3394,21 @@ FN doc_widest
     mov [rsp + 8], rdx
     cmp qword ptr [rsp], WIDEST_FULL
     jbe 7f
+    # a long text never measured: its first frame takes the lines on screen, the next one all
+    cmp qword ptr [rbx + DOC_wkey], 0
+    jne 71f
+    mov qword ptr [rbx + DOC_wkey], 2  # even: no key of a text
     call time_ms
+    mov [rip + widest_due], rax
+    jmp 72f
+71: call time_ms
     sub rax, [rbx + DOC_lastedit]
     cmp rax, WIDEST_PAUSE
     jae 7f
     mov rax, [rbx + DOC_lastedit]
     add rax, WIDEST_PAUSE
     mov [rip + widest_due], rax
-    call widest_visible
+72: call widest_visible
     cmp rax, [rbx + DOC_wcols]
     jbe 8f
     mov [rbx + DOC_wcols], rax
