@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Routine agent discovery runs quietly: the panel shows its loading state only for a run the user
 asked for, a file saved in the folder runs no discovery, and of a repository's activity only a
-worktree registered does."""
+worktree registered does. An idle panel draws when a label it shows changes, not every second."""
 import glob
 import json
 import os
@@ -121,6 +121,20 @@ class AgentsRefresh(unittest.TestCase):
             self.fail('the session kept its old title: discovery did not run again')
         self.assertEqual(self.command('print-agents-page'), 'shown=1 total=1 loading=0 error=0\n')
         self.assertNotEqual(self.cache(), before, 'the refresh did not write the index')
+
+    def test_an_idle_panel_draws_when_a_label_changes(self):
+        # written 55 s before: the row says "now" until the session is a minute old, then "1m ago"
+        # (in whole seconds, as rhun counts them)
+        written = int(time.time()) - 55
+        os.utime(self.session, (written, written))
+        self.start()
+        self.command('print-frames')
+        boundary = written + 60
+        self.assertLess(time.time(), boundary - 1, 'the editor took too long to start')
+        time.sleep(boundary - 0.5 - time.time())
+        self.assertEqual(self.command('print-frames'), 'frames=0\n', 'frames with nothing to show')
+        time.sleep(boundary + 1.6 - time.time())     # the poll looks once a second
+        self.assertNotEqual(self.command('print-frames'), 'frames=0\n', '"now" stayed on screen')
 
     def test_a_requested_refresh_shows_loading(self):
         # hidden, the panel keeps a requested run pending, and shows it as loading once it is open

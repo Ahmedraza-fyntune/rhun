@@ -2241,18 +2241,11 @@ prompt_done:
     SYS SYS_rename
     test rax, rax
     js 8f
-    # retarget an open tab
+    # open tabs follow it: the file's, or those of the files inside a folder
     lea rdi, [rip + g_explorer_target]
-    call app_find_tab
-    test rax, rax
-    js 31f
-    mov rdi, rax
-    call tab_at
-    mov rdi, [rax + TAB_doc]
     mov rsi, rbx
-    call doc_set_path
-    call app_update_title
-31: call explorer_refresh
+    call app_retarget_tabs
+    call explorer_refresh
     jmp 9f
 8:  lea rdi, [rip + .Lfailed]
     call app_toast

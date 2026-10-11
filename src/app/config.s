@@ -30,9 +30,9 @@ cfg_indent_guides: .long 1
 cfg_cursor_blink: .long 1
 cfg_whitespace: .long 0
 cfg_sidebar: .long 1
-cfg_sidebar_w: .long 240
+cfg_sidebar_w: .long SIDEBAR_W_DEFAULT
 cfg_agents: .long 1
-cfg_agents_w: .long 380
+cfg_agents_w: .long AGENTS_W_DEFAULT
 cfg_ui_scale: .long 100
 cfg_final_newline: .long 1
 cfg_trim_trailing: .long 0

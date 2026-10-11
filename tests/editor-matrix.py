@@ -174,6 +174,32 @@ class EditorMatrix(unittest.TestCase):
         self.assertIn('tabs=0 focus=0 ', output)
         self.assertIn('resumed\n<eod>', output)
 
+    def test_closing_a_tab_puts_the_strip_back(self):
+        # at this zoom the settings tab scrolls the strip; once it closes, the strip's own end
+        # clamps the scroll as it is drawn, and the frame that shows it must follow by itself
+        output = self.run_editor(['cmd settings', 'wait 100', 'cmd close_tab', 'print-frames',
+                                  'wait 100', 'print-frames', 'print-state'], size='640x480', scale='3')
+        frames = [int(line[7:]) for line in output.splitlines() if line.startswith('frames=')]
+        self.assertIn('active=words.txt ', output)
+        self.assertGreaterEqual(frames[1], 1, output)
+
+    def test_a_translucent_theme_color_does_not_build_up(self):
+        # a user theme may give a panel an alpha: drawn over the window's background each frame,
+        # not over the frame before, the explorer looks the same after any number of frames
+        themes = self.work / 'config/rhun/themes'
+        themes.mkdir(parents=True)
+        (themes / 'glass.theme').write_text('name = Glass\nkind = dark\nbg = #202020\nfg = #d0d0d0\n'
+                                            'accent = #8aa4ff\npanel = #f0303080\n', encoding='utf-8')
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text(encoding='utf-8').replace(
+            '[ui]\nsidebar = false\n', '[ui]\nsidebar = true\nfollow_system = false\ntheme = glass\n'),
+            encoding='utf-8')
+        shots = [self.shot_path('glass-%d' % i) for i in range(2)]
+        self.run_editor(['move 100 300', 'shot ' + shots[0].as_posix(),
+                         *(['move 101 300', 'move 100 300'] * 8), 'shot ' + shots[1].as_posix()])
+        first, last = (path.read_bytes() for path in shots)
+        self.assertEqual(first, last, 'the translucent panel blended with the frames before it')
+
     def test_close_all_tabs(self):
         output = self.run_editor(['cmd settings', 'cmd close_all_tabs', 'print-state'])
         self.assertIn('tabs=0', output)

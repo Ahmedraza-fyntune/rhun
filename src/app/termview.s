@@ -10,6 +10,7 @@ F TS_name, 32
 ENDSTRUCT TS_SIZE
 
 .equ ID_TSPLIT, 0x6000
+.equ TERM_FRAME_MS, 16            # output keeps to about a frame a display refresh
 .equ ID_TNEW, 0x6002
 .equ ID_TLINK, 0x6003           # the link under the pointer, for its tooltip
 .equ ID_THIDE, 0x6004
@@ -54,6 +55,9 @@ sel_e: .quad 0
 scroll_px: .long 0
 zombies: .zero 4 * MAX_ZOMB
 nzomb: .long 0
+.p2align 3
+out_frame: .quad 0              # time_ms of the last frame output asked for
+out_due: .quad 0                # time_ms of the next, held back while output keeps coming (0: none)
 link_on: .long 0                # the link under the pointer: 1 a URL, 2 a file (link_find)
 link_line: .long 0              # a file's :LINE:COL, 0 when not given
 link_col: .long 0
@@ -271,7 +275,7 @@ on_pty:
     dec r13d
     jnz 2b
 3:  call send_replies
-    mov dword ptr [rip + g_dirty], 1
+    call output_frame
     EPILOGUE
 .Lop_end:
     mov rdi, rbx
@@ -451,9 +455,64 @@ FN reap_later
     inc dword ptr [rip + nzomb]
 1:  ret
 
-# term_tick(): reap shells that took their time to exit
+# output_frame(): output asks for a frame, at once after a quiet spell, then at most one each
+#   TERM_FRAME_MS while it keeps coming: a frame for every read drew `cat` of a large file thousands
+#   of times (four seconds for 21 MB, a quarter of one paced)
+output_frame:
+    cmp qword ptr [rip + out_due], 0
+    jne 9f
+    sub rsp, 8
+    call time_ms
+    add rsp, 8
+    mov rcx, rax
+    sub rcx, [rip + out_frame]
+    cmp rcx, TERM_FRAME_MS
+    jb 1f
+    mov [rip + out_frame], rax
+    mov dword ptr [rip + g_dirty], 1
+    ret
+1:  mov rax, [rip + out_frame]
+    add rax, TERM_FRAME_MS
+    mov [rip + out_due], rax
+9:  ret
+
+# term_timeout() -> ms until the output held back is drawn, or -1
+FN term_timeout
+    mov rax, [rip + out_due]
+    test rax, rax
+    jz 1f
+    sub rsp, 8
+    call time_ms
+    add rsp, 8
+    mov rcx, [rip + out_due]
+    sub rcx, rax
+    xor eax, eax
+    test rcx, rcx
+    cmovg eax, ecx
+    ret
+1:  mov eax, -1
+    ret
+
+# term_frame_now(): the output held back is drawn with the next frame (a control command's)
+FN term_frame_now
+    cmp qword ptr [rip + out_due], 0
+    je 1f
+    mov qword ptr [rip + out_due], 0
+    mov dword ptr [rip + g_dirty], 1
+1:  ret
+
+# term_tick(): draw the output held back once its time comes; reap shells that took their time to exit
 FN term_tick
     push rbx
+    cmp qword ptr [rip + out_due], 0
+    je 0f
+    call time_ms
+    cmp rax, [rip + out_due]
+    jb 0f
+    mov [rip + out_frame], rax
+    mov qword ptr [rip + out_due], 0
+    mov dword ptr [rip + g_dirty], 1
+0:
     xor ebx, ebx
 1:  cmp ebx, [rip + nzomb]
     jae 9f

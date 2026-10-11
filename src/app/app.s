@@ -88,7 +88,9 @@ pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folder
 .globl g_shot_path
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
-split_drag: .long 0
+split_grab: .long 0             # a divider's drag: the pointer's distance from it at the press
+split_moved: .long 0            # and whether the pointer has moved since
+split_reanchor: .long 0         # a double-click reset the width: the next frame takes hold anew
 split_l_bits: .long 0           # UB_* of the dividers, hit tested before the panels
 split_r_bits: .long 0
 .globl g_editor_rect
@@ -115,8 +117,6 @@ FN app_init
     call syntax_load_all
     call keys_init
     call vim_sync
-    call explorer_init
-    call agents_init
     call watch_init
     call update_init
     call ai_apply
@@ -613,6 +613,10 @@ FN app_activate_tab
 # app_update_title(): window title "name — project"
 FN app_update_title
     PROLOGUE
+    # the window takes its title once the command line or session is open: a session restoring ten
+    # tabs set it ten times before the first frame (half a millisecond each on macOS)
+    cmp dword ptr [rip + g_started], 0
+    je 9f
     lea rdi, [rip + tmp_sb]
     call sb_clear
     mov rbx, [rip + g_file]
@@ -632,7 +636,7 @@ FN app_update_title
     call sb_push_cstr
     mov rdi, [rip + tmp_sb + SB_ptr]
     PCALL P_title
-    EPILOGUE
+9:  EPILOGUE
 
 # app_find_tab(path) -> index or -1
 FN app_find_tab
@@ -662,6 +666,141 @@ FN app_find_tab
 3:  mov rax, -1
     EPILOGUE
 4:  mov rax, rbx
+    EPILOGUE
+
+# app_path_inside(path, dir) -> eax 1 when path is dir or names something inside it, compared as
+#   app_find_tab compares paths, and rdx the length of path's part that names dir
+.ifdef WINDOWS
+# Windows: each part of path that ends at a separator (or all of it), after its root, against dir by
+# win_path_equal: spellings that are the same without case may differ in length
+FN app_path_inside
+    PROLOGUE 4096
+    mov r12, rdi
+    mov r13, rsi
+    call strlen
+    mov r15, rax
+    mov rdi, r12
+    call path_rootlen
+    mov r14, rax
+    test r14, r14
+    jnz 1f
+    mov r14d, 1
+1:  cmp r14, r15
+    ja 8f
+    je 2f
+    movzx eax, byte ptr [r12 + r14]
+    cmp eax, '/'
+    je 2f
+    cmp eax, 92
+    je 2f
+3:  inc r14
+    jmp 1b
+2:  cmp r14, 4096
+    jae 8f
+    mov rdi, rsp
+    mov rsi, r12
+    mov rcx, r14
+    rep movsb
+    mov byte ptr [rdi], 0
+    mov rdi, rsp
+    mov rsi, r13
+    call win_path_equal
+    test eax, eax
+    jz 3b
+    mov eax, 1
+    mov rdx, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+.else
+FN app_path_inside
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov rdi, rsi
+    call strlen
+    mov r14, rax
+    test r14, r14
+    jz 8f
+    cmp r14, 1                  # a folder written with its slash, but not / itself
+    jbe 1f
+    cmp byte ptr [r13 + r14 - 1], '/'
+    jne 1f
+    dec r14
+1:  mov rdi, r12
+    call strlen
+    mov r15, rax
+    cmp r15, r14
+    jb 8f
+    movzx eax, byte ptr [r12 + r14]
+    test eax, eax
+    jz 2f
+    cmp eax, '/'
+    je 2f
+    cmp byte ptr [r13 + r14 - 1], '/'   # under a root such as /
+    jne 8f
+2:  mov rdi, r12
+    mov rsi, r15
+    mov rdx, r13
+    mov rcx, r14
+    call str_starts
+    mov rdx, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+.endif
+
+# app_retarget_tabs(old, new): after a rename, the tabs of old, or of the files inside it when it
+#   is a folder, take their paths under new
+FN app_retarget_tabs
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor ebx, ebx
+2:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    mov r15, [rax + TAB_doc]
+    test r15, r15
+    jz 3f
+    mov rdi, [r15 + DOC_path]
+    test rdi, rdi
+    jz 3f
+    mov rsi, r12
+    call app_path_inside
+    test eax, eax
+    jz 3f
+    mov r14, rdx                # the tab's own spelling of old ends there
+    lea rdi, [rip + tmp_sb]
+    call sb_clear
+    mov rdi, r13                # the new name without a separator at its end ("e/" in the prompt)
+    call strlen
+    mov rdx, rax
+4:  cmp rdx, 1
+    jbe 5f
+    cmp byte ptr [r13 + rdx - 1], '/'
+.ifdef WINDOWS
+    je 41f
+    cmp byte ptr [r13 + rdx - 1], 92
+.endif
+    jne 5f
+41: dec rdx
+    jmp 4b
+5:  lea rdi, [rip + tmp_sb]
+    mov rsi, r13
+    call sb_push
+    lea rdi, [rip + tmp_sb]
+    mov rsi, [r15 + DOC_path]
+    add rsi, r14
+    call sb_push_cstr
+    mov rdi, r15
+    mov rsi, [rip + tmp_sb + SB_ptr]
+    call doc_set_path
+3:  inc rbx
+    jmp 2b
+9:  call app_update_title
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # app_open_startup_path(path): initial desktop events follow argv startup precedence.
@@ -891,7 +1030,7 @@ FN app_detect_lang
     mov qword ptr [rbx + DOC_svalid], 0
     EPILOGUE
 
-# app_new_file()
+# cmd_new_file()
 FN cmd_new_file
     call doc_new
     mov rdi, rax
@@ -1958,7 +2097,15 @@ FN app_timeout
     cmp eax, ebx
     jge 84f
 85: mov ebx, eax
-84: mov eax, ebx
+84: call term_timeout
+    cmp eax, -1
+    je 86f
+    cmp ebx, -1
+    je 87f
+    cmp eax, ebx
+    jge 86f
+87: mov ebx, eax
+86: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2005,14 +2152,26 @@ FN app_render
     jz 1f
     mov dword ptr [rip + g_block], 1
 1:
-    # background
+    # no background: the bars, panels, dividers and the editor column cover the window, each with
+    # its own color (a whole-window fill under them was a fifth of every frame). A theme with a
+    # translucent color (#rrggbbaa) still gets it, so nothing blends with the frame before.
+    lea rcx, [rip + g_theme]
+    mov eax, -1
+    xor edx, edx
+0:  and eax, [rcx + rdx*4]
+    inc edx
+    cmp edx, T_COUNT
+    jb 0b
+    shr eax, 24
+    cmp eax, 255
+    je 0f
     xor edi, edi
     xor esi, esi
     mov edx, [rsp]
     mov ecx, [rsp + 4]
     COLOR r8d, T_BG
     call gfx_fill
-    # panel sizes
+0:  # panel sizes
     mov edi, [rip + cfg_sidebar_w]
     call sc
     mov [rip + g_side_px], eax
@@ -2326,10 +2485,47 @@ splitter:
     COLOR r9d, T_ACCENT
     call gfx_round_rect
     mov eax, [rsp]
-1:  test eax, UB_HELD
+1:  test eax, UB_DOUBLE
+    jz 5f
+    # a double-click puts the panel back at its default width; a drag after it starts from where
+    # the next frame lays the divider out (a narrow window may give the panel less than that)
+    mov edi, SIDEBAR_W_DEFAULT
+    lea r15, [rip + cfg_sidebar_w]
+    cmp ebx, ID_SPLIT_L
+    je 7f
+    mov edi, AGENTS_W_DEFAULT
+    lea r15, [rip + cfg_agents_w]
+7:  mov [r15], edi
+    mov dword ptr [rip + split_reanchor], 1
+    mov dword ptr [rip + split_moved], 0
+    jmp 3f
+5:  test eax, UB_HELD
     jz 9f
-    # new width in logical points
+    test eax, UB_PRESS
+    jz 52f
+    # the press takes hold of the divider where it is: it keeps its distance from the pointer
     mov eax, [rip + g_mx]
+    sub eax, r12d
+    mov [rip + split_grab], eax
+    mov dword ptr [rip + split_moved], 0
+    mov dword ptr [rip + split_reanchor], 0
+    jmp 9f
+52: cmp dword ptr [rip + split_reanchor], 0
+    je 6f
+    mov dword ptr [rip + split_reanchor], 0
+    mov eax, [rip + g_press_x]  # the double-click's press against the divider the reset laid out
+    sub eax, r12d
+    mov [rip + split_grab], eax
+6:  # a click that does not move leaves the width alone (even one the layout narrowed); once the
+    # pointer has moved, the divider follows it back to where it was pressed too
+    mov eax, [rip + g_mx]
+    cmp dword ptr [rip + split_moved], 0
+    jne 7f
+    cmp eax, [rip + g_press_x]
+    je 9f
+    mov dword ptr [rip + split_moved], 1
+7:  # new width in logical points
+    sub eax, [rip + split_grab]
     cmp ebx, ID_SPLIT_L
     jne 2f
     cvtsi2ss xmm0, eax
@@ -3003,7 +3199,7 @@ FN tabs_draw
     jz 61f
     mov rdi, rbx
     call app_close_tab
-    jmp .Ltd_done
+    jmp .Ltd_closed
 61: # background
     cmp rbx, [rip + g_tab_cur]
     jne 7f
@@ -3155,21 +3351,28 @@ FN tabs_draw
     jz .Ltd_next
     mov rdi, rbx
     call app_close_tab
-    jmp .Ltd_done
+    jmp .Ltd_closed
 841:
 .Ltd_next:
     add r12d, [rsp + 16]
     inc rbx
     jmp .Ltd_tab
 .Ltd_done:
-    # clamp scroll so the strip cannot scroll past its end
+    # the strip cannot scroll past its end (a wheel, a tab closed); measured as it is drawn, so a
+    # change shows in the next frame
     mov eax, r12d
     add eax, [rip + g_tabscroll]
     sub eax, [rsp]
     sub eax, [rsp + 8]
-    jg 9f
-    mov dword ptr [rip + g_tabscroll], 0
-9:  call gfx_clip_pop
+    xor ecx, ecx
+    cmp eax, ecx
+    cmovl eax, ecx
+    cmp [rip + g_tabscroll], eax
+    jle .Ltd_closed
+    mov [rip + g_tabscroll], eax
+    mov dword ptr [rip + g_dirty], 1
+.Ltd_closed:                    # a tab closed while drawn: the strip is measured again next frame
+    call gfx_clip_pop
     EPILOGUE
 
 # statusbar_draw(x, y, w, h)
@@ -4691,7 +4894,6 @@ tip_table:
 .Lplain: .asciz "Plain Text"
 .Ldlg_q: .asciz "Save changes to "
 .Ldlg_msg: .asciz "Your changes will be lost if you don't save them."
-.Lnl: .ascii "\n"
 .Lw1: .asciz "Go to file"
 .Lw2: .asciz "Command palette"
 .Lw3: .asciz "New file"

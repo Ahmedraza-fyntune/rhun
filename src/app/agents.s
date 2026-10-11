@@ -35,8 +35,8 @@ list_scroll: .long 0
 th_scroll: .long 0
 th_content: .long 0
 last_poll: .quad 0
+label_due: .quad 0              # unix second when a label shown changes ("now" turns "1m ago", a live dot goes out)
 last_scan: .quad 0
-panel_rect: .zero 16
 tmp: .zero SB_SIZE
 line: .zero SB_SIZE
 buf: .zero 96
@@ -70,9 +70,6 @@ registry_wd: .long -1           # and of its worktrees folder
 
 
 .text
-
-FN agents_init
-    ret
 
 # Config reloads can change sources while a worker is still running.
 FN agents_apply_settings
@@ -188,6 +185,10 @@ FN agents_scan
     je 2f
     cmp dword ptr [rip + index_pid], 0
     jne 2f
+    # at startup the worker waits for the first frame: the tick right after it starts the run asked
+    # for (agents_timeout gives it no wait), rather than a fork before the window shows
+    cmp dword ptr [rip + g_started], 0
+    je 2f
     jmp index_start
 1:  mov dword ptr [rip + index_pending], 0
     mov dword ptr [rip + index_loud], 0
@@ -681,7 +682,7 @@ session_clear_msgs:
 2:  mov qword ptr [rbx + AS_msgs + VEC_len], 0
     EPILOGUE
 
-# read_head(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
+# agent_read_head(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
 FN agent_read_head
     xor edx, edx
     jmp agent_read_window
@@ -738,7 +739,7 @@ FN agent_read_window
     xor edx, edx
     EPILOGUE
 
-# read_first_line(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
+# agent_read_first_line(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
 # Failure returns rax=0, rdx=-errno for I/O errors or 0 for an oversized line.
 # Read through newline or EOF, rejecting lines longer than max and read errors.
 FN agent_read_first_line
@@ -805,7 +806,7 @@ FN agent_read_first_line
 11: mov [rsp], rax
     jmp 8b
 
-# session_header(s): title from the first part of the file
+# agent_session_header(s): title from the first part of the file
 FN agent_session_header
     PROLOGUE 16
     mov rbx, rdi
@@ -2066,6 +2067,9 @@ FN agents_tick
     cmp rax, 1000
     jb 2f
     call agents_poll
+    call time_now                # a frame when a label shown changes, not every second
+    cmp rax, [rip + label_due]
+    jb 2f
     mov dword ptr [rip + g_dirty], 1
 2:  mov rax, rbx
     sub rax, [rip + last_scan]
@@ -2433,7 +2437,7 @@ worktree_badge:
 9:  mov eax, r12d
     EPILOGUE
 
-# rel_time(unix seconds) -> cstr in buf ("now", "5m", "3h", "2d")
+# rel_time(unix seconds) -> cstr in buf ("now", "5m", "3h", "2d"); notes in label_due when it changes
 rel_time:
     push rbx
     mov rbx, rdi
@@ -2441,7 +2445,24 @@ rel_time:
     sub rax, rbx
     jns 1f
     xor eax, eax
-1:  lea rdi, [rip + buf]
+1:  mov r9, rax                 # the label changes at the next minute under an hour, then hourly, daily
+    mov ecx, 60
+    cmp rax, 3600
+    jb 11f
+    mov ecx, 3600
+    cmp rax, 86400
+    jb 11f
+    mov ecx, 86400
+11: xor edx, edx
+    div rcx
+    inc rax
+    imul rax, rcx
+    add rax, rbx
+    cmp rax, [rip + label_due]
+    jae 12f
+    mov [rip + label_due], rax
+12: mov rax, r9
+    lea rdi, [rip + buf]
     cmp rax, 60
     jae 2f
     lea rsi, [rip + .Lnow]
@@ -2474,15 +2495,23 @@ rel_time:
     pop rbx
     ret
 
-# is_live(s) -> 1 if written in the last 20 seconds
+# is_live(s) -> 1 if written in the last 20 seconds; notes in label_due when the dot goes out
 is_live:
     push rbx
     mov rbx, rdi
     call time_now
     sub rax, [rbx + AS_mtime]
     cmp rax, 20
-    setbe al
-    movzx eax, al
+    ja 1f
+    mov rax, [rbx + AS_mtime]   # the dot goes out once 20 seconds have passed
+    add rax, 21
+    cmp rax, [rip + label_due]
+    jae 2f
+    mov [rip + label_due], rax
+2:  mov eax, 1
+    pop rbx
+    ret
+1:  xor eax, eax
     pop rbx
     ret
 
@@ -2654,14 +2683,11 @@ wr_setup:
 # agents_draw(x, y, w, h)
 FN agents_draw
     PROLOGUE 64
+    mov qword ptr [rip + label_due], -1     # the labels drawn below say when they change
     mov [rsp], edi
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
-    mov [rip + panel_rect], edi
-    mov [rip + panel_rect + 4], esi
-    mov [rip + panel_rect + 8], edx
-    mov [rip + panel_rect + 12], ecx
     COLOR r8d, T_PANEL
     call gfx_fill
     mov edi, [rsp]

@@ -147,6 +147,7 @@ FN control_exec
 2:  call [r15 + 8]
     push rax
     push rax
+    call term_frame_now         # a command ends with a frame that shows all output so far
     call flush_frame
     pop rax
     pop rax

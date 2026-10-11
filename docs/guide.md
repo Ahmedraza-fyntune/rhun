@@ -218,6 +218,9 @@ Hovering a title bar or explorer button for half a second shows its name and, fo
 current shortcut in your platform's notation. Once one is showing, the next button's appears at once.
 **Tooltips** in Settings > Appearance turns them off (`tooltips = false` under `[ui]`).
 
+Drag the line between the explorer or the agents panel and the editor to resize the panel; a
+double-click on it puts the panel back at its default width.
+
 Scrollbars stay out of sight until you scroll or point at them. **Auto-hide scrollbars** in
 Settings > Appearance keeps a faint one in view instead (`auto_hide_scrollbars = false` under `[ui]`).
 
@@ -290,7 +293,7 @@ holds the path, which can include folders that do not exist yet. Right-click a f
 menu; right-click the empty space below the list for the project folder's: New File, New Folder,
 Copy Path and Show in Finder (Show in Explorer, Open in File Manager).
 
-Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder permanently removes its contents, including hidden files. Links are removed without deleting their targets.
+Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder permanently removes its contents, including hidden files. Links are removed without deleting their targets. The tabs of deleted files close, except those with unsaved changes. Renaming a file or folder keeps its open tabs on the new path.
 
 Right-click a file or directory in the explorer and choose **Show in Finder** (macOS), **Show in Explorer** (Windows), or **Open in File Manager** (Linux). Finder and Explorer select the item in its parent folder. Linux opens the containing folder through `xdg-open`, using your desktop's default file manager. The command palette also has **Show File in System File Manager** for the active file.
 

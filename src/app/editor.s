@@ -4,6 +4,7 @@
 .equ ID_EDITOR, 0x1001
 .equ ID_EDSCROLL, 0x1002
 .equ ID_EDHSCROLL, 0x1004          # along the bottom, when lines do not wrap
+.equ CLS_LONG, 4096                # bytes of a line whose classes are kept across frames
 .equ WIDEST_FULL, 1 << 20       # bytes measured again on every change (about a millisecond)
 .equ WIDEST_VISIBLE, 1 << 16    # total bytes measured from visible lines while editing a large text
 .equ WIDEST_PAUSE, 400          # ms without edits before a longer text is measured again
@@ -37,9 +38,8 @@ caret_frame: .long 0            # this frame drew the caret that has the keyboar
 caret_seen: .long 0             # the last frame did: only then is there a caret to blink
 classes: .zero SB_SIZE          # per-byte syntax class for the line being drawn
 clip_sb: .zero SB_SIZE
-.globl g_ed_find, g_ed_find_case
+.globl g_ed_find
 g_ed_find: .zero SB_SIZE        # find highlight text (set by the find bar)
-g_ed_find_case: .long 0
 
 .text
 
@@ -191,8 +191,7 @@ FN ed_move
     jz .Lmv_set_h
     mov r14, rdx
     jmp .Lmv_set_h
-1:  lea rax, [rip + .Lmv_table]
-    mov eax, r12d
+1:  mov eax, r12d
     cmp eax, 0
     je .Lmv_left
     cmp eax, 1
@@ -360,7 +359,6 @@ FN ed_move
 6:  call ed_touch
 .Lmv_ret:
     EPILOGUE
-.Lmv_table:
 
 # page_lines() -> visible lines - 1 (at least 1)
 page_lines:
@@ -1678,7 +1676,7 @@ FN cmd_redo
 
 # ---- drawing ----
 
-# editor_metrics(doc) -> eax gutter width
+# editor_gutter(doc) -> eax gutter width
 editor_gutter:
     cmp qword ptr [rdi + DOC_diff], 0
     jne diffview_gutter
@@ -2234,8 +2232,6 @@ FN editor_draw
     call word_at
     mov [rbx + DOC_anchor], rax
     mov [rbx + DOC_cur], rdx
-    mov [rip + sel_word_a], rax
-    mov [rip + sel_word_b], rdx
     call ed_touch
     mov dword ptr [rip + g_reveal], 0
     jmp .Led_noinput
@@ -2685,8 +2681,48 @@ draw_line:
 1:  mov [rsp + 32], rax         # to (offset)
     mov eax, [rip + dl_from]
     mov [rsp + 96], rax         # from (offset)
-    # classes for the whole line (cached across the rows of one line)
-    cmp [rip + cls_doc], rbx
+    # classes for the whole line (cached across the rows of one line; a long one's across frames,
+    # which tokenized all of a minified file's line on every frame)
+    cmp r15, CLS_LONG
+    jb 10f
+    cmp [rip + g_long_doc], rbx
+    jne 11f
+    cmp [rip + long_line], r12
+    jne 11f
+    cmp [rip + long_len], r15
+    jne 11f
+    mov rax, [rbx + DOC_version]
+    cmp [rip + long_ver], rax
+    jne 11f
+    mov rax, [rbx + DOC_svalid]
+    cmp [rip + long_svalid], rax
+    jne 11f
+    mov rax, [rbx + DOC_lang]
+    cmp [rip + long_lang], rax
+    je 12f
+11: mov [rip + g_long_doc], rbx
+    mov [rip + long_line], r12
+    mov [rip + long_len], r15
+    mov rax, [rbx + DOC_version]
+    mov [rip + long_ver], rax
+    mov rax, [rbx + DOC_svalid]
+    mov [rip + long_svalid], rax
+    mov rax, [rbx + DOC_lang]
+    mov [rip + long_lang], rax
+    lea rdi, [rip + long_cls]
+    mov qword ptr [rdi + SB_len], 0
+    lea rsi, [r15 + 16]
+    call sb_reserve
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r14
+    mov rcx, r15
+    mov r8, [rip + long_cls + SB_ptr]
+    call syntax_line
+12: mov rax, [rip + long_cls + SB_ptr]
+    mov [rip + cls_ptr], rax
+    jmp 3f
+10: cmp [rip + cls_doc], rbx
     jne 2f
     cmp [rip + cls_line], r12
     jne 2f
@@ -2695,7 +2731,7 @@ draw_line:
     jne 2f
     mov rax, [rbx + DOC_svalid]
     cmp [rip + cls_svalid], rax
-    je 3f
+    je 13f
 2:  mov [rip + cls_doc], rbx
     mov [rip + cls_line], r12
     mov rax, [rbx + DOC_version]
@@ -2712,6 +2748,8 @@ draw_line:
     mov rcx, r15
     mov r8, [rip + classes + SB_ptr]
     call syntax_line
+13: mov rax, [rip + classes + SB_ptr]
+    mov [rip + cls_ptr], rax
 3:  # x origin
     mov eax, [rip + g_ed_tx]
     sub eax, [rbx + DOC_scrollx]
@@ -2938,13 +2976,38 @@ draw_line:
 82: inc dword ptr [rsp + 64]
     inc r13
     jmp .Ldl_glyph
-9:  lea rdi, [r14 + r13]
+    # a glyph wholly left of the clip (two cells, a wide one's) only moves the column: a long line
+    # scrolled sideways drew all of its text up to the window's left edge every frame
+9:  mov ecx, [rip + g_cw]
+    mov eax, [rsp + 80]
+    lea eax, [rax + rcx*2]
+    cmp eax, [rip + g_cv + CV_cx0]
+    jg 93f
+    movzx eax, byte ptr [r14 + r13]
+    lea ecx, [rax - 0x21]
+    cmp ecx, 0x7e - 0x21
+    ja 92f
+    inc dword ptr [rsp + 64]
+    inc r13
+    jmp .Ldl_glyph
+92: lea rdi, [r14 + r13]
+    mov rsi, r15
+    sub rsi, r13
+    call utf8_decode
+    mov [rsp + 84], edx
+    mov edi, eax
+    call cp_width
+    add [rsp + 64], eax
+    mov eax, [rsp + 84]
+    add r13, rax
+    jmp .Ldl_glyph
+93: lea rdi, [r14 + r13]
     mov rsi, r15
     sub rsi, r13
     call utf8_decode
     mov [rsp + 84], edx         # byte length
     mov [rsp + 88], eax         # codepoint
-    mov rcx, [rip + classes + SB_ptr]
+    mov rcx, [rip + cls_ptr]
     movzx ecx, byte ptr [rcx + r13]
     lea rdx, [rip + g_theme]
     mov r9d, [rdx + rcx*4 + 4*T_SYN]
@@ -3041,6 +3104,31 @@ draw_box:
 match_brackets:
     PROLOGUE 32
     mov rbx, rdi
+    # found again only when what it depends on changed: the search walks up to 100,000 bytes, on
+    # every frame while the caret is at a bracket whose partner is far or missing
+    cmp [rip + g_br_doc], rbx
+    jne 0f
+    mov rax, [rbx + DOC_version]
+    cmp [rip + br_ver], rax
+    jne 0f
+    mov rax, [rbx + DOC_cur]
+    cmp [rip + br_cur], rax
+    jne 0f
+    mov rax, [rbx + DOC_anchor]
+    cmp [rip + br_anchor], rax
+    jne 0f
+    mov eax, [rip + cfg_match_brackets]
+    cmp [rip + br_on], eax
+    je 9f
+0:  mov [rip + g_br_doc], rbx
+    mov rax, [rbx + DOC_version]
+    mov [rip + br_ver], rax
+    mov rax, [rbx + DOC_cur]
+    mov [rip + br_cur], rax
+    mov rax, [rbx + DOC_anchor]
+    mov [rip + br_anchor], rax
+    mov eax, [rip + cfg_match_brackets]
+    mov [rip + br_on], eax
     mov qword ptr [rip + g_br], -1
     mov qword ptr [rip + g_br + 8], -1
     cmp dword ptr [rip + cfg_match_brackets], 0
@@ -3377,7 +3465,8 @@ pair_close: .asciz ")]}\"'`"
 
 # doc_widest(doc) -> rax columns of its widest line, tabs and wide characters as drawn; measured
 #   again when its text or the tab width changed. Past WIDEST_FULL bytes the whole text is measured
-#   once editing pauses; meanwhile short lines on screen and the caret can only widen it.
+#   once editing pauses, and on the frame after its first; meanwhile short lines on screen and the
+#   caret can only widen it.
 FN doc_widest
     PROLOGUE 16
     mov rbx, rdi
@@ -3398,14 +3487,21 @@ FN doc_widest
     mov [rsp + 8], rdx
     cmp qword ptr [rsp], WIDEST_FULL
     jbe 7f
+    # a long text never measured: its first frame takes the lines on screen, the next one all
+    cmp qword ptr [rbx + DOC_wkey], 0
+    jne 71f
+    mov qword ptr [rbx + DOC_wkey], 2  # even: no key of a text
     call time_ms
+    mov [rip + widest_due], rax
+    jmp 72f
+71: call time_ms
     sub rax, [rbx + DOC_lastedit]
     cmp rax, WIDEST_PAUSE
     jae 7f
     mov rax, [rbx + DOC_lastedit]
     add rax, WIDEST_PAUSE
     mov [rip + widest_due], rax
-    call widest_visible
+72: call widest_visible
     cmp rax, [rbx + DOC_wcols]
     jbe 8f
     mov [rbx + DOC_wcols], rax
@@ -3594,8 +3690,11 @@ hscroll_extent:
     mov [rip + hs_on], eax
     ret
 
-# hscroll_clamp(): the view goes no further right than the widest line (rbx doc)
+# hscroll_clamp(): the view goes no further right than the widest line (rbx doc); not while that
+#   width is the first frame's guess (doc_widest), which would undo a view a reopened tab restored
 hscroll_clamp:
+    cmp qword ptr [rbx + DOC_wkey], 2
+    je 2f
     mov eax, [rip + hs_content]
     sub eax, [rip + hs_view]
     jns 1f
@@ -3675,12 +3774,16 @@ FN editor_scroll_dump
 dl_to: .long -1
 .p2align 3
 g_br: .quad -1, -1
+.globl g_br_doc
+g_br_doc: .quad 0               # what g_br was found for: doc (0: nothing), version, caret, anchor, setting
+br_ver: .quad 0
+br_cur: .quad 0
+br_anchor: .quad 0
+br_on: .long 0
 .bss
 .p2align 3
-sel_word_a: .quad 0
 disk_edge: .long 0
 disk_tint: .long 0
-sel_word_b: .quad 0
 last_indent: .long 0
 .globl g_ed_x, g_ed_y, g_ed_w, g_ed_h, g_ed_tx
 .globl g_caret_x, g_caret_y, g_caret_ok
@@ -3694,6 +3797,15 @@ cls_doc: .quad 0
 cls_line: .quad 0
 cls_ver: .quad 0
 cls_svalid: .quad 0
+cls_ptr: .quad 0                # the classes of the line being drawn: classes', or long_cls's
+.globl g_long_doc
+g_long_doc: .quad 0             # a long line's classes, kept across frames: its doc (0: none), and
+long_line: .quad 0              # what they depend on
+long_len: .quad 0
+long_ver: .quad 0
+long_svalid: .quad 0
+long_lang: .quad 0
+long_cls: .zero SB_SIZE
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0

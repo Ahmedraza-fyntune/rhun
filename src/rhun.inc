@@ -315,8 +315,6 @@ F FONT_nhmetrics, 4
 F FONT_ascent, 4
 F FONT_descent, 4
 F FONT_linegap, 4
-F FONT_xheight, 4
-F FONT_capheight, 4
 ENDSTRUCT FONT_SIZE
 
 # font at a pixel size
@@ -865,6 +863,9 @@ STRUCT
 F TAB_kind, 8
 F TAB_doc, 8
 ENDSTRUCT TAB_SIZE
+
+.equ SIDEBAR_W_DEFAULT, 240        # points: the explorer's and the agents panel's widths
+.equ AGENTS_W_DEFAULT, 380
 
 .equ FOCUS_EDITOR, 0
 .equ FOCUS_PALETTE, 1

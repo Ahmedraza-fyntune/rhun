@@ -93,7 +93,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
 
     for name, exe in [('cpu', 'cpu'), ('doc', 'doc'), ('syntax', 'syntax'), ('themes', 'theme'),
                       ('term', 'term'), ('diff', 'diff'), ('cols', 'cols'), ('config', 'config'),
-                      ('textarea', 'textarea'), ('ui-clip', 'ui_clip'), ('keys', 'keys'), ('config-strings', 'config_strings')]:
+                      ('textarea', 'textarea'), ('ui-clip', 'ui_clip'), ('fill', 'fill'), ('memmove', 'memmove'), ('keys', 'keys'),
+                      ('config-strings', 'config_strings')]:
         check(name, lambda name=name, exe=exe: golden(name, exe + '_test'))
     for name, exe, file in [('strfind', 'str', 'strfind'), ('versions', 'update', 'versions'),
                             ('keymap-names-us-ru', 'xkb', 'keymap-names-us-ru'),
@@ -144,6 +145,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
         check('explorer/create', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/explorer-create.py')], check=True,
+            env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
+        check('explorer/tabs-follow-deletes-and-renames', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/explorer-tabs.py')], check=True,
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
 
     def ui(name):

@@ -26,8 +26,6 @@ tk_c: .long 0
 .globl g_grammars
 g_grammars: .zero VEC_SIZE      # GR* items
 it: .zero INI_SIZE
-cur_gr: .quad 0
-dummy: .zero SB_SIZE
 .globl g_grammars_parsed, g_grammar_warnings
 g_grammars_parsed: .long 0      # built-in grammars parsed so far (they are parsed when first used)
 g_grammar_warnings: .long 0     # unknown keys and class names the parser met
