@@ -2108,13 +2108,8 @@ FN app_render
     jz 1f
     mov dword ptr [rip + g_block], 1
 1:
-    # background
-    xor edi, edi
-    xor esi, esi
-    mov edx, [rsp]
-    mov ecx, [rsp + 4]
-    COLOR r8d, T_BG
-    call gfx_fill
+    # no background: the bars, panels, dividers and the editor column cover the window, each with
+    # its own color (a whole-window fill under them was a fifth of every frame)
     # panel sizes
     mov edi, [rip + cfg_sidebar_w]
     call sc
