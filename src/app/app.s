@@ -2061,7 +2061,15 @@ FN app_timeout
     cmp eax, ebx
     jge 84f
 85: mov ebx, eax
-84: mov eax, ebx
+84: call term_timeout
+    cmp eax, -1
+    je 86f
+    cmp ebx, -1
+    je 87f
+    cmp eax, ebx
+    jge 86f
+87: mov ebx, eax
+86: mov eax, ebx
     EPILOGUE
 
 FN app_tick
