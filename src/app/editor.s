@@ -3104,6 +3104,31 @@ draw_box:
 match_brackets:
     PROLOGUE 32
     mov rbx, rdi
+    # found again only when what it depends on changed: the search walks up to 100,000 bytes, on
+    # every frame while the caret is at a bracket whose partner is far or missing
+    cmp [rip + g_br_doc], rbx
+    jne 0f
+    mov rax, [rbx + DOC_version]
+    cmp [rip + br_ver], rax
+    jne 0f
+    mov rax, [rbx + DOC_cur]
+    cmp [rip + br_cur], rax
+    jne 0f
+    mov rax, [rbx + DOC_anchor]
+    cmp [rip + br_anchor], rax
+    jne 0f
+    mov eax, [rip + cfg_match_brackets]
+    cmp [rip + br_on], eax
+    je 9f
+0:  mov [rip + g_br_doc], rbx
+    mov rax, [rbx + DOC_version]
+    mov [rip + br_ver], rax
+    mov rax, [rbx + DOC_cur]
+    mov [rip + br_cur], rax
+    mov rax, [rbx + DOC_anchor]
+    mov [rip + br_anchor], rax
+    mov eax, [rip + cfg_match_brackets]
+    mov [rip + br_on], eax
     mov qword ptr [rip + g_br], -1
     mov qword ptr [rip + g_br + 8], -1
     cmp dword ptr [rip + cfg_match_brackets], 0
@@ -3746,6 +3771,12 @@ FN editor_scroll_dump
 dl_to: .long -1
 .p2align 3
 g_br: .quad -1, -1
+.globl g_br_doc
+g_br_doc: .quad 0               # what g_br was found for: doc (0: nothing), version, caret, anchor, setting
+br_ver: .quad 0
+br_cur: .quad 0
+br_anchor: .quad 0
+br_on: .long 0
 .bss
 .p2align 3
 disk_edge: .long 0

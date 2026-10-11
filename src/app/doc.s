@@ -38,10 +38,13 @@ FN doc_new
 FN doc_free
     push rbx
     mov rbx, rdi
-    cmp rdi, [rip + g_long_doc]   # its long line's classes go too (another doc may get its address)
-    jne 1f
+    cmp rdi, [rip + g_long_doc]   # its long line's classes and matched brackets go too (another doc
+    jne 1f                        # may get its address)
     mov qword ptr [rip + g_long_doc], 0
-1:  call git_doc_free
+1:  cmp rdi, [rip + g_br_doc]
+    jne 2f
+    mov qword ptr [rip + g_br_doc], 0
+2:  call git_doc_free
     mov rdi, rbx
     lea rsi, [rbx + DOC_undo]
     call urec_clear
