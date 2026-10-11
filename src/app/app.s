@@ -90,6 +90,7 @@ g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
 split_grab: .long 0             # a divider's drag: the pointer's distance from it at the press
 split_moved: .long 0            # and whether the pointer has moved since
+split_reanchor: .long 0         # a double-click reset the width: the next frame takes hold anew
 split_l_bits: .long 0           # UB_* of the dividers, hit tested before the panels
 split_r_bits: .long 0
 .globl g_editor_rect
@@ -2486,7 +2487,8 @@ splitter:
     mov eax, [rsp]
 1:  test eax, UB_DOUBLE
     jz 5f
-    # a double-click puts the panel back at its default width; a drag after it starts from there
+    # a double-click puts the panel back at its default width; a drag after it starts from where
+    # the next frame lays the divider out (a narrow window may give the panel less than that)
     mov edi, SIDEBAR_W_DEFAULT
     lea r15, [rip + cfg_sidebar_w]
     cmp ebx, ID_SPLIT_L
@@ -2494,26 +2496,26 @@ splitter:
     mov edi, AGENTS_W_DEFAULT
     lea r15, [rip + cfg_agents_w]
 7:  mov [r15], edi
-    call sc
-    cmp ebx, ID_SPLIT_L
-    je 41f
-    neg eax
-    add eax, [rip + g_cv + CV_w]
-41: mov ecx, [rip + g_mx]
-    sub ecx, eax
-    mov [rip + split_grab], ecx
+    mov dword ptr [rip + split_reanchor], 1
     mov dword ptr [rip + split_moved], 0
     jmp 3f
 5:  test eax, UB_HELD
     jz 9f
     test eax, UB_PRESS
-    jz 6f
+    jz 52f
     # the press takes hold of the divider where it is: it keeps its distance from the pointer
     mov eax, [rip + g_mx]
     sub eax, r12d
     mov [rip + split_grab], eax
     mov dword ptr [rip + split_moved], 0
+    mov dword ptr [rip + split_reanchor], 0
     jmp 9f
+52: cmp dword ptr [rip + split_reanchor], 0
+    je 6f
+    mov dword ptr [rip + split_reanchor], 0
+    mov eax, [rip + g_press_x]  # the double-click's press against the divider the reset laid out
+    sub eax, r12d
+    mov [rip + split_grab], eax
 6:  # a click that does not move leaves the width alone (even one the layout narrowed); once the
     # pointer has moved, the divider follows it back to where it was pressed too
     mov eax, [rip + g_mx]

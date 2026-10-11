@@ -142,6 +142,13 @@ class SidebarSplit(unittest.TestCase):
                         agents=True, agents_w=480)
         self.assertEqual(self.config_value('agents_width'), 380)
 
+    def test_a_drag_after_a_reset_the_window_narrowed_follows_the_pointer(self):
+        # explorer 400 pt and the editor's 240 leave the agents panel 360 of its 380 by default:
+        # after the double-click its divider is at 640, and a drag 20 px right puts it at 660
+        self.run_editor(['wait 300', 'move 700 400', 'down', 'up', 'down', 'wait 60', 'move 720 400',
+                         'wait 60', 'up', 'wait 60'], agents=True, sidebar=400, agents_w=300)
+        self.assertEqual(self.config_value('agents_width'), 340)
+
     def test_drag_after_a_double_click_starts_at_the_default_width(self):
         self.run_editor(['wait 200', 'move 300 400', 'down', 'up', 'down', 'wait 60', 'move 320 400',
                          'wait 60', 'up', 'wait 60'], sidebar=300)
