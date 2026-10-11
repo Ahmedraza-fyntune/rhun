@@ -4,6 +4,7 @@
 .equ ID_EDITOR, 0x1001
 .equ ID_EDSCROLL, 0x1002
 .equ ID_EDHSCROLL, 0x1004          # along the bottom, when lines do not wrap
+.equ CLS_LONG, 4096                # bytes of a line whose classes are kept across frames
 .equ WIDEST_FULL, 1 << 20       # bytes measured again on every change (about a millisecond)
 .equ WIDEST_VISIBLE, 1 << 16    # total bytes measured from visible lines while editing a large text
 .equ WIDEST_PAUSE, 400          # ms without edits before a longer text is measured again
@@ -2680,8 +2681,48 @@ draw_line:
 1:  mov [rsp + 32], rax         # to (offset)
     mov eax, [rip + dl_from]
     mov [rsp + 96], rax         # from (offset)
-    # classes for the whole line (cached across the rows of one line)
-    cmp [rip + cls_doc], rbx
+    # classes for the whole line (cached across the rows of one line; a long one's across frames,
+    # which tokenized all of a minified file's line on every frame)
+    cmp r15, CLS_LONG
+    jb 10f
+    cmp [rip + g_long_doc], rbx
+    jne 11f
+    cmp [rip + long_line], r12
+    jne 11f
+    cmp [rip + long_len], r15
+    jne 11f
+    mov rax, [rbx + DOC_version]
+    cmp [rip + long_ver], rax
+    jne 11f
+    mov rax, [rbx + DOC_svalid]
+    cmp [rip + long_svalid], rax
+    jne 11f
+    mov rax, [rbx + DOC_lang]
+    cmp [rip + long_lang], rax
+    je 12f
+11: mov [rip + g_long_doc], rbx
+    mov [rip + long_line], r12
+    mov [rip + long_len], r15
+    mov rax, [rbx + DOC_version]
+    mov [rip + long_ver], rax
+    mov rax, [rbx + DOC_svalid]
+    mov [rip + long_svalid], rax
+    mov rax, [rbx + DOC_lang]
+    mov [rip + long_lang], rax
+    lea rdi, [rip + long_cls]
+    mov qword ptr [rdi + SB_len], 0
+    lea rsi, [r15 + 16]
+    call sb_reserve
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r14
+    mov rcx, r15
+    mov r8, [rip + long_cls + SB_ptr]
+    call syntax_line
+12: mov rax, [rip + long_cls + SB_ptr]
+    mov [rip + cls_ptr], rax
+    jmp 3f
+10: cmp [rip + cls_doc], rbx
     jne 2f
     cmp [rip + cls_line], r12
     jne 2f
@@ -2690,7 +2731,7 @@ draw_line:
     jne 2f
     mov rax, [rbx + DOC_svalid]
     cmp [rip + cls_svalid], rax
-    je 3f
+    je 13f
 2:  mov [rip + cls_doc], rbx
     mov [rip + cls_line], r12
     mov rax, [rbx + DOC_version]
@@ -2707,6 +2748,8 @@ draw_line:
     mov rcx, r15
     mov r8, [rip + classes + SB_ptr]
     call syntax_line
+13: mov rax, [rip + classes + SB_ptr]
+    mov [rip + cls_ptr], rax
 3:  # x origin
     mov eax, [rip + g_ed_tx]
     sub eax, [rbx + DOC_scrollx]
@@ -2964,7 +3007,7 @@ draw_line:
     call utf8_decode
     mov [rsp + 84], edx         # byte length
     mov [rsp + 88], eax         # codepoint
-    mov rcx, [rip + classes + SB_ptr]
+    mov rcx, [rip + cls_ptr]
     movzx ecx, byte ptr [rcx + r13]
     lea rdx, [rip + g_theme]
     mov r9d, [rdx + rcx*4 + 4*T_SYN]
@@ -3720,6 +3763,15 @@ cls_doc: .quad 0
 cls_line: .quad 0
 cls_ver: .quad 0
 cls_svalid: .quad 0
+cls_ptr: .quad 0                # the classes of the line being drawn: classes', or long_cls's
+.globl g_long_doc
+g_long_doc: .quad 0             # a long line's classes, kept across frames: its doc (0: none), and
+long_line: .quad 0              # what they depend on
+long_len: .quad 0
+long_ver: .quad 0
+long_svalid: .quad 0
+long_lang: .quad 0
+long_cls: .zero SB_SIZE
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0
