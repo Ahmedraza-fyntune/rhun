@@ -19,12 +19,38 @@ FN memmove
     lea r8, [rsi + rdx]
     cmp rdi, r8
     jae 1f
+.ifdef MACOS
     lea rsi, [rsi + rdx - 1]
     lea rdi, [rdi + rdx - 1]
     std
     rep movsb
     cld
     ret
+.else
+    # from the end, 16 bytes a step, both halves read before either is written (std; rep movsb
+    # skips the fast string path: a byte a cycle, for a gap moved back or a line opened in a big file)
+    add rsi, rdx
+    add rdi, rdx
+2:  cmp rcx, 16
+    jb 3f
+    sub rsi, 16
+    sub rdi, 16
+    mov r8, [rsi]
+    mov r9, [rsi + 8]
+    mov [rdi], r8
+    mov [rdi + 8], r9
+    sub rcx, 16
+    jmp 2b
+3:  test rcx, rcx
+    jz 4f
+    dec rsi
+    dec rdi
+    mov r8b, [rsi]
+    mov [rdi], r8b
+    dec rcx
+    jmp 3b
+4:  ret
+.endif
 1:  rep movsb
     ret
 
