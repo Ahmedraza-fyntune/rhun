@@ -480,8 +480,8 @@ open_initial:
     cmp qword ptr [rip + g_tabs + VEC_len], 0
     jne 6f
     call session_restore
-6:  call app_update_title
-    mov dword ptr [rip + g_started], 1
+6:  mov dword ptr [rip + g_started], 1
+    call app_update_title
 .ifdef WINDOWS
     cmp dword ptr [rip + opt_headless], 0
     jne 7f

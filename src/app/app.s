@@ -611,6 +611,10 @@ FN app_activate_tab
 # app_update_title(): window title "name — project"
 FN app_update_title
     PROLOGUE
+    # the window takes its title once the command line or session is open: a session restoring ten
+    # tabs set it ten times before the first frame (half a millisecond each on macOS)
+    cmp dword ptr [rip + g_started], 0
+    je 9f
     lea rdi, [rip + tmp_sb]
     call sb_clear
     mov rbx, [rip + g_file]
@@ -630,7 +634,7 @@ FN app_update_title
     call sb_push_cstr
     mov rdi, [rip + tmp_sb + SB_ptr]
     PCALL P_title
-    EPILOGUE
+9:  EPILOGUE
 
 # app_find_tab(path) -> index or -1
 FN app_find_tab
