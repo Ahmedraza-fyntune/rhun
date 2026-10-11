@@ -549,10 +549,20 @@ class CodexDiscovery(unittest.TestCase):
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-dynamiclib',
                         str(ROOT / 'tests/file_faults.c'), '-o', str(library)], check=True)
         self.env.update(DYLD_INSERT_LIBRARIES=str(library), RHUN_TEST_PATH=str(self.session))
+        # The library fails the first read of the last file it saw opened as the target, or of an
+        # atomic write's temporary file: the editor writing one at startup (the last-project file)
+        # would take the fault itself, on a later file with the same descriptor. With that file
+        # already naming the project, nothing is written, and the fault reaches the worker's read
+        # of the session; each case starts without the index cache an earlier one left.
+        state = self.home / 'state/rhun'
+        state.mkdir(parents=True, exist_ok=True)
+        (state / 'last-project').write_text(self.project.as_posix(), encoding='utf-8')
         for fault, errno, expected in (('read', '4', 'Codex: Untitled session\n'),
                                         ('short-read', '5', 'Codex: Untitled session\n'),
                                         ('read', '5', '')):
             with self.subTest(fault=fault, errno=errno):
+                for cache in state.glob('agents-index-v5-*'):
+                    cache.unlink()
                 self.env.update(RHUN_TEST_FAULT=fault, RHUN_TEST_ERRNO=errno)
                 self.assertEqual(self.run_editor(self.metadata(20197) + b'\n'), expected)
 
