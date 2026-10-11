@@ -77,3 +77,21 @@ same desktop, script, configuration, and directory for comparisons.
 Native API references: [Apple window information](https://developer.apple.com/documentation/coregraphics/cgwindowlistcopywindowinfo(_:_:)),
 [Win32 window enumeration](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-enumwindows),
 and [X-Resource API](https://www.x.org/releases/current/doc/man/man3/XRes.3.xhtml).
+
+## Headless baseline
+
+[perf-baseline.py](perf-baseline.py) times a build headless on fixed workloads: startup with
+an empty folder and with 20,000 files, opening a 20 MB file, an editor frame and a palette frame
+at 2560x1600, a frame with the caret at the end of a 2.7 MB line, a keystroke in the find field
+over a million lines, Replace All with 80,000 matches, `cat` of 18 MB in the terminal (not on
+Windows), and the frames an idle agents panel draws in 3 seconds. It makes its fixtures and its
+HOME and XDG folders in a temporary folder, so it never reads or changes your configuration.
+Pass `--binary` once per build to compare them side by side, and `--json FILE` to keep the
+medians:
+
+```sh
+python3 tools/perf-baseline.py --binary old/build/rhun --binary build/rhun
+```
+
+The numbers are whole headless runs less the same run without the measured steps; they leave out
+putting frames on a screen, so compare builds on one machine, not machines.
