@@ -4521,6 +4521,7 @@ FN cmd_settings
 3:  mov rdi, rbx
     call app_activate_tab
 4:  mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    call settings_focus
     cmp dword ptr [rip + cfg_commit_ai], 0
     je 5f
     call cmd_ai_detect

@@ -101,7 +101,7 @@ class SettingsUI(unittest.TestCase):
         return THEME_ROWS.get((section, key), self.follow) == self.follow
 
     def row_y(self, section, key):
-        y, previous = 228, None
+        y, previous = 268, None
         for sec, name, _ in ROWS:
             if not self.shown(sec, name):
                 continue
@@ -114,7 +114,7 @@ class SettingsUI(unittest.TestCase):
         self.fail(f'unknown row {section}.{key}')
 
     def compact_row_y(self, section, key):
-        y, previous = 228, None
+        y, previous = 268, None
         for sec, name, kind in ROWS:
             if not self.shown(sec, name):
                 continue
