@@ -185,6 +185,10 @@ FN agents_scan
     je 2f
     cmp dword ptr [rip + index_pid], 0
     jne 2f
+    # at startup the worker waits for the first frame: the tick right after it starts the run asked
+    # for (agents_timeout gives it no wait), rather than a fork before the window shows
+    cmp dword ptr [rip + g_started], 0
+    je 2f
     jmp index_start
 1:  mov dword ptr [rip + index_pending], 0
     mov dword ptr [rip + index_loud], 0
