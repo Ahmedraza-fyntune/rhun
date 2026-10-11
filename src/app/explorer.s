@@ -199,28 +199,96 @@ node_load:
     lea rsi, [rip + load_cb]
     mov rdx, rbx
     call dir_each
-    # insertion sort
-    mov r12, [rbx + N_kids + VEC_ptr]
-    mov r13, [rbx + N_kids + VEC_len]
-    mov r14d, 1
-1:  cmp r14, r13
-    jae 9f
-    mov r15, r14
-2:  test r15, r15
-    jz 3f
-    mov rdi, [r12 + r15*8]
-    mov rsi, [r12 + r15*8 - 8]
+    mov rdi, [rbx + N_kids + VEC_ptr]
+    mov rsi, [rbx + N_kids + VEC_len]
+    call sort_nodes
+9:  EPILOGUE
+
+# sort_nodes(array, n): node pointers in node_less order, stable (equal names keep the folder's
+#   order), by bottom-up merge sort: a folder of 20,000 entries took most of a second sorted by
+#   insertion, at startup and again on every refresh
+sort_nodes:
+    PROLOGUE 64
+    mov r12, rdi
+    mov r13, rsi
+    cmp r13, 2
+    jb 9f
+    lea rdi, [r13*8]
+    call mem_alloc
+    mov r14, rax
+    mov r15, r12                # runs of [rsp] merged from r15 into rbx, which the next pass reads
+    mov rbx, r14
+    mov qword ptr [rsp], 1
+.Lsn_pass:
+    mov rax, [rsp]
+    cmp rax, r13
+    jae .Lsn_done
+    mov qword ptr [rsp + 8], 0
+.Lsn_run:
+    mov rax, [rsp + 8]          # lo
+    cmp rax, r13
+    jae .Lsn_swap
+    mov rcx, rax                # mid = min(lo + width, n)
+    add rcx, [rsp]
+    cmp rcx, r13
+    cmova rcx, r13
+    mov [rsp + 16], rcx
+    mov rdx, rcx                # hi = min(mid + width, n)
+    add rdx, [rsp]
+    cmp rdx, r13
+    cmova rdx, r13
+    mov [rsp + 24], rdx
+    mov [rsp + 32], rax         # l
+    mov [rsp + 40], rcx         # r
+    mov [rsp + 48], rax         # k
+.Lsn_merge:
+    mov rax, [rsp + 48]
+    cmp rax, [rsp + 24]
+    jae .Lsn_next
+    mov rcx, [rsp + 32]
+    cmp rcx, [rsp + 16]
+    jae .Lsn_right
+    mov rdx, [rsp + 40]
+    cmp rdx, [rsp + 24]
+    jae .Lsn_left
+    mov rdi, [r15 + rdx*8]      # the right run's only when it sorts before: ties keep their order
+    mov rsi, [r15 + rcx*8]
     call node_less
     test eax, eax
-    jz 3f
-    mov rax, [r12 + r15*8]
-    mov rcx, [r12 + r15*8 - 8]
-    mov [r12 + r15*8], rcx
-    mov [r12 + r15*8 - 8], rax
-    dec r15
-    jmp 2b
-3:  inc r14
-    jmp 1b
+    jz .Lsn_left
+.Lsn_right:
+    mov rdx, [rsp + 40]
+    mov rax, [r15 + rdx*8]
+    inc qword ptr [rsp + 40]
+    jmp .Lsn_put
+.Lsn_left:
+    mov rcx, [rsp + 32]
+    mov rax, [r15 + rcx*8]
+    inc qword ptr [rsp + 32]
+.Lsn_put:
+    mov rcx, [rsp + 48]
+    mov [rbx + rcx*8], rax
+    inc qword ptr [rsp + 48]
+    jmp .Lsn_merge
+.Lsn_next:
+    mov rax, [rsp + 24]
+    mov [rsp + 8], rax
+    jmp .Lsn_run
+.Lsn_swap:
+    xchg r15, rbx
+    mov rax, [rsp]
+    add rax, rax
+    mov [rsp], rax
+    jmp .Lsn_pass
+.Lsn_done:
+    cmp r15, r12
+    je 1f
+    mov rdi, r12
+    mov rsi, r15
+    lea rdx, [r13*8]
+    call memcpy
+1:  mov rdi, r14
+    call mem_free
 9:  EPILOGUE
 
 # in_openset(path) -> 1 if it was open before a refresh
