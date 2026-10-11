@@ -535,6 +535,7 @@ FN explorer_delete_target
     mov rbx, rax
     # A failed deletion can still have removed some children.
     call explorer_refresh
+    call close_deleted_tabs
     test rbx, rbx
     jns 1f
     lea rdi, [rip + .Lnot_deleted]
@@ -545,6 +546,40 @@ FN explorer_delete_target
     mov byte ptr [rip + delete_path], 0
     pop rbx
     ret
+
+# close_deleted_tabs(): the tabs of what a deletion removed close, as in VS Code; one with unsaved
+#   changes stays open, and so does one whose file is still there (a deletion that failed part way)
+close_deleted_tabs:
+    PROLOGUE
+    mov rbx, [rip + g_tabs + VEC_len]
+1:  test rbx, rbx
+    jz 9f
+    dec rbx
+    mov rdi, rbx
+    call tab_at
+    mov r12, [rax + TAB_doc]
+    test r12, r12
+    jz 1b
+    mov rdi, [r12 + DOC_path]
+    test rdi, rdi
+    jz 1b
+    lea rsi, [rip + delete_path]
+    call app_path_inside
+    test eax, eax
+    jz 1b
+    mov rdi, r12
+    call doc_dirty
+    test eax, eax
+    jnz 1b
+    mov rdi, [r12 + DOC_path]
+    call file_type
+    test eax, eax
+    jnz 1b
+    mov rdi, rbx
+    call app_close_tab_now
+    mov dword ptr [rip + g_dirty], 1
+    jmp 1b
+9:  EPILOGUE
 
 # explorer_key(keysym, cp, mods) -> 1 if handled
 FN explorer_key

@@ -664,6 +664,111 @@ FN app_find_tab
 4:  mov rax, rbx
     EPILOGUE
 
+# app_path_inside(path, dir) -> 1 when path is dir or names something inside it, compared as
+#   app_find_tab compares paths
+FN app_path_inside
+.ifdef WINDOWS
+    PROLOGUE 4096
+.else
+    PROLOGUE
+.endif
+    mov r12, rdi
+    mov r13, rsi
+    mov rdi, rsi
+    call strlen
+    mov r14, rax
+    test r14, r14
+    jz 8f
+    cmp r14, 1                  # a folder written with its slash, but not / itself
+    jbe 1f
+    cmp byte ptr [r13 + r14 - 1], '/'
+    jne 1f
+    dec r14
+1:  mov rdi, r12
+    call strlen
+    mov r15, rax
+    cmp r15, r14
+    jb 8f
+    movzx eax, byte ptr [r12 + r14]
+    test eax, eax
+    jz 2f
+    cmp eax, '/'
+    je 2f
+.ifdef WINDOWS
+    cmp eax, 92
+    je 2f
+.endif
+    cmp byte ptr [r13 + r14 - 1], '/'   # under a root such as /
+    jne 8f
+2:
+.ifdef WINDOWS
+    cmp r14, 4096
+    jae 8f
+    mov rdi, rsp
+    mov rsi, r12
+    mov rcx, r14
+    rep movsb
+    mov byte ptr [rdi], 0
+    mov rdi, rsp
+    mov rsi, r13
+    call win_path_equal
+.else
+    mov rdi, r12
+    mov rsi, r15
+    mov rdx, r13
+    mov rcx, r14
+    call str_starts
+.endif
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# app_retarget_tabs(old, new): after a rename, the tabs of old, or of the files inside it when it
+#   is a folder, take their paths under new
+FN app_retarget_tabs
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    call strlen
+    mov r14, rax
+    cmp r14, 1
+    jbe 1f
+    cmp byte ptr [r12 + r14 - 1], '/'
+    jne 1f
+    dec r14
+1:  xor ebx, ebx
+2:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    mov r15, [rax + TAB_doc]
+    test r15, r15
+    jz 3f
+    mov rdi, [r15 + DOC_path]
+    test rdi, rdi
+    jz 3f
+    mov rsi, r12
+    call app_path_inside
+    test eax, eax
+    jz 3f
+    lea rdi, [rip + tmp_sb]
+    call sb_clear
+    lea rdi, [rip + tmp_sb]
+    mov rsi, r13
+    call sb_push_cstr
+    lea rdi, [rip + tmp_sb]
+    mov rsi, [r15 + DOC_path]
+    add rsi, r14
+    call sb_push_cstr
+    mov rdi, r15
+    mov rsi, [rip + tmp_sb + SB_ptr]
+    call doc_set_path
+3:  inc rbx
+    jmp 2b
+9:  call app_update_title
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
 # app_open_startup_path(path): initial desktop events follow argv startup precedence.
 FN app_open_startup_path
     # Finder delivers its initial URLs during AppKit startup. Queue them with argv so
