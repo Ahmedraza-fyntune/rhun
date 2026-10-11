@@ -2933,7 +2933,32 @@ draw_line:
 82: inc dword ptr [rsp + 64]
     inc r13
     jmp .Ldl_glyph
-9:  lea rdi, [r14 + r13]
+    # a glyph wholly left of the clip (two cells, a wide one's) only moves the column: a long line
+    # scrolled sideways drew all of its text up to the window's left edge every frame
+9:  mov ecx, [rip + g_cw]
+    mov eax, [rsp + 80]
+    lea eax, [rax + rcx*2]
+    cmp eax, [rip + g_cv + CV_cx0]
+    jg 93f
+    movzx eax, byte ptr [r14 + r13]
+    lea ecx, [rax - 0x21]
+    cmp ecx, 0x7e - 0x21
+    ja 92f
+    inc dword ptr [rsp + 64]
+    inc r13
+    jmp .Ldl_glyph
+92: lea rdi, [r14 + r13]
+    mov rsi, r15
+    sub rsi, r13
+    call utf8_decode
+    mov [rsp + 84], edx
+    mov edi, eax
+    call cp_width
+    add [rsp + 64], eax
+    mov eax, [rsp + 84]
+    add r13, rax
+    jmp .Ldl_glyph
+93: lea rdi, [r14 + r13]
     mov rsi, r15
     sub rsi, r13
     call utf8_decode
