@@ -3690,8 +3690,11 @@ hscroll_extent:
     mov [rip + hs_on], eax
     ret
 
-# hscroll_clamp(): the view goes no further right than the widest line (rbx doc)
+# hscroll_clamp(): the view goes no further right than the widest line (rbx doc); not while that
+#   width is the first frame's guess (doc_widest), which would undo a view a reopened tab restored
 hscroll_clamp:
+    cmp qword ptr [rbx + DOC_wkey], 2
+    je 2f
     mov eax, [rip + hs_content]
     sub eax, [rip + hs_view]
     jns 1f

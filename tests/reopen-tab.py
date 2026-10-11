@@ -157,6 +157,22 @@ class ReopenClosedTab(unittest.TestCase):
         self.assertEqual(self.state()['line'], '1')
         self.assertEqual(self.command('print-scroll'), scroll)
 
+    def test_a_large_file_keeps_its_sideways_view(self):
+        # past 1 MiB the first frame takes the widths of the lines on screen only, and a line of
+        # 100,000 columns is too long for that: the view must wait for the whole text's width
+        (self.project / 'wide.txt').write_text('L' * 100000 + '\n' + 'short line\n' * 120000,
+                                               encoding='utf-8')
+        self.start()
+        self.open('a.txt', 'wide.txt')
+        self.command('move 500 300')
+        self.command('scroll-x 30000')
+        scroll = self.command('print-scroll')
+        self.assertNotIn('x=0 ', scroll)
+        self.command('cmd close_tab')
+        self.reopen()
+        self.command('wait 100')
+        self.assertEqual(self.command('print-scroll'), scroll)
+
     def test_a_shorter_file_keeps_the_view_inside_its_text(self):
         # wrapped lines without scrolling past the end: the view is clamped from its top line's rows
         self.write_config(git=False, extra='[editor]\nword_wrap = true\nscroll_past_end = false\n')
