@@ -115,8 +115,6 @@ FN app_init
     call syntax_load_all
     call keys_init
     call vim_sync
-    call explorer_init
-    call agents_init
     call watch_init
     call update_init
     call ai_apply
@@ -996,7 +994,7 @@ FN app_detect_lang
     mov qword ptr [rbx + DOC_svalid], 0
     EPILOGUE
 
-# app_new_file()
+# cmd_new_file()
 FN cmd_new_file
     call doc_new
     mov rdi, rax
@@ -4833,7 +4831,6 @@ tip_table:
 .Lplain: .asciz "Plain Text"
 .Ldlg_q: .asciz "Save changes to "
 .Ldlg_msg: .asciz "Your changes will be lost if you don't save them."
-.Lnl: .ascii "\n"
 .Lw1: .asciz "Go to file"
 .Lw2: .asciz "Command palette"
 .Lw3: .asciz "New file"

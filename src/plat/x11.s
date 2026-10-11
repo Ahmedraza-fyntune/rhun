@@ -20,7 +20,6 @@ id_base: .long 0
 id_mask: .long 0
 id_next: .long 0
 root: .long 0
-root_visual: .long 0
 root_depth: .long 0
 win: .long 0
 gc: .long 0
@@ -68,11 +67,9 @@ reply_extra_len: .quad 0
 .p2align 3
 xclip: .zero SB_SIZE
 own_clip: .long 0
-maximized: .long 0
 addr: .zero 110
 tmp: .zero SB_SIZE
 iov2: .zero 32
-mh: .zero 56
 
 .data
 variant_dark: .long -1          # the _GTK_THEME_VARIANT last set: 1 dark, 0 light
@@ -1019,8 +1016,6 @@ FN x_connect
     lea r15, [r15 + rdx*8]          # first screen
     mov eax, [r15]
     mov [rip + root], eax
-    mov eax, [r15 + 32]
-    mov [rip + root_visual], eax
     movzx eax, byte ptr [r15 + 38]
     mov [rip + root_depth], eax
     # drop the setup reply

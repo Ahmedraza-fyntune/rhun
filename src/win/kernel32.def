@@ -21,8 +21,7 @@ EXPORTS
     FindCloseChangeNotification
     FindFirstChangeNotificationW
     FindFirstFileW
-    FindNextChangeNotification
-    FindNextFileW
+        FindNextFileW
     FlushFileBuffers
     FreeEnvironmentStringsW
     GetCommandLineW

@@ -542,11 +542,10 @@ FN color_alpha
 
 .section .rodata
 .p2align 2
-.globl f_half, f_zero, f_one, f_255, f_two, f_64
+.globl f_half, f_zero, f_one, f_255, f_64
 f_half: .float 0.5
 f_zero: .float 0.0
 f_one: .float 1.0
-f_two: .float 2.0
 f_255: .float 255.0
 f_64: .float 64.0
 

@@ -37,9 +37,8 @@ caret_frame: .long 0            # this frame drew the caret that has the keyboar
 caret_seen: .long 0             # the last frame did: only then is there a caret to blink
 classes: .zero SB_SIZE          # per-byte syntax class for the line being drawn
 clip_sb: .zero SB_SIZE
-.globl g_ed_find, g_ed_find_case
+.globl g_ed_find
 g_ed_find: .zero SB_SIZE        # find highlight text (set by the find bar)
-g_ed_find_case: .long 0
 
 .text
 
@@ -191,8 +190,7 @@ FN ed_move
     jz .Lmv_set_h
     mov r14, rdx
     jmp .Lmv_set_h
-1:  lea rax, [rip + .Lmv_table]
-    mov eax, r12d
+1:  mov eax, r12d
     cmp eax, 0
     je .Lmv_left
     cmp eax, 1
@@ -360,7 +358,6 @@ FN ed_move
 6:  call ed_touch
 .Lmv_ret:
     EPILOGUE
-.Lmv_table:
 
 # page_lines() -> visible lines - 1 (at least 1)
 page_lines:
@@ -1678,7 +1675,7 @@ FN cmd_redo
 
 # ---- drawing ----
 
-# editor_metrics(doc) -> eax gutter width
+# editor_gutter(doc) -> eax gutter width
 editor_gutter:
     cmp qword ptr [rdi + DOC_diff], 0
     jne diffview_gutter
@@ -2234,8 +2231,6 @@ FN editor_draw
     call word_at
     mov [rbx + DOC_anchor], rax
     mov [rbx + DOC_cur], rdx
-    mov [rip + sel_word_a], rax
-    mov [rip + sel_word_b], rdx
     call ed_touch
     mov dword ptr [rip + g_reveal], 0
     jmp .Led_noinput
@@ -3677,10 +3672,8 @@ dl_to: .long -1
 g_br: .quad -1, -1
 .bss
 .p2align 3
-sel_word_a: .quad 0
 disk_edge: .long 0
 disk_tint: .long 0
-sel_word_b: .quad 0
 last_indent: .long 0
 .globl g_ed_x, g_ed_y, g_ed_w, g_ed_h, g_ed_tx
 .globl g_caret_x, g_caret_y, g_caret_ok

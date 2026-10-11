@@ -110,8 +110,6 @@ update_matches:
     mov rsi, r12
     mov rdx, r13
     call sb_push
-    mov eax, [rip + find_case]
-    mov [rip + g_ed_find_case], eax
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f

@@ -3111,20 +3111,6 @@ FN term_mouse
     xor eax, eax
     EPILOGUE
 
-# term_focus(t, in): focus reports when asked for
-FN term_focus
-    push rbx
-    mov rbx, rdi
-    test dword ptr [rbx + TM_modes], TMM_FOCUS
-    jz 9f
-    lea rdi, [rip + .Lf_in]
-    test esi, esi
-    jnz 1f
-    lea rdi, [rip + .Lf_out]
-1:  call reply_cstr
-9:  pop rbx
-    ret
-
 .section .rodata
 .Lr_da: .asciz "\033[?62;22c"
 .Lr_da2: .asciz "\033[>1;10;0c"
@@ -3144,8 +3130,6 @@ FN term_focus
 .Lp_end: .asciz "\033[201~"
 .Lm_sgr: .asciz "\033[<"
 .Lm_x10s: .asciz "\033[M"
-.Lf_in: .asciz "\033[I"
-.Lf_out: .asciz "\033[O"
 .Ld_cursor: .asciz "cursor "
 # ctrl + character -> control code
 ctrl_chars: .byte ' ', 0, '@', 0, '2', 0, '[', 27, '3', 27, '\\', 28, '4', 28, ']', 29, '5', 29

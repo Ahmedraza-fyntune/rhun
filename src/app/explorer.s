@@ -31,7 +31,6 @@ menu_x: .long 0
 menu_y: .long 0
 menu_press: .long 0             # the presses of the frame that opened the menu
 .p2align 3
-menu_node: .quad 0
 menu_list: .quad 0
 .globl g_explorer_dir, g_explorer_target, g_exp_reveal
 g_exp_reveal: .long 0             # reveal the active file on the next draw
@@ -45,9 +44,6 @@ delete_label: .zero 256
 delete_path: .zero 4096          # the path named by the open confirmation
 
 .text
-
-FN explorer_init
-    ret
 
 # explorer_excluded(name cstr) -> 1 if listed in cfg_exclude
 FN explorer_excluded
@@ -1031,7 +1027,6 @@ FN explorer_draw
     mov [rip + exp_cursor], r12d
     mov rdi, r14
     call select_target
-    mov [rip + menu_node], r14
     # files with changes: "Open Changes" too
     lea rax, [rip + menu_items]
     push rax

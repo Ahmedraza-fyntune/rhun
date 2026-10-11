@@ -315,8 +315,6 @@ F FONT_nhmetrics, 4
 F FONT_ascent, 4
 F FONT_descent, 4
 F FONT_linegap, 4
-F FONT_xheight, 4
-F FONT_capheight, 4
 ENDSTRUCT FONT_SIZE
 
 # font at a pixel size

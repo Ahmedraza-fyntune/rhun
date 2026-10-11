@@ -37,7 +37,6 @@ th_content: .long 0
 last_poll: .quad 0
 label_due: .quad 0              # unix second when a label shown changes ("now" turns "1m ago", a live dot goes out)
 last_scan: .quad 0
-panel_rect: .zero 16
 tmp: .zero SB_SIZE
 line: .zero SB_SIZE
 buf: .zero 96
@@ -71,9 +70,6 @@ registry_wd: .long -1           # and of its worktrees folder
 
 
 .text
-
-FN agents_init
-    ret
 
 # Config reloads can change sources while a worker is still running.
 FN agents_apply_settings
@@ -682,7 +678,7 @@ session_clear_msgs:
 2:  mov qword ptr [rbx + AS_msgs + VEC_len], 0
     EPILOGUE
 
-# read_head(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
+# agent_read_head(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
 FN agent_read_head
     xor edx, edx
     jmp agent_read_window
@@ -739,7 +735,7 @@ FN agent_read_window
     xor edx, edx
     EPILOGUE
 
-# read_first_line(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
+# agent_read_first_line(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
 # Failure returns rax=0, rdx=-errno for I/O errors or 0 for an oversized line.
 # Read through newline or EOF, rejecting lines longer than max and read errors.
 FN agent_read_first_line
@@ -806,7 +802,7 @@ FN agent_read_first_line
 11: mov [rsp], rax
     jmp 8b
 
-# session_header(s): title from the first part of the file
+# agent_session_header(s): title from the first part of the file
 FN agent_session_header
     PROLOGUE 16
     mov rbx, rdi
@@ -2688,10 +2684,6 @@ FN agents_draw
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
-    mov [rip + panel_rect], edi
-    mov [rip + panel_rect + 4], esi
-    mov [rip + panel_rect + 8], edx
-    mov [rip + panel_rect + 12], ecx
     COLOR r8d, T_PANEL
     call gfx_fill
     mov edi, [rsp]

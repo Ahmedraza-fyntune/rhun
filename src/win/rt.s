@@ -293,7 +293,7 @@ FN win_error
 .Leintr: mov rax, -4
     ret
 
-# fd_alloc(handle, kind, flags) -> fd or -24. Allocation and closing run on the GUI thread.
+# win_fd_alloc(handle, kind, flags) -> fd or -24. Allocation and closing run on the GUI thread.
 FN win_fd_alloc
     mov eax, 3
     lea r8, [rip + win_fds + 3*FD_SIZE]
