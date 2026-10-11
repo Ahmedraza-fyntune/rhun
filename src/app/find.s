@@ -380,7 +380,7 @@ replace_one:
 # replace_all(): one undo step
 replace_all:
     READONLY_RET
-    PROLOGUE 16
+    PROLOGUE 96
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -390,6 +390,8 @@ replace_all:
     mov r13, rdx
     test r13, r13
     jz 9f
+    cmp dword ptr [rip + g_find_word], 0
+    je .Lra_batch
     mov rdi, rbx
     call doc_begin_group
     xor r15d, r15d              # position
@@ -446,6 +448,127 @@ replace_all:
     call ed_touch
     call update_matches
 9:  EPILOGUE
+
+# Without whole words, the text from the first match to the end of the last is built anew and goes
+# in as one edit: an edit a match shifted every later line's start, so many matches took
+# quadratic time (160,000 of them over nine seconds). The caret and anchor land where an edit a
+# match leaves them: inside a match (or at its end) at its replacement's start, elsewhere moved by
+# the replacements before them. A whole word's bounds depend on the replacement before it, so that
+# search keeps the loop above.
+.Lra_batch:
+    mov rdi, rsp
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset                 # [rsp] the new text
+    lea rdi, [rip + tf_repl]
+    call tf_text
+    mov [rsp + 24], rax         # replacement
+    mov [rsp + 32], rdx
+    mov rdi, rbx
+    call doc_len
+    mov [rsp + 40], rax         # n
+    mov rdi, rbx
+    call doc_contiguous
+    mov r14, rax
+    mov qword ptr [rsp + 48], -1    # first match
+    mov qword ptr [rsp + 56], 0     # delta: replacements so far, less their matches
+    mov qword ptr [rsp + 64], -1    # caret, once placed
+    mov qword ptr [rsp + 72], -1    # anchor, once placed
+    xor r15d, r15d              # search from (the end of the last match)
+.Lrb_next:
+    mov rdi, r14
+    add rdi, r15
+    mov rsi, [rsp + 40]
+    sub rsi, r15
+    jbe .Lrb_done
+    mov rdx, r12
+    mov rcx, r13
+    call find_raw
+    test rax, rax
+    js .Lrb_done
+    add rax, r15                # the match
+    cmp qword ptr [rsp + 48], 0
+    jge 1f
+    mov [rsp + 48], rax
+    mov r15, rax
+1:  push rax
+    push rax
+    lea rdi, [rsp + 16]         # the text between the last match and this one
+    lea rsi, [r14 + r15]
+    mov rdx, rax
+    sub rdx, r15
+    call sb_push
+    lea rdi, [rsp + 16]
+    mov rsi, [rsp + 40]
+    mov rdx, [rsp + 48]
+    call sb_push
+    pop rax
+    pop rax
+    # the caret and the anchor, at or before this match's end
+    mov rcx, [rsp + 56]
+    lea rdx, [rax + r13]        # match end
+    lea r8, [rsp + 64]
+    mov r9, [rbx + DOC_cur]
+    call place_mark
+    lea r8, [rsp + 72]
+    mov r9, [rbx + DOC_anchor]
+    call place_mark
+    add rcx, [rsp + 32]
+    sub rcx, r13
+    mov [rsp + 56], rcx
+    mov r15, rdx
+    jmp .Lrb_next
+.Lrb_done:
+    cmp qword ptr [rsp + 48], 0
+    jl .Lrb_free                # no match
+    mov rdi, rbx
+    call doc_begin_group
+    mov rdi, rbx
+    mov rsi, [rsp + 48]
+    mov rdx, r15
+    sub rdx, rsi
+    xor ecx, ecx
+    call doc_delete
+    mov rdi, rbx
+    mov rsi, [rsp + 48]
+    mov rdx, [rsp + SB_ptr]
+    mov rcx, [rsp + SB_len]
+    xor r8d, r8d
+    call doc_insert
+    mov rdi, rbx
+    call doc_end_group
+    # past the last match the two edits moved them by every replacement already
+    mov rax, [rsp + 64]
+    test rax, rax
+    js 1f
+    mov [rbx + DOC_cur], rax
+1:  mov rax, [rsp + 72]
+    test rax, rax
+    js 2f
+    mov [rbx + DOC_anchor], rax
+2:  call ed_touch
+    call update_matches
+.Lrb_free:
+    mov rdi, rsp
+    call sb_free
+    EPILOGUE
+
+# place_mark(rax match, rdx its end, rcx delta, r8 -> placed (-1 until then), r9 position before
+#   the edits): a position at or before the match's start moves by the replacements before it, one
+#   inside the match or at its end goes to the replacement's start
+place_mark:
+    cmp qword ptr [r8], 0
+    jge 9f
+    cmp r9, rax
+    ja 1f
+    lea r10, [r9 + rcx]
+    mov [r8], r10
+    ret
+1:  cmp r9, rdx
+    ja 9f
+    lea r10, [rax + rcx]
+    mov [r8], r10
+9:  ret
 
 FN find_changed
     mov dword ptr [rip + g_find_word], 0
