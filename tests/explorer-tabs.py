@@ -4,8 +4,10 @@
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
@@ -73,6 +75,46 @@ with tempfile.TemporaryDirectory(prefix='rhun-explorer-tabs-') as temporary:
         names = tabs[0].removeprefix('tabs=').replace('*', '').split(' | ')
         assert names == ['kept.txt'] + ['a.txt'] * (project / 'd/a.txt').exists(), tabs
         print('ok   explorer-tabs/a-failed-deletion-keeps-the-tabs-of-what-is-left')
+
+    if os.name != 'nt' and os.geteuid() != 0:
+        # the folder cannot be searched any more once its file is open: the deletion fails, and the
+        # file's tab stays, as nothing says the file is gone
+        fresh()
+        control = Path(tempfile.mkdtemp(prefix='rhun-et-', dir='/tmp')) / 'sock'
+        process = subprocess.Popen([str(EXE), project.as_posix(), (project / 'd/a.txt').as_posix(),
+                                    '--headless', '1000x700', '--scale', '1', '--control', str(control)],
+                                   env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(15)
+        for _ in range(500):
+            try:
+                client.connect(str(control))
+                break
+            except (FileNotFoundError, ConnectionRefusedError):
+                time.sleep(0.01)
+        reader = client.makefile('r', encoding='utf-8')
+
+        def command(line):
+            client.sendall((line + '\n').encode('utf-8'))
+            out = []
+            while (reply := reader.readline()) != 'ok\n':
+                assert reply not in ('', 'error\n'), line
+                out.append(reply)
+            return ''.join(out)
+        (project / 'd').chmod(0)
+        try:
+            for line in (FOLDER_MENU, MENU_DELETE, CONFIRM):
+                command(line)
+            tabs = command('print-tabs')
+        finally:
+            (project / 'd').chmod(0o700)
+            command('quit') if process.poll() is None else None
+            process.wait(timeout=10)
+            client.close()
+            shutil.rmtree(control.parent, ignore_errors=True)
+        assert (project / 'd/a.txt').exists()
+        assert tabs == 'tabs=*a.txt\n', tabs
+        print('ok   explorer-tabs/a-folder-that-cannot-be-searched-keeps-its-tabs')
 
     fresh()
     tabs = run([FOLDER_MENU, MENU_RENAME, 'key ctrl+a', 'type e', 'key Return', 'wait 100',

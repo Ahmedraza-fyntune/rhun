@@ -220,6 +220,20 @@ FN file_stamp
     xor ecx, ecx
     ret
 
+# file_missing(path) -> 1 if nothing is there, not even a link (ENOENT, ENOTDIR); 0 if something is or
+#   that cannot be told (EACCES: a folder on the way that cannot be searched)
+FN file_missing
+    lea rsi, [rip + stat_buf]
+    SYS SYS_lstat
+    xor ecx, ecx
+    cmp rax, -2
+    sete cl
+    cmp rax, -20
+    jne 1f
+    mov ecx, 1
+1:  mov eax, ecx
+    ret
+
 # file_mtime(path) -> unix seconds (0 on error)
 FN file_mtime
     lea rsi, [rip + stat_buf]
