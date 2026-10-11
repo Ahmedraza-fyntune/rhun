@@ -866,6 +866,9 @@ F TAB_kind, 8
 F TAB_doc, 8
 ENDSTRUCT TAB_SIZE
 
+.equ SIDEBAR_W_DEFAULT, 240        # points: the explorer's and the agents panel's widths
+.equ AGENTS_W_DEFAULT, 380
+
 .equ FOCUS_EDITOR, 0
 .equ FOCUS_PALETTE, 1
 .equ FOCUS_FIND, 2

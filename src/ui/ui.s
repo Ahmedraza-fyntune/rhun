@@ -4,7 +4,7 @@
 .bss
 .p2align 3
 .globl g_mt, g_s, g_mx, g_my, g_mdown, g_pressed, g_released, g_scroll_x, g_scroll_y
-.globl g_hot, g_active, g_cursor, g_block, g_clicks, g_face_ui, g_face_small, g_face_big, g_face_code
+.globl g_hot, g_active, g_cursor, g_block, g_clicks, g_press_x, g_face_ui, g_face_small, g_face_big, g_face_code
 .globl g_hole
 g_mt: .zero 4 * MI_COUNT
 g_s: .long 0                    # float scale
@@ -23,8 +23,7 @@ g_clicks: .long 0               # click count of the last press (1..3)
 last_press_t: .quad 0
 last_press_x: .long 0
 last_press_y: .long 0
-g_press_x: .long 0
-g_press_y: .long 0
+g_press_x: .long 0              # where the left button went down last
 held_mx: .long 0                # a pointer move waiting for the frame of a press
 held_my: .long 0
 held_move: .long 0
@@ -196,8 +195,6 @@ FN ui_input_button
     # multi-click detection
     mov eax, [rip + g_mx]
     mov [rip + g_press_x], eax
-    mov eax, [rip + g_my]
-    mov [rip + g_press_y], eax
     call time_ms
     mov rcx, rax
     sub rcx, [rip + last_press_t]

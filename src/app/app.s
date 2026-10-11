@@ -88,7 +88,7 @@ pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folder
 .globl g_shot_path
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
-split_drag: .long 0
+split_grab: .long 0             # a divider's drag: the pointer's distance from it at the press
 split_l_bits: .long 0           # UB_* of the dividers, hit tested before the panels
 split_r_bits: .long 0
 .globl g_editor_rect
@@ -2431,10 +2431,40 @@ splitter:
     COLOR r9d, T_ACCENT
     call gfx_round_rect
     mov eax, [rsp]
-1:  test eax, UB_HELD
+1:  test eax, UB_DOUBLE
+    jz 5f
+    # a double-click puts the panel back at its default width; a drag after it starts from there
+    mov edi, SIDEBAR_W_DEFAULT
+    lea r15, [rip + cfg_sidebar_w]
+    cmp ebx, ID_SPLIT_L
+    je 7f
+    mov edi, AGENTS_W_DEFAULT
+    lea r15, [rip + cfg_agents_w]
+7:  mov [r15], edi
+    call sc
+    cmp ebx, ID_SPLIT_L
+    je 41f
+    neg eax
+    add eax, [rip + g_cv + CV_w]
+41: mov ecx, [rip + g_mx]
+    sub ecx, eax
+    mov [rip + split_grab], ecx
+    jmp 3f
+5:  test eax, UB_HELD
     jz 9f
-    # new width in logical points
+    test eax, UB_PRESS
+    jz 6f
+    # the press takes hold of the divider where it is: it keeps its distance from the pointer
     mov eax, [rip + g_mx]
+    sub eax, r12d
+    mov [rip + split_grab], eax
+    jmp 9f
+6:  # a click that does not move leaves the width alone (even one the layout narrowed)
+    mov eax, [rip + g_mx]
+    cmp eax, [rip + g_press_x]
+    je 9f
+    # new width in logical points
+    sub eax, [rip + split_grab]
     cmp ebx, ID_SPLIT_L
     jne 2f
     cvtsi2ss xmm0, eax

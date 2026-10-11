@@ -218,6 +218,9 @@ Hovering a title bar or explorer button for half a second shows its name and, fo
 current shortcut in your platform's notation. Once one is showing, the next button's appears at once.
 **Tooltips** in Settings > Appearance turns them off (`tooltips = false` under `[ui]`).
 
+Drag the line between the explorer or the agents panel and the editor to resize the panel; a
+double-click on it puts the panel back at its default width.
+
 Scrollbars stay out of sight until you scroll or point at them. **Auto-hide scrollbars** in
 Settings > Appearance keeps a faint one in view instead (`auto_hide_scrollbars = false` under `[ui]`).
 
