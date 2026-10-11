@@ -756,9 +756,22 @@ FN app_retarget_tabs
     jz 3f
     lea rdi, [rip + tmp_sb]
     call sb_clear
-    lea rdi, [rip + tmp_sb]
+    mov rdi, r13                # the new name without a separator at its end ("e/" in the prompt)
+    call strlen
+    mov rdx, rax
+4:  cmp rdx, 1
+    jbe 5f
+    cmp byte ptr [r13 + rdx - 1], '/'
+.ifdef WINDOWS
+    je 41f
+    cmp byte ptr [r13 + rdx - 1], 92
+.endif
+    jne 5f
+41: dec rdx
+    jmp 4b
+5:  lea rdi, [rip + tmp_sb]
     mov rsi, r13
-    call sb_push_cstr
+    call sb_push
     lea rdi, [rip + tmp_sb]
     mov rsi, [r15 + DOC_path]
     add rsi, r14
@@ -2122,8 +2135,25 @@ FN app_render
     mov dword ptr [rip + g_block], 1
 1:
     # no background: the bars, panels, dividers and the editor column cover the window, each with
-    # its own color (a whole-window fill under them was a fifth of every frame)
-    # panel sizes
+    # its own color (a whole-window fill under them was a fifth of every frame). A theme with a
+    # translucent color (#rrggbbaa) still gets it, so nothing blends with the frame before.
+    lea rcx, [rip + g_theme]
+    mov eax, -1
+    xor edx, edx
+0:  and eax, [rcx + rdx*4]
+    inc edx
+    cmp edx, T_COUNT
+    jb 0b
+    shr eax, 24
+    cmp eax, 255
+    je 0f
+    xor edi, edi
+    xor esi, esi
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    COLOR r8d, T_BG
+    call gfx_fill
+0:  # panel sizes
     mov edi, [rip + cfg_sidebar_w]
     call sc
     mov [rip + g_side_px], eax

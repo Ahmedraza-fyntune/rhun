@@ -124,6 +124,15 @@ with tempfile.TemporaryDirectory(prefix='rhun-explorer-tabs-') as temporary:
     assert (project / 'e/a.txt').read_text(encoding='utf-8') == 'Xalpha\n'
     print('ok   explorer-tabs/renaming-a-folder-moves-its-tabs')
 
+    # a new name typed with a slash at its end: the tab's path takes no double slash, so opening
+    # the file by its path finds that tab
+    fresh()
+    tabs = run([FOLDER_MENU, MENU_RENAME, 'key ctrl+a', 'type e/', 'key Return', 'wait 100',
+                f'open {(project / "e/a.txt").as_posix()}', 'print-tabs'], project / 'd/a.txt')
+    assert (project / 'e/a.txt').exists()
+    assert tabs == ['tabs=*a.txt'], tabs
+    print('ok   explorer-tabs/a-new-name-ending-in-a-slash')
+
     if os.name == 'nt':
         # Windows paths compare without case: a file opened as D\A.TXT closes with the folder d
         fresh()
