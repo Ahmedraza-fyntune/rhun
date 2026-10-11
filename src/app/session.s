@@ -81,7 +81,29 @@ FN session_remember_project
     test rax, rax
     jz 9f
     mov r12, rax
+    # written only when it names another folder: a relaunch into the same project read it, and the
+    # write (a new file, synced and renamed in place) cost half a millisecond at startup and exit
+    mov rdi, rax
+    call file_read_all
+    test rax, rax
+    jz 1f
+    mov r13, rax
+    mov r14, rdx
     mov rdi, rbx
+    call strlen
+    xor r15d, r15d
+    cmp rax, r14
+    jne 2f
+    mov rdi, r13
+    mov rsi, rbx
+    mov rdx, rax
+    call memeq
+    mov r15d, eax
+2:  mov rdi, r13
+    call mem_free
+    test r15d, r15d
+    jnz 9f
+1:  mov rdi, rbx
     call strlen
     mov rdx, rax
     mov rsi, rbx
