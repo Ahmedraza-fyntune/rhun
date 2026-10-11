@@ -93,7 +93,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
 
     for name, exe in [('cpu', 'cpu'), ('doc', 'doc'), ('syntax', 'syntax'), ('themes', 'theme'),
                       ('term', 'term'), ('diff', 'diff'), ('cols', 'cols'), ('config', 'config'),
-                      ('textarea', 'textarea'), ('ui-clip', 'ui_clip'), ('keys', 'keys'), ('config-strings', 'config_strings')]:
+                      ('textarea', 'textarea'), ('ui-clip', 'ui_clip'), ('fill', 'fill'), ('keys', 'keys'),
+                      ('config-strings', 'config_strings')]:
         check(name, lambda name=name, exe=exe: golden(name, exe + '_test'))
     for name, exe, file in [('strfind', 'str', 'strfind'), ('versions', 'update', 'versions'),
                             ('keymap-names-us-ru', 'xkb', 'keymap-names-us-ru'),

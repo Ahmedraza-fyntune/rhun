@@ -156,6 +156,8 @@ FN gfx_fill
     test eax, eax
     jz .Lfill_ret
     mov esi, eax                # alpha
+    cmp r12d, 4
+    jae .Lfill_wide
 .Lfill_brow:
     xor edi, edi
 .Lfill_bpx:
@@ -177,6 +179,79 @@ FN gfx_fill
     pop r12
     pop rbx
     ret
+# four pixels at a time, as BLEND has each channel: (color * a' + pixel * (256 - a')) >> 8, opaque;
+# the color's share is the same for every pixel. A modal's shade over the whole window took most of
+# its frame one pixel at a time. The xmm registers it takes are given back.
+.Lfill_wide:
+    sub rsp, 96
+    movdqu [rsp], xmm0
+    movdqu [rsp + 16], xmm1
+    movdqu [rsp + 32], xmm4
+    movdqu [rsp + 48], xmm5
+    movdqu [rsp + 64], xmm6
+    movdqu [rsp + 80], xmm7
+    mov eax, esi
+    shr eax, 7
+    add eax, esi                # a' 0..256
+    mov ecx, 256
+    sub ecx, eax
+    movd xmm4, ecx
+    pshuflw xmm4, xmm4, 0
+    punpcklqdq xmm4, xmm4       # 256 - a' in every word
+    movd xmm0, eax
+    pshuflw xmm0, xmm0, 0       # a' in the low four
+    pxor xmm6, xmm6
+    movd xmm5, ebx
+    punpcklbw xmm5, xmm6        # the color's channels as words
+    pmullw xmm5, xmm0
+    punpcklqdq xmm5, xmm5       # times a', for two pixels
+    mov eax, 0xff000000
+    movd xmm7, eax
+    pshufd xmm7, xmm7, 0
+.Lfill_wrow:
+    xor edi, edi
+.Lfill_w4:
+    lea eax, [rdi + 4]
+    cmp eax, r12d
+    ja .Lfill_wtail
+    movdqu xmm0, [r15 + rdi*4]
+    movdqu xmm1, xmm0
+    psrldq xmm1, 8
+    punpcklbw xmm0, xmm6
+    punpcklbw xmm1, xmm6
+    pmullw xmm0, xmm4
+    pmullw xmm1, xmm4
+    paddw xmm0, xmm5
+    paddw xmm1, xmm5
+    psrlw xmm0, 8
+    psrlw xmm1, 8
+    packuswb xmm0, xmm1
+    por xmm0, xmm7
+    movdqu [r15 + rdi*4], xmm0
+    add edi, 4
+    jmp .Lfill_w4
+.Lfill_wtail:
+    cmp edi, r12d
+    jae .Lfill_wnext
+    mov eax, [r15 + rdi*4]
+    mov ecx, ebx
+    mov edx, esi
+    BLEND
+    mov [r15 + rdi*4], eax
+    inc edi
+    jmp .Lfill_wtail
+.Lfill_wnext:
+    lea r15, [r15 + r14*4]
+    dec r13d
+    jnz .Lfill_wrow
+    movdqu xmm0, [rsp]
+    movdqu xmm1, [rsp + 16]
+    movdqu xmm4, [rsp + 32]
+    movdqu xmm5, [rsp + 48]
+    movdqu xmm6, [rsp + 64]
+    movdqu xmm7, [rsp + 80]
+    add rsp, 96
+    jmp .Lfill_ret
 
 # gfx_blend_px(x, y, argb, alpha 0..255): alpha is multiplied with color alpha
 FN gfx_blend_px

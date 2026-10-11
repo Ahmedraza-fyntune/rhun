@@ -21,6 +21,7 @@ check config env XDG_CONFIG_HOME=tests/data/config-reload build/config_test
 check config-strings build/config_strings_test
 check keys build/keys_test
 check ui-clip build/ui_clip_test
+check fill build/fill_test
 check syntax build/syntax_test
 check themes build/theme_test
 check term build/term_test
