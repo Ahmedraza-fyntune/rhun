@@ -7,9 +7,10 @@ temporary folder from fixed seeds.
     python3 tools/perf-baseline.py --binary OLD --binary NEW
     python3 tools/perf-baseline.py --json results.json   # medians, for a later comparison
 
-Times are medians of --runs runs (default 5) of a whole headless process, less a run of the same
-setup without the measured steps where that makes sense; they include the scripted commands' own
-frames, not putting frames on a screen.
+Times are medians of --runs rounds (default 5); each round times every build once, in turns, so
+caches and the machine's load treat them alike. A time is a whole headless process, less a run of
+the same setup without the measured steps where that makes sense; it includes the scripted
+commands' own frames, not putting frames on a screen.
 """
 import argparse
 import json
@@ -87,14 +88,17 @@ def fixtures(work):
     return locals()
 
 
-def measure(exe, work, runs):
+def measure(exe, work):
+    """one sample of every workload"""
     f = FIXTURES
-    b = Bench(exe, work, runs)
+    b = Bench(exe, work, 1)
     moves = lambda n: ['move %d 600' % (500 + i % 2) for i in range(n)]
     results = {}
-    results['startup, empty folder (ms)'] = b.median([f['empty']]) * 1000
-    results['startup, folder of 20,000 files (ms)'] = b.median([f['folder']]) * 1000
-    results['open a 20 MB file (ms)'] = b.median([f['big']]) * 1000
+    # startups after one not timed, so the file cache holds what they read
+    for name, target in (('startup, empty folder (ms)', f['empty']), ('startup, folder of 20,000 files (ms)',
+                         f['folder']), ('open a 20 MB file (ms)', f['big'])):
+        b.run([target])
+        results[name] = b.median([target]) * 1000
     # each step is two moves, a frame each
     results['editor frame, 2560x1600 @2x (ms)'] = b.per_step(
         [f['code']], [], ['move 500 600', 'move 501 600'], 50, size='2560x1600', scale='2') / 2
@@ -145,11 +149,17 @@ def main():
         work = Path(temporary).resolve()
         print('making fixtures...', file=sys.stderr)
         FIXTURES = fixtures(work)
-        table = {}
-        for exe in binaries:
-            version = subprocess.run([exe, '--version'], capture_output=True, text=True).stdout.strip()
-            print('timing %s (%s)...' % (exe, version), file=sys.stderr)
-            table['%s (%s)' % (version, exe)] = measure(exe, work, args.runs)
+        names = {exe: '%s (%s)' % (subprocess.run([exe, '--version'], capture_output=True,
+                                                   text=True).stdout.strip(), exe) for exe in binaries}
+        samples = {exe: {} for exe in binaries}
+        for round in range(args.runs):
+            print('round %d of %d...' % (round + 1, args.runs), file=sys.stderr)
+            order = binaries[round % len(binaries):] + binaries[:round % len(binaries)]
+            for exe in order:
+                for name, value in measure(exe, work).items():
+                    samples[exe].setdefault(name, []).append(value)
+        table = {names[exe]: {name: statistics.median(values) for name, values in samples[exe].items()}
+                 for exe in binaries}
     names = list(next(iter(table.values())))
     width = max(map(len, names))
     print(' ' * width + ''.join('  %18s' % k.split(' (')[0] for k in table))

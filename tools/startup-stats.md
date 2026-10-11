@@ -93,5 +93,6 @@ medians:
 python3 tools/perf-baseline.py --binary old/build/rhun --binary build/rhun
 ```
 
-The numbers are whole headless runs less the same run without the measured steps; they leave out
+The numbers are medians of `--runs` rounds (5 by default), each timing every build once in
+turns, of whole headless runs less the same run without the measured steps; they leave out
 putting frames on a screen, so compare builds on one machine, not machines.
