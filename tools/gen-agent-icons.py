@@ -73,5 +73,5 @@ def contours(filename):
             close(contour)
     return result
 
-data = {name: contours(ASSETS / f'{name.lower()}.svg') for name in ('CLAUDE', 'OPENAI', 'GROK')}
+data = {name: contours(ASSETS / f'{name.lower()}.svg') for name in ('CLAUDE', 'OPENAI', 'GROK', 'OPENCODE')}
 (ASSETS / 'contours.json').write_text(json.dumps(data, separators=(',', ':')) + '\n')

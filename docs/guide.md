@@ -10,8 +10,8 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Syntax highlighting for about 125 languages, defined in plain text grammar files
 - 40 color themes, dark and light, with a match for every Omarchy theme; add your own. A dark and a light theme switch with the system's dark mode on macOS, Windows and Linux, as in VS Code
 - Settings page and a readable config file, both applied while running
-- Agents panel: Claude Code, Codex and Grok Build sessions of the project and its Git worktrees, with theme-colored provider badges and icons, updated live as the agent works. Worktree sessions show a branch icon and the worktree name in a badge beside the provider. The list starts with the 50 most recently active sessions across all providers and related worktrees. Load more adds 50. Discovery runs in the background and reuses a saved metadata index; routine refreshes are silent, and pause while the panel is hidden.
-  Grok Build sessions come from `~/.grok/sessions` (`$GROK_HOME/sessions` when set) with the titles Grok gives them; one shows once it has a prompt, and a subagent's session stays inside its parent's. The clones Grok makes with `grok --worktree` are not Git worktrees of the project, so their sessions are not listed. `[agents] sources` picks the providers: `claude codex grok` by default.
+- Agents panel: Claude Code, Codex, Grok Build and OpenCode sessions of the project and its Git worktrees, with theme-colored provider badges and icons, updated live as the agent works. Worktree sessions show a branch icon and the worktree name in a badge beside the provider. The list starts with the 50 most recently active sessions across all providers and related worktrees. Load more adds 50. Discovery runs in the background and reuses a saved metadata index; routine refreshes are silent, and pause while the panel is hidden.
+  Grok Build sessions come from `~/.grok/sessions` (`$GROK_HOME/sessions` when set) with the titles Grok gives them; one shows once it has a prompt, and a subagent's session stays inside its parent's. The clones Grok makes with `grok --worktree` are not Git worktrees of the project, so their sessions are not listed. `[agents] sources` picks the providers: `claude codex grok opencode` by default. Existing explicit source selections are kept; add `opencode` to include it.
   Git worktree registrations supply the checkout roots. Rhun remembers verified worktree paths in repository-specific state, so their agent history stays visible after the checkouts are deleted or Git prunes their registrations. Nested Claude worktree history can also be recovered from its exact recorded path without prior Rhun state. If another repository takes over a remembered checkout path, Rhun keeps previously verified sessions and excludes new sessions from that repository. When Git metadata is stored outside the main checkout and contains no reference to its path, open the main checkout to include its sessions.
 - Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs; Cmd+click (Ctrl+click on Linux and Windows) opens links in the browser and files in a tab
 - Git: changed lines in the gutter, file status in tabs and the explorer, diffs, a history of all branches drawn as a graph, and source control as in VS Code: stage, commit, pull, push
@@ -55,6 +55,51 @@ it as it is, and Save As writes a copy elsewhere. Save As onto a read-only file 
 question about unsaved files when closing or quitting ask the same; Vim's `:wq` closes the file after
 Overwrite, and `:wa` leaves read-only files unsaved. In a folder that takes no new file, a save fails
 as any other.
+
+## OpenCode sessions
+
+Install the [OpenCode CLI](https://opencode.ai/docs/) and open a terminal in rhun's project.
+Run `opencode` there, or `opencode -m provider/model` to pick a model directly. Use `/connect`
+for provider sign-in and `/models` to select a model. Local and open weight models use
+[OpenCode's provider configuration](https://opencode.ai/docs/providers/), including Ollama,
+LM Studio and llama.cpp. Rhun uses OpenCode's saved settings and does not need provider keys.
+To resume a session, run `opencode -c` for the last one or `opencode -s SESSION_ID` for a specific one.
+
+The agents panel lists the project's top-level OpenCode sessions and related Git worktrees,
+with OpenCode's titles and a provider badge. Click a row to read its prompts, replies, tool calls
+and results. Streaming edits replace the stored conversation snapshot; routine background
+refreshes pick them up, including a conversation that remains open after leaving the first page.
+After `/undo` the undone messages are left out until `/redo`, as in OpenCode.
+Archived sessions and subagent sessions are omitted. Use **Refresh** for an immediate scan.
+The panel reads history, as it does for the other agents; interact with OpenCode in the terminal.
+
+OpenCode discovery requires a recent CLI with `opencode db` (verified with 1.19.0). It runs
+local SELECT queries in the background, without starting a server or making model requests,
+and follows the database path reported by the CLI, including `XDG_DATA_HOME` and `OPENCODE_DB`.
+The queries run only after OpenCode has written to its database, and at least every five
+minutes; an unchanged database starts no CLI. Discovery waits
+until OpenCode has created its data folder, so opening Rhun does not initialize an unused
+OpenCode profile. Only visible
+conversations and the open conversation are copied into Rhun's local state folder. Unchanged
+copies are reused, and the copy of a session OpenCode deletes or archives is removed. A copy
+holds what the panel shows, prompts, replies and tool calls; a part over 70 KB keeps the first
+16,384 characters of its text and 8,192 of a tool's output. A conversation whose copy would pass
+about 24 MB is listed without its transcript.
+On Linux and macOS the transcript cache folder is accessible only to its owner.
+The CLI must be on Rhun's PATH; the usual `~/.opencode/bin`, `~/.local/bin`, Homebrew and
+`/usr/local/bin` locations are also checked on Linux and macOS. Windows requires the native
+`opencode.exe` on PATH. Once OpenCode has a data folder, a CLI missing from PATH shows setup
+guidance in an empty panel;
+a failed query shows an OpenCode warning while the other sources still refresh. Check
+`opencode db path` and `opencode db 'SELECT 1'` in the terminal, update OpenCode if needed,
+then refresh the panel.
+
+To include OpenCode in an existing source selection, edit **Agent sources** in Settings or set:
+
+```ini
+[agents]
+sources = claude codex grok opencode
+```
 
 ## Install and update
 

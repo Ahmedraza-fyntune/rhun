@@ -59,7 +59,10 @@ ICONS = [
 root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 inc = os.path.join(root, 'src/rhun.inc')
 with open(os.path.join(root, 'assets/icons/providers/contours.json')) as source:
-    for name, contours in json.load(source).items():
+    providers = json.load(source)
+    for name, contours in providers.items():
+        if name == 'OPENCODE':
+            continue
         ICONS.append((name, [('F', len(points), *[v for point in points for v in point])
                             for points in contours]))
 # explorer file icons (assets/icons/files, flattened by tools/file-icons.py): F_ and the file's name
@@ -69,6 +72,9 @@ with open(os.path.join(root, 'assets/icons/files/contours.json')) as source:
         FILE_ICONS[name] = len(ICONS)
         ICONS.append(('F_' + name.upper().replace('-', '_'), [('F', len(points), *[v for point in points for v in point])
                                                               for points in contours]))
+# Keep the existing embedded icon numbers stable when adding a provider.
+ICONS.append(('OPENCODE', [('F', len(points), *[v for point in points for v in point])
+                          for points in providers['OPENCODE']]))
 # icon_mask keys its cache by icon | size << 8
 assert len(ICONS) <= 256, len(ICONS)
 # the color names of file icons, in the order of their theme slots from T_ICON (src/app/theme.s)

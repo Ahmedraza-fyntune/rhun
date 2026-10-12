@@ -423,7 +423,7 @@ FN config_load
     jz 1f
     mov rdi, rax
     lea rsi, [rip + .Ldef_sources]
-    mov edx, 17
+    mov edx, 26
     call setting_assign
 1:  mov rdi, r15
     call mem_free
@@ -640,7 +640,7 @@ cfg_def_theme: .asciz "rhun-dark"
 cfg_def_light_theme: .asciz "rhun-light"
 .Lempty: .asciz ""
 .Ldef_exclude: .asciz ".git node_modules target build .cache __pycache__ .venv .idea .DS_Store"
-.Ldef_sources: .asciz "claude codex grok"
+.Ldef_sources: .asciz "claude codex grok opencode"
 .Lold_sources: .asciz "claude codex"
 .Lsources_key: .ascii "sources"
 .Lxdg: .asciz "XDG_CONFIG_HOME"
@@ -735,7 +735,7 @@ g_settings:
     SETTING .Ls_files, restore_session, ST_BOOL, cfg_restore_session, 0, 1, 1, 0, "Restore open files", "Reopen the files from the last session of a project."
     SETTING .Ls_files, restore_project, ST_BOOL, cfg_restore_project, 0, 1, 1, 0, "Reopen last project", "Reopen the project you closed with when no file or folder is given."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
-    SETTING .Ls_agents, sources, ST_STR, cfg_agent_sources, 0, 0, 0, 0, "Agent sources", "Which agents to show: claude, codex, grok."
+    SETTING .Ls_agents, sources, ST_STR, cfg_agent_sources, 0, 0, 0, 0, "Agent sources", "Which agents to show: claude, codex, grok, opencode."
     SETTING .Ls_terminal, shell, ST_STR, cfg_term_shell, 0, 0, 0, 0, "Shell", "Program the terminal runs. Empty uses $SHELL."
     SETTING .Ls_terminal, font_size, ST_INT, cfg_term_font_size, 8, 40, 1, 0, "Terminal font size", "Font size of the terminal panel."
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
