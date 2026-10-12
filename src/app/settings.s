@@ -65,9 +65,12 @@ FN setting_applied
     jne 3f
     call explorer_refresh
     jmp 9f
-3:  lea rcx, [rip + cfg_agent_sources]
-    cmp rax, rcx
-    jne 4f
+3:  lea rcx, [rip + cfg_agents_claude]
+    mov rdx, rax
+    sub rdx, rcx
+    cmp rdx, 12                 # one of the four provider switches
+    ja 4f
+    call config_agent_sources
     call agents_set_project
     jmp 9f
 4:  lea rcx, [rip + cfg_git]

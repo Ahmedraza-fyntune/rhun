@@ -742,5 +742,20 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
         self.assertEqual(status, 2)
         self.assertEqual(self.calls().count('db WITH'), before + 1)
 
+    def test_switches_and_a_config_from_before_them(self):
+        self.session('Switched')
+        config = self.home / 'config/rhun/config'
+        base = '[updates]\ncheck = false\n[git]\nenabled = false\n'
+        # 0.17.8 to 0.17.11 saved the default selection, which knew no OpenCode
+        config.write_text(base + '[agents]\nsources = claude codex grok\n')
+        self.assertEqual(self.editor(['print-agents']), 'OpenCode: Switched\n')
+        config.write_text(base + '[agents]\nopencode = false\n')
+        self.assertEqual(self.editor(['print-agents']), '')
+        config.write_text(base + '[agents]\nsources = codex\n')
+        self.editor(['cmd toggle_vim'])  # a change saves the file
+        saved = config.read_text()
+        self.assertNotIn('sources', saved)
+        self.assertIn('[agents]\nclaude = false\ncodex = true\ngrok = false\nopencode = true\n', saved)
+
 
 if __name__ == '__main__': unittest.main()

@@ -32,6 +32,7 @@ BOOLS = {
                'indent_guides word_wrap whitespace cursor_blink smooth_caret auto_pairs '
                'scroll_past_end vim_mode'),
     'files': 'trim_trailing_whitespace final_newline restore_session restore_project',
+    'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
 }
 INTS = {
@@ -44,7 +45,7 @@ INTS = {
 }
 STRINGS = {
     ('ui', 'font'): 'missing font café.ttf', ('editor', 'font'): 'missing mono café.ttf',
-    ('files', 'exclude'): '.git hidden café', ('agents', 'sources'): 'claude codex',
+    ('files', 'exclude'): '.git hidden café',
     ('terminal', 'shell'): 'missing shell café', ('git', 'commit_model'): 'model:café',
 }
 CHOICES = {('ui', 'decorations'): ('auto', 'client', 'server'),
@@ -82,7 +83,7 @@ class SettingsUI(unittest.TestCase):
             k + ' = ' + v + '\n' for k, v in values.items()) for s, values in data.items()),
             encoding='utf-8')
 
-    def run_editor(self, actions, height=4200, width=1400):
+    def run_editor(self, actions, height=4600, width=1400):
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join(['cmd settings', *actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), self.work.as_posix(), '--headless', f'{width}x{height}',

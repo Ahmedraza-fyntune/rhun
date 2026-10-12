@@ -986,14 +986,14 @@ class CodexDiscovery(unittest.TestCase):
             if section != previous:
                 y += 48
                 previous = section
-            if (section, key) == ('agents', 'sources'):
+            if (section, key) == ('agents', 'codex'):
                 y += 32
                 break
             y += 72
         script = self.home / 'commands.rsc'
-        modifier = 'cmd' if sys.platform == 'darwin' else 'ctrl'
-        script.write_text('wait-agents\ncmd settings\n' + f'click 800 {y}\nkey {modifier}+a\n'
-                          'type claude\nkey Return\nwait-agents\nprint-agents\nquit\n')
+        # Codex's switch, on the page beside the agents panel
+        script.write_text('wait-agents\ncmd settings\n' + f'click 955 {y}\n'
+                          'wait-agents\nprint-agents\nquit\n')
         result = subprocess.run([str(EXE), str(self.project), '--headless', '1400x3800',
                                  '--scale', '1', '--script', str(script)], env=self.env,
                                 capture_output=True, timeout=20)
@@ -1316,7 +1316,7 @@ class CodexDiscovery(unittest.TestCase):
             self.assertTrue(process.stdout.readline().startswith(b'project='))
             config = self.home / 'config/rhun/config'
             config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n'
-                              '[agents]\nsources = claude\n')
+                              '[agents]\nclaude = true\ncodex = false\ngrok = false\nopencode = false\n')
             output, errors = process.communicate(timeout=20)
             self.assertEqual(process.returncode, 0, errors)
             self.assertEqual(output, b'Claude: Claude only\n')
