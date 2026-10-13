@@ -88,6 +88,7 @@ with open(os.environ['OPENCODE_FIXTURE_DB'] + '.cwd', 'a') as log:
 assert bun or 'BUN_BE_BUN' not in os.environ, args  # OpenCode itself, not Bun, answers the others
 mode = os.environ.get('OPENCODE_FIXTURE_MODE', '')
 if mode == 'fail': sys.exit(1)
+if mode == 'fail-with' and entry.endswith(' WITH'): sys.exit(1)
 if mode == 'invalid': print('not TSV'); sys.exit()
 if mode == 'slow' and entry.endswith(' WITH'):
     import time; time.sleep(11)
@@ -730,6 +731,25 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
         folders = set(Path(str(self.db) + '.cwd').read_text().splitlines())
         self.assertEqual({Path(folder).resolve() for folder in folders}, {(self.home / 'state/rhun').resolve()})
 
+    def test_a_relative_path_entry_finds_the_cli(self):
+        sid = self.session('Relative')
+        self.part(sid, 'user', {'type': 'text', 'text': 'Prompt'})
+        self.env['PATH'] = 'bin' + os.pathsep + '/usr/bin:/bin'
+        rows, status, _ = self.worker(cwd=self.home)
+        self.assertEqual((status, rows[0]['title']), (0, 'Relative'))
+
+    def test_a_failed_transcript_query_asks_the_cli_again(self):
+        sid = self.session('Transcript fails')
+        self.part(sid, 'user', {'type': 'text', 'text': 'Prompt'})
+        self.env['OPENCODE_FIXTURE_MODE'] = 'fail-with'
+        self.assertEqual(self.worker()[1], 2)
+        self.env.pop('OPENCODE_FIXTURE_MODE')
+        calls = len(self.calls())
+        rows, status, _ = self.worker()
+        self.assertEqual((status, rows[0]['title']), (0, 'Transcript fails'))
+        self.assertEqual(self.calls()[calls:], ['--version', self.PATH, self.SELECT, self.WITH])
+        self.assertIn('Prompt', self.snapshot(sid).read_text())
+
     def test_damaged_state_file_asks_the_cli_again(self):
         self.session('State')
         self.worker()
@@ -1139,6 +1159,11 @@ CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, typ
         self.assertEqual((status, rows[0]['title']), (0, 'First prompt'))
         self.set_session(sid, 'title', 'Named')
         self.assertEqual(self.worker()[0][0]['title'], 'Named')
+        pasted = self.session(None)
+        self.part(pasted, 'user', {'type': 'text', 'text': 'A pasted log ' + 'x' * 2000000})
+        rows, status, _ = self.worker()
+        self.assertEqual((status, [row['title'][:13] for row in rows]), (0, ['A pasted log ', 'Named']))
+        self.assertLess(len(self.snapshot(pasted).read_text().splitlines()[0]), 2000)  # the title's start alone
 
 
 @unittest.skipIf(BUN is None, 'no Bun runtime: neither OpenCode 2 nor bun is installed')

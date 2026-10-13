@@ -59,7 +59,21 @@ FN agent_opencode_init
 .else
     jmp 9f                      # Windows looks on PATH alone
 .endif
-3:  mov [rip + cli], rax
+3:  mov rbx, rax
+    # a relative PATH entry names it from here, and it runs in Rhun's state folder (run_cli)
+    PATH_ABSOLUTE rbx, 4f
+    sub rsp, 4096
+    mov rdi, rsp
+    mov esi, 4000
+    SYS SYS_getcwd
+    test rax, rax
+    js 41f
+    mov rdi, rsp
+    mov rsi, rbx
+    call path_join
+    mov rbx, rax
+41: add rsp, 4096
+4:  mov [rip + cli], rbx
     mov eax, 1
     EPILOGUE
 9:  xor eax, eax
