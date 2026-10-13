@@ -228,8 +228,8 @@ THE SOFTWARE.
         <button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span>
         <div class="windows-install">
           <div class="install-box-heading"><span class="install-os-label">Terminal install · <span><svg class="os-icon" aria-hidden="true" focusable="false"><use href="#os-windows"/></svg>Windows PowerShell</span></span><span aria-hidden="true">&gt;_</span></div>
-          <div class="command"><span class="prompt" aria-hidden="true">&gt;</span><code>powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;&amp; ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))&quot;</code></div>
-          <button class="copy button" type="button" data-copy="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;&amp; ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))&quot;">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span>
+          <div class="command"><span class="prompt" aria-hidden="true">&gt;</span><code>powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; &amp; ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))&quot;</code></div>
+          <button class="copy button" type="button" data-copy="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; &amp; ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))&quot;">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span>
         </div>
       </div>
     </div>

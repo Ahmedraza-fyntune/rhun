@@ -6,7 +6,7 @@
 <pre><code>curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></pre>
 <h3>Windows</h3>
 <p>Paste this into PowerShell, then open a new terminal to use the <code>rhun</code> command.</p>
-<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))"</code></pre>
+<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; &amp; ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))"</code></pre>
 <p>Prefer a download? Get an archive from <a href="https://github.com/vshvedov/rhun/releases/latest">Releases</a>. On Windows, extract the ZIP and open <code>rhun.exe</code>. Keep <code>rhun.com</code> beside it for terminal use.</p>
 </section>
 <section id="open">
