@@ -15,11 +15,12 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-# stapler validate asks Apple's ticket service, and a CI runner can lose that connection ("The network
-# connection was lost", error 68) with a good ticket: it is asked again, up to five times, before failing.
-validate() {
+# stapler staple and validate ask Apple's ticket service, and a CI runner can lose that connection ("The
+# network connection was lost", error 68) with a good ticket: it is asked again, up to five times, before
+# failing. Stapling again replaces the ticket.
+stapler() {
     tries=1
-    until xcrun stapler validate "$1"; do
+    until xcrun stapler "$@"; do
         [ "$tries" -lt 5 ] || return 1
         sleep $((tries * 15))
         tries=$((tries + 1))
@@ -30,7 +31,7 @@ verify_app() {
     codesign --verify --strict --deep --verbose=2 "$1"
     team=$(codesign -dv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p')
     [ "$team" = G29V3JRMJJ ] || { echo "verify-mac-release: unexpected developer ($team)" >&2; exit 1; }
-    validate "$1"
+    stapler validate "$1"
     spctl --assess --type execute --verbose=2 "$1"
     test "$(plutil -extract CFBundleShortVersionString raw "$1/Contents/Info.plist")" = "${version%%-*}"
     test "$("$1/Contents/MacOS/rhun" --version)" = "rhun $version"
@@ -41,7 +42,7 @@ xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");rhun-release-ve
 verify_app "$work/zip/rhun.app"
 
 codesign --verify --strict --verbose=2 "$dmg"
-validate "$dmg"
+stapler validate "$dmg"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
 mkdir "$work/dmg"
 hdiutil attach -quiet -readonly -nobrowse -mountpoint "$work/dmg" "$dmg"
