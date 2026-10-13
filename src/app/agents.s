@@ -63,6 +63,9 @@ index_debounce: .quad 0
 index_started: .quad 0
 index_runs: .quad 0             # workers started (print-agents-runs)
 sources_hash: .quad 0
+model_noted: .long 0            # row_model found a model since cleared (agent_session_tail_title)
+.p2align 3
+prefix_buf: .zero 65536         # model_before: the beginning of a line that begins near a window's end
 .data
 index_fd: .long -1
 common_wd: .long -1             # the watch of the common .git folder (agents_watch_repo)
@@ -544,6 +547,11 @@ apply_page:
     mov rax, [r12 + AS_worktree]
     mov [r13 + AS_worktree], rax
     mov qword ptr [r12 + AS_worktree], 0
+    mov rdi, [r13 + AS_model]
+    call mem_free
+    mov rax, [r12 + AS_model]
+    mov [r13 + AS_model], rax
+    mov qword ptr [r12 + AS_model], 0
     cmp dword ptr [r13 + AS_loaded], 0
     jne 62f
     mov rax, [r12 + AS_stamp]
@@ -708,6 +716,8 @@ FN agent_session_free
     call mem_free
     mov rdi, [rbx + AS_worktree]
     call mem_free
+    mov rdi, [rbx + AS_model]
+    call mem_free
     mov rdi, rbx
     call mem_free
     EPILOGUE
@@ -727,6 +737,12 @@ session_clear_msgs:
     inc r12
     jmp 1b
 2:  mov qword ptr [rbx + AS_msgs + VEC_len], 0
+    mov rdi, [rbx + AS_log_model]
+    call mem_free
+    mov rdi, [rbx + AS_shown_model]
+    call mem_free
+    mov qword ptr [rbx + AS_log_model], 0
+    mov qword ptr [rbx + AS_shown_model], 0
     EPILOGUE
 
 # agent_read_head(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
@@ -991,6 +1007,124 @@ set_title:
 9:  EPILOGUE
 
 # add_msg(s, role, ptr, len, name cstr or 0)
+# set_str(slot, ptr, len): *slot holds a copy of the bytes; an equal one stays
+set_str:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov rdi, [rbx]
+    test rdi, rdi
+    jz 1f
+    call strlen
+    cmp rax, r13
+    jne 1f
+    mov rdi, [rbx]
+    mov rsi, r12
+    mov rdx, r13
+    call memeq
+    test eax, eax
+    jnz 9f
+1:  mov rdi, [rbx]
+    call mem_free
+    mov rdi, r12
+    mov rsi, r13
+    call mem_dup
+    mov [rbx], rax
+9:  EPILOGUE
+
+# model_ok(ptr, len) -> 1 when the bytes name a model. Nothing, Claude Code's "<synthetic>" (its own
+#   notices) and anything past a record's short string name none.
+model_ok:
+    xor eax, eax
+    test rdi, rdi
+    jz 9f
+    test rsi, rsi
+    jz 9f
+    cmp rsi, 120
+    ja 9f
+    cmp byte ptr [rdi], '<'
+    je 9f
+    xor ecx, ecx
+1:  cmp byte ptr [rdi + rcx], ' '
+    jb 9f
+    inc rcx
+    cmp rcx, rsi
+    jb 1b
+    inc eax
+9:  ret
+
+# row_model(s, ptr, len): the model the session's row shows
+row_model:
+    PROLOGUE
+    lea rbx, [rdi + AS_model]
+    mov r14d, 1
+    jmp 1f
+# log_model(s, ptr, len): the model the log names for the replies that follow
+log_model:
+    PROLOGUE
+    lea rbx, [rdi + AS_log_model]
+    xor r14d, r14d
+1:  mov r12, rsi
+    mov r13, rdx
+    mov rdi, rsi
+    mov rsi, rdx
+    call model_ok
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call set_str
+    test r14d, r14d
+    jz 9f
+    mov dword ptr [rip + model_noted], 1
+9:  EPILOGUE
+
+# note_model(s, ptr, len): both: the log names the model of the replies that follow, and the last of
+#   them is the row's
+note_model:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call log_model
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call row_model
+    EPILOGUE
+
+# reply_label(s, text, len) -> the model a reply's label shows: the log's, when another one was shown
+#   last (or none), else 0
+reply_label:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    test rdx, rdx
+    jz 8f                       # an empty reply is not shown
+    mov rsi, [rbx + AS_log_model]
+    test rsi, rsi
+    jz 8f
+    mov rdi, [rbx + AS_shown_model]
+    test rdi, rdi
+    jz 1f
+    call strcmp_eq
+    test eax, eax
+    jnz 8f
+1:  mov rdi, [rbx + AS_log_model]
+    call strlen
+    lea rdi, [rbx + AS_shown_model]
+    mov rsi, [rbx + AS_log_model]
+    mov rdx, rax
+    call set_str
+    mov rax, [rbx + AS_shown_model]
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 add_msg:
     PROLOGUE 16
     mov rbx, rdi
@@ -1196,7 +1330,7 @@ tool_field:
 
 # ingest_line(s, ptr, len, full): full=0 only looks for a title
 FN ingest_line
-    PROLOGUE 32
+    PROLOGUE 48
     mov rbx, rdi
     mov [rsp], ecx
     mov rdi, rsi
@@ -1335,12 +1469,27 @@ FN ingest_line
 4:  inc r14d
     jmp 2b
 .Lil_assist:
-    cmp dword ptr [rsp], 0
-    je .Lil_ret
     mov rdi, r12
     lea rsi, [rip + .Lmessage]
     call json_get
+    mov r13, rax
     mov rdi, rax
+    lea rsi, [rip + .Lmodel]
+    call json_get
+    mov rdi, rax
+    call json_str
+    xor ecx, ecx                # Claude Code's own notices ("<synthetic>") are no model's replies
+    test rdx, rdx
+    jz 11f
+    cmp byte ptr [rax], '<'
+    sete cl
+11: mov [rsp + 32], ecx
+    mov rdi, rbx
+    mov rsi, rax
+    call note_model
+    cmp dword ptr [rsp], 0
+    je .Lil_ret
+    mov rdi, r13
     lea rsi, [rip + .Lcontent]
     call json_get
     mov r13, rax
@@ -1367,11 +1516,19 @@ FN ingest_line
     call json_get
     mov rdi, rax
     call json_str
-    mov rdi, rbx
-    mov esi, R_ASSIST
-    mov rcx, rdx
-    mov rdx, rax
+    mov [rsp + 16], rax
+    mov [rsp + 24], rdx
     xor r8d, r8d
+    cmp dword ptr [rsp + 32], 0
+    jne 12f
+    mov rdi, rbx
+    mov rsi, rax
+    call reply_label
+    mov r8, rax
+12: mov rdi, rbx
+    mov esi, R_ASSIST
+    mov rdx, [rsp + 16]
+    mov rcx, [rsp + 24]
     call add_msg
     jmp 7f
 6:  mov rdi, [rsp + 8]
@@ -1430,6 +1587,20 @@ FN ingest_line
     mov [rbx + AS_mtime], rax
 11:
     mov rdi, r12
+    lea rsi, [rip + .Lmodel]
+    call json_get
+    mov rdi, rax
+    call json_str
+    mov [rsp + 16], rax
+    mov [rsp + 24], rdx
+    mov rdi, [rbx + AS_model]   # the header names the row's model, or none: a deleted message's goes
+    call mem_free
+    mov qword ptr [rbx + AS_model], 0
+    mov rdi, rbx
+    mov rsi, [rsp + 16]
+    mov rdx, [rsp + 24]
+    call row_model
+    mov rdi, r12
     lea rsi, [rip + .Loc_title]
     call json_get
     mov rdi, rax
@@ -1475,16 +1646,33 @@ FN ingest_line
     test eax, eax
     jz 1f
     mov r15d, R_USER
-1:  mov rdi, r13
+1:  mov rdi, r12
+    lea rsi, [rip + .Lmodel]
+    call json_get
+    mov rdi, rax
+    call json_str
+    mov rdi, rbx                # the row keeps the header's: the latest message's, also one of tools
+    mov rsi, rax
+    call log_model
+    mov rdi, r13
     lea rsi, [rip + .Ltext]
     call json_get
     mov rdi, rax
     call json_str
-    mov rcx, rdx
-    mov rdx, rax
-    mov esi, r15d
+    mov [rsp + 16], rax
+    mov [rsp + 24], rdx
+    xor r14d, r14d
+    cmp r15d, R_ASSIST
+    jne 12f
     mov rdi, rbx
-    xor r8d, r8d
+    mov rsi, rax
+    call reply_label
+    mov r14, rax
+12: mov rdi, rbx
+    mov esi, r15d
+    mov rdx, [rsp + 16]
+    mov rcx, [rsp + 24]
+    mov r8, r14
     call add_msg
     jmp .Lil_ret
 .Loc_part_tool:
@@ -1552,6 +1740,27 @@ FN ingest_line
 
 .Lil_codex:
     mov rdi, r12
+    lea rsi, [rip + .Ltype]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Lturn_context]
+    call json_is
+    test eax, eax
+    jz .Lcx_item
+    mov rdi, r12
+    lea rsi, [rip + .Lpayload]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Lmodel]
+    call json_get
+    mov rdi, rax
+    call json_str
+    mov rdi, rbx
+    mov rsi, rax
+    call note_model
+    jmp .Lil_ret
+.Lcx_item:
+    mov rdi, r12
     lea rsi, [rip + .Lpayload]
     call json_get
     mov r13, rax
@@ -1601,10 +1810,18 @@ FN ingest_line
     mov esi, R_ASSIST
 81: cmp dword ptr [rsp], 0
     je .Lil_ret
+    xor r8d, r8d
+    cmp esi, R_ASSIST
+    jne 82f
     mov rdi, rbx
+    mov rsi, [rsp + 8]
+    mov rdx, [rsp + 16]
+    call reply_label
+    mov r8, rax
+    mov esi, R_ASSIST
+82: mov rdi, rbx
     mov rdx, [rsp + 8]
     mov rcx, [rsp + 16]
-    xor r8d, r8d
     call add_msg
     jmp .Lil_ret
 .Lcx_tool:
@@ -1789,6 +2006,17 @@ FN ingest_line
     mov rsi, rax
     xor ecx, ecx
     call set_title
+    mov rdi, r13                # the model chosen for the prompt, when the log names it; the row shows
+    lea rsi, [rip + .Lgk_meta]  # the session's current one, from summary.json
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Lgk_model]
+    call json_get
+    mov rdi, rax
+    call json_str
+    mov rdi, rbx
+    mov rsi, rax
+    call log_model
     mov esi, R_USER
     jmp 112f
 111: mov rdi, r13
@@ -1806,10 +2034,18 @@ FN ingest_line
     mov esi, R_ASSIST
 112: cmp dword ptr [rsp], 0
     je .Lil_ret
+    xor r8d, r8d
+    cmp esi, R_ASSIST
+    jne 119f
     mov rdi, rbx
+    mov rsi, [rsp + 8]
+    mov rdx, [rsp + 16]
+    call reply_label
+    mov r8, rax
+    mov esi, R_ASSIST
+119: mov rdi, rbx
     mov rdx, [rsp + 8]
     mov rcx, [rsp + 16]
-    xor r8d, r8d
     call add_msg
     jmp .Lil_ret
     # a tool call: its title is the tool's name, rawInput its arguments as an object
@@ -1943,7 +2179,16 @@ FN agent_grok_title
     mov rbx, rdi
     mov rdi, [rbx + AS_path]
     call agent_grok_summary
+    mov r12, rax
     mov rdi, rax
+    lea rsi, [rip + .Lcurrent_model_id]
+    call json_get
+    mov rdi, rax
+    call json_str
+    mov rdi, rbx
+    mov rsi, rax
+    call row_model               # the session's current model only: its log names none
+    mov rdi, r12
     lea rsi, [rip + .Lgenerated_title]
     call json_get
     mov rdi, rax
@@ -2412,7 +2657,19 @@ FN agents_dump
     mov rdi, r15
     mov esi, ']'
     call sb_push_byte
-22: mov rdi, r15
+22: mov rsi, [r12 + AS_model]
+    test rsi, rsi
+    jz 25f
+    mov rdi, r15
+    lea rsi, [rip + .Lmodel_dump]
+    call sb_push_cstr
+    mov rdi, r15
+    mov rsi, [r12 + AS_model]
+    call sb_push_cstr
+    mov rdi, r15
+    mov esi, ']'
+    call sb_push_byte
+25: mov rdi, r15
     mov esi, ':'
     call sb_push_byte
     mov rdi, r15
@@ -3138,10 +3395,21 @@ list_draw:
     mov r8d, UB_HOVER
     mov r9, [r14 + AS_worktree]
     call tip_note_text
-7:
-    lea rdi, [rip + tmp]
+7:  mov dword ptr [rsp + 52], 1   # with the model
+71: lea rdi, [rip + tmp]
     call sb_clear
+    cmp dword ptr [rsp + 52], 0
+    je 72f
+    mov rsi, [r14 + AS_model]
+    test rsi, rsi
+    jz 72f
     lea rdi, [rip + tmp]
+    lea rsi, [rip + .Ldot]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, [r14 + AS_model]
+    call sb_push_cstr
+72: lea rdi, [rip + tmp]
     lea rsi, [rip + .Ldot]
     call sb_push_cstr
     mov rdi, [r14 + AS_mtime]
@@ -3157,8 +3425,6 @@ list_draw:
     lea rsi, [rip + .Llive]
     call sb_push_cstr
 8:  lea rdi, [rip + g_face_small]
-    cmp qword ptr [r14 + AS_worktree], 0
-    je 81f
     mov rsi, [rip + tmp + SB_ptr]
     mov rdx, [rip + tmp + SB_len]
     call text_width
@@ -3167,7 +3433,15 @@ list_draw:
     sub ecx, [rsp + 40]
     sub ecx, [rip + g_mt + 4*MI_16]
     cmp eax, ecx
-    jg .Lld_meta_done           # keep the worktree name visible without partial age text
+    jle 81f
+    cmp dword ptr [rsp + 52], 0
+    je 82f
+    cmp qword ptr [r14 + AS_model], 0
+    je 82f
+    mov dword ptr [rsp + 52], 0  # a narrow panel keeps the age rather than the model
+    jmp 71b
+82: cmp qword ptr [r14 + AS_worktree], 0
+    jne .Lld_meta_done          # keep the worktree name visible without partial age text
 81: lea rdi, [rip + g_face_small]
     mov esi, [rsp + 40]
     mov edx, r13d
@@ -3481,7 +3755,38 @@ draw_msg:
     add edx, [rip + g_mt + 4*MI_4]
     M ecx, MI_20
     call ui_text_c
-    lea rdi, [rsp]
+    # the model of the replies from here on, where it changed
+    cmp dword ptr [rbx + AM_role], R_ASSIST
+    jne 3f
+    mov rdi, [rbx + AM_name]
+    test rdi, rdi
+    jz 3f
+    mov [rsp + 96], eax
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Ldot]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + AM_name]
+    call sb_push_cstr
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 96]
+    mov edx, r12d
+    add edx, [rip + g_mt + 4*MI_4]
+    M ecx, MI_20
+    mov r8, [rip + tmp + SB_ptr]
+    mov r9, [rip + tmp + SB_len]
+    COLOR r10d, T_MUTED
+    mov r11d, [r14]
+    add r11d, [r14 + 8]
+    sub r11d, esi
+    sub r11d, [rip + g_mt + 4*MI_24]
+    push r11
+    push r10
+    call ui_text_v_fit
+    add rsp, 16
+3:  lea rdi, [rsp]
     push r12
     push r12
     mov r12d, [r14 + 32]
@@ -3616,6 +3921,15 @@ role_names: .quad .Lr0, .Lr1, .Lr2, .Lr3, .Lr4
 .Lgrok_name: .asciz "Grok"
 .Lopencode_name: .asciz "OpenCode"
 .Lworktree_dump: .asciz " [worktree: "
+.Lmodel_dump: .asciz " [model: "
+.Lmsg_obj: .ascii "\"message\":{"
+.Ltc_type: .ascii "\"type\":\"turn_context\""
+.Lkey_model: .ascii "\"model\":\""
+.Lmodel: .asciz "model"
+.Lturn_context: .asciz "turn_context"
+.Lcurrent_model_id: .asciz "current_model_id"
+.Lgk_meta: .asciz "_meta"
+.Lgk_model: .asciz "modelId"
 .Ldot: .asciz "  \302\267  "
 .Llive: .asciz "  \302\267  live"
 .Lnow: .asciz "just now"
@@ -3822,6 +4136,8 @@ page_footer:
 FN agent_session_tail_title
     PROLOGUE 32
     mov dword ptr [rsp + 16], 0
+    mov qword ptr [rsp + 24], 0
+    mov dword ptr [rip + model_noted], 0
     mov rbx, rdi
     mov rdi, [rbx + AS_path]
     call file_open_read
@@ -3869,6 +4185,7 @@ FN agent_session_tail_title
     inc r15
     cmp al, 10
     jne 3b
+    mov [rsp + 24], r15         # the window's first complete line
 4:  cmp r15, r14
     jae 7f
     mov rax, r15
@@ -3894,7 +4211,21 @@ FN agent_session_tail_title
 61: mov r15, [rsp]
     inc r15
     jmp 4b
-7:  mov rdi, r13
+    # A long Claude Code or Codex log whose last window names no model (a turn of long output): the
+    # latest model is in an earlier line, back to the bytes an earlier read covered (none on a first).
+7:  cmp dword ptr [rip + model_noted], 0
+    jne 71f
+    cmp dword ptr [rbx + AS_kind], 2
+    ja 71f
+    mov rdx, [rsp + 24]         # from the window's first complete line, or its start inside a longer one
+    add rdx, [rsp + 8]
+    jz 71f
+    mov rdi, rbx
+    mov esi, r12d
+    mov rcx, r13
+    mov r8, [rbx + AS_title_off]
+    call model_before
+71: mov rdi, r13
     call mem_free
     jmp 8f
 81: mov dword ptr [rsp + 16], 1
@@ -3902,6 +4233,362 @@ FN agent_session_tail_title
     SYS SYS_close
 9:  mov eax, [rsp + 16]
     EPILOGUE
+
+# model_before(s, fd, end, buffer of 262146 bytes, floor): the latest line between floor and end that
+#   names a model, read back a window at a time, at most 32 windows
+model_before:
+    PROLOGUE 48
+    mov rbx, rdi
+    mov r12d, esi
+    mov [rsp], rdx              # the bytes from here on are read
+    mov r13, rcx
+    mov dword ptr [rsp + 8], 32
+    xor eax, eax
+    test r8, r8
+    jz 10f
+    lea rax, [r8 - 1]           # with the byte before floor: a newline there starts a line at floor
+10: mov [rsp + 32], rax
+1:  mov rax, [rsp]
+    cmp rax, [rsp + 32]
+    jbe 9f
+    dec dword ptr [rsp + 8]
+    js 9f
+    sub rax, 262144
+    jb 11f
+    cmp rax, [rsp + 32]
+    jae 12f
+11: mov rax, [rsp + 32]
+12: mov [rsp + 16], rax         # this window's start
+    mov edi, r12d
+    mov rsi, rax
+    xor edx, edx
+    SYS SYS_lseek
+    test rax, rax
+    js 9f
+    mov r14, [rsp]
+    sub r14, [rsp + 16]
+    xor r15d, r15d
+2:  mov edi, r12d
+    lea rsi, [r13 + r15]
+    mov rdx, r14
+    sub rdx, r15
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 2b
+    test rax, rax
+    jle 9f
+    add r15, rax
+    cmp r15, r14
+    jb 2b
+    # its lines from the last; it ends where a line begins
+    mov r15, r14
+3:  test r15, r15
+    jz 6f
+    lea rax, [r15 - 1]          # the newline that ends this line
+    mov rcx, rax
+4:  test rcx, rcx
+    jz 5f
+    cmp byte ptr [r13 + rcx - 1], 10
+    je 5f
+    dec rcx
+    jmp 4b
+5:  test rcx, rcx
+    jnz 51f
+    mov rax, [rsp + 16]
+    test rax, rax
+    jz 51f
+    cmp rax, [rsp + 32]
+    jne 6f                      # it may begin before the window: the next one reads it
+    mov rdi, rbx                # at the floor, a line an earlier read ended inside of (it was being
+    mov esi, r12d               # written): its beginning, before the floor
+    mov rdx, rax
+    call line_prefix
+    jmp 9f
+51: mov [rsp + 24], rcx
+    mov rdi, rbx
+    lea rsi, [r13 + rcx]
+    mov rdx, rax
+    sub rdx, rcx
+    cmp r15, r14
+    jne 52f
+    cmp byte ptr [r13 + r14 - 1], 10
+    je 52f
+    inc rdx                     # the beginning of a line that ends past the window
+    cmp rdx, 65536
+    jae 54f
+    mov rsi, [rsp + 16]         # too little of it here: 64 KB from where it begins
+    add rsi, rcx
+    mov edi, r12d
+    xor edx, edx
+    SYS SYS_lseek
+    test rax, rax
+    js 53f
+55: mov edi, r12d
+    lea rsi, [rip + prefix_buf]
+    mov edx, 65536
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 55b
+    test rax, rax
+    jle 53f
+    mov rdx, rax
+    mov rdi, rbx
+    lea rsi, [rip + prefix_buf]
+54: call prefix_model
+    jmp 53f
+52: call line_model
+53:
+    cmp dword ptr [rip + model_noted], 0
+    jne 9f
+    mov r15, [rsp + 24]
+    jmp 3b
+    # the next window ends where this one's first complete line begins, past a newline before its end;
+    # without one, at its start (inside a line longer than the window)
+6:  xor ecx, ecx
+    lea rdx, [r14 - 1]
+7:  cmp rcx, rdx
+    jae 71f
+    cmp byte ptr [r13 + rcx], 10
+    je 72f
+    inc rcx
+    jmp 7b
+71: mov rax, [rsp + 16]
+    mov [rsp], rax
+    jmp 1b
+72: mov rax, [rsp + 16]
+    lea rax, [rax + rcx + 1]
+    cmp rax, [rsp]
+    jae 9f
+    mov [rsp], rax
+    jmp 1b
+9:  EPILOGUE
+
+# read_at(fd, offset, buffer, len) -> bytes read there (0 on failure)
+read_at:
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rdx
+    mov r13, rcx
+    xor edx, edx
+    SYS SYS_lseek
+    test rax, rax
+    js 8f
+    xor r14d, r14d
+1:  mov edi, ebx
+    lea rsi, [r12 + r14]
+    mov rdx, r13
+    sub rdx, r14
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 1b
+    test rax, rax
+    jle 2f
+    add r14, rax
+    cmp r14, r13
+    jb 1b
+2:  mov rax, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# line_prefix(s, fd, offset): prefix_model of the line that offset is in, from its beginning, found back
+#   past at most 1 MB
+line_prefix:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12d, esi
+    mov r14, rdx                # the bytes before it are searched
+    mov dword ptr [rsp], 16
+1:  xor eax, eax
+    test r14, r14
+    jz 4f                       # the file's first line
+    dec dword ptr [rsp]
+    js 9f
+    mov r15, r14
+    sub r15, 65536
+    jnb 2f
+    xor r15d, r15d
+2:  mov edi, r12d
+    mov rsi, r15
+    lea rdx, [rip + prefix_buf]
+    mov rcx, r14
+    sub rcx, r15
+    call read_at
+    mov rcx, r14
+    sub rcx, r15
+    cmp rax, rcx
+    jne 9f
+3:  test rcx, rcx
+    jz 31f
+    lea rdx, [rip + prefix_buf]
+    cmp byte ptr [rdx + rcx - 1], 10
+    je 32f
+    dec rcx
+    jmp 3b
+31: mov r14, r15                # no newline here: further back
+    jmp 1b
+32: lea rax, [r15 + rcx]        # the line begins after that newline
+4:  mov edi, r12d
+    mov rsi, rax
+    lea rdx, [rip + prefix_buf]
+    mov ecx, 65536
+    call read_at
+    test rax, rax
+    jz 9f
+    mov rdi, rbx
+    lea rsi, [rip + prefix_buf]
+    mov rdx, rax
+    call prefix_model
+9:  EPILOGUE
+
+# prefix_model(s, ptr, len): the beginning of a record too long to read whole names its model, in its
+#   first 64 KB, before the content: a key of a Claude Code reply's message object (at the record's top
+#   level, not a subagent's in a progress record), or of a Codex turn_context's payload, after its type
+prefix_model:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    cmp dword ptr [rbx + AS_kind], 2
+    ja 9f
+    cmp r13, 65536
+    jbe 1f
+    mov r13d, 65536
+1:  xor ecx, ecx                # offset
+    xor r8d, r8d                # depth
+    xor r10d, r10d              # in the object whose model counts
+4:  lea rax, [rcx + 21]         # the longest key compared
+    cmp rax, r13
+    ja 9f
+    movzx eax, byte ptr [r12 + rcx]
+    cmp al, '"'
+    je 5f
+    cmp al, '{'
+    je 41f
+    cmp al, '['
+    je 41f
+    cmp al, '}'
+    je 42f
+    cmp al, ']'
+    je 42f
+    inc rcx
+    jmp 4b
+41: inc r8d
+    inc rcx
+    jmp 4b
+42: dec r8d
+    inc rcx
+    cmp dword ptr [rbx + AS_kind], 1
+    jne 4b
+    cmp r8d, 1
+    jne 4b
+    xor r10d, r10d              # past Claude Code's message object
+    jmp 4b
+5:  cmp r8d, 1                  # a key of the record itself
+    jne 51f
+    lea rsi, [rip + .Lmsg_obj]
+    mov edx, 11
+    cmp dword ptr [rbx + AS_kind], 2
+    jne 50f
+    lea rsi, [rip + .Ltc_type]
+    mov edx, 21
+50: lea rdi, [r12 + rcx]
+    push rcx
+    push r8
+    call memeq
+    pop r8
+    pop rcx
+    or r10d, eax
+    jmp 6f
+51: cmp r8d, 2                  # a key of the message or payload
+    jne 6f
+    test r10d, r10d
+    jz 6f
+    lea rsi, [rip + .Lkey_model]
+    mov r9d, 9
+52: lea rdi, [r12 + rcx]
+    mov edx, r9d
+    push rcx
+    push r8
+    call memeq
+    pop r8
+    pop rcx
+    test eax, eax
+    jnz 7f
+6:  inc rcx                     # past the string
+61: cmp rcx, r13
+    jae 9f
+    movzx eax, byte ptr [r12 + rcx]
+    inc rcx
+    cmp al, 92
+    jne 62f
+    inc rcx
+    jmp 61b
+62: cmp al, '"'
+    jne 61b
+    jmp 4b
+7:  lea r14, [r12 + rcx]
+    add r14, r9
+    mov rax, r13
+    sub rax, rcx
+    sub rax, r9
+    mov rcx, rax
+    xor edx, edx
+2:  cmp rdx, rcx
+    jae 9f
+    cmp byte ptr [r14 + rdx], '"'
+    je 3f
+    cmp byte ptr [r14 + rdx], 92
+    je 9f                       # an escape: no model name
+    inc rdx
+    jmp 2b
+3:  mov rdi, rbx
+    mov rsi, r14
+    call row_model
+9:  EPILOGUE
+
+# line_model(s, line, len): the model a Claude Code reply or a Codex turn_context line names, for the row
+line_model:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rsi
+    mov rsi, rdx
+    call json_parse
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, rax
+    lea rsi, [rip + .Ltype]
+    call json_get
+    mov r13, rax
+    cmp dword ptr [rbx + AS_kind], 2
+    je 2f
+    mov rdi, r13
+    lea rsi, [rip + .Lassistant]
+    call json_is
+    test eax, eax
+    jz 9f
+    mov rdi, r12
+    lea rsi, [rip + .Lmessage]
+    call json_get
+    jmp 3f
+2:  mov rdi, r13
+    lea rsi, [rip + .Lturn_context]
+    call json_is
+    test eax, eax
+    jz 9f
+    mov rdi, r12
+    lea rsi, [rip + .Lpayload]
+    call json_get
+3:  mov rdi, rax
+    lea rsi, [rip + .Lmodel]
+    call json_get
+    mov rdi, rax
+    call json_str
+    mov rdi, rbx
+    mov rsi, rax
+    call row_model
+9:  EPILOGUE
 
 # Capture the file state being consumed by a full conversation read.
 observe_session:

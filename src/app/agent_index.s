@@ -544,7 +544,7 @@ history_read_file:
     sub rsi, r13
     sub rsi, 8
     lea rdx, [rip + history_records]
-    call agent_records_decode
+    call agent_records_decode4
     test eax, eax
     jz 8f
     xor r13d, r13d
@@ -619,7 +619,7 @@ history_save:
     call packet_start
     lea rdi, [rip + packet]
     mov rsi, r12
-    call agent_record_encode
+    call agent_record_encode4
     call packet_finish
     lea rdi, [rip + history_item]
     call sb_clear
@@ -811,7 +811,7 @@ member_save:
     call packet_start
     lea rdi, [rip + packet]
     mov rsi, rbx
-    call agent_record_encode
+    call agent_record_encode4
     mov rdi, rbx
     call mem_free
     call packet_finish
@@ -868,7 +868,7 @@ member_check:
     sub rsi, r14
     sub rsi, 8
     lea rdx, [rip + history_records]
-    call agent_records_decode
+    call agent_records_decode4
     test eax, eax
     jz 8f
     mov rax, [rip + history_records + VEC_ptr]
@@ -949,7 +949,7 @@ cache_load:
     test eax, eax
     jz 8f
     lea rdi, [rbx + r13 + 8]
-    mov rax, 0x3558444941484152   # RAHAIDX5, verified transcript ownership
+    mov rax, 0x3658444941484152   # RAHAIDX6, verified transcript ownership
     cmp [rdi], rax
     jne 8f
     mov rsi, r12
@@ -1041,7 +1041,7 @@ cache_save:
     inc r12
 11: inc rbx
     jmp 1b
-2:  mov rdi, 0x3558444941484152
+2:  mov rdi, 0x3658444941484152   # RAHAIDX6
     mov rsi, r12
     mov rdx, r12
     call packet_start
@@ -1477,6 +1477,9 @@ index_file:
     mov qword ptr [rbx + AS_title], 0
     mov dword ptr [rbx + AS_titled], 0
     mov qword ptr [rbx + AS_title_off], 0
+    mov rdi, [rbx + AS_model]   # read again with the title
+    call mem_free
+    mov qword ptr [rbx + AS_model], 0
 6:  mov [rbx + AS_stamp], r15
     mov rax, [rsp]
     mov [rbx + AS_recency], rax
@@ -1993,7 +1996,7 @@ sort_sift:
 .Lempty: .asciz ""
 .Lpayload: .asciz "payload"
 .Lcwd: .asciz "cwd"
-.Lcache_prefix: .asciz "/agents-index-v5-"
+.Lcache_prefix: .asciz "/agents-index-v6-"
 .Lhistory_prefix: .asciz "/agents-worktrees-v1-"
 .Lhistory_dir_prefix: .asciz "/agents-worktrees-v2-"
 .Lhistory_suffix: .asciz ".root"
@@ -3172,7 +3175,8 @@ opencode_part_line:
 # without its metadata. A batch past the output limit is tried again one conversation at a time.
 # After /undo OpenCode keeps the undone messages until the next prompt; as its TUI, the copy ends before
 # session.revert's message, in OpenCode's message order (time, then ID), and so does the estimate.
-.Loc_metadata: .ascii "SELECT json_object('id',s.id,'cwd',s.directory,'title',s.title,'updated',max(s.time_updated,coalesce((SELECT max(time_updated) FROM part WHERE session_id=s.id),0),coalesce((SELECT max(time_updated) FROM message WHERE session_id=s.id),0)),'created',s.time_created,'revision',CASE WHEN s.revert IS NULL THEN (SELECT coalesce(max(time_updated),0)||':'||count(*)||':'||coalesce(sum(length(data)),0)||':'||coalesce(sum(CASE WHEN substr(data,1,19)='{\"type\":\"reasoning\"' OR substr(data,1,14)='{\"type\":\"file\"' THEN 0 ELSE min(length(CAST(data AS BLOB)),70000) END),0) FROM part WHERE session_id=s.id) ELSE (SELECT coalesce(max(time_updated),0)||':'||count(*)||':'||coalesce(sum(length(data)),0) FROM part WHERE session_id=s.id)||':'||(SELECT coalesce(sum(CASE WHEN substr(p.data,1,19)='{\"type\":\"reasoning\"' OR substr(p.data,1,14)='{\"type\":\"file\"' THEN 0 ELSE min(length(CAST(p.data AS BLOB)),70000) END),0) FROM part p JOIN message m ON m.id=p.message_id LEFT JOIN message c ON c.id=CASE WHEN json_valid(s.revert) THEN json_extract(s.revert,'$.messageID') END WHERE p.session_id=s.id AND (c.id IS NULL OR m.time_created<c.time_created OR (m.time_created=c.time_created AND m.id<c.id))) END,'messages',(SELECT coalesce(max(time_updated),0)||':'||count(*)||':'||coalesce(sum(length(data)),0) FROM message WHERE session_id=s.id),'revert',s.revert) AS line FROM session s WHERE s.parent_id IS NULL AND s.time_archived IS NULL AND "
+# A reply's message names its model (a prompt's, the model chosen for the reply); the row shows the last.
+.Loc_metadata: .ascii "SELECT json_object('id',s.id,'cwd',s.directory,'title',s.title,'updated',max(s.time_updated,coalesce((SELECT max(time_updated) FROM part WHERE session_id=s.id),0),coalesce((SELECT max(time_updated) FROM message WHERE session_id=s.id),0)),'created',s.time_created,'revision',CASE WHEN s.revert IS NULL THEN (SELECT coalesce(max(time_updated),0)||':'||count(*)||':'||coalesce(sum(length(data)),0)||':'||coalesce(sum(CASE WHEN substr(data,1,19)='{\"type\":\"reasoning\"' OR substr(data,1,14)='{\"type\":\"file\"' THEN 0 ELSE min(length(CAST(data AS BLOB)),70000) END),0) FROM part WHERE session_id=s.id) ELSE (SELECT coalesce(max(time_updated),0)||':'||count(*)||':'||coalesce(sum(length(data)),0) FROM part WHERE session_id=s.id)||':'||(SELECT coalesce(sum(CASE WHEN substr(p.data,1,19)='{\"type\":\"reasoning\"' OR substr(p.data,1,14)='{\"type\":\"file\"' THEN 0 ELSE min(length(CAST(p.data AS BLOB)),70000) END),0) FROM part p JOIN message m ON m.id=p.message_id LEFT JOIN message c ON c.id=CASE WHEN json_valid(s.revert) THEN json_extract(s.revert,'$.messageID') END WHERE p.session_id=s.id AND (c.id IS NULL OR m.time_created<c.time_created OR (m.time_created=c.time_created AND m.id<c.id))) END,'messages',(SELECT coalesce(max(time_updated),0)||':'||count(*)||':'||coalesce(sum(length(data)),0) FROM message WHERE session_id=s.id),'revert',s.revert,'model',(SELECT coalesce(json_extract(data,'$.modelID'),json_extract(data,'$.model.modelID')) FROM message WHERE session_id=s.id AND CASE WHEN json_valid(data) THEN coalesce(json_extract(data,'$.modelID'),json_extract(data,'$.model.modelID')) END IS NOT NULL ORDER BY time_created DESC,id DESC LIMIT 1)) AS line FROM session s WHERE s.parent_id IS NULL AND s.time_archived IS NULL AND "
 .ifdef WINDOWS
     .ascii "replace(s.directory,char(92),'/') COLLATE NOCASE"
 .else
@@ -3180,4 +3184,4 @@ opencode_part_line:
 .endif
     .asciz " IN ("
 .Loc_parts: .asciz "WITH selected AS (SELECT s.id,c.time_created AS ct,c.id AS cid FROM session s LEFT JOIN message c ON c.id=CASE WHEN json_valid(s.revert) THEN json_extract(s.revert,'$.messageID') END WHERE s.id IN ("
-.Loc_parts_end: .asciz ")) SELECT line FROM (SELECT json_object('sessionId',p.session_id,'role',CASE WHEN json_valid(m.data) THEN json_extract(m.data,'$.role') END,'part',CASE WHEN length(CAST(p.data AS BLOB))<=70000 THEN json(p.data) ELSE json_remove(json_replace(p.data,'$.text',substr(json_extract(p.data,'$.text'),1,16384),'$.state.output',substr(json_extract(p.data,'$.state.output'),1,8192),'$.state.error',substr(json_extract(p.data,'$.state.error'),1,8192),'$.state.input.command',substr(json_extract(p.data,'$.state.input.command'),1,1024),'$.state.input.content',substr(json_extract(p.data,'$.state.input.content'),1,1024),'$.state.input.oldString',substr(json_extract(p.data,'$.state.input.oldString'),1,1024),'$.state.input.newString',substr(json_extract(p.data,'$.state.input.newString'),1,1024),'$.state.input.prompt',substr(json_extract(p.data,'$.state.input.prompt'),1,1024)),'$.state.metadata','$.state.attachments') END) AS line,p.session_id AS sid,m.time_created AS mc,m.id AS mid,p.id AS pid FROM part p JOIN message m ON m.id=p.message_id JOIN selected sel ON sel.id=p.session_id WHERE (sel.cid IS NULL OR m.time_created<sel.ct OR (m.time_created=sel.ct AND m.id<sel.cid)) AND CASE WHEN json_valid(p.data) THEN json_extract(p.data,'$.type') IN ('text','tool') END UNION ALL SELECT json_object('sessionId',m.session_id,'role','assistant','part',json_object('type','error','text',coalesce(json_extract(m.data,'$.error.data.message'),json_extract(m.data,'$.error.message'),'OpenCode request failed'))) AS line,m.session_id AS sid,m.time_created AS mc,m.id AS mid,'' AS pid FROM message m JOIN selected sel ON sel.id=m.session_id WHERE (sel.cid IS NULL OR m.time_created<sel.ct OR (m.time_created=sel.ct AND m.id<sel.cid)) AND CASE WHEN json_valid(m.data) THEN json_extract(m.data,'$.error') END IS NOT NULL) ORDER BY sid,mc,mid,pid"
+.Loc_parts_end: .asciz ")) SELECT line FROM (SELECT json_object('sessionId',p.session_id,'role',CASE WHEN json_valid(m.data) THEN json_extract(m.data,'$.role') END,'model',CASE WHEN json_valid(m.data) THEN coalesce(json_extract(m.data,'$.modelID'),json_extract(m.data,'$.model.modelID')) END,'part',CASE WHEN length(CAST(p.data AS BLOB))<=70000 THEN json(p.data) ELSE json_remove(json_replace(p.data,'$.text',substr(json_extract(p.data,'$.text'),1,16384),'$.state.output',substr(json_extract(p.data,'$.state.output'),1,8192),'$.state.error',substr(json_extract(p.data,'$.state.error'),1,8192),'$.state.input.command',substr(json_extract(p.data,'$.state.input.command'),1,1024),'$.state.input.content',substr(json_extract(p.data,'$.state.input.content'),1,1024),'$.state.input.oldString',substr(json_extract(p.data,'$.state.input.oldString'),1,1024),'$.state.input.newString',substr(json_extract(p.data,'$.state.input.newString'),1,1024),'$.state.input.prompt',substr(json_extract(p.data,'$.state.input.prompt'),1,1024)),'$.state.metadata','$.state.attachments') END) AS line,p.session_id AS sid,m.time_created AS mc,m.id AS mid,p.id AS pid FROM part p JOIN message m ON m.id=p.message_id JOIN selected sel ON sel.id=p.session_id WHERE (sel.cid IS NULL OR m.time_created<sel.ct OR (m.time_created=sel.ct AND m.id<sel.cid)) AND CASE WHEN json_valid(p.data) THEN json_extract(p.data,'$.type') IN ('text','tool') END UNION ALL SELECT json_object('sessionId',m.session_id,'role','assistant','part',json_object('type','error','text',coalesce(json_extract(m.data,'$.error.data.message'),json_extract(m.data,'$.error.message'),'OpenCode request failed'))) AS line,m.session_id AS sid,m.time_created AS mc,m.id AS mid,'' AS pid FROM message m JOIN selected sel ON sel.id=m.session_id WHERE (sel.cid IS NULL OR m.time_created<sel.ct OR (m.time_created=sel.ct AND m.id<sel.cid)) AND CASE WHEN json_valid(m.data) THEN json_extract(m.data,'$.error') END IS NOT NULL) ORDER BY sid,mc,mid,pid"

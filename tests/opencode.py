@@ -459,7 +459,7 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
     def test_unchanged_database_is_queried_again_after_five_minutes(self):
         self.session('Old')
         self.worker()
-        state = next((self.home / 'state/rhun').glob('agents-index-v5-*-opencode'))
+        state = next((self.home / 'state/rhun').glob('agents-index-v6-*-opencode'))
         data = bytearray(state.read_bytes())
         struct.pack_into('<q', data, 32, struct.unpack_from('<q', data, 32)[0] - 301)
         state.write_bytes(bytes(data))
@@ -630,7 +630,7 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
     def test_damaged_state_file_asks_the_cli_again(self):
         self.session('State')
         self.worker()
-        state = next((self.home / 'state/rhun').glob('agents-index-v5-*-opencode'))
+        state = next((self.home / 'state/rhun').glob('agents-index-v6-*-opencode'))
         for damage in (b'', b'RAHOCST1', state.read_bytes()[:40] + b'', b'x' * 60):
             state.write_bytes(damage)
             before = self.calls().count('db path')
@@ -756,6 +756,54 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
         saved = config.read_text()
         self.assertNotIn('sources', saved)
         self.assertIn('[agents]\nclaude = false\ncodex = true\ngrok = false\nopencode = true\n', saved)
+
+    def test_models_in_the_row_and_where_replies_change(self):
+        sid = self.session('Models')
+        with self.connect() as db:
+            for mid, role, when, model, text in (
+                    ('n1', 'user', 1, 'qwen3.6', 'Prompt'), ('n2', 'assistant', 2, 'qwen3.6', 'First reply'),
+                    ('n3', 'assistant', 3, 'qwen3.6', 'Second reply'), ('n4', 'user', 4, 'big-pickle', 'Switch'),
+                    ('n5', 'assistant', 5, 'big-pickle', 'Third reply')):
+                data = ({'role': role, 'model': {'providerID': 'x', 'modelID': model}} if role == 'user'
+                        else {'role': role, 'providerID': 'x', 'modelID': model})
+                db.execute('INSERT INTO message VALUES (?,?,?,?,?)', (mid, sid, when, when, json.dumps(data)))
+                db.execute('INSERT INTO part VALUES (?,?,?,?,?,?)', ('p' + mid, mid, sid, when, when,
+                           json.dumps({'type': 'text', 'text': text}, separators=(',', ':'))))
+        rows, _, _ = self.worker()
+        self.assertEqual(rows[0]['model'], 'big-pickle')
+        self.assertEqual(self.editor(['print-agents 1']),
+                         'OpenCode [model: big-pickle]: Models\nuser Prompt\nagent(qwen3.6) First reply\n'
+                         'agent Second reply\nuser Switch\nagent(big-pickle) Third reply\n')
+
+    def test_row_keeps_the_latest_model_also_of_a_reply_of_tools(self):
+        sid = self.session('Tools last')
+        with self.connect() as db:
+            for mid, when, model, part in (
+                    ('t1', 1, 'one', {'type': 'text', 'text': 'Text reply'}),
+                    ('t2', 2, 'two', {'type': 'tool', 'tool': 'bash', 'state': {
+                        'status': 'completed', 'input': {'command': 'make'}, 'output': 'ok'}})):
+                db.execute('INSERT INTO message VALUES (?,?,?,?,?)', (mid, sid, when, when, json.dumps(
+                    {'role': 'assistant', 'modelID': model})))
+                db.execute('INSERT INTO part VALUES (?,?,?,?,?,?)', ('p' + mid, mid, sid, when, when,
+                           json.dumps(part, separators=(',', ':'))))
+        self.assertEqual(self.worker()[0][0]['model'], 'two')
+        output = self.editor(['print-agents 1', 'print-agents'])
+        self.assertEqual(output.splitlines()[0], 'OpenCode [model: two]: Tools last')
+        self.assertEqual(output.splitlines()[-4], 'OpenCode [model: two]: Tools last')
+
+    def test_row_model_goes_with_the_messages_that_named_it(self):
+        sid = self.session('Emptied')
+        with self.connect() as db:
+            db.execute('INSERT INTO message VALUES (?,?,?,?,?)', ('e1', sid, 1, 1, json.dumps(
+                {'role': 'assistant', 'modelID': 'gone-model'})))
+            db.execute('INSERT INTO part VALUES (?,?,?,?,?,?)', ('pe1', 'e1', sid, 1, 1,
+                       json.dumps({'type': 'text', 'text': 'Reply'}, separators=(',', ':'))))
+        self.assertEqual(self.worker()[0][0]['model'], 'gone-model')
+        with self.connect() as db:
+            db.execute('DELETE FROM part WHERE session_id=?', (sid,))
+            db.execute('DELETE FROM message WHERE session_id=?', (sid,))
+        self.assertEqual(self.worker()[0][0]['model'], '')
+        self.assertEqual(self.editor(['print-agents']), 'OpenCode: Emptied\n')
 
 
 if __name__ == '__main__': unittest.main()

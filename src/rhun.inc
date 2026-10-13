@@ -1095,4 +1095,7 @@ F AS_title_rev, 8       # identity of the last indexed custom title record
 F AS_record_off, 8      # worker: current title record's newline offset plus one
 F AS_replaced, 8        # worker page: metadata came from a replaced or truncated log
 F AS_bytes, 8           # worker, OpenCode: the conversation copy's estimated size
+F AS_model, 8           # the model the session last used (its row), or 0
+F AS_log_model, 8       # parse: the model the log names for the replies that follow
+F AS_shown_model, 8     # parse: the model on the last reply labeled with one
 ENDSTRUCT AS_SIZE
