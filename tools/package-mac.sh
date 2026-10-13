@@ -11,6 +11,16 @@
 #   RHUN_NOTARIZE=0       sign only for local use, and no disk image; forbidden with RHUN_DIST=1
 set -eu
 cd "$(dirname "$0")/.."
+# stapler validate asks Apple's ticket service, and a CI runner can lose that connection ("The network
+# connection was lost", error 68) with a good ticket: it is asked again, up to five times, before failing.
+validate() {
+    tries=1
+    until xcrun stapler validate "$1"; do
+        [ "$tries" -lt 5 ] || return 1
+        sleep $((tries * 15))
+        tries=$((tries + 1))
+    done
+}
 notarize=${RHUN_NOTARIZE:-1}
 case "$notarize" in 0|1) ;; *) echo "package-mac: RHUN_NOTARIZE must be 0 or 1" >&2; exit 1 ;; esac
 if [ "${RHUN_DIST:-0}" = 1 ] && [ "$notarize" != 1 ]; then
@@ -60,7 +70,7 @@ if [ "$notarize" = 1 ]; then
     submit build/rhun.zip
     rm build/rhun.zip
     xcrun stapler staple "$app"
-    xcrun stapler validate "$app"
+    validate "$app"
     spctl --assess --type execute --verbose=2 "$app"
 fi
 # the app for install.sh and updates; ditto keeps the signature and the stapled ticket
@@ -80,6 +90,6 @@ rm -rf "$stage"
 codesign --force --timestamp --sign "$id" "$dmg"
 submit "$dmg"
 xcrun stapler staple "$dmg"
-xcrun stapler validate "$dmg"
+validate "$dmg"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
 echo "$dmg"
