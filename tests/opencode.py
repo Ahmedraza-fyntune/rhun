@@ -1214,7 +1214,9 @@ class OpenCode2RealReader(OpenCode2Discovery):
     def test_a_query_failing_part_way_fails(self):
         query = "SELECT CASE WHEN value<3 THEN 'row ' || value ELSE json_extract('not JSON','$') END AS line FROM json_each('[1,2,3]')"
         result = self.read(query)
-        self.assertEqual((result.returncode != 0, result.stdout), (True, b'line\nrow 1\nrow 2\n'))  # its exit fails it
+        self.assertNotEqual(result.returncode, 0)  # its exit fails it, whatever it printed first
+        # the rows before the error with iterate(); none with the all() of a Bun without it
+        self.assertIn(result.stdout, (b'line\nrow 1\nrow 2\n', b'line\n'))
 
     def test_reader_leaves_the_database_as_it_was(self):
         sid = self.session('Open')
