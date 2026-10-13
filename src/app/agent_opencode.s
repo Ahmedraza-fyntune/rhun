@@ -1,5 +1,6 @@
-# OpenCode's database CLI runs only in the background metadata worker.
-# No shell, provider requests, or extra SQLite runtime are needed.
+# OpenCode's database is read only in the background metadata worker, by OpenCode's own binary: its
+# `db` command (OpenCode 1), or, in OpenCode 2, which has none, the Bun runtime it is built on, whose
+# SQLite reads the database. No shell, provider requests, server or extra SQLite runtime are needed.
 .include "rhun.inc"
 .equ OPENCODE_TIMEOUT, 15000    # ms one CLI run may take
 .equ OPENCODE_BUDGET, 30000     # ms for all of a discovery run's CLI runs
@@ -7,6 +8,10 @@
 .p2align 3
 cli: .quad 0
 deadline: .quad 0
+bun_env: .quad 0                # the environment with BUN_BE_BUN, made once
+.globl agent_opencode_v2
+agent_opencode_v2: .long 0      # OpenCode 2 or later: sessions are in session_v2 and session_message
+.p2align 3
 output: .zero SB_SIZE
 out_path: .zero SB_SIZE
 key: .zero SB_SIZE
@@ -70,8 +75,8 @@ FN agent_opencode_scope
     call key_hash
     EPILOGUE
 
-# agent_opencode_cli_key(data dir) -> identity of what decides `opencode db path`: the CLI file (an
-# update replaces it) and the scope's folder and variables.
+# agent_opencode_cli_key(data dir) -> identity of what decides the database path and OpenCode's version:
+# the CLI file (an update replaces it) and the scope's folder and variables.
 FN agent_opencode_cli_key
     PROLOGUE 16
     mov r12, rdi
@@ -144,15 +149,118 @@ FN agent_opencode_data_dir
     call path_join
 9:  EPILOGUE
 
-# agent_opencode_query(SQL or 0 for db path) -> borrowed output ptr, rdx bytes; 0 on failure, with rdx
-#   -1 when the run's time for queries is used up and -2 for output past 64 MiB.
-# The CLI writes to a file: OpenCode 1.19 exits before a pipe has taken all of its output and drops
-# the rest, with status 0. Output and time stay bounded if a CLI installation is broken or hangs, and
-# the queries of one run share a deadline, well inside the app's limit for the whole run.
-FN agent_opencode_query
-    PROLOGUE 80
+# agent_opencode_locate() -> borrowed path of the database the CLI uses, rdx bytes; 0 on failure, with rdx
+#   -1 when the run's time for the CLI is used up. Sets agent_opencode_v2 from `opencode --version`
+#   ("1.19.0", "opencode v2.0.28"): OpenCode 2 has no `db` command, and `opencode db` alone would start its
+#   interface in a folder named db; its `debug paths` names the database on a line "db  PATH".
+FN agent_opencode_locate
+    PROLOGUE 32
     mov rax, [rip + cli]
     mov [rsp], rax
+    lea rax, [rip + .Lversion]
+    mov [rsp + 8], rax
+    mov qword ptr [rsp + 16], 0
+    mov rdi, rsp
+    mov rsi, [rip + g_envp]
+    call run_cli
+    test rax, rax
+    jz 9f
+    xor ecx, ecx                # the first number is the major version
+1:  cmp rcx, rdx
+    jae 8f
+    movzx r8d, byte ptr [rax + rcx]
+    sub r8d, '0'
+    cmp r8d, 9
+    jbe 2f
+    inc rcx
+    jmp 1b
+2:  lea rdi, [rax + rcx]
+    mov rsi, rdx
+    sub rsi, rcx
+    call parse_u64
+    xor ecx, ecx
+    cmp rax, 2
+    setae cl
+    mov [rip + agent_opencode_v2], ecx
+    lea rax, [rip + .Ldb]
+    lea rdx, [rip + .Lpath]
+    test ecx, ecx
+    jz 3f
+    lea rax, [rip + .Ldebug]
+    lea rdx, [rip + .Lpaths]
+3:  mov [rsp + 8], rax
+    mov [rsp + 16], rdx
+    mov qword ptr [rsp + 24], 0
+    mov rdi, rsp
+    mov rsi, [rip + g_envp]
+    call run_cli
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov r12, rdx
+    cmp dword ptr [rip + agent_opencode_v2], 0
+    jne 4f
+    mov rdi, rax                # OpenCode 1 prints the path alone
+    mov rsi, rdx
+    call path_text
+    EPILOGUE
+4:  xor r13d, r13d              # the start of a line
+5:  cmp r13, r12
+    jae 8f
+    mov r14, r13
+6:  cmp r14, r12
+    jae 7f
+    cmp byte ptr [rbx + r14], 10
+    je 7f
+    inc r14
+    jmp 6b
+7:  lea rcx, [r13 + 3]
+    cmp rcx, r14
+    jae 71f
+    cmp word ptr [rbx + r13], 0x6264 # "db", then spaces
+    jne 71f
+    movzx ecx, byte ptr [rbx + r13 + 2]
+    cmp ecx, ' '
+    je 72f
+    cmp ecx, 9
+    jne 71f
+72: lea rdi, [rbx + r13 + 2]
+    mov rsi, r14
+    sub rsi, r13
+    sub rsi, 2
+    call path_text
+    EPILOGUE
+71: lea r13, [r14 + 1]
+    jmp 5b
+8:  xor eax, eax
+    xor edx, edx
+9:  EPILOGUE
+
+# path_text(ptr, bytes) -> the path without the blanks and line end around it
+path_text:
+    call trim
+1:  test rdx, rdx               # and the line's end, which trim keeps
+    jz 9f
+    movzx ecx, byte ptr [rax + rdx - 1]
+    cmp cl, 10
+    je 2f
+    cmp cl, 13
+    je 2f
+    cmp cl, ' '
+    jne 9f
+2:  dec rdx
+    jmp 1b
+9:  ret
+
+# agent_opencode_query(SQL, database path) -> borrowed output ptr, rdx bytes; 0 on failure, with rdx
+#   -1 when the run's time for the CLI is used up and -2 for output past 64 MiB. Either way the output is
+#   the TSV of `opencode db --format tsv`: a header "line", then one row a line.
+FN agent_opencode_query
+    PROLOGUE 48
+    mov rax, [rip + cli]
+    mov [rsp], rax
+    cmp dword ptr [rip + agent_opencode_v2], 0
+    jne 1f
     lea rax, [rip + .Ldb]
     mov [rsp + 8], rax
     mov [rsp + 16], rdi
@@ -161,12 +269,35 @@ FN agent_opencode_query
     lea rax, [rip + .Ltsv]
     mov [rsp + 32], rax
     mov qword ptr [rsp + 40], 0
-    test rdi, rdi
-    jnz 1f
-    lea rax, [rip + .Lpath]
+    mov rsi, [rip + g_envp]
+    jmp 2f
+1:  lea rax, [rip + .Leval]
+    mov [rsp + 8], rax
+    lea rax, [rip + .Lreader]
     mov [rsp + 16], rax
-    mov qword ptr [rsp + 24], 0
-1:  call time_ms
+    mov [rsp + 24], rsi
+    mov [rsp + 32], rdi
+    mov qword ptr [rsp + 40], 0
+    mov rsi, [rip + bun_env]
+    test rsi, rsi
+    jnz 2f
+    lea rdi, [rip + bun_extras]
+    call env_make
+    mov [rip + bun_env], rax
+    mov rsi, rax
+2:  mov rdi, rsp
+    call run_cli
+    EPILOGUE
+
+# run_cli(argv, envp) -> as agent_opencode_query, for the output of the CLI run with argv.
+# The CLI writes to a file: OpenCode 1.19 exits before a pipe has taken all of its output and drops
+# the rest, with status 0. Output and time stay bounded if a CLI installation is broken or hangs, and
+# the runs of one discovery share a deadline, well inside the app's limit for the whole run.
+run_cli:
+    PROLOGUE 32
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    call time_ms
     mov r14, rax
     mov rcx, [rip + deadline]
     test rcx, rcx
@@ -189,8 +320,8 @@ FN agent_opencode_query
     test rax, rax
     js 8f
     mov ebx, eax
-    mov rdi, rsp
-    mov rsi, [rip + g_envp]
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
     xor edx, edx
     mov ecx, ebx
     mov r8d, r15d
@@ -217,7 +348,7 @@ FN agent_opencode_query
     call time_ms
     cmp rax, r14
     jae 4f
-    lea rdi, [rsp + 48]
+    lea rdi, [rsp + 16]
     xor esi, esi
     mov edx, 20
     SYS SYS_poll
@@ -412,6 +543,15 @@ FN agent_opencode_each_line
 .Lcli: .asciz "opencode"
 .Ldb: .asciz "db"
 .Lpath: .asciz "path"
+.Lversion: .asciz "--version"
+.Ldebug: .asciz "debug"
+.Lpaths: .asciz "paths"
+.Leval: .asciz "-e"
+.Lbun_be_bun: .asciz "BUN_BE_BUN=1"
+# OpenCode 2's binary as Bun runs this with the database and the query. It reads without a write when
+# OpenCode has the database open; with no -shm (OpenCode closed) SQLite cannot read the log read-only,
+# so it opens the database as OpenCode does, never creating one. It prints what `db --format tsv` did.
+.Lreader: .asciz "const{Database}=require('bun:sqlite'),a=process.argv;let d;try{d=new Database(a[1],{readonly:true});d.query('SELECT 1 FROM sqlite_master').get()}catch(e){d=new Database(a[1],{readwrite:true,create:false})}d.exec('PRAGMA busy_timeout=5000');const o=['line'];for(const r of d.query(a[2]).values())o.push(r[0]);require('fs').writeFileSync(1,o.join('\\n')+'\\n')"
 .Lformat: .asciz "--format"
 .Ltsv: .asciz "tsv"
 .Ldevnull: .asciz "/dev/null"
@@ -428,4 +568,5 @@ FN agent_opencode_each_line
 .Lenv_channel: .asciz "OPENCODE_DISABLE_CHANNEL_DB"
 .p2align 3
 locations: .quad .Linstaller, .Llocal, .Lbrew, .Lusr, 0
+bun_extras: .quad .Lbun_be_bun, 0
 key_env: .quad .Lenv_db, .Lenv_channel, 0

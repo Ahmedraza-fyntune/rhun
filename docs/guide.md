@@ -73,9 +73,13 @@ After `/undo` the undone messages are left out until `/redo`, as in OpenCode.
 Archived sessions and subagent sessions are omitted. Use **Refresh** for an immediate scan.
 The panel reads history, as it does for the other agents; interact with OpenCode in the terminal.
 
-OpenCode discovery requires a recent CLI with `opencode db` (verified with 1.19.0). It runs
-local SELECT queries in the background, without starting a server or making model requests,
-and follows the database path reported by the CLI, including `XDG_DATA_HOME` and `OPENCODE_DB`.
+OpenCode discovery works with OpenCode 1 (verified with 1.19.0) and OpenCode 2 (verified with
+2.0.28). It runs local SELECT queries in the background, without starting a server or making
+model requests: with `opencode db` on OpenCode 1, and on OpenCode 2, which has no `db` command,
+with the Bun runtime the `opencode` binary is built on, which reads OpenCode 2's session tables
+without writing to them while OpenCode is open. Discovery follows the database path the CLI
+reports (`opencode db path`, or `opencode debug paths` on OpenCode 2), including `XDG_DATA_HOME`
+and `OPENCODE_DB`, and asks again only after the CLI changes, as an update does.
 The queries run only after OpenCode has written to its database, and at least every five
 minutes; an unchanged database starts no CLI. Discovery waits
 until OpenCode has created its data folder, so opening Rhun does not initialize an unused
@@ -91,8 +95,8 @@ The CLI must be on Rhun's PATH; the usual `~/.opencode/bin`, `~/.local/bin`, Hom
 `opencode.exe` on PATH. Once OpenCode has a data folder, a CLI missing from PATH shows setup
 guidance in an empty panel;
 a failed query shows an OpenCode warning while the other sources still refresh. Check
-`opencode db path` and `opencode db 'SELECT 1'` in the terminal, update OpenCode if needed,
-then refresh the panel.
+`opencode --version` and `opencode debug paths` (`opencode db path` on OpenCode 1) in the
+terminal, update OpenCode if needed, then refresh the panel.
 
 To hide OpenCode sessions, turn off **OpenCode** under Agents in Settings, or set:
 
