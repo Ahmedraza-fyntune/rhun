@@ -76,9 +76,12 @@ class OpenCodeDiscovery(unittest.TestCase):
 version = os.environ.get('OPENCODE_FIXTURE_VERSION', '1.19.0')
 v2 = version[:1].isdigit() and int(version.split('.')[0]) >= 2
 args = sys.argv[1:]
-# OpenCode 2's binary as Bun, which loads no .env: the reader, the database, the query
-bun = args[:2] == ['--no-env-file', '-e']
-if bun: entry = '-e ' + args[4].split()[0]
+# OpenCode 2's binary as Bun, with an empty config and no .env: the reader, the database, the query
+bun = args[:1] and args[0].startswith('--config=') and args[1:3] == ['--no-env-file', '-e']
+if bun:
+    entry = '-e ' + args[5].split()[0]
+    config = args[0][len('--config='):]
+    assert os.path.isabs(config) and os.path.getsize(config) == 0, config
 elif len(args) > 1: entry = args[0] + ' ' + args[1].split()[0]
 else: entry = args[0]
 with open(os.environ['OPENCODE_FIXTURE_DB'] + '.calls', 'a') as log:
@@ -109,13 +112,13 @@ if args == ['debug', 'paths'] and v2:
     if paths != 'missing': lines.append('db' + gap + os.environ['OPENCODE_FIXTURE_DB'])
     sys.stdout.write(''.join(line + end for line in lines + ['log' + gap + '/nowhere'])); sys.exit()
 if v2:
-    assert bun and len(args) == 5 and 'bun:sqlite' in args[2] and os.environ.get('BUN_BE_BUN') == '1', args
-    assert args[3] == os.environ['OPENCODE_FIXTURE_DB'], args
+    assert bun and len(args) == 6 and 'bun:sqlite' in args[3] and os.environ.get('BUN_BE_BUN') == '1', args
+    assert args[4] == os.environ['OPENCODE_FIXTURE_DB'], args
     if os.environ.get('OPENCODE_FIXTURE_BUN'):  # the reader itself, in a real Bun
         with open(os.environ['OPENCODE_FIXTURE_DB'] + '.queries', 'a') as log:
-            log.write(args[4] + '\\n')
+            log.write(args[5] + '\\n')
         os.execv(os.environ['OPENCODE_FIXTURE_BUN'], [os.environ['OPENCODE_FIXTURE_BUN']] + args)
-    sql = args[4]
+    sql = args[5]
 else:
     assert args[0] == 'db' and args[2:] == ['--format', 'tsv'], args
     sql = args[1]
@@ -1174,18 +1177,22 @@ class OpenCode2RealReader(OpenCode2Discovery):
               'test_project_filter_subagents_archived_and_source_selection', 'test_empty_database_and_damaged_snapshot_rebuild',
               'test_unreadable_rows_are_left_out_of_the_transcript', 'test_transcript_past_a_pipe_buffer_arrives_whole',
               'test_models_in_the_row_and_where_replies_change', 'test_a_projects_bunfig_and_env_are_not_loaded',
-              'test_reader_leaves_the_database_as_it_was'}
+              'test_reader_leaves_the_database_as_it_was', 'test_one_conversation_past_the_output_limit_keeps_its_title_alone',
+              'test_a_query_failing_part_way_fails'}
 
     def setUp(self):
         if self._testMethodName not in self.CHOSEN: self.skipTest('the test reader covers it')
         super().setUp()
         self.env['OPENCODE_FIXTURE_BUN'] = BUN
 
-    def read(self, sql, database=None):
+    def read(self, sql, database=None, cwd=None):
         state = self.home / 'state/rhun'
         state.mkdir(parents=True, exist_ok=True)
-        return subprocess.run([BUN, '--no-env-file', '-e', reader(), str(database or self.db), sql], cwd=state,
-                              env=dict(os.environ, BUN_BE_BUN='1', HOME=str(self.home)), capture_output=True, timeout=30)
+        config = state / '.rhun-bunfig.toml'
+        config.write_bytes(b'')
+        return subprocess.run([BUN, f'--config={config}', '--no-env-file', '-e', reader(), str(database or self.db), sql],
+                              cwd=cwd or state, env=dict(os.environ, BUN_BE_BUN='1', HOME=str(self.home)),
+                              capture_output=True, timeout=30)
 
     def test_a_projects_bunfig_and_env_are_not_loaded(self):
         marker = self.home / 'preloaded'
@@ -1199,6 +1206,15 @@ class OpenCode2RealReader(OpenCode2Discovery):
         rows, status, _ = self.worker(cwd=self.project)
         self.assertEqual((status, rows[0]['title']), (0, 'Project with a bunfig'))
         self.assertFalse(marker.exists())
+        # nor if the reader ever started in the project: its config is Rhun's empty one
+        result = self.read("SELECT 'x' AS line", cwd=self.project)
+        self.assertEqual((result.returncode, result.stdout), (0, b'line\nx\n'), result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_a_query_failing_part_way_fails(self):
+        query = "SELECT CASE WHEN value<3 THEN 'row ' || value ELSE json_extract('not JSON','$') END AS line FROM json_each('[1,2,3]')"
+        result = self.read(query)
+        self.assertEqual((result.returncode != 0, result.stdout), (True, b'line\nrow 1\nrow 2\n'))  # its exit fails it
 
     def test_reader_leaves_the_database_as_it_was(self):
         sid = self.session('Open')

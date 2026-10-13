@@ -15,6 +15,7 @@ agent_opencode_v2: .long 0      # OpenCode 2 or later: sessions are in session_v
 output: .zero SB_SIZE
 out_path: .zero SB_SIZE
 cwd: .zero SB_SIZE              # where the CLI runs: Rhun's state folder, never the project
+config: .zero SB_SIZE           # "--config=" and the empty Bun config Rhun keeps there
 key: .zero SB_SIZE
 .text
 
@@ -272,6 +273,8 @@ path_text:
 #   the TSV of `opencode db --format tsv`: a header "line", then one row a line.
 FN agent_opencode_query
     PROLOGUE 64
+    mov r12, rdi
+    mov r13, rsi
     mov rax, [rip + cli]
     mov [rsp], rax
     cmp dword ptr [rip + agent_opencode_v2], 0
@@ -286,15 +289,19 @@ FN agent_opencode_query
     mov qword ptr [rsp + 40], 0
     mov rsi, [rip + g_envp]
     jmp 2f
-1:  lea rax, [rip + .Lno_env]
+1:  call bun_config
+    test rax, rax
+    jz 9f
     mov [rsp + 8], rax
-    lea rax, [rip + .Leval]
+    lea rax, [rip + .Lno_env]
     mov [rsp + 16], rax
-    lea rax, [rip + .Lreader]
+    lea rax, [rip + .Leval]
     mov [rsp + 24], rax
-    mov [rsp + 32], rsi
-    mov [rsp + 40], rdi
-    mov qword ptr [rsp + 48], 0
+    lea rax, [rip + .Lreader]
+    mov [rsp + 32], rax
+    mov [rsp + 40], r13
+    mov [rsp + 48], r12
+    mov qword ptr [rsp + 56], 0
     mov rsi, [rip + bun_env]
     test rsi, rsi
     jnz 2f
@@ -304,6 +311,42 @@ FN agent_opencode_query
     mov rsi, rax
 2:  mov rdi, rsp
     call run_cli
+    EPILOGUE
+9:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
+# bun_config() -> "--config=PATH" of an empty file in Rhun's state folder, or 0: Bun then reads no
+#   bunfig.toml of the folder it starts in, whatever that is. Emptied before each query.
+bun_config:
+    PROLOGUE
+    lea rdi, [rip + cwd]
+    call session_state_dir
+    test eax, eax
+    jz 8f
+    lea rdi, [rip + config]
+    call sb_clear
+    lea rdi, [rip + config]
+    lea rsi, [rip + .Lconfig_option]
+    call sb_push_cstr
+    lea rdi, [rip + config]
+    mov rsi, [rip + cwd + SB_ptr]
+    call sb_push_cstr
+    lea rdi, [rip + config]
+    lea rsi, [rip + .Lconfig_file]
+    call sb_push_cstr
+    mov rdi, [rip + config + SB_ptr]
+    add rdi, 9                  # past "--config="
+    mov esi, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
+    mov edx, 0600
+    SYS SYS_open
+    test rax, rax
+    js 8f
+    mov edi, eax
+    SYS SYS_close
+    mov rax, [rip + config + SB_ptr]
+    EPILOGUE
+8:  xor eax, eax
     EPILOGUE
 
 # run_cli(argv, envp) -> as agent_opencode_query, for the output of the CLI run with argv.
@@ -569,6 +612,8 @@ FN agent_opencode_each_line
 .Lpaths: .asciz "paths"
 .Leval: .asciz "-e"
 .Lno_env: .asciz "--no-env-file"
+.Lconfig_option: .asciz "--config="
+.Lconfig_file: .asciz "/.rhun-bunfig.toml"
 .Lbun_be_bun: .asciz "BUN_BE_BUN=1"
 # OpenCode 2's binary as Bun runs this with the database and the query. It reads without a write when
 # OpenCode has the database open; with no -shm (OpenCode closed) SQLite cannot read the log read-only,
@@ -576,7 +621,7 @@ FN agent_opencode_each_line
 # that made, which Apple's SQLite, Bun's on macOS, otherwise keeps. Statements are prepared rather than
 # cached, which would keep the database open past close. It prints what `db --format tsv` did, a row at
 # a time: the output limit applies while it runs.
-.Lreader: .asciz "const{Database}=require('bun:sqlite'),f=require('fs'),a=process.argv;let d,s;try{d=new Database(a[1],{readonly:true});s=d.prepare('SELECT 1 FROM sqlite_master');s.get();s.finalize()}catch(e){if(s)s.finalize();if(d)d.close();d=new Database(a[1],{readwrite:true,create:false});try{d.fileControl(10,0)}catch(e){}}d.exec('PRAGMA busy_timeout=5000');s=d.prepare(a[2]);f.writeSync(1,'line\\n');for(const r of s.iterate())f.writeSync(1,r.line+'\\n');s.finalize();d.close()"
+.Lreader: .asciz "const{Database}=require('bun:sqlite'),f=require('fs'),a=process.argv;let d,s;try{d=new Database(a[1],{readonly:true});s=d.prepare('SELECT 1 FROM sqlite_master');s.get();s.finalize()}catch(e){if(s)s.finalize();if(d)d.close();d=new Database(a[1],{readwrite:true,create:false});try{d.fileControl(10,0)}catch(e){}}d.exec('PRAGMA busy_timeout=5000');s=d.prepare(a[2]);f.writeSync(1,'line\\n');for(const r of(s.iterate?s.iterate():s.all()))f.writeSync(1,r.line+'\\n');s.finalize();d.close()"
 .Lformat: .asciz "--format"
 .Ltsv: .asciz "tsv"
 .Ldevnull: .asciz "/dev/null"
