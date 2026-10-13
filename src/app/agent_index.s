@@ -42,7 +42,8 @@ opencode_state: .zero SB_SIZE   # this project's state file, next to the cache
 opencode_ident: .zero SB_SIZE
 opencode_open: .quad 0
 opencode_scope: .quad 0
-opencode_st: .zero 40           # saved state: magic, CLI key, scan key, rows hash, time of the last query
+opencode_st: .zero 48           # saved state: magic, CLI key, scan key, rows hash, time of the last query,
+                                # OpenCode 2
 opencode_rows: .quad 0          # opencode_rows_hash of the cache as loaded
 opencode_cli_key: .quad 0
 opencode_scan_key: .quad 0      # this run's listing identity, 0 when the database cannot be identified
@@ -2245,7 +2246,8 @@ opencode_scan:
     mov dword ptr [rip + opencode_status], 1
     jmp .Loc_scan_keep
 1:
-    # Each CLI start costs about a second of CPU: the path it reports is kept until the CLI changes.
+    # Each CLI start costs about a second of CPU: the path and version it reports are kept until the CLI
+    # changes.
     lea rdi, [rip + opencode_state]
     call sb_clear
     cmp qword ptr [rip + cache_file + SB_len], 0
@@ -2259,25 +2261,10 @@ opencode_scan:
 13: call opencode_state_load
     test eax, eax
     jnz 14f
-    xor edi, edi
-    call agent_opencode_query
+    call agent_opencode_locate
     test rax, rax
     jz .Loc_scan_fail
-    mov rdi, rax
-    mov rsi, rdx
-    call trim
-15: test rdx, rdx               # and the line's end, which trim keeps
-    jz 16f
-    movzx ecx, byte ptr [rax + rdx - 1]
-    cmp cl, 10
-    je 17f
-    cmp cl, 13
-    je 17f
-    cmp cl, ' '
-    jne 16f
-17: dec rdx
-    jmp 15b
-16: mov rbx, rax
+    mov rbx, rax
     mov r12, rdx
     lea rdi, [rip + opencode_db]
     call sb_clear
@@ -2350,8 +2337,9 @@ opencode_scan:
     call stale_temps            # a copy the app stopped in the middle of its save
     lea rdi, [rip + opencode_sql]
     call sb_clear
+    call opencode_metadata_sql
     lea rdi, [rip + opencode_sql]
-    lea rsi, [rip + .Loc_metadata]
+    mov rsi, rax
     call sb_push_cstr
     xor ebx, ebx
 2:  cmp rbx, [rip + roots + VEC_len]
@@ -2433,6 +2421,7 @@ opencode_keep:
 opencode_metadata:
     PROLOGUE
     mov rdi, [rip + opencode_sql + SB_ptr]
+    mov rsi, [rip + opencode_db + SB_ptr]
     call agent_opencode_query
     test rax, rax
     jz 8f
@@ -2457,8 +2446,20 @@ opencode_metadata:
 9:  EPILOGUE
 8:  mov dword ptr [rip + opencode_status], 2
     mov dword ptr [rip + opencode_good], 0
+    call opencode_state_forget
     call opencode_keep
     EPILOGUE
+
+# opencode_state_forget(): a query failed, so the next run asks the CLI for its version and database
+#   again: the CLI can change behind a file whose stamp stays, a script that runs another installation.
+opencode_state_forget:
+    PROLOGUE
+    mov dword ptr [rip + opencode_good], 0 # nor saved again with the cache at the run's end
+    cmp qword ptr [rip + opencode_state + SB_len], 0
+    je 9f
+    mov rdi, [rip + opencode_state + SB_ptr]
+    SYS SYS_unlink
+9:  EPILOGUE
 
 # opencode_prune_cb(0, name, folder): the copy of a session this complete listing does not have any more
 #   (deleted, archived, moved) is removed: a transcript is not kept after OpenCode lets it go.
@@ -2543,8 +2544,9 @@ opencode_identify:
     mov rsi, [rip + opencode_db + SB_ptr]
     mov rdx, [rip + opencode_db + SB_len]
     call sb_push
+    call opencode_metadata_sql
     lea rdi, [rip + opencode_ident]
-    lea rsi, [rip + .Loc_metadata]
+    mov rsi, rax
     call sb_push_cstr
     # the roots in any order: windows of one repository list them in their own order
     xor r13d, r13d
@@ -2586,40 +2588,44 @@ opencode_state_load:
     xor ecx, ecx
 1:  mov qword ptr [rax + rcx*8], 0
     inc ecx
-    cmp ecx, 5
+    cmp ecx, 6
     jb 1b
     cmp qword ptr [rip + opencode_state + SB_len], 0
     je 9f
     mov rdi, [rip + opencode_state + SB_ptr]
-    mov esi, 40 + 4096
+    mov esi, 48 + 4096
     call agent_read_head
     test rax, rax
     jz 9f
     mov rbx, rax
     mov r12, rdx
-    cmp r12, 41
+    cmp r12, 49
     jb 8f
-    cmp r12, 40 + 4095
+    cmp r12, 48 + 4095
     ja 8f
-    mov rax, 0x315453434f484152   # RAHOCST1
+    mov rax, 0x325453434f484152   # RAHOCST2
     cmp [rbx], rax
     jne 8f
     mov rax, [rbx + 8]
     cmp rax, [rip + opencode_cli_key]
     jne 8f
+    cmp qword ptr [rbx + 40], 1
+    ja 8f
     lea rdi, [rip + opencode_db]
     call sb_clear
     lea rdi, [rip + opencode_db]
-    lea rsi, [rbx + 40]
-    lea rdx, [r12 - 40]
+    lea rsi, [rbx + 48]
+    lea rdx, [r12 - 48]
     call sb_push
     lea rdx, [rip + opencode_st]
     xor ecx, ecx
 2:  mov rax, [rbx + rcx*8]
     mov [rdx + rcx*8], rax
     inc ecx
-    cmp ecx, 5
+    cmp ecx, 6
     jb 2b
+    mov eax, [rbx + 40]         # the version the path came with: the CLI file has not changed since
+    mov [rip + agent_opencode_v2], eax
     mov rdi, rbx
     call mem_free
     mov eax, 1
@@ -2637,7 +2643,7 @@ opencode_state_save:
     je 9f
     cmp qword ptr [rip + opencode_state + SB_len], 0
     je 9f
-    mov rax, 0x315453434f484152   # RAHOCST1
+    mov rax, 0x325453434f484152   # RAHOCST2
     mov [rsp], rax
     mov rax, [rip + opencode_cli_key]
     mov [rsp + 8], rax
@@ -2646,9 +2652,11 @@ opencode_state_save:
     mov [rsp + 24], rdi
     mov rax, [rip + opencode_time]
     mov [rsp + 32], rax
+    mov eax, [rip + agent_opencode_v2]
+    mov [rsp + 40], rax
     lea rdi, [rip + opencode_st]
     mov rsi, rsp
-    mov edx, 40
+    mov edx, 48
     call memeq
     test eax, eax
     jnz 9f                      # as saved: not written (and synced) again on every run
@@ -2656,7 +2664,7 @@ opencode_state_save:
     call sb_clear
     lea rdi, [rip + opencode_ident]
     mov rsi, rsp
-    mov edx, 40
+    mov edx, 48
     call sb_push
     lea rdi, [rip + opencode_ident]
     mov rsi, [rip + opencode_db + SB_ptr]
@@ -2959,13 +2967,14 @@ opencode_refresh:
     ja 8f
 .endif
     mov rdi, [rip + opencode_sql + SB_ptr]
+    mov rsi, [rip + opencode_db + SB_ptr]
     call agent_opencode_query
     test rax, rax
     jnz 3f
     cmp rdx, -1
     je 9f                       # out of time: the next run goes on
     cmp rdx, -2
-    jne 8f
+    jne 81f
     call opencode_overflow
     jmp 1b
 3:  mov rdi, rax
@@ -2973,7 +2982,7 @@ opencode_refresh:
     lea rdx, [rip + opencode_part_line]
     call agent_opencode_each_line
     test eax, eax
-    jz 8f
+    jz 81f
     xor ebx, ebx
 4:  cmp rbx, [rip + matches + VEC_len]
     jae 1b
@@ -3000,6 +3009,7 @@ opencode_refresh:
     mov qword ptr [r12 + AS_replaced], 1 # streamed parts replace previous contents, including same-size edits
 5:  inc rbx
     jmp 4b
+81: call opencode_state_forget      # the query failed
 8:  mov dword ptr [rip + opencode_status], 2
 9:  EPILOGUE
 
@@ -3010,8 +3020,11 @@ opencode_batch:
     mov [rsp], edi
     lea rdi, [rip + opencode_sql]
     call sb_clear
-    lea rdi, [rip + opencode_sql]
     lea rsi, [rip + .Loc_parts]
+    cmp dword ptr [rip + agent_opencode_v2], 0
+    je 4f
+    lea rsi, [rip + .Loc_parts2]
+4:  lea rdi, [rip + opencode_sql]
     call sb_push_cstr
     xor ebx, ebx
     xor r14d, r14d              # characters
@@ -3066,11 +3079,22 @@ opencode_batch:
     jmp 1b
 3:  test r15d, r15d
     jz 9f
-    lea rdi, [rip + opencode_sql]
     lea rsi, [rip + .Loc_parts_end]
+    cmp dword ptr [rip + agent_opencode_v2], 0
+    je 31f
+    lea rsi, [rip + .Loc_parts2_end]
+31: lea rdi, [rip + opencode_sql]
     call sb_push_cstr
 9:  mov eax, r15d
     EPILOGUE
+
+# opencode_metadata_sql() -> the start of the metadata query for the CLI's version
+opencode_metadata_sql:
+    lea rax, [rip + .Loc_metadata]
+    cmp dword ptr [rip + agent_opencode_v2], 0
+    je 1f
+    lea rax, [rip + .Loc_metadata2]
+1:  ret
 
 # opencode_title_only(AS*): a conversation too large to copy keeps the title alone, also in place of an
 #   older transcript, and is not tried again until it changes. A failed save is the provider's failure.
@@ -3185,3 +3209,21 @@ opencode_part_line:
     .asciz " IN ("
 .Loc_parts: .asciz "WITH selected AS (SELECT s.id,c.time_created AS ct,c.id AS cid FROM session s LEFT JOIN message c ON c.id=CASE WHEN json_valid(s.revert) THEN json_extract(s.revert,'$.messageID') END WHERE s.id IN ("
 .Loc_parts_end: .asciz ")) SELECT line FROM (SELECT json_object('sessionId',p.session_id,'role',CASE WHEN json_valid(m.data) THEN json_extract(m.data,'$.role') END,'model',CASE WHEN json_valid(m.data) THEN coalesce(json_extract(m.data,'$.modelID'),json_extract(m.data,'$.model.modelID')) END,'part',CASE WHEN length(CAST(p.data AS BLOB))<=70000 THEN json(p.data) ELSE json_remove(json_replace(p.data,'$.text',substr(json_extract(p.data,'$.text'),1,16384),'$.state.output',substr(json_extract(p.data,'$.state.output'),1,8192),'$.state.error',substr(json_extract(p.data,'$.state.error'),1,8192),'$.state.input.command',substr(json_extract(p.data,'$.state.input.command'),1,1024),'$.state.input.content',substr(json_extract(p.data,'$.state.input.content'),1,1024),'$.state.input.oldString',substr(json_extract(p.data,'$.state.input.oldString'),1,1024),'$.state.input.newString',substr(json_extract(p.data,'$.state.input.newString'),1,1024),'$.state.input.prompt',substr(json_extract(p.data,'$.state.input.prompt'),1,1024)),'$.state.metadata','$.state.attachments') END) AS line,p.session_id AS sid,m.time_created AS mc,m.id AS mid,p.id AS pid FROM part p JOIN message m ON m.id=p.message_id JOIN selected sel ON sel.id=p.session_id WHERE (sel.cid IS NULL OR m.time_created<sel.ct OR (m.time_created=sel.ct AND m.id<sel.cid)) AND CASE WHEN json_valid(p.data) THEN json_extract(p.data,'$.type') IN ('text','tool') END UNION ALL SELECT json_object('sessionId',m.session_id,'role','assistant','part',json_object('type','error','text',coalesce(json_extract(m.data,'$.error.data.message'),json_extract(m.data,'$.error.message'),'OpenCode request failed'))) AS line,m.session_id AS sid,m.time_created AS mc,m.id AS mid,'' AS pid FROM message m JOIN selected sel ON sel.id=m.session_id WHERE (sel.cid IS NULL OR m.time_created<sel.ct OR (m.time_created=sel.ct AND m.id<sel.cid)) AND CASE WHEN json_valid(m.data) THEN json_extract(m.data,'$.error') END IS NOT NULL) ORDER BY sid,mc,mid,pid"
+# OpenCode 2 keeps sessions in session_v2 and their messages, in order (seq), in session_message: a prompt's
+# text, a reply's model and content (text, reasoning, tool calls with their output as content), a command
+# the user ran (shell: command, status, output.output), and rows of bookkeeping (system, synthetic, skill,
+# compaction, idle, agent-, model- and location-switched). The copy has the shape of OpenCode 1's, which
+# kept a user's command as a reply's tool call: prompts, reply text and tools, commands, a reply's error,
+# with the same limits; the estimate counts what is copied. After /undo, as in OpenCode 2's TUI, the copy ends before session.revert's message. The row's
+# model is the last reply's, or a switch since, else the session's (a prompt waiting for its reply). Until
+# OpenCode 2 names a session (OpenCode 1 gave a new one a title at once) its first prompt stands in, its
+# start alone (the panel shows a title's first line, at most 120 bytes).
+.Loc_metadata2: .ascii "SELECT json_object('id',s.id,'cwd',s.directory,'title',substr(coalesce(nullif(s.title,''),(SELECT json_extract(data,'$.text') FROM session_message WHERE session_id=s.id AND type='user' AND json_valid(data) ORDER BY seq LIMIT 1),''),1,512),'updated',max(s.time_updated,coalesce((SELECT max(time_updated) FROM session_message WHERE session_id=s.id),0)),'created',s.time_created,'revision',(SELECT coalesce(max(time_updated),0)||':'||count(*)||':'||coalesce(sum(length(CAST(data AS BLOB))),0) FROM session_message WHERE session_id=s.id)||':'||(SELECT coalesce(sum(CASE WHEN m.type IN ('user','shell') THEN min(length(CAST(m.data AS BLOB)),70000) ELSE (SELECT coalesce(sum(min(length(CAST(c.value AS BLOB)),70000)),0) FROM json_each(m.data,'$.content') c WHERE CASE WHEN c.type='object' THEN json_extract(c.value,'$.type') END IN ('text','tool')) END),0) FROM session_message m WHERE m.session_id=s.id AND m.type IN ('user','assistant','shell') AND json_valid(m.data) AND m.seq<coalesce((SELECT r.seq FROM session_message r WHERE r.session_id=s.id AND r.id=CASE WHEN json_valid(s.revert) THEN json_extract(s.revert,'$.messageID') END),9223372036854775807)),'revert',s.revert,'model',coalesce((SELECT json_extract(data,'$.model.id') FROM session_message WHERE session_id=s.id AND type IN ('assistant','model-switched') AND CASE WHEN json_valid(data) THEN json_extract(data,'$.model.id') END IS NOT NULL ORDER BY seq DESC LIMIT 1),CASE WHEN json_valid(s.model) THEN json_extract(s.model,'$.id') END)) AS line FROM session_v2 s WHERE s.parent_id IS NULL AND s.time_archived IS NULL AND "
+.ifdef WINDOWS
+    .ascii "replace(s.directory,char(92),'/') COLLATE NOCASE"
+.else
+    .ascii "s.directory"
+.endif
+    .asciz " IN ("
+.Loc_parts2: .asciz "WITH selected AS (SELECT s.id,coalesce((SELECT r.seq FROM session_message r WHERE r.session_id=s.id AND r.id=CASE WHEN json_valid(s.revert) THEN json_extract(s.revert,'$.messageID') END),9223372036854775807) AS cut FROM session_v2 s WHERE s.id IN ("
+.Loc_parts2_end: .asciz ")),shown AS (SELECT m.session_id,m.seq,m.type,m.data FROM session_message m JOIN selected sel ON sel.id=m.session_id WHERE m.seq<sel.cut AND m.type IN ('user','assistant','shell') AND json_valid(m.data)) SELECT line FROM (SELECT json_object('sessionId',session_id,'role','user','part',json_object('type','text','text',substr(json_extract(data,'$.text'),1,CASE WHEN length(CAST(data AS BLOB))<=70000 THEN 2147483647 ELSE 16384 END))) AS line,session_id AS sid,seq AS sq,-1 AS ix FROM shown WHERE type='user' UNION ALL SELECT json_object('sessionId',m.session_id,'role','assistant','model',json_extract(m.data,'$.model.id'),'part',CASE json_extract(c.value,'$.type') WHEN 'text' THEN json_object('type','text','text',substr(json_extract(c.value,'$.text'),1,CASE WHEN length(CAST(c.value AS BLOB))<=70000 THEN 2147483647 ELSE 16384 END)) ELSE json_object('type','tool','tool',json_extract(c.value,'$.name'),'state',CASE WHEN json_extract(c.value,'$.state.status')='error' THEN json_object('status','error','input',CASE WHEN length(CAST(c.value AS BLOB))<=70000 OR json_type(c.value,'$.state.input') IS NOT 'object' THEN json_extract(c.value,'$.state.input') ELSE json_replace(json_extract(c.value,'$.state.input'),'$.command',substr(json_extract(c.value,'$.state.input.command'),1,1024),'$.content',substr(json_extract(c.value,'$.state.input.content'),1,1024),'$.oldString',substr(json_extract(c.value,'$.state.input.oldString'),1,1024),'$.newString',substr(json_extract(c.value,'$.state.input.newString'),1,1024),'$.prompt',substr(json_extract(c.value,'$.state.input.prompt'),1,1024)) END,'error',substr(coalesce(json_extract(c.value,'$.state.error.message'),CASE WHEN json_type(c.value,'$.state.error')='text' THEN json_extract(c.value,'$.state.error') END,''),1,CASE WHEN length(CAST(c.value AS BLOB))<=70000 THEN 2147483647 ELSE 8192 END)) ELSE json_object('status',json_extract(c.value,'$.state.status'),'input',CASE WHEN length(CAST(c.value AS BLOB))<=70000 OR json_type(c.value,'$.state.input') IS NOT 'object' THEN json_extract(c.value,'$.state.input') ELSE json_replace(json_extract(c.value,'$.state.input'),'$.command',substr(json_extract(c.value,'$.state.input.command'),1,1024),'$.content',substr(json_extract(c.value,'$.state.input.content'),1,1024),'$.oldString',substr(json_extract(c.value,'$.state.input.oldString'),1,1024),'$.newString',substr(json_extract(c.value,'$.state.input.newString'),1,1024),'$.prompt',substr(json_extract(c.value,'$.state.input.prompt'),1,1024)) END,'output',substr((SELECT group_concat(json_extract(x.value,'$.text'),char(10)) FROM json_each(c.value,'$.state.content') x WHERE CASE WHEN x.type='object' THEN json_extract(x.value,'$.type') END='text'),1,CASE WHEN length(CAST(c.value AS BLOB))<=70000 THEN 2147483647 ELSE 8192 END)) END) END) AS line,m.session_id AS sid,m.seq AS sq,c.key AS ix FROM shown m,json_each(m.data,'$.content') c WHERE m.type='assistant' AND CASE WHEN c.type='object' THEN json_extract(c.value,'$.type') END IN ('text','tool') UNION ALL SELECT json_object('sessionId',session_id,'role','assistant','part',json_object('type','tool','tool','shell','state',json_object('status',json_extract(data,'$.status'),'input',json_object('command',substr(json_extract(data,'$.command'),1,CASE WHEN length(CAST(data AS BLOB))<=70000 THEN 2147483647 ELSE 1024 END)),'output',substr(json_extract(data,'$.output.output'),1,CASE WHEN length(CAST(data AS BLOB))<=70000 THEN 2147483647 ELSE 8192 END)))) AS line,session_id AS sid,seq AS sq,0 AS ix FROM shown WHERE type='shell' UNION ALL SELECT json_object('sessionId',session_id,'role','assistant','part',json_object('type','error','text',coalesce(json_extract(data,'$.error.data.message'),json_extract(data,'$.error.message'),'OpenCode request failed'))) AS line,session_id AS sid,seq AS sq,1000000000 AS ix FROM shown WHERE type='assistant' AND json_extract(data,'$.error') IS NOT NULL) ORDER BY sid,sq,ix"
