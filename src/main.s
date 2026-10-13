@@ -29,7 +29,9 @@ FN main
     mov r10d, 8
     SYS SYS_rt_sigaction
     cmp qword ptr [rip + g_argc], 5
-    jne 1f
+    jb 1f
+    cmp qword ptr [rip + g_argc], 6
+    ja 1f
     mov rax, [rip + g_argv]
     mov rdi, [rax + 8]
     lea rsi, [rip + .Lagent_worker]

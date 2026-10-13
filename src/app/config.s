@@ -11,6 +11,7 @@
 .globl cfg_sidebar, cfg_sidebar_w, cfg_agents, cfg_agents_w, cfg_ui_scale, cfg_final_newline
 .globl cfg_trim_trailing, cfg_scroll_past_end, cfg_smooth_caret, cfg_theme, cfg_font, cfg_ui_font
 .globl cfg_exclude, cfg_agent_sources, cfg_restore_session, cfg_auto_pairs, cfg_word_wrap, cfg_decorations
+.globl cfg_agents_claude, cfg_agents_codex, cfg_agents_grok, cfg_agents_opencode
 .globl cfg_vim
 .globl cfg_restore_project
 .globl cfg_follow_system, cfg_dark_theme, cfg_light_theme, cfg_theme_keys
@@ -44,6 +45,10 @@ cfg_word_wrap: .long 0
 cfg_vim: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
 cfg_follow_system: .long 1       # dark_theme or light_theme as the system's dark mode is on or off
+cfg_agents_claude: .long 1       # the providers the agents panel lists, in this order (settings.s)
+cfg_agents_codex: .long 1
+cfg_agents_grok: .long 1
+cfg_agents_opencode: .long 1
 .globl cfg_scroll_sens, cfg_fast_sens
 cfg_scroll_sens: .long 100       # scroll_sensitivity: multiplier in hundredths
 cfg_fast_sens: .long 400         # fast_scroll_sensitivity: multiplier while alt is held
@@ -63,15 +68,17 @@ cfg_light_theme: .quad cfg_def_light_theme
 cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
 cfg_exclude: .quad .Ldef_exclude
-cfg_agent_sources: .quad .Ldef_sources
 cfg_term_shell: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
 .Lcfg_strings_end:
+cfg_agent_sources: .quad .Ldef_sources  # the switched-on providers' names, for the discovery worker
 
 .bss
 .p2align 3
 cfg_seen_mtime: .quad 0         # the config file's mtime (ns) when rhun last read or wrote it
 cfg_theme_keys: .long 0         # theme keys the last read found: 1 theme, 2 dark_theme, 4 light_theme
+old_sources: .long 0            # the last read found [agents] sources = claude codex, the old default
+agent_sources_buf: .zero 32
 # One owned allocation per string slot above. The theme slots may separately borrow
 # a theme registry ID, so the current value alone does not identify its owner.
 cfg_owned_strings: .zero .Lcfg_strings_end - cfg_theme
@@ -340,6 +347,7 @@ FN config_load
     inc rbx
     jmp 1b
 2:  mov qword ptr [rip + g_keylines + VEC_len], 0
+    mov dword ptr [rip + old_sources], 0
     # taken before the read: a write that lands during it still counts as a change
     call config_path
     mov rdi, rax
@@ -388,8 +396,10 @@ FN config_load
     mov rcx, [rip + it + INI_keylen]
     call setting_find
     test rax, rax
-    jz .Lcl_next
-    # which theme keys the file has: a file from before dark_theme and light_theme has theme only
+    jnz 3f
+    call legacy_sources
+    jmp .Lcl_next
+3:  # which theme keys the file has: a file from before dark_theme and light_theme has theme only
     mov rcx, [rax + SET_ptr]
     lea rdx, [rip + cfg_theme]
     sub rcx, rdx
@@ -409,24 +419,95 @@ FN config_load
     # while one written since keeps what is set
     test dword ptr [rip + cfg_theme_keys], 2
     jnz 1f
-    mov rdi, [rip + cfg_agent_sources]
-    lea rsi, [rip + .Lold_sources]
-    call strcmp_eq
-    test eax, eax
-    jz 1f
-    lea rdi, [rip + .Ls_agents]
-    mov esi, 6
-    lea rdx, [rip + .Lsources_key]
-    mov ecx, 7
-    call setting_find
-    test rax, rax
-    jz 1f
-    mov rdi, rax
-    lea rsi, [rip + .Ldef_sources]
-    mov edx, 17
-    call setting_assign
-1:  mov rdi, r15
+    cmp dword ptr [rip + old_sources], 0
+    je 1f
+    mov dword ptr [rip + cfg_agents_grok], 1
+1:  call config_agent_sources
+    mov rdi, r15
     call mem_free
+    EPILOGUE
+
+# legacy_sources(): [agents] sources from before the switches names the providers listed. OpenCode came
+#   with the switches: no such line turns it off. config_save writes the switches in its place.
+legacy_sources:
+    PROLOGUE
+    lea rdi, [rip + .Ls_agents]
+    mov rsi, [rip + it + INI_sec]
+    mov rdx, [rip + it + INI_seclen]
+    mov ecx, 6
+    call ini_field_is
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lsources_key]
+    mov rsi, [rip + it + INI_key]
+    mov rdx, [rip + it + INI_keylen]
+    mov ecx, 7
+    call ini_field_is
+    test eax, eax
+    jz 9f
+    mov rdi, [rip + it + INI_val]
+    mov rsi, [rip + it + INI_vallen]
+    call mem_dup
+    mov r12, rax
+    lea rdi, [rip + .Lold_sources]
+    mov rsi, r12
+    call strcmp_eq
+    mov [rip + old_sources], eax
+    lea rbx, [rip + legacy_names]
+1:  mov r13, [rbx]
+    test r13, r13
+    jz 2f
+    mov rdi, r13
+    call strlen
+    mov r14, rax
+    mov rdi, r12
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    mov rdx, r13
+    mov rcx, r14
+    call str_find
+    not rax
+    shr rax, 63
+    mov rcx, [rbx + 8]
+    mov [rcx], eax
+    add rbx, 16
+    jmp 1b
+2:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
+# ini_field_is(name, ptr, len, name length) -> 1 when the ini field is that name
+ini_field_is:
+    xor eax, eax
+    cmp rdx, rcx
+    jne 1f
+    mov rdx, rcx
+    jmp memeq
+1:  ret
+
+# config_agent_sources(): cfg_agent_sources names the providers switched on, as the worker takes them
+FN config_agent_sources
+    PROLOGUE
+    lea rbx, [rip + agent_sources_buf]
+    mov rax, rbx
+    lea r12, [rip + agent_names]
+1:  mov rcx, [r12 + 8]
+    test rcx, rcx
+    jz 3f
+    cmp dword ptr [rcx], 0
+    je 2f
+    cmp rax, rbx
+    je 11f
+    mov byte ptr [rax], ' '
+    inc rax
+11: mov rdi, rax
+    mov rsi, [r12]
+    call cstr_copy
+2:  add r12, 16
+    jmp 1b
+3:  mov byte ptr [rax], 0
+    mov [rip + cfg_agent_sources], rbx
     EPILOGUE
 
 # config_save(): write every setting (and custom keys) back to the file
@@ -640,9 +721,17 @@ cfg_def_theme: .asciz "rhun-dark"
 cfg_def_light_theme: .asciz "rhun-light"
 .Lempty: .asciz ""
 .Ldef_exclude: .asciz ".git node_modules target build .cache __pycache__ .venv .idea .DS_Store"
-.Ldef_sources: .asciz "claude codex grok"
+.Ldef_sources: .asciz "claude codex grok opencode"
 .Lold_sources: .asciz "claude codex"
 .Lsources_key: .ascii "sources"
+.Ln_claude: .asciz "claude"
+.Ln_codex: .asciz "codex"
+.Ln_grok: .asciz "grok"
+.Ln_opencode: .asciz "opencode"
+.p2align 3
+agent_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, .Ln_grok, cfg_agents_grok
+    .quad .Ln_opencode, cfg_agents_opencode, 0, 0
+legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, .Ln_grok, cfg_agents_grok, 0, 0
 .Lxdg: .asciz "XDG_CONFIG_HOME"
 .Lhome: .asciz "HOME"
 .Ltmp: .asciz "/tmp"
@@ -735,7 +824,10 @@ g_settings:
     SETTING .Ls_files, restore_session, ST_BOOL, cfg_restore_session, 0, 1, 1, 0, "Restore open files", "Reopen the files from the last session of a project."
     SETTING .Ls_files, restore_project, ST_BOOL, cfg_restore_project, 0, 1, 1, 0, "Reopen last project", "Reopen the project you closed with when no file or folder is given."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
-    SETTING .Ls_agents, sources, ST_STR, cfg_agent_sources, 0, 0, 0, 0, "Agent sources", "Which agents to show: claude, codex, grok."
+    SETTING .Ls_agents, claude, ST_BOOL, cfg_agents_claude, 0, 1, 1, 0, "Claude Code", "Show Claude Code sessions in the agents panel."
+    SETTING .Ls_agents, codex, ST_BOOL, cfg_agents_codex, 0, 1, 1, 0, "Codex", "Show Codex sessions in the agents panel."
+    SETTING .Ls_agents, grok, ST_BOOL, cfg_agents_grok, 0, 1, 1, 0, "Grok Build", "Show Grok Build sessions in the agents panel."
+    SETTING .Ls_agents, opencode, ST_BOOL, cfg_agents_opencode, 0, 1, 1, 0, "OpenCode", "Show OpenCode sessions in the agents panel."
     SETTING .Ls_terminal, shell, ST_STR, cfg_term_shell, 0, 0, 0, 0, "Shell", "Program the terminal runs. Empty uses $SHELL."
     SETTING .Ls_terminal, font_size, ST_INT, cfg_term_font_size, 8, 40, 1, 0, "Terminal font size", "Font size of the terminal panel."
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."

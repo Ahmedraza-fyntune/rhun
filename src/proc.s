@@ -324,7 +324,8 @@ FN run_piped
 
 # run_piped_input(argv, envp, cwd, ptr, len, errors): run_piped with ptr/len (at most 60 KiB) on the
 #   program's input; errors 1 sends its error output down the same pipe (else it goes to /dev/null) and
-#   runs it in a session of its own, without a terminal to ask for passwords on
+#   runs it in a session of its own, without a terminal to ask for passwords on.
+#   errors 2 creates that session without merging stderr, for binary-output workers.
 FN run_piped_input
     PROLOGUE 48
     mov r12, rdi
@@ -362,8 +363,8 @@ FN run_piped_input
     mov ecx, r15d
     mov r8d, [rsp + 4]
     mov r9d, ebx
-    cmp dword ptr [rsp + 32], 0
-    je 11f
+    test dword ptr [rsp + 32], 1
+    jz 11f
     mov r9d, r8d
 11: mov eax, [rsp + 32]
     push rax

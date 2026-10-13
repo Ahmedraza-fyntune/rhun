@@ -64,11 +64,19 @@ FN agent_records_free
     call vec_free
     EPILOGUE
 
-# agent_record_encode(sb, AS*): 88-byte fixed header, then four byte strings.
+# agent_record_encode(sb, AS*): a 96-byte fixed header, then five byte strings (pages and the cache).
+# agent_record_encode4(sb, AS*): an 88-byte header and the first four, without the model: worktree
+#   history and membership proofs, which earlier versions wrote so and which stay readable.
 FN agent_record_encode
-    PROLOGUE 96
+    mov edx, 5
+    jmp record_encode
+FN agent_record_encode4
+    mov edx, 4
+record_encode:
+    PROLOGUE 112
     mov r12, rdi
     mov r13, rsi
+    mov r14d, edx
     mov eax, [r13 + AS_kind]
     mov [rsp], rax
     mov eax, [r13 + AS_pad]     # worker completed both bounded title reads
@@ -82,12 +90,13 @@ FN agent_record_encode
     mov [rsp + 16], rax
     mov rax, [r13 + AS_stamp]
     mov [rsp + 24], rax
+    lea rcx, [rsp + r14*8 + 32]  # after the string lengths
     mov rax, [r13 + AS_prefix_hash]
-    mov [rsp + 64], rax
+    mov [rcx], rax
     mov rax, [r13 + AS_title_off]
-    mov [rsp + 72], rax
+    mov [rcx + 8], rax
     mov rax, [r13 + AS_title_rev]
-    mov [rsp + 80], rax
+    mov [rcx + 16], rax
     xor ebx, ebx
 1:  lea rax, [rip + record_fields]
     mov ecx, [rax + rbx*4]
@@ -98,11 +107,11 @@ FN agent_record_encode
     call strlen
 2:  mov [rsp + rbx*8 + 32], rax
     inc ebx
-    cmp ebx, 4
+    cmp ebx, r14d
     jb 1b
     mov rdi, r12
     mov rsi, rsp
-    mov edx, 88
+    lea edx, [r14*8 + 56]
     call sb_push
     xor ebx, ebx
 3:  lea rax, [rip + record_fields]
@@ -112,17 +121,24 @@ FN agent_record_encode
     mov rdi, r12
     call sb_push
     inc ebx
-    cmp ebx, 4
+    cmp ebx, r14d
     jb 3b
     EPILOGUE
 
-# agent_records_decode(packet, bytes, out VEC*) -> 1 valid, 0 invalid.
+# agent_records_decode(packet, bytes, out VEC*) -> 1 valid, 0 invalid; records of five strings.
+# agent_records_decode4: of four, as agent_record_encode4 writes them.
 # Caller validates magic. No mutation escapes until the entire packet is valid.
 FN agent_records_decode
+    mov ecx, 5
+    jmp records_decode
+FN agent_records_decode4
+    mov ecx, 4
+records_decode:
     PROLOGUE 48
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
+    mov [rsp + 40], rcx        # strings a record
     cmp r13, 32
     jb .Ldecode_bad
     cmp r13, 1 << 26
@@ -152,43 +168,49 @@ FN agent_records_decode
 .Ldecode_record:
     cmp qword ptr [rsp], 0
     je .Ldecode_end
-    cmp r13, 88
+    mov rcx, [rsp + 40]
+    lea rax, [rcx*8 + 56]      # the fixed header
+    cmp r13, rax
     jb .Ldecode_fail
     mov rax, [r12]
     dec rax
-    cmp rax, 2                  # kinds 1 to 3
+    cmp rax, 3                  # kinds 1 to 4
     ja .Ldecode_fail
     cmp qword ptr [r12 + 8], 7
     ja .Ldecode_fail
     cmp qword ptr [r12 + 32], 0
     je .Ldecode_fail
-    cmp qword ptr [r12 + 72], 0
+    cmp qword ptr [r12 + rcx*8 + 40], 0
     js .Ldecode_fail
-    mov r15d, 88
+    lea r15, [rcx*8 + 56]
     xor ebx, ebx
 3:  mov rax, [r12 + rbx*8 + 32]
     cmp rax, 4096
     ja .Ldecode_fail
-    cmp ebx, 2
+    cmp ebx, 2                  # the title and the model are short
+    je 31f
+    cmp ebx, 4
     jne 4f
-    cmp rax, 120
+31: cmp rax, 120
     ja .Ldecode_fail
 4:  add r15, rax
     inc ebx
-    cmp ebx, 4
+    cmp rbx, [rsp + 40]
     jb 3b
     cmp r15, r13
     ja .Ldecode_fail
     mov [rsp + 24], r15
-    lea rax, [r12 + 88]
-    mov ecx, r15d
-    sub ecx, 88
-5:  test ecx, ecx
+    mov rcx, [rsp + 40]
+    lea rax, [r12 + rcx*8 + 56]
+    lea rcx, [rcx*8 + 56]
+    neg rcx
+    add rcx, r15                # the strings' bytes
+5:  test rcx, rcx
     jz 6f
     cmp byte ptr [rax], 0
     je .Ldecode_fail
     inc rax
-    dec ecx
+    dec rcx
     jmp 5b
 6:  mov edi, AS_SIZE
     call mem_alloc
@@ -213,13 +235,14 @@ FN agent_records_decode
     mov [r15 + AS_mtime], rax
     mov rax, [r12 + 24]
     mov [r15 + AS_stamp], rax
-    mov rax, [r12 + 64]
+    mov rcx, [rsp + 40]
+    mov rax, [r12 + rcx*8 + 32]
     mov [r15 + AS_prefix_hash], rax
-    mov rax, [r12 + 72]
+    mov rax, [r12 + rcx*8 + 40]
     mov [r15 + AS_title_off], rax
-    mov rax, [r12 + 80]
+    mov rax, [r12 + rcx*8 + 48]
     mov [r15 + AS_title_rev], rax
-    lea rax, [r12 + 88]
+    lea rax, [r12 + rcx*8 + 56]
     mov [rsp + 32], rax
     xor ebx, ebx
 7:  mov rsi, [r12 + rbx*8 + 32]
@@ -232,7 +255,7 @@ FN agent_records_decode
     mov ecx, [rcx + rbx*4]
     mov [r15 + rcx], rax
 8:  inc ebx
-    cmp ebx, 4
+    cmp rbx, [rsp + 40]
     jb 7b
     mov rdi, [rsp + 8]
     mov rsi, [rsp + 16]
@@ -273,4 +296,4 @@ FN agent_records_decode
     EPILOGUE
 
 .section .rodata
-record_fields: .long AS_path, AS_cwd, AS_title, AS_worktree
+record_fields: .long AS_path, AS_cwd, AS_title, AS_worktree, AS_model

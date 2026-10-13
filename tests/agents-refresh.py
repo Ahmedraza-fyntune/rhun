@@ -94,7 +94,7 @@ class AgentsRefresh(unittest.TestCase):
 
     def cache(self):
         """The index worker writes its cache anew when it changed: another inode, a later time."""
-        files = glob.glob(str(self.work / 'state/rhun/agents-index-v5-*'))
+        files = glob.glob(str(self.work / 'state/rhun/agents-index-v6-*'))
         self.assertEqual(len(files), 1, files)
         stat = os.stat(files[0])
         return stat.st_ino, stat.st_mtime_ns

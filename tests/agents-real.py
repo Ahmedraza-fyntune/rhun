@@ -113,14 +113,14 @@ def decode(packet):
     count, = struct.unpack_from('<Q', packet, 8)
     offset, rows = 32, []
     for _ in range(count):
-        kind, flags, mtime, stamp, *lengths = struct.unpack_from('<8Q', packet, offset)
-        offset += 88
+        kind, flags, mtime, stamp, *lengths = struct.unpack_from('<9Q', packet, offset)
+        offset += 96
         strings = []
         for length in lengths:
             strings.append(packet[offset:offset + length].decode())
             offset += length
         rows.append(dict(kind=kind, flags=flags, mtime=mtime, path=strings[0],
-                         cwd=strings[1], title=strings[2], badge=strings[3]))
+                         cwd=strings[1], title=strings[2], badge=strings[3], model=strings[4]))
     require(offset == len(packet), 'Worker packet has trailing or missing bytes')
     return rows
 
@@ -175,8 +175,9 @@ def check_rows(packet, reference, main, limit):
 
 
 def labels(rows):
-    return [{1: 'Claude', 2: 'Codex', 3: 'Grok'}[row['kind']] +
+    return [{1: 'Claude', 2: 'Codex', 3: 'Grok', 4: 'OpenCode'}[row['kind']] +
             (' [worktree: ' + row['badge'] + ']' if row['badge'] else '') +
+            (' [model: ' + row['model'] + ']' if row.get('model') else '') +
             ': ' + (row['title'] or 'Untitled session') for row in rows]
 
 

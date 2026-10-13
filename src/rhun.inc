@@ -825,7 +825,8 @@ ENDSTRUCT TF_SIZE
 .equ IC_F_YML, 142
 .equ IC_F_ZIG, 143
 .equ IC_F_ZIP, 144
-.equ IC_COUNT, 145
+.equ IC_OPENCODE, 145
+.equ IC_COUNT, 146
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
@@ -1077,7 +1078,7 @@ F AS_mtime, 8
 F AS_off, 8             # bytes parsed
 F AS_msgs, VEC_SIZE     # AM
 F AS_part, SB_SIZE      # incomplete trailing line
-F AS_kind, 4            # 1 claude, 2 codex, 3 grok
+F AS_kind, 4            # 1 claude, 2 codex, 3 grok, 4 opencode
 F AS_loaded, 4          # messages parsed (opened at least once)
 F AS_titled, 4          # has a custom title
 F AS_pad, 4
@@ -1093,4 +1094,8 @@ F AS_title_off, 8       # worker: bytes covered by the last successful title rea
 F AS_title_rev, 8       # identity of the last indexed custom title record
 F AS_record_off, 8      # worker: current title record's newline offset plus one
 F AS_replaced, 8        # worker page: metadata came from a replaced or truncated log
+F AS_bytes, 8           # worker, OpenCode: the conversation copy's estimated size
+F AS_model, 8           # the model the session last used (its row), or 0
+F AS_log_model, 8       # parse: the model the log names for the replies that follow
+F AS_shown_model, 8     # parse: the model on the last reply labeled with one
 ENDSTRUCT AS_SIZE

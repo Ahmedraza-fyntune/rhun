@@ -1,0 +1,431 @@
+# OpenCode's database CLI runs only in the background metadata worker.
+# No shell, provider requests, or extra SQLite runtime are needed.
+.include "rhun.inc"
+.equ OPENCODE_TIMEOUT, 15000    # ms one CLI run may take
+.equ OPENCODE_BUDGET, 30000     # ms for all of a discovery run's CLI runs
+.bss
+.p2align 3
+cli: .quad 0
+deadline: .quad 0
+output: .zero SB_SIZE
+out_path: .zero SB_SIZE
+key: .zero SB_SIZE
+.text
+
+FN agent_opencode_init
+    PROLOGUE
+    lea rdi, [rip + .Lcli]
+    call proc_which
+    test rax, rax
+    jnz 3f
+.ifndef WINDOWS
+    lea rdi, [rip + .Lhome]
+    call getenv
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    lea r13, [rip + locations]
+1:  mov rsi, [r13]
+    test rsi, rsi
+    jz 9f
+    mov rdi, r12
+    cmp byte ptr [rsi], '/'
+    jne 11f
+    mov rdi, rsi
+    call strlen
+    mov rsi, rax
+    mov rdi, [r13]
+    call mem_dup
+    jmp 12f
+11: call path_join
+12:
+    mov rbx, rax
+    mov rdi, rax
+    mov esi, 1
+    SYS SYS_access
+    test rax, rax
+    jz 2f
+    mov rdi, rbx
+    call mem_free
+    add r13, 8
+    jmp 1b
+2:  mov rax, rbx
+.else
+    jmp 9f                      # Windows looks on PATH alone
+.endif
+3:  mov [rip + cli], rax
+    mov eax, 1
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
+
+# agent_opencode_scope(data dir) -> identity of the database this profile's CLI uses: its data folder
+#   and the variables OpenCode chooses the database with. Cached rows of another one are never listed.
+FN agent_opencode_scope
+    PROLOGUE
+    mov r12, rdi
+    lea rdi, [rip + key]
+    call sb_clear
+    mov rdi, r12
+    call key_hash
+    EPILOGUE
+
+# agent_opencode_cli_key(data dir) -> identity of what decides `opencode db path`: the CLI file (an
+# update replaces it) and the scope's folder and variables.
+FN agent_opencode_cli_key
+    PROLOGUE 16
+    mov r12, rdi
+    lea rdi, [rip + key]
+    call sb_clear
+    lea rdi, [rip + key]
+    mov rsi, [rip + cli]
+    call sb_push_cstr
+    lea rdi, [rip + key]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + cli]
+    call file_stamp
+    mov [rsp], rax
+    lea rdi, [rip + key]
+    mov rsi, rsp
+    mov edx, 8
+    call sb_push
+    mov rdi, r12
+    call key_hash
+    EPILOGUE
+
+# key_hash(data dir) -> hash of the key so far, the variables and the folder
+key_hash:
+    PROLOGUE
+    mov r12, rdi
+    lea rbx, [rip + key_env]
+1:  mov rdi, [rbx]
+    test rdi, rdi
+    jz 2f
+    call getenv
+    test rax, rax
+    jz 11f
+    lea rdi, [rip + key]
+    mov rsi, rax
+    call sb_push_cstr
+11: lea rdi, [rip + key]
+    xor esi, esi
+    call sb_push_byte
+    add rbx, 8
+    jmp 1b
+2:  lea rdi, [rip + key]
+    mov rsi, r12
+    call sb_push_cstr
+    mov rdi, [rip + key + SB_ptr]
+    mov rsi, [rip + key + SB_len]
+    call hash_line
+    EPILOGUE
+
+# Data is created by OpenCode's global bootstrap, including installations with a custom database.
+# Do not invoke the CLI (or initialize its database) until OpenCode has been used in this profile.
+FN agent_opencode_data_dir
+    PROLOGUE
+    lea rdi, [rip + .Ldata]
+    call getenv
+    test rax, rax
+    jz 1f
+    cmp byte ptr [rax], 0
+    je 1f
+    mov rdi, rax
+    lea rsi, [rip + .Lcli]
+    call path_join
+    EPILOGUE
+1:  lea rdi, [rip + .Lhome]
+    call getenv
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    lea rsi, [rip + .Ldefault_data]
+    call path_join
+9:  EPILOGUE
+
+# agent_opencode_query(SQL or 0 for db path) -> borrowed output ptr, rdx bytes; 0 on failure, with rdx
+#   -1 when the run's time for queries is used up and -2 for output past 64 MiB.
+# The CLI writes to a file: OpenCode 1.19 exits before a pipe has taken all of its output and drops
+# the rest, with status 0. Output and time stay bounded if a CLI installation is broken or hangs, and
+# the queries of one run share a deadline, well inside the app's limit for the whole run.
+FN agent_opencode_query
+    PROLOGUE 80
+    mov rax, [rip + cli]
+    mov [rsp], rax
+    lea rax, [rip + .Ldb]
+    mov [rsp + 8], rax
+    mov [rsp + 16], rdi
+    lea rax, [rip + .Lformat]
+    mov [rsp + 24], rax
+    lea rax, [rip + .Ltsv]
+    mov [rsp + 32], rax
+    mov qword ptr [rsp + 40], 0
+    test rdi, rdi
+    jnz 1f
+    lea rax, [rip + .Lpath]
+    mov [rsp + 16], rax
+    mov qword ptr [rsp + 24], 0
+1:  call time_ms
+    mov r14, rax
+    mov rcx, [rip + deadline]
+    test rcx, rcx
+    jnz 2f
+    lea rcx, [rax + OPENCODE_BUDGET]
+    mov [rip + deadline], rcx
+2:  cmp r14, rcx
+    jae 10f                     # this run's time for OpenCode is used up
+    add r14, OPENCODE_TIMEOUT
+    cmp r14, rcx
+    cmova r14, rcx
+    call out_open
+    test eax, eax
+    js 9f
+    mov r15d, eax
+    lea rdi, [rip + .Ldevnull]
+    mov esi, O_RDWR | O_CLOEXEC
+    xor edx, edx
+    SYS SYS_open
+    test rax, rax
+    js 8f
+    mov ebx, eax
+    mov rdi, rsp
+    mov rsi, [rip + g_envp]
+    xor edx, edx
+    mov ecx, ebx
+    mov r8d, r15d
+    mov r9d, ebx
+    xor eax, eax
+    push rax
+    push rax
+    call proc_spawn
+    add rsp, 16
+    mov r12, rax
+    mov edi, ebx
+    SYS SYS_close
+    test r12, r12
+    jle 8f
+3:  mov edi, r12d
+    mov esi, 1
+    call proc_wait
+    cmp eax, -1
+    jne 5f
+    mov edi, r15d
+    call file_size
+    cmp rax, 1 << 26
+    ja 41f
+    call time_ms
+    cmp rax, r14
+    jae 4f
+    lea rdi, [rsp + 48]
+    xor esi, esi
+    mov edx, 20
+    SYS SYS_poll
+    jmp 3b
+4:  mov edi, r12d
+    mov esi, 9
+    SYS SYS_kill
+    mov edi, r12d
+    xor esi, esi
+    call proc_wait
+    mov edi, r15d
+    call out_close
+    cmp r14, [rip + deadline]
+    je 10f                      # stopped for the run's time, not its own
+    jmp 9f
+41: mov edi, r12d
+    mov esi, 9
+    SYS SYS_kill
+    mov edi, r12d
+    xor esi, esi
+    call proc_wait
+    jmp 11f
+5:  test eax, eax
+    jnz 8f
+    lea rdi, [rip + output]
+    call sb_clear
+    mov edi, r15d
+    xor esi, esi
+    xor edx, edx
+    SYS SYS_lseek
+    test rax, rax
+    js 8f
+6:  lea rdi, [rip + output]
+    mov esi, 65536
+    call sb_reserve
+    mov rsi, rax
+    mov edi, r15d
+    mov edx, 65536
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 6b
+    test rax, rax
+    js 8f
+    jz 7f
+    add [rip + output + SB_len], rax
+    cmp qword ptr [rip + output + SB_len], 1 << 26
+    ja 11f
+    jmp 6b
+7:  mov edi, r15d
+    call out_close
+    mov rax, [rip + output + SB_ptr]
+    mov rdx, [rip + output + SB_len]
+    EPILOGUE
+8:  mov edi, r15d
+    call out_close
+9:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+10: xor eax, eax
+    mov rdx, -1
+    EPILOGUE
+11: mov edi, r15d
+    call out_close
+    xor eax, eax
+    mov rdx, -2
+    EPILOGUE
+
+# out_open() -> fd of a new file, readable by this user alone, for the CLI's output (or -errno). On
+#   Linux and macOS it loses its name at once; a Windows file keeps it until out_close.
+out_open:
+    PROLOGUE 32
+    lea rdi, [rip + out_path]
+    call session_state_dir
+    test eax, eax
+    jz 8f
+    lea rdi, [rip + out_path]
+    lea rsi, [rip + .Lout_prefix]
+    call sb_push_cstr
+    SYS SYS_getpid
+    mov rsi, rax
+    mov rdi, rsp
+    call fmt_u64
+    lea rdi, [rip + out_path]
+    mov rsi, rsp
+    mov rdx, rax
+    call sb_push
+    lea rdi, [rip + out_path]
+    lea rsi, [rip + .Lout_suffix]
+    call sb_push_cstr
+    mov ebx, 2
+1:  mov rdi, [rip + out_path + SB_ptr]
+    mov esi, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC
+    mov edx, 0600
+    SYS SYS_open
+    cmp rax, -17                # EEXIST: what a stopped run of this process ID left
+    jne 2f
+    dec ebx
+    jz 2f
+    mov rdi, [rip + out_path + SB_ptr]
+    SYS SYS_unlink
+    jmp 1b
+2:  test rax, rax
+    js 9f
+.ifndef WINDOWS
+    mov r12, rax
+    mov rdi, [rip + out_path + SB_ptr]
+    SYS SYS_unlink
+    mov rax, r12
+.endif
+9:  EPILOGUE
+8:  mov rax, -2
+    EPILOGUE
+
+# out_close(fd)
+out_close:
+    PROLOGUE
+    SYS SYS_close
+.ifdef WINDOWS
+    mov rdi, [rip + out_path + SB_ptr]
+    SYS SYS_unlink
+.endif
+    EPILOGUE
+
+# SQL string literal, with quotes doubled. Arguments go directly to the CLI, never a shell.
+FN agent_opencode_quote
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov esi, 39
+    call sb_push_byte
+1:  movzx esi, byte ptr [r13]
+    test esi, esi
+    jz 3f
+    mov ebx, esi
+    mov rdi, r12
+    call sb_push_byte
+    cmp ebx, 39
+    jne 2f
+    mov rdi, r12
+    mov esi, 39
+    call sb_push_byte
+2:  inc r13
+    jmp 1b
+3:  mov rdi, r12
+    mov esi, 39
+    call sb_push_byte
+    EPILOGUE
+
+# The query returns one JSON object per TSV row, under the single column "line".
+# each_line(ptr, bytes, callback(ptr,len)) -> 1 valid transport, 0 invalid/truncated.
+FN agent_opencode_each_line
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    test r13, r13
+    jz 9f                      # db prints nothing when the SELECT returns no rows
+    cmp r13, 5
+    jb 8f
+    cmp dword ptr [r12], 0x656e696c # line
+    jne 8f
+    mov ebx, 4
+    cmp byte ptr [r12 + rbx], 13
+    jne 1f
+    inc rbx
+1:  cmp byte ptr [r12 + rbx], 10
+    jne 8f
+    inc rbx
+2:  cmp rbx, r13
+    jae 9f
+    mov r15, rbx
+3:  cmp r15, r13
+    jae 8f
+    cmp byte ptr [r12 + r15], 10
+    je 4f
+    inc r15
+    jmp 3b
+4:  lea rdi, [r12 + rbx]
+    mov rsi, r15
+    sub rsi, rbx
+    call r14
+    test eax, eax
+    jz 8f
+    lea rbx, [r15 + 1]
+    jmp 2b
+8:  xor eax, eax
+    EPILOGUE
+9:  mov eax, 1
+    EPILOGUE
+
+.section .rodata
+.Lcli: .asciz "opencode"
+.Ldb: .asciz "db"
+.Lpath: .asciz "path"
+.Lformat: .asciz "--format"
+.Ltsv: .asciz "tsv"
+.Ldevnull: .asciz "/dev/null"
+.Lout_prefix: .asciz "/.rhun-opencode-"
+.Lout_suffix: .asciz ".tmp"
+.Lhome: .asciz "HOME"
+.Ldata: .asciz "XDG_DATA_HOME"
+.Ldefault_data: .asciz ".local/share/opencode"
+.Linstaller: .asciz ".opencode/bin/opencode"
+.Llocal: .asciz ".local/bin/opencode"
+.Lbrew: .asciz "/opt/homebrew/bin/opencode"
+.Lusr: .asciz "/usr/local/bin/opencode"
+.Lenv_db: .asciz "OPENCODE_DB"
+.Lenv_channel: .asciz "OPENCODE_DISABLE_CHANNEL_DB"
+.p2align 3
+locations: .quad .Linstaller, .Llocal, .Lbrew, .Lusr, 0
+key_env: .quad .Lenv_db, .Lenv_channel, 0
