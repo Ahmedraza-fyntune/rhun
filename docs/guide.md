@@ -79,16 +79,17 @@ model requests: with `opencode db` on OpenCode 1, and on OpenCode 2, which has n
 with the Bun runtime the `opencode` binary is built on, which reads OpenCode 2's session tables
 without writing to them while OpenCode is open. Discovery follows the database path the CLI
 reports (`opencode db path`, or `opencode debug paths` on OpenCode 2), including `XDG_DATA_HOME`
-and `OPENCODE_DB`, and asks again only after the CLI changes, as an update does.
+and `OPENCODE_DB`, and asks again after the CLI changes, as an update does, or a query fails.
+The CLI runs in Rhun's state folder, so a project's `bunfig.toml` or `.env` is never loaded.
 The queries run only after OpenCode has written to its database, and at least every five
 minutes; an unchanged database starts no CLI. Discovery waits
 until OpenCode has created its data folder, so opening Rhun does not initialize an unused
 OpenCode profile. Only visible
 conversations and the open conversation are copied into Rhun's local state folder. Unchanged
 copies are reused, and the copy of a session OpenCode deletes or archives is removed. A copy
-holds what the panel shows, prompts, replies and tool calls; a part over 70 KB keeps the first
-16,384 characters of its text and 8,192 of a tool's output. A conversation whose copy would pass
-about 24 MB is listed without its transcript.
+holds what the panel shows, prompts, replies, tool calls and the commands you ran in OpenCode;
+a part over 70 KB keeps the first 16,384 characters of its text and 8,192 of a tool's output.
+A conversation whose copy would pass about 24 MB is listed without its transcript.
 On Linux and macOS the transcript cache folder is accessible only to its owner.
 The CLI must be on Rhun's PATH; the usual `~/.opencode/bin`, `~/.local/bin`, Homebrew and
 `/usr/local/bin` locations are also checked on Linux and macOS. Windows requires the native

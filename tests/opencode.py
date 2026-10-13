@@ -4,6 +4,7 @@ import json
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import struct
 import subprocess
@@ -15,6 +16,32 @@ import unittest
 import agents
 
 EXE = agents.EXE
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def reader():
+    """the reader Rhun runs in OpenCode 2's binary, as its source holds it"""
+    line, = [line for line in (ROOT / 'src/app/agent_opencode.s').read_text().splitlines()
+             if line.startswith('.Lreader: .asciz "')]
+    value = line[len('.Lreader: .asciz "'):-1]
+    assert '\\"' not in value
+    return value.replace('\\\\', '\\')
+
+
+def real_bun():
+    """a Bun runtime where one is installed: OpenCode's binary as Bun, or bun"""
+    for path in (os.path.expanduser('~/.opencode/bin/opencode'), shutil.which('opencode'), shutil.which('bun')):
+        if not path or not os.access(path, os.X_OK): continue
+        try:
+            out = subprocess.run([path, '-e', 'console.log(typeof Bun)'], env=dict(os.environ, BUN_BE_BUN='1'),
+                                 capture_output=True, text=True, timeout=30).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if out == 'object': return path
+    return None
+
+
+BUN = real_bun() if os.name != 'nt' else None
 
 
 @unittest.skipIf(os.name == 'nt', 'the test CLI uses a Unix shebang; Windows needs opencode.exe')
@@ -47,14 +74,18 @@ class OpenCodeDiscovery(unittest.TestCase):
         cli = self.bin / 'opencode'
         cli.write_text(f'#!{sys.executable}\n' + '''import os, sqlite3, sys
 version = os.environ.get('OPENCODE_FIXTURE_VERSION', '1.19.0')
-v2 = int(version.split('.')[0]) >= 2
+v2 = version[:1].isdigit() and int(version.split('.')[0]) >= 2
 args = sys.argv[1:]
-bun = args[:1] == ['-e']  # OpenCode 2's binary as Bun: the reader, the database, the query
-if bun: entry = '-e ' + args[3].split()[0]
+# OpenCode 2's binary as Bun, which loads no .env: the reader, the database, the query
+bun = args[:2] == ['--no-env-file', '-e']
+if bun: entry = '-e ' + args[4].split()[0]
 elif len(args) > 1: entry = args[0] + ' ' + args[1].split()[0]
 else: entry = args[0]
 with open(os.environ['OPENCODE_FIXTURE_DB'] + '.calls', 'a') as log:
     log.write(entry + '\\n')
+with open(os.environ['OPENCODE_FIXTURE_DB'] + '.cwd', 'a') as log:
+    log.write(os.getcwd() + '\\n')
+assert bun or 'BUN_BE_BUN' not in os.environ, args  # OpenCode itself, not Bun, answers the others
 mode = os.environ.get('OPENCODE_FIXTURE_MODE', '')
 if mode == 'fail': sys.exit(1)
 if mode == 'invalid': print('not TSV'); sys.exit()
@@ -71,12 +102,19 @@ if args == ['--version']:
 if args == ['db', 'path'] and not v2:
     print(os.environ['OPENCODE_FIXTURE_DB']); sys.exit()
 if args == ['debug', 'paths'] and v2:
-    print('data       ' + os.path.dirname(os.environ['OPENCODE_FIXTURE_DB']))
-    print('db         ' + os.environ['OPENCODE_FIXTURE_DB']); sys.exit()
+    paths = os.environ.get('OPENCODE_FIXTURE_PATHS', '')
+    end, gap = ('\\r\\n' if paths == 'crlf' else '\\n'), ('\\t' if paths == 'tab' else '         ')
+    lines = ['home' + gap + os.environ['HOME'], 'data' + gap + os.path.dirname(os.environ['OPENCODE_FIXTURE_DB'])]
+    if paths != 'missing': lines.append('db' + gap + os.environ['OPENCODE_FIXTURE_DB'])
+    sys.stdout.write(''.join(line + end for line in lines + ['log' + gap + '/nowhere'])); sys.exit()
 if v2:
-    assert bun and len(args) == 4 and 'bun:sqlite' in args[1] and os.environ.get('BUN_BE_BUN') == '1', args
-    assert args[2] == os.environ['OPENCODE_FIXTURE_DB'], args
-    sql = args[3]
+    assert bun and len(args) == 5 and 'bun:sqlite' in args[2] and os.environ.get('BUN_BE_BUN') == '1', args
+    assert args[3] == os.environ['OPENCODE_FIXTURE_DB'], args
+    if os.environ.get('OPENCODE_FIXTURE_BUN'):  # the reader itself, in a real Bun
+        with open(os.environ['OPENCODE_FIXTURE_DB'] + '.queries', 'a') as log:
+            log.write(args[4] + '\\n')
+        os.execv(os.environ['OPENCODE_FIXTURE_BUN'], [os.environ['OPENCODE_FIXTURE_BUN']] + args)
+    sql = args[4]
 else:
     assert args[0] == 'db' and args[2:] == ['--format', 'tsv'], args
     sql = args[1]
@@ -181,6 +219,9 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
         self.drop_messages(sid)
         with self.connect() as db: db.execute('DELETE FROM session WHERE id=?', (sid,))
 
+    def forget_state(self):
+        for state in (self.home / 'state/rhun').glob('agents-index-v6-*-opencode'): state.unlink()
+
     def calls(self):
         path = Path(str(self.db) + '.calls')
         return path.read_text().splitlines() if path.exists() else []
@@ -219,10 +260,10 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
                  1791473123000 + start + index, json.dumps(data(index), separators=(',', ':')))
                 for index in range(count)])
 
-    def worker(self, limit=50, sources='opencode', opened=None, project=None, timeout=20):
+    def worker(self, limit=50, sources='opencode', opened=None, project=None, timeout=20, cwd=None):
         args = [str(EXE), '--agent-index', str(project or self.project), str(limit), sources]
         if opened is not None: args.append(opened)
-        result = subprocess.run(args, env=self.env, capture_output=True, timeout=timeout)
+        result = subprocess.run(args, env=self.env, capture_output=True, timeout=timeout, cwd=cwd)
         self.assertEqual(result.returncode, 0, result.stderr)
         offset, rows, status, total = 0, None, None, None
         while offset < len(result.stdout):
@@ -681,6 +722,14 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
         self.worker()
         self.assertTrue(all(self.snapshot(sid).exists() for sid in sids))
 
+    def test_the_cli_runs_in_rhuns_state_folder_never_the_editors(self):
+        # OpenCode 2's binary as Bun reads a bunfig.toml (its preload runs code) and a .env where it starts
+        sid = self.session('Folder')
+        self.part(sid, 'user', {'type': 'text', 'text': 'Prompt'})
+        self.assertEqual(self.worker(cwd=self.project)[1], 0)
+        folders = set(Path(str(self.db) + '.cwd').read_text().splitlines())
+        self.assertEqual({Path(folder).resolve() for folder in folders}, {(self.home / 'state/rhun').resolve()})
+
     def test_damaged_state_file_asks_the_cli_again(self):
         self.session('State')
         self.worker()
@@ -737,6 +786,8 @@ CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
         self.set_session(sid, 'revert', json.dumps({'messageID': 'm7'}))
         self.assertEqual(self.editor(['print-agents 1']), 'OpenCode: Undo\nuser First prompt\nagent First reply\n')
         self.set_session(sid, 'revert', json.dumps({'messageID': 'unknown'}))  # as OpenCode: nothing is undone
+        self.assertEqual(self.editor(['print-agents 1']), full)
+        self.set_session(sid, 'revert', 'not JSON {')
         self.assertEqual(self.editor(['print-agents 1']), full)
         self.set_session(sid, 'revert', None)  # /redo
         self.assertEqual(self.editor(['print-agents 1']), full)
@@ -988,13 +1039,24 @@ CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, typ
                                                  'previous': {'id': 'm1', 'providerID': 'x'}}),
                     ('u2', 'user', 7, {'text': 'Stop', 'files': [], 'agents': []}),
                     ('a2', 'assistant', 8, {'agent': 'build', 'model': {'id': 'm2', 'providerID': 'x'},
-                                            'content': [], 'error': {'type': 'aborted', 'message': 'Aborted'}})):
+                                            'content': [], 'error': {'type': 'aborted', 'message': 'Aborted'}}),
+                    # a command the user ran (!make test), and more bookkeeping
+                    ('h1', 'shell', 9, {'shellID': 'sh1', 'command': 'make test', 'status': 'completed', 'exit': 0,
+                                        'output': {'output': 'All tests passed\n3 run', 'cursor': 0, 'size': 23,
+                                                   'truncated': False}}),
+                    ('h2', 'shell', 10, {'shellID': 'sh2', 'command': 'sleep 9', 'status': 'running'}),
+                    ('k1', 'skill', 11, {'skill': {}, 'name': 'review', 'text': 'Skill instructions'}),
+                    ('c1', 'compaction', 12, {'status': 'completed', 'reason': 'auto', 'summary': 'A summary',
+                                              'recent': ''}),
+                    ('g1', 'agent-switched', 13, {'agent': 'plan'}),
+                    ('l1', 'location-switched', 14, {'location': {}})):
                 self.message(db, sid, mid, kind, seq, data)
         self.assertEqual(self.worker()[0][0]['model'], 'm2')
         self.assertEqual(self.editor(['print-agents 1']),
                          'OpenCode [model: m2]: Two\nuser Explain the code\nagent(m1) Reading it.\n'
                          'tool(read) calc.py\nresult def add(a, b):\ntool(shell) false\nresult Command failed\n'
-                         'user Stop\nresult Aborted\n')
+                         'user Stop\nresult Aborted\ntool(shell) make test\nresult All tests passed\n'
+                         'tool(shell) sleep 9\n')  # still running: no output yet
 
     def test_a_prompt_waiting_for_its_reply_shows_the_sessions_model(self):
         sid = self.session('Waiting')
@@ -1031,6 +1093,114 @@ CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, typ
         self.assertEqual(self.calls()[calls:calls + 2], ['--version', 'debug paths'])
         self.assertIn('Migrated prompt', self.snapshot(old).read_text())
         self.assertFalse(self.snapshot(stale).exists())
+
+    def test_debug_paths_lines_and_an_unreadable_version(self):
+        sid = self.session('Paths')
+        self.part(sid, 'user', {'type': 'text', 'text': 'Prompt'})
+        spaced = self.home / "data folder café ' with spaces" / 'opencode.db'
+        spaced.parent.mkdir()
+        self.db.rename(spaced)
+        self.db = spaced
+        self.env['OPENCODE_FIXTURE_DB'] = str(spaced)
+        for paths in ('', 'crlf', 'tab'):
+            with self.subTest(paths=paths):
+                self.forget_state()
+                self.env['OPENCODE_FIXTURE_PATHS'] = paths
+                rows, status, _ = self.worker()
+                self.assertEqual((status, [r['title'] for r in rows]), (0, ['Paths']))
+        self.forget_state()
+        self.env['OPENCODE_FIXTURE_PATHS'] = 'missing'  # no line names the database
+        self.assertEqual(self.worker()[1], 2)
+        self.env.pop('OPENCODE_FIXTURE_PATHS')
+        self.forget_state()
+        self.env['OPENCODE_FIXTURE_VERSION'] = 'unknown'
+        calls = len(self.calls())
+        self.assertEqual(self.worker()[1], 2)
+        self.assertEqual(self.calls()[calls:], ['--version'])
+
+    def test_a_cli_changed_behind_an_unchanged_file_is_asked_again(self):
+        # a script that runs another installation keeps its own stamp across an update
+        self.env['OPENCODE_FIXTURE_VERSION'] = '1.19.0'
+        OpenCodeDiscovery.session(self, 'Before the update')
+        self.assertEqual(self.worker()[1], 0)
+        self.env['OPENCODE_FIXTURE_VERSION'] = '2.0.28'
+        self.session('After the update')  # a write: the cached rows cannot stand in for a query
+        rows, status, _ = self.worker()
+        self.assertEqual((status, [r['title'] for r in rows]), (2, ['Before the update']))
+        calls = len(self.calls())
+        rows, status, _ = self.worker()
+        self.assertEqual((status, [r['title'] for r in rows]), (0, ['After the update']))
+        self.assertEqual(self.calls()[calls:calls + 2], ['--version', 'debug paths'])
+
+    def test_a_session_before_opencode_names_it(self):
+        sid = self.session(None)
+        self.part(sid, 'user', {'type': 'text', 'text': 'First prompt\nand more'})
+        rows, status, _ = self.worker()
+        self.assertEqual((status, rows[0]['title']), (0, 'First prompt'))
+        self.set_session(sid, 'title', 'Named')
+        self.assertEqual(self.worker()[0][0]['title'], 'Named')
+
+
+@unittest.skipIf(BUN is None, 'no Bun runtime: neither OpenCode 2 nor bun is installed')
+class OpenCode2RealReader(OpenCode2Discovery):
+    """Rhun's reader run by a real Bun, as OpenCode 2's binary runs it, for the tests of what it returns"""
+    CHOSEN = {'test_transcript_title_text_tools_errors_and_hidden_parts', 'test_bookkeeping_rows_and_opencode_2_tools',
+              'test_undone_messages_are_left_out_until_redone', 'test_giant_parts_are_copied_with_their_start',
+              'test_project_filter_subagents_archived_and_source_selection', 'test_empty_database_and_damaged_snapshot_rebuild',
+              'test_unreadable_rows_are_left_out_of_the_transcript', 'test_transcript_past_a_pipe_buffer_arrives_whole',
+              'test_models_in_the_row_and_where_replies_change', 'test_a_projects_bunfig_and_env_are_not_loaded',
+              'test_reader_leaves_the_database_as_it_was'}
+
+    def setUp(self):
+        if self._testMethodName not in self.CHOSEN: self.skipTest('the test reader covers it')
+        super().setUp()
+        self.env['OPENCODE_FIXTURE_BUN'] = BUN
+
+    def read(self, sql, database=None):
+        state = self.home / 'state/rhun'
+        state.mkdir(parents=True, exist_ok=True)
+        return subprocess.run([BUN, '--no-env-file', '-e', reader(), str(database or self.db), sql], cwd=state,
+                              env=dict(os.environ, BUN_BE_BUN='1', HOME=str(self.home)), capture_output=True, timeout=30)
+
+    def test_a_projects_bunfig_and_env_are_not_loaded(self):
+        marker = self.home / 'preloaded'
+        (self.project / 'preload.js').write_text(f'require("fs").writeFileSync({json.dumps(str(marker))}, "ran")\n')
+        (self.project / 'bunfig.toml').write_text('preload = ["./preload.js"]\n')
+        subprocess.run([BUN, '-e', '1'], cwd=self.project, env=dict(os.environ, BUN_BE_BUN='1'), timeout=30)
+        self.assertTrue(marker.exists(), 'Bun started in the project runs its preload')
+        marker.unlink()
+        sid = self.session('Project with a bunfig')
+        self.part(sid, 'user', {'type': 'text', 'text': 'Prompt'})
+        rows, status, _ = self.worker(cwd=self.project)
+        self.assertEqual((status, rows[0]['title']), (0, 'Project with a bunfig'))
+        self.assertFalse(marker.exists())
+
+    def test_reader_leaves_the_database_as_it_was(self):
+        sid = self.session('Open')
+        with self.connect() as db: db.execute('PRAGMA journal_mode=WAL').fetchall()
+        def files():
+            return {path.name: (path.stat().st_size, path.stat().st_mtime_ns)
+                    for path in self.db.parent.iterdir() if path.name in
+                    (self.db.name, self.db.name + '-wal', self.db.name + '-shm')}
+        query = "SELECT json_object('id',id,'title',title) AS line FROM session_v2"
+        expected = b'line\n{"id":"' + sid.encode() + b'","title":"Open"}\n'
+        keeper = sqlite3.connect(self.db)  # OpenCode has the database open
+        keeper.execute('SELECT count(*) FROM session_v2').fetchall()
+        before = files()
+        self.assertEqual(len(before), 3)
+        result = self.read(query)
+        self.assertEqual((result.returncode, result.stdout), (0, expected), result.stderr)
+        self.assertEqual(files(), before)  # read-only: nothing written
+        keeper.close()  # OpenCode closed: no -shm, so SQLite cannot read the log read-only
+        before = files()
+        self.assertEqual(list(before), [self.db.name])
+        result = self.read(query)
+        self.assertEqual((result.returncode, result.stdout), (0, expected), result.stderr)
+        self.assertEqual(files(), before)
+        self.assertEqual(self.read('SELECT 1 WHERE 0').stdout, b'line\n')
+        missing = self.home / 'missing.db'
+        self.assertNotEqual(self.read(query, missing).returncode, 0)
+        self.assertFalse(missing.exists())  # never created
 
 
 if __name__ == '__main__': unittest.main()

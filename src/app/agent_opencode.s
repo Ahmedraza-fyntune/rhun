@@ -14,6 +14,7 @@ agent_opencode_v2: .long 0      # OpenCode 2 or later: sessions are in session_v
 .p2align 3
 output: .zero SB_SIZE
 out_path: .zero SB_SIZE
+cwd: .zero SB_SIZE              # where the CLI runs: Rhun's state folder, never the project
 key: .zero SB_SIZE
 .text
 
@@ -256,7 +257,7 @@ path_text:
 #   -1 when the run's time for the CLI is used up and -2 for output past 64 MiB. Either way the output is
 #   the TSV of `opencode db --format tsv`: a header "line", then one row a line.
 FN agent_opencode_query
-    PROLOGUE 48
+    PROLOGUE 64
     mov rax, [rip + cli]
     mov [rsp], rax
     cmp dword ptr [rip + agent_opencode_v2], 0
@@ -271,13 +272,15 @@ FN agent_opencode_query
     mov qword ptr [rsp + 40], 0
     mov rsi, [rip + g_envp]
     jmp 2f
-1:  lea rax, [rip + .Leval]
+1:  lea rax, [rip + .Lno_env]
     mov [rsp + 8], rax
-    lea rax, [rip + .Lreader]
+    lea rax, [rip + .Leval]
     mov [rsp + 16], rax
-    mov [rsp + 24], rsi
-    mov [rsp + 32], rdi
-    mov qword ptr [rsp + 40], 0
+    lea rax, [rip + .Lreader]
+    mov [rsp + 24], rax
+    mov [rsp + 32], rsi
+    mov [rsp + 40], rdi
+    mov qword ptr [rsp + 48], 0
     mov rsi, [rip + bun_env]
     test rsi, rsi
     jnz 2f
@@ -292,7 +295,9 @@ FN agent_opencode_query
 # run_cli(argv, envp) -> as agent_opencode_query, for the output of the CLI run with argv.
 # The CLI writes to a file: OpenCode 1.19 exits before a pipe has taken all of its output and drops
 # the rest, with status 0. Output and time stay bounded if a CLI installation is broken or hangs, and
-# the runs of one discovery share a deadline, well inside the app's limit for the whole run.
+# the runs of one discovery share a deadline, well inside the app's limit for the whole run. It runs in
+# Rhun's state folder: as Bun, OpenCode 2's binary reads a bunfig.toml (whose preload runs code) and a
+# .env from the folder it starts in, which in the project's could be anyone's.
 run_cli:
     PROLOGUE 32
     mov [rsp], rdi
@@ -320,9 +325,11 @@ run_cli:
     test rax, rax
     js 8f
     mov ebx, eax
+    lea rdi, [rip + cwd]
+    call session_state_dir      # out_open has found it
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
-    xor edx, edx
+    mov rdx, [rip + cwd + SB_ptr]
     mov ecx, ebx
     mov r8d, r15d
     mov r9d, ebx
@@ -547,11 +554,15 @@ FN agent_opencode_each_line
 .Ldebug: .asciz "debug"
 .Lpaths: .asciz "paths"
 .Leval: .asciz "-e"
+.Lno_env: .asciz "--no-env-file"
 .Lbun_be_bun: .asciz "BUN_BE_BUN=1"
 # OpenCode 2's binary as Bun runs this with the database and the query. It reads without a write when
 # OpenCode has the database open; with no -shm (OpenCode closed) SQLite cannot read the log read-only,
-# so it opens the database as OpenCode does, never creating one. It prints what `db --format tsv` did.
-.Lreader: .asciz "const{Database}=require('bun:sqlite'),a=process.argv;let d;try{d=new Database(a[1],{readonly:true});d.query('SELECT 1 FROM sqlite_master').get()}catch(e){d=new Database(a[1],{readwrite:true,create:false})}d.exec('PRAGMA busy_timeout=5000');const o=['line'];for(const r of d.query(a[2]).values())o.push(r[0]);require('fs').writeFileSync(1,o.join('\\n')+'\\n')"
+# so it opens the database as OpenCode does, never creating one, and on closing removes the log files
+# that made, which Apple's SQLite, Bun's on macOS, otherwise keeps. Statements are prepared rather than
+# cached, which would keep the database open past close. It prints what `db --format tsv` did, a row at
+# a time: the output limit applies while it runs.
+.Lreader: .asciz "const{Database}=require('bun:sqlite'),f=require('fs'),a=process.argv;let d,s;try{d=new Database(a[1],{readonly:true});s=d.prepare('SELECT 1 FROM sqlite_master');s.get();s.finalize()}catch(e){if(s)s.finalize();if(d)d.close();d=new Database(a[1],{readwrite:true,create:false});try{d.fileControl(10,0)}catch(e){}}d.exec('PRAGMA busy_timeout=5000');s=d.prepare(a[2]);f.writeSync(1,'line\\n');for(const r of s.iterate())f.writeSync(1,r.line+'\\n');s.finalize();d.close()"
 .Lformat: .asciz "--format"
 .Ltsv: .asciz "tsv"
 .Ldevnull: .asciz "/dev/null"
