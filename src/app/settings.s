@@ -4,23 +4,39 @@
 .equ ID_SET_ROW, 0x5000         # + index*4 + part
 .equ ID_SET_OPENFILE, 0x4f00
 .equ ID_SET_SCROLL, 0x4f01
+.equ ID_SET_SEARCH, 0x4f02
+
+.data
+.p2align 3
+set_qlen: .long -1              # last drawn query length: a change scrolls to the top
 
 .bss
 .p2align 3
 set_scroll: .long 0
 set_content_h: .long 0
+set_find: .long 0               # the search field has the keyboard
 .p2align 3
 set_tf: .zero TF_SIZE
+set_search: .zero TF_SIZE
 buf: .zero 64
 
 .text
 
 FN settings_field
-    cmp dword ptr [rip + set_edit], 0
-    jl 1f
+    cmp dword ptr [rip + set_find], 0
+    je 1f
+    lea rax, [rip + set_search]
+    ret
+1:  cmp dword ptr [rip + set_edit], 0
+    jl 2f
     lea rax, [rip + set_tf]
     ret
-1:  xor eax, eax
+2:  xor eax, eax
+    ret
+
+# settings_focus(): the settings tab got the keyboard; its search field takes it
+FN settings_focus
+    mov dword ptr [rip + set_find], 1
     ret
 
 # commit the edited string setting
@@ -127,12 +143,75 @@ setting_shown:
     sete al
     ret
 
+# setting_match(SET*) -> 1 while the search text fuzzily hits its title, description or key
+setting_match:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + set_search]
+    call tf_text
+    test rdx, rdx
+    jz .Lsm_yes
+    mov r14, rax
+    mov r15, rdx
+    mov rdi, [rbx + SET_label]
+    call strlen
+    mov rdi, [rbx + SET_label]
+    mov rsi, rax
+    mov rdx, r14
+    mov rcx, r15
+    call fuzzy
+    test eax, eax
+    jns .Lsm_yes
+    mov rdi, [rbx + SET_desc]
+    call strlen
+    mov rdi, [rbx + SET_desc]
+    mov rsi, rax
+    mov rdx, r14
+    mov rcx, r15
+    call fuzzy
+    test eax, eax
+    jns .Lsm_yes
+    mov rdi, [rbx + SET_key]
+    call strlen
+    mov rdi, [rbx + SET_key]
+    mov rsi, rax
+    mov rdx, r14
+    mov rcx, r15
+    call fuzzy
+    test eax, eax
+    jns .Lsm_yes
+    xor eax, eax
+    EPILOGUE
+.Lsm_yes:
+    mov eax, 1
+    EPILOGUE
+
 # settings_key(keysym, cp, mods) -> 1 if handled
 FN settings_key
     PROLOGUE
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
+    cmp dword ptr [rip + set_find], 0
+    je .Lsk_page
+    cmp r12d, KEY_ESCAPE
+    je .Lsk_unfind
+    cmp r12d, KEY_RETURN
+    jne .Lsk_type
+.Lsk_unfind:
+    mov dword ptr [rip + set_find], 0
+    jmp .Lsk_yes
+.Lsk_type:
+    lea rdi, [rip + set_search]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call tf_key
+    test eax, eax
+    jnz .Lsk_yes
+    xor eax, eax
+    EPILOGUE
+.Lsk_page:
     cmp dword ptr [rip + set_edit], 0
     jl 5f
     cmp r12d, KEY_RETURN
@@ -277,6 +356,14 @@ FN settings_draw
     jge 13f
     mov dword ptr [rip + set_scroll], 0
 13: call update_desc_refresh
+    # a changed query scrolls back to the first match
+    lea rdi, [rip + set_search]
+    call tf_text
+    cmp edx, [rip + set_qlen]
+    je 15f
+    mov [rip + set_qlen], edx
+    mov dword ptr [rip + set_scroll], 0
+15:
     # column
     mov edi, 720
     call sc
@@ -446,6 +533,29 @@ FN settings_draw
     jz 32f
     call cmd_discord
 32: add r12d, [rip + g_mt + 4*MI_40]
+    # the search field sits in the flow, above the sections
+    mov dword ptr [rip + set_search + TF_id], ID_SET_SEARCH
+    lea rdi, [rip + set_search]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    mov ecx, [rsp + 16]
+    M r8d, MI_32
+    xor r9d, r9d
+    cmp dword ptr [rip + set_find], 0
+    je 57f
+    mov r9d, 1
+57: lea rax, [rip + .Lsearch]
+    push rax
+    push rax
+    call ui_textfield
+    add rsp, 16
+    test eax, UB_PRESS
+    jz 58f
+    call commit_edit
+    mov dword ptr [rip + set_find], 1
+    mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+58: add r12d, [rip + g_mt + 4*MI_32]
+    add r12d, [rip + g_mt + 4*MI_8]
     # rows
     lea rbx, [rip + g_settings]
     xor r15d, r15d              # index
@@ -455,6 +565,10 @@ FN settings_draw
     je .Lsd_rows_done
     mov rdi, rbx
     call setting_shown
+    test eax, eax
+    jz .Lsd_skip
+    mov rdi, rbx
+    call setting_match
     test eax, eax
     jz .Lsd_skip
     mov rax, [rbx + SET_sec]
@@ -1030,12 +1144,15 @@ FN settings_draw
     add r12d, [rip + g_mt + 4*MI_48]
     sub r12d, [rsp + 24]
     mov [rip + set_content_h], r12d
-    # clicking elsewhere ends string editing
+    # clicking elsewhere ends string editing and leaves the search field
     test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Lsd_end
-    cmp dword ptr [rip + set_edit], 0
-    jl .Lsd_end
     mov eax, [rip + g_active]
+    cmp eax, ID_SET_SEARCH
+    je 54f
+    mov dword ptr [rip + set_find], 0
+54: cmp dword ptr [rip + set_edit], 0
+    jl .Lsd_end
     cmp eax, [rip + set_tf + TF_id]
     je .Lsd_end
     call commit_edit
@@ -1234,6 +1351,7 @@ FN ui_text_v_fit
 
 .section .rodata
 .Ltitle: .asciz "Settings"
+.Lsearch: .asciz "Search settings"
 .Lopen_file: .asciz "Open settings file"
 .Lbuiltin: .asciz "built-in"
 .Lt_appearance: .asciz "Appearance"

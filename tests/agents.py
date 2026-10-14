@@ -980,7 +980,7 @@ class CodexDiscovery(unittest.TestCase):
             match = re.match(r'\s+SETTING(?:_ACTION)? \.Ls_(\w+), (\w+), (\w+)', line)
             if match:
                 rows.append(match.groups())
-        y, previous = 228, None
+        y, previous = 268, None
         for section, key, _ in rows:
             if (section, key) == ('ui', 'theme'):
                 continue                # shown only without Follow system dark mode
