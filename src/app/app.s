@@ -641,7 +641,14 @@ FN app_activate_tab
     or dword ptr [rdi + DOC_flags], DF_REVEAL
 1:  call watch_show
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
-    mov dword ptr [rip + g_tabscroll_reveal], 1
+    # the settings tab's keys go to its search field
+    mov rdi, [rip + g_tab_cur]
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
+    jne 2f
+    mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    call settings_focus
+2:  mov dword ptr [rip + g_tabscroll_reveal], 1
     # the caret shows at once, as after a key
     call time_ms
     mov [rip + g_blink_t0], rax
@@ -4879,7 +4886,8 @@ FN cmd_settings
     je 3f
     inc rbx
     jmp 1b
-2:  xor edi, edi
+2:  call settings_reset            # a new settings tab: no query
+    xor edi, edi
     mov esi, TAB_SETTINGS
     call app_add_tab
     jmp 4f

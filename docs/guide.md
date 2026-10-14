@@ -435,6 +435,8 @@ Registers, marks, macros, ranges and `:s`, visual block and replace mode are not
 
 `~/.config/rhun/config` is written when you change something in Settings; Open Settings File creates it. Edits to the file apply as soon as it is saved.
 
+Settings opens with its search field taking the keys: the page keeps the settings whose title, description or config name (`section.key`, or the section's title) has every word typed, ignoring case, such as `terminal font` or `vim_mode`. Esc clears the search, a second Esc or Enter leaves the field (the arrows then scroll the page), and Ctrl+F goes back to it.
+
 ```ini
 [ui]
 dark_theme = tokyo-night

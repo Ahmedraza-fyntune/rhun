@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""The settings page's search field filters its rows as you type."""
+"""The settings page's search field filters its rows as you type (PR 78): each word has to be in a row's
+title, its description, its config name (section.key) or its section's title, ignoring case. Esc
+clears the query, then hands the keys to the page; the field has the keys whenever the settings tab
+comes to the front, and Find there goes to it. A new settings tab starts with no query."""
 import os
 from pathlib import Path
 import subprocess
@@ -52,6 +55,49 @@ class SettingsSearch(unittest.TestCase):
     def test_no_match_hides_rows(self):
         self.run_editor(['cmd settings', 'type zzzzz', 'click 827 348'])
         self.assertNotIn('vim_mode', self.vim_mode())
+
+    def rows(self, *actions):
+        return self.run_editor(['cmd settings', *actions, 'print-settings']).split()
+
+    def test_words_not_scattered_letters(self):
+        # "font" once kept Explorer width ("of the file explorer in points") and the like
+        self.assertEqual(self.rows('type font'), [
+            'ui.font_size', 'ui.font', 'editor.font_size', 'editor.font', 'editor.line_height',
+            'terminal.font_size', 'terminal.font', 'terminal.line_height'])
+        self.assertEqual(self.rows('type terminal font'),
+                         ['terminal.font_size', 'terminal.font', 'terminal.line_height'])
+
+    def test_names_and_case(self):
+        self.assertEqual(self.rows('type vim_mode'), ['editor.vim_mode'])
+        self.assertEqual(self.rows('type VIM'), ['editor.vim_mode'])
+        self.assertEqual(self.rows('type editor.font'), ['editor.font_size', 'editor.font'])
+        appearance = self.rows('type appearance')
+        self.assertTrue(appearance and all(row.startswith('ui.') for row in appearance), appearance)
+        self.assertIn('ui.scale', appearance)
+
+    def test_no_match(self):
+        self.assertEqual(self.rows('type zzzzz'), [])
+
+    def test_escape_clears_then_leaves(self):
+        everything = self.rows()
+        self.assertGreater(len(everything), 40)
+        self.assertEqual(self.rows('type font', 'key Escape'), everything)
+        # the second Escape hands the keys to the page: typing filters nothing
+        self.assertEqual(self.rows('type font', 'key Escape', 'key Escape', 'type vim'), everything)
+
+    def test_the_tab_coming_back_has_the_keys(self):
+        out = self.run_editor(['cmd settings', 'type vim', 'key ctrl+Tab', 'key ctrl+Tab',
+                               'key BackSpace', 'key BackSpace', 'key BackSpace', 'type wrap',
+                               'print-settings'])
+        self.assertEqual(out.split(), ['editor.word_wrap'])
+
+    def test_find_goes_to_the_search_field(self):
+        self.assertEqual(self.rows('type vim', 'key Return', 'type x', f'key {MOD}+f', 'type wrap'),
+                         ['editor.word_wrap'])
+
+    def test_a_new_settings_tab_starts_unfiltered(self):
+        everything = self.rows()
+        self.assertEqual(self.rows('type vim', 'cmd close_tab', 'cmd settings'), everything)
 
 
 if __name__ == '__main__':
