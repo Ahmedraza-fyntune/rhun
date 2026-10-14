@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The terminal's own font and line height (issue 90). line_height is a multiple of the font size, as
-the editor's, the font's own height at least: 1.0 keeps the terminal as it was, more gives fewer
-rows. font names a .ttf for the terminal alone; empty, or one that does not load, uses the editor's
+"""The terminal's own font and line height (issue 90). line_height is a multiple of the font's own line
+height, as terminals scale it: 1.0 keeps the terminal as it was, and every step above gives taller
+lines, so fewer rows. font names a .ttf for the terminal alone; empty, or one that does not load, uses the editor's
 font. Both apply from Settings and from the file while rhun runs (the editor's and interface's font
 paths too). The grid is what the shell's stty sees."""
 import os
@@ -84,6 +84,9 @@ class TerminalFont(unittest.TestCase):
     def test_line_height_gives_fewer_rows(self):
         (rows, cols), _ = self.measure()
         self.assertEqual(self.measure('line_height = 1.0\n')[0], (rows, cols))
+        (rows11, cols11), _ = self.measure('line_height = 1.1\n')
+        self.assertLess(rows11, rows, 'a small step did nothing')
+        self.assertEqual(cols11, cols)
         (rows15, cols15), _ = self.measure('line_height = 1.5\n')
         (rows20, cols20), _ = self.measure('line_height = 2.0\n')
         self.assertEqual((cols15, cols20), (cols, cols))
@@ -102,6 +105,7 @@ class TerminalFont(unittest.TestCase):
     def test_empty_uses_the_editor_font_and_its_own_wins(self):
         (rows, cols), width = self.measure()
         (erows, ecols), ewidth = self.measure(editor=f'font = {self.wide}\n')
+        self.assertEqual(erows, rows)
         self.assertLessEqual(abs(ecols - cols // 2), 1, (cols, ecols))
         self.assertGreater(ewidth, width)
         self.assertEqual(self.measure(f'font = {IOSEVKA}\n', f'font = {self.wide}\n'),
@@ -116,17 +120,24 @@ class TerminalFont(unittest.TestCase):
     def test_the_file_applies_while_running(self):
         self.configure()
         control = self.work / 'c'
+        log = open(self.work / 'rhun.log', 'w')
         process = subprocess.Popen([str(EXE), str(self.proj), str(self.proj / 'long.txt'), '--headless',
                                     '1000x700', '--scale', '1', '--control', str(control)],
-                                   env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                   env=self.env, stdout=log, stderr=log)
         try:
+            # the socket file is there from bind, before listen
             deadline = time.monotonic() + 15
-            while not control.exists():
-                self.assertLess(time.monotonic(), deadline, 'no control socket')
-                time.sleep(.05)
-            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            while True:
+                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    client.connect(str(control))
+                    break
+                except (FileNotFoundError, ConnectionRefusedError):
+                    client.close()
+                    self.assertLess(time.monotonic(), deadline,
+                                    'no control socket: ' + (self.work / 'rhun.log').read_text())
+                    time.sleep(.05)
             client.settimeout(30)
-            client.connect(str(control))
             reader = client.makefile('r', encoding='utf-8')
 
             def command(line):
@@ -153,6 +164,7 @@ class TerminalFont(unittest.TestCase):
                 seen = match and (int(match.group(1)), int(match.group(2)))
                 if seen and seen != (rows, cols):
                     break
+            self.assertTrue(seen, 'the shell printed no grid')
             self.assertLess(seen[0], rows * 0.8, seen)
             self.assertLessEqual(abs(seen[1] - cols // 2), 1, seen)
             self.assertGreater(self.editor_width(command('print-scroll')), width)
@@ -163,6 +175,7 @@ class TerminalFont(unittest.TestCase):
             if process.poll() is None:
                 process.terminate()
             process.wait(timeout=10)
+            log.close()
 
 
 if __name__ == '__main__':

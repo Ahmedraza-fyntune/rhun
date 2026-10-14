@@ -18,9 +18,11 @@
 <section id="configure">
 <h2>Make it yours</h2>
 <p>Editor and terminal font sizes are independent. Focus the terminal before using <strong>Zoom In</strong> or <strong>Zoom Out</strong> from the command palette.</p>
+<p>The terminal can have a font and line height of its own: set <code>font</code> to a monospace <code>.ttf</code> file (empty uses the editor’s font) and <code>line_height</code> to a multiple of the font’s own line height, or change them in <strong>Settings › Terminal</strong>.</p>
 <p>To choose a shell, edit the <code>[terminal]</code> section of your <a href="/docs/customization/#config">config file</a>. For example, on a system with fish installed here:</p>
 <pre><code>[terminal]
 shell = /usr/bin/fish
-font_size = 14</code></pre>
+font_size = 14
+line_height = 1.2</code></pre>
 <p>On Windows, use a native executable such as <code>pwsh.exe</code> or the path to Git Bash.</p>
 </section>

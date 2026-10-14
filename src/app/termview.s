@@ -99,8 +99,8 @@ cur_sess:
 1:  ret
 
 # term_metrics(): the terminal face at the configured size, in its font (the editor's unless it has
-#   one of its own), and the line height: font px * line_height / 100, the font's own height at least,
-#   with the text in the middle as in the editor
+#   one of its own), and the line height: the font's own (ascent and descent) * line_height / 100,
+#   with the text in the middle, as terminals scale it: every step shows, and 1.0 is the font's
 term_metrics:
     push rbx
     cvtsi2ss xmm0, dword ptr [rip + cfg_term_font_size]
@@ -137,7 +137,7 @@ term_metrics:
     cmp ecx, 2
     jge 4f
     mov ecx, 2
-4:  mov eax, ebx
+4:  mov eax, ecx
     imul eax, [rip + cfg_term_line_height]
     add eax, 50
     xor edx, edx

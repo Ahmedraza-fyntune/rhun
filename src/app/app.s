@@ -5021,9 +5021,10 @@ FN cmd_move_line_down
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
 .p2align 3
-# tip_table: button, text, the handler it runs (0: not a command, no shortcut); 0 ends it
+# font_paths: the settings that name font files (font_paths_hash); 0 ends it
 font_paths:
     .quad cfg_font, cfg_ui_font, cfg_term_font, 0
+# tip_table: button, text, the handler it runs (0: not a command, no shortcut); 0 ends it
 tip_table:
     .quad ID_GIT_BTN, .Ltip_git, cmd_toggle_git
     .quad ID_TOG_TERM, .Ltip_term, cmd_toggle_terminal
