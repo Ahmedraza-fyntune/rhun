@@ -34,8 +34,12 @@ FN settings_field
 2:  xor eax, eax
     ret
 
-# settings_focus(): the settings tab got the keyboard; its search field takes it
+# settings_focus(): the settings tab got the keyboard; its search field takes it, and a setting being
+#   edited is done (its field would get the keys back, hidden by the filter)
 FN settings_focus
+    push rax
+    call commit_edit
+    pop rax
     mov dword ptr [rip + set_find], 1
     ret
 
@@ -61,7 +65,7 @@ FN settings_take_find
     cmp qword ptr [rcx + TAB_kind], TAB_SETTINGS
     jne 1f
     mov dword ptr [rip + g_focus], FOCUS_SETTINGS
-    mov dword ptr [rip + set_find], 1
+    call settings_focus
     lea rdi, [rip + set_search]
     call tf_select_all
     mov dword ptr [rip + g_dirty], 1
@@ -1277,12 +1281,21 @@ FN settings_draw
 59: add r12d, [rip + g_mt + 4*MI_48]
     sub r12d, [rsp + 24]
     mov [rip + set_content_h], r12d
-    # clicking elsewhere ends string editing and leaves the search field
+    # clicking elsewhere ends string editing; clicking elsewhere on the page leaves the search field
+    # (not the click on the tab that brought the page and gave the field the keys)
     test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Lsd_end
     mov eax, [rip + g_active]
     cmp eax, ID_SET_SEARCH
     je 54f
+    mov ecx, [rip + g_mx]
+    sub ecx, [rsp]
+    cmp ecx, [rsp + 8]
+    jae 54f
+    mov ecx, [rip + g_my]
+    sub ecx, [rsp + 4]
+    cmp ecx, [rsp + 12]
+    jae 54f
     mov dword ptr [rip + set_find], 0
 54: cmp dword ptr [rip + set_edit], 0
     jl .Lsd_end

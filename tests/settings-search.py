@@ -15,6 +15,25 @@ EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 MOD = 'cmd' if sys.platform == 'darwin' else 'ctrl'
 
 
+def settings_row_y(section, key):
+    """y of a setting's row in a 1400 px wide Settings tab (as tests/settings-ui.py lays it out)"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('settings_ui', ROOT / 'tests/settings-ui.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    y, previous = 268, None
+    for sec, name, _ in module.ROWS:
+        if not module.THEME_ROWS.get((sec, name), True):
+            continue
+        if sec != previous:
+            y += 48
+            previous = sec
+        if (sec, name) == (section, key):
+            return y + 32
+        y += 72
+    raise KeyError(key)
+
+
 class SettingsSearch(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='rhun-settings-search-')
@@ -33,11 +52,11 @@ class SettingsSearch(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_editor(self, actions):
+    def run_editor(self, actions, size='1000x700'):
         script = self.home / 'commands.rsc'
         script.write_text('\n'.join([*actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), str(self.home), str(self.file),
-                                 '--headless', '1000x700', '--script', str(script)],
+                                 '--headless', size, '--scale', '1', '--script', str(script)],
                                 env=self.env, capture_output=True, text=True,
                                 encoding='utf-8', timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -90,6 +109,21 @@ class SettingsSearch(unittest.TestCase):
                                'key BackSpace', 'key BackSpace', 'key BackSpace', 'type wrap',
                                'print-settings'])
         self.assertEqual(out.split(), ['editor.word_wrap'])
+
+    def test_a_click_on_the_tab_gives_the_field_the_keys(self):
+        # a.txt, then Settings: the click that brings it is not a click away from the field
+        out = self.run_editor(['cmd settings', 'type vim', 'click 30 58', 'click 130 58',
+                               'key BackSpace', 'key BackSpace', 'key BackSpace', 'type wrap',
+                               'print-settings'])
+        self.assertEqual(out.split(), ['editor.word_wrap'])
+
+    def test_find_finishes_a_setting_being_edited(self):
+        # its field would get the keys back after the search, hidden by the filter
+        y = settings_row_y('ui', 'font')
+        self.run_editor(['cmd settings', f'click 900 {y}', f'key {MOD}+a', 'type /fonts/edited.ttf',
+                         f'key {MOD}+f', 'type vim', 'key Return', 'type zzz', 'key Return'],
+                        size='1400x4600')
+        self.assertIn('font = /fonts/edited.ttf\n', self.vim_mode())
 
     def test_find_goes_to_the_search_field(self):
         self.assertEqual(self.rows('type vim', 'key Return', 'type x', f'key {MOD}+f', 'type wrap'),

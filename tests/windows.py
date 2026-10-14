@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
         for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity',
                      'file-launch', 'readonly-save', 'field-blink', 'window-focus',
-                     'new-tab', 'tab-view'):
+                     'new-tab', 'tab-view', 'settings-search'):
             check('ui/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
