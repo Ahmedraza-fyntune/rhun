@@ -4,7 +4,7 @@
 .equ ID_SET_ROW, 0x5000         # + index*4 + part
 .equ ID_SET_OPENFILE, 0x4f00
 .equ ID_SET_SCROLL, 0x4f01
-.equ ID_SET_SEARCH, 0x4f02
+.equ ID_SET_SEARCH, 0x4f06        # 0x4f02-0x4f05: the links under the title
 
 .data
 .p2align 3
@@ -207,15 +207,18 @@ setting_shown:
     sete al
     ret
 
-# setting_match(SET*) -> 1 when each word of the search text is in the row's title, its description,
-#   its config name (section.key) or its section's title, ignoring case
+# setting_match(SET*) -> 1 when each word of the search text starts a word of the row's title, its
+#   description, its config name (section.key) or its section's title, ignoring case: "ui" is the
+#   interface's settings, not "built-in"
 setting_match:
-    PROLOGUE 136                # [rsp] "section.key Title", [rsp + 128] its length
+    PROLOGUE 144                # [rsp] "section.key Title", [rsp + 128] its length
     mov rbx, rdi
     lea rdi, [rip + set_search]
     call tf_text
     mov r14, rax
     mov r15, rdx
+    test r15, r15
+    jz .Lsm_yes
     # the config name and the section's title
     lea rdi, [rsp]
     mov rsi, [rbx + SET_sec]
@@ -259,12 +262,9 @@ setting_match:
     call .Lsm_in
     test rax, rax
     jns .Lsm_word
-    lea rdx, [r14 + r12]
-    mov rcx, r13
-    sub rcx, r12
     lea rdi, [rsp]
     mov rsi, [rsp + 128]
-    call str_ifind
+    call .Lsm_at
     test rax, rax
     jns .Lsm_word
     xor eax, eax
@@ -272,16 +272,53 @@ setting_match:
 .Lsm_yes:
     mov eax, 1
     EPILOGUE
-# .Lsm_in(cstr): where the word r14 + r12 .. r13 is in it, or -1
+# .Lsm_in(cstr): where the word r14 + r12 .. r13 starts a word in it, or -1
 .Lsm_in:
     push rdi
     call strlen
     pop rdi
     mov rsi, rax
+# .Lsm_at(hay, len): the same in hay
+.Lsm_at:
+    push rbx
+    push r12
+    mov rbx, rdi
+    mov r8, rsi
+    xor r9d, r9d                # where to look from
+1:  lea rdi, [rbx + r9]
+    mov rsi, r8
+    sub rsi, r9
     lea rdx, [r14 + r12]
     mov rcx, r13
     sub rcx, r12
-    jmp str_ifind
+    push r8
+    push r9
+    call str_ifind
+    pop r9
+    pop r8
+    test rax, rax
+    js 9f
+    add rax, r9
+    test rax, rax
+    jz 9f                       # at the start
+    movzx ecx, byte ptr [rbx + rax - 1]
+    or ecx, 0x20                # letters either case
+    lea edx, [rcx - 'a']
+    cmp edx, 25
+    jbe 2f
+    movzx ecx, byte ptr [rbx + rax - 1]
+    lea edx, [rcx - '0']
+    cmp edx, 9
+    jbe 2f
+    cmp ecx, 0x80               # within a character of several bytes
+    jb 9f
+2:  lea r9, [rax + 1]
+    cmp r9, r8
+    jb 1b
+    mov rax, -1
+9:  pop r12
+    pop rbx
+    ret
 # .Lsm_copy(rdi dst, rsi cstr) -> rdi past the copy; at most 40 bytes
 .Lsm_copy:
     mov ecx, 40
@@ -314,6 +351,8 @@ FN settings_key
     call tf_clear
     jmp .Lsk_yes
 1:  cmp r12d, KEY_RETURN
+    je .Lsk_unfind
+    cmp r12d, KEY_KP_ENTER
     jne .Lsk_type
 .Lsk_unfind:
     mov dword ptr [rip + set_find], 0
@@ -355,14 +394,10 @@ FN settings_key
     add [rip + set_scroll], eax
     jmp .Lsk_yes
 6:  cmp r12d, KEY_UP
-    jne 7f
+    jne 8f
     mov edi, 60
     call sc
     sub [rip + set_scroll], eax
-    jmp .Lsk_yes
-7:  cmp r12d, KEY_ESCAPE
-    jne 8f
-    mov dword ptr [rip + g_focus], FOCUS_EDITOR
     jmp .Lsk_yes
 8:  xor eax, eax
     EPILOGUE
@@ -444,6 +479,17 @@ FN settings_draw
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
+    # the keys that would go to an editor are this page's, for its search field (after a tab closed
+    # in front of it, the terminal hidden, a bar or the palette closed)
+    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    jne 1f
+    mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    call settings_focus
+    mov dword ptr [rip + g_dirty], 1
+1:  mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
     COLOR r8d, T_BG
     call gfx_fill
     mov edi, [rsp]

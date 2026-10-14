@@ -643,6 +643,8 @@ FN app_activate_tab
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     # the settings tab's keys go to its search field
     mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 2f
     call tab_at
     cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
     jne 2f

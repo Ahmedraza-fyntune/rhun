@@ -94,6 +94,13 @@ class SettingsSearch(unittest.TestCase):
         self.assertTrue(appearance and all(row.startswith('ui.') for row in appearance), appearance)
         self.assertIn('ui.scale', appearance)
 
+    def test_words_start_words(self):
+        # "ui" is the interface's section, not "built-in", "guides" or "Build"
+        ui = self.rows('type ui')
+        self.assertTrue(ui and all(row.startswith('ui.') for row in ui), ui)
+        self.assertEqual(self.rows('type height'), ['editor.line_height', 'terminal.line_height',
+                                                    'terminal.height'])
+
     def test_no_match(self):
         self.assertEqual(self.rows('type zzzzz'), [])
 
@@ -124,6 +131,18 @@ class SettingsSearch(unittest.TestCase):
                          f'key {MOD}+f', 'type vim', 'key Return', 'type zzz', 'key Return'],
                         size='1400x4600')
         self.assertIn('font = /fonts/edited.ttf\n', self.vim_mode())
+
+    def test_the_keys_come_back_to_the_field(self):
+        # a tab closed in front of it, the terminal hidden: no editor takes the keys there
+        self.assertEqual(self.rows('type vim', 'open ' + self.file.as_posix(), 'cmd close_tab',
+                                   'key BackSpace', 'key BackSpace', 'key BackSpace', 'type wrap'),
+                         ['editor.word_wrap'])
+        self.assertEqual(self.rows('cmd toggle_terminal', 'wait 300', 'cmd toggle_terminal',
+                                   'type wrap'), ['editor.word_wrap'])
+
+    def test_keypad_enter_leaves_the_field(self):
+        everything = self.rows()
+        self.assertEqual(self.rows('key KP_Enter', 'type vim'), everything)
 
     def test_find_goes_to_the_search_field(self):
         self.assertEqual(self.rows('type vim', 'key Return', 'type x', f'key {MOD}+f', 'type wrap'),
