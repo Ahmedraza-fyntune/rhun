@@ -147,6 +147,11 @@ class SettingsSearch(unittest.TestCase):
     def test_find_goes_to_the_search_field(self):
         self.assertEqual(self.rows('type vim', 'key Return', 'type x', f'key {MOD}+f', 'type wrap'),
                          ['editor.word_wrap'])
+        # Find Next with no query opens Find too
+        self.assertEqual(self.rows('type vim', 'key Return', 'key F3', 'type wrap'),
+                         ['editor.word_wrap'])
+        self.assertEqual(self.rows('type vim', 'key Return', 'key shift+F3', 'type wrap'),
+                         ['editor.word_wrap'])
 
     def test_a_new_settings_tab_starts_unfiltered(self):
         everything = self.rows()
