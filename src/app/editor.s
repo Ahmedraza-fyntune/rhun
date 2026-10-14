@@ -2282,7 +2282,11 @@ FN editor_draw
     jne 45f
     mov rdi, rbx
     call vim_view
-45: cmp dword ptr [rip + g_reveal], 0
+45: test dword ptr [rbx + DOC_flags], DF_REVEAL
+    jz 46f
+    and dword ptr [rbx + DOC_flags], ~DF_REVEAL
+    mov dword ptr [rip + g_reveal], 1
+46: cmp dword ptr [rip + g_reveal], 0
     je 7f
     mov dword ptr [rip + g_reveal], 0
     mov rdi, rbx

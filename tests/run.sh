@@ -81,6 +81,7 @@ python3 tests/splitter.py || fail=1
 python3 tests/scroll-sensitivity.py || fail=1
 python3 tests/window-focus.py || fail=1
 python3 tests/new-tab.py || fail=1
+python3 tests/tab-view.py || fail=1
 python3 tests/shift-wheel.py || fail=1
 python3 tests/stress.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then

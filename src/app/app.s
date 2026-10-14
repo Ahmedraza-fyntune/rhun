@@ -604,13 +604,24 @@ FN app_activate_tab
     push rdi
     call vim_leave
     pop rdi
+    mov rax, [rip + g_doc]
+    push rax
     mov [rip + g_tab_cur], rdi
     mov dword ptr [rip + g_exp_reveal], 1
     call app_sync_doc
-    call watch_show
+    pop rax
+    # a tab shows where it was scrolled, also away from the cursor: a reveal asked for the document
+    # shown before is not this one's (only compared: that one may be freed already)
+    cmp rax, [rip + g_doc]
+    je 1f
+    mov dword ptr [rip + g_reveal], 0
+1:  call watch_show
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     mov dword ptr [rip + g_tabscroll_reveal], 1
-    call ed_touch
+    # the caret shows at once, as after a key
+    call time_ms
+    mov [rip + g_blink_t0], rax
+    mov dword ptr [rip + g_dirty], 1
     jmp app_update_title
 
 # app_update_title(): window title "name — project"
