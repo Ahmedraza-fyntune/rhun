@@ -1650,13 +1650,16 @@ FN wheel_xy
 
 FN app_on_focus
     mov [rip + g_win_focused], edi
+    push rdi
     # files may have changed while away
     test edi, edi
     jz 1f
-    push rdi
     call git_touch
+1:  # the caret shows at once, as after a key; the view stays where it was scrolled, also away from
+    # the caret (issue 85)
+    call time_ms
+    mov [rip + g_blink_t0], rax
     pop rdi
-1:  call ed_touch
     mov dword ptr [rip + g_dirty], 1
     ret
 

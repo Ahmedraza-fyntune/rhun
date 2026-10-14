@@ -2,7 +2,7 @@
 #   key ctrl+s | type text | click x y [right|middle|shift|ctrl] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
-#   print-menu
+#   print-menu | focus out|in
 .include "rhun.inc"
 
 .bss
@@ -820,6 +820,19 @@ c_print_panels:
     xor eax, eax
     ret
 
+# focus out|in: the window loses or gets the keyboard, as a platform reports it
+c_focus:
+    call next_arg
+    xor edi, edi
+    test rdx, rdx
+    jz 1f
+    cmp byte ptr [rax], 'i'
+    jne 1f
+    mov edi, 1
+1:  call app_on_focus
+    xor eax, eax
+    ret
+
 # appearance dark|light|unknown: the system's dark mode changes, as a platform reports it
 c_appearance:
     call next_arg
@@ -1527,6 +1540,7 @@ on_client:
 .Lc_print_scroll: .asciz "print-scroll"
 .Lc_scroll_x: .asciz "scroll-x"
 .Lc_appearance: .asciz "appearance"
+.Lc_focus: .asciz "focus"
 .Lc_print_appearance: .asciz "print-appearance"
 .Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
@@ -1577,7 +1591,8 @@ ctl_table:
     .quad .Lc_print_tip, c_print_tip, .Lc_print_toast, c_print_toast, .Lc_print_link, c_print_link
     .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
     .quad .Lc_scroll_x, c_scroll_x
-    .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance, 0, 0
+    .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
+    .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:
