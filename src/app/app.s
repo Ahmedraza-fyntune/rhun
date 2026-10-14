@@ -610,11 +610,23 @@ FN app_activate_tab
     mov dword ptr [rip + g_exp_reveal], 1
     call app_sync_doc
     pop rax
-    # a tab shows where it was scrolled, also away from the cursor: a reveal asked for the document
-    # shown before is not this one's (only compared: that one may be freed already)
+    # a tab shows where it was scrolled, also away from the cursor: a reveal still asked for the
+    # document shown before is that one's, for when it is shown again (only while it has a tab: it
+    # may be freed already)
     cmp rax, [rip + g_doc]
     je 1f
+    cmp dword ptr [rip + g_reveal], 0
+    je 1f
     mov dword ptr [rip + g_reveal], 0
+    test rax, rax
+    jz 1f
+    push rax
+    mov rdi, rax
+    call doc_tab
+    pop rdi
+    test rax, rax
+    js 1f
+    or dword ptr [rdi + DOC_flags], DF_REVEAL
 1:  call watch_show
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     mov dword ptr [rip + g_tabscroll_reveal], 1
@@ -651,6 +663,23 @@ FN app_update_title
     mov rdi, [rip + tmp_sb + SB_ptr]
     PCALL P_title
 9:  EPILOGUE
+
+# doc_tab(doc) -> rax the index of its tab, or -1
+doc_tab:
+    PROLOGUE
+    mov r12, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 2f
+    mov rdi, rbx
+    call tab_at
+    cmp [rax + TAB_doc], r12
+    je 3f
+    inc rbx
+    jmp 1b
+2:  mov rbx, -1
+3:  mov rax, rbx
+    EPILOGUE
 
 # app_find_tab(path) -> index or -1
 FN app_find_tab
@@ -1058,6 +1087,7 @@ FN app_close_tab_now
     cmp r12, [rip + g_tab_cur]
     jne .Lclose_note
     call vim_leave              # out of visual mode, as leaving the tab is
+    mov dword ptr [rip + g_reveal], 0   # one still asked for it is not the next tab's
 .Lclose_note:
     mov rdi, r12
     call closed_note            # for Reopen Closed Tab

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 
 CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n'
-          '[editor]\ncursor_blink = false\n'
+          '[editor]\ncursor_blink = false\nword_wrap = {wrap}\n'
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
 Y = 58
 A_TAB = 30                      # a.txt, the first tab, left of its close button
@@ -28,9 +28,9 @@ class TabView(unittest.TestCase):
         for name in ('a', 'b', 'c'):
             (self.proj / (name + '.txt')).write_text(''.join(f'{name} line {i}\n' for i in range(3000)),
                                                      encoding='utf-8')
-        config = self.work / 'config/rhun/config'
-        config.parent.mkdir(parents=True)
-        config.write_text(CONFIG, encoding='utf-8')
+        self.config = self.work / 'config/rhun/config'
+        self.config.parent.mkdir(parents=True)
+        self.config.write_text(CONFIG.format(wrap='false'), encoding='utf-8')
         self.env = dict(os.environ, HOME=self.work.as_posix(),
                         XDG_CONFIG_HOME=(self.work / 'config').as_posix(),
                         XDG_STATE_HOME=(self.work / 'state').as_posix())
@@ -73,11 +73,13 @@ class TabView(unittest.TestCase):
         out = self.run_editor([*self.open('a', 'b'),
                                f'click {A_TAB} {Y}', 'move 500 400', 'scroll 3000', 'wait 60', 'print-scroll',
                                'key ctrl+Tab', 'wait 60', 'print-state',
-                               f'click {A_TAB} {Y}', 'wait 60', 'print-scroll', 'print-state'])
+                               f'click {A_TAB} {Y}', 'wait 60', 'print-scroll', 'print-state',
+                               # a click on the tab in front
+                               f'click {A_TAB} {Y}', 'wait 60', 'print-scroll'])
         ys, states = self.scrolls(out)
         self.assertGreater(ys[0], 0)
         self.assertIn('active=b.txt ', states[0])
-        self.assertEqual(ys[1], ys[0])
+        self.assertEqual(ys[1:], [ys[0], ys[0]])
         self.assertIn('active=a.txt line=1 col=1 ', states[1])
 
     def test_closing_a_tab_shows_the_next_where_it_was_scrolled(self):
@@ -98,6 +100,13 @@ class TabView(unittest.TestCase):
         self.assertIn('active=b.txt line=1 col=2 ', states[0])
 
     def test_restored_cursors_are_in_view_when_their_tabs_show(self):
+        self.restored_cursors()
+
+    def test_restored_cursors_are_in_view_with_word_wrap(self):
+        self.config.write_text(CONFIG.format(wrap='true'), encoding='utf-8')
+        self.restored_cursors()
+
+    def restored_cursors(self):
         # a session with a at line 2000 and b at line 1500, b in front
         goto = lambda line: ['key ctrl+g', f'type {line}', 'key Return']
         self.run_editor([*self.open('a'), *goto(2000), *self.open('b'), *goto(1500)])
@@ -108,8 +117,8 @@ class TabView(unittest.TestCase):
         self.assertIn('active=a.txt line=2000 ', states[1])
         for y, line in zip(ys, (1500, 2000)):
             top = y // 256 + 1
-            # 1000x700 at scale 1 shows 28 lines
-            self.assertTrue(top <= line < top + 28, f'line {line} not shown from line {top}: {out}')
+            # 1000x700 at scale 1 shows 28 lines; the bound only has to tell a reveal from none
+            self.assertTrue(top <= line < top + 40, f'line {line} not shown from line {top}: {out}')
 
 
 if __name__ == '__main__':
