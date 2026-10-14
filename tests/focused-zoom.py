@@ -114,6 +114,16 @@ class FocusedZoom(unittest.TestCase):
         self.run_editor([*self.terminal(), f'key {MOD}+j'])
         self.assertEqual(self.sizes(), (17, 13))
 
+    @unittest.skipIf(sys.platform == 'darwin', 'the keypad types its characters on macOS (the keys above)')
+    def test_keypad_zooms_the_focused_panel(self):
+        # X11 and Wayland report the keypad's own keys; tests/linux-keypad.py presses real ones
+        self.run_editor([*self.terminal(), 'click 100 100', 'key ctrl+KP_Add', 'key ctrl+KP_Add',
+                         'key ctrl+KP_Subtract', 'click 100 480', 'key ctrl+KP_Add', 'key ctrl+KP_Equal'])
+        self.assertEqual(self.sizes(), (18, 14))
+        self.configure(editor=20, terminal=20)
+        self.run_editor([*self.terminal(), 'key ctrl+KP_0', 'click 100 100', 'key ctrl+KP_0'])
+        self.assertEqual(self.sizes(), (14, 14))
+
     @unittest.skipUnless(sys.platform == 'darwin', 'macOS distinguishes Command from Control')
     def test_physical_control_stays_terminal_input(self):
         self.run_editor([*self.terminal(), 'key ctrl+=', 'key ctrl+-', 'key ctrl+0'])
