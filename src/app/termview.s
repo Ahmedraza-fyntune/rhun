@@ -32,6 +32,7 @@ env: .quad 0
 g_face_term: .zero FACE_SIZE
 g_term_open: .long 0
 last_px: .long 0
+last_lh: .long 0                # cfg_term_line_height the metrics were made for
 tab_scroll: .long 0             # first session tab shown when they do not all fit
 .p2align 3
 last_font: .quad 0
@@ -97,7 +98,9 @@ cur_sess:
     jmp sess
 1:  ret
 
-# term_metrics(): the terminal face at the configured size
+# term_metrics(): the terminal face at the configured size, in its font (the editor's unless it has
+#   one of its own), and the line height: font px * line_height / 100, the font's own height at least,
+#   with the text in the middle as in the editor
 term_metrics:
     push rbx
     cvtsi2ss xmm0, dword ptr [rip + cfg_term_font_size]
@@ -106,13 +109,20 @@ term_metrics:
     cmp ebx, 4
     jge 1f
     mov ebx, 4
-1:  mov rax, [rip + g_font_code]
+1:  mov rax, [rip + g_font_term]
+    test rax, rax
+    jnz 11f
+    mov rax, [rip + g_font_code]
+11: mov ecx, [rip + cfg_term_line_height]
     cmp rax, [rip + last_font]
     jne 2f
     cmp ebx, [rip + last_px]
+    jne 2f
+    cmp ecx, [rip + last_lh]
     je 9f
 2:  mov [rip + last_font], rax
     mov [rip + last_px], ebx
+    mov [rip + last_lh], ecx
     lea rdi, [rip + g_face_term]
     mov rsi, rax
     mov edx, ebx
@@ -122,13 +132,24 @@ term_metrics:
     jge 3f
     mov eax, 1
 3:  mov [rip + tcw], eax
-    mov eax, [rip + g_face_term + FACE_ascent]
-    mov [rip + tbase], eax
-    add eax, [rip + g_face_term + FACE_descent]
-    cmp eax, 2
+    mov ecx, [rip + g_face_term + FACE_ascent]
+    add ecx, [rip + g_face_term + FACE_descent]
+    cmp ecx, 2
     jge 4f
-    mov eax, 2
-4:  mov [rip + tlh], eax
+    mov ecx, 2
+4:  mov eax, ebx
+    imul eax, [rip + cfg_term_line_height]
+    add eax, 50
+    xor edx, edx
+    mov r8d, 100
+    div r8d
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov [rip + tlh], eax
+    sub eax, ecx
+    sar eax, 1
+    add eax, [rip + g_face_term + FACE_ascent]
+    mov [rip + tbase], eax
 9:  pop rbx
     ret
 

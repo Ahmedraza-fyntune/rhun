@@ -56,6 +56,9 @@ FN setting_applied
     je 1f
     lea rcx, [rip + cfg_ui_font]
     cmp rax, rcx
+    je 1f
+    lea rcx, [rip + cfg_term_font]
+    cmp rax, rcx
     jne 2f
 1:  call app_load_fonts
     call ui_force_metrics

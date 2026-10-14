@@ -140,7 +140,19 @@ FN app_load_fonts
     mov rdx, [rip + cfg_ui_font]
     call load_font_or
     mov [rip + g_font_ui], rax
-    EPILOGUE
+    # the terminal's: the editor's unless the config names another that loads
+    mov qword ptr [rip + g_font_term], 0
+    mov rdi, [rip + cfg_term_font]
+    cmp byte ptr [rdi], 0
+    je 9f
+    call file_read_all
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call font_load
+    mov [rip + g_font_term], rax
+9:  EPILOGUE
 
 # load_font_or(builtin ptr, len, path cstr) -> FONT*
 load_font_or:
@@ -1574,6 +1586,8 @@ FN app_toast
 # app_reload_config(): re-read config and apply theme/fonts/sizes
 FN app_reload_config
     PROLOGUE
+    call font_paths_hash
+    mov r13, rax
     mov ebx, [rip + cfg_follow_system]
     mov rdi, [rip + cfg_theme]
     call theme_find
@@ -1596,6 +1610,33 @@ FN app_reload_config
     call theme_set
 1:  call keys_reload
     call app_apply_settings
+    # a font named anew loads now, as from Settings
+    call font_paths_hash
+    cmp rax, r13
+    je 9f
+    call app_load_fonts
+    call ui_force_metrics
+9:  EPILOGUE
+
+# font_paths_hash() -> rax: a hash of the editor's, the interface's and the terminal's font paths
+font_paths_hash:
+    PROLOGUE
+    xor ebx, ebx
+    lea r12, [rip + font_paths]
+1:  mov rax, [r12]
+    test rax, rax
+    jz 9f
+    mov r13, [rax]
+    mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call hash_line
+    rol rbx, 7
+    xor rbx, rax
+    add r12, 8
+    jmp 1b
+9:  mov rax, rbx
     EPILOGUE
 
 # app_apply_settings(): push current cfg_* values into the running app
@@ -4981,6 +5022,8 @@ FN cmd_move_line_down
 .Lsettings: .asciz "Settings"
 .p2align 3
 # tip_table: button, text, the handler it runs (0: not a command, no shortcut); 0 ends it
+font_paths:
+    .quad cfg_font, cfg_ui_font, cfg_term_font, 0
 tip_table:
     .quad ID_GIT_BTN, .Ltip_git, cmd_toggle_git
     .quad ID_TOG_TERM, .Ltip_term, cmd_toggle_terminal

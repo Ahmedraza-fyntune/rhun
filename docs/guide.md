@@ -330,7 +330,7 @@ Links in the terminal open with Cmd+click on macOS and Ctrl+click on Linux and W
 
 Programs that turn on the kitty keyboard protocol, such as the Pi agent and fish 4, tell Shift+Enter, Alt+Enter and Ctrl+Enter apart from Enter, so Shift+Enter can start a new line in an agent's prompt instead of sending it. rhun reports those keys, Escape, and Ctrl or Alt with a character as `CSI` codes while a program asks for them (the protocol's first level); other programs get the usual bytes.
 
-Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independently. On macOS use Command+Plus, Command+Minus and Command+0; on Linux and Windows use Ctrl+Plus, Ctrl+Minus and Ctrl+0. The keypad's plus, minus and 0 work too (its 0 with Num Lock on). Settings > Terminal > Font size controls the terminal separately from Settings > Editor > Font size.
+Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independently. On macOS use Command+Plus, Command+Minus and Command+0; on Linux and Windows use Ctrl+Plus, Ctrl+Minus and Ctrl+0. The keypad's plus, minus and 0 work too (its 0 with Num Lock on). Settings > Terminal > Font size controls the terminal separately from Settings > Editor > Font size. The terminal has its own font and line height too (`font` and `line_height` under `[terminal]`, as the editor's); an empty font uses the editor's.
 
 ### Folders and files
 
