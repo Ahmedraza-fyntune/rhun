@@ -11,6 +11,8 @@
 .equ ID_TOG_TERM, 0x2007
 .equ ID_GIT_BTN, 0x2008
 .equ ID_PROJECT_BTN, 0x2009
+.equ ID_TAB_NEW, 0x200a           # the + after the last tab
+.equ ID_TAB_END, 0x200b           # the strip's empty end
 .equ PM_RECENT, 3                 # the project menu's first recent folder
 .equ ID_TAB, 0x2100              # + index
 .equ ID_TABX, 0x2400             # + index
@@ -64,6 +66,7 @@ tip_left: .quad 0                # time_ms when the pointer left a shown tooltip
 tip_text_id: .long 0             # the button whose tooltip is in tip_text (tip_note_text)
 tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
+tab_end_press: .long 0           # the last left press was on the tab strip's empty end
 g_side_px: .long 0
 g_agents_px: .long 0
 dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm, 5 close all
@@ -3111,6 +3114,13 @@ FN tabs_draw
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
+    # the tabs scroll in all but a square at the strip's end: the + after them stays there when they
+    # fill the strip
+    mov eax, edx
+    sub eax, ecx
+    jns 0f
+    xor eax, eax
+0:  mov [rsp + 36], eax
     COLOR r8d, T_TAB
     call gfx_fill
     mov edi, [rsp]
@@ -3140,7 +3150,12 @@ FN tabs_draw
 1:  cmp dword ptr [rip + g_tabscroll], 0
     jge 2f
     mov dword ptr [rip + g_tabscroll], 0
-2:  mov r12d, [rsp]
+2:  mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 36]
+    mov ecx, [rsp + 12]
+    call gfx_clip_push
+    mov r12d, [rsp]
     sub r12d, [rip + g_tabscroll]
     xor ebx, ebx
 .Ltd_tab:
@@ -3179,7 +3194,7 @@ FN tabs_draw
 41: mov ecx, r12d
     add ecx, eax
     mov edx, [rsp]
-    add edx, [rsp + 8]
+    add edx, [rsp + 36]
     sub ecx, edx
     jle 5f
     add [rip + g_tabscroll], ecx
@@ -3366,17 +3381,79 @@ FN tabs_draw
     mov eax, r12d
     add eax, [rip + g_tabscroll]
     sub eax, [rsp]
-    sub eax, [rsp + 8]
+    sub eax, [rsp + 36]
     xor ecx, ecx
     cmp eax, ecx
     cmovl eax, ecx
     cmp [rip + g_tabscroll], eax
-    jle .Ltd_closed
+    jle 1f
     mov [rip + g_tabscroll], eax
     mov dword ptr [rip + g_dirty], 1
+1:  call gfx_clip_pop
+    # + right after the last tab, in the square at the strip's end when the tabs fill the strip
+    mov eax, [rsp]
+    add eax, [rsp + 36]
+    cmp r12d, eax
+    cmovg r12d, eax
+    M r13d, MI_24
+    mov eax, [rsp + 12]
+    sub eax, r13d
+    sar eax, 1
+    lea esi, [r12 + rax]
+    mov [rsp + 40], esi
+    mov edx, [rsp + 4]
+    add edx, eax
+    mov edi, ID_TAB_NEW
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_PLUS
+    call ui_icon_btn
+    mov r8d, eax
+    mov edi, ID_TAB_NEW
+    mov esi, [rsp + 40]
+    mov edx, [rsp + 4]
+    add edx, [rsp + 12]
+    mov ecx, r13d
+    call tip_note               # keeps the button flags in eax
+    test eax, UB_CLICK
+    jnz 2f
+    test eax, UB_HOVER
+    jnz 9f
+    # a double click on the strip after the tabs does the same
+    mov edx, [rsp]
+    add edx, [rsp + 8]
+    sub edx, r12d
+    jle 9f
+    mov edi, ID_TAB_END
+    mov esi, r12d
+    mov ecx, edx
+    mov edx, [rsp + 4]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    test eax, UB_PRESS
+    jz 9f
+    # both presses: after a quick click that closed the last tab, the next one lands here
+    test eax, UB_DOUBLE
+    jz 3f
+    cmp dword ptr [rip + tab_end_press], 0
+    jne 2f
+3:  mov dword ptr [rip + tab_end_press], 1
+    jmp 8f
+2:  call tab_new_last
+    jmp 9f
 .Ltd_closed:                    # a tab closed while drawn: the strip is measured again next frame
     call gfx_clip_pop
+9:  test dword ptr [rip + g_pressed], 1 << BTN_LEFT
+    jz 8f
+    mov dword ptr [rip + tab_end_press], 0
+8:  call gfx_clip_pop
     EPILOGUE
+
+# tab_new_last(): a new file in a tab at the strip's end, where the + is
+tab_new_last:
+    call cmd_new_file
+    mov rdi, [rip + g_tabs + VEC_len]
+    jmp app_place_tab
 
 # statusbar_draw(x, y, w, h)
 FN statusbar_draw
@@ -4872,6 +4949,7 @@ tip_table:
     .quad ID_EXP_NEW, .Ltip_exp_new, 0
     .quad ID_EXP_NEW_FOLDER, .Ltip_exp_new_folder, 0
     .quad ID_EXP_REFRESH, .Ltip_exp_refresh, 0
+    .quad ID_TAB_NEW, .Ltip_tab_new, cmd_new_file
     .quad ID_STATUS + 2, .Ltip_git, cmd_toggle_git
     .quad 0, 0, 0
 .Ltip_git: .asciz "Git history"
@@ -4882,6 +4960,7 @@ tip_table:
 .Ltip_exp_new: .asciz "New file"
 .Ltip_exp_new_folder: .asciz "New folder"
 .Ltip_exp_refresh: .asciz "Refresh explorer"
+.Ltip_tab_new: .asciz "New file"
 .Ltip_eq: .asciz "tip="
 .Lgit_tab: .asciz "Git"
 .Lln: .asciz "Ln "
