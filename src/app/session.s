@@ -140,10 +140,22 @@ FN session_trusted
 8:  xor eax, eax
     EPILOGUE
 
-# session_trust(folder): add the folder to the trusted-folders list
+# session_trust(folder): add the folder to the trusted-folders list (not one whose path holds a line
+#   break, which the list cannot hold: it is trusted for this run only)
 FN session_trust
     PROLOGUE
     mov r12, rdi
+    mov rcx, rdi
+0:  movzx eax, byte ptr [rcx]
+    test eax, eax
+    jz 12f
+    cmp eax, 10
+    je 9f
+    cmp eax, 13
+    je 9f
+    inc rcx
+    jmp 0b
+12: mov rdi, r12
     call session_trusted
     test eax, eax
     jnz 9f
@@ -158,10 +170,19 @@ FN session_trust
     test rax, rax
     jz 1f
     mov rbx, rax
+    mov r14, rdx
     lea rdi, [rip + out]
     mov rsi, rax
     call sb_push
-    mov rdi, rbx
+    # a list whose last line has no line break of its own gets one first
+    test r14, r14
+    jz 11f
+    cmp byte ptr [rbx + r14 - 1], 10
+    je 11f
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+11: mov rdi, rbx
     call mem_free
 1:  lea rdi, [rip + out]
     mov rsi, r12
@@ -181,6 +202,10 @@ FN session_remember_project
     test rbx, rbx
     jz 9f
     cmp dword ptr [rip + g_project_adopted], 0
+    jne 9f
+    # nor one a link opened, while git is paused there: a launch without arguments would reopen it
+    # as a folder opened by hand, and git would run in it without the trust asked for
+    cmp dword ptr [rip + g_git_paused], 0
     jne 9f
     call last_project_file
     test rax, rax
@@ -515,6 +540,10 @@ FN session_save
     cmp dword ptr [rip + cfg_restore_session], 0
     je 9f
     cmp dword ptr [rip + g_project_adopted], 0
+    jne 9f
+    # nor for a folder a link opened while git is paused there: its session would list it among
+    # the recent folders, and opening it from there runs git as in a folder opened by hand
+    cmp dword ptr [rip + g_git_paused], 0
     jne 9f
     cmp dword ptr [rip + g_session_final], 0
     jne 9f

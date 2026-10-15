@@ -28,6 +28,7 @@ ENDSTRUCT GE_SIZE
 .bss
 .p2align 3
 .globl g_git_on, g_git_ver, g_git_changes, g_git_root, g_git_rootlen, g_git_paused, g_project_link
+.globl g_git_paused_text
 .globl g_git_head, g_git_ahead, g_git_behind, g_git_upstream, g_worktree
 g_git_on: .long 0               # the setting is on, there is a repository and a git program
 g_git_paused: .long 0           # a rhun:// link opened the project, in a repository not trusted yet:
@@ -2027,6 +2028,7 @@ FN git_dump
 .Ld_on: .asciz "on"
 .Ld_off: .asciz "off"
 .Ld_paused: .asciz "paused"
+g_git_paused_text: .asciz "Git is paused for this folder until you trust it"
 .Ld_branch: .asciz " branch="
 .Ld_worktree: .asciz " worktree="
 .Ld_marks: .asciz "marks "

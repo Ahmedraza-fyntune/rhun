@@ -561,8 +561,85 @@ FN app_restart_paths
     lea rax, [rip + .Lrestart_empty]
     mov [r14 + r13*8], rax
     inc r13
-41: mov qword ptr [r14 + r13*8], 0
+    jmp 43f
+41: # while git is paused for a repository a link opened, the paths come back as links, so that git
+    # stays paused after the restart (a folder with its slash)
+    cmp dword ptr [rip + g_git_paused], 0
+    je 43f
+    mov r12d, 1
+42: cmp r12, r13
+    jae 43f
+    mov rdi, [r14 + r12*8]
+    mov esi, 1                  # the project itself: a folder
+    cmp dword ptr [rip + g_project_adopted], 0
+    je 44f
+    xor esi, esi                # an adopted folder's files
+44: call restart_link
+    mov [r14 + r12*8], rax
+    inc r12
+    jmp 42b
+43: mov qword ptr [r14 + r13*8], 0
     mov rax, r14
+    EPILOGUE
+
+# restart_link(path, folder) -> a new "rhun://file/..." link to path (with % ? # escaped, and a slash
+#   at its end for a folder), which app_open_path reads back
+restart_link:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    lea rdi, [rip + tmp_sb]
+    call sb_clear
+    lea rdi, [rip + tmp_sb]
+    lea rsi, [rip + .Lrestart_link]
+    call sb_push_cstr
+    cmp byte ptr [rbx], '/'
+    je 1f
+    lea rdi, [rip + tmp_sb]     # C:\x is rhun://file/C:\x
+    mov esi, '/'
+    call sb_push_byte
+1:  movzx r13d, byte ptr [rbx]
+    test r13d, r13d
+    jz 3f
+    cmp r13d, '%'
+    je 2f
+    cmp r13d, '?'
+    je 2f
+    cmp r13d, '#'
+    je 2f
+    lea rdi, [rip + tmp_sb]
+    mov esi, r13d
+    call sb_push_byte
+    inc rbx
+    jmp 1b
+2:  lea rdi, [rip + tmp_sb]
+    mov esi, '%'
+    call sb_push_byte
+    lea rax, [rip + hexdigits]
+    mov ecx, r13d
+    shr ecx, 4
+    movzx esi, byte ptr [rax + rcx]
+    lea rdi, [rip + tmp_sb]
+    call sb_push_byte
+    lea rax, [rip + hexdigits]
+    mov ecx, r13d
+    and ecx, 15
+    movzx esi, byte ptr [rax + rcx]
+    lea rdi, [rip + tmp_sb]
+    call sb_push_byte
+    inc rbx
+    jmp 1b
+3:  test r12d, r12d
+    jz 4f
+    lea rdi, [rip + tmp_sb]
+    mov esi, '/'
+    call sb_push_byte
+4:  lea rdi, [rip + tmp_sb]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + tmp_sb + SB_ptr]
+    mov rsi, [rip + tmp_sb + SB_len]
+    call mem_dup
     EPILOGUE
 
 # Snapshot before quit confirmations close dirty tabs. Owned path copies survive
@@ -3488,7 +3565,30 @@ trust_bar:
     lea rdi, [rip + trust_sb]
     lea rsi, [rip + trust_path]
     call sb_push_cstr
-    mov edi, [rsp]
+    # too long for the room before the button: the folder's own name, which the end of a cut path
+    # would lose first
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rip + trust_sb + SB_ptr]
+    mov rdx, [rip + trust_sb + SB_len]
+    call text_width
+    mov ecx, [rsp + 24]
+    sub ecx, [rsp]
+    sub ecx, [rip + g_mt + 4*MI_12]
+    sub ecx, [rip + g_mt + 4*MI_8]
+    cmp eax, ecx
+    jle 21f
+    lea rdi, [rip + trust_sb]
+    call sb_clear
+    lea rdi, [rip + trust_sb]
+    lea rsi, [rip + .Ltrust_text]
+    call sb_push_cstr
+    mov rdi, [rip + g_git_root]
+    mov rsi, [rip + g_git_rootlen]
+    call path_basename
+    lea rdi, [rip + trust_sb]
+    mov rsi, rax
+    call sb_push_cstr
+21: mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 24]
     sub edx, edi
@@ -5696,6 +5796,7 @@ FN cmd_move_line_down
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
 .Lpinned_stays: .asciz "The tab is pinned: unpin it to close it"
+.Lrestart_link: .asciz "rhun://file"
 .Lbad_link: .asciz "Not a rhun://file/ link"
 .Ltrust_text: .asciz "Opened from a link: git is paused for "
 .Ltrust_button: .asciz "Trust folder"

@@ -72,8 +72,11 @@ class GitTrust(unittest.TestCase):
     def run_editor(self, paths, actions):
         script = self.work / 'commands.rsc'
         script.write_text('\n'.join(['wait-git', *actions, 'quit']) + '\n', encoding='utf-8')
+        elsewhere = self.work / 'elsewhere'     # a launch without a project takes up its folder
+        elsewhere.mkdir(exist_ok=True)
         result = subprocess.run([str(EXE), *paths, '--headless', '1000x600', '--scale', '1',
-                                 '--script', str(script)], env=self.env, capture_output=True, timeout=60)
+                                 '--script', str(script)], env=self.env, capture_output=True, timeout=30,
+                                cwd=elsewhere)
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
         return [line for line in result.stdout.decode('utf-8').splitlines() if line.startswith('git ')]
 
@@ -99,6 +102,46 @@ class GitTrust(unittest.TestCase):
         self.assertEqual(self.trusted(), [str(self.repo)])
         self.marker.unlink()
         self.assertEqual(self.run_editor([self.link(self.repo, '/')], ['print-git']), ['git on branch=main'])
+
+    def test_a_launch_without_arguments_does_not_reopen_it_untrusted(self):
+        # the last project comes back with restore_project: not one a link opened while git is paused
+        # there, as it would come back as a folder opened by hand; once trusted, it does
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text(encoding='utf-8').replace('restore_project = false',
+                                                                     'restore_project = true'), encoding='utf-8')
+        self.assertEqual(self.run_editor([self.link(self.repo, '/')], ['print-git']), ['git paused branch=main'])
+        self.assertEqual(self.run_editor([], ['print-git']), ['git off branch='])
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.run_editor([self.link(self.repo, '/')], ['cmd trust_folder', 'wait-git', 'print-git']),
+                         ['git on branch=main'])
+        self.assertEqual(self.run_editor([], ['print-git']), ['git on branch=main'])
+
+    def test_no_session_while_paused(self):
+        # a session file would list the folder among the recent ones, which open it as by hand
+        def sessions():
+            return sorted(p.name for p in (self.work / 'state/rhun').glob('*.session'))
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text(encoding='utf-8').replace('restore_session = false',
+                                                                     'restore_session = true'), encoding='utf-8')
+        self.run_editor([self.link(self.repo, '/')], ['print-git'])
+        self.assertEqual(sessions(), [])
+        self.run_editor([self.link(self.repo, '/')], ['cmd trust_folder', 'wait-git'])
+        self.assertEqual(len(sessions()), 1)
+
+    def test_the_list_keeps_an_entry_without_a_line_break(self):
+        listed = self.work / 'state/rhun/trusted-folders'
+        listed.parent.mkdir(parents=True)
+        listed.write_text('/some/other', encoding='utf-8')
+        self.run_editor([self.link(self.repo, '/')], ['cmd trust_folder', 'wait-git'])
+        self.assertEqual(self.trusted(), ['/some/other', str(self.repo)])
+
+    def test_a_fifo_for_head_does_not_hang(self):
+        # opening a FIFO to read waits for a writer; rhun reads its files without waiting
+        fifo = self.work / 'fifo'
+        (fifo / '.git/refs/heads').mkdir(parents=True)
+        os.mkfifo(fifo / '.git/HEAD')
+        (fifo / 'a.txt').write_text('a\n', encoding='utf-8')
+        self.assertEqual(self.run_editor([self.link(fifo / 'a.txt')], ['print-git']), ['git paused branch='])
 
     def test_closing_the_bar_keeps_git_paused(self):
         out = self.run_editor([self.link(self.repo / 'a.txt')], [f'click {CLOSE_X} {BAR_Y}', 'wait 100',
