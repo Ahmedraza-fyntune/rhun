@@ -37,6 +37,14 @@ jobs:
         run: |
           python3 tests/linux-scroll.py
           python3 tests/linux-scroll.py --wayland
+      - name: Zoom from the keypad
+        run: |
+          python3 tests/linux-keypad.py
+          python3 tests/linux-keypad.py --wayland
+      - name: Window switches keep the editor's view
+        run: |
+          python3 tests/linux-focus.py
+          python3 tests/linux-focus.py --wayland
       - name: System dark mode (portal, XSETTINGS, settings.ini)
         run: |
           python3 tests/linux-appearance.py

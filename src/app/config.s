@@ -53,7 +53,9 @@ cfg_agents_opencode: .long 1
 cfg_scroll_sens: .long 100       # scroll_sensitivity: multiplier in hundredths
 cfg_fast_sens: .long 400         # fast_scroll_sensitivity: multiplier while alt is held
 .globl cfg_term_font_size, cfg_term_scrollback, cfg_term_h, cfg_term_shell, cfg_git
+.globl cfg_term_line_height, cfg_term_font
 cfg_term_font_size: .long 14
+cfg_term_line_height: .long 100  # line_height: hundredths of the font's own line height
 cfg_term_scrollback: .long 10000
 cfg_term_h: .long 260
 cfg_git: .long 1
@@ -69,6 +71,7 @@ cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
 cfg_exclude: .quad .Ldef_exclude
 cfg_term_shell: .quad .Lempty
+cfg_term_font: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
 .Lcfg_strings_end:
 cfg_agent_sources: .quad .Ldef_sources  # the switched-on providers' names, for the discovery worker
@@ -830,6 +833,8 @@ g_settings:
     SETTING .Ls_agents, opencode, ST_BOOL, cfg_agents_opencode, 0, 1, 1, 0, "OpenCode", "Show OpenCode sessions in the agents panel."
     SETTING .Ls_terminal, shell, ST_STR, cfg_term_shell, 0, 0, 0, 0, "Shell", "Program the terminal runs. Empty uses $SHELL."
     SETTING .Ls_terminal, font_size, ST_INT, cfg_term_font_size, 8, 40, 1, 0, "Terminal font size", "Font size of the terminal panel."
+    SETTING .Ls_terminal, font, ST_STR, cfg_term_font, 0, 0, 0, 0, "Terminal font", "Path to a monospace .ttf file. Empty uses the editor font."
+    SETTING .Ls_terminal, line_height, ST_INT, cfg_term_line_height, 100, 250, 5, 1, "Terminal line height", "Multiple of the font's own line height."
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
     SETTING .Ls_terminal, height, ST_INT, cfg_term_h, 80, 2000, 10, 0, "Terminal height", "Height of the terminal panel in points."
     SETTING .Ls_git, enabled, ST_BOOL, cfg_git, 0, 1, 1, 0, "Git", "Changes in the gutter, tabs and explorer, and the history view."

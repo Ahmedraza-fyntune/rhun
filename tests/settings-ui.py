@@ -41,12 +41,14 @@ INTS = {
     ('ui', 'scroll_sensitivity'): (.1, 10., .1), ('ui', 'fast_scroll_sensitivity'): (.1, 10., .1),
     ('editor', 'font_size'): (8, 40, 1), ('editor', 'line_height'): (1., 2.5, .05),
     ('editor', 'tab_width'): (1, 16, 1), ('terminal', 'font_size'): (8, 40, 1),
+    ('terminal', 'line_height'): (1., 2.5, .05),
     ('terminal', 'scrollback'): (0, 100000, 1000), ('terminal', 'height'): (80, 2000, 10),
 }
 STRINGS = {
     ('ui', 'font'): 'missing font café.ttf', ('editor', 'font'): 'missing mono café.ttf',
     ('files', 'exclude'): '.git hidden café',
-    ('terminal', 'shell'): 'missing shell café', ('git', 'commit_model'): 'model:café',
+    ('terminal', 'shell'): 'missing shell café', ('terminal', 'font'): 'missing term café.ttf',
+    ('git', 'commit_model'): 'model:café',
 }
 CHOICES = {('ui', 'decorations'): ('auto', 'client', 'server'),
            ('git', 'commit_ai'): ('off', 'claude', 'codex', 'ollama')}
@@ -102,7 +104,7 @@ class SettingsUI(unittest.TestCase):
         return THEME_ROWS.get((section, key), self.follow) == self.follow
 
     def row_y(self, section, key):
-        y, previous = 228, None
+        y, previous = 268, None
         for sec, name, _ in ROWS:
             if not self.shown(sec, name):
                 continue
@@ -115,7 +117,7 @@ class SettingsUI(unittest.TestCase):
         self.fail(f'unknown row {section}.{key}')
 
     def compact_row_y(self, section, key):
-        y, previous = 228, None
+        y, previous = 268, None
         for sec, name, kind in ROWS:
             if not self.shown(sec, name):
                 continue
@@ -133,14 +135,14 @@ class SettingsUI(unittest.TestCase):
                 self.configure(section, key, 'original')
                 y = self.compact_row_y(section, key)
                 self.run_editor([f'click 240 {y}', f'key {MOD}+a', 'type ' + value,
-                                 'key Return'], width=480, height=6500)
+                                 'key Return'], width=480, height=7000)
                 self.assertEqual(self.value(section, key), value)
         for (section, key), choices in CHOICES.items():
             for index, value in enumerate(choices):
                 with self.subTest(setting=f'{section}.{key}', value=value):
                     self.configure()
                     y = self.compact_row_y(section, key) + index * 32
-                    self.run_editor([f'click 240 {y}'], width=480, height=6500)
+                    self.run_editor([f'click 240 {y}'], width=480, height=7000)
                     self.assertEqual(self.value(section, key), value)
 
     def test_inventory_requires_cases_for_every_setting(self):

@@ -4,24 +4,104 @@
 .equ ID_SET_ROW, 0x5000         # + index*4 + part
 .equ ID_SET_OPENFILE, 0x4f00
 .equ ID_SET_SCROLL, 0x4f01
+.equ ID_SET_SEARCH, 0x4f06        # 0x4f02-0x4f05: the links under the title
+
+.data
+.p2align 3
+set_qhash: .quad -1             # the query last drawn: a change scrolls to the top
 
 .bss
 .p2align 3
 set_scroll: .long 0
 set_content_h: .long 0
+set_find: .long 0               # the search field has the keyboard
 .p2align 3
 set_tf: .zero TF_SIZE
+set_search: .zero TF_SIZE
 buf: .zero 64
 
 .text
 
 FN settings_field
-    cmp dword ptr [rip + set_edit], 0
-    jl 1f
+    cmp dword ptr [rip + set_find], 0
+    je 1f
+    lea rax, [rip + set_search]
+    ret
+1:  cmp dword ptr [rip + set_edit], 0
+    jl 2f
     lea rax, [rip + set_tf]
     ret
-1:  xor eax, eax
+2:  xor eax, eax
     ret
+
+# settings_focus(): the settings tab got the keyboard; its search field takes it, and a setting being
+#   edited is done (its field would get the keys back, hidden by the filter)
+FN settings_focus
+    push rax
+    call commit_edit
+    pop rax
+    mov dword ptr [rip + set_find], 1
+    ret
+
+# settings_reset(): a new settings tab starts with no query, at the top
+FN settings_reset
+    mov dword ptr [rip + set_scroll], 0
+    lea rdi, [rip + set_search]
+    jmp tf_clear
+
+# settings_take_find() -> eax 1 when the settings tab is in front: Find goes to its search field, the
+#   query selected so typing replaces it
+FN settings_take_find
+    xor eax, eax
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 1f
+    push rax
+    push rax
+    call tab_at
+    mov rcx, rax
+    pop rax
+    pop rax
+    cmp qword ptr [rcx + TAB_kind], TAB_SETTINGS
+    jne 1f
+    mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    call settings_focus
+    lea rdi, [rip + set_search]
+    call tf_select_all
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+1:  ret
+
+# settings_dump(sb): the rows the page shows, "section.key" each on a line (print-settings)
+FN settings_dump
+    PROLOGUE
+    mov r12, rdi
+    lea rbx, [rip + g_settings]
+1:  cmp qword ptr [rbx + SET_key], 0
+    je 9f
+    mov rdi, rbx
+    call setting_shown
+    test eax, eax
+    jz 2f
+    mov rdi, rbx
+    call setting_match
+    test eax, eax
+    jz 2f
+    mov rdi, r12
+    mov rsi, [rbx + SET_sec]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, '.'
+    call sb_push_byte
+    mov rdi, r12
+    mov rsi, [rbx + SET_key]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+2:  add rbx, SET_SIZE
+    jmp 1b
+9:  EPILOGUE
 
 # commit the edited string setting
 commit_edit:
@@ -55,6 +135,9 @@ FN setting_applied
     cmp rax, rcx
     je 1f
     lea rcx, [rip + cfg_ui_font]
+    cmp rax, rcx
+    je 1f
+    lea rcx, [rip + cfg_term_font]
     cmp rax, rcx
     jne 2f
 1:  call app_load_fonts
@@ -124,12 +207,166 @@ setting_shown:
     sete al
     ret
 
+# setting_match(SET*) -> 1 when each word of the search text starts a word of the row's title, its
+#   description, its config name (section.key) or its section's title, ignoring case: "ui" is the
+#   interface's settings, not "built-in"
+setting_match:
+    PROLOGUE 144                # [rsp] "section.key Title", [rsp + 128] its length
+    mov rbx, rdi
+    lea rdi, [rip + set_search]
+    call tf_text
+    mov r14, rax
+    mov r15, rdx
+    test r15, r15
+    jz .Lsm_yes
+    # the config name and the section's title
+    lea rdi, [rsp]
+    mov rsi, [rbx + SET_sec]
+    call .Lsm_copy
+    mov byte ptr [rdi], '.'
+    inc rdi
+    mov rsi, [rbx + SET_key]
+    call .Lsm_copy
+    mov byte ptr [rdi], ' '
+    inc rdi
+    push rdi
+    push rdi
+    mov rdi, [rbx + SET_sec]
+    call section_title
+    mov rsi, rax
+    pop rdi
+    pop rdi
+    call .Lsm_copy
+    lea rax, [rsp]
+    sub rdi, rax
+    mov [rsp + 128], rdi
+    xor r13d, r13d              # where the next word starts
+.Lsm_word:
+    cmp r13, r15
+    jae .Lsm_yes
+    cmp byte ptr [r14 + r13], ' '
+    jne 1f
+    inc r13
+    jmp .Lsm_word
+1:  mov r12, r13
+2:  inc r13
+    cmp r13, r15
+    jae 3f
+    cmp byte ptr [r14 + r13], ' '
+    jne 2b
+3:  mov rdi, [rbx + SET_label]
+    call .Lsm_in
+    test rax, rax
+    jns .Lsm_word
+    mov rdi, [rbx + SET_desc]
+    call .Lsm_in
+    test rax, rax
+    jns .Lsm_word
+    lea rdi, [rsp]
+    mov rsi, [rsp + 128]
+    call .Lsm_at
+    test rax, rax
+    jns .Lsm_word
+    xor eax, eax
+    EPILOGUE
+.Lsm_yes:
+    mov eax, 1
+    EPILOGUE
+# .Lsm_in(cstr): where the word r14 + r12 .. r13 starts a word in it, or -1
+.Lsm_in:
+    push rdi
+    call strlen
+    pop rdi
+    mov rsi, rax
+# .Lsm_at(hay, len): the same in hay
+.Lsm_at:
+    push rbx
+    push r12
+    mov rbx, rdi
+    mov r8, rsi
+    xor r9d, r9d                # where to look from
+1:  lea rdi, [rbx + r9]
+    mov rsi, r8
+    sub rsi, r9
+    lea rdx, [r14 + r12]
+    mov rcx, r13
+    sub rcx, r12
+    push r8
+    push r9
+    call str_ifind
+    pop r9
+    pop r8
+    test rax, rax
+    js 9f
+    add rax, r9
+    test rax, rax
+    jz 9f                       # at the start
+    movzx ecx, byte ptr [rbx + rax - 1]
+    or ecx, 0x20                # letters either case
+    lea edx, [rcx - 'a']
+    cmp edx, 25
+    jbe 2f
+    movzx ecx, byte ptr [rbx + rax - 1]
+    lea edx, [rcx - '0']
+    cmp edx, 9
+    jbe 2f
+    cmp ecx, 0x80               # within a character of several bytes
+    jb 9f
+2:  lea r9, [rax + 1]
+    cmp r9, r8
+    jb 1b
+    mov rax, -1
+9:  pop r12
+    pop rbx
+    ret
+# .Lsm_copy(rdi dst, rsi cstr) -> rdi past the copy; at most 40 bytes
+.Lsm_copy:
+    mov ecx, 40
+1:  mov al, [rsi]
+    test al, al
+    jz 2f
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    dec ecx
+    jnz 1b
+2:  ret
+
 # settings_key(keysym, cp, mods) -> 1 if handled
 FN settings_key
     PROLOGUE
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
+    cmp dword ptr [rip + set_find], 0
+    je .Lsk_page
+    # Esc clears the query first, then hands the keys to the page, as Enter does
+    cmp r12d, KEY_ESCAPE
+    jne 1f
+    lea rdi, [rip + set_search]
+    call tf_text
+    test rdx, rdx
+    jz .Lsk_unfind
+    lea rdi, [rip + set_search]
+    call tf_clear
+    jmp .Lsk_yes
+1:  cmp r12d, KEY_RETURN
+    je .Lsk_unfind
+    cmp r12d, KEY_KP_ENTER
+    jne .Lsk_type
+.Lsk_unfind:
+    mov dword ptr [rip + set_find], 0
+    jmp .Lsk_yes
+.Lsk_type:
+    lea rdi, [rip + set_search]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call tf_key
+    test eax, eax
+    jnz .Lsk_yes
+    jmp 5f                      # the page's keys (up and down scroll the rows found)
+.Lsk_page:
     cmp dword ptr [rip + set_edit], 0
     jl 5f
     cmp r12d, KEY_RETURN
@@ -157,14 +394,10 @@ FN settings_key
     add [rip + set_scroll], eax
     jmp .Lsk_yes
 6:  cmp r12d, KEY_UP
-    jne 7f
+    jne 8f
     mov edi, 60
     call sc
     sub [rip + set_scroll], eax
-    jmp .Lsk_yes
-7:  cmp r12d, KEY_ESCAPE
-    jne 8f
-    mov dword ptr [rip + g_focus], FOCUS_EDITOR
     jmp .Lsk_yes
 8:  xor eax, eax
     EPILOGUE
@@ -246,6 +479,17 @@ FN settings_draw
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
+    # the keys that would go to an editor are this page's, for its search field (after a tab closed
+    # in front of it, the terminal hidden, a bar or the palette closed)
+    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    jne 1f
+    mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    call settings_focus
+    mov dword ptr [rip + g_dirty], 1
+1:  mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
     COLOR r8d, T_BG
     call gfx_fill
     mov edi, [rsp]
@@ -274,6 +518,17 @@ FN settings_draw
     jge 13f
     mov dword ptr [rip + set_scroll], 0
 13: call update_desc_refresh
+    # a changed query scrolls back to the first match
+    lea rdi, [rip + set_search]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    call hash_line
+    cmp rax, [rip + set_qhash]
+    je 15f
+    mov [rip + set_qhash], rax
+    mov dword ptr [rip + set_scroll], 0
+15:
     # column
     mov edi, 720
     call sc
@@ -443,6 +698,31 @@ FN settings_draw
     jz 32f
     call cmd_discord
 32: add r12d, [rip + g_mt + 4*MI_40]
+    # the search field sits in the flow, above the sections
+    mov dword ptr [rip + set_search + TF_id], ID_SET_SEARCH
+    lea rdi, [rip + set_search]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    mov ecx, [rsp + 16]
+    M r8d, MI_32
+    xor r9d, r9d
+    cmp dword ptr [rip + set_find], 0
+    je 57f
+    cmp dword ptr [rip + g_focus], FOCUS_SETTINGS
+    jne 57f
+    mov r9d, 1
+57: lea rax, [rip + .Lsearch]
+    push rax
+    push rax
+    call ui_textfield
+    add rsp, 16
+    test eax, UB_PRESS
+    jz 58f
+    call commit_edit
+    mov dword ptr [rip + set_find], 1
+    mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+58: add r12d, [rip + g_mt + 4*MI_32]
+    add r12d, [rip + g_mt + 4*MI_8]
     # rows
     lea rbx, [rip + g_settings]
     xor r15d, r15d              # index
@@ -452,6 +732,10 @@ FN settings_draw
     je .Lsd_rows_done
     mov rdi, rbx
     call setting_shown
+    test eax, eax
+    jz .Lsd_skip
+    mov rdi, rbx
+    call setting_match
     test eax, eax
     jz .Lsd_skip
     mov rax, [rbx + SET_sec]
@@ -1024,15 +1308,43 @@ FN settings_draw
     inc r15d
     jmp .Lsd_row
 .Lsd_rows_done:
-    add r12d, [rip + g_mt + 4*MI_48]
+    # a query nothing matches says so
+    test r14, r14
+    jnz 59f
+    lea rdi, [rip + set_search]
+    call tf_text
+    test rdx, rdx
+    jz 59f
+    add r12d, [rip + g_mt + 4*MI_16]
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 20]
+    mov edx, r12d
+    M ecx, MI_28
+    lea r8, [rip + .Lno_match]
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    add r12d, [rip + g_mt + 4*MI_32]
+59: add r12d, [rip + g_mt + 4*MI_48]
     sub r12d, [rsp + 24]
     mov [rip + set_content_h], r12d
-    # clicking elsewhere ends string editing
+    # clicking elsewhere ends string editing; clicking elsewhere on the page leaves the search field
+    # (not the click on the tab that brought the page and gave the field the keys)
     test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz .Lsd_end
-    cmp dword ptr [rip + set_edit], 0
-    jl .Lsd_end
     mov eax, [rip + g_active]
+    cmp eax, ID_SET_SEARCH
+    je 54f
+    mov ecx, [rip + g_mx]
+    sub ecx, [rsp]
+    cmp ecx, [rsp + 8]
+    jae 54f
+    mov ecx, [rip + g_my]
+    sub ecx, [rsp + 4]
+    cmp ecx, [rsp + 12]
+    jae 54f
+    mov dword ptr [rip + set_find], 0
+54: cmp dword ptr [rip + set_edit], 0
+    jl .Lsd_end
     cmp eax, [rip + set_tf + TF_id]
     je .Lsd_end
     call commit_edit
@@ -1231,6 +1543,8 @@ FN ui_text_v_fit
 
 .section .rodata
 .Ltitle: .asciz "Settings"
+.Lsearch: .asciz "Search settings"
+.Lno_match: .asciz "No settings match."
 .Lopen_file: .asciz "Open settings file"
 .Lbuiltin: .asciz "built-in"
 .Lt_appearance: .asciz "Appearance"

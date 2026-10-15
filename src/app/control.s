@@ -2,7 +2,7 @@
 #   key ctrl+s | type text | click x y [right|middle|shift|ctrl] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
-#   print-menu
+#   print-menu | focus out|in
 .include "rhun.inc"
 
 .bss
@@ -472,6 +472,13 @@ c_scroll_x:
     xor eax, eax
     ret
 
+# print-settings: the rows the settings page shows, "section.key" each
+c_print_settings:
+    lea rdi, [rip + out]
+    call settings_dump
+    xor eax, eax
+    ret
+
 # print-scroll: "x=PX y=N max=PX track=X,Y,W,H", the editor's scroll (y in 1/256 lines)
 c_print_scroll:
     lea rdi, [rip + out]
@@ -817,6 +824,19 @@ c_print_panels:
     mov esi, 10
     call sb_push_byte
     pop rbx
+    xor eax, eax
+    ret
+
+# focus out|in: the window loses or gets the keyboard, as a platform reports it
+c_focus:
+    call next_arg
+    xor edi, edi
+    test rdx, rdx
+    jz 1f
+    cmp byte ptr [rax], 'i'
+    jne 1f
+    mov edi, 1
+1:  call app_on_focus
     xor eax, eax
     ret
 
@@ -1525,8 +1545,10 @@ on_client:
 .Lc_print_toast: .asciz "print-toast"
 .Lc_print_link: .asciz "print-link"
 .Lc_print_scroll: .asciz "print-scroll"
+.Lc_print_settings: .asciz "print-settings"
 .Lc_scroll_x: .asciz "scroll-x"
 .Lc_appearance: .asciz "appearance"
+.Lc_focus: .asciz "focus"
 .Lc_print_appearance: .asciz "print-appearance"
 .Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
@@ -1576,8 +1598,10 @@ ctl_table:
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
     .quad .Lc_print_tip, c_print_tip, .Lc_print_toast, c_print_toast, .Lc_print_link, c_print_link
     .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
+    .quad .Lc_print_settings, c_print_settings
     .quad .Lc_scroll_x, c_scroll_x
-    .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance, 0, 0
+    .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
+    .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:

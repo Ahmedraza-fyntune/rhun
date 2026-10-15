@@ -113,12 +113,16 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
     check('input/wheel-and-touchpad-steps', lambda: run('wheel_test.exe'))
     if not args.wine:
+        # Wine's MapVirtualKeyW gives VK_NUMPAD0 no character
+        check('input/keypad-zoom', lambda: run('keypad_test.exe'))
+    if not args.wine:
         check('files/long-paths', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/windows-longpaths.py')], check=True))
         check('clipboard/contention-copy-and-paste', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
         for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity',
-                     'file-launch', 'readonly-save', 'field-blink'):
+                     'file-launch', 'readonly-save', 'field-blink', 'window-focus',
+                     'new-tab', 'tab-view', 'settings-search'):
             check('ui/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))

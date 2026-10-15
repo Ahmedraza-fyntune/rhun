@@ -434,7 +434,7 @@ class LiveReload(unittest.TestCase):
         self.command('cmd settings')
         self.command('move 500 350')
         self.command('scroll 1500')
-        self.command('click 827 440')
+        self.command('click 827 480')
         self.command('quit')
         self.process.wait(timeout=5)
         after = settings()
@@ -586,6 +586,33 @@ class LiveReload(unittest.TestCase):
         self.wait_document('moved\n')
         self.external_write('seventh\n', target=note)
         self.wait_document('seventh\n')
+
+    def test_reload_follows_a_folder_moved_into_place(self):
+        # another folder holding the file renamed to its folder's path: nothing in a folder moved in
+        # is reported, only the folder itself (macOS reported nothing at all for a watched folder)
+        sub = self.project / 'sub'
+        sub.mkdir()
+        note = sub / 'note.txt'
+        note.write_text('before\n', encoding='utf-8')
+        other = self.project / 'other'
+        self.start(note)
+        text = 'before\n'
+        for index in range(4):
+            # over its emptied folder, after the file was found gone
+            other.mkdir()
+            (other / 'note.txt').write_text(f'over {index}\n', encoding='utf-8')
+            note.unlink()
+            self.settle()
+            self.assertEqual(self.document(), text)
+            os.rename(other, sub)
+            self.wait_document(f'over {index}\n')
+            # in place of its removed folder, at once
+            text = f'in place {index}\n'
+            other.mkdir()
+            (other / 'note.txt').write_text(text, encoding='utf-8')
+            shutil.rmtree(sub)
+            os.rename(other, sub)
+            self.wait_document(text)
 
 
 if __name__ == '__main__':

@@ -41,9 +41,10 @@ g_face_huge: .zero FACE_SIZE
 last_scale: .long 0
 last_code_px: .long 0
 last_ui_px: .long 0
-.globl g_font_code, g_font_ui
+.globl g_font_code, g_font_ui, g_font_term
 g_font_code: .quad 0
 g_font_ui: .quad 0
+g_font_term: .quad 0            # the terminal's own font, or 0 for the editor's
 .globl g_lh, g_cw, g_base
 g_lh: .long 0                   # editor line height
 g_cw: .long 0                   # editor cell width

@@ -2,7 +2,8 @@
 //
 // The inotify descriptor is the read end of a pipe. An FSEvents stream over the watched
 // directories reports file events on a dispatch queue; each one in a watched directory becomes
-// an inotify_event record (watch, mask, name) written to the pipe.
+// an inotify_event record (watch, mask, name) written to the pipe, and one on a watched
+// directory itself an IN_IGNORED for its watch.
 .include "mac.inc"
 
 .equ MAXW, 1024
@@ -12,6 +13,7 @@
 .equ IN_MOVED_TO, 0x80
 .equ IN_CREATE, 0x100
 .equ IN_DELETE, 0x200
+.equ IN_IGNORED, 0x8000
 
 // watch entry: given path, real path, real path length
 .equ W_path, 0
@@ -194,7 +196,7 @@ restart:
 
 // on_events(stream, info, n, paths, flags, ids): on the dispatch queue
 on_events:
-    ENTER 560
+    ENTER 160
     mov x19, x2
     mov x20, x3
     mov x21, x4
@@ -218,79 +220,112 @@ on_events:
 4:  tst w24, #0x800
     b.eq 5f
     mov x0, x23
-    add x1, sp, #400
+    add x1, sp, #16
     bl _lstat
     mov w9, #IN_MOVED_TO
     mov w10, #IN_MOVED_FROM
     cmp w0, #0
     csel w9, w9, w10, eq
     orr w25, w25, w9
-5:  cbz w25, 8f
+5:  cbz w25, 7f
     // directory and name
     mov x0, x23
     mov w1, #'/'
     bl _strrchr
-    cbz x0, 8f
+    cbz x0, 7f
     sub x26, x0, x23                    // directory length
     add x27, x0, #1                     // name
     mov x0, x27
     bl _strlen
     cmp x0, #255
-    b.hi 8f
-    str x0, [sp, #16]
-    // the watch holding it
-    LOCK
-    ADR x9, nwatch
-    ldr w10, [x9]
-    str w10, [sp, #8]
-    mov x24, #0
-6:  ldr w10, [sp, #8]
-    cmp w24, w10
-    b.hs 61f
-    ADR x9, watches
-    mov x10, #W_SIZE
-    madd x9, x10, x24, x9
-    ldr x10, [x9, #W_len]
-    cmp x10, x26
-    b.ne 62f
-    ldr x0, [x9, #W_real]
-    mov x1, x23
-    mov x2, x26
-    bl _memcmp
-    cbz w0, 63f
-62: add x24, x24, #1
-    b 6b
-61: mov x24, #-1
-63: UNLOCK
-    tbnz x24, #63, 8f
-    // record: wd, mask, cookie, len, name padded to 16
-    add x9, sp, #32
-    add w10, w24, #1
-    str w10, [x9, #0]
-    str w25, [x9, #4]
-    str wzr, [x9, #8]
-    ldr x11, [sp, #16]
-    add x12, x11, #16
-    and x12, x12, #~15
-    str w12, [x9, #12]
-    str x12, [sp, #24]
-    add x0, x9, #16
-    mov w1, #0
-    mov x2, x12
-    bl _memset
-    add x0, sp, #48
-    mov x1, x27
-    ldr x2, [sp, #16]
-    bl _memcpy
-    ADR x9, fds
-    ldr w0, [x9, #4]
-    add x1, sp, #32
-    ldr x2, [sp, #24]
-    add x2, x2, #16
-    bl _write
+    b.hi 7f
+    str x0, [sp]                        // name length
+    mov x0, x23
+    mov x1, x26
+    bl lookup                           // the watch holding it
+    tbnz x0, #63, 7f
+    mov w1, w25
+    mov x2, x27
+    ldr x3, [sp]
+    bl emit
+    // a watched folder itself made, removed or renamed: the folder at that path is gone or another
+    // one now, and inotify says so with IN_IGNORED (the watch stays on the path here, so adding it
+    // again finds what is there now). Nothing in it is reported for a folder moved into its place.
+7:  mov w9, #0xb00
+    tst w24, w9
+    b.eq 8f
+    mov x0, x23
+    bl _strlen
+    mov x1, x0
+    mov x0, x23
+    bl lookup
+    tbnz x0, #63, 8f
+    mov w1, #IN_IGNORED
+    ADR x2, s_empty
+    mov x3, #0
+    bl emit
 8:  add x22, x22, #1
     b 1b
 9:  LEAVE
+    ret
+
+// lookup(directory, length) -> the watch of that directory, -1 when there is none
+lookup:
+    ENTER 16
+    mov x19, x0
+    mov x20, x1
+    LOCK
+    ADR x9, nwatch
+    ldr w21, [x9]
+    mov x22, #0
+1:  cmp x22, x21
+    b.hs 2f
+    ADR x9, watches
+    mov x10, #W_SIZE
+    madd x23, x10, x22, x9
+    ldr x10, [x23, #W_len]
+    cmp x10, x20
+    b.ne 3f
+    ldr x0, [x23, #W_real]
+    mov x1, x19
+    mov x2, x20
+    bl _memcmp
+    cbz w0, 4f
+3:  add x22, x22, #1
+    b 1b
+2:  mov x22, #-1
+4:  UNLOCK
+    mov x0, x22
+    LEAVE
+    ret
+
+// emit(watch, mask, name, name length): an inotify_event record to the pipe
+emit:
+    ENTER 288
+    mov x19, x2
+    mov x20, x3
+    // record: wd, mask, cookie, len, name padded to 16
+    add w9, w0, #1
+    str w9, [sp, #0]
+    str w1, [sp, #4]
+    str wzr, [sp, #8]
+    add x21, x20, #16
+    and x21, x21, #~15
+    str w21, [sp, #12]
+    add x0, sp, #16
+    mov w1, #0
+    mov x2, x21
+    bl _memset
+    add x0, sp, #16
+    mov x1, x19
+    mov x2, x20
+    bl _memcpy
+    ADR x9, fds
+    ldr w0, [x9, #4]
+    mov x1, sp
+    add x2, x21, #16
+    bl _write
+    LEAVE
     ret
 
 // linux_ret_errno(): -errno of the last libSystem call, Linux numbering
@@ -309,6 +344,7 @@ f_latency: .double 0.005
 
 .section __TEXT,__cstring,cstring_literals
 s_queue: .asciz "rhun.watch"
+s_empty: .asciz ""
 
 .data
 .p2align 3

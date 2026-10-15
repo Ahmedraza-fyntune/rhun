@@ -536,6 +536,7 @@ FN session_restore
     mov rax, [rip + g_doc]
     mov [rax + DOC_cur], rcx
     mov [rax + DOC_anchor], rcx
+    or dword ptr [rax + DOC_flags], DF_REVEAL
 7:  lea r14, [r15 + 1]
     jmp 1b
 8:  mov rdi, r12

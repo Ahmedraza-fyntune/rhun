@@ -21,7 +21,7 @@ def settings_row_y(section, key):
     spec = importlib.util.spec_from_file_location('settings_ui', ROOT / 'tests/settings-ui.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    y, previous = 228, None
+    y, previous = 268, None
     for sec, name, _ in module.ROWS:
         if not module.THEME_ROWS.get((sec, name), True):
             continue

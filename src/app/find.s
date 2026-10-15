@@ -37,6 +37,10 @@ FN find_field
 # open with the selection (single line) as the query
 open_bar:
     PROLOGUE
+    # the settings page searches its own rows (also for Find Next with no query)
+    call settings_take_find
+    test eax, eax
+    jnz 9f
     mov dword ptr [rip + g_find_word], 0
     mov dword ptr [rip + find_open], 1
     mov dword ptr [rip + find_sub], 0
@@ -79,11 +83,18 @@ open_bar:
     EPILOGUE
 
 FN cmd_find_bar
+    call settings_take_find     # the settings page searches its own rows
+    test eax, eax
+    jnz 1f
     mov dword ptr [rip + repl_open], 0
     jmp open_bar
 FN cmd_replace_bar
+    call settings_take_find
+    test eax, eax
+    jnz 1f
     mov dword ptr [rip + repl_open], 1
     jmp open_bar
+1:  ret
 
 close_bar:
     mov dword ptr [rip + find_open], 0
