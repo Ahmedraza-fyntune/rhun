@@ -905,7 +905,11 @@ FN term_panel_draw
     add ecx, [rsp + 12]
     sub ecx, eax
     sub ecx, [rip + g_mt + 4*MI_4]
-    mov [rsp + 28], ecx         # grid h
+    # no room is none, not a negative size: the cells are counted by unsigned division
+    test ecx, ecx
+    jns 21f
+    xor ecx, ecx
+21: mov [rsp + 28], ecx         # grid h
     M eax, MI_12
     mov ecx, [rsp]
     add ecx, eax
@@ -913,7 +917,10 @@ FN term_panel_draw
     mov ecx, [rsp + 8]
     sub ecx, eax
     sub ecx, eax
-    mov [rsp + 24], ecx         # grid w
+    test ecx, ecx
+    jns 22f
+    xor ecx, ecx
+22: mov [rsp + 24], ecx         # grid w
     mov eax, [rsp + 16]
     mov [rip + gx], eax
     mov eax, [rsp + 20]

@@ -2429,7 +2429,9 @@ FN app_render
     mov edi, [rip + cfg_agents_w]
     call sc
     mov [rip + g_agents_px], eax
-    # keep the editor at least 240pt wide
+    # keep the editor at least 240pt wide: the agents panel gives way first, then the sidebar, each
+    # down to nothing in a window too narrow for them. The column's width never goes below zero (the
+    # terminal under it made a grid of 268 million columns of a negative one).
     mov edi, 240
     call sc
     mov ecx, [rsp]
@@ -2441,13 +2443,21 @@ FN app_render
 1:  cmp dword ptr [rip + g_show_agents], 0
     je 2f
     add edx, [rip + g_agents_px]
-2:  cmp edx, ecx
+2:  sub edx, ecx                # what does not fit
     jle 3f
-    # shrink the agents panel first, then the sidebar
-    sub edx, ecx
+    cmp dword ptr [rip + g_show_agents], 0
+    je 21f
     mov eax, [rip + g_agents_px]
-    sub eax, edx
-    mov [rip + g_agents_px], eax
+    cmp eax, edx
+    cmovg eax, edx
+    sub [rip + g_agents_px], eax
+    sub edx, eax
+21: cmp dword ptr [rip + g_show_side], 0
+    je 3f
+    mov eax, [rip + g_side_px]
+    cmp eax, edx
+    cmovg eax, edx
+    sub [rip + g_side_px], eax
 3:  M eax, MI_TITLE
     mov [rsp + 12], eax         # title h
     M eax, MI_STATUS

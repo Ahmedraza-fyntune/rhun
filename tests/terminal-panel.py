@@ -90,6 +90,61 @@ class TerminalPanel(unittest.TestCase):
         self.assertIn('line=1 col=1 sel=0', state)
         self.assertEqual(self.height(), HEIGHT - 98)
 
+    def test_a_window_narrower_than_its_panels(self):
+        # A 600 pt explorer in a 500 pt window (1000 px at scale 2) gives way, so the editor keeps its
+        # 240 pt and the terminal under it a grid. Its negative width once made that grid 268 million
+        # columns wide: gigabytes within a second, so the run is watched and stopped early.
+        self.config.write_text(
+            '[ui]\nsidebar = true\nsidebar_width = 600\nagents_panel = false\n'
+            '[terminal]\nshell = /bin/sh\n'
+            '[editor]\ncursor_blink = false\n'
+            '[files]\nrestore_session = false\nrestore_project = false\n'
+            '[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
+        script = self.home / 'commands.rsc'
+        script.write_text('\n'.join(['wait 200', 'cmd toggle_terminal', 'wait 300',
+                                     'type echo R$((1+1))X $(stty size)', 'key Return', 'wait-term R2X',
+                                     'print-term', 'print-panels', 'quit']) + '\n', encoding='utf-8')
+        out_path = self.home / 'out.txt'
+
+        def limits():
+            import resource
+            resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
+            if sys.platform.startswith('linux'):
+                resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
+
+        def rss_mb(pid):
+            try:
+                for line in Path(f'/proc/{pid}/status').read_text().splitlines():
+                    if line.startswith('VmRSS:'):
+                        return int(line.split()[1]) // 1024
+            except OSError:
+                pass
+            ps = subprocess.run(['ps', '-o', 'rss=', '-p', str(pid)], capture_output=True, text=True)
+            return int(ps.stdout.strip() or 0) // 1024
+
+        with open(out_path, 'wb') as out:
+            proc = subprocess.Popen([str(EXE), str(self.project), '--headless', '1000x600', '--scale', '2',
+                                     '--script', str(script)], env=self.env, stdout=out,
+                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, preexec_fn=limits)
+            peak = 0
+            deadline = time.monotonic() + 30
+            while proc.poll() is None:
+                peak = max(peak, rss_mb(proc.pid))
+                if peak > 500 or time.monotonic() > deadline:
+                    proc.kill()
+                    proc.wait()
+                    break
+                time.sleep(0.05)
+        output = out_path.read_text(encoding='utf-8', errors='replace')
+        self.assertLess(peak, 500, output[-2000:])
+        self.assertEqual(proc.returncode, 0, output[-2000:])
+        self.assertIn('explorer=1 agents=0 term=1', output)
+        size = re.search(r'R2X (\d+) (\d+)', output)
+        self.assertIsNotNone(size, output[-2000:])
+        rows, cols = int(size.group(1)), int(size.group(2))
+        self.assertGreaterEqual(rows, 2)
+        self.assertTrue(20 <= cols <= 40, cols)       # 480 px of a 1000 px window, less its margins
+
     def test_the_hide_button_hides_the_panel_at_once(self):
         # the click is handled while the panel is drawn: the frame without it must follow by
         # itself, not with the next caret blink or pointer move (here nothing blinks)
