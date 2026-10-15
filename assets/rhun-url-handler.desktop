@@ -2,7 +2,7 @@
 Type=Application
 Name=rhun
 Comment=Open rhun://file/ links in rhun
-Exec=rhun %u
+Exec=rhun -- %u
 Icon=rhun
 Terminal=false
 NoDisplay=true

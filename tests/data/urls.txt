@@ -24,6 +24,10 @@ rhun://other/a
 rhun:/file/a
 rhun:notes.txt
 rhun://file/home/me/nul%00.txt
+rhun://file/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+rhun://file/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+rhun://file/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa%41%42
+rhun://file/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa%41%42
 rhun://file/home/me/a-path-long-enough-to-pass-the-buffer-of-the-test.txt
 rhun://file/home/me/a-path-long-enough-to-pass-the-buffer-of-the-test.txt.bak
 /home/me/a.txt
@@ -31,3 +35,5 @@ notes.txt
 rhubarb.txt
 https://example.com/a
 file:///home/me/a.txt
+rhun//file/x
+rhun:file/x

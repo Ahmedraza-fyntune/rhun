@@ -9,6 +9,7 @@
 sigact: .zero 32
 opt_headless: .long 0
 opt_empty: .long 0
+opt_paths: .long 0              # past a -- argument: the rest are paths
 .p2align 3
 opt_script: .quad 0
 opt_control: .quad 0
@@ -130,7 +131,18 @@ parse_args:
     cmp rbx, r13
     jae .Lpa_done
     mov r14, [r12 + rbx*8]
+    # after --, paths only (the Windows rhun:// command passes the link after it, so that a quote in
+    # the link cannot start an option)
+    cmp dword ptr [rip + opt_paths], 0
+    jne 41f
     mov rdi, r14
+    lea rsi, [rip + .Lo_dashdash]
+    call strcmp_eq
+    test eax, eax
+    jz 0f
+    mov dword ptr [rip + opt_paths], 1
+    jmp 9f
+0:  mov rdi, r14
     call help_flag
     mov rdi, r14
     lea rsi, [rip + .Lo_headless]
@@ -505,6 +517,7 @@ open_initial:
 .Lo_scale: .asciz "--scale"
 .Lo_wait: .asciz "--wait"
 .Lo_empty: .asciz "--empty"
+.Lo_dashdash: .asciz "--"
 .Ldevnull: .asciz "/dev/null"
 .Lself_exe: .asciz "/proc/self/exe"
 .Lenv_wayland: .asciz "WAYLAND_DISPLAY"
@@ -522,6 +535,7 @@ open_initial:
     .ascii "  --script FILE    run control commands from FILE and exit\n"
     .ascii "  --control PATH   accept control commands on a unix socket\n"
     .ascii "  --scale F        display scale where the platform has none\n"
+    .ascii "  --               the arguments after it are paths (rhun://file/ links too)\n"
     .asciz "  --version        print the version\n"
 .p2align 2
 .Lf100: .float 100.0

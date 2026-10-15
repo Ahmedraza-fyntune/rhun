@@ -175,13 +175,15 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     check('paths/drive-and-unc', roots)
 
     def links():
-        # rhun://file/ links name a drive as /C:/ (as vscode://file/c:/), which is the path C:/
+        # rhun://file/ links name a drive as /C:/ (as vscode://file/c:/), which is the path C:/; a UNC
+        # path (//server/share) is refused, as a page would have Windows reach a server it names
         source = temp / 'links.txt'
         links = ['rhun://file/C:/work/app/main.c:10:2', 'rhun://file/c:/Program%20Files/a.txt',
-                 'rhun://file//server/share/a.txt:3', 'rhun://file/C:', 'rhun://other/C:/a']
+                 'rhun://file//server/share/a.txt:3', 'rhun://file/%5C%5Cserver/share/a.txt',
+                 'rhun://file/C:', 'rhun://other/C:/a']
         source.write_text('\n'.join(links) + '\n', encoding='utf-8', newline='\n')
         equal(run('url_test.exe', winpath(source)).stdout,
-              b'C:/work/app/main.c 10 2\nc:/Program Files/a.txt 0 0\n//server/share/a.txt 3 0\nC: 0 0\nbad\n')
+              b'C:/work/app/main.c 10 2\nc:/Program Files/a.txt 0 0\nbad\nbad\nC: 0 0\nbad\n')
     check('paths/rhun-links', links)
 
     def files():

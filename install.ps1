@@ -146,8 +146,9 @@ function Remove-FileAssociations {
     Notify-FileAssociations
 }
 
-# rhun://file/ links open in rhun.exe, the way a click on a file does. The key names this installation's
-# rhun.exe, which Remove-UrlScheme checks, so another installation's registration stays.
+# rhun://file/ links open in rhun.exe, after -- so that a quote in a link cannot start an option. The
+# key names this installation's rhun.exe, which Remove-UrlScheme checks, so another installation's
+# registration stays.
 function Register-UrlScheme {
     if ($NoUrlScheme) { return }
     $exe = Join-Path $InstallDir 'rhun.exe'
@@ -155,14 +156,14 @@ function Register-UrlScheme {
     Set-AssociationValue $key '(default)' 'URL:rhun file link'
     Set-AssociationValue $key 'URL Protocol' ''
     Set-AssociationValue "$key\DefaultIcon" '(default)' ('"' + $exe + '",0')
-    Set-AssociationValue "$key\shell\open\command" '(default)' ('"' + $exe + '" "%1"')
+    Set-AssociationValue "$key\shell\open\command" '(default)' ('"' + $exe + '" -- "%1"')
 }
 
 function Remove-UrlScheme {
     $key = "$associationRoot\Classes\rhun"
     if (-not (Test-Path -LiteralPath "$key\shell\open\command")) { return }
     $command = Get-ItemPropertyValue -LiteralPath "$key\shell\open\command" -Name '(default)' -ErrorAction SilentlyContinue
-    if ($command -ine ('"' + (Join-Path $InstallDir 'rhun.exe') + '" "%1"')) { return }
+    if ($command -ine ('"' + (Join-Path $InstallDir 'rhun.exe') + '" -- "%1"')) { return }
     Remove-Item -LiteralPath $key -Recurse -Force
 }
 

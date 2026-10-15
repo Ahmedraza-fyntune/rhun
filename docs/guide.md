@@ -52,7 +52,8 @@ Links of the form `rhun://file/PATH`, as VS Code's `vscode://file/`, open in rhu
 chat or any other program: `rhun://file/Users/me/app/src/main.rs:42:7` opens the file at line 42,
 column 7, in the middle of the view (`:42` alone works too), and a link to a folder opens it as the
 project. The path is absolute and percent-encoded where a URL needs it (`%20` for a space); on
-Windows a drive is written `rhun://file/C:/work/app/main.c`. A link starts a window as opening the
+Windows a drive is written `rhun://file/C:/work/app/main.c`, and a network path (`\\server\share`)
+is refused, so that a page cannot make Windows contact a server it names. A link starts a window as opening the
 file would; on macOS, a running rhun opens it as a tab, as it does for Finder. `rhun 'rhun://file/...'`
 works from a terminal too. macOS knows the scheme from the app itself; the installers register it on
 Linux and Windows (`--no-url-scheme` and `-NoUrlScheme` leave it out, and updates keep that choice).

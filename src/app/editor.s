@@ -13,10 +13,9 @@
 
 .bss
 .p2align 3
-.globl g_doc, g_reveal, g_blink_t0, g_reveal_center
+.globl g_doc, g_reveal, g_blink_t0
 g_doc: .quad 0
 g_reveal: .long 0
-g_reveal_center: .long 0        # the next reveal puts the cursor's line in the middle (app_goto_line)
 g_ed_x: .long 0
 g_ed_y: .long 0
 g_ed_w: .long 0
@@ -2290,16 +2289,11 @@ FN editor_draw
 46: cmp dword ptr [rip + g_reveal], 0
     je 7f
     mov dword ptr [rip + g_reveal], 0
+    test dword ptr [rbx + DOC_flags], DF_CENTER
+    jz 47f
+    # its line in the middle of the view, now that the view's height is known (app_goto_line)
+    and dword ptr [rbx + DOC_flags], ~DF_CENTER
     mov rdi, rbx
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    je 71f
-    mov dword ptr [rip + g_reveal_center], 0
-    call reveal_wrap
-    jmp 7f
-71: cmp dword ptr [rip + g_reveal_center], 0
-    je 72f
-    # its line in the middle of the view, now that the view's height is known
-    mov dword ptr [rip + g_reveal_center], 0
     mov rsi, [rbx + DOC_cur]
     call doc_line_of
     mov r8, rax                 # the line
@@ -2313,8 +2307,12 @@ FN editor_draw
     xor ecx, ecx
 73: shl rcx, 8
     mov [rbx + DOC_scrolly], rcx
-    mov rdi, rbx
-72: call reveal
+47: mov rdi, rbx
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 71f
+    call reveal_wrap
+    jmp 7f
+71: call reveal
 7:  mov rdi, rbx
     call clamp_scroll
     # syntax states for everything visible

@@ -538,6 +538,7 @@ ENDSTRUCT DOC_SIZE
 .equ DF_EOL, 4                   # the text ended in a newline when read or saved: vim has no line after it
 .equ DF_DISK_CHANGED, 8          # external contents differ and unsaved edits were kept
 .equ DF_REVEAL, 16               # its cursor was placed while it was not shown: in view when next drawn
+.equ DF_CENTER, 32               # with DF_REVEAL: that reveal puts the cursor's line in the middle
 
 # return 0 at once when the document is read-only: g_doc, or the one in reg
 .macro READONLY_RET reg=0

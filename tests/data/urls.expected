@@ -24,6 +24,10 @@ bad
 bad
 bad
 bad
+/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0 0
+bad
+/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaAB 0 0
+bad
 /home/me/a-path-long-enough-to-pass-the-buffer-of-the-test.txt 0 0
 bad
 none
@@ -31,3 +35,5 @@ none
 none
 none
 none
+none
+bad

@@ -199,7 +199,7 @@ if [ $os = linux ]; then
     # an update keeps that, as a fresh install without the option undoes it
     begin url-scheme
     h=$H/.local/share/applications/rhun-url-handler.desktop
-    t "handler" grep -qxF "Exec=$bin %u" "$h"
+    t "handler" grep -qxF "Exec=$bin -- %u" "$h"
     printf '#!/bin/sh\necho "$*" >> "%s"\n' "$w/xdg-mime.log" > "$w/shim/xdg-mime"
     chmod 755 "$w/shim/xdg-mime"
     : > "$w/xdg-mime.log"
@@ -216,7 +216,13 @@ if [ $os = linux ]; then
     t "update: exit $st" [ $st = 0 ]
     t "update keeps the opt-out" grep -qxF 'Hidden=true' "$h"
     inst --version 99.0.0         # and back to what the next cases expect
-    t "again: handler" grep -qxF "Exec=$bin %u" "$h"
+    t "again: handler" grep -qxF "Exec=$bin -- %u" "$h"
+    # a prefix the desktop does not see gets the entry but no default that would name it
+    : > "$w/xdg-mime.log"
+    inst --version 99.0.0 --prefix "$w/elsewhere" --no-modify-path
+    t "unseen prefix: exit $st" [ $st = 0 ]
+    t "unseen prefix: handler" [ -f "$w/elsewhere/share/applications/rhun-url-handler.desktop" ]
+    t "unseen prefix: no default" sh -c '! grep -q "^default" "$1"' sh "$w/xdg-mime.log"
     rm -f "$w/shim/xdg-mime"
     end
 fi

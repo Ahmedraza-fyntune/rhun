@@ -5807,12 +5807,12 @@ FN app_goto_line
     mov rsi, rax
     xor edx, edx
     call ed_set_cursor
-    # before the editor's first frame (a link that started rhun) its height is not known: that
-    # frame's reveal centers the line
+    # before the editor's first frame (a link that started rhun) its height is not known: the
+    # reveal when this file is first drawn centers the line
     mov ecx, [rip + g_ed_h_lines]
     test ecx, ecx
     jnz 31f
-    mov dword ptr [rip + g_reveal_center], 1
+    or dword ptr [rbx + DOC_flags], DF_REVEAL | DF_CENTER
     jmp 4f
 31:
     shr ecx, 1

@@ -597,8 +597,11 @@ FN rhun_url
     test eax, eax
     jz 2f
     movzx edx, byte ptr [rbx + rcx]
+    lea r9d, [rdx - 'A']        # a capital letter as small; nothing else changes
+    cmp r9d, 25
+    ja 11f
     or edx, 0x20
-    cmp edx, eax
+11: cmp edx, eax
     jne .Lru_none
     inc rcx
     jmp 1b
@@ -608,8 +611,11 @@ FN rhun_url
     test eax, eax
     jz 22f
     movzx r9d, byte ptr [rbx + rcx]
+    lea r10d, [r9 - 'A']
+    cmp r10d, 25
+    ja 23f
     or r9d, 0x20
-    cmp r9d, eax
+23: cmp r9d, eax
     jne .Lru_bad
     inc rcx
     inc rdx
@@ -663,7 +669,18 @@ FN rhun_url
     mov rdx, r14                # the rest and its 0
     call memmove
     dec r14
-6:
+6:  # not \\host\share (or \\?\): a link would have Windows reach a server the page names
+    movzx eax, byte ptr [r12]
+    cmp eax, '/'
+    je 61f
+    cmp eax, 92
+    jne 62f
+61: movzx eax, byte ptr [r12 + 1]
+    cmp eax, '/'
+    je .Lru_bad
+    cmp eax, 92
+    je .Lru_bad
+62:
 .endif
     # :LINE, or :LINE:COL
     mov rdi, r12

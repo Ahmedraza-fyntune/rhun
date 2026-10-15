@@ -568,8 +568,8 @@ FN git_run
 FN git_run_all
     mov r9d, 1
 run_git:
-    PROLOGUE 256                # argv, then the errors flag
-    mov [rsp + 240], r9d
+    PROLOGUE 272                # argv, then the errors flag
+    mov [rsp + 256], r9d
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -587,7 +587,13 @@ run_git:
     mov [rsp + 24], rax
     lea rax, [rip + .Lquotepath]
     mov [rsp + 32], rax
-    mov ecx, 5
+    # no fsmonitor command from the repository's own config: opening a folder (a rhun:// link from a
+    # web page) must not run a program that the folder names
+    lea rax, [rip + .Ldash_c]
+    mov [rsp + 40], rax
+    lea rax, [rip + .Lno_fsmonitor]
+    mov [rsp + 48], rax
+    mov ecx, 7
     xor edx, edx
 1:  mov rax, [rbx + rdx*8]
     mov [rsp + rcx*8], rax
@@ -595,7 +601,7 @@ run_git:
     jz 2f
     inc rcx
     inc rdx
-    cmp rcx, MAXARGS + 5
+    cmp rcx, MAXARGS + 7
     jb 1b
     mov qword ptr [rsp + rcx*8], 0
 2:  mov rdi, rsp
@@ -603,7 +609,7 @@ run_git:
     mov rdx, [rip + g_git_root]
     mov rcx, r14
     mov r8, r15
-    mov r9d, [rsp + 240]
+    mov r9d, [rsp + 256]
     call run_piped_input
     test rax, rax
     jle 8f
@@ -1978,6 +1984,7 @@ FN git_dump
 .Lliteral: .asciz "--literal-pathspecs"
 .Ldash_c: .asciz "-c"
 .Lquotepath: .asciz "core.quotepath=off"
+.Lno_fsmonitor: .asciz "core.fsmonitor=false"
 .Lstatus: .asciz "status"
 .Lporcelain: .asciz "--porcelain"
 .Ldash_z: .asciz "-z"

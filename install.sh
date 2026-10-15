@@ -245,12 +245,26 @@ place_desktop() {
     refresh_desktop "$1"
 }
 
+# desktop_visible PREFIX: the desktop finds PREFIX's entries: xdg-mime resolves desktop IDs through
+# XDG_DATA_HOME and XDG_DATA_DIRS, and a custom prefix must be among them for the desktop too, not just
+# for this process
+desktop_visible() {
+    data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+    [ "$1/share" = "$data_home" ] && return 0
+    old_ifs=$IFS; IFS=:
+    for data_dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+        if [ "$1/share" = "$data_dir" ]; then IFS=$old_ifs; return 0; fi
+    done
+    IFS=$old_ifs
+    return 1
+}
+
 # register_url_scheme PREFIX: rhun opens rhun://file/ links, through the handler place_desktop put
-# there, unless another program was chosen for them
+# there, unless another program was chosen for them (or the desktop cannot see that entry)
 register_url_scheme() {
     h=$1/share/applications/rhun-url-handler.desktop
     [ -f "$h" ] && ! grep -qx 'Hidden=true' "$h" || return 0
-    have xdg-mime || return 0
+    have xdg-mime && desktop_visible "$1" || return 0
     current=$(xdg-mime query default x-scheme-handler/rhun 2>/dev/null || true)
     case $current in '' | rhun-url-handler.desktop) ;; *) return 0 ;; esac
     xdg-mime default rhun-url-handler.desktop x-scheme-handler/rhun 2>/dev/null || true
@@ -353,17 +367,7 @@ set_file_defaults() {
             say 'Default editor was not changed: install xdg-utils or choose rhun in your desktop settings'
             return 0
         fi
-        # xdg-mime resolves desktop IDs through XDG_DATA_HOME and XDG_DATA_DIRS.
-        # Custom prefixes must be visible to the desktop too, not just to this process.
-        data_home=${XDG_DATA_HOME:-$HOME/.local/share}
-        visible=no
-        [ "$prefix/share" = "$data_home" ] && visible=yes
-        old_ifs=$IFS; IFS=:
-        for data_dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
-            [ "$prefix/share" = "$data_dir" ] && visible=yes
-        done
-        IFS=$old_ifs
-        if [ "$visible" = no ]; then
+        if ! desktop_visible "$prefix"; then
             say "Default editor was not changed: add $prefix/share to your desktop's XDG_DATA_DIRS first"
             return 0
         fi

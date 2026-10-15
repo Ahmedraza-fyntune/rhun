@@ -22,7 +22,7 @@ assert 'qoi' in images['CFBundleTypeExtensions']
 # rhun://file/ links: the app declares the scheme, and Linux has a hidden entry that takes a URL
 assert [t['CFBundleURLSchemes'] for t in plist['CFBundleURLTypes']] == [['rhun']]
 handler = (ROOT / 'assets/rhun-url-handler.desktop').read_text().splitlines()
-assert {'Exec=rhun %u', 'NoDisplay=true', 'MimeType=x-scheme-handler/rhun;'} <= set(handler), handler
+assert {'Exec=rhun -- %u', 'NoDisplay=true', 'MimeType=x-scheme-handler/rhun;'} <= set(handler), handler
 assert not any(line.startswith('MimeType=') and 'x-scheme-handler' in line
                for line in (ROOT / 'assets/rhun.desktop').read_text().splitlines())
 print('ok   associations/metadata', flush=True)
@@ -108,7 +108,7 @@ try {
     $key = "$associationRoot\Classes\rhun"
     Assert ((Get-ItemPropertyValue -LiteralPath $key -Name 'URL Protocol') -eq '') 'Not a URL protocol'
     $command = Get-ItemPropertyValue -LiteralPath "$key\shell\open\command" -Name '(default)'
-    Assert ($command -ceq ('"' + (Join-Path $InstallDir 'rhun.exe') + '" "%1"')) "The link command is $command"
+    Assert ($command -ceq ('"' + (Join-Path $InstallDir 'rhun.exe') + '" -- "%1"')) "The link command is $command"
     $InstallDir = 'C:\Other rhun'
     Remove-UrlScheme
     Assert (Test-Path -LiteralPath $key) 'Removed another installation scheme'

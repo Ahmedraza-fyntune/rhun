@@ -186,6 +186,48 @@ class FileLaunch(unittest.TestCase):
             out = self.run_editor(['rhun:notes.txt'], ['print-state'], cwd=self.alpha)
             self.assertIn('active=rhun:notes.txt ', out[0])
 
+    def test_paths_after_a_double_dash(self):
+        # the Windows command for rhun:// links passes the link after --, so a quote in it cannot
+        # start an option: after --, an option's name is a file's
+        (self.alpha / '-dash.txt').write_text('dash\n', encoding='utf-8')
+        script = self.home / 'commands.rsc'
+        script.write_text('wait 100\nprint-tabs\nquit\n', encoding='utf-8')
+        result = subprocess.run([str(EXE), '--headless', '1000x600', '--scale', '1', '--script',
+                                 script.as_posix(), '--', '-dash.txt', '--empty'], env=self.env,
+                                capture_output=True, timeout=30, cwd=self.alpha)
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
+        self.assertEqual(result.stdout.decode('utf-8').splitlines(), ['tabs=-dash.txt | *--empty'])
+
+    def test_a_link_that_starts_rhun_centers_its_line(self):
+        # at 1280x700 about 28 lines show: line 150 in the middle has its top line near 136, where a
+        # plain reveal would leave it at the bottom (top near 123)
+        long = self.alpha / 'long.txt'
+        long.write_text(''.join(f'line {i}\n' for i in range(1, 301)), encoding='utf-8')
+        def top(line):
+            return int(re.search(r'y=(\d+)', line).group(1)) // 256
+        for wrap in ('false', 'true'):
+            with self.subTest(word_wrap=wrap):
+                self.configure()
+                with open(self.config, 'a', encoding='utf-8') as config:
+                    config.write(f'[editor]\nword_wrap = {wrap}\n')
+                out = self.run_editor([link(long, ':150')], ['print-state', 'print-scroll'], size='1280x700')
+                self.assertIn('active=long.txt line=150 ', out[0])
+                self.assertTrue(130 <= top(out[1]) <= 142, out[1])
+        # a file opened after it shows first, from its top, and its own reveals are as ever (PageDown as
+        # without the link); the link's file is centered once shown
+        self.configure()
+        other = self.alpha / 'other.txt'
+        other.write_text(long.read_text(encoding='utf-8'), encoding='utf-8')
+        alone = self.run_editor([other], ['key PageDown', 'print-scroll'], size='1280x700')
+        out = self.run_editor([link(long, ':150'), other], ['print-state', 'print-scroll', 'key PageDown',
+                                                            'print-scroll', 'cmd prev_tab', 'print-state',
+                                                            'print-scroll'], size='1280x700')
+        self.assertIn('active=other.txt ', out[0])
+        self.assertEqual(top(out[1]), 0)
+        self.assertEqual(top(out[2]), top(alone[0]))
+        self.assertIn('active=long.txt line=150 ', out[3])
+        self.assertTrue(130 <= top(out[4]) <= 142, out[4])
+
     def test_agents_are_found_once_the_panel_shows(self):
         slug = re.sub(r'[^A-Za-z0-9]', '-', self.alpha.as_posix())
         sessions = self.home / '.claude/projects' / slug
