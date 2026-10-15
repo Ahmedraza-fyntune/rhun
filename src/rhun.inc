@@ -527,7 +527,15 @@ F DOC_real, 8           # a symlink's file: its path (owned) and name, and its f
 F DOC_rname, 8
 F DOC_wd2, 8
 F DOC_hops, 8           # the symlinks it leads through before that file (watch.s), or 0
+F DOC_cursors, VEC_SIZE # secondary cursors (CURS elements)
 ENDSTRUCT DOC_SIZE
+
+# ---- secondary cursor ----
+STRUCT
+F CURS_cur, 8
+F CURS_anchor, 8
+F CURS_prefx, 8
+ENDSTRUCT CURS_SIZE
 
 .equ DISK_FADE_MS, 800
 .equ DISK_FRAME_MS, 50
