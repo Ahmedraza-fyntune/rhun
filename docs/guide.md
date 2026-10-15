@@ -47,6 +47,15 @@ Opening a folder still restores that folder's session; starting without a path c
 project.
 Use `rhun --empty` to start with an empty window. Updating and restarting preserves standalone file tabs,
 including image tabs, and keeps an empty window empty.
+
+Links of the form `rhun://file/PATH`, as VS Code's `vscode://file/`, open in rhun from a browser, a
+chat or any other program: `rhun://file/Users/me/app/src/main.rs:42:7` opens the file at line 42,
+column 7, in the middle of the view (`:42` alone works too), and a link to a folder opens it as the
+project. The path is absolute and percent-encoded where a URL needs it (`%20` for a space); on
+Windows a drive is written `rhun://file/C:/work/app/main.c`. A link starts a window as opening the
+file would; on macOS, a running rhun opens it as a tab, as it does for Finder. `rhun 'rhun://file/...'`
+works from a terminal too. macOS knows the scheme from the app itself; the installers register it on
+Linux and Windows (`--no-url-scheme` and `-NoUrlScheme` leave it out, and updates keep that choice).
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
 command palette to load the disk version, or save to keep your version. Undoing back to the saved
 state loads the disk version too.
@@ -129,6 +138,7 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--prefix DIR` | Linux: install under DIR instead of `~/.local` |
 | `--app-dir DIR` | macOS: put rhun.app in DIR |
 | `--no-modify-path` | leave shell startup files alone |
+| `--no-url-scheme` | Linux: do not open `rhun://file/` links in rhun |
 | `--configure-files` | configure an existing installation without downloading or replacing it |
 | `--uninstall` | remove rhun, the PATH line and the editor lines; your settings in `~/.config/rhun` stay |
 
@@ -205,7 +215,7 @@ Download `rhun-VERSION-windows-x86_64.zip` from [Releases](https://github.com/vs
 powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))"
 ```
 
-The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Use the status bar to download an update and restart into it, or close rhun and rerun the installer. Automatic checks are enabled for release builds, with installation and restart initiated by you. Uninstalling keeps settings and sessions.
+The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, `-NoUrlScheme` (no `rhun://file/` links), and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Use the status bar to download an update and restart into it, or close rhun and rerun the installer. Automatic checks are enabled for release builds, with installation and restart initiated by you. Uninstalling keeps settings and sessions.
 
 The script is also included in the ZIP. To install from a downloaded script, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`. No administrator access or package manager is needed.
 

@@ -42,6 +42,7 @@ jobs:
             "$r/share/icons/hicolor/256x256/apps" "$r/share/icons/hicolor/512x512/apps"
           cp build/rhun "$r/bin/"
           cp assets/rhun.desktop "$r/share/applications/"
+          cp assets/rhun-url-handler.desktop "$r/share/applications/"
           cp assets/icons/rhun.svg "$r/share/icons/hicolor/scalable/apps/"
           cp assets/icons/rhun-256.png "$r/share/icons/hicolor/256x256/apps/rhun.png"
           cp assets/icons/rhun-512.png "$r/share/icons/hicolor/512x512/apps/rhun.png"

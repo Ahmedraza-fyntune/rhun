@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
@@ -37,6 +38,12 @@ def settings_row_y(key):
             return y + 32
         y += 72
     raise KeyError(key)
+
+
+def link(path, end=''):
+    """A rhun://file/ link to path, percent-encoded as a browser hands it over."""
+    posix = Path(path).as_posix()
+    return 'rhun://file' + ('' if posix.startswith('/') else '/') + urllib.parse.quote(posix) + end
 
 
 class FileLaunch(unittest.TestCase):
@@ -75,12 +82,12 @@ class FileLaunch(unittest.TestCase):
         config.read(self.config, encoding='utf-8')
         return config.get('ui', key, fallback=None)
 
-    def run_editor(self, paths, actions, size='1280x800'):
+    def run_editor(self, paths, actions, size='1280x800', cwd=None):
         script = self.home / 'commands.rsc'
         script.write_text('\n'.join(['wait 100', *actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), *map(str, paths), '--headless', size, '--scale', '1',
                                  '--script', script.as_posix()], env=self.env, capture_output=True,
-                                timeout=30)
+                                timeout=30, cwd=cwd)
         self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
         output = result.stdout.decode('utf-8')
         self.assertNotIn('unknown command', output)
@@ -150,6 +157,34 @@ class FileLaunch(unittest.TestCase):
                                                  'print-project'])
                 self.assertEqual(out[0], SHOWN)
                 self.assertTrue(out[1].replace('\\', '/').endswith('work/' + folder.name), out[1])
+
+    def test_rhun_links(self):
+        # rhun://file/ links, as a browser or the desktop hands them over (issue: open files from
+        # links): a file at its line and column starts a file window, a folder a project window
+        named = self.alpha / 'with space é.txt'
+        named.write_text('one\ntwo\nthree three\n', encoding='utf-8')
+        out = self.run_editor([link(named, ':3:7')], ['print-panels', 'print-state'])
+        self.assertEqual(out[0], HIDDEN)
+        self.assertIn('active=with space é.txt line=3 col=7 ', out[1])
+        out = self.run_editor([link(self.alpha, '/')], ['print-panels', 'print-project'])
+        self.assertEqual(out[0], SHOWN)
+        self.assertTrue(out[1].replace('\\', '/').endswith('work/alpha'), out[1])
+        # in a running window, as macOS hands a link over: a tab at that line, in the middle of the
+        # view (40 lines of 21 px in 700 px less the bars: about 28 shown, so the 30th has 15 above)
+        out = self.run_editor([self.b], [f'open {link(self.a, ":30")}', 'print-tabs', 'print-state',
+                                         'print-scroll'], size='1280x700')
+        self.assertEqual(out[0], 'tabs=b.txt | *a.txt')
+        self.assertIn('active=a.txt line=30 col=1 ', out[1])
+        top = int(re.search(r'y=(\d+)', out[2]).group(1)) // 256
+        self.assertTrue(10 <= top <= 20, out[2])
+        # another rhun: link is refused with a word, and opens nothing
+        out = self.run_editor(['rhun://nothing/here'], ['print-state', 'print-toast'])
+        self.assertTrue(out[0].startswith('tabs=0 '), out)
+        self.assertEqual(out[1], 'toast=Not a rhun://file/ link')
+        if os.name != 'nt':         # a file named so (Windows allows no colon in a name)
+            (self.alpha / 'rhun:notes.txt').write_text('notes\n', encoding='utf-8')
+            out = self.run_editor(['rhun:notes.txt'], ['print-state'], cwd=self.alpha)
+            self.assertIn('active=rhun:notes.txt ', out[0])
 
     def test_agents_are_found_once_the_panel_shows(self):
         slug = re.sub(r'[^A-Za-z0-9]', '-', self.alpha.as_posix())

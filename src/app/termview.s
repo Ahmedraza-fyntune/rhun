@@ -2980,41 +2980,9 @@ link_open:
     js 9f
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     # at :LINE:COL, in a text tab
-    test r12d, r12d
-    jz 9f
-    mov rbx, [rip + g_doc]
-    test rbx, rbx
-    jz 9f
-    cmp qword ptr [rbx + DOC_img], 0
-    jne 9f
-    lea rsi, [r12 - 1]
-    mov rax, [rbx + DOC_nlines]
-    dec rax
-    cmp rsi, rax
-    cmova rsi, rax
-    mov r14, rsi
-    # Source-character columns, as in rustc diagnostics: tabs and wide glyphs each count once.
-    # The resulting byte position always lands on a UTF-8 character boundary.
-    lea edx, [r13 - 1]
-    test edx, edx
-    jns 2f
-    xor edx, edx
-2:  mov rdi, rbx
-    mov rsi, r14
-    call doc_pos_at_char
-    mov rdi, rbx
-    mov rsi, rax
-    xor edx, edx
-    call ed_set_cursor
-    mov ecx, [rip + g_ed_h_lines]
-    shr ecx, 1
-    mov rax, r14
-    sub rax, rcx
-    jns 3f
-    xor eax, eax
-3:  shl rax, 8
-    mov [rbx + DOC_scrolly], rax
-    mov dword ptr [rip + g_reveal], 1
+    mov edi, r12d
+    mov esi, r13d
+    call app_goto_line
 9:  mov dword ptr [rip + link_on], 0
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE

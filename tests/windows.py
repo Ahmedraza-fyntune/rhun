@@ -174,6 +174,16 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
               b'C:/\nC:/\nC:/b\nC:/b\n//server/share/\n//server/share/b\n//server/share/\nC:/a/c\nrelative/../path\n')
     check('paths/drive-and-unc', roots)
 
+    def links():
+        # rhun://file/ links name a drive as /C:/ (as vscode://file/c:/), which is the path C:/
+        source = temp / 'links.txt'
+        links = ['rhun://file/C:/work/app/main.c:10:2', 'rhun://file/c:/Program%20Files/a.txt',
+                 'rhun://file//server/share/a.txt:3', 'rhun://file/C:', 'rhun://other/C:/a']
+        source.write_text('\n'.join(links) + '\n', encoding='utf-8', newline='\n')
+        equal(run('url_test.exe', winpath(source)).stdout,
+              b'C:/work/app/main.c 10 2\nc:/Program Files/a.txt 0 0\n//server/share/a.txt 3 0\nC: 0 0\nbad\n')
+    check('paths/rhun-links', links)
+
     def files():
         folder = temp / 'spaces café 日本'
         folder.mkdir()

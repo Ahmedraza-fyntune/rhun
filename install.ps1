@@ -9,6 +9,7 @@ param(
     [switch]$MakeDefault,
     [switch]$NoMakeDefault,
     [switch]$NoFileAssociations,
+    [switch]$NoUrlScheme,
     [switch]$ConfigureFiles,
     [switch]$Uninstall,
     # Internal updater modes. Preparation never changes a running installation.
@@ -143,6 +144,26 @@ function Remove-FileAssociations {
     Remove-Item -LiteralPath $capabilities -Recurse -Force
     Remove-ItemProperty -LiteralPath "$associationRoot\RegisteredApplications" -Name 'rhun' -ErrorAction SilentlyContinue
     Notify-FileAssociations
+}
+
+# rhun://file/ links open in rhun.exe, the way a click on a file does. The key names this installation's
+# rhun.exe, which Remove-UrlScheme checks, so another installation's registration stays.
+function Register-UrlScheme {
+    if ($NoUrlScheme) { return }
+    $exe = Join-Path $InstallDir 'rhun.exe'
+    $key = "$associationRoot\Classes\rhun"
+    Set-AssociationValue $key '(default)' 'URL:rhun file link'
+    Set-AssociationValue $key 'URL Protocol' ''
+    Set-AssociationValue "$key\DefaultIcon" '(default)' ('"' + $exe + '",0')
+    Set-AssociationValue "$key\shell\open\command" '(default)' ('"' + $exe + '" "%1"')
+}
+
+function Remove-UrlScheme {
+    $key = "$associationRoot\Classes\rhun"
+    if (-not (Test-Path -LiteralPath "$key\shell\open\command")) { return }
+    $command = Get-ItemPropertyValue -LiteralPath "$key\shell\open\command" -Name '(default)' -ErrorAction SilentlyContinue
+    if ($command -ine ('"' + (Join-Path $InstallDir 'rhun.exe') + '" "%1"')) { return }
+    Remove-Item -LiteralPath $key -Recurse -Force
 }
 
 function Choose-DefaultEditor {
@@ -333,9 +354,9 @@ if ($ApplyUpdate) {
         $marker = Join-Path $InstallDir '.rhun-install'
         if (Test-Path -LiteralPath $marker) {
             $receipt = "rhun $Version`n"
-            if ([IO.File]::ReadAllText($marker).Contains('file-associations: no')) {
-                $receipt += "file-associations: no`n"
-            }
+            $old = [IO.File]::ReadAllText($marker)
+            if ($old.Contains('file-associations: no')) { $receipt += "file-associations: no`n" }
+            if ($old.Contains('url-scheme: no')) { $receipt += "url-scheme: no`n" }
             [IO.File]::WriteAllText($marker, $receipt)
         }
     } catch {
@@ -356,6 +377,10 @@ if ($ApplyUpdate) {
     $optedOut = $installed -and ([IO.File]::ReadAllText((Join-Path $InstallDir '.rhun-install')).Contains('file-associations: no'))
     if (-not $optedOut -and ($installed -or $registeredHere)) {
         try { Register-FileAssociations } catch { Write-Warning "File association registration failed: $($_.Exception.Message)" }
+    }
+    $urlOptedOut = $installed -and ([IO.File]::ReadAllText((Join-Path $InstallDir '.rhun-install')).Contains('url-scheme: no'))
+    if ($installed -and -not $urlOptedOut) {
+        try { Register-UrlScheme } catch { Write-Warning "rhun:// link registration failed: $($_.Exception.Message)" }
     }
     return
 }
@@ -413,6 +438,7 @@ foreach ($name in @('rhun.exe', 'rhun.com') | Where-Object { -not $PrepareUpdate
 
 if ($Uninstall) {
     Remove-FileAssociations
+    Remove-UrlScheme
     Remove-TerminalEditor
     if (Test-Path -LiteralPath $InstallDir) {
         foreach ($name in $knownFiles) {
@@ -490,6 +516,7 @@ try {
     }
     $receipt = "rhun $Version`n"
     if ($NoFileAssociations) { $receipt += "file-associations: no`n" }
+    if ($NoUrlScheme) { $receipt += "url-scheme: no`n" }
     [IO.File]::WriteAllText((Join-Path $stage '.rhun-install'), $receipt)
     if (Test-Path -LiteralPath $InstallDir) {
         $backup = Join-Path $parent ('.rhun-old-' + [Guid]::NewGuid().ToString('N'))
@@ -518,6 +545,8 @@ try {
     Write-Output "Installed rhun $Version in $InstallDir. Open a new terminal to use the rhun command."
     try { Register-FileAssociations; Show-DefaultEditorCommand }
     catch { Write-Warning "File association setup failed: $($_.Exception.Message)" }
+    try { Register-UrlScheme }
+    catch { Write-Warning "rhun:// link registration failed: $($_.Exception.Message)" }
 } finally {
     if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
     Remove-Item -LiteralPath $temporary -Recurse -Force

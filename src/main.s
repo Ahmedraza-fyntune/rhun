@@ -431,7 +431,7 @@ open_initial:
     jae 2f
     mov rax, [rip + g_start_paths + VEC_ptr]
     mov rdi, [rax + rbx*8]
-    call file_is_dir
+    call app_path_is_dir        # a rhun:// link to a folder too
     test eax, eax
     jz 11f
     mov r12d, 1

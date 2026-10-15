@@ -5541,6 +5541,7 @@ FN cmd_move_line_down
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
 .Lpinned_stays: .asciz "The tab is pinned: unpin it to close it"
+.Lbad_link: .asciz "Not a rhun://file/ link"
 .Ltm_pin: .asciz "Pin Tab"
 .Ltm_unpin: .asciz "Unpin Tab"
 .Ltm_close: .asciz "Close Tab"
@@ -5662,11 +5663,50 @@ panels_hidden: .long 0          # 1 the explorer, 2 the agents panel: hidden in 
 g_settings_changed: .long 0
 g_started: .long 0              # the command line is open: later folders switch the project
 g_tabscroll_reveal: .long 0
+url_path: .zero 4096           # the path of a rhun:// link (app_open_path)
 
 .text
-# app_open_path(path): folder -> project, file -> tab (relative paths use the cwd)
+# app_open_path(path): folder -> project, file -> tab (relative paths use the cwd). A rhun://file/
+#   link opens its path, a file at its :LINE:COL; another rhun: link only says it is not one (unless
+#   a file has that name)
 FN app_open_path
     PROLOGUE 16
+    mov rbx, rdi
+    lea rsi, [rip + url_path]
+    mov edx, 4096
+    call rhun_url
+    cmp rax, -1
+    je .Lop_path
+    cmp rax, -2
+    jne 1f
+    mov rdi, rbx
+    call file_type
+    test eax, eax
+    jnz .Lop_path
+    lea rdi, [rip + .Lbad_link]
+    call app_toast
+    EPILOGUE
+1:  mov [rsp], edx
+    mov [rsp + 4], ecx
+    lea rdi, [rip + url_path]
+    call path_normalize
+    lea rdi, [rip + url_path]
+    call app_open_path
+    cmp dword ptr [rsp], 0
+    je 9f
+    # at its line, when the file opened (as the tab shown)
+    lea rdi, [rip + url_path]
+    call app_find_tab
+    test rax, rax
+    js 9f
+    cmp rax, [rip + g_tab_cur]
+    jne 9f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    call app_goto_line
+    jmp 9f
+.Lop_path:
+    mov rdi, rbx
 .ifdef WINDOWS
     call win_fullpath
     test rax, rax
@@ -5720,4 +5760,68 @@ FN app_open_path
     jz 9f
     mov rdi, rbx
     call mem_free
+9:  EPILOGUE
+
+# app_path_is_dir(path) -> eax 1 for a folder, also one a rhun://file/ link names
+FN app_path_is_dir
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + url_path]
+    mov edx, 4096
+    call rhun_url
+    lea rdi, [rip + url_path]
+    test rax, rax
+    jns 1f
+    mov rdi, rbx
+1:  call file_is_dir
+    EPILOGUE
+
+# app_goto_line(line, col): the cursor of the text file shown to LINE and COL (counted from 1; COL in
+#   source characters, as in rustc diagnostics: tabs and wide glyphs each count once, and the position
+#   lands on a UTF-8 character boundary), with that line in the middle of the view
+FN app_goto_line
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    test r12d, r12d
+    jz 9f
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    cmp qword ptr [rbx + DOC_img], 0
+    jne 9f
+    lea rsi, [r12 - 1]
+    mov rax, [rbx + DOC_nlines]
+    dec rax
+    cmp rsi, rax
+    cmova rsi, rax
+    mov r14, rsi
+    lea edx, [r13 - 1]
+    test edx, edx
+    jns 2f
+    xor edx, edx
+2:  mov rdi, rbx
+    mov rsi, r14
+    call doc_pos_at_char
+    mov rdi, rbx
+    mov rsi, rax
+    xor edx, edx
+    call ed_set_cursor
+    # before the editor's first frame (a link that started rhun) its height is not known: that
+    # frame's reveal centers the line
+    mov ecx, [rip + g_ed_h_lines]
+    test ecx, ecx
+    jnz 31f
+    mov dword ptr [rip + g_reveal_center], 1
+    jmp 4f
+31:
+    shr ecx, 1
+    mov rax, r14
+    sub rax, rcx
+    jns 3f
+    xor eax, eax
+3:  shl rax, 8
+    mov [rbx + DOC_scrolly], rax
+4:  mov dword ptr [rip + g_reveal], 1
+    mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE

@@ -19,7 +19,9 @@ fi
 ./build.sh release
 install -Dm755 build/rhun "$prefix/bin/rhun"
 install -Dm644 assets/rhun.desktop "$prefix/share/applications/rhun.desktop"
+install -Dm644 assets/rhun-url-handler.desktop "$prefix/share/applications/rhun-url-handler.desktop"
 install -Dm644 assets/icons/rhun.svg "$prefix/share/icons/hicolor/scalable/apps/rhun.svg"
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$prefix/share/applications" || true
+command -v xdg-mime >/dev/null && xdg-mime default rhun-url-handler.desktop x-scheme-handler/rhun || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -qtf "$prefix/share/icons/hicolor" 2>/dev/null || true
 echo "installed to $prefix"
