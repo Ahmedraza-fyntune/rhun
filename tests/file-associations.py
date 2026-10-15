@@ -115,6 +115,10 @@ try {
     $InstallDir = "C:\Program files café ' $ &\rhun"
     Remove-UrlScheme
     Assert (-not (Test-Path -LiteralPath $key)) 'Scheme left behind'
+    # as registered before the link came after --
+    Set-AssociationValue "$key\shell\open\command" '(default)' ('"' + (Join-Path $InstallDir 'rhun.exe') + '" "%1"')
+    Remove-UrlScheme
+    Assert (-not (Test-Path -LiteralPath $key)) 'Older scheme left behind'
     $NoUrlScheme = $true
     Register-UrlScheme
     Assert (-not (Test-Path -LiteralPath $key)) 'Scheme opt-out ignored'

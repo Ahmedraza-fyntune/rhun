@@ -163,7 +163,9 @@ function Remove-UrlScheme {
     $key = "$associationRoot\Classes\rhun"
     if (-not (Test-Path -LiteralPath "$key\shell\open\command")) { return }
     $command = Get-ItemPropertyValue -LiteralPath "$key\shell\open\command" -Name '(default)' -ErrorAction SilentlyContinue
-    if ($command -ine ('"' + (Join-Path $InstallDir 'rhun.exe') + '" -- "%1"')) { return }
+    # this installation's, also as registered before -- came in
+    $exe = '"' + (Join-Path $InstallDir 'rhun.exe') + '"'
+    if ($command -ine ($exe + ' -- "%1"') -and $command -ine ($exe + ' "%1"')) { return }
     Remove-Item -LiteralPath $key -Recurse -Force
 }
 
