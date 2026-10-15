@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 # NTFS keeps file times in steps of 100 ns; elsewhere they are exact to the nanosecond
@@ -38,6 +39,7 @@ class CodexDiscovery(unittest.TestCase):
         self.env = dict(os.environ, HOME=self.home.as_posix(),
                         XDG_CONFIG_HOME=(self.home / 'config').as_posix(),
                         XDG_STATE_HOME=(self.home / 'state').as_posix(), SHELL='/nonexistent')
+        self.env.pop('GROK_HOME', None)
         config = self.home / 'config/rhun/config'
         config.parent.mkdir(parents=True)
         config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n', encoding='utf-8')
@@ -114,7 +116,7 @@ class CodexDiscovery(unittest.TestCase):
         output = self.run_editor(self.metadata() + b'\n', open_thread=True)
         self.assertEqual(output,
                          f'Codex [worktree: {worktree.name}]: Worktree session\n'
-                         f'Claude Code [worktree: {worktree.name}]: Worktree session\n'
+                         f'Claude [worktree: {worktree.name}]: Worktree session\n'
                          'Codex: Untitled session\nuser Worktree session\n')
 
     def test_open_worktree_includes_main_and_sibling_sessions_once(self):
@@ -135,7 +137,7 @@ class CodexDiscovery(unittest.TestCase):
         self.assertEqual(len(lines), 5, lines)
         self.assertEqual(lines[0], 'Codex: Main')
         for name, title in ((worktree.name, 'Current'), (sibling.name, 'Sibling')):
-            for provider in ('Codex', 'Claude Code'):
+            for provider in ('Codex', 'Claude'):
                 self.assertIn(f'{provider} [worktree: {name}]: {title}', lines)
 
     def test_deleted_nested_claude_worktree_is_recovered_without_a_cache(self):
@@ -161,7 +163,7 @@ class CodexDiscovery(unittest.TestCase):
         self.worktree_sessions(tree)
         self.assertEqual(len(self.worker()[-1][2]), 2)
         self.git('worktree', 'remove', str(tree))
-        for path in (self.home / 'state/rhun').glob('agents-index-v5-*'):
+        for path in (self.home / 'state/rhun').glob('agents-index-v6-*'):
             path.unlink()
         self.worker(sources='')
         for _ in range(2):
@@ -280,7 +282,7 @@ class CodexDiscovery(unittest.TestCase):
         strings = [str(path).encode(), str(self.project).encode(), b'Old main identity', b'']
         record = struct.pack('<11Q', 1, 2, row['mtime'], row['stamp'],
                              *(len(s) for s in strings), 0, 0, 0) + b''.join(strings)
-        legacy = cache.with_name(cache.name.replace('-v5-', '-v3-'))
+        legacy = cache.with_name(cache.name.replace('-v6-', '-v3-'))
         legacy.write_bytes(original[:8 + key_length] +
                            struct.pack('<8sQQQ', b'RAHAIDX3', 1, 1, len(record)) + record)
         if legacy != cache:
@@ -399,7 +401,7 @@ class CodexDiscovery(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.decode('utf-8'),
                                  'Codex [worktree: website-refresh]: Worktree session\n'
-                                 'Claude Code [worktree: website-refresh]: Worktree session\n')
+                                 'Claude [worktree: website-refresh]: Worktree session\n')
 
     def test_relative_worktree_registration_and_commondir(self):
         self.init_repo()
@@ -413,7 +415,7 @@ class CodexDiscovery(unittest.TestCase):
                 self.project = opened
                 self.assertEqual(self.run_editor(b''),
                                  'Codex [worktree: relative-tree]: Worktree session\n'
-                                 'Claude Code [worktree: relative-tree]: Worktree session\n')
+                                 'Claude [worktree: relative-tree]: Worktree session\n')
 
     def test_new_worktree_reconsiders_sessions_and_keeps_the_open_thread(self):
         self.init_repo()
@@ -440,7 +442,7 @@ class CodexDiscovery(unittest.TestCase):
             self.assertEqual(process.returncode, 0, errors)
             lines = output.decode('utf-8').splitlines()
             self.assertIn('Codex [worktree: new-tree]: Worktree session', lines)
-            self.assertIn('Claude Code [worktree: new-tree]: Worktree session', lines)
+            self.assertIn('Claude [worktree: new-tree]: Worktree session', lines)
             self.assertIn('Codex [worktree: new-tree]: Untitled session', lines)
             self.assertEqual(lines[-1], 'user Main thread', lines)
         finally:
@@ -491,6 +493,35 @@ class CodexDiscovery(unittest.TestCase):
                          'Codex: Read the large session\n'
                          'user Read the large session\nagent The session is visible\n')
 
+    def test_result_text_stays_inside_its_box(self):
+        # A result's box insets its text, which was measured at the full width of the thread: where the
+        # inset made it wrap once more, the last line drew below the box. With the result last, the lowest
+        # row drawn in the panel has to be the box's edge, not glyphs.
+        output = ('The secret word is pelican.\n\n<subagent_meta>id=01a11c28-9a69-7190-aa70-689d17128c42, '
+                  'tool_calls=1, turns=1, duration_ms=3356</subagent_meta>')
+        call = {'type': 'response_item', 'payload': {'type': 'function_call', 'name': 'spawn_subagent',
+                                                      'arguments': json.dumps({'description': 'Read it'})}}
+        result = {'type': 'response_item', 'payload': {'type': 'function_call_output', 'output': output}}
+        self.session.write_bytes(self.metadata() + b'\n' + self.message('user', 'Spawn a subagent') +
+                                 json.dumps(call).encode() + b'\n' + json.dumps(result).encode() + b'\n')
+        for width in (250, 290, 390):   # where the inset takes one more line
+            with self.subTest(width=width):
+                (self.home / 'config/rhun/config').write_text(
+                    '[updates]\ncheck = false\n[git]\nenabled = false\n'
+                    f'[ui]\nagents_panel = true\nagents_width = {width}\n', encoding='utf-8')
+                shot = self.home / f'result-{width}.ppm'
+                self.run_commands(['print-agents 1', f'shot {shot.as_posix()}'])
+                magic, dimensions, depth, pixels = shot.read_bytes().split(b'\n', 3)
+                self.assertEqual((magic, dimensions, depth), (b'P6', b'1280 800', b'255'))
+                def at(x, y):
+                    return pixels[(y * 1280 + x) * 3:(y * 1280 + x) * 3 + 3]
+                background = at(1274, 720)
+                columns = range(1280 - width + 4, 1268)
+                drawn = [(y, [at(x, y) for x in columns if at(x, y) != background]) for y in range(100, 740)]
+                y, row = [line for line in drawn if line[1]][-1]
+                self.assertGreater(row.count(max(set(row), key=row.count)), len(columns) // 2,
+                                   f'text drawn below the result box, at y={y}')
+
     def test_large_session_updates_while_open(self):
         self.session.write_bytes(self.metadata(20197) + b'\n' + self.message('user', 'Live session'))
         script = self.home / 'commands.rsc'
@@ -518,10 +549,20 @@ class CodexDiscovery(unittest.TestCase):
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-dynamiclib',
                         str(ROOT / 'tests/file_faults.c'), '-o', str(library)], check=True)
         self.env.update(DYLD_INSERT_LIBRARIES=str(library), RHUN_TEST_PATH=str(self.session))
+        # The library fails the first read of the last file it saw opened as the target, or of an
+        # atomic write's temporary file: the editor writing one at startup (the last-project file)
+        # would take the fault itself, on a later file with the same descriptor. With that file
+        # already naming the project, nothing is written, and the fault reaches the worker's read
+        # of the session; each case starts without the index cache an earlier one left.
+        state = self.home / 'state/rhun'
+        state.mkdir(parents=True, exist_ok=True)
+        (state / 'last-project').write_text(self.project.as_posix(), encoding='utf-8')
         for fault, errno, expected in (('read', '4', 'Codex: Untitled session\n'),
                                         ('short-read', '5', 'Codex: Untitled session\n'),
                                         ('read', '5', '')):
             with self.subTest(fault=fault, errno=errno):
+                for cache in state.glob('agents-index-v6-*'):
+                    cache.unlink()
                 self.env.update(RHUN_TEST_FAULT=fault, RHUN_TEST_ERRNO=errno)
                 self.assertEqual(self.run_editor(self.metadata(20197) + b'\n'), expected)
 
@@ -554,9 +595,9 @@ class CodexDiscovery(unittest.TestCase):
                 self.assertEqual(len(metadata), size)
                 session.write_bytes(metadata + b'\n' + user)
                 listed_title = 'After Claude metadata'
-                self.assertEqual(self.run_editor(b''), 'Claude Code: ' + listed_title + '\n')
+                self.assertEqual(self.run_editor(b''), 'Claude: ' + listed_title + '\n')
                 self.assertEqual(self.run_editor(b'', open_thread=True),
-                                 'Claude Code: After Claude metadata\nuser After Claude metadata\n')
+                                 'Claude: After Claude metadata\nuser After Claude metadata\n')
 
     def test_claude_unicode_project_paths(self):
         for index, (name, suffix) in enumerate((('café', '-caf-'), ('日本', '---'), ('cafe\u0301', '-cafe-'),
@@ -571,7 +612,7 @@ class CodexDiscovery(unittest.TestCase):
                 record = {'type': 'user', 'message': {'role': 'user', 'content': 'Unicode project'}}
                 session.write_bytes(json.dumps(record).encode('utf-8') + b'\n')
                 self.assertEqual(self.run_editor(b'', open_thread=True),
-                                 'Claude Code: Unicode project\nuser Unicode project\n')
+                                 'Claude: Unicode project\nuser Unicode project\n')
 
     def test_eof_without_newline(self):
         for size in (None, 20197, META_LIMIT):
@@ -618,7 +659,7 @@ class CodexDiscovery(unittest.TestCase):
             os.utime(codex, (2000000000, 2000000000))
             os.utime(claude, (1999999999, 1999999999))
             listings[project] = ('Codex: Codex ' + project.name + '\n' +
-                                 'Claude Code: Claude ' + project.name + '\n')
+                                 'Claude: Claude ' + project.name + '\n')
 
         for start, target in (projects, projects[::-1]):
             with self.subTest(start=start.name):
@@ -645,8 +686,10 @@ class CodexDiscovery(unittest.TestCase):
         file.write_text('standalone\n', encoding='utf-8')
         script = self.home / 'commands.rsc'
         # 1280x800 at scale 1: the refresh button sits in the 40-point panel header, 8 points
-        # from the right edge, 28 points square.
-        script.write_text('print-project\nclick 1258 60\nwait 300\nprint-agents\nquit\n', encoding='utf-8')
+        # from the right edge, 28 points square. A window started with a file hides the panel, so
+        # focus_agents shows it first.
+        script.write_text('print-project\ncmd focus_agents\nprint-panels\nclick 1258 60\nwait 300\n'
+                          'print-agents\nquit\n', encoding='utf-8')
         for name, paths, expected in (('project', [self.project.as_posix()], 'Codex: Codex session\n'),
                                       ('file', [file.as_posix()], 'Codex: Codex session\n'),
                                       ('wait', ['--wait', file.as_posix()], ''),
@@ -658,7 +701,8 @@ class CodexDiscovery(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
                 output = result.stdout.decode('utf-8')
                 project = 'project=~/' + self.project.name + '\n' if name in ('project', 'file') else 'project=\n'
-                self.assertEqual(output, project + expected)
+                self.assertEqual(output, project + 'explorer=0 agents=1 term=0\n' * (name in ('file', 'wait')) +
+                                 'explorer=1 agents=1 term=0\n' * (name in ('project', 'empty')) + expected)
 
     def run_commands(self, commands, timeout=20):
         script = self.home / 'commands.rsc'
@@ -698,14 +742,15 @@ class CodexDiscovery(unittest.TestCase):
         offset = 32
         records = []
         for _ in range(count):
-            kind, flags, mtime, stamp, *lengths = struct.unpack_from('<8Q', packet, offset)
-            offset += 88
+            kind, flags, mtime, stamp, *lengths = struct.unpack_from('<9Q', packet, offset)
+            offset += 96
             strings = []
             for length in lengths:
                 strings.append(packet[offset:offset + length].decode('utf-8'))
                 offset += length
             records.append(dict(kind=kind, flags=flags, mtime=mtime, stamp=stamp,
-                                path=strings[0], cwd=strings[1], title=strings[2], badge=strings[3]))
+                                path=strings[0], cwd=strings[1], title=strings[2], badge=strings[3],
+                            model=strings[4]))
         assert offset == len(packet)
         return records
 
@@ -730,7 +775,7 @@ class CodexDiscovery(unittest.TestCase):
         self.assertEqual(packets[-1][1], 123)
         self.assertEqual([row['title'] for row in packets[-1][2]],
                          [f'Session {index:04}' for index in range(122, 72, -1)])
-        cache, = (self.home / 'state/rhun').glob('agents-index-v5-*')
+        cache, = (self.home / 'state/rhun').glob('agents-index-v6-*')
         data = cache.read_bytes()
         key_length, = struct.unpack_from('<Q', data)
         rows = self.decode_records(data[8 + key_length:])
@@ -781,7 +826,7 @@ class CodexDiscovery(unittest.TestCase):
     def test_corrupt_cache_rebuilds_and_unwritable_state_still_lists(self):
         self.make_history(3)
         self.worker()
-        cache, = (self.home / 'state/rhun').glob('agents-index-v5-*')
+        cache, = (self.home / 'state/rhun').glob('agents-index-v6-*')
         for data in (b'broken', struct.pack('<Q', 2**64 - 1), cache.read_bytes()[:-1]):
             with self.subTest(size=len(data)):
                 cache.write_bytes(data)
@@ -876,7 +921,7 @@ class CodexDiscovery(unittest.TestCase):
     def test_cache_rejects_invalid_lengths_flags_and_duplicate_paths(self):
         self.make_history(2)
         self.worker()
-        cache, = (self.home / 'state/rhun').glob('agents-index-v5-*')
+        cache, = (self.home / 'state/rhun').glob('agents-index-v6-*')
         original = cache.read_bytes()
         key_length, = struct.unpack_from('<Q', original)
         start = 8 + key_length
@@ -935,24 +980,165 @@ class CodexDiscovery(unittest.TestCase):
             match = re.match(r'\s+SETTING(?:_ACTION)? \.Ls_(\w+), (\w+), (\w+)', line)
             if match:
                 rows.append(match.groups())
-        y, previous = 228, None
+        y, previous = 268, None
         for section, key, _ in rows:
+            if (section, key) == ('ui', 'theme'):
+                continue                # shown only without Follow system dark mode
             if section != previous:
                 y += 48
                 previous = section
-            if (section, key) == ('agents', 'sources'):
+            if (section, key) == ('agents', 'codex'):
                 y += 32
                 break
             y += 72
         script = self.home / 'commands.rsc'
-        modifier = 'cmd' if sys.platform == 'darwin' else 'ctrl'
-        script.write_text('wait-agents\ncmd settings\n' + f'click 800 {y}\nkey {modifier}+a\n'
-                          'type claude\nkey Return\nwait-agents\nprint-agents\nquit\n')
+        # Codex's switch, on the page beside the agents panel
+        script.write_text('wait-agents\ncmd settings\n' + f'click 955 {y}\n'
+                          'wait-agents\nprint-agents\nquit\n')
         result = subprocess.run([str(EXE), str(self.project), '--headless', '1400x3800',
                                  '--scale', '1', '--script', str(script)], env=self.env,
                                 capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, b'Claude Code: Claude only\n')
+        self.assertEqual(result.stdout, b'Claude: Claude only\n')
+
+
+    def test_models_in_the_row_and_where_replies_change(self):
+        directory = self.home / '.claude/projects' / claude_slug(str(self.project))
+        directory.mkdir(parents=True)
+        def claude(model, text):
+            return json.dumps({'type': 'assistant', 'cwd': str(self.project), 'message': {
+                'model': model, 'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}}) + '\n'
+        (directory / 'c.jsonl').write_text(json.dumps({'type': 'user', 'cwd': str(self.project), 'message': {
+            'role': 'user', 'content': 'Claude prompt'}}) + '\n' + claude('claude-opus-5-5', 'One') +
+            claude('<synthetic>', 'A notice') + claude('claude-opus-5-5', 'Two') + claude('claude-sonnet-5-5', 'Three'))
+        os.utime(directory / 'c.jsonl', (2000000000, 2000000000))
+        def turn(model):
+            return json.dumps({'type': 'turn_context', 'payload': {'cwd': str(self.project), 'model': model}}).encode() + b'\n'
+        self.session.write_bytes(self.metadata() + b'\n' + turn('gpt-6.1-sol') + self.message('user', 'Codex prompt') +
+                                 self.message('assistant', 'Alpha') + turn('gpt-6-astra') + self.message('assistant', 'Beta'))
+        os.utime(self.session, (1900000000, 1900000000))
+        rows = self.worker()[-1][2]
+        self.assertEqual([(r['kind'], r['model']) for r in rows], [(1, 'claude-sonnet-5-5'), (2, 'gpt-6-astra')])
+        self.assertEqual(self.run_commands(['print-agents 1']),
+                         'Claude [model: claude-sonnet-5-5]: Claude prompt\n'
+                         'Codex [model: gpt-6-astra]: Codex prompt\n'
+                         'user Claude prompt\nagent(claude-opus-5-5) One\nagent A notice\nagent Two\n'
+                         'agent(claude-sonnet-5-5) Three\n')
+        self.assertEqual(self.run_commands(['print-agents 2']).split('\n', 2)[2],
+                         'user Codex prompt\nagent(gpt-6.1-sol) Alpha\nagent(gpt-6-astra) Beta\n')
+
+
+    def test_latest_model_of_a_long_log_between_its_first_and_last_windows(self):
+        def turn(model):
+            return json.dumps({'type': 'turn_context', 'payload': {'model': model}}).encode() + b'\n'
+        def output(size):
+            return json.dumps({'type': 'response_item', 'payload': {
+                'type': 'function_call_output', 'call_id': 'c', 'output': 'o' * size}}).encode() + b'\n'
+        self.session.write_bytes(self.metadata() + b'\n' + turn('gpt-old') + self.message('user', 'Long Codex') +
+                                 output(300000) + turn('gpt-new') + self.message('assistant', 'Switched') +
+                                 output(600000))
+        directory = self.home / '.claude/projects' / claude_slug(str(self.project))
+        directory.mkdir(parents=True)
+        def reply(model):
+            return json.dumps({'type': 'assistant', 'cwd': str(self.project), 'message': {
+                'model': model, 'role': 'assistant', 'content': [{'type': 'text', 'text': model}]}}) + '\n'
+        def result(size):
+            return json.dumps({'type': 'user', 'cwd': str(self.project), 'message': {'role': 'user', 'content': [
+                {'type': 'tool_result', 'tool_use_id': 't', 'content': 'r' * size}]}}) + '\n'
+        (directory / 'c.jsonl').write_text(json.dumps({'type': 'user', 'cwd': str(self.project), 'message': {
+            'role': 'user', 'content': 'Long Claude'}}) + '\n' + reply('claude-old') + result(300000) +
+            reply('claude-new') + result(600000))
+        rows = self.worker()[-1][2]
+        self.assertEqual(sorted(r['model'] for r in rows), ['claude-new', 'gpt-new'])
+
+    def test_model_switched_in_an_append_with_long_output_after_it(self):
+        directory = self.home / '.claude/projects' / claude_slug(str(self.project))
+        directory.mkdir(parents=True)
+        log = directory / 'c.jsonl'
+        def reply(model):
+            return json.dumps({'type': 'assistant', 'cwd': str(self.project), 'message': {
+                'model': model, 'role': 'assistant', 'content': [{'type': 'text', 'text': model}]}}) + '\n'
+        def result(size):
+            return json.dumps({'type': 'user', 'cwd': str(self.project), 'message': {'role': 'user', 'content': [
+                {'type': 'tool_result', 'tool_use_id': 't', 'content': 'r' * size}]}}) + '\n'
+        log.write_text(json.dumps({'type': 'user', 'cwd': str(self.project), 'message': {
+            'role': 'user', 'content': 'Appended'}}) + '\n' + reply('model-old') + result(300000))
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-old'])
+        with log.open('a') as stream:
+            stream.write(reply('model-new') + result(600000))
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-new'])
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-new'])
+
+    def test_models_of_records_longer_than_a_read_window(self):
+        directory = self.home / '.claude/projects' / claude_slug(str(self.project))
+        directory.mkdir(parents=True)
+        log = directory / 'c.jsonl'
+        def compact(record):
+            return json.dumps(record, separators=(',', ':'))  # as Claude Code writes its log
+        def reply(model, text):
+            return compact({'type': 'assistant', 'cwd': str(self.project), 'message': {
+                'model': model, 'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}}) + '\n'
+        prompt = compact({'type': 'user', 'cwd': str(self.project), 'message': {'role': 'user', 'content': 'Long'}}) + '\n'
+        unfinished = compact({'type': 'user', 'cwd': str(self.project), 'message': {'role': 'user', 'content': [
+            {'type': 'tool_result', 'tool_use_id': 't', 'content': 'r' * 600000}]}})
+        # a log that ends inside a record longer than the last window
+        log.write_text(prompt + reply('model-old', 'o' * 300000) + reply('model-new', 'short') + unfinished)
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-new'])
+        with log.open('a') as stream:
+            stream.write('\n')
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-new'])
+        # a reply longer than a window: its beginning names the model
+        log.write_text(prompt + reply('model-old', 'short') + reply('model-big', 'b' * 300000))
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-big'])
+        # a long reply read while it was being written, then completed
+        partial = reply('model-split', 'p' * 600000)
+        log.write_text(prompt + reply('model-old', 'short') + partial[:200000])
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-old'])
+        with log.open('a') as stream:
+            stream.write(partial[200000:])
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-split'])
+        # the model need not be its message's first key
+        late = compact({'type': 'assistant', 'cwd': str(self.project), 'message': {
+            'id': 'msg_late', 'role': 'assistant', 'model': 'model-late',
+            'content': [{'type': 'text', 'text': 'l' * 300000}]}}) + '\n'
+        log.write_text(prompt + reply('model-old', 'short') + late)
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-late'])
+        # a subagent's reply inside a long progress record is not the session's model
+        progress = compact({'type': 'progress', 'cwd': str(self.project), 'data': {'message': {
+            'type': 'assistant', 'message': {'model': 'model-sub', 'content': [{'type': 'text', 'text': 's' * 300000}]}}}})
+        log.write_text(prompt + reply('model-main', 'short') + progress + '\n')
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-main'])
+        # a reply just longer than a window leaves few of its first bytes before the window's start
+        body = 262200 - len(reply('model-edge', ''))
+        log.write_text(prompt + reply('model-old', 'short') + reply('model-edge', 'e' * body) +
+                       compact({'type': 'user', 'cwd': str(self.project), 'message': {'role': 'user', 'content': 'next'}}) + '\n')
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['model-edge'])
+
+    def test_model_of_a_codex_turn_context_longer_than_a_read_window(self):
+        def turn(model, instructions=''):
+            payload = {'cwd': str(self.project), 'model': model}
+            if instructions:
+                payload['collaboration_mode'] = {'settings': {'developer_instructions': instructions}}
+            # compact, as Codex writes its log
+            return json.dumps({'type': 'turn_context', 'payload': payload}, separators=(',', ':')).encode() + b'\n'
+        self.session.write_bytes(self.metadata() + b'\n' + turn('gpt-old') + self.message('user', 'Codex prompt') +
+                                 self.message('assistant', 'Reply') + turn('gpt-big', 'i' * 300000) +
+                                 self.message('user', 'Next'))
+        self.assertEqual([r['model'] for r in self.worker()[-1][2]], ['gpt-big'])
+
+    def test_a_synthetic_notice_takes_no_model_label(self):
+        directory = self.home / '.claude/projects' / claude_slug(str(self.project))
+        directory.mkdir(parents=True)
+        def record(model, content):
+            return json.dumps({'type': 'assistant', 'cwd': str(self.project), 'message': {
+                'model': model, 'role': 'assistant', 'content': content}}) + '\n'
+        (directory / 'c.jsonl').write_text(json.dumps({'type': 'user', 'cwd': str(self.project), 'message': {
+            'role': 'user', 'content': 'Prompt'}}) + '\n' +
+            record('claude-opus-5-5', [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}]) +
+            record('<synthetic>', [{'type': 'text', 'text': 'API notice'}]) +
+            record('claude-opus-5-5', [{'type': 'text', 'text': 'Real reply'}]))
+        self.assertEqual(self.run_commands(['print-agents 1']).split('\n', 1)[1],
+                         'user Prompt\ntool(Bash) ls\nagent API notice\nagent(claude-opus-5-5) Real reply\n')
 
     def test_closed_loaded_session_gets_latest_tail_title_without_regressing(self):
         self.assert_closed_loaded_title('Latest tail title')
@@ -985,7 +1171,7 @@ class CodexDiscovery(unittest.TestCase):
                                     '--scale', '1', '--script', str(script)], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
-            self.assertEqual(process.stdout.readline(), b'Claude Code: Full transcript title\n')
+            self.assertEqual(process.stdout.readline(), b'Claude: Full transcript title\n')
             self.assertTrue(process.stdout.readline().startswith(b'project='))
             if replace:
                 path.write_text(json.dumps({'type': 'user', 'cwd': str(self.project),
@@ -995,9 +1181,9 @@ class CodexDiscovery(unittest.TestCase):
                     stream.write(title(latest))
             output, errors = process.communicate(timeout=20)
             self.assertEqual(process.returncode, 0, errors)
-            expected = 'Claude Code: ' + latest + '\n'
+            expected = 'Claude: ' + latest + '\n'
             if replace:
-                expected += 'Claude Code: ' + latest + '\nuser ' + latest + '\n'
+                expected += 'Claude: ' + latest + '\nuser ' + latest + '\n'
             self.assertEqual(output, expected.encode())
         finally:
             if process.poll() is None:
@@ -1057,14 +1243,14 @@ class CodexDiscovery(unittest.TestCase):
                                     '--scale', '1', '--script', str(script)], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
-            self.assertEqual(process.stdout.readline(), b'Claude Code: Known custom title\n')
+            self.assertEqual(process.stdout.readline(), b'Claude: Known custom title\n')
             self.assertTrue(process.stdout.readline().startswith(b'project='))
             with path.open('a') as stream:
                 stream.write(json.dumps({'type': 'user', 'message': {
                     'role': 'user', 'content': 'Latest user message'}}) + '\n')
             output, errors = process.communicate(timeout=20)
             self.assertEqual(process.returncode, 0, errors)
-            self.assertEqual(output, b'Claude Code: Known custom title\n')
+            self.assertEqual(output, b'Claude: Known custom title\n')
         finally:
             if process.poll() is None:
                 process.kill()
@@ -1194,7 +1380,7 @@ class CodexDiscovery(unittest.TestCase):
                                     '--scale', '1', '--script', str(script)], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
-            self.assertEqual(process.stdout.readline(), b'Claude Code: Title X\n')
+            self.assertEqual(process.stdout.readline(), b'Claude: Title X\n')
             self.assertTrue(process.stdout.readline().startswith(b'project='))
             ready.unlink()
             with path.open('a') as stream:
@@ -1266,20 +1452,267 @@ class CodexDiscovery(unittest.TestCase):
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             self.assertEqual({process.stdout.readline(), process.stdout.readline()},
-                             {b'Codex: Session 0000\n', b'Claude Code: Claude only\n'})
+                             {b'Codex: Session 0000\n', b'Claude: Claude only\n'})
             self.assertTrue(process.stdout.readline().startswith(b'project='))
             config = self.home / 'config/rhun/config'
             config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n'
-                              '[agents]\nsources = claude\n')
+                              '[agents]\nclaude = true\ncodex = false\ngrok = false\nopencode = false\n')
             output, errors = process.communicate(timeout=20)
             self.assertEqual(process.returncode, 0, errors)
-            self.assertEqual(output, b'Claude Code: Claude only\n')
+            self.assertEqual(output, b'Claude: Claude only\n')
         finally:
             if process.poll() is None:
                 process.kill()
                 process.communicate()
             process.stdout.close()
             process.stderr.close()
+
+
+class GrokDiscovery(unittest.TestCase):
+    """Grok Build keeps a session in ~/.grok/sessions/<its cwd, URL-encoded>/<session id>/: the log of
+    the conversation, updates.jsonl, and summary.json with the cwd and the title Grok gives it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='rhun-grok-')
+        self.home = Path(self.tmp.name).resolve()
+        self.project = self.home / 'project café with spaces'
+        self.project.mkdir()
+        self.env = dict(os.environ, HOME=self.home.as_posix(),
+                        XDG_CONFIG_HOME=(self.home / 'config').as_posix(),
+                        XDG_STATE_HOME=(self.home / 'state').as_posix(), SHELL='/nonexistent')
+        self.env.pop('GROK_HOME', None)
+        self.config('')
+        self.count = 0
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def config(self, extra):
+        config = self.home / 'config/rhun/config'
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n' + extra, encoding='utf-8')
+
+    def session(self, *updates, cwd=None, title=None, kind=None, grok_home=None, when=None):
+        cwd = cwd or self.project.as_posix()
+        self.count += 1
+        sid = f'01a11c1e-808b-7263-a007-{self.count:012}'
+        folder = (grok_home or self.home / '.grok') / 'sessions' / quote(cwd, safe='') / sid
+        folder.mkdir(parents=True)
+        summary = {'info': {'id': sid, 'cwd': cwd}, 'session_summary': title or '',
+                   'created_at': '2026-10-08T15:25:23.498980Z', 'num_messages': len(updates)}
+        if title:
+            summary['generated_title'] = title
+        if kind:
+            summary['session_kind'] = kind
+        (folder / 'summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+        log = folder / 'updates.jsonl'
+        log.write_bytes(b''.join(self.update(sid, update) for update in updates))
+        if when is not None:
+            os.utime(log, (when, when))
+        return log
+
+    @staticmethod
+    def update(sid, update):
+        record = {'timestamp': 1791473123, 'method': 'session/update',
+                  'params': {'sessionId': sid, 'update': update}}
+        return json.dumps(record, ensure_ascii=False).encode('utf-8') + b'\n'
+
+    @staticmethod
+    def user(text):
+        return {'sessionUpdate': 'user_message_chunk', 'content': {'type': 'text', 'text': text},
+                '_meta': {'modelId': 'grok-4.7', 'promptIndex': 0}}
+
+    @staticmethod
+    def agent(text):
+        return {'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': text}}
+
+    @staticmethod
+    def tool(call, name, raw_input):
+        return {'sessionUpdate': 'tool_call', 'toolCallId': call, 'title': name, 'rawInput': raw_input,
+                '_meta': {'x.ai/tool': {'version': 1, 'name': name}}}
+
+    @staticmethod
+    def result(call, text=None, diff=None, status='completed'):
+        content = []
+        if text is not None:
+            content.append({'type': 'content', 'content': {'type': 'text', 'text': text}})
+        if diff is not None:
+            content.append({'type': 'diff', 'path': diff[0], 'oldText': diff[1], 'newText': diff[2]})
+        return {'sessionUpdate': 'tool_call_update', 'toolCallId': call, 'status': status,
+                'content': content}
+
+    def run_commands(self, commands, timeout=20):
+        script = self.home / 'commands.rsc'
+        script.write_text('\n'.join(commands + ['quit']) + '\n', encoding='utf-8')
+        result = subprocess.run([str(EXE), str(self.project), '--headless', '1280x800',
+                                 '--scale', '1', '--script', str(script)], env=self.env,
+                                capture_output=True, timeout=timeout)
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
+        return result.stdout.decode('utf-8')
+
+    def worker(self, sources='claude,codex,grok'):
+        result = subprocess.run([str(EXE), '--agent-index', str(self.project), '50', sources],
+                                env=self.env, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        offset = 0
+        page = None
+        while offset < len(result.stdout):
+            payload, = struct.unpack_from('<Q', result.stdout, offset + 24)
+            page = CodexDiscovery.decode_records(result.stdout[offset:offset + 32 + payload])
+            offset += 32 + payload
+        return [(row['kind'], row['title']) for row in page]
+
+    def test_thread_shows_prompts_replies_tools_and_results(self):
+        calc = (self.project / 'calc.py').as_posix()
+        self.session(
+            {'sessionUpdate': 'current_mode_update', 'currentModeId': 'default'},
+            self.user('calc.py has a bug in add(). Fix it.'),
+            {'sessionUpdate': 'agent_thought_chunk', 'content': {'type': 'text', 'text': 'Thinking'}},
+            self.agent("I'll look at `calc.py` first."),
+            self.tool('c0', 'read_file', {'target_file': calc}),
+            {'sessionUpdate': 'tool_call_update', 'toolCallId': 'c0', 'kind': 'read',
+             'title': 'Read `calc.py`', 'rawInput': {'variant': 'ReadFile', 'target_file': calc}},
+            self.tool('c1', 'run_terminal_command', {'command': 'ls -1', 'description': 'List files'}),
+            self.result('c0', '1→def add(a, b):\n    return a - b\n'),
+            self.result('c1', '\x1b[1m\x1b[36mcalc.py\x1b[39;49m\x1b[0m\n'),
+            self.tool('c2', 'search_replace', {'file_path': calc, 'old_string': 'a - b',
+                                               'new_string': 'a + b'}),
+            self.result('c2', diff=(calc, '    return a - b', '    return a + b')),
+            self.tool('c3', 'list_dir', {'target_directory': (self.project / 'src').as_posix()}),
+            self.result('c3'),
+            self.tool('c4', 'read_file', {'target_file': 'missing.txt'}),
+            self.result('c4', 'Error: missing.txt does not exist.', status='failed'),
+            {'sessionUpdate': 'turn_completed', 'stop_reason': 'end_turn'},
+            self.agent('`add()` returns `a + b` now.'))
+        self.assertEqual(self.run_commands(['print-agents 1']),
+                         'Grok: calc.py has a bug in add(). Fix it.\n'
+                         'user calc.py has a bug in add(). Fix it.\n'
+                         "agent(grok-4.7) I'll look at `calc.py` first.\n"
+                         'tool(read_file) calc.py\n'
+                         'tool(run_terminal_command) ls -1\n'
+                         'result 1→def add(a, b):\n'
+                         'result calc.py\n'
+                         'tool(search_replace) calc.py\n'
+                         'result return a + b\n'
+                         'tool(list_dir) src\n'
+                         'tool(read_file) missing.txt\n'
+                         'result Error: missing.txt does not exist.\n'
+                         'agent `add()` returns `a + b` now.\n')
+
+    def test_grok_titles_its_sessions_and_a_rename_follows_without_new_log_lines(self):
+        log = self.session(self.user('Fix the add function'), title='Fix bug in calc.py add')
+        self.session(self.user('Untitled yet'), when=1700000000)
+        self.assertEqual(self.worker(), [(3, 'Fix bug in calc.py add'), (3, 'Untitled yet')])
+        # /rename rewrites summary.json alone; the log is the same
+        summary = log.parent / 'summary.json'
+        data = json.loads(summary.read_text(encoding='utf-8'))
+        data.update(generated_title='Custom probe title', title_is_manual=True)
+        stamp = log.stat()
+        summary.write_text(json.dumps(data), encoding='utf-8')
+        self.assertEqual(log.stat().st_mtime_ns, stamp.st_mtime_ns)
+        self.assertEqual(self.worker(), [(3, 'Custom probe title'), (3, 'Untitled yet')])
+        self.assertEqual(self.run_commands(['print-agents']),
+                         'Grok: Custom probe title\nGrok: Untitled yet\n')
+
+    def test_sessions_without_a_prompt_and_subagents_are_not_listed(self):
+        # The interface makes a session's folder and log when it starts, before any prompt
+        empty = self.session({'sessionUpdate': 'current_mode_update', 'currentModeId': 'plan'})
+        self.session(self.user('Read hello.txt and report it'), kind='subagent',
+                     title='Read hello.txt and report exact contents')
+        # A session folder that has no log yet, and other files of the cwd's folder
+        (empty.parent.parent / '01a11c1e-808b-7263-a007-999999999999').mkdir()
+        (empty.parent.parent / 'prompt_history.jsonl').write_text('{}\n', encoding='utf-8')
+        self.assertEqual(self.worker(), [])
+        self.assertEqual(self.worker(), [])  # as cached
+        with empty.open('ab') as stream:
+            stream.write(self.update('x', self.user('Now with a prompt')))
+        self.assertEqual(self.worker(), [(3, 'Now with a prompt')])
+
+    def test_summary_written_later_and_other_cwds(self):
+        log = self.session(self.user('Waiting for its summary'))
+        summary = log.parent / 'summary.json'
+        saved = summary.read_bytes()
+        summary.write_bytes(saved[:20])          # being written
+        other = self.home / 'other'
+        other.mkdir()
+        self.session(self.user('Another project'), cwd=other.as_posix())
+        self.assertEqual(self.worker(), [])
+        summary.write_bytes(saved)
+        self.assertEqual(self.worker(), [(3, 'Waiting for its summary')])
+
+    def test_sources_setting_and_grok_home(self):
+        self.session(self.user('In the default home'))
+        self.assertEqual(self.worker(sources='claude,codex'), [])
+        custom = self.home / 'custom grok'
+        self.session(self.user('In GROK_HOME'), grok_home=custom)
+        self.assertEqual(self.worker(), [(3, 'In the default home')])
+        self.env['GROK_HOME'] = custom.as_posix()
+        self.assertEqual(self.worker(), [(3, 'In GROK_HOME')])
+        self.config('[agents]\nsources = claude codex\n[ui]\ndark_theme = rhun-dark\n')
+        self.assertEqual(self.run_commands(['print-agents']), '')
+        self.config('[agents]\nsources = grok\n')
+        self.assertEqual(self.run_commands(['print-agents']), 'Grok: In GROK_HOME\n')
+
+    def test_configs_from_before_grok_build_get_it(self):
+        # sources was written with every setting, so the old default is in every older config; a config
+        # written since (it has dark_theme) keeps what it says
+        self.session(self.user('Listed'))
+        self.config('[ui]\ntheme = rhun-light\n[agents]\nsources = claude codex\n')
+        self.assertEqual(self.run_commands(['print-agents']), 'Grok: Listed\n')
+        self.config('[agents]\nsources = claude codex\n')
+        self.assertEqual(self.run_commands(['print-agents']), 'Grok: Listed\n')
+        self.config('[ui]\ntheme = rhun-light\n[agents]\nsources = codex claude\n')
+        self.assertEqual(self.run_commands(['print-agents']), '')
+        self.config('[ui]\ntheme = rhun-light\ndark_theme = rhun-dark\n[agents]\nsources = claude codex\n')
+        self.assertEqual(self.run_commands(['print-agents']), '')
+
+
+    def test_current_model_in_the_row_and_the_prompt_model_on_replies(self):
+        log = self.session(self.user('Grok prompt'), self.agent('Grok reply'), title='Models')
+        summary = log.parent / 'summary.json'
+        data = json.loads(summary.read_text())
+        data['current_model_id'] = 'grok-4.7-fast'
+        summary.write_text(json.dumps(data))
+        self.assertEqual(self.run_commands(['print-agents 1']),
+                         'Grok [model: grok-4.7-fast]: Models\nuser Grok prompt\nagent(grok-4.7) Grok reply\n')
+
+    def test_worktree_sessions_have_its_badge(self):
+        def git(*args):
+            subprocess.run(['git', '-C', str(self.project), *args], env=self.env, check=True,
+                           capture_output=True)
+        git('init', '-q', '-b', 'main')
+        git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+            'commit', '--allow-empty', '-qm', 'Initial')
+        worktree = self.home / 'fix café 🦉'
+        git('worktree', 'add', '--detach', str(worktree))
+        self.session(self.user('In the worktree'), cwd=worktree.as_posix(), when=2000000000)
+        self.session(self.user('In the main checkout'), when=1900000000)
+        self.assertEqual(self.run_commands(['print-agents 1']),
+                         f'Grok [worktree: {worktree.name}]: In the worktree\n'
+                         'Grok: In the main checkout\n'
+                         'user In the worktree\n')
+
+    def test_open_session_follows_new_lines(self):
+        log = self.session(self.user('Live session'))
+        script = self.home / 'commands.rsc'
+        script.write_text('print-agents 1\nwait 2000\nprint-agents 1\nquit\n', encoding='utf-8')
+        process = subprocess.Popen([str(EXE), self.project.as_posix(), '--headless', '1000x700',
+                                    '--script', script.as_posix()], env=self.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.assertEqual(process.stdout.readline(), b'Grok: Live session\n')
+            self.assertEqual(process.stdout.readline(), b'user Live session\n')
+            with log.open('ab') as stream:
+                stream.write(self.update('x', self.tool('c0', 'run_terminal_command', {'command': 'make'})))
+                stream.write(self.update('x', self.agent('A live update')))
+            output, errors = process.communicate(timeout=20)
+            self.assertEqual(process.returncode, 0, errors)
+            self.assertEqual(output, b'Grok: Live session\nuser Live session\n'
+                                     b'tool(run_terminal_command) make\nagent(grok-4.7) A live update\n')
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
 
 
 if __name__ == '__main__':

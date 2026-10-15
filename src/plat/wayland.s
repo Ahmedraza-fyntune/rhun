@@ -42,7 +42,6 @@ id_activation: .long 0
 activation_sent: .long 0
 id_sync: .long 0
 sync_done: .long 0
-compositor_ver: .long 0
 seat_ver: .long 0
 
 id_surface: .long 0
@@ -96,7 +95,6 @@ offer_new_text: .long 0
 sel_offer: .long 0
 sel_offer_text: .long 0
 id_source: .long 0
-clip_mime_sel: .long 0
 .p2align 3
 clip_sb: .zero SB_SIZE
 paste_sb: .zero SB_SIZE
@@ -801,12 +799,7 @@ wl_on_global:
     ARG [rsp + 4]
     END
     mov rax, [rbx + 8]
-    lea rcx, [rip + id_compositor]
-    cmp rax, rcx
-    jne 1f
-    mov eax, [rsp]
-    mov [rip + compositor_ver], eax
-1:  lea rcx, [rip + id_seat]
+    lea rcx, [rip + id_seat]
     cmp rax, rcx
     jne .Lg_ret
     mov eax, [rsp]

@@ -1,5 +1,6 @@
 name = Vim script
 files = *.vim .vimrc _vimrc .gvimrc .exrc
+icon = code green
 region = " eol comment bol
 string = " \
 comment = "

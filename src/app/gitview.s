@@ -33,8 +33,6 @@ files: .zero VEC_SIZE           # GF of the selected row
 sel_hash: .zero 72
 det_hash: .zero 72
 head_ix: .quad 0
-det_author: .quad 0
-det_time: .quad 0
 det_msg: .quad 0
 maskbuf: .quad 0
 maskcap: .quad 0
@@ -677,7 +675,8 @@ details_fetch:
     pop rbx
 9:  ret
 
-# on_details(ctx, ptr, len, status): "hash\x1fparents\x1fauthor\x1ftime\x1fmessage\x1e", raw entries, numstat
+# on_details(ctx, ptr, len, status): "hash\x1fparents\x1fauthor\x1ftime\x1fmessage\x1e", then the raw
+#   entries (numstat_fetch asks for the line counts in a job of its own)
 on_details:
     PROLOGUE 16
     mov dword ptr [rip + det_running], 0
@@ -724,19 +723,11 @@ on_details:
     call next_field
     mov rdi, rax
     call next_field
-    mov [rip + det_author], rax
     mov rdi, rax
     call next_field
-    mov r14, rax
     mov rdi, rax
     call next_field
     mov [rip + det_msg], rax
-    mov rdi, r14
-    call strlen
-    mov rdi, r14
-    mov rsi, rax
-    call parse_u64
-    mov [rip + det_time], rax
     # files: ":mode mode id id X\0path\0"
     lea rbx, [r13 + 1]
 .Lod_ent:

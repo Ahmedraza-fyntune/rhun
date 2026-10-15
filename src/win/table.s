@@ -93,7 +93,7 @@ win_systable:
     .quad ws_unlink # 87
     .quad ws_nosys # 88
     .quad ws_readlink # 89
-    .quad ws_nosys # 90
+    .quad ws_chmod # 90
     .quad ws_zero # 91
     .quad ws_nosys # 92
     .quad ws_nosys # 93

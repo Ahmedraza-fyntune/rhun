@@ -12,13 +12,6 @@
 Lxc\@:
 .endm
 
-.macro XCALLR reg
-    adr x17, Lxc\@
-    str x17, [x28, #-8]!
-    blr \reg
-Lxc\@:
-.endm
-
 .macro XRET
     add x28, x28, #8
     ret
@@ -52,12 +45,6 @@ Lxc\@:
 .macro ADR reg, sym
     adrp \reg, \sym@PAGE
     add \reg, \reg, \sym@PAGEOFF
-.endm
-
-// external data symbol (via the GOT)
-.macro GOT reg, sym
-    adrp \reg, \sym@GOTPAGE
-    ldr \reg, [\reg, \sym@GOTPAGEOFF]
 .endm
 
 .macro FN name

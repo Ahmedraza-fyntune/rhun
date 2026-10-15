@@ -1,5 +1,6 @@
 name = Apache
 files = .htaccess httpd.conf apache2.conf
+icon = config red
 comment = #
 string = "
 region = < > tag

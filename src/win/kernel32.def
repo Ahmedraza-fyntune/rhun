@@ -14,13 +14,13 @@ EXPORTS
     CreateThread
     DeleteFileW
     DeleteProcThreadAttributeList
+    DeviceIoControl
     DuplicateHandle
     ExitProcess
     FindClose
     FindCloseChangeNotification
     FindFirstChangeNotificationW
     FindFirstFileW
-    FindNextChangeNotification
     FindNextFileW
     FlushFileBuffers
     FreeEnvironmentStringsW
@@ -57,6 +57,7 @@ EXPORTS
     SetCurrentDirectoryW
     SetEnvironmentVariableW
     SetEvent
+    SetFileAttributesW
     SetFilePointerEx
     SetInformationJobObject
     Sleep

@@ -11,8 +11,10 @@
 .globl cfg_sidebar, cfg_sidebar_w, cfg_agents, cfg_agents_w, cfg_ui_scale, cfg_final_newline
 .globl cfg_trim_trailing, cfg_scroll_past_end, cfg_smooth_caret, cfg_theme, cfg_font, cfg_ui_font
 .globl cfg_exclude, cfg_agent_sources, cfg_restore_session, cfg_auto_pairs, cfg_word_wrap, cfg_decorations
+.globl cfg_agents_claude, cfg_agents_codex, cfg_agents_grok, cfg_agents_opencode
 .globl cfg_vim
 .globl cfg_restore_project
+.globl cfg_follow_system, cfg_dark_theme, cfg_light_theme, cfg_theme_keys
 cfg_restore_project: .long 1
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
@@ -29,9 +31,9 @@ cfg_indent_guides: .long 1
 cfg_cursor_blink: .long 1
 cfg_whitespace: .long 0
 cfg_sidebar: .long 1
-cfg_sidebar_w: .long 240
+cfg_sidebar_w: .long SIDEBAR_W_DEFAULT
 cfg_agents: .long 1
-cfg_agents_w: .long 380
+cfg_agents_w: .long AGENTS_W_DEFAULT
 cfg_ui_scale: .long 100
 cfg_final_newline: .long 1
 cfg_trim_trailing: .long 0
@@ -42,11 +44,18 @@ cfg_auto_pairs: .long 1
 cfg_word_wrap: .long 0
 cfg_vim: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
+cfg_follow_system: .long 1       # dark_theme or light_theme as the system's dark mode is on or off
+cfg_agents_claude: .long 1       # the providers the agents panel lists, in this order (settings.s)
+cfg_agents_codex: .long 1
+cfg_agents_grok: .long 1
+cfg_agents_opencode: .long 1
 .globl cfg_scroll_sens, cfg_fast_sens
 cfg_scroll_sens: .long 100       # scroll_sensitivity: multiplier in hundredths
 cfg_fast_sens: .long 400         # fast_scroll_sensitivity: multiplier while alt is held
 .globl cfg_term_font_size, cfg_term_scrollback, cfg_term_h, cfg_term_shell, cfg_git
+.globl cfg_term_line_height, cfg_term_font
 cfg_term_font_size: .long 14
+cfg_term_line_height: .long 100  # line_height: hundredths of the font's own line height
 cfg_term_scrollback: .long 10000
 cfg_term_h: .long 260
 cfg_git: .long 1
@@ -56,18 +65,24 @@ cfg_commit_ai: .long 0
 cfg_update_check: .long 1
 .p2align 3
 cfg_theme: .quad cfg_def_theme
+cfg_dark_theme: .quad cfg_def_theme
+cfg_light_theme: .quad cfg_def_light_theme
 cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
 cfg_exclude: .quad .Ldef_exclude
-cfg_agent_sources: .quad .Ldef_sources
 cfg_term_shell: .quad .Lempty
+cfg_term_font: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
 .Lcfg_strings_end:
+cfg_agent_sources: .quad .Ldef_sources  # the switched-on providers' names, for the discovery worker
 
 .bss
 .p2align 3
 cfg_seen_mtime: .quad 0         # the config file's mtime (ns) when rhun last read or wrote it
-# One owned allocation per string slot above. cfg_theme may separately borrow
+cfg_theme_keys: .long 0         # theme keys the last read found: 1 theme, 2 dark_theme, 4 light_theme
+old_sources: .long 0            # the last read found [agents] sources = claude codex, the old default
+agent_sources_buf: .zero 32
+# One owned allocation per string slot above. The theme slots may separately borrow
 # a theme registry ID, so the current value alone does not identify its owner.
 cfg_owned_strings: .zero .Lcfg_strings_end - cfg_theme
 .p2align 3
@@ -320,6 +335,7 @@ FN parse_decimal
 FN config_load
     PROLOGUE 16
     xor r15d, r15d              # owned input buffer, if the config exists
+    mov dword ptr [rip + cfg_theme_keys], 0
     # [keys] lines come from this read only
     xor ebx, ebx
 1:  cmp rbx, [rip + g_keylines + VEC_len]
@@ -334,6 +350,7 @@ FN config_load
     inc rbx
     jmp 1b
 2:  mov qword ptr [rip + g_keylines + VEC_len], 0
+    mov dword ptr [rip + old_sources], 0
     # taken before the read: a write that lands during it still counts as a change
     call config_path
     mov rdi, rax
@@ -382,15 +399,118 @@ FN config_load
     mov rcx, [rip + it + INI_keylen]
     call setting_find
     test rax, rax
-    jz .Lcl_next
-    mov rdi, rax
+    jnz 3f
+    call legacy_sources
+    jmp .Lcl_next
+3:  # which theme keys the file has: a file from before dark_theme and light_theme has theme only
+    mov rcx, [rax + SET_ptr]
+    lea rdx, [rip + cfg_theme]
+    sub rcx, rdx
+    shr rcx, 3
+    cmp rcx, 2
+    ja 2f
+    mov edx, 1
+    shl edx, cl
+    or [rip + cfg_theme_keys], edx
+2:  mov rdi, rax
     mov rsi, [rip + it + INI_val]
     mov rdx, [rip + it + INI_vallen]
     call setting_assign
     jmp .Lcl_next
 .Lcl_ret:
+    # Grok Build came with dark_theme: a file from before that has the old default sources gets it too,
+    # while one written since keeps what is set
+    test dword ptr [rip + cfg_theme_keys], 2
+    jnz 1f
+    cmp dword ptr [rip + old_sources], 0
+    je 1f
+    mov dword ptr [rip + cfg_agents_grok], 1
+1:  call config_agent_sources
     mov rdi, r15
     call mem_free
+    EPILOGUE
+
+# legacy_sources(): [agents] sources from before the switches names the providers listed. OpenCode came
+#   with the switches: no such line turns it off. config_save writes the switches in its place.
+legacy_sources:
+    PROLOGUE
+    lea rdi, [rip + .Ls_agents]
+    mov rsi, [rip + it + INI_sec]
+    mov rdx, [rip + it + INI_seclen]
+    mov ecx, 6
+    call ini_field_is
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lsources_key]
+    mov rsi, [rip + it + INI_key]
+    mov rdx, [rip + it + INI_keylen]
+    mov ecx, 7
+    call ini_field_is
+    test eax, eax
+    jz 9f
+    mov rdi, [rip + it + INI_val]
+    mov rsi, [rip + it + INI_vallen]
+    call mem_dup
+    mov r12, rax
+    lea rdi, [rip + .Lold_sources]
+    mov rsi, r12
+    call strcmp_eq
+    mov [rip + old_sources], eax
+    lea rbx, [rip + legacy_names]
+1:  mov r13, [rbx]
+    test r13, r13
+    jz 2f
+    mov rdi, r13
+    call strlen
+    mov r14, rax
+    mov rdi, r12
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    mov rdx, r13
+    mov rcx, r14
+    call str_find
+    not rax
+    shr rax, 63
+    mov rcx, [rbx + 8]
+    mov [rcx], eax
+    add rbx, 16
+    jmp 1b
+2:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
+# ini_field_is(name, ptr, len, name length) -> 1 when the ini field is that name
+ini_field_is:
+    xor eax, eax
+    cmp rdx, rcx
+    jne 1f
+    mov rdx, rcx
+    jmp memeq
+1:  ret
+
+# config_agent_sources(): cfg_agent_sources names the providers switched on, as the worker takes them
+FN config_agent_sources
+    PROLOGUE
+    lea rbx, [rip + agent_sources_buf]
+    mov rax, rbx
+    lea r12, [rip + agent_names]
+1:  mov rcx, [r12 + 8]
+    test rcx, rcx
+    jz 3f
+    cmp dword ptr [rcx], 0
+    je 2f
+    cmp rax, rbx
+    je 11f
+    mov byte ptr [rax], ' '
+    inc rax
+11: mov rdi, rax
+    mov rsi, [r12]
+    call cstr_copy
+2:  add r12, 16
+    jmp 1b
+3:  mov byte ptr [rax], 0
+    mov [rip + cfg_agent_sources], rbx
     EPILOGUE
 
 # config_save(): write every setting (and custom keys) back to the file
@@ -599,11 +719,22 @@ dir_each_cb:
 9:  EPILOGUE
 
 .section .rodata
-.globl cfg_def_theme
+.globl cfg_def_theme, cfg_def_light_theme
 cfg_def_theme: .asciz "rhun-dark"
+cfg_def_light_theme: .asciz "rhun-light"
 .Lempty: .asciz ""
 .Ldef_exclude: .asciz ".git node_modules target build .cache __pycache__ .venv .idea .DS_Store"
-.Ldef_sources: .asciz "claude codex"
+.Ldef_sources: .asciz "claude codex grok opencode"
+.Lold_sources: .asciz "claude codex"
+.Lsources_key: .ascii "sources"
+.Ln_claude: .asciz "claude"
+.Ln_codex: .asciz "codex"
+.Ln_grok: .asciz "grok"
+.Ln_opencode: .asciz "opencode"
+.p2align 3
+agent_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, .Ln_grok, cfg_agents_grok
+    .quad .Ln_opencode, cfg_agents_opencode, 0, 0
+legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, .Ln_grok, cfg_agents_grok, 0, 0
 .Lxdg: .asciz "XDG_CONFIG_HOME"
 .Lhome: .asciz "HOME"
 .Ltmp: .asciz "/tmp"
@@ -658,7 +789,10 @@ cfg_def_theme: .asciz "rhun-dark"
 .p2align 3
 .globl g_settings
 g_settings:
+    SETTING .Ls_ui, follow_system, ST_BOOL, cfg_follow_system, 0, 1, 1, 0, "Follow system dark mode", "Switch themes with the system's dark mode."
     SETTING .Ls_ui, theme, ST_THEME, cfg_theme, 0, 0, 0, 0, "Theme", "Color theme for the editor and the interface."
+    SETTING .Ls_ui, dark_theme, ST_THEME, cfg_dark_theme, 0, 0, 0, 0, "Dark theme", "Theme while the system is in dark mode."
+    SETTING .Ls_ui, light_theme, ST_THEME, cfg_light_theme, 0, 0, 0, 0, "Light theme", "Theme while the system is in light mode."
     SETTING .Ls_ui, scale, ST_INT, cfg_ui_scale, 50, 300, 10, 1, "Interface zoom", "Scales everything on top of the display scale."
     SETTING .Ls_ui, font_size, ST_INT, cfg_ui_font_size, 9, 24, 1, 0, "Interface font size", "Font size of panels, tabs and menus."
     SETTING .Ls_ui, font, ST_STR, cfg_ui_font, 0, 0, 0, 0, "Interface font", "Path to a .ttf file. Empty uses the built-in Iosevka."
@@ -693,9 +827,14 @@ g_settings:
     SETTING .Ls_files, restore_session, ST_BOOL, cfg_restore_session, 0, 1, 1, 0, "Restore open files", "Reopen the files from the last session of a project."
     SETTING .Ls_files, restore_project, ST_BOOL, cfg_restore_project, 0, 1, 1, 0, "Reopen last project", "Reopen the project you closed with when no file or folder is given."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
-    SETTING .Ls_agents, sources, ST_STR, cfg_agent_sources, 0, 0, 0, 0, "Agent sources", "Which agents to show: claude, codex."
+    SETTING .Ls_agents, claude, ST_BOOL, cfg_agents_claude, 0, 1, 1, 0, "Claude Code", "Show Claude Code sessions in the agents panel."
+    SETTING .Ls_agents, codex, ST_BOOL, cfg_agents_codex, 0, 1, 1, 0, "Codex", "Show Codex sessions in the agents panel."
+    SETTING .Ls_agents, grok, ST_BOOL, cfg_agents_grok, 0, 1, 1, 0, "Grok Build", "Show Grok Build sessions in the agents panel."
+    SETTING .Ls_agents, opencode, ST_BOOL, cfg_agents_opencode, 0, 1, 1, 0, "OpenCode", "Show OpenCode sessions in the agents panel."
     SETTING .Ls_terminal, shell, ST_STR, cfg_term_shell, 0, 0, 0, 0, "Shell", "Program the terminal runs. Empty uses $SHELL."
     SETTING .Ls_terminal, font_size, ST_INT, cfg_term_font_size, 8, 40, 1, 0, "Terminal font size", "Font size of the terminal panel."
+    SETTING .Ls_terminal, font, ST_STR, cfg_term_font, 0, 0, 0, 0, "Terminal font", "Path to a monospace .ttf file. Empty uses the editor font."
+    SETTING .Ls_terminal, line_height, ST_INT, cfg_term_line_height, 100, 250, 5, 1, "Terminal line height", "Multiple of the font's own line height."
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
     SETTING .Ls_terminal, height, ST_INT, cfg_term_h, 80, 2000, 10, 0, "Terminal height", "Height of the terminal panel in points."
     SETTING .Ls_git, enabled, ST_BOOL, cfg_git, 0, 1, 1, 0, "Git", "Changes in the gutter, tabs and explorer, and the history view."

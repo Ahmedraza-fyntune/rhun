@@ -1,5 +1,6 @@
 name = Pkl
 files = *.pkl PklProject
+icon = config green
 comment = //
 block = /* */
 mstring = """ \

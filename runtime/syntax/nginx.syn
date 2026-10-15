@@ -1,5 +1,6 @@
 name = Nginx
 files = nginx.conf *.nginx
+icon = config green
 comment = #
 string = "
 string = '

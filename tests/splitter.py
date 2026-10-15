@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Panel dividers keep their presses and cursors, scrollbars hide when idle (unless that setting is
 off), and nearby tooltips skip the delay. A press inside a divider's strip resizes the panel and
-must not turn into a text selection, open the file under it or lose the next click."""
+must not turn into a text selection, open the file under it or lose the next click. The divider keeps
+its distance from the pointer while it drags, a click that does not move leaves it where it is, and a
+double-click puts the panel back at its default width."""
 import os
 from pathlib import Path
 import subprocess
@@ -41,13 +43,14 @@ class SidebarSplit(unittest.TestCase):
                 time.sleep(0.2)
         self.tmp.cleanup()
 
-    def run_editor(self, actions, agents=False, autohide=True):
-        self.config.write_text('[ui]\nsidebar = true\nsidebar_width = 240\nagents_panel = %s\n'
-                               'auto_hide_scrollbars = %s\n'
+    def run_editor(self, actions, agents=False, autohide=True, sidebar=240, agents_w=380):
+        self.config.write_text('[ui]\nsidebar = true\nsidebar_width = %d\nagents_panel = %s\n'
+                               'agents_width = %d\nauto_hide_scrollbars = %s\n'
                                '[editor]\ncursor_blink = false\n'
                                '[files]\nrestore_session = false\nrestore_project = false\n'
                                '[updates]\ncheck = false\n[git]\nenabled = false\n'
-                               % (str(agents).lower(), str(autohide).lower()), encoding='utf-8')
+                               % (sidebar, str(agents).lower(), agents_w, str(autohide).lower()),
+                               encoding='utf-8')
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join([*actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), self.proj.as_posix(), self.file.as_posix(),
@@ -92,17 +95,18 @@ class SidebarSplit(unittest.TestCase):
     # the sidebar divider at x=240
 
     def test_drag_from_editor_side_resizes_without_selecting(self):
-        # the handle's last ~3 px overlap the editor: the press must stay the splitter's
+        # the handle's last ~3 px overlap the editor: the press must stay the splitter's; the
+        # divider moves as far as the pointer, 2 px to its left
         out = self.run_editor(['wait 200', 'move 242 400', 'down', 'wait 60',
                                'move 330 400', 'wait 60', 'print-state', 'up', 'wait 50'])
         self.assertIn('sel=0', out)
-        self.assertEqual(self.config_value('sidebar_width'), 330)
+        self.assertEqual(self.config_value('sidebar_width'), 328)
 
     def test_drag_from_panel_side_resizes(self):
         out = self.run_editor(['wait 200', 'move 238 400', 'down', 'wait 60',
                                'move 330 400', 'wait 60', 'print-state', 'up', 'wait 50'])
         self.assertIn('sel=0', out)
-        self.assertEqual(self.config_value('sidebar_width'), 330)
+        self.assertEqual(self.config_value('sidebar_width'), 332)
 
     def test_drag_over_text_keeps_resize_cursor(self):
         # issue #48: the editor's I-beam took over while the drag crossed the text
@@ -110,7 +114,45 @@ class SidebarSplit(unittest.TestCase):
                          'echo shape=', 'print-shape', 'echo state=', 'print-state', 'up', 'wait 50'])
         self.assertEqual(int(v['shape']), CUR_EW)
         self.assertIn('sel=0', v['state'])
-        self.assertEqual(self.config_value('sidebar_width'), 500)
+        self.assertEqual(self.config_value('sidebar_width'), 502)
+
+    def test_click_without_moving_leaves_the_divider(self):
+        # the press used to put the divider under the pointer, up to 3 px away
+        for x in (237, 243):
+            self.run_editor(['wait 200', 'move %d 400' % x, 'down', 'wait 60', 'up', 'wait 60'])
+            self.assertEqual(self.config_value('sidebar_width'), 240)
+
+    def test_click_keeps_a_width_the_layout_narrowed(self):
+        # 900 pt asked for, but the editor keeps 240 of the 1000 next to the 240 pt explorer: the
+        # panel shows 520 wide, its divider at 480; a click on it must not save the narrowed width
+        self.run_editor(['wait 300', 'move 480 400', 'down', 'wait 60', 'up', 'wait 60'],
+                        agents=True, agents_w=900)
+        self.assertEqual(self.config_value('agents_width'), 900)
+
+    def test_a_drag_back_to_the_press_follows_it(self):
+        # the press point is not special once the pointer has moved: the divider comes back with it
+        self.run_editor(['wait 200', 'move 242 400', 'down', 'wait 60', 'move 330 400', 'wait 60',
+                         'move 242 400', 'wait 60', 'up', 'wait 60'])
+        self.assertEqual(self.config_value('sidebar_width'), 240)
+
+    def test_double_click_resets_the_width(self):
+        self.run_editor(['wait 200', 'move 300 400', 'down', 'up', 'down', 'up', 'wait 60'], sidebar=300)
+        self.assertEqual(self.config_value('sidebar_width'), 240)
+        self.run_editor(['wait 300', 'move 520 400', 'down', 'up', 'down', 'up', 'wait 60'],
+                        agents=True, agents_w=480)
+        self.assertEqual(self.config_value('agents_width'), 380)
+
+    def test_a_drag_after_a_reset_the_window_narrowed_follows_the_pointer(self):
+        # explorer 400 pt and the editor's 240 leave the agents panel 360 of its 380 by default:
+        # after the double-click its divider is at 640, and a drag 20 px right puts it at 660
+        self.run_editor(['wait 300', 'move 700 400', 'down', 'up', 'down', 'wait 60', 'move 720 400',
+                         'wait 60', 'up', 'wait 60'], agents=True, sidebar=400, agents_w=300)
+        self.assertEqual(self.config_value('agents_width'), 340)
+
+    def test_drag_after_a_double_click_starts_at_the_default_width(self):
+        self.run_editor(['wait 200', 'move 300 400', 'down', 'up', 'down', 'wait 60', 'move 320 400',
+                         'wait 60', 'up', 'wait 60'], sidebar=300)
+        self.assertEqual(self.config_value('sidebar_width'), 260)
 
     def test_press_on_explorer_half_does_not_open_a_file(self):
         # the explorer is drawn before the divider: its row under the strip must not take the press
@@ -147,7 +189,7 @@ class SidebarSplit(unittest.TestCase):
                         agents=True)
         self.assertEqual(int(v['shape']), CUR_EW)
         self.assertIn('sel=0', v['state'])
-        self.assertEqual(self.config_value('agents_width'), 480)
+        self.assertEqual(self.config_value('agents_width'), 478)
 
     def test_agents_divider_hover_shows_resize_cursor_on_both_halves(self):
         v = self.values(['wait 300', 'move 618 400', 'wait 60', 'echo left=', 'print-shape',

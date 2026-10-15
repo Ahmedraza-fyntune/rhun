@@ -1,5 +1,6 @@
 name = VHDL
 files = *.vhd *.vhdl
+icon = code orange
 case = insensitive
 comment = --
 block = /* */

@@ -41,7 +41,13 @@ FN doc_new
 FN doc_free
     push rbx
     mov rbx, rdi
-    call git_doc_free
+    cmp rdi, [rip + g_long_doc]   # its long line's classes and matched brackets go too (another doc
+    jne 1f                        # may get its address)
+    mov qword ptr [rip + g_long_doc], 0
+1:  cmp rdi, [rip + g_br_doc]
+    jne 2f
+    mov qword ptr [rip + g_br_doc], 0
+2:  call git_doc_free
     mov rdi, rbx
     lea rsi, [rbx + DOC_undo]
     call urec_clear
@@ -64,6 +70,10 @@ FN doc_free
     call mem_free
     mov rdi, [rbx + DOC_path]
     call mem_free
+    mov rdi, [rbx + DOC_real]
+    call mem_free
+    mov rdi, rbx
+    call watch_hops_free
     mov rdi, [rbx + DOC_img]
     call iv_free
     mov rdi, rbx
@@ -944,9 +954,8 @@ FN doc_set_path
     mov qword ptr [rbx + DOC_disk_until], 0
     and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
     # Every path assignment participates: explorer, pickers, restored tabs, images and rename.
-    mov rdi, [rbx + DOC_path]
+    mov rdi, rbx
     call watch_doc
-    mov [rbx + DOC_wd], rax
     pop rbx
     ret
 
@@ -971,8 +980,32 @@ FN doc_note_eol
 FN doc_normalize_eol
     mov dword ptr [rdi + DOC_crlf], 0
     mov r9, rdx
+    # the text up to the first CR stays as it is: found 16 bytes at a time, and with no CR at all
+    # nothing is written
+    mov eax, 0x0d0d0d0d
+    movd xmm1, eax
+    pshufd xmm1, xmm1, 0
     xor ecx, ecx
-    xor edx, edx                # write index
+1:  lea r8, [rcx + 16]
+    cmp r8, r9
+    ja 2f
+    movdqu xmm0, [rsi + rcx]
+    pcmpeqb xmm0, xmm1
+    pmovmskb eax, xmm0
+    test eax, eax
+    jnz 21f
+    mov rcx, r8
+    jmp 1b
+21: bsf eax, eax
+    add rcx, rax
+    jmp 22f
+2:  cmp rcx, r9
+    jae 5f
+    cmp byte ptr [rsi + rcx], 13
+    je 22f
+    inc rcx
+    jmp 2b
+22: mov rdx, rcx                # write index
 3:  cmp rcx, r9
     jae 5f
     movzx eax, byte ptr [rsi + rcx]
@@ -1018,7 +1051,8 @@ FN doc_load
     call file_stamp
     mov [rbx + DOC_mtime], rax
     mov rdi, r12
-    call file_read_all
+    mov esi, GAP_MIN * 4
+    call file_read_all_extra
     test rax, rax
     jz .Ldl_error
     mov r13, rax
@@ -1044,16 +1078,47 @@ FN doc_load
     mov [rbx + DOC_cap], r15
     mov [rbx + DOC_gs], r14
     mov [rbx + DOC_ge], r15
-    # line index
+    # line index: newlines counted 16 bytes at a time (a mask's bits added up), then the rest
+    mov ecx, 0x0a0a0a0a
+    movd xmm1, ecx
+    pshufd xmm1, xmm1, 0
     xor ecx, ecx
     mov edx, 1
-6:  cmp rcx, r14
+6:  lea r8, [rcx + 16]
+    cmp r8, r14
+    ja 62f
+    movdqu xmm0, [rax + rcx]
+    pcmpeqb xmm0, xmm1
+    pmovmskb r9d, xmm0
+    mov rcx, r8
+    test r9d, r9d
+    jz 6b
+    mov r10d, r9d
+    shr r10d, 1
+    and r10d, 0x5555
+    sub r9d, r10d
+    mov r10d, r9d
+    shr r10d, 2
+    and r9d, 0x3333
+    and r10d, 0x3333
+    add r9d, r10d
+    mov r10d, r9d
+    shr r10d, 4
+    add r9d, r10d
+    and r9d, 0x0f0f
+    mov r10d, r9d
+    shr r10d, 8
+    add r9d, r10d
+    and r9d, 0x1f
+    add rdx, r9
+    jmp 6b
+62: cmp rcx, r14
     jae 7f
     cmp byte ptr [rax + rcx], 10
     jne 61f
     inc rdx
 61: inc rcx
-    jmp 6b
+    jmp 62b
 7:  mov [rsp], rdx
     mov rdi, rbx
     mov rsi, rdx
@@ -1063,7 +1128,24 @@ FN doc_load
     mov qword ptr [r8], 0
     mov edx, 1
     xor ecx, ecx
-8:  cmp rcx, r14
+8:  lea r10, [rcx + 16]         # each newline of a block in turn, the lowest bit of its mask
+    cmp r10, r14
+    ja 82f
+    movdqu xmm0, [r9 + rcx]
+    pcmpeqb xmm0, xmm1
+    pmovmskb r11d, xmm0
+83: test r11d, r11d
+    jz 84f
+    bsf eax, r11d
+    lea rax, [rcx + rax + 1]
+    mov [r8 + rdx*8], rax
+    inc rdx
+    lea eax, [r11 - 1]
+    and r11d, eax
+    jmp 83b
+84: add rcx, 16
+    jmp 8b
+82: cmp rcx, r14
     jae 9f
     cmp byte ptr [r9 + rcx], 10
     jne 81f
@@ -1071,7 +1153,7 @@ FN doc_load
     mov [r8 + rdx*8], rax
     inc rdx
 81: inc rcx
-    jmp 8b
+    jmp 82b
 9:  mov [rbx + DOC_nlines], rdx
     mov rdi, [rbx + DOC_lhash]
     mov rcx, rdx
@@ -1234,9 +1316,8 @@ FN doc_save
     and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED
     mov qword ptr [rbx + DOC_disk_seen], 0
     # Save As can create a directory that did not exist when the path was assigned.
-    mov rdi, [rbx + DOC_path]
+    mov rdi, rbx
     call watch_doc
-    mov [rbx + DOC_wd], rax
 7:  mov rax, r12
     EPILOGUE
 .Lds_nopath:

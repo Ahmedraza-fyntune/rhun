@@ -1,5 +1,6 @@
 name = Solidity
 files = *.sol
+icon = ethereum blue
 comment = //
 block = /* */
 string = " \

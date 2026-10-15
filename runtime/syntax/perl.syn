@@ -1,5 +1,6 @@
 name = Perl
 files = *.pl *.pm *.t
+icon = perl blue
 first_line = perl
 comment = #
 region = =pod =cut comment multiline bol

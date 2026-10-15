@@ -4,6 +4,7 @@
 .equ ID_EDITOR, 0x1001
 .equ ID_EDSCROLL, 0x1002
 .equ ID_EDHSCROLL, 0x1004          # along the bottom, when lines do not wrap
+.equ CLS_LONG, 4096                # bytes of a line whose classes are kept across frames
 .equ WIDEST_FULL, 1 << 20       # bytes measured again on every change (about a millisecond)
 .equ WIDEST_VISIBLE, 1 << 16    # total bytes measured from visible lines while editing a large text
 .equ WIDEST_PAUSE, 400          # ms without edits before a longer text is measured again
@@ -37,10 +38,13 @@ widest_due: .quad 0             # time_ms when a long text paused in doc_widest 
 .p2align 3
 g_blink_t0: .quad 0
 blink_seen: .long 0             # the half of the blink the last frame was asked for
+caret_frame: .long 0            # this frame drew the caret that has the keyboard (ed_caret_shown)
+caret_seen: .long 0             # the last frame did: only then is there a caret to blink
 classes: .zero SB_SIZE          # per-byte syntax class for the line being drawn
 clip_sb: .zero SB_SIZE
-.globl g_ed_find, g_ed_find_case
+.globl g_ed_find
 g_ed_find: .zero SB_SIZE        # find highlight text (set by the find bar)
+
 g_ed_find_case: .long 0
 .p2align 3
 g_carets_buf: .space 8 * 1024
@@ -201,8 +205,7 @@ FN ed_move
     jz .Lmv_set_h
     mov r14, rdx
     jmp .Lmv_set_h
-1:  lea rax, [rip + .Lmv_table]
-    mov eax, r12d
+1:  mov eax, r12d
     cmp eax, 0
     je .Lmv_left
     cmp eax, 1
@@ -370,9 +373,11 @@ FN ed_move
 6:  call ed_touch
 .Lmv_ret:
     EPILOGUE
+
 .Lmv_fast_ret:
     ret
 .Lmv_table:
+
 
 # page_lines() -> visible lines - 1 (at least 1)
 page_lines:
@@ -3035,7 +3040,7 @@ FN cmd_redo
 
 # ---- drawing ----
 
-# editor_metrics(doc) -> eax gutter width
+# editor_gutter(doc) -> eax gutter width
 editor_gutter:
     cmp qword ptr [rdi + DOC_diff], 0
     jne diffview_gutter
@@ -3060,6 +3065,22 @@ editor_gutter:
     ret
 2:  M eax, MI_16
     ret
+
+# ed_top_inside(doc): the view starts at the last line when the text ends above its top line. Text
+#   replaced under a view that is kept (a reload, a diff fetched again, a reopened tab) can do that,
+#   and a wrapped view reads the rows of its top line first (its clamp, a click in it).
+FN ed_top_inside
+    mov rax, [rdi + DOC_nlines]
+    dec rax
+    mov rcx, [rdi + DOC_scrolly]
+    sar rcx, 8
+    cmp rcx, rax
+    jle 1f
+    mov [rdi + DOC_wtop], rax
+    mov qword ptr [rdi + DOC_woff], 0
+    shl rax, 8
+    mov [rdi + DOC_scrolly], rax
+1:  ret
 
 # clamp_scroll(doc)
 clamp_scroll:
@@ -3177,15 +3198,17 @@ pos_at_point:
     # line
     mov eax, r13d
     sub eax, [rip + g_ed_y]
+    movsxd rax, eax
     # g_lh is 32 bits: a 64-bit multiply would take g_cw along as its high half
     movsxd rcx, dword ptr [rip + g_lh]
     imul rcx, [rbx + DOC_scrolly]
     sar rcx, 8
-    add eax, ecx
+    add rax, rcx                # 64 bits: past 2^31 px a 32-bit sum went negative, to line 1
     jns 1f
     xor eax, eax
-1:  xor edx, edx
-    div dword ptr [rip + g_lh]
+1:  movsxd rcx, dword ptr [rip + g_lh]
+    xor edx, edx
+    div rcx
     mov r14, rax
     cmp r14, [rbx + DOC_nlines]
     jb 2f
@@ -3474,8 +3497,9 @@ FN editor_draw
     cmp dword ptr [rip + g_cursor], CUR_DEFAULT
     jne 1f
     mov dword ptr [rip + g_cursor], CUR_TEXT
-1:  # wheel
-    mov eax, [rip + g_scroll_y]
+1:  # wheel (sideways with Shift: wheel_xy)
+    call wheel_xy
+    mov eax, edx
     test eax, eax
     jz 2f
     cmp dword ptr [rip + cfg_word_wrap], 0
@@ -3491,7 +3515,7 @@ FN editor_draw
     idiv rcx
     add [rbx + DOC_scrolly], rax
     mov dword ptr [rip + g_dirty], 1
-2:  mov eax, [rip + g_scroll_x]
+2:  call wheel_xy
     test eax, eax
     jz 3f
     cmp dword ptr [rip + cfg_word_wrap], 0
@@ -3593,8 +3617,6 @@ FN editor_draw
     call word_at
     mov [rbx + DOC_anchor], rax
     mov [rbx + DOC_cur], rdx
-    mov [rip + sel_word_a], rax
-    mov [rip + sel_word_b], rdx
     call ed_touch
     mov dword ptr [rip + g_reveal], 0
     jmp .Led_noinput
@@ -3646,7 +3668,11 @@ FN editor_draw
     jne 45f
     mov rdi, rbx
     call vim_view
-45: cmp dword ptr [rip + g_reveal], 0
+45: test dword ptr [rbx + DOC_flags], DF_REVEAL
+    jz 46f
+    and dword ptr [rbx + DOC_flags], ~DF_REVEAL
+    mov dword ptr [rip + g_reveal], 1
+46: cmp dword ptr [rip + g_reveal], 0
     je 7f
     mov dword ptr [rip + g_reveal], 0
     mov rdi, rbx
@@ -3807,15 +3833,26 @@ FN editor_draw
     mov ecx, [rip + g_ed_h]
     COLOR r8d, T_BORDER
     call gfx_fill
-8:  # scrollbar
+8:  # scrollbar: px in 64 bits, a million lines' offset overflows 32. ui_scrollbar takes i32, so a
+    # document past 2^31 px goes in units of 2^k px, the whole of it still under the thumb.
     mov rax, [rbx + DOC_nlines]
-    add eax, 1
-    imul eax, [rip + g_lh]
+    inc rax
+    movsxd rcx, dword ptr [rip + g_lh]
+    imul rax, rcx
     cmp dword ptr [rip + cfg_scroll_past_end], 0
     je 81f
-    add eax, [rip + g_ed_h]
-    sub eax, [rip + g_lh]
-81: mov [rsp + 48], eax         # content px
+    movsxd rcx, dword ptr [rip + g_ed_h]
+    add rax, rcx
+    movsxd rcx, dword ptr [rip + g_lh]
+    sub rax, rcx
+81: xor ecx, ecx
+82: cmp rax, 0x7fffffff
+    jle 83f
+    shr rax, 1
+    inc ecx
+    jmp 82b
+83: mov [rsp + 48], eax         # content
+    mov [rsp + 56], ecx         # k
     mov eax, [rip + g_block]
     mov [rsp + 104], eax
     call find_blocks_editor
@@ -3823,10 +3860,15 @@ FN editor_draw
     mov eax, [rip + g_block]
     mov [rsp + 108], eax
     mov rax, [rbx + DOC_scrolly]
-    imul eax, [rip + g_lh]
-    sar eax, 8
-    mov [rsp + 52], eax         # offset px
+    movsxd rcx, dword ptr [rip + g_lh]
+    imul rax, rcx
+    sar rax, 8
+    mov ecx, [rsp + 56]
+    sar rax, cl
+    mov [rsp + 52], eax         # offset
+    mov [rsp + 60], eax         # as drawn: a frame that leaves it writes nothing back
     mov eax, [rip + g_ed_h]
+    shr eax, cl
     push rax
     mov eax, [rsp + 48 + 8]
     push rax
@@ -3843,13 +3885,18 @@ FN editor_draw
     add rsp, 16
     mov eax, [rsp + 104]
     mov [rip + g_block], eax
-    # scrollbar drag writes pixels back
+    # scrollbar drag writes pixels back when it moved them; the release frame leaves the offset,
+    # and a round trip through px would round the scroll down
     cmp dword ptr [rsp + 108], 0
     jne 91f
     cmp dword ptr [rip + g_active], ID_EDSCROLL
     jne 91f
     mov eax, [rsp + 52]
+    cmp eax, [rsp + 60]
+    je 91f
     movsxd rax, eax
+    mov ecx, [rsp + 56]
+    shl rax, cl
     shl rax, 8
     cqo
     movsxd rcx, dword ptr [rip + g_lh]
@@ -4025,8 +4072,48 @@ draw_line:
 1:  mov [rsp + 32], rax         # to (offset)
     mov eax, [rip + dl_from]
     mov [rsp + 96], rax         # from (offset)
-    # classes for the whole line (cached across the rows of one line)
-    cmp [rip + cls_doc], rbx
+    # classes for the whole line (cached across the rows of one line; a long one's across frames,
+    # which tokenized all of a minified file's line on every frame)
+    cmp r15, CLS_LONG
+    jb 10f
+    cmp [rip + g_long_doc], rbx
+    jne 11f
+    cmp [rip + long_line], r12
+    jne 11f
+    cmp [rip + long_len], r15
+    jne 11f
+    mov rax, [rbx + DOC_version]
+    cmp [rip + long_ver], rax
+    jne 11f
+    mov rax, [rbx + DOC_svalid]
+    cmp [rip + long_svalid], rax
+    jne 11f
+    mov rax, [rbx + DOC_lang]
+    cmp [rip + long_lang], rax
+    je 12f
+11: mov [rip + g_long_doc], rbx
+    mov [rip + long_line], r12
+    mov [rip + long_len], r15
+    mov rax, [rbx + DOC_version]
+    mov [rip + long_ver], rax
+    mov rax, [rbx + DOC_svalid]
+    mov [rip + long_svalid], rax
+    mov rax, [rbx + DOC_lang]
+    mov [rip + long_lang], rax
+    lea rdi, [rip + long_cls]
+    mov qword ptr [rdi + SB_len], 0
+    lea rsi, [r15 + 16]
+    call sb_reserve
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r14
+    mov rcx, r15
+    mov r8, [rip + long_cls + SB_ptr]
+    call syntax_line
+12: mov rax, [rip + long_cls + SB_ptr]
+    mov [rip + cls_ptr], rax
+    jmp 3f
+10: cmp [rip + cls_doc], rbx
     jne 2f
     cmp [rip + cls_line], r12
     jne 2f
@@ -4035,7 +4122,7 @@ draw_line:
     jne 2f
     mov rax, [rbx + DOC_svalid]
     cmp [rip + cls_svalid], rax
-    je 3f
+    je 13f
 2:  mov [rip + cls_doc], rbx
     mov [rip + cls_line], r12
     mov rax, [rbx + DOC_version]
@@ -4052,6 +4139,8 @@ draw_line:
     mov rcx, r15
     mov r8, [rip + classes + SB_ptr]
     call syntax_line
+13: mov rax, [rip + classes + SB_ptr]
+    mov [rip + cls_ptr], rax
 3:  # x origin
     mov eax, [rip + g_ed_tx]
     sub eax, [rbx + DOC_scrollx]
@@ -4377,13 +4466,38 @@ draw_line:
 82: inc dword ptr [rsp + 64]
     inc r13
     jmp .Ldl_glyph
-9:  lea rdi, [r14 + r13]
+    # a glyph wholly left of the clip (two cells, a wide one's) only moves the column: a long line
+    # scrolled sideways drew all of its text up to the window's left edge every frame
+9:  mov ecx, [rip + g_cw]
+    mov eax, [rsp + 80]
+    lea eax, [rax + rcx*2]
+    cmp eax, [rip + g_cv + CV_cx0]
+    jg 93f
+    movzx eax, byte ptr [r14 + r13]
+    lea ecx, [rax - 0x21]
+    cmp ecx, 0x7e - 0x21
+    ja 92f
+    inc dword ptr [rsp + 64]
+    inc r13
+    jmp .Ldl_glyph
+92: lea rdi, [r14 + r13]
+    mov rsi, r15
+    sub rsi, r13
+    call utf8_decode
+    mov [rsp + 84], edx
+    mov edi, eax
+    call cp_width
+    add [rsp + 64], eax
+    mov eax, [rsp + 84]
+    add r13, rax
+    jmp .Ldl_glyph
+93: lea rdi, [r14 + r13]
     mov rsi, r15
     sub rsi, r13
     call utf8_decode
     mov [rsp + 84], edx         # byte length
     mov [rsp + 88], eax         # codepoint
-    mov rcx, [rip + classes + SB_ptr]
+    mov rcx, [rip + cls_ptr]
     movzx ecx, byte ptr [rcx + r13]
     lea rdx, [rip + g_theme]
     mov r9d, [rdx + rcx*4 + 4*T_SYN]
@@ -4480,6 +4594,31 @@ draw_box:
 match_brackets:
     PROLOGUE 32
     mov rbx, rdi
+    # found again only when what it depends on changed: the search walks up to 100,000 bytes, on
+    # every frame while the caret is at a bracket whose partner is far or missing
+    cmp [rip + g_br_doc], rbx
+    jne 0f
+    mov rax, [rbx + DOC_version]
+    cmp [rip + br_ver], rax
+    jne 0f
+    mov rax, [rbx + DOC_cur]
+    cmp [rip + br_cur], rax
+    jne 0f
+    mov rax, [rbx + DOC_anchor]
+    cmp [rip + br_anchor], rax
+    jne 0f
+    mov eax, [rip + cfg_match_brackets]
+    cmp [rip + br_on], eax
+    je 9f
+0:  mov [rip + g_br_doc], rbx
+    mov rax, [rbx + DOC_version]
+    mov [rip + br_ver], rax
+    mov rax, [rbx + DOC_cur]
+    mov [rip + br_cur], rax
+    mov rax, [rbx + DOC_anchor]
+    mov [rip + br_anchor], rax
+    mov eax, [rip + cfg_match_brackets]
+    mov [rip + br_on], eax
     mov qword ptr [rip + g_br], -1
     mov qword ptr [rip + g_br + 8], -1
     cmp dword ptr [rip + cfg_match_brackets], 0
@@ -4562,17 +4701,14 @@ draw_caret:
     jne 9f
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 9f
-    cmp dword ptr [rip + g_win_focused], 0
-    je 9f
-    # off in the odd halves of the blink, on when it does not blink
-    call ed_blink_phase
-    cmp eax, -1
-    je 1f
-    test eax, 1
-    jnz 9f
-1:  mov edi, [rip + g_caret_x]
+    mov edi, [rip + g_caret_x]
     cmp edi, [rip + g_ed_tx]
     jl 9f
+    mov dword ptr [rip + caret_frame], 1     # on screen: a caret to blink
+    call ed_caret_shown
+    test eax, eax
+    jz 9f
+    mov edi, [rip + g_caret_x]
     # vim: a block over the character outside insert mode
     cmp dword ptr [rip + cfg_vim], 0
     je 11f
@@ -4703,23 +4839,42 @@ FN ed_clip_linewise
     jmp memeq
 1:  ret
 
-# blink_elapsed() -> ms since the last caret activity, -1 if the caret does not blink (turned off,
-# not focused, BLINK_FOR idle)
+# blink_elapsed() -> ms since the last caret activity, -1 if no caret blinks (turned off, the last
+# frame drew no caret with the keyboard, the window does not have it, BLINK_FOR idle); 0 while the
+# mouse button is held (a drag moves the caret)
 blink_elapsed:
-    cmp qword ptr [rip + g_doc], 0
-    je 1f
     cmp dword ptr [rip + cfg_cursor_blink], 0
     je 1f
-    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
-    jne 1f
     cmp dword ptr [rip + g_win_focused], 0
+    je 1f
+    cmp dword ptr [rip + caret_seen], 0
     je 1f
     call time_ms
     sub rax, [rip + g_blink_t0]
     cmp rax, BLINK_FOR
-    jbe 2f
-1:  mov rax, -1
+    ja 1f
+    test dword ptr [rip + g_mdown], 1 << BTN_LEFT
+    jz 2f
+    xor eax, eax
 2:  ret
+1:  mov rax, -1
+    ret
+
+# ed_caret_shown() -> eax 1 when the caret with the keyboard shows now: the window has the keyboard,
+#   and the caret is in an even half of its blink or does not blink
+FN ed_caret_shown
+    xor eax, eax
+    cmp dword ptr [rip + g_win_focused], 0
+    je 9f
+    call ed_blink_phase
+    mov ecx, eax
+    mov eax, 1
+    cmp ecx, -1
+    je 9f
+    test ecx, 1
+    jz 9f
+    xor eax, eax
+9:  ret
 
 # ed_blink_timeout() -> ms until the caret toggles, -1 if not blinking
 FN ed_blink_timeout
@@ -4742,6 +4897,54 @@ FN ed_blink_phase
     mov ecx, BLINK_MS
     div rcx
 1:  ret
+
+# ed_caret_draw(x, y, w, h): a text field's caret with the keyboard (ui_textfield, ui_textarea,
+#   vim's command line), in its rect: noted for the blink when any of it is inside the clip (a field
+#   scrolled out of view does not blink), and drawn while the blink shows it
+FN ed_caret_draw
+    PROLOGUE 16
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    mov r8d, edi                # across: max(x, the clip's left) below min(x + w, its right)
+    mov eax, [rip + g_cv + CV_cx0]
+    cmp r8d, eax
+    cmovl r8d, eax
+    lea r9d, [rdi + rdx]
+    mov eax, [rip + g_cv + CV_cx1]
+    cmp r9d, eax
+    cmovg r9d, eax
+    cmp r8d, r9d
+    jge 1f
+    mov r8d, esi                # and down
+    mov eax, [rip + g_cv + CV_cy0]
+    cmp r8d, eax
+    cmovl r8d, eax
+    lea r9d, [rsi + rcx]
+    mov eax, [rip + g_cv + CV_cy1]
+    cmp r9d, eax
+    cmovg r9d, eax
+    cmp r8d, r9d
+    jge 1f
+    mov dword ptr [rip + caret_frame], 1
+1:  call ed_caret_shown
+    test eax, eax
+    jz 9f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_CURSOR
+    call gfx_fill
+9:  EPILOGUE
+
+# ed_blink_frame(): the frame is drawn: whether it had a caret to blink
+FN ed_blink_frame
+    mov eax, [rip + caret_frame]
+    mov [rip + caret_seen], eax
+    mov dword ptr [rip + caret_frame], 0
+    ret
 
 # ed_blink_tick(): a frame each time the caret turns on or off, and when it stops blinking
 FN ed_blink_tick
@@ -4776,7 +4979,8 @@ pair_close: .asciz ")]}\"'`"
 
 # doc_widest(doc) -> rax columns of its widest line, tabs and wide characters as drawn; measured
 #   again when its text or the tab width changed. Past WIDEST_FULL bytes the whole text is measured
-#   once editing pauses; meanwhile short lines on screen and the caret can only widen it.
+#   once editing pauses, and on the frame after its first; meanwhile short lines on screen and the
+#   caret can only widen it.
 FN doc_widest
     PROLOGUE 16
     mov rbx, rdi
@@ -4797,14 +5001,21 @@ FN doc_widest
     mov [rsp + 8], rdx
     cmp qword ptr [rsp], WIDEST_FULL
     jbe 7f
+    # a long text never measured: its first frame takes the lines on screen, the next one all
+    cmp qword ptr [rbx + DOC_wkey], 0
+    jne 71f
+    mov qword ptr [rbx + DOC_wkey], 2  # even: no key of a text
     call time_ms
+    mov [rip + widest_due], rax
+    jmp 72f
+71: call time_ms
     sub rax, [rbx + DOC_lastedit]
     cmp rax, WIDEST_PAUSE
     jae 7f
     mov rax, [rbx + DOC_lastedit]
     add rax, WIDEST_PAUSE
     mov [rip + widest_due], rax
-    call widest_visible
+72: call widest_visible
     cmp rax, [rbx + DOC_wcols]
     jbe 8f
     mov [rbx + DOC_wcols], rax
@@ -4993,8 +5204,11 @@ hscroll_extent:
     mov [rip + hs_on], eax
     ret
 
-# hscroll_clamp(): the view goes no further right than the widest line (rbx doc)
+# hscroll_clamp(): the view goes no further right than the widest line (rbx doc); not while that
+#   width is the first frame's guess (doc_widest), which would undo a view a reopened tab restored
 hscroll_clamp:
+    cmp qword ptr [rbx + DOC_wkey], 2
+    je 2f
     mov eax, [rip + hs_content]
     sub eax, [rip + hs_view]
     jns 1f
@@ -5074,12 +5288,16 @@ FN editor_scroll_dump
 dl_to: .long -1
 .p2align 3
 g_br: .quad -1, -1
+.globl g_br_doc
+g_br_doc: .quad 0               # what g_br was found for: doc (0: nothing), version, caret, anchor, setting
+br_ver: .quad 0
+br_cur: .quad 0
+br_anchor: .quad 0
+br_on: .long 0
 .bss
 .p2align 3
-sel_word_a: .quad 0
 disk_edge: .long 0
 disk_tint: .long 0
-sel_word_b: .quad 0
 last_indent: .long 0
 .globl g_ed_x, g_ed_y, g_ed_w, g_ed_h, g_ed_tx
 .globl g_caret_x, g_caret_y, g_caret_ok
@@ -5093,6 +5311,15 @@ cls_doc: .quad 0
 cls_line: .quad 0
 cls_ver: .quad 0
 cls_svalid: .quad 0
+cls_ptr: .quad 0                # the classes of the line being drawn: classes', or long_cls's
+.globl g_long_doc
+g_long_doc: .quad 0             # a long line's classes, kept across frames: its doc (0: none), and
+long_line: .quad 0              # what they depend on
+long_len: .quad 0
+long_ver: .quad 0
+long_svalid: .quad 0
+long_lang: .quad 0
+long_cls: .zero SB_SIZE
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0

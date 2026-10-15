@@ -1,5 +1,6 @@
 name = Clojure
 files = *.clj *.cljs *.cljc *.edn *.el *.lisp *.cl *.scm *.ss *.rkt *.fnl
+icon = clojure green
 comment = ;
 string = " \
 ident = -!?*+/<>=.

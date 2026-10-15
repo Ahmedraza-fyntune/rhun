@@ -9,7 +9,6 @@
 .globl wb_starts, wb_rows
 wb_starts: .zero 4 * (MAXROWS + 1)     # byte offset of each row in the line, last = length
 wb_rows: .long 0
-wb_cols: .long 0
 
 .text
 

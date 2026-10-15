@@ -1,5 +1,6 @@
 name = Dockerfile
 files = Dockerfile *.dockerfile Containerfile
+icon = docker blue
 comment = #
 string = " \
 string = '

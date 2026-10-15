@@ -1,0 +1,20 @@
+// V sample
+module main
+
+#flag -I @VMODROOT/include
+import os
+
+@[heap]
+struct Point {
+mut:
+	tags map[string]chan int
+}
+
+fn main() {
+	quote := `"`
+	path := r'C:\dir\'
+	msg := $if windows { c'win' } $else { 'other ${quote}' }
+	p := &Point(nil)
+	dump(p)
+	println(@FILE + path + msg + os.args[0])
+}

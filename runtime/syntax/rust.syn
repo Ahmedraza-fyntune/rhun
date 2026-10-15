@@ -1,5 +1,6 @@
 name = Rust
 files = *.rs
+icon = rust orange
 comment = //
 block = /* */
 region = r#" "# string multiline

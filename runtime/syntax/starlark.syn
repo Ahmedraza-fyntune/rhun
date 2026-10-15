@@ -1,5 +1,6 @@
 name = Starlark
 files = BUILD BUILD.bazel WORKSPACE WORKSPACE.bazel MODULE.bazel *.bzl *.star *.bazel Tiltfile
+icon = bazel green
 comment = #
 mstring = """ \
 string = " \

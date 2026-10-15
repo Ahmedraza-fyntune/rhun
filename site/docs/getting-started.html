@@ -6,7 +6,7 @@
 <pre><code>curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh</code></pre>
 <h3>Windows</h3>
 <p>Paste this into PowerShell, then open a new terminal to use the <code>rhun</code> command.</p>
-<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))"</code></pre>
+<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; &amp; ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))"</code></pre>
 <p>Prefer a download? Get an archive from <a href="https://github.com/vshvedov/rhun/releases/latest">Releases</a>. On Windows, extract the ZIP and open <code>rhun.exe</code>. Keep <code>rhun.com</code> beside it for terminal use.</p>
 </section>
 <section id="open">
@@ -15,6 +15,7 @@
 <pre><code>rhun .</code></pre>
 <p>Use <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>O</kbd> to choose a folder, or <kbd>Ctrl</kbd> + <kbd>O</kbd> for a single file. A project remembers its tabs and layout when you return.</p>
 <div class="doc-note"><strong>On a Mac</strong><p>Most shortcuts use <kbd>Cmd</kbd> in place of <kbd>Ctrl</kbd>, and <kbd>Option</kbd> for <kbd>Alt</kbd>. Keep <kbd>Control</kbd> for <kbd>Tab</kbd>, <kbd>H</kbd>, and the terminal shortcut <kbd>`</kbd>.</p></div>
+<p>For a quick edit, run <code>rhun notes.txt</code>: the window shows just the file, without the explorer or the agents panel, until you bring them back.</p>
 <p>Want a blank window? Run <code>rhun --empty</code>. For tools that need to wait until you finish editing, use <code>rhun --wait file.txt</code>.</p>
 </section>
 <section id="find-your-way">

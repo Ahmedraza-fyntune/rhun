@@ -103,22 +103,24 @@ def context(base, name, home):
     config.write_text('[updates]\ncheck = false\n[git]\nenabled = false\n'
                       '[editor]\ncursor_blink = false\n[files]\nrestore_session = false\n'
                       'restore_project = false\n')
-    return folder, dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(folder / 'config'),
-                        XDG_STATE_HOME=str(folder / 'state'), SHELL='/nonexistent')
+    env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(folder / 'config'),
+               XDG_STATE_HOME=str(folder / 'state'), SHELL='/nonexistent')
+    env.pop('GROK_HOME', None)
+    return folder, env
 
 
 def decode(packet):
     count, = struct.unpack_from('<Q', packet, 8)
     offset, rows = 32, []
     for _ in range(count):
-        kind, flags, mtime, stamp, *lengths = struct.unpack_from('<8Q', packet, offset)
-        offset += 88
+        kind, flags, mtime, stamp, *lengths = struct.unpack_from('<9Q', packet, offset)
+        offset += 96
         strings = []
         for length in lengths:
             strings.append(packet[offset:offset + length].decode())
             offset += length
         rows.append(dict(kind=kind, flags=flags, mtime=mtime, path=strings[0],
-                         cwd=strings[1], title=strings[2], badge=strings[3]))
+                         cwd=strings[1], title=strings[2], badge=strings[3], model=strings[4]))
     require(offset == len(packet), 'Worker packet has trailing or missing bytes')
     return rows
 
@@ -173,8 +175,9 @@ def check_rows(packet, reference, main, limit):
 
 
 def labels(rows):
-    return [('Claude Code' if row['kind'] == 1 else 'Codex') +
+    return [{1: 'Claude', 2: 'Codex', 3: 'Grok', 4: 'OpenCode'}[row['kind']] +
             (' [worktree: ' + row['badge'] + ']' if row['badge'] else '') +
+            (' [model: ' + row['model'] + ']' if row.get('model') else '') +
             ': ' + (row['title'] or 'Untitled session') for row in rows]
 
 

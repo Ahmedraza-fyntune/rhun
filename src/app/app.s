@@ -11,6 +11,8 @@
 .equ ID_TOG_TERM, 0x2007
 .equ ID_GIT_BTN, 0x2008
 .equ ID_PROJECT_BTN, 0x2009
+.equ ID_TAB_NEW, 0x200a           # the + after the last tab
+.equ ID_TAB_END, 0x200b           # the strip's empty end
 .equ PM_RECENT, 3                 # the project menu's first recent folder
 .equ ID_TAB, 0x2100              # + index
 .equ ID_TABX, 0x2400             # + index
@@ -64,15 +66,23 @@ tip_left: .quad 0                # time_ms when the pointer left a shown tooltip
 tip_text_id: .long 0             # the button whose tooltip is in tip_text (tip_note_text)
 tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
+tab_end_press: .long 0           # the last left press was on the tab strip's empty end
 g_side_px: .long 0
 g_agents_px: .long 0
-dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm
+dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm, 5 close all
 dlg_tab: .quad 0
 .p2align 3
 dlg_title: .quad 0               # app_confirm: the question, a line under it, the button, its function
 dlg_text: .quad 0
 dlg_ok: .quad 0
 dlg_fn: .quad 0
+dlg_cancel: .quad 0              # app_confirm's Cancel calls this when it is set
+ro_doc: .quad 0                  # ask_readonly: the file asked about, and the question
+ro_kind: .long 0                 # a close or quit that asked about it (dlg_kind), carried on after Overwrite
+ro_close: .long 0                # vim's :wq asked: Overwrite closes the file too
+ro_title: .zero 256
+ro_path: .zero 4096              # Save As onto a read-only file: that path
+ro_dir: .zero 4096
 switch_pending: .long 0          # a project switch waits on unsaved files
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
@@ -81,7 +91,9 @@ pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folder
 .globl g_shot_path
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
-split_drag: .long 0
+split_grab: .long 0             # a divider's drag: the pointer's distance from it at the press
+split_moved: .long 0            # and whether the pointer has moved since
+split_reanchor: .long 0         # a double-click reset the width: the next frame takes hold anew
 split_l_bits: .long 0           # UB_* of the dividers, hit tested before the panels
 split_r_bits: .long 0
 .globl g_editor_rect
@@ -99,29 +111,15 @@ g_file: .quad 0                  # DOC of the active tab when it shows a file (t
 FN app_init
     PROLOGUE 16
     call config_load
+    call app_sync_panels
     call theme_scan
-    # on Omarchy, follow its theme until one is picked
-    cmp qword ptr [rip + g_follow], 0
-    js 2f
-    lea rax, [rip + cfg_def_theme]
-    cmp [rip + cfg_theme], rax
-    jne 2f
-    lea rax, [rip + omarchy_id]
-    mov [rip + cfg_theme], rax
-2:  mov rdi, [rip + cfg_theme]
-    call theme_find
-    test rax, rax
-    jns 1f
-    lea rdi, [rip + cfg_def_theme]
-    call theme_find
-1:  mov rdi, rax
-    call theme_apply
+    mov edi, 1
+    call theme_settings_init
+    call theme_apply_config
     call app_load_fonts
     call syntax_load_all
     call keys_init
     call vim_sync
-    call explorer_init
-    call agents_init
     call watch_init
     call update_init
     call ai_apply
@@ -142,7 +140,19 @@ FN app_load_fonts
     mov rdx, [rip + cfg_ui_font]
     call load_font_or
     mov [rip + g_font_ui], rax
-    EPILOGUE
+    # the terminal's: the editor's unless the config names another that loads
+    mov qword ptr [rip + g_font_term], 0
+    mov rdi, [rip + cfg_term_font]
+    cmp byte ptr [rdi], 0
+    je 9f
+    call file_read_all
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call font_load
+    mov [rip + g_font_term], rax
+9:  EPILOGUE
 
 # load_font_or(builtin ptr, len, path cstr) -> FONT*
 load_font_or:
@@ -168,9 +178,11 @@ load_font_or:
 # app_set_project(dir cstr): project root for explorer, agents and session
 FN app_set_project
     mov dword ptr [rip + g_project_adopted], 0
+    mov dword ptr [rip + panels_hidden], 0 # a folder opened as such shows its panels
 set_project:
     PROLOGUE
     mov rbx, rdi
+    call app_sync_panels
     mov rdi, [rip + g_project]
     call mem_free
     mov rdi, rbx
@@ -337,6 +349,8 @@ FN app_switch_project
     cmp dword ptr [rip + g_project_adopted], 0
     je 9f
     mov dword ptr [rip + g_project_adopted], 0
+    mov dword ptr [rip + panels_hidden], 0
+    call app_sync_panels
     call session_remember_project
     call session_restore
     call app_update_title
@@ -379,33 +393,14 @@ switch_continue:
     PROLOGUE
     cmp dword ptr [rip + switch_pending], 0
     je 9f
-    xor ebx, ebx
-1:  cmp rbx, [rip + g_tabs + VEC_len]
-    jae 3f
-    mov rdi, rbx
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+    mov edi, 3
+    call ask_unsaved
     test eax, eax
-    jz 2f
-    mov [rip + dlg_tab], rbx
-    mov dword ptr [rip + dlg_kind], 3
-    mov rdi, rbx
-    call app_activate_tab
-    mov dword ptr [rip + g_focus], FOCUS_DIALOG
-    jmp 9f
-2:  inc rbx
-    jmp 1b
-3:  mov dword ptr [rip + switch_pending], 0
-4:  mov rdi, [rip + g_tabs + VEC_len]
-    test rdi, rdi
-    jz 5f
-    dec rdi
-    call app_close_tab_now
-    jmp 4b
-5:  mov byte ptr [rip + g_explorer_dir], 0
+    jnz 9f
+    mov dword ptr [rip + switch_pending], 0
+    call close_tabs_now
+    call closed_clear           # the last project's tabs are not this one's to reopen
+    mov byte ptr [rip + g_explorer_dir], 0
     mov byte ptr [rip + g_explorer_target], 0
     lea rdi, [rip + switch_path]
     call app_set_project
@@ -621,18 +616,54 @@ FN app_activate_tab
     push rdi
     call vim_leave
     pop rdi
+    mov rax, [rip + g_doc]
+    push rax
     mov [rip + g_tab_cur], rdi
     mov dword ptr [rip + g_exp_reveal], 1
     call app_sync_doc
-    call watch_show
+    pop rax
+    # a tab shows where it was scrolled, also away from the cursor: a reveal still asked for the
+    # document shown before is that one's, for when it is shown again (only while it has a tab: it
+    # may be freed already)
+    cmp rax, [rip + g_doc]
+    je 1f
+    cmp dword ptr [rip + g_reveal], 0
+    je 1f
+    mov dword ptr [rip + g_reveal], 0
+    test rax, rax
+    jz 1f
+    push rax
+    mov rdi, rax
+    call doc_tab
+    pop rdi
+    test rax, rax
+    js 1f
+    or dword ptr [rdi + DOC_flags], DF_REVEAL
+1:  call watch_show
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
-    mov dword ptr [rip + g_tabscroll_reveal], 1
-    call ed_touch
+    # the settings tab's keys go to its search field
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 2f
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
+    jne 2f
+    mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    call settings_focus
+2:  mov dword ptr [rip + g_tabscroll_reveal], 1
+    # the caret shows at once, as after a key
+    call time_ms
+    mov [rip + g_blink_t0], rax
+    mov dword ptr [rip + g_dirty], 1
     jmp app_update_title
 
 # app_update_title(): window title "name — project"
 FN app_update_title
     PROLOGUE
+    # the window takes its title once the command line or session is open: a session restoring ten
+    # tabs set it ten times before the first frame (half a millisecond each on macOS)
+    cmp dword ptr [rip + g_started], 0
+    je 9f
     lea rdi, [rip + tmp_sb]
     call sb_clear
     mov rbx, [rip + g_file]
@@ -652,6 +683,23 @@ FN app_update_title
     call sb_push_cstr
     mov rdi, [rip + tmp_sb + SB_ptr]
     PCALL P_title
+9:  EPILOGUE
+
+# doc_tab(doc) -> rax the index of its tab, or -1
+doc_tab:
+    PROLOGUE
+    mov r12, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 2f
+    mov rdi, rbx
+    call tab_at
+    cmp [rax + TAB_doc], r12
+    je 3f
+    inc rbx
+    jmp 1b
+2:  mov rbx, -1
+3:  mov rax, rbx
     EPILOGUE
 
 # app_find_tab(path) -> index or -1
@@ -682,6 +730,141 @@ FN app_find_tab
 3:  mov rax, -1
     EPILOGUE
 4:  mov rax, rbx
+    EPILOGUE
+
+# app_path_inside(path, dir) -> eax 1 when path is dir or names something inside it, compared as
+#   app_find_tab compares paths, and rdx the length of path's part that names dir
+.ifdef WINDOWS
+# Windows: each part of path that ends at a separator (or all of it), after its root, against dir by
+# win_path_equal: spellings that are the same without case may differ in length
+FN app_path_inside
+    PROLOGUE 4096
+    mov r12, rdi
+    mov r13, rsi
+    call strlen
+    mov r15, rax
+    mov rdi, r12
+    call path_rootlen
+    mov r14, rax
+    test r14, r14
+    jnz 1f
+    mov r14d, 1
+1:  cmp r14, r15
+    ja 8f
+    je 2f
+    movzx eax, byte ptr [r12 + r14]
+    cmp eax, '/'
+    je 2f
+    cmp eax, 92
+    je 2f
+3:  inc r14
+    jmp 1b
+2:  cmp r14, 4096
+    jae 8f
+    mov rdi, rsp
+    mov rsi, r12
+    mov rcx, r14
+    rep movsb
+    mov byte ptr [rdi], 0
+    mov rdi, rsp
+    mov rsi, r13
+    call win_path_equal
+    test eax, eax
+    jz 3b
+    mov eax, 1
+    mov rdx, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+.else
+FN app_path_inside
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov rdi, rsi
+    call strlen
+    mov r14, rax
+    test r14, r14
+    jz 8f
+    cmp r14, 1                  # a folder written with its slash, but not / itself
+    jbe 1f
+    cmp byte ptr [r13 + r14 - 1], '/'
+    jne 1f
+    dec r14
+1:  mov rdi, r12
+    call strlen
+    mov r15, rax
+    cmp r15, r14
+    jb 8f
+    movzx eax, byte ptr [r12 + r14]
+    test eax, eax
+    jz 2f
+    cmp eax, '/'
+    je 2f
+    cmp byte ptr [r13 + r14 - 1], '/'   # under a root such as /
+    jne 8f
+2:  mov rdi, r12
+    mov rsi, r15
+    mov rdx, r13
+    mov rcx, r14
+    call str_starts
+    mov rdx, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+.endif
+
+# app_retarget_tabs(old, new): after a rename, the tabs of old, or of the files inside it when it
+#   is a folder, take their paths under new
+FN app_retarget_tabs
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor ebx, ebx
+2:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    mov r15, [rax + TAB_doc]
+    test r15, r15
+    jz 3f
+    mov rdi, [r15 + DOC_path]
+    test rdi, rdi
+    jz 3f
+    mov rsi, r12
+    call app_path_inside
+    test eax, eax
+    jz 3f
+    mov r14, rdx                # the tab's own spelling of old ends there
+    lea rdi, [rip + tmp_sb]
+    call sb_clear
+    mov rdi, r13                # the new name without a separator at its end ("e/" in the prompt)
+    call strlen
+    mov rdx, rax
+4:  cmp rdx, 1
+    jbe 5f
+    cmp byte ptr [r13 + rdx - 1], '/'
+.ifdef WINDOWS
+    je 41f
+    cmp byte ptr [r13 + rdx - 1], 92
+.endif
+    jne 5f
+41: dec rdx
+    jmp 4b
+5:  lea rdi, [rip + tmp_sb]
+    mov rsi, r13
+    call sb_push
+    lea rdi, [rip + tmp_sb]
+    mov rsi, [r15 + DOC_path]
+    add rsi, r14
+    call sb_push_cstr
+    mov rdi, r15
+    mov rsi, [rip + tmp_sb + SB_ptr]
+    call doc_set_path
+3:  inc rbx
+    jmp 2b
+9:  call app_update_title
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # app_open_startup_path(path): initial desktop events follow argv startup precedence.
@@ -834,6 +1017,63 @@ FN app_add_tab
     mov rax, r14
     EPILOGUE
 
+# app_place_tab(i): the active tab moves to place i in the strip (the last place at most), the tabs
+#   between closing up behind it
+FN app_place_tab
+    PROLOGUE
+    mov r12, [rip + g_tab_cur]
+    test r12, r12
+    js 9f
+    mov r13, [rip + g_tabs + VEC_len]
+    dec r13
+    cmp rdi, r13
+    cmovb r13, rdi
+    mov rdi, r12
+    call tab_at
+    mov r14, [rax + TAB_kind]
+    mov r15, [rax + TAB_doc]
+1:  cmp r12, r13
+    je 3f
+    mov rdi, r12
+    call tab_at
+    # the neighbor toward the new place moves into this slot
+    mov rcx, TAB_SIZE
+    mov rdx, 1
+    cmp r12, r13
+    jb 2f
+    neg rcx
+    neg rdx
+2:  add r12, rdx
+    lea rdx, [rax + rcx]
+    mov rsi, [rdx + TAB_kind]
+    mov [rax + TAB_kind], rsi
+    mov rsi, [rdx + TAB_doc]
+    mov [rax + TAB_doc], rsi
+    jmp 1b
+3:  mov rdi, r13
+    call tab_at
+    mov [rax + TAB_kind], r14
+    mov [rax + TAB_doc], r15
+    mov [rip + g_tab_cur], r13
+    mov dword ptr [rip + g_tabscroll_reveal], 1
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# app_tab_label(i) -> cstr: the name the tab strip shows
+FN app_tab_label
+    call tab_at
+    mov rcx, rax
+    mov rax, [rcx + TAB_doc]
+    test rax, rax
+    jz 1f
+    mov rax, [rax + DOC_name]
+    ret
+1:  lea rax, [rip + .Lsettings]
+    cmp qword ptr [rcx + TAB_kind], TAB_GIT
+    jne 2f
+    lea rax, [rip + .Lgit_tab]
+2:  ret
+
 # app_detect_lang(doc)
 FN app_detect_lang
     PROLOGUE
@@ -854,7 +1094,7 @@ FN app_detect_lang
     mov qword ptr [rbx + DOC_svalid], 0
     EPILOGUE
 
-# app_new_file()
+# cmd_new_file()
 FN cmd_new_file
     call doc_new
     mov rdi, rax
@@ -865,6 +1105,14 @@ FN cmd_new_file
 FN app_close_tab_now
     PROLOGUE
     mov r12, rdi
+    cmp r12, [rip + g_tab_cur]
+    jne .Lclose_note
+    call vim_leave              # out of visual mode, as leaving the tab is
+    mov dword ptr [rip + g_reveal], 0   # one still asked for it is not the next tab's
+.Lclose_note:
+    mov rdi, r12
+    call closed_note            # for Reopen Closed Tab
+    mov rdi, r12
     call tab_at
     xor r13d, r13d
     cmp r12, [rip + g_tab_cur]
@@ -878,10 +1126,7 @@ FN app_close_tab_now
     mov rbx, [rax + TAB_doc]
     test rbx, rbx
     jz 1f
-    cmp r12, [rip + g_tab_cur]
-    jne 11f
-    call vim_leave
-11: mov rdi, rbx
+    mov rdi, rbx
     call vim_forget
     mov rdi, rbx
     call doc_free
@@ -949,6 +1194,55 @@ FN cmd_close_tab
     jmp app_close_tab
 1:  ret
 
+# cmd_close_all: close every tab. The first modified doc asks, and each answer that closes it comes
+# back here for the next; a cancel stops, with the tabs not closed yet still open
+FN cmd_close_all
+    PROLOGUE
+    mov edi, 5
+    call ask_unsaved
+    test eax, eax
+    jnz 9f
+    call close_tabs_now
+9:  EPILOGUE
+
+# ask_unsaved(kind) -> eax 1 when the first modified doc asks, in dialog kind (dlg_kind), else 0
+ask_unsaved:
+    PROLOGUE
+    mov r12d, edi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov rdi, [rax + TAB_doc]
+    call doc_dirty
+    test eax, eax
+    jz 2f
+    mov [rip + dlg_tab], rbx
+    mov [rip + dlg_kind], r12d
+    mov rdi, rbx
+    call app_activate_tab
+    mov dword ptr [rip + g_focus], FOCUS_DIALOG
+    mov eax, 1
+    EPILOGUE
+2:  inc rbx
+    jmp 1b
+3:  xor eax, eax
+    EPILOGUE
+
+# close_tabs_now(): close every tab without asking, the last first
+close_tabs_now:
+    PROLOGUE
+1:  mov rdi, [rip + g_tabs + VEC_len]
+    test rdi, rdi
+    jz 9f
+    dec rdi
+    call app_close_tab_now
+    jmp 1b
+9:  EPILOGUE
+
 FN cmd_next_tab
     mov esi, 1
     cmp dword ptr [rip + g_focus], FOCUS_TERMINAL   # in the terminal: the next terminal
@@ -979,10 +1273,19 @@ FN cmd_prev_tab
     jmp app_activate_tab
 1:  ret
 
-# cmd_save(): save, or ask for a path for untitled docs
+# cmd_save(): save, or ask for a path for untitled docs; a read-only file asks before it is replaced
 FN cmd_save
+    xor edi, edi
+    jmp save_doc
+
+# app_save_close(): vim's :wq: save, and close the file once it is saved (after Overwrite, for a
+#   read-only one)
+FN app_save_close
+    mov edi, 1
+save_doc:
     READONLY_RET
     PROLOGUE
+    mov r13d, edi
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -991,15 +1294,229 @@ FN cmd_save
     call cmd_save_as
     jmp 9f
 1:  mov rdi, rbx
+    call doc_readonly
+    test eax, eax
+    jz 3f
+    mov [rip + ro_close], r13d
+    mov rdi, rbx
+    lea rsi, [rip + save_readonly_confirmed]
+    call ask_readonly
+    jmp 9f
+3:  mov rdi, rbx
     call doc_save
     test rax, rax
     js 2f
     mov rdi, rbx
     call app_after_save
+    test r13d, r13d
+    jz 9f
+    call cmd_close_tab
     jmp 9f
 2:  lea rdi, [rip + .Lsave_failed]
     call app_toast
 9:  EPILOGUE
+
+# save_readonly_confirmed(): Overwrite, for cmd_save and :wq
+save_readonly_confirmed:
+    PROLOGUE
+    mov rbx, [rip + ro_doc]
+    cmp rbx, [rip + g_doc]
+    jne 9f
+    mov rdi, rbx
+    call doc_save_readonly
+    test rax, rax
+    js 2f
+    mov rdi, rbx
+    call app_after_save
+    cmp dword ptr [rip + ro_close], 0
+    je 9f
+    call cmd_close_tab
+    jmp 9f
+2:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+9:  EPILOGUE
+
+# doc_readonly(doc) -> eax 1 when saving it would replace a file that says not to write it: file_readonly,
+#   with a symlink followed as it is now, as the save will
+FN doc_readonly
+    mov rdi, [rdi + DOC_path]
+    test rdi, rdi
+    jnz file_readonly
+    xor eax, eax
+    ret
+
+# file_readonly(path) -> path_readonly for the file a symlink there leads to (the one a save writes),
+#   or for the path itself
+FN file_readonly
+    PROLOGUE
+    mov rbx, rdi
+    xor esi, esi
+    call link_target
+    mov r12, rax
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call path_readonly
+    mov ebx, eax
+    mov rdi, r12
+    call mem_free
+    mov eax, ebx
+    EPILOGUE
+1:  mov rdi, rbx
+    call path_readonly
+    EPILOGUE
+
+# path_readonly(path) -> eax 1 when the file there says not to write it (no write permission, or the
+#   read-only attribute on Windows) while its folder takes a new file, so a save would replace it
+#   anyway; in a folder that does not, a save fails as any other
+FN path_readonly
+    PROLOGUE
+    mov rbx, rdi
+    mov esi, 2                  # W_OK
+    SYS SYS_access
+    cmp rax, -13                # EACCES
+    jne 8f
+    mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_dirlen
+    test rax, rax
+    jnz 1f
+    cmp byte ptr [rbx], '/'
+    jne 7f
+    mov eax, 1
+1:  cmp rax, 4096
+    jae 7f
+    lea rdi, [rip + ro_dir]
+    mov rsi, rbx
+    mov rcx, rax
+    rep movsb
+    mov byte ptr [rdi], 0
+    lea rdi, [rip + ro_dir]
+    mov esi, 2
+    SYS SYS_access
+    test rax, rax
+    jnz 8f
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# doc_save_readonly(doc) -> doc_save's result: a read-only file is replaced and stays read-only. On
+#   Windows, where a read-only file cannot be replaced, the attribute is off while it is written (on
+#   the file a symlink leads to, which is the one written).
+FN doc_save_readonly
+.ifdef WINDOWS
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + DOC_path]
+    xor esi, esi
+    call link_target            # as the save will follow it
+    mov r13, rax
+    test rax, rax
+    jnz 1f
+    mov r13, [rbx + DOC_path]
+    mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call mem_dup                # the doc's paths are made again by the save
+    mov r13, rax
+1:
+    mov rdi, r13
+    mov esi, 0666
+    SYS SYS_chmod
+    mov rdi, rbx
+    call doc_save
+    mov r12, rax
+    mov rdi, r13
+    mov esi, 0444
+    SYS SYS_chmod
+    mov rdi, r13
+    call mem_free
+    mov rax, r12
+    EPILOGUE
+.else
+    jmp doc_save
+.endif
+
+# app_save_as_readonly(path): Save As onto a read-only file asks first, as a save does
+FN app_save_as_readonly
+    PROLOGUE
+    mov rbx, rdi
+    call strlen
+    cmp rax, 4096
+    jae 9f
+    lea rdi, [rip + ro_path]
+    mov rsi, rbx
+    call cstr_copy
+    mov rax, [rip + g_doc]
+    mov [rip + ro_doc], rax
+    lea rdi, [rip + ro_path]
+    call strlen
+    lea rdi, [rip + ro_path]
+    mov rsi, rax
+    call path_basename
+    mov rdi, rax
+    lea rsi, [rip + save_as_readonly_confirmed]
+    call ask_readonly_named
+9:  EPILOGUE
+
+# save_as_readonly_confirmed(): Overwrite, for Save As
+save_as_readonly_confirmed:
+    PROLOGUE
+    mov rbx, [rip + ro_doc]
+    test rbx, rbx
+    jz 9f
+    cmp rbx, [rip + g_doc]
+    jne 9f
+    mov rdi, rbx
+    lea rsi, [rip + ro_path]
+    call doc_set_path
+    mov rdi, rbx
+    call doc_save_readonly
+    test rax, rax
+    js 2f
+    mov rdi, rbx
+    call app_detect_lang
+    mov rdi, rbx
+    call app_after_save
+    call app_update_title
+    jmp 9f
+2:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+9:  EPILOGUE
+
+# ask_readonly(doc, fn): "Overwrite read-only NAME?", whose button calls fn
+ask_readonly:
+    mov [rip + ro_doc], rdi
+    mov rdi, [rdi + DOC_name]
+# ask_readonly_named(name, fn): the same for a file of that name
+ask_readonly_named:
+    PROLOGUE
+    mov r12, rsi
+    mov rbx, rdi
+    call strlen
+    cmp rax, 200
+    jbe 1f
+    mov eax, 200
+1:  mov r13, rax
+    lea rdi, [rip + ro_title]
+    lea rsi, [rip + .Lro_a]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, rbx
+    mov rcx, r13
+    rep movsb
+    lea rsi, [rip + .Lro_b]
+    call cstr_copy
+    lea rdi, [rip + ro_title]
+    lea rsi, [rip + .Lro_text]
+    lea rdx, [rip + .Lro_button]
+    mov rcx, r12
+    call app_confirm
+    EPILOGUE
 
 # app_after_save(doc): re-detect language, config reload, explorer refresh
 FN app_after_save
@@ -1042,28 +1559,13 @@ FN cmd_quit
     jne 4f
     call session_save
     mov dword ptr [rip + g_session_final], 1
-4:  # first modified doc -> ask
-    xor ebx, ebx
-1:  cmp rbx, [rip + g_tabs + VEC_len]
-    jae 3f
-    mov rdi, rbx
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+4:  # the first modified doc asks; with none, quit
+    mov edi, 2
+    call ask_unsaved
     test eax, eax
-    jz 2f
-    mov [rip + dlg_tab], rbx
-    mov dword ptr [rip + dlg_kind], 2
-    mov rdi, rbx
-    call app_activate_tab
-    mov dword ptr [rip + g_focus], FOCUS_DIALOG
-    EPILOGUE
-2:  inc rbx
-    jmp 1b
-3:  mov dword ptr [rip + g_quit], 1
-    EPILOGUE
+    jnz 9f
+    mov dword ptr [rip + g_quit], 1
+9:  EPILOGUE
 
 FN app_on_close
     jmp cmd_quit
@@ -1093,23 +1595,65 @@ FN app_toast
 # app_reload_config(): re-read config and apply theme/fonts/sizes
 FN app_reload_config
     PROLOGUE
+    call font_paths_hash
+    mov r13, rax
+    mov ebx, [rip + cfg_follow_system]
+    mov rdi, [rip + cfg_theme]
+    call theme_find
+    mov r12, rax
     call config_load
-    call keys_reload
+    xor edi, edi
+    call theme_settings_init
+    # follow_system turned off in the file: theme becomes the theme shown, as in Settings, unless
+    # theme was changed too
+    test ebx, ebx
+    jz 1f
+    cmp dword ptr [rip + cfg_follow_system], 0
+    jne 1f
+    mov rdi, [rip + cfg_theme]
+    call theme_find
+    cmp rax, r12
+    jne 1f
+    lea rdi, [rip + cfg_theme]
+    mov rsi, [rip + g_theme_cur]
+    call theme_set
+1:  call keys_reload
     call app_apply_settings
+    # a font named anew loads now, as from Settings
+    call font_paths_hash
+    cmp rax, r13
+    je 9f
+    call app_load_fonts
+    call ui_force_metrics
+9:  EPILOGUE
+
+# font_paths_hash() -> rax: a hash of the editor's, the interface's and the terminal's font paths
+font_paths_hash:
+    PROLOGUE
+    xor ebx, ebx
+    lea r12, [rip + font_paths]
+1:  mov rax, [r12]
+    test rax, rax
+    jz 9f
+    mov r13, [rax]
+    mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call hash_line
+    rol rbx, 7
+    xor rbx, rax
+    add r12, 8
+    jmp 1b
+9:  mov rax, rbx
     EPILOGUE
 
 # app_apply_settings(): push current cfg_* values into the running app
 FN app_apply_settings
     PROLOGUE
-    mov rdi, [rip + cfg_theme]
-    call theme_find
-    test rax, rax
-    js 1f
-    cmp rax, [rip + g_theme_cur]
-    je 1f
-    mov rdi, rax
-    call theme_apply
-1:  call git_apply
+    call theme_apply_config
+    call app_sync_panels
+    call git_apply
     call agents_apply_settings
     call ai_apply
     call vim_sync
@@ -1138,6 +1682,15 @@ FN app_on_pointer_leave
 # app_on_button(btn, pressed, mods)
 FN app_on_button
     mov [rip + g_mods], edx
+    # the caret shows at once, as after a key: a press or a release may have placed it
+    push rdi
+    push rsi
+    push rdx
+    call time_ms
+    mov [rip + g_blink_t0], rax
+    pop rdx
+    pop rsi
+    pop rdi
     call ui_input_button
     mov dword ptr [rip + g_dirty], 1
     ret
@@ -1174,15 +1727,33 @@ FN app_on_scroll
     mov dword ptr [rip + g_dirty], 1
 2:  ret
 
+# wheel_xy() -> eax x, edx y: this frame's wheel for a view that also scrolls sideways (the editor, an
+#   image). Shift turns it sideways, as in other apps on Linux and Windows; macOS turns it itself.
+#   Views that only scroll down keep Shift's wheel as it is (the terminal's scrollback).
+FN wheel_xy
+    mov eax, [rip + g_scroll_x]
+    mov edx, [rip + g_scroll_y]
+.ifndef MACOS
+    test dword ptr [rip + g_scroll_mods], MOD_SHIFT
+    jz 1f
+    add eax, edx
+    xor edx, edx
+1:
+.endif
+    ret
+
 FN app_on_focus
     mov [rip + g_win_focused], edi
+    push rdi
     # files may have changed while away
     test edi, edi
     jz 1f
-    push rdi
     call git_touch
+1:  # the caret shows at once, as after a key; the view stays where it was scrolled, also away from
+    # the caret (issue 85)
+    call time_ms
+    mov [rip + g_blink_t0], rax
     pop rdi
-1:  call ed_touch
     mov dword ptr [rip + g_dirty], 1
     ret
 
@@ -1625,7 +2196,15 @@ FN app_timeout
     cmp eax, ebx
     jge 84f
 85: mov ebx, eax
-84: mov eax, ebx
+84: call term_timeout
+    cmp eax, -1
+    je 86f
+    cmp ebx, -1
+    je 87f
+    cmp eax, ebx
+    jge 86f
+87: mov ebx, eax
+86: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -1672,14 +2251,26 @@ FN app_render
     jz 1f
     mov dword ptr [rip + g_block], 1
 1:
-    # background
+    # no background: the bars, panels, dividers and the editor column cover the window, each with
+    # its own color (a whole-window fill under them was a fifth of every frame). A theme with a
+    # translucent color (#rrggbbaa) still gets it, so nothing blends with the frame before.
+    lea rcx, [rip + g_theme]
+    mov eax, -1
+    xor edx, edx
+0:  and eax, [rcx + rdx*4]
+    inc edx
+    cmp edx, T_COUNT
+    jb 0b
+    shr eax, 24
+    cmp eax, 255
+    je 0f
     xor edi, edi
     xor esi, esi
     mov edx, [rsp]
     mov ecx, [rsp + 4]
     COLOR r8d, T_BG
     call gfx_fill
-    # panel sizes
+0:  # panel sizes
     mov edi, [rip + cfg_sidebar_w]
     call sc
     mov [rip + g_side_px], eax
@@ -1692,10 +2283,10 @@ FN app_render
     mov ecx, [rsp]
     sub ecx, eax
     xor edx, edx
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 1f
     mov edx, [rip + g_side_px]
-1:  cmp dword ptr [rip + cfg_agents], 0
+1:  cmp dword ptr [rip + g_show_agents], 0
     je 2f
     add edx, [rip + g_agents_px]
 2:  cmp edx, ecx
@@ -1723,7 +2314,7 @@ FN app_render
     # the dividers take their strips first: the panels either side are drawn before them
     mov dword ptr [rip + split_l_bits], 0
     mov dword ptr [rip + split_r_bits], 0
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 31f
     mov edi, ID_SPLIT_L
     mov esi, [rip + g_side_px]
@@ -1731,7 +2322,7 @@ FN app_render
     mov ecx, [rsp + 24]
     call splitter_hit
     mov [rip + split_l_bits], eax
-31: cmp dword ptr [rip + cfg_agents], 0
+31: cmp dword ptr [rip + g_show_agents], 0
     je 32f
     mov edi, ID_SPLIT_R
     mov esi, [rsp]
@@ -1742,7 +2333,7 @@ FN app_render
     mov [rip + split_r_bits], eax
 32:
     # sidebar
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 4f
     xor edi, edi
     mov esi, [rsp + 20]
@@ -1758,7 +2349,7 @@ FN app_render
     mov ecx, [rsp + 24]
     COLOR r8d, T_BORDER
     call gfx_fill
-4:  cmp dword ptr [rip + cfg_agents], 0
+4:  cmp dword ptr [rip + g_show_agents], 0
     je 5f
     mov edi, [rsp]
     sub edi, [rip + g_agents_px]
@@ -1775,7 +2366,7 @@ FN app_render
     call gfx_fill
 5:  # editor column, the terminal panel under it
     mov edi, [rsp + 28]
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 51f
     add edi, [rip + g_mt + 4*MI_1]
 51: mov [rsp + 40], edi
@@ -1830,7 +2421,7 @@ FN app_render
     mov ecx, [rsp + 52]
     call term_panel_draw
 53: # the dividers over everything in the body: their line and cursor win
-    cmp dword ptr [rip + cfg_sidebar], 0
+    cmp dword ptr [rip + g_show_side], 0
     je 55f
     mov edi, ID_SPLIT_L
     mov esi, [rsp + 28]
@@ -1838,7 +2429,7 @@ FN app_render
     mov ecx, [rsp + 24]
     mov r8d, [rip + split_l_bits]
     call splitter
-55: cmp dword ptr [rip + cfg_agents], 0
+55: cmp dword ptr [rip + g_show_agents], 0
     je 56f
     mov edi, ID_SPLIT_R
     mov esi, [rsp + 32]
@@ -1871,7 +2462,8 @@ FN app_render
     jz 2f
     call edge_cursor
     mov [rip + g_cursor], eax
-2:  call ui_end
+2:  call ed_blink_frame
+    call ui_end
     # scripted screenshot
     mov rdi, [rip + g_shot_path]
     test rdi, rdi
@@ -1931,6 +2523,7 @@ resize_edges:
     push rax
     mov edi, eax
     PCALL P_resize
+    and dword ptr [rip + g_mdown], ~(1 << BTN_LEFT)   # the release goes to the compositor
     pop rax
     pop rax
 9:  ret
@@ -1991,10 +2584,47 @@ splitter:
     COLOR r9d, T_ACCENT
     call gfx_round_rect
     mov eax, [rsp]
-1:  test eax, UB_HELD
+1:  test eax, UB_DOUBLE
+    jz 5f
+    # a double-click puts the panel back at its default width; a drag after it starts from where
+    # the next frame lays the divider out (a narrow window may give the panel less than that)
+    mov edi, SIDEBAR_W_DEFAULT
+    lea r15, [rip + cfg_sidebar_w]
+    cmp ebx, ID_SPLIT_L
+    je 7f
+    mov edi, AGENTS_W_DEFAULT
+    lea r15, [rip + cfg_agents_w]
+7:  mov [r15], edi
+    mov dword ptr [rip + split_reanchor], 1
+    mov dword ptr [rip + split_moved], 0
+    jmp 3f
+5:  test eax, UB_HELD
     jz 9f
-    # new width in logical points
+    test eax, UB_PRESS
+    jz 52f
+    # the press takes hold of the divider where it is: it keeps its distance from the pointer
     mov eax, [rip + g_mx]
+    sub eax, r12d
+    mov [rip + split_grab], eax
+    mov dword ptr [rip + split_moved], 0
+    mov dword ptr [rip + split_reanchor], 0
+    jmp 9f
+52: cmp dword ptr [rip + split_reanchor], 0
+    je 6f
+    mov dword ptr [rip + split_reanchor], 0
+    mov eax, [rip + g_press_x]  # the double-click's press against the divider the reset laid out
+    sub eax, r12d
+    mov [rip + split_grab], eax
+6:  # a click that does not move leaves the width alone (even one the layout narrowed); once the
+    # pointer has moved, the divider follows it back to where it was pressed too
+    mov eax, [rip + g_mx]
+    cmp dword ptr [rip + split_moved], 0
+    jne 7f
+    cmp eax, [rip + g_press_x]
+    je 9f
+    mov dword ptr [rip + split_moved], 1
+7:  # new width in logical points
+    sub eax, [rip + split_grab]
     cmp ebx, ID_SPLIT_L
     jne 2f
     cvtsi2ss xmm0, eax
@@ -2577,6 +3207,13 @@ FN tabs_draw
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
+    # the tabs scroll in all but a square at the strip's end: the + after them stays there when they
+    # fill the strip
+    mov eax, edx
+    sub eax, ecx
+    jns 0f
+    xor eax, eax
+0:  mov [rsp + 36], eax
     COLOR r8d, T_TAB
     call gfx_fill
     mov edi, [rsp]
@@ -2606,7 +3243,12 @@ FN tabs_draw
 1:  cmp dword ptr [rip + g_tabscroll], 0
     jge 2f
     mov dword ptr [rip + g_tabscroll], 0
-2:  mov r12d, [rsp]
+2:  mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 36]
+    mov ecx, [rsp + 12]
+    call gfx_clip_push
+    mov r12d, [rsp]
     sub r12d, [rip + g_tabscroll]
     xor ebx, ebx
 .Ltd_tab:
@@ -2616,16 +3258,10 @@ FN tabs_draw
     mov rdi, rbx
     call tab_at
     mov r15, rax
-    mov rax, [r15 + TAB_doc]
-    test rax, rax
-    jz 3f
-    mov r13, [rax + DOC_name]
-    jmp 4f
-3:  lea r13, [rip + .Lsettings]
-    cmp qword ptr [r15 + TAB_kind], TAB_GIT
-    jne 4f
-    lea r13, [rip + .Lgit_tab]
-4:  mov rdi, r13
+    mov rdi, rbx
+    call app_tab_label
+    mov r13, rax
+    mov rdi, r13
     call strlen
     mov r14, rax
     lea rdi, [rip + g_face_ui]
@@ -2651,7 +3287,7 @@ FN tabs_draw
 41: mov ecx, r12d
     add ecx, eax
     mov edx, [rsp]
-    add edx, [rsp + 8]
+    add edx, [rsp + 36]
     sub ecx, edx
     jle 5f
     add [rip + g_tabscroll], ecx
@@ -2674,7 +3310,7 @@ FN tabs_draw
     jz 61f
     mov rdi, rbx
     call app_close_tab
-    jmp .Ltd_done
+    jmp .Ltd_closed
 61: # background
     cmp rbx, [rip + g_tab_cur]
     jne 7f
@@ -2826,22 +3462,91 @@ FN tabs_draw
     jz .Ltd_next
     mov rdi, rbx
     call app_close_tab
-    jmp .Ltd_done
+    jmp .Ltd_closed
 841:
 .Ltd_next:
     add r12d, [rsp + 16]
     inc rbx
     jmp .Ltd_tab
 .Ltd_done:
-    # clamp scroll so the strip cannot scroll past its end
+    # the strip cannot scroll past its end (a wheel, a tab closed); measured as it is drawn, so a
+    # change shows in the next frame
     mov eax, r12d
     add eax, [rip + g_tabscroll]
     sub eax, [rsp]
-    sub eax, [rsp + 8]
-    jg 9f
-    mov dword ptr [rip + g_tabscroll], 0
-9:  call gfx_clip_pop
+    sub eax, [rsp + 36]
+    xor ecx, ecx
+    cmp eax, ecx
+    cmovl eax, ecx
+    cmp [rip + g_tabscroll], eax
+    jle 1f
+    mov [rip + g_tabscroll], eax
+    mov dword ptr [rip + g_dirty], 1
+1:  call gfx_clip_pop
+    # + right after the last tab, in the square at the strip's end when the tabs fill the strip
+    mov eax, [rsp]
+    add eax, [rsp + 36]
+    cmp r12d, eax
+    cmovg r12d, eax
+    M r13d, MI_24
+    mov eax, [rsp + 12]
+    sub eax, r13d
+    sar eax, 1
+    lea esi, [r12 + rax]
+    mov [rsp + 40], esi
+    mov edx, [rsp + 4]
+    add edx, eax
+    mov edi, ID_TAB_NEW
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, IC_PLUS
+    call ui_icon_btn
+    mov r8d, eax
+    mov edi, ID_TAB_NEW
+    mov esi, [rsp + 40]
+    mov edx, [rsp + 4]
+    add edx, [rsp + 12]
+    mov ecx, r13d
+    call tip_note               # keeps the button flags in eax
+    test eax, UB_CLICK
+    jnz 2f
+    test eax, UB_HOVER
+    jnz 9f
+    # a double click on the strip after the tabs does the same
+    mov edx, [rsp]
+    add edx, [rsp + 8]
+    sub edx, r12d
+    jle 9f
+    mov edi, ID_TAB_END
+    mov esi, r12d
+    mov ecx, edx
+    mov edx, [rsp + 4]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    test eax, UB_PRESS
+    jz 9f
+    # both presses: after a quick click that closed the last tab, the next one lands here
+    test eax, UB_DOUBLE
+    jz 3f
+    cmp dword ptr [rip + tab_end_press], 0
+    jne 2f
+3:  mov dword ptr [rip + tab_end_press], 1
+    jmp 8f
+2:  call tab_new_last
+    jmp 9f
+.Ltd_closed:                    # a tab closed while drawn: the strip is measured again next frame
+    call gfx_clip_pop
+9:  test dword ptr [rip + g_pressed], 1 << BTN_LEFT
+    jz 8f
+    mov dword ptr [rip + tab_end_press], 0
+8:  call gfx_clip_pop
     EPILOGUE
+
+# tab_new_last(): a new file in a tab at the strip's end, where the + is
+tab_new_last:
+    call cmd_new_file
+    mov rdi, [rip + g_tabs + VEC_len]
+    jmp app_place_tab
 
 # statusbar_draw(x, y, w, h)
 FN statusbar_draw
@@ -3603,9 +4308,15 @@ dialog_choose:
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     cmp r12d, 4
     jne 0f
+    mov rax, [rip + dlg_cancel]
+    mov qword ptr [rip + dlg_cancel], 0
     cmp ebx, 2
-    jne 9f
-    call [rip + dlg_fn]
+    je 5f
+    test rax, rax
+    jz 9f
+    call rax
+    jmp 9f
+5:  call [rip + dlg_fn]
     jmp 9f
 0:  test ebx, ebx
     jz 8f
@@ -3613,30 +4324,83 @@ dialog_choose:
     jne 1f
     mov rdi, [rip + dlg_tab]
     call tab_at
-    mov rdi, [rax + TAB_doc]
-    cmp qword ptr [rdi + DOC_path], 0
+    mov rbx, [rax + TAB_doc]
+    cmp qword ptr [rbx + DOC_path], 0
     je 2f
+    mov rdi, rbx
+    call doc_readonly
+    test eax, eax
+    jnz 6f
+    mov rdi, rbx
     call doc_save
     test rax, rax
-    js 8f
+    js 7f
     jmp 1f
 2:  call cmd_save_as
     jmp 8f
-1:  mov rdi, [rip + dlg_tab]
+6:  # a read-only file asks first: Overwrite saves it and goes on, Cancel stops here
+    mov [rip + ro_kind], r12d
+    mov rdi, rbx
+    lea rsi, [rip + close_readonly_confirmed]
+    call ask_readonly
+    lea rax, [rip + unsaved_kept]
+    mov [rip + dlg_cancel], rax
+    jmp 9f
+1:  mov edi, r12d
+    call unsaved_done
+    jmp 9f
+7:  # the file stays open and modified: say why
+    lea rdi, [rip + .Lsave_failed]
+    call app_toast
+8:  call unsaved_kept
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# unsaved_done(kind): the file asked about (dlg_tab) is saved or let go: close it and go on with what
+#   asked (dlg_kind)
+unsaved_done:
+    push rbx
+    mov ebx, edi
+    mov rdi, [rip + dlg_tab]
     call app_close_tab_now
-    cmp r12d, 3
-    jne 11f
-    call switch_continue
-    jmp 9f
-11: cmp r12d, 2
-    jne 9f
-    call cmd_quit
-    jmp 9f
-8:  # not quitting after all: no restart into an update either, no other project, and the session
-    # is saved again when it comes to that
+    cmp ebx, 3
+    jne 1f
+    pop rbx
+    jmp switch_continue
+1:  cmp ebx, 2
+    jne 2f
+    pop rbx
+    jmp cmd_quit
+2:  cmp ebx, 5
+    jne 3f
+    pop rbx
+    jmp cmd_close_all
+3:  pop rbx
+    ret
+
+# unsaved_kept(): not quitting after all: no restart into an update either, no other project, and the
+#   session is saved again when it comes to that
+unsaved_kept:
     mov dword ptr [rip + g_restart], 0
     mov dword ptr [rip + switch_pending], 0
     mov dword ptr [rip + g_session_final], 0
+    ret
+
+# close_readonly_confirmed(): Overwrite, for a close or quit that asked to save a read-only file
+close_readonly_confirmed:
+    PROLOGUE
+    mov rdi, [rip + dlg_tab]
+    call tab_at
+    mov rdi, [rax + TAB_doc]
+    call doc_save_readonly
+    test rax, rax
+    js 1f
+    mov edi, [rip + ro_kind]
+    call unsaved_done
+    jmp 9f
+1:  lea rdi, [rip + .Lsave_failed]
+    call app_toast
+    call unsaved_kept
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -3659,6 +4423,7 @@ FN app_confirm
     mov [rip + dlg_text], rsi
     mov [rip + dlg_ok], rdx
     mov [rip + dlg_fn], rcx
+    mov qword ptr [rip + dlg_cancel], 0
     mov dword ptr [rip + dlg_kind], 4
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
     mov dword ptr [rip + g_dirty], 1
@@ -4012,14 +4777,52 @@ toast_draw:
 # ---------------- misc commands ----------------
 
 FN cmd_toggle_sidebar
-    xor dword ptr [rip + cfg_sidebar], 1
-    mov dword ptr [rip + g_settings_changed], 1
-    mov dword ptr [rip + g_dirty], 1
-    ret
+    mov eax, 1
+    lea rcx, [rip + cfg_sidebar]
+    jmp toggle_panel
 
 FN cmd_toggle_agents
-    xor dword ptr [rip + cfg_agents], 1
+    mov eax, 2
+    lea rcx, [rip + cfg_agents]
+    jmp toggle_panel
+
+# toggle_panel(bit eax, setting rcx): a panel hidden in this window alone comes back, and the setting
+# turns on only if it was off; any other panel flips its setting
+toggle_panel:
+    test [rip + panels_hidden], eax
+    jz 1f
+    not eax
+    and [rip + panels_hidden], eax
+    cmp dword ptr [rcx], 0
+    jne app_sync_panels
+1:  xor dword ptr [rcx], 1
     mov dword ptr [rip + g_settings_changed], 1
+    jmp app_sync_panels
+
+# app_hide_panels(): a window started with files alone is for editing them: the explorer and the
+# agents panel stay out of it, whatever the settings say, until shown or a folder is opened
+FN app_hide_panels
+    mov dword ptr [rip + panels_hidden], 3
+    jmp app_sync_panels
+
+# app_reveal_panel(bit): 1 the explorer, 2 the agents panel follows its setting again in this window
+FN app_reveal_panel
+    not edi
+    and [rip + panels_hidden], edi
+    jmp app_sync_panels
+
+# app_sync_panels(): g_show_side and g_show_agents from the settings and panels_hidden
+FN app_sync_panels
+    mov eax, [rip + cfg_sidebar]
+    test dword ptr [rip + panels_hidden], 1
+    jz 1f
+    xor eax, eax
+1:  mov [rip + g_show_side], eax
+    mov eax, [rip + cfg_agents]
+    test dword ptr [rip + panels_hidden], 2
+    jz 2f
+    xor eax, eax
+2:  mov [rip + g_show_agents], eax
     mov dword ptr [rip + g_dirty], 1
     ret
 
@@ -4087,13 +4890,15 @@ FN cmd_settings
     je 3f
     inc rbx
     jmp 1b
-2:  xor edi, edi
+2:  call settings_reset            # a new settings tab: no query
+    xor edi, edi
     mov esi, TAB_SETTINGS
     call app_add_tab
     jmp 4f
 3:  mov rdi, rbx
     call app_activate_tab
 4:  mov dword ptr [rip + g_focus], FOCUS_SETTINGS
+    call settings_focus
     cmp dword ptr [rip + cfg_commit_ai], 0
     je 5f
     call cmd_ai_detect
@@ -4222,9 +5027,16 @@ FN cmd_move_line_down
 .Lnot_regular: .asciz "Not a regular file, not opened"
 .Lsaved: .asciz "Saved"
 .Lsave_failed: .asciz "Could not save the file"
+.Lro_a: .asciz "Overwrite read-only "
+.Lro_b: .asciz "?"
+.Lro_text: .asciz "The file is read-only. Overwriting replaces it, and it stays read-only."
+.Lro_button: .asciz "Overwrite"
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
 .p2align 3
+# font_paths: the settings that name font files (font_paths_hash); 0 ends it
+font_paths:
+    .quad cfg_font, cfg_ui_font, cfg_term_font, 0
 # tip_table: button, text, the handler it runs (0: not a command, no shortcut); 0 ends it
 tip_table:
     .quad ID_GIT_BTN, .Ltip_git, cmd_toggle_git
@@ -4235,6 +5047,7 @@ tip_table:
     .quad ID_EXP_NEW, .Ltip_exp_new, 0
     .quad ID_EXP_NEW_FOLDER, .Ltip_exp_new_folder, 0
     .quad ID_EXP_REFRESH, .Ltip_exp_refresh, 0
+    .quad ID_TAB_NEW, .Ltip_tab_new, cmd_new_file
     .quad ID_STATUS + 2, .Ltip_git, cmd_toggle_git
     .quad 0, 0, 0
 .Ltip_git: .asciz "Git history"
@@ -4245,6 +5058,7 @@ tip_table:
 .Ltip_exp_new: .asciz "New file"
 .Ltip_exp_new_folder: .asciz "New folder"
 .Ltip_exp_refresh: .asciz "Refresh explorer"
+.Ltip_tab_new: .asciz "New file"
 .Ltip_eq: .asciz "tip="
 .Lgit_tab: .asciz "Git"
 .Lln: .asciz "Ln "
@@ -4260,7 +5074,6 @@ tip_table:
 .Lplain: .asciz "Plain Text"
 .Ldlg_q: .asciz "Save changes to "
 .Ldlg_msg: .asciz "Your changes will be lost if you don't save them."
-.Lnl: .ascii "\n"
 .Lw1: .asciz "Go to file"
 .Lw2: .asciz "Command palette"
 .Lw3: .asciz "New file"
@@ -4318,9 +5131,14 @@ dlg_labels: .quad .Ld0, .Ld1, .Ld2
 
 .data
 g_win_focused: .long 1
+# the panels this window shows: the settings, less those panels_hidden takes away (app_sync_panels)
+.globl g_show_side, g_show_agents
+g_show_side: .long 1
+g_show_agents: .long 1
 .p2align 3
 g_tab_cur: .quad -1
 .bss
+panels_hidden: .long 0          # 1 the explorer, 2 the agents panel: hidden in a window started with files
 .globl g_settings_changed, g_started
 g_settings_changed: .long 0
 g_started: .long 0              # the command line is open: later folders switch the project

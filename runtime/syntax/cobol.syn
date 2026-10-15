@@ -1,5 +1,6 @@
 name = COBOL
 files = *.cob *.cbl *.cpy *.cobol
+icon = code blue
 case = insensitive
 comment = *>
 string = "

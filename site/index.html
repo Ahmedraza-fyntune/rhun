@@ -151,7 +151,7 @@ THE SOFTWARE.
     <div class="pixel-field" aria-hidden="true"><canvas id="pixel-canvas"></canvas></div>
     <div class="wrap hero-stage">
       <div class="hero-copy">
-        <p class="eyebrow">AI does the heavy lifting. Keep your code editor light.</p>
+        <p class="eyebrow">Agents do the heavy lifting. Keep your code editor light.</p>
         <h1 id="title"><span>Less weight.</span> <span class="accent">More flow.</span></h1>
         <p class="hero-description"><span>A small, fast code editor.</span> <span>Written in assembly.</span></p>
         <div class="hero-actions"><a class="button button-primary" href="#install">Get rhun</a></div>
@@ -185,7 +185,7 @@ THE SOFTWARE.
         <p data-description="terminal" hidden>Built-in terminal emulator with 24-bit color, scrollback, mouse reporting, and alternate-screen support.</p>
         <p data-description="git" hidden>Built-in Git with staging, diffs, commit history, and commit message generation using a local model or your Claude Code or Codex subscription.</p>
         <p data-description="agents" hidden>...and in the Darkness bind them: follow your project’s Claude Code and Codex sessions as they work.</p>
-        <p data-description="themes" hidden>Multiple built-in light and dark themes, customizable editor and terminal colors, and automatic theme switching with Omarchy.</p>
+        <p data-description="themes" hidden>Multiple built-in light and dark themes, customizable editor and terminal colors, and automatic theme switching with the system's dark mode and with Omarchy.</p>
       </div>
       <div class="theme-controls" id="themes" hidden>
         <div class="theme-picker" role="group" aria-label="Preview a color theme">
@@ -228,8 +228,8 @@ THE SOFTWARE.
         <button class="copy button" type="button" data-copy="curl -fsSL https://github.com/vshvedov/rhun/releases/latest/download/install.sh | sh">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span>
         <div class="windows-install">
           <div class="install-box-heading"><span class="install-os-label">Terminal install · <span><svg class="os-icon" aria-hidden="true" focusable="false"><use href="#os-windows"/></svg>Windows PowerShell</span></span><span aria-hidden="true">&gt;_</span></div>
-          <div class="command"><span class="prompt" aria-hidden="true">&gt;</span><code>powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;&amp; ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))&quot;</code></div>
-          <button class="copy button" type="button" data-copy="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;&amp; ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))&quot;">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span>
+          <div class="command"><span class="prompt" aria-hidden="true">&gt;</span><code>powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; &amp; ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))&quot;</code></div>
+          <button class="copy button" type="button" data-copy="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; &amp; ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))&quot;">Copy command</button><span class="copy-status" role="status" aria-live="polite"></span>
         </div>
       </div>
     </div>
