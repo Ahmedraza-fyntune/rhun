@@ -87,10 +87,18 @@ class TabPin(unittest.TestCase):
                                'tabs=^*one.txt'])
 
     def test_vim_quit_leaves_a_pinned_tab_open(self):
+        # :q, then :q! and ZQ with an unsaved change, which stays; :wq saves but leaves it open
         out = self.run_editor(['cmd toggle_vim', f'click {ONE} {Y}', 'cmd pin_tab', 'key Escape',
-                               'type :q', 'key Return', 'print-tabs', 'print-toast'])
-        self.assertEqual(out, ['tabs=^*one.txt | two.txt | three.txt',
-                               'toast=The tab is pinned: unpin it to close it'])
+                               'type :q', 'key Return', 'print-tabs', 'print-toast',
+                               'type x', 'type :q!', 'key Return', 'type ZQ', 'print-tabs', 'print-state',
+                               'type :wq', 'key Return', 'print-tabs', 'print-state'])
+        self.assertEqual(out[:3], ['tabs=^*one.txt | two.txt | three.txt',
+                                   'toast=The tab is pinned: unpin it to close it',
+                                   'tabs=^*one.txt | two.txt | three.txt'])
+        self.assertIn(' dirty=1 ', out[3])
+        self.assertEqual(out[4], 'tabs=^*one.txt | two.txt | three.txt')
+        self.assertIn(' dirty=0 ', out[5])
+        self.assertEqual((self.proj / 'one.txt').read_text(encoding='utf-8'), 'ne\n')
 
     def test_the_menu_closes_a_pinned_tab(self):
         # two.txt, pinned, is first: its menu closes it, and the next tab shows
@@ -127,7 +135,7 @@ class TabPin(unittest.TestCase):
 
     def test_a_drag_pins_and_unpins(self):
         out = self.run_editor([f'click {ONE} {Y}', 'cmd pin_tab',
-                               # three.txt, held at 55 of its 112 px, to the left end: among the pinned
+                               # three.txt, held at 45 of its 112 px, to the left end: among the pinned
                                f'move {THREE} {Y}', 'down', 'move 10 58', 'up', 'print-tabs',
                                # three.txt is at 0 to 112: to the right end, among the others
                                'move 50 58', 'down', 'move 590 58', 'up', 'print-tabs',

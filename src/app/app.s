@@ -1138,6 +1138,7 @@ FN app_pin_tab
 2:  mov rdi, r12
     call tab_move
     mov dword ptr [rip + g_tabscroll_reveal], 1
+    mov dword ptr [rip + g_dirty], 1    # the pin shows also where the tab stays in its place
 9:  EPILOGUE
 
 FN cmd_pin_tab
@@ -1328,11 +1329,11 @@ FN cmd_close_tab
     pop rdi
     test eax, eax
     jz app_close_tab
-    jmp pinned_stays
+    jmp app_pinned_stays
 1:  ret
 
-# pinned_stays(): say why a pinned tab did not close
-pinned_stays:
+# app_pinned_stays(): say why a pinned tab did not close
+FN app_pinned_stays
     lea rdi, [rip + .Lpinned_stays]
     jmp app_toast
 
@@ -3610,7 +3611,7 @@ tab_draw:
     # a middle click closes it, but not a pinned one
     test dword ptr [r15 + TAB_flags], TF_PIN
     jz 3f
-    call pinned_stays
+    call app_pinned_stays
     jmp .Ltw_bg
 3:  mov rdi, rbx
     call app_close_tab
