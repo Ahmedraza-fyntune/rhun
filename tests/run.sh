@@ -48,6 +48,7 @@ python3 tests/commit-wrap.py || fail=1
 python3 tests/git-reset.py || fail=1
 python3 tests/git-untracked.py || fail=1
 python3 tests/git-fsmonitor.py || fail=1
+python3 tests/git-trust.py || fail=1
 python3 tests/live-reload.py || fail=1
 python3 tests/tooltips.py || fail=1
 python3 tests/terminal-tabs.py || fail=1

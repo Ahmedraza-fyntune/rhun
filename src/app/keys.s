@@ -520,6 +520,7 @@ g_commands:
     COMMAND toggle_agents, "Toggle Agents Panel", cmd_toggle_agents, "ctrl+shift+a"
     COMMAND focus_explorer, "Focus File Explorer", cmd_focus_explorer, "ctrl+shift+e"
     COMMAND reveal_file, "Show File in System File Manager", cmd_reveal_file, ""
+    COMMAND trust_folder, "Trust Folder for Git", cmd_trust_folder, ""
     COMMAND website, "Open rhun Website", cmd_website, ""
     COMMAND email, "Email rhun", cmd_email, ""
     COMMAND feedback, "Send Feedback or Report a Bug", cmd_feedback, ""

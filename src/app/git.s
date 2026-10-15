@@ -27,9 +27,12 @@ ENDSTRUCT GE_SIZE
 
 .bss
 .p2align 3
-.globl g_git_on, g_git_ver, g_git_changes, g_git_root, g_git_rootlen
+.globl g_git_on, g_git_ver, g_git_changes, g_git_root, g_git_rootlen, g_git_paused, g_project_link
 .globl g_git_head, g_git_ahead, g_git_behind, g_git_upstream, g_worktree
 g_git_on: .long 0               # the setting is on, there is a repository and a git program
+g_git_paused: .long 0           # a rhun:// link opened the project, in a repository not trusted yet:
+                                # git runs no command there (the repository's config could name one)
+g_project_link: .long 0         # a rhun:// link opened the project (set_project)
 g_git_ver: .long 0              # changes with every new status
 g_git_changes: .long 0          # entries in the status
 g_git_head: .long 0             # HD_*
@@ -84,6 +87,7 @@ FN git_set_project
     PROLOGUE
     inc dword ptr [rip + gen]
     mov dword ptr [rip + g_git_on], 0
+    mov dword ptr [rip + g_git_paused], 0
     mov dword ptr [rip + st_running], 0
     mov dword ptr [rip + st_again], 0
     mov dword ptr [rip + touch_kind], 0
@@ -127,7 +131,16 @@ FN git_set_project
     mov [rip + env], rax
 1:  cmp qword ptr [rip + git_bin], 0
     je 9f
-    mov dword ptr [rip + g_git_on], 1
+    # a repository a link opened runs git once trusted (git_trust)
+    cmp dword ptr [rip + g_project_link], 0
+    je 2f
+    mov rdi, [rip + g_git_root]
+    call session_trusted
+    test eax, eax
+    jnz 2f
+    mov dword ptr [rip + g_git_paused], 1
+    jmp 9f
+2:  mov dword ptr [rip + g_git_on], 1
     # status and the open files' bases right away
     mov dword ptr [rip + touch_kind], 3
     call time_ms
@@ -142,17 +155,31 @@ free_path:
     mov qword ptr [rbx], 0
     ret
 
-# git_apply(): follow the setting
+# git_apply(): follow the setting (a paused repository stays so)
 FN git_apply
     xor eax, eax
     cmp dword ptr [rip + cfg_git], 0
     je 1f
     cmp qword ptr [rip + gitdir], 0
     je 1f
+    cmp dword ptr [rip + g_git_paused], 0
+    jne 1f
     mov eax, 1
 1:  cmp eax, [rip + g_git_on]
     jne git_set_project
     ret
+
+# git_trust(): the repository a link opened is trusted from now on (session_trust), and git starts there
+FN git_trust
+    cmp dword ptr [rip + g_git_paused], 0
+    je 1f
+    push rax
+    mov rdi, [rip + g_git_root]
+    call session_trust
+    pop rax
+    mov dword ptr [rip + g_project_link], 0
+    jmp git_set_project
+1:  ret
 
 # find_repo(): walk up from g_project to the directory holding .git
 find_repo:
@@ -1829,10 +1856,13 @@ FN git_dump
     mov rbx, rdi
     lea rsi, [rip + .Ld_git]
     call sb_push_cstr
-    lea rsi, [rip + .Ld_off]
-    cmp dword ptr [rip + g_git_on], 0
-    je 1f
     lea rsi, [rip + .Ld_on]
+    cmp dword ptr [rip + g_git_on], 0
+    jne 1f
+    lea rsi, [rip + .Ld_off]
+    cmp dword ptr [rip + g_git_paused], 0
+    je 1f
+    lea rsi, [rip + .Ld_paused]
 1:  mov rdi, rbx
     call sb_push_cstr
     mov rdi, rbx
@@ -1996,6 +2026,7 @@ FN git_dump
 .Ld_git: .asciz "git "
 .Ld_on: .asciz "on"
 .Ld_off: .asciz "off"
+.Ld_paused: .asciz "paused"
 .Ld_branch: .asciz " branch="
 .Ld_worktree: .asciz " worktree="
 .Ld_marks: .asciz "marks "

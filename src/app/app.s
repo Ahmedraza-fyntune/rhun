@@ -13,6 +13,8 @@
 .equ ID_PROJECT_BTN, 0x2009
 .equ ID_TAB_NEW, 0x200a           # the + after the last tab
 .equ ID_TAB_END, 0x200b           # the strip's empty end
+.equ ID_TRUST, 0x200c             # the trust bar's Trust folder button
+.equ ID_TRUST_X, 0x200d           # and its close button
 .equ PM_RECENT, 3                 # the project menu's first recent folder
 .equ ID_TAB, 0x2100              # + index
 .equ ID_TABX, 0x2400             # + index
@@ -93,6 +95,11 @@ ro_title: .zero 256
 ro_path: .zero 4096              # Save As onto a read-only file: that path
 ro_dir: .zero 4096
 switch_pending: .long 0          # a project switch waits on unsaved files
+switch_link: .long 0             # and a rhun:// link asked for it
+g_link_open: .long 0             # app_open_path is opening a rhun:// link's path (set_project notes it)
+trust_closed: .long 0            # the trust bar was closed for this project
+trust_sb: .zero SB_SIZE          # its text
+trust_path: .zero 4096           # the repository's folder, as shown (~ for the home folder)
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
@@ -221,6 +228,9 @@ set_project:
     mov rsi, rax
     call path_basename
     mov [rip + g_project_name], rax
+    mov eax, [rip + g_link_open]
+    mov [rip + g_project_link], eax
+    mov dword ptr [rip + trust_closed], 0
     call git_set_project
     call explorer_set_root
     call agents_set_project
@@ -348,6 +358,8 @@ FN app_switch_project
     lea rdi, [rip + switch_path]
     mov rsi, rbx
     call cstr_copy
+    mov eax, [rip + g_link_open]
+    mov [rip + switch_link], eax
     # before the questions: an answer closes that file, and a quit meanwhile must not save again
     call session_save
     mov dword ptr [rip + g_session_final], 1
@@ -411,8 +423,11 @@ switch_continue:
     call closed_clear           # the last project's tabs are not this one's to reopen
     mov byte ptr [rip + g_explorer_dir], 0
     mov byte ptr [rip + g_explorer_target], 0
+    mov eax, [rip + switch_link]
+    mov [rip + g_link_open], eax
     lea rdi, [rip + switch_path]
     call app_set_project
+    mov dword ptr [rip + g_link_open], 0
     # the new project saves its own session
     mov dword ptr [rip + g_session_final], 0
     call session_restore
@@ -2568,10 +2583,17 @@ FN app_render
     M eax, MI_3
     lea eax, [rax + rax + 1]
     mov [rip + g_hole + 12], eax
-54: mov edi, [rsp + 40]
+54: # the trust bar over the column, while git is paused for a repository a link opened
+    mov edi, [rsp + 40]
     mov esi, [rsp + 20]
     mov edx, [rsp + 44]
+    call trust_bar
+    mov edi, [rsp + 40]
+    mov esi, [rsp + 20]
+    add esi, eax
+    mov edx, [rsp + 44]
     mov ecx, [rsp + 48]
+    sub ecx, eax
     call center_draw
     mov dword ptr [rip + g_hole + 12], 0
     cmp dword ptr [rip + g_term_open], 0
@@ -3361,6 +3383,139 @@ FN doc_rel_path
 2:  mov rax, r12
     mov rdx, r13
     EPILOGUE
+
+# trust_bar(x, y, w) -> eax the height it takes: while git is paused for a repository a rhun:// link
+#   opened (its config could name a program for git to run), a bar says so, with Trust folder, which
+#   trusts it for good, and a close button
+trust_bar:
+    PROLOGUE 48
+    xor eax, eax
+    cmp dword ptr [rip + g_git_paused], 0
+    je 9f
+    cmp dword ptr [rip + trust_closed], 0
+    jne 9f
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    M ebx, MI_28
+    mov ecx, ebx
+    COLOR r8d, T_PANEL
+    call gfx_fill
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    add esi, ebx
+    sub esi, [rip + g_mt + 4*MI_1]
+    mov edx, [rsp + 8]
+    M ecx, MI_1
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    # the close button at the right end, Trust folder before it
+    M r12d, MI_20
+    mov eax, [rsp]
+    add eax, [rsp + 8]
+    sub eax, r12d
+    sub eax, [rip + g_mt + 4*MI_4]
+    mov [rsp + 12], eax         # close x
+    mov eax, ebx
+    sub eax, r12d
+    sar eax, 1
+    add eax, [rsp + 4]
+    mov [rsp + 16], eax         # buttons' y
+    lea rdi, [rip + g_face_small]
+    lea rsi, [rip + .Ltrust_button]
+    mov edx, 12
+    call text_width
+    M ecx, MI_12
+    lea eax, [rax + rcx*2]
+    mov [rsp + 20], eax         # Trust folder's width
+    mov ecx, [rsp + 12]
+    sub ecx, [rip + g_mt + 4*MI_6]
+    sub ecx, eax
+    mov [rsp + 24], ecx         # its x
+    mov edi, ID_TRUST
+    mov esi, ecx
+    mov edx, [rsp + 16]
+    mov ecx, eax
+    mov r8d, r12d
+    call ui_btn
+    mov [rsp + 28], eax
+    COLOR r13d, T_ACCENT
+    COLOR r14d, T_ACCENT_FG
+    test eax, UB_HOVER
+    jz 1f
+    mov edi, r13d
+    mov esi, r14d
+    mov edx, 36
+    call color_mix
+    mov r13d, eax
+1:  mov edi, [rsp + 24]
+    mov esi, [rsp + 16]
+    mov edx, [rsp + 20]
+    mov ecx, r12d
+    M r8d, MI_RADIUS
+    mov r9d, r13d
+    call gfx_round_rect
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp + 24]
+    mov edx, [rsp + 16]
+    mov ecx, [rsp + 20]
+    mov r8d, r12d
+    lea r9, [rip + .Ltrust_button]
+    push r14
+    push r14
+    call ui_text_center
+    add rsp, 16
+    mov edi, ID_TRUST_X
+    mov esi, [rsp + 12]
+    mov edx, [rsp + 16]
+    mov ecx, r12d
+    mov r8d, r12d
+    mov r9d, IC_CLOSE
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 2f
+    mov dword ptr [rip + trust_closed], 1
+    mov dword ptr [rip + g_dirty], 1
+2:  # what it says, cut short before the button
+    lea rdi, [rip + trust_sb]
+    call sb_clear
+    lea rdi, [rip + trust_sb]
+    lea rsi, [rip + .Ltrust_text]
+    call sb_push_cstr
+    lea rdi, [rip + trust_path]
+    mov rsi, [rip + g_git_root]
+    call path_tilde
+    lea rdi, [rip + trust_sb]
+    lea rsi, [rip + trust_path]
+    call sb_push_cstr
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 24]
+    sub edx, edi
+    sub edx, [rip + g_mt + 4*MI_8]
+    mov ecx, ebx
+    call gfx_clip_push
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_12]
+    mov edx, [rsp + 4]
+    mov ecx, ebx
+    mov r8, [rip + trust_sb + SB_ptr]
+    COLOR r9d, T_WARNING
+    call ui_text_c
+    call gfx_clip_pop
+    test dword ptr [rsp + 28], UB_CLICK
+    jz 3f
+    call git_trust
+3:  mov eax, ebx
+9:  EPILOGUE
+
+# cmd_trust_folder(): Trust Folder for Git: the trust bar's button, also after the bar was closed
+FN cmd_trust_folder
+    cmp dword ptr [rip + g_git_paused], 0
+    jne git_trust
+    lea rdi, [rip + .Lnot_paused]
+    jmp app_toast
 
 # tabs_draw(x, y, w, h)
 FN tabs_draw
@@ -5542,6 +5697,9 @@ FN cmd_move_line_down
 .Lsettings: .asciz "Settings"
 .Lpinned_stays: .asciz "The tab is pinned: unpin it to close it"
 .Lbad_link: .asciz "Not a rhun://file/ link"
+.Ltrust_text: .asciz "Opened from a link: git is paused for "
+.Ltrust_button: .asciz "Trust folder"
+.Lnot_paused: .asciz "Git is not paused for this folder"
 .Ltm_pin: .asciz "Pin Tab"
 .Ltm_unpin: .asciz "Unpin Tab"
 .Ltm_close: .asciz "Close Tab"
@@ -5690,8 +5848,11 @@ FN app_open_path
     mov [rsp + 4], ecx
     lea rdi, [rip + url_path]
     call path_normalize
+    # a project it makes runs git once trusted (git_set_project)
+    mov dword ptr [rip + g_link_open], 1
     lea rdi, [rip + url_path]
     call app_open_path
+    mov dword ptr [rip + g_link_open], 0
     cmp dword ptr [rsp], 0
     je 9f
     # at its line, when the file opened (as the tab shown)

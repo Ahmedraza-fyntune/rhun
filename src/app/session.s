@@ -8,6 +8,7 @@
 path_sb: .zero SB_SIZE
 out: .zero SB_SIZE
 rc_dir: .zero SB_SIZE
+trust_sb: .zero SB_SIZE
 last_path: .zero SB_SIZE
 last_project: .zero 4096
 recent_time: .zero 8 * RECENT_MAX     # when each was written, in nanoseconds
@@ -69,6 +70,110 @@ last_project_file:
     mov rax, [rip + last_path + SB_ptr]
 1:  pop rbx
     ret
+
+# trusted_file() -> cstr "$XDG_STATE_HOME/rhun/trusted-folders" (in trust_sb), or 0 without a home
+trusted_file:
+    push rbx
+    lea rdi, [rip + trust_sb]
+    call state_dir
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + trust_sb]
+    lea rsi, [rip + .Ltrusted]
+    call sb_push_cstr
+    mov rax, [rip + trust_sb + SB_ptr]
+    pop rbx
+    ret
+1:  xor eax, eax
+    pop rbx
+    ret
+
+# session_trusted(folder) -> eax 1 when the folder is in the trusted-folders list (one path a line):
+#   git runs there for a folder a rhun:// link opened
+FN session_trusted
+    PROLOGUE
+    mov r12, rdi
+    call trusted_file
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    call file_read_all
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    lea r13, [rax + rdx]        # the end
+    mov rdi, r12
+    call strlen
+    mov r14, rax
+    mov r15, rbx                # a line
+1:  cmp r15, r13
+    jae 7f
+    mov rcx, r15
+2:  cmp rcx, r13
+    jae 3f
+    cmp byte ptr [rcx], 10
+    je 3f
+    inc rcx
+    jmp 2b
+3:  mov rax, rcx
+    sub rax, r15
+    cmp rax, r14
+    jne 4f
+    push rcx
+    push rcx
+    mov rdi, r15
+    mov rsi, r12
+    mov rdx, r14
+    call memeq
+    pop rcx
+    pop rcx
+    test eax, eax
+    jnz 6f
+4:  lea r15, [rcx + 1]
+    jmp 1b
+6:  mov rdi, rbx
+    call mem_free
+    mov eax, 1
+    EPILOGUE
+7:  mov rdi, rbx
+    call mem_free
+8:  xor eax, eax
+    EPILOGUE
+
+# session_trust(folder): add the folder to the trusted-folders list
+FN session_trust
+    PROLOGUE
+    mov r12, rdi
+    call session_trusted
+    test eax, eax
+    jnz 9f
+    call trusted_file
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    lea rdi, [rip + out]
+    call sb_clear
+    mov rdi, r13
+    call file_read_all
+    test rax, rax
+    jz 1f
+    mov rbx, rax
+    lea rdi, [rip + out]
+    mov rsi, rax
+    call sb_push
+    mov rdi, rbx
+    call mem_free
+1:  lea rdi, [rip + out]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, r13
+    mov rsi, [rip + out + SB_ptr]
+    mov rdx, [rip + out + SB_len]
+    call file_write_all
+9:  EPILOGUE
 
 FN session_remember_project
     PROLOGUE
@@ -584,6 +689,7 @@ FN session_restore
 .Lrhun_dir: .asciz "/rhun"
 .Lext: .asciz ".session"
 .Llast_project: .asciz "/last-project"
+.Ltrusted: .asciz "/trusted-folders"
 .Lpercent: .asciz "%%25"
 .Lempty: .asciz ""
 .Lpin: .asciz "\tpin"

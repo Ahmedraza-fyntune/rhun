@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """A repository's own config cannot make rhun run a program by being opened: git's fsmonitor hook
-(core.fsmonitor in .git/config) runs on every git status, and a rhun://file/ link from a web page
-opens a folder in one click. rhun runs git with core.fsmonitor=false."""
+(core.fsmonitor in .git/config) runs on every git status. rhun runs git with core.fsmonitor=false.
+(A folder a rhun://file/ link opens runs no git at all until it is trusted: tests/git-trust.py.)"""
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
@@ -54,11 +53,11 @@ class GitFsmonitor(unittest.TestCase):
         self.git('status', '--porcelain')
         self.assertTrue(self.marker.exists(), 'this git does not run core.fsmonitor')
         self.marker.unlink()
-        for target in (urllib.parse.quote(str(self.repo / 'file.txt')) + ':2', urllib.parse.quote(str(self.repo))):
-            with self.subTest(link=target):
+        for target in (self.repo / 'file.txt', self.repo):
+            with self.subTest(path=target):
                 script = self.work / 'commands.rsc'
                 script.write_text('wait-git\nprint-scm\nquit\n', encoding='utf-8')
-                result = subprocess.run([str(EXE), 'rhun://file' + target, '--headless', '1000x700',
+                result = subprocess.run([str(EXE), str(target), '--headless', '1000x700',
                                          '--scale', '1', '--script', str(script)], env=self.env,
                                         capture_output=True, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))

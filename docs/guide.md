@@ -57,6 +57,15 @@ is refused, so that a page cannot make Windows contact a server it names. A link
 file would; on macOS, a running rhun opens it as a tab, as it does for Finder. `rhun 'rhun://file/...'`
 works from a terminal too. macOS knows the scheme from the app itself; the installers register it on
 Linux and Windows (`--no-url-scheme` and `-NoUrlScheme` leave it out, and updates keep that choice).
+
+A repository's own settings can name programs for git to run, and git status runs some of them as
+soon as a folder is opened (a clean filter, in a repository unpacked from an archive). So a folder that
+a link opens, or the folder of a file it opens, starts with git paused: no status, gutter, history or
+diffs, and a bar above the editor says so. **Trust folder** in the bar, or **Trust Folder for Git** in
+the command palette, turns git on there and remembers the folder for later links (in
+`$XDG_STATE_HOME/rhun/trusted-folders`). Folders you open yourself, from the command line, a file
+manager or Open Folder, work as always, and a link to a file inside the project already open in the
+window changes nothing.
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
 command palette to load the disk version, or save to keep your version. Undoing back to the saved
 state loads the disk version too.
