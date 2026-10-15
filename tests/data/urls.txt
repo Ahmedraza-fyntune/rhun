@@ -15,6 +15,7 @@ rhun://file/home/me/v1:2/a.txt
 rhun://file/home/me/a.txt:
 rhun://file/home/me/a.txt:x
 rhun://file/home/me/a.txt:999999999999
+rhun://file/home/me/report:12:1:1
 rhun://file/C:/work/app/main.c:10
 rhun://file/:5
 rhun://file

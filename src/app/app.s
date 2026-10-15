@@ -537,7 +537,9 @@ FN app_restart_paths
     jne 1f                      # a file's folder comes back with the file
     mov [r14 + r13*8], rax
     inc r13
-    jmp 4f
+    # its session brings its tabs back, but none is saved while git is paused there: they follow it
+    cmp dword ptr [rip + g_git_paused], 0
+    je 4f
 1:  xor r12d, r12d
 2:  cmp r12, [rip + g_tabs + VEC_len]
     jae 4f
@@ -570,10 +572,12 @@ FN app_restart_paths
 42: cmp r12, r13
     jae 43f
     mov rdi, [r14 + r12*8]
-    mov esi, 1                  # the project itself: a folder
+    xor esi, esi                # a file
+    cmp r12, 1
+    jne 44f
     cmp dword ptr [rip + g_project_adopted], 0
-    je 44f
-    xor esi, esi                # an adopted folder's files
+    jne 44f
+    mov esi, 1                  # the project itself: a folder
 44: call restart_link
     mov [r14 + r12*8], rax
     inc r12
@@ -582,8 +586,9 @@ FN app_restart_paths
     mov rax, r14
     EPILOGUE
 
-# restart_link(path, folder) -> a new "rhun://file/..." link to path (with % ? # escaped, and a slash
-#   at its end for a folder), which app_open_path reads back
+# restart_link(path, folder) -> a new "rhun://file/..." link to path (with % ? # escaped), which
+#   app_open_path reads back: a folder ends in a slash, and a file in :1:1, which the line and column
+#   take, so that a name ending in :12 stays whole
 restart_link:
     PROLOGUE
     mov rbx, rdi
@@ -630,10 +635,14 @@ restart_link:
     inc rbx
     jmp 1b
 3:  test r12d, r12d
-    jz 4f
+    jz 31f
     lea rdi, [rip + tmp_sb]
     mov esi, '/'
     call sb_push_byte
+    jmp 4f
+31: lea rdi, [rip + tmp_sb]
+    lea rsi, [rip + .Lline_one]
+    call sb_push_cstr
 4:  lea rdi, [rip + tmp_sb]
     xor esi, esi
     call sb_push_byte
@@ -5797,6 +5806,7 @@ FN cmd_move_line_down
 .Lsettings: .asciz "Settings"
 .Lpinned_stays: .asciz "The tab is pinned: unpin it to close it"
 .Lrestart_link: .asciz "rhun://file"
+.Lline_one: .asciz ":1:1"
 .Lbad_link: .asciz "Not a rhun://file/ link"
 .Ltrust_text: .asciz "Opened from a link: git is paused for "
 .Ltrust_button: .asciz "Trust folder"

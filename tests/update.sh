@@ -134,12 +134,21 @@ fi
 mkdir -p "$w/repo"
 git -C "$w/repo" init -q
 printf 'a\n' > "$w/repo/a.txt"
+printf 'b\n' > "$w/repo/b:12"
 for kind in folder file; do
-    if [ $kind = folder ]; then launch="rhun://file$w/repo/"; else launch="rhun://file$w/repo/a.txt"; fi
-    run restart-link-$kind 99.0.0 '' "$w/target" '' print-git "$check" wait-update 'cmd install_update' \
-        wait-update 'cmd restart_to_update'
+    # a folder brings its open file back after it (no session is saved while paused), and a file
+    # link ends in :1:1, so that a name ending in :12 stays whole
+    if [ $kind = folder ]; then
+        launch="rhun://file$w/repo/"
+        expected="restarted rhun://file$w/repo/ rhun://file$w/repo/b:12:1:1"
+    else
+        launch="rhun://file$w/repo/b:12:1:1"
+        expected="restarted rhun://file$w/repo/b:12:1:1"
+    fi
+    run restart-link-$kind 99.0.0 '' "$w/target" '' "open $w/repo/b:12" print-git "$check" wait-update \
+        'cmd install_update' wait-update 'cmd restart_to_update'
     if grep -qx 'git paused branch=.*' "$w/restart-link-$kind.out" &&
-       [ "$(cat "$w/restart.log" 2>/dev/null)" = "restarted $launch" ]; then
+       [ "$(cat "$w/restart.log" 2>/dev/null)" = "$expected" ]; then
         echo "ok   update/restart-link-$kind-keeps-git-paused"
     else
         echo "FAIL update/restart-link-$kind-keeps-git-paused"; cat "$w/restart-link-$kind.out" "$w/restart.log"; fail=1
