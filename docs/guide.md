@@ -320,6 +320,10 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 
 The **+** after the last tab opens an untitled file at the end of the tabs, and so does a double click on the empty space after them; New File (Ctrl+N) opens one next to the current tab. With more tabs than fit, the + stays at the right end and the wheel scrolls the tabs.
 
+Drag a tab along the strip to move it; the other tabs make room as it goes, and holding it past either end scrolls the strip.
+
+**Pin Tab** (in the tab's right-click menu and the command palette) keeps a tab at the left, before the others, with a pin in place of its close button; clicking the pin unpins it. Pinned tabs stay open: Close All Tabs leaves them, and Ctrl+W, a middle click and vim's `:q` do not close them. The tab's menu still closes one. Dragging a tab among the pinned tabs pins it, and dragging a pinned tab out among the others unpins it. Files open after the pinned tabs, and the project remembers which tabs are pinned.
+
 **Reopen Closed Tab** (Ctrl+Shift+T) brings back the tabs you closed, the last one first, in their place among the tabs and with the cursor, selection and scroll a file had. Pressing it again goes further back, up to 20 tabs; tabs that are already open and files that are gone are skipped. Opening another folder starts the list over.
 
 Find, replace and find in files ignore case until their Aa is on, in every script: `été` finds `Été`, `яблоко` finds `ЯБЛОКО` and `οδος` finds `ΟΔΟΣ`. Accented letters stay apart from plain ones, so `ete` does not find `été`.

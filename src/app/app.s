@@ -67,6 +67,15 @@ tip_text_id: .long 0             # the button whose tooltip is in tip_text (tip_
 tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
 tab_end_press: .long 0           # the last left press was on the tab strip's empty end
+tab_drag: .long 0                # the tab held by the left button follows the pointer (tab_drag_step)
+tab_grab: .long 0                # where along the tab the press took hold of it
+tab_drag_x: .long 0              # where the dragged tab is drawn, and its width
+tab_drag_w: .long 0
+.p2align 3
+tab_drag_kind: .quad 0           # the tab pressed: a drag follows it while it is the one at g_active
+tab_drag_doc: .quad 0
+menu_tab_kind: .quad 0           # the tab whose menu is open (tab_menu_tab)
+menu_tab_doc: .quad 0
 g_side_px: .long 0
 g_agents_px: .long 0
 dlg_kind: .long 0                # 0 none, 1 close tab, 2 quit, 3 open another project, 4 app_confirm, 5 close all
@@ -686,7 +695,7 @@ FN app_update_title
 9:  EPILOGUE
 
 # doc_tab(doc) -> rax the index of its tab, or -1
-doc_tab:
+FN doc_tab
     PROLOGUE
     mov r12, rdi
     xor ebx, ebx
@@ -951,7 +960,7 @@ FN app_open_file
     call app_detect_lang
     mov rdi, rbx
     call git_doc_opened
-    # replace an untouched untitled tab
+    # replace an untouched untitled tab, unless it is pinned
     mov rax, [rip + g_tab_cur]
     test rax, rax
     js 3f
@@ -959,6 +968,8 @@ FN app_open_file
     call tab_at
     cmp qword ptr [rax + TAB_kind], TAB_DOC
     jne 3f
+    test dword ptr [rax + TAB_flags], TF_PIN
+    jnz 3f
     mov rcx, [rax + TAB_doc]
     cmp qword ptr [rcx + DOC_path], 0
     jne 3f
@@ -984,77 +995,194 @@ FN app_open_file
     call app_add_tab
     EPILOGUE
 
-# app_add_tab(doc, kind) -> index (inserted after the current tab, activated)
+# app_add_tab(doc, kind) -> index (inserted after the current tab, but after the pinned tabs, and
+#   activated)
 FN app_add_tab
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
     lea rdi, [rip + g_tabs]
     mov esi, TAB_SIZE
-    call vec_push
+    call vec_push               # zeroed: not pinned
+    mov [rax + TAB_kind], r12
+    mov [rax + TAB_doc], rbx
     mov r13, [rip + g_tabs + VEC_len]
     dec r13                     # new slot index
     mov r14, [rip + g_tab_cur]
     inc r14                     # insert position
-    # shift [r14, r13) right by one
-    mov rcx, r13
-1:  cmp rcx, r14
-    jbe 2f
-    mov rdi, rcx
-    call tab_at
-    mov rdx, [rax - TAB_SIZE + TAB_kind]
-    mov [rax + TAB_kind], rdx
-    mov rdx, [rax - TAB_SIZE + TAB_doc]
-    mov [rax + TAB_doc], rdx
-    dec rcx
-    jmp 1b
-2:  mov rdi, r14
-    call tab_at
-    mov [rax + TAB_kind], r12
-    mov [rax + TAB_doc], rbx
+    call tabs_pinned
+    cmp r14, rax
+    cmovb r14, rax
+    mov rdi, r13
+    mov rsi, r14
+    call tab_move
     mov rdi, r14
     call app_activate_tab
     mov rax, r14
     EPILOGUE
 
-# app_place_tab(i): the active tab moves to place i in the strip (the last place at most), the tabs
-#   between closing up behind it
+# tab_move(from, to): tab `from` moves to place `to`, the tabs between closing up behind it; the
+#   active tab stays the active one wherever it goes
+FN tab_move
+    PROLOGUE 32
+    mov r12, rdi
+    mov r13, rsi
+    cmp r12, r13
+    je 9f
+    mov rdi, r12
+    call tab_at
+    mov rcx, [rax + TAB_kind]
+    mov [rsp], rcx
+    mov rcx, [rax + TAB_doc]
+    mov [rsp + 8], rcx
+    mov rcx, [rax + TAB_flags]
+    mov [rsp + 16], rcx
+    cmp r12, r13
+    ja 1f
+    # to the right: (from, to] one place left
+    mov rdi, r12
+    call tab_at
+    mov rdi, rax
+    lea rsi, [rax + TAB_SIZE]
+    mov rdx, r13
+    sub rdx, r12
+    imul rdx, rdx, TAB_SIZE
+    call memmove
+    jmp 2f
+1:  # to the left: [to, from) one place right
+    mov rdi, r13
+    call tab_at
+    mov rsi, rax
+    lea rdi, [rax + TAB_SIZE]
+    mov rdx, r12
+    sub rdx, r13
+    imul rdx, rdx, TAB_SIZE
+    call memmove
+2:  mov rdi, r13
+    call tab_at
+    mov rcx, [rsp]
+    mov [rax + TAB_kind], rcx
+    mov rcx, [rsp + 8]
+    mov [rax + TAB_doc], rcx
+    mov rcx, [rsp + 16]
+    mov [rax + TAB_flags], rcx
+    # the active tab: the one moved, or one of those it passed (a place toward where it was)
+    mov rax, [rip + g_tab_cur]
+    test rax, rax
+    js 8f
+    cmp rax, r12
+    jne 3f
+    mov [rip + g_tab_cur], r13
+    jmp 8f
+3:  cmp r12, r13
+    ja 4f
+    cmp rax, r12
+    jb 8f
+    cmp rax, r13
+    ja 8f
+    dec qword ptr [rip + g_tab_cur]
+    jmp 8f
+4:  cmp rax, r13
+    jb 8f
+    cmp rax, r12
+    ja 8f
+    inc qword ptr [rip + g_tab_cur]
+8:  mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# tabs_pinned() -> how many tabs are pinned: the first ones in the strip
+FN tabs_pinned
+    xor eax, eax
+    mov rcx, [rip + g_tabs + VEC_ptr]
+1:  cmp rax, [rip + g_tabs + VEC_len]
+    jae 2f
+    test dword ptr [rcx + TAB_flags], TF_PIN
+    jz 2f
+    add rcx, TAB_SIZE
+    inc rax
+    jmp 1b
+2:  ret
+
+# tab_pinned(i) -> eax 1 when tab i is pinned
+FN tab_pinned
+    call tab_at
+    mov eax, [rax + TAB_flags]
+    and eax, TF_PIN
+    ret
+
+# app_pin_tab(i, on): pin tab i, which moves after the other pinned tabs, or unpin it, which moves
+#   before the others
+FN app_pin_tab
+    PROLOGUE
+    mov r12, rdi
+    mov r13d, esi
+    cmp r12, [rip + g_tabs + VEC_len]
+    jae 9f
+    call tabs_pinned
+    mov rbx, rax
+    mov rdi, r12
+    call tab_at
+    mov ecx, [rax + TAB_flags]
+    and ecx, TF_PIN
+    test r13d, r13d
+    jz 1f
+    test ecx, ecx
+    jnz 9f
+    or dword ptr [rax + TAB_flags], TF_PIN
+    mov rsi, rbx
+    jmp 2f
+1:  test ecx, ecx
+    jz 9f
+    and dword ptr [rax + TAB_flags], ~TF_PIN
+    lea rsi, [rbx - 1]
+2:  mov rdi, r12
+    call tab_move
+    mov dword ptr [rip + g_tabscroll_reveal], 1
+9:  EPILOGUE
+
+FN cmd_pin_tab
+    mov esi, 1
+    jmp pin_active
+
+FN cmd_unpin_tab
+    xor esi, esi
+    jmp pin_active
+
+# pin_active(on): app_pin_tab for the active tab
+pin_active:
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 1f
+    jmp app_pin_tab
+1:  ret
+
+# app_place_tab(i): the active tab moves to place i in the strip (the last place at most, and among
+#   the tabs pinned or not as it is), the tabs between closing up behind it
 FN app_place_tab
     PROLOGUE
     mov r12, [rip + g_tab_cur]
     test r12, r12
     js 9f
-    mov r13, [rip + g_tabs + VEC_len]
-    dec r13
-    cmp rdi, r13
-    cmovb r13, rdi
+    mov rbx, rdi
+    call tabs_pinned
+    mov r13, rax
     mov rdi, r12
-    call tab_at
-    mov r14, [rax + TAB_kind]
-    mov r15, [rax + TAB_doc]
-1:  cmp r12, r13
-    je 3f
-    mov rdi, r12
-    call tab_at
-    # the neighbor toward the new place moves into this slot
-    mov rcx, TAB_SIZE
-    mov rdx, 1
-    cmp r12, r13
-    jb 2f
-    neg rcx
-    neg rdx
-2:  add r12, rdx
-    lea rdx, [rax + rcx]
-    mov rsi, [rdx + TAB_kind]
-    mov [rax + TAB_kind], rsi
-    mov rsi, [rdx + TAB_doc]
-    mov [rax + TAB_doc], rsi
-    jmp 1b
-3:  mov rdi, r13
-    call tab_at
-    mov [rax + TAB_kind], r14
-    mov [rax + TAB_doc], r15
-    mov [rip + g_tab_cur], r13
+    call tab_pinned
+    test eax, eax
+    jz 1f
+    lea rcx, [r13 - 1]
+    cmp rbx, rcx
+    cmova rbx, rcx
+    jmp 2f
+1:  mov rcx, [rip + g_tabs + VEC_len]
+    dec rcx
+    cmp rbx, rcx
+    cmova rbx, rcx
+    cmp rbx, r13
+    cmovb rbx, r13
+2:  mov rdi, r12
+    mov rsi, rbx
+    call tab_move
     mov dword ptr [rip + g_tabscroll_reveal], 1
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
@@ -1141,6 +1269,8 @@ FN app_close_tab_now
     mov [rax + TAB_kind], rdx
     mov rdx, [rax + TAB_SIZE + TAB_doc]
     mov [rax + TAB_doc], rdx
+    mov rdx, [rax + TAB_SIZE + TAB_flags]
+    mov [rax + TAB_flags], rdx
     inc rcx
     jmp 2b
 3:  dec qword ptr [rip + g_tabs + VEC_len]
@@ -1187,29 +1317,48 @@ FN app_close_tab
     call app_close_tab_now
     EPILOGUE
 
+# cmd_close_tab(): Ctrl+W, the palette and vim's :q close the active tab, but not a pinned one (its menu
+#   does)
 FN cmd_close_tab
     mov rdi, [rip + g_tab_cur]
     test rdi, rdi
     js 1f
-    jmp app_close_tab
+    push rdi
+    call tab_pinned
+    pop rdi
+    test eax, eax
+    jz app_close_tab
+    jmp pinned_stays
 1:  ret
 
-# cmd_close_all: close every tab. The first modified doc asks, and each answer that closes it comes
-# back here for the next; a cancel stops, with the tabs not closed yet still open
+# pinned_stays(): say why a pinned tab did not close
+pinned_stays:
+    lea rdi, [rip + .Lpinned_stays]
+    jmp app_toast
+
+# cmd_close_all: close every tab but the pinned ones. The first modified doc asks, and each answer that
+# closes it comes back here for the next; a cancel stops, with the tabs not closed yet still open
 FN cmd_close_all
     PROLOGUE
     mov edi, 5
     call ask_unsaved
     test eax, eax
     jnz 9f
-    call close_tabs_now
+    call tabs_pinned
+    mov rdi, rax
+    call close_tabs_from
 9:  EPILOGUE
 
-# ask_unsaved(kind) -> eax 1 when the first modified doc asks, in dialog kind (dlg_kind), else 0
+# ask_unsaved(kind) -> eax 1 when the first modified doc asks, in dialog kind (dlg_kind), else 0. Close
+#   All Tabs (kind 5) leaves the pinned tabs alone.
 ask_unsaved:
     PROLOGUE
     mov r12d, edi
     xor ebx, ebx
+    cmp r12d, 5
+    jne 1f
+    call tabs_pinned
+    mov rbx, rax
 1:  cmp rbx, [rip + g_tabs + VEC_len]
     jae 3f
     mov rdi, rbx
@@ -1234,10 +1383,14 @@ ask_unsaved:
 
 # close_tabs_now(): close every tab without asking, the last first
 close_tabs_now:
+    xor edi, edi
+# close_tabs_from(i): close tab i and the ones after it without asking, the last first
+close_tabs_from:
     PROLOGUE
+    mov rbx, rdi
 1:  mov rdi, [rip + g_tabs + VEC_len]
-    test rdi, rdi
-    jz 9f
+    cmp rdi, rbx
+    jbe 9f
     dec rdi
     call app_close_tab_now
     jmp 1b
@@ -3241,7 +3394,12 @@ FN tabs_draw
 1:  cmp dword ptr [rip + g_tabscroll], 0
     jge 2f
     mov dword ptr [rip + g_tabscroll], 0
-2:  mov edi, [rsp]
+2:  # a tab dragged along the strip moves before the tabs are laid out
+    mov edi, [rsp]
+    mov esi, [rsp + 36]
+    call tab_drag_step
+    mov [rsp + 44], eax         # the dragged tab, drawn over the others, or -1
+    mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 36]
     mov ecx, [rsp + 12]
@@ -3252,23 +3410,9 @@ FN tabs_draw
 .Ltd_tab:
     cmp rbx, [rip + g_tabs + VEC_len]
     jae .Ltd_done
-    # label
     mov rdi, rbx
-    call tab_at
-    mov r15, rax
-    mov rdi, rbx
-    call app_tab_label
-    mov r13, rax
-    mov rdi, r13
-    call strlen
-    mov r14, rax
-    lea rdi, [rip + g_face_ui]
-    mov rsi, r13
-    mov rdx, r14
-    call text_width
-    add eax, [rip + g_mt + 4*MI_40]
-    add eax, [rip + g_mt + 4*MI_12]
-    mov [rsp + 16], eax         # tab width
+    call tab_width
+    mov [rsp + 16], eax
     # reveal the active tab
     cmp rbx, [rip + g_tab_cur]
     jne 5f
@@ -3290,178 +3434,17 @@ FN tabs_draw
     jle 5f
     add [rip + g_tabscroll], ecx
     mov dword ptr [rip + g_dirty], 1
-5:  # interaction
-    lea edi, [rbx + ID_TAB]
+5:  cmp ebx, [rsp + 44]
+    je .Ltd_next                # its place stays empty under it
+    mov rdi, rbx
     mov esi, r12d
     mov edx, [rsp + 4]
     mov ecx, [rsp + 16]
     mov r8d, [rsp + 12]
-    call ui_btn
-    mov [rsp + 20], eax
-    test eax, UB_PRESS
-    jz 6f
-    mov rdi, rbx
-    call app_activate_tab
-6:  test dword ptr [rsp + 20], UB_HOVER
-    jz 61f
-    test dword ptr [rip + g_pressed], 1 << BTN_MIDDLE
-    jz 61f
-    mov rdi, rbx
-    call app_close_tab
-    jmp .Ltd_closed
-61: # background
-    cmp rbx, [rip + g_tab_cur]
-    jne 7f
-    mov edi, r12d
-    mov esi, [rsp + 4]
-    mov edx, [rsp + 16]
-    mov ecx, [rsp + 12]
-    COLOR r8d, T_TAB_ACTIVE
-    call gfx_fill
-    # the active tab opens into the editor: borders at both sides run the full height and join
-    # the strip's bottom line (the left one is the previous tab's separator column)
-    mov edi, r12d
-    sub edi, [rip + g_mt + 4*MI_1]
-    mov esi, [rsp + 4]
-    M edx, MI_1
-    mov ecx, [rsp + 12]
-    COLOR r8d, T_BORDER
-    call gfx_fill
-    mov edi, r12d
-    add edi, [rsp + 16]
-    sub edi, [rip + g_mt + 4*MI_1]
-    mov esi, [rsp + 4]
-    M edx, MI_1
-    mov ecx, [rsp + 12]
-    COLOR r8d, T_BORDER
-    call gfx_fill
-    mov edi, r12d
-    mov esi, [rsp + 4]
-    mov edx, [rsp + 16]
-    sub edx, [rip + g_mt + 4*MI_1]
-    M ecx, MI_2
-    COLOR r8d, T_ACCENT
-    call gfx_fill
-    jmp 86f
-7:  test dword ptr [rsp + 20], UB_HOVER
-    jz 8f
-    mov edi, r12d
-    mov esi, [rsp + 4]
-    mov edx, [rsp + 16]
-    mov ecx, [rsp + 12]
-    sub ecx, [rip + g_mt + 4*MI_1]
-    COLOR r8d, T_HOVER
-    call gfx_fill
-8:  # separator
-    mov edi, r12d
-    add edi, [rsp + 16]
-    sub edi, [rip + g_mt + 4*MI_1]
-    mov esi, [rsp + 4]
-    add esi, [rip + g_mt + 4*MI_8]
-    M edx, MI_1
-    mov ecx, [rsp + 12]
-    sub ecx, [rip + g_mt + 4*MI_16]
-    COLOR r8d, T_BORDER
-    call gfx_fill
-86: # text: git status color, else muted (foreground when active)
-    mov rax, [r15 + TAB_doc]
-    test rax, rax
-    jz 80f
-    mov rdi, [rax + DOC_path]
-    xor eax, eax
-    test rdi, rdi
-    jz 80f
-    call git_path_color
-80: mov r9d, eax
+    xor r9d, r9d
+    call tab_draw
     test eax, eax
-    jnz 81f
-    COLOR r9d, T_MUTED
-    cmp rbx, [rip + g_tab_cur]
-    jne 81f
-    COLOR r9d, T_FG
-81: lea rdi, [rip + g_face_ui]
-    mov esi, r12d
-    add esi, [rip + g_mt + 4*MI_16]
-    mov edx, [rsp + 4]
-    mov ecx, [rsp + 12]
-    mov r8, r13
-    push r9
-    push r9
-    mov r9, r14
-    call ui_text_v
-    add rsp, 16
-    # close button / modified dot
-    M r13d, MI_20
-    mov esi, r12d
-    add esi, [rsp + 16]
-    sub esi, r13d
-    sub esi, [rip + g_mt + 4*MI_8]
-    mov [rsp + 24], esi
-    mov edx, [rsp + 12]
-    sub edx, r13d
-    sar edx, 1
-    add edx, [rsp + 4]
-    mov [rsp + 28], edx
-    lea edi, [rbx + ID_TABX]
-    mov ecx, r13d
-    mov r8d, r13d
-    call ui_btn
-    mov [rsp + 32], eax
-    xor r14d, r14d              # modified?
-    cmp qword ptr [r15 + TAB_kind], TAB_DOC
-    jne 82f
-    mov rdi, [r15 + TAB_doc]
-    call doc_dirty
-    mov r14d, eax
-82: test dword ptr [rsp + 32], UB_HOVER
-    jnz 84f
-    test r14d, r14d
-    jz 83f
-    # dot
-    M ecx, MI_8
-    mov edi, [rsp + 24]
-    mov esi, [rsp + 28]
-    mov eax, r13d
-    sub eax, ecx
-    sar eax, 1
-    add edi, eax
-    add esi, eax
-    mov edx, ecx
-    mov r8d, ecx
-    shr r8d, 1
-    COLOR r9d, T_FG
-    cmp rbx, [rip + g_tab_cur]
-    je 821f
-    COLOR r9d, T_MUTED
-821:call gfx_round_rect
-    jmp .Ltd_next
-83: cmp rbx, [rip + g_tab_cur]
-    jne 841f
-    test dword ptr [rsp + 20], UB_HOVER
-    jz 841f
-84: # x
-    test dword ptr [rsp + 32], UB_HOVER
-    jz 85f
-    mov edi, [rsp + 24]
-    mov esi, [rsp + 28]
-    mov edx, r13d
-    mov ecx, r13d
-    M r8d, MI_4
-    COLOR r9d, T_HOVER
-    call gfx_round_rect
-85: mov edi, IC_CLOSE
-    mov esi, [rsp + 24]
-    mov edx, [rsp + 28]
-    mov ecx, r13d
-    mov r8d, r13d
-    COLOR r9d, T_MUTED
-    call ui_icon_center
-    test dword ptr [rsp + 32], UB_CLICK
-    jz .Ltd_next
-    mov rdi, rbx
-    call app_close_tab
-    jmp .Ltd_closed
-841:
+    jnz .Ltd_closed
 .Ltd_next:
     add r12d, [rsp + 16]
     inc rbx
@@ -3537,7 +3520,17 @@ FN tabs_draw
 9:  test dword ptr [rip + g_pressed], 1 << BTN_LEFT
     jz 8f
     mov dword ptr [rip + tab_end_press], 0
-8:  call gfx_clip_pop
+8:  # the dragged tab over the others and the +
+    mov edi, [rsp + 44]
+    cmp rdi, [rip + g_tabs + VEC_len]
+    jae 81f
+    mov esi, [rip + tab_drag_x]
+    mov edx, [rsp + 4]
+    mov ecx, [rip + tab_drag_w]
+    mov r8d, [rsp + 12]
+    mov r9d, 1
+    call tab_draw
+81: call gfx_clip_pop
     EPILOGUE
 
 # tab_new_last(): a new file in a tab at the strip's end, where the + is
@@ -3545,6 +3538,511 @@ tab_new_last:
     call cmd_new_file
     mov rdi, [rip + g_tabs + VEC_len]
     jmp app_place_tab
+
+# tab_width(i) -> eax: its name, and room for the button after it
+tab_width:
+    PROLOGUE
+    call app_tab_label
+    mov rbx, rax
+    mov rdi, rax
+    call strlen
+    lea rdi, [rip + g_face_ui]
+    mov rsi, rbx
+    mov rdx, rax
+    call text_width
+    add eax, [rip + g_mt + 4*MI_40]
+    add eax, [rip + g_mt + 4*MI_12]
+    EPILOGUE
+
+# tab_draw(i, x, y, w, h, lifted) -> eax 1 when the strip changed under it (the tab closed or was
+#   unpinned): the rest shows next frame. A lifted tab is the one being dragged, drawn over the others;
+#   it is not hit tested, nor are the others while it is.
+tab_draw:
+    PROLOGUE 48
+    mov rbx, rdi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    mov [rsp + 32], r9d
+    mov dword ptr [rsp + 16], 0 # UB_* of the tab
+    mov dword ptr [rsp + 28], 0 # and of its button
+    mov rdi, rbx
+    call tab_at
+    mov r15, rax
+    mov rdi, rbx
+    call app_tab_label
+    mov r13, rax
+    mov rdi, rax
+    call strlen
+    mov r14, rax
+    cmp dword ptr [rsp + 32], 0
+    jne .Ltw_bg
+    cmp dword ptr [rip + tab_drag], 0
+    jne .Ltw_bg
+    lea edi, [rbx + ID_TAB]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    mov [rsp + 16], eax
+    test eax, UB_PRESS
+    jz 1f
+    # the press may start a drag: which tab, and where along it the press took hold
+    mov eax, [rip + g_mx]
+    sub eax, [rsp]
+    mov [rip + tab_grab], eax
+    mov rax, [r15 + TAB_kind]
+    mov [rip + tab_drag_kind], rax
+    mov rax, [r15 + TAB_doc]
+    mov [rip + tab_drag_doc], rax
+    mov rdi, rbx
+    call app_activate_tab
+1:  test dword ptr [rsp + 16], UB_RPRESS
+    jz 2f
+    mov rdi, rbx
+    call tab_menu_open
+2:  test dword ptr [rsp + 16], UB_HOVER
+    jz .Ltw_bg
+    test dword ptr [rip + g_pressed], 1 << BTN_MIDDLE
+    jz .Ltw_bg
+    # a middle click closes it, but not a pinned one
+    test dword ptr [r15 + TAB_flags], TF_PIN
+    jz 3f
+    call pinned_stays
+    jmp .Ltw_bg
+3:  mov rdi, rbx
+    call app_close_tab
+    jmp .Ltw_changed
+.Ltw_bg:
+    cmp rbx, [rip + g_tab_cur]
+    jne 7f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_TAB_ACTIVE
+    call gfx_fill
+    # the active tab opens into the editor: borders at both sides run the full height and join
+    # the strip's bottom line (the left one is the previous tab's separator column)
+    mov edi, [rsp]
+    sub edi, [rip + g_mt + 4*MI_1]
+    mov esi, [rsp + 4]
+    M edx, MI_1
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov edi, [rsp]
+    add edi, [rsp + 8]
+    sub edi, [rip + g_mt + 4*MI_1]
+    mov esi, [rsp + 4]
+    M edx, MI_1
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    sub edx, [rip + g_mt + 4*MI_1]
+    M ecx, MI_2
+    COLOR r8d, T_ACCENT
+    call gfx_fill
+    jmp 86f
+7:  test dword ptr [rsp + 16], UB_HOVER
+    jz 8f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    sub ecx, [rip + g_mt + 4*MI_1]
+    COLOR r8d, T_HOVER
+    call gfx_fill
+8:  # separator
+    mov edi, [rsp]
+    add edi, [rsp + 8]
+    sub edi, [rip + g_mt + 4*MI_1]
+    mov esi, [rsp + 4]
+    add esi, [rip + g_mt + 4*MI_8]
+    M edx, MI_1
+    mov ecx, [rsp + 12]
+    sub ecx, [rip + g_mt + 4*MI_16]
+    COLOR r8d, T_BORDER
+    call gfx_fill
+86: # text: git status color, else muted (foreground when active)
+    mov rax, [r15 + TAB_doc]
+    test rax, rax
+    jz 87f
+    mov rdi, [rax + DOC_path]
+    xor eax, eax
+    test rdi, rdi
+    jz 87f
+    call git_path_color
+87: mov r9d, eax
+    test eax, eax
+    jnz 88f
+    COLOR r9d, T_MUTED
+    cmp rbx, [rip + g_tab_cur]
+    jne 88f
+    COLOR r9d, T_FG
+88: lea rdi, [rip + g_face_ui]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    mov r8, r13
+    push r9
+    push r9
+    mov r9, r14
+    call ui_text_v
+    add rsp, 16
+    # close button, pin, modified dot
+    M r12d, MI_20
+    mov eax, [rsp]
+    add eax, [rsp + 8]
+    sub eax, r12d
+    sub eax, [rip + g_mt + 4*MI_8]
+    mov [rsp + 20], eax
+    mov eax, [rsp + 12]
+    sub eax, r12d
+    sar eax, 1
+    add eax, [rsp + 4]
+    mov [rsp + 24], eax
+    cmp dword ptr [rsp + 32], 0
+    jne 89f
+    cmp dword ptr [rip + tab_drag], 0
+    jne 89f
+    lea edi, [rbx + ID_TABX]
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 24]
+    mov ecx, r12d
+    mov r8d, r12d
+    call ui_btn
+    mov [rsp + 28], eax
+89: xor r14d, r14d              # modified?
+    cmp qword ptr [r15 + TAB_kind], TAB_DOC
+    jne 82f
+    mov rdi, [r15 + TAB_doc]
+    call doc_dirty
+    mov r14d, eax
+82: test dword ptr [r15 + TAB_flags], TF_PIN
+    jnz .Ltw_pin
+    test dword ptr [rsp + 28], UB_HOVER
+    jnz 84f
+    test r14d, r14d
+    jz 83f
+    # dot
+    M ecx, MI_8
+    mov edi, [rsp + 20]
+    mov esi, [rsp + 24]
+    mov eax, r12d
+    sub eax, ecx
+    sar eax, 1
+    add edi, eax
+    add esi, eax
+    mov edx, ecx
+    mov r8d, ecx
+    shr r8d, 1
+    COLOR r9d, T_FG
+    cmp rbx, [rip + g_tab_cur]
+    je 821f
+    COLOR r9d, T_MUTED
+821:call gfx_round_rect
+    jmp .Ltw_done
+83: cmp rbx, [rip + g_tab_cur]
+    jne .Ltw_done
+    test dword ptr [rsp + 16], UB_HOVER
+    jz .Ltw_done
+84: # x
+    test dword ptr [rsp + 28], UB_HOVER
+    jz 85f
+    mov edi, [rsp + 20]
+    mov esi, [rsp + 24]
+    mov edx, r12d
+    mov ecx, r12d
+    M r8d, MI_4
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+85: mov edi, IC_CLOSE
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 24]
+    mov ecx, r12d
+    mov r8d, r12d
+    COLOR r9d, T_MUTED
+    call ui_icon_center
+    test dword ptr [rsp + 28], UB_CLICK
+    jz .Ltw_done
+    mov rdi, rbx
+    call app_close_tab
+    jmp .Ltw_changed
+.Ltw_pin:
+    # the pin, which unpins it, with a dot at its corner while the file is modified
+    test dword ptr [rsp + 28], UB_HOVER
+    jz 1f
+    mov edi, [rsp + 20]
+    mov esi, [rsp + 24]
+    mov edx, r12d
+    mov ecx, r12d
+    M r8d, MI_4
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+1:  mov edi, IC_PIN
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 24]
+    mov ecx, r12d
+    mov r8d, r12d
+    COLOR r9d, T_MUTED
+    call ui_icon_center
+    test r14d, r14d
+    jz 2f
+    M ecx, MI_6
+    mov edi, [rsp + 20]
+    add edi, r12d
+    sub edi, ecx
+    mov esi, [rsp + 24]
+    mov edx, ecx
+    mov r8d, ecx
+    shr r8d, 1
+    COLOR r9d, T_FG
+    cmp rbx, [rip + g_tab_cur]
+    je 11f
+    COLOR r9d, T_MUTED
+11: call gfx_round_rect
+2:  test dword ptr [rsp + 28], UB_CLICK
+    jz .Ltw_done
+    mov rdi, rbx
+    xor esi, esi
+    call app_pin_tab
+.Ltw_changed:
+    mov eax, 1
+    EPILOGUE
+.Ltw_done:
+    xor eax, eax
+    EPILOGUE
+
+# tab_drag_step(x, w) -> eax the tab being dragged, or -1. Once the pointer has moved a few pixels, a
+#   tab held by the left button follows it: the tab takes the place where the others before it end
+#   nearest to its left edge, so tabs of any width trade places without flipping back. Among the
+#   pinned tabs it is pinned, among the others not; at the place between them it stays as it was.
+#   Taken past an end of the strip's scrolling part (x, w) it scrolls the strip. tab_drag_x and
+#   tab_drag_w are where to draw it.
+tab_drag_step:
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    test dword ptr [rip + g_mdown], 1 << BTN_LEFT
+    jz .Lds_end
+    # a dialog or menu that opened meanwhile ends it (not g_block: the window's resize border sets
+    # that too, and the pointer goes there to scroll the strip)
+    call app_modal_open
+    test eax, eax
+    jnz .Lds_end
+    mov eax, [rip + g_active]
+    cmp eax, ID_TAB
+    jb .Lds_end
+    sub eax, ID_TAB
+    mov ebx, eax
+    cmp rbx, [rip + g_tabs + VEC_len]
+    jae .Lds_end
+    # still the tab pressed, and shown (a key may have closed it, and another taken its place, or
+    # shown another tab)
+    cmp rbx, [rip + g_tab_cur]
+    jne .Lds_end
+    mov rdi, rbx
+    call tab_at
+    mov rcx, [rax + TAB_kind]
+    cmp rcx, [rip + tab_drag_kind]
+    jne .Lds_end
+    mov rcx, [rax + TAB_doc]
+    cmp rcx, [rip + tab_drag_doc]
+    jne .Lds_end
+    cmp dword ptr [rip + tab_drag], 0
+    jne 1f
+    mov eax, [rip + g_mx]
+    sub eax, [rip + g_press_x]
+    cdq
+    xor eax, edx
+    sub eax, edx
+    cmp eax, [rip + g_mt + 4*MI_4]
+    jl .Lds_none
+    mov dword ptr [rip + tab_drag], 1
+1:  mov rdi, rbx
+    call tab_width
+    mov r12d, eax
+    mov [rip + tab_drag_w], eax
+    # how far the strip scrolls: all the tabs, less what shows of them
+    xor r13d, r13d
+    xor r14d, r14d
+2:  cmp r14, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, r14
+    call tab_width
+    add r13d, eax
+    inc r14
+    jmp 2b
+3:  sub r13d, [rsp + 4]
+    jns 31f
+    xor r13d, r13d
+31: # where the pointer takes the tab's left edge; past an end the strip scrolls toward it
+    mov eax, [rip + g_mx]
+    sub eax, [rip + tab_grab]
+    mov r14d, eax
+    cmp eax, [rsp]
+    jge 4f
+    mov eax, [rip + g_tabscroll]
+    sub eax, [rip + g_mt + 4*MI_8]
+    jmp 5f
+4:  add eax, r12d
+    mov ecx, [rsp]
+    add ecx, [rsp + 4]
+    cmp eax, ecx
+    jle 6f
+    mov eax, [rip + g_tabscroll]
+    add eax, [rip + g_mt + 4*MI_8]
+5:  cmp eax, r13d
+    cmovg eax, r13d
+    xor ecx, ecx
+    cmp eax, ecx
+    cmovl eax, ecx
+    cmp eax, [rip + g_tabscroll]
+    je 6f
+    mov [rip + g_tabscroll], eax
+    mov dword ptr [rip + g_dirty], 1
+6:  # the tab stays inside the strip
+    mov eax, [rsp]
+    add eax, [rsp + 4]
+    sub eax, r12d
+    cmp r14d, eax
+    cmovg r14d, eax
+    mov eax, [rsp]
+    cmp r14d, eax
+    cmovl r14d, eax
+    mov [rip + tab_drag_x], r14d
+    # its left edge along the tabs, and its place
+    sub r14d, [rsp]
+    add r14d, [rip + g_tabscroll]
+    mov eax, r14d
+    cdq
+    xor eax, edx
+    sub eax, edx
+    mov [rsp + 8], eax          # how near the best place is
+    mov qword ptr [rsp + 16], 0 # the best place
+    xor r12d, r12d
+    xor r13d, r13d              # where the other tabs so far end
+    xor r15d, r15d              # how many
+7:  cmp r12, [rip + g_tabs + VEC_len]
+    jae 8f
+    cmp r12, rbx
+    je 71f
+    mov rdi, r12
+    call tab_width
+    add r13d, eax
+    inc r15
+    mov eax, r13d
+    sub eax, r14d
+    cdq
+    xor eax, edx
+    sub eax, edx
+    cmp eax, [rsp + 8]
+    jge 71f
+    mov [rsp + 8], eax
+    mov [rsp + 16], r15
+71: inc r12
+    jmp 7b
+8:  # pinned or not, as the tabs on both sides are
+    call tabs_pinned
+    mov r13, rax
+    mov rdi, rbx
+    call tab_pinned
+    sub r13, rax                # the other pinned tabs
+    mov r12, [rsp + 16]
+    mov rdi, rbx
+    call tab_at
+    cmp r12, r13
+    jae 81f
+    or dword ptr [rax + TAB_flags], TF_PIN
+    jmp 82f
+81: jbe 82f
+    and dword ptr [rax + TAB_flags], ~TF_PIN
+82: mov rdi, rbx
+    mov rsi, r12
+    call tab_move
+    lea eax, [r12 + ID_TAB]
+    mov [rip + g_active], eax
+    mov eax, r12d
+    EPILOGUE
+.Lds_end:
+    # let go: the tab settles in its place, in full view
+    cmp dword ptr [rip + tab_drag], 0
+    je .Lds_none
+    mov dword ptr [rip + tab_drag], 0
+    mov dword ptr [rip + g_tabscroll_reveal], 1
+    mov dword ptr [rip + g_dirty], 1
+.Lds_none:
+    mov eax, -1
+    EPILOGUE
+
+# tab_menu_open(i): the menu of tab i, for a right click on it: pin or unpin, close, close all
+tab_menu_open:
+    PROLOGUE
+    call tab_at
+    mov rcx, [rax + TAB_kind]
+    mov [rip + menu_tab_kind], rcx
+    mov rcx, [rax + TAB_doc]
+    mov [rip + menu_tab_doc], rcx
+    lea rdi, [rip + tab_menu]
+    test dword ptr [rax + TAB_flags], TF_PIN
+    jz 1f
+    lea rdi, [rip + tab_menu_pinned]
+1:  mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call ctx_menu_open
+    mov dword ptr [rip + g_menu_keys], 1
+    EPILOGUE
+
+# tab_menu_tab() -> the index of the tab the menu is for, or -1 once it closed
+tab_menu_tab:
+    xor eax, eax
+    mov rcx, [rip + g_tabs + VEC_ptr]
+1:  cmp rax, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdx, [rcx + TAB_kind]
+    cmp rdx, [rip + menu_tab_kind]
+    jne 2f
+    mov rdx, [rcx + TAB_doc]
+    cmp rdx, [rip + menu_tab_doc]
+    je 4f
+2:  add rcx, TAB_SIZE
+    inc rax
+    jmp 1b
+3:  mov rax, -1
+4:  ret
+
+tab_menu_pin:
+    mov esi, 1
+    jmp tab_menu_set_pin
+
+tab_menu_unpin:
+    xor esi, esi
+# tab_menu_set_pin(on): app_pin_tab for the menu's tab
+tab_menu_set_pin:
+    push rsi
+    call tab_menu_tab
+    pop rsi
+    test rax, rax
+    js 1f
+    mov rdi, rax
+    jmp app_pin_tab
+1:  ret
+
+# tab_menu_close(): the menu closes its tab, pinned or not (asking when it is modified)
+tab_menu_close:
+    call tab_menu_tab
+    test rax, rax
+    js 1f
+    mov rdi, rax
+    jmp app_close_tab
+1:  ret
 
 # statusbar_draw(x, y, w, h)
 FN statusbar_draw
@@ -5031,7 +5529,19 @@ FN cmd_move_line_down
 .Lro_button: .asciz "Overwrite"
 .Lsave_as: .asciz "Save as"
 .Lsettings: .asciz "Settings"
+.Lpinned_stays: .asciz "The tab is pinned: unpin it to close it"
+.Ltm_pin: .asciz "Pin Tab"
+.Ltm_unpin: .asciz "Unpin Tab"
+.Ltm_close: .asciz "Close Tab"
+.Ltm_close_all: .asciz "Close All Tabs"
 .p2align 3
+# the menus of a tab and of a pinned tab
+tab_menu:
+    .quad .Ltm_pin, tab_menu_pin, .Lpm_line, 0
+    .quad .Ltm_close, tab_menu_close, .Ltm_close_all, cmd_close_all, 0, 0
+tab_menu_pinned:
+    .quad .Ltm_unpin, tab_menu_unpin, .Lpm_line, 0
+    .quad .Ltm_close, tab_menu_close, .Ltm_close_all, cmd_close_all, 0, 0
 # font_paths: the settings that name font files (font_paths_hash); 0 ends it
 font_paths:
     .quad cfg_font, cfg_ui_font, cfg_term_font, 0

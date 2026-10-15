@@ -403,7 +403,8 @@ recent_cb:
     call cstr_copy
 9:  EPILOGUE
 
-# session_save(): "path<TAB>cursor" per open file, "*" marks the active one
+# session_save(): "path<TAB>cursor" per open file, "*" marks the active one and "<TAB>pin" ends the line
+#   of a pinned one (older versions read the cursor and stop there)
 FN session_save
     PROLOGUE
     cmp dword ptr [rip + cfg_restore_session], 0
@@ -442,7 +443,14 @@ FN session_save
     lea rdi, [rip + out]
     mov rsi, [r12 + DOC_cur]
     call sb_push_u64
+    mov rdi, rbx
+    call tab_pinned
+    test eax, eax
+    jz 12f
     lea rdi, [rip + out]
+    lea rsi, [rip + .Lpin]
+    call sb_push_cstr
+12: lea rdi, [rip + out]
     mov esi, 10
     call sb_push_byte
 2:  inc rbx
@@ -458,7 +466,7 @@ FN session_save
 
 # session_restore(): reopen the files of the last session of this project
 FN session_restore
-    PROLOGUE 16
+    PROLOGUE 32
     cmp dword ptr [rip + cfg_restore_session], 0
     je 9f
     call session_file
@@ -470,7 +478,7 @@ FN session_restore
     jz 9f
     mov r12, rax
     mov r13, rdx
-    mov qword ptr [rsp], -1     # active tab
+    mov qword ptr [rsp], 0      # the active tab's document (pinning moves tabs)
     xor r14d, r14d
 1:  cmp r14, r13
     jae 8f
@@ -516,15 +524,33 @@ FN session_restore
     pop rsi
     test rax, rax
     js 7f
+    mov [rsp + 16], rax
+    mov [rsp + 24], rsi
     cmp dword ptr [rsp + 8], 0
     je 61f
+    mov rdi, rax
+    call tab_at
+    mov rax, [rax + TAB_doc]
     mov [rsp], rax
-61: mov rdi, rsi
+61: mov rdi, [rsp + 24]
     call strlen
-    mov rdi, rsi
+    mov rdi, [rsp + 24]
     mov rsi, rax
     call parse_u64
-    mov rcx, [rip + g_doc]
+    # "<TAB>pin" after the cursor
+    mov rcx, [rsp + 24]
+    cmp byte ptr [rcx + rdx], 9
+    jne 62f
+    cmp byte ptr [rcx + rdx + 1], 'p'
+    jne 62f
+    push rax
+    push rax
+    mov rdi, [rsp + 32]
+    mov esi, 1
+    call app_pin_tab
+    pop rax
+    pop rax
+62: mov rcx, [rip + g_doc]
     test rcx, rcx
     jz 7f                       # an image
     push rax
@@ -543,7 +569,11 @@ FN session_restore
     call mem_free
     mov rdi, [rsp]
     test rdi, rdi
+    jz 9f
+    call doc_tab
+    test rax, rax
     js 9f
+    mov rdi, rax
     call app_activate_tab
 9:  EPILOGUE
 
@@ -556,6 +586,7 @@ FN session_restore
 .Llast_project: .asciz "/last-project"
 .Lpercent: .asciz "%%25"
 .Lempty: .asciz ""
+.Lpin: .asciz "\tpin"
 
 .ifdef WINDOWS
 .text

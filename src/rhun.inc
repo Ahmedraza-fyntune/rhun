@@ -827,7 +827,8 @@ ENDSTRUCT TF_SIZE
 .equ IC_F_ZIG, 143
 .equ IC_F_ZIP, 144
 .equ IC_OPENCODE, 145
-.equ IC_COUNT, 146
+.equ IC_PIN, 146
+.equ IC_COUNT, 147
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
@@ -864,7 +865,10 @@ ENDSTRUCT IMG_SIZE
 STRUCT
 F TAB_kind, 8
 F TAB_doc, 8
+F TAB_flags, 8
 ENDSTRUCT TAB_SIZE
+# TAB_flags
+.equ TF_PIN, 1                  # pinned: the pinned tabs are the first ones in the strip
 
 .equ SIDEBAR_W_DEFAULT, 240        # points: the explorer's and the agents panel's widths
 .equ AGENTS_W_DEFAULT, 380

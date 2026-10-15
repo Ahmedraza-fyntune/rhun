@@ -483,6 +483,8 @@ g_commands:
     COMMAND close_tab, "Close Tab", cmd_close_tab, "ctrl+w ctrl+F4"
     COMMAND close_all_tabs, "Close All Tabs", cmd_close_all, "ctrl+shift+w"
     COMMAND reopen_closed_tab, "Reopen Closed Tab", cmd_reopen_closed_tab, "ctrl+shift+t"
+    COMMAND pin_tab, "Pin Tab", cmd_pin_tab, ""
+    COMMAND unpin_tab, "Unpin Tab", cmd_unpin_tab, ""
     COMMAND next_tab, "Next Tab", cmd_next_tab, "ctrl+Tab ctrl+PageDown"
     COMMAND prev_tab, "Previous Tab", cmd_prev_tab, "ctrl+shift+Tab ctrl+PageUp"
     COMMAND quit, "Quit", cmd_quit, "ctrl+q"
