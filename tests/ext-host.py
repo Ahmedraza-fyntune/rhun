@@ -22,7 +22,7 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
 CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen,'
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
         'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
-        'echo.countdiag,echo.bidi')
+        'echo.countdiag,echo.bidi,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec')
 
 
 class Host(unittest.TestCase):
@@ -37,7 +37,8 @@ class Host(unittest.TestCase):
         config = self.work / 'config/rhun/config'
         config.parent.mkdir(parents=True)
         config.write_text(CONFIG, encoding='utf-8')
-        self.log = self.work / 'echo.log'
+        # the log lives in the extension's state folder: that is where a confined program may write
+        self.log = self.work / 'state/rhun/extensions/rhun-tests--echo/echo.log'
         self.env = dict(os.environ, HOME=self.work.as_posix(),
                         XDG_CONFIG_HOME=(self.work / 'config').as_posix(),
                         XDG_STATE_HOME=(self.work / 'state').as_posix(),
@@ -74,7 +75,7 @@ class Host(unittest.TestCase):
 
     def test_manifest_commands_exist_before_any_process(self):
         out = self.run_editor(['print-extensions', 'print-palette'])
-        self.assertEqual(out[0], f'rhun-tests/echo state=idle pid=0 cmds={CMDS}')
+        self.assertEqual(out[0], f'rhun-tests/echo state=idle pid=0 cmds={CMDS} confined=0')
         self.assertFalse(self.log.exists(), 'no process was started')
 
     def test_a_folder_without_manifests_is_fine(self):
@@ -95,10 +96,10 @@ class Host(unittest.TestCase):
         (bad / 'o' / 'nortl' / 'extension.ini').write_text('name = nortl\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nruntime = no-such-runtime-xyz\nrun = x.py\n')
         out = self.run_editor(['print-extensions'], exts=bad)
         states = sorted(line for line in out if line.startswith('o/'))
-        self.assertIn('o/noprog state=failed reason=program file missing pid=0 cmds=', states)
-        self.assertIn('o/nortl state=failed reason=runtime not found on PATH pid=0 cmds=', states)
-        self.assertIn('o/notitle state=failed reason=extension.ini has no title pid=0 cmds=', states)
-        self.assertIn('o/v2 state=failed reason=protocol version not supported (rhun speaks 1) pid=0 cmds=', states)
+        self.assertIn('o/noprog state=failed reason=program file missing pid=0 cmds= confined=0', states)
+        self.assertIn('o/nortl state=failed reason=runtime not found on PATH pid=0 cmds= confined=0', states)
+        self.assertIn('o/notitle state=failed reason=extension.ini has no title pid=0 cmds= confined=0', states)
+        self.assertIn('o/v2 state=failed reason=protocol version not supported (rhun speaks 1) pid=0 cmds= confined=0', states)
 
     # --- handshake and events ---
 
@@ -476,7 +477,7 @@ class Host(unittest.TestCase):
         out = self.run_editor(drop_waits=True, actions=['cmd echo.reg', 'wait-ext echo running', 'wait 300', 'print-extensions',
                                'cmd echo.extra', 'wait 300', 'print-toast', 'key ctrl+alt+9', 'wait 300',
                                'cmd echo.reg', 'wait 300'])
-        self.assertTrue(out[0].endswith(',echo.bidi,echo.extra'), out[0])   # after the manifest's last command
+        self.assertIn(',echo.extra confined=', out[0])   # after the manifest's last command
         self.assertEqual(out[1], 'toast=extra ran')
         log = self.echo_log()
         self.assertEqual(sum(1 for l in log if l == '0 run echo.extra 1'), 2)   # the palette and the key
@@ -486,7 +487,7 @@ class Host(unittest.TestCase):
         out = self.run_editor(drop_waits=True, actions=['cmd echo.reg', 'wait-ext echo running', 'wait 300', 'cmd echo.die',
                                'wait 500', 'print-extensions'])
         self.assertIn('state=crashed', out[0])
-        self.assertTrue(out[0].endswith(',echo.bidi'), out[0])   # echo.extra is gone
+        self.assertNotIn('echo.extra', out[0])   # gone with the program
 
     def test_options_override_the_settings_for_one_document(self):
         out = self.run_editor(drop_waits=True, actions=['print-options', 'cmd echo.opt', 'wait-ext echo running', 'wait 300',

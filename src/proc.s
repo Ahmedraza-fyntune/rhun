@@ -232,9 +232,15 @@ FN proc_spawn
     mov [rsp + 8], r9d
     mov eax, [rbp + 16]
     mov [rsp + 12], eax
-    # vfork: the child borrows this stack until exec, so below it only reads memory
+    # vfork: the child borrows this stack until exec, so below it only reads memory. An
+    # extension (ctty 2) is a real fork: its confinement makes a user namespace, which a process
+    # sharing its address space may not, and it may use the stack
+    cmp dword ptr [rsp + 12], 2
+    je 10f
     SYS SYS_vfork
-    test rax, rax
+    jmp 12f
+10: SYS SYS_fork
+12: test rax, rax
     jnz 9f
     cmp dword ptr [rsp + 12], 0
     je 1f
@@ -256,6 +262,7 @@ FN proc_spawn
     xor r8d, r8d
     SYS SYS_prctl
 .endif
+    call confine_child          # what confine_prepare set up, if anything; exits on failure
 1:  mov edi, [rsp]
     xor esi, esi
     SYS SYS_dup2

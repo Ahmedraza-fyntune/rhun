@@ -101,7 +101,9 @@ FN settings_dump
     call sb_push_byte
 2:  add rbx, SET_SIZE
     jmp 1b
-9:  EPILOGUE
+9:  mov rdi, r12
+    call ext_settings_dump
+    EPILOGUE
 
 # commit the edited string setting
 commit_edit:
@@ -1324,7 +1326,18 @@ FN settings_draw
     COLOR r9d, T_MUTED
     call ui_text_c
     add r12d, [rip + g_mt + 4*MI_32]
-59: add r12d, [rip + g_mt + 4*MI_48]
+59: # the extensions, after the table (not under a search query)
+    lea rdi, [rip + set_search]
+    call tf_text
+    test rdx, rdx
+    jnz 58f
+    add r12d, [rip + g_mt + 4*MI_32]
+    mov edi, [rsp + 20]
+    mov esi, r12d
+    mov edx, [rsp + 16]
+    call ext_settings_draw
+    add r12d, eax
+58: add r12d, [rip + g_mt + 4*MI_48]
     sub r12d, [rsp + 24]
     mov [rip + set_content_h], r12d
     # clicking elsewhere ends string editing; clicking elsewhere on the page leaves the search field

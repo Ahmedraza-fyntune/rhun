@@ -36,7 +36,8 @@ argv_vec: .zero VEC_SIZE
 env_vec: .zero VEC_SIZE
 pipe_in: .zero 8                # the program's input: read end, write end
 pipe_out: .zero 8               # the program's output: read end, write end
-reason_buf: .zero 128
+reason_buf: .zero 256
+ext_ini_path: .zero SB_SIZE     # ~/.config/rhun/extensions.ini
 
 .data
 .globl g_tab_width, g_insert_spaces
@@ -262,6 +263,229 @@ ext_cmds_changed:
     pop rbx
     ret
 
+# ---------------- the user's choices: ~/.config/rhun/extensions.ini ----------------
+
+# ext_ini_file() -> cstr path of extensions.ini
+ext_ini_file:
+    PROLOGUE
+    cmp qword ptr [rip + ext_ini_path + SB_len], 0
+    jne 9f
+    call config_dir
+    mov rbx, rax
+    lea rdi, [rip + ext_ini_path]
+    mov rsi, rbx
+    call sb_push_cstr
+    lea rdi, [rip + ext_ini_path]
+    lea rsi, [rip + .Lf_extensions_ini]
+    call sb_push_cstr
+    lea rdi, [rip + ext_ini_path]
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rip + ext_ini_path + SB_len]
+9:  mov rax, [rip + ext_ini_path + SB_ptr]
+    EPILOGUE
+
+# ext_settings_load(): [owner/name] sections with unconfined = yes and disabled = yes
+ext_settings_load:
+    PROLOGUE
+    call ext_ini_file
+    mov rdi, rax
+    call file_read_all
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    lea rdi, [rip + ini_it]
+    mov rsi, rax
+    call ini_init
+1:  lea rdi, [rip + ini_it]
+    call ini_next
+    test eax, eax
+    jz 8f
+    lea rdi, [rip + ini_it]
+    call ext_by_section
+    test rax, rax
+    jz 1b
+    mov rbx, rax
+    lea rdi, [rip + ini_it]
+    lea rsi, [rip + .Lk_unconfined]
+    call ini_key_is
+    test eax, eax
+    jz 2f
+    call ini_val_yes
+    mov [rbx + EXT_unconfined], eax
+    jmp 1b
+2:  lea rdi, [rip + ini_it]
+    lea rsi, [rip + .Lk_disabled]
+    call ini_key_is
+    test eax, eax
+    jz 1b
+    call ini_val_yes
+    mov [rbx + EXT_disabled], eax
+    test eax, eax
+    jz 1b
+    mov dword ptr [rbx + EXT_status], ES_DISABLED
+    lea rax, [rip + .Lr_disabled]
+    mov [rbx + EXT_reason], rax
+    jmp 1b
+8:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
+# ini_val_yes() -> 1 when ini_it's value is "yes"
+ini_val_yes:
+    mov rdi, [rip + ini_it + INI_val]
+    mov rsi, [rip + ini_it + INI_vallen]
+    lea rdx, [rip + .Lv_yes]
+    jmp str_eq_cstr
+
+# ext_by_section(it) -> the EXT whose "owner/name" is the iterator's section, or 0
+ext_by_section:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 8f
+    imul r13, r12, EXT_SIZE
+    add r13, [rip + g_exts + VEC_ptr]
+    inc r12
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [r13 + EXT_owner]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, [r13 + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + tmp + SB_ptr]
+    call ini_sec_is
+    test eax, eax
+    jz 1b
+    mov rax, r13
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# ext_settings_save(): the file from the records (only extensions with a choice are written)
+ext_settings_save:
+    PROLOGUE
+    lea rdi, [rip + tmp2]
+    call sb_clear
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 8f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov eax, [rbx + EXT_unconfined]
+    or eax, [rbx + EXT_disabled]
+    test eax, eax
+    jz 1b
+    lea rdi, [rip + tmp2]
+    mov esi, '['
+    call sb_push_byte
+    lea rdi, [rip + tmp2]
+    mov rsi, [rbx + EXT_owner]
+    call sb_push_cstr
+    lea rdi, [rip + tmp2]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + tmp2]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + tmp2]
+    mov esi, ']'
+    call sb_push_byte
+    lea rdi, [rip + tmp2]
+    mov esi, 10
+    call sb_push_byte
+    cmp dword ptr [rbx + EXT_unconfined], 0
+    je 2f
+    lea rdi, [rip + tmp2]
+    lea rsi, [rip + .Lw_unconfined_yes]
+    call sb_push_cstr
+2:  cmp dword ptr [rbx + EXT_disabled], 0
+    je 1b
+    lea rdi, [rip + tmp2]
+    lea rsi, [rip + .Lw_disabled_yes]
+    call sb_push_cstr
+    jmp 1b
+8:  call ext_ini_file
+    mov rdi, rax
+    mov rsi, [rip + tmp2 + SB_ptr]
+    mov rdx, [rip + tmp2 + SB_len]
+    call file_write_all
+    EPILOGUE
+
+# ext_set_unconfined(ext, yes): the choice is kept; a running program is started again under it
+FN ext_set_unconfined
+    PROLOGUE
+    mov rbx, rdi
+    mov [rbx + EXT_unconfined], esi
+    call ext_settings_save
+    mov rdi, rbx
+    call ext_restart_now
+    EPILOGUE
+
+# ext_set_disabled(ext, yes): disabled programs stop and stay stopped; enabling makes it idle
+FN ext_set_disabled
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov [rbx + EXT_disabled], esi
+    call ext_settings_save
+    test r12d, r12d
+    jz 2f
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 1f
+    mov dword ptr [rbx + EXT_status], ES_DISABLED
+    lea rax, [rip + .Lr_disabled]
+    mov [rbx + EXT_reason], rax
+    jmp 9f
+1:  mov rdi, rbx
+    lea rsi, [rip + .Lr_disabled]
+    call ext_stop
+    jmp 9f
+2:  cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    jne 9f
+    mov dword ptr [rbx + EXT_status], ES_IDLE
+    mov qword ptr [rbx + EXT_reason], 0
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# ext_restart_now(ext): a running program stops and starts again; a stopped one starts
+FN ext_restart_now
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    je 9f
+    mov dword ptr [rbx + EXT_status], ES_STOPPED
+    mov rdi, rbx
+    call ext_restart
+    jmp 9f
+1:  mov dword ptr [rbx + EXT_restart], 1
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_settings_change]
+    call ext_stop
+9:  EPILOGUE
+
+# ext_stop_user(ext): Stop in Settings
+FN ext_stop_user
+    lea rsi, [rip + .Lr_settings_stop]
+    jmp ext_stop
+
 # ---------------- discovery ----------------
 
 # ext_init(): read every OWNER/NAME/extension.ini under the extensions folder
@@ -345,6 +569,7 @@ owner_cb:
     call mem_free
 9:  mov rax, [rip + g_ext_cmds + VEC_len]
     mov [rip + ext_manifest_cmds], rax
+    call ext_settings_load
     EPILOGUE
 
 # name_cb(ctx, name, is_dir): one extension folder
@@ -893,9 +1118,17 @@ parse_needs:
     lea rsi, [rip + .Ln_terminal]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 5f
     mov edi, NEEDS_TERMINAL
     call needs_yes
+    jmp 9f
+5:  mov rdi, r12
+    lea rsi, [rip + .Ln_run]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    call val_dup
+    mov [rbx + EXT_runs], rax
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -1149,6 +1382,8 @@ FN ext_start
     je 9f
     cmp dword ptr [rbx + EXT_status], ES_FAILED
     je 9f
+    cmp dword ptr [rbx + EXT_disabled], 0
+    jne 9f
     cmp dword ptr [rbx + EXT_status], ES_DISABLED
     je 9f
     call ext_running
@@ -1219,6 +1454,49 @@ FN ext_start
     test rax, rax
     js .Les_fail2
     mov rdi, rbx
+    # confinement (confine.s): prepared here, applied in the child
+    mov qword ptr [rbx + EXT_confine_why], 0
+    mov dword ptr [rbx + EXT_confined], CONFINED_NO
+    cmp dword ptr [rbx + EXT_unconfined], 0
+    jne .Les_spawn
+    mov rdi, rbx
+    call confine_prepare
+    test rax, rax
+    jz .Les_spawn
+    # it cannot be confined: a --extensions session runs it anyway and says so; an installed
+    # extension does not start
+    cmp qword ptr [rip + g_ext_dir], 0
+    je .Les_unconfined_fail
+    mov [rbx + EXT_confine_why], rax
+    jmp .Les_spawn
+.Les_unconfined_fail:
+    lea rdi, [rip + reason_buf]
+    lea rsi, [rip + .Lr_not_confined]
+    call cstr_copy
+    mov r12, rax
+    call confine_reason
+    mov rdi, r12
+    mov rsi, rax
+    call cstr_copy
+    lea rdi, [rip + reason_buf]
+    call dup_cstr
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    mov edi, [rbx + EXT_log]
+    SYS SYS_close
+    mov dword ptr [rbx + EXT_log], -1
+    mov edi, [rip + pipe_in]
+    SYS SYS_close
+    mov edi, [rip + pipe_in + 4]
+    SYS SYS_close
+    mov edi, [rip + pipe_out]
+    SYS SYS_close
+    mov edi, [rip + pipe_out + 4]
+    SYS SYS_close
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+.Les_spawn:
+    mov rdi, rbx
     call build_argv
     mov rdi, rbx
     call build_env
@@ -1240,6 +1518,9 @@ FN ext_start
     push rax
     push rax
     call proc_spawn
+    mov r12, rax
+    call confine_release
+    mov rax, r12
     add rsp, 16
     mov r12, rax
     mov edi, [rip + pipe_in]
@@ -1763,8 +2044,26 @@ FN ext_exited
     mov qword ptr [rbx + EXT_pending], 0
     cmp qword ptr [rbx + EXT_reason], 0
     jne 5f
-    # it left on its own; 127 is the child that could not exec its program
-    cmp r12d, 127
+    # it left on its own; 127 is the child that could not exec its program; 70-75 are the child
+    # that could not confine itself (confine.s)
+    mov edi, r12d
+    call confine_exit_reason
+    test rax, rax
+    jz 20f
+    push rax
+    lea rdi, [rip + reason_buf]
+    lea rsi, [rip + .Lr_not_confined]
+    call cstr_copy
+    pop rsi
+    mov rdi, rax
+    call cstr_copy
+    lea rdi, [rip + reason_buf]
+    call dup_cstr
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    mov dword ptr [rbx + EXT_confined], CONFINED_NO
+    jmp 8f
+20: cmp r12d, 127
     jne 21f
     lea rax, [rip + .Lr_exec]
     mov [rbx + EXT_reason], rax
@@ -1795,6 +2094,20 @@ FN ext_exited
     mov dword ptr [rbx + EXT_status], ES_STOPPED
     jmp 8f
 5:  mov dword ptr [rbx + EXT_status], ES_STOPPED
+    cmp dword ptr [rbx + EXT_disabled], 0
+    je 51f
+    mov dword ptr [rbx + EXT_status], ES_DISABLED
+    lea rax, [rip + .Lr_disabled]
+    mov [rbx + EXT_reason], rax
+51: cmp dword ptr [rbx + EXT_restart], 0
+    je 8f
+    mov dword ptr [rbx + EXT_restart], 0
+    mov dword ptr [rbx + EXT_status], ES_IDLE
+    mov dword ptr [rip + g_dirty], 1
+    call ext_hooks_update
+    mov rdi, rbx
+    call ext_start
+    jmp 9f
 8:  mov dword ptr [rip + g_dirty], 1
     call ext_hooks_update
 9:  EPILOGUE
@@ -1838,7 +2151,11 @@ FN ext_restart
     cmp dword ptr [rbx + EXT_status], ES_STOPPED
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_CRASHED
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_FAILED
     jne 9f
+    cmp qword ptr [rbx + EXT_prog], 0
+    je 9f                       # a bad manifest stays failed
 1:  mov dword ptr [rbx + EXT_status], ES_IDLE
     mov rdi, rbx
     call ext_start
@@ -2527,7 +2844,24 @@ FN ext_dump
     mov rsi, [r15 + CMD_name]
     call sb_push_cstr
     jmp 31b
-32: cmp dword ptr [rbx + EXT_flood], 0
+32: # how it is confined, and the user's choices
+    mov rdi, r12
+    lea rsi, [rip + .Ld_confined]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rbx + EXT_confined]
+    call sb_push_u64
+    cmp dword ptr [rbx + EXT_unconfined], 0
+    je 42f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_unconfined]
+    call sb_push_cstr
+42: cmp dword ptr [rbx + EXT_disabled], 0
+    je 43f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_disabled]
+    call sb_push_cstr
+43: cmp dword ptr [rbx + EXT_flood], 0
     je 41f
     mov rdi, r12
     lea rsi, [rip + .Ld_flood]
@@ -2535,7 +2869,16 @@ FN ext_dump
     mov rdi, r12
     mov esi, [rbx + EXT_flood]
     call sb_push_u64
-41: mov rsi, [rbx + EXT_status_text]
+41: mov rsi, [rbx + EXT_confine_why]
+    test rsi, rsi
+    jz 44f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_why]
+    call sb_push_cstr
+    mov rdi, r12
+    mov rsi, [rbx + EXT_confine_why]
+    call sb_push_cstr
+44: mov rsi, [rbx + EXT_status_text]
     test rsi, rsi
     jz 5f
     mov rdi, r12
@@ -2664,6 +3007,7 @@ ext_target: .asciz "linux-x86_64"
 .Ln_home: .asciz "home"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
+.Ln_run: .asciz "run"
 .Lo_startup: .asciz "startup"
 .Lo_command: .asciz "command"
 .Lo_project: .asciz "project"
@@ -2734,6 +3078,20 @@ ext_target: .asciz "linux-x86_64"
 .Ld_reason: .asciz " reason="
 .Ld_pid: .asciz " pid="
 .Ld_cmds: .asciz " cmds="
+.Ld_confined: .asciz " confined="
+.Ld_unconfined: .asciz " unconfined=1"
+.Ld_disabled: .asciz " disabled=1"
+.Ld_why: .asciz " why="
+.Lr_not_confined: .asciz "not confined: "
+.Lr_disabled: .asciz "disabled in Settings"
+.Lr_settings_stop: .asciz "stopped from Settings"
+.Lr_settings_change: .asciz "restarting after a settings change"
+.Lf_extensions_ini: .asciz "/extensions.ini"
+.Lk_unconfined: .asciz "unconfined"
+.Lk_disabled: .asciz "disabled"
+.Lv_yes: .asciz "yes"
+.Lw_unconfined_yes: .asciz "unconfined = yes\n"
+.Lw_disabled_yes: .asciz "disabled = yes\n"
 .Ld_status: .asciz " status="
 .Ld_flood: .asciz " flood="
 .Ld_errors: .asciz " errors"

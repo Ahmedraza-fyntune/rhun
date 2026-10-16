@@ -10,6 +10,7 @@
 .equ SYS_lstat, 6
 .equ SYS_poll, 7
 .equ SYS_lseek, 8
+.equ SYS_pread, 17
 .equ SYS_mmap, 9
 .equ SYS_munmap, 11
 .equ SYS_rt_sigaction, 13
@@ -28,6 +29,7 @@
 .equ SYS_recvmsg, 47
 .equ SYS_bind, 49
 .equ SYS_listen, 50
+.equ SYS_fork, 57
 .equ SYS_vfork, 58
 .equ SYS_execve, 59
 .equ SYS_exit, 60
@@ -62,6 +64,54 @@
 .equ SYS_close_range, 436
 .equ SYS_prctl, 157
 .equ PR_SET_PDEATHSIG, 1
+.equ PR_SET_NO_NEW_PRIVS, 38
+# confinement (src/app/confine.s): Landlock, namespaces, the macOS sandbox
+.equ SYS_getuid, 102
+.equ SYS_getgid, 104
+.equ SYS_unshare, 272
+.equ SYS_landlock_create_ruleset, 444
+.equ SYS_landlock_add_rule, 445
+.equ SYS_landlock_restrict_self, 446
+.equ SYS_sandbox_init, 290          # macOS only: a pseudo number the translator maps to sandbox_init
+.equ SYS_realpath, 291              # macOS only: realpath(path, buf) -> buf or 0
+.equ CLONE_NEWUSER, 0x10000000
+.equ CLONE_NEWNET, 0x40000000
+.equ O_PATH, 0x200000
+.equ LL_VERSION, 1                  # landlock_create_ruleset flag: report the ABI
+.equ LL_RULE_PATH_BENEATH, 1
+.equ LL_EXECUTE, 1
+.equ LL_WRITE_FILE, 2
+.equ LL_READ_FILE, 4
+.equ LL_READ_DIR, 8
+.equ LL_REMOVE_DIR, 16
+.equ LL_REMOVE_FILE, 32
+.equ LL_MAKE_CHAR, 64
+.equ LL_MAKE_DIR, 128
+.equ LL_MAKE_REG, 256
+.equ LL_MAKE_SOCK, 512
+.equ LL_MAKE_FIFO, 1024
+.equ LL_MAKE_BLOCK, 2048
+.equ LL_MAKE_SYM, 4096
+.equ LL_REFER, 8192                 # ABI 2
+.equ LL_TRUNCATE, 16384             # ABI 3
+.equ LL_IOCTL_DEV, 32768            # ABI 5
+.equ LL_FILE_RIGHTS, LL_READ_FILE | LL_WRITE_FILE | LL_EXECUTE | LL_TRUNCATE | LL_IOCTL_DEV
+.equ LL_RO, LL_READ_FILE | LL_READ_DIR
+.equ LL_RW, LL_RO | LL_WRITE_FILE | LL_TRUNCATE | LL_REMOVE_DIR | LL_REMOVE_FILE | LL_MAKE_DIR | LL_MAKE_REG | LL_MAKE_SYM | LL_MAKE_FIFO | LL_MAKE_SOCK | LL_REFER
+.equ LL_NET_BIND_TCP, 1             # ABI 4
+.equ LL_NET_CONNECT_TCP, 2
+.equ CF_LANDLOCK, 1                 # confinement flags for the child
+.equ CF_NETNS, 2                    # a user and network namespace
+.equ CF_SANDBOX, 4                  # macOS: sandbox_init with the profile
+.equ EXITC_NNP, 70                  # the child's exit codes when confinement fails
+.equ EXITC_NETNS, 71
+.equ EXITC_LANDLOCK, 72
+.equ EXITC_RULE, 73
+.equ EXITC_RESTRICT, 74
+.equ EXITC_SANDBOX, 75
+.equ CONFINED_NO, 0                 # EXT_confined: how the running program is held
+.equ CONFINED_FULL, 1
+.equ CONFINED_TCP, 2                # network cut by TCP rules only (no user namespaces)
 .equ SIGTERM, 15
 .equ F_SETFL, 4
 
@@ -1045,11 +1095,24 @@ F EXT_in_closed_at, 8   # time_ms when the program closed its input, 0 otherwise
 F EXT_mname, 8          # the manifest's name and owner (checked against the folders)
 F EXT_mowner, 8
 F EXT_rtcmds, 4         # commands registered at runtime (removed when it stops)
-F EXT_pad2, 4
+F EXT_confined, 4       # CONFINED_* of the running program
+F EXT_runs, 8           # cstr: the [needs] run list (program names), or 0
+F EXT_unconfined, 4     # 1: the user chose "Run unconfined" (extensions.ini)
+F EXT_disabled, 4       # 1: disabled in extensions.ini
+F EXT_confine_why, 8    # cstr: why it runs unconfined in a --extensions session, or 0
+F EXT_restart, 4        # 1: start again once the stop in progress completes (a settings change)
+F EXT_pad3, 4
 ENDSTRUCT EXT_SIZE
 .equ EXT_RTCMDS_MAX, 64         # register: commands per extension
 .equ EXT_CHOOSE_MAX, 1000       # choose: items
 .equ EXT_TERM_MAX, 4096         # term: the command's bytes
+
+# a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
+STRUCT
+F CR_access, 8
+F CR_fd, 4
+F CR_pad, 4
+ENDSTRUCT CR_SIZE
 
 # what an extension was last told about a document
 STRUCT

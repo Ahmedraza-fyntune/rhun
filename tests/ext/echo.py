@@ -265,6 +265,39 @@ def on_run(command, doc, versions):
         request(f'diagnostics {doc} {versions.get(doc, 0)} 2 {len(body)}', body)   # N says two lines
     elif name == 'bidi':
         request('term 11', 'rm -rf \u202e x'.encode())
+    # confinement probes (tests/ext-confine.py): each toasts what happened
+    elif name == 'pwrite':
+        probe(lambda: open(os.path.join(os.environ['RHUN_PROJECT'], 'written-by-echo.txt'), 'w').write('x'))
+    elif name == 'hread':
+        probe(lambda: open(os.environ['ECHO_SECRET']).read())
+    elif name == 'swrite':
+        probe(lambda: open(os.path.join(os.environ['RHUN_STATE'], 'state.txt'), 'w').write('x'))
+    elif name == 'net':
+        def connect():
+            import socket
+            s = socket.socket()
+            s.settimeout(3)
+            rc = s.connect_ex(('1.1.1.1', 80))
+            s.close()
+            if rc == 1:          # EPERM: cut off
+                raise PermissionError('EPERM')
+        probe(connect)
+    elif name == 'exec':
+        def run_ls():
+            import subprocess
+            subprocess.run(['/bin/ls', '/'], capture_output=True, check=True)
+        probe(run_ls)
+
+
+def probe(fn):
+    try:
+        fn()
+        text = b'probe ok'
+    except PermissionError:
+        text = b'probe refused'
+    except Exception as e:      # noqa: BLE001 - the kind matters, not the message
+        text = ('probe failed ' + type(e).__name__).encode()[:200]
+    request(f'toast {len(text)}', text)
 
 
 if __name__ == '__main__':

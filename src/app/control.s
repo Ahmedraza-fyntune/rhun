@@ -785,6 +785,60 @@ c_wait_ext:
     mov rax, -1
     EPILOGUE
 
+# ext-set NAME unconfined|disabled 0|1, or ext-set NAME stop|restart: what the Settings buttons do
+c_ext_set:
+    PROLOGUE 16
+    call next_arg               # rbx, r12 are the argument cursor: the extension goes to r15
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_by_name
+    test rax, rax
+    jz 9f
+    mov r15, rax
+    call next_arg
+    mov r13, rax
+    mov r14, rdx
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .Lx_stop]
+    call str_eq_cstr
+    test eax, eax
+    jz 1f
+    mov rdi, r15
+    call ext_stop_user
+    jmp 9f
+1:  mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .Lx_restart]
+    call str_eq_cstr
+    test eax, eax
+    jz 2f
+    mov rdi, r15
+    call ext_restart
+    jmp 9f
+2:  call next_int
+    mov [rsp], eax
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .Lx_unconfined]
+    call str_eq_cstr
+    test eax, eax
+    jz 3f
+    mov rdi, r15
+    mov esi, [rsp]
+    call ext_set_unconfined
+    jmp 9f
+3:  mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .Lx_disabled]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov rdi, r15
+    mov esi, [rsp]
+    call ext_set_disabled
+9:  EPILOGUE
+
 # print-options: "tab_width=N insert_spaces=B trim_trailing_whitespace=B final_newline=B", the
 # settings in force for the active document (an extension's overrides included)
 c_print_options:
@@ -1875,6 +1929,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_hover: .asciz "print-hover"
 .Lc_print_text_cell: .asciz "print-text-cell"
 .Lc_print_options: .asciz "print-options"
+.Lc_ext_set: .asciz "ext-set"
+.Lx_unconfined: .asciz "unconfined"
+.Lx_disabled: .asciz "disabled"
+.Lx_stop: .asciz "stop"
+.Lx_restart: .asciz "restart"
 .Ls_opts: .asciz "tab_width="
 .Ls_opt_spaces: .asciz " insert_spaces="
 .Ls_opt_trim: .asciz " trim_trailing_whitespace="
@@ -1946,7 +2005,7 @@ ctl_table:
     .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
     .quad .Lc_print_extensions, c_print_extensions, .Lc_wait_ext, c_wait_ext
     .quad .Lc_print_marks, c_print_marks, .Lc_print_hover, c_print_hover, .Lc_print_text_cell, c_print_text_cell
-    .quad .Lc_print_options, c_print_options
+    .quad .Lc_print_options, c_print_options, .Lc_ext_set, c_ext_set
     .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
