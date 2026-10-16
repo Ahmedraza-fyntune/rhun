@@ -3419,6 +3419,7 @@ FN ext_status_draw
     mov r14d, edi
     mov [rsp], esi
     mov [rsp + 4], edx
+    mov [rsp + 8], edi
     # "N errors, M warnings" of the document on screen
     mov rdi, [rip + g_doc]
     call extmarks_counts
@@ -3510,7 +3511,10 @@ FN ext_status_draw
     add rsp, 16
     jmp 1b
 9:  mov eax, r14d
-    EPILOGUE
+    cmp eax, [rsp + 8]
+    je 8f
+    sub eax, [rip + g_mt + 4*MI_20]   # the file's items keep their gap from the last text
+8:  EPILOGUE
 
 # ext_state_name(ES_*) -> cstr
 FN ext_state_name

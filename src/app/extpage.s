@@ -1507,7 +1507,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ln_proj_write: .asciz "read and change the files in your project"
 .Ln_home: .asciz "read the files in your home folder"
 .Ln_net: .asciz "use the internet"
-.Ln_terminal: .asciz "suggest terminal commands, which you run yourself"
+.Ln_terminal: .asciz "suggest terminal commands for you to run"
 .Ln_runs: .asciz "run "
 .Ln_nothing: .asciz "only use its own commands and settings"
 .Ln_sep: .asciz ", "

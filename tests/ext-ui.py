@@ -100,7 +100,7 @@ class UI(host.Host):
         self.assertEqual(out[0], 'Echo 0.0.1 on')
         self.assertEqual(out[1], 'Echo 0.0.1 on')
         self.assertEqual(out[2], 'pinned=0')
-        self.assertEqual(out[3], 'can: read and change the files you have open, suggest terminal commands, which you run yourself')
+        self.assertEqual(out[3], 'can: read and change the files you have open, suggest terminal commands for you to run')
         self.assertIn('setting greeting=Hello', out)
         self.assertIn('setting loud=no', out)
         self.assertIn('setting width=4', out)
@@ -204,6 +204,24 @@ class UI(host.Host):
         exts = self.manifest_variant('badlink')
         out = self.ui(['ext-install demo/hello', 'wait-install', 'print-toast'], exts=exts)
         self.assertEqual(out[1], 'toast=Could not install demo/hello: the archive holds links or devices')
+
+    def test_a_manifest_for_another_extension_is_refused(self):
+        self.release(files={'extension.ini': HELLO_INI.replace('name = hello', 'name = other'), 'main.py': HELLO_PY})
+        exts = self.manifest_variant('other')
+        out = self.ui(['ext-install demo/hello', 'wait-install', 'print-toast'], exts=exts)
+        self.assertEqual(out[0], 'install=failed')
+        self.assertEqual(out[1], 'toast=Could not install demo/hello: its extension.ini names a different extension')
+        self.assertFalse((exts / 'demo').exists())
+        self.assertFalse(any(p.name.startswith('.install') for p in exts.iterdir()))
+
+    def test_the_folders_take_the_manifest_s_spelling(self):
+        self.release(owner='Demo')
+        exts = self.manifest_variant('spelling')
+        out = self.ui(['ext-install Demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
+                       'print-extensions'], exts=exts)
+        self.assertIn('demo', os.listdir(exts))
+        self.assertNotIn('Demo', os.listdir(exts))
+        self.assertTrue(any(l.startswith('demo/hello state=running') for l in out), out)
 
     def test_a_missing_release_says_so(self):
         self.env['RHUN_EXT_BASE'] = 'file://' + (self.work / 'nothing').as_posix()

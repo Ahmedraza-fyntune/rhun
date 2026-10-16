@@ -330,10 +330,32 @@ offer:
     mov rsi, rdx
     lea rdx, [rip + pv]
     call ext_preview
+    push rax
+    push rax
     mov rdi, rbx
     call mem_free
+    pop rax
+    pop rax
     test eax, eax
     jz .Lof_bad
+    # the manifest must be the extension asked for (GitHub names ignore case: the manifest's
+    # spelling names the folders)
+    mov rdi, [rip + pv + EXT_mowner]
+    lea rsi, [rip + in_owner]
+    call same_ci
+    test eax, eax
+    jz .Lof_other
+    mov rdi, [rip + pv + EXT_mname]
+    lea rsi, [rip + in_name]
+    call same_ci
+    test eax, eax
+    jz .Lof_other
+    lea rdi, [rip + in_owner]
+    mov rsi, [rip + pv + EXT_mowner]
+    call cstr_copy
+    lea rdi, [rip + in_name]
+    mov rsi, [rip + pv + EXT_mname]
+    call cstr_copy
     # "Add “Title”?"
     lea rdi, [rip + in_title]
     lea rsi, [rip + .Lq_add]
@@ -396,6 +418,49 @@ offer:
     lea rdi, [rip + .Le_manifest]
     call app_toast
     EPILOGUE
+.Lof_other:
+    call install_discard
+    mov dword ptr [rip + g_ext_install_state], 4
+    lea rdi, [rip + in_sb]
+    call sb_clear
+    lea rdi, [rip + in_sb]
+    lea rsi, [rip + .Lt_cannot]
+    call sb_push_cstr
+    call push_owner_name
+    lea rdi, [rip + in_sb]
+    lea rsi, [rip + .Lcolon]
+    call sb_push_cstr
+    lea rdi, [rip + in_sb]
+    lea rsi, [rip + .Le_other]
+    call sb_push_cstr
+    call in_sb_cstr
+    mov rdi, rax
+    call app_toast
+    EPILOGUE
+
+# same_ci(a, b) -> 1 when the cstrs are equal ignoring ASCII case
+same_ci:
+1:  movzx eax, byte ptr [rdi]
+    movzx ecx, byte ptr [rsi]
+    lea edx, [rax - 'A']
+    cmp edx, 25
+    ja 2f
+    add eax, 32
+2:  lea edx, [rcx - 'A']
+    cmp edx, 25
+    ja 3f
+    add ecx, 32
+3:  cmp eax, ecx
+    jne 8f
+    test eax, eax
+    jz 9f
+    inc rdi
+    inc rsi
+    jmp 1b
+8:  xor eax, eax
+    ret
+9:  mov eax, 1
+    ret
 
 # install_discard(): Cancel: the unpacked folder goes
 install_discard:
@@ -623,6 +688,7 @@ remove_commit:
 .Le_spawn: .asciz "Could not start the download"
 .Le_unknown: .asciz "the download failed"
 .Le_manifest: .asciz "The download has no readable extension.ini"
+.Le_other: .asciz "its extension.ini names a different extension"
 .Le_move: .asciz "Could not put the extension in place"
 .Le_full: .asciz "Too many extensions are installed"
 .Le_windows: .asciz "Extensions are not available on Windows yet"

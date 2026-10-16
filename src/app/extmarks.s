@@ -18,6 +18,7 @@ g_hover_sent: .long 0           # the hover event went out for this position
 g_hover_x: .long 0              # where the pointer is (the tooltip's anchor)
 g_hover_y: .long 0
 g_hover_text: .zero HOVER_MAX + 1   # what an extension answered for this position, or empty
+hover_both: .zero MARK_MSG_MAX + 8 + HOVER_MAX + 1   # a mark's message and the answer together
 tmp: .zero SB_SIZE
 newmarks: .zero VEC_SIZE        # a diagnostics request's marks while its lines are parsed
 target: .quad 0                 # the VEC mark_parse appends to
@@ -886,8 +887,22 @@ FN ext_hover_tip
     mov rsi, [rip + g_hover_pos]
     call extmarks_at
     test rax, rax
-    jnz 1f
-    lea rax, [rip + g_hover_text]
+    jz 2f
+    cmp byte ptr [rip + g_hover_text], 0
+    je 1f
+    # a mark and an extension's answer: "MESSAGE · ANSWER", so neither hides the other
+    lea rdi, [rip + hover_both]
+    mov rsi, rax
+    call cstr_copy
+    mov rdi, rax
+    lea rsi, [rip + .Lhover_dot]
+    call cstr_copy
+    mov rdi, rax
+    lea rsi, [rip + g_hover_text]
+    call cstr_copy
+    lea rax, [rip + hover_both]
+    jmp 1f
+2:  lea rax, [rip + g_hover_text]
     cmp byte ptr [rax], 0
     je 9f
 1:  mov r9, rax
@@ -985,6 +1000,7 @@ FN ext_hooks_update
     ret
 
 .section .rodata
+.Lhover_dot: .asciz "  \302\267  "
 .p2align 3
 sev_names: .quad .Lsv_error, .Lsv_warning, .Lsv_info, .Lsv_hint, 0
 .Lsv_error: .asciz "error"

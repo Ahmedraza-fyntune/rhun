@@ -443,11 +443,20 @@ class Host(unittest.TestCase):
         self.assertEqual(out[3], 'hover=none')
 
     def test_a_mark_message_shows_as_a_tooltip(self):
-        out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'print-text-cell 2 3'])
+        exts = self.manifest_variant('nohover', **{'hover = *\n': ''})
+        out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'print-text-cell 2 3'], exts=exts)
         x, y = out[1].split()
         out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'wait 200', f'move {x} {y}', 'wait 700',
-                               'print-tip'])
+                               'print-tip'], exts=exts)
         self.assertEqual(out[1], 'tip=second word')
+
+    def test_a_mark_and_a_hover_answer_share_the_tooltip(self):
+        out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'print-text-cell 2 3'])
+        x, y = out[1].split()
+        out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'wait 200', f'move {x} {y}', 'wait 800',
+                               'print-hover', 'wait 700', 'print-tip'])
+        self.assertEqual(out[1], 'hover=1 2 3 sent=1 text=hovering 2:3')
+        self.assertEqual(out[2], 'tip=second word  ·  hovering 2:3')
 
     def test_the_edits_stream_describes_every_change(self):
         exts = self.manifest_variant('edits', **{'cursor = *': 'cursor = *\nedits = *'})
