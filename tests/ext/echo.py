@@ -288,8 +288,8 @@ def on_run(command, doc, versions):
             s.settimeout(3)
             rc = s.connect_ex(('1.1.1.1', 80))
             s.close()
-            if rc == 1:          # EPERM: cut off
-                raise PermissionError('EPERM')
+            if rc in (1, 13, 101):   # EPERM or EACCES (TCP rules), ENETUNREACH (a network namespace)
+                raise PermissionError('errno %d' % rc)
         probe(connect)
     elif name == 'exec':
         def run_ls():

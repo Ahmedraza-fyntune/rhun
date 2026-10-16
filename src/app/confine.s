@@ -14,6 +14,9 @@ conf_flags: .long 0             # CF_*
 conf_abi: .long 0               # the Landlock ABI (probe), -1 when unavailable
 conf_userns: .long 0            # 1 when an unprivileged user namespace can be made (probe)
 conf_probed: .long 0
+conf_log: .byte 0               # RHUN_CONFINE_LOG set: every rule is written to the program's log
+.p2align 3
+logbuf: .zero 4300
 .p2align 3
 conf_attr: .zero 24             # struct landlock_ruleset_attr: handled_access_fs, _net, scoped
 conf_attr_size: .quad 0
@@ -23,6 +26,7 @@ conf_uidmap: .zero 48           # "U U 1" and "G G 1"
 conf_gidmap: .zero 48
 conf_profile: .zero SB_SIZE     # macOS: the SBPL profile text
 conf_reason: .quad 0            # why confinement is impossible (cstr), or 0
+conf_ext: .quad 0               # the EXT being prepared (its log takes the rule list)
 conf_fail: .long 0              # the child's failure code when it exits (set by the parent on the
                                 #   way out of confine_child: a code to exit with)
 pathbuf: .zero 4200
@@ -53,18 +57,47 @@ confine_probe:
     jns 1f
     mov eax, -1
 1:  mov [rip + conf_abi], eax
-    # a throwaway child tries the namespace
+    # the maps the namespace will need
+    SYS SYS_getuid
+    lea rdi, [rip + conf_uidmap]
+    call map_line
+    SYS SYS_getgid
+    lea rdi, [rip + conf_gidmap]
+    call map_line
+    lea rdi, [rip + .Lenv_conflog]
+    call getenv
+    test rax, rax
+    setnz byte ptr [rip + conf_log]
+    # a throwaway child tries the whole namespace sequence: on a system that restricts
+    # unprivileged user namespaces (Ubuntu's AppArmor default) unshare itself succeeds, into a
+    # namespace without capabilities, and the map writes are what fail
     SYS SYS_fork
     test rax, rax
     js 9f
     jnz 2f
     mov edi, CLONE_NEWUSER | CLONE_NEWNET
     SYS SYS_unshare
-    mov edi, 1
     test rax, rax
-    jnz 3f
+    js 3f
+    lea rdi, [rip + .Lp_setgroups]
+    lea rsi, [rip + .Ls_deny]
+    call write_proc
+    test rax, rax
+    js 3f
+    lea rdi, [rip + .Lp_uidmap]
+    lea rsi, [rip + conf_uidmap]
+    call write_proc
+    test rax, rax
+    js 3f
+    lea rdi, [rip + .Lp_gidmap]
+    lea rsi, [rip + conf_gidmap]
+    call write_proc
+    test rax, rax
+    js 3f
     xor edi, edi
-3:  SYS SYS_exit
+    SYS SYS_exit
+3:  mov edi, 1
+    SYS SYS_exit
 2:  mov edi, eax
     xor esi, esi
     call proc_wait
@@ -81,6 +114,7 @@ confine_probe:
 FN confine_prepare
     PROLOGUE 16
     mov rbx, rdi
+    mov [rip + conf_ext], rdi
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
     mov dword ptr [rip + conf_pending], 0
     mov dword ptr [rip + conf_flags], 0
@@ -135,14 +169,7 @@ FN confine_prepare
 51: cmp dword ptr [rip + conf_abi], 4
     jl 6f
     mov qword ptr [rip + conf_attr + 8], LL_NET_BIND_TCP | LL_NET_CONNECT_TCP
-6:  # the maps for the namespace
-    SYS SYS_getuid
-    lea rdi, [rip + conf_uidmap]
-    call map_line
-    SYS SYS_getgid
-    lea rdi, [rip + conf_gidmap]
-    call map_line
-    # the rules
+6:  # the rules (the maps were built by the probe)
     call rules_build
     test rax, rax
     jnz .Lcp_fail
@@ -368,7 +395,26 @@ add_rule:
     mov [rax + CR_access], r12
     mov [rax + CR_fd], r13d
     mov dword ptr [rax + CR_pad], 0
-    mov eax, 1
+    cmp byte ptr [rip + conf_log], 0
+    je 2f
+    lea rdi, [rip + logbuf]
+    lea rsi, [rip + .Llog_rule]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, r12
+    call fmt_u64
+    mov byte ptr [rdi], ' '
+    inc rdi
+    mov rsi, rbx
+    call cstr_copy
+    mov byte ptr [rax], 10
+    lea rsi, [rip + logbuf]
+    lea rdx, [rax + 1]
+    sub rdx, rsi
+    mov rax, [rip + conf_ext]
+    mov edi, [rax + EXT_log]
+    SYS SYS_write
+2:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -907,6 +953,8 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lp_gidmap: .asciz "/proc/self/gid_map"
 .Ls_deny: .asciz "deny"
 .Lenv_home: .asciz "HOME"
+.Lenv_conflog: .asciz "RHUN_CONFINE_LOG"
+.Llog_rule: .asciz "confine: rule "
 .Lpct_s: .asciz "%s"
 .Lr_no_landlock: .asciz "Landlock is not available in this kernel"
 .Lr_old_landlock: .asciz "Landlock ABI below 3 (Linux 6.2 or later is needed)"
