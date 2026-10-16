@@ -95,7 +95,10 @@ FN cmd_git_history
     cmp dword ptr [rip + g_git_on], 0
     jne 1f
     lea rdi, [rip + .Lno_repo]
-    call app_toast
+    cmp dword ptr [rip + g_git_paused], 0
+    je 2f
+    lea rdi, [rip + g_git_paused_text]
+2:  call app_toast
     pop rbx
     ret
 1:  call git_tab
@@ -861,7 +864,10 @@ FN gitview_draw
     cmp dword ptr [rip + cfg_git], 0
     je 11f
     lea r9, [rip + .Lno_repo]
-    cmp dword ptr [rip + g_git_on], 0
+    cmp dword ptr [rip + g_git_paused], 0
+    je 12f
+    lea r9, [rip + g_git_paused_text]
+12: cmp dword ptr [rip + g_git_on], 0
     je 11f
     cmp dword ptr [rip + log_state], 2
     je 2f

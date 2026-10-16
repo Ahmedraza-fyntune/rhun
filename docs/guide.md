@@ -47,6 +47,27 @@ Opening a folder still restores that folder's session; starting without a path c
 project.
 Use `rhun --empty` to start with an empty window. Updating and restarting preserves standalone file tabs,
 including image tabs, and keeps an empty window empty.
+
+Links of the form `rhun://file/PATH`, as VS Code's `vscode://file/`, open in rhun from a browser, a
+chat or any other program: `rhun://file/Users/me/app/src/main.rs:42:7` opens the file at line 42,
+column 7, in the middle of the view (`:42` alone works too), and a link to a folder opens it as the
+project. The path is absolute and percent-encoded where a URL needs it (`%20` for a space); on
+Windows a drive is written `rhun://file/C:/work/app/main.c`, and a network path (`\\server\share`)
+is refused, so that a page cannot make Windows contact a server it names. A link starts a window as opening the
+file would; on macOS, a running rhun opens it as a tab, as it does for Finder. `rhun 'rhun://file/...'`
+works from a terminal too. macOS knows the scheme from the app itself; the installers register it on
+Linux and Windows (`--no-url-scheme` and `-NoUrlScheme` leave it out, and updates keep that choice).
+
+A repository's own settings can name programs for git to run, and git status runs some of them as
+soon as a folder is opened (a clean filter, in a repository unpacked from an archive). So a folder that
+a link opens, or the folder of a file it opens, starts with git paused: no status, gutter, history or
+diffs, and a bar above the editor says so. **Trust folder** in the bar, or **Trust Folder for Git** in
+the command palette, turns git on there and remembers the folder for later links (in
+`$XDG_STATE_HOME/rhun/trusted-folders`, one folder a line; remove a line to stop trusting it). Until
+then the folder is not reopened by a launch without arguments, kept among the recent folders, or
+restarted into after an update as anything but a link. Folders you open yourself, from the command
+line, a file manager or Open Folder, work as always, and a link to a file inside the project already
+open in the window changes nothing.
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
 command palette to load the disk version, or save to keep your version. Undoing back to the saved
 state loads the disk version too.
@@ -129,6 +150,7 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--prefix DIR` | Linux: install under DIR instead of `~/.local` |
 | `--app-dir DIR` | macOS: put rhun.app in DIR |
 | `--no-modify-path` | leave shell startup files alone |
+| `--no-url-scheme` | Linux: do not open `rhun://file/` links in rhun |
 | `--configure-files` | configure an existing installation without downloading or replacing it |
 | `--uninstall` | remove rhun, the PATH line and the editor lines; your settings in `~/.config/rhun` stay |
 
@@ -205,7 +227,7 @@ Download `rhun-VERSION-windows-x86_64.zip` from [Releases](https://github.com/vs
 powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))"
 ```
 
-The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Use the status bar to download an update and restart into it, or close rhun and rerun the installer. Automatic checks are enabled for release builds, with installation and restart initiated by you. Uninstalling keeps settings and sessions.
+The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, `-NoUrlScheme` (no `rhun://file/` links), and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Use the status bar to download an update and restart into it, or close rhun and rerun the installer. Automatic checks are enabled for release builds, with installation and restart initiated by you. Uninstalling keeps settings and sessions.
 
 The script is also included in the ZIP. To install from a downloaded script, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`. No administrator access or package manager is needed.
 
@@ -319,6 +341,10 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+Shift+T | Reopen closed tab |
 
 The **+** after the last tab opens an untitled file at the end of the tabs, and so does a double click on the empty space after them; New File (Ctrl+N) opens one next to the current tab. With more tabs than fit, the + stays at the right end and the wheel scrolls the tabs.
+
+Drag a tab along the strip to move it; the other tabs make room as it goes, and holding it past either end scrolls the strip.
+
+**Pin Tab** (in the tab's right-click menu and the command palette) keeps a tab at the left, before the others, with a pin in place of its close button; clicking the pin unpins it. Pinned tabs stay open: Close All Tabs leaves them, and Ctrl+W, a middle click and vim's `:q` do not close them. The tab's menu still closes one. Dragging a tab among the pinned tabs pins it, and dragging a pinned tab out among the others unpins it. Files open after the pinned tabs, and the project remembers which tabs are pinned.
 
 **Reopen Closed Tab** (Ctrl+Shift+T) brings back the tabs you closed, the last one first, in their place among the tabs and with the cursor, selection and scroll a file had. Pressing it again goes further back, up to 20 tabs; tabs that are already open and files that are gone are skipped. Opening another folder starts the list over.
 

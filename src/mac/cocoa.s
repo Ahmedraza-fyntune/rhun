@@ -1648,7 +1648,8 @@ a_shouldTerminate:
     mov x0, #0                  // NSTerminateCancel
     IMPRET
 
-// application:openURLs:: files and folders from Finder and the Dock
+// application:openURLs:: files and folders from Finder and the Dock, and rhun://file/ links (the
+// Info.plist declares the scheme), which go on as their text
 a_openURLs:
     IMP
     mov x19, x3
@@ -1661,8 +1662,16 @@ a_openURLs:
     mov x0, x19
     mov x2, x21
     MSG objectAtIndex_
+    mov x22, x0
+    MSG isFileURL
+    cbnz w0, 3f
+    mov x0, x22
+    MSG absoluteString
+    MSG UTF8String
+    b 4f
+3:  mov x0, x22
     MSG fileSystemRepresentation
-    cbz x0, 2f
+4:  cbz x0, 2f
     XCALL app_open_startup_path
 2:  add x21, x21, #1
     b 1b
@@ -2171,6 +2180,8 @@ DEFSEL initWithRect_options_owner_userInfo_, "initWithRect:options:owner:userInf
 DEFSEL count, "count"
 DEFSEL objectAtIndex_, "objectAtIndex:"
 DEFSEL fileSystemRepresentation, "fileSystemRepresentation"
+DEFSEL isFileURL, "isFileURL"
+DEFSEL absoluteString, "absoluteString"
 DEFSEL initWithTitle_action_keyEquivalent_, "initWithTitle:action:keyEquivalent:"
 DEFSEL setKeyEquivalentModifierMask_, "setKeyEquivalentModifierMask:"
 DEFSEL addItem_, "addItem:"

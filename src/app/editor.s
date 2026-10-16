@@ -2289,7 +2289,30 @@ FN editor_draw
 46: cmp dword ptr [rip + g_reveal], 0
     je 7f
     mov dword ptr [rip + g_reveal], 0
+    test dword ptr [rbx + DOC_flags], DF_CENTER
+    jz 47f
+    # its line in the middle of the view, now that the view's height is known (app_goto_line)
+    and dword ptr [rbx + DOC_flags], ~DF_CENTER
     mov rdi, rbx
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 72f
+    call center_wrap
+    jmp 7f
+72:
+    mov rsi, [rbx + DOC_cur]
+    call doc_line_of
+    mov r8, rax                 # the line
+    mov eax, [rip + g_ed_h]
+    xor edx, edx
+    div dword ptr [rip + g_lh]  # the lines shown
+    shr eax, 1
+    mov rcx, r8
+    sub rcx, rax
+    jns 73f
+    xor ecx, ecx
+73: shl rcx, 8
+    mov [rbx + DOC_scrolly], rcx
+47: mov rdi, rbx
     cmp dword ptr [rip + cfg_word_wrap], 0
     je 71f
     call reveal_wrap

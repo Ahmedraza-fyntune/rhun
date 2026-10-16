@@ -10,6 +10,7 @@ F CT_kind, 8                    # TAB_DOC, TAB_IMAGE, TAB_SETTINGS, TAB_GIT or C
 F CT_path, 8                    # the file, or the diff's path in the work tree (owned); 0 for the others
 F CT_rev, 8                     # the diff's commit (owned), 0 for the work tree
 F CT_index, 8                   # its place in the strip
+F CT_pin, 8                     # 1 when it was pinned
 F CT_cur, 8                     # a text file's DOC_cur, DOC_anchor and scroll
 F CT_anchor, 8
 F CT_scrolly, 8
@@ -38,6 +39,9 @@ FN closed_note
     mov [rbx + CT_index], r12
     mov rdi, r12
     call tab_at
+    mov ecx, [rax + TAB_flags]
+    and ecx, TF_PIN
+    mov [rbx + CT_pin], rcx
     mov rcx, [rax + TAB_kind]
     mov [rbx + CT_kind], rcx
     mov r13, [rax + TAB_doc]
@@ -205,7 +209,13 @@ reopen_probe:
     mov rsi, [rbx + CT_path]
     call git_open_diff
 .Lrp_place:
-    mov rdi, [rbx + CT_index]
+    # pinned again first: its place is then among the pinned tabs
+    cmp qword ptr [rbx + CT_pin], 0
+    je 6f
+    mov rdi, [rip + g_tab_cur]
+    mov esi, 1
+    call app_pin_tab
+6:  mov rdi, [rbx + CT_index]
     call app_place_tab
 7:  mov eax, 1
     EPILOGUE

@@ -4394,11 +4394,17 @@ vx_w:
     jmp cmd_save
 vx_q:
     jmp cmd_close_tab
+# :q! and ZQ: close without saving, but not a pinned tab (as :q)
 vx_qbang:
     mov rdi, [rip + g_tab_cur]
     test rdi, rdi
     js 1f
-    jmp app_close_tab_now
+    push rdi
+    call tab_pinned
+    pop rdi
+    test eax, eax
+    jz app_close_tab_now
+    jmp app_pinned_stays
 1:  ret
 vx_wq:
     mov rax, [rip + g_doc]

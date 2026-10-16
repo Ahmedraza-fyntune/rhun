@@ -29,6 +29,7 @@ release() {
         printf '#!/bin/sh\nif [ "${1:-}" = --version ]; then echo "rhun %s"; exit 0; fi\nsleep "${1:-0}"\n' "$v" > "$r/bin/rhun"
         chmod 755 "$r/bin/rhun"
         cp assets/rhun.desktop "$r/share/applications/"
+        cp assets/rhun-url-handler.desktop "$r/share/applications/"
         cp assets/icons/rhun.svg "$r/share/icons/hicolor/scalable/apps/"
         cp assets/icons/rhun-256.png "$r/share/icons/hicolor/256x256/apps/rhun.png"
         cp assets/icons/rhun-512.png "$r/share/icons/hicolor/512x512/apps/rhun.png"
@@ -193,6 +194,39 @@ t "exit $st" [ $st = 0 ]
 t "untouched" [ "$(inode "$exe")" = "$before" ]
 end
 
+if [ $os = linux ]; then
+    # rhun://file/ links: the hidden handler, the default for the scheme; --no-url-scheme hides it, and
+    # an update keeps that, as a fresh install without the option undoes it
+    begin url-scheme
+    h=$H/.local/share/applications/rhun-url-handler.desktop
+    t "handler" grep -qxF "Exec=$bin -- %u" "$h"
+    printf '#!/bin/sh\necho "$*" >> "%s"\n' "$w/xdg-mime.log" > "$w/shim/xdg-mime"
+    chmod 755 "$w/shim/xdg-mime"
+    : > "$w/xdg-mime.log"
+    inst --version 99.0.0
+    t "exit $st" [ $st = 0 ]
+    t "the default for the links" grep -qxF 'default rhun-url-handler.desktop x-scheme-handler/rhun' "$w/xdg-mime.log"
+    : > "$w/xdg-mime.log"
+    inst --version 99.0.0 --no-url-scheme
+    t "opt-out: exit $st" [ $st = 0 ]
+    t "opt-out: hidden" grep -qxF 'Hidden=true' "$h"
+    t "opt-out: no default" sh -c '! grep -q "^default" "$1"' sh "$w/xdg-mime.log"
+    release 99.0.1
+    inst --update --target "$target" --version 99.0.1
+    t "update: exit $st" [ $st = 0 ]
+    t "update keeps the opt-out" grep -qxF 'Hidden=true' "$h"
+    inst --version 99.0.0         # and back to what the next cases expect
+    t "again: handler" grep -qxF "Exec=$bin -- %u" "$h"
+    # a prefix the desktop does not see gets the entry but no default that would name it
+    : > "$w/xdg-mime.log"
+    inst --version 99.0.0 --prefix "$w/elsewhere" --no-modify-path
+    t "unseen prefix: exit $st" [ $st = 0 ]
+    t "unseen prefix: handler" [ -f "$w/elsewhere/share/applications/rhun-url-handler.desktop" ]
+    t "unseen prefix: no default" sh -c '! grep -q "^default" "$1"' sh "$w/xdg-mime.log"
+    rm -f "$w/shim/xdg-mime"
+    end
+fi
+
 begin unwritable
 if [ "$(id -u)" = 0 ]; then
     echo "skip install/$c (root)"
@@ -253,6 +287,7 @@ t "binary gone" [ ! -e "$bin" ]
 t "app gone" [ ! -e "$target" ]
 if [ $os = linux ]; then
     t "desktop entry gone" [ ! -e "$H/.local/share/applications/rhun.desktop" ]
+    t "link handler gone" [ ! -e "$H/.local/share/applications/rhun-url-handler.desktop" ]
     t "icons gone" [ ! -e "$H/.local/share/icons/hicolor/512x512/apps/rhun.png" ]
 fi
 t "PATH lines gone" sh -c "! grep -q '^# rhun' '$H/.zshrc' '$H/.tcshrc'"

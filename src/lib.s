@@ -538,6 +538,8 @@ FN fmt_hex
 .section .rodata
 .globl hexdigits
 hexdigits: .ascii "0123456789abcdef"
+.Lrhun_scheme: .asciz "rhun:"
+.Lrhun_file: .asciz "//file"
 .text
 
 # parse_u64(ptr, len) -> rax value, rdx = digits consumed
@@ -576,6 +578,178 @@ FN parse_hex
     inc rdx
     jmp 1b
 3:  ret
+
+# rhun_url(str, buf, cap) -> rax the length of the path written to buf (with a 0 after it), edx its
+#   line and ecx its column (0 when not given); rax -1 when str is no rhun: link, -2 for a rhun: link
+#   that is not rhun://file/PATH. As vscode://file: the scheme and "file" in any case, the path
+#   absolute and percent-decoded, a query or fragment (from a raw ? or #) left out, and :LINE or
+#   :LINE:COL at its end. On Windows /C:/x is C:/x.
+FN rhun_url
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov qword ptr [rsp], 0      # line, column
+    # "rhun:" in any case, then "//file/"
+    lea r8, [rip + .Lrhun_scheme]
+    xor ecx, ecx
+1:  movzx eax, byte ptr [r8 + rcx]
+    test eax, eax
+    jz 2f
+    movzx edx, byte ptr [rbx + rcx]
+    lea r9d, [rdx - 'A']        # a capital letter as small; nothing else changes
+    cmp r9d, 25
+    ja 11f
+    or edx, 0x20
+11: cmp edx, eax
+    jne .Lru_none
+    inc rcx
+    jmp 1b
+2:  lea r8, [rip + .Lrhun_file]
+    xor edx, edx
+21: movzx eax, byte ptr [r8 + rdx]
+    test eax, eax
+    jz 22f
+    movzx r9d, byte ptr [rbx + rcx]
+    lea r10d, [r9 - 'A']
+    cmp r10d, 25
+    ja 23f
+    or r9d, 0x20
+23: cmp r9d, eax
+    jne .Lru_bad
+    inc rcx
+    inc rdx
+    jmp 21b
+22: lea rbx, [rbx + rcx]
+    cmp byte ptr [rbx], '/'
+    jne .Lru_bad
+    # the path, decoded, up to a query or a fragment
+    xor r14d, r14d
+    lea r15, [r13 - 1]
+3:  movzx eax, byte ptr [rbx]
+    test eax, eax
+    jz 5f
+    cmp eax, '?'
+    je 5f
+    cmp eax, '#'
+    je 5f
+    cmp r14, r15
+    jae .Lru_bad
+    cmp eax, '%'
+    jne 4f
+    lea rdi, [rbx + 1]
+    mov esi, 2
+    call parse_hex
+    cmp rdx, 2
+    jne 41f
+    test eax, eax               # %00 would cut the path short
+    jz .Lru_bad
+    mov [r12 + r14], al
+    inc r14
+    add rbx, 3
+    jmp 3b
+41: mov eax, '%'                # not an escape: kept as it is
+4:  mov [r12 + r14], al
+    inc r14
+    inc rbx
+    jmp 3b
+5:  mov byte ptr [r12 + r14], 0
+.ifdef WINDOWS
+    cmp r14, 3
+    jb 6f
+    movzx eax, byte ptr [r12 + 1]
+    or eax, 0x20
+    sub eax, 'a'
+    cmp eax, 25
+    ja 6f
+    cmp byte ptr [r12 + 2], ':'
+    jne 6f
+    mov rdi, r12
+    lea rsi, [r12 + 1]
+    mov rdx, r14                # the rest and its 0
+    call memmove
+    dec r14
+6:  # not \\host\share (or \\?\): a link would have Windows reach a server the page names
+    movzx eax, byte ptr [r12]
+    cmp eax, '/'
+    je 61f
+    cmp eax, 92
+    jne 62f
+61: movzx eax, byte ptr [r12 + 1]
+    cmp eax, '/'
+    je .Lru_bad
+    cmp eax, 92
+    je .Lru_bad
+62:
+.endif
+    # :LINE, or :LINE:COL
+    mov rdi, r12
+    mov rsi, r14
+    call colon_number
+    test rax, rax
+    js .Lru_done
+    mov r15, rax                # where its colon is
+    mov [rsp], edx              # line, unless another number comes before it
+    mov rdi, r12
+    mov rsi, rax
+    call colon_number
+    test rax, rax
+    js 7f
+    mov ecx, [rsp]
+    mov [rsp + 4], ecx          # that was the column
+    mov [rsp], edx
+    mov r15, rax
+7:  test r15, r15               # nothing but a number: no path
+    jz .Lru_bad
+    mov byte ptr [r12 + r15], 0
+    mov r14, r15
+.Lru_done:
+    mov rax, r14
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    EPILOGUE
+.Lru_none:
+    mov rax, -1
+    jmp 8f
+.Lru_bad:
+    mov rax, -2
+8:  xor edx, edx
+    xor ecx, ecx
+    EPILOGUE
+
+# colon_number(str, len) -> rax the index of a ":" with only digits after it to len, and edx their
+#   value (at most 100000000), or rax -1
+colon_number:
+    mov rax, rsi
+1:  test rax, rax
+    jz 8f
+    movzx ecx, byte ptr [rdi + rax - 1]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja 2f
+    dec rax
+    jmp 1b
+2:  cmp rax, rsi
+    je 8f                       # no digits
+    cmp byte ptr [rdi + rax - 1], ':'
+    jne 8f
+    xor edx, edx
+    mov rcx, rax
+3:  cmp rcx, rsi
+    jae 4f
+    movzx r8d, byte ptr [rdi + rcx]
+    sub r8d, '0'
+    imul edx, edx, 10
+    add edx, r8d
+    cmp edx, 100000000          # a line or column past that is none anyway
+    jb 31f
+    mov edx, 100000000
+31: inc rcx
+    jmp 3b
+4:  dec rax
+    ret
+8:  mov rax, -1
+    ret
 
 # utf8_decode(ptr, avail) -> eax codepoint, edx length (>=1). invalid -> U+FFFD
 FN utf8_decode

@@ -271,7 +271,10 @@ confirmed:
 ready:
     push rbx
     lea rdi, [rip + .Lno_repo]
-    cmp dword ptr [rip + g_git_on], 0
+    cmp dword ptr [rip + g_git_paused], 0
+    je 2f
+    lea rdi, [rip + g_git_paused_text]
+2:  cmp dword ptr [rip + g_git_on], 0
     je 1f
     lea rdi, [rip + .Lbusy]
     cmp dword ptr [rip + op], OP_NONE
@@ -318,7 +321,10 @@ FN scm_focus
     cmp dword ptr [rip + g_git_on], 0
     jne 1f
     lea rdi, [rip + .Lno_repo]
-    call app_toast
+    cmp dword ptr [rip + g_git_paused], 0
+    je 2f
+    lea rdi, [rip + g_git_paused_text]
+2:  call app_toast
     pop rbx
     ret
 1:  call gitview_show_wip

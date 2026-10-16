@@ -19,7 +19,18 @@ fi
 ./build.sh release
 install -Dm755 build/rhun "$prefix/bin/rhun"
 install -Dm644 assets/rhun.desktop "$prefix/share/applications/rhun.desktop"
+install -Dm644 assets/rhun-url-handler.desktop "$prefix/share/applications/rhun-url-handler.desktop"
 install -Dm644 assets/icons/rhun.svg "$prefix/share/icons/hicolor/scalable/apps/rhun.svg"
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$prefix/share/applications" || true
+# rhun://file/ links, unless another program handles them, or the desktop cannot see the prefix's
+# entries: xdg-mime resolves desktop IDs through XDG_DATA_HOME and XDG_DATA_DIRS
+case ":${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}:" in
+*":$prefix/share:"*) visible=yes ;;
+*) visible=no ;;
+esac
+if [ "$visible" = yes ] && command -v xdg-mime >/dev/null &&
+    [ -z "$(xdg-mime query default x-scheme-handler/rhun 2>/dev/null)" ]; then
+    xdg-mime default rhun-url-handler.desktop x-scheme-handler/rhun || true
+fi
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -qtf "$prefix/share/icons/hicolor" 2>/dev/null || true
 echo "installed to $prefix"

@@ -494,6 +494,23 @@ FN reveal_wrap
 .Lrw_ret:
     EPILOGUE
 
+# center_wrap(doc): the cursor row in the middle of the view, counting wrapped rows above it
+FN center_wrap
+    push rbx
+    mov rbx, rdi
+    mov qword ptr [rbx + DOC_scrollx], 0
+    call cursor_row
+    mov rdi, rbx
+    mov rsi, rax
+    call set_top_row
+    mov esi, [rip + g_ed_h]
+    sub esi, [rip + g_lh]
+    sar esi, 1
+    neg esi
+    mov rdi, rbx
+    pop rbx
+    jmp scroll_by_px
+
 # set_top_row(doc, line, row): scroll so that row of line is the first visible
 set_top_row:
     mov [rdi + DOC_wtop], rsi

@@ -12,6 +12,7 @@ import tempfile
 import time
 import uuid
 import unicodedata
+import urllib.parse
 
 if sys.platform != 'darwin':
     print('skip mac/launch (requires macOS)')
@@ -113,6 +114,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-launch-', dir='/tmp') as directory
         until(lambda: 'tabs=2 active=second.rb' in command('print-state'), 'warm file event did not open a tab')
         until(lambda: jxa('$.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier.js') == identifier,
               'warm file event did not activate rhun')
+        # a rhun://file/ link (the app declares the scheme) opens its file at its line in this window
+        third = work / 'third café.txt'
+        third.write_text('one\ntwo\nthree three\n')
+        subprocess.run(['open', '-a', str(bundle), 'rhun://file' + urllib.parse.quote(str(third)) + ':3:7'],
+                       check=True)
+        until(lambda: 'tabs=3 active=third café.txt line=3 col=7 ' in unicodedata.normalize('NFC', command('print-state')),
+              'rhun:// link did not open its file at its line')
+        print('ok   mac/rhun-link-in-running-app')
         command('cmd next_tab')
         document = command('print-doc')
         assert '#pending' in document, document
