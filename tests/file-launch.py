@@ -213,6 +213,14 @@ class FileLaunch(unittest.TestCase):
                 out = self.run_editor([link(long, ':150')], ['print-state', 'print-scroll'], size='1280x700')
                 self.assertIn('active=long.txt line=150 ', out[0])
                 self.assertTrue(130 <= top(out[1]) <= 142, out[1])
+        # wrapped lines count as the rows they take: three each here, so the top line is near 145 (the
+        # lines above, counted as one row each, would put line 150 below the view, and the reveal at
+        # its bottom, near 140)
+        wide = self.alpha / 'wide.txt'
+        wide.write_text(''.join(f'line {i} ' + 'word ' * 80 + '\n' for i in range(1, 301)), encoding='utf-8')
+        out = self.run_editor([link(wide, ':150')], ['print-state', 'print-scroll'], size='1280x700')
+        self.assertIn('active=wide.txt line=150 ', out[0])
+        self.assertTrue(143 <= top(out[1]) <= 146, out[1])
         # a file opened after it shows first, from its top, and its own reveals are as ever (PageDown as
         # without the link); the link's file is centered once shown
         self.configure()

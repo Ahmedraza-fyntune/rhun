@@ -2294,6 +2294,11 @@ FN editor_draw
     # its line in the middle of the view, now that the view's height is known (app_goto_line)
     and dword ptr [rbx + DOC_flags], ~DF_CENTER
     mov rdi, rbx
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 72f
+    call center_wrap
+    jmp 7f
+72:
     mov rsi, [rbx + DOC_cur]
     call doc_line_of
     mov r8, rax                 # the line
