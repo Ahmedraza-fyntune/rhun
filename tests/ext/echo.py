@@ -294,7 +294,7 @@ def on_run(command, doc, versions):
     elif name == 'exec':
         def run_ls():
             import subprocess
-            subprocess.run(['/bin/ls', '/'], capture_output=True, check=True)
+            subprocess.run(['/bin/ls', '/usr'], capture_output=True, check=True)   # a folder the rules let it read
         probe(run_ls)
 
 
