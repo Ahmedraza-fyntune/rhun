@@ -384,6 +384,17 @@ class Host(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
 
+    def test_a_command_right_after_an_open_sees_the_document_first(self):
+        # the run event for a document rhun has not yet reported waits behind opened and active
+        self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 100',
+                         'open ' + (self.proj / 'b.go').as_posix(), 'cmd echo.toast', 'wait 300'])
+        log = self.echo_log()
+        opened = log.index('0 opened 2 0 Go ' + (self.proj / 'b.go').as_posix())
+        active = log.index('0 active 2')
+        run = [i for i, line in enumerate(log) if line == '0 run echo.toast 2'][0]
+        self.assertLess(opened, run)
+        self.assertLess(active, run)
+
     def test_quitting_leaves_no_program_behind(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'print-extensions'])
         pid = int(out[1].split('pid=')[1].split()[0])

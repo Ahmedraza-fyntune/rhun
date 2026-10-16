@@ -145,7 +145,7 @@ def main():
             if fields[0] == 'ok' and verb in ('text', 'range') and len(fields) >= 4:
                 body = read_body(int(fields[-1]))
                 log(body)
-            if then:
+            if then and fields[0] == 'ok':
                 then(fields, body)
             continue
         if fields[0] != '0':

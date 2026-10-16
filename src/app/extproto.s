@@ -1126,8 +1126,13 @@ send_ready:
 # extproto_send_run(ext, command index): "0 run NAME DOC"
 FN extproto_send_run
     PROLOGUE
-    mov [rip + cur], rdi
     mov rbx, rsi
+    # what changed since the last tick goes first: the extension must know the document
+    # (opened, active) before it is asked to act on it
+    call extproto_events
+    mov rax, [rip + cur]
+    cmp dword ptr [rax + EXT_status], ES_RUNNING
+    jne 9f
     call out_begin
     lea rdi, [rip + .Lev_run]
     call out_cstr
@@ -1143,7 +1148,7 @@ FN extproto_send_run
     mov edi, 10
     call out_byte
     call out_end
-    EPILOGUE
+9:  EPILOGUE
 
 # active_doc_id() -> the active document's id, or 0
 active_doc_id:
