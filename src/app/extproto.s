@@ -12,6 +12,7 @@ cur: .quad 0                    # the EXT being served
 cur_id: .quad 0                 # the request id
 body_ptr: .quad 0               # its body
 body_len: .quad 0
+syntax_seen: .quad 0            # a syntax reply went out while handling this message
 toast_buf: .zero 256
 
 .text
@@ -20,15 +21,41 @@ toast_buf: .zero 256
 
 # extproto_pump(ext): handle every complete message in the receive buffer
 FN extproto_pump
-    PROLOGUE
+    PROLOGUE 16
     mov rbx, rdi
     mov [rip + cur], rbx
+    call time_ms
+    mov r15, rax                # this run's start: EXT_PUMP_MS at most
+    # the window: a new one after EXT_WIN_MS; a window that hit a cap counts toward flooding,
+    # one that did not ends the count
+    mov rax, r15
+    sub rax, [rbx + EXT_win_t0]
+    cmp rax, EXT_WIN_MS
+    jl .Lpp_next
+    mov [rbx + EXT_win_t0], r15
+    # a busy window (a fifth of a cap or more: 100 messages or 64 KB in 16 ms) counts; a quieter
+    # one ends the count
+    cmp qword ptr [rbx + EXT_win_msgs], EXT_WIN_MSGS / 5
+    jae 0f
+    cmp qword ptr [rbx + EXT_fbytes], EXT_WIN_BYTES / 4
+    jae 0f
+    mov dword ptr [rbx + EXT_flood], 0
+    jmp 01f
+0:  inc dword ptr [rbx + EXT_flood]
+01: mov qword ptr [rbx + EXT_win_msgs], 0
+    mov qword ptr [rbx + EXT_fbytes], 0
+    mov dword ptr [rbx + EXT_win_hit], 0
 .Lpp_next:
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 9f
-1:  mov r12, [rbx + EXT_rbuf + SB_ptr]
+1:  # the caps
+    cmp qword ptr [rbx + EXT_win_msgs], EXT_WIN_MSGS
+    jae .Lpp_cap
+    cmp qword ptr [rbx + EXT_fbytes], EXT_WIN_BYTES
+    jae .Lpp_cap
+    mov r12, [rbx + EXT_rbuf + SB_ptr]
     mov r13, [rbx + EXT_rbuf + SB_len]
     # a message waiting for its body
     mov rax, [rbx + EXT_body]
@@ -48,8 +75,10 @@ FN extproto_pump
     call mem_free
     mov qword ptr [rbx + EXT_body], 0
     mov rdi, [rbx + EXT_body_len]
+    add [rbx + EXT_fbytes], rdi
+    inc qword ptr [rbx + EXT_win_msgs]
     call consume
-    jmp .Lpp_next
+    jmp .Lpp_time
 2:  # a complete line?
     xor ecx, ecx
 3:  cmp rcx, r13
@@ -66,31 +95,34 @@ FN extproto_pump
     jne 5f
     dec rdx
 5:  # copy the line out first: handling it may change the buffer
-    mov r15, rdx
+    mov [rsp], rdx
     lea rdi, [rip + out]        # `out` is free until a reply is built
     call sb_clear
     lea rdi, [rip + out]
     mov rsi, r12
-    mov rdx, r15
+    mov rdx, [rsp]
     call sb_push
     lea rdi, [r14 + 1]
+    add [rbx + EXT_fbytes], rdi
+    inc qword ptr [rbx + EXT_win_msgs]
     call consume
     mov qword ptr [rip + body_ptr], 0
     mov qword ptr [rip + body_len], 0
     mov rdi, [rip + out + SB_ptr]
     mov rsi, [rip + out + SB_len]
     call handle_line
-    # time budget: the rest of the buffer waits for the next frame
-    cmp qword ptr [rip + g_ext_frame_bytes], 0
-    jne 6f
-    call time_ms                # parsing from ext_tick: the clock starts now
-    mov [rip + g_ext_frame_t0], rax
-    inc qword ptr [rip + g_ext_frame_bytes]
-6:  call time_ms
-    sub rax, [rip + g_ext_frame_t0]
-    cmp rax, EXT_FRAME_MS
-    jb .Lpp_next
+.Lpp_time:
+    # one run takes EXT_PUMP_MS at most; the rest waits like a capped window (ext_tick resumes it)
+    call time_ms
+    sub rax, r15
+    cmp rax, EXT_PUMP_MS
+    jl .Lpp_next
+.Lpp_cap:
+    # the window's cap: the rest waits for the next window (ext_tick resumes it)
+    mov dword ptr [rbx + EXT_win_hit], 1
     mov dword ptr [rbx + EXT_throttled], 1
+    cmp dword ptr [rbx + EXT_out], 0
+    jl 9f
     mov edi, [rbx + EXT_out]
     xor esi, esi
     call watch_set_events
@@ -275,7 +307,7 @@ handle_line:
     mov [rip + cur_id], rax
     cmp qword ptr [rip + nfields], 2
     jb .Lhl_syntax
-    mov dword ptr [rbx + EXT_syntax_errs], 0
+    mov qword ptr [rip + syntax_seen], 0
     # the verb
     lea r12, [rip + verbs]
 5:  mov rsi, [r12]
@@ -312,6 +344,9 @@ handle_line:
     mov [rbx + EXT_body], rax
     jmp 9f
 7:  call [r12 + 8]
+    cmp qword ptr [rip + syntax_seen], 0
+    jne 9f
+    mov dword ptr [rbx + EXT_syntax_errs], 0    # a whole request parsed: the streak is over
     jmp 9f
 .Lhl_unknown:
     mov rdi, [rip + cur_id]
@@ -320,15 +355,24 @@ handle_line:
     jmp 9f
 .Lhl_syntax:
     xor edi, edi
+    call reply_syntax
+9:  EPILOGUE
+
+# reply_syntax(id): "error ID syntax ..."; the third in a row ends the program
+reply_syntax:
+    push rbx
+    mov rbx, [rip + cur]
     lea rsi, [rip + .Le_syntax]
     call reply_error
+    mov qword ptr [rip + syntax_seen], 1
     inc dword ptr [rbx + EXT_syntax_errs]
     cmp dword ptr [rbx + EXT_syntax_errs], 3
     jb 9f
     mov rdi, rbx
     lea rsi, [rip + .Lr_syntax]
     call ext_kill
-9:  EPILOGUE
+9:  pop rbx
+    ret
 
 # ---------------- replies ----------------
 
@@ -541,6 +585,8 @@ h_text:
     call need
     test eax, eax
     jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jb 8f
     mov edi, 2
     call arg_doc
     test rax, rax
@@ -575,6 +621,9 @@ h_text:
     add [rip + out + SB_len], r12
     call out_end
 9:  EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
 
 # ID range DOC L1 C1 L2 C2 -> ok ID VERSION LEN + body
 h_range:
@@ -636,8 +685,7 @@ h_range:
 9:  EPILOGUE
 .Lhr_syntax:
     mov rdi, [rip + cur_id]
-    lea rsi, [rip + .Le_syntax]
-    call reply_error
+    call reply_syntax
     EPILOGUE
 
 # ID replace DOC VERSION L1 C1 L2 C2 LEN + body -> ok ID NEWVERSION
@@ -654,6 +702,8 @@ h_replace:
     test rax, rax
     jz 9f
     mov rbx, rax
+    test dword ptr [rbx + DOC_flags], DF_READONLY
+    jnz .Lhp_readonly
     mov edi, 3
     call field_u64
     test edx, edx
@@ -695,10 +745,14 @@ h_replace:
     lea rsi, [rip + .Le_badpos]
     call reply_error
     EPILOGUE
+.Lhp_readonly:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_readonly]
+    call reply_error
+    EPILOGUE
 .Lhp_syntax:
     mov rdi, [rip + cur_id]
-    lea rsi, [rip + .Le_syntax]
-    call reply_error
+    call reply_syntax
     EPILOGUE
 
 # apply_replace(doc, pos, len, ptr, blen): one undo step; the cursor and anchor follow the text
@@ -734,10 +788,31 @@ apply_replace:
     call move_mark
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
-    mov edx, 1
-    call ed_set_cursor          # reveals it; the anchor stays
+    mov rdx, [rbx + DOC_anchor]
+    call set_marks
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# set_marks(doc, cur, anchor): through the editor (which reveals the cursor) for the document on
+# screen, directly for any other
+set_marks:
+    cmp rdi, [rip + g_doc]
+    je 1f
+    mov [rdi + DOC_cur], rsi
+    mov [rdi + DOC_anchor], rdx
+    ret
+1:  push rbx
+    push rsi
+    mov rbx, rdi
+    mov rsi, rdx
+    xor edx, edx
+    call ed_set_cursor
+    pop rsi
+    mov rdi, rbx
+    mov edx, 1
+    call ed_set_cursor
+    pop rbx
+    ret
 
 # move_mark(ptr to a position): after replacing [r12, r12+r13) with r15 bytes
 move_mark:
@@ -769,6 +844,8 @@ h_insert:
     test rax, rax
     jz 9f
     mov rbx, rax
+    test dword ptr [rbx + DOC_flags], DF_READONLY
+    jnz .Lhi_readonly
     mov edi, 3
     call field_u64
     test edx, edx
@@ -801,7 +878,11 @@ h_insert:
     EPILOGUE
 .Lhi_syntax:
     mov rdi, [rip + cur_id]
-    lea rsi, [rip + .Le_syntax]
+    call reply_syntax
+    EPILOGUE
+.Lhi_readonly:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_readonly]
     call reply_error
     EPILOGUE
 
@@ -828,32 +909,28 @@ h_select:
     js 9f
     mov r13, rax
     mov rdi, rbx
-    mov rsi, r12
-    xor edx, edx
-    call ed_set_cursor
-    mov rdi, rbx
     mov rsi, r13
-    mov edx, 1
-    call ed_set_cursor
+    mov rdx, r12
+    call set_marks
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
     call reply_ok
 9:  EPILOGUE
 .Lhs_syntax:
     mov rdi, [rip + cur_id]
-    lea rsi, [rip + .Le_syntax]
-    call reply_error
+    call reply_syntax
     EPILOGUE
 
 # ID toast LEN + body -> ok ID (at most 200 bytes shown)
 h_toast:
     PROLOGUE
     mov rsi, [rip + body_ptr]
-    mov rdx, [rip + body_len]
-    cmp rdx, 200
-    jbe 1f
+    mov rdi, [rip + body_len]
     mov edx, 200
-1:  lea rdi, [rip + toast_buf]
+    call utf8_cut
+    mov rdx, rax
+    mov rsi, [rip + body_ptr]
+    lea rdi, [rip + toast_buf]
     mov rcx, rdx
     push rdx
     push rdx
@@ -877,16 +954,34 @@ h_status:
     mov rsi, [rip + body_len]
     test rsi, rsi
     jz 1f
-    cmp rsi, 80
-    jbe 2f
-    mov esi, 80
-2:  mov rdi, [rip + body_ptr]
+    mov rdi, rsi
+    mov edx, 80
+    mov rsi, [rip + body_ptr]
+    call utf8_cut
+    mov rsi, rax
+    mov rdi, [rip + body_ptr]
     call mem_dup
     mov [rbx + EXT_status_text], rax
 1:  mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
     call reply_ok
     EPILOGUE
+
+# utf8_cut(len, ptr, max) -> the length to keep: at most max bytes, not ending inside a character
+utf8_cut:
+    mov rax, rdi
+    cmp rax, rdx
+    jbe 9f
+    mov rax, rdx
+1:  test rax, rax
+    jz 9f
+    movzx ecx, byte ptr [rsi + rax]
+    and ecx, 0xc0
+    cmp ecx, 0x80
+    jne 9f
+    dec rax
+    jmp 1b
+9:  ret
 
 # ID open LINE COL PATH -> ok ID DOC: a tab for the file, the cursor at the position (0 0 keeps it)
 h_open:
@@ -907,9 +1002,41 @@ h_open:
     call rest_from
     mov rdi, rax
     mov rsi, rdx
-    call mem_dup
+    cmp byte ptr [rdi], '/'
+    je 1f
+    # relative: inside the project
+    mov rcx, [rip + g_project]
+    test rcx, rcx
+    jz .Lho_nofile
+    push rdi
+    push rsi
+    mov rdi, rcx
+    call strlen
+    pop rsi
+    pop rdi
+    push rsi
+    push rdi
+    lea rdi, [rip + out]
+    call sb_clear
+    lea rdi, [rip + out]
+    mov rsi, [rip + g_project]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, '/'
+    call sb_push_byte
+    pop rsi
+    pop rdx
+    lea rdi, [rip + out]
+    call sb_push
+    mov rdi, [rip + out + SB_ptr]
+    mov rsi, [rip + out + SB_len]
+1:  call mem_dup
     mov r14, rax
     mov rdi, rax
+    call file_type
+    cmp eax, 0x8000             # a regular file
+    jne .Lho_missing
+    mov rdi, r14
     call app_open_file
     mov rbx, rax
     mov rdi, r14
@@ -918,6 +1045,8 @@ h_open:
     js .Lho_failed
     mov rdi, rbx
     call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne .Lho_notdoc
     mov rbx, [rax + TAB_doc]
     test r12, r12
     jz 1f
@@ -947,15 +1076,27 @@ h_open:
     mov rsi, [rbx + DOC_id]
     call reply_ok_u64
     EPILOGUE
+.Lho_missing:
+    mov rdi, r14
+    call mem_free
+.Lho_nofile:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nofile]
+    call reply_error
+    EPILOGUE
+.Lho_notdoc:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nodoc]
+    call reply_error
+    EPILOGUE
 .Lho_failed:
     mov rdi, [rip + cur_id]
-    lea rsi, [rip + .Le_refused_open]
+    lea rsi, [rip + .Le_nofile]
     call reply_error
     EPILOGUE
 .Lho_syntax:
     mov rdi, [rip + cur_id]
-    lea rsi, [rip + .Le_syntax]
-    call reply_error
+    call reply_syntax
     EPILOGUE
 
 # ID cancel ID2 -> ok ID: requests are handled as they arrive, so there is nothing to withdraw
@@ -1056,9 +1197,9 @@ FN extproto_events
     test rax, rax
     jnz 3f
     # new to this extension
-    mov rdi, rbx
+    mov rdi, [rbx + EXT_sub_opened]
     mov rsi, r13
-    call doc_matches_sub        # [subscribe] opened
+    call sub_matches            # opened is the gate: a document never opened to it stays unknown
     test eax, eax
     jz .Lev_tabs
     lea rdi, [rbx + EXT_known]
@@ -1077,38 +1218,42 @@ FN extproto_events
     mov [r14 + XK_anchor], rcx
     mov qword ptr [r14 + XK_seen], 1
     cmp qword ptr [rbx + EXT_sub_opened], 0
-    je .Lev_tabs
+    je 31f
     mov rdi, r13
     call send_opened
+31: # the active document's position is part of the snapshot, sent after `active` below
+    call active_doc_id
+    cmp rax, [r13 + DOC_id]
+    jne .Lev_tabs
+    mov qword ptr [r14 + XK_cur], -1
+    mov qword ptr [r14 + XK_anchor], -1
     jmp .Lev_tabs
 3:  mov r14, rax
     mov qword ptr [r14 + XK_seen], 1
-    # saved?
-    mov rcx, [r13 + DOC_saves]
-    cmp rcx, [r14 + XK_saves]
-    je 4f
-    mov [r14 + XK_saves], rcx
-    mov rcx, [r13 + DOC_version]
-    mov [r14 + XK_ver], rcx     # a save reports the version; no separate "changed" for it
-    mov rdi, [rbx + EXT_sub_saved]
-    mov rsi, r13
-    call sub_matches
-    test eax, eax
-    jz 4f
-    lea rdi, [rip + .Lev_saved]
-    mov rsi, r13
-    call send_doc_version
-4:  # changed?
+    # changed? (before saved, so a save after a change reports both)
     mov rcx, [r13 + DOC_version]
     cmp rcx, [r14 + XK_ver]
-    je 5f
+    je 4f
     mov [r14 + XK_ver], rcx
     mov rdi, [rbx + EXT_sub_changed]
     mov rsi, r13
     call sub_matches
     test eax, eax
-    jz 5f
+    jz 4f
     lea rdi, [rip + .Lev_changed]
+    mov rsi, r13
+    call send_doc_version
+4:  # saved?
+    mov rcx, [r13 + DOC_saves]
+    cmp rcx, [r14 + XK_saves]
+    je 5f
+    mov [r14 + XK_saves], rcx
+    mov rdi, [rbx + EXT_sub_saved]
+    mov rsi, r13
+    call sub_matches
+    test eax, eax
+    jz 5f
+    lea rdi, [rip + .Lev_saved]
     mov rsi, r13
     call send_doc_version
 5:  # cursor or selection?
@@ -1118,18 +1263,24 @@ FN extproto_events
     jne 6f
     cmp rdx, [r14 + XK_anchor]
     je .Lev_tabs
-6:  mov [r14 + XK_cur], rcx
+6:  mov rax, [r14 + XK_cur]
+    cmp rax, [r14 + XK_anchor]
+    setne r15b                  # a selection existed before
+    mov [r14 + XK_cur], rcx
     mov [r14 + XK_anchor], rdx
     cmp rcx, rdx
     jne 7f
+    # a bare cursor now: cursor subscribers hear it; selection subscribers hear the empty range
+    # when a selection just collapsed
     mov rdi, [rbx + EXT_sub_cursor]
     mov rsi, r13
     call sub_matches
     test eax, eax
-    jz .Lev_tabs
+    jz 61f
     mov rdi, r13
     call send_cursor
-    jmp .Lev_tabs
+61: test r15b, r15b
+    jz .Lev_tabs
 7:  mov rdi, [rbx + EXT_sub_selection]
     mov rsi, r13
     call sub_matches
@@ -1165,10 +1316,46 @@ FN extproto_events
 .Lxe_active:
     call active_doc_id
     cmp rax, [rbx + EXT_active]
-    je 9f
+    je 85f
     mov [rbx + EXT_active], rax
     mov rdi, rax
     call send_active
+85: # positions held back during catch-up (XK_cur -1): the active document's, now
+    xor r12d, r12d
+86: cmp r12, [rbx + EXT_known + VEC_len]
+    jae 9f
+    imul r14, r12, XK_SIZE
+    add r14, [rbx + EXT_known + VEC_ptr]
+    inc r12
+    cmp qword ptr [r14 + XK_cur], -1
+    jne 86b
+    mov rdi, [r14 + XK_id]
+    call doc_by_id
+    test rax, rax
+    jz 86b
+    mov r13, rax
+    mov rcx, [r13 + DOC_cur]
+    mov rdx, [r13 + DOC_anchor]
+    mov [r14 + XK_cur], rcx
+    mov [r14 + XK_anchor], rdx
+    cmp rcx, rdx
+    jne 87f
+    mov rdi, [rbx + EXT_sub_cursor]
+    mov rsi, r13
+    call sub_matches
+    test eax, eax
+    jz 86b
+    mov rdi, r13
+    call send_cursor
+    jmp 86b
+87: mov rdi, [rbx + EXT_sub_selection]
+    mov rsi, r13
+    call sub_matches
+    test eax, eax
+    jz 86b
+    mov rdi, r13
+    call send_selection
+    jmp 86b
 9:  EPILOGUE
 
 # known_find(ext, id) -> XK* or 0
@@ -1184,25 +1371,6 @@ known_find:
     ret
 8:  xor eax, eax
     ret
-
-# doc_matches_sub(ext, doc) -> 1 when any subscription's patterns match the document (a document
-# no subscription names is never reported, not even as opened)
-doc_matches_sub:
-    PROLOGUE
-    mov rbx, rdi
-    mov r12, rsi
-    lea r13, [rbx + EXT_sub_opened]
-    mov r14d, 5
-1:  mov rdi, [r13]
-    mov rsi, r12
-    call sub_matches
-    test eax, eax
-    jnz 9f
-    add r13, 8
-    dec r14d
-    jnz 1b
-    xor eax, eax
-9:  EPILOGUE
 
 # sub_matches(patterns cstr or 0, doc) -> 1 when the document's name matches ("*" matches all,
 # untitled documents too)
@@ -1246,10 +1414,11 @@ send_opened:
     test rax, rax
     jz 1f
     mov rdi, [rax + GR_name]
+    call out_word               # "Visual Basic" travels as Visual_Basic
     jmp 2f
 1:  lea rdi, [rip + .Ldash]
-2:  call out_cstr
-    mov edi, ' '
+    call out_cstr
+2:  mov edi, ' '
     call out_byte
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
@@ -1260,6 +1429,48 @@ send_opened:
     call out_byte
     call out_end
     EPILOGUE
+
+# out_word(cstr): the text with each space as an underscore
+out_word:
+    push rbx
+    mov rbx, rdi
+1:  movzx edi, byte ptr [rbx]
+    test edi, edi
+    jz 9f
+    cmp edi, ' '
+    jne 2f
+    mov edi, '_'
+2:  call out_byte
+    inc rbx
+    jmp 1b
+9:  pop rbx
+    ret
+
+# extproto_send_project_all(): "0 project PATH" to every running extension
+FN extproto_send_project_all
+    PROLOGUE
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 1b
+    mov [rip + cur], rbx
+    call out_begin
+    lea rdi, [rip + .Lev_project]
+    call out_cstr
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jnz 2f
+    lea rdi, [rip + .Ldash]
+2:  call out_cstr
+    mov edi, 10
+    call out_byte
+    call out_end
+    jmp 1b
+9:  EPILOGUE
 
 # send_doc_version(event cstr "0 saved ", doc): "EVENT DOC VERSION"
 send_doc_version:
@@ -1403,6 +1614,7 @@ verbs:
 .Lev_selection: .asciz "0 selection "
 .Lev_closed: .asciz "0 closed "
 .Lev_active: .asciz "0 active "
+.Lev_project: .asciz "0 project "
 .Le_unknown: .asciz "unknown no such request"
 .Le_syntax: .asciz "syntax cannot parse the line"
 .Le_nodoc: .asciz "nodoc no such document"
@@ -1410,7 +1622,8 @@ verbs:
 .Le_stale: .asciz "stale "
 .Le_needs_read: .asciz "needs documents=read"
 .Le_needs_write: .asciz "needs documents=write"
-.Le_refused_open: .asciz "refused cannot open that file"
+.Le_nofile: .asciz "nofile no such file"
+.Le_readonly: .asciz "readonly the document cannot be edited"
 .Lr_no_hello: .asciz "the first line was not hello 1"
 .Lr_protocol: .asciz "protocol version not supported (rhun speaks 1)"
 .Lr_body: .asciz "a body over its cap"

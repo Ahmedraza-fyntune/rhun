@@ -10,19 +10,20 @@
 
 .bss
 .p2align 3
-.globl g_exts, g_ext_cmds, g_ext_owner, g_ext_dir, g_ext_frame_bytes, g_ext_frame_t0
+.globl g_exts, g_ext_cmds, g_ext_owner, g_ext_dir
 g_exts: .zero VEC_SIZE          # EXT records, in discovery order
 g_ext_cmds: .zero VEC_SIZE      # CMD records for the palette and [keys] (CMD_fn = ext_cmd_run)
 g_ext_owner: .zero VEC_SIZE     # per command: the index of its EXT (u64)
 g_ext_dir: .quad 0              # --extensions DIR, or 0 for the config folder
-g_ext_frame_bytes: .quad 0      # the frame's budget used so far, all extensions together
-g_ext_frame_t0: .quad 0         # time_ms when the frame's budget began
 ext_root: .zero SB_SIZE         # the folder the extensions are read from
 ext_state_root: .zero SB_SIZE   # ~/.local/state/rhun/extensions
 ext_startup_done: .long 0       # on = startup extensions have been started
 ext_project_done: .long 0       # on = project extensions have been started for this project
 .p2align 3
 ext_last_doc: .quad 0           # the highest DOC_id ext_tick has seen (new documents trigger activations)
+ext_ticks: .long 0              # ticks so far (the log check runs every 64th)
+.p2align 3
+ext_project_seen: .quad 0       # g_project at the last tick
 .p2align 3
 cur_ext: .quad 0                # the EXT being loaded (manifest callbacks)
 cur_owner: .quad 0              # the owner folder being scanned (cstr)
@@ -79,8 +80,11 @@ FN ext_init
     lea rdi, [rip + ext_state_root]
     call session_state_dir
     test eax, eax
-    jz 3f
+    jnz 21f
     lea rdi, [rip + ext_state_root]
+    lea rsi, [rip + .Lno_home_state]
+    call sb_push_cstr
+21: lea rdi, [rip + ext_state_root]
     lea rsi, [rip + .Lsub_extensions]
     call sb_push_cstr
     mov rdi, [rip + ext_state_root + SB_ptr]
@@ -213,8 +217,30 @@ FN ext_load
     jmp 2b
 3:  mov rdi, r13
     call mem_free
-    # required keys
-    cmp qword ptr [rbx + EXT_title], 0
+    # required keys; name and owner must be the folder names
+    mov rdi, [rbx + EXT_mname]
+    test rdi, rdi
+    jz 31f
+    mov rsi, [rbx + EXT_name]
+    call strcmp_eq
+    test eax, eax
+    jnz 32f
+31: lea rdi, [rip + .Lr_name]
+    jmp .Lel_fail
+32: mov rdi, [rbx + EXT_mowner]
+    test rdi, rdi
+    jz 33f
+    mov rsi, [rbx + EXT_owner]
+    call strcmp_eq
+    test eax, eax
+    jnz 34f
+33: lea rdi, [rip + .Lr_owner]
+    jmp .Lel_fail
+34: cmp qword ptr [rbx + EXT_version], 0
+    jne 35f
+    lea rdi, [rip + .Lr_no_version]
+    jmp .Lel_fail
+35: cmp qword ptr [rbx + EXT_title], 0
     jne 4f
     lea rdi, [rip + .Lr_no_title]
     jmp .Lel_fail
@@ -248,17 +274,41 @@ FN ext_load
     pop rax
     mov [rbx + EXT_prog], rax
     jmp 8f
-7:  # the program must exist
+7:  # the program must exist and be executable
     mov rdi, [rbx + EXT_prog]
     xor esi, esi
     SYS SYS_access
     test rax, rax
-    jz 8f
+    jz 71f
     lea rdi, [rip + .Lr_no_file]
     jmp .Lel_fail
+71: mov rdi, [rbx + EXT_prog]
+    mov esi, 1                  # X_OK
+    SYS SYS_access
+    test rax, rax
+    jz 8f
+    lea rdi, [rip + .Lr_not_exec]
+    jmp .Lel_fail
 8:  test dword ptr [rbx + EXT_on], -1
-    jnz 9f
+    jnz 81f
     mov dword ptr [rbx + EXT_on], ON_COMMAND
+81: # its data files: themes and grammars
+    mov rdi, [rbx + EXT_dir]
+    lea rsi, [rip + .Lsub_themes]
+    call path_join
+    mov r12, rax
+    mov rdi, rax
+    call theme_add_dir
+    mov rdi, r12
+    call mem_free
+    mov rdi, [rbx + EXT_dir]
+    lea rsi, [rip + .Lsub_syntax]
+    call path_join
+    mov r12, rax
+    mov rdi, rax
+    call syntax_add_dir
+    mov rdi, r12
+    call mem_free
 9:  mov qword ptr [rip + cur_ext], 0
     EPILOGUE
 .Lel_fail:
@@ -284,6 +334,22 @@ manifest_kv:
     mov [rbx + EXT_title], rax
     jmp 9f
 1:  mov rdi, r12
+    lea rsi, [rip + .Lk_name]
+    call ini_key_is
+    test eax, eax
+    jz 11f
+    call val_dup
+    mov [rbx + EXT_mname], rax
+    jmp 9f
+11: mov rdi, r12
+    lea rsi, [rip + .Lk_owner]
+    call ini_key_is
+    test eax, eax
+    jz 12f
+    call val_dup
+    mov [rbx + EXT_mowner], rax
+    jmp 9f
+12: mov rdi, r12
     lea rsi, [rip + .Lk_version]
     call ini_key_is
     test eax, eax
@@ -761,6 +827,8 @@ FN ext_cmd_run
     mov ecx, CMD_SIZE
     div rcx
     mov r12, rax                # command index
+    cmp r12, [rip + g_ext_cmds + VEC_len]
+    jae 9f
     mov rax, [rip + g_ext_owner + VEC_ptr]
     mov rax, [rax + r12*8]
     imul rax, rax, EXT_SIZE
@@ -782,6 +850,8 @@ FN ext_cmd_run
     je 8f
     cmp dword ptr [rbx + EXT_status], ES_DISABLED
     je 8f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPED
+    je 8f                       # by the user or a limit: Settings restarts it
     mov rdi, rbx
     call ext_start
 9:  EPILOGUE
@@ -861,15 +931,22 @@ FN ext_start
     jb 1f
     lea rax, [rip + .Lr_slots]
     mov [rbx + EXT_reason], rax
-    mov dword ptr [rbx + EXT_status], ES_STOPPED
+    mov dword ptr [rbx + EXT_wait_slot], 1
+    mov dword ptr [rbx + EXT_status], ES_IDLE
     jmp 9f
-1:  mov qword ptr [rbx + EXT_reason], 0
+1:  mov dword ptr [rbx + EXT_wait_slot], 0
+    mov qword ptr [rbx + EXT_reason], 0
     mov qword ptr [rbx + EXT_status_text], 0
     mov dword ptr [rbx + EXT_hello], 0
     mov dword ptr [rbx + EXT_syntax_errs], 0
     mov dword ptr [rbx + EXT_flood], 0
     mov dword ptr [rbx + EXT_throttled], 0
+    mov dword ptr [rbx + EXT_win_hit], 0
+    mov qword ptr [rbx + EXT_win_t0], 0
+    mov qword ptr [rbx + EXT_win_msgs], 0
+    mov qword ptr [rbx + EXT_fbytes], 0
     mov qword ptr [rbx + EXT_full_since], 0
+    mov qword ptr [rbx + EXT_in_closed_at], 0
     mov qword ptr [rbx + EXT_body], 0
     mov qword ptr [rbx + EXT_wq_off], 0
     mov qword ptr [rbx + EXT_active], -1
@@ -928,7 +1005,12 @@ FN ext_start
     mov r9d, [rbx + EXT_log]
     test r9d, r9d
     jns 2f
-    mov r9d, r8d
+    lea rdi, [rip + .Ldevnull]
+    mov esi, O_WRONLY | O_CLOEXEC
+    xor edx, edx
+    SYS SYS_open
+    mov [rbx + EXT_log], eax
+    mov r9d, eax
 2:  mov eax, 2                          # own session, dies with rhun
     push rax
     push rax
@@ -1135,7 +1217,14 @@ build_env:
     jz 5f
     lea rdi, [rip + .Le_project_eq]
     call env_add
-5:  lea rdi, [rip + env_vec]
+5:  cmp qword ptr [rip + g_ext_dir], 0
+    je 51f
+    mov rsi, [rip + g_control_path]
+    test rsi, rsi
+    jz 51f
+    lea rdi, [rip + .Le_socket_eq]
+    call env_add
+51: lea rdi, [rip + env_vec]
     mov esi, 8
     call vec_push
     EPILOGUE
@@ -1223,29 +1312,29 @@ env_copy:
     call env_add
 9:  EPILOGUE
 
-# ext_on_out(fd, revents, ctx = EXT*): bytes from the program, within the frame's budget
+# ext_on_out(fd, revents, ctx = EXT*): bytes from the program. Each extension has a window of
+# EXT_WIN_MS with caps on messages and bytes (extproto_pump enforces them); when a cap is hit the
+# rest waits in the buffer for the next window, and ext_tick resumes it.
 ext_on_out:
     PROLOGUE
     mov rbx, rdx
-    # the frame's budget clock starts with its first read (the poll before it may have idled)
-    cmp qword ptr [rip + g_ext_frame_bytes], 0
-    jne 0f
+    # a program that is not reading what rhun wrote gets nothing more read from it either, and
+    # the not-reading clock runs
+    mov rax, [rbx + EXT_wq + SB_len]
+    sub rax, [rbx + EXT_wq_off]
+    cmp rax, EXT_WQ_MAX
+    jb 1f
+    cmp qword ptr [rbx + EXT_full_since], 0
+    jne .Loo_throttle
     call time_ms
-    mov [rip + g_ext_frame_t0], rax
-0:  # budget left this frame
-    mov rax, EXT_FRAME_BYTES
-    sub rax, [rip + g_ext_frame_bytes]
-    jle .Loo_throttle
-    mov r12, rax
-    cmp r12, EXT_READ_PER_FRAME
-    jbe 1f
-    mov r12d, EXT_READ_PER_FRAME
+    mov [rbx + EXT_full_since], rax
+    jmp .Loo_throttle
 1:  lea rdi, [rbx + EXT_rbuf]
-    mov rsi, r12
+    mov esi, EXT_READ_CHUNK
     call sb_reserve
     mov rsi, rax
     mov edi, [rbx + EXT_out]
-    mov rdx, r12
+    mov edx, EXT_READ_CHUNK
     SYS SYS_read
     cmp rax, -EINTR
     je 1b
@@ -1254,22 +1343,28 @@ ext_on_out:
     test rax, rax
     jle .Loo_eof
     add [rbx + EXT_rbuf + SB_len], rax
-    add [rip + g_ext_frame_bytes], rax
     mov rdi, rbx
     call extproto_pump
-    # a line without an end that fills the buffer: the program is not speaking the protocol
+    # 64 KB without a line end: the program is not speaking the protocol
     cmp qword ptr [rbx + EXT_rbuf + SB_len], EXT_LINE_MAX
     jb 2f
     cmp qword ptr [rbx + EXT_body], 0
     jne 2f
+    mov rdi, [rbx + EXT_rbuf + SB_ptr]
+    mov esi, EXT_LINE_MAX
+    lea rdx, [rip + .Lnl]
+    mov ecx, 1
+    call str_find
+    test rax, rax
+    jns 2f
     mov rdi, rbx
     lea rsi, [rip + .Lr_line]
     call ext_kill
     jmp 9f
-2:  cmp qword ptr [rip + g_ext_frame_bytes], EXT_FRAME_BYTES
-    jb 9f
+2:  cmp dword ptr [rbx + EXT_throttled], 0
+    je 9f
 .Loo_throttle:
-    # the rest waits for the next frame
+    # the rest waits for the next window
     mov dword ptr [rbx + EXT_throttled], 1
     mov edi, [rbx + EXT_out]
     xor esi, esi
@@ -1284,7 +1379,22 @@ ext_on_out:
 
 # ext_on_in(fd, revents, ctx = EXT*): the program reads again
 ext_on_in:
-    mov rdi, rdx
+    test esi, POLLERR | POLLHUP
+    jz 1f
+    # the program closed its input (or exited: its output's end of file follows, and that exit
+    # status is the reason to keep); ext_tick ends it after 300 ms if it is still there
+    push rbx
+    mov rbx, rdx
+    cmp qword ptr [rbx + EXT_in_closed_at], 0
+    jne 2f
+    call time_ms
+    mov [rbx + EXT_in_closed_at], rax
+2:  mov edi, [rbx + EXT_in]
+    xor esi, esi
+    call watch_set_events
+    pop rbx
+    ret
+1:  mov rdi, rdx
     jmp ext_flush
 
 # ext_send(ext, ptr, len): queue bytes for the program and write what the pipe takes
@@ -1297,7 +1407,17 @@ FN ext_send
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_STOPPING
     jne 9f
-1:  lea rdi, [rbx + EXT_wq]
+1:  mov rax, [rbx + EXT_wq + SB_len]
+    sub rax, [rbx + EXT_wq_off]
+    add rax, rdx
+    cmp rax, EXT_WQ_HARD
+    jb 2f
+    # a program that let 8 MB pile up is not reading: ext_tick ends it; nothing more is kept
+    call time_ms
+    sub rax, 20000
+    mov [rbx + EXT_full_since], rax
+    jmp 9f
+2:  lea rdi, [rbx + EXT_wq]
     call sb_push
     mov rdi, rbx
     call ext_flush
@@ -1309,6 +1429,8 @@ FN ext_flush
     mov rbx, rdi
     cmp dword ptr [rbx + EXT_in], 0
     jl 9f
+    cmp qword ptr [rbx + EXT_in_closed_at], 0
+    jne 9f
 1:  mov rdx, [rbx + EXT_wq + SB_len]
     sub rdx, [rbx + EXT_wq_off]
     jz 5f
@@ -1398,10 +1520,17 @@ FN ext_exited
     lea rdi, [rbx + EXT_wq]
     call sb_clear
     mov qword ptr [rbx + EXT_wq_off], 0
+    mov qword ptr [rbx + EXT_pending], 0
     cmp qword ptr [rbx + EXT_reason], 0
     jne 5f
-    # it left on its own
-    mov dword ptr [rbx + EXT_status], ES_CRASHED
+    # it left on its own; 127 is the child that could not exec its program
+    cmp r12d, 127
+    jne 21f
+    lea rax, [rip + .Lr_exec]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    jmp 8f
+21: mov dword ptr [rbx + EXT_status], ES_CRASHED
     lea rdi, [rip + reason_buf]
     lea rsi, [rip + .Lr_exited]
     call cstr_copy
@@ -1478,26 +1607,32 @@ FN ext_tick
     PROLOGUE
     cmp qword ptr [rip + g_exts + VEC_len], 0
     je 9f
-    call time_ms
-    mov r14, rax
-    mov qword ptr [rip + g_ext_frame_bytes], 0
+    inc dword ptr [rip + ext_ticks]
     # on = startup, once; on = project when a project is open
     cmp dword ptr [rip + ext_startup_done], 0
     jne 1f
     mov dword ptr [rip + ext_startup_done], 1
     mov edi, ON_STARTUP
     call ext_start_matching
-1:  cmp qword ptr [rip + g_project], 0
+1:  mov rax, [rip + g_project]
+    cmp rax, [rip + ext_project_seen]
+    je 12f
+    mov [rip + ext_project_seen], rax
+    mov dword ptr [rip + ext_project_done], 0
+    call extproto_send_project_all
+12: cmp qword ptr [rip + g_project], 0
     je 2f
     cmp dword ptr [rip + ext_project_done], 0
     jne 2f
     mov dword ptr [rip + ext_project_done], 1
     mov edi, ON_PROJECT
     call ext_start_matching
-2:  # documents opened since the last tick start the extensions whose lang:/open: lists match
+2:  # documents opened since the last tick start the extensions whose lang:/open: lists match;
+    # tabs are not in creation order, so the mark moves only after the whole scan
+    mov r15, [rip + ext_last_doc]
     xor r12d, r12d
 21: cmp r12, [rip + g_tabs + VEC_len]
-    jae 2f
+    jae 22f
     imul rax, r12, TAB_SIZE
     add rax, [rip + g_tabs + VEC_ptr]
     inc r12
@@ -1509,10 +1644,33 @@ FN ext_tick
     mov rax, [rdi + DOC_id]
     cmp rax, [rip + ext_last_doc]
     jbe 21b
-    mov [rip + ext_last_doc], rax
-    call ext_doc_opened
+    cmp rax, r15
+    jbe 23f
+    mov r15, rax
+23: call ext_doc_opened
     jmp 21b
-2:  xor r12d, r12d
+22: mov [rip + ext_last_doc], r15
+    # extensions waiting for a slot
+    xor r12d, r12d
+24: cmp r12, [rip + g_exts + VEC_len]
+    jae 25f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_wait_slot], 0
+    je 24b
+    cmp dword ptr [rbx + EXT_status], ES_IDLE
+    jne 24b
+    call ext_running
+    cmp eax, EXT_MAX_RUNNING
+    jae 25f
+    mov rdi, rbx
+    call ext_start
+    jmp 24b
+25: # the clock, after the starts above (a start sets EXT_started)
+    call time_ms
+    mov r14, rax
+    xor r12d, r12d
 .Let_each:
     cmp r12, [rip + g_exts + VEC_len]
     jae 9f
@@ -1531,7 +1689,7 @@ FN ext_tick
     mov rax, r14
     sub rax, [rbx + EXT_started]
     cmp rax, EXT_HELLO_MS
-    jb .Let_common
+    jl .Let_common
     mov rdi, rbx
     lea rsi, [rip + .Lr_no_hello]
     call ext_kill
@@ -1540,12 +1698,12 @@ FN ext_tick
     mov rax, r14
     sub rax, [rbx + EXT_started]
     cmp rax, 1000
-    jb .Let_common
+    jl .Let_common
     mov edi, [rbx + EXT_pid]
     neg edi
     mov esi, SIGTERM
     cmp rax, 2000
-    jb 3f
+    jl 3f
     mov rdi, rbx
     mov esi, -1
     call ext_exited
@@ -1556,30 +1714,57 @@ FN ext_tick
     mov rdi, rbx
     call extproto_events
 .Let_common:
-    # a program that does not read for 10 s
+    # a program that closed its input and is still there 300 ms later
+    mov rax, [rbx + EXT_in_closed_at]
+    test rax, rax
+    jz 40f
+    mov rcx, r14
+    sub rcx, rax
+    cmp rcx, 300
+    jl 40f
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_closed_in]
+    call ext_kill
+    jmp .Let_each
+40: # a program that does not read for 10 s
     mov rax, [rbx + EXT_full_since]
     test rax, rax
     jz 4f
     mov rcx, r14
     sub rcx, rax
     cmp rcx, 10000
-    jb 4f
+    jl 4f
     mov rdi, rbx
     lea rsi, [rip + .Lr_not_reading]
     call ext_kill
     jmp .Let_each
-4:  # a program throttled last frame reads again; one that fills the budget frame after frame floods
+4:  # its error log stays under its cap (the program keeps its descriptor, so it is cut, not rotated)
+    mov edi, [rbx + EXT_log]
+    test edi, edi
+    js 42f
+    xor esi, esi
+    mov edx, 2                  # SEEK_END
+    SYS SYS_lseek
+    cmp rax, EXT_LOG_MAX
+    jbe 42f
+    mov edi, [rbx + EXT_log]
+    xor esi, esi
+    SYS SYS_ftruncate
+42: # a program throttled for a window resumes when the window has passed; EXT_flood counts
+    # windows in a row that hit a cap (extproto_pump keeps it)
     cmp dword ptr [rbx + EXT_throttled], 0
-    je 5f
-    mov dword ptr [rbx + EXT_throttled], 0
-    inc dword ptr [rbx + EXT_flood]
+    je .Let_each
+    mov rax, r14
+    sub rax, [rbx + EXT_win_t0]
+    cmp rax, EXT_WIN_MS
+    jl .Let_each
     cmp dword ptr [rbx + EXT_flood], EXT_FLOOD_FRAMES
-    jb 41f
+    jb 43f
     mov rdi, rbx
     lea rsi, [rip + .Lr_flooding]
     call ext_kill
     jmp .Let_each
-41: mov qword ptr [rip + g_ext_frame_bytes], 0
+43: mov dword ptr [rbx + EXT_throttled], 0
     mov rdi, rbx
     call extproto_pump          # what is buffered already; it may throttle again
     cmp dword ptr [rbx + EXT_throttled], 0
@@ -1590,25 +1775,64 @@ FN ext_tick
     mov esi, POLLIN
     call watch_set_events
     jmp .Let_each
-5:  mov dword ptr [rbx + EXT_flood], 0
-    jmp .Let_each
 9:  EPILOGUE
 
-# ext_timeout() -> ms until the loop should come back for the extensions: 16 while a program's
-# buffered lines wait for the next frame's budget, else -1
+# ext_timeout() -> ms until the loop should come back for the extensions, or -1: 16 while a
+# program's buffered lines wait for the next frame's budget; the time left to a hello deadline, a
+# stop escalation or a full-queue deadline (so they are enforced without any other event)
 FN ext_timeout
-    xor ecx, ecx
-1:  cmp rcx, [rip + g_exts + VEC_len]
+    PROLOGUE
+    mov r12, -1                 # the earliest deadline, as a time
+    xor r13d, r13d
+1:  cmp r13, [rip + g_exts + VEC_len]
     jae 8f
-    imul rax, rcx, EXT_SIZE
-    add rax, [rip + g_exts + VEC_ptr]
-    inc rcx
-    cmp dword ptr [rax + EXT_throttled], 0
-    je 1b
-    mov eax, 16
-    ret
-8:  mov eax, -1
-    ret
+    imul rbx, r13, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r13
+    cmp dword ptr [rbx + EXT_throttled], 0
+    je 11f
+    mov rax, [rbx + EXT_win_t0]
+    add rax, EXT_WIN_MS
+    call deadline
+11: mov eax, [rbx + EXT_status]
+    cmp eax, ES_STARTING
+    jne 2f
+    mov rax, [rbx + EXT_started]
+    add rax, EXT_HELLO_MS
+    call deadline
+    jmp 3f
+2:  cmp eax, ES_STOPPING
+    jne 3f
+    mov rax, [rbx + EXT_started]
+    add rax, 1000
+    call deadline
+    mov rax, [rbx + EXT_started]
+    add rax, 2000
+    call deadline
+3:  mov rax, [rbx + EXT_full_since]
+    test rax, rax
+    jz 1b
+    add rax, 10000
+    call deadline
+    jmp 1b
+8:  cmp r12, -1
+    je 9f
+    call time_ms
+    sub r12, rax
+    jns 81f
+    xor r12d, r12d
+81: mov rax, r12
+    EPILOGUE
+9:  mov eax, -1
+    EPILOGUE
+# deadline(rax time): keep the earliest in r12
+deadline:
+    cmp r12, -1
+    je 1f
+    cmp rax, r12
+    jae 2f
+1:  mov r12, rax
+2:  ret
 
 # ext_start_matching(ON_ bit): start idle extensions with that activation
 FN ext_start_matching
@@ -1819,6 +2043,48 @@ FN ext_shutdown
     jmp 7b
 9:  EPILOGUE
 
+# ext_status_draw(right, y, h) -> eax the right edge left of the texts drawn: each running
+# extension's status text, right-aligned in the small face
+FN ext_status_draw
+    PROLOGUE 16
+    mov r14d, edi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 1b
+    mov r13, [rbx + EXT_status_text]
+    test r13, r13
+    jz 1b
+    mov rdi, r13
+    call strlen
+    mov r15, rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, r13
+    mov rdx, r15
+    call text_width
+    sub r14d, [rip + g_mt + 4*MI_12]
+    sub r14d, eax
+    lea rdi, [rip + g_face_small]
+    mov esi, r14d
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    mov r8, r13
+    mov r9, r15
+    COLOR eax, T_MUTED
+    push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+    jmp 1b
+9:  mov eax, r14d
+    EPILOGUE
+
 # ext_state_name(ES_*) -> cstr
 FN ext_state_name
     cmp edi, ES_DISABLED
@@ -1893,7 +2159,15 @@ FN ext_dump
     mov esi, ','
     call sb_push_byte
     jmp 3b
-4:  mov rsi, [rbx + EXT_status_text]
+4:  cmp dword ptr [rbx + EXT_flood], 0
+    je 41f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_flood]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rbx + EXT_flood]
+    call sb_push_u64
+41: mov rsi, [rbx + EXT_status_text]
     test rsi, rsi
     jz 5f
     mov rdi, r12
@@ -1981,6 +2255,14 @@ ext_target: .asciz "linux-x86_64"
 .Lsub_npm: .asciz "/npm"
 .Lsuf_log: .asciz ".log"
 .Lmanifest: .asciz "extension.ini"
+.Lsub_themes: .asciz "themes"
+.Lsub_syntax: .asciz "syntax"
+.Ldevnull: .asciz "/dev/null"
+.Lnl: .asciz "\n"
+.Lno_home_state: .asciz "/tmp/rhun-state"
+.Lk_name: .asciz "name"
+.Lk_owner: .asciz "owner"
+.Le_socket_eq: .asciz "RHUN_SOCKET="
 .Ldashdash: .asciz "--"
 .Lempty: .asciz ""
 .Lone: .asciz "1"
@@ -2052,6 +2334,12 @@ ext_target: .asciz "linux-x86_64"
 .Lr_no_program: .asciz "no program for this target in extension.ini"
 .Lr_no_runtime: .asciz "runtime not found on PATH"
 .Lr_no_file: .asciz "program file missing"
+.Lr_not_exec: .asciz "program is not executable"
+.Lr_name: .asciz "extension.ini name does not match the folder"
+.Lr_owner: .asciz "extension.ini owner does not match the folder"
+.Lr_no_version: .asciz "extension.ini has no version"
+.Lr_exec: .asciz "failed to start: the program could not be executed"
+.Lr_closed_in: .asciz "closed its input"
 .Lr_slots: .asciz "16 extensions already running"
 .Lr_pipes: .asciz "cannot create pipes"
 .Lr_spawn: .asciz "cannot start the program"
@@ -2061,7 +2349,7 @@ ext_target: .asciz "linux-x86_64"
 .Lr_three: .asciz "crashed three times within a minute"
 .Lr_no_hello: .asciz "no hello within 5 s"
 .Lr_not_reading: .asciz "not reading for 10 s"
-.Lr_flooding: .asciz "flooding: used the whole budget 30 frames in a row"
+.Lr_flooding: .asciz "flooding: at the message or byte cap 30 windows in a row"
 .Lst_idle: .asciz "idle"
 .Lst_starting: .asciz "starting"
 .Lst_running: .asciz "running"
@@ -2076,3 +2364,4 @@ ext_target: .asciz "linux-x86_64"
 .Ld_pid: .asciz " pid="
 .Ld_cmds: .asciz " cmds="
 .Ld_status: .asciz " status="
+.Ld_flood: .asciz " flood="

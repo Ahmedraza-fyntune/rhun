@@ -11,18 +11,24 @@ test can assert catch-up and events. ECHO_MODE makes it misbehave:
   badhello   "hello 2"
   crash      exit 3 right after hello
   sleep      hello, then stop reading and writing
-  flood      hello, then write toast requests forever as fast as it can
+  flood      hello, then write toast requests forever as fast as it can (reading the replies)
+  floodnoread the same without ever reading its input
   garbage    hello, then 100 KB of bytes with no newline
   fragment   normal, but every write goes out one byte at a time with flushes
   eof        hello, then close stdout and sleep
   syntax     hello, then three unparsable lines
+  badargs    hello, then three requests with ids whose arguments cannot be parsed
+  noisy      normal, but writes 2 MB to its error output after hello
 
 Commands (from tests/ext/exts/rhun-tests/echo/extension.ini): echo.shout upper-cases the active document,
 echo.hi inserts "hi" at the cursor, echo.toast shows a toast, echo.stale sends a replace with a
-version one behind, echo.status sets the status text, echo.open opens ECHO_OPEN at line 2.
+version one behind, echo.status sets the status text, echo.open opens ECHO_OPEN at line 2,
+echo.mb asks for a range inside a character, echo.sel selects then reads the first word, echo.relopen
+opens b.go by a relative path, echo.bad asks for a range outside the document.
 """
 import os
 import sys
+import threading
 import time
 
 MODE = os.environ.get('ECHO_MODE', 'normal')
@@ -30,7 +36,7 @@ LOG = os.environ.get('ECHO_LOG')
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
 next_id = 1
-pending = {}            # id -> what to do with the reply
+pending = {}            # id -> (verb, what to do with the reply)
 
 
 def log(line):
@@ -54,7 +60,7 @@ def request(verb_and_args, body=b'', then=None):
     global next_id
     rid = next_id
     next_id += 1
-    pending[rid] = then
+    pending[rid] = (verb_and_args.split(' ', 1)[0], then)
     send(f'{rid} {verb_and_args}', body)
     return rid
 
@@ -77,6 +83,8 @@ def read_body(n):
 
 
 def main():
+    global next_id
+    log(f'pid {os.getpid()}'.encode())
     if MODE == 'nohello':
         time.sleep(30)
         return
@@ -91,9 +99,14 @@ def main():
     if MODE == 'sleep':
         time.sleep(600)
         return
-    if MODE == 'flood':
+    if MODE in ('flood', 'floodnoread'):
+        if MODE == 'flood':
+            threading.Thread(target=lambda: inp.read(), daemon=True).start()
         while True:
-            request('toast 5', b'flood')
+            # a hundred requests per write: a flooder is not held back by its own flushes
+            out.write(b''.join(f'{next_id + i} toast 5\nflood'.encode() for i in range(100)))
+            out.flush()
+            next_id += 100
     if MODE == 'garbage':
         out.write(b'x' * 100000)
         out.flush()
@@ -108,6 +121,14 @@ def main():
             send('this is not a message')
         time.sleep(600)
         return
+    if MODE == 'badargs':
+        for i in range(1, 4):
+            send(f'{i} insert blah')
+        time.sleep(600)
+        return
+    if MODE == 'noisy':
+        sys.stderr.write('x' * (2 * 1024 * 1024))
+        sys.stderr.flush()
 
     active = 0
     versions = {}
@@ -119,11 +140,11 @@ def main():
         fields = line.decode(errors='replace').split(' ')
         if fields[0] == 'ok' or fields[0] == 'error':
             rid = int(fields[1])
+            verb, then = pending.pop(rid, (None, None))
             body = b''
-            if fields[0] == 'ok' and pending.get(rid) is not None and len(fields) >= 4:
+            if fields[0] == 'ok' and verb in ('text', 'range') and len(fields) >= 4:
                 body = read_body(int(fields[-1]))
                 log(body)
-            then = pending.pop(rid, None)
             if then:
                 then(fields, body)
             continue
@@ -166,6 +187,14 @@ def on_run(command, doc, versions):
         request(f'open 2 1 {path}')
     elif name == 'bad':
         request(f'range {doc} 999 1 999 2')
+    elif name == 'mb':
+        request(f'range {doc} 1 1 1 3')       # col 3 of "héllo" is inside the é
+    elif name == 'sel':
+        def selected(fields, body):
+            request(f'range {doc} 1 1 1 6')
+        request(f'select {doc} 1 1 1 6', then=selected)
+    elif name == 'relopen':
+        request('open 1 1 b.go')
 
 
 if __name__ == '__main__':

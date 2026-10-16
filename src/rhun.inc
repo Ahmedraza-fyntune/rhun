@@ -1000,7 +1000,15 @@ F EXT_known, VEC_SIZE   # XK records: the documents this extension has seen, and
 F EXT_active, 8         # DOC id last reported active, -1 before catch-up
 F EXT_pending, 8        # a command invoked before hello: its g_ext_cmds index + 1, or 0
 F EXT_throttled, 4      # 1 while its reads wait for the next frame's budget
-F EXT_pad, 4
+F EXT_wait_slot, 4      # 1 while it waits for one of the 16 slots
+F EXT_fbytes, 8         # bytes parsed in the current 16 ms window
+F EXT_win_t0, 8         # when that window began
+F EXT_win_msgs, 8       # messages parsed in it
+F EXT_win_hit, 4        # 1 when the window reached a cap (the rest waited)
+F EXT_win_pad, 4
+F EXT_in_closed_at, 8   # time_ms when the program closed its input, 0 otherwise
+F EXT_mname, 8          # the manifest's name and owner (checked against the folders)
+F EXT_mowner, 8
 ENDSTRUCT EXT_SIZE
 
 # what an extension was last told about a document
@@ -1041,10 +1049,14 @@ ENDSTRUCT XK_SIZE
 .equ EXT_LINE_MAX, 65536
 .equ EXT_BODY_MAX, 4194304
 .equ EXT_WQ_MAX, 1048576
-.equ EXT_READ_PER_FRAME, 65536
-.equ EXT_FRAME_BYTES, 262144
-.equ EXT_FRAME_MS, 2
-.equ EXT_FLOOD_FRAMES, 30
+.equ EXT_WQ_HARD, 8388608       # a queue this long ends the program at once
+.equ EXT_LOG_MAX, 1048576
+.equ EXT_READ_CHUNK, 65536      # one read
+.equ EXT_WIN_MS, 16             # the window: a frame at 60 Hz
+.equ EXT_WIN_BYTES, 262144      # per extension per window
+.equ EXT_WIN_MSGS, 500
+.equ EXT_PUMP_MS, 2             # one parsing run
+.equ EXT_FLOOD_FRAMES, 30       # windows in a row at a cap
 
 # json
 .equ JT_NULL, 0

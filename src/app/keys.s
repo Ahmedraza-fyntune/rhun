@@ -251,9 +251,10 @@ FN keys_init
     mov rdi, rax
     mov rsi, rdx
     call bound_key
+    mov r15d, eax
     pop rdx
     pop rax
-    test eax, eax
+    test r15d, r15d
     jnz 4b
     mov rdi, rbx
     mov rsi, rax

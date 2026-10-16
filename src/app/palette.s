@@ -901,6 +901,13 @@ load_commands:
     mov rdi, r12
     call strlen
     mov r13, rax
+    lea rdi, [rip + ext_keys_cache]
+    mov esi, 8
+    call vec_ensure             # one slot per extension command
+    mov rax, [rip + ext_keys_cache + VEC_ptr]
+    mov rax, [rax + r14*8 - 8]
+    test rax, rax
+    jnz 6f
     mov rdi, rbx
     call keys_for
     test rax, rax
@@ -910,7 +917,9 @@ load_commands:
     call strlen
     pop rdi
     mov rsi, rax
-    call mem_dup                # kept for the palette's lifetime, like the cache entries
+    call mem_dup
+    mov rcx, [rip + ext_keys_cache + VEC_ptr]
+    mov [rcx + r14*8 - 8], rax
 6:  mov rdi, r12
     mov rsi, r13
     mov rdx, rax
@@ -918,6 +927,20 @@ load_commands:
     call item_add
     jmp 5b
 8:  EPILOGUE
+
+# vec_ensure(vec, item size): grow vec to g_ext_cmds' length (zeroed slots)
+vec_ensure:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+1:  mov rax, [rbx + VEC_len]
+    cmp rax, [rip + g_ext_cmds + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call vec_push
+    jmp 1b
+9:  EPILOGUE
 
 load_themes:
     PROLOGUE
@@ -2858,5 +2881,6 @@ hint_text:
 .bss
 .p2align 3
 keys_cache: .zero 8 * 256
+ext_keys_cache: .zero VEC_SIZE  # the extensions' shortcut labels, one slot per command
 .globl g_ed_h_lines
 g_ed_h_lines: .long 0

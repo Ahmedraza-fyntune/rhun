@@ -4355,6 +4355,10 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call statusbar_update
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call ext_status_draw        # the extensions' status texts, left of the updater's item
     mov [rsp + 20], eax
     # Keep branch and position glyphs out of the updater's reserved area.
     mov edx, eax

@@ -13,6 +13,11 @@ F LR_len, 4
 F LR_class, 4
 ENDSTRUCT LR_SIZE
 
+.data
+.p2align 3
+.globl g_user_grammars
+g_user_grammars: .quad 0        # grammars from ~/.config and extensions, at the front of g_grammars
+
 .bss
 .p2align 3
 tk_i: .quad 0
@@ -741,12 +746,46 @@ FN syntax_load_all
     call config_dir_each
     EPILOGUE
 
+# syntax_add_dir(dir): the .syn files of a folder (an extension's); they go after the user's
+# grammars and before the built-in ones
+FN syntax_add_dir
+    lea rsi, [rip + .Lsyn_ext]
+    lea rdx, [rip + load_ext_grammar]
+    jmp dir_each_suffix
+
+load_ext_grammar:
+    PROLOGUE
+    call file_read_all
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call grammar_parse
+    mov r12, rax
+    lea rdi, [rip + g_grammars]
+    mov esi, 8
+    call vec_push
+    # shift the entries from the insertion point right, put the new one there
+    mov rcx, [rip + g_grammars + VEC_len]
+    mov rdi, [rip + g_grammars + VEC_ptr]
+    mov rdx, [rip + g_user_grammars]
+1:  dec rcx
+    cmp rcx, rdx
+    jbe 2f
+    mov rax, [rdi + rcx*8 - 8]
+    mov [rdi + rcx*8], rax
+    jmp 1b
+2:  mov [rdi + rdx*8], r12
+    inc qword ptr [rip + g_user_grammars]
+9:  EPILOGUE
+
 # user grammar: inserted first so it wins detection
 load_user_grammar:
     PROLOGUE
     call file_read_all
     test rax, rax
     jz 9f
+    inc qword ptr [rip + g_user_grammars]
     mov rdi, rax
     mov rsi, rdx
     call grammar_parse

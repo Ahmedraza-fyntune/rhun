@@ -358,6 +358,12 @@ FN theme_scan
     call config_dir_each
     EPILOGUE
 
+# theme_add_dir(dir): the .theme files of a folder (an extension's), after the user's
+FN theme_add_dir
+    lea rsi, [rip + .Ltheme_ext]
+    lea rdx, [rip + add_user_theme]
+    jmp dir_each_suffix
+
 # add_user_theme(path, name): callback from config_dir_each
 add_user_theme:
     push rbx

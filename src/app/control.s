@@ -1388,6 +1388,7 @@ FN control_listen
 .endif
     PROLOGUE
     mov rbx, rdi
+    mov [rip + g_control_path], rdi
     # sun_path holds 104 bytes on macOS, 108 on Linux
     call strlen
     cmp rax, 103
@@ -1698,6 +1699,9 @@ panel_rows:
 
 .data
 lsock: .long -1
+.p2align 3
+.globl g_control_path
+g_control_path: .quad 0         # --control PATH while listening
 csock: .long -1
 oc_next: .long -1               # a client that came while oc_busy
 .bss

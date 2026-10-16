@@ -7,6 +7,7 @@ the extension through the environment (a --extensions session inherits rhun's)."
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -18,7 +19,7 @@ EXTS = ROOT / 'tests/ext/exts'
 CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink = false\n'
           '[files]\nrestore_session = false\nrestore_project = false\n'
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
-CMDS = 'echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad'
+CMDS = 'echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen'
 
 
 class Host(unittest.TestCase):
@@ -57,7 +58,8 @@ class Host(unittest.TestCase):
         return result.stdout.decode('utf-8', errors='replace').splitlines()
 
     def echo_log(self):
-        return self.log.read_text(encoding='utf-8', errors='replace').splitlines() if self.log.exists() else []
+        lines = self.log.read_text(encoding='utf-8', errors='replace').splitlines() if self.log.exists() else []
+        return [line for line in lines if not line.startswith('pid ')]
 
     def state_lines(self, out):
         return [line for line in out if line.startswith('rhun-tests/echo ')]
@@ -78,13 +80,13 @@ class Host(unittest.TestCase):
     def test_bad_manifests_are_reported_not_fatal(self):
         bad = self.work / 'bad'
         (bad / 'o' / 'notitle').mkdir(parents=True)
-        (bad / 'o' / 'notitle' / 'extension.ini').write_text('name = notitle\nprotocol = 1\nruntime = python3\nrun = x.py\n')
+        (bad / 'o' / 'notitle' / 'extension.ini').write_text('name = notitle\nowner = o\nversion = 1\nprotocol = 1\nruntime = python3\nrun = x.py\n')
         (bad / 'o' / 'v2').mkdir(parents=True)
-        (bad / 'o' / 'v2' / 'extension.ini').write_text('name = v2\ntitle = V2\nprotocol = 2\nruntime = python3\nrun = x.py\n')
+        (bad / 'o' / 'v2' / 'extension.ini').write_text('name = v2\nowner = o\nversion = 1\ntitle = V2\nprotocol = 2\nruntime = python3\nrun = x.py\n')
         (bad / 'o' / 'noprog').mkdir(parents=True)
-        (bad / 'o' / 'noprog' / 'extension.ini').write_text('name = noprog\ntitle = No\nprotocol = 1\nrun.linux-x86_64 = none\nrun.macos-arm64 = none\n')
+        (bad / 'o' / 'noprog' / 'extension.ini').write_text('name = noprog\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nrun.linux-x86_64 = none\nrun.macos-arm64 = none\n')
         (bad / 'o' / 'nortl').mkdir(parents=True)
-        (bad / 'o' / 'nortl' / 'extension.ini').write_text('name = nortl\ntitle = No\nprotocol = 1\nruntime = no-such-runtime-xyz\nrun = x.py\n')
+        (bad / 'o' / 'nortl' / 'extension.ini').write_text('name = nortl\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nruntime = no-such-runtime-xyz\nrun = x.py\n')
         out = self.run_editor(['print-extensions'], exts=bad)
         states = sorted(line for line in out if line.startswith('o/'))
         self.assertIn('o/noprog state=failed reason=program file missing pid=0 cmds=', states)
@@ -104,8 +106,9 @@ class Host(unittest.TestCase):
         self.assertEqual(log[1], '0 opened 1 0 - ' + (self.proj / 'a.txt').as_posix())
         self.assertEqual(log[2], '0 opened 2 0 Go ' + (self.proj / 'b.go').as_posix())
         self.assertEqual(log[3], '0 active 2')
-        self.assertEqual(log[4], '0 run echo.toast 2')
-        self.assertEqual(log[5], 'ok 1')
+        self.assertEqual(log[4], '0 cursor 2 1 1')
+        self.assertEqual(log[5], '0 run echo.toast 2')
+        self.assertEqual(log[6], 'ok 1')
 
     def test_typing_saving_and_closing_are_reported(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 100', 'type xy', 'wait 100',
@@ -123,7 +126,8 @@ class Host(unittest.TestCase):
         # the command that started the program is delivered after ready and catch-up
         self.run_editor(['cmd echo.hi', 'wait-ext echo running', 'wait 300', 'print-doc'])
         log = self.echo_log()
-        self.assertEqual(log[3], '0 run echo.hi 1')
+        self.assertEqual(log[3], '0 cursor 1 1 1')
+        self.assertEqual(log[4], '0 run echo.hi 1')
 
     # --- requests ---
 
@@ -221,6 +225,14 @@ class Host(unittest.TestCase):
         self.assertIn('state=stopped reason=flooding', out[2])
         self.assertEqual(out[3], 'okhello world')
 
+    def test_a_program_that_never_reads_is_stopped(self):
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 11000', 'print-extensions',
+                               'type ok', 'print-doc'], mode='floodnoread')
+        # whichever rule trips first: the message cap, or the queue it never drains
+        self.assertTrue('reason=not reading for 10 s' in out[1] or 'reason=flooding' in out[1], out[1])
+        self.assertIn('state=stopped', out[1])
+        self.assertEqual(out[2], 'okhello world')
+
     def test_garbage_without_a_newline(self):
         out = self.run_editor(['cmd echo.toast', 'wait 600', 'print-extensions'], mode='garbage')
         self.assertIn('state=stopped reason=a line over 64 KB without an end', out[0])
@@ -236,6 +248,141 @@ class Host(unittest.TestCase):
     def test_fragmented_writes_are_reassembled(self):
         out = self.run_editor(['cmd echo.hi', 'wait-ext echo running', 'wait 800', 'print-doc'], mode='fragment')
         self.assertEqual(out[1], 'hihello world')
+
+    def test_a_manifest_key_runs_the_command(self):
+        out = self.run_editor(['key ctrl+alt+shift+u', 'wait-ext echo running', 'wait 400', 'print-doc'])
+        self.assertEqual(out[1:3], ['HELLO WORLD', 'SECOND LINE'])
+
+    def test_catch_up_includes_the_cursor_of_the_active_tab(self):
+        self.run_editor(['key ctrl+g', 'type 2', 'key Return', 'cmd echo.toast', 'wait-ext echo running', 'wait 300'])
+        log = self.echo_log()
+        self.assertEqual(log[2:4], ['0 active 1', '0 cursor 1 2 1'])
+
+    def test_a_change_then_a_save_within_one_frame_report_both(self):
+        self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 100', 'type q', 'key ctrl+s', 'wait 300'])
+        log = self.echo_log()
+        changed = log.index('0 changed 1 1')
+        self.assertEqual(log[changed + 1:changed + 3], ['0 saved 1 1', '0 cursor 1 1 2'])
+
+    def test_a_collapsing_selection_is_reported_as_empty(self):
+        sel = self.work / 'sel'
+        dst = sel / 'rhun-tests' / 'echo'
+        dst.mkdir(parents=True)
+        manifest = (EXTS / 'rhun-tests/echo/extension.ini').read_text()
+        manifest = manifest.replace('cursor = *', 'cursor = no\nselection = *')
+        manifest = manifest.replace('run = ../../../echo.py', 'run = ' + (ROOT / 'tests/ext/echo.py').as_posix())
+        (dst / 'extension.ini').write_text(manifest)
+        self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 100', 'key shift+Right', 'wait 100',
+                         'key Left', 'wait 300'], exts=sel)
+        log = self.echo_log()
+        self.assertIn('0 selection 1 1 1 1 2', log)
+        self.assertIn('0 selection 1 1 1 1 1', log)
+
+    def test_a_late_hello_is_caught_without_other_activity(self):
+        # nothing else wakes the loop: the deadline itself must
+        out = self.run_editor(['cmd echo.toast', 'wait 8000', 'print-extensions'], mode='slowhello')
+        self.assertIn('state=stopped reason=no hello within 5 s', out[0])
+
+    def test_three_requests_with_bad_arguments(self):
+        out = self.run_editor(['cmd echo.toast', 'wait 600', 'print-extensions'], mode='badargs')
+        self.assertIn('state=stopped reason=three unparsable lines in a row', out[0])
+
+    def test_the_error_log_is_kept_under_its_cap(self):
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 2500', 'print-extensions'], mode='noisy')
+        self.assertIn('state=running', out[1])
+        logs = list((self.work / 'state/rhun/extensions').glob('*.log'))
+        self.assertEqual(len(logs), 1, logs)
+        self.assertLess(logs[0].stat().st_size, 1024 * 1024 + 65536)
+
+    def test_a_stopped_extension_is_not_restarted_by_its_command(self):
+        out = self.run_editor(['cmd echo.toast', 'wait 400', 'cmd echo.toast', 'wait 400', 'cmd echo.toast', 'wait 400',
+                               'print-extensions', 'cmd echo.toast', 'wait 400', 'print-extensions', 'print-toast'],
+                              mode='crash')
+        states = self.state_lines(out)
+        self.assertIn('state=stopped reason=crashed three times within a minute', states[0])
+        self.assertIn('pid=0', states[1])
+        self.assertEqual(out[-1], 'toast=crashed three times within a minute')
+
+    def test_a_position_inside_a_character_is_refused(self):
+        self.run_editor(['cmd echo.mb', 'wait-ext echo running', 'wait 300'], files=('u.txt',))
+        log = self.echo_log()
+        self.assertTrue(any(line.startswith('error 1 badpos') for line in log), log)
+
+    def test_select_then_range(self):
+        out = self.run_editor(['cmd echo.sel', 'wait-ext echo running', 'wait 400', 'print-state'])
+        self.assertIn('line=1 col=6 sel=5', out[1])
+        log = self.echo_log()
+        self.assertIn('ok 1', log)
+        self.assertIn('ok 2 0 5', log)
+        self.assertIn('hello', log)
+
+    def test_redo_after_an_extension_edit(self):
+        out = self.run_editor(['cmd echo.shout', 'wait-ext echo running', 'wait 400', 'cmd undo', 'cmd redo', 'print-doc'])
+        self.assertEqual(out[1:3], ['HELLO WORLD', 'SECOND LINE'])
+
+    def test_a_relative_open_is_inside_the_project(self):
+        out = self.run_editor(['cmd echo.relopen', 'wait-ext echo running', 'wait 400', 'print-tabs'])
+        self.assertEqual(out[1], 'tabs=a.txt | *b.go')
+
+    def manifest_variant(self, folder, **changes):
+        dst = self.work / folder / 'rhun-tests' / 'echo'
+        dst.mkdir(parents=True)
+        manifest = (EXTS / 'rhun-tests/echo/extension.ini').read_text()
+        manifest = manifest.replace('run = ../../../echo.py', 'run = ' + (ROOT / 'tests/ext/echo.py').as_posix())
+        for old, new in changes.items():
+            manifest = manifest.replace(old, new)
+        (dst / 'extension.ini').write_text(manifest)
+        return self.work / folder
+
+    def test_lang_activation_starts_on_a_matching_document(self):
+        exts = self.manifest_variant('lang', **{'on = command': 'on = lang:Go'})
+        out = self.run_editor(['wait 300', 'print-extensions'], exts=exts)
+        self.assertIn('state=idle', out[0])
+        out = self.run_editor(['wait-ext echo running', 'print-extensions'], exts=exts, files=('a.txt', 'b.go'))
+        self.assertEqual(out[0], 'ext=echo state=running')
+
+    def test_startup_activation(self):
+        exts = self.manifest_variant('startup', **{'on = command': 'on = startup'})
+        out = self.run_editor(['wait-ext echo running', 'print-extensions'], exts=exts)
+        self.assertEqual(out[0], 'ext=echo state=running')
+        log = self.echo_log()
+        self.assertTrue(log[0].startswith('0 ready '), log)
+
+    def test_a_program_that_cannot_run_is_a_failed_start(self):
+        exts = self.work / 'noexec'
+        d = exts / 'rhun-tests' / 'x'
+        d.mkdir(parents=True)
+        (d / 'prog').write_text('not a program\n')
+        (d / 'extension.ini').write_text('name = x\nowner = rhun-tests\ntitle = X\nversion = 1\nprotocol = 1\n'
+                                         'run.linux-x86_64 = prog\nrun.macos-arm64 = prog\n[commands]\ngo = Go\n')
+        out = self.run_editor(['print-extensions'], exts=exts)
+        self.assertIn('state=failed reason=program is not executable', out[0])
+        os.chmod(d / 'prog', 0o755)
+        out = self.run_editor(['cmd x.go', 'wait 500', 'print-extensions'], exts=exts)
+        self.assertIn('state=failed reason=failed to start: the program could not be executed', out[0])
+
+    def test_a_manifest_whose_name_does_not_match_its_folder(self):
+        exts = self.manifest_variant('badname', **{'name = echo': 'name = other'})
+        out = self.run_editor(['print-extensions'], exts=exts)
+        self.assertIn('state=failed reason=extension.ini name does not match the folder', out[0])
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'the parent-death signal is Linux')
+    def test_killing_rhun_kills_the_program(self):
+        script = self.work / 'k.rsc'
+        script.write_text('cmd echo.toast\nwait-ext echo running\nwait 20000\nquit\n')
+        proc = subprocess.Popen([str(EXE), self.proj.as_posix(), '--headless', '1000x600', '--extensions', str(EXTS),
+                                 '--script', script.as_posix()], env=self.env, stdout=subprocess.PIPE)
+        for _ in range(100):
+            time.sleep(0.1)
+            lines = self.log.read_text().splitlines() if self.log.exists() else []
+            if any(line.startswith('0 ready') for line in lines):
+                break
+        pid = int([line for line in lines if line.startswith('pid ')][0].split()[1])
+        proc.kill()
+        proc.wait()
+        time.sleep(0.5)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
 
     def test_quitting_leaves_no_program_behind(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'print-extensions'])
