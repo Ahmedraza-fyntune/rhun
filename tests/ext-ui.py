@@ -113,13 +113,13 @@ class UI(host.Host):
         out = self.ui(['ext-setting echo greeting Good morning', 'ext-setting echo loud yes', 'cmd echo.greet',
                        'wait-ext echo running', 'wait 300', 'wait 300', 'print-doc'])
         self.assertEqual(out[0], 'GOOD MORNINGhello world')
-        log = self.echo_log()
+        log = self.echo_log(settings=True)
         self.assertIn('0 setting greeting Good morning', log)
         self.assertIn('0 setting loud yes', log)
         self.assertIn('setting.greeting = Good morning\n', self.ini())
         # a change while it runs arrives as an event
         self.ui(['cmd echo.toast', 'wait-ext echo running', 'wait 300', 'ext-setting echo width 6', 'wait 300'])
-        self.assertIn('0 setting width 6', self.echo_log())
+        self.assertIn('0 setting width 6', self.echo_log(settings=True))
 
     def test_settings_are_checked_against_their_type(self):
         out = self.ui(['ext-setting echo width 99', 'ext-setting echo style shiny', 'ext-setting echo loud maybe',

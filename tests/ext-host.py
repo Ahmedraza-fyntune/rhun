@@ -22,7 +22,7 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
 CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen,'
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
         'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
-        'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec')
+        'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec,echo.greet')
 
 
 class Host(unittest.TestCase):
@@ -64,9 +64,10 @@ class Host(unittest.TestCase):
             lines = [l for l in lines if not l.startswith('ext=')]
         return lines
 
-    def echo_log(self):
+    def echo_log(self, settings=False):
         lines = self.log.read_text(encoding='utf-8', errors='replace').splitlines() if self.log.exists() else []
-        return [line for line in lines if not line.startswith('pid ')]
+        return [line for line in lines if not line.startswith('pid ')
+                and (settings or not line.startswith('0 setting '))]
 
     def state_lines(self, out):
         return [line for line in out if line.startswith('rhun-tests/echo ')]
