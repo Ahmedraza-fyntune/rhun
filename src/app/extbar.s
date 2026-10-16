@@ -5,6 +5,7 @@
 .equ ID_XB_ROW, 0x7480          # + i*4 + k: a row, its pin, its more button
 .equ ID_XB_FOOT, 0x7600         # + 0 manage, + 1 install
 
+.equ XB_NAME, 128              # bytes of a command name in a menu
 .bss
 .p2align 3
 xb_open: .long 0                # the dropdown is open
@@ -14,7 +15,8 @@ xb_y: .long 0
 xb_ext: .quad 0                 # the extension a menu was opened for
 xb_items: .zero 16 * 72         # a menu: (label, handler) pairs, 0-ended
 xb_labels: .zero 64 * 64        # the menu's labels
-xb_cmds: .zero 8 * 64           # the commands its items run
+xb_names: .zero XB_NAME * 64     # the names of the commands its items run (looked up on the
+                                # click: a registration may move the command table meanwhile)
 
 .text
 
@@ -480,8 +482,13 @@ FN ext_action
     jne 2f
     imul r15, r12, CMD_SIZE
     add r15, [rip + g_ext_cmds + VEC_ptr]
-    lea rcx, [rip + xb_cmds]
-    mov [rcx + r13*8], r15
+    mov [rsp + 8], r15          # the last one: run at once when it is the only one
+    mov rdi, r13
+    imul rdi, rdi, XB_NAME
+    lea rax, [rip + xb_names]
+    add rdi, rax
+    mov rsi, [r15 + CMD_name]
+    call copy_name
     mov rdi, r13
     shl rdi, 6
     lea rax, [rip + xb_labels]
@@ -508,7 +515,7 @@ FN ext_action
     EPILOGUE
 4:  cmp r13d, 1
     jne 5f
-    mov rdi, [rip + xb_cmds]
+    mov rdi, [rsp + 8]
     call [rdi + CMD_fn]
     EPILOGUE
 5:  # a line, then its settings
@@ -608,26 +615,64 @@ copy_title_short:
 
 # the menus' handlers (g_menu_index is the item clicked)
 run_item:
+    push rbx
     mov eax, [rip + g_menu_index]
-    lea rcx, [rip + xb_cmds]
-    mov rdi, [rcx + rax*8]
+    imul rax, rax, XB_NAME
+    lea rbx, [rip + xb_names]
+    add rbx, rax
+    mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call ext_cmd_find           # gone meanwhile (removed, unregistered): nothing runs
+    pop rbx
+    test rax, rax
+    jz 1f
+    mov rdi, rax
     jmp [rdi + CMD_fn]
+1:  ret
 open_details:
-    mov rdi, [rip + xb_ext]
+    call menu_ext
+    jz 1f
     jmp extpage_show
 toggle_pin:
-    mov rdi, [rip + xb_ext]
+    call menu_ext
+    jz 1f
     mov esi, [rdi + EXT_pinned]
     xor esi, 1
     jmp ext_set_pinned
 toggle_on:
-    mov rdi, [rip + xb_ext]
+    call menu_ext
+    jz 1f
     mov esi, [rdi + EXT_disabled]
     xor esi, 1
     jmp ext_set_disabled
 remove_item:
-    mov rdi, [rip + xb_ext]
+    call menu_ext
+    jz 1f
     jmp ext_remove_ask
+1:  ret
+
+# menu_ext() -> rdi the extension the menu was opened for; ZF when it was removed meanwhile
+menu_ext:
+    mov rdi, [rip + xb_ext]
+    cmp dword ptr [rdi + EXT_status], ES_REMOVED
+    ret
+
+# copy_name(dst, cstr): the command name into an XB_NAME slot, empty when it does not fit
+copy_name:
+    push rdi
+    push rsi
+    mov rdi, rsi
+    call strlen
+    pop rsi
+    pop rdi
+    cmp rax, XB_NAME - 1
+    jb 1f
+    mov byte ptr [rdi], 0
+    ret
+1:  lea rdx, [rax + 1]
+    jmp memcpy
 
 # ---------------- for the tests: print-extbar ----------------
 

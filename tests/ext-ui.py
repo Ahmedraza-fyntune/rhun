@@ -88,6 +88,31 @@ class UI(host.Host):
         self.assertEqual(out[2], 'menu=open')
         self.assertEqual(out[4], 'menu=closed')
 
+    def test_a_menu_item_runs_its_command_after_more_are_registered(self):
+        # the extension's menu is open while it registers twenty commands, which moves the command
+        # table; the item clicked afterwards still runs the command it shows
+        exts = self.work / 'menu'
+        d = exts / 'demo/foo'
+        d.mkdir(parents=True)
+        (d / 'extension.ini').write_text('name = foo\nowner = demo\ntitle = Foo\nversion = 1\nprotocol = 1\n'
+                                         'runtime = python3\nrun = main.py\n[commands]\nfirst = First\n'
+                                         'trigger = Trigger\n')
+        (d / 'main.py').write_text('import sys, threading, time\n'
+                                   'print("hello 1", flush=True)\n'
+                                   'def reg():\n'
+                                   '    time.sleep(.15)\n'
+                                   '    for i in range(20): print(f"{i + 1} register x{i} - X{i}", flush=True)\n'
+                                   'for line in sys.stdin:\n'
+                                   '    if line.startswith("0 run foo.trigger"): threading.Thread(target=reg).start()\n'
+                                   '    if line.startswith("0 run foo.first"): print("99 toast 3\\nran", end="", flush=True)\n'
+                                   '    if line.startswith("0 bye"): break\n')
+        out = self.ui(['wait-ext foo running', 'wait 100', 'cmd foo.trigger', 'cmd extensions_menu', 'click 700 100',
+                       'print-menu', 'wait 500', 'print-extensions', 'click 700 132', 'wait 100', 'print-toast'],
+                      exts=exts)
+        self.assertEqual(out[:4], ['First', 'Trigger', '-', 'Settings and details'])
+        self.assertIn('foo.x19', out[4])
+        self.assertEqual(out[5], 'toast=ran')
+
     def test_a_pin_is_remembered(self):
         out = self.ui(['ext-set echo pinned 1', 'print-extbar'])
         self.assertEqual(out[1], 'pinned=echo')
