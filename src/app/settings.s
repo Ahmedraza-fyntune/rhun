@@ -1331,11 +1331,10 @@ FN settings_draw
     call tf_text
     test rdx, rdx
     jnz 58f
-    add r12d, [rip + g_mt + 4*MI_32]
     mov edi, [rsp + 20]
     mov esi, r12d
     mov edx, [rsp + 16]
-    call ext_settings_draw
+    call ext_settings_draw      # nothing, and no space, without extensions
     add r12d, eax
 58: add r12d, [rip + g_mt + 4*MI_48]
     sub r12d, [rsp + 24]

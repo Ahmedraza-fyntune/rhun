@@ -23,7 +23,9 @@ FN ext_settings_draw
     mov r14d, esi
     cmp qword ptr [rip + g_exts + VEC_len], 0
     je .Lxd_done
-    # the section's title
+    # the gap after the table, then the section's title
+    M eax, MI_32
+    add [rip + ex_y], eax
     lea rdi, [rip + g_face_ui]
     mov esi, [rip + ex_x]
     mov edx, [rip + ex_y]
