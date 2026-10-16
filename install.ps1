@@ -148,9 +148,9 @@ function Remove-FileAssociations {
 
 # rhun://file/ links open in rhun.exe, after -- so that a quote in a link cannot start an option. The
 # key names this installation's rhun.exe, which Remove-UrlScheme checks, so another installation's
-# registration stays.
+# registration stays. -NoUrlScheme removes this installation's earlier registration.
 function Register-UrlScheme {
-    if ($NoUrlScheme) { return }
+    if ($NoUrlScheme) { Remove-UrlScheme; return }
     $exe = Join-Path $InstallDir 'rhun.exe'
     $key = "$associationRoot\Classes\rhun"
     Set-AssociationValue $key '(default)' 'URL:rhun file link'

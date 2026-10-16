@@ -122,6 +122,19 @@ try {
     $NoUrlScheme = $true
     Register-UrlScheme
     Assert (-not (Test-Path -LiteralPath $key)) 'Scheme opt-out ignored'
+    # opting out on reinstall removes this installation's registration, not another's
+    $NoUrlScheme = $false
+    Register-UrlScheme
+    $NoUrlScheme = $true
+    Register-UrlScheme
+    Assert (-not (Test-Path -LiteralPath $key)) 'Scheme opt-out kept the earlier registration'
+    $InstallDir = 'C:\Other rhun'
+    $NoUrlScheme = $false
+    Register-UrlScheme
+    $InstallDir = "C:\Program files café ' $ &\rhun"
+    $NoUrlScheme = $true
+    Register-UrlScheme
+    Assert (Test-Path -LiteralPath $key) 'Scheme opt-out removed another installation scheme'
     'ok   associations/windows-url-scheme'
 } finally {
     if (Test-Path -LiteralPath $associationRoot) { Remove-Item -LiteralPath $associationRoot -Recurse -Force }
