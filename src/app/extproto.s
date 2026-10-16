@@ -36,13 +36,13 @@ FN extproto_pump
     # a busy window (a fifth of a cap or more: 100 messages or 64 KB in 16 ms) counts; a quieter
     # one ends the count
     cmp qword ptr [rbx + EXT_win_msgs], EXT_WIN_MSGS / 5
-    jae 0f
+    jae 8f
     cmp qword ptr [rbx + EXT_fbytes], EXT_WIN_BYTES / 4
-    jae 0f
+    jae 8f
     mov dword ptr [rbx + EXT_flood], 0
-    jmp 01f
-0:  inc dword ptr [rbx + EXT_flood]
-01: mov qword ptr [rbx + EXT_win_msgs], 0
+    jmp 81f
+8:  inc dword ptr [rbx + EXT_flood]
+81: mov qword ptr [rbx + EXT_win_msgs], 0
     mov qword ptr [rbx + EXT_fbytes], 0
     mov dword ptr [rbx + EXT_win_hit], 0
 .Lpp_next:
