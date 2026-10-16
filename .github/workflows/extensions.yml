@@ -1,4 +1,5 @@
-# The extension host and its kernel confinement, on the runners that can prove them: Linux
+# The extension host, its kernel confinement and a real install from GitHub
+# (tests/ext-showcase.py), on the runners that can prove them: Linux
 # x86-64 with Landlock (Ubuntu 24.04, ABI 4), once as the runner comes (unprivileged user
 # namespaces restricted by AppArmor: the TCP-rules path for network = no) and once with them
 # allowed (the namespace path), and macOS with sandbox_init. Docker on a Mac proves nothing here:
@@ -50,6 +51,9 @@ jobs:
         run: python3 tests/ext-confine.py -v
       - name: Fuzz
         run: python3 tests/ext-fuzz.py 1 4
+      - name: Install the showcase from GitHub and use it
+        if: matrix.userns == 'restricted'
+        run: python3 tests/ext-showcase.py -v
   macos:
     runs-on: macos-latest
     timeout-minutes: 25
@@ -61,3 +65,5 @@ jobs:
         run: python3 tests/ext-host.py
       - name: Confinement tests
         run: python3 tests/ext-confine.py -v
+      - name: Install the showcase from GitHub and use it
+        run: python3 tests/ext-showcase.py -v
