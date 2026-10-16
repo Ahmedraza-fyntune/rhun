@@ -15,6 +15,7 @@ g_exts: .zero VEC_SIZE          # EXT records, in discovery order
 g_ext_cmds: .zero VEC_SIZE      # CMD records for the palette and [keys] (CMD_fn = ext_cmd_run)
 g_ext_owner: .zero VEC_SIZE     # per command: the index of its EXT (u64)
 g_ext_dir: .quad 0              # --extensions DIR, or 0 for the config folder
+ext_manifest_cmds: .quad 0      # g_ext_cmds entries from manifests; runtime commands follow them
 ext_root: .zero SB_SIZE         # the folder the extensions are read from
 ext_state_root: .zero SB_SIZE   # ~/.local/state/rhun/extensions
 ext_startup_done: .long 0       # on = startup extensions have been started
@@ -37,7 +38,228 @@ pipe_in: .zero 8                # the program's input: read end, write end
 pipe_out: .zero 8               # the program's output: read end, write end
 reason_buf: .zero 128
 
+.data
+.globl g_tab_width, g_insert_spaces
+g_tab_width: .long 4            # the settings for the active document: the user's, under an
+g_insert_spaces: .long 1        #   extension's option override (ext_options_apply, section 6c)
+
 .text
+
+# ---------------- options (section 6c) and runtime commands ----------------
+
+# ext_options_apply(): g_tab_width and g_insert_spaces for the active document (its overrides, or
+# the settings); called every tick and when the active tab changes. Clobbers rax, rcx only.
+FN ext_options_apply
+    mov eax, [rip + cfg_tab_width]
+    mov [rip + g_tab_width], eax
+    mov eax, [rip + cfg_insert_spaces]
+    mov [rip + g_insert_spaces], eax
+    mov rcx, [rip + g_doc]
+    test rcx, rcx
+    jz 9f
+    mov eax, [rcx + DOC_oval + 4*OPT_TAB]
+    test eax, eax
+    jz 1f
+    mov [rip + g_tab_width], eax
+1:  mov eax, [rcx + DOC_oval + 4*OPT_SPACES]
+    test eax, eax
+    jz 9f
+    dec eax                     # 1 = no -> 0, 2 = yes -> 1
+    mov [rip + g_insert_spaces], eax
+9:  ret
+
+# ext_opt_bool(doc, OPT_TRIM | OPT_FINAL) -> eax: the effective yes (1) or no (0)
+FN ext_opt_bool
+    mov eax, [rdi + DOC_oval + rsi*4]
+    test eax, eax
+    jz 1f
+    dec eax
+    ret
+1:  cmp esi, OPT_TRIM
+    jne 2f
+    mov eax, [rip + cfg_trim_trailing]
+    ret
+2:  mov eax, [rip + cfg_final_newline]
+    ret
+
+# ext_options_clear(ext): the overrides this extension set on any open document are removed
+FN ext_options_clear
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rip + g_tabs + VEC_len]
+    jae 9f
+    imul rax, r12, TAB_SIZE
+    add rax, [rip + g_tabs + VEC_ptr]
+    inc r12
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 1b
+    xor ecx, ecx
+2:  cmp [rax + DOC_oown + rcx*8], rbx
+    jne 3f
+    mov qword ptr [rax + DOC_oown + rcx*8], 0
+    mov dword ptr [rax + DOC_oval + rcx*4], 0
+3:  inc ecx
+    cmp ecx, 4
+    jb 2b
+    jmp 1b
+9:  call ext_options_apply
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# ext_cmd_register(ext, name, nlen, keys, klen, title cstr) -> 0 registered, 1 the name is in
+# use, 2 too many: a command for this session, like ext_cmd_add's but owned by the process
+FN ext_cmd_register
+    PROLOGUE 16
+    mov rbx, rdi
+    mov [rsp], rcx              # keys
+    mov [rsp + 8], r8
+    mov r14, r9                 # title
+    mov eax, 2
+    cmp dword ptr [rbx + EXT_rtcmds], EXT_RTCMDS_MAX
+    jae .Lcr_ret
+    # name: NAME.key
+    push rsi
+    push rdx
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '.'
+    call sb_push_byte
+    pop rdx
+    pop rsi
+    lea rdi, [rip + tmp]
+    call sb_push
+    mov rdi, [rip + tmp + SB_ptr]
+    mov rsi, [rip + tmp + SB_len]
+    call cmd_find
+    test rax, rax
+    jz 1f
+    mov eax, 1
+    jmp .Lcr_ret
+1:  mov rdi, [rip + tmp + SB_ptr]
+    call dup_cstr
+    mov r12, rax                # name
+    # title: "TITLE (Extension)"
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, r14
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lparen]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_title]
+    test rsi, rsi
+    jnz 2f
+    mov rsi, [rbx + EXT_name]
+2:  call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, ')'
+    call sb_push_byte
+    mov rdi, [rip + tmp + SB_ptr]
+    call dup_cstr
+    mov r13, rax                # title
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call mem_dup                # keys ("-" binds nothing: parse_combo rejects it)
+    mov r14, rax
+    lea rdi, [rip + g_ext_cmds]
+    mov esi, CMD_SIZE
+    call vec_push
+    mov [rax + CMD_name], r12
+    mov [rax + CMD_title], r13
+    lea rcx, [rip + ext_cmd_run]
+    mov [rax + CMD_fn], rcx
+    mov [rax + CMD_keys], r14
+    lea rdi, [rip + g_ext_owner]
+    mov esi, 8
+    call vec_push
+    mov rcx, rbx
+    lea rdx, [rip + g_exts]
+    sub rcx, [rdx + VEC_ptr]
+    push rax
+    mov rax, rcx
+    xor edx, edx
+    mov ecx, EXT_SIZE
+    div rcx
+    mov rcx, rax
+    pop rax
+    mov [rax], rcx
+    inc dword ptr [rbx + EXT_rtcmds]
+    call ext_cmds_changed
+    xor eax, eax
+.Lcr_ret:
+    EPILOGUE
+
+# ext_cmds_remove_runtime(ext): its runtime commands leave g_ext_cmds (the manifests' entries
+# all come first, so no other extension's EXT_cmd0 moves)
+FN ext_cmds_remove_runtime
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_rtcmds], 0
+    je 9f
+    mov rax, rbx
+    lea rcx, [rip + g_exts]
+    sub rax, [rcx + VEC_ptr]
+    xor edx, edx
+    mov ecx, EXT_SIZE
+    div rcx
+    mov r12, rax                # this extension's index
+    mov r13, [rip + g_ext_cmds + VEC_len]
+1:  cmp r13, [rip + ext_manifest_cmds]
+    jbe 8f
+    dec r13
+    mov rax, [rip + g_ext_owner + VEC_ptr]
+    cmp [rax + r13*8], r12
+    jne 1b
+    imul r14, r13, CMD_SIZE
+    add r14, [rip + g_ext_cmds + VEC_ptr]
+    mov rdi, [r14 + CMD_name]
+    call mem_free
+    mov rdi, [r14 + CMD_title]
+    call mem_free
+    mov rdi, [r14 + CMD_keys]
+    call mem_free
+    # close the gap in both vectors
+    mov rdi, r14
+    lea rsi, [r14 + CMD_SIZE]
+    mov rdx, [rip + g_ext_cmds + VEC_len]
+    sub rdx, r13
+    dec rdx
+    imul rdx, rdx, CMD_SIZE
+    call memmove
+    dec qword ptr [rip + g_ext_cmds + VEC_len]
+    mov rdi, [rip + g_ext_owner + VEC_ptr]
+    lea rdi, [rdi + r13*8]
+    lea rsi, [rdi + 8]
+    mov rdx, [rip + g_ext_owner + VEC_len]
+    sub rdx, r13
+    dec rdx
+    shl rdx, 3
+    call memmove
+    dec qword ptr [rip + g_ext_owner + VEC_len]
+    jmp 1b
+8:  mov dword ptr [rbx + EXT_rtcmds], 0
+    call ext_cmds_changed
+9:  EPILOGUE
+
+# ext_cmds_changed(): the bindings point into g_ext_cmds, which moved or shrank: bind again; the
+# palette's shortcut labels for extension commands are per index: drop them
+ext_cmds_changed:
+    push rbx
+    call keys_reload
+    call palette_ext_keys_reset
+    mov dword ptr [rip + g_dirty], 1
+    pop rbx
+    ret
 
 # ---------------- discovery ----------------
 
@@ -120,7 +342,9 @@ owner_cb:
     call mem_free
     mov rdi, [rip + cur_owner]
     call mem_free
-9:  EPILOGUE
+9:  mov rax, [rip + g_ext_cmds + VEC_len]
+    mov [rip + ext_manifest_cmds], rax
+    EPILOGUE
 
 # name_cb(ctx, name, is_dir): one extension folder
 name_cb:
@@ -1515,6 +1739,12 @@ FN ext_exited
 2:  mov dword ptr [rbx + EXT_pid], 0
     mov rdi, rbx
     call extmarks_clear_owner
+    mov rdi, rbx
+    call ext_cmds_remove_runtime
+    mov rdi, rbx
+    call ext_options_clear
+    mov rdi, rbx
+    call extproto_prompt_owner_gone
     mov rdi, [rbx + EXT_body]
     call mem_free
     mov qword ptr [rbx + EXT_body], 0
@@ -2272,7 +2502,27 @@ FN ext_dump
     mov esi, ','
     call sb_push_byte
     jmp 3b
-4:  cmp dword ptr [rbx + EXT_flood], 0
+4:  # the commands it registered at runtime
+    mov r14, [rip + ext_manifest_cmds]
+31: cmp r14, [rip + g_ext_cmds + VEC_len]
+    jae 32f
+    mov rax, [rip + g_ext_owner + VEC_ptr]
+    mov rax, [rax + r14*8]
+    inc r14
+    inc rax
+    cmp rax, r13
+    jne 31b                     # r13 is this extension's index + 1 after the inc above
+    lea r15, [r14 - 1]
+    imul r15, r15, CMD_SIZE
+    add r15, [rip + g_ext_cmds + VEC_ptr]
+    mov rdi, r12
+    mov esi, ','
+    call sb_push_byte
+    mov rdi, r12
+    mov rsi, [r15 + CMD_name]
+    call sb_push_cstr
+    jmp 31b
+32: cmp dword ptr [rbx + EXT_flood], 0
     je 41f
     mov rdi, r12
     lea rsi, [rip + .Ld_flood]

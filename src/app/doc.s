@@ -22,6 +22,17 @@ FN doc_new
     inc qword ptr [rip + doc_next_id]
     mov rax, [rip + doc_next_id]
     mov [rbx + DOC_id], rax
+    # the extension fields start clear (mem_alloc reuses blocks)
+    xor eax, eax
+    mov [rbx + DOC_xedits], rax
+    mov [rbx + DOC_xmarks], rax
+    mov [rbx + DOC_xresync], eax
+    mov [rbx + DOC_oval], rax
+    mov [rbx + DOC_oval + 8], rax
+    mov [rbx + DOC_oown], rax
+    mov [rbx + DOC_oown + 8], rax
+    mov [rbx + DOC_oown + 16], rax
+    mov [rbx + DOC_oown + 24], rax
     mov edi, GAP_MIN
     call mem_alloc
     mov [rbx + DOC_buf], rax
@@ -1201,8 +1212,11 @@ FN doc_save
     je .Lds_nopath
     mov rdi, rbx
     call doc_begin_group
-    cmp dword ptr [rip + cfg_trim_trailing], 0
-    je .Lds_final
+    mov rdi, rbx
+    mov esi, OPT_TRIM
+    call ext_opt_bool
+    test eax, eax
+    jz .Lds_final
     # trim trailing blanks on every line (last to first)
     mov r12, [rbx + DOC_nlines]
 .Lds_trim:
@@ -1239,8 +1253,11 @@ FN doc_save
     call doc_delete
     jmp .Lds_trim
 .Lds_final:
-    cmp dword ptr [rip + cfg_final_newline], 0
-    je .Lds_write
+    mov rdi, rbx
+    mov esi, OPT_FINAL
+    call ext_opt_bool
+    test eax, eax
+    jz .Lds_write
     mov rdi, rbx
     call doc_len
     test rax, rax
@@ -1620,8 +1637,8 @@ FN doc_col_of
     jne 2f
     mov eax, ebx
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     add ebx, eax
     inc r13
@@ -1690,8 +1707,8 @@ FN doc_pos_at_col
     jne 2f
     mov eax, r12d
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     mov ecx, 1
     jmp 3f

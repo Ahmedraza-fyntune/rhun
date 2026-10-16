@@ -695,6 +695,12 @@ FN tab_at
 
 # app_sync_doc(): g_doc and g_file from the active tab
 FN app_sync_doc
+    push rbx
+    call app_sync_doc_1
+    call ext_options_apply
+    pop rbx
+    ret
+app_sync_doc_1:
     mov qword ptr [rip + g_doc], 0
     mov qword ptr [rip + g_file], 0
     mov rdi, [rip + g_tab_cur]
@@ -2473,6 +2479,7 @@ FN app_timeout
 
 FN app_tick
     PROLOGUE
+    call ext_options_apply
     call watch_tick
     call tip_tick
     call sb_tick
@@ -4474,13 +4481,13 @@ FN statusbar_draw
     lea r13, [rip + .Lcrlf]
 2:  call .Lsb_item
     lea r13, [rip + .Ltabs]
-    cmp dword ptr [rip + cfg_insert_spaces], 0
+    cmp dword ptr [rip + g_insert_spaces], 0
     je 3f
     lea rdi, [rsp + 32]
     lea rsi, [rip + .Lspaces]
     call cstr_copy
     mov rdi, rax
-    mov esi, [rip + cfg_tab_width]
+    mov esi, [rip + g_tab_width]
     call fmt_u64
     mov byte ptr [rdi], 0      # fmt_u64 leaves rdi after the digits
     lea r13, [rsp + 32]
@@ -5765,12 +5772,12 @@ FN cmd_newline_above
     je 2f
     cmp eax, ']'
     jne 4f
-2:  cmp dword ptr [rip + cfg_insert_spaces], 0
+2:  cmp dword ptr [rip + g_insert_spaces], 0
     jne 3f
     mov byte ptr [rsp + r14], 9
     inc r14
     jmp 4f
-3:  mov ecx, [rip + cfg_tab_width]
+3:  mov ecx, [rip + g_tab_width]
     cmp ecx, 16
     jbe 31f
     mov ecx, 16

@@ -20,7 +20,8 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
           '[files]\nrestore_session = false\nrestore_project = false\n'
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
 CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen,'
-        'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag')
+        'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
+        'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die')
 
 
 class Host(unittest.TestCase):
@@ -45,7 +46,7 @@ class Host(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_editor(self, actions, mode=None, exts=EXTS, files=('a.txt',)):
+    def run_editor(self, actions, mode=None, exts=EXTS, files=('a.txt',), drop_waits=False):
         env = dict(self.env)
         if mode:
             env['ECHO_MODE'] = mode
@@ -56,7 +57,10 @@ class Host(unittest.TestCase):
                                  '--extensions', str(exts), '--script', script.as_posix()],
                                 env=env, capture_output=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
-        return result.stdout.decode('utf-8', errors='replace').splitlines()
+        lines = result.stdout.decode('utf-8', errors='replace').splitlines()
+        if drop_waits:
+            lines = [l for l in lines if not l.startswith('ext=')]
+        return lines
 
     def echo_log(self):
         lines = self.log.read_text(encoding='utf-8', errors='replace').splitlines() if self.log.exists() else []
@@ -464,6 +468,101 @@ class Host(unittest.TestCase):
             os.kill(pid, 0)
         log = self.echo_log()
         self.assertEqual(log[-1], '0 bye')
+
+    # --- gate 4: register, option, prompts, cmd ---
+
+    def test_register_adds_a_command_with_its_key_and_it_runs(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.reg', 'wait-ext echo running', 'wait 300', 'print-extensions',
+                               'cmd echo.extra', 'wait 300', 'print-toast', 'key ctrl+alt+9', 'wait 300',
+                               'cmd echo.reg', 'wait 300'])
+        self.assertTrue(out[0].endswith(',echo.die,echo.extra'), out[0])
+        self.assertEqual(out[1], 'toast=extra ran')
+        log = self.echo_log()
+        self.assertEqual(sum(1 for l in log if l == '0 run echo.extra 1'), 2)   # the palette and the key
+        self.assertTrue(any(l.startswith('error 4 refused') for l in log), log)  # registered twice
+
+    def test_runtime_commands_leave_when_the_program_stops(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.reg', 'wait-ext echo running', 'wait 300', 'cmd echo.die',
+                               'wait 500', 'print-extensions'])
+        self.assertIn('state=crashed', out[0])
+        self.assertTrue(out[0].endswith(',echo.die'), out[0])
+
+    def test_options_override_the_settings_for_one_document(self):
+        out = self.run_editor(drop_waits=True, actions=['print-options', 'cmd echo.opt', 'wait-ext echo running', 'wait 300',
+                               'print-options', 'key ctrl+End', 'key Tab', 'print-doc', 'cmd echo.optoff',
+                               'wait 300', 'print-options', 'cmd echo.badopt', 'wait 300'],
+                              files=('a.txt', 'b.go'))
+        self.assertEqual(out[0], 'tab_width=4 insert_spaces=1 trim_trailing_whitespace=0 final_newline=1')
+        self.assertEqual(out[1], 'tab_width=8 insert_spaces=0 trim_trailing_whitespace=0 final_newline=1')
+        self.assertIn('\t', out[2] + out[3])
+        self.assertEqual(out[-1], 'tab_width=4 insert_spaces=1 trim_trailing_whitespace=0 final_newline=1')
+        log = self.echo_log()
+        self.assertEqual(sum(1 for l in log if l.startswith('error ') and ' syntax ' in l), 2)
+
+    def test_options_are_per_document_and_leave_with_the_program(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.opt', 'wait-ext echo running', 'wait 300', 'print-options',
+                               'key ctrl+Tab', 'print-state', 'print-options', 'key ctrl+Tab', 'print-options',
+                               'cmd echo.die', 'wait 500', 'print-options'], files=('a.txt', 'b.go'))
+        self.assertTrue(out[0].startswith('tab_width=8 insert_spaces=0'), out[0])
+        self.assertIn('active=a.txt', out[1])
+        self.assertTrue(out[2].startswith('tab_width=4 insert_spaces=1'), out[2])
+        self.assertTrue(out[3].startswith('tab_width=8 insert_spaces=0'), out[3])
+        self.assertTrue(out[4].startswith('tab_width=4 insert_spaces=1'), out[4])
+
+    def test_save_options_trim_and_skip_the_final_newline(self):
+        self.run_editor(drop_waits=True, actions=['cmd echo.optsave', 'wait-ext echo running', 'wait 300', 'print-options',
+                         'key ctrl+End', 'type x', 'key space', 'key space', 'key ctrl+s', 'wait 200'])
+        self.assertEqual((self.proj / 'a.txt').read_text(encoding='utf-8'), 'hello world\nsecond line\nx')
+        self.run_editor(drop_waits=True, actions=['key ctrl+End', 'type y', 'key space', 'key space', 'key ctrl+s', 'wait 200'])
+        self.assertEqual((self.proj / 'a.txt').read_text(encoding='utf-8'), 'hello world\nsecond line\nxy  \n')
+
+    def test_choose_shows_a_pick_list_and_answers_with_the_pick(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.choose', 'wait-ext echo running', 'wait 300', 'print-palette',
+                               'type be', 'print-palette', 'key Return', 'wait 300', 'print-toast',
+                               'print-palette'])
+        self.assertEqual(out[:5], ['choose=Pick one', 'field=', '> alpha', '  beta', '  gamma'])
+        self.assertEqual(out[5:8], ['choose=Pick one', 'field=be', '> beta'])
+        self.assertEqual(out[8], 'toast=chose 2')
+        self.assertEqual(out[9], 'none')
+        self.assertIn('ok 1 2', self.echo_log())
+
+    def test_escape_cancels_a_prompt_and_a_second_prompt_is_busy(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.choose', 'wait-ext echo running', 'wait 300', 'cmd echo.ask',
+                               'wait 300', 'print-palette', 'key Escape', 'wait 300', 'print-palette',
+                               'cmd echo.ask', 'wait 300', 'print-palette'])
+        self.assertEqual(out[0], 'choose=Pick one')          # the ask did not replace it
+        self.assertEqual(out[5], 'none')
+        self.assertEqual(out[6], 'prompt=Your name?')        # free again
+        log = self.echo_log()
+        self.assertIn('error 2 busy a prompt is open', log)
+        self.assertIn('error 1 cancelled', log)
+
+    def test_ask_returns_the_text_typed(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.ask', 'wait-ext echo running', 'wait 300', 'type Bob',
+                               'print-palette', 'key Return', 'wait 300', 'print-toast'])
+        self.assertEqual(out[:2], ['prompt=Your name?', 'field=Bob'])
+        self.assertEqual(out[2], 'toast=answer Bob')
+        self.assertIn('ok 1 3', self.echo_log())
+
+    def test_opening_the_palette_cancels_the_prompt(self):
+        self.run_editor(drop_waits=True, actions=['cmd echo.ask', 'wait-ext echo running', 'wait 300', 'key ctrl+shift+p', 'wait 300',
+                         'key Escape'])
+        self.assertIn('error 1 cancelled', self.echo_log())
+
+    def test_term_shows_the_command_and_enter_runs_it(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.term', 'wait-ext echo running', 'wait 300', 'print-palette',
+                               'key Return', 'wait-term ext-ran-ok', 'print-term', 'print-palette'])
+        self.assertEqual(out[:2], ['prompt=Run in the terminal: Enter, or Esc', 'field=echo ext-ran-ok'])
+        self.assertTrue(any('ext-ran-ok' in l for l in out[2:]), out)
+        self.assertIn('ok 1', self.echo_log())
+
+    def test_cmd_runs_listed_commands_and_refuses_the_rest(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.cmd', 'wait-ext echo running', 'wait 300', 'print-state',
+                               'cmd echo.badcmd', 'wait 300', 'print-state'])
+        self.assertIn('sel=24', out[0])
+        self.assertIn('active=a.txt', out[1])              # still running
+        log = self.echo_log()
+        self.assertEqual(sum(1 for l in log if l.startswith('error ') and ' refused ' in l), 2)
 
 
 if __name__ == '__main__':

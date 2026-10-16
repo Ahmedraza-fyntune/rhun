@@ -572,7 +572,7 @@ FN cmd_toggle_terminal
     ret
 
 # term_show(): open the panel with a shell in it
-term_show:
+FN term_show
     cmp qword ptr [rip + sessions + VEC_len], 0
     jne 1f
     push rax

@@ -785,6 +785,53 @@ c_wait_ext:
     mov rax, -1
     EPILOGUE
 
+# print-options: "tab_width=N insert_spaces=B trim_trailing_whitespace=B final_newline=B", the
+# settings in force for the active document (an extension's overrides included)
+c_print_options:
+    PROLOGUE
+    mov rbx, [rip + g_doc]
+    call ext_options_apply
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_opts]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_tab_width]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_opt_spaces]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_insert_spaces]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_opt_trim]
+    call sb_push_cstr
+    mov eax, [rip + cfg_trim_trailing]
+    test rbx, rbx
+    jz 1f
+    mov rdi, rbx
+    mov esi, OPT_TRIM
+    call ext_opt_bool
+1:  lea rdi, [rip + out]
+    mov esi, eax
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_opt_final]
+    call sb_push_cstr
+    mov eax, [rip + cfg_final_newline]
+    test rbx, rbx
+    jz 2f
+    mov rdi, rbx
+    mov esi, OPT_FINAL
+    call ext_opt_bool
+2:  lea rdi, [rip + out]
+    mov esi, eax
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
 # print-marks: the active document's diagnostic marks, "L1 C1 L2 C2 SEVERITY owner/name MESSAGE"
 # per line, in the order they are held; then "errors=N warnings=M"
 c_print_marks:
@@ -1827,6 +1874,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_marks: .asciz "print-marks"
 .Lc_print_hover: .asciz "print-hover"
 .Lc_print_text_cell: .asciz "print-text-cell"
+.Lc_print_options: .asciz "print-options"
+.Ls_opts: .asciz "tab_width="
+.Ls_opt_spaces: .asciz " insert_spaces="
+.Ls_opt_trim: .asciz " trim_trailing_whitespace="
+.Ls_opt_final: .asciz " final_newline="
 .Lc_print_project: .asciz "print-project"
 .Lc_print_panels: .asciz "print-panels"
 .Lc_print_tabs: .asciz "print-tabs"
@@ -1894,6 +1946,7 @@ ctl_table:
     .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
     .quad .Lc_print_extensions, c_print_extensions, .Lc_wait_ext, c_wait_ext
     .quad .Lc_print_marks, c_print_marks, .Lc_print_hover, c_print_hover, .Lc_print_text_cell, c_print_text_cell
+    .quad .Lc_print_options, c_print_options
     .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

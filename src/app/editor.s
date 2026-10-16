@@ -157,8 +157,8 @@ FN line_indent
     jne 3f
     mov eax, r14d
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     add r14d, eax
     inc rcx
@@ -651,11 +651,11 @@ FN ed_newline
 # push_indent_unit(): append one indentation unit to the sb at [rsp+8] of the caller frame
 push_indent_unit:
     lea rdi, [rsp + 8]
-    cmp dword ptr [rip + cfg_insert_spaces], 0
+    cmp dword ptr [rip + g_insert_spaces], 0
     je 2f
     push rbx
     push rdi
-    mov ebx, [rip + cfg_tab_width]
+    mov ebx, [rip + g_tab_width]
 1:  mov rdi, [rsp]
     mov esi, ' '
     call sb_push_byte
@@ -692,7 +692,7 @@ FN ed_backspace
 1:  # inside leading blanks with spaces indentation: remove to previous tab stop
     call doc_prev_char
     mov r14, rax
-    cmp dword ptr [rip + cfg_insert_spaces], 0
+    cmp dword ptr [rip + g_insert_spaces], 0
     je 4f
     mov rdi, rbx
     mov rsi, r14
@@ -729,8 +729,8 @@ FN ed_backspace
     call doc_col_of
     dec eax
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    imul eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    imul eax, [rip + g_tab_width]
     mov rcx, r13
     sub rcx, r15                # current col (all spaces)
     sub rcx, rax
@@ -909,7 +909,7 @@ FN ed_indent
     mov edx, 1
     cmp al, 9
     je 1f
-    mov edx, [rip + cfg_tab_width]
+    mov edx, [rip + g_tab_width]
     cmp rdx, r15
     cmova rdx, r15
 1:  mov rdi, rbx
@@ -950,7 +950,7 @@ FN ed_tab
     mov edi, 1
     call ed_indent
     jmp 9f
-1:  cmp dword ptr [rip + cfg_insert_spaces], 0
+1:  cmp dword ptr [rip + g_insert_spaces], 0
     jne 2f
     mov byte ptr [rsp], 9
     mov edx, 1
@@ -959,8 +959,8 @@ FN ed_tab
     mov rsi, [rbx + DOC_cur]
     call doc_col_of
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     mov edx, eax
     lea rdi, [rsp]
@@ -2999,8 +2999,8 @@ draw_line:
     jne 8f
     mov eax, [rsp + 64]
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     mov [rsp + 84], eax
     cmp dword ptr [rip + cfg_whitespace], 0
@@ -3090,12 +3090,12 @@ draw_line:
     jne 10f
     mov edx, [rip + last_indent]
 10: mov [rip + last_indent], edx
-    mov ecx, [rip + cfg_tab_width]
+    mov ecx, [rip + g_tab_width]
     mov [rsp + 64], ecx
 11: mov eax, [rsp + 64]
     cmp eax, [rip + last_indent]
     jg .Ldl_ret
-    sub eax, [rip + cfg_tab_width]
+    sub eax, [rip + g_tab_width]
     imul eax, [rip + g_cw]
     add eax, [rsp + 40]
     mov edi, eax
@@ -3104,7 +3104,7 @@ draw_line:
     mov ecx, [rip + g_lh]
     COLOR r8d, T_GUIDE
     call gfx_fill
-    mov eax, [rip + cfg_tab_width]
+    mov eax, [rip + g_tab_width]
     add [rsp + 64], eax
     jmp 11b
 .Ldl_ret:
@@ -3541,7 +3541,7 @@ FN doc_widest
     imul rdx, rcx
     add rdx, rax
     imul rdx, rcx
-    mov eax, [rip + cfg_tab_width]
+    mov eax, [rip + g_tab_width]
     add rdx, rax
     or rdx, 1                   # never 0, the key of a document not measured yet
     cmp rdx, [rbx + DOC_wkey]
@@ -3673,7 +3673,7 @@ widest_span:
     lea r12, [rdi + rsi]
     mov r13d, [rip + ww_col]
     mov r14d, [rip + ww_max]
-    mov r15d, [rip + cfg_tab_width]
+    mov r15d, [rip + g_tab_width]
     test r15d, r15d
     jnz 1f
     mov r15d, 1

@@ -25,6 +25,12 @@ echo.hi inserts "hi" at the cursor, echo.toast shows a toast, echo.stale sends a
 version one behind, echo.status sets the status text, echo.open opens ECHO_OPEN at line 2,
 echo.mb asks for a range inside a character, echo.sel selects then reads the first word, echo.relopen
 opens b.go by a relative path, echo.bad asks for a range outside the document.
+Gate 4: echo.reg registers the runtime command echo.extra (ctrl+alt+9; it toasts "extra ran"),
+echo.opt sets tab_width 8 and insert_spaces no on the active document, echo.optoff removes them,
+echo.optsave sets trim_trailing_whitespace yes and final_newline no, echo.badopt sends a bad key,
+echo.choose opens a pick list (the reply is toasted as "chose N"), echo.ask a text prompt (the
+answer is toasted), echo.term proposes "echo ext-ran-ok" for the terminal, echo.cmd runs
+select_all, echo.badcmd asks for quit, echo.die exits.
 """
 import os
 import sys
@@ -142,7 +148,7 @@ def main():
             rid = int(fields[1])
             verb, then = pending.pop(rid, (None, None))
             body = b''
-            if fields[0] == 'ok' and verb in ('text', 'range') and len(fields) >= 4:
+            if fields[0] == 'ok' and verb in ('text', 'range', 'ask') and len(fields) >= 3:
                 body = read_body(int(fields[-1]))
                 log(body)
             if then and fields[0] == 'ok':
@@ -169,6 +175,8 @@ def main():
         elif event == 'run':
             command, doc = fields[2], int(fields[3])
             on_run(command, doc, versions)
+            if command.endswith('.die'):
+                sys.exit(0)
 
 
 def on_run(command, doc, versions):
@@ -213,6 +221,40 @@ def on_run(command, doc, versions):
         request(f'diagnostics {doc} {versions.get(doc, 0)} 1 19', b'1 1 x 6 error nope\n')
     elif name == 'stalediag':
         request(f'diagnostics {doc} 0 0 0')
+    elif name == 'reg':
+        request('register extra ctrl+alt+9 Extra Command')
+    elif name == 'extra':
+        request('toast 9', b'extra ran')
+    elif name == 'opt':
+        request(f'option {doc} tab_width 8')
+        request(f'option {doc} insert_spaces no')
+    elif name == 'optoff':
+        request(f'option {doc} tab_width -')
+        request(f'option {doc} insert_spaces -')
+    elif name == 'optsave':
+        request(f'option {doc} trim_trailing_whitespace yes')
+        request(f'option {doc} final_newline no')
+    elif name == 'badopt':
+        request(f'option {doc} wrap yes')
+        request(f'option {doc} tab_width 99')
+    elif name == 'choose':
+        def chose(fields, body):
+            text = f'chose {fields[2]}'.encode()
+            request(f'toast {len(text)}', text)
+        body = b'Pick one\nalpha\nbeta\ngamma\n'
+        request(f'choose {len(body)}', body, then=chose)
+    elif name == 'ask':
+        def answered(fields, body):
+            text = b'answer ' + body
+            request(f'toast {len(text)}', text)
+        request('ask 10', b'Your name?', then=answered)
+    elif name == 'term':
+        request('term 15', b'echo ext-ran-ok')
+    elif name == 'cmd':
+        request('cmd select_all')
+    elif name == 'badcmd':
+        request('cmd quit')
+        request('cmd no_such_command')
 
 
 if __name__ == '__main__':

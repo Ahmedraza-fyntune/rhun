@@ -11,6 +11,7 @@
 .equ PM_PROMPT, 6
 .equ PM_GREP, 7
 .equ PM_BROWSE, 8
+.equ PM_CHOOSE, 9               # an extension's pick list (choose)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -104,6 +105,7 @@ FN palette_field
 palette_open:
     PROLOGUE
     mov ebx, edi
+    call extproto_prompt_abort  # an extension's prompt that was open is cancelled
     # from the theme list to another list (its shortcut): the settings' theme again, as on closing
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
@@ -150,6 +152,7 @@ palette_open:
 
 FN palette_close
     push rbx
+    call extproto_prompt_abort
     # themes: the settings' theme again, after a preview or a change of the system's mode
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
@@ -821,6 +824,61 @@ prompt_initial:
     mov esi, '/'
     call sb_push_byte
 9:  EPILOGUE
+
+# ---- an extension's prompts (extproto.s owns the request; the palette shows it) ----
+
+# palette_choose_open(label cstr): an empty pick list with the label as its placeholder; items
+# follow with palette_choose_add, then palette_choose_ready
+FN palette_choose_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_CHOOSE
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+# palette_choose_add(ptr, len, n): item number n (its IT_data)
+FN palette_choose_add
+    xor ecx, ecx
+    xchg rcx, rdx
+    jmp item_add
+
+FN palette_choose_ready
+    jmp palette_filter
+
+# palette_ext_prompt_open(label cstr, PROMPT_ASK | PROMPT_TERM, text, len): a text prompt with
+# the field preset
+FN palette_ext_prompt_open
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13, rdx
+    mov r14, rcx
+    mov edi, PM_PROMPT
+    call palette_open
+    mov [rip + pal_label], rbx
+    mov [rip + pal_prompt], r12d
+    mov dword ptr [rip + g_focus], FOCUS_PROMPT
+    lea rdi, [rip + pal_tf]
+    mov rsi, r13
+    mov rdx, r14
+    call tf_set
+    EPILOGUE
+
+# palette_ext_keys_reset(): the extensions' commands changed: their shortcut labels are stale
+FN palette_ext_keys_reset
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + ext_keys_cache + VEC_len]
+    jae 2f
+    mov rax, [rip + ext_keys_cache + VEC_ptr]
+    mov rdi, [rax + rbx*8]
+    call mem_free
+    inc rbx
+    jmp 1b
+2:  mov qword ptr [rip + ext_keys_cache + VEC_len], 0
+    EPILOGUE
 
 # ---- item sources ----
 
@@ -1564,9 +1622,13 @@ FN palette_print
     call sb_push_cstr
     EPILOGUE
 1:  cmp dword ptr [rip + pal_mode], PM_PROMPT
+    je 10f
+    cmp dword ptr [rip + pal_mode], PM_CHOOSE
     jne 11f
-    lea rsi, [rip + .Lpp_prompt]
-    call sb_push_cstr
+    lea rsi, [rip + .Lpp_choose]
+    jmp 12f
+10: lea rsi, [rip + .Lpp_prompt]
+12: call sb_push_cstr
     mov rdi, rbx
     mov rsi, [rip + pal_label]
     call sb_push_cstr
@@ -1999,7 +2061,7 @@ palette_accept:
     call theme_set
     jmp .Lpa_close
 3:  cmp ebx, PM_LANGS
-    jne .Lpa_close
+    jne 31f
     cmp qword ptr [rip + g_doc], 0
     je .Lpa_close
     mov rdi, [r12 + IT_data]
@@ -2008,6 +2070,16 @@ palette_accept:
     mov [rcx + DOC_lang], rax
     mov qword ptr [rcx + DOC_svalid], 0
     jmp .Lpa_close
+31: cmp ebx, PM_CHOOSE
+    jne .Lpa_close
+    # the extension's pick: the item's number, with the palette closed first (the reply may
+    # open another prompt)
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call extproto_prompt_chose
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
 .Lpa_goto:
     lea rdi, [rip + pal_tf]
     call tf_text
@@ -2047,7 +2119,21 @@ palette_accept:
     mov dword ptr [rip + g_reveal], 0
     jmp .Lpa_close
 .Lpa_prompt:
+    cmp dword ptr [rip + pal_prompt], PROMPT_ASK
+    jb 70f
+    # an extension's prompt: the field's text goes back to it
     lea rdi, [rip + pal_tf]
+    call tf_text
+    mov ebx, [rip + pal_prompt]
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, rax
+    mov rsi, rdx
+    mov edx, ebx
+    call extproto_prompt_text
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+70: lea rdi, [rip + pal_tf]
     call tf_text
     test rdx, rdx
     jz .Lpa_close
@@ -2876,6 +2962,7 @@ hint_text:
 .Lpp_field: .asciz "field="
 .Lpp_reading: .asciz "reading\n"
 .Lpp_prompt: .asciz "prompt="
+.Lpp_choose: .asciz "choose="
 .Lpp_row: .asciz "  "
 .Lpp_sel: .asciz "> "
 .bss

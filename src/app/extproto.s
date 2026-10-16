@@ -14,6 +14,12 @@ body_ptr: .quad 0               # its body
 body_len: .quad 0
 syntax_seen: .quad 0            # a syntax reply went out while handling this message
 toast_buf: .zero 256
+pr_ext: .quad 0                 # the open prompt (choose, ask, term): its extension,
+pr_id: .quad 0                  #   request id (0: no prompt is open),
+pr_kind: .quad 0                #   1 choose, 2 ask, 3 term,
+pr_body: .quad 0                #   the items' bytes (choose), owned
+pr_label: .zero 208             #   the prompt text, a cstr
+pr_cmd: .zero SB_SIZE           # the command sent to the terminal
 
 .text
 
@@ -579,8 +585,11 @@ need:
     ret
 1:  lea rsi, [rip + .Le_needs_read]
     cmp edi, NEEDS_DOC_WRITE
-    jne 2f
+    jne 11f
     lea rsi, [rip + .Le_needs_write]
+11: cmp edi, NEEDS_TERMINAL
+    jne 2f
+    lea rsi, [rip + .Le_needs_term]
 2:  mov rdi, [rip + cur_id]
     call reply_error
     xor eax, eax
@@ -1205,8 +1214,550 @@ h_hover:
 
 # ID cancel ID2 -> ok ID: requests are handled as they arrive, so there is nothing to withdraw
 h_cancel:
-    mov rdi, [rip + cur_id]
+    # of this extension's open prompt: the prompt closes, answered cancelled
+    cmp qword ptr [rip + pr_id], 0
+    je 1f
+    mov rax, [rip + cur]
+    cmp [rip + pr_ext], rax
+    jne 1f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 1f
+    cmp rax, [rip + pr_id]
+    jne 1f
+    call palette_close          # extproto_prompt_abort answers it
+1:  mov rdi, [rip + cur_id]
     jmp reply_ok
+
+# field_at(i) -> rax ptr, rdx len
+field_at:
+    lea r8, [rip + fields]
+    shl rdi, 4
+    mov rax, [r8 + rdi]
+    mov rdx, [r8 + rdi + 8]
+    ret
+
+# ---------------- gate 4: register, option, prompts, cmd ----------------
+
+# ID register NAME KEYS TITLE -> ok ID: a command for this session
+h_register:
+    PROLOGUE
+    cmp qword ptr [rip + nfields], 5
+    jb .Lhreg_syntax
+    mov edi, 2
+    call field_at
+    mov r12, rax
+    mov r13, rdx                # name
+    test rdx, rdx
+    jz .Lhreg_syntax
+    cmp rdx, 40
+    ja .Lhreg_syntax
+    xor ecx, ecx
+1:  cmp rcx, r13
+    jae 2f
+    movzx eax, byte ptr [r12 + rcx]
+    inc rcx
+    cmp al, '_'
+    je 1b
+    sub al, '0'
+    cmp al, 9
+    jbe 1b
+    sub al, 'a' - '0'
+    cmp al, 25
+    jbe 1b
+    jmp .Lhreg_syntax
+2:  mov edi, 4
+    call rest_from
+    mov rdi, rdx
+    mov rsi, rax
+    mov edx, 80
+    push rsi
+    call utf8_cut
+    pop rsi
+    mov rdx, rax
+    lea rdi, [rip + out]
+    push rsi
+    push rdx
+    call sb_clear
+    pop rdx
+    pop rsi
+    lea rdi, [rip + out]
+    call sb_push
+    lea rdi, [rip + out]
+    xor esi, esi
+    call sb_push_byte           # the title, as a cstr
+    mov edi, 3
+    call field_at
+    mov rcx, rax
+    mov r8, rdx                 # keys
+    mov rdi, [rip + cur]
+    mov rsi, r12
+    mov rdx, r13
+    mov r9, [rip + out + SB_ptr]
+    call ext_cmd_register
+    test eax, eax
+    jz 8f
+    lea rsi, [rip + .Le_refused_name]
+    cmp eax, 1
+    je 7f
+    lea rsi, [rip + .Le_toobig_cmds]
+7:  mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+.Lhreg_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# ID option DOC KEY VALUE -> ok ID: a per-document override (section 6c)
+h_option:
+    PROLOGUE
+    cmp qword ptr [rip + nfields], 5
+    jne .Lhop_syntax
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz .Lhop_ret
+    mov rbx, rax
+    xor r12d, r12d              # the key's index
+1:  cmp r12d, 4
+    jae .Lhop_syntax
+    lea rax, [rip + opt_names]
+    mov rsi, [rax + r12*8]
+    mov edi, 3
+    call field_is
+    test eax, eax
+    jnz 2f
+    inc r12d
+    jmp 1b
+2:  mov edi, 4
+    lea rsi, [rip + .Lo_dash]
+    call field_is
+    test eax, eax
+    jz 3f
+    # remove this extension's override
+    mov rax, [rip + cur]
+    cmp [rbx + DOC_oown + r12*8], rax
+    jne 8f
+    mov qword ptr [rbx + DOC_oown + r12*8], 0
+    mov dword ptr [rbx + DOC_oval + r12*4], 0
+    jmp 8f
+3:  test r12d, r12d
+    jnz 4f
+    mov edi, 4
+    call field_u64
+    test edx, edx
+    jz .Lhop_syntax
+    test rax, rax
+    jz .Lhop_syntax
+    cmp rax, 16
+    ja .Lhop_syntax
+    jmp 6f
+4:  mov eax, 2
+    mov edi, 4
+    lea rsi, [rip + .Lo_yes]
+    call field_is
+    test eax, eax
+    mov eax, 2
+    jnz 6f
+    mov edi, 4
+    lea rsi, [rip + .Lo_no]
+    call field_is
+    test eax, eax
+    jz .Lhop_syntax
+    mov eax, 1
+6:  mov [rbx + DOC_oval + r12*4], eax
+    mov rax, [rip + cur]
+    mov [rbx + DOC_oown + r12*8], rax
+8:  call ext_options_apply
+    mov dword ptr [rip + g_dirty], 1
+    mov rdi, [rip + cur_id]
+    call reply_ok
+.Lhop_ret:
+    EPILOGUE
+.Lhop_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# prompt_busy() -> 1 after replying busy when a prompt or the palette is open
+prompt_busy:
+    cmp qword ptr [rip + pr_id], 0
+    jne 1f
+    push rax
+    call palette_is_open
+    pop rcx
+    test eax, eax
+    jnz 1f
+    xor eax, eax
+    ret
+1:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_busy]
+    call reply_error
+    mov eax, 1
+    ret
+
+# prompt_begin(kind): the open prompt is cur's current request
+prompt_begin:
+    mov [rip + pr_kind], rdi
+    mov rax, [rip + cur]
+    mov [rip + pr_ext], rax
+    mov rax, [rip + cur_id]
+    mov [rip + pr_id], rax
+    ret
+
+# prompt_clear(): no prompt is open
+prompt_clear:
+    push rbx
+    mov rdi, [rip + pr_body]
+    call mem_free
+    mov qword ptr [rip + pr_body], 0
+    mov qword ptr [rip + pr_id], 0
+    mov qword ptr [rip + pr_ext], 0
+    mov qword ptr [rip + pr_kind], 0
+    pop rbx
+    ret
+
+# set_label(ptr, len): the prompt text into pr_label, the first line only, at most 200 bytes
+set_label:
+    xor ecx, ecx
+1:  cmp rcx, rsi
+    jae 2f
+    cmp byte ptr [rdi + rcx], 10
+    je 2f
+    inc rcx
+    jmp 1b
+2:  push rdi
+    mov rsi, rdi
+    mov rdi, rcx
+    mov edx, 200
+    call utf8_cut
+    pop rsi
+    lea rdi, [rip + pr_label]
+    mov rdx, rax
+    mov byte ptr [rdi + rax], 0
+    jmp memcpy
+
+# ID choose LEN + body -> ok ID N when the user picks the N-th item (section 8), or cancelled
+h_choose:
+    PROLOGUE
+    cmp qword ptr [rip + nfields], 3
+    jne .Lhc_syntax
+    call prompt_busy
+    test eax, eax
+    jnz .Lhc_ret
+    mov r12, [rip + body_ptr]
+    mov r13, [rip + body_len]
+    # the first line is the prompt
+    xor ebx, ebx
+1:  cmp rbx, r13
+    jae .Lhc_syntax             # no items
+    cmp byte ptr [r12 + rbx], 10
+    je 2f
+    inc rbx
+    jmp 1b
+2:  mov rdi, r12
+    mov rsi, rbx
+    call set_label
+    inc rbx                     # the items start here
+    # count the item lines
+    xor r14d, r14d              # items
+    xor r15d, r15d              # non-empty items
+    mov rcx, rbx
+3:  cmp rcx, r13
+    jae 4f
+    mov rdx, rcx
+31: cmp rdx, r13
+    jae 32f
+    cmp byte ptr [r12 + rdx], 10
+    je 32f
+    inc rdx
+    jmp 31b
+32: inc r14
+    cmp rdx, rcx
+    je 33f
+    inc r15
+33: lea rcx, [rdx + 1]
+    jmp 3b
+4:  test r15, r15
+    jz .Lhc_syntax
+    cmp r14, EXT_CHOOSE_MAX
+    ja .Lhc_toobig
+    # the items' bytes outlive the receive buffer
+    mov rdi, r12
+    mov rsi, r13
+    call mem_dup
+    mov [rip + pr_body], rax
+    mov r12, rax
+    lea rdi, [rip + pr_label]
+    call palette_choose_open
+    xor r14d, r14d              # item number - 1
+    mov rcx, rbx
+5:  cmp rcx, r13
+    jae 7f
+    mov rdx, rcx
+51: cmp rdx, r13
+    jae 52f
+    cmp byte ptr [r12 + rdx], 10
+    je 52f
+    inc rdx
+    jmp 51b
+52: inc r14
+    mov rsi, rdx
+    sub rsi, rcx
+    jz 6f                       # an empty line keeps its number but is not shown
+    push rcx
+    push rdx
+    lea rdi, [r12 + rcx]
+    mov rdi, rsi
+    lea rsi, [r12 + rcx]
+    mov edx, 200
+    call utf8_cut
+    pop rdx
+    pop rcx
+    push rcx
+    push rdx
+    lea rdi, [r12 + rcx]
+    mov rsi, rax
+    mov rdx, r14
+    call palette_choose_add
+    pop rdx
+    pop rcx
+6:  lea rcx, [rdx + 1]
+    jmp 5b
+7:  call palette_choose_ready
+    mov edi, 1
+    call prompt_begin
+.Lhc_ret:
+    EPILOGUE
+.Lhc_toobig:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_items]
+    call reply_error
+    EPILOGUE
+.Lhc_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# ID ask LEN + body -> ok ID LEN + the answer, or cancelled
+h_ask:
+    PROLOGUE
+    cmp qword ptr [rip + nfields], 3
+    jne .Lha_syntax
+    call prompt_busy
+    test eax, eax
+    jnz .Lha_ret
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call set_label
+    lea rdi, [rip + pr_label]
+    mov esi, PROMPT_ASK
+    xor edx, edx
+    xor ecx, ecx
+    call palette_ext_prompt_open
+    mov edi, 2
+    call prompt_begin
+.Lha_ret:
+    EPILOGUE
+.Lha_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# ID term LEN + body -> ok ID once the user ran it in the terminal, or cancelled
+h_term:
+    PROLOGUE
+    cmp qword ptr [rip + nfields], 3
+    jne .Lht_syntax
+    mov edi, NEEDS_TERMINAL
+    call need
+    test eax, eax
+    jz .Lht_ret
+    mov r12, [rip + body_ptr]
+    mov r13, [rip + body_len]
+    test r13, r13
+    jz .Lht_syntax
+    cmp r13, EXT_TERM_MAX
+    ja .Lht_toobig
+    xor ecx, ecx
+1:  cmp rcx, r13
+    jae 2f
+    movzx eax, byte ptr [r12 + rcx]
+    inc rcx
+    cmp al, 0x20
+    jb .Lht_syntax              # one line, no control characters: what is shown is what runs
+    cmp al, 0x7f
+    je .Lht_syntax
+    jmp 1b
+2:  call prompt_busy
+    test eax, eax
+    jnz .Lht_ret
+    lea rdi, [rip + .Lrun_label]
+    mov esi, PROMPT_TERM
+    mov rdx, r12
+    mov rcx, r13
+    call palette_ext_prompt_open
+    mov edi, 3
+    call prompt_begin
+.Lht_ret:
+    EPILOGUE
+.Lht_toobig:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_term]
+    call reply_error
+    EPILOGUE
+.Lht_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# ID cmd NAME -> ok ID: one of rhun's own commands, from the list of section 8a
+h_cmd:
+    PROLOGUE
+    cmp qword ptr [rip + nfields], 3
+    jne .Lhcm_syntax
+    lea rbx, [rip + cmd_allow]
+1:  mov rsi, [rbx]
+    test rsi, rsi
+    jz .Lhcm_refused
+    add rbx, 8
+    mov edi, 2
+    call field_is
+    test eax, eax
+    jz 1b
+    mov edi, 2
+    call field_at
+    mov rdi, rax
+    mov rsi, rdx
+    call cmd_find
+    test rax, rax
+    jz .Lhcm_refused
+    mov r12, rax
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    mov rdi, r12
+    call [r12 + CMD_fn]
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+.Lhcm_refused:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_refused_cmd]
+    call reply_error
+    EPILOGUE
+.Lhcm_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# extproto_prompt_abort(): the open prompt, if any, is answered cancelled (the palette closed or
+# changed mode under it)
+FN extproto_prompt_abort
+    PROLOGUE
+    cmp qword ptr [rip + pr_id], 0
+    je 9f
+    mov rbx, [rip + cur]
+    mov rax, [rip + pr_ext]
+    mov [rip + cur], rax
+    mov rdi, [rip + pr_id]
+    lea rsi, [rip + .Le_cancelled]
+    call reply_error
+    mov [rip + cur], rbx
+    call prompt_clear
+9:  EPILOGUE
+
+# extproto_prompt_chose(n): the user picked item n of the choose prompt
+FN extproto_prompt_chose
+    PROLOGUE
+    cmp qword ptr [rip + pr_id], 0
+    je 9f
+    mov r12, rdi
+    mov rbx, [rip + cur]
+    mov rax, [rip + pr_ext]
+    mov [rip + cur], rax
+    mov rdi, [rip + pr_id]
+    mov rsi, r12
+    call reply_ok_u64
+    mov [rip + cur], rbx
+    call prompt_clear
+9:  EPILOGUE
+
+# extproto_prompt_text(ptr, len, PROMPT_ASK | PROMPT_TERM): the user accepted the field's text
+FN extproto_prompt_text
+    PROLOGUE
+    cmp qword ptr [rip + pr_id], 0
+    je 9f
+    mov r12, rdi
+    mov r13, rsi
+    mov r14d, edx
+    mov rbx, [rip + cur]
+    mov rax, [rip + pr_ext]
+    mov [rip + cur], rax
+    cmp r14d, PROMPT_TERM
+    je 5f
+    # ask: "ok ID LEN" + the answer
+    call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, [rip + pr_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r13
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, r12
+    mov rsi, r13
+    call out_bytes
+    call out_end
+    jmp 8f
+5:  # term: an empty line is a dismissal; otherwise the line runs in the terminal panel
+    test r13, r13
+    jnz 6f
+    mov rdi, [rip + pr_id]
+    lea rsi, [rip + .Le_cancelled]
+    call reply_error
+    jmp 8f
+6:  lea rdi, [rip + pr_cmd]
+    call sb_clear
+    lea rdi, [rip + pr_cmd]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    lea rdi, [rip + pr_cmd]
+    mov esi, 10
+    call sb_push_byte
+    cmp dword ptr [rip + g_term_open], 0
+    jne 7f
+    call term_show
+7:  mov rdi, [rip + pr_cmd + SB_ptr]
+    mov rsi, [rip + pr_cmd + SB_len]
+    call term_panel_paste
+    mov rdi, [rip + pr_id]
+    call reply_ok
+8:  mov [rip + cur], rbx
+    call prompt_clear
+9:  EPILOGUE
+
+# extproto_prompt_owner_gone(ext): the extension stopped: its prompt leaves the screen unanswered
+FN extproto_prompt_owner_gone
+    push rbx
+    cmp qword ptr [rip + pr_id], 0
+    je 9f
+    cmp [rip + pr_ext], rdi
+    jne 9f
+    call prompt_clear
+    call palette_is_open
+    test eax, eax
+    jz 9f
+    call palette_close
+9:  pop rbx
+    ret
 
 # ---------------- events ----------------
 
@@ -1790,7 +2341,87 @@ verbs:
     .quad .Lv_cancel, h_cancel, 0
     .quad .Lv_diagnostics, h_diagnostics, EXT_BODY_MAX
     .quad .Lv_hover, h_hover, EXT_BODY_MAX
+    .quad .Lv_register, h_register, 0
+    .quad .Lv_option, h_option, 0
+    .quad .Lv_choose, h_choose, EXT_BODY_MAX
+    .quad .Lv_ask, h_ask, EXT_BODY_MAX
+    .quad .Lv_term, h_term, EXT_BODY_MAX
+    .quad .Lv_cmd, h_cmd, 0
     .quad 0, 0, 0
+.Lv_register: .asciz "register"
+.Lv_option: .asciz "option"
+.Lv_choose: .asciz "choose"
+.Lv_ask: .asciz "ask"
+.Lv_term: .asciz "term"
+.Lv_cmd: .asciz "cmd"
+.Lo_tab: .asciz "tab_width"
+.Lo_spaces: .asciz "insert_spaces"
+.Lo_trim: .asciz "trim_trailing_whitespace"
+.Lo_final: .asciz "final_newline"
+.Lo_yes: .asciz "yes"
+.Lo_no: .asciz "no"
+.Lo_dash: .asciz "-"
+.Le_busy: .asciz "busy a prompt is open"
+.Le_cancelled: .asciz "cancelled"
+.Le_refused_cmd: .asciz "refused not a command an extension may run"
+.Le_refused_name: .asciz "refused the name is in use"
+.Le_toobig_cmds: .asciz "toobig 64 commands"
+.Le_toobig_items: .asciz "toobig 1000 items"
+.Le_toobig_term: .asciz "toobig 4096 bytes"
+.Le_needs_term: .asciz "needs terminal=yes"
+.Lrun_label: .asciz "Run in the terminal: Enter, or Esc"
+.p2align 3
+opt_names: .quad .Lo_tab, .Lo_spaces, .Lo_trim, .Lo_final
+# the commands cmd may run (section 8a)
+cmd_allow:
+    .quad .La_undo, .La_redo, .La_cut, .La_copy, .La_paste, .La_select_all, .La_select_line
+    .quad .La_select_next, .La_duplicate_line, .La_delete_line, .La_move_line_up, .La_move_line_down
+    .quad .La_indent, .La_outdent, .La_toggle_comment, .La_newline_below, .La_newline_above
+    .quad .La_find, .La_replace, .La_find_next, .La_find_prev, .La_find_in_files, .La_goto_line
+    .quad .La_quick_open, .La_command_palette, .La_next_tab, .La_prev_tab, .La_reveal_file
+    .quad .La_focus_explorer, .La_toggle_sidebar, .La_toggle_agents, .La_toggle_terminal
+    .quad .La_new_terminal, .La_clear_terminal, .La_toggle_word_wrap, .La_toggle_whitespace
+    .quad .La_toggle_line_numbers, .La_zoom_in, .La_zoom_out, .La_zoom_reset, 0
+.La_undo: .asciz "undo"
+.La_redo: .asciz "redo"
+.La_cut: .asciz "cut"
+.La_copy: .asciz "copy"
+.La_paste: .asciz "paste"
+.La_select_all: .asciz "select_all"
+.La_select_line: .asciz "select_line"
+.La_select_next: .asciz "select_next"
+.La_duplicate_line: .asciz "duplicate_line"
+.La_delete_line: .asciz "delete_line"
+.La_move_line_up: .asciz "move_line_up"
+.La_move_line_down: .asciz "move_line_down"
+.La_indent: .asciz "indent"
+.La_outdent: .asciz "outdent"
+.La_toggle_comment: .asciz "toggle_comment"
+.La_newline_below: .asciz "newline_below"
+.La_newline_above: .asciz "newline_above"
+.La_find: .asciz "find"
+.La_replace: .asciz "replace"
+.La_find_next: .asciz "find_next"
+.La_find_prev: .asciz "find_prev"
+.La_find_in_files: .asciz "find_in_files"
+.La_goto_line: .asciz "goto_line"
+.La_quick_open: .asciz "quick_open"
+.La_command_palette: .asciz "command_palette"
+.La_next_tab: .asciz "next_tab"
+.La_prev_tab: .asciz "prev_tab"
+.La_reveal_file: .asciz "reveal_file"
+.La_focus_explorer: .asciz "focus_explorer"
+.La_toggle_sidebar: .asciz "toggle_sidebar"
+.La_toggle_agents: .asciz "toggle_agents"
+.La_toggle_terminal: .asciz "toggle_terminal"
+.La_new_terminal: .asciz "new_terminal"
+.La_clear_terminal: .asciz "clear_terminal"
+.La_toggle_word_wrap: .asciz "toggle_word_wrap"
+.La_toggle_whitespace: .asciz "toggle_whitespace"
+.La_toggle_line_numbers: .asciz "toggle_line_numbers"
+.La_zoom_in: .asciz "zoom_in"
+.La_zoom_out: .asciz "zoom_out"
+.La_zoom_reset: .asciz "zoom_reset"
 .Lv_text: .asciz "text"
 .Lv_range: .asciz "range"
 .Lv_replace: .asciz "replace"

@@ -537,7 +537,14 @@ F DOC_xedits, 8         # extensions: SB* of edit records since the last frame (
 F DOC_xmarks, 8         # extensions: VEC* of MK marks (diagnostics), or 0
 F DOC_xresync, 4        # extensions: 1 when records were lost: the resync event is due
 F DOC_xpad, 4
+F DOC_oval, 16          # extensions: option overrides (section 6c), u32 each: OPT_TAB the width,
+                        #   the booleans 1 = no, 2 = yes; 0 = no override
+F DOC_oown, 32          # extensions: the EXT* that set each of them
 ENDSTRUCT DOC_SIZE
+.equ OPT_TAB, 0
+.equ OPT_SPACES, 1
+.equ OPT_TRIM, 2
+.equ OPT_FINAL, 3
 
 # a diagnostic mark on a document
 STRUCT
@@ -964,6 +971,8 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_NEW_FILE, 2
 .equ PROMPT_NEW_FOLDER, 3
 .equ PROMPT_RENAME, 4
+.equ PROMPT_ASK, 5              # an extension's text prompt (ask)
+.equ PROMPT_TERM, 6             # an extension's command for the terminal (term)
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -1035,7 +1044,12 @@ F EXT_win_pad, 4
 F EXT_in_closed_at, 8   # time_ms when the program closed its input, 0 otherwise
 F EXT_mname, 8          # the manifest's name and owner (checked against the folders)
 F EXT_mowner, 8
+F EXT_rtcmds, 4         # commands registered at runtime (removed when it stops)
+F EXT_pad2, 4
 ENDSTRUCT EXT_SIZE
+.equ EXT_RTCMDS_MAX, 64         # register: commands per extension
+.equ EXT_CHOOSE_MAX, 1000       # choose: items
+.equ EXT_TERM_MAX, 4096         # term: the command's bytes
 
 # what an extension was last told about a document
 STRUCT
