@@ -1923,7 +1923,24 @@ FN ext_send
     sub rax, 20000
     mov [rbx + EXT_full_since], rax
     jmp 9f
-2:  lea rdi, [rbx + EXT_wq]
+2:  # the written prefix goes before more is appended (a program that drains its pipe slowly
+    # must not make the queue grow behind the bytes it already took)
+    mov rcx, [rbx + EXT_wq_off]
+    test rcx, rcx
+    jz 3f
+    push rsi
+    push rdx
+    mov rdi, [rbx + EXT_wq + SB_ptr]
+    lea rsi, [rdi + rcx]
+    mov rdx, [rbx + EXT_wq + SB_len]
+    sub rdx, rcx
+    call memmove
+    mov rcx, [rbx + EXT_wq_off]
+    sub [rbx + EXT_wq + SB_len], rcx
+    mov qword ptr [rbx + EXT_wq_off], 0
+    pop rdx
+    pop rsi
+3:  lea rdi, [rbx + EXT_wq]
     call sb_push
     mov rdi, rbx
     call ext_flush

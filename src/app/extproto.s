@@ -78,7 +78,12 @@ FN extproto_pump
     mov rdi, [rbx + EXT_body]
     mov rsi, rax
     call handle_line            # the saved line, now with its body
-    mov rdi, [rbx + EXT_body]
+    # the handler may have ended the program (a third syntax error): its buffers are gone
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 11f
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 9f
+11: mov rdi, [rbx + EXT_body]
     call mem_free
     mov qword ptr [rbx + EXT_body], 0
     mov rdi, [rbx + EXT_body_len]
@@ -806,10 +811,8 @@ apply_replace:
     call doc_insert
 2:  mov rdi, rbx
     call doc_end_group
-    lea rdi, [rbx + DOC_cur]
-    call move_mark
-    lea rdi, [rbx + DOC_anchor]
-    call move_mark
+    # doc_delete and doc_insert moved the cursor and the anchor (a position inside the range
+    # ends after the new text): set them again through the editor so the view follows
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
     mov rdx, [rbx + DOC_anchor]
@@ -837,22 +840,6 @@ set_marks:
     call ed_set_cursor
     pop rbx
     ret
-
-# move_mark(ptr to a position): after replacing [r12, r12+r13) with r15 bytes
-move_mark:
-    mov rax, [rdi]
-    cmp rax, r12
-    jb 9f
-    lea rcx, [r12 + r13]
-    cmp rax, rcx
-    jae 1f
-    lea rax, [r12 + r15]        # inside the range: after the new text
-    mov [rdi], rax
-    ret
-1:  sub rax, r13
-    add rax, r15
-    mov [rdi], rax
-9:  ret
 
 # ID insert DOC VERSION LEN + body -> ok ID NEWVERSION: at the cursor, replacing the selection
 h_insert:

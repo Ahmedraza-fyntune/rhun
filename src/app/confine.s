@@ -633,14 +633,35 @@ profile_path:
     push rax
     push rax
     call sb_push
-    lea rdi, [rip + conf_profile]
-    mov rsi, r12
-    call sb_push_cstr
+    mov rdi, r12
+    call push_sbpl_string
     pop rax
     pop rax
     lea rdi, [rip + conf_profile]
     lea rsi, [rbx + rax + 2]
     call sb_push_cstr
+9:  EPILOGUE
+
+# push_sbpl_string(cstr): the bytes into the profile with the quote and the backslash escaped,
+# so a path can never end the literal it sits in
+push_sbpl_string:
+    PROLOGUE
+    mov rbx, rdi
+1:  movzx r12d, byte ptr [rbx]
+    test r12d, r12d
+    jz 9f
+    inc rbx
+    cmp r12d, '"'
+    je 2f
+    cmp r12d, '\\'
+    jne 3f
+2:  lea rdi, [rip + conf_profile]
+    mov esi, '\\'
+    call sb_push_byte
+3:  lea rdi, [rip + conf_profile]
+    mov esi, r12d
+    call sb_push_byte
+    jmp 1b
 9:  EPILOGUE
 
 # profile_program(path cstr): exec and read on the program's real path, and on its install tree
@@ -672,6 +693,7 @@ profile_program:
 # confine_child(): in the forked child, before dup2 and close_range (the rule descriptors are
 # still open): what confine_prepare set up. Exits with EXITC_* when a step fails.
 FN confine_child
+    PROLOGUE                    # proc_spawn keeps argv, envp and cwd in r12-r14 across this call
     cmp dword ptr [rip + conf_pending], 0
     je 9f
 .ifdef MACOS
@@ -684,7 +706,7 @@ FN confine_child
     SYS SYS_sandbox_init
     test eax, eax
     jnz .Lcc_sandbox
-    ret
+9:  EPILOGUE
 .Lcc_sandbox:
     mov edi, EXITC_SANDBOX
     SYS SYS_exit
@@ -757,7 +779,7 @@ FN confine_child
     js .Lcc_restrict
     mov edi, ebx
     SYS SYS_close
-9:  ret
+9:  EPILOGUE
 .Lcc_nnp:
     mov esi, EXITC_NNP
     jmp fail_exit

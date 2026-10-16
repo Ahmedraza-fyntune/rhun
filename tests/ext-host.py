@@ -22,7 +22,7 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
 CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen,'
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
         'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
-        'echo.countdiag,echo.bidi,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec')
+        'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec')
 
 
 class Host(unittest.TestCase):
@@ -604,6 +604,20 @@ class Host(unittest.TestCase):
                                                         'print-palette'])
         self.assertEqual(out[0], 'none')
         self.assertTrue(any(l.startswith('error 1 syntax') for l in self.echo_log()), self.echo_log())
+
+    # --- the Codex review of the PR ---
+
+    def test_a_syntax_kill_while_a_body_waits_does_not_take_rhun_down(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.toast', 'wait-ext echo stopped', 'print-extensions'],
+                              mode='badbodies')
+        self.assertIn('state=stopped reason=three unparsable lines in a row', out[0])
+
+    def test_a_replace_before_the_cursor_moves_it_once(self):
+        out = self.run_editor(drop_waits=True, actions=['key End', 'print-state', 'cmd echo.first', 'wait-ext echo running',
+                                                        'wait 300', 'print-state', 'print-doc'])
+        self.assertIn('line=1 col=12', out[0])
+        self.assertIn('line=1 col=14', out[1])           # "h" became "XYZ": two bytes further
+        self.assertEqual(out[2], 'XYZello world')
 
 
 if __name__ == '__main__':

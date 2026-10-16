@@ -132,6 +132,13 @@ def main():
             send(f'{i} insert blah')
         time.sleep(600)
         return
+    if MODE == 'badbodies':
+        # three body requests whose lines cannot be parsed: the third ends the program while its
+        # body is still in the buffer
+        for i in range(1, 4):
+            send(f'{i} insert 1 x 1', b'x')
+        time.sleep(600)
+        return
     if MODE == 'noisy':
         sys.stderr.write('x' * (2 * 1024 * 1024))
         sys.stderr.flush()
@@ -265,6 +272,8 @@ def on_run(command, doc, versions):
         request(f'diagnostics {doc} {versions.get(doc, 0)} 2 {len(body)}', body)   # N says two lines
     elif name == 'bidi':
         request('term 11', 'rm -rf \u202e x'.encode())
+    elif name == 'first':
+        request(f'replace {doc} {versions.get(doc, 0)} 1 1 1 2 3', b'XYZ')
     # confinement probes (tests/ext-confine.py): each toasts what happened
     elif name == 'pwrite':
         probe(lambda: open(os.path.join(os.environ['RHUN_PROJECT'], 'written-by-echo.txt'), 'w').write('x'))

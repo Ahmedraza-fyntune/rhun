@@ -101,6 +101,14 @@ class Confine(host.Host):
         ini = (self.work / 'config/rhun/extensions.ini').read_text(encoding='utf-8')
         self.assertEqual(ini, '')
 
+    def test_a_quote_in_the_extension_path_cannot_break_the_profile(self):
+        # the profile quotes paths: a quote and a backslash in the extension's folder are escaped
+        exts = self.manifest_variant('con"f\\ine', **{'documents = write\nterminal = yes': 'documents = read'})
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.pwrite', 'wait-ext echo running', 'wait 300',
+                                                        'wait 300', 'print-toast', 'print-extensions'], exts=exts)
+        self.skip_unless_confined(out[1])
+        self.assertEqual(out[0], 'toast=probe refused')
+
 
 # only this file's tests run here: the inherited ones belong to ext-host.py
 for _name in dir(host.Host):
