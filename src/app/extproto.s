@@ -328,7 +328,7 @@ handle_line:
     dec rdi
     call field_u64
     test edx, edx
-    jz .Lhl_syntax
+    jz .Lhl_syntax_id
     cmp rax, [r12 + 16]
     jbe 61f
     # over the cap: the body cannot be skipped without reading it, and reading megabytes to
@@ -355,6 +355,10 @@ handle_line:
     jmp 9f
 .Lhl_syntax:
     xor edi, edi
+    call reply_syntax
+    jmp 9f
+.Lhl_syntax_id:
+    mov rdi, [rip + cur_id]
     call reply_syntax
 9:  EPILOGUE
 
@@ -496,11 +500,16 @@ arg_doc:
     push rbx
     call field_u64
     test edx, edx
-    jz 8f
+    jz 7f
     mov rdi, rax
     call doc_by_id
     test rax, rax
     jz 8f
+    pop rbx
+    ret
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+    xor eax, eax
     pop rbx
     ret
 8:  mov rdi, [rip + cur_id]
@@ -1051,8 +1060,10 @@ h_open:
     test r12, r12
     jz 1f
     cmp r12, [rbx + DOC_nlines]
-    ja 1f
-    lea rsi, [r12 - 1]
+    jbe 11f
+    mov r12, [rbx + DOC_nlines]  # past the end: the last line
+    mov r13, 1 << 40             # and its end
+11: lea rsi, [r12 - 1]
     mov rdi, rbx
     call doc_line_start
     mov r15, rax
@@ -1271,20 +1282,30 @@ FN extproto_events
 6:  mov rax, [r14 + XK_cur]
     cmp rax, [r14 + XK_anchor]
     setne r15b                  # a selection existed before
+    cmp rax, rcx
+    sete r15b                   # bit 1: the cursor itself did not move
+    shl r15b, 1
+    mov rax, [r14 + XK_cur]
+    cmp rax, [r14 + XK_anchor]
+    setne al
+    or r15b, al
     mov [r14 + XK_cur], rcx
     mov [r14 + XK_anchor], rdx
-    cmp rcx, rdx
-    jne 7f
-    # a bare cursor now: cursor subscribers hear it; selection subscribers hear the empty range
-    # when a selection just collapsed
+    # the cursor moved: cursor subscribers hear it, selection or not
+    test r15b, 2
+    jnz 62f
     mov rdi, [rbx + EXT_sub_cursor]
     mov rsi, r13
     call sub_matches
     test eax, eax
-    jz 61f
+    jz 62f
     mov rdi, r13
     call send_cursor
-61: test r15b, r15b
+62: # a selection exists, or one just collapsed: selection subscribers hear the range
+    mov rcx, [r14 + XK_cur]
+    cmp rcx, [r14 + XK_anchor]
+    jne 7f
+    test r15b, 1
     jz .Lev_tabs
 7:  mov rdi, [rbx + EXT_sub_selection]
     mov rsi, r13
@@ -1343,17 +1364,17 @@ FN extproto_events
     mov rdx, [r13 + DOC_anchor]
     mov [r14 + XK_cur], rcx
     mov [r14 + XK_anchor], rdx
-    cmp rcx, rdx
-    jne 87f
     mov rdi, [rbx + EXT_sub_cursor]
     mov rsi, r13
     call sub_matches
     test eax, eax
-    jz 86b
+    jz 88f
     mov rdi, r13
     call send_cursor
-    jmp 86b
-87: mov rdi, [rbx + EXT_sub_selection]
+88: mov rcx, [r14 + XK_cur]
+    cmp rcx, [r14 + XK_anchor]
+    je 86b
+    mov rdi, [rbx + EXT_sub_selection]
     mov rsi, r13
     call sub_matches
     test eax, eax
@@ -1590,8 +1611,8 @@ verbs:
     .quad .Lv_replace, h_replace, EXT_BODY_MAX
     .quad .Lv_insert, h_insert, EXT_BODY_MAX
     .quad .Lv_select, h_select, 0
-    .quad .Lv_toast, h_toast, 4096
-    .quad .Lv_status, h_status, 4096
+    .quad .Lv_toast, h_toast, EXT_BODY_MAX
+    .quad .Lv_status, h_status, EXT_BODY_MAX
     .quad .Lv_open, h_open, 0
     .quad .Lv_cancel, h_cancel, 0
     .quad 0, 0, 0

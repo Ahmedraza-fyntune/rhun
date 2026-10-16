@@ -1470,7 +1470,12 @@ FN ext_flush
     jmp 9f
 61: mov qword ptr [rbx + EXT_full_since], 0
     jmp 9f
-7:  # EPIPE: the program went away; its output's end of file follows
+7:  # EPIPE: the program closed its input (macOS does not report that through poll on the
+    # write end); its exit status, if it comes within 300 ms, is the reason to keep
+    cmp qword ptr [rbx + EXT_in_closed_at], 0
+    jne 9f
+    call time_ms
+    mov [rbx + EXT_in_closed_at], rax
 9:  EPILOGUE
 
 # ext_exited(ext, status): the program is gone; reap it and record why
