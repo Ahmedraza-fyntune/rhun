@@ -785,6 +785,193 @@ c_wait_ext:
     mov rax, -1
     EPILOGUE
 
+# print-marks: the active document's diagnostic marks, "L1 C1 L2 C2 SEVERITY owner/name MESSAGE"
+# per line, in the order they are held; then "errors=N warnings=M"
+c_print_marks:
+    PROLOGUE
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 8f
+    mov rdi, [rbx + DOC_xmarks]
+    test rdi, rdi
+    jz 8f
+    xor r12d, r12d
+1:  mov rdi, [rbx + DOC_xmarks]
+    cmp r12, [rdi + VEC_len]
+    jae 8f
+    imul r13, r12, MK_SIZE
+    add r13, [rdi + VEC_ptr]
+    inc r12
+    mov rdi, rbx
+    mov rsi, [r13 + MK_start]
+    call pm_pos
+    mov rdi, rbx
+    mov rsi, [r13 + MK_end]
+    call pm_pos
+    mov eax, [r13 + MK_sev]
+    lea rcx, [rip + sev_words]
+    mov rsi, [rcx + rax*8]
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, ' '
+    call sb_push_byte
+    mov rax, [r13 + MK_owner]
+    lea rdi, [rip + out]
+    mov rsi, [rax + EXT_owner]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, '/'
+    call sb_push_byte
+    mov rax, [r13 + MK_owner]
+    lea rdi, [rip + out]
+    mov rsi, [rax + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + out]
+    mov rsi, [r13 + MK_msg]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    jmp 1b
+8:  mov rdi, rbx
+    call extmarks_counts
+    mov r12d, eax
+    mov r13d, edx
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_errors]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_warnings]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, r13d
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+# pm_pos(doc, pos): "LINE COL " into out
+pm_pos:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    call doc_line_of
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, rax
+    call doc_line_start
+    sub r12, rax
+    lea rdi, [rip + out]
+    lea rsi, [r13 + 1]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + out]
+    lea rsi, [r12 + 1]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, ' '
+    call sb_push_byte
+    EPILOGUE
+
+# print-hover: "hover=DOC LINE COL sent=S text=T" for the position the pointer rests on, or
+# "hover=none"
+c_print_hover:
+    PROLOGUE
+    mov rbx, [rip + g_hover_doc]
+    test rbx, rbx
+    jz 8f
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_hover]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov rsi, [rbx + DOC_id]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + g_hover_pos]
+    call pm_pos
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_sent]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + g_hover_sent]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_text]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    lea rsi, [rip + g_hover_text]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+8:  lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_hover_none]
+    call sb_push_cstr
+    xor eax, eax
+    EPILOGUE
+
+# print-text-cell LINE COL: "X Y", the middle of that cell of the active document on screen
+# (without word wrap)
+c_print_text_cell:
+    PROLOGUE
+    call next_int               # (next_int reads the arguments through rbx and r12)
+    mov r14, rax                # line
+    call next_int
+    mov r15, rax                # col
+    mov dword ptr [rip + g_dirty], 1
+    call flush_frame            # the layout of a frame: g_ed_y, g_ed_tx, the metrics
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 8f
+    # y: rows from the first visible line
+    mov rax, [rbx + DOC_scrolly]
+    sar rax, 8
+    lea rcx, [r14 - 1]
+    sub rcx, rax
+    imul ecx, [rip + g_lh]
+    add ecx, [rip + g_ed_y]
+    mov eax, [rip + g_lh]
+    shr eax, 1
+    add ecx, eax
+    mov r14d, ecx
+    # x: columns from the left edge
+    lea rax, [r15 - 1]
+    imul eax, [rip + g_cw]
+    add eax, [rip + g_ed_tx]
+    sub rax, [rbx + DOC_scrollx]
+    mov ecx, [rip + g_cw]
+    shr ecx, 1
+    add eax, ecx
+    lea rdi, [rip + out]
+    mov esi, eax
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + out]
+    mov esi, r14d
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+8:  xor eax, eax
+    EPILOGUE
+
 # print-frames: frames drawn since the last print-frames
 c_print_frames:
     lea rdi, [rip + out]
@@ -1566,6 +1753,18 @@ on_client:
 .Llong_path: .asciz "rhun: the control socket path is too long (at most 103 bytes)"
 .Lno_listen: .asciz "rhun: cannot create the control socket"
 .Ls_ext: .asciz "ext="
+.Ls_errors: .asciz "errors="
+.Ls_warnings: .asciz " warnings="
+.Ls_hover: .asciz "hover="
+.Ls_sent: .asciz "sent="
+.Ls_text: .asciz " text="
+.Ls_hover_none: .asciz "hover=none\n"
+.Lsw_error: .asciz "error"
+.Lsw_warning: .asciz "warning"
+.Lsw_info: .asciz "info"
+.Lsw_hint: .asciz "hint"
+.p2align 3
+sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Ls_state: .asciz " state="
 .Ls_no_ext: .asciz "no such extension\n"
 .Lunknown: .asciz "unknown command\n"
@@ -1625,6 +1824,9 @@ on_client:
 .Lc_print_frames: .asciz "print-frames"
 .Lc_print_extensions: .asciz "print-extensions"
 .Lc_wait_ext: .asciz "wait-ext"
+.Lc_print_marks: .asciz "print-marks"
+.Lc_print_hover: .asciz "print-hover"
+.Lc_print_text_cell: .asciz "print-text-cell"
 .Lc_print_project: .asciz "print-project"
 .Lc_print_panels: .asciz "print-panels"
 .Lc_print_tabs: .asciz "print-tabs"
@@ -1691,6 +1893,7 @@ ctl_table:
     .quad .Lc_scroll_x, c_scroll_x
     .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
     .quad .Lc_print_extensions, c_print_extensions, .Lc_wait_ext, c_wait_ext
+    .quad .Lc_print_marks, c_print_marks, .Lc_print_hover, c_print_hover, .Lc_print_text_cell, c_print_text_cell
     .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

@@ -1513,6 +1513,8 @@ FN ext_exited
     SYS SYS_close
     mov dword ptr [rbx + EXT_log], -1
 2:  mov dword ptr [rbx + EXT_pid], 0
+    mov rdi, rbx
+    call extmarks_clear_owner
     mov rdi, [rbx + EXT_body]
     call mem_free
     mov qword ptr [rbx + EXT_body], 0
@@ -1561,6 +1563,7 @@ FN ext_exited
     jmp 8f
 5:  mov dword ptr [rbx + EXT_status], ES_STOPPED
 8:  mov dword ptr [rip + g_dirty], 1
+    call ext_hooks_update
 9:  EPILOGUE
 
 # ext_kill(ext, reason): end the program now, keeping the reason
@@ -1675,7 +1678,20 @@ FN ext_tick
 25: # the clock, after the starts above (a start sets EXT_started)
     call time_ms
     mov r14, rax
-    xor r12d, r12d
+    # the pointer has rested on a position long enough: the hover event, once
+    cmp qword ptr [rip + g_hover_doc], 0
+    je 26f
+    cmp dword ptr [rip + g_hover_sent], 0
+    jne 26f
+    mov rax, r14
+    sub rax, [rip + g_hover_since]
+    cmp rax, HOVER_REST_MS
+    jl 26f
+    mov dword ptr [rip + g_hover_sent], 1
+    mov rdi, [rip + g_hover_doc]
+    mov rsi, [rip + g_hover_pos]
+    call extproto_send_hover_all
+26: xor r12d, r12d
 .Let_each:
     cmp r12, [rip + g_exts + VEC_len]
     jae 9f
@@ -1780,7 +1796,23 @@ FN ext_tick
     mov esi, POLLIN
     call watch_set_events
     jmp .Let_each
-9:  EPILOGUE
+9:  # the frame's edit records have been delivered to every extension: clear them
+    cmp dword ptr [rip + g_ext_hooks], 0
+    je 91f
+    xor r12d, r12d
+90: cmp r12, [rip + g_tabs + VEC_len]
+    jae 91f
+    imul rax, r12, TAB_SIZE
+    add rax, [rip + g_tabs + VEC_ptr]
+    inc r12
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 90b
+    mov rdi, [rax + TAB_doc]
+    test rdi, rdi
+    jz 90b
+    call ext_edits_clear
+    jmp 90b
+91: EPILOGUE
 
 # ext_timeout() -> ms until the loop should come back for the extensions, or -1: 16 while a
 # program's buffered lines wait for the next frame's budget; the time left to a hello deadline, a
@@ -1820,7 +1852,25 @@ FN ext_timeout
     add rax, 10000
     call deadline
     jmp 1b
-8:  cmp r12, -1
+8:  # the hover rest, when one is pending, is a deadline too
+    call ext_hover_due
+    cmp eax, -1
+    je 82f
+    movsxd r13, eax
+    cmp r12, -1
+    je 83f
+    call time_ms
+    sub r12, rax
+    jns 84f
+    xor r12d, r12d
+84: cmp r13, r12
+    jae 85f
+    mov r12, r13
+85: mov rax, r12
+    EPILOGUE
+83: mov rax, r13
+    EPILOGUE
+82: cmp r12, -1
     je 9f
     call time_ms
     sub r12, rax
@@ -2055,7 +2105,65 @@ FN ext_status_draw
     mov r14d, edi
     mov [rsp], esi
     mov [rsp + 4], edx
-    xor r12d, r12d
+    # "N errors, M warnings" of the document on screen
+    mov rdi, [rip + g_doc]
+    call extmarks_counts
+    test eax, eax
+    jnz 10f
+    test edx, edx
+    jz 11f
+10: mov r12d, eax
+    mov r13d, edx
+    lea rdi, [rip + tmp]
+    call sb_clear
+    test r12d, r12d
+    jz 12f
+    lea rdi, [rip + tmp]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Ld_errors]
+    cmp r12d, 1
+    jne 13f
+    lea rsi, [rip + .Ld_error]
+13: call sb_push_cstr
+    test r13d, r13d
+    jz 14f
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Ld_comma]
+    call sb_push_cstr
+12: test r13d, r13d
+    jz 14f
+    lea rdi, [rip + tmp]
+    mov esi, r13d
+    call sb_push_u64
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Ld_warnings]
+    cmp r13d, 1
+    jne 15f
+    lea rsi, [rip + .Ld_warning]
+15: call sb_push_cstr
+14: lea rdi, [rip + g_face_small]
+    mov rsi, [rip + tmp + SB_ptr]
+    mov rdx, [rip + tmp + SB_len]
+    call text_width
+    sub r14d, [rip + g_mt + 4*MI_12]
+    sub r14d, eax
+    lea rdi, [rip + g_face_small]
+    mov esi, r14d
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    mov r8, [rip + tmp + SB_ptr]
+    mov r9, [rip + tmp + SB_len]
+    COLOR eax, T_MUTED
+    test r12d, r12d
+    jz 16f
+    COLOR eax, T_ERROR
+16: push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+11: xor r12d, r12d
 1:  cmp r12, [rip + g_exts + VEC_len]
     jae 9f
     imul rbx, r12, EXT_SIZE
@@ -2235,7 +2343,8 @@ cur_start: .quad 0              # the EXT being started (env_add_state)
 .p2align 3
 state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
-    .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection, 0, 0
+    .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
+    .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
 env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
     .quad .Le_rhun_prefix, 0
 .globl ext_target
@@ -2293,6 +2402,8 @@ ext_target: .asciz "linux-x86_64"
 .Lsk_changed: .asciz "changed"
 .Lsk_cursor: .asciz "cursor"
 .Lsk_selection: .asciz "selection"
+.Lsk_edits: .asciz "edits"
+.Lsk_hover: .asciz "hover"
 .Ln_documents: .asciz "documents"
 .Ln_project: .asciz "project"
 .Ln_home: .asciz "home"
@@ -2370,3 +2481,8 @@ ext_target: .asciz "linux-x86_64"
 .Ld_cmds: .asciz " cmds="
 .Ld_status: .asciz " status="
 .Ld_flood: .asciz " flood="
+.Ld_errors: .asciz " errors"
+.Ld_error: .asciz " error"
+.Ld_warnings: .asciz " warnings"
+.Ld_warning: .asciz " warning"
+.Ld_comma: .asciz ", "

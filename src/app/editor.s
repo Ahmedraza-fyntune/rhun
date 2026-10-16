@@ -21,6 +21,7 @@ g_ed_y: .long 0
 g_ed_w: .long 0
 g_ed_h: .long 0
 g_ed_tx: .long 0                # x of column 0 (before horizontal scroll)
+ed_hovered: .long 0             # the pointer was over the editor this frame (hover tracking)
 g_dragging: .long 0
 hs_on: .long 0                  # the horizontal scrollbar is shown (hscroll_measure)
 hs_content: .long 0             # px: the widest line and a margin
@@ -1961,7 +1962,13 @@ draw_wrapped:
     lea rcx, [rsp + 40]
     mov r8, r15
     call text_draw
-1:  mov rax, [rsp]
+1:  mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    imul ecx, r14d
+    call extmarks_gutter        # an extension's diagnostic on the line
+    mov rax, [rsp]
     test rax, rax
     jz 13f
     movzx edi, byte ptr [rax + r12]
@@ -2129,11 +2136,25 @@ FN editor_draw
     jz .Led_noinput
     mov eax, [rip + g_mx]
     cmp eax, [rip + g_ed_tx]
-    jl 1f
+    jl 12f
     cmp dword ptr [rip + g_cursor], CUR_DEFAULT
     jne 1f
     mov dword ptr [rip + g_cursor], CUR_TEXT
-1:  # wheel (sideways with Shift: wheel_xy)
+1:  # the position the pointer rests on, for extensions' hovers and diagnostics' messages
+    mov rdi, rbx
+    mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call pos_at_point
+    mov rdi, rbx
+    mov rsi, rax
+    call ext_hover_track
+    call ext_hover_tip
+    jmp 13f
+12: xor edi, edi
+    xor esi, esi
+    call ext_hover_track
+13: mov dword ptr [rip + ed_hovered], 1
+    # wheel (sideways with Shift: wheel_xy)
     call wheel_xy
     mov eax, edx
     test eax, eax
@@ -2242,6 +2263,12 @@ FN editor_draw
     call cmd_select_line
     mov dword ptr [rip + g_reveal], 0
 .Led_noinput:
+    cmp dword ptr [rip + ed_hovered], 0
+    jne 1f
+    xor edi, edi
+    xor esi, esi
+    call ext_hover_track
+1:  mov dword ptr [rip + ed_hovered], 0
     call hscroll_clamp           # a wheel or trackpad stops at the widest line
     # drag selection
     cmp dword ptr [rip + g_dragging], 0
@@ -3081,6 +3108,14 @@ draw_line:
     add [rsp + 64], eax
     jmp 11b
 .Ldl_ret:
+    # the extensions' marks on this row
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, [rsp + 96]
+    mov rcx, [rsp + 32]
+    mov r8d, [rsp + 40]
+    mov r9d, [rsp]
+    call extmarks_row
     EPILOGUE
 
 # draw_box(x, y, w, h, argb): 1px outline, softened

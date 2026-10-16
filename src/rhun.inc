@@ -533,7 +533,31 @@ F DOC_wd2, 8
 F DOC_hops, 8           # the symlinks it leads through before that file (watch.s), or 0
 F DOC_id, 8             # extensions: session-unique id, given by doc_new
 F DOC_saves, 8          # extensions: times the document was written (the "saved" event)
+F DOC_xedits, 8         # extensions: SB* of edit records since the last frame (section 6a), or 0
+F DOC_xmarks, 8         # extensions: VEC* of MK marks (diagnostics), or 0
+F DOC_xresync, 4        # extensions: 1 when records were lost: the resync event is due
+F DOC_xpad, 4
 ENDSTRUCT DOC_SIZE
+
+# a diagnostic mark on a document
+STRUCT
+F MK_owner, 8           # EXT*
+F MK_start, 8           # byte positions, half-open
+F MK_end, 8
+F MK_sev, 4             # SEV_*
+F MK_pad, 4
+F MK_msg, 8             # cstr (owned)
+ENDSTRUCT MK_SIZE
+.equ SEV_ERROR, 0
+.equ SEV_WARNING, 1
+.equ SEV_INFO, 2
+.equ SEV_HINT, 3
+.equ MARKS_MAX, 2000
+.equ MARK_MSG_MAX, 200
+.equ HOVER_MAX, 4000
+.equ HOVER_REST_MS, 500
+.equ EDITS_MAX, 1048576
+.equ ID_EXT_HOVER, 0x3e00
 
 .equ DISK_FADE_MS, 800
 .equ DISK_FRAME_MS, 50
@@ -995,6 +1019,8 @@ F EXT_sub_saved, 8
 F EXT_sub_changed, 8
 F EXT_sub_cursor, 8
 F EXT_sub_selection, 8
+F EXT_sub_edits, 8
+F EXT_sub_hover, 8
 F EXT_status_text, 8    # cstr, its status-bar text, or 0
 F EXT_known, VEC_SIZE   # XK records: the documents this extension has seen, and what it was told
 F EXT_active, 8         # DOC id last reported active, -1 before catch-up

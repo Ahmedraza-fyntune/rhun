@@ -159,6 +159,13 @@ def main():
             active = int(fields[2])
         elif event == 'bye':
             return
+        elif event == 'hover':
+            d, line, col = int(fields[2]), fields[3], fields[4]
+            text = f'hovering {line}:{col}'.encode()
+            request(f'hover {d} {line} {col} {len(text)}', text)
+        elif event == 'edits':
+            body = read_body(int(fields[-1]))
+            log(body.replace(b'\n', b'\\n'))
         elif event == 'run':
             command, doc = fields[2], int(fields[3])
             on_run(command, doc, versions)
@@ -195,6 +202,17 @@ def on_run(command, doc, versions):
         request(f'select {doc} 1 1 1 6', then=selected)
     elif name == 'relopen':
         request('open 1 1 b.go')
+    elif name == 'diag':
+        body = (b'1 1 1 6 error first word\n'
+                b'2 1 2 7 warning second word\n'
+                b'2 8 2 12 info a note\n')
+        request(f'diagnostics {doc} {versions.get(doc, 0)} 3 {len(body)}', body)
+    elif name == 'nodiag':
+        request(f'diagnostics {doc} {versions.get(doc, 0)} 0 0')
+    elif name == 'baddiag':
+        request(f'diagnostics {doc} {versions.get(doc, 0)} 1 19', b'1 1 x 6 error nope\n')
+    elif name == 'stalediag':
+        request(f'diagnostics {doc} 0 0 0')
 
 
 if __name__ == '__main__':

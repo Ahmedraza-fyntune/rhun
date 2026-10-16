@@ -19,7 +19,8 @@ EXTS = ROOT / 'tests/ext/exts'
 CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink = false\n'
           '[files]\nrestore_session = false\nrestore_project = false\n'
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
-CMDS = 'echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen'
+CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen,'
+        'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag')
 
 
 class Host(unittest.TestCase):
@@ -396,6 +397,64 @@ class Host(unittest.TestCase):
         run = [i for i, line in enumerate(log) if line == '0 run echo.toast 2'][0]
         self.assertLess(opened, run)
         self.assertLess(active, run)
+
+    # --- gate 3: diagnostics, hover, edits ---
+
+    def test_diagnostics_become_marks_that_follow_edits(self):
+        out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'wait 300', 'print-marks',
+                               'key ctrl+Home', 'type ab', 'wait 100', 'print-marks',
+                               'cmd echo.nodiag', 'wait 300', 'print-marks'])
+        self.assertEqual(out[1:5], ['1 1 1 6 error rhun-tests/echo first word',
+                                    '2 1 2 7 warning rhun-tests/echo second word',
+                                    '2 8 2 12 info rhun-tests/echo a note', 'errors=1 warnings=1'])
+        # two bytes typed at the start of line 1 move the first mark; the others are on line 2
+        self.assertEqual(out[5], '1 3 1 8 error rhun-tests/echo first word')
+        self.assertEqual(out[6], '2 1 2 7 warning rhun-tests/echo second word')
+        self.assertEqual(out[9], 'errors=0 warnings=0')
+
+    def test_deleting_a_marked_range_removes_the_mark(self):
+        out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'wait 300', 'key ctrl+Home',
+                               'key shift+End', 'key Delete', 'wait 100', 'print-marks'])
+        self.assertEqual(sorted(out[1:3]), ['2 1 2 7 warning rhun-tests/echo second word',
+                                            '2 8 2 12 info rhun-tests/echo a note'])
+        self.assertEqual(out[3], 'errors=0 warnings=1')
+
+    def test_a_bad_diagnostics_line_is_a_syntax_error_and_a_stale_version_is_refused(self):
+        self.run_editor(['cmd echo.baddiag', 'wait-ext echo running', 'wait 300', 'type q', 'wait 100',
+                         'cmd echo.stalediag', 'wait 300'])
+        log = self.echo_log()
+        self.assertTrue(any(line.startswith('error 1 syntax') for line in log), log)
+        self.assertIn('error 2 stale 1', log)
+
+    def test_hover_asks_the_extension_and_shows_its_answer(self):
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'print-text-cell 1 3'])
+        x, y = out[1].split()
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', f'move {x} {y}', 'wait 800',
+                               'print-hover', 'wait 700', 'print-tip', 'move 5 5', 'wait 100', 'print-hover'])
+        self.assertEqual(out[1], 'hover=1 1 3 sent=1 text=hovering 1:3')
+        self.assertEqual(out[2], 'tip=hovering 1:3')
+        self.assertEqual(out[3], 'hover=none')
+
+    def test_a_mark_message_shows_as_a_tooltip(self):
+        out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'print-text-cell 2 3'])
+        x, y = out[1].split()
+        out = self.run_editor(['cmd echo.diag', 'wait-ext echo running', 'wait 200', f'move {x} {y}', 'wait 700',
+                               'print-tip'])
+        self.assertEqual(out[1], 'tip=second word')
+
+    def test_the_edits_stream_describes_every_change(self):
+        exts = self.manifest_variant('edits', **{'cursor = *': 'cursor = *\nedits = *'})
+        self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 100', 'key ctrl+Home', 'type xy',
+                         'wait 100', 'key BackSpace', 'wait 100', 'cmd undo', 'wait 100', 'cmd echo.hi', 'wait 300'],
+                        exts=exts)
+        log = self.echo_log()
+        headers = [line for line in log if line.startswith('0 edits 1 ')]
+        bodies = [log[i + 1] for i, line in enumerate(log) if line.startswith('0 edits 1 ')]
+        self.assertEqual(headers[0], '0 edits 1 2 14')          # two keystrokes, one event
+        self.assertEqual(bodies[0], r'0 0 1\nx1 0 1\ny')          # START DEL INS, then the bytes
+        self.assertEqual(bodies[1], r'1 1 0\n')                   # backspace deletes byte 1
+        self.assertEqual(bodies[2], r'1 0 1\ny')                 # undo puts the y back
+        self.assertTrue(any(b.endswith('hi') for b in bodies), bodies)   # the extension's own insert too
 
     def test_quitting_leaves_no_program_behind(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'print-extensions'])

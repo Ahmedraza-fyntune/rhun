@@ -45,6 +45,8 @@ FN doc_new
 FN doc_free
     push rbx
     mov rbx, rdi
+    call extmarks_free
+    mov rdi, rbx
     cmp rdi, [rip + g_long_doc]   # its long line's classes and matched brackets go too (another doc
     jne 1f                        # may get its address)
     mov qword ptr [rip + g_long_doc], 0
@@ -495,6 +497,13 @@ FN raw_insert
     jbe 81f
     add [rbx + DOC_anchor], r14
 81: inc qword ptr [rbx + DOC_version]
+    cmp dword ptr [rip + g_ext_hooks], 0
+    je .Lri_ret
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, r14
+    call ext_note_insert
 .Lri_ret:
     EPILOGUE
 
@@ -579,6 +588,12 @@ FN raw_delete
     lea rdi, [rbx + DOC_anchor]
     call .Lrd_marker
     inc qword ptr [rbx + DOC_version]
+    cmp dword ptr [rip + g_ext_hooks], 0
+    je .Lrd_ret
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call ext_note_delete
 .Lrd_ret:
     EPILOGUE
 .Lrd_marker:
@@ -1046,6 +1061,8 @@ FN doc_load
     PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
+    mov rdi, rbx
+    call ext_note_resync
     mov rdi, rbx
     mov rsi, r12
     call doc_set_path

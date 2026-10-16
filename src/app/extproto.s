@@ -264,6 +264,7 @@ handle_line:
     jne 4f
     mov dword ptr [rbx + EXT_hello], 1
     mov dword ptr [rbx + EXT_status], ES_RUNNING
+    call ext_hooks_update
     mov rdi, rbx
     call send_ready
     mov rdi, rbx
@@ -1110,6 +1111,98 @@ h_open:
     call reply_syntax
     EPILOGUE
 
+# ID diagnostics DOC VERSION N + body -> ok ID: the extension's marks on the document
+h_diagnostics:
+    PROLOGUE
+    mov edi, NEEDS_DOC_READ
+    call need
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 6
+    jb .Lhd_syntax
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz .Lhd_syntax
+    cmp rax, [rbx + DOC_version]
+    jne .Lhd_stale
+    mov edi, 4
+    call field_u64
+    test edx, edx
+    jz .Lhd_syntax
+    cmp rax, MARKS_MAX
+    ja .Lhd_toobig
+    mov r12, rax
+    mov rdi, rbx
+    mov rsi, [rip + cur]
+    mov rdx, [rip + body_ptr]
+    mov rcx, [rip + body_len]
+    mov r8, r12
+    call extmarks_set
+    test rax, rax
+    jnz .Lhd_bad
+    mov dword ptr [rip + g_dirty], 1
+    mov rdi, [rip + cur_id]
+    call reply_ok
+9:  EPILOGUE
+.Lhd_bad:
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
+    EPILOGUE
+.Lhd_stale:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_stale]
+    mov rdx, [rbx + DOC_version]
+    call reply_error_u64
+    EPILOGUE
+.Lhd_toobig:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig]
+    call reply_error
+    EPILOGUE
+.Lhd_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# ID hover DOC LINE COL LEN + body -> ok ID: shown if the pointer still rests there
+h_hover:
+    PROLOGUE
+    mov edi, NEEDS_DOC_READ
+    call need
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 6
+    jb .Lhh_syntax
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, rbx
+    mov esi, 3
+    call arg_pos
+    test rax, rax
+    js 9f
+    mov rdi, rbx
+    mov rsi, rax
+    mov rdx, [rip + body_ptr]
+    mov rcx, [rip + body_len]
+    call ext_hover_text_set
+    mov rdi, [rip + cur_id]
+    call reply_ok
+9:  EPILOGUE
+.Lhh_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
 # ID cancel ID2 -> ok ID: requests are handled as they arrive, so there is nothing to withdraw
 h_cancel:
     mov rdi, [rip + cur_id]
@@ -1232,7 +1325,7 @@ FN extproto_events
     mov [r14 + XK_cur], rcx
     mov rcx, [r13 + DOC_anchor]
     mov [r14 + XK_anchor], rcx
-    mov qword ptr [r14 + XK_seen], 1
+    mov qword ptr [r14 + XK_seen], 2    # new this pass: no edits for it yet
     cmp qword ptr [rbx + EXT_sub_opened], 0
     je 31f
     mov rdi, r13
@@ -1246,7 +1339,26 @@ FN extproto_events
     jmp .Lev_tabs
 3:  mov r14, rax
     mov qword ptr [r14 + XK_seen], 1
-    # changed? (before saved, so a save after a change reports both)
+    # edits since the last frame, or a resync, for an edits subscriber
+    mov rdi, [rbx + EXT_sub_edits]
+    mov rsi, r13
+    call sub_matches
+    test eax, eax
+    jz 30f
+    cmp dword ptr [r13 + DOC_xresync], 0
+    je 29f
+    lea rdi, [rip + .Lev_resync]
+    mov rsi, r13
+    call send_doc_version
+    jmp 30f
+29: mov rax, [r13 + DOC_xedits]
+    test rax, rax
+    jz 30f
+    cmp qword ptr [rax + SB_len], 0
+    je 30f
+    mov rdi, r13
+    call send_edits
+30: # changed? (before saved, so a save after a change reports both)
     mov rcx, [r13 + DOC_version]
     cmp rcx, [r14 + XK_ver]
     je 4f
@@ -1517,6 +1629,67 @@ send_doc_version:
     call out_end
     EPILOGUE
 
+# send_edits(doc): "0 edits DOC VERSION LEN" + the records
+send_edits:
+    PROLOGUE
+    mov rbx, rdi
+    call out_begin
+    lea rdi, [rip + .Lev_edits]
+    call out_cstr
+    mov rdi, [rbx + DOC_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rbx + DOC_version]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rax, [rbx + DOC_xedits]
+    mov rdi, [rax + SB_len]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rax, [rbx + DOC_xedits]
+    mov rdi, [rax + SB_ptr]
+    mov rsi, [rax + SB_len]
+    call out_bytes
+    call out_end
+    EPILOGUE
+
+# extproto_send_hover_all(doc, pos): "0 hover DOC LINE COL" to the running extensions whose
+# hover subscription names the document
+FN extproto_send_hover_all
+    PROLOGUE
+    mov r13, rdi
+    mov r14, rsi
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 1b
+    mov rdi, [rbx + EXT_sub_hover]
+    mov rsi, r13
+    call sub_matches
+    test eax, eax
+    jz 1b
+    mov [rip + cur], rbx
+    call out_begin
+    lea rdi, [rip + .Lev_hover]
+    call out_cstr
+    mov rdi, [r13 + DOC_id]
+    call out_u64
+    mov rdi, r13
+    mov rsi, r14
+    call out_pos
+    mov edi, 10
+    call out_byte
+    call out_end
+    jmp 1b
+9:  EPILOGUE
+
 # out_pos(doc, pos): " LINE COL"
 out_pos:
     PROLOGUE
@@ -1615,6 +1788,8 @@ verbs:
     .quad .Lv_status, h_status, EXT_BODY_MAX
     .quad .Lv_open, h_open, 0
     .quad .Lv_cancel, h_cancel, 0
+    .quad .Lv_diagnostics, h_diagnostics, EXT_BODY_MAX
+    .quad .Lv_hover, h_hover, EXT_BODY_MAX
     .quad 0, 0, 0
 .Lv_text: .asciz "text"
 .Lv_range: .asciz "range"
@@ -1625,6 +1800,8 @@ verbs:
 .Lv_status: .asciz "status"
 .Lv_open: .asciz "open"
 .Lv_cancel: .asciz "cancel"
+.Lv_diagnostics: .asciz "diagnostics"
+.Lv_hover: .asciz "hover"
 .Lw_hello: .asciz "hello"
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
@@ -1641,6 +1818,9 @@ verbs:
 .Lev_closed: .asciz "0 closed "
 .Lev_active: .asciz "0 active "
 .Lev_project: .asciz "0 project "
+.Lev_edits: .asciz "0 edits "
+.Lev_resync: .asciz "0 resync "
+.Lev_hover: .asciz "0 hover "
 .Le_unknown: .asciz "unknown no such request"
 .Le_syntax: .asciz "syntax cannot parse the line"
 .Le_nodoc: .asciz "nodoc no such document"
@@ -1650,6 +1830,7 @@ verbs:
 .Le_needs_write: .asciz "needs documents=write"
 .Le_nofile: .asciz "nofile no such file"
 .Le_readonly: .asciz "readonly the document cannot be edited"
+.Le_toobig: .asciz "toobig more than 2000 diagnostics"
 .Lr_no_hello: .asciz "the first line was not hello 1"
 .Lr_protocol: .asciz "protocol version not supported (rhun speaks 1)"
 .Lr_body: .asciz "a body over its cap"
