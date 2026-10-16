@@ -1059,6 +1059,7 @@ F XK_saves, 8
 F XK_cur, 8
 F XK_anchor, 8
 F XK_seen, 8            # scratch: 1 when the document is still open (events pass)
+F XK_eoff, 8            # edit records (DOC_xedits) delivered so far, as a byte offset
 ENDSTRUCT XK_SIZE
 
 .equ ES_IDLE, 0                 # not started

@@ -866,6 +866,14 @@ FN palette_ext_prompt_open
     call tf_set
     EPILOGUE
 
+# palette_close_commands(): the command list holds CMD* and titles of extension commands that
+# just moved or went: a palette showing it closes
+FN palette_close_commands
+    cmp dword ptr [rip + pal_mode], PM_COMMANDS
+    jne 1f
+    jmp palette_close
+1:  ret
+
 # palette_ext_keys_reset(): the extensions' commands changed: their shortcut labels are stale
 FN palette_ext_keys_reset
     PROLOGUE
@@ -2121,7 +2129,11 @@ palette_accept:
 .Lpa_prompt:
     cmp dword ptr [rip + pal_prompt], PROMPT_ASK
     jb 70f
-    # an extension's prompt: the field's text goes back to it
+    # an extension's prompt: the field's text goes back to it. A terminal command's prompt that
+    # just appeared ignores Enter: a keystroke meant for the editor must not run it
+    call extproto_prompt_fresh
+    test eax, eax
+    jnz .Lpa_ret
     lea rdi, [rip + pal_tf]
     call tf_text
     mov ebx, [rip + pal_prompt]

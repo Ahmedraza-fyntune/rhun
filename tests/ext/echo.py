@@ -255,6 +255,16 @@ def on_run(command, doc, versions):
     elif name == 'badcmd':
         request('cmd quit')
         request('cmd no_such_command')
+        request('cmd paste')
+    elif name == 'termcmd':
+        request('cmd toggle_terminal')
+    elif name == 'emptymark':
+        request(f'diagnostics {doc} {versions.get(doc, 0)} 1 17', b'1 7 1 7 hint here\n')
+    elif name == 'countdiag':
+        body = b'1 1 1 6 error first\n'
+        request(f'diagnostics {doc} {versions.get(doc, 0)} 2 {len(body)}', body)   # N says two lines
+    elif name == 'bidi':
+        request('term 11', 'rm -rf \u202e x'.encode())
 
 
 if __name__ == '__main__':

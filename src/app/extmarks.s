@@ -19,6 +19,9 @@ g_hover_x: .long 0              # where the pointer is (the tooltip's anchor)
 g_hover_y: .long 0
 g_hover_text: .zero HOVER_MAX + 1   # what an extension answered for this position, or empty
 tmp: .zero SB_SIZE
+newmarks: .zero VEC_SIZE        # a diagnostics request's marks while its lines are parsed
+target: .quad 0                 # the VEC mark_parse appends to
+badpos_seen: .long 0            # mark_parse: the line parsed but a position was outside the text
 rec: .zero 80
 
 .text
@@ -45,7 +48,8 @@ FN ext_note_insert
     mov rsi, r13
     mov rdx, r14
     call sb_push
-1:  # marks: starts at or after pos move; ends after pos move (an insert at a mark's end stays out)
+1:  # marks: starts at or after pos move; ends after pos move (an insert at a mark's end stays
+    # out); an empty mark moves whole
     mov rdi, [rbx + DOC_xmarks]
     test rdi, rdi
     jz 9f
@@ -55,7 +59,15 @@ FN ext_note_insert
     imul rax, rcx, MK_SIZE
     add rax, [rdi + VEC_ptr]
     inc rcx
-    cmp [rax + MK_start], r12
+    mov rdx, [rax + MK_start]
+    cmp rdx, [rax + MK_end]
+    jne 21f
+    cmp rdx, r12
+    jb 2b
+    add [rax + MK_start], r14
+    add [rax + MK_end], r14
+    jmp 2b
+21: cmp [rax + MK_start], r12
     jb 3f
     add [rax + MK_start], r14
 3:  cmp [rax + MK_end], r12
@@ -86,7 +98,15 @@ FN ext_note_delete
     jae 9f
     imul rax, rcx, MK_SIZE
     add rax, [rdi + VEC_ptr]
-    lea rsi, [rax + MK_start]
+    mov rdx, [rax + MK_start]
+    cmp rdx, [rax + MK_end]
+    jne 22f
+    lea rsi, [rax + MK_start]   # empty before: it moves whole and stays
+    call shift_point
+    mov rdx, [rax + MK_start]
+    mov [rax + MK_end], rdx
+    jmp 3f
+22: lea rsi, [rax + MK_start]
     call shift_point
     lea rsi, [rax + MK_end]
     call shift_point
@@ -174,6 +194,7 @@ record:
     EPILOGUE
 7:  mov rdi, rbx
     call ext_note_resync
+7:  mov dword ptr [rip + badpos_seen], 1
 8:  xor eax, eax
     EPILOGUE
 
@@ -191,12 +212,61 @@ FN ext_note_resync
 
 # ext_edits_clear(doc): the frame's records were delivered
 FN ext_edits_clear
-    mov dword ptr [rdi + DOC_xresync], 0
-    mov rax, [rdi + DOC_xedits]
-    test rax, rax
+    PROLOGUE
+    mov rbx, rdi
+    mov dword ptr [rbx + DOC_xresync], 0
+    mov r12, [rbx + DOC_xedits]
+    test r12, r12
     jz 9f
-    mov qword ptr [rax + SB_len], 0
-9:  ret
+    # the records every running subscriber has received go; the rest wait for the next frame
+    # (a program whose reads were throttled, or one that edited after its events went out)
+    mov r13, [r12 + SB_len]     # the least delivered offset, over the subscribers
+    xor r14d, r14d
+1:  cmp r14, [rip + g_exts + VEC_len]
+    jae 5f
+    imul r15, r14, EXT_SIZE
+    add r15, [rip + g_exts + VEC_ptr]
+    inc r14
+    cmp dword ptr [r15 + EXT_status], ES_RUNNING
+    jne 1b
+    cmp qword ptr [r15 + EXT_sub_edits], 0
+    je 1b
+    mov rdi, r15
+    mov rsi, [rbx + DOC_id]
+    call extproto_known
+    test rax, rax
+    jz 1b                       # not told of the document yet: its opened snapshot will be current
+    mov rax, [rax + XK_eoff]
+    cmp rax, r13
+    cmovb r13, rax
+    jmp 1b
+5:  test r13, r13
+    jz 9f
+    mov rdi, [r12 + SB_ptr]
+    lea rsi, [rdi + r13]
+    mov rdx, [r12 + SB_len]
+    sub rdx, r13
+    call memmove
+    sub [r12 + SB_len], r13
+    # every record's offset moves with the buffer
+    xor r14d, r14d
+6:  cmp r14, [rip + g_exts + VEC_len]
+    jae 9f
+    imul r15, r14, EXT_SIZE
+    add r15, [rip + g_exts + VEC_ptr]
+    inc r14
+    mov rdi, r15
+    mov rsi, [rbx + DOC_id]
+    call extproto_known
+    test rax, rax
+    jz 6b
+    mov rcx, [rax + XK_eoff]
+    sub rcx, r13
+    jns 7f
+    xor ecx, ecx
+7:  mov [rax + XK_eoff], rcx
+    jmp 6b
+9:  EPILOGUE
 
 # ---------------- marks ----------------
 
@@ -209,17 +279,11 @@ FN extmarks_set
     mov r13, rdx
     mov r14, rcx
     mov [rsp], r8
-    mov rdi, rbx
-    mov rsi, r12
-    call marks_drop_owner
-    mov rdi, [rbx + DOC_xmarks]
-    test rdi, rdi
-    jnz 1f
-    mov edi, VEC_SIZE
-    call mem_alloc
-    mov [rbx + DOC_xmarks], rax
-1:  mov dword ptr [rip + g_marks_ever], 1
-    call ext_hooks_update
+    # the lines are parsed into a list of their own first: a bad line leaves the old marks as
+    # they were
+    mov qword ptr [rip + newmarks + VEC_len], 0
+    lea rax, [rip + newmarks]
+    mov [rip + target], rax
     lea r15, [r13 + r14]        # end of the body
 .Lms_line:
     cmp r13, r15
@@ -247,11 +311,64 @@ FN extmarks_set
     inc r13
     jmp .Lms_line
 .Lms_ok:
-    xor eax, eax
+    mov rax, [rip + newmarks + VEC_len]
+    cmp rax, [rsp]
+    jne .Lms_count              # not the N the line announced
+    cmp rax, MARKS_MAX
+    ja .Lms_count
+    mov rdi, rbx
+    mov rsi, r12
+    call marks_drop_owner
+    mov rdi, [rbx + DOC_xmarks]
+    test rdi, rdi
+    jnz 1f
+    mov edi, VEC_SIZE
+    call mem_alloc
+    mov [rbx + DOC_xmarks], rax
+1:  mov dword ptr [rip + g_marks_ever], 1
+    call ext_hooks_update
+    xor r13d, r13d
+4:  cmp r13, [rip + newmarks + VEC_len]
+    jae 5f
+    mov rdi, [rbx + DOC_xmarks]
+    mov esi, MK_SIZE
+    call vec_push
+    mov rdi, rax
+    imul rsi, r13, MK_SIZE
+    add rsi, [rip + newmarks + VEC_ptr]
+    mov edx, MK_SIZE
+    call memcpy
+    inc r13
+    jmp 4b
+5:  xor eax, eax
+    EPILOGUE
+.Lms_count:
+    call newmarks_free
+    lea rax, [rip + .Le_count]
     EPILOGUE
 .Lms_bad:
+    call newmarks_free
     lea rax, [rip + .Le_badmark]
-    EPILOGUE
+    cmp dword ptr [rip + badpos_seen], 0
+    je 1f
+    lea rax, [rip + .Le_badpos_mark]
+1:  EPILOGUE
+
+# newmarks_free(): the messages of the temporary list
+newmarks_free:
+    push rbx
+    xor ebx, ebx
+1:  cmp rbx, [rip + newmarks + VEC_len]
+    jae 2f
+    imul rax, rbx, MK_SIZE
+    add rax, [rip + newmarks + VEC_ptr]
+    mov rdi, [rax + MK_msg]
+    call mem_free
+    inc rbx
+    jmp 1b
+2:  mov qword ptr [rip + newmarks + VEC_len], 0
+    pop rbx
+    ret
 
 # mark_parse(ptr, len, doc, owner) -> 1 and a mark appended, 0 when the line cannot be read
 mark_parse:
@@ -279,22 +396,23 @@ mark_parse:
     cmp r15d, 4
     jb 1b
     # positions
+    mov dword ptr [rip + badpos_seen], 0
     mov rdi, rbx
     mov rsi, [rsp + 16]
     mov rdx, [rsp + 24]
     call mark_pos
     test rax, rax
-    js 8f
+    js 7f
     mov r13, rax
     mov rdi, rbx
     mov rsi, [rsp + 32]
     mov rdx, [rsp + 40]
     call mark_pos
     test rax, rax
-    js 8f
+    js 7f
     mov r14, rax
     cmp r14, r13
-    jb 8f
+    jb 7f
     # severity
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
@@ -313,13 +431,17 @@ mark_parse:
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
     call trim
-    cmp rdx, MARK_MSG_MAX
-    jbe 2f
-    mov rdx, MARK_MSG_MAX
-2:  mov rdi, rax
-    mov rsi, rdx
+    mov rdi, rdx
+    mov rsi, rax
+    mov edx, MARK_MSG_MAX
+    push rax
+    push rax
+    call utf8_cut
+    pop rdi
+    pop rdi
+    mov rsi, rax
     call mem_dup
-    mov rdi, [rbx + DOC_xmarks]
+    mov rdi, [rip + target]
     mov esi, MK_SIZE
     push rax
     push rax
@@ -361,7 +483,17 @@ FN mark_pos
     lea rcx, [r13 - 1]
     cmp rcx, rax
     ja 8f
-    lea rax, [r14 + rcx]
+    je 7f
+    # not inside a multibyte character
+    mov rdi, rbx
+    lea rsi, [r14 + rcx]
+    push rcx
+    call doc_byte
+    pop rcx
+    and eax, 0xc0
+    cmp eax, 0x80
+    je 8f
+7:  lea rax, [r14 + rcx]
     EPILOGUE
 8:  mov rax, -1
     EPILOGUE
@@ -554,7 +686,11 @@ FN extmarks_gutter
     mov r9d, eax                # argb
     mov edi, [rip + g_ed_tx]
     sub edi, [rip + g_mt + 4*MI_20]
-    mov esi, [rsp]
+    cmp dword ptr [rip + cfg_line_numbers], 0
+    jne 1f
+    mov edi, [rip + g_ed_tx]    # a 16 px gutter without numbers: the dot sits in it
+    sub edi, [rip + g_mt + 4*MI_12]
+1:  mov esi, [rsp]
     mov eax, [rip + g_lh]
     sub eax, [rip + g_mt + 4*MI_6]
     shr eax, 1
@@ -770,6 +906,17 @@ FN ext_hover_due
     je 8f
     cmp dword ptr [rip + g_hover_sent], 0
     jne 8f
+    # only when a running extension would hear it: otherwise the deadline would be due forever
+    xor ecx, ecx
+7:  cmp rcx, [rip + g_exts + VEC_len]
+    jae 8f
+    imul rdx, rcx, EXT_SIZE
+    add rdx, [rip + g_exts + VEC_ptr]
+    inc rcx
+    cmp dword ptr [rdx + EXT_status], ES_RUNNING
+    jne 7b
+    cmp qword ptr [rdx + EXT_sub_hover], 0
+    je 7b
     push rbx
     call time_ms
     pop rbx
@@ -781,6 +928,16 @@ FN ext_hover_due
 1:  mov eax, ecx
     ret
 8:  mov eax, -1
+    ret
+
+# ext_hover_forget(doc): the document is going away (or an extension did): nothing rests on it
+FN ext_hover_forget
+    cmp rdi, [rip + g_hover_doc]
+    jne 1f
+    mov qword ptr [rip + g_hover_doc], 0
+    mov qword ptr [rip + g_hover_pos], 0
+    mov dword ptr [rip + g_hover_sent], 0
+1:  mov byte ptr [rip + g_hover_text], 0
     ret
 
 # ext_hover_text_set(doc, pos, ptr, len) -> 1 when it is for the position the pointer rests on
@@ -835,3 +992,5 @@ sev_names: .quad .Lsv_error, .Lsv_warning, .Lsv_info, .Lsv_hint, 0
 .Lsv_info: .asciz "info"
 .Lsv_hint: .asciz "hint"
 .Le_badmark: .asciz "syntax a diagnostics line is not L1 C1 L2 C2 SEVERITY MESSAGE"
+.Le_badpos_mark: .asciz "badpos a diagnostics range is outside the document or inside a character"
+.Le_count: .asciz "syntax the body does not have N lines"

@@ -58,6 +58,8 @@ FN doc_free
     mov rbx, rdi
     call extmarks_free
     mov rdi, rbx
+    call ext_hover_forget
+    mov rdi, rbx
     cmp rdi, [rip + g_long_doc]   # its long line's classes and matched brackets go too (another doc
     jne 1f                        # may get its address)
     mov qword ptr [rip + g_long_doc], 0

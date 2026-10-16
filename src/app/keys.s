@@ -256,6 +256,17 @@ FN keys_init
     pop rax
     test r15d, r15d
     jnz 4b
+    # a bare key (a letter, Enter) would take typing away from the editor: a modifier is required
+    push rax
+    push rdx
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_combo
+    mov r15d, edx
+    pop rdx
+    pop rax
+    test r15d, r15d
+    jz 4b
     mov rdi, rbx
     mov rsi, rax
     call bind

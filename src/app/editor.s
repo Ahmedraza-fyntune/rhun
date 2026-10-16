@@ -2454,7 +2454,12 @@ FN editor_draw
     mov esi, r13d
     mov edx, [rip + g_lh]
     call mark_draw
-21: # text area clip
+21: mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    call extmarks_gutter        # an extension's diagnostic on the line
+    # text area clip
     mov edi, [rip + g_ed_tx]
     sub edi, [rip + g_mt + 4*MI_4]
     mov esi, [rip + g_ed_y]

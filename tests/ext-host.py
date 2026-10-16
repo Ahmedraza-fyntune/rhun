@@ -21,7 +21,8 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
 CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen,'
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
-        'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die')
+        'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
+        'echo.countdiag,echo.bidi')
 
 
 class Host(unittest.TestCase):
@@ -475,7 +476,7 @@ class Host(unittest.TestCase):
         out = self.run_editor(drop_waits=True, actions=['cmd echo.reg', 'wait-ext echo running', 'wait 300', 'print-extensions',
                                'cmd echo.extra', 'wait 300', 'print-toast', 'key ctrl+alt+9', 'wait 300',
                                'cmd echo.reg', 'wait 300'])
-        self.assertTrue(out[0].endswith(',echo.die,echo.extra'), out[0])
+        self.assertTrue(out[0].endswith(',echo.bidi,echo.extra'), out[0])   # after the manifest's last command
         self.assertEqual(out[1], 'toast=extra ran')
         log = self.echo_log()
         self.assertEqual(sum(1 for l in log if l == '0 run echo.extra 1'), 2)   # the palette and the key
@@ -485,7 +486,7 @@ class Host(unittest.TestCase):
         out = self.run_editor(drop_waits=True, actions=['cmd echo.reg', 'wait-ext echo running', 'wait 300', 'cmd echo.die',
                                'wait 500', 'print-extensions'])
         self.assertIn('state=crashed', out[0])
-        self.assertTrue(out[0].endswith(',echo.die'), out[0])
+        self.assertTrue(out[0].endswith(',echo.bidi'), out[0])   # echo.extra is gone
 
     def test_options_override_the_settings_for_one_document(self):
         out = self.run_editor(drop_waits=True, actions=['print-options', 'cmd echo.opt', 'wait-ext echo running', 'wait 300',
@@ -550,10 +551,13 @@ class Host(unittest.TestCase):
         self.assertIn('error 1 cancelled', self.echo_log())
 
     def test_term_shows_the_command_and_enter_runs_it(self):
+        # the prompt ignores Enter in its first half second (a keystroke meant for the editor)
         out = self.run_editor(drop_waits=True, actions=['cmd echo.term', 'wait-ext echo running', 'wait 300', 'print-palette',
-                               'key Return', 'wait-term ext-ran-ok', 'print-term', 'print-palette'])
+                               'key Return', 'wait 300', 'print-palette', 'key Return', 'wait-term ext-ran-ok',
+                               'print-term', 'print-palette'])
         self.assertEqual(out[:2], ['prompt=Run in the terminal: Enter, or Esc', 'field=echo ext-ran-ok'])
-        self.assertTrue(any('ext-ran-ok' in l for l in out[2:]), out)
+        self.assertEqual(out[2:4], ['prompt=Run in the terminal: Enter, or Esc', 'field=echo ext-ran-ok'])  # too early: still open
+        self.assertTrue(any('ext-ran-ok' in l for l in out[4:]), out)
         self.assertIn('ok 1', self.echo_log())
 
     def test_cmd_runs_listed_commands_and_refuses_the_rest(self):
@@ -562,7 +566,43 @@ class Host(unittest.TestCase):
         self.assertIn('sel=24', out[0])
         self.assertIn('active=a.txt', out[1])              # still running
         log = self.echo_log()
-        self.assertEqual(sum(1 for l in log if l.startswith('error ') and ' refused ' in l), 2)
+        self.assertEqual(sum(1 for l in log if l.startswith('error ') and ' refused ' in l), 3)  # quit, unknown, paste
+
+    def test_cmd_needs_the_terminal_capability_for_the_terminal_commands(self):
+        # the echo manifest has terminal = yes: toggle_terminal opens the panel
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.termcmd', 'wait-ext echo running', 'wait 300',
+                                                        'print-panels'])
+        self.assertIn('term=1', out[0])
+        self.assertIn('ok 1', self.echo_log())
+
+    def test_an_edit_and_a_command_in_one_frame_send_each_record_once(self):
+        exts = self.manifest_variant('edits', **{'cursor = *': 'cursor = *\nedits = *'})
+        self.run_editor(drop_waits=True, actions=['cmd echo.toast', 'wait-ext echo running', 'wait 300',
+                                                  'key ctrl+End', 'type q', 'cmd echo.toast', 'wait 300', 'wait 300'],
+                        exts=exts)
+        log = self.echo_log()
+        records = [l for l in log if l.startswith('24 0 1')]   # "24 0 1\nq": the insert at the end
+        self.assertEqual(len(records), 1, log)
+
+    def test_an_empty_mark_survives_edits_elsewhere(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.emptymark', 'wait-ext echo running', 'wait 300',
+                                                        'print-marks', 'key ctrl+End', 'key BackSpace', 'wait 300',
+                                                        'print-marks', 'key ctrl+Home', 'type ab', 'wait 300', 'print-marks'])
+        self.assertEqual(out[0], '1 7 1 7 hint rhun-tests/echo here')
+        self.assertEqual(out[2], '1 7 1 7 hint rhun-tests/echo here')      # a delete elsewhere left it
+        self.assertEqual(out[4], '1 9 1 9 hint rhun-tests/echo here')      # an insert before it moved it whole
+
+    def test_a_miscounted_diagnostics_body_is_refused_and_old_marks_stay(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.diag', 'wait-ext echo running', 'wait 300',
+                                                        'cmd echo.countdiag', 'wait 300', 'print-marks'])
+        self.assertEqual(out[0], '1 1 1 6 error rhun-tests/echo first word')
+        self.assertTrue(any(l.startswith('error 2 syntax') for l in self.echo_log()), self.echo_log())
+
+    def test_term_refuses_text_that_does_not_show_as_it_is(self):
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.bidi', 'wait-ext echo running', 'wait 300',
+                                                        'print-palette'])
+        self.assertEqual(out[0], 'none')
+        self.assertTrue(any(l.startswith('error 1 syntax') for l in self.echo_log()), self.echo_log())
 
 
 if __name__ == '__main__':

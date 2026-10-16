@@ -257,6 +257,7 @@ ext_cmds_changed:
     push rbx
     call keys_reload
     call palette_ext_keys_reset
+    call palette_close_commands # an open command palette holds pointers into the vector
     mov dword ptr [rip + g_dirty], 1
     pop rbx
     ret
@@ -1745,6 +1746,8 @@ FN ext_exited
     call ext_options_clear
     mov rdi, rbx
     call extproto_prompt_owner_gone
+    xor edi, edi
+    call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
     call mem_free
     mov qword ptr [rbx + EXT_body], 0
@@ -1817,6 +1820,8 @@ FN ext_stop
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     jne 9f
 1:  mov rdi, rbx
+    call extproto_prompt_owner_gone     # a prompt of a stopping program must not act any more
+    mov rdi, rbx
     lea rsi, [rip + .Lbye]
     mov edx, 6
     call ext_send

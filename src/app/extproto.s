@@ -18,6 +18,7 @@ pr_ext: .quad 0                 # the open prompt (choose, ask, term): its exten
 pr_id: .quad 0                  #   request id (0: no prompt is open),
 pr_kind: .quad 0                #   1 choose, 2 ask, 3 term,
 pr_body: .quad 0                #   the items' bytes (choose), owned
+pr_opened: .quad 0              #   time_ms when it opened (a fresh term prompt ignores Enter)
 pr_label: .zero 208             #   the prompt text, a cstr
 pr_cmd: .zero SB_SIZE           # the command sent to the terminal
 
@@ -639,6 +640,8 @@ h_text:
     call doc_copy
     add [rip + out + SB_len], r12
     call out_end
+    mov rdi, rbx
+    call snapshot_taken
 9:  EPILOGUE
 8:  mov rdi, [rip + cur_id]
     call reply_syntax
@@ -701,6 +704,8 @@ h_range:
     call doc_copy
     add [rip + out + SB_len], r13
     call out_end
+    mov rdi, rbx
+    call snapshot_taken
 9:  EPILOGUE
 .Lhr_syntax:
     mov rdi, [rip + cur_id]
@@ -987,7 +992,7 @@ h_status:
     EPILOGUE
 
 # utf8_cut(len, ptr, max) -> the length to keep: at most max bytes, not ending inside a character
-utf8_cut:
+FN utf8_cut
     mov rax, rdi
     cmp rax, rdx
     jbe 9f
@@ -1334,7 +1339,13 @@ h_option:
     jnz 2f
     inc r12d
     jmp 1b
-2:  mov edi, 4
+2:  cmp r12d, OPT_TRIM
+    jb 21f
+    mov edi, NEEDS_DOC_WRITE    # trim and the final newline change what is written to disk
+    call need
+    test eax, eax
+    jz .Lhop_ret
+21: mov edi, 4
     lea rsi, [rip + .Lo_dash]
     call field_is
     test eax, eax
@@ -1403,12 +1414,33 @@ prompt_busy:
 
 # prompt_begin(kind): the open prompt is cur's current request
 prompt_begin:
+    push rbx
     mov [rip + pr_kind], rdi
     mov rax, [rip + cur]
     mov [rip + pr_ext], rax
     mov rax, [rip + cur_id]
     mov [rip + pr_id], rax
+    call time_ms
+    mov [rip + pr_opened], rax
+    pop rbx
     ret
+
+# extproto_prompt_fresh() -> 1 while a term prompt is less than half a second old: an Enter that
+# early was meant for whatever had the focus before the prompt appeared
+FN extproto_prompt_fresh
+    xor eax, eax
+    cmp qword ptr [rip + pr_kind], 3
+    jne 9f
+    push rbx
+    call time_ms
+    pop rbx
+    sub rax, [rip + pr_opened]
+    cmp rax, 500
+    jge 8f
+    mov eax, 1
+    ret
+8:  xor eax, eax
+9:  ret
 
 # prompt_clear(): no prompt is open
 prompt_clear:
@@ -1584,17 +1616,12 @@ h_term:
     jz .Lht_syntax
     cmp r13, EXT_TERM_MAX
     ja .Lht_toobig
-    xor ecx, ecx
-1:  cmp rcx, r13
-    jae 2f
-    movzx eax, byte ptr [r12 + rcx]
-    inc rcx
-    cmp al, 0x20
-    jb .Lht_syntax              # one line, no control characters: what is shown is what runs
-    cmp al, 0x7f
-    je .Lht_syntax
-    jmp 1b
-2:  call prompt_busy
+    mov rdi, r12
+    mov rsi, r13
+    call plain_text             # one line of valid UTF-8, nothing that hides or reorders text
+    test eax, eax
+    jz .Lht_syntax              # what is shown is what runs
+    call prompt_busy
     test eax, eax
     jnz .Lht_ret
     lea rdi, [rip + .Lrun_label]
@@ -1602,6 +1629,9 @@ h_term:
     mov rdx, r12
     mov rcx, r13
     call palette_ext_prompt_open
+    call palette_field
+    mov qword ptr [rax + TF_cur], 0     # the start of the command is what the user sees
+    mov qword ptr [rax + TF_anchor], 0
     mov edi, 3
     call prompt_begin
 .Lht_ret:
@@ -1625,12 +1655,18 @@ h_cmd:
 1:  mov rsi, [rbx]
     test rsi, rsi
     jz .Lhcm_refused
-    add rbx, 8
+    add rbx, 16
     mov edi, 2
     call field_is
     test eax, eax
     jz 1b
-    mov edi, 2
+    mov edi, [rbx - 8]          # what the command needs: a document write, the terminal
+    test edi, edi
+    jz 2f
+    call need
+    test eax, eax
+    jz .Lhcm_ret
+2:  mov edi, 2
     call field_at
     mov rdi, rax
     mov rsi, rdx
@@ -1648,7 +1684,92 @@ h_cmd:
     mov rdi, [rip + cur_id]
     lea rsi, [rip + .Le_refused_cmd]
     call reply_error
+.Lhcm_ret:
     EPILOGUE
+
+# plain_text(ptr, len) -> 1 when the bytes are one line of valid UTF-8 with no control
+# character (C0, DEL, C1), no bidi control (U+202A-202E, U+2066-2069) and no zero-width
+# character (U+200B-200F, U+2060, U+FEFF): text that shows as it is
+plain_text:
+    xor ecx, ecx
+1:  cmp rcx, rsi
+    jae 9f
+    movzx eax, byte ptr [rdi + rcx]
+    cmp al, 0x20
+    jb 8f
+    cmp al, 0x7f
+    je 8f
+    jb 7f                       # ASCII
+    cmp al, 0xc2
+    jb 8f                       # a continuation byte or an overlong lead
+    cmp al, 0xf4
+    ja 8f
+    # the sequence length and its continuation bytes
+    mov edx, 1
+    cmp al, 0xe0
+    jb 2f
+    inc edx
+    cmp al, 0xf0
+    jb 2f
+    inc edx
+2:  lea r8, [rcx + rdx]
+    cmp r8, rsi
+    jae 8f                      # cut short
+    push rcx
+    push rdx
+3:  inc rcx
+    movzx r9d, byte ptr [rdi + rcx]
+    and r9d, 0xc0
+    cmp r9d, 0x80
+    jne 6f
+    dec edx
+    jnz 3b
+    pop rdx
+    pop rcx
+    # the characters that hide or reorder what follows
+    cmp al, 0xc2
+    jne 4f
+    movzx r9d, byte ptr [rdi + rcx + 1]
+    cmp r9d, 0xa0
+    jb 8f                       # U+0080-009F
+4:  cmp al, 0xe2
+    jne 5f
+    movzx r9d, byte ptr [rdi + rcx + 1]
+    movzx r10d, byte ptr [rdi + rcx + 2]
+    cmp r9d, 0x80
+    jne 41f
+    cmp r10d, 0x8b
+    jb 5f
+    cmp r10d, 0x8f
+    jbe 8f                      # U+200B-200F
+    cmp r10d, 0xaa
+    jb 5f
+    cmp r10d, 0xae
+    jbe 8f                      # U+202A-202E
+    jmp 5f
+41: cmp r9d, 0x81
+    jne 5f
+    cmp r10d, 0xa0
+    je 8f                       # U+2060
+    cmp r10d, 0xa6
+    jb 5f
+    cmp r10d, 0xa9
+    jbe 8f                      # U+2066-2069
+5:  cmp al, 0xef
+    jne 51f
+    cmp byte ptr [rdi + rcx + 1], 0xbb
+    jne 51f
+    cmp byte ptr [rdi + rcx + 2], 0xbf
+    je 8f                       # U+FEFF
+51: add rcx, rdx
+7:  inc rcx
+    jmp 1b
+6:  pop rdx
+    pop rcx
+8:  xor eax, eax
+    ret
+9:  mov eax, 1
+    ret
 .Lhcm_syntax:
     mov rdi, [rip + cur_id]
     call reply_syntax
@@ -1723,7 +1844,12 @@ FN extproto_prompt_text
     lea rsi, [rip + .Le_cancelled]
     call reply_error
     jmp 8f
-6:  lea rdi, [rip + pr_cmd]
+6:  mov rdi, r12
+    mov rsi, r13
+    call plain_text             # the user may have edited it: the same rule
+    test eax, eax
+    jz 61f
+    lea rdi, [rip + pr_cmd]
     call sb_clear
     lea rdi, [rip + pr_cmd]
     mov rsi, r12
@@ -1737,9 +1863,15 @@ FN extproto_prompt_text
     call term_show
 7:  mov rdi, [rip + pr_cmd + SB_ptr]
     mov rsi, [rip + pr_cmd + SB_len]
-    call term_panel_paste
+    call term_panel_write       # typed into the shell, not pasted: Enter is Enter
+    test eax, eax
+    jz 61f
     mov rdi, [rip + pr_id]
     call reply_ok
+    jmp 8f
+61: mov rdi, [rip + pr_id]
+    lea rsi, [rip + .Le_cancelled]
+    call reply_error
 8:  mov [rip + cur], rbx
     call prompt_clear
 9:  EPILOGUE
@@ -1877,6 +2009,12 @@ FN extproto_events
     mov rcx, [r13 + DOC_anchor]
     mov [r14 + XK_anchor], rcx
     mov qword ptr [r14 + XK_seen], 2    # new this pass: no edits for it yet
+    mov rax, [r13 + DOC_xedits]
+    xor rcx, rcx
+    test rax, rax
+    jz 30f
+    mov rcx, [rax + SB_len]
+30: mov [r14 + XK_eoff], rcx           # the records so far are in the text it is told about
     cmp qword ptr [rbx + EXT_sub_opened], 0
     je 31f
     mov rdi, r13
@@ -1905,9 +2043,11 @@ FN extproto_events
 29: mov rax, [r13 + DOC_xedits]
     test rax, rax
     jz 30f
-    cmp qword ptr [rax + SB_len], 0
-    je 30f
+    mov rcx, [r14 + XK_eoff]
+    cmp rcx, [rax + SB_len]
+    jae 30f
     mov rdi, r13
+    mov rsi, r14
     call send_edits
 30: # changed? (before saved, so a save after a change reports both)
     mov rcx, [r13 + DOC_version]
@@ -2047,6 +2187,10 @@ FN extproto_events
     jmp 86b
 9:  EPILOGUE
 
+# extproto_known(ext, id) -> XK* or 0: what the extension was told about the document
+FN extproto_known
+    jmp known_find
+
 # known_find(ext, id) -> XK* or 0
 known_find:
     xor ecx, ecx
@@ -2180,10 +2324,12 @@ send_doc_version:
     call out_end
     EPILOGUE
 
-# send_edits(doc): "0 edits DOC VERSION LEN" + the records
+# send_edits(doc, xk): "0 edits DOC VERSION LEN" + the records this extension has not had yet
+# (from XK_eoff to the end of the frame's records); the offset moves to the end
 send_edits:
     PROLOGUE
     mov rbx, rdi
+    mov r12, rsi
     call out_begin
     lea rdi, [rip + .Lev_edits]
     call out_cstr
@@ -2196,16 +2342,41 @@ send_edits:
     mov edi, ' '
     call out_byte
     mov rax, [rbx + DOC_xedits]
+    mov r13, [r12 + XK_eoff]
     mov rdi, [rax + SB_len]
+    sub rdi, r13
     call out_u64
     mov edi, 10
     call out_byte
     mov rax, [rbx + DOC_xedits]
     mov rdi, [rax + SB_ptr]
+    add rdi, r13
     mov rsi, [rax + SB_len]
+    sub rsi, r13
+    mov [r12 + XK_eoff], rsi
+    add [r12 + XK_eoff], r13
     call out_bytes
     call out_end
     EPILOGUE
+
+# snapshot_taken(doc): the extension was just given the document's text (text, range): the
+# records so far are in what it has
+snapshot_taken:
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rip + cur]
+    mov rsi, [rbx + DOC_id]
+    call known_find
+    test rax, rax
+    jz 9f
+    mov rcx, [rbx + DOC_xedits]
+    xor edx, edx
+    test rcx, rcx
+    jz 1f
+    mov rdx, [rcx + SB_len]
+1:  mov [rax + XK_eoff], rdx
+9:  pop rbx
+    ret
 
 # extproto_send_hover_all(doc, pos): "0 hover DOC LINE COL" to the running extensions whose
 # hover subscription names the document
@@ -2372,21 +2543,23 @@ verbs:
 .Lrun_label: .asciz "Run in the terminal: Enter, or Esc"
 .p2align 3
 opt_names: .quad .Lo_tab, .Lo_spaces, .Lo_trim, .Lo_final
-# the commands cmd may run (section 8a)
+# the commands cmd may run (section 8a): name, what it needs (0, NEEDS_DOC_WRITE for the ones
+# that change the document, NEEDS_TERMINAL for the terminal panel's); cut, copy and paste are
+# not here: the clipboard is no extension's, and a paste can reach the terminal
 cmd_allow:
-    .quad .La_undo, .La_redo, .La_cut, .La_copy, .La_paste, .La_select_all, .La_select_line
-    .quad .La_select_next, .La_duplicate_line, .La_delete_line, .La_move_line_up, .La_move_line_down
-    .quad .La_indent, .La_outdent, .La_toggle_comment, .La_newline_below, .La_newline_above
-    .quad .La_find, .La_replace, .La_find_next, .La_find_prev, .La_find_in_files, .La_goto_line
-    .quad .La_quick_open, .La_command_palette, .La_next_tab, .La_prev_tab, .La_reveal_file
-    .quad .La_focus_explorer, .La_toggle_sidebar, .La_toggle_agents, .La_toggle_terminal
-    .quad .La_new_terminal, .La_clear_terminal, .La_toggle_word_wrap, .La_toggle_whitespace
-    .quad .La_toggle_line_numbers, .La_zoom_in, .La_zoom_out, .La_zoom_reset, 0
+    .quad .La_undo, NEEDS_DOC_WRITE, .La_redo, NEEDS_DOC_WRITE, .La_select_all, 0, .La_select_line, 0
+    .quad .La_select_next, 0, .La_duplicate_line, NEEDS_DOC_WRITE, .La_delete_line, NEEDS_DOC_WRITE
+    .quad .La_move_line_up, NEEDS_DOC_WRITE, .La_move_line_down, NEEDS_DOC_WRITE
+    .quad .La_indent, NEEDS_DOC_WRITE, .La_outdent, NEEDS_DOC_WRITE, .La_toggle_comment, NEEDS_DOC_WRITE
+    .quad .La_newline_below, NEEDS_DOC_WRITE, .La_newline_above, NEEDS_DOC_WRITE
+    .quad .La_find, 0, .La_replace, 0, .La_find_next, 0, .La_find_prev, 0, .La_find_in_files, 0, .La_goto_line, 0
+    .quad .La_quick_open, 0, .La_command_palette, 0, .La_next_tab, 0, .La_prev_tab, 0, .La_reveal_file, 0
+    .quad .La_focus_explorer, 0, .La_toggle_sidebar, 0, .La_toggle_agents, 0
+    .quad .La_toggle_terminal, NEEDS_TERMINAL, .La_new_terminal, NEEDS_TERMINAL, .La_clear_terminal, NEEDS_TERMINAL
+    .quad .La_toggle_word_wrap, 0, .La_toggle_whitespace, 0, .La_toggle_line_numbers, 0
+    .quad .La_zoom_in, 0, .La_zoom_out, 0, .La_zoom_reset, 0, 0, 0
 .La_undo: .asciz "undo"
 .La_redo: .asciz "redo"
-.La_cut: .asciz "cut"
-.La_copy: .asciz "copy"
-.La_paste: .asciz "paste"
 .La_select_all: .asciz "select_all"
 .La_select_line: .asciz "select_line"
 .La_select_next: .asciz "select_next"
