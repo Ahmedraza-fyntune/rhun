@@ -116,6 +116,17 @@ class GitTrust(unittest.TestCase):
                          ['git on branch=main'])
         self.assertEqual(self.run_editor([], ['print-git']), ['git on branch=main'])
 
+    def test_git_turned_off_keeps_the_pause(self):
+        # a link's folder is paused with git off too, so that the last project does not come back as a
+        # folder opened by hand once git is on
+        config = self.work / 'config/rhun/config'
+        text = config.read_text(encoding='utf-8').replace('restore_project = false', 'restore_project = true')
+        config.write_text(text.replace('enabled = true', 'enabled = false'), encoding='utf-8')
+        self.assertEqual(self.run_editor([self.link(self.repo, '/')], ['print-git']), ['git paused branch=main'])
+        config.write_text(text, encoding='utf-8')
+        self.assertEqual(self.run_editor([], ['print-git']), ['git off branch='])
+        self.assertFalse(self.marker.exists(), 'git ran in a repository a link opened')
+
     def test_no_session_while_paused(self):
         # a session file would list the folder among the recent ones, which open it as by hand
         def sessions():

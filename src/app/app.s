@@ -3480,6 +3480,8 @@ trust_bar:
     je 9f
     cmp dword ptr [rip + trust_closed], 0
     jne 9f
+    cmp dword ptr [rip + cfg_git], 0      # git is off in the settings: nothing to trust it for yet
+    je 9f
     mov [rsp], edi
     mov [rsp + 4], esi
     mov [rsp + 8], edx

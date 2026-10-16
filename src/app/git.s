@@ -119,7 +119,17 @@ FN git_set_project
     je 9f
     call git_read_branch
     call watch_repo
-    cmp dword ptr [rip + cfg_git], 0
+    # a repository a link opened runs git once trusted (git_trust); it is paused with git off too, so
+    # that no session or restart keeps it as a folder opened by hand for when git is turned on
+    cmp dword ptr [rip + g_project_link], 0
+    je 2f
+    mov rdi, [rip + g_git_root]
+    call session_trusted
+    test eax, eax
+    jnz 2f
+    mov dword ptr [rip + g_git_paused], 1
+    jmp 9f
+2:  cmp dword ptr [rip + cfg_git], 0
     je 9f
     cmp dword ptr [rip + bin_tried], 0
     jne 1f
@@ -132,16 +142,7 @@ FN git_set_project
     mov [rip + env], rax
 1:  cmp qword ptr [rip + git_bin], 0
     je 9f
-    # a repository a link opened runs git once trusted (git_trust)
-    cmp dword ptr [rip + g_project_link], 0
-    je 2f
-    mov rdi, [rip + g_git_root]
-    call session_trusted
-    test eax, eax
-    jnz 2f
-    mov dword ptr [rip + g_git_paused], 1
-    jmp 9f
-2:  mov dword ptr [rip + g_git_on], 1
+    mov dword ptr [rip + g_git_on], 1
     # status and the open files' bases right away
     mov dword ptr [rip + touch_kind], 3
     call time_ms
