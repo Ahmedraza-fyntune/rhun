@@ -1309,7 +1309,10 @@ FN app_tab_label
     cmp qword ptr [rcx + TAB_kind], TAB_GIT
     jne 2f
     lea rax, [rip + .Lgit_tab]
-2:  ret
+2:  cmp qword ptr [rcx + TAB_kind], TAB_EXT
+    jne 3f
+    lea rax, [rip + .Lext_tab]
+3:  ret
 
 # app_detect_lang(doc)
 FN app_detect_lang
@@ -2112,13 +2115,18 @@ FN app_on_key
     mov edi, r12d
     call dialog_key
     jmp 9f
-1:  # Esc closes a context menu
+1:  # Esc closes a context menu, then the extensions dropdown
     cmp r12d, KEY_ESCAPE
     jne 10f
     call explorer_menu_open
     test eax, eax
-    jz 10f
+    jz 11f
     call ctx_menu_close
+    jmp 9f
+11: call extbar_menu_open
+    test eax, eax
+    jz 10f
+    call extbar_close
     jmp 9f
 10: # focused components get the first chance
     mov eax, [rip + g_focus]
@@ -2740,6 +2748,7 @@ FN app_render
     call statusbar_draw
     # overlays (not blocked)
     mov dword ptr [rip + g_block], 0
+    call extbar_draw
     call explorer_menu_draw
     call palette_draw
     call dialog_draw
@@ -2766,6 +2775,9 @@ app_modal_open:
     cmp dword ptr [rip + dlg_kind], 0
     jne 1f
     call explorer_menu_open
+    test eax, eax
+    jnz 1f
+    call extbar_menu_open
     test eax, eax
     jnz 1f
     call palette_is_open
@@ -3001,12 +3013,20 @@ FN center_draw
     call gitview_draw
     EPILOGUE
 1:  cmp qword ptr [rax + TAB_kind], TAB_SETTINGS
-    jne 2f
+    jne 11f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call settings_draw
+    EPILOGUE
+11: cmp qword ptr [rax + TAB_kind], TAB_EXT
+    jne 2f
+    mov edi, [rip + g_editor_rect]
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call extpage_draw
     EPILOGUE
 2:  mov rbx, [rip + g_doc]
     mov rdi, rbx
@@ -3320,7 +3340,14 @@ FN titlebar_draw
     test eax, UB_CLICK
     jz 8f
     call cmd_settings
-8:  sub r12d, r13d
+8:  # the extensions button, and the pinned extensions to its left
+    mov edi, r12d
+    mov esi, [rsp + 12]
+    mov edx, r13d
+    mov ecx, [rsp + 48]
+    call extbar_buttons
+    mov r12d, eax
+    sub r12d, r13d
     sub r12d, [rsp + 48]
     mov edi, ID_TOG_AGENTS
     mov esi, r12d
@@ -5225,6 +5252,58 @@ FN app_confirm
     mov dword ptr [rip + g_dirty], 1
     ret
 
+# app_confirm_cancel(fn): the open app_confirm's Cancel calls fn
+FN app_confirm_cancel
+    mov [rip + dlg_cancel], rdi
+    ret
+
+# app_dialog_dump(sb): "dialog=none", or "dialog=QUESTION" and its line and button (tests)
+FN app_dialog_dump
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rip + dlg_kind], 4
+    je 1f
+    lea rsi, [rip + .Ldd_none]
+    call sb_push_cstr
+    EPILOGUE
+1:  lea rsi, [rip + .Ldd_head]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + dlg_title]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, rbx
+    lea rsi, [rip + .Ldd_text]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + dlg_text]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, rbx
+    lea rsi, [rip + .Ldd_button]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + dlg_ok]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
+# app_dialog_answer(yes): the open dialog's button (1) or Cancel (0)
+FN app_dialog_answer
+    cmp dword ptr [rip + dlg_kind], 0
+    je 1f
+    test edi, edi
+    jz 2f
+    mov edi, 2
+2:  jmp dialog_choose
+1:  ret
+
 # ---------------- tooltips (debounced hover) ----------------
 # A button notes itself while it is drawn and hovered; tip_commit, once everything is drawn,
 # turns the frame's note into a pending tooltip, and tip_tick shows it after TIP_DELAY. Buttons
@@ -5857,6 +5936,7 @@ tip_table:
     .quad ID_TOG_TERM, .Ltip_term, cmd_toggle_terminal
     .quad ID_TOG_AGENTS, .Ltip_agents, cmd_toggle_agents
     .quad ID_SETTINGS_BTN, .Ltip_settings, cmd_settings
+    .quad ID_XB_PUZZLE, .Ltip_extensions, 0
     .quad ID_TOG_SIDE, .Ltip_side, cmd_toggle_sidebar
     .quad ID_EXP_NEW, .Ltip_exp_new, 0
     .quad ID_EXP_NEW_FOLDER, .Ltip_exp_new_folder, 0
@@ -5868,6 +5948,12 @@ tip_table:
 .Ltip_term: .asciz "Terminal"
 .Ltip_agents: .asciz "Agents"
 .Ltip_settings: .asciz "Settings"
+.Ldd_none: .asciz "dialog=none\n"
+.Ldd_head: .asciz "dialog="
+.Ldd_text: .asciz "text="
+.Ldd_button: .asciz "button="
+.Ltip_extensions: .asciz "Extensions"
+.Lext_tab: .asciz "Extensions"
 .Ltip_side: .asciz "File explorer"
 .Ltip_exp_new: .asciz "New file"
 .Ltip_exp_new_folder: .asciz "New folder"

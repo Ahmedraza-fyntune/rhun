@@ -8,6 +8,7 @@
 .bss
 .p2align 3
 out: .zero SB_SIZE
+ctl_value: .zero 1024
 cbuf: .zero SB_SIZE
 tbuf: .zero SB_SIZE
 oc_busy: .long 0                # running the client's lines
@@ -820,13 +821,13 @@ c_ext_set:
     mov [rsp], eax
     mov rdi, r13
     mov rsi, r14
-    lea rdx, [rip + .Lx_unconfined]
+    lea rdx, [rip + .Lx_pinned]
     call str_eq_cstr
     test eax, eax
     jz 3f
     mov rdi, r15
     mov esi, [rsp]
-    call ext_set_unconfined
+    call ext_set_pinned
     jmp 9f
 3:  mov rdi, r13
     mov rsi, r14
@@ -837,7 +838,160 @@ c_ext_set:
     mov rdi, r15
     mov esi, [rsp]
     call ext_set_disabled
-9:  EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
+
+# ext-install OWNER/NAME: as Install from GitHub with that answer
+c_ext_install:
+    PROLOGUE
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_install_start
+    xor eax, eax
+    EPILOGUE
+
+# wait-install: until the download is done (2 minutes at most), then "install=STATE"
+c_wait_install:
+    PROLOGUE
+    call time_ms
+    lea r13, [rax + 120000]
+1:  cmp dword ptr [rip + g_ext_install_state], 1
+    jne 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 50
+    call loop_poll
+    call app_tick
+    call flush_frame
+    jmp 1b
+2:  mov eax, [rip + g_ext_install_state]
+    lea rcx, [rip + .Lx_install_states]
+    mov rsi, [rcx + rax*8]
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    xor eax, eax
+    EPILOGUE
+
+# print-dialog: the confirm dialog's question, line and button, or dialog=none
+c_print_dialog:
+    PROLOGUE
+    call flush_frame
+    lea rdi, [rip + out]
+    call app_dialog_dump
+    xor eax, eax
+    EPILOGUE
+
+# dialog yes|no: its button, or Cancel
+c_dialog:
+    PROLOGUE
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lx_yes]
+    call str_eq_cstr
+    mov edi, eax
+    call app_dialog_answer
+    mov dword ptr [rip + g_dirty], 1
+    xor eax, eax
+    EPILOGUE
+
+# ext-setting NAME KEY VALUE: an extension's own setting, as its page sets it (VALUE: the rest)
+c_ext_setting:
+    PROLOGUE
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_by_name
+    test rax, rax
+    jz 9f
+    mov r15, rax
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    mov rdx, r15
+    call sdef_find
+    test rax, rax
+    jz 9f
+    mov r14, rax
+    # the rest of the line, trimmed
+    mov rdi, rbx
+    mov rsi, r12
+    call trim
+    lea rdi, [rip + ctl_value]
+    mov rsi, rax
+    mov rcx, rdx
+    cmp rcx, 1000
+    jbe 1f
+    mov ecx, 1000
+1:  mov rdx, rcx
+    push rdx
+    push rdx
+    call memcpy
+    pop rdx
+    pop rdx
+    lea rax, [rip + ctl_value]
+    mov byte ptr [rax + rdx], 0
+    mov rdi, r15
+    mov rsi, r14
+    lea rdx, [rip + ctl_value]
+    call ext_setting_set
+9:  xor eax, eax
+    EPILOGUE
+
+# print-ext-page: the Extensions page's list, or the details shown
+c_print_ext_page:
+    PROLOGUE
+    call flush_frame
+    lea rdi, [rip + out]
+    call extpage_dump
+    xor eax, eax
+    EPILOGUE
+
+# print-extbar: the dropdown's state and the pinned extensions
+c_print_extbar:
+    PROLOGUE
+    call flush_frame
+    lea rdi, [rip + out]
+    call extbar_dump
+    xor eax, eax
+    EPILOGUE
+
+# ext-page NAME|list: the Extensions page with that extension's details, or the list
+c_ext_page:
+    PROLOGUE
+    call next_arg
+    mov r13, rax
+    mov r14, rdx
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .Lx_list]
+    call str_eq_cstr
+    xor edi, edi
+    test eax, eax
+    jnz 1f
+    mov rdi, r13
+    mov rsi, r14
+    call ext_by_name
+    mov rdi, rax
+1:  call extpage_show
+    xor eax, eax
+    EPILOGUE
+
+# ext-remove NAME: Remove (the dialog asks; dialog yes confirms)
+c_ext_remove:
+    PROLOGUE
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_by_name
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    call ext_remove_ask
+9:  xor eax, eax
+    EPILOGUE
 
 # print-options: "tab_width=N insert_spaces=B trim_trailing_whitespace=B final_newline=B", the
 # settings in force for the active document (an extension's overrides included)
@@ -884,6 +1038,7 @@ c_print_options:
     lea rdi, [rip + out]
     mov esi, 10
     call sb_push_byte
+    xor eax, eax
     EPILOGUE
 
 # print-marks: the active document's diagnostic marks, "L1 C1 L2 C2 SEVERITY owner/name MESSAGE"
@@ -1930,7 +2085,24 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_text_cell: .asciz "print-text-cell"
 .Lc_print_options: .asciz "print-options"
 .Lc_ext_set: .asciz "ext-set"
-.Lx_unconfined: .asciz "unconfined"
+.Lc_ext_install: .asciz "ext-install"
+.Lc_wait_install: .asciz "wait-install"
+.Lc_print_dialog: .asciz "print-dialog"
+.Lc_dialog: .asciz "dialog"
+.Lc_ext_setting: .asciz "ext-setting"
+.Lc_print_ext_page: .asciz "print-ext-page"
+.Lc_print_extbar: .asciz "print-extbar"
+.Lc_ext_page: .asciz "ext-page"
+.Lc_ext_remove: .asciz "ext-remove"
+.Lx_yes: .asciz "yes"
+.Lx_list: .asciz "list"
+.Lx_install_states: .quad .Lxi_idle, .Lxi_busy, .Lxi_asking, .Lxi_done, .Lxi_failed
+.Lxi_idle: .asciz "install=idle\n"
+.Lxi_busy: .asciz "install=downloading\n"
+.Lxi_asking: .asciz "install=asking\n"
+.Lxi_done: .asciz "install=done\n"
+.Lxi_failed: .asciz "install=failed\n"
+.Lx_pinned: .asciz "pinned"
 .Lx_disabled: .asciz "disabled"
 .Lx_stop: .asciz "stop"
 .Lx_restart: .asciz "restart"
@@ -2006,6 +2178,10 @@ ctl_table:
     .quad .Lc_print_extensions, c_print_extensions, .Lc_wait_ext, c_wait_ext
     .quad .Lc_print_marks, c_print_marks, .Lc_print_hover, c_print_hover, .Lc_print_text_cell, c_print_text_cell
     .quad .Lc_print_options, c_print_options, .Lc_ext_set, c_ext_set
+    .quad .Lc_ext_install, c_ext_install, .Lc_wait_install, c_wait_install
+    .quad .Lc_print_dialog, c_print_dialog, .Lc_dialog, c_dialog
+    .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
+    .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

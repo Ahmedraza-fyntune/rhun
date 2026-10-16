@@ -77,19 +77,6 @@ class Confine(host.Host):
         out = self.probe('echo.exec', 'documents = read\nrun = ls')
         self.assertEqual(out[0], 'toast=probe ok', out)
 
-    def test_run_unconfined_is_a_remembered_choice(self):
-        out = self.run_editor(drop_waits=True, actions=['ext-set echo unconfined 1', 'cmd echo.pwrite',
-                                                        'wait-ext echo running', 'wait 300', 'wait 300',
-                                                        'print-toast', 'print-extensions', 'print-settings'])
-        self.assertEqual(out[0], 'toast=probe ok')
-        self.assertIn(' confined=0 unconfined=1', out[1])
-        self.assertIn('extensions.rhun-tests/echo', out[2:])
-        ini = (self.work / 'config/rhun/extensions.ini').read_text(encoding='utf-8')
-        self.assertEqual(ini, '[rhun-tests/echo]\nunconfined = yes\n')
-        # the choice is read back at the next start
-        out = self.run_editor(drop_waits=True, actions=['print-extensions'])
-        self.assertIn(' unconfined=1', out[0])
-
     def test_disable_stops_and_keeps_it_stopped(self):
         out = self.run_editor(drop_waits=True, actions=['cmd echo.toast', 'wait-ext echo running', 'wait 300',
                                                         'ext-set echo disabled 1', 'wait 500', 'print-extensions',
@@ -97,7 +84,7 @@ class Confine(host.Host):
                                                         'ext-set echo disabled 0', 'print-extensions'])
         self.assertIn('state=disabled', out[0])
         self.assertIn('state=disabled', out[1])
-        self.assertIn('state=idle', out[2])
+        self.assertIn('state=starting', out[2])      # on again: it starts
         ini = (self.work / 'config/rhun/extensions.ini').read_text(encoding='utf-8')
         self.assertEqual(ini, '')
 

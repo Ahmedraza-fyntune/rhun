@@ -230,9 +230,13 @@ FN keys_init
     xor r14d, r14d
 3:  cmp r14, [rip + g_ext_cmds + VEC_len]
     jae .Lki_user
+    mov rdi, r14
+    call ext_cmd_live
     imul rbx, r14, CMD_SIZE
     add rbx, [rip + g_ext_cmds + VEC_ptr]
     inc r14
+    test eax, eax
+    jz 3b                       # an extension removed this session
     mov r12, [rbx + CMD_keys]
     mov rdi, r12
     call strlen
@@ -611,6 +615,9 @@ g_commands:
     COMMAND toggle_vim, "Toggle Vim Mode", cmd_toggle_vim, ""
     COMMAND reload_file, "Revert File", cmd_reload_file, ""
     COMMAND toggle_terminal, "Toggle Terminal", cmd_toggle_terminal, "ctrl+`"
+    COMMAND extensions, "Extensions", cmd_extensions, ""
+    COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
+    COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
     COMMAND kill_terminal, "Kill Terminal", cmd_kill_terminal, ""
     COMMAND clear_terminal, "Clear Terminal", cmd_clear_terminal, ""

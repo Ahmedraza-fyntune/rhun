@@ -960,9 +960,13 @@ load_commands:
     xor r14d, r14d
 5:  cmp r14, [rip + g_ext_cmds + VEC_len]
     jae 8f
+    mov rdi, r14
+    call ext_cmd_live
     imul rbx, r14, CMD_SIZE
     add rbx, [rip + g_ext_cmds + VEC_ptr]
     inc r14
+    test eax, eax
+    jz 5b                       # an extension removed this session
     mov r12, [rbx + CMD_title]
     mov rdi, r12
     call strlen
@@ -2127,7 +2131,33 @@ palette_accept:
     mov dword ptr [rip + g_reveal], 0
     jmp .Lpa_close
 .Lpa_prompt:
-    cmp dword ptr [rip + pal_prompt], PROMPT_ASK
+    cmp dword ptr [rip + pal_prompt], PROMPT_EXT_INSTALL
+    jne 68f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call ext_install_start
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+68: cmp dword ptr [rip + pal_prompt], PROMPT_EXT_SETTING
+    jne 69f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call extpage_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+69: cmp dword ptr [rip + pal_prompt], PROMPT_ASK
     jb 70f
     # an extension's prompt: the field's text goes back to it. A terminal command's prompt that
     # just appeared ignores Enter: a keystroke meant for the editor must not run it

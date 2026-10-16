@@ -43,6 +43,7 @@ out = sys.stdout.buffer
 inp = sys.stdin.buffer
 next_id = 1
 pending = {}            # id -> (verb, what to do with the reply)
+SETTINGS = {}           # the extension's own settings, from the setting events
 
 
 def log(line):
@@ -172,6 +173,9 @@ def main():
             active = int(fields[2])
         elif event == 'bye':
             return
+        elif event == 'setting':
+            parts = line.decode(errors='replace').split(' ', 3)    # 0 setting KEY VALUE
+            SETTINGS[parts[2]] = parts[3] if len(parts) > 3 else ''
         elif event == 'hover':
             d, line, col = int(fields[2]), fields[3], fields[4]
             text = f'hovering {line}:{col}'.encode()
@@ -272,6 +276,11 @@ def on_run(command, doc, versions):
         request(f'diagnostics {doc} {versions.get(doc, 0)} 2 {len(body)}', body)   # N says two lines
     elif name == 'bidi':
         request('term 11', 'rm -rf \u202e x'.encode())
+    elif name == 'greet':
+        text = SETTINGS.get('greeting', '').encode()
+        if SETTINGS.get('loud') == 'yes':
+            text = text.upper()
+        request(f'insert {doc} {versions.get(doc, 0)} {len(text)}', text)
     elif name == 'first':
         request(f'replace {doc} {versions.get(doc, 0)} 1 1 1 2 3', b'XYZ')
     # confinement probes (tests/ext-confine.py): each toasts what happened

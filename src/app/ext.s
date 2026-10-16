@@ -264,6 +264,8 @@ ext_cmds_changed:
     ret
 
 # ---------------- the user's choices: ~/.config/rhun/extensions.ini ----------------
+# [owner/name] sections: disabled = yes, pinned = yes, and setting.KEY = VALUE for the extension's
+# own settings that differ from their defaults.
 
 # ext_ini_file() -> cstr path of extensions.ini
 ext_ini_file:
@@ -285,7 +287,7 @@ ext_ini_file:
 9:  mov rax, [rip + ext_ini_path + SB_ptr]
     EPILOGUE
 
-# ext_settings_load(): [owner/name] sections with unconfined = yes and disabled = yes
+# ext_settings_load(): the choices for every extension record
 ext_settings_load:
     PROLOGUE
     call ext_ini_file
@@ -305,30 +307,87 @@ ext_settings_load:
     call ext_by_section
     test rax, rax
     jz 1b
-    mov rbx, rax
+    mov rdi, rax
+    call apply_choice
+    jmp 1b
+8:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
+# ext_settings_load_one(ext): the choices of one extension (after an install)
+ext_settings_load_one:
+    PROLOGUE
+    mov r13, rdi
+    call ext_ini_file
+    mov rdi, rax
+    call file_read_all
+    test rax, rax
+    jz 9f
+    mov r12, rax
     lea rdi, [rip + ini_it]
-    lea rsi, [rip + .Lk_unconfined]
+    mov rsi, rax
+    call ini_init
+1:  lea rdi, [rip + ini_it]
+    call ini_next
+    test eax, eax
+    jz 8f
+    lea rdi, [rip + ini_it]
+    call ext_by_section
+    cmp rax, r13
+    jne 1b
+    mov rdi, rax
+    call apply_choice
+    jmp 1b
+8:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
+# apply_choice(ext): ini_it's key and value for it
+apply_choice:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + ini_it]
+    lea rsi, [rip + .Lk_disabled]
     call ini_key_is
     test eax, eax
     jz 2f
     call ini_val_yes
-    mov [rbx + EXT_unconfined], eax
-    jmp 1b
-2:  lea rdi, [rip + ini_it]
-    lea rsi, [rip + .Lk_disabled]
-    call ini_key_is
-    test eax, eax
-    jz 1b
-    call ini_val_yes
     mov [rbx + EXT_disabled], eax
     test eax, eax
-    jz 1b
+    jz 9f
     mov dword ptr [rbx + EXT_status], ES_DISABLED
-    lea rax, [rip + .Lr_disabled]
-    mov [rbx + EXT_reason], rax
-    jmp 1b
-8:  mov rdi, r12
-    call mem_free
+    mov qword ptr [rbx + EXT_reason], 0
+    jmp 9f
+2:  lea rdi, [rip + ini_it]
+    lea rsi, [rip + .Lk_pinned]
+    call ini_key_is
+    test eax, eax
+    jz 3f
+    call ini_val_yes
+    mov [rbx + EXT_pinned], eax
+    jmp 9f
+3:  # setting.KEY
+    mov rdi, [rip + ini_it + INI_key]
+    mov rsi, [rip + ini_it + INI_keylen]
+    cmp rsi, 8
+    jbe 9f
+    cmp dword ptr [rdi], 0x74746573         # "sett"
+    jne 9f
+    cmp dword ptr [rdi + 4], 0x2e676e69     # "ing."
+    jne 9f
+    add rdi, 8
+    sub rsi, 8
+    mov rdx, rbx
+    call sdef_find
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, [rip + ini_it + INI_val]
+    mov rsi, [rip + ini_it + INI_vallen]
+    call mem_dup
+    mov rdi, r12
+    mov rsi, rax
+    call sdef_take_value
 9:  EPILOGUE
 
 # ini_val_yes() -> 1 when ini_it's value is "yes"
@@ -338,7 +397,7 @@ ini_val_yes:
     lea rdx, [rip + .Lv_yes]
     jmp str_eq_cstr
 
-# ext_by_section(it) -> the EXT whose "owner/name" is the iterator's section, or 0
+# ext_by_section(it) -> the live EXT whose "owner/name" is the iterator's section, or 0
 ext_by_section:
     PROLOGUE
     mov rbx, rdi
@@ -348,22 +407,12 @@ ext_by_section:
     imul r13, r12, EXT_SIZE
     add r13, [rip + g_exts + VEC_ptr]
     inc r12
-    lea rdi, [rip + tmp]
-    call sb_clear
-    lea rdi, [rip + tmp]
-    mov rsi, [r13 + EXT_owner]
-    call sb_push_cstr
-    lea rdi, [rip + tmp]
-    mov esi, '/'
-    call sb_push_byte
-    lea rdi, [rip + tmp]
-    mov rsi, [r13 + EXT_name]
-    call sb_push_cstr
-    lea rdi, [rip + tmp]
-    xor esi, esi
-    call sb_push_byte
+    cmp dword ptr [r13 + EXT_status], ES_REMOVED
+    je 1b
+    mov rdi, r13
+    call ext_full_name
     mov rdi, rbx
-    mov rsi, [rip + tmp + SB_ptr]
+    mov rsi, rax
     call ini_sec_is
     test eax, eax
     jz 1b
@@ -372,8 +421,29 @@ ext_by_section:
 8:  xor eax, eax
     EPILOGUE
 
-# ext_settings_save(): the file from the records (only extensions with a choice are written)
-ext_settings_save:
+# ext_full_name(ext) -> "owner/name" in tmp (until tmp is used again)
+FN ext_full_name
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_owner]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rip + tmp + SB_ptr]
+    EPILOGUE
+
+# ext_settings_save(): the file from the records: a section for each extension with a choice
+FN ext_settings_save
     PROLOGUE
     lea rdi, [rip + tmp2]
     call sb_clear
@@ -383,57 +453,83 @@ ext_settings_save:
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
-    mov eax, [rbx + EXT_unconfined]
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 1b
+    # anything to write?
+    mov eax, [rbx + EXT_pinned]
     or eax, [rbx + EXT_disabled]
+    jnz 2f
+    mov rdi, rbx
+    call sdefs_changed
     test eax, eax
     jz 1b
-    lea rdi, [rip + tmp2]
+2:  lea rdi, [rip + tmp2]
     mov esi, '['
     call sb_push_byte
+    mov rdi, rbx
+    call ext_full_name
     lea rdi, [rip + tmp2]
-    mov rsi, [rbx + EXT_owner]
+    mov rsi, rax
     call sb_push_cstr
     lea rdi, [rip + tmp2]
-    mov esi, '/'
-    call sb_push_byte
-    lea rdi, [rip + tmp2]
-    mov rsi, [rbx + EXT_name]
+    lea rsi, [rip + .Lw_close_sec]
     call sb_push_cstr
-    lea rdi, [rip + tmp2]
-    mov esi, ']'
-    call sb_push_byte
-    lea rdi, [rip + tmp2]
-    mov esi, 10
-    call sb_push_byte
-    cmp dword ptr [rbx + EXT_unconfined], 0
-    je 2f
-    lea rdi, [rip + tmp2]
-    lea rsi, [rip + .Lw_unconfined_yes]
-    call sb_push_cstr
-2:  cmp dword ptr [rbx + EXT_disabled], 0
-    je 1b
+    cmp dword ptr [rbx + EXT_disabled], 0
+    je 3f
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_disabled_yes]
     call sb_push_cstr
-    jmp 1b
-8:  call ext_ini_file
+3:  cmp dword ptr [rbx + EXT_pinned], 0
+    je 4f
+    lea rdi, [rip + tmp2]
+    lea rsi, [rip + .Lw_pinned_yes]
+    call sb_push_cstr
+4:  # the settings that differ from their defaults
+    xor r13d, r13d
+5:  cmp r13, [rbx + EXT_sdefs + VEC_len]
+    jae 1b
+    imul r14, r13, SD_SIZE
+    add r14, [rbx + EXT_sdefs + VEC_ptr]
+    inc r13
+    mov rdi, r14
+    call sdef_is_default
+    test eax, eax
+    jnz 5b
+    lea rdi, [rip + tmp2]
+    lea rsi, [rip + .Lw_setting]
+    call sb_push_cstr
+    lea rdi, [rip + tmp2]
+    mov rsi, [r14 + SD_key]
+    call sb_push_cstr
+    lea rdi, [rip + tmp2]
+    lea rsi, [rip + .Lw_eq]
+    call sb_push_cstr
+    lea rdi, [rip + tmp2]
+    mov rsi, [r14 + SD_value]
+    call sb_push_cstr
+    lea rdi, [rip + tmp2]
+    mov esi, 10
+    call sb_push_byte
+    jmp 5b
+8:  call config_dir
+    mov rdi, rax
+    call mkdir_p
+    call ext_ini_file
     mov rdi, rax
     mov rsi, [rip + tmp2 + SB_ptr]
     mov rdx, [rip + tmp2 + SB_len]
     call file_write_all
     EPILOGUE
 
-# ext_set_unconfined(ext, yes): the choice is kept; a running program is started again under it
-FN ext_set_unconfined
+# ext_set_pinned(ext, yes): its button in the title bar, remembered
+FN ext_set_pinned
     PROLOGUE
-    mov rbx, rdi
-    mov [rbx + EXT_unconfined], esi
+    mov [rdi + EXT_pinned], esi
     call ext_settings_save
-    mov rdi, rbx
-    call ext_restart_now
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
-# ext_set_disabled(ext, yes): disabled programs stop and stay stopped; enabling makes it idle
+# ext_set_disabled(ext, yes): Off stops it and keeps it stopped; On starts it
 FN ext_set_disabled
     PROLOGUE
     mov rbx, rdi
@@ -446,18 +542,25 @@ FN ext_set_disabled
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 1f
+    cmp dword ptr [rbx + EXT_status], ES_FAILED
+    je 9f                       # a bad manifest keeps its reason
     mov dword ptr [rbx + EXT_status], ES_DISABLED
-    lea rax, [rip + .Lr_disabled]
-    mov [rbx + EXT_reason], rax
+    mov qword ptr [rbx + EXT_reason], 0
     jmp 9f
 1:  mov rdi, rbx
-    lea rsi, [rip + .Lr_disabled]
+    lea rsi, [rip + .Lr_turned_off]
     call ext_stop
     jmp 9f
 2:  cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    je 21f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPING
     jne 9f
-    mov dword ptr [rbx + EXT_status], ES_IDLE
+    mov dword ptr [rbx + EXT_restart], 1    # turned on again before the stop completed
+    jmp 9f
+21: mov dword ptr [rbx + EXT_status], ES_IDLE
     mov qword ptr [rbx + EXT_reason], 0
+    mov rdi, rbx
+    call ext_start
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -471,6 +574,8 @@ FN ext_restart_now
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_DISABLED
     je 9f
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 9f
     mov dword ptr [rbx + EXT_status], ES_STOPPED
     mov rdi, rbx
     call ext_restart
@@ -481,10 +586,603 @@ FN ext_restart_now
     call ext_stop
 9:  EPILOGUE
 
-# ext_stop_user(ext): Stop in Settings
+# ext_stop_user(ext): stopped by the user
 FN ext_stop_user
     lea rsi, [rip + .Lr_settings_stop]
     jmp ext_stop
+
+# ---------------- installing and removing (extinstall.s asks; these change the records) ------
+
+# ext_root_dir() -> the folder extensions are installed in (cstr)
+FN ext_root_dir
+    mov rax, [rip + ext_root + SB_ptr]
+    ret
+
+# ext_preview(ptr, len, ext) -> 1 when the manifest names title, version, owner and name: those,
+# the description and [needs] into the scratch record (nothing is registered)
+FN ext_preview
+    PROLOGUE
+    mov r14, rdi
+    mov r15, rsi
+    mov rbx, rdx
+    lea rdi, [rip + ini_it]
+    mov rsi, r14
+    mov rdx, r15
+    call ini_init
+1:  lea rdi, [rip + ini_it]
+    call ini_next
+    test eax, eax
+    jz 8f
+    lea r12, [rip + ini_it]
+    cmp qword ptr [r12 + INI_seclen], 0
+    jne 5f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_title]
+    call ini_key_is
+    lea r13, [rbx + EXT_title]
+    test eax, eax
+    jnz 4f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_version]
+    call ini_key_is
+    lea r13, [rbx + EXT_version]
+    test eax, eax
+    jnz 4f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_description]
+    call ini_key_is
+    lea r13, [rbx + EXT_desc]
+    test eax, eax
+    jnz 4f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_name]
+    call ini_key_is
+    lea r13, [rbx + EXT_mname]
+    test eax, eax
+    jnz 4f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_owner]
+    call ini_key_is
+    lea r13, [rbx + EXT_mowner]
+    test eax, eax
+    jz 1b
+4:  call val_dup
+    mov [r13], rax
+    jmp 1b
+5:  mov rdi, r12
+    lea rsi, [rip + .Ls_needs]
+    call ini_sec_is
+    test eax, eax
+    jz 1b
+    call parse_needs
+    jmp 1b
+8:  xor eax, eax
+    cmp qword ptr [rbx + EXT_title], 0
+    je 9f
+    cmp qword ptr [rbx + EXT_version], 0
+    je 9f
+    cmp qword ptr [rbx + EXT_mname], 0
+    je 9f
+    cmp qword ptr [rbx + EXT_mowner], 0
+    je 9f
+    mov eax, 1
+9:  EPILOGUE
+
+# ext_install_load(dir, owner, name) -> EXT* or 0: an extension installed while rhun runs: loaded,
+# its manifest commands placed with the other manifests' (before any runtime command), its choices
+# read, bindings and the palette refreshed, and started
+FN ext_install_load
+    PROLOGUE 16
+    mov rax, [rip + g_ext_cmds + VEC_len]
+    mov [rsp], rax              # where its commands will start
+    call ext_load
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    # its commands went to the end: the runtime ones (between the boundary and them) move up
+    mov r12, [rip + ext_manifest_cmds]
+    mov r13, [rsp]
+    sub r13, r12                # runtime commands
+    mov r14d, [rbx + EXT_ncmd]
+    test r13, r13
+    jz 5f
+    test r14, r14
+    jz 5f
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, r14
+    lea rcx, [rip + g_ext_cmds]
+    mov r8d, CMD_SIZE
+    call rotate_entries
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, r14
+    lea rcx, [rip + g_ext_owner]
+    mov r8d, 8
+    call rotate_entries
+5:  mov [rbx + EXT_cmd0], r12d
+    add [rip + ext_manifest_cmds], r14
+    mov rdi, rbx
+    call ext_settings_load_one
+    call ext_cmds_changed
+    mov dword ptr [rbx + EXT_status], ES_IDLE
+    cmp dword ptr [rbx + EXT_disabled], 0
+    je 6f
+    mov dword ptr [rbx + EXT_status], ES_DISABLED
+    jmp 7f
+6:  cmp qword ptr [rbx + EXT_reason], 0
+    jne 7f                      # a bad manifest stays failed
+    mov rdi, rbx
+    call ext_start
+7:  mov rax, rbx
+9:  EPILOGUE
+
+# rotate_entries(first, a, b, vec, size): entries [first, first+a) and [first+a, first+a+b) swap
+# places (the b entries come first), in a vector of size-byte entries
+rotate_entries:
+    PROLOGUE 32
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov [rsp + 16], rdx
+    mov rbx, rcx
+    mov r15d, r8d
+    # the b entries aside
+    mov rdi, [rsp + 16]
+    imul rdi, r15
+    call mem_alloc
+    mov r14, rax
+    mov rax, [rsp]
+    add rax, [rsp + 8]
+    imul rax, r15
+    mov rsi, [rbx + VEC_ptr]
+    add rsi, rax
+    mov rdi, r14
+    mov rdx, [rsp + 16]
+    imul rdx, r15
+    call memcpy
+    # the a entries up by b
+    mov rax, [rsp]
+    imul rax, r15
+    mov rsi, [rbx + VEC_ptr]
+    add rsi, rax
+    mov rdi, [rsp + 16]
+    imul rdi, r15
+    add rdi, rsi
+    mov rdx, [rsp + 8]
+    imul rdx, r15
+    call memmove
+    # the b entries at first
+    mov rax, [rsp]
+    imul rax, r15
+    mov rdi, [rbx + VEC_ptr]
+    add rdi, rax
+    mov rsi, r14
+    mov rdx, [rsp + 16]
+    imul rdx, r15
+    call memcpy
+    mov rdi, r14
+    call mem_free
+    EPILOGUE
+
+# ext_retire(ext): removed or replaced: the program ends now, its commands go inert and leave the
+# palette and the bindings
+FN ext_retire
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPING
+    jne 2f
+1:  mov rdi, rbx
+    lea rsi, [rip + .Lr_removed]
+    call ext_kill
+2:  mov dword ptr [rbx + EXT_status], ES_REMOVED
+    mov dword ptr [rbx + EXT_restart], 0
+    mov qword ptr [rbx + EXT_pending], 0
+    call ext_cmds_changed
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# ---------------- an extension's own settings ([settings] in the manifest) ----------------
+
+# sdef_find(key ptr, len, ext) -> SD* or 0
+FN sdef_find
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov rbx, rdx
+    xor r14d, r14d
+1:  cmp r14, [rbx + EXT_sdefs + VEC_len]
+    jae 8f
+    imul r15, r14, SD_SIZE
+    add r15, [rbx + EXT_sdefs + VEC_ptr]
+    inc r14
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [r15 + SD_key]
+    call str_eq_cstr
+    test eax, eax
+    jz 1b
+    mov rax, r15
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# sdef_take_value(sd, value cstr owned): the value in force, after checking it fits the type (an int
+# is clamped, a bool is yes or no, a choice one of its options; anything else keeps the old value)
+FN sdef_take_value
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov eax, [rbx + SD_type]
+    cmp eax, SDT_BOOL
+    jne 2f
+    mov rdi, r12
+    lea rsi, [rip + .Lv_yes]
+    call strcmp_eq
+    test eax, eax
+    jnz 8f
+    mov rdi, r12
+    lea rsi, [rip + .Lv_no]
+    call strcmp_eq
+    test eax, eax
+    jnz 8f
+    jmp 7f
+2:  cmp eax, SDT_INT
+    jne 3f
+    mov rdi, r12
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    call parse_u64
+    test rdx, rdx
+    jz 7f
+    cmp eax, [rbx + SD_min]
+    jge 21f
+    mov eax, [rbx + SD_min]
+21: cmp eax, [rbx + SD_max]
+    jle 22f
+    mov eax, [rbx + SD_max]
+22: mov r13d, eax
+    mov rdi, r12
+    call mem_free
+    lea rdi, [rip + reason_buf]
+    mov esi, r13d
+    call fmt_u64
+    mov byte ptr [rdi], 0
+    lea rdi, [rip + reason_buf]
+    call dup_cstr
+    mov r12, rax
+    jmp 8f
+3:  cmp eax, SDT_CHOICE
+    jne 8f
+    mov rdi, rbx
+    mov rsi, r12
+    call sdef_is_option
+    test eax, eax
+    jz 7f
+8:  mov rdi, [rbx + SD_value]
+    call mem_free
+    mov [rbx + SD_value], r12
+    EPILOGUE
+7:  mov rdi, r12
+    call mem_free
+    EPILOGUE
+
+# sdef_is_option(sd, cstr) -> 1 when the value is one of the choice's options
+FN sdef_is_option
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, [rbx + SD_opts]
+    test r13, r13
+    jz 8f
+    mov rdi, r13
+    call strlen
+    mov r14, rax
+1:  test r14, r14
+    jz 8f
+    mov rdi, r13
+    mov rsi, r14
+    call next_word
+    add r13, rcx
+    sub r14, rcx
+    test rdx, rdx
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    mov rdx, r12
+    call str_eq_cstr
+    test eax, eax
+    jz 1b
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# sdef_is_default(sd) -> 1 when its value is its default
+sdef_is_default:
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rbx + SD_value]
+    mov rsi, [rbx + SD_default]
+    test rsi, rsi
+    jnz 1f
+    lea rsi, [rip + .Lempty]
+1:  test rdi, rdi
+    jnz 2f
+    lea rdi, [rip + .Lempty]
+2:  call strcmp_eq
+    pop rbx
+    ret
+
+# sdefs_changed(ext) -> 1 when a setting differs from its default
+sdefs_changed:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rbx + EXT_sdefs + VEC_len]
+    jae 8f
+    imul rdi, r12, SD_SIZE
+    add rdi, [rbx + EXT_sdefs + VEC_ptr]
+    inc r12
+    call sdef_is_default
+    test eax, eax
+    jnz 1b
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# ext_setting_set(ext, sd, value cstr): the user changed it: kept, saved, and told to the program
+FN ext_setting_set
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdi, rdx
+    call dup_cstr
+    mov rdi, r12
+    mov rsi, rax
+    call sdef_take_value
+    call ext_settings_save
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call extproto_send_setting
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# parse_setting(): one [settings] line of the manifest: KEY.FIELD = VALUE, FIELD one of type,
+# default, title, description, min, max, options
+parse_setting:
+    PROLOGUE 16
+    # the key up to the last dot
+    mov rdi, [r12 + INI_key]
+    mov rsi, [r12 + INI_keylen]
+    mov rcx, rsi
+1:  test rcx, rcx
+    jz 9f                       # no field: ignored
+    dec rcx
+    cmp byte ptr [rdi + rcx], '.'
+    jne 1b
+    test rcx, rcx
+    jz 9f
+    mov [rsp], rcx              # the key's length
+    lea rax, [rdi + rcx + 1]
+    mov [rsp + 8], rax          # the field
+    # the definition: found, or appended in manifest order
+    mov rsi, rcx
+    mov rdx, rbx
+    call sdef_find
+    test rax, rax
+    jnz 2f
+    lea rdi, [rbx + EXT_sdefs]
+    mov esi, SD_SIZE
+    call vec_push
+    mov r13, rax
+    mov rdi, [r12 + INI_key]
+    mov rsi, [rsp]
+    call mem_dup
+    mov [r13 + SD_key], rax
+    mov dword ptr [r13 + SD_max], 0x7fffffff
+    mov rax, r13
+2:  mov r13, rax
+    mov r14, [rsp + 8]
+    mov r15, [r12 + INI_key]
+    add r15, [r12 + INI_keylen]
+    sub r15, r14                # the field's length
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Lsf_type]
+    call str_eq_cstr
+    test eax, eax
+    jz 3f
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lst_bool]
+    call str_eq_cstr
+    mov ecx, SDT_BOOL
+    test eax, eax
+    jnz 21f
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lst_int]
+    call str_eq_cstr
+    mov ecx, SDT_INT
+    test eax, eax
+    jnz 21f
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lst_choice]
+    call str_eq_cstr
+    mov ecx, SDT_CHOICE
+    test eax, eax
+    jnz 21f
+    mov ecx, SDT_STRING
+21: mov [r13 + SD_type], ecx
+    jmp 9f
+3:  lea r8, [r13 + SD_default]
+    lea rdx, [rip + .Lsf_default]
+    call field_cstr
+    test eax, eax
+    jnz 9f
+    lea r8, [r13 + SD_title]
+    lea rdx, [rip + .Lsf_title]
+    call field_cstr
+    test eax, eax
+    jnz 9f
+    lea r8, [r13 + SD_desc]
+    lea rdx, [rip + .Lsf_desc]
+    call field_cstr
+    test eax, eax
+    jnz 9f
+    lea r8, [r13 + SD_opts]
+    lea rdx, [rip + .Lsf_options]
+    call field_cstr
+    test eax, eax
+    jnz 9f
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Lsf_min]
+    call str_eq_cstr
+    test eax, eax
+    jz 4f
+    call val_int
+    mov [r13 + SD_min], eax
+    jmp 9f
+4:  mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Lsf_max]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    call val_int
+    mov [r13 + SD_max], eax
+9:  EPILOGUE
+
+# field_cstr(field name in rdx, slot in r8) -> 1 when r14/r15 (the field) is that name: the value
+# goes into the slot as an owned cstr
+field_cstr:
+    push rbx
+    mov rbx, r8
+    mov rdi, r14
+    mov rsi, r15
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov rdi, [rbx]
+    call mem_free
+    call val_dup
+    mov [rbx], rax
+    mov eax, 1
+9:  pop rbx
+    ret
+
+# val_int() -> r12's value as a number (0 when it is not one)
+val_int:
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    jmp parse_u64
+
+# sdefs_init_values(ext): each default made to fit its type (a switch is yes or no, a number within
+# its range, a choice one of its options, the first when the default is not), then the value
+# starts at it
+sdefs_init_values:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rbx + EXT_sdefs + VEC_len]
+    jae 9f
+    imul r13, r12, SD_SIZE
+    add r13, [rbx + EXT_sdefs + VEC_ptr]
+    inc r12
+    mov rdi, [r13 + SD_default]
+    test rdi, rdi
+    jnz 2f
+    lea rdi, [rip + .Lempty]
+2:  call dup_cstr
+    mov r14, rax                # the default as given
+    mov eax, [r13 + SD_type]
+    cmp eax, SDT_BOOL
+    jne 3f
+    mov rdi, r14
+    lea rsi, [rip + .Lv_yes]
+    call strcmp_eq
+    lea rdi, [rip + .Lv_yes]
+    test eax, eax
+    jnz 21f
+    lea rdi, [rip + .Lv_no]
+21: call replace_default
+    jmp 8f
+3:  cmp eax, SDT_INT
+    jne 4f
+    mov rdi, r14
+    call strlen
+    mov rdi, r14
+    mov rsi, rax
+    call parse_u64
+    cmp eax, [r13 + SD_min]
+    jge 31f
+    mov eax, [r13 + SD_min]
+31: cmp eax, [r13 + SD_max]
+    jle 32f
+    mov eax, [r13 + SD_max]
+32: lea rdi, [rip + reason_buf]
+    mov esi, eax
+    call fmt_u64
+    mov byte ptr [rdi], 0
+    lea rdi, [rip + reason_buf]
+    call replace_default
+    jmp 8f
+4:  cmp eax, SDT_CHOICE
+    jne 8f
+    mov rdi, r13
+    mov rsi, r14
+    call sdef_is_option
+    test eax, eax
+    jnz 8f
+    # the first option
+    mov rdi, [r13 + SD_opts]
+    test rdi, rdi
+    jz 8f
+    call strlen
+    mov rdi, [r13 + SD_opts]
+    mov rsi, rax
+    call next_word
+    test rdx, rdx
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov rdi, r14
+    mov r14, rax
+    call mem_free
+8:  # the normalized default, and the value
+    mov rdi, [r13 + SD_default]
+    call mem_free
+    mov [r13 + SD_default], r14
+    mov rdi, r14
+    call dup_cstr
+    mov [r13 + SD_value], rax
+    jmp 1b
+9:  EPILOGUE
+
+# replace_default(cstr): r14 becomes an owned copy of it
+replace_default:
+    push rdi
+    mov rdi, r14
+    call mem_free
+    pop rdi
+    jmp dup_cstr_r14
+dup_cstr_r14:
+    push rbx
+    call dup_cstr
+    mov r14, rax
+    pop rbx
+    ret
 
 # ---------------- discovery ----------------
 
@@ -536,10 +1234,18 @@ FN ext_init
     call sb_push_cstr
     mov rdi, [rip + ext_state_root + SB_ptr]
     call mkdir_p
-3:  mov rdi, [rip + ext_root + SB_ptr]
+3:  # room for every record up front: an install appends, and EXT* are held elsewhere
+    mov edi, EXT_SIZE * EXT_CAP
+    call mem_alloc
+    mov [rip + g_exts + VEC_ptr], rax
+    mov qword ptr [rip + g_exts + VEC_cap], EXT_CAP
+    mov rdi, [rip + ext_root + SB_ptr]
     lea rsi, [rip + owner_cb]
     xor edx, edx
     call dir_each
+    mov rax, [rip + g_ext_cmds + VEC_len]
+    mov [rip + ext_manifest_cmds], rax
+    call ext_settings_load
     EPILOGUE
 
 # owner_cb(ctx, name, is_dir): one owner folder
@@ -567,10 +1273,7 @@ owner_cb:
     call mem_free
     mov rdi, [rip + cur_owner]
     call mem_free
-9:  mov rax, [rip + g_ext_cmds + VEC_len]
-    mov [rip + ext_manifest_cmds], rax
-    call ext_settings_load
-    EPILOGUE
+9:  EPILOGUE
 
 # name_cb(ctx, name, is_dir): one extension folder
 name_cb:
@@ -591,13 +1294,16 @@ name_cb:
     call mem_free
 9:  EPILOGUE
 
-# ext_load(dir, owner, name): an EXT from dir/extension.ini; a bad manifest leaves a failed EXT
-# with its reason, so Settings can show it
+# ext_load(dir, owner, name) -> EXT*, or 0 when the table is full: an EXT from dir/extension.ini;
+# a bad manifest leaves a failed EXT with its reason, so the Extensions page can show it
 FN ext_load
     PROLOGUE 64
     mov [rsp], rdi
     mov [rsp + 8], rsi
     mov [rsp + 16], rdx
+    xor eax, eax
+    cmp qword ptr [rip + g_exts + VEC_len], EXT_CAP
+    jae .Lel_full                # the table never moves: past its size nothing more is read
     lea rdi, [rip + g_exts]
     mov esi, EXT_SIZE
     call vec_push
@@ -667,6 +1373,8 @@ FN ext_load
     jmp 2b
 3:  mov rdi, r13
     call mem_free
+    mov rdi, rbx
+    call sdefs_init_values
     # required keys; name and owner must be the folder names
     mov rdi, [rbx + EXT_mname]
     test rdi, rdi
@@ -741,7 +1449,7 @@ FN ext_load
     jmp .Lel_fail
 8:  test dword ptr [rbx + EXT_on], -1
     jnz 81f
-    mov dword ptr [rbx + EXT_on], ON_COMMAND
+    mov dword ptr [rbx + EXT_on], ON_STARTUP | ON_COMMAND   # installed means running
 81: # its data files: themes and grammars
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsub_themes]
@@ -760,11 +1468,16 @@ FN ext_load
     mov rdi, r12
     call mem_free
 9:  mov qword ptr [rip + cur_ext], 0
+    mov rax, rbx
     EPILOGUE
 .Lel_fail:
     mov [rbx + EXT_reason], rdi
     mov dword ptr [rbx + EXT_status], ES_FAILED
     mov qword ptr [rip + cur_ext], 0
+    mov rax, rbx
+    EPILOGUE
+.Lel_full:
+    xor eax, eax
     EPILOGUE
 
 # manifest_kv(ini): one key = value of the manifest being loaded (cur_ext)
@@ -779,9 +1492,17 @@ manifest_kv:
     lea rsi, [rip + .Lk_title]
     call ini_key_is
     test eax, eax
-    jz 1f
+    jz 0f
     call val_dup
     mov [rbx + EXT_title], rax
+    jmp 9f
+0:  mov rdi, r12
+    lea rsi, [rip + .Lk_description]
+    call ini_key_is
+    test eax, eax
+    jz 1f
+    call val_dup
+    mov [rbx + EXT_desc], rax
     jmp 9f
 1:  mov rdi, r12
     lea rsi, [rip + .Lk_name]
@@ -892,8 +1613,15 @@ manifest_kv:
     lea rsi, [rip + .Ls_needs]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 3f
     call parse_needs
+    jmp 9f
+3:  mov rdi, r12
+    lea rsi, [rip + .Ls_settings]
+    call ini_sec_is
+    test eax, eax
+    jz 9f
+    call parse_setting
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -1170,7 +1898,7 @@ needs_yes:
 9:  EPILOGUE
 
 # dup_cstr(cstr) -> owned copy
-dup_cstr:
+FN dup_cstr
     push rdi
     call strlen
     pop rdi
@@ -1292,6 +2020,8 @@ FN ext_cmd_run
     imul rax, rax, EXT_SIZE
     add rax, [rip + g_exts + VEC_ptr]
     mov rbx, rax
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1f
     mov rdi, rbx
@@ -1320,6 +2050,18 @@ FN ext_cmd_run
     call app_toast
     EPILOGUE
 
+# ext_cmd_live(index) -> 1 when the g_ext_cmds entry belongs to an extension that is not removed
+FN ext_cmd_live
+    mov rax, [rip + g_ext_owner + VEC_ptr]
+    mov rax, [rax + rdi*8]
+    imul rax, rax, EXT_SIZE
+    add rax, [rip + g_exts + VEC_ptr]
+    xor ecx, ecx
+    cmp dword ptr [rax + EXT_status], ES_REMOVED
+    setne cl
+    mov eax, ecx
+    ret
+
 # ext_cmd_find(ptr, len) -> CMD* or 0, among the extensions' commands
 FN ext_cmd_find
     PROLOGUE
@@ -1331,9 +2073,15 @@ FN ext_cmd_find
     imul rax, rbx, CMD_SIZE
     add rax, [rip + g_ext_cmds + VEC_ptr]
     mov r14, rax
+    mov rdi, rbx
+    call ext_cmd_live
+    inc rbx
+    test eax, eax
+    jz 1b
+    dec rbx
     mov rdi, r12
     mov rsi, r13
-    mov rdx, [rax + CMD_name]
+    mov rdx, [r14 + CMD_name]
     call str_eq_cstr
     test eax, eax
     jnz 9f
@@ -1385,6 +2133,8 @@ FN ext_start
     cmp dword ptr [rbx + EXT_disabled], 0
     jne 9f
     cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
     je 9f
     call ext_running
     cmp eax, EXT_MAX_RUNNING
@@ -1455,18 +2205,15 @@ FN ext_start
     js .Les_fail2
     mov rdi, rbx
     # confinement (confine.s): prepared here, applied in the child
-    mov qword ptr [rbx + EXT_confine_why], 0
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
-    cmp dword ptr [rbx + EXT_unconfined], 0
-    jne .Les_spawn
+    cmp dword ptr [rbx + EXT_noconfine], 0
+    jne .Les_spawn              # the child could not confine itself before: the reason stays
+    mov qword ptr [rbx + EXT_confine_why], 0
     mov rdi, rbx
     call confine_prepare
     test rax, rax
     jz .Les_spawn
-    # it cannot be confined: a --extensions session runs it anyway and says so; an installed
-    # extension does not start
-    cmp qword ptr [rip + g_ext_dir], 0
-    je .Les_unconfined_fail
+    # this system cannot hold it to its permissions: it runs, and its page says so
     mov [rbx + EXT_confine_why], rax
     jmp .Les_spawn
 .Les_unconfined_fail:
@@ -2067,19 +2814,17 @@ FN ext_exited
     call confine_exit_reason
     test rax, rax
     jz 20f
-    push rax
-    lea rdi, [rip + reason_buf]
-    lea rsi, [rip + .Lr_not_confined]
-    call cstr_copy
-    pop rsi
-    mov rdi, rax
-    call cstr_copy
-    lea rdi, [rip + reason_buf]
-    call dup_cstr
-    mov [rbx + EXT_reason], rax
-    mov dword ptr [rbx + EXT_status], ES_FAILED
+    cmp dword ptr [rbx + EXT_noconfine], 0
+    jne 20f                     # once is enough: an exit code of 70-75 now is the program's own
+    mov [rbx + EXT_confine_why], rax
+    mov dword ptr [rbx + EXT_noconfine], 1
+    mov dword ptr [rbx + EXT_status], ES_IDLE
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
-    jmp 8f
+    mov dword ptr [rip + g_dirty], 1
+    call ext_hooks_update
+    mov rdi, rbx
+    call ext_start
+    jmp 9f
 20: cmp r12d, 127
     jne 21f
     lea rax, [rip + .Lr_exec]
@@ -2769,7 +3514,7 @@ FN ext_status_draw
 
 # ext_state_name(ES_*) -> cstr
 FN ext_state_name
-    cmp edi, ES_DISABLED
+    cmp edi, ES_REMOVED
     ja 1f
     mov eax, edi
     lea rcx, [rip + state_names]
@@ -2789,6 +3534,8 @@ FN ext_dump
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 1b
     mov rdi, r12
     mov rsi, [rbx + EXT_owner]
     call sb_push_cstr
@@ -2868,10 +3615,10 @@ FN ext_dump
     mov rdi, r12
     mov esi, [rbx + EXT_confined]
     call sb_push_u64
-    cmp dword ptr [rbx + EXT_unconfined], 0
+    cmp dword ptr [rbx + EXT_pinned], 0
     je 42f
     mov rdi, r12
-    lea rsi, [rip + .Ld_unconfined]
+    lea rsi, [rip + .Ld_pinned]
     call sb_push_cstr
 42: cmp dword ptr [rbx + EXT_disabled], 0
     je 43f
@@ -2921,6 +3668,8 @@ FN ext_by_name
     imul rbx, r14, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r14
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 1b
     mov rdi, r12
     mov rsi, r13
     mov rdx, [rbx + EXT_name]
@@ -2956,7 +3705,7 @@ cur_start: .quad 0              # the EXT being started (env_add_state)
 
 .section .rodata
 .p2align 3
-state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled
+state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled, .Lst_removed
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -2964,13 +3713,16 @@ env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gom
     .quad .Le_rhun_prefix, 0
 .globl ext_target
 .ifdef WINDOWS
+.globl ext_target
 ext_target: .asciz "windows-x64"
 .Lk_run_target: .asciz "run.windows-x64"
 .else
 .ifdef MACOS
+.globl ext_target
 ext_target: .asciz "macos-arm64"
 .Lk_run_target: .asciz "run.macos-arm64"
 .else
+.globl ext_target
 ext_target: .asciz "linux-x86_64"
 .Lk_run_target: .asciz "run.linux-x86_64"
 .endif
@@ -3096,7 +3848,7 @@ ext_target: .asciz "linux-x86_64"
 .Ld_pid: .asciz " pid="
 .Ld_cmds: .asciz " cmds="
 .Ld_confined: .asciz " confined="
-.Ld_unconfined: .asciz " unconfined=1"
+.Ld_pinned: .asciz " pinned=1"
 .Ld_disabled: .asciz " disabled=1"
 .Ld_why: .asciz " why="
 .Lr_not_confined: .asciz "not confined: "
@@ -3104,10 +3856,29 @@ ext_target: .asciz "linux-x86_64"
 .Lr_settings_stop: .asciz "stopped from Settings"
 .Lr_settings_change: .asciz "restarting after a settings change"
 .Lf_extensions_ini: .asciz "/extensions.ini"
-.Lk_unconfined: .asciz "unconfined"
+.Lk_pinned: .asciz "pinned"
+.Lk_description: .asciz "description"
+.Ls_settings: .asciz "settings"
+.Lsf_type: .asciz "type"
+.Lsf_default: .asciz "default"
+.Lsf_title: .asciz "title"
+.Lsf_desc: .asciz "description"
+.Lsf_options: .asciz "options"
+.Lsf_min: .asciz "min"
+.Lsf_max: .asciz "max"
+.Lst_bool: .asciz "bool"
+.Lst_int: .asciz "int"
+.Lst_choice: .asciz "choice"
+.Lv_no: .asciz "no"
+.Lw_close_sec: .asciz "]\n"
+.Lw_pinned_yes: .asciz "pinned = yes\n"
+.Lw_setting: .asciz "setting."
+.Lw_eq: .asciz " = "
+.Lr_turned_off: .asciz "turned off"
+.Lst_removed: .asciz "removed"
+.Lr_removed: .asciz "removed"
 .Lk_disabled: .asciz "disabled"
 .Lv_yes: .asciz "yes"
-.Lw_unconfined_yes: .asciz "unconfined = yes\n"
 .Lw_disabled_yes: .asciz "disabled = yes\n"
 .Ld_status: .asciz " status="
 .Ld_flood: .asciz " flood="

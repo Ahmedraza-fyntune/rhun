@@ -101,9 +101,7 @@ FN settings_dump
     call sb_push_byte
 2:  add rbx, SET_SIZE
     jmp 1b
-9:  mov rdi, r12
-    call ext_settings_dump
-    EPILOGUE
+9:  EPILOGUE
 
 # commit the edited string setting
 commit_edit:
@@ -1331,11 +1329,6 @@ FN settings_draw
     call tf_text
     test rdx, rdx
     jnz 58f
-    mov edi, [rsp + 20]
-    mov esi, r12d
-    mov edx, [rsp + 16]
-    call ext_settings_draw      # nothing, and no space, without extensions
-    add r12d, eax
 58: add r12d, [rip + g_mt + 4*MI_48]
     sub r12d, [rsp + 24]
     mov [rip + set_content_h], r12d

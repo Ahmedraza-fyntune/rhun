@@ -916,7 +916,9 @@ ENDSTRUCT TF_SIZE
 .equ IC_F_ZIP, 144
 .equ IC_OPENCODE, 145
 .equ IC_PIN, 146
-.equ IC_COUNT, 147
+.equ IC_PUZZLE, 147
+.equ IC_MORE, 148
+.equ IC_COUNT, 149
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
@@ -950,6 +952,8 @@ ENDSTRUCT IMG_SIZE
 .equ TAB_SETTINGS, 2
 .equ TAB_IMAGE, 3               # TAB_doc is a DOC without text; DOC_img holds the view
 .equ TAB_GIT, 4
+.equ TAB_EXT, 5                 # the Extensions page (extpage.s)
+.equ ID_XB_PUZZLE, 0x7400       # the extensions button in the title bar; + 1 + i: a pinned one
 STRUCT
 F TAB_kind, 8
 F TAB_doc, 8
@@ -1023,6 +1027,8 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_RENAME, 4
 .equ PROMPT_ASK, 5              # an extension's text prompt (ask)
 .equ PROMPT_TERM, 6             # an extension's command for the terminal (term)
+.equ PROMPT_EXT_INSTALL, 7      # Install from GitHub: owner/name
+.equ PROMPT_EXT_SETTING, 8      # a text setting of an extension (extpage.s)
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -1097,12 +1103,32 @@ F EXT_mowner, 8
 F EXT_rtcmds, 4         # commands registered at runtime (removed when it stops)
 F EXT_confined, 4       # CONFINED_* of the running program
 F EXT_runs, 8           # cstr: the [needs] run list (program names), or 0
-F EXT_unconfined, 4     # 1: the user chose "Run unconfined" (extensions.ini)
-F EXT_disabled, 4       # 1: disabled in extensions.ini
-F EXT_confine_why, 8    # cstr: why it runs unconfined in a --extensions session, or 0
+F EXT_pinned, 4         # 1: its button is in the title bar (extensions.ini)
+F EXT_disabled, 4       # 1: turned off (extensions.ini)
+F EXT_confine_why, 8    # cstr: why rhun cannot hold it to its permissions on this system, or 0
 F EXT_restart, 4        # 1: start again once the stop in progress completes (a settings change)
-F EXT_pad3, 4
+F EXT_noconfine, 4      # 1: confinement failed in the child once: it runs without (EXT_confine_why)
+F EXT_desc, 8           # cstr: the manifest's description, or 0
+F EXT_sdefs, VEC_SIZE   # SD records: its own settings ([settings] in the manifest)
 ENDSTRUCT EXT_SIZE
+.equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
+# an extension's own setting: [settings] in its manifest, its value in extensions.ini
+STRUCT
+F SD_key, 8             # cstr
+F SD_title, 8           # cstr, or 0 (the key is shown)
+F SD_desc, 8            # cstr, or 0
+F SD_default, 8         # cstr, or 0 (empty)
+F SD_value, 8           # cstr, owned: the value in force
+F SD_opts, 8            # cstr: a choice's options, space separated, or 0
+F SD_type, 4            # SDT_*
+F SD_min, 4
+F SD_max, 4
+F SD_pad, 4
+ENDSTRUCT SD_SIZE
+.equ SDT_STRING, 0
+.equ SDT_BOOL, 1
+.equ SDT_INT, 2
+.equ SDT_CHOICE, 3
 .equ EXT_RTCMDS_MAX, 64         # register: commands per extension
 .equ EXT_CHOOSE_MAX, 1000       # choose: items
 .equ EXT_TERM_MAX, 4096         # term: the command's bytes
@@ -1133,6 +1159,7 @@ ENDSTRUCT XK_SIZE
 .equ ES_CRASHED, 5              # exited on its own: EXT_reason
 .equ ES_FAILED, 6               # could not start, or a bad manifest: EXT_reason
 .equ ES_DISABLED, 7
+.equ ES_REMOVED, 8              # uninstalled this session: hidden, its commands inert
 
 .equ ON_STARTUP, 1
 .equ ON_COMMAND, 2

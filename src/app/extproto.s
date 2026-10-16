@@ -280,6 +280,8 @@ handle_line:
     mov rdi, rbx
     call send_ready
     mov rdi, rbx
+    call send_settings          # its own settings, before anything else
+    mov rdi, rbx
     call extproto_events        # catch-up: nothing is known yet, so everything open is reported
     mov rax, [rbx + EXT_pending]
     test rax, rax
@@ -1880,6 +1882,42 @@ FN extproto_prompt_owner_gone
 
 # ---------------- events ----------------
 
+# send_settings(ext): "0 setting KEY VALUE" for each of its own settings
+send_settings:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rbx + EXT_sdefs + VEC_len]
+    jae 9f
+    imul rsi, r12, SD_SIZE
+    add rsi, [rbx + EXT_sdefs + VEC_ptr]
+    inc r12
+    mov rdi, rbx
+    call extproto_send_setting
+    jmp 1b
+9:  EPILOGUE
+
+# extproto_send_setting(ext, sd): "0 setting KEY VALUE"
+FN extproto_send_setting
+    PROLOGUE
+    mov rbx, rsi
+    mov r12, [rip + cur]
+    mov [rip + cur], rdi
+    call out_begin
+    lea rdi, [rip + .Lev_setting]
+    call out_cstr
+    mov rdi, [rbx + SD_key]
+    call out_cstr
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rbx + SD_value]
+    call out_cstr
+    mov edi, 10
+    call out_byte
+    call out_end
+    mov [rip + cur], r12
+    EPILOGUE
+
 # send_ready(ext): "0 ready PROJECT"
 send_ready:
     PROLOGUE
@@ -2612,6 +2650,7 @@ cmd_allow:
 .Lev_edits: .asciz "0 edits "
 .Lev_resync: .asciz "0 resync "
 .Lev_hover: .asciz "0 hover "
+.Lev_setting: .asciz "0 setting "
 .Le_unknown: .asciz "unknown no such request"
 .Le_syntax: .asciz "syntax cannot parse the line"
 .Le_nodoc: .asciz "nodoc no such document"
