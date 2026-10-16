@@ -105,6 +105,23 @@ FN extbar_buttons
 9:  mov eax, r12d
     EPILOGUE
 
+# extbar_count() -> how many buttons extbar_buttons draws: the puzzle and each pinned extension
+FN extbar_count
+    mov eax, 1
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rdx, rcx, EXT_SIZE
+    add rdx, [rip + g_exts + VEC_ptr]
+    inc rcx
+    cmp dword ptr [rdx + EXT_status], ES_REMOVED
+    je 1b
+    cmp dword ptr [rdx + EXT_pinned], 0
+    je 1b
+    inc eax
+    jmp 1b
+9:  ret
+
 # extbar_toggle(): the dropdown opens, or closes
 FN extbar_toggle
     xor dword ptr [rip + xb_open], 1

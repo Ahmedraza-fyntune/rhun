@@ -3076,7 +3076,10 @@ FN titlebar_draw
     mov [rsp + 52], eax         # window control width
     M eax, MI_6
     mov [rsp + 56], eax         # project padding
-    mov ecx, 160
+    call extbar_count
+    mov [rsp + 60], eax         # the extensions button and the pinned ones
+    imul ecx, eax, 36
+    add ecx, 160
     cmp dword ptr [rip + g_csd], 0
     je 21f
     add ecx, 144
@@ -3144,7 +3147,11 @@ FN titlebar_draw
     je 31f
     add eax, [rsp + 40]
     add eax, [rsp + 48]
-31: cmp dword ptr [rip + g_csd], 0
+31: mov ecx, [rsp + 40]
+    add ecx, [rsp + 48]
+    imul ecx, [rsp + 60]
+    add eax, ecx
+    cmp dword ptr [rip + g_csd], 0
     je 32f
     mov ecx, [rsp + 52]
     imul ecx, ecx, 3
