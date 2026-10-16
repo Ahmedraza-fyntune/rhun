@@ -1,0 +1,2078 @@
+# extensions: separate programs that talk to rhun over their standard input and output
+# (docs/extensions/v1.md). This file: manifests and discovery, the commands they add to the
+# palette, starting and stopping the programs, and moving bytes to and from them within the
+# frame budget. extproto.s parses the lines and acts on them.
+#
+# Discovery runs in app_init, before keys_init, so manifest commands have their keys from the
+# first frame; programs start lazily: on a command, on a matching document, or at startup (after
+# the first frame, from ext_tick).
+.include "rhun.inc"
+
+.bss
+.p2align 3
+.globl g_exts, g_ext_cmds, g_ext_owner, g_ext_dir, g_ext_frame_bytes, g_ext_frame_t0
+g_exts: .zero VEC_SIZE          # EXT records, in discovery order
+g_ext_cmds: .zero VEC_SIZE      # CMD records for the palette and [keys] (CMD_fn = ext_cmd_run)
+g_ext_owner: .zero VEC_SIZE     # per command: the index of its EXT (u64)
+g_ext_dir: .quad 0              # --extensions DIR, or 0 for the config folder
+g_ext_frame_bytes: .quad 0      # the frame's budget used so far, all extensions together
+g_ext_frame_t0: .quad 0         # time_ms when the frame's budget began
+ext_root: .zero SB_SIZE         # the folder the extensions are read from
+ext_state_root: .zero SB_SIZE   # ~/.local/state/rhun/extensions
+ext_startup_done: .long 0       # on = startup extensions have been started
+ext_project_done: .long 0       # on = project extensions have been started for this project
+.p2align 3
+ext_last_doc: .quad 0           # the highest DOC_id ext_tick has seen (new documents trigger activations)
+.p2align 3
+cur_ext: .quad 0                # the EXT being loaded (manifest callbacks)
+cur_owner: .quad 0              # the owner folder being scanned (cstr)
+cur_owner_path: .quad 0
+tmp: .zero SB_SIZE
+tmp2: .zero SB_SIZE
+ini_it: .zero INI_SIZE          # the manifest iterator
+argv_vec: .zero VEC_SIZE
+env_vec: .zero VEC_SIZE
+pipe_in: .zero 8                # the program's input: read end, write end
+pipe_out: .zero 8               # the program's output: read end, write end
+reason_buf: .zero 128
+
+.text
+
+# ---------------- discovery ----------------
+
+# ext_init(): read every OWNER/NAME/extension.ini under the extensions folder
+FN ext_init
+    PROLOGUE
+    lea rdi, [rip + ext_root]
+    call sb_clear
+    mov rax, [rip + g_ext_dir]
+    test rax, rax
+    jz 1f
+    # a relative --extensions DIR becomes absolute: the folder is the programs' working directory
+    cmp byte ptr [rax], '/'
+    je 11f
+    lea rdi, [rip + ext_root]
+    mov esi, 4096
+    call sb_reserve
+    mov rdi, rax
+    mov esi, 4096
+    SYS SYS_getcwd
+    test rax, rax
+    jle 11f
+    dec rax                     # without the NUL
+    add [rip + ext_root + SB_len], rax
+    lea rdi, [rip + ext_root]
+    mov esi, '/'
+    call sb_push_byte
+11: lea rdi, [rip + ext_root]
+    mov rsi, [rip + g_ext_dir]
+    call sb_push_cstr
+    jmp 2f
+1:  call config_dir
+    lea rdi, [rip + ext_root]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + ext_root]
+    lea rsi, [rip + .Lsub_extensions]
+    call sb_push_cstr
+2:  # the state folder for all extensions
+    lea rdi, [rip + ext_state_root]
+    call session_state_dir
+    test eax, eax
+    jz 3f
+    lea rdi, [rip + ext_state_root]
+    lea rsi, [rip + .Lsub_extensions]
+    call sb_push_cstr
+    mov rdi, [rip + ext_state_root + SB_ptr]
+    call mkdir_p
+3:  mov rdi, [rip + ext_root + SB_ptr]
+    lea rsi, [rip + owner_cb]
+    xor edx, edx
+    call dir_each
+    EPILOGUE
+
+# owner_cb(ctx, name, is_dir): one owner folder
+owner_cb:
+    PROLOGUE
+    test edx, edx
+    jz 9f
+    cmp byte ptr [rsi], '.'
+    je 9f
+    mov rdi, rsi
+    call strlen
+    mov rdi, rsi
+    mov rsi, rax
+    call mem_dup
+    mov [rip + cur_owner], rax
+    mov rdi, [rip + ext_root + SB_ptr]
+    mov rsi, rax
+    call path_join
+    mov [rip + cur_owner_path], rax
+    mov rdi, rax
+    lea rsi, [rip + name_cb]
+    xor edx, edx
+    call dir_each
+    mov rdi, [rip + cur_owner_path]
+    call mem_free
+    mov rdi, [rip + cur_owner]
+    call mem_free
+9:  EPILOGUE
+
+# name_cb(ctx, name, is_dir): one extension folder
+name_cb:
+    PROLOGUE
+    test edx, edx
+    jz 9f
+    cmp byte ptr [rsi], '.'
+    je 9f
+    mov rbx, rsi
+    mov rdi, [rip + cur_owner_path]
+    call path_join
+    mov r12, rax
+    mov rdi, rax
+    mov rsi, [rip + cur_owner]
+    mov rdx, rbx
+    call ext_load
+    mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
+# ext_load(dir, owner, name): an EXT from dir/extension.ini; a bad manifest leaves a failed EXT
+# with its reason, so Settings can show it
+FN ext_load
+    PROLOGUE 64
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov [rsp + 16], rdx
+    lea rdi, [rip + g_exts]
+    mov esi, EXT_SIZE
+    call vec_push
+    mov rbx, rax
+    mov [rip + cur_ext], rax
+    mov dword ptr [rbx + EXT_in], -1
+    mov dword ptr [rbx + EXT_out], -1
+    mov dword ptr [rbx + EXT_log], -1
+    mov qword ptr [rbx + EXT_active], -1
+    mov eax, [rip + g_ext_cmds + VEC_len]
+    mov [rbx + EXT_cmd0], eax
+    mov rdi, [rsp]
+    call dup_cstr
+    mov [rbx + EXT_dir], rax
+    mov rdi, [rsp + 8]
+    call dup_cstr
+    mov [rbx + EXT_owner], rax
+    mov rdi, [rsp + 16]
+    call dup_cstr
+    mov [rbx + EXT_name], rax
+    # the state folder: ROOT/OWNER--NAME
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rip + ext_state_root + SB_ptr]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_owner]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Ldashdash]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    mov rdi, [rip + tmp + SB_ptr]
+    call dup_cstr
+    mov [rbx + EXT_state], rax
+    # the manifest
+    mov rdi, [rsp]
+    lea rsi, [rip + .Lmanifest]
+    call path_join
+    mov r12, rax
+    mov rdi, rax
+    call file_read_all
+    mov r13, rax
+    mov r14, rdx
+    mov rdi, r12
+    call mem_free
+    test r13, r13
+    jnz 1f
+    lea rdi, [rip + .Lr_no_manifest]
+    jmp .Lel_fail
+1:  lea rdi, [rip + ini_it]
+    mov rsi, r13
+    mov rdx, r14
+    call ini_init
+2:  lea rdi, [rip + ini_it]
+    call ini_next
+    test eax, eax
+    jz 3f
+    lea rdi, [rip + ini_it]
+    call manifest_kv
+    jmp 2b
+3:  mov rdi, r13
+    call mem_free
+    # required keys
+    cmp qword ptr [rbx + EXT_title], 0
+    jne 4f
+    lea rdi, [rip + .Lr_no_title]
+    jmp .Lel_fail
+4:  cmp dword ptr [rbx + EXT_hello], 1   # EXT_hello holds "protocol = N" while loading
+    je 5f
+    cmp dword ptr [rbx + EXT_hello], 0
+    jne 41f
+    lea rdi, [rip + .Lr_no_protocol]
+    jmp .Lel_fail
+41: lea rdi, [rip + .Lr_protocol]
+    jmp .Lel_fail
+5:  mov dword ptr [rbx + EXT_hello], 0
+    cmp qword ptr [rbx + EXT_prog], 0
+    jne 6f
+    lea rdi, [rip + .Lr_no_program]
+    jmp .Lel_fail
+6:  # a script needs its runtime on PATH
+    cmp qword ptr [rbx + EXT_script], 0
+    je 7f
+    mov rdi, [rbx + EXT_prog]
+    call proc_which
+    test rax, rax
+    jnz 61f
+    lea rdi, [rip + .Lr_no_runtime]
+    jmp .Lel_fail
+61: mov rdi, [rbx + EXT_prog]
+    push rax
+    push rax
+    call mem_free
+    pop rax
+    pop rax
+    mov [rbx + EXT_prog], rax
+    jmp 8f
+7:  # the program must exist
+    mov rdi, [rbx + EXT_prog]
+    xor esi, esi
+    SYS SYS_access
+    test rax, rax
+    jz 8f
+    lea rdi, [rip + .Lr_no_file]
+    jmp .Lel_fail
+8:  test dword ptr [rbx + EXT_on], -1
+    jnz 9f
+    mov dword ptr [rbx + EXT_on], ON_COMMAND
+9:  mov qword ptr [rip + cur_ext], 0
+    EPILOGUE
+.Lel_fail:
+    mov [rbx + EXT_reason], rdi
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    mov qword ptr [rip + cur_ext], 0
+    EPILOGUE
+
+# manifest_kv(ini): one key = value of the manifest being loaded (cur_ext)
+manifest_kv:
+    PROLOGUE
+    mov r12, rdi
+    mov rbx, [rip + cur_ext]
+    cmp qword ptr [r12 + INI_seclen], 0
+    jne .Lmk_sections
+    # top level
+    mov rdi, r12
+    lea rsi, [rip + .Lk_title]
+    call ini_key_is
+    test eax, eax
+    jz 1f
+    call val_dup
+    mov [rbx + EXT_title], rax
+    jmp 9f
+1:  mov rdi, r12
+    lea rsi, [rip + .Lk_version]
+    call ini_key_is
+    test eax, eax
+    jz 2f
+    call val_dup
+    mov [rbx + EXT_version], rax
+    jmp 9f
+2:  mov rdi, r12
+    lea rsi, [rip + .Lk_protocol]
+    call ini_key_is
+    test eax, eax
+    jz 3f
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    call parse_u64
+    test rdx, rdx
+    jz 21f
+    test rax, rax
+    jnz 22f
+21: mov eax, 99                 # not a number: "protocol N not supported"
+22: mov [rbx + EXT_hello], eax
+    jmp 9f
+3:  mov rdi, r12
+    lea rsi, [rip + .Lk_run_target]
+    call ini_key_is
+    test eax, eax
+    jz 4f
+    cmp qword ptr [rbx + EXT_script], 0
+    jne 9f                      # runtime + run already set
+    mov rdi, [rbx + EXT_dir]
+    call val_join
+    mov [rbx + EXT_prog], rax
+    jmp 9f
+4:  mov rdi, r12
+    lea rsi, [rip + .Lk_runtime]
+    call ini_key_is
+    test eax, eax
+    jz 5f
+    mov rdi, [rbx + EXT_prog]
+    call mem_free
+    call val_dup
+    mov [rbx + EXT_prog], rax
+    cmp qword ptr [rbx + EXT_script], 0
+    jne 9f
+    lea rax, [rip + .Lempty]
+    mov [rbx + EXT_script], rax
+    jmp 9f
+5:  mov rdi, r12
+    lea rsi, [rip + .Lk_run]
+    call ini_key_is
+    test eax, eax
+    jz 6f
+    mov rdi, [rbx + EXT_dir]
+    call val_join
+    mov [rbx + EXT_script], rax
+    jmp 9f
+6:  mov rdi, r12
+    lea rsi, [rip + .Lk_args]
+    call ini_key_is
+    test eax, eax
+    jz 7f
+    call val_dup
+    mov [rbx + EXT_args], rax
+    jmp 9f
+7:  mov rdi, r12
+    lea rsi, [rip + .Lk_on]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    call parse_on
+    jmp 9f
+.Lmk_sections:
+    mov rdi, r12
+    lea rsi, [rip + .Ls_commands]
+    call ini_sec_is
+    test eax, eax
+    jz 1f
+    mov rdi, rbx
+    mov rsi, r12
+    call ext_cmd_add
+    jmp 9f
+1:  mov rdi, r12
+    lea rsi, [rip + .Ls_subscribe]
+    call ini_sec_is
+    test eax, eax
+    jz 2f
+    call parse_subscribe
+    jmp 9f
+2:  mov rdi, r12
+    lea rsi, [rip + .Ls_needs]
+    call ini_sec_is
+    test eax, eax
+    jz 9f
+    call parse_needs
+9:  EPILOGUE
+
+# val_dup() -> a copy of r12's value as a cstr
+val_dup:
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    jmp mem_dup
+
+# val_join(dir) -> dir joined with r12's value (relative paths are inside the extension folder)
+val_join:
+    push rbx
+    push rbx
+    mov rbx, rdi
+    mov rax, [r12 + INI_val]
+    cmp byte ptr [rax], '/'
+    jne 1f
+    call val_dup
+    pop rbx
+    pop rbx
+    ret
+1:  call val_dup
+    mov rdi, rbx
+    mov rsi, rax
+    push rax
+    push rax
+    call path_join
+    pop rdi
+    pop rdi
+    push rax
+    push rax
+    call mem_free
+    pop rax
+    pop rax
+    pop rbx
+    pop rbx
+    ret
+
+# parse_on(): on = startup command lang:X open:GLOB project
+parse_on:
+    PROLOGUE
+    mov r13, [r12 + INI_val]
+    mov r14, [r12 + INI_vallen]
+1:  test r14, r14
+    jz 9f
+    mov rdi, r13
+    mov rsi, r14
+    call next_word
+    add r13, rcx
+    sub r14, rcx
+    test rdx, rdx
+    jz 9f
+    mov r15, rax
+    mov rdi, rax
+    mov rsi, rdx
+    push rdx
+    push rdx
+    lea rdx, [rip + .Lo_startup]
+    call str_eq_cstr
+    pop rdx
+    pop rdx
+    test eax, eax
+    jz 2f
+    or dword ptr [rbx + EXT_on], ON_STARTUP
+    jmp 1b
+2:  mov rdi, r15
+    mov rsi, rdx
+    push rdx
+    push rdx
+    lea rdx, [rip + .Lo_command]
+    call str_eq_cstr
+    pop rdx
+    pop rdx
+    test eax, eax
+    jz 3f
+    or dword ptr [rbx + EXT_on], ON_COMMAND
+    jmp 1b
+3:  mov rdi, r15
+    mov rsi, rdx
+    push rdx
+    push rdx
+    lea rdx, [rip + .Lo_project]
+    call str_eq_cstr
+    pop rdx
+    pop rdx
+    test eax, eax
+    jz 4f
+    or dword ptr [rbx + EXT_on], ON_PROJECT
+    jmp 1b
+4:  # lang:X and open:GLOB collect into space separated lists
+    cmp rdx, 5
+    jbe 1b
+    mov rdi, r15
+    mov rsi, rdx
+    push rdx
+    push rdx
+    lea rdx, [rip + .Lo_lang]
+    mov ecx, 5
+    call str_starts
+    pop rdx
+    pop rdx
+    test eax, eax
+    jz 5f
+    or dword ptr [rbx + EXT_on], ON_LANG
+    lea rdi, [rbx + EXT_on_langs]
+    lea rsi, [r15 + 5]
+    sub rdx, 5
+    call list_append
+    jmp 1b
+5:  mov rdi, r15
+    mov rsi, rdx
+    push rdx
+    push rdx
+    lea rdx, [rip + .Lo_open]
+    mov ecx, 5
+    call str_starts
+    pop rdx
+    pop rdx
+    test eax, eax
+    jz 1b
+    or dword ptr [rbx + EXT_on], ON_OPEN
+    lea rdi, [rbx + EXT_on_globs]
+    lea rsi, [r15 + 5]
+    sub rdx, 5
+    call list_append
+    jmp 1b
+9:  EPILOGUE
+
+# list_append(slot*, ptr, len): "a b" lists kept as owned cstrs
+list_append:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    lea rdi, [rip + tmp]
+    call sb_clear
+    mov rsi, [rbx]
+    test rsi, rsi
+    jz 1f
+    lea rdi, [rip + tmp]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, ' '
+    call sb_push_byte
+1:  lea rdi, [rip + tmp]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov rdi, [rbx]
+    call mem_free
+    mov rdi, [rip + tmp + SB_ptr]
+    call dup_cstr
+    mov [rbx], rax
+    EPILOGUE
+
+# parse_subscribe(): event = patterns ("no" leaves it unsubscribed)
+parse_subscribe:
+    PROLOGUE
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lno]
+    call str_eq_cstr
+    test eax, eax
+    jnz 9f
+    lea r13, [rip + sub_keys]
+    xor r14d, r14d
+1:  mov rsi, [r13 + r14*8]
+    test rsi, rsi
+    jz 9f
+    mov rdi, r12
+    call ini_key_is
+    test eax, eax
+    jnz 2f
+    add r14, 2
+    jmp 1b
+2:  mov rcx, [r13 + r14*8 + 8]
+    lea r15, [rbx + rcx]
+    mov rdi, [r15]
+    call mem_free
+    call val_dup
+    mov [r15], rax
+9:  EPILOGUE
+
+# parse_needs(): the [needs] block into NEEDS_* bits
+parse_needs:
+    PROLOGUE
+    mov rdi, r12
+    lea rsi, [rip + .Ln_documents]
+    call ini_key_is
+    test eax, eax
+    jz 1f
+    mov edi, NEEDS_DOC_READ
+    mov esi, NEEDS_DOC_WRITE
+    call needs_level
+    jmp 9f
+1:  mov rdi, r12
+    lea rsi, [rip + .Ln_project]
+    call ini_key_is
+    test eax, eax
+    jz 2f
+    mov edi, NEEDS_PROJECT_READ
+    mov esi, NEEDS_PROJECT_WRITE
+    call needs_level
+    jmp 9f
+2:  mov rdi, r12
+    lea rsi, [rip + .Ln_home]
+    call ini_key_is
+    test eax, eax
+    jz 3f
+    mov edi, NEEDS_HOME_READ
+    xor esi, esi
+    call needs_level
+    jmp 9f
+3:  mov rdi, r12
+    lea rsi, [rip + .Ln_network]
+    call ini_key_is
+    test eax, eax
+    jz 4f
+    mov edi, NEEDS_NETWORK
+    call needs_yes
+    jmp 9f
+4:  mov rdi, r12
+    lea rsi, [rip + .Ln_terminal]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov edi, NEEDS_TERMINAL
+    call needs_yes
+9:  EPILOGUE
+
+# needs_level(read bit, write bit): the value is none, read or write
+needs_level:
+    PROLOGUE
+    mov r13d, edi
+    mov r14d, esi
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lread]
+    call str_eq_cstr
+    test eax, eax
+    jz 1f
+    or [rbx + EXT_needs], r13d
+    jmp 9f
+1:  mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lwrite]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    test r14d, r14d
+    jz 9f
+    or [rbx + EXT_needs], r13d
+    or [rbx + EXT_needs], r14d
+9:  EPILOGUE
+
+# needs_yes(bit): the value is yes or no
+needs_yes:
+    PROLOGUE
+    mov r13d, edi
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lyes]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    or [rbx + EXT_needs], r13d
+9:  EPILOGUE
+
+# dup_cstr(cstr) -> owned copy
+dup_cstr:
+    push rdi
+    call strlen
+    pop rdi
+    mov rsi, rax
+    jmp mem_dup
+
+# ---------------- commands ----------------
+
+# ext_cmd_add(ext, ini): "key = Title | keys" under [commands] becomes a palette command
+# NAME.key titled "Title (Extension)"
+FN ext_cmd_add
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    # name: NAME.key
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '.'
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, [r12 + INI_key]
+    mov rdx, [r12 + INI_keylen]
+    call sb_push
+    mov rdi, [rip + tmp + SB_ptr]
+    call dup_cstr
+    mov r13, rax                # name
+    # title and keys: split the value at '|'
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lbar]
+    mov ecx, 1
+    call str_find
+    mov r14, rax                # index of '|' or -1
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    test rax, rax
+    js 1f
+    mov rsi, rax
+1:  call trim
+    mov [rsp], rax
+    mov [rsp + 8], rdx          # title ptr, len
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call sb_push
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lparen]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_title]
+    test rsi, rsi
+    jnz 2f
+    mov rsi, [rbx + EXT_name]
+2:  call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, ')'
+    call sb_push_byte
+    mov rdi, [rip + tmp + SB_ptr]
+    call dup_cstr
+    mov r15, rax                # title
+    lea rax, [rip + .Lempty]
+    test r14, r14
+    js 3f
+    mov rdi, [r12 + INI_val]
+    lea rdi, [rdi + r14 + 1]
+    mov rsi, [r12 + INI_vallen]
+    sub rsi, r14
+    dec rsi
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+3:  mov r14, rax                # keys
+    lea rdi, [rip + g_ext_cmds]
+    mov esi, CMD_SIZE
+    call vec_push
+    mov [rax + CMD_name], r13
+    mov [rax + CMD_title], r15
+    lea rcx, [rip + ext_cmd_run]
+    mov [rax + CMD_fn], rcx
+    mov [rax + CMD_keys], r14
+    inc dword ptr [rbx + EXT_ncmd]
+    lea rdi, [rip + g_ext_owner]
+    mov esi, 8
+    call vec_push
+    mov rcx, rbx
+    lea rdx, [rip + g_exts]
+    sub rcx, [rdx + VEC_ptr]
+    xor edx, edx
+    push rax
+    mov rax, rcx
+    mov ecx, EXT_SIZE
+    div rcx
+    mov rcx, rax
+    pop rax
+    mov [rax], rcx
+    EPILOGUE
+
+# ext_cmd_run(cmd*): a manifest command was invoked: tell the extension, starting it first
+FN ext_cmd_run
+    PROLOGUE
+    mov rax, rdi
+    lea rcx, [rip + g_ext_cmds]
+    sub rax, [rcx + VEC_ptr]
+    xor edx, edx
+    mov ecx, CMD_SIZE
+    div rcx
+    mov r12, rax                # command index
+    mov rax, [rip + g_ext_owner + VEC_ptr]
+    mov rax, [rax + r12*8]
+    imul rax, rax, EXT_SIZE
+    add rax, [rip + g_exts + VEC_ptr]
+    mov rbx, rax
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 1f
+    mov rdi, rbx
+    mov rsi, r12
+    call extproto_send_run
+    EPILOGUE
+1:  lea rax, [r12 + 1]
+    mov [rbx + EXT_pending], rax
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPING
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_FAILED
+    je 8f
+    cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    je 8f
+    mov rdi, rbx
+    call ext_start
+9:  EPILOGUE
+8:  # cannot run: say why
+    mov rdi, [rbx + EXT_reason]
+    test rdi, rdi
+    jz 9b
+    call app_toast
+    EPILOGUE
+
+# ext_cmd_find(ptr, len) -> CMD* or 0, among the extensions' commands
+FN ext_cmd_find
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_ext_cmds + VEC_len]
+    jae 8f
+    imul rax, rbx, CMD_SIZE
+    add rax, [rip + g_ext_cmds + VEC_ptr]
+    mov r14, rax
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [rax + CMD_name]
+    call str_eq_cstr
+    test eax, eax
+    jnz 9f
+    inc rbx
+    jmp 1b
+8:  xor r14d, r14d
+9:  mov rax, r14
+    EPILOGUE
+
+# ---------------- processes ----------------
+
+# ext_running() -> how many are running or starting
+FN ext_running
+    xor eax, eax
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rdx, rcx, EXT_SIZE
+    add rdx, [rip + g_exts + VEC_ptr]
+    cmp dword ptr [rdx + EXT_status], ES_STARTING
+    je 2f
+    cmp dword ptr [rdx + EXT_status], ES_RUNNING
+    je 2f
+    cmp dword ptr [rdx + EXT_status], ES_STOPPING
+    jne 3f
+2:  inc eax
+3:  inc rcx
+    jmp 1b
+9:  ret
+
+# ext_start(ext): the program, with pipes on its input and output and the log on its errors
+FN ext_start
+    PROLOGUE 32
+    mov rbx, rdi
+.ifdef WINDOWS
+    lea rax, [rip + .Lr_windows]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    jmp 9f
+.endif
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPING
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_FAILED
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    je 9f
+    call ext_running
+    cmp eax, EXT_MAX_RUNNING
+    jb 1f
+    lea rax, [rip + .Lr_slots]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_STOPPED
+    jmp 9f
+1:  mov qword ptr [rbx + EXT_reason], 0
+    mov qword ptr [rbx + EXT_status_text], 0
+    mov dword ptr [rbx + EXT_hello], 0
+    mov dword ptr [rbx + EXT_syntax_errs], 0
+    mov dword ptr [rbx + EXT_flood], 0
+    mov dword ptr [rbx + EXT_throttled], 0
+    mov qword ptr [rbx + EXT_full_since], 0
+    mov qword ptr [rbx + EXT_body], 0
+    mov qword ptr [rbx + EXT_wq_off], 0
+    mov qword ptr [rbx + EXT_active], -1
+    mov qword ptr [rbx + EXT_known + VEC_len], 0
+    lea rdi, [rbx + EXT_rbuf]
+    call sb_clear
+    lea rdi, [rbx + EXT_wq]
+    call sb_clear
+    # the state folder and its tmp
+    mov rdi, [rbx + EXT_state]
+    call mkdir_p
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_state]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lsub_tmp]
+    call sb_push_cstr
+    mov rdi, [rip + tmp + SB_ptr]
+    call mkdir_p
+    # the log: ROOT/OWNER--NAME.log, appended
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_state]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lsuf_log]
+    call sb_push_cstr
+    mov rdi, [rip + tmp + SB_ptr]
+    mov esi, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC
+    mov edx, 0644
+    SYS SYS_open
+    mov [rbx + EXT_log], eax
+    # pipes
+    lea rdi, [rip + pipe_in]
+    mov esi, O_CLOEXEC
+    SYS SYS_pipe2
+    test rax, rax
+    js .Les_fail
+    lea rdi, [rip + pipe_out]
+    mov esi, O_CLOEXEC
+    SYS SYS_pipe2
+    test rax, rax
+    js .Les_fail2
+    mov rdi, rbx
+    call build_argv
+    mov rdi, rbx
+    call build_env
+    mov rdi, [rip + argv_vec + VEC_ptr]
+    mov rsi, [rip + env_vec + VEC_ptr]
+    mov rdx, [rbx + EXT_dir]
+    mov ecx, [rip + pipe_in]            # child reads here
+    mov r8d, [rip + pipe_out + 4]       # child writes here
+    mov r9d, [rbx + EXT_log]
+    test r9d, r9d
+    jns 2f
+    mov r9d, r8d
+2:  mov eax, 2                          # own session, dies with rhun
+    push rax
+    push rax
+    call proc_spawn
+    add rsp, 16
+    mov r12, rax
+    mov edi, [rip + pipe_in]
+    SYS SYS_close
+    mov edi, [rip + pipe_out + 4]
+    SYS SYS_close
+    test r12, r12
+    jns 3f
+    mov edi, [rip + pipe_in + 4]
+    SYS SYS_close
+    mov edi, [rip + pipe_out]
+    SYS SYS_close
+    lea rdi, [rip + .Lr_spawn]
+    jmp .Les_failed
+3:  mov [rbx + EXT_pid], r12d
+    mov eax, [rip + pipe_in + 4]
+    mov [rbx + EXT_in], eax
+    mov eax, [rip + pipe_out]
+    mov [rbx + EXT_out], eax
+    mov edi, eax
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    mov edi, [rbx + EXT_in]
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    mov edi, [rbx + EXT_out]
+    mov esi, POLLIN
+    lea rdx, [rip + ext_on_out]
+    mov rcx, rbx
+    call watch_add
+    mov edi, [rbx + EXT_in]
+    xor esi, esi                        # POLLOUT only while the queue has bytes
+    lea rdx, [rip + ext_on_in]
+    mov rcx, rbx
+    call watch_add
+    call time_ms
+    mov [rbx + EXT_started], rax
+    mov dword ptr [rbx + EXT_status], ES_STARTING
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+.Les_fail2:
+    mov edi, [rip + pipe_in]
+    SYS SYS_close
+    mov edi, [rip + pipe_in + 4]
+    SYS SYS_close
+.Les_fail:
+    lea rdi, [rip + .Lr_pipes]
+.Les_failed:
+    mov [rbx + EXT_reason], rdi
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    mov edi, [rbx + EXT_log]
+    test edi, edi
+    js 91f
+    SYS SYS_close
+    mov dword ptr [rbx + EXT_log], -1
+91: mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# build_argv(ext): argv_vec = program [script] args..., 0
+build_argv:
+    PROLOGUE
+    mov rbx, rdi
+    mov qword ptr [rip + argv_vec + VEC_len], 0
+    lea rdi, [rip + argv_vec]
+    mov esi, 8
+    call vec_push
+    mov rcx, [rbx + EXT_prog]
+    mov [rax], rcx
+    mov rax, [rbx + EXT_script]
+    test rax, rax
+    jz 1f
+    cmp byte ptr [rax], 0
+    je 1f
+    lea rdi, [rip + argv_vec]
+    mov esi, 8
+    call vec_push
+    mov rcx, [rbx + EXT_script]
+    mov [rax], rcx
+1:  mov r12, [rbx + EXT_args]
+    test r12, r12
+    jz 8f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+2:  test r13, r13
+    jz 8f
+    mov rdi, r12
+    mov rsi, r13
+    call next_word
+    add r12, rcx
+    sub r13, rcx
+    test rdx, rdx
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup                # leaked on purpose: argv strings live as long as the process
+    mov r14, rax
+    lea rdi, [rip + argv_vec]
+    mov esi, 8
+    call vec_push
+    mov [rax], r14
+    jmp 2b
+8:  lea rdi, [rip + argv_vec]
+    mov esi, 8
+    call vec_push
+    EPILOGUE
+
+# build_env(ext): env_vec, the environment of section 4 of the spec. In a --extensions session the
+# extension inherits rhun's environment as well (tests pass their settings that way).
+build_env:
+    PROLOGUE
+    mov rbx, rdi
+    mov [rip + cur_start], rbx
+    mov qword ptr [rip + env_vec + VEC_len], 0
+    cmp qword ptr [rip + g_ext_dir], 0
+    je 1f
+    # rhun's environment first; the entries below override by coming later (execve takes the
+    # first match in most libcs, so inherited duplicates of these names are skipped)
+    mov r12, [rip + g_envp]
+2:  mov rdi, [r12]
+    test rdi, rdi
+    jz 1f
+    call env_is_ours
+    test eax, eax
+    jnz 3f
+    lea rdi, [rip + env_vec]
+    mov esi, 8
+    call vec_push
+    mov rcx, [r12]
+    mov [rax], rcx
+3:  add r12, 8
+    jmp 2b
+1:  lea rdi, [rip + .Le_path]
+    call getenv
+    test rax, rax
+    jz 4f
+    lea rdi, [rip + .Le_path_eq]
+    mov rsi, rax
+    call env_add
+4:  lea rdi, [rip + .Le_home_eq]
+    mov rsi, [rbx + EXT_state]
+    call env_add
+    lea rdi, [rip + .Le_tmpdir_eq]
+    lea rsi, [rip + .Lsub_tmp]
+    call env_add_state
+    lea rdi, [rip + .Le_cache_eq]
+    lea rsi, [rip + .Lsub_cache]
+    call env_add_state
+    lea rdi, [rip + .Le_gocache_eq]
+    lea rsi, [rip + .Lsub_gocache]
+    call env_add_state
+    lea rdi, [rip + .Le_gomod_eq]
+    lea rsi, [rip + .Lsub_gomod]
+    call env_add_state
+    lea rdi, [rip + .Le_gopath_eq]
+    lea rsi, [rip + .Lsub_gopath]
+    call env_add_state
+    lea rdi, [rip + .Le_npm_eq]
+    lea rsi, [rip + .Lsub_npm]
+    call env_add_state
+    lea rdi, [rip + .Le_lang]
+    lea rsi, [rip + .Le_lang_eq]
+    call env_copy
+    lea rdi, [rip + .Le_lc_all]
+    lea rsi, [rip + .Le_lc_all_eq]
+    call env_copy
+    lea rdi, [rip + .Le_tz]
+    lea rsi, [rip + .Le_tz_eq]
+    call env_copy
+    lea rdi, [rip + .Le_version_eq]
+    lea rsi, [rip + rhun_version]
+    call env_add
+    lea rdi, [rip + .Le_protocol_eq]
+    lea rsi, [rip + .Lone]
+    call env_add
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_owner]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + .Le_extension_eq]
+    mov rsi, [rip + tmp + SB_ptr]
+    call env_add
+    lea rdi, [rip + .Le_target_eq]
+    lea rsi, [rip + ext_target]
+    call env_add
+    lea rdi, [rip + .Le_state_eq]
+    mov rsi, [rbx + EXT_state]
+    call env_add
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 5f
+    lea rdi, [rip + .Le_project_eq]
+    call env_add
+5:  lea rdi, [rip + env_vec]
+    mov esi, 8
+    call vec_push
+    EPILOGUE
+
+# env_is_ours(entry) -> 1 when the entry's name is one build_env sets itself (or starts with RHUN_)
+env_is_ours:
+    PROLOGUE
+    mov rbx, rdi
+    lea r12, [rip + env_names]
+1:  mov r13, [r12]
+    test r13, r13
+    jz 8f
+    mov rdi, r13
+    call strlen
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r14
+    call memeq
+    test eax, eax
+    jz 2f
+    cmp byte ptr [rbx + r14], '='
+    je 9f
+    cmp byte ptr [r13 + r14 - 1], '_'   # a prefix entry (RHUN_) matches without the =
+    je 9f
+2:  add r12, 8
+    jmp 1b
+8:  xor eax, eax
+    EPILOGUE
+9:  mov eax, 1
+    EPILOGUE
+
+# env_add(prefix "NAME=", value cstr): one entry
+env_add:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    lea rdi, [rip + tmp2]
+    call sb_clear
+    lea rdi, [rip + tmp2]
+    mov rsi, rbx
+    call sb_push_cstr
+    lea rdi, [rip + tmp2]
+    mov rsi, r12
+    call sb_push_cstr
+    mov rdi, [rip + tmp2 + SB_ptr]
+    call dup_cstr                # lives as long as the process; freed with the next start's vec? no: leaked
+    mov r13, rax
+    lea rdi, [rip + env_vec]
+    mov esi, 8
+    call vec_push
+    mov [rax], r13
+    EPILOGUE
+
+# env_add_state(prefix, suffix): NAME=STATE/suffix, the folder created
+env_add_state:
+    PROLOGUE
+    mov r13, rdi
+    mov r14, rsi
+    mov rbx, [rip + cur_start]
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_state]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, r14
+    call sb_push_cstr
+    mov rdi, [rip + tmp + SB_ptr]
+    call mkdir_p
+    mov rdi, r13
+    mov rsi, [rip + tmp + SB_ptr]
+    call env_add
+    EPILOGUE
+
+# env_copy(name, prefix): rhun's NAME, when set
+env_copy:
+    PROLOGUE
+    mov r12, rsi
+    call getenv
+    test rax, rax
+    jz 9f
+    mov rdi, r12
+    mov rsi, rax
+    call env_add
+9:  EPILOGUE
+
+# ext_on_out(fd, revents, ctx = EXT*): bytes from the program, within the frame's budget
+ext_on_out:
+    PROLOGUE
+    mov rbx, rdx
+    # the frame's budget clock starts with its first read (the poll before it may have idled)
+    cmp qword ptr [rip + g_ext_frame_bytes], 0
+    jne 0f
+    call time_ms
+    mov [rip + g_ext_frame_t0], rax
+0:  # budget left this frame
+    mov rax, EXT_FRAME_BYTES
+    sub rax, [rip + g_ext_frame_bytes]
+    jle .Loo_throttle
+    mov r12, rax
+    cmp r12, EXT_READ_PER_FRAME
+    jbe 1f
+    mov r12d, EXT_READ_PER_FRAME
+1:  lea rdi, [rbx + EXT_rbuf]
+    mov rsi, r12
+    call sb_reserve
+    mov rsi, rax
+    mov edi, [rbx + EXT_out]
+    mov rdx, r12
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 1b
+    cmp rax, -EAGAIN
+    je 9f
+    test rax, rax
+    jle .Loo_eof
+    add [rbx + EXT_rbuf + SB_len], rax
+    add [rip + g_ext_frame_bytes], rax
+    mov rdi, rbx
+    call extproto_pump
+    # a line without an end that fills the buffer: the program is not speaking the protocol
+    cmp qword ptr [rbx + EXT_rbuf + SB_len], EXT_LINE_MAX
+    jb 2f
+    cmp qword ptr [rbx + EXT_body], 0
+    jne 2f
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_line]
+    call ext_kill
+    jmp 9f
+2:  cmp qword ptr [rip + g_ext_frame_bytes], EXT_FRAME_BYTES
+    jb 9f
+.Loo_throttle:
+    # the rest waits for the next frame
+    mov dword ptr [rbx + EXT_throttled], 1
+    mov edi, [rbx + EXT_out]
+    xor esi, esi
+    call watch_set_events
+9:  EPILOGUE
+.Loo_eof:
+    # the program closed its output (or died): a program that stops talking is gone to us
+    mov rdi, rbx
+    xor esi, esi
+    call ext_exited
+    EPILOGUE
+
+# ext_on_in(fd, revents, ctx = EXT*): the program reads again
+ext_on_in:
+    mov rdi, rdx
+    jmp ext_flush
+
+# ext_send(ext, ptr, len): queue bytes for the program and write what the pipe takes
+FN ext_send
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPING
+    jne 9f
+1:  lea rdi, [rbx + EXT_wq]
+    call sb_push
+    mov rdi, rbx
+    call ext_flush
+9:  EPILOGUE
+
+# ext_flush(ext): write the queue to the program; what does not fit waits for POLLOUT
+FN ext_flush
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_in], 0
+    jl 9f
+1:  mov rdx, [rbx + EXT_wq + SB_len]
+    sub rdx, [rbx + EXT_wq_off]
+    jz 5f
+    mov rsi, [rbx + EXT_wq + SB_ptr]
+    add rsi, [rbx + EXT_wq_off]
+    mov edi, [rbx + EXT_in]
+    SYS SYS_write
+    cmp rax, -EINTR
+    je 1b
+    cmp rax, -EAGAIN
+    je 6f
+    test rax, rax
+    jle 7f
+    add [rbx + EXT_wq_off], rax
+    jmp 1b
+5:  # all written
+    lea rdi, [rbx + EXT_wq]
+    call sb_clear
+    mov qword ptr [rbx + EXT_wq_off], 0
+    mov qword ptr [rbx + EXT_full_since], 0
+    mov edi, [rbx + EXT_in]
+    xor esi, esi
+    call watch_set_events
+    jmp 9f
+6:  # the pipe is full: wait for POLLOUT; note when the queue went over its cap
+    mov edi, [rbx + EXT_in]
+    mov esi, POLLOUT
+    call watch_set_events
+    mov rax, [rbx + EXT_wq + SB_len]
+    sub rax, [rbx + EXT_wq_off]
+    cmp rax, EXT_WQ_MAX
+    jb 61f
+    cmp qword ptr [rbx + EXT_full_since], 0
+    jne 9f
+    call time_ms
+    mov [rbx + EXT_full_since], rax
+    jmp 9f
+61: mov qword ptr [rbx + EXT_full_since], 0
+    jmp 9f
+7:  # EPIPE: the program went away; its output's end of file follows
+9:  EPILOGUE
+
+# ext_exited(ext, status): the program is gone; reap it and record why
+#   status -1: not known yet (end of file on its output): the group is killed and waited for
+FN ext_exited
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPING
+    jne 9f
+1:  mov edi, [rbx + EXT_pid]
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+    mov edi, [rbx + EXT_pid]
+    xor esi, esi
+    call proc_wait
+    mov r12d, eax
+    mov edi, [rbx + EXT_out]
+    call watch_remove
+    mov edi, [rbx + EXT_in]
+    call watch_remove
+    mov edi, [rbx + EXT_out]
+    SYS SYS_close
+    mov edi, [rbx + EXT_in]
+    SYS SYS_close
+    mov dword ptr [rbx + EXT_out], -1
+    mov dword ptr [rbx + EXT_in], -1
+    mov edi, [rbx + EXT_log]
+    test edi, edi
+    js 2f
+    SYS SYS_close
+    mov dword ptr [rbx + EXT_log], -1
+2:  mov dword ptr [rbx + EXT_pid], 0
+    mov rdi, [rbx + EXT_body]
+    call mem_free
+    mov qword ptr [rbx + EXT_body], 0
+    mov rdi, [rbx + EXT_status_text]
+    call mem_free
+    mov qword ptr [rbx + EXT_status_text], 0
+    mov qword ptr [rbx + EXT_known + VEC_len], 0
+    lea rdi, [rbx + EXT_rbuf]
+    call sb_clear
+    lea rdi, [rbx + EXT_wq]
+    call sb_clear
+    mov qword ptr [rbx + EXT_wq_off], 0
+    cmp qword ptr [rbx + EXT_reason], 0
+    jne 5f
+    # it left on its own
+    mov dword ptr [rbx + EXT_status], ES_CRASHED
+    lea rdi, [rip + reason_buf]
+    lea rsi, [rip + .Lr_exited]
+    call cstr_copy
+    mov rdi, rax
+    mov esi, r12d
+    call fmt_u64
+    lea rdi, [rip + reason_buf]
+    call dup_cstr
+    mov [rbx + EXT_reason], rax
+    call time_ms
+    mov rcx, rax
+    sub rcx, [rbx + EXT_crash_t0]
+    cmp rcx, 60000
+    jb 3f
+    mov [rbx + EXT_crash_t0], rax
+    mov dword ptr [rbx + EXT_crashes], 0
+3:  inc dword ptr [rbx + EXT_crashes]
+    cmp dword ptr [rbx + EXT_crashes], 3
+    jb 8f
+    lea rax, [rip + .Lr_three]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_STOPPED
+    jmp 8f
+5:  mov dword ptr [rbx + EXT_status], ES_STOPPED
+8:  mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# ext_kill(ext, reason): end the program now, keeping the reason
+FN ext_kill
+    push rbx
+    mov rbx, rdi
+    mov [rbx + EXT_reason], rsi
+    mov rdi, rbx
+    mov esi, -1
+    call ext_exited
+    pop rbx
+    ret
+
+# ext_stop(ext, reason): bye, then SIGTERM after a second and SIGKILL after another (ext_tick)
+FN ext_stop
+    PROLOGUE
+    mov rbx, rdi
+    mov [rbx + EXT_reason], rsi
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    jne 9f
+1:  mov rdi, rbx
+    lea rsi, [rip + .Lbye]
+    mov edx, 6
+    call ext_send
+    mov dword ptr [rbx + EXT_status], ES_STOPPING
+    call time_ms
+    mov [rbx + EXT_started], rax
+9:  EPILOGUE
+
+# ext_restart(ext): after a stop or a crash, by the user
+FN ext_restart
+    push rbx
+    mov rbx, rdi
+    mov dword ptr [rbx + EXT_crashes], 0
+    cmp dword ptr [rbx + EXT_status], ES_STOPPED
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_CRASHED
+    jne 9f
+1:  mov dword ptr [rbx + EXT_status], ES_IDLE
+    mov rdi, rbx
+    call ext_start
+9:  pop rbx
+    ret
+
+# ext_tick(): once per frame: the budget, deadlines, and the events for each program
+FN ext_tick
+    PROLOGUE
+    cmp qword ptr [rip + g_exts + VEC_len], 0
+    je 9f
+    call time_ms
+    mov r14, rax
+    mov qword ptr [rip + g_ext_frame_bytes], 0
+    # on = startup, once; on = project when a project is open
+    cmp dword ptr [rip + ext_startup_done], 0
+    jne 1f
+    mov dword ptr [rip + ext_startup_done], 1
+    mov edi, ON_STARTUP
+    call ext_start_matching
+1:  cmp qword ptr [rip + g_project], 0
+    je 2f
+    cmp dword ptr [rip + ext_project_done], 0
+    jne 2f
+    mov dword ptr [rip + ext_project_done], 1
+    mov edi, ON_PROJECT
+    call ext_start_matching
+2:  # documents opened since the last tick start the extensions whose lang:/open: lists match
+    xor r12d, r12d
+21: cmp r12, [rip + g_tabs + VEC_len]
+    jae 2f
+    imul rax, r12, TAB_SIZE
+    add rax, [rip + g_tabs + VEC_ptr]
+    inc r12
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 21b
+    mov rdi, [rax + TAB_doc]
+    test rdi, rdi
+    jz 21b
+    mov rax, [rdi + DOC_id]
+    cmp rax, [rip + ext_last_doc]
+    jbe 21b
+    mov [rip + ext_last_doc], rax
+    call ext_doc_opened
+    jmp 21b
+2:  xor r12d, r12d
+.Let_each:
+    cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov eax, [rbx + EXT_status]
+    cmp eax, ES_STARTING
+    je .Let_starting
+    cmp eax, ES_RUNNING
+    je .Let_running
+    cmp eax, ES_STOPPING
+    je .Let_stopping
+    jmp .Let_each
+.Let_starting:
+    mov rax, r14
+    sub rax, [rbx + EXT_started]
+    cmp rax, EXT_HELLO_MS
+    jb .Let_common
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_no_hello]
+    call ext_kill
+    jmp .Let_each
+.Let_stopping:
+    mov rax, r14
+    sub rax, [rbx + EXT_started]
+    cmp rax, 1000
+    jb .Let_common
+    mov edi, [rbx + EXT_pid]
+    neg edi
+    mov esi, SIGTERM
+    cmp rax, 2000
+    jb 3f
+    mov rdi, rbx
+    mov esi, -1
+    call ext_exited
+    jmp .Let_each
+3:  SYS SYS_kill
+    jmp .Let_common
+.Let_running:
+    mov rdi, rbx
+    call extproto_events
+.Let_common:
+    # a program that does not read for 10 s
+    mov rax, [rbx + EXT_full_since]
+    test rax, rax
+    jz 4f
+    mov rcx, r14
+    sub rcx, rax
+    cmp rcx, 10000
+    jb 4f
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_not_reading]
+    call ext_kill
+    jmp .Let_each
+4:  # a program throttled last frame reads again; one that fills the budget frame after frame floods
+    cmp dword ptr [rbx + EXT_throttled], 0
+    je 5f
+    mov dword ptr [rbx + EXT_throttled], 0
+    inc dword ptr [rbx + EXT_flood]
+    cmp dword ptr [rbx + EXT_flood], EXT_FLOOD_FRAMES
+    jb 41f
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_flooding]
+    call ext_kill
+    jmp .Let_each
+41: mov qword ptr [rip + g_ext_frame_bytes], 0
+    mov rdi, rbx
+    call extproto_pump          # what is buffered already; it may throttle again
+    cmp dword ptr [rbx + EXT_throttled], 0
+    jne .Let_each
+    cmp dword ptr [rbx + EXT_out], 0
+    jl .Let_each
+    mov edi, [rbx + EXT_out]
+    mov esi, POLLIN
+    call watch_set_events
+    jmp .Let_each
+5:  mov dword ptr [rbx + EXT_flood], 0
+    jmp .Let_each
+9:  EPILOGUE
+
+# ext_timeout() -> ms until the loop should come back for the extensions: 16 while a program's
+# buffered lines wait for the next frame's budget, else -1
+FN ext_timeout
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_exts + VEC_len]
+    jae 8f
+    imul rax, rcx, EXT_SIZE
+    add rax, [rip + g_exts + VEC_ptr]
+    inc rcx
+    cmp dword ptr [rax + EXT_throttled], 0
+    je 1b
+    mov eax, 16
+    ret
+8:  mov eax, -1
+    ret
+
+# ext_start_matching(ON_ bit): start idle extensions with that activation
+FN ext_start_matching
+    PROLOGUE
+    mov r12d, edi
+    xor r13d, r13d
+1:  cmp r13, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r13, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r13
+    test [rbx + EXT_on], r12d
+    jz 1b
+    cmp dword ptr [rbx + EXT_status], ES_IDLE
+    jne 1b
+    mov rdi, rbx
+    call ext_start
+    jmp 1b
+9:  EPILOGUE
+
+# ext_doc_opened(doc): a document appeared: on = lang:X / open:GLOB extensions that match start
+FN ext_doc_opened
+    PROLOGUE
+    mov r12, rdi
+    xor r13d, r13d
+1:  cmp r13, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r13, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r13
+    cmp dword ptr [rbx + EXT_status], ES_IDLE
+    jne 1b
+    test dword ptr [rbx + EXT_on], ON_LANG | ON_OPEN
+    jz 1b
+    mov rdi, rbx
+    mov rsi, r12
+    call ext_activation_matches
+    test eax, eax
+    jz 1b
+    mov rdi, rbx
+    call ext_start
+    jmp 1b
+9:  EPILOGUE
+
+# ext_activation_matches(ext, doc) -> 1 when the document's grammar or name is in the lists
+FN ext_activation_matches
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rax, [r12 + DOC_lang]
+    test rax, rax
+    jz 1f
+    mov rdi, [rax + GR_name]
+    mov rsi, [rbx + EXT_on_langs]
+    call list_has_word
+    test eax, eax
+    jnz 9f
+1:  mov rdi, [r12 + DOC_path]
+    test rdi, rdi
+    jz 8f
+    mov rsi, [rbx + EXT_on_globs]
+    call ext_path_matches
+    test eax, eax
+    jnz 9f
+8:  xor eax, eax
+    EPILOGUE
+9:  mov eax, 1
+    EPILOGUE
+
+# list_has_word(word cstr, list cstr or 0) -> 1 when the space separated list has the word
+FN list_has_word
+    PROLOGUE
+    test rsi, rsi
+    jz 8f
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdi, rsi
+    call strlen
+    mov r13, rax
+1:  test r13, r13
+    jz 8f
+    mov rdi, r12
+    mov rsi, r13
+    call next_word
+    add r12, rcx
+    sub r13, rcx
+    test rdx, rdx
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    mov rdx, rbx
+    call str_eq_cstr
+    test eax, eax
+    jz 1b
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# ext_path_matches(path cstr, patterns cstr or 0) -> 1 when the file's name matches a pattern
+# ("*" matches every name; "*.ext" a suffix; anything else the exact name)
+FN ext_path_matches
+    PROLOGUE
+    test rsi, rsi
+    jz 8f
+    mov r12, rsi
+    call strlen
+    mov rsi, rax
+    call path_basename
+    mov rbx, rax                # name
+    mov r14, rdx                # len
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+1:  test r13, r13
+    jz 8f
+    mov rdi, r12
+    mov rsi, r13
+    call next_word
+    add r12, rcx
+    sub r13, rcx
+    test rdx, rdx
+    jz 8f
+    cmp rdx, 1
+    jne 2f
+    cmp byte ptr [rax], '*'
+    je 9f
+2:  mov rcx, rdx
+    mov rdx, rax
+    mov rdi, rbx
+    mov rsi, r14
+    call pattern_match
+    test eax, eax
+    jz 1b
+9:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# ext_shutdown(): rhun quits: bye to every program, up to 300 ms for them to leave on their own,
+# SIGTERM to the rest (on Linux they die with rhun regardless)
+FN ext_shutdown
+    PROLOGUE
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 2f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 1b
+    mov rdi, rbx
+    lea rsi, [rip + .Lbye]
+    mov edx, 6
+    call ext_send
+    jmp 1b
+2:  call time_ms
+    lea r13, [rax + 300]
+3:  # any still running?
+    xor r12d, r12d
+    xor r14d, r14d
+4:  cmp r12, [rip + g_exts + VEC_len]
+    jae 5f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov eax, [rbx + EXT_status]
+    cmp eax, ES_RUNNING
+    je 41f
+    cmp eax, ES_STARTING
+    je 41f
+    cmp eax, ES_STOPPING
+    jne 4b
+41: mov edi, [rbx + EXT_pid]
+    mov esi, 1
+    call proc_wait
+    cmp eax, -1
+    jne 42f
+    inc r14d                    # still there
+    jmp 4b
+42: mov dword ptr [rbx + EXT_status], ES_STOPPED
+    jmp 4b
+5:  test r14d, r14d
+    jz 9f
+    call time_ms
+    cmp rax, r13
+    jae 6f
+    mov edi, 10
+    call loop_poll              # drains what they write, flushes bye
+    jmp 3b
+6:  xor r12d, r12d
+7:  cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov eax, [rbx + EXT_status]
+    cmp eax, ES_RUNNING
+    je 71f
+    cmp eax, ES_STARTING
+    je 71f
+    cmp eax, ES_STOPPING
+    jne 7b
+71: mov edi, [rbx + EXT_pid]
+    neg edi
+    mov esi, SIGTERM
+    SYS SYS_kill
+    jmp 7b
+9:  EPILOGUE
+
+# ext_state_name(ES_*) -> cstr
+FN ext_state_name
+    cmp edi, ES_DISABLED
+    ja 1f
+    mov eax, edi
+    lea rcx, [rip + state_names]
+    mov rax, [rcx + rax*8]
+    ret
+1:  lea rax, [rip + .Lst_unknown]
+    ret
+
+# ext_dump(sb): one line per extension, for print-extensions:
+#   OWNER/NAME state=S [reason=R] pid=P cmds=a,b [status=T]
+FN ext_dump
+    PROLOGUE
+    mov r12, rdi
+    xor r13d, r13d
+1:  cmp r13, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r13, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r13
+    mov rdi, r12
+    mov rsi, [rbx + EXT_owner]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, '/'
+    call sb_push_byte
+    mov rdi, r12
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    mov rdi, r12
+    lea rsi, [rip + .Ld_state]
+    call sb_push_cstr
+    mov edi, [rbx + EXT_status]
+    call ext_state_name
+    mov rdi, r12
+    mov rsi, rax
+    call sb_push_cstr
+    mov rsi, [rbx + EXT_reason]
+    test rsi, rsi
+    jz 2f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_reason]
+    call sb_push_cstr
+    mov rdi, r12
+    mov rsi, [rbx + EXT_reason]
+    call sb_push_cstr
+2:  mov rdi, r12
+    lea rsi, [rip + .Ld_pid]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rbx + EXT_pid]
+    call sb_push_u64
+    mov rdi, r12
+    lea rsi, [rip + .Ld_cmds]
+    call sb_push_cstr
+    mov r14d, [rbx + EXT_cmd0]
+    mov r15d, [rbx + EXT_ncmd]
+    add r15d, r14d
+3:  cmp r14d, r15d
+    jae 4f
+    imul rax, r14, CMD_SIZE
+    add rax, [rip + g_ext_cmds + VEC_ptr]
+    mov rdi, r12
+    mov rsi, [rax + CMD_name]
+    call sb_push_cstr
+    inc r14d
+    cmp r14d, r15d
+    jae 4f
+    mov rdi, r12
+    mov esi, ','
+    call sb_push_byte
+    jmp 3b
+4:  mov rsi, [rbx + EXT_status_text]
+    test rsi, rsi
+    jz 5f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_status]
+    call sb_push_cstr
+    mov rdi, r12
+    mov rsi, [rbx + EXT_status_text]
+    call sb_push_cstr
+5:  mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    jmp 1b
+9:  EPILOGUE
+
+# ext_by_name(ptr, len) -> EXT* or 0: "name" or "owner/name"
+FN ext_by_name
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor r14d, r14d
+1:  cmp r14, [rip + g_exts + VEC_len]
+    jae 8f
+    imul rbx, r14, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r14
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [rbx + EXT_name]
+    call str_eq_cstr
+    test eax, eax
+    jnz 9f
+    # owner/name
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_owner]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [rip + tmp + SB_ptr]
+    call str_eq_cstr
+    test eax, eax
+    jnz 9f
+    jmp 1b
+8:  xor ebx, ebx
+9:  mov rax, rbx
+    EPILOGUE
+
+.data
+.p2align 3
+cur_start: .quad 0              # the EXT being started (env_add_state)
+
+.section .rodata
+.p2align 3
+state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled
+sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
+    .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection, 0, 0
+env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
+    .quad .Le_rhun_prefix, 0
+.globl ext_target
+.ifdef WINDOWS
+ext_target: .asciz "windows-x64"
+.Lk_run_target: .asciz "run.windows-x64"
+.else
+.ifdef MACOS
+ext_target: .asciz "macos-arm64"
+.Lk_run_target: .asciz "run.macos-arm64"
+.else
+ext_target: .asciz "linux-x86_64"
+.Lk_run_target: .asciz "run.linux-x86_64"
+.endif
+.endif
+.Lsub_extensions: .asciz "/extensions"
+.Lsub_tmp: .asciz "/tmp"
+.Lsub_cache: .asciz "/cache"
+.Lsub_gocache: .asciz "/gocache"
+.Lsub_gomod: .asciz "/gomod"
+.Lsub_gopath: .asciz "/gopath"
+.Lsub_npm: .asciz "/npm"
+.Lsuf_log: .asciz ".log"
+.Lmanifest: .asciz "extension.ini"
+.Ldashdash: .asciz "--"
+.Lempty: .asciz ""
+.Lone: .asciz "1"
+.Lno: .asciz "no"
+.Lyes: .asciz "yes"
+.Lread: .asciz "read"
+.Lwrite: .asciz "write"
+.Lbar: .asciz "|"
+.Lparen: .asciz " ("
+.Lbye: .asciz "0 bye\n"
+.Lk_title: .asciz "title"
+.Lk_version: .asciz "version"
+.Lk_protocol: .asciz "protocol"
+.Lk_runtime: .asciz "runtime"
+.Lk_run: .asciz "run"
+.Lk_args: .asciz "args"
+.Lk_on: .asciz "on"
+.Ls_commands: .asciz "commands"
+.Ls_subscribe: .asciz "subscribe"
+.Ls_needs: .asciz "needs"
+.Lsk_opened: .asciz "opened"
+.Lsk_saved: .asciz "saved"
+.Lsk_changed: .asciz "changed"
+.Lsk_cursor: .asciz "cursor"
+.Lsk_selection: .asciz "selection"
+.Ln_documents: .asciz "documents"
+.Ln_project: .asciz "project"
+.Ln_home: .asciz "home"
+.Ln_network: .asciz "network"
+.Ln_terminal: .asciz "terminal"
+.Lo_startup: .asciz "startup"
+.Lo_command: .asciz "command"
+.Lo_project: .asciz "project"
+.Lo_lang: .asciz "lang:"
+.Lo_open: .asciz "open:"
+.Le_path: .asciz "PATH"
+.Le_path_eq: .asciz "PATH="
+.Le_home: .asciz "HOME"
+.Le_home_eq: .asciz "HOME="
+.Le_tmpdir: .asciz "TMPDIR"
+.Le_tmpdir_eq: .asciz "TMPDIR="
+.Le_cache: .asciz "XDG_CACHE_HOME"
+.Le_cache_eq: .asciz "XDG_CACHE_HOME="
+.Le_gocache: .asciz "GOCACHE"
+.Le_gocache_eq: .asciz "GOCACHE="
+.Le_gomod: .asciz "GOMODCACHE"
+.Le_gomod_eq: .asciz "GOMODCACHE="
+.Le_gopath: .asciz "GOPATH"
+.Le_gopath_eq: .asciz "GOPATH="
+.Le_npm: .asciz "npm_config_cache"
+.Le_npm_eq: .asciz "npm_config_cache="
+.Le_lang: .asciz "LANG"
+.Le_lang_eq: .asciz "LANG="
+.Le_lc_all: .asciz "LC_ALL"
+.Le_lc_all_eq: .asciz "LC_ALL="
+.Le_tz: .asciz "TZ"
+.Le_tz_eq: .asciz "TZ="
+.Le_rhun_prefix: .asciz "RHUN_"
+.Le_version_eq: .asciz "RHUN_VERSION="
+.Le_protocol_eq: .asciz "RHUN_PROTOCOL="
+.Le_extension_eq: .asciz "RHUN_EXTENSION="
+.Le_target_eq: .asciz "RHUN_TARGET="
+.Le_state_eq: .asciz "RHUN_STATE="
+.Le_project_eq: .asciz "RHUN_PROJECT="
+.Lr_no_manifest: .asciz "no extension.ini"
+.Lr_no_title: .asciz "extension.ini has no title"
+.Lr_no_protocol: .asciz "extension.ini has no protocol"
+.Lr_protocol: .asciz "protocol version not supported (rhun speaks 1)"
+.Lr_no_program: .asciz "no program for this target in extension.ini"
+.Lr_no_runtime: .asciz "runtime not found on PATH"
+.Lr_no_file: .asciz "program file missing"
+.Lr_slots: .asciz "16 extensions already running"
+.Lr_pipes: .asciz "cannot create pipes"
+.Lr_spawn: .asciz "cannot start the program"
+.Lr_windows: .asciz "extensions do not run on Windows yet"
+.Lr_line: .asciz "a line over 64 KB without an end"
+.Lr_exited: .asciz "exited with status "
+.Lr_three: .asciz "crashed three times within a minute"
+.Lr_no_hello: .asciz "no hello within 5 s"
+.Lr_not_reading: .asciz "not reading for 10 s"
+.Lr_flooding: .asciz "flooding: used the whole budget 30 frames in a row"
+.Lst_idle: .asciz "idle"
+.Lst_starting: .asciz "starting"
+.Lst_running: .asciz "running"
+.Lst_stopping: .asciz "stopping"
+.Lst_stopped: .asciz "stopped"
+.Lst_crashed: .asciz "crashed"
+.Lst_failed: .asciz "failed"
+.Lst_disabled: .asciz "disabled"
+.Lst_unknown: .asciz "?"
+.Ld_state: .asciz " state="
+.Ld_reason: .asciz " reason="
+.Ld_pid: .asciz " pid="
+.Ld_cmds: .asciz " cmds="
+.Ld_status: .asciz " status="

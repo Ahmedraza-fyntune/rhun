@@ -134,6 +134,7 @@ FN app_init
     call theme_apply_config
     call app_load_fonts
     call syntax_load_all
+    call ext_init               # manifests: their commands take keys below
     call keys_init
     call vim_sync
     call watch_init
@@ -1777,6 +1778,7 @@ ask_readonly_named:
 FN app_after_save
     PROLOGUE
     mov rbx, rdi
+    inc qword ptr [rbx + DOC_saves]
     cmp qword ptr [rbx + DOC_lang], 0
     jne 1f
     mov rdi, rbx
@@ -2192,6 +2194,7 @@ FN app_on_key
     call keys_lookup
     test rax, rax
     jz .Lk_editor
+    mov rdi, rdx
     call rax
     jmp 9f
 .Lk_editor:
@@ -2457,7 +2460,15 @@ FN app_timeout
     cmp eax, ebx
     jge 86f
 87: mov ebx, eax
-86: mov eax, ebx
+86: call ext_timeout
+    cmp eax, -1
+    je 88f
+    cmp ebx, -1
+    je 89f
+    cmp eax, ebx
+    jge 88f
+89: mov ebx, eax
+88: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2481,6 +2492,7 @@ FN app_tick
     call ai_tick
     call palette_tick
     call editor_tick
+    call ext_tick
     EPILOGUE
 
 # ---------------- rendering ----------------

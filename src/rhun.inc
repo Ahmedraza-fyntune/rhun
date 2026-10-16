@@ -60,6 +60,10 @@
 .equ SYS_inotify_init1, 294
 .equ SYS_memfd_create, 319
 .equ SYS_close_range, 436
+.equ SYS_prctl, 157
+.equ PR_SET_PDEATHSIG, 1
+.equ SIGTERM, 15
+.equ F_SETFL, 4
 
 .equ O_RDONLY, 0
 .equ O_WRONLY, 1
@@ -527,6 +531,8 @@ F DOC_real, 8           # a symlink's file: its path (owned) and name, and its f
 F DOC_rname, 8
 F DOC_wd2, 8
 F DOC_hops, 8           # the symlinks it leads through before that file (watch.s), or 0
+F DOC_id, 8             # extensions: session-unique id, given by doc_new
+F DOC_saves, 8          # extensions: times the document was written (the "saved" event)
 ENDSTRUCT DOC_SIZE
 
 .equ DISK_FADE_MS, 800
@@ -948,6 +954,97 @@ F CMD_title, 8
 F CMD_fn, 8
 F CMD_keys, 8           # default bindings, space separated
 ENDSTRUCT CMD_SIZE
+
+# ---- extensions (src/app/ext.s, extproto.s) ----
+STRUCT
+F EXT_name, 8           # cstr, the folder name ("echo")
+F EXT_owner, 8          # cstr, the parent folder name
+F EXT_title, 8          # cstr
+F EXT_version, 8        # cstr
+F EXT_dir, 8            # cstr, the extension folder
+F EXT_state, 8          # cstr, its writable state folder
+F EXT_prog, 8           # cstr, the program to run (the runtime for a script), or 0 when unusable
+F EXT_script, 8         # cstr, the script given to the runtime, or 0
+F EXT_args, 8           # cstr, extra arguments (space separated), or 0
+F EXT_on, 4             # ON_* bits
+F EXT_needs, 4          # NEEDS_* bits
+F EXT_status, 4         # ES_*
+F EXT_pid, 4
+F EXT_in, 4             # the pipe to the program's input, -1 when not running
+F EXT_out, 4            # the pipe from its output
+F EXT_log, 4            # its error output, a file
+F EXT_hello, 4          # 1 once hello arrived
+F EXT_crashes, 4        # within the current minute
+F EXT_syntax_errs, 4    # in a row
+F EXT_flood, 4          # frames in a row that used up the budget
+F EXT_cmd0, 4           # its commands: first index into g_ext_cmds and count
+F EXT_ncmd, 4
+F EXT_reason, 8         # cstr, why it is stopped or failed, or 0
+F EXT_started, 8        # time_ms of the start (hello deadline) or of the stop request (bye)
+F EXT_crash_t0, 8       # time_ms of the first crash in the window
+F EXT_full_since, 8     # time_ms since the outgoing queue has been full, 0 when not
+F EXT_rbuf, SB_SIZE     # bytes read from the program, not yet parsed
+F EXT_wq, SB_SIZE       # bytes to write to the program
+F EXT_wq_off, 8         # of them, already written
+F EXT_body, 8           # a pending message that waits for its body (owned cstr), or 0
+F EXT_body_len, 8       # that body's length
+F EXT_on_langs, 8       # cstr lists for on = lang:X and on = open:GLOB, or 0
+F EXT_on_globs, 8
+F EXT_sub_opened, 8     # [subscribe] patterns per event (cstr) or 0 when not subscribed
+F EXT_sub_saved, 8
+F EXT_sub_changed, 8
+F EXT_sub_cursor, 8
+F EXT_sub_selection, 8
+F EXT_status_text, 8    # cstr, its status-bar text, or 0
+F EXT_known, VEC_SIZE   # XK records: the documents this extension has seen, and what it was told
+F EXT_active, 8         # DOC id last reported active, -1 before catch-up
+F EXT_pending, 8        # a command invoked before hello: its g_ext_cmds index + 1, or 0
+F EXT_throttled, 4      # 1 while its reads wait for the next frame's budget
+F EXT_pad, 4
+ENDSTRUCT EXT_SIZE
+
+# what an extension was last told about a document
+STRUCT
+F XK_id, 8
+F XK_ver, 8
+F XK_saves, 8
+F XK_cur, 8
+F XK_anchor, 8
+F XK_seen, 8            # scratch: 1 when the document is still open (events pass)
+ENDSTRUCT XK_SIZE
+
+.equ ES_IDLE, 0                 # not started
+.equ ES_STARTING, 1             # running, no hello yet
+.equ ES_RUNNING, 2
+.equ ES_STOPPING, 3             # bye sent, waiting before SIGTERM / SIGKILL
+.equ ES_STOPPED, 4              # by the user or a limit: EXT_reason
+.equ ES_CRASHED, 5              # exited on its own: EXT_reason
+.equ ES_FAILED, 6               # could not start, or a bad manifest: EXT_reason
+.equ ES_DISABLED, 7
+
+.equ ON_STARTUP, 1
+.equ ON_COMMAND, 2
+.equ ON_LANG, 4
+.equ ON_OPEN, 8
+.equ ON_PROJECT, 16
+
+.equ NEEDS_DOC_READ, 1
+.equ NEEDS_DOC_WRITE, 2
+.equ NEEDS_PROJECT_READ, 4
+.equ NEEDS_PROJECT_WRITE, 8
+.equ NEEDS_HOME_READ, 16
+.equ NEEDS_NETWORK, 32
+.equ NEEDS_TERMINAL, 64
+
+.equ EXT_MAX_RUNNING, 16
+.equ EXT_HELLO_MS, 5000
+.equ EXT_LINE_MAX, 65536
+.equ EXT_BODY_MAX, 4194304
+.equ EXT_WQ_MAX, 1048576
+.equ EXT_READ_PER_FRAME, 65536
+.equ EXT_FRAME_BYTES, 262144
+.equ EXT_FRAME_MS, 2
+.equ EXT_FLOOD_FRAMES, 30
 
 # json
 .equ JT_NULL, 0

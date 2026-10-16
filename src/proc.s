@@ -8,7 +8,6 @@
 .equ TCGETS, 0x5401
 .equ TCSETS, 0x5402
 .equ IUTF8, 0x4000
-.equ F_SETFL, 4
 
 .bss
 .p2align 3
@@ -220,7 +219,8 @@ FN proc_which
 .endif
 
 # proc_spawn(argv, envp, cwd, fd_in, fd_out, fd_err, ctty) -> pid or -errno
-#   argv[0] is the path to run; cwd may be 0; ctty makes fd_in the controlling terminal of a new session
+#   argv[0] is the path to run; cwd may be 0; ctty 1 makes fd_in the controlling terminal of a new
+#   session; ctty 2 makes a new session without one that dies with rhun (extensions)
 .ifndef WINDOWS
 FN proc_spawn
     PROLOGUE 32
@@ -239,10 +239,23 @@ FN proc_spawn
     cmp dword ptr [rsp + 12], 0
     je 1f
     SYS SYS_setsid
+    cmp dword ptr [rsp + 12], 2
+    je 11f
     mov edi, [rsp]
     mov esi, TIOCSCTTY
     xor edx, edx
     SYS SYS_ioctl
+    jmp 1f
+11:
+.ifndef MACOS
+    # ctty 2: an extension; it dies with rhun
+    mov edi, PR_SET_PDEATHSIG
+    mov esi, SIGKILL
+    xor edx, edx
+    xor r10d, r10d
+    xor r8d, r8d
+    SYS SYS_prctl
+.endif
 1:  mov edi, [rsp]
     xor esi, esi
     SYS SYS_dup2

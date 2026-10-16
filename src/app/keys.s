@@ -175,7 +175,10 @@ FN cmd_find
     jnz 3f
     add rbx, CMD_SIZE
     jmp 1b
-2:  xor ebx, ebx
+2:  mov rdi, r12
+    mov rsi, r13
+    call ext_cmd_find
+    mov rbx, rax
 3:  mov rax, rbx
     EPILOGUE
 
@@ -202,7 +205,7 @@ FN keys_init
     lea rbx, [rip + g_commands]
 .Lki_cmd:
     cmp qword ptr [rbx + CMD_name], 0
-    je .Lki_user
+    je .Lki_ext
     mov r12, [rbx + CMD_keys]
     mov rdi, r12
     call strlen
@@ -222,6 +225,40 @@ FN keys_init
     jmp 1b
 2:  add rbx, CMD_SIZE
     jmp .Lki_cmd
+.Lki_ext:
+    # the extensions' commands: a key two extensions claim stays with the first
+    xor r14d, r14d
+3:  cmp r14, [rip + g_ext_cmds + VEC_len]
+    jae .Lki_user
+    imul rbx, r14, CMD_SIZE
+    add rbx, [rip + g_ext_cmds + VEC_ptr]
+    inc r14
+    mov r12, [rbx + CMD_keys]
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+4:  test r13, r13
+    jz 3b
+    mov rdi, r12
+    mov rsi, r13
+    call next_word
+    add r12, rcx
+    sub r13, rcx
+    test rdx, rdx
+    jz 3b
+    push rax
+    push rdx
+    mov rdi, rax
+    mov rsi, rdx
+    call bound_key
+    pop rdx
+    pop rax
+    test eax, eax
+    jnz 4b
+    mov rdi, rbx
+    mov rsi, rax
+    call bind
+    jmp 4b
 .Lki_user:
     xor r14d, r14d
 3:  cmp r14, [rip + g_keylines + VEC_len]
@@ -243,7 +280,30 @@ FN keys_init
     jmp 3b
 9:  EPILOGUE
 
-# keys_lookup(keysym, mods) -> handler fn or 0
+# bound_key(ptr, len) -> 1 when the combination already has a binding
+bound_key:
+    PROLOGUE
+    call parse_combo
+    test eax, eax
+    jz 8f
+    mov r12d, eax
+    mov r13d, edx
+    xor ecx, ecx
+1:  cmp rcx, [rip + bindings + VEC_len]
+    jae 8f
+    imul rax, rcx, KB_SIZE
+    add rax, [rip + bindings + VEC_ptr]
+    inc rcx
+    cmp [rax + KB_key], r12d
+    jne 1b
+    cmp [rax + KB_mods], r13d
+    jne 1b
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# keys_lookup(keysym, mods) -> rax handler fn or 0, rdx its CMD* (callers pass it in rdi)
 FN keys_lookup
     # letters bind lowercase; shift is part of mods
     lea eax, [rdi - 'A']
@@ -262,8 +322,8 @@ FN keys_lookup
     jne 4f
     cmp [rax + KB_mods], esi
     jne 4f
-    mov rax, [rax + KB_cmd]
-    mov rax, [rax + CMD_fn]
+    mov rdx, [rax + KB_cmd]
+    mov rax, [rdx + CMD_fn]
     ret
 4:  inc rcx
     jmp 3b

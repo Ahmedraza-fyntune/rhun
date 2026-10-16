@@ -783,7 +783,7 @@ FN syntax_ready
     EPILOGUE
 
 # pattern_match(name, nlen, pat, plen) -> 1 if "*.ext" suffix or exact name matches
-pattern_match:
+FN pattern_match
     test rcx, rcx
     jz 3f
     cmp byte ptr [rdx], '*'

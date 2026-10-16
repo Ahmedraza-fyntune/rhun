@@ -890,7 +890,34 @@ load_commands:
     call item_add
 2:  add rbx, CMD_SIZE
     jmp 1b
-9:  EPILOGUE
+9:  # the extensions' commands (no shortcut cache: there are few of them)
+    xor r14d, r14d
+5:  cmp r14, [rip + g_ext_cmds + VEC_len]
+    jae 8f
+    imul rbx, r14, CMD_SIZE
+    add rbx, [rip + g_ext_cmds + VEC_ptr]
+    inc r14
+    mov r12, [rbx + CMD_title]
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    mov rdi, rbx
+    call keys_for
+    test rax, rax
+    jz 6f
+    mov rdi, rax
+    push rax
+    call strlen
+    pop rdi
+    mov rsi, rax
+    call mem_dup                # kept for the palette's lifetime, like the cache entries
+6:  mov rdi, r12
+    mov rsi, r13
+    mov rdx, rax
+    mov rcx, rbx
+    call item_add
+    jmp 5b
+8:  EPILOGUE
 
 load_themes:
     PROLOGUE
@@ -1938,6 +1965,7 @@ palette_accept:
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
     mov rax, [r12 + IT_data]
+    mov rdi, rax
     call [rax + CMD_fn]
     jmp .Lpa_ret
 2:  cmp ebx, PM_THEMES

@@ -12,6 +12,9 @@ cbuf: .zero SB_SIZE
 tbuf: .zero SB_SIZE
 oc_busy: .long 0                # running the client's lines
 oc_eof: .long 0                 # the client closed meanwhile
+.p2align 3
+wait_ext_state: .quad 0         # wait-ext: the state waited for
+wait_ext_state_len: .quad 0
 addr: .zero 110
 .globl g_headless
 g_headless: .long 0
@@ -506,6 +509,7 @@ c_cmd:
     call cmd_find
     test rax, rax
     jz 1f
+    mov rdi, rax                # commands get their CMD* (extensions' commands share one fn)
     call [rax + CMD_fn]
     mov dword ptr [rip + g_dirty], 1
     xor eax, eax
@@ -709,6 +713,77 @@ c_print_ai:
     call sb_push_byte
     xor eax, eax
     ret
+
+# print-extensions: one line per extension: OWNER/NAME state=S [reason=R] pid=P cmds=a,b [status=T]
+c_print_extensions:
+    lea rdi, [rip + out]
+    call ext_dump
+    xor eax, eax
+    ret
+
+# wait-ext NAME STATE: until the extension (name or owner/name) is in that state (10 s at most);
+# prints "ext=NAME state=S" at the end either way
+c_wait_ext:
+    PROLOGUE
+    mov rdi, rbx
+    mov rsi, r12
+    call next_word
+    mov r13, rax                # name
+    mov r14, rdx
+    add rbx, rcx
+    sub r12, rcx
+    mov rdi, rbx
+    mov rsi, r12
+    call next_word
+    mov [rip + wait_ext_state], rax
+    mov [rip + wait_ext_state_len], rdx
+    mov rdi, r13
+    mov rsi, r14
+    call ext_by_name
+    test rax, rax
+    jz 8f
+    mov r15, rax
+    call time_ms
+    lea r13, [rax + 10000]
+1:  mov edi, [r15 + EXT_status]
+    call ext_state_name
+    mov rdi, [rip + wait_ext_state]
+    mov rsi, [rip + wait_ext_state_len]
+    mov rdx, rax
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 1b
+2:  lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_ext]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov rsi, [r15 + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_state]
+    call sb_push_cstr
+    mov edi, [r15 + EXT_status]
+    call ext_state_name
+    lea rdi, [rip + out]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+8:  lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_no_ext]
+    call sb_push_cstr
+    mov rax, -1
+    EPILOGUE
 
 # print-frames: frames drawn since the last print-frames
 c_print_frames:
@@ -1489,6 +1564,9 @@ on_client:
 .section .rodata
 .Llong_path: .asciz "rhun: the control socket path is too long (at most 103 bytes)"
 .Lno_listen: .asciz "rhun: cannot create the control socket"
+.Ls_ext: .asciz "ext="
+.Ls_state: .asciz " state="
+.Ls_no_ext: .asciz "no such extension\n"
 .Lunknown: .asciz "unknown command\n"
 .Leod: .asciz "\n<eod>\n"
 .Lok: .ascii "ok\n"
@@ -1544,6 +1622,8 @@ on_client:
 .Lc_wait_update: .asciz "wait-update"
 .Lc_print_update: .asciz "print-update"
 .Lc_print_frames: .asciz "print-frames"
+.Lc_print_extensions: .asciz "print-extensions"
+.Lc_wait_ext: .asciz "wait-ext"
 .Lc_print_project: .asciz "print-project"
 .Lc_print_panels: .asciz "print-panels"
 .Lc_print_tabs: .asciz "print-tabs"
@@ -1609,6 +1689,7 @@ ctl_table:
     .quad .Lc_print_settings, c_print_settings
     .quad .Lc_scroll_x, c_scroll_x
     .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
+    .quad .Lc_print_extensions, c_print_extensions, .Lc_wait_ext, c_wait_ext
     .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

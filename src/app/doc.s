@@ -1,6 +1,10 @@
 # document: gap buffer, line index, undo/redo, file io
 .include "rhun.inc"
 
+.data
+.p2align 3
+doc_next_id: .quad 0            # DOC_id of the last document made (extensions name documents by it)
+
 .equ GAP_MIN, 4096
 
 .bss
@@ -15,6 +19,9 @@ FN doc_new
     mov edi, DOC_SIZE
     call mem_alloc
     mov rbx, rax
+    inc qword ptr [rip + doc_next_id]
+    mov rax, [rip + doc_next_id]
+    mov [rbx + DOC_id], rax
     mov edi, GAP_MIN
     call mem_alloc
     mov [rbx + DOC_buf], rax
