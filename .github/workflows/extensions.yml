@@ -1,0 +1,55 @@
+# The extension host and its kernel confinement, on the runners that can prove them: Linux
+# x86-64 with Landlock (Ubuntu 24.04, ABI 4), once as the runner comes (unprivileged user
+# namespaces restricted by AppArmor: the TCP-rules path for network = no) and once with them
+# allowed (the namespace path), and macOS with sandbox_init. Docker on a Mac proves nothing here:
+# its kernels have no Landlock and Rosetta drops the syscalls.
+name: extensions
+
+on:
+  push:
+    branches: [main, '0.*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        userns: [restricted, allowed]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq binutils python3
+      - name: Allow unprivileged user namespaces
+        if: matrix.userns == 'allowed'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build
+        run: ./build.sh
+      - name: What the kernel offers
+        run: |
+          uname -r
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          unshare -Urn true && echo "user namespaces: yes" || echo "user namespaces: no"
+      - name: Host tests
+        run: python3 tests/ext-host.py
+      - name: Confinement tests
+        run: python3 tests/ext-confine.py -v
+      - name: Fuzz
+        run: python3 tests/ext-fuzz.py 1 4
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: ./build.sh
+      - name: Host tests
+        run: python3 tests/ext-host.py
+      - name: Confinement tests
+        run: python3 tests/ext-confine.py -v
