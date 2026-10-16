@@ -217,7 +217,8 @@ class Host(unittest.TestCase):
         self.assertIn('state=running', out[-1])
 
     def test_a_flood_ends_the_program_and_frames_keep_coming(self):
-        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 1500', 'print-frames',
+        # 30 busy windows of 16 ms is half a second; emulated test machines are given six times that
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 3000', 'print-frames',
                                'print-extensions', 'type ok', 'print-doc'], mode='flood')
         self.assertEqual(out[0], 'ext=echo state=running')
         frames = int(out[1].split('=')[1])
