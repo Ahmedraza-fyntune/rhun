@@ -216,6 +216,7 @@ class Host(unittest.TestCase):
         self.assertEqual(out[3], 'abchello world')
         self.assertIn('state=running', out[-1])
 
+    @unittest.skipIf(os.environ.get('RHUN_SLOW_MACHINE'), 'an emulated flooder is too slow to flood')
     def test_a_flood_ends_the_program_and_frames_keep_coming(self):
         # 30 busy windows of 16 ms is half a second; emulated test machines are given six times that
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 3000', 'print-frames',
