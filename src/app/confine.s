@@ -695,35 +695,41 @@ FN confine_child
     xor r10d, r10d
     xor r8d, r8d
     SYS SYS_prctl
+    lea rdi, [rip + .Lstep_nnp]
     test rax, rax
     js .Lcc_nnp
     test dword ptr [rip + conf_flags], CF_NETNS
     jz 2f
     mov edi, CLONE_NEWUSER | CLONE_NEWNET
     SYS SYS_unshare
+    lea rdi, [rip + .Lstep_unshare]
     test rax, rax
     js .Lcc_netns
     lea rdi, [rip + .Lp_setgroups]
     lea rsi, [rip + .Ls_deny]
     call write_proc
-    test eax, eax
-    jz .Lcc_netns
+    lea rdi, [rip + .Lp_setgroups]
+    test rax, rax
+    js .Lcc_netns
     lea rdi, [rip + .Lp_uidmap]
     lea rsi, [rip + conf_uidmap]
     call write_proc
-    test eax, eax
-    jz .Lcc_netns
+    lea rdi, [rip + .Lp_uidmap]
+    test rax, rax
+    js .Lcc_netns
     lea rdi, [rip + .Lp_gidmap]
     lea rsi, [rip + conf_gidmap]
     call write_proc
-    test eax, eax
-    jz .Lcc_netns
+    lea rdi, [rip + .Lp_gidmap]
+    test rax, rax
+    js .Lcc_netns
 2:  test dword ptr [rip + conf_flags], CF_LANDLOCK
     jz 9f
     lea rdi, [rip + conf_attr]
     mov rsi, [rip + conf_attr_size]
     xor edx, edx
     SYS SYS_landlock_create_ruleset
+    lea rdi, [rip + .Lstep_ruleset]
     test rax, rax
     js .Lcc_landlock
     mov ebx, eax                # the ruleset
@@ -738,6 +744,7 @@ FN confine_child
     mov esi, LL_RULE_PATH_BENEATH
     xor r10d, r10d
     SYS SYS_landlock_add_rule
+    lea rdi, [rip + .Lstep_rule]
     test rax, rax
     js .Lcc_rule
 31: inc r12
@@ -745,28 +752,58 @@ FN confine_child
 4:  mov edi, ebx
     xor esi, esi
     SYS SYS_landlock_restrict_self
+    lea rdi, [rip + .Lstep_restrict]
     test rax, rax
     js .Lcc_restrict
     mov edi, ebx
     SYS SYS_close
 9:  ret
 .Lcc_nnp:
-    mov edi, EXITC_NNP
-    SYS SYS_exit
+    mov esi, EXITC_NNP
+    jmp fail_exit
 .Lcc_netns:
-    mov edi, EXITC_NETNS
-    SYS SYS_exit
+    mov esi, EXITC_NETNS
+    jmp fail_exit
 .Lcc_landlock:
-    mov edi, EXITC_LANDLOCK
-    SYS SYS_exit
+    mov esi, EXITC_LANDLOCK
+    jmp fail_exit
 .Lcc_rule:
-    mov edi, EXITC_RULE
-    SYS SYS_exit
+    mov esi, EXITC_RULE
+    jmp fail_exit
 .Lcc_restrict:
-    mov edi, EXITC_RESTRICT
+    mov esi, EXITC_RESTRICT
+    jmp fail_exit
+
+# fail_exit(step cstr, code) with -errno in rax: "rhun: not confined: STEP failed, errno N" on
+# the program's standard error (its log), then the exit code
+fail_exit:
+    mov rbx, rdi
+    mov r12d, esi
+    neg rax
+    mov r13, rax
+    lea rdi, [rip + pathbuf]
+    lea rsi, [rip + .Lnote_head]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, rbx
+    call cstr_copy
+    mov rdi, rax
+    lea rsi, [rip + .Lnote_errno]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, r13
+    call fmt_u64
+    mov byte ptr [rdi], 10
+    inc rdi
+    lea rsi, [rip + pathbuf]
+    mov rdx, rdi
+    sub rdx, rsi
+    mov edi, 2
+    SYS SYS_write
+    mov edi, r12d
     SYS SYS_exit
 
-# write_proc(path, cstr) -> 1 when written
+# write_proc(path, cstr) -> bytes written, or -errno
 write_proc:
     push rbx
     push r12
@@ -776,7 +813,7 @@ write_proc:
     xor edx, edx
     SYS SYS_open
     test rax, rax
-    js 8f
+    js 9f
     mov ebx, eax
     mov rdi, r12
     call strlen
@@ -787,11 +824,7 @@ write_proc:
     mov r13, rax
     mov edi, ebx
     SYS SYS_close
-    test r13, r13
-    js 8f
-    mov eax, 1
-    jmp 9f
-8:  xor eax, eax
+    mov rax, r13
 9:  pop r13
     pop r12
     pop rbx
@@ -864,6 +897,13 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lx_rule: .asciz "a Landlock rule was refused"
 .Lx_restrict: .asciz "landlock_restrict_self was refused"
 .Lx_sandbox: .asciz "sandbox_init refused the profile"
+.Lnote_head: .asciz "rhun: not confined: "
+.Lnote_errno: .asciz " failed, errno "
+.Lstep_nnp: .asciz "no_new_privs"
+.Lstep_unshare: .asciz "unshare(CLONE_NEWUSER | CLONE_NEWNET)"
+.Lstep_ruleset: .asciz "landlock_create_ruleset"
+.Lstep_rule: .asciz "landlock_add_rule"
+.Lstep_restrict: .asciz "landlock_restrict_self"
 .Lsb_head: .ascii "(version 1)\n(deny default)\n(import \"system.sb\")\n(allow process-fork)\n(allow file-read-metadata)\n(allow sysctl-read)\n"
     .ascii "(allow mach-lookup (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\"))\n"
     .ascii "(allow file-read* (subpath \"/usr\") (subpath \"/System\") (subpath \"/Library\") (subpath \"/private/etc\") (subpath \"/dev\") (literal \"/\") (subpath \"/opt\") (subpath \"/nix\"))\n"

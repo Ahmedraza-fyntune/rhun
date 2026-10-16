@@ -36,6 +36,13 @@ jobs:
           uname -r
           sysctl kernel.apparmor_restrict_unprivileged_userns || true
           unshare -Urn true && echo "user namespaces: yes" || echo "user namespaces: no"
+      - name: Confinement probe
+        # one extension start, then what rhun says and what the child wrote before it gave up
+        run: |
+          mkdir -p /tmp/probe/c /tmp/probe/s
+          printf 'wait 100\nopen VERSION\ncmd echo.toast\nwait-ext echo running\nwait 300\nprint-extensions\nquit\n' > /tmp/probe/s.txt
+          HOME=/tmp/probe XDG_CONFIG_HOME=/tmp/probe/c XDG_STATE_HOME=/tmp/probe/s ./build/rhun "$PWD" --headless 1000x600 --scale 1 --extensions tests/ext/exts --script /tmp/probe/s.txt || true
+          cat /tmp/probe/s/rhun/extensions/*.log 2>/dev/null || true
       - name: Host tests
         run: python3 tests/ext-host.py
       - name: Confinement tests
