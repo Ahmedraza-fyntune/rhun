@@ -359,6 +359,33 @@ FN ws_write
 8:  mov rax, -9
     EPILOGUE
 
+# ws_ftruncate(fd, length): the file cut (or grown) to length, its position there; a program that
+# shares the handle (an extension's log) goes on writing at that position
+FN ws_ftruncate
+    PROLOGUE 112
+    mov r12, rsi
+    call win_fd
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov rcx, [rbx + FD_handle]
+    mov rdx, r12
+    xor r8d, r8d
+    xor r9d, r9d                # FILE_BEGIN
+    API SetFilePointerEx
+    test eax, eax
+    jz 7f
+    mov rcx, [rbx + FD_handle]
+    API SetEndOfFile
+    test eax, eax
+    jz 7f
+    xor eax, eax
+    EPILOGUE
+7:  call win_error
+    EPILOGUE
+8:  mov rax, -9
+    EPILOGUE
+
 FN ws_lseek
     PROLOGUE 112
     mov r12, rsi

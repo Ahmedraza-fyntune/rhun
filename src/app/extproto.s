@@ -1017,6 +1017,20 @@ h_open:
     mov rsi, rdx
     cmp byte ptr [rdi], '/'
     je 1f
+.ifdef WINDOWS
+    # D:/x, D:\x, \\server\share are absolute too
+    cmp byte ptr [rdi], 92
+    je 1f
+    cmp rsi, 3
+    jb 4f
+    cmp byte ptr [rdi + 1], ':'
+    jne 4f
+    cmp byte ptr [rdi + 2], '/'
+    je 1f
+    cmp byte ptr [rdi + 2], 92
+    je 1f
+4:
+.endif
     # relative: inside the project
     mov rcx, [rip + g_project]
     test rcx, rcx
@@ -1045,7 +1059,11 @@ h_open:
     mov rsi, [rip + out + SB_len]
 1:  call mem_dup
     mov r14, rax
+.ifdef WINDOWS
     mov rdi, rax
+    call win_slashes            # backslashes, as Windows programs write them
+.endif
+    mov rdi, r14
     call file_type
     cmp eax, 0x8000             # a regular file
     jne .Lho_missing

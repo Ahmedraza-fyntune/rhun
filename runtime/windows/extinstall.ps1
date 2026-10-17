@@ -6,6 +6,9 @@
 # native programs report on their own error stream; Stop would turn that into an exception
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
+# started from PowerShell 7 (a CI shell, a terminal), Windows PowerShell inherits 7's module path
+# and cannot load its own modules; only the machine's own module folders, then
+$env:PSModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
 $owner = $env:RHUN_EI_OWNER
 $name = $env:RHUN_EI_NAME
 $target = $env:RHUN_EI_TARGET
@@ -41,8 +44,15 @@ foreach ($line in Get-Content -LiteralPath $sums) {
         $want = $fields[0].ToLowerInvariant()
     }
 }
-$have = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
-if (-not $want -or $want -ne $have) { Fail 'the download does not match its checksum' }
+# .NET directly: no module to load
+$have = ''
+try {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($archive)
+    try { $have = -join ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) } finally { $stream.Close() }
+} catch { Fail 'the download cannot be read' }
+if (-not $want) { Fail "the release's sha256sums.txt does not list $asset" }
+if ($want -ne $have) { Fail 'the download does not match its checksum' }
 # plain files and folders only: a link, hard link or device in the listing ends it
 $listing = & $tar -tvzf $archive 2>$null
 if ($LASTEXITCODE -ne 0) { Fail 'the archive cannot be read' }

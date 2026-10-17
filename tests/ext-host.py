@@ -16,6 +16,25 @@ ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 EXTS = ROOT / 'tests/ext/exts'
 
+
+def alive(pid):
+    """Whether a process with this id is running (os.kill(pid, 0) does not work on Windows)."""
+    if os.name == 'nt':
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return code.value == 259                                # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
 CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink = false\n'
           '[files]\nrestore_session = false\nrestore_project = false\n'
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
@@ -92,7 +111,7 @@ class Host(unittest.TestCase):
         (bad / 'o' / 'v2').mkdir(parents=True)
         (bad / 'o' / 'v2' / 'extension.ini').write_text('name = v2\nowner = o\nversion = 1\ntitle = V2\nprotocol = 2\nruntime = python3\nrun = x.py\n', encoding='utf-8')
         (bad / 'o' / 'noprog').mkdir(parents=True)
-        (bad / 'o' / 'noprog' / 'extension.ini').write_text('name = noprog\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nrun.linux-x86_64 = none\nrun.macos-arm64 = none\n', encoding='utf-8')
+        (bad / 'o' / 'noprog' / 'extension.ini').write_text('name = noprog\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nrun.linux-x86_64 = none\nrun.macos-arm64 = none\nrun.windows-x64 = none\n', encoding='utf-8')
         (bad / 'o' / 'nortl').mkdir(parents=True)
         (bad / 'o' / 'nortl' / 'extension.ini').write_text('name = nortl\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nruntime = no-such-runtime-xyz\nrun = x.py\n', encoding='utf-8')
         out = self.run_editor(['print-extensions'], exts=bad)
@@ -368,7 +387,13 @@ class Host(unittest.TestCase):
         d.mkdir(parents=True)
         (d / 'prog').write_text('not a program\n', encoding='utf-8')
         (d / 'extension.ini').write_text('name = x\nowner = rhun-tests\ntitle = X\nversion = 1\nprotocol = 1\n'
-                                         'run.linux-x86_64 = prog\nrun.macos-arm64 = prog\n[commands]\ngo = Go\n', encoding='utf-8')
+                                         'run.linux-x86_64 = prog\nrun.macos-arm64 = prog\nrun.windows-x64 = prog\n'
+                                         '[commands]\ngo = Go\n', encoding='utf-8')
+        if os.name == 'nt':
+            # no executable bit: Windows refuses the file when asked to start it
+            out = self.run_editor(['cmd x.go', 'wait 500', 'print-extensions'], exts=exts)
+            self.assertIn('state=failed reason=failed to start: the program could not be executed', out[0])
+            return
         out = self.run_editor(['print-extensions'], exts=exts)
         self.assertIn('state=failed reason=program is not executable', out[0])
         os.chmod(d / 'prog', 0o755)
@@ -395,8 +420,7 @@ class Host(unittest.TestCase):
         proc.kill()
         proc.wait()
         time.sleep(0.5)
-        with self.assertRaises(ProcessLookupError):
-            os.kill(pid, 0)
+        self.assertFalse(alive(pid), pid)
 
     def test_a_command_right_after_an_open_sees_the_document_first(self):
         # the run event for a document rhun has not yet reported waits behind opened and active
@@ -480,8 +504,7 @@ class Host(unittest.TestCase):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'print-extensions'])
         pid = int(out[1].split('pid=')[1].split()[0])
         time.sleep(0.5)
-        with self.assertRaises(ProcessLookupError):
-            os.kill(pid, 0)
+        self.assertFalse(alive(pid), pid)
         log = self.echo_log()
         self.assertEqual(log[-1], '0 bye')
 

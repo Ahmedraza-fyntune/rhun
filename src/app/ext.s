@@ -2335,7 +2335,11 @@ FN ext_start
     SYS SYS_close
     mov edi, [rip + pipe_out]
     SYS SYS_close
+.ifdef WINDOWS
+    lea rdi, [rip + .Lr_exec]   # CreateProcess itself refuses a file that is not a program
+.else
     lea rdi, [rip + .Lr_spawn]
+.endif
     jmp .Les_failed
 3:  mov [rbx + EXT_pid], r12d
     mov eax, [rip + pipe_in + 4]

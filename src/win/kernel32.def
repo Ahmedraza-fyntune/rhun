@@ -55,6 +55,7 @@ EXPORTS
     ResumeThread
     SearchPathW
     SetCurrentDirectoryW
+    SetEndOfFile
     SetEnvironmentVariableW
     SetEvent
     SetFileAttributesW
