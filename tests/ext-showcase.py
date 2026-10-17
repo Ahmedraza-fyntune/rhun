@@ -19,7 +19,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 LOCAL = os.environ.get('SHOWCASE_DIR')
-TARGET = 'macos-arm64' if sys.platform == 'darwin' else 'linux-x86_64'
+TARGET = 'windows-x64' if os.name == 'nt' else 'macos-arm64' if sys.platform == 'darwin' else 'linux-x86_64'
+# rhun's terminal runs a POSIX shell, or PowerShell on Windows; the showcase suggests each its own form
+TERM_DEMO = 'echo "Showcase ran this: $(6 * 7)"' if os.name == 'nt' else 'echo "Showcase ran this: $((6 * 7))"'
 CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink = false\n'
           '[files]\nrestore_session = false\nrestore_project = false\n'
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
@@ -38,12 +40,12 @@ class Showcase(unittest.TestCase):
         cls.work = Path(cls.tmp.name).resolve()
         cls.proj = cls.work / 'proj'
         cls.proj.mkdir()
-        (cls.proj / 'notes.md').write_text(NOTES)
-        (cls.proj / 'README.md').write_text('# The project\n\nRead me first.\n')
-        (cls.proj / 'demo.showcase').write_text('# a tour script\nstep "one"\nsay greeting\n')
+        (cls.proj / 'notes.md').write_text(NOTES, encoding='utf-8')
+        (cls.proj / 'README.md').write_text('# The project\n\nRead me first.\n', encoding='utf-8')
+        (cls.proj / 'demo.showcase').write_text('# a tour script\nstep "one"\nsay greeting\n', encoding='utf-8')
         cfg = cls.work / 'config/rhun'
         cfg.mkdir(parents=True)
-        (cfg / 'config').write_text(CONFIG)
+        (cfg / 'config').write_text(CONFIG, encoding='utf-8')
         cls.ext_dir = cfg / 'extensions/rhun-editor/showcase'
         cls.env = dict(os.environ, HOME=cls.work.as_posix(), XDG_CONFIG_HOME=(cls.work / 'config').as_posix(),
                        XDG_STATE_HOME=(cls.work / 'state').as_posix())
@@ -64,7 +66,7 @@ class Showcase(unittest.TestCase):
     def session(self, lines, size='1100x800'):
         """runs the script; returns the output split at 'echo @label' lines into {label: [lines]}"""
         script = self.work / 'script.rsc'
-        script.write_text('\n'.join(['wait 100', *lines, 'quit']) + '\n')
+        script.write_text('\n'.join(['wait 100', *lines, 'quit']) + '\n', encoding='utf-8')
         r = subprocess.run([str(EXE), self.proj.as_posix(), '--headless', size, '--scale', '1',
                             '--script', script.as_posix()], env=self.env, capture_output=True, timeout=600)
         self.assertEqual(r.returncode, 0, r.stderr.decode(errors='replace')[-2000:])
@@ -148,6 +150,8 @@ class Showcase(unittest.TestCase):
         self.assertIn('status=Showcase: 27 words', running)
         held = ' confined=1' if sys.platform == 'darwin' else ' confined='
         self.assertIn(held, running)
+        if os.name == 'nt':
+            self.assertIn('why=Windows cannot hold an extension to its permissions yet', running)
 
         marks = out['live_marks']
         self.assertIn('3 1 3 15 warning rhun-editor/showcase TODO: buy milk', marks)
@@ -188,9 +192,9 @@ class Showcase(unittest.TestCase):
         self.assertEqual(out['pinned'], ['menu=closed', 'pinned=showcase'])
         self.assertIn('active=README.md', out['readme'][0])
         self.assertEqual(out['term'][:2], ['prompt=Run in the terminal: Enter, or Esc',
-                                          'field=echo "Showcase ran this: $((6 * 7))"'])
+                                          'field=' + TERM_DEMO])
         self.assertTrue(any(l.rstrip().endswith('Showcase ran this: 42') for l in out['termran']), out['termran'])
-        ini = (self.work / 'config/rhun/extensions.ini').read_text()
+        ini = (self.work / 'config/rhun/extensions.ini').read_text(encoding='utf-8')
         self.assertIn('[rhun-editor/showcase]\npinned = yes\nsetting.greeting = Bonjour\n', ini)
 
     def test_2_it_runs_by_itself_keeps_its_settings_and_goes_when_removed(self):

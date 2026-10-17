@@ -15,7 +15,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 host = __import__('ext-host')
 
-TARGET = 'macos-arm64' if sys.platform == 'darwin' else 'linux-x86_64'
+TARGET = 'windows-x64' if os.name == 'nt' else 'macos-arm64' if sys.platform == 'darwin' else 'linux-x86_64'
 HELLO_INI = '''name = hello
 owner = demo
 title = Hello
@@ -96,7 +96,7 @@ class UI(host.Host):
         d.mkdir(parents=True)
         (d / 'extension.ini').write_text('name = foo\nowner = demo\ntitle = Foo\nversion = 1\nprotocol = 1\n'
                                          'runtime = python3\nrun = main.py\n[commands]\nfirst = First\n'
-                                         'trigger = Trigger\n')
+                                         'trigger = Trigger\n', encoding='utf-8')
         (d / 'main.py').write_text('import sys, threading, time\n'
                                    'print("hello 1", flush=True)\n'
                                    'def reg():\n'
@@ -105,7 +105,7 @@ class UI(host.Host):
                                    'for line in sys.stdin:\n'
                                    '    if line.startswith("0 run foo.trigger"): threading.Thread(target=reg).start()\n'
                                    '    if line.startswith("0 run foo.first"): print("99 toast 3\\nran", end="", flush=True)\n'
-                                   '    if line.startswith("0 bye"): break\n')
+                                   '    if line.startswith("0 bye"): break\n', encoding='utf-8')
         out = self.ui(['wait-ext foo running', 'wait 100', 'cmd foo.trigger', 'cmd extensions_menu', 'click 700 100',
                        'print-menu', 'wait 500', 'print-extensions', 'click 700 132', 'wait 100', 'print-toast'],
                       exts=exts)
@@ -120,11 +120,11 @@ class UI(host.Host):
             d.mkdir(parents=True)
             (d / 'extension.ini').write_text(f'name = foo\nowner = {owner}\ntitle = Foo {owner}\nversion = 1\n'
                                              'protocol = 1\nruntime = python3\nrun = main.py\n[commands]\n'
-                                             'first = First\nsecond = Second\n')
+                                             'first = First\nsecond = Second\n', encoding='utf-8')
             (d / 'main.py').write_text('import sys\nprint("hello 1", flush=True)\nfor line in sys.stdin:\n'
                                        '    if line.startswith("0 run foo.first"):\n'
                                        f'        print("99 toast 8\\nfrom {owner}", end="", flush=True)\n'
-                                       '    if line.startswith("0 bye"): break\n')
+                                       '    if line.startswith("0 bye"): break\n', encoding='utf-8')
         out = self.ui(['wait-ext aaa/foo running', 'wait-ext bbb/foo running',
                        'ext-menu aaa/foo', 'print-menu', 'menu-pick First', 'wait 300', 'print-toast',
                        'ext-menu bbb/foo', 'menu-pick First', 'wait 300', 'print-toast'], exts=exts)
@@ -230,8 +230,8 @@ class UI(host.Host):
         asset = '%s-%s.tar.gz' % (name, TARGET)
         (d / asset).write_bytes(data)
         digest = hashlib.sha256(data + (b'x' if bad_sum else b'')).hexdigest()
-        (d / 'sha256sums.txt').write_text('%s  %s\n' % (digest, asset))
-        self.env['RHUN_EXT_BASE'] = 'file://' + base.as_posix()
+        (d / 'sha256sums.txt').write_text('%s  %s\n' % (digest, asset), encoding='utf-8')
+        self.env['RHUN_EXT_BASE'] = base.as_uri()      # file:///tmp/… or file:///C:/…
         return base
 
     def test_install_asks_with_the_permissions_and_runs_it(self):
@@ -330,8 +330,8 @@ class UI(host.Host):
         exts = self.manifest_variant('again')
         self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running'], exts=exts)
         release('*.hello2')                  # the next version's grammar is for other files
-        (self.proj / 'x.hello1').write_text('one\n')
-        (self.proj / 'x.hello2').write_text('two\n')
+        (self.proj / 'x.hello1').write_text('one\n', encoding='utf-8')
+        (self.proj / 'x.hello2').write_text('two\n', encoding='utf-8')
         out = self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
                        'open ' + (self.proj / 'x.hello1').as_posix(), 'print-state',
                        'open ' + (self.proj / 'x.hello2').as_posix(), 'print-state',
@@ -342,7 +342,7 @@ class UI(host.Host):
         self.assertEqual(sum('Hello Dusk' in l for l in out), 1, out)
 
     def test_a_missing_release_says_so(self):
-        self.env['RHUN_EXT_BASE'] = 'file://' + (self.work / 'nothing').as_posix()
+        self.env['RHUN_EXT_BASE'] = (self.work / 'nothing').as_uri()
         out = self.ui(['ext-install demo/hello', 'wait-install', 'print-toast'])
         self.assertEqual(out[1], 'toast=Could not install demo/hello: no release of demo/hello for ' + TARGET)
 

@@ -88,13 +88,13 @@ class Host(unittest.TestCase):
     def test_bad_manifests_are_reported_not_fatal(self):
         bad = self.work / 'bad'
         (bad / 'o' / 'notitle').mkdir(parents=True)
-        (bad / 'o' / 'notitle' / 'extension.ini').write_text('name = notitle\nowner = o\nversion = 1\nprotocol = 1\nruntime = python3\nrun = x.py\n')
+        (bad / 'o' / 'notitle' / 'extension.ini').write_text('name = notitle\nowner = o\nversion = 1\nprotocol = 1\nruntime = python3\nrun = x.py\n', encoding='utf-8')
         (bad / 'o' / 'v2').mkdir(parents=True)
-        (bad / 'o' / 'v2' / 'extension.ini').write_text('name = v2\nowner = o\nversion = 1\ntitle = V2\nprotocol = 2\nruntime = python3\nrun = x.py\n')
+        (bad / 'o' / 'v2' / 'extension.ini').write_text('name = v2\nowner = o\nversion = 1\ntitle = V2\nprotocol = 2\nruntime = python3\nrun = x.py\n', encoding='utf-8')
         (bad / 'o' / 'noprog').mkdir(parents=True)
-        (bad / 'o' / 'noprog' / 'extension.ini').write_text('name = noprog\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nrun.linux-x86_64 = none\nrun.macos-arm64 = none\n')
+        (bad / 'o' / 'noprog' / 'extension.ini').write_text('name = noprog\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nrun.linux-x86_64 = none\nrun.macos-arm64 = none\n', encoding='utf-8')
         (bad / 'o' / 'nortl').mkdir(parents=True)
-        (bad / 'o' / 'nortl' / 'extension.ini').write_text('name = nortl\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nruntime = no-such-runtime-xyz\nrun = x.py\n')
+        (bad / 'o' / 'nortl' / 'extension.ini').write_text('name = nortl\nowner = o\nversion = 1\ntitle = No\nprotocol = 1\nruntime = no-such-runtime-xyz\nrun = x.py\n', encoding='utf-8')
         out = self.run_editor(['print-extensions'], exts=bad)
         states = sorted(line for line in out if line.startswith('o/'))
         self.assertIn('o/noprog state=failed reason=program file missing pid=0 cmds= confined=0', states)
@@ -185,10 +185,10 @@ class Host(unittest.TestCase):
         ro = self.work / 'ro'
         dst = ro / 'rhun-tests' / 'echo'
         dst.mkdir(parents=True)
-        manifest = (EXTS / 'rhun-tests/echo/extension.ini').read_text()
+        manifest = (EXTS / 'rhun-tests/echo/extension.ini').read_text(encoding='utf-8')
         manifest = manifest.replace('documents = write', 'documents = none')
         manifest = manifest.replace('run = ../../../echo.py', 'run = ' + (ROOT / 'tests/ext/echo.py').as_posix())
-        (dst / 'extension.ini').write_text(manifest)
+        (dst / 'extension.ini').write_text(manifest, encoding='utf-8')
         self.run_editor(['cmd echo.hi', 'wait-ext echo running', 'wait 300', 'print-doc'], exts=ro)
         log = self.echo_log()
         self.assertIn('error 1 needs documents=write', log)
@@ -281,10 +281,10 @@ class Host(unittest.TestCase):
         sel = self.work / 'sel'
         dst = sel / 'rhun-tests' / 'echo'
         dst.mkdir(parents=True)
-        manifest = (EXTS / 'rhun-tests/echo/extension.ini').read_text()
+        manifest = (EXTS / 'rhun-tests/echo/extension.ini').read_text(encoding='utf-8')
         manifest = manifest.replace('cursor = *', 'cursor = no\nselection = *')
         manifest = manifest.replace('run = ../../../echo.py', 'run = ' + (ROOT / 'tests/ext/echo.py').as_posix())
-        (dst / 'extension.ini').write_text(manifest)
+        (dst / 'extension.ini').write_text(manifest, encoding='utf-8')
         self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 100', 'key shift+Right', 'wait 100',
                          'key Left', 'wait 300'], exts=sel)
         log = self.echo_log()
@@ -340,11 +340,11 @@ class Host(unittest.TestCase):
     def manifest_variant(self, folder, **changes):
         dst = self.work / folder / 'rhun-tests' / 'echo'
         dst.mkdir(parents=True)
-        manifest = (EXTS / 'rhun-tests/echo/extension.ini').read_text()
+        manifest = (EXTS / 'rhun-tests/echo/extension.ini').read_text(encoding='utf-8')
         manifest = manifest.replace('run = ../../../echo.py', 'run = ' + (ROOT / 'tests/ext/echo.py').as_posix())
         for old, new in changes.items():
             manifest = manifest.replace(old, new)
-        (dst / 'extension.ini').write_text(manifest)
+        (dst / 'extension.ini').write_text(manifest, encoding='utf-8')
         return self.work / folder
 
     def test_lang_activation_starts_on_a_matching_document(self):
@@ -365,9 +365,9 @@ class Host(unittest.TestCase):
         exts = self.work / 'noexec'
         d = exts / 'rhun-tests' / 'x'
         d.mkdir(parents=True)
-        (d / 'prog').write_text('not a program\n')
+        (d / 'prog').write_text('not a program\n', encoding='utf-8')
         (d / 'extension.ini').write_text('name = x\nowner = rhun-tests\ntitle = X\nversion = 1\nprotocol = 1\n'
-                                         'run.linux-x86_64 = prog\nrun.macos-arm64 = prog\n[commands]\ngo = Go\n')
+                                         'run.linux-x86_64 = prog\nrun.macos-arm64 = prog\n[commands]\ngo = Go\n', encoding='utf-8')
         out = self.run_editor(['print-extensions'], exts=exts)
         self.assertIn('state=failed reason=program is not executable', out[0])
         os.chmod(d / 'prog', 0o755)
@@ -382,12 +382,12 @@ class Host(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith('linux'), 'the parent-death signal is Linux')
     def test_killing_rhun_kills_the_program(self):
         script = self.work / 'k.rsc'
-        script.write_text('cmd echo.toast\nwait-ext echo running\nwait 20000\nquit\n')
+        script.write_text('cmd echo.toast\nwait-ext echo running\nwait 20000\nquit\n', encoding='utf-8')
         proc = subprocess.Popen([str(EXE), self.proj.as_posix(), '--headless', '1000x600', '--extensions', str(EXTS),
                                  '--script', script.as_posix()], env=self.env, stdout=subprocess.PIPE)
         for _ in range(100):
             time.sleep(0.1)
-            lines = self.log.read_text().splitlines() if self.log.exists() else []
+            lines = self.log.read_text(encoding='utf-8').splitlines() if self.log.exists() else []
             if any(line.startswith('0 ready') for line in lines):
                 break
         pid = int([line for line in lines if line.startswith('pid ')][0].split()[1])
