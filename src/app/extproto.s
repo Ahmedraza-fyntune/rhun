@@ -197,6 +197,8 @@ split:
 
 # field_u64(i) -> rax value, rdx 1 when it was a number (and only digits)
 field_u64:
+    cmp rdi, [rip + nfields]
+    jae 8f                      # past the line's fields: what is there is an older line's
     lea r8, [rip + fields]
     shl rdi, 4
     mov rsi, [r8 + rdi + 8]
@@ -216,12 +218,16 @@ field_u64:
 
 # field_is(i, cstr) -> 1 if equal
 field_is:
+    cmp rdi, [rip + nfields]
+    jae 8f
     lea r8, [rip + fields]
     mov rdx, rsi
     shl rdi, 4
     mov rsi, [r8 + rdi + 8]
     mov rdi, [r8 + rdi]
     jmp str_eq_cstr
+8:  xor eax, eax
+    ret
 
 # rest_from(i) -> rax ptr, rdx len: from field i to the end of the line
 rest_from:
@@ -1703,6 +1709,8 @@ h_view:
 # view_arg() -> rax the VW* named by field 2, or 0 with the reply sent
 view_arg:
     PROLOGUE
+    cmp qword ptr [rip + nfields], 3
+    jb 7f
     mov edi, 2
     call field_u64
     test edx, edx
@@ -1714,6 +1722,11 @@ view_arg:
     jnz 9f
 8:  mov rdi, [rip + cur_id]
     lea rsi, [rip + .Le_noview]
+    call reply_error
+    xor eax, eax
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_syntax]
     call reply_error
     xor eax, eax
 9:  EPILOGUE
@@ -2065,7 +2078,8 @@ hello_features:
     jmp 2b
 3:  inc r12d
     jmp 1b
-4:  cmp dword ptr [rbx + EXT_features], 0
+4:  and dword ptr [rbx + EXT_features], FEAT_HOST
+    cmp dword ptr [rbx + EXT_features], 0
     je 9f
     call out_begin
     lea rdi, [rip + .Lev_features]

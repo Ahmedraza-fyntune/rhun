@@ -327,6 +327,10 @@ def on_run(command, doc, versions):
     elif name == 'unview':
         if VIEWS:
             request(f'unview {VIEWS.pop()}')
+    elif name == 'staleview':
+        # a line with a number in field 2, then one without: the second must not see the first's
+        request(f'frob {VIEWS[-1] if VIEWS else 1}')
+        request('unview')
     elif name == 'manyviews':
         for i in range(9):
             request(f'view View {i + 1}')

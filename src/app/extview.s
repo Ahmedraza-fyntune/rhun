@@ -49,6 +49,12 @@ rc_aux: .long 0                 # the record being drawn: its aux byte, color, f
 rc_color: .long 0
 rc_nf: .long 0
 rc_tlen: .long 0
+cl_w: .float 0.0                # the mask being rasterized, as floats: edges are clipped to it
+cl_h: .float 0.0
+.p2align 3
+budget: .quad 0                 # pixels a rendering may still cover: a picture cannot stall the editor
+
+.equ CLICK_SLOP, 4                # logical pixels a click may move between down and up
 
 .text
 
@@ -522,11 +528,15 @@ compile_line:
     call push_float
     lea rax, [rip + nums]
     mov rax, [rax + VEC_len]
+    movzx ecx, byte ptr [rbx + 9]
+    sub rax, rcx                # the points' numbers, after the fixed ones
     cmp rax, VIEW_POINTS_MAX * 2
     ja 9f
     jmp 61b
 62: lea rax, [rip + nums]
     mov rax, [rax + VEC_len]
+    movzx ecx, byte ptr [rbx + 9]
+    sub rax, rcx
     shr rax, 1                  # points
     movzx ecx, byte ptr [rbx + 11]
     cmp rax, rcx
@@ -882,8 +892,11 @@ FN extview_draw
     call event_send
 2:  mov eax, [rip + g_s]
     cmp eax, [rbx + VW_scale]
+    jne 21f
+    mov eax, [rip + g_face_gen]
+    cmp eax, [rbx + VW_fgen]
     je 3f
-    mov rdi, rbx
+21: mov rdi, rbx
     call send_metrics
 3:  # pixels of the right size, rendered with this theme
     mov eax, [rsp + 8]
@@ -962,8 +975,12 @@ FN extview_draw
 51: test dword ptr [rsp + 16], UB_PRESS
     jz 52f
     mov dword ptr [rbx + VW_down], 1
+    mov [rbx + VW_ax], r12d
+    mov [rbx + VW_ay], r13d
     lea rsi, [rip + .Le_down]
     call point_event
+    test dword ptr [rip + g_released], 1 << BTN_LEFT
+    jnz 53f                     # it came up in the same frame
     jmp 55f
 52: cmp dword ptr [rbx + VW_down], 0
     je 54f
@@ -982,6 +999,21 @@ FN extview_draw
     call point_event
     test dword ptr [rsp + 16], UB_CLICK
     jz 55f
+    # a click is a release where the button went down, give or take a few pixels
+    mov eax, [rbx + VW_mx]
+    sub eax, [rbx + VW_ax]
+    mov ecx, eax
+    neg ecx
+    cmovl ecx, eax
+    cmp ecx, CLICK_SLOP
+    jg 55f
+    mov eax, [rbx + VW_my]
+    sub eax, [rbx + VW_ay]
+    mov ecx, eax
+    neg ecx
+    cmovl ecx, eax
+    cmp ecx, CLICK_SLOP
+    jg 55f
     lea rsi, [rip + .Le_click]
     call point_event
     jmp 55f
@@ -1063,6 +1095,9 @@ send_metrics:
     mov rbx, rdi
     mov eax, [rip + g_s]
     mov [rbx + VW_scale], eax
+    mov eax, [rip + g_face_gen]
+    mov [rbx + VW_fgen], eax
+    mov dword ptr [rbx + VW_dirty], 1   # its text is drawn with other faces
     mov rdi, rbx
     call event_head
     test eax, eax
@@ -1124,11 +1159,18 @@ render:
     COLOR r8d, T_BG
     call gfx_fill
     mov dword ptr [rip + clip_on], 0
+    mov eax, [rbx + VW_pw]
+    mov ecx, [rbx + VW_ph]
+    imul rax, rcx
+    shl rax, 6                  # 64 times the view's area
+    mov [rip + budget], rax
     mov r12, [rbx + VW_pic + SB_ptr]
     mov r13, r12
     add r13, [rbx + VW_pic + SB_len]
 1:  cmp r12, r13
     jae 8f
+    cmp qword ptr [rip + budget], 0
+    jl 8f                       # spent: the rest is left out
     mov eax, [r12]
     mov [rsp], eax              # op | aux << 8
     shr eax, 8
@@ -1186,26 +1228,110 @@ d_rect:
     cvtss2si ecx, xmm3
     sub edx, edi
     sub ecx, esi
+    call spend
     mov r8d, [rip + rc_color]
     jmp gfx_fill
 
+# spend(edi x, esi y, edx w, ecx h): the rectangle's pixels within the target off the budget;
+# keeps its arguments
+spend:
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    add edx, edi                # x1
+    add ecx, esi                # y1
+    xor eax, eax
+    cmp edi, eax
+    cmovl edi, eax
+    cmp esi, eax
+    cmovl esi, eax
+    mov eax, [rip + g_cv + CV_w]
+    cmp edx, eax
+    cmovg edx, eax
+    mov eax, [rip + g_cv + CV_h]
+    cmp ecx, eax
+    cmovg ecx, eax
+    sub edx, edi
+    jle 9f
+    sub ecx, esi
+    jle 9f
+    imul rdx, rcx
+    sub [rip + budget], rdx
+9:  pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    ret
+
 d_rrect:
-    P 0, xmm0
-    P 1, xmm1
+    PROLOGUE 32
+    call shape_begin
     P 2, xmm2
     P 3, xmm3
+    xorps xmm5, xmm5
+    comiss xmm2, xmm5
+    jbe 9f
+    comiss xmm3, xmm5
+    jbe 9f
+    # r within half of each side
     P 4, xmm4
-    addss xmm2, xmm0
-    addss xmm3, xmm1
-    cvtss2si edi, xmm0
-    cvtss2si esi, xmm1
-    cvtss2si edx, xmm2
-    cvtss2si ecx, xmm3
-    sub edx, edi
-    sub ecx, esi
-    cvtss2si r8d, xmm4
-    mov r9d, [rip + rc_color]
-    jmp gfx_round_rect
+    movss xmm0, xmm2
+    mulss xmm0, [rip + f_half]
+    minss xmm4, xmm0
+    movss xmm0, xmm3
+    mulss xmm0, [rip + f_half]
+    minss xmm4, xmm0
+    maxss xmm4, xmm5
+    movss [rsp], xmm4           # r
+    P 0, xmm0
+    P 1, xmm1
+    movss [rsp + 4], xmm0       # x
+    movss [rsp + 8], xmm1       # y
+    addss xmm0, xmm2
+    subss xmm0, xmm4
+    movss [rsp + 12], xmm0      # x + w - r
+    addss xmm1, xmm3
+    subss xmm1, xmm4
+    movss [rsp + 16], xmm1      # y + h - r
+    movss xmm0, [rsp + 4]
+    addss xmm0, xmm4
+    movss [rsp + 20], xmm0      # x + r
+    movss xmm1, [rsp + 8]
+    addss xmm1, xmm4
+    movss [rsp + 24], xmm1      # y + r
+    # the corners clockwise from the top right, each a quarter turn
+    movss xmm0, [rsp + 12]
+    movss xmm1, [rsp + 24]
+    xorps xmm3, xmm3
+    call corner
+    movss xmm0, [rsp + 12]
+    movss xmm1, [rsp + 16]
+    movss xmm3, [rip + f_90]
+    call corner
+    movss xmm0, [rsp + 20]
+    movss xmm1, [rsp + 16]
+    movss xmm3, [rip + f_180]
+    call corner
+    movss xmm0, [rsp + 20]
+    movss xmm1, [rsp + 24]
+    movss xmm3, [rip + f_270]
+    call corner
+    call fill_close
+    mov edi, [rip + rc_color]
+    call shape_end
+9:  EPILOGUE
+
+# corner(xmm0 x, xmm1 y, xmm3 from; r at [rsp + 8] of the caller): a quarter arc, or the point
+# itself without a radius
+corner:
+    movss xmm2, [rsp + 8]
+    comiss xmm2, [rip + f_half]
+    jb fill_point
+    movss xmm4, xmm3
+    addss xmm4, [rip + f_90]
+    xor edi, edi
+    jmp arc_points
 
 d_line:
     push rbx
@@ -1447,7 +1573,9 @@ stroke_end:
     PROLOGUE 32
     mov [rsp + 16], edi
     mulss xmm0, [rip + f_half]
-    maxss xmm0, [rip + f_half]  # at least a pixel wide
+    xorps xmm1, xmm1
+    comiss xmm0, xmm1
+    jbe 9f                      # no width: nothing
     movss [rsp], xmm0           # half width
     lea rax, [rip + pts]
     mov r12, [rax + VEC_ptr]
@@ -1763,20 +1891,28 @@ shape_end:
     mov eax, r14d
     imul eax, r15d
     mov [rsp + 4], eax
+    sub [rip + budget], rax
+    jl 9f
     cmp rax, [rip + mask_cap]
     jbe 1f
-    mov rdi, [rip + mask]
-    call mem_free
     mov edi, [rsp + 4]
     call mem_alloc_try
     test rax, rax
-    jz 9f
+    jz 9f                       # the old mask stays as it was
+    mov [rsp + 16], rax
+    mov rdi, [rip + mask]
+    call mem_free
+    mov rax, [rsp + 16]
     mov [rip + mask], rax
     mov eax, [rsp + 4]
     mov [rip + mask_cap], rax
 1:  mov edi, r14d
     mov esi, r15d
     call raster_begin
+    cvtsi2ss xmm0, r14d
+    movss [rip + cl_w], xmm0
+    cvtsi2ss xmm0, r15d
+    movss [rip + cl_h], xmm0
     cvtsi2ss xmm4, r12d
     cvtsi2ss xmm5, r13d
     movss [rsp + 8], xmm4
@@ -1798,7 +1934,7 @@ shape_end:
     subss xmm2, [rsp + 8]
     movss xmm3, [rbx + rax + 12]
     subss xmm3, [rsp + 12]
-    call raster_line
+    call clip_line
     inc qword ptr [rsp + 24]
     jmp 2b
 3:  mov rdi, [rip + mask]
@@ -1819,6 +1955,102 @@ shape_end:
     mov r8d, r15d
     mov r9d, [rsp]
     call gfx_mask_exact
+9:  EPILOGUE
+
+# clip_line(xmm0 x0, xmm1 y0, xmm2 x1, xmm3 y1), in the mask's pixels: raster_line for the part
+# within its rows; the part left of it moved onto its left side (it covers the whole row to its
+# right), the part right of it left out (it covers nothing in the mask). The edge keeps its
+# direction, so its winding.
+clip_line:
+    PROLOGUE 48
+    subss xmm2, xmm0
+    subss xmm3, xmm1
+    movss [rsp], xmm0           # x0
+    movss [rsp + 4], xmm1       # y0
+    movss [rsp + 8], xmm2       # dx
+    movss [rsp + 12], xmm3      # dy
+    movss xmm4, xmm3
+    mulss xmm4, xmm4
+    comiss xmm4, [rip + f_eps2]
+    jb 9f                       # level: it adds nothing
+    # t where it meets the rows' top and bottom, within 0 .. 1
+    xorps xmm4, xmm4
+    subss xmm4, xmm1
+    divss xmm4, xmm3
+    movss xmm5, [rip + cl_h]
+    subss xmm5, xmm1
+    divss xmm5, xmm3
+    movss xmm6, xmm4
+    minss xmm6, xmm5            # from
+    maxss xmm4, xmm5            # to
+    xorps xmm7, xmm7
+    maxss xmm6, xmm7
+    minss xmm4, [rip + f_one]
+    comiss xmm6, xmm4
+    jae 9f                      # it misses them
+    movss [rsp + 16], xmm6
+    movss [rsp + 28], xmm4
+    # t where it crosses x 0 and x w: two cuts between from and to
+    movss xmm0, xmm4
+    movss xmm1, xmm4
+    movss xmm5, xmm2
+    mulss xmm5, xmm5
+    comiss xmm5, [rip + f_eps2]
+    jb 1f                       # upright: no cuts
+    xorps xmm0, xmm0
+    subss xmm0, [rsp]
+    divss xmm0, xmm2
+    movss xmm1, [rip + cl_w]
+    subss xmm1, [rsp]
+    divss xmm1, xmm2
+    movss xmm5, xmm0
+    minss xmm0, xmm1
+    maxss xmm1, xmm5
+1:  maxss xmm0, xmm6
+    minss xmm0, xmm4
+    maxss xmm1, xmm6
+    minss xmm1, xmm4
+    movss [rsp + 20], xmm0
+    movss [rsp + 24], xmm1
+    # the three pieces
+    xor ebx, ebx
+2:  cmp ebx, 3
+    jae 9f
+    movss xmm6, [rsp + 16 + rbx*4]
+    movss xmm7, [rsp + 20 + rbx*4]
+    inc ebx
+    comiss xmm6, xmm7
+    jae 2b
+    movss xmm0, [rsp + 8]
+    mulss xmm0, xmm6
+    addss xmm0, [rsp]
+    movss xmm1, [rsp + 12]
+    mulss xmm1, xmm6
+    addss xmm1, [rsp + 4]
+    movss xmm2, [rsp + 8]
+    mulss xmm2, xmm7
+    addss xmm2, [rsp]
+    movss xmm3, [rsp + 12]
+    mulss xmm3, xmm7
+    addss xmm3, [rsp + 4]
+    # its side, by its middle
+    movss xmm4, xmm0
+    addss xmm4, xmm2
+    mulss xmm4, [rip + f_half]
+    xorps xmm5, xmm5
+    comiss xmm4, xmm5
+    jae 3f
+    xorps xmm0, xmm0
+    xorps xmm2, xmm2
+    jmp 4f
+3:  comiss xmm4, [rip + cl_w]
+    ja 2b
+    maxss xmm0, xmm5
+    minss xmm0, [rip + cl_w]
+    maxss xmm2, xmm5
+    minss xmm2, [rip + cl_w]
+4:  call raster_line
+    jmp 2b
 9:  EPILOGUE
 
 # ---------------- for the tests ----------------
@@ -1931,6 +2163,9 @@ f_big: .float 1.0e9
 f_nbig: .float -1.0e9
 f_360: .float 360.0
 f_90: .float 90.0
+f_180: .float 180.0
+f_270: .float 270.0
+f_eps2: .float 1.0e-12
 f_deg: .float 0.017453292519943295
 f_2pi: .float 6.283185307179586
 f_s3: .float -0.16666666666666666

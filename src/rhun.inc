@@ -939,6 +939,7 @@ ENDSTRUCT TF_SIZE
 .equ FEAT_VIEWS, 1               # section 12 of the spec: features agreed after hello
 .equ FEAT_COMPLETE, 2
 .equ FEAT_SIGNATURE, 4
+.equ FEAT_HOST, FEAT_VIEWS        # the features this rhun implements: only these are agreed
 .equ ICON_SLOTS, 4              # badge sizes an extension's icon is kept at
 .equ ICON_MAXBYTES, 65536       # an extension's icon file, at most
 .equ ICON_MAXDIM, 256           # and its width and height
@@ -1158,7 +1159,9 @@ F VW_scale, 4           # g_s's bits when the metrics were last sent
 F VW_sx, 4              # where it was last drawn, physical (tests point at it)
 F VW_sy, 4
 F VW_down, 4             # the left button went down over it and is still down
-F VW_pad2, 4
+F VW_fgen, 4             # g_face_gen when the metrics were last sent
+F VW_ax, 4               # where the button went down, logical: a click is a release near it
+F VW_ay, 4
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini

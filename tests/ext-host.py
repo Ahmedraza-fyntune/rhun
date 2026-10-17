@@ -32,6 +32,22 @@ def ppm_colors(path):
     return {tuple(pixels[i:i + 3]) for i in range(0, len(pixels) - 2, 3)}
 
 
+def ppm_pixel(path, x, y):
+    """The (r, g, b) at x, y of a binary PPM screenshot."""
+    data = path.read_bytes()
+    fields, pos = [], 0
+    while len(fields) < 4:
+        while data[pos:pos + 1].isspace():
+            pos += 1
+        start = pos
+        while not data[pos:pos + 1].isspace():
+            pos += 1
+        fields.append(data[start:pos])
+    width = int(fields[1])
+    i = pos + 1 + 3 * (y * width + x)
+    return tuple(data[i:i + 3])
+
+
 def alive(pid):
     """Whether a process with this id is running (os.kill(pid, 0) does not work on Windows)."""
     if os.name == 'nt':
@@ -57,7 +73,7 @@ CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
         'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
         'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec,echo.greet,'
-        'echo.view,echo.badview,echo.unview,echo.manyviews')
+        'echo.view,echo.badview,echo.unview,echo.manyviews,echo.staleview')
 
 
 class Host(unittest.TestCase):
@@ -400,7 +416,7 @@ class Host(unittest.TestCase):
     def test_hello_features_are_said_back_before_ready(self):
         self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 300'], mode='features')
         log = self.echo_log()
-        self.assertEqual(log[0], '0 features views complete')
+        self.assertEqual(log[0], '0 features views')
         self.assertTrue(log[1].startswith('0 ready '), log)
 
     # --- views (section 12a) ---
@@ -461,6 +477,72 @@ class Host(unittest.TestCase):
         self.assertTrue(any(l.endswith('toobig 8 views') for l in log), log)
         self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300'])
         self.assertTrue(any(l.endswith('unknown no such request') for l in self.echo_log()))
+
+    def test_shapes_past_the_edges_keep_their_geometry(self):
+        # a circle far larger than the view as the background; a triangle crossing the top; a wedge
+        # running far past the right side; a stroke without width; rounded rectangles that once
+        # took minutes to draw
+        picture = '|'.join([
+            'rrect -100000 -100000 200000 200000 100000 #ffff00',
+            'fill #ff0000 100 -100 200 100 0 100',
+            'fill #00ff00 350 200 100000 200 350 260',
+            'line 10 280 300 280 0 #0000ff',
+            'rrect 2000 2000 200000 200000 100000 #ff00ff',
+            'rrect 2000 2000 9999999 9999999 9999999 #ff00ff',
+        ])
+        self.env['ECHO_PICTURE'] = picture
+        shot = self.work / 'edges.ppm'
+        out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300', 'print-views',
+                               'shot ' + shot.as_posix()], mode='views')
+        line, x, y = self.view_at(out)
+        width = int(line.split(' size=')[1].split('x')[0])
+        yellow, red, green = (255, 255, 0), (255, 0, 0), (0, 255, 0)
+        # at the view's second row the triangle spans x 49 .. 151
+        for px, want in ((44, yellow), (52, red), (100, red), (148, red), (156, yellow)):
+            self.assertEqual(ppm_pixel(shot, x + px, y + 2), want, f'{px},2')
+        for py in (202, 225, 250):
+            for px in (352, 600, width - 2):
+                self.assertEqual(ppm_pixel(shot, x + px, y + py), green, f'{px},{py}')
+        colors = ppm_colors(shot)
+        self.assertNotIn((0, 0, 255), colors)
+        self.assertNotIn((255, 0, 255), colors)
+
+    def test_a_long_polyline_is_one_shape(self):
+        self.env['ECHO_PICTURE'] = 'poly 1 fg ' + '0 0 9 9 ' * 5000
+        out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300', 'print-views'],
+                              mode='views')
+        line, _, _ = self.view_at(out)
+        self.assertIn(' shapes=1 ', line)
+
+    def test_a_tap_clicks_and_a_drag_does_not(self):
+        out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300', 'print-views'],
+                              mode='views')
+        _, x, y = self.view_at(out)
+        self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300',
+                         f'tap {x + 40} {y + 25}', 'wait 100',
+                         f'move {x + 10} {y + 10}', 'wait 50', 'down', 'wait 50', f'move {x + 60} {y + 50}',
+                         'wait 50', 'up', 'wait 100',
+                         f'move {x + 100} {y + 100}', 'wait 50', 'down', 'wait 50', f'move {x + 102} {y + 99}',
+                         'wait 50', 'up', 'wait 300'], mode='views')
+        log = [l for l in self.echo_log() if l.startswith('0 view 1 ') and ' hover ' not in l]
+        events = [l[len('0 view 1 '):] for l in log if l.split(' ')[3] in ('down', 'drag', 'up', 'click')]
+        self.assertEqual(events, ['down 40 25', 'up 40 25', 'click 40 25',
+                                  'down 10 10', 'drag 60 50', 'up 60 50',
+                                  'down 100 100', 'drag 102 99', 'up 102 99', 'click 102 99'])
+
+    def test_a_request_does_not_read_an_older_lines_fields(self):
+        out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300',
+                               'cmd echo.staleview', 'wait 300', 'print-views'], mode='views')
+        self.assertTrue(any(l.startswith('view=1 ') for l in out), out)
+        log = self.echo_log()
+        self.assertTrue(any(l.startswith('error ') and ' syntax ' in l for l in log), log)
+
+    def test_zoom_sends_the_metrics_again(self):
+        self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300', 'cmd zoom_in',
+                         'wait 300', 'wait 300'], mode='views')
+        metrics = [l for l in self.echo_log() if l.startswith('0 view 1 metrics ')]
+        self.assertEqual(len(metrics), 2, metrics)
+        self.assertNotEqual(metrics[0], metrics[1])
 
     def test_a_view_closes_with_its_extension(self):
         out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300',
