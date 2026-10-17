@@ -1215,6 +1215,15 @@ FN ext_init
     mov rax, [rip + g_ext_dir]
     test rax, rax
     jz 1f
+.ifdef WINDOWS
+    # a drive, UNC or relative --extensions DIR, made absolute with forward slashes
+    mov rdi, rax
+    call win_fullpath
+    test rax, rax
+    jz 11f
+    mov [rip + g_ext_dir], rax
+    jmp 11f
+.endif
     # a relative --extensions DIR becomes absolute: the folder is the programs' working directory
     cmp byte ptr [rax], '/'
     je 11f
@@ -1440,7 +1449,11 @@ FN ext_load
     cmp qword ptr [rbx + EXT_script], 0
     je 7f
     mov rdi, [rbx + EXT_prog]
+.ifdef WINDOWS
+    call win_runtime
+.else
     call proc_which
+.endif
     test rax, rax
     jnz 61f
     lea rdi, [rip + .Lr_no_runtime]
@@ -2157,12 +2170,6 @@ FN ext_running
 FN ext_start
     PROLOGUE 32
     mov rbx, rdi
-.ifdef WINDOWS
-    lea rax, [rip + .Lr_windows]
-    mov [rbx + EXT_reason], rax
-    mov dword ptr [rbx + EXT_status], ES_FAILED
-    jmp 9f
-.endif
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -2247,6 +2254,11 @@ FN ext_start
     mov rdi, rbx
     # confinement (confine.s): prepared here, applied in the child
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
+.ifdef WINDOWS
+    lea rax, [rip + .Lr_windows]    # nothing holds it there yet: it runs, and its page says so
+    mov [rbx + EXT_confine_why], rax
+    jmp .Les_spawn
+.endif
     cmp dword ptr [rbx + EXT_noconfine], 0
     jne .Les_spawn              # the child could not confine itself before: the reason stays
     mov qword ptr [rbx + EXT_confine_why], 0
@@ -2307,7 +2319,9 @@ FN ext_start
     push rax
     call proc_spawn
     mov r12, rax
+.ifndef WINDOWS
     call confine_release
+.endif
     mov rax, r12
     add rsp, 16
     mov r12, rax
@@ -2480,6 +2494,33 @@ build_env:
     lea rdi, [rip + .Le_tz]
     lea rsi, [rip + .Le_tz_eq]
     call env_copy
+.ifdef WINDOWS
+    # what Windows programs need to start at all (Winsock fails without SYSTEMROOT), and their
+    # home, temporary and application data folders in the state folder
+    lea r12, [rip + win_env_copy]
+6:  mov rdi, [r12]
+    test rdi, rdi
+    jz 7f
+    mov rsi, [r12 + 8]
+    call env_copy
+    add r12, 16
+    jmp 6b
+7:  lea rdi, [rip + .Le_temp_eq]
+    lea rsi, [rip + .Lsub_tmp]
+    call env_add_state
+    lea rdi, [rip + .Le_tmp_eq]
+    lea rsi, [rip + .Lsub_tmp]
+    call env_add_state
+    lea rdi, [rip + .Le_userprofile_eq]
+    mov rsi, [rbx + EXT_state]
+    call env_add
+    lea rdi, [rip + .Le_appdata_eq]
+    lea rsi, [rip + .Lsub_roaming]
+    call env_add_state
+    lea rdi, [rip + .Le_localappdata_eq]
+    lea rsi, [rip + .Lsub_local]
+    call env_add_state
+.endif
     lea rdi, [rip + .Le_version_eq]
     lea rsi, [rip + rhun_version]
     call env_add
@@ -2593,6 +2634,62 @@ env_add_state:
     mov rsi, [rip + tmp + SB_ptr]
     call env_add
     EPILOGUE
+
+.ifdef WINDOWS
+# win_runtime(name) -> path or 0: proc_which, except that python3 is also looked for as python and
+# py (Windows installs Python as python.exe and the py launcher), and the Microsoft Store's stubs in
+# WindowsApps (which only offer to install Python) are taken only when nothing else is there
+win_runtime:
+    PROLOGUE
+    mov r12, rdi
+    lea rsi, [rip + .Lpython3]
+    call strcmp_eq
+    test eax, eax
+    jnz 1f
+    mov rdi, r12
+    call proc_which
+    EPILOGUE
+1:  xor r13d, r13d              # a stub, kept in case nothing else is found
+    lea r14, [rip + .Lpython3]
+    call 2f
+    lea r14, [rip + .Lpython]
+    call 2f
+    lea r14, [rip + .Lpy]
+    call 2f
+    mov rax, r13
+    EPILOGUE
+2:  # one candidate: a real one ends the search (returns from win_runtime), a stub is kept
+    push rbx
+    mov rdi, r14
+    call proc_which
+    test rax, rax
+    jz 4f
+    mov rbx, rax
+    mov rdi, rax
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    lea rdx, [rip + .Lwinapps]
+    mov ecx, 13
+    call str_find
+    test rax, rax
+    js 3f
+    test r13, r13
+    jnz 31f
+    mov r13, rbx
+    jmp 4f
+31: mov rdi, rbx
+    call mem_free
+4:  pop rbx
+    ret
+3:  # a real runtime: drop a kept stub, leave both helper and win_runtime with it
+    mov rdi, r13
+    call mem_free
+    mov rax, rbx
+    pop rbx
+    add rsp, 8                  # the return address of "call 2f"
+    EPILOGUE
+.endif
 
 # env_copy(name, prefix): rhun's NAME, when set
 env_copy:
@@ -3764,7 +3861,29 @@ sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_cha
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
 env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
+.ifdef WINDOWS
+    .quad .Le_temp, .Le_tmp, .Le_userprofile, .Le_appdata, .Le_localappdata
+.endif
     .quad .Le_rhun_prefix, 0
+.ifdef WINDOWS
+win_env_copy:
+    .quad .Lwe_0, .Lwe_0_eq
+    .quad .Lwe_1, .Lwe_1_eq
+    .quad .Lwe_2, .Lwe_2_eq
+    .quad .Lwe_3, .Lwe_3_eq
+    .quad .Lwe_4, .Lwe_4_eq
+    .quad .Lwe_5, .Lwe_5_eq
+    .quad .Lwe_6, .Lwe_6_eq
+    .quad .Lwe_7, .Lwe_7_eq
+    .quad .Lwe_8, .Lwe_8_eq
+    .quad .Lwe_9, .Lwe_9_eq
+    .quad .Lwe_10, .Lwe_10_eq
+    .quad .Lwe_11, .Lwe_11_eq
+    .quad .Lwe_12, .Lwe_12_eq
+    .quad .Lwe_13, .Lwe_13_eq
+    .quad .Lwe_14, .Lwe_14_eq
+    .quad 0, 0
+.endif
 .globl ext_target
 .ifdef WINDOWS
 .globl ext_target
@@ -3792,7 +3911,11 @@ ext_target: .asciz "linux-x86_64"
 .Lmanifest: .asciz "extension.ini"
 .Lsub_themes: .asciz "themes"
 .Lsub_syntax: .asciz "syntax"
+.ifdef WINDOWS
+.Ldevnull: .asciz "NUL"
+.else
 .Ldevnull: .asciz "/dev/null"
+.endif
 .Lnl: .asciz "\n"
 .Lno_home_state: .asciz "/tmp/rhun-state"
 .Lk_name: .asciz "name"
@@ -3858,6 +3981,54 @@ ext_target: .asciz "linux-x86_64"
 .Le_lc_all_eq: .asciz "LC_ALL="
 .Le_tz: .asciz "TZ"
 .Le_tz_eq: .asciz "TZ="
+.ifdef WINDOWS
+.Lwe_0: .asciz "SYSTEMROOT"
+.Lwe_0_eq: .asciz "SYSTEMROOT="
+.Lwe_1: .asciz "WINDIR"
+.Lwe_1_eq: .asciz "WINDIR="
+.Lwe_2: .asciz "COMSPEC"
+.Lwe_2_eq: .asciz "COMSPEC="
+.Lwe_3: .asciz "PATHEXT"
+.Lwe_3_eq: .asciz "PATHEXT="
+.Lwe_4: .asciz "SYSTEMDRIVE"
+.Lwe_4_eq: .asciz "SYSTEMDRIVE="
+.Lwe_5: .asciz "PROGRAMDATA"
+.Lwe_5_eq: .asciz "PROGRAMDATA="
+.Lwe_6: .asciz "PROGRAMFILES"
+.Lwe_6_eq: .asciz "PROGRAMFILES="
+.Lwe_7: .asciz "PROGRAMFILES(X86)"
+.Lwe_7_eq: .asciz "PROGRAMFILES(X86)="
+.Lwe_8: .asciz "PROGRAMW6432"
+.Lwe_8_eq: .asciz "PROGRAMW6432="
+.Lwe_9: .asciz "COMMONPROGRAMFILES"
+.Lwe_9_eq: .asciz "COMMONPROGRAMFILES="
+.Lwe_10: .asciz "COMMONPROGRAMFILES(X86)"
+.Lwe_10_eq: .asciz "COMMONPROGRAMFILES(X86)="
+.Lwe_11: .asciz "COMMONPROGRAMW6432"
+.Lwe_11_eq: .asciz "COMMONPROGRAMW6432="
+.Lwe_12: .asciz "NUMBER_OF_PROCESSORS"
+.Lwe_12_eq: .asciz "NUMBER_OF_PROCESSORS="
+.Lwe_13: .asciz "PROCESSOR_ARCHITECTURE"
+.Lwe_13_eq: .asciz "PROCESSOR_ARCHITECTURE="
+.Lwe_14: .asciz "OS"
+.Lwe_14_eq: .asciz "OS="
+.Le_temp: .asciz "TEMP"
+.Le_temp_eq: .asciz "TEMP="
+.Le_tmp: .asciz "TMP"
+.Le_tmp_eq: .asciz "TMP="
+.Le_userprofile: .asciz "USERPROFILE"
+.Le_userprofile_eq: .asciz "USERPROFILE="
+.Le_appdata: .asciz "APPDATA"
+.Le_appdata_eq: .asciz "APPDATA="
+.Le_localappdata: .asciz "LOCALAPPDATA"
+.Le_localappdata_eq: .asciz "LOCALAPPDATA="
+.Lsub_roaming: .asciz "/appdata"
+.Lsub_local: .asciz "/localappdata"
+.Lpython3: .asciz "python3"
+.Lpython: .asciz "python"
+.Lpy: .asciz "py"
+.Lwinapps: .asciz "/WindowsApps/"
+.endif
 .Le_rhun_prefix: .asciz "RHUN_"
 .Le_version_eq: .asciz "RHUN_VERSION="
 .Le_protocol_eq: .asciz "RHUN_PROTOCOL="
@@ -3883,7 +4054,7 @@ ext_target: .asciz "linux-x86_64"
 .Lr_slots: .asciz "16 extensions already running"
 .Lr_pipes: .asciz "cannot create pipes"
 .Lr_spawn: .asciz "cannot start the program"
-.Lr_windows: .asciz "extensions do not run on Windows yet"
+.Lr_windows: .asciz "Windows cannot hold an extension to its permissions yet"
 .Lr_line: .asciz "a line over 64 KB without an end"
 .Lr_exited: .asciz "exited with status "
 .Lr_three: .asciz "crashed three times within a minute"
@@ -3908,8 +4079,8 @@ ext_target: .asciz "linux-x86_64"
 .Ld_disabled: .asciz " disabled=1"
 .Ld_why: .asciz " why="
 .Lr_not_confined: .asciz "not confined: "
-.Lr_disabled: .asciz "disabled in Settings"
-.Lr_settings_stop: .asciz "stopped from Settings"
+.Lr_disabled: .asciz "turned off"
+.Lr_settings_stop: .asciz "stopped on its page"
 .Lr_settings_change: .asciz "restarting after a settings change"
 .Lf_extensions_ini: .asciz "/extensions.ini"
 .Lk_pinned: .asciz "pinned"

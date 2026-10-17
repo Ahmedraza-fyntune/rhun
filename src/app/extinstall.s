@@ -17,6 +17,13 @@ in_tmp: .zero 4096              # the job's folder (.install-XXXXXX)
 in_title: .zero 256             # the dialog's question
 in_text: .zero 1024             # its line
 in_pid: .long 0
+.ifdef WINDOWS
+.p2align 3
+ei_vars: .zero 5 * SB_SIZE      # the job's RHUN_EI_* variables
+ei_envp: .quad 0
+ei_shell: .quad 0
+ei_argv: .zero 64
+.endif
 .globl g_ext_install_state
 g_ext_install_state: .long 0    # 0 idle, 1 downloading, 2 asking, 3 done, 4 failed (tests wait on it)
 .p2align 3
@@ -47,10 +54,6 @@ FN ext_install_start
     je .Lis_busy
     cmp dword ptr [rip + g_ext_install_state], 2
     je .Lis_busy
-.ifdef WINDOWS
-    lea rdi, [rip + .Le_windows]
-    jmp .Lis_fail_msg
-.endif
     # drop a URL's scheme and host
     mov rdi, r12
     mov rsi, r13
@@ -86,7 +89,20 @@ FN ext_install_start
     cmp dword ptr [rcx + rax - 4], 0x7469672e   # ".git"
     jne 2f
     mov byte ptr [rcx + rax - 4], 0
-2:  # argv: sh -c SCRIPT sh OWNER NAME TARGET ROOT BASE
+2:
+.ifdef WINDOWS
+    call win_install_job        # rax argv, rdx envp
+    test rax, rax
+    jz .Lis_spawn
+    mov rdi, rax
+    mov rsi, rdx
+    xor edx, edx
+    call run_piped
+    test rax, rax
+    jle .Lis_spawn
+    jmp 4f
+.endif
+    # argv: sh -c SCRIPT sh OWNER NAME TARGET ROOT BASE
     lea rax, [rip + .Lsh]
     mov [rsp], rax
     lea rax, [rip + .Ldash_c]
@@ -116,7 +132,7 @@ FN ext_install_start
     call run_piped
     test rax, rax
     jle .Lis_spawn
-    mov [rip + in_pid], eax
+4:  mov [rip + in_pid], eax
     mov [rip + in_fd], edx
     lea rdi, [rip + in_out]
     call sb_clear
@@ -152,6 +168,101 @@ FN ext_install_start
 .Lis_spawn:
     lea rdi, [rip + .Le_spawn]
     jmp .Lis_fail_msg
+
+.ifdef WINDOWS
+# win_install_job() -> rax argv, rdx envp (0 when PowerShell is not there): powershell.exe runs
+# runtime/windows/extinstall.ps1 (embedded by tools/build-windows.py as ext_install_script) with
+# owner, name, target, root and base in RHUN_EI_* variables
+win_install_job:
+    PROLOGUE 64
+    mov rdi, [rip + ei_envp]
+    call mem_free
+    mov qword ptr [rip + ei_envp], 0
+    mov rdi, [rip + ei_shell]
+    call mem_free
+    mov qword ptr [rip + ei_shell], 0
+    lea rdi, [rip + ei_vars]
+    lea rsi, [rip + .Lei_owner]
+    lea rdx, [rip + in_owner]
+    call ei_var
+    mov [rsp], rax
+    lea rdi, [rip + ei_vars + SB_SIZE]
+    lea rsi, [rip + .Lei_name]
+    lea rdx, [rip + in_name]
+    call ei_var
+    mov [rsp + 8], rax
+    lea rdi, [rip + ei_vars + 2*SB_SIZE]
+    lea rsi, [rip + .Lei_target]
+    lea rdx, [rip + ext_target]
+    call ei_var
+    mov [rsp + 16], rax
+    call ext_root_dir
+    lea rdi, [rip + ei_vars + 3*SB_SIZE]
+    lea rsi, [rip + .Lei_root]
+    mov rdx, rax
+    call ei_var
+    mov [rsp + 24], rax
+    lea rdi, [rip + .Lenv_base]
+    call getenv
+    test rax, rax
+    jnz 1f
+    lea rax, [rip + .Lgithub]
+1:  lea rdi, [rip + ei_vars + 4*SB_SIZE]
+    lea rsi, [rip + .Lei_base]
+    mov rdx, rax
+    call ei_var
+    mov [rsp + 32], rax
+    mov qword ptr [rsp + 40], 0
+    mov rdi, rsp
+    call env_make
+    mov [rip + ei_envp], rax
+    lea rdi, [rip + .Lei_shell]
+    call proc_which
+    mov [rip + ei_shell], rax
+    test rax, rax
+    jz 9f
+    lea rcx, [rip + ei_argv]
+    mov [rcx], rax
+    lea rax, [rip + .Lei_noprofile]
+    mov [rcx + 8], rax
+    lea rax, [rip + .Lei_noninteractive]
+    mov [rcx + 16], rax
+    lea rax, [rip + .Lei_outputformat]
+    mov [rcx + 24], rax
+    lea rax, [rip + .Lei_text]
+    mov [rcx + 32], rax
+    lea rax, [rip + .Lei_encoded]
+    mov [rcx + 40], rax
+    lea rax, [rip + ext_install_script]
+    mov [rcx + 48], rax
+    mov qword ptr [rcx + 56], 0
+    mov rax, rcx
+    mov rdx, [rip + ei_envp]
+    EPILOGUE
+9:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
+# ei_var(sb, "NAME=", value) -> the cstr "NAME=value" in sb
+ei_var:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call sb_clear
+    mov rdi, rbx
+    mov rsi, r12
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, r13
+    call sb_push_cstr
+    mov rdi, rbx
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rbx + SB_ptr]
+    EPILOGUE
+.endif
+
 
 # take_part(buf): copy [A-Za-z0-9._-]+ from r12/r13 into buf (at most 100), advancing them -> 1 when
 # something was taken and it does not start with a dot
@@ -258,8 +369,10 @@ on_install_job:
 3:  test rsi, rsi
     jz 4f
     cmp byte ptr [rdi + rsi - 1], 10
+    je 31f
+    cmp byte ptr [rdi + rsi - 1], 13    # PowerShell ends its lines with CR LF
     jne 4f
-    dec rsi
+31: dec rsi
     mov byte ptr [rdi + rsi], 0
     jmp 3b
 4:  mov rcx, rsi                # the last line starts after the last LF
@@ -741,7 +854,19 @@ remove_commit:
 .Le_other: .asciz "its extension.ini names a different extension"
 .Le_move: .asciz "Could not put the extension in place"
 .Le_full: .asciz "Too many extensions are installed"
-.Le_windows: .asciz "Extensions are not available on Windows yet"
+.ifdef WINDOWS
+.Lei_owner: .asciz "RHUN_EI_OWNER="
+.Lei_name: .asciz "RHUN_EI_NAME="
+.Lei_target: .asciz "RHUN_EI_TARGET="
+.Lei_root: .asciz "RHUN_EI_ROOT="
+.Lei_base: .asciz "RHUN_EI_BASE="
+.Lei_shell: .asciz "powershell.exe"
+.Lei_noprofile: .asciz "-NoProfile"
+.Lei_noninteractive: .asciz "-NonInteractive"
+.Lei_outputformat: .asciz "-OutputFormat"
+.Lei_text: .asciz "Text"
+.Lei_encoded: .asciz "-EncodedCommand"
+.endif
 # the job: fixed text; owner, name, target, root and base come as $1..$5
 install_script:
     .ascii "set -u\n"

@@ -60,6 +60,7 @@ EXPORTS
     SetFileAttributesW
     SetFilePointerEx
     SetInformationJobObject
+    SetNamedPipeHandleState
     Sleep
     TerminateJobObject
     TerminateProcess

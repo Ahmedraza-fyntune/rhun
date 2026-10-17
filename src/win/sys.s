@@ -323,7 +323,8 @@ FN ws_write
     mov rdx, r13
     call win_pty_write
     EPILOGUE
-1:  mov rcx, [rax + FD_write]
+1:  mov rbx, rax
+    mov rcx, [rax + FD_write]
     mov rdx, r12
     mov r8d, 0x7fffffff
     cmp r13, r8
@@ -334,8 +335,26 @@ FN ws_write
     test eax, eax
     jz 7f
     mov eax, [rsp + 96]
+    cmp dword ptr [rbx + FD_wend], 0
+    je 2f
+    mov qword ptr [rbx + FD_full], 0
+    test eax, eax
+    jnz 2f
+    test r13, r13
+    jz 2f
+    # a non-blocking pipe with no room: EAGAIN, and poll waits 10 ms before saying POLLOUT again
+    API GetTickCount64
+    mov [rbx + FD_full], rax
+    mov rax, -11
+2:  EPILOGUE
+7:  API GetLastError
+    cmp eax, 232                # ERROR_NO_DATA: the pipe is being closed
+    je 71f
+    cmp eax, 109                # ERROR_BROKEN_PIPE
+    je 71f
+    call win_error
     EPILOGUE
-7:  call win_error
+71: mov rax, -32                # EPIPE
     EPILOGUE
 8:  mov rax, -9
     EPILOGUE
@@ -1067,6 +1086,7 @@ FN ws_pipe
     call win_fd_alloc
     test rax, rax
     js 5f
+    mov dword ptr [r8 + FD_wend], 1     # win_fd_alloc leaves the slot in r8
     mov [rbx + 4], eax
     xor eax, eax
     EPILOGUE
@@ -1083,16 +1103,32 @@ FN ws_pipe
     EPILOGUE
 
 FN ws_fcntl
+    PROLOGUE 112
     call win_fd
     test rax, rax
     jz 8f
     cmp esi, 4
     jne 1f
     mov [rax + FD_flags], edx
+    cmp dword ptr [rax + FD_kind], FD_PIPE
+    jne 1f
+    cmp dword ptr [rax + FD_wend], 0
+    je 1f
+    # a pipe's write end: O_NONBLOCK makes WriteFile return at once when the reader is behind
+    # (PIPE_NOWAIT on this end only; the child's reads keep waiting)
+    xor ecx, ecx
+    test edx, O_NONBLOCK
+    setnz cl
+    mov [rsp + 96], ecx
+    mov rcx, [rax + FD_handle]
+    lea rdx, [rsp + 96]
+    xor r8d, r8d
+    xor r9d, r9d
+    API SetNamedPipeHandleState
 1:  xor eax, eax
-    ret
+    EPILOGUE
 8:  mov rax, -9
-    ret
+    EPILOGUE
 
 FN ws_getdents
     PROLOGUE 9120
