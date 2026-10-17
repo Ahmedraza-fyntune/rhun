@@ -356,6 +356,8 @@ rules_build:
     sub r13, rcx
     test rdx, rdx
     jz 8f
+    cmp rdx, 4096
+    jae 7b                     # cannot name a program on this platform
     lea rdi, [rip + pathbuf]
     mov rsi, rax
     mov rcx, rdx
@@ -683,6 +685,8 @@ profile_build:
     sub r13, rcx
     test rdx, rdx
     jz 8f
+    cmp rdx, 4096
+    jae 7b
     lea rdi, [rip + pathbuf]
     mov rsi, rax
     mov rcx, rdx

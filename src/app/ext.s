@@ -24,7 +24,7 @@ ext_project_done: .long 0       # on = project extensions have been started for 
 ext_last_doc: .quad 0           # the highest DOC_id ext_tick has seen (new documents trigger activations)
 ext_ticks: .long 0              # ticks so far (the log check runs every 64th)
 .p2align 3
-ext_project_seen: .quad 0       # g_project at the last tick
+ext_project_seen: .quad 0       # owned copy of the project at the last tick
 .p2align 3
 cur_ext: .quad 0                # the EXT being loaded (manifest callbacks)
 cur_owner: .quad 0              # the owner folder being scanned (cstr)
@@ -576,6 +576,8 @@ FN ext_set_disabled
 FN ext_restart_now
     PROLOGUE
     mov rbx, rdi
+    cmp dword ptr [rbx + EXT_manifest_ok], 0
+    je 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
@@ -713,6 +715,8 @@ FN ext_install_load
     mov rdi, rbx
     call ext_settings_load_one
     call ext_cmds_changed
+    cmp dword ptr [rbx + EXT_status], ES_FAILED
+    je 7f                      # keep the validation failure; its commands must not start it
     mov dword ptr [rbx + EXT_status], ES_IDLE
     cmp dword ptr [rbx + EXT_disabled], 0
     je 6f
@@ -1411,6 +1415,24 @@ FN ext_load
     jmp 2b
 3:  mov rdi, r13
     call mem_free
+    # A run-list token is a program name or path, never more than the path buffer can hold.
+    mov r12, [rbx + EXT_runs]
+    test r12, r12
+    jz 301f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+300:test r13, r13
+    jz 301f
+    mov rdi, r12
+    mov rsi, r13
+    call next_word
+    cmp rdx, 4096
+    jae .Lel_runs_long
+    add r12, rcx
+    sub r13, rcx
+    jmp 300b
+301:
     mov rdi, rbx
     call sdefs_init_values
     # required keys; name and owner must be the folder names
@@ -1489,7 +1511,8 @@ FN ext_load
     jz 8f
     lea rdi, [rip + .Lr_not_exec]
     jmp .Lel_fail
-8:  test dword ptr [rbx + EXT_on], -1
+8:  mov dword ptr [rbx + EXT_manifest_ok], 1
+    test dword ptr [rbx + EXT_on], -1
     jnz 81f
     mov dword ptr [rbx + EXT_on], ON_STARTUP | ON_COMMAND   # installed means running
 81: # completion and signature help providers
@@ -1529,6 +1552,8 @@ FN ext_load
 9:  mov qword ptr [rip + cur_ext], 0
     mov rax, rbx
     EPILOGUE
+.Lel_runs_long:
+    lea rdi, [rip + .Lr_runs_long]
 .Lel_fail:
     mov [rbx + EXT_reason], rdi
     mov dword ptr [rbx + EXT_status], ES_FAILED
@@ -2282,6 +2307,8 @@ FN ext_running
 FN ext_start
     PROLOGUE 32
     mov rbx, rdi
+    cmp dword ptr [rbx + EXT_manifest_ok], 0
+    je 9f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -3196,6 +3223,8 @@ FN ext_stop
 FN ext_restart
     push rbx
     mov rbx, rdi
+    cmp dword ptr [rbx + EXT_manifest_ok], 0
+    je 9f
     mov dword ptr [rbx + EXT_crashes], 0
     cmp dword ptr [rbx + EXT_status], ES_STOPPED
     je 1f
@@ -3211,25 +3240,66 @@ FN ext_restart
 9:  pop rbx
     ret
 
+# A project name is owned here: app_set_project may reuse the old string's address. Running
+# programs must restart because a sandbox and RHUN_PROJECT cannot be changed after exec.
+ext_project_check:
+    PROLOGUE
+    mov rdi, [rip + g_project]
+    mov rsi, [rip + ext_project_seen]
+    cmp rdi, rsi
+    je 9f
+    test rdi, rdi
+    jz 1f
+    test rsi, rsi
+    jz 1f
+    call strcmp_eq
+    test eax, eax
+    jnz 9f
+1:  mov rdi, [rip + ext_project_seen]
+    call mem_free
+    mov qword ptr [rip + ext_project_seen], 0
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz 2f
+    call dup_cstr
+    mov [rip + ext_project_seen], rax
+2:  mov dword ptr [rip + ext_project_done], 0
+    cmp dword ptr [rip + ext_startup_done], 0
+    je 9f                      # the initial project, before any activation
+    call extproto_send_project_all
+    xor r12d, r12d
+3:  cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov eax, [rbx + EXT_status]
+    cmp eax, ES_RUNNING
+    je 4f
+    cmp eax, ES_STARTING
+    jne 3b
+4:  mov dword ptr [rbx + EXT_restart], 1
+    mov dword ptr [rbx + EXT_noconfine], 0
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_project_change]
+    call ext_stop
+    jmp 3b
+9:  EPILOGUE
+
 # ext_tick(): once per frame: the budget, deadlines, and the events for each program
 FN ext_tick
     PROLOGUE
     cmp qword ptr [rip + g_exts + VEC_len], 0
     je 9f
     inc dword ptr [rip + ext_ticks]
+    call ext_project_check
     # on = startup, once; on = project when a project is open
     cmp dword ptr [rip + ext_startup_done], 0
     jne 1f
     mov dword ptr [rip + ext_startup_done], 1
     mov edi, ON_STARTUP
     call ext_start_matching
-1:  mov rax, [rip + g_project]
-    cmp rax, [rip + ext_project_seen]
-    je 12f
-    mov [rip + ext_project_seen], rax
-    mov dword ptr [rip + ext_project_done], 0
-    call extproto_send_project_all
-12: cmp qword ptr [rip + g_project], 0
+1:  cmp qword ptr [rip + g_project], 0
     je 2f
     cmp dword ptr [rip + ext_project_done], 0
     jne 2f
@@ -4227,6 +4297,8 @@ ext_target: .asciz "linux-x86_64"
 .Lr_exited: .asciz "exited with status "
 .Lr_three: .asciz "crashed three times within a minute"
 .Lr_no_hello: .asciz "no hello within 5 s"
+.Lr_runs_long: .asciz "a run permission names a program path that is too long"
+.Lr_project_change: .asciz "restarting after a project change"
 .Lr_not_reading: .asciz "not reading for 10 s"
 .Lr_flooding: .asciz "flooding: at the message or byte cap 30 windows in a row"
 .Lst_idle: .asciz "idle"

@@ -123,6 +123,7 @@ def opened(fields, body):
 def main():
     global next_id
     log(f'pid {os.getpid()}'.encode())
+    time.sleep(float(os.environ.get('ECHO_HELLO_DELAY', '0')))
     if MODE == 'exit70once':
         # the exit code rhun's child uses when it cannot confine itself: the program's own must not
         # buy it a second run without confinement
@@ -295,6 +296,8 @@ def on_host_request(rid, verb, args):
             while start > 1 and (text[start - 2:start - 1].isalnum() or text[start - 2:start - 1] == b'_'):
                 start -= 1
             reply = complete_body(line, start, col, 1 if MODE == 'completemore' else 0)
+            if 'ECHO_COMPLETE_REPLY' in os.environ:
+                reply = os.environ['ECHO_COMPLETE_REPLY'].encode()
         elif verb == 'signature':
             before = text[:col - 1]
             open_at = before.rfind(b'(')
@@ -432,7 +435,8 @@ def on_run(command, doc, versions):
     elif name == 'nodiag':
         request(f'diagnostics {doc} {versions.get(doc, 0)} 0 0')
     elif name == 'baddiag':
-        request(f'diagnostics {doc} {versions.get(doc, 0)} 1 19', b'1 1 x 6 error nope\n')
+        body = os.environ.get('ECHO_BAD_DIAG', '1 1 x 6 error nope\n').encode('utf-8')
+        request(f'diagnostics {doc} {versions.get(doc, 0)} 1 {len(body)}', body)
     elif name == 'stalediag':
         request(f'diagnostics {doc} 0 0 0')
     elif name == 'reg':
@@ -504,11 +508,18 @@ def on_run(command, doc, versions):
             here = [(1, 1, 1, 1, 'untitled text')]
         elif twist == 'replins':     # a replacement, then an insertion where it starts
             here = [(1, 1, 1, 3, 'FN'), (1, 1, 1, 1, '<')]
+        elif twist in ('alias', 'aliasbad'):
+            target = PROJECT[0] + '/./p.rs'
+            version = '-'
+            if twist == 'aliasbad':
+                here = [(999, 1, 999, 2, 'X')]
         elif twist == 'badref':
             target = f'#{doc}x'
         groups = [(target, version, here), (PROJECT[0] + ('/missing.rs' if twist == 'missing' else '/other.rs'), '-', other)]
         if twist == 'relative':
             groups[1] = ('other.rs', '-', other)
+        elif twist == 'outside':
+            groups[1] = (os.environ['ECHO_OPEN'], '-', other)
         body = workspace_edit(groups)
         request(f'apply {len(body)}', body)
     elif name == 'faredit':

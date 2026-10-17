@@ -240,7 +240,7 @@ class UI(host.Host):
         self.assertEqual(out[1], 'Echo 0.0.1 on')
         self.assertEqual(out[2], 'pinned=0')
         self.assertEqual(out[3], 'badge=letter color=-')
-        self.assertEqual(out[4], 'can: read and change the files you have open, suggest terminal commands for you to run')
+        self.assertEqual(out[4], 'can: read and change the files you have open, read the files in your project, suggest terminal commands for you to run')
         self.assertIn('setting greeting=Hello', out)
         self.assertIn('setting loud=no', out)
         self.assertIn('setting width=4', out)
@@ -331,6 +331,18 @@ class UI(host.Host):
         self.assertFalse((exts / 'demo').exists() and any((exts / 'demo').iterdir()))
         self.assertFalse(any(p.name.startswith('.install') for p in exts.iterdir()))
         self.assertFalse(any(l.startswith('demo/hello') for l in out))
+
+    def test_an_installed_invalid_manifest_keeps_its_failure(self):
+        ini = HELLO_INI.replace('runtime = python3\nrun = main.py\n', '')
+        self.release({'extension.ini': ini, 'main.py': HELLO_PY})
+        exts = self.manifest_variant('invalid-install')
+        out = self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'print-extensions',
+                       'cmd hello.say', 'ext-set hello restart', 'wait 100', 'print-extensions'], exts=exts)
+        states = [line for line in out if line.startswith('demo/hello ')]
+        self.assertEqual(len(states), 2, out)
+        for state in states:
+            self.assertIn('state=failed', state)
+            self.assertIn('pid=0', state)
 
     def test_a_wrong_checksum_is_refused(self):
         self.release(bad_sum=True)

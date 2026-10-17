@@ -886,6 +886,13 @@ win_backup:
 
 # readlink resolves a final reparse point to its final opened target. An unresolved/dangling
 # reparse point is an error, never permission to replace the link itself.
+FN win_realpath
+    PROLOGUE 8320
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    jmp .Lrl_resolve
+
 FN ws_readlink
     PROLOGUE 8320
     mov rbx, rdi
@@ -918,6 +925,7 @@ FN ws_readlink
     je 7f
     test r15d, 0x400
     jz 81f
+.Lrl_resolve:
     mov rdi, rbx
     xor esi, esi
     xor edx, edx

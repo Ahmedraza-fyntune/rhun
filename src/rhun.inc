@@ -1086,6 +1086,7 @@ F EXT_script, 8         # cstr, the script given to the runtime, or 0
 F EXT_args, 8           # cstr, extra arguments (space separated), or 0
 F EXT_on, 4             # ON_* bits
 F EXT_needs, 4          # NEEDS_* bits
+F EXT_manifest_ok, 4    # full manifest validation passed; failed installs cannot be restarted
 F EXT_status, 4         # ES_*
 F EXT_pid, 4
 F EXT_in, 4             # the pipe to the program's input, -1 when not running

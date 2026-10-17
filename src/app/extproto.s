@@ -876,6 +876,7 @@ h_apply:
     jz 9f
     mov rdi, [rip + body_ptr]
     mov rsi, [rip + body_len]
+    mov rdx, [rip + cur]
     call ws_apply_request
     test eax, eax
     jz 1f
@@ -1193,6 +1194,15 @@ h_open:
     call file_type
     cmp eax, 0x8000             # a regular file
     jne .Lho_missing
+    mov rdi, [rip + cur]
+    mov rsi, r14
+    call ext_open_path
+    mov r15, rax
+    mov rdi, r14
+    call mem_free
+    test r15, r15
+    jz .Lho_denied
+    mov r14, r15
     mov rdi, r14
     call app_open_file
     mov rbx, rax
@@ -1241,6 +1251,11 @@ h_open:
 .Lho_nofile:
     mov rdi, [rip + cur_id]
     lea rsi, [rip + .Le_nofile]
+    call reply_error
+    EPILOGUE
+.Lho_denied:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_file_needs]
     call reply_error
     EPILOGUE
 .Lho_notdoc:
@@ -3148,6 +3163,7 @@ feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf
 .Le_needs_read: .asciz "needs documents=read"
 .Le_needs_write: .asciz "needs documents=write"
 .Le_nofile: .asciz "nofile no such file"
+.Le_file_needs: .asciz "needs file=read"
 .Le_readonly: .asciz "readonly the document cannot be edited"
 .Le_toobig: .asciz "toobig more than 2000 diagnostics"
 .Lr_no_hello: .asciz "the first line was not hello 1"

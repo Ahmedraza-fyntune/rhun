@@ -157,6 +157,57 @@ class Host(unittest.TestCase):
 
     # --- handshake and events ---
 
+    def test_overlong_program_names_fail_without_starting(self):
+        for field, value in (('runtime = python3', 'runtime = ' + 'x' * 100000),
+                             ('project = read', 'project = read\nrun = ' + 'x' * 100000)):
+            with self.subTest(field=field):
+                exts = self.manifest_variant('long-name-' + field.split()[0], **{field: value})
+                out = self.run_editor(['cmd echo.toast', 'ext-set echo restart', 'wait 100',
+                                       'print-extensions'], exts=exts)
+                self.assertIn('state=failed', self.state_lines(out)[0])
+                self.assertIn('pid=0', self.state_lines(out)[0])
+
+    def test_protocol_open_obeys_disk_permissions(self):
+        secret = self.work / 'secret.txt'
+        secret.write_text('private\n', encoding='utf-8')
+        self.env['ECHO_OPEN'] = secret.as_posix()
+        out = self.run_editor(['cmd echo.open', 'wait-ext echo running', 'wait 300', 'print-tabs'])
+        self.assertIn('error 1 needs file=read', self.echo_log())
+        self.assertIn('tabs=*a.txt', out)
+        # An already-open file belongs to documents permission, even outside the project.
+        out = self.run_editor(['cmd echo.open', 'wait-ext echo running', 'wait 300', 'print-tabs'],
+                              files=('a.txt', secret.as_posix()))
+        self.assertIn('tabs=a.txt | *secret.txt', out)
+        # Explicit home permission allows a closed file there.
+        exts = self.manifest_variant('home-open', **{'project = read': 'home = read'})
+        out = self.run_editor(['cmd echo.open', 'wait-ext echo running', 'wait 300', 'print-tabs'], exts=exts)
+        self.assertIn('tabs=a.txt | *secret.txt', out)
+
+    @unittest.skipIf(os.name == 'nt', 'creating symlinks requires Windows developer mode')
+    def test_protocol_open_cannot_follow_a_project_link_outside_its_permissions(self):
+        secret = self.work / 'secret.txt'
+        secret.write_text('private\n', encoding='utf-8')
+        (self.proj / 'outside').symlink_to(self.work, target_is_directory=True)
+        self.env['ECHO_OPEN'] = (self.proj / 'outside/secret.txt').as_posix()
+        out = self.run_editor(['cmd echo.open', 'wait-ext echo running', 'wait 300', 'print-tabs'])
+        self.assertIn('error 1 needs file=read', self.echo_log())
+        self.assertIn('tabs=*a.txt', out)
+
+    def test_project_switch_restarts_with_the_new_project(self):
+        other = self.work / 'next'
+        other.mkdir()
+        exts = self.manifest_variant('project-switch', **{'project = read': 'project = write'})
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 200',
+                               'cmd open_folder', 'key ctrl+a', 'type ' + other.as_posix(), 'key ctrl+Return',
+                               'wait 300', 'wait-ext echo running', 'wait 300', 'cmd echo.pwrite',
+                               'wait 300', 'print-toast'], exts=exts)
+        self.assertIn('toast=probe ok', out)
+        self.assertTrue((other / 'written-by-echo.txt').exists())
+        self.assertFalse((self.proj / 'written-by-echo.txt').exists())
+        log = self.echo_log()
+        self.assertIn('0 project ' + other.as_posix(), log)
+        self.assertIn('0 ready ' + other.as_posix(), log)
+
     def test_a_command_starts_the_program_and_catch_up_lists_the_open_tabs(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 300', 'print-toast',
                                'print-extensions'], files=('a.txt', 'b.go'))
@@ -571,6 +622,39 @@ class Host(unittest.TestCase):
         self.assertIn('1 complete 1 2 2 7 typed -', log)
         self.assertEqual(sum(bool(re.match(r'[1-9][0-9]* complete ', l)) for l in log), 1, 'filtering asks nothing more')
 
+    def test_completion_waits_for_a_starting_provider(self):
+        self.rust()
+        self.env['ECHO_HELLO_DELAY'] = '1'
+        out = self.run_editor(['key Down', 'key End', 'type pr', 'wait 300', 'wait-ext echo running',
+                               'wait 300', 'wait 300', 'print-complete'], mode='complete', files=('p.rs',))
+        self.assertTrue(any(l.startswith('complete open=2 items=6 ') for l in out), out)
+
+    def test_completion_cannot_split_a_utf8_character(self):
+        self.rust('é\n')
+        self.env['ECHO_COMPLETE_REPLY'] = '1 0\n1 2 1 2 text 1 1 0 0\nxx'
+        out = self.run_editor(['wait-ext echo running', 'key ctrl+Space', 'wait 300', 'print-complete',
+                               'print-doc'], mode='complete', files=('p.rs',))
+        self.assertIn('complete open=1 items=0 shown=0 sel=0 labels=', out)
+        self.assertIn('é', out)
+
+    def test_completion_extra_edit_cannot_split_a_utf8_character(self):
+        self.rust('é\n\n')
+        extra = 'edit 1 2 1 2 1\nx'
+        self.env['ECHO_COMPLETE_REPLY'] = f'1 0\n2 1 2 1 text 1 1 0 {len(extra)}\nxx' + extra
+        out = self.run_editor(['wait-ext echo running', 'key Down', 'key ctrl+Space', 'wait 300',
+                               'key Return', 'print-doc', 'cmd undo', 'print-doc'], mode='complete', files=('p.rs',))
+        self.assertEqual(out.count('é'), 2)
+        self.assertIn('x', out)
+
+    def test_completion_insertion_precedes_an_extra_replacement_at_its_start(self):
+        self.rust('abc\n')
+        extra = 'edit 1 1 1 2 1\nY'
+        self.env['ECHO_COMPLETE_REPLY'] = f'1 0\n1 1 1 1 text 1 1 0 {len(extra)}\nxx' + extra
+        out = self.run_editor(['wait-ext echo running', 'key ctrl+Space', 'wait 300',
+                               'key Return', 'print-doc', 'cmd undo', 'print-doc'], mode='complete', files=('p.rs',))
+        self.assertIn('xYbc', out)
+        self.assertIn('abc', out)
+
     def test_an_item_can_place_the_cursor_inside_its_text(self):
         self.rust()
         out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pri', 'wait 300',
@@ -750,6 +834,19 @@ class Host(unittest.TestCase):
         self.assertEqual(out[docs[1]:docs[1] + 2], ['fn  main( ) {', '    let x = main;'])
         self.assertEqual((self.proj / 'other.rs').read_text(), 'fn main_ref() {}\n', 'nothing saved')
 
+    @unittest.skipIf(os.name == 'nt', 'creating symlinks requires Windows developer mode')
+    def test_rename_reuses_dirty_tabs_opened_through_symlinks(self):
+        self.lang()
+        (self.proj / 'alias.rs').symlink_to(self.proj / 'other.rs')
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'type UNSAVED',
+                               'key ctrl+Tab', 'key F2', 'type start', 'key Return',
+                               'wait 300', 'wait 300', 'print-toast', 'print-tabs', 'print-doc',
+                               'key ctrl+Tab', 'print-doc'], mode='lang', files=('p.rs', 'alias.rs'))
+        self.assertIn('toast=A document changed since the edit was made: nothing changed', out)
+        self.assertIn('tabs=*p.rs | alias.rs', out)
+        self.assertIn('fn  main( ) {', out)
+        self.assertIn('UNSAVEDfn main_ref() {}', out)
+
     def test_a_stale_workspace_edit_changes_nothing(self):
         self.lang()
         self.env['ECHO_STALE'] = '1'
@@ -796,6 +893,16 @@ class Host(unittest.TestCase):
         self.assertIn('// applied', out)
         self.assertTrue(any(l.startswith('ok ') and l.count(' ') == 1 for l in self.echo_log()), self.echo_log())
 
+    def test_unsolicited_apply_cannot_open_a_file_outside_its_permissions(self):
+        secret = self.work / 'secret.rs'
+        secret.write_text('private\n', encoding='utf-8')
+        self.env['ECHO_OPEN'] = secret.as_posix()
+        out = self.apply_twist('outside')
+        self.assertIn('needs ', self.reply_to_apply())
+        self.assertIn('tabs=*p.rs', out)
+        self.assertIn('fn  main( ) {', out)
+        self.assertEqual(secret.read_text(), 'private\n')
+
     def test_a_refused_apply_says_why_and_changes_nothing(self):
         self.lang()
         out = self.run_editor(['wait-ext echo running', 'wait 300', 'cmd echo.applystale', 'wait 300',
@@ -833,6 +940,25 @@ class Host(unittest.TestCase):
         out = self.apply_twist('dash', pre=('key ctrl+End', 'type x'))
         self.assertIn('stale', self.reply_to_apply())
         self.assertIn('fn  main( ) {', out)
+
+    def test_apply_aliases_preserve_unsaved_tabs_and_check_versions(self):
+        for twist in ('alias', 'aliasbad'):
+            with self.subTest(twist=twist):
+                out = self.apply_twist(twist, pre=('type UNSAVED',))
+                self.assertIn('stale', self.reply_to_apply())
+                self.assertIn('tabs=*p.rs', out)
+                self.assertIn('UNSAVEDfn  main( ) {', out)
+
+    @unittest.skipIf(os.name == 'nt', 'creating symlinks requires Windows developer mode')
+    def test_apply_reuses_a_dirty_tab_opened_through_a_symlink(self):
+        self.lang()
+        (self.proj / 'alias.rs').symlink_to(self.proj / 'p.rs')
+        self.env['ECHO_APPLY'] = 'alias'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'type UNSAVED',
+                               'cmd echo.apply', 'wait 300', 'print-tabs', 'print-doc'], files=('alias.rs',))
+        self.assertIn('stale', self.reply_to_apply())
+        self.assertIn('tabs=*alias.rs', out)
+        self.assertIn('UNSAVEDfn  main( ) {', out)
 
     def test_an_insertion_goes_before_a_replacement_at_its_place(self):
         out = self.apply_twist('replins')
@@ -983,6 +1109,16 @@ class Host(unittest.TestCase):
         log = self.echo_log()
         self.assertTrue(any(line.startswith('error 1 syntax') for line in log), log)
         self.assertIn('error 2 stale 1', log)
+
+    def test_diagnostics_reject_malformed_and_out_of_range_coordinates(self):
+        for coords, code in (('1x 1 1 2', 'syntax'),
+                             ('18446744073709551617 1 1 2', 'syntax'),
+                             ('999 1 999 2', 'badpos'), ('1 6 1 2', 'badpos')):
+            with self.subTest(coords=coords):
+                self.env['ECHO_BAD_DIAG'] = coords + ' error invalid\n'
+                out = self.run_editor(['cmd echo.baddiag', 'wait-ext echo running', 'wait 300', 'print-marks'])
+                self.assertTrue(any(l.startswith('error 1 ' + code) for l in self.echo_log()), self.echo_log())
+                self.assertIn('errors=0 warnings=0', out)
 
     def test_hover_asks_the_extension_and_shows_its_answer(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'print-text-cell 1 3'])

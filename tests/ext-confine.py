@@ -22,7 +22,7 @@ class Confine(host.Host):
 
     def probe(self, command, needs, extra=('print-extensions',)):
         self.probes = getattr(self, 'probes', 0) + 1
-        exts = self.manifest_variant('confine-%d' % self.probes, **{'documents = write\nterminal = yes': needs})
+        exts = self.manifest_variant('confine-%d' % self.probes, **{'documents = write\nterminal = yes\nproject = read': needs})
         out = self.run_editor(drop_waits=True, actions=[f'cmd {command}', 'wait-ext echo running', 'wait 300',
                                                         'wait 300', 'print-toast', *extra], exts=exts)
         return out
@@ -58,7 +58,7 @@ class Confine(host.Host):
 
     def test_an_exit_code_of_its_own_does_not_lift_the_confinement(self):
         self.skip_unless_confined(self.probe('echo.swrite', 'documents = read')[1])
-        exts = self.manifest_variant('exit70', **{'documents = write\nterminal = yes': 'documents = read\nproject = read'})
+        exts = self.manifest_variant('exit70', **{'documents = write\nterminal = yes\nproject = read': 'documents = read\nproject = read'})
         out = self.run_editor(drop_waits=True, mode='exit70once',
                               actions=['cmd echo.pwrite', 'wait 300', 'wait 300', 'wait 300', 'cmd echo.pwrite',
                                        'wait 300', 'wait 300', 'print-toast', 'print-extensions'], exts=exts)
@@ -99,7 +99,7 @@ class Confine(host.Host):
 
     def test_a_quote_in_the_extension_path_cannot_break_the_profile(self):
         # the profile quotes paths: a quote and a backslash in the extension's folder are escaped
-        exts = self.manifest_variant('con"f\\ine', **{'documents = write\nterminal = yes': 'documents = read'})
+        exts = self.manifest_variant('con"f\\ine', **{'documents = write\nterminal = yes\nproject = read': 'documents = read'})
         out = self.run_editor(drop_waits=True, actions=['cmd echo.pwrite', 'wait-ext echo running', 'wait 300',
                                                         'wait 300', 'print-toast', 'print-extensions'], exts=exts)
         self.skip_unless_confined(out[1])

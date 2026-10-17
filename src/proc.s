@@ -157,6 +157,8 @@ FN proc_which
     mov rbx, rdi
     call strlen
     mov r12, rax
+    cmp r12, 4096
+    jae 8f
     mov rdi, rbx
     mov rsi, rax
     lea rdx, [rip + .Lslash]
@@ -186,7 +188,8 @@ FN proc_which
     inc rcx
     jmp 3b
 4:  mov r14, rcx
-    cmp rcx, 3000
+    lea rax, [rcx + r12 + 1]    # directory, slash, name and its terminating NUL
+    cmp rax, 4096
     jae 6f
     lea rdi, [rip + tmp_path]
     mov rsi, r13

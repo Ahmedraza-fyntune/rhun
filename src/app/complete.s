@@ -96,6 +96,7 @@ ps_lend: .quad 0
 ps_doc: .quad 0
 ps_rline: .quad 0               # the request's cursor line (0-based) and how far the cursor has moved
 ps_delta: .quad 0               # since (typing in the word): positions are turned into the request's
+ps_req: .quad 0                 # its cursor offset, for mapping positions back into the live text
 
 .text
 
@@ -216,6 +217,8 @@ providers_any:
     cmp edx, ES_RUNNING
     je 2f
     cmp edx, ES_STARTING
+    je 2f
+    cmp edx, ES_IDLE            # an opened document activates its providers at the next tick
     jne 1b
 2:  cmp qword ptr [rax + EXT_pv_complete], 0
     jne 9f
@@ -501,6 +504,31 @@ FN complete_tick
     sub rcx, rax
     cmp rcx, 2
     jb 9f                       # the word went while it waited
+    # A provider may need longer than the typing pause to finish its handshake. Keep the
+    # request due while a matching one starts, rather than losing the first completion.
+    push r12
+    push r13
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 3f
+    imul r13, r12, EXT_SIZE
+    add r13, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [r13 + EXT_status], ES_STARTING
+    jne 1b
+    mov rdi, [r13 + EXT_pv_complete]
+    mov rsi, rbx
+    call extproto_matches
+    test eax, eax
+    jz 1b
+    call time_ms
+    add rax, 50
+    mov [rip + cp_due], rax
+    pop r13
+    pop r12
+    jmp 9f
+3:  pop r13
+    pop r12
     lea rdi, [rip + .Lk_typed]
     mov esi, '-'
     xor edx, edx
@@ -844,6 +872,25 @@ ps_pos:
 2:  lea rax, [rax + r13 - 1]
     cmp rax, rcx
     jg 8f
+    # Check the character boundary in the live text, where positions after the request's
+    # cursor moved with subsequent typing. Never split a UTF-8 sequence with an edit.
+    mov r13, rax
+    mov r12, rax
+    cmp r12, [rip + ps_req]
+    jb 3f
+    add r12, [rip + ps_delta]
+3:  mov rdi, rbx
+    call doc_len
+    cmp r12, rax
+    ja 8f
+    je 4f
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_byte
+    and eax, 0xc0
+    cmp eax, 0x80
+    je 8f
+4:  mov rax, r13
     pop r13
     pop r12
     pop rbx
@@ -862,11 +909,12 @@ req_coords:
     mov rbx, rdi
     mov r12, rsi
     mov [rip + ps_doc], rbx
+    mov [rip + ps_req], r12
     mov rax, [rbx + DOC_cur]
     sub rax, r12
     mov [rip + ps_delta], rax
     mov rdi, rbx
-    mov rsi, r12
+    mov rsi, [rbx + DOC_cur]    # deleting in the word may put the old offset on the next line
     call doc_line_of
     mov [rip + ps_rline], rax
     pop r13
@@ -1902,7 +1950,7 @@ ae_add:
     inc qword ptr [rip + ae_n]
 9:  ret
 
-# ae_sort(): the edits by start, last first (insertion sort: a handful)
+# ae_sort(): last position first, with replacements before insertions at the same start
 ae_sort:
     mov rcx, 1
 1:  cmp rcx, [rip + ae_n]
@@ -1915,8 +1963,12 @@ ae_sort:
     add r8, r9
     mov rax, [r8]
     cmp rax, [r8 - 32]
+    jb 3f
+    ja 5f
+    mov rax, [r8 + 8]
+    cmp rax, [r8 - 24]
     jbe 3f
-    # swap the two records
+5:  # swap the two records
     mov r10, 0
 4:  mov rax, [r8 + r10]
     mov r11, [r8 + r10 - 32]

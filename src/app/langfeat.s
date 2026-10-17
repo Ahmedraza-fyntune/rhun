@@ -87,6 +87,7 @@ lf_err: .zero 256               # what the rename provider said instead
 ws_quiet: .long 0               # ws_apply for an extension's request: no toast
 .p2align 3
 ws_only: .quad 0                # a document id: ws_apply may change that document only
+ws_request_ext: .quad 0         # unsolicited apply: its permissions gate opening closed files
 .p2align 3
 ws_code: .quad 0                # the reply for the last failure ("CODE TEXT")
 wg_vec: .zero VEC_SIZE          # a workspace edit being applied
@@ -1714,13 +1715,15 @@ ws_fail:
     pop rbx
     ret
 
-# FN ws_apply_request(body, len) -> eax 1 when every edit was made; 0 when none was, with rdx the
+# FN ws_apply_request(body, len, ext) -> eax 1 when every edit was made; 0 when none was, with rdx the
 # error reply's "CODE TEXT" (an extension's apply request: no toast, the extension hears why)
 FN ws_apply_request
     push rbx
+    mov [rip + ws_request_ext], rdx
     mov dword ptr [rip + ws_quiet], 1
     call ws_apply
     mov dword ptr [rip + ws_quiet], 0
+    mov qword ptr [rip + ws_request_ext], 0
     mov rdx, [rip + ws_code]
     pop rbx
     ret
@@ -1874,8 +1877,23 @@ FN ws_apply
     lea rdi, [rip + lf_path]
     call app_find_tab
     test rax, rax
+    jns 42f
+    mov rdi, [rip + ws_request_ext]
+    lea rsi, [rip + lf_path]
+    call ext_open_path
+    test rax, rax
+    jz 41f                     # the open pass distinguishes missing and forbidden files
+    mov r13, rax
+    lea rdi, [rip + lf_path]
+    mov rsi, r13
+    call cstr_copy
+    mov rdi, r13
+    call mem_free
+    lea rdi, [rip + lf_path]
+    call app_find_tab
+    test rax, rax
     js 41f
-    mov rdi, rax
+42: mov rdi, rax
     call tab_at
     cmp qword ptr [rax + TAB_kind], TAB_DOC
     jne .Lws_badpath
@@ -1916,7 +1934,34 @@ FN ws_apply
     call file_type
     cmp eax, 0x8000
     jne .Lws_unreadable         # missing (it would open empty), a folder, a device
-    mov dword ptr [rip + g_open_keep_tab], 1
+    # Every edit resolves existing aliases; only unsolicited edits gate disk roots.
+    mov rdi, [rip + ws_request_ext]
+    lea rsi, [rip + lf_path]
+    call ext_open_path
+    test rax, rax
+    jz .Lws_denied
+    mov r13, rax
+    lea rdi, [rip + lf_path]
+    mov rsi, r13
+    call cstr_copy
+    mov rdi, r13
+    call mem_free
+60: lea rdi, [rip + lf_path]
+    call app_find_tab
+    test rax, rax
+    js 62f
+    # Another group may already have opened this canonical path. Never own its rollback.
+    mov rdi, rax
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne .Lws_badpath
+    mov rdi, [rax + TAB_doc]
+    mov [r12 + WG_doc], rdi
+    call doc_dirty
+    test eax, eax
+    jnz .Lws_stale
+    jmp 6b
+62: mov dword ptr [rip + g_open_keep_tab], 1
     lea rdi, [rip + lf_path]
     call app_open_file
     mov dword ptr [rip + g_open_keep_tab], 0
@@ -2023,6 +2068,11 @@ FN ws_apply
     lea rax, [rip + .Lwc_big]
     mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_big]
+    jmp .Lws_out
+.Lws_denied:
+    lea rax, [rip + .Lwc_denied]
+    mov [rip + ws_code], rax
+    lea rdi, [rip + .Lws_e_path]
     jmp .Lws_out
 .Lws_bad:
     lea rax, [rip + .Lwc_bad]
@@ -2433,6 +2483,7 @@ lf_single: .byte 0, 0, 0, 1, 0, 1, 1
 .Lwc_big: .asciz "toobig over 4 MB, 1000 files or 100000 edits"
 .Lws_e_big: .asciz "The extension's edit is too big: nothing changed"
 .Lwc_path: .asciz "nofile a path is not absolute or not a document"
+.Lwc_denied: .asciz "needs the file is outside the extension's read permissions"
 .Lwc_gone: .asciz "nodoc a document it names is closed"
 .Lwc_stale: .asciz "stale a document changed since the edit was made"
 .Lwc_open: .asciz "nofile a file cannot be opened"

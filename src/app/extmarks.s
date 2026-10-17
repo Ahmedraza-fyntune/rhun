@@ -195,7 +195,6 @@ record:
     EPILOGUE
 7:  mov rdi, rbx
     call ext_note_resync
-7:  mov dword ptr [rip + badpos_seen], 1
 8:  xor eax, eax
     EPILOGUE
 
@@ -373,7 +372,8 @@ newmarks_free:
 
 # mark_parse(ptr, len, doc, owner) -> 1 and a mark appended, 0 when the line cannot be read
 mark_parse:
-    PROLOGUE 48
+    PROLOGUE 64
+    mov dword ptr [rip + badpos_seen], 0
     mov [rsp], rdi
     mov [rsp + 8], rsi
     mov rbx, rdx
@@ -387,11 +387,14 @@ mark_parse:
     jz 8f
     add [rsp], rcx
     sub [rsp + 8], rcx
+    cmp rdx, 10                 # coordinates use the same bound as workspace edits
+    ja 8f
+    mov [rsp + 48], rdx
     mov rdi, rax
     mov rsi, rdx
     call parse_u64
-    test rdx, rdx
-    jz 8f
+    cmp rdx, [rsp + 48]
+    jne 8f
     mov [rsp + 16 + r15*8], rax
     inc r15d
     cmp r15d, 4
@@ -456,6 +459,7 @@ mark_parse:
     mov [rax + MK_sev], r15d
     mov eax, 1
     EPILOGUE
+7:  mov dword ptr [rip + badpos_seen], 1
 8:  xor eax, eax
     EPILOGUE
 
