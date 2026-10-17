@@ -936,6 +936,9 @@ ENDSTRUCT TF_SIZE
 .equ IMF_PNM, 7
 .equ IMF_TGA, 8
 .equ IMG_MAXDIM, 32768
+.equ FEAT_VIEWS, 1               # section 12 of the spec: features agreed after hello
+.equ FEAT_COMPLETE, 2
+.equ FEAT_SIGNATURE, 4
 .equ ICON_SLOTS, 4              # badge sizes an extension's icon is kept at
 .equ ICON_MAXBYTES, 65536       # an extension's icon file, at most
 .equ ICON_MAXDIM, 256           # and its width and height
@@ -956,6 +959,14 @@ ENDSTRUCT IMG_SIZE
 .equ TAB_IMAGE, 3               # TAB_doc is a DOC without text; DOC_img holds the view
 .equ TAB_GIT, 4
 .equ TAB_EXT, 5                 # the Extensions page (extpage.s)
+.equ TAB_VIEW, 6                # an extension's view (extview.s); TAB_flags >> TF_VIEW_SHIFT is its slot + 1
+.equ TF_VIEW_SHIFT, 16
+.equ ID_VIEW, 0x7700            # + slot: a view's area
+.equ VW_MAX, 32                 # views open at once, all extensions
+.equ VIEWS_PER_EXT, 8
+.equ VIEW_BODY_MAX, 1048576     # a draw body
+.equ VIEW_SHAPES_MAX, 20000
+.equ VIEW_POINTS_MAX, 10000     # points of one poly or fill
 .equ ID_XB_PUZZLE, 0x7400       # the extensions button in the title bar; + 1 + i: a pinned one
 STRUCT
 F TAB_kind, 8
@@ -1121,7 +1132,34 @@ F EXT_icon_px, 8*ICON_SLOTS   # copies at the sizes badges ask for, corners roun
 F EXT_icon_sz, 4*ICON_SLOTS
 F EXT_icon_next, 4      # the slot the next new size replaces
 F EXT_icon_pad, 4
+F EXT_features, 4       # FEAT_*: what was agreed after hello (section 12 of the spec)
+F EXT_feat_pad, 4
 ENDSTRUCT EXT_SIZE
+
+# an extension's view (extview.s)
+STRUCT
+F VW_ext, 8             # its extension, 0 when the slot is free
+F VW_title, 8           # cstr, mem_alloc'd
+F VW_pic, SB_SIZE       # the picture, compiled into records
+F VW_px, 8              # its pixels, VW_pw x VW_ph, rendered from the picture
+F VW_id, 4              # the number the extension knows it by
+F VW_pw, 4
+F VW_ph, 4
+F VW_dirty, 4           # to be rendered again before it is shown
+F VW_lw, 4              # the size last sent, logical pixels (-1: none yet)
+F VW_lh, 4
+F VW_theme, 4           # the theme and background it was rendered with
+F VW_bg, 4
+F VW_in, 4              # the pointer is over it
+F VW_mx, 4              # where the pointer was last said to be, logical
+F VW_my, 4
+F VW_shapes, 4          # how many shapes the picture has
+F VW_scale, 4           # g_s's bits when the metrics were last sent
+F VW_sx, 4              # where it was last drawn, physical (tests point at it)
+F VW_sy, 4
+F VW_down, 4             # the left button went down over it and is still down
+F VW_pad2, 4
+ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini
 STRUCT

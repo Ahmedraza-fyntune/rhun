@@ -950,6 +950,15 @@ c_print_ext_page:
     EPILOGUE
 
 # print-extbar: the dropdown's state and the pinned extensions
+# print-views: a line per extension view: "view=ID title=T shapes=N size=WxH at=X,Y"
+c_print_views:
+    PROLOGUE
+    call flush_frame
+    lea rdi, [rip + out]
+    call extview_dump
+    xor eax, eax
+    EPILOGUE
+
 c_print_extbar:
     PROLOGUE
     call flush_frame
@@ -2123,6 +2132,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_extbar: .asciz "print-extbar"
 .Lc_ext_page: .asciz "ext-page"
 .Lc_ext_menu: .asciz "ext-menu"
+.Lc_print_views: .asciz "print-views"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lx_yes: .asciz "yes"
@@ -2213,7 +2223,7 @@ ctl_table:
     .quad .Lc_print_dialog, c_print_dialog, .Lc_dialog, c_dialog
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
-    .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick
+    .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
     .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

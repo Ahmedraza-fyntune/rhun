@@ -278,6 +278,8 @@ handle_line:
     mov dword ptr [rbx + EXT_status], ES_RUNNING
     call ext_hooks_update
     mov rdi, rbx
+    call hello_features         # the features it named that rhun knows, said back before ready
+    mov rdi, rbx
     call send_ready
     mov rdi, rbx
     call send_settings          # its own settings, before anything else
@@ -1654,6 +1656,105 @@ h_term:
     EPILOGUE
 
 # ID cmd NAME -> ok ID: one of rhun's own commands, from the list of section 8a
+# ---------------- views (section 12a) ----------------
+
+# view_agreed() -> ZF clear when the views feature was agreed; otherwise the reply is sent
+view_agreed:
+    mov rax, [rip + cur]
+    test dword ptr [rax + EXT_features], FEAT_VIEWS
+    jnz 1f
+    push rax
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    pop rax
+    xor eax, eax                # ZF set: answered
+1:  ret
+
+# ID view TITLE -> ok ID VIEW
+h_view:
+    PROLOGUE
+    call view_agreed
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jb .Lhvw_syntax
+    mov edi, 2
+    call rest_from
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call extview_open
+    test rax, rax
+    js .Lhvw_toobig
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+.Lhvw_toobig:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_views]
+    call reply_error
+    EPILOGUE
+.Lhvw_syntax:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_syntax]
+    call reply_error
+9:  EPILOGUE
+
+# view_arg() -> rax the VW* named by field 2, or 0 with the reply sent
+view_arg:
+    PROLOGUE
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 8f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call extview_find
+    test rax, rax
+    jnz 9f
+8:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noview]
+    call reply_error
+    xor eax, eax
+9:  EPILOGUE
+
+# ID draw VIEW LEN + body -> ok ID: the view's picture
+h_draw:
+    PROLOGUE
+    call view_agreed
+    jz 9f
+    call view_arg
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    call extview_set
+    test eax, eax
+    jnz 1f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+1:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_syntax_line]
+    mov edx, eax
+    call reply_error_u64
+9:  EPILOGUE
+
+# ID unview VIEW -> ok ID: its tab closes
+h_unview:
+    PROLOGUE
+    call view_agreed
+    jz 9f
+    call view_arg
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    call extview_close
+    mov rdi, [rip + cur_id]
+    call reply_ok
+9:  EPILOGUE
+
 h_cmd:
     PROLOGUE
     cmp qword ptr [rip + nfields], 3
@@ -1937,6 +2038,62 @@ FN extproto_send_setting
     EPILOGUE
 
 # send_ready(ext): "0 ready PROJECT"
+# hello_features(ext): EXT_features from the names after "hello 1" (the fields of the current line),
+# and "0 features NAME..." with those rhun knows, when there are any
+hello_features:
+    PROLOGUE
+    mov rbx, rdi
+    mov [rip + cur], rdi
+    mov dword ptr [rbx + EXT_features], 0
+    mov r12d, 2                 # the field
+1:  cmp r12, [rip + nfields]
+    jae 4f
+    lea r13, [rip + feature_names]
+    xor r14d, r14d              # the feature's bit index
+2:  mov rsi, [r13 + r14*8]
+    test rsi, rsi
+    jz 3f
+    mov edi, r12d
+    call field_is
+    test eax, eax
+    jz 21f
+    mov ecx, r14d
+    mov eax, 1
+    shl eax, cl
+    or [rbx + EXT_features], eax
+21: inc r14d
+    jmp 2b
+3:  inc r12d
+    jmp 1b
+4:  cmp dword ptr [rbx + EXT_features], 0
+    je 9f
+    call out_begin
+    lea rdi, [rip + .Lev_features]
+    call out_cstr
+    xor r14d, r14d
+5:  lea rax, [rip + feature_names]
+    mov rsi, [rax + r14*8]
+    test rsi, rsi
+    jz 7f
+    mov eax, [rbx + EXT_features]
+    mov ecx, r14d
+    shr eax, cl
+    test eax, 1
+    jz 6f
+    mov edi, ' '
+    push rsi
+    push rsi
+    call out_byte
+    pop rdi
+    pop rsi
+    call out_cstr
+6:  inc r14d
+    jmp 5b
+7:  mov edi, 10
+    call out_byte
+    call out_end
+9:  EPILOGUE
+
 send_ready:
     PROLOGUE
     mov [rip + cur], rdi
@@ -2561,6 +2718,9 @@ verbs:
     .quad .Lv_ask, h_ask, EXT_BODY_MAX
     .quad .Lv_term, h_term, EXT_BODY_MAX
     .quad .Lv_cmd, h_cmd, 0
+    .quad .Lv_view, h_view, 0
+    .quad .Lv_draw, h_draw, VIEW_BODY_MAX
+    .quad .Lv_unview, h_unview, 0
     .quad 0, 0, 0
 .Lv_register: .asciz "register"
 .Lv_option: .asciz "option"
@@ -2568,6 +2728,12 @@ verbs:
 .Lv_ask: .asciz "ask"
 .Lv_term: .asciz "term"
 .Lv_cmd: .asciz "cmd"
+.Lv_view: .asciz "view"
+.Lv_draw: .asciz "draw"
+.Lv_unview: .asciz "unview"
+.Le_toobig_views: .asciz "toobig 8 views"
+.Le_noview: .asciz "noview no such view"
+.Le_syntax_line: .asciz "syntax line "
 .Lo_tab: .asciz "tab_width"
 .Lo_spaces: .asciz "insert_spaces"
 .Lo_trim: .asciz "trim_trailing_whitespace"
@@ -2650,6 +2816,12 @@ cmd_allow:
 .Lv_diagnostics: .asciz "diagnostics"
 .Lv_hover: .asciz "hover"
 .Lw_hello: .asciz "hello"
+.Lev_features: .asciz "0 features"
+.Lf_views: .asciz "views"
+.Lf_complete: .asciz "complete"
+.Lf_signature: .asciz "signature"
+.p2align 3
+feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, 0   # bit 0, 1, 2: FEAT_*
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "

@@ -89,6 +89,37 @@ def read_body(n):
     return data
 
 
+# a picture with every shape (section 12a); the colors are ones a test looks for in a screenshot
+PICTURE = (
+    'rect 10 10 100 40 #ff0000\n'
+    'rrect 120 10 100 40 8 #00ff00\n'
+    'line 10 70 220 70 4 #0000ff\n'
+    'poly 3 #ffff00 10 90 60 120 110 90 160 120\n'
+    'fill #ff00ff 230 10 330 10 280 60\n'
+    'circle 60 170 30 #00ffff\n'
+    'ring 140 170 30 4 #ff8000\n'
+    'pie 220 170 30 0 90 #8000ff\n'
+    'shape-from-the-future 1 2 3\n'
+    'clip 260 140 20 20\n'
+    'rect 250 130 60 60 #804000\n'
+    'unclip\n'
+    'text 10 220 normal left fg Echo draws\n'
+    'rect 400 10 50 50 #ff000000\n'
+).encode()
+if os.environ.get('ECHO_PICTURE'):
+    PICTURE = os.environ['ECHO_PICTURE'].replace('|', '\n').encode() + b'\n'
+VIEWS = []
+
+
+def draw(view, picture=None):
+    picture = PICTURE if picture is None else picture
+    request(f'draw {view} {len(picture)}', picture)
+
+
+def opened(fields, body):
+    VIEWS.append(int(fields[2]))
+    draw(int(fields[2]))
+
 def main():
     global next_id
     log(f'pid {os.getpid()}'.encode())
@@ -106,6 +137,10 @@ def main():
         time.sleep(7)
     if MODE == 'badhello':
         send('hello 2')
+    elif MODE == 'features':
+        send('hello 1 views bogus complete')     # section 12: rhun says back the ones it knows
+    elif MODE == 'views':
+        send('hello 1 views')
     else:
         send('hello 1')
     if MODE == 'crash':
@@ -284,6 +319,17 @@ def on_run(command, doc, versions):
         request(f'diagnostics {doc} {versions.get(doc, 0)} 2 {len(body)}', body)   # N says two lines
     elif name == 'bidi':
         request('term 11', 'rm -rf \u202e x'.encode())
+    elif name == 'view':
+        request('view Echo picture', then=opened)
+    elif name == 'badview':
+        if VIEWS:
+            draw(VIEWS[-1], b'rect 1 2 3\n')
+    elif name == 'unview':
+        if VIEWS:
+            request(f'unview {VIEWS.pop()}')
+    elif name == 'manyviews':
+        for i in range(9):
+            request(f'view View {i + 1}')
     elif name == 'greet':
         text = SETTINGS.get('greeting', '').encode()
         if SETTINGS.get('loud') == 'yes':

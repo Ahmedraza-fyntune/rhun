@@ -43,6 +43,8 @@ FN closed_note
     and ecx, TF_PIN
     mov [rbx + CT_pin], rcx
     mov rcx, [rax + TAB_kind]
+    cmp rcx, TAB_VIEW
+    je 9f                       # an extension's view: it is gone with its extension's picture
     mov [rbx + CT_kind], rcx
     mov r13, [rax + TAB_doc]
     test r13, r13

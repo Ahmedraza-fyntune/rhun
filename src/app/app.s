@@ -1312,7 +1312,11 @@ FN app_tab_label
 2:  cmp qword ptr [rcx + TAB_kind], TAB_EXT
     jne 3f
     lea rax, [rip + .Lext_tab]
-3:  ret
+3:  cmp qword ptr [rcx + TAB_kind], TAB_VIEW
+    jne 4f
+    mov rdi, [rcx + TAB_flags]
+    jmp extview_title
+4:  ret
 
 # app_detect_lang(doc)
 FN app_detect_lang
@@ -1363,7 +1367,15 @@ FN app_close_tab_now
     jne .Lclose_focus_saved
     mov r13d, 1
 .Lclose_focus_saved:
-    mov rbx, [rax + TAB_doc]
+    cmp qword ptr [rax + TAB_kind], TAB_VIEW
+    jne 0f
+    push rax
+    push rax
+    mov rdi, [rax + TAB_flags]
+    call extview_tab_closed     # its extension hears it, the view's slot is freed
+    pop rax
+    pop rax
+0:  mov rbx, [rax + TAB_doc]
     test rbx, rbx
     jz 1f
     mov rdi, rbx
@@ -3022,12 +3034,20 @@ FN center_draw
     call settings_draw
     EPILOGUE
 11: cmp qword ptr [rax + TAB_kind], TAB_EXT
-    jne 2f
+    jne 12f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call extpage_draw
+    EPILOGUE
+12: cmp qword ptr [rax + TAB_kind], TAB_VIEW
+    jne 2f
+    mov edi, [rip + g_editor_rect]
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call extview_draw
     EPILOGUE
 2:  mov rbx, [rip + g_doc]
     mov rdi, rbx

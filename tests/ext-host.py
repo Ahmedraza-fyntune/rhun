@@ -17,6 +17,21 @@ EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 EXTS = ROOT / 'tests/ext/exts'
 
 
+def ppm_colors(path):
+    """The set of (r, g, b) colors in a binary PPM screenshot."""
+    data = path.read_bytes()
+    fields, pos = [], 0
+    while len(fields) < 4:
+        while data[pos:pos + 1].isspace():
+            pos += 1
+        start = pos
+        while not data[pos:pos + 1].isspace():
+            pos += 1
+        fields.append(data[start:pos])
+    pixels = data[pos + 1:]
+    return {tuple(pixels[i:i + 3]) for i in range(0, len(pixels) - 2, 3)}
+
+
 def alive(pid):
     """Whether a process with this id is running (os.kill(pid, 0) does not work on Windows)."""
     if os.name == 'nt':
@@ -41,7 +56,8 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
 CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen,'
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
         'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
-        'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec,echo.greet')
+        'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec,echo.greet,'
+        'echo.view,echo.badview,echo.unview,echo.manyviews')
 
 
 class Host(unittest.TestCase):
@@ -380,6 +396,78 @@ class Host(unittest.TestCase):
         self.assertEqual(out[0], 'ext=echo state=running')
         log = self.echo_log()
         self.assertTrue(log[0].startswith('0 ready '), log)
+
+    def test_hello_features_are_said_back_before_ready(self):
+        self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 300'], mode='features')
+        log = self.echo_log()
+        self.assertEqual(log[0], '0 features views complete')
+        self.assertTrue(log[1].startswith('0 ready '), log)
+
+    # --- views (section 12a) ---
+
+    def view_at(self, out):
+        line = next(l for l in out if l.startswith('view='))
+        x, y = line.split(' at=')[1].split(',')
+        return line, int(x), int(y)
+
+    def test_a_view_draws_every_shape(self):
+        shot = self.work / 'view.ppm'
+        out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300', 'print-views',
+                               'print-tabs', 'shot ' + shot.as_posix()], mode='views')
+        line, _, _ = self.view_at(out)
+        self.assertTrue(line.startswith('view=1 title=Echo picture shapes=12 size='), line)
+        self.assertIn('tabs=a.txt | *Echo picture', out)
+        colors = ppm_colors(shot)
+        for color in ((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255),
+                      (255, 128, 0), (128, 0, 255), (128, 64, 0)):
+            self.assertIn(color, colors)
+        log = self.echo_log()
+        self.assertIn('0 features views', log)
+        self.assertTrue(any(l.startswith('0 view 1 size ') for l in log), log)
+        metrics = next(l for l in log if l.startswith('0 view 1 metrics '))
+        self.assertRegex(metrics, r'^0 view 1 metrics small [0-9.]+ [0-9.]+ normal [0-9.]+ [0-9.]+ '
+                                  r'large [0-9.]+ [0-9.]+ mono [0-9.]+ [0-9.]+$')
+
+    def test_a_view_hears_the_pointer_and_its_closing(self):
+        out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300', 'print-views'],
+                              mode='views')
+        _, x, y = self.view_at(out)
+        self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300',
+                         f'move {x + 30} {y + 20}', 'wait 100', f'click {x + 40} {y + 25}', 'wait 100',
+                         f'move {x + 5} {y - 30}', 'wait 100', 'cmd close_tab', 'wait 300'], mode='views')
+        log = self.echo_log()
+        self.assertIn('0 view 1 hover 30 20', log)
+        self.assertIn('0 view 1 down 40 25', log)
+        self.assertIn('0 view 1 up 40 25', log)
+        self.assertIn('0 view 1 click 40 25', log)
+        self.assertIn('0 view 1 leave', log)
+        self.assertIn('0 view 1 closed', log)
+
+    def test_a_broken_picture_changes_nothing_and_unview_closes(self):
+        out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300',
+                               'cmd echo.badview', 'wait 300', 'print-views', 'cmd echo.unview', 'wait 300',
+                               'print-views', 'print-tabs'], mode='views')
+        self.assertTrue(any(l.startswith('view=1 title=Echo picture shapes=12 ') for l in out), out)
+        self.assertEqual(out[-1], 'tabs=*a.txt')
+        log = self.echo_log()
+        self.assertTrue(any(l.startswith('error ') and l.endswith(' syntax line 1') for l in log), log)
+        self.assertNotIn('0 view 1 closed', log)
+
+    def test_eight_views_at_most_and_none_without_the_feature(self):
+        self.run_editor(['cmd echo.manyviews', 'wait-ext echo running', 'wait 300', 'wait 300'], mode='views')
+        log = self.echo_log()
+        self.assertEqual(sum(l.startswith('ok ') for l in log if ' ' in l and l.split(' ')[1].isdigit()
+                             and int(l.split(' ')[1]) > 0), 8)
+        self.assertTrue(any(l.endswith('toobig 8 views') for l in log), log)
+        self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300'])
+        self.assertTrue(any(l.endswith('unknown no such request') for l in self.echo_log()))
+
+    def test_a_view_closes_with_its_extension(self):
+        out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300',
+                               'ext-set echo disabled 1', 'wait 300', 'wait 300', 'print-views', 'print-tabs'],
+                              mode='views')
+        self.assertFalse(any(l.startswith('view=') for l in out), out)
+        self.assertEqual(out[-1], 'tabs=*a.txt')
 
     def test_a_program_that_cannot_run_is_a_failed_start(self):
         exts = self.work / 'noexec'

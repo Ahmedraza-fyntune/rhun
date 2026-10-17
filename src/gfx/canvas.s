@@ -9,6 +9,9 @@
 g_cv: .zero CV_SIZE
 clip_stack: .zero 16 * CLIP_DEPTH
 clip_sp: .quad 0
+saved_cv: .zero CV_SIZE         # gfx_target_push's one saved target, its clip stack and depth
+saved_stack: .zero 16 * CLIP_DEPTH
+saved_sp: .quad 0
 
 .text
 
@@ -23,6 +26,41 @@ FN gfx_set_target
     mov [rip + g_cv + CV_cx1], esi
     mov [rip + g_cv + CV_cy1], edx
     mov qword ptr [rip + clip_sp], 0
+    ret
+
+# gfx_target_push(pixels, w, h): draw into another buffer (stride w) for a while, the window's
+# target, clip and clip stack kept; gfx_target_pop() goes back to them. One level.
+FN gfx_target_push
+    push rdi
+    push rsi
+    push rdx
+    lea rdi, [rip + saved_cv]
+    lea rsi, [rip + g_cv]
+    mov ecx, CV_SIZE
+    rep movsb
+    lea rdi, [rip + saved_stack]
+    lea rsi, [rip + clip_stack]
+    mov ecx, 16 * CLIP_DEPTH
+    rep movsb
+    mov rax, [rip + clip_sp]
+    mov [rip + saved_sp], rax
+    pop rdx
+    pop rsi
+    pop rdi
+    mov ecx, esi
+    jmp gfx_set_target
+
+FN gfx_target_pop
+    lea rdi, [rip + g_cv]
+    lea rsi, [rip + saved_cv]
+    mov ecx, CV_SIZE
+    rep movsb
+    lea rdi, [rip + clip_stack]
+    lea rsi, [rip + saved_stack]
+    mov ecx, 16 * CLIP_DEPTH
+    rep movsb
+    mov rax, [rip + saved_sp]
+    mov [rip + clip_sp], rax
     ret
 
 # gfx_clip_push(x, y, w, h): intersect clip with rect
@@ -521,6 +559,83 @@ FN gfx_mask
     inc r15d
     jmp .Lmk_row
 .Lmk_ret:
+    EPILOGUE
+
+# gfx_mask_exact(x, y, bits, w, h, argb): gfx_mask with the coverage times the color's alpha rounded,
+# so full coverage of an opaque color is that color (the views' shapes; text keeps gfx_mask)
+FN gfx_mask_exact
+    PROLOGUE 32
+    mov [rsp], edi              # x
+    mov [rsp + 4], esi          # y
+    mov r12, rdx                # bits
+    mov [rsp + 8], ecx          # w (mask stride)
+    mov [rsp + 12], r8d         # h
+    mov ebx, r9d                # color
+    mov eax, ebx
+    shr eax, 24
+    mov [rsp + 16], eax         # color alpha
+    # clipped span
+    mov r13d, edi               # x0
+    lea r14d, [rdi + rcx]       # x1
+    mov eax, [rip + g_cv + CV_cx0]
+    cmp r13d, eax
+    cmovl r13d, eax
+    mov eax, [rip + g_cv + CV_cx1]
+    cmp r14d, eax
+    cmovg r14d, eax
+    cmp r14d, r13d
+    jle .Lmx_ret
+    mov r15d, esi               # y0
+    lea eax, [rsi + r8]
+    mov [rsp + 20], eax         # y1
+    mov eax, [rip + g_cv + CV_cy0]
+    cmp r15d, eax
+    cmovl r15d, eax
+    mov eax, [rip + g_cv + CV_cy1]
+    cmp [rsp + 20], eax
+    jle 1f
+    mov [rsp + 20], eax
+1:
+.Lmx_row:
+    cmp r15d, [rsp + 20]
+    jge .Lmx_ret
+    # src row = bits + (y - y0)*w
+    mov eax, r15d
+    sub eax, [rsp + 4]
+    imul eax, [rsp + 8]
+    movsxd rax, eax
+    lea rsi, [r12 + rax]
+    movsxd rax, dword ptr [rsp]
+    sub rsi, rax                # so that rsi[x] is the mask byte for canvas x
+    mov eax, r15d
+    imul eax, [rip + g_cv + CV_stride]
+    movsxd rax, eax
+    mov rdi, [rip + g_cv + CV_pixels]
+    lea rdi, [rdi + rax*4]
+    movsxd r10, r13d
+.Lmx_px:
+    movzx edx, byte ptr [rsi + r10]
+    test edx, edx
+    jz .Lmx_next
+    imul edx, [rsp + 16]
+    add edx, 128                # (x + 128 + (x + 128) / 256) / 256: x / 255 rounded, 255 * 255 is 255
+    mov eax, edx
+    shr eax, 8
+    add edx, eax
+    shr edx, 8
+    mov eax, [rdi + r10*4]
+    mov ecx, ebx
+    push r10
+    BLEND
+    pop r10
+    mov [rdi + r10*4], eax
+.Lmx_next:
+    inc r10
+    cmp r10d, r14d
+    jl .Lmx_px
+    inc r15d
+    jmp .Lmx_row
+.Lmx_ret:
     EPILOGUE
 
 # one channel of a premultiplied source over the canvas: \sh is its bit position; ecx source,

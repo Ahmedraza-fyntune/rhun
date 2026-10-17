@@ -792,6 +792,8 @@ FN ext_retire
     call extpage_forget         # its details page goes back to the list (a reinstall is a new record)
     mov rdi, rbx
     call ext_icon_free
+    mov rdi, rbx
+    call extview_owner_gone
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -2220,6 +2222,7 @@ FN ext_start
     mov qword ptr [rbx + EXT_status_text], 0
     mov dword ptr [rbx + EXT_hello], 0
     mov dword ptr [rbx + EXT_syntax_errs], 0
+    mov dword ptr [rbx + EXT_features], 0
     mov dword ptr [rbx + EXT_flood], 0
     mov dword ptr [rbx + EXT_throttled], 0
     mov dword ptr [rbx + EXT_win_hit], 0
@@ -2956,6 +2959,8 @@ FN ext_exited
     call ext_options_clear
     mov rdi, rbx
     call extproto_prompt_owner_gone
+    mov rdi, rbx
+    call extview_owner_gone     # its views close with it
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
