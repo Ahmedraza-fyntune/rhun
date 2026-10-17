@@ -378,7 +378,7 @@ handle_line:
     call reply_error
     jmp 9f
 .Lhl_ok:
-    test dword ptr [rbx + EXT_features], FEAT_COMPLETE | FEAT_SIGNATURE
+    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
     jz 9f
     cmp qword ptr [rip + nfields], 3
     jb 9f
@@ -413,20 +413,40 @@ handle_line:
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
     call complete_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call langfeat_reply
     jmp 9f
 .Lhl_err:
-    test dword ptr [rbx + EXT_features], FEAT_COMPLETE | FEAT_SIGNATURE
+    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
     jz 9f
     mov edi, 1
     call field_u64
     test edx, edx
     jz 9f
+    mov r12, rax
     mov rdi, rbx
-    mov rsi, rax
+    mov rsi, r12
     xor edx, edx
     xor ecx, ecx
     xor r8d, r8d
     call complete_reply
+    test eax, eax
+    jnz 9f
+    # the code and text after the id, for the user when the request was theirs (rename)
+    mov edi, 2
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call langfeat_reply
     jmp 9f
 .Lhl_syntax:
     xor edi, edi
@@ -2184,6 +2204,64 @@ FN extproto_host_request
 8:  xor eax, eax
     EPILOGUE
 
+# FN extproto_host_send(ext, doc, line, len) -> rax the id of "ID LINE" sent to the extension, or
+# 0: every event about the document goes first, and a document it does not know is not asked about
+FN extproto_host_send
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 8f
+    mov rdi, rbx
+    call extproto_events
+    mov rdi, rbx
+    mov rsi, [r12 + DOC_id]
+    call known_find
+    test rax, rax
+    jz 8f
+    mov [rip + cur], rbx
+    inc qword ptr [rbx + EXT_hreq]
+    mov r15, [rbx + EXT_hreq]
+    call out_begin
+    mov rdi, r15
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r13
+    mov rsi, r14
+    call out_bytes
+    mov edi, 10
+    call out_byte
+    call out_end
+    mov rax, r15
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN extproto_send_action(ext, data, len): "0 action LEN" and the bytes of a chosen code action
+FN extproto_send_action
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 9f
+    mov [rip + cur], rbx
+    call out_begin
+    lea rdi, [rip + .Lev_action]
+    call out_cstr
+    mov rdi, r13
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, r12
+    mov rsi, r13
+    call out_bytes
+    call out_end
+9:  EPILOGUE
+
 # FN extproto_send_cancel(ext, id): "0 cancel ID", a request rhun no longer needs the answer to
 FN extproto_send_cancel
     PROLOGUE
@@ -2982,11 +3060,19 @@ cmd_allow:
 .Lw_hello: .asciz "hello"
 .Lev_features: .asciz "0 features"
 .Lev_cancel: .asciz "0 cancel "
+.Lev_action: .asciz "0 action "
 .Lf_views: .asciz "views"
 .Lf_complete: .asciz "complete"
 .Lf_signature: .asciz "signature"
+.Lf_definition: .asciz "definition"
+.Lf_references: .asciz "references"
+.Lf_symbols: .asciz "symbols"
+.Lf_actions: .asciz "actions"
+.Lf_rename: .asciz "rename"
+.Lf_format: .asciz "format"
 .p2align 3
-feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, 0   # bit 0, 1, 2: FEAT_*
+feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, 0
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "

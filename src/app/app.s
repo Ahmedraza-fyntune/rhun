@@ -2511,12 +2511,21 @@ FN app_timeout
     cmp eax, ebx
     jge 90f
 91: mov ebx, eax
-90: mov eax, ebx
+90: call langfeat_timeout
+    cmp eax, -1
+    je 92f
+    cmp ebx, -1
+    je 93f
+    cmp eax, ebx
+    jge 92f
+93: mov ebx, eax
+92: mov eax, ebx
     EPILOGUE
 
 FN app_tick
     PROLOGUE
     call complete_tick
+    call langfeat_tick
     call ext_options_apply
     call watch_tick
     call tip_tick

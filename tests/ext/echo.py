@@ -143,6 +143,8 @@ def main():
         send('hello 1 views')
     elif MODE in ('complete', 'completebad', 'completemore'):
         send('hello 1 complete signature')
+    elif MODE == 'lang':
+        send('hello 1 definition references symbols actions rename format')
     else:
         send('hello 1')
     if MODE == 'crash':
@@ -208,10 +210,20 @@ def main():
                 then(fields, body)
             continue
         if fields[0] != '0':
-            if fields[0].isdigit() and len(fields) >= 8:
+            if fields[0].isdigit() and len(fields) >= 6 and MODE == 'lang':
+                on_lang_request(int(fields[0]), fields[1], fields[2:])
+            elif fields[0].isdigit() and len(fields) >= 8:
                 on_host_request(int(fields[0]), fields[1], fields[2:])
             continue
         event = fields[1]
+        if event == 'action':
+            log(read_body(int(fields[2])))
+            continue
+        if event == 'ready':
+            PROJECT[0] = line.decode(errors='replace').split(' ', 2)[2]
+        if event == 'opened':
+            parts = line.decode(errors='replace').split(' ', 5)
+            PATHS[int(fields[2])] = parts[5]
         if event == 'opened':
             versions[int(fields[2])] = int(fields[3])
         elif event in ('changed', 'saved'):
@@ -293,6 +305,79 @@ def on_host_request(rid, verb, args):
             return
         send(f'ok {rid} {len(reply)}', reply)
     request(f'text {doc}', then=answer)
+
+
+PROJECT = ['-']
+PATHS = {}
+
+
+def workspace_edit(groups):
+    """A workspace edit body (12g): groups of (path, version or '-', [(l1, c1, l2, c2, text)])."""
+    out = f'{len(groups)}\n'.encode()
+    for path, version, edits in groups:
+        p = path.encode()
+        out += f'{len(p)} {version} {len(edits)}\n'.encode() + p
+        for l1, c1, l2, c2, text in edits:
+            t = text.encode()
+            out += f'{l1} {c1} {l2} {c2} {len(t)}\n'.encode() + t
+    return out
+
+
+def on_lang_request(rid, verb, args):
+    doc, version = int(args[0]), int(args[1])
+    twist = os.environ.get('ECHO_LANG', '')
+    if twist == 'exit':
+        sys.exit(0)
+    if twist == 'error':
+        send(f'error {rid} conflict "x" is already a name here')
+        return
+    path = PATHS.get(doc, f'#{doc}')
+    other = PROJECT[0] + '/other.rs'
+
+    def answer(fields, body):
+        lines = body.decode().split('\n')
+        if verb == 'definition':
+            reply = b'1\n' + loc(path, 1, 5, 1, 9, lines[0])
+        elif verb == 'references':
+            reply = b'2\n' + loc(other, 1, 4, 1, 8, 'fn main_ref() {}') + loc(path, 2, 13, 2, 17, lines[1])
+        elif verb == 'symbols':
+            reply = b'2\n' + sym(1, 1, 3, 2, 'function', 0, 'main', 'fn()') + sym(2, 9, 2, 10, 'variable', 1, 'x', '')
+        elif verb == 'actions':
+            title1, title2 = b'Say hello', b'Add a comment'
+            edit = workspace_edit([(path, version, [(1, 1, 1, 1, '// fixed\n')])])
+            reply = (b'2\n' + f'source {len(title1)} 0 5\n'.encode() + title1 + b'hello'
+                     + f'quickfix {len(title2)} {len(edit)} 0\n'.encode() + title2 + edit)
+        elif verb == 'rename':
+            name = args[5]
+            stale = version + 1 if os.environ.get('ECHO_STALE') else version
+            edits = []
+            for i, text in enumerate(lines):
+                start = 0
+                while (j := text.find('main', start)) >= 0:
+                    edits.append((i + 1, j + 1, i + 1, j + 5, name))
+                    start = j + 4
+            reply = workspace_edit([(path, stale, edits), (other, '-', [(1, 4, 1, 8, name)])])
+        elif verb == 'format' and twist == 'overlap':
+            reply = workspace_edit([(path, version, [(1, 1, 1, 6, 'a'), (1, 3, 1, 9, 'b')])])
+        elif verb == 'format' and twist == 'outside':
+            reply = workspace_edit([(path, version, [(1, 1, 1, 6, 'a'), (9, 1, 9, 1, 'b')])])
+        elif verb == 'format':
+            reply = workspace_edit([(path, version, [(1, 1, 1, len(lines[0].encode()) + 1, 'fn main() {')])])
+        else:
+            send(f'error {rid} unknown no such request')
+            return
+        send(f'ok {rid} {len(reply)}', reply)
+    request(f'text {doc}', then=answer)
+
+
+def loc(path, l1, c1, l2, c2, text):
+    p, t = path.encode(), text.encode()
+    return f'{l1} {c1} {l2} {c2} {len(p)} {len(t)}\n'.encode() + p + t
+
+
+def sym(l1, c1, l2, c2, kind, depth, name, detail):
+    n, d = name.encode(), detail.encode()
+    return f'{l1} {c1} {l2} {c2} {kind} {depth} {len(n)} {len(d)}\n'.encode() + n + d
 
 
 def on_run(command, doc, versions):

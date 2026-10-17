@@ -12,6 +12,7 @@
 .equ PM_GREP, 7
 .equ PM_BROWSE, 8
 .equ PM_CHOOSE, 9               # an extension's pick list (choose)
+.equ PM_RESULTS, 10             # results from extensions: locations, symbols, code actions (langfeat.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -847,6 +848,30 @@ FN palette_choose_add
 FN palette_choose_ready
     jmp palette_filter
 
+# palette_results_open(label cstr), palette_results_add(ptr, len, detail cstr or 0, n),
+# palette_results_ready(), palette_results_close(): a list of langfeat's results; choosing item n
+# calls langfeat_chosen(n). The strings stay langfeat's until it closes the list
+FN palette_results_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_RESULTS
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+FN palette_results_add
+    jmp item_add
+
+FN palette_results_ready
+    jmp palette_filter
+
+FN palette_results_close
+    cmp dword ptr [rip + pal_mode], PM_RESULTS
+    jne 1f
+    jmp palette_close
+1:  ret
+
 # palette_ext_prompt_open(label cstr, PROMPT_ASK | PROMPT_TERM, text, len): a text prompt with
 # the field preset
 FN palette_ext_prompt_open
@@ -1636,8 +1661,10 @@ FN palette_print
 1:  cmp dword ptr [rip + pal_mode], PM_PROMPT
     je 10f
     cmp dword ptr [rip + pal_mode], PM_CHOOSE
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_RESULTS
     jne 11f
-    lea rsi, [rip + .Lpp_choose]
+13: lea rsi, [rip + .Lpp_choose]
     jmp 12f
 10: lea rsi, [rip + .Lpp_prompt]
 12: call sb_push_cstr
@@ -2082,7 +2109,15 @@ palette_accept:
     mov [rcx + DOC_lang], rax
     mov qword ptr [rcx + DOC_svalid], 0
     jmp .Lpa_close
-31: cmp ebx, PM_CHOOSE
+31: cmp ebx, PM_RESULTS
+    jne 32f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call langfeat_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+32: cmp ebx, PM_CHOOSE
     jne .Lpa_close
     # the extension's pick: the item's number, with the palette closed first (the reply may
     # open another prompt)
@@ -2157,7 +2192,20 @@ palette_accept:
     call extpage_prompt_done
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-69: cmp dword ptr [rip + pal_prompt], PROMPT_ASK
+69: cmp dword ptr [rip + pal_prompt], PROMPT_RENAME_SYMBOL
+    jne 691f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call langfeat_rename_to
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+691: cmp dword ptr [rip + pal_prompt], PROMPT_ASK
     jb 70f
     # an extension's prompt: the field's text goes back to it. A terminal command's prompt that
     # just appeared ignores Enter: a keystroke meant for the editor must not run it
@@ -2724,7 +2772,20 @@ FN palette_draw
     mov rdx, rax
     call text_width
     add eax, [rip + g_mt + 4*MI_16]
-    mov [rsp + 56], eax
+    mov [rsp + 60], eax
+    # at most 2/5 of the row: a longer one (a deep folder) shows its end
+    lea ecx, [r12 + r12]
+    push rax
+    mov eax, ecx
+    xor edx, edx
+    mov ecx, 5
+    div ecx
+    mov ecx, eax
+    pop rax
+    cmp eax, ecx
+    jbe 103f
+    mov eax, ecx
+103:mov [rsp + 56], eax
 101: # label with matched characters highlighted, clipped before the detail; not the path
     # browser's "Open <folder>" rows
     mov rax, [rsp + 24]
@@ -2755,9 +2816,16 @@ FN palette_draw
     # detail on the right
     cmp dword ptr [rsp + 56], 0
     je 11f
+    mov edi, r13d
+    add edi, r12d
+    sub edi, [rsp + 56]
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 56]
+    mov ecx, ebx
+    call gfx_clip_push
     mov esi, r13d
     add esi, r12d
-    sub esi, [rsp + 56]
+    sub esi, [rsp + 60]
     lea rdi, [rip + g_face_small]
     mov edx, [rsp + 20]
     mov ecx, ebx
@@ -2768,6 +2836,7 @@ FN palette_draw
     push rax
     call ui_text_v
     add rsp, 16
+    call gfx_clip_pop
 11: test dword ptr [rsp + 32], UB_CLICK
     jz 12f
     mov eax, [rsp + 16]
@@ -2794,8 +2863,11 @@ prompt_title:
     jne 1f
     mov edi, IC_FILE_PLUS
 1:  cmp eax, PROMPT_NEW_FOLDER
-    jne 2f
+    jne 21f
     mov edi, IC_FOLDER_PLUS
+21: cmp eax, PROMPT_RENAME_SYMBOL
+    jne 2f
+    mov edi, IC_F_CODE
 2:  M ecx, MI_16
     mov esi, r12d
     add esi, ecx
@@ -2967,6 +3039,8 @@ hint_text:
     je 1f
     lea rax, [rip + .Lhint_rename]
     cmp dword ptr [rip + pal_prompt], PROMPT_RENAME
+    je 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_RENAME_SYMBOL
     je 1f
     lea rax, [rip + .Lhint_path]
 1:  ret

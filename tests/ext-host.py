@@ -675,6 +675,118 @@ class Host(unittest.TestCase):
         self.assertIn('complete open=0 items=0 shown=0 sel=0 labels=', out)
         self.assertFalse(any(' complete ' in l or ' signature ' in l for l in self.echo_log()))
 
+    # --- definition, references, symbols, actions, rename, format (12d to 12h) ---
+
+    def lang(self):
+        (self.proj / 'p.rs').write_text('fn  main( ) {\n    let x = main;\n}\n', encoding='utf-8')
+        (self.proj / 'other.rs').write_text('fn main_ref() {}\n', encoding='utf-8')
+
+    def state(self, out, n=0):
+        return [l for l in out if l.startswith('tabs=')][n]
+
+    def test_definition_goes_there_and_references_list_them(self):
+        self.lang()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key Home', 'key ctrl+Right',
+                               'key ctrl+Right', 'key ctrl+Right', 'key F12', 'wait 300', 'wait 300', 'print-state',
+                               'key shift+F12', 'wait 300', 'wait 300', 'print-palette', 'key Down', 'key Return',
+                               'wait 100', 'print-state'], mode='lang', files=('p.rs',))
+        self.assertIn(' active=p.rs line=1 col=9 sel=4 ', self.state(out, 0))
+        rows = out[out.index('choose=Go to reference') + 1:]
+        self.assertTrue(rows[1].startswith('> p.rs:2  let x = main;'), rows)
+        self.assertTrue(rows[2].startswith('  other.rs:1  fn main_ref() {}'), rows)
+        self.assertIn(' active=other.rs line=1 col=8 sel=4 ', self.state(out, 1))
+
+    def test_symbols_filter_and_go(self):
+        self.lang()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key ctrl+r', 'wait 300', 'wait 300',
+                               'print-palette', 'type x', 'key Return', 'wait 100', 'print-state'],
+                              mode='lang', files=('p.rs',))
+        rows = out[out.index('choose=Go to symbol') + 1:]
+        self.assertTrue(rows[1].startswith('> main'), rows)
+        self.assertTrue(rows[2].startswith('    x'), rows)
+        self.assertIn(' line=2 col=10 sel=1 ', self.state(out))
+
+    def test_code_actions_edit_and_send_their_data(self):
+        self.lang()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key ctrl+.', 'wait 300', 'wait 300',
+                               'print-palette', 'key Return', 'wait 300', 'print-doc', 'key ctrl+.', 'wait 300',
+                               'wait 300', 'key Down', 'key Return', 'wait 300', 'wait 300'],
+                              mode='lang', files=('p.rs',))
+        rows = out[out.index('choose=Code action') + 1:]
+        self.assertTrue(rows[1].startswith('> Add a comment'), rows)   # quick fixes first
+        self.assertTrue(rows[2].startswith('  Say hello'), rows)
+        self.assertEqual(out[out.index('// fixed') + 1], 'fn  main( ) {')
+        log = self.echo_log()
+        self.assertIn('0 action 5', log)
+        self.assertEqual(log[log.index('0 action 5') + 1], 'hello')
+
+    def test_rename_edits_open_and_closed_files_as_one_undo_step_each(self):
+        self.lang()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key ctrl+End', 'key F2', 'print-palette',
+                               'type start', 'key Return', 'wait 300', 'wait 300', 'print-tabs', 'print-doc',
+                               'cmd undo', 'print-doc', 'key ctrl+Tab', 'print-state', 'print-doc'],
+                              mode='lang', files=('p.rs',))
+        self.assertIn('prompt=New name', out)
+        state = [l for l in out if l.startswith('tabs=2 ')][0]
+        self.assertIn(' active=other.rs ', state)
+        self.assertIn(' dirty=1 ', state)
+        self.assertIn('fn start_ref() {}', out)
+        self.assertIn('tabs=*p.rs | other.rs', out)
+        docs = [i for i, l in enumerate(out) if l.startswith('fn ')]
+        self.assertEqual(out[docs[0]:docs[0] + 2], ['fn  start( ) {', '    let x = start;'])
+        self.assertEqual(out[docs[1]:docs[1] + 2], ['fn  main( ) {', '    let x = main;'])
+        self.assertEqual((self.proj / 'other.rs').read_text(), 'fn main_ref() {}\n', 'nothing saved')
+
+    def test_a_stale_workspace_edit_changes_nothing(self):
+        self.lang()
+        self.env['ECHO_STALE'] = '1'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key F2', 'type start', 'key Return',
+                               'wait 300', 'wait 300', 'print-toast', 'print-tabs', 'print-doc'],
+                              mode='lang', files=('p.rs',))
+        self.assertIn('toast=A document changed since the edit was made: nothing changed', out)
+        self.assertIn('tabs=*p.rs', out)
+        self.assertIn('fn  main( ) {', out)
+
+    def test_a_rename_the_extension_refuses_says_why(self):
+        self.lang()
+        self.env['ECHO_LANG'] = 'error'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key F2', 'type x', 'key Return',
+                               'wait 300', 'print-toast', 'print-doc'], mode='lang', files=('p.rs',))
+        self.assertIn('toast="x" is already a name here', out)
+        self.assertIn('fn  main( ) {', out)
+
+    def test_edits_that_overlap_or_leave_the_text_change_nothing(self):
+        self.lang()
+        for twist, toast in (('overlap', "The edit's ranges overlap: nothing changed"),
+                             ('outside', "The edit's ranges are not in the text: nothing changed")):
+            self.env['ECHO_LANG'] = twist
+            out = self.run_editor(['wait-ext echo running', 'wait 300', 'key shift+alt+f', 'wait 300', 'wait 300',
+                                   'print-toast', 'print-state', 'print-doc'], mode='lang', files=('p.rs',))
+            self.assertIn('toast=' + toast, out)
+            self.assertIn(' dirty=0 ', self.state(out))
+            self.assertIn('fn  main( ) {', out)
+
+    def test_an_extension_that_exits_while_asked_ends_the_question(self):
+        self.lang()
+        self.env['ECHO_LANG'] = 'exit'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key ctrl+r', 'wait 300', 'wait 300',
+                               'print-toast', 'print-palette', 'type abc', 'print-doc'], mode='lang', files=('p.rs',))
+        self.assertIn('toast=No symbols in this file', out)
+        self.assertIn('abcfn  main( ) {', out)
+
+    def test_format_document(self):
+        self.lang()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key shift+alt+f', 'wait 300', 'wait 300',
+                               'print-doc'], mode='lang', files=('p.rs',))
+        self.assertEqual(out[out.index('fn main() {') + 1], '    let x = main;')
+
+    def test_without_a_provider_f2_renames_the_file(self):
+        self.lang()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key F12', 'wait 100', 'print-toast',
+                               'key F2', 'print-palette'], mode='lang', files=('a.txt',))
+        self.assertIn('toast=No extension finds definitions in this file', out)
+        self.assertTrue(any(l.startswith('prompt=') and 'New name' not in l for l in out), out)
+
     def test_a_view_closes_with_its_extension(self):
         out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300',
                                'ext-set echo disabled 1', 'wait 300', 'wait 300', 'print-views', 'print-tabs'],

@@ -89,6 +89,7 @@ sg_text: .zero SB_SIZE          # the signature, LF, the documentation
 sg_siglen: .quad 0              # the signature's bytes in sg_text
 sg_rect: .zero 16
 # the answer parser: where it is, the end of the body and of the current line
+.globl ps_ptr, ps_end, ps_lend
 ps_ptr: .quad 0
 ps_end: .quad 0
 ps_lend: .quad 0
@@ -509,8 +510,8 @@ FN complete_tick
 
 # ---------------- answers ----------------
 
-# FN complete_reply(ext, id, ok, body, len): an extension answered one of rhun's requests (called
-# from extproto's pump: state only)
+# FN complete_reply(ext, id, ok, body, len) -> eax 1 when it was a completion's or a signature's
+# request (called from extproto's pump: state only)
 FN complete_reply
     PROLOGUE 32
     mov rbx, rdi
@@ -520,7 +521,7 @@ FN complete_reply
     mov r15, r8
     xor r13d, r13d
 1:  cmp r13, [rip + cp_reqs + VEC_len]
-    jae 9f                      # not one rhun waits for
+    jae 8f                      # not a completion's or a signature's
     imul rax, r13, HR_SIZE
     add rax, [rip + cp_reqs + VEC_ptr]
     cmp [rax + HR_ext], rbx
@@ -579,7 +580,10 @@ FN complete_reply
     cmp rcx, [rip + sg_ver]
     je 9f
 53: mov dword ptr [rip + sg_again], 1
-9:  EPILOGUE
+9:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # FN complete_ext_gone(ext): an extension stopped: its requests and items go (no messages: this
 # runs while processes are reaped)
@@ -716,7 +720,7 @@ cp_merge:
 # ---- the answer's parser: globals ps_ptr, ps_end, ps_lend ----
 
 # ps_line() -> eax 1 with ps_lend at the LF ending the line from ps_ptr, 0 when there is none
-ps_line:
+FN ps_line
     mov rax, [rip + ps_ptr]
     mov rcx, [rip + ps_end]
 1:  cmp rax, rcx
@@ -733,7 +737,7 @@ ps_line:
 
 # ps_word() -> rax ptr, rdx len of the next word of the line (rdx 0 at its end); moves past it and
 # one space
-ps_word:
+FN ps_word
     mov rax, [rip + ps_ptr]
     mov rcx, [rip + ps_lend]
     mov rdx, rax
@@ -752,7 +756,7 @@ ps_word:
     ret
 
 # ps_num() -> rax value, edx 1 when the next word is a number of at most 10 digits
-ps_num:
+FN ps_num
     push rbx
     call ps_word
     test rdx, rdx
@@ -788,7 +792,7 @@ ps_snum:
     ret
 
 # ps_eol() -> eax 1 when the line is used up; ps_ptr moves past its LF
-ps_eol:
+FN ps_eol
     mov rax, [rip + ps_ptr]
     cmp rax, [rip + ps_lend]
     jne 8f

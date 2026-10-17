@@ -796,6 +796,8 @@ FN ext_retire
     call extview_owner_gone
     mov rdi, rbx
     call complete_ext_gone
+    mov rdi, rbx
+    call langfeat_ext_gone
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1497,7 +1499,17 @@ FN ext_load
     mov rdi, rbx
     mov rsi, [rbx + EXT_pv_signature]
     call provides_merge
-    # its data files: themes and grammars
+    xor r12d, r12d
+82: lea rax, [rip + pv_more]
+    mov rcx, [rax + r12*8]
+    test rcx, rcx
+    jz 83f
+    mov rdi, rbx
+    mov rsi, [rbx + rcx]
+    call provides_merge
+    inc r12d
+    jmp 82b
+83: # its data files: themes and grammars
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsub_themes]
     call path_join
@@ -3038,6 +3050,8 @@ FN ext_exited
     call extview_owner_gone     # its views close with it
     mov rdi, rbx
     call complete_ext_gone      # and its completion items and signature help
+    mov rdi, rbx
+    call langfeat_ext_gone      # and the language queries it was asked
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -3966,8 +3980,13 @@ cur_start: .quad 0              # the EXT being started (env_add_state)
 .section .rodata
 .p2align 3
 state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled, .Lst_removed
+pv_more: .quad EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename
+    .quad EXT_pv_format, 0
 pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
-    .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig, 0, 0
+    .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig
+    .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
+    .quad .Lpv_symbols, EXT_pv_symbols, .Lpv_actions, EXT_pv_actions
+    .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format, 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -4058,6 +4077,12 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_ctrig: .asciz "complete.triggers"
 .Lpv_signature: .asciz "signature"
 .Lpv_strig: .asciz "signature.triggers"
+.Lpv_definition: .asciz "definition"
+.Lpv_references: .asciz "references"
+.Lpv_symbols: .asciz "symbols"
+.Lpv_actions: .asciz "actions"
+.Lpv_rename: .asciz "rename"
+.Lpv_format: .asciz "format"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"

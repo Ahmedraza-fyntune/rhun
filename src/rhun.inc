@@ -939,7 +939,15 @@ ENDSTRUCT TF_SIZE
 .equ FEAT_VIEWS, 1               # section 12 of the spec: features agreed after hello
 .equ FEAT_COMPLETE, 2
 .equ FEAT_SIGNATURE, 4
-.equ FEAT_HOST, FEAT_VIEWS | FEAT_COMPLETE | FEAT_SIGNATURE   # what this rhun implements: only these are agreed
+.equ FEAT_DEFINITION, 8
+.equ FEAT_REFERENCES, 16
+.equ FEAT_SYMBOLS, 32
+.equ FEAT_ACTIONS, 64
+.equ FEAT_RENAME, 128
+.equ FEAT_FORMAT, 256
+# the features whose requests rhun sends (and whose ok ID LEN replies it frames)
+.equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT
+.equ FEAT_HOST, FEAT_VIEWS | FEAT_PROVIDERS   # what this rhun implements: only these are agreed
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1048,6 +1056,7 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_TERM, 6             # an extension's command for the terminal (term)
 .equ PROMPT_EXT_INSTALL, 7      # Install from GitHub: owner/name
 .equ PROMPT_EXT_SETTING, 8      # a text setting of an extension (extpage.s)
+.equ PROMPT_RENAME_SYMBOL, 9    # the new name of a symbol (langfeat.s)
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -1144,6 +1153,12 @@ F EXT_pv_ctrig, 8       # complete.triggers: characters that ask at once, space 
 F EXT_pv_signature, 8   # signature: the files it gives signature help in, or 0
 F EXT_pv_strig, 8       # signature.triggers
 F EXT_hreq, 8           # the id of the last request rhun sent it (ids are never reused)
+F EXT_pv_definition, 8  # [provides] definition, references, symbols, actions, rename, format
+F EXT_pv_references, 8
+F EXT_pv_symbols, 8
+F EXT_pv_actions, 8
+F EXT_pv_rename, 8
+F EXT_pv_format, 8
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)

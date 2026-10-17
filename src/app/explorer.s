@@ -527,7 +527,14 @@ FN cmd_new_folder
     jmp prompt_open
 
 FN cmd_rename_file
-    call file_target
+    # in a document with a rename provider, F2 renames the symbol under the cursor (langfeat.s)
+    push rbx
+    call langfeat_rename_start
+    pop rbx
+    test eax, eax
+    jz 0f
+    ret
+0:  call file_target
     test eax, eax
     jz 1f
     lea rdi, [rip + .Lrename]
