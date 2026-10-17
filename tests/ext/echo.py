@@ -329,7 +329,7 @@ def on_lang_request(rid, verb, args):
     if twist == 'exit':
         sys.exit(0)
     if twist == 'error':
-        send(f'error {rid} conflict "x" is already a name here')
+        send(f'error {rid} refused "x" is already a name here')
         return
     path = PATHS.get(doc, f'#{doc}')
     other = PROJECT[0] + '/other.rs'
@@ -498,6 +498,8 @@ def on_run(command, doc, versions):
         elif twist == 'untitled':    # the untitled document by its id, and a file to open
             target = f'#{doc}'
             here = [(1, 1, 1, 1, 'untitled text')]
+        elif twist == 'replins':     # a replacement, then an insertion where it starts
+            here = [(1, 1, 1, 3, 'FN'), (1, 1, 1, 1, '<')]
         elif twist == 'badref':
             target = f'#{doc}x'
         groups = [(target, version, here), (PROJECT[0] + ('/missing.rs' if twist == 'missing' else '/other.rs'), '-', other)]

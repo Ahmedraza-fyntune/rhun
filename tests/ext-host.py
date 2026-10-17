@@ -822,6 +822,11 @@ class Host(unittest.TestCase):
         self.assertIn('stale', self.reply_to_apply())
         self.assertIn('fn  main( ) {', out)
 
+    def test_an_insertion_goes_before_a_replacement_at_its_place(self):
+        out = self.apply_twist('replins')
+        self.assertTrue(self.reply_to_apply().startswith('ok '), self.reply_to_apply())
+        self.assertIn('<FN  main( ) {', out)
+
     def test_many_edits_out_of_order_are_sorted(self):
         out = self.apply_twist('many')
         self.assertTrue(self.reply_to_apply().startswith('ok '), self.reply_to_apply())

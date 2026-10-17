@@ -677,8 +677,14 @@ FN langfeat_reply
     call sb_push
     mov [rip + lf_ws_ext], rbx
     jmp 7f
-6:  # an error: a rename's text (after the code) is the user's to read
+6:  # an error: a rename's "refused TEXT" is the user's to read (other codes say nothing to them)
     cmp eax, LF_RENAME
+    jne 7f
+    cmp r15, 8
+    jb 7f
+    cmp dword ptr [r14], 0x75666572       # "refu"
+    jne 7f
+    cmp dword ptr [r14 + 4], 0x20646573   # "sed "
     jne 7f
 62: test r15, r15
     jz 7f
@@ -2120,17 +2126,19 @@ ws_sort:
     PROLOGUE
     mov rbx, [rdi + WG_first]
     mov r12, [rdi + WG_count]
-    # already in order?
-    mov rcx, 1
-1:  cmp rcx, r12
+    # already in order (by we_cmp: a replacement listed before an insertion at its start is not)?
+    mov r13, 1
+1:  cmp r13, r12
     jae 8f
-    lea rax, [rbx + rcx]
+    lea rax, [rbx + r13]
     imul rax, rax, WE_SIZE
     add rax, [rip + we_vec + VEC_ptr]
-    mov rdx, [rax + WE_start]
-    cmp rdx, [rax - WE_SIZE + WE_start]
-    jb 2f
-    inc rcx
+    lea rdi, [rax - WE_SIZE]
+    mov rsi, rax
+    call we_cmp
+    test eax, eax
+    jg 2f
+    inc r13
     jmp 1b
 2:  imul rdi, rbx, WE_SIZE
     add rdi, [rip + we_vec + VEC_ptr]
