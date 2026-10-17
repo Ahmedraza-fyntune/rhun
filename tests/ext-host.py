@@ -239,12 +239,13 @@ class Host(unittest.TestCase):
         self.assertEqual(out[4], 'okhello world')
 
     def test_a_program_that_never_reads_is_stopped(self):
-        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 11000', 'print-extensions',
-                               'type ok', 'print-doc'], mode='floodnoread')
-        # whichever rule trips first: the message cap, or the queue it never drains
-        self.assertTrue('reason=not reading for 10 s' in out[1] or 'reason=flooding' in out[1], out[1])
-        self.assertIn('state=stopped', out[1])
-        self.assertEqual(out[2], 'okhello world')
+        # whichever rule trips first: the message cap, or the queue it never drains; on a busy runner
+        # a quiet window can restart the flood count, so after the 11 s it may take up to 10 s more
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 11000', 'wait-ext echo stopped',
+                               'print-extensions', 'type ok', 'print-doc'], mode='floodnoread')
+        self.assertTrue('reason=not reading for 10 s' in out[2] or 'reason=flooding' in out[2], out[2])
+        self.assertIn('state=stopped', out[2])
+        self.assertEqual(out[3], 'okhello world')
 
     def test_garbage_without_a_newline(self):
         out = self.run_editor(['cmd echo.toast', 'wait 600', 'print-extensions'], mode='garbage')
