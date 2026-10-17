@@ -15,7 +15,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
   Git worktree registrations supply the checkout roots. Rhun remembers verified worktree paths in repository-specific state, so their agent history stays visible after the checkouts are deleted or Git prunes their registrations. Nested Claude worktree history can also be recovered from its exact recorded path without prior Rhun state. If another repository takes over a remembered checkout path, Rhun keeps previously verified sessions and excludes new sessions from that repository. When Git metadata is stored outside the main checkout and contains no reference to its path, open the main checkout to include its sessions.
 - Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs; Cmd+click (Ctrl+click on Linux and Windows) opens links in the browser and files in a tab
 - Git: changed lines in the gutter, file status in tabs and the explorer, diffs, a history of all branches drawn as a graph, and source control as in VS Code: stage, commit, pull, push
-- Extensions: native programs in Rust, Go, C or C++ that add commands, edits, marks, hover, settings, completion lists, signature help and views (tabs they draw charts and pictures in), installed from GitHub and held to the permissions they declare; first-party ones bring language servers, formatters, `.editorconfig`, snippets and tasks (see [Extensions](#extensions))
+- Extensions: native programs in Rust, Go, C or C++ that add commands, edits, marks, hover, settings, completion lists, signature help, go to definition, references, symbols, code actions, rename, format and views (tabs they draw charts and pictures in), installed from GitHub and held to the permissions they declare; first-party ones bring language servers, formatters, `.editorconfig`, snippets and tasks (see [Extensions](#extensions))
 - Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap; without it, lines wider than the editor get a horizontal scrollbar along its bottom
 - Vim mode, off by default: normal, insert and visual modes, operators, text objects, counts, `.`, search and `:` commands
 - Characters missing from the built-in fonts are drawn with the system's fonts
@@ -583,7 +583,21 @@ lists, suggest terminal commands, set per-document options, ship themes and gram
 settings on their page. They can also open **views**, tabs they draw in with shapes and text in
 the theme's colors (charts, pictures, previews) that hear the pointer, and provide **completion
 lists** and **signature help** as you type: `ctrl+space` asks for the list, `ctrl+shift+space`
-for the signature, Enter or Tab puts the selected item in.
+for the signature, Enter or Tab puts the selected item in. And they answer the language
+commands:
+
+| Key | Command | What happens |
+| --- | --- | --- |
+| F12 | Go to Definition | one definition opens at once; several are listed in the palette |
+| shift+F12 | Find All References | the references in the palette, this file's first; choosing one opens it |
+| ctrl+r | Go to Symbol in File | the file's functions, types and variables, indented by nesting; type to filter |
+| ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
+| F2 | Rename | on a word, asks for the new name; every file it changes opens unsaved for you to review (on no word, F2 renames the file) |
+| shift+alt+f | Format Document | with the document's tab width and spaces |
+
+An edit across files is checked whole before anything changes: if a document changed meanwhile
+or a range is off, nothing changes and rhun says why. Each document's changes are one undo
+step.
 
 ### Install and manage
 
@@ -599,7 +613,7 @@ From [rhun-editor](https://github.com/rhun-editor):
 
 | Extension | What it does |
 | --- | --- |
-| `rhun-editor/lsp` | completion, signature help, errors, hover text and Go to Definition from the language servers you have installed (gopls, rust-analyzer, clangd, pyright and 18 more) |
+| `rhun-editor/lsp` | completion, signature help, errors, hover text, definitions, references, symbols, code actions, rename and format from the language servers you have installed (gopls, rust-analyzer, clangd, pyright and 18 more) |
 | `rhun-editor/format` | formats the document with the formatter you already have, such as gofmt, prettier or ruff |
 | `rhun-editor/editorconfig` | applies your `.editorconfig` files |
 | `rhun-editor/snippets` | expands a short name into a longer piece of text for the document's language |

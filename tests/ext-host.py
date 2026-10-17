@@ -705,7 +705,7 @@ class Host(unittest.TestCase):
         rows = out[out.index('choose=Go to symbol') + 1:]
         self.assertTrue(rows[1].startswith('> main'), rows)
         self.assertTrue(rows[2].startswith('    x'), rows)
-        self.assertIn(' line=2 col=10 sel=1 ', self.state(out))
+        self.assertIn(' line=2 col=9 sel=0 ', self.state(out))   # a symbol: the cursor at its start
 
     def test_code_actions_edit_and_send_their_data(self):
         self.lang()
@@ -795,6 +795,77 @@ class Host(unittest.TestCase):
         self.assertIn('tabs=*p.rs', out)
         self.assertIn('fn  main( ) {', out)
         self.assertNotIn('toast=', ' '.join(l for l in out if 'nothing changed' in l))
+
+    def apply_twist(self, twist, files=('p.rs',), pre=()):
+        self.lang()
+        self.env['ECHO_APPLY'] = twist
+        return self.run_editor(['wait-ext echo running', 'wait 300', *pre, 'cmd echo.apply', 'wait 300', 'print-tabs',
+                                'print-doc'], files=files)
+
+    def reply_to_apply(self):
+        return [l for l in self.echo_log() if l.startswith(('ok ', 'error '))][-1]
+
+    def test_apply_refuses_what_it_cannot_make_and_leaves_no_tab(self):
+        for twist, code in (('bigcoord', 'badpos'), ('missing', 'nofile'), ('relative', 'nofile'),
+                            ('badref', 'nofile')):
+            out = self.apply_twist(twist)
+            self.assertIn(code, self.reply_to_apply(), twist)
+            self.assertIn('tabs=*p.rs', out, twist)
+            self.assertIn('fn  main( ) {', out, twist)
+            self.assertFalse((self.proj / 'missing.rs').exists())
+
+    def test_a_disk_edit_for_an_open_document_needs_it_unchanged(self):
+        out = self.apply_twist('dash')
+        self.assertTrue(self.reply_to_apply().startswith('ok '), self.reply_to_apply())
+        self.assertIn('FN  main( ) {', out)
+        out = self.apply_twist('dash', pre=('key ctrl+End', 'type x'))
+        self.assertIn('stale', self.reply_to_apply())
+        self.assertIn('fn  main( ) {', out)
+
+    def test_many_edits_out_of_order_are_sorted(self):
+        out = self.apply_twist('many')
+        self.assertTrue(self.reply_to_apply().startswith('ok '), self.reply_to_apply())
+        first = out[out.index('tabs=*p.rs | other.rs') + 1]
+        # the list is i = 5999 down to 0, even ones at column 1, odd ones at column 2 (after the f):
+        # each position's insertions in the list's order
+        self.assertEqual(first, ('86420' * 600) + 'f' + ('97531' * 600) + 'n  main( ) {')
+
+    def test_an_untitled_document_is_not_replaced_by_a_file_an_edit_opens(self):
+        self.lang()
+        self.env['ECHO_APPLY'] = 'untitled'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'cmd new_file', 'wait 300', 'cmd echo.apply',
+                               'wait 300', 'print-tabs', 'print-doc'], files=('p.rs',))
+        self.assertTrue(self.reply_to_apply().startswith('ok '), self.reply_to_apply())
+        self.assertIn('untitled text', out)
+        self.assertEqual(len([l for l in out if l.startswith('tabs=')][0].split(' | ')), 3)
+
+    def test_answers_with_bytes_after_them_or_relative_paths_are_dropped(self):
+        self.lang()
+        self.env['ECHO_LANG'] = 'trailing'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key shift+F12', 'wait 300', 'wait 300',
+                               'print-toast'], mode='lang', files=('p.rs',))
+        self.assertIn('toast=No references found', out)
+        self.env['ECHO_LANG'] = 'relpath'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key F12', 'wait 300', 'wait 300',
+                               'print-toast'], mode='lang', files=('p.rs',))
+        self.assertIn('toast=No definition found', out)
+
+    def test_references_this_file_first_then_by_path(self):
+        self.lang()
+        (self.proj / 'z.rs').write_text('z\n', encoding='utf-8')
+        self.env['ECHO_LANG'] = 'sorted'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key shift+F12', 'wait 300', 'wait 300',
+                               'print-palette'], mode='lang', files=('p.rs',))
+        rows = out[out.index('choose=Go to reference') + 2:][:3]
+        self.assertEqual([r[2:].split(':')[0] for r in rows], ['p.rs', 'other.rs', 'z.rs'], rows)
+
+    def test_a_format_edit_for_another_file_changes_nothing(self):
+        self.lang()
+        self.env['ECHO_LANG'] = 'other'
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key shift+alt+f', 'wait 300', 'wait 300',
+                               'print-toast', 'print-tabs'], mode='lang', files=('p.rs',))
+        self.assertIn("toast=The extension's edit names a file it cannot: nothing changed", out)
+        self.assertIn('tabs=*p.rs', out)
 
     def test_format_document(self):
         self.lang()

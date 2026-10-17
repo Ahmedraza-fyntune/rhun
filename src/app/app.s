@@ -37,6 +37,7 @@
 
 .bss
 .p2align 3
+.globl g_open_keep_tab
 .globl g_focus, g_win_focused, g_tabs, g_tab_cur, g_project, g_project_name, g_branch
 g_focus: .long 0
 g_tabs: .zero VEC_SIZE
@@ -96,6 +97,7 @@ ro_path: .zero 4096              # Save As onto a read-only file: that path
 ro_dir: .zero 4096
 switch_pending: .long 0          # a project switch waits on unsaved files
 switch_link: .long 0             # and a rhun:// link asked for it
+g_open_keep_tab: .long 0         # app_open_file opens a tab of its own (ws_apply)
 g_link_open: .long 0             # app_open_path is opening a rhun:// link's path (set_project notes it)
 trust_closed: .long 0            # the trust bar was closed for this project
 trust_sb: .zero SB_SIZE          # its text
@@ -1068,7 +1070,10 @@ FN app_open_file
     call app_detect_lang
     mov rdi, rbx
     call git_doc_opened
-    # replace an untouched untitled tab, unless it is pinned
+    # replace an untouched untitled tab, unless it is pinned (or a workspace edit opens files:
+    # the untitled document may be one it changes)
+    cmp dword ptr [rip + g_open_keep_tab], 0
+    jne 3f
     mov rax, [rip + g_tab_cur]
     test rax, rax
     js 3f

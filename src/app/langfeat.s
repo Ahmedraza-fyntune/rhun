@@ -16,7 +16,6 @@
 .equ WS_BODY_MAX, 4194304       # a workspace edit (12g)
 .equ WS_FILES_MAX, 1000
 .equ WS_EDITS_MAX, 100000
-.equ WS_SORT_MAX, 5000          # a file's edits out of order are sorted up to this many
 .equ LR_MAX, 64
 
 # a request rhun waits on
@@ -86,6 +85,8 @@ lf_line: .zero SB_SIZE          # a request being built
 lf_name: .zero SB_SIZE          # the new name of a rename
 lf_err: .zero 256               # what the rename provider said instead
 ws_quiet: .long 0               # ws_apply for an extension's request: no toast
+.p2align 3
+ws_only: .quad 0                # a document id: ws_apply may change that document only
 .p2align 3
 ws_code: .quad 0                # the reply for the last failure ("CODE TEXT")
 wg_vec: .zero VEC_SIZE          # a workspace edit being applied
@@ -243,7 +244,27 @@ lf_str:
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
-    mov rbx, [rip + lf_bytes + SB_len]
+    # a source inside lf_bytes moves when it grows: make room first, then find it again
+    mov r14, -1
+    mov rax, [rip + lf_bytes + SB_ptr]
+    test rax, rax
+    jz 1f
+    cmp r12, rax
+    jb 1f
+    mov rcx, rax
+    add rcx, [rip + lf_bytes + SB_cap]
+    cmp r12, rcx
+    jae 1f
+    mov r14, r12
+    sub r14, rax
+1:  lea rdi, [rip + lf_bytes]
+    lea rsi, [r13 + 1]
+    call sb_reserve
+    test r14, r14
+    js 2f
+    mov r12, [rip + lf_bytes + SB_ptr]
+    add r12, r14
+2:  mov rbx, [rip + lf_bytes + SB_len]
     lea rdi, [rip + lf_bytes]
     mov rsi, r12
     mov rdx, r13
@@ -722,6 +743,96 @@ lf_head:
 
 # lf_take(n) -> rax ptr of the next n bytes of the body (ps_ptr moves past them), or 0 when there are
 # not that many
+# lf_path_ok(ptr, len) -> eax 1 for "#DOC" or an absolute path without NUL or line breaks
+lf_path_ok:
+    test rsi, rsi
+    jz 8f
+    xor ecx, ecx
+1:  cmp rcx, rsi
+    jae 2f
+    movzx eax, byte ptr [rdi + rcx]
+    test eax, eax
+    jz 8f
+    cmp eax, 10
+    je 8f
+    cmp eax, 13
+    je 8f
+    inc rcx
+    jmp 1b
+2:  cmp byte ptr [rdi], '#'
+    jne 3f
+    cmp rsi, 2
+    jb 8f
+    cmp rsi, 19
+    ja 8f
+    mov ecx, 1
+21: cmp rcx, rsi
+    jae 9f
+    movzx eax, byte ptr [rdi + rcx]
+    sub eax, '0'
+    cmp eax, 9
+    ja 8f
+    inc rcx
+    jmp 21b
+3:  cmp byte ptr [rdi], '/'
+    je 9f
+.ifdef WINDOWS
+    cmp byte ptr [rdi], 92
+    je 9f
+    cmp rsi, 3
+    jb 8f
+    cmp byte ptr [rdi + 1], ':'
+    jne 8f
+    cmp byte ptr [rdi + 2], '/'
+    je 9f
+    cmp byte ptr [rdi + 2], 92
+    je 9f
+.endif
+8:  xor eax, eax
+    ret
+9:  mov eax, 1
+    ret
+
+# lf_is_abs(cstr) -> eax 1 for an absolute path
+lf_is_abs:
+    push rbx
+    mov rbx, rdi
+    call strlen
+    mov rsi, rax
+    mov rdi, rbx
+    call lf_path_ok
+    cmp byte ptr [rbx], '#'
+    jne 1f
+    xor eax, eax
+1:  pop rbx
+    ret
+
+# lf_doc_ref(cstr "#DIGITS") -> rax the document id, -1 when it is not one
+lf_doc_ref:
+    push rbx
+    mov rbx, rdi
+    call strlen
+    mov rsi, rax
+    mov rdi, rbx
+    call lf_path_ok
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx], '#'
+    jne 8f
+    xor eax, eax
+    lea rcx, [rbx + 1]
+1:  movzx edx, byte ptr [rcx]
+    test edx, edx
+    jz 9f
+    sub edx, '0'
+    imul rax, rax, 10
+    add rax, rdx
+    inc rcx
+    jmp 1b
+8:  mov rax, -1
+9:  pop rbx
+    ret
+
 lf_take:
     mov rax, [rip + ps_end]
     sub rax, [rip + ps_ptr]
@@ -742,6 +853,10 @@ lf_four:
     call ps_num
     test edx, edx
     jz 8f
+    cmp rax, 0x7fffffff
+    jbe 11f
+    mov eax, 0x7fffffff         # past any line or column (and not wrapped into the text)
+11:
     lea rcx, [rip + lf_tmp4]
     mov [rcx + rbx*4], eax
     inc ebx
@@ -777,7 +892,7 @@ lf_parse_locations:
     js 8f
     mov r15, rax
 1:  test r15, r15
-    jz 9f
+    jz 7f
     dec r15
     call ps_line
     test eax, eax
@@ -805,6 +920,11 @@ lf_parse_locations:
     test rax, rax
     jz 8f
     mov r14, rax                # the path
+    mov rdi, r14
+    mov rsi, r12
+    call lf_path_ok
+    test eax, eax
+    jz 8f
     mov rdi, r13
     call lf_take
     test rax, rax
@@ -841,6 +961,10 @@ lf_parse_locations:
     mov rcx, [rsp + 40]
     mov [rax + LS_detail], rcx
     jmp 1b
+7:  # all of the body was the N records: nothing after them
+    mov rax, [rip + ps_ptr]
+    cmp rax, [rip + ps_end]
+    je 9f
 8:  mov rdi, [rsp + 8]
     mov rsi, [rsp + 16]
     call lf_rollback
@@ -1005,7 +1129,7 @@ lf_parse_symbols:
     js 8f
     mov r15, rax
 1:  test r15, r15
-    jz 9f
+    jz 7f
     dec r15
     call ps_line
     test eax, eax
@@ -1115,6 +1239,10 @@ lf_parse_symbols:
     mov [rax + LS_label], r14
     mov [rax + LS_detail], r12
     jmp 1b
+7:  # all of the body was the N records: nothing after them
+    mov rax, [rip + ps_ptr]
+    cmp rax, [rip + ps_end]
+    je 9f
 8:  mov rdi, [rsp + 8]
     mov rsi, [rsp + 16]
     call lf_rollback
@@ -1138,7 +1266,7 @@ lf_parse_actions:
     js 8f
     mov r15, rax
 1:  test r15, r15
-    jz 9f
+    jz 7f
     dec r15
     call ps_line
     test eax, eax
@@ -1220,6 +1348,10 @@ lf_parse_actions:
     mov ecx, 1
 11: mov [rax + LS_rank], ecx
     jmp 1b
+7:  # all of the body was the N records: nothing after them
+    mov rax, [rip + ps_ptr]
+    cmp rax, [rip + ps_end]
+    je 9f
 8:  mov rdi, [rsp + 8]
     mov rsi, [rsp + 16]
     call lf_rollback
@@ -1265,6 +1397,7 @@ FN langfeat_tick
 lf_finish:
     PROLOGUE
     mov ebx, [rip + lf_kind]
+    mov [rip + lf_list_kind], ebx
     mov dword ptr [rip + lf_kind], 0
     mov dword ptr [rip + lf_ready], 0
     mov dword ptr [rip + g_dirty], 1
@@ -1337,9 +1470,12 @@ lf_finish:
 .Lfn_format:
     cmp qword ptr [rip + lf_ws + SB_len], 0
     je 9f
+    mov rax, [rip + lf_doc_id]
+    mov [rip + ws_only], rax    # a format edit changes the document it was asked for, no other
     mov rdi, [rip + lf_ws + SB_ptr]
     mov rsi, [rip + lf_ws + SB_len]
     call ws_apply
+    mov qword ptr [rip + ws_only], 0
 9:  EPILOGUE
 
 # lf_sort(): the results in their order: by rank (actions), and locations of this document first
@@ -1347,8 +1483,6 @@ lf_finish:
 lf_sort:
     PROLOGUE 16
     mov r12, [rip + lf_res + VEC_len]
-    cmp r12, 2000
-    ja 9f
     # the ranks of locations: 0 in the asked document, 1 elsewhere
     xor ebx, ebx
 1:  cmp rbx, r12
@@ -1365,31 +1499,53 @@ lf_sort:
     xor eax, 1
     mov [r13 + LS_rank], eax
     jmp 1b
-2:  mov rbx, 1
-3:  cmp rbx, r12
-    jae 9f
-    mov r13, rbx
-4:  test r13, r13
-    jz 5f
-    imul r14, r13, LS_SIZE
-    add r14, [rip + lf_res + VEC_ptr]
-    mov eax, [r14 + LS_rank]
-    cmp eax, [r14 - LS_SIZE + LS_rank]
-    jge 5f
-    # swap the two records
-    xor ecx, ecx
-41: mov rax, [r14 + rcx]
-    mov rdx, [r14 + rcx - LS_SIZE]
-    mov [r14 + rcx], rdx
-    mov [r14 + rcx - LS_SIZE], rax
-    add ecx, 8
-    cmp ecx, LS_SIZE
-    jb 41b
-    dec r13
-    jmp 4b
-5:  inc rbx
-    jmp 3b
+2:  mov rdi, [rip + lf_res + VEC_ptr]
+    mov rsi, r12
+    mov edx, LS_SIZE
+    lea rcx, [rip + ls_cmp]
+    call lf_msort
 9:  EPILOGUE
+
+# ls_cmp(a, b) -> eax < 0 when result a goes first: by rank, then by path, line and column
+# (symbols and actions have no path: their order is the providers')
+ls_cmp:
+    mov eax, [rdi + LS_rank]
+    cmp eax, [rsi + LS_rank]
+    jl 8f
+    jg 9f
+    mov rax, [rdi + LS_path]
+    mov rcx, [rsi + LS_path]
+    test rax, rax
+    js 7f
+    test rcx, rcx
+    js 7f
+    mov rdx, [rip + lf_bytes + SB_ptr]
+    add rax, rdx
+    add rcx, rdx
+1:  movzx edx, byte ptr [rax]
+    movzx r8d, byte ptr [rcx]
+    cmp edx, r8d
+    jb 8f
+    ja 9f
+    test edx, edx
+    jz 2f
+    inc rax
+    inc rcx
+    jmp 1b
+2:  mov eax, [rdi + LS_l1]
+    cmp eax, [rsi + LS_l1]
+    jb 8f
+    ja 9f
+    mov eax, [rdi + LS_c1]
+    cmp eax, [rsi + LS_c1]
+    jb 8f
+    ja 9f
+7:  xor eax, eax
+    ret
+8:  mov eax, -1
+    ret
+9:  mov eax, 1
+    ret
 
 # lf_is_asked_doc(path cstr) -> eax 1 when it names the asked document ("#ID" or its path)
 lf_is_asked_doc:
@@ -1446,6 +1602,8 @@ FN langfeat_chosen
     jz 9f                       # an edit that cannot be made: nothing more either
 2:  cmp qword ptr [r12 + LS_dlen], 0
     je 9f
+    cmp qword ptr [r12 + LS_ext], 0
+    je 9f                       # its extension stopped since
     mov rdi, [r12 + LS_ext]
     mov rsi, [r12 + LS_data]
     add rsi, [rip + lf_bytes + SB_ptr]
@@ -1491,7 +1649,10 @@ lf_goto:
     cmp rax, r13
     jae 3f
     mov rax, r13
-3:  mov [r12 + DOC_anchor], r13
+3:  cmp dword ptr [rip + lf_list_kind], LF_SYMS
+    jne 4f
+    mov rax, r13                # a symbol: the cursor at its start, nothing selected
+4:  mov [r12 + DOC_anchor], r13
     mov [r12 + DOC_cur], rax
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
     call ed_touch
@@ -1566,11 +1727,13 @@ FN ws_apply
     mov qword ptr [rip + wg_vec + VEC_len], 0
     mov qword ptr [rip + we_vec + VEC_len], 0
     cmp rsi, WS_BODY_MAX
-    ja .Lws_bad
-    mov edx, WS_FILES_MAX
+    ja .Lws_big
+    mov edx, 0x7fffffff
     call lf_head
     test rax, rax
     js .Lws_bad
+    cmp rax, WS_FILES_MAX
+    ja .Lws_big
     mov r15, rax                # groups
     # read the groups and their edits
 .Lws_group:
@@ -1629,7 +1792,7 @@ FN ws_apply
     mov rcx, [rip + we_vec + VEC_len]
     add rcx, r14
     cmp rcx, WS_EDITS_MAX
-    ja .Lws_bad
+    ja .Lws_big
 3:  test r14, r14
     jz .Lws_group
     dec r14
@@ -1688,11 +1851,10 @@ FN ws_apply
     jz .Lws_badpath
     cmp byte ptr [rip + lf_path], '#'
     jne 4f
-    lea rdi, [rip + lf_path + 1]
-    call strlen
-    mov rsi, rax
-    lea rdi, [rip + lf_path + 1]
-    call parse_u64
+    lea rdi, [rip + lf_path]
+    call lf_doc_ref
+    test rax, rax
+    js .Lws_badpath
     mov rdi, rax
     call extproto_doc
     test rax, rax
@@ -1700,6 +1862,10 @@ FN ws_apply
     mov [r12 + WG_doc], rax
     jmp 5f
 4:  lea rdi, [rip + lf_path]
+    call lf_is_abs
+    test eax, eax
+    jz .Lws_badpath
+    lea rdi, [rip + lf_path]
     call app_find_tab
     test rax, rax
     js 41f
@@ -1716,7 +1882,15 @@ FN ws_apply
 5:  mov rax, [r12 + WG_doc]
     mov rcx, [r12 + WG_version]
     cmp rcx, -1
-    je .Lws_find
+    jne 51f
+    # made from the file on disk: right for an open document only while it has no changes
+    mov rdi, rax
+    call doc_dirty
+    test eax, eax
+    jnz .Lws_stale
+    jmp .Lws_find
+51: mov rax, [r12 + WG_doc]
+    mov rcx, [r12 + WG_version]
     cmp rcx, [rax + DOC_version]
     jne .Lws_stale
     jmp .Lws_find
@@ -1733,14 +1907,24 @@ FN ws_apply
     mov rdi, r12
     call ws_path
     lea rdi, [rip + lf_path]
+    call file_type
+    cmp eax, 0x8000
+    jne .Lws_unreadable         # missing (it would open empty), a folder, a device
+    mov dword ptr [rip + g_open_keep_tab], 1
+    lea rdi, [rip + lf_path]
     call app_open_file
+    mov dword ptr [rip + g_open_keep_tab], 0
     test rax, rax
     js .Lws_unreadable
+    mov [rsp + 24], rax
     mov rdi, rax
     call tab_at
     cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne .Lws_unreadable
-    mov rax, [rax + TAB_doc]
+    je 61f
+    mov rdi, [rsp + 24]         # an image: its tab goes again
+    call app_close_tab_now
+    jmp .Lws_unreadable
+61: mov rax, [rax + TAB_doc]
     mov [r12 + WG_doc], rax
     mov qword ptr [r12 + WG_opened], 1
     jmp 6b
@@ -1753,7 +1937,12 @@ FN ws_apply
     add r12, [rip + wg_vec + VEC_ptr]
     inc rbx
     mov r13, [r12 + WG_doc]
-    # a document named twice (by id and by path) would get edits made for a text it no longer has
+    mov rax, [rip + ws_only]
+    test rax, rax
+    jz 75f
+    cmp rax, [r13 + DOC_id]
+    jne .Lws_badpath            # a format edit for another document
+75: # a document named twice (by id and by path) would get edits made for a text it no longer has
     mov rcx, [rip + wg_vec + VEC_ptr]
 73: cmp rcx, r12
     jae 74f
@@ -1824,6 +2013,11 @@ FN ws_apply
 81: mov dword ptr [rip + g_dirty], 1
     mov eax, 1
     EPILOGUE
+.Lws_big:
+    lea rax, [rip + .Lwc_big]
+    mov [rip + ws_code], rax
+    lea rdi, [rip + .Lws_e_big]
+    jmp .Lws_out
 .Lws_bad:
     lea rax, [rip + .Lwc_bad]
     mov [rip + ws_code], rax
@@ -1938,36 +2132,140 @@ ws_sort:
     jb 2f
     inc rcx
     jmp 1b
-2:  cmp r12, WS_SORT_MAX
-    ja 9f
-    mov r13, 1
-3:  cmp r13, r12
-    jae 8f
-    mov r14, r13
-4:  test r14, r14
-    jz 6f
-    lea rax, [rbx + r14]
-    imul rax, rax, WE_SIZE
-    add rax, [rip + we_vec + VEC_ptr]
-    mov rdx, [rax + WE_start]
-    cmp rdx, [rax - WE_SIZE + WE_start]
-    jae 6f
-    xor ecx, ecx
-5:  mov rdx, [rax + rcx]
-    mov r8, [rax + rcx - WE_SIZE]
-    mov [rax + rcx], r8
-    mov [rax + rcx - WE_SIZE], rdx
-    add ecx, 8
-    cmp ecx, WE_SIZE
-    jb 5b
-    dec r14
-    jmp 4b
-6:  inc r13
-    jmp 3b
+2:  imul rdi, rbx, WE_SIZE
+    add rdi, [rip + we_vec + VEC_ptr]
+    mov rsi, r12
+    mov edx, WE_SIZE
+    lea rcx, [rip + we_cmp]
+    call lf_msort
 8:  mov eax, 1
     EPILOGUE
-9:  xor eax, eax
-    EPILOGUE
+
+# we_cmp(a, b) -> eax < 0 when edit a goes first: by start, then by end (an insertion before a
+# replacement that starts where it is); equal ones keep their order
+we_cmp:
+    mov rax, [rdi + WE_start]
+    cmp rax, [rsi + WE_start]
+    jb 8f
+    ja 9f
+    mov rax, [rdi + WE_end]
+    cmp rax, [rsi + WE_end]
+    jb 8f
+    ja 9f
+    xor eax, eax
+    ret
+8:  mov eax, -1
+    ret
+9:  mov eax, 1
+    ret
+
+# lf_msort(base, n, size, cmp): a stable sort of n records of size bytes; cmp(a, b) -> eax < 0
+# when a goes before b (a merge sort of pointers, then the records copied in their order)
+lf_msort:
+    PROLOGUE 80
+    mov [rsp], rdi              # base
+    mov [rsp + 8], rsi          # n
+    mov [rsp + 16], rdx         # size
+    mov [rsp + 24], rcx         # cmp
+    cmp rsi, 2
+    jb 9f
+    # two pointer arrays and room for the records
+    mov rax, rsi
+    imul rax, rdx
+    lea rdi, [rax + rsi*8]
+    lea rdi, [rdi + rsi*8]
+    call mem_alloc
+    mov [rsp + 32], rax
+    mov r12, rax                # the run's pointers
+    mov rcx, [rsp + 8]
+    lea r13, [rax + rcx*8]      # the merged ones
+    xor ecx, ecx
+    mov rdx, [rsp]
+1:  cmp rcx, [rsp + 8]
+    jae 2f
+    mov [r12 + rcx*8], rdx
+    add rdx, [rsp + 16]
+    inc rcx
+    jmp 1b
+2:  mov r14, 1                  # the width of a sorted run
+3:  cmp r14, [rsp + 8]
+    jae 7f
+    xor r15d, r15d              # lo
+4:  cmp r15, [rsp + 8]
+    jae 6f
+    lea rax, [r15 + r14]
+    cmp rax, [rsp + 8]
+    jbe 41f
+    mov rax, [rsp + 8]
+41: mov [rsp + 56], rax         # mid
+    lea rax, [r15 + r14*2]
+    cmp rax, [rsp + 8]
+    jbe 42f
+    mov rax, [rsp + 8]
+42: mov [rsp + 64], rax         # hi
+    mov [rsp + 40], r15         # i, in the left run
+    mov rax, [rsp + 56]
+    mov [rsp + 48], rax         # j, in the right run
+    mov rbx, r15                # k
+5:  cmp rbx, [rsp + 64]
+    jae 59f
+    mov rax, [rsp + 40]
+    cmp rax, [rsp + 56]
+    jae 52f                     # the left run is used up
+    mov rcx, [rsp + 48]
+    cmp rcx, [rsp + 64]
+    jae 51f                     # the right one is
+    mov rdi, [r12 + rcx*8]
+    mov rsi, [r12 + rax*8]
+    mov rax, [rsp + 24]
+    call rax
+    test eax, eax
+    js 52f                      # the right one first only when it is strictly less
+51: mov rax, [rsp + 40]
+    mov rax, [r12 + rax*8]
+    mov [r13 + rbx*8], rax
+    inc qword ptr [rsp + 40]
+    inc rbx
+    jmp 5b
+52: mov rax, [rsp + 48]
+    mov rax, [r12 + rax*8]
+    mov [r13 + rbx*8], rax
+    inc qword ptr [rsp + 48]
+    inc rbx
+    jmp 5b
+59: mov r15, [rsp + 64]
+    jmp 4b
+6:  mov rax, r12
+    mov r12, r13
+    mov r13, rax
+    add r14, r14
+    jmp 3b
+7:  # the records in that order, through the room after the arrays
+    mov rax, [rsp + 8]
+    mov rdi, [rsp + 32]
+    lea rdi, [rdi + rax*8]
+    lea rdi, [rdi + rax*8]
+    mov [rsp + 40], rdi
+    xor ebx, ebx
+71: cmp rbx, [rsp + 8]
+    jae 72f
+    mov rdi, [rsp + 16]
+    imul rdi, rbx
+    add rdi, [rsp + 40]
+    mov rsi, [r12 + rbx*8]
+    mov rdx, [rsp + 16]
+    call memcpy
+    inc rbx
+    jmp 71b
+72: mov rdx, [rsp + 8]
+    mov rax, [rsp + 16]
+    imul rdx, rax
+    mov rdi, [rsp]
+    mov rsi, [rsp + 40]
+    call memcpy
+    mov rdi, [rsp + 32]
+    call mem_free
+9:  EPILOGUE
 
 # ws_overlap(WG*) -> eax 1 when one of its (sorted) edits starts inside the one before
 ws_overlap:
@@ -2051,7 +2349,18 @@ FN langfeat_ext_gone
     mov r8, [rdx + 16]
     mov [rax + 16], r8
     jmp 1b
-8:  # nothing more to wait for: the tick finishes the query with what came
+8:  # its results on show forget it: a code action chosen later sends nothing to a restarted one
+    xor ecx, ecx
+81: cmp rcx, [rip + lf_res + VEC_len]
+    jae 82f
+    imul rax, rcx, LS_SIZE
+    add rax, [rip + lf_res + VEC_ptr]
+    inc rcx
+    cmp [rax + LS_ext], rdi
+    jne 81b
+    mov qword ptr [rax + LS_ext], 0
+    jmp 81b
+82: # nothing more to wait for: the tick finishes the query with what came
     cmp dword ptr [rip + lf_kind], 0
     je 9f
     cmp qword ptr [rip + lf_reqs + VEC_len], 0
@@ -2113,6 +2422,8 @@ lf_single: .byte 0, 0, 0, 1, 0, 1, 1
 .Lws_e_many: .asciz "Too many edits out of order in one file: nothing changed"
 .Lws_e_overlap: .asciz "The edit's ranges overlap: nothing changed"
 .Lwc_bad: .asciz "syntax the edit cannot be read"
+.Lwc_big: .asciz "toobig over 4 MB, 1000 files or 100000 edits"
+.Lws_e_big: .asciz "The extension's edit is too big: nothing changed"
 .Lwc_path: .asciz "nofile a path is not absolute or not a document"
 .Lwc_gone: .asciz "nodoc a document it names is closed"
 .Lwc_stale: .asciz "stale a document changed since the edit was made"

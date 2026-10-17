@@ -39,6 +39,7 @@ conf_slot: .quad 0              # the EXT being prepared, as an index into g_ext
 pathbuf: .zero 4200
 pathbuf2: .zero 4200
 realbuf: .zero 4200             # profile_path's resolved path (never the buffer it reads from)
+devbuf: .zero 4200              # the active Xcode developer folder (xcode_shim)
 elfhdr: .zero 64
 phdr: .zero 56
 
@@ -697,7 +698,15 @@ profile_build:
     mov rdi, r14
     call mem_free
     jmp 7b
-8:  lea rdi, [rip + conf_profile]
+8:  lea rdi, [rip + .Lenv_conflog]
+    call getenv
+    test rax, rax
+    jz 81f
+    mov edi, 2                  # RHUN_CONFINE_LOG: the profile on standard error
+    mov rsi, [rip + conf_profile + SB_ptr]
+    mov rdx, [rip + conf_profile + SB_len]
+    call write_all
+81: lea rdi, [rip + conf_profile]
     xor esi, esi
     call sb_push_byte           # the profile is a cstr
     xor eax, eax
@@ -779,10 +788,126 @@ profile_program:
     lea rsi, [rip + pathbuf]
     call install_tree
     test eax, eax
-    jz 9f
+    jz 8f
     lea rdi, [rip + pathbuf]
     lea rsi, [rip + .Lsb_exec_sub]
     call profile_path
+8:  mov rdi, r12
+    call xcode_shim
+9:  EPILOGUE
+
+# xcode_shim(path cstr): a tool in /usr/bin that Xcode provides (clangd, clang, swift…) is a shim:
+# it loads libxcrun from the active developer folder, finds the tool through xcrun's cache and runs
+# it from there. Then the folder is readable (the tool's SDK headers are in it), the cache and
+# xcode-select's link too, and the tool itself may run. (A tool missing from the cache would need
+# xcodebuild and much of Xcode: the shim says so, as it would for a tool that is not installed.)
+xcode_shim:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov rdi, rbx
+    call strlen
+    mov rsi, rax
+    mov rdi, rbx
+    lea rdx, [rip + .Lusr_bin]
+    mov ecx, 9
+    call str_starts
+    test eax, eax
+    jz 9f
+    lea r12, [rbx + 9]          # the tool's name
+    cmp byte ptr [r12], 0
+    je 9f
+    # the developer folder, found as xcode-select finds it: DEVELOPER_DIR, its link, Xcode in
+    # Applications, the command line tools
+    lea rdi, [rip + .Lenv_devdir]
+    call getenv
+    test rax, rax
+    jz 11f
+    mov rdi, rax
+    lea rsi, [rip + devbuf]
+    SYS SYS_realpath
+    test rax, rax
+    jnz 1f
+11: lea r13, [rip + .Ldev_dirs]
+12: mov rdi, [r13]
+    test rdi, rdi
+    jz 9f
+    add r13, 8
+    lea rsi, [rip + devbuf]
+    SYS SYS_realpath
+    test rax, rax
+    jz 12b
+    lea rdi, [rip + devbuf]
+    call file_type
+    cmp eax, 0x4000
+    jne 12b
+1:  # the tool in the default toolchain, else in the folder's own usr/bin
+    xor r14d, r14d
+2:  cmp r14d, 2
+    jae 9f
+    lea rax, [rip + .Lshim_dirs]
+    mov rsi, [rax + r14*8]
+    inc r14d
+    lea rdi, [rip + devbuf]
+    call path_join
+    mov r15, rax
+    mov rdi, rax
+    mov rsi, r12
+    call path_join
+    mov r13, rax
+    mov rdi, r15
+    call mem_free
+    mov rdi, r13
+    call file_type
+    cmp eax, 0x8000
+    je 3f
+    mov rdi, r13
+    call mem_free
+    jmp 2b
+3:  # read: the developer folder, or the whole Xcode bundle it is in (xcodebuild, which xcrun runs
+    # when its cache does not have the tool for this HOME, loads Xcode's shared frameworks)
+    lea rdi, [rip + devbuf]
+    call strlen
+    mov r15, rax
+    lea rdi, [rip + devbuf]
+    mov rsi, rax
+    lea rdx, [rip + .Lcontents_dev]
+    mov ecx, .Lcontents_dev_end - .Lcontents_dev - 1
+    call str_ends
+    test eax, eax
+    jz 31f
+    lea rax, [rip + devbuf]
+    sub r15, .Lcontents_dev_end - .Lcontents_dev - 1
+    mov byte ptr [rax + r15], 0  # the bundle, for its rule, then the folder again
+    lea rdi, [rip + devbuf]
+    lea rsi, [rip + .Lsb_ro]
+    call profile_path
+    lea rax, [rip + devbuf]
+    mov byte ptr [rax + r15], '/'
+    jmp 32f
+31: lea rdi, [rip + devbuf]
+    lea rsi, [rip + .Lsb_ro]
+    call profile_path
+32: mov rdi, r13
+    lea rsi, [rip + .Lsb_exec_lit]
+    call profile_path
+    lea rdi, [rip + devbuf]
+    lea rsi, [rip + .Lxcodebuild]
+    call path_join
+    mov r15, rax
+    mov rdi, rax
+    call file_type
+    cmp eax, 0x8000
+    jne 33f
+    mov rdi, r15
+    lea rsi, [rip + .Lsb_exec_lit]
+    call profile_path
+33: mov rdi, r15
+    call mem_free
+    lea rdi, [rip + conf_profile]
+    lea rsi, [rip + .Lsb_xcrun]
+    call sb_push_cstr
+    mov rdi, r13
+    call mem_free
 9:  EPILOGUE
 .endif
 
@@ -1048,4 +1173,19 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lsb_exec_lit: .asciz "(allow process-exec file-read* (literal \"%s\"))\n"
 .Lsb_exec_sub: .asciz "(allow process-exec file-read* (subpath \"%s\"))\n"
 .Lsb_net_deny: .asciz "(deny network*)\n"
+.Lusr_bin: .asciz "/usr/bin/"
+.Lxcode_link: .asciz "/var/db/xcode_select_link"
+.Lclt: .asciz "/Library/Developer/CommandLineTools"
+.Lxcode_app: .asciz "/Applications/Xcode.app/Contents/Developer"
+.Lenv_devdir: .asciz "DEVELOPER_DIR"
+.Lxcodebuild: .asciz "usr/bin/xcodebuild"
+.Lcontents_dev: .asciz "/Contents/Developer"
+.Lcontents_dev_end:
+.Ltc_bin: .asciz "Toolchains/XcodeDefault.xctoolchain/usr/bin"
+.Ldev_bin: .asciz "usr/bin"
+.p2align 3
+.Lshim_dirs: .quad .Ltc_bin, .Ldev_bin
+.Ldev_dirs: .quad .Lxcode_link, .Lxcode_app, .Lclt, 0
+.Lsb_xcrun: .ascii "(allow file-read* (literal \"/private/var/db/xcode_select_link\"))\n"
+    .asciz "(allow file-read* file-write* (regex #\"^/private/var/folders/[^/]+/[^/]+/T/xcrun_db\"))\n"
 .Lsb_net_allow: .asciz "(allow network*)\n"

@@ -336,8 +336,15 @@ def on_lang_request(rid, verb, args):
 
     def answer(fields, body):
         lines = body.decode().split('\n')
-        if verb == 'definition':
+        if verb == 'definition' and twist == 'relpath':
+            reply = b'1\n' + loc('p.rs', 1, 5, 1, 9, lines[0])
+        elif verb == 'definition':
             reply = b'1\n' + loc(path, 1, 5, 1, 9, lines[0])
+        elif verb == 'references' and twist == 'trailing':
+            reply = b'1\n' + loc(path, 2, 13, 2, 17, lines[1]) + b'junk'
+        elif verb == 'references' and twist == 'sorted':
+            reply = (b'3\n' + loc(PROJECT[0] + '/z.rs', 1, 1, 1, 2, 'z') + loc(other, 1, 4, 1, 8, 'fn main_ref() {}')
+                     + loc(path, 2, 13, 2, 17, lines[1]))
         elif verb == 'references':
             reply = b'2\n' + loc(other, 1, 4, 1, 8, 'fn main_ref() {}') + loc(path, 2, 13, 2, 17, lines[1])
         elif verb == 'symbols':
@@ -357,6 +364,8 @@ def on_lang_request(rid, verb, args):
                     edits.append((i + 1, j + 1, i + 1, j + 5, name))
                     start = j + 4
             reply = workspace_edit([(path, stale, edits), (other, '-', [(1, 4, 1, 8, name)])])
+        elif verb == 'format' and twist == 'other':
+            reply = workspace_edit([(other, '-', [(1, 1, 1, 1, '// formatted\n')])])
         elif verb == 'format' and twist == 'overlap':
             reply = workspace_edit([(path, version, [(1, 1, 1, 6, 'a'), (1, 3, 1, 9, 'b')])])
         elif verb == 'format' and twist == 'outside':
@@ -477,8 +486,24 @@ def on_run(command, doc, versions):
     elif name in ('apply', 'applystale', 'applyoverlap'):
         version = versions.get(doc, 0) + (1 if name == 'applystale' else 0)
         here = [(1, 1, 1, 3, 'FN')] if name != 'applyoverlap' else [(1, 1, 1, 3, 'FN'), (1, 2, 1, 4, 'x')]
-        body = workspace_edit([(PATHS.get(doc, f'#{doc}'), version, here),
-                               (PROJECT[0] + '/other.rs', '-', [(1, 1, 1, 1, '// applied\n')])])
+        other = [(1, 1, 1, 1, '// applied\n')]
+        twist = os.environ.get('ECHO_APPLY', '')
+        target = PATHS.get(doc, f'#{doc}')
+        if twist == 'dash':          # made from the disk for a document that is open
+            version = '-'
+        elif twist == 'bigcoord':    # a column that wraps to 1 in 32 bits
+            here = [(1, 4294967297, 1, 4294967298, 'X')]
+        elif twist == 'many':        # 6000 insertions, last first
+            here = [(1, 1 + (i % 2), 1, 1 + (i % 2), str(i % 10)) for i in range(6000)][::-1]
+        elif twist == 'untitled':    # the untitled document by its id, and a file to open
+            target = f'#{doc}'
+            here = [(1, 1, 1, 1, 'untitled text')]
+        elif twist == 'badref':
+            target = f'#{doc}x'
+        groups = [(target, version, here), (PROJECT[0] + ('/missing.rs' if twist == 'missing' else '/other.rs'), '-', other)]
+        if twist == 'relative':
+            groups[1] = ('other.rs', '-', other)
+        body = workspace_edit(groups)
         request(f'apply {len(body)}', body)
     elif name == 'faredit':
         # the same number of bytes, far from the cursor: fn becomes FN on line 1

@@ -501,6 +501,7 @@ c_open:
     pop rdi
     pop rdi
     call mem_free
+    mov dword ptr [rip + g_dirty], 1    # the frame that shows it loads it (and tells extensions)
     xor eax, eax
     ret
 
@@ -575,6 +576,10 @@ c_wait:
     push r15
     call next_int
     mov r13, rax
+    # what the step before queued (a file opened, a key typed) goes out now, as the main loop's
+    # tick after an input event would, not after the first sleep
+    call app_tick
+    call flush_frame
     call time_ms
     add r13, rax
 1:  call time_ms
