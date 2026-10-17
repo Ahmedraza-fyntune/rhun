@@ -1389,7 +1389,7 @@ FN explorer_menu_draw
     sub edx, eax
     mov ecx, ebx
     M r8d, MI_RADIUS
-    COLOR r9d, T_HOVER
+    COLOR r9d, T_ACTIVE
     call gfx_round_rect
 4:  # the shortcut, right-aligned
     mov dword ptr [rsp + 20], 0 # its width and a gap

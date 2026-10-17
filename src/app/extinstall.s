@@ -35,7 +35,7 @@ in_fd: .long -1
 
 .text
 
-# cmd_install_extension(): the palette asks for owner/name
+# cmd_install_extension(): the palette asks for a repository name or GitHub URL
 FN cmd_install_extension
     PROLOGUE
     lea rdi, [rip + .Lask]
@@ -820,7 +820,7 @@ remove_commit:
     EPILOGUE
 
 .section .rodata
-.Lask: .asciz "Install from GitHub: owner/name"
+.Lask: .asciz "Install from GitHub: owner/repo or GitHub URL"
 .Lgh: .asciz "github.com/"
 .Lsh: .asciz "/bin/sh"
 .Ldash_c: .asciz "-c"
@@ -847,7 +847,7 @@ remove_commit:
 .Lt_removed: .asciz "Removed "
 .Lt_remove_line: .asciz "Its settings and the data it saved go too."
 .Le_busy: .asciz "An extension is already being installed"
-.Le_name: .asciz "Give the extension as owner/name, as on GitHub"
+.Le_name: .asciz "Enter owner/repo or a GitHub repository URL"
 .Le_spawn: .asciz "Could not start the download"
 .Le_unknown: .asciz "the download failed"
 .Le_manifest: .asciz "The download has no readable extension.ini"

@@ -115,6 +115,43 @@ class UI(host.Host):
         self.assertEqual(out[2], 'menu=open')
         self.assertEqual(out[4], 'menu=closed')
 
+    def test_dropdown_rows_have_visible_hover_feedback(self):
+        empty = self.work / 'empty'
+        empty.mkdir()
+        for theme in ('dark', 'light'):
+            self.env['RHUN_APPEARANCE'] = theme
+            for exts, rows in ((empty, (148, 180)), (host.EXTS, (100, 148, 180))):
+                with self.subTest(theme=theme, extensions=exts):
+                    plain = self.work / 'plain.ppm'
+                    away = self.work / 'away.ppm'
+                    actions = ['cmd extensions_menu', 'move 500 300', 'shot ' + plain.as_posix()]
+                    shots = []
+                    for y in rows:
+                        shot = self.work / f'hover-{y}.ppm'
+                        shots.append(shot)
+                        actions += [f'move 900 {y}', 'shot ' + shot.as_posix()]
+                    actions += ['move 500 300', 'shot ' + away.as_posix()]
+                    self.ui(actions, exts=exts)
+                    for y, shot in zip(rows, shots):
+                        base = host.ppm_pixel(plain, 900, y)
+                        hover = host.ppm_pixel(shot, 900, y)
+                        self.assertGreaterEqual(max(abs(a - b) for a, b in zip(base, hover)), 12)
+                        self.assertEqual(host.ppm_pixel(away, 900, y), base)
+
+    def test_extension_command_menu_has_visible_hover_feedback(self):
+        exts = self.icon_ext('commands', 'on = command\n[commands]\nfirst = First\nsecond = Second\n', {})
+        for theme in ('dark', 'light'):
+            with self.subTest(theme=theme):
+                self.env['RHUN_APPEARANCE'] = theme
+                plain, hover, away = (self.work / (name + '.ppm') for name in ('plain', 'hover', 'away'))
+                self.ui(['ext-menu pic', 'move 300 300', 'shot ' + plain.as_posix(),
+                         'move 650 60', 'shot ' + hover.as_posix(),
+                         'move 300 300', 'shot ' + away.as_posix()], exts=exts)
+                base = host.ppm_pixel(plain, 650, 60)
+                shown = host.ppm_pixel(hover, 650, 60)
+                self.assertGreaterEqual(max(abs(a - b) for a, b in zip(base, shown)), 12)
+                self.assertEqual(host.ppm_pixel(away, 650, 60), base)
+
     def test_a_menu_item_runs_its_command_after_more_are_registered(self):
         # the extension's menu is open while it registers twenty commands, which moves the command
         # table; the item clicked afterwards still runs the command it shows
@@ -434,7 +471,7 @@ class UI(host.Host):
 
     def test_a_bad_name_is_refused_before_anything_runs(self):
         out = self.ui(['ext-install demo/../../etc', 'print-toast'])
-        self.assertEqual(out[0], 'toast=Give the extension as owner/name, as on GitHub')
+        self.assertEqual(out[0], 'toast=Enter owner/repo or a GitHub repository URL')
 
 
 for _name in dir(host.Host):

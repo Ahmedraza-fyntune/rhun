@@ -334,7 +334,7 @@ row:
     sub edx, [rip + g_mt + 4*MI_6]
     mov ecx, [rsp]
     M r8d, MI_RADIUS
-    COLOR r9d, T_HOVER
+    COLOR r9d, T_ACTIVE
     call gfx_round_rect
 1:  mov edi, r12d
     add edi, [rip + g_mt + 4*MI_16]
@@ -446,7 +446,7 @@ foot_row:
     sub edx, [rip + g_mt + 4*MI_12]
     M ecx, MI_32
     M r8d, MI_RADIUS
-    COLOR r9d, T_HOVER
+    COLOR r9d, T_ACTIVE
     call gfx_round_rect
 1:  mov edi, [rsp]
     mov esi, r12d

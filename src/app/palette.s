@@ -3042,6 +3042,9 @@ hint_text:
     je 1f
     cmp dword ptr [rip + pal_prompt], PROMPT_RENAME_SYMBOL
     je 1f
+    lea rax, [rip + .Lhint_ext_install]
+    cmp dword ptr [rip + pal_prompt], PROMPT_EXT_INSTALL
+    je 1f
     lea rax, [rip + .Lhint_path]
 1:  ret
 
@@ -3066,6 +3069,7 @@ hint_text:
 .Lnl: .ascii "\n"
 .Lhint_goto: .asciz "Enter a line number and press Enter"
 .Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
+.Lhint_ext_install: .asciz "Enter continues, Esc cancels"
 .Lhint_new_file: .asciz "Enter creates the file, Esc cancels"
 .Lhint_new_folder: .asciz "Enter creates the folder, Esc cancels"
 .Lhint_rename: .asciz "Enter renames, Esc cancels"
