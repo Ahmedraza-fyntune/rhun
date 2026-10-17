@@ -610,6 +610,8 @@ g_commands:
     COMMAND zoom_out, "Zoom Out", cmd_zoom_out, "ctrl+- ctrl+KP_Subtract"
     COMMAND zoom_reset, "Reset Zoom", cmd_zoom_reset, "ctrl+0 ctrl+KP_0"
     COMMAND toggle_word_wrap, "Toggle Word Wrap", cmd_toggle_word_wrap, "alt+z"
+    COMMAND complete, "Show Completions", cmd_complete, "ctrl+Space"
+    COMMAND signature_help, "Show Signature Help", cmd_signature_help, "ctrl+shift+Space"
     COMMAND toggle_whitespace, "Toggle Whitespace", cmd_toggle_whitespace, ""
     COMMAND toggle_line_numbers, "Toggle Line Numbers", cmd_toggle_line_numbers, ""
     COMMAND toggle_vim, "Toggle Vim Mode", cmd_toggle_vim, ""

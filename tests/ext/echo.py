@@ -141,6 +141,8 @@ def main():
         send('hello 1 views bogus complete')     # section 12: rhun says back the ones it knows
     elif MODE == 'views':
         send('hello 1 views')
+    elif MODE in ('complete', 'completebad', 'completemore'):
+        send('hello 1 complete signature')
     else:
         send('hello 1')
     if MODE == 'crash':
@@ -206,6 +208,8 @@ def main():
                 then(fields, body)
             continue
         if fields[0] != '0':
+            if fields[0].isdigit() and len(fields) >= 8:
+                on_host_request(int(fields[0]), fields[1], fields[2:])
             continue
         event = fields[1]
         if event == 'opened':
@@ -231,6 +235,61 @@ def main():
             on_run(command, doc, versions)
             if command.endswith('.die'):
                 sys.exit(0)
+
+
+# completion items (section 12b): label, insert, detail, kind, documentation, an extra edit
+ITEMS = [
+    ('print', 'print()', 'fn print()', 'function', 'Prints a line.', None),
+    ('println', 'println!()', 'macro', 'function', '', None),
+    ('printf', 'printf("")', '', 'function', '', None),
+    ('process', 'process', 'mod process', 'module', '', (1, 1, 1, 1, 'use std::process;\n')),
+    ('private', 'private', '', 'keyword', '', None),
+]
+SIGNATURE = b'fn add(a: i32, b: i32)'
+
+
+def complete_body(line, start, col, more=0):
+    out = b''
+    for label, insert, detail, kind, doc, edit in ITEMS:
+        extra = b''
+        if edit:
+            l1, c1, l2, c2, text = edit
+            extra += f'edit {l1} {c1} {l2} {c2} {len(text.encode())}\n'.encode() + text.encode()
+        if doc:
+            extra += f'doc {len(doc.encode())}\n'.encode() + doc.encode()
+        lb, ib, db = label.encode(), insert.encode(), detail.encode()
+        out += (f'{line} {start} {line} {col} {kind} {len(lb)} {len(ib)} {len(db)} {len(extra)}\n'.encode()
+                + lb + ib + db + extra)
+    n = len(ITEMS)
+    if MODE == 'completebad':
+        n += 1                  # says one more item than it sends: the whole list is dropped
+    return f'{n} {more}\n'.encode() + out
+
+
+def on_host_request(rid, verb, args):
+    doc, line, col, kind = int(args[0]), int(args[2]), int(args[3]), args[4]
+
+    def answer(fields, body):
+        text = body.split(b'\n')[line - 1] if line - 1 < len(body.split(b'\n')) else b''
+        if verb == 'complete':
+            start = col
+            while start > 1 and (text[start - 2:start - 1].isalnum() or text[start - 2:start - 1] == b'_'):
+                start -= 1
+            reply = complete_body(line, start, col, 1 if MODE == 'completemore' else 0)
+        elif verb == 'signature':
+            before = text[:col - 1]
+            open_at = before.rfind(b'(')
+            if open_at < 0:
+                reply = b''
+            else:
+                params = [(7, 13), (15, 21)]
+                active = params[min(before[open_at:].count(b','), 1)]
+                reply = f'{active[0]} {active[1]}\n'.encode() + SIGNATURE + b'\nAdds two numbers.\nOverflow wraps.'
+        else:
+            send(f'error {rid} unknown no such request')
+            return
+        send(f'ok {rid} {len(reply)}', reply)
+    request(f'text {doc}', then=answer)
 
 
 def on_run(command, doc, versions):

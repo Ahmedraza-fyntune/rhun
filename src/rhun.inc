@@ -939,7 +939,11 @@ ENDSTRUCT TF_SIZE
 .equ FEAT_VIEWS, 1               # section 12 of the spec: features agreed after hello
 .equ FEAT_COMPLETE, 2
 .equ FEAT_SIGNATURE, 4
-.equ FEAT_HOST, FEAT_VIEWS        # the features this rhun implements: only these are agreed
+.equ FEAT_HOST, FEAT_VIEWS | FEAT_COMPLETE | FEAT_SIGNATURE   # what this rhun implements: only these are agreed
+.equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
+.equ CP_BODY_MAX, 1048576
+.equ SG_BODY_MAX, 65536          # 12c: signature help's body
+.equ ID_COMPLETE, 0x7800         # + row: the completion list's rows
 .equ ICON_SLOTS, 4              # badge sizes an extension's icon is kept at
 .equ ICON_MAXBYTES, 65536       # an extension's icon file, at most
 .equ ICON_MAXDIM, 256           # and its width and height
@@ -1135,6 +1139,11 @@ F EXT_icon_next, 4      # the slot the next new size replaces
 F EXT_icon_pad, 4
 F EXT_features, 4       # FEAT_*: what was agreed after hello (section 12 of the spec)
 F EXT_feat_pad, 4
+F EXT_pv_complete, 8    # [provides] complete: the files it completes in (patterns, cstr) or 0
+F EXT_pv_ctrig, 8       # complete.triggers: characters that ask at once, space separated, or 0
+F EXT_pv_signature, 8   # signature: the files it gives signature help in, or 0
+F EXT_pv_strig, 8       # signature.triggers
+F EXT_hreq, 8           # the id of the last request rhun sent it (ids are never reused)
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)

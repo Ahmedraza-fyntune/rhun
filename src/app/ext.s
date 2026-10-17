@@ -794,6 +794,8 @@ FN ext_retire
     call ext_icon_free
     mov rdi, rbx
     call extview_owner_gone
+    mov rdi, rbx
+    call complete_ext_gone
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1488,7 +1490,14 @@ FN ext_load
 8:  test dword ptr [rbx + EXT_on], -1
     jnz 81f
     mov dword ptr [rbx + EXT_on], ON_STARTUP | ON_COMMAND   # installed means running
-81: # its data files: themes and grammars
+81: # completion and signature help providers
+    mov rdi, rbx
+    mov rsi, [rbx + EXT_pv_complete]
+    call provides_merge
+    mov rdi, rbx
+    mov rsi, [rbx + EXT_pv_signature]
+    call provides_merge
+    # its data files: themes and grammars
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsub_themes]
     call path_join
@@ -1679,8 +1688,16 @@ manifest_kv:
     lea rsi, [rip + .Ls_settings]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 4f
     call parse_setting
+    jmp 9f
+4:  mov rdi, r12
+    lea rsi, [rip + .Ls_provides]
+    call ini_sec_is
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + pv_keys]
+    call parse_keyed
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -1862,6 +1879,64 @@ parse_subscribe:
     call val_dup
     mov [r15], rax
 9:  EPILOGUE
+
+# parse_keyed(table): a key = value of the table's ("key", EXT offset, ..., 0) as an owned cstr
+parse_keyed:
+    PROLOGUE
+    mov r13, rdi
+    xor r14d, r14d
+1:  mov rsi, [r13 + r14*8]
+    test rsi, rsi
+    jz 9f
+    mov rdi, r12
+    call ini_key_is
+    test eax, eax
+    jnz 2f
+    add r14, 2
+    jmp 1b
+2:  mov rcx, [r13 + r14*8 + 8]
+    lea r15, [rbx + rcx]
+    mov rdi, [r15]
+    call mem_free
+    call val_dup
+    mov [r15], rax
+9:  EPILOGUE
+
+# provides_merge(ext, patterns): a provider hears opened and edits for the files it provides for,
+# and the first of them to open starts it (section 12b)
+provides_merge:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    test r12, r12
+    jz 9f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    lea rdi, [rbx + EXT_sub_opened]
+    call merge_into
+    lea rdi, [rbx + EXT_sub_edits]
+    call merge_into
+    lea rdi, [rbx + EXT_on_globs]
+    call merge_into
+    or dword ptr [rbx + EXT_on], ON_OPEN
+9:  EPILOGUE
+
+# merge_into(slot*): r12 (r13 bytes) appended to the list, unless the list is "*" (all already)
+merge_into:
+    mov rax, [rdi]
+    test rax, rax
+    jz 1f
+    cmp byte ptr [rax], '*'
+    jne 1f
+    cmp byte ptr [rax + 1], 0
+    je 9f
+1:  push rbx
+    mov rsi, r12
+    mov rdx, r13
+    call list_append
+    pop rbx
+9:  ret
 
 # parse_needs(): the [needs] block into NEEDS_* bits
 parse_needs:
@@ -2961,6 +3036,8 @@ FN ext_exited
     call extproto_prompt_owner_gone
     mov rdi, rbx
     call extview_owner_gone     # its views close with it
+    mov rdi, rbx
+    call complete_ext_gone      # and its completion items and signature help
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -3889,6 +3966,8 @@ cur_start: .quad 0              # the EXT being started (env_add_state)
 .section .rodata
 .p2align 3
 state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled, .Lst_removed
+pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
+    .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig, 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -3974,6 +4053,11 @@ ext_target: .asciz "linux-x86_64"
 .Lk_on: .asciz "on"
 .Ls_commands: .asciz "commands"
 .Ls_subscribe: .asciz "subscribe"
+.Ls_provides: .asciz "provides"
+.Lpv_complete: .asciz "complete"
+.Lpv_ctrig: .asciz "complete.triggers"
+.Lpv_signature: .asciz "signature"
+.Lpv_strig: .asciz "signature.triggers"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"

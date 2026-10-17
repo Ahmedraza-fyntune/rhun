@@ -308,17 +308,18 @@ handle_line:
     call ext_kill
     jmp 9f
 .Lhl_msg:
-    # replies to rhun's requests (none in gate 1) are ignored
+    # replies to rhun's requests (section 12): "ok ID LEN" and its body, "error ID CODE TEXT"; an
+    # extension that agreed no feature is asked nothing, and its stray replies are ignored
     xor edi, edi
     lea rsi, [rip + .Lw_ok]
     call field_is
     test eax, eax
-    jnz 9f
+    jnz .Lhl_ok
     xor edi, edi
     lea rsi, [rip + .Lw_error]
     call field_is
     test eax, eax
-    jnz 9f
+    jnz .Lhl_err
     xor edi, edi
     call field_u64
     test edx, edx
@@ -375,6 +376,57 @@ handle_line:
     mov rdi, [rip + cur_id]
     lea rsi, [rip + .Le_unknown]
     call reply_error
+    jmp 9f
+.Lhl_ok:
+    test dword ptr [rbx + EXT_features], FEAT_COMPLETE | FEAT_SIGNATURE
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jb 9f
+    mov edi, 1
+    call field_u64
+    test edx, edx
+    jz 9f
+    mov r12, rax                # the id
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 9f
+    cmp qword ptr [rip + body_ptr], 0
+    jne 2f
+    test rax, rax
+    jz 2f                       # no body: answered at once
+    cmp rax, CP_BODY_MAX
+    jbe 1f
+    mov rdi, rbx                # a body over the cap ends the program, as for requests
+    lea rsi, [rip + .Lr_body]
+    call ext_kill
+    jmp 9f
+1:  mov [rbx + EXT_body_len], rax
+    mov rdi, [rip + line + SB_ptr]
+    mov rsi, [rip + line + SB_len]
+    call mem_dup
+    mov [rbx + EXT_body], rax
+    jmp 9f
+2:  mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call complete_reply
+    jmp 9f
+.Lhl_err:
+    test dword ptr [rbx + EXT_features], FEAT_COMPLETE | FEAT_SIGNATURE
+    jz 9f
+    mov edi, 1
+    call field_u64
+    test edx, edx
+    jz 9f
+    mov rdi, rbx
+    mov rsi, rax
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call complete_reply
     jmp 9f
 .Lhl_syntax:
     xor edi, edi
@@ -2050,6 +2102,100 @@ FN extproto_send_setting
     mov [rip + cur], r12
     EPILOGUE
 
+# FN extproto_matches(patterns, doc) -> eax 1 when the document's name matches the patterns
+FN extproto_matches
+    jmp sub_matches
+
+# FN extproto_host_request(ext, verb, doc, kind, ch) -> rax the id of "ID VERB DOC VERSION LINE COL
+# KIND CHAR" sent to the extension (section 12), or 0: every event about the document goes first,
+# and a document it does not know is not asked about
+FN extproto_host_request
+    PROLOGUE 32
+    mov rbx, rdi
+    mov [rsp], rsi
+    mov r12, rdx
+    mov [rsp + 8], rcx
+    mov [rsp + 16], r8d
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 8f
+    mov rdi, rbx
+    call extproto_events
+    mov rdi, rbx
+    mov rsi, [r12 + DOC_id]
+    call known_find
+    test rax, rax
+    jz 8f
+    mov [rip + cur], rbx
+    inc qword ptr [rbx + EXT_hreq]
+    mov r13, [rbx + EXT_hreq]
+    call out_begin
+    mov rdi, r13
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rsp]
+    call out_cstr
+    mov edi, ' '
+    call out_byte
+    mov rdi, [r12 + DOC_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [r12 + DOC_version]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r12
+    mov rsi, [r12 + DOC_cur]
+    call doc_line_of
+    mov r14, rax
+    lea rdi, [rax + 1]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r12
+    mov rsi, r14
+    call doc_line_start
+    mov rdi, [r12 + DOC_cur]
+    sub rdi, rax
+    inc rdi
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rsp + 8]
+    call out_cstr
+    mov edi, ' '
+    call out_byte
+    mov edi, [rsp + 16]
+    lea rsi, [rsp + 20]
+    call utf8_encode
+    lea rdi, [rsp + 20]
+    mov rsi, rax
+    call out_bytes
+    mov edi, 10
+    call out_byte
+    call out_end
+    mov rax, r13
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN extproto_send_cancel(ext, id): "0 cancel ID", a request rhun no longer needs the answer to
+FN extproto_send_cancel
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov [rip + cur], rbx
+    call out_begin
+    lea rdi, [rip + .Lev_cancel]
+    call out_cstr
+    mov rdi, r12
+    call out_u64
+    mov edi, 10
+    call out_byte
+    call out_end
+    EPILOGUE
+
 # send_ready(ext): "0 ready PROJECT"
 # hello_features(ext): EXT_features from the names after "hello 1" (the fields of the current line),
 # and "0 features NAME..." with those rhun knows, when there are any
@@ -2831,6 +2977,7 @@ cmd_allow:
 .Lv_hover: .asciz "hover"
 .Lw_hello: .asciz "hello"
 .Lev_features: .asciz "0 features"
+.Lev_cancel: .asciz "0 cancel "
 .Lf_views: .asciz "views"
 .Lf_complete: .asciz "complete"
 .Lf_signature: .asciz "signature"

@@ -9,7 +9,7 @@ acc_cap: .quad 0                # floats
 g_acc_w: .long 0
 g_acc_h: .long 0
 acc_stride: .long 0             # cells a row: w and two more, where what lies right of the area lands
-acc_wf: .float 0.0              # w, as a float: x is clamped to it
+acc_wf: .long 0                   # w, as a float: x is clamped to it
 .p2align 4
 gamma_tab: .zero 256
 

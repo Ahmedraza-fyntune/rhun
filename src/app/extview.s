@@ -49,8 +49,8 @@ rc_aux: .long 0                 # the record being drawn: its aux byte, color, f
 rc_color: .long 0
 rc_nf: .long 0
 rc_tlen: .long 0
-cl_w: .float 0.0                # the mask being rasterized, as floats: edges are clipped to it
-cl_h: .float 0.0
+cl_w: .long 0                  # the mask being rasterized, as floats: edges are clipped to it
+cl_h: .long 0
 .p2align 3
 budget: .quad 0                 # pixels a rendering may still cover: a picture cannot stall the editor
 

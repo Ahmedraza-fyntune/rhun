@@ -5,6 +5,7 @@ catch-up, versioned edits, the error replies, and the ways a program can misbeha
 taking the editor with it. Each run gets its own HOME and config; ECHO_MODE and ECHO_LOG reach
 the extension through the environment (a --extensions session inherits rhun's)."""
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -416,7 +417,7 @@ class Host(unittest.TestCase):
     def test_hello_features_are_said_back_before_ready(self):
         self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 300'], mode='features')
         log = self.echo_log()
-        self.assertEqual(log[0], '0 features views')
+        self.assertEqual(log[0], '0 features views complete')
         self.assertTrue(log[1].startswith('0 ready '), log)
 
     # --- views (section 12a) ---
@@ -543,6 +544,103 @@ class Host(unittest.TestCase):
         metrics = [l for l in self.echo_log() if l.startswith('0 view 1 metrics ')]
         self.assertEqual(len(metrics), 2, metrics)
         self.assertNotEqual(metrics[0], metrics[1])
+
+    # --- completion and signature help (sections 12b and 12c) ---
+
+    def rust(self, text='fn main() {\n    \n}\n'):
+        (self.proj / 'p.rs').write_text(text, encoding='utf-8')
+
+    def complete_lines(self, out):
+        return [l for l in out if l.startswith('complete ') or l.startswith('signature ')]
+
+    def test_completion_follows_typing_and_accepts_as_one_step(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pr', 'wait 300',
+                               'wait 300', 'print-complete', 'type i', 'wait 100', 'print-complete', 'key Down',
+                               'key Return', 'wait 100', 'print-doc', 'print-complete', 'cmd undo', 'print-doc'],
+                              mode='complete', files=('p.rs',))
+        lines = self.complete_lines(out)
+        self.assertEqual(lines[0], 'complete open=2 items=5 shown=5 sel=0 labels=print|println|printf|process|private')
+        self.assertEqual(lines[2], 'complete open=2 items=5 shown=4 sel=0 labels=print|println|printf|private')
+        self.assertEqual(lines[4], 'complete open=0 items=0 shown=0 sel=0 labels=')
+        docs = [i for i, l in enumerate(out) if l == 'fn main() {']
+        self.assertEqual(out[docs[0] + 1], '    println!()')
+        self.assertEqual(out[docs[1] + 1], '    pri')
+        log = self.echo_log()
+        self.assertIn('1 complete 1 2 2 7 typed -', log)
+        self.assertEqual(sum(bool(re.match(r'[1-9][0-9]* complete ', l)) for l in log), 1, 'filtering asks nothing more')
+
+    def test_an_item_with_an_import_and_the_cursor_after_it(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type proc', 'wait 300',
+                               'wait 300', 'print-complete', 'key Tab', 'wait 100', 'print-doc', 'print-state',
+                               'cmd undo', 'print-doc'], mode='complete', files=('p.rs',))
+        self.assertIn('complete open=2 items=5 shown=1 sel=0 labels=process', out)
+        start = out.index('use std::process;')
+        self.assertEqual(out[start:start + 3], ['use std::process;', 'fn main() {', '    process'])
+        state = next(l for l in out if l.startswith('tabs='))
+        self.assertIn(' line=3 col=12 ', state)
+        last = len(out) - 1 - out[::-1].index('fn main() {')
+        self.assertEqual(out[last:last + 2], ['fn main() {', '    proc'])
+        self.assertNotIn('use std::process;', out[last - 1:])
+
+    def test_a_trigger_character_asks_at_once_and_escape_closes(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type x.', 'wait 200',
+                               'print-complete', 'key Escape', 'print-complete', 'key ctrl+Space', 'wait 200',
+                               'print-complete'], mode='complete', files=('p.rs',))
+        lines = self.complete_lines(out)
+        self.assertTrue(lines[0].startswith('complete open=2 items=5 shown=5 '), lines)
+        self.assertTrue(lines[2].startswith('complete open=0 '), lines)
+        self.assertTrue(lines[4].startswith('complete open=2 items=5 shown=5 '), lines)
+        log = self.echo_log()
+        self.assertTrue(any(' complete 1 ' in l and l.endswith(' 2 7 trigger .') for l in log), log)
+        self.assertTrue(any(' complete 1 ' in l and l.endswith(' 2 7 invoked -') for l in log), log)
+
+    def test_moving_away_or_another_character_closes_the_list(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pr', 'wait 300',
+                               'wait 300', 'print-complete', 'key Left', 'key Left', 'key Left', 'print-complete',
+                               'key End', 'key ctrl+Space', 'wait 300', 'print-complete', 'type -',
+                               'print-complete'], mode='complete', files=('p.rs',))
+        opens = [l.split(' ')[1] for l in self.complete_lines(out) if l.startswith('complete ')]
+        self.assertEqual(opens, ['open=2', 'open=0', 'open=2', 'open=0'])
+
+    def test_a_broken_list_shows_nothing(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pr', 'wait 300',
+                               'wait 300', 'print-complete'], mode='completebad', files=('p.rs',))
+        self.assertIn('complete open=1 items=0 shown=0 sel=0 labels=', out)
+
+    def test_a_list_cut_short_is_asked_for_again(self):
+        self.rust()
+        self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pr', 'wait 300', 'wait 300',
+                         'type i', 'wait 300', 'wait 300'], mode='completemore', files=('p.rs',))
+        log = self.echo_log()
+        self.assertTrue(any(' complete 1 ' in l and l.endswith(' 2 8 incomplete -') for l in log), log)
+
+    def test_signature_help_follows_the_arguments(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type add(', 'wait 300',
+                               'print-complete', 'type 1,', 'wait 300', 'wait 300', 'print-complete', 'key Escape',
+                               'print-complete', 'key ctrl+shift+Space', 'wait 300', 'print-complete'],
+                              mode='complete', files=('p.rs',))
+        sigs = [l for l in out if l.startswith('signature ')]
+        self.assertEqual(sigs[0], 'signature open=1 from=7 to=13 text=fn add(a: i32, b: i32)')
+        self.assertEqual(sigs[1], 'signature open=1 from=15 to=21 text=fn add(a: i32, b: i32)')
+        self.assertTrue(sigs[2].startswith('signature open=0 '), sigs)
+        self.assertEqual(sigs[3], 'signature open=1 from=15 to=21 text=fn add(a: i32, b: i32)')
+        log = self.echo_log()
+        self.assertTrue(any(' signature 1 ' in l and l.endswith(' 2 9 trigger (') for l in log), log)
+        self.assertTrue(any(' signature 1 ' in l and l.endswith(' update -') for l in log), log)
+        self.assertTrue(any(l.endswith(' invoked -') and ' signature ' in l for l in log), log)
+
+    def test_no_requests_without_the_features(self):
+        self.rust()
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 300', 'key Down', 'key End',
+                               'type pr(', 'wait 300', 'wait 300', 'print-complete'], files=('p.rs',))
+        self.assertIn('complete open=0 items=0 shown=0 sel=0 labels=', out)
+        self.assertFalse(any(' complete ' in l or ' signature ' in l for l in self.echo_log()))
 
     def test_a_view_closes_with_its_extension(self):
         out = self.run_editor(['cmd echo.view', 'wait-ext echo running', 'wait 300', 'wait 300',

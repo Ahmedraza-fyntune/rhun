@@ -2213,6 +2213,12 @@ FN app_on_key
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
+    call complete_key           # the completion list, when it shows, takes its keys first
+    test eax, eax
+    jnz 9f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
     call vim_key
     test eax, eax
     jnz 9f
@@ -2384,6 +2390,8 @@ FN editor_key
     je 9f
     mov edi, r13d
     call ed_type
+    mov edi, r13d
+    call complete_typed         # completion and signature help follow typing
 9:  EPILOGUE
 
 # ---------------- timers ----------------
@@ -2495,11 +2503,20 @@ FN app_timeout
     cmp eax, ebx
     jge 88f
 89: mov ebx, eax
-88: mov eax, ebx
+88: call complete_timeout
+    cmp eax, -1
+    je 90f
+    cmp ebx, -1
+    je 91f
+    cmp eax, ebx
+    jge 90f
+91: mov ebx, eax
+90: mov eax, ebx
     EPILOGUE
 
 FN app_tick
     PROLOGUE
+    call complete_tick
     call ext_options_apply
     call watch_tick
     call tip_tick
@@ -2543,7 +2560,7 @@ FN app_render
     test eax, eax
     jz 1f
     mov dword ptr [rip + g_block], 1
-1:
+1:  call complete_hole          # the completion list drawn last frame keeps the pointer
     # no background: the bars, panels, dividers and the editor column cover the window, each with
     # its own color (a whole-window fill under them was a fifth of every frame). A theme with a
     # translucent color (#rrggbbaa) still gets it, so nothing blends with the frame before.
@@ -2761,6 +2778,7 @@ FN app_render
     call statusbar_draw
     # overlays (not blocked)
     mov dword ptr [rip + g_block], 0
+    call complete_draw
     call extbar_draw
     call explorer_menu_draw
     call palette_draw
