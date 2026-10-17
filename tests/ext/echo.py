@@ -141,7 +141,7 @@ def main():
         send('hello 1 views bogus complete')     # section 12: rhun says back the ones it knows
     elif MODE == 'views':
         send('hello 1 views')
-    elif MODE in ('complete', 'completebad', 'completemore'):
+    elif MODE in ('complete', 'completebad', 'completemore', 'completecursor'):
         send('hello 1 complete signature')
     elif MODE == 'lang':
         send('hello 1 definition references symbols actions rename format')
@@ -272,6 +272,10 @@ def complete_body(line, start, col, more=0):
             extra += f'edit {l1} {c1} {l2} {c2} {len(text.encode())}\n'.encode() + text.encode()
         if doc:
             extra += f'doc {len(doc.encode())}\n'.encode() + doc.encode()
+        if MODE == 'completecursor' and label == 'print':
+            extra += b'cursor 6 0\n'          # between the parentheses
+        if MODE == 'completecursor' and label == 'println':
+            extra += b'cursor 99 0\n'         # past the text: left out
         lb, ib, db = label.encode(), insert.encode(), detail.encode()
         out += (f'{line} {start} {line} {col} {kind} {len(lb)} {len(ib)} {len(db)} {len(extra)}\n'.encode()
                 + lb + ib + db + extra)

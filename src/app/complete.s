@@ -1628,7 +1628,7 @@ cp_select:
 # cp_accept(): the selected item goes in: its range, extended to the cursor by what was typed
 # since, and its extra edits, as one undo step
 cp_accept:
-    PROLOGUE 80
+    PROLOGUE 96
     mov eax, [rip + cp_sel]
     cmp eax, [rip + cp_nshown]
     jae 8f
@@ -1694,16 +1694,19 @@ cp_accept:
     mov rdi, rbx
     mov rsi, [r12 + CI_req]
     call req_coords
+    mov qword ptr [rsp + 72], -1    # the cursor's offset in the item's text: none (at its end)
 4:  call ps_line
     test eax, eax
     jz 5f
     call ps_word
+    mov [rsp + 80], rax
+    mov [rsp + 88], rdx
     mov rdi, rax
     mov rsi, rdx
     lea rdx, [rip + .Lx_edit]
     call str_eq_cstr
     test eax, eax
-    jz 41f
+    jz 40f
     call ps_pos
     mov [rsp + 8], rax
     call ps_pos
@@ -1749,6 +1752,37 @@ cp_accept:
     mov rdx, [rsp + 32]
     mov rcx, [rsp + 24]
     call ae_add
+    jmp 4b
+40: # cursor OFFSET 0: where the cursor goes in the item's text
+    mov rdi, [rsp + 80]
+    mov rsi, [rsp + 88]
+    lea rdx, [rip + .Lx_cursor]
+    call str_eq_cstr
+    test eax, eax
+    jz 41f
+    call ps_num
+    test edx, edx
+    jz 5f
+    mov [rsp + 48], rax
+    call ps_num
+    test edx, edx
+    jz 5f
+    test rax, rax
+    jnz 5f                      # no bytes follow it
+    call ps_eol
+    test eax, eax
+    jz 5f
+    mov rax, [rsp + 48]
+    mov ecx, [r12 + CI_ilen]
+    cmp rax, rcx
+    ja 4b                       # past the text: left out
+    jae 401f
+    mov rdx, [rsp + 64]
+    movzx edx, byte ptr [rdx + rax]
+    and edx, 0xc0
+    cmp edx, 0x80
+    je 4b                       # inside a character: left out
+401:mov [rsp + 72], rax
     jmp 4b
 41: # another record: its last word is its length
     mov rax, [rip + ps_lend]
@@ -1828,7 +1862,13 @@ cp_accept:
     add r13, [rax]
     sub r13, [rax + 8]
     jmp 71b
-72: mov [rbx + DOC_cur], r13
+72: mov rax, [rsp + 72]
+    test rax, rax
+    js 74f
+    mov ecx, [r12 + CI_ilen]    # a cursor record: that far into the item's text
+    sub r13, rcx
+    add r13, rax
+74: mov [rbx + DOC_cur], r13
     mov [rbx + DOC_anchor], r13
     call ed_touch
 8:  call cp_close
@@ -2946,6 +2986,7 @@ kind_colors: .byte T_MUTED, T_ICON + 5, T_ICON + 5, T_ICON + 4, T_ICON + 4, T_IC
 .Lk_incomplete: .asciz "incomplete"
 .Lk_update: .asciz "update"
 .Lx_edit: .asciz "edit"
+.Lx_cursor: .asciz "cursor"
 .Ld_open: .asciz "complete open="
 .Ld_items: .asciz " items="
 .Ld_shown: .asciz " shown="

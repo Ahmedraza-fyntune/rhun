@@ -571,6 +571,18 @@ class Host(unittest.TestCase):
         self.assertIn('1 complete 1 2 2 7 typed -', log)
         self.assertEqual(sum(bool(re.match(r'[1-9][0-9]* complete ', l)) for l in log), 1, 'filtering asks nothing more')
 
+    def test_an_item_can_place_the_cursor_inside_its_text(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pri', 'wait 300',
+                               'wait 300', 'key Return', 'wait 100', 'print-doc', 'print-state', 'type x',
+                               'print-doc', 'key End', 'key Return', 'type print', 'wait 300', 'wait 300', 'key Down', 'key Return',
+                               'wait 100', 'print-doc', 'print-state'], mode='completecursor', files=('p.rs',))
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn(' line=2 col=11 ', states[0])       # print(|)
+        self.assertIn('    print(x)', out)
+        self.assertIn(' line=3 col=15 ', states[1])       # println!()| : the offset past its text is left out
+        self.assertIn('    println!()', out)
+
     def test_an_item_with_an_import_and_the_cursor_after_it(self):
         self.rust()
         out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type proc', 'wait 300',
