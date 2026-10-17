@@ -474,6 +474,12 @@ def on_run(command, doc, versions):
     elif name == 'unview':
         if VIEWS:
             request(f'unview {VIEWS.pop()}')
+    elif name in ('apply', 'applystale', 'applyoverlap'):
+        version = versions.get(doc, 0) + (1 if name == 'applystale' else 0)
+        here = [(1, 1, 1, 3, 'FN')] if name != 'applyoverlap' else [(1, 1, 1, 3, 'FN'), (1, 2, 1, 4, 'x')]
+        body = workspace_edit([(PATHS.get(doc, f'#{doc}'), version, here),
+                               (PROJECT[0] + '/other.rs', '-', [(1, 1, 1, 1, '// applied\n')])])
+        request(f'apply {len(body)}', body)
     elif name == 'faredit':
         # the same number of bytes, far from the cursor: fn becomes FN on line 1
         request(f'replace {doc} {versions.get(doc, 0)} 1 1 1 3 2', b'FN')

@@ -951,6 +951,7 @@ ENDSTRUCT TF_SIZE
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
+.equ REPLY_BODY_MAX, 4194304     # any answer's body (a workspace edit, 12g); each feature has its own cap
 .equ ID_COMPLETE, 0x7800         # + row: the completion list's rows
 .equ ICON_SLOTS, 4              # badge sizes an extension's icon is kept at
 .equ ICON_MAXBYTES, 65536       # an extension's icon file, at most

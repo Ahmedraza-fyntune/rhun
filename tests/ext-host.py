@@ -74,7 +74,8 @@ CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
         'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
         'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec,echo.greet,'
-        'echo.view,echo.badview,echo.unview,echo.manyviews,echo.staleview,echo.faredit')
+        'echo.view,echo.badview,echo.unview,echo.manyviews,echo.staleview,echo.faredit,echo.apply,echo.applystale,'
+        'echo.applyoverlap')
 
 
 class Host(unittest.TestCase):
@@ -773,6 +774,27 @@ class Host(unittest.TestCase):
                                'print-toast', 'print-palette', 'type abc', 'print-doc'], mode='lang', files=('p.rs',))
         self.assertIn('toast=No symbols in this file', out)
         self.assertIn('abcfn  main( ) {', out)
+
+    def test_an_extension_applies_a_workspace_edit(self):
+        self.lang()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'cmd echo.apply', 'wait 300', 'print-tabs',
+                               'print-doc', 'key ctrl+Tab', 'print-doc'], files=('p.rs',))
+        self.assertIn('tabs=*p.rs | other.rs', out)
+        self.assertIn('FN  main( ) {', out)
+        self.assertIn('// applied', out)
+        self.assertTrue(any(l.startswith('ok ') and l.count(' ') == 1 for l in self.echo_log()), self.echo_log())
+
+    def test_a_refused_apply_says_why_and_changes_nothing(self):
+        self.lang()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'cmd echo.applystale', 'wait 300',
+                               'cmd echo.applyoverlap', 'wait 300', 'print-tabs', 'print-doc', 'print-toast'],
+                              files=('p.rs',))
+        log = self.echo_log()
+        self.assertTrue(any(' stale a document changed' in l for l in log), log)
+        self.assertTrue(any(' badpos two edits overlap' in l for l in log), log)
+        self.assertIn('tabs=*p.rs', out)
+        self.assertIn('fn  main( ) {', out)
+        self.assertNotIn('toast=', ' '.join(l for l in out if 'nothing changed' in l))
 
     def test_format_document(self):
         self.lang()

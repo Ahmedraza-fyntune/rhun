@@ -53,6 +53,7 @@ F WG_version, 8                 # -1: not open
 F WG_doc, 8                     # DOC* once resolved
 F WG_first, 8                   # its edits: we[first .. first + count)
 F WG_count, 8
+F WG_opened, 8                  # 1: this edit opened its tab (closed again if the edit fails)
 ENDSTRUCT WG_SIZE
 
 # an edit of a workspace edit
@@ -84,6 +85,9 @@ lf_ws: .zero SB_SIZE            # a workspace edit to apply (rename, format)
 lf_line: .zero SB_SIZE          # a request being built
 lf_name: .zero SB_SIZE          # the new name of a rename
 lf_err: .zero 256               # what the rename provider said instead
+ws_quiet: .long 0               # ws_apply for an extension's request: no toast
+.p2align 3
+ws_code: .quad 0                # the reply for the last failure ("CODE TEXT")
 wg_vec: .zero VEC_SIZE          # a workspace edit being applied
 we_vec: .zero VEC_SIZE
 lf_path: .zero 4100             # a path as a cstr
@@ -1536,8 +1540,21 @@ lf_open_path:
 # ws_fail(cstr) -> eax 0: says why nothing changed
 ws_fail:
     push rbx
+    cmp dword ptr [rip + ws_quiet], 0
+    jne 1f
     call app_toast
-    xor eax, eax
+1:  xor eax, eax
+    pop rbx
+    ret
+
+# FN ws_apply_request(body, len) -> eax 1 when every edit was made; 0 when none was, with rdx the
+# error reply's "CODE TEXT" (an extension's apply request: no toast, the extension hears why)
+FN ws_apply_request
+    push rbx
+    mov dword ptr [rip + ws_quiet], 1
+    call ws_apply
+    mov dword ptr [rip + ws_quiet], 0
+    mov rdx, [rip + ws_code]
     pop rbx
     ret
 
@@ -1545,6 +1562,7 @@ ws_fail:
 # "N", then per file PATH_LEN VERSION M and the path, then M edits L1 C1 L2 C2 LEN and the text
 FN ws_apply
     PROLOGUE 48
+    mov qword ptr [rsp + 16], 0
     mov qword ptr [rip + wg_vec + VEC_len], 0
     mov qword ptr [rip + we_vec + VEC_len], 0
     cmp rsi, WS_BODY_MAX
@@ -1663,6 +1681,7 @@ FN ws_apply
     add r12, [rip + wg_vec + VEC_ptr]
     inc rbx
     mov qword ptr [r12 + WG_doc], 0
+    mov qword ptr [r12 + WG_opened], 0
     mov rdi, r12
     call ws_path
     test eax, eax
@@ -1723,6 +1742,7 @@ FN ws_apply
     jne .Lws_unreadable
     mov rax, [rax + TAB_doc]
     mov [r12 + WG_doc], rax
+    mov qword ptr [r12 + WG_opened], 1
     jmp 6b
 .Lws_check:
     # every range in its text, in order, none over another
@@ -1733,7 +1753,15 @@ FN ws_apply
     add r12, [rip + wg_vec + VEC_ptr]
     inc rbx
     mov r13, [r12 + WG_doc]
-    test dword ptr [r13 + DOC_flags], DF_READONLY
+    # a document named twice (by id and by path) would get edits made for a text it no longer has
+    mov rcx, [rip + wg_vec + VEC_ptr]
+73: cmp rcx, r12
+    jae 74f
+    cmp [rcx + WG_doc], r13
+    je .Lws_bad
+    add rcx, WG_SIZE
+    jmp 73b
+74: test dword ptr [r13 + DOC_flags], DF_READONLY
     jnz .Lws_readonly
     mov r14, [r12 + WG_first]
     mov r15, r14
@@ -1797,33 +1825,77 @@ FN ws_apply
     mov eax, 1
     EPILOGUE
 .Lws_bad:
+    lea rax, [rip + .Lwc_bad]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_bad]
     jmp .Lws_out
 .Lws_badpath:
+    lea rax, [rip + .Lwc_path]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_path]
     jmp .Lws_out
 .Lws_gone:
+    lea rax, [rip + .Lwc_gone]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_gone]
     jmp .Lws_out
 .Lws_stale:
+    lea rax, [rip + .Lwc_stale]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_stale]
     jmp .Lws_out
 .Lws_unreadable:
+    lea rax, [rip + .Lwc_open]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_open]
     jmp .Lws_out
 .Lws_readonly:
+    lea rax, [rip + .Lwc_readonly]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_readonly]
     jmp .Lws_out
 .Lws_badrange:
+    lea rax, [rip + .Lwc_range]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_range]
     jmp .Lws_out
 .Lws_toomany:
+    lea rax, [rip + .Lwc_many]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_many]
     jmp .Lws_out
 .Lws_overlap:
+    lea rax, [rip + .Lwc_overlap]
+    mov [rip + ws_code], rax
     lea rdi, [rip + .Lws_e_overlap]
 .Lws_out:
     call ws_fail
+    # nothing changes: the tabs this edit opened close, and the user's document is active again
+    mov rbx, [rip + wg_vec + VEC_len]
+1:  test rbx, rbx
+    jz 2f
+    dec rbx
+    imul r12, rbx, WG_SIZE
+    add r12, [rip + wg_vec + VEC_ptr]
+    cmp qword ptr [r12 + WG_opened], 0
+    je 1b
+    mov rdi, [r12 + WG_doc]
+    call doc_tab
+    test rax, rax
+    js 1b
+    mov rdi, rax
+    call app_close_tab_now
+    jmp 1b
+2:  mov rdi, [rsp + 16]
+    test rdi, rdi
+    jz 3f
+    call doc_tab
+    test rax, rax
+    js 3f
+    mov rdi, rax
+    call app_activate_tab
+3:  mov dword ptr [rip + g_dirty], 1
+    xor eax, eax
     EPILOGUE
 
 # ws_path(WG*) -> eax 1 with its path in lf_path as a cstr, 0 when it holds a NUL or is too long
@@ -2040,3 +2112,12 @@ lf_single: .byte 0, 0, 0, 1, 0, 1, 1
 .Lws_e_range: .asciz "The edit's ranges are not in the text: nothing changed"
 .Lws_e_many: .asciz "Too many edits out of order in one file: nothing changed"
 .Lws_e_overlap: .asciz "The edit's ranges overlap: nothing changed"
+.Lwc_bad: .asciz "syntax the edit cannot be read"
+.Lwc_path: .asciz "nofile a path is not absolute or not a document"
+.Lwc_gone: .asciz "nodoc a document it names is closed"
+.Lwc_stale: .asciz "stale a document changed since the edit was made"
+.Lwc_open: .asciz "nofile a file cannot be opened"
+.Lwc_readonly: .asciz "readonly a document cannot be edited"
+.Lwc_range: .asciz "badpos a range is outside its text or inside a character"
+.Lwc_many: .asciz "toobig too many edits out of order in one file"
+.Lwc_overlap: .asciz "badpos two edits overlap"

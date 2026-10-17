@@ -395,7 +395,7 @@ handle_line:
     jne 2f
     test rax, rax
     jz 2f                       # no body: answered at once
-    cmp rax, CP_BODY_MAX
+    cmp rax, REPLY_BODY_MAX
     jbe 1f
     mov rdi, rbx                # a body over the cap ends the program, as for requests
     lea rsi, [rip + .Lr_body]
@@ -865,6 +865,27 @@ h_replace:
     mov rdi, [rip + cur_id]
     call reply_syntax
     EPILOGUE
+
+# apply LEN + a workspace edit (section 12g): checked whole, then each document changed as one
+# undo step; files that are not open open in tabs, unsaved
+h_apply:
+    PROLOGUE
+    mov edi, NEEDS_DOC_WRITE
+    call need
+    test eax, eax
+    jz 9f
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call ws_apply_request
+    test eax, eax
+    jz 1f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    jmp 9f
+1:  mov rdi, [rip + cur_id]
+    mov rsi, rdx
+    call reply_error
+9:  EPILOGUE
 
 # apply_replace(doc, pos, len, ptr, blen): one undo step; the cursor and anchor follow the text
 apply_replace:
@@ -2963,6 +2984,7 @@ verbs:
     .quad .Lv_view, h_view, 0
     .quad .Lv_draw, h_draw, VIEW_BODY_MAX
     .quad .Lv_unview, h_unview, 0
+    .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad 0, 0, 0
 .Lv_register: .asciz "register"
 .Lv_option: .asciz "option"
@@ -2973,6 +2995,7 @@ verbs:
 .Lv_view: .asciz "view"
 .Lv_draw: .asciz "draw"
 .Lv_unview: .asciz "unview"
+.Lv_apply: .asciz "apply"
 .Le_toobig_views: .asciz "toobig 8 views"
 .Le_noview: .asciz "noview no such view"
 .Le_syntax_line: .asciz "syntax line "
