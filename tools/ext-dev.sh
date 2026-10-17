@@ -1,7 +1,7 @@
 #!/bin/sh
 # Lays the local extension repositories out the way rhun installs them, builds their programs for
 # this machine, and prints the command that opens rhun with them. For looking at the real thing:
-# the palette entries, Settings > Extensions, the confinement at work.
+# the palette entries, the extensions button in the title bar and the Extensions page, the confinement at work.
 #   tools/ext-dev.sh [SRC_DIR] [OUT_DIR]      SRC_DIR holds one folder per extension (default
 #                                             ~/tmp/rhun-editor), OUT_DIR the layout (build/ext-dev)
 set -e
@@ -31,4 +31,4 @@ done
 echo
 echo "rhun with these extensions (the state folder and extensions.ini stay the user's):"
 echo "  ./build/rhun --extensions $out"
-echo "then Command Palette > Settings, scroll to Extensions; or run a command such as Format Document."
+echo "then the puzzle button in the title bar: the dropdown, pins, Manage extensions, Install from GitHub…"
