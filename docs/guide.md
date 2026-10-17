@@ -614,9 +614,9 @@ From [rhun-editor](https://github.com/rhun-editor):
 | Extension | What it does |
 | --- | --- |
 | `rhun-editor/lsp` | completion, signature help, errors, hover text, definitions, references, symbols, code actions, rename and format from the language servers you have installed (gopls, rust-analyzer, clangd, pyright and 18 more) |
-| `rhun-editor/format` | formats the document with the formatter you already have, such as gofmt, prettier or ruff |
+| `rhun-editor/format` | Format Document (shift+alt+f) with the formatter you already have, such as gofmt, prettier or ruff |
 | `rhun-editor/editorconfig` | applies your `.editorconfig` files |
-| `rhun-editor/snippets` | expands a short name into a longer piece of text for the document's language |
+| `rhun-editor/snippets` | your snippets in the completion list as you type, and Expand Snippet for a short name |
 | `rhun-editor/tasks` | puts your project's tasks, such as make targets and npm scripts, in the command palette |
 | `rhun-editor/charts` | charts in a tab: the project's lines by language, the open file's line lengths (Rust) |
 | `rhun-editor/wordfreq` | the open file's most frequent words as a bar chart that follows your typing (C) |
