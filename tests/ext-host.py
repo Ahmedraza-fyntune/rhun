@@ -226,14 +226,17 @@ class Host(unittest.TestCase):
 
     @unittest.skipIf(os.environ.get('RHUN_SLOW_MACHINE'), 'an emulated flooder is too slow to flood')
     def test_a_flood_ends_the_program_and_frames_keep_coming(self):
-        # 30 busy windows of 16 ms is half a second; emulated test machines are given six times that
-        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 3000', 'print-frames',
+        # 30 busy windows of 16 ms in a row is half a second; a busy runner can give the flooder a
+        # quiet window now and then, which starts the count again, so after the 3 s the test also
+        # waits for the stop (up to 10 s more)
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 3000', 'wait-ext echo stopped',
+                               'print-frames',
                                'print-extensions', 'type ok', 'print-doc'], mode='flood')
         self.assertEqual(out[0], 'ext=echo state=running')
-        frames = int(out[1].split('=')[1])
+        frames = int(out[2].split('=')[1])
         self.assertGreater(frames, 5, out)
-        self.assertIn('state=stopped reason=flooding', out[2])
-        self.assertEqual(out[3], 'okhello world')
+        self.assertIn('state=stopped reason=flooding', out[3])
+        self.assertEqual(out[4], 'okhello world')
 
     def test_a_program_that_never_reads_is_stopped(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 11000', 'print-extensions',

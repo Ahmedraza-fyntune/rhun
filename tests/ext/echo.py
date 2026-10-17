@@ -117,10 +117,11 @@ def main():
         if MODE == 'flood':
             threading.Thread(target=lambda: inp.read(), daemon=True).start()
         while True:
-            # a hundred requests per write: a flooder is not held back by its own flushes
-            out.write(b''.join(f'{next_id + i} toast 5\nflood'.encode() for i in range(100)))
+            # a thousand requests per write: a flooder is not held back by its own flushes, and the
+            # pipe keeps a backlog when the machine is busy
+            out.write(b''.join(f'{next_id + i} toast 5\nflood'.encode() for i in range(1000)))
             out.flush()
-            next_id += 100
+            next_id += 1000
     if MODE == 'garbage':
         out.write(b'x' * 100000)
         out.flush()
