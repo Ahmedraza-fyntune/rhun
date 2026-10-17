@@ -74,7 +74,7 @@ CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
         'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
         'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec,echo.greet,'
-        'echo.view,echo.badview,echo.unview,echo.manyviews,echo.staleview')
+        'echo.view,echo.badview,echo.unview,echo.manyviews,echo.staleview,echo.faredit')
 
 
 class Host(unittest.TestCase):
@@ -560,8 +560,8 @@ class Host(unittest.TestCase):
                                'key Return', 'wait 100', 'print-doc', 'print-complete', 'cmd undo', 'print-doc'],
                               mode='complete', files=('p.rs',))
         lines = self.complete_lines(out)
-        self.assertEqual(lines[0], 'complete open=2 items=5 shown=5 sel=0 labels=print|println|printf|process|private')
-        self.assertEqual(lines[2], 'complete open=2 items=5 shown=4 sel=0 labels=print|println|printf|private')
+        self.assertEqual(lines[0], 'complete open=2 items=6 shown=6 sel=0 labels=print|println|printf|process|private|printd')
+        self.assertEqual(lines[2], 'complete open=2 items=6 shown=5 sel=0 labels=print|println|printf|private|printd')
         self.assertEqual(lines[4], 'complete open=0 items=0 shown=0 sel=0 labels=')
         docs = [i for i, l in enumerate(out) if l == 'fn main() {']
         self.assertEqual(out[docs[0] + 1], '    println!()')
@@ -575,7 +575,7 @@ class Host(unittest.TestCase):
         out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type proc', 'wait 300',
                                'wait 300', 'print-complete', 'key Tab', 'wait 100', 'print-doc', 'print-state',
                                'cmd undo', 'print-doc'], mode='complete', files=('p.rs',))
-        self.assertIn('complete open=2 items=5 shown=1 sel=0 labels=process', out)
+        self.assertIn('complete open=2 items=6 shown=1 sel=0 labels=process', out)
         start = out.index('use std::process;')
         self.assertEqual(out[start:start + 3], ['use std::process;', 'fn main() {', '    process'])
         state = next(l for l in out if l.startswith('tabs='))
@@ -590,9 +590,9 @@ class Host(unittest.TestCase):
                                'print-complete', 'key Escape', 'print-complete', 'key ctrl+Space', 'wait 200',
                                'print-complete'], mode='complete', files=('p.rs',))
         lines = self.complete_lines(out)
-        self.assertTrue(lines[0].startswith('complete open=2 items=5 shown=5 '), lines)
+        self.assertTrue(lines[0].startswith('complete open=2 items=6 shown=6 '), lines)
         self.assertTrue(lines[2].startswith('complete open=0 '), lines)
-        self.assertTrue(lines[4].startswith('complete open=2 items=5 shown=5 '), lines)
+        self.assertTrue(lines[4].startswith('complete open=2 items=6 shown=6 '), lines)
         log = self.echo_log()
         self.assertTrue(any(' complete 1 ' in l and l.endswith(' 2 7 trigger .') for l in log), log)
         self.assertTrue(any(' complete 1 ' in l and l.endswith(' 2 7 invoked -') for l in log), log)
@@ -605,6 +605,39 @@ class Host(unittest.TestCase):
                                'print-complete'], mode='complete', files=('p.rs',))
         opens = [l.split(' ')[1] for l in self.complete_lines(out) if l.startswith('complete ')]
         self.assertEqual(opens, ['open=2', 'open=0', 'open=2', 'open=0'])
+
+    def test_the_cursor_after_an_item_with_documentation(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type x.', 'wait 300',
+                               'print-complete', 'key Return', 'wait 100', 'print-doc', 'print-state'],
+                              mode='complete', files=('p.rs',))
+        self.assertIn('    x.print()', out)
+        self.assertIn(' line=2 col=14 ', next(l for l in out if l.startswith('tabs=')))
+
+    def test_an_edit_below_the_cursor_lands_where_it_was_meant(self):
+        self.rust('fn main() {\n    \n}\n')
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pr', 'wait 300',
+                               'wait 300', 'type intd', 'wait 100', 'print-complete', 'key Return', 'wait 100',
+                               'print-doc'], mode='complete', files=('p.rs',))
+        self.assertIn('complete open=2 items=6 shown=1 sel=0 labels=printd', out)
+        start = out.index('fn main() {')
+        self.assertEqual(out[start:start + 4], ['fn main() {', '    printd', '// after', '}'])
+
+    def test_escape_before_the_pause_asks_nothing(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pr', 'key Escape',
+                               'wait 300', 'wait 300', 'print-complete'], mode='complete', files=('p.rs',))
+        self.assertIn('complete open=0 items=0 shown=0 sel=0 labels=', out)
+        self.assertFalse(any(re.match(r'[1-9][0-9]* complete ', l) for l in self.echo_log()))
+
+    def test_an_edit_elsewhere_ends_the_list(self):
+        self.rust()
+        out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key End', 'type pr', 'wait 300',
+                               'wait 300', 'print-complete', 'cmd echo.faredit', 'wait 300', 'print-complete',
+                               'print-doc'], mode='complete', files=('p.rs',))
+        opens = [l.split(' ')[1] for l in out if l.startswith('complete ')]
+        self.assertEqual(opens, ['open=2', 'open=0'])
+        self.assertIn('FN main() {', out)
 
     def test_a_broken_list_shows_nothing(self):
         self.rust()

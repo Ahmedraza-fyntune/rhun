@@ -10,6 +10,7 @@
 .equ CP_TYPED_MS, 150           # the pause after typing in a word before the list is asked for
 .equ CP_QMAX, 256               # the filter text: longer filters nothing
 .equ HR_MAX, 64                 # requests waiting for answers
+.equ AE_MAX, 64                 # edits an accepted item makes, its own and its extra ones
 .equ HR_COMPLETE, 1
 .equ HR_SIGNATURE, 2
 .equ CK_COUNT, 17               # item kinds (kind_names)
@@ -92,7 +93,8 @@ ps_ptr: .quad 0
 ps_end: .quad 0
 ps_lend: .quad 0
 ps_doc: .quad 0
-ps_tmp: .zero 64
+ps_rline: .quad 0               # the request's cursor line (0-based) and how far the cursor has moved
+ps_delta: .quad 0               # since (typing in the word): positions are turned into the request's
 
 .text
 
@@ -188,6 +190,18 @@ focused_doc:
 8:  xor eax, eax
     ret
 
+# doc_alive() -> eax 1 when cp_doc is still the open document it was (answers arrive between frames)
+doc_alive:
+    push rbx
+    mov rdi, [rip + cp_doc_id]
+    call extproto_doc
+    xor ecx, ecx
+    cmp rax, [rip + cp_doc]
+    sete cl
+    mov eax, ecx
+    pop rbx
+    ret
+
 # providers(feature) -> eax 1 when a running extension agreed it (nothing to do otherwise)
 providers:
     xor ecx, ecx
@@ -259,42 +273,6 @@ line_col:
     sub rdx, rax
     inc rdx
     lea rax, [r13 + 1]
-    pop r13
-    pop r12
-    pop rbx
-    ret
-
-# offset_of(doc, line, col) -> rax byte offset of a 1-based line and byte column, or -1 when it
-# lies outside the document
-offset_of:
-    push rbx
-    push r12
-    push r13
-    mov rbx, rdi
-    mov r12, rsi
-    mov r13, rdx
-    test r12, r12
-    jz 8f
-    test r13, r13
-    jz 8f
-    cmp r12, [rbx + DOC_nlines]
-    ja 8f
-    dec r12
-    mov rdi, rbx
-    mov rsi, r12
-    call doc_line_start
-    lea r13, [rax + r13 - 1]
-    mov rdi, rbx
-    mov rsi, r12
-    call doc_line_end
-    cmp r13, rax
-    ja 8f
-    mov rax, r13
-    pop r13
-    pop r12
-    pop rbx
-    ret
-8:  mov rax, -1
     pop r13
     pop r12
     pop rbx
@@ -394,6 +372,8 @@ cp_begin:
     mov dword ptr [rip + cp_open], 1
     mov dword ptr [rip + cp_more], 0
     mov dword ptr [rip + cp_reask], 0
+    mov qword ptr [rip + g_edit_lo], -1     # edits before the list do not count against it
+    mov qword ptr [rip + g_edit_hi], 0
     mov rdi, [rsp]
     mov esi, [rsp + 8]
     mov edx, r12d
@@ -563,6 +543,9 @@ FN complete_reply
     jne 9f
     cmp dword ptr [rip + cp_open], 0
     je 9f
+    call doc_alive
+    test eax, eax
+    jz 9f                       # closed meanwhile: the next frame ends the list
     mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
@@ -578,8 +561,19 @@ FN complete_reply
     mov rdi, r14
     mov rsi, r15
     call sg_set
-    jmp 9f
+    jmp 52f
 51: mov dword ptr [rip + sg_open], 0
+52: # moved since it was asked: ask again from the frame, whatever this answer did
+    mov rax, [rip + g_doc]
+    cmp rax, [rip + sg_doc]
+    jne 9f
+    mov rcx, [rax + DOC_cur]
+    cmp rcx, [rip + sg_cur]
+    jne 53f
+    mov rcx, [rax + DOC_version]
+    cmp rcx, [rip + sg_ver]
+    je 9f
+53: mov dword ptr [rip + sg_again], 1
 9:  EPILOGUE
 
 # FN complete_ext_gone(ext): an extension stopped: its requests and items go (no messages: this
@@ -611,6 +605,9 @@ FN complete_ext_gone
     mov qword ptr [rip + cp_qo1], -1
     cmp dword ptr [rip + cp_open], 0
     je 3f
+    call doc_alive
+    test eax, eax
+    jz 3f
     call cp_filter
 3:  cmp [rip + sg_ext], rbx
     jne 9f
@@ -692,6 +689,7 @@ cp_merge:
     call cp_parse
     test eax, eax
     jz 9f
+    mov [rsp + 8], edx
     or [rip + cp_more], edx
     lea rdi, [rip + cp_new_items]
     lea rsi, [rip + cp_items]
@@ -701,6 +699,13 @@ cp_merge:
     call swap24
     mov qword ptr [rip + cp_qo1], -1
     call cp_filter
+    cmp dword ptr [rsp + 8], 0
+    je 9f
+    mov rax, [rip + cp_doc]
+    mov rcx, [rax + DOC_cur]
+    cmp rcx, [rsp]
+    je 9f
+    mov dword ptr [rip + cp_reask], 1   # cut short for what was typed before: ask again
 9:  EPILOGUE
 
 # ---- the answer's parser: globals ps_ptr, ps_end, ps_lend ----
@@ -789,7 +794,9 @@ ps_eol:
 8:  xor eax, eax
     ret
 
-# ps_pos() -> rax byte offset in ps_doc of the next two words LINE COL, or -1
+# ps_pos() -> rax the byte offset of the next two words LINE COL in the document as it was when
+# asked (ps_doc now, less ps_delta from the request's line on: only typing at its cursor has
+# happened since), or -1 when it is not in it
 ps_pos:
     push rbx
     push r12
@@ -801,10 +808,33 @@ ps_pos:
     call ps_num
     test edx, edx
     jz 8f
-    mov rdi, [rip + ps_doc]
+    mov r13, rax
+    test r12, r12
+    jz 8f
+    test r13, r13
+    jz 8f
+    mov rbx, [rip + ps_doc]
+    cmp r12, [rbx + DOC_nlines]
+    ja 8f
+    dec r12
+    mov rdi, rbx
     mov rsi, r12
-    mov rdx, rax
-    call offset_of
+    call doc_line_end
+    push rax
+    push rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_start
+    pop rcx
+    pop rcx                     # the line's end
+    cmp r12, [rip + ps_rline]
+    jb 2f
+    je 1f
+    sub rax, [rip + ps_delta]   # past the request's line: the typing moved it
+1:  sub rcx, [rip + ps_delta]
+2:  lea rax, [rax + r13 - 1]
+    cmp rax, rcx
+    jg 8f
     pop r13
     pop r12
     pop rbx
@@ -814,6 +844,70 @@ ps_pos:
     pop r12
     pop rbx
     ret
+
+# req_coords(doc, req): ps_doc, ps_rline and ps_delta for positions asked at req
+req_coords:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    mov [rip + ps_doc], rbx
+    mov rax, [rbx + DOC_cur]
+    sub rax, r12
+    mov [rip + ps_delta], rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    mov [rip + ps_rline], rax
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+# extra_ok(ptr, len) -> eax 1 when the bytes are whole records: a header line whose last word is a
+# length of at most 10 digits, then that many bytes
+extra_ok:
+    PROLOGUE
+    mov r12, rdi
+    lea r13, [rdi + rsi]
+1:  cmp r12, r13
+    jae 8f
+    mov rbx, r12
+2:  cmp rbx, r13
+    jae 9f
+    cmp byte ptr [rbx], 10
+    je 3f
+    inc rbx
+    jmp 2b
+3:  mov r14, rbx
+4:  cmp r14, r12
+    je 5f
+    cmp byte ptr [r14 - 1], ' '
+    je 5f
+    dec r14
+    jmp 4b
+5:  mov r15, rbx
+    sub r15, r14
+    jz 9f
+    cmp r15, 10
+    ja 9f
+    mov rdi, r14
+    mov rsi, r15
+    call parse_u64
+    cmp rdx, r15
+    jne 9f
+    lea rcx, [rbx + 1]
+    mov rdx, r13
+    sub rdx, rcx
+    cmp rax, rdx
+    ja 9f
+    lea r12, [rcx + rax]
+    jmp 1b
+8:  mov eax, 1
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
 
 # one_line(ptr, len) -> eax 1 when the bytes hold no line break
 one_line:
@@ -838,11 +932,15 @@ cp_parse:
     PROLOGUE 64
     mov [rsp], rdi              # ext
     mov [rsp + 8], rcx          # req
+    mov [rsp + 56], rsi
+    mov [rsp + 48], rdx
+    mov rdi, [rip + cp_doc]
+    mov rsi, rcx
+    call req_coords
+    mov rsi, [rsp + 56]
     mov [rip + ps_ptr], rsi
-    lea rax, [rsi + rdx]
-    mov [rip + ps_end], rax
-    mov rax, [rip + cp_doc]
-    mov [rip + ps_doc], rax
+    add rsi, [rsp + 48]
+    mov [rip + ps_end], rsi
     call ps_line
     test eax, eax
     jz 8f
@@ -922,6 +1020,14 @@ cp_parse:
     add rdi, r13
     mov rsi, r14
     call one_line
+    test eax, eax
+    jz 8f
+    mov rdi, [rip + ps_ptr]
+    add rdi, r12
+    add rdi, r13
+    add rdi, r14
+    mov rsi, rbx
+    call extra_ok
     test eax, eax
     jz 8f
     # the record
@@ -1135,13 +1241,23 @@ cp_check:
     jz 7f
     inc r13
     jmp 1b
-2:  # what was typed since it was filtered
+2:  # what was typed since it was filtered: every edit since started in the word
     cmp r12, [rip + cp_seen_cur]
     jne 3f
     mov rax, [rbx + DOC_version]
     cmp rax, [rip + cp_seen_ver]
     je 4f
-3:  call cp_filter
+3:  mov rax, [rbx + DOC_version]
+    cmp rax, [rip + cp_seen_ver]
+    je 31f
+    mov rax, [rip + g_edit_lo]
+    cmp rax, [rip + cp_start]
+    jb 7f
+    cmp qword ptr [rip + g_edit_hi], r12
+    ja 7f
+31: mov qword ptr [rip + g_edit_lo], -1
+    mov qword ptr [rip + g_edit_hi], 0
+    call cp_filter
     cmp dword ptr [rip + cp_more], 0
     je 4f
     mov dword ptr [rip + cp_reask], 1
@@ -1348,6 +1464,7 @@ sg_check:
     PROLOGUE
     mov eax, [rip + sg_open]
     or eax, [rip + sg_wait]
+    or eax, [rip + sg_again]
     jz 9f
     call focused_doc
     test rax, rax
@@ -1363,9 +1480,13 @@ sg_check:
     jz 7f
     cmp dword ptr [rax + EXT_status], ES_RUNNING
     jne 7f
+    cmp dword ptr [rip + sg_wait], 0
+    jne 9f                      # asked: the answer says what comes next
     cmp dword ptr [rip + sg_open], 0
-    je 9f                       # the first answer has not come: nothing to follow yet
-    mov rax, [rbx + DOC_cur]
+    jne 51f
+    cmp dword ptr [rip + sg_again], 0
+    je 9f
+51: mov rax, [rbx + DOC_cur]
     cmp rax, [rip + sg_cur]
     jne 1f
     mov rax, [rbx + DOC_version]
@@ -1386,6 +1507,7 @@ sg_close:
     push rbx
     mov dword ptr [rip + sg_open], 0
     mov dword ptr [rip + sg_wait], 0
+    mov dword ptr [rip + sg_again], 0
     mov dword ptr [rip + sg_rect + 12], 0
     mov edi, HR_SIGNATURE
     call cancel_kind
@@ -1402,6 +1524,23 @@ FN complete_key
     mov r14d, edx
     test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER | MOD_SHIFT
     jnz 8f
+    # Escape withdraws what was asked and not shown yet, and leaves the key to the editor
+    cmp r12d, KEY_ESCAPE
+    jne 71f
+    cmp dword ptr [rip + cp_rect + 12], 0
+    jne 71f
+    mov eax, [rip + cp_open]
+    or rax, [rip + cp_due]
+    jz 72f
+    call cp_close
+72: cmp dword ptr [rip + sg_open], 0
+    jne 71f
+    mov eax, [rip + sg_wait]
+    or eax, [rip + sg_again]
+    jz 8f
+    call sg_close
+    jmp 8f
+71:
     cmp dword ptr [rip + cp_open], 2
     jne 7f
     mov ebx, [rip + cp_nshown]
@@ -1480,7 +1619,7 @@ cp_select:
 # cp_accept(): the selected item goes in: its range, extended to the cursor by what was typed
 # since, and its extra edits, as one undo step
 cp_accept:
-    PROLOGUE 64
+    PROLOGUE 80
     mov eax, [rip + cp_sel]
     cmp eax, [rip + cp_nshown]
     jae 8f
@@ -1493,6 +1632,9 @@ cp_accept:
     jz 8f
     mov rbx, rax
     cmp rbx, [rip + cp_doc]
+    jne 8f
+    mov rax, [rbx + DOC_id]
+    cmp rax, [rip + cp_doc_id]
     jne 8f
     test dword ptr [rbx + DOC_flags], DF_READONLY
     jnz 8f
@@ -1522,7 +1664,7 @@ cp_accept:
     add rax, [rip + cp_bytes + SB_ptr]
     mov ecx, [r12 + CI_llen]
     add rax, rcx                # the insert text
-    mov [rsp + 40], rax         # the item's text, to know its record after sorting
+    mov [rsp + 64], rax         # the item's text, to know its record after sorting
     mov rdi, r14
     mov rsi, r15
     mov rdx, rax
@@ -1540,7 +1682,9 @@ cp_accept:
     mov ecx, [r12 + CI_xlen]
     add rax, rcx
     mov [rip + ps_end], rax
-    mov [rip + ps_doc], rbx
+    mov rdi, rbx
+    mov rsi, [r12 + CI_req]
+    call req_coords
 4:  call ps_line
     test eax, eax
     jz 5f
@@ -1585,6 +1729,14 @@ cp_accept:
     add rsi, [rsp]
 43: cmp rdi, rsi
     ja 4b
+    mov [rsp + 8], rdi
+    mov [rsp + 16], rsi
+    mov rdi, rbx
+    call doc_len
+    mov rdi, [rsp + 8]
+    mov rsi, [rsp + 16]
+    cmp rsi, rax
+    ja 4b                       # not in the document as it is
     mov rdx, [rsp + 32]
     mov rcx, [rsp + 24]
     call ae_add
@@ -1658,7 +1810,7 @@ cp_accept:
     jb 73f
     ja 71b
     mov rdx, [rax + 16]         # at the item's start: an insert there that is not the item
-    cmp rdx, [rsp + 40]
+    cmp rdx, [rsp + 64]
     je 71b
     mov rdx, [rax + 8]
     cmp rdx, [rax]
@@ -2747,7 +2899,6 @@ FN complete_dump
 
 .bss
 .p2align 3
-.equ AE_MAX, 64
 ae_n: .quad 0                   # the edits of the item being accepted: start end ptr len
 ae_list: .zero 32 * AE_MAX
 

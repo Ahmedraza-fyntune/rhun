@@ -244,6 +244,7 @@ ITEMS = [
     ('printf', 'printf("")', '', 'function', '', None),
     ('process', 'process', 'mod process', 'module', '', (1, 1, 1, 1, 'use std::process;\n')),
     ('private', 'private', '', 'keyword', '', None),
+    ('printd', 'printd', '', 'function', '', ('NEXT', 1, 'NEXT', 1, '// after\n')),
 ]
 SIGNATURE = b'fn add(a: i32, b: i32)'
 
@@ -254,6 +255,8 @@ def complete_body(line, start, col, more=0):
         extra = b''
         if edit:
             l1, c1, l2, c2, text = edit
+            l1 = line + 1 if l1 == 'NEXT' else l1     # the line under the cursor's
+            l2 = line + 1 if l2 == 'NEXT' else l2
             extra += f'edit {l1} {c1} {l2} {c2} {len(text.encode())}\n'.encode() + text.encode()
         if doc:
             extra += f'doc {len(doc.encode())}\n'.encode() + doc.encode()
@@ -386,6 +389,9 @@ def on_run(command, doc, versions):
     elif name == 'unview':
         if VIEWS:
             request(f'unview {VIEWS.pop()}')
+    elif name == 'faredit':
+        # the same number of bytes, far from the cursor: fn becomes FN on line 1
+        request(f'replace {doc} {versions.get(doc, 0)} 1 1 1 3 2', b'FN')
     elif name == 'staleview':
         # a line with a number in field 2, then one without: the second must not see the first's
         request(f'frob {VIEWS[-1] if VIEWS else 1}')

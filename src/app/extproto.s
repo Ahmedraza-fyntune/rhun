@@ -2102,6 +2102,10 @@ FN extproto_send_setting
     mov [rip + cur], r12
     EPILOGUE
 
+# FN extproto_doc(id) -> rax the open document with that id, or 0 (it may have been closed)
+FN extproto_doc
+    jmp doc_by_id
+
 # FN extproto_matches(patterns, doc) -> eax 1 when the document's name matches the patterns
 FN extproto_matches
     jmp sub_matches

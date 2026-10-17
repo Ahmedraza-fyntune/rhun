@@ -4,6 +4,9 @@
 .data
 .p2align 3
 doc_next_id: .quad 0            # DOC_id of the last document made (extensions name documents by it)
+.globl g_edit_lo, g_edit_hi
+g_edit_lo: .quad -1             # the lowest and highest offset an edit started at since the completion
+g_edit_hi: .quad 0              # list last looked (complete.s): typing in its word is all it allows
 
 .equ GAP_MIN, 4096
 
@@ -398,7 +401,13 @@ gb_reserve:
 
 # raw_insert(doc, pos, ptr, len)
 FN raw_insert
-    PROLOGUE 16
+    cmp rsi, [rip + g_edit_lo]
+    jae 1f
+    mov [rip + g_edit_lo], rsi
+1:  cmp rsi, [rip + g_edit_hi]
+    jbe 2f
+    mov [rip + g_edit_hi], rsi
+2:  PROLOGUE 16
     mov qword ptr [rsp], 0
     mov rbx, rdi
     mov r12, rsi
@@ -522,7 +531,13 @@ FN raw_insert
 
 # raw_delete(doc, pos, len)
 FN raw_delete
-    PROLOGUE 16
+    cmp rsi, [rip + g_edit_lo]
+    jae 1f
+    mov [rip + g_edit_lo], rsi
+1:  cmp rsi, [rip + g_edit_hi]
+    jbe 2f
+    mov [rip + g_edit_hi], rsi
+2:  PROLOGUE 16
     mov qword ptr [rsp], 0
     mov rbx, rdi
     mov r12, rsi
