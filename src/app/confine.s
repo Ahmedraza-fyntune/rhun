@@ -471,9 +471,11 @@ add_rule:
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
+.endif
 
 # interp_of(path, out buf) -> 1 and the path of the program's ELF interpreter (PT_INTERP) or of its
-# #! interpreter in out, 0 when it has none (a static binary, a script with no #!)
+# #! interpreter in out, 0 when it has none (a static binary, a script with no #!); on macOS only
+# the #! one counts (dyld comes from /usr/lib, readable to all)
 interp_of:
     PROLOGUE 16
     mov rbx, rdi
@@ -561,7 +563,6 @@ interp_of:
     SYS SYS_close
 8:  xor eax, eax
     EPILOGUE
-.endif
 
 # install_tree(program path, out buf) -> 1 and the folder two above the program in out, when it
 # looks like an install tree: more than two path components and a lib, libexec, pkg or
@@ -784,7 +785,27 @@ profile_program:
 1:  mov rdi, r12
     lea rsi, [rip + .Lsb_exec_lit]
     call profile_path
+    # a script: its #! interpreter runs it (an ELF loader cannot be one here)
     mov rdi, r12
+    lea rsi, [rip + pathbuf]
+    call interp_of
+    test eax, eax
+    jz 2f
+    cmp dword ptr [rip + elfhdr], 0x464c457f
+    je 2f
+    lea rdi, [rip + pathbuf]
+    lea rsi, [rip + .Lsb_exec_lit]
+    call profile_path
+    # macOS's /bin/sh runs the shell /var/select/sh names (bash, dash or zsh) in its place
+    lea rdi, [rip + pathbuf]
+    lea rsi, [rip + .Lbin_sh]
+    call strcmp_eq
+    test eax, eax
+    jz 2f
+    lea rdi, [rip + .Lselect_sh]
+    lea rsi, [rip + .Lsb_exec_lit]
+    call profile_path
+2:  mov rdi, r12
     lea rsi, [rip + pathbuf]
     call install_tree
     test eax, eax
@@ -1174,6 +1195,8 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lsb_exec_sub: .asciz "(allow process-exec file-read* (subpath \"%s\"))\n"
 .Lsb_net_deny: .asciz "(deny network*)\n"
 .Lusr_bin: .asciz "/usr/bin/"
+.Lbin_sh: .asciz "/bin/sh"
+.Lselect_sh: .asciz "/private/var/select/sh"
 .Lxcode_link: .asciz "/var/db/xcode_select_link"
 .Lclt: .asciz "/Library/Developer/CommandLineTools"
 .Lxcode_app: .asciz "/Applications/Xcode.app/Contents/Developer"

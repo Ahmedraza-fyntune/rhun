@@ -895,6 +895,16 @@ apply_replace:
     mov r13, rdx
     mov r14, rcx
     mov r15, r8
+    # where the cursor and the anchor end (section 4: one inside the range goes after the new
+    # text; the editor's own rule would leave it at the range's start)
+    mov rax, [rbx + DOC_cur]
+    mov [rsp], rax
+    lea rdi, [rsp]
+    call move_mark
+    mov rax, [rbx + DOC_anchor]
+    mov [rsp + 8], rax
+    lea rdi, [rsp + 8]
+    call move_mark
     mov rdi, rbx
     call doc_begin_group
     test r13, r13
@@ -914,14 +924,29 @@ apply_replace:
     call doc_insert
 2:  mov rdi, rbx
     call doc_end_group
-    # doc_delete and doc_insert moved the cursor and the anchor (a position inside the range
-    # ends after the new text): set them again through the editor so the view follows
+    # through the editor, so the view follows
     mov rdi, rbx
-    mov rsi, [rbx + DOC_cur]
-    mov rdx, [rbx + DOC_anchor]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
     call set_marks
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# move_mark(ptr to a position): where it is after [r12, r12+r13) is replaced with r15 bytes
+move_mark:
+    mov rax, [rdi]
+    cmp rax, r12
+    jb 9f
+    lea rcx, [r12 + r13]
+    cmp rax, rcx
+    jae 1f
+    lea rax, [r12 + r15]        # inside the range: after the new text
+    mov [rdi], rax
+    ret
+1:  sub rax, r13
+    add rax, r15
+    mov [rdi], rax
+9:  ret
 
 # set_marks(doc, cur, anchor): through the editor (which reveals the cursor) for the document on
 # screen, directly for any other
