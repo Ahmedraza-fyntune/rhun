@@ -202,19 +202,25 @@ doc_alive:
     pop rbx
     ret
 
-# providers(feature) -> eax 1 when a running extension agreed it (nothing to do otherwise)
-providers:
+# providers_any() -> eax 1 when an extension that is running or starting provides completion or
+# signature help (one still starting asks once it has: typing in the meantime keeps the timer)
+providers_any:
     xor ecx, ecx
 1:  cmp rcx, [rip + g_exts + VEC_len]
     jae 8f
     imul rax, rcx, EXT_SIZE
     add rax, [rip + g_exts + VEC_ptr]
     inc rcx
-    cmp dword ptr [rax + EXT_status], ES_RUNNING
+    mov edx, [rax + EXT_status]
+    cmp edx, ES_RUNNING
+    je 2f
+    cmp edx, ES_STARTING
     jne 1b
-    test [rax + EXT_features], edi
-    jz 1b
-    mov eax, 1
+2:  cmp qword ptr [rax + EXT_pv_complete], 0
+    jne 9f
+    cmp qword ptr [rax + EXT_pv_signature], 0
+    je 1b
+9:  mov eax, 1
     ret
 8:  xor eax, eax
     ret
@@ -412,8 +418,7 @@ FN complete_typed
     test rax, rax
     jz 9f
     mov rbx, rax
-    mov edi, FEAT_COMPLETE | FEAT_SIGNATURE
-    call providers
+    call providers_any
     test eax, eax
     jz 9f
     # signature help: one of its triggers asks
