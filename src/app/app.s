@@ -1418,6 +1418,7 @@ FN app_close_tab
     call doc_dirty
     test eax, eax
     jz 1f
+    call dlg_drop
     mov [rip + dlg_tab], rbx
     mov dword ptr [rip + dlg_kind], 1
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
@@ -5249,6 +5250,17 @@ dialog_key:
 # app_confirm(question cstr, line cstr, button cstr, fn): a dialog with Cancel and the button, which calls
 #   fn; the strings must last while it is open
 FN app_confirm
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    sub rsp, 8
+    call dlg_drop
+    add rsp, 8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
     mov [rip + dlg_title], rdi
     mov [rip + dlg_text], rsi
     mov [rip + dlg_ok], rdx
@@ -5258,6 +5270,19 @@ FN app_confirm
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
     mov dword ptr [rip + g_dirty], 1
     ret
+
+# dlg_drop(): a new dialog replaces an open confirmation: its Cancel runs, as if chosen (an install
+# waiting for Add discards its download instead of waiting forever)
+dlg_drop:
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 1f
+    mov rax, [rip + dlg_cancel]
+    test rax, rax
+    jz 1f
+    mov qword ptr [rip + dlg_cancel], 0
+    mov dword ptr [rip + dlg_kind], 0
+    jmp rax
+1:  ret
 
 # app_confirm_cancel(fn): the open app_confirm's Cancel calls fn
 FN app_confirm_cancel

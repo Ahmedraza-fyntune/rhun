@@ -362,7 +362,7 @@ offer:
     call cstr_copy
     mov rdi, rax
     mov rsi, [rip + pv + EXT_title]
-    call cstr_copy
+    call copy_title
     mov rdi, rax
     lea rsi, [rip + .Lq_end]
     call cstr_copy
@@ -438,6 +438,41 @@ offer:
     call app_toast
     EPILOGUE
 
+# copy_title(dst, cstr) -> rax the end (its NUL): at most TITLE_MAX bytes of a manifest's title,
+# cut between characters and ended with "…" when it is longer (in_title holds the question)
+.equ TITLE_MAX, 120
+copy_title:
+    xor ecx, ecx
+1:  mov al, [rsi + rcx]
+    test al, al
+    jz 3f
+    inc rcx
+    cmp rcx, TITLE_MAX
+    jb 1b
+    cmp byte ptr [rsi + rcx], 0
+    je 3f
+    # too long: back to the start of a character, then the ellipsis
+2:  mov al, [rsi + rcx]
+    and al, 0xc0
+    cmp al, 0x80
+    jne 4f
+    dec rcx
+    jnz 2b
+4:  push rcx
+    push rcx
+    mov rdx, rcx
+    call memcpy                 # rax: dst (memcpy returns it)
+    pop rcx
+    pop rcx
+    add rax, rcx
+    mov byte ptr [rax], 0xe2
+    mov byte ptr [rax + 1], 0x80
+    mov byte ptr [rax + 2], 0xa6
+    mov byte ptr [rax + 3], 0
+    add rax, 3
+    ret
+3:  jmp cstr_copy
+
 # same_ci(a, b) -> 1 when the cstrs are equal ignoring ASCII case
 same_ci:
 1:  movzx eax, byte ptr [rdi]
@@ -478,7 +513,15 @@ install_discard:
 # install_commit(): Add: into OWNER/NAME (replacing an earlier version), loaded and started
 install_commit:
     PROLOGUE
-    # the destination
+    # a record for it first: nothing on disk changes when the table is full
+    cmp qword ptr [rip + g_exts + VEC_len], EXT_CAP
+    jb 0f
+    call install_discard
+    mov dword ptr [rip + g_ext_install_state], 4
+    lea rdi, [rip + .Le_full]
+    call app_toast
+    EPILOGUE
+0:  # the destination
     lea rdi, [rip + in_sb]
     call sb_clear
     call ext_root_dir
@@ -512,6 +555,7 @@ install_commit:
     mov rdi, rax
     mov rsi, [rip + in_sb + SB_len]
     call ext_by_name
+    mov r14, rax                # the installed version's record, or 0
     test rax, rax
     jz 1f
     mov rdi, rax
@@ -581,10 +625,16 @@ install_commit:
     call app_toast
     jmp 9f
 .Lic_fail:
-    mov rdi, r13                # the older version comes back
+    mov rdi, r13                # the older version comes back, and runs again
     mov rsi, r12
     SYS SYS_rename
-    call install_discard
+    test r14, r14
+    jz 1f
+    mov rdi, r12
+    lea rsi, [rip + in_owner]
+    lea rdx, [rip + in_name]
+    call ext_install_load
+1:  call install_discard
     mov dword ptr [rip + g_ext_install_state], 4
     lea rdi, [rip + .Le_move]
     call app_toast
@@ -613,7 +663,7 @@ FN ext_remove_ask
     test rsi, rsi
     jnz 1f
     mov rsi, [rbx + EXT_name]
-1:  call cstr_copy
+1:  call copy_title
     mov rdi, rax
     lea rsi, [rip + .Lq_end]
     call cstr_copy

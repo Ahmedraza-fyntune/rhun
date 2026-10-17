@@ -92,6 +92,13 @@ def read_body(n):
 def main():
     global next_id
     log(f'pid {os.getpid()}'.encode())
+    if MODE == 'exit70once':
+        # the exit code rhun's child uses when it cannot confine itself: the program's own must not
+        # buy it a second run without confinement
+        mark = os.path.join(os.environ['RHUN_STATE'], 'exited-70')
+        if not os.path.exists(mark):
+            open(mark, 'w').close()
+            sys.exit(70)
     if MODE == 'nohello':
         time.sleep(30)
         return

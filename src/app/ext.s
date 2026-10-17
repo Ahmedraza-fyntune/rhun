@@ -534,6 +534,8 @@ FN ext_set_disabled
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 9f                       # a menu or page left open on a removed record
     mov [rbx + EXT_disabled], esi
     call ext_settings_save
     test r12d, r12d
@@ -542,6 +544,8 @@ FN ext_set_disabled
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 1f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPING
+    je 11f
     cmp dword ptr [rbx + EXT_status], ES_FAILED
     je 9f                       # a bad manifest keeps its reason
     mov dword ptr [rbx + EXT_status], ES_DISABLED
@@ -550,6 +554,10 @@ FN ext_set_disabled
 1:  mov rdi, rbx
     lea rsi, [rip + .Lr_turned_off]
     call ext_stop
+    jmp 9f
+11: # off again before the stop completed: the program is still alive, so it stays STOPPING
+    # (ext_exited reaps it and makes it DISABLED); no restart
+    mov dword ptr [rbx + EXT_restart], 0
     jmp 9f
 2:  cmp dword ptr [rbx + EXT_status], ES_DISABLED
     je 21f
@@ -781,6 +789,7 @@ FN ext_retire
 2:  mov dword ptr [rbx + EXT_status], ES_REMOVED
     mov dword ptr [rbx + EXT_restart], 0
     mov qword ptr [rbx + EXT_pending], 0
+    call extpage_forget         # its details page goes back to the list (a reinstall is a new record)
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -836,7 +845,7 @@ FN sdef_take_value
     call strlen
     mov rdi, r12
     mov rsi, rax
-    call parse_u64
+    call parse_int31
     test rdx, rdx
     jz 7f
     cmp eax, [rbx + SD_min]
@@ -1085,7 +1094,19 @@ field_cstr:
 val_int:
     mov rdi, [r12 + INI_val]
     mov rsi, [r12 + INI_vallen]
-    jmp parse_u64
+    jmp parse_int31
+
+# parse_int31(ptr, len) -> rax the number, at most 2147483647 (settings compare as 32-bit signed);
+# rdx as parse_u64 leaves it
+parse_int31:
+    push rbx
+    call parse_u64
+    pop rbx
+    mov ecx, 0x7fffffff
+    cmp rax, rcx
+    jbe 1f
+    mov eax, ecx
+1:  ret
 
 # sdefs_init_values(ext): each default made to fit its type (a switch is yes or no, a number within
 # its range, a choice one of its options, the first when the default is not), then the value
@@ -1123,7 +1144,7 @@ sdefs_init_values:
     call strlen
     mov rdi, r14
     mov rsi, rax
-    call parse_u64
+    call parse_int31
     cmp eax, [r13 + SD_min]
     jge 31f
     mov eax, [r13 + SD_min]
@@ -2028,26 +2049,46 @@ FN ext_cmd_run
     mov rsi, r12
     call extproto_send_run
     EPILOGUE
-1:  lea rax, [r12 + 1]
+1:  # it cannot run now: say why, and keep nothing for later (turning it on must not run an old
+    # command)
+    cmp dword ptr [rbx + EXT_status], ES_FAILED
+    je 8f
+    cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    je 7f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPED
+    je 8f                       # by the user or a limit: its page starts it again
+    lea rax, [r12 + 1]
     mov [rbx + EXT_pending], rax
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 9f
     cmp dword ptr [rbx + EXT_status], ES_STOPPING
     je 9f
-    cmp dword ptr [rbx + EXT_status], ES_FAILED
-    je 8f
-    cmp dword ptr [rbx + EXT_status], ES_DISABLED
-    je 8f
-    cmp dword ptr [rbx + EXT_status], ES_STOPPED
-    je 8f                       # by the user or a limit: Settings restarts it
     mov rdi, rbx
     call ext_start
 9:  EPILOGUE
-8:  # cannot run: say why
-    mov rdi, [rbx + EXT_reason]
+8:  mov rdi, [rbx + EXT_reason]
     test rdi, rdi
-    jz 9b
-    call app_toast
+    jnz 6f
+7:  # "Title is turned off" (or stopped without a reason)
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_title]
+    test rsi, rsi
+    jnz 5f
+    mov rsi, [rbx + EXT_name]
+5:  call sb_push_cstr
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lr_off_cmd]
+    cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    je 4f
+    lea rsi, [rip + .Lr_stopped_cmd]
+4:  call sb_push_cstr
+    lea rdi, [rip + tmp]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + tmp + SB_ptr]
+6:  call app_toast
     EPILOGUE
 
 # ext_cmd_live(index) -> 1 when the g_ext_cmds entry belongs to an extension that is not removed
@@ -2805,21 +2846,28 @@ FN ext_exited
     lea rdi, [rbx + EXT_wq]
     call sb_clear
     mov qword ptr [rbx + EXT_wq_off], 0
+    mov r13, [rbx + EXT_pending]    # the command that started it, for a restart without confinement
     mov qword ptr [rbx + EXT_pending], 0
     cmp qword ptr [rbx + EXT_reason], 0
     jne 5f
-    # it left on its own; 127 is the child that could not exec its program; 70-75 are the child
-    # that could not confine itself (confine.s)
-    mov edi, r12d
+    # it left on its own; 127 is the child that could not exec its program; a code in the shared
+    # page is the child that could not confine itself (confine.s). The exit status alone proves
+    # nothing: the program may exit with the same numbers
+    mov rdi, rbx
+    call confine_failed
+    test eax, eax
+    jz 20f
+    mov edi, eax
     call confine_exit_reason
     test rax, rax
     jz 20f
     cmp dword ptr [rbx + EXT_noconfine], 0
-    jne 20f                     # once is enough: an exit code of 70-75 now is the program's own
+    jne 20f
     mov [rbx + EXT_confine_why], rax
     mov dword ptr [rbx + EXT_noconfine], 1
     mov dword ptr [rbx + EXT_status], ES_IDLE
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
+    mov [rbx + EXT_pending], r13
     mov dword ptr [rip + g_dirty], 1
     call ext_hooks_update
     mov rdi, rbx
@@ -2864,6 +2912,8 @@ FN ext_exited
 51: cmp dword ptr [rbx + EXT_restart], 0
     je 8f
     mov dword ptr [rbx + EXT_restart], 0
+    cmp dword ptr [rbx + EXT_disabled], 0
+    jne 8f                      # turned off again meanwhile
     mov dword ptr [rbx + EXT_status], ES_IDLE
     mov dword ptr [rip + g_dirty], 1
     call ext_hooks_update
@@ -3824,6 +3874,8 @@ ext_target: .asciz "linux-x86_64"
 .Lr_no_file: .asciz "program file missing"
 .Lr_not_exec: .asciz "program is not executable"
 .Lr_name: .asciz "extension.ini name does not match the folder"
+.Lr_off_cmd: .asciz " is turned off. Turn it on in Extensions to use its commands."
+.Lr_stopped_cmd: .asciz " is stopped. Turn it off and on in Extensions to start it again."
 .Lr_owner: .asciz "extension.ini owner does not match the folder"
 .Lr_no_version: .asciz "extension.ini has no version"
 .Lr_exec: .asciz "failed to start: the program could not be executed"

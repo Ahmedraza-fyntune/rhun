@@ -113,6 +113,47 @@ class UI(host.Host):
         self.assertIn('foo.x19', out[4])
         self.assertEqual(out[5], 'toast=ran')
 
+    def test_menus_of_two_extensions_with_one_name_run_their_own(self):
+        exts = self.work / 'twins'
+        for owner in ('aaa', 'bbb'):
+            d = exts / owner / 'foo'
+            d.mkdir(parents=True)
+            (d / 'extension.ini').write_text(f'name = foo\nowner = {owner}\ntitle = Foo {owner}\nversion = 1\n'
+                                             'protocol = 1\nruntime = python3\nrun = main.py\n[commands]\n'
+                                             'first = First\nsecond = Second\n')
+            (d / 'main.py').write_text('import sys\nprint("hello 1", flush=True)\nfor line in sys.stdin:\n'
+                                       '    if line.startswith("0 run foo.first"):\n'
+                                       f'        print("99 toast 8\\nfrom {owner}", end="", flush=True)\n'
+                                       '    if line.startswith("0 bye"): break\n')
+        out = self.ui(['wait-ext aaa/foo running', 'wait-ext bbb/foo running',
+                       'ext-menu aaa/foo', 'print-menu', 'menu-pick First', 'wait 300', 'print-toast',
+                       'ext-menu bbb/foo', 'menu-pick First', 'wait 300', 'print-toast'], exts=exts)
+        self.assertEqual(out[:4], ['First', 'Second', '-', 'Settings and details'])
+        self.assertEqual(out[4], 'toast=from aaa')
+        self.assertEqual(out[5], 'toast=from bbb')
+
+    def test_a_command_of_a_turned_off_extension_says_so_and_is_not_kept(self):
+        out = self.ui(['ext-set echo disabled 1', 'cmd echo.hi', 'print-toast', 'ext-set echo disabled 0',
+                       'wait-ext echo running', 'wait 300', 'wait 300'])
+        self.assertEqual(out[0], 'toast=Echo is turned off. Turn it on in Extensions to use its commands.')
+        self.assertFalse(any(l.startswith('0 run echo.hi') for l in self.echo_log()), self.echo_log())
+
+    def test_off_on_off_while_it_stops_ends_it(self):
+        # the program does not answer bye: it is stopping when the user turns it on and off again
+        out = self.ui(['cmd echo.toast', 'wait-ext echo running', 'ext-set echo disabled 1', 'ext-set echo disabled 0',
+                       'ext-set echo disabled 1', 'wait 1500', 'wait 1500', 'print-extensions',
+                       'ext-set echo disabled 0', 'wait-ext echo running', 'print-extensions'], mode='sleep')
+        self.assertIn('state=disabled', out[0])
+        self.assertIn(' pid=0 ', out[0])
+        self.assertIn('state=running', out[1])
+
+    def test_int_settings_stay_within_32_bits(self):
+        exts = self.manifest_variant('bigint', **{'width.max = 8': 'width.max = 4000000000'})
+        out = self.ui(['ext-setting echo width 7', 'ext-page echo', 'print-ext-page',
+                       'ext-setting echo width 9999999999', 'print-ext-page'], exts=exts)
+        widths = [l for l in out if l.startswith('setting width=')]
+        self.assertEqual(widths, ['setting width=7', 'setting width=2147483647'])
+
     def test_a_pin_is_remembered(self):
         out = self.ui(['ext-set echo pinned 1', 'print-extbar'])
         self.assertEqual(out[1], 'pinned=echo')
@@ -247,6 +288,58 @@ class UI(host.Host):
         self.assertIn('demo', os.listdir(exts))
         self.assertNotIn('Demo', os.listdir(exts))
         self.assertTrue(any(l.startswith('demo/hello state=running') for l in out), out)
+
+    def test_a_long_title_is_cut_between_characters_in_the_dialogs(self):
+        title = 'a' + '€' * 1000             # 3001 bytes; the 120-byte cut falls inside a €
+        self.release(files={'extension.ini': HELLO_INI.replace('title = Hello', 'title = ' + title),
+                            'main.py': HELLO_PY})
+        exts = self.manifest_variant('longtitle')
+        out = self.ui(['ext-install demo/hello', 'wait-install', 'print-dialog', 'dialog yes', 'wait-ext hello running',
+                       'ext-remove hello', 'print-dialog', 'dialog no'], exts=exts)
+        cut = 'a' + '€' * 39 + '…'
+        self.assertEqual(out[1], 'dialog=Add “' + cut + '”?')
+        self.assertEqual(out[4], 'dialog=Remove “' + cut + '”?')
+
+    def test_the_details_page_follows_a_reinstall(self):
+        self.release()
+        exts = self.manifest_variant('reinstall')
+        out = self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
+                       'ext-page hello', 'ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
+                       'ext-set hello disabled 1', 'print-ext-page'], exts=exts)
+        self.assertIn('Hello 1.2.0 off', out)          # the list, with the record that is installed now
+        self.assertFalse(any(l.startswith('pinned=') for l in out), out)
+
+    def test_a_dialog_in_its_place_cancels_the_install(self):
+        self.release()
+        exts = self.manifest_variant('replaced')
+        out = self.ui(['ext-install demo/hello', 'wait-install', 'ext-remove echo', 'print-dialog', 'dialog no',
+                       'ext-install demo/hello', 'wait-install', 'print-dialog', 'dialog no', 'print-extensions'],
+                      exts=exts)
+        self.assertEqual(out[0], 'install=asking')
+        self.assertEqual(out[1], 'dialog=Remove “Echo”?')
+        self.assertEqual(out[4:6], ['install=asking', 'dialog=Add “Hello”?'])
+        self.assertFalse(any(p.name.startswith('.install') for p in exts.iterdir()))
+        self.assertTrue(any(l.startswith('rhun-tests/echo ') for l in out))     # Cancel kept it
+
+    def test_installing_again_replaces_its_theme_and_grammar(self):
+        theme = 'name = Hello Dusk\nkind = dark\nbg = #1d1b26\nfg = #e4def2\n'
+        def release(pattern):
+            self.release(files={'extension.ini': HELLO_INI, 'main.py': HELLO_PY, 'themes/hello-dusk.theme': theme,
+                                'syntax/hello.syn': 'name = Hello Script\nfiles = %s\n' % pattern})
+        release('*.hello1')
+        exts = self.manifest_variant('again')
+        self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running'], exts=exts)
+        release('*.hello2')                  # the next version's grammar is for other files
+        (self.proj / 'x.hello1').write_text('one\n')
+        (self.proj / 'x.hello2').write_text('two\n')
+        out = self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
+                       'open ' + (self.proj / 'x.hello1').as_posix(), 'print-state',
+                       'open ' + (self.proj / 'x.hello2').as_posix(), 'print-state',
+                       'cmd select_theme', 'type hello dusk', 'print-palette'], exts=exts)
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertNotIn('lang=Hello Script', states[0])
+        self.assertIn('lang=Hello Script', states[1])
+        self.assertEqual(sum('Hello Dusk' in l for l in out), 1, out)
 
     def test_a_missing_release_says_so(self):
         self.env['RHUN_EXT_BASE'] = 'file://' + (self.work / 'nothing').as_posix()

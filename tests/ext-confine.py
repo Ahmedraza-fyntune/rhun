@@ -56,6 +56,15 @@ class Confine(host.Host):
         out = self.probe('echo.hread', 'documents = read\nhome = read')
         self.assertEqual(out[0], 'toast=probe ok')
 
+    def test_an_exit_code_of_its_own_does_not_lift_the_confinement(self):
+        self.skip_unless_confined(self.probe('echo.swrite', 'documents = read')[1])
+        exts = self.manifest_variant('exit70', **{'documents = write\nterminal = yes': 'documents = read\nproject = read'})
+        out = self.run_editor(drop_waits=True, mode='exit70once',
+                              actions=['cmd echo.pwrite', 'wait 300', 'wait 300', 'wait 300', 'cmd echo.pwrite',
+                                       'wait 300', 'wait 300', 'print-toast', 'print-extensions'], exts=exts)
+        self.assertFalse((self.proj / 'written-by-echo.txt').exists(), out)
+        self.assertNotIn('why=', out[-1])
+
     def test_the_state_folder_is_always_writable(self):
         out = self.probe('echo.swrite', 'documents = read')
         self.assertEqual(out[0], 'toast=probe ok')

@@ -2,8 +2,9 @@
 # on Linux, Landlock rules built from [needs] plus a user and network namespace for
 # network = no; on macOS, sandbox_init with a profile generated from the same. The parent
 # prepares everything here (rule descriptors, attributes, map strings, the profile text) before
-# the fork; the child (confine_child, from proc_spawn) only issues the syscalls and exits with a
-# distinct code when one fails, which ext_exited turns into "not confined: reason".
+# the fork; the child (confine_child, from proc_spawn) only issues the syscalls and, when one
+# fails, records its code in a page shared with the parent and exits; ext_exited turns that into
+# "not confined: reason".
 .include "rhun.inc"
 
 .bss
@@ -29,6 +30,12 @@ conf_reason: .quad 0            # why confinement is impossible (cstr), or 0
 conf_ext: .quad 0               # the EXT being prepared (its log takes the rule list)
 conf_fail: .long 0              # the child's failure code when it exits (set by the parent on the
                                 #   way out of confine_child: a code to exit with)
+.p2align 3
+conf_page: .quad 0              # a page shared with the forked children: byte [slot] is the EXITC_*
+                                #   code a child failed with before its exec. Not the exit status:
+                                #   the program can exit with any code, but after exec it has no
+                                #   way to this page
+conf_slot: .quad 0              # the EXT being prepared, as an index into g_exts
 pathbuf: .zero 4200
 pathbuf2: .zero 4200
 realbuf: .zero 4200             # profile_path's resolved path (never the buffer it reads from)
@@ -115,6 +122,7 @@ FN confine_prepare
     PROLOGUE 16
     mov rbx, rdi
     mov [rip + conf_ext], rdi
+    call slot_arm
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
     mov dword ptr [rip + conf_pending], 0
     mov dword ptr [rip + conf_flags], 0
@@ -185,6 +193,50 @@ FN confine_prepare
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
     mov rax, r12
     EPILOGUE
+
+# slot_arm(ext): its slot in the shared page (mapped the first time), cleared
+slot_arm:
+    push rbx
+    mov rax, rdi
+    sub rax, [rip + g_exts + VEC_ptr]
+    xor edx, edx
+    mov ecx, EXT_SIZE
+    div rcx
+    mov [rip + conf_slot], rax
+    cmp qword ptr [rip + conf_page], 0
+    jne 1f
+    xor edi, edi
+    mov esi, 4096
+    mov edx, PROT_READ | PROT_WRITE
+    mov r10d, MAP_SHARED | MAP_ANONYMOUS
+    mov r8, -1
+    xor r9d, r9d
+    SYS SYS_mmap
+    cmp rax, -4096
+    ja 9f                       # no page: a failed child then counts as the program's exit
+    mov [rip + conf_page], rax
+1:  mov rax, [rip + conf_page]
+    add rax, [rip + conf_slot]
+    mov byte ptr [rax], 0
+9:  pop rbx
+    ret
+
+# confine_failed(ext) -> eax the EXITC_* code its child failed with before the exec, or 0 (the
+# exit was the program's own); reading clears it
+FN confine_failed
+    xor eax, eax
+    mov rcx, [rip + conf_page]
+    test rcx, rcx
+    jz 9f
+    mov rax, rdi
+    sub rax, [rip + g_exts + VEC_ptr]
+    xor edx, edx
+    mov esi, EXT_SIZE
+    div rsi
+    add rcx, rax
+    movzx eax, byte ptr [rcx]
+    mov byte ptr [rcx], 0
+9:  ret
 
 # map_line(buf, id in eax): "ID ID 1"
 map_line:
@@ -754,7 +806,12 @@ FN confine_child
     jnz .Lcc_sandbox
 9:  EPILOGUE
 .Lcc_sandbox:
-    mov edi, EXITC_SANDBOX
+    mov rax, [rip + conf_page]
+    test rax, rax
+    jz 1f
+    add rax, [rip + conf_slot]
+    mov byte ptr [rax], EXITC_SANDBOX
+1:  mov edi, EXITC_SANDBOX
     SYS SYS_exit
 .else
     mov edi, PR_SET_NO_NEW_PRIVS
@@ -868,7 +925,13 @@ fail_exit:
     sub rdx, rsi
     mov edi, 2
     SYS SYS_write
-    mov edi, r12d
+    mov rax, [rip + conf_page]
+    test rax, rax
+    jz 1f
+    add rax, [rip + conf_slot]
+    mov ecx, r12d
+    mov [rax], cl
+1:  mov edi, r12d
     SYS SYS_exit
 
 # write_proc(path, cstr) -> bytes written, or -errno

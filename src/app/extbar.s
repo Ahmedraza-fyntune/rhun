@@ -632,22 +632,43 @@ copy_title_short:
 
 # the menus' handlers (g_menu_index is the item clicked)
 run_item:
-    push rbx
+    PROLOGUE
+    call menu_ext
+    jz 9f
+    # the menu's extension, as an index (two owners may both have an extension called NAME)
+    mov rax, rdi
+    sub rax, [rip + g_exts + VEC_ptr]
+    xor edx, edx
+    mov ecx, EXT_SIZE
+    div rcx
+    mov r13, rax
     mov eax, [rip + g_menu_index]
     imul rax, rax, XB_NAME
-    lea rbx, [rip + xb_names]
-    add rbx, rax
-    mov rdi, rbx
-    call strlen
-    mov rdi, rbx
-    mov rsi, rax
-    call ext_cmd_find           # gone meanwhile (removed, unregistered): nothing runs
-    pop rbx
-    test rax, rax
-    jz 1f
-    mov rdi, rax
-    jmp [rdi + CMD_fn]
-1:  ret
+    lea r14, [rip + xb_names]
+    add r14, rax
+    cmp byte ptr [r14], 0
+    je 9f
+    # its command of that name; gone meanwhile (removed, unregistered): nothing runs
+    xor r12d, r12d
+1:  cmp r12, [rip + g_ext_cmds + VEC_len]
+    jae 9f
+    mov rax, [rip + g_ext_owner + VEC_ptr]
+    cmp [rax + r12*8], r13
+    jne 2f
+    imul rbx, r12, CMD_SIZE
+    add rbx, [rip + g_ext_cmds + VEC_ptr]
+    mov rdi, [rbx + CMD_name]
+    test rdi, rdi
+    jz 2f
+    mov rsi, r14
+    call strcmp_eq
+    test eax, eax
+    jnz 3f
+2:  inc r12
+    jmp 1b
+3:  mov rdi, rbx
+    call [rbx + CMD_fn]
+9:  EPILOGUE
 open_details:
     call menu_ext
     jz 1f

@@ -979,6 +979,35 @@ c_ext_page:
     xor eax, eax
     EPILOGUE
 
+# ext-menu NAME: what a click on its title-bar button or its dropdown row does (a menu of its
+# commands when it has several)
+c_ext_menu:
+    PROLOGUE
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_by_name
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov esi, 500
+    mov edx, 40
+    call ext_action
+9:  xor eax, eax
+    EPILOGUE
+
+# menu-pick LABEL: the open menu's item with that label runs, as a click on it would
+c_menu_pick:
+    PROLOGUE
+    mov rdi, rbx
+    mov rsi, r12
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call menu_pick
+    xor eax, eax
+    EPILOGUE
+
 # ext-remove NAME: Remove (the dialog asks; dialog yes confirms)
 c_ext_remove:
     PROLOGUE
@@ -2093,6 +2122,8 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_ext_page: .asciz "print-ext-page"
 .Lc_print_extbar: .asciz "print-extbar"
 .Lc_ext_page: .asciz "ext-page"
+.Lc_ext_menu: .asciz "ext-menu"
+.Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lx_yes: .asciz "yes"
 .Lx_list: .asciz "list"
@@ -2182,6 +2213,7 @@ ctl_table:
     .quad .Lc_print_dialog, c_print_dialog, .Lc_dialog, c_dialog
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
+    .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick
     .quad .Lc_focus, c_focus, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

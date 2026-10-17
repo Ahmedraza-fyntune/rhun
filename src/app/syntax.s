@@ -17,6 +17,7 @@ ENDSTRUCT LR_SIZE
 .p2align 3
 .globl g_user_grammars
 g_user_grammars: .quad 0        # grammars from ~/.config and extensions, at the front of g_grammars
+ext_grammars: .quad 0           # how many of those came from extensions (the last ones of them)
 
 .bss
 .p2align 3
@@ -762,7 +763,28 @@ load_ext_grammar:
     mov rsi, rdx
     call grammar_parse
     mov r12, rax
-    lea rdi, [rip + g_grammars]
+    # an extension's grammar of a name another extension's grammar has (the same extension
+    # installed again, or updated) takes that one's place; the user's own still win
+    mov r13, [rip + g_user_grammars]
+    sub r13, [rip + ext_grammars]
+3:  cmp r13, [rip + g_user_grammars]
+    jae 4f
+    mov rax, [rip + g_grammars + VEC_ptr]
+    mov rax, [rax + r13*8]
+    mov rdi, [rax + GR_name]
+    mov rsi, [r12 + GR_name]
+    inc r13
+    test rdi, rdi
+    jz 3b
+    test rsi, rsi
+    jz 3b
+    call strcmp_eq
+    test eax, eax
+    jz 3b
+    mov rax, [rip + g_grammars + VEC_ptr]
+    mov [rax + r13*8 - 8], r12
+    jmp 9f
+4:  lea rdi, [rip + g_grammars]
     mov esi, 8
     call vec_push
     # shift the entries from the insertion point right, put the new one there
@@ -777,6 +799,7 @@ load_ext_grammar:
     jmp 1b
 2:  mov [rdi + rdx*8], r12
     inc qword ptr [rip + g_user_grammars]
+    inc qword ptr [rip + ext_grammars]
 9:  EPILOGUE
 
 # user grammar: inserted first so it wins detection
