@@ -847,7 +847,27 @@ xcode_shim:
     lea rsi, [rip + devbuf]
     SYS SYS_realpath
     test rax, rax
-    jnz 1f
+    jz 11f
+    # the bundle (Xcode.app) stands for its Contents/Developer, as for the shims
+    lea rdi, [rip + devbuf]
+    lea rsi, [rip + .Lcontents_dev + 1]
+    call path_join
+    mov r13, rax
+    mov rdi, rax
+    call file_type
+    cmp eax, 0x4000
+    jne 13f
+    mov rdi, r13
+    call strlen
+    cmp rax, 4096
+    jae 13f
+    lea rdi, [rip + devbuf]
+    mov rsi, r13
+    lea rcx, [rax + 1]
+    rep movsb
+13: mov rdi, r13
+    call mem_free
+    jmp 1f
 11: lea r13, [rip + .Ldev_dirs]
 12: mov rdi, [r13]
     test rdi, rdi
@@ -927,6 +947,14 @@ xcode_shim:
     lea rdi, [rip + conf_profile]
     lea rsi, [rip + .Lsb_xcrun]
     call sb_push_cstr
+    # xcrun looks a tool up the first time (its cache is the extension's own, xcrun_db in the
+    # state folder) through popen: /bin/sh and the shell it starts
+    lea rdi, [rip + .Lbin_sh]
+    lea rsi, [rip + .Lsb_exec_lit]
+    call profile_path
+    lea rdi, [rip + .Lselect_sh]
+    lea rsi, [rip + .Lsb_exec_lit]
+    call profile_path
     mov rdi, r13
     call mem_free
 9:  EPILOGUE
@@ -1209,6 +1237,5 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .p2align 3
 .Lshim_dirs: .quad .Ltc_bin, .Ldev_bin
 .Ldev_dirs: .quad .Lxcode_link, .Lxcode_app, .Lclt, 0
-.Lsb_xcrun: .ascii "(allow file-read* (literal \"/private/var/db/xcode_select_link\"))\n"
-    .asciz "(allow file-read* file-write* (regex #\"^/private/var/folders/[^/]+/[^/]+/T/xcrun_db\"))\n"
+.Lsb_xcrun: .asciz "(allow file-read* (literal \"/private/var/db/xcode_select_link\"))\n"
 .Lsb_net_allow: .asciz "(allow network*)\n"

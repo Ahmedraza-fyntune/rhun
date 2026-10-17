@@ -2611,6 +2611,23 @@ build_env:
     lea rdi, [rip + .Le_tz]
     lea rsi, [rip + .Le_tz_eq]
     call env_copy
+.ifdef MACOS
+    # Xcode's /usr/bin shims: xcrun's cache private to the extension (the user's shared cache is
+    # not writable from the sandbox: an entry it wrote would run unconfined later), and the Xcode
+    # the sandbox profile allowed
+    mov rdi, [rbx + EXT_state]
+    lea rsi, [rip + .Lsub_xcrun_db]
+    call path_join
+    mov r12, rax
+    lea rdi, [rip + .Le_xcrun_db_eq]
+    mov rsi, rax
+    call env_add
+    mov rdi, r12
+    call mem_free
+    lea rdi, [rip + .Le_devdir]
+    lea rsi, [rip + .Le_devdir_eq]
+    call env_copy
+.endif
 .ifdef WINDOWS
     # what Windows programs need to start at all (Winsock fails without SYSTEMROOT), and their
     # home, temporary and application data folders in the state folder
@@ -3991,6 +4008,9 @@ sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_cha
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
 env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
+.ifdef MACOS
+    .quad .Le_xcrun_db, .Le_devdir
+.endif
 .ifdef WINDOWS
     .quad .Le_temp, .Le_tmp, .Le_userprofile, .Le_appdata, .Le_localappdata
 .endif
@@ -4119,6 +4139,11 @@ ext_target: .asciz "linux-x86_64"
 .Le_npm: .asciz "npm_config_cache"
 .Le_npm_eq: .asciz "npm_config_cache="
 .Le_lang: .asciz "LANG"
+.Le_xcrun_db: .asciz "xcrun_db"
+.Le_xcrun_db_eq: .asciz "xcrun_db="
+.Lsub_xcrun_db: .asciz "xcrun_db"
+.Le_devdir: .asciz "DEVELOPER_DIR"
+.Le_devdir_eq: .asciz "DEVELOPER_DIR="
 .Le_lang_eq: .asciz "LANG="
 .Le_lc_all: .asciz "LC_ALL"
 .Le_lc_all_eq: .asciz "LC_ALL="
