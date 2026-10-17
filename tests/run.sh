@@ -28,6 +28,7 @@ check themes build/theme_test
 check term build/term_test
 check diff build/diff_test
 check images build/image_test $(ls tests/data/images/* | LC_ALL=C sort)
+python3 tests/image-fuzz.py 1 20 || fail=1
 check cpu build/cpu_test
 check cols build/cols_test
 check textarea build/textarea_test

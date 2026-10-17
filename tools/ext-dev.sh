@@ -22,6 +22,7 @@ for dir in "$src"/*/; do
     dest=$out/$owner/$name
     mkdir -p "$dest/bin"
     cp "$dir/extension.ini" "$dest/"
+icon=$(sed -n 's/^icon = //p' "$dir/extension.ini"); [ -z "$icon" ] || cp "$dir/$icon" "$dest/"
     [ -d "$dir/syntax" ] && cp -R "$dir/syntax" "$dest/"
     [ -d "$dir/themes" ] && cp -R "$dir/themes" "$dest/"
     if [ -f "$dir/go.mod" ]; then

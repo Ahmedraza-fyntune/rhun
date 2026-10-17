@@ -790,6 +790,8 @@ FN ext_retire
     mov dword ptr [rbx + EXT_restart], 0
     mov qword ptr [rbx + EXT_pending], 0
     call extpage_forget         # its details page goes back to the list (a reinstall is a new record)
+    mov rdi, rbx
+    call ext_icon_free
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1539,6 +1541,27 @@ manifest_kv:
     mov [rbx + EXT_desc], rax
     jmp 9f
 1:  mov rdi, r12
+    lea rsi, [rip + .Lk_icon]
+    call ini_key_is
+    test eax, eax
+    jz 13f
+    call val_dup
+    mov [rbx + EXT_icon], rax
+    jmp 9f
+13: mov rdi, r12
+    lea rsi, [rip + .Lk_color]
+    call ini_key_is
+    test eax, eax
+    jz 14f
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    call parse_color
+    test edx, edx
+    jz 9f                       # not a color: the hashed one stays
+    or eax, 0xff000000          # a badge is opaque
+    mov [rbx + EXT_color], eax
+    jmp 9f
+14: mov rdi, r12
     lea rsi, [rip + .Lk_name]
     call ini_key_is
     test eax, eax
@@ -3939,6 +3962,8 @@ ext_target: .asciz "linux-x86_64"
 .Lk_version: .asciz "version"
 .Lk_protocol: .asciz "protocol"
 .Lk_runtime: .asciz "runtime"
+.Lk_icon: .asciz "icon"
+.Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
 .Lk_args: .asciz "args"
 .Lk_on: .asciz "on"

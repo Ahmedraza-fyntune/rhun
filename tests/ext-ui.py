@@ -72,6 +72,33 @@ def archive(files, link=None):
     return buf.getvalue()
 
 
+def png(w, h, pixel):
+    """An RGBA PNG; pixel(x, y) -> (r, g, b, a)."""
+    import struct
+    import zlib
+    raw = b''.join(b'\x00' + b''.join(bytes(pixel(x, y)) for x in range(w)) for y in range(h))
+
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) +
+            chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+
+
+def ppm_colors(path):
+    """The set of (r, g, b) colors in a binary PPM screenshot."""
+    data = path.read_bytes()
+    fields, pos = [], 0
+    while len(fields) < 4:
+        while data[pos:pos + 1].isspace():
+            pos += 1
+        start = pos
+        while not data[pos:pos + 1].isspace():
+            pos += 1
+        fields.append(data[start:pos])
+    pixels = data[pos + 1:]
+    return {tuple(pixels[i:i + 3]) for i in range(0, len(pixels) - 2, 3)}
+
+
 class UI(host.Host):
     def ui(self, actions, **kw):
         return self.run_editor(actions, drop_waits=True, **kw)
@@ -154,6 +181,52 @@ class UI(host.Host):
         widths = [l for l in out if l.startswith('setting width=')]
         self.assertEqual(widths, ['setting width=7', 'setting width=2147483647'])
 
+    # --- badges: an icon on a color ---
+
+    def icon_ext(self, folder, keys, files):
+        exts = self.work / folder
+        d = exts / 'demo' / 'pic'
+        d.mkdir(parents=True)
+        (d / 'extension.ini').write_text('name = pic\nowner = demo\ntitle = Pic\nversion = 1\nprotocol = 1\n'
+                                         'runtime = python3\nrun = main.py\n' + keys, encoding='utf-8')
+        (d / 'main.py').write_text('import sys\nprint("hello 1", flush=True)\nfor line in sys.stdin:\n'
+                                   '    if line.startswith("0 bye"): break\n', encoding='utf-8')
+        for name, data in files.items():
+            (d / name).write_bytes(data)
+        return exts
+
+    def test_an_icon_on_its_color_makes_the_badge(self):
+        red = (224, 17, 95, 255)
+        icon = png(64, 64, lambda x, y: red if 8 <= x < 56 and 8 <= y < 56 else (0, 0, 0, 0))
+        exts = self.icon_ext('icon', 'icon = icon.png\ncolor = #112233\n', {'icon.png': icon})
+        shot = self.work / 'badge.ppm'
+        out = self.ui(['ext-set pic pinned 1', 'ext-page pic', 'print-ext-page', 'shot ' + shot.as_posix()],
+                      exts=exts)
+        self.assertIn('badge=icon color=#112233', out)
+        colors = ppm_colors(shot)
+        self.assertIn((224, 17, 95), colors)            # the icon, drawn
+        self.assertIn((0x11, 0x22, 0x33), colors)       # on its color
+
+    def test_a_color_alone_colors_the_letter_badge(self):
+        exts = self.icon_ext('color', 'color = #2f9e8f\n', {})
+        shot = self.work / 'badge.ppm'
+        out = self.ui(['ext-page pic', 'print-ext-page', 'shot ' + shot.as_posix()], exts=exts)
+        self.assertIn('badge=letter color=#2f9e8f', out)
+        self.assertIn((0x2f, 0x9e, 0x8f), ppm_colors(shot))
+
+    def test_an_icon_that_cannot_be_shown_leaves_the_letter(self):
+        big = png(300, 300, lambda x, y: (1, 2, 3, 255))
+        cases = {'big': ('icon = big.png\n', {'big.png': big}),
+                 'notpng': ('icon = x.png\n', {'x.png': b'GIF89a not a png'}),
+                 'outside': ('icon = ../x.png\n', {}),
+                 'missing': ('icon = nope.png\n', {}),
+                 'huge': ('icon = h.png\n', {'h.png': png(64, 64, lambda x, y: (9, 9, 9, 255)) + b'\0' * 70000})}
+        for folder, (keys, files) in cases.items():
+            with self.subTest(folder):
+                exts = self.icon_ext(folder, keys, files)
+                out = self.ui(['ext-page pic', 'print-ext-page'], exts=exts)
+                self.assertIn('badge=unreadable color=-', out)
+
     def test_a_pin_is_remembered(self):
         out = self.ui(['ext-set echo pinned 1', 'print-extbar'])
         self.assertEqual(out[1], 'pinned=echo')
@@ -166,7 +239,8 @@ class UI(host.Host):
         self.assertEqual(out[0], 'Echo 0.0.1 on')
         self.assertEqual(out[1], 'Echo 0.0.1 on')
         self.assertEqual(out[2], 'pinned=0')
-        self.assertEqual(out[3], 'can: read and change the files you have open, suggest terminal commands for you to run')
+        self.assertEqual(out[3], 'badge=letter color=-')
+        self.assertEqual(out[4], 'can: read and change the files you have open, suggest terminal commands for you to run')
         self.assertIn('setting greeting=Hello', out)
         self.assertIn('setting loud=no', out)
         self.assertIn('setting width=4', out)

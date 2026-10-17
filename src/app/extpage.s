@@ -205,7 +205,7 @@ draw_card:
     M eax, MI_16
     mov r12d, eax               # padding
     M r13d, MI_28
-    add r13d, [rip + g_mt + 4*MI_24]
+    add r13d, [rip + g_mt + 4*MI_4]     # under the description's lines (counted below)
     add r13d, [rip + g_mt + 4*MI_32]
     add r13d, [rip + g_mt + 4*MI_8]
     add r13d, r12d
@@ -216,7 +216,18 @@ draw_card:
     test rax, rax
     jz 1f
     add r13d, [rip + g_mt + 4*MI_24]
-1:  mov eax, [rip + xp_y]
+1:  # a description longer than the card is wide takes more lines
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rbx + EXT_desc]
+    test rsi, rsi
+    jnz 11f
+    lea rsi, [rip + .Lt_no_desc]
+11: mov edx, [rip + xp_x]
+    add edx, r12d
+    call para_lines
+    imul eax, [rip + g_mt + 4*MI_20]
+    add r13d, eax
+    mov eax, [rip + xp_y]
     mov [rsp + 8], eax          # the card's top
     mov edi, [rip + xp_x]
     mov esi, eax
@@ -295,9 +306,11 @@ draw_card:
     lea rsi, [rip + .Lt_no_desc]
 4:  lea rdi, [rip + g_face_small]
     COLOR edx, T_MUTED
-    mov ecx, MI_24
+    mov ecx, MI_20
     mov r8d, [rsp + 12]
-    call text_at
+    call para
+    mov eax, [rip + g_mt + 4*MI_4]
+    add [rip + xp_y], eax
     # a problem, in red
     mov rsi, [rsp]
     test rsi, rsi
@@ -452,8 +465,11 @@ draw_detail:
     jz 4f
     lea rdi, [rip + g_face_ui]
     COLOR edx, T_FG
-    mov ecx, MI_28
-    call line_text
+    mov ecx, MI_24
+    mov r8d, [rip + xp_x]
+    call para
+    mov eax, [rip + g_mt + 4*MI_4]
+    add [rip + xp_y], eax
 4:  # a problem, with Restart
     mov rdi, rbx
     call ext_problem
@@ -1060,7 +1076,34 @@ FN badge
     mov r13d, esi
     mov r14d, edx
     mov rbx, rcx
-    # the color: a hash of the name picks one of eight
+    # its icon, on the manifest's color when it names one
+    mov rdi, rbx
+    mov esi, r14d
+    call ext_icon
+    test rax, rax
+    jz 4f
+    mov [rsp + 8], rax
+    mov r9d, [rbx + EXT_color]
+    test r9d, r9d
+    jz 5f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, r14d
+    mov r8d, r14d
+    shr r8d, 2
+    call gfx_round_rect
+5:  mov edi, r12d
+    mov esi, r13d
+    mov rdx, [rsp + 8]
+    mov ecx, r14d
+    mov r8d, r14d
+    call gfx_blit
+    EPILOGUE
+4:  # no icon: the manifest's color, or one of eight a hash of the name picks, and the letter
+    mov r15d, [rbx + EXT_color]
+    test r15d, r15d
+    jnz 21f
     mov rsi, [rbx + EXT_name]
     xor eax, eax
 1:  movzx ecx, byte ptr [rsi]
@@ -1073,7 +1116,7 @@ FN badge
 2:  and eax, 7
     lea rcx, [rip + badge_colors]
     mov r15d, [rcx + rax*4]
-    mov edi, r12d
+21: mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     mov ecx, r14d
@@ -1133,6 +1176,134 @@ section:
 # line_text(face, cstr, argb, height index): at the column's left, xp_y moves down
 line_text:
     mov r8d, [rip + xp_x]
+# para(face, cstr, argb, height index, x): the text wrapped at spaces to fit between x and the
+# column's right edge less as much as x is in from its left edge (a card's padding), a line each
+# at xp_y, which moves down
+para:
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12, rsi
+    mov [rsp], edx              # color
+    mov r13d, ecx               # height index
+    mov [rsp + 4], r8d          # x
+    call para_width
+    mov r14d, eax
+1:  test r12, r12
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r14d
+    call wrap_next
+    mov r15, rdx                # where the next line starts, or 0
+    mov [rsp + 8], rax          # its bytes
+    mov edi, [rsp + 4]          # a word wider than the line stays inside it
+    mov esi, [rip + xp_y]
+    mov edx, r14d
+    lea rcx, [rip + g_mt]
+    mov ecx, [rcx + r13*4]
+    call gfx_clip_push
+    mov rdi, rbx
+    mov esi, [rsp + 4]
+    mov edx, [rip + xp_y]
+    lea rcx, [rip + g_mt]
+    mov ecx, [rcx + r13*4]
+    mov r9, [rsp + 8]
+    mov r8, r12
+    mov eax, [rsp]
+    push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+    call gfx_clip_pop
+    lea rax, [rip + g_mt]
+    mov eax, [rax + r13*4]
+    add [rip + xp_y], eax
+    mov r12, r15
+    jmp 1b
+9:  EPILOGUE
+
+# para_lines(face, cstr, x) -> how many lines para draws the text in (at least 1)
+para_lines:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r8d, edx
+    call para_width
+    mov r14d, eax
+    xor r13d, r13d
+1:  inc r13d
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r14d
+    call wrap_next
+    mov r12, rdx
+    test r12, r12
+    jnz 1b
+    mov eax, r13d
+    EPILOGUE
+
+# para_width(x in r8d) -> eax the width para wraps to: the column less 2 * (x - its left edge)
+para_width:
+    mov eax, r8d
+    sub eax, [rip + xp_x]
+    shl eax, 1
+    neg eax
+    add eax, [rip + xp_w]
+    cmp eax, 16
+    jge 1f
+    mov eax, 16
+1:  ret
+
+# wrap_next(face, cstr, width) -> rax the bytes of the first line that fit (whole words; a word
+# wider than the line on its own), rdx the next line's start, 0 after the last
+wrap_next:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13d, edx
+    xor r14d, r14d              # the bytes that fit so far
+    xor r15d, r15d              # the next word's start
+1:  mov rcx, r15                # its end
+2:  movzx eax, byte ptr [r12 + rcx]
+    test eax, eax
+    jz 3f
+    cmp eax, ' '
+    je 3f
+    inc rcx
+    jmp 2b
+3:  push rcx
+    push rcx
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, rcx
+    call text_width
+    pop rcx
+    pop rcx
+    cmp eax, r13d
+    jle 4f
+    test r14, r14
+    jnz 5f                      # this word goes to the next line
+4:  mov r14, rcx
+    cmp byte ptr [r12 + rcx], 0
+    je 5f
+    lea r15, [rcx + 1]
+    cmp eax, r13d
+    jle 1b                      # a word wider than the line ends it on its own
+5:  # the next line: after the spaces
+    mov rdx, r14
+6:  cmp byte ptr [r12 + rdx], ' '
+    jne 7f
+    inc rdx
+    jmp 6b
+7:  cmp byte ptr [r12 + rdx], 0
+    je 8f
+    add rdx, r12
+    mov rax, r14
+    EPILOGUE
+8:  xor edx, edx
+    mov rax, r14
+    EPILOGUE
+
 # text_at(face, cstr, argb, height index, x): at x, clipped to the column; xp_y moves down
 text_at:
     PROLOGUE
@@ -1408,6 +1579,45 @@ FN extpage_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
+    # "badge=letter|icon|unreadable color=#rrggbb|-"
+    mov rdi, rbx
+    call ext_icon_state
+    lea rsi, [rip + .Ld_badge_letter]
+    cmp eax, 1
+    jne 1f
+    lea rsi, [rip + .Ld_badge_icon]
+1:  cmp eax, 2
+    jne 2f
+    lea rsi, [rip + .Ld_badge_bad]
+2:  mov rdi, r12
+    call sb_push_cstr
+    mov rdi, r12
+    lea rsi, [rip + .Ld_color]
+    call sb_push_cstr
+    mov eax, [rbx + EXT_color]
+    test eax, eax
+    jnz 3f
+    mov rdi, r12
+    mov esi, '-'
+    call sb_push_byte
+    jmp 5f
+3:  mov rdi, r12
+    mov esi, '#'
+    call sb_push_byte
+    mov r13d, 20                # the six hex digits, high to low
+4:  mov eax, [rbx + EXT_color]
+    mov ecx, r13d
+    shr eax, cl
+    and eax, 15
+    lea rcx, [rip + .Ld_hex]
+    movzx esi, byte ptr [rcx + rax]
+    mov rdi, r12
+    call sb_push_byte
+    sub r13d, 4
+    jns 4b
+5:  mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
     # permissions, a line each
     lea rdi, [rip + xp_line]
     call sb_clear
@@ -1540,6 +1750,11 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ld_off: .asciz " off"
 .Ld_problem: .asciz " problem="
 .Ld_pinned: .asciz "pinned="
+.Ld_badge_letter: .asciz "badge=letter"
+.Ld_badge_icon: .asciz "badge=icon"
+.Ld_badge_bad: .asciz "badge=unreadable"
+.Ld_color: .asciz " color="
+.Ld_hex: .ascii "0123456789abcdef"
 .Ld_can: .asciz "can: "
 .Ld_held: .asciz "held="
 .Ld_setting: .asciz "setting "

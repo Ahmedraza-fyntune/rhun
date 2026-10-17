@@ -936,6 +936,9 @@ ENDSTRUCT TF_SIZE
 .equ IMF_PNM, 7
 .equ IMF_TGA, 8
 .equ IMG_MAXDIM, 32768
+.equ ICON_SLOTS, 4              # badge sizes an extension's icon is kept at
+.equ ICON_MAXBYTES, 65536       # an extension's icon file, at most
+.equ ICON_MAXDIM, 256           # and its width and height
 .equ IMG_MAXPX, 1 << 26
 
 # decoded image
@@ -1110,6 +1113,14 @@ F EXT_restart, 4        # 1: start again once the stop in progress completes (a 
 F EXT_noconfine, 4      # 1: confinement failed in the child once: it runs without (EXT_confine_why)
 F EXT_desc, 8           # cstr: the manifest's description, or 0
 F EXT_sdefs, VEC_SIZE   # SD records: its own settings ([settings] in the manifest)
+F EXT_color, 4          # the badge's background from the manifest's color (ARGB), 0 without
+F EXT_icon_state, 4     # 0 not read yet, 1 read, 2 cannot be shown (the letter stands in)
+F EXT_icon, 8           # cstr: the manifest's icon, a PNG in the extension's folder, or 0
+F EXT_icon_img, IMG_SIZE    # the decoded icon
+F EXT_icon_px, 8*ICON_SLOTS   # copies at the sizes badges ask for, corners rounded
+F EXT_icon_sz, 4*ICON_SLOTS
+F EXT_icon_next, 4      # the slot the next new size replaces
+F EXT_icon_pad, 4
 ENDSTRUCT EXT_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini

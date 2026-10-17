@@ -54,7 +54,7 @@ class Showcase(unittest.TestCase):
             # a local build laid out as a release would install it
             src = Path(LOCAL).resolve()
             cls.ext_dir.mkdir(parents=True)
-            for name in ('extension.ini', 'README.md', 'LICENSE'):
+            for name in ('extension.ini', 'README.md', 'LICENSE', 'icon.png'):
                 shutil.copy(src / name, cls.ext_dir / name)
             for d in ('themes', 'syntax', 'bin'):
                 shutil.copytree(src / d, cls.ext_dir / d)
@@ -189,6 +189,7 @@ class Showcase(unittest.TestCase):
         self.assertIn('setting greeting=Bonjour', page)
         self.assertIn('setting case=upper', page)
         self.assertIn('setting tab_width=2', page)
+        self.assertIn('badge=icon color=#2a9d8f', page)     # its icon on its color
         self.assertEqual(out['pinned'], ['menu=closed', 'pinned=showcase'])
         self.assertIn('active=README.md', out['readme'][0])
         self.assertEqual(out['term'][:2], ['prompt=Run in the terminal: Enter, or Esc',
