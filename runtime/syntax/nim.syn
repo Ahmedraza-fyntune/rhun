@@ -1,5 +1,6 @@
 name = Nim
 files = *.nim *.nims *.nimble
+icon = nim yellow
 region = #[ ]# comment multiline
 comment = #
 mstring = """ \

@@ -4,16 +4,18 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 
 ## Features
 
-- Tabs, file explorer, command palette, fuzzy file finder, find and replace, find in files, go to line
-- Project menu in the title bar: open a folder or a file from anywhere on disk, or a recent folder
+- Tabs, file explorer with file type icons, command palette, fuzzy file finder, find and replace, find in files, go to line
+- Project menu in the title bar: open a folder or a file from anywhere on disk, or a recent folder, in this window or a new one
 - Image preview: PNG, JPEG, GIF, BMP, ICO, QOI, PNM and TGA open in a tab, with zoom and pan
 - Syntax highlighting for about 125 languages, defined in plain text grammar files
-- 40 color themes, dark and light, with a match for every Omarchy theme; add your own
+- 40 color themes, dark and light, with a match for every Omarchy theme; add your own. A dark and a light theme switch with the system's dark mode on macOS, Windows and Linux, as in VS Code
 - Settings page and a readable config file, both applied while running
-- Agents panel: Claude Code and Codex sessions of the project, with theme-colored provider badges and icons, updated live as the agent works
-- Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs
+- Agents panel: Claude Code, Codex, Grok Build and OpenCode sessions of the project and its Git worktrees, with theme-colored provider badges and icons, updated live as the agent works. Worktree sessions show a branch icon and the worktree name in a badge beside the provider. Each row names the model its session last used, and in a conversation a reply's label names its model where it changed (Grok Build's row shows the session's current model). The list starts with the 50 most recently active sessions across all providers and related worktrees. Load more adds 50. Discovery runs in the background and reuses a saved metadata index; routine refreshes are silent, and pause while the panel is hidden.
+  Grok Build sessions come from `~/.grok/sessions` (`$GROK_HOME/sessions` when set) with the titles Grok gives them; one shows once it has a prompt, and a subagent's session stays inside its parent's. The clones Grok makes with `grok --worktree` are not Git worktrees of the project, so their sessions are not listed. Settings has a switch for each provider under Agents, all on by default (`[agents]` `claude`, `codex`, `grok` and `opencode` in the config file). A config from before the switches keeps its `sources` selection for the others and gets OpenCode on.
+  Git worktree registrations supply the checkout roots. Rhun remembers verified worktree paths in repository-specific state, so their agent history stays visible after the checkouts are deleted or Git prunes their registrations. Nested Claude worktree history can also be recovered from its exact recorded path without prior Rhun state. If another repository takes over a remembered checkout path, Rhun keeps previously verified sessions and excludes new sessions from that repository. When Git metadata is stored outside the main checkout and contains no reference to its path, open the main checkout to include its sessions.
+- Terminal panel: shells with 24-bit color, mouse, scrollback and full-screen programs; Cmd+click (Ctrl+click on Linux and Windows) opens links in the browser and files in a tab
 - Git: changed lines in the gutter, file status in tabs and the explorer, diffs, a history of all branches drawn as a graph, and source control as in VS Code: stage, commit, pull, push
-- Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap
+- Undo and redo, auto-indent, bracket pairs, comment toggling, moving and duplicating lines, soft word wrap; without it, lines wider than the editor get a horizontal scrollbar along its bottom
 - Vim mode, off by default: normal, insert and visual modes, operators, text objects, counts, `.`, search and `:` commands
 - Characters missing from the built-in fonts are drawn with the system's fonts
 - Every XKB layout, dead keys and the Compose key (the system's Compose rules, `~/.XCompose` or `$XCOMPOSEFILE`)
@@ -24,14 +26,18 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Installs from GitHub releases; updates itself on Windows, Linux and macOS
 
 Open files follow edits made by agents and other tools. Writes arriving within 100 ms are grouped
-into one reload. In the active editor, the changed region briefly fades back to its normal background;
+into one reload. A file opened through a symlink follows the file it leads to, in whatever folder,
+and the link pointed elsewhere. When a file's folder is removed or moved away, the file keeps its
+text, and it follows the file again once a folder is back at that path. In the active editor, the changed region briefly fades back to its normal background;
 a thin highlight at the top also signals changes outside the visible lines.
 **Animate changed text** in Settings > Editor is on by default. Turn it off to hide both highlights;
 files still reload. The config key is `animate_disk_changes = true` under `[editor]`.
 
-Opening files from a file manager or with `rhun file.rb` starts the regular editor with those files
-as tabs, and the first file's folder becomes the project: the explorer shows it, and new files and
-terminals start there. That folder is not remembered as the last project, and its saved session is
+Opening files from a file manager or with `rhun file.rb` starts a quick edit: the window shows just
+those files as tabs, without the explorer or the agents panel, whatever Settings say; that is never
+saved to Settings. Ctrl+B and Ctrl+Shift+A bring a panel back, and opening a folder in the window
+shows both again. The first file's folder becomes the project: the explorer shows it, and new
+files and terminals start there. That folder is not remembered as the last project, and its saved session is
 neither restored nor overwritten; open the folder itself (Open Folder) to bring its session back and
 make it the project you return to. A window without a project, such as `rhun --empty`, takes up the
 folder of the first file opened in it the same way. `rhun --wait file` (for programs that wait for
@@ -44,6 +50,61 @@ including image tabs, and keeps an empty window empty.
 If you have unsaved edits, rhun keeps them and shows an inline warning. Use **Revert File** from the
 command palette to load the disk version, or save to keep your version. Undoing back to the saved
 state loads the disk version too.
+Saving a read-only file asks first: **Overwrite** replaces it and it stays read-only, **Cancel** leaves
+it as it is, and Save As writes a copy elsewhere. Save As onto a read-only file and Save in the
+question about unsaved files when closing or quitting ask the same; Vim's `:wq` closes the file after
+Overwrite, and `:wa` leaves read-only files unsaved. In a folder that takes no new file, a save fails
+as any other.
+
+## OpenCode sessions
+
+Install the [OpenCode CLI](https://opencode.ai/docs/) and open a terminal in rhun's project.
+Run `opencode` there, or `opencode -m provider/model` to pick a model directly. Use `/connect`
+for provider sign-in and `/models` to select a model. Local and open weight models use
+[OpenCode's provider configuration](https://opencode.ai/docs/providers/), including Ollama,
+LM Studio and llama.cpp. Rhun uses OpenCode's saved settings and does not need provider keys.
+To resume a session, run `opencode -c` for the last one or `opencode -s SESSION_ID` for a specific one.
+
+The agents panel lists the project's top-level OpenCode sessions and related Git worktrees,
+with OpenCode's titles and a provider badge. Click a row to read its prompts, replies, tool calls
+and results. Streaming edits replace the stored conversation snapshot; routine background
+refreshes pick them up, including a conversation that remains open after leaving the first page.
+After `/undo` the undone messages are left out until `/redo`, as in OpenCode.
+Archived sessions and subagent sessions are omitted. Use **Refresh** for an immediate scan.
+The panel reads history, as it does for the other agents; interact with OpenCode in the terminal.
+
+OpenCode discovery works with OpenCode 1 (verified with 1.19.0) and OpenCode 2 (verified with
+2.0.28). It runs local SELECT queries in the background, without starting a server or making
+model requests: with `opencode db` on OpenCode 1, and on OpenCode 2, which has no `db` command,
+with the Bun runtime the `opencode` binary is built on, which reads OpenCode 2's session tables
+without writing to them while OpenCode is open. Discovery follows the database path the CLI
+reports (`opencode db path`, or `opencode debug paths` on OpenCode 2), including `XDG_DATA_HOME`
+and `OPENCODE_DB`, and asks again after the CLI changes, as an update does, or a query fails.
+The CLI runs in Rhun's state folder, so a project's `bunfig.toml` or `.env` is never loaded.
+The queries run only after OpenCode has written to its database, and at least every five
+minutes; an unchanged database starts no CLI. Discovery waits
+until OpenCode has created its data folder, so opening Rhun does not initialize an unused
+OpenCode profile. Only visible
+conversations and the open conversation are copied into Rhun's local state folder. Unchanged
+copies are reused, and the copy of a session OpenCode deletes or archives is removed. A copy
+holds what the panel shows, prompts, replies, tool calls and the commands you ran in OpenCode;
+a part over 70 KB keeps the first 16,384 characters of its text and 8,192 of a tool's output.
+A conversation whose copy would pass about 24 MB is listed without its transcript.
+On Linux and macOS the transcript cache folder is accessible only to its owner.
+The CLI must be on Rhun's PATH; the usual `~/.opencode/bin`, `~/.local/bin`, Homebrew and
+`/usr/local/bin` locations are also checked on Linux and macOS. Windows requires the native
+`opencode.exe` on PATH. Once OpenCode has a data folder, a CLI missing from PATH shows setup
+guidance in an empty panel;
+a failed query shows an OpenCode warning while the other sources still refresh. Check
+`opencode --version` and `opencode debug paths` (`opencode db path` on OpenCode 1) in the
+terminal, update OpenCode if needed, then refresh the panel.
+
+To hide OpenCode sessions, turn off **OpenCode** under Agents in Settings, or set:
+
+```ini
+[agents]
+opencode = false
+```
 
 ## Install and update
 
@@ -69,7 +130,7 @@ Options go after `sh -s --`, as in `curl -fsSL .../install.sh | sh -s -- --versi
 | `--app-dir DIR` | macOS: put rhun.app in DIR |
 | `--no-modify-path` | leave shell startup files alone |
 | `--configure-files` | configure an existing installation without downloading or replacing it |
-| `--uninstall` | remove rhun and the PATH line; your settings in `~/.config/rhun` stay |
+| `--uninstall` | remove rhun, the PATH line and the editor lines; your settings in `~/.config/rhun` stay |
 
 Installation prints a command you can run manually to make rhun your default editor. It does not
 ask about or change your defaults. Supported images, folders and HTML documents appear in Open With;
@@ -77,6 +138,13 @@ the manual default-editor command leaves browser, image and folder associations 
 On Linux, changing defaults needs `xdg-mime` from xdg-utils and a desktop-visible installation
 prefix. On macOS, associations are requested through Launch Services; if a request fails, use
 Finder's Get Info > Open with > rhun > Change All for that type.
+
+The default-editor command also makes rhun the editor that programs such as git ask for: every shell
+you use gets `VISUAL` and `EDITOR` set to `rhun --wait` (by its full path), in a block marked
+`# rhun editor` (fish: `conf.d/rhun-editor.fish`). Only where a window can open: on Linux when there
+is a display (`DISPLAY` or `WAYLAND_DISPLAY`), on macOS outside SSH sessions; elsewhere your shell
+keeps the editor it had. git's own `core.editor` and `GIT_EDITOR` still come first, and the command
+says so when one is set. With `--no-modify-path` it only prints the value to set.
 
 Updates refresh file handler registration without asking about or changing defaults. The separate
 `--configure-files --make-default` command enables defaults without reinstalling:
@@ -106,6 +174,14 @@ tools/install.sh     # release build into ~/.local, with the desktop entry and i
                      # on macOS rhun.app into /Applications and the rhun command into ~/.local/bin
 ```
 
+To test agents against a project's local Claude Code and Codex history after building:
+
+```sh
+python3 tests/agents-real.py --project /path/to/project --output /tmp/agents-audit
+```
+
+Use a new output directory. The audit compares discovery with an independent inventory, checks every existing Git checkout registered to the repository and metadata-verified historical nested worktrees, and tests pagination and resumed sessions using temporary copies. It reads the original sessions and keeps test state separate. `--copies` controls the number of copies per session (default 8); choose enough to produce more than 100 sessions. The output includes a report and native UI screenshots. On macOS it also measures agents-panel polling, indexing, and rendering.
+
 ### macOS
 
 rhun is written in x86-64 assembly, and the sources stay the one description of the editor. On macOS `tools/arm64.py` translates them to AArch64 at build time, instruction by instruction: x86 registers live in fixed AArch64 registers, the x86 stack keeps its layout, and flags are computed only where they are read. `src/mac/` holds what is native to the Mac: the process entry, the Linux system calls rhun makes, carried out on libSystem, file watching on FSEvents, and the AppKit window, which shows each frame through an IOSurface. The tests pass on both systems. `tests/compare-linux.sh` checks the translation itself: it runs random editing sessions (`tests/fuzz.py`) in the Linux binary under Docker and in a translated one built from the same sources for Linux, and compares states, documents and screenshots, which must be identical.
@@ -126,7 +202,7 @@ The Windows build targets Windows 10 version 1809 or later and Windows 11, on x6
 Download `rhun-VERSION-windows-x86_64.zip` from [Releases](https://github.com/vshvedov/rhun/releases/latest), extract it, and open `rhun.exe`. Keep `rhun.com` beside it for terminal use. For a Start menu shortcut and a terminal command, paste this into PowerShell:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://github.com/vshvedov/rhun/releases/latest/download/install.ps1).Content))"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/vshvedov/rhun/releases/latest/download/install.ps1')))"
 ```
 
 The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Use the status bar to download an update and restart into it, or close rhun and rerun the installer. Automatic checks are enabled for release builds, with installation and restart initiated by you. Uninstalling keeps settings and sessions.
@@ -135,7 +211,10 @@ The script is also included in the ZIP. To install from a downloaded script, run
 
 Installation registers text, source, configuration and supported image extensions in Open With and
 Default Apps for the current user. It prints a command you can run manually to open Windows Settings
-and choose defaults. Installation never asks about defaults or opens that page.
+and choose defaults. Installation never asks about defaults or opens that page. That command also
+sets your user `VISUAL` and `EDITOR` to `rhun.com --wait` (by its full path), so git opens commit
+messages in rhun; with `-NoModifyPath` it only prints the value. Uninstalling removes them while they
+still name rhun.
 `-NoFileAssociations` skips registration and remembers that choice across updates. Images remain an
 optional separate choice in Windows Settings.
 
@@ -186,12 +265,25 @@ Without files the previous session of the selected project is reopened. The proj
 **Reopen last project** in Settings > Files is on by default. When launching from a desktop shortcut, the Dock, or without path arguments, rhun reopens the project you closed with. The config key is `restore_project = true` under `[files]`. Explicit file or folder arguments take precedence. If this setting is off, no project is saved yet, or the saved folder no longer exists, rhun uses the current directory (usually your home folder when launched from the desktop). This preference is independent of **Restore open files**.
 
 Hovering a title bar or explorer button for half a second shows its name and, for commands, the
-current shortcut in your platform's notation. **Tooltips** in Settings > Appearance turns them off
-(`tooltips = false` under `[ui]`).
+current shortcut in your platform's notation. Once one is showing, the next button's appears at once.
+**Tooltips** in Settings > Appearance turns them off (`tooltips = false` under `[ui]`).
+
+Drag the line between the explorer or the agents panel and the editor to resize the panel; a
+double-click on it puts the panel back at its default width.
+
+Scrollbars stay out of sight until you scroll or point at them. **Auto-hide scrollbars** in
+Settings > Appearance keeps a faint one in view instead (`auto_hide_scrollbars = false` under `[ui]`).
+
+**Scroll sensitivity** in Settings > Appearance multiplies how far the wheel and touchpad scroll
+(`scroll_sensitivity = 1.0` under `[ui]`, from 0.1 to 10). While Alt is held, **Fast scroll
+sensitivity** applies instead (`fast_scroll_sensitivity = 4.0`).
+
+Shift turns the wheel sideways in the editor and in images, on Linux and Windows as macOS does by
+itself. The terminal keeps Shift's wheel for its scrollback.
 
 Settings includes links to [rhun.app](https://rhun.app), [hi@rhun.app](mailto:hi@rhun.app), and [GitHub issues](https://github.com/vshvedov/rhun/issues) for feedback and bug reports in a single row. The email link follows the website and opens the default email app. All three are also available from the command palette.
 
-Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`.
+Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`, which the installer's default-editor command sets for you.
 
 rhun uses Wayland when it can and falls back to X11 when there is no Wayland compositor. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
 
@@ -224,12 +316,29 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Alt+Up, Alt+Down | Move lines |
 | Ctrl+Shift+D, Ctrl+Shift+K | Duplicate, delete line |
 | Ctrl+Tab, Ctrl+W | Next tab, close tab |
+| Ctrl+Shift+W | Close all tabs |
+| Ctrl+Shift+T | Reopen closed tab |
 
-All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Shift+PageUp and Shift+PageDown scroll back, Ctrl+Tab and Ctrl+Shift+Tab switch between terminals, and Shift keeps the mouse for selecting when a program uses it. A command run from the palette acts where its shortcut would: Zoom In with the terminal focused zooms the terminal.
+The **+** after the last tab opens an untitled file at the end of the tabs, and so does a double click on the empty space after them; New File (Ctrl+N) opens one next to the current tab. With more tabs than fit, the + stays at the right end and the wheel scrolls the tabs.
 
-Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independently. On macOS use Command+Plus, Command+Minus and Command+0; on Linux and Windows use Ctrl+Plus, Ctrl+Minus and Ctrl+0. Settings > Terminal > Font size controls the terminal separately from Settings > Editor > Font size.
+**Reopen Closed Tab** (Ctrl+Shift+T) brings back the tabs you closed, the last one first, in their place among the tabs and with the cursor, selection and scroll a file had. Pressing it again goes further back, up to 20 tabs; tabs that are already open and files that are gone are skipped. Opening another folder starts the list over.
+
+Find, replace and find in files ignore case until their Aa is on, in every script: `été` finds `Été`, `яблоко` finds `ЯБЛОКО` and `οδος` finds `ΟΔΟΣ`. Accented letters stay apart from plain ones, so `ete` does not find `été`.
+
+All commands are listed in the command palette. In the terminal, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Ctrl+Shift+W goes to the program instead of closing the editor's tabs, Shift+PageUp and Shift+PageDown scroll back, Ctrl+Tab and Ctrl+Shift+Tab switch between terminals, and Shift keeps the mouse for selecting when a program uses it. A command run from the palette acts where its shortcut would: Zoom In with the terminal focused zooms the terminal.
+
+Links in the terminal open with Cmd+click on macOS and Ctrl+click on Linux and Windows, as in VS Code; a plain click still selects. Hovering a link underlines it, and its tooltip names the click. An `http://` or `https://` URL opens in the default browser, such as the `http://localhost:5173/` a dev server prints. The path of a file that exists opens in a tab: a name from `ls`, a relative or absolute path, or `~/...`, and `file:LINE` or `file:LINE:COL` from a compiler or `grep -n` opens at that place. Relative paths start in the shell's current folder on Linux and macOS, then in the project folder, where they also start on Windows. The click works in programs that take the mouse too.
+
+Programs that turn on the kitty keyboard protocol, such as the Pi agent and fish 4, tell Shift+Enter, Alt+Enter and Ctrl+Enter apart from Enter, so Shift+Enter can start a new line in an agent's prompt instead of sending it. rhun reports those keys, Escape, and Ctrl or Alt with a character as `CSI` codes while a program asks for them (the protocol's first level); other programs get the usual bytes.
+
+Zoom In, Zoom Out and Reset Zoom change the focused editor or terminal independently. On macOS use Command+Plus, Command+Minus and Command+0; on Linux and Windows use Ctrl+Plus, Ctrl+Minus and Ctrl+0. The keypad's plus, minus and 0 work too (its 0 with Num Lock on). Settings > Terminal > Font size controls the terminal separately from Settings > Editor > Font size. The terminal has its own font and line height too: `font` under `[terminal]` names a monospace .ttf file (empty uses the editor's font), and `line_height` is a multiple of the font's own line height, 1.0 by default.
 
 ### Folders and files
+
+The explorer shows each file with the icon of its language or type, in the theme's colors: the
+grammar the file name gets gives the language's icon, and `assets/icons/files/types.txt` gives the
+icons of images, archives, fonts, documents, and names such as `LICENSE` or `package.json`. The
+glyphs are from Seti UI (MIT).
 
 The explorer's header has **New File** and **New Folder** buttons. They create in the folder of the
 item last selected in the explorer, or in the project folder; the prompt names what it creates and
@@ -237,17 +346,17 @@ holds the path, which can include folders that do not exist yet. Right-click a f
 menu; right-click the empty space below the list for the project folder's: New File, New Folder,
 Copy Path and Show in Finder (Show in Explorer, Open in File Manager).
 
-Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder permanently removes its contents, including hidden files. Links are removed without deleting their targets.
+Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder permanently removes its contents, including hidden files. Links are removed without deleting their targets. The tabs of deleted files close, except those with unsaved changes. Renaming a file or folder keeps its open tabs on the new path.
 
 Right-click a file or directory in the explorer and choose **Show in Finder** (macOS), **Show in Explorer** (Windows), or **Open in File Manager** (Linux). Finder and Explorer select the item in its parent folder. Linux opens the containing folder through `xdg-open`, using your desktop's default file manager. The command palette also has **Show File in System File Manager** for the active file.
 
-Clicking the project name in the title bar opens the project menu: Open Folder…, Open File… and the folders of up to 9 recent sessions, newest first. Opening a folder turns the window to it: rhun remembers the open files, asks about unsaved ones, and brings back the folder's last session. The same happens to a folder opened from Finder or the Dock, or with `:e`. Running terminals keep running; new ones start in the new folder.
+Clicking the project name in the title bar opens the project menu: Open Folder…, Open File… and the folders of up to 9 recent sessions, newest first. Opening a folder turns the window to it: rhun remembers the open files, asks about unsaved ones, and brings back the folder's last session. The same happens to a folder opened from Finder or the Dock, or with `:e`. Running terminals keep running; new ones start in the new folder. Shift-click a recent folder to open it in a new window instead; this one keeps its project.
 
 Open Folder and Open File show a browser in the palette. It starts in the project folder, and its field holds a path: the list shows what is in the folder before the last `/`, narrowed by what follows it.
 
 - Enter goes into a folder or opens a file, Tab completes the name, and Backspace past a `/` goes up.
 - A path can be typed or pasted, as in `/etc/` or `~/code/`. Hidden entries show once the name typed starts with a dot.
-- Open Folder lists only folders, led by **Open** and the folder shown. Ctrl+Enter opens the selected folder without going into it.
+- Open Folder lists only folders, led by **Open** and the folder shown, then **Open … in a new window**, which leaves this window as it is (on macOS the new window has a Dock icon of its own). Ctrl+Enter opens the selected folder without going into it.
 
 ### Git
 
@@ -274,7 +383,7 @@ Git support is on by default; `enabled = false` under `[git]` in the config, or 
 
 #### Commit message AI
 
-In Settings under Git, choose one **Commit message AI** provider: **Off** (the default), **Claude Code**, **Codex**, or **Local (Ollama)**. With a provider enabled, the work tree's commit controls include a sparkle **AI** button. Click it to draft a message, edit the result, then commit as usual. Click **Cancel** beside the message input to stop. Generation never commits or stages files. If your draft, repository, selected provider, or changes move while it runs, rhun keeps your draft.
+In Settings under Git, choose one **Commit message AI** provider: **Off** (the default), **Claude Code**, **Codex**, or **Local (Ollama)**. With a provider enabled, the work tree's commit controls include a sparkle **Generate** button. Click it to draft a message, edit the result, then commit as usual. Click **Cancel** beside the message input to stop. Generation never commits or stages files. If your draft, repository, selected provider, or changes move while it runs, rhun keeps your draft.
 
 Claude Code and Codex use their installed CLI and saved subscription sign-in. Install the relevant CLI and run `claude auth login` or `codex login` in the terminal first. rhun checks the authentication mode and rejects API-key sign-in. It uses `claude -p` or `codex exec`, with tools restricted, in a temporary directory. Recent CLI versions are required. These requests use your subscription allowance and are subject to its limits; they are not unlimited free calls. The diff is sent to the selected provider only when you request generation. There is no automatic fallback to another provider.
 
@@ -304,7 +413,7 @@ PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame
 | Ctrl+0, `0` | Fit to the view |
 | `1`, double click | 100%; double click again to fit |
 | Ctrl+wheel | Zoom at the pointer |
-| Wheel, drag, arrows | Pan |
+| Wheel (Shift+wheel sideways), drag, arrows | Pan |
 
 The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
@@ -327,9 +436,12 @@ Registers, marks, macros, ranges and `:s`, visual block and replace mode are not
 
 `~/.config/rhun/config` is written when you change something in Settings; Open Settings File creates it. Edits to the file apply as soon as it is saved.
 
+Settings opens with its search field taking the keys: the page keeps the settings where each word typed starts a word of the title, the description or the config name (`section.key`, or the section's title), ignoring case, such as `terminal font`, `vim_mode` or `ui`. Esc clears the search, a second Esc or Enter leaves the field (the arrows then scroll the page), and Ctrl+F goes back to it.
+
 ```ini
 [ui]
-theme = tokyo-night
+dark_theme = tokyo-night
+light_theme = github-light
 scale = 1.25
 [editor]
 font_size = 15
@@ -351,7 +463,17 @@ Key names are those of the command palette entries in snake case (see `src/app/k
 
 ### Themes
 
-Choose **Turbo Pascal** in the theme picker (Ctrl+K Ctrl+Shift+T) for a blue editor with yellow text, white keywords and the DOS terminal palette. To select it in the configuration file, set `theme = turbo-pascal` under `[ui]`.
+The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
+
+rhun reads the mode as VS Code does and switches as soon as the system does:
+
+- macOS: System Settings > Appearance, Auto included.
+- Windows: the app mode in Settings > Personalization > Colors. The title bar is dark with a dark theme.
+- Linux: the XDG desktop portal's color scheme over D-Bus: GNOME, KDE Plasma, Cinnamon and COSMIC, and Sway, Hyprland and other window managers with xdg-desktop-portal-gtk (`gsettings set org.gnome.desktop.interface color-scheme prefer-dark`). Without a dark or light answer there the GTK theme decides: `gtk-application-prefer-dark-theme`, or a theme name with "dark" in it, from XSETTINGS (Xfce, MATE, LXDE, xsettingsd), the portal or `~/.config/gtk-3.0/settings.ini` (lxappearance, nwg-look). On X11 the window's `_GTK_THEME_VARIANT` tells the window manager whether the theme is dark.
+
+When the system says nothing, the dark theme shows. A configuration from before 0.17.8 names one `theme`: it becomes the theme for its kind and for the mode the system is in, so the editor looks the same until you pick another.
+
+Choose **Turbo Pascal** in the theme picker for a blue editor with yellow text, white keywords and the DOS terminal palette. To select it in the configuration file, set `dark_theme = turbo-pascal` under `[ui]` (or `theme`, with `follow_system = false`).
 
 A theme is a `name.theme` file in `~/.config/rhun/themes/`. Colors not given are derived from `bg`, `fg` and `accent`, so a theme can be three lines. See `runtime/themes/` for all keys.
 
@@ -367,7 +489,9 @@ string = #a6e3a1
 
 Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors. `git_added`, `git_modified` and `git_deleted` color changes in the gutter, tabs, explorer and diffs.
 
-On Omarchy the theme list starts with Follow Omarchy (`theme = omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
+The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
+
+On Omarchy the theme list starts with Follow Omarchy (`omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there, for both modes, until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
 
 ### Languages
 
@@ -378,6 +502,7 @@ A grammar is a `name.syn` file in `~/.config/rhun/syntax/`; your grammars win a 
 ```ini
 name = Example
 files = *.ex Examplefile
+icon = code purple
 first_line = example
 comment = //
 block = /* */
@@ -401,6 +526,8 @@ case = insensitive
 
 `comment` also gives the token Toggle Comment adds in front of the selected lines. Where a comment counts only at a line's first non-blank, color it with a `bol` region and give the token with `toggle_comment`, which colors nothing itself (a `comment` would also color the token in the middle of a line). The first `comment` or `toggle_comment` sets the token.
 
+`icon` gives the explorer's icon for the grammar's files: an icon from `assets/icons/files/` (without `.svg`, such as `rust` or `config`; `code` for a language with none) and a color, one of red orange yellow green blue purple pink cyan grey white (grey if left out). Without it the files get the default icon.
+
 `prefix` lists characters that start a colored word, each followed by a letter: `v` variable, `a` attribute, `t` tag, `p` preproc (at the start of a line only). A file gets the grammar whose `files` fit its name best: an exact name first, then the longest `*.suffix`; your grammars win a tie. Only when no pattern fits does rhun look for a `first_line` word in the file's first line; the longest one found wins.
 
 ## Scripting
@@ -417,7 +544,7 @@ shot /tmp/rhun.ppm
 print-state
 ```
 
-Commands: `key`, `type`, `click x y [right|middle]`, `move`, `down`, `up`, `scroll dy [ctrl]`, `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-palette`, `print-menu`, `print-term`, `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `echo`, `quit`. `cmd` runs anything from the command palette by its snake case name.
+Commands: `key`, `type`, `click x y [right|middle|shift|ctrl]` (ctrl is Cmd+click on macOS), `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [MODS]` (modifiers as a key combination names them: `ctrl`, `shift+alt`), `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents-runs` (discovery runs started so far), `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-panels` (whether the explorer, the agents panel and the terminal are shown), `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-term-cell ROW COL` (the middle of that terminal cell), `print-link` (the terminal link under the pointer), `print-settings` (the rows the Settings page shows, `section.key` each), `print-scroll` (the editor's horizontal scroll, its vertical one in 1/256 lines, the horizontal limit and the scrollbar's track), `scroll-x dx` (a sideways wheel), `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `appearance dark|light|unknown` (the system's dark mode changes, as a platform reports it), `print-appearance` (that mode, `follow_system`, the three theme settings and the theme shown), `focus out|in` (the window loses or gets the keyboard, as a platform reports it), `echo`, `quit`. A headless run takes the system's mode from `RHUN_APPEARANCE` (`dark` or `light`). `cmd` runs anything from the command palette by its snake case name.
 
 ## Extensions (planned)
 
@@ -436,16 +563,17 @@ An extension that crashes or hangs cannot take the editor with it.
 | `src/gfx/` | canvas, TrueType parser, rasterizer, icons |
 | `src/img/` | image decoders: inflate, PNG, JPEG, GIF, BMP / ICO, QOI, PNM, TGA |
 | `src/ui/ui.s` | immediate-mode widgets |
-| `src/plat/` | Wayland, XKB keymaps, X11, headless |
+| `src/plat/` | Wayland, XKB keymaps, X11, headless, the system's dark mode (desktop portal over D-Bus, GTK settings) |
 | `src/app/` | documents, editor, vim keys, image view, explorer, palette, settings, agents, terminal, git, syntax, themes |
 | `src/win/` | Windows x64 assembly: Unicode APIs, Win32 window, directory notifications, ConPTY |
 | `src/mac/` | macOS, native AArch64: entry, Linux system calls on libSystem, FSEvents, the AppKit window |
 | `tools/arm64.py` | the x86-64 to AArch64 translator for Apple silicon |
 | `runtime/` | themes and grammars embedded into the binary |
 | `assets/fonts/` | Iosevka Fixed, cut down (SIL Open Font License) |
+| `assets/icons/files/` | the explorer's file icons, from Seti UI (MIT), and the file types they go with |
 
 Porting to another platform means another file in `src/plat/` that fills the platform table in `src/rhun.inc`; macOS fills it from `src/mac/cocoa.s`. Code that differs by system is in `.ifdef MACOS` or `.ifdef WINDOWS` blocks.
 
 ## License
 
-MIT, see [LICENSE](../LICENSE). The built-in Iosevka font is under the SIL Open Font License ([assets/fonts/LICENSE-Iosevka.md](../assets/fonts/LICENSE-Iosevka.md)).
+MIT, see [LICENSE](../LICENSE). The built-in Iosevka font is under the SIL Open Font License ([assets/fonts/LICENSE-Iosevka.md](../assets/fonts/LICENSE-Iosevka.md)). The file icons are from Seti UI, MIT licensed ([assets/icons/files/LICENSE-Seti.md](../assets/icons/files/LICENSE-Seti.md)).

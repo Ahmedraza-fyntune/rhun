@@ -12,16 +12,21 @@
 .equ PM_GREP, 7
 .equ PM_BROWSE, 8
 
-.equ ID_PAL_ROW, 0x3000
+.equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
 .equ MAXFILES, 200000
 .equ GREP_MAX, 5000             # results
 .equ GREP_FILE_MAX, 8 << 20     # bytes per file
 .equ GREP_TOTAL_MAX, 256 << 20
 .equ GREP_BLOCK, 32 << 20        # file texts are read into mappings this big, unmapped after
+.equ GREP_SLICE, 8              # ms of reading files per loop pass, so keys keep working meanwhile
+.equ GL_NONE, 0                 # gload_state: nothing to read
+.equ GL_SCAN, 1                 # the project's files are to be listed
+.equ GL_READ, 2                 # and read, from gload_i on
 .equ BRW_MAX, 20000             # entries of a folder in the path browser
 .equ BRW_DIR, 1                 # IT_data of the path browser: a folder
 .equ BRW_HERE, 2                # the "Open <folder>" row
+.equ BRW_NEW, 4                 # and "Open <folder> in a new window" under it
 
 STRUCT
 F IT_label, 8
@@ -56,7 +61,7 @@ items: .zero VEC_SIZE
 results: .zero VEC_SIZE
 strings: .zero SB_SIZE          # label storage for file items
 pal_label: .quad 0              # prompt label
-pal_theme_before: .quad 0
+pal_theme_slot: .quad 0         # the theme setting the theme list picks for (theme_slot)
 pal_path: .zero 4096
 scan_depth: .long 0
 scan_prefix: .zero 4096         # relative dir during scan
@@ -70,6 +75,11 @@ gblock_end: .quad 0
 gprev: .zero 256
 gprev_len: .long 0
 gstr: .zero SB_SIZE             # result labels and details
+gload: .zero VEC_SIZE           # IT: the files find in files reads (labels in strings)
+gload_i: .quad 0                # the next one
+gload_bytes: .quad 0            # read so far
+gload_state: .long 0            # GL_*
+gload_drawn: .long 0            # the palette has been on screen since find in files opened
 grep_case: .long 0
 pal_mods: .long 0               # modifiers of the key that accepts
 pal_nohl: .long 0               # the row being drawn shows no matched characters
@@ -94,7 +104,13 @@ FN palette_field
 palette_open:
     PROLOGUE
     mov ebx, edi
-    call grep_release
+    # from the theme list to another list (its shortcut): the settings' theme again, as on closing
+    cmp dword ptr [rip + pal_mode], PM_THEMES
+    jne 1f
+    cmp ebx, PM_THEMES
+    je 1f
+    call theme_apply_config
+1:  call grep_release
     mov [rip + pal_mode], ebx
     mov dword ptr [rip + pal_sel], 0
     mov dword ptr [rip + pal_scroll], 0
@@ -124,18 +140,20 @@ palette_open:
     jne 8f
     call load_langs
 8:  call palette_filter
-    mov dword ptr [rip + g_dirty], 1
+    # the theme list shows its setting's theme, which need not be the one shown (the light mode's
+    # theme from Settings while the system is dark)
+    cmp ebx, PM_THEMES
+    jne 9f
+    call preview
+9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 FN palette_close
     push rbx
-    # themes: Esc restores the previous theme
+    # themes: the settings' theme again, after a preview or a change of the system's mode
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
-    mov rdi, [rip + pal_theme_before]
-    cmp rdi, [rip + g_theme_cur]
-    je 1f
-    call theme_apply
+    call theme_apply_config
 1:  call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
@@ -161,11 +179,24 @@ FN cmd_quick_open
 FN cmd_command_palette
     mov edi, PM_COMMANDS
     jmp palette_open
+# Select Color Theme picks for the setting in use: theme, or the dark or light mode's theme
+# while the theme follows the system (VS Code saves it in the same place)
 FN cmd_select_theme
-    mov rax, [rip + g_theme_cur]
-    mov [rip + pal_theme_before], rax
+    call theme_slot
+    mov rdi, rax
+    jmp cmd_select_theme_for
+# cmd_select_theme_for(setting): the theme list for one theme setting (Settings' buttons)
+FN cmd_select_theme_for
+    mov [rip + pal_theme_slot], rdi
     mov edi, PM_THEMES
     jmp palette_open
+
+# palette_picks_theme() -> 1 while the theme list is open
+FN palette_picks_theme
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_THEMES
+    sete al
+    ret
 FN cmd_select_language
     cmp qword ptr [rip + g_doc], 0
     je 1f
@@ -194,7 +225,8 @@ FN cmd_find_in_files
     je 9f
     mov edi, PM_GREP
     call palette_open
-    call grep_load
+    # the files are read once the field is on screen (palette_tick)
+    mov dword ptr [rip + gload_state], GL_SCAN
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 8f
@@ -228,18 +260,57 @@ FN cmd_find_in_files
 8:  call palette_filter
 9:  EPILOGUE
 
-# grep_load(): read the project's text files into memory
-grep_load:
+# palette_timeout() -> 0 while find in files has files to read and has been drawn, else -1
+FN palette_timeout
+    mov eax, -1
+    cmp dword ptr [rip + gload_state], GL_NONE
+    je 1f
+    cmp dword ptr [rip + gload_drawn], 0
+    je 1f
+    xor eax, eax
+1:  ret
+
+# palette_tick(): find in files reads the project's text files into memory once its field has been
+# drawn, GREP_SLICE ms at a time, so the field comes up at once and keys keep working; with all of
+# them read, the query runs again over every file
+FN palette_tick
     PROLOGUE 16
+    cmp dword ptr [rip + gload_state], GL_NONE
+    je 9f
+    cmp dword ptr [rip + gload_drawn], 0
+    je 9f
+    cmp qword ptr [rip + g_project], 0
+    je 8f
+    call time_ms
+    mov [rsp], rax
+    cmp dword ptr [rip + gload_state], GL_SCAN
+    jne 1f
+    # the list goes to gload, as the search keeps its results in items
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
     call load_files
-    mov qword ptr [rsp], 0      # total bytes
-    xor ebx, ebx
-1:  cmp rbx, [rip + items + VEC_len]
+    mov rax, [rip + items + VEC_ptr]
+    mov rcx, [rip + gload + VEC_ptr]
+    mov [rip + gload + VEC_ptr], rax
+    mov [rip + items + VEC_ptr], rcx
+    mov rax, [rip + items + VEC_cap]
+    mov rcx, [rip + gload + VEC_cap]
+    mov [rip + gload + VEC_cap], rax
+    mov [rip + items + VEC_cap], rcx
+    mov rax, [rip + items + VEC_len]
+    mov [rip + gload + VEC_len], rax
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + gload_i], 0
+    mov qword ptr [rip + gload_bytes], 0
+    mov dword ptr [rip + gload_state], GL_READ
+1:  mov rbx, [rip + gload_i]
+    cmp rbx, [rip + gload + VEC_len]
     jae 8f
-    cmp qword ptr [rsp], GREP_TOTAL_MAX
+    cmp qword ptr [rip + gload_bytes], GREP_TOTAL_MAX
     jae 8f
+    inc qword ptr [rip + gload_i]
     imul r12, rbx, IT_SIZE
-    add r12, [rip + items + VEC_ptr]
+    add r12, [rip + gload + VEC_ptr]
     mov rdi, [rip + g_project]
     mov rsi, [r12 + IT_label]
     call path_join
@@ -251,8 +322,8 @@ grep_load:
     mov rdi, r13
     call mem_free
     test r14, r14
-    jz 7f
-    add [rsp], r15
+    jz 2f
+    add [rip + gload_bytes], r15
     lea rdi, [rip + gfiles]
     mov esi, GF_SIZE
     call vec_push
@@ -260,11 +331,29 @@ grep_load:
     mov [rax + GF_label], rcx
     mov [rax + GF_text], r14
     mov [rax + GF_len], r15
-7:  inc rbx
-    jmp 1b
-8:  mov qword ptr [rip + items + VEC_len], 0
+2:  call time_ms
+    sub rax, [rsp]
+    cmp rax, GREP_SLICE
+    jb 1b
+    jmp 9f
+8:  # all read: by path, and the query over every file
+    mov dword ptr [rip + gload_state], GL_NONE
+    mov qword ptr [rip + gload + VEC_len], 0
     call sort_gfiles
-    EPILOGUE
+    call palette_filter
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# palette_read_all(): find in files reads the rest of the project's files now (wait-grep)
+FN palette_read_all
+    push rbx
+1:  cmp dword ptr [rip + gload_state], GL_NONE
+    je 9f
+    mov dword ptr [rip + gload_drawn], 1
+    call palette_tick
+    jmp 1b
+9:  pop rbx
+    ret
 
 # sort_gfiles(): by path, byte order (shell sort)
 sort_gfiles:
@@ -411,6 +500,9 @@ grep_release:
     mov qword ptr [rip + gblock_ptr], 0
     mov qword ptr [rip + gblock_end], 0
     mov qword ptr [rip + gfiles + VEC_len], 0
+    mov dword ptr [rip + gload_state], GL_NONE
+    mov dword ptr [rip + gload_drawn], 0
+    mov qword ptr [rip + gload + VEC_len], 0
     mov rdi, [rip + ghit]
     call mem_free
     mov qword ptr [rip + ghit], 0
@@ -490,8 +582,12 @@ grep_run:
     mov dword ptr [rip + grep_case], 1
 11: inc rcx
     jmp 1b
-2:  call grep_narrow
-    mov [rsp + 60], eax
+2:  # while files are still being read every one is searched: ghit is sized for those read
+    xor eax, eax
+    cmp dword ptr [rip + gload_state], GL_NONE
+    jne 22f
+    call grep_narrow
+22: mov [rsp + 60], eax
     xor ebx, ebx                # file index
 .Lgr_file:
     cmp rbx, [rip + gfiles + VEC_len]
@@ -630,8 +726,10 @@ grep_run:
     mov dword ptr [rsp + 56], 1
     jmp .Lgr_match
 .Lgr_nextfile:
-    # searched to its end: whether it has the query
+    # searched to its end: whether it has the query (no ghit while files are still being read)
     mov rax, [rip + ghit]
+    test rax, rax
+    jz .Lgr_skip
     mov ecx, [rsp + 56]
     mov [rax + rbx], cl
 .Lgr_skip:
@@ -822,8 +920,9 @@ load_themes:
     call item_add
     inc rbx
     jmp 1b
-9:  # preselect the current theme
-    mov rax, [rip + g_theme_cur]
+9:  # preselect the setting's theme
+    mov rdi, [rip + pal_theme_slot]
+    call theme_slot_index
     mov [rip + pal_sel], eax
     EPILOGUE
 
@@ -1095,17 +1194,19 @@ browse_filter:
 1:  lea r15, [r12 + r13]        # query
     sub r14, r13
     xor ebx, ebx
-    cmp qword ptr [rip + items + VEC_len], 0
-    je 2f
-    mov rax, [rip + items + VEC_ptr]
-    test qword ptr [rax + IT_data], BRW_HERE
+21: cmp rbx, [rip + items + VEC_len]
+    jae 2f
+    imul rax, rbx, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    test qword ptr [rax + IT_data], BRW_HERE | BRW_NEW
     jz 2f
     lea rdi, [rip + results]
     mov esi, RS_SIZE
     call vec_push
-    mov dword ptr [rax + RS_item], 0
+    mov [rax + RS_item], ebx
     mov dword ptr [rax + RS_score], 0
-    mov ebx, 1
+    inc ebx
+    jmp 21b
 2:  mov [rsp], rbx              # leading rows
 3:  cmp rbx, [rip + items + VEC_len]
     jae 5f
@@ -1163,7 +1264,7 @@ browse_filter:
     EPILOGUE
 
 # browse_load(): the entries of brw_dir, folders first ("name/"), then files (none when picking a
-# folder), by name; picking a folder, the "Open <folder>" row first
+# folder), by name; picking a folder, the "Open <folder>" and "... in a new window" rows first
 browse_load:
     PROLOGUE
     mov qword ptr [rip + items + VEC_len], 0
@@ -1194,7 +1295,30 @@ browse_load:
     xor edx, edx
     mov ecx, BRW_HERE
     call item_add
-    mov ebx, 1
+    lea r13, [r12 + 1]
+    lea rdi, [rip + strings]
+    lea rsi, [rip + .Lopen_here]
+    call sb_push_cstr
+    lea rdi, [rip + strings]
+    lea rsi, [rip + brw_label]
+    call sb_push_cstr
+    lea rdi, [rip + strings]
+    lea rsi, [rip + .Lopen_new]
+    call sb_push_cstr
+    mov rsi, [rip + strings + SB_len]
+    sub rsi, r13
+    lea rdi, [rip + strings]
+    push rsi
+    push rsi
+    xor esi, esi
+    call sb_push_byte
+    pop rsi
+    pop rsi
+    mov rdi, r13
+    xor edx, edx
+    mov ecx, BRW_NEW
+    call item_add
+    mov ebx, 2
 1:  lea rdi, [rip + brw_dir]
     lea rsi, [rip + browse_cb]
     xor edx, edx
@@ -1410,7 +1534,12 @@ FN palette_print
     mov rdi, rbx
     mov esi, 10
     call sb_push_byte
-    xor r12d, r12d
+    cmp dword ptr [rip + gload_state], GL_NONE
+    je 12f
+    mov rdi, rbx
+    lea rsi, [rip + .Lpp_reading]
+    call sb_push_cstr
+12: xor r12d, r12d
 2:  cmp r12, [rip + results + VEC_len]
     jae 9f
     cmp r12, 20
@@ -1751,7 +1880,7 @@ FN palette_key
     call selected_item
     test rax, rax
     jz .Lpk_yes
-    test qword ptr [rax + IT_data], BRW_HERE
+    test qword ptr [rax + IT_data], BRW_HERE | BRW_NEW
     jnz .Lpk_yes
     mov rdi, rax
     call browse_complete
@@ -1813,13 +1942,10 @@ palette_accept:
     jmp .Lpa_ret
 2:  cmp ebx, PM_THEMES
     jne 3f
-    mov rdi, [r12 + IT_data]
-    call theme_apply
-    call theme_current_id
-    mov [rip + cfg_theme], rax
-    mov dword ptr [rip + g_settings_changed], 1
-    mov rax, [rip + g_theme_cur]
-    mov [rip + pal_theme_before], rax
+    # saved in the list's setting; closing shows the theme the settings now choose
+    mov rdi, [rip + pal_theme_slot]
+    mov rsi, [r12 + IT_data]
+    call theme_set
     jmp .Lpa_close
 3:  cmp ebx, PM_LANGS
     jne .Lpa_close
@@ -1996,6 +2122,8 @@ palette_accept:
     mov rax, [r12 + IT_data]
     test eax, BRW_HERE
     jnz .Lpa_here
+    test eax, BRW_NEW
+    jnz .Lpa_new
     test eax, BRW_DIR
     jz .Lpa_file
     # a folder: the browser goes into it; picking a folder, Ctrl+Enter opens it
@@ -2024,6 +2152,15 @@ palette_accept:
     lea rdi, [rip + brw_next]
     call app_switch_project
     jmp .Lpa_ret
+.Lpa_new:
+    # another rhun opens it; this window keeps its project
+    lea rdi, [rip + brw_next]
+    lea rsi, [rip + brw_dir]
+    call cstr_copy
+    call palette_close
+    lea rdi, [rip + brw_next]
+    call app_new_window
+    jmp .Lpa_ret
 .Lpa_file:
     lea rdi, [rip + brw_dir]
     mov rsi, [r12 + IT_label]
@@ -2051,7 +2188,15 @@ prompt_done:
     mov r13, [rip + g_doc]
     test r13, r13
     jz 9f
-    mov rdi, r13
+    # onto a read-only file (or a symlink to one): ask first
+    mov rdi, rbx
+    call file_readonly
+    test eax, eax
+    jz 0f
+    mov rdi, rbx
+    call app_save_as_readonly
+    jmp 9f
+0:  mov rdi, r13
     mov rsi, rbx
     call doc_set_path
     mov rdi, rbx
@@ -2096,18 +2241,11 @@ prompt_done:
     SYS SYS_rename
     test rax, rax
     js 8f
-    # retarget an open tab
+    # open tabs follow it: the file's, or those of the files inside a folder
     lea rdi, [rip + g_explorer_target]
-    call app_find_tab
-    test rax, rax
-    js 31f
-    mov rdi, rax
-    call tab_at
-    mov rdi, [rax + TAB_doc]
     mov rsi, rbx
-    call doc_set_path
-    call app_update_title
-31: call explorer_refresh
+    call app_retarget_tabs
+    call explorer_refresh
     jmp 9f
 8:  lea rdi, [rip + .Lfailed]
     call app_toast
@@ -2119,6 +2257,11 @@ FN palette_draw
     PROLOGUE 64
     cmp dword ptr [rip + pal_mode], PM_NONE
     je .Lpd_ret
+    # find in files reads its files once this frame is on screen
+    cmp dword ptr [rip + gload_state], GL_NONE
+    je 98f
+    mov dword ptr [rip + gload_drawn], 1
+98:
     # scrim + card
     xor edi, edi
     xor esi, esi
@@ -2134,7 +2277,12 @@ FN palette_draw
     mov ecx, [rip + g_cv + CV_w]
     sub ecx, [rip + g_mt + 4*MI_64]
     cmp eax, ecx
-    cmovg eax, ecx
+    jle 24f
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, [rip + g_mt + 4*MI_16]
+24: mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
     mov r12d, eax               # w
     mov eax, [rip + g_cv + CV_w]
     sub eax, r12d
@@ -2149,7 +2297,21 @@ FN palette_draw
     jbe 1f
     mov eax, 12
 1:  mov [rsp], eax              # rows shown
-    mov eax, [rsp]
+    # Keep the card in the viewport and reveal selection in the fitted rows.
+    mov eax, [rip + g_cv + CV_h]
+    sub eax, r14d
+    sub eax, [rip + g_mt + 4*MI_8]
+    sub eax, [rip + g_mt + 4*MI_48]
+    sub eax, [rip + g_mt + 4*MI_12]
+    cdq
+    idiv ebx
+    mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
+    cmp eax, [rsp]
+    jge 25f
+    mov [rsp], eax
+25: mov eax, [rsp]
     imul eax, ebx
     M ecx, MI_48
     add eax, ecx
@@ -2171,6 +2333,14 @@ FN palette_draw
     jne 23f
     add eax, [rip + g_mt + 4*MI_32]   # the title
 23: mov [rsp + 4], eax          # card h
+    mov ecx, [rip + g_cv + CV_h]
+    sub ecx, [rip + g_mt + 4*MI_8]
+    sub ecx, eax
+    cmp r14d, ecx
+    cmovg r14d, ecx
+    xor ecx, ecx
+    cmp r14d, ecx
+    cmovl r14d, ecx
     mov edi, r13d
     mov esi, r14d
     mov edx, r12d
@@ -2207,7 +2377,14 @@ FN palette_draw
     sub ecx, eax
     sub ecx, eax
     M r8d, MI_32
+    xor r9d, r9d                # focused while keys come to it
+    cmp dword ptr [rip + g_focus], FOCUS_PALETTE
+    je .Lpd_focused
+    cmp dword ptr [rip + g_focus], FOCUS_PROMPT
+    jne .Lpd_field
+.Lpd_focused:
     mov r9d, 1
+.Lpd_field:
     push r10
     push r10
     call ui_textfield
@@ -2370,12 +2547,12 @@ FN palette_draw
     add eax, [rip + g_mt + 4*MI_16]
     mov [rsp + 56], eax
 101: # label with matched characters highlighted, clipped before the detail; not the path
-    # browser's "Open <folder>"
+    # browser's "Open <folder>" rows
     mov rax, [rsp + 24]
     xor ecx, ecx
     cmp dword ptr [rip + pal_mode], PM_BROWSE
     jne 102f
-    test qword ptr [rax + IT_data], BRW_HERE
+    test qword ptr [rax + IT_data], BRW_HERE | BRW_NEW
     setnz cl
 102:mov [rip + pal_nohl], ecx
     M eax, MI_16
@@ -2559,9 +2736,19 @@ placeholder_text:
     lea rcx, [rip + .Lph_cmds]
     cmp eax, PM_COMMANDS
     je 1f
-    lea rcx, [rip + .Lph_themes]
     cmp eax, PM_THEMES
+    jne 2f
+    lea rcx, [rip + .Lph_dark]
+    lea rax, [rip + cfg_dark_theme]
+    cmp [rip + pal_theme_slot], rax
     je 1f
+    lea rcx, [rip + .Lph_light]
+    lea rax, [rip + cfg_light_theme]
+    cmp [rip + pal_theme_slot], rax
+    je 1f
+    lea rcx, [rip + .Lph_themes]
+    jmp 1f
+2:
     lea rcx, [rip + .Lph_langs]
     cmp eax, PM_LANGS
     je 1f
@@ -2584,6 +2771,9 @@ hint_text:
     lea rax, [rip + .Lhint_grep]
     cmp qword ptr [rip + pal_tf + TF_sb + SB_len], 2
     jb 1f
+    lea rax, [rip + .Lhint_reading]
+    cmp dword ptr [rip + gload_state], GL_NONE
+    jne 1f
     lea rax, [rip + .Lhint_nomatch]
     ret
 2:  lea rax, [rip + .Lhint_goto]
@@ -2612,11 +2802,14 @@ hint_text:
 .Lph_files: .asciz "Search files by name  (> commands, : line)"
 .Lph_cmds: .asciz "Type a command"
 .Lph_themes: .asciz "Select a color theme"
+.Lph_dark: .asciz "Select a theme for dark mode"
+.Lph_light: .asciz "Select a theme for light mode"
 .Lph_langs: .asciz "Select a language"
 .Lph_goto: .asciz "Line number"
 .Lph_grep: .asciz "Search in files"
 .Lhint_grep: .asciz "Case-insensitive unless the text has capitals"
 .Lhint_nomatch: .asciz "No matches"
+.Lhint_reading: .asciz "Reading files..."
 .Lnl: .ascii "\n"
 .Lhint_goto: .asciz "Enter a line number and press Enter"
 .Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
@@ -2626,9 +2819,11 @@ hint_text:
 .Lph_open_file: .asciz "Open a file"
 .Lph_open_folder: .asciz "Open a folder"
 .Lopen_here: .asciz "Open "
+.Lopen_new: .asciz " in a new window"
 .Lroot: .asciz "/"
 .Lpp_none: .asciz "none\n"
 .Lpp_field: .asciz "field="
+.Lpp_reading: .asciz "reading\n"
 .Lpp_prompt: .asciz "prompt="
 .Lpp_row: .asciz "  "
 .Lpp_sel: .asciz "> "

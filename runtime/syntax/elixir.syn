@@ -1,5 +1,6 @@
 name = Elixir
 files = *.ex *.exs mix.lock
+icon = elixir purple
 comment = #
 mstring = """ \
 string = " \

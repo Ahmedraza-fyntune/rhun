@@ -1,8 +1,8 @@
 # scripted control: line commands from a file (--script) or a unix socket (--control)
-#   key ctrl+s | type text | click x y [right|middle] | tap x y | move x y | down | up | scroll dy [ctrl]
+#   key ctrl+s | type text | click x y [right|middle|shift|ctrl] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
-#   print-menu
+#   print-menu | focus out|in
 .include "rhun.inc"
 
 .bss
@@ -147,6 +147,7 @@ FN control_exec
 2:  call [r15 + 8]
     push rax
     push rax
+    call term_frame_now         # a command ends with a frame that shows all output so far
     call flush_frame
     pop rax
     pop rax
@@ -222,10 +223,21 @@ c_click:
     call app_on_motion
     call flush_frame
     call next_arg
+    mov dword ptr [rip + click_mods], 0
     mov r13d, BTN_LEFT
     test rdx, rdx
     jz 1f
-    mov r13d, BTN_RIGHT
+    # shift: a left click with Shift held, pressed and released
+    cmp byte ptr [rax], 's'
+    jne 21f
+    mov dword ptr [rip + click_mods], MOD_SHIFT
+    jmp 1f
+    # ctrl: Ctrl+click, which is Cmd+click on macOS (Command arrives as Ctrl)
+21: cmp byte ptr [rax], 'c'
+    jne 2f
+    mov dword ptr [rip + click_mods], MOD_CTRL
+    jmp 1f
+2:  mov r13d, BTN_RIGHT
     cmp byte ptr [rax], 'r'
     je 1f
     mov r13d, BTN_MIDDLE
@@ -234,10 +246,11 @@ c_click:
     mov r13d, BTN_LEFT
 1:  mov edi, r13d
     mov esi, 1
-    xor edx, edx
+    mov edx, [rip + click_mods]
     call app_on_button
     call flush_frame
     mov edi, r13d
+    mov esi, [rip + click_mods]
     call release
     pop rax
     pop rax
@@ -279,13 +292,14 @@ c_tap:
     ret
 
 # release(button): unless a window move took the pointer (headless records that)
+# release(button, mods)
 release:
     cmp dword ptr [rip + g_hl_grab], 0
     je 1f
     mov dword ptr [rip + g_hl_grab], 0
     ret
-1:  xor esi, esi
-    xor edx, edx
+1:  mov edx, esi
+    xor esi, esi
     jmp app_on_button
 
 c_down:
@@ -296,8 +310,22 @@ c_down:
     xor eax, eax
     ret
 
+# up-down: a release and the next press before one frame, as a busy event queue delivers them
+c_updown:
+    mov edi, BTN_LEFT
+    xor esi, esi
+    xor edx, edx
+    call app_on_button
+    mov edi, BTN_LEFT
+    mov esi, 1
+    xor edx, edx
+    call app_on_button
+    xor eax, eax
+    ret
+
 c_up:
     mov edi, BTN_LEFT
+    xor esi, esi
     call release
     xor eax, eax
     ret
@@ -402,6 +430,17 @@ c_print_window:
     xor eax, eax
     ret
 
+c_print_shape:
+    lea rdi, [rip + out]
+    mov esi, [rip + g_cursor]
+    call sb_push_u64
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    ret
+
+# scroll dy [mods]: the wheel, with modifiers held as a key combination names them (ctrl, shift+alt)
 c_scroll:
     call next_int
     push rax
@@ -410,13 +449,40 @@ c_scroll:
     xor ecx, ecx
     test rdx, rdx
     jz 1f
-    mov ecx, MOD_CTRL
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_combo
+    mov ecx, edx
 1:  pop rax
     pop rax
     xor edi, edi
     mov esi, eax
     mov edx, ecx
     call app_on_scroll
+    xor eax, eax
+    ret
+
+# scroll-x dx: a sideways wheel or trackpad
+c_scroll_x:
+    call next_int
+    mov edi, eax
+    xor esi, esi
+    xor edx, edx
+    call app_on_scroll
+    xor eax, eax
+    ret
+
+# print-settings: the rows the settings page shows, "section.key" each
+c_print_settings:
+    lea rdi, [rip + out]
+    call settings_dump
+    xor eax, eax
+    ret
+
+# print-scroll: "x=PX y=N max=PX track=X,Y,W,H", the editor's scroll (y in 1/256 lines)
+c_print_scroll:
+    lea rdi, [rip + out]
+    call editor_scroll_dump
     xor eax, eax
     ret
 
@@ -549,6 +615,53 @@ c_wait_git:
     xor eax, eax
     ret
 
+# wait-agents: async metadata discovery, without blocking the event loop (at most 30 s).
+c_wait_agents:
+    push r13
+    call agents_request_now
+    call time_ms
+    lea r13, [rax + 30000]
+1:  call agents_busy
+    test eax, eax
+    jz 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    call agents_request_now
+    jmp 1b
+2:  pop r13
+    xor eax, eax
+    ret
+
+c_agents_more:
+    call agents_more
+    xor eax, eax
+    ret
+
+c_agents_page:
+    lea rdi, [rip + out]
+    call agents_page_dump
+    xor eax, eax
+    ret
+
+# print-agents-runs: "runs=N", discovery runs started so far
+c_agents_runs:
+    lea rdi, [rip + out]
+    call agents_runs_dump
+    xor eax, eax
+    ret
+
+# wait-grep: until find in files has read the project's files
+c_wait_grep:
+    push r13
+    call palette_read_all
+    pop r13
+    xor eax, eax
+    ret
+
 # wait-update: until the update check or install is done (at most 30 s)
 c_wait_update:
     push r13
@@ -660,6 +773,137 @@ c_print_project:
     xor eax, eax
     ret
 
+# print-tabs: "tabs=a | *b | c", the tab strip in order with the active tab starred
+c_print_tabs:
+    PROLOGUE
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_tabs]
+    call sb_push_cstr
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 4f
+    test rbx, rbx
+    jz 2f
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_bar]
+    call sb_push_cstr
+2:  cmp rbx, [rip + g_tab_cur]
+    jne 3f
+    lea rdi, [rip + out]
+    mov esi, '*'
+    call sb_push_byte
+3:  mov rdi, rbx
+    call app_tab_label
+    lea rdi, [rip + out]
+    mov rsi, rax
+    call sb_push_cstr
+    inc rbx
+    jmp 1b
+4:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+
+# print-panels: whether this window shows the explorer, the agents panel and the terminal
+c_print_panels:
+    push rbx
+    lea rbx, [rip + panel_rows]
+1:  mov rsi, [rbx]
+    test rsi, rsi
+    jz 2f
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    mov rax, [rbx + 8]
+    lea rdi, [rip + out]
+    mov esi, [rax]
+    call sb_push_u64
+    add rbx, 16
+    jmp 1b
+2:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    xor eax, eax
+    ret
+
+# focus out|in: the window loses or gets the keyboard, as a platform reports it
+c_focus:
+    call next_arg
+    xor edi, edi
+    test rdx, rdx
+    jz 1f
+    cmp byte ptr [rax], 'i'
+    jne 1f
+    mov edi, 1
+1:  call app_on_focus
+    xor eax, eax
+    ret
+
+# appearance dark|light|unknown: the system's dark mode changes, as a platform reports it
+c_appearance:
+    call next_arg
+    mov edi, -1
+    test rdx, rdx
+    jz 1f
+    cmp byte ptr [rax], 'u'
+    je 1f
+    xor edi, edi
+    cmp byte ptr [rax], 'l'
+    je 1f
+    mov edi, 1
+1:  call theme_system_changed
+    xor eax, eax
+    ret
+
+# print-appearance: the system's mode, follow_system, the three theme settings and the theme shown
+c_print_appearance:
+    push rbx
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_system]
+    call sb_push_cstr
+    lea rsi, [rip + .Ls_unknown]
+    lea rax, [rip + .Ls_dark]
+    lea rcx, [rip + .Ls_light]
+    mov edx, [rip + g_sys_dark]
+    cmp edx, 1
+    cmove rsi, rax
+    test edx, edx
+    cmovz rsi, rcx
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_follow]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + cfg_follow_system]
+    call sb_push_u64
+    lea rbx, [rip + appearance_rows]
+1:  mov rsi, [rbx]
+    test rsi, rsi
+    jz 2f
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    mov rax, [rbx + 8]
+    lea rdi, [rip + out]
+    mov rsi, [rax]
+    call sb_push_cstr
+    add rbx, 16
+    jmp 1b
+2:  lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_shown]
+    call sb_push_cstr
+    call theme_current_id
+    lea rdi, [rip + out]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    xor eax, eax
+    ret
+
 # print-palette: the palette's field and rows
 c_print_palette:
     lea rdi, [rip + out]
@@ -674,10 +918,53 @@ c_print_menu:
     xor eax, eax
     ret
 
+# print-tip: the text of the tooltip on screen, "tip=" when there is none
+c_print_tip:
+    lea rdi, [rip + out]
+    call tip_print
+    xor eax, eax
+    ret
+
+# print-toast: the message on screen, "toast=" when there is none
+c_print_toast:
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_toast]
+    call sb_push_cstr
+    call time_ms
+    cmp rax, [rip + g_toast_until]
+    jae 1f
+    lea rdi, [rip + out]
+    lea rsi, [rip + g_toast]
+    call sb_push_cstr
+1:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    ret
+
 # print-term: the screen of the current terminal
 c_print_term:
     lea rdi, [rip + out]
     call term_dump_current
+    xor eax, eax
+    ret
+
+# print-link: the terminal's link under the pointer, "link=" when there is none
+c_print_link:
+    lea rdi, [rip + out]
+    call term_link_dump
+    xor eax, eax
+    ret
+
+# print-term-cell ROW COL: "X Y", the middle of that cell of the terminal
+c_print_term_cell:
+    call next_int
+    push rax
+    call next_int
+    pop rdi
+    mov esi, eax
+    lea rdx, [rip + out]
+    call term_cell_dump
     xor eax, eax
     ret
 
@@ -945,6 +1232,7 @@ c_print_syntax:
 
 # print-agents [open N]: sessions and the open thread
 c_print_agents:
+    call c_wait_agents
     call next_int
     test rdx, rdx
     jz 1f
@@ -1214,6 +1502,7 @@ on_client:
 .Lc_click: .asciz "click"
 .Lc_tap: .asciz "tap"
 .Lc_down: .asciz "down"
+.Lc_updown: .asciz "up-down"
 .Lc_up: .asciz "up"
 .Lc_scroll: .asciz "scroll"
 .Lc_open: .asciz "open"
@@ -1230,9 +1519,15 @@ on_client:
 .Lc_xkey: .asciz "xkey"
 .Lc_print_window: .asciz "print-window"
 .Lc_print_cursor: .asciz "print-cursor"
+.Lc_print_shape: .asciz "print-shape"
 .Lc_print_term: .asciz "print-term"
 .Lc_print_git: .asciz "print-git"
 .Lc_wait_git: .asciz "wait-git"
+.Lc_wait_agents: .asciz "wait-agents"
+.Lc_agents_more: .asciz "agents-more"
+.Lc_agents_page: .asciz "print-agents-page"
+.Lc_agents_runs: .asciz "print-agents-runs"
+.Lc_wait_grep: .asciz "wait-grep"
 .Lc_wait_term: .asciz "wait-term"
 .Lc_print_gitlog: .asciz "print-gitlog"
 .Lc_print_scm: .asciz "print-scm"
@@ -1242,9 +1537,25 @@ on_client:
 .Lc_print_update: .asciz "print-update"
 .Lc_print_frames: .asciz "print-frames"
 .Lc_print_project: .asciz "print-project"
+.Lc_print_panels: .asciz "print-panels"
+.Lc_print_tabs: .asciz "print-tabs"
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
+.Lc_print_tip: .asciz "print-tip"
+.Lc_print_toast: .asciz "print-toast"
+.Lc_print_link: .asciz "print-link"
+.Lc_print_scroll: .asciz "print-scroll"
+.Lc_print_settings: .asciz "print-settings"
+.Lc_scroll_x: .asciz "scroll-x"
+.Lc_appearance: .asciz "appearance"
+.Lc_focus: .asciz "focus"
+.Lc_print_appearance: .asciz "print-appearance"
+.Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
+.Ls_bar: .asciz " | "
+.Ls_explorer_eq: .asciz "explorer="
+.Ls_agents_eq: .asciz " agents="
+.Ls_toast: .asciz "toast="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
 .Ls_hidden: .asciz " hidden"
@@ -1255,22 +1566,46 @@ on_client:
 .Ls_minimized: .asciz " minimized="
 .Ls_quit: .asciz " quit="
 .Ls_csd: .asciz " csd="
+.Ls_system: .asciz "system="
+.Ls_unknown: .asciz "unknown"
+.Ls_dark: .asciz "dark"
+.Ls_light: .asciz "light"
+.Ls_follow: .asciz " follow="
+.Ls_theme_eq: .asciz " theme="
+.Ls_dark_eq: .asciz " dark="
+.Ls_light_eq: .asciz " light="
+.Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
-    .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_scroll, c_scroll, .Lc_open, c_open
+    .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open
     .quad .Lc_cmd, c_cmd, .Lc_shot, c_shot, .Lc_wait, c_wait, .Lc_resize, c_resize
     .quad .Lc_quit, c_quit, .Lc_echo, c_echo, .Lc_print_doc, c_print_doc
     .quad .Lc_print_state, c_print_state, .Lc_print_syntax, c_print_syntax, .Lc_print_agents, c_print_agents, .Lc_xkey, c_xkey
+    .quad .Lc_print_shape, c_print_shape
     .quad .Lc_print_window, c_print_window, .Lc_print_cursor, c_print_cursor, .Lc_print_term, c_print_term
     .quad .Lc_print_git, c_print_git, .Lc_wait_git, c_wait_git, .Lc_print_gitlog, c_print_gitlog
+    .quad .Lc_wait_grep, c_wait_grep
+    .quad .Lc_wait_agents, c_wait_agents, .Lc_agents_more, c_agents_more, .Lc_agents_page, c_agents_page
+    .quad .Lc_agents_runs, c_agents_runs
     .quad .Lc_wait_term, c_wait_term
     .quad .Lc_print_scm, c_print_scm
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
-    .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu, 0, 0
+    .quad .Lc_print_panels, c_print_panels, .Lc_print_tabs, c_print_tabs
+    .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
+    .quad .Lc_print_tip, c_print_tip, .Lc_print_toast, c_print_toast, .Lc_print_link, c_print_link
+    .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
+    .quad .Lc_print_settings, c_print_settings
+    .quad .Lc_scroll_x, c_scroll_x
+    .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
+    .quad .Lc_focus, c_focus, 0, 0
+appearance_rows:
+    .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
+panel_rows:
+    .quad .Ls_explorer_eq, g_show_side, .Ls_agents_eq, g_show_agents, .Ls_term, g_term_open, 0
 
 .data
 lsock: .long -1
@@ -1279,6 +1614,7 @@ oc_next: .long -1               # a client that came while oc_busy
 .bss
 .p2align 3
 pc_xc: .zero XC_SIZE
+click_mods: .long 0             # c_click: the modifiers its press and release carry
 pp_buf: .zero 4096
 
 CSTR .Lwindows_control, "rhun: --control is unavailable on Windows; use --script FILE"

@@ -1,5 +1,6 @@
 name = Batch
 files = *.bat *.cmd
+icon = windows blue
 case = insensitive
 region = REM eol comment bol
 region = rem eol comment bol

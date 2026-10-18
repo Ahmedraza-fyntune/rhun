@@ -35,6 +35,22 @@ def run(args):
     subprocess.run([str(a) for a in args], cwd=ROOT, check=True)
 
 
+def without_comments(text):
+    """PowerShell TEXT without its whole-line comments, here-strings as they are: the update helper,
+    the installer included, has to fit a command line"""
+    assert '<#' not in text, 'a block comment would have to go as a whole'
+    lines, here = [], False
+    for line in text.split('\n'):
+        if here:
+            here = not line.startswith(('"@', "'@"))
+        elif line.rstrip().endswith(('@"', "@'")):
+            here = True
+        elif line.lstrip().startswith('#'):
+            continue
+        lines.append(line)
+    return '\n'.join(lines)
+
+
 def assets():
     lines = ['.section .rdata,"dr"']
 
@@ -55,10 +71,10 @@ def assets():
     script = base64.b64encode(bootstrap.encode('utf-16le')).decode('ascii')
     assert len(script) < 30000, 'AI helper exceeds the Windows command-line budget'
     lines += ['.globl commit_ai_script', 'commit_ai_script: .asciz "' + script + '"']
-    installer = (ROOT / 'install.ps1').read_text(encoding='utf-8')
+    installer = without_comments((ROOT / 'install.ps1').read_text(encoding='utf-8'))
     assert "\n'@" not in installer, 'Installer contains the embedding here-string delimiter'
     update = ("$installer=[scriptblock]::Create(@'\n" + installer + "\n'@);" +
-              (ROOT / 'runtime/windows/update.ps1').read_text(encoding='utf-8'))
+              without_comments((ROOT / 'runtime/windows/update.ps1').read_text(encoding='utf-8')))
     packed_update = base64.b64encode(gzip.compress(update.encode(), mtime=0)).decode('ascii')
     bootstrap_update = ("$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';"
                         "$b=[Convert]::FromBase64String('" + packed_update + "');"
@@ -83,7 +99,7 @@ def assets():
                     key, sep, value = line.partition('=')
                     if sep:
                         values[key.strip()] = value.strip()
-                for key in ('name', 'files', 'first_line'):
+                for key in ('name', 'files', 'first_line', 'icon'):
                     data = values.get(key, '').encode() + b'\0'
                     lines += [f'{label}_g{key}: .byte ' + ','.join(map(str, data))]
         lines += [f'.globl {kind}_table, {kind}_count', '.p2align 3',
@@ -92,7 +108,7 @@ def assets():
             label = f'{kind}_{i}'
             fields = [label + '_name', label, label + '_end']
             if kind == 'syntax':
-                fields += [label + '_g' + key for key in ('name', 'files', 'first_line')]
+                fields += [label + '_g' + key for key in ('name', 'files', 'first_line', 'icon')]
             lines += ['.quad ' + ','.join(fields)]
     version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
     lines += ['.globl rhun_version, rhun_dist', f'rhun_version: .asciz "{version}"',
@@ -119,7 +135,7 @@ def main():
     res = OUT / 'rhun.res'
     # Relative paths avoid llvm-rc interpreting a POSIX absolute path as a /flag.
     run([rc, '/no-preprocess', '/C', '65001', '/fo', res.relative_to(ROOT), resource.relative_to(ROOT)])
-    exclude = {'src/start.s', 'src/plat/wayland.s', 'src/plat/x11.s'}
+    exclude = {'src/start.s', 'src/plat/wayland.s', 'src/plat/x11.s', 'src/plat/appearance.s'}
     sources = [p for p in sorted((ROOT / 'src').rglob('*.s'))
                if 'mac' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).as_posix() not in exclude]
     generated = OUT / 'assets.s'

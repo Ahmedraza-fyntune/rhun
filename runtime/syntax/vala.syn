@@ -1,5 +1,6 @@
 name = Vala
 files = *.vala *.vapi
+icon = vala purple
 comment = //
 block = /* */
 mstring = """

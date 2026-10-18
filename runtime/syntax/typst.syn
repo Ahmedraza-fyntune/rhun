@@ -1,5 +1,6 @@
 name = Typst
 files = *.typ
+icon = tex cyan
 comment = //
 block = /* */
 string = "

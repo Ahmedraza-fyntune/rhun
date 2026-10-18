@@ -10,9 +10,10 @@ F N_dir, 4
 F N_open, 4
 F N_loaded, 4
 F N_depth, 4
+F N_icon, 4                      # file_icon's icon | color slot << 8 | 0x80000000, 0 until drawn
 ENDSTRUCT N_SIZE
 
-.equ ID_EXP_ROW, 0x4000
+.equ ID_EXP_ROW, 0x300000         # + row: a range of its own, as the tree has no end
 .equ ID_EXP_SCROLL, 0x3f02
 .equ ID_EXP_EMPTY, 0x3f04
 .equ ID_MENU, 0x3f10
@@ -28,8 +29,8 @@ openset: .zero VEC_SIZE         # paths kept open across refresh (cstr*)
 menu_open: .long 0
 menu_x: .long 0
 menu_y: .long 0
+menu_press: .long 0             # the presses of the frame that opened the menu
 .p2align 3
-menu_node: .quad 0
 menu_list: .quad 0
 .globl g_explorer_dir, g_explorer_target, g_exp_reveal
 g_exp_reveal: .long 0             # reveal the active file on the next draw
@@ -43,9 +44,6 @@ delete_label: .zero 256
 delete_path: .zero 4096          # the path named by the open confirmation
 
 .text
-
-FN explorer_init
-    ret
 
 # explorer_excluded(name cstr) -> 1 if listed in cfg_exclude
 FN explorer_excluded
@@ -197,28 +195,96 @@ node_load:
     lea rsi, [rip + load_cb]
     mov rdx, rbx
     call dir_each
-    # insertion sort
-    mov r12, [rbx + N_kids + VEC_ptr]
-    mov r13, [rbx + N_kids + VEC_len]
-    mov r14d, 1
-1:  cmp r14, r13
-    jae 9f
-    mov r15, r14
-2:  test r15, r15
-    jz 3f
-    mov rdi, [r12 + r15*8]
-    mov rsi, [r12 + r15*8 - 8]
+    mov rdi, [rbx + N_kids + VEC_ptr]
+    mov rsi, [rbx + N_kids + VEC_len]
+    call sort_nodes
+9:  EPILOGUE
+
+# sort_nodes(array, n): node pointers in node_less order, stable (equal names keep the folder's
+#   order), by bottom-up merge sort: a folder of 20,000 entries took most of a second sorted by
+#   insertion, at startup and again on every refresh
+sort_nodes:
+    PROLOGUE 64
+    mov r12, rdi
+    mov r13, rsi
+    cmp r13, 2
+    jb 9f
+    lea rdi, [r13*8]
+    call mem_alloc
+    mov r14, rax
+    mov r15, r12                # runs of [rsp] merged from r15 into rbx, which the next pass reads
+    mov rbx, r14
+    mov qword ptr [rsp], 1
+.Lsn_pass:
+    mov rax, [rsp]
+    cmp rax, r13
+    jae .Lsn_done
+    mov qword ptr [rsp + 8], 0
+.Lsn_run:
+    mov rax, [rsp + 8]          # lo
+    cmp rax, r13
+    jae .Lsn_swap
+    mov rcx, rax                # mid = min(lo + width, n)
+    add rcx, [rsp]
+    cmp rcx, r13
+    cmova rcx, r13
+    mov [rsp + 16], rcx
+    mov rdx, rcx                # hi = min(mid + width, n)
+    add rdx, [rsp]
+    cmp rdx, r13
+    cmova rdx, r13
+    mov [rsp + 24], rdx
+    mov [rsp + 32], rax         # l
+    mov [rsp + 40], rcx         # r
+    mov [rsp + 48], rax         # k
+.Lsn_merge:
+    mov rax, [rsp + 48]
+    cmp rax, [rsp + 24]
+    jae .Lsn_next
+    mov rcx, [rsp + 32]
+    cmp rcx, [rsp + 16]
+    jae .Lsn_right
+    mov rdx, [rsp + 40]
+    cmp rdx, [rsp + 24]
+    jae .Lsn_left
+    mov rdi, [r15 + rdx*8]      # the right run's only when it sorts before: ties keep their order
+    mov rsi, [r15 + rcx*8]
     call node_less
     test eax, eax
-    jz 3f
-    mov rax, [r12 + r15*8]
-    mov rcx, [r12 + r15*8 - 8]
-    mov [r12 + r15*8], rcx
-    mov [r12 + r15*8 - 8], rax
-    dec r15
-    jmp 2b
-3:  inc r14
-    jmp 1b
+    jz .Lsn_left
+.Lsn_right:
+    mov rdx, [rsp + 40]
+    mov rax, [r15 + rdx*8]
+    inc qword ptr [rsp + 40]
+    jmp .Lsn_put
+.Lsn_left:
+    mov rcx, [rsp + 32]
+    mov rax, [r15 + rcx*8]
+    inc qword ptr [rsp + 32]
+.Lsn_put:
+    mov rcx, [rsp + 48]
+    mov [rbx + rcx*8], rax
+    inc qword ptr [rsp + 48]
+    jmp .Lsn_merge
+.Lsn_next:
+    mov rax, [rsp + 24]
+    mov [rsp + 8], rax
+    jmp .Lsn_run
+.Lsn_swap:
+    xchg r15, rbx
+    mov rax, [rsp]
+    add rax, rax
+    mov [rsp], rax
+    jmp .Lsn_pass
+.Lsn_done:
+    cmp r15, r12
+    je 1f
+    mov rdi, r12
+    mov rsi, r15
+    lea rdx, [r13*8]
+    call memcpy
+1:  mov rdi, r14
+    call mem_free
 9:  EPILOGUE
 
 # in_openset(path) -> 1 if it was open before a refresh
@@ -452,8 +518,8 @@ row_node:
 FN cmd_focus_explorer
     mov dword ptr [rip + cfg_sidebar], 1
     mov dword ptr [rip + g_focus], FOCUS_EXPLORER
-    mov dword ptr [rip + g_dirty], 1
-    ret
+    mov edi, 1
+    jmp app_reveal_panel
 
 FN cmd_new_folder
     lea rdi, [rip + .Lnew_folder]
@@ -533,6 +599,7 @@ FN explorer_delete_target
     mov rbx, rax
     # A failed deletion can still have removed some children.
     call explorer_refresh
+    call close_deleted_tabs
     test rbx, rbx
     jns 1f
     lea rdi, [rip + .Lnot_deleted]
@@ -543,6 +610,41 @@ FN explorer_delete_target
     mov byte ptr [rip + delete_path], 0
     pop rbx
     ret
+
+# close_deleted_tabs(): the tabs of what a deletion removed close, as in VS Code; one with unsaved
+#   changes stays open, and so does one whose file is still there or may be (a deletion that failed
+#   part way, a folder that cannot be searched)
+close_deleted_tabs:
+    PROLOGUE
+    mov rbx, [rip + g_tabs + VEC_len]
+1:  test rbx, rbx
+    jz 9f
+    dec rbx
+    mov rdi, rbx
+    call tab_at
+    mov r12, [rax + TAB_doc]
+    test r12, r12
+    jz 1b
+    mov rdi, [r12 + DOC_path]
+    test rdi, rdi
+    jz 1b
+    lea rsi, [rip + delete_path]
+    call app_path_inside
+    test eax, eax
+    jz 1b
+    mov rdi, r12
+    call doc_dirty
+    test eax, eax
+    jnz 1b
+    mov rdi, [r12 + DOC_path]
+    call file_missing
+    test eax, eax
+    jz 1b
+    mov rdi, rbx
+    call app_close_tab_now
+    mov dword ptr [rip + g_dirty], 1
+    jmp 1b
+9:  EPILOGUE
 
 # explorer_key(keysym, cp, mods) -> 1 if handled
 FN explorer_key
@@ -926,7 +1028,6 @@ FN explorer_draw
     mov [rip + exp_cursor], r12d
     mov rdi, r14
     call select_target
-    mov [rip + menu_node], r14
     # files with changes: "Open Changes" too
     lea rax, [rip + menu_items]
     push rax
@@ -1021,20 +1122,34 @@ FN explorer_draw
 55: add r15d, [rip + g_mt + 4*MI_16]
     add r15d, [rip + g_mt + 4*MI_2]
     M ecx, MI_16
-    mov edi, IC_FILE
-    cmp dword ptr [r14 + N_dir], 0
-    je 56f
     mov edi, IC_FOLDER
-56: mov esi, r15d
+    COLOR r8d, T_ACCENT
+    cmp dword ptr [r14 + N_dir], 0
+    jne 57f
+    # a file: the icon of its name and type, looked up once
+    mov eax, [r14 + N_icon]
+    test eax, eax
+    jnz 56f
+    mov rdi, [r14 + N_name]
+    push rcx
+    call file_icon
+    pop rcx
+    shl edx, 8
+    or eax, edx
+    or eax, 0x80000000
+    mov [r14 + N_icon], eax
+56: mov edi, eax
+    and edi, 0xff
+    shr eax, 8
+    and eax, 0xff
+    lea rdx, [rip + g_theme]
+    mov r8d, [rdx + rax*4]
+57: mov esi, r15d
     mov edx, ebx
     sub edx, ecx
     sar edx, 1
     add edx, r13d
-    COLOR r8d, T_MUTED
-    cmp dword ptr [r14 + N_dir], 0
-    je 57f
-    COLOR r8d, T_ACCENT
-57: call icon_draw
+    call icon_draw
     add r15d, [rip + g_mt + 4*MI_20]
     add r15d, [rip + g_mt + 4*MI_2]
     # git: name in the status color, the letter at the right for files
@@ -1101,8 +1216,13 @@ FN explorer_draw
 1:  call gfx_clip_pop
     # scrollbar
     mov rax, [rip + rows + VEC_len]
-    imul eax, ebx
-    add eax, [rip + g_mt + 4*MI_16]
+    movsxd rcx, ebx
+    imul rax, rcx               # 64 bits before the i32 content cap
+    movsxd rcx, dword ptr [rip + g_mt + 4*MI_16]
+    add rax, rcx
+    mov ecx, 0x7fffffff
+    cmp rax, rcx
+    cmovg rax, rcx
     mov ecx, [rsp + 24]
     push rcx
     push rax
@@ -1144,7 +1264,7 @@ root_menu_open:
 # explorer_menu_draw(): context menu overlay. An item without a handler is a separating line; with
 # g_menu_keys set the items show their commands' shortcuts on the right.
 FN explorer_menu_draw
-    PROLOGUE 32
+    PROLOGUE 48
     cmp dword ptr [rip + menu_open], 0
     je .Lmd_ret
     M ebx, MI_32                # item h
@@ -1195,9 +1315,12 @@ FN explorer_menu_draw
     mov edx, r12d
     mov ecx, r14d
     call ui_card
-    # click outside closes (after this frame's clicks were handled)
+    # click outside closes (after this frame's clicks were handled), but not the press that opened
+    # the menu: a right press, or a tap whose release opened it in the same frame
     test dword ptr [rip + g_pressed], (1 << BTN_LEFT) | (1 << BTN_RIGHT)
     jz 3f
+    cmp dword ptr [rip + menu_press], 0
+    jne 3f
     mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, r12d
@@ -1205,25 +1328,20 @@ FN explorer_menu_draw
     call ui_in
     test eax, eax
     jnz 3f
-    # the right press that opened the menu is in the same frame: keep it
-    mov eax, [rip + g_mx]
-    cmp eax, [rip + menu_x]
-    jne 21f
-    mov eax, [rip + g_my]
-    cmp eax, [rip + menu_y]
-    je 3f
-21: mov dword ptr [rip + menu_open], 0
+    mov dword ptr [rip + menu_open], 0
+    mov dword ptr [rip + g_dirty], 1    # a frame without it
     jmp .Lmd_ret
 3:  mov eax, [rsp + 4]
     add eax, [rip + g_mt + 4*MI_6]
     mov [rsp + 8], eax          # item y
     xor ecx, ecx
     mov [rsp + 12], ecx         # item index
+    mov dword ptr [rsp + 32], -1    # the item clicked in this frame
 .Lmd_item:
     mov ecx, [rsp + 12]
     shl ecx, 4
     cmp qword ptr [r15 + rcx], 0
-    je .Lmd_ret
+    je .Lmd_done
     cmp qword ptr [r15 + rcx + 8], 0
     jne 31f
     # a line across the middle
@@ -1314,19 +1432,27 @@ FN explorer_menu_draw
     call gfx_clip_pop
     test dword ptr [rsp + 16], UB_CLICK
     jz 5f
-    mov dword ptr [rip + menu_open], 0
     mov ecx, [rsp + 12]
+    mov [rsp + 32], ecx
+5:  add [rsp + 8], ebx
+    inc dword ptr [rsp + 12]
+    jmp .Lmd_item
+.Lmd_done:
+    # A clicked item's command runs once the whole menu is drawn (this frame is shown whole, not cut
+    # after that item), and the next frame, without the menu, follows at once.
+    mov ecx, [rsp + 32]
+    test ecx, ecx
+    js .Lmd_ret
+    mov dword ptr [rip + menu_open], 0
+    mov dword ptr [rip + g_dirty], 1
     mov [rip + g_menu_index], ecx
     shl ecx, 4
     mov rax, [r15 + rcx + 8]
     mov dword ptr [rip + g_menu_cmd], 1
     call rax
     mov dword ptr [rip + g_menu_cmd], 0
-    jmp .Lmd_ret
-5:  add [rsp + 8], ebx
-    inc dword ptr [rsp + 12]
-    jmp .Lmd_item
 .Lmd_ret:
+    mov dword ptr [rip + menu_press], 0
     EPILOGUE
 
 # item_width(i) -> width of the menu item's label, with its shortcut and the gap before it
@@ -1434,6 +1560,9 @@ FN ctx_menu_open
     mov [rip + menu_list], rdi
     mov [rip + menu_x], esi
     mov [rip + menu_y], edx
+    mov eax, [rip + g_pressed]
+    and eax, (1 << BTN_LEFT) | (1 << BTN_RIGHT)
+    mov [rip + menu_press], eax
     mov dword ptr [rip + menu_open], 1
     mov dword ptr [rip + g_menu_keys], 0
     mov dword ptr [rip + g_dirty], 1

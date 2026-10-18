@@ -33,8 +33,6 @@ files: .zero VEC_SIZE           # GF of the selected row
 sel_hash: .zero 72
 det_hash: .zero 72
 head_ix: .quad 0
-det_author: .quad 0
-det_time: .quad 0
 det_msg: .quad 0
 maskbuf: .quad 0
 maskcap: .quad 0
@@ -677,7 +675,8 @@ details_fetch:
     pop rbx
 9:  ret
 
-# on_details(ctx, ptr, len, status): "hash\x1fparents\x1fauthor\x1ftime\x1fmessage\x1e", raw entries, numstat
+# on_details(ctx, ptr, len, status): "hash\x1fparents\x1fauthor\x1ftime\x1fmessage\x1e", then the raw
+#   entries (numstat_fetch asks for the line counts in a job of its own)
 on_details:
     PROLOGUE 16
     mov dword ptr [rip + det_running], 0
@@ -724,19 +723,11 @@ on_details:
     call next_field
     mov rdi, rax
     call next_field
-    mov [rip + det_author], rax
     mov rdi, rax
     call next_field
-    mov r14, rax
     mov rdi, rax
     call next_field
     mov [rip + det_msg], rax
-    mov rdi, r14
-    call strlen
-    mov rdi, r14
-    mov rsi, rax
-    call parse_u64
-    mov [rip + det_time], rax
     # files: ":mode mode id id X\0path\0"
     lea rbx, [r13 + 1]
 .Lod_ent:
@@ -1165,8 +1156,9 @@ draw_list:
     call ui_text_c
     add eax, [rip + g_mt + 4*MI_8]
     mov r12d, eax
+    call scm_changes            # as many as the panel lists, a new folder's files each
+    mov esi, eax
     lea rdi, [rsp + 48]
-    mov esi, [rip + g_git_changes]
     call fmt_u64
     mov byte ptr [rdi], 0
     lea rdi, [rip + g_face_small]
@@ -2124,6 +2116,23 @@ FN gitview_dump
     lea rsi, [rip + .Lclean]
 31: mov rdi, rbx
     call sb_push_cstr
+    # and how many, as the row shows them
+    mov rax, [r14 + CM_hash]
+    cmp byte ptr [rax], 0
+    jne 32f
+    call scm_changes
+    test eax, eax
+    jz 32f
+    push rax
+    push rax
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    pop rsi
+    pop rax
+    mov rdi, rbx
+    call sb_push_u64
+32:
     mov rax, [r14 + CM_refs]
     cmp byte ptr [rax], 0
     je 4f

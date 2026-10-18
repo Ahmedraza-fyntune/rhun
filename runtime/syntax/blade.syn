@@ -1,5 +1,6 @@
 name = Blade
 files = *.blade.php
+icon = php red
 block = <!-- -->
 string = "
 string = '

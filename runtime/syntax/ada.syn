@@ -1,5 +1,6 @@
 name = Ada
 files = *.adb *.ads *.ada
+icon = code blue
 case = insensitive
 comment = --
 string = "

@@ -1,5 +1,6 @@
 name = Visual Basic
 files = *.vb *.vbs
+icon = code purple
 case = insensitive
 comment = '
 comment = REM

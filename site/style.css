@@ -47,6 +47,9 @@ h2 { font-size: clamp(32px, 3vw, 44px); line-height: 1.1; letter-spacing: -.05em
 .brand-dot { color: var(--accent); }
 .links { display: flex; gap: 26px; margin-left: auto; font-size: 14px; color: var(--muted); font: 12px var(--mono); }
 .links a:hover { color: var(--text); }
+.social-symbols { position: absolute; width: 0; height: 0; overflow: hidden; }
+.social-link { display: inline-flex; align-items: center; gap: 7px; }
+.social-icon { width: 16px; height: 16px; flex: none; fill: currentColor; }
 .nav-cta { margin-left: 28px; min-height: 36px; padding: 8px 16px; gap: 32px; font: 12px var(--mono); }
 .hero { position: relative; overflow: clip; isolation: isolate; }
 .hero-stage { padding-block: 82px 108px; text-align: center; position: relative; }

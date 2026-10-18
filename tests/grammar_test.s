@@ -1,4 +1,4 @@
-# built-in grammars: loading parses none, each one's build-time header (name, files, first_line)
+# built-in grammars: loading parses none, each one's build-time header (name, files, first_line, icon)
 # matches its text, the parser warns about none, the samples in SAMPLES-DIR/NAME.txt as classes (one
 # base 36 digit per byte, then the state at the line's end); then the grammar detection picks for
 # each line of DETECT, a file name and, after a tab, a first line
@@ -127,7 +127,7 @@ FN main
     xor r12d, r12d
 1:  cmp r12, [rip + syntax_count]
     jae 5f
-    imul r13, r12, 48
+    imul r13, r12, 56
     lea rax, [rip + syntax_table]
     add r13, rax
     mov dword ptr [rip + g_grammar_warnings], 0
@@ -155,6 +155,10 @@ FN main
     and r15d, eax
     mov rdi, [r14 + GR_first]
     mov rsi, [r13 + 40]
+    call same
+    and r15d, eax
+    mov rdi, [r14 + GR_icon]
+    mov rsi, [r13 + 48]
     call same
     and r15d, eax
     jnz 3f

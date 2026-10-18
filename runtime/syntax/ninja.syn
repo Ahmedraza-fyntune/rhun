@@ -1,5 +1,6 @@
 name = Ninja
 files = *.ninja
+icon = makefile grey
 comment = #
 prefix = $v
 ident = _.

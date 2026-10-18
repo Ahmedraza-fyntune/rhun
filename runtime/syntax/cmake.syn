@@ -1,5 +1,6 @@
 name = CMake
 files = CMakeLists.txt *.cmake
+icon = makefile blue
 comment = #
 string = " \
 prefix = $v

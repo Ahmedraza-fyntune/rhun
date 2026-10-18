@@ -1,5 +1,6 @@
 name = Assembly
 files = *.s *.S *.asm *.inc *.nasm
+icon = asm red
 comment = #
 comment = ;
 block = /* */

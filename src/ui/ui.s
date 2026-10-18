@@ -4,7 +4,8 @@
 .bss
 .p2align 3
 .globl g_mt, g_s, g_mx, g_my, g_mdown, g_pressed, g_released, g_scroll_x, g_scroll_y
-.globl g_hot, g_active, g_cursor, g_block, g_clicks, g_face_ui, g_face_small, g_face_big, g_face_code
+.globl g_hot, g_active, g_cursor, g_block, g_clicks, g_press_x, g_face_ui, g_face_small, g_face_big, g_face_code
+.globl g_hole
 g_mt: .zero 4 * MI_COUNT
 g_s: .long 0                    # float scale
 g_mdown: .long 0                # buttons held (bit per button)
@@ -16,15 +17,20 @@ g_hot: .long 0
 g_active: .long 0
 g_cursor: .long 0
 g_block: .long 0                # 1 while drawing layers under a modal
+g_hole: .zero 16                # x, y, w, h: a handle drawn later owns this strip, nothing drawn
+                                # before it takes the pointer there (h 0: none)
 g_clicks: .long 0               # click count of the last press (1..3)
 last_press_t: .quad 0
 last_press_x: .long 0
 last_press_y: .long 0
-g_press_x: .long 0
-g_press_y: .long 0
+g_press_x: .long 0              # where the left button went down last
 held_mx: .long 0                # a pointer move waiting for the frame of a press
 held_my: .long 0
 held_move: .long 0
+.equ SB_MAX, 16                 # scrollbars tracked for the scroll-flash
+.equ SB_SHOW_MS, 800            # ms a thumb stays visible after its offset last moved
+# sb_flash slot: +0 scrollbar id, +8 last offset px (+pad), +16 show-until ms; 24B each
+sb_flash: .zero SB_MAX * 24
 .p2align 3
 g_face_ui: .zero FACE_SIZE
 g_face_small: .zero FACE_SIZE
@@ -35,9 +41,10 @@ g_face_huge: .zero FACE_SIZE
 last_scale: .long 0
 last_code_px: .long 0
 last_ui_px: .long 0
-.globl g_font_code, g_font_ui
+.globl g_font_code, g_font_ui, g_font_term
 g_font_code: .quad 0
 g_font_ui: .quad 0
+g_font_term: .quad 0            # the terminal's own font, or 0 for the editor's
 .globl g_lh, g_cw, g_base
 g_lh: .long 0                   # editor line height
 g_cw: .long 0                   # editor cell width
@@ -189,8 +196,6 @@ FN ui_input_button
     # multi-click detection
     mov eax, [rip + g_mx]
     mov [rip + g_press_x], eax
-    mov eax, [rip + g_my]
-    mov [rip + g_press_y], eax
     call time_ms
     mov rcx, rax
     sub rcx, [rip + last_press_t]
@@ -242,10 +247,17 @@ FN ui_begin
     mov dword ptr [rip + g_hot], 0
     mov dword ptr [rip + g_cursor], CUR_DEFAULT
     mov dword ptr [rip + g_block], 0
+    mov dword ptr [rip + g_hole + 12], 0
     ret
 
 FN ui_end
-    # clear active when left button is up
+    # handlers ran for a press or a release during this frame, after part of it was drawn (a panel
+    # hidden, a field given the keyboard): another frame shows what they changed
+    mov eax, [rip + g_pressed]
+    or eax, [rip + g_released]
+    jz 0f
+    mov dword ptr [rip + g_dirty], 1
+0:  # clear active when left button is up
     test dword ptr [rip + g_mdown], 1 << BTN_LEFT
     jnz 1f
     mov dword ptr [rip + g_active], 0
@@ -283,7 +295,33 @@ FN ui_in
     add esi, ecx
     cmp r9d, esi
     jge 1f
-    mov eax, 1
+    cmp r8d, [rip + g_cv + CV_cx0]
+    jl 1f
+    cmp r8d, [rip + g_cv + CV_cx1]
+    jge 1f
+    cmp r9d, [rip + g_cv + CV_cy0]
+    jl 1f
+    cmp r9d, [rip + g_cv + CV_cy1]
+    jge 1f
+    # g_hole belongs to a handle drawn later (only the registers this clobbers anyway)
+    mov eax, [rip + g_hole + 12]
+    test eax, eax
+    jz 2f
+    mov esi, [rip + g_hole + 4]
+    cmp r9d, esi
+    jl 2f
+    add esi, eax
+    cmp r9d, esi
+    jge 2f
+    mov edi, [rip + g_hole]
+    cmp r8d, edi
+    jl 2f
+    add edi, [rip + g_hole + 8]
+    cmp r8d, edi
+    jge 2f
+    xor eax, eax
+    ret
+2:  mov eax, 1
 1:  ret
 
 # ui_btn(id, x, y, w, h) -> UB_* bits
@@ -388,7 +426,12 @@ FN ui_text_center
     mov r15, r9
     mov eax, [rbp + 16]
     mov [rsp + 4], eax
-    mov rdi, r9
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, [rsp]
+    call gfx_clip_push
+    mov rdi, r15
     call strlen
     mov [rsp + 8], rax
     mov rdi, rbx
@@ -409,6 +452,9 @@ FN ui_text_center
     push rax
     call ui_text_v
     add rsp, 16
+    mov [rsp + 16], eax
+    call gfx_clip_pop
+    mov eax, [rsp + 16]
     EPILOGUE
 
 # ui_icon_center(icon, x, y, w, h, argb): icon (MI_ICON sized) centered in the box
@@ -418,6 +464,12 @@ FN ui_icon_center
     mov ebx, edi
     mov r12d, r9d
     M eax, MI_ICON
+    cmp eax, ecx
+    cmovg eax, ecx
+    cmp eax, r8d
+    cmovg eax, r8d
+    test eax, eax
+    jle 1f
     sub ecx, eax
     sar ecx, 1
     add esi, ecx
@@ -428,7 +480,7 @@ FN ui_icon_center
     mov ecx, eax
     mov r8d, r12d
     call icon_draw
-    pop r12
+1:  pop r12
     pop rbx
     ret
 
@@ -451,7 +503,10 @@ FN ui_icon_btn
     mov ecx, r15d
     M r8d, MI_RADIUS
     COLOR r9d, T_HOVER
-    call gfx_round_rect
+    test dword ptr [rsp + 4], UB_HELD
+    jz 11f
+    COLOR r9d, T_ACTIVE
+11: call gfx_round_rect
 1:  mov edi, ebx
     mov esi, r12d
     mov edx, r13d
@@ -604,11 +659,15 @@ FN ui_scrollbar
     # thumb y = y + (h - thumb) * off / (content - view)
     mov eax, [rsp + 16]
     sub eax, r14d
-    imul eax, [r15]
+    movsxd rax, eax
+    mov ecx, [r15]
+    movsxd rcx, ecx
+    imul rax, rcx               # 64 bits: a long text's offset times the track overflows 32
     mov ecx, r12d
     sub ecx, r13d
-    cdq
-    idiv ecx
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
     add eax, [rsp + 8]
     mov ebx, eax                # thumb y
     # interaction on the whole track
@@ -617,8 +676,17 @@ FN ui_scrollbar
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
     mov r8d, [rsp + 16]
+    cmp dword ptr [rip + g_block], 0
+    jne .Lsb_blocked
     call ui_btn
+    jmp .Lsb_input_ready
+.Lsb_blocked:
+    xor eax, eax
+.Lsb_input_ready:
     mov [rsp + 20], eax
+    mov edi, eax
+    call sb_cursor
+    mov eax, [rsp + 20]
     test eax, UB_PRESS
     jz 1f
     # grab offset inside thumb (or jump so the thumb centers on the mouse)
@@ -636,34 +704,36 @@ FN ui_scrollbar
     mov eax, [rip + g_my]
     sub eax, [rip + grab_dy]
     sub eax, [rsp + 8]
+    movsxd rax, eax
     mov ecx, r12d
     sub ecx, r13d
-    imul eax, ecx
+    movsxd rcx, ecx
+    imul rax, rcx               # in 64 bits, as the thumb's position
     mov ecx, [rsp + 16]
     sub ecx, r14d
     jle 4f
-    cdq
-    idiv ecx
-    test eax, eax
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
+    test rax, rax
     jns 5f
     xor eax, eax
 5:  mov ecx, r12d
     sub ecx, r13d
-    cmp eax, ecx
-    cmovg eax, ecx
+    movsxd rcx, ecx
+    cmp rax, rcx
+    cmovg rax, rcx
     mov [r15], eax
     mov dword ptr [rip + g_dirty], 1
-4:  # draw thumb (thin, wider when hovered or dragged)
-    COLOR r9d, T_SCROLLBAR
+4:  mov edi, [rsp]
+    mov rsi, r15
+    mov edx, [rsp + 20]
+    call sb_thumb
+    test eax, eax
+    jz .Lsb_ret
+    mov r9d, edx
     mov ecx, [rsp + 12]
-    M eax, MI_6
-    test dword ptr [rsp + 20], UB_HOVER | UB_HELD
-    jnz 6f
-    mov r9d, r9d
-    and r9d, 0x00ffffff
-    or r9d, 0xa0000000
-    M eax, MI_4
-6:  mov edx, eax
+    mov edx, eax
     mov edi, [rsp + 4]
     add edi, ecx
     sub edi, eax
@@ -675,6 +745,227 @@ FN ui_scrollbar
     call gfx_round_rect
 .Lsb_ret:
     EPILOGUE
+
+# ui_hscrollbar(id, x, y, w, h, *offset(i32 px), content, view): ui_scrollbar along x, its thumb at the
+# bottom of the track
+FN ui_hscrollbar
+    PROLOGUE 48
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    mov [rsp + 16], r8d
+    mov r15, r9
+    mov r12d, [rbp + 16]        # content
+    mov r13d, [rbp + 24]        # view
+    cmp r12d, r13d
+    jle .Lhs_ret
+    # thumb width = max(w * view / content, 24)
+    mov eax, [rsp + 12]
+    imul eax, r13d
+    cdq
+    idiv r12d
+    M ecx, MI_24
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov r14d, eax               # thumb w
+    # thumb x = x + (w - thumb) * off / (content - view)
+    mov eax, [rsp + 12]
+    sub eax, r14d
+    movsxd rax, eax
+    mov ecx, [r15]
+    movsxd rcx, ecx
+    imul rax, rcx               # 64 bits: a long text's offset times the track overflows 32
+    mov ecx, r12d
+    sub ecx, r13d
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
+    add eax, [rsp + 4]
+    mov ebx, eax                # thumb x
+    # interaction on the whole track
+    xor eax, eax
+    cmp dword ptr [rip + g_block], 0
+    jne 0f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    mov r8d, [rsp + 16]
+    call ui_btn
+0:  mov [rsp + 20], eax
+    mov edi, eax
+    call sb_cursor
+    mov eax, [rsp + 20]
+    test eax, UB_PRESS
+    jz 1f
+    # grab offset inside thumb (or jump so the thumb centers on the mouse)
+    mov eax, [rip + g_mx]
+    sub eax, ebx
+    js 2f
+    cmp eax, r14d
+    jl 3f
+2:  mov eax, r14d
+    shr eax, 1
+3:  mov [rip + grab_dx], eax
+1:  test dword ptr [rsp + 20], UB_HELD
+    jz 4f
+    # offset = (mx - grab - x) * (content - view) / (w - thumb)
+    mov eax, [rip + g_mx]
+    sub eax, [rip + grab_dx]
+    sub eax, [rsp + 4]
+    movsxd rax, eax
+    mov ecx, r12d
+    sub ecx, r13d
+    movsxd rcx, ecx
+    imul rax, rcx               # in 64 bits, as the thumb's position
+    mov ecx, [rsp + 12]
+    sub ecx, r14d
+    jle 4f
+    movsxd rcx, ecx
+    cqo
+    idiv rcx
+    test rax, rax
+    jns 5f
+    xor eax, eax
+5:  mov ecx, r12d
+    sub ecx, r13d
+    movsxd rcx, ecx
+    cmp rax, rcx
+    cmovg rax, rcx
+    mov [r15], eax
+    mov dword ptr [rip + g_dirty], 1
+4:  mov edi, [rsp]
+    mov rsi, r15
+    mov edx, [rsp + 20]
+    call sb_thumb
+    test eax, eax
+    jz .Lhs_ret
+    mov r9d, edx
+    mov ecx, eax                # thickness
+    mov edi, ebx
+    mov esi, [rsp + 8]
+    add esi, [rsp + 16]
+    sub esi, eax
+    sub esi, [rip + g_mt + 4*MI_3]
+    mov edx, r14d
+    mov r8d, eax
+    shr r8d, 1
+    call gfx_round_rect
+.Lhs_ret:
+    EPILOGUE
+
+# sb_tick(): expire scroll-flash windows that have passed
+FN sb_tick
+    push rbx
+    push r12
+    sub rsp, 8
+    call time_ms
+    mov r12, rax
+    lea rbx, [rip + sb_flash]
+    mov ecx, SB_MAX
+1:  mov rax, [rbx + 16]
+    test rax, rax
+    jz 2f
+    cmp r12, rax
+    jb 2f
+    mov qword ptr [rbx + 16], 0
+    mov dword ptr [rip + g_dirty], 1
+2:  add rbx, 24
+    dec ecx
+    jnz 1b
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# sb_timeout() -> ms until the oldest scroll-flash window closes, or -1
+FN sb_timeout
+    push rbx
+    push r12
+    sub rsp, 8
+    call time_ms
+    mov r12, rax
+    lea rbx, [rip + sb_flash]
+    mov ecx, SB_MAX
+    mov edx, -1
+1:  mov rax, [rbx + 16]
+    test rax, rax
+    jz 2f
+    sub rax, r12
+    jle 2f                          # already due: sb_tick clears it
+    cmp edx, -1
+    je 3f
+    cmp eax, edx
+    jge 2f
+3:  mov edx, eax
+2:  add rbx, 24
+    dec ecx
+    jnz 1b
+    mov eax, edx
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# sb_cursor(bits): the arrow over a scrollbar or while its thumb is dragged, but not over another
+# widget's drag
+sb_cursor:
+    test edi, UB_HELD
+    jnz 1f
+    test edi, UB_HOVER
+    jz 2f
+    cmp dword ptr [rip + g_active], 0
+    jne 2f
+1:  mov dword ptr [rip + g_cursor], CUR_ARROW
+2:  ret
+
+# sb_thumb(id, *offset, bits) -> eax thumb thickness (0: none), edx its color. The full thumb while
+# hovered or dragged, or for SB_SHOW_MS after the offset last moved; otherwise none, or a faint thin
+# one when scrollbars do not auto-hide. Each scrollbar id keeps its own sb_flash slot (an offset on
+# the caller's stack moves with its depth, so the id is the key).
+sb_thumb:
+    PROLOGUE
+    mov ebx, edx
+    mov r12, rsi
+    mov r14d, edi
+    lea r13, [rip + sb_flash]
+    xor ecx, ecx
+1:  cmp [r13], r14
+    je 3f
+    cmp qword ptr [r13], 0
+    jne 2f
+    mov [r13], r14
+    mov eax, [r12]                  # seed, don't flash, on first sight
+    mov [r13 + 8], eax
+    jmp 3f
+2:  add r13, 24
+    inc ecx
+    cmp ecx, SB_MAX
+    jl 1b
+    jmp 5f                          # table full: keep the thumb shown
+3:  call time_ms
+    mov ecx, [r12]
+    cmp ecx, [r13 + 8]
+    je 4f
+    mov [r13 + 8], ecx
+    lea rdx, [rax + SB_SHOW_MS]
+    mov [r13 + 16], rdx
+4:  test ebx, UB_HOVER | UB_HELD
+    jnz 5f
+    cmp rax, [r13 + 16]
+    jl 5f
+    xor eax, eax
+    cmp dword ptr [rip + cfg_autohide_scrollbars], 0
+    jne 9f
+    COLOR edx, T_SCROLLBAR
+    and edx, 0x00ffffff
+    or edx, 0xa0000000
+    M eax, MI_4
+    jmp 9f
+5:  COLOR edx, T_SCROLLBAR
+    M eax, MI_6
+9:  EPILOGUE
 
 # ---- text field ----
 
@@ -1195,7 +1486,7 @@ FN ui_textfield
     push rax
     call ui_text_v
     add rsp, 16
-7:  # caret
+7:  # caret, blinking as the editor's
     cmp dword ptr [rsp + 16], 0
     je 8f
     lea rdi, [rip + g_face_ui]
@@ -1208,8 +1499,7 @@ FN ui_textfield
     M edx, MI_2
     mov ecx, [rsp + 12]
     sub ecx, [rip + g_mt + 4*MI_12]
-    COLOR r8d, T_CURSOR
-    call gfx_fill
+    call ed_caret_draw
 8:  call gfx_clip_pop
     mov eax, [rsp + 20]
     EPILOGUE
@@ -1765,8 +2055,7 @@ FN ui_textarea
     add edi, [rsp + 52]
     M edx, MI_2
     mov ecx, [rsp + 32]
-    COLOR r8d, T_CURSOR
-    call gfx_fill
+    call ed_caret_draw           # blinking as the editor's
 9:  call gfx_clip_pop
     mov eax, [rsp + 20]
     EPILOGUE
@@ -1786,6 +2075,7 @@ empty_str: .byte 0
 ta_nl: .ascii "\n"
 .bss
 grab_dy: .long 0
+grab_dx: .long 0
 .p2align 3
 ta_buf: .zero SB_SIZE
 ta_rows: .zero VEC_SIZE

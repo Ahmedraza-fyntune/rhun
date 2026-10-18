@@ -1,5 +1,6 @@
 name = KDL
 files = *.kdl
+icon = config orange
 comment = //
 block = /* */
 string = " \

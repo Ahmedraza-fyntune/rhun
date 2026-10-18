@@ -42,7 +42,6 @@ id_activation: .long 0
 activation_sent: .long 0
 id_sync: .long 0
 sync_done: .long 0
-compositor_ver: .long 0
 seat_ver: .long 0
 
 id_surface: .long 0
@@ -81,6 +80,8 @@ cur_shape: .long 0
 ptr_x: .long 0             # fixed 24.8 logical
 ptr_y: .long 0
 axis_src: .long 0
+.p2align 3
+axis_rem: .quad 0, 0       # what is left of a pixel, vertical and horizontal
 
 kb_group: .long 0
 kb_mods: .long 0
@@ -94,7 +95,6 @@ offer_new_text: .long 0
 sel_offer: .long 0
 sel_offer_text: .long 0
 id_source: .long 0
-clip_mime_sel: .long 0
 .p2align 3
 clip_sb: .zero SB_SIZE
 paste_sb: .zero SB_SIZE
@@ -799,12 +799,7 @@ wl_on_global:
     ARG [rsp + 4]
     END
     mov rax, [rbx + 8]
-    lea rcx, [rip + id_compositor]
-    cmp rax, rcx
-    jne 1f
-    mov eax, [rsp]
-    mov [rip + compositor_ver], eax
-1:  lea rcx, [rip + id_seat]
+    lea rcx, [rip + id_seat]
     cmp rax, rcx
     jne .Lg_ret
     mov eax, [rsp]
@@ -1093,20 +1088,38 @@ on_pointer:
     call app_on_button
     jmp .Lp_ret
 .Lp_axis:
-    mov edi, [r12 + 8]            # fixed value
-    call fixed_to_phys
+    # in 1/(256 * 120) physical pixels: the wheel scrolls ~3 lines a notch, a touchpad 3x the
+    # finger's travel, and what falls short of a pixel carries to the next event
+    movsxd rax, dword ptr [r12 + 8]   # fixed 24.8 logical
+    mov ecx, 5
+    mov edx, 3
+    mov esi, [rip + axis_src]
+    dec esi
+    cmp esi, 1                    # finger or continuous
+    cmovbe ecx, edx
+    imul rax, rcx
+    mov ecx, [rip + scale120]
+    test ecx, ecx
+    jnz 1f
+    imul ecx, dword ptr [rip + int_scale], 120
+1:  imul rax, rcx
+    mov ecx, [r12 + 4]            # 0 vertical, 1 horizontal
+    and ecx, 1
+    lea rsi, [rip + axis_rem]
+    add rax, [rsi + rcx*8]
+    cqo
+    mov edi, 256 * 120
+    idiv rdi
+    mov [rsi + rcx*8], rdx
     mov r13d, eax
-    cmp dword ptr [rip + axis_src], 0
-    jne 2f
-    imul r13d, r13d, 5            # wheel: ~3 lines per notch
-2:  xor edi, edi
+    xor edi, edi
     xor esi, esi
     cmp dword ptr [r12 + 4], 0
-    jne 3f
+    jne 4f
     mov esi, r13d
-    jmp 4f
-3:  mov edi, r13d
-4:  mov edx, [rip + kb_mods]
+    jmp 5f
+4:  mov edi, r13d
+5:  mov edx, [rip + kb_mods]
     call app_on_scroll
     jmp .Lp_ret
 .Lp_source:
@@ -1240,9 +1253,10 @@ on_keyboard:
 key_emit:
     push rbx
     push r12
-    sub rsp, 8
+    push r13
     mov r12d, edi
-    mov esi, [rip + kb_group]
+    mov r13d, [rip + kb_group]
+    mov esi, r13d
     mov edx, [rip + kb_mods]
     call xkb_keysym
     mov ebx, eax
@@ -1253,20 +1267,30 @@ key_emit:
     jb 1f
     cmp ebx, 0xfe00
     jae 1f
+    xor r13d, r13d
     mov edi, r12d
     xor esi, esi
     mov edx, [rip + kb_mods]
     call xkb_keysym
     mov ebx, eax
-1:
+1:  # and the key's unshifted character in that layout, neither Shift nor Caps Lock (g_key_base)
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, [rip + kb_mods]
+    and edx, -4
+    call xkb_keysym
     mov edi, eax
+    call keysym_to_unicode
+    mov [rip + g_key_base], eax
+    mov edi, ebx
     call keysym_to_unicode
     mov edi, ebx
     mov esi, eax
     mov edx, [rip + kb_mods]
     and edx, MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER
     call app_on_key
-    add rsp, 8
+    mov dword ptr [rip + g_key_base], 0
+    pop r13
     pop r12
     pop rbx
     ret
@@ -1561,7 +1585,7 @@ cursor_drop:
     lea rax, [rip + cur_ids]
     mov dword ptr [rax + rbx*4], 0
 2:  inc ebx
-    cmp ebx, 7
+    cmp ebx, 8
     jb 1b
     pop rbx
     ret
@@ -2069,7 +2093,7 @@ global_table:
 .Lsend_err: .asciz "rhun: wayland send failed"
 .Lshm_err: .asciz "rhun: shm buffer allocation failed"
 # CUR_* -> wp_cursor_shape_device_v1 shapes
-cursor_shapes: .byte 1, 9, 4, 26, 27, 29, 28
+cursor_shapes: .byte 1, 9, 4, 26, 27, 29, 28, 1
 .p2align 2
 f_120: .float 120.0
 
@@ -2083,9 +2107,9 @@ g_csd: .long 1
 deco_applied: .long -1
 cur_bs: .long 0
 cur_surf: .long 0
-cur_ids: .zero 4 * 7
-cur_hx: .zero 4 * 7
-cur_hy: .zero 4 * 7
+cur_ids: .zero 4 * 8
+cur_hx: .zero 4 * 8
+cur_hy: .zero 4 * 8
 .p2align 3
 xcur: .zero XC_SIZE
 deco_mode: .long 0

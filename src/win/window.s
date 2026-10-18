@@ -12,6 +12,7 @@ win_cursor: .quad 0
 win_class: .zero 80
 win_bmi: .zero 44
 win_message: .zero 48
+wheel_rem: .long 0, 0       # half a pixel left from the wheel, vertical and horizontal
 .text
 
 FN win_open_window
@@ -66,7 +67,12 @@ FN win_open_window
     test rax, rax
     jz 8f
     mov [rip + win_hwnd], rax
-    mov rcx, rax
+    # a mode change since win_appearance_init reached no window of rhun's: read the mode again
+    call win_setting_changed
+    mov rdi, [rip + win_hwnd]
+    xor esi, esi
+    call win_title_theme
+    mov rcx, [rip + win_hwnd]
     API GetDpiForWindow
     call win_dpi
     mov rcx, [rip + win_hwnd]
@@ -135,6 +141,9 @@ win_draw:
     call gfx_set_target
     mov dword ptr [rip + g_dirty], 0
     call app_render
+    mov rdi, [rip + win_hwnd]
+    mov esi, 1
+    call win_title_theme
     mov rcx, [rip + win_hwnd]
     API GetDC
     test rax, rax
@@ -180,6 +189,21 @@ win_title:
     call mem_free
 9:  EPILOGUE
 
+# Clipboard managers can hold the clipboard briefly after a content change.
+win_clip_open:
+    PROLOGUE 64
+    mov ebx, 20
+1:  mov rcx, [rip + win_hwnd]
+    API OpenClipboard
+    test eax, eax
+    jnz 9f
+    dec ebx
+    jz 9f
+    mov ecx, 25
+    API Sleep
+    jmp 1b
+9:  EPILOGUE
+
 win_clip_set:
     PROLOGUE 96
     # Copy a counted UTF-8 string before conversion; embedded editor buffers are not NUL terminated.
@@ -212,8 +236,7 @@ win_clip_set:
     call memcpy
     mov rcx, r13
     API GlobalUnlock
-    mov rcx, [rip + win_hwnd]
-    API OpenClipboard
+    call win_clip_open
     test eax, eax
     jz 7f
     API EmptyClipboard
@@ -236,8 +259,7 @@ win_clip_set:
 
 win_clip_get:
     PROLOGUE 96
-    mov rcx, [rip + win_hwnd]
-    API OpenClipboard
+    call win_clip_open
     test eax, eax
     jz 9f
     mov ecx, 13
@@ -328,6 +350,8 @@ FN win_mods
 4:  mov eax, ebx
     EPILOGUE
 
+# the window procedure (tests/windows/wheel_test.s sends it messages)
+.globl win_wndproc
 win_wndproc:
     CALLBACK 96
     mov rbx, rcx
@@ -348,6 +372,8 @@ win_wndproc:
     je .Lwm_cursor
     cmp edx, 0x2e0
     je .Lwm_dpi
+    cmp edx, 0x1a
+    je .Lwm_setting
     cmp edx, 0x200
     je .Lwm_motion
     cmp edx, 0x201
@@ -377,6 +403,10 @@ win_wndproc:
 .Lwm_close:
     call app_on_close
     jmp .Lwm_zero
+.Lwm_setting:
+    # WM_SETTINGCHANGE: the system's dark mode among others
+    call win_setting_changed
+    jmp .Lwm_default
 .Lwm_size:
     cmp r13d, 1
     je .Lwm_zero
@@ -476,16 +506,28 @@ win_wndproc:
 .Lwm_scroll:
     call win_mods
     mov edx, eax
+    # 120 a notch scrolls 60 px. A precision touchpad sends smaller steps: what falls short of a
+    # pixel carries to the next message, so they add up and both directions round alike.
     shr r13, 16
-    movsx esi, r13w
-    neg esi
-    sar esi, 1
-    xor edi, edi
+    movsx eax, r13w
+    xor ecx, ecx
     cmp r12d, 0x20e
-    jne 1f
-    mov edi, esi
-    neg edi
+    sete cl                       # 0 vertical, 1 horizontal
+    lea r8, [rip + wheel_rem]
+    add eax, [r8 + rcx*4]
+    mov edi, eax
+    shr edi, 31
+    add edi, eax
+    sar edi, 1                    # halved toward zero
+    lea r9d, [rdi + rdi]
+    sub eax, r9d
+    mov [r8 + rcx*4], eax
     xor esi, esi
+    test ecx, ecx
+    jnz 1f                        # tilted right scrolls right
+    mov esi, edi
+    neg esi                       # turned away scrolls up
+    xor edi, edi
 1:  call app_on_scroll
     jmp .Lwm_zero
 .Lwm_char:
@@ -690,17 +732,6 @@ FN ws_poll
 .Lpoll_done:
     EPILOGUE
 
-FN win_download_page
-    PROLOGUE 96
-    mov rcx, [rip + win_hwnd]
-    lea rdx, [rip + .Lopen]
-    lea r8, [rip + .Ldownloads]
-    xor r9d, r9d
-    mov qword ptr [rsp + 32], 0
-    mov qword ptr [rsp + 40], 1
-    API ShellExecuteW
-    EPILOGUE
-
 # win_open_link(UTF-8 URL): use the registered browser or mail application.
 FN win_open_link
     PROLOGUE 96
@@ -813,8 +844,6 @@ win_platform:
     .long 112,KEY_F1,113,KEY_F1+1,114,KEY_F1+2,115,KEY_F1+3,116,KEY_F1+4,117,KEY_F1+5
     .long 118,KEY_F1+6,119,KEY_F1+7,120,KEY_F1+8,121,KEY_F1+9,122,KEY_F1+10,123,KEY_F1+11,0,0
 .Lwindow_error: .asciz "rhun: could not create a Windows window"
-.Ldownloads:
-    .short 104,116,116,112,115,58,47,47,103,105,116,104,117,98,46,99,111,109,47,118,115,104,118,101,100,111,118,47,114,104,117,110,47,114,101,108,101,97,115,101,115,47,108,97,116,101,115,116,0
 
 .data
 .globl g_csd,g_dpi_scale,g_win_states

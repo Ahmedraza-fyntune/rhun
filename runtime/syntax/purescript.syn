@@ -1,5 +1,6 @@
 name = PureScript
 files = *.purs
+icon = purescript white
 block = {- -}
 comment = --
 mstring = """

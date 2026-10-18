@@ -1,5 +1,6 @@
 name = Idris
 files = *.idr *.lidr
+icon = code red
 comment = --
 block = {- -}
 string = " \

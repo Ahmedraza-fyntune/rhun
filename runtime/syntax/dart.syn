@@ -1,5 +1,6 @@
 name = Dart
 files = *.dart
+icon = dart blue
 comment = //
 block = /* */
 region = r''' ''' string multiline

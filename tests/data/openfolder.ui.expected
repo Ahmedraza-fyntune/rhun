@@ -1,16 +1,20 @@
 field=~/work/alpha/
 > Open ~/work/alpha
+  Open ~/work/alpha in a new window
   src/
 field=~/work/alpha/../
 > Open ~/work
+  Open ~/work in a new window
   alpha/
   beta/
   Gamma/
 field=~/work/alpha/../b
   Open ~/work
+  Open ~/work in a new window
 > beta/
 field=~/work/beta/
 > Open ~/work/beta
+  Open ~/work/beta in a new window
 tabs=1 active=a.txt line=1 col=2 sel=0 dirty=1 lang=none focus=5 theme=rhun-dark
 project=~/work/alpha
 tabs=1 active=a.txt line=1 col=2 sel=0 dirty=1 lang=none focus=0 theme=rhun-dark

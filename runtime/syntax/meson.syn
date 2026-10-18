@@ -1,5 +1,6 @@
 name = Meson
 files = meson.build meson_options.txt meson.options
+icon = makefile green
 comment = #
 mstring = '''
 string = ' \

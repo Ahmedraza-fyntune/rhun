@@ -1,5 +1,6 @@
 name = Mojo
 files = *.mojo *.🔥
+icon = code orange
 comment = #
 mstring = """ \
 mstring = ''' \

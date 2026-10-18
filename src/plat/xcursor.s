@@ -611,7 +611,7 @@ pat_at:
 .section .rodata
 .p2align 3
 # CUR_* -> names to try, CSS names first
-shape_names: .quad .Ln_default, .Ln_text, .Ln_pointer, .Ln_ew, .Ln_ns, .Ln_nwse, .Ln_nesw
+shape_names: .quad .Ln_default, .Ln_text, .Ln_pointer, .Ln_ew, .Ln_ns, .Ln_nwse, .Ln_nesw, .Ln_default
 .Ln_default: .quad .Ls_default, .Ls_left_ptr, .Ls_arrow, 0
 .Ln_text: .quad .Ls_text, .Ls_xterm, .Ls_ibeam, 0
 .Ln_pointer: .quad .Ls_pointer, .Ls_hand2, .Ls_hand1, .Ls_pointing_hand, 0

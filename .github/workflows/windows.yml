@@ -12,6 +12,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-2022
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,7 +36,13 @@ jobs:
         id: build
         run: python tools/build-windows.py test
       - name: Native tests
+        env:
+          RHUN_TEST_ARTIFACTS: build/stabilization/windows
         run: python tests/windows.py
+      - name: System dark mode
+        env:
+          RHUN_TEST_SYSTEM_APPEARANCE: '1'
+        run: python tests/windows-appearance.py
       - name: Package
         id: package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -51,3 +58,8 @@ jobs:
           name: windows-x86_64
           path: build/windows/rhun-*-windows-x86_64.zip
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-stabilization
+          path: build/stabilization/

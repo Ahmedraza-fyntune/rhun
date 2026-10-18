@@ -1,5 +1,6 @@
 name = Razor
 files = *.cshtml *.razor
+icon = html blue
 block = <!-- -->
 string = "
 string = '

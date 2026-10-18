@@ -29,6 +29,11 @@ if name == 'curl' and os.environ.get('ARCHIVE') and any(x.startswith('https://')
 if name == 'curl' and any(x.endswith('/api/pull') for x in a):
     print(json.dumps({'status':'pulling manifest'}), flush=True)
     print(json.dumps({'status':'pulling layer', 'total':104857600, 'completed':52428800}), flush=True)
+    if os.environ.get('PULL_GATE'):
+        gate = pathlib.Path(os.environ['PULL_GATE'])
+        deadline = time.monotonic() + 20
+        while not gate.exists() and time.monotonic() < deadline: time.sleep(.02)
+        if not gate.exists(): sys.exit(9)
     time.sleep(float(os.environ.get('PULL_DELAY', '0')))
     if os.environ.get('PULL_ERROR'): print('{"error":"fixture failure"}', flush=True); sys.exit()
     if os.environ.get('PULL_INCOMPLETE'): sys.exit()
@@ -212,6 +217,37 @@ class CommitAI(unittest.TestCase):
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertIn('Model file: 50% (50 / 100 MiB)',r.stdout)
         self.assertIn('Ready locally: qwen2.5-coder:1.5b',r.stdout)
+
+    def test_live_progress_before_download_completes(self):
+        gate = self.w / 'continue-download'
+        progress = threading.Event()
+        output = []
+        process = subprocess.Popen(['/bin/sh', str(ROOT / 'runtime/ai/commit.sh')],
+            env=dict(self.env, RHUN_AI_PROVIDER='ollama', RHUN_AI_ACTION='setup',
+                     MISSING_MODEL='1', PULL_GATE=str(gate)),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        def read():
+            for line in process.stdout:
+                output.append(line)
+                if line == '@Model file: 50% (50 / 100 MiB)\n': progress.set()
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        try:
+            self.assertTrue(progress.wait(10), 'Progress was buffered while the download remained open: ' + ''.join(output))
+            self.assertIsNone(process.poll(), 'Download finished before the gate was released')
+            self.assertFalse((self.w / 'pulled').exists())
+        finally:
+            gate.touch()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            reader.join(timeout=5)
+            process.stdout.close()
+            process.stderr.close()
+        self.assertEqual(process.returncode, 0, ''.join(output))
+        self.assertIn('Ready locally: qwen2.5-coder:1.5b\n', output)
 
     def test_native_download_cancel(self):
         r=self.native(['wait-git','wait-ai','cmd ai_setup','wait 1000','cmd ai_setup','wait-ai','print-ai'],

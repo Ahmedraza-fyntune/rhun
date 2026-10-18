@@ -1,5 +1,6 @@
 name = TOML
 files = *.toml Cargo.lock Pipfile poetry.lock uv.lock
+icon = config grey
 comment = #
 mstring = """ \
 mstring = '''

@@ -1,5 +1,6 @@
 name = Twig
 files = *.twig
+icon = twig green
 block = <!-- -->
 string = "
 string = '

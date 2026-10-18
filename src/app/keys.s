@@ -286,14 +286,18 @@ FN keys_for
 2:  lea r13, [rip + keybuf]
     mov r14d, [r12 + KB_mods]
 .ifdef MACOS
-    # macOS: symbols in the order of its menus, Command for Ctrl; Ctrl+Tab and Ctrl+` stay
-    # Control, as Command-Tab and Command-` belong to the system
+    # macOS: symbols in menu order, Command for Ctrl. Tab, backtick and bare H
+    # stay Control because their Command shortcuts belong to the system/menu.
     test r14d, MOD_CTRL
     jz 21f
     mov eax, [r12 + KB_key]
     cmp eax, KEY_TAB
     je 20f
     cmp eax, '`'
+    je 20f
+    cmp eax, 'h'
+    jne 21f
+    cmp r14d, MOD_CTRL
     jne 21f
 20: lea rsi, [rip + .Lmac_control]
     mov rdi, r13
@@ -478,6 +482,8 @@ g_commands:
     COMMAND save, "Save", cmd_save, "ctrl+s"
     COMMAND save_as, "Save As", cmd_save_as, "ctrl+shift+s"
     COMMAND close_tab, "Close Tab", cmd_close_tab, "ctrl+w ctrl+F4"
+    COMMAND close_all_tabs, "Close All Tabs", cmd_close_all, "ctrl+shift+w"
+    COMMAND reopen_closed_tab, "Reopen Closed Tab", cmd_reopen_closed_tab, "ctrl+shift+t"
     COMMAND next_tab, "Next Tab", cmd_next_tab, "ctrl+Tab ctrl+PageDown"
     COMMAND prev_tab, "Previous Tab", cmd_prev_tab, "ctrl+shift+Tab ctrl+PageUp"
     COMMAND quit, "Quit", cmd_quit, "ctrl+q"
@@ -489,6 +495,9 @@ g_commands:
     COMMAND select_all, "Select All", cmd_select_all, "ctrl+a"
     COMMAND select_line, "Select Line", cmd_select_line, "ctrl+l"
     COMMAND select_next, "Select Word or Next Match", cmd_select_next, "ctrl+d"
+    COMMAND select_all_matches, "Select All Occurrences", cmd_select_all_matches, "ctrl+shift+l"
+    COMMAND cursor_up, "Add Cursor Above", cmd_cursor_up, "ctrl+alt+Up"
+    COMMAND cursor_down, "Add Cursor Below", cmd_cursor_down, "ctrl+alt+Down"
     COMMAND duplicate_line, "Duplicate Line", cmd_duplicate_line, "ctrl+shift+d"
     COMMAND delete_line, "Delete Line", cmd_delete_line, "ctrl+shift+k"
     COMMAND move_line_up, "Move Line Up", cmd_move_line_up, "alt+Up"
@@ -506,7 +515,8 @@ g_commands:
     COMMAND goto_line, "Go to Line", cmd_goto_line, "ctrl+g"
     COMMAND settings, "Open Settings", cmd_settings, "ctrl+,"
     COMMAND open_config, "Open Settings File", cmd_open_config, ""
-    COMMAND select_theme, "Select Color Theme", cmd_select_theme, "ctrl+k ctrl+shift+t"
+    COMMAND select_theme, "Select Color Theme", cmd_select_theme, "ctrl+k"
+    COMMAND toggle_light_dark_theme, "Toggle Light/Dark Theme", cmd_toggle_light_dark, ""
     COMMAND select_language, "Change Language Mode", cmd_select_language, ""
     COMMAND toggle_sidebar, "Toggle File Explorer", cmd_toggle_sidebar, "ctrl+b"
     COMMAND toggle_agents, "Toggle Agents Panel", cmd_toggle_agents, "ctrl+shift+a"
@@ -521,9 +531,9 @@ g_commands:
     COMMAND new_folder, "New Folder", cmd_new_folder, ""
     COMMAND rename_file, "Rename File", cmd_rename_file, "F2"
     COMMAND delete_file, "Delete File", cmd_delete_file, ""
-    COMMAND zoom_in, "Zoom In", cmd_zoom_in, "ctrl+= ctrl++ ctrl+shift+= ctrl+shift++"
-    COMMAND zoom_out, "Zoom Out", cmd_zoom_out, "ctrl+-"
-    COMMAND zoom_reset, "Reset Zoom", cmd_zoom_reset, "ctrl+0"
+    COMMAND zoom_in, "Zoom In", cmd_zoom_in, "ctrl+= ctrl++ ctrl+shift+= ctrl+shift++ ctrl+KP_Add ctrl+KP_Equal"
+    COMMAND zoom_out, "Zoom Out", cmd_zoom_out, "ctrl+- ctrl+KP_Subtract"
+    COMMAND zoom_reset, "Reset Zoom", cmd_zoom_reset, "ctrl+0 ctrl+KP_0"
     COMMAND toggle_word_wrap, "Toggle Word Wrap", cmd_toggle_word_wrap, "alt+z"
     COMMAND toggle_whitespace, "Toggle Whitespace", cmd_toggle_whitespace, ""
     COMMAND toggle_line_numbers, "Toggle Line Numbers", cmd_toggle_line_numbers, ""

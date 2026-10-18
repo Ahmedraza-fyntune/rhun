@@ -17,4 +17,9 @@ print-window
 tap 900 20
 print-window
 print-state
+# the project menu opens on the release of a tap, and that frame's press is not a click outside it
+tap 60 20
+print-menu
+tap 1000 700
+print-menu
 quit

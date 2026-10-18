@@ -1,5 +1,6 @@
 name = JavaScript
 files = *.js *.mjs *.cjs *.jsx
+icon = javascript yellow
 first_line = node deno
 comment = //
 block = /* */

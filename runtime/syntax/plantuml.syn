@@ -1,5 +1,6 @@
 name = PlantUML
 files = *.puml *.plantuml *.pu *.iuml
+icon = code yellow
 comment = '
 block = /' '/
 string = "

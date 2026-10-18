@@ -1,5 +1,6 @@
 name = Go
 files = *.go
+icon = go2 cyan
 comment = //
 block = /* */
 region = ` ` string multiline

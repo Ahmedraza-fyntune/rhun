@@ -1,5 +1,6 @@
 name = Diff
 files = *.diff *.patch
+icon = git orange
 line = +++ heading
 line = --- heading
 line = @@ keyword

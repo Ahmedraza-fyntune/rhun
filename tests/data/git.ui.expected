@@ -53,7 +53,7 @@ Y
 <eod>
 tabs=3 active=crlf.txt (changes) line=1 col=1 sel=0 dirty=0 lang=none focus=0 theme=rhun-dark
 tabs=4 focus=0 theme=rhun-dark
-*  Uncommitted changes <
+*  Uncommitted changes 6 <
 *\ Merge feature (HEAD -> main)
 *| Six
 |* Feature work (feature)
@@ -67,7 +67,7 @@ tabs=4 focus=0 theme=rhun-dark
     M crlf.txt
     U new.txt
     U notes/
-*  Uncommitted changes
+*  Uncommitted changes 6
 *\ Merge feature (HEAD -> main)
 *| Six
 |* Feature work (feature)
@@ -85,7 +85,7 @@ int main(void)
 git on branch=main
 U new.txt
 U notes/
-*  Uncommitted changes
+*  Uncommitted changes 2
 *  Commit all (HEAD -> main)
 *\ Merge feature
 *| Six

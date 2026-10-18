@@ -153,8 +153,43 @@ function Choose-DefaultEditor {
             'ms-settings:defaultapps?registeredAppUser=rhun'
         } else { 'ms-settings:defaultapps' }
         Start-Process $uri
+        Set-TerminalEditor
     } else {
         Show-DefaultEditorCommand
+    }
+}
+
+# The editor programs such as git ask for: rhun.com, which keeps the console until rhun closes. Git's sh
+# reads it: forward slashes, and $ and ` escaped, so that the double quotes keep the path as it is.
+function Get-EditorValue {
+    $path = (Join-Path $InstallDir 'rhun.com').Replace('\', '/').Replace('$', '\$').Replace('`', '\`')
+    '"' + $path + '" --wait'
+}
+function Get-UserVariable([string]$Name) { [Environment]::GetEnvironmentVariable($Name, 'User') }
+function Set-UserVariable([string]$Name, $Value) { [Environment]::SetEnvironmentVariable($Name, $Value, 'User') }
+
+# Set-TerminalEditor: VISUAL and EDITOR for the user, so that git opens commit messages in rhun
+function Set-TerminalEditor {
+    $value = Get-EditorValue
+    if ($NoModifyPath) {
+        Write-Output "To edit commit messages in rhun, set VISUAL and EDITOR to: $value"
+        return
+    }
+    Set-UserVariable 'VISUAL' $value
+    Set-UserVariable 'EDITOR' $value
+    Write-Output 'Programs that ask for an editor, such as git, open rhun in new terminals (VISUAL and EDITOR).'
+    if ($env:GIT_EDITOR) { Write-Output "GIT_EDITOR ($env:GIT_EDITOR) still comes first for git." }
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $core = & git config --global --get core.editor 2>$null
+        if ($core) { Write-Output "git's core.editor ($core) still comes first; git config --global --unset core.editor uses rhun." }
+    }
+}
+
+# Remove-TerminalEditor: VISUAL and EDITOR, where they still name this installation
+function Remove-TerminalEditor {
+    $value = Get-EditorValue
+    foreach ($name in 'VISUAL', 'EDITOR') {
+        if ((Get-UserVariable $name) -eq $value) { Set-UserVariable $name $null }
     }
 }
 
@@ -172,7 +207,7 @@ function Show-DefaultEditorCommand {
         Write-Output '  Optional: default editor'
         Write-Output '  ========================'
     }
-    Write-Output 'To choose rhun as your default editor, run this command manually:'
+    Write-Output 'To choose rhun as your default editor, for files and for git, run this command manually:'
     if ($color) { Write-Host $command -ForegroundColor Green } else { Write-Output $command }
     Write-Output ''
 }
@@ -204,6 +239,16 @@ function File-Sha256([string]$Path) {
 
 # Removes a folder without following links: a junction is removed, never its target.
 function Remove-Folder([string]$Path) { [IO.Directory]::Delete($Path, $true) }
+
+# Just after the staged rhun.com ran, Windows or a scan can hold a file in the stage for a moment:
+# its move is retried for five seconds while it can still happen (the error does not say why).
+function Move-StagedFolder([string]$Path, [string]$Destination) {
+    for ($i = 1; ; $i++) {
+        try { Move-Item -LiteralPath $Path -Destination $Destination; return }
+        catch { if ($i -ge 20 -or (Test-Path -LiteralPath $Destination) -or -not (Test-Path -LiteralPath $Path)) { throw } }
+        Start-Sleep -Milliseconds 250
+    }
+}
 
 # Staged updates whose editor is gone (it quit or crashed before restarting, or its process ID now
 # belongs to another program), and interrupted downloads and swaps older than an hour.
@@ -368,6 +413,7 @@ foreach ($name in @('rhun.exe', 'rhun.com') | Where-Object { -not $PrepareUpdate
 
 if ($Uninstall) {
     Remove-FileAssociations
+    Remove-TerminalEditor
     if (Test-Path -LiteralPath $InstallDir) {
         foreach ($name in $knownFiles) {
             $file = Join-Path $InstallDir $name
@@ -437,7 +483,7 @@ try {
             Set-Content -LiteralPath (Join-Path $stage 'update.json') -Encoding UTF8
         # Stale stages are gone (Remove-StaleUpdates); one that appeared since is not ours to remove.
         if (Test-Path -LiteralPath $UpdateStage) { throw 'An update is already staged for this editor.' }
-        Move-Item -LiteralPath $stage -Destination $UpdateStage
+        Move-StagedFolder $stage $UpdateStage
         $stage = $null
         Write-Output 'The update is ready to install when rhun restarts.'
         return
@@ -450,7 +496,7 @@ try {
         Move-Item -LiteralPath $InstallDir -Destination $backup
     }
     try {
-        Move-Item -LiteralPath $stage -Destination $InstallDir
+        Move-StagedFolder $stage $InstallDir
         $stage = $null
     } catch {
         if ($backup -and -not (Test-Path -LiteralPath $InstallDir)) {

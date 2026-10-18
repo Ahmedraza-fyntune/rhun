@@ -27,7 +27,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-create-') as temporary:
     config = work / 'config/rhun/config'
     config.parent.mkdir(parents=True)
     config.write_text('[files]\nrestore_session = false\nrestore_project = false\n'
-                      '[updates]\ncheck = false\n[git]\nenabled = false\n[ui]\nagents_panel = false\n')
+                      '[updates]\ncheck = false\n[git]\nenabled = false\n[ui]\nagents_panel = false\n'
+                      # nothing draws frames by itself: a blinking cursor, a tooltip
+                      'tooltips = false\n[editor]\ncursor_blink = false\n')
     env = dict(os.environ, HOME=str(work), XDG_CONFIG_HOME=str(work / 'config'),
                XDG_STATE_HOME=str(work / 'state'))
 
@@ -84,6 +86,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-create-') as temporary:
     output = run([EMPTY, ITEM[2], 'cmd new_file', 'key ctrl+v', 'print-doc'])
     assert output.replace('\\', '/').rstrip('\n').removesuffix('<eod>').rstrip('\n').endswith('/' + project.name), output
     print('ok   explorer/empty-space-copy-path')
+
+    # A clicked item runs once the menu is drawn whole, and the frame without the menu follows at
+    # once: the menu stayed on screen, cut after Copy Path, until the pointer moved. (The wait lets the
+    # frames of startup pass first.)
+    output = run(['wait 300', EMPTY, ITEM[2], 'print-frames', 'wait 100', 'print-frames', 'print-menu'])
+    frames = [int(line[7:]) for line in output.splitlines() if line.startswith('frames=')]
+    assert frames[1] >= 1 and output.endswith('none\n'), output
+    print('ok   explorer/menu-click-redraws')
 
     # Rename and Delete never take the project folder from that menu.
     output = run([EMPTY, 'key Escape', 'cmd focus_explorer', 'cmd delete_file', 'print-state',

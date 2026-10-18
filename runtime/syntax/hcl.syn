@@ -1,5 +1,6 @@
 name = HCL
 files = *.tf *.tfvars *.hcl *.nomad
+icon = terraform purple
 comment = #
 comment = //
 block = /* */

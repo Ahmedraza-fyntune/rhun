@@ -1,5 +1,6 @@
 name = Kotlin
 files = *.kt *.kts
+icon = kotlin orange
 comment = //
 block = /* */
 mstring = """ \

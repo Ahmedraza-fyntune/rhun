@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 if os.name != 'nt':
@@ -23,6 +24,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def guess_type(self, path):
+        return 'application/octet-stream'  # as GitHub serves every release asset
+
 
 with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
     temp = Path(temporary)
@@ -31,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
     latest = temp / 'releases/latest/download'
     latest.mkdir(parents=True)
     (latest / 'VERSION').write_text(VERSION + '\n')
+    shutil.copyfile(ROOT / 'install.ps1', latest / 'install.ps1')
     shutil.copyfile(ROOT / 'build/windows' / ASSET, release / ASSET)
     digest = hashlib.sha256((release / ASSET).read_bytes()).hexdigest()
     checksums = release / 'SHA256SUMS'
@@ -51,15 +56,67 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         assert (result.returncode == 0) == success, result.stdout.decode(errors='replace')
         return result
 
+    def install_while_stage_held(*options, ready):
+        """install, with LICENSE in its staging folder held open from before the folder is to move into
+        place (ready: the file written just before that) until a second after, as Windows or a scan of
+        the staged rhun.com can right after it runs: the move waits for the file instead of failing"""
+        held = []
+
+        def hold():
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                stages = list(destination.parent.glob('.rhun-stage-*'))
+                try:
+                    handle = open(stages[0] / 'LICENSE', 'rb') if stages else None
+                except OSError:  # not extracted yet
+                    handle = None
+                if handle is None:
+                    time.sleep(0.005)
+                    continue
+                with handle:
+                    while not (stages[0] / ready).exists() and time.monotonic() < deadline:
+                        time.sleep(0.005)
+                    time.sleep(1)
+                    held.append(stages[0].exists())
+                return
+
+        holder = threading.Thread(target=hold, daemon=True)
+        holder.start()
+        result = install(*options)
+        holder.join(timeout=60)
+        assert held == [True], f'the staging folder was not held while it was to move: {held}'
+        return result
+
+    def paste(target):
+        """run the README's PowerShell command as pasted into PowerShell, plus options for a test install:
+        it fetches install.ps1 from the test server, which serves it as GitHub does"""
+        github = 'https://github.com/vshvedov/rhun/releases'
+        line = next(line for line in (ROOT / 'README.md').read_text(encoding='utf-8').splitlines()
+                    if line.startswith('powershell ') and github + '/latest/download/install.ps1' in line)
+        assert line.endswith('"'), line
+        options = f" -InstallDir '{target}' -ReleasesUrl '{url}' -NoModifyPath -NoShortcut -NoFileAssociations"
+        pasted = temp / 'pasted.ps1'
+        # with a BOM, as Windows PowerShell reads a script without one in the ANSI code page
+        pasted.write_text(line.replace(github, url)[:-1] + options + '"\nexit $LASTEXITCODE\n', encoding='utf-8-sig')
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(pasted)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+        assert result.returncode == 0, result.stdout.decode(errors='replace')
+
     def version():
         assert subprocess.check_output([str(destination / 'rhun.com'), '--version']).strip() == ('rhun ' + VERSION).encode()
 
     try:
+        documented = temp / 'documented' / 'rhun'
+        paste(documented)
+        assert subprocess.check_output([str(documented / 'rhun.com'), '--version']).strip() == ('rhun ' + VERSION).encode()
+        install('-Uninstall', target=documented)
+        assert not documented.exists()
+        print('ok   install/documented-command', flush=True)
         install()  # latest lookup and first install, including a Unicode destination
         version()
         assert (destination / '.rhun-install').is_file()
         assert 'file-associations: no' in (destination / '.rhun-install').read_text()
-        install('-Version', VERSION)
+        install_while_stage_held('-Version', VERSION, ready='.rhun-install')
         version()
         print('ok   install/latest-version-and-reinstall', flush=True)
         checksums.write_text(f'{"0" * 64}  {ASSET}\n')
@@ -111,7 +168,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
             install(*options, '-PrepareUpdate', success=False)
             assert not staged.exists()
             checksums.write_text(f'{digest}  {ASSET}\n')
-            install(*options, '-PrepareUpdate')
+            install_while_stage_held(*options, '-PrepareUpdate', ready='update.json')
             assert process.poll() is None
             assert (destination / 'rhun.exe').read_bytes() == old
             assert unrelated.read_bytes() == b'keep this'

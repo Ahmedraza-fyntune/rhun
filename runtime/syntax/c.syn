@@ -1,5 +1,6 @@
 name = C
 files = *.c *.h
+icon = c blue
 comment = //
 block = /* */
 string = " \

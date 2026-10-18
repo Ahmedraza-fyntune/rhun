@@ -42,6 +42,15 @@ static int test_open(const char *path, int flags, ...) {
 INTERPOSE(open);
 
 static ssize_t test_write(int fd, const void *buf, size_t len) {
+    const char *delay = getenv("RHUN_TEST_AGENT_DELAY_MS");
+    if (fd == STDOUT_FILENO && len >= 8 && delay && !memcmp(buf, "RAHPAGE3", 8)) {
+        const char *ready = getenv("RHUN_TEST_AGENT_READY");
+        if (ready) {
+            FILE *marker = fopen(ready, "w");
+            if (marker) { fputs("ready\n", marker); fclose(marker); }
+        }
+        usleep((useconds_t)atoi(delay) * 1000);
+    }
     if (fd == target_fd && fault("write")) return -1;
     if (fd == target_fd && fault("short-write") && len > 2) len = 2;
     return write(fd, buf, len);

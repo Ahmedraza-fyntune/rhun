@@ -28,9 +28,23 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
+    cmp qword ptr [rip + g_argc], 5
+    jb 1f
+    cmp qword ptr [rip + g_argc], 6
+    ja 1f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lagent_worker]
+    call strcmp_eq
+    test eax, eax
+    jz 1f
+    call agent_index_main
+    EPILOGUE
+1:
     call parse_args
     call detach
     call raster_init
+    call appearance_init
     call app_init
     cmp dword ptr [rip + opt_headless], 0
     jne .Lm_headless
@@ -54,6 +68,9 @@ FN main
 1:  call wl_connect
     test eax, eax
     jz 2f
+    # no XSETTINGS on Wayland: the system's mode from the other sources is final
+    mov edi, -1
+    call linux_xsettings
     lea rdi, [rip + .Ltitle]
     call wl_open_window
     jmp .Lm_open
@@ -86,6 +103,7 @@ FN main
     jmp .Lm_exit
 3:  call loop_run
 .Lm_exit:
+    call agents_shutdown
     call ai_shutdown
     call session_remember_project
     call session_save
@@ -100,6 +118,9 @@ FN main
 6:  xor eax, eax
     EPILOGUE
 
+.section .rodata
+.Lagent_worker: .asciz "--agent-index"
+.text
 parse_args:
     PROLOGUE
     mov r12, [rip + g_argv]
@@ -172,6 +193,37 @@ parse_args:
     jmp .Lpa_next
 .Lpa_done:
     EPILOGUE
+
+# appearance_init(): the system's dark mode before the first theme is chosen: from the platform,
+# which reports its changes later, or headless from RHUN_APPEARANCE (dark or light), for tests
+appearance_init:
+    PROLOGUE
+    cmp dword ptr [rip + opt_headless], 0
+    je 1f
+    lea rdi, [rip + .Lenv_appearance]
+    call getenv
+    test rax, rax
+    jz 9f
+    mov ecx, 1
+    cmp byte ptr [rax], 'd'
+    je 2f
+    mov ecx, 0
+    cmp byte ptr [rax], 'l'
+    je 2f
+    mov ecx, -1
+2:  mov [rip + g_sys_dark], ecx
+    jmp 9f
+1:
+.ifdef WINDOWS
+    call win_appearance_init
+.else
+.ifdef MACOS
+    call mac_appearance_init
+.else
+    call linux_appearance_init
+.endif
+.endif
+9:  EPILOGUE
 
 # detach(): started from a terminal, rhun goes on as a fresh copy in a session of its own that reads
 # and writes /dev/null, and this one exits: the shell gets its prompt back, and closing the terminal
@@ -389,8 +441,11 @@ open_initial:
     jnz 3f
     # With no paths, optionally reopen the last project; explicit paths always win.
     cmp qword ptr [rip + g_start_paths + VEC_len], 0
-    jne 3f                    # explicit files are ordinary tabs without a project
-    cmp dword ptr [rip + opt_empty], 0
+    je 20f
+    # explicit files are ordinary tabs without a project, and a quick edit: no explorer or agents
+    call app_hide_panels
+    jmp 3f
+20: cmp dword ptr [rip + opt_empty], 0
     jne 3f
     cmp dword ptr [rip + cfg_restore_project], 0
     je 21f
@@ -427,8 +482,8 @@ open_initial:
     cmp qword ptr [rip + g_tabs + VEC_len], 0
     jne 6f
     call session_restore
-6:  call app_update_title
-    mov dword ptr [rip + g_started], 1
+6:  mov dword ptr [rip + g_started], 1
+    call app_update_title
 .ifdef WINDOWS
     cmp dword ptr [rip + opt_headless], 0
     jne 7f
@@ -453,6 +508,7 @@ open_initial:
 .Ldevnull: .asciz "/dev/null"
 .Lself_exe: .asciz "/proc/self/exe"
 .Lenv_wayland: .asciz "WAYLAND_DISPLAY"
+.Lenv_appearance: .asciz "RHUN_APPEARANCE"
 .Lenv_display: .asciz "DISPLAY"
 .Lo_help: .asciz "--help"
 .Lo_h: .asciz "-h"

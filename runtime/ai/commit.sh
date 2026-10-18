@@ -126,6 +126,12 @@ install_local() {
 }
 pull_model() {
     printf '@Downloading %s: requesting model manifest...\n' "$model"
+    # mawk buffers pipe input even when the action flushes its output. Other awk
+    # implementations stream these lines without mawk's nonportable option.
+    set --
+    if awk -W version </dev/null 2>/dev/null | grep -q '^mawk '; then
+        set -- -W interactive
+    fi
     # Both clients stream NDJSON. Record transport status independently of awk.
     (
         code=0
@@ -137,7 +143,7 @@ pull_model() {
                 --post-data="{\"model\":\"$model\",\"stream\":true}" -O - "http://$OLLAMA_HOST/api/pull" || code=$?
         fi
         printf '%s' "$code" > "$work/pull-code"
-    ) | awk '
+    ) | awk "$@" '
         function number(key, value) {
             value = $0
             if (!match(value, "\"" key "\"[[:space:]]*:[[:space:]]*[0-9]+")) return 0

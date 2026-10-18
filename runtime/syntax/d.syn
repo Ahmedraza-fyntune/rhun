@@ -1,5 +1,6 @@
 name = D
 files = *.d *.di
+icon = d red
 comment = //
 block = /* */
 block = /+ +/

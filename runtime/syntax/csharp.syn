@@ -1,5 +1,6 @@
 name = C#
 files = *.cs *.csx
+icon = c-sharp blue
 comment = //
 block = /* */
 region = """" """" string multiline

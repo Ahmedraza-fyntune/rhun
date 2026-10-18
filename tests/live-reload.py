@@ -2,6 +2,7 @@
 """External writes reload open files, keep local edits, and briefly mark the affected code."""
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -105,6 +106,13 @@ class LiveReload(unittest.TestCase):
     def settle(self):
         self.command('wait 400')
 
+    def wait_document(self, expected, timeout=5):
+        # Disk events can arrive late on a loaded machine: wait for the reload, not a fixed time.
+        deadline = time.monotonic() + timeout
+        while self.document() != expected and time.monotonic() < deadline:
+            self.command('wait 50')
+        self.assertEqual(self.document(), expected)
+
     def shot(self, name):
         path = self.work / (name + '.ppm')
         self.command('shot ' + str(path))
@@ -126,8 +134,7 @@ class LiveReload(unittest.TestCase):
         for atomic in (False, True):
             text = 'changed atomically\n' if atomic else 'after café\n'
             self.external_write(text, atomic)
-            self.settle()
-            self.assertEqual(self.document(), text)
+            self.wait_document(text)
             self.assertIn('dirty=0', self.command('print-state'))
 
     def test_open_file_picker_reloads(self):
@@ -137,8 +144,7 @@ class LiveReload(unittest.TestCase):
         self.command('key Return')
         self.assertIn('active=watched.txt', self.command('print-state'))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_explorer_reloads(self):
         self.start()
@@ -146,8 +152,7 @@ class LiveReload(unittest.TestCase):
         self.command('click 120 94')
         self.assertIn('active=watched.txt', self.command('print-state'))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_save_as_in_new_directory_reloads(self):
         self.start()
@@ -159,8 +164,7 @@ class LiveReload(unittest.TestCase):
         self.command('key Return')
         self.assertTrue(target.exists())
         self.external_write(target=target)
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_reload_undo_and_redo_preserve_unchanged_text(self):
         before = 'first line\nold café\nlast line\n'
@@ -174,8 +178,7 @@ class LiveReload(unittest.TestCase):
         self.command('cmd undo')
         self.assertIn('dirty=0', self.command('print-state'))
         self.external_write(after)
-        self.settle()
-        self.assertEqual(self.document(), after)
+        self.wait_document(after)
         self.command('cmd undo')
         self.assertEqual(self.document(), before)
         self.command('cmd redo')
@@ -185,8 +188,7 @@ class LiveReload(unittest.TestCase):
     def test_command_line_reloads(self):
         self.start(self.file)
         self.external_write(atomic=True)
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_directory_alias_reloads(self):
         alias = self.work / 'alias'
@@ -194,8 +196,7 @@ class LiveReload(unittest.TestCase):
         self.start()
         self.command('open ' + str(alias / self.file.name))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_restored_session_reloads(self):
         self.start()
@@ -206,8 +207,7 @@ class LiveReload(unittest.TestCase):
         self.start()
         self.assertIn('active=watched.txt', self.command('print-state'))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_unsaved_edits_stay_and_warning_clears_on_revert(self):
         self.start()
@@ -236,8 +236,7 @@ class LiveReload(unittest.TestCase):
         warning = bytes.fromhex('f2c46f')
         self.assertGreater(self.warning_strip(self.shot('conflict')).count(warning), 100)
         self.command('cmd undo')
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
         self.assertIn('dirty=0', self.command('print-state'))
         self.assertEqual(self.warning_strip(self.shot('resolved')).count(warning), 0)
 
@@ -259,7 +258,7 @@ class LiveReload(unittest.TestCase):
         self.assertIn('active=other.txt', self.command('print-state'))
         self.assertEqual(self.document(), 'other\n')
         self.open_quick()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
 
     def test_burst_keeps_final_contents_and_cursor(self):
         self.start()
@@ -268,8 +267,7 @@ class LiveReload(unittest.TestCase):
         self.command('key Right')
         for index in range(20):
             self.external_write(f'change {index:02}\n', atomic=index % 2 == 0)
-        self.settle()
-        self.assertEqual(self.document(), 'change 19\n')
+        self.wait_document('change 19\n')
         self.assertIn('line=1 col=3', self.command('print-state'))
 
     def test_continuous_writes_update_before_the_writer_stops(self):
@@ -289,8 +287,7 @@ class LiveReload(unittest.TestCase):
             self.assertTrue(self.document().startswith('stream '))
         finally:
             writer.join(timeout=5)
-        self.settle()
-        self.assertEqual(self.document(), 'stream 19\n')
+        self.wait_document('stream 19\n')
 
     def test_changed_line_tint_leaves_neighboring_lines_alone(self):
         self.file.write_text('first\nbefore\nlast\n', encoding='utf-8')
@@ -298,7 +295,7 @@ class LiveReload(unittest.TestCase):
         self.open_quick()
         before = self.shot('before')
         self.external_write('first\nchanged\nlast\n')
-        self.settle()
+        self.wait_document('first\nchanged\nlast\n')
         after = self.shot('after')
         changed = (1000 * 108 + 700) * 3
         unchanged = (1000 * 130 + 700) * 3
@@ -313,13 +310,31 @@ class LiveReload(unittest.TestCase):
         self.start()
         self.open_quick()
         before = self.shot('before')
-        self.external_write('first\n' + 'x' * 100 + 'Y' + 'x' * 299 + '\nlast\n')
-        self.settle()
+        changed_text = 'first\n' + 'x' * 100 + 'Y' + 'x' * 299 + '\nlast\n'
+        self.external_write(changed_text)
+        self.wait_document(changed_text)
         after = self.shot('after')
         for y in (108, 130):
             # Sample the blank gutter, since opaque glyphs keep their color over the tint.
             pixel = (1000 * y + 10) * 3
             self.assertNotEqual(before[pixel:pixel + 3], after[pixel:pixel + 3])
+
+    def test_wrapped_view_follows_a_file_that_got_shorter(self):
+        # Without scrolling past the end, a wrapped view is clamped from its top line's rows: after
+        # the file shrinks below that line the view starts inside the new text
+        self.file.write_text(''.join(f'line {i}\n' for i in range(1, 401)), encoding='utf-8')
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text().replace(
+            '[editor]\n', '[editor]\nword_wrap = true\nscroll_past_end = false\n'))
+        self.start()
+        self.open_quick()
+        self.command('key ctrl+End')
+        self.assertNotIn(' y=0 ', self.command('print-scroll'))
+        self.external_write('one\ntwo\nthree\n')
+        self.wait_document('one\ntwo\nthree\n')
+        self.assertEqual(self.command('print-scroll'), 'x=0 y=0 max=0\n')
+        self.command('click 300 108')
+        self.assertIn(' line=2 ', self.command('print-state'))
 
     def test_editor_fades_without_popup_and_idle_stops_drawing(self):
         self.start()
@@ -327,7 +342,7 @@ class LiveReload(unittest.TestCase):
         baseline_image = self.shot('baseline')
         baseline = self.editor_edge(baseline_image)
         self.external_write()
-        self.settle()
+        self.wait_document('after café\n')
         pulse_image = self.shot('pulse')
         pulse = self.editor_edge(pulse_image)
         self.assertNotEqual(pulse, baseline)
@@ -365,8 +380,7 @@ class LiveReload(unittest.TestCase):
         self.start(self.file)
         baseline = self.shot('baseline')
         self.external_write('first\nchanged\nlast\n')
-        self.settle()
-        self.assertEqual(self.document(), 'first\nchanged\nlast\n')
+        self.wait_document('first\nchanged\nlast\n')
         changed = self.shot('changed')
         self.assertEqual(self.editor_edge(changed), self.editor_edge(baseline))
         pixel = (1000 * 108 + 700) * 3
@@ -380,12 +394,13 @@ class LiveReload(unittest.TestCase):
         baseline = self.editor_edge(self.shot('baseline'))
         self.external_write()
         self.command('wait 180')
+        self.wait_document('after café\n')
         self.assertNotEqual(self.editor_edge(self.shot('pulse')), baseline)
         self.set_animation(False)
         # A queued file reload must survive cancellation of the fade timer.
         self.external_write('second\n')
         self.command('wait 200')
-        self.assertEqual(self.document(), 'second\n')
+        self.wait_document('second\n')
         self.assertEqual(self.editor_edge(self.shot('disabled')), baseline)
         self.command('print-frames')
         self.command('wait 100')
@@ -395,7 +410,7 @@ class LiveReload(unittest.TestCase):
         self.assertEqual(self.editor_edge(self.shot('enabled')), baseline)
         self.external_write('third\n')
         self.command('wait 180')
-        self.assertEqual(self.document(), 'third\n')
+        self.wait_document('third\n')
         self.assertNotEqual(self.editor_edge(self.shot('new-pulse')), baseline)
 
     def test_disabled_animation_keeps_unsaved_edit_warning(self):
@@ -418,8 +433,8 @@ class LiveReload(unittest.TestCase):
         before = settings()
         self.command('cmd settings')
         self.command('move 500 350')
-        self.command('scroll 1200')
-        self.command('click 827 380')
+        self.command('scroll 1500')
+        self.command('click 827 480')
         self.command('quit')
         self.process.wait(timeout=5)
         after = settings()
@@ -427,7 +442,7 @@ class LiveReload(unittest.TestCase):
         moved = sorted(key for key in before if key in after and before[key] != after[key])
         self.assertEqual(after.get('animate_disk_changes'), expected, after)
         self.assertLessEqual(set(moved), {'animate_disk_changes'},
-                             f'the click at 827 380 toggled another setting: {moved}')
+                             f'the click at 827 296 toggled another setting: {moved}')
 
     def test_settings_switch_persists_and_controls_next_launch(self):
         self.start(self.file)
@@ -438,8 +453,7 @@ class LiveReload(unittest.TestCase):
         self.start(self.file)
         baseline = self.editor_edge(self.shot('baseline'))
         self.external_write()
-        self.settle()
-        self.assertEqual(self.document(), 'after café\n')
+        self.wait_document('after café\n')
         self.assertEqual(self.editor_edge(self.shot('changed')), baseline)
         self.toggle_animation_in_settings('true')
         self.assertIn('animate_disk_changes = true\n', config.read_text())
@@ -450,6 +464,155 @@ class LiveReload(unittest.TestCase):
         self.file.write_bytes(b'binary\x00data\n')
         self.settle()
         self.assertEqual(self.document(), 'before\n')
+
+    def test_symlink_reloads_when_the_file_it_leads_to_changes(self):
+        # the file is in another folder, under another name, behind a relative link and an absolute one
+        elsewhere = self.work / 'elsewhere'
+        elsewhere.mkdir()
+        real = elsewhere / 'real.txt'
+        real.write_text('before\n', encoding='utf-8')
+        (self.work / 'hop.txt').symlink_to(real)
+        link = self.project / 'link.txt'
+        link.symlink_to(Path('..') / 'hop.txt')
+        self.start(link)
+        self.assertIn('active=link.txt', self.command('print-state'))
+        self.external_write('written\n', target=real)
+        self.wait_document('written\n')
+        self.external_write('replaced\n', atomic=True, target=real)
+        self.wait_document('replaced\n')
+        self.assertTrue(link.is_symlink())
+        # the link itself pointed elsewhere, then that file written
+        other = elsewhere / 'other.txt'
+        other.write_text('other\n', encoding='utf-8')
+        relinked = self.project / 'relink.tmp'
+        relinked.symlink_to(other)
+        os.replace(relinked, link)
+        self.wait_document('other\n')
+        self.external_write('other changed\n', target=other)
+        self.wait_document('other changed\n')
+        # saving writes the file it leads to, and that is not a change from outside
+        self.command('type x')
+        self.command('cmd save')
+        self.settle()
+        self.assertEqual(other.read_text(encoding='utf-8'), 'xother changed\n')
+        self.assertIn('dirty=0', self.command('print-state'))
+
+    def test_symlink_chains_and_files_that_become_symlinks(self):
+        # link -> hop -> real: the symlink on the way pointed elsewhere is followed too
+        elsewhere = self.work / 'elsewhere'
+        elsewhere.mkdir()
+        real, other = elsewhere / 'real.txt', elsewhere / 'other.txt'
+        real.write_text('real\n', encoding='utf-8')
+        other.write_text('other\n', encoding='utf-8')
+        hops = self.work / 'hops'
+        hops.mkdir()
+        hop = hops / 'hop.txt'
+        hop.symlink_to(real)
+        link = self.project / 'link.txt'
+        link.symlink_to(hop)
+        plain = self.project / 'plain.txt'
+        plain.write_text('plain\n', encoding='utf-8')
+        self.start(link, plain)
+        self.command('cmd prev_tab')
+        self.assertIn('active=link.txt', self.command('print-state'))
+        swap = hops / 'swap.tmp'
+        swap.symlink_to(other)
+        os.replace(swap, hop)
+        self.wait_document('other\n')
+        self.external_write('other changed\n', target=other)
+        self.wait_document('other changed\n')
+        # replaced as ln -sf does it, removed and made again: the symlink on the way, then the link
+        hop.unlink()
+        hop.symlink_to(real)
+        self.wait_document('real\n')
+        link.unlink()
+        link.symlink_to(other)
+        self.wait_document('other changed\n')
+        link.unlink()
+        link.symlink_to(hop)
+        self.wait_document('real\n')
+        # an open file replaced by a symlink: the file it leads to is followed from then on
+        self.command('cmd next_tab')
+        self.assertIn('active=plain.txt', self.command('print-state'))
+        swap = self.project / 'swap.tmp'
+        swap.symlink_to(real)
+        os.replace(swap, plain)
+        self.wait_document('real\n')
+        self.external_write('real changed\n', target=real)
+        self.wait_document('real changed\n')
+
+    def test_reload_follows_a_folder_made_again(self):
+        sub = self.project / 'sub/deeper'
+        sub.mkdir(parents=True)
+        note = sub / 'note.txt'
+        note.write_text('before\n', encoding='utf-8')
+        self.start(note)
+        # the folder removed and made again at once, then the file written twice
+        note.unlink()
+        sub.rmdir()
+        sub.mkdir()
+        self.external_write('after\n', target=note)
+        self.wait_document('after\n')
+        self.external_write('again\n', target=note)
+        self.wait_document('again\n')
+        # two levels removed: the file waits while they are gone, and they come back one at a time
+        shutil.rmtree(self.project / 'sub')
+        self.settle()
+        self.assertEqual(self.document(), 'again\n')
+        (self.project / 'sub').mkdir()
+        self.settle()
+        sub.mkdir()
+        self.settle()
+        self.external_write('third\n', atomic=True, target=note)
+        self.wait_document('third\n')
+        self.external_write('fourth\n', target=note)
+        self.wait_document('fourth\n')
+        # all at once, the file written in the same moment
+        shutil.rmtree(self.project / 'sub')
+        sub.mkdir(parents=True)
+        self.external_write('fifth\n', target=note)
+        self.wait_document('fifth\n')
+        # its folder moved away and made again; then the old one moved back in its place
+        moved = self.project / 'sub/moved'
+        os.rename(sub, moved)
+        sub.mkdir()
+        self.external_write('sixth\n', target=note)
+        self.wait_document('sixth\n')
+        (moved / 'note.txt').write_text('moved\n', encoding='utf-8')
+        self.settle()
+        self.assertEqual(self.document(), 'sixth\n')
+        shutil.rmtree(sub)
+        os.rename(moved, sub)
+        self.wait_document('moved\n')
+        self.external_write('seventh\n', target=note)
+        self.wait_document('seventh\n')
+
+    def test_reload_follows_a_folder_moved_into_place(self):
+        # another folder holding the file renamed to its folder's path: nothing in a folder moved in
+        # is reported, only the folder itself (macOS reported nothing at all for a watched folder)
+        sub = self.project / 'sub'
+        sub.mkdir()
+        note = sub / 'note.txt'
+        note.write_text('before\n', encoding='utf-8')
+        other = self.project / 'other'
+        self.start(note)
+        text = 'before\n'
+        for index in range(4):
+            # over its emptied folder, after the file was found gone
+            other.mkdir()
+            (other / 'note.txt').write_text(f'over {index}\n', encoding='utf-8')
+            note.unlink()
+            self.settle()
+            self.assertEqual(self.document(), text)
+            os.rename(other, sub)
+            self.wait_document(f'over {index}\n')
+            # in place of its removed folder, at once
+            text = f'in place {index}\n'
+            other.mkdir()
+            (other / 'note.txt').write_text(text, encoding='utf-8')
+            shutil.rmtree(sub)
+            os.rename(other, sub)
+            self.wait_document(text)
 
 
 if __name__ == '__main__':
