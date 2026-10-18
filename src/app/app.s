@@ -39,6 +39,7 @@
 .p2align 3
 .globl g_focus, g_win_focused, g_tabs, g_tab_cur, g_project, g_project_name, g_branch
 g_focus: .long 0
+g_focus_prev: .long 0
 g_tabs: .zero VEC_SIZE
 g_project: .quad 0
 # the project is the folder of a file opened without one: it is not remembered as the last project
@@ -725,7 +726,13 @@ FN app_image
 FN app_activate_tab
     push rdi
     call vim_leave
-    pop rdi
+    cmp dword ptr [rip + cfg_auto_save], AUTOSAVE_ON_FOCUS_CHANGE
+    jne 1f
+    mov rdi, [rip + g_doc]
+    test rdi, rdi
+    jz 1f
+    call app_auto_save_doc
+1:  pop rdi
     mov rax, [rip + g_doc]
     push rax
     mov [rip + g_tab_cur], rdi
@@ -1801,6 +1808,162 @@ FN app_after_save
 2:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
+# app_after_auto_save(doc): re-detect language, config reload, explorer refresh (no toast)
+FN app_after_auto_save
+    PROLOGUE
+    mov rbx, rdi
+    cmp qword ptr [rbx + DOC_lang], 0
+    jne 1f
+    mov rdi, rbx
+    call app_detect_lang
+1:  call explorer_refresh
+    mov rdi, rbx
+    call git_doc_saved
+    call config_path
+    mov rdi, rax
+    mov rsi, [rbx + DOC_path]
+.ifdef WINDOWS
+    call win_path_equal
+.else
+    call strcmp_eq
+.endif
+    test eax, eax
+    jz 2f
+    call app_reload_config
+2:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# app_auto_save_doc(doc): save if modified, with a path, and not read-only
+FN app_auto_save_doc
+    PROLOGUE
+    mov rbx, rdi
+    test rbx, rbx
+    jz 9f
+    test dword ptr [rbx + DOC_flags], DF_READONLY
+    jnz 9f
+    cmp qword ptr [rbx + DOC_path], 0
+    je 9f
+    mov rdi, rbx
+    call doc_dirty
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    call doc_save
+    test rax, rax
+    js 9f
+    mov rdi, rbx
+    call app_after_auto_save
+9:  EPILOGUE
+
+# app_auto_save_all(): auto-save all open dirty tabs that have a file path
+FN app_auto_save_all
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov rdi, [rax + TAB_doc]
+    call app_auto_save_doc
+2:  inc rbx
+    jmp 1b
+9:  EPILOGUE
+
+# autosave_timeout() -> ms until next after_delay save, or -1
+FN autosave_timeout
+    PROLOGUE
+    cmp dword ptr [rip + cfg_auto_save], AUTOSAVE_AFTER_DELAY
+    jne .Lat_none
+    call time_ms
+    mov r12, rax
+    movsxd r14, dword ptr [rip + cfg_auto_save_delay]
+    mov r15, -1
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae .Lat_done
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov r13, [rax + TAB_doc]
+    test dword ptr [r13 + DOC_flags], DF_READONLY
+    jnz 2f
+    cmp qword ptr [r13 + DOC_path], 0
+    je 2f
+    mov rdi, r13
+    call doc_dirty
+    test eax, eax
+    jz 2f
+    mov rax, r12
+    sub rax, [r13 + DOC_lastedit]
+    cmp rax, r14
+    jge .Lat_zero
+    mov rcx, r14
+    sub rcx, rax
+    cmp r15, -1
+    je 3f
+    cmp rcx, r15
+    jge 2f
+3:  mov r15, rcx
+2:  inc rbx
+    jmp 1b
+.Lat_zero:
+    xor eax, eax
+    EPILOGUE
+.Lat_done:
+    mov eax, r15d
+    EPILOGUE
+.Lat_none:
+    mov eax, -1
+    EPILOGUE
+
+# autosave_tick(): handle after_delay auto-saving and focus-away transitions
+FN autosave_tick
+    PROLOGUE
+    mov eax, [rip + g_focus]
+    mov ecx, [rip + g_focus_prev]
+    mov [rip + g_focus_prev], eax
+    cmp ecx, FOCUS_EDITOR
+    jne .Last_delay
+    cmp eax, FOCUS_EDITOR
+    je .Last_delay
+    cmp dword ptr [rip + cfg_auto_save], AUTOSAVE_ON_FOCUS_CHANGE
+    jne .Last_delay
+    call app_auto_save_all
+.Last_delay:
+    cmp dword ptr [rip + cfg_auto_save], AUTOSAVE_AFTER_DELAY
+    jne 9f
+    call time_ms
+    mov r12, rax
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2f
+    mov r13, [rax + TAB_doc]
+    test dword ptr [r13 + DOC_flags], DF_READONLY
+    jnz 2f
+    cmp qword ptr [r13 + DOC_path], 0
+    je 2f
+    mov rdi, r13
+    call doc_dirty
+    test eax, eax
+    jz 2f
+    mov rax, r12
+    sub rax, [r13 + DOC_lastedit]
+    movsxd rcx, dword ptr [rip + cfg_auto_save_delay]
+    cmp rax, rcx
+    jl 2f
+    mov rdi, r13
+    call app_auto_save_doc
+2:  inc rbx
+    jmp 1b
+9:  EPILOGUE
+
 FN cmd_save_as
     READONLY_RET
     lea rdi, [rip + .Lsave_as]
@@ -2009,6 +2172,13 @@ FN app_on_focus
     call time_ms
     mov [rip + g_blink_t0], rax
     pop rdi
+    jmp 2f
+1:  cmp dword ptr [rip + cfg_auto_save], AUTOSAVE_ON_WINDOW_CHANGE
+    je 11f
+    cmp dword ptr [rip + cfg_auto_save], AUTOSAVE_ON_FOCUS_CHANGE
+    jne 2f
+11: call app_auto_save_all
+2:  call ed_touch
     mov dword ptr [rip + g_dirty], 1
     ret
 
@@ -2427,6 +2597,7 @@ FN app_timeout
     cmp eax, ebx
     jge 7f
 71: mov ebx, eax
+7:  call autosave_timeout
 7:  call palette_timeout
     cmp eax, -1
     je 8f
@@ -2435,6 +2606,7 @@ FN app_timeout
     cmp eax, ebx
     jge 8f
 81: mov ebx, eax
+8:  mov eax, ebx
 8:  call editor_timeout
     cmp eax, -1
     je 82f
@@ -2481,6 +2653,7 @@ FN app_tick
     call git_tick
     call update_tick
     call ai_tick
+    call autosave_tick
     call palette_tick
     call editor_tick
     EPILOGUE

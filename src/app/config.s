@@ -14,8 +14,11 @@
 .globl cfg_agents_claude, cfg_agents_codex, cfg_agents_grok, cfg_agents_opencode
 .globl cfg_vim
 .globl cfg_restore_project
+.globl cfg_auto_save, cfg_auto_save_delay
 .globl cfg_follow_system, cfg_dark_theme, cfg_light_theme, cfg_theme_keys
 cfg_restore_project: .long 1
+cfg_auto_save: .long 0
+cfg_auto_save_delay: .long 1000
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
 cfg_line_height: .long 150
@@ -826,6 +829,8 @@ g_settings:
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
     SETTING .Ls_files, restore_session, ST_BOOL, cfg_restore_session, 0, 1, 1, 0, "Restore open files", "Reopen the files from the last session of a project."
     SETTING .Ls_files, restore_project, ST_BOOL, cfg_restore_project, 0, 1, 1, 0, "Reopen last project", "Reopen the project you closed with when no file or folder is given."
+    SETTING .Ls_files, auto_save, ST_CHOICE, cfg_auto_save, 0, 3, 1, 0, "Auto save", "Automatically save modified files.", .Lautosave_opts
+    SETTING .Ls_files, auto_save_delay, ST_INT, cfg_auto_save_delay, 200, 60000, 100, 0, "Auto save delay", "Delay in milliseconds before saving modified files."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
     SETTING .Ls_agents, claude, ST_BOOL, cfg_agents_claude, 0, 1, 1, 0, "Claude Code", "Show Claude Code sessions in the agents panel."
     SETTING .Ls_agents, codex, ST_BOOL, cfg_agents_codex, 0, 1, 1, 0, "Codex", "Show Codex sessions in the agents panel."
@@ -850,3 +855,4 @@ g_settings:
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"
 .Lai_opts: .asciz "off", "Off", "claude", "Claude Code", "codex", "Codex", "ollama", "Local (Ollama)", ""
 .Lai_setup: .asciz "Local model files"
+.Lautosave_opts: .asciz "off", "Off", "after_delay", "After Delay", "on_focus_change", "On Focus Change", "on_window_change", "On Window Change", ""
