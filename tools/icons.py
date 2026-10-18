@@ -75,6 +75,10 @@ with open(os.path.join(root, 'assets/icons/files/contours.json')) as source:
 # Keep the existing embedded icon numbers stable when adding a provider.
 ICONS.append(('OPENCODE', [('F', len(points), *[v for point in points for v in point])
                           for points in providers['OPENCODE']]))
+# drawn icons added later go last too: a pinned tab's pin, its head, flared foot and needle
+ICONS.append(('PIN', [('W', 10)] + line([(40, 14), (88, 14)])
+                     + line([(50, 14), (50, 54), (30, 76), (30, 84), (98, 84), (98, 76), (78, 54), (78, 14)])
+                     + [('M', 64, 84), ('L', 64, 118)]))
 # icon_mask keys its cache by icon | size << 8
 assert len(ICONS) <= 256, len(ICONS)
 # the color names of file icons, in the order of their theme slots from T_ICON (src/app/theme.s)

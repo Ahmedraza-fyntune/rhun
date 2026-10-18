@@ -36,6 +36,7 @@ check versions build/update_test tests/data/versions.txt
 python3 tests/mac-package.py || fail=1
 python3 tests/install-command.py || fail=1
 check paths build/path_test tests/data/paths.txt
+check urls build/url_test tests/data/urls.txt
 check grammars env HOME=/nonexistent XDG_CONFIG_HOME=tests/data/config build/grammar_test tests/data/detect.txt tests/data/samples
 dups=$(grep -h '^files' runtime/syntax/*.syn | sed 's/^files *= *//' | tr ' ' '\n' | grep -v '^$' | sort | uniq -d)
 if [ -z "$dups" ]; then echo "ok   grammar-patterns"; else echo "FAIL grammar-patterns: $dups"; fail=1; fi
@@ -46,6 +47,8 @@ python3 tests/palette-scroll.py || fail=1
 python3 tests/commit-wrap.py || fail=1
 python3 tests/git-reset.py || fail=1
 python3 tests/git-untracked.py || fail=1
+python3 tests/git-fsmonitor.py || fail=1
+python3 tests/git-trust.py || fail=1
 python3 tests/live-reload.py || fail=1
 python3 tests/tooltips.py || fail=1
 python3 tests/terminal-tabs.py || fail=1
@@ -82,6 +85,8 @@ python3 tests/splitter.py || fail=1
 python3 tests/scroll-sensitivity.py || fail=1
 python3 tests/window-focus.py || fail=1
 python3 tests/new-tab.py || fail=1
+python3 tests/tab-drag.py || fail=1
+python3 tests/tab-pin.py || fail=1
 python3 tests/tab-view.py || fail=1
 python3 tests/terminal-font.py || fail=1
 python3 tests/shift-wheel.py || fail=1

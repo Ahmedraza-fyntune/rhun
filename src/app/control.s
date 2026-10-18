@@ -773,7 +773,8 @@ c_print_project:
     xor eax, eax
     ret
 
-# print-tabs: "tabs=a | *b | c", the tab strip in order with the active tab starred
+# print-tabs: "tabs=^a | *b | c", the tab strip in order with pinned tabs marked ^ and the active tab
+#   starred
 c_print_tabs:
     PROLOGUE
     lea rdi, [rip + out]
@@ -787,7 +788,14 @@ c_print_tabs:
     lea rdi, [rip + out]
     lea rsi, [rip + .Ls_bar]
     call sb_push_cstr
-2:  cmp rbx, [rip + g_tab_cur]
+2:  mov rdi, rbx
+    call tab_pinned
+    test eax, eax
+    jz 21f
+    lea rdi, [rip + out]
+    mov esi, '^'
+    call sb_push_byte
+21: cmp rbx, [rip + g_tab_cur]
     jne 3f
     lea rdi, [rip + out]
     mov esi, '*'

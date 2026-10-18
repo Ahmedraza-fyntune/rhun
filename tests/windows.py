@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
         for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity',
                      'file-launch', 'readonly-save', 'field-blink', 'window-focus',
-                     'new-tab', 'tab-view', 'settings-search'):
+                     'new-tab', 'tab-view', 'tab-drag', 'tab-pin', 'settings-search'):
             check('ui/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
@@ -173,6 +173,18 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         equal(run('path_test.exe', winpath(source)).stdout,
               b'C:/\nC:/\nC:/b\nC:/b\n//server/share/\n//server/share/b\n//server/share/\nC:/a/c\nrelative/../path\n')
     check('paths/drive-and-unc', roots)
+
+    def links():
+        # rhun://file/ links name a drive as /C:/ (as vscode://file/c:/), which is the path C:/; a UNC
+        # path (//server/share) is refused, as a page would have Windows reach a server it names
+        source = temp / 'links.txt'
+        links = ['rhun://file/C:/work/app/main.c:10:2', 'rhun://file/c:/Program%20Files/a.txt',
+                 'rhun://file//server/share/a.txt:3', 'rhun://file/%5C%5Cserver/share/a.txt',
+                 'rhun://file/C:', 'rhun://other/C:/a']
+        source.write_text('\n'.join(links) + '\n', encoding='utf-8', newline='\n')
+        equal(run('url_test.exe', winpath(source)).stdout,
+              b'C:/work/app/main.c 10 2\nc:/Program Files/a.txt 0 0\nbad\nbad\nC: 0 0\nbad\n')
+    check('paths/rhun-links', links)
 
     def files():
         folder = temp / 'spaces café 日本'

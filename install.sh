@@ -10,6 +10,8 @@
 #                           when that is not writable)
 #   --no-modify-path        leave shell startup files alone (by default every shell the user has
 #                           gets rhun's folder on PATH: zsh, bash, sh, fish, nushell, tcsh)
+#   --no-url-scheme         Linux: do not open rhun://file/ links in rhun (by default a hidden desktop
+#                           entry handles them; on macOS the app itself declares the scheme)
 #   --make-default          with --configure-files: use rhun for text, source and configuration files,
 #                           and as the editor programs such as git ask for (VISUAL and EDITOR)
 #   --no-make-default       accepted for compatibility; installation never prompts for defaults
@@ -71,6 +73,7 @@ usage: install.sh [options]   (curl -fsSL .../install.sh | sh -s -- [options])
   --prefix DIR            Linux: install under DIR (default ~/.local)
   --app-dir DIR           macOS: where rhun.app goes (default /Applications)
   --no-modify-path        leave shell startup files alone
+  --no-url-scheme         Linux: do not open rhun://file/ links in rhun
   --configure-files       configure an existing installation without downloading it
                           add --make-default to make rhun the default editor manually
                           (files, and VISUAL and EDITOR for git and the like)
@@ -218,6 +221,19 @@ place_desktop() {
     exe=$(printf '%s' "$exe" | sed 's/[&|\\]/\\&/g')
     sed "s|^Exec=rhun |Exec=$exe |" "$src/share/applications/rhun.desktop" > "$apps/.rhun.desktop.new"
     mv -f "$apps/.rhun.desktop.new" "$apps/rhun.desktop"
+    # rhun://file/ links: an entry of their own, not in menus, as its Exec takes a URL (%u), not files
+    # (%F). --no-url-scheme leaves one with Hidden=true, which desktops read as no entry at all, so
+    # that updates keep the choice (and add the handler to installations from before it); installing
+    # again without the option brings it back.
+    url_handler=$src/share/applications/rhun-url-handler.desktop
+    if [ -f "$url_handler" ]; then
+        if [ "$url_scheme" = no ]; then
+            printf '[Desktop Entry]\nType=Application\nName=rhun\nHidden=true\n' > "$apps/rhun-url-handler.desktop"
+        elif [ "$mode" = install ] || ! grep -qx 'Hidden=true' "$apps/rhun-url-handler.desktop" 2>/dev/null; then
+            sed "s|^Exec=rhun |Exec=$exe |" "$url_handler" > "$apps/.rhun-url-handler.desktop.new"
+            mv -f "$apps/.rhun-url-handler.desktop.new" "$apps/rhun-url-handler.desktop"
+        fi
+    fi
     for d in scalable 256x256 512x512; do
         for f in "$src/share/icons/hicolor/$d/apps"/rhun.*; do
             if [ -f "$f" ]; then
@@ -227,6 +243,31 @@ place_desktop() {
         done
     done
     refresh_desktop "$1"
+}
+
+# desktop_visible PREFIX: the desktop finds PREFIX's entries: xdg-mime resolves desktop IDs through
+# XDG_DATA_HOME and XDG_DATA_DIRS, and a custom prefix must be among them for the desktop too, not just
+# for this process
+desktop_visible() {
+    data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+    [ "$1/share" = "$data_home" ] && return 0
+    old_ifs=$IFS; IFS=:
+    for data_dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+        if [ "$1/share" = "$data_dir" ]; then IFS=$old_ifs; return 0; fi
+    done
+    IFS=$old_ifs
+    return 1
+}
+
+# register_url_scheme PREFIX: rhun opens rhun://file/ links, through the handler place_desktop put
+# there, unless another program was chosen for them (or the desktop cannot see that entry)
+register_url_scheme() {
+    h=$1/share/applications/rhun-url-handler.desktop
+    [ -f "$h" ] && ! grep -qx 'Hidden=true' "$h" || return 0
+    have xdg-mime && desktop_visible "$1" || return 0
+    current=$(xdg-mime query default x-scheme-handler/rhun 2>/dev/null || true)
+    case $current in '' | rhun-url-handler.desktop) ;; *) return 0 ;; esac
+    xdg-mime default rhun-url-handler.desktop x-scheme-handler/rhun 2>/dev/null || true
 }
 
 # refresh_desktop PREFIX: menus and icon caches of whatever desktop there is
@@ -326,17 +367,7 @@ set_file_defaults() {
             say 'Default editor was not changed: install xdg-utils or choose rhun in your desktop settings'
             return 0
         fi
-        # xdg-mime resolves desktop IDs through XDG_DATA_HOME and XDG_DATA_DIRS.
-        # Custom prefixes must be visible to the desktop too, not just to this process.
-        data_home=${XDG_DATA_HOME:-$HOME/.local/share}
-        visible=no
-        [ "$prefix/share" = "$data_home" ] && visible=yes
-        old_ifs=$IFS; IFS=:
-        for data_dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
-            [ "$prefix/share" = "$data_dir" ] && visible=yes
-        done
-        IFS=$old_ifs
-        if [ "$visible" = no ]; then
+        if ! desktop_visible "$prefix"; then
             say "Default editor was not changed: add $prefix/share to your desktop's XDG_DATA_DIRS first"
             return 0
         fi
@@ -637,6 +668,7 @@ install_fresh() {
         say 'Installing binary and desktop entry'
         place_binary "$prefix/bin/rhun"
         place_desktop "$prefix" "$prefix/bin/rhun"
+        register_url_scheme "$prefix"
         add_path "$prefix/bin"
         installed "$prefix"
         say "start it from your applications, or run: rhun [folder]"
@@ -669,6 +701,7 @@ update() {
         prefix=$(dirname "$dir")
         if [ -f "$prefix/share/applications/rhun.desktop" ] && [ -w "$prefix/share/applications" ]; then
             place_desktop "$prefix" "$target"
+            register_url_scheme "$prefix"
         fi
     else
         unpack_mac
@@ -679,7 +712,8 @@ update() {
 uninstall() {
     if [ "$os" = linux ]; then
         prefix=${prefix:-$HOME/.local}
-        rm -f "$prefix/bin/rhun" "$prefix/share/applications/rhun.desktop"
+        rm -f "$prefix/bin/rhun" "$prefix/share/applications/rhun.desktop" \
+            "$prefix/share/applications/rhun-url-handler.desktop"
         for d in scalable/apps/rhun.svg 256x256/apps/rhun.png 512x512/apps/rhun.png; do
             rm -f "$prefix/share/icons/hicolor/$d"
         done
@@ -713,6 +747,7 @@ uninstall() {
 
 main() {
     version='' prefix='' appdir='' modify_path=1 mode=install target='' quiet='' make_default=no
+    url_scheme=yes
     output_style
     while [ $# -gt 0 ]; do
         case $1 in
@@ -720,6 +755,7 @@ main() {
         --prefix) prefix=${2:-}; shift ;;
         --app-dir) appdir=${2:-}; shift ;;
         --no-modify-path) modify_path= ;;
+        --no-url-scheme) url_scheme=no ;;
         --make-default) make_default=yes ;;
         --no-make-default) make_default=no ;;
         --configure-files) mode=configure ;;

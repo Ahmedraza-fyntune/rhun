@@ -316,7 +316,11 @@ FN file_read_all
 FN file_read_all_extra
     PROLOGUE
     mov r15, rsi
-    call file_open_read
+    # without blocking: opening a FIFO to read waits for a writer (a repository's .git/HEAD can be
+    # one, and a rhun:// link opens a repository); the regular-file check below then refuses it
+    mov esi, O_RDONLY | O_CLOEXEC | O_NONBLOCK
+    xor edx, edx
+    SYS SYS_open
     test rax, rax
     js .Lfr_fail
     mov ebx, eax
@@ -326,8 +330,11 @@ FN file_read_all_extra
     js .Lfr_close_fail
     mov ecx, [rip + stat_buf + 24]
     and ecx, 0xf000
-    cmp ecx, 0x4000             # a directory can report size zero, so read would never reject it
-    jne 1f
+    cmp ecx, 0x8000
+    je 1f
+    mov rax, -22               # EINVAL: a FIFO, a device or a socket would never end
+    cmp ecx, 0x4000            # a directory can report size zero, so read would never reject it
+    jne .Lfr_close_fail
     mov rax, -21               # EISDIR
     jmp .Lfr_close_fail
 1:
