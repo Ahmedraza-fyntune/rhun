@@ -1,5 +1,6 @@
 name = C++
 files = *.cpp *.cc *.cxx *.hpp *.hh *.hxx *.ipp *.tpp *.cppm *.ixx
+icon = cpp blue
 comment = //
 block = /* */
 region = R"( )" string multiline

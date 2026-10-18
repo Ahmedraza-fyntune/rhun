@@ -1,5 +1,6 @@
 name = ERB
 files = *.erb *.rhtml
+icon = html_erb red
 block = <!-- -->
 string = "
 string = '

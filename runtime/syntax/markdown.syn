@@ -1,5 +1,6 @@
 name = Markdown
 files = *.md *.markdown *.mdx README CHANGELOG
+icon = markdown blue
 region = ``` ``` string multiline bol
 region = ~~~ ~~~ string multiline bol
 region = ` ` string

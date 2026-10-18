@@ -1,5 +1,6 @@
 name = AWK
 files = *.awk
+icon = shell yellow
 first_line = awk gawk mawk
 comment = #
 string = " \

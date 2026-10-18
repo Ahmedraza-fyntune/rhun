@@ -1,5 +1,6 @@
 name = Lean
 files = *.lean
+icon = code white
 comment = --
 block = /- -/
 string = " \

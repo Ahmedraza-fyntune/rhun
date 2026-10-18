@@ -8,7 +8,6 @@
 .equ TAG_hmtx, 0x78746d68
 .equ TAG_loca, 0x61636f6c
 .equ TAG_maxp, 0x7078616d
-.equ TAG_OS2, 0x322f534f
 
 .equ MAXPTS, 8192
 .equ MAXCONT, 1024
@@ -95,15 +94,6 @@ FN font_load
     mov [rbx + FONT_linegap], r8d
     LDBE16 r8d, r8w, [rdx + 34]
     mov [rbx + FONT_nhmetrics], r8d
-1:  cmp eax, TAG_OS2
-    jne 1f
-    LDBE32 r9d, [r14 + 12]
-    cmp r9d, 90
-    jb 1f
-    LDBE16S r8d, r8w, [rdx + 86]
-    mov [rbx + FONT_xheight], r8d
-    LDBE16S r8d, r8w, [rdx + 88]
-    mov [rbx + FONT_capheight], r8d
 1:  add r14, 16
     dec ecx
     jmp .Lfl_tab

@@ -4,7 +4,7 @@
 .bss
 .p2align 3
 .globl g_mt, g_s, g_mx, g_my, g_mdown, g_pressed, g_released, g_scroll_x, g_scroll_y
-.globl g_hot, g_active, g_cursor, g_block, g_clicks, g_face_ui, g_face_small, g_face_big, g_face_code
+.globl g_hot, g_active, g_cursor, g_block, g_clicks, g_press_x, g_face_ui, g_face_small, g_face_big, g_face_code
 .globl g_hole
 g_mt: .zero 4 * MI_COUNT
 g_s: .long 0                    # float scale
@@ -23,8 +23,7 @@ g_clicks: .long 0               # click count of the last press (1..3)
 last_press_t: .quad 0
 last_press_x: .long 0
 last_press_y: .long 0
-g_press_x: .long 0
-g_press_y: .long 0
+g_press_x: .long 0              # where the left button went down last
 held_mx: .long 0                # a pointer move waiting for the frame of a press
 held_my: .long 0
 held_move: .long 0
@@ -42,9 +41,10 @@ g_face_huge: .zero FACE_SIZE
 last_scale: .long 0
 last_code_px: .long 0
 last_ui_px: .long 0
-.globl g_font_code, g_font_ui
+.globl g_font_code, g_font_ui, g_font_term
 g_font_code: .quad 0
 g_font_ui: .quad 0
+g_font_term: .quad 0            # the terminal's own font, or 0 for the editor's
 .globl g_lh, g_cw, g_base
 g_lh: .long 0                   # editor line height
 g_cw: .long 0                   # editor cell width
@@ -196,8 +196,6 @@ FN ui_input_button
     # multi-click detection
     mov eax, [rip + g_mx]
     mov [rip + g_press_x], eax
-    mov eax, [rip + g_my]
-    mov [rip + g_press_y], eax
     call time_ms
     mov rcx, rax
     sub rcx, [rip + last_press_t]
@@ -253,7 +251,13 @@ FN ui_begin
     ret
 
 FN ui_end
-    # clear active when left button is up
+    # handlers ran for a press or a release during this frame, after part of it was drawn (a panel
+    # hidden, a field given the keyboard): another frame shows what they changed
+    mov eax, [rip + g_pressed]
+    or eax, [rip + g_released]
+    jz 0f
+    mov dword ptr [rip + g_dirty], 1
+0:  # clear active when left button is up
     test dword ptr [rip + g_mdown], 1 << BTN_LEFT
     jnz 1f
     mov dword ptr [rip + g_active], 0
@@ -1482,7 +1486,7 @@ FN ui_textfield
     push rax
     call ui_text_v
     add rsp, 16
-7:  # caret
+7:  # caret, blinking as the editor's
     cmp dword ptr [rsp + 16], 0
     je 8f
     lea rdi, [rip + g_face_ui]
@@ -1495,8 +1499,7 @@ FN ui_textfield
     M edx, MI_2
     mov ecx, [rsp + 12]
     sub ecx, [rip + g_mt + 4*MI_12]
-    COLOR r8d, T_CURSOR
-    call gfx_fill
+    call ed_caret_draw
 8:  call gfx_clip_pop
     mov eax, [rsp + 20]
     EPILOGUE
@@ -2052,8 +2055,7 @@ FN ui_textarea
     add edi, [rsp + 52]
     M edx, MI_2
     mov ecx, [rsp + 32]
-    COLOR r8d, T_CURSOR
-    call gfx_fill
+    call ed_caret_draw           # blinking as the editor's
 9:  call gfx_clip_pop
     mov eax, [rsp + 20]
     EPILOGUE

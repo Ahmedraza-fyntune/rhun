@@ -1,5 +1,6 @@
 name = GLSL
 files = *.glsl *.vert *.frag *.geom *.comp *.tesc *.tese *.hlsl *.wgsl *.metal
+icon = code cyan
 comment = //
 block = /* */
 prefix = #p @a

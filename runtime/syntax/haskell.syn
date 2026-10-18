@@ -1,5 +1,6 @@
 name = Haskell
 files = *.hs *.lhs
+icon = haskell purple
 region = {- -} comment multiline
 comment = --
 string = " \

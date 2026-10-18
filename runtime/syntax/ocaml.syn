@@ -1,5 +1,6 @@
 name = OCaml
 files = *.ml *.mli *.mly *.mll
+icon = ocaml orange
 region = (* *) comment multiline
 string = " \
 captypes = yes

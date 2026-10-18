@@ -2,7 +2,7 @@
 #   key ctrl+s | type text | click x y [right|middle|shift|ctrl] | tap x y | move x y | down | up | scroll dy [ctrl]
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
-#   print-menu
+#   print-menu | focus out|in
 .include "rhun.inc"
 
 .bss
@@ -147,6 +147,7 @@ FN control_exec
 2:  call [r15 + 8]
     push rax
     push rax
+    call term_frame_now         # a command ends with a frame that shows all output so far
     call flush_frame
     pop rax
     pop rax
@@ -439,6 +440,7 @@ c_print_shape:
     xor eax, eax
     ret
 
+# scroll dy [mods]: the wheel, with modifiers held as a key combination names them (ctrl, shift+alt)
 c_scroll:
     call next_int
     push rax
@@ -447,16 +449,10 @@ c_scroll:
     xor ecx, ecx
     test rdx, rdx
     jz 1f
-    mov ecx, MOD_CTRL
-    cmp rdx, 3
-    jne 1f
-    cmp byte ptr [rax], 'a'
-    jne 1f
-    cmp byte ptr [rax + 1], 'l'
-    jne 1f
-    cmp byte ptr [rax + 2], 't'
-    jne 1f
-    mov ecx, MOD_ALT
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_combo
+    mov ecx, edx
 1:  pop rax
     pop rax
     xor edi, edi
@@ -473,6 +469,13 @@ c_scroll_x:
     xor esi, esi
     xor edx, edx
     call app_on_scroll
+    xor eax, eax
+    ret
+
+# print-settings: the rows the settings page shows, "section.key" each
+c_print_settings:
+    lea rdi, [rip + out]
+    call settings_dump
     xor eax, eax
     ret
 
@@ -770,6 +773,137 @@ c_print_project:
     xor eax, eax
     ret
 
+# print-tabs: "tabs=a | *b | c", the tab strip in order with the active tab starred
+c_print_tabs:
+    PROLOGUE
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_tabs]
+    call sb_push_cstr
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 4f
+    test rbx, rbx
+    jz 2f
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_bar]
+    call sb_push_cstr
+2:  cmp rbx, [rip + g_tab_cur]
+    jne 3f
+    lea rdi, [rip + out]
+    mov esi, '*'
+    call sb_push_byte
+3:  mov rdi, rbx
+    call app_tab_label
+    lea rdi, [rip + out]
+    mov rsi, rax
+    call sb_push_cstr
+    inc rbx
+    jmp 1b
+4:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+
+# print-panels: whether this window shows the explorer, the agents panel and the terminal
+c_print_panels:
+    push rbx
+    lea rbx, [rip + panel_rows]
+1:  mov rsi, [rbx]
+    test rsi, rsi
+    jz 2f
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    mov rax, [rbx + 8]
+    lea rdi, [rip + out]
+    mov esi, [rax]
+    call sb_push_u64
+    add rbx, 16
+    jmp 1b
+2:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    xor eax, eax
+    ret
+
+# focus out|in: the window loses or gets the keyboard, as a platform reports it
+c_focus:
+    call next_arg
+    xor edi, edi
+    test rdx, rdx
+    jz 1f
+    cmp byte ptr [rax], 'i'
+    jne 1f
+    mov edi, 1
+1:  call app_on_focus
+    xor eax, eax
+    ret
+
+# appearance dark|light|unknown: the system's dark mode changes, as a platform reports it
+c_appearance:
+    call next_arg
+    mov edi, -1
+    test rdx, rdx
+    jz 1f
+    cmp byte ptr [rax], 'u'
+    je 1f
+    xor edi, edi
+    cmp byte ptr [rax], 'l'
+    je 1f
+    mov edi, 1
+1:  call theme_system_changed
+    xor eax, eax
+    ret
+
+# print-appearance: the system's mode, follow_system, the three theme settings and the theme shown
+c_print_appearance:
+    push rbx
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_system]
+    call sb_push_cstr
+    lea rsi, [rip + .Ls_unknown]
+    lea rax, [rip + .Ls_dark]
+    lea rcx, [rip + .Ls_light]
+    mov edx, [rip + g_sys_dark]
+    cmp edx, 1
+    cmove rsi, rax
+    test edx, edx
+    cmovz rsi, rcx
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_follow]
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, [rip + cfg_follow_system]
+    call sb_push_u64
+    lea rbx, [rip + appearance_rows]
+1:  mov rsi, [rbx]
+    test rsi, rsi
+    jz 2f
+    lea rdi, [rip + out]
+    call sb_push_cstr
+    mov rax, [rbx + 8]
+    lea rdi, [rip + out]
+    mov rsi, [rax]
+    call sb_push_cstr
+    add rbx, 16
+    jmp 1b
+2:  lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_shown]
+    call sb_push_cstr
+    call theme_current_id
+    lea rdi, [rip + out]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    xor eax, eax
+    ret
+
 # print-palette: the palette's field and rows
 c_print_palette:
     lea rdi, [rip + out]
@@ -788,6 +922,23 @@ c_print_menu:
 c_print_tip:
     lea rdi, [rip + out]
     call tip_print
+    xor eax, eax
+    ret
+
+# print-toast: the message on screen, "toast=" when there is none
+c_print_toast:
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_toast]
+    call sb_push_cstr
+    call time_ms
+    cmp rax, [rip + g_toast_until]
+    jae 1f
+    lea rdi, [rip + out]
+    lea rsi, [rip + g_toast]
+    call sb_push_cstr
+1:  lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
     xor eax, eax
     ret
 
@@ -1386,14 +1537,25 @@ on_client:
 .Lc_print_update: .asciz "print-update"
 .Lc_print_frames: .asciz "print-frames"
 .Lc_print_project: .asciz "print-project"
+.Lc_print_panels: .asciz "print-panels"
+.Lc_print_tabs: .asciz "print-tabs"
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
 .Lc_print_tip: .asciz "print-tip"
+.Lc_print_toast: .asciz "print-toast"
 .Lc_print_link: .asciz "print-link"
 .Lc_print_scroll: .asciz "print-scroll"
+.Lc_print_settings: .asciz "print-settings"
 .Lc_scroll_x: .asciz "scroll-x"
+.Lc_appearance: .asciz "appearance"
+.Lc_focus: .asciz "focus"
+.Lc_print_appearance: .asciz "print-appearance"
 .Lc_print_term_cell: .asciz "print-term-cell"
 .Ls_project: .asciz "project="
+.Ls_bar: .asciz " | "
+.Ls_explorer_eq: .asciz "explorer="
+.Ls_agents_eq: .asciz " agents="
+.Ls_toast: .asciz "toast="
 .Ls_frames: .asciz "frames="
 .Ls_term: .asciz " term="
 .Ls_hidden: .asciz " hidden"
@@ -1404,6 +1566,15 @@ on_client:
 .Ls_minimized: .asciz " minimized="
 .Ls_quit: .asciz " quit="
 .Ls_csd: .asciz " csd="
+.Ls_system: .asciz "system="
+.Ls_unknown: .asciz "unknown"
+.Ls_dark: .asciz "dark"
+.Ls_light: .asciz "light"
+.Ls_follow: .asciz " follow="
+.Ls_theme_eq: .asciz " theme="
+.Ls_dark_eq: .asciz " dark="
+.Ls_light_eq: .asciz " light="
+.Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
 ctl_table:
@@ -1423,10 +1594,18 @@ ctl_table:
     .quad .Lc_wait_ai, c_wait_ai, .Lc_print_ai, c_print_ai
     .quad .Lc_wait_update, c_wait_update, .Lc_print_update, c_print_update
     .quad .Lc_print_frames, c_print_frames, .Lc_print_project, c_print_project
+    .quad .Lc_print_panels, c_print_panels, .Lc_print_tabs, c_print_tabs
     .quad .Lc_print_palette, c_print_palette, .Lc_print_menu, c_print_menu
-    .quad .Lc_print_tip, c_print_tip, .Lc_print_link, c_print_link
+    .quad .Lc_print_tip, c_print_tip, .Lc_print_toast, c_print_toast, .Lc_print_link, c_print_link
     .quad .Lc_print_term_cell, c_print_term_cell, .Lc_print_scroll, c_print_scroll
-    .quad .Lc_scroll_x, c_scroll_x, 0, 0
+    .quad .Lc_print_settings, c_print_settings
+    .quad .Lc_scroll_x, c_scroll_x
+    .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
+    .quad .Lc_focus, c_focus, 0, 0
+appearance_rows:
+    .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
+panel_rows:
+    .quad .Ls_explorer_eq, g_show_side, .Ls_agents_eq, g_show_agents, .Ls_term, g_term_open, 0
 
 .data
 lsock: .long -1

@@ -24,6 +24,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def guess_type(self, path):
+        return 'application/octet-stream'  # as GitHub serves every release asset
+
 
 with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
     temp = Path(temporary)
@@ -32,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
     latest = temp / 'releases/latest/download'
     latest.mkdir(parents=True)
     (latest / 'VERSION').write_text(VERSION + '\n')
+    shutil.copyfile(ROOT / 'install.ps1', latest / 'install.ps1')
     shutil.copyfile(ROOT / 'build/windows' / ASSET, release / ASSET)
     digest = hashlib.sha256((release / ASSET).read_bytes()).hexdigest()
     checksums = release / 'SHA256SUMS'
@@ -83,10 +87,31 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         assert held == [True], f'the staging folder was not held while it was to move: {held}'
         return result
 
+    def paste(target):
+        """run the README's PowerShell command as pasted into PowerShell, plus options for a test install:
+        it fetches install.ps1 from the test server, which serves it as GitHub does"""
+        github = 'https://github.com/vshvedov/rhun/releases'
+        line = next(line for line in (ROOT / 'README.md').read_text(encoding='utf-8').splitlines()
+                    if line.startswith('powershell ') and github + '/latest/download/install.ps1' in line)
+        assert line.endswith('"'), line
+        options = f" -InstallDir '{target}' -ReleasesUrl '{url}' -NoModifyPath -NoShortcut -NoFileAssociations"
+        pasted = temp / 'pasted.ps1'
+        # with a BOM, as Windows PowerShell reads a script without one in the ANSI code page
+        pasted.write_text(line.replace(github, url)[:-1] + options + '"\nexit $LASTEXITCODE\n', encoding='utf-8-sig')
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(pasted)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+        assert result.returncode == 0, result.stdout.decode(errors='replace')
+
     def version():
         assert subprocess.check_output([str(destination / 'rhun.com'), '--version']).strip() == ('rhun ' + VERSION).encode()
 
     try:
+        documented = temp / 'documented' / 'rhun'
+        paste(documented)
+        assert subprocess.check_output([str(documented / 'rhun.com'), '--version']).strip() == ('rhun ' + VERSION).encode()
+        install('-Uninstall', target=documented)
+        assert not documented.exists()
+        print('ok   install/documented-command', flush=True)
         install()  # latest lookup and first install, including a Unicode destination
         version()
         assert (destination / '.rhun-install').is_file()

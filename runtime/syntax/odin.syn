@@ -1,5 +1,6 @@
 name = Odin
 files = *.odin
+icon = code blue
 comment = //
 block = /* */
 region = ` ` string multiline

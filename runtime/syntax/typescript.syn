@@ -1,5 +1,6 @@
 name = TypeScript
 files = *.ts *.tsx *.mts *.cts
+icon = typescript blue
 comment = //
 block = /* */
 region = ` ` string multiline escape=\

@@ -151,11 +151,15 @@ FN gif_decode
     call img_alloc
     test rax, rax
     jz .Lfail
-    # indices, then colors onto the screen
+    # indices, then colors onto the screen; a frame, which may reach past the screen, within the
+    # limits of an image too (its 16-bit sides alone ask for up to 4 GiB of indices)
     mov eax, [rip + fw]
-    imul eax, [rip + fh]
-    test eax, eax
+    mov ecx, [rip + fh]
+    imul rax, rcx
+    test rax, rax
     jz .Lok
+    cmp rax, IMG_MAXPX
+    ja .Lbig
     mov r14d, eax
     lea rdi, [rax + 16]
     call mem_alloc_try
@@ -170,6 +174,9 @@ FN gif_decode
     call cleanup
     xor eax, eax
     EPILOGUE
+.Lbig:
+    lea rax, [rip + .Lerr_frame]
+    mov [rip + g_img_err], rax
 .Lfail:
     call cleanup
     mov eax, -1
@@ -471,3 +478,6 @@ interlace_row:
 3:  sub edi, eax
     lea eax, [rdi*2 + 1]
     ret
+
+.section .rodata
+.Lerr_frame: .asciz "The image is too large to show"

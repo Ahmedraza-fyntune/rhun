@@ -1218,6 +1218,47 @@ ffffffffffffff 0
 004444444444 0
 }
 9 0
+== v.syn
+// V sample
+66666666666 0
+module main
+11111100000 0
+
+ 0
+#flag -I @VMODROOT/include
+aaaaaaaaaaaaaaaaaaaaaaaaaa 0
+import os
+111111000 0
+
+ 0
+@[heap]
+ddddddd 0
+struct Point {
+11111102222209 0
+mut:
+1118 0
+	tags map[string]chan int
+0000002229222222922220222 0
+}
+9 0
+
+ 0
+fn main() {
+11033339909 0
+	quote := `"`
+0000000880444 0
+	path := r'C:\dir\'
+0000008804444444444 0
+	msg := $if windows { c'win' } $else { 'other ${quote}' }
+00000880aaa00000000090044444090aaaaa090444444444444444409 0
+	p := &Point(nil)
+00088083333397779 0
+	dump(p)
+01111909 0
+	println(@FILE + path + msg + os.args[0])
+0ccccccc9ddddd080000008000008000900009599 0
+}
+9 0
 == vala.syn
 // a greeter class
 666666666666666666 0
@@ -1423,3 +1464,6 @@ wishapp -> Tcl (parsed 83)
 p6script -> Raku (parsed 83)
 bashscript -> Shell (parsed 84)
 x.sh -> Shell (parsed 84)
+main.v -> V (parsed 85)
+build.vsh -> V (parsed 85)
+v.mod -> V (parsed 85)

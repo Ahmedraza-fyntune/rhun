@@ -10,6 +10,7 @@ F TS_name, 32
 ENDSTRUCT TS_SIZE
 
 .equ ID_TSPLIT, 0x6000
+.equ TERM_FRAME_MS, 16            # output keeps to about a frame a display refresh
 .equ ID_TNEW, 0x6002
 .equ ID_TLINK, 0x6003           # the link under the pointer, for its tooltip
 .equ ID_THIDE, 0x6004
@@ -31,6 +32,7 @@ env: .quad 0
 g_face_term: .zero FACE_SIZE
 g_term_open: .long 0
 last_px: .long 0
+last_lh: .long 0                # cfg_term_line_height the metrics were made for
 tab_scroll: .long 0             # first session tab shown when they do not all fit
 .p2align 3
 last_font: .quad 0
@@ -54,6 +56,9 @@ sel_e: .quad 0
 scroll_px: .long 0
 zombies: .zero 4 * MAX_ZOMB
 nzomb: .long 0
+.p2align 3
+out_frame: .quad 0              # time_ms of the last frame output asked for
+out_due: .quad 0                # time_ms of the next, held back while output keeps coming (0: none)
 link_on: .long 0                # the link under the pointer: 1 a URL, 2 a file (link_find)
 link_line: .long 0              # a file's :LINE:COL, 0 when not given
 link_col: .long 0
@@ -93,7 +98,9 @@ cur_sess:
     jmp sess
 1:  ret
 
-# term_metrics(): the terminal face at the configured size
+# term_metrics(): the terminal face at the configured size, in its font (the editor's unless it has
+#   one of its own), and the line height: the font's own (ascent and descent) * line_height / 100,
+#   with the text in the middle, as terminals scale it: every step shows, and 1.0 is the font's
 term_metrics:
     push rbx
     cvtsi2ss xmm0, dword ptr [rip + cfg_term_font_size]
@@ -102,13 +109,20 @@ term_metrics:
     cmp ebx, 4
     jge 1f
     mov ebx, 4
-1:  mov rax, [rip + g_font_code]
+1:  mov rax, [rip + g_font_term]
+    test rax, rax
+    jnz 11f
+    mov rax, [rip + g_font_code]
+11: mov ecx, [rip + cfg_term_line_height]
     cmp rax, [rip + last_font]
     jne 2f
     cmp ebx, [rip + last_px]
+    jne 2f
+    cmp ecx, [rip + last_lh]
     je 9f
 2:  mov [rip + last_font], rax
     mov [rip + last_px], ebx
+    mov [rip + last_lh], ecx
     lea rdi, [rip + g_face_term]
     mov rsi, rax
     mov edx, ebx
@@ -118,13 +132,24 @@ term_metrics:
     jge 3f
     mov eax, 1
 3:  mov [rip + tcw], eax
-    mov eax, [rip + g_face_term + FACE_ascent]
-    mov [rip + tbase], eax
-    add eax, [rip + g_face_term + FACE_descent]
-    cmp eax, 2
+    mov ecx, [rip + g_face_term + FACE_ascent]
+    add ecx, [rip + g_face_term + FACE_descent]
+    cmp ecx, 2
     jge 4f
-    mov eax, 2
-4:  mov [rip + tlh], eax
+    mov ecx, 2
+4:  mov eax, ecx
+    imul eax, [rip + cfg_term_line_height]
+    add eax, 50
+    xor edx, edx
+    mov r8d, 100
+    div r8d
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov [rip + tlh], eax
+    sub eax, ecx
+    sar eax, 1
+    add eax, [rip + g_face_term + FACE_ascent]
+    mov [rip + tbase], eax
 9:  pop rbx
     ret
 
@@ -271,7 +296,7 @@ on_pty:
     dec r13d
     jnz 2b
 3:  call send_replies
-    mov dword ptr [rip + g_dirty], 1
+    call output_frame
     EPILOGUE
 .Lop_end:
     mov rdi, rbx
@@ -451,9 +476,64 @@ FN reap_later
     inc dword ptr [rip + nzomb]
 1:  ret
 
-# term_tick(): reap shells that took their time to exit
+# output_frame(): output asks for a frame, at once after a quiet spell, then at most one each
+#   TERM_FRAME_MS while it keeps coming: a frame for every read drew `cat` of a large file thousands
+#   of times (four seconds for 21 MB, a quarter of one paced)
+output_frame:
+    cmp qword ptr [rip + out_due], 0
+    jne 9f
+    sub rsp, 8
+    call time_ms
+    add rsp, 8
+    mov rcx, rax
+    sub rcx, [rip + out_frame]
+    cmp rcx, TERM_FRAME_MS
+    jb 1f
+    mov [rip + out_frame], rax
+    mov dword ptr [rip + g_dirty], 1
+    ret
+1:  mov rax, [rip + out_frame]
+    add rax, TERM_FRAME_MS
+    mov [rip + out_due], rax
+9:  ret
+
+# term_timeout() -> ms until the output held back is drawn, or -1
+FN term_timeout
+    mov rax, [rip + out_due]
+    test rax, rax
+    jz 1f
+    sub rsp, 8
+    call time_ms
+    add rsp, 8
+    mov rcx, [rip + out_due]
+    sub rcx, rax
+    xor eax, eax
+    test rcx, rcx
+    cmovg eax, ecx
+    ret
+1:  mov eax, -1
+    ret
+
+# term_frame_now(): the output held back is drawn with the next frame (a control command's)
+FN term_frame_now
+    cmp qword ptr [rip + out_due], 0
+    je 1f
+    mov qword ptr [rip + out_due], 0
+    mov dword ptr [rip + g_dirty], 1
+1:  ret
+
+# term_tick(): draw the output held back once its time comes; reap shells that took their time to exit
 FN term_tick
     push rbx
+    cmp qword ptr [rip + out_due], 0
+    je 0f
+    call time_ms
+    cmp rax, [rip + out_due]
+    jb 0f
+    mov [rip + out_frame], rax
+    mov qword ptr [rip + out_due], 0
+    mov dword ptr [rip + g_dirty], 1
+0:
     xor ebx, ebx
 1:  cmp ebx, [rip + nzomb]
     jae 9f
@@ -611,19 +691,38 @@ FN term_panel_paste
 # ---------------- keys ----------------
 
 # term_panel_key(keysym, cp, mods) -> 1 if the terminal took the key
-#   zoom, ctrl+shift combinations, ctrl+` and tab switching stay with rhun;
-#   ctrl+shift+c/v copy and paste
+#   zoom, ctrl+shift combinations, ctrl+` and tab switching stay with rhun, but Close All Tabs'
+#   keys go to the program; ctrl+shift+c/v copy and paste
 FN term_panel_key
     PROLOGUE
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
+    test r14d, MOD_SUPER
+    jnz .Ltk_no
+    # Close All Tabs' keys are the terminal's, where Ctrl+Shift+W closes a tab in other terminals:
+    # the program gets them as if unbound (with Command on macOS, or before the terminal has
+    # started, they do nothing). The palette still runs the command.
+    mov edi, r12d
+    mov esi, r14d
+    call keys_lookup
+    lea rcx, [rip + cmd_close_all]
+    cmp rax, rcx
+    jne .Ltk_unbound
+    call cur_sess
+    test rax, rax
+    jz .Ltk_yes
+    mov rbx, rax
+.ifdef MACOS
+    cmp dword ptr [rip + g_mac_cmd], 0
+    jne .Ltk_yes
+.endif
+    jmp .Ltk_send
+.Ltk_unbound:
     call cur_sess
     test rax, rax
     jz .Ltk_no
     mov rbx, rax
-    test r14d, MOD_SUPER
-    jnz .Ltk_no
 .ifdef MACOS
     # Command copies, pastes and runs rhun's shortcuts; Control types control characters
     cmp dword ptr [rip + g_mac_cmd], 0
@@ -704,7 +803,9 @@ FN term_panel_key
 4:  mov edi, eax
     call view_scroll
     jmp .Ltk_yes
-5:  mov rdi, [rbx + TS_term]
+5:
+.Ltk_send:
+    mov rdi, [rbx + TS_term]
     mov esi, r12d
     mov edx, r13d
     mov ecx, r14d

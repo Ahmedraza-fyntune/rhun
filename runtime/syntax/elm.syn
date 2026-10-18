@@ -1,5 +1,6 @@
 name = Elm
 files = *.elm
+icon = elm blue
 block = {- -}
 comment = --
 mstring = """ \

@@ -1,5 +1,6 @@
 name = Lua
 files = *.lua *.rockspec
+icon = lua blue
 first_line = lua
 region = --[[ ]] comment multiline
 comment = --

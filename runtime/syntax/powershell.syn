@@ -1,5 +1,6 @@
 name = PowerShell
 files = *.ps1 *.psm1 *.psd1
+icon = powershell blue
 comment = #
 region = <# #> comment multiline
 string = " `

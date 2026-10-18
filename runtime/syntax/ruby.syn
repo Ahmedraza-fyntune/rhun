@@ -1,5 +1,6 @@
 name = Ruby
 files = *.rb *.rake *.gemspec Gemfile Rakefile Vagrantfile config.ru
+icon = ruby red
 first_line = ruby
 comment = #
 region = =begin =end comment multiline bol

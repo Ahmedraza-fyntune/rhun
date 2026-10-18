@@ -1,5 +1,6 @@
 name = EJS
 files = *.ejs
+icon = ejs yellow
 block = <!-- -->
 string = "
 string = '

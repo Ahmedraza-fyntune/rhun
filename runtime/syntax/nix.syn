@@ -1,5 +1,6 @@
 name = Nix
 files = *.nix
+icon = code blue
 comment = #
 block = /* */
 region = '' '' string multiline

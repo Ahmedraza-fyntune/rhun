@@ -220,6 +220,23 @@ FN file_stamp
     xor ecx, ecx
     ret
 
+# file_missing(path) -> 1 if nothing is there, not even a link (ENOENT, ENOTDIR); 0 if something is or
+#   that cannot be told (EACCES: a folder on the way that cannot be searched)
+FN file_missing
+.ifdef WINDOWS
+    jmp win_file_missing            # its lstat is stat: it would follow a link to a missing target
+.endif
+    lea rsi, [rip + stat_buf]
+    SYS SYS_lstat
+    xor ecx, ecx
+    cmp rax, -2
+    sete cl
+    cmp rax, -20
+    jne 1f
+    mov ecx, 1
+1:  mov eax, ecx
+    ret
+
 # file_mtime(path) -> unix seconds (0 on error)
 FN file_mtime
     lea rsi, [rip + stat_buf]
@@ -291,7 +308,14 @@ FN file_id
 
 # file_read_all(path) -> rax=ptr (NUL-terminated, mem_alloc'd) rdx=len; rax=0, rdx=-errno on error
 FN file_read_all
+    xor esi, esi
+    jmp file_read_all_extra
+
+# file_read_all_extra(path, extra) -> as file_read_all, with room for extra bytes after the text (a
+#   document's gap, which then needs no copy of the whole file to grow into)
+FN file_read_all_extra
     PROLOGUE
+    mov r15, rsi
     call file_open_read
     test rax, rax
     js .Lfr_fail
@@ -308,7 +332,7 @@ FN file_read_all
     jmp .Lfr_close_fail
 1:
     mov r12, rax            # size
-    lea rdi, [rax + 1]
+    lea rdi, [rax + r15 + 1]
     call mem_alloc
     mov r13, rax            # buf
     xor r14d, r14d          # read so far
