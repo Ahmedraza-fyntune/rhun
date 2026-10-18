@@ -8,6 +8,7 @@
 path_sb: .zero SB_SIZE
 out: .zero SB_SIZE
 rc_dir: .zero SB_SIZE
+trust_sb: .zero SB_SIZE
 last_path: .zero SB_SIZE
 last_project: .zero 4096
 recent_time: .zero 8 * RECENT_MAX     # when each was written, in nanoseconds
@@ -70,12 +71,141 @@ last_project_file:
 1:  pop rbx
     ret
 
+# trusted_file() -> cstr "$XDG_STATE_HOME/rhun/trusted-folders" (in trust_sb), or 0 without a home
+trusted_file:
+    push rbx
+    lea rdi, [rip + trust_sb]
+    call state_dir
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + trust_sb]
+    lea rsi, [rip + .Ltrusted]
+    call sb_push_cstr
+    mov rax, [rip + trust_sb + SB_ptr]
+    pop rbx
+    ret
+1:  xor eax, eax
+    pop rbx
+    ret
+
+# session_trusted(folder) -> eax 1 when the folder is in the trusted-folders list (one path a line):
+#   git runs there for a folder a rhun:// link opened
+FN session_trusted
+    PROLOGUE
+    mov r12, rdi
+    call trusted_file
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    call file_read_all
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    lea r13, [rax + rdx]        # the end
+    mov rdi, r12
+    call strlen
+    mov r14, rax
+    mov r15, rbx                # a line
+1:  cmp r15, r13
+    jae 7f
+    mov rcx, r15
+2:  cmp rcx, r13
+    jae 3f
+    cmp byte ptr [rcx], 10
+    je 3f
+    inc rcx
+    jmp 2b
+3:  mov rax, rcx
+    sub rax, r15
+    cmp rax, r14
+    jne 4f
+    push rcx
+    push rcx
+    mov rdi, r15
+    mov rsi, r12
+    mov rdx, r14
+    call memeq
+    pop rcx
+    pop rcx
+    test eax, eax
+    jnz 6f
+4:  lea r15, [rcx + 1]
+    jmp 1b
+6:  mov rdi, rbx
+    call mem_free
+    mov eax, 1
+    EPILOGUE
+7:  mov rdi, rbx
+    call mem_free
+8:  xor eax, eax
+    EPILOGUE
+
+# session_trust(folder): add the folder to the trusted-folders list (not one whose path holds a line
+#   break, which the list cannot hold: it is trusted for this run only)
+FN session_trust
+    PROLOGUE
+    mov r12, rdi
+    mov rcx, rdi
+0:  movzx eax, byte ptr [rcx]
+    test eax, eax
+    jz 12f
+    cmp eax, 10
+    je 9f
+    cmp eax, 13
+    je 9f
+    inc rcx
+    jmp 0b
+12: mov rdi, r12
+    call session_trusted
+    test eax, eax
+    jnz 9f
+    call trusted_file
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    lea rdi, [rip + out]
+    call sb_clear
+    mov rdi, r13
+    call file_read_all
+    test rax, rax
+    jz 1f
+    mov rbx, rax
+    mov r14, rdx
+    lea rdi, [rip + out]
+    mov rsi, rax
+    call sb_push
+    # a list whose last line has no line break of its own gets one first
+    test r14, r14
+    jz 11f
+    cmp byte ptr [rbx + r14 - 1], 10
+    je 11f
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+11: mov rdi, rbx
+    call mem_free
+1:  lea rdi, [rip + out]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + out]
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, r13
+    mov rsi, [rip + out + SB_ptr]
+    mov rdx, [rip + out + SB_len]
+    call file_write_all
+9:  EPILOGUE
+
 FN session_remember_project
     PROLOGUE
     mov rbx, [rip + g_project]
     test rbx, rbx
     jz 9f
     cmp dword ptr [rip + g_project_adopted], 0
+    jne 9f
+    # nor one a link opened, while git is paused there: a launch without arguments would reopen it
+    # as a folder opened by hand, and git would run in it without the trust asked for
+    cmp dword ptr [rip + g_git_paused], 0
     jne 9f
     call last_project_file
     test rax, rax
@@ -403,12 +533,17 @@ recent_cb:
     call cstr_copy
 9:  EPILOGUE
 
-# session_save(): "path<TAB>cursor" per open file, "*" marks the active one
+# session_save(): "path<TAB>cursor" per open file, "*" marks the active one and "<TAB>pin" ends the line
+#   of a pinned one (older versions read the cursor and stop there)
 FN session_save
     PROLOGUE
     cmp dword ptr [rip + cfg_restore_session], 0
     je 9f
     cmp dword ptr [rip + g_project_adopted], 0
+    jne 9f
+    # nor for a folder a link opened while git is paused there: its session would list it among
+    # the recent folders, and opening it from there runs git as in a folder opened by hand
+    cmp dword ptr [rip + g_git_paused], 0
     jne 9f
     cmp dword ptr [rip + g_session_final], 0
     jne 9f
@@ -442,7 +577,14 @@ FN session_save
     lea rdi, [rip + out]
     mov rsi, [r12 + DOC_cur]
     call sb_push_u64
+    mov rdi, rbx
+    call tab_pinned
+    test eax, eax
+    jz 12f
     lea rdi, [rip + out]
+    lea rsi, [rip + .Lpin]
+    call sb_push_cstr
+12: lea rdi, [rip + out]
     mov esi, 10
     call sb_push_byte
 2:  inc rbx
@@ -458,7 +600,7 @@ FN session_save
 
 # session_restore(): reopen the files of the last session of this project
 FN session_restore
-    PROLOGUE 16
+    PROLOGUE 32
     cmp dword ptr [rip + cfg_restore_session], 0
     je 9f
     call session_file
@@ -470,7 +612,7 @@ FN session_restore
     jz 9f
     mov r12, rax
     mov r13, rdx
-    mov qword ptr [rsp], -1     # active tab
+    mov qword ptr [rsp], 0      # the active tab's document (pinning moves tabs)
     xor r14d, r14d
 1:  cmp r14, r13
     jae 8f
@@ -516,15 +658,33 @@ FN session_restore
     pop rsi
     test rax, rax
     js 7f
+    mov [rsp + 16], rax
+    mov [rsp + 24], rsi
     cmp dword ptr [rsp + 8], 0
     je 61f
+    mov rdi, rax
+    call tab_at
+    mov rax, [rax + TAB_doc]
     mov [rsp], rax
-61: mov rdi, rsi
+61: mov rdi, [rsp + 24]
     call strlen
-    mov rdi, rsi
+    mov rdi, [rsp + 24]
     mov rsi, rax
     call parse_u64
-    mov rcx, [rip + g_doc]
+    # "<TAB>pin" after the cursor
+    mov rcx, [rsp + 24]
+    cmp byte ptr [rcx + rdx], 9
+    jne 62f
+    cmp byte ptr [rcx + rdx + 1], 'p'
+    jne 62f
+    push rax
+    push rax
+    mov rdi, [rsp + 32]
+    mov esi, 1
+    call app_pin_tab
+    pop rax
+    pop rax
+62: mov rcx, [rip + g_doc]
     test rcx, rcx
     jz 7f                       # an image
     push rax
@@ -543,7 +703,11 @@ FN session_restore
     call mem_free
     mov rdi, [rsp]
     test rdi, rdi
+    jz 9f
+    call doc_tab
+    test rax, rax
     js 9f
+    mov rdi, rax
     call app_activate_tab
 9:  EPILOGUE
 
@@ -554,8 +718,10 @@ FN session_restore
 .Lrhun_dir: .asciz "/rhun"
 .Lext: .asciz ".session"
 .Llast_project: .asciz "/last-project"
+.Ltrusted: .asciz "/trusted-folders"
 .Lpercent: .asciz "%%25"
 .Lempty: .asciz ""
+.Lpin: .asciz "\tpin"
 
 .ifdef WINDOWS
 .text

@@ -19,6 +19,12 @@ assert {'txt', 'md', 'py', 'rs', 'json', 'ts', 'yaml'} <= set(source['CFBundleTy
 assert not {'png', 'jpg', 'gif', 'qoi'} & set(source['CFBundleTypeExtensions'])
 images = next(d for d in plist['CFBundleDocumentTypes'] if d['CFBundleTypeName'] == 'Image extensions')
 assert 'qoi' in images['CFBundleTypeExtensions']
+# rhun://file/ links: the app declares the scheme, and Linux has a hidden entry that takes a URL
+assert [t['CFBundleURLSchemes'] for t in plist['CFBundleURLTypes']] == [['rhun']]
+handler = (ROOT / 'assets/rhun-url-handler.desktop').read_text().splitlines()
+assert {'Exec=rhun -- %u', 'NoDisplay=true', 'MimeType=x-scheme-handler/rhun;'} <= set(handler), handler
+assert not any(line.startswith('MimeType=') and 'x-scheme-handler' in line
+               for line in (ROOT / 'assets/rhun.desktop').read_text().splitlines())
 print('ok   associations/metadata', flush=True)
 
 if os.name == 'nt':
@@ -30,6 +36,7 @@ $ErrorActionPreference = 'Stop'
 $associationRoot = 'HKCU:\Software\rhun-association-test-' + [Guid]::NewGuid().ToString('N')
 $InstallDir = "C:\Program files café ' $ &\rhun"
 $NoFileAssociations = $false
+$NoUrlScheme = $false
 $NoMakeDefault = $false
 $MakeDefault = $false
 $NoModifyPath = $false
@@ -97,6 +104,38 @@ try {
     Register-FileAssociations
     Assert (-not (Test-Path -LiteralPath "$associationRoot\Classes\rhun.Text")) 'Opt-out ignored'
     'ok   associations/windows-register-preserve-defaults-and-uninstall'
+    Register-UrlScheme
+    $key = "$associationRoot\Classes\rhun"
+    Assert ((Get-ItemPropertyValue -LiteralPath $key -Name 'URL Protocol') -eq '') 'Not a URL protocol'
+    $command = Get-ItemPropertyValue -LiteralPath "$key\shell\open\command" -Name '(default)'
+    Assert ($command -ceq ('"' + (Join-Path $InstallDir 'rhun.exe') + '" -- "%1"')) "The link command is $command"
+    $InstallDir = 'C:\Other rhun'
+    Remove-UrlScheme
+    Assert (Test-Path -LiteralPath $key) 'Removed another installation scheme'
+    $InstallDir = "C:\Program files café ' $ &\rhun"
+    Remove-UrlScheme
+    Assert (-not (Test-Path -LiteralPath $key)) 'Scheme left behind'
+    # as registered before the link came after --
+    Set-AssociationValue "$key\shell\open\command" '(default)' ('"' + (Join-Path $InstallDir 'rhun.exe') + '" "%1"')
+    Remove-UrlScheme
+    Assert (-not (Test-Path -LiteralPath $key)) 'Older scheme left behind'
+    $NoUrlScheme = $true
+    Register-UrlScheme
+    Assert (-not (Test-Path -LiteralPath $key)) 'Scheme opt-out ignored'
+    # opting out on reinstall removes this installation's registration, not another's
+    $NoUrlScheme = $false
+    Register-UrlScheme
+    $NoUrlScheme = $true
+    Register-UrlScheme
+    Assert (-not (Test-Path -LiteralPath $key)) 'Scheme opt-out kept the earlier registration'
+    $InstallDir = 'C:\Other rhun'
+    $NoUrlScheme = $false
+    Register-UrlScheme
+    $InstallDir = "C:\Program files café ' $ &\rhun"
+    $NoUrlScheme = $true
+    Register-UrlScheme
+    Assert (Test-Path -LiteralPath $key) 'Scheme opt-out removed another installation scheme'
+    'ok   associations/windows-url-scheme'
 } finally {
     if (Test-Path -LiteralPath $associationRoot) { Remove-Item -LiteralPath $associationRoot -Recurse -Force }
 }

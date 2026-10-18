@@ -27,9 +27,13 @@ ENDSTRUCT GE_SIZE
 
 .bss
 .p2align 3
-.globl g_git_on, g_git_ver, g_git_changes, g_git_root, g_git_rootlen
+.globl g_git_on, g_git_ver, g_git_changes, g_git_root, g_git_rootlen, g_git_paused, g_project_link
+.globl g_git_paused_text
 .globl g_git_head, g_git_ahead, g_git_behind, g_git_upstream, g_worktree
 g_git_on: .long 0               # the setting is on, there is a repository and a git program
+g_git_paused: .long 0           # a rhun:// link opened the project, in a repository not trusted yet:
+                                # git runs no command there (the repository's config could name one)
+g_project_link: .long 0         # a rhun:// link opened the project (set_project)
 g_git_ver: .long 0              # changes with every new status
 g_git_changes: .long 0          # entries in the status
 g_git_head: .long 0             # HD_*
@@ -84,6 +88,7 @@ FN git_set_project
     PROLOGUE
     inc dword ptr [rip + gen]
     mov dword ptr [rip + g_git_on], 0
+    mov dword ptr [rip + g_git_paused], 0
     mov dword ptr [rip + st_running], 0
     mov dword ptr [rip + st_again], 0
     mov dword ptr [rip + touch_kind], 0
@@ -114,7 +119,17 @@ FN git_set_project
     je 9f
     call git_read_branch
     call watch_repo
-    cmp dword ptr [rip + cfg_git], 0
+    # a repository a link opened runs git once trusted (git_trust); it is paused with git off too, so
+    # that no session or restart keeps it as a folder opened by hand for when git is turned on
+    cmp dword ptr [rip + g_project_link], 0
+    je 2f
+    mov rdi, [rip + g_git_root]
+    call session_trusted
+    test eax, eax
+    jnz 2f
+    mov dword ptr [rip + g_git_paused], 1
+    jmp 9f
+2:  cmp dword ptr [rip + cfg_git], 0
     je 9f
     cmp dword ptr [rip + bin_tried], 0
     jne 1f
@@ -142,17 +157,31 @@ free_path:
     mov qword ptr [rbx], 0
     ret
 
-# git_apply(): follow the setting
+# git_apply(): follow the setting (a paused repository stays so)
 FN git_apply
     xor eax, eax
     cmp dword ptr [rip + cfg_git], 0
     je 1f
     cmp qword ptr [rip + gitdir], 0
     je 1f
+    cmp dword ptr [rip + g_git_paused], 0
+    jne 1f
     mov eax, 1
 1:  cmp eax, [rip + g_git_on]
     jne git_set_project
     ret
+
+# git_trust(): the repository a link opened is trusted from now on (session_trust), and git starts there
+FN git_trust
+    cmp dword ptr [rip + g_git_paused], 0
+    je 1f
+    push rax
+    mov rdi, [rip + g_git_root]
+    call session_trust
+    pop rax
+    mov dword ptr [rip + g_project_link], 0
+    jmp git_set_project
+1:  ret
 
 # find_repo(): walk up from g_project to the directory holding .git
 find_repo:
@@ -568,8 +597,8 @@ FN git_run
 FN git_run_all
     mov r9d, 1
 run_git:
-    PROLOGUE 256                # argv, then the errors flag
-    mov [rsp + 240], r9d
+    PROLOGUE 272                # argv, then the errors flag
+    mov [rsp + 256], r9d
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -587,7 +616,13 @@ run_git:
     mov [rsp + 24], rax
     lea rax, [rip + .Lquotepath]
     mov [rsp + 32], rax
-    mov ecx, 5
+    # no fsmonitor command from the repository's own config: opening a folder (a rhun:// link from a
+    # web page) must not run a program that the folder names
+    lea rax, [rip + .Ldash_c]
+    mov [rsp + 40], rax
+    lea rax, [rip + .Lno_fsmonitor]
+    mov [rsp + 48], rax
+    mov ecx, 7
     xor edx, edx
 1:  mov rax, [rbx + rdx*8]
     mov [rsp + rcx*8], rax
@@ -595,7 +630,7 @@ run_git:
     jz 2f
     inc rcx
     inc rdx
-    cmp rcx, MAXARGS + 5
+    cmp rcx, MAXARGS + 7
     jb 1b
     mov qword ptr [rsp + rcx*8], 0
 2:  mov rdi, rsp
@@ -603,7 +638,7 @@ run_git:
     mov rdx, [rip + g_git_root]
     mov rcx, r14
     mov r8, r15
-    mov r9d, [rsp + 240]
+    mov r9d, [rsp + 256]
     call run_piped_input
     test rax, rax
     jle 8f
@@ -1823,10 +1858,13 @@ FN git_dump
     mov rbx, rdi
     lea rsi, [rip + .Ld_git]
     call sb_push_cstr
-    lea rsi, [rip + .Ld_off]
-    cmp dword ptr [rip + g_git_on], 0
-    je 1f
     lea rsi, [rip + .Ld_on]
+    cmp dword ptr [rip + g_git_on], 0
+    jne 1f
+    lea rsi, [rip + .Ld_off]
+    cmp dword ptr [rip + g_git_paused], 0
+    je 1f
+    lea rsi, [rip + .Ld_paused]
 1:  mov rdi, rbx
     call sb_push_cstr
     mov rdi, rbx
@@ -1978,6 +2016,7 @@ FN git_dump
 .Lliteral: .asciz "--literal-pathspecs"
 .Ldash_c: .asciz "-c"
 .Lquotepath: .asciz "core.quotepath=off"
+.Lno_fsmonitor: .asciz "core.fsmonitor=false"
 .Lstatus: .asciz "status"
 .Lporcelain: .asciz "--porcelain"
 .Ldash_z: .asciz "-z"
@@ -1989,6 +2028,8 @@ FN git_dump
 .Ld_git: .asciz "git "
 .Ld_on: .asciz "on"
 .Ld_off: .asciz "off"
+.Ld_paused: .asciz "paused"
+g_git_paused_text: .asciz "Git is paused for this folder until you trust it"
 .Ld_branch: .asciz " branch="
 .Ld_worktree: .asciz " worktree="
 .Ld_marks: .asciz "marks "
