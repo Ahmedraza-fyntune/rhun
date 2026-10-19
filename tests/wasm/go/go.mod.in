@@ -1,0 +1,7 @@
+module wasmtestgo
+
+go 1.25
+
+require github.com/rhun-editor/extension-protocol v1.3.0
+
+replace github.com/rhun-editor/extension-protocol => @SDK@

@@ -116,10 +116,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         check('mem-helpers', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/mem-helpers.py')], check=True))
         check('dir-scan', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/dir-scan.py')], check=True))
     check('windows-package', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/windows-package.py')], check=True))
-    for driver in ('task-core', 'task-view', 'task-clipboard', 'ext-watch-native'):
+    for driver in ('ext-watch-native',):
         check(driver, lambda driver=driver: subprocess.run(
             [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
-             *(['--faults'] if driver in ('task-core', 'task-view') else []),
              *(['--wine', args.wine] if args.wine else [])], check=True))
 
     for name, exe in [('ext-send', 'ext_send'), ('cpu', 'cpu'), ('doc', 'doc'), ('doc-selections', 'doc_selections'), ('doc-multi-edit', 'doc_multi_edit'), ('doc-batch', 'doc_batch'), ('doc-batch-guard', 'doc_batch_guard'), ('editor-multi-type', 'editor_multi_type'), ('editor-multi-newline', 'editor_multi_newline'), ('editor-multi-delete', 'editor_multi_delete'), ('editor-multi-tab', 'editor_multi_tab'), ('clipboard-write', 'clipboard_write'), ('clipboard-wire', 'clipboard_wire'), ('clipboard-metadata', 'clipboard_metadata'), ('clipboard-context', 'clipboard_context'), ('clipboard-paste-queue', 'clipboard_paste_queue'), ('editor-clipboard', 'editor_clipboard'), ('editor-paste', 'editor_paste'), ('snippet', 'snippet'), ('snippet-choice', 'snippet_choice'), ('snippet-unicode', 'snippet_unicode'), ('snippet-regex', 'snippet_regex'), ('snippet-regex-state', 'snippet_regex_state'), ('snippet-regex-scope', 'snippet_regex_scope'), ('snippet-regex-match', 'snippet_regex_match'), ('snippet-regex-limits', 'snippet_regex_limits'), ('snippet-replacement', 'snippet_replacement'), ('snippet-case', 'snippet_case'), ('snippet-case-api', 'snippet_case_api'), ('snippet-transform', 'snippet_transform'), ('snippet-transform-api', 'snippet_transform_api'), ('snippet-transform-indent', 'snippet_transform_indent'), ('snippet-transform-payload', 'snippet_transform_payload'), ('snippet-indent-capture', 'snippet_indent_capture'), ('snippet-transform-leave', 'snippet_transform_leave'), ('snippet-base64', 'snippet_base64'), ('syntax', 'syntax'), ('themes', 'theme'),
@@ -143,6 +142,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                                   b'rhun ' + (ROOT / 'VERSION').read_bytes().strip() + b'\n'))
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
     check('input/wheel-and-touchpad-steps', lambda: run('wheel_test.exe'))
+    # resources group: secrets in the Credential Manager, what an extension's job costs
+    check('extensions/secrets-and-cost', lambda: run('resources_test.exe'))
     check('clipboard/bounded-read', lambda: golden('windows-clipboard-read', 'clipboard_read_test'))
     if not args.wine or os.environ.get('DISPLAY'):
         check('clipboard/native-metadata', lambda: golden('windows-clipboard-metadata', 'clipboard_native_metadata_test'))

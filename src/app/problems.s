@@ -364,9 +364,11 @@ point_of:
 8:  mov rax, -1
     EPILOGUE
 
-# problems_tick(): documents opened since the last tick get their problems' marks
+# problems_tick(): documents opened since the last tick get their problems' marks; a frame only when
+#   marks came (or the tab changed: tab_rebuild)
 FN problems_tick
-    PROLOGUE
+    PROLOGUE 16
+    mov qword ptr [rsp], 0      # marks added
     cmp dword ptr [rip + tab_dirty], 0
     je 0f
     call tab_rebuild
@@ -407,10 +409,13 @@ FN problems_tick
     mov rdi, r12
     mov rsi, r14
     call mark_problem
+    mov qword ptr [rsp], 1
     jmp 2b
 8:  mov [rip + last_doc], r15
+    cmp qword ptr [rsp], 0
+    je 81f
     mov dword ptr [rip + g_dirty], 1
-    EPILOGUE
+81: EPILOGUE
 9:  # with none, documents opened meanwhile have nothing to show
     call newest_doc
     mov [rip + last_doc], rax

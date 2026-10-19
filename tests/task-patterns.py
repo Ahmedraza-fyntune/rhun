@@ -183,6 +183,26 @@ class Patterns(unittest.TestCase):
             '3 13 3 14 error problems:t cannot use "s" (untyped string constant) as int value in variable declaration',
             'errors=1 warnings=0'])
 
+    def test_problems_do_not_draw_a_frame_each_tick(self):
+        # with problems known and their marks shown, a program's output over 2 s is drawn a frame now
+        # and then, not one per tick (reviews: about 45 frames without a problem, 1400 with one); a
+        # document opened later gets its marks all the same
+        self.files('main.go', 'sub/s.go', 'sum_test.go')
+        chunk = self.work / 'chunk.txt'
+        chunk.write_text(''.join(f'{i:08} ' + 'x' * 70 + '\n' for i in range(1000)), encoding='utf-8')
+        loop = ' '.join(str(i) for i in range(20))
+        out = self.run_editor(['open ' + (self.proj / 'main.go').as_posix(),
+                               f'term-run --title t --matcher go -- {CAT} {(DATA / "go.txt").as_posix()}',
+                               'wait-terminal 1 ended', 'print-frames',
+                               f'term-run --title out --sh -- for i in {loop}; do cat {chunk.as_posix()}; '
+                               'sleep 0.1; done', 'wait 3500', 'print-frames',
+                               'open ' + (self.proj / 'sub/s.go').as_posix(), 'wait 300', 'print-marks'])
+        frames = [int(line.split('=')[1]) for line in out if line.startswith('frames=')]
+        self.assertEqual(len(frames), 2, out)
+        self.assertLess(frames[1], 300, out)
+        self.assertIn('3 13 3 14 error problems:t cannot use "s" (untyped string constant) as int value in '
+                      'variable declaration', out)
+
     # --- the Problems tab ---
 
     def test_problems_tab_lists_files_and_goes_to_a_problem(self):

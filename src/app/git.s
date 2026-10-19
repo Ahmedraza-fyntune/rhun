@@ -161,8 +161,12 @@ FN git_set_project
     jne 1f
     mov dword ptr [rip + bin_tried], 1
     lea rdi, [rip + .Lgit]
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the host's git, found there by its name
+    jne 3f
     call proc_which
-    mov [rip + git_bin], rax
+    jmp 4f
+3:  call dup_cstr
+4:  mov [rip + git_bin], rax
     lea rdi, [rip + env_extras]
     call env_make
     mov [rip + env], rax
@@ -232,11 +236,11 @@ find_repo:
     call path_join
     mov rbx, rax
     mov rdi, rax
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jnz .Lfr_found
     mov rdi, rbx
-    call file_read_all
+    call vfs_read_all
     test rax, rax
     jnz .Lfr_file
     mov rdi, rbx
@@ -319,7 +323,7 @@ watch_repo:
     call path_join
     mov rbx, rax
     mov rdi, rax
-    call file_read_all
+    call vfs_read_all
     mov r12, rax
     mov r13, rdx
     mov rdi, rbx
@@ -424,7 +428,7 @@ FN git_each_agent_worktree
     mov rdi, [rsp + 16]
     lea rsi, [rip + worktree_cb]
     mov rdx, rsp
-    call dir_each
+    call vfs_dir_each
     mov rdi, [rsp + 16]
     call mem_free
 9:  EPILOGUE
@@ -442,7 +446,7 @@ worktree_cb:
     call path_join
     mov r13, rax
     mov rdi, rax
-    call file_read_all
+    call vfs_read_all
     mov r14, rax
     mov r15, rdx
     mov rdi, r13
@@ -510,7 +514,7 @@ FN git_read_branch
     call path_join
     mov rbx, rax
     mov rdi, rax
-    call file_read_all
+    call vfs_read_all
     mov r12, rax
     mov r13, rdx
     mov rdi, rbx
@@ -2043,7 +2047,7 @@ FN git_merge_msg
     call path_join
     mov rbx, rax
     mov rdi, rax
-    call file_read_all
+    call vfs_read_all
     mov r12, rax
     mov r13, rdx
     mov rdi, rbx

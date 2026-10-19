@@ -115,6 +115,9 @@ cp_wait_serial: .long 0         # the item an accept waits for (0: none)
 cp_wait_until: .quad 0
 cp_wait_replace: .long 0        # that accept's range: 1 the replace range
 cp_wait_ready: .long 0          # its resolve answer came (the tick accepts)
+cp_wait_char: .long 0           # a commit character typed after the accept, 0 for none
+cp_pad2: .long 0
+cp_room: .quad 0                # the items a final answer after parts may still bring (-1: any)
 sg_count: .long 0               # signature-list: the signatures and the one shown
 sg_index: .long 0
 sg_list: .zero SB_SIZE          # the answer's records
@@ -538,6 +541,7 @@ cp_close:
     mov dword ptr [rip + cp_res_serial], 0
     mov dword ptr [rip + cp_wait_serial], 0
     mov dword ptr [rip + cp_wait_ready], 0
+    mov dword ptr [rip + cp_wait_char], 0
     mov dword ptr [rip + g_dirty], 1
     pop rbx
     ret
@@ -796,7 +800,19 @@ FN complete_reply
     call doc_alive
     test eax, eax
     jz 9f                       # closed meanwhile: the next frame ends the list
+    # after parts, the query's caps count the rest too (query_final_room)
+    mov qword ptr [rip + cp_room], -1
+    cmp dword ptr [rsp + 12], 0
+    je 41f
+    call query_final_room
+    mov [rip + cp_room], rax
+    cmp r15, rdx
+    jbe 41f
     mov rdi, rbx
+    mov esi, PK_COMPLETE
+    call query_dropped
+    jmp 9f
+41: mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
     mov rcx, [rsp + 16]
@@ -979,6 +995,15 @@ cp_merge_mode:
     mov [rsp + 8], edx
     mov rax, [rip + cp_new_items + VEC_len]
     sub rax, [rsp + 24]
+    mov rcx, [rip + cp_room]    # past the query's cap: what fits is kept
+    test rcx, rcx
+    js 2f
+    cmp rax, rcx
+    jbe 2f
+    sub rax, rcx
+    sub [rip + cp_new_items + VEC_len], rax
+    mov rax, rcx
+2:  mov qword ptr [rip + cp_room], -1
     mov [rsp + 24], rax
     or [rip + cp_more], edx
     lea rdi, [rip + cp_new_items]
@@ -2021,6 +2046,7 @@ FN complete_key
     jz .Lcpk_plain
     test dword ptr [rax + CI_flags], CF_COMMIT
     jz .Lcpk_plain
+    mov rbx, rax
     mov rdi, rax
     lea rsi, [rip + .Lx_commit]
     call item_record
@@ -2032,7 +2058,15 @@ FN complete_key
     movzx ecx, byte ptr [rax + rdx]
     cmp ecx, r13d
     jne 1b
-    call cp_accept
+    mov eax, [rbx + CI_flags]
+    and eax, CF_RESOLVE_EDITS | CF_RESOLVED
+    cmp eax, CF_RESOLVE_EDITS
+    jne 2f
+    mov [rip + cp_wait_char], r13d  # it waits for its resolve; the character follows the accept
+    mov edi, [rip + cfg_complete_replace]
+    call cp_accept_key
+    jmp 9f
+2:  call cp_accept
     jmp 8f                      # the editor types the character
 .Lcpk_plain:
     test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER | MOD_SHIFT
@@ -2279,9 +2313,16 @@ cp_accept_ci:
     # (not for snippet fields, whose offsets the text keeps)
     test dword ptr [r12 + CI_flags], CF_ADJUST
     jz 0f
-    mov rax, [r12 + CI_ext]
-    FEAT_TEST rax, FEAT_SNIPPETS
+    mov rdi, r12
+    lea rsi, [rip + .Lx_field]
+    call item_record
+    test rax, rax
     jnz 0f
+    mov rax, [r12 + CI_off]     # item_record used the parser: the text again
+    add rax, [rip + cp_bytes + SB_ptr]
+    mov ecx, [r12 + CI_llen]
+    add rax, rcx
+    mov [rsp + 64], rax
     mov rdi, rbx
     mov rsi, r14
     mov rdx, [rsp + 64]
@@ -3055,8 +3096,7 @@ res_send:
     call query_room
     test eax, eax
     jz 9f
-    mov edi, HR_RESOLVE
-    call cancel_kind
+    call res_withdraw
     mov r12d, [rbx + CI_serial]
     mov rdi, rbx
     lea rsi, [rip + .Lx_resolve]
@@ -3114,6 +3154,24 @@ res_send:
     mov [rax + HR_session], ecx
     mov [rax + HR_req], r12
 9:  EPILOGUE
+
+# res_withdraw(): the resolve out is not wanted any more: its item may be resolved again later
+res_withdraw:
+    push rbx
+    mov edi, [rip + cp_res_serial]
+    test edi, edi
+    jz 1f
+    mov dword ptr [rip + cp_res_serial], 0
+    call item_by_serial
+    test rax, rax
+    js 1f
+    mov rdi, rax
+    call item
+    and dword ptr [rax + CI_flags], ~CF_RESOLVING
+1:  mov edi, HR_RESOLVE
+    call cancel_kind
+    pop rbx
+    ret
 
 # res_answer(serial, ok, body, len): its resolve answer (from extproto's pump: state only): EXTRA
 # records doc, detail, edit and after join the item; field, choice and cursor records drop it
@@ -3261,10 +3319,14 @@ res_answer:
 # cp_wait_accept(): the accept that waited for its item's resolve goes ahead, with what came
 cp_wait_accept:
     push rbx
+    push r12
+    sub rsp, 8
     mov edi, [rip + cp_wait_serial]
     mov ebx, [rip + cp_wait_replace]
+    mov r12d, [rip + cp_wait_char]
     mov dword ptr [rip + cp_wait_serial], 0
     mov dword ptr [rip + cp_wait_ready], 0
+    mov dword ptr [rip + cp_wait_char], 0
     call item_by_serial
     test rax, rax
     js 8f
@@ -3273,9 +3335,19 @@ cp_wait_accept:
     mov rdi, rax
     mov esi, ebx
     call cp_accept_ci
-    pop rbx
-    ret
+    jmp 7f
 8:  call cp_close
+7:  test r12d, r12d             # the commit character that waited goes in after the item
+    jz 9f
+    call focused_doc
+    test rax, rax
+    jz 9f
+    mov edi, r12d
+    call ed_type
+    mov edi, r12d
+    call complete_typed
+9:  add rsp, 8
+    pop r12
     pop rbx
     ret
 
@@ -3317,6 +3389,7 @@ FN complete_part
     mov dword ptr [rax + HR_parts], 1
     mov rdx, [rax + HR_version]
     mov [rip + cp_parse_ver], rdx
+    mov qword ptr [rip + cp_room], -1
     mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
@@ -3851,9 +3924,12 @@ lmatch:
     mov eax, 1
 9:  ret
 
-# item_doc(CI*) -> rax ptr, rdx len of the documentation in the item's extra records (len 0: none)
+# item_doc(CI*) -> rax ptr, rdx len of the documentation in the item's extra records (len 0: none);
+# the last doc record, so a resolve answer's documentation replaces the list's
 item_doc:
-    PROLOGUE
+    PROLOGUE 16
+    mov qword ptr [rsp], 0
+    mov qword ptr [rsp + 8], 0
     mov r12, rdi
     mov rax, [r12 + CI_off]
     add rax, [rip + cp_bytes + SB_ptr]
@@ -3903,11 +3979,11 @@ item_doc:
     jne 1b
     cmp byte ptr [r15 + 3], ' '
     jne 1b
-    mov rdx, rax
-    mov rax, rcx
-    EPILOGUE
-8:  xor eax, eax
-    xor edx, edx
+    mov [rsp], rcx
+    mov [rsp + 8], rax
+    jmp 1b
+8:  mov rax, [rsp]
+    mov rdx, [rsp + 8]
     EPILOGUE
 
 # wrap(face, ptr, len, maxw, x, y, lh, argb, lines left, draw) -> eax lines it takes (drawn when draw
