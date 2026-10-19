@@ -57,8 +57,10 @@ STRINGS = {
     ('remote', 'agent_binary'): '/opt/rhun café/linux/rhun',
 }
 CHOICES = {('editor', 'multi_cursor_paste'): ('spread', 'full'),
+           ('editor', 'multi_cursor_modifier'): ('alt', 'ctrl'),
            ('ui', 'decorations'): ('auto', 'client', 'server'),
-           ('git', 'commit_ai'): ('off', 'claude', 'codex', 'ollama')}
+           ('git', 'commit_ai'): ('off', 'claude', 'codex', 'ollama'),
+           ('updates', 'extensions'): ('install', 'check', 'off')}
 
 
 # Theme shows without Follow system dark mode, the dark and light mode's themes with it.
@@ -142,20 +144,21 @@ class SettingsUI(unittest.TestCase):
                 self.configure(section, key, 'original')
                 y = self.compact_row_y(section, key)
                 self.run_editor([f'click 240 {y}', f'key {MOD}+a', 'type ' + value,
-                                 'key Return'], width=480, height=8000)
+                                 'key Return'], width=480, height=12000)
                 self.assertEqual(self.value(section, key), value)
         for (section, key), choices in CHOICES.items():
             for index, value in enumerate(choices):
                 with self.subTest(setting=f'{section}.{key}', value=value):
                     self.configure()
                     y = self.compact_row_y(section, key) + index * 32
-                    self.run_editor([f'click 240 {y}'], width=480, height=8000)
+                    self.run_editor([f'click 240 {y}'], width=480, height=12000)
                     self.assertEqual(self.value(section, key), value)
 
     def test_inventory_requires_cases_for_every_setting(self):
         expected = {(s, k) for s, names in BOOLS.items() for k in names.split()}
         expected |= set(INTS) | set(STRINGS) | set(CHOICES)
-        expected |= set(THEME_ROWS) | {('git', 'ai_setup'), ('updates', 'check_now')}
+        expected |= set(THEME_ROWS) | {('git', 'ai_setup'), ('updates', 'check_now'),
+                                       ('updates', 'check_extensions')}
         self.assertEqual(expected, {(s, k) for s, k, _ in ROWS})
 
     def test_every_boolean_toggles_both_ways(self):
@@ -208,8 +211,10 @@ class SettingsUI(unittest.TestCase):
     def test_every_choice_segment(self):
         # Control widths place each click well inside its segment.
         widths = {('editor', 'multi_cursor_paste'): (108, 86),
+                  ('editor', 'multi_cursor_modifier'): (42, 49),
                   ('ui', 'decorations'): (55, 55, 78),
-                  ('git', 'commit_ai'): (45, 92, 59, 116)}
+                  ('git', 'commit_ai'): (45, 92, 59, 116),
+                  ('updates', 'extensions'): (67, 84, 45)}
         for (section, key), options in CHOICES.items():
             for index, option in enumerate(options):
                 with self.subTest(setting=f'{section}.{key}', option=option):

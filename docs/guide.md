@@ -323,7 +323,7 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+Shift+O | Open folder |
 | Ctrl+Shift+P, F1 | Command palette |
 | Ctrl+, | Settings |
-| Ctrl+K | Color theme |
+| Ctrl+K Ctrl+T | Color theme |
 | Ctrl+B | Toggle explorer |
 | Ctrl+Shift+A | Toggle agents panel |
 | Ctrl+\` | Toggle terminal |
@@ -372,7 +372,7 @@ holds the path, which can include folders that do not exist yet. Right-click a f
 menu; right-click the empty space below the list for the project folder's: New File, New Folder,
 Copy Path and Show in Finder (Show in Explorer, Open in File Manager).
 
-Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder permanently removes its contents, including hidden files. Links are removed without deleting their targets. The tabs of deleted files close, except those with unsaved changes. Renaming a file or folder keeps its open tabs on the new path.
+Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder removes its contents, including hidden files; links are removed without deleting their targets. The tabs of deleted files close, except those with unsaved changes. Renaming a file or folder keeps its open tabs on the new path. Both can be undone until rhun quits: `ctrl+z` while the explorer has the focus, or **Undo Last Multi-File Edit**, brings the file or folder back (deleted items wait in `~/.local/state/rhun/edits`).
 
 Right-click a file or directory in the explorer and choose **Show in Finder** (macOS), **Show in Explorer** (Windows), or **Open in File Manager** (Linux). Finder and Explorer select the item in its parent folder. Linux opens the containing folder through `xdg-open`, using your desktop's default file manager. The command palette also has **Show File in System File Manager** for the active file.
 
@@ -400,6 +400,7 @@ In a git repository rhun shows what changed since the last commit. It runs the `
   - **Reset All Changes** asks with **Cancel** and **Reset All Changes** buttons. Confirming restores staged and unstaged files on disk to the last commit and permanently deletes untracked files and folders throughout the repository. The cleanup skips ignored files and nested repositories. Before the first commit, it removes staged additions too. Unsaved editor changes are kept, and running agents or terminals can create changes again after the reset.
   - The changes in groups: merge conflicts, staged and not staged. A file shows its buttons when hovered: + stages it, − unstages it, ↶ discards its changes; each group has them for all its files. Discarding asks first, and for a new file it deletes the file. Clicking a file opens its diff.
   - When a pull stops on conflicts, the merge's message fills the message box: resolve the files, stage them and commit. What git reports when something fails is shown under the buttons.
+- A right click on a commit in the history copies its id; on a file of a commit or a changed file it offers **Open Changes**, **Open File** and **Copy Path**. Extensions can add items to these menus.
 - The command palette has them too: Git: Commit, Commit (Amend), Pull, Push, Sync, Fetch, Stage All Changes, Unstage All Changes, Discard All Changes and Reset All Changes. Discard All Changes only discards unstaged changes; Reset All Changes also clears staged changes. An amend without a message keeps the commit's message.
 - git runs without a terminal to ask for passwords: HTTPS remotes need a credential helper, SSH keys an agent.
 
@@ -425,7 +426,9 @@ commit_ai = off
 commit_model = qwen2.5-coder:1.5b
 ```
 
-`commit_ai` accepts `off`, `claude`, `codex`, or `ollama`. **Git: Generate Commit Message**, **Git: Check AI Provider**, **Git: Download Local Model**, **Git: Delete Local Model**, and **Git: Cancel AI Operation** are also available in the command palette.
+An installed extension that writes commit messages is listed after these, by its name. Generate then starts it if needed and sends it the same bounded diff (staged changes, or what **Commit All** would take) and the branch; its answer fills the message box under the same rules, and **Cancel** withdraws the request. The extension needs no access to your files for this: rhun sends the diff only when you click Generate.
+
+`commit_ai` accepts `off`, `claude`, `codex`, `ollama`, or `ext:OWNER/NAME` for an extension. **Git: Generate Commit Message**, **Git: Check AI Provider**, **Git: Download Local Model**, **Git: Delete Local Model**, and **Git: Cancel AI Operation** are also available in the command palette.
 
 CLI references: [Codex noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [Codex authentication](https://learn.chatgpt.com/docs/auth), [Claude Code CLI](https://code.claude.com/docs/en/cli-reference), and [Ollama](https://docs.ollama.com/quickstart).
 
@@ -442,6 +445,28 @@ PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame
 | Wheel (Shift+wheel sideways), drag, arrows | Pan |
 
 The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
+
+### Multiple cursors
+
+Several selections edit together: typing, Backspace and Delete (by character and by word), Enter, Tab and Shift+Tab, Indent and Outdent, Cut, Copy and Paste act at every one, as one Undo step that also brings the selections back. The newest selection is the primary: the view follows it and the status bar shows its position and how many selections there are.
+
+| Keys | Command |
+| --- | --- |
+| Ctrl+D | Select the word at the cursor, then add the next match (whole words of the same case after a word; else the exact text) |
+| Ctrl+Shift+L | Select All Matches (at most 512, the nearest ones) |
+| Ctrl+Alt+Up / Down, Shift+Alt+Up / Down | Add Cursor Above / Below, at the primary's column |
+| Ctrl+U | Remove Last Selection |
+| Shift+Alt+I | Add Cursors to Line Ends of the selected lines |
+| Ctrl+Shift+Alt+arrows | Column Select: a box that grows from the cursor |
+| Escape | Back to the primary alone |
+
+On macOS Ctrl is Command and Alt is Option. Move Selection to Next Match (Ctrl+D's old behaviour) is in the command palette without a key.
+
+With the mouse, Alt+click adds a caret (on a caret, removes it), Alt+drag adds a selection, Alt+double-click adds a word, and Shift+Alt+drag selects a box: one selection a line between the two columns, tabs expanded, skipping lines that end left of it. A plain click goes back to one cursor. When the window manager takes Alt+drag, `multi_cursor_modifier = ctrl` under `[editor]` (**Multi-cursor modifier** in Settings) uses Ctrl instead.
+
+Arrows, Home, End, word and page moves move every selection, each keeping its own column on short lines; selections that come to overlap become one. Duplicate Line, Delete Line, Move Line Up/Down, Toggle Comment, Insert Line Below/Above and Select Line act on the lines of every selection. Commands about one place (find next, Go to Line, completion, Go to Definition, rename, code actions) keep the primary alone first, and completion does not open by itself while there are several selections.
+
+In Vim mode, `gb` adds a cursor at the next occurrence of the word under the cursor (of the selection in visual mode); Ctrl+D keeps paging. Motions with counts, `i a I A o O`, visual mode, `x X D C s S dd cc yy`, operators with a motion or text object (`ciw`), `p P` and `.` act at every cursor as one undo step; `u` brings the cursors back. Yanks at several cursors are one copy with a piece each, which `p` puts back paired. Esc in insert mode keeps the cursors, each stepping back a character; Esc in normal mode leaves the primary alone. Searches, `:`, `J`, `r`, `~`, `>` and `<` go back to the primary first.
 
 ### Vim mode
 
@@ -480,11 +505,22 @@ enabled = false
 [keys]
 ctrl+shift+d = duplicate_line
 alt+z = none
+ctrl+k ctrl+c = toggle_comment when editorFocus
+ctrl+alt+g = goto_line
+ctrl+alt+p = owner/ext.command some arguments
 ```
 
-Key names are those of the command palette entries in snake case (see `src/app/keys.s`). `none` removes a binding.
+Command names are those of the command palette entries in snake case (see `src/app/keys.s`);
+an extension's command is `name.command` or `owner/name.command`. `none` removes every binding of
+those keys. A binding is one key or a chord of two (`ctrl+k ctrl+c`): after the first, the status
+bar shows `Ctrl+K — waiting for the next key` until the second, Escape, a click or five seconds.
+Text after the command is passed to an extension command as its arguments, and `when CLAUSE`
+limits the binding to a context (`editorFocus`, `resourceLang == Rust`, `terminalFocus`, ...; the
+clause language and its keys are in the extension protocol's "When clauses"). Your bindings win
+over extensions', which win over rhun's own. **Keyboard Shortcuts** in the command palette lists
+every binding, where it comes from, its clause and what overrides it.
 
-At multiple cursors, copied selections stay paired with their destinations. For other multiline text, `multi_cursor_paste = spread` under `[editor]` pastes one line per cursor when the counts match. Set it to `full` to paste all the text at each cursor. The same choice is available as **Paste at multiple cursors** in Settings.
+At multiple cursors (see [Multiple cursors](#multiple-cursors)), copied selections stay paired with their destinations. For other multiline text, `multi_cursor_paste = spread` under `[editor]` pastes one line per cursor when the counts match. Set it to `full` to paste all the text at each cursor. The same choice is available as **Paste at multiple cursors** in Settings.
 
 Tab uses each cursor’s own column. Indent and Outdent update each shared line once and preserve selection direction. One Undo restores the whole edit.
 
@@ -492,7 +528,7 @@ Paste waits for clipboard data without changing its destination. If the original
 
 ### Themes
 
-The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
+The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K Ctrl+T), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
 
 rhun reads the mode as VS Code does and switches as soon as the system does:
 
@@ -584,7 +620,9 @@ else installed. One that crashes or hangs cannot take the editor with it, and on
 the kernel holds each one to the permissions its manifest declares.
 
 They can add commands to the palette with their own keys, read and edit the open documents (each
-edit one undo step), put marks with messages in the gutter, answer hover, open prompts and pick
+edit one undo step), put marks with messages in the gutter, **decorate** text (colors,
+backgrounds, underlines, strikethrough, faded text, icons in the gutter, ticks in the scrollbar,
+tips when the pointer rests on them), answer hover, open prompts and pick
 lists, suggest terminal commands, set per-document options, ship themes and grammars, and keep
 settings on their page. They can also open **views**, tabs they draw in with shapes and text in
 the theme's colors (charts, pictures, previews) that hear the pointer, and provide **completion
@@ -598,12 +636,53 @@ commands:
 | shift+F12 | Find All References | the references in the palette, this file's first; choosing one opens it |
 | ctrl+r | Go to Symbol in File | the file's functions, types and variables, indented by nesting; type to filter |
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
-| F2 | Rename | on a word, asks for the new name; every file it changes opens unsaved for you to review (without a matching rename provider, F2 renames the file) |
+| F2 | Rename | on a word, asks for the new name, then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
 | shift+alt+f | Format Document | with the document's tab width and spaces |
+
+Extensions that declare `git = read` read the project's Git data through rhun: the status, the
+blame of a file as you edit it (unsaved lines show as not committed), the history of a file or of
+some lines, a file at an older commit, and rhun's diff view of two commits. rhun runs git for them,
+so a folder opened from a `rhun://` link stays paused for them too until you trust it. An
+extension can also give the base the gutter marks compare a file with, for files outside git
+(another version control system, or "compare with" modes), and write commit messages (see
+Commit message AI).
 
 An edit across files is checked whole before anything changes: if a document changed meanwhile
 or a range is off, nothing changes and rhun says why. Each document's changes are one undo
 step.
+
+#### Edits across files
+
+A rename, a code action or an extension's edit across files is checked whole before anything
+changes: if a document changed meanwhile or a range is off, nothing changes and rhun says why.
+Then it is made everywhere at once, and one **Undo** (`ctrl+z`, or `u` in vim) in any tab it
+touched takes all of it back: "Undid 'Rename to total' in 5 files". Redo redoes it everywhere.
+If one of its files changed since (you typed in it, or it changed on disk), Undo asks whether to
+undo in that file only, in the files that did not change, or not at all. **Undo Last Multi-File
+Edit** and **Redo Last Multi-File Edit** reach the newest one when none of its files is open.
+
+Extensions that support it (the first-party language server extension does) change files you do
+not have open directly on disk, without opening tabs, and save the open files they change that
+had no unsaved changes; files with unsaved changes are edited and stay unsaved. They can also
+create, rename and delete files: a renamed file's tab follows it, a deleted file's tab closes
+and comes back with Undo. When an extension's edit would change files on disk and its manifest
+does not ask for `project = write`, rhun asks first in the palette:
+
+```
+Language Server: 'Rename to total' changes 3 files that are not open and 1 open file, renames 1
+> Apply
+  Apply, and let Language Server change project files from now on
+  Preview changes
+  M  internal/calc.go    2 edits
+  R  util.go → helpers.go
+```
+
+**Preview changes** (or Enter on a file's row) opens a read-only tab with the changes as a diff,
+then the question again. The second row remembers the permission (`edits = yes` in
+`extensions.ini`); the extension's page shows it with a switch to take it back. Escape changes
+nothing. Every write is first recorded in `~/.local/state/rhun/edits`: a write the system refuses
+puts everything back, and an edit cut short by a crash is put back at the next start ("Restored 3
+files from a workspace edit that was cut short").
 
 Formatting, symbol rename, file symbols and signature help use a saved provider for the document's language.
 With one matching extension, rhun uses it. With several, a chooser shows their `owner/name`
@@ -727,6 +806,95 @@ The command palette shows each extension command's qualified name, `owner/name.c
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same
 name, use the qualified name so turning an extension off cannot change which command runs.
+
+#### Versions and roll back
+
+`owner/name@0.1.0` (or `@v0.1.0`) installs that release's tag; without a version rhun asks
+GitHub which tag is the latest and installs exactly that one, so the archive and its checksums
+always come from one release. The Add dialog says whether the version was reviewed for the rhun
+extensions index. Archives that unpack to more than 64 MB, or hold links, devices or paths
+outside themselves, are refused.
+
+rhun keeps the version an install or update replaces in
+`~/.config/rhun/extensions/.previous/OWNER/NAME/`, one per extension. **Roll back to 0.1.0** on
+its page (or `ext-rollback` in a script) swaps the two, so rolling back twice returns to the
+newer one; when the older version may do more than the newer, rhun asks first. A new version
+that fails its first start (it cannot start, says no `hello` within 5 seconds, or exits before
+it) rolls back by itself with a note such as "Showcase 0.1.2 did not start (no hello within
+5 s); back to 0.1.0". Its settings stay across versions, including settings only one of them
+declares. Each install writes `.rhun-install` into the extension's folder: where it came from
+(`source = github`, `archive` or `folder`, the repository and tag or the path), the archive's
+SHA-256, whether the index reviewed it, when it was installed, and `started = yes` after its
+first start.
+
+#### Updates
+
+rhun checks for extension updates 60 seconds after it starts and then once a day (Settings >
+Updates > **Check extensions now**, or **Check for updates** on the Extensions page, checks at
+once). An extension the [rhun extensions index](https://github.com/rhun-editor/extensions) lists
+is offered only the version the index reviewed (its tag and archive digest); any other extension
+is asked about through its repository's latest release on GitHub. Waiting updates put a dot on
+the title bar's extensions button and an **Update all** row in its menu; the Extensions page
+lists them at the top, each card has **Update to 0.1.2**, and the details page links the
+release's notes (**What's new**).
+
+`[updates] extensions` decides what happens on its own: `install` (the default) installs reviewed
+versions by themselves, one at a time, with a note such as "Updated Showcase to 0.1.2"; `check`
+only shows updates; `off` stops the checks. An update the index has not reviewed is never
+installed by itself: **Update** says "Not in the rhun extensions index: nobody has reviewed this
+version." first. An update that asks for more access than the installed version (a higher level
+for your files or project, home, the network, the terminal, or a new program to run) always asks,
+naming what is new, and waits for you; Cancel keeps the installed version and stops automatic
+updates from fetching that version again. After **Roll back**, automatic updates leave the
+version you went back from alone until a newer one appears. What rhun learned is kept in
+`$XDG_STATE_HOME/rhun/extension-updates`.
+
+#### Browse
+
+**Browse** on the Extensions page lists the extensions of the
+[rhun extensions index](https://github.com/rhun-editor/extensions): each one's version was
+reviewed before rhun offers it, its release pinned by tag and archive digest. Type in the search
+field (ctrl+f on the page) to narrow the list: each word must start a word of an extension's
+title, `owner/name`, description or keywords; featured ones come first. Each card shows what the
+extension can do and one button: **Install** (the reviewed version; its download must match the
+index's digest, then the usual Add dialog), **Installed**, **Update to 0.2.0**, **Not for this
+system** or **Needs rhun 0.19**. rhun fetches the index when Browse opens and its copy is older
+than a day, with every update check, and on **Refresh** (never at startup just for Browse); it
+keeps the copy in `$XDG_STATE_HOME/rhun/extension-index.ini` and shows it offline with its age.
+The website's [catalog](https://rhun.app/extensions/catalog/) lists the same extensions with
+Install links that open rhun.
+
+#### Packs
+
+A pack installs several extensions at once: its manifest's `pack = OWNER/NAME …` names them (at
+most 16). Installing it downloads the pack and every member you do not have, then asks once:
+"Add “Essentials” and 3 extensions?", a line per member with what it can do, and a line for any
+that could not be downloaded; **Add** installs everything that downloaded. A pack has no program
+of its own. Its page lists its members, each with **Remove** or **Install**; removing the pack
+keeps them. An update of a pack that names a new member asks before adding it.
+
+**Remove** stops the extension and deletes its folder, its previous version, its saved data and
+log, its settings, pin and on/off choice, the provider choices that name it (rhun asks again
+rather than switching silently) and what rhun knew about its updates. Your `[keys]` stay.
+
+#### Development installs
+
+The page's **Install** menu (and the palette commands **Install Extension from Folder**, **Link
+Extension Folder (development)** and **Install Extension from Archive**) install what you are building:
+
+- **From a folder** copies a folder holding `extension.ini` (laid out as a release archive)
+  through the same checks as a download.
+- **Link a folder** runs the extension from your folder: rhun keeps only a stub with its record
+  in the extensions folder, so rebuild and **Restart** is the loop. Removing it leaves your
+  folder alone. A link that replaces a GitHub install keeps that install as the previous
+  version, so **Roll back** returns to the release.
+- **From an archive** takes a release `.tar.gz` on this computer; a `sha256sums.txt` beside it is
+  checked when there is one.
+
+Archive and folder installs are never checked for updates.
+
+`rhun://extension/OWNER/NAME` and `rhun://extension/OWNER/NAME@VERSION` links open the same Add
+dialog (the site's catalog uses them for its Install buttons).
 
 From [rhun-editor](https://github.com/rhun-editor):
 

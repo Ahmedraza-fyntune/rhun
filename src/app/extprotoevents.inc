@@ -27,6 +27,10 @@ xe_opened_baseline:
     cmp rax, [rbx + DOC_id]
     jne 2f
     mov qword ptr [r12 + XK_replay], 3
+    mov rax, [rip + cur]        # feature selections: the selections at catch-up too
+    FEAT_TEST rax, FEAT_SELECTIONS
+    jz 2f
+    mov qword ptr [r12 + XK_replay], 7
 2:  mov rax, [rbx + DOC_xedits]
     xor edx, edx
     test rax, rax
@@ -223,6 +227,8 @@ xe_positions:
 2:  mov [r13 + XK_cur], r14
     and qword ptr [r13 + XK_replay], -3
 .Lxp_selection:
+    FEAT_TEST rbx, FEAT_SELECTIONS
+    jnz .Lxp_selections
     test qword ptr [r13 + XK_replay], 4
     jnz .Lxp_selection_due
     mov rax, [r12 + DOC_cur]
@@ -253,6 +259,28 @@ xe_positions:
     js .Lxp_done
 3:  mov [r13 + XK_selcur], r14
     mov [r13 + XK_anchor], r15
+    and qword ptr [r13 + XK_replay], -5
+    jmp .Lxp_ready
+.Lxp_selections:
+    # feature selections: every selection when the set changed, but a caret that moved (cursor
+    # says that), and at catch-up
+    mov rdi, r12
+    call sel_hash
+    mov r14, rax
+    test qword ptr [r13 + XK_replay], 4
+    jnz 5f
+    cmp [r13 + XK_selhash], r14
+    je 6f
+5:  mov rdi, [rbx + EXT_sub_selection]
+    mov rsi, r12
+    call sub_matches
+    test eax, eax
+    jz 6f
+    mov rdi, r12
+    call send_selections
+    test rax, rax
+    js .Lxp_done
+6:  mov [r13 + XK_selhash], r14
     and qword ptr [r13 + XK_replay], -5
 .Lxp_ready:
     mov qword ptr [r13 + XK_phase], XP_READY
@@ -294,6 +322,10 @@ FN extproto_events
     mov r13, [rax + TAB_doc]
     test r13, r13
     jz .Lxe_tabs
+    mov rdi, r13                # wsedit: a workspace edit's preview, an extension's diff tab
+    call ws_doc_hidden
+    test eax, eax
+    jnz .Lxe_tabs
     mov rdi, r13
     call doc_sync_grammar
     mov [rsp + 8], rax
@@ -361,6 +393,10 @@ FN extproto_events
     mov r13, [rax + TAB_doc]
     test r13, r13
     jz .Lxe_positions
+    mov rdi, r13                # wsedit
+    call ws_doc_hidden
+    test eax, eax
+    jnz .Lxe_positions
     mov rdi, r13
     call doc_sync_grammar
     test rax, rax

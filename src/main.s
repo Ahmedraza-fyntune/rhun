@@ -58,6 +58,17 @@ FN main
     mov rdi, [rax + 8]
 1:  call remote_askpass_main
 .Lnot_askpass:
+    # rhun --print-env: the login shell asks for its environment (uproc.s)
+    cmp qword ptr [rip + g_argc], 2
+    jne 2f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lprint_env]
+    call strcmp_eq
+    test eax, eax
+    jz 2f
+    call uproc_print_env
+2:
     cmp qword ptr [rip + g_argc], 5
     jb 1f
     cmp qword ptr [rip + g_argc], 6
@@ -138,9 +149,12 @@ FN main
     call headless_clip_reset
     call dap_shutdown           # debugger: sessions disconnect, adapters are stopped
     call bp_save
+    call uproc_quit_begin       # programs run as the user: SIGTERM now, up to 300 ms with the extensions
     call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
+    call uproc_quit_end
     call remote_shutdown        # remote hosts: the askpass socket
+    call ws_journal_cleanup     # wsedit: nothing can undo this session's workspace edits now
     call agents_shutdown
     call ai_shutdown
     call session_remember_project
@@ -158,6 +172,7 @@ FN main
 
 .section .rodata
 .Lagent_worker: .asciz "--agent-index"
+.Lprint_env: .asciz "--print-env"
 .text
 parse_args:
     PROLOGUE
@@ -545,7 +560,8 @@ open_initial:
     js 3f
     lea rdi, [rip + cwd]
     call app_set_project
-3:  xor ebx, ebx
+3:  call ws_recover             # wsedit: workspace edits a crash cut short are put back first
+    xor ebx, ebx
 4:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 5f
     mov rax, [rip + g_start_paths + VEC_ptr]

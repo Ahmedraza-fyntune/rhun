@@ -201,7 +201,12 @@ FN line_indent
 
 # ed_move(kind, extend) ; kind: 0 left 1 right 2 up 3 down 4 home 5 end 6 wordl 7 wordr 8 pgup 9 pgdn 10 docstart 11 docend
 FN ed_move
-    PROLOGUE 16
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne sel_move                # several selections: each moves (editorsel.s)
+1:  PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Lmv_ret
@@ -1302,6 +1307,7 @@ FN ed_paste
     EPILOGUE
 
 FN cmd_select_all
+    call ed_single              # one selection (multi-cursor)
     mov rdi, [rip + g_doc]
     test rdi, rdi
     jz 1f
@@ -1315,7 +1321,12 @@ FN cmd_select_all
 
 # select the current line(s), extending on repeat
 FN cmd_select_line
-    push rbx
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_select              # several selections (editorlines.s)
+1:  push rbx
     push r12
     push r13
     mov rbx, [rip + g_doc]
@@ -1385,9 +1396,15 @@ FN word_at
     mov rdx, r13
     EPILOGUE
 
-# ctrl+d: select word, or the next occurrence of the selection
-FN cmd_select_next
-    PROLOGUE 16
+# Move Selection to Next Match: select word, or the selection moves to the next occurrence (ctrl+d
+# before 0.18; editorsel.s's cmd_select_next adds the next match instead)
+FN cmd_select_next_skip
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne sel_next_skip           # several selections: the primary moves, the others stay
+1:  PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1501,7 +1518,12 @@ FN doc_search
 
 FN cmd_duplicate_line
     READONLY_RET
-    PROLOGUE 16
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_duplicate              # several selections (editorlines.s)
+1:  PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1559,7 +1581,12 @@ FN cmd_duplicate_line
 
 FN cmd_delete_line
     READONLY_RET
-    PROLOGUE
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_delete              # several selections (editorlines.s)
+1:  PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1614,7 +1641,15 @@ FN cmd_delete_line
 # ed_move_lines(dir): move selected lines up (-1) or down (1)
 FN ed_move_lines
     READONLY_RET
-    PROLOGUE 48
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    je 1f
+    test edi, edi               # several selections (editorlines.s)
+    js lines_move_up
+    jmp lines_move_down
+1:  PROLOGUE 48
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Lml_ret
@@ -1743,7 +1778,12 @@ FN ed_move_lines
 # toggle line comments using the grammar's comment token
 FN cmd_toggle_comment
     READONLY_RET
-    PROLOGUE 32
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_comment              # several selections (editorlines.s)
+1:  PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Ltc_ret
@@ -1859,6 +1899,8 @@ FN cmd_toggle_comment
     EPILOGUE
 
 FN cmd_undo
+    cmp dword ptr [rip + g_focus], FOCUS_EXPLORER
+    je cmd_undo_workspace_edit  # wsedit: the explorer's Rename and Delete undo from there
     READONLY_RET
     mov rdi, [rip + g_doc]
     test rdi, rdi
@@ -1900,8 +1942,12 @@ editor_gutter:
     lea eax, [rcx + 0]
     add eax, [rip + g_mt + 4*MI_24]
     add eax, [rip + g_mt + 4*MI_8]
+    mov ecx, eax
+    call gutter_extra           # the lanes' share (gutter.s)
+    add eax, ecx
     ret
-2:  M eax, MI_16
+2:  call gutter_extra
+    add eax, [rip + g_mt + 4*MI_16]
     ret
 
 # ed_top_inside(doc): the view starts at the last line when the text ends above its top line. Text
@@ -2025,8 +2071,12 @@ reveal:
     call clamp_scroll
     EPILOGUE
 
+# pos_at_point_editor(doc, px, py) -> pos: pos_at_point for other files
+FN pos_at_point_editor
+    jmp pos_at_point
+
 # pos_at_point(doc, px, py) -> pos
-pos_at_point:
+FN pos_at_point
     cmp dword ptr [rip + cfg_word_wrap], 0
     jne wrap_pos_at
     PROLOGUE
@@ -2121,11 +2171,17 @@ draw_wrapped:
     cmp dword ptr [rip + cfg_highlight_line], 0
     je 12f
     cmp r12, [rsp + 8]
-    jne 12f
+    jne 14f
     mov rax, [rsp + 16]
     cmp rax, [rsp + 24]
     jne 12f
-    mov edi, [rip + g_ed_x]
+    jmp 15f
+14: mov rdi, rbx                # and the lines of the other carets
+    mov rsi, r12
+    call sel_line_tint
+    test eax, eax
+    jz 12f
+15: mov edi, [rip + g_ed_x]
     mov esi, r13d
     mov edx, [rip + g_ed_w]
     mov ecx, [rip + g_lh]
@@ -2137,9 +2193,21 @@ draw_wrapped:
     mov edx, [rip + g_lh]
     imul edx, r14d
     call draw_disk_range
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    imul ecx, r14d
+    call deco_line_back
     # line number on the first row
     cmp qword ptr [rbx + DOC_diff], 0
     jne .Ldw_diff
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    imul ecx, r14d
+    call gutter_line_under
     cmp dword ptr [rip + cfg_line_numbers], 0
     je 1f
     lea rdi, [rsp + 40]
@@ -2150,9 +2218,8 @@ draw_wrapped:
     lea rsi, [rsp + 40]
     mov rdx, rax
     call text_width
-    mov esi, [rip + g_ed_tx]
+    mov esi, [rip + g_gl_digits_r]
     sub esi, eax
-    sub esi, [rip + g_mt + 4*MI_16]
     COLOR r9d, T_LINENO
     cmp r12, [rsp + 8]
     jne 11f
@@ -2168,7 +2235,7 @@ draw_wrapped:
     mov edx, r13d
     mov ecx, [rip + g_lh]
     imul ecx, r14d
-    call extmarks_gutter        # an extension's diagnostic on the line
+    call gutter_line            # the left lane's glyph (gutter.s)
     mov rax, [rsp]
     test rax, rax
     jz 13f
@@ -2322,6 +2389,8 @@ FN editor_draw
     mov [rsp], eax              # gutter width
     add eax, [rip + g_ed_x]
     mov [rip + g_ed_tx], eax
+    mov rdi, rbx
+    call gutter_frame           # the lanes' positions (gutter.s)
     mov edi, [rsp]
     call hscroll_measure
     # ---- input ----
@@ -2350,10 +2419,13 @@ FN editor_draw
     mov rsi, rax
     call ext_hover_track
     call ext_hover_tip
+    call gutter_unhover
     jmp 13f
 12: xor edi, edi
     xor esi, esi
     call ext_hover_track
+    mov rdi, rbx
+    call gutter_hover           # the left lane's hover glyph and tips (gutter.s)
 13: mov dword ptr [rip + ed_hovered], 1
     # wheel (sideways with Shift: wheel_xy)
     call wheel_xy
@@ -2384,7 +2456,15 @@ FN editor_draw
 3:  # right click: menu (moves the cursor unless clicking inside the selection)
     test dword ptr [rip + g_pressed], 1 << BTN_RIGHT
     jz 31f
-    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov eax, [rip + g_mx]
+    cmp eax, [rip + g_ed_tx]
+    jge 34f
+    mov rdi, rbx
+    mov esi, BTN_RIGHT
+    call gutter_press           # a glyph's own menu
+    test eax, eax
+    jnz .Led_noinput
+34: mov dword ptr [rip + g_focus], FOCUS_EDITOR
     call vim_export
     mov rdi, rbx
     mov esi, [rip + g_mx]
@@ -2397,14 +2477,13 @@ FN editor_draw
     jb 32f
     cmp r12, rdx
     jbe 33f
-32: mov [rbx + DOC_cur], r12
+32: mov rdi, rbx
+    call sel_collapse           # a click outside the selection: one caret (multi-cursor)
+    mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
     mov rdi, rbx
     call snippet_selection_changed
-33: lea rdi, [rip + editor_menu]
-    mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+33: call menu_open_editor       # with the extensions' items (menu.s)
     jmp .Led_noinput
 31: # mouse press in the text area
     test dword ptr [rip + g_pressed], 1 << BTN_LEFT
@@ -2426,6 +2505,15 @@ FN editor_draw
     cmp eax, [rip + g_ed_tx]
     jge .Led_noinput
 311:
+    mov eax, [rip + g_mx]
+    cmp eax, [rip + g_ed_tx]
+    jge 312f
+    mov rdi, rbx
+    mov esi, BTN_LEFT
+    call gutter_press           # a glyph or the left lane's owner takes it
+    test eax, eax
+    jnz .Led_noinput
+312:
     mov edi, ID_EDITOR
     mov [rip + g_active], edi
     mov dword ptr [rip + g_dragging], 1
@@ -2436,6 +2524,18 @@ FN editor_draw
     mov edx, [rip + g_my]
     call pos_at_point
     mov r12, rax
+    # multi-cursor: the modifier's clicks add carets, words or a box; a plain click collapses
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, [rip + g_clicks]
+    call sel_press
+    test eax, eax
+    jz 312f
+    cmp eax, 1
+    je .Led_noinput
+    mov dword ptr [rip + g_dragging], 0
+    jmp .Led_noinput
+312:
     mov eax, [rip + g_clicks]
     cmp eax, 2
     je .Led_dbl
@@ -2471,6 +2571,7 @@ FN editor_draw
     xor edi, edi
     xor esi, esi
     call ext_hover_track
+    call gutter_unhover
 1:  mov dword ptr [rip + ed_hovered], 0
     call hscroll_clamp           # a wheel or trackpad stops at the widest line
     # drag selection
@@ -2479,8 +2580,16 @@ FN editor_draw
     test dword ptr [rip + g_mdown], 1 << BTN_LEFT
     jnz 5f
     mov dword ptr [rip + g_dragging], 0
+    mov rdi, rbx
+    call sel_drag_end           # multi-cursor: a box is done, an alt+drag's selection merges
     jmp 4f
 5:  mov rdi, rbx
+    mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call sel_drag               # multi-cursor: a shift+alt drag's box follows the pointer
+    test eax, eax
+    jnz 6f
+    mov rdi, rbx
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
     call pos_at_point
@@ -2561,11 +2670,21 @@ FN editor_draw
     mov [rip + g_ed_h_lines], eax
     lea rsi, [rsi + rax + 2]
     mov rdi, rbx
+    push rsi
+    push rsi
     call syntax_prepare
+    pop rdx
+    pop rdx
+    mov rsi, [rbx + DOC_scrolly]
+    shr rsi, 8
+    mov rdi, rbx
+    call deco_frame             # the decorations on these lines, once per change (deco.s)
     # ---- lines ----
     mov qword ptr [rip + cls_doc], 0
     mov rdi, rbx
     call match_brackets
+    mov rdi, rbx
+    call sel_frame              # the other selections, for draw_line's rows
     mov dword ptr [rip + g_caret_ok], 0
     mov dword ptr [rip + dl_from], 0
     mov dword ptr [rip + dl_to], -1
@@ -2609,11 +2728,17 @@ FN editor_draw
     cmp dword ptr [rip + cfg_highlight_line], 0
     je 1f
     cmp r12, [rsp + 8]
-    jne 1f
+    jne 14f
     mov rax, [rsp + 16]
     cmp rax, [rsp + 24]
     jne 1f
-    mov edi, [rip + g_ed_x]
+    jmp 15f
+14: mov rdi, rbx                # and the lines of the other carets
+    mov rsi, r12
+    call sel_line_tint
+    test eax, eax
+    jz 1f
+15: mov edi, [rip + g_ed_x]
     mov esi, r13d
     mov edx, [rip + g_ed_w]
     mov ecx, [rip + g_lh]
@@ -2623,9 +2748,19 @@ FN editor_draw
     mov esi, r13d
     mov edx, [rip + g_lh]
     call draw_disk_range
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    call deco_line_back         # whole-line decoration backgrounds
     # line number
     cmp qword ptr [rbx + DOC_diff], 0
     jne .Led_diffline
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    call gutter_line_under      # a tint behind it (coverage)
     cmp dword ptr [rip + cfg_line_numbers], 0
     je 2f
     lea rdi, [rsp + 40]
@@ -2636,9 +2771,8 @@ FN editor_draw
     lea rsi, [rsp + 40]
     mov rdx, rax
     call text_width
-    mov esi, [rip + g_ed_tx]
+    mov esi, [rip + g_gl_digits_r]
     sub esi, eax
-    sub esi, [rip + g_mt + 4*MI_16]
     COLOR r9d, T_LINENO
     cmp r12, [rsp + 8]
     jne 11f
@@ -2663,7 +2797,7 @@ FN editor_draw
     mov rsi, r12
     mov edx, r13d
     mov ecx, [rip + g_lh]
-    call extmarks_gutter        # an extension's diagnostic on the line
+    call gutter_line            # the left lane's glyph (gutter.s)
     # text area clip
     mov edi, [rip + g_ed_tx]
     sub edi, [rip + g_mt + 4*MI_4]
@@ -2693,9 +2827,21 @@ FN editor_draw
     jz 21b
     jmp .Led_adv
 .Led_lines_done:
+    # the lines shown, for extensions (`0 visible`, deco.s)
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_scrolly]
+    shr rsi, 8
+    mov rdx, [rip + g_row_line]
+    cmp rdx, rsi
+    jae 1f
+    mov rdx, rsi
+1:  call deco_visible
     # caret
     mov rdi, rbx
     call draw_caret
+    mov rdi, rbx
+    mov esi, [rip + g_ed_tx]
+    call sel_carets             # and the other selections' carets
     # gutter separator shadow when scrolled horizontally
     cmp qword ptr [rbx + DOC_scrollx], 0
     je 8f
@@ -2756,6 +2902,14 @@ FN editor_draw
     lea r9, [rsp + 52 + 16]
     call ui_scrollbar
     add rsp, 16
+    mov rdi, rbx                # decorations' ticks over the track (deco.s)
+    mov esi, [rip + g_ed_x]
+    add esi, [rip + g_ed_w]
+    sub esi, [rip + g_mt + 4*MI_12]
+    mov edx, [rip + g_ed_y]
+    M ecx, MI_12
+    mov r8d, [rip + g_ed_h]
+    call deco_scroll_ticks
     mov eax, [rsp + 104]
     mov [rip + g_block], eax
     # scrollbar drag writes pixels back when it moved them; the release frame leaves the offset,
@@ -3020,6 +3174,21 @@ draw_line:
     mov eax, [rip + g_ed_tx]
     sub eax, [rbx + DOC_scrollx]
     mov [rsp + 40], eax
+    # the row, for the presentation layers (deco.s): decoration backgrounds under the selection
+    mov [rip + g_row_doc], rbx
+    mov [rip + g_row_line], r12
+    mov rcx, [rsp + 24]
+    mov [rip + g_row_lstart], rcx
+    mov [rip + g_row_text], r14
+    mov [rip + g_row_len], r15
+    mov rcx, [rsp + 96]
+    mov [rip + g_row_from], rcx
+    mov rcx, [rsp + 32]
+    mov [rip + g_row_to], rcx
+    mov [rip + g_row_x], eax
+    mov eax, [rsp]
+    mov [rip + g_row_y], eax
+    call deco_row_back
     # ---- selection ----
     mov rax, [rsp + 8]
     cmp rax, [rsp + 16]
@@ -3069,6 +3238,14 @@ draw_line:
     COLOR r8d, T_SELECTION
     call gfx_fill
 .Ldl_nosel:
+    # the other selections' fills and carets on this row (multi-cursor)
+    mov rdi, r14
+    mov rsi, [rsp + 24]
+    mov rdx, [rsp + 96]
+    mov rcx, [rsp + 32]
+    mov r8d, [rsp + 40]
+    mov r9d, [rsp]
+    call sel_row
     # ---- find matches ----
     mov rcx, [rip + g_ed_find + SB_len]
     test rcx, rcx
@@ -3277,7 +3454,13 @@ draw_line:
     movzx ecx, byte ptr [rcx + r13]
     lea rdx, [rip + g_theme]
     mov r9d, [rdx + rcx*4 + 4*T_SYN]
-    mov r8d, [rsp + 84]
+    cmp dword ptr [rip + g_deco_spans], 0
+    je 94f
+    mov rdi, r13                # a decoration's text color (deco.s)
+    mov esi, r9d
+    call deco_span_color
+    mov r9d, eax
+94: mov r8d, [rsp + 84]
     lea rdi, [rip + g_face_code]
     mov esi, [rsp + 80]
     mov edx, [rsp + 72]
@@ -3320,6 +3503,7 @@ draw_line:
     add [rsp + 64], eax
     jmp 11b
 .Ldl_ret:
+    call deco_row_front         # decorations' strike, underline, border (deco.s)
     # the extensions' marks on this row
     mov rdi, rbx
     mov rsi, r12
@@ -3811,6 +3995,7 @@ FN ed_blink_tick
 .Lem5: .asciz "Toggle Comment"
 .Lem6: .asciz "Go to File"
 .p2align 3
+.globl editor_menu
 editor_menu:
     .quad .Lem1, cmd_cut, .Lem2, cmd_copy, .Lem3, cmd_paste, .Lem4, cmd_select_all
     .quad .Lem5, cmd_toggle_comment, .Lem6, cmd_quick_open, 0, 0
@@ -3892,23 +4077,31 @@ FN doc_widest
 # editor_timeout() -> ms until a long text whose editing paused is measured again (a frame does it),
 #   or -1
 FN editor_timeout
+    push rbx
+    call deco_visible_due       # the visible event (deco.s)
+    mov ebx, eax
     mov rax, [rip + widest_due]
     test rax, rax
     jz 1f
-    sub rsp, 8
     call time_ms
-    add rsp, 8
     mov rcx, [rip + widest_due]
     sub rcx, rax
     xor eax, eax
     test rcx, rcx
     cmovg eax, ecx
-    ret
-1:  mov eax, -1
+    cmp ebx, -1
+    je 2f
+    cmp eax, ebx
+    jle 2f
+1:  mov eax, ebx
+2:  pop rbx
     ret
 
 # editor_tick(): the frame that measures it
 FN editor_tick
+    sub rsp, 8
+    call deco_visible_tick
+    add rsp, 8
     cmp qword ptr [rip + widest_due], 0
     je 1f
     sub rsp, 8
@@ -4153,6 +4346,7 @@ g_caret_x: .long 0
 g_caret_y: .long 0
 g_caret_ok: .long 0
 dl_from: .long 0
+.globl dl_last                  # editorsel.s draws the other selections on draw_line's row
 dl_last: .long 0
 .p2align 3
 cls_doc: .quad 0
@@ -4171,6 +4365,19 @@ long_cls: .zero SB_SIZE
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0
+# the row draw_line is drawing, for the presentation layers (deco.s)
+.p2align 3
+.globl g_row_doc, g_row_line, g_row_lstart, g_row_text, g_row_len, g_row_from, g_row_to
+.globl g_row_x, g_row_y
+g_row_doc: .quad 0
+g_row_line: .quad 0
+g_row_lstart: .quad 0           # the line's start position
+g_row_text: .quad 0             # the line's text and length
+g_row_len: .quad 0
+g_row_from: .quad 0             # the row's bytes [from, to) of the line
+g_row_to: .quad 0
+g_row_x: .long 0                # x of the line's column 0
+g_row_y: .long 0
 
 .section .rodata
 .Lclip_failure: .asciz "Could not copy to the clipboard."

@@ -52,6 +52,7 @@ EXPORTS
     LocalFree
     MoveFileExW
     MultiByteToWideChar
+    OpenProcess
     PeekNamedPipe
     ReadFile
     RemoveDirectoryW

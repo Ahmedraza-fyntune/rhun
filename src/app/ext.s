@@ -378,6 +378,7 @@ FN ext_cmds_remove_runtime
 # palette's shortcut labels for extension commands are per index: drop them
 ext_cmds_changed:
     push rbx
+    call scmext_providers_changed   # source control (wider-parity C): installs and removals
     call keys_reload
     call palette_ext_keys_reset
     call palette_close_commands # an open command palette holds pointers into the vector
@@ -427,6 +428,10 @@ ext_settings_load:
     jz 8f
     lea rdi, [rip + ini_it]
     call ext_provider_load_line
+    test eax, eax
+    jnz 1b
+    lea rdi, [rip + ini_it]
+    call run_allow_load_line    # allow_run = PROJECT (runallow.s)
     test eax, eax
     jnz 1b
     lea rdi, [rip + ini_it]
@@ -492,9 +497,17 @@ apply_choice:
     lea rsi, [rip + .Lk_pinned]
     call ini_key_is
     test eax, eax
-    jz 3f
+    jz 21f
     call ini_val_yes
     mov [rbx + EXT_pinned], eax
+    jmp 9f
+21: lea rdi, [rip + ini_it]       # wsedit: edits = yes
+    lea rsi, [rip + .Lk_edits]
+    call ini_key_is
+    test eax, eax
+    jz 3f
+    call ini_val_yes
+    mov [rbx + EXT_edits], eax
     jmp 9f
 3:  # setting.KEY
     mov rdi, [rip + ini_it + INI_key]
@@ -510,8 +523,12 @@ apply_choice:
     mov rdx, rbx
     call sdef_find
     test rax, rax
-    jz 9f
-    mov r12, rax
+    jnz 31f
+    mov rdi, rbx
+    lea rsi, [rip + ini_it]
+    call xset_keep              # extension management: kept for a version that declares it
+    jmp 9f
+31: mov r12, rax
     mov rdi, [rip + ini_it + INI_val]
     mov rsi, [rip + ini_it + INI_vallen]
     call mem_dup
@@ -588,6 +605,13 @@ FN ext_settings_save
     # anything to write?
     mov eax, [rbx + EXT_pinned]
     or eax, [rbx + EXT_disabled]
+    or eax, [rbx + EXT_edits]
+    jnz 2f
+    cmp qword ptr [rbx + EXT_xset], 0
+    jne 2f
+    mov rdi, rbx
+    call run_allow_has
+    test eax, eax
     jnz 2f
     mov rdi, rbx
     call sdefs_changed
@@ -610,12 +634,25 @@ FN ext_settings_save
     lea rsi, [rip + .Lw_disabled_yes]
     call sb_push_cstr
 3:  cmp dword ptr [rbx + EXT_pinned], 0
-    je 4f
+    je 31f
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_pinned_yes]
     call sb_push_cstr
-4:  # the settings that differ from their defaults
-    xor r13d, r13d
+31: cmp dword ptr [rbx + EXT_edits], 0
+    je 4f
+    lea rdi, [rip + tmp2]
+    lea rsi, [rip + .Lw_edits_yes]
+    call sb_push_cstr
+4:  mov rdi, rbx                # the projects it may run programs in (runallow.s)
+    lea rsi, [rip + tmp2]
+    call run_allow_write
+    # the settings that differ from their defaults, and those another version declares
+    mov rsi, [rbx + EXT_xset]
+    test rsi, rsi
+    jz 41f
+    lea rdi, [rip + tmp2]
+    call sb_push_cstr
+41: xor r13d, r13d
 5:  cmp r13, [rbx + EXT_sdefs + VEC_len]
     jae 1b
     imul r14, r13, SD_SIZE
@@ -662,6 +699,20 @@ FN ext_set_pinned
     test eax, eax
     jz 9f
     mov [rbx + EXT_pinned], r12d
+    call ext_settings_save
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# wsedit: ext_set_edits(ext, yes): it may change project files without the confirmation list
+# (workspace edits), remembered; Off takes the permission back
+FN ext_set_edits
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    call ext_is_visible
+    test eax, eax
+    jz 9f
+    mov [rbx + EXT_edits], r12d
     call ext_settings_save
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
@@ -817,6 +868,12 @@ FN ext_preview
     call ini_key_is
     lea r13, [rbx + EXT_mowner]
     test eax, eax
+    jnz 4f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_pack]
+    call ini_key_is
+    lea r13, [rbx + EXT_pack]
+    test eax, eax
     jz 1b
 4:  call val_dup
     mov [r13], rax
@@ -887,6 +944,8 @@ FN ext_install_load
     jmp 7f
 6:  cmp qword ptr [rbx + EXT_reason], 0
     jne 7f                      # a bad manifest stays failed
+    cmp qword ptr [rbx + EXT_prog], 0
+    je 7f                       # a pack without a program never starts
     mov rdi, rbx
     call ext_start
 7:  mov rax, rbx
@@ -972,7 +1031,11 @@ FN ext_retire
     mov rdi, rbx
     call complete_ext_gone
     mov rdi, rbx
+    call ws_ext_gone            # wsedit: its waiting workspace edit, its diff tabs
+    mov rdi, rbx
     call langfeat_ext_gone
+    mov rdi, rbx
+    call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
@@ -1479,6 +1542,7 @@ FN ext_init
     mov rax, [rip + g_ext_cmds + VEC_len]
     mov [rip + ext_manifest_cmds], rax
     call ext_settings_load
+    call scmext_providers_changed   # source control (wider-parity C): commit-message providers
     EPILOGUE
 
 # owner_cb(ctx, name, is_dir): one owner folder
@@ -1558,6 +1622,8 @@ FN ext_load
     mov rdi, [rsp + 16]
     call dup_cstr
     mov [rbx + EXT_name], rax
+    mov rdi, rbx
+    call extrec_load            # extension management: its install record (a link moves EXT_dir)
     # the state folder: ROOT/OWNER--NAME
     lea rdi, [rip + tmp]
     call sb_clear
@@ -1580,7 +1646,7 @@ FN ext_load
     call dup_cstr
     mov [rbx + EXT_state], rax
     # the manifest
-    mov rdi, [rsp]
+    mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lmanifest]
     call path_join
     mov r12, rax
@@ -1669,7 +1735,13 @@ FN ext_load
 41: lea rdi, [rip + .Lr_protocol]
     jmp .Lel_fail
 5:  mov dword ptr [rbx + EXT_hello], 0
-    cmp qword ptr [rbx + EXT_prog], 0
+    mov rdi, rbx
+    call pack_check             # extension management: a pack's list
+    test rax, rax
+    jz 51f
+    mov rdi, rax
+    jmp .Lel_fail
+51: cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
     # no program for this system: a WebAssembly module runs in rhun --wasm-host
     mov rdi, rbx
@@ -1679,7 +1751,11 @@ FN ext_load
     mov rdi, rax
     cmp rax, 1
     jne .Lel_fail
-    lea rdi, [rip + .Lr_no_program]
+    cmp qword ptr [rbx + EXT_pack], 0
+    je 52f
+    mov dword ptr [rbx + EXT_manifest_ok], 1    # a pack without a program never starts
+    jmp 83f
+52: lea rdi, [rip + .Lr_no_program]
     jmp .Lel_fail
 6:  # a script needs its runtime on PATH
     cmp qword ptr [rbx + EXT_script], 0
@@ -1738,7 +1814,17 @@ FN ext_load
     call provides_merge
     inc r12d
     jmp 82b
-83: # its data files: themes and grammars
+83: # source control (wider-parity C): a quick-diff provider hears opened for its files, so that
+    # rhun can ask about them (scmext.s); it starts by its own `on`
+    mov r12, [rbx + EXT_pv_quickdiff]
+    test r12, r12
+    jz 84f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    lea rdi, [rbx + EXT_sub_opened]
+    call merge_into
+84: # its data files: themes and grammars
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsub_themes]
     call path_join
@@ -1801,9 +1887,17 @@ manifest_kv:
     lea rsi, [rip + .Lk_icon]
     call ini_key_is
     test eax, eax
-    jz 13f
+    jz 15f
     call val_dup
     mov [rbx + EXT_icon], rax
+    jmp 9f
+15: mov rdi, r12
+    lea rsi, [rip + .Lk_pack]
+    call ini_key_is
+    test eax, eax
+    jz 13f
+    call val_dup
+    mov [rbx + EXT_pack], rax
     jmp 9f
 13: mov rdi, r12
     lea rsi, [rip + .Lk_color]
@@ -2308,7 +2402,17 @@ parse_needs:
     mov edi, NEEDS_DEBUG
     call needs_yes
     jmp 9f
-8:  mov rdi, r12                # resources group: secrets = yes (the system keychain)
+8:  # source control (wider-parity C): git = read, the project's Git data through rhun
+    mov rdi, r12
+    lea rsi, [rip + .Ln_git]
+    call ini_key_is
+    test eax, eax
+    jz 81f
+    mov edi, NEEDS_GIT_READ
+    xor esi, esi
+    call needs_level
+    jmp 9f
+81: mov rdi, r12                # resources group: secrets = yes (the system keychain)
     lea rsi, [rip + .Ln_secrets]
     call ini_key_is
     test eax, eax
@@ -2468,7 +2572,11 @@ FN ext_cmd_run
     mov rbx, rdi
     lea rdi, [rsp]
     call invoke_take
-    mov rdi, rbx
+    cmp qword ptr [rsp + INV_doc], 0
+    jne 0f
+    call invoke_active_doc      # the document is the one active now, also after a lazy start
+    mov [rsp + INV_doc], rax
+0:  mov rdi, rbx
     cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 9f
     mov rax, rdi
@@ -2730,7 +2838,11 @@ FN ext_start
     call ext_is_visible
     test eax, eax
     jz 8f
-    cmp qword ptr [rip + ext_pending_shutting_down], 0
+    cmp qword ptr [rbx + EXT_prog], 0
+    jne 6f
+    cmp qword ptr [rbx + EXT_pack], 0
+    jne 7f                      # extension management: a pack without a program never starts
+6:  cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 7f
     mov rdi, rbx
     call ext_spawn
@@ -3639,7 +3751,11 @@ FN ext_exited
     mov rdi, rbx
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
+    call ws_ext_gone            # wsedit: its waiting workspace edit, its diff tabs
+    mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
+    mov rdi, rbx
+    call scm_ext_gone           # and its source control requests and providers (gitdata.s, scmext.s)
     mov rdi, rbx
     call testproto_ext_gone     # testing: its runs end errored and their processes stop
     mov rdi, rbx
@@ -3859,6 +3975,7 @@ FN ext_tick
     call extres_frame           # resources group: start pacing, idle = stop, cost samples
     call ext_project_check
     call extwatch_tick
+    call invoke_tick            # calls between extensions (invoke.s)
     # on = startup, once; on = project when a project is open
     cmp dword ptr [rip + ext_startup_done], 0
     jne 1f
@@ -4113,6 +4230,14 @@ FN ext_timeout
     je .Lres_timeout_none
     call deadline
 .Lres_timeout_none:
+    call invoke_timeout
+    cmp rax, -1
+    je .Liv_timeout_none
+    mov r13, rax
+    call time_ms
+    add rax, r13
+    call deadline
+.Liv_timeout_none:
     xor r13d, r13d
 1:  cmp r13, [rip + g_exts + VEC_len]
     jae 8f
@@ -4755,10 +4880,14 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_selection_ranges, EXT_pv_selection_ranges, .Lpv_call_hierarchy, EXT_pv_call_hierarchy
     .quad .Lpv_type_hierarchy, EXT_pv_type_hierarchy, .Lpv_workspace_symbols, EXT_pv_workspace_symbols
     .quad .Lpv_range_format, EXT_pv_range_format, .Lpv_type_format, EXT_pv_type_format
-    .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links, 0, 0
+    .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links
+    # source control (wider-parity C)
+    .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
+    .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
-    .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
+    .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover
+    .quad 0, 0
 env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
 .ifdef MACOS
     .quad .Le_xcrun_db, .Le_devdir
@@ -4842,6 +4971,7 @@ ext_target: .asciz "linux-x86_64"
 .Lk_runtime: .asciz "runtime"
 .Lk_run_wasm: .asciz "run.wasm32-wasip1"
 .Lk_icon: .asciz "icon"
+.Lk_pack: .asciz "pack"
 .Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
 .Lk_args: .asciz "args"
@@ -4891,6 +5021,10 @@ ext_target: .asciz "linux-x86_64"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
 .Ln_secrets: .asciz "secrets"
+.Ln_git: .asciz "git"
+.Lpv_commit: .asciz "commit_message"
+.Lpv_quickdiff: .asciz "quickdiff"
+.Lpv_scm: .asciz "scm"
 .Ln_debug: .asciz "debug"
 .Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"
@@ -5031,6 +5165,7 @@ ext_target: .asciz "linux-x86_64"
 .Lr_settings_change: .asciz "restarting after a settings change"
 .Lf_extensions_ini: .asciz "/extensions.ini"
 .Lk_pinned: .asciz "pinned"
+.Lk_edits: .asciz "edits"         # wsedit
 .Lk_description: .asciz "description"
 .Ls_settings: .asciz "settings"
 .Lsf_type: .asciz "type"
@@ -5046,6 +5181,7 @@ ext_target: .asciz "linux-x86_64"
 .Lv_no: .asciz "no"
 .Lw_close_sec: .asciz "]\n"
 .Lw_pinned_yes: .asciz "pinned = yes\n"
+.Lw_edits_yes: .asciz "edits = yes\n"
 .Lw_setting: .asciz "setting."
 .Lw_eq: .asciz " = "
 .Lr_turned_off: .asciz "turned off"

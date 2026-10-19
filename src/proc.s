@@ -155,8 +155,15 @@ env_overridden:
 # proc_which(name) -> path to run (mem_free it), or 0; names with a slash are taken as they are
 .ifndef WINDOWS
 FN proc_which
+    xor esi, esi
+    jmp proc_which_in
+
+# proc_which_in(name, PATH value or 0 for rhun's own) -> the same, searching that PATH (uproc.s: the
+#   user's login environment)
+FN proc_which_in
     PROLOGUE
     mov rbx, rdi
+    mov r15, rsi
     call strlen
     mov r12, rax
     cmp r12, 4096
@@ -172,7 +179,10 @@ FN proc_which
     mov rsi, r12
     call mem_dup
     EPILOGUE
-1:  lea rdi, [rip + .Lpath]
+1:  mov r13, r15
+    test r13, r13
+    jnz 2f
+    lea rdi, [rip + .Lpath]
     call getenv
     mov r13, rax
     test rax, rax
@@ -225,7 +235,8 @@ FN proc_which
 
 # proc_spawn(argv, envp, cwd, fd_in, fd_out, fd_err, ctty) -> pid or -errno
 #   argv[0] is the path to run; cwd may be 0; ctty 1 makes fd_in the controlling terminal of a new
-#   session; ctty 2 makes a new session without one that dies with rhun (extensions)
+#   session; ctty 2 makes a new session without one that dies with rhun (extensions); ctty 3 the same
+#   without the extension's confinement (programs run as the user, uproc.s)
 .ifndef WINDOWS
 FN proc_spawn
     PROLOGUE 32
@@ -252,6 +263,8 @@ FN proc_spawn
     SYS SYS_setsid
     cmp dword ptr [rsp + 12], 2
     je 11f
+    cmp dword ptr [rsp + 12], 3
+    je 13f
     mov edi, [rsp]
     mov esi, TIOCSCTTY
     xor edx, edx
@@ -268,6 +281,17 @@ FN proc_spawn
     SYS SYS_prctl
 .endif
     call confine_child          # what confine_prepare set up, if anything; exits on failure
+    jmp 1f
+13:
+.ifndef MACOS
+    # ctty 3: a program run as the user; it dies with rhun too
+    mov edi, PR_SET_PDEATHSIG
+    mov esi, SIGKILL
+    xor edx, edx
+    xor r10d, r10d
+    xor r8d, r8d
+    SYS SYS_prctl
+.endif
 1:  mov edi, [rsp]
     xor esi, esi
     SYS SYS_dup2
@@ -365,6 +389,8 @@ FN run_piped
 #   program's input; errors 1 sends its error output down the same pipe (else it goes to /dev/null) and
 #   runs it in a session of its own, without a terminal to ask for passwords on.
 #   errors 2 creates that session without merging stderr, for binary-output workers.
+#   errors | 4: the caller feeds the input itself, of any length (ptr is not read; len only says there
+#   is one): ecx is the pipe to the program's input, nonblocking, the caller's to close (-1 on failure)
 FN run_piped_input
     PROLOGUE 48
     mov r12, rdi
@@ -406,6 +432,7 @@ FN run_piped_input
     jz 11f
     mov r9d, r8d
 11: mov eax, [rsp + 32]
+    and eax, 3
     push rax
     push rax
     call proc_spawn
@@ -422,7 +449,14 @@ FN run_piped_input
     # the input fits the pipe, so this does not wait for the program
     test r15, r15
     js 21f
-    mov r12, [rsp + 16]
+    test dword ptr [rsp + 32], 4
+    jz 22f
+    mov edi, [rsp + 12]         # the caller writes it as the program reads
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    jmp 3f
+22: mov r12, [rsp + 16]
     mov r13, [rsp + 24]
 2:  test r13, r13
     jz 21f
@@ -439,6 +473,7 @@ FN run_piped_input
     jmp 2b
 21: mov edi, [rsp + 12]
     SYS SYS_close
+    mov dword ptr [rsp + 12], -1
 3:  test r15, r15
     js 7f
     mov edi, [rsp]
@@ -447,10 +482,12 @@ FN run_piped_input
     SYS SYS_fcntl
     mov rax, r15
     mov edx, [rsp]
+    mov ecx, [rsp + 12]
     EPILOGUE
 7:  mov edi, [rsp]
     SYS SYS_close
     mov rax, r15
+    mov ecx, -1
     EPILOGUE
 6:  mov r15, rax
     mov edi, [rsp + 8]
@@ -462,12 +499,14 @@ FN run_piped_input
 61: mov edi, ebx
     SYS SYS_close
     mov rax, r15
+    mov ecx, -1
     EPILOGUE
 8:  mov r15, rax
     mov edi, ebx
     SYS SYS_close
     mov rax, r15
-9:  EPILOGUE
+9:  mov ecx, -1
+    EPILOGUE
 
 # pty_open(cols, rows) -> eax master (nonblocking), edx slave; eax < 0 on failure
 .ifndef WINDOWS
