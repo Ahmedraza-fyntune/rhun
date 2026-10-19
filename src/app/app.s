@@ -155,6 +155,7 @@ FN app_init
     call vim_sync
     call watch_init
     call update_init
+    call extupdate_init         # extension management: update state, crashed installs' folders
     call ai_apply
     EPILOGUE
 
@@ -2249,6 +2250,8 @@ FN focused_field
     je find_field
     cmp eax, FOCUS_SETTINGS
     je settings_field
+    cmp eax, FOCUS_EXT_SEARCH   # extension management: Browse's search
+    je extpage_field
     cmp eax, FOCUS_EDITOR
     je vim_field
     xor eax, eax
@@ -2327,11 +2330,20 @@ FN app_on_key
     jnz 9f
     jmp .Lk_bind
 4:  cmp eax, FOCUS_SETTINGS
-    jne 5f
+    jne 41f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call settings_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+41: cmp eax, FOCUS_EXT_SEARCH   # extension management: Browse's search
+    jne 5f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call extpage_key
     test eax, eax
     jnz 9f
     jmp .Lk_bind
@@ -2652,6 +2664,7 @@ timeout_fns:
     .quad testing_timeout
     .quad dap_timeout
     .quad remote_timeout
+    .quad extupdate_timeout      # extension management
     .quad 0
 .text
 
@@ -2685,6 +2698,8 @@ FN app_tick
     call palette_tick
     call editor_tick
     call ext_tick
+    call extrec_tick            # extension management: first starts of new versions
+    call extupdate_tick         # and update checks
     call ext_provider_tick
     call testing_tick           # testing (testproto.s)
     call app_clip_tick
@@ -5151,14 +5166,13 @@ FN dialog_draw
     mov r12d, eax               # w
     # Confirmation details can include model names or file paths. Size to the
     # content where space allows, and fit the line inside the visible dialog.
+    # A confirmation's text may have several lines (\n between them: extension management)
+    mov dword ptr [rsp + 32], 1
     cmp dword ptr [rip + dlg_kind], 4
     jne 8f
     mov rdi, [rip + dlg_text]
-    call strlen
-    mov rdx, rax
-    mov rsi, [rip + dlg_text]
-    lea rdi, [rip + g_face_small]
-    call text_width
+    call dlg_text_size
+    mov [rsp + 32], edx
     add eax, [rip + g_mt + 4*MI_40]
     cmp eax, r12d
     cmovg r12d, eax
@@ -5170,6 +5184,10 @@ FN dialog_draw
     mov edi, 150
     call sc
     mov r13d, eax               # h
+    mov eax, [rsp + 32]
+    dec eax
+    imul eax, [rip + g_mt + 4*MI_24]
+    add r13d, eax
     mov eax, [rip + g_cv + CV_w]
     sub eax, r12d
     sar eax, 1
@@ -5225,8 +5243,11 @@ FN dialog_draw
     jne 3f
     mov r8, [rip + dlg_text]
 3:  mov [rsp + 16], r8
-    mov rdi, r8
-    call strlen
+    mov eax, r15d
+    add eax, [rip + g_mt + 4*MI_40]
+    mov [rsp + 40], eax         # the line's y
+31: mov rdi, [rsp + 16]
+    call dlg_line_len
     mov r9, rax
     mov eax, r12d
     sub eax, [rip + g_mt + 4*MI_40]
@@ -5236,12 +5257,22 @@ FN dialog_draw
     lea rdi, [rip + g_face_small]
     mov esi, r14d
     add esi, [rip + g_mt + 4*MI_20]
-    mov edx, r15d
-    add edx, [rip + g_mt + 4*MI_40]
+    mov edx, [rsp + 56]
     M ecx, MI_24
     mov r8, [rsp + 32]
     call ui_text_v_fit
     add rsp, 16
+    mov rdi, [rsp + 16]
+    call dlg_line_len
+    add rax, [rsp + 16]
+    cmp byte ptr [rax], 10
+    jne 32f
+    inc rax
+    mov [rsp + 16], rax
+    mov eax, [rip + g_mt + 4*MI_24]
+    add [rsp + 40], eax
+    jmp 31b
+32:
     # buttons: Save (primary), Don't Save, Cancel
     M ebx, MI_32
     mov eax, r15d
@@ -5343,6 +5374,42 @@ FN dialog_draw
     jmp .Ldd_btn
 .Ldd_ret:
     EPILOGUE
+
+# dlg_text_size(cstr) -> eax the widest line's width in the small face, edx the lines (\n between)
+dlg_text_size:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d              # widest
+    xor r13d, r13d              # lines
+1:  inc r13d
+    mov rdi, rbx
+    call dlg_line_len
+    mov r14, rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, rbx
+    mov rdx, rax
+    call text_width
+    cmp eax, r12d
+    cmovg r12d, eax
+    add rbx, r14
+    cmp byte ptr [rbx], 10
+    jne 9f
+    inc rbx
+    jmp 1b
+9:  mov eax, r12d
+    mov edx, r13d
+    EPILOGUE
+
+# dlg_line_len(cstr) -> rax the bytes before its first \n or its end
+dlg_line_len:
+    xor eax, eax
+1:  cmp byte ptr [rdi + rax], 0
+    je 2f
+    cmp byte ptr [rdi + rax], 10
+    je 2f
+    inc rax
+    jmp 1b
+2:  ret
 
 # dialog_choose(i): 0 cancel, 1 don't save, 2 save (or app_confirm's button)
 dialog_choose:
@@ -6360,6 +6427,10 @@ FN app_open_path
     call file_type
     test eax, eax
     jnz .Lop_path
+    mov rdi, rbx
+    call ext_link_open          # extension management: rhun://extension/OWNER/NAME[@VERSION]
+    test eax, eax
+    jnz 9f
     lea rdi, [rip + .Lbad_link]
     call app_toast
     EPILOGUE

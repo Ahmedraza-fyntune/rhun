@@ -6,84 +6,84 @@
 # can only be rejected. The proposer hears what became of each file.
 .include "rhun.inc"
 
-.equ RV_PENDING_MAX, 8          # proposals of one extension not decided yet
-.equ RV_FILES_MAX, 1000
-.equ RV_EDITS_MAX, 100000
-.equ RV_TEXT_MAX, 4194304       # a file's text before or after
-.equ RV_LABEL_MAX, 200
-.equ RV_CONTEXT, 3              # lines shown around a change
-.equ RV_DMAX, 1000              # beyond this many differences a file is one change
+.equ RVP_PENDING_MAX, 8          # proposals of one extension not decided yet
+.equ RVP_FILES_MAX, 1000
+.equ RVP_EDITS_MAX, 100000
+.equ RVP_TEXT_MAX, 4194304       # a file's text before or after
+.equ RVP_LABEL_MAX, 200
+.equ RVP_CONTEXT, 3              # lines shown around a change
+.equ RVP_DMAX, 1000              # beyond this many differences a file is one change
 
-.equ RS_PENDING, 0
-.equ RS_ACCEPTED, 1
-.equ RS_REJECTED, 2
-.equ RS_STALE, 3                # changed since it was proposed: not applied
-.equ RS_PARTIAL, 4              # some hunks accepted, the others not
+.equ RVS_PENDING, 0
+.equ RVS_ACCEPTED, 1
+.equ RVS_REJECTED, 2
+.equ RVS_STALE, 3                # changed since it was proposed: not applied
+.equ RVS_PARTIAL, 4              # some hunks accepted, the others not
 
 # a proposal
 STRUCT
-F RV_id, 8
-F RV_ext, 8             # the extension that proposed it
-F RV_label, 8           # cstr
-F RV_sid, 8             # cstr, the agent session it came from, or 0
-F RV_files, VEC_SIZE    # RF records
-F RV_doc, 8             # its Review tab's document, 0 once closed
-F RV_events, 4          # 1: the proposer hears 0 proposal events (feature edit-review)
-F RV_done, 4            # every file decided
-F RV_gone, 4            # withdrawn: nothing more is said
-F RV_pad, 4
-F RV_waiter, 8          # tools.s: the rhun.propose call answered when it is done, or 0
-ENDSTRUCT RV_SIZE
+F RVP_id, 8
+F RVP_ext, 8             # the extension that proposed it
+F RVP_label, 8           # cstr
+F RVP_sid, 8             # cstr, the agent session it came from, or 0
+F RVP_files, VEC_SIZE    # RF records
+F RVP_doc, 8             # its Review tab's document, 0 once closed
+F RVP_events, 4          # 1: the proposer hears 0 proposal events (feature edit-review)
+F RVP_done, 4            # every file decided
+F RVP_gone, 4            # withdrawn: nothing more is said
+F RVP_pad, 4
+F RVP_waiter, 8          # tools.s: the rhun.propose call answered when it is done, or 0
+ENDSTRUCT RVP_SIZE
 
 # a file of a proposal
 STRUCT
-F RF_index, 8           # its group's place in the edit, from 1
-F RF_path, 8            # cstr: the file, or 0 for an untitled document
-F RF_name, 8            # cstr: as the tab shows it
-F RF_docid, 8           # the open document it was proposed against, or 0
-F RF_old, 8             # its text before (owned) and after
-F RF_oldlen, 8
-F RF_new, 8
-F RF_newlen, 8
-F RF_ostart, 8          # line starts of both (owned): n + 1 entries, the last the length
-F RF_on, 8
-F RF_nstart, 8
-F RF_nn, 8
-F RF_hunks, VEC_SIZE    # RH records
-F RF_state, 4           # RS_*
-F RF_line, 4            # its header's line in the Review document
-F RF_add, 4             # lines added and removed
-F RF_del, 4
-ENDSTRUCT RF_SIZE
+F RVF_index, 8           # its group's place in the edit, from 1
+F RVF_path, 8            # cstr: the file, or 0 for an untitled document
+F RVF_name, 8            # cstr: as the tab shows it
+F RVF_docid, 8           # the open document it was proposed against, or 0
+F RVF_old, 8             # its text before (owned) and after
+F RVF_oldlen, 8
+F RVF_new, 8
+F RVF_newlen, 8
+F RVF_ostart, 8          # line starts of both (owned): n + 1 entries, the last the length
+F RVF_on, 8
+F RVF_nstart, 8
+F RVF_nn, 8
+F RVF_hunks, VEC_SIZE    # RH records
+F RVF_state, 4           # RVS_*
+F RVF_line, 4            # its header's line in the Review document
+F RVF_add, 4             # lines added and removed
+F RVF_del, 4
+ENDSTRUCT RVF_SIZE
 
 # a hunk: old lines [ol, ol + oc) become new lines [nl, nl + nc) (0-based)
 STRUCT
-F RH_ol, 8
-F RH_oc, 8
-F RH_nl, 8
-F RH_nc, 8
-F RH_state, 4           # RS_PENDING, RS_ACCEPTED, RS_REJECTED, RS_STALE
-F RH_line, 4            # its header's line in the Review document
-ENDSTRUCT RH_SIZE
+F RVH_ol, 8
+F RVH_oc, 8
+F RVH_nl, 8
+F RVH_nc, 8
+F RVH_state, 4           # RVS_PENDING, RVS_ACCEPTED, RVS_REJECTED, RVS_STALE
+F RVH_line, 4            # its header's line in the Review document
+ENDSTRUCT RVH_SIZE
 
 # parsing: a group and an edit as read
 STRUCT
-F PG_path, 8
-F PG_plen, 8
-F PG_version, 8         # -1 for -
-F PG_first, 8
-F PG_count, 8
-ENDSTRUCT PG_SIZE
+F RVG_path, 8
+F RVG_plen, 8
+F RVG_version, 8         # -1 for -
+F RVG_first, 8
+F RVG_count, 8
+ENDSTRUCT RVG_SIZE
 STRUCT
-F PE_l1, 8
-F PE_c1, 8
-F PE_l2, 8
-F PE_c2, 8
-F PE_text, 8
-F PE_len, 8
-F PE_start, 8
-F PE_end, 8
-ENDSTRUCT PE_SIZE
+F RVE_l1, 8
+F RVE_c1, 8
+F RVE_l2, 8
+F RVE_c2, 8
+F RVE_text, 8
+F RVE_len, 8
+F RVE_start, 8
+F RVE_end, 8
+ENDSTRUCT RVE_SIZE
 
 .bss
 .p2align 3
@@ -126,7 +126,7 @@ FN review_propose
     mov [rip + cur_ext], rdi
     call ai_ext
     mov [rsp + 32], rax
-    cmp dword ptr [rax + AX_proposals], RV_PENDING_MAX
+    cmp dword ptr [rax + AX_proposals], RVP_PENDING_MAX
     jae .Lrp_many
     mov qword ptr [rip + pg + VEC_len], 0
     mov qword ptr [rip + pe + VEC_len], 0
@@ -172,14 +172,14 @@ FN review_propose
     call ai_rd_eol
     test eax, eax
     jz .Lrp_syntax
-    cmp r14, RV_FILES_MAX
+    cmp r14, RVP_FILES_MAX
     ja .Lrp_big
 .Lrp_group:
     test r14, r14
     jz .Lrp_read
     dec r14
     lea rdi, [rip + pg]
-    mov esi, PG_SIZE
+    mov esi, RVG_SIZE
     call vec_push
     mov rbx, rax
     call ai_rd_num
@@ -189,9 +189,9 @@ FN review_propose
     jz .Lrp_syntax
     cmp rax, 4096
     ja .Lrp_syntax
-    mov [rbx + PG_plen], rax
+    mov [rbx + RVG_plen], rax
     call ai_rd_word
-    mov qword ptr [rbx + PG_version], -1
+    mov qword ptr [rbx + RVG_version], -1
     cmp rdx, 1
     jne 2f
     cmp byte ptr [rax], '-'
@@ -206,87 +206,87 @@ FN review_propose
     call parse_u64
     cmp rdx, r15
     jne .Lrp_syntax
-    mov [rbx + PG_version], rax
+    mov [rbx + RVG_version], rax
 3:  call ai_rd_num
     test edx, edx
     jz .Lrp_syntax
-    mov [rbx + PG_count], rax
+    mov [rbx + RVG_count], rax
     mov rcx, [rip + pe + VEC_len]
-    mov [rbx + PG_first], rcx
+    mov [rbx + RVG_first], rcx
     add rcx, rax
-    cmp rcx, RV_EDITS_MAX
+    cmp rcx, RVP_EDITS_MAX
     ja .Lrp_big
     call ai_rd_eol
     test eax, eax
     jz .Lrp_syntax
-    mov rdi, [rbx + PG_plen]
+    mov rdi, [rbx + RVG_plen]
     call ai_rd_take
     test rax, rax
     jz .Lrp_syntax
-    mov [rbx + PG_path], rax
-    mov r15, [rbx + PG_count]
+    mov [rbx + RVG_path], rax
+    mov r15, [rbx + RVG_count]
 4:  test r15, r15
     jz .Lrp_group
     dec r15
     lea rdi, [rip + pe]
-    mov esi, PE_SIZE
+    mov esi, RVE_SIZE
     call vec_push
     mov rbx, rax
     call ai_rd_num
     test edx, edx
     jz .Lrp_syntax
-    mov [rbx + PE_l1], rax
+    mov [rbx + RVE_l1], rax
     call ai_rd_num
     test edx, edx
     jz .Lrp_syntax
-    mov [rbx + PE_c1], rax
+    mov [rbx + RVE_c1], rax
     call ai_rd_num
     test edx, edx
     jz .Lrp_syntax
-    mov [rbx + PE_l2], rax
+    mov [rbx + RVE_l2], rax
     call ai_rd_num
     test edx, edx
     jz .Lrp_syntax
-    mov [rbx + PE_c2], rax
+    mov [rbx + RVE_c2], rax
     call ai_rd_num
     test edx, edx
     jz .Lrp_syntax
-    mov [rbx + PE_len], rax
+    mov [rbx + RVE_len], rax
     call ai_rd_eol
     test eax, eax
     jz .Lrp_syntax
-    mov rdi, [rbx + PE_len]
+    mov rdi, [rbx + RVE_len]
     call ai_rd_take
     test rax, rax
     jz .Lrp_syntax
-    mov [rbx + PE_text], rax
+    mov [rbx + RVE_text], rax
     jmp 4b
 .Lrp_read:
     call ai_rd_done
     test eax, eax
     jz .Lrp_syntax
     # the proposal, and each file's text before and after
-    mov edi, RV_SIZE
+    mov edi, RVP_SIZE
     call mem_alloc
     mov r15, rax
     mov rax, [rsp]
-    mov [r15 + RV_ext], rax
+    mov [r15 + RVP_ext], rax
     mov eax, [rsp + 24]
-    mov [r15 + RV_events], eax
+    mov [r15 + RVP_events], eax
     mov rdi, [rsp + 40]
     mov rsi, r12
     call clean_label
-    mov [r15 + RV_label], rax
+    mov [r15 + RVP_label], rax
     test r13, r13
     jz 5f
     mov rdi, [rsp + 48]
     mov rsi, r13
     call ai_dup
-    mov [r15 + RV_sid], rax
+    mov [r15 + RVP_sid], rax
 5:  xor ebx, ebx
 6:  cmp rbx, [rip + pg + VEC_len]
     jae 7f
-    imul rdi, rbx, PG_SIZE
+    imul rdi, rbx, RVG_SIZE
     add rdi, [rip + pg + VEC_ptr]
     inc rbx
     mov rsi, rbx
@@ -300,11 +300,11 @@ FN review_propose
     call twice
     test eax, eax
     jnz .Lrp_twice
-    cmp qword ptr [r15 + RV_files + VEC_len], 0
+    cmp qword ptr [r15 + RVP_files + VEC_len], 0
     je .Lrp_nothing
     inc qword ptr [rip + next_id]
     mov rax, [rip + next_id]
-    mov [r15 + RV_id], rax
+    mov [r15 + RVP_id], rax
     lea rdi, [rip + proposals]
     mov esi, 8
     call vec_push
@@ -314,7 +314,7 @@ FN review_propose
     mov rdi, r15
     call open_tab
     xor eax, eax
-    mov rdx, [r15 + RV_id]
+    mov rdx, [r15 + RVP_id]
     EPILOGUE
 .Lrp_twice:
     lea rax, [rip + .Le_twice]
@@ -338,7 +338,7 @@ FN review_propose
     lea rax, [rip + .Le_syntax]
     EPILOGUE
 
-# clean_label(ptr, len) -> a cstr: the first line, cut to RV_LABEL_MAX, controls as spaces
+# clean_label(ptr, len) -> a cstr: the first line, cut to RVP_LABEL_MAX, controls as spaces
 clean_label:
     PROLOGUE
     xor ecx, ecx
@@ -349,7 +349,7 @@ clean_label:
     inc rcx
     jmp 1b
 2:  mov rsi, rcx
-    mov edx, RV_LABEL_MAX
+    mov edx, RVP_LABEL_MAX
     call ai_cut
     mov rdi, rax
     mov rsi, rdx
@@ -372,25 +372,25 @@ twice:
     PROLOGUE
     mov rbx, rdi
     xor r12d, r12d
-1:  cmp r12, [rbx + RV_files + VEC_len]
+1:  cmp r12, [rbx + RVP_files + VEC_len]
     jae 8f
-    imul r13, r12, RF_SIZE
-    add r13, [rbx + RV_files + VEC_ptr]
+    imul r13, r12, RVF_SIZE
+    add r13, [rbx + RVP_files + VEC_ptr]
     xor r14d, r14d
 2:  cmp r14, r12
     jae 7f
-    imul r15, r14, RF_SIZE
-    add r15, [rbx + RV_files + VEC_ptr]
+    imul r15, r14, RVF_SIZE
+    add r15, [rbx + RVP_files + VEC_ptr]
     inc r14
-    mov rax, [r13 + RF_docid]
+    mov rax, [r13 + RVF_docid]
     test rax, rax
     jz 3f
-    cmp rax, [r15 + RF_docid]
+    cmp rax, [r15 + RVF_docid]
     je 9f
-3:  mov rdi, [r13 + RF_path]
+3:  mov rdi, [r13 + RVF_path]
     test rdi, rdi
     jz 2b
-    mov rsi, [r15 + RF_path]
+    mov rsi, [r15 + RVF_path]
     test rsi, rsi
     jz 2b
     call strcmp_eq
@@ -412,8 +412,8 @@ group_file:
     mov [rsp], rsi
     mov [rsp + 8], rdx
     # the path as a cstr
-    mov rcx, [rbx + PG_plen]
-    mov rsi, [rbx + PG_path]
+    mov rcx, [rbx + RVG_plen]
+    mov rsi, [rbx + RVG_path]
     lea rdi, [rip + path_buf]
     xor eax, eax
 1:  cmp rax, rcx
@@ -426,12 +426,12 @@ group_file:
     jmp 1b
 2:  mov byte ptr [rdi + rax], 0
     lea rdi, [rip + .Lrf_tmp]
-    mov ecx, RF_SIZE
+    mov ecx, RVF_SIZE
     xor eax, eax
     rep stosb
     lea r12, [rip + .Lrf_tmp]
     mov rax, [rsp]
-    mov [r12 + RF_index], rax
+    mov [r12 + RVF_index], rax
     xor r13d, r13d              # the document, when it is open
     lea rdi, [rip + path_buf]
     cmp byte ptr [rdi], '#'
@@ -483,23 +483,23 @@ group_file:
     jmp .Lgf_doc
 41: mov r13, rax
     jmp .Lgf_doc
-42: mov [r12 + RF_path], r14
+42: mov [r12 + RVF_path], r14
     mov rdi, r14
     call read_text
     test rax, rax
     jz .Lgf_unreadable
-    mov [r12 + RF_old], rax
-    mov [r12 + RF_oldlen], rdx
-    cmp qword ptr [rbx + PG_version], -1
+    mov [r12 + RVF_old], rax
+    mov [r12 + RVF_oldlen], rdx
+    cmp qword ptr [rbx + RVG_version], -1
     jne .Lgf_stale              # made for a document that is closed now
     mov rdi, r14
     call path_basename_c
-    mov [r12 + RF_name], rax
+    mov [r12 + RVF_name], rax
     jmp .Lgf_edits
 .Lgf_doc:
     test dword ptr [r13 + DOC_flags], DF_READONLY
     jnz .Lgf_readonly
-    mov rax, [rbx + PG_version]
+    mov rax, [rbx + RVG_version]
     cmp rax, -1
     jne 5f
     mov rdi, r13                # made from the file: right while it has no unsaved changes
@@ -510,19 +510,19 @@ group_file:
 5:  cmp rax, [r13 + DOC_version]
     jne .Lgf_stale
 6:  mov rax, [r13 + DOC_id]
-    mov [r12 + RF_docid], rax
+    mov [r12 + RVF_docid], rax
     mov rdi, [r13 + DOC_path]
     test rdi, rdi
     jz 7f
     call dup_cstr
-    mov [r12 + RF_path], rax
+    mov [r12 + RVF_path], rax
 7:  mov rdi, [r13 + DOC_name]
     call dup_cstr
-    mov [r12 + RF_name], rax
+    mov [r12 + RVF_name], rax
     mov rdi, r13
     call doc_text_copy
-    mov [r12 + RF_old], rax
-    mov [r12 + RF_oldlen], rdx
+    mov [r12 + RVF_old], rax
+    mov [r12 + RVF_oldlen], rdx
 .Lgf_edits:
     mov rdi, rbx
     mov rsi, r12
@@ -530,11 +530,11 @@ group_file:
     test rax, rax
     jnz .Lgf_out
     # an edit that changes nothing proposes nothing for this file
-    mov rax, [r12 + RF_oldlen]
-    cmp rax, [r12 + RF_newlen]
+    mov rax, [r12 + RVF_oldlen]
+    cmp rax, [r12 + RVF_newlen]
     jne 8f
-    mov rdi, [r12 + RF_old]
-    mov rsi, [r12 + RF_new]
+    mov rdi, [r12 + RVF_old]
+    mov rsi, [r12 + RVF_new]
     mov rdx, rax
     call memeq
     test eax, eax
@@ -546,12 +546,12 @@ group_file:
 8:  mov rdi, r12
     call file_diff
     mov rbx, [rsp + 8]
-    lea rdi, [rbx + RV_files]
-    mov esi, RF_SIZE
+    lea rdi, [rbx + RVP_files]
+    mov esi, RVF_SIZE
     call vec_push
     mov rdi, rax
     mov rsi, r12
-    mov edx, RF_SIZE
+    mov edx, RVF_SIZE
     call memcpy
     xor eax, eax
     EPILOGUE
@@ -649,7 +649,7 @@ FN review_read_text
 #   it cannot be read, is over 4 MB or holds a NUL
 read_text:
     PROLOGUE
-    mov esi, RV_TEXT_MAX
+    mov esi, RVP_TEXT_MAX
     call file_read_limited
     test rax, rax
     jz 9f
@@ -729,37 +729,37 @@ line_starts:
     mov rax, r15
     EPILOGUE
 
-# apply_edits(PG*, RF*) -> rax 0 with RF_new made from RF_old and the group's edits, or the error
+# apply_edits(PG*, RF*) -> rax 0 with RVF_new made from RVF_old and the group's edits, or the error
 apply_edits:
     PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
     mov qword ptr [rip + sorted + VEC_len], 0
     xor r13d, r13d
-1:  cmp r13, [rbx + PG_count]
+1:  cmp r13, [rbx + RVG_count]
     jae 2f
-    mov r14, [rbx + PG_first]
+    mov r14, [rbx + RVG_first]
     add r14, r13
-    imul r14, r14, PE_SIZE
+    imul r14, r14, RVE_SIZE
     add r14, [rip + pe + VEC_ptr]
     inc r13
-    mov rdi, [r12 + RF_old]
-    mov rsi, [r12 + RF_oldlen]
-    mov rdx, [r14 + PE_l1]
-    mov rcx, [r14 + PE_c1]
+    mov rdi, [r12 + RVF_old]
+    mov rsi, [r12 + RVF_oldlen]
+    mov rdx, [r14 + RVE_l1]
+    mov rcx, [r14 + RVE_c1]
     call lc_off_fast
     test rax, rax
     js .Lae_badpos
-    mov [r14 + PE_start], rax
-    mov rdi, [r12 + RF_old]
-    mov rsi, [r12 + RF_oldlen]
-    mov rdx, [r14 + PE_l2]
-    mov rcx, [r14 + PE_c2]
+    mov [r14 + RVE_start], rax
+    mov rdi, [r12 + RVF_old]
+    mov rsi, [r12 + RVF_oldlen]
+    mov rdx, [r14 + RVE_l2]
+    mov rcx, [r14 + RVE_c2]
     call lc_off_fast
     test rax, rax
     js .Lae_badpos
-    mov [r14 + PE_end], rax
-    cmp rax, [r14 + PE_start]
+    mov [r14 + RVE_end], rax
+    cmp rax, [r14 + RVE_start]
     jb .Lae_badpos
     lea rdi, [rip + sorted]
     mov esi, 8
@@ -774,8 +774,8 @@ apply_edits:
     mov rax, [rip + sorted + VEC_ptr]
     mov rcx, [rax + r13*8 - 8]
     mov rdx, [rax + r13*8]
-    mov rcx, [rcx + PE_end]
-    cmp rcx, [rdx + PE_start]
+    mov rcx, [rcx + RVE_end]
+    cmp rcx, [rdx + RVE_start]
     ja .Lae_overlap
     inc r13
     jmp 3b
@@ -790,33 +790,33 @@ apply_edits:
     mov r14, [rax + r13*8]
     inc r13
     lea rdi, [rip + scratch]
-    mov rsi, [r12 + RF_old]
+    mov rsi, [r12 + RVF_old]
     add rsi, r15
-    mov rdx, [r14 + PE_start]
+    mov rdx, [r14 + RVE_start]
     sub rdx, r15
     call sb_push
     lea rdi, [rip + scratch]
-    mov rsi, [r14 + PE_text]
-    mov rdx, [r14 + PE_len]
+    mov rsi, [r14 + RVE_text]
+    mov rdx, [r14 + RVE_len]
     call sb_push
-    mov r15, [r14 + PE_end]
-    cmp qword ptr [rip + scratch + SB_len], RV_TEXT_MAX
+    mov r15, [r14 + RVE_end]
+    cmp qword ptr [rip + scratch + SB_len], RVP_TEXT_MAX
     ja .Lae_big
     jmp 5b
 6:  lea rdi, [rip + scratch]
-    mov rsi, [r12 + RF_old]
+    mov rsi, [r12 + RVF_old]
     add rsi, r15
-    mov rdx, [r12 + RF_oldlen]
+    mov rdx, [r12 + RVF_oldlen]
     sub rdx, r15
     call sb_push
-    cmp qword ptr [rip + scratch + SB_len], RV_TEXT_MAX
+    cmp qword ptr [rip + scratch + SB_len], RVP_TEXT_MAX
     ja .Lae_big
     mov rdi, [rip + scratch + SB_ptr]
     mov rsi, [rip + scratch + SB_len]
     call ai_dup
-    mov [r12 + RF_new], rax
+    mov [r12 + RVF_new], rax
     mov rax, [rip + scratch + SB_len]
-    mov [r12 + RF_newlen], rax
+    mov [r12 + RVF_newlen], rax
     xor eax, eax
     EPILOGUE
 .Lae_badpos:
@@ -834,49 +834,49 @@ lc_off_fast:
     PROLOGUE 16
     mov rbx, rdx
     mov r13, rcx
-    cmp qword ptr [r12 + RF_ostart], 0
+    cmp qword ptr [r12 + RVF_ostart], 0
     jne 1f
-    mov rdi, [r12 + RF_old]
-    mov rsi, [r12 + RF_oldlen]
-    lea rdx, [r12 + RF_on]
+    mov rdi, [r12 + RVF_old]
+    mov rsi, [r12 + RVF_oldlen]
+    lea rdx, [r12 + RVF_on]
     call line_starts
-    mov [r12 + RF_ostart], rax
+    mov [r12 + RVF_ostart], rax
 1:  # protocol lines: one more than the starts when the text ends with LF (or is empty)
     test rbx, rbx
     jz 8f
     test r13, r13
     jz 8f
-    mov r14, [r12 + RF_on]
-    mov rcx, [r12 + RF_oldlen]
+    mov r14, [r12 + RVF_on]
+    mov rcx, [r12 + RVF_oldlen]
     test rcx, rcx
     jz 2f
-    mov rdx, [r12 + RF_old]
+    mov rdx, [r12 + RVF_old]
     cmp byte ptr [rdx + rcx - 1], 10
     jne 3f
 2:  inc r14                     # the empty line after the last LF
 3:  cmp rbx, r14
     ja 8f
-    mov rdx, [r12 + RF_ostart]
-    mov rax, [r12 + RF_on]
+    mov rdx, [r12 + RVF_ostart]
+    mov rax, [r12 + RVF_on]
     cmp rbx, rax
     ja 4f
     mov r8, [rdx + rbx*8 - 8]   # the line's start
     mov r9, [rdx + rbx*8]       # and the next one's
     cmp r9, r8
     je 5f
-    mov r10, [r12 + RF_old]
+    mov r10, [r12 + RVF_old]
     cmp byte ptr [r10 + r9 - 1], 10
     jne 5f
     dec r9                      # its end is its LF
     jmp 5f
-4:  mov r8, [r12 + RF_oldlen]   # the empty last line
+4:  mov r8, [r12 + RVF_oldlen]   # the empty last line
     mov r9, r8
 5:  lea rax, [r8 + r13 - 1]
     cmp rax, r9
     ja 8f
-    cmp rax, [r12 + RF_oldlen]
+    cmp rax, [r12 + RVF_oldlen]
     jae 9f
-    mov r10, [r12 + RF_old]
+    mov r10, [r12 + RVF_old]
     movzx ecx, byte ptr [r10 + rax]
     and ecx, 0xc0
     cmp ecx, 0x80
@@ -925,12 +925,12 @@ sort_edits:
     jae 51f
     mov r10, [r8 + rbx*8]
     mov r11, [r8 + r15*8]
-    mov rax, [r11 + PE_start]   # the right one first only when strictly less
-    cmp rax, [r10 + PE_start]
+    mov rax, [r11 + RVE_start]   # the right one first only when strictly less
+    cmp rax, [r10 + RVE_start]
     jb 52f
     ja 51f
-    mov rax, [r11 + PE_end]
-    cmp rax, [r10 + PE_end]
+    mov rax, [r11 + RVE_end]
+    cmp rax, [r10 + RVE_end]
     jb 52f
 51: mov rax, [r8 + rbx*8]
     mov [r9 + rcx*8], rax
@@ -971,22 +971,22 @@ sb_reserve_vec:
 file_free:
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + RF_path]
+    mov rdi, [rbx + RVF_path]
     call mem_free
-    mov rdi, [rbx + RF_name]
+    mov rdi, [rbx + RVF_name]
     call mem_free
-    mov rdi, [rbx + RF_old]
+    mov rdi, [rbx + RVF_old]
     call mem_free
-    mov rdi, [rbx + RF_new]
+    mov rdi, [rbx + RVF_new]
     call mem_free
-    mov rdi, [rbx + RF_ostart]
+    mov rdi, [rbx + RVF_ostart]
     call mem_free
-    mov rdi, [rbx + RF_nstart]
+    mov rdi, [rbx + RVF_nstart]
     call mem_free
-    lea rdi, [rbx + RF_hunks]
+    lea rdi, [rbx + RVF_hunks]
     call vec_free
     mov rdi, rbx
-    mov ecx, RF_SIZE
+    mov ecx, RVF_SIZE
     xor eax, eax
     rep stosb
     EPILOGUE
@@ -996,18 +996,18 @@ proposal_free:
     PROLOGUE
     mov rbx, rdi
     xor r12d, r12d
-1:  cmp r12, [rbx + RV_files + VEC_len]
+1:  cmp r12, [rbx + RVP_files + VEC_len]
     jae 2f
-    imul rdi, r12, RF_SIZE
-    add rdi, [rbx + RV_files + VEC_ptr]
+    imul rdi, r12, RVF_SIZE
+    add rdi, [rbx + RVP_files + VEC_ptr]
     call file_free
     inc r12
     jmp 1b
-2:  lea rdi, [rbx + RV_files]
+2:  lea rdi, [rbx + RVP_files]
     call vec_free
-    mov rdi, [rbx + RV_label]
+    mov rdi, [rbx + RVP_label]
     call mem_free
-    mov rdi, [rbx + RV_sid]
+    mov rdi, [rbx + RVP_sid]
     call mem_free
     mov rdi, rbx
     call mem_free
@@ -1015,23 +1015,23 @@ proposal_free:
 
 # ---------------- the changes of a file ----------------
 
-# file_diff(RF*): RF_hunks, RF_add, RF_del from a line diff (Myers) of its text before and after; each
+# file_diff(RF*): RVF_hunks, RVF_add, RVF_del from a line diff (Myers) of its text before and after; each
 #   run of changed lines is a hunk. A diff that does not give back the text after is one hunk.
 file_diff:
     PROLOGUE 48
     mov rbx, rdi
-    cmp qword ptr [rbx + RF_ostart], 0
+    cmp qword ptr [rbx + RVF_ostart], 0
     jne 1f
-    mov rdi, [rbx + RF_old]
-    mov rsi, [rbx + RF_oldlen]
-    lea rdx, [rbx + RF_on]
+    mov rdi, [rbx + RVF_old]
+    mov rsi, [rbx + RVF_oldlen]
+    lea rdx, [rbx + RVF_on]
     call line_starts
-    mov [rbx + RF_ostart], rax
-1:  mov rdi, [rbx + RF_new]
-    mov rsi, [rbx + RF_newlen]
-    lea rdx, [rbx + RF_nn]
+    mov [rbx + RVF_ostart], rax
+1:  mov rdi, [rbx + RVF_new]
+    mov rsi, [rbx + RVF_newlen]
+    lea rdx, [rbx + RVF_nn]
     call line_starts
-    mov [rbx + RF_nstart], rax
+    mov [rbx + RVF_nstart], rax
     # hashes and flags
     mov rdi, [rip + ha]
     call mem_free
@@ -1041,27 +1041,27 @@ file_diff:
     call mem_free
     mov rdi, [rip + fadd]
     call mem_free
-    mov rdi, [rbx + RF_old]
-    mov rsi, [rbx + RF_ostart]
-    mov rdx, [rbx + RF_on]
+    mov rdi, [rbx + RVF_old]
+    mov rsi, [rbx + RVF_ostart]
+    mov rdx, [rbx + RVF_on]
     call hashes
     mov [rip + ha], rax
-    mov rdi, [rbx + RF_new]
-    mov rsi, [rbx + RF_nstart]
-    mov rdx, [rbx + RF_nn]
+    mov rdi, [rbx + RVF_new]
+    mov rsi, [rbx + RVF_nstart]
+    mov rdx, [rbx + RVF_nn]
     call hashes
     mov [rip + hb], rax
-    mov rdi, [rbx + RF_on]
+    mov rdi, [rbx + RVF_on]
     inc rdi
     call mem_alloc
     mov [rip + fdel], rax
-    mov rdi, [rbx + RF_nn]
+    mov rdi, [rbx + RVF_nn]
     inc rdi
     call mem_alloc
     mov [rip + fadd], rax
     # the common start and end
-    mov r12, [rbx + RF_on]
-    mov r13, [rbx + RF_nn]
+    mov r12, [rbx + RVF_on]
+    mov r13, [rbx + RVF_nn]
     mov r8, [rip + ha]
     mov r9, [rip + hb]
     xor ecx, ecx
@@ -1118,16 +1118,16 @@ file_diff:
     test eax, eax
     jnz 9f
     # one hunk: everything
-    mov qword ptr [rbx + RF_hunks + VEC_len], 0
-    lea rdi, [rbx + RF_hunks]
-    mov esi, RH_SIZE
+    mov qword ptr [rbx + RVF_hunks + VEC_len], 0
+    lea rdi, [rbx + RVF_hunks]
+    mov esi, RVH_SIZE
     call vec_push
-    mov rcx, [rbx + RF_on]
-    mov [rax + RH_oc], rcx
-    mov [rbx + RF_del], ecx
-    mov rcx, [rbx + RF_nn]
-    mov [rax + RH_nc], rcx
-    mov [rbx + RF_add], ecx
+    mov rcx, [rbx + RVF_on]
+    mov [rax + RVH_oc], rcx
+    mov [rbx + RVF_del], ecx
+    mov rcx, [rbx + RVF_nn]
+    mov [rax + RVH_nc], rcx
+    mov [rbx + RVF_add], ecx
 9:  EPILOGUE
 
 # hashes(text, starts, n) -> n line hashes (mem_alloc'd), each over the line and its LF
@@ -1157,29 +1157,29 @@ hashes:
 make_hunks:
     PROLOGUE 16
     mov rbx, rdi
-    mov qword ptr [rbx + RF_hunks + VEC_len], 0
-    mov dword ptr [rbx + RF_add], 0
-    mov dword ptr [rbx + RF_del], 0
+    mov qword ptr [rbx + RVF_hunks + VEC_len], 0
+    mov dword ptr [rbx + RVF_add], 0
+    mov dword ptr [rbx + RVF_del], 0
     xor r12d, r12d              # i, old
     xor r13d, r13d              # j, new
 .Lmh_next:
     mov r8, [rip + fdel]
     mov r9, [rip + fadd]
     xor eax, eax                # i changed
-    cmp r12, [rbx + RF_on]
+    cmp r12, [rbx + RVF_on]
     jae 1f
     movzx eax, byte ptr [r8 + r12]
 1:  xor ecx, ecx                # j changed
-    cmp r13, [rbx + RF_nn]
+    cmp r13, [rbx + RVF_nn]
     jae 2f
     movzx ecx, byte ptr [r9 + r13]
 2:  mov edx, eax
     or edx, ecx
     jnz 3f
     # both unchanged, or the end
-    cmp r12, [rbx + RF_on]
+    cmp r12, [rbx + RVF_on]
     jb 21f
-    cmp r13, [rbx + RF_nn]
+    cmp r13, [rbx + RVF_nn]
     jae 9f
 21: inc r12
     inc r13
@@ -1189,13 +1189,13 @@ make_hunks:
 4:  mov r8, [rip + fdel]
     mov r9, [rip + fadd]
     xor edx, edx
-    cmp r12, [rbx + RF_on]
+    cmp r12, [rbx + RVF_on]
     jae 5f
     cmp byte ptr [r8 + r12], 0
     je 5f
     inc r12
     inc edx
-5:  cmp r13, [rbx + RF_nn]
+5:  cmp r13, [rbx + RVF_nn]
     jae 6f
     cmp byte ptr [r9 + r13], 0
     je 6f
@@ -1203,19 +1203,19 @@ make_hunks:
     inc edx
 6:  test edx, edx
     jnz 4b
-    lea rdi, [rbx + RF_hunks]
-    mov esi, RH_SIZE
+    lea rdi, [rbx + RVF_hunks]
+    mov esi, RVH_SIZE
     call vec_push
-    mov [rax + RH_ol], r14
+    mov [rax + RVH_ol], r14
     mov rcx, r12
     sub rcx, r14
-    mov [rax + RH_oc], rcx
-    add [rbx + RF_del], ecx
-    mov [rax + RH_nl], r15
+    mov [rax + RVH_oc], rcx
+    add [rbx + RVF_del], ecx
+    mov [rax + RVH_nl], r15
     mov rcx, r13
     sub rcx, r15
-    mov [rax + RH_nc], rcx
-    add [rbx + RF_add], ecx
+    mov [rax + RVH_nc], rcx
+    add [rbx + RVF_add], ecx
     jmp .Lmh_next
 9:  EPILOGUE
 
@@ -1230,10 +1230,10 @@ hunks_check:
     call build_text
     xor eax, eax
     mov rcx, [rip + scratch + SB_len]
-    cmp rcx, [rbx + RF_newlen]
+    cmp rcx, [rbx + RVF_newlen]
     jne 9f
     mov rdi, [rip + scratch + SB_ptr]
-    mov rsi, [rbx + RF_new]
+    mov rsi, [rbx + RVF_new]
     mov rdx, rcx
     call memeq
 9:  EPILOGUE
@@ -1245,47 +1245,47 @@ build_text:
     mov r15d, esi
     xor r12d, r12d              # old offset copied up to
     xor r13d, r13d
-1:  cmp r13, [rbx + RF_hunks + VEC_len]
+1:  cmp r13, [rbx + RVF_hunks + VEC_len]
     jae 3f
-    imul r14, r13, RH_SIZE
-    add r14, [rbx + RF_hunks + VEC_ptr]
+    imul r14, r13, RVH_SIZE
+    add r14, [rbx + RVF_hunks + VEC_ptr]
     inc r13
     test r15d, r15d
     jnz 2f
-    cmp dword ptr [r14 + RH_state], RS_ACCEPTED
+    cmp dword ptr [r14 + RVH_state], RVS_ACCEPTED
     jne 1b
-2:  mov rcx, [rbx + RF_ostart]
-    mov rax, [r14 + RH_ol]
+2:  mov rcx, [rbx + RVF_ostart]
+    mov rax, [r14 + RVH_ol]
     mov rdx, [rcx + rax*8]      # the hunk's old start
     lea rdi, [rip + scratch]
-    mov rsi, [rbx + RF_old]
+    mov rsi, [rbx + RVF_old]
     add rsi, r12
     sub rdx, r12
     call sb_push
-    mov rcx, [rbx + RF_nstart]
-    mov rax, [r14 + RH_nl]
+    mov rcx, [rbx + RVF_nstart]
+    mov rax, [r14 + RVH_nl]
     mov rsi, [rcx + rax*8]
-    add rax, [r14 + RH_nc]
+    add rax, [r14 + RVH_nc]
     mov rdx, [rcx + rax*8]
     sub rdx, rsi
-    add rsi, [rbx + RF_new]
+    add rsi, [rbx + RVF_new]
     lea rdi, [rip + scratch]
     call sb_push
-    mov rcx, [rbx + RF_ostart]
-    mov rax, [r14 + RH_ol]
-    add rax, [r14 + RH_oc]
+    mov rcx, [rbx + RVF_ostart]
+    mov rax, [r14 + RVH_ol]
+    add rax, [r14 + RVH_oc]
     mov r12, [rcx + rax*8]      # the hunk's old end
     jmp 1b
 3:  lea rdi, [rip + scratch]
-    mov rsi, [rbx + RF_old]
+    mov rsi, [rbx + RVF_old]
     add rsi, r12
-    mov rdx, [rbx + RF_oldlen]
+    mov rdx, [rbx + RVF_oldlen]
     sub rdx, r12
     call sb_push
     EPILOGUE
 
 # myers(a, n, b, m, p) -> eax 1 with fdel[p + x] for old lines deleted and fadd[p + y] for new lines
-#   inserted, 0 beyond RV_DMAX differences (diff.s's walk, with both sides marked)
+#   inserted, 0 beyond RVP_DMAX differences (diff.s's walk, with both sides marked)
 myers:
     PROLOGUE 64
     mov [rsp], rdi
@@ -1295,16 +1295,16 @@ myers:
     mov [rsp + 32], r8
     cmp qword ptr [rip + vbuf], 0
     jne 1f
-    mov edi, (2 * RV_DMAX + 3) * 4
+    mov edi, (2 * RVP_DMAX + 3) * 4
     call mem_alloc
     mov [rip + vbuf], rax
 1:  mov rbx, [rip + vbuf]
-    add rbx, (RV_DMAX + 1) * 4  # V[k] at rbx + 4k
+    add rbx, (RVP_DMAX + 1) * 4  # V[k] at rbx + 4k
     mov dword ptr [rbx + 4], 0
     xor r12d, r12d              # d
     mov qword ptr [rsp + 40], 0 # trace used (ints)
 .Lmy_d:
-    cmp r12, RV_DMAX
+    cmp r12, RVP_DMAX
     ja .Lmy_fail
     mov r13, r12
     neg r13                     # k
@@ -1455,14 +1455,14 @@ open_tab:
     lea rsi, [rip + .Ltab_prefix]
     call sb_push_cstr
     lea rdi, [rip + line]
-    mov rsi, [rbx + RV_label]
+    mov rsi, [rbx + RVP_label]
     call sb_push_cstr
     mov rdi, [rip + line + SB_ptr]
     mov rsi, [rip + line + SB_len]
     call ai_dup
     mov [r13 + DV_name], rax
     mov [r12 + DOC_name], rax
-    mov [rbx + RV_doc], r12
+    mov [rbx + RVP_doc], r12
     mov rdi, r12
     call doc_language_refresh
     mov rdi, r12
@@ -1471,8 +1471,8 @@ open_tab:
     mov rdi, rbx
     call build_doc
     # the cursor on the first file
-    mov rax, [rbx + RV_files + VEC_ptr]
-    mov eax, [rax + RF_line]
+    mov rax, [rbx + RVP_files + VEC_ptr]
+    mov eax, [rax + RVF_line]
     mov rdi, r12
     mov rsi, rax
     call doc_line_start
@@ -1485,7 +1485,7 @@ open_tab:
 build_doc:
     PROLOGUE 48
     mov rbx, rdi
-    mov r15, [rbx + RV_doc]
+    mov r15, [rbx + RVP_doc]
     test r15, r15
     jz 99f
     mov rdi, r15
@@ -1500,12 +1500,12 @@ build_doc:
     lea rdi, [rip + line]
     call sb_clear
     lea rdi, [rip + line]
-    mov rsi, [rbx + RV_label]
+    mov rsi, [rbx + RVP_label]
     call sb_push_cstr
     lea rdi, [rip + line]
     lea rsi, [rip + .Ldot]
     call sb_push_cstr
-    mov rdi, [rbx + RV_ext]
+    mov rdi, [rbx + RVP_ext]
     call agentext_title
     lea rdi, [rip + line]
     mov rsi, rax
@@ -1514,7 +1514,7 @@ build_doc:
     lea rsi, [rip + .Ldot]
     call sb_push_cstr
     lea rdi, [rip + line]
-    mov rsi, [rbx + RV_files + VEC_len]
+    mov rsi, [rbx + RVP_files + VEC_len]
     call sb_push_u64
     lea rdi, [rip + line]
     lea rsi, [rip + .Lfiles]
@@ -1548,13 +1548,13 @@ build_doc:
     # the files
     xor r12d, r12d
 .Lbd_file:
-    cmp r12, [rbx + RV_files + VEC_len]
+    cmp r12, [rbx + RVP_files + VEC_len]
     jae .Lbd_done
-    imul r13, r12, RF_SIZE
-    add r13, [rbx + RV_files + VEC_ptr]
+    imul r13, r12, RVF_SIZE
+    add r13, [rbx + RVP_files + VEC_ptr]
     inc r12
     mov rax, [rip + dls + VEC_len]
-    mov [r13 + RF_line], eax
+    mov [r13 + RVF_line], eax
     lea rdi, [rip + line]
     call sb_clear
     mov rdi, r13
@@ -1566,13 +1566,13 @@ build_doc:
     lea rsi, [rip + .Lplus]
     call sb_push_cstr
     lea rdi, [rip + line]
-    mov esi, [r13 + RF_add]
+    mov esi, [r13 + RVF_add]
     call sb_push_u64
     lea rdi, [rip + line]
     lea rsi, [rip + .Lminus]
     call sb_push_cstr
     lea rdi, [rip + line]
-    mov esi, [r13 + RF_del]
+    mov esi, [r13 + RVF_del]
     call sb_push_u64
     lea rdi, [rip + line]
     lea rsi, [rip + .Ldot]
@@ -1590,14 +1590,14 @@ build_doc:
     xor r14d, r14d
     mov qword ptr [rsp], 0      # old lines shown so far (context does not repeat)
 .Lbd_hunk:
-    cmp r14, [r13 + RF_hunks + VEC_len]
+    cmp r14, [r13 + RVF_hunks + VEC_len]
     jae .Lbd_file
-    imul rax, r14, RH_SIZE
-    add rax, [r13 + RF_hunks + VEC_ptr]
+    imul rax, r14, RVH_SIZE
+    add rax, [r13 + RVF_hunks + VEC_ptr]
     mov [rsp + 8], rax
     inc r14
     mov rcx, [rip + dls + VEC_len]
-    mov [rax + RH_line], ecx
+    mov [rax + RVH_line], ecx
     # @@ -ol,oc +nl,nc @@
     lea rdi, [rip + line]
     call sb_clear
@@ -1605,7 +1605,7 @@ build_doc:
     lea rsi, [rip + .Lat_minus]
     call sb_push_cstr
     mov rax, [rsp + 8]
-    mov rsi, [rax + RH_ol]
+    mov rsi, [rax + RVH_ol]
     inc rsi
     lea rdi, [rip + line]
     call sb_push_u64
@@ -1614,13 +1614,13 @@ build_doc:
     call sb_push_byte
     mov rax, [rsp + 8]
     lea rdi, [rip + line]
-    mov rsi, [rax + RH_oc]
+    mov rsi, [rax + RVH_oc]
     call sb_push_u64
     lea rdi, [rip + line]
     lea rsi, [rip + .Lsp_plus]
     call sb_push_cstr
     mov rax, [rsp + 8]
-    mov rsi, [rax + RH_nl]
+    mov rsi, [rax + RVH_nl]
     inc rsi
     lea rdi, [rip + line]
     call sb_push_u64
@@ -1629,13 +1629,13 @@ build_doc:
     call sb_push_byte
     mov rax, [rsp + 8]
     lea rdi, [rip + line]
-    mov rsi, [rax + RH_nc]
+    mov rsi, [rax + RVH_nc]
     call sb_push_u64
     lea rdi, [rip + line]
     lea rsi, [rip + .Lat_end]
     call sb_push_cstr
     mov rax, [rsp + 8]
-    mov eax, [rax + RH_state]
+    mov eax, [rax + RVH_state]
     test eax, eax
     jz 2f
     lea rcx, [rip + hunk_words]
@@ -1648,30 +1648,30 @@ build_doc:
     call emit_line
     # context before, from where the last one stopped
     mov rax, [rsp + 8]
-    mov r15, [rax + RH_ol]
-    sub r15, RV_CONTEXT
+    mov r15, [rax + RVH_ol]
+    sub r15, RVP_CONTEXT
     jns 3f
     xor r15d, r15d
 3:  cmp r15, [rsp]
     jae 4f
     mov r15, [rsp]
 4:  mov rax, [rsp + 8]
-    cmp r15, [rax + RH_ol]
+    cmp r15, [rax + RVH_ol]
     jae 5f
     mov rdi, r13
     mov rsi, r15
-    mov rdx, [rax + RH_nl]
-    sub rdx, [rax + RH_ol]
+    mov rdx, [rax + RVH_nl]
+    sub rdx, [rax + RVH_ol]
     add rdx, r15                # its new line
     call emit_context
     inc r15
     jmp 4b
 5:  # the old lines, then the new ones
     mov rax, [rsp + 8]
-    mov r15, [rax + RH_ol]
+    mov r15, [rax + RVH_ol]
 6:  mov rax, [rsp + 8]
-    mov rcx, [rax + RH_ol]
-    add rcx, [rax + RH_oc]
+    mov rcx, [rax + RVH_ol]
+    add rcx, [rax + RVH_oc]
     cmp r15, rcx
     jae 7f
     mov rdi, r13
@@ -1680,10 +1680,10 @@ build_doc:
     inc r15
     jmp 6b
 7:  mov rax, [rsp + 8]
-    mov r15, [rax + RH_nl]
+    mov r15, [rax + RVH_nl]
 8:  mov rax, [rsp + 8]
-    mov rcx, [rax + RH_nl]
-    add rcx, [rax + RH_nc]
+    mov rcx, [rax + RVH_nl]
+    add rcx, [rax + RVH_nc]
     cmp r15, rcx
     jae 9f
     mov rdi, r13
@@ -1693,18 +1693,18 @@ build_doc:
     jmp 8b
 9:  # context after, up to the next hunk
     mov rax, [rsp + 8]
-    mov r15, [rax + RH_ol]
-    add r15, [rax + RH_oc]
+    mov r15, [rax + RVH_ol]
+    add r15, [rax + RVH_oc]
     mov rcx, r15
-    add rcx, RV_CONTEXT
-    cmp rcx, [r13 + RF_on]
+    add rcx, RVP_CONTEXT
+    cmp rcx, [r13 + RVF_on]
     jbe 10f
-    mov rcx, [r13 + RF_on]
-10: cmp r14, [r13 + RF_hunks + VEC_len]
+    mov rcx, [r13 + RVF_on]
+10: cmp r14, [r13 + RVF_hunks + VEC_len]
     jae 11f
-    imul rdx, r14, RH_SIZE
-    add rdx, [r13 + RF_hunks + VEC_ptr]
-    mov rdx, [rdx + RH_ol]
+    imul rdx, r14, RVH_SIZE
+    add rdx, [r13 + RVF_hunks + VEC_ptr]
+    mov rdx, [rdx + RVH_ol]
     cmp rcx, rdx
     jbe 11f
     mov rcx, rdx
@@ -1714,10 +1714,10 @@ build_doc:
     mov rax, [rsp + 8]
     mov rdi, r13
     mov rsi, r15
-    mov rdx, [rax + RH_nl]
-    add rdx, [rax + RH_nc]
-    sub rdx, [rax + RH_ol]
-    sub rdx, [rax + RH_oc]
+    mov rdx, [rax + RVH_nl]
+    add rdx, [rax + RVH_nc]
+    sub rdx, [rax + RVH_ol]
+    sub rdx, [rax + RVH_oc]
     add rdx, r15
     call emit_context
     inc r15
@@ -1725,7 +1725,7 @@ build_doc:
 13: mov [rsp], r15
     jmp .Lbd_hunk
 .Lbd_done:
-    mov r15, [rbx + RV_doc]
+    mov r15, [rbx + RVP_doc]
     mov rdi, r15
     mov rsi, [rip + text + SB_ptr]
     mov rdx, [rip + text + SB_len]
@@ -1797,8 +1797,8 @@ emit_context:
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    mov rdi, [rbx + RF_old]
-    mov rsi, [rbx + RF_ostart]
+    mov rdi, [rbx + RVF_old]
+    mov rsi, [rbx + RVF_ostart]
     mov rdx, r12
     call text_line
     mov edi, DK_CTX
@@ -1810,8 +1810,8 @@ emit_old:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov rdi, [rbx + RF_old]
-    mov rsi, [rbx + RF_ostart]
+    mov rdi, [rbx + RVF_old]
+    mov rsi, [rbx + RVF_ostart]
     mov rdx, r12
     call text_line
     mov edi, DK_DEL
@@ -1823,8 +1823,8 @@ emit_new:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov rdi, [rbx + RF_new]
-    mov rsi, [rbx + RF_nstart]
+    mov rdi, [rbx + RVF_new]
+    mov rsi, [rbx + RVF_nstart]
     mov rdx, r12
     call text_line
     mov edi, DK_ADD
@@ -1857,7 +1857,7 @@ text_line:
 show_path:
     PROLOGUE
     mov rbx, rdi
-    mov r12, [rbx + RF_path]
+    mov r12, [rbx + RVF_path]
     test r12, r12
     jz 8f
     mov r13, [rip + g_project]
@@ -1884,12 +1884,12 @@ show_path:
     EPILOGUE
 7:  mov rax, r12
     EPILOGUE
-8:  mov rax, [rbx + RF_name]
+8:  mov rax, [rbx + RVF_name]
     EPILOGUE
 
 # file_state_word(RF*) -> cstr: pending, accepted, rejected, changed since proposed, partly accepted
 file_state_word:
-    mov eax, [rdi + RF_state]
+    mov eax, [rdi + RVF_state]
     lea rcx, [rip + file_words]
     mov rax, [rcx + rax*8]
     ret
@@ -1898,12 +1898,12 @@ file_state_word:
 pending_files:
     xor eax, eax
     xor ecx, ecx
-1:  cmp rcx, [rdi + RV_files + VEC_len]
+1:  cmp rcx, [rdi + RVP_files + VEC_len]
     jae 9f
-    imul rdx, rcx, RF_SIZE
-    add rdx, [rdi + RV_files + VEC_ptr]
+    imul rdx, rcx, RVF_SIZE
+    add rdx, [rdi + RVP_files + VEC_ptr]
     inc rcx
-    cmp dword ptr [rdx + RF_state], RS_PENDING
+    cmp dword ptr [rdx + RVF_state], RVS_PENDING
     jne 1b
     inc rax
     jmp 1b
@@ -1920,13 +1920,13 @@ FN review_decide
     mov [rsp], rsi
     mov [rsp + 8], rdx
     mov r15d, ecx
-    cmp dword ptr [rbx + RV_done], 0
+    cmp dword ptr [rbx + RVP_done], 0
     jne 9f
     mov rax, [rsp]
     test rax, rax
     jns 2f
     xor r12d, r12d
-1:  cmp r12, [rbx + RV_files + VEC_len]
+1:  cmp r12, [rbx + RVP_files + VEC_len]
     jae 3f
     mov rdi, rbx
     mov rsi, r12
@@ -1935,7 +1935,7 @@ FN review_decide
     call decide_file
     inc r12
     jmp 1b
-2:  cmp rax, [rbx + RV_files + VEC_len]
+2:  cmp rax, [rbx + RVP_files + VEC_len]
     jae 9f
     mov rdi, rbx
     mov rsi, rax
@@ -1952,20 +1952,20 @@ FN review_decide
 decide_file:
     PROLOGUE 16
     mov rbx, rdi
-    imul r12, rsi, RF_SIZE
-    add r12, [rbx + RV_files + VEC_ptr]
+    imul r12, rsi, RVF_SIZE
+    add r12, [rbx + RVP_files + VEC_ptr]
     mov [rsp], rsi
     mov r13, rdx
     mov r14d, ecx
-    cmp dword ptr [r12 + RF_state], RS_PENDING
+    cmp dword ptr [r12 + RVF_state], RVS_PENDING
     jne 9f
     test r13, r13
     js 1f
-    cmp r13, [r12 + RF_hunks + VEC_len]
+    cmp r13, [r12 + RVF_hunks + VEC_len]
     jae 9f
-    imul rax, r13, RH_SIZE
-    add rax, [r12 + RF_hunks + VEC_ptr]
-    cmp dword ptr [rax + RH_state], RS_PENDING
+    imul rax, r13, RVH_SIZE
+    add rax, [r12 + RVF_hunks + VEC_ptr]
+    cmp dword ptr [rax + RVH_state], RVS_PENDING
     jne 9f
 1:  test r14d, r14d
     jz 2f
@@ -1975,19 +1975,19 @@ decide_file:
     call accept_hunks
     jmp 3f
 2:  xor ecx, ecx                # rejected: nothing changes
-4:  cmp rcx, [r12 + RF_hunks + VEC_len]
+4:  cmp rcx, [r12 + RVF_hunks + VEC_len]
     jae 3f
-    imul rax, rcx, RH_SIZE
-    add rax, [r12 + RF_hunks + VEC_ptr]
+    imul rax, rcx, RVH_SIZE
+    add rax, [r12 + RVF_hunks + VEC_ptr]
     inc rcx
     test r13, r13
     js 5f
     lea rdx, [r13 + 1]
     cmp rcx, rdx
     jne 4b
-5:  cmp dword ptr [rax + RH_state], RS_PENDING
+5:  cmp dword ptr [rax + RVH_state], RVS_PENDING
     jne 4b
-    mov dword ptr [rax + RH_state], RS_REJECTED
+    mov dword ptr [rax + RVH_state], RVS_REJECTED
     jmp 4b
 3:  mov rdi, rbx
     mov rsi, [rsp]
@@ -2010,21 +2010,21 @@ accept_hunks:
     call build_text
     # what it is
     mov qword ptr [rsp], 0      # the open document, or 0
-    mov rax, [r12 + RF_docid]
+    mov rax, [r12 + RVF_docid]
     test rax, rax
     jz 1f
     mov rdi, rax
     call extproto_doc
     test rax, rax
     jnz 2f
-1:  mov rdi, [r12 + RF_path]
+1:  mov rdi, [r12 + RVF_path]
     test rdi, rdi
     jz .Lah_stale
     call open_doc_at
     test rax, rax
     js .Lah_stale
     jnz 2f
-    mov rdi, [r12 + RF_path]
+    mov rdi, [r12 + RVF_path]
     call read_text
     test rax, rax
     jz .Lah_stale
@@ -2062,7 +2062,7 @@ accept_hunks:
     call sb_push_u64
     jmp 6f
 5:  lea rdi, [rip + line]
-    mov rsi, [r12 + RF_path]
+    mov rsi, [r12 + RVF_path]
     call sb_push_cstr
 6:  lea rdi, [rip + text]
     lea rsi, [rip + .Lone_lf]
@@ -2089,7 +2089,7 @@ accept_hunks:
     # how many: the open hunks chosen
     xor ecx, ecx
     xor edx, edx
-10: cmp rcx, [r12 + RF_hunks + VEC_len]
+10: cmp rcx, [r12 + RVF_hunks + VEC_len]
     jae 11f
     mov rdi, r12
     mov rsi, rcx
@@ -2115,10 +2115,10 @@ accept_hunks:
     mov qword ptr [rsp + 40], 1 # its line
     mov qword ptr [rsp + 48], 0 # its line's start
     xor r15d, r15d
-12: cmp r15, [r12 + RF_hunks + VEC_len]
+12: cmp r15, [r12 + RVF_hunks + VEC_len]
     jae 15f
-    imul r14, r15, RH_SIZE
-    add r14, [r12 + RF_hunks + VEC_ptr]
+    imul r14, r15, RVH_SIZE
+    add r14, [r12 + RVF_hunks + VEC_ptr]
     mov rdi, r12
     mov rsi, r15
     mov r8, r13
@@ -2126,7 +2126,7 @@ accept_hunks:
     inc r15
     test eax, eax
     jnz 13f
-    cmp dword ptr [r14 + RH_state], RS_ACCEPTED
+    cmp dword ptr [r14 + RVH_state], RVS_ACCEPTED
     jne 12b
     mov rdi, r12
     mov rsi, r14
@@ -2171,40 +2171,40 @@ accept_hunks:
     test eax, eax
     jz .Lah_stale
     xor ecx, ecx
-16: cmp rcx, [r12 + RF_hunks + VEC_len]
+16: cmp rcx, [r12 + RVF_hunks + VEC_len]
     jae 9f
     mov rdi, r12
     mov rsi, rcx
     mov r8, r13
     call chosen
-    imul rdx, rcx, RH_SIZE
-    add rdx, [r12 + RF_hunks + VEC_ptr]
+    imul rdx, rcx, RVH_SIZE
+    add rdx, [r12 + RVF_hunks + VEC_ptr]
     inc rcx
     test eax, eax
     jz 16b
-    mov dword ptr [rdx + RH_state], RS_ACCEPTED
+    mov dword ptr [rdx + RVH_state], RVS_ACCEPTED
     jmp 16b
 .Lah_stale:
     lea rdi, [rip + .Lchanged_toast]
     call app_toast
     xor ecx, ecx
-17: cmp rcx, [r12 + RF_hunks + VEC_len]
+17: cmp rcx, [r12 + RVF_hunks + VEC_len]
     jae 9f
-    imul rdx, rcx, RH_SIZE
-    add rdx, [r12 + RF_hunks + VEC_ptr]
+    imul rdx, rcx, RVH_SIZE
+    add rdx, [r12 + RVF_hunks + VEC_ptr]
     inc rcx
-    cmp dword ptr [rdx + RH_state], RS_PENDING
+    cmp dword ptr [rdx + RVH_state], RVS_PENDING
     jne 17b
-    mov dword ptr [rdx + RH_state], RS_STALE
+    mov dword ptr [rdx + RVH_state], RVS_STALE
     jmp 17b
 9:  EPILOGUE
 
 # chosen(RF*, i, r8 hunk or -1) -> eax 1 when hunk i is open and chosen (keeps rcx, rdx)
 chosen:
-    imul r9, rsi, RH_SIZE
-    add r9, [rdi + RF_hunks + VEC_ptr]
+    imul r9, rsi, RVH_SIZE
+    add r9, [rdi + RVF_hunks + VEC_ptr]
     xor eax, eax
-    cmp dword ptr [r9 + RH_state], RS_PENDING
+    cmp dword ptr [r9 + RVH_state], RVS_PENDING
     jne 1f
     test r8, r8
     js 2f
@@ -2215,22 +2215,22 @@ chosen:
 
 # hunk_old_range(RF*, RH*) -> rax start, rdx end in the text before
 hunk_old_range:
-    mov rcx, [rdi + RF_ostart]
-    mov r8, [rsi + RH_ol]
+    mov rcx, [rdi + RVF_ostart]
+    mov r8, [rsi + RVH_ol]
     mov rax, [rcx + r8*8]
-    add r8, [rsi + RH_oc]
+    add r8, [rsi + RVH_oc]
     mov rdx, [rcx + r8*8]
     ret
 
 # hunk_new_text(RF*, RH*) -> rax ptr, rdx len of its lines after
 hunk_new_text:
-    mov rcx, [rdi + RF_nstart]
-    mov r8, [rsi + RH_nl]
+    mov rcx, [rdi + RVF_nstart]
+    mov r8, [rsi + RVH_nl]
     mov rax, [rcx + r8*8]
-    add r8, [rsi + RH_nc]
+    add r8, [rsi + RVH_nc]
     mov rdx, [rcx + r8*8]
     sub rdx, rax
-    add rax, [rdi + RF_new]
+    add rax, [rdi + RVF_new]
     ret
 
 # hunk_growth(RF*, RH*) -> rax bytes it adds (negative when it removes)
@@ -2286,46 +2286,46 @@ settle:
     PROLOGUE 48
     mov rbx, rdi
     mov [rsp], rsi
-    imul r12, rsi, RF_SIZE
-    add r12, [rbx + RV_files + VEC_ptr]
-    cmp dword ptr [r12 + RF_state], RS_PENDING
+    imul r12, rsi, RVF_SIZE
+    add r12, [rbx + RVP_files + VEC_ptr]
+    cmp dword ptr [r12 + RVF_state], RVS_PENDING
     jne 9f
     xor r13d, r13d              # accepted
     xor r14d, r14d              # stale
     xor ecx, ecx
-1:  cmp rcx, [r12 + RF_hunks + VEC_len]
+1:  cmp rcx, [r12 + RVF_hunks + VEC_len]
     jae 2f
-    imul rax, rcx, RH_SIZE
-    add rax, [r12 + RF_hunks + VEC_ptr]
+    imul rax, rcx, RVH_SIZE
+    add rax, [r12 + RVF_hunks + VEC_ptr]
     inc rcx
-    mov edx, [rax + RH_state]
-    cmp edx, RS_PENDING
+    mov edx, [rax + RVH_state]
+    cmp edx, RVS_PENDING
     je 9f                       # still open
-    cmp edx, RS_ACCEPTED
+    cmp edx, RVS_ACCEPTED
     jne 11f
     inc r13
-11: cmp edx, RS_STALE
+11: cmp edx, RVS_STALE
     jne 1b
     inc r14
     jmp 1b
-2:  mov r15d, RS_ACCEPTED
-    cmp r13, [r12 + RF_hunks + VEC_len]
+2:  mov r15d, RVS_ACCEPTED
+    cmp r13, [r12 + RVF_hunks + VEC_len]
     je 3f
-    mov r15d, RS_PARTIAL
+    mov r15d, RVS_PARTIAL
     test r13, r13
     jnz 3f
-    mov r15d, RS_REJECTED
+    mov r15d, RVS_REJECTED
     test r14, r14
     jz 3f
-    mov r15d, RS_STALE
-3:  mov [r12 + RF_state], r15d
+    mov r15d, RVS_STALE
+3:  mov [r12 + RVF_state], r15d
     # 0 proposal P I accepted|rejected|stale|partial A N
     lea rdi, [rip + line]
     call sb_clear
     mov rdi, rbx
     call event_head
     lea rdi, [rip + line]
-    mov rsi, [r12 + RF_index]
+    mov rsi, [r12 + RVF_index]
     call sb_push_u64
     lea rdi, [rip + line]
     mov esi, ' '
@@ -2335,7 +2335,7 @@ settle:
     lea rdi, [rip + line]
     mov rsi, [rcx + rax*8]
     call sb_push_cstr
-    cmp r15d, RS_PARTIAL
+    cmp r15d, RVS_PARTIAL
     jne 4f
     lea rdi, [rip + line]
     mov esi, ' '
@@ -2347,7 +2347,7 @@ settle:
     mov esi, ' '
     call sb_push_byte
     lea rdi, [rip + line]
-    mov rsi, [r12 + RF_hunks + VEC_len]
+    mov rsi, [r12 + RVF_hunks + VEC_len]
     call sb_push_u64
 4:  mov rdi, rbx
     call send_event
@@ -2361,7 +2361,7 @@ event_head:
     lea rsi, [rip + .Lev_proposal]
     call sb_push_cstr
     lea rdi, [rip + line]
-    mov rsi, [rbx + RV_id]
+    mov rsi, [rbx + RVP_id]
     call sb_push_u64
     lea rdi, [rip + line]
     mov esi, ' '
@@ -2370,11 +2370,11 @@ event_head:
 
 # send_event(RV*): "0 " and line to the proposer, when it listens
 send_event:
-    cmp dword ptr [rdi + RV_events], 0
+    cmp dword ptr [rdi + RVP_events], 0
     je 1f
-    cmp dword ptr [rdi + RV_gone], 0
+    cmp dword ptr [rdi + RVP_gone], 0
     jne 1f
-    mov rdi, [rdi + RV_ext]
+    mov rdi, [rdi + RVP_ext]
     mov rsi, [rip + line + SB_ptr]
     mov rdx, [rip + line + SB_len]
     xor ecx, ecx
@@ -2387,14 +2387,14 @@ send_event:
 check_done:
     PROLOGUE
     mov rbx, rdi
-    cmp dword ptr [rbx + RV_done], 0
+    cmp dword ptr [rbx + RVP_done], 0
     jne 9f
     mov rdi, rbx
     call pending_files
     test rax, rax
     jnz 9f
-    mov dword ptr [rbx + RV_done], 1
-    mov rdi, [rbx + RV_ext]
+    mov dword ptr [rbx + RVP_done], 1
+    mov rdi, [rbx + RVP_ext]
     call ai_ext
     dec dword ptr [rax + AX_proposals]
     jns 1f
@@ -2402,15 +2402,15 @@ check_done:
 1:  xor r12d, r12d              # accepted, partly accepted
     xor r13d, r13d              # rejected, stale
     xor ecx, ecx
-2:  cmp rcx, [rbx + RV_files + VEC_len]
+2:  cmp rcx, [rbx + RVP_files + VEC_len]
     jae 4f
-    imul rax, rcx, RF_SIZE
-    add rax, [rbx + RV_files + VEC_ptr]
+    imul rax, rcx, RVF_SIZE
+    add rax, [rbx + RVP_files + VEC_ptr]
     inc rcx
-    mov edx, [rax + RF_state]
-    cmp edx, RS_ACCEPTED
+    mov edx, [rax + RVF_state]
+    cmp edx, RVS_ACCEPTED
     je 3f
-    cmp edx, RS_PARTIAL
+    cmp edx, RVS_PARTIAL
     je 3f
     inc r13
     jmp 2b
@@ -2434,10 +2434,10 @@ check_done:
     call sb_push_u64
     mov rdi, rbx
     call send_event
-    mov rdi, [rbx + RV_waiter]
+    mov rdi, [rbx + RVP_waiter]
     test rdi, rdi
     jz 9f
-    mov qword ptr [rbx + RV_waiter], 0
+    mov qword ptr [rbx + RVP_waiter], 0
     mov rsi, r12
     mov rdx, r13
     call tools_propose_done
@@ -2449,8 +2449,8 @@ check_done:
 FN review_doc_gone
     PROLOGUE
     mov rbx, rdi
-    mov qword ptr [rbx + RV_doc], 0
-    cmp dword ptr [rbx + RV_done], 0
+    mov qword ptr [rbx + RVP_doc], 0
+    cmp dword ptr [rbx + RVP_done], 0
     jne 2f
     mov rdi, rbx
     mov rsi, -1
@@ -2483,15 +2483,15 @@ FN review_unpropose
     call find_proposal
     test rax, rax
     jz 8f
-    cmp [rax + RV_ext], rbx
+    cmp [rax + RVP_ext], rbx
     jne 8f
-    cmp qword ptr [rax + RV_waiter], 0
+    cmp qword ptr [rax + RVP_waiter], 0
     jne 8f                      # a tool call's proposal ends with the call
     mov r12, rax
-    mov dword ptr [r12 + RV_gone], 1
-    cmp dword ptr [r12 + RV_done], 0
+    mov dword ptr [r12 + RVP_gone], 1
+    cmp dword ptr [r12 + RVP_done], 0
     jne 1f
-    mov dword ptr [r12 + RV_done], 1
+    mov dword ptr [r12 + RVP_done], 1
     mov rdi, rbx
     call ai_ext
     dec dword ptr [rax + AX_proposals]
@@ -2506,7 +2506,7 @@ FN review_unpropose
 close_proposal:
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + RV_doc]
+    mov rdi, [rbx + RVP_doc]
     test rdi, rdi
     jz 1f
     call doc_tab
@@ -2521,12 +2521,12 @@ close_proposal:
 
 # FN review_withdraw_waiter(RV*): the rhun.propose call it answers ended first: nothing waits for it
 FN review_withdraw_waiter
-    mov qword ptr [rdi + RV_waiter], 0
+    mov qword ptr [rdi + RVP_waiter], 0
     ret
 
 # FN review_set_waiter(RV*, call): the rhun.propose call answered when it is done
 FN review_set_waiter
-    mov [rdi + RV_waiter], rsi
+    mov [rdi + RVP_waiter], rsi
     ret
 
 # find_proposal(id) -> RV* or 0
@@ -2536,7 +2536,7 @@ find_proposal:
     jae 8f
     mov rax, [rip + proposals + VEC_ptr]
     mov rax, [rax + rcx*8]
-    cmp [rax + RV_id], rdi
+    cmp [rax + RVP_id], rdi
     je 9f
     inc rcx
     jmp 1b
@@ -2566,11 +2566,11 @@ where:
     mov rax, -1
     mov rdx, -1
     xor ecx, ecx
-1:  cmp rcx, [rdi + RV_files + VEC_len]
+1:  cmp rcx, [rdi + RVP_files + VEC_len]
     jae 3f
-    imul r8, rcx, RF_SIZE
-    add r8, [rdi + RV_files + VEC_ptr]
-    mov r9d, [r8 + RF_line]
+    imul r8, rcx, RVF_SIZE
+    add r8, [rdi + RVP_files + VEC_ptr]
+    mov r9d, [r8 + RVF_line]
     cmp rsi, r9
     jb 3f
     mov rax, rcx
@@ -2578,14 +2578,14 @@ where:
     jmp 1b
 3:  test rax, rax
     js 9f
-    imul r8, rax, RF_SIZE
-    add r8, [rdi + RV_files + VEC_ptr]
+    imul r8, rax, RVF_SIZE
+    add r8, [rdi + RVP_files + VEC_ptr]
     xor ecx, ecx
-4:  cmp rcx, [r8 + RF_hunks + VEC_len]
+4:  cmp rcx, [r8 + RVF_hunks + VEC_len]
     jae 9f
-    imul r9, rcx, RH_SIZE
-    add r9, [r8 + RF_hunks + VEC_ptr]
-    mov r9d, [r9 + RH_line]
+    imul r9, rcx, RVH_SIZE
+    add r9, [r8 + RVF_hunks + VEC_ptr]
+    mov r9d, [r9 + RVH_line]
     cmp rsi, r9
     jb 9f
     mov rdx, rcx
@@ -2667,18 +2667,18 @@ FN review_key
 .Lrk_prev_file:
     test rsi, rsi
     js .Lrk_yes
-    imul rax, rsi, RF_SIZE
-    add rax, [rbx + RV_files + VEC_ptr]
-    mov eax, [rax + RF_line]
+    imul rax, rsi, RVF_SIZE
+    add rax, [rbx + RVP_files + VEC_ptr]
+    mov eax, [rax + RVF_line]
     cmp rax, [rsp]
     jb 3f                       # below the header: to it
     dec rsi
     js .Lrk_yes
-3:  cmp rsi, [rbx + RV_files + VEC_len]
+3:  cmp rsi, [rbx + RVP_files + VEC_len]
     jae .Lrk_yes
-    imul rax, rsi, RF_SIZE
-    add rax, [rbx + RV_files + VEC_ptr]
-    mov esi, [rax + RF_line]
+    imul rax, rsi, RVF_SIZE
+    add rax, [rbx + RVP_files + VEC_ptr]
+    mov esi, [rax + RVF_line]
     jmp .Lrk_go
 .Lrk_next_hunk:
     # the first hunk header after the cursor's line
@@ -2717,18 +2717,18 @@ hunk_line_near:
     mov r13d, edx
     mov r14, -1
     xor ecx, ecx
-1:  cmp rcx, [rbx + RV_files + VEC_len]
+1:  cmp rcx, [rbx + RVP_files + VEC_len]
     jae 9f
-    imul r8, rcx, RF_SIZE
-    add r8, [rbx + RV_files + VEC_ptr]
+    imul r8, rcx, RVF_SIZE
+    add r8, [rbx + RVP_files + VEC_ptr]
     inc rcx
     xor edx, edx
-2:  cmp rdx, [r8 + RF_hunks + VEC_len]
+2:  cmp rdx, [r8 + RVF_hunks + VEC_len]
     jae 1b
-    imul r9, rdx, RH_SIZE
-    add r9, [r8 + RF_hunks + VEC_ptr]
+    imul r9, rdx, RVH_SIZE
+    add r9, [r8 + RVF_hunks + VEC_ptr]
     inc rdx
-    mov eax, [r9 + RH_line]
+    mov eax, [r9 + RVH_line]
     test r13d, r13d
     jz 3f
     cmp rax, r12
@@ -2754,7 +2754,7 @@ FN review_line_extra
     test rax, rax
     jz 9f
     mov rbx, rax
-    cmp dword ptr [rbx + RV_done], 0
+    cmp dword ptr [rbx + RVP_done], 0
     jne 9f
     mov rax, [rsp + 8]
     test rax, rax
@@ -2771,23 +2771,23 @@ FN review_line_extra
     js 9f
     mov [rsp + 24], rax
     mov [rsp + 32], rdx
-    imul r14, rax, RF_SIZE
-    add r14, [rbx + RV_files + VEC_ptr]
-    cmp dword ptr [r14 + RF_state], RS_PENDING
+    imul r14, rax, RVF_SIZE
+    add r14, [rbx + RVP_files + VEC_ptr]
+    cmp dword ptr [r14 + RVF_state], RVS_PENDING
     jne 9f
     test rdx, rdx
     js 2f
-    imul rcx, rdx, RH_SIZE
-    add rcx, [r14 + RF_hunks + VEC_ptr]
-    mov eax, [rcx + RH_line]
+    imul rcx, rdx, RVH_SIZE
+    add rcx, [r14 + RVF_hunks + VEC_ptr]
+    mov eax, [rcx + RVH_line]
     cmp rax, [rsp + 8]
     jne 9f                      # a line inside the hunk
-    cmp dword ptr [rcx + RH_state], RS_PENDING
+    cmp dword ptr [rcx + RVH_state], RVS_PENDING
     jne 9f
     lea r12, [rip + .Lb_accept]
     lea r13, [rip + .Lb_reject]
     jmp 5f
-2:  mov eax, [r14 + RF_line]
+2:  mov eax, [r14 + RVF_line]
     cmp rax, [rsp + 8]
     jne 9f
     lea r12, [rip + .Lb_accept]
@@ -2912,51 +2912,51 @@ FN review_dump
     mov rax, [rip + proposals + VEC_ptr]
     mov rax, [rax + rcx*8]
     inc rcx
-    mov rdx, [rax + RV_id]
+    mov rdx, [rax + RVP_id]
     cmp rdx, [rsp]
     jbe 1b
     test rbx, rbx
     jz 11f
-    cmp rdx, [rbx + RV_id]
+    cmp rdx, [rbx + RVP_id]
     jae 1b
 11: mov rbx, rax
     jmp 1b
 2:  test rbx, rbx
     jz 9f
-    mov rax, [rbx + RV_id]
+    mov rax, [rbx + RVP_id]
     mov [rsp], rax
     mov rdi, r15
     lea rsi, [rip + .Ld_proposal]
     call sb_push_cstr
     mov rdi, r15
-    mov rsi, [rbx + RV_id]
+    mov rsi, [rbx + RVP_id]
     call sb_push_u64
     mov rdi, r15
     lea rsi, [rip + .Ld_label]
     call sb_push_cstr
     mov rdi, r15
-    mov rsi, [rbx + RV_label]
+    mov rsi, [rbx + RVP_label]
     call sb_push_cstr
     mov rdi, r15
     lea rsi, [rip + .Ld_done]
     call sb_push_cstr
     mov rdi, r15
-    mov esi, [rbx + RV_done]
+    mov esi, [rbx + RVP_done]
     call sb_push_u64
     mov rdi, r15
     mov esi, 10
     call sb_push_byte
     xor r12d, r12d
-3:  cmp r12, [rbx + RV_files + VEC_len]
+3:  cmp r12, [rbx + RVP_files + VEC_len]
     jae .Lrd_next
-    imul r13, r12, RF_SIZE
-    add r13, [rbx + RV_files + VEC_ptr]
+    imul r13, r12, RVF_SIZE
+    add r13, [rbx + RVP_files + VEC_ptr]
     inc r12
     mov rdi, r15
     lea rsi, [rip + .Ld_proposal]
     call sb_push_cstr
     mov rdi, r15
-    mov rsi, [rbx + RV_id]
+    mov rsi, [rbx + RVP_id]
     call sb_push_u64
     mov rdi, r15
     lea rsi, [rip + .Ld_file]
@@ -2976,18 +2976,18 @@ FN review_dump
     lea rsi, [rip + .Ld_plus]
     call sb_push_cstr
     mov rdi, r15
-    mov esi, [r13 + RF_add]
+    mov esi, [r13 + RVF_add]
     call sb_push_u64
     mov rdi, r15
     lea rsi, [rip + .Ld_minus]
     call sb_push_cstr
     mov rdi, r15
-    mov esi, [r13 + RF_del]
+    mov esi, [r13 + RVF_del]
     call sb_push_u64
     mov rdi, r15
     lea rsi, [rip + .Ld_state]
     call sb_push_cstr
-    mov eax, [r13 + RF_state]
+    mov eax, [r13 + RVF_state]
     lea rcx, [rip + dump_words]
     mov rdi, r15
     mov rsi, [rcx + rax*8]
@@ -2996,10 +2996,10 @@ FN review_dump
     mov esi, 10
     call sb_push_byte
     xor r14d, r14d
-4:  cmp r14, [r13 + RF_hunks + VEC_len]
+4:  cmp r14, [r13 + RVF_hunks + VEC_len]
     jae 3b
-    imul rax, r14, RH_SIZE
-    add rax, [r13 + RF_hunks + VEC_ptr]
+    imul rax, r14, RVH_SIZE
+    add rax, [r13 + RVF_hunks + VEC_ptr]
     mov [rsp + 8], rax
     inc r14
     mov rdi, r15
@@ -3012,7 +3012,7 @@ FN review_dump
     lea rsi, [rip + .Ld_hminus]
     call sb_push_cstr
     mov rax, [rsp + 8]
-    mov rsi, [rax + RH_ol]
+    mov rsi, [rax + RVH_ol]
     inc rsi
     mov rdi, r15
     call sb_push_u64
@@ -3021,13 +3021,13 @@ FN review_dump
     call sb_push_byte
     mov rax, [rsp + 8]
     mov rdi, r15
-    mov rsi, [rax + RH_oc]
+    mov rsi, [rax + RVH_oc]
     call sb_push_u64
     mov rdi, r15
     lea rsi, [rip + .Ld_hplus]
     call sb_push_cstr
     mov rax, [rsp + 8]
-    mov rsi, [rax + RH_nl]
+    mov rsi, [rax + RVH_nl]
     inc rsi
     mov rdi, r15
     call sb_push_u64
@@ -3036,13 +3036,13 @@ FN review_dump
     call sb_push_byte
     mov rax, [rsp + 8]
     mov rdi, r15
-    mov rsi, [rax + RH_nc]
+    mov rsi, [rax + RVH_nc]
     call sb_push_u64
     mov rdi, r15
     lea rsi, [rip + .Ld_state]
     call sb_push_cstr
     mov rax, [rsp + 8]
-    mov eax, [rax + RH_state]
+    mov eax, [rax + RVH_state]
     lea rcx, [rip + dump_words]
     mov rdi, r15
     mov rsi, [rcx + rax*8]
@@ -3067,8 +3067,8 @@ FN review_current
     inc rcx
     test rax, rax
     jz 2f
-    mov r8, [rdx + RV_id]
-    cmp r8, [rax + RV_id]
+    mov r8, [rdx + RVP_id]
+    cmp r8, [rax + RVP_id]
     jbe 1b
 2:  mov rax, rdx
     jmp 1b
@@ -3136,4 +3136,4 @@ dump_words: .quad .Lw_pending, .Lw_accepted, .Lw_rejected, .Lw_stale, .Lw_partia
 
 .bss
 .p2align 3
-.Lrf_tmp: .zero RF_SIZE
+.Lrf_tmp: .zero RVF_SIZE

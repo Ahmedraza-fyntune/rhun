@@ -28,17 +28,17 @@ match_cwd: .quad 0
 
 # a row as parsed, pointing into the body
 STRUCT
-F RW_updated, 8
-F RW_state, 8
-F RW_sid, 8
-F RW_sidlen, 8
-F RW_title, 8
-F RW_titlelen, 8
-F RW_model, 8
-F RW_modellen, 8
-F RW_cwd, 8
-F RW_cwdlen, 8
-ENDSTRUCT RW_SIZE
+F AXR_updated, 8
+F AXR_state, 8
+F AXR_sid, 8
+F AXR_sidlen, 8
+F AXR_title, 8
+F AXR_titlelen, 8
+F AXR_model, 8
+F AXR_modellen, 8
+F AXR_cwd, 8
+F AXR_cwdlen, 8
+ENDSTRUCT AXR_SIZE
 
 .text
 
@@ -341,73 +341,73 @@ FN agentext_set_rows
     jz .Lsr_parsed
     dec r12
     lea rdi, [rip + rows_new]
-    mov esi, RW_SIZE
+    mov esi, AXR_SIZE
     call vec_push
     mov r13, rax
     call ai_rd_num
     test edx, edx
     jz .Lsr_syntax
-    mov [r13 + RW_updated], rax
+    mov [r13 + AXR_updated], rax
     call ai_rd_word
     mov rdi, rax
     mov rsi, rdx
     call state_of
     test rax, rax
     js .Lsr_syntax
-    mov [r13 + RW_state], rax
+    mov [r13 + AXR_state], rax
     call ai_rd_num
     test edx, edx
     jz .Lsr_syntax
-    mov [r13 + RW_sidlen], rax
+    mov [r13 + AXR_sidlen], rax
     call ai_rd_num
     test edx, edx
     jz .Lsr_syntax
-    mov [r13 + RW_titlelen], rax
+    mov [r13 + AXR_titlelen], rax
     call ai_rd_num
     test edx, edx
     jz .Lsr_syntax
-    mov [r13 + RW_modellen], rax
+    mov [r13 + AXR_modellen], rax
     call ai_rd_num
     test edx, edx
     jz .Lsr_syntax
-    mov [r13 + RW_cwdlen], rax
+    mov [r13 + AXR_cwdlen], rax
     call ai_rd_eol
     test eax, eax
     jz .Lsr_syntax
-    cmp qword ptr [r13 + RW_titlelen], AGENT_FIELD_MAX
+    cmp qword ptr [r13 + AXR_titlelen], AGENT_FIELD_MAX
     ja .Lsr_syntax
-    cmp qword ptr [r13 + RW_modellen], AGENT_FIELD_MAX
+    cmp qword ptr [r13 + AXR_modellen], AGENT_FIELD_MAX
     ja .Lsr_syntax
-    cmp qword ptr [r13 + RW_cwdlen], AGENT_FIELD_MAX
+    cmp qword ptr [r13 + AXR_cwdlen], AGENT_FIELD_MAX
     ja .Lsr_syntax
-    mov rdi, [r13 + RW_sidlen]
+    mov rdi, [r13 + AXR_sidlen]
     call ai_rd_take
     test rax, rax
     jz .Lsr_syntax
-    mov [r13 + RW_sid], rax
+    mov [r13 + AXR_sid], rax
     mov rdi, rax
-    mov rsi, [r13 + RW_sidlen]
+    mov rsi, [r13 + AXR_sidlen]
     mov edx, AGENT_SID_MAX
     call ai_word_ok
     test eax, eax
     jz .Lsr_syntax
-    mov rdi, [r13 + RW_titlelen]
+    mov rdi, [r13 + AXR_titlelen]
     call ai_rd_take
     test rax, rax
     jz .Lsr_syntax
-    mov [r13 + RW_title], rax
-    mov rdi, [r13 + RW_modellen]
+    mov [r13 + AXR_title], rax
+    mov rdi, [r13 + AXR_modellen]
     call ai_rd_take
     test rax, rax
     jz .Lsr_syntax
-    mov [r13 + RW_model], rax
-    mov rdi, [r13 + RW_cwdlen]
+    mov [r13 + AXR_model], rax
+    mov rdi, [r13 + AXR_cwdlen]
     call ai_rd_take
     test rax, rax
     jz .Lsr_syntax
-    mov [r13 + RW_cwd], rax
+    mov [r13 + AXR_cwd], rax
     # a CWD is an absolute path without NUL or LF, or nothing
-    mov rcx, [r13 + RW_cwdlen]
+    mov rcx, [r13 + AXR_cwdlen]
     test rcx, rcx
     jz .Lsr_row
     mov rdi, rax
@@ -430,18 +430,18 @@ FN agentext_set_rows
     xor r12d, r12d
 2:  cmp r12, [rip + rows_new + VEC_len]
     jae 4f
-    imul r13, r12, RW_SIZE
+    imul r13, r12, AXR_SIZE
     add r13, [rip + rows_new + VEC_ptr]
     xor r14d, r14d
 3:  cmp r14, r12
     jae 31f
-    imul rax, r14, RW_SIZE
+    imul rax, r14, AXR_SIZE
     add rax, [rip + rows_new + VEC_ptr]
-    mov rcx, [rax + RW_sidlen]
-    cmp rcx, [r13 + RW_sidlen]
+    mov rcx, [rax + AXR_sidlen]
+    cmp rcx, [r13 + AXR_sidlen]
     jne 32f
-    mov rdi, [rax + RW_sid]
-    mov rsi, [r13 + RW_sid]
+    mov rdi, [rax + AXR_sid]
+    mov rsi, [r13 + AXR_sid]
     mov rdx, rcx
     call memeq
     test eax, eax
@@ -455,11 +455,11 @@ FN agentext_set_rows
     xor r12d, r12d
 5:  cmp r12, [rip + rows_new + VEC_len]
     jae 7f
-    imul r13, r12, RW_SIZE
+    imul r13, r12, AXR_SIZE
     add r13, [rip + rows_new + VEC_ptr]
     mov rdi, r15
-    mov rsi, [r13 + RW_sid]
-    mov rdx, [r13 + RW_sidlen]
+    mov rsi, [r13 + AXR_sid]
+    mov rdx, [r13 + AXR_sidlen]
     call row_find
     test rax, rax
     jnz 6f
@@ -608,8 +608,8 @@ row_new:
     mov [r13 + AS_ext], rbx
     mov qword ptr [r13 + AS_dirty], 0
     mov dword ptr [r13 + AS_titled], 1
-    mov rdi, [r12 + RW_sid]
-    mov rsi, [r12 + RW_sidlen]
+    mov rdi, [r12 + AXR_sid]
+    mov rsi, [r12 + AXR_sidlen]
     call ai_dup
     mov [r13 + AS_sid], rax
     # the key the panel's tables know a row by: OWNER/NAME:SID
@@ -642,9 +642,9 @@ row_update:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov rax, [r12 + RW_state]
+    mov rax, [r12 + AXR_state]
     mov [rbx + AS_state], eax
-    mov rax, [r12 + RW_updated]
+    mov rax, [r12 + AXR_updated]
     cmp rax, [rbx + AS_mtime]
     je 1f
     mov [rbx + AS_mtime], rax
@@ -654,8 +654,8 @@ row_update:
     call time_ms
     mov [rbx + AS_changed], rax
 1:  # the title: its first line, trimmed and cut
-    mov rdi, [r12 + RW_title]
-    mov rsi, [r12 + RW_titlelen]
+    mov rdi, [r12 + AXR_title]
+    mov rsi, [r12 + AXR_titlelen]
     xor ecx, ecx
 2:  cmp rcx, rsi
     jae 3f
@@ -672,16 +672,16 @@ row_update:
     lea rdi, [rbx + AS_title]
     mov rsi, rax
     call set_slot
-    mov rdi, [r12 + RW_model]
-    mov rsi, [r12 + RW_modellen]
+    mov rdi, [r12 + AXR_model]
+    mov rsi, [r12 + AXR_modellen]
     mov edx, AGENT_MODEL_MAX
     call ai_cut
     lea rdi, [rbx + AS_model]
     mov rsi, rax
     call set_slot
     lea rdi, [rbx + AS_cwd]
-    mov rsi, [r12 + RW_cwd]
-    mov rdx, [r12 + RW_cwdlen]
+    mov rsi, [r12 + AXR_cwd]
+    mov rdx, [r12 + AXR_cwdlen]
     call set_slot
     mov rdi, rbx
     call row_match

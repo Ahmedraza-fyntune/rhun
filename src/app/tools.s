@@ -13,45 +13,45 @@
 
 # a tool from a manifest
 STRUCT
-F TL_name, 8            # cstr, [a-z0-9_]
-F TL_title, 8           # cstr
-F TL_desc, 8            # cstr or 0
-F TL_input, 8           # cstr or 0
-F TL_ro, 4              # readonly = yes: no confirmation
-F TL_pad, 4
-ENDSTRUCT TL_SIZE
+F TLX_name, 8            # cstr, [a-z0-9_]
+F TLX_title, 8           # cstr
+F TLX_desc, 8            # cstr or 0
+F TLX_input, 8           # cstr or 0
+F TLX_ro, 4              # readonly = yes: no confirmation
+F TLX_pad, 4
+ENDSTRUCT TLX_SIZE
 
 # a call in flight
 STRUCT
-F CL_caller, 8          # the extension that called
-F CL_creq, 8            # its request id
-F CL_owner, 8           # the tool's extension, 0 for rhun.*
-F CL_tool, 8            # TL*, or the built-in's index
-F CL_name, 8            # cstr: OWNER/NAME.tool or rhun.tool
-F CL_input, 8           # owned copy of the input
-F CL_inlen, 8
-F CL_state, 4           # CS_*
-F CL_ro, 4
-F CL_oreq, 8            # the tool request sent to the owner
-F CL_since, 8           # time_ms it began waiting
-ENDSTRUCT CL_SIZE
+F TCL_caller, 8          # the extension that called
+F TCL_creq, 8            # its request id
+F TCL_owner, 8           # the tool's extension, 0 for rhun.*
+F TCL_tool, 8            # TL*, or the built-in's index
+F TCL_name, 8            # cstr: OWNER/NAME.tool or rhun.tool
+F TCL_input, 8           # owned copy of the input
+F TCL_inlen, 8
+F TCL_state, 4           # TCS_*
+F TCL_ro, 4
+F TCL_oreq, 8            # the tool request sent to the owner
+F TCL_since, 8           # time_ms it began waiting
+ENDSTRUCT TCL_SIZE
 
-.equ CS_CONFIRM, 0              # waits for the user's answer
-.equ CS_ASKING, 1               # the dialog asks about it
-.equ CS_START, 2                # its tool's extension is starting
-.equ CS_OWNER, 3                # sent to the owner
-.equ CS_REVIEW, 4               # rhun.propose: the Review tab decides
-.equ CS_TERM, 5                 # rhun.run: rhun's prompt decides
+.equ TCS_CONFIRM, 0              # waits for the user's answer
+.equ TCS_ASKING, 1               # the dialog asks about it
+.equ TCS_START, 2                # its tool's extension is starting
+.equ TCS_OWNER, 3                # sent to the owner
+.equ TCS_REVIEW, 4               # rhun.propose: the Review tab decides
+.equ TCS_TERM, 5                 # rhun.run: rhun's prompt decides
 
 # built-in tools
-.equ BT_EDITORS, 0
-.equ BT_SELECTION, 1
-.equ BT_READ, 2
-.equ BT_DIAGNOSTICS, 3
-.equ BT_OPEN, 4
-.equ BT_PROPOSE, 5
-.equ BT_RUN, 6
-.equ BT_COUNT, 7
+.equ TBT_EDITORS, 0
+.equ TBT_SELECTION, 1
+.equ TBT_READ, 2
+.equ TBT_DIAGNOSTICS, 3
+.equ TBT_OPEN, 4
+.equ TBT_PROPOSE, 5
+.equ TBT_RUN, 6
+.equ TBT_COUNT, 7
 
 .bss
 .p2align 3
@@ -104,13 +104,13 @@ FN tools_manifest_kv
     cmp qword ptr [r13 + AX_tools + VEC_len], TOOLS_PER_EXT
     jae 9f
     lea rdi, [r13 + AX_tools]
-    mov esi, TL_SIZE
+    mov esi, TLX_SIZE
     call vec_push
     mov r15, rax
     mov rdi, [r12 + INI_key]
     mov rsi, [rsp]
     call ai_dup
-    mov [r15 + TL_name], rax
+    mov [r15 + TLX_name], rax
     mov rax, r15
 3:  mov r15, rax
     test r14, r14
@@ -128,7 +128,7 @@ FN tools_manifest_kv
 41: mov [rsp + 8], rcx
     mov rsi, rcx
     call trim
-    lea rdi, [r15 + TL_title]
+    lea rdi, [r15 + TLX_title]
     mov rsi, rax
     call set_text
     mov rcx, [rsp + 8]
@@ -140,7 +140,7 @@ FN tools_manifest_kv
     sub rsi, rcx
     dec rsi
     call trim
-    lea rdi, [r15 + TL_desc]
+    lea rdi, [r15 + TLX_desc]
     mov rsi, rax
     call set_text
     jmp 9f
@@ -151,7 +151,7 @@ FN tools_manifest_kv
     call str_eq_cstr
     test eax, eax
     jz 6f
-    lea rdi, [r15 + TL_input]
+    lea rdi, [r15 + TLX_input]
     mov rsi, [r12 + INI_val]
     mov rdx, [r12 + INI_vallen]
     call set_text
@@ -166,7 +166,7 @@ FN tools_manifest_kv
     mov rdi, [r12 + INI_val]
     mov rsi, [r12 + INI_vallen]
     call parse_bool
-    mov [r15 + TL_ro], eax
+    mov [r15 + TLX_ro], eax
 9:  EPILOGUE
 
 # name_ok(ptr, len) -> eax 1 for 1 to 40 of [a-z0-9_]
@@ -219,12 +219,12 @@ tool_find:
     xor r14d, r14d
 1:  cmp r14, [rbx + AX_tools + VEC_len]
     jae 8f
-    imul r15, r14, TL_SIZE
+    imul r15, r14, TLX_SIZE
     add r15, [rbx + AX_tools + VEC_ptr]
     inc r14
     mov rdi, r12
     mov rsi, r13
-    mov rdx, [r15 + TL_name]
+    mov rdx, [r15 + TLX_name]
     call str_eq_cstr
     test eax, eax
     jz 1b
@@ -241,16 +241,16 @@ FN tools_ext_reset
     xor r12d, r12d
 1:  cmp r12, [rbx + AX_tools + VEC_len]
     jae 2f
-    imul r13, r12, TL_SIZE
+    imul r13, r12, TLX_SIZE
     add r13, [rbx + AX_tools + VEC_ptr]
     inc r12
-    mov rdi, [r13 + TL_name]
+    mov rdi, [r13 + TLX_name]
     call mem_free
-    mov rdi, [r13 + TL_title]
+    mov rdi, [r13 + TLX_title]
     call mem_free
-    mov rdi, [r13 + TL_desc]
+    mov rdi, [r13 + TLX_desc]
     call mem_free
-    mov rdi, [r13 + TL_input]
+    mov rdi, [r13 + TLX_input]
     call mem_free
     jmp 1b
 2:  lea rdi, [rbx + AX_tools]
@@ -278,7 +278,7 @@ FN tools_list
     PROLOGUE 16
     mov r15, rdi
     # count
-    mov ebx, BT_COUNT
+    mov ebx, TBT_COUNT
     xor r12d, r12d
 1:  cmp r12, [rip + g_exts + VEC_len]
     jae 2f
@@ -301,7 +301,7 @@ FN tools_list
     call sb_push_byte
     # rhun's
     xor r12d, r12d
-3:  cmp r12, BT_COUNT
+3:  cmp r12, TBT_COUNT
     jae 4f
     imul r13, r12, 40
     lea rax, [rip + builtins]
@@ -337,7 +337,7 @@ FN tools_list
     xor ebx, ebx
 6:  cmp rbx, [r14 + AX_tools + VEC_len]
     jae 5b
-    imul rax, rbx, TL_SIZE
+    imul rax, rbx, TLX_SIZE
     add rax, [r14 + AX_tools + VEC_ptr]
     mov [rsp], rax
     inc rbx
@@ -351,14 +351,14 @@ FN tools_list
     call sb_push_byte
     mov rax, [rsp]
     mov rdi, r15
-    mov rsi, [rax + TL_name]
+    mov rsi, [rax + TLX_name]
     call sb_push_cstr
     mov rax, [rsp]
     mov rdi, r15
-    mov esi, [rax + TL_ro]
-    mov rdx, [rax + TL_title]
-    mov rcx, [rax + TL_desc]
-    mov r8, [rax + TL_input]
+    mov esi, [rax + TLX_ro]
+    mov rdx, [rax + TLX_title]
+    mov rcx, [rax + TLX_desc]
+    mov r8, [rax + TLX_input]
     call list_rest
     jmp 6b
 9:  EPILOGUE
@@ -425,24 +425,24 @@ FN tools_call
     mov [rsp + 16], r9
     cmp qword ptr [rip + calls + VEC_len], TOOL_CALLS_MAX
     jae .Ltc_busy
-    mov edi, CL_SIZE
+    mov edi, TCL_SIZE
     call mem_alloc
     mov r15, rax
-    mov [r15 + CL_caller], rbx
+    mov [r15 + TCL_caller], rbx
     mov rax, [rsp]
-    mov [r15 + CL_creq], rax
+    mov [r15 + TCL_creq], rax
     mov rdi, r12
     mov rsi, r13
     call ai_dup
-    mov [r15 + CL_name], rax
+    mov [r15 + TCL_name], rax
     mov rdi, [rsp + 8]
     mov rsi, [rsp + 16]
     call ai_dup
-    mov [r15 + CL_input], rax
+    mov [r15 + TCL_input], rax
     mov rax, [rsp + 16]
-    mov [r15 + CL_inlen], rax
+    mov [r15 + TCL_inlen], rax
     call time_ms
-    mov [r15 + CL_since], rax
+    mov [r15 + TCL_since], rax
     lea rdi, [rip + calls]
     mov esi, 8
     call vec_push
@@ -456,7 +456,7 @@ FN tools_call
     test eax, eax
     jz 3f
     xor r14d, r14d
-1:  cmp r14, BT_COUNT
+1:  cmp r14, TBT_COUNT
     jae .Ltc_none
     imul rax, r14, 40
     lea rcx, [rip + builtins]
@@ -468,29 +468,29 @@ FN tools_call
     jnz 2f
     inc r14
     jmp 1b
-2:  mov [r15 + CL_tool], r14
+2:  mov [r15 + TCL_tool], r14
     imul rax, r14, 40
     lea rcx, [rip + builtins]
     mov rax, [rcx + rax + 32]
-    mov [r15 + CL_ro], eax
-    cmp r14, BT_PROPOSE
+    mov [r15 + TCL_ro], eax
+    cmp r14, TBT_PROPOSE
     je 21f
-    cmp r14, BT_RUN
+    cmp r14, TBT_RUN
     jne 4f
-21: mov dword ptr [r15 + CL_ro], 1  # the review and the prompt are the user's confirmation
+21: mov dword ptr [r15 + TCL_ro], 1  # the review and the prompt are the user's confirmation
     jmp 4f
 3:  mov rdi, r15
     call find_owner
     test rax, rax
     jz .Ltc_none
 4:  # a tool that changes anything waits for the user, unless allowed for this session
-    cmp dword ptr [r15 + CL_ro], 0
+    cmp dword ptr [r15 + TCL_ro], 0
     jne 5f
     mov rdi, r15
     call granted
     test eax, eax
     jnz 5f
-    mov dword ptr [r15 + CL_state], CS_CONFIRM
+    mov dword ptr [r15 + TCL_state], TCS_CONFIRM
     call tools_tick
     EPILOGUE
 5:  mov rdi, r15
@@ -508,11 +508,11 @@ FN tools_call
     call answer_error_direct
     EPILOGUE
 
-# find_owner(CL*) -> rax the TL of OWNER/NAME.TOOL (CL_owner, CL_tool, CL_ro set), or 0
+# find_owner(CL*) -> rax the TL of OWNER/NAME.TOOL (TCL_owner, TCL_tool, TCL_ro set), or 0
 find_owner:
     PROLOGUE
     mov rbx, rdi
-    mov r12, [rbx + CL_name]
+    mov r12, [rbx + TCL_name]
     mov rdi, r12
     call strlen
     mov r13, rax
@@ -548,7 +548,7 @@ find_owner:
     pop rdi
     test eax, eax
     jz 2b
-    mov [rbx + CL_owner], rdi
+    mov [rbx + TCL_owner], rdi
     call ai_ext
     mov rdi, rax
     lea rsi, [r12 + r14 + 1]
@@ -558,9 +558,9 @@ find_owner:
     call tool_find
     test rax, rax
     jz 8f
-    mov [rbx + CL_tool], rax
-    mov ecx, [rax + TL_ro]
-    mov [rbx + CL_ro], ecx
+    mov [rbx + TCL_tool], rax
+    mov ecx, [rax + TLX_ro]
+    mov [rbx + TCL_ro], ecx
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -578,9 +578,9 @@ granted:
     mov rdi, [rax + r12 + 8]
     shr r12, 4
     inc r12
-    cmp rcx, [rbx + CL_caller]
+    cmp rcx, [rbx + TCL_caller]
     jne 1b
-    mov rsi, [rbx + CL_name]
+    mov rsi, [rbx + TCL_name]
     call strcmp_eq
     test eax, eax
     jz 1b
@@ -593,12 +593,12 @@ granted:
 dispatch:
     PROLOGUE
     mov rbx, rdi
-    cmp qword ptr [rbx + CL_owner], 0
+    cmp qword ptr [rbx + TCL_owner], 0
     jne 1f
     mov rdi, rbx
     call run_builtin
     EPILOGUE
-1:  mov r12, [rbx + CL_owner]
+1:  mov r12, [rbx + TCL_owner]
     mov eax, [r12 + EXT_status]
     cmp eax, ES_RUNNING
     je 3f
@@ -614,9 +614,9 @@ dispatch:
     EPILOGUE
 21: mov rdi, r12
     call ext_start
-2:  mov dword ptr [rbx + CL_state], CS_START
+2:  mov dword ptr [rbx + TCL_state], TCS_START
     call time_ms
-    mov [rbx + CL_since], rax
+    mov [rbx + TCL_since], rax
     EPILOGUE
 3:  FEAT_TEST r12, FEAT_TOOLS
     jnz 4f
@@ -630,14 +630,14 @@ dispatch:
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lv_tool]
     call sb_push_cstr
-    mov rax, [rbx + CL_tool]
+    mov rax, [rbx + TCL_tool]
     lea rdi, [rip + tmp]
-    mov rsi, [rax + TL_name]
+    mov rsi, [rax + TLX_name]
     call sb_push_cstr
     lea rdi, [rip + tmp]
     mov esi, ' '
     call sb_push_byte
-    mov rdi, [rbx + CL_caller]
+    mov rdi, [rbx + TCL_caller]
     call ext_full_name
     lea rdi, [rip + tmp]
     mov rsi, rax
@@ -646,18 +646,18 @@ dispatch:
     mov esi, ' '
     call sb_push_byte
     lea rdi, [rip + tmp]
-    mov rsi, [rbx + CL_inlen]
+    mov rsi, [rbx + TCL_inlen]
     call sb_push_u64
     mov rdi, r12
     mov rsi, [rip + tmp + SB_ptr]
     mov rdx, [rip + tmp + SB_len]
-    mov rcx, [rbx + CL_input]
-    mov r8, [rbx + CL_inlen]
+    mov rcx, [rbx + TCL_input]
+    mov r8, [rbx + TCL_inlen]
     call extproto_ai_request
     test rax, rax
     jz 8f
-    mov [rbx + CL_oreq], rax
-    mov dword ptr [rbx + CL_state], CS_OWNER
+    mov [rbx + TCL_oreq], rax
+    mov dword ptr [rbx + TCL_state], TCS_OWNER
     mov rdi, r12                # counted with the language queries (query.s)
     mov rsi, rax
     mov edx, PK_TOOL
@@ -679,9 +679,9 @@ FN tools_owner_ready
     mov rax, [rip + calls + VEC_ptr]
     mov r13, [rax + r12*8]
     inc r12
-    cmp [r13 + CL_owner], rbx
+    cmp [r13 + TCL_owner], rbx
     jne 1b
-    cmp dword ptr [r13 + CL_state], CS_START
+    cmp dword ptr [r13 + TCL_state], TCS_START
     jne 1b
     mov rdi, r13
     call dispatch
@@ -704,11 +704,11 @@ FN tools_reply
     mov rax, [rip + calls + VEC_ptr]
     mov rdi, [rax + rcx*8]
     inc rcx
-    cmp [rdi + CL_owner], rbx
+    cmp [rdi + TCL_owner], rbx
     jne 1b
-    cmp dword ptr [rdi + CL_state], CS_OWNER
+    cmp dword ptr [rdi + TCL_state], TCS_OWNER
     jne 1b
-    cmp [rdi + CL_oreq], r12
+    cmp [rdi + TCL_oreq], r12
     jne 1b
     test r13d, r13d
     jz 2f
@@ -752,8 +752,8 @@ answer_ok:
     lea rdi, [rip + num]
     mov rsi, r13
     call fmt_u64
-    mov rdi, [rbx + CL_caller]
-    mov rsi, [rbx + CL_creq]
+    mov rdi, [rbx + TCL_caller]
+    mov rsi, [rbx + TCL_creq]
     lea rdx, [rip + num]
     mov rcx, rax
     mov r8, r12
@@ -768,8 +768,8 @@ answer_error:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov rdi, [rbx + CL_caller]
-    mov rsi, [rbx + CL_creq]
+    mov rdi, [rbx + TCL_caller]
+    mov rsi, [rbx + TCL_creq]
     mov rdx, r12
     call answer_error_direct
     mov rdi, rbx
@@ -817,9 +817,9 @@ call_done:
 3:  cmp [rip + asking], rbx
     jne 4f
     mov qword ptr [rip + asking], 0
-4:  mov rdi, [rbx + CL_name]
+4:  mov rdi, [rbx + TCL_name]
     call mem_free
-    mov rdi, [rbx + CL_input]
+    mov rdi, [rbx + TCL_input]
     call mem_free
     mov rdi, rbx
     call mem_free
@@ -839,10 +839,10 @@ FN tools_tick
     mov rax, [rip + calls + VEC_ptr]
     mov rbx, [rax + r12*8]
     inc r12
-    cmp dword ptr [rbx + CL_state], CS_START
+    cmp dword ptr [rbx + TCL_state], TCS_START
     jne 1b
     mov rax, r13
-    sub rax, [rbx + CL_since]
+    sub rax, [rbx + TCL_since]
     cmp rax, TOOL_START_WAIT
     jb 1b
     mov rdi, rbx
@@ -861,7 +861,7 @@ FN tools_tick
     mov rax, [rip + calls + VEC_ptr]
     mov rbx, [rax + r12*8]
     inc r12
-    cmp dword ptr [rbx + CL_state], CS_CONFIRM
+    cmp dword ptr [rbx + TCL_state], TCS_CONFIRM
     jne 3b
     mov rdi, rbx
     call ask
@@ -875,9 +875,9 @@ FN tools_timeout
     mov rax, [rip + calls + VEC_ptr]
     mov rax, [rax + rcx*8]
     inc rcx
-    cmp dword ptr [rax + CL_state], CS_START
+    cmp dword ptr [rax + TCL_state], TCS_START
     je 2f
-    cmp dword ptr [rax + CL_state], CS_CONFIRM
+    cmp dword ptr [rax + TCL_state], TCS_CONFIRM
     jne 1b
     cmp qword ptr [rip + asking], 0
     jne 1b
@@ -891,13 +891,13 @@ ask:
     PROLOGUE
     mov rbx, rdi
     mov [rip + asking], rbx
-    mov dword ptr [rbx + CL_state], CS_ASKING
+    mov dword ptr [rbx + TCL_state], TCS_ASKING
     lea rdi, [rip + tmp]
     call sb_clear
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lq_allow]
     call sb_push_cstr
-    mov rdi, [rbx + CL_caller]
+    mov rdi, [rbx + TCL_caller]
     call ext_title
     lea rdi, [rip + tmp]
     mov rsi, rax
@@ -906,7 +906,7 @@ ask:
     lea rsi, [rip + .Lq_use]
     call sb_push_cstr
     lea rdi, [rip + tmp]
-    mov rsi, [rbx + CL_name]
+    mov rsi, [rbx + TCL_name]
     call sb_push_cstr
     lea rdi, [rip + tmp]
     mov esi, '?'
@@ -917,11 +917,11 @@ ask:
     # the line: the tool's title, then the input's first line
     lea rdi, [rip + tmp]
     call sb_clear
-    mov rax, [rbx + CL_owner]
+    mov rax, [rbx + TCL_owner]
     test rax, rax
     jz 1f
-    mov rax, [rbx + CL_tool]
-    mov rsi, [rax + TL_title]
+    mov rax, [rbx + TCL_tool]
+    mov rsi, [rax + TLX_title]
     test rsi, rsi
     jz 1f
     lea rdi, [rip + tmp]
@@ -929,8 +929,8 @@ ask:
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lcolon]
     call sb_push_cstr
-1:  mov rdi, [rbx + CL_input]
-    mov rsi, [rbx + CL_inlen]
+1:  mov rdi, [rbx + TCL_input]
+    mov rsi, [rbx + TCL_inlen]
     xor ecx, ecx
 2:  cmp rcx, rsi
     jae 3f
@@ -1007,10 +1007,10 @@ choose_session:
     lea rdi, [rip + grants]
     mov esi, 16
     call vec_push
-    mov rcx, [rbx + CL_caller]
+    mov rcx, [rbx + TCL_caller]
     mov [rax], rcx
     mov r12, rax
-    mov rdi, [rbx + CL_name]
+    mov rdi, [rbx + TCL_name]
     call dup_cstr
     mov [r12 + 8], rax
     mov rdi, rbx
@@ -1022,7 +1022,7 @@ choose_session:
     mov rax, [rip + calls + VEC_ptr]
     mov rbx, [rax + r12*8]
     inc r12
-    cmp dword ptr [rbx + CL_state], CS_CONFIRM
+    cmp dword ptr [rbx + TCL_state], TCS_CONFIRM
     jne 1b
     mov rdi, rbx
     call granted
@@ -1066,14 +1066,14 @@ FN tools_ext_gone
     mov rax, [rip + calls + VEC_ptr]
     mov r13, [rax + r12*8]
     inc r12
-    cmp [r13 + CL_caller], rbx
+    cmp [r13 + TCL_caller], rbx
     jne 3f
     mov rdi, r13
     call withdraw
     jmp 1b
-3:  cmp [r13 + CL_owner], rbx
+3:  cmp [r13 + TCL_owner], rbx
     jne 2b
-    cmp dword ptr [r13 + CL_state], CS_OWNER
+    cmp dword ptr [r13 + TCL_state], TCS_OWNER
     jne 2b
     mov rdi, r13
     lea rsi, [rip + .Le_owner_gone]
@@ -1085,20 +1085,20 @@ FN tools_ext_gone
 withdraw:
     PROLOGUE
     mov rbx, rdi
-    cmp dword ptr [rbx + CL_state], CS_OWNER
+    cmp dword ptr [rbx + TCL_state], TCS_OWNER
     jne 1f
-    mov rdi, [rbx + CL_owner]   # 0 cancel ID to the owner
-    mov rsi, [rbx + CL_oreq]
+    mov rdi, [rbx + TCL_owner]   # 0 cancel ID to the owner
+    mov rsi, [rbx + TCL_oreq]
     call query_withdraw
-1:  cmp dword ptr [rbx + CL_state], CS_REVIEW
+1:  cmp dword ptr [rbx + TCL_state], TCS_REVIEW
     jne 2f
-    mov rdi, [rbx + CL_oreq]    # the proposal it waits for stays for the user
+    mov rdi, [rbx + TCL_oreq]    # the proposal it waits for stays for the user
     call review_by_id
     test rax, rax
     jz 2f
     mov rdi, rax
     call review_withdraw_waiter
-2:  cmp dword ptr [rbx + CL_state], CS_ASKING
+2:  cmp dword ptr [rbx + TCL_state], TCS_ASKING
     jne 3f
     mov qword ptr [rip + asking], 0     # its dialog closes
     xor edi, edi
@@ -1118,11 +1118,11 @@ FN tools_cancel
     mov rax, [rip + calls + VEC_ptr]
     mov r13, [rax + rcx*8]
     inc rcx
-    cmp [r13 + CL_caller], rbx
+    cmp [r13 + TCL_caller], rbx
     jne 1b
-    cmp [r13 + CL_creq], r12
+    cmp [r13 + TCL_creq], r12
     jne 1b
-    cmp dword ptr [r13 + CL_state], CS_TERM
+    cmp dword ptr [r13 + TCL_state], TCS_TERM
     je 8f                       # rhun's prompt answers it
     mov rdi, rbx
     mov rsi, r12
@@ -1167,8 +1167,8 @@ kv_find:
     PROLOGUE 16
     mov rbx, rdi
     mov [rsp], rsi
-    mov rdi, [rbx + CL_input]
-    mov rsi, [rbx + CL_inlen]
+    mov rdi, [rbx + TCL_input]
+    mov rsi, [rbx + TCL_inlen]
     call ai_rd_init
 1:  call ai_rd_done
     test eax, eax
@@ -1204,8 +1204,8 @@ kv_find:
     test rax, rax
     jnz 4f
     call ai_rd_pos              # the last line may lack its LF
-    mov rdx, [rbx + CL_input]
-    add rdx, [rbx + CL_inlen]
+    mov rdx, [rbx + TCL_input]
+    add rdx, [rbx + TCL_inlen]
     sub rdx, rax
     push rax
     push rdx
@@ -1252,7 +1252,7 @@ kv_num:
 needs:
     PROLOGUE
     mov rbx, rdi
-    mov rax, [rbx + CL_caller]
+    mov rax, [rbx + TCL_caller]
     test [rax + EXT_needs], esi
     jnz 1f
     lea rax, [rip + .Le_needs_read]
@@ -1273,7 +1273,7 @@ run_builtin:
     mov rbx, rdi
     lea rdi, [rip + out]
     call sb_clear
-    mov rax, [rbx + CL_tool]
+    mov rax, [rbx + TCL_tool]
     lea rcx, [rip + builtin_fns]
     mov rdi, rbx
     call [rcx + rax*8]
@@ -1526,7 +1526,7 @@ target:
     call file_type
     cmp eax, 0x8000
     jne .Ltg_nofile_free
-    mov rdi, [rbx + CL_caller]
+    mov rdi, [rbx + TCL_caller]
     mov rsi, r12
     call ext_open_path
     mov r13, rax
@@ -1830,7 +1830,7 @@ bt_open:
     call file_type
     cmp eax, 0x8000
     jne .Lbo_nofile
-    mov rdi, [rbx + CL_caller]
+    mov rdi, [rbx + TCL_caller]
     mov rsi, r12
     call ext_open_path
     mov r13, rax
@@ -2074,15 +2074,15 @@ bt_propose:
     call sb_push
     mov rdi, [rsp + 16]
     call mem_free
-6:  mov rdi, [rbx + CL_caller]
+6:  mov rdi, [rbx + TCL_caller]
     mov rsi, [rip + out + SB_ptr]
     mov rdx, [rip + out + SB_len]
     xor ecx, ecx
     call review_propose
     test rax, rax
     jnz .Lbp_error
-    mov [rbx + CL_oreq], rdx    # the proposal it waits for
-    mov dword ptr [rbx + CL_state], CS_REVIEW
+    mov [rbx + TCL_oreq], rdx    # the proposal it waits for
+    mov dword ptr [rbx + TCL_state], TCS_REVIEW
     mov rdi, rdx
     call review_by_id
     mov rdi, rax
@@ -2137,15 +2137,15 @@ bt_run:
     call kv_find
     test eax, eax
     jz 8f
-    mov rdi, [rbx + CL_caller]
-    mov rsi, [rbx + CL_creq]
+    mov rdi, [rbx + TCL_caller]
+    mov rsi, [rbx + TCL_creq]
     mov rdx, [rip + kv_ptr]
     mov rcx, [rip + kv_len]
     mov r8, rbx
     call extproto_tool_term
     test rax, rax
     jnz 7f
-    mov dword ptr [rbx + CL_state], CS_TERM
+    mov dword ptr [rbx + TCL_state], TCS_TERM
     EPILOGUE
 7:  mov rdi, rbx
     mov rsi, rax
@@ -2191,7 +2191,7 @@ FN tools_dump
     mov rdi, rbx
     lea rsi, [rip + .Ld_call]
     call sb_push_cstr
-    mov rdi, [r13 + CL_caller]
+    mov rdi, [r13 + TCL_caller]
     call ext_full_name
     mov rdi, rbx
     mov rsi, rax
@@ -2200,12 +2200,12 @@ FN tools_dump
     mov esi, ' '
     call sb_push_byte
     mov rdi, rbx
-    mov rsi, [r13 + CL_name]
+    mov rsi, [r13 + TCL_name]
     call sb_push_cstr
     mov rdi, rbx
     lea rsi, [rip + .Ld_state]
     call sb_push_cstr
-    mov eax, [r13 + CL_state]
+    mov eax, [r13 + TCL_state]
     lea rcx, [rip + state_words]
     mov rdi, rbx
     mov rsi, [rcx + rax*8]
