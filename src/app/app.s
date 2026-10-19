@@ -2757,6 +2757,7 @@ timeout_fns:
     .quad extupdate_timeout      # extension management
     .quad keys_timeout           # a chord's pause (keys.s)
     .quad ws_difftab_timeout    # wsedit: diff tabs whose sides changed
+    .quad ws_linked_timeout     # wsedit: a cursor resting for linked editing
     .quad nb_timeout              # notebooks: requests waiting for their program
     .quad 0
 .text
@@ -2767,6 +2768,7 @@ FN app_tick
     call complete_tick
     call langfeat_tick
     call ws_difftab_tick        # wsedit: diff tabs follow their sides
+    call ws_linked_tick         # wsedit: linked editing asks where the cursor rests
     call save_tick
     call ext_options_apply
     call watch_tick
