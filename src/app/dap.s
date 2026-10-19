@@ -2185,10 +2185,18 @@ r_threads:
     mov rax, [rbx + DS_threads + VEC_ptr]
     mov rax, [rax + DT_id]
     mov [rbx + DS_thread], rax
-    cmp dword ptr [rbx + DS_state], DSS_PAUSED
+    cmp dword ptr [rbx + DS_state], DSS_RUNNING
+    jne 3f
+    test dword ptr [r13 + PD_ctx], 2        # Pause asked for the list
+    jz 9f
+    mov rdi, rbx
+    call send_pause
+    jmp 9f
+3:  cmp dword ptr [rbx + DS_state], DSS_PAUSED
     jne 9f
     mov rdi, rbx
     mov esi, [r13 + PD_ctx]
+    and esi, 1
     call send_stack
 9:  EPILOGUE
 
@@ -3016,6 +3024,7 @@ FN dap_watch_add
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
+    call bp_ensure_loaded
     test r13, r13
     jz 9f
     mov rdi, [rip + g_watches + SB_ptr]
@@ -3046,6 +3055,7 @@ FN dap_watch_remove
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
+    call bp_ensure_loaded
     xor ebx, ebx
 1:  mov edi, ebx
     call dap_watch_text
@@ -3162,6 +3172,9 @@ r_repl:
     mov edi, [rbx + DS_id]
     mov esi, DCON_RESULT
     call dcon_text
+    mov edi, [rbx + DS_id]
+    mov esi, DCON_RESULT
+    call dcon_close
     EPILOGUE
 1:  mov rdi, rsi
     mov rsi, rdx
@@ -3171,6 +3184,9 @@ r_repl:
     mov edi, [rbx + DS_id]
     mov esi, DCON_ERROR
     call dcon_text
+    mov edi, [rbx + DS_id]
+    mov esi, DCON_ERROR
+    call dcon_close
     EPILOGUE
 
 # r_excinfo(ds, root, body, success, pd): the exception's id and description in the console
@@ -3209,7 +3225,7 @@ r_excinfo:
     mov esi, DCON_ERROR
     mov rdx, [rip + nodep + SB_ptr]
     mov rcx, [rip + nodep + SB_len]
-    call dcon_text
+    call dcon_line
 9:  EPILOGUE
 
 # ---------------- reverse requests ----------------
@@ -3342,6 +3358,25 @@ FN dap_pause
     mov rbx, rax
     cmp dword ptr [rbx + DS_state], DSS_RUNNING
     jne 9f
+    cmp qword ptr [rbx + DS_thread], 0
+    jne 1f
+    # no thread known yet: the list first; its answer pauses the first one
+    mov rdi, rbx
+    lea rsi, [rip + .Lc_threads]
+    call dap_req_begin
+    mov rdi, rbx
+    mov esi, RQ_THREADS
+    mov edx, 2
+    call dap_req_send
+    jmp 9f
+1:  mov rdi, rbx
+    call send_pause
+9:  EPILOGUE
+
+# send_pause(ds): pause the focused thread
+send_pause:
+    PROLOGUE
+    mov rbx, rdi
     mov rdi, rbx
     lea rsi, [rip + .Lc_pause]
     call dap_req_begin

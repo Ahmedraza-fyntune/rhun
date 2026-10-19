@@ -73,7 +73,8 @@ FN dcon_line
     xor r8d, r8d
     jmp add_piece
 
-# close_open(session id, category): a newline ends the last line if it is open and theirs
+# dcon_close(session id, category) / close_open: a newline ends the last line if it is open and theirs
+FN dcon_close
 close_open:
     mov rax, [rip + clines + VEC_len]
     test rax, rax

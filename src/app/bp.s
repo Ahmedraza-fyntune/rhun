@@ -74,6 +74,7 @@ FN bp_find
     EPILOGUE
 
 # bp_ensure(): the project's breakpoints are loaded (preserves rdi, rsi, rdx, rcx)
+FN bp_ensure_loaded
 bp_ensure:
     push rdi
     push rsi
