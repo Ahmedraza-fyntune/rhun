@@ -1,6 +1,8 @@
 # feature diff (v1.1.md): an extension's read-only tab showing a unified line diff from one open
 # document to another, drawn like the git changes view (wsdiff.s). It follows both sides as they
-# change (at most every 100 ms) and closes when either side closes or its extension stops.
+# change (at most every 100 ms) and closes when either side closes or its extension stops. A side
+# may be a virtual document (feature uris) the diff opened without a tab: it goes with the last
+# diff tab that shows it, unless the user opened it meanwhile.
 .include "rhun.inc"
 
 .equ DFT_MAX, 128                # diff tabs in all
@@ -12,6 +14,8 @@ STRUCT
 F DFT_ext, 8                     # its extension
 F DFT_left, 8                    # the two documents' ids
 F DFT_right, 8
+F DFT_lp, 8                      # and the documents (cleared when one goes: the tab is dead then)
+F DFT_rp, 8
 F DFT_doc, 8                     # the diff tab's document
 F DFT_title, 8                   # owned cstr
 F DFT_lv, 8                      # the sides' versions it shows
@@ -59,12 +63,8 @@ dt_text:
 dt_compute:
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + DFT_left]
-    call extproto_doc
-    mov r12, rax
-    mov rdi, [rbx + DFT_right]
-    call extproto_doc
-    mov r13, rax
+    mov r12, [rbx + DFT_lp]
+    mov r13, [rbx + DFT_rp]
     test r12, r12
     jz 9f
     test r13, r13
@@ -172,6 +172,8 @@ FN ws_diff_open
     mov [r15 + DFT_left], rax
     mov rax, [r13 + DOC_id]
     mov [r15 + DFT_right], rax
+    mov [r15 + DFT_lp], r12
+    mov [r15 + DFT_rp], r13
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
     call mem_dup
@@ -227,50 +229,121 @@ FN ws_diff_close
 8:  xor eax, eax
     ret
 
-# FN ws_difftab_doc_closed(doc): a document goes: its diff tab's record goes with it; a side's diff
-# tabs close at the next frame
+# FN ws_difftab_doc_closed(doc): a document goes: its diff tab's record goes with it (and lets go
+# of its sides); a side's diff tabs close at the next frame
 FN ws_difftab_doc_closed
-    push rbx
+    PROLOGUE 16
     mov rbx, rdi
-    mov rcx, [rip + dt_vec + VEC_len]
-1:  test rcx, rcx
-    jz 9f
-    dec rcx
-    imul rax, rcx, DFT_SIZE
-    add rax, [rip + dt_vec + VEC_ptr]
-    cmp [rax + DFT_doc], rbx
+    mov qword ptr [rsp], 0      # the sides of the diff tab that goes
+    mov qword ptr [rsp + 8], 0
+    mov r12, [rip + dt_vec + VEC_len]
+1:  test r12, r12
+    jz 5f
+    dec r12
+    imul r13, r12, DFT_SIZE
+    add r13, [rip + dt_vec + VEC_ptr]
+    cmp [r13 + DFT_doc], rbx
     jne 2f
     # the tab itself: the record goes (the last takes its place)
-    push rcx
-    push rax
-    mov rdi, [rax + DFT_title]
+    mov rax, [r13 + DFT_lp]
+    mov [rsp], rax
+    mov rax, [r13 + DFT_rp]
+    mov [rsp + 8], rax
+    mov rdi, [r13 + DFT_title]
     call mem_free
-    pop rdi
-    pop rcx
     mov rax, [rip + dt_vec + VEC_len]
     dec rax
     mov [rip + dt_vec + VEC_len], rax
     imul rsi, rax, DFT_SIZE
     add rsi, [rip + dt_vec + VEC_ptr]
-    cmp rsi, rdi
+    cmp rsi, r13
     je 1b
-    push rcx
-    push rcx
+    mov rdi, r13
     mov edx, DFT_SIZE
     call memcpy
-    pop rcx
-    pop rcx
     jmp 1b
-2:  mov rdx, [rbx + DOC_id]
-    cmp [rax + DFT_left], rdx
-    je 3f
-    cmp [rax + DFT_right], rdx
-    jne 1b
-3:  mov qword ptr [rax + DFT_dead], 1
+2:  xor eax, eax
+    cmp [r13 + DFT_lp], rbx
+    jne 3f
+    mov qword ptr [r13 + DFT_lp], 0
+    mov eax, 1
+3:  cmp [r13 + DFT_rp], rbx
+    jne 4f
+    mov qword ptr [r13 + DFT_rp], 0
+    mov eax, 1
+4:  test eax, eax
+    jz 1b
+    mov qword ptr [r13 + DFT_dead], 1
     mov dword ptr [rip + g_dirty], 1
     jmp 1b
-9:  pop rbx
-    ret
+5:  mov rdi, [rsp]
+    call dt_let_go
+    mov rdi, [rsp + 8]
+    cmp rdi, [rsp]
+    je 9f
+    call dt_let_go
+9:  EPILOGUE
+
+# FN ws_diff_unused(doc or 0): a side h_diff resolved but did not use (dt_let_go)
+FN ws_diff_unused
+    jmp dt_let_go
+
+# dt_let_go(doc or 0): a side a diff tab no longer shows: a virtual document without a tab (one a
+# diff opened) goes once no other diff tab shows it
+dt_let_go:
+    PROLOGUE
+    mov rbx, rdi
+    test rbx, rbx
+    jz 9f
+    cmp qword ptr [rbx + DOC_uri], 0
+    je 9f
+    mov rdi, rbx
+    call doc_tab
+    test rax, rax
+    jns 9f
+    xor ecx, ecx
+1:  cmp rcx, [rip + dt_vec + VEC_len]
+    jae 2f
+    imul rax, rcx, DFT_SIZE
+    add rax, [rip + dt_vec + VEC_ptr]
+    inc rcx
+    cmp [rax + DFT_lp], rbx
+    je 9f
+    cmp [rax + DFT_rp], rbx
+    je 9f
+    jmp 1b
+2:  mov rdi, rbx
+    call doc_free
+9:  EPILOGUE
+
+# FN ws_doc_by_uri(ptr, len) -> rax the open document (in a tab) whose URI it is, or 0
+FN ws_doc_by_uri
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 8f
+    imul rax, rbx, TAB_SIZE
+    add rax, [rip + g_tabs + VEC_ptr]
+    inc rbx
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov r14, [rax + TAB_doc]
+    test r14, r14
+    jz 1b
+    mov rdx, [r14 + DOC_uri]
+    test rdx, rdx
+    jz 1b
+    mov rdi, r12
+    mov rsi, r13
+    call str_eq_cstr
+    test eax, eax
+    jz 1b
+    mov rax, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # FN ws_difftab_ext_gone(ext): the extension stopped: its diff tabs close at the next frame
 FN ws_difftab_ext_gone
@@ -324,15 +397,13 @@ FN ws_difftab_timeout
 dt_changed:
     push rbx
     mov rbx, rdi
-    mov rdi, [rbx + DFT_left]
-    call extproto_doc
+    mov rax, [rbx + DFT_lp]
     test rax, rax
     jz 8f
     mov rcx, [rax + DOC_version]
     cmp rcx, [rbx + DFT_lv]
     jne 9f
-    mov rdi, [rbx + DFT_right]
-    call extproto_doc
+    mov rax, [rbx + DFT_rp]
     test rax, rax
     jz 8f
     mov rcx, [rax + DOC_version]

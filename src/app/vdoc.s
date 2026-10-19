@@ -36,6 +36,7 @@ vd_slots: .zero VD_SIZE * VD_MAX
 vd_line: .zero SB_SIZE
 vd_err: .zero 256
 vd_path: .zero 4100
+vd_hidden: .zero 8               # wsedit: 1 while vdoc_open_hidden opens one
 
 .text
 
@@ -407,17 +408,23 @@ FN vdoc_open
     test rax, rax
     jz 1f
     mov r15, rax
+    cmp qword ptr [rip + vd_hidden], 0  # wsedit: a diff side: as it is, nothing activates
+    jne 96f
     mov rdi, [r15 + VD_doc]
     call tab_of_doc
     test rax, rax
-    js 0f
+    js 97f
     mov rdi, rax
     call app_activate_tab
+    jmp 0f
+97: mov rdi, [r15 + VD_doc]     # wsedit: open without a tab so far (a diff side): it gets one
+    mov esi, TAB_DOC
+    call app_add_tab
 0:  mov rdi, [r15 + VD_doc]
     mov esi, [rsp + 8]
     mov edx, [rsp + 12]
     call vd_place_cursor
-    mov rax, [r15 + VD_doc]
+96: mov rax, [r15 + VD_doc]
     EPILOGUE
 1:  # room: VD_MAX in all, VD_PER_PROVIDER each
     xor ecx, ecx
@@ -470,10 +477,12 @@ FN vdoc_open
     call doc_replace_all
     mov rdi, r14
     call vd_detect_lang
+    cmp qword ptr [rip + vd_hidden], 0  # wsedit: a diff side opens without a tab
+    jne 1f
     mov rdi, r14
     mov esi, TAB_DOC
     call app_add_tab
-    mov rdi, r15
+1:  mov rdi, r15
     call vd_ask
     mov dword ptr [rip + g_dirty], 1
     mov rax, r14
@@ -484,6 +493,19 @@ FN vdoc_open
 .Lvo_toobig:
     mov rax, -27
     EPILOGUE
+
+# FN vdoc_open_hidden(requester ext, uri ptr, len) -> as vdoc_open, but a new document gets no tab
+# and an open one is returned as it is, nothing activated (wsedit: a side of an extension's diff
+# tab, which lets it go when it closes; opening the URI later gives it a tab)
+FN vdoc_open_hidden
+    push rbx
+    mov qword ptr [rip + vd_hidden], 1
+    xor ecx, ecx
+    xor r8d, r8d
+    call vdoc_open
+    mov qword ptr [rip + vd_hidden], 0
+    pop rbx
+    ret
 
 # vd_detect_lang(doc): the grammar for the URI's last segment, as for a file of that name
 vd_detect_lang:
@@ -907,9 +929,12 @@ FN vdoc_ext_gone
     jne 2f
     call tab_of_doc
     test rax, rax
-    js 2f
+    js 3f
     mov rdi, rax
     call app_close_tab_now
+    jmp 2f
+3:  mov rdi, [r12 + VD_doc]     # wsedit: without a tab (a side of a diff tab): it goes, the diff
+    call doc_free               # tabs showing it close
 2:  add r12, VD_SIZE
     dec r13d
     jnz 1b
