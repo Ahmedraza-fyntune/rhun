@@ -14,3 +14,7 @@ FN tools_ext_gone
 # FN tools_manifest_kv(ext, ini): one key of [tools]
 FN tools_manifest_kv
     ret
+
+# FN tools_propose_done(call, accepted, rejected): the review a rhun.propose call waits for is done
+FN tools_propose_done
+    ret

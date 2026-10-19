@@ -72,6 +72,56 @@ h_agent_changed:
     call reply_syntax
 9:  EPILOGUE
 
+# ID propose LEN + LABEL_LEN SID_LEN LF, the label and session id, and a workspace edit (feature
+# edit-review): checked at once, answered ok ID PROPOSAL; the user decides in the Review tab
+h_propose:
+    PROLOGUE
+    mov edi, FEAT_EDIT_REVIEW
+    call ai_agreed
+    test eax, eax
+    jz 9f
+    mov edi, NEEDS_DOC_READ
+    call need
+    test eax, eax
+    jz 9f
+    mov rdi, [rip + cur]
+    mov rsi, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    mov ecx, 1
+    call review_propose
+    test rax, rax
+    jnz 1f
+    mov rdi, [rip + cur_id]
+    mov rsi, rdx
+    call reply_ok_u64
+    jmp 9f
+1:  mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
+9:  EPILOGUE
+
+# ID unpropose PROPOSAL (feature edit-review)
+h_unpropose:
+    PROLOGUE
+    mov edi, FEAT_EDIT_REVIEW
+    call ai_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 8f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 8f
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call review_unpropose
+    call ai_answer
+    jmp 9f
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 # FN extproto_ai_request(ext, line, len, body, body_len) -> rax the id of "ID LINE" sent with the body
 #   (a request from rhun, section 12), or 0 when the extension is not running
 FN extproto_ai_request
@@ -220,6 +270,8 @@ ai_reply:
 .section .rodata
 .Lv_agent_sessions: .asciz "agent-sessions"
 .Lv_agent_changed: .asciz "agent-changed"
+.Lv_propose: .asciz "propose"
+.Lv_unpropose: .asciz "unpropose"
 .Lf_agents: .asciz "agents"
 .Lf_edit_review: .asciz "edit-review"
 .Lf_tools: .asciz "tools"

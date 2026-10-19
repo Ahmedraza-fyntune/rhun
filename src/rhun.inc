@@ -1164,6 +1164,7 @@ F DV_rev, 8             # commit, or 0 for the work tree
 F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
 F DV_pad, 4
+F DV_review, 8          # AI (review.s): the proposal a Review tab shows, or 0
 ENDSTRUCT DV_SIZE
 STRUCT
 F DL_kind, 4            # DK_*
@@ -1175,6 +1176,7 @@ ENDSTRUCT DL_SIZE
 .equ DK_DEL, 2
 .equ DK_HUNK, 3
 .equ DK_INFO, 4
+.equ DK_FILE, 5                 # AI (review.s): a file's header in a Review tab
 
 # a changed file in the history view
 STRUCT

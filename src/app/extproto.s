@@ -3436,6 +3436,8 @@ verbs:
     # AI (wider-parity D, extaiproto.inc)
     .quad .Lv_agent_sessions, h_agent_sessions, 1048576
     .quad .Lv_agent_changed, h_agent_changed, 0
+    .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
+    .quad .Lv_unpropose, h_unpropose, 0
     .quad 0, 0, 0
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"

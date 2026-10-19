@@ -428,7 +428,11 @@ FN diffview_free
     jz 9f
     push rbx
     mov rbx, rdi
-    mov rdi, [rbx + DV_lines]
+    mov rdi, [rbx + DV_review]  # AI: a Review tab's proposal (review.s)
+    test rdi, rdi
+    jz 1f
+    call review_doc_gone
+1:  mov rdi, [rbx + DV_lines]
     call mem_free
     mov rdi, [rbx + DV_name]
     call mem_free
@@ -503,6 +507,9 @@ FN diffview_line
     COLOR esi, T_ACCENT
     mov edx, 22
     cmp eax, DK_HUNK
+    je 1f
+    mov edx, 44                 # AI: a file's header in a Review tab (review.s)
+    cmp eax, DK_FILE
     jne 2f
 1:  COLOR edi, T_BG
     call color_mix
@@ -564,13 +571,28 @@ FN diffview_line
     mov edx, r13d
     add edx, [rip + g_base]
     COLOR r9d, T_MUTED
-    call text_draw
+    cmp dword ptr [rsp], DK_FILE
+    jne 5f
+    COLOR r9d, T_FG
+5:  call text_draw
     call gfx_clip_pop
+    call .Ldl_review
     mov eax, 1
     EPILOGUE
 .Ldl_no:
+    call .Ldl_review
     xor eax, eax
     EPILOGUE
+# AI: a Review tab's buttons on its line (review.s)
+.Ldl_review:
+    cmp qword ptr [r15 + DV_review], 0
+    je 1f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, r14d
+    jmp review_line_extra
+1:  ret
 # number edi (none when 0) right-aligned at esi
 .Ldl_number:
     test edi, edi
