@@ -465,7 +465,18 @@ recent_cb:
     inc rdx
     jmp 1b
 .else
-    cmp byte ptr [r12], '%'
+    mov rbx, r12                # the whole name
+    # remote hosts: a remote window lists its remote's folders (session files named SPEC%path)
+    cmp dword ptr [rip + g_remote], 0
+    je 12f
+    mov rdi, r12
+    mov rsi, r13
+    call remote_session_prefix
+    test rax, rax
+    jz 9f
+    add r12, rax
+    sub r13, rax
+12: cmp byte ptr [r12], '%'
     jne 9f
     # the folder: %%25 was a %, any other % a / (see session_file); ".session" ends a match
     lea rdi, [rip + rc_path]
@@ -498,11 +509,15 @@ recent_cb:
     test eax, eax
     jnz 9f
 3:  lea rdi, [rip + rc_path]
-    call file_is_dir
+    call vfs_is_dir             # the host's folder in a remote window
     test eax, eax
     jz 9f
     mov rdi, [rip + rc_dir + SB_ptr]
+.ifdef WINDOWS
     mov rsi, r12
+.else
+    mov rsi, rbx
+.endif
     call path_join_tmp
     mov rdi, rax
     call file_mtime_ns

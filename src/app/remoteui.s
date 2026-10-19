@@ -265,6 +265,38 @@ FN remote_session_key
     pop rbx
     ret
 
+# remote_session_prefix(name, len) -> the length of this window's spec at the start of a session file's
+#   name (followed by its path's first %), or 0 for another remote's or a local folder's
+FN remote_session_prefix
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    call remote_spec
+    mov r13, rax
+    mov rdi, rax
+    call strlen
+    cmp rax, r12
+    jae 8f
+    cmp byte ptr [rbx + rax], '%'
+    jne 8f
+    push rax
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, rax
+    call memeq
+    pop rcx
+    test eax, eax
+    jz 8f
+    mov rax, rcx
+    jmp 9f
+8:  xor eax, eax
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
+
 # ---------------- the bar ----------------
 
 # remote_bar(x, y, w) -> its height (0 when connected or not remote): the connection's progress, or
@@ -1356,7 +1388,11 @@ FN remote_recent_label
     dec rdx
     cmp rdx, 200
     ja 8f
-    mov rdi, rbx
+    test rdx, rdx
+    jnz 2f
+    lea rsi, [rip + .Llocal_name]   # local: (tests) has no host
+    mov edx, 5
+2:  mov rdi, rbx
     push rdx
     push rdx
     call memcpy

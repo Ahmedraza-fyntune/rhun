@@ -99,6 +99,7 @@ rg_query_len: .quad 0
 rg_asked: .zero 256             # the query out to the host
 rg_asked_len: .quad 0
 rg_out: .long 0                 # 1 while a query is out
+rg_groups: .zero VEC_SIZE       # rg_items: each file's first record, by path
 
 .text
 
@@ -465,7 +466,13 @@ FN palette_read_all
     mov dword ptr [rip + gload_drawn], 1
     call palette_tick
     jmp 1b
-9:  # remote hosts: and the host's answer to the query (10 s at most)
+9:  call rg_wait_answer        # remote hosts: and the host's answer to the query
+    pop rbx
+    ret
+
+# rg_wait_answer(): remote hosts: until the host has answered the field's query (10 s at most)
+rg_wait_answer:
+    push rbx
     cmp dword ptr [rip + g_remote], 0
     je 8f
     call time_ms
@@ -1005,7 +1012,7 @@ rg_answer:
 # rg_items(): items from rg_reply ("REL\0LINE\0COL\0LABEL\0" records), one gfiles entry per file
 #   (its label only: accepting opens it as for a local search)
 rg_items:
-    PROLOGUE 48
+    PROLOGUE 64
     mov qword ptr [rip + gfiles + VEC_len], 0
     lea rdi, [rip + rg_paths]
     call sb_clear
@@ -1014,18 +1021,33 @@ rg_items:
     jz 8f
     mov r15, [rip + rg_reply + SB_len]
     add r15, rbx                # end
+    # the files' groups in path order, as the local search sorts its files
+    call rg_groups_sort
+    mov qword ptr [rsp + 48], 0 # the next group
     mov qword ptr [rsp + 40], -1  # the file index
-1:  cmp rbx, r15
+0:  mov rax, [rsp + 48]
+    cmp rax, [rip + rg_groups + VEC_len]
     jae 7f
+    inc qword ptr [rsp + 48]
+    mov rcx, [rip + rg_groups + VEC_ptr]
+    mov rbx, [rcx + rax*8]
+    mov [rsp + 56], rbx         # the group's path
+1:  cmp rbx, r15
+    jae 0b
     cmp qword ptr [rip + items + VEC_len], GREP_MAX
     jae 7f
+    mov rdi, rbx
+    mov rsi, [rsp + 56]
+    call strcmp_eq
+    test eax, eax
+    jz 0b                       # the group's records end
     mov r12, rbx                # REL
     mov rdi, rbx
     call strlen
     lea r13, [rbx + rax + 1]    # LINE
     mov [rsp], rax
     cmp r13, r15
-    jae 7f
+    jae 0b
     # a file other than the last: a new gfiles entry (its path in rg_paths, fixed up after)
     cmp qword ptr [rsp + 40], 0
     jl 2f
@@ -1121,6 +1143,82 @@ rg_items:
     inc rcx
     jmp 71b
 8:  EPILOGUE
+
+# rg_groups_sort(): rg_groups = the first record of each file's run in rg_reply, by path (byte order)
+rg_groups_sort:
+    PROLOGUE 16
+    mov qword ptr [rip + rg_groups + VEC_len], 0
+    mov rbx, [rip + rg_reply + SB_ptr]
+    mov r15, [rip + rg_reply + SB_len]
+    add r15, rbx
+    xor r14d, r14d              # the last group's path
+1:  cmp rbx, r15
+    jae 5f
+    test r14, r14
+    jz 2f
+    mov rdi, rbx
+    mov rsi, r14
+    call strcmp_eq
+    test eax, eax
+    jnz 3f
+2:  lea rdi, [rip + rg_groups]
+    mov esi, 8
+    call vec_push
+    mov [rax], rbx
+    mov r14, rbx
+3:  # past the record's four fields
+    mov r12d, 4
+4:  mov rdi, rbx
+    call strlen
+    lea rbx, [rbx + rax + 1]
+    dec r12d
+    jz 1b
+    cmp rbx, r15
+    jb 4b
+5:  # shell sort by path
+    mov r15, [rip + rg_groups + VEC_len]
+    mov r12, r15
+.Lrgs_gap:
+    shr r12, 1
+    jz 9f
+    mov r13, r12                # i
+.Lrgs_i:
+    cmp r13, r15
+    jae .Lrgs_gap
+    mov rax, [rip + rg_groups + VEC_ptr]
+    mov rbx, [rax + r13*8]      # the one placed
+    mov r14, r13                # j
+.Lrgs_j:
+    cmp r14, r12
+    jb .Lrgs_put
+    mov rax, [rip + rg_groups + VEC_ptr]
+    mov rcx, r14
+    sub rcx, r12
+    mov rdi, [rax + rcx*8]
+    mov rsi, rbx
+6:  movzx eax, byte ptr [rdi]
+    movzx edx, byte ptr [rsi]
+    cmp eax, edx
+    jne 7f
+    test eax, eax
+    jz .Lrgs_put
+    inc rdi
+    inc rsi
+    jmp 6b
+7:  jb .Lrgs_put
+    mov rax, [rip + rg_groups + VEC_ptr]
+    mov rcx, r14
+    sub rcx, r12
+    mov rdx, [rax + rcx*8]
+    mov [rax + r14*8], rdx
+    mov r14, rcx
+    jmp .Lrgs_j
+.Lrgs_put:
+    mov rax, [rip + rg_groups + VEC_ptr]
+    mov [rax + r14*8], rbx
+    inc r13
+    jmp .Lrgs_i
+9:  EPILOGUE
 
 # prompt_open(label cstr, kind, [initial text in pal_path])
 FN prompt_open
@@ -2461,7 +2559,22 @@ FN palette_key
     jne 1f
     call palette_close
     jmp .Lpk_yes
-1:  cmp r12d, KEY_UP
+1:  # remote hosts: moving in Find in Files' results waits for the host's answer they belong to
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 11f
+    cmp dword ptr [rip + g_remote], 0
+    je 11f
+    mov eax, r12d
+    cmp eax, KEY_UP
+    je 12f
+    cmp eax, KEY_DOWN
+    je 12f
+    cmp eax, KEY_PAGEUP
+    je 12f
+    cmp eax, KEY_PAGEDOWN
+    jne 11f
+12: call rg_wait_answer
+11: cmp r12d, KEY_UP
     jne 2f
     mov dword ptr [rip + pal_reveal], 1
     mov dword ptr [rip + pal_wheel], 0
@@ -2555,6 +2668,12 @@ palette_accept:
     mov ebx, [rip + pal_mode]
     cmp ebx, PM_REMOTE
     je .Lpa_remote
+    cmp ebx, PM_GREP            # remote hosts: Enter right after typing waits for the host's answer
+    jne 1f
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    call rg_wait_answer
+1:
     cmp ebx, PM_GOTO
     je .Lpa_goto
     cmp ebx, PM_PROMPT

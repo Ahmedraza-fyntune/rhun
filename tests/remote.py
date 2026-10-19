@@ -251,5 +251,66 @@ class LocalTransport(unittest.TestCase):
             self.assertTrue(list((base / 'home/.cache/rhun-remote').glob('*/rhun')))
 
 
+    def test_typing_never_waits_for_the_host(self):
+        """With every agent reply 300 ms late, 40 typed characters cost no more than a few replies."""
+        with tempfile.TemporaryDirectory(prefix='rhun-remote-slow-') as tmp:
+            base = Path(tmp)
+            for d in ('home', 'config', 'state', 'proj'):
+                (base / d).mkdir()
+            (base / 'proj/a.txt').write_text('text\n')
+            env = dict(os.environ, HOME=str(base / 'home'), XDG_CONFIG_HOME=str(base / 'config'),
+                       XDG_STATE_HOME=str(base / 'state'), SHELL='/bin/sh', RHUN_REMOTE_DELAY_MS='300')
+            times = []
+            for typing in ('', 'type ' + 'x' * 40):
+                rsc = base / 't.rsc'
+                rsc.write_text('wait-remote 60\nopen %s/proj/a.txt\nwait 300\necho start\n%s\necho end\nprint-doc\nquit\n'
+                               % (base, typing))
+                t0 = time.time()
+                p = subprocess.run([str(EXE), '--headless', '800x600', '--remote', 'local:', str(base / 'proj'),
+                                    '--script', str(rsc)], capture_output=True, timeout=180, env=env)
+                times.append(time.time() - t0)
+                out = p.stdout.decode(errors='replace')
+            self.assertIn('x' * 40 + 'text', out)
+            self.assertLess(times[1] - times[0], 4.0, times)
+
+    def test_ui_scripts_under_strict(self):
+        """Every tests/scripts/*.rsc in a remote window (local: shares this machine's paths) with
+        RHUN_REMOTE_STRICT=1: no local file function may see a path of the project, and none may
+        crash. Outputs may differ (the host's shell prompt, recent folders are the remote's)."""
+        stops = []
+        with tempfile.TemporaryDirectory(prefix='rhun-remote-ui-') as tmp:
+            base = Path(tmp)
+            # rhun's own resources the scripts name live in the repository (the project): copies
+            compose = base / 'compose.txt'
+            shutil.copy(ROOT / 'tests/data/compose.txt', compose)
+            icons = base / 'icons'
+            shutil.copytree(ROOT / 'tests/data/icons', icons, symlinks=True)
+            for script in sorted((ROOT / 'tests/scripts').glob('*.rsc')):
+                n = script.stem
+                home = base / ('home-' + n)
+                home.mkdir()
+                if (ROOT / 'tests/data' / (n + '.home')).is_dir():
+                    shutil.copytree(ROOT / 'tests/data' / (n + '.home'), home, dirs_exist_ok=True)
+                if (ROOT / 'tests/data' / (n + '.setup')).is_file():
+                    subprocess.run(['sh', str(ROOT / 'tests/data' / (n + '.setup')), str(home),
+                                    str(base / ('state-' + n))], capture_output=True, check=False)
+                text = 'wait-remote 30\n' + script.read_text(encoding='utf-8').replace('@HOME@', str(home))
+                start = next((l[len('# start: '):] for l in text.splitlines() if l.startswith('# start: ')),
+                             str(ROOT))
+                rsc = base / (n + '.rsc')
+                rsc.write_text(text, encoding='utf-8')
+                env = dict(os.environ, RHUN_REMOTE_STRICT='1', HOME=str(home),
+                           XDG_CONFIG_HOME=str(base / ('config-' + n)), XDG_STATE_HOME=str(base / ('state-' + n)),
+                           XCOMPOSEFILE=str(compose), XCURSOR_PATH=str(icons),
+                           XCURSOR_THEME='child', SHELL='/bin/sh', PS1='$ ', GROK_HOME='')
+                p = subprocess.run([str(EXE), '--remote', 'local:', start, '--headless', '1400x860', '--script',
+                                    str(rsc)], capture_output=True, timeout=120, env=env, cwd=ROOT)
+                out = (p.stdout + p.stderr).decode(errors='replace')
+                if 'RHUN_REMOTE_STRICT' in out or p.returncode != 0:
+                    stops.append('%s (exit %d): %s' % (n, p.returncode,
+                                 next((l for l in out.splitlines() if 'STRICT' in l), '')))
+        self.assertEqual(stops, [])
+
+
 if __name__ == '__main__':
     unittest.main()
