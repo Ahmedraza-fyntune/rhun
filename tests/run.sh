@@ -179,6 +179,7 @@ python3 tests/snippet-final.py || fail=1
 python3 tests/snippet-context.py || fail=1
 python3 tests/ext-providers.py || fail=1
 python3 tests/ext-language.py || fail=1
+python3 tests/ext-selections.py || fail=1
 python3 tests/ext-scheduling.py || fail=1
 python3 tests/ext-watch.py || fail=1
 python3 tests/ext-watch-native.py || fail=1

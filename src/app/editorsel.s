@@ -28,6 +28,9 @@ sc_list: .zero 16*SEL_MAX       # {position, column}
 sf_n: .quad 0
 sf_list: .zero SF_SIZE*SEL_MAX
 sf_carets: .quad 0              # the secondary carets the rows drew: x, y (dwords), position
+vis_doc: .quad 0                # the lines the last frame drew of this document (feature selections)
+vis_first: .quad 0              # -1 none
+vis_last: .quad 0
 sf_caret: .zero 16*SEL_MAX
 # ctrl+d: a selection made from the word at the cursor looks for whole words of the same case
 sn_doc: .quad 0                 # DOC_id, 0 none
@@ -1320,6 +1323,9 @@ FN sel_drag_end
 FN sel_frame
     PROLOGUE 16
     mov [rsp], rdi
+    mov [rip + vis_doc], rdi
+    mov qword ptr [rip + vis_first], -1
+    mov qword ptr [rip + vis_last], -1
     mov qword ptr [rip + sf_n], 0
     mov qword ptr [rip + sf_carets], 0
     mov r12, [rdi + DOC_selections]
@@ -1397,10 +1403,27 @@ sel_first:
 # document: the secondary selections' fills, as the primary's, and where their carets go
 FN sel_row
     PROLOGUE 48
-    cmp qword ptr [rip + sf_n], 0
-    je .Lsr_ret
     mov r12, rdi
     mov r13, rsi
+    # the lines on screen (one call a row, top to bottom)
+    mov [rsp], rdx
+    mov [rsp + 8], rcx
+    mov [rsp + 16], r8d
+    mov [rsp + 20], r9d
+    mov rdi, [rip + vis_doc]
+    test rdi, rdi
+    jz 1f
+    call doc_line_of
+    mov [rip + vis_last], rax
+    cmp qword ptr [rip + vis_first], -1
+    jne 1f
+    mov [rip + vis_first], rax
+1:  mov rdx, [rsp]
+    mov rcx, [rsp + 8]
+    mov r8d, [rsp + 16]
+    mov r9d, [rsp + 20]
+    cmp qword ptr [rip + sf_n], 0
+    je .Lsr_ret
     mov [rsp], rdx
     mov [rsp + 8], rcx
     mov [rsp + 16], r8d
@@ -1649,6 +1672,79 @@ FN sel_status
     call sb_push_cstr
 9:  EPILOGUE
 
+# ---------------- extensions (feature selections) ----------------
+
+# sel_hash(doc) -> rax 0 for one caret (wherever it is), else a hash of every selection
+FN sel_hash
+    PROLOGUE
+    mov rbx, rdi
+    call doc_selections_count
+    mov r12, rax
+    cmp r12, 1
+    jne 1f
+    mov rax, [rbx + DOC_cur]
+    cmp rax, [rbx + DOC_anchor]
+    jne 1f
+    xor eax, eax
+    EPILOGUE
+1:  mov r14, 0xcbf29ce484222325
+    xor r13d, r13d
+2:  cmp r13, r12
+    jae 3f
+    mov rdi, rbx
+    mov rsi, r13
+    call doc_selections_get
+    xor r14, rax
+    mov rcx, 0x100000001b3
+    imul r14, rcx
+    xor r14, rdx
+    imul r14, rcx
+    inc r13
+    jmp 2b
+3:  mov rax, r14
+    or rax, 1
+    EPILOGUE
+
+# sel_body(doc, sb) -> rax count: "L1 C1 L2 C2" a line a selection (anchor, cursor; lines and byte
+# columns from 1), the primary first
+FN sel_body
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    call doc_selections_count
+    mov r13, rax
+    xor r14d, r14d
+1:  cmp r14, r13
+    jae 9f
+    mov rdi, rbx
+    mov rsi, r14
+    call doc_selections_get
+    mov r15, rax
+    mov rsi, rdx
+    call .Lsd_point
+    mov rdi, r12
+    mov esi, ' '
+    call sb_push_byte
+    mov rsi, r15
+    call .Lsd_point
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    inc r14
+    jmp 1b
+9:  mov rax, r13
+    EPILOGUE
+
+# sel_visible(doc) -> rax first, rdx last line (from 0) the last frame drew of it, rax -1 when it
+# drew none
+FN sel_visible
+    mov rax, -1
+    cmp rdi, [rip + vis_doc]
+    jne 1f
+    mov rax, [rip + vis_first]
+    mov rdx, [rip + vis_last]
+1:  ret
+
 # ---------------- control (--script) ----------------
 
 # sel_state(doc, sb): print-state's " sels=N" with several selections
@@ -1667,8 +1763,7 @@ FN sel_state
     call sb_push_u64
 9:  EPILOGUE
 
-# sel_dump(doc, sb): print-selections: "sels=N", then "L1 C1 L2 C2" a selection (anchor, then
-# cursor; lines and byte columns from 1), the primary first
+# sel_dump(doc, sb): print-selections: "sels=N", then sel_body's lines
 FN sel_dump
     PROLOGUE
     mov rbx, rdi
@@ -1688,25 +1783,11 @@ FN sel_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
-    xor r14d, r14d
-2:  cmp r14, r13
-    jae 9f
+    test rbx, rbx
+    jz 9f
     mov rdi, rbx
-    mov rsi, r14
-    call doc_selections_get
-    mov r15, rax
-    mov rsi, rdx
-    call .Lsd_point
-    mov rdi, r12
-    mov esi, ' '
-    call sb_push_byte
-    mov rsi, r15
-    call .Lsd_point
-    mov rdi, r12
-    mov esi, 10
-    call sb_push_byte
-    inc r14
-    jmp 2b
+    mov rsi, r12
+    call sel_body
 9:  EPILOGUE
 # .Lsd_point(rsi position): "LINE COL" into r12's sb (rbx doc)
 .Lsd_point:
