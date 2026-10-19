@@ -26,6 +26,7 @@ lc_rlen: .quad 0
     LCWRAP w_print_langstats, c_print_langstats
     LCWRAP w_print_provides, c_print_provides
     LCWRAP w_print_query, c_print_query
+    LCWRAP w_print_fd, c_print_fd
 
 # lc_arg() -> rax ptr, rdx len of the next word of the rest (rdx 0 at its end)
 lc_arg:
@@ -108,6 +109,14 @@ c_print_provides:
 9:  pop rbx
     ret
 
+# print-file-diagnostics: the Problems store (problems_dump), where file-diagnostics go
+c_print_fd:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call problems_dump
+    pop rbx
+    ret
+
 # print-query: the requests rhun waits on, with their progress
 c_print_query:
     push rbx
@@ -121,10 +130,12 @@ c_print_query:
 .Lc_print_langstats: .asciz "print-langstats"
 .Lc_print_provides: .asciz "print-provides"
 .Lc_print_query: .asciz "print-query"
+.Lc_print_fd: .asciz "print-file-diagnostics"
 .p2align 3
 .globl langfeat_ctl
 langfeat_ctl:
     .quad .Lc_print_langstats, w_print_langstats
     .quad .Lc_print_provides, w_print_provides
     .quad .Lc_print_query, w_print_query
+    .quad .Lc_print_fd, w_print_fd
     .quad 0, 0

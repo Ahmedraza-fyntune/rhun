@@ -2244,7 +2244,7 @@ FN app_on_paste
     jne 9f
     mov rdi, rbx
     mov rsi, r12
-    call ed_paste
+    call langextra_paste        # ed_paste, then format_on_paste (language features)
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -2580,6 +2580,8 @@ FN editor_key
     cmp eax, KEY_KP_ENTER
     jne 84f
 83: call ed_newline
+    mov edi, 10
+    call langextra_typed        # language features: formatting as you type
     jmp 9f
 84: cmp eax, KEY_TAB
     jne 85f
@@ -2617,6 +2619,8 @@ FN editor_key
     call ed_type
     mov edi, r13d
     call complete_typed         # completion and signature help follow typing
+    mov edi, r13d
+    call langextra_typed        # language features: formatting as you type
 9:  EPILOGUE
 
 # ---------------- timers ----------------

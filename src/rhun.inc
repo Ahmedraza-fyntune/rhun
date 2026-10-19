@@ -1633,6 +1633,11 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
     FEATURE FEAT_COMPLETE_ITEMS, "complete-items", 1  # complete-resolve
     FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
+    FEATURE FEAT_NAVIGATION, "navigation", 1          # declaration, type-definition, implementation
+    FEATURE FEAT_PARTIAL_FORMAT, "partial-format", 1  # range-format, type-format
+    FEATURE FEAT_CODE_ACTIONS, "code-actions", 1      # code-actions, code-action-resolve
+    FEATURE FEAT_PREPARE_RENAME, "prepare-rename", 1  # prepare-rename
+    FEATURE FEAT_FILE_DIAGNOSTICS, "file-diagnostics", 0  # file-diagnostics into the Problems store
     # editor presentation (deco.s ...)
     FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
     # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):
@@ -1970,6 +1975,7 @@ F EXT_pv_ttrig, 8       # type_format.triggers
 F EXT_pv_document_links, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
+F EXT_fdsrc, VEC_SIZE   # PS*: its file-diagnostics sources in the Problems store (filediag.s)
 # WebAssembly extensions (extwasm.s)
 F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
 F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
