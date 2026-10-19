@@ -478,7 +478,7 @@ lf_start:
     cmp r14, [rsp + 16]
     jne 6b
 61: mov rdi, r14
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 6b
     cmp dword ptr [r14 + EXT_status], ES_RUNNING
@@ -693,7 +693,7 @@ FN langfeat_reply
     add rsi, LR_SIZE
     call memmove
 4:  mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     mov eax, [rsp + 4]
@@ -1668,7 +1668,7 @@ FN langfeat_chosen
     imul r12, rbx, LS_SIZE
     add r12, [rip + lf_res + VEC_ptr]
     mov rdi, [r12 + LS_ext]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp dword ptr [rip + lf_list_kind], LF_ACTS
@@ -2621,13 +2621,3 @@ lf_single: .byte 0, 0, 0, 1, 0, 1, 1
 .Lwc_range: .asciz "badpos a range is outside its text or inside a character"
 .Lwc_many: .asciz "toobig too many edits out of order in one file"
 .Lwc_overlap: .asciz "badpos two edits overlap"
-
-.text
-# Keep result/request allocations owned; prevent pending and selected actions from resuming.
-FN langfeat_catalog_invalidate_pure
-    mov dword ptr [rip + lf_kind], 0
-    mov dword ptr [rip + lf_ready], 0
-    mov dword ptr [rip + lf_list_kind], 0
-    mov qword ptr [rip + lf_ws_ext], 0
-    mov qword ptr [rip + lf_deadline], 0
-    ret

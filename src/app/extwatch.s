@@ -34,7 +34,7 @@ ew_path: .zero 4096
 FN extwatch_add
     PROLOGUE
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lew_denied
     FEAT_TEST rbx, FEAT_WORKSPACE_WATCH

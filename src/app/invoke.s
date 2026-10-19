@@ -234,7 +234,7 @@ FN cmdref_invoke
     mov rdi, [rbx + CRF_ext]
     test rdi, rdi
     jz 8f
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     lea rdi, [rbx + CRF_name]

@@ -262,7 +262,7 @@ FN save_reply
     cmp [rbx + SJ_request], rsi
     jne 8f
     mov qword ptr [rbx + SJ_request], 0
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 7f
     mov rdi, [rbx + SJ_id]
@@ -929,7 +929,7 @@ save_source_eligible:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     test dword ptr [rbx + EXT_needs], NEEDS_DOC_WRITE
@@ -1226,7 +1226,7 @@ FN save_apply
     jne .Lsa_refused
     cmp [rbx + SJ_id], rdx
     jne .Lsa_refused
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lsa_refused
     call time_ms

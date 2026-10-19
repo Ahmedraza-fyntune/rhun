@@ -15,7 +15,6 @@ body_len: .quad 0
 syntax_seen: .quad 0            # a syntax reply went out while handling this message
 toast_buf: .zero 256
 pr_ext: .quad 0                 # the open prompt (choose, ask, term): its extension,
-pr_revoked: .quad 0             # logical cancellation retains owned copied bytes until normal cleanup
 pr_id: .quad 0                  #   request id (0: no prompt is open),
 pr_kind: .quad 0                #   1 choose, 2 ask, 3 term,
 pr_body: .quad 0                #   the items' bytes (choose), owned
@@ -31,7 +30,7 @@ pr_cmd: .zero SB_SIZE           # the command sent to the terminal
 FN extproto_pump
     PROLOGUE 16
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     mov [rip + cur], rbx
@@ -70,7 +69,7 @@ FN extproto_pump
     mov dword ptr [rbx + EXT_win_hit], 0
 .Lpp_next:
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
@@ -409,7 +408,7 @@ handle_line:
     call field_u64
 .Lhl_body_parsed:
     test edx, edx
-    jz .Lhl_bad_frame
+    jz .Lhl_syntax_id          # v1: error ID syntax, the line dropped, no body read
     cmp rax, [r12 + 16]
     jbe 61f
     # over the cap: the body cannot be skipped without reading it, and reading megabytes to
@@ -2070,12 +2069,7 @@ h_option:
 
 # prompt_busy() -> 1 after replying busy when a prompt or the palette is open
 prompt_busy:
-    cmp qword ptr [rip + pr_revoked], 0
-    je 2f
-    push rax
-    call prompt_clear
-    pop rax
-2:  cmp qword ptr [rip + pr_id], 0
+    cmp qword ptr [rip + pr_id], 0
     jne 1f
     push rax
     call palette_is_open
@@ -2093,7 +2087,6 @@ prompt_busy:
 # prompt_begin(kind): the open prompt is cur's current request
 prompt_begin:
     push rbx
-    mov qword ptr [rip + pr_revoked], 0
     mov [rip + pr_kind], rdi
     mov rax, [rip + cur]
     mov [rip + pr_ext], rax
@@ -2108,8 +2101,6 @@ prompt_begin:
 # early was meant for whatever had the focus before the prompt appeared
 FN extproto_prompt_fresh
     xor eax, eax
-    cmp qword ptr [rip + pr_revoked], 0
-    jne 9f
     cmp qword ptr [rip + pr_kind], 3
     jne 9f
     push rbx
@@ -2126,7 +2117,6 @@ FN extproto_prompt_fresh
 # prompt_clear(): no prompt is open
 prompt_clear:
     push rbx
-    mov qword ptr [rip + pr_revoked], 0
     mov rdi, [rip + pr_body]
     call mem_free
     mov qword ptr [rip + pr_body], 0
@@ -2668,11 +2658,6 @@ plain_text:
 # changed mode under it)
 FN extproto_prompt_abort
     PROLOGUE
-    cmp qword ptr [rip + pr_revoked], 0
-    je 1f
-    call prompt_clear
-    jmp 9f
-1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov rbx, [rip + cur]
@@ -2688,11 +2673,6 @@ FN extproto_prompt_abort
 # extproto_prompt_chose(n): the user picked item n of the choose prompt
 FN extproto_prompt_chose
     PROLOGUE
-    cmp qword ptr [rip + pr_revoked], 0
-    je 1f
-    call prompt_clear
-    jmp 9f
-1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov r12, rdi
@@ -2709,11 +2689,6 @@ FN extproto_prompt_chose
 # extproto_prompt_text(ptr, len, PROMPT_ASK | PROMPT_TERM): the user accepted the field's text
 FN extproto_prompt_text
     PROLOGUE
-    cmp qword ptr [rip + pr_revoked], 0
-    je 1f
-    call prompt_clear
-    jmp 9f
-1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov r12, rdi
@@ -2801,7 +2776,7 @@ FN extproto_prompt_owner_gone
 send_settings:
     PROLOGUE
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     xor r12d, r12d
@@ -2972,7 +2947,7 @@ FN extproto_send_action
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -3378,7 +3353,7 @@ FN extproto_send_project_all
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -3489,7 +3464,7 @@ FN extproto_send_hover_all
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -3793,14 +3768,3 @@ feature_names:
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"
 .Lewp_feature: .asciz "workspace_watch"
 
-.text
-# Pure logical cancellation. Retain the copied prompt body/command for ordinary cleanup.
-FN extproto_prompt_catalog_invalidate_pure
-    mov qword ptr [rip + pr_revoked], 1
-    ret
-
-# Outside pure publication, one normal owned body cleanup with no reply or terminal action.
-FN extproto_prompt_collect_revoked
-    cmp qword ptr [rip + pr_revoked], 0
-    jne prompt_clear
-    ret

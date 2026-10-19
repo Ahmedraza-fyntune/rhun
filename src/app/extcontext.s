@@ -207,7 +207,7 @@ FN xc_resolve
     add rbx, [rip + g_exts + VEC_ptr]
     inc r15
     mov rdi, rbx
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz 1b
     mov rdi, rbx

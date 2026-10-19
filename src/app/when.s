@@ -1934,7 +1934,7 @@ ck_editor_providers:
     add rbx, [rip + g_exts + VEC_ptr]
     inc r15
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 2b
     cmp dword ptr [rbx + EXT_disabled], 0
