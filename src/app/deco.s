@@ -746,7 +746,7 @@ FN h_decorate
     mov rcx, [r12 + DOC_pres]
     test rcx, rcx
     jz .Lhd_stale
-    cmp rax, [rcx + PS_tbase]
+    cmp rax, [rcx + PRS_tbase]
     jb .Lhd_stale
 1:  mov edi, 4
     call xp_field
@@ -941,10 +941,10 @@ FN h_decorate
     xor ecx, ecx
     xor r8d, r8d                # this extension's that stay
     xor r9d, r9d                # all that stay
-8:  cmp rcx, [r15 + PS_deco + VEC_len]
+8:  cmp rcx, [r15 + PRS_deco + VEC_len]
     jae 9f
     imul rax, rcx, DR_SIZE
-    add rax, [r15 + PS_deco + VEC_ptr]
+    add rax, [r15 + PRS_deco + VEC_ptr]
     inc rcx
     push rcx
     push r8
@@ -979,10 +979,10 @@ FN h_decorate
     ja .Lhd_toobig
     # out with the replaced ranges, in with the new
     xor ecx, ecx
-10: cmp rcx, [r15 + PS_deco + VEC_len]
+10: cmp rcx, [r15 + PRS_deco + VEC_len]
     jae 11f
     imul rax, rcx, DR_SIZE
-    add rax, [r15 + PS_deco + VEC_ptr]
+    add rax, [r15 + PRS_deco + VEC_ptr]
     push rcx
     push rax
     mov rdi, r12
@@ -1005,15 +1005,15 @@ FN h_decorate
     jmp 10b
 101:inc rcx
     jmp 10b
-11: mov r13, [r15 + PS_dpool + SB_len]   # the new texts' offset in the pool
-    lea rdi, [r15 + PS_dpool]
+11: mov r13, [r15 + PRS_dpool + SB_len]   # the new texts' offset in the pool
+    lea rdi, [r15 + PRS_dpool]
     mov rsi, [rip + npool + SB_ptr]
     mov rdx, [rip + npool + SB_len]
     call sb_push
     xor r14d, r14d
 12: cmp r14, [rip + nr + VEC_len]
     jae 13f
-    lea rdi, [r15 + PS_deco]
+    lea rdi, [r15 + PRS_deco]
     mov esi, DR_SIZE
     call vec_push
     imul rsi, r14, DR_SIZE
@@ -1151,12 +1151,12 @@ dr_drop:
     movzx r8d, word ptr [rsi + DR_tlen]
     add ecx, r8d
     add ecx, [rsi + DR_xlen]
-    add [rax + PS_dgarbage], rcx
-    mov rcx, [rax + PS_deco + VEC_len]
+    add [rax + PRS_dgarbage], rcx
+    mov rcx, [rax + PRS_deco + VEC_len]
     dec rcx
-    mov [rax + PS_deco + VEC_len], rcx
+    mov [rax + PRS_deco + VEC_len], rcx
     imul rcx, rcx, DR_SIZE
-    add rcx, [rax + PS_deco + VEC_ptr]
+    add rcx, [rax + PRS_deco + VEC_ptr]
     cmp rcx, rsi
     je 9f
     mov r8, [rcx]
@@ -1175,19 +1175,19 @@ dr_drop:
 pool_compact:
     PROLOGUE
     mov rbx, rdi
-    mov rax, [rbx + PS_dgarbage]
+    mov rax, [rbx + PRS_dgarbage]
     cmp rax, 1048576
     jb 9f
-    mov rcx, [rbx + PS_dpool + SB_len]
+    mov rcx, [rbx + PRS_dpool + SB_len]
     shr rcx, 1
     cmp rax, rcx
     jb 9f
     mov qword ptr [rip + npool + SB_len], 0
     xor r12d, r12d
-1:  cmp r12, [rbx + PS_deco + VEC_len]
+1:  cmp r12, [rbx + PRS_deco + VEC_len]
     jae 2f
     imul r13, r12, DR_SIZE
-    add r13, [rbx + PS_deco + VEC_ptr]
+    add r13, [rbx + PRS_deco + VEC_ptr]
     inc r12
     movzx edx, word ptr [r13 + DR_blen]
     movzx ecx, word ptr [r13 + DR_alen]
@@ -1196,18 +1196,18 @@ pool_compact:
     add edx, ecx
     add edx, [r13 + DR_xlen]
     mov esi, [r13 + DR_text]
-    add rsi, [rbx + PS_dpool + SB_ptr]
+    add rsi, [rbx + PRS_dpool + SB_ptr]
     mov rax, [rip + npool + SB_len]
     mov [r13 + DR_text], eax
     lea rdi, [rip + npool]
     call sb_push
     jmp 1b
-2:  mov qword ptr [rbx + PS_dpool + SB_len], 0
-    lea rdi, [rbx + PS_dpool]
+2:  mov qword ptr [rbx + PRS_dpool + SB_len], 0
+    lea rdi, [rbx + PRS_dpool]
     mov rsi, [rip + npool + SB_ptr]
     mov rdx, [rip + npool + SB_len]
     call sb_push
-    mov qword ptr [rbx + PS_dgarbage], 0
+    mov qword ptr [rbx + PRS_dgarbage], 0
 9:  EPILOGUE
 
 # deco_shift(doc, entry): the ranges move with an edit; emptied ones go
@@ -1218,10 +1218,10 @@ FN deco_shift
     mov r13, [rbx + DOC_pres]
     xor r14d, r14d
 .Lds_each:
-    cmp r14, [r13 + PS_deco + VEC_len]
+    cmp r14, [r13 + PRS_deco + VEC_len]
     jae .Lds_done
     imul r15, r14, DR_SIZE
-    add r15, [r13 + PS_deco + VEC_ptr]
+    add r15, [r13 + PRS_deco + VEC_ptr]
     mov eax, [r15 + DR_type]
     imul rax, rax, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
@@ -1309,12 +1309,12 @@ FN deco_clear_owner
     mov r13, [rax + DOC_pres]
     test r13, r13
     jz 1b
-    inc qword ptr [r13 + PS_gen]
+    inc qword ptr [r13 + PRS_gen]
     xor r14d, r14d
-2:  cmp r14, [r13 + PS_deco + VEC_len]
+2:  cmp r14, [r13 + PRS_deco + VEC_len]
     jae 1b
     imul rsi, r14, DR_SIZE
-    add rsi, [r13 + PS_deco + VEC_ptr]
+    add rsi, [r13 + PRS_deco + VEC_ptr]
     mov eax, [rsi + DR_type]
     imul rax, rax, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
@@ -1355,7 +1355,7 @@ FN deco_doc_gone
 # type_of(range index in eax, r13 ps) -> rax DT*, rcx DR*
 type_of:
     imul rcx, rax, DR_SIZE
-    add rcx, [r13 + PS_deco + VEC_ptr]
+    add rcx, [r13 + PRS_deco + VEC_ptr]
     mov eax, [rcx + DR_type]
     imul rax, rax, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
@@ -1369,7 +1369,7 @@ FN deco_frame
     mov r13, [rbx + DOC_pres]
     test r13, r13
     jz .Ldf_none
-    cmp qword ptr [r13 + PS_deco + VEC_len], 0
+    cmp qword ptr [r13 + PRS_deco + VEC_len], 0
     je .Ldf_none
     cmp rdx, [rbx + DOC_nlines]
     jb 1f
@@ -1380,7 +1380,7 @@ FN deco_frame
     mov rax, [rbx + DOC_version]
     cmp [rip + dw_ver], rax
     jne 2f
-    mov rax, [r13 + PS_gen]
+    mov rax, [r13 + PRS_gen]
     cmp [rip + dw_gen], rax
     jne 2f
     mov rax, [rip + g_deco_gen]
@@ -1393,7 +1393,7 @@ FN deco_frame
 2:  mov [rip + dw_doc], rbx
     mov rax, [rbx + DOC_version]
     mov [rip + dw_ver], rax
-    mov rax, [r13 + PS_gen]
+    mov rax, [r13 + PRS_gen]
     mov [rip + dw_gen], rax
     mov rax, [rip + g_deco_gen]
     mov [rip + dw_tgen], rax
@@ -1417,7 +1417,7 @@ FN deco_frame
     mov qword ptr [rip + dw_cap], DECO_PIECES
 3:  xor r12d, r12d
 .Ldf_each:
-    cmp r12, [r13 + PS_deco + VEC_len]
+    cmp r12, [r13 + PRS_deco + VEC_len]
     jae .Ldf_sort
     mov eax, r12d
     call type_of
@@ -2038,7 +2038,7 @@ tip_copy:
     add esi, ecx
     movzx ecx, word ptr [rdi + DR_alen]
     add esi, ecx
-    add rsi, [r13 + PS_dpool + SB_ptr]
+    add rsi, [r13 + PRS_dpool + SB_ptr]
     push rdx
     lea rdi, [rip + tipbuf]
     call memcpy
@@ -2058,7 +2058,7 @@ FN deco_tip_at
     jz 9f
     xor r15d, r15d
     mov r8, -1                  # the best priority so far
-1:  cmp r15, [r13 + PS_deco + VEC_len]
+1:  cmp r15, [r13 + PRS_deco + VEC_len]
     jae 8f
     mov eax, r15d
     call type_of
@@ -2100,7 +2100,7 @@ FN deco_scroll_ticks
     mov r13, [rbx + DOC_pres]
     test r13, r13
     jz 9f
-    cmp qword ptr [r13 + PS_deco + VEC_len], 0
+    cmp qword ptr [r13 + PRS_deco + VEC_len], 0
     je 9f
     cmp r8d, 4
     jl 9f
@@ -2111,7 +2111,7 @@ FN deco_scroll_ticks
     mov rax, [rbx + DOC_version]
     cmp [rip + tk_ver], rax
     jne 1f
-    mov rax, [r13 + PS_gen]
+    mov rax, [r13 + PRS_gen]
     cmp [rip + tk_gen], rax
     jne 1f
     mov rax, [rip + g_deco_gen]
@@ -2125,7 +2125,7 @@ FN deco_scroll_ticks
 1:  mov [rip + tk_doc], rbx
     mov rax, [rbx + DOC_version]
     mov [rip + tk_ver], rax
-    mov rax, [r13 + PS_gen]
+    mov rax, [r13 + PRS_gen]
     mov [rip + tk_gen], rax
     mov rax, [rip + g_deco_gen]
     mov [rip + tk_tgen], rax
@@ -2155,7 +2155,7 @@ FN deco_scroll_ticks
     call memset
     xor r14d, r14d
     xor r15d, r15d              # rows with a tick
-3:  cmp r14, [r13 + PS_deco + VEC_len]
+3:  cmp r14, [r13 + PRS_deco + VEC_len]
     jae .Ltk_draw
     mov eax, r14d
     call type_of

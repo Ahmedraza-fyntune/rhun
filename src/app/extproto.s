@@ -497,6 +497,15 @@ handle_line:
     call ai_reply
     test eax, eax
     jnz 9f
+    # source control (wider-parity C): commit-message and quickdiff answers (scmext.s)
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call scmext_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -554,6 +563,17 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call ai_reply
+    test eax, eax
+    jnz 9f
+    # source control (wider-parity C): commit-message and quickdiff errors (scmext.s)
+    mov edi, 2
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call scmext_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -3861,6 +3881,13 @@ verbs:
     .quad .Lv_provides, query_h_provides, 0
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
+    # source control (wider-parity C): gitdata.s
+    .quad .Lv_git_repo, gitdata_h_repo, 0
+    .quad .Lv_git_status, gitdata_h_status, 0
+    .quad .Lv_git_blame, gitdata_h_blame, 0
+    .quad .Lv_git_log, gitdata_h_log, 4096
+    .quad .Lv_git_show, gitdata_h_show, 4096
+    .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -3891,6 +3918,12 @@ verbs:
 .Lv_set_context: .asciz "set-context"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
+.Lv_git_repo: .asciz "git-repo"
+.Lv_git_status: .asciz "git-status"
+.Lv_git_blame: .asciz "git-blame"
+.Lv_git_log: .asciz "git-log"
+.Lv_git_show: .asciz "git-show"
+.Lv_git_diff_open: .asciz "git-diff-open"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -4042,6 +4075,14 @@ feature_names:
 .Lr_body: .asciz "a body over its cap"
 .Lr_framing: .asciz "invalid body framing"
 .Lr_syntax: .asciz "three unparsable lines in a row"
+
+# ---------------- source control (wider-parity C): for verb handlers in other files ----------------
+.text
+# FN extproto_answer_syntax(): "error ID syntax ..." for the request being served (counts toward the
+# three in a row that end a program)
+FN extproto_answer_syntax
+    mov rdi, [rip + cur_id]
+    jmp reply_syntax
 
 .include "app/extwatchproto.inc"
 .include "app/extaiproto.inc"

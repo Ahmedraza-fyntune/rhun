@@ -112,8 +112,8 @@ glyph_lower:
     xor eax, eax
     test rdi, rdi
     jz 9f
-    mov rcx, [rdi + PS_glyphs + VEC_len]
-    mov rdi, [rdi + PS_glyphs + VEC_ptr]
+    mov rcx, [rdi + PRS_glyphs + VEC_len]
+    mov rdi, [rdi + PRS_glyphs + VEC_ptr]
 1:  cmp rax, rcx
     jae 9f
     lea rdx, [rax + rcx]
@@ -141,10 +141,10 @@ glyph_find:
     mov rdi, [rbx + DOC_pres]
     test rdi, rdi
     jz 8f
-1:  cmp rax, [rdi + PS_glyphs + VEC_len]
+1:  cmp rax, [rdi + PRS_glyphs + VEC_len]
     jae 8f
     imul rcx, rax, GLE_SIZE
-    add rcx, [rdi + PS_glyphs + VEC_ptr]
+    add rcx, [rdi + PRS_glyphs + VEC_ptr]
     cmp [rcx + GLE_pos], r15
     jae 8f
     inc rax
@@ -175,15 +175,15 @@ FN gutter_glyph_set
     jmp 8f
 1:  # removed: the later entries move down over it
     mov rdi, [rbx + DOC_pres]
-    mov rcx, [rdi + PS_glyphs + VEC_ptr]
-    imul rdx, [rdi + PS_glyphs + VEC_len], GLE_SIZE
+    mov rcx, [rdi + PRS_glyphs + VEC_ptr]
+    imul rdx, [rdi + PRS_glyphs + VEC_len], GLE_SIZE
     add rdx, rcx
     lea rsi, [rax + GLE_SIZE]
     sub rdx, rsi
     mov rdi, rax
     call memmove
     mov rdi, [rbx + DOC_pres]
-    dec qword ptr [rdi + PS_glyphs + VEC_len]
+    dec qword ptr [rdi + PRS_glyphs + VEC_len]
     jmp 8f
 2:  test r14d, r14d
     jz 9f
@@ -197,15 +197,15 @@ FN gutter_glyph_set
     push rax
     push rax
     mov rdi, [rbx + DOC_pres]
-    lea rdi, [rdi + PS_glyphs]
+    lea rdi, [rdi + PRS_glyphs]
     mov esi, GLE_SIZE
     call vec_push
     pop rax
     pop rax
     mov rdi, [rbx + DOC_pres]
     imul rsi, rax, GLE_SIZE
-    add rsi, [rdi + PS_glyphs + VEC_ptr]
-    mov rdx, [rdi + PS_glyphs + VEC_len]
+    add rsi, [rdi + PRS_glyphs + VEC_ptr]
+    mov rdx, [rdi + PRS_glyphs + VEC_len]
     dec rdx
     sub rdx, rax
     imul rdx, rdx, GLE_SIZE
@@ -254,10 +254,10 @@ FN gutter_glyph_next
     call glyph_lower
     mov r14, rax
 1:  mov rdi, [rbx + DOC_pres]
-    cmp r14, [rdi + PS_glyphs + VEC_len]
+    cmp r14, [rdi + PRS_glyphs + VEC_len]
     jae 8f
     imul rcx, r14, GLE_SIZE
-    add rcx, [rdi + PS_glyphs + VEC_ptr]
+    add rcx, [rdi + PRS_glyphs + VEC_ptr]
     inc r14
     cmp [rcx + GLE_kind], r12d
     jne 1b
@@ -297,8 +297,8 @@ glyph_clear_doc:
     mov rdi, [rbx + DOC_pres]
     test rdi, rdi
     jz 9f
-    mov rsi, [rdi + PS_glyphs + VEC_ptr]
-    mov rcx, [rdi + PS_glyphs + VEC_len]
+    mov rsi, [rdi + PRS_glyphs + VEC_ptr]
+    mov rcx, [rdi + PRS_glyphs + VEC_len]
     xor edx, edx                # read
     xor r8d, r8d                # write
 1:  cmp rdx, rcx
@@ -316,7 +316,7 @@ glyph_clear_doc:
     jmp 1b
 2:  cmp r8, rcx
     je 9f
-    mov [rdi + PS_glyphs + VEC_len], r8
+    mov [rdi + PRS_glyphs + VEC_len], r8
     mov rdi, rbx
     call pres_touch
 9:  pop rbx
@@ -328,10 +328,10 @@ FN gutter_shift
     mov rbx, rdi
     mov r12, rsi
     mov rax, [rbx + DOC_pres]
-    mov rsi, [rax + PS_glyphs + VEC_len]
+    mov rsi, [rax + PRS_glyphs + VEC_len]
     test rsi, rsi
     jz 9f
-    mov rdi, [rax + PS_glyphs + VEC_ptr]
+    mov rdi, [rax + PRS_glyphs + VEC_ptr]
     mov edx, GLE_SIZE
     mov ecx, GR_RIGHT
     mov r8, r12
@@ -347,19 +347,19 @@ FN gutter_shift
     call glyph_lower
     mov r15, rax                # the line's first entry
 1:  mov rdi, [rbx + DOC_pres]
-    cmp r15, [rdi + PS_glyphs + VEC_len]
+    cmp r15, [rdi + PRS_glyphs + VEC_len]
     jae 9f
     imul rcx, r15, GLE_SIZE
-    add rcx, [rdi + PS_glyphs + VEC_ptr]
+    add rcx, [rdi + PRS_glyphs + VEC_ptr]
     cmp [rcx + GLE_pos], r14
     jae 9f
     inc r15
     # a later entry of the same kind on the line goes
     mov r8, r15
-2:  cmp r8, [rdi + PS_glyphs + VEC_len]
+2:  cmp r8, [rdi + PRS_glyphs + VEC_len]
     jae 1b
     imul r9, r8, GLE_SIZE
-    add r9, [rdi + PS_glyphs + VEC_ptr]
+    add r9, [rdi + PRS_glyphs + VEC_ptr]
     cmp [r9 + GLE_pos], r14
     jae 1b
     mov eax, [rcx + GLE_kind]
@@ -372,12 +372,12 @@ FN gutter_shift
     mov rdi, r9
     lea rsi, [r9 + GLE_SIZE]
     mov rax, [rbx + DOC_pres]
-    imul rdx, [rax + PS_glyphs + VEC_len], GLE_SIZE
-    add rdx, [rax + PS_glyphs + VEC_ptr]
+    imul rdx, [rax + PRS_glyphs + VEC_len], GLE_SIZE
+    add rdx, [rax + PRS_glyphs + VEC_ptr]
     sub rdx, rsi
     call memmove
     mov rax, [rbx + DOC_pres]
-    dec qword ptr [rax + PS_glyphs + VEC_len]
+    dec qword ptr [rax + PRS_glyphs + VEC_len]
     pop r8
     pop rcx
     mov rdi, [rbx + DOC_pres]
@@ -478,7 +478,7 @@ top_glyph:
     mov rdi, [rbx + DOC_pres]
     test rdi, rdi
     jz 9f
-    cmp qword ptr [rdi + PS_glyphs + VEC_len], 0
+    cmp qword ptr [rdi + PRS_glyphs + VEC_len], 0
     je 9f
     mov rsi, r13
     call line_span
@@ -486,10 +486,10 @@ top_glyph:
     mov rsi, rax
     call glyph_lower
     mov rdi, [rbx + DOC_pres]
-1:  cmp rax, [rdi + PS_glyphs + VEC_len]
+1:  cmp rax, [rdi + PRS_glyphs + VEC_len]
     jae 9f
     imul rcx, rax, GLE_SIZE
-    add rcx, [rdi + PS_glyphs + VEC_ptr]
+    add rcx, [rdi + PRS_glyphs + VEC_ptr]
     cmp [rcx + GLE_pos], r12
     jae 9f
     inc rax

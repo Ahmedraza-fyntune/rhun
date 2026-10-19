@@ -356,10 +356,10 @@ c_print_present:
     # sorted by start: keys start << 20 | index
     mov qword ptr [rip + keys + VEC_len], 0
     xor r12d, r12d
-2:  cmp r12, [r14 + PS_deco + VEC_len]
+2:  cmp r12, [r14 + PRS_deco + VEC_len]
     jae 3f
     imul rax, r12, DR_SIZE
-    add rax, [r14 + PS_deco + VEC_ptr]
+    add rax, [r14 + PRS_deco + VEC_ptr]
     mov r13, [rax + DR_start]
     shl r13, 20
     or r13, r12
@@ -380,7 +380,7 @@ c_print_present:
     inc r12
     and r13d, 0xfffff
     imul r13, r13, DR_SIZE
-    add r13, [r14 + PS_deco + VEC_ptr]
+    add r13, [r14 + PRS_deco + VEC_ptr]
     lea rdi, [rip + .Ls_deco_sp]
     call out_cstr
     mov eax, [r13 + DR_type]
@@ -400,7 +400,7 @@ c_print_present:
     call put_lc
     # its texts
     mov r15d, [r13 + DR_text]
-    add r15, [r14 + PS_dpool + SB_ptr]
+    add r15, [r14 + PRS_dpool + SB_ptr]
     movzx esi, word ptr [r13 + DR_blen]
     lea rdi, [rip + .Ls_before]
     call put_text
@@ -418,10 +418,10 @@ c_print_present:
     test r14, r14
     jz 6f
     xor r12d, r12d
-5:  cmp r12, [r14 + PS_glyphs + VEC_len]
+5:  cmp r12, [r14 + PRS_glyphs + VEC_len]
     jae 6f
     imul r13, r12, GLE_SIZE
-    add r13, [r14 + PS_glyphs + VEC_ptr]
+    add r13, [r14 + PRS_glyphs + VEC_ptr]
     inc r12
     lea rdi, [rip + .Ls_glyph]
     call out_cstr
@@ -454,14 +454,14 @@ c_print_present:
     xor edi, edi
     test r14, r14
     jz 7f
-    mov rdi, [r14 + PS_tn]
+    mov rdi, [r14 + PRS_tn]
 7:  call out_u64
     lea rdi, [rip + .Ls_base]
     call out_cstr
     xor edi, edi
     test r14, r14
     jz 71f
-    mov rdi, [r14 + PS_tbase]
+    mov rdi, [r14 + PRS_tbase]
 71: call out_u64
     lea rdi, [rip + .Ls_version]
     call out_cstr

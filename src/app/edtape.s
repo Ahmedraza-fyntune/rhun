@@ -29,15 +29,15 @@ FN pres_ensure
     ret
 1:  PROLOGUE
     mov rbx, rdi
-    mov edi, PS_SIZE
+    mov edi, PRS_SIZE
     call mem_alloc
     mov r12, rax
     mov edi, TAPE_N * TE_SIZE
     call mem_alloc
-    mov [r12 + PS_tape], rax
+    mov [r12 + PRS_tape], rax
     mov rax, [rbx + DOC_version]
-    mov [r12 + PS_tbase], rax
-    mov qword ptr [r12 + PS_gen], 1
+    mov [r12 + PRS_tbase], rax
+    mov qword ptr [r12 + PRS_gen], 1
     mov [rbx + DOC_pres], r12
     call pres_enable
     mov rax, r12
@@ -62,13 +62,13 @@ FN pres_free
     mov rdi, rbx
     call deco_doc_gone
     mov qword ptr [rbx + DOC_pres], 0
-    mov rdi, [r12 + PS_tape]
+    mov rdi, [r12 + PRS_tape]
     call mem_free
-    lea rdi, [r12 + PS_deco]
+    lea rdi, [r12 + PRS_deco]
     call vec_free
-    mov rdi, [r12 + PS_dpool + SB_ptr]
+    mov rdi, [r12 + PRS_dpool + SB_ptr]
     call mem_free
-    lea rdi, [r12 + PS_glyphs]
+    lea rdi, [r12 + PRS_glyphs]
     call vec_free
     mov rdi, r12
     call mem_free
@@ -79,7 +79,7 @@ FN pres_touch
     mov rax, [rdi + DOC_pres]
     test rax, rax
     jz 1f
-    inc qword ptr [rax + PS_gen]
+    inc qword ptr [rax + PRS_gen]
 1:  mov dword ptr [rip + g_dirty], 1
     ret
 
@@ -139,7 +139,7 @@ FN pres_note_insert
     call pres_ensure            # a tape from before this insert
     mov rcx, [rbx + DOC_version]
     dec rcx
-    mov [rax + PS_tbase], rcx
+    mov [rax + PRS_tbase], rcx
 2:  call tape_next
     mov r15, rax
     mov [r15 + TE_pos], r12
@@ -205,16 +205,16 @@ FN pres_note_delete
 # tape_next(rbx doc) -> rax the ring's next entry, its version set; the oldest one goes when full
 tape_next:
     mov rdx, [rbx + DOC_pres]
-    mov rax, [rdx + PS_tn]
+    mov rax, [rdx + PRS_tn]
     mov rcx, rax
     and ecx, TAPE_N - 1
     imul rcx, rcx, TE_SIZE
-    add rcx, [rdx + PS_tape]
+    add rcx, [rdx + PRS_tape]
     cmp rax, TAPE_N
     jb 1f
     mov r8, [rcx + TE_version]  # the edit it held can no longer be replayed: positions of that
-    mov [rdx + PS_tbase], r8    # version and later still can
-1:  inc qword ptr [rdx + PS_tn]
+    mov [rdx + PRS_tbase], r8    # version and later still can
+1:  inc qword ptr [rdx + PRS_tn]
     mov r8, [rbx + DOC_version]
     mov [rcx + TE_version], r8
     mov rax, rcx
@@ -280,9 +280,9 @@ FN shift_points
 # tape_first(ps, version) -> rax the index of the first entry after that version, or -1 when the
 # tape cannot replay from it (older than the ring, or newer than the text)
 tape_first:
-    cmp rsi, [rdi + PS_tbase]
+    cmp rsi, [rdi + PRS_tbase]
     jb 8f
-    mov rax, [rdi + PS_tn]
+    mov rax, [rdi + PRS_tn]
     xor ecx, ecx
     cmp rax, TAPE_N
     jbe 1f
@@ -312,12 +312,12 @@ FN tape_map
     js .Ltm_fail
     mov r15, rax
 1:  mov rdx, [rbx + DOC_pres]
-    cmp r15, [rdx + PS_tn]
+    cmp r15, [rdx + PRS_tn]
     jae .Ltm_done
     mov rax, r15
     and eax, TAPE_N - 1
     imul rax, rax, TE_SIZE
-    add rax, [rdx + PS_tape]
+    add rax, [rdx + PRS_tape]
     inc r15
     cmp [rax + TE_version], r12
     jbe 1b
@@ -364,12 +364,12 @@ FN tape_map_lc
     mov r15, rax
 .Ltl_entry:
     mov rdx, [rbx + DOC_pres]
-    cmp r15, [rdx + PS_tn]
+    cmp r15, [rdx + PRS_tn]
     jae .Ltl_pos
     mov rax, r15
     and eax, TAPE_N - 1
     imul rax, rax, TE_SIZE
-    add rax, [rdx + PS_tape]
+    add rax, [rdx + PRS_tape]
     inc r15
     cmp [rax + TE_version], r12
     jbe .Ltl_entry

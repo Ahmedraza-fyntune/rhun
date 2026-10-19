@@ -748,8 +748,8 @@ FN extmarks_row
     imul r15, r14, MK_SIZE
     add r15, [rdi + VEC_ptr]
     inc r14
-    mov rdi, [r15 + MK_owner]
-    call ext_is_visible
+    mov rdi, r15
+    call mark_live
     test eax, eax
     jz .Lmr_each
     # the mark's byte range on this line, as offsets within the line, clipped to the row
@@ -834,8 +834,8 @@ FN extmarks_counts
     imul r15, r12, MK_SIZE
     add r15, [rbx + VEC_ptr]
     inc r12
-    mov rdi, [r15 + MK_owner]
-    call ext_is_visible
+    mov rdi, r15
+    call mark_live
     test eax, eax
     jz 1b
     cmp dword ptr [r15 + MK_sev], SEV_ERROR
@@ -867,8 +867,8 @@ FN extmarks_at
     ja 1b
     cmp [r14 + MK_end], r12
     jbe 1b
-    mov rdi, [r14 + MK_owner]
-    call ext_is_visible
+    mov rdi, r14
+    call mark_live
     test eax, eax
     jz 1b
     mov rax, [r14 + MK_msg]
@@ -1055,6 +1055,59 @@ FN ext_hooks_update
     mov [rip + g_ext_hooks], r12d
     EPILOGUE
 
+# mark_live(MK*) -> eax 1 when it is shown: a problems source's always (problems.s), an extension's
+#   while the extension is
+mark_live:
+    test dword ptr [rdi + MK_pad], MKF_SOURCE
+    jnz 1f
+    mov rdi, [rdi + MK_owner]
+    jmp ext_is_visible
+1:  mov eax, 1
+    ret
+
+# extmarks_add_source(doc, source, start, end, SEV_*, message cstr): a mark of the Problems store
+#   (problems.s), its message copied (cut at MARK_MSG_MAX bytes)
+FN extmarks_add_source
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov [rsp], r8d
+    mov [rsp + 8], r9
+    mov rdi, [rbx + DOC_xmarks]
+    test rdi, rdi
+    jnz 1f
+    mov edi, VEC_SIZE
+    call mem_alloc
+    mov [rbx + DOC_xmarks], rax
+1:  mov rax, [rbx + DOC_xmarks]
+    cmp qword ptr [rax + VEC_len], MARKS_MAX * 4
+    jae 9f
+    mov dword ptr [rip + g_marks_ever], 1
+    call ext_hooks_update
+    mov rdi, [rsp + 8]
+    call strlen
+    cmp rax, MARK_MSG_MAX
+    jbe 2f
+    mov eax, MARK_MSG_MAX
+2:  mov rdi, [rsp + 8]
+    mov rsi, rax
+    call mem_dup
+    mov r15, rax
+    mov rdi, [rbx + DOC_xmarks]
+    mov esi, MK_SIZE
+    call vec_push
+    mov [rax + MK_owner], r12
+    mov [rax + MK_start], r13
+    mov [rax + MK_end], r14
+    mov ecx, [rsp]
+    mov [rax + MK_sev], ecx
+    mov dword ptr [rax + MK_pad], MKF_SOURCE
+    mov [rax + MK_msg], r15
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
 # RAX mark -> ZF1 when unavailable. Preserve every caller register for the range scan.
 mark_visible_flags:
     push rax
@@ -1066,8 +1119,8 @@ mark_visible_flags:
     push r9
     push r10
     push r11
-    mov rdi, [rax + MK_owner]
-    call ext_is_visible
+    mov rdi, rax
+    call mark_live
     test eax, eax
     pop r11
     pop r10
