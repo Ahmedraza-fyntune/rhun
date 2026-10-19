@@ -690,8 +690,14 @@ run_git:
     mov r9d, [rsp + 256]
     cmp r15, PIPE_IN
     jbe 3f
+    cmp dword ptr [rip + g_remote], 0
+    jne 3f                      # a remote host takes the input whole (remote.s)
     or r9d, 4                   # longer than the pipe holds: fed as git reads it
-3:  call run_piped_input
+3:  call vfs_run_piped_input    # on the host in a remote window
+    cmp dword ptr [rip + g_remote], 0
+    je 31f
+    mov ecx, -1
+31:
     test rax, rax
     jle 8f
     mov ebx, eax
@@ -790,7 +796,7 @@ FN git_job_kill
     push rbx
     mov edi, [rdi + JB_pid]
     mov esi, 9
-    SYS SYS_kill
+    call proc_kill
     pop rbx
 9:  ret
 
@@ -823,7 +829,7 @@ on_job:
     mov dword ptr [rbx + JB_over], 1
     mov edi, [rbx + JB_pid]
     mov esi, 9
-    SYS SYS_kill
+    call proc_kill
 11: mov qword ptr [rbx + JB_out + SB_len], 0
     jmp 1b
 2:  mov edi, [rbx + JB_fd]

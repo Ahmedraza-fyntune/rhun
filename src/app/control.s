@@ -171,6 +171,7 @@ FN control_exec
     mov rsi, rbx
     mov rdx, r12
 2:  call [r15 + 8]
+.Lce_done:
     push rax
     push rax
     call term_frame_now         # a command ends with a frame that shows all output so far
@@ -2331,9 +2332,12 @@ ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
     .quad scm_ctl               # source control (scmctl.s)
     .quad langfeat_ctl          # language features (lfcontrol.s)
+    .quad debug_ctl             # debugger (debugctl.s)
     .quad test_ctl              # testing (testview.s)
     .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
     .quad views_ctl             # views group: places and retained views (viewsctl.s)
+    .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
+    .quad remote_ctl            # remote hosts (remotectl.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap

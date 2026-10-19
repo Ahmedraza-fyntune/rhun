@@ -89,6 +89,8 @@ cfg_term_font: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
 .globl cfg_save_actions
 cfg_save_actions: .quad .Lempty
+.globl cfg_remote_agent_binary
+cfg_remote_agent_binary: .quad .Lempty  # remote hosts: the Linux rhun to start on hosts (remote.s)
 .Lcfg_strings_end:
 cfg_agent_sources: .quad .Ldef_sources  # the switched-on providers' names, for the discovery worker
 
@@ -819,6 +821,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Ls_terminal: .asciz "terminal"
 .Ls_git: .asciz "git"
 .Ls_updates: .asciz "updates"
+.Ls_remote: .asciz "remote"
 
 .macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0, live_desc=0
     .quad \sec, 1f, \ptr, 2f
@@ -914,6 +917,7 @@ g_settings:
     SETTING_ACTION .Ls_git, ai_setup, cmd_ai_model_files, .Lai_setup, g_ai_local_desc
     SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
     SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_version_text, g_update_desc
+    SETTING .Ls_remote, agent_binary, ST_STR, cfg_remote_agent_binary, 0, 0, 0, 0, "Remote agent binary", "A Linux rhun to start on remote hosts. Empty uses this release's own."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Lpaste_opts: .asciz "spread", "Spread lines", "full", "Full text", ""

@@ -1668,6 +1668,14 @@ FN ext_load
 5:  mov dword ptr [rbx + EXT_hello], 0
     cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
+    # no program for this system: a WebAssembly module runs in rhun --wasm-host
+    mov rdi, rbx
+    call ext_wasm_program
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    cmp rax, 1
+    jne .Lel_fail
     lea rdi, [rip + .Lr_no_program]
     jmp .Lel_fail
 6:  # a script needs its runtime on PATH
@@ -1847,12 +1855,23 @@ manifest_kv:
     lea rsi, [rip + .Lk_run_target]
     call ini_key_is
     test eax, eax
-    jz 4f
+    jz .Lel_wasm_key
     cmp qword ptr [rbx + EXT_script], 0
     jne 9f                      # runtime + run already set
     mov rdi, [rbx + EXT_dir]
     call val_join
     mov [rbx + EXT_prog], rax
+    jmp 9f
+.Lel_wasm_key:
+    # run.wasm32-wasip1: the WebAssembly module, used when no program runs here (extwasm.s)
+    mov rdi, r12
+    lea rsi, [rip + .Lk_run_wasm]
+    call ini_key_is
+    test eax, eax
+    jz 4f
+    mov rdi, [rbx + EXT_dir]
+    call val_join
+    mov [rbx + EXT_wasm], rax
     jmp 9f
 4:  mov rdi, r12
     lea rsi, [rip + .Lk_runtime]
@@ -1954,10 +1973,22 @@ manifest_kv:
     lea rsi, [rip + .Ls_views]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 7f
     mov rdi, rbx
     mov rsi, r12
     call rview_manifest_kv
+    jmp 9f
+7:  # debugger: [debugger.TYPE] (debugcfg.s)
+    mov rdi, [r12 + INI_sec]
+    mov rsi, [r12 + INI_seclen]
+    lea rdx, [rip + .Ls_debugger_dot]
+    mov ecx, 9
+    call str_starts
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call dbg_manifest_kv
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -2263,7 +2294,15 @@ parse_needs:
     call val_dup
     mov [rbx + EXT_tests_progs], rax
     jmp 9f
-7:  # source control (wider-parity C): git = read, the project's Git data through rhun
+7:  mov rdi, r12                # debugger: debug = yes starts debug adapters as the user
+    lea rsi, [rip + .Ln_debug]
+    call ini_key_is
+    test eax, eax
+    jz 8f
+    mov edi, NEEDS_DEBUG
+    call needs_yes
+    jmp 9f
+8:  # source control (wider-parity C): git = read, the project's Git data through rhun
     mov rdi, r12
     lea rsi, [rip + .Ln_git]
     call ini_key_is
@@ -2953,8 +2992,13 @@ ext_spawn:
 .Les_scratch_done:
     EPILOGUE
 
-# build_argv(ext): argv_vec = program [script] args..., 0
+# build_argv(ext): argv_vec = program [script] args..., 0 (a WebAssembly extension's: extwasm.s)
 build_argv:
+    cmp dword ptr [rdi + EXT_wasm_run], 0
+    je 1f
+    lea rsi, [rip + argv_vec]
+    jmp ext_wasm_argv
+1:
     PROLOGUE
     mov rbx, rdi
     mov qword ptr [rip + argv_vec + VEC_len], 0
@@ -3313,6 +3357,7 @@ env_add_state:
 # win_runtime(name) -> path or 0: proc_which, except that python3 is also looked for as python and
 # py (Windows installs Python as python.exe and the py launcher), and the Microsoft Store's stubs in
 # WindowsApps (which only offer to install Python) are taken only when nothing else is there
+.globl win_runtime               # the debugger finds adapters the same way (debugcfg.s)
 win_runtime:
     PROLOGUE
     mov r12, rdi
@@ -4765,6 +4810,7 @@ ext_target: .asciz "linux-x86_64"
 .Lk_version: .asciz "version"
 .Lk_protocol: .asciz "protocol"
 .Lk_runtime: .asciz "runtime"
+.Lk_run_wasm: .asciz "run.wasm32-wasip1"
 .Lk_icon: .asciz "icon"
 .Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
@@ -4818,6 +4864,8 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_commit: .asciz "commit_message"
 .Lpv_quickdiff: .asciz "quickdiff"
 .Lpv_scm: .asciz "scm"
+.Ln_debug: .asciz "debug"
+.Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"
 .Lo_command: .asciz "command"
 .Lo_project: .asciz "project"

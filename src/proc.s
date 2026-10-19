@@ -50,6 +50,8 @@ FN proc_self_path
 # proc_cwd(pid, buf, capacity) -> length of the process's current folder, written to buf with a NUL, or
 #   negative (a terminal's shell: relative paths in its output start there)
 FN proc_cwd
+    test edi, REMOTE_PID_TAG    # a program on the remote host (remote.s)
+    jnz remote_pid_cwd
 .ifdef MACOS
     jmp mac_pid_cwd
 .else
@@ -307,8 +309,22 @@ FN proc_spawn
 
 .endif
 
+# proc_kill(pid, sig) -> 0 or -errno: kill(2), also for the programs of a remote window (remote.s);
+#   a negative pid is the process group
+FN proc_kill
+    mov eax, edi
+    test eax, eax
+    jns 1f
+    neg eax
+1:  test eax, REMOTE_PID_TAG
+    jnz remote_kill
+    SYS SYS_kill
+    ret
+
 # proc_wait(pid, nohang) -> exit status (128 + signal when killed), -1 still running, -2 unknown pid
 FN proc_wait
+    test edi, REMOTE_PID_TAG    # a program on the remote host (remote.s)
+    jnz remote_wait
     sub rsp, 24
     mov dword ptr [rsp], 0
     xor edx, edx
@@ -537,7 +553,24 @@ FN pty_open
 # pty_resize(master, cols, rows, width px, height px)
 .ifndef WINDOWS
 FN pty_resize
-    sub rsp, 24
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    # a remote terminal's master is a channel: the host resizes its pty
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push r8
+    call remote_pty_resize
+    pop r8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jz 1f
+    ret
+1:  sub rsp, 24
     mov [rsp], dx               # rows
     mov [rsp + 2], si           # cols
     mov [rsp + 4], cx

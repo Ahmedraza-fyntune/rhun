@@ -1004,7 +1004,7 @@ class Translator:
         return set()
 
     WRITES_ALL = {'add', 'sub', 'cmp', 'and', 'or', 'xor', 'test', 'neg', 'adc', 'sbb', 'comiss',
-                  'ucomiss', 'repe cmpsb', 'repz cmpsb', 'repne scasb', 'repnz scasb', 'shl', 'sal',
+                  'ucomiss', 'comisd', 'ucomisd', 'repe cmpsb', 'repz cmpsb', 'repne scasb', 'repnz scasb', 'shl', 'sal',
                   'shr', 'sar', 'div', 'idiv', 'mul', 'imul', 'bsr', 'bsf'}
 
     def writes(self, st):
@@ -2222,6 +2222,105 @@ class Translator:
 
     i_movaps = i_movups
     i_movdqu = i_movups
+
+    # -- double precision and 64-bit moves (the WebAssembly interpreter, src/wasm)
+    def dsrc(self, o, st, tmp=24):
+        if isinstance(o, Xmm):
+            return o.i
+        if isinstance(o, Mem):
+            a = self.addr(o, 8)
+            self.emit('ldr d%d, %s' % (tmp, a))
+            return tmp
+        self.err(st, 'bad sse operand')
+
+    def i_movq(self, st, ops, need, k):
+        d, s = ops
+        if isinstance(d, Xmm):
+            if isinstance(s, Reg):
+                self.emit('fmov d%d, %s' % (d.i, rn(s.i, 64)))
+            elif isinstance(s, Mem):
+                self.emit('ldr d%d, %s' % (d.i, self.addr(s, 8)))
+            else:
+                self.emit('fmov d%d, d%d' % (d.i, s.i))
+        elif isinstance(d, Reg):
+            self.emit('fmov %s, d%d' % (rn(d.i, 64), s.i))
+        else:
+            self.emit('str d%d, %s' % (s.i, self.addr(d, 8)))
+
+    def i_movsd(self, st, ops, need, k):
+        if not ops or len(ops) != 2:
+            self.err(st, 'string movsd')
+        d, s = ops
+        if isinstance(d, Mem):
+            self.emit('str d%d, %s' % (s.i, self.addr(d, 8)))
+        elif isinstance(s, Mem):
+            self.emit('ldr d%d, %s' % (d.i, self.addr(s, 8)))
+        else:
+            self.emit('mov v%d.d[0], v%d.d[0]' % (d.i, s.i))
+
+    def dop(self, st, ops, op):
+        d, s = ops
+        si = self.dsrc(s, st)
+        self.emit('%s d%d, d%d, d%d' % (op, d.i, d.i, si))
+
+    def i_addsd(self, st, ops, need, k):
+        self.dop(st, ops, 'fadd')
+
+    def i_subsd(self, st, ops, need, k):
+        self.dop(st, ops, 'fsub')
+
+    def i_mulsd(self, st, ops, need, k):
+        self.dop(st, ops, 'fmul')
+
+    def i_divsd(self, st, ops, need, k):
+        self.dop(st, ops, 'fdiv')
+
+    def i_sqrtsd(self, st, ops, need, k):
+        d, s = ops
+        si = self.dsrc(s, st)
+        self.emit('fsqrt d%d, d%d' % (d.i, si))
+
+    def i_comisd(self, st, ops, need, k):
+        # as comiss: unordered sets ZF and CF on x86, so Z=1 C=0 here
+        d, s = ops
+        si = self.dsrc(s, st)
+        self.emit('fcmp d%d, d%d' % (d.i, si))
+        self.emit('fccmp d%d, d%d, #4, vc' % (d.i, si))
+        if 'N' in need:
+            self.emit('mrs x16, nzcv')
+            self.emit('and x16, x16, #0xffffffff7fffffff')
+            self.emit('msr nzcv, x16')
+
+    i_ucomisd = i_comisd
+
+    def i_cvtsi2sd(self, st, ops, need, k):
+        d, s = ops
+        bits = s.bits or 32
+        S = self.get(s, bits, 11)
+        self.emit('scvtf d%d, %s' % (d.i, S))
+
+    def i_cvttsd2si(self, st, ops, need, k):
+        # x86 gives 0x80..0 for NaN and out of range where AArch64 saturates: callers check first
+        d, s = ops
+        si = self.dsrc(s, st)
+        self.emit('fcvtzs %s, d%d' % (rn(d.i, d.bits), si))
+
+    def i_cvtss2sd(self, st, ops, need, k):
+        d, s = ops
+        si = self.fsrc(s, st)
+        self.emit('fcvt d%d, s%d' % (d.i, si))
+
+    def i_cvtsd2ss(self, st, ops, need, k):
+        d, s = ops
+        si = self.dsrc(s, st)
+        self.emit('fcvt s%d, d%d' % (d.i, si))
+
+    def i_roundsd(self, st, ops, need, k):
+        d, s, m = ops
+        si = self.dsrc(s, st)
+        mode = m.value & 7
+        op = 'frinti' if mode & 4 else {0: 'frintn', 1: 'frintm', 2: 'frintp', 3: 'frintz'}[mode & 3]
+        self.emit('%s d%d, d%d' % (op, d.i, si))
 
 
 # a translation takes well under a second and 30 MB; past these limits the analysis has run away
