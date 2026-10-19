@@ -624,6 +624,9 @@ F DOC_language_name, 8  # owned explicit language name, retained even while unav
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
+# source control (wider-parity C): quick-diff bases from extensions (scmext.s)
+F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
+F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1
@@ -1141,9 +1144,10 @@ F DV_lines, 8           # DL per line
 F DV_n, 8
 F DV_name, 8            # tab title
 F DV_rev, 8             # commit, or 0 for the work tree
+F DV_rev2, 8            # with DV_two: the second revision, or 0 for the work tree
 F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
-F DV_pad, 4
+F DV_two, 4             # 1: DV_rev against DV_rev2 (git-diff-open), not a commit against its parent
 F DV_review, 8          # AI (review.s): the proposal a Review tab shows, or 0
 ENDSTRUCT DV_SIZE
 STRUCT
@@ -1170,6 +1174,11 @@ ENDSTRUCT GF_SIZE
 .equ GG_MERGE, 1                # conflicts
 .equ GG_STAGED, 2
 .equ GG_CHANGES, 3              # not staged, untracked
+# source control row menus (scm_row_menu, scmext.s): their locations
+.equ SL_HISTORY_COMMIT, 1
+.equ SL_HISTORY_FILE, 2
+.equ SL_SCM_RESOURCE, 3
+.equ SL_SCM_GROUP, 4
 
 # what HEAD is (g_git_head)
 .equ HD_BRANCH, 0
@@ -1478,6 +1487,11 @@ ENDSTRUCT TF_SIZE
     # contributions and commands (invoke.s, when.s, extcontext.s)
     FEATURE FEAT_COMMAND_ARGS, "command-args", 1  # 0 run ... FROM LEN, run-command, call
     FEATURE FEAT_CONTEXT_KEYS, "context-keys", 0  # set-context
+    # source control (wider-parity C): gitdata.s, scmext.s
+    FEATURE FEAT_GIT_DATA, "git-data", 0          # git-repo, git-status, git-blame, git-log, git-show, git-diff-open
+    FEATURE FEAT_COMMIT_MESSAGE, "commit-message", 1   # rhun asks a commit-message provider
+    FEATURE FEAT_QUICKDIFF, "quickdiff", 1        # rhun asks a quick-diff provider for a base text
+    FEATURE FEAT_SCM, "scm", 0                    # a second VCS provider's tabs
     # testing (testproto.s): test items, runs, results, coverage, test-exec
     FEATURE FEAT_TESTS, "tests", 1
     # AI (wider-parity D: agentext.s, review.s, tools.s)
@@ -1542,11 +1556,14 @@ FEATURE_LIST
 .equ PK_TYPE_FORMAT, 22
 .equ PK_LINKS, 23
 .equ PK_SAVE_ACTIONS, 24
-.equ PK_COUNT, 25
+.equ PK_COMMIT_MESSAGE, 25       # source control (scmext.s)
+.equ PK_QUICKDIFF, 26
+.equ PK_COUNT, 27
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
+.equ QO_SCM, 4                   # source control (scmext.s)
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1766,6 +1783,10 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
+# source control (wider-parity C): [provides] commit_message, quickdiff, scm (cstr values or 0)
+F EXT_pv_commit, 8      # "yes": a commit-message provider (scmext.s)
+F EXT_pv_quickdiff, 8   # file patterns it gives quick-diff bases for
+F EXT_pv_scm, 8         # "yes": it registers VCS provider tabs
 F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
 F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
 F EXT_tests_progs, 8    # [needs] tests: programs rhun may start for its test runs (cstr) or 0
@@ -1920,6 +1941,11 @@ ENDSTRUCT CRF_SIZE
     CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
     CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
     CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+    # source control (wider-parity C): gitTrusted (git.s), and a row menu's target (scmext.s)
+    CTXKEY CTX_GIT_TRUSTED, "gitTrusted", 0         # false while git is paused for a linked folder
+    CTXKEY CTX_SCM_PROVIDER, "scmProvider", 0       # "git" or the provider extension's OWNER/NAME
+    CTXKEY CTX_SCM_RESOURCE_GROUP, "scmResourceGroup", 0   # merge, staged, changes, or a provider's
+    CTXKEY CTX_SCM_RESOURCE_STATUS, "scmResourceStatus", 0 # the resource's letter (M A D R C U ?)
     # remote hosts (remote.s): "ssh", "docker", "podman", "wsl", "local" in a remote window, else empty
     CTXKEY CTX_REMOTE_NAME, "remoteName", 0
     CTXKEY CTX_REMOTE_HOST, "remoteHost", 0
@@ -2003,6 +2029,7 @@ ENDSTRUCT XK_SIZE
 .equ NEEDS_HOME_READ, 16
 .equ NEEDS_NETWORK, 32
 .equ NEEDS_TERMINAL, 64
+.equ NEEDS_GIT_READ, 128        # [needs] git = read: the project's Git data through rhun (gitdata.s)
 
 .equ EXT_MAX_RUNNING, EXT_CAP
 .equ EXT_HELLO_MS, 5000

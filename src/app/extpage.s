@@ -1646,6 +1646,10 @@ FN ext_needs_words
     call item
 6:  lea rsi, [rip + .Ln_terminal]
     test r13d, NEEDS_TERMINAL
+    jz 61f
+    call item
+61: lea rsi, [rip + .Ln_git]
+    test r13d, NEEDS_GIT_READ
     jz 7f
     call item
 7:  mov rsi, [rbx + EXT_runs]
@@ -1855,6 +1859,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ln_home: .asciz "read the files in your home folder"
 .Ln_net: .asciz "use the internet"
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
+.Ln_git: .asciz "read the project's Git history"
 .Ln_runs: .asciz "run "
 .Ln_nothing: .asciz "only use its own commands and settings"
 .Ln_sep: .asciz ", "
