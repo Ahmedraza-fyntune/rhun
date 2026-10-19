@@ -212,6 +212,7 @@ for t in debug-launch debug-framing debug-config debug-breakpoints debug-step de
 done
 # testing: the test explorer (feature "tests")
 python3 tests/testing.py || fail=1
+python3 tests/testing-real.py || fail=1   # skips without TESTS_DIR (a rhun-editor/tests checkout)
 # WebAssembly extension host (src/wasm): the core spec suite needs wabt's wast2json
 if command -v wast2json >/dev/null; then python3 tests/wasm-spec.py || fail=1; else echo "skip wasm-spec (no wast2json)"; fi
 python3 tests/wasm-host.py || fail=1
