@@ -12,7 +12,7 @@
 #   ctx_refresh()                    rhun's state may have changed: keys are read again
 #   ctx_set(id, ptr, len), ctx_set_bool(id, 0|1)   a published key's value (CTX_*)
 #   ctx_get(id) -> rax ptr, rdx len  a key's value
-#   ctx_push_target(CT*) / ctx_pop_target()        a menu's target for resource/editor keys
+#   ctx_push_target(MTG*) / ctx_pop_target()        a menu's target for resource/editor keys
 #
 # Grammar (WHEN_MAX bytes, WHEN_OPS_MAX operations, WHEN_DEPTH_MAX levels of ! and parentheses):
 #   or = and *("||" and); and = unary *("&&" unary); unary = "!" unary / "(" or ")" / true /
@@ -82,7 +82,7 @@ ctx_num: .zero CTX_COUNT * 24   # numbers formatted for a key
 ctx_lang: .zero 128             # resourceLang, spaces as _
 ctx_prov: .zero 128             # editorProviders
 .p2align 3
-ctx_target: .quad 0             # CT* a menu pushed, or 0
+ctx_target: .quad 0             # MTG* a menu pushed, or 0
 ctx_targets: .zero 8 * 8        # targets pushed before the current one (ctx_push_target)
 ctx_ntargets: .quad 0
 .globl g_wayland
@@ -1425,7 +1425,7 @@ FN ctx_refresh
     inc dword ptr [rip + ctx_round]    # 0 is never a round
 1:  ret
 
-# FN ctx_push_target(CT*): the resource and editor keys describe this menu target until
+# FN ctx_push_target(MTG*): the resource and editor keys describe this menu target until
 # ctx_pop_target
 FN ctx_push_target
     mov rax, [rip + ctx_ntargets]
@@ -1795,7 +1795,7 @@ ctx_rdoc:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz 1f
-    mov rax, [rax + CT_doc]
+    mov rax, [rax + MTG_doc]
     ret
 1:  mov rax, [rip + g_doc]
     ret
@@ -1804,10 +1804,10 @@ ctx_rpath:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz 1f
-    mov rcx, [rax + CT_path]
+    mov rcx, [rax + MTG_path]
     test rcx, rcx
     jnz 3f
-    mov rax, [rax + CT_doc]
+    mov rax, [rax + MTG_doc]
     jmp 2f
 1:  mov rax, [rip + g_file]
     test rax, rax
@@ -2106,13 +2106,13 @@ ck_target_kind:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz ck_empty
-    mov rdi, [rax + CT_kind]
+    mov rdi, [rax + MTG_kind]
     jmp ck_cstr
 ck_target_is_folder:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz ck_bool
-    mov rdi, [rax + CT_kind]
+    mov rdi, [rax + MTG_kind]
     test rdi, rdi
     jz ck_empty
     lea rsi, [rip + .Lv_folder]
@@ -2120,7 +2120,7 @@ ck_target_is_folder:
     test eax, eax
     jnz ck_bool
     mov rax, [rip + ctx_target]
-    mov rdi, [rax + CT_kind]
+    mov rdi, [rax + MTG_kind]
     lea rsi, [rip + .Lv_root]
     call strcmp_eq
     jmp ck_bool
@@ -2128,7 +2128,7 @@ ck_target_is_root:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz ck_bool
-    mov rdi, [rax + CT_kind]
+    mov rdi, [rax + MTG_kind]
     test rdi, rdi
     jz ck_empty
     lea rsi, [rip + .Lv_root]
@@ -2138,7 +2138,7 @@ ck_tab_kind:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz ck_empty
-    mov rdi, [rax + CT_tabkind]
+    mov rdi, [rax + MTG_tabkind]
     jmp ck_cstr
 
 # ---------------------------------------------------------------- headless control

@@ -4,11 +4,11 @@
 # program stops. Also the lifecycle hooks the contributions work needs from ext.s.
 .include "rhun.inc"
 
-# a key: XK records per extension, in xc_keys[extension index]
-.equ XK_name, 0                 # owned cstr
-.equ XK_val, 8                  # owned cstr set at run time, or 0
-.equ XK_def, 16                 # owned cstr from [context], or 0
-.equ XK_SIZE, 24
+# a key: XCK records per extension, in xc_keys[extension index]
+.equ XCK_name, 0                 # owned cstr
+.equ XCK_val, 8                  # owned cstr set at run time, or 0
+.equ XCK_def, 16                 # owned cstr from [context], or 0
+.equ XCK_SIZE, 24
 .equ XC_KEYS_MAX, 64            # keys per extension, defaults included
 .equ XP_MAX, 64                 # problems kept per extension
 
@@ -20,7 +20,7 @@ xp_buf: .zero SB_SIZE
 
 .text
 
-# xc_vec(ext) -> rax its VEC of XK records, or 0 for a pointer that is not an extension
+# xc_vec(ext) -> rax its VEC of XCK records, or 0 for a pointer that is not an extension
 xc_vec:
     mov rax, rdi
     sub rax, [rip + g_exts + VEC_ptr]
@@ -39,7 +39,7 @@ xc_vec:
 8:  xor eax, eax
     ret
 
-# xc_find(vec, key, klen) -> rax the XK with that name, or 0
+# xc_find(vec, key, klen) -> rax the XCK with that name, or 0
 xc_find:
     PROLOGUE
     mov rbx, rdi
@@ -48,12 +48,12 @@ xc_find:
     xor r14d, r14d
 1:  cmp r14, [rbx + VEC_len]
     jae 8f
-    imul r15, r14, XK_SIZE
+    imul r15, r14, XCK_SIZE
     add r15, [rbx + VEC_ptr]
     inc r14
     mov rdi, r12
     mov rsi, r13
-    mov rdx, [r15 + XK_name]
+    mov rdx, [r15 + XCK_name]
     call str_eq_cstr
     test eax, eax
     jz 1b
@@ -69,17 +69,17 @@ xc_present:
     mov rdx, [rdi + VEC_ptr]
 1:  cmp rcx, [rdi + VEC_len]
     jae 9f
-    imul r8, rcx, XK_SIZE
+    imul r8, rcx, XCK_SIZE
     inc rcx
-    cmp qword ptr [rdx + r8 + XK_val], 0
+    cmp qword ptr [rdx + r8 + XCK_val], 0
     jne 2f
-    cmp qword ptr [rdx + r8 + XK_def], 0
+    cmp qword ptr [rdx + r8 + XCK_def], 0
     je 1b
 2:  inc rax
     jmp 1b
 9:  ret
 
-# xc_slot(vec, key, klen) -> rax the key's XK, made when absent (reusing an empty one), or 0 when
+# xc_slot(vec, key, klen) -> rax the key's XCK, made when absent (reusing an empty one), or 0 when
 # the extension has XC_KEYS_MAX keys already
 xc_slot:
     PROLOGUE
@@ -97,27 +97,27 @@ xc_slot:
     xor r14d, r14d
 1:  cmp r14, [rbx + VEC_len]
     jae 2f
-    imul r15, r14, XK_SIZE
+    imul r15, r14, XCK_SIZE
     add r15, [rbx + VEC_ptr]
     inc r14
-    cmp qword ptr [r15 + XK_val], 0
+    cmp qword ptr [r15 + XCK_val], 0
     jne 1b
-    cmp qword ptr [r15 + XK_def], 0
+    cmp qword ptr [r15 + XCK_def], 0
     jne 1b
-    mov rdi, [r15 + XK_name]
+    mov rdi, [r15 + XCK_name]
     call mem_free
     jmp 3f
 2:  mov rdi, rbx
-    mov esi, XK_SIZE
+    mov esi, XCK_SIZE
     call vec_push
     mov r15, rax
     xor eax, eax
-    mov [r15 + XK_val], rax
-    mov [r15 + XK_def], rax
+    mov [r15 + XCK_val], rax
+    mov [r15 + XCK_def], rax
 3:  mov rdi, r12
     mov rsi, r13
     call mem_dup                # mem_dup ends it with a NUL
-    mov [r15 + XK_name], rax
+    mov [r15 + XCK_name], rax
     mov rax, r15
 9:  EPILOGUE
 8:  xor eax, eax
@@ -260,10 +260,10 @@ FN xc_value
     call xc_find
     test rax, rax
     jz 8f
-    mov rdi, [rax + XK_val]
+    mov rdi, [rax + XCK_val]
     test rdi, rdi
     jnz 1f
-    mov rdi, [rax + XK_def]
+    mov rdi, [rax + XCK_def]
     test rdi, rdi
     jz 8f
 1:  mov rbx, rdi
@@ -335,9 +335,9 @@ FN xc_set
     test rax, rax
     jz 5f
     mov rbx, rax
-    mov rdi, [rbx + XK_val]
+    mov rdi, [rbx + XCK_val]
     call mem_free
-    mov qword ptr [rbx + XK_val], 0
+    mov qword ptr [rbx + XCK_val], 0
     jmp 5f
 1:  mov rdi, rax
     mov rsi, r12
@@ -346,12 +346,12 @@ FN xc_set
     test rax, rax
     jz 6f
     mov rbx, rax
-    mov rdi, [rbx + XK_val]
+    mov rdi, [rbx + XCK_val]
     call mem_free
     mov rdi, r14
     mov rsi, r15
     call mem_dup
-    mov [rbx + XK_val], rax
+    mov [rbx + XCK_val], rax
 5:  mov dword ptr [rip + g_dirty], 1
     xor eax, eax
     EPILOGUE
@@ -386,12 +386,12 @@ FN xc_default
     test rax, rax
     jz 6f
     mov rbx, rax
-    mov rdi, [rbx + XK_def]
+    mov rdi, [rbx + XCK_def]
     call mem_free
     mov rdi, r14
     mov rsi, r15
     call mem_dup
-    mov [rbx + XK_def], rax
+    mov [rbx + XCK_def], rax
     xor eax, eax
     EPILOGUE
 6:  mov eax, 1
@@ -410,18 +410,18 @@ xc_clear:
     xor r13d, r13d
 1:  cmp r13, [rbx + VEC_len]
     jae 2f
-    imul r14, r13, XK_SIZE
+    imul r14, r13, XCK_SIZE
     add r14, [rbx + VEC_ptr]
     inc r13
-    mov rdi, [r14 + XK_val]
+    mov rdi, [r14 + XCK_val]
     call mem_free
-    mov qword ptr [r14 + XK_val], 0
+    mov qword ptr [r14 + XCK_val], 0
     test r12d, r12d
     jz 1b
-    mov rdi, [r14 + XK_def]
+    mov rdi, [r14 + XCK_def]
     call mem_free
-    mov qword ptr [r14 + XK_def], 0
-    mov rdi, [r14 + XK_name]
+    mov qword ptr [r14 + XCK_def], 0
+    mov rdi, [r14 + XCK_name]
     call mem_free
     jmp 1b
 2:  test r12d, r12d
@@ -442,17 +442,17 @@ FN xc_dump_ext
     xor r13d, r13d
 1:  cmp r13, [rbx + VEC_len]
     jae 9f
-    imul r14, r13, XK_SIZE
+    imul r14, r13, XCK_SIZE
     add r14, [rbx + VEC_ptr]
     inc r13
-    mov r15, [r14 + XK_val]
+    mov r15, [r14 + XCK_val]
     test r15, r15
     jnz 2f
-    mov r15, [r14 + XK_def]
+    mov r15, [r14 + XCK_def]
     test r15, r15
     jz 1b
 2:  mov rdi, r12
-    mov rsi, [r14 + XK_name]
+    mov rsi, [r14 + XCK_name]
     call sb_push_cstr
     mov rdi, r12
     mov esi, '='

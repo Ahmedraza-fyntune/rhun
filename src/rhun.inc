@@ -1970,12 +1970,12 @@ CTXKEY_LIST
 .equ WHEN_DEPTH_MAX, 8
 # a menu target the resource and editor keys describe while a menu evaluates (ctx_push_target)
 STRUCT
-F CT_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
+F MTG_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
                         #   "view" "item" (targetKind), or 0 for no target
-F CT_doc, 8             # its DOC*, or 0
-F CT_path, 8            # cstr: its path, or 0
-F CT_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
-ENDSTRUCT CT_SIZE
+F MTG_doc, 8             # its DOC*, or 0
+F MTG_path, 8            # cstr: its path, or 0
+F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
 STRUCT

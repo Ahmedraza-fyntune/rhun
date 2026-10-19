@@ -66,7 +66,7 @@ mn_nlabels: .quad 0
 mn_cands: .zero MN_EXT_ROWS * MC_SIZE
 mn_ncands: .quad 0
 mn_cand_tmp: .zero MC_SIZE
-mn_target: .zero CT_SIZE        # the menu's target, for clauses and the body
+mn_target: .zero MTG_SIZE        # the menu's target, for clauses and the body
 mn_line: .zero SB_SIZE          # its TARGET line
 mn_path: .zero 4096
 mn_doc: .quad 0                 # the DOC id the invocation is about, 0: the active one
@@ -1077,10 +1077,10 @@ mt_begin:
     mov r12, rsi
     mov r13, rdx
     lea rax, [rip + mn_target]
-    mov [rax + CT_kind], rbx
-    mov [rax + CT_doc], r12
-    mov qword ptr [rax + CT_tabkind], 0
-    mov qword ptr [rax + CT_path], 0
+    mov [rax + MTG_kind], rbx
+    mov [rax + MTG_doc], r12
+    mov qword ptr [rax + MTG_tabkind], 0
+    mov qword ptr [rax + MTG_path], 0
     test r13, r13
     jz 1f
     lea rdi, [rip + mn_path]
@@ -1088,7 +1088,7 @@ mt_begin:
     call cstr_copy
     lea rax, [rip + mn_target]
     lea rcx, [rip + mn_path]
-    mov [rax + CT_path], rcx
+    mov [rax + MTG_path], rcx
 1:  mov qword ptr [rip + mn_doc], 0
     test r12, r12
     jz 2f
@@ -1230,7 +1230,7 @@ FN menu_open_tab
     mov rdi, [rbx + TAB_kind]
     call ctx_tab_kind_name
     lea rcx, [rip + mn_target]
-    mov [rcx + CT_tabkind], rax
+    mov [rcx + MTG_tabkind], rax
     test rax, rax
     jz 7f
     mov rdi, rax
