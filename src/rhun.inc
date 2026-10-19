@@ -1859,6 +1859,11 @@ ENDSTRUCT CRF_SIZE
     CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
     CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
     CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+    # source control (wider-parity C): gitTrusted (git.s), and a row menu's target (scmext.s)
+    CTXKEY CTX_GIT_TRUSTED, "gitTrusted", 0         # false while git is paused for a linked folder
+    CTXKEY CTX_SCM_PROVIDER, "scmProvider", 0       # "git" or the provider extension's OWNER/NAME
+    CTXKEY CTX_SCM_RESOURCE_GROUP, "scmResourceGroup", 0   # merge, staged, changes, or a provider's
+    CTXKEY CTX_SCM_RESOURCE_STATUS, "scmResourceStatus", 0 # the resource's letter (M A D R C U ?)
 .endm
 # when.s expands the list as records: FN, the name, padding to 8 bytes
 .macro CTXKEY sym, name, fn

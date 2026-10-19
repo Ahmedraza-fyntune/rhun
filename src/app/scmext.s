@@ -558,7 +558,8 @@ FN scmext_ext_gone
 # "commit SHA PATH", scm_resource "resource GROUP PATH", scm_group "group GROUP" (GROUP merge, staged,
 # changes; PATH in the work tree). Until extension menu items exist the menus hold built-in items.
 
-# scm_row_menu(location, sha cstr or 0, path ptr or 0, len, group): the menu of a row at the pointer
+# scm_row_menu(location, sha cstr or 0, path ptr or 0, len, group, code): the menu of a row at the
+#   pointer; the when-clause keys scmProvider, scmResourceGroup and scmResourceStatus describe it
 FN scm_row_menu
     PROLOGUE 16
     mov [rsp], edi
@@ -566,7 +567,30 @@ FN scm_row_menu
     mov r13, rdx
     mov r14, rcx
     mov r15d, r8d
+    mov [rsp + 4], r9d
     mov [rip + g_scm_menu_loc], edi
+    mov edi, CTX_SCM_PROVIDER
+    lea rsi, [rip + .Lp_git]
+    mov edx, 3
+    call ctx_set
+    lea rax, [rip + group_names]
+    mov rdi, [rax + r15*8]
+    test r15d, r15d
+    jnz 01f
+    lea rdi, [rip + .Lempty]
+01: mov rbx, rdi
+    call strlen
+    mov rdx, rax
+    mov rsi, rbx
+    mov edi, CTX_SCM_RESOURCE_GROUP
+    call ctx_set
+    lea rsi, [rsp + 4]
+    xor edx, edx
+    cmp byte ptr [rsi], 0
+    je 02f
+    mov edx, 1
+02: mov edi, CTX_SCM_RESOURCE_STATUS
+    call ctx_set
     lea rdi, [rip + g_scm_menu_target]
     call sb_clear
     lea rdi, [rip + menu_path]
@@ -778,6 +802,8 @@ ai_builtin_end:
 .Lgone: .asciz "The extension stopped before answering. Your draft was kept."
 .Ld_provider: .asciz "commit-provider="
 .Ld_menu: .asciz "menu="
+.Lp_git: .asciz "git"
+.Lempty: .asciz ""
 .Lt_commit: .asciz "commit "
 .Lt_resource: .asciz "resource "
 .Lt_group: .asciz "group "

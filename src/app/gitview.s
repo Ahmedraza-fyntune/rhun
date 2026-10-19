@@ -1048,6 +1048,7 @@ draw_list:
     xor edx, edx
     xor ecx, ecx
     xor r8d, r8d
+    xor r9d, r9d
     call scm_row_menu
 4:  # background
     COLOR r8d, T_ACTIVE
@@ -1885,6 +1886,7 @@ draw_details:
     mov rsi, [r14 + CM_hash]
     mov edi, SL_HISTORY_FILE
     xor r8d, r8d
+    mov r9d, [r15 + GF_code]
     call scm_row_menu
 51: test dword ptr [rsp + 24], UB_CLICK
     jz 6f

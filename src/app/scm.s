@@ -2287,6 +2287,7 @@ draw_file:
     xor esi, esi
     mov edi, SL_SCM_RESOURCE
     mov r8d, [r12 + GF_group]
+    mov r9d, [r12 + GF_code]
     call scm_row_menu
 61: # a click on the row: the file's changes (not for untracked folders)
     test r14d, UB_CLICK

@@ -173,7 +173,13 @@ FN git_set_project
     mov dword ptr [rip + touch_kind], 3
     call time_ms
     mov [rip + touch_at], rax
-9:  mov dword ptr [rip + g_dirty], 1
+9:  # the when-clause key gitTrusted (source control, wider-parity C)
+    xor esi, esi
+    cmp dword ptr [rip + g_git_paused], 0
+    sete sil
+    mov edi, CTX_GIT_TRUSTED
+    call ctx_set_bool
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # free_path(): mem_free [rbx] and clear it
