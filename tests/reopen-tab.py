@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reopen Closed Tab (Ctrl+Shift+T, Command+Shift+T on macOS) brings back the last closed tabs, the
 latest first, at their place in the strip and with the cursor, selection and scroll a file had. Tabs
-that are open again or whose files are gone are passed over; the theme picker keeps Ctrl+K."""
+that are open again or whose files are gone are passed over; the theme picker keeps Ctrl+K Ctrl+T."""
 import os
 from pathlib import Path
 import shutil
@@ -301,7 +301,7 @@ class ReopenClosedTab(unittest.TestCase):
         self.reopen()
         self.assertEqual(self.tabs(), 'tabs=')
 
-    def test_theme_picker_keeps_ctrl_k(self):
+    def test_theme_picker_keeps_ctrl_k_ctrl_t(self):
         self.start()
         self.open('a.txt')
         self.command('cmd close_tab')
@@ -309,6 +309,7 @@ class ReopenClosedTab(unittest.TestCase):
         self.assertEqual(self.state()['focus'], '0')
         self.assertEqual(self.tabs(), 'tabs=*a.txt')
         self.command('key ctrl+k')
+        self.command('key ctrl+t')
         self.assertEqual(self.state()['focus'], '1')
         self.assertIn('Dracula', self.command('print-palette'))
 

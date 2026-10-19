@@ -577,6 +577,9 @@ x_key:
     mov ebx, edi
     sub ebx, [rip + min_kc]
     imul ebx, [rip + kpk]
+    # the same key on the first layout, level 1 (g_key_latin: chords on any layout)
+    mov eax, [rax + rbx*4]
+    mov [rip + g_key_latin], eax
     # columns: group 1 levels 1-2, group 2 levels 1-2, group 1 levels 3-4, group 2 levels 3-4;
     # the group is in state bits 13-14 (XKB is on), AltGr (level 3) sets Mod5
     xor edx, edx
@@ -649,6 +652,7 @@ x_key:
     mov esi, r15d
     call app_on_key
     mov dword ptr [rip + g_key_base], 0
+    mov dword ptr [rip + g_key_latin], 0
 9:  EPILOGUE
 
 # x_key_test(keycode, state): feed a key press as if it came from the server (control socket)

@@ -2098,6 +2098,16 @@ FN app_on_pointer_leave
 # app_on_button(btn, pressed, mods)
 FN app_on_button
     mov [rip + g_mods], edx
+    test esi, esi
+    jz 1f
+    push rdi
+    push rsi
+    push rdx
+    call keys_chord_cancel      # a press ends a waiting chord
+    pop rdx
+    pop rsi
+    pop rdi
+1:
     # the caret shows at once, as after a key: a press or a release may have placed it
     push rdi
     push rsi
@@ -2161,6 +2171,7 @@ FN wheel_xy
 FN app_on_focus
     mov [rip + g_win_focused], edi
     push rdi
+    call keys_chord_cancel
     # files may have changed while away
     test edi, edi
     jz 1f
@@ -2258,6 +2269,13 @@ FN app_on_key
     mov dword ptr [rip + g_dirty], 1
     call time_ms
     mov [rip + g_blink_t0], rax
+    # a chord waiting for its second stroke takes the key first (keys.s)
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call keys_chord_key
+    test eax, eax
+    jnz 9f
     # dead keys and the Compose key
     mov edi, r12d
     mov esi, r14d
@@ -2695,7 +2713,15 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: mov eax, ebx
+96: call keys_timeout           # a chord's pause
+    cmp eax, -1
+    je 98f
+    cmp ebx, -1
+    je 99f
+    cmp eax, ebx
+    jge 98f
+99: mov ebx, eax
+98: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2726,6 +2752,7 @@ FN app_tick
     call ext_tick
     call ext_provider_tick
     call app_clip_tick
+    call keys_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -4636,14 +4663,28 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov ecx, [rsp + 12]
     call gfx_clip_push
-    # the branch at the left end; the file's items follow it
+    # a chord waiting for its second stroke says so at the left end (keys.s); else the branch,
+    # and the file's items follow it
     mov edi, [rsp]
+    add edi, [rip + g_mt + 4*MI_12]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call keys_chord_draw
+    mov ecx, [rsp]
+    add ecx, [rip + g_mt + 4*MI_12]
+    cmp eax, ecx
+    je 2f
+    add eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 24], eax
+    jmp 3f
+2:  mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     mov ecx, [rsp + 20]
     add ecx, [rip + g_mt + 4*MI_12]
     call statusbar_branch
     mov [rsp + 24], eax
+3:
     call app_image
     test rax, rax
     jz 1f

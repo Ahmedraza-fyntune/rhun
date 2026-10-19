@@ -470,6 +470,8 @@ FN contrib_ext_gone
     call cmdopt_clear
     mov rdi, rbx
     call xp_clear
+    mov rdi, rbx
+    call keys_manifest_clear
     EPILOGUE
 
 # ---------------- problems: manifest entries that were dropped, shown on its page ----------------
@@ -640,6 +642,16 @@ FN contrib_manifest_kv
     mov eax, 1
     EPILOGUE
 1:  mov rdi, r12
+    lea rsi, [rip + .Ls_keys]
+    call ini_sec_is
+    test eax, eax
+    jz 2f
+    mov rdi, rbx
+    mov rsi, r12
+    call keys_manifest_line
+    mov eax, 1
+    EPILOGUE
+2:  mov rdi, r12
     lea rsi, [rip + .Ls_context]
     call ini_sec_is
     test eax, eax
@@ -661,6 +673,7 @@ FN contrib_manifest_kv
 .section .rodata
 .Lslash: .asciz "/"
 .Ls_context: .asciz "context"
+.Ls_keys: .asciz "keys"
 .Ls_command_options: .asciz "command-options"
 .Lxp_sep: .asciz "] "
 .Lxp_colon: .asciz ": "
