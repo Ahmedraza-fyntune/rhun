@@ -506,6 +506,14 @@ handle_line:
     call scmext_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # wsedit: linked editing's answer (wslinked.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ws_linked_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -574,6 +582,14 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call scmext_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # wsedit: linked editing's error (wslinked.s)
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call ws_linked_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx

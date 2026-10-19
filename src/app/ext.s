@@ -4768,6 +4768,7 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links
     # source control (wider-parity C)
     .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
+    .quad .Lpv_linked, EXT_pv_linked          # wsedit: linked editing
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -4908,6 +4909,7 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_commit: .asciz "commit_message"
 .Lpv_quickdiff: .asciz "quickdiff"
 .Lpv_scm: .asciz "scm"
+.Lpv_linked: .asciz "linked"       # wsedit
 .Ln_debug: .asciz "debug"
 .Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"

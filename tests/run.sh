@@ -207,6 +207,7 @@ python3 tests/wasm-host.py || fail=1
 # workspace edits and the editor model: transactions, disk edits, file operations
 python3 tests/wsedit.py || fail=1
 python3 tests/ext-reveal.py || fail=1
+python3 tests/ext-linked.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?
