@@ -1567,7 +1567,14 @@ key_emit:
     mov edx, [rip + kb_mods]
     call xkb_keysym
     mov ebx, eax
-1:  # and the key's unshifted character in that layout, neither Shift nor Caps Lock (g_key_base)
+1:  # the same key on the first layout, without Shift (g_key_latin: chords on any layout)
+    mov edi, r12d
+    xor esi, esi
+    mov edx, [rip + kb_mods]
+    and edx, -4
+    call xkb_keysym
+    mov [rip + g_key_latin], eax
+    # and the key's unshifted character in that layout, neither Shift nor Caps Lock (g_key_base)
     mov edi, r12d
     mov esi, r13d
     mov edx, [rip + kb_mods]
@@ -1584,6 +1591,7 @@ key_emit:
     and edx, MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER
     call app_on_key
     mov dword ptr [rip + g_key_base], 0
+    mov dword ptr [rip + g_key_latin], 0
     pop r13
     pop r12
     pop rbx

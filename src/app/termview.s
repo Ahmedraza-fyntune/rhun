@@ -3377,9 +3377,9 @@ grid_input:
     jz 4f
     mov dword ptr [rip + g_focus], FOCUS_TERMINAL
     lea rdi, [rip + term_menu]
-    mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+    mov rsi, [rip + cur]
+    inc rsi
+    call menu_open_terminal     # with the extensions' items, "terminal N" (menu.s)
     jmp .Lgi_ret
 4:  test dword ptr [rip + g_pressed], 1 << BTN_MIDDLE
     jz 41f
