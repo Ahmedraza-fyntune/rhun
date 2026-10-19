@@ -2277,7 +2277,18 @@ draw_file:
     mov r8, [r12 + GF_path]
     call ui_text_v_fit
     add rsp, 16
-6:  # a click on the row: the file's changes (not for untracked folders)
+6:  # a right press: its menu (source control, wider-parity C)
+    test r14d, UB_RPRESS
+    jz 61f
+    mov rdi, [r12 + GF_path]
+    call strlen
+    mov rcx, rax
+    mov rdx, [r12 + GF_path]
+    xor esi, esi
+    mov edi, SL_SCM_RESOURCE
+    mov r8d, [r12 + GF_group]
+    call scm_row_menu
+61: # a click on the row: the file's changes (not for untracked folders)
     test r14d, UB_CLICK
     jz 9f
     mov rdi, [r12 + GF_path]

@@ -1189,6 +1189,11 @@ ENDSTRUCT GF_SIZE
 .equ GG_MERGE, 1                # conflicts
 .equ GG_STAGED, 2
 .equ GG_CHANGES, 3              # not staged, untracked
+# source control row menus (scm_row_menu, scmext.s): their locations
+.equ SL_HISTORY_COMMIT, 1
+.equ SL_HISTORY_FILE, 2
+.equ SL_SCM_RESOURCE, 3
+.equ SL_SCM_GROUP, 4
 
 # what HEAD is (g_git_head)
 .equ HD_BRANCH, 0

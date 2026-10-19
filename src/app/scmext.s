@@ -22,6 +22,12 @@ cm_line: .zero SB_SIZE
 cm_pid: .long 0
 .p2align 3
 tmp: .zero SB_SIZE
+.globl g_scm_menu_target, g_scm_menu_loc
+g_scm_menu_target: .zero SB_SIZE    # the last row menu's target line (scm_row_menu)
+menu_path: .zero SB_SIZE            # its path in the work tree, a cstr
+menu_abs_path: .zero SB_SIZE
+menu_sha: .zero 72
+g_scm_menu_loc: .long 0             # SL_* of the last row menu
 
 .text
 
@@ -545,6 +551,162 @@ FN scmext_ext_gone
     pop rbx
 9:  ret
 
+# ---------------- menus on source control rows ----------------
+# A right press on a history commit, a file of a commit, a changed file or a change group opens its
+# menu. The target is one line, as menu targets are for extensions' menu items (the contributions
+# design's menu_open takes it with these location names): history_commit "commit SHA", history_file
+# "commit SHA PATH", scm_resource "resource GROUP PATH", scm_group "group GROUP" (GROUP merge, staged,
+# changes; PATH in the work tree). Until extension menu items exist the menus hold built-in items.
+
+# scm_row_menu(location, sha cstr or 0, path ptr or 0, len, group): the menu of a row at the pointer
+FN scm_row_menu
+    PROLOGUE 16
+    mov [rsp], edi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov r15d, r8d
+    mov [rip + g_scm_menu_loc], edi
+    lea rdi, [rip + g_scm_menu_target]
+    call sb_clear
+    lea rdi, [rip + menu_path]
+    call sb_clear
+    mov byte ptr [rip + menu_sha], 0
+    test r12, r12
+    jz 1f
+    # commit SHA
+    lea rdi, [rip + menu_sha]
+    mov rsi, r12
+    call cstr_copy_72
+    lea rdi, [rip + g_scm_menu_target]
+    lea rsi, [rip + .Lt_commit]
+    call sb_push_cstr
+    lea rdi, [rip + g_scm_menu_target]
+    mov rsi, r12
+    call sb_push_cstr
+    jmp 2f
+1:  # resource GROUP, group GROUP
+    lea rsi, [rip + .Lt_resource]
+    test r13, r13
+    jnz 11f
+    lea rsi, [rip + .Lt_group]
+11: lea rdi, [rip + g_scm_menu_target]
+    call sb_push_cstr
+    lea rax, [rip + group_names]
+    mov rsi, [rax + r15*8]
+    lea rdi, [rip + g_scm_menu_target]
+    call sb_push_cstr
+2:  test r13, r13
+    jz 3f
+    lea rdi, [rip + g_scm_menu_target]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + g_scm_menu_target]
+    mov rsi, r13
+    mov rdx, r14
+    call sb_push
+    lea rdi, [rip + menu_path]
+    mov rsi, r13
+    mov rdx, r14
+    call sb_push
+    lea rdi, [rip + menu_path]
+    xor esi, esi
+    call sb_push_byte
+3:  lea rdi, [rip + g_scm_menu_target]
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rip + g_scm_menu_target + SB_len]
+    mov eax, [rsp]
+    lea rcx, [rip + menu_tables]
+    mov rdi, [rcx + rax*8]
+    test rdi, rdi
+    jz 9f
+    mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call ctx_menu_open
+9:  EPILOGUE
+
+# cstr_copy_72(dest, src): at most 71 bytes and a NUL
+cstr_copy_72:
+    mov ecx, 71
+1:  mov al, [rsi]
+    test al, al
+    jz 2f
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    dec ecx
+    jnz 1b
+2:  mov byte ptr [rdi], 0
+    ret
+
+# the menus' items
+menu_copy_sha:
+    lea rdi, [rip + menu_sha]
+    jmp copy_cstr
+menu_copy_path:
+    call menu_abs
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+copy_cstr:
+    push rdi
+    call strlen
+    pop rdi
+    mov rsi, rax
+    xor edx, edx
+    call ed_clip_set
+    jmp editor_clip_result
+9:  ret
+menu_open_changes:
+    mov rdi, [rip + menu_path + SB_ptr]
+    test rdi, rdi
+    jz 9f
+    push rdi
+    call strlen
+    pop rsi
+    mov rdx, rax
+    lea rdi, [rip + menu_sha]
+    cmp byte ptr [rdi], 0
+    jne 1f
+    xor edi, edi
+1:  jmp git_open_diff
+9:  ret
+menu_open_file:
+    call menu_abs
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    jmp app_open_path
+9:  ret
+
+# menu_abs() -> the target's path made absolute (in menu_abs_path), or 0
+menu_abs:
+    PROLOGUE
+    xor eax, eax
+    mov r12, [rip + menu_path + SB_ptr]
+    test r12, r12
+    jz 9f
+    mov rsi, [rip + g_git_root]
+    test rsi, rsi
+    jz 9f
+    mov rdi, rsi
+    mov rsi, r12
+    call path_join
+    mov rbx, rax
+    lea rdi, [rip + menu_abs_path]
+    call sb_clear
+    lea rdi, [rip + menu_abs_path]
+    mov rsi, rbx
+    call sb_push_cstr
+    lea rdi, [rip + menu_abs_path]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, rbx
+    call mem_free
+    mov rax, [rip + menu_abs_path + SB_ptr]
+9:  EPILOGUE
+
 # scmext_dump(sb): "commit-provider=OWNER/NAME|- asked=0|1" (print-scm-ext)
 FN scmext_dump
     PROLOGUE
@@ -565,6 +727,25 @@ FN scmext_dump
     setne sil
     mov rdi, rbx
     call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    # the last row menu's target
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_menu]
+    call sb_push_cstr
+    mov eax, [rip + g_scm_menu_loc]
+    lea rcx, [rip + loc_names]
+    mov rsi, [rcx + rax*8]
+    mov rdi, rbx
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + g_scm_menu_target + SB_ptr]
+    mov rdx, [rip + g_scm_menu_target + SB_len]
+    call sb_push
     mov rdi, rbx
     mov esi, 10
     call sb_push_byte
@@ -596,4 +777,28 @@ ai_builtin_end:
 .Lno_feature: .asciz "The extension does not provide commit messages (it did not agree commit-message)."
 .Lgone: .asciz "The extension stopped before answering. Your draft was kept."
 .Ld_provider: .asciz "commit-provider="
+.Ld_menu: .asciz "menu="
+.Lt_commit: .asciz "commit "
+.Lt_resource: .asciz "resource "
+.Lt_group: .asciz "group "
+.Lg_none: .asciz "-"
+.Lg_merge: .asciz "merge"
+.Lg_staged: .asciz "staged"
+.Lg_changes: .asciz "changes"
+.Ll_none: .asciz "none"
+.Ll_commit: .asciz "history_commit"
+.Ll_file: .asciz "history_file"
+.Ll_resource: .asciz "scm_resource"
+.Ll_group: .asciz "scm_group"
+.Lm_copy_sha: .asciz "Copy Commit ID"
+.Lm_copy_path: .asciz "Copy Path"
+.Lm_changes: .asciz "Open Changes"
+.Lm_open: .asciz "Open File"
+.p2align 3
+group_names: .quad .Lg_none, .Lg_merge, .Lg_staged, .Lg_changes
+loc_names: .quad .Ll_none, .Ll_commit, .Ll_file, .Ll_resource, .Ll_group
+menu_tables: .quad 0, menu_commit, menu_file, menu_resource, 0
+menu_commit: .quad .Lm_copy_sha, menu_copy_sha, 0, 0
+menu_file: .quad .Lm_changes, menu_open_changes, .Lm_open, menu_open_file, .Lm_copy_path, menu_copy_path, 0, 0
+menu_resource: .quad .Lm_changes, menu_open_changes, .Lm_open, menu_open_file, .Lm_copy_path, menu_copy_path, 0, 0
 .Ld_asked: .asciz " asked="
