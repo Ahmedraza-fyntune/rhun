@@ -18,7 +18,7 @@ g_hover_sent: .long 0           # the hover event went out for this position
 g_hover_x: .long 0              # where the pointer is (the tooltip's anchor)
 g_hover_y: .long 0
 g_hover_text: .zero HOVER_MAX + 1   # what an extension answered for this position, or empty
-hover_both: .zero MARK_MSG_MAX + 8 + HOVER_MAX + 1   # a mark's message and the answer together
+hover_both: .zero MARK_MSG_MAX + 8 + DECO_TIP_MAX + 8 + HOVER_MAX + 1   # a mark's message, a decoration's tip and the answer together
 tmp: .zero SB_SIZE
 newmarks: .zero VEC_SIZE        # a diagnostics request's marks while its lines are parsed
 target: .quad 0                 # the VEC mark_parse appends to
@@ -49,31 +49,39 @@ FN ext_note_insert
     mov rsi, r13
     mov rdx, r14
     call sb_push
-1:  # marks: starts at or after pos move; ends after pos move (an insert at a mark's end stays
-    # out); an empty mark moves whole
-    mov rdi, [rbx + DOC_xmarks]
-    test rdi, rdi
+1:  mov rdi, rbx                # the edit tape and what presentation keeps (edtape.s)
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, r14
+    call pres_note_insert
+    # marks: starts at or after pos move; ends after pos move (an insert at a mark's end stays
+    # out); an empty mark moves whole (the edit tape's gravities)
+    mov r15, [rbx + DOC_xmarks]
+    test r15, r15
     jz 9f
-    xor ecx, ecx
-2:  cmp rcx, [rdi + VEC_len]
+    xor r13d, r13d
+2:  cmp r13, [r15 + VEC_len]
     jae 9f
-    imul rax, rcx, MK_SIZE
-    add rax, [rdi + VEC_ptr]
-    inc rcx
+    imul rax, r13, MK_SIZE
+    add rax, [r15 + VEC_ptr]
+    inc r13
+    mov r10, rax
+    mov r11d, GR_LEFT           # the end's gravity
     mov rdx, [rax + MK_start]
     cmp rdx, [rax + MK_end]
     jne 21f
-    cmp rdx, r12
-    jb 2b
-    add [rax + MK_start], r14
-    add [rax + MK_end], r14
-    jmp 2b
-21: cmp [rax + MK_start], r12
-    jb 3f
-    add [rax + MK_start], r14
-3:  cmp [rax + MK_end], r12
-    jbe 2b
-    add [rax + MK_end], r14
+    mov r11d, GR_RIGHT
+21: mov rdi, [r10 + MK_start]
+    mov rsi, r12
+    xor edx, edx
+    mov rcx, r14
+    mov r8d, GR_RIGHT
+    call tape_shift
+    mov [r10 + MK_start], rax
+    mov rdi, [r10 + MK_end]
+    mov r8d, r11d
+    call tape_shift
+    mov [r10 + MK_end], rax
     jmp 2b
 9:  EPILOGUE
 
@@ -90,6 +98,10 @@ FN ext_note_delete
     mov rdx, r13
     xor ecx, ecx
     call record
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call pres_note_delete
     mov rdi, [rbx + DOC_xmarks]
     test rdi, rdi
     jz 9f
@@ -139,18 +151,25 @@ FN ext_note_delete
 3:  inc rcx
     jmp 2b
 9:  EPILOGUE
-# shift_point(rsi ptr to a position): for a delete of [r12, r14)
+# shift_point(rsi ptr to a position): for a delete of r13 bytes at r12 (tape_shift); keeps rax,
+# rcx, rdi
 shift_point:
-    mov rdx, [rsi]
-    cmp rdx, r14
-    jb 1f
-    sub rdx, r13
-    mov [rsi], rdx
+    push rax
+    push rcx
+    push rdi
+    push rsi
+    mov rdi, [rsi]
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    xor r8d, r8d
+    call tape_shift
+    pop rsi
+    mov [rsi], rax
+    pop rdi
+    pop rcx
+    pop rax
     ret
-1:  cmp rdx, r12
-    jbe 2f
-    mov [rsi], r12
-2:  ret
 
 # record(doc, pos, del, ins) -> 1 when the record was appended ("POS DEL INS\n"; the caller
 # appends the inserted bytes), 0 when the records are over their cap (resync instead)
@@ -574,6 +593,7 @@ marks_drop_owner:
 FN extmarks_clear_owner
     PROLOGUE
     mov r12, rdi
+    call deco_clear_owner       # and its decorations (deco.s)
     xor r13d, r13d
 1:  cmp r13, [rip + g_tabs + VEC_len]
     jae 9f
@@ -649,6 +669,8 @@ extmarks_drop_all:
 FN extmarks_free
     PROLOGUE
     mov rbx, rdi
+    call pres_free
+    mov rdi, rbx
     call extmarks_drop_all
     mov rdi, [rbx + DOC_xedits]
     test rdi, rdi
@@ -712,6 +734,7 @@ FN extmarks_line
     EPILOGUE
 
 # extmarks_color(SEV_*) -> argb
+.globl extmarks_color
 extmarks_color:
     test edi, edi
     jnz 1f
@@ -723,34 +746,6 @@ extmarks_color:
     ret
 2:  COLOR eax, T_MUTED
     ret
-
-# extmarks_gutter(doc, line, y, h): a dot left of the line number area for a marked line
-FN extmarks_gutter
-    PROLOGUE 16
-    mov [rsp], edx
-    mov [rsp + 4], ecx
-    call extmarks_line
-    test eax, eax
-    js 9f
-    mov edi, eax
-    call extmarks_color
-    mov r9d, eax                # argb
-    mov edi, [rip + g_ed_tx]
-    sub edi, [rip + g_mt + 4*MI_20]
-    cmp dword ptr [rip + cfg_line_numbers], 0
-    jne 1f
-    mov edi, [rip + g_ed_tx]    # a 16 px gutter without numbers: the dot sits in it
-    sub edi, [rip + g_mt + 4*MI_12]
-1:  mov esi, [rsp]
-    mov eax, [rip + g_lh]
-    sub eax, [rip + g_mt + 4*MI_6]
-    shr eax, 1
-    add esi, eax
-    M edx, MI_6
-    M ecx, MI_6
-    M r8d, MI_3                 # radius
-    call gfx_round_rect
-9:  EPILOGUE
 
 # extmarks_row(doc, line, from, to, basex, y): underlines under the marks of one visual row
 # (bytes [from, to) of the line, drawn from basex)
@@ -950,26 +945,23 @@ FN ext_hover_tip
     mov rbx, [rip + g_hover_doc]
     test rbx, rbx
     jz 9f
+    # a mark's message, a decoration's tip and an extension's answer, as "A · B · C" so none
+    # hides another
+    lea r12, [rip + hover_both]
+    mov byte ptr [r12], 0
     mov rdi, rbx
     mov rsi, [rip + g_hover_pos]
     call extmarks_at
-    test rax, rax
-    jz 2f
-    cmp byte ptr [rip + g_hover_text], 0
-    je 1f
-    # a mark and an extension's answer: "MESSAGE · ANSWER", so neither hides the other
-    lea rdi, [rip + hover_both]
-    mov rsi, rax
-    call cstr_copy
     mov rdi, rax
-    lea rsi, [rip + .Lhover_dot]
-    call cstr_copy
+    call hover_part
+    mov rdi, rbx
+    mov rsi, [rip + g_hover_pos]
+    call deco_tip_at
     mov rdi, rax
-    lea rsi, [rip + g_hover_text]
-    call cstr_copy
+    call hover_part
+    lea rdi, [rip + g_hover_text]
+    call hover_part
     lea rax, [rip + hover_both]
-    jmp 1f
-2:  lea rax, [rip + g_hover_text]
     cmp byte ptr [rax], 0
     je 9f
 1:  mov r9, rax
@@ -981,6 +973,26 @@ FN ext_hover_tip
     mov r8d, UB_HOVER
     call tip_note_text
 9:  EPILOGUE
+
+# hover_part(cstr or 0): appended to hover_both at r12 (the end), after a dot when not the first
+hover_part:
+    test rdi, rdi
+    jz 9f
+    cmp byte ptr [rdi], 0
+    je 9f
+    push rdi
+    lea rax, [rip + hover_both]
+    cmp r12, rax
+    je 1f
+    mov rdi, r12
+    lea rsi, [rip + .Lhover_dot]
+    call cstr_copy
+    mov r12, rax
+1:  pop rsi
+    mov rdi, r12
+    call cstr_copy
+    mov r12, rax
+9:  ret
 
 # ext_hover_due() -> ms until the hover event is due for the rest position, or -1
 FN ext_hover_due
@@ -1070,6 +1082,7 @@ FN ext_hooks_update
     inc r12d
     jmp 1b
 2:  add r12d, [rip + g_marks_ever]
+    add r12d, [rip + g_pres_ever]   # documents keep an edit tape (edtape.s)
     mov [rip + g_ext_hooks], r12d
     EPILOGUE
 

@@ -318,6 +318,31 @@ FN ext_provider_dump
     jmp 1b
 9:  EPILOGUE
 
+# ext_provider_forget(name cstr "owner/name"): an extension was removed: the saved choices naming it
+# go, so the chooser asks again (nothing switches silently). The caller saves the file (extension
+# management, remove_commit)
+FN ext_provider_forget
+    PROLOGUE
+    mov r12, rdi
+    xor r13d, r13d
+1:  cmp r13, [rip + pp_prefs + VEC_len]
+    jae 9f
+    imul rbx, r13, PP_SIZE
+    add rbx, [rip + pp_prefs + VEC_ptr]
+    inc r13
+    mov rdi, [rbx + PP_owner]
+    test rdi, rdi
+    jz 1b
+    mov rsi, r12
+    call strcmp_eq
+    test eax, eax
+    jz 1b
+    mov rdi, [rbx + PP_owner]
+    call mem_free
+    mov qword ptr [rbx + PP_owner], 0
+    jmp 1b
+9:  EPILOGUE
+
 # Stateless checks for automatic help. These do not disturb an explicit action's snapshot.
 # pp_match_for(ext, kind, doc): valid, enabled manifest and matching provider declaration.
 pp_match_for:
