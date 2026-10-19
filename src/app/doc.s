@@ -575,7 +575,10 @@ FN raw_delete
     mov r13, rdx
     test r13, r13
     jz .Lrd_ret
-    mov rdi, rbx
+    cmp dword ptr [rip + g_pres_ever], 0
+    je 0f
+    call pres_pre_delete        # the edit tape notes what goes before it goes (edtape.s)
+0:  mov rdi, rbx
     mov rsi, r12
     call doc_line_of
     mov r15, rax                # L

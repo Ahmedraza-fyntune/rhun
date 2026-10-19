@@ -7,6 +7,8 @@
 
 .bss
 .p2align 3
+.globl g_ctl_out
+g_ctl_out:                      # (what other files' commands print into)
 out: .zero SB_SIZE
 ctl_value: .zero 1024
 cbuf: .zero SB_SIZE
@@ -19,6 +21,10 @@ wait_ext_state_len: .quad 0
 addr: .zero 110
 .globl g_headless
 g_headless: .long 0
+.p2align 3
+.globl g_ctl_cur, g_ctl_cur_len
+g_ctl_cur: .quad 0              # the control line being run
+g_ctl_cur_len: .quad 0
 
 .text
 
@@ -122,6 +128,8 @@ FN control_exec
     dec r12
 8:
 .endif
+    mov [rip + g_ctl_cur], rbx  # the line being run (the frame probes log it)
+    mov [rip + g_ctl_cur_len], r12
     lea rdi, [rip + out]
     call sb_clear
     call next_arg
@@ -160,7 +168,22 @@ FN control_exec
     xor eax, eax
     EPILOGUE
 .Lce_unknown:
-    lea rdi, [rip + out]
+    # editor presentation's commands (presctl.s)
+    mov rdi, r13
+    mov rsi, r14
+    mov rdx, rbx
+    mov rcx, r12
+    call presctl_exec
+    cmp rax, -2
+    je 1f
+    push rax
+    push rax
+    call term_frame_now
+    call flush_frame
+    pop rax
+    pop rax
+    EPILOGUE
+1:  lea rdi, [rip + out]
     lea rsi, [rip + .Lunknown]
     call sb_push_cstr
     mov rax, -1

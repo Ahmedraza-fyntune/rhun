@@ -644,6 +644,7 @@ F DOC_language_owner, 8 # owned prepared GP reference for DOC_lang, or 0
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
+F DOC_pres, 8           # editor presentation: PS* (edtape.s), owned, or 0
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1
@@ -1488,7 +1489,10 @@ ENDSTRUCT TF_SIZE
 # the features whose requests rhun sends (and whose ok ID LEN replies it frames)
 .equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
 .equ FEAT_WORKSPACE_WATCH, 16384
-.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+# editor presentation (deco.s ...): decorations and the visible event
+.equ FEAT_DECORATIONS, 32768
+.equ FEAT_PRESENTATION, FEAT_DECORATIONS
+.equ FEAT_HOST, FEAT_PRESENTATION | FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -2008,3 +2012,149 @@ F AS_model, 8           # the model the session last used (its row), or 0
 F AS_log_model, 8       # parse: the model the log names for the replies that follow
 F AS_shown_model, 8     # parse: the model on the last reply labeled with one
 ENDSTRUCT AS_SIZE
+
+# ---- editor presentation (edtape.s, deco.s, gutter.s, presctl.s) ----
+# per-document presentation state, DOC_pres: the edit tape, decorations, glyph-lane entries
+.equ TAPE_N, 256                # edits the tape keeps
+STRUCT
+F PS_tape, 8            # TE[TAPE_N], a ring
+F PS_tn, 8              # edits written since the tape began (entry tn % TAPE_N is the next)
+F PS_tbase, 8           # the oldest version tape_map moves positions from
+F PS_gen, 8             # bumped by every change to what is drawn
+F PS_deco, VEC_SIZE     # DR decoration ranges, unsorted
+F PS_dpool, SB_SIZE     # their texts (before, after, tip, extra)
+F PS_dgarbage, 8        # pool bytes no range uses any more
+F PS_glyphs, VEC_SIZE   # GLE glyph-lane entries, sorted by position then kind
+ENDSTRUCT PS_SIZE
+STRUCT
+F TE_version, 8         # DOC_version after the edit
+F TE_pos, 8
+F TE_del, 8             # one of del and ins is 0
+F TE_ins, 8
+F TE_line, 8            # where pos was: 0-based line and byte column
+F TE_col, 8
+F TE_nl, 8              # line feeds in the inserted or deleted text
+F TE_tail, 8            # its bytes after the last line feed (all of them when it has none)
+ENDSTRUCT TE_SIZE
+.equ GR_RIGHT, 0                # an insert at the position moves it (range start, marks)
+.equ GR_LEFT, 1                 # an insert at the position leaves it (range end)
+
+# decoration types (deco.s): one per extension and name; COLOR is two SPECs, dark and light
+STRUCT
+F DCS_value, 4           # argb, or the theme slot
+F DCS_kind, 1            # DCSK_*
+F DCS_pct, 1             # a slot's opacity, 0-100
+F DCS_pad, 2
+ENDSTRUCT DCS_SIZE
+.equ DCSK_NONE, 0
+.equ DCSK_ARGB, 1
+.equ DCSK_SLOT, 2
+.equ DCSK_TEXT, 3                # strike COLOR "-": the text's color
+STRUCT
+F DT_owner, 8           # EXT*, 0 for a free slot
+F DT_name, 48           # cstr, 1-40 bytes of [a-z0-9_-]
+F DT_flags, 4           # DTF_*
+F DT_prio, 4            # 0-100
+F DT_bwidth, 4          # border width 1-3
+F DT_ustyle, 4          # US_*
+F DT_gshape, 4          # GS_* in the gutter's left lane
+F DT_grow, 4            # DG_*
+F DT_width, 4           # before/after text cells, 0 natural
+F DT_seq, 4             # registration order, for ties
+F DT_color, 2*DCS_SIZE
+F DT_bg, 2*DCS_SIZE
+F DT_linebg, 2*DCS_SIZE
+F DT_border, 2*DCS_SIZE
+F DT_under, 2*DCS_SIZE
+F DT_strike, 2*DCS_SIZE
+F DT_gutter, 2*DCS_SIZE
+F DT_scroll, 2*DCS_SIZE
+F DT_before, 2*DCS_SIZE
+F DT_beforebg, 2*DCS_SIZE
+F DT_after, 2*DCS_SIZE
+F DT_afterbg, 2*DCS_SIZE
+ENDSTRUCT DT_SIZE
+.equ DTF_COLOR, 1
+.equ DTF_BG, 2
+.equ DTF_LINEBG, 4
+.equ DTF_BORDER, 8
+.equ DTF_UNDER, 16
+.equ DTF_STRIKE, 32
+.equ DTF_FADED, 64
+.equ DTF_BEFORE, 128
+.equ DTF_AFTER, 256
+.equ DTF_GUTTER, 512
+.equ DTF_SCROLL, 1024
+.equ US_SOLID, 1
+.equ US_DOUBLE, 2
+.equ US_DOTTED, 3
+.equ US_DASHED, 4
+.equ US_SQUIGGLE, 5
+.equ DG_NONE, 0
+.equ DG_START, 1
+.equ DG_END, 2
+.equ DG_BOTH, 3
+# a decorated range on a document
+STRUCT
+F DR_start, 8
+F DR_end, 8
+F DR_type, 4            # index into the types
+F DR_flags, 4           # DRF_*
+F DR_text, 4            # offset of its texts in PS_dpool
+F DR_blen, 2            # before, after, tip lengths
+F DR_alen, 2
+F DR_tlen, 2
+F DR_pad, 2
+F DR_xlen, 4            # extra records' length
+ENDSTRUCT DR_SIZE
+.equ DRF_WASEMPTY, 1            # empty when it came: kept at an edge of a deletion
+
+# the gutter's glyph lane (gutter.s): GLE entries per document, kinds registered by built-in code
+STRUCT
+F GLE_pos, 8            # start of the glyph's line (moves with the text before it)
+F GLE_kind, 4
+F GLE_glyph, 4          # shape | slot << 8 | GF_* << 16
+ENDSTRUCT GLE_SIZE
+.equ GS_DOT, 1                  # glyph shapes (gutter_shape_draw)
+.equ GS_CIRCLE, 2
+.equ GS_RING, 3
+.equ GS_SQUARE, 4
+.equ GS_DIAMOND, 5
+.equ GS_TRIANGLE, 6             # pointing right: run
+.equ GS_BAR, 7
+.equ GS_CHECK, 8
+.equ GS_CROSS, 9
+.equ GS_PLUS, 10
+.equ GS_MINUS, 11
+.equ GS_ARROW, 12               # the debugger's current line
+.equ GS_CIRCLE_BAR, 13          # a circle with a bar (a breakpoint with a condition)
+.equ GS_CIRCLE_TRI, 14          # a circle with a warning triangle (rejected)
+.equ GS_BULB, 15
+.equ GS_COUNT, 16
+.equ GF_FAINT, 1                # glyph flags (bits 16-23): drawn at a third of the color's alpha
+.equ GK_EMPTY, 1                # gutter_kind flags: clicks on lines without a glyph come here
+.equ GK_RESERVE, 2              # the lane keeps its width with line numbers off
+.equ GK_MAX, 32
+.equ LANE_NONE, 0                 # gutter_hit lanes
+.equ LANE_LEFT, 1
+.equ LANE_DIGITS, 2
+.equ LANE_FOLD, 3
+.equ LANE_GIT, 4
+.equ GK_PRIO_DOT, 10            # built-in lane priorities: the diagnostic dot, decoration icons,
+.equ GK_PRIO_DECO, 20           #   suggested ones for the others (the highest shows on a line)
+.equ GK_PRIO_TEST, 40
+.equ GK_PRIO_BULB, 50
+.equ GK_PRIO_BREAKPOINT, 80
+.equ GK_PRIO_DEBUG_LINE, 90
+# caps
+.equ DT_MAX_EXT, 64             # decoration types per extension
+.equ DT_MAX, 512                # in all
+.equ DT_BODY_MAX, 4096
+.equ DECO_BODY_MAX, 4194304     # a decorate body
+.equ DECO_MAX_MSG, 20000        # records per message, and per extension and document
+.equ DECO_MAX_DOC, 50000        # per document in all
+.equ DECO_TEXT_MAX, 200         # before/after bytes
+.equ DECO_TIP_MAX, 1000
+.equ DECO_EXTRA_MAX, 9000
+.equ DECO_PIECES, 4096          # decoration pieces drawn per frame
+.equ DECO_TICKS, 1024           # scrollbar ticks

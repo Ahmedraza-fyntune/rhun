@@ -668,6 +668,66 @@ reply_error_u64:
     call out_byte
     jmp out_end
 
+# ---------------- for verb handlers in other files (editor presentation) ----------------
+
+# xp_field(i) -> rax ptr, rdx len of field i of the message being handled (0, 0 past its fields)
+FN xp_field
+    cmp rdi, [rip + nfields]
+    jae 1f
+    jmp field_at
+1:  xor eax, eax
+    xor edx, edx
+    ret
+# xp_field_u64(i) -> rax value, rdx 1 when field i is a decimal u64
+FN xp_field_u64
+    jmp field_u64
+# xp_nfields() -> rax
+FN xp_nfields
+    mov rax, [rip + nfields]
+    ret
+# xp_cur() -> rax the EXT being served; xp_cur_id() -> rax its request id
+FN xp_cur
+    mov rax, [rip + cur]
+    ret
+FN xp_cur_id
+    mov rax, [rip + cur_id]
+    ret
+# xp_body() -> rax ptr, rdx len of the message's body
+FN xp_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+# xp_reply_ok(id), xp_reply_error(id, "code text"), xp_reply_error_u64(id, "code text ", value),
+# xp_reply_syntax(id)
+FN xp_reply_ok
+    jmp reply_ok
+FN xp_reply_error
+    jmp reply_error
+FN xp_reply_error_u64
+    jmp reply_error_u64
+FN xp_reply_syntax
+    jmp reply_syntax
+# xp_arg_doc(i) -> rax DOC* of field i, or 0 after replying
+FN xp_arg_doc
+    jmp arg_doc
+# xp_need(NEEDS_*) -> eax 1, or 0 after replying needs
+FN xp_need
+    jmp need
+# xp_send(ext, ptr, len): bytes to an extension as one message (an event line and its body)
+FN xp_send
+    PROLOGUE
+    mov r12, [rip + cur]
+    mov [rip + cur], rdi
+    mov rbx, rsi
+    mov r13, rdx
+    call out_begin
+    mov rdi, rbx
+    mov rsi, r13
+    call out_bytes
+    call out_end
+    mov [rip + cur], r12
+    EPILOGUE
+
 # ---------------- documents ----------------
 
 # doc_by_id(id) -> DOC* or 0, among the open document tabs
@@ -2938,7 +2998,11 @@ hello_features:
 3:  add r12, r13
     jmp 1b
 4:  and dword ptr [rbx + EXT_features], FEAT_HOST
-    cmp dword ptr [rbx + EXT_features], 0
+    # answers about older versions are moved through the documents' edit tapes (edtape.s)
+    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS | FEAT_PRESENTATION
+    jz 41f
+    call pres_enable
+41: cmp dword ptr [rbx + EXT_features], 0
     je 9f
     call out_begin
     lea rdi, [rip + .Lev_features]
@@ -3415,7 +3479,14 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # editor presentation (deco.s)
+    .quad .Lpv_decoration_type, h_decoration_type, DT_BODY_MAX
+    .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
     .quad 0, 0, 0
+# editor presentation: verbs and features
+.Lpv_decoration_type: .asciz "decoration-type"
+.Lpv_decorate: .asciz "decorate"
+.Lpf_decorations: .asciz "decorations"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -3538,7 +3609,9 @@ cmd_allow:
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature
+    .quad .Lpf_decorations         # bit 15 on: editor presentation
+    .quad 0
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "

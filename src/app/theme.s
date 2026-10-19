@@ -682,6 +682,28 @@ FN theme_entry
 # preferredLightColorTheme with window.autoDetectColorScheme). A mode the system does not report
 # counts as dark, rhun's default.
 
+# theme_slot_find(ptr, len) -> eax the color slot of that name (as .theme files name them), or -1
+FN theme_slot_find
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    xor r13d, r13d
+1:  cmp r13d, T_COUNT
+    jae 8f
+    lea rax, [rip + slot_names]
+    mov rdx, [rax + r13*8]
+    mov rdi, rbx
+    mov rsi, r12
+    call str_eq_cstr
+    test eax, eax
+    jnz 9f
+    inc r13d
+    jmp 1b
+8:  mov eax, -1
+    EPILOGUE
+9:  mov eax, r13d
+    EPILOGUE
+
 # theme_slot() -> the setting (cfg_theme, cfg_dark_theme or cfg_light_theme) whose theme is shown
 FN theme_slot
     lea rax, [rip + cfg_theme]
