@@ -94,6 +94,8 @@ FN testexec_request
     call testexec_approved
     test eax, eax
     jz .Lxr_cancelled
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lxr_remote
     # found on the user's PATH (args[0] holds its name as a cstr)
     mov rax, [rip + args + VEC_ptr]
     mov rdi, [rax]
@@ -143,6 +145,7 @@ FN testexec_request
     call mem_free
     mov rax, [rip + args + VEC_ptr]
     mov [rax], r13
+.Lxr_spawn:
     mov rdi, [rip + envs + VEC_ptr]
     call env_make
     mov r14, rax                # envp (its strings are the environment's and ours)
@@ -189,10 +192,13 @@ FN testexec_request
     mov rcx, r13
     call watch_add
     mov edi, [r13 + TX_err]
+    test edi, edi
+    js 6f                       # a remote window's program: its errors come with its output
     mov esi, POLLIN
     lea rdx, [rip + on_pipe]
     mov rcx, r13
     call watch_add
+6:
     mov rdi, [rsp]
     mov rsi, [r13 + TX_exec]
     call testproto_reply_ok_u64
@@ -200,6 +206,42 @@ FN testexec_request
     mov dword ptr [rip + g_ts_dirty], 1
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+.Lxr_remote:
+    # a remote window: the host finds the program on its PATH and the folder is checked as written
+    # (inside the project, no .. parts), since its links are the host's
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz .Lxr_cwd_reply
+    lea rdi, [rip + realproj]
+    call cstr_copy
+    lea rdi, [rip + realcwd]
+    lea rsi, [rip + realproj]
+    call cstr_copy
+    cmp qword ptr [rip + cmd_cwdlen], 0
+    je .Lxr_spawn_remote
+    lea rdi, [rip + realcwd]
+    mov rsi, [rip + cmd_cwd]
+    mov rdx, [rip + cmd_cwdlen]
+    call memcpy
+    mov rax, [rip + cmd_cwdlen]
+    lea rcx, [rip + realcwd]
+    mov byte ptr [rcx + rax], 0
+    lea rdi, [rip + realcwd]
+    call path_rootlen
+    test rax, rax
+    jz .Lxr_cwd_reply
+    lea rdi, [rip + realcwd]
+    call path_normalize
+    lea rdi, [rip + realcwd]
+    lea rsi, [rip + realproj]
+    call app_path_inside
+    test eax, eax
+    jz .Lxr_cwd_reply
+.Lxr_spawn_remote:
+    jmp .Lxr_spawn
+.Lxr_cwd_reply:
+    lea rsi, [rip + .Le_cwd]
+    jmp .Lxr_reply
 .Lxr_cwd_free:
     mov rdi, r13
     call mem_free
@@ -572,6 +614,19 @@ FN testexec_spawn
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    # a remote window: the program runs on the host (vfs.s), its errors merged with its output
+    xor ecx, ecx
+    xor r8d, r8d
+    mov r9d, 1
+    call vfs_run_piped_input
+    test rax, rax
+    js 9f
+    mov [rip + pipe_out], edx
+    mov dword ptr [rip + pipe_err], -1
+    EPILOGUE
+1:
     mov dword ptr [rsp + 16], -1
     mov dword ptr [rsp + 20], -1
     mov dword ptr [rsp + 24], -1
@@ -781,6 +836,8 @@ reap:
     sub rsp, 16
     mov rbx, rdi
     mov dword ptr [rsp], 0
+    test dword ptr [rbx + TX_pid], REMOTE_PID_TAG
+    jnz 5f
 1:  mov edi, [rbx + TX_pid]
     mov rsi, rsp
     mov edx, WNOHANG
@@ -801,6 +858,23 @@ reap:
 9:  add rsp, 16
     pop rbx
     ret
+5:  # a program on the remote host: its status as proc_wait gives it (128 + N for signal N)
+    mov edi, [rbx + TX_pid]
+    mov esi, 1
+    call proc_wait
+    cmp eax, -1
+    je 9b
+    cmp eax, -2
+    je 2b
+    cmp eax, 128
+    jb 6f
+    sub eax, 128                # a signal: its number in the low bits, as wait4 has it
+    and eax, 0x7f
+    mov [rbx + TX_status], eax
+    jmp 3b
+6:  shl eax, 8
+    mov [rbx + TX_status], eax
+    jmp 3b
 
 # report_exit(TX*): "0 test-exit EXEC CODE" (CODE the exit status, "signal N", "killed"); pipes still
 #   open are closed; the slot is free
@@ -906,7 +980,7 @@ stop:
     mov rbx, rdi
     mov edi, [rbx + TX_pid]
     neg edi
-    SYS SYS_kill
+    call proc_kill              # a remote window's programs too
     pop rbx
     ret
 
