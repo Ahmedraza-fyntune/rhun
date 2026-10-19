@@ -420,6 +420,29 @@ class LocalTransport(unittest.TestCase):
             self.assertTrue(list((base / 'home/.cache/rhun-remote').glob('*/rhun')))
 
 
+    def test_extension_on_the_host(self):
+        """The echo extension in a local: window runs as the host's: its files in the host's cache,
+        its state folder the host's ($HOME/.local/state, not XDG_STATE_HOME)."""
+        with tempfile.TemporaryDirectory(prefix='rhun-remote-ext-') as tmp:
+            base = Path(tmp)
+            for d in ('home', 'config/rhun', 'state', 'proj'):
+                (base / d).mkdir(parents=True)
+            (base / 'config/rhun/config').write_text(ECHO_CONFIG)
+            exts = echo_extension(base / 'exts')
+            script = base / 't.rsc'
+            script.write_text('wait-remote 60\ncmd echo.swrite\nwait-ext echo running\nwait 1500\nprint-toast\n'
+                              'print-extensions\nquit\n')
+            env = dict(os.environ, HOME=str(base / 'home'), XDG_CONFIG_HOME=str(base / 'config'),
+                       XDG_STATE_HOME=str(base / 'state'), SHELL='/bin/sh')
+            out = subprocess.run([str(EXE), '--headless', '1000x700', '--remote', 'local:', str(base / 'proj'),
+                                  '--extensions', str(exts), '--script', str(script)], capture_output=True,
+                                 timeout=120, env=env).stdout.decode(errors='replace')
+            self.assertIn('toast=probe ok', out)
+            self.assertIn('state=running', ext_line(out), out)
+            self.assertTrue((base / 'home/.local/state/rhun/extensions/rhun-tests--echo/state.txt').is_file())
+            self.assertFalse(list((base / 'state').rglob('state.txt')))
+            self.assertEqual(len(list((base / 'home/.cache/rhun-remote/extensions/rhun-tests/echo').iterdir())), 1)
+
     def test_typing_never_waits_for_the_host(self):
         """With every agent reply 300 ms late, 40 typed characters cost no more than a few replies."""
         with tempfile.TemporaryDirectory(prefix='rhun-remote-slow-') as tmp:
