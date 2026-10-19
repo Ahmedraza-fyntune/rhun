@@ -486,6 +486,36 @@ holds_cursor:
 
 # ---------------- headless controls ----------------
 
+# control.s's ctl_tables lists this table: each fn(out, rest, rest length) -> rax 0
+.section .rodata
+.p2align 3
+.globl test_ctl
+test_ctl:
+    .quad .Lc_select, testctl_select, .Lc_expand, testctl_expand_open
+    .quad .Lc_collapse, testctl_collapse, .Lc_action, testctl_action
+    .quad .Lc_wait, testctl_wait, .Lc_wait_items, testctl_wait_items
+    .quad .Lc_print, testctl_print, .Lc_result, testctl_result
+    .quad .Lc_runs, testctl_runs, .Lc_coverage, testctl_coverage
+    .quad 0, 0
+.Lc_select: .asciz "test-select"
+.Lc_expand: .asciz "test-expand"
+.Lc_collapse: .asciz "test-collapse"
+.Lc_action: .asciz "test-action"
+.Lc_wait: .asciz "wait-tests"
+.Lc_wait_items: .asciz "wait-test-items"
+.Lc_print: .asciz "print-tests"
+.Lc_result: .asciz "print-test-result"
+.Lc_runs: .asciz "print-test-runs"
+.Lc_coverage: .asciz "print-coverage"
+.text
+
+testctl_expand_open:
+    mov ecx, 1
+    jmp testctl_expand
+testctl_collapse:
+    xor ecx, ecx
+    jmp testctl_expand
+
 # item_arg(rest, len) -> rax TSC*, rdx index for "OWNER/NAME ID" (no ID: the controller's row), or
 #   rax 0
 item_arg:

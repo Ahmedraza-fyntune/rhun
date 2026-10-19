@@ -140,7 +140,7 @@ FN control_exec
     lea r15, [rip + ctl_table]
 1:  mov rdx, [r15]
     test rdx, rdx
-    jz .Lce_unknown
+    jz .Lce_more
     mov rdi, r13
     mov rsi, r14
     call str_eq_cstr
@@ -148,6 +148,28 @@ FN control_exec
     jnz 2f
     add r15, 16
     jmp 1b
+.Lce_more:
+    # the other parts' tables (ctl_tables): fn(out, rest, rest len) -> rax as above
+    lea rax, [rip + ctl_tables]
+    mov [rsp], rax
+11: mov rax, [rsp]
+    mov r15, [rax]
+    test r15, r15
+    jz .Lce_unknown
+    add qword ptr [rsp], 8
+12: mov rdx, [r15]
+    test rdx, rdx
+    jz 11b
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 13f
+    add r15, 16
+    jmp 12b
+13: lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
 2:  call [r15 + 8]
     push rax
     push rax
@@ -1179,56 +1201,6 @@ c_print_options:
     call sb_push_byte
     xor eax, eax
     EPILOGUE
-
-# testing (testview.s): the test model's controls get (out, the arguments, their length)
-c_test_select:
-    lea rdi, [rip + out]
-    mov rsi, rbx
-    mov rdx, r12
-    jmp testctl_select
-c_test_expand:
-    lea rdi, [rip + out]
-    mov rsi, rbx
-    mov rdx, r12
-    mov ecx, 1
-    jmp testctl_expand
-c_test_collapse:
-    lea rdi, [rip + out]
-    mov rsi, rbx
-    mov rdx, r12
-    xor ecx, ecx
-    jmp testctl_expand
-c_test_action:
-    lea rdi, [rip + out]
-    mov rsi, rbx
-    mov rdx, r12
-    jmp testctl_action
-c_wait_tests:
-    lea rdi, [rip + out]
-    jmp testctl_wait
-c_wait_test_items:
-    lea rdi, [rip + out]
-    mov rsi, rbx
-    mov rdx, r12
-    jmp testctl_wait_items
-c_print_tests:
-    lea rdi, [rip + out]
-    mov rsi, rbx
-    mov rdx, r12
-    jmp testctl_print
-c_print_test_result:
-    lea rdi, [rip + out]
-    mov rsi, rbx
-    mov rdx, r12
-    jmp testctl_result
-c_print_test_runs:
-    lea rdi, [rip + out]
-    jmp testctl_runs
-c_print_coverage:
-    lea rdi, [rip + out]
-    mov rsi, rbx
-    mov rdx, r12
-    jmp testctl_coverage
 
 # print-marks: the active document's diagnostic marks, "L1 C1 L2 C2 SEVERITY owner/name MESSAGE"
 # per line, in the order they are held; then "errors=N warnings=M"
@@ -2349,6 +2321,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
+# other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
+ctl_tables:
+    .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad test_ctl              # testing (testview.s)
+    .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open
@@ -2385,23 +2362,7 @@ ctl_table:
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
     .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
-    # testing (testview.s)
-    .quad .Lc_test_select, c_test_select, .Lc_test_expand, c_test_expand
-    .quad .Lc_test_collapse, c_test_collapse, .Lc_test_action, c_test_action
-    .quad .Lc_wait_tests, c_wait_tests, .Lc_wait_test_items, c_wait_test_items
-    .quad .Lc_print_tests, c_print_tests, .Lc_print_test_result, c_print_test_result
-    .quad .Lc_print_test_runs, c_print_test_runs, .Lc_print_coverage, c_print_coverage
     .quad 0, 0
-.Lc_test_select: .asciz "test-select"
-.Lc_test_expand: .asciz "test-expand"
-.Lc_test_collapse: .asciz "test-collapse"
-.Lc_test_action: .asciz "test-action"
-.Lc_wait_tests: .asciz "wait-tests"
-.Lc_wait_test_items: .asciz "wait-test-items"
-.Lc_print_tests: .asciz "print-tests"
-.Lc_print_test_result: .asciz "print-test-result"
-.Lc_print_test_runs: .asciz "print-test-runs"
-.Lc_print_coverage: .asciz "print-coverage"
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:

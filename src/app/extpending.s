@@ -28,7 +28,7 @@ FN ext_pending_new
     mov r12, rsi
     test rbx, rbx
     jz .Lpn_invalid
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz .Lpn_invalid
     cmp qword ptr [rip + ext_pending_shutting_down], 0
@@ -159,6 +159,10 @@ FN ext_pending_release
     dec qword ptr [rdi + PN_refs]
     jnz 9f
     PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + PN_inv]
+    call mem_free
+    mov rdi, rbx
     call mem_free
     xor eax, eax
     EPILOGUE
@@ -183,7 +187,7 @@ FN ext_pending_matches
     mov r12, rsi
     mov r13, rdx
     mov rdi, r12
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz .Lpn_no
     test rbx, rbx

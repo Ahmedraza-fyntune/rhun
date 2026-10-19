@@ -163,7 +163,7 @@ FN testproto_agreed
     jz 9f
     cmp dword ptr [rdi + EXT_status], ES_RUNNING
     jne 9f
-    test dword ptr [rdi + EXT_features], FEAT_TESTS
+    FEAT_TEST rdi, FEAT_TESTS
     jz 9f
     mov eax, 1
 9:  ret
@@ -179,7 +179,7 @@ FN testproto_event
 FN testproto_ready
     PROLOGUE
     mov rbx, rdi
-    test dword ptr [rbx + EXT_features], FEAT_TESTS
+    FEAT_TEST rbx, FEAT_TESTS
     jz 9f
     mov rdi, rbx
     call testmodel_ctrl_make
@@ -926,7 +926,7 @@ FN testproto_request
     mov rsi, rcx
     call tsb_fields
     mov r12d, eax               # fields
-    test dword ptr [rbx + EXT_features], FEAT_TESTS
+    FEAT_TEST rbx, FEAT_TESTS
     jz .Ltq_unknown
     mov edi, 1
     lea rsi, [rip + .Lv_items]
