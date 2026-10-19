@@ -609,7 +609,10 @@ commands:
 Extensions that declare `git = read` read the project's Git data through rhun: the status, the
 blame of a file as you edit it (unsaved lines show as not committed), the history of a file or of
 some lines, a file at an older commit, and rhun's diff view of two commits. rhun runs git for them,
-so a folder opened from a `rhun://` link stays paused for them too until you trust it.
+so a folder opened from a `rhun://` link stays paused for them too until you trust it. An
+extension can also give the base the gutter marks compare a file with, for files outside git
+(another version control system, or "compare with" modes), and write commit messages (see
+Commit message AI).
 
 An edit across files is checked whole before anything changes: if a document changed meanwhile
 or a range is off, nothing changes and rhun says why. Each document's changes are one undo
