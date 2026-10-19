@@ -46,6 +46,7 @@ parked_id: .quad 0              #   request id, run and that run's number
 parked_run: .quad 0
 parked_runnum: .quad 0
 cmdline: .zero 4096             # the command as the question shows it
+cwd_buf: .zero 4096             # the request's folder, copied
 
 .text
 
@@ -462,10 +463,10 @@ exec_start:
     lea rdi, [rip + eb]
     lea rsi, [rip + .Le_nofile]
     call sb_push_cstr
+    mov rax, [rip + args + VEC_ptr]
+    mov rsi, [rax]
     lea rdi, [rip + eb]
-    mov rsi, [rip + cmd_prog]
-    mov rdx, [rip + cmd_proglen]
-    call sb_push
+    call sb_push_cstr
     lea rdi, [rip + eb]
     lea rsi, [rip + .Le_not_found]
     call sb_push_cstr
@@ -594,6 +595,14 @@ parse_command:
     call tsb_take
     test rax, rax
     jz .Lpc_syntax
+    # copied: a request waiting for the approval outlives its body
+    lea rdi, [rip + cwd_buf]
+    mov rsi, rax
+    mov rdx, [rip + cmd_cwdlen]
+    call memcpy
+    lea rax, [rip + cwd_buf]
+    mov rcx, [rip + cmd_cwdlen]
+    mov byte ptr [rax + rcx], 0
     mov [rip + cmd_cwd], rax
     # the program name: [A-Za-z0-9._+-]
     mov rdi, [rip + cmd_prog]

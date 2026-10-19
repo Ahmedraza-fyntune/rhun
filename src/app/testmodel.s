@@ -2379,6 +2379,18 @@ FN testmodel_dump_runs
     mov rdi, rbx
     mov esi, 10
     call sb_push_byte
+    # the run's own messages (a problem that belongs to no item)
+    xor ecx, ecx
+7:  cmp rcx, [r13 + TSR_ents + VEC_len]
+    jae 1b
+    imul rax, rcx, TSE_SIZE
+    add rax, [r13 + TSR_ents + VEC_ptr]
+    inc rcx
+    cmp dword ptr [rax + TSE_item], -1
+    jne 7b
+    mov rdi, rbx
+    mov rsi, rax
+    call testmodel_dump_messages
     jmp 1b
 9:  EPILOGUE
 
