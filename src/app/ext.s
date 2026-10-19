@@ -964,6 +964,8 @@ FN ext_retire
     call complete_ext_gone
     mov rdi, rbx
     call langfeat_ext_gone
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1605,7 +1607,9 @@ FN ext_load
     jne .Lel_fail
     lea rdi, [rip + .Lr_manifest_large]
     jmp .Lel_fail
-1:  lea rdi, [rip + ini_it]
+1:  mov rdi, rbx                # AI: nothing from an earlier manifest (agentext.s)
+    call ai_ext_reset
+    lea rdi, [rip + ini_it]
     mov rsi, r13
     mov rdx, r14
     call ini_init
@@ -1943,9 +1947,23 @@ manifest_kv:
     lea rsi, [rip + .Ls_provides]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 5f
+    mov rdi, rbx                # AI: agents, agents.title (agentext.s)
+    mov rsi, r12
+    call agentext_manifest_kv
+    test eax, eax
+    jnz 9f
     lea rdi, [rip + pv_keys]
     call parse_keyed
+    jmp 9f
+5:  mov rdi, r12                # AI: [tools] (tools.s)
+    lea rsi, [rip + .Ls_tools]
+    call ini_sec_is
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call tools_manifest_kv
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -4268,6 +4286,8 @@ FN ext_legacy_exited
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4416,6 +4436,8 @@ FN ext_supervised_exited
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -5725,6 +5747,7 @@ ext_target: .asciz "linux-x86_64"
 .Ls_commands: .asciz "commands"
 .Ls_subscribe: .asciz "subscribe"
 .Ls_provides: .asciz "provides"
+.Ls_tools: .asciz "tools"           # AI (tools.s)
 .Lpv_complete: .asciz "complete"
 .Lpv_ctrig: .asciz "complete.triggers"
 .Lpv_signature: .asciz "signature"

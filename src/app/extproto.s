@@ -468,6 +468,14 @@ handle_line:
     jmp 9f
 2:  test r12, r12
     jz 9f
+    mov rdi, rbx                # AI: transcripts, tool answers, prompts (extaiproto.inc)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ai_reply
+    test eax, eax
+    jnz 9f
     test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
     jz 9f
     mov rdi, rbx
@@ -494,13 +502,23 @@ handle_line:
     call langfeat_reply
     jmp 9f
 .Lhl_err:
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
     mov edi, 1
     call field_u64
     test edx, edx
     jz 9f
     mov r12, rax
+    mov edi, 2                  # AI: the code and text go with the error (extaiproto.inc)
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call ai_reply
+    test eax, eax
+    jnz 9f
+    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
+    jz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -3415,6 +3433,9 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # AI (wider-parity D, extaiproto.inc)
+    .quad .Lv_agent_sessions, h_agent_sessions, 1048576
+    .quad .Lv_agent_changed, h_agent_changed, 0
     .quad 0, 0, 0
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
@@ -3538,7 +3559,9 @@ cmd_allow:
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature
+    .quad .Lf_agents, .Lf_edit_review, .Lf_tools, .Lf_agent_prompts   # AI (extaiproto.inc)
+    .quad 0
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "
@@ -3576,6 +3599,7 @@ feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf
 .Lr_syntax: .asciz "three unparsable lines in a row"
 
 .include "app/extwatchproto.inc"
+.include "app/extaiproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

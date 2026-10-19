@@ -1488,7 +1488,13 @@ ENDSTRUCT TF_SIZE
 # the features whose requests rhun sends (and whose ok ID LEN replies it frames)
 .equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
 .equ FEAT_WORKSPACE_WATCH, 16384
-.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+# AI (wider-parity D): agent sources, edit proposals, tools, interactive sessions
+.equ FEAT_AGENTS, 1 << 15        # bit i: feature_names[i]
+.equ FEAT_EDIT_REVIEW, 1 << 16
+.equ FEAT_TOOLS, 1 << 17
+.equ FEAT_AGENT_PROMPTS, 1 << 18
+.equ FEAT_AI, FEAT_AGENTS | FEAT_EDIT_REVIEW
+.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS | FEAT_AI
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1544,6 +1550,7 @@ ENDSTRUCT TAB_SIZE
 .equ FOCUS_PROMPT, 7
 .equ FOCUS_TERMINAL, 8
 .equ FOCUS_SCM, 9               # the commit message
+.equ FOCUS_AGENT_INPUT, 10      # AI (D4): the prompt box of an extension's agent session
 
 # grammar (syntax definition)
 STRUCT
@@ -2007,4 +2014,34 @@ F AS_bytes, 8           # worker, OpenCode: the conversation copy's estimated si
 F AS_model, 8           # the model the session last used (its row), or 0
 F AS_log_model, 8       # parse: the model the log names for the replies that follow
 F AS_shown_model, 8     # parse: the model on the last reply labeled with one
+# AI (wider-parity D1): a row an extension lists (AS_kind 5) keeps its title, model, CWD (AS_cwd)
+# and worktree in the fields above
+F AS_ext, 8             # kind 5: the extension that lists it (EXT*)
+F AS_sid, 8             # kind 5: its session id, cstr
+F AS_state, 4           # kind 5: AGS_*
+F AS_xflags, 4          # kind 5: AXF_*
+F AS_total, 8           # kind 5: messages the extension says the session has
+F AS_dirty, 8           # kind 5: the first message to fetch again, -1 when the copy is current
+F AS_req, 8             # kind 5: the agent-transcript request in flight (its id), 0 when none
+F AS_from, 8            # kind 5: the FROM of that request
+F AS_ask, 8             # kind 5 (D4): the open card, an AK record, or 0
 ENDSTRUCT AS_SIZE
+.equ AS_KIND_EXT, 5
+.equ AGS_IDLE, 0
+.equ AGS_WORKING, 1
+.equ AGS_WAITING, 2
+.equ AGS_ERROR, 3
+.equ AXF_MATCH, 1               # its CWD is the project or one of its worktrees
+.equ AXF_FETCHED, 2             # a transcript answer came at least once
+
+# AI (wider-parity D): what one extension contributes, indexed like g_exts (ai_ext)
+STRUCT
+F AX_agents, 4          # [provides] agents = yes
+F AX_hidden, 4          # its sessions are switched off ([agents] OWNER/NAME = false)
+F AX_title, 8           # agents.title, cstr or 0
+F AX_rows, VEC_SIZE     # AS*, its session rows, owned
+F AX_tools, VEC_SIZE    # TL records from [tools] (tools.s)
+F AX_grants, 8          # tools.s: bit i set when the user allowed tool i for this session
+F AX_proposals, 4       # review.s: proposals of it still pending
+F AX_pad, 4
+ENDSTRUCT AX_SIZE
