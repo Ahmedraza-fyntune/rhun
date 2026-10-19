@@ -101,6 +101,11 @@ FN settings_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
+    lea rax, [rip + cfg_agents_opencode]
+    cmp [rbx + SET_ptr], rax
+    jne 2f
+    mov rdi, r12                # AI: the extension sources (agentext.s)
+    call agentext_settings_dump
 2:  add rbx, SET_SIZE
     jmp 1b
 9:  EPILOGUE
@@ -1306,6 +1311,14 @@ FN settings_draw
     call gfx_clip_pop
     add r12d, r13d
     add r12d, [rip + g_mt + 4*MI_8]
+    lea rax, [rip + cfg_agents_opencode]
+    cmp [rbx + SET_ptr], rax
+    jne .Lsd_skip
+    mov edi, [rsp + 20]         # AI: a switch per extension source (agentext.s)
+    mov esi, r12d
+    mov edx, [rsp + 16]
+    call agentext_settings_rows
+    add r12d, eax
 .Lsd_skip:
     add rbx, SET_SIZE
     inc r15d

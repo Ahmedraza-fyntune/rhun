@@ -188,6 +188,8 @@ python3 tests/ext-updates.py || fail=1
 python3 tests/ext-remove-clean.py || fail=1
 python3 tests/ext-dev-install.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
+# testing: the test explorer (feature "tests")
+python3 tests/testing.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?

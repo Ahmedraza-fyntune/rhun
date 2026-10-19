@@ -201,6 +201,8 @@ FN extrec_pv_free
     call mem_free
     mov rdi, [rbx + EXT_pack]
     call mem_free
+    mov rdi, [rbx + EXT_tests_progs]
+    call mem_free
     mov rdi, rbx
     xor esi, esi
     mov edx, EXT_SIZE
@@ -781,21 +783,48 @@ FN ext_needs_wider
     test r15d, NEEDS_TERMINAL
     jz 7f
     call wider_item
-7:  # programs in run that the old list lacks: "run cargo rustfmt"
-    mov r15, [r12 + EXT_runs]
-    test r15, r15
-    jz 9f
-    mov dword ptr [rsp], 0      # names so far
-71: mov rdi, r15
+7:  # programs in run, and in tests (testing), that the old lists lack: "run cargo rustfmt"
+    mov rdi, [r12 + EXT_runs]
+    mov rsi, [rbx + EXT_runs]
+    lea rdx, [rip + .Lempty]
+    mov rcx, r13
+    mov r8d, r14d
+    call wider_list
+    mov r14d, eax
+    mov rdi, [r12 + EXT_tests_progs]
+    mov rsi, [rbx + EXT_tests_progs]
+    lea rdx, [rip + .Ln_when_tests]
+    mov rcx, r13
+    mov r8d, r14d
+    call wider_list
+    mov r14d, eax
+    xor eax, eax
+    test r14d, r14d
+    setnz al
+    EPILOGUE
+
+# wider_list(new list, old list, suffix, sb, items) -> eax items: "run A B" + suffix onto sb (after
+# ", " when items) for the names of new that old lacks
+wider_list:
+    PROLOGUE 16
+    mov r12, rdi
+    mov rbx, rsi
+    mov [rsp], rdx
+    mov r13, rcx
+    mov r14d, r8d
+    xor r15d, r15d              # names so far
+    test r12, r12
+    jz 8f
+1:  mov rdi, r12
     call strlen
-    mov rdi, r15
+    mov rdi, r12
     mov rsi, rax
     call next_word
-    add r15, rcx
+    add r12, rcx
     test rdx, rdx
-    jz 9f
+    jz 7f
     cmp rdx, 100
-    jae 71b
+    jae 1b
     lea rdi, [rip + rc_word]
     mov rsi, rax
     push rdx
@@ -806,26 +835,29 @@ FN ext_needs_wider
     lea rax, [rip + rc_word]
     mov byte ptr [rax + rdx], 0
     lea rdi, [rip + rc_word]
-    mov rsi, [rbx + EXT_runs]
+    mov rsi, rbx
     call list_has_word
     test eax, eax
-    jnz 71b
-    cmp dword ptr [rsp], 0
-    jne 72f
+    jnz 1b
+    test r15d, r15d
+    jnz 2f
     lea rsi, [rip + .Ln_run]
     call wider_item
-    jmp 73f
-72: mov rdi, r13
+    jmp 3f
+2:  mov rdi, r13
     mov esi, ' '
     call sb_push_byte
-73: inc dword ptr [rsp]
+3:  inc r15d
     mov rdi, r13
     lea rsi, [rip + rc_word]
     call sb_push_cstr
-    jmp 71b
-9:  xor eax, eax
-    test r14d, r14d
-    setnz al
+    jmp 1b
+7:  test r15d, r15d
+    jz 8f
+    mov rdi, r13
+    mov rsi, [rsp]
+    call sb_push_cstr
+8:  mov eax, r14d
     EPILOGUE
 
 # wider_item(cstr in rsi): onto r13, after ", " when not the first (r14 counts)
@@ -1155,6 +1187,7 @@ put_num:
 .Ln_net: .asciz "use the internet"
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
 .Ln_run: .asciz "run "
+.Ln_when_tests: .asciz " with your access when you run tests"
 .Ln_sep: .asciz ", "
 .Leq: .asciz " = "
 .Lr_pack: .asciz "pack in extension.ini must list at most 16 other extensions as owner/name"
