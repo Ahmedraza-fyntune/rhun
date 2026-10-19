@@ -624,6 +624,7 @@ F DOC_language_name, 8  # owned explicit language name, retained even while unav
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
+F DOC_uri, 8            # resources group: a virtual document's URI (owned; vdoc.s), or 0
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1

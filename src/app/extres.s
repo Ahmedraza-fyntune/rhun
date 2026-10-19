@@ -332,6 +332,8 @@ FN extres_exited
     mov dword ptr [rax + EL_busy], 0
     mov dword ptr [rax + EL_procs], 0
     mov qword ptr [rax + EL_rss], 0
+    mov rdi, rbx
+    call vdoc_ext_exited        # the virtual documents waiting for it say so
 9:  EPILOGUE
 
 # extres_stopped(ext) -> eax 1 when the stop that ended it was for idleness: it is idle again
@@ -572,7 +574,8 @@ FN extres_frame
     mov [rip + el_sample_t], r12
     call sample_all
     mov dword ptr [rip + g_dirty], 1
-9:  EPILOGUE
+9:  call vdoc_tick              # virtual documents waiting for their providers
+    EPILOGUE
 
 # extres_timeout() -> rax the time (time_ms) the loop must come back for idleness and samples,
 # or -1
@@ -596,7 +599,17 @@ FN extres_timeout
     jz 1b
 2:  mov r12, [rip + el_idle_t]
     add r12, 1000
-3:  call time_ms
+3:  call vdoc_waiting           # a virtual document waits: back in 100 ms
+    test eax, eax
+    jz 31f
+    call time_ms
+    add rax, 100
+    cmp r12, -1
+    je 30f
+    cmp rax, r12
+    jae 31f
+30: mov r12, rax
+31: call time_ms
     sub rax, [rip + el_page_t]
     cmp rax, 3000
     jae 9f
@@ -1461,6 +1474,7 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
     .quad .Lc_print_resources, c_print_resources
     .quad .Lc_secret_backend, c_secret_backend, .Lc_print_secrets, c_print_secrets
     .quad .Lc_secrets_refresh, c_secrets_refresh, .Lc_secret_forget, c_secret_forget
+    .quad .Lc_print_vdocs, c_print_vdocs
     .quad 0, 0
 .Lv_complete: .asciz "complete"
 .Lq_complete: .asciz "completion"
@@ -1481,6 +1495,7 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
 .Lc_print_secrets: .asciz "print-secrets"
 .Lc_secrets_refresh: .asciz "secrets-refresh"
 .Lc_secret_forget: .asciz "secret-forget"
+.Lc_print_vdocs: .asciz "print-vdocs"
 .Lr_idle: .asciz "idle"
 .Lenv_scale: .asciz "RHUN_IDLE_SCALE"
 .Lk_idle: .asciz "idle"

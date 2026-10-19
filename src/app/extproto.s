@@ -487,6 +487,14 @@ handle_line:
     call extres_req_answer
     cmp dword ptr [rbx + EXT_feat_asks], 0
     je 9f
+    mov rdi, rbx                # resources group: a virtual document's text (vdoc.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call vdoc_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # language features: counted, and a late answer goes no further
     mov rsi, r12
     mov edx, 1
@@ -549,6 +557,16 @@ handle_line:
     call extres_req_answer
     cmp dword ptr [rbx + EXT_feat_asks], 0
     je 9f
+    mov edi, 2                  # resources group: a virtual document's error (vdoc.s)
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call vdoc_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # language features: counted, and a late answer goes no further
     mov rsi, r12
     xor edx, edx
@@ -1716,6 +1734,13 @@ h_open:
     mov r13, rax                # col
     mov edi, 4
     call rest_from
+    mov rdi, rax                # resources group: a URI (feature uris; extresproto.inc)
+    mov rsi, rdx
+    mov rdx, r12
+    mov rcx, r13
+    call res_open_uri
+    cmp rax, -1
+    je .Lho_done
     mov rdi, rax
     mov rsi, rdx
     cmp byte ptr [rdi], '/'
@@ -1847,6 +1872,7 @@ h_open:
 .Lho_syntax:
     mov rdi, [rip + cur_id]
     call reply_syntax
+.Lho_done:
     EPILOGUE
 
 # ID diagnostics DOC VERSION N + body -> ok ID: the extension's marks on the document
@@ -3494,13 +3520,33 @@ sub_matches:
     jz 8f
     mov rbx, rdi
     mov r12, rsi
+    cmp qword ptr [r12 + DOC_uri], 0
+    jne 2f
     cmp byte ptr [rbx], '*'
     jne 1f
     cmp byte ptr [rbx + 1], 0
     je 9f
-1:  mov rdi, [r12 + DOC_path]
+1:
+    mov rdi, [r12 + DOC_path]
     test rdi, rdi
     jz 8f
+    mov rsi, rbx
+    call ext_path_matches
+    EPILOGUE
+2:  # resources group: a virtual document, only for extensions that agreed uris, by its URI's
+    # last segment
+    mov rdi, [rip + cur]
+    mov esi, FEAT_URIS
+    call ext_feature
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx], '*'
+    jne 3f
+    cmp byte ptr [rbx + 1], 0
+    je 9f
+3:  mov rdi, r12
+    call extproto_uri_segment
+    mov rdi, rax
     mov rsi, rbx
     call ext_path_matches
     EPILOGUE
@@ -3541,6 +3587,9 @@ send_opened:
 2:  mov edi, ' '
     call out_byte
     mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jnz 3f
+    mov rdi, [rbx + DOC_uri]    # resources group: a virtual document's URI
     test rdi, rdi
     jnz 3f
     lea rdi, [rip + .Ldash]
@@ -3842,6 +3891,7 @@ verbs:
     .quad .Lres_v_secret_set, h_res_secret_set, 65536
     .quad .Lres_v_secret_delete, h_res_secret_delete, 0
     .quad .Lres_v_secret_keys, h_res_secret_keys, 0
+    .quad .Lres_v_content_changed, h_res_content_changed, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX

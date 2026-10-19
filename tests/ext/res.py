@@ -3,10 +3,13 @@
 links, URIs and virtual documents, files and search, scoped settings, workspace folders).
 Standard library only.
 
-RES_FEATURES  the features named after "hello 1" (space separated)
+RES_FEATURES  the features named after "hello 1" (space separated); RES_FEATURES_NAME for the
+              extension NAME alone
 RES_LOG       a file that receives every line rhun sends and every reply, one per line
 RES_ARGS      a file whose lines are arguments for the next commands (one line per command that
               takes arguments, consumed in order)
+In both, {state} stands for the extension's state folder (RHUN_STATE): with several extensions
+each keeps its own.
 
 A command NAME run from rhun ("0 run OWNER.NAME DOC") does what CMDS says; the extension's
 manifest lists the commands a test uses.
@@ -16,13 +19,14 @@ import subprocess
 import sys
 import time
 
-LOG = os.environ.get('RES_LOG')
+STATE = os.environ.get('RHUN_STATE', '')
+LOG = os.environ.get('RES_LOG', '').replace('{state}', STATE) or None
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
 next_id = 1
 pending = {}
 keep = []               # memory and children kept alive on purpose
-contents = {}           # uri -> (lang, title, text) for content requests
+served = {}             # uri -> how many content requests it answered
 
 
 def log(line):
@@ -46,7 +50,7 @@ def request(verb_and_args, body=b''):
 
 
 def arg():
-    path = os.environ.get('RES_ARGS')
+    path = os.environ.get('RES_ARGS', '').replace('{state}', STATE)
     if not path or not os.path.exists(path):
         return ''
     with open(path, encoding='utf-8') as f:
@@ -125,7 +129,8 @@ def send_line(line):
 
 
 def main():
-    features = os.environ.get('RES_FEATURES', '').strip()
+    name = os.environ.get('RHUN_EXTENSION', '').rsplit('/', 1)[-1]
+    features = os.environ.get('RES_FEATURES_' + name, os.environ.get('RES_FEATURES', '')).strip()
     send('hello 1' + (' ' + features if features else ''))
     while True:
         line = read_line()
@@ -148,10 +153,22 @@ def main():
             body = read_body(int(parts[-1]))
             log(b'body ' + body)
         elif parts[0].isdigit() and len(parts) >= 3 and parts[1] == b'content':
+            # RES_VDOC: "LANG|TITLE" for the answer; RES_VDOC_MODE: slow (no answer), error,
+            # bad (a broken answer)
             uri = parts[2].decode()
-            lang, title, text = contents.get(uri, ('', '', 'content of ' + uri + '\n'))
+            served[uri] = served.get(uri, 0) + 1
+            mode = os.environ.get('RES_VDOC_MODE', '')
+            if mode == 'slow':
+                continue
+            if mode == 'error':
+                send(f'error {parts[0].decode()} nofile no such revision')
+                continue
+            lang, _, title = os.environ.get('RES_VDOC', '|').partition('|')
+            text = f'content {served[uri]} of {uri}\nsecond line\n'
             data = f'{len(lang.encode())} {len(title.encode())} {len(text.encode())}\n'.encode() \
                 + lang.encode() + title.encode() + text.encode()
+            if mode == 'bad':
+                data = b'1 2 99999\nxx'
             send(f'ok {parts[0].decode()} {len(data)}', data)
 
 

@@ -678,6 +678,8 @@ FN ext_set_disabled
     jz .Lpn_enabled_choices
     mov rdi, rbx
     call ext_pending_clear
+    mov rdi, rbx
+    call vdoc_ext_gone          # resources group: the virtual documents it provides close
 .Lpn_enabled_choices:
     call ext_settings_save
     test r12d, r12d
@@ -955,6 +957,8 @@ FN ext_retire
     mov dword ptr [rbx + EXT_restart], 0
     mov rdi, rbx
     call secrets_ext_removed    # resources group: its secrets go with it
+    mov rdi, rbx
+    call vdoc_ext_gone          # and the virtual documents it provides
     mov rdi, rbx
     call ext_pending_clear
     mov rdi, rbx

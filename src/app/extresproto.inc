@@ -230,6 +230,177 @@ FN extproto_secret_reply
 .Lres_one: .asciz " 1 "
 .text
 
+# ---------------- uris and virtual documents (vdoc.s) ----------------
+
+# FN extproto_host_line(ext, line ptr, len) -> rax the id of "ID LINE" sent to the extension, or 0:
+# a request about no document (content)
+FN extproto_host_line
+    PROLOGUE
+    mov rbx, rdi
+    mov r13, rsi
+    mov r14, rdx
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 8f
+    cmp qword ptr [rbx + EXT_hreq], 2147483647
+    jae 8f
+    mov r12, [rip + cur]
+    mov [rip + cur], rbx
+    inc qword ptr [rbx + EXT_hreq]
+    mov r15, [rbx + EXT_hreq]
+    call out_begin
+    mov rdi, r15
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r13
+    mov rsi, r14
+    call out_bytes
+    mov edi, 10
+    call out_byte
+    call out_end
+    mov [rip + cur], r12
+    test rax, rax
+    js 8f
+    mov rdi, r13
+    mov rsi, r14
+    call next_word
+    mov rcx, rdx
+    mov rdx, rax
+    mov rdi, rbx
+    mov rsi, r15
+    call extres_req_sent
+    mov rax, r15
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN extproto_content_closed(ext, uri cstr): "0 content-closed URI"
+FN extproto_content_closed
+    PROLOGUE
+    mov rbx, rdi
+    mov r13, rsi
+    mov r12, [rip + cur]
+    mov [rip + cur], rbx
+    call out_begin
+    lea rdi, [rip + .Lres_ev_closed]
+    call out_cstr
+    mov rdi, r13
+    call out_cstr
+    mov edi, 10
+    call out_byte
+    call out_end
+    mov [rip + cur], r12
+    EPILOGUE
+
+# ID content-changed URI -> ok ID: an open virtual document of the extension is asked again
+h_res_content_changed:
+    PROLOGUE
+    mov edi, FEAT_URIS
+    call res_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 8f
+    mov edi, 2
+    call rest_from
+    mov rbx, rax
+    mov r12, rdx
+    mov rdi, rax
+    mov rsi, rdx
+    call uri_scheme_len
+    test rax, rax
+    jz 8f
+    mov rdi, [rip + cur]
+    mov rsi, rbx
+    mov rdx, r12
+    call vdoc_changed
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# res_open_uri(ptr, len, line, col) -> rax -1 when open's resource was a URI and the request is
+# answered; else rax, rdx the resource to open as a path (a file: URI decoded, or as it came)
+res_open_uri:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov rdi, [rip + cur]
+    mov esi, FEAT_URIS
+    call ext_feature
+    test eax, eax
+    jz 7f
+    mov rdi, rbx
+    mov rsi, r12
+    call uri_scheme_len
+    test rax, rax
+    jz 7f
+    mov rdi, rbx
+    mov rsi, r12
+    call uri_file_path
+    test rax, rax
+    jz 1f
+    EPILOGUE
+1:  cmp r12, 5
+    jb 2f
+    mov rdi, rbx
+    mov rsi, r12
+    lea rdx, [rip + .Lres_file_colon]
+    mov ecx, 5
+    call str_starts
+    test eax, eax
+    jnz 6f                      # a file: URI that is no local path
+2:  mov rdi, [rip + cur]
+    mov rsi, rbx
+    mov rdx, r12
+    mov ecx, r13d
+    mov r8d, r14d
+    call vdoc_open
+    test rax, rax
+    js 5f
+    mov rsi, [rax + DOC_id]
+    mov rdi, [rip + cur_id]
+    call reply_ok_u64
+    mov rax, -1
+    EPILOGUE
+5:  lea rsi, [rip + .Le_nofile]
+    cmp rax, -27
+    jne 51f
+    lea rsi, [rip + .Lres_e_vdocs]
+51: mov rdi, [rip + cur_id]
+    call reply_error
+    mov rax, -1
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nofile]
+    call reply_error
+    mov rax, -1
+    EPILOGUE
+7:  mov rax, rbx
+    mov rdx, r12
+    EPILOGUE
+
+# FN extproto_uri_segment(doc) -> rax the cstr subscriptions match a virtual document by (its URI's
+# last segment), or 0 for an ordinary document
+FN extproto_uri_segment
+    mov rax, [rdi + DOC_uri]
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    jmp uri_last_segment
+9:  ret
+
+.section .rodata
+.Lres_v_content_changed: .asciz "content-changed"
+.Lres_ev_closed: .asciz "0 content-closed "
+.Lres_file_colon: .asciz "file:"
+.Lres_e_vdocs: .asciz "toobig too many virtual documents are open"
+.text
+
 .section .rodata
 .Lres_v_busy: .asciz "busy"
 .text
