@@ -831,33 +831,21 @@ reveal_cursor:
     mov [rip + exp_scroll], eax
     ret
 1:  add eax, ecx
-    mov edx, [rip + exp_rect + 12]
-    sub edx, [rip + g_mt + 4*MI_40]
+    mov edx, [rip + exp_rect + 12]     # the list's height
     sub eax, edx
     cmp eax, [rip + exp_scroll]
     jle 2f
     mov [rip + exp_scroll], eax
 2:  ret
 
-# explorer_draw(x, y, w, h)
+# explorer_draw(x, y, w, h): the sidebar with the explorer alone: its title and buttons, the tree
+#   under them
 FN explorer_draw
-    PROLOGUE 64
+    PROLOGUE 16
     mov [rsp], edi
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
-    mov [rip + exp_rect], edi
-    mov [rip + exp_rect + 4], esi
-    mov [rip + exp_rect + 8], edx
-    mov [rip + exp_rect + 12], ecx
-    cmp dword ptr [rip + g_exp_reveal], 0
-    je 1f
-    mov dword ptr [rip + g_exp_reveal], 0
-    call explorer_reveal
-1:  mov edi, [rsp]
-    mov esi, [rsp + 4]
-    mov edx, [rsp + 8]
-    mov ecx, [rsp + 12]
     COLOR r8d, T_PANEL
     call gfx_fill
     mov edi, [rsp]
@@ -865,21 +853,43 @@ FN explorer_draw
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
     call gfx_clip_push
-    # header
-    M r15d, MI_40
     lea rdi, [rip + g_face_small]
     mov esi, [rsp]
     add esi, [rip + g_mt + 4*MI_16]
     mov edx, [rsp + 4]
-    mov ecx, r15d
+    M ecx, MI_40
     lea r8, [rip + .Lheader]
     COLOR r9d, T_MUTED
     call ui_text_c
-    M r12d, MI_28
+    xor edi, edi
     mov esi, [rsp]
     add esi, [rsp + 8]
-    sub esi, r12d
     sub esi, [rip + g_mt + 4*MI_8]
+    mov edx, [rsp + 4]
+    M ecx, MI_40
+    call explorer_actions
+    xor edi, edi
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    add edx, [rip + g_mt + 4*MI_40]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    sub r8d, [rip + g_mt + 4*MI_40]
+    call explorer_body_draw
+    call gfx_clip_pop
+    EPILOGUE
+
+# explorer_actions(ctx, right, y, h) -> eax the x left of them: the header's buttons (New File, New
+#   Folder, Refresh) ending at right, centered in [y, y + h): the explorer's own header and its
+#   section's in a sidebar of several (places.s)
+FN explorer_actions
+    PROLOGUE 32
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov r15d, ecx
+    M r12d, MI_28
+    mov esi, [rsp]
+    sub esi, r12d
     mov [rsp + 16], esi
     mov edi, ID_EXP_REFRESH
     mov edx, r15d
@@ -946,24 +956,42 @@ FN explorer_draw
     test eax, UB_CLICK
     jz 2f
     call cmd_new_file_prompt
-2:  cmp qword ptr [rip + root], 0
+2:  mov eax, [rsp + 16]
+    sub eax, r12d
+    sub eax, r12d
+    EPILOGUE
+
+# explorer_body_draw(ctx, x, y, w, h): the tree of the project's files (or "No folder open") in the
+#   rectangle, with its scrollbar; its context menus
+FN explorer_body_draw
+    PROLOGUE 64
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    mov [rip + exp_rect], esi
+    mov [rip + exp_rect + 4], edx
+    mov [rip + exp_rect + 8], ecx
+    mov [rip + exp_rect + 12], r8d
+    cmp dword ptr [rip + g_exp_reveal], 0
+    je 1f
+    mov dword ptr [rip + g_exp_reveal], 0
+    call explorer_reveal
+1:  cmp qword ptr [rip + root], 0
     jne 3f
     lea rdi, [rip + g_face_small]
     mov esi, [rsp]
     add esi, [rip + g_mt + 4*MI_16]
     mov edx, [rsp + 4]
-    add edx, r15d
     M ecx, MI_24
     lea r8, [rip + .Lno_folder]
     COLOR r9d, T_MUTED
     call ui_text_c
-    jmp .Lxd_done
+    jmp .Lxd_ret
 3:  # list area
     mov eax, [rsp + 4]
-    add eax, r15d
     mov [rsp + 20], eax         # list y
     mov eax, [rsp + 12]
-    sub eax, r15d
     mov [rsp + 24], eax         # list h
     mov edi, [rsp]
     mov esi, [rsp + 20]
@@ -1244,8 +1272,7 @@ FN explorer_draw
     lea r9, [rip + exp_scroll]
     call ui_scrollbar
     add rsp, 16
-.Lxd_done:
-    call gfx_clip_pop
+.Lxd_ret:
     EPILOGUE
 
 FN cmd_new_file_prompt

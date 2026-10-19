@@ -73,11 +73,11 @@ ENDSTRUCT WE_SIZE
 lf_kind: .long 0                # the query in flight (LF_*), 0 for none
 lf_session: .long 0
 lf_ready: .long 0               # every provider answered: the tick finishes it
+lf_truncated: .long 0           # the query's cap cut it short (query-part)
 lf_list_kind: .long 0           # what the palette's list shows
 lf_doc: .quad 0                 # the document asked about, and its id
 lf_doc_id: .quad 0
 lf_language_revision: .quad 0
-lf_deadline: .quad 0
 lf_ws_ext: .quad 0
 lf_reqs: .zero VEC_SIZE         # LR records
 lf_res: .zero VEC_SIZE          # LS records
@@ -290,9 +290,7 @@ lf_cancel_all:
     inc rbx
     mov rdi, [rax + LR_ext]
     mov rsi, [rax + LR_id]
-    cmp dword ptr [rdi + EXT_status], ES_RUNNING
-    jne 1b
-    call extproto_send_cancel
+    call query_withdraw
     jmp 1b
 2:  mov qword ptr [rip + lf_reqs + VEC_len], 0
     EPILOGUE
@@ -305,6 +303,7 @@ lf_reset:
     call palette_results_close
     mov dword ptr [rip + lf_kind], 0
     mov dword ptr [rip + lf_ready], 0
+    mov dword ptr [rip + lf_truncated], 0
     mov dword ptr [rip + lf_list_kind], 0
     mov qword ptr [rip + lf_res + VEC_len], 0
     lea rdi, [rip + lf_bytes]
@@ -367,10 +366,6 @@ lf_start:
     mov [rip + lf_doc], rbx
     mov rax, [rbx + DOC_id]
     mov [rip + lf_doc_id], rax
-    call time_ms
-    lea rcx, [rip + lf_waits]
-    add rax, [rcx + r12*8]
-    mov [rip + lf_deadline], rax
     # the request: VERB DOC VERSION, then what the kind takes
     lea rdi, [rip + lf_line]
     call sb_clear
@@ -490,8 +485,10 @@ lf_start:
     test eax, eax
     jz 6b
     lea rax, [rip + lf_pvs]
-    mov rax, [rax + r12*8]
-    mov rdi, [r14 + rax]
+    mov rsi, [rax + r12*8]
+    mov rdi, r14
+    call ext_pv
+    mov rdi, rax
     mov rsi, rbx
     call extproto_matches
     test eax, eax
@@ -506,6 +503,12 @@ lf_start:
     test rax, rax
     jz 6b
     mov r15, rax
+    mov rdi, r14                # its kind's limits and statistics (query.s)
+    mov rsi, r15
+    lea rax, [rip + lf_pks]
+    mov edx, [rax + r12*4]
+    mov ecx, QO_LANGFEAT
+    call query_track
     lea rdi, [rip + lf_reqs]
     mov esi, LR_SIZE
     call vec_push
@@ -720,16 +723,33 @@ FN langfeat_reply
     mov rsi, r14
     mov rdx, r15
     call lf_parse_locations
-    jmp 7f
+    test rax, rax
+    jns 7f
+    jmp 54f
 51: mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
+    mov r13, [rip + lf_res + VEC_len]
     call lf_parse_symbols
-    jmp 7f
+    jmp 55f
 52: mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
+    mov r13, [rip + lf_res + VEC_len]
     call lf_parse_actions
+55: # a body with records whose answer left none broke the rules (query.s counts it dropped)
+    cmp [rip + lf_res + VEC_len], r13
+    jne 7f
+    mov rdi, r14
+    mov rsi, r15
+    call lf_body_empty
+    test eax, eax
+    jnz 7f
+54: mov eax, [rip + lf_kind]
+    lea rcx, [rip + lf_pks]
+    mov esi, [rcx + rax*4]
+    mov rdi, rbx
+    call query_dropped
     jmp 7f
 53: # rename, format: the workspace edit, applied when the query finishes
     cmp r15, WS_BODY_MAX
@@ -786,6 +806,64 @@ FN langfeat_reply
 72: mov dword ptr [rip + lf_ready], 1
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
+
+# lf_body_empty(body, len) -> eax 1 for no bytes or a count of 0
+lf_body_empty:
+    test rsi, rsi
+    jz 1f
+    cmp byte ptr [rdi], '0'
+    jne 8f
+    cmp rsi, 1
+    je 1f
+    cmp byte ptr [rdi + 1], 10
+    je 1f
+8:  xor eax, eax
+    ret
+1:  mov eax, 1
+    ret
+
+# FN langfeat_part(ext, id, body, len) -> rax the records taken from a part of a pending request's
+# answer (query-part, from extproto's pump: state only), or -1 when it breaks the rules
+FN langfeat_part
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    xor ecx, ecx
+1:  cmp rcx, [rip + lf_reqs + VEC_len]
+    jae 8f
+    imul rax, rcx, LR_SIZE
+    add rax, [rip + lf_reqs + VEC_ptr]
+    inc rcx
+    cmp [rax + LR_ext], rbx
+    jne 1b
+    cmp [rax + LR_id], r12
+    jne 1b
+    mov ecx, [rax + LR_session]
+    cmp ecx, [rip + lf_session]
+    jne 8f
+    call lf_language_current
+    test eax, eax
+    jz 8f
+    mov eax, [rip + lf_kind]
+    cmp eax, LF_REFS
+    ja 8f
+    test eax, eax
+    jz 8f
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r14
+    call lf_parse_locations
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+8:  xor eax, eax                # an answer nobody waits for any more: taken, and dropped
+    EPILOGUE
+
+# FN langfeat_truncated(ext, id): the query's cap cut that request short: what came is kept
+FN langfeat_truncated
+    mov dword ptr [rip + lf_truncated], 1
+    ret
 
 # lf_check_lines(body, len, n_max) -> eax N when the body starts with "N LF" (N at most n_max), with
 # ps_ptr past that line; -1 otherwise
@@ -945,7 +1023,8 @@ lf_rollback:
     mov [rip + lf_bytes + SB_len], rsi
     ret
 
-# lf_parse_locations(ext, body, len): "N", then L1 C1 L2 C2 PATH_LEN TEXT_LEN and the bytes
+# lf_parse_locations(ext, body, len) -> rax the records taken, or -1 when the body breaks the rules
+# (nothing is taken): "N", then L1 C1 L2 C2 PATH_LEN TEXT_LEN and the bytes
 lf_parse_locations:
     PROLOGUE 48
     mov [rsp], rdi
@@ -1035,11 +1114,15 @@ lf_parse_locations:
 7:  # all of the body was the N records: nothing after them
     mov rax, [rip + ps_ptr]
     cmp rax, [rip + ps_end]
-    je 9f
+    jne 8f
+    mov rax, [rip + lf_res + VEC_len]
+    sub rax, [rsp + 8]
+    EPILOGUE
 8:  mov rdi, [rsp + 8]
     mov rsi, [rsp + 16]
     call lf_rollback
-9:  EPILOGUE
+    mov rax, -1
+    EPILOGUE
 
 # lf_location_label(preview, len) -> rax the label's offset ("name:line  preview"), rdx the
 # detail's (the folder) for the location whose path offset is at [rsp + 24 + 16 + 8] of the caller
@@ -1432,21 +1515,13 @@ lf_parse_actions:
 
 # FN langfeat_timeout() -> ms until the query in flight is given up, or -1
 FN langfeat_timeout
-    push rbx
     cmp dword ptr [rip + lf_kind], 0
     je 8f
     cmp dword ptr [rip + lf_ready], 0
-    jne 7f
-    mov rbx, [rip + lf_deadline]
-    call time_ms
-    sub rbx, rax
-    jns 1f
-7:  xor ebx, ebx
-1:  mov eax, ebx
-    pop rbx
+    je 8f
+    xor eax, eax
     ret
-8:  mov eax, -1
-    pop rbx
+8:  mov eax, -1                 # query.s's timeout covers the requests still out
     ret
 
 # FN langfeat_tick(): a query whose answers are in, or whose time is up, is finished
@@ -1461,11 +1536,8 @@ FN langfeat_tick
     jmp 9f
 0:
     cmp dword ptr [rip + lf_ready], 0
-    jne 1f
-    call time_ms
-    cmp rax, [rip + lf_deadline]
-    jb 9f
-1:  call lf_cancel_all
+    je 9f
+    call lf_cancel_all
     call lf_finish
 9:  pop rbx
     ret
@@ -2515,6 +2587,11 @@ ws_apply_group:
 
 # FN langfeat_ext_gone(ext): an extension stopped: its requests go (state only)
 FN langfeat_ext_gone
+    push rdi
+    push rdi
+    call query_ext_gone
+    pop rdi
+    pop rdi
     xor ecx, ecx
 1:  cmp rcx, [rip + lf_reqs + VEC_len]
     jae 8f
@@ -2562,13 +2639,14 @@ lf_tmp4: .zero 16
 
 .section .rodata
 .p2align 3
-# per kind (index LF_*): the verb, the feature, where its patterns are, how long it waits (ms), a
+# per kind (index LF_*): the verb, the feature, where its patterns are, its query.s kind, a
 # toast when nobody provides it, a toast when nothing came, the list's placeholder; one provider?
 lf_verbs: .quad 0, .Lv_definition, .Lv_references, .Lv_symbols, .Lv_actions, .Lv_rename, .Lv_format
 lf_feats: .long -1, FEAT_DEFINITION, FEAT_REFERENCES, FEAT_SYMBOLS, FEAT_ACTIONS, FEAT_RENAME, FEAT_FORMAT
 .p2align 3
 lf_pvs: .quad 0, EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format
-lf_waits: .quad 0, 5000, 10000, 5000, 3000, 15000, 10000
+lf_pks: .long 0, PK_DEFINITION, PK_REFERENCES, PK_SYMBOLS, PK_ACTIONS, PK_RENAME, PK_FORMAT
+.p2align 3
 lf_none: .quad 0, .Ln_def, .Ln_refs, .Ln_syms, .Ln_acts, .Ln_rename, .Ln_format
 lf_empty: .quad 0, .Le_def, .Le_refs, .Le_syms, .Le_acts, 0, 0
 lf_lists: .quad 0, .Ll_def, .Ll_refs, .Ll_syms, .Ll_acts, 0, 0

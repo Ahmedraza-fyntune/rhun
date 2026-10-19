@@ -875,6 +875,7 @@ FN ext_install_load
     mov rdi, rbx
     call ext_settings_load_one
     call ext_cmds_changed
+    call rview_init             # its declared views take their places (views group)
     cmp dword ptr [rbx + EXT_status], ES_FAILED
     je 7f                      # keep the validation failure; its commands must not start it
     mov dword ptr [rbx + EXT_status], ES_IDLE
@@ -961,6 +962,8 @@ FN ext_retire
     mov rdi, rbx
     call extview_owner_gone
     mov rdi, rbx
+    call rview_ext_gone         # its declared views leave their places (views group)
+    mov rdi, rbx
     call complete_ext_gone
     mov rdi, rbx
     call langfeat_ext_gone
@@ -968,6 +971,8 @@ FN ext_retire
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
     call testmodel_forget       # testing: its tests and results go
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1586,7 +1591,9 @@ FN ext_load
     jne .Lel_fail
     lea rdi, [rip + .Lr_manifest_large]
     jmp .Lel_fail
-1:  lea rdi, [rip + ini_it]
+1:  mov rdi, rbx                # AI: nothing from an earlier manifest (agentext.s)
+    call ai_ext_reset
+    lea rdi, [rip + ini_it]
     mov rsi, r13
     mov rdx, r14
     call ini_init
@@ -1921,9 +1928,32 @@ manifest_kv:
     lea rsi, [rip + .Ls_provides]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 5f
+    mov rdi, rbx                # AI: agents, agents.title (agentext.s)
+    mov rsi, r12
+    call agentext_manifest_kv
+    test eax, eax
+    jnz 9f
     lea rdi, [rip + pv_keys]
     call parse_keyed
+    jmp 9f
+5:  mov rdi, r12                # AI: [tools] (tools.s)
+    lea rsi, [rip + .Ls_tools]
+    call ini_sec_is
+    test eax, eax
+    jz 6f
+    mov rdi, rbx
+    mov rsi, r12
+    call tools_manifest_kv
+    jmp 9f
+6:  mov rdi, r12                # views group: [views] (rview.s)
+    lea rsi, [rip + .Ls_views]
+    call ini_sec_is
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call rview_manifest_kv
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -3540,6 +3570,8 @@ FN ext_exited
     call langfeat_ext_gone      # and the language queries it was asked
     mov rdi, rbx
     call testproto_ext_gone     # testing: its runs end errored and their processes stop
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4610,7 +4642,12 @@ state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_s
 pv_more: .quad EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename
     .quad EXT_pv_format, EXT_pv_save_actions
     .quad EXT_pv_tests              # testing: a controller hears its test files as a provider does
-    .quad 0
+    # language features (query.s)
+    .quad EXT_pv_hover, EXT_pv_declaration, EXT_pv_type_definition, EXT_pv_implementation
+    .quad EXT_pv_selection_ranges, EXT_pv_call_hierarchy, EXT_pv_type_hierarchy
+    .quad EXT_pv_workspace_symbols, EXT_pv_range_format, EXT_pv_type_format, EXT_pv_document_links, 0
+.globl ext_pv_keys               # [provides] keys and their EXT fields (query.s's provides too)
+ext_pv_keys:
 pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig
     .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
@@ -4618,7 +4655,13 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format
     .quad .Lpv_save_actions, EXT_pv_save_actions
     .quad .Lpv_tests, EXT_pv_tests, .Lpv_tests_profiles, EXT_tests_profiles     # testing
-    .quad 0, 0
+    # language features (query.s)
+    .quad .Lpv_hover, EXT_pv_hover, .Lpv_declaration, EXT_pv_declaration
+    .quad .Lpv_type_definition, EXT_pv_type_definition, .Lpv_implementation, EXT_pv_implementation
+    .quad .Lpv_selection_ranges, EXT_pv_selection_ranges, .Lpv_call_hierarchy, EXT_pv_call_hierarchy
+    .quad .Lpv_type_hierarchy, EXT_pv_type_hierarchy, .Lpv_workspace_symbols, EXT_pv_workspace_symbols
+    .quad .Lpv_range_format, EXT_pv_range_format, .Lpv_type_format, EXT_pv_type_format
+    .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links, 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -4711,6 +4754,8 @@ ext_target: .asciz "linux-x86_64"
 .Ls_commands: .asciz "commands"
 .Ls_subscribe: .asciz "subscribe"
 .Ls_provides: .asciz "provides"
+.Ls_views: .asciz "views"
+.Ls_tools: .asciz "tools"           # AI (tools.s)
 .Lpv_complete: .asciz "complete"
 .Lpv_ctrig: .asciz "complete.triggers"
 .Lpv_signature: .asciz "signature"
@@ -4722,6 +4767,18 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_rename: .asciz "rename"
 .Lpv_format: .asciz "format"
 .Lpv_save_actions: .asciz "save_actions"
+.Lpv_hover: .asciz "hover"
+.Lpv_declaration: .asciz "declaration"
+.Lpv_type_definition: .asciz "type_definition"
+.Lpv_implementation: .asciz "implementation"
+.Lpv_selection_ranges: .asciz "selection_ranges"
+.Lpv_call_hierarchy: .asciz "call_hierarchy"
+.Lpv_type_hierarchy: .asciz "type_hierarchy"
+.Lpv_workspace_symbols: .asciz "workspace_symbols"
+.Lpv_range_format: .asciz "range_format"
+.Lpv_type_format: .asciz "type_format"
+.Lpv_ttrig: .asciz "type_format.triggers"
+.Lpv_document_links: .asciz "document_links"
 .Lpv_tests: .asciz "tests"
 .Lpv_tests_profiles: .asciz "tests.profiles"
 .Ls_needs: .asciz "needs"
