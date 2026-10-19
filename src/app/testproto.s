@@ -142,6 +142,12 @@ FN testproto_reply_error
     pop rbx
     ret
 
+# FN testproto_set_ext(ext): the replies that follow go to this extension (testexec.s's answers to a
+# request that waited for the user's approval)
+FN testproto_set_ext
+    mov [rip + req_ext], rdi
+    ret
+
 # FN testproto_reply_ok_u64(id, value) for testexec.s
 FN testproto_reply_ok_u64
     jmp reply_ok_u64

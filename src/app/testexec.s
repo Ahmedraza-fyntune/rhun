@@ -41,12 +41,18 @@ realproj: .zero 4096
 realcwd: .zero 4096
 pipe_out: .zero 8
 pipe_err: .zero 8
+parked_ext: .quad 0             # a request waiting for the approval question: its extension (0: none),
+parked_id: .quad 0              #   request id, run and that run's number
+parked_run: .quad 0
+parked_runnum: .quad 0
+cmdline: .zero 4096             # the command as the question shows it
 
 .text
 
 # testexec_request(ext, id, run, body, len): "ID test-exec RUN LEN" + "PROGRAM_LEN CWD_LEN ARGC ENVC"
 #   LF PROGRAM CWD, ARGC args "LEN" LF bytes, ENVC variables "LEN" LF NAME=VALUE; answered "ok ID
-#   EXEC" when the program started, else with the reason
+#   EXEC" when the program started, else with the reason. The first program an extension runs in a
+#   project waits for the user's approval (runallow.s): the request is parked meanwhile
 FN testexec_request
     PROLOGUE 48
     mov rbx, rdi
@@ -54,6 +60,8 @@ FN testexec_request
     mov r12, rdx                # run
     mov [rsp + 8], rcx
     mov [rsp + 16], r8
+    cmp qword ptr [rip + parked_ext], 0
+    jne .Lxr_busy_open          # one approval question at a time (its lists are in use)
     call free_lists
     # a folder a link opened runs nothing of its own until it is trusted
     cmp dword ptr [rip + g_git_paused], 0
@@ -87,177 +95,38 @@ FN testexec_request
     jae .Lxr_busy
     cmp edx, TS_PROCS_RUN
     jae .Lxr_busy
-    # the user's approval for this extension and project (the tasks design's run-as-user
-    # approval takes this place when it lands; until then a test run the user started is the
-    # consent, as the testing design had it)
+    # the user's approval for this extension and project: once, with the command shown
+    call command_line
     mov rdi, rbx
-    call testexec_approved
-    test eax, eax
-    jz .Lxr_cancelled
-    cmp dword ptr [rip + g_remote], 0
-    jne .Lxr_remote
-    # found on the user's PATH (args[0] holds its name as a cstr)
-    mov rax, [rip + args + VEC_ptr]
-    mov rdi, [rax]
-    call proc_which
-    test rax, rax
-    jz .Lxr_nofile
-    mov r13, rax                # the program's path (owned)
-    # the folder: inside the project once links are resolved (none: the project)
-    mov rdi, [rip + g_project]
-    test rdi, rdi
-    jz .Lxr_cwd_free
-    lea rsi, [rip + realproj]
-    call ext_realpath
-    test eax, eax
-    jz .Lxr_cwd_free
-    mov rdi, [rip + g_project]
-    cmp qword ptr [rip + cmd_cwdlen], 0
+    lea rsi, [rip + cmdline]
+    lea rdx, [rip + on_approved]
+    lea rcx, [rip + parked_ext]
+    call run_approve
+    cmp eax, 1
     je 3f
-    mov rdi, [rip + cmd_cwd]
-    mov rsi, [rip + cmd_cwdlen]
-    call mem_dup
-    mov r14, rax
-    mov rdi, rax
-    lea rsi, [rip + realcwd]
-    call ext_realpath
-    mov r15d, eax
-    mov rdi, r14
-    call mem_free
-    mov eax, r15d
-    jmp 31f
-3:  lea rsi, [rip + realcwd]
-    call ext_realpath
-31: test eax, eax
-    jz .Lxr_cwd_free
-    lea rdi, [rip + realcwd]
-    lea rsi, [rip + realproj]
-    call app_path_inside
     test eax, eax
-    jz .Lxr_cwd_free
-    lea rdi, [rip + realcwd]
-    call file_is_dir
-    test eax, eax
-    jz .Lxr_cwd_free
-    # argv: the path, then the arguments
-    mov rax, [rip + args + VEC_ptr]
-    mov rdi, [rax]
-    call mem_free
-    mov rax, [rip + args + VEC_ptr]
-    mov [rax], r13
-.Lxr_spawn:
-    mov rdi, [rip + envs + VEC_ptr]
-    call env_make
-    mov r14, rax                # envp (its strings are the environment's and ours)
-    mov rdi, [rip + args + VEC_ptr]
-    mov rsi, r14
-    lea rdx, [rip + realcwd]
-    call testexec_spawn
-    mov r15, rax
-    mov rdi, r14
-    call mem_free
-    test r15, r15
-    js .Lxr_failed
-    # the slot
-    lea rax, [rip + procs]
-    xor ecx, ecx
-4:  cmp qword ptr [rax + TX_ext], 0
-    je 5f
-    add rax, TX_SIZE
-    inc ecx
-    cmp ecx, TS_PROCS_ALL
-    jb 4b
-5:  mov r13, rax
-    mov rdi, r13
-    xor esi, esi
-    mov edx, TX_SIZE
-    call memset
-    mov [r13 + TX_ext], rbx
-    mov [r13 + TX_run], r12
+    jnz .Lxr_busy_open
+    # asked: the request waits for the answer
+    mov [rip + parked_ext], rbx
+    mov rax, [rsp]
+    mov [rip + parked_id], rax
+    mov [rip + parked_run], r12
     mov rax, [r12 + TSR_num]
-    mov [r13 + TX_runnum], rax
-    inc qword ptr [rip + exec_next]
-    mov rax, [rip + exec_next]
-    mov [r13 + TX_exec], rax
-    mov [r13 + TX_pid], r15d
-    mov dword ptr [r13 + TX_status], -1
-    mov eax, [rip + pipe_out]
-    mov [r13 + TX_out], eax
-    mov eax, [rip + pipe_err]
-    mov [r13 + TX_err], eax
-    inc dword ptr [r12 + TSR_procs]
-    mov edi, [r13 + TX_out]
-    mov esi, POLLIN
-    lea rdx, [rip + on_pipe]
-    mov rcx, r13
-    call watch_add
-    mov edi, [r13 + TX_err]
-    test edi, edi
-    js 6f                       # a remote window's program: its errors come with its output
-    mov esi, POLLIN
-    lea rdx, [rip + on_pipe]
-    mov rcx, r13
-    call watch_add
-6:
-    mov rdi, [rsp]
-    mov rsi, [r13 + TX_exec]
-    call testproto_reply_ok_u64
-    call free_lists
-    mov dword ptr [rip + g_ts_dirty], 1
-    mov dword ptr [rip + g_dirty], 1
+    mov [rip + parked_runnum], rax
     EPILOGUE
-.Lxr_remote:
-    # a remote window: the host finds the program on its PATH and the folder is checked as written
-    # (inside the project, no .. parts), since its links are the host's
-    mov rsi, [rip + g_project]
-    test rsi, rsi
-    jz .Lxr_cwd_reply
-    lea rdi, [rip + realproj]
-    call cstr_copy
-    lea rdi, [rip + realcwd]
-    lea rsi, [rip + realproj]
-    call cstr_copy
-    cmp qword ptr [rip + cmd_cwdlen], 0
-    je .Lxr_spawn_remote
-    lea rdi, [rip + realcwd]
-    mov rsi, [rip + cmd_cwd]
-    mov rdx, [rip + cmd_cwdlen]
-    call memcpy
-    mov rax, [rip + cmd_cwdlen]
-    lea rcx, [rip + realcwd]
-    mov byte ptr [rcx + rax], 0
-    lea rdi, [rip + realcwd]
-    call path_rootlen
-    test rax, rax
-    jz .Lxr_cwd_reply
-    lea rdi, [rip + realcwd]
-    call path_normalize
-    lea rdi, [rip + realcwd]
-    lea rsi, [rip + realproj]
-    call app_path_inside
-    test eax, eax
-    jz .Lxr_cwd_reply
-.Lxr_spawn_remote:
-    jmp .Lxr_spawn
-.Lxr_cwd_reply:
-    lea rsi, [rip + .Le_cwd]
-    jmp .Lxr_reply
-.Lxr_cwd_free:
-    mov rdi, r13
-    call mem_free
-    lea rsi, [rip + .Le_cwd]
-    jmp .Lxr_reply
+3:  mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, r12
+    call exec_start
+    EPILOGUE
 .Lxr_untrusted:
     lea rsi, [rip + .Le_untrusted]
     jmp .Lxr_reply
 .Lxr_busy:
     lea rsi, [rip + .Le_busy]
     jmp .Lxr_reply
-.Lxr_cancelled:
-    lea rsi, [rip + .Le_cancelled]
-    jmp .Lxr_reply
-.Lxr_failed:
-    lea rsi, [rip + .Le_failed]
+.Lxr_busy_open:
+    lea rsi, [rip + .Le_busy_open]
     jmp .Lxr_reply
 .Lxr_error:
     mov rsi, rax
@@ -277,8 +146,316 @@ FN testexec_request
     mov rsi, [rip + cmd_prog]
     mov rdx, [rip + cmd_proglen]
     call sb_push
-    jmp .Lxr_built
-.Lxr_nofile:
+    lea rdi, [rip + eb]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rsp]
+    mov rsi, [rip + eb + SB_ptr]
+    call testproto_reply_error
+    call free_lists
+    EPILOGUE
+
+# on_approved(cookie, allowed): the user answered the approval question of the parked request
+on_approved:
+    PROLOGUE
+    mov r15d, esi
+    mov rbx, [rip + parked_ext]
+    test rbx, rbx
+    jz 9f
+    mov qword ptr [rip + parked_ext], 0
+    mov r12, [rip + parked_run]
+    mov rax, [rip + parked_runnum]
+    cmp [r12 + TSR_num], rax
+    jne 8f                      # its run is gone
+    cmp dword ptr [r12 + TSR_state], TSRS_RUNNING
+    jne 8f
+    mov rdi, rbx
+    call testproto_agreed
+    test eax, eax
+    jz 8f
+    mov rdi, rbx
+    call testproto_set_ext
+    test r15d, r15d
+    jz 7f
+    mov rdi, rbx
+    mov rsi, [rip + parked_id]
+    mov rdx, r12
+    call exec_start
+    jmp 9f
+7:  mov rdi, [rip + parked_id]
+    lea rsi, [rip + .Le_cancelled]
+    call testproto_reply_error
+8:  call free_lists
+9:  EPILOGUE
+
+# unpark(ext or 0, run or 0): a parked request of that extension (or run) is answered cancelled
+#   and its question withdrawn (the run ended, the extension stopped)
+unpark:
+    PROLOGUE
+    mov rbx, [rip + parked_ext]
+    test rbx, rbx
+    jz 9f
+    test rdi, rdi
+    jz 1f
+    cmp rdi, rbx
+    jne 9f
+1:  test rsi, rsi
+    jz 2f
+    cmp rsi, [rip + parked_run]
+    jne 9f
+2:  mov qword ptr [rip + parked_ext], 0
+    lea rdi, [rip + parked_ext]
+    call run_approve_cancel
+    mov rdi, rbx
+    call testproto_agreed
+    test eax, eax
+    jz 8f
+    mov rdi, rbx
+    call testproto_set_ext
+    mov rdi, [rip + parked_id]
+    lea rsi, [rip + .Le_cancelled]
+    call testproto_reply_error
+8:  call free_lists
+9:  EPILOGUE
+
+# command_line(): cmdline holds the command as the approval question shows it: the program and its
+#   arguments, those with spaces or quotes in single quotes
+command_line:
+    PROLOGUE
+    lea rdi, [rip + eb]
+    call sb_clear
+    xor ebx, ebx
+1:  cmp rbx, [rip + args + VEC_len]
+    jae 5f
+    test rbx, rbx
+    jz 2f
+    lea rdi, [rip + eb]
+    mov esi, ' '
+    call sb_push_byte
+2:  mov rax, [rip + args + VEC_ptr]
+    mov r12, [rax + rbx*8]
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    xor ecx, ecx                # quoted?
+    xor edx, edx
+3:  cmp rdx, r13
+    jae 4f
+    movzx eax, byte ptr [r12 + rdx]
+    inc rdx
+    cmp eax, ' '
+    jbe 31f
+    cmp eax, 39
+    je 31f
+    cmp eax, '"'
+    je 31f
+    cmp eax, '$'
+    je 31f
+    jmp 3b
+31: mov ecx, 1
+4:  test r13, r13
+    jnz 41f
+    mov ecx, 1
+41: mov r14d, ecx
+    test r14d, r14d
+    jz 42f
+    lea rdi, [rip + eb]
+    mov esi, 39
+    call sb_push_byte
+42: xor r15d, r15d              # its bytes, line breaks and other controls shown as spaces
+44: cmp r15, r13
+    jae 45f
+    movzx esi, byte ptr [r12 + r15]
+    inc r15
+    cmp esi, ' '
+    jae 46f
+    mov esi, ' '
+46: lea rdi, [rip + eb]
+    call sb_push_byte
+    jmp 44b
+45: test r14d, r14d
+    jz 43f
+    lea rdi, [rip + eb]
+    mov esi, 39
+    call sb_push_byte
+43: inc rbx
+    cmp qword ptr [rip + eb + SB_len], 4000
+    jb 1b
+5:  mov rcx, [rip + eb + SB_len]
+    cmp rcx, 4000
+    jbe 6f
+    mov ecx, 4000
+6:  lea rdi, [rip + cmdline]
+    mov rsi, [rip + eb + SB_ptr]
+    mov rdx, rcx
+    push rcx
+    push rcx
+    call memcpy
+    pop rcx
+    pop rcx
+    lea rax, [rip + cmdline]
+    mov byte ptr [rax + rcx], 0
+    EPILOGUE
+
+# exec_start(ext, id, run): the approved program starts: found on the user's PATH (the login
+#   environment's), its folder checked, then the slot, its pipes watched and "ok ID EXEC"; the
+#   reply goes to testproto's current extension
+exec_start:
+    PROLOGUE 48
+    mov rbx, rdi
+    mov [rsp], rsi
+    mov r12, rdx
+    xor r13d, r13d              # the program's path (owned)
+    mov rdi, [rip + envs + VEC_ptr]
+    xor esi, esi
+    xor edx, edx
+    call uproc_env_make
+    mov [rsp + 8], rax          # envp: the login environment and the variables
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lxs_remote
+    mov rax, [rip + args + VEC_ptr]
+    mov rdi, [rax]
+    mov rsi, [rsp + 8]
+    call uproc_which
+    test rax, rax
+    jz .Lxs_nofile
+    mov r13, rax
+    # the folder: inside the project once links are resolved (none: the project)
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz .Lxs_cwd
+    lea rsi, [rip + realproj]
+    call ext_realpath
+    test eax, eax
+    jz .Lxs_cwd
+    mov rdi, [rip + g_project]
+    cmp qword ptr [rip + cmd_cwdlen], 0
+    je 3f
+    mov rdi, [rip + cmd_cwd]
+    mov rsi, [rip + cmd_cwdlen]
+    call mem_dup
+    mov r14, rax
+    mov rdi, rax
+    lea rsi, [rip + realcwd]
+    call ext_realpath
+    mov r15d, eax
+    mov rdi, r14
+    call mem_free
+    mov eax, r15d
+    jmp 31f
+3:  lea rsi, [rip + realcwd]
+    call ext_realpath
+31: test eax, eax
+    jz .Lxs_cwd
+    lea rdi, [rip + realcwd]
+    lea rsi, [rip + realproj]
+    call app_path_inside
+    test eax, eax
+    jz .Lxs_cwd
+    lea rdi, [rip + realcwd]
+    call file_is_dir
+    test eax, eax
+    jz .Lxs_cwd
+    # argv: the path, then the arguments
+    mov rax, [rip + args + VEC_ptr]
+    mov rdi, [rax]
+    call mem_free
+    mov rax, [rip + args + VEC_ptr]
+    mov [rax], r13
+    xor r13d, r13d              # args owns it now
+.Lxs_spawn:
+    mov rdi, [rip + args + VEC_ptr]
+    mov rsi, [rsp + 8]
+    lea rdx, [rip + realcwd]
+    call testexec_spawn
+    mov r15, rax
+    test r15, r15
+    js .Lxs_failed
+    # the slot
+    lea rax, [rip + procs]
+    xor ecx, ecx
+4:  cmp qword ptr [rax + TX_ext], 0
+    je 5f
+    add rax, TX_SIZE
+    inc ecx
+    cmp ecx, TS_PROCS_ALL
+    jb 4b
+5:  mov r14, rax
+    mov rdi, r14
+    xor esi, esi
+    mov edx, TX_SIZE
+    call memset
+    mov [r14 + TX_ext], rbx
+    mov [r14 + TX_run], r12
+    mov rax, [r12 + TSR_num]
+    mov [r14 + TX_runnum], rax
+    inc qword ptr [rip + exec_next]
+    mov rax, [rip + exec_next]
+    mov [r14 + TX_exec], rax
+    mov [r14 + TX_pid], r15d
+    mov dword ptr [r14 + TX_status], -1
+    mov eax, [rip + pipe_out]
+    mov [r14 + TX_out], eax
+    mov eax, [rip + pipe_err]
+    mov [r14 + TX_err], eax
+    inc dword ptr [r12 + TSR_procs]
+    mov edi, [r14 + TX_out]
+    mov esi, POLLIN
+    lea rdx, [rip + on_pipe]
+    mov rcx, r14
+    call watch_add
+    mov edi, [r14 + TX_err]
+    test edi, edi
+    js 6f                       # a remote window's program: its errors come with its output
+    mov esi, POLLIN
+    lea rdx, [rip + on_pipe]
+    mov rcx, r14
+    call watch_add
+6:  mov rdi, [rsp]
+    mov rsi, [r14 + TX_exec]
+    call testproto_reply_ok_u64
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lxs_done
+.Lxs_remote:
+    # a remote window: the host finds the program on its PATH and the folder is checked as written
+    # (inside the project, normalized), since its links are the host's
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz .Lxs_cwd
+    lea rdi, [rip + realproj]
+    call cstr_copy
+    lea rdi, [rip + realcwd]
+    lea rsi, [rip + realproj]
+    call cstr_copy
+    cmp qword ptr [rip + cmd_cwdlen], 0
+    je .Lxs_spawn
+    lea rdi, [rip + realcwd]
+    mov rsi, [rip + cmd_cwd]
+    mov rdx, [rip + cmd_cwdlen]
+    call memcpy
+    mov rax, [rip + cmd_cwdlen]
+    lea rcx, [rip + realcwd]
+    mov byte ptr [rcx + rax], 0
+    lea rdi, [rip + realcwd]
+    call path_rootlen
+    test rax, rax
+    jz .Lxs_cwd
+    lea rdi, [rip + realcwd]
+    call path_normalize
+    lea rdi, [rip + realcwd]
+    lea rsi, [rip + realproj]
+    call app_path_inside
+    test eax, eax
+    jz .Lxs_cwd
+    jmp .Lxs_spawn
+.Lxs_cwd:
+    lea rsi, [rip + .Le_cwd]
+    jmp .Lxs_reply
+.Lxs_failed:
+    lea rsi, [rip + .Le_failed]
+    jmp .Lxs_reply
+.Lxs_nofile:
     # "nofile NAME not found"
     lea rdi, [rip + eb]
     call sb_clear
@@ -292,22 +469,20 @@ FN testexec_request
     lea rdi, [rip + eb]
     lea rsi, [rip + .Le_not_found]
     call sb_push_cstr
-.Lxr_built:
     lea rdi, [rip + eb]
     xor esi, esi
     call sb_push_byte
-    mov rdi, [rsp]
     mov rsi, [rip + eb + SB_ptr]
+.Lxs_reply:
+    mov rdi, [rsp]
     call testproto_reply_error
+.Lxs_done:
+    mov rdi, r13
+    call mem_free
+    mov rdi, [rsp + 8]
+    call mem_free
     call free_lists
     EPILOGUE
-
-# testexec_approved(ext) -> eax 1 when the extension may run programs as the user in this project.
-#   The hook for the tasks design's approval (one per extension and project): a run the user
-#   started is the consent until it lands.
-FN testexec_approved
-    mov eax, 1
-    ret
 
 # free_lists(): args and envs empty, their strings freed
 free_lists:
@@ -606,9 +781,9 @@ prog_allowed:
     EPILOGUE
 
 # testexec_spawn(argv, envp, cwd) -> rax pid or -errno, with pipe_out and pipe_err the nonblocking
-#   read ends of its output and error. The one place a test process starts: input from the null
-#   device, a session (process group) of its own, never confined. (The tasks design's user-process
-#   helper takes its place when it lands.)
+#   read ends of its output and error. The one place a test process starts: through uproc_spawn
+#   (input from the null device, a session and process group of its own, never confined), or on a
+#   remote window's host
 FN testexec_spawn
     PROLOGUE 48
     mov r12, rdi
@@ -654,10 +829,10 @@ FN testexec_spawn
     mov ecx, ebx
     mov r8d, [rsp + 20]
     mov r9d, [rsp + 28]
-    mov eax, 1                  # a session of its own (the null device is no terminal)
+    xor eax, eax                # no terminal
     push rax
     push rax
-    call proc_spawn
+    call uproc_spawn            # outside the sandbox, a group of its own, dies with rhun
     add rsp, 16
     mov r15, rax
     mov edi, [rsp + 20]
@@ -830,51 +1005,38 @@ try_finish:
     call report_exit
 9:  EPILOGUE
 
-# reap(TX*): its wait status when it has ended (wait4 without waiting)
+# reap(TX*): its wait status once it has ended, as uproc_wait (proc_wait for a remote window's
+#   program) tells it without waiting: exit code N becomes N << 8, 128 + N signal N, as wait4 has them
 reap:
     push rbx
-    sub rsp, 16
     mov rbx, rdi
-    mov dword ptr [rsp], 0
-    test dword ptr [rbx + TX_pid], REMOTE_PID_TAG
-    jnz 5f
-1:  mov edi, [rbx + TX_pid]
-    mov rsi, rsp
-    mov edx, WNOHANG
-    xor r10d, r10d
-    SYS SYS_wait4
-    cmp rax, -EINTR
-    je 1b
-    test rax, rax
-    jz 9f                       # still running
-    js 2f                       # not ours any more: as if killed
-    mov eax, [rsp]
-    mov [rbx + TX_status], eax
-    jmp 3f
-2:  mov dword ptr [rbx + TX_status], 9
-    mov dword ptr [rbx + TX_killed], 1
-3:  call time_ms
-    mov [rbx + TX_exit_at], rax
-9:  add rsp, 16
-    pop rbx
-    ret
-5:  # a program on the remote host: its status as proc_wait gives it (128 + N for signal N)
     mov edi, [rbx + TX_pid]
     mov esi, 1
-    call proc_wait
-    cmp eax, -1
-    je 9b
+    test edi, REMOTE_PID_TAG
+    jnz 1f
+    call uproc_wait
+    jmp 2f
+1:  call proc_wait
+2:  cmp eax, -1
+    je 9f                       # still running
     cmp eax, -2
-    je 2b
-    cmp eax, 128
-    jb 6f
-    sub eax, 128                # a signal: its number in the low bits, as wait4 has it
-    and eax, 0x7f
+    jne 3f
+    mov dword ptr [rbx + TX_status], 9    # not ours any more: as if killed
+    mov dword ptr [rbx + TX_killed], 1
+    jmp 5f
+3:  cmp eax, 129
+    jb 4f
+    cmp eax, 192
+    jae 4f
+    sub eax, 128
     mov [rbx + TX_status], eax
-    jmp 3b
-6:  shl eax, 8
+    jmp 5f
+4:  shl eax, 8
     mov [rbx + TX_status], eax
-    jmp 3b
+5:  call time_ms
+    mov [rbx + TX_exit_at], rax
+9:  pop rbx
+    ret
 
 # report_exit(TX*): "0 test-exit EXEC CODE" (CODE the exit status, "signal N", "killed"); pipes still
 #   open are closed; the slot is free
@@ -979,8 +1141,13 @@ stop:
 1:  push rbx
     mov rbx, rdi
     mov edi, [rbx + TX_pid]
-    neg edi
-    call proc_kill              # a remote window's programs too
+    test edi, REMOTE_PID_TAG
+    jnz 2f
+    call uproc_signal           # its whole group, while it is ours
+    pop rbx
+    ret
+2:  neg edi
+    call proc_kill              # a remote window's program
     pop rbx
     ret
 
@@ -1001,6 +1168,9 @@ term:
 FN testexec_run_over
     PROLOGUE
     mov r12, rdi
+    xor edi, edi
+    mov rsi, r12
+    call unpark
     lea rbx, [rip + procs]
     xor r13d, r13d
 1:  cmp qword ptr [rbx + TX_ext], 0
@@ -1023,6 +1193,8 @@ FN testexec_run_kill
 FN testexec_ext_gone
     PROLOGUE
     mov r12, rdi
+    xor esi, esi
+    call unpark
     lea rbx, [rip + procs]
     xor r13d, r13d
 1:  cmp [rbx + TX_ext], r12
@@ -1190,6 +1362,7 @@ FN testexec_dump
 .Ls_signal: .asciz "signal "
 .Le_untrusted: .asciz "refused folder not trusted"
 .Le_busy: .asciz "busy 4 processes per run, 8 in all"
+.Le_busy_open: .asciz "busy a question is open"
 .Le_cancelled: .asciz "cancelled"
 .Le_failed: .asciz "refused the program could not be started"
 .Le_cwd: .asciz "refused the folder is not inside the project"

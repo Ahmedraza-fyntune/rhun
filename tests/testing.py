@@ -270,8 +270,13 @@ class Testing(unittest.TestCase):
     # --- test-exec ---
 
     def test_exec_runs_a_program_as_the_user_and_passes_its_output(self):
-        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'print-test-runs',
-                               'print-test-result testsfake go:example/pkg.TestA'], mode='exec')
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'print-dialog', 'dialog yes', 'wait-tests',
+                               'print-test-runs', 'print-test-result testsfake go:example/pkg.TestA',
+                               'cmd test_run_all', 'wait-tests', 'print-dialog'], mode='exec')
+        # the first program in the project asks once, showing the command; the second run does not
+        self.assertIn('dialog=Let Fake Tests run programs in proj?', out)
+        self.assertTrue([l for l in out if l.startswith("text=python3 -c 'import sys print(")], out)
+        self.assertEqual(out[-1], 'dialog=none')
         log = self.fake_log()
         self.assertTrue([l for l in log if l.startswith('exec ok ') and l.endswith(' 1')], log)
         self.assertIn("exec-result exit=3 out=b'out-line\\n' err=b'err-line\\n'", log)
@@ -279,7 +284,7 @@ class Testing(unittest.TestCase):
         self.assertTrue([l for l in out if l.startswith('run=1 ') and ' procs=0' in l], out)
 
     def test_exec_refusals(self):
-        self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 4000'], mode='execbad')
+        self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog yes', 'wait-tests', 'wait 4000'], mode='execbad')
         log = self.fake_log()
         def reply(prefix):
             hit = [l for l in log if l.startswith(prefix + ' ')]
@@ -295,17 +300,24 @@ class Testing(unittest.TestCase):
         # the four that started were stopped when the run ended
         self.assertEqual(len([l for l in log if l.startswith('recv 0 test-exit ') and l.endswith(' killed')]), 4, log)
 
+    def test_a_declined_approval_answers_cancelled_and_asks_again(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog no', 'wait-tests',
+                               'cmd test_run_all', 'wait 500', 'print-dialog', 'dialog no', 'wait-tests'], mode='exec')
+        self.assertEqual(len([l for l in self.fake_log() if l.startswith('exec error ') and l.endswith(' cancelled')]), 2,
+                         self.fake_log())
+        self.assertEqual(len([l for l in out if l.startswith('dialog=Let Fake Tests')]), 1, out)
+
     def test_cancel_stops_processes_after_2_s(self):
-        self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 800', 'cmd test_cancel', 'wait-tests', 'wait 3000'],
-                        mode='slowexec')
+        self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog yes', 'wait 800', 'cmd test_cancel',
+                         'wait-tests', 'wait 3000'], mode='slowexec')
         log = self.fake_log()
         self.assertTrue([l for l in log if l.startswith('recv 0 test-out ') and 'sleeping' in l], log)
         self.assertIn('exit killed', log)
 
     def test_back_pressure_keeps_a_chatty_process_waiting(self):
         self.env['TESTS_CHATTY'] = str(8 << 20)
-        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'print-extensions'], mode='chatty',
-                              timeout=180)
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog yes', 'wait-tests', 'print-extensions'],
+                              mode='chatty', timeout=180)
         self.assertIn('chatty exit=0 bytes=%d' % (8 << 20), self.fake_log())
         self.assertTrue([l for l in out if l.startswith('rhun-tests/testsfake state=running')], out)
 

@@ -400,6 +400,7 @@ In a git repository rhun shows what changed since the last commit. It runs the `
   - **Reset All Changes** asks with **Cancel** and **Reset All Changes** buttons. Confirming restores staged and unstaged files on disk to the last commit and permanently deletes untracked files and folders throughout the repository. The cleanup skips ignored files and nested repositories. Before the first commit, it removes staged additions too. Unsaved editor changes are kept, and running agents or terminals can create changes again after the reset.
   - The changes in groups: merge conflicts, staged and not staged. A file shows its buttons when hovered: + stages it, − unstages it, ↶ discards its changes; each group has them for all its files. Discarding asks first, and for a new file it deletes the file. Clicking a file opens its diff.
   - When a pull stops on conflicts, the merge's message fills the message box: resolve the files, stage them and commit. What git reports when something fails is shown under the buttons.
+- A right click on a commit in the history copies its id; on a file of a commit or a changed file it offers **Open Changes**, **Open File** and **Copy Path**. Extensions can add items to these menus.
 - The command palette has them too: Git: Commit, Commit (Amend), Pull, Push, Sync, Fetch, Stage All Changes, Unstage All Changes, Discard All Changes and Reset All Changes. Discard All Changes only discards unstaged changes; Reset All Changes also clears staged changes. An amend without a message keeps the commit's message.
 - git runs without a terminal to ask for passwords: HTTPS remotes need a credential helper, SSH keys an agent.
 
@@ -425,7 +426,9 @@ commit_ai = off
 commit_model = qwen2.5-coder:1.5b
 ```
 
-`commit_ai` accepts `off`, `claude`, `codex`, or `ollama`. **Git: Generate Commit Message**, **Git: Check AI Provider**, **Git: Download Local Model**, **Git: Delete Local Model**, and **Git: Cancel AI Operation** are also available in the command palette.
+An installed extension that writes commit messages is listed after these, by its name. Generate then starts it if needed and sends it the same bounded diff (staged changes, or what **Commit All** would take) and the branch; its answer fills the message box under the same rules, and **Cancel** withdraws the request. The extension needs no access to your files for this: rhun sends the diff only when you click Generate.
+
+`commit_ai` accepts `off`, `claude`, `codex`, `ollama`, or `ext:OWNER/NAME` for an extension. **Git: Generate Commit Message**, **Git: Check AI Provider**, **Git: Download Local Model**, **Git: Delete Local Model**, and **Git: Cancel AI Operation** are also available in the command palette.
 
 CLI references: [Codex noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [Codex authentication](https://learn.chatgpt.com/docs/auth), [Claude Code CLI](https://code.claude.com/docs/en/cli-reference), and [Ollama](https://docs.ollama.com/quickstart).
 
@@ -600,6 +603,11 @@ commands:
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
 | F2 | Rename | on a word, asks for the new name; every file it changes opens unsaved for you to review (without a matching rename provider, F2 renames the file) |
 | shift+alt+f | Format Document | with the document's tab width and spaces |
+
+Extensions that declare `git = read` read the project's Git data through rhun: the status, the
+blame of a file as you edit it (unsaved lines show as not committed), the history of a file or of
+some lines, a file at an older commit, and rhun's diff view of two commits. rhun runs git for them,
+so a folder opened from a `rhun://` link stays paused for them too until you trust it.
 
 An edit across files is checked whole before anything changes: if a document changed meanwhile
 or a range is off, nothing changes and rhun says why. Each document's changes are one undo

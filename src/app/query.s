@@ -1366,6 +1366,8 @@ FN query_dump_pending
 .Lk_type_format: .asciz "type-format"
 .Lk_links: .asciz "document-links"
 .Lk_save_actions: .asciz "save-actions"
+.Lk_commit_message: .asciz "commit-message"
+.Lk_quickdiff: .asciz "quickdiff"
 .Lk_tests_resolve: .asciz "tests-resolve"
 .Lk_test_run: .asciz "test-run"
 .p2align 3
@@ -1373,9 +1375,9 @@ qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_ex
     .quad .Lq_late, .Lq_dropped, .Lq_cancelled, 0
 # per asker (QO_*): its reply handler (an expired request is an error answer to it), what takes a
 # query-part, and what hears that the Query cap cut a request short
-qo_reply: .quad 0, langfeat_reply, complete_reply, 0, testproto_expired
-qo_part: .quad 0, langfeat_part, complete_part, 0, 0
-qo_trunc: .quad 0, langfeat_truncated, 0, 0
+qo_reply: .quad 0, langfeat_reply, complete_reply, 0, scmext_reply, testproto_expired
+qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0
+qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0
 # the kinds (docs/extensions/v1.1.md, "Language feature queries"): name, [provides] key, show,
 # hard limit and ceiling (ms), flags, an answer's cap (records, bytes), the query's cap
 .macro PK name, pv, show, base, ceil, flags, items, bytes, qitems, qbytes
@@ -1408,6 +1410,9 @@ pk_table:
     PK .Lk_type_format, EXT_pv_type_format, 0, 500, 0, PKF_SILENT, 100000, 65536, 100000, 65536
     PK .Lk_links, EXT_pv_document_links, 0, 2000, 0, PKF_SILENT, 10000, 1048576, 10000, 1048576
     PK .Lk_save_actions, EXT_pv_save_actions, 0, 0, 0, PKF_SILENT, 1000, 4194304, 1000, 4194304
+    # source control (scmext.s): the asker keeps its own time limits
+    PK .Lk_commit_message, EXT_pv_commit, 0, 0, 0, PKF_SILENT, 1, 4194304, 1, 4194304
+    PK .Lk_quickdiff, EXT_pv_quickdiff, 0, 0, 0, PKF_SILENT, 1, 4194304, 1, 4194304
     # testing: a tests-resolve answer waits 30 s, a test-run's "ok ID 0" 10 s
     PK .Lk_tests_resolve, EXT_pv_tests, 0, 30000, 0, PKF_SILENT, 10000, 4194304, 10000, 4194304
     PK .Lk_test_run, EXT_pv_tests, 0, 10000, 0, PKF_SILENT | PKF_SUB, 1, 65536, 1, 65536
