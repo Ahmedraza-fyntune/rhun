@@ -619,6 +619,9 @@ F DOC_language_name, 8  # owned explicit language name, retained even while unav
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
+# source control (wider-parity C): quick-diff bases from extensions (scmext.s)
+F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
+F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1

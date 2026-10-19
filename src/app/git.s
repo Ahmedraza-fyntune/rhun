@@ -1541,8 +1541,13 @@ drop_base:
     mov dword ptr [rdi + DOC_gstate], GS_NOBASE
     ret
 
-# git_doc_opened(doc): ask for the file at HEAD
+# git_doc_opened(doc): ask for the file at HEAD (and a quick-diff provider for its base, scmext.s)
 FN git_doc_opened
+    push rdi
+    call scmext_qd_want
+    pop rdi
+# git_doc_head(doc): ask for the file at HEAD only
+git_doc_head:
     PROLOGUE
     cmp dword ptr [rip + g_git_on], 0
     je 9f
@@ -1561,7 +1566,9 @@ FN git_doc_opened
 # git_doc_saved(doc)
 FN git_doc_saved
     push rbx
+    push rdi
     call git_doc_opened
+    pop rdi
     call git_touch
     pop rbx
     ret
@@ -1651,6 +1658,8 @@ request_bases:
     call sb_push_byte
     jmp .Lrb_doc
 .Lrb_outside:
+    cmp dword ptr [r12 + DOC_gsrc], 0
+    jne .Lrb_doc                # an extension's quick-diff base stays
     mov rdi, r12
     call drop_base
     jmp .Lrb_doc
@@ -1753,6 +1762,8 @@ on_bases:
     mov eax, [rsp + 8]
     cmp [rdi + DOC_gseq], eax
     jne .Lob_next
+    cmp dword ptr [rdi + DOC_gsrc], 0
+    jne .Lob_next               # an extension's quick-diff base is the one shown
     mov rdx, [rsp + 16]
     test rdx, rdx
     js 8f
@@ -1844,9 +1855,11 @@ set_base:
 # git_doc_marks(doc) -> GM_* per line, or 0
 FN git_doc_marks
     xor eax, eax
+    cmp dword ptr [rdi + DOC_gsrc], 0
+    jne 2f                      # an extension's base: marks without git
     cmp dword ptr [rip + g_git_on], 0
     je 9f
-    cmp dword ptr [rdi + DOC_gstate], GS_BASE
+2:  cmp dword ptr [rdi + DOC_gstate], GS_BASE
     jne 9f
     mov rax, [rdi + DOC_version]
     cmp rax, [rdi + DOC_gver]
@@ -1855,6 +1868,25 @@ FN git_doc_marks
     call diff_marks
     pop rdi
 1:  mov rax, [rdi + DOC_gmarks]
+9:  ret
+
+# git_set_base_ext(doc, ptr, len): an extension's quick-diff base (scmext.s); the gutter marks follow it
+FN git_set_base_ext
+    PROLOGUE
+    mov rbx, rdi
+    mov dword ptr [rbx + DOC_gsrc], 1
+    call set_base
+    EPILOGUE
+
+# git_drop_base_ext(doc): an extension's base goes; git's comes back when git runs there
+FN git_drop_base_ext
+    cmp dword ptr [rdi + DOC_gsrc], 0
+    je 9f
+    mov dword ptr [rdi + DOC_gsrc], 0
+    push rdi
+    call drop_base
+    call git_doc_head
+    pop rdi
 9:  ret
 
 # git_doc_free(doc): its git data; answers still on their way forget it
