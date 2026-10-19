@@ -114,7 +114,7 @@ def build(folder, windows=False, native_mac=False, mutation=None):
                    *[str(out / (p.stem + '.lib')) for p in sorted((ROOT / 'src/win').glob('*.def'))]]
     elif mac:
         command = ['clang', '-arch', 'arm64', '-mmacosx-version-min=12.0', '-o', str(executable), *map(str, inventory)]
-        for framework in ('AppKit', 'QuartzCore', 'IOSurface', 'CoreServices', 'Carbon'):
+        for framework in ('AppKit', 'QuartzCore', 'IOSurface', 'CoreServices', 'Carbon', 'Security'):
             command += ['-framework', framework]
     else:
         command = ['ld', '-static', '-nostdlib', '--no-dynamic-linker', '-z', 'noexecstack', '-o', str(executable), *map(str, inventory)]
