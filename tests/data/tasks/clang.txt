@@ -1,0 +1,14 @@
+[1ma.c:2:10: [0m[0;1;31merror: [0m[1muse of undeclared identifier 'undefined_x'[0m
+    2 |         [0;34mint[0m y = undefined_x;[0m
+      | [0;1;32m                ^~~~~~~~~~~
+[0m[1ma.c:3:14: [0m[0;1;35mwarning: [0m[1madding 'int' to a string does not append to the string [-Wstring-plus-int][0m
+    3 |         [0;34mreturn[0m [0;32m"é"[0m + y;[0m
+      | [0;1;32m               ~~~~^~~
+[0m[1ma.c:3:14: [0m[0;1;36mnote: [0muse array indexing to silence this warning[0m
+    3 |         [0;34mreturn[0m [0;32m"é"[0m + y;[0m
+      | [0;1;32m                   ^  
+[0m      | [0;32m               &   [  ]
+[0m[1ma.c:3:9: [0m[0;1;31merror: [0m[1mincompatible pointer to integer conversion returning 'char *' from a function with result type 'int' [-Wint-conversion][0m
+    3 |         [0;34mreturn[0m [0;32m"é"[0m + y;[0m
+      | [0;1;32m               ^~~~~~~
+[0m1 warning and 2 errors generated.
