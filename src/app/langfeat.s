@@ -64,6 +64,8 @@ lf_kind: .long 0                # the query in flight (LF_*), 0 for none
 lf_session: .long 0
 lf_ready: .long 0               # every provider answered: the tick finishes it
 lf_truncated: .long 0           # the query's cap cut it short (query-part)
+lf_partial: .long 0             # its list was shown before every provider answered
+lf_show_due: .long 0            # a part came for a kind shown at its first part
 lf_act_mode: .long 0            # code actions: 0 list, LA_AUTO one preferred quick fix, LA_ONE one action
 lf_act_kinds: .quad 0           # the kinds asked for (cstr), 0 for any
 lf_rs_ext: .quad 0              # a code action's resolve request out: its extension, id, result
@@ -313,6 +315,8 @@ lf_reset:
     mov dword ptr [rip + lf_kind], 0
     mov dword ptr [rip + lf_ready], 0
     mov dword ptr [rip + lf_truncated], 0
+    mov dword ptr [rip + lf_partial], 0
+    mov dword ptr [rip + lf_show_due], 0
     mov dword ptr [rip + lf_list_kind], 0
     mov qword ptr [rip + lf_res + VEC_len], 0
     lea rdi, [rip + lf_bytes]
@@ -1047,13 +1051,29 @@ FN langfeat_reply
     je 53f
     cmp eax, LF_RANGEFMT
     je 53f
+    # after parts, the query's caps count the rest too (query_final_room)
+    call query_final_room
+    mov [rsp + 8], rax
+    test rax, rax
+    js 50f
+    cmp r15, rdx
+    ja 54f
+50: mov r13, [rip + lf_res + VEC_len]
     mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
     call lf_parse_locations
     test rax, rax
-    jns 7f
-    jmp 54f
+    js 54f
+    mov rcx, [rsp + 8]
+    test rcx, rcx
+    js 7f
+    cmp rax, rcx
+    jbe 7f
+    add r13, rcx                # what fits is kept
+    mov [rip + lf_res + VEC_len], r13
+    mov dword ptr [rip + lf_truncated], 1
+    jmp 7f
 51: mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
@@ -1190,7 +1210,19 @@ FN langfeat_part
     mov rdx, r14
     call lf_parse_locations
     mov dword ptr [rip + g_dirty], 1
-    EPILOGUE
+    test rax, rax
+    jle 9f
+    # a kind shown at its first part (references, implementation): the tick shows what came
+    mov r12, rax
+    mov eax, [rip + lf_kind]
+    lea rcx, [rip + lf_pks]
+    mov edi, [rcx + rax*4]
+    call query_kind_first
+    test eax, eax
+    jz 1f
+    mov dword ptr [rip + lf_show_due], 1
+1:  mov rax, r12
+9:  EPILOGUE
 8:  xor eax, eax                # an answer nobody waits for any more: taken, and dropped
     EPILOGUE
 
@@ -2722,6 +2754,23 @@ FN langfeat_tick
     push rbx
     call lf_rs_tick
     call langextra_tick
+    cmp dword ptr [rip + lf_show_due], 0
+    je 0f
+    mov dword ptr [rip + lf_show_due], 0  # the first parts of a query still out, shown
+    cmp dword ptr [rip + lf_kind], 0
+    je 0f
+    cmp qword ptr [rip + lf_res + VEC_len], 0
+    je 0f
+    cmp dword ptr [rip + lf_partial], 0
+    je 01f
+    call palette_results_showing
+    test eax, eax
+    jz 0f
+01: mov dword ptr [rip + lf_partial], 1
+    mov eax, [rip + lf_kind]
+    mov [rip + lf_list_kind], eax
+    call lf_present_list
+0:
     cmp dword ptr [rip + lf_kind], 0
     je 9f
     call lf_language_current
@@ -2764,7 +2813,13 @@ lf_finish:
     mov rdi, [rax + rbx*8]
     call app_toast
     jmp 9f
-1:  cmp ebx, LF_REFS
+1:  cmp dword ptr [rip + lf_partial], 0
+    je 11f
+    call palette_results_showing    # shown at its first part: refreshed while still open
+    test eax, eax
+    jz 9f
+    jmp 2f
+11: cmp ebx, LF_REFS
     je 2f
     cmp ebx, LF_SYMS
     je 2f
@@ -2775,8 +2830,14 @@ lf_finish:
     xor edi, edi
     call lf_goto                # one definition: there at once
     jmp 9f
-2:  call lf_sort
-    mov [rip + lf_list_kind], ebx
+2:  call lf_present_list
+    jmp 9f
+
+# lf_present_list(): the results in the palette, in their order (ebx the kind)
+lf_present_list:
+    PROLOGUE
+    mov ebx, [rip + lf_list_kind]
+    call lf_sort
     lea rax, [rip + lf_lists]
     mov rdi, [rax + rbx*8]
     call palette_results_open
@@ -2803,7 +2864,8 @@ lf_finish:
     inc r13
     jmp 3b
 4:  call palette_results_ready
-    jmp 9f
+    EPILOGUE
+
 .Lfn_rename:
     cmp byte ptr [rip + lf_err], 0
     je 5f
@@ -2959,7 +3021,12 @@ FN langfeat_chosen
     jz 9f
     cmp dword ptr [rip + lf_list_kind], LF_ACTS
     je 1f
-    mov rdi, rbx
+    cmp dword ptr [rip + lf_kind], 0  # chosen from a list shown early: the rest is not wanted
+    je 0f
+    call lf_cancel_all
+    mov dword ptr [rip + lf_kind], 0
+    mov dword ptr [rip + lf_partial], 0
+0:  mov rdi, rbx
     call lf_goto
     jmp 9f
 1:  mov rdi, rbx                # code actions: disabled, resolve, edit, command (lf_action_run)

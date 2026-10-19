@@ -76,6 +76,8 @@ qr_vec: .zero VEC_SIZE          # QR records
 late_ring: .zero LATE_RING * 24 # ext, id, kind
 late_next: .quad 0
 qp_buf: .zero SB_SIZE           # a value being built
+q_room_items: .quad 0           # query_final_room's answer for the reply being read (query_reply
+q_room_bytes: .quad 0           # sets them before any asker reads)
 
 .text
 
@@ -86,6 +88,14 @@ FN query_kind_row
     imul rax, rdi, PKR_SIZE
     lea rcx, [rip + pk_table]
     add rax, rcx
+    ret
+
+# FN query_kind_first(kind) -> eax 1 for a kind shown at its first part (references, implementation)
+FN query_kind_first
+    call query_kind_row
+    mov eax, [rax + PKR_flags]
+    shr eax, 2                  # PKF_FIRST
+    and eax, 1
     ret
 
 # qs_rec(ext, kind) -> rax its QS record (the extension's records are made on first use)
@@ -258,10 +268,29 @@ late_take:
     xor eax, eax
     ret
 
-# body_empty(body, len) -> eax 1 for an answer that says nothing: no bytes, or a count of 0
+# FN query_final_room() -> rax the records, rdx the bytes a final answer may still bring after its
+# parts (the query's caps less what the parts brought), -1 each without parts; valid while the
+# askers read the answer query_reply just counted
+FN query_final_room
+    mov rax, [rip + q_room_items]
+    mov rdx, [rip + q_room_bytes]
+    ret
+
+# body_empty(body, len, kind) -> eax 1 for an answer that says nothing: no bytes, or (for kinds whose
+# answer starts with a count) a count of 0
 body_empty:
     test rsi, rsi
     jz 1f
+    cmp edx, PK_SIGNATURE       # these start with other numbers: only no bytes says nothing
+    je 8f
+    cmp edx, PK_HOVER
+    je 8f
+    cmp edx, PK_PREPARE_RENAME
+    je 8f
+    cmp edx, PK_RESOLVE
+    je 8f
+    cmp edx, PK_ACTION_RESOLVE
+    je 8f
     cmp byte ptr [rdi], '0'
     jne 8f
     cmp rsi, 1
@@ -280,12 +309,14 @@ body_empty:
 # request or it expired: counted late, and nobody else hears of it. Otherwise it is counted and
 # eax is 0 (the asker reads it). From extproto's pump, before the askers.
 FN query_reply
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
     mov r14, rcx
     mov r15, r8
+    mov qword ptr [rip + q_room_items], -1
+    mov qword ptr [rip + q_room_bytes], -1
     call qr_find
     test rax, rax
     jz .Lqrp_late
@@ -294,15 +325,37 @@ FN query_reply
     mov rcx, [rsp]
     sub rax, [rcx + QR_sent]
     mov [rsp + 8], rax
-    mov eax, [rcx + QR_kind]
+    mov rax, [rcx + QR_items]
+    mov [rsp + 16], rax         # what its parts brought
+    # after parts, the final answer still counts toward the query's caps (query_final_room)
+    test dword ptr [rcx + QR_flags], QF_PART
+    jz 1f
+    mov edi, [rcx + QR_kind]
+    call query_kind_row
+    mov rcx, [rsp]
+    mov edx, [rax + PKR_qitems]
+    sub rdx, [rcx + QR_items]
+    jns 11f
+    xor edx, edx
+11: mov [rip + q_room_items], rdx
+    mov edx, [rax + PKR_qbytes]
+    sub rdx, [rcx + QR_bytes]
+    jns 12f
+    xor edx, edx
+12: mov [rip + q_room_bytes], rdx
+1:  mov eax, [rcx + QR_kind]
     mov [rsp], rax
     mov rdi, rcx
     call qr_remove
     mov edx, QS_failed
     test r13d, r13d
     jz 2f
+    mov edx, QS_answered
+    cmp qword ptr [rsp + 16], 0
+    jne 2f                      # its parts brought records: answered, whatever the rest says
     mov rdi, r14
     mov rsi, r15
+    mov edx, [rsp]
     call body_empty
     mov edx, QS_empty
     test eax, eax

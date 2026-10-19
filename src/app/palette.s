@@ -1014,6 +1014,14 @@ FN palette_results_add
 FN palette_results_ready
     jmp palette_filter
 
+# FN palette_results_showing() -> eax 1 while the palette shows a results list (language features:
+# a list shown at a query's first part is refreshed only while it is still open)
+FN palette_results_showing
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_RESULTS
+    sete al
+    ret
+
 FN palette_results_close
     cmp dword ptr [rip + pal_mode], PM_RESULTS
     jne 1f
