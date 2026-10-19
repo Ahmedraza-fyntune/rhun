@@ -113,7 +113,8 @@ trust_path: .zero 4096           # the repository's folder, as shown (~ for the 
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
-pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folders, the end
+pm_items: .zero 16 * 24         # the project menu: 2 commands, a line, 9 folders, the remote items
+                                # (a line, 2 commands, 8 recent remotes; remoteui.s), the end
 .globl g_shot_path
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
@@ -144,7 +145,9 @@ FN app_init
     call theme_apply_config
     call app_load_fonts
     call syntax_load_all
+    call places_init            # the explorer is the sidebar's first section
     call ext_init               # manifests: their commands take keys below
+    call rview_init             # their declared views take their places
     call keys_init
     call vim_sync
     call watch_init
@@ -239,6 +242,7 @@ set_project:
     mov rsi, rax
     call path_basename
     mov [rip + g_project_name], rax
+    call remote_project_label   # remote hosts: "HOST: name"
     mov eax, [rip + g_link_open]
     mov [rip + g_project_link], eax
     mov dword ptr [rip + trust_closed], 0
@@ -484,7 +488,11 @@ project_menu_open:
     add rbx, 16
     inc r15d
     jmp 1b
-2:  mov qword ptr [rbx], 0
+2:  mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
+    lea rsi, [rip + pm_items]
+    call remote_menu_append
+    mov rbx, rax
+    mov qword ptr [rbx], 0
     mov qword ptr [rbx + 8], 0
     lea rdi, [rip + pm_items]
     mov esi, r12d
@@ -1524,6 +1532,10 @@ FN cmd_next_tab
     mov esi, 1
     cmp dword ptr [rip + g_focus], FOCUS_TERMINAL   # in the terminal: the next terminal
     je term_cycle
+    call panel_view_focused     # in one of the panel's view tabs: the next of its tabs
+    mov esi, 1
+    test eax, eax
+    jnz term_cycle
     mov rax, [rip + g_tab_cur]
     test rax, rax
     js 1f
@@ -1539,6 +1551,10 @@ FN cmd_prev_tab
     mov esi, -1
     cmp dword ptr [rip + g_focus], FOCUS_TERMINAL
     je term_cycle
+    call panel_view_focused
+    mov esi, -1
+    test eax, eax
+    jnz term_cycle
     mov rax, [rip + g_tab_cur]
     test rax, rax
     js 1f
@@ -2360,7 +2376,16 @@ FN app_on_key
     test eax, eax
     jnz 9f
     jmp .Lk_bind
-71: cmp eax, FOCUS_SCM
+71: cmp eax, FOCUS_VIEW
+    jne 73f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call place_key              # a view in a place (places.s)
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+73: cmp eax, FOCUS_SCM
     jne .Lk_bind
     mov edi, r12d
     mov esi, r13d
@@ -2375,6 +2400,12 @@ FN app_on_key
     mov esi, r13d
     mov edx, r14d
     call complete_key           # the completion list, when it shows, takes its keys first
+    test eax, eax
+    jnz 9f
+    mov edi, r12d               # AI: a Review tab's keys (review.s)
+    mov esi, r13d
+    mov edx, r14d
+    call review_key
     test eax, eax
     jnz 9f
     mov edi, r12d
@@ -2713,7 +2744,15 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: call keys_timeout           # a chord's pause
+96: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
+    cmp eax, -1
+    je 961f
+    cmp ebx, -1
+    je 962f
+    cmp eax, ebx
+    jge 961f
+962: mov ebx, eax
+961: call query_timeout         # language features: the next request to expire
     cmp eax, -1
     je 98f
     cmp ebx, -1
@@ -2721,11 +2760,36 @@ FN app_timeout
     cmp eax, ebx
     jge 98f
 99: mov ebx, eax
-98: mov eax, ebx
+98: call dap_timeout             # debugger: adapters' messages and deadlines
+    cmp eax, -1
+    je 100f
+    cmp ebx, -1
+    je 101f
+    cmp eax, ebx
+    jge 100f
+101:mov ebx, eax
+100:call remote_timeout         # remote hosts
+    cmp eax, -1
+    je 102f
+    cmp ebx, -1
+    je 103f
+    cmp eax, ebx
+    jge 102f
+103: mov ebx, eax
+102: call keys_timeout          # a chord's pause (keys.s)
+    cmp eax, -1
+    je 104f
+    cmp ebx, -1
+    je 105f
+    cmp eax, ebx
+    jge 104f
+105: mov ebx, eax
+104: mov eax, ebx
     EPILOGUE
 
 FN app_tick
     PROLOGUE
+    call query_tick             # language features: expired requests, before their askers' ticks
     call complete_tick
     call langfeat_tick
     call save_tick
@@ -2751,8 +2815,11 @@ FN app_tick
     call editor_tick
     call ext_tick
     call ext_provider_tick
+    call testing_tick           # testing (testproto.s)
     call app_clip_tick
-    call keys_tick
+    call dap_tick               # debugger
+    call remote_tick            # remote hosts
+    call keys_tick              # a chord's pause (keys.s)
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -2874,7 +2941,7 @@ FN app_render
     mov esi, [rsp + 20]
     mov edx, [rip + g_side_px]
     mov ecx, [rsp + 24]
-    call explorer_draw
+    call sidebar_draw
     mov eax, [rip + g_side_px]
     mov [rsp + 28], eax
     # border + splitter
@@ -2892,7 +2959,7 @@ FN app_render
     mov esi, [rsp + 20]
     mov edx, [rip + g_agents_px]
     mov ecx, [rsp + 24]
-    call agents_draw
+    call side_draw              # the agents panel, or a side view (places.s)
     mov edi, [rsp + 32]
     mov esi, [rsp + 20]
     M edx, MI_1
@@ -2941,7 +3008,14 @@ FN app_render
     M eax, MI_3
     lea eax, [rax + rax + 1]
     mov [rip + g_hole + 12], eax
-54: # the trust bar over the column, while git is paused for a repository a link opened
+54: # remote hosts: the connection's bar over the column while it is not up
+    mov edi, [rsp + 40]
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 44]
+    call remote_bar
+    add [rsp + 20], eax
+    sub [rsp + 48], eax
+    # the trust bar over the column, while git is paused for a repository a link opened
     mov edi, [rsp + 40]
     mov esi, [rsp + 20]
     mov edx, [rsp + 44]
@@ -3001,6 +3075,7 @@ FN app_render
     call toast_draw
     call tip_commit             # after every button with a tooltip has been drawn
     call tip_draw
+    call places_frame_end       # views hear focus and visibility changes once a frame
     mov edi, [rsp + 36]
     test edi, edi
     jz 2f
@@ -4663,8 +4738,8 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov ecx, [rsp + 12]
     call gfx_clip_push
-    # a chord waiting for its second stroke says so at the left end (keys.s); else the branch,
-    # and the file's items follow it
+    # a chord waiting for its second stroke says so at the left end (keys.s); else the remote
+    # host ("SSH: HOST"), the branch and the file's items
     mov edi, [rsp]
     add edi, [rip + g_mt + 4*MI_12]
     mov esi, [rsp + 4]
@@ -4677,7 +4752,12 @@ FN statusbar_draw
     add eax, [rip + g_mt + 4*MI_16]
     mov [rsp + 24], eax
     jmp 3f
-2:  mov edi, [rsp]
+2:  mov edi, [rsp]                # remote hosts: "SSH: HOST" at the left end
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call remote_status_item
+    # the branch; the file's items follow it
+    mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     mov ecx, [rsp + 20]

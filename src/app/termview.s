@@ -175,7 +175,10 @@ FN term_spawn
     lea rdi, [rip + env_extras]
     call env_make
     mov [rip + env], rax
-1:  # the shell: the setting, $SHELL, /bin/sh
+1:  # remote hosts: in a remote window the shell is the user's shell on the host (vfs.s)
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lsp_remote
+    # the shell: the setting, $SHELL, /bin/sh
     mov dword ptr [rsp + 24], 0
     mov rdi, [rip + cfg_term_shell]
     cmp byte ptr [rdi], 0
@@ -284,6 +287,28 @@ FN term_spawn
     call app_toast
     xor eax, eax
     EPILOGUE
+.Lsp_remote:
+    # its name for the tab, from the host's $SHELL
+    lea rdi, [rip + g_remote_shell]
+    cmp byte ptr [rdi], 0
+    jne 1f
+    lea rdi, [rip + .Lsh_name]
+1:  call dup_cstr
+    mov r12, rax
+    lea rax, [rip + .Lempty_arg]
+    mov [rsp], rax
+    mov qword ptr [rsp + 8], 0
+    lea rdi, [rsp]
+    mov rsi, [rip + env]
+    mov rdx, [rip + g_project]
+    mov ecx, 80
+    mov r8d, 24
+    call vfs_pty_spawn
+    test rax, rax
+    jle .Lsp_free
+    mov r15, rax
+    mov r13d, edx
+    jmp 3b
 
 # on_pty(fd, revents, session): output of the shell, room to write more
 on_pty:
@@ -447,10 +472,10 @@ session_end:
     mov edi, [rbx + TS_pid]
     neg edi
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + TS_pid]
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + TS_pid]
     mov esi, 1
     call proc_wait
@@ -572,10 +597,12 @@ FN term_tick
 
 # ---------------- commands ----------------
 
-# cmd_toggle_terminal(): show and focus the panel, hide it when it has focus
+# cmd_toggle_terminal(): show and focus the panel's terminals, hide it when they have focus
 FN cmd_toggle_terminal
     cmp dword ptr [rip + g_term_open], 0
     je term_show
+    cmp dword ptr [rip + g_panel_cur], -1
+    jne term_show               # a view tab is chosen: the terminals come back (places.s)
     cmp dword ptr [rip + g_focus], FOCUS_TERMINAL
     jne 1f
     mov dword ptr [rip + g_term_open], 0
@@ -586,7 +613,7 @@ FN cmd_toggle_terminal
     mov dword ptr [rip + g_dirty], 1
     ret
 
-# term_show(): open the panel with a shell in it
+# term_show(): open the panel on its terminals, with a shell in it
 FN term_show
     cmp qword ptr [rip + sessions + VEC_len], 0
     jne 1f
@@ -595,7 +622,8 @@ FN term_show
     pop rcx
     test eax, eax
     jz 2f
-1:  mov dword ptr [rip + g_term_open], 1
+1:  mov dword ptr [rip + g_panel_cur], -1
+    mov dword ptr [rip + g_term_open], 1
     mov dword ptr [rip + g_focus], FOCUS_TERMINAL
     mov dword ptr [rip + g_dirty], 1
 2:  ret
@@ -606,24 +634,56 @@ FN cmd_new_terminal
     pop rcx
     test eax, eax
     jz 1f
+    mov dword ptr [rip + g_panel_cur], -1
     mov dword ptr [rip + g_term_open], 1
     mov dword ptr [rip + g_focus], FOCUS_TERMINAL
 1:  ret
 
-# term_cycle(dir): the next (1) or previous (-1) terminal, wrapping around
+# term_cycle(dir in esi): the next (1) or previous (-1) of the panel's tabs, the terminals then the
+#   view tabs (places.s), wrapping around
 FN term_cycle
-    mov ecx, [rip + sessions + VEC_len]
+    push rbx
+    push r12
+    push r13
+    mov r13d, esi
+    call places_panel_count
+    mov r12d, eax               # view tabs
+    mov ebx, [rip + sessions + VEC_len]
+    lea ecx, [rbx + r12]
     test ecx, ecx
     jz 9f
-    mov eax, [rip + cur]
-    add eax, esi
+    mov eax, [rip + cur]        # where the panel is now
+    cmp dword ptr [rip + g_panel_cur], -1
+    je 1f
+    call places_panel_index
+    test eax, eax
+    js 9f
+    add eax, ebx
+1:  lea ecx, [rbx + r12]
+    add eax, r13d
     add eax, ecx
     xor edx, edx
     div ecx
+    cmp edx, ebx
+    jae 2f
     mov [rip + cur], rdx
+    mov dword ptr [rip + g_panel_cur], -1
     mov dword ptr [rip + sel_on], 0
+    mov dword ptr [rip + g_focus], FOCUS_TERMINAL
     mov dword ptr [rip + g_dirty], 1
-9:  ret
+    jmp 9f
+2:  sub edx, ebx
+    push rdx
+    call places_panel_count     # the list places_panel_nth reads
+    pop rdi
+    call places_panel_nth
+    mov edi, eax
+    mov esi, 1
+    call place_show
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
 
 FN cmd_kill_terminal
     call cur_sess
@@ -944,6 +1004,13 @@ FN term_panel_draw
     mov dword ptr [rip + g_dirty], 1
 2:  call header_draw
     mov dword ptr [rip + link_on], 0
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call places_panel_body      # a view tab is chosen: it draws the body instead of a terminal
+    test eax, eax
+    jnz .Lpd_ret
     call cur_sess
     test rax, rax
     jz .Lpd_ret
@@ -1096,7 +1163,9 @@ header_draw:
     add eax, [rip + g_mt + 4*MI_20]
     add eax, [rip + g_mt + 4*MI_28]
     mov r13d, eax               # narrowest tab
+    call places_panel_tabs_width
     mov r14d, [rsp + 24]
+    sub r14d, eax               # the view tabs after the sessions keep their room
     sub r14d, r12d              # room for the tabs
     mov [rsp + 32], r13d        # widest tab
     mov dword ptr [rsp + 36], 0 # first tab shown
@@ -1196,6 +1265,7 @@ header_draw:
     test eax, UB_PRESS
     jz 2f
     mov [rip + cur], rbx
+    mov dword ptr [rip + g_panel_cur], -1
     mov dword ptr [rip + g_focus], FOCUS_TERMINAL
     mov dword ptr [rip + sel_on], 0
 2:  cmp dword ptr [rsp + 28], 0
@@ -1209,6 +1279,8 @@ header_draw:
     COLOR r9d, T_MUTED
     cmp rbx, [rip + cur]
     jne 4f
+    cmp dword ptr [rip + g_panel_cur], -1
+    jne 4f                      # a view tab is chosen instead
     COLOR r9d, T_FG
     mov edi, r12d
     mov esi, [rbp + 20]
@@ -1272,6 +1344,12 @@ header_draw:
     inc rbx
     jmp .Lhd_tab
 .Lhd_buttons:
+    mov edi, r12d               # the view tabs after the sessions (places.s)
+    mov esi, [rbp + 20]
+    mov edx, [rsp + 24]
+    mov ecx, r15d
+    mov r8d, [rip + sessions + VEC_len]
+    call places_panel_tabs
     call gfx_clip_pop
     mov eax, [rsp + 20]
     mov [rip + g_block], eax
@@ -3241,6 +3319,8 @@ rep_cell: .long -1
 .Lsh: .asciz "/bin/sh"
 .endif
 .Lno_shell: .asciz "Could not start a shell"
+.Lsh_name: .asciz "sh"
+.Lempty_arg: .asciz ""
 .Lword_stop: .asciz "()[]{}<>'\"`,;|&"
 .Lurl_stop: .asciz "\"'<>`{}|\\^"
 .Lpath_stop: .asciz "\"'<>`|()[]{},;"

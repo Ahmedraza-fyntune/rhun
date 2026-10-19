@@ -51,8 +51,11 @@ FN closed_note
     jz .Lcn_push                # Settings, the history
     mov r14, [r13 + DOC_diff]
     test r14, r14
-    jnz .Lcn_diff
-    mov rdi, [r13 + DOC_path]
+    jz 1f
+    cmp qword ptr [r14 + DV_review], 0
+    jne 9f                      # AI: a Review tab is gone with its decisions (review.s)
+    jmp .Lcn_diff
+1:  mov rdi, [r13 + DOC_path]
     test rdi, rdi
     jz 9f                       # untitled: nothing to bring back
     call str_own
