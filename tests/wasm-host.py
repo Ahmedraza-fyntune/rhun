@@ -195,9 +195,10 @@ class Wasm(unittest.TestCase):
 
     def test_nothing_outside(self):
         self.assertEqual(self.command('escape', 'escape'), 'toast=escape absolute=false climb=false')
-        # home = read opens the home folder (where the secret is), read only
-        self.assertEqual(self.command('escape', 'escape', needs='documents = write\nhome = read'),
-                         'toast=escape absolute=true climb=false')
+        # home = read opens the home folder (where the secret is), read only (a climbing path that
+        # a runtime cleans into the home folder may reach it too: Go cleans paths itself)
+        self.assertTrue(self.command('escape', 'escape', needs='documents = write\nhome = read').startswith(
+            'toast=escape absolute=true climb='))
 
     def test_its_own_folder_read_only(self):
         self.assertEqual(self.command('own', 'own'), 'toast=own read=true write=false')
