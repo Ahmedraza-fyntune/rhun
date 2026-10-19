@@ -1948,6 +1948,72 @@ lf_msort:
     call mem_free
 9:  EPILOGUE
 
+# wsedit: FN langfeat_show_locations(ext, title ptr, len, body, len) -> eax 1 with the locations
+# body (12d) listed in the palette under the title as Find All References lists its results, 0
+# when it breaks 12d's rules (feature reveal's show-locations; the Results panel takes it over)
+FN langfeat_show_locations
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov [rsp], rcx
+    mov [rsp + 8], r8
+    call lf_reset
+    mov rax, [rip + g_doc]      # choosing one checks the document asked about: the active one
+    mov [rip + lf_doc], rax
+    test rax, rax
+    jz 1f
+    mov rcx, [rax + DOC_id]
+    mov [rip + lf_doc_id], rcx
+    mov rcx, [rax + DOC_language_revision]
+    mov [rip + lf_language_revision], rcx
+1:  # the title, at most 200 bytes, as the list's placeholder
+    mov rdi, r13
+    mov rsi, r12
+    mov edx, 200
+    call utf8_cut
+    mov rcx, rax
+    lea rdi, [rip + lf_show_title]
+    mov rsi, r12
+    rep movsb
+    mov byte ptr [rdi], 0
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call lf_parse_locations
+    test rax, rax
+    js 8f
+    call lf_sort
+    mov dword ptr [rip + lf_list_kind], LF_REFS
+    lea rdi, [rip + lf_show_title]
+    call palette_results_open
+    xor r13d, r13d
+2:  cmp r13, [rip + lf_res + VEC_len]
+    jae 4f
+    imul r14, r13, LS_SIZE
+    add r14, [rip + lf_res + VEC_ptr]
+    mov rdi, [r14 + LS_label]
+    add rdi, [rip + lf_bytes + SB_ptr]
+    call strlen
+    mov rsi, rax
+    mov rdi, [r14 + LS_label]
+    add rdi, [rip + lf_bytes + SB_ptr]
+    xor edx, edx
+    mov rax, [r14 + LS_detail]
+    test rax, rax
+    js 3f
+    mov rdx, rax
+    add rdx, [rip + lf_bytes + SB_ptr]
+3:  mov rcx, r13
+    call palette_results_add
+    inc r13
+    jmp 2b
+4:  call palette_results_ready
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # FN langfeat_ext_gone(ext): an extension stopped: its requests go (state only)
 FN langfeat_ext_gone
     push rdi
@@ -1999,6 +2065,7 @@ FN langfeat_ext_gone
 .bss
 .p2align 2
 lf_tmp4: .zero 16
+lf_show_title: .zero 208        # wsedit: show-locations' title
 
 .section .rodata
 .p2align 3

@@ -1502,14 +1502,18 @@ FN ws_features_agreed
     FEAT_TEST rdi, FEAT_WORKSPACE_EDITS
     jnz 1f
     FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS
-1:  FEAT_CLEAR rdi, FEAT_REVEAL                 # not yet
-    FEAT_CLEAR rdi, FEAT_DIFF
-    FEAT_CLEAR rdi, FEAT_LINKED_EDITING
+1:  FEAT_CLEAR rdi, FEAT_LINKED_EDITING         # not yet
     ret
 
 # FN ws_ext_gone(ext): an extension stopped: an edit of its that waits for the user is cancelled
 FN ws_ext_gone
-    jmp ws_confirm_owner_gone
+    push rbx
+    mov rbx, rdi
+    call ws_difftab_ext_gone
+    mov rdi, rbx
+    call ws_confirm_owner_gone
+    pop rbx
+    ret
 
 .section .rodata
 .Lk_create: .asciz "create"

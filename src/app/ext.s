@@ -995,6 +995,8 @@ FN ext_retire
     mov rdi, rbx
     call complete_ext_gone
     mov rdi, rbx
+    call ws_ext_gone            # wsedit: its waiting workspace edit, its diff tabs
+    mov rdi, rbx
     call langfeat_ext_gone
     mov rdi, rbx
     call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
@@ -3655,6 +3657,8 @@ FN ext_exited
     call extview_owner_gone     # its views close with it
     mov rdi, rbx
     call complete_ext_gone      # and its completion items and signature help
+    mov rdi, rbx
+    call ws_ext_gone            # wsedit: its waiting workspace edit, its diff tabs
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
     mov rdi, rbx

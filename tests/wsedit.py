@@ -301,7 +301,7 @@ class Ws(host.Host):
         self.assertIn('edits = yes', ini)
         self.assertEqual(self.replies()[:2], ['ok 1', 'ok 2'])
         self.assertIn('none', out)                         # the second edit did not ask
-        self.assertIn('edits=1', out)
+        self.assertIn('edits=yes', out)
         self.assertEqual((self.proj / 'c.txt').read_text(), 'third file\n')
         out = self.run_ws(exts, ['ext-edits wsx no', 'cmd wsx.go', 'wait-ext wsx running', 'wait 400',
                                  'print-palette', 'key Escape'])

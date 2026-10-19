@@ -2763,7 +2763,15 @@ FN app_timeout
     cmp eax, ebx
     jge 102f
 103: mov ebx, eax
-102: mov eax, ebx
+102: call ws_difftab_timeout     # wsedit: diff tabs whose sides changed
+    cmp eax, -1
+    je 104f
+    cmp ebx, -1
+    je 105f
+    cmp eax, ebx
+    jge 104f
+105: mov ebx, eax
+104: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2771,6 +2779,7 @@ FN app_tick
     call query_tick             # language features: expired requests, before their askers' ticks
     call complete_tick
     call langfeat_tick
+    call ws_difftab_tick        # wsedit: diff tabs follow their sides
     call save_tick
     call ext_options_apply
     call watch_tick

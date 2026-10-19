@@ -322,6 +322,10 @@ FN extproto_events
     mov r13, [rax + TAB_doc]
     test r13, r13
     jz .Lxe_tabs
+    mov rdi, r13                # wsedit: a workspace edit's preview, an extension's diff tab
+    call ws_doc_hidden
+    test eax, eax
+    jnz .Lxe_tabs
     mov rdi, r13
     call doc_sync_grammar
     mov [rsp + 8], rax
@@ -389,6 +393,10 @@ FN extproto_events
     mov r13, [rax + TAB_doc]
     test r13, r13
     jz .Lxe_positions
+    mov rdi, r13                # wsedit
+    call ws_doc_hidden
+    test eax, eax
+    jnz .Lxe_positions
     mov rdi, r13
     call doc_sync_grammar
     test rax, rax
