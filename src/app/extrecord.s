@@ -824,6 +824,13 @@ FN ext_needs_wider
     mov r8d, r14d
     call wider_list
     mov r14d, eax
+    mov rdi, [r12 + EXT_nb_kernels]     # notebooks: kernels run as the user
+    mov rsi, [rbx + EXT_nb_kernels]
+    lea rdx, [rip + .Ln_when_kernels]
+    mov rcx, r13
+    mov r8d, r14d
+    call wider_list
+    mov r14d, eax
     xor eax, eax
     test r14d, r14d
     setnz al
@@ -1216,6 +1223,7 @@ put_num:
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
 .Ln_run: .asciz "run "
 .Ln_when_tests: .asciz " with your access when you run tests"
+.Ln_when_kernels: .asciz " with your access as notebook kernels"
 .Ln_sep: .asciz ", "
 .Leq: .asciz " = "
 .Lr_pack: .asciz "pack in extension.ini must list at most 16 other extensions as owner/name"

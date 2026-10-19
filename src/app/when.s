@@ -1769,6 +1769,9 @@ ck_active_tab:
     jmp ck_cstr
 # FN ctx_tab_kind_name(TAB_*) -> rax "doc" "image" "settings" "git" "extensions" "view", or 0
 FN ctx_tab_kind_name
+    lea rax, [rip + .Lv_notebook]   # notebooks: TAB_NOTEBOOK (from the notebooks' block) is "notebook"
+    cmp rdi, TAB_NOTEBOOK
+    je 9f
     xor eax, eax
     dec rdi
     cmp rdi, 5
@@ -2388,6 +2391,7 @@ prov_names: .quad .Lp_complete, .Lp_signature, .Lp_definition, .Lp_references, .
 .Lv_git: .asciz "git"
 .Lv_extensions: .asciz "extensions"
 .Lv_view: .asciz "view"
+.Lv_notebook: .asciz "notebook"
 .Lv_normal: .asciz "normal"
 .Lv_insert: .asciz "insert"
 .Lv_visual: .asciz "visual"

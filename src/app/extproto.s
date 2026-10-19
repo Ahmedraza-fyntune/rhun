@@ -471,6 +471,17 @@ handle_line:
     jz 2f                       # no body: answered at once
     cmp rax, REPLY_BODY_MAX
     jbe 1f
+    # notebooks: a request may have a cap of its own (nb-open, nb-save: 64 MB)
+    push rax
+    push rax
+    mov rdi, rbx
+    mov rsi, r12
+    call ext_reply_cap
+    mov rcx, rax
+    pop rax
+    pop rdx
+    cmp rax, rcx
+    jbe 1f
     mov rdi, rbx                # a body over the cap ends the program, as for requests
     lea rsi, [rip + .Lr_body]
     call ext_kill
@@ -528,6 +539,14 @@ handle_line:
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
     call scmext_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # notebooks: nb-open, nb-save
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call nb_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -635,6 +654,16 @@ handle_line:
     xor edx, edx
     call invoke_reply           # (invoke.s)
     mov [rip + cur], rbx
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # notebooks: nb-open, nb-save, with the code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call nb_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -4529,6 +4558,13 @@ verbs:
     .quad .Lv_unpropose, h_unpropose, 0
     .quad .Lv_tools, h_tools, 0
     .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
+    # notebooks (nbproto.inc)
+    .quad .Lnb_v_state, h_nb_state, 0
+    .quad .Lnb_v_output, h_nb_output, NB_OUTPUT_MAX
+    .quad .Lnb_v_stream, h_nb_stream, NB_STREAM_MAX
+    .quad .Lnb_v_kernel_label, h_nb_kernel_label, 4096
+    .quad .Lnb_v_exec, h_nb_exec, 262144
+    .quad .Lnb_v_exec_signal, h_nb_exec_signal, 0
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
@@ -4739,6 +4775,7 @@ FN extproto_answer_syntax
 .include "app/extwatchproto.inc"
 .include "app/extresproto.inc"    # resources group: idle, secrets, urls, uris, files, folders
 .include "app/extaiproto.inc"
+.include "app/nbproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"
