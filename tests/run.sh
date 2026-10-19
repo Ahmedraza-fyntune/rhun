@@ -182,6 +182,7 @@ python3 tests/ext-sdk-commands.py || fail=1
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }
 python3 tests/enum-values.py --negative-control > /dev/null || { python3 tests/enum-values.py --negative-control; fail=1; }
+python3 tests/asm-pitfalls.py --negative-control > /dev/null || { python3 tests/asm-pitfalls.py --negative-control; fail=1; }
 check edtape build/edtape_test
 python3 tests/presentation.py || fail=1
 python3 tests/folding.py || fail=1

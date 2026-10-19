@@ -4058,9 +4058,9 @@ FN tabs_draw
     sub [rsp + 8], eax
     mov eax, [rsp + 8]
     sub eax, [rsp + 12]
-    jns 01f
+    jns 9701f
     xor eax, eax
-01: mov [rsp + 36], eax
+9701: mov [rsp + 36], eax
 0:  mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 8]
