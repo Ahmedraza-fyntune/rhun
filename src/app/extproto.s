@@ -1228,6 +1228,8 @@ h_snippet:
     cmp rax, [rbx + DOC_version]
     jne .Lhsn_stale
     mov rdi, rbx
+    call sel_collapse           # a snippet is about one place (multi-cursor)
+    mov rdi, rbx
     mov esi, 4
     call arg_pos
     test rax, rax
@@ -1567,7 +1569,21 @@ h_insert:
     jz .Lhi_syntax
     cmp rax, [rbx + DOC_version]
     jne .Lhi_stale
+    # feature selections: at every selection, as typing would
+    cmp qword ptr [rbx + DOC_selections], 0
+    je 2f
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_SELECTIONS
+    jz 2f
     mov rdi, rbx
+    call sel_insert_all
+    test rax, rax
+    jz 9f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
+    jmp 9f
+2:  mov rdi, rbx
     call ed_sel
     mov r12, rax
     mov r13, rdx
@@ -1623,6 +1639,8 @@ h_select:
     test rax, rax
     js 9f
     mov r13, rax
+    mov rdi, rbx
+    call sel_collapse           # one selection (multi-cursor)
     mov rdi, rbx
     mov rsi, r13
     mov rdx, r12
@@ -3758,6 +3776,305 @@ send_selection:
     call out_end
     EPILOGUE
 
+# ---------------- feature selections (multi-cursor) ----------------
+
+# sel_insert_all(doc) -> rax 0 after replying ok ID VERSION, else the error text: the body at
+# every selection of the document, as typing would
+sel_insert_all:
+    PROLOGUE
+    mov rbx, rdi
+    mov rsi, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    call doc_selections_replace
+    test eax, eax
+    jz 1f
+    mov dword ptr [rip + g_dirty], 1
+    cmp rbx, [rip + g_doc]
+    jne 2f
+    mov qword ptr [rbx + DOC_prefx], -1
+    call ed_touch
+2:  mov rdi, [rip + cur_id]
+    mov rsi, [rbx + DOC_version]
+    call reply_ok_u64
+    xor eax, eax
+    EPILOGUE
+1:  lea rax, [rip + .Le_sel_refused]
+    cmp edx, 2
+    jne 3f
+    lea rax, [rip + .Le_sel_large]
+3:  cmp edx, 3
+    jne 4f
+    lea rax, [rip + .Le_readonly]
+4:  EPILOGUE
+
+# ID select-many DOC N LEN + N lines "L1 C1 L2 C2" -> ok ID: the selections (anchor, cursor),
+# the first the primary; overlapping ones merge
+h_select_many:
+    PROLOGUE 16
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_SELECTIONS
+    jz .Lsm_unknown
+    cmp qword ptr [rip + nfields], 5
+    jb .Lsm_syntax
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz .Lsm_syntax
+    test rax, rax
+    jz .Lsm_toobig
+    cmp rax, DOC_SELECTIONS_MAX
+    ja .Lsm_toobig
+    mov r12, rax                # selections
+    mov r13, [rip + body_ptr]   # the numbers go on from here
+    mov r14, r13
+    add r14, [rip + body_len]
+    xor r15d, r15d
+1:  cmp r15, r12
+    jae 2f
+    call sm_number              # anchor line, column
+    mov [rsp], rax
+    call sm_number
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, rax
+    call sm_pos
+    test rax, rax
+    js .Lsm_badpos
+    mov rcx, r15
+    shl rcx, 4
+    lea rdx, [rip + sel_pairs]
+    mov [rdx + rcx + DMP_anchor], rax
+    call sm_number              # cursor line, column
+    mov [rsp], rax
+    call sm_number
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, rax
+    call sm_pos
+    test rax, rax
+    js .Lsm_badpos
+    mov rcx, r15
+    shl rcx, 4
+    lea rdx, [rip + sel_pairs]
+    mov [rdx + rcx + DMP_cur], rax
+    inc r15
+    jmp 1b
+2:  mov rdi, rbx
+    lea rsi, [rip + sel_pairs]
+    mov rdx, r12
+    call sel_install
+    test rax, rax
+    jz .Lsm_badpos
+    mov qword ptr [rbx + DOC_prefx], -1
+    cmp rbx, [rip + g_doc]
+    jne 3f
+    call ed_touch
+    jmp 4f
+3:  mov rdi, rbx
+    call snippet_selection_changed
+4:  mov rdi, [rip + cur_id]
+    call reply_ok
+9:  EPILOGUE
+.Lsm_unknown:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    EPILOGUE
+.Lsm_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+.Lsm_toobig:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_sel_toobig]
+    call reply_error
+    EPILOGUE
+.Lsm_badpos:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_badpos]
+    call reply_error
+    EPILOGUE
+
+# sm_number() -> rax the next decimal number of the body between r13 and r14 (r13 moves past it),
+# 0 when there is none (no line or column is 0)
+sm_number:
+    xor eax, eax
+1:  cmp r13, r14
+    jae 9f
+    movzx ecx, byte ptr [r13]
+    cmp ecx, ' '
+    je 2f
+    cmp ecx, 10
+    jne 3f
+2:  inc r13
+    jmp 1b
+3:  cmp r13, r14
+    jae 9f
+    movzx ecx, byte ptr [r13]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja 9f
+    imul rax, rax, 10
+    add rax, rcx
+    mov rcx, 0xffffffffff
+    cmp rax, rcx
+    ja 8f
+    inc r13
+    jmp 3b
+8:  xor eax, eax
+9:  ret
+
+# sm_pos(doc, line, column) -> rax byte position (lines and byte columns from 1, arg_pos's rules),
+# -1 when it is outside the document or inside a character
+sm_pos:
+    PROLOGUE
+    mov rbx, rdi
+    test rsi, rsi
+    jz 8f
+    cmp rsi, [rbx + DOC_nlines]
+    ja 8f
+    test rdx, rdx
+    jz 8f
+    lea r12, [rsi - 1]
+    lea r13, [rdx - 1]
+    mov rsi, r12
+    call doc_line_start
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_end
+    sub rax, r14
+    cmp r13, rax
+    ja 8f
+    add r14, r13
+    cmp r13, rax
+    je 9f
+    mov rdi, rbx
+    mov rsi, r14
+    call doc_byte
+    and eax, 0xc0
+    cmp eax, 0x80
+    je 8f
+9:  mov rax, r14
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# send_selections(doc): "0 selections DOC N LEN" + N lines "L1 C1 L2 C2", the primary first
+send_selections:
+    PROLOGUE 32
+    mov rbx, rdi
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset
+    mov rdi, rbx
+    lea rsi, [rsp]
+    call sel_body
+    mov r12, rax
+    call out_begin
+    lea rdi, [rip + .Lev_selections]
+    call out_cstr
+    mov rdi, [rbx + DOC_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r12
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rsp + SB_len]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, [rsp + SB_ptr]
+    mov rsi, [rsp + SB_len]
+    call out_bytes
+    lea rdi, [rsp]
+    call sb_free
+    call out_end
+    EPILOGUE
+
+# xe_visible(ext) -> 0 or -errno: "0 visible DOC 1 L1 L2", the lines of the active document the last
+# frame showed, to an extension subscribed to them: when they change (at most every 50 ms; once
+# more when they stop changing, ext_timeout's deadline) and at catch-up
+xe_visible:
+    PROLOGUE
+    mov rbx, rdi
+    xor eax, eax
+    cmp qword ptr [rbx + EXT_sub_visible], 0
+    je 9f
+    mov r12, [rip + g_doc]
+    test r12, r12
+    jz 9f
+    mov rdi, rbx
+    mov rsi, [r12 + DOC_id]
+    call known_find
+    test rax, rax
+    jz 8f
+    cmp qword ptr [rax + XK_phase], XP_READY
+    jne 8f
+    mov rdi, [rbx + EXT_sub_visible]
+    mov rsi, r12
+    call sub_matches
+    test eax, eax
+    jz 8f
+    mov rdi, r12
+    call sel_visible
+    test rax, rax
+    js 8f
+    mov r13, rax
+    mov r14, rdx
+    mov rax, [r12 + DOC_id]
+    cmp rax, [rbx + EXT_vis_doc]
+    jne 2f                      # another document, or the first time: now
+    cmp r13, [rbx + EXT_vis_l1]
+    jne 1f
+    cmp r14, [rbx + EXT_vis_l2]
+    jne 1f
+    mov qword ptr [rbx + EXT_vis_due], 0
+    jmp 8f
+1:  call time_ms
+    sub rax, [rbx + EXT_vis_t]
+    cmp rax, 50
+    jge 2f
+    mov qword ptr [rbx + EXT_vis_due], 1
+    jmp 8f
+2:  call out_begin
+    lea rdi, [rip + .Lev_visible]
+    call out_cstr
+    mov rdi, [r12 + DOC_id]
+    call out_u64
+    lea rdi, [rip + .Lev_visible_one]
+    call out_cstr
+    lea rdi, [r13 + 1]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    lea rdi, [r14 + 1]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    call out_end
+    test rax, rax
+    js 9f
+    mov rax, [r12 + DOC_id]
+    mov [rbx + EXT_vis_doc], rax
+    mov [rbx + EXT_vis_l1], r13
+    mov [rbx + EXT_vis_l2], r14
+    call time_ms
+    mov [rbx + EXT_vis_t], rax
+    mov qword ptr [rbx + EXT_vis_due], 0
+8:  xor eax, eax
+9:  EPILOGUE
+
+# ---------------- end feature selections ----------------
+
 # send_closed(id): "0 closed DOC"
 send_closed:
     push rdi
@@ -3795,6 +4112,7 @@ verbs:
     .quad .Lv_snippet_context, h_snippet_context, 0
     .quad .Lv_insert, h_insert, EXT_BODY_MAX
     .quad .Lv_select, h_select, 0
+    .quad .Lv_select_many, h_select_many, EXT_BODY_MAX    # feature selections
     .quad .Lv_toast, h_toast, EXT_BODY_MAX
     .quad .Lv_status, h_status, EXT_BODY_MAX
     .quad .Lv_open, h_open, 0
@@ -3974,6 +4292,13 @@ feature_names:
 .Lev_changed: .asciz "0 changed "
 .Lev_cursor: .asciz "0 cursor "
 .Lev_selection: .asciz "0 selection "
+.Lev_selections: .asciz "0 selections "     # feature selections
+.Lev_visible: .asciz "0 visible "
+.Lev_visible_one: .asciz " 1 "
+.Lv_select_many: .asciz "select-many"
+.Le_sel_toobig: .asciz "toobig 512 selections at most"
+.Le_sel_refused: .asciz "refused the text could not be inserted"
+.Le_sel_large: .asciz "toobig the text at every selection exceeds 64 MiB"
 .Lev_closed: .asciz "0 closed "
 .Lev_active: .asciz "0 active "
 .Lev_project: .asciz "0 project "

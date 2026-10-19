@@ -277,6 +277,7 @@ FN cmd_select_language
     jmp palette_open
 1:  ret
 FN cmd_goto_line
+    call ed_single              # one selection (multi-cursor)
     cmp qword ptr [rip + g_doc], 0
     je 1f
     mov edi, PM_GOTO

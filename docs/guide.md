@@ -443,6 +443,28 @@ PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame
 
 The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
+### Multiple cursors
+
+Several selections edit together: typing, Backspace and Delete (by character and by word), Enter, Tab and Shift+Tab, Indent and Outdent, Cut, Copy and Paste act at every one, as one Undo step that also brings the selections back. The newest selection is the primary: the view follows it and the status bar shows its position and how many selections there are.
+
+| Keys | Command |
+| --- | --- |
+| Ctrl+D | Select the word at the cursor, then add the next match (whole words of the same case after a word; else the exact text) |
+| Ctrl+Shift+L | Select All Matches (at most 512, the nearest ones) |
+| Ctrl+Alt+Up / Down, Shift+Alt+Up / Down | Add Cursor Above / Below, at the primary's column |
+| Ctrl+U | Remove Last Selection |
+| Shift+Alt+I | Add Cursors to Line Ends of the selected lines |
+| Ctrl+Shift+Alt+arrows | Column Select: a box that grows from the cursor |
+| Escape | Back to the primary alone |
+
+On macOS Ctrl is Command and Alt is Option. Move Selection to Next Match (Ctrl+D's old behaviour) is in the command palette without a key.
+
+With the mouse, Alt+click adds a caret (on a caret, removes it), Alt+drag adds a selection, Alt+double-click adds a word, and Shift+Alt+drag selects a box: one selection a line between the two columns, tabs expanded, skipping lines that end left of it. A plain click goes back to one cursor. When the window manager takes Alt+drag, `multi_cursor_modifier = ctrl` under `[editor]` (**Multi-cursor modifier** in Settings) uses Ctrl instead.
+
+Arrows, Home, End, word and page moves move every selection, each keeping its own column on short lines; selections that come to overlap become one. Duplicate Line, Delete Line, Move Line Up/Down, Toggle Comment, Insert Line Below/Above and Select Line act on the lines of every selection. Commands about one place (find next, Go to Line, completion, Go to Definition, rename, code actions) keep the primary alone first, and completion does not open by itself while there are several selections.
+
+In Vim mode, `gb` adds a cursor at the next occurrence of the word under the cursor (of the selection in visual mode); Ctrl+D keeps paging. Motions with counts, `i a I A o O`, visual mode, `x X D C s S dd cc yy`, operators with a motion or text object (`ciw`), `p P` and `.` act at every cursor as one undo step; `u` brings the cursors back. Yanks at several cursors are one copy with a piece each, which `p` puts back paired. Esc in insert mode keeps the cursors, each stepping back a character; Esc in normal mode leaves the primary alone. Searches, `:`, `J`, `r`, `~`, `>` and `<` go back to the primary first.
+
 ### Vim mode
 
 The Vim mode switch in Settings (`vim_mode = true` under `[editor]`) or Toggle Vim Mode in the command palette turns it on. The status bar shows the mode and the keys typed so far; outside insert mode the cursor is a block.
@@ -484,7 +506,7 @@ alt+z = none
 
 Key names are those of the command palette entries in snake case (see `src/app/keys.s`). `none` removes a binding.
 
-At multiple cursors, copied selections stay paired with their destinations. For other multiline text, `multi_cursor_paste = spread` under `[editor]` pastes one line per cursor when the counts match. Set it to `full` to paste all the text at each cursor. The same choice is available as **Paste at multiple cursors** in Settings.
+At multiple cursors (see [Multiple cursors](#multiple-cursors)), copied selections stay paired with their destinations. For other multiline text, `multi_cursor_paste = spread` under `[editor]` pastes one line per cursor when the counts match. Set it to `full` to paste all the text at each cursor. The same choice is available as **Paste at multiple cursors** in Settings.
 
 Tab uses each cursor’s own column. Indent and Outdent update each shared line once and preserve selection direction. One Undo restores the whole edit.
 

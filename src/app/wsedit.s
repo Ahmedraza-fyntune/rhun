@@ -1502,8 +1502,7 @@ FN ws_features_agreed
     FEAT_TEST rdi, FEAT_WORKSPACE_EDITS
     jnz 1f
     FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS
-1:  FEAT_CLEAR rdi, FEAT_SELECTIONS             # not yet
-    FEAT_CLEAR rdi, FEAT_REVEAL
+1:  FEAT_CLEAR rdi, FEAT_REVEAL                 # not yet
     FEAT_CLEAR rdi, FEAT_DIFF
     FEAT_CLEAR rdi, FEAT_LINKED_EDITING
     ret

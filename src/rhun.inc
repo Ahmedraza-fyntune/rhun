@@ -1895,6 +1895,13 @@ F EXT_pv_ttrig, 8       # type_format.triggers
 F EXT_pv_document_links, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
+# feature selections (extproto.s): the visible event
+F EXT_sub_visible, 8    # [subscribe] visible: its patterns (cstr) or 0
+F EXT_vis_doc, 8        # the visible event last sent: DOC id (0: none since the start), its lines
+F EXT_vis_l1, 8
+F EXT_vis_l2, 8
+F EXT_vis_t, 8          # time_ms it was sent
+F EXT_vis_due, 8        # 1: the lines changed since; sent once 50 ms have passed
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
@@ -2076,6 +2083,7 @@ F XK_text_ver, 8        # last accepted edit/resync/full-text baseline
 F XK_resync, 8          # per-peer debt survives clearing DOC_xresync
 F XK_replay, 8          # pending active1/cursor2/selection4 catch-up
 F XK_selcur, 8          # cursor of last accepted selection, independent of XK_cur
+F XK_selhash, 8         # feature selections: sel_hash of the selections last told (0: one caret)
 ENDSTRUCT XK_SIZE
 .equ XP_NEED_OPEN, 0
 .equ XP_READY, 1
