@@ -73,6 +73,8 @@ FN closed_note
 .Lcn_diff:
     mov qword ptr [rbx + CT_kind], CK_DIFF
     mov rdi, [r14 + DV_path]
+    test rdi, rdi
+    jz 9f                       # testing's expected/actual diff: nothing to fetch again
     call str_own
     mov [rbx + CT_path], rax
     mov rdi, [r14 + DV_rev]

@@ -699,8 +699,179 @@ cancel_ext:
     jb 1b
     EPILOGUE
 
-# testview_action(tsc, index, word, len): goto, diff, output on an item (the Testing tab's; T4/T5)
+# testview_action(tsc, index, word, len): on an item, "goto" (its range), "failure" (its last
+#   failure's place), "diff" (its last failure's expected and actual as a diff tab), "output" (its last
+#   output in a read-only tab)
 FN testview_action
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .La_goto]
+    call str_eq_cstr
+    test eax, eax
+    jnz .Lva_goto
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_result
+    test rax, rax
+    jz 9f
+    mov r15, rax
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .La_output]
+    call str_eq_cstr
+    test eax, eax
+    jnz .Lva_output
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .La_diff]
+    call str_eq_cstr
+    test eax, eax
+    jnz .Lva_diff
+    mov rdi, r13
+    mov rsi, r14
+    lea rdx, [rip + .La_failure]
+    call str_eq_cstr
+    test eax, eax
+    jnz .Lva_failure
+9:  EPILOGUE
+.Lva_goto:
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    mov rdi, [rax + TSI_path]
+    test rdi, rdi
+    jz 9b
+    mov r13d, [rax + TSI_l1]
+    mov r14d, [rax + TSI_c1]
+    call app_open_file
+    test rax, rax
+    js 9b
+    mov edi, r13d
+    mov esi, r14d
+    call app_goto_line
+    EPILOGUE
+.Lva_output:
+    call title_begin
+    lea rsi, [rip + .Lt_output]
+    call title_push
+    mov rdi, rbx
+    mov rsi, r12
+    call title_label
+    lea rdi, [rip + title]
+    mov rsi, [r15 + TSE_out + SB_ptr]
+    mov rdx, [r15 + TSE_out + SB_len]
+    call testdiff_output
+    EPILOGUE
+.Lva_diff:
+    mov rdi, r15
+    call first_values
+    test rax, rax
+    jz 9b
+    mov r13, rax                # the message's header
+    call title_begin
+    lea rsi, [rip + .Lt_diff]
+    call title_push
+    mov rdi, rbx
+    mov rsi, r12
+    call title_label
+    lea rsi, [r13 + TSM_SIZE]
+    mov eax, [r13 + TSM_text]
+    add rsi, rax
+    mov eax, [r13 + TSM_path]
+    add rsi, rax                # expected
+    mov edx, [r13 + TSM_exp]
+    lea rcx, [rsi + rdx]        # actual
+    mov r8d, [r13 + TSM_act]
+    lea rdi, [rip + title]
+    call testdiff_open
+    EPILOGUE
+.Lva_failure:
+    mov rax, [r15 + TSE_msgs + SB_ptr]
+    test rax, rax
+    jz 9b
+    cmp dword ptr [rax + TSM_l1], 0
+    je 9b
+    mov r13, rax
+    lea rdi, [rax + TSM_SIZE]
+    mov ecx, [rax + TSM_text]
+    add rdi, rcx
+    mov esi, [rax + TSM_path]
+    call mem_dup
+    mov r14, rax
+    mov rdi, rax
+    call app_open_file
+    mov r15, rax
+    mov rdi, r14
+    call mem_free
+    test r15, r15
+    js 9b
+    mov edi, [r13 + TSM_l1]
+    mov esi, [r13 + TSM_c1]
+    call app_goto_line
+    EPILOGUE
+
+# first_values(TSE*) -> rax the header of its first message with both expected and actual, or 0
+first_values:
+    mov rax, [rdi + TSE_msgs + SB_ptr]
+    mov rcx, [rdi + TSE_msgs + SB_len]
+    add rcx, rax
+1:  cmp rax, rcx
+    jae 8f
+    cmp dword ptr [rax + TSM_exp], -1
+    je 2f
+    cmp dword ptr [rax + TSM_act], -1
+    jne 9f
+2:  mov edx, TSM_SIZE
+    add edx, [rax + TSM_text]
+    add edx, [rax + TSM_path]
+    mov r8d, [rax + TSM_exp]
+    cmp r8d, -1
+    je 3f
+    add edx, r8d
+3:  mov r8d, [rax + TSM_act]
+    cmp r8d, -1
+    je 4f
+    add edx, r8d
+4:  add rax, rdx
+    jmp 1b
+8:  xor eax, eax
+9:  ret
+
+# the title of a tab being opened: title_begin(), title_push(cstr in rsi), title_label(tsc, index)
+.bss
+title: .zero 320
+title_len: .quad 0
+.text
+title_begin:
+    mov qword ptr [rip + title_len], 0
+    mov byte ptr [rip + title], 0
+    ret
+title_push:
+    mov rax, [rip + title_len]
+    lea rdx, [rip + title]
+1:  movzx ecx, byte ptr [rsi]
+    test ecx, ecx
+    jz 2f
+    cmp rax, 300
+    jae 2f
+    mov [rdx + rax], cl
+    inc rax
+    inc rsi
+    jmp 1b
+2:  mov byte ptr [rdx + rax], 0
+    mov [rip + title_len], rax
+    ret
+title_label:
+    push rbx
+    call testmodel_item
+    mov rsi, [rax + TSI_label]
+    call title_push
+    pop rbx
     ret
 
 # testctl_wait(sb): wait-tests: until no run is queued or running (30 s at most), then
@@ -841,6 +1012,12 @@ FN testctl_coverage
 .Lm_busy: .asciz "tests=busy\n"
 .Lm_items: .asciz "items="
 .La_cancel: .asciz "cancel"
+.La_goto: .asciz "goto"
+.La_failure: .asciz "failure"
+.La_diff: .asciz "diff"
+.La_output: .asciz "output"
+.Lt_output: .asciz "Output: "
+.Lt_diff: .asciz "Expected \342\206\224 Actual: "
 
 .text
 # cmd_testing: Testing: controllers start and show their tests

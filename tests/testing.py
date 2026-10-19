@@ -211,6 +211,20 @@ class Testing(unittest.TestCase):
         self.assertTrue(output.endswith('\\n[output cut]\\n'), output[-80:])
         self.assertEqual(output.count('y'), 262144 - len('ok A\n'))
 
+    def test_expected_and_actual_open_as_a_diff_and_output_as_a_tab(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests',
+                               'test-select testsfake go:example/pkg.TestB', 'test-action diff', 'print-tabs',
+                               'print-doc', 'test-action output', 'print-doc', 'test-action failure', 'print-state',
+                               'test-select testsfake go:example/pkg.TestC', 'test-action goto', 'print-state'])
+        at = out.index('@@ -1,2 +1,1 @@')
+        self.assertEqual(out[at:at + 5], ['@@ -1,2 +1,1 @@', 'Hello, rhun!', 'Welcome.', 'Hello, rhun', '<eod>'])
+        self.assertIn('tabs=a_test.go | *Expected \u2194 Actual: TestB', out)
+        at = out.index('=== RUN TestB')
+        self.assertEqual(out[at:at + 4], ['=== RUN TestB', 'fail', '', '<eod>'])
+        states = [l for l in out if l.startswith('tabs=3 ')]
+        self.assertIn(' line=8 col=5 ', states[0])       # 8:2, after a tab four columns wide
+        self.assertIn(' line=11 col=1 ', states[1])
+
     def test_coverage_run(self):
         f = (self.proj / 'a_test.go').as_posix()
         out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'print-test-runs',
