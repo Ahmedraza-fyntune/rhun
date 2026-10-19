@@ -83,6 +83,10 @@ FN pres_free
     call vec_free
     lea rdi, [r12 + PRS_hid]
     call vec_free
+    lea rdi, [r12 + PRS_fr]     # a folding provider's ranges (present.s)
+    call fr_vec_clear
+    lea rdi, [r12 + PRS_fr]
+    call vec_free
     mov rdi, r12
     call mem_free
 9:  EPILOGUE

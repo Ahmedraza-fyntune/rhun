@@ -2922,11 +2922,15 @@ FN editor_draw
     jz 21b
     jmp .Led_adv
 .Led_lines_done:
-    # the lines shown, for extensions (`0 visible`, deco.s)
+    # the lines shown, for extensions (`0 visible`, deco.s; the providers' windows, present.s)
     mov rdi, rbx
     mov rsi, [rbx + DOC_scrolly]
     shr rsi, 8
-    mov rdx, [rip + g_row_line]
+    call rows_mode
+    test eax, eax
+    jz 0f
+    mov rsi, [rbx + DOC_wtop]
+0:  mov rdx, [rip + g_row_line]
     cmp rdx, rsi
     jae 1f
     mov rdx, rsi
@@ -4202,7 +4206,15 @@ FN editor_timeout
     push rbx
     call deco_visible_due       # the visible event (deco.s)
     mov ebx, eax
-    mov rax, [rip + widest_due]
+    call present_timeout        # and the providers' requests (present.s)
+    cmp eax, -1
+    je 6f
+    cmp ebx, -1
+    je 5f
+    cmp eax, ebx
+    jge 6f
+5:  mov ebx, eax
+6:  mov rax, [rip + widest_due]
     test rax, rax
     jz 1f
     call time_ms
@@ -4223,6 +4235,7 @@ FN editor_timeout
 FN editor_tick
     sub rsp, 8
     call deco_visible_tick
+    call present_tick           # the providers' requests that are due (present.s)
     add rsp, 8
     cmp qword ptr [rip + widest_due], 0
     je 1f

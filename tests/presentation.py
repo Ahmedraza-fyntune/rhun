@@ -91,8 +91,17 @@ class Base(unittest.TestCase):
 
     def run_p(self, actions, files=('m.rs',), **kw):
         out = self.run_editor(actions, exts=self.exts, files=files, **kw)
-        # glyph kinds are numbered as built-in code registers them: tests look at shapes
-        return [re.sub(r' kind=\d+', '', l) if l.startswith('glyph ') else l for l in out]
+        # glyph kinds are numbered as built-in code registers them: "glyph-kind N" (glyph-test)
+        # names the test's, and its glyphs print without the number when they have it
+        kind = next((l.split()[1] for l in out if l.startswith('glyph-kind ')), None)
+        res = []
+        for l in out:
+            if l.startswith('glyph-kind '):
+                continue
+            if l.startswith('glyph ') and kind is not None:
+                l = l.replace(f' kind={kind} ', ' ')
+            res.append(l)
+        return res
 
     def replies(self):
         if not self.plog.exists():

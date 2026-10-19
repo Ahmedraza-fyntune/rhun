@@ -1662,6 +1662,13 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_SCOPED_SETTINGS, "scoped-settings", 0
     FEATURE FEAT_WORKSPACE_FOLDERS, "workspace-folders", 0
     FEATURE FEAT_DIAG_TAGS, "diagnostic-tags", 0  # SEVERITY+TAG in diagnostics: faded, struck
+    FEATURE FEAT_FOLDING_RANGES, "folding-ranges", 1  # rhun asks folding-ranges
+    FEATURE FEAT_SEMANTIC_TOKENS, "semantic-tokens", 1    # semantic-legend; rhun asks semantic-tokens
+    FEATURE FEAT_INLAY_HINTS, "inlay-hints", 1    # rhun asks inlay-hints
+    FEATURE FEAT_CODE_LENS, "code-lens", 1        # rhun asks code-lens
+    FEATURE FEAT_INLINE_COMPLETE, "inline-complete", 1    # rhun asks inline-complete
+    FEATURE FEAT_DOC_COLORS, "document-colors", 1 # rhun asks colors, color-edit
+    FEATURE FEAT_DOC_HIGHLIGHTS, "document-highlights", 1 # rhun asks highlights
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1718,13 +1725,22 @@ FEATURE_LIST
 .equ PK_QUICKDIFF, 26
 .equ PK_TESTS_RESOLVE, 27        # testing (testproto.s)
 .equ PK_TEST_RUN, 28
-.equ PK_COUNT, 29
+.equ PK_FOLDING, 29              # editor presentation (present.s)
+.equ PK_TOKENS, 30
+.equ PK_HINTS, 31
+.equ PK_LENS, 32
+.equ PK_INLINE, 33
+.equ PK_COLORS, 34
+.equ PK_COLOR_EDIT, 35
+.equ PK_HIGHLIGHTS, 36
+.equ PK_COUNT, 37
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
 .equ QO_SCM, 4                   # source control (scmext.s)
 .equ QO_TESTS, 5                 # testing (testproto.s)
+.equ QO_PRESENT, 6               # editor presentation (present.s)
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -1975,6 +1991,14 @@ F EXT_pv_range_format, 8
 F EXT_pv_type_format, 8
 F EXT_pv_ttrig, 8       # type_format.triggers
 F EXT_pv_document_links, 8
+# editor presentation (present.s): [provides] keys
+F EXT_pv_semantic_tokens, 8
+F EXT_pv_inlay_hints, 8
+F EXT_pv_code_lens, 8
+F EXT_pv_inline_complete, 8
+F EXT_pv_colors, 8
+F EXT_pv_highlights, 8
+F EXT_pv_folding, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
 # WebAssembly extensions (extwasm.s)
@@ -3147,6 +3171,8 @@ F PRS_hid, VEC_SIZE      # HI the hidden lines, merged (a cache of the folds)
 F PRS_hidver, 8          # DOC_version and PRS_gen the cache was built for
 F PRS_hidgen, 8
 F PRS_hidden, 8          # hidden lines in all
+F PRS_fr, VEC_SIZE       # FR a folding provider's ranges, sorted by their header's line feed
+F PRS_frext, 8           # the extension they came from; 0 while indentation decides
 ENDSTRUCT PRS_SIZE
 # a fold: the lines after its header up to its last line are hidden; it follows edits as positions
 STRUCT
@@ -3159,7 +3185,26 @@ F HI_first, 8           # hidden lines first..last (0-based)
 F HI_last, 8
 F HI_before, 8          # hidden lines before them
 ENDSTRUCT HI_SIZE
+# a folding provider's range (present.s, fold.s): lines after the header up to the last can fold
+STRUCT
+F FR_a, 8               # the header line's line feed
+F FR_b, 8               # the last line's line feed
+F FR_text, 8            # owned cstr: the collapsed text, or 0
+F FR_kind, 4            # FRK_*
+F FR_pad, 4
+ENDSTRUCT FR_SIZE
+.equ FRK_NONE, 0
+.equ FRK_REGION, 1
+.equ FRK_COMMENT, 2
+.equ FRK_IMPORTS, 3
+.equ FR_MAX, 50000              # ranges in one answer
+.equ FR_TEXT_MAX, 80            # a collapsed text's bytes
 .equ FOLD_ALL_MAX, 4000000      # fold_all scans at most this many lines
+# single-provider kinds for automatic use (extproviders.s numbers 0-7 its own)
+.equ PP_TOKENS, 8
+.equ PP_INLINE, 9
+.equ PP_HIGHLIGHTS, 10
+.equ PP_FOLDING, 11
 .equ FOLD_SESSION_MAX, 1000     # folds a session line keeps per file
 STRUCT
 F TE_version, 8         # DOC_version after the edit

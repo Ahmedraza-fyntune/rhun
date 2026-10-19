@@ -515,16 +515,28 @@ FN fold_add
     cmp r13, [rbx + DOC_nlines]
     jae 9f
     mov rdi, rbx
-    call pres_ensure
-    mov r15, rax
-    mov rdi, rbx
     mov rsi, r12
     call doc_line_end
     mov r12, rax                # a
     mov rdi, rbx
     mov rsi, r13
     call doc_line_end
-    mov r13, rax                # b
+    mov rdx, rax                # b
+    mov rdi, rbx
+    mov rsi, r12
+    call fold_add_at
+9:  EPILOGUE
+
+# fold_add_at(doc, a, b): a fold from the header's line feed a to the last line's b; a provider's
+# range with the same lines gives it its collapsed text
+fold_add_at:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov rdi, rbx
+    call pres_ensure
+    mov r15, rax
     # its place
     xor r14d, r14d
 1:  cmp r14, [r15 + PRS_folds + VEC_len]
@@ -556,7 +568,19 @@ FN fold_add
     mov [rax + FD_a], r12
     mov [rax + FD_b], r13
     mov qword ptr [rax + FD_text], 0
-    mov rdi, rbx
+    mov r14, rax
+    mov rdi, r15
+    mov rsi, r12
+    mov rdx, r13
+    call fr_same
+    test rax, rax
+    jz 4f
+    mov rdi, [rax + FR_text]
+    test rdi, rdi
+    jz 4f
+    call dup_cstr
+    mov [r14 + FD_text], rax
+4:  mov rdi, rbx
     call pres_touch
 9:  EPILOGUE
 
@@ -651,6 +675,7 @@ FN fold_shift
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    call fr_shift               # a provider's ranges move with the text
     mov r13, [rbx + DOC_pres]
     cmp qword ptr [r13 + PRS_folds + VEC_len], 0
     je 9f
@@ -741,6 +766,15 @@ FN range_starts
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    call fr_find                # a provider's ranges decide once it answered
+    test edx, edx
+    jz 0f
+    test rax, rax
+    setnz al
+    movzx eax, al
+    EPILOGUE
+0:  mov rdi, rbx
+    mov rsi, r12
     call indent_of
     test eax, eax
     js 8f
@@ -769,6 +803,17 @@ FN range_end
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    call fr_find
+    test edx, edx
+    jz 0f
+    test rax, rax
+    jz 8f
+    mov rdi, rbx
+    mov rsi, [rax + FR_b]
+    call doc_line_of
+    EPILOGUE
+0:  mov rdi, rbx
+    mov rsi, r12
     call range_starts
     test eax, eax
     jz 8f
@@ -818,7 +863,14 @@ fold_innermost:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov r13, r12                # the candidate header
+    mov rax, [rbx + DOC_pres]
+    test rax, rax
+    jz 0f
+    cmp qword ptr [rax + PRS_frext], 0
+    je 0f
+    call fr_innermost
+    EPILOGUE
+0:  mov r13, r12                # the candidate header
 1:  mov rdi, rbx
     mov rsi, r13
     call range_end
@@ -955,7 +1007,17 @@ fold_levels:
     call app_toast
     jmp 9f
 1:  mov qword ptr [rip + fl_stack + VEC_len], 0
-    xor r12d, r12d              # line
+    mov rax, [rbx + DOC_pres]
+    test rax, rax
+    jz 2f
+    cmp qword ptr [rax + PRS_frext], 0
+    je 2f
+    mov edi, [rsp]
+    mov rsi, rbx
+    call fr_levels              # a provider's ranges
+    call fold_caret_out
+    jmp 9f
+2:  xor r12d, r12d              # line
     mov r15, -1                 # the last non-blank line
 .Lfl_line:
     cmp r12, [rbx + DOC_nlines]
@@ -1346,6 +1408,318 @@ FN fold_touch
     call fold_reveal
 9:  EPILOGUE
 
+# ---------------- a provider's ranges ----------------
+
+# fr_lower(PRS, a) -> rax the index of the first range whose header's line feed is at or after a.
+# Keeps rdi, rsi.
+fr_lower:
+    xor eax, eax
+    mov rdx, [rdi + PRS_fr + VEC_len]
+1:  cmp rax, rdx
+    jae 9f
+    lea rcx, [rax + rdx]
+    shr rcx, 1
+    imul r8, rcx, FR_SIZE
+    add r8, [rdi + PRS_fr + VEC_ptr]
+    cmp [r8 + FR_a], rsi
+    jae 2f
+    lea rax, [rcx + 1]
+    jmp 1b
+2:  mov rdx, rcx
+    jmp 1b
+9:  ret
+
+# fr_find(doc, line) -> rax FR* of the widest provider range whose header is the line, or 0; edx 1
+# when the document's ranges come from a provider (0: indentation decides)
+fr_find:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, [rbx + DOC_pres]
+    test r13, r13
+    jz 8f
+    cmp qword ptr [r13 + PRS_frext], 0
+    je 8f
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_end
+    mov r14, rax
+    mov rdi, r13
+    mov rsi, r14
+    call fr_lower
+    mov rcx, rax
+    xor r15d, r15d
+1:  cmp rcx, [r13 + PRS_fr + VEC_len]
+    jae 7f
+    imul r8, rcx, FR_SIZE
+    add r8, [r13 + PRS_fr + VEC_ptr]
+    cmp [r8 + FR_a], r14
+    jne 7f
+    inc rcx
+    mov rax, [r8 + FR_b]
+    cmp rax, r14
+    jbe 1b                      # edits collapsed it
+    test r15, r15
+    jz 2f
+    cmp rax, [r15 + FR_b]
+    jbe 1b
+2:  mov r15, r8
+    jmp 1b
+7:  mov rax, r15
+    mov edx, 1
+    EPILOGUE
+8:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
+# fr_same(PRS, a, b) -> rax FR* of a provider range from a to b, or 0
+fr_same:
+    push rbx
+    mov rbx, rdx
+    call fr_lower
+1:  cmp rax, [rdi + PRS_fr + VEC_len]
+    jae 8f
+    imul rcx, rax, FR_SIZE
+    add rcx, [rdi + PRS_fr + VEC_ptr]
+    cmp [rcx + FR_a], rsi
+    jne 8f
+    inc rax
+    cmp [rcx + FR_b], rbx
+    jne 1b
+    mov rax, rcx
+    pop rbx
+    ret
+8:  xor eax, eax
+    pop rbx
+    ret
+
+# fr_shift(doc, entry): the provider's ranges move with an edit (they stay; its next answer, half a
+# second later, replaces them)
+fr_shift:
+    PROLOGUE
+    mov r13, [rdi + DOC_pres]
+    mov r14, [r13 + PRS_fr + VEC_len]
+    test r14, r14
+    jz 9f
+    mov r12, rsi
+    mov r15, [r13 + PRS_fr + VEC_ptr]
+    mov rsi, [r12 + TE_pos]
+    mov rdx, [r12 + TE_del]
+    mov rcx, [r12 + TE_ins]
+    mov r8d, GR_RIGHT
+1:  mov rdi, [r15 + FR_a]
+    call tape_shift
+    mov [r15 + FR_a], rax
+    mov rdi, [r15 + FR_b]
+    call tape_shift
+    mov [r15 + FR_b], rax
+    add r15, FR_SIZE
+    dec r14
+    jnz 1b
+9:  EPILOGUE
+
+# fd_has(PRS, a, b) -> eax 1 when a fold from a to b exists
+fd_has:
+    xor ecx, ecx
+1:  cmp rcx, [rdi + PRS_folds + VEC_len]
+    jae 8f
+    imul rax, rcx, FD_SIZE
+    add rax, [rdi + PRS_folds + VEC_ptr]
+    inc rcx
+    cmp [rax + FD_a], rsi
+    jne 1b
+    cmp [rax + FD_b], rdx
+    jne 1b
+    mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
+
+# fr_innermost(doc, line) -> rax header, rdx last of the narrowest provider range not folded yet
+# whose header is the line or that holds it; rax -1 for none
+fr_innermost:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, [rbx + DOC_pres]
+    call doc_line_end
+    mov r13, rax                # the line's line feed
+    mov r14, -1                 # the best's span
+    xor r15d, r15d              # the best
+    xor ecx, ecx
+1:  cmp rcx, [r12 + PRS_fr + VEC_len]
+    jae 5f
+    imul rax, rcx, FR_SIZE
+    add rax, [r12 + PRS_fr + VEC_ptr]
+    inc rcx
+    cmp [rax + FR_a], r13
+    ja 5f                       # sorted: the rest start below the line
+    cmp [rax + FR_b], r13
+    jb 1b
+    mov rdx, [rax + FR_b]
+    sub rdx, [rax + FR_a]
+    jz 1b
+    cmp rdx, r14
+    jae 1b
+    mov [rsp], rcx
+    mov [rsp + 8], rax
+    mov rdi, r12
+    mov rsi, [rax + FR_a]
+    mov rdx, [rax + FR_b]
+    call fd_has
+    mov rcx, [rsp]
+    test eax, eax
+    jnz 1b
+    mov r15, [rsp + 8]
+    mov r14, [r15 + FR_b]
+    sub r14, [r15 + FR_a]
+    jmp 1b
+5:  test r15, r15
+    jz 8f
+    mov rdi, rbx
+    mov rsi, [r15 + FR_b]
+    call doc_line_of
+    mov [rsp], rax
+    mov rdi, rbx
+    mov rsi, [r15 + FR_a]
+    call doc_line_of
+    mov rdx, [rsp]
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# fr_levels(depth, doc): the provider's ranges at that depth (0: all) fold; a range's depth is one
+# more than the ranges holding it
+fr_levels:
+    PROLOGUE 16
+    mov [rsp], edi
+    mov rbx, rsi
+    mov r12, [rbx + DOC_pres]
+    mov qword ptr [rip + fl_stack + VEC_len], 0
+    xor r13d, r13d
+1:  cmp r13, [r12 + PRS_fr + VEC_len]
+    jae 9f
+    imul r14, r13, FR_SIZE
+    add r14, [r12 + PRS_fr + VEC_ptr]
+    inc r13
+    mov rax, [r14 + FR_b]
+    cmp rax, [r14 + FR_a]
+    jbe 1b
+    # the ranges ending before this header no longer hold anything
+2:  mov rcx, [rip + fl_stack + VEC_len]
+    test rcx, rcx
+    jz 3f
+    mov rdx, [rip + fl_stack + VEC_ptr]
+    mov rax, [rdx + rcx*8 - 8]
+    cmp rax, [r14 + FR_a]
+    jae 3f
+    dec qword ptr [rip + fl_stack + VEC_len]
+    jmp 2b
+3:  mov r15, [rip + fl_stack + VEC_len]
+    inc r15                     # its depth
+    lea rdi, [rip + fl_stack]
+    mov esi, 8
+    call vec_push
+    mov rcx, [r14 + FR_b]
+    mov [rax], rcx
+    mov eax, [rsp]
+    test eax, eax
+    jz 4f
+    cmp r15, rax
+    jne 1b
+4:  mov rdi, r12
+    mov rsi, [r14 + FR_a]
+    mov rdx, [r14 + FR_b]
+    call fd_has
+    test eax, eax
+    jnz 1b
+    mov rdi, rbx
+    mov rsi, [r14 + FR_a]
+    mov rdx, [r14 + FR_b]
+    call fold_add_at
+    jmp 1b
+9:  EPILOGUE
+
+# FN fold_ranges_set(doc, ext): the ranges of an answer (fr_new, present.s) become the document's,
+# sorted by header; indentation no longer decides for it
+FN fold_ranges_set
+    PROLOGUE 16
+    mov rbx, rdi
+    mov [rsp], rsi
+    call pres_ensure
+    mov r12, rax
+    lea rdi, [r12 + PRS_fr]
+    call fr_vec_clear
+    # sort keys: the header's line feed, then the answer's order
+    mov r13, [rip + fr_new + VEC_len]
+    mov qword ptr [rip + fr_keys + VEC_len], 0
+    xor r14d, r14d
+1:  cmp r14, r13
+    jae 2f
+    lea rdi, [rip + fr_keys]
+    mov esi, 8
+    call vec_push
+    imul rcx, r14, FR_SIZE
+    add rcx, [rip + fr_new + VEC_ptr]
+    mov rcx, [rcx + FR_a]
+    shl rcx, 16
+    or rcx, r14
+    mov [rax], rcx
+    inc r14
+    jmp 1b
+2:  mov rdi, [rip + fr_keys + VEC_ptr]
+    mov rsi, r13
+    call sort_u64
+    xor r14d, r14d
+3:  cmp r14, r13
+    jae 4f
+    lea rdi, [r12 + PRS_fr]
+    mov esi, FR_SIZE
+    call vec_push
+    mov rdi, rax
+    mov rsi, [rip + fr_keys + VEC_ptr]
+    mov rsi, [rsi + r14*8]
+    and esi, 0xffff
+    imul rsi, rsi, FR_SIZE
+    add rsi, [rip + fr_new + VEC_ptr]
+    mov edx, FR_SIZE
+    call memcpy
+    inc r14
+    jmp 3b
+4:  mov qword ptr [rip + fr_new + VEC_len], 0   # the texts moved with the records
+    mov rax, [rsp]
+    mov [r12 + PRS_frext], rax
+    mov rdi, rbx
+    call pres_touch
+    EPILOGUE
+
+# FN fold_ext_gone(ext): documents whose ranges came from that extension go back to indentation
+FN fold_ext_gone
+    PROLOGUE
+    mov r12, rdi
+    xor r13d, r13d
+1:  cmp r13, [rip + g_tabs + VEC_len]
+    jae 9f
+    imul rax, r13, TAB_SIZE
+    add rax, [rip + g_tabs + VEC_ptr]
+    inc r13
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov rbx, [rax + TAB_doc]
+    test rbx, rbx
+    jz 1b
+    mov r14, [rbx + DOC_pres]
+    test r14, r14
+    jz 1b
+    cmp [r14 + PRS_frext], r12
+    jne 1b
+    lea rdi, [r14 + PRS_fr]
+    call fr_vec_clear
+    mov qword ptr [r14 + PRS_frext], 0
+    mov rdi, rbx
+    call pres_touch
+    jmp 1b
+9:  EPILOGUE
+
 .section .rodata
 .Ltoo_long: .asciz "Too many lines to fold them all"
 .Lfolds_eq: .asciz "\tfolds="
@@ -1357,3 +1731,4 @@ FN fold_touch
 fl_stack: .zero VEC_SIZE        # fold_levels: open headers (line, indentation)
 vi_fold: .zero VI_SIZE
 fs_tmp: .zero SB_SIZE
+fr_keys: .zero VEC_SIZE         # fold_ranges_set's sort keys

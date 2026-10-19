@@ -2,7 +2,9 @@
 """Folding (editor presentation stage 5): indentation ranges, the fold commands and keys, the fold
 lane and the pill, caret motion over folds, folds that open when the caret lands inside, edits that
 remove folds, line commands on folded headers, sessions and closed tabs, vim, and the view that
-scrolls by rows."""
+scrolls by rows. Stage 6: a folding provider (feature folding-ranges, the fake extension
+tests/ext/present.py answering) whose ranges replace indentation's."""
+import json
 from pathlib import Path
 import unittest
 
@@ -24,7 +26,7 @@ fn b() {
 '''
 
 
-class Folding(pres.Base):
+class FoldBase(pres.Base):
     def setUp(self):
         super().setUp()
         (self.proj / 'n.rs').write_text(NESTED, encoding='utf-8')
@@ -37,6 +39,9 @@ class Folding(pres.Base):
 
     def state(self, out, i=0):
         return [l for l in out if l.startswith('tabs=')][i]
+
+
+class Folding(FoldBase):
 
     def test_fold_and_unfold_by_indentation(self):
         out = self.run_f(['key ctrl+Home', 'cmd fold', 'print-present folds', 'print-viewport',
@@ -156,6 +161,78 @@ class Folding(pres.Base):
         top = int(views[2].split('top=')[1].split()[0])
         self.assertIn((top - 1) % 22, (0, 21))       # a header or a closing brace: no folded line
         self.assertGreater(top, 22)
+
+
+RANGES = '3\n1 8 - 0\n2 5 comment 0\n10 12 region 4\nbody'
+
+
+class ProviderFolding(FoldBase):
+    """A folding provider (feature folding-ranges): its ranges replace indentation's."""
+    def setUp(self):
+        super().setUp()
+        ini = self.exts / 'rhun-tests/present/extension.ini'
+        ini.write_text(ini.read_text() + '[provides]\nfolding = *.rs\n', encoding='utf-8')
+        self.env['PRESENT_HELLO'] = 'hello 1 folding-ranges'
+        self.answer(RANGES)
+
+    def answer(self, body):
+        path = self.exts / 'rhun-tests/present/answers.json'
+        path.write_text(json.dumps({'folding-ranges': ['ok {ID} {LEN}', body]}), encoding='utf-8')
+        self.env['PRESENT_ANSWERS'] = path.as_posix()
+
+    def asked(self):
+        if not self.plog.exists():
+            return []
+        return [l.split(' ', 1)[1] for l in self.plog.read_text(errors='replace').splitlines()
+                if ' folding-ranges ' in l and l.split(' ')[0] != '0']
+
+    def ranges(self, out):
+        return [l for l in out if l.startswith('range')]
+
+    def test_provider_ranges_replace_indentation(self):
+        out = self.run_f(self.start() + ['print-present ranges', 'key ctrl+Home', 'cmd fold',
+                                         'print-present folds', 'cmd unfold_all', 'cmd fold_all',
+                                         'print-present folds'])
+        self.assertEqual(self.ranges(out), ['ranges present', 'range 1-8 kind=0', 'range 2-5 kind=2',
+                                            'range 10-12 kind=1 text=body'])
+        # the narrowest range holding line 1 (indentation would fold 1-7)
+        self.assertEqual(self.folds(out), ['fold 1-8', 'fold 1-8', 'fold 2-5', 'fold 10-12 text=body'])
+        self.assertEqual(len(self.asked()), 1, self.asked())
+        self.assertRegex(self.asked()[0], r'^folding-ranges \d+ \d+$')
+
+    def test_ranges_follow_edits_until_the_next_answer(self):
+        out = self.run_f(self.start() + ['key ctrl+Home', 'key Return', 'print-present ranges', 'wait 900',
+                                         'print-present ranges'])
+        r = self.ranges(out)
+        self.assertEqual(r[:4], ['ranges present', 'range 2-9 kind=0', 'range 3-6 kind=2',
+                                 'range 11-13 kind=1 text=body'])
+        # asked again after the edit: the same answer, now about the new text
+        self.assertEqual(r[4:], ['ranges present', 'range 1-8 kind=0', 'range 2-5 kind=2',
+                                 'range 10-12 kind=1 text=body'])
+        asked = self.asked()
+        self.assertEqual(len(asked), 2, asked)
+        self.assertGreater(int(asked[1].split()[2]), int(asked[0].split()[2]))
+
+    def test_provider_stopping_returns_to_indentation(self):
+        out = self.run_f(self.start() + ['print-present ranges', 'ext-set present stop', 'wait 300',
+                                         'print-present ranges', 'key ctrl+Home', 'cmd fold',
+                                         'print-present folds'])
+        self.assertEqual(self.ranges(out)[0], 'ranges present')
+        self.assertIn('ranges indentation', out)
+        self.assertEqual(self.folds(out), ['fold 1-7'])
+
+    def test_broken_answers_are_dropped(self):
+        for body in ('2\n1 8 - 0\n', '1\n1 8 - 5\nab\ncd', '1\n1 8 - 81\n' + 'x' * 81, 'x'):
+            self.answer(body)
+            out = self.run_f(self.start() + ['print-present ranges'])
+            self.assertIn('ranges indentation', out, body)
+
+    def test_no_ranges_means_nothing_folds(self):
+        self.answer('1\n4 2 - 0\n')       # START after END: left out; the provider has no ranges
+        out = self.run_f(self.start() + ['print-present ranges', 'key ctrl+Home', 'cmd fold', 'cmd fold_all',
+                                         'print-present folds'])
+        self.assertEqual(self.ranges(out), ['ranges present'])
+        self.assertEqual(self.folds(out), [])
 
 
 if __name__ == '__main__':

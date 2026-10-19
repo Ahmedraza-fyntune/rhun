@@ -2620,6 +2620,13 @@ FN deco_scroll_ticks
 
 # deco_visible(doc, first, last): the lines the editor shows this frame (0-based; doc 0: none)
 FN deco_visible
+    push rdi
+    push rsi
+    push rdx
+    call present_frame          # the providers' schedules (present.s)
+    pop rdx
+    pop rsi
+    pop rdi
     xor eax, eax
     test rdi, rdi
     jz 1f

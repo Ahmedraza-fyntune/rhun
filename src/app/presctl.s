@@ -2,8 +2,9 @@
 #   print-viewport              "view mode=lines|wrap top=L off=N rows=R content=PX"
 #   print-xy LINE COL           "X Y": the caret's x at that position and its row's middle
 #   print-hit X Y               "text L C" | "left-lane L" | "digits L" | "fold-lane L" | "git L" | "none"
-#   print-present deco|types|glyphs|tape
-#   glyph-test                  a test kind in the left lane (clicks toggle a circle; logged)
+#   print-present deco|types|glyphs|tape|folds|ranges
+#   glyph-test                  a test kind in the left lane (clicks toggle a circle; logged):
+#                               "glyph-kind N", its kind number
 #   glyph LINE SHAPE            the test kind's glyph on a line (0 removes)
 .include "rhun.inc"
 
@@ -351,6 +352,12 @@ c_print_present:
     call str_eq_cstr
     test eax, eax
     jnz .Lpp_folds
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_ranges]
+    call str_eq_cstr
+    test eax, eax
+    jnz .Lpp_ranges
 9:  xor eax, eax
     EPILOGUE
 .Lpp_types:
@@ -535,6 +542,8 @@ c_print_present:
     call doc_line_of
     lea rdi, [rax + 1]
     call out_u64
+    mov rdi, [r13 + FD_text]
+    call text_out
     mov edi, 10
     call out_byte
     jmp 1b
@@ -549,6 +558,64 @@ c_print_present:
     call out_byte
 9:  xor eax, eax
     EPILOGUE
+
+# "ranges indentation", or "ranges EXT" and "range H-E kind=K[ text=T]" for a provider's ranges
+.Lpp_ranges:
+    lea rdi, [rip + .Ls_ranges_sp]
+    call out_cstr
+    mov r14, [rbx + DOC_pres]
+    test r14, r14
+    jz 1f
+    mov rax, [r14 + PRS_frext]
+    test rax, rax
+    jnz 2f
+1:  lea rdi, [rip + .Ls_indentation]
+    call out_cstr
+    jmp 9b
+2:  mov rdi, [rax + EXT_name]
+    call out_cstr
+    mov edi, 10
+    call out_byte
+    xor r12d, r12d
+3:  cmp r12, [r14 + PRS_fr + VEC_len]
+    jae 9b
+    imul r13, r12, FR_SIZE
+    add r13, [r14 + PRS_fr + VEC_ptr]
+    inc r12
+    lea rdi, [rip + .Ls_range_sp]
+    call out_cstr
+    mov rdi, rbx
+    mov rsi, [r13 + FR_a]
+    call doc_line_of
+    lea rdi, [rax + 1]
+    call out_u64
+    mov edi, '-'
+    call out_byte
+    mov rdi, rbx
+    mov rsi, [r13 + FR_b]
+    call doc_line_of
+    lea rdi, [rax + 1]
+    call out_u64
+    lea rdi, [rip + .Ls_kind]
+    call out_cstr
+    mov edi, [r13 + FR_kind]
+    call out_u64
+    mov rdi, [r13 + FR_text]
+    call text_out
+    mov edi, 10
+    call out_byte
+    jmp 3b
+
+# text_out(cstr or 0): " text=T"
+text_out:
+    test rdi, rdi
+    jz 9f
+    push rdi
+    lea rdi, [rip + .Ls_text_eq]
+    call out_cstr
+    pop rdi
+    jmp out_cstr
+9:  ret
 
 # put_text(label, len; r15 the text, advanced): " label=TEXT" when there is text
 put_text:
@@ -603,7 +670,13 @@ c_glyph_test:
     mov r8d, GS_CIRCLE | T_ERROR << 8
     call gutter_kind
     mov [rip + test_kind], eax
-9:  xor eax, eax
+9:  lea rdi, [rip + .Ls_glyph_kind]
+    call out_cstr
+    mov edi, [rip + test_kind]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    xor eax, eax
     EPILOGUE
 
 c_glyph:
@@ -691,6 +764,7 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Lc_print_present: .asciz "print-present"
 .Lc_glyph_test: .asciz "glyph-test"
 .Lc_glyph: .asciz "glyph"
+.Ls_glyph_kind: .asciz "glyph-kind "
 .Lc_probe_plant: .asciz "probe-plant"
 .Ls_stale: .asciz "stale"
 .Ls_view_lines: .asciz "view mode=lines top="
@@ -717,6 +791,11 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Ls_glyphs: .asciz "glyphs"
 .Ls_tape: .asciz "tape"
 .Ls_folds: .asciz "folds"
+.Ls_ranges: .asciz "ranges"
+.Ls_ranges_sp: .asciz "ranges "
+.Ls_range_sp: .asciz "range "
+.Ls_indentation: .asciz "indentation\n"
+.Ls_text_eq: .asciz " text="
 .Ls_fold_sp: .asciz "fold "
 .Ls_hidden: .asciz "hidden "
 .Ls_type: .asciz "type "

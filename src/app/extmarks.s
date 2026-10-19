@@ -660,6 +660,8 @@ FN extmarks_clear_owner
     PROLOGUE
     mov r12, rdi
     call deco_clear_owner       # and its decorations (deco.s)
+    mov rdi, r12
+    call present_ext_gone       # and its presentation requests and folding ranges (present.s)
     xor r13d, r13d
 1:  cmp r13, [rip + g_tabs + VEC_len]
     jae 9f

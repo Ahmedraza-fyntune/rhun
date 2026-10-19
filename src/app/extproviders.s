@@ -6,6 +6,7 @@
 .equ PP_RENAME, 5
 .equ PP_FORMAT, 6
 .equ PP_SIGNATURE, 7
+.equ PP_LAST, PP_FOLDING        # PP_TOKENS..PP_FOLDING: editor presentation's (rhun.inc)
 .equ PP_CHOOSING, 1
 .equ PP_STARTING, 2
 .equ PP_RENAMING, 3
@@ -58,7 +59,7 @@ FN ext_provider_kind
     test eax, eax
     jnz 3f
 2:  inc r13
-    cmp r13, PP_SIGNATURE
+    cmp r13, PP_LAST
     jbe 1b
     xor eax, eax
     EPILOGUE
@@ -151,7 +152,11 @@ FN ext_provider_set
     cmp r12d, PP_FORMAT
     je 1f
     cmp r12d, PP_SIGNATURE
-    jne 8f
+    je 1f
+    cmp r12d, PP_TOKENS
+    jb 8f
+    cmp r12d, PP_LAST
+    ja 8f
 1:  mov rdi, r13
     call strlen
     test rax, rax
@@ -1091,6 +1096,18 @@ FN cmd_select_symbol_provider
 .Lwrite_error: .asciz "Could not save provider choice. Check the extensions settings file."
 .p2align 3
 pp_names: .quad 0, 0, 0, .Lsymbols, 0, .Lrename, .Lformat, .Lsignature
+    .quad .Lpp_tokens, .Lpp_inline, .Lpp_highlights, .Lpp_folding     # editor presentation
 pp_patterns: .quad 0, 0, 0, EXT_pv_symbols, 0, EXT_pv_rename, EXT_pv_format, EXT_pv_signature
+    .quad EXT_pv_semantic_tokens, EXT_pv_inline_complete, EXT_pv_highlights, EXT_pv_folding
 pp_titles: .quad 0, 0, 0, .Lsymbols_title, 0, .Lrename_title, .Lformat_title, .Lsignature_title
+    .quad .Lpp_tokens_title, .Lpp_inline_title, .Lpp_highlights_title, .Lpp_folding_title
 pp_features: .long -1, -1, -1, FEAT_SYMBOLS, -1, FEAT_RENAME, FEAT_FORMAT, FEAT_SIGNATURE
+    .long FEAT_SEMANTIC_TOKENS, FEAT_INLINE_COMPLETE, FEAT_DOC_HIGHLIGHTS, FEAT_FOLDING_RANGES
+.Lpp_tokens: .asciz "tokens"
+.Lpp_inline: .asciz "inline"
+.Lpp_highlights: .asciz "highlights"
+.Lpp_folding: .asciz "folding"
+.Lpp_tokens_title: .asciz "Choose Semantic Tokens Provider"
+.Lpp_inline_title: .asciz "Choose Inline Completion Provider"
+.Lpp_highlights_title: .asciz "Choose Highlights Provider"
+.Lpp_folding_title: .asciz "Choose Folding Provider"
