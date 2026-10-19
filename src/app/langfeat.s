@@ -2762,11 +2762,11 @@ FN langfeat_tick
     cmp qword ptr [rip + lf_res + VEC_len], 0
     je 0f
     cmp dword ptr [rip + lf_partial], 0
-    je 01f
+    je 3f
     call palette_results_showing
     test eax, eax
     jz 0f
-01: mov dword ptr [rip + lf_partial], 1
+3:  mov dword ptr [rip + lf_partial], 1
     mov eax, [rip + lf_kind]
     mov [rip + lf_list_kind], eax
     call lf_present_list
