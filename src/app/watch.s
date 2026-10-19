@@ -21,7 +21,7 @@
 # remote hosts: in a remote window the workspace's folders are watched on the host (vfs.s); their
 # native descriptors carry this tag, local ones (the config, Omarchy's theme) do not
 .equ WD_REMOTE, 0x40000000
-.equ WK_LOCAL, WK_CONFIG | WK_OMARCHY | WK_AGENTS
+.equ WK_LOCAL, WK_CONFIG | WK_OMARCHY
 
 .bss
 .p2align 3

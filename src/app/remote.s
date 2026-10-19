@@ -282,7 +282,14 @@ FN remote_start
     test eax, eax
     jz 8f
     mov dword ptr [rip + g_remote], 1
-    # the when-clause keys remoteName and remoteHost
+    lea rdi, [rip + .Lenv_strict]
+    call getenv
+    test rax, rax
+    jz 2f
+    cmp byte ptr [rax], '1'
+    jne 2f
+    mov dword ptr [rip + g_remote_strict], 1
+2:  # the when-clause keys remoteName and remoteHost
     call remote_kind_name
     mov rbx, rax
     mov rdi, rax
@@ -3176,6 +3183,7 @@ rm_rq_ready: .long 0
 .Lbin_sh: .asciz "/bin/sh"
 .Lself_exe: .asciz "/proc/self/exe"
 .Lenv_ssh: .asciz "RHUN_SSH"
+.Lenv_strict: .asciz "RHUN_REMOTE_STRICT"
 .Lcolon: .ascii ":"
 .Lcolon_sp: .asciz ": "
 .Lhex: .ascii "0123456789abcdef"

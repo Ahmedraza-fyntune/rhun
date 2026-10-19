@@ -17,6 +17,10 @@ vfs_events: .zero SB_SIZE       # vfs_tick's events while it hands them on
 .globl vfs_statbuf
 vfs_statbuf: .zero 144          # the last vfs_stat / vfs_lstat (Linux struct stat on every system)
 vfs_tmp: .zero 4200
+vfs_cache: .zero SB_SIZE        # vfs_stats_prefetch: "PATH\0" + "o" stat (144) or "e" errno (4), each
+vfs_cache_on: .long 0
+.globl g_remote_strict
+g_remote_strict: .long 0        # RHUN_REMOTE_STRICT=1 in a remote window (tests)
 
 .text
 
@@ -180,6 +184,101 @@ vfs_read_remote:
     mov byte ptr [r15 + r14], 0
     lea rdi, [rip + vfs_acc]
     call sb_free
+    mov rax, r15
+    mov rdx, r14
+    EPILOGUE
+8:  mov rdx, rax
+    xor eax, eax
+    EPILOGUE
+
+# vfs_read_at(path, offset, max) -> rax at most max bytes of the file from offset (mem_alloc'd,
+#   NUL-terminated), rdx their length; rax 0 and rdx -errno on failure (the agents panel's transcripts)
+FN vfs_read_at
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    cmp dword ptr [rip + g_remote], 0
+    jne 5f
+    call file_open_read
+    test rax, rax
+    js 8f
+    mov r14d, eax
+    lea rdi, [r13 + 1]
+    call mem_alloc
+    mov r15, rax
+    xor ebx, ebx
+1:  cmp rbx, r13
+    jae 3f
+    mov edi, r14d
+    lea rsi, [r15 + rbx]
+    mov rdx, r13
+    sub rdx, rbx
+    lea r10, [r12 + rbx]
+    mov eax, 17                 # pread64
+    XSYS
+    cmp rax, -EINTR
+    je 1b
+    test rax, rax
+    js 2f
+    jz 3f
+    add rbx, rax
+    jmp 1b
+2:  mov rbx, rax
+    mov edi, r14d
+    SYS SYS_close
+    mov rdi, r15
+    call mem_free
+    mov rax, rbx
+    jmp 8f
+3:  mov byte ptr [r15 + rbx], 0
+    mov edi, r14d
+    SYS SYS_close
+    mov rax, r15
+    mov rdx, rbx
+    EPILOGUE
+5:  # the host's file, in parts
+    lea rdi, [rip + vfs_acc]
+    call sb_clear
+6:  mov rax, [rip + vfs_acc + SB_len]
+    cmp rax, r13
+    jae 7f
+    lea rdi, [rip + vfs_line_read]
+    call vfs_line_start
+    mov rdi, r12
+    add rdi, [rip + vfs_acc + SB_len]
+    call vfs_line_num
+    mov rdi, r13
+    sub rdi, [rip + vfs_acc + SB_len]
+    cmp rdi, VFS_CHUNK
+    jbe 61f
+    mov edi, VFS_CHUNK
+61: call vfs_line_num
+    mov rdi, rbx
+    call strlen
+    mov rsi, rax
+    mov rdi, rbx
+    call vfs_line_call
+    test rax, rax
+    js 8f
+    mov r14, [rip + g_remote_reply + SB_len]
+    lea rdi, [rip + vfs_acc]
+    mov rsi, [rip + g_remote_reply + SB_ptr]
+    mov rdx, r14
+    call sb_push
+    test r14, r14
+    jz 7f
+    cmp r14, VFS_CHUNK
+    je 6b
+7:  mov r14, [rip + vfs_acc + SB_len]
+    lea rdi, [r14 + 1]
+    call mem_alloc
+    mov r15, rax
+    mov rdi, rax
+    mov rsi, [rip + vfs_acc + SB_ptr]
+    mov rdx, r14
+    call memcpy
+    mov byte ptr [r15 + r14], 0
     mov rax, r15
     mov rdx, r14
     EPILOGUE
@@ -372,9 +471,132 @@ vfs_cat_tmp:
 
 # ---------------- what is there ----------------
 
+# vfs_stats_prefetch(paths, n): remote hosts: the stat of n paths (an array of cstr) in one request;
+#   vfs_stat answers them from that until vfs_stats_clear. Nothing locally
+FN vfs_stats_prefetch
+    cmp dword ptr [rip + g_remote], 0
+    je 9f
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    lea rdi, [rip + vfs_body]
+    call sb_clear
+    xor ebx, ebx
+1:  cmp rbx, r13
+    jae 2f
+    lea rdi, [rip + vfs_body]
+    mov rsi, [r12 + rbx*8]
+    call sb_push_cstr
+    lea rdi, [rip + vfs_body]
+    xor esi, esi
+    call sb_push_byte
+    inc rbx
+    jmp 1b
+2:  lea rdi, [rip + .Lv_stats]
+    call vfs_line_start
+    mov rdi, [rip + vfs_body + SB_ptr]
+    mov rsi, [rip + vfs_body + SB_len]
+    call vfs_line_call
+    test rax, rax
+    js 8f
+    # the cache: each path with its answer
+    lea rdi, [rip + vfs_cache]
+    call sb_clear
+    mov r14, [rip + g_remote_reply + SB_ptr]
+    mov r15, [rip + g_remote_reply + SB_len]
+    add r15, r14
+    xor ebx, ebx
+3:  cmp rbx, r13
+    jae 7f
+    cmp r14, r15
+    jae 7f
+    lea rdi, [rip + vfs_cache]
+    mov rsi, [r12 + rbx*8]
+    call sb_push_cstr
+    lea rdi, [rip + vfs_cache]
+    xor esi, esi
+    call sb_push_byte
+    mov edx, 145
+    cmp byte ptr [r14], 'o'
+    je 4f
+    mov edx, 5
+4:  lea rax, [r14 + rdx]
+    cmp rax, r15
+    ja 7f
+    lea rdi, [rip + vfs_cache]
+    mov rsi, r14
+    push rdx
+    push rdx
+    call sb_push
+    pop rdx
+    pop rdx
+    add r14, rdx
+    inc rbx
+    jmp 3b
+7:  mov dword ptr [rip + vfs_cache_on], 1
+8:  EPILOGUE
+9:  ret
+
+# vfs_stats_clear(): vfs_stat asks the host again
+FN vfs_stats_clear
+    mov dword ptr [rip + vfs_cache_on], 0
+    ret
+
+# vfs_cache_find(path) -> rax 1 with the cached stat in vfs_statbuf (rdx 0) or its error (rdx -errno),
+#   0 when the path is not cached
+vfs_cache_find:
+    PROLOGUE
+    xor eax, eax
+    cmp dword ptr [rip + vfs_cache_on], 0
+    je 9f
+    mov r12, rdi
+    mov rbx, [rip + vfs_cache + SB_ptr]
+    mov r13, [rip + vfs_cache + SB_len]
+    add r13, rbx
+1:  cmp rbx, r13
+    jae 8f
+    mov rdi, rbx
+    call strlen
+    lea r14, [rbx + rax + 1]    # the answer
+    mov rdi, rbx
+    mov rsi, r12
+    call strcmp_eq
+    mov r15d, eax
+    mov ecx, 145
+    cmp byte ptr [r14], 'o'
+    je 2f
+    mov ecx, 5
+2:  lea rbx, [r14 + rcx]
+    test r15d, r15d
+    jz 1b
+    cmp byte ptr [r14], 'o'
+    jne 3f
+    lea rdi, [rip + vfs_statbuf]
+    lea rsi, [r14 + 1]
+    mov edx, 144
+    call memcpy
+    xor edx, edx
+    mov eax, 1
+    EPILOGUE
+3:  mov edx, [r14 + 1]
+    neg rdx
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+9:  EPILOGUE
+
 # vfs_stat(path) / vfs_lstat(path) -> 0 or -errno, the Linux struct stat in vfs_statbuf
 FN vfs_stat
-    mov eax, 4                  # stat
+    cmp dword ptr [rip + vfs_cache_on], 0
+    je 1f
+    push rdi
+    call vfs_cache_find
+    pop rdi
+    test eax, eax
+    jz 1f
+    mov rax, rdx
+    ret
+1:  mov eax, 4                  # stat
     lea rsi, [rip + .Lv_stat]
     jmp vfs_stat_common
 FN vfs_lstat
@@ -1228,10 +1450,86 @@ FN vfs_tick
 .Lv_readlink: .asciz "readlink"
 .Lv_watch: .asciz "watch"
 .Lv_files: .asciz "files"
+.Lv_stats: .asciz "stats"
 .Lv_grep: .asciz "grep"
 .Lv_unwatch: .asciz "unwatch"
 vfs_line_read: .asciz "read"
 vfs_line_write: .asciz "write"
 .Lsave_suffix: .asciz ".rhun-save"
 .Lproc_fd: .asciz "/proc/self/fd/"
+.text
+
+# remote_strict_check(rdi path): with RHUN_REMOTE_STRICT=1, a local file function (sys.s) given a path
+#   inside a remote window's project stops rhun with the path and the caller's address (for
+#   addr2line): a call site that should use vfs. Keeps every register.
+FN remote_strict_check
+    cmp dword ptr [rip + g_remote_strict], 0
+    jne 1f
+    ret
+1:  push rax
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push rbx
+    push rbp
+    mov rbp, rsp
+    and rsp, -16
+    mov rbx, rdi
+    cmp dword ptr [rip + g_remote], 0
+    je 9f
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 9f
+    test rbx, rbx
+    jz 9f
+    xor ecx, ecx
+2:  mov al, [rsi + rcx]
+    test al, al
+    jz 3f
+    cmp al, [rbx + rcx]
+    jne 9f
+    inc rcx
+    jmp 2b
+3:  mov al, [rbx + rcx]
+    test al, al
+    jz 4f
+    cmp al, '/'
+    jne 9f
+4:  lea rdi, [rip + .Lstrict_msg]
+    call log_cstr
+    mov rdi, rbx
+    call log_cstr
+    lea rdi, [rip + .Lstrict_from]
+    call log_cstr
+    mov rsi, [rbp + 96]         # the file function's caller
+    lea rdi, [rip + vfs_tmp]
+    call fmt_hex
+    lea rdi, [rip + vfs_tmp]
+    mov rsi, rax
+    call log_write
+    call log_nl
+    mov edi, 99
+    call sys_exit
+9:  mov rsp, rbp
+    pop rbp
+    pop rbx
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
+    ret
+
+.section .rodata
+.Lstrict_msg: .asciz "rhun: RHUN_REMOTE_STRICT: a local file function got the workspace path "
+.Lstrict_from: .asciz " from 0x"
 .text

@@ -1213,10 +1213,28 @@ ag_spawn:
 32: lea rcx, [rip + ag_argv]
     mov [rcx], rax
     mov qword ptr [rcx + 8], 0
-4:  # a name without a slash is looked up in the login PATH
+4:  # @self is this agent's own binary (the agents panel's index worker); a name without a slash is
+    # looked up in the login PATH
     lea rax, [rip + ag_argv]
     mov rdi, [rax]
+    lea rsi, [rip + .Lat_self]
+    call strcmp_eq
+    test eax, eax
+    jz 41f
+    lea rdi, [rip + .Lself]
+    lea rsi, [rip + ag_path2]
+    mov edx, 4095
+    SYS SYS_readlink
+    test rax, rax
+    jle .Las_noent
+    lea rdi, [rip + ag_path2]
+    mov byte ptr [rdi + rax], 0
+    call mem_dup_cstr
+    jmp 42f
+41: lea rax, [rip + ag_argv]
+    mov rdi, [rax]
     call proc_which
+42:
     test rax, rax
     jz .Las_noent
     mov [rsp + 56], rax         # path (freed below)
@@ -2304,6 +2322,55 @@ ag_access:
     call ag_error
     EPILOGUE
 
+# stats LEN + paths, each with a NUL -> for each path in order: "o" and its 144-byte struct stat, or
+#   "e" and its errno as 4 bytes (the agents panel polls its sessions in one request)
+ag_stats:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    lea r14, [rsi + rdx]
+1:  cmp r13, r14
+    jae 8f
+    mov rdi, r13
+    call strlen
+    mov r15, rax
+    mov rdi, r13
+    mov rsi, rax
+    call ag_path_arg
+    lea r13, [r13 + r15 + 1]
+    mov rbx, -36
+    test rax, rax
+    jz 2f
+    mov rdi, rax
+    lea rsi, [rip + ag_statbuf]
+    mov eax, 4
+    syscall
+    mov rbx, rax
+    test rax, rax
+    js 2f
+    lea rdi, [rip + ag_tmp]
+    mov esi, 'o'
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    lea rsi, [rip + ag_statbuf]
+    mov edx, 144
+    call sb_push
+    jmp 1b
+2:  lea rdi, [rip + ag_tmp]
+    mov esi, 'e'
+    call sb_push_byte
+    neg rbx
+    mov [rip + ag_statbuf], ebx
+    lea rdi, [rip + ag_tmp]
+    lea rsi, [rip + ag_statbuf]
+    mov edx, 4
+    call sb_push
+    jmp 1b
+8:  mov rdi, r12
+    xor esi, esi
+    call ag_reply
+    EPILOGUE
+
 # ---------------- file lists and search ----------------
 
 # ag_walk_args(body, len) -> 1 with the root in ag_path2 and the excluded names in cfg_exclude
@@ -2707,6 +2774,7 @@ ag_verbs:
     .quad .Lv_mkdir, ag_mkdir, .Lv_rename, ag_rename, .Lv_remove, ag_remove
     .quad .Lv_watch, ag_watch, .Lv_unwatch, ag_unwatch
     .quad .Lv_access, ag_access, .Lv_files, ag_files, .Lv_grep, ag_grep
+    .quad .Lv_stats, ag_stats
     .quad 0, 0
 .Linfo_keys:
     .quad .Lk_home_env, .Lk_home, .Lk_shell_env, .Lk_shell, .Lk_user_env, .Lk_user, 0, 0
@@ -2732,6 +2800,7 @@ ag_verbs:
 .Lv_access: .asciz "access"
 .Lv_files: .asciz "files"
 .Lv_grep: .asciz "grep"
+.Lv_stats: .asciz "stats"
 .Lk_home_env: .asciz "HOME"
 .Lk_shell_env: .asciz "SHELL"
 .Lk_user_env: .asciz "USER"
@@ -2742,6 +2811,7 @@ ag_verbs:
 .Lhello: .asciz "hello rhun-remote "
 .Lhex: .ascii "0123456789abcdef"
 .Lself: .asciz "/proc/self/exe"
+.Lat_self: .asciz "@self"
 .Lproc_fd: .asciz "/proc/self/fd/"
 .Lshell: .asciz "SHELL"
 .Lbin_sh: .asciz "/bin/sh"
