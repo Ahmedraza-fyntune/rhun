@@ -14,6 +14,7 @@
 .equ AE_MAX, 64                 # edits an accepted item makes, its own and its extra ones
 .equ HR_COMPLETE, 1
 .equ HR_SIGNATURE, 2
+.equ HR_RESOLVE, 3              # complete-resolve: HR_req holds the item's serial
 .equ CK_COUNT, 17               # item kinds (kind_names)
 .equ DOC_LINES_MAX, 14          # the documentation beside the list
 .equ SG_LINES_MAX, 6            # the signature's documentation
@@ -30,8 +31,28 @@ F CI_ilen, 4
 F CI_dlen, 4
 F CI_xlen, 4
 F CI_kind, 4
+F CI_flags, 4                   # CF_*: what its complete-items records say
+F CI_serial, 4                  # unique for the session: a resolve answer finds its item by it
 F CI_pad, 4
+F CI_r2, 8                      # the replace range's end (as CI_o2; it starts at CI_o1), or -1
+F CI_ver, 8                     # the document's version the list was asked at
 ENDSTRUCT CI_SIZE
+# complete-items (docs/extensions/v1.1.md): an item's flags from its EXTRA records
+.equ CF_PRESELECT, 1
+.equ CF_DEPRECATED, 2
+.equ CF_ADJUST, 4               # later lines of INSERT get the insertion line's indentation
+.equ CF_AFTER_SIG, 8            # signature help after accepting
+.equ CF_AFTER_COMPLETE, 16      # a new list after accepting
+.equ CF_RESOLVE, 32             # it has resolve data
+.equ CF_RESOLVE_EDITS, 64       # its resolve answer may add edits: accepting waits for it
+.equ CF_RESOLVED, 128           # its resolve answer came (or failed)
+.equ CF_REPLACE, 256            # a replace range
+.equ CF_FILTER, 512             # a filter text
+.equ CF_RESOLVING, 1024         # its resolve request is out
+.equ CF_COMMIT, 2048            # commit characters
+.equ CF_SUFFIX, 4096
+.equ CP_RESOLVE_MS, 60          # the pause after a selection before its item is resolved
+.equ CP_WAIT_MS, 500            # how long accepting waits for a resolve that may add edits
 
 # a request rhun sent and waits on
 STRUCT
@@ -41,6 +62,9 @@ F HR_kind, 4                    # HR_COMPLETE, HR_SIGNATURE
 F HR_session, 4                 # cp_session or sg_session when it went out
 F HR_req, 8                     # the cursor then
 F HR_language_revision, 8
+F HR_version, 8                 # the document's version then
+F HR_parts, 4                   # query-part brought some of its items
+F HR_pad, 4
 ENDSTRUCT HR_SIZE
 
 .data
@@ -81,6 +105,21 @@ cp_reqs: .zero VEC_SIZE         # HR records
 cp_q: .zero CP_QMAX             # the filter text
 cp_qlen: .quad 0
 cp_qcur: .quad 0
+cp_serial: .long 0              # the last item serial given
+cp_parse_lf: .long 0            # the provider of the list being parsed agreed complete-items
+cp_parse_ver: .quad 0           # the version it was asked at
+cp_res_due: .quad 0             # time_ms when the selected item is resolved (0: not due)
+cp_res_serial: .long 0          # the item whose resolve request is out (0: none)
+cp_wait_serial: .long 0         # the item an accept waits for (0: none)
+cp_wait_until: .quad 0
+cp_wait_replace: .long 0        # that accept's range: 1 the replace range
+cp_wait_ready: .long 0          # its resolve answer came (the tick accepts)
+sg_count: .long 0               # signature-list: the signatures and the one shown
+sg_index: .long 0
+sg_list: .zero SB_SIZE          # the answer's records
+sg_ctr: .zero 16                # "2/3"
+sg_ctrlen: .long 0
+sgl_tmp: .zero 16
 sg_open: .long 0                # the signature shows
 sg_wait: .long 0                # a request for it is out
 sg_again: .long 0               # something changed while it was out: ask again when it answers
@@ -270,10 +309,16 @@ providers_any:
     je 2f
     cmp edx, ES_IDLE
     jne 1b
-2:  cmp qword ptr [rbx + EXT_pv_complete], 0
-    jne 9f
-    cmp qword ptr [rbx + EXT_pv_signature], 0
-    je 1b
+2:  mov rdi, rbx
+    mov esi, EXT_pv_complete
+    call ext_pv
+    test rax, rax
+    jnz 9f
+    mov rdi, rbx
+    mov esi, EXT_pv_signature
+    call ext_pv
+    test rax, rax
+    jz 1b
 9:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
@@ -309,10 +354,8 @@ cancel_kind:
     jmp 1b
 2:  mov rdi, [rax + HR_ext]
     mov rsi, [rax + HR_id]
-    cmp dword ptr [rdi + EXT_status], ES_RUNNING
-    jne 3f
-    call extproto_send_cancel
-3:  mov rdi, rbx
+    call query_withdraw
+    mov rdi, rbx
     call req_remove
     jmp 1b
 9:  EPILOGUE
@@ -364,14 +407,20 @@ ask:
     jne 1b
     test dword ptr [rbx + EXT_features], FEAT_COMPLETE
     jz 1b
-    mov rdi, [rbx + EXT_pv_complete]
+    mov rdi, rbx
+    mov esi, EXT_pv_complete
+    call ext_pv
+    mov rdi, rax
     mov rsi, r15
     call extproto_matches
     test eax, eax
     jz 1b
     cmp dword ptr [rsp + 12], 0
     je 2f
-    mov rdi, [rbx + EXT_pv_ctrig]
+    mov rdi, rbx
+    mov esi, EXT_pv_ctrig
+    call ext_pv
+    mov rdi, rax
     mov esi, [rsp + 8]
     call trig_has
     test eax, eax
@@ -387,6 +436,11 @@ ask:
     test rax, rax
     jz 1b
     mov r12, rax
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, PK_COMPLETE
+    mov ecx, QO_COMPLETE
+    call query_track
     lea rdi, [rip + cp_reqs]
     mov esi, HR_SIZE
     call vec_push
@@ -399,6 +453,8 @@ ask:
     mov [rax + HR_req], rcx
     mov rcx, [r15 + DOC_language_revision]
     mov [rax + HR_language_revision], rcx
+    mov rcx, [r15 + DOC_version]
+    mov [rax + HR_version], rcx
     inc dword ptr [rsp + 16]
     jmp 1b
 9:  mov eax, [rsp + 16]
@@ -475,6 +531,12 @@ cp_close:
     mov qword ptr [rip + cp_qo1], -1
     mov edi, HR_COMPLETE
     call cancel_kind
+    mov edi, HR_RESOLVE
+    call cancel_kind
+    mov qword ptr [rip + cp_res_due], 0
+    mov dword ptr [rip + cp_res_serial], 0
+    mov dword ptr [rip + cp_wait_serial], 0
+    mov dword ptr [rip + cp_wait_ready], 0
     mov dword ptr [rip + g_dirty], 1
     pop rbx
     ret
@@ -535,27 +597,75 @@ FN cmd_complete
     pop rbx
     ret
 
-# FN complete_timeout() -> ms until the typed list is due, or -1
+# FN complete_timeout() -> ms until the typed list is due, the selected item is resolved or a
+# waiting accept goes ahead, or -1
 FN complete_timeout
     push rbx
+    push r12
+    push r13
     mov rbx, [rip + cp_due]
+    mov rcx, [rip + cp_res_due]
     test rbx, rbx
+    jz 1f
+    test rcx, rcx
+    jz 2f
+    cmp rcx, rbx
+    jae 2f
+1:  mov rbx, rcx
+2:  cmp dword ptr [rip + cp_wait_serial], 0
+    je 3f
+    mov rcx, [rip + cp_wait_until]
+    cmp dword ptr [rip + cp_wait_ready], 0
+    je 21f
+    xor ecx, ecx
+    inc ecx
+21: test rbx, rbx
+    jz 22f
+    cmp rcx, rbx
+    jae 3f
+22: mov rbx, rcx
+3:  test rbx, rbx
     jz 8f
     call time_ms
     sub rbx, rax
-    jns 1f
+    jns 4f
     xor ebx, ebx
-1:  mov eax, ebx
+4:  mov eax, ebx
+    pop r13
+    pop r12
     pop rbx
     ret
 8:  mov eax, -1
+    pop r13
+    pop r12
     pop rbx
     ret
 
-# FN complete_tick(): the typed list when its pause is over
+# FN complete_tick(): the typed list when its pause is over; complete-items: the selected item's
+# resolve, and the accept that waited for one
 FN complete_tick
     push rbx
-    mov rbx, [rip + cp_due]
+    cmp dword ptr [rip + cp_wait_serial], 0
+    je 2f
+    cmp dword ptr [rip + cp_wait_ready], 0
+    jne 1f
+    call time_ms
+    cmp rax, [rip + cp_wait_until]
+    jb 2f
+1:  call cp_wait_accept
+2:  mov rbx, [rip + cp_res_due]
+    test rbx, rbx
+    jz 3f
+    call time_ms
+    cmp rax, rbx
+    jb 3f
+    mov qword ptr [rip + cp_res_due], 0
+    call selected_item
+    test rax, rax
+    jz 3f
+    mov rdi, rax
+    call res_send
+3:  mov rbx, [rip + cp_due]
     test rbx, rbx
     jz 9f
     call time_ms
@@ -591,7 +701,10 @@ FN complete_tick
     jz 1b
     cmp dword ptr [r13 + EXT_status], ES_STARTING
     jne 1b
-    mov rdi, [r13 + EXT_pv_complete]
+    mov rdi, r13
+    mov esi, EXT_pv_complete
+    call ext_pv
+    mov rdi, rax
     mov rsi, rbx
     call extproto_matches
     test eax, eax
@@ -641,6 +754,10 @@ FN complete_reply
     mov [rsp + 16], rcx
     mov rcx, [rax + HR_language_revision]
     mov [rsp + 24], rcx
+    mov rcx, [rax + HR_version]
+    mov [rip + cp_parse_ver], rcx
+    mov ecx, [rax + HR_parts]
+    mov [rsp + 12], ecx
     mov rdi, r13
     call req_remove
     mov rdi, rbx
@@ -650,7 +767,18 @@ FN complete_reply
     mov dword ptr [rip + g_dirty], 1
     cmp dword ptr [rsp + 4], HR_SIGNATURE
     je 5f
-    # a list, for the session still open
+    cmp dword ptr [rsp + 4], HR_RESOLVE
+    jne 4f
+    mov eax, [rsp + 8]          # complete-items: an item's resolve answer
+    cmp eax, [rip + cp_session]
+    jne 9f
+    mov edi, [rsp + 16]
+    mov esi, [rsp]
+    mov rdx, r14
+    mov rcx, r15
+    call res_answer
+    jmp 9f
+4:  # a list, for the session still open
     cmp dword ptr [rsp], 0
     je 9f                       # an error adds nothing
     mov eax, [rsp + 8]
@@ -668,7 +796,13 @@ FN complete_reply
     mov rsi, r14
     mov rdx, r15
     mov rcx, [rsp + 16]
-    call cp_merge
+    mov r8d, [rsp + 12]         # after parts: the rest joins them
+    call cp_merge_mode
+    test rax, rax
+    jns 9f
+    mov rdi, rbx
+    mov esi, PK_COMPLETE
+    call query_dropped
     jmp 9f
 5:  mov eax, [rsp + 8]
     cmp eax, [rip + sg_session]
@@ -684,6 +818,11 @@ FN complete_reply
     je 51f
     mov rdi, r14
     mov rsi, r15
+    test dword ptr [rbx + EXT_lfeatures], LFEAT_SIGNATURE_LIST
+    jz 50f
+    call sgl_set
+    jmp 52f
+50: mov dword ptr [rip + sg_count], 0
     call sg_set
     jmp 52f
 51: mov dword ptr [rip + sg_open], 0
@@ -800,29 +939,43 @@ keep_others:
     jmp 1b
 9:  EPILOGUE
 
-# cp_merge(ext, body, len, req): an extension's list replaces what it said before in this session;
-# a body that breaks the rules changes nothing
-cp_merge:
-    PROLOGUE 16
+# cp_merge_mode(ext, body, len, req, append) -> rax the items taken, or -1 when the body breaks the
+# rules (nothing changes): an extension's list replaces what it said before in this session, or
+# (append 1: the parts of one answer after its first) joins it
+cp_merge_mode:
+    PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
     mov [rsp], rcx
+    mov [rsp + 16], r8d
     call ext_has_metadata
     test eax, eax
-    jz 9f
+    jz 8f
     cmp r13, CP_BODY_MAX
-    ja 9f
+    ja 8f
+    xor eax, eax
+    test dword ptr [rbx + EXT_lfeatures], LFEAT_COMPLETE_ITEMS
+    setnz al
+    mov [rip + cp_parse_lf], eax
     mov rdi, rbx
-    call keep_others
+    cmp dword ptr [rsp + 16], 0
+    je 1f
+    xor edi, edi                # keep every item, its own too
+1:  call keep_others
+    mov rax, [rip + cp_new_items + VEC_len]
+    mov [rsp + 24], rax
     mov rdi, rbx
     mov rsi, r12
     mov rdx, r13
     mov rcx, [rsp]
     call cp_parse
     test eax, eax
-    jz 9f
+    jz 8f
     mov [rsp + 8], edx
+    mov rax, [rip + cp_new_items + VEC_len]
+    sub rax, [rsp + 24]
+    mov [rsp + 24], rax
     or [rip + cp_more], edx
     lea rdi, [rip + cp_new_items]
     lea rsi, [rip + cp_items]
@@ -839,7 +992,10 @@ cp_merge:
     cmp rcx, [rsp]
     je 9f
     mov dword ptr [rip + cp_reask], 1   # cut short for what was typed before: ask again
-9:  EPILOGUE
+9:  mov rax, [rsp + 24]
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
 
 # ---- the answer's parser: globals ps_ptr, ps_end, ps_lend ----
 
@@ -1203,7 +1359,23 @@ cp_parse:
     mov [rax + CI_xlen], ebx
     mov ecx, [rsp + 40]
     mov [rax + CI_kind], ecx
-    lea rdi, [rip + cp_new_bytes]
+    # complete-items: its serial, version, flags and replace range
+    mov rcx, [rip + cp_parse_ver]
+    mov [rax + CI_ver], rcx
+    mov qword ptr [rax + CI_r2], -1
+    inc dword ptr [rip + cp_serial]
+    mov ecx, [rip + cp_serial]
+    mov [rax + CI_serial], ecx
+    cmp dword ptr [rip + cp_parse_lf], 0
+    je 11f
+    mov rdi, rax
+    mov rsi, [rip + ps_ptr]
+    add rsi, r12
+    add rsi, r13
+    add rsi, r14
+    mov edx, ebx
+    call ci_scan
+11: lea rdi, [rip + cp_new_bytes]
     mov rsi, [rip + ps_ptr]
     mov rdx, [rsp + 48]
     call sb_push
@@ -1300,9 +1472,10 @@ cp_filter:
     mov r12, rax
     mov rdi, [r12 + CI_o1]
     call query_for
-    mov rdi, [r12 + CI_off]
-    add rdi, [rip + cp_bytes + SB_ptr]
-    mov esi, [r12 + CI_llen]
+    mov rdi, r12
+    call item_match_text        # complete-items: its filter text, else its label
+    mov rdi, rax
+    mov rsi, rdx
     lea rdx, [rip + cp_q]
     mov rcx, [rip + cp_qlen]
     call fuzzy
@@ -1356,6 +1529,20 @@ cp_filter:
 8:  mov [rip + cp_open], eax
     mov dword ptr [rip + cp_hover], -1
     mov dword ptr [rip + g_dirty], 1
+    # complete-items: a preselected item that passed is selected first, and gets resolved
+    xor ebx, ebx
+81: cmp ebx, [rip + cp_nshown]
+    jae 83f
+    lea rax, [rip + cp_shown]
+    mov edi, [rax + rbx*4]
+    call item
+    test dword ptr [rax + CI_flags], CF_PRESELECT
+    jnz 82f
+    inc ebx
+    jmp 81b
+82: mov edi, ebx
+    call cp_select
+83: call res_schedule
     EPILOGUE
 
 # cp_check(): each frame: the list follows the word being typed; moving away, a selection, an
@@ -1510,7 +1697,10 @@ sig_trigger:
     test rax, rax
     jz 9f
     mov rbx, rax
-    mov rdi, [rbx + EXT_pv_strig]
+    mov rdi, rbx
+    mov esi, EXT_pv_strig
+    call ext_pv
+    mov rdi, rax
     mov esi, r12d
     call trig_has
     test eax, eax
@@ -1564,13 +1754,21 @@ sig_ask:
     mov dword ptr [rip + sg_again], 0
     mov rdi, rbx
     lea rsi, [rip + .Lv_signature]
-    mov rdx, r14
+    test dword ptr [rbx + EXT_lfeatures], LFEAT_SIGNATURE_LIST
+    jz 2f
+    lea rsi, [rip + .Lv_signatures]   # signature-list: every overload
+2:  mov rdx, r14
     mov rcx, r12
     mov r8d, r13d
     call extproto_host_request
     test rax, rax
     jz 9f
     mov r15, rax
+    mov rdi, rbx
+    mov rsi, r15
+    mov edx, PK_SIGNATURE
+    mov ecx, QO_COMPLETE
+    call query_track
     lea rdi, [rip + cp_reqs]
     mov esi, HR_SIZE
     call vec_push
@@ -1713,6 +1911,7 @@ sg_check:
 # sg_close(): the help goes
 sg_close:
     push rbx
+    mov dword ptr [rip + sg_count], 0
     mov dword ptr [rip + sg_open], 0
     mov dword ptr [rip + sg_wait], 0
     mov dword ptr [rip + sg_again], 0
@@ -1729,8 +1928,21 @@ sg_close:
 FN complete_key
     PROLOGUE
     mov r12d, edi
+    mov r13d, esi
     mov r14d, edx
-    cmp dword ptr [rip + cp_source], CP_CHOICES
+    # complete-items: an accept waiting for its item's resolve goes ahead at the next key; Enter
+    # or Tab again is taken, anything else then does what it does
+    cmp dword ptr [rip + cp_wait_serial], 0
+    je 0f
+    call cp_wait_accept
+    cmp r12d, KEY_RETURN
+    je 9f
+    cmp r12d, KEY_KP_ENTER
+    je 9f
+    cmp r12d, KEY_TAB
+    je 9f
+    jmp 8f
+0:  cmp dword ptr [rip + cp_source], CP_CHOICES
     jne .Lcpk_ordinary
     call cp_choice_check
     test rax, rax
@@ -1775,6 +1987,50 @@ FN complete_key
     call snippet_step
     jmp 9f
 .Lcpk_ordinary:
+    # complete-items: shift+Enter uses the other range; a commit character of the selected item
+    # accepts it, and the character is typed after it
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    je .Lcpk_plain
+    cmp dword ptr [rip + cp_rect + 12], 0
+    je .Lcpk_plain
+    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    jnz .Lcpk_plain
+    cmp r14d, MOD_SHIFT
+    jne .Lcpk_commit
+    cmp r12d, KEY_RETURN
+    je 0f
+    cmp r12d, KEY_KP_ENTER
+    jne .Lcpk_commit
+0:  mov edi, [rip + cfg_complete_replace]
+    xor edi, 1
+    call cp_accept_key
+    jmp 9f
+.Lcpk_commit:
+    cmp dword ptr [rip + cfg_complete_commit], 0
+    je .Lcpk_plain
+    cmp r13d, 0x21
+    jb .Lcpk_plain
+    cmp r13d, 0x7e
+    ja .Lcpk_plain
+    call selected_item
+    test rax, rax
+    jz .Lcpk_plain
+    test dword ptr [rax + CI_flags], CF_COMMIT
+    jz .Lcpk_plain
+    mov rdi, rax
+    lea rsi, [rip + .Lx_commit]
+    call item_record
+    test rax, rax
+    jz .Lcpk_plain
+1:  test rdx, rdx
+    jz .Lcpk_plain
+    dec rdx
+    movzx ecx, byte ptr [rax + rdx]
+    cmp ecx, r13d
+    jne 1b
+    call cp_accept
+    jmp 8f                      # the editor types the character
+.Lcpk_plain:
     test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER | MOD_SHIFT
     jnz 8f
     # Escape withdraws what was asked and not shown yet, and leaves the key to the editor
@@ -1841,7 +2097,8 @@ FN complete_key
     sete dil
     call cp_choice_accept
     jmp 9f
-42: call cp_accept
+42: mov edi, [rip + cfg_complete_replace]
+    call cp_accept_key
     jmp 9f
 5:  cmp r12d, KEY_ESCAPE
     jne 7f
@@ -1851,10 +2108,32 @@ FN complete_key
     call cp_select
     jmp 9f
 7:  cmp r12d, KEY_ESCAPE
-    jne 8f
+    jne 71f
     cmp dword ptr [rip + sg_open], 0
     je 8f
     call sg_close
+    jmp 9f
+71: # signature-list: Up and Down switch overloads while help with several shows
+    cmp dword ptr [rip + sg_open], 0
+    je 8f
+    cmp dword ptr [rip + sg_count], 1
+    jbe 8f
+    mov eax, [rip + sg_index]
+    cmp r12d, KEY_UP
+    jne 72f
+    dec eax
+    jns 73f
+    mov eax, [rip + sg_count]
+    dec eax
+    jmp 73f
+72: cmp r12d, KEY_DOWN
+    jne 8f
+    inc eax
+    cmp eax, [rip + sg_count]
+    jb 73f
+    xor eax, eax
+73: mov edi, eax
+    call sgl_show
     jmp 9f
 8:  xor eax, eax
     EPILOGUE
@@ -1874,24 +2153,74 @@ cp_select:
     lea eax, [rdi - CP_ROWS + 1]
     mov [rip + cp_top], eax
 2:  mov dword ptr [rip + g_dirty], 1
-    ret
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    je 3f
+    jmp res_schedule            # complete-items: the newly selected item is resolved
+3:  ret
 
-# cp_accept(): the selected item goes in: its range, extended to the cursor by what was typed
-# since, and its extra edits, as one undo step
+# cp_accept_key(replace): Enter or Tab: an item whose resolve answer may add edits (an import)
+# waits for it, up to CP_WAIT_MS (the tick, or the next key, accepts); others go in at once
+cp_accept_key:
+    push rbx
+    mov ebx, edi
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    je 8f
+    call selected_item
+    test rax, rax
+    jz 8f
+    mov ecx, [rax + CI_flags]
+    and ecx, CF_RESOLVE_EDITS | CF_RESOLVED
+    cmp ecx, CF_RESOLVE_EDITS
+    jne 8f
+    mov ecx, [rax + CI_serial]
+    mov [rip + cp_wait_serial], ecx
+    mov [rip + cp_wait_replace], ebx
+    mov dword ptr [rip + cp_wait_ready], 0
+    push rax
+    push rax
+    call time_ms
+    add rax, CP_WAIT_MS
+    mov [rip + cp_wait_until], rax
+    pop rdi
+    pop rdi
+    call res_send               # unless it is out already
+    mov dword ptr [rip + g_dirty], 1
+    pop rbx
+    ret
+8:  mov esi, ebx
+    pop rbx
+    jmp cp_accept_mode
+
+# cp_accept(): the selected item goes in over its insert range (its replace range with
+# [editor] complete_replace); cp_accept_mode(replace) chooses
 cp_accept:
+    mov esi, [rip + cfg_complete_replace]
+cp_accept_mode:
     cmp dword ptr [rip + cp_source], CP_CHOICES
     jne 0f
     xor edi, edi
     jmp cp_choice_accept
-0:  PROLOGUE 128
+0:  push rsi
+    push rsi
+    call selected_item
+    pop rsi
+    pop rsi
+    test rax, rax
+    jz cp_close
+    mov rdi, rax
+
+# cp_accept_ci(CI*, replace): the item goes in: its range (insert, or replace when it has one and
+# replace is 1), extended to the cursor by what was typed since, and its extra edits, as one undo
+# step; then what its after records ask for
+cp_accept_ci:
+    PROLOGUE 160
     mov qword ptr [rsp + 96], 0   # validated snippet candidate, owned until attached
-    mov eax, [rip + cp_sel]
-    cmp eax, [rip + cp_nshown]
-    jae 8f
-    lea rcx, [rip + cp_shown]
-    mov edi, [rcx + rax*4]
-    call item
-    mov r12, rax
+    mov r12, rdi
+    mov [rsp + 128], esi        # the replace range
+    mov qword ptr [rsp + 152], 0    # its flags once it went in (after signature, after complete)
+    mov eax, [r12 + CI_ilen]
+    mov [rsp + 136], rax        # the text's length (adjust may change it)
+    mov qword ptr [rsp + 144], 0    # the indentation adjust adds to each later line
     mov rdi, [r12 + CI_ext]
     call ext_has_metadata
     test eax, eax
@@ -1917,7 +2246,12 @@ cp_accept:
     # the item's range
     mov r14, [r12 + CI_o1]
     mov r15, [r12 + CI_o2]
-    cmp r15, [r12 + CI_req]
+    cmp dword ptr [rsp + 128], 0
+    je 0f
+    test dword ptr [r12 + CI_flags], CF_REPLACE
+    jz 0f
+    mov r15, [r12 + CI_r2]
+0:  cmp r15, [r12 + CI_req]
     jb 1f
     add r15, [rsp]
 1:  cmp r15, r13
@@ -1937,10 +2271,25 @@ cp_accept:
     mov ecx, [r12 + CI_llen]
     add rax, rcx                # the insert text
     mov [rsp + 64], rax         # the item's text, to know its record after sorting
-    mov rdi, r14
-    mov rsi, r15
-    mov rdx, rax
+    # complete-items adjust: the lines after the first get the insertion line's indentation
+    # (not for snippet fields, whose offsets the text keeps)
+    test dword ptr [r12 + CI_flags], CF_ADJUST
+    jz 0f
+    mov rax, [r12 + CI_ext]
+    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    jnz 0f
+    mov rdi, rbx
+    mov rsi, r14
+    mov rdx, [rsp + 64]
     mov ecx, [r12 + CI_ilen]
+    call cp_adjust
+    mov [rsp + 64], rax
+    mov [rsp + 136], rdx
+    mov [rsp + 144], rcx
+0:  mov rdi, r14
+    mov rsi, r15
+    mov rdx, [rsp + 64]
+    mov rcx, [rsp + 136]
     call ae_add
     mov rax, [r12 + CI_off]
     add rax, [rip + cp_bytes + SB_ptr]
@@ -2159,7 +2508,7 @@ cp_accept:
 7:  mov rdi, rbx
     call doc_end_group
     # the cursor after the item's text, moved by the edits made before it
-    mov eax, [r12 + CI_ilen]
+    mov rax, [rsp + 136]
     lea r13, [r14 + rax]
     xor ecx, ecx
 71: cmp rcx, [rip + ae_n]
@@ -2181,16 +2530,33 @@ cp_accept:
     add r13, [rax]
     sub r13, [rax + 8]
     jmp 71b
-72: mov eax, [r12 + CI_ilen]
+72: mov rax, [rsp + 136]
     mov rcx, r13
     sub rcx, rax
     mov [rsp + 104], rcx        # actual inserted start after earlier additional edits
     mov rax, [rsp + 72]
     test rax, rax
     js 74f
-    mov ecx, [r12 + CI_ilen]    # a cursor record: that far into the item's text
+    mov rcx, [rsp + 136]        # a cursor record: that far into the item's text
     sub r13, rcx
-    add r13, rax
+    cmp qword ptr [rsp + 144], 0
+    je 73f
+    # adjusted: the indentation added before it moves it on
+    mov rdx, rax
+    xor r8d, r8d
+    mov r9, [r12 + CI_off]
+    add r9, [rip + cp_bytes + SB_ptr]
+    mov ecx, [r12 + CI_llen]
+    add r9, rcx
+75: test rdx, rdx
+    jz 76f
+    dec rdx
+    cmp byte ptr [r9 + rdx], 10
+    jne 75b
+    add r8, [rsp + 144]
+    jmp 75b
+76: add rax, r8
+73: add r13, rax
 74: mov [rbx + DOC_cur], r13
     mov [rbx + DOC_anchor], r13
     mov rdi, rbx
@@ -2209,9 +2575,95 @@ cp_accept:
     call snippet_record_after
 .Lcpa_attached:
     call ed_touch
+    mov eax, [r12 + CI_flags]
+    mov [rsp + 152], rax
 8:  mov rdi, [rsp + 96]
     call snippet_free_node
     call cp_close
+    # complete-items: after signature asks for signature help, after complete for a new list
+    test dword ptr [rsp + 152], CF_AFTER_COMPLETE
+    jz 81f
+    lea rdi, [rip + .Lk_invoked]
+    mov esi, '-'
+    xor edx, edx
+    call cp_begin
+81: test dword ptr [rsp + 152], CF_AFTER_SIG
+    jz 82f
+    call sig_provider
+    test rax, rax
+    jz 82f
+    mov rdi, rax
+    lea rsi, [rip + .Lk_invoked]
+    mov edx, '-'
+    call sig_ask
+82: EPILOGUE
+
+# cp_adjust(doc, pos, text, len) -> rax the text with the indentation of the line at pos after each
+# of its line breaks (in cp_adj), rdx its length, rcx the indentation's length
+cp_adjust:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    lea rdi, [rip + cp_adj]
+    call sb_clear
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    mov rdi, rbx
+    mov rsi, rax
+    call doc_line_start
+    mov r15, rax                # the line's start; its indentation runs to the first other byte
+    xor r12d, r12d
+1:  lea rsi, [r15 + r12]
+    mov rdi, rbx
+    push rsi
+    push rsi
+    call doc_len
+    pop rsi
+    pop rsi
+    cmp rsi, rax
+    jae 2f
+    mov rdi, rbx
+    call doc_byte
+    cmp eax, ' '
+    je 11f
+    cmp eax, 9
+    jne 2f
+11: inc r12
+    cmp r12, 256
+    jb 1b
+2:  xor ecx, ecx                # the text, the indentation after each LF
+3:  cmp rcx, r14
+    jae 5f
+    push rcx
+    push rcx
+    lea rdi, [rip + cp_adj]
+    movzx esi, byte ptr [r13 + rcx]
+    call sb_push_byte
+    pop rcx
+    pop rcx
+    cmp byte ptr [r13 + rcx], 10
+    jne 4f
+    push rcx
+    push rcx
+    lea rdi, [rip + cp_adj]
+    mov rsi, r12
+    call sb_reserve
+    mov rdi, rbx
+    mov rsi, r15
+    mov rdx, r12
+    mov rcx, rax
+    call doc_copy
+    add [rip + cp_adj + SB_len], r12
+    pop rcx
+    pop rcx
+4:  inc rcx
+    jmp 3b
+5:  mov rax, [rip + cp_adj + SB_ptr]
+    mov rdx, [rip + cp_adj + SB_len]
+    mov rcx, r12
     EPILOGUE
 
 # ae_add(start, end, ptr, len): one edit of the item being accepted, unless it overlaps one before
@@ -2274,6 +2726,602 @@ ae_sort:
 3:  inc rcx
     jmp 1b
 9:  ret
+
+# ---------------- complete-items (language features) ----------------
+
+# rec_begin(ptr, len): the EXTRA records from ptr are iterated with rec_next
+rec_begin:
+    mov [rip + rec_after], rdi
+    add rdi, rsi
+    mov [rip + ps_end], rdi
+    ret
+
+# rec_next() -> eax 1 for the next record: rec_name/rec_nlen its name, ps_ptr at the fields after
+# it (ps_lend ends them), rec_body/rec_blen its bytes; 0 at the end or at a broken record
+rec_next:
+    push rbx
+    mov rax, [rip + rec_after]
+    mov [rip + ps_ptr], rax
+    call ps_line
+    test eax, eax
+    jz 8f
+    # its last word is its length
+    mov rbx, [rip + ps_lend]
+    mov rcx, rbx
+1:  cmp rcx, [rip + ps_ptr]
+    je 8f
+    cmp byte ptr [rcx - 1], ' '
+    je 2f
+    dec rcx
+    jmp 1b
+2:  mov rdi, rcx
+    mov rsi, rbx
+    sub rsi, rcx
+    jz 8f
+    cmp rsi, 10
+    ja 8f
+    push rsi
+    push rsi
+    call parse_u64
+    pop rsi
+    pop rsi
+    cmp rdx, rsi
+    jne 8f
+    lea rcx, [rbx + 1]
+    mov [rip + rec_body], rcx
+    mov [rip + rec_blen], rax
+    add rcx, rax
+    cmp rcx, [rip + ps_end]
+    ja 8f
+    mov [rip + rec_after], rcx
+    call ps_word
+    mov [rip + rec_name], rax
+    mov [rip + rec_nlen], rdx
+    mov eax, 1
+    pop rbx
+    ret
+8:  xor eax, eax
+    pop rbx
+    ret
+
+# rec_is(cstr) -> eax 1 when the current record has that name
+rec_is:
+    mov rdx, rdi
+    mov rdi, [rip + rec_name]
+    mov rsi, [rip + rec_nlen]
+    jmp str_eq_cstr
+
+# item_extra(CI*) -> rax ptr, rdx len of the item's EXTRA records
+item_extra:
+    mov rax, [rdi + CI_off]
+    add rax, [rip + cp_bytes + SB_ptr]
+    mov ecx, [rdi + CI_llen]
+    add rax, rcx
+    mov ecx, [rdi + CI_ilen]
+    add rax, rcx
+    mov ecx, [rdi + CI_dlen]
+    add rax, rcx
+    mov edx, [rdi + CI_xlen]
+    ret
+
+# item_record(CI*, name cstr) -> rax ptr, rdx len of the first record of that name's bytes, rax 0
+# when it has none (ps_ptr is then at the record's fields)
+item_record:
+    PROLOGUE
+    mov r12, rsi
+    call item_extra
+    mov rdi, rax
+    mov rsi, rdx
+    call rec_begin
+1:  call rec_next
+    test eax, eax
+    jz 8f
+    mov rdi, r12
+    call rec_is
+    test eax, eax
+    jz 1b
+    mov rax, [rip + rec_body]
+    mov rdx, [rip + rec_blen]
+    EPILOGUE
+8:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
+# ci_scan(CI*, extra ptr, len): the item's flags and replace range from its complete-items
+# records (cp_parse's position mapping is in force; its parser state is kept)
+ci_scan:
+    PROLOGUE 32
+    mov rbx, rdi
+    mov rax, [rip + ps_ptr]
+    mov [rsp], rax
+    mov rax, [rip + ps_end]
+    mov [rsp + 8], rax
+    mov rax, [rip + ps_lend]
+    mov [rsp + 16], rax
+    mov rdi, rsi
+    mov rsi, rdx
+    call rec_begin
+.Lcs_next:
+    call rec_next
+    test eax, eax
+    jz .Lcs_done
+    lea rdi, [rip + .Lx_preselect]
+    call rec_is
+    mov ecx, CF_PRESELECT
+    test eax, eax
+    jnz .Lcs_flag
+    lea rdi, [rip + .Lx_deprecated]
+    call rec_is
+    mov ecx, CF_DEPRECATED
+    test eax, eax
+    jnz .Lcs_flag
+    lea rdi, [rip + .Lx_adjust]
+    call rec_is
+    mov ecx, CF_ADJUST
+    test eax, eax
+    jnz .Lcs_flag
+    lea rdi, [rip + .Lx_filter]
+    call rec_is
+    mov ecx, CF_FILTER
+    test eax, eax
+    jnz .Lcs_line
+    lea rdi, [rip + .Lx_suffix]
+    call rec_is
+    mov ecx, CF_SUFFIX
+    test eax, eax
+    jnz .Lcs_line
+    lea rdi, [rip + .Lx_commit]
+    call rec_is
+    test eax, eax
+    jnz .Lcs_commit
+    lea rdi, [rip + .Lx_after]
+    call rec_is
+    test eax, eax
+    jnz .Lcs_after
+    lea rdi, [rip + .Lx_resolve]
+    call rec_is
+    test eax, eax
+    jnz .Lcs_resolve
+    lea rdi, [rip + .Lx_replace]
+    call rec_is
+    test eax, eax
+    jnz .Lcs_replace
+    jmp .Lcs_next
+.Lcs_flag:
+    or [rbx + CI_flags], ecx
+    jmp .Lcs_next
+.Lcs_line:                      # filter, suffix: one line of text
+    mov [rsp + 24], ecx
+    mov rdi, [rip + rec_body]
+    mov rsi, [rip + rec_blen]
+    call one_line
+    test eax, eax
+    jz .Lcs_next
+    mov ecx, [rsp + 24]
+    or [rbx + CI_flags], ecx
+    jmp .Lcs_next
+.Lcs_commit:                    # 1 to 16 printable ASCII characters
+    mov rcx, [rip + rec_blen]
+    test rcx, rcx
+    jz .Lcs_next
+    cmp rcx, 16
+    ja .Lcs_next
+    mov rdx, [rip + rec_body]
+1:  movzx eax, byte ptr [rdx + rcx - 1]
+    cmp eax, 0x21
+    jb .Lcs_next
+    cmp eax, 0x7e
+    ja .Lcs_next
+    dec rcx
+    jnz 1b
+    or dword ptr [rbx + CI_flags], CF_COMMIT
+    jmp .Lcs_next
+.Lcs_after:                     # after signature 0, after complete 0
+    call ps_word
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lx_signature]
+    call str_eq_cstr
+    test eax, eax
+    jz 1f
+    or dword ptr [rbx + CI_flags], CF_AFTER_SIG
+    jmp .Lcs_next
+1:  mov rax, [rip + ps_ptr]
+    sub rax, 9
+    mov rdi, rax
+    mov esi, 8
+    lea rdx, [rip + .Lx_complete]
+    call str_eq_cstr
+    test eax, eax
+    jz .Lcs_next
+    or dword ptr [rbx + CI_flags], CF_AFTER_COMPLETE
+    jmp .Lcs_next
+.Lcs_resolve:                   # resolve EDITS LEN + at most 16 KB of data
+    cmp qword ptr [rip + rec_blen], 16384
+    ja .Lcs_next
+    call ps_num
+    test edx, edx
+    jz .Lcs_next
+    cmp rax, 1
+    ja .Lcs_next
+    or dword ptr [rbx + CI_flags], CF_RESOLVE
+    test rax, rax
+    jz .Lcs_next
+    or dword ptr [rbx + CI_flags], CF_RESOLVE_EDITS
+    jmp .Lcs_next
+.Lcs_replace:                   # replace L1 C1 L2 C2 0: it starts where the insert range does
+    call ps_pos
+    test rax, rax
+    js .Lcs_next
+    cmp rax, [rbx + CI_o1]
+    jne .Lcs_next
+    call ps_pos
+    test rax, rax
+    js .Lcs_next
+    cmp rax, [rbx + CI_o1]
+    jb .Lcs_next
+    mov [rbx + CI_r2], rax
+    or dword ptr [rbx + CI_flags], CF_REPLACE
+    jmp .Lcs_next
+.Lcs_done:
+    mov rax, [rsp]
+    mov [rip + ps_ptr], rax
+    mov rax, [rsp + 8]
+    mov [rip + ps_end], rax
+    mov rax, [rsp + 16]
+    mov [rip + ps_lend], rax
+    EPILOGUE
+
+# item_match_text(CI*) -> rax ptr, rdx len: what typing filters and ranks the item by: its filter
+# text, else its label
+item_match_text:
+    PROLOGUE
+    mov rbx, rdi
+    test dword ptr [rbx + CI_flags], CF_FILTER
+    jz 1f
+    lea rsi, [rip + .Lx_filter]
+    call item_record
+    test rax, rax
+    jnz 9f
+1:  mov rax, [rbx + CI_off]
+    add rax, [rip + cp_bytes + SB_ptr]
+    mov edx, [rbx + CI_llen]
+9:  EPILOGUE
+
+# item_by_serial(serial) -> rax the item's index, or -1
+item_by_serial:
+    xor eax, eax
+1:  cmp rax, [rip + cp_items + VEC_len]
+    jae 8f
+    imul rcx, rax, CI_SIZE
+    add rcx, [rip + cp_items + VEC_ptr]
+    cmp [rcx + CI_serial], edi
+    je 9f
+    inc rax
+    jmp 1b
+8:  mov rax, -1
+9:  ret
+
+# selected_item() -> rax the selected row's CI*, or 0
+selected_item:
+    xor eax, eax
+    cmp dword ptr [rip + cp_open], 2
+    jne 9f
+    mov ecx, [rip + cp_sel]
+    cmp ecx, [rip + cp_nshown]
+    jae 9f
+    lea rax, [rip + cp_shown]
+    mov edi, [rax + rcx*4]
+    jmp item
+9:  ret
+
+# res_schedule(): the selected item is resolved after a short pause (it may be shown only briefly)
+res_schedule:
+    push rbx
+    call selected_item
+    test rax, rax
+    jz 8f
+    mov ecx, [rax + CI_flags]
+    and ecx, CF_RESOLVE | CF_RESOLVED | CF_RESOLVING
+    cmp ecx, CF_RESOLVE
+    jne 8f
+    call time_ms
+    add rax, CP_RESOLVE_MS
+    mov [rip + cp_res_due], rax
+    pop rbx
+    ret
+8:  mov qword ptr [rip + cp_res_due], 0
+    pop rbx
+    ret
+
+# res_send(CI*): "ID complete-resolve DOC VERSION LEN" + its resolve data to its provider; the
+# resolve out for another item is withdrawn
+res_send:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov eax, [rbx + CI_flags]
+    and eax, CF_RESOLVE | CF_RESOLVED | CF_RESOLVING
+    cmp eax, CF_RESOLVE
+    jne 9f
+    mov rdi, [rbx + CI_ext]
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
+    mov edi, 1
+    call query_room
+    test eax, eax
+    jz 9f
+    mov edi, HR_RESOLVE
+    call cancel_kind
+    mov r12d, [rbx + CI_serial]
+    mov rdi, rbx
+    lea rsi, [rip + .Lx_resolve]
+    call item_record
+    test rax, rax
+    jz 9f
+    mov r13, rax                # the data
+    mov r14, rdx
+    lea rdi, [rip + cp_res_line]
+    call sb_clear
+    lea rdi, [rip + cp_res_line]
+    lea rsi, [rip + .Lv_resolve]
+    call sb_push_cstr
+    mov rax, [rip + cp_doc]
+    lea rdi, [rip + cp_res_line]
+    mov rsi, [rax + DOC_id]
+    call sb_push_u64
+    lea rdi, [rip + cp_res_line]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + cp_res_line]
+    mov rsi, [rbx + CI_ver]
+    call sb_push_u64
+    lea rdi, [rip + cp_res_line]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + cp_res_line]
+    mov rsi, r14
+    call sb_push_u64
+    mov rdi, [rbx + CI_ext]
+    mov rsi, [rip + cp_doc]
+    mov rdx, [rip + cp_res_line + SB_ptr]
+    mov rcx, [rip + cp_res_line + SB_len]
+    mov r8, r13
+    mov r9, r14
+    call extproto_host_send_body
+    test rax, rax
+    jz 9f
+    mov r15, rax
+    or dword ptr [rbx + CI_flags], CF_RESOLVING
+    mov [rip + cp_res_serial], r12d
+    mov rbx, [rbx + CI_ext]
+    mov rdi, rbx
+    mov rsi, r15
+    mov edx, PK_RESOLVE
+    mov ecx, QO_COMPLETE
+    call query_track
+    lea rdi, [rip + cp_reqs]
+    mov esi, HR_SIZE
+    call vec_push
+    mov [rax + HR_ext], rbx
+    mov [rax + HR_id], r15
+    mov dword ptr [rax + HR_kind], HR_RESOLVE
+    mov ecx, [rip + cp_session]
+    mov [rax + HR_session], ecx
+    mov [rax + HR_req], r12
+9:  EPILOGUE
+
+# res_answer(serial, ok, body, len): its resolve answer (from extproto's pump: state only): EXTRA
+# records doc, detail, edit and after join the item; field, choice and cursor records drop it
+res_answer:
+    PROLOGUE 32
+    mov r12d, edi
+    mov r13d, esi
+    mov r14, rdx
+    mov r15, rcx
+    cmp [rip + cp_res_serial], r12d
+    jne 1f
+    mov dword ptr [rip + cp_res_serial], 0
+1:  mov edi, r12d
+    call item_by_serial
+    test rax, rax
+    js 9f
+    mov rdi, rax
+    call item
+    mov rbx, rax
+    and dword ptr [rbx + CI_flags], ~CF_RESOLVING
+    or dword ptr [rbx + CI_flags], CF_RESOLVED
+    test r13d, r13d
+    jz 8f
+    test r15, r15
+    jz 8f
+    cmp r15, 65536
+    ja 8f
+    # whole records, none of them a field, choice or cursor; a detail one line
+    mov rdi, r14
+    mov rsi, r15
+    call extra_ok
+    test eax, eax
+    jz 7f
+    mov qword ptr [rsp], 0      # its detail record, if any
+    mov rdi, r14
+    mov rsi, r15
+    call rec_begin
+2:  call rec_next
+    test eax, eax
+    jz 3f
+    lea rdi, [rip + .Lx_field]
+    call rec_is
+    test eax, eax
+    jnz 7f
+    lea rdi, [rip + .Lx_choice]
+    call rec_is
+    test eax, eax
+    jnz 7f
+    lea rdi, [rip + .Lx_cursor]
+    call rec_is
+    test eax, eax
+    jnz 7f
+    lea rdi, [rip + .Lx_detail]
+    call rec_is
+    test eax, eax
+    jz 2b
+    mov rdi, [rip + rec_body]
+    mov rsi, [rip + rec_blen]
+    call one_line
+    test eax, eax
+    jz 7f
+    mov rax, [rip + rec_body]
+    mov [rsp], rax
+    mov rax, [rip + rec_blen]
+    mov [rsp + 8], rax
+    jmp 2b
+3:  # the item's bytes again at the end: label, insert, the detail (the new one), the old records
+    # and the answer's
+    mov rdi, rbx
+    call item_extra
+    mov [rsp + 16], rax         # its old records, before the detail's length changes
+    mov [rsp + 24], rdx
+    lea rdi, [rip + cp_res_line]
+    call sb_clear
+    mov rsi, [rbx + CI_off]
+    add rsi, [rip + cp_bytes + SB_ptr]
+    mov edx, [rbx + CI_llen]
+    add edx, [rbx + CI_ilen]
+    lea rdi, [rip + cp_res_line]
+    call sb_push
+    cmp qword ptr [rsp], 0
+    je 4f
+    lea rdi, [rip + cp_res_line]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call sb_push
+    mov eax, [rsp + 8]
+    mov [rbx + CI_dlen], eax
+    jmp 5f
+4:  mov rsi, [rbx + CI_off]
+    add rsi, [rip + cp_bytes + SB_ptr]
+    mov eax, [rbx + CI_llen]
+    add rsi, rax
+    mov eax, [rbx + CI_ilen]
+    add rsi, rax
+    mov edx, [rbx + CI_dlen]
+    lea rdi, [rip + cp_res_line]
+    call sb_push
+5:  lea rdi, [rip + cp_res_line]
+    mov rsi, [rsp + 16]
+    mov rdx, [rsp + 24]
+    call sb_push
+    lea rdi, [rip + cp_res_line]
+    mov rsi, r14
+    mov rdx, r15
+    call sb_push
+    add [rbx + CI_xlen], r15d
+    mov rax, [rip + cp_bytes + SB_len]
+    mov [rbx + CI_off], rax
+    lea rdi, [rip + cp_bytes]
+    mov rsi, [rip + cp_res_line + SB_ptr]
+    mov rdx, [rip + cp_res_line + SB_len]
+    call sb_push
+    # an after record in the answer
+    mov rdi, r14
+    mov rsi, r15
+    call rec_begin
+6:  call rec_next
+    test eax, eax
+    jz 8f
+    lea rdi, [rip + .Lx_after]
+    call rec_is
+    test eax, eax
+    jz 6b
+    call ps_word
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lx_signature]
+    call str_eq_cstr
+    mov ecx, CF_AFTER_SIG
+    test eax, eax
+    jnz 61f
+    mov ecx, CF_AFTER_COMPLETE
+61: or [rbx + CI_flags], ecx
+    jmp 6b
+7:  mov rdi, [rbx + CI_ext]
+    mov esi, PK_RESOLVE
+    call query_dropped
+8:  cmp [rip + cp_wait_serial], r12d
+    jne 9f
+    mov dword ptr [rip + cp_wait_ready], 1     # the waiting accept goes ahead (the tick)
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# cp_wait_accept(): the accept that waited for its item's resolve goes ahead, with what came
+cp_wait_accept:
+    push rbx
+    mov edi, [rip + cp_wait_serial]
+    mov ebx, [rip + cp_wait_replace]
+    mov dword ptr [rip + cp_wait_serial], 0
+    mov dword ptr [rip + cp_wait_ready], 0
+    call item_by_serial
+    test rax, rax
+    js 8f
+    mov rdi, rax
+    call item
+    mov rdi, rax
+    mov esi, ebx
+    call cp_accept_ci
+    pop rbx
+    ret
+8:  call cp_close
+    pop rbx
+    ret
+
+# FN complete_part(ext, id, body, len) -> rax the items a part of a pending completion request
+# brought (query-part, from extproto's pump: state only), or -1 when it breaks the rules
+FN complete_part
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12, rsi
+    mov r14, rdx
+    mov r15, rcx
+    xor r13d, r13d
+1:  cmp r13, [rip + cp_reqs + VEC_len]
+    jae 7f
+    imul rax, r13, HR_SIZE
+    add rax, [rip + cp_reqs + VEC_ptr]
+    inc r13
+    cmp [rax + HR_ext], rbx
+    jne 1b
+    cmp [rax + HR_id], r12
+    jne 1b
+    cmp dword ptr [rax + HR_kind], HR_COMPLETE
+    jne 7f
+    mov ecx, [rax + HR_session]
+    cmp ecx, [rip + cp_session]
+    jne 7f
+    cmp dword ptr [rip + cp_open], 0
+    je 7f
+    mov rcx, [rax + HR_language_revision]
+    cmp rcx, [rip + cp_language_revision]
+    jne 7f
+    mov [rsp], rax
+    call doc_alive
+    test eax, eax
+    jz 7f
+    mov rax, [rsp]
+    mov ecx, [rax + HR_parts]   # the first part replaces what it said before, later ones add
+    mov [rsp + 16], ecx
+    mov dword ptr [rax + HR_parts], 1
+    mov rdx, [rax + HR_version]
+    mov [rip + cp_parse_ver], rdx
+    mov rdi, rbx
+    mov rsi, r14
+    mov rdx, r15
+    mov rcx, [rax + HR_req]
+    mov r8d, [rsp + 16]
+    call cp_merge_mode
+    EPILOGUE
+7:  xor eax, eax                # nobody waits for it any more: taken, and dropped
+    EPILOGUE
 
 # ---------------- drawing ----------------
 
@@ -2343,9 +3391,20 @@ cp_draw:
     add rsi, [rip + cp_bytes + SB_ptr]
     mov edx, [r12 + CI_llen]
     call text_width
-    cmp eax, [rsp + 4]
+    mov r13d, eax
+    test dword ptr [r12 + CI_flags], CF_SUFFIX
+    jz 13f
+    mov rdi, r12                # complete-items: the suffix follows the label
+    lea rsi, [rip + .Lx_suffix]
+    call item_record
+    mov rsi, rax
+    lea rdi, [rip + g_face_code]
+    call text_width
+    add r13d, eax
+    add r13d, [rip + g_mt + 4*MI_4]
+13: cmp r13d, [rsp + 4]
     jle 11f
-    mov [rsp + 4], eax
+    mov [rsp + 4], r13d
 11: lea rdi, [rip + g_face_small]
     mov rsi, [r12 + CI_off]
     add rsi, [rip + cp_bytes + SB_ptr]
@@ -2607,10 +3666,13 @@ cp_draw:
     mov esi, r13d
     mov edx, [rsp]
     call baseline
+    mov [rsp + 68], eax
     mov esi, eax
     mov edi, [rsp + 52]
     mov rdx, r12
     call draw_label
+    mov [rsp + 64], eax
+    call cp_label_extras        # complete-items: struck when deprecated, the suffix, the wait
     call gfx_clip_pop
     # the detail at the right, muted
     mov eax, [rsp + 60]
@@ -2704,6 +3766,62 @@ draw_label:
     mov [rsp], eax
     mov ebx, [rsp + 12]
     jmp 1b
+9:  mov eax, [rsp]
+    EPILOGUE
+
+# cp_label_extras(): cp_draw's row: r12 the item, [rsp + 8 + 52] the label's x, + 64 the pen after
+# it, + 68 the baseline: a line through a deprecated label, the suffix muted, "…" while accepting
+# waits for its resolve
+cp_label_extras:
+    PROLOGUE 16
+    mov eax, [rbp + 16 + 52]
+    mov [rsp], eax              # the label's x
+    mov eax, [rbp + 16 + 64]
+    mov [rsp + 4], eax          # the pen
+    mov eax, [rbp + 16 + 68]
+    mov [rsp + 8], eax          # the baseline
+    test dword ptr [r12 + CI_flags], CF_DEPRECATED
+    jz 1f
+    mov edi, [rsp]
+    mov esi, [rsp + 8]
+    mov eax, [rip + g_face_code + FACE_ascent]
+    imul eax, eax, 3
+    sar eax, 3
+    sub esi, eax
+    mov edx, [rsp + 4]
+    sub edx, edi
+    M ecx, MI_1
+    COLOR r8d, T_FG
+    call gfx_fill
+1:  test dword ptr [r12 + CI_flags], CF_SUFFIX
+    jz 2f
+    mov rdi, r12
+    lea rsi, [rip + .Lx_suffix]
+    call item_record
+    test rax, rax
+    jz 2f
+    mov rcx, rax
+    mov r8, rdx
+    lea rdi, [rip + g_face_code]
+    mov esi, [rsp + 4]
+    add esi, [rip + g_mt + 4*MI_4]
+    mov edx, [rsp + 8]
+    COLOR r9d, T_MUTED
+    call text_draw
+    mov [rsp + 4], eax
+2:  mov eax, [r12 + CI_serial]
+    cmp dword ptr [rip + cp_wait_serial], 0
+    je 9f
+    cmp eax, [rip + cp_wait_serial]
+    jne 9f
+    lea rdi, [rip + g_face_code]
+    mov esi, [rsp + 4]
+    add esi, [rip + g_mt + 4*MI_4]
+    mov edx, [rsp + 8]
+    lea rcx, [rip + .Lx_ellipsis]
+    mov r8d, 3
+    COLOR r9d, T_MUTED
+    call text_draw
 9:  EPILOGUE
 
 # lmatch(i) -> eax 1 when label byte i (r13 the label) is the next query byte (r15d of cp_q)
@@ -3024,11 +4142,22 @@ sg_draw:
     jz 1f
     dec r14
 1:  lea r15, [r12 + r13 + 1]
+    # signature-list: "2/3" before the signature when there are several
+    xor eax, eax
+    cmp dword ptr [rip + sg_count], 1
+    jbe 11f
+    lea rdi, [rip + g_face_code]
+    lea rsi, [rip + sg_ctr]
+    mov edx, [rip + sg_ctrlen]
+    call text_width
+    add eax, [rip + g_mt + 4*MI_8]
+11: mov [rsp + 40], eax
     # the width
     lea rdi, [rip + g_face_code]
     mov rsi, r12
     mov rdx, r13
     call text_width
+    add eax, [rsp + 40]
     M ecx, MI_8
     lea eax, [rax + rcx*2]
     M ecx, MI_64
@@ -3130,7 +4259,20 @@ sg_draw:
     mov eax, [rsp + 16]
     add eax, [rip + g_mt + 4*MI_8]
     mov [rsp + 28], eax         # the pen
-    movsxd rbx, dword ptr [rip + sg_from]
+    cmp dword ptr [rsp + 40], 0
+    je 31f
+    lea rdi, [rip + g_face_code]
+    mov esi, eax
+    mov edx, [rsp + 24]
+    lea rcx, [rip + sg_ctr]
+    mov r8d, [rip + sg_ctrlen]
+    COLOR r9d, T_MUTED
+    call text_draw
+    mov eax, [rsp + 16]
+    add eax, [rip + g_mt + 4*MI_8]
+    add eax, [rsp + 40]
+    mov [rsp + 28], eax
+31: movsxd rbx, dword ptr [rip + sg_from]
     movsxd rax, dword ptr [rip + sg_to]
     test rbx, rbx
     jns 4f
@@ -3193,6 +4335,192 @@ sg_run:
     pop rbx
 9:  ret
 
+# ---------------- signature-list (language features) ----------------
+
+# sgl_set(body, len): "N ACTIVE", then N records "FROM TO SIG_LEN DOC_LEN" + SIG + DOC (at most 32);
+# an empty or broken body hides the help
+sgl_set:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov dword ptr [rip + sg_count], 0
+    test r13, r13
+    jz 8f
+    cmp r13, SG_BODY_MAX
+    ja 8f
+    mov [rip + ps_ptr], r12
+    lea rax, [r12 + r13]
+    mov [rip + ps_end], rax
+    call ps_line
+    test eax, eax
+    jz 8f
+    call ps_num
+    test edx, edx
+    jz 8f
+    test rax, rax
+    jz 8f
+    cmp rax, 32
+    ja 8f
+    mov r14, rax                # N
+    call ps_num
+    test edx, edx
+    jz 8f
+    mov r15, rax                # ACTIVE
+    call ps_eol
+    test eax, eax
+    jz 8f
+    # every record whole, its signature one line
+    mov rbx, r14
+1:  test rbx, rbx
+    jz 2f
+    dec rbx
+    call ps_line
+    test eax, eax
+    jz 8f
+    call ps_snum
+    test edx, edx
+    jz 8f
+    call ps_snum
+    test edx, edx
+    jz 8f
+    call ps_num
+    test edx, edx
+    jz 8f
+    mov [rip + sgl_tmp], rax
+    call ps_num
+    test edx, edx
+    jz 8f
+    mov [rip + sgl_tmp + 8], rax
+    call ps_eol
+    test eax, eax
+    jz 8f
+    mov rax, [rip + sgl_tmp]
+    add rax, [rip + sgl_tmp + 8]
+    mov rcx, [rip + ps_end]
+    sub rcx, [rip + ps_ptr]
+    cmp rax, rcx
+    ja 8f
+    mov rdi, [rip + ps_ptr]
+    mov rsi, [rip + sgl_tmp]
+    call one_line
+    test eax, eax
+    jz 8f
+    mov rax, [rip + sgl_tmp]
+    add rax, [rip + sgl_tmp + 8]
+    add [rip + ps_ptr], rax
+    jmp 1b
+2:  mov rax, [rip + ps_ptr]
+    cmp rax, [rip + ps_end]
+    jne 8f
+    lea rdi, [rip + sg_list]
+    call sb_clear
+    lea rdi, [rip + sg_list]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov [rip + sg_count], r14d
+    cmp r15, r14
+    jb 3f
+    xor r15d, r15d
+3:  mov edi, r15d
+    call sgl_show
+    EPILOGUE
+8:  mov dword ptr [rip + sg_open], 0
+    EPILOGUE
+
+# sgl_show(i): signature i of sg_list is the one the help shows (as a 12c answer through sg_set),
+# with "i+1/N" before it
+sgl_show:
+    PROLOGUE
+    mov r12d, edi
+    mov [rip + sg_index], edi
+    mov rax, [rip + sg_list + SB_ptr]
+    mov [rip + ps_ptr], rax
+    add rax, [rip + sg_list + SB_len]
+    mov [rip + ps_end], rax
+    call ps_line                # past "N ACTIVE"
+    mov rax, [rip + ps_lend]
+    inc rax
+    mov [rip + ps_ptr], rax
+    mov ebx, -1
+1:  inc ebx
+    call ps_line
+    test eax, eax
+    jz 9f
+    call ps_snum
+    mov r13, rax                # FROM
+    call ps_snum
+    mov r14, rax                # TO
+    call ps_num
+    mov r15, rax                # SIG_LEN
+    call ps_num
+    mov [rip + sgl_tmp + 8], rax    # DOC_LEN
+    call ps_eol
+    cmp ebx, r12d
+    je 2f
+    mov rax, r15
+    add rax, [rip + sgl_tmp + 8]
+    add [rip + ps_ptr], rax
+    jmp 1b
+2:  # "FROM TO" LF SIG LF DOC
+    lea rdi, [rip + cp_res_line]
+    call sb_clear
+    mov rax, r13
+    test rax, rax
+    jns 21f
+    lea rdi, [rip + cp_res_line]
+    mov esi, '-'
+    call sb_push_byte
+    mov eax, 1
+21: lea rdi, [rip + cp_res_line]
+    mov rsi, rax
+    call sb_push_u64
+    lea rdi, [rip + cp_res_line]
+    mov esi, ' '
+    call sb_push_byte
+    mov rax, r14
+    test rax, rax
+    jns 22f
+    lea rdi, [rip + cp_res_line]
+    mov esi, '-'
+    call sb_push_byte
+    mov eax, 1
+22: lea rdi, [rip + cp_res_line]
+    mov rsi, rax
+    call sb_push_u64
+    lea rdi, [rip + cp_res_line]
+    mov esi, 10
+    call sb_push_byte
+    lea rdi, [rip + cp_res_line]
+    mov rsi, [rip + ps_ptr]
+    mov rdx, r15
+    call sb_push
+    lea rdi, [rip + cp_res_line]
+    mov esi, 10
+    call sb_push_byte
+    lea rdi, [rip + cp_res_line]
+    mov rsi, [rip + ps_ptr]
+    add rsi, r15
+    mov rdx, [rip + sgl_tmp + 8]
+    call sb_push
+    mov rdi, [rip + cp_res_line + SB_ptr]
+    mov rsi, [rip + cp_res_line + SB_len]
+    call sg_set
+    # the counter
+    lea rdi, [rip + sg_ctr]
+    lea esi, [r12 + 1]
+    call fmt_u64
+    lea rcx, [rip + sg_ctr]
+    mov byte ptr [rcx + rax], '/'
+    lea rdi, [rcx + rax + 1]
+    mov rbx, rax
+    mov esi, [rip + sg_count]
+    call fmt_u64
+    lea eax, [rbx + rax + 1]
+    mov [rip + sg_ctrlen], eax
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
 # ---------------- for the tests ----------------
 
 # FN complete_dump(sb): "complete open=O items=N shown=S sel=I labels=A|B|..." and
@@ -3246,6 +4574,8 @@ FN complete_dump
     inc ebx
     jmp 1b
 2:  mov rdi, r12
+    call cp_dump_selected       # complete-items: the selected item
+    mov rdi, r12
     lea rsi, [rip + .Ld_sig]
     call sb_push_cstr
     mov rdi, r12
@@ -3277,7 +4607,16 @@ FN complete_dump
 4:  mov rdi, r12
     mov esi, eax
     call sb_push_u64
+    cmp dword ptr [rip + sg_count], 1
+    jbe 41f
+    mov rdi, r12                # signature-list: " overload=2/3"
+    lea rsi, [rip + .Ld_overload]
+    call sb_push_cstr
     mov rdi, r12
+    lea rsi, [rip + sg_ctr]
+    mov edx, [rip + sg_ctrlen]
+    call sb_push
+41: mov rdi, r12
     lea rsi, [rip + .Ld_text]
     call sb_push_cstr
     cmp dword ptr [rip + sg_open], 0
@@ -3291,8 +4630,123 @@ FN complete_dump
     call sb_push_byte
     EPILOGUE
 
+# cp_dump_selected(sb): "\nselected label=L detail=D doc=TEXT resolved=0|1 replace=0|1
+# commit=CHARS suffix=S deprecated=0|1 waiting=0|1" (doc with its line breaks as \n)
+cp_dump_selected:
+    PROLOGUE
+    mov r12, rdi
+    call selected_item
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, r12
+    lea rsi, [rip + .Ld_selected]
+    call sb_push_cstr
+    mov rsi, [rbx + CI_off]
+    add rsi, [rip + cp_bytes + SB_ptr]
+    mov edx, [rbx + CI_llen]
+    mov rdi, r12
+    call sb_push
+    mov rdi, r12
+    lea rsi, [rip + .Ld_detail]
+    call sb_push_cstr
+    mov rsi, [rbx + CI_off]
+    add rsi, [rip + cp_bytes + SB_ptr]
+    mov eax, [rbx + CI_llen]
+    add rsi, rax
+    mov eax, [rbx + CI_ilen]
+    add rsi, rax
+    mov edx, [rbx + CI_dlen]
+    mov rdi, r12
+    call sb_push
+    mov rdi, r12
+    lea rsi, [rip + .Ld_doc]
+    call sb_push_cstr
+    mov rdi, rbx
+    call item_doc
+    mov r13, rax
+    mov r14, rdx
+1:  test r14, r14
+    jz 3f
+    movzx esi, byte ptr [r13]
+    inc r13
+    dec r14
+    cmp esi, 10
+    jne 2f
+    mov rdi, r12
+    mov esi, 92
+    call sb_push_byte
+    mov esi, 'n'
+2:  mov rdi, r12
+    call sb_push_byte
+    jmp 1b
+3:  mov rdi, r12
+    lea rsi, [rip + .Ld_resolved]
+    call sb_push_cstr
+    mov esi, [rbx + CI_flags]
+    shr esi, 7                  # CF_RESOLVED
+    and esi, 1
+    mov rdi, r12
+    call sb_push_u64
+    mov rdi, r12
+    lea rsi, [rip + .Ld_replace]
+    call sb_push_cstr
+    mov esi, [rbx + CI_flags]
+    shr esi, 8                  # CF_REPLACE
+    and esi, 1
+    mov rdi, r12
+    call sb_push_u64
+    mov rdi, r12
+    lea rsi, [rip + .Ld_commit]
+    call sb_push_cstr
+    test dword ptr [rbx + CI_flags], CF_COMMIT
+    jz 4f
+    mov rdi, rbx
+    lea rsi, [rip + .Lx_commit]
+    call item_record
+    mov rsi, rax
+    mov rdi, r12
+    call sb_push
+4:  mov rdi, r12
+    lea rsi, [rip + .Ld_suffix]
+    call sb_push_cstr
+    test dword ptr [rbx + CI_flags], CF_SUFFIX
+    jz 5f
+    mov rdi, rbx
+    lea rsi, [rip + .Lx_suffix]
+    call item_record
+    mov rsi, rax
+    mov rdi, r12
+    call sb_push
+5:  mov rdi, r12
+    lea rsi, [rip + .Ld_deprecated]
+    call sb_push_cstr
+    mov esi, [rbx + CI_flags]
+    shr esi, 1                  # CF_DEPRECATED
+    and esi, 1
+    mov rdi, r12
+    call sb_push_u64
+    mov rdi, r12
+    lea rsi, [rip + .Ld_waiting]
+    call sb_push_cstr
+    xor esi, esi
+    mov eax, [rbx + CI_serial]
+    cmp eax, [rip + cp_wait_serial]
+    jne 6f
+    inc esi
+6:  mov rdi, r12
+    call sb_push_u64
+9:  EPILOGUE
+
 .bss
 .p2align 3
+rec_after: .quad 0              # rec_next: where the next EXTRA record starts, the current one's
+rec_name: .quad 0               # name and bytes
+rec_nlen: .quad 0
+rec_body: .quad 0
+rec_blen: .quad 0
+cp_res_line: .zero SB_SIZE      # a resolve request or an item's bytes being rebuilt
+cp_adj: .zero SB_SIZE           # an adjusted item text
 ae_n: .quad 0                   # the edits of the item being accepted: start end ptr len
 ae_list: .zero 32 * AE_MAX
 
@@ -3325,6 +4779,7 @@ kind_colors: .byte T_MUTED, T_ICON + 5, T_ICON + 5, T_ICON + 4, T_ICON + 4, T_IC
 .Lck_folder: .asciz "folder"
 .Lv_complete: .asciz "complete"
 .Lv_signature: .asciz "signature"
+.Lv_signatures: .asciz "signatures"
 .Lk_typed: .asciz "typed"
 .Lk_trigger: .asciz "trigger"
 .Lk_invoked: .asciz "invoked"
@@ -3332,6 +4787,22 @@ kind_colors: .byte T_MUTED, T_ICON + 5, T_ICON + 5, T_ICON + 4, T_ICON + 4, T_IC
 .Lk_update: .asciz "update"
 .Lx_edit: .asciz "edit"
 .Lx_cursor: .asciz "cursor"
+.Lx_preselect: .asciz "preselect"
+.Lx_deprecated: .asciz "deprecated"
+.Lx_adjust: .asciz "adjust"
+.Lx_filter: .asciz "filter"
+.Lx_suffix: .asciz "suffix"
+.Lx_commit: .asciz "commit"
+.Lx_after: .asciz "after"
+.Lx_signature: .asciz "signature"
+.Lx_complete: .asciz "complete"
+.Lx_resolve: .asciz "resolve"
+.Lx_replace: .asciz "replace"
+.Lx_field: .asciz "field"
+.Lx_choice: .asciz "choice"
+.Lx_detail: .asciz "detail"
+.Lx_ellipsis: .asciz "\342\200\246"
+.Lv_resolve: .asciz "complete-resolve "
 .Ld_open: .asciz "complete open="
 .Ld_items: .asciz " items="
 .Ld_shown: .asciz " shown="
@@ -3341,6 +4812,16 @@ kind_colors: .byte T_MUTED, T_ICON + 5, T_ICON + 5, T_ICON + 4, T_ICON + 4, T_IC
 .Ld_from: .asciz " from="
 .Ld_to: .asciz " to="
 .Ld_text: .asciz " text="
+.Ld_overload: .asciz " overload="
+.Ld_selected: .asciz "\nselected label="
+.Ld_detail: .asciz " detail="
+.Ld_doc: .asciz " doc="
+.Ld_resolved: .asciz " resolved="
+.Ld_replace: .asciz " replace="
+.Ld_commit: .asciz " commit="
+.Ld_suffix: .asciz " suffix="
+.Ld_deprecated: .asciz " deprecated="
+.Ld_waiting: .asciz " waiting="
 
 # ---------------- native snippet choices ----------------
 .text

@@ -2695,11 +2695,20 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: mov eax, ebx
+96: call query_timeout          # language features: the next request to expire
+    cmp eax, -1
+    je 98f
+    cmp ebx, -1
+    je 99f
+    cmp eax, ebx
+    jge 98f
+99: mov ebx, eax
+98: mov eax, ebx
     EPILOGUE
 
 FN app_tick
     PROLOGUE
+    call query_tick             # language features: expired requests, before their askers' ticks
     call complete_tick
     call langfeat_tick
     call save_tick

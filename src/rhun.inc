@@ -1489,6 +1489,54 @@ ENDSTRUCT TF_SIZE
 .equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
 .equ FEAT_WORKSPACE_WATCH, 16384
 .equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+# language features of protocol 1.1 (query.s): bit i of EXT_lfeatures is lfeat_names[i]
+.equ LFEAT_QUERY_STREAM, 1       # query-part, query-progress for rhun's pending requests
+.equ LFEAT_PROVIDER_SCOPE, 2     # provides KEY VALUES: narrows [provides] at run time
+.equ LFEAT_HOVER_QUERY, 4
+.equ LFEAT_COMPLETE_ITEMS, 8
+.equ LFEAT_SIGNATURE_LIST, 16
+.equ LFEAT_NAVIGATION, 32
+.equ LFEAT_SELECTION_RANGES, 64
+.equ LFEAT_HIERARCHY, 128
+.equ LFEAT_WORKSPACE_SYMBOLS, 256
+.equ LFEAT_PREPARE_RENAME, 512
+.equ LFEAT_PARTIAL_FORMAT, 1024
+.equ LFEAT_CODE_ACTIONS, 2048
+.equ LFEAT_FILE_DIAGNOSTICS, 4096
+.equ LFEAT_DOCUMENT_LINKS, 8192
+# the ones this rhun agrees to
+.equ LFEAT_HOST, LFEAT_QUERY_STREAM | LFEAT_PROVIDER_SCOPE | LFEAT_COMPLETE_ITEMS | LFEAT_SIGNATURE_LIST
+# the kinds of request rhun sends providers (query.s's pk_table rows)
+.equ PK_COMPLETE, 0
+.equ PK_RESOLVE, 1               # complete-resolve
+.equ PK_SIGNATURE, 2
+.equ PK_HOVER, 3
+.equ PK_DEFINITION, 4
+.equ PK_DECLARATION, 5
+.equ PK_TYPEDEF, 6
+.equ PK_IMPLEMENTATION, 7
+.equ PK_REFERENCES, 8
+.equ PK_SYMBOLS, 9
+.equ PK_WSYMBOLS, 10
+.equ PK_SELECTION, 11
+.equ PK_CALLH, 12                # call-hierarchy
+.equ PK_TYPEH, 13                # type-hierarchy
+.equ PK_HIERCALLS, 14            # calls-in, calls-out, supertypes, subtypes
+.equ PK_ACTIONS, 15
+.equ PK_ACTIONS_AUTO, 16         # code actions asked for the lightbulb
+.equ PK_ACTION_RESOLVE, 17
+.equ PK_PREPARE_RENAME, 18
+.equ PK_RENAME, 19
+.equ PK_FORMAT, 20
+.equ PK_RANGE_FORMAT, 21
+.equ PK_TYPE_FORMAT, 22
+.equ PK_LINKS, 23
+.equ PK_SAVE_ACTIONS, 24
+.equ PK_COUNT, 25
+# who asked (query.s routes parts and expiries to them)
+.equ QO_LANGFEAT, 1
+.equ QO_COMPLETE, 2
+.equ QO_SAVE, 3
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1726,6 +1774,24 @@ F EXT_catalog_state, 4 #0staging,1visible,2hidden historical
 F EXT_catalog_pad, 4
 F EXT_host_child_in, 4 # retained temporary target stdin endpoint
 F EXT_host_child_out, 4 # retained temporary target stdout endpoint
+# language features (query.s): the [provides] keys of 0.18's kinds, provider-scope's narrowed
+# values, the session's statistics per kind, and the language features agreed after hello
+F EXT_pv_hover, 8       # [provides] hover: patterns, cstr, or 0
+F EXT_pv_declaration, 8
+F EXT_pv_type_definition, 8
+F EXT_pv_implementation, 8
+F EXT_pv_selection_ranges, 8
+F EXT_pv_call_hierarchy, 8
+F EXT_pv_type_hierarchy, 8
+F EXT_pv_workspace_symbols, 8
+F EXT_pv_range_format, 8
+F EXT_pv_type_format, 8
+F EXT_pv_ttrig, 8       # type_format.triggers
+F EXT_pv_document_links, 8
+F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
+F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
+F EXT_lfeatures, 4      # LFEAT_*: language features agreed after hello
+F EXT_lfeatures_pad, 4
 ENDSTRUCT EXT_SIZE
 .equ EXT_host_cleanup_mask, EXT_start_pad
 .equ EXT_host_cleanup_error, EXT_activation_owner_pad

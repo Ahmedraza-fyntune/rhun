@@ -566,6 +566,9 @@ draw_detail:
     # its commands
     mov rdi, rbx
     call draw_commands
+    # the language features it provides, with the session's numbers (query.s)
+    mov rdi, rbx
+    call draw_langfeat
     # its own settings
     cmp qword ptr [rbx + EXT_sdefs + VEC_len], 0
     je 7f
@@ -728,6 +731,61 @@ draw_commands:
 7:  inc r12
     jmp 1b
 8:  EPILOGUE
+
+# draw_langfeat(ext): "Language features": each kind it provides, its file patterns in force and
+# its numbers this session, in the warning color when slow or failing (query.s)
+draw_langfeat:
+    PROLOGUE 16
+    mov rbx, rdi
+    xor r12d, r12d              # the kind
+    xor r13d, r13d              # rows shown
+1:  cmp r12d, PK_COUNT
+    jae 9f
+    mov rdi, rbx
+    mov esi, r12d
+    lea rdx, [rip + xp_line]
+    call query_kind_label
+    test eax, eax
+    jz 7f
+    test r13d, r13d
+    jnz 2f
+    lea rsi, [rip + .Ls_langfeat]
+    call section
+2:  inc r13d
+    lea rdi, [rip + g_face_ui]
+    mov rsi, [rip + xp_line + SB_ptr]
+    COLOR edx, T_FG
+    mov ecx, MI_28
+    mov r8d, [rip + xp_x]
+    call text_at_keep
+    mov rdi, rbx
+    mov esi, r12d
+    lea rdx, [rip + xp_line]
+    call query_kind_numbers
+    mov rdi, [rip + xp_line + SB_ptr]
+    call label_width_small
+    mov esi, [rip + xp_x]
+    add esi, [rip + xp_w]
+    sub esi, eax
+    mov [rsp], esi
+    mov rdi, rbx
+    mov esi, r12d
+    call query_kind_warn
+    COLOR r9d, T_MUTED
+    test eax, eax
+    jz 3f
+    COLOR r9d, T_WARNING
+3:  mov esi, [rsp]
+    lea rdi, [rip + g_face_small]
+    mov edx, [rip + xp_y]
+    M ecx, MI_28
+    mov r8, [rip + xp_line + SB_ptr]
+    call ui_text_c
+    M eax, MI_28
+    add [rip + xp_y], eax
+7:  inc r12d
+    jmp 1b
+9:  EPILOGUE
 
 # copy_title(dst, title): up to the last " (" (the extension's name that the palette adds)
 copy_title:
@@ -1825,6 +1883,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ls_permissions: .asciz "It can"
 .Ls_toolbar: .asciz "Title bar"
 .Ls_commands: .asciz "Commands"
+.Ls_langfeat: .asciz "Language features"
 .Ls_settings: .asciz "Settings"
 .Lb_install: .asciz "Install from GitHub"
 .Lb_details: .asciz "Details"

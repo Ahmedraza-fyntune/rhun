@@ -469,7 +469,17 @@ handle_line:
 2:  test r12, r12
     jz 9f
     test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
+    jnz 21f
+    cmp dword ptr [rbx + EXT_lfeatures], 0
+    je 9f
+21: mov rdi, rbx                # language features: counted, and a late answer goes no further
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call query_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -495,12 +505,22 @@ handle_line:
     jmp 9f
 .Lhl_err:
     test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
-    mov edi, 1
+    jnz 1f
+    cmp dword ptr [rbx + EXT_lfeatures], 0
+    je 9f
+1:  mov edi, 1
     call field_u64
     test edx, edx
     jz 9f
     mov r12, rax
+    mov rdi, rbx                # language features: counted, and a late answer goes no further
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call query_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -667,6 +687,43 @@ reply_error_u64:
     mov edi, 10
     call out_byte
     jmp out_end
+
+# ---------------- for verb handlers in other files (language features: query.s) ----------------
+
+# FN extproto_cur() -> rax the EXT being served; extproto_req_id() -> rax its request's id
+FN extproto_cur
+    mov rax, [rip + cur]
+    ret
+FN extproto_req_id
+    mov rax, [rip + cur_id]
+    ret
+# FN extproto_nfields() -> rax the fields of the request's line
+FN extproto_nfields
+    mov rax, [rip + nfields]
+    ret
+# FN extproto_field(i) -> rax value, rdx 1 for a decimal number; extproto_field_at(i) -> rax ptr,
+# rdx len (0 past the line's fields); extproto_rest(i) -> rax ptr, rdx len: field i to the end
+FN extproto_field
+    jmp field_u64
+FN extproto_field_at
+    cmp rdi, [rip + nfields]
+    jae 8f
+    jmp field_at
+8:  xor eax, eax
+    xor edx, edx
+    ret
+FN extproto_rest
+    jmp rest_from
+# FN extproto_body() -> rax ptr, rdx len of the request's body
+FN extproto_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+# FN extproto_ok(id), extproto_error(id, "code text"): the reply
+FN extproto_ok
+    jmp reply_ok
+FN extproto_error
+    jmp reply_error
 
 # ---------------- documents ----------------
 
@@ -2848,6 +2905,56 @@ FN extproto_host_send
 8:  xor eax, eax
     EPILOGUE
 
+# FN extproto_host_send_body(ext, doc or 0, line, len, body, blen) -> rax the id of "ID LINE" and
+# the body's bytes after it (language features: the line ends with blen), or 0. With a document,
+# every event about it goes first and a document the extension does not know is not asked about
+FN extproto_host_send_body
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov [rsp], r8
+    mov [rsp + 8], r9
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 8f
+    mov rdi, rbx
+    call extproto_events
+    test rax, rax
+    js 8f
+    test r12, r12
+    jz 1f
+    mov rdi, rbx
+    mov rsi, r12
+    call extproto_doc_ready
+    test eax, eax
+    jz 8f
+1:  mov [rip + cur], rbx
+    cmp qword ptr [rbx + EXT_hreq], 2147483647
+    jae 8f
+    inc qword ptr [rbx + EXT_hreq]
+    mov r15, [rbx + EXT_hreq]
+    call out_begin
+    mov rdi, r15
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r13
+    mov rsi, r14
+    call out_bytes
+    mov edi, 10
+    call out_byte
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call out_bytes
+    call out_end
+    test rax, rax
+    js 8f
+    mov rax, r15
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # FN extproto_send_action(ext, data, len): "0 action LEN" and the bytes of a chosen code action
 FN extproto_send_action
     PROLOGUE
@@ -2897,6 +3004,7 @@ hello_features:
     mov rbx, rdi
     mov [rip + cur], rdi
     mov dword ptr [rbx + EXT_features], 0
+    mov dword ptr [rbx + EXT_lfeatures], 0
     mov edi, 2
     call rest_from
     mov r12, rax
@@ -2935,11 +3043,29 @@ hello_features:
     or [rbx + EXT_features], eax
 21: inc r14d
     jmp 2b
-3:  add r12, r13
+3:  xor r14d, r14d              # language features (query.s): EXT_lfeatures
+31: lea rax, [rip + lfeat_names]
+    mov rdx, [rax + r14*8]
+    test rdx, rdx
+    jz 33f
+    mov rdi, r12
+    mov rsi, r13
+    call str_eq_cstr
+    test eax, eax
+    jz 32f
+    mov ecx, r14d
+    mov eax, 1
+    shl eax, cl
+    or [rbx + EXT_lfeatures], eax
+32: inc r14d
+    jmp 31b
+33: add r12, r13
     jmp 1b
 4:  and dword ptr [rbx + EXT_features], FEAT_HOST
-    cmp dword ptr [rbx + EXT_features], 0
-    je 9f
+    and dword ptr [rbx + EXT_lfeatures], LFEAT_HOST
+    mov eax, [rbx + EXT_features]
+    or eax, [rbx + EXT_lfeatures]
+    jz 9f
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
@@ -2962,7 +3088,26 @@ hello_features:
     call out_cstr
 6:  inc r14d
     jmp 5b
-7:  mov edi, 10
+7:  xor r14d, r14d              # and the language features agreed
+71: lea rax, [rip + lfeat_names]
+    mov rsi, [rax + r14*8]
+    test rsi, rsi
+    jz 73f
+    mov eax, [rbx + EXT_lfeatures]
+    mov ecx, r14d
+    shr eax, cl
+    test eax, 1
+    jz 72f
+    mov edi, ' '
+    push rsi
+    push rsi
+    call out_byte
+    pop rdi
+    pop rsi
+    call out_cstr
+72: inc r14d
+    jmp 71b
+73: mov edi, 10
     call out_byte
     call out_end
 9:  EPILOGUE
@@ -3415,7 +3560,14 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # language features (query.s)
+    .quad .Lv_query_part, query_h_part, REPLY_BODY_MAX
+    .quad .Lv_query_progress, query_h_progress, 4096
+    .quad .Lv_provides, query_h_provides, 0
     .quad 0, 0, 0
+.Lv_query_part: .asciz "query-part"
+.Lv_query_progress: .asciz "query-progress"
+.Lv_provides: .asciz "provides"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
