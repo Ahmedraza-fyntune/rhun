@@ -107,3 +107,22 @@ FN wslist_abort
 FN wslist_kind
     mov rax, [rip + wl_kind]
     ret
+
+# ---------------- the confirmation list (to come) ----------------
+
+# FN ws_gate() -> eax 1 when the edit may be made now, 0 refused (ws_code), 2 waiting for the user
+FN ws_gate
+    mov eax, 1
+    ret
+
+# FN ws_parked() -> eax 1 while an edit waits for the user's answer
+FN ws_parked
+    xor eax, eax
+    ret
+
+FN ws_confirm_chosen
+    ret
+FN ws_confirm_cancel
+    ret
+FN ws_confirm_owner_gone
+    ret

@@ -9,59 +9,10 @@
 .equ WS_EDITS_MAX, 100000
 .equ WS_LABEL_MAX, 200
 
-.equ WK_TEXT, 0                 # entry kinds
-.equ WK_CREATE, 1
-.equ WK_RENAME, 2
-.equ WK_DELETE, 3
-
-.equ WP_VERSION, 0              # what a text group was made for (PRE)
-.equ WP_DASH, 1                 # "-": the file on disk as it is
-.equ WP_HASH, 2                 # "fnv1a64:HEX": the file whose bytes hash so
-
-.equ WF_OVERWRITE, 1            # entry flags
-.equ WF_IGNORE_EXISTING, 2
-.equ WF_RECURSIVE, 4
-.equ WF_IGNORE_MISSING, 8
-
-# an entry of a workspace edit: a text group (one file) or a file operation
-STRUCT
-F WG_kind, 8                    # WK_*
-F WG_path, 8                    # its PATH bytes (a rename's FROM)
-F WG_plen, 8
-F WG_path2, 8                   # a rename's TO
-F WG_plen2, 8
-F WG_pre, 8                     # WP_*
-F WG_version, 8                 # WP_VERSION: the version; -1 otherwise
-F WG_hash, 8                    # WP_HASH: the hash
-F WG_flags, 8                   # WF_*
-F WG_doc, 8                     # DOC* once resolved: the open document, or a hidden one (WG_hidden)
-F WG_hidden, 8                  # 1: WG_doc was read for a closed file, never shown, freed after
-F WG_first, 8                   # its edits: we[first .. first + count)
-F WG_count, 8
-F WG_opened, 8                  # 1: this edit opened its tab (v1; closed again if the edit fails)
-F WG_real, 8                    # owned: the file's path as written on disk, or 0
-F WG_stamp, 8                   # the file's stamp when it was read
-F WG_orig, 8                    # owned: a closed file's bytes as read, raw
-F WG_olen, 8
-F WG_clean, 8                   # an open document that had no unsaved changes
-F WG_ver0, 8                    # an open document's version when it was checked
-ENDSTRUCT WG_SIZE
-
-# an edit of a text group
-STRUCT
-F WE_l1, 4
-F WE_c1, 4
-F WE_l2, 4
-F WE_c2, 4
-F WE_start, 8                   # byte offsets, once resolved
-F WE_end, 8
-F WE_text, 8
-F WE_len, 8
-ENDSTRUCT WE_SIZE
-
 .bss
 .p2align 3
 .globl wg_vec, we_vec, ws_only, ws_act_data, ws_act_dlen, ws_req_id, ws_quiet, ws_feats, ws_ext
+.globl ws_entry, ws_pathbuf, ws_confirm, ws_request_ext, ws_back, ws_code, ws_deflabel, ws_preserve_context, ws_body
 wg_vec: .zero VEC_SIZE          # the workspace edit being made
 we_vec: .zero VEC_SIZE
 ws_only: .quad 0                # a document id: the edit may change that document only
@@ -225,6 +176,9 @@ ws_run:
     call sb_clear
     mov rax, [rip + g_doc]
     mov [rip + ws_back], rax
+    call ws_parked              # another edit waits for the user: this one is busy
+    test eax, eax
+    jnz .Lwr_busy
     # the grammar: the features the extension agreed (a restricted edit keeps v1's)
     xor eax, eax
     mov rcx, [rip + ws_ext]
@@ -256,7 +210,18 @@ ws_run:
     call ws_check
     test eax, eax
     jz .Lwr_fail
-    call ws_commit
+    cmp qword ptr [rip + ws_feats], 0
+    je 3f
+    # workspace-edits: closed files edited in their hidden documents; the confirmation list
+    # when the edit writes to disk without the extension's permission (wsconfirm.s)
+    call ws_disk_prepare
+    call ws_gate
+    test eax, eax
+    jz .Lwr_fail
+    cmp eax, 2
+    jne 3f
+    EPILOGUE                    # waiting for the user: the plan stays as it is
+3:  call ws_commit
     test eax, eax
     jz .Lwr_fail
     call ws_finish
@@ -270,10 +235,21 @@ ws_run:
     call ws_unwind
     xor eax, eax
     EPILOGUE
+.Lwr_busy:
+    mov qword ptr [rip + ws_feats], 0   # nothing of the waiting plan is touched
+    lea rdi, [rip + .Lwc_busy]
+    lea rsi, [rip + .Lws_e_busy]
+    call ws_err
+    cmp dword ptr [rip + ws_quiet], 0
+    jne 4f
+    mov rdi, [rip + ws_toast]
+    call app_toast
+4:  xor eax, eax
+    EPILOGUE
 
-# ws_err(reply "CODE TEXT", toast) -> eax 0: the failure's reply and toast; with workspace-edits
+# FN ws_err(reply "CODE TEXT", toast) -> eax 0: the failure's reply and toast; with workspace-edits
 # agreed the reply names the entry at fault: "CODE ENTRY TEXT"
-ws_err:
+FN ws_err
     PROLOGUE
     mov rbx, rdi
     mov [rip + ws_toast], rsi
@@ -310,9 +286,9 @@ ws_err:
 9:  xor eax, eax
     EPILOGUE
 
-# ws_unwind(): nothing changed: the tabs this edit opened close, the hidden documents go, the
+# FN ws_unwind(): nothing changed: the tabs this edit opened close, the hidden documents go, the
 # user's document is active again, a toast says why (unless quiet)
-ws_unwind:
+FN ws_unwind
     PROLOGUE
     cmp dword ptr [rip + ws_quiet], 0
     jne 1f
@@ -375,6 +351,9 @@ FN ws_release
 11: mov rdi, [r12 + WG_orig]
     mov qword ptr [r12 + WG_orig], 0
     call mem_free
+    mov rdi, [r12 + WG_new]
+    mov qword ptr [r12 + WG_new], 0
+    call mem_free
     mov rdi, [r12 + WG_real]
     mov qword ptr [r12 + WG_real], 0
     call mem_free
@@ -384,8 +363,8 @@ FN ws_release
     call mem_free
     EPILOGUE
 
-# ws_finish(): a made edit: back to the user's document, the run's leftovers go
-ws_finish:
+# FN ws_finish(): a made edit: back to the user's document, the run's leftovers go
+FN ws_finish
     PROLOGUE
     call ws_release
     cmp dword ptr [rip + ws_preserve_context], 0
@@ -846,9 +825,9 @@ ws_flag_bit:
 
 # ---------------- resolving ----------------
 
-# ws_path(WG*, second) -> eax 1 with its path (a rename's TO when second is 1) in ws_pathbuf as a
+# FN ws_path(WG*, second) -> eax 1 with its path (a rename's TO when second is 1) in ws_pathbuf as a
 # cstr, 0 when it holds a NUL or is too long
-ws_path:
+FN ws_path
     mov r8, [rdi + WG_path]
     mov rcx, [rdi + WG_plen]
     test esi, esi
@@ -1291,9 +1270,9 @@ FN ws_buf_parts
     jmp 1b
 9:  ret
 
-# ws_commit() -> eax 1 when the edit was made (0 with ws_code when the disk refused and it was
+# FN ws_commit() -> eax 1 when the edit was made (0 with ws_code when the disk refused and it was
 # put back): a transaction when it touches disk or several documents
-ws_commit:
+FN ws_commit
     PROLOGUE
     call ws_disk_needed         # files on disk to write, create, rename or delete (wsdisk.s)
     test eax, eax
@@ -1433,3 +1412,5 @@ FN ws_ext_gone
 .Lwc_readonly: .asciz "readonly a document cannot be edited"
 .Lwc_range: .asciz "badpos a range is outside its text or inside a character"
 .Lwc_overlap: .asciz "badpos two edits overlap"
+.Lwc_busy: .asciz "busy another workspace edit waits for the user"
+.Lws_e_busy: .asciz "Another workspace edit waits for your answer: nothing changed"

@@ -6,6 +6,7 @@
 
 # ext_realpath(path, buf[4096]) -> eax 1 with the existing path resolved, else 0.
 # Resolve links before comparing roots, including links in parent folders.
+.globl ext_realpath             # wsedit: where a workspace edit's disk changes may go
 ext_realpath:
 .ifdef MACOS
     SYS SYS_realpath

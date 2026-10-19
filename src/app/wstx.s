@@ -637,6 +637,20 @@ tx_cmd:
     pop rbx
     ret
 
+# FN tx_drop_journals(): every transaction's journal goes (rhun quits: nothing can undo them)
+FN tx_drop_journals
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + tx_count]
+    jae 9f
+    imul rdi, rbx, TX_SIZE
+    lea rax, [rip + tx_table]
+    add rdi, rax
+    inc rbx
+    call ws_journal_drop
+    jmp 1b
+9:  EPILOGUE
+
 # FN tx_print(sb): print-tx, the newest first: "tx=ID state=applied|undone|partial parts=N
 # files=N label=TEXT", one line per transaction ("tx=none" without any)
 FN tx_print

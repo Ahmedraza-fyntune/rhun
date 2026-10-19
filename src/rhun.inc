@@ -1255,6 +1255,62 @@ ENDSTRUCT TP_SIZE
 .equ TPS_LOST, 2        # closed unsaved, or otherwise out of reach: skipped
 .equ TPF_FOLDER, 1      # a create or delete of a folder
 .equ TPF_PICK, 2        # tx_run: undo or redo this one
+.equ TPF_DONE, 4        # a commit made its disk step (a rollback puts it back)
+# a workspace edit being made (wsedit.s reads it, wsdisk.s writes its files)
+.equ WK_TEXT, 0                 # entry kinds
+.equ WK_CREATE, 1
+.equ WK_RENAME, 2
+.equ WK_DELETE, 3
+
+.equ WP_VERSION, 0              # what a text group was made for (PRE)
+.equ WP_DASH, 1                 # "-": the file on disk as it is
+.equ WP_HASH, 2                 # "fnv1a64:HEX": the file whose bytes hash so
+
+.equ WF_OVERWRITE, 1            # entry flags
+.equ WF_IGNORE_EXISTING, 2
+.equ WF_RECURSIVE, 4
+.equ WF_IGNORE_MISSING, 8
+
+# an entry of a workspace edit: a text group (one file) or a file operation
+STRUCT
+F WG_kind, 8                    # WK_*
+F WG_path, 8                    # its PATH bytes (a rename's FROM)
+F WG_plen, 8
+F WG_path2, 8                   # a rename's TO
+F WG_plen2, 8
+F WG_pre, 8                     # WP_*
+F WG_version, 8                 # WP_VERSION: the version; -1 otherwise
+F WG_hash, 8                    # WP_HASH: the hash
+F WG_flags, 8                   # WF_*
+F WG_doc, 8                     # DOC* once resolved: the open document, or a hidden one (WG_hidden)
+F WG_hidden, 8                  # 1: WG_doc was read for a closed file, never shown, freed after
+F WG_first, 8                   # its edits: we[first .. first + count)
+F WG_count, 8
+F WG_opened, 8                  # 1: this edit opened its tab (v1; closed again if the edit fails)
+F WG_real, 8                    # owned: the file's path as written on disk, or 0
+F WG_stamp, 8                   # the file's stamp when it was read
+F WG_orig, 8                    # owned: a closed file's bytes as read, raw
+F WG_olen, 8
+F WG_clean, 8                   # an open document that had no unsaved changes
+F WG_ver0, 8                    # an open document's version when it was checked
+F WG_new, 8                     # owned: a closed file's bytes to write
+F WG_nlen, 8
+F WG_before, 8                  # FNV-1a of the bytes read, and of the bytes to write
+F WG_after, 8
+ENDSTRUCT WG_SIZE
+
+# an edit of a text group
+STRUCT
+F WE_l1, 4
+F WE_c1, 4
+F WE_l2, 4
+F WE_c2, 4
+F WE_start, 8                   # byte offsets, once resolved
+F WE_end, 8
+F WE_text, 8
+F WE_len, 8
+ENDSTRUCT WE_SIZE
+
 
 .equ EK_OTHER, 0
 .equ EK_TYPE, 1

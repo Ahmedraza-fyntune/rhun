@@ -55,6 +55,7 @@ EXPORTS
     LockFileEx
     MoveFileExW
     MultiByteToWideChar
+    OpenProcess
     PeekNamedPipe
     ReadFile
     RemoveDirectoryW
