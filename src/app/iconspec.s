@@ -377,7 +377,9 @@ ei_check_grey:
     dec ecx
     mov eax, [rsi + rcx*4]
     movzx edx, al
-    movzx r8d, ah
+    mov r8d, eax
+    shr r8d, 8
+    movzx r8d, r8b
     cmp edx, r8d
     jne 9f
     shr eax, 16
