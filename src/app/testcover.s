@@ -462,6 +462,43 @@ FN testcover_count
     mov rax, [rdi + CF_n]
     ret
 
+# testcover_files() -> rax the files with coverage
+FN testcover_files
+    mov rax, [rip + files + VEC_len]
+    ret
+
+# testcover_file_at(i) -> rax CF*
+FN testcover_file_at
+    imul rax, rdi, CF_SIZE
+    add rax, [rip + files + VEC_ptr]
+    ret
+
+# testcover_path(CF*) -> rax its path (cstr)
+FN testcover_path
+    mov rax, [rdi + CF_path]
+    ret
+
+# testcover_stats(CF*) -> eax its covered lines (partly covered ones too), edx the lines it has
+#   coverage for
+FN testcover_stats
+    xor eax, eax
+    xor edx, edx
+    mov rsi, [rdi + CF_lines]
+    mov r8, [rdi + CF_n]
+    xor ecx, ecx
+1:  cmp rcx, r8
+    jae 9f
+    movzx r9d, byte ptr [rsi + rcx]
+    inc rcx
+    test r9d, r9d
+    jz 1b
+    inc edx
+    test r9d, COV_HIT
+    jz 1b
+    inc eax
+    jmp 1b
+9:  ret
+
 # testcover_line(CF*, line one-based) -> eax 0 unknown, COV_HIT covered, COV_MISS missed, 3 partly
 FN testcover_line
     xor eax, eax

@@ -562,6 +562,7 @@ test_ctl:
     .quad .Lc_view, testctl_print_view, .Lc_gutter, testctl_gutter
     .quad .Lc_gutter_click, testctl_gutter_click, .Lc_status, testctl_status
     .quad .Lc_filter, testctl_filter, .Lc_failed, testctl_failed
+    .quad .Lc_cov_view, testctl_cov_view
     .quad 0, 0
 .Lc_select: .asciz "test-select"
 .Lc_expand: .asciz "test-expand"
@@ -579,6 +580,7 @@ test_ctl:
 .Lc_status: .asciz "print-test-status"
 .Lc_filter: .asciz "test-filter"
 .Lc_failed: .asciz "test-failed-only"
+.Lc_cov_view: .asciz "print-test-coverage"
 .text
 
 testctl_expand_open:
@@ -3051,4 +3053,309 @@ testctl_failed:
 .Lht_coverage: .asciz "Run All Tests with Coverage"
 .Lht_rerun: .asciz "Re-run Failed Tests"
 .Lht_cancel: .asciz "Cancel Test Runs"
+.text
+
+# ---------------- the Coverage section ----------------
+# A sidebar section once coverage exists: a row per file with its covered and total lines and the
+# percentage, the least covered first; a click opens the file. It goes when the coverage does.
+
+.bss
+.p2align 3
+.globl g_tcv_dirty
+tcv_tree: .quad 0
+tcv_keys: .zero VEC_SIZE        # u64 sort keys: per mille << 32 | the file's index
+g_tcv_dirty: .long 0            # the files changed: listed again
+.data
+.p2align 2
+tcv_place: .long -1
+.text
+
+# testview_cov_tick(): the section shows with coverage, hides without; its rows follow the files
+FN testview_cov_tick
+    PROLOGUE
+    cmp qword ptr [rip + g_cov_run], 0
+    jne 1f
+    mov edi, [rip + tcv_place]
+    test edi, edi
+    js 9f
+    mov esi, 1
+    call place_set_hidden
+    EPILOGUE
+1:  cmp dword ptr [rip + tcv_place], 0
+    jge 2f
+    lea rdi, [rip + tcv_tree_ops]
+    xor esi, esi
+    call tree_new
+    mov [rip + tcv_tree], rax
+    mov edi, PLACE_SIDEBAR
+    lea rsi, [rip + .Ltcv_name]
+    lea rdx, [rip + .Ltcv_title]
+    lea rcx, [rip + tcv_place_ops]
+    xor r8d, r8d
+    call place_add
+    mov [rip + tcv_place], eax
+    test eax, eax
+    js 9f
+    mov edi, eax
+    mov esi, IC_BEAKER
+    call place_set_icon
+    mov dword ptr [rip + g_tcv_dirty], 1
+2:  mov edi, [rip + tcv_place]
+    xor esi, esi
+    call place_set_hidden
+    cmp dword ptr [rip + g_tcv_dirty], 0
+    je 9f
+    mov dword ptr [rip + g_tcv_dirty], 0
+    call tcv_rebuild
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# tcv_rebuild(): the rows, least covered first
+tcv_rebuild:
+    PROLOGUE
+    mov qword ptr [rip + tcv_keys + VEC_len], 0
+    call testcover_files
+    mov r12, rax
+    xor ebx, ebx
+1:  cmp rbx, r12
+    jae 2f
+    mov rdi, rbx
+    call testcover_file_at
+    mov rdi, rax
+    call testcover_stats
+    xor ecx, ecx
+    test edx, edx
+    jz 11f
+    imul eax, eax, 1000
+    mov ecx, edx
+    xor edx, edx
+    div ecx
+    mov ecx, eax
+11: shl rcx, 32
+    or rcx, rbx
+    push rcx
+    push rcx
+    lea rdi, [rip + tcv_keys]
+    mov esi, 8
+    call vec_push
+    pop rcx
+    pop rcx
+    mov [rax], rcx
+    inc rbx
+    jmp 1b
+2:  mov rdi, [rip + tcv_keys + VEC_ptr]
+    mov rsi, [rip + tcv_keys + VEC_len]
+    call sort_u64
+    mov rdi, [rip + tcv_tree]
+    xor esi, esi
+    call tree_kids_begin
+    xor r13d, r13d
+3:  cmp r13, [rip + tcv_keys + VEC_len]
+    jae 8f
+    mov rax, [rip + tcv_keys + VEC_ptr]
+    mov eax, [rax + r13*8]      # the file's index (the key's low half)
+    mov rdi, rax
+    call testcover_file_at
+    mov r14, rax
+    mov rdi, r14
+    call testcover_path
+    mov r15, rax
+    # the label: the path inside the project, else the whole path
+    mov rdi, r15
+    call tcv_rel
+    mov rbx, rax
+    mov rdi, rbx
+    call strlen
+    mov r8, rax
+    push r8
+    push r8
+    mov rdi, r15
+    call strlen
+    mov rdx, rax
+    pop r8
+    pop r8
+    mov rdi, [rip + tcv_tree]
+    mov rsi, r15
+    mov rcx, rbx
+    mov r9d, KIDS_LEAF
+    call tree_kid
+    cmp eax, -1
+    je 7f
+    mov ebx, eax
+    # "C/T · N%"
+    lea rdi, [rip + tv_text]
+    call sb_clear
+    mov rdi, r14
+    call testcover_stats
+    push rax
+    push rdx
+    lea rdi, [rip + tv_text]
+    mov esi, eax
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    mov esi, '/'
+    call sb_push_byte
+    mov rsi, [rsp]
+    lea rdi, [rip + tv_text]
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltcv_dot]
+    call sb_push_cstr
+    pop rcx
+    pop rax
+    xor esi, esi
+    test ecx, ecx
+    jz 4f
+    imul eax, eax, 100
+    xor edx, edx
+    div ecx
+    mov esi, eax
+4:  lea rdi, [rip + tv_text]
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    mov esi, '%'
+    call sb_push_byte
+    mov rdi, [rip + tcv_tree]
+    mov esi, ebx
+    mov rdx, [rip + tv_text + SB_ptr]
+    mov rcx, [rip + tv_text + SB_len]
+    call tree_set_desc
+7:  inc r13
+    jmp 3b
+8:  mov rdi, [rip + tcv_tree]
+    xor esi, esi
+    call tree_kids_end
+    EPILOGUE
+
+# tcv_rel(path) -> rax the part after the project's folder and a slash, else the path
+tcv_rel:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rip + g_project]
+    test r12, r12
+    jz 8f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    mov rdi, rbx
+    call strlen
+    cmp rax, r13
+    jbe 8f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call memeq
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx + r13], '/'
+    jne 8f
+    lea rax, [rbx + r13 + 1]
+    EPILOGUE
+8:  mov rax, rbx
+    EPILOGUE
+
+# tcv_draw(ctx, x, y, w, h): the rows
+tcv_draw:
+    PROLOGUE 16
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov ebx, ecx
+    mov r12d, r8d
+    call place_focused
+    xor r9d, r9d
+    cmp eax, [rip + tcv_place]
+    sete r9b
+    mov rdi, [rip + tcv_tree]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, ebx
+    mov r8d, r12d
+    call tree_draw
+    EPILOGUE
+
+# tcv_key(ctx, keysym, cp, mods) -> eax 1 when taken
+tcv_key:
+    mov rdi, [rip + tcv_tree]
+    jmp tree_key
+
+# tcv_activate(ctx, tr, node): the row's file opens
+tcv_activate:
+    PROLOGUE
+    mov rdi, rsi
+    mov esi, edx
+    call tree_node_id
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov rbx, rax
+    mov rdi, rbx
+    call app_open_file
+    mov rdi, rbx
+    call mem_free
+9:  EPILOGUE
+
+# testctl_cov_view(sb, rest, len): print-test-coverage: the Coverage section's rows, "file=LABEL
+#   desc=C/T · N%" each (the shown order), or "coverage-section none"
+testctl_cov_view:
+    PROLOGUE
+    mov rbx, rdi
+    mov edi, [rip + tcv_place]
+    test edi, edi
+    js 8f
+    call place_at
+    test rax, rax
+    jz 8f
+    mov rdi, [rip + tcv_tree]
+    call tree_rows_count
+    mov r12, rax
+    xor r13d, r13d
+1:  cmp r13, r12
+    jae 9f
+    mov rdi, [rip + tcv_tree]
+    mov rsi, r13
+    call tree_row
+    mov r14d, eax               # the node
+    mov rdi, rbx
+    lea rsi, [rip + .Ltcv_file]
+    call sb_push_cstr
+    mov rdi, [rip + tcv_tree]
+    mov esi, r14d
+    call tree_node_label
+    mov rdi, rbx
+    mov rsi, rax
+    call sb_push
+    mov rdi, rbx
+    lea rsi, [rip + .Ltcv_desc]
+    call sb_push_cstr
+    mov rdi, [rip + tcv_tree]
+    imul rax, r14, ND_SIZE
+    add rax, [rdi + TR_nodes + VEC_ptr]
+    mov rsi, [rax + ND_desc]
+    test rsi, rsi
+    jz 2f
+    mov rdi, rbx
+    call sb_push_cstr
+2:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    inc r13
+    jmp 1b
+8:  mov rdi, rbx
+    lea rsi, [rip + .Ltcv_none]
+    call sb_push_cstr
+9:  xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Ltcv_name: .asciz "coverage"
+.Ltcv_title: .asciz "Coverage"
+.Ltcv_dot: .asciz " \302\267 "
+.Ltcv_file: .asciz "file="
+.Ltcv_desc: .asciz " desc="
+.Ltcv_none: .asciz "coverage-section none\n"
+.p2align 3
+tcv_place_ops: .quad tcv_draw, tcv_key, 0, 0, 0, 0
+tcv_tree_ops: .quad tcv_activate, 0, 0, 0, 0, 0, 0, 0, 0
 .text

@@ -803,6 +803,7 @@ cov_cache:
 # testgutter_cov_changed(): the tint cache forgets (coverage replaced or cleared)
 FN testgutter_cov_changed
     mov qword ptr [rip + tg_cov_doc], 0
+    mov dword ptr [rip + g_tcv_dirty], 1      # the Coverage section lists the files again
     ret
 
 .section .rodata

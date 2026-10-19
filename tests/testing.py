@@ -397,6 +397,15 @@ class Testing(unittest.TestCase):
         self.assertTrue(any('Show only failed tests' in l for l in tips), tips)
         self.assertTrue(any('Run All Tests' in l for l in tips), tips)
 
+    def test_the_coverage_section_lists_files_least_covered_first(self):
+        out = self.run_editor([*EXPAND, 'print-test-coverage', 'cmd test_coverage_all', 'wait-tests', 'wait 100',
+                               'print-test-coverage', 'print-sidebar', 'cmd test_coverage_toggle', 'wait 100',
+                               'print-test-coverage'], mode='cov2')
+        self.assertIn('coverage-section none', out)
+        self.assertEqual([l for l in out if l.startswith('file=')][:2],
+                         ['file=/cov/low.go desc=1/4 \u00b7 25%', 'file=a_test.go desc=4/4 \u00b7 100%'])
+        self.assertTrue([l for l in out if l.startswith('coverage title=Coverage at=')], out)
+
     # --- the Testing section ---
 
     def section(self, out):

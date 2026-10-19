@@ -230,6 +230,10 @@ def run(run_no, profile, ids):
         f = tests_file().encode()
         body = b'1\n' + f'{len(f)} 3\n'.encode() + f + b'3 3 1\n5 7 2\n6 6 0\n'
         log('coverage ' + request('test-coverage', str(run_no), body))
+        if 'cov2' in MODE:
+            low = b'/cov/low.go'
+            body = b'1\n' + f'{len(low)} 2\n'.encode() + low + b'1 1 1\n2 4 0\n'
+            log('cov2 ' + request('test-coverage', str(run_no), body))
         if 'covbig' in MODE:
             # 70 files with one line at the last allowed line: 70 MiB of lines
             files = [f'/cov/big{i}.go'.encode() for i in range(70)]

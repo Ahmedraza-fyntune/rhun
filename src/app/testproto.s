@@ -867,6 +867,7 @@ FN testing_tick
     call testproto_dispatch
     call testexec_tick
     call testgutter_tick        # failures as problems
+    call testview_cov_tick      # the Coverage section
     EPILOGUE
 
 # testing_timeout() -> ms until testing_tick has something to do, -1 when nothing waits
