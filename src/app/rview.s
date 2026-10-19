@@ -22,6 +22,10 @@
 .equ ID_RV_ACT, 0x5f0000         # + vd << 6 + i: its title actions
 .equ ID_RV_STATE, 0x5b0000       # + slot << 4 + i: the buttons of an instance's empty or error state
 .equ ID_RV_LOGBTN, 0x5a0000      # + slot << 2 + i: a log's Find, Clear, Follow
+.equ ID_RV_MTITLE, 0x5a8000      # + vd << 3 + i: the extensions' manifest view_title buttons (menu.s)
+.equ ID_RV_MROW, 0x5ac000        # + slot << 4 + 0|8 + i: their view_item_inline buttons on a row
+.equ VML_TITLE, 7                # menu.s's MLOC_VIEW_TITLE, MLOC_VIEW_ITEM_INLINE
+.equ VML_ITEM_INLINE, 9
 .equ LABEL_MAX, 1000
 .equ TITLE_MAX, 80
 .equ TIP_MAX, 4000
@@ -44,6 +48,8 @@ F VD_open, 4            # open = yes
 F VD_pl, 4              # its place item, -1 before rview_init gives it one
 F VD_rv, 4              # its instance while the extension runs, -1
 F VD_started, 4         # showing it started its extension (once per showing)
+F VD_mtx, 4             # the manifest view_title buttons last drawn in its header: x, width (tests)
+F VD_mtw, 4
 ENDSTRUCT VD_SIZE
 
 # an instance
@@ -139,6 +145,7 @@ p_kind: .long 0                 # and its kind
 p_actions: .quad 0              # the actions it would have
 g_rv_nodes: .quad 0             # nodes in all instances
 idsbuf: .zero SB_SIZE           # a select event's ids
+ctxbuf: .zero 104               # a node's ctx value as a cstr (menus)
 pq_table: .zero PQ_SIZE * PQ_MAX
 menu_items: .zero 16 * 17       # rv_menu's items (label, handler), 0-ended
 menu_keys: .zero 8 * 16
@@ -498,6 +505,13 @@ rv_open:
     pop rcx
     pop rcx
     mov [rcx + RV_tree], rax
+    push rcx
+    push rcx
+    mov rdi, rax                # the extensions' manifest inline items on rows (menu.s)
+    lea rsi, [rip + rv_rowbuttons]
+    call tree_set_rowbuttons
+    pop rcx
+    pop rcx
     cmp r12d, RK_LOG
     jne 4f
     push rcx
@@ -1748,7 +1762,7 @@ rv_place_actions:
     mov ebx, eax
     mov eax, [rsp]
     cmp ebx, -1
-    je 9f
+    je .Lpb_done
     mov edi, ebx
     call rv_at
     mov r12, rax
@@ -1814,8 +1828,111 @@ rv_place_actions:
     call send_action
     jmp .Lpb_done
 .Lpb_done:
+    # the extensions' manifest view_title items (menu.s), left of the view's own buttons
+    mov edi, [rsp + 12]
+    call vd_at
+    mov rdi, [rax + VD_name]
+    call menu_btn_target_view
+    mov edi, VML_TITLE
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, 4
+    mov r9d, [rsp + 12]
+    shl r9d, 3
+    add r9d, ID_RV_MTITLE
+    call menu_buttons_draw
+    sub [rsp], eax
+    mov [rsp + 16], eax
+    mov edi, [rsp + 12]
+    call vd_at
+    mov ecx, [rsp]
+    mov [rax + VD_mtx], ecx
+    mov ecx, [rsp + 16]
+    mov [rax + VD_mtw], ecx
     mov eax, [rsp]
 9:  EPILOGUE
+
+# rv_view_name(slot) -> rax its view's name for menus and context keys ("OWNER/NAME.KEY", a tab's
+#   "OWNER/NAME.tab"), or 0
+rv_view_name:
+    push rbx
+    call rv_at
+    mov edi, [rax + RV_pl]
+    call place_at
+    test rax, rax
+    jz 9f
+    mov rax, [rax + PL_name]
+9:  pop rbx
+    ret
+
+# node_ctx_cstr(tr, node) -> rax its ctx record's value as a cstr (ctxbuf), or 0 without one
+node_ctx_cstr:
+    PROLOGUE
+    lea rdx, [rip + .Lr_ctx]
+    lea rcx, [rip + rr2]
+    call tree_extra_find
+    test eax, eax
+    jz 8f
+    mov rcx, [rip + rr2 + RR_len]
+    cmp rcx, 100
+    jbe 1f
+    mov ecx, 100
+1:  lea rdi, [rip + ctxbuf]
+    mov rsi, [rip + rr2 + RR_data]
+    mov rdx, rcx
+    push rcx
+    push rcx
+    call memcpy
+    pop rcx
+    pop rcx
+    lea rax, [rip + ctxbuf]
+    mov byte ptr [rax + rcx], 0
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# rv_rowbuttons(slot, tr, node, right, y, h) -> eax the width drawn: the extensions' manifest
+#   view_item_inline items for the row (tree_set_rowbuttons)
+rv_rowbuttons:
+    PROLOGUE 32
+    mov ebx, edi
+    mov r12, rsi
+    mov r13d, edx
+    mov [rsp], ecx
+    mov [rsp + 4], r8d
+    mov [rsp + 8], r9d
+    mov edi, ebx
+    call rv_view_name
+    test rax, rax
+    jz 8f
+    mov r14, rax
+    mov rdi, r12
+    mov esi, r13d
+    call node_ctx_cstr
+    mov r15, rax
+    mov rdi, r12
+    mov esi, r13d
+    call tree_node_id
+    mov rdi, r14
+    mov rsi, rax
+    mov rcx, r15
+    call menu_btn_target_item
+    mov r9d, ebx                # its widgets: the cursor row's and the hovered row's apart
+    shl r9d, 4
+    add r9d, ID_RV_MROW
+    cmp r13d, [r12 + TR_cursor]
+    je 1f
+    add r9d, 8
+1:  mov edi, VML_ITEM_INLINE
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, 4
+    call menu_buttons_draw
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # log_buttons(RV*, right, y, h, slot) -> eax the x left of them: a log's Find, Clear and Follow
 #   (accented while following) in its header
@@ -1970,7 +2087,7 @@ rv_menu:
     lea rcx, [rip + rr]
     call tree_extra_find
     test eax, eax
-    jz 9f
+    jz .Lrm_manifest
     mov edi, ebx
     call rv_at
     mov r14, rax
@@ -2052,6 +2169,27 @@ rv_menu:
     mov edx, [rsp + 4]
     call ctx_menu_open
 9:  EPILOGUE
+.Lrm_manifest:
+    # no menu record: the extensions' manifest view_item items (menu.s), if any
+    mov edi, ebx
+    call rv_view_name
+    test rax, rax
+    jz 9b
+    mov r14, rax
+    mov rdi, r12
+    mov esi, r13d
+    call node_ctx_cstr
+    mov r15, rax
+    mov rdi, r12
+    mov esi, r13d
+    call tree_node_id
+    mov rdi, r14
+    mov rsi, rax
+    mov rcx, r15
+    mov r8d, [rsp]
+    mov r9d, [rsp + 4]
+    call menu_open_view_item
+    jmp 9b
 
 # rv_menu_pick(): the item g_menu_index of rv_menu's menu
 rv_menu_pick:
@@ -2731,6 +2869,10 @@ FN rview_show
 .Lq_vkids: .asciz " vkids "
 .Lq_vmore: .asciz " vmore "
 .Lr_menu: .asciz "menu"
+.Lr_ctx: .asciz "ctx"
+.Ld_titlebuttons: .asciz "titlebuttons "
+.Ld_x: .asciz " x="
+.Ld_w: .asciz " w="
 .Lh_select: .asciz "select"
 .Lh_focus: .asciz "focus"
 .Lh_expand: .asciz "expand"
@@ -4772,7 +4914,38 @@ FN rview_dump
     call sb_push_byte
 8:  inc r12d
     jmp 1b
-9:  EPILOGUE
+9:  xor r12d, r12d              # "titlebuttons NAME x=X w=W": the manifest view_title buttons drawn
+91: cmp r12, [rip + vdecls + VEC_len]
+    jae 99f
+    mov rdi, r12
+    call vd_at
+    mov r13, rax
+    cmp dword ptr [r13 + VD_mtw], 0
+    je 92f
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_titlebuttons]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [r13 + VD_name]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_x]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r13 + VD_mtx]
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_w]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r13 + VD_mtw]
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+92: inc r12
+    jmp 91b
+99: EPILOGUE
 
 # rview_tree_of(ptr, len) -> rax the TR* of the instance with that number, or of the declared view
 #   with that key (KEY or OWNER/NAME.KEY), or 0 (tests)

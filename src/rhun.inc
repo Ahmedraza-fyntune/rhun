@@ -3254,6 +3254,9 @@ F TR_actions, 8         # TA records the inline keys are looked up in (tree_set_
 F TR_nactions, 8
 F TR_selanchor, 4       # multi-select: where a Shift range starts
 F TR_pad2, 4
+F TR_rowfn, 8           # tree_set_rowbuttons: fn(ctx, tr, node, right, y, h) -> width drawn, or 0
+F TR_rowbw, 4           # the width it drew last frame, and for which node
+F TR_rownode, 4
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame

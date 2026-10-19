@@ -344,5 +344,46 @@ class Corners(ViewsBase):
         self.assertNotIn(' cur ', rows[1])
 
 
+class Menus(ViewsBase):
+    """The extensions' manifest menus in views (menu.s): view_title buttons in the header,
+    view_item_inline buttons on the hovered or cursor row, view_item as a row's context menu."""
+
+    def ran(self, name):
+        return any(l.startswith(f'0 run rhun-tests/viewfake.{name} ') or l == f'0 run rhun-tests/viewfake.{name}'
+                   or l.startswith(f'0 run viewfake.{name} ') for l in self.fake_log())
+
+    def test_a_view_title_button_runs_its_command(self):
+        side = [l for l in self.run_editor(['print-sidebar']) if l.startswith('rhun-tests/viewfake.todo ')][0]
+        y = int(side.split(' at=')[1].split(',')[1].split(' ')[0]) - 14     # the header above the body
+        out = self.run_editor([f'move 60 {y}', 'wait 50', 'print-views'])     # its buttons show on hover
+        line = [l for l in out if l.startswith('titlebuttons rhun-tests/viewfake.todo ')][0]
+        x = int(line.split(' x=')[1].split(' ')[0])
+        w = int(line.split(' w=')[1])
+        self.run_editor([f'move 60 {y}', 'wait 50', f'click {x + w // 2} {y}', 'wait 300'])
+        self.assertTrue(self.ran('rescan'), self.fake_log())
+
+    def test_a_row_without_a_menu_record_opens_the_manifest_menu(self):
+        out = self.run_editor(['print-view todo'])
+        x, y = self.row_xy(self.rows(out), 'f:main.rs')
+        out = self.run_editor([f'click {x} {y} right', 'wait 100', 'print-menu', 'menu-pick Rescan With New Ids',
+                               'wait 300'])
+        self.assertIn('Rescan With New Ids [rhun-tests/viewfake]', out)
+        self.assertTrue(self.ran('renamed'), self.fake_log())
+
+    def test_an_inline_manifest_button_on_the_hovered_row(self):
+        out = self.run_editor(['print-view todo'])
+        at = [l for l in out if l.startswith('at=')][0]
+        vx = int(at.split('=')[1].split(',')[0])
+        vw = int(at.split(' size=')[1].split('x')[0])
+        rowh = int(at.split(' rowh=')[1])
+        rows = self.rows(out)
+        y = int([r for r in rows if ' id=f:lib.rs ' in r][0].split(' y=')[1].split(' ')[0])
+        bx = vx + vw - 16 - rowh // 2
+        out = self.run_editor([f'move {bx} {y + rowh // 2}', 'wait 50', f'click {bx} {y + rowh // 2}', 'wait 300',
+                               'print-view todo'])
+        self.assertTrue(self.ran('show'), self.fake_log())
+        self.assertFalse(any(' cur ' in r for r in self.rows(out)))     # the press was the button's
+
+
 if __name__ == '__main__':
     unittest.main()

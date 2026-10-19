@@ -93,7 +93,7 @@ def todo_tree(view, prefix='', count=2):
            rec('action', 'pin pin node', b'Pin'), rec('action', 'hide - node', b'Hide')]
     top = []
     for name, folder, n in files:
-        extra = rec('icon', f'file:{name} -') + rec('badge', f'{n}')
+        extra = rec('icon', f'file:{name} -') + rec('badge', f'{n}') + rec('ctx', data=b'file')
         if folder:
             extra = rec('desc', data=folder.encode()) + extra
         top.append(node(f'{prefix}f:{name}', name, 'open', extra))

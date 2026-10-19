@@ -2087,7 +2087,45 @@ draw_row:
     test eax, eax
     jz 11f
     and dword ptr [rsp + 16], ~(UB_PRESS | UB_DOUBLE | UB_RPRESS)
-11: # x after the indent
+11: # buttons of others (manifest menus) on the hovered or cursor row, left of the inline ones:
+    # a press within last frame's extent is theirs, not the row's
+    mov dword ptr [rip + rb_want], 0
+    cmp qword ptr [rbx + TR_rowfn], 0
+    je 13f
+    cmp dword ptr [rsp + 8], RWK_NODE
+    jne 13f
+    mov eax, [rsp]
+    cmp eax, [rbx + TR_cursor]
+    je 14f
+    test dword ptr [rsp + 16], UB_HOVER
+    jz 13f
+14: mov dword ptr [rip + rb_want], 1
+    mov eax, [rbx + TR_rect]
+    add eax, [rbx + TR_rect + 8]
+    sub eax, [rip + g_mt + 4*MI_16]
+    cmp dword ptr [rip + inl_n], 0
+    je 15f
+    mov eax, [rip + inl_left]
+    sub eax, [rip + g_mt + 4*MI_4]
+15: mov [rip + rb_edge], eax
+    mov ecx, [rsp]
+    cmp ecx, [rbx + TR_rownode]
+    jne 13f
+    mov ecx, [rip + g_mx]
+    cmp ecx, eax
+    jge 13f
+    sub eax, [rbx + TR_rowbw]
+    cmp ecx, eax
+    jl 13f
+    mov ecx, [rip + g_my]
+    cmp ecx, r13d
+    jl 13f
+    mov eax, r13d
+    add eax, [rsp + 12]
+    cmp ecx, eax
+    jge 13f
+    and dword ptr [rsp + 16], ~(UB_PRESS | UB_DOUBLE | UB_RPRESS)
+13: # x after the indent
     mov eax, [rsp + 4]
     imul eax, [rip + g_mt + 4*MI_12]
     add eax, [r15]
@@ -2322,8 +2360,19 @@ draw_row:
     mov eax, [rsp + 20]
     sub eax, [rip + g_mt + 4*MI_28]
     mov [rsp + 20], eax
-48: # label
-    mov edi, [r15 + ND_lcolor]
+48: # label (left of the others' row buttons when they show)
+    cmp dword ptr [rip + rb_want], 0
+    je 481f
+    mov eax, [rsp]
+    cmp eax, [rbx + TR_rownode]
+    jne 481f
+    mov eax, [rip + rb_edge]
+    sub eax, [rbx + TR_rowbw]
+    sub eax, [rip + g_mt + 4*MI_4]
+    cmp eax, [rsp + 20]
+    jge 481f
+    mov [rsp + 20], eax
+481:mov edi, [r15 + ND_lcolor]
     mov esi, T_PANEL_FG
     call tree_color
     mov ecx, eax
@@ -2375,7 +2424,23 @@ draw_row:
     mov r8, r9
     call call_op
     jmp .Ldr_ret
-491:# tooltip
+491:# the others' row buttons
+    cmp dword ptr [rip + rb_want], 0
+    je 492f
+    mov rax, [rbx + TR_rowfn]
+    mov rdi, [rbx + TR_ctx]
+    mov rsi, rbx
+    mov edx, [rsp]
+    mov ecx, [rip + rb_edge]
+    mov r8d, r13d
+    mov r9d, [rsp + 12]
+    call rax
+    mov [rbx + TR_rowbw], eax
+    mov eax, [rsp]
+    mov [rbx + TR_rownode], eax
+    mov eax, [rsp]
+    NDP r15, rbx, rax
+492:# tooltip
     mov rax, [r15 + ND_tip]
     test rax, rax
     jz .Ldr_ret
@@ -2632,6 +2697,15 @@ collect_hl:
     jmp 1b
 9:  mov eax, r14d
     EPILOGUE
+
+# tree_set_rowbuttons(tr, fn): fn(ctx, tr, node, right, y, h) -> eax the width it drew: buttons of
+#   others (the extensions' manifest view_item_inline items) on the hovered or cursor row, ending
+#   at right, left of the inline actions; a press within them is not the row's
+FN tree_set_rowbuttons
+    mov [rdi + TR_rowfn], rsi
+    mov dword ptr [rdi + TR_rowbw], 0
+    mov dword ptr [rdi + TR_rownode], -1
+    ret
 
 # tree_set_actions(tr, TA*, n): the actions inline keys name (the owner keeps the records)
 FN tree_set_actions
@@ -3102,6 +3176,8 @@ FN tree_dump
 .globl tr_focused
 tr_focused: .long 0             # the tree being drawn has the keyboard (tree_draw sets it)
 tr_first: .long 0               # its first row in view: row ids count from it
+rb_want: .long 0                # draw_row: the others' row buttons show on this row, ending at rb_edge
+rb_edge: .long 0
 inl_n: .long 0                  # the row's inline buttons: how many, where, their keys and state
 inl_left: .long 0
 inl_y: .long 0
