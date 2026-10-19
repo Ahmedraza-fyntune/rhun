@@ -365,6 +365,8 @@ FN run_piped
 #   program's input; errors 1 sends its error output down the same pipe (else it goes to /dev/null) and
 #   runs it in a session of its own, without a terminal to ask for passwords on.
 #   errors 2 creates that session without merging stderr, for binary-output workers.
+#   errors | 4: the caller feeds the input itself, of any length (ptr is not read; len only says there
+#   is one): ecx is the pipe to the program's input, nonblocking, the caller's to close (-1 on failure)
 FN run_piped_input
     PROLOGUE 48
     mov r12, rdi
@@ -406,6 +408,7 @@ FN run_piped_input
     jz 11f
     mov r9d, r8d
 11: mov eax, [rsp + 32]
+    and eax, 3
     push rax
     push rax
     call proc_spawn
@@ -422,7 +425,14 @@ FN run_piped_input
     # the input fits the pipe, so this does not wait for the program
     test r15, r15
     js 21f
-    mov r12, [rsp + 16]
+    test dword ptr [rsp + 32], 4
+    jz 22f
+    mov edi, [rsp + 12]         # the caller writes it as the program reads
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    jmp 3f
+22: mov r12, [rsp + 16]
     mov r13, [rsp + 24]
 2:  test r13, r13
     jz 21f
@@ -439,6 +449,7 @@ FN run_piped_input
     jmp 2b
 21: mov edi, [rsp + 12]
     SYS SYS_close
+    mov dword ptr [rsp + 12], -1
 3:  test r15, r15
     js 7f
     mov edi, [rsp]
@@ -447,10 +458,12 @@ FN run_piped_input
     SYS SYS_fcntl
     mov rax, r15
     mov edx, [rsp]
+    mov ecx, [rsp + 12]
     EPILOGUE
 7:  mov edi, [rsp]
     SYS SYS_close
     mov rax, r15
+    mov ecx, -1
     EPILOGUE
 6:  mov r15, rax
     mov edi, [rsp + 8]
@@ -462,12 +475,14 @@ FN run_piped_input
 61: mov edi, ebx
     SYS SYS_close
     mov rax, r15
+    mov ecx, -1
     EPILOGUE
 8:  mov r15, rax
     mov edi, ebx
     SYS SYS_close
     mov rax, r15
-9:  EPILOGUE
+9:  mov ecx, -1
+    EPILOGUE
 
 # pty_open(cols, rows) -> eax master (nonblocking), edx slave; eax < 0 on failure
 .ifndef WINDOWS

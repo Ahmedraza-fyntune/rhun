@@ -1437,6 +1437,7 @@ c_print_scm:
     xor eax, eax
     ret
 
+
 # print-project: the project folder (the home folder as ~)
 c_print_project:
     lea rdi, [rip + out]
@@ -2268,6 +2269,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_complete: .asciz "print-complete"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
+
 .Lx_yes: .asciz "yes"
 .Lx_list: .asciz "list"
 .Lx_install_states: .quad .Lxi_idle, .Lxi_busy, .Lxi_asking, .Lxi_done, .Lxi_failed
@@ -2328,6 +2330,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 # other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
 ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad scm_ctl               # source control (scmctl.s)
     .quad langfeat_ctl          # language features (lfcontrol.s)
     .quad debug_ctl             # debugger (debugctl.s)
     .quad test_ctl              # testing (testview.s)

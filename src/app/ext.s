@@ -378,6 +378,7 @@ FN ext_cmds_remove_runtime
 # palette's shortcut labels for extension commands are per index: drop them
 ext_cmds_changed:
     push rbx
+    call scmext_providers_changed   # source control (wider-parity C): installs and removals
     call keys_reload
     call palette_ext_keys_reset
     call palette_close_commands # an open command palette holds pointers into the vector
@@ -987,6 +988,8 @@ FN ext_retire
     mov rdi, rbx
     call langfeat_ext_gone
     mov rdi, rbx
+    call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
+    mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
     call testmodel_forget       # testing: its tests and results go
@@ -1491,6 +1494,7 @@ FN ext_init
     mov rax, [rip + g_ext_cmds + VEC_len]
     mov [rip + ext_manifest_cmds], rax
     call ext_settings_load
+    call scmext_providers_changed   # source control (wider-parity C): commit-message providers
     EPILOGUE
 
 # owner_cb(ctx, name, is_dir): one owner folder
@@ -2333,9 +2337,19 @@ parse_needs:
     lea rsi, [rip + .Ln_debug]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 8f
     mov edi, NEEDS_DEBUG
     call needs_yes
+    jmp 9f
+8:  # source control (wider-parity C): git = read, the project's Git data through rhun
+    mov rdi, r12
+    lea rsi, [rip + .Ln_git]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov edi, NEEDS_GIT_READ
+    xor esi, esi
+    call needs_level
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -3657,6 +3671,8 @@ FN ext_exited
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
     mov rdi, rbx
+    call scm_ext_gone           # and its source control requests and providers (gitdata.s, scmext.s)
+    mov rdi, rbx
     call testproto_ext_gone     # testing: its runs end errored and their processes stop
     mov rdi, rbx
     call ai_ext_gone            # AI: its sessions, tool calls and cards
@@ -4749,7 +4765,10 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_selection_ranges, EXT_pv_selection_ranges, .Lpv_call_hierarchy, EXT_pv_call_hierarchy
     .quad .Lpv_type_hierarchy, EXT_pv_type_hierarchy, .Lpv_workspace_symbols, EXT_pv_workspace_symbols
     .quad .Lpv_range_format, EXT_pv_range_format, .Lpv_type_format, EXT_pv_type_format
-    .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links, 0, 0
+    .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links
+    # source control (wider-parity C)
+    .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
+    .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -4885,6 +4904,10 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_git: .asciz "git"
+.Lpv_commit: .asciz "commit_message"
+.Lpv_quickdiff: .asciz "quickdiff"
+.Lpv_scm: .asciz "scm"
 .Ln_debug: .asciz "debug"
 .Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"

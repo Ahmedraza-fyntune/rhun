@@ -252,7 +252,16 @@ FN setting_assign
     jmp 9f
 2:  cmp eax, ST_CHOICE
     jne 3f
-    xor r15d, r15d
+    # source control (wider-parity C): commit_ai = ext:OWNER/NAME names an extension (scmext.s)
+    lea rax, [rip + cfg_commit_ai]
+    cmp r14, rax
+    jne 20f
+    mov rdi, r12
+    mov rsi, r13
+    call scmext_ai_config
+    test eax, eax
+    jnz 9f
+20: xor r15d, r15d
 21: mov rdi, [rbx + SET_opts]
     mov esi, r15d
     call choice_entry
@@ -905,7 +914,7 @@ g_settings:
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
     SETTING .Ls_terminal, height, ST_INT, cfg_term_h, 80, 2000, 10, 0, "Terminal height", "Height of the terminal panel in points."
     SETTING .Ls_git, enabled, ST_BOOL, cfg_git, 0, 1, 1, 0, "Git", "Changes in the gutter, tabs and explorer, and the history view."
-    SETTING .Ls_git, commit_ai, ST_CHOICE, cfg_commit_ai, 0, 3, 1, 0, "Commit message AI", "Optional. Cloud providers use your subscription.", .Lai_opts, g_ai_provider_desc
+    SETTING .Ls_git, commit_ai, ST_CHOICE, cfg_commit_ai, 0, 3, 1, 0, "Commit message AI", "Optional. Cloud providers use your subscription.", g_ai_opts, g_ai_provider_desc
     SETTING .Ls_git, commit_model, ST_STR, cfg_commit_model, 0, 0, 0, 0, "Local model", "Ollama model name. Default download: about 1 GB."
     SETTING_ACTION .Ls_git, ai_setup, cmd_ai_model_files, .Lai_setup, g_ai_local_desc
     SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
@@ -922,5 +931,5 @@ g_settings:
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"
-.Lai_opts: .asciz "off", "Off", "claude", "Claude Code", "codex", "Codex", "ollama", "Local (Ollama)", ""
+
 .Lai_setup: .asciz "Local model files"
