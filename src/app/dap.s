@@ -206,6 +206,9 @@ FN dap_start
     call dcfg_prepare
     test eax, eax
     jz .Lst_cfgfail
+    mov qword ptr [rip + dstart_owner], 0
+    mov qword ptr [rip + dstart_oid], 0
+.Lst_prepared:
     cmp qword ptr [rip + g_lc_compound + SB_len], 0
     jne .Lst_compound
     mov edi, [rip + g_lc_dbg]
@@ -238,6 +241,10 @@ FN dap_start
     mov eax, [rip + g_lc_dbg]
     mov [rbx + DS_dbg], eax
     mov [rbx + DS_dbg_ext], r15
+    mov rax, [rip + dstart_owner]
+    mov [rbx + DS_owner], rax
+    mov rax, [rip + dstart_oid]
+    mov [rbx + DS_owner_id], rax
     mov eax, [rip + g_lc_request]
     mov [rbx + DS_request], eax
     mov eax, [rip + g_lc_nodebug]
@@ -323,9 +330,20 @@ FN dap_start
 .Lst_cfgfail:
     lea rdi, [rip + g_dcfg_err]
 .Lst_msg:
+    mov [rip + g_dstart_msg], rdi
     call dap_error
     xor eax, eax
     EPILOGUE
+
+# dap_start_ext(EXT*, request id) -> eax the new session's id, 0 when it could not start
+#   (g_dstart_msg says why; the console and a toast too): debug-start (debugext.s) after
+#   dcfg_from_leaves filled g_lc_*. The extension hears ok ID SESSION once the adapter starts, or an
+#   error (cancelled, busy, refused) from ds_end; debug-ended when the session is over
+FN dap_start_ext
+    PROLOGUE 16
+    mov [rip + dstart_owner], rdi
+    mov [rip + dstart_oid], rsi
+    jmp .Lst_prepared
 
 # dap_error(cstr): a failure to start or run, in the console and as a toast
 FN dap_error
@@ -446,8 +464,16 @@ launch_now:
     call time_ms
     add rax, DAP_INIT_MS
     mov [rbx + DS_deadline], rax
-4:
-    mov edi, [rbx + DS_id]
+4:  # debug-start: the extension that asked hears the session's id
+    cmp qword ptr [rbx + DS_owner_id], 0
+    je 41f
+    mov rdi, [rbx + DS_owner]
+    mov rsi, [rbx + DS_owner_id]
+    mov edx, [rbx + DS_id]
+    call dbgx_reply_ok
+    mov qword ptr [rbx + DS_owner_id], 0
+    mov dword ptr [rbx + DS_owner_ok], 1
+41: mov edi, [rbx + DS_id]
     mov esi, DCON_INFO
     lea rdx, [rip + .Lm_starting]
     mov ecx, .Lm_starting_end - .Lm_starting
@@ -1218,7 +1244,26 @@ ds_end:
     mov edi, eax
     call bp_session_gone
     or dword ptr [rbx + DS_flags], DSF_STALE
-    # the console says so
+    # debug-start: an answer still owed is an error; a session it was told of has ended
+    mov rdi, [rbx + DS_owner]
+    test rdi, rdi
+    jz 3f
+    mov rsi, [rbx + DS_owner_id]
+    test rsi, rsi
+    jz 21f
+    mov rdx, r12
+    call dbgx_reply_failed
+    mov qword ptr [rbx + DS_owner_id], 0
+    jmp 3f
+21: cmp dword ptr [rbx + DS_owner_ok], 0
+    je 3f
+    mov esi, [rbx + DS_id]
+    mov edx, [rbx + DS_exit]
+    test dword ptr [rbx + DS_flags], DSF_EXITED
+    jnz 22f
+    mov edx, -1
+22: call dbgx_ended
+3:  # the console says so
     mov edi, [rbx + DS_id]
     mov esi, DCON_INFO
     lea rdx, [rip + .Lm_ended]
@@ -4118,7 +4163,16 @@ FN dap_find_node
 9:  mov eax, r14d
     EPILOGUE
 
+.bss
+.p2align 3
+dstart_owner: .quad 0           # dap_start_ext's caller for the session being made, 0 the user
+dstart_oid: .quad 0
+.globl g_dstart_msg
+g_dstart_msg: .quad 0           # why the last dap_start* could not make a session
+
 .section .rodata
+.globl dap_m_busy, dap_m_cancelled, dap_m_full
+dap_m_busy:
 .Lm_busy: .asciz "a debug session is waiting for your answer"
 .Lm_compound: .asciz "compound configurations are not supported yet"
 .Lm_badserver: .asciz "server must be PORT or HOST:PORT, with HOST localhost or an IPv4 address"
@@ -4128,7 +4182,9 @@ FN dap_find_node
 .Lm_noconn2: .asciz " in 10 s"
 .Ls_localhost: .ascii "localhost"
 .Lm_noneeds: .asciz "the debugger's extension does not declare debug = yes under [needs]"
-.Lm_full: .asciz "8 debug sessions are running already"
+.Lm_full:
+dap_m_full: .asciz "8 debug sessions are running already"
+dap_m_cancelled:
 .Lm_cancelled: .asciz "cancelled"
 .Lm_spawn: .asciz "the debugger could not be started"
 .Lm_starting: .ascii "Starting the debugger"

@@ -3632,6 +3632,8 @@ FN extproto_send_invoke
     mov r13, [rax + CMD_name]
     test r13, r13
     jz .Lpsr_missing
+    mov rdi, r12                # debugger: a debug-start may follow this command (debugext.s)
+    call dbgx_note_command
     mov [rip + cur], r12
     call out_begin
     lea rdi, [rip + .Lev_run]
@@ -4558,6 +4560,8 @@ verbs:
     .quad .Lv_unpropose, h_unpropose, 0
     .quad .Lv_tools, h_tools, 0
     .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
+    # debugger (debugext.s): feature "debug"
+    .quad dbgx_v_debug_start, dbgx_h_debug_start, DBGX_BODY_MAX
     # notebooks (nbproto.inc)
     .quad .Lnb_v_state, h_nb_state, 0
     .quad .Lnb_v_output, h_nb_output, NB_OUTPUT_MAX

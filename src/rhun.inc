@@ -1664,6 +1664,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_WORKSPACE_FOLDERS, "workspace-folders", 0
     # notebooks (wider-parity A: nbdoc.s, nbproto.inc)
     FEATURE FEAT_NOTEBOOKS, "notebooks", 1        # nb-open, nb-save; runs and outputs
+    FEATURE FEAT_DEBUG, "debug", 1                # debugger: debug-resolve; debug-start, debug-ended
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -2709,6 +2710,9 @@ ENDSTRUCT AS_SIZE
 .equ DAP_CONNECT_MS, 10000          # tcp: the adapter accepts a connection within this
 .equ DAP_CONNECT_EVERY, 100         # and is tried this often
 .equ DAP_LOOPBACK, 0x0100007f       # 127.0.0.1 in network order
+.equ DBGX_BODY_MAX, 1048576 + 256     # debug-start's body: NAME and a configuration body
+.equ DCE_SYNTAX, 1                   # dcfg_from_leaves: the configuration body does not parse
+.equ DCE_REFUSED, 2                  # its type is not one of the extension's debuggers
 .equ DTR_STDIO, 0                   # DS_transport: the adapter's standard input and output
 .equ DTR_TCP, 1                     # rhun picks a port, starts the adapter and connects
 .equ DTR_SERVER, 2                  # launch.ini's server = HOST:PORT: no process
@@ -2894,7 +2898,9 @@ F DS_port, 4            # tcp, server: the port it listens on
 F DS_addr, 4            # and the IPv4 address (network order)
 F DS_conn_until, 8      # time_ms when connecting gives up
 F DS_rit_seq, 4         # the runInTerminal request still owed an answer, 0 none
-F DS_rit_pad, 4
+F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
+F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
+F DS_owner_id, 8        # and its request still owed an answer, 0 none
 F DS_seq, 4             # the next request number
 F DS_epoch, 4           # bumped on every stop and resume
 F DS_flags, 4           # DSF_*
