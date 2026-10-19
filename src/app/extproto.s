@@ -2919,7 +2919,7 @@ h_notify:
     call reply_syntax
 9:  EPILOGUE
 
-# ID notify-set NOTE LEN + body -> ok ID: new content (a card that is gone: ok, nothing changes)
+# ID notify-set NOTE LEN + body -> ok ID: new content (a card that is gone: noview)
 h_notify_set:
     PROLOGUE
     mov edi, FEAT_NOTIFY
@@ -2939,8 +2939,14 @@ h_notify_set:
     call notify_set_request
     cmp eax, 2
     je 7f
+    cmp eax, 1
+    je 6f
     mov rdi, [rip + cur_id]
     call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nonote]
+    call reply_error
     EPILOGUE
 7:  mov rdi, [rip + cur_id]
     call reply_syntax
@@ -2962,8 +2968,14 @@ h_unnotify:
     mov rdi, [rip + cur]
     mov esi, eax
     call notify_close_request
+    test eax, eax
+    jnz 6f
     mov rdi, [rip + cur_id]
     call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nonote]
+    call reply_error
     EPILOGUE
 7:  mov rdi, [rip + cur_id]
     call reply_syntax
@@ -3017,7 +3029,7 @@ h_progress:
     call reply_syntax
 9:  EPILOGUE
 
-# ID progress-set P PERCENT LEN + message -> ok ID (PERCENT 0-100 or -; a progress that is gone: ok)
+# ID progress-set P PERCENT LEN + message -> ok ID (PERCENT 0-100 or -; a progress that is gone: noview)
 h_progress_set:
     PROLOGUE
     mov edi, FEAT_PROGRESS
@@ -3050,8 +3062,14 @@ h_progress_set:
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
     call progress_set_request
+    test eax, eax
+    jnz 6f
     mov rdi, [rip + cur_id]
     call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noprogress]
+    call reply_error
     EPILOGUE
 7:  mov rdi, [rip + cur_id]
     call reply_syntax
@@ -3073,8 +3091,14 @@ h_progress_end:
     mov rdi, [rip + cur]
     mov esi, eax
     call progress_end_request
+    test eax, eax
+    jnz 6f
     mov rdi, [rip + cur_id]
     call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noprogress]
+    call reply_error
     EPILOGUE
 7:  mov rdi, [rip + cur_id]
     call reply_syntax
@@ -4952,6 +4976,8 @@ verbs:
 .Lv_progress_end: .asciz "progress-end"
 .Le_toobig_notes: .asciz "toobig 16 notifications"
 .Le_toobig_progress: .asciz "toobig 8 progress"
+.Le_nonote: .asciz "noview no such notification"
+.Le_noprogress: .asciz "noview no such progress"
 .Le_refused_unview: .asciz "refused a declared view: the user hides it"
 .Le_toobig_vtab: .asciz "toobig 8 views"
 .Le_badpos_vreveal: .asciz "badpos no such node"

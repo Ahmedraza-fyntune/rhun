@@ -98,11 +98,13 @@ class Notes(ViewsBase):
 
     def test_notify_set_replaces_and_unnotify_closes_quietly(self):
         out = self.run_editor(['cmd viewfake.note', 'wait 200', 'cmd viewfake.noteset', 'wait 200', 'print-notes',
-                               'cmd viewfake.unnote', 'wait 200', 'print-notes'])
+                               'cmd viewfake.unnote', 'wait 200', 'print-notes', 'cmd viewfake.unnote', 'wait 200'])
         notes = self.notes(out)
         self.assertEqual(len(notes), 1)
         self.assertIn('buttons=Open msg=Indexed 40 files stays', notes[0])
-        self.assertNotIn('0 notify 1 closed', self.fake_log())
+        log = self.fake_log()
+        self.assertNotIn('0 notify 1 closed', log)
+        self.assertTrue(any(l.startswith('error ') and l.endswith(' noview no such notification') for l in log), log)
 
 
 class Progress(ViewsBase):
