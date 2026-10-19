@@ -83,6 +83,20 @@ def assets():
     encoded_install = base64.b64encode(bootstrap_install.encode('utf-16le')).decode('ascii')
     assert len(encoded_install) < 30000, 'Extension installer exceeds the Windows command-line budget'
     lines += ['.globl ext_install_script', 'ext_install_script: .asciz "' + encoded_install + '"']
+    # extension management: the update check (src/app/extupdate.s) and the index fetch
+    # (src/app/extindexfile.s); their inputs come in RHUN_EC_* and RHUN_EX_* variables
+    for script, symbol in (('extcheck.ps1', 'ext_check_script'), ('extindex.ps1', 'ext_index_script')):
+        packed = base64.b64encode(gzip.compress(
+            without_comments((ROOT / 'runtime/windows' / script).read_text(encoding='utf-8')).encode(),
+            mtime=0)).decode('ascii')
+        bootstrap = ("$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';"
+                     "$b=[Convert]::FromBase64String('" + packed + "');"
+                     "$m=New-Object IO.MemoryStream(,$b);"
+                     "$g=New-Object IO.Compression.GzipStream($m,[IO.Compression.CompressionMode]::Decompress);"
+                     "$r=New-Object IO.StreamReader($g);& ([scriptblock]::Create($r.ReadToEnd()))")
+        encoded = base64.b64encode(bootstrap.encode('utf-16le')).decode('ascii')
+        assert len(encoded) < 30000, script + ' exceeds the Windows command-line budget'
+        lines += ['.globl ' + symbol, symbol + ': .asciz "' + encoded + '"']
     installer = without_comments((ROOT / 'install.ps1').read_text(encoding='utf-8'))
     assert "\n'@" not in installer, 'Installer contains the embedding here-string delimiter'
     update = ("$installer=[scriptblock]::Create(@'\n" + installer + "\n'@);" +
