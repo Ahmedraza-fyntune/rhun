@@ -472,6 +472,11 @@ db_readable:
 8:  call db_close               # the bus went away: what it said last stays
 9:  EPILOGUE
 
+# FN dbus_session_connect() -> eax a socket connected to the session bus, or -1 (the resources
+# group's secretservice.s connects with it)
+FN dbus_session_connect
+    jmp db_connect
+
 # db_connect() -> eax a socket connected to the session bus, or -1. The address is
 # DBUS_SESSION_BUS_ADDRESS (unix: entries with path= or abstract=, values %-escaped), or without
 # it systemd's $XDG_RUNTIME_DIR/bus.
