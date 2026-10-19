@@ -3,6 +3,7 @@
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
 #   print-menu | focus out|in
+#   multi-cursor: click x y alt|shift+alt (print-selections and drag are in wsctl.s)
 .include "rhun.inc"
 
 .bss
@@ -261,8 +262,21 @@ c_click:
     mov r13d, BTN_LEFT
     test rdx, rdx
     jz 1f
+    # multi-cursor: alt, shift+alt, ctrl+alt: a left click with those held
+    push rax
+    push rdx
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_combo
+    mov ecx, edx
+    pop rdx
+    pop rax
+    test ecx, MOD_ALT
+    jz 20f
+    mov [rip + click_mods], ecx
+    jmp 1f
     # shift: a left click with Shift held, pressed and released
-    cmp byte ptr [rax], 's'
+20: cmp byte ptr [rax], 's'
     jne 21f
     mov dword ptr [rip + click_mods], MOD_SHIFT
     jmp 1f
@@ -1791,6 +1805,9 @@ c_print_state:
     lea rdi, [rip + out]
     mov rsi, rdx
     call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + out]
+    call sel_state              # " sels=N" with several selections (multi-cursor)
     lea rdi, [rip + out]
     lea rsi, [rip + .Ls_dirty]
     call sb_push_cstr
@@ -2372,6 +2389,7 @@ ctl_tables:
     .quad remote_ctl            # remote hosts (remotectl.s)
     .quad pres_ctl              # editor presentation (presctl.s)
     .quad extmgr_ctl            # extension management (extmgrctl.s)
+    .quad ws_ctl                # workspace edits and the editor model (wsctl.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap

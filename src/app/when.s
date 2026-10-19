@@ -12,7 +12,7 @@
 #   ctx_refresh()                    rhun's state may have changed: keys are read again
 #   ctx_set(id, ptr, len), ctx_set_bool(id, 0|1)   a published key's value (CTX_*)
 #   ctx_get(id) -> rax ptr, rdx len  a key's value
-#   ctx_push_target(CT*) / ctx_pop_target()        a menu's target for resource/editor keys
+#   ctx_push_target(MTG*) / ctx_pop_target()        a menu's target for resource/editor keys
 #
 # Grammar (WHEN_MAX bytes, WHEN_OPS_MAX operations, WHEN_DEPTH_MAX levels of ! and parentheses):
 #   or = and *("||" and); and = unary *("&&" unary); unary = "!" unary / "(" or ")" / true /
@@ -65,6 +65,9 @@
 .equ OP_NIN, 16
 .equ EVAL_STACK, 64
 
+.data
+ctx_focus_over: .long -1        # ctx_focus_as
+
 .bss
 .p2align 3
 ctx_vals: .zero CTX_COUNT * 16  # (ptr, len) of each key, valid in round ctx_stamp
@@ -79,8 +82,9 @@ ctx_num: .zero CTX_COUNT * 24   # numbers formatted for a key
 ctx_lang: .zero 128             # resourceLang, spaces as _
 ctx_prov: .zero 128             # editorProviders
 .p2align 3
-ctx_target: .quad 0             # CT* a menu pushed, or 0
-ctx_target_prev: .quad 0
+ctx_target: .quad 0             # MTG* a menu pushed, or 0
+ctx_targets: .zero 8 * 8        # targets pushed before the current one (ctx_push_target)
+ctx_ntargets: .quad 0
 .globl g_wayland
 g_wayland: .long 0              # the Wayland client runs (wayland.s sets it)
 # the compiler's state
@@ -761,7 +765,20 @@ wc_quoted:
     mov [rip + wc_p], r8
     mov rdx, rcx
     sub rdx, rax
+    push rax
+    push rdx
+    mov rdi, rax
+    mov rsi, rdx
+    call snippet_utf8_valid
+    test eax, eax
+    pop rdx
+    pop rax
+    jz 7f
     ret
+7:  dec rax                     # reported at the opening quote
+    mov [rip + wc_p], rax
+    lea rsi, [rip + .Le_utf8]
+    jmp wc_fail
 8:  lea rsi, [rip + .Le_quote]
     jmp wc_fail
 
@@ -1151,25 +1168,35 @@ ev_in:
 8:  xor eax, eax
     EPILOGUE
 
-# ev_int(ptr, len) -> rax a signed decimal integer, edx 1 when the whole value is one
+# FN when_number(ptr, len) -> rax a signed decimal integer, edx 1 when the whole text is one
+FN when_number
+    jmp ev_int
+
+# ev_int(ptr, len) -> rax a signed decimal integer, edx 1 when the whole value is one that fits
+#   in 64 bits (leading zeros allowed)
 ev_int:
     xor eax, eax
     xor r8d, r8d                # negative
     test rsi, rsi
     jz 8f
     cmp byte ptr [rdi], '-'
-    jne 1f
+    jne 2f
     mov r8d, 1
     inc rdi
     dec rsi
     jz 8f
-1:  cmp rsi, 18
-    ja 8f
 2:  movzx ecx, byte ptr [rdi]
     sub ecx, '0'
     cmp ecx, 9
     ja 8f
-    imul rax, rax, 10
+    mov r9, 922337203685477580  # (2^63 - 1) / 10: one more digit must not pass 2^63 - 1 (2^63 negative)
+    cmp rax, r9
+    ja 8f
+    jb 4f
+    lea r10d, [r8 + 7]
+    cmp ecx, r10d
+    ja 8f
+4:  imul rax, rax, 10
     add rax, rcx
     inc rdi
     dec rsi
@@ -1398,17 +1425,28 @@ FN ctx_refresh
     inc dword ptr [rip + ctx_round]    # 0 is never a round
 1:  ret
 
-# FN ctx_push_target(CT*): the resource and editor keys describe this menu target until
+# FN ctx_push_target(MTG*): the resource and editor keys describe this menu target until
 # ctx_pop_target
 FN ctx_push_target
-    mov rax, [rip + ctx_target]
-    mov [rip + ctx_target_prev], rax
-    mov [rip + ctx_target], rdi
+    mov rax, [rip + ctx_ntargets]
+    cmp rax, 8
+    jae 1f                      # deeper than any menu nests: the outer ones are kept
+    lea rcx, [rip + ctx_targets]
+    mov rdx, [rip + ctx_target]
+    mov [rcx + rax*8], rdx
+    inc qword ptr [rip + ctx_ntargets]
+1:  mov [rip + ctx_target], rdi
     jmp ctx_refresh
 FN ctx_pop_target
-    mov rax, [rip + ctx_target_prev]
-    mov [rip + ctx_target], rax
-    mov qword ptr [rip + ctx_target_prev], 0
+    xor edx, edx
+    mov rax, [rip + ctx_ntargets]
+    test rax, rax
+    jz 1f
+    dec rax
+    mov [rip + ctx_ntargets], rax
+    lea rcx, [rip + ctx_targets]
+    mov rdx, [rcx + rax*8]
+1:  mov [rip + ctx_target], rdx
     jmp ctx_refresh
 
 # FN ctx_get(id) -> rax ptr, rdx len: the value of built-in key CTX_* (empty for a bad id)
@@ -1467,35 +1505,35 @@ ctx_ready:
     jmp ctx_init
 1:  ret
 
-# ctx_init(): the key index from ctx_table, then the published keys' defaults
+# ctx_init(): the key index from ctx_table, then the published keys' defaults (ctx_defaults)
 ctx_init:
+    PROLOGUE
     mov dword ptr [rip + ctx_inited], 1
-    push rbx
     lea rbx, [rip + ctx_table]
-    lea r8, [rip + ctx_idx]
-    xor r9d, r9d
-1:  cmp r9d, CTX_COUNT
+    lea r12, [rip + ctx_idx]
+    xor r13d, r13d
+1:  cmp r13d, CTX_COUNT
     jae 3f
     mov rax, [rbx]
-    mov [r8 + 8], rax
+    mov [r12 + 8], rax
     lea rdi, [rbx + 8]
-    mov [r8], rdi
+    mov [r12], rdi
     call strlen
     lea rbx, [rbx + rax + 8 + 1 + 7]
     and rbx, -8
-    add r8, 16
-    inc r9d
+    add r12, 16
+    inc r13d
     jmp 1b
-3:
-    mov edi, CTX_DEBUG_STATE
-    lea rsi, [rip + .Lv_inactive]
-    mov edx, 8
-    call ctx_set
-    mov edi, CTX_IN_DEBUG_MODE
+3:  lea rbx, [rip + ctx_defaults]
+4:  mov edi, [rbx]
+    cmp edi, -1
+    je 5f
     xor esi, esi
-    call ctx_set_bool
-    pop rbx
-    ret
+    xor edx, edx                # empty: the default
+    call ctx_set
+    add rbx, 16
+    jmp 4b
+5:  EPILOGUE
 
 # FN ctx_set(id, ptr, len): a published key's value (cut at CTX_VAL_MAX bytes); a computed key
 # is not changed
@@ -1516,7 +1554,22 @@ FN ctx_set
     lea rcx, [rip + ctx_idx]
     cmp qword ptr [rcx + rax + 8], 0
     jne 9f
-    cmp r13, CTX_VAL_MAX
+    test r13, r13
+    jnz 0f
+    # cleared: the key's default, if it has one
+    lea rcx, [rip + ctx_defaults]
+2:  mov eax, [rcx]
+    cmp eax, -1
+    je 1f
+    add rcx, 16
+    cmp eax, ebx
+    jne 2b
+    mov r12, [rcx - 8]
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    jmp 1f
+0:  cmp r13, CTX_VAL_MAX
     jbe 1f
     mov edi, r13d
     mov rsi, r12
@@ -1586,11 +1639,24 @@ ck_number:
     pop r12
     ret
 
-ck_focus_is:                    # eax 1 when g_focus == edi
-    xor eax, eax
-    cmp [rip + g_focus], edi
+ck_focus_is:                    # eax 1 when the focus is edi
+    call ctx_focus
+    cmp eax, edi
     sete al
+    movzx eax, al
     ret
+# ctx_focus() -> eax g_focus, or the focus a list is evaluated for (ctx_focus_as)
+ctx_focus:
+    mov eax, [rip + ctx_focus_over]
+    test eax, eax
+    jns 1f
+    mov eax, [rip + g_focus]
+1:  ret
+# FN ctx_focus_as(focus or -1): clauses see this focus (the palette lists commands as of the
+# focus before it opened); -1 ends it
+FN ctx_focus_as
+    mov [rip + ctx_focus_over], edi
+    jmp ctx_refresh
 
 ck_editor_focus:
     call ctx_editor_focused
@@ -1600,14 +1666,17 @@ ctx_editor_focused:
     xor eax, eax
     cmp qword ptr [rip + g_doc], 0
     je 1f
-    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    call ctx_focus
+    cmp eax, FOCUS_EDITOR
     sete al
+    movzx eax, al
 1:  ret
 ck_text_input_focus:
     call ctx_editor_focused
     test eax, eax
     jnz ck_bool
-    mov ecx, [rip + g_focus]
+    call ctx_focus
+    mov ecx, eax
     cmp ecx, FOCUS_PALETTE
     je 1f
     cmp ecx, FOCUS_PROMPT
@@ -1726,7 +1795,7 @@ ctx_rdoc:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz 1f
-    mov rax, [rax + CT_doc]
+    mov rax, [rax + MTG_doc]
     ret
 1:  mov rax, [rip + g_doc]
     ret
@@ -1735,10 +1804,10 @@ ctx_rpath:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz 1f
-    mov rcx, [rax + CT_path]
+    mov rcx, [rax + MTG_path]
     test rcx, rcx
     jnz 3f
-    mov rax, [rax + CT_doc]
+    mov rax, [rax + MTG_doc]
     jmp 2f
 1:  mov rax, [rip + g_file]
     test rax, rax
@@ -1776,7 +1845,12 @@ ck_resource_dirname:
     call path_dirlen
     mov rdx, rax
     pop rax
-    ret
+    test rdx, rdx
+    jnz 1f
+    cmp byte ptr [rax], '/'     # a file at the root: its folder is /
+    jne 1f
+    mov edx, 1
+1:  ret
 ck_resource_ext:
     call ctx_rpath
     test rax, rax
@@ -2032,13 +2106,13 @@ ck_target_kind:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz ck_empty
-    mov rdi, [rax + CT_kind]
+    mov rdi, [rax + MTG_kind]
     jmp ck_cstr
 ck_target_is_folder:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz ck_bool
-    mov rdi, [rax + CT_kind]
+    mov rdi, [rax + MTG_kind]
     test rdi, rdi
     jz ck_empty
     lea rsi, [rip + .Lv_folder]
@@ -2046,7 +2120,7 @@ ck_target_is_folder:
     test eax, eax
     jnz ck_bool
     mov rax, [rip + ctx_target]
-    mov rdi, [rax + CT_kind]
+    mov rdi, [rax + MTG_kind]
     lea rsi, [rip + .Lv_root]
     call strcmp_eq
     jmp ck_bool
@@ -2054,7 +2128,7 @@ ck_target_is_root:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz ck_bool
-    mov rdi, [rax + CT_kind]
+    mov rdi, [rax + MTG_kind]
     test rdi, rdi
     jz ck_empty
     lea rsi, [rip + .Lv_root]
@@ -2064,7 +2138,7 @@ ck_tab_kind:
     mov rax, [rip + ctx_target]
     test rax, rax
     jz ck_empty
-    mov rdi, [rax + CT_tabkind]
+    mov rdi, [rax + MTG_tabkind]
     jmp ck_cstr
 
 # ---------------------------------------------------------------- headless control
@@ -2165,9 +2239,23 @@ FN ctx_dump
     call when_free
     xor eax, eax
     EPILOGUE
-7:  mov rdi, rbx
-    lea rsi, [rip + .Lc_unknown_key]
+7:  mov r12, rdx                # the error's byte and text
+    mov r13, rcx
+    mov rdi, rbx
+    lea rsi, [rip + .Lc_error_at]
     call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, r12
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Lc_colon]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, r13
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
     xor eax, eax
     EPILOGUE
 5:  xor r14d, r14d
@@ -2249,7 +2337,17 @@ FN ctx_ctl_set
 .set CTXKEY_NAMES, 1
 ctx_table:
     CTXKEY_LIST
-tab_kind_names: .quad .Lv_doc, .Lv_image, .Lv_settings, .Lv_git, .Lv_extensions, .Lv_view, .Lv_notebook
+# by TAB_*: TAB_DOC 1, TAB_SETTINGS 2, TAB_IMAGE 3, TAB_GIT 4, TAB_EXT 5, TAB_VIEW 6
+# published keys with a value until they are set, and again when cleared: id, value
+.p2align 3
+ctx_defaults:
+    .long CTX_DEBUG_STATE, 0
+    .quad .Lv_inactive
+    .long CTX_IN_DEBUG_MODE, 0
+    .quad .Lw_false
+    .long -1, 0
+.p2align 3
+tab_kind_names: .quad .Lv_doc, .Lv_settings, .Lv_image, .Lv_git, .Lv_extensions, .Lv_view, .Lv_notebook
 vim_names: .quad .Lv_normal, .Lv_insert, .Lv_visual, .Lv_vline
 prov_fields: .quad EXT_pv_complete, EXT_pv_signature, EXT_pv_definition, EXT_pv_references
     .quad EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format, 0
@@ -2299,10 +2397,11 @@ prov_names: .quad .Lp_complete, .Lp_signature, .Lp_definition, .Lp_references, .
 .Le_value: .asciz "expected a value"
 .Le_list: .asciz "expected a key or a quoted list"
 .Le_quote: .asciz "unclosed quote"
+.Le_utf8: .asciz "a quoted value that is not UTF-8"
 .Le_unknown: .asciz "unknown key "
 .Le_ambiguous: .asciz "ambiguous extension name "
 .Lc_when1: .asciz "when=1\n"
 .Lc_when0: .asciz "when=0\n"
 .Lc_when_err: .asciz "when error at "
 .Lc_colon: .asciz ": "
-.Lc_unknown_key: .asciz "unknown key\n"
+.Lc_error_at: .asciz "error at "
