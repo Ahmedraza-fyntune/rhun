@@ -640,6 +640,8 @@ draw_detail:
 51:
     mov rdi, rbx                # resources group: its passwords and tokens (extpageres.inc)
     call draw_res_secrets
+    mov rdi, rbx                # and its links
+    call draw_res_links
     # the pin
     lea rsi, [rip + .Ls_toolbar]
     call section

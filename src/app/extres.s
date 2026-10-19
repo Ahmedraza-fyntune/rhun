@@ -334,6 +334,8 @@ FN extres_exited
     mov qword ptr [rax + EL_rss], 0
     mov rdi, rbx
     call vdoc_ext_exited        # the virtual documents waiting for it say so
+    mov rdi, rbx
+    call links_ext_exited       # and its links will not be taken
 9:  EPILOGUE
 
 # extres_stopped(ext) -> eax 1 when the stop that ended it was for idleness: it is idle again
@@ -486,7 +488,15 @@ idle_held:
 # extres_group_holds(ext) -> eax 1 while a secret request, a pending link or a search of it runs
 # (the parts of the group add their checks here as they arrive)
 FN extres_group_holds
-    jmp secrets_pending
+    push rdi
+    push rdi
+    call secrets_pending
+    pop rdi
+    pop rdi
+    test eax, eax
+    jnz 9f
+    jmp links_pending
+9:  ret
 
 # idle_pass(): once a second: requests nobody answers, and idle = stop extensions quiet for
 # their period that hold nothing
@@ -562,6 +572,7 @@ FN extres_frame
     jb 2f
     mov [rip + el_idle_t], r12
     call idle_pass
+    call links_expire
 2:  # every 2 s while the Extensions page shows: CPU and memory
     mov rax, r12
     sub rax, [rip + el_page_t]
@@ -869,6 +880,69 @@ FN extres_idle_secs
 9:  ret
 8:  xor eax, eax
     ret
+
+# ---------------- the user's choices for it (extensions.ini) ----------------
+
+# FN extres_choice(ini, ext) -> eax 1 when the key was the group's: open_urls = yes
+FN extres_choice
+    PROLOGUE
+    mov r12, rdi
+    mov rbx, rsi
+    mov rdi, r12
+    lea rsi, [rip + .Lk_open_urls]
+    call ini_key_is
+    test eax, eax
+    jz 8f
+    mov rdi, rbx
+    call extres_row
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    and dword ptr [r13 + EL_flags], ~ELF_OPEN_URLS
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lv_yes]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    or dword ptr [r13 + EL_flags], ELF_OPEN_URLS
+9:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN extres_choices_write(ext, sb, write) -> eax 1 when the extension has choices of the group
+# to keep; with write 1 their lines go onto sb
+FN extres_choices_write
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13d, edx
+    call extres_row
+    test rax, rax
+    jz 8f
+    test dword ptr [rax + EL_flags], ELF_OPEN_URLS
+    jz 8f
+    test r13d, r13d
+    jz 9f
+    mov rdi, r12
+    lea rsi, [rip + .Lw_open_urls]
+    call sb_push_cstr
+9:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN extres_open_urls_revoke(ext): its page's switch: it asks before opening links again
+FN extres_open_urls_revoke
+    PROLOGUE
+    call extres_row
+    test rax, rax
+    jz 9f
+    and dword ptr [rax + EL_flags], ~ELF_OPEN_URLS
+    call ext_settings_save
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
 
 # ---------------- words for the page ----------------
 
@@ -1475,6 +1549,7 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
     .quad .Lc_secret_backend, c_secret_backend, .Lc_print_secrets, c_print_secrets
     .quad .Lc_secrets_refresh, c_secrets_refresh, .Lc_secret_forget, c_secret_forget
     .quad .Lc_print_vdocs, c_print_vdocs
+    .quad .Lc_link_deliver, c_link_deliver, .Lc_print_links, c_print_links
     .quad 0, 0
 .Lv_complete: .asciz "complete"
 .Lq_complete: .asciz "completion"
@@ -1496,7 +1571,12 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
 .Lc_secrets_refresh: .asciz "secrets-refresh"
 .Lc_secret_forget: .asciz "secret-forget"
 .Lc_print_vdocs: .asciz "print-vdocs"
+.Lc_link_deliver: .asciz "link-deliver"
+.Lc_print_links: .asciz "print-links"
 .Lr_idle: .asciz "idle"
+.Lk_open_urls: .asciz "open_urls"
+.Lv_yes: .asciz "yes"
+.Lw_open_urls: .asciz "open_urls = yes\n"
 .Lenv_scale: .asciz "RHUN_IDLE_SCALE"
 .Lk_idle: .asciz "idle"
 .Lk_idle_after: .asciz "idle.after"

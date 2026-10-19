@@ -481,6 +481,11 @@ FN ext_settings_load_one
 apply_choice:
     PROLOGUE
     mov rbx, rdi
+    lea rdi, [rip + ini_it]     # resources group: open_urls = yes (extres.s)
+    mov rsi, rbx
+    call extres_choice
+    test eax, eax
+    jnz 9f
     lea rdi, [rip + ini_it]
     lea rsi, [rip + .Lk_disabled]
     call ini_key_is
@@ -607,6 +612,12 @@ FN ext_settings_save
     or eax, [rbx + EXT_disabled]
     or eax, [rbx + EXT_edits]
     jnz 2f
+    mov rdi, rbx                # resources group: open_urls
+    lea rsi, [rip + tmp2]
+    xor edx, edx
+    call extres_choices_write
+    test eax, eax
+    jnz 2f
     cmp qword ptr [rbx + EXT_xset], 0
     jne 2f
     mov rdi, rbx
@@ -628,6 +639,10 @@ FN ext_settings_save
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_close_sec]
     call sb_push_cstr
+    mov rdi, rbx                # resources group: open_urls = yes
+    lea rsi, [rip + tmp2]
+    mov edx, 1
+    call extres_choices_write
     cmp dword ptr [rbx + EXT_disabled], 0
     je 3f
     lea rdi, [rip + tmp2]

@@ -3034,6 +3034,11 @@ FN extproto_prompt_chose
     PROLOGUE
     cmp qword ptr [rip + pr_id], 0
     je 9f
+    cmp qword ptr [rip + pr_kind], 4    # resources group: an open-url prompt (extresproto.inc)
+    jne 1f
+    call res_url_chose
+    jmp 9f
+1:
     mov r12, rdi
     mov rbx, [rip + cur]
     mov rax, [rip + pr_ext]
@@ -4501,6 +4506,9 @@ verbs:
     .quad .Lres_v_secret_delete, h_res_secret_delete, 0
     .quad .Lres_v_secret_keys, h_res_secret_keys, 0
     .quad .Lres_v_content_changed, h_res_content_changed, 0
+    .quad .Lres_v_open_url, h_res_open_url, 65536
+    .quad .Lres_v_external_uri, h_res_external_uri, 65536
+    .quad .Lres_v_link, h_res_link, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX

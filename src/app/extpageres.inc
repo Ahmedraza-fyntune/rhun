@@ -1,7 +1,43 @@
 # The resources group's parts of an extension's details page, part of extpage.s: its passwords
 # and tokens (the keys, never the values, each with Forget) and where they are kept.
 .equ ID_XR_FORGET, 0x7d40       # + i: Forget for the i-th key; ID_XP + 7: Forget all
+.equ ID_XR_LINKS, 0x7d3f        # the open-links-without-asking switch
 .text
+
+# draw_res_links(ext): "Opens links without asking" with a switch, once the user chose Always
+# for its open-url prompt
+draw_res_links:
+    PROLOGUE
+    mov rbx, rdi
+    call extres_row
+    test rax, rax
+    jz 9f
+    test dword ptr [rax + EL_flags], ELF_OPEN_URLS
+    jz 9f
+    M eax, MI_8
+    add [rip + xp_y], eax
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + .Lxr_open_urls]
+    COLOR edx, T_FG
+    mov ecx, MI_28
+    mov r8d, [rip + xp_x]
+    call text_at_keep
+    mov edi, ID_XR_LINKS
+    mov esi, [rip + xp_x]
+    add esi, [rip + xp_w]
+    sub esi, [rip + g_mt + 4*MI_20]
+    sub esi, [rip + g_mt + 4*MI_14]
+    mov edx, [rip + xp_y]
+    add edx, [rip + g_mt + 4*MI_4]
+    mov ecx, 1
+    call ui_toggle
+    test eax, eax
+    jz 1f
+    mov rdi, rbx
+    call extres_open_urls_revoke
+1:  M eax, MI_28
+    add [rip + xp_y], eax
+9:  EPILOGUE
 
 # draw_res_secrets(ext): "Passwords and tokens" for an extension with [needs] secrets = yes
 draw_res_secrets:
@@ -117,4 +153,5 @@ draw_res_secrets:
 .Lxr_none: .asciz "None stored."
 .Lxr_forget: .asciz "Forget"
 .Lxr_forget_all: .asciz "Forget all"
+.Lxr_open_urls: .asciz "Opens links in your browser without asking"
 .text
