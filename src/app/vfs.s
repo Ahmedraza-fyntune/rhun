@@ -13,6 +13,7 @@ vfs_pending: .zero SB_SIZE      # watch events from the host, waiting for vfs_ti
 vfs_line: .zero SB_SIZE         # a request's line
 vfs_body: .zero SB_SIZE         # a request's body
 vfs_acc: .zero SB_SIZE          # a file read in parts
+vfs_events: .zero SB_SIZE       # vfs_tick's events while it hands them on
 .globl vfs_statbuf
 vfs_statbuf: .zero 144          # the last vfs_stat / vfs_lstat (Linux struct stat on every system)
 vfs_tmp: .zero 4200
@@ -78,6 +79,19 @@ vfs_line_call:
     mov rdi, [rip + vfs_line + SB_ptr]
     mov rsi, [rip + vfs_line + SB_len]
     jmp remote_call
+
+# vfs_home() -> the home folder (cstr) or 0: the host's in a remote window, else $HOME
+FN vfs_home
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    lea rax, [rip + g_remote_home]
+    cmp byte ptr [rax], 0
+    je 2f
+    ret
+1:  lea rdi, [rip + .Lhome_env]
+    jmp getenv
+2:  xor eax, eax
+    ret
 
 # ---------------- reading and writing ----------------
 
@@ -531,6 +545,80 @@ FN vfs_access
     pop rbx
     ret
 
+# vfs_readlink(path, buf, cap) -> as readlink(2): the link's text in buf (not NUL-terminated, cut at
+#   cap), its length, or -errno (-EINVAL when path is no symlink)
+FN vfs_readlink
+    cmp dword ptr [rip + g_remote], 0
+    jne 1f
+.ifdef WINDOWS
+    jmp win_readlink_one
+.else
+    SYS SYS_readlink
+    ret
+.endif
+1:  push rbx
+    push r12
+    push r13
+    mov rbx, rsi
+    mov r12, rdx
+    mov rsi, rdi
+    lea rdi, [rip + .Lv_readlink]
+    call vfs_req_path
+    test rax, rax
+    js 9f
+    mov rdx, [rip + g_remote_reply + SB_len]
+    cmp rdx, r12
+    jbe 2f
+    mov rdx, r12
+2:  mov r13, rdx
+    mov rdi, rbx
+    mov rsi, [rip + g_remote_reply + SB_ptr]
+    call memcpy
+    mov rax, r13
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
+
+# vfs_watch(path, mask) -> the host's watch descriptor or -errno (events: vfs_remote_event)
+FN vfs_watch
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12d, esi
+    lea rdi, [rip + .Lv_watch]
+    call vfs_line_start
+    mov edi, r12d
+    call vfs_line_num
+    mov rdi, rbx
+    call strlen
+    mov rsi, rax
+    mov rdi, rbx
+    call vfs_line_call
+    test rax, rax
+    js 9f
+    mov rdi, [rip + g_remote_reply + SB_ptr]
+    mov rsi, [rip + g_remote_reply + SB_len]
+    call parse_u64
+9:  add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# vfs_unwatch(wd): the host's watch ends (nothing waits for the answer)
+FN vfs_unwatch
+    push rbx
+    mov ebx, edi
+    lea rdi, [rip + .Lv_unwatch]
+    call vfs_line_start
+    mov edi, ebx
+    call vfs_line_num
+    mov rdi, [rip + vfs_line + SB_ptr]
+    call remote_request_async
+    pop rbx
+    ret
+
 # vfs_realpath(path, buf 4096) -> length of the resolved path in buf (NUL-terminated), or -errno
 FN vfs_realpath
     cmp dword ptr [rip + g_remote], 0
@@ -666,6 +754,100 @@ vfs_list:
     call mem_free
     xor eax, eax
 9:  EPILOGUE
+
+# vfs_walk_body(root, query or 0, query len): vfs_body = "ROOT\0EXCLUDES[\0QUERY]" for files and grep
+vfs_walk_body:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    lea rdi, [rip + vfs_body]
+    call sb_clear
+    lea rdi, [rip + vfs_body]
+    mov rsi, rbx
+    call sb_push_cstr
+    lea rdi, [rip + vfs_body]
+    xor esi, esi
+    call sb_push_byte
+    lea rdi, [rip + vfs_body]
+    mov rsi, [rip + cfg_exclude]
+    call sb_push_cstr
+    test r12, r12
+    jz 1f
+    lea rdi, [rip + vfs_body]
+    xor esi, esi
+    call sb_push_byte
+    lea rdi, [rip + vfs_body]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+1:  pop r13
+    pop r12
+    pop rbx
+    ret
+
+# vfs_files(root, max) -> rax the host's files under root relative to it, each with a NUL (in
+#   g_remote_reply, valid until the next request), rdx their bytes; rax 0 on failure. Go to File in a
+#   remote window: one request, the host walks the project as quick open does here
+FN vfs_files
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12, rsi
+    xor esi, esi
+    xor edx, edx
+    call vfs_walk_body
+    lea rdi, [rip + .Lv_files]
+    call vfs_line_start
+    mov rdi, r12
+    call vfs_line_num
+    mov rdi, [rip + vfs_body + SB_ptr]
+    mov rsi, [rip + vfs_body + SB_len]
+    call vfs_line_call
+    test rax, rax
+    js 8f
+    mov rax, [rip + g_remote_reply + SB_ptr]
+    mov rdx, [rip + g_remote_reply + SB_len]
+    test rax, rax
+    jnz 9f
+8:  xor eax, eax
+    xor edx, edx
+9:  add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# vfs_grep(root, query, len, max, case, cb, ctx) -> request id or 0: find in files on the host; cb(ctx,
+#   status, records, len) later with "REL\0LINE\0COL\0LABEL\0" for each line (remote_request_cb)
+FN vfs_grep
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov r15d, r8d
+    mov [rsp], r9
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call vfs_walk_body
+    lea rdi, [rip + .Lv_grep]
+    call vfs_line_start
+    mov rdi, r14
+    call vfs_line_num
+    mov edi, r15d
+    call vfs_line_num
+    mov rdi, [rip + vfs_line + SB_ptr]
+    mov rsi, [rip + vfs_line + SB_len]
+    mov rdx, [rip + vfs_body + SB_ptr]
+    mov rcx, [rip + vfs_body + SB_len]
+    mov r8, [rsp]
+    mov r9, [rbp + 16]
+    call remote_request_cb
+    EPILOGUE
 
 # vfs_mkdir(path, mode) -> 0 or -errno
 FN vfs_mkdir
@@ -943,6 +1125,13 @@ FN vfs_remote_event
     call sb_push
 9:  EPILOGUE
 
+# vfs_pending_events() -> eax 1 while watch events wait for vfs_tick
+FN vfs_pending_events
+    xor eax, eax
+    cmp qword ptr [rip + vfs_pending + SB_len], 0
+    setne al
+    ret
+
 # vfs_remote_lost(): the connection went: pending events are stale
 FN vfs_remote_lost
     sub rsp, 8
@@ -951,12 +1140,84 @@ FN vfs_remote_lost
     add rsp, 8
     ret
 
-# vfs_reconnected(): connected again after a loss (E2 renews the watches here)
+# vfs_reconnected(): connected again after a loss: the watches are made again on the host and open
+#   files compared with it
 FN vfs_reconnected
-    ret
+    jmp watch_remote_renew
+
+# vfs_tick(): the watch events that came from the host go to watch.s, as inotify events with their
+#   descriptors tagged (struct inotify_event: wd, mask, cookie, len, the name padded with NULs)
+FN vfs_tick
+    PROLOGUE
+    cmp qword ptr [rip + vfs_pending + SB_len], 0
+    je 9f
+    # taken out first: the handlers make requests, during which more events arrive
+    lea rdi, [rip + vfs_events]
+    call sb_free
+    lea rsi, [rip + vfs_pending]
+    lea rdi, [rip + vfs_events]
+    mov edx, SB_SIZE
+    call memcpy
+    lea rdi, [rip + vfs_pending]
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset
+    call watch_evbuf
+    mov r15, rax
+    xor r12d, r12d              # read position in vfs_pending
+1:  xor r13d, r13d              # bytes in the buffer
+2:  mov rax, [rip + vfs_events + SB_len]
+    sub rax, r12
+    cmp rax, 16
+    jb 5f
+    mov rbx, [rip + vfs_events + SB_ptr]
+    add rbx, r12
+    mov r14, [rbx + 8]          # the name's length
+    cmp r14, 255
+    jbe 3f
+    mov r14d, 255
+3:  lea rax, [r14 + 4]
+    and rax, -4                 # the name, its NUL and padding
+    lea rcx, [rax + 16]
+    lea rdx, [r13 + rcx]
+    cmp rdx, 16384
+    ja 4f                       # full: this batch goes first
+    mov ecx, [rbx]
+    or ecx, 0x40000000          # WD_REMOTE
+    mov [r15 + r13], ecx
+    mov ecx, [rbx + 4]
+    mov [r15 + r13 + 4], ecx
+    mov dword ptr [r15 + r13 + 8], 0
+    mov [r15 + r13 + 12], eax
+    lea rdi, [r15 + r13 + 16]
+    push rax
+    push rax
+    mov rdx, rax
+    xor esi, esi
+    call memset
+    lea rdi, [r15 + r13 + 16]
+    lea rsi, [rbx + 16]
+    mov rdx, r14
+    call memcpy
+    pop rax
+    pop rax
+    lea r13, [r13 + rax + 16]
+    mov rax, [rbx + 8]
+    lea r12, [r12 + rax + 16]
+    jmp 2b
+4:  mov edi, r13d
+    call watch_remote_events
+    test r13, r13
+    jnz 1b
+5:  mov edi, r13d
+    call watch_remote_events
+    lea rdi, [rip + vfs_events]
+    call sb_clear
+9:  EPILOGUE
 
 .section .rodata
 .Lv_stat: .asciz "stat"
+.Lhome_env: .asciz "HOME"
 .Lv_lstat: .asciz "lstat"
 .Lv_list: .asciz "list"
 .Lv_access: .asciz "access"
@@ -964,6 +1225,11 @@ FN vfs_reconnected
 .Lv_mkdir: .asciz "mkdir"
 .Lv_remove: .asciz "remove"
 .Lv_rename: .asciz "rename"
+.Lv_readlink: .asciz "readlink"
+.Lv_watch: .asciz "watch"
+.Lv_files: .asciz "files"
+.Lv_grep: .asciz "grep"
+.Lv_unwatch: .asciz "unwatch"
 vfs_line_read: .asciz "read"
 vfs_line_write: .asciz "write"
 .Lsave_suffix: .asciz ".rhun-save"

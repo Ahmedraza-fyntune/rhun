@@ -18,6 +18,10 @@
 .equ HOP_wd, 0
 .equ HOP_path, 8
 .equ HOP_SIZE, 16
+# remote hosts: in a remote window the workspace's folders are watched on the host (vfs.s); their
+# native descriptors carry this tag, local ones (the config, Omarchy's theme) do not
+.equ WD_REMOTE, 0x40000000
+.equ WK_LOCAL, WK_CONFIG | WK_OMARCHY | WK_AGENTS
 
 .bss
 .p2align 3
@@ -30,6 +34,7 @@ wait_path: .zero 4096
 next_tick: .quad 0              # earliest pending reload or fade frame; 0 means no timer
 .data
 ino_fd: .long -1
+in_remote_len: .long 0          # remote hosts: events in evbuf from vfs_tick (-1: handled)
 
 .text
 
@@ -87,7 +92,20 @@ add_watch:
     mov rbx, rdi
     mov r12d, esi
     mov r13, -1
-    mov edi, [rip + ino_fd]
+    # remote hosts: a workspace folder of a remote window is watched on the host
+    cmp dword ptr [rip + g_remote], 0
+    je 10f
+    test r12d, WK_LOCAL
+    jnz 10f
+    mov rdi, rbx
+    mov esi, WMASK
+    call vfs_watch
+    test rax, rax
+    js 9f
+    or rax, WD_REMOTE
+    mov r14, rax
+    jmp 11f
+10: mov edi, [rip + ino_fd]
     test edi, edi
     js 9f
     mov rsi, rbx
@@ -96,6 +114,7 @@ add_watch:
     test rax, rax
     js 9f
     mov r14, rax
+11:
     mov rdi, rax
     call .Lwatch_descriptor
     test rax, rax
@@ -131,11 +150,69 @@ add_watch:
 6:  lea rcx, [rip + wd_kinds]
     or [rcx + r13], r12b
     jmp 9f
-8:  mov edi, [rip + ino_fd]
-    mov esi, r14d
-    SYS SYS_inotify_rm_watch
+8:  mov rdi, r14
+    call rm_native
     mov r13, -1
 9:  mov rax, r13
+    EPILOGUE
+
+# rm_native(native descriptor): the watch ends, here or on the host
+rm_native:
+    test rdi, WD_REMOTE
+    jz 1f
+    and edi, WD_REMOTE - 1
+    jmp vfs_unwatch
+1:  mov esi, edi
+    mov edi, [rip + ino_fd]
+    SYS SYS_inotify_rm_watch
+    ret
+
+# watch_remote_events(len): remote hosts: vfs_tick put len bytes of inotify events in watch_evbuf,
+#   their descriptors tagged WD_REMOTE; they are handled as the local ones are
+FN watch_remote_events
+    test edi, edi
+    jle 1f
+    mov [rip + in_remote_len], edi
+    sub rsp, 8
+    call on_inotify
+    add rsp, 8
+    mov dword ptr [rip + in_remote_len], 0
+1:  ret
+
+# watch_evbuf() -> the event buffer (16384 bytes)
+FN watch_evbuf
+    lea rax, [rip + evbuf]
+    ret
+
+# watch_remote_renew(): connected again: every remote watch is made again on the host (the paths
+#   are kept); one whose folder went is dropped, its users seeing it as removed
+FN watch_remote_renew
+    PROLOGUE
+    xor ebx, ebx
+1:  lea rax, [rip + wd_native]
+    mov rcx, [rax + rbx*8]
+    test rcx, rcx
+    jz 3f
+    dec rcx
+    test rcx, WD_REMOTE
+    jz 3f
+    lea rax, [rip + wd_paths]
+    mov rdi, [rax + rbx*8]
+    mov esi, WMASK
+    call vfs_watch
+    test rax, rax
+    js 2f
+    or rax, WD_REMOTE
+    inc rax
+    lea rcx, [rip + wd_native]
+    mov [rcx + rbx*8], rax
+    jmp 3f
+2:  mov edi, ebx
+    call docs_lost
+3:  inc ebx
+    cmp ebx, MAXWD
+    jb 1b
+    call docs_wake
     EPILOGUE
 
 # Broker references share the existing native descriptors and owned paths.
@@ -164,11 +241,10 @@ FN watch_broker_release
     cmp byte ptr [rax + rbx], 0
     jne 8f
     lea rax, [rip + wd_native]
-    mov rsi, [rax + rbx*8]
+    mov rdi, [rax + rbx*8]
     mov qword ptr [rax + rbx*8], 0
-    dec rsi
-    mov edi, [rip + ino_fd]
-    SYS SYS_inotify_rm_watch
+    dec rdi
+    call rm_native
     lea rax, [rip + wd_paths]
     mov rdi, [rax + rbx*8]
     mov qword ptr [rax + rbx*8], 0
@@ -366,11 +442,7 @@ FN link_target
 1:  mov rdi, rsp
     lea rsi, [rsp + 4096]
     mov edx, 4095
-.ifdef WINDOWS
-    call win_readlink_one       # one symlink at a time, as readlink does here
-.else
-    SYS SYS_readlink
-.endif
+    call vfs_readlink           # one symlink at a time (Windows too); the host's in a remote window
     test rax, rax
     js 5f                       # not a symlink, or not there: the path reached
     cmp rax, 4095
@@ -555,12 +627,15 @@ on_inotify:
     mov dword ptr [rsp + 4], 0  # agents changed
     mov dword ptr [rsp + 8], 0  # open files wait for a folder that may be there now
 .Lin_read:
+    cmp dword ptr [rip + in_remote_len], 0     # remote hosts: watch_remote_events' batch
+    jne .Lin_remote
     mov edi, [rip + ino_fd]
     lea rsi, [rip + evbuf]
     mov edx, 16384
     SYS SYS_read
     test rax, rax
     jle .Lin_done
+.Lin_have:
     mov r12, rax
     xor r13d, r13d
 .Lin_ev:
@@ -680,6 +755,11 @@ on_inotify:
     jz .Lin_ev
     call omarchy_changed
     jmp .Lin_ev
+.Lin_remote:
+    movsxd rax, dword ptr [rip + in_remote_len]
+    mov dword ptr [rip + in_remote_len], -1
+    test rax, rax
+    jg .Lin_have
 .Lin_done:
     cmp dword ptr [rsp + 8], 0
     je 3f
@@ -892,14 +972,14 @@ reload_changed:
     sub rsp, 16
     mov rsi, rsp
     mov edx, 1
-    SYS SYS_readlink
+    call vfs_readlink
     add rsp, 16
     cmp rax, -22                # EINVAL: not a symlink (a short buffer is an error on Windows, not here)
     je 2f
 1:  mov rdi, rbx
     call watch_doc
 2:  mov rdi, [rbx + DOC_path]
-    call file_stamp
+    call vfs_stamp
     test rax, rax
     jz 9f                      # a removed file keeps its current contents
     cmp rax, [rbx + DOC_mtime]
@@ -1036,16 +1116,16 @@ FN app_reload_doc
     jz 9f
     cmp qword ptr [rbx + DOC_img], 0
     jne .Lrd_image
-    call file_stamp
+    call vfs_stamp
     mov [rsp + 24], rax        # stamp belongs to the bytes read, not a later replacement
     mov rdi, [rbx + DOC_path]
-    call file_read_all
+    call vfs_read_all
     test rax, rax
     jz 9f
     mov r12, rax
     mov r13, rdx
     mov rdi, [rbx + DOC_path]
-    call file_stamp
+    call vfs_stamp
     cmp rax, [rsp + 24]
     jne .Lrd_unstable          # a concurrent writer replaced or changed it while we read
     mov rdi, r12
@@ -1132,7 +1212,7 @@ FN app_reload_doc
     xor eax, eax
     EPILOGUE
 .Lrd_image:
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     mov [rbx + DOC_disk_seen], rax
     and dword ptr [rbx + DOC_flags], ~DF_DISK_CHANGED

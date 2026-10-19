@@ -194,7 +194,7 @@ node_load:
     mov rdi, [rbx + N_path]
     lea rsi, [rip + load_cb]
     mov rdx, rbx
-    call dir_each
+    call vfs_dir_each
     mov rdi, [rbx + N_kids + VEC_ptr]
     mov rsi, [rbx + N_kids + VEC_len]
     call sort_nodes
@@ -602,7 +602,7 @@ file_target:
 FN explorer_delete_target
     push rbx
     lea rdi, [rip + delete_path]
-    call file_remove_tree
+    call vfs_remove_tree
     mov rbx, rax
     # A failed deletion can still have removed some children.
     call explorer_refresh
@@ -644,7 +644,7 @@ close_deleted_tabs:
     test eax, eax
     jnz 1b
     mov rdi, [r12 + DOC_path]
-    call file_missing
+    call vfs_missing
     test eax, eax
     jz 1b
     mov rdi, rbx

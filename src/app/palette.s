@@ -92,6 +92,13 @@ brw_kind: .long 0               # the path browser picks: 0 a file, 1 a folder
 brw_dir: .zero 4096             # the folder it lists
 brw_next: .zero 4096
 brw_label: .zero 4096
+rg_reply: .zero SB_SIZE         # remote hosts: the host's answer to rg_query (find in files)
+rg_paths: .zero SB_SIZE         # its files' paths, which gfiles' labels point into
+rg_query: .zero 256
+rg_query_len: .quad 0
+rg_asked: .zero 256             # the query out to the host
+rg_asked_len: .quad 0
+rg_out: .long 0                 # 1 while a query is out
 
 .text
 
@@ -388,6 +395,9 @@ FN palette_tick
     mov [rsp], rax
     cmp dword ptr [rip + gload_state], GL_SCAN
     jne 1f
+    # remote hosts: the host searches (grep_run): nothing is read here
+    cmp dword ptr [rip + g_remote], 0
+    jne 8f
     # the list goes to gload, as the search keeps its results in items
     mov qword ptr [rip + items + VEC_len], 0
     mov qword ptr [rip + results + VEC_len], 0
@@ -455,7 +465,42 @@ FN palette_read_all
     mov dword ptr [rip + gload_drawn], 1
     call palette_tick
     jmp 1b
-9:  pop rbx
+9:  # remote hosts: and the host's answer to the query (10 s at most)
+    cmp dword ptr [rip + g_remote], 0
+    je 8f
+    call time_ms
+    lea rbx, [rax + 10000]
+2:  cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 8f
+    cmp dword ptr [rip + rg_out], 0
+    jne 3f
+    call rg_answered
+    test eax, eax
+    jnz 8f
+    call palette_filter         # not asked yet (a short query): asks now
+    cmp dword ptr [rip + rg_out], 0
+    je 8f
+3:  call time_ms
+    cmp rax, rbx
+    jae 8f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 2b
+8:  pop rbx
+    ret
+
+# rg_answered() -> eax 1 when the host's answer is for the field's query
+rg_answered:
+    sub rsp, 8
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + rg_query]
+    mov rcx, [rip + rg_query_len]
+    call str_eq
+    add rsp, 8
     ret
 
 # sort_gfiles(): by path, byte order (shell sort)
@@ -610,6 +655,7 @@ grep_release:
     call mem_free
     mov qword ptr [rip + ghit], 0
     mov dword ptr [rip + gprev_len], 0
+    mov qword ptr [rip + rg_query_len], 0     # remote hosts: a new search asks the host again
     pop rbx
     ret
 
@@ -668,6 +714,8 @@ grep_run:
     mov qword ptr [rip + items + VEC_len], 0
     lea rdi, [rip + gstr]
     call sb_clear
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lgr_remote
     lea rdi, [rip + pal_tf]
     call tf_text
     mov [rsp], rax              # query
@@ -858,6 +906,222 @@ grep_run:
     jmp 1b
 9:  EPILOGUE
 
+# ---- find in files on a remote host ----
+# The query goes to the host (vfs_grep); its answer comes later (rg_answer) and runs the filter again,
+# which then shows it. Typing never waits; while a query is out, a newer one waits for its answer.
+
+.Lgr_remote:
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    cmp rdx, 2
+    jb .Lgr_fix
+    cmp rdx, 255
+    ja .Lgr_fix
+    # the answer for this query is here: its lines become the items
+    cmp [rip + rg_query_len], rdx
+    jne 1f
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + rg_query]
+    mov rcx, [rip + rg_query_len]
+    call str_eq
+    test eax, eax
+    jz 1f
+    call rg_items
+    jmp .Lgr_fix
+1:  # ask, unless a query is out: its answer asks again
+    cmp dword ptr [rip + rg_out], 0
+    jne .Lgr_fix
+    call rg_ask
+    jmp .Lgr_fix
+
+# rg_ask(): the field's query to the host (case-sensitive with a capital letter, as here)
+rg_ask:
+    PROLOGUE
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rbx, rax
+    mov r12, rdx
+    lea rdi, [rip + rg_asked]
+    mov rsi, rbx
+    mov rdx, r12
+    call memcpy
+    mov [rip + rg_asked_len], r12
+    xor r8d, r8d
+    xor ecx, ecx
+1:  cmp rcx, r12
+    jae 2f
+    movzx eax, byte ptr [rbx + rcx]
+    sub eax, 'A'
+    cmp eax, 25
+    ja 11f
+    mov r8d, 1
+11: inc rcx
+    jmp 1b
+2:  mov rdi, [rip + g_project]
+    mov rsi, rbx
+    mov rdx, r12
+    mov ecx, GREP_MAX
+    lea r9, [rip + rg_answer]
+    push 0
+    push 0
+    call vfs_grep
+    add rsp, 16
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + rg_out], 1
+9:  EPILOGUE
+
+# rg_answer(ctx, status, records, len): the host's lines for rg_asked; kept, then the filter again
+rg_answer:
+    PROLOGUE
+    mov dword ptr [rip + rg_out], 0
+    mov rbx, rdx
+    mov r12, rcx
+    test rsi, rsi
+    js 9f
+    lea rdi, [rip + rg_reply]
+    call sb_clear
+    test r12, r12
+    jz 1f
+    lea rdi, [rip + rg_reply]
+    mov rsi, rbx
+    mov rdx, r12
+    call sb_push
+1:  lea rdi, [rip + rg_query]
+    lea rsi, [rip + rg_asked]
+    mov rdx, [rip + rg_asked_len]
+    call memcpy
+    mov rax, [rip + rg_asked_len]
+    mov [rip + rg_query_len], rax
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 9f
+    call palette_filter
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# rg_items(): items from rg_reply ("REL\0LINE\0COL\0LABEL\0" records), one gfiles entry per file
+#   (its label only: accepting opens it as for a local search)
+rg_items:
+    PROLOGUE 48
+    mov qword ptr [rip + gfiles + VEC_len], 0
+    lea rdi, [rip + rg_paths]
+    call sb_clear
+    mov rbx, [rip + rg_reply + SB_ptr]
+    test rbx, rbx
+    jz 8f
+    mov r15, [rip + rg_reply + SB_len]
+    add r15, rbx                # end
+    mov qword ptr [rsp + 40], -1  # the file index
+1:  cmp rbx, r15
+    jae 7f
+    cmp qword ptr [rip + items + VEC_len], GREP_MAX
+    jae 7f
+    mov r12, rbx                # REL
+    mov rdi, rbx
+    call strlen
+    lea r13, [rbx + rax + 1]    # LINE
+    mov [rsp], rax
+    cmp r13, r15
+    jae 7f
+    # a file other than the last: a new gfiles entry (its path in rg_paths, fixed up after)
+    cmp qword ptr [rsp + 40], 0
+    jl 2f
+    mov rdi, [rip + gfiles + VEC_ptr]
+    mov rax, [rsp + 40]
+    imul rax, rax, GF_SIZE
+    mov rdi, [rdi + rax + GF_label]
+    add rdi, [rip + rg_paths + SB_ptr]
+    mov rsi, r12
+    call strcmp_eq
+    test eax, eax
+    jnz 3f
+2:  lea rdi, [rip + gfiles]
+    mov esi, GF_SIZE
+    call vec_push
+    mov rcx, [rip + rg_paths + SB_len]
+    mov [rax + GF_label], rcx
+    mov qword ptr [rax + GF_text], 0
+    mov qword ptr [rax + GF_len], 0
+    lea rdi, [rip + rg_paths]
+    mov rsi, r12
+    mov rdx, [rsp]
+    call sb_push
+    lea rdi, [rip + rg_paths]
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rip + gfiles + VEC_len]
+    dec rax
+    mov [rsp + 40], rax
+3:  mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    lea r14, [r13 + rax + 1]    # COL
+    call parse_u64
+    mov [rsp + 8], rax          # line
+    mov rdi, r14
+    call strlen
+    mov rdi, r14
+    mov rsi, rax
+    lea r13, [r14 + rax + 1]    # LABEL
+    call parse_u64
+    cmp rax, 0xfffff
+    jbe 4f
+    mov eax, 0xfffff
+4:  mov [rsp + 16], rax         # col
+    cmp r13, r15
+    jae 7f
+    mov rdi, r13
+    call strlen
+    mov [rsp + 24], rax
+    lea rbx, [r13 + rax + 1]    # the next record
+    # label, then detail "REL:LINE"
+    mov rax, [rip + gstr + SB_len]
+    mov [rsp + 32], rax
+    lea rdi, [rip + gstr]
+    mov rsi, r13
+    mov rdx, [rsp + 24]
+    call sb_push
+    mov r14, [rip + gstr + SB_len]
+    lea rdi, [rip + gstr]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + gstr]
+    mov esi, ':'
+    call sb_push_byte
+    lea rdi, [rip + gstr]
+    mov rsi, [rsp + 8]
+    inc rsi
+    call sb_push_u64
+    lea rdi, [rip + gstr]
+    xor esi, esi
+    call sb_push_byte
+    mov rcx, [rsp + 8]
+    shl rcx, 20
+    or rcx, [rsp + 16]
+    mov rax, [rsp + 40]
+    shl rax, 44
+    or rcx, rax
+    mov rdi, [rsp + 32]
+    mov rsi, [rsp + 24]
+    mov rdx, r14
+    call item_add
+    jmp 1b
+7:  # the paths' offsets -> pointers
+    xor ecx, ecx
+71: cmp rcx, [rip + gfiles + VEC_len]
+    jae 8f
+    imul rax, rcx, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdx, [rip + rg_paths + SB_ptr]
+    add [rax + GF_label], rdx
+    inc rcx
+    jmp 71b
+8:  EPILOGUE
+
 # prompt_open(label cstr, kind, [initial text in pal_path])
 FN prompt_open
     push rbx
@@ -913,8 +1177,7 @@ prompt_initial:
     mov rsi, [rip + g_project]
     test rsi, rsi
     jnz 4f
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rsi, rax
     test rsi, rsi
     jz 9f
@@ -1262,9 +1525,12 @@ load_files:
     mov rdi, [rip + g_project]
     test rdi, rdi
     jz 9f
+    cmp dword ptr [rip + g_remote], 0
+    jne .Llf_remote
     mov dword ptr [rip + scan_plen], 0
     mov dword ptr [rip + scan_depth], 0
     call scan_dir
+.Llf_fix:
     # labels point into strings (stable after the scan): offsets -> pointers
     xor ebx, ebx
 1:  cmp rbx, [rip + items + VEC_len]
@@ -1274,6 +1540,38 @@ load_files:
     mov rcx, [rip + strings + SB_ptr]
     add [rax + IT_label], rcx
     inc rbx
+    jmp 1b
+9:  EPILOGUE
+
+.Llf_remote:
+    # remote hosts: the host walks the project in one request (vfs.s)
+    mov esi, MAXFILES
+    call vfs_files
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    lea r13, [rax + rdx]
+1:  cmp r12, r13
+    jae .Llf_fix
+    mov rdi, r12
+    call strlen
+    mov r14, rax
+    test rax, rax
+    jz 2f
+    mov r15, [rip + strings + SB_len]
+    lea rdi, [rip + strings]
+    mov rsi, r12
+    mov rdx, r14
+    call sb_push
+    lea rdi, [rip + strings]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, r15
+    mov rsi, r14
+    xor edx, edx
+    xor ecx, ecx
+    call item_add
+2:  lea r12, [r12 + r14 + 1]
     jmp 1b
 9:  EPILOGUE
 
@@ -1367,8 +1665,7 @@ browse_open:
     mov rsi, [rip + g_project]
     test rsi, rsi
     jnz 2f
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rsi, rax
     test rsi, rsi
     jnz 2f
@@ -1434,8 +1731,7 @@ browse_expand:
 2:  # ~: the home folder
     inc r12
     dec r13
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rdi, rbx
     test rax, rax
     jz 5f
@@ -1447,8 +1743,7 @@ browse_expand:
     mov rsi, [rip + g_project]
     test rsi, rsi
     jnz 4f
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rsi, rax
     test rsi, rsi
     jnz 4f
@@ -1576,7 +1871,7 @@ browse_load:
     lea rdi, [rip + strings]
     call sb_clear
     lea rdi, [rip + brw_dir]
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 9f
     xor ebx, ebx                # items before the sorted ones
@@ -1627,7 +1922,7 @@ browse_load:
 1:  lea rdi, [rip + brw_dir]
     lea rsi, [rip + browse_cb]
     xor edx, edx
-    call dir_each
+    call vfs_dir_each
     # labels point into strings (stable now): offsets -> pointers
     xor ecx, ecx
 2:  cmp rcx, [rip + items + VEC_len]
@@ -2489,8 +2784,7 @@ palette_accept:
     jne 71f
     push rax
     push rdx
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rsi, rax
     lea rdi, [rip + pal_path]
     call cstr_copy
@@ -2670,15 +2964,15 @@ prompt_done:
     jne 2f
     # create the file (and its folders) if missing, then open it
     mov rdi, rbx
-    call file_mtime
+    call vfs_mtime
     test rax, rax
     jnz 11f
     mov rdi, rbx
-    call mkdir_parent
+    call vfs_mkdir_parent
     mov rdi, rbx
     lea rsi, [rip + .Lempty]
     xor edx, edx
-    call file_write_all
+    call vfs_write_all
 11: mov rdi, rbx
     call app_open_file
     call explorer_refresh
@@ -2686,14 +2980,15 @@ prompt_done:
 2:  cmp r12d, PROMPT_NEW_FOLDER
     jne 3f
     mov rdi, rbx
-    call mkdir_p
+    call vfs_mkdir_p
     call explorer_refresh
     jmp 9f
 3:  cmp r12d, PROMPT_RENAME
     jne 9f
     lea rdi, [rip + g_explorer_target]
     mov rsi, rbx
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     js 8f
     # open tabs follow it: the file's, or those of the files inside a folder

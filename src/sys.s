@@ -1000,8 +1000,7 @@ FN path_tilde
     mov rdi, rsi
     call strlen
     mov r13, rax
-    lea rdi, [rip + .Lhome_env]
-    call getenv
+    call vfs_home               # a remote window's paths are the host's (vfs.s)
     test rax, rax
     jz 8f
     mov r14, rax
