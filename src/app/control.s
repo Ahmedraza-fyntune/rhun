@@ -1180,6 +1180,56 @@ c_print_options:
     xor eax, eax
     EPILOGUE
 
+# testing (testview.s): the test model's controls get (out, the arguments, their length)
+c_test_select:
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
+    jmp testctl_select
+c_test_expand:
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
+    mov ecx, 1
+    jmp testctl_expand
+c_test_collapse:
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
+    xor ecx, ecx
+    jmp testctl_expand
+c_test_action:
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
+    jmp testctl_action
+c_wait_tests:
+    lea rdi, [rip + out]
+    jmp testctl_wait
+c_wait_test_items:
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
+    jmp testctl_wait_items
+c_print_tests:
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
+    jmp testctl_print
+c_print_test_result:
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
+    jmp testctl_result
+c_print_test_runs:
+    lea rdi, [rip + out]
+    jmp testctl_runs
+c_print_coverage:
+    lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
+    jmp testctl_coverage
+
 # print-marks: the active document's diagnostic marks, "L1 C1 L2 C2 SEVERITY owner/name MESSAGE"
 # per line, in the order they are held; then "errors=N warnings=M"
 c_print_marks:
@@ -2334,7 +2384,24 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
-    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
+    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
+    # testing (testview.s)
+    .quad .Lc_test_select, c_test_select, .Lc_test_expand, c_test_expand
+    .quad .Lc_test_collapse, c_test_collapse, .Lc_test_action, c_test_action
+    .quad .Lc_wait_tests, c_wait_tests, .Lc_wait_test_items, c_wait_test_items
+    .quad .Lc_print_tests, c_print_tests, .Lc_print_test_result, c_print_test_result
+    .quad .Lc_print_test_runs, c_print_test_runs, .Lc_print_coverage, c_print_coverage
+    .quad 0, 0
+.Lc_test_select: .asciz "test-select"
+.Lc_test_expand: .asciz "test-expand"
+.Lc_test_collapse: .asciz "test-collapse"
+.Lc_test_action: .asciz "test-action"
+.Lc_wait_tests: .asciz "wait-tests"
+.Lc_wait_test_items: .asciz "wait-test-items"
+.Lc_print_tests: .asciz "print-tests"
+.Lc_print_test_result: .asciz "print-test-result"
+.Lc_print_test_runs: .asciz "print-test-runs"
+.Lc_print_coverage: .asciz "print-coverage"
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:

@@ -204,6 +204,7 @@ FN main
     call ext_store_job_retire_wait
     jmp .Lm_store_retire
 .Lm_store_retired:
+    call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
     call agents_shutdown
     call ai_shutdown

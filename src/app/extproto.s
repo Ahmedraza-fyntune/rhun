@@ -347,6 +347,8 @@ handle_line:
     mov rdi, rbx
     call extproto_events        # catch-up: nothing is known yet, so everything open is reported
     mov rdi, rbx
+    call testproto_ready        # testing: a controller is asked for its roots
+    mov rdi, rbx
     call ext_pending_try
     jmp 9f
 3:  mov rdi, rbx
@@ -468,8 +470,16 @@ handle_line:
     jmp 9f
 2:  test r12, r12
     jz 9f
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
+    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS | FEAT_TESTS
     jz 9f
+    mov rdi, rbx                # testing: tests-resolve and test-run answers
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call testproto_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -494,13 +504,23 @@ handle_line:
     call langfeat_reply
     jmp 9f
 .Lhl_err:
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
+    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS | FEAT_TESTS
     jz 9f
     mov edi, 1
     call field_u64
     test edx, edx
     jz 9f
     mov r12, rax
+    mov edi, 2                  # testing: the code and text go with the answer
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call testproto_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -555,6 +575,17 @@ handle_line:
     lea rsi, [rip + .Lr_framing]
     call ext_kill
     jmp 9b
+
+# testing (testproto.s): every tests verb goes to testproto_request(ext, id, line, len, body,
+# body length), which parses the line itself and answers through ext_send_checked
+h_tests:
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov rdx, [rip + line + SB_ptr]
+    mov rcx, [rip + line + SB_len]
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    jmp testproto_request
 
 # reply_syntax(id): "error ID syntax ..."; the third in a row ends the program
 reply_syntax:
@@ -3415,7 +3446,21 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # testing (testproto.s): feature "tests"
+    .quad .Lv_test_items, h_tests, EXT_BODY_MAX
+    .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
+    .quad .Lv_test_update, h_tests, TS_RESULTS_BODY
+    .quad .Lv_test_end, h_tests, 0
+    .quad .Lv_test_coverage, h_tests, TS_COVER_BODY
+    .quad .Lv_test_exec, h_tests, TS_EXEC_BODY
     .quad 0, 0, 0
+.Lv_test_items: .asciz "test-items"
+.Lv_test_remove: .asciz "test-remove"
+.Lv_test_update: .asciz "test-update"
+.Lv_test_end: .asciz "test-end"
+.Lv_test_coverage: .asciz "test-coverage"
+.Lv_test_exec: .asciz "test-exec"
+.Lf_tests: .asciz "tests"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -3538,7 +3583,9 @@ cmd_allow:
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature
+    .quad .Lf_tests                 # 15: testing
+    .quad 0
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "

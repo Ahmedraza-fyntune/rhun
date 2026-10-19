@@ -1488,7 +1488,8 @@ ENDSTRUCT TF_SIZE
 # the features whose requests rhun sends (and whose ok ID LEN replies it frames)
 .equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
 .equ FEAT_WORKSPACE_WATCH, 16384
-.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+.equ FEAT_TESTS, 32768          # testing (testproto.s): "tests", feature_names index 15
+.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS | FEAT_TESTS
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1705,6 +1706,9 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
+F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
+F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
+F EXT_tests_progs, 8    # [needs] tests: programs rhun may start for its test runs (cstr) or 0
 F EXT_activation_plan, 8 # borrowed immutable KE128, catalog retains its captured inputs and lease
 F EXT_keeper, 8         # stable independent process-service handle, 0 without an owned lifetime
 F EXT_retiring, 4       # contributions withdrawn; raw output drains independently of protocol
@@ -1850,6 +1854,158 @@ ENDSTRUCT XK_SIZE
 .equ EXT_GLOBAL_BYTES, 1048576
 .equ EXT_PUMP_MS, 2             # one parsing run
 .equ EXT_FLOOD_FRAMES, 30       # windows in a row at a cap
+
+# ---- testing (testmodel.s, testproto.s, testexec.s; feature "tests") ----
+.equ TSK_CTRL, 0                # item kinds; the controller's own row is item 0
+.equ TSK_GROUP, 1
+.equ TSK_FILE, 2
+.equ TSK_SUITE, 3
+.equ TSK_TEST, 4
+.equ TSS_NOTRUN, 0              # states, by precedence: a parent shows the highest of its own and
+.equ TSS_SKIPPED, 1             # its children's
+.equ TSS_PASSED, 2
+.equ TSS_FAILED, 3
+.equ TSS_ERRORED, 4
+.equ TSS_QUEUED, 5
+.equ TSS_RUNNING, 6
+.equ TSS_COUNT, 7
+.equ TSF_LAZY, 1                # item flags
+.equ TSF_NODEBUG, 2
+.equ TSF_EXPANDED, 4
+.equ TSF_RESOLVING, 8           # a tests-resolve for its children is out
+.equ TSF_MARK, 16               # scratch: kept by a replace
+.equ TSP_RUN, 0                 # run profiles (bit i of TSC_profiles)
+.equ TSP_DEBUG, 1
+.equ TSP_COVERAGE, 2
+.equ TSRS_FREE, 0               # run states
+.equ TSRS_QUEUED, 1             # waiting for a run slot: test-run not sent yet
+.equ TSRS_RUNNING, 2
+.equ TSRS_ENDED, 3
+.equ TS_ITEMS_BODY, 10000       # items per test-items body or tests-resolve answer
+.equ TS_ITEMS_EXT, 50000        # per controller
+.equ TS_ITEMS_ALL, 100000       # all controllers
+.equ TS_ID_MAX, 512
+.equ TS_LABEL_MAX, 200
+.equ TS_DESC_MAX, 200
+.equ TS_ERROR_MAX, 1000
+.equ TS_RESULTS_BODY, 1048576   # a test-update body
+.equ TS_RESULTS_MAX, 2000       # records in it
+.equ TS_MSG_MAX, 8000           # a message's text
+.equ TS_MSGS_ITEM, 16           # messages per item per run
+.equ TS_VALUE_MAX, 65536        # expected, actual
+.equ TS_OUT_ITEM, 262144        # an item's output per run
+.equ TS_OUT_RUN, 4194304        # the run's own output
+.equ TS_BUDGET, 33554432        # messages, values and outputs of all runs
+.equ TS_RUNS_KEPT, 10           # finished runs kept
+.equ TS_RUNS_EXT, 4             # active runs per controller
+.equ TS_RUNS_ACTIVE, 8          # active runs in all
+.equ TS_RUNS_MAX, 32            # run slots: active, queued and kept
+.equ TS_RESOLVE_MS, 30000       # a tests-resolve answer waits this long
+.equ TS_CANCEL_KILL_MS, 2000    # after Cancel: processes get SIGTERM, then SIGKILL as long again
+.equ TS_CANCEL_END_MS, 5000     # and rhun ends the run itself
+.equ TS_COVER_BODY, 4194304     # a test-coverage body
+.equ TS_COVER_FILES, 20000      # files per run
+.equ TS_COVER_RANGES, 1000000   # ranges per run
+.equ TS_COVER_LINES, 1048576    # lines per file
+.equ TS_EXEC_BODY, 262144       # a test-exec body
+.equ TS_EXEC_ARGS, 1000
+.equ TS_EXEC_ARG_MAX, 32768
+.equ TS_EXEC_ENVS, 64
+.equ TS_PROCS_RUN, 4
+.equ TS_PROCS_ALL, 8
+.equ TS_OUT_EVENT, 65536        # bytes per test-out event
+.equ TS_QUEUE_PAUSE, 262144     # pipes wait while the extension's queue holds this much
+.equ TS_PROGS_MAX, 16           # [needs] tests: program names
+.equ TS_PROG_NAME, 64
+.equ TS_CTRL_MAX, 64            # controllers (extensions with tests agreed or declared)
+.equ TS_RESOLVE_MAX, 64         # tests-resolve requests out at once, all controllers
+# a controller: an extension's test tree
+STRUCT
+F TSC_ext, 8            # its EXT, 0 for a free slot
+F TSC_items, VEC_SIZE   # TSI records; item 0 is the controller's own row, the parent of its roots
+F TSC_map, 8            # id -> item: u32 slots holding the item's index + 1, 0 empty
+F TSC_mapcap, 8         # slots, a power of two
+F TSC_mapn, 8           # slots in use
+F TSC_free, 4           # first free item slot (TSI_next chains them), -1 none
+F TSC_count, 4          # items besides row 0
+F TSC_ready, 4          # 1 once its program agreed tests (roots asked); 0 again when it stops
+F TSC_pad, 4
+ENDSTRUCT TSC_SIZE
+# a test item
+STRUCT
+F TSI_id, 8             # owned bytes with a NUL after them; 0 marks a free slot
+F TSI_label, 8          # owned cstr
+F TSI_desc, 8           # owned cstr or 0
+F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed tests-resolve
+F TSI_path, 8           # owned cstr or 0: the file its range is in
+F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
+F TSI_idlen, 4
+F TSI_kind, 4           # TSK_*
+F TSI_flags, 4          # TSF_*
+F TSI_l1, 4             # its range, one-based; all 0 for none
+F TSI_c1, 4
+F TSI_l2, 4
+F TSI_c2, 4
+F TSI_parent, 4         # item indices, -1 for none
+F TSI_first, 4
+F TSI_last, 4
+F TSI_next, 4
+F TSI_prev, 4
+F TSI_gen, 4            # bumped when the slot is freed: results name (index, gen)
+F TSI_own, 4            # TSS_* of its own last result
+F TSI_state, 4          # the highest of its own and its children's (derived)
+F TSI_ms, 4             # its last duration, -1 none
+F TSI_run, 4            # the run of its last result, 0 none (or dropped)
+F TSI_rent, 4           # that result's entry in the run
+F TSI_cnt, 4*TSS_COUNT    # its children by derived state
+ENDSTRUCT TSI_SIZE
+# a run
+STRUCT
+F TSR_ext, 8            # its controller's EXT, 0 for a free slot
+F TSR_num, 8            # the run number (unique for the session)
+F TSR_ids, SB_SIZE      # the items asked for, each ending in LF (none: everything)
+F TSR_out, SB_SIZE      # the run's own output
+F TSR_ents, VEC_SIZE    # TSE records
+F TSR_t0, 8             # time_ms it started (was sent), and ended
+F TSR_t1, 8
+F TSR_cancel_at, 8      # time_ms of the user's Cancel, 0 none
+F TSR_req, 8            # the id of its test-run request, 0 before it is sent
+F TSR_bytes, 8          # messages, values and outputs it holds
+F TSR_state, 4          # TSRS_*
+F TSR_profile, 4        # TSP_*
+F TSR_nids, 4
+F TSR_dropped, 4        # records for unknown items
+F TSR_procs, 4          # its live processes
+F TSR_err, 4            # 1 when the run itself errored
+F TSR_cut, 4            # 1 once output was cut for the budget
+F TSR_killed, 4         # 1 once its processes were sent SIGTERM after a Cancel
+ENDSTRUCT TSR_SIZE
+# a result: one item in one run (item -1: the run itself)
+STRUCT
+F TSE_item, 4
+F TSE_gen, 4
+F TSE_state, 4          # TSS_*; NOTRUN when the run ended with it queued or running
+F TSE_ms, 4
+F TSE_prev_own, 4       # the item's result before this run touched it
+F TSE_prev_ms, 4
+F TSE_prev_run, 4
+F TSE_prev_rent, 4
+F TSE_nmsg, 4
+F TSE_cut, 4            # 1 once its output was cut
+F TSE_msgs, SB_SIZE     # messages: TSM header + text, path, expected, actual
+F TSE_out, SB_SIZE      # its output
+ENDSTRUCT TSE_SIZE
+# a message's header in TSE_msgs
+STRUCT
+F TSM_l1, 4
+F TSM_c1, 4
+F TSM_l2, 4
+F TSM_c2, 4
+F TSM_text, 4           # lengths of the bytes after the header
+F TSM_path, 4
+F TSM_exp, 4            # -1: no expected value
+F TSM_act, 4            # -1: no actual value
+ENDSTRUCT TSM_SIZE
 
 # json
 .equ JT_NULL, 0
