@@ -33,6 +33,8 @@ ENDSTRUCT KB_SIZE
 .equ KBR_TYPING, 3              # an extension's typing key without a guard
 .equ KBR_PREFIX, 4              # a chord's first stroke without ctrl, alt or super
 .equ KBR_STROKES, 5             # not one or two strokes
+.equ KBR_ARGS, 6                # ARGS over 4096 bytes
+.equ KEY_ARGS_MAX, 4096
 .equ CHORD_FALLBACK_MS, 1000    # a pause runs the single-stroke binding of the first stroke
 .equ CHORD_WAIT_MS, 5000
 # an extension's [keys] line, kept from its manifest (kx_lines[extension index])
@@ -392,6 +394,8 @@ kb_value:
     call trim
     test rdx, rdx
     jz 3f
+    cmp rdx, KEY_ARGS_MAX
+    ja .Lkv_args
     mov [rip + kb_tmpl + KB_alen], rdx
     mov rdi, rax
     mov rsi, rdx
@@ -458,6 +462,9 @@ kb_value:
     EPILOGUE
 .Lkv_when:
     mov eax, KBR_WHEN
+    EPILOGUE
+.Lkv_args:
+    mov eax, KBR_ARGS
     EPILOGUE
 
 # kb_push(rank, ext, refused) -> rax the new binding, from kb_tmpl (which gives up its strings)
@@ -1862,12 +1869,13 @@ typing_keys: .long KEY_RETURN, KEY_TAB, KEY_ISO_LEFT_TAB, KEY_BACKSPACE, KEY_DEL
     .long KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END, KEY_PAGEUP, KEY_PAGEDOWN
     .long KEY_INSERT, 0
 .p2align 3
-refusal_names: .quad .Lr_command, .Lr_when, .Lr_typing, .Lr_prefix, .Lr_strokes
+refusal_names: .quad .Lr_command, .Lr_when, .Lr_typing, .Lr_prefix, .Lr_strokes, .Lr_args
 .Lr_command: .asciz "command"
 .Lr_when: .asciz "when"
 .Lr_typing: .asciz "typing"
 .Lr_prefix: .asciz "prefix"
 .Lr_strokes: .asciz "strokes"
+.Lr_args: .asciz "args"
 .Lwhen_sp: .asciz "when "
 .Lsp_when_sp: .asciz " when "
 .Lnone_word: .asciz "none"

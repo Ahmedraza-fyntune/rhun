@@ -153,6 +153,8 @@ FN ext_pending_set_inv
 .Lps_toobig:
     mov rdi, r13
     call ext_pending_release
+    mov rdi, rbx                # nothing older is delivered in its place either
+    call ext_pending_clear
     mov rax, -7
     EPILOGUE
 .Lps_missing:

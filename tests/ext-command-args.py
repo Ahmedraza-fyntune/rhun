@@ -55,6 +55,19 @@ class CommandArgs(contribhost.Contrib):
             'wait-ext demo running', 'wait 300'])
         self.assertEqual(self.runs(), [('0 run demo.ping 1 ref 5', 'body=first')])
 
+    def test_waiting_command_whose_document_closed(self):
+        root = self.work / 'exts'
+        self.make_ext(root, hello='hello 1 command-args', delay=0.5)
+        self.run_editor(exts=root, files=('a.txt', 'b.go'), drop_waits=True, actions=[
+            'cmd-args demo.ping first', 'cmd close_tab', 'wait-ext demo running', 'wait 300'])
+        self.assertEqual(self.runs(), [('0 run demo.ping 0 ref 5', 'body=first')])
+
+    def test_oversized_body_runs_nothing(self):
+        self.run_editor(exts=self.exts(), drop_waits=True, actions=[
+            'cmd-args demo.ping first', 'cmd-args demo.ping ' + 'x' * 65537,
+            'wait-ext demo running', 'wait 300'])
+        self.assertEqual(self.runs(), [('0 run demo.ping 1 ref 5', 'body=first')])
+
     def test_a_later_command_replaces_the_waiting_one(self):
         self.run_editor(exts=self.exts(), drop_waits=True, actions=[
             'cmd-args demo.ping first', 'cmd-args demo.ping second', 'wait-ext demo running', 'wait 300'])

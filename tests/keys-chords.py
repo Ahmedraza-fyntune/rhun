@@ -105,6 +105,12 @@ class Keys(contribhost.Contrib):
         self.assertEqual([l for l in out if l.startswith('ctrl+alt+y')],
                          ['ctrl+alt+y ' + mine + ' source=ext:alice/demo rank=3 state=active'])
 
+    def test_long_args_are_refused(self):
+        self.user_keys('ctrl+alt+u = alice/demo.ping ' + 'a' * 4097 + '\n')
+        out = self.run_editor(exts=self.exts(), drop_waits=True, actions=['print-keys'])
+        self.assertTrue(any(l.startswith('ctrl+alt+u alice/demo.ping') and l.endswith('state=refused:args')
+                            for l in out), [l for l in out if 'ctrl+alt+u' in l])
+
     def test_precedence(self):
         # an extension's [keys] beats the built-in; the user's beats it; [commands] defaults lose
         self.user_keys('ctrl+e = toggle_sidebar\n')

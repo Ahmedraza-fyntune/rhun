@@ -55,6 +55,8 @@ iv_msg: .zero 256
 # document (0: the active one). Built-in commands ignore what they do not use.
 FN cmd_invoke
     PROLOGUE
+    cmp rcx, INV_BODY_MAX       # a body no extension may be given: nothing runs
+    ja 9f
     mov rbx, rdi
     mov [rip + g_invoke + INV_from], esi
     mov [rip + g_invoke + INV_body], rdx
@@ -64,7 +66,7 @@ FN cmd_invoke
     call [rbx + CMD_fn]
     call invoke_clear
     mov dword ptr [rip + g_dirty], 1
-    EPILOGUE
+9:  EPILOGUE
 
 # FN invoke_take(dst INV*): the invocation being run, copied to dst, and cleared (the body
 # stays the caller's: it is valid until the command returns)

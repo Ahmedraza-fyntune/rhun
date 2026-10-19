@@ -3434,15 +3434,16 @@ FN extproto_send_invoke
     call out_cstr
     mov edi, ' '
     call out_byte
-    # the document: the invocation's while it is open, else the active one
+    # the document: the invocation's while it is open (0 once it closed), else the active one
     test r14, r14
     jz 1f
     mov rdi, [r14 + INV_doc]
     test rdi, rdi
     jz 1f
     call doc_by_id
+    xor edi, edi
     test rax, rax
-    jz 1f
+    jz 2f
     mov rdi, [rax + DOC_id]
     jmp 2f
 1:  call active_doc_id
