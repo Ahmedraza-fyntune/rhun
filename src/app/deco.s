@@ -1521,7 +1521,8 @@ FN deco_line_back
     jmp 1b
 9:  EPILOGUE
 
-# row_clip(DR* rcx) -> rax, rdx the range's part of the row as offsets in the line (rax > rdx: none)
+# row_clip(DR* rcx) -> rax, rdx the range's part of the row as offsets in the line (signed; rax >= rdx:
+# none)
 row_clip:
     mov rax, [rcx + DR_start]
     sub rax, [rip + g_row_lstart]
@@ -1568,7 +1569,7 @@ FN deco_row_back
     jz 2f
     call row_clip
     cmp rax, rdx
-    jae 2f
+    jge 2f
     mov rdi, rax
     mov rsi, rdx
     mov rdx, r14
@@ -1578,7 +1579,7 @@ FN deco_row_back
     mov rcx, r15
     call row_clip
     cmp rax, rdx
-    jae 1b
+    jge 1b
     call piece_count
     jz 1b
     mov [rsp], rdx
@@ -1766,7 +1767,7 @@ FN deco_row_front
     mov r14, rax
     call row_clip
     cmp rax, rdx
-    jae .Lrf_each
+    jge .Lrf_each
     call piece_count
     jz .Lrf_each
     mov [rsp], rdx
@@ -2237,6 +2238,12 @@ FN deco_visible
     mov [rip + vis_l1], rsi
     mov [rip + vis_l2], rdx
 3:  ret
+
+# deco_visible_again(): an extension started: the visible event goes out again
+FN deco_visible_again
+    mov qword ptr [rip + vis_sent_doc], -1
+    mov qword ptr [rip + vis_at], 0
+    ret
 
 # deco_visible_due() -> eax ms until the visible event is due, or -1
 FN deco_visible_due

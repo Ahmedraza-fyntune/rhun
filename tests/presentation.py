@@ -58,7 +58,7 @@ class Base(unittest.TestCase):
         self.env = dict(os.environ, HOME=self.work.as_posix(),
                         XDG_CONFIG_HOME=(self.work / 'config').as_posix(),
                         XDG_STATE_HOME=(self.work / 'state').as_posix())
-        for k in ('PRESENT_STEPS', 'PRESENT_ANSWERS', 'PRESENT_HELLO', 'RHUN_STALE', 'RHUN_UNDERPAINT'):
+        for k in ('PRESENT_STEPS', 'PRESENT_ANSWERS', 'PRESENT_HELLO'):
             self.env.pop(k, None)
         (self.proj / 'm.rs').write_text(TEXT, encoding='utf-8')
         self.exts = self.work / 'pexts'
@@ -121,10 +121,10 @@ class Presentation(Base):
         cx, cy = map(int, out[2].split())
         self.assertEqual(y, cy)
         self.assertLess(x, cx)              # the caret's edge, half a cell before the middle
-        out = self.run_p([f'print-hit {cx} {cy}', f'print-hit {x - 1} {cy}', 'print-hit 3 ' + str(cy)])
+        out = self.run_p([f'print-hit {cx} {cy}', 'print-hit 3 ' + str(cy), 'print-hit 30 ' + str(cy)])
         self.assertEqual(out[0], 'text 2 5')
-        self.assertTrue(out[1].startswith('git 2') or out[1] == 'text 2 1', out)
-        self.assertEqual(out[2], 'left-lane 2')
+        self.assertEqual(out[1], 'left-lane 2')
+        self.assertEqual(out[2], 'digits 2')
 
     def test_probes_log_planted_faults_and_nothing_else(self):
         stale = self.work / 'stale.log'
@@ -224,16 +224,18 @@ class Presentation(Base):
                                          'type cd', 'key Down', 'key Home', 'key shift+End', 'key BackSpace',
                                          'print-present deco'])
         decos = [l for l in out if l.startswith('deco ')]
-        self.assertEqual(decos, ['deco none 2:11-2:12', 'deco both 2:9-2:14'])
+        self.assertEqual(decos, ['deco both 2:9-2:14', 'deco none 2:11-2:12'])
 
     def test_older_versions_are_moved_through_the_tape(self):
         self.steps({'a': [['decoration-type t {LEN}', 'faded\n']],
-                    'b': [['decorate {DOC} {VER-2} t 0 0 2 {LEN}', '2 5 2 8 0 0 0 0\n3 13 3 14 0 0 0 0\n']]})
-        # two lines inserted at the top, then an edit inside line 2's "let": three versions on
-        out = self.run_p(self.start() + ['key ctrl+Home', 'type //\n', 'type \n', 'cmd present.b', 'wait 200',
-                                         'print-present deco', 'print-present tape'])
+                    'b': [['decorate {DOC} {VER-3} t 0 0 3 {LEN}',
+                           '1 1 1 3 0 0 0 0\n2 5 2 8 0 0 0 0\n3 13 3 14 0 0 0 0\n']]})
+        # two lines inserted at the top, then a "z" before "fn": the decorations are three versions old
+        out = self.run_p(self.start() + ['key ctrl+Home', 'key Return', 'key Return', 'type z', 'wait 200',
+                                         'cmd present.b', 'wait 200', 'print-present deco', 'print-present tape'])
         decos = [l for l in out if l.startswith('deco ')]
-        self.assertEqual(decos, ['deco t 3:5-3:8', 'deco t 4:13-4:14'], out)
+        self.assertEqual(decos, ['deco t 3:2-3:4', 'deco t 4:5-4:8', 'deco t 5:13-5:14'], out)
+        self.assertIn('tape edits=3 base=0 version=3', out)
 
     def test_too_old_a_version_is_stale(self):
         self.steps({'a': [['decoration-type t {LEN}', 'faded\n']],
@@ -256,7 +258,7 @@ class Presentation(Base):
             ['decoration-type bg {LEN}', 'background #ff0000\n'],
             ['decoration-type line {LEN}', 'line-background #0000ff\n'],
             ['decoration-type ul {LEN}', 'underline solid #00ff00\n'],
-            ['decoration-type st {LEN}', 'strike #ff00ff\n'],
+            ['decoration-type st {LEN}', 'strike #ff40ff\n'],
             ['decoration-type fg {LEN}', 'color #ffff00\n'],
             ['decoration-type icon {LEN}', 'gutter square #00ffff\nscrollbar #ff8000\n'],
             ['decorate {DOC} {VER} bg 0 0 1 {LEN}', '2 5 2 8 0 0 0 0\n'],
@@ -268,8 +270,10 @@ class Presentation(Base):
         ]})
         path = self.shot(self.start())
         colors = host.ppm_colors(path)
-        for c in ('ff0000', '0000ff', '00ff00', 'ff00ff', 'ffff00', '00ffff', 'ff8000'):
+        for c in ('ff0000', '0000ff', '00ff00', 'ff40ff', '00ffff', 'ff8000'):  # (not ff00ff: the underpaint probe's)
             self.assertTrue(rgb(c) in colors, c)
+        # text pixels are blended: the yellow "fn" has pixels strongly yellow
+        self.assertTrue(any(r > 200 and g > 200 and b < 90 for r, g, b in colors))
         # the background sits under line 2's "let", the line background across line 4
         out = self.run_p(['print-xy 2 5', 'print-xy 2 8', 'print-xy 4 1'])
         (x1, y2), (x2, _), (_, y4) = (tuple(map(int, l.split())) for l in out[:3])
@@ -287,7 +291,8 @@ class Presentation(Base):
     def test_visible_event_follows_the_view(self):
         (self.proj / 'long.rs').write_text(''.join(f'line {i}\n' for i in range(400)), encoding='utf-8')
         self.steps({})
-        self.run_p(self.start() + ['scroll 2000', 'wait 300', 'scroll 2000', 'wait 300'], files=('long.rs',))
+        self.run_p(self.start() + ['move 500 300', 'scroll 2000', 'wait 300', 'scroll 2000', 'wait 300'],
+                   files=('long.rs',))
         ev = self.events('visible')
         self.assertGreaterEqual(len(ev), 2, ev)
         first, last = ev[0].split(), ev[-1].split()
@@ -300,23 +305,24 @@ class Presentation(Base):
         out = self.run_p(['glyph-test', 'glyph 3 6', 'print-present glyphs', 'print-xy 3 1'])
         self.assertIn('glyph 3 kind=1 shape=6', out)
         _, y3 = map(int, out[-1].split())
-        out = self.run_p(['glyph-test', 'glyph 3 6', f'print-hit 4 {y3}', f'click 4 {y3}',
-                          f'click 4 {y3 - 21}', f'click 4 {y3 - 21}', f'click 4 {y3} right',
+        # (x 10: the window's resize edge takes the first pixels)
+        out = self.run_p(['glyph-test', 'glyph 3 6', f'print-hit 10 {y3}', f'click 10 {y3}',
+                          f'click 10 {y3 - 21}', 'wait 600', f'click 10 {y3 - 21}', f'click 10 {y3} right',
                           'print-present glyphs'])
         self.assertEqual(out[0], 'left-lane 3')
         self.assertIn('click 3 1 6', out)       # the kind's glyph
         self.assertIn('click 2 1 0', out)       # an empty line: the GK_EMPTY kind, glyph 0
         self.assertIn('click 2 1 2', out)       # its circle, the second time
-        self.assertIn('click 3 3 6', out)       # right button
+        self.assertIn('click 3 3 0', out)       # right button (the first click removed the glyph)
         self.assertNotIn('glyph 2 kind=1 shape=2', out)
         # two lines inserted above move it down; deleting its line gives it to the next one
-        out = self.run_p(['glyph-test', 'glyph 3 6', 'glyph 4 7', 'key ctrl+Home', 'type a\nb\n',
-                          'print-present glyphs', 'key Down', 'key Down', 'key Down', 'key Home',
+        out = self.run_p(['glyph-test', 'glyph 3 6', 'glyph 4 7', 'key ctrl+Home', 'key Return', 'key Return',
+                          'print-present glyphs', 'key Down', 'key Down', 'key Home',
                           'key shift+Down', 'key BackSpace', 'print-present glyphs'])
         self.assertEqual([l for l in out if l.startswith('glyph')][:2],
                          ['glyph 5 kind=1 shape=6', 'glyph 6 kind=1 shape=7'])
         self.assertEqual([l for l in out if l.startswith('glyph')][2:], ['glyph 5 kind=1 shape=6'])
-        out = self.run_p(['glyph-test', 'glyph 3 6', f'move 4 {y3}', 'wait 650', 'print-tip'])
+        out = self.run_p(['glyph-test', 'glyph 3 6', f'move 10 {y3}', 'wait 650', 'print-tip'])
         self.assertIn('Test glyph', '\n'.join(out))
 
     def test_glyph_lane_drawn_and_reserved_without_line_numbers(self):
@@ -326,7 +332,7 @@ class Presentation(Base):
         accent = host.ppm_pixel(path, 8, y2)
         self.assertNotEqual(accent, host.ppm_pixel(path, 8, y2 + 21))
         out = self.run_p(['cmd toggle_line_numbers', 'print-xy 2 1', 'glyph-test', 'print-xy 2 1',
-                          'print-hit 4 ' + str(y2), 'print-hit 20 ' + str(y2), 'cmd toggle_line_numbers'])
+                          'print-hit 10 ' + str(y2), 'print-hit 20 ' + str(y2), 'cmd toggle_line_numbers'])
         x_before, x_after = int(out[0].split()[0]), int(out[1].split()[0])
         self.assertEqual(x_after - x_before, 16)
         self.assertEqual(out[2], 'left-lane 2')

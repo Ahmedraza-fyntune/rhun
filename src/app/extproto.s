@@ -3032,6 +3032,7 @@ hello_features:
     test r14, r14
     jz 9f
     call pres_enable            # answers about older versions move through the edit tapes (edtape.s)
+    call deco_visible_again     # and the visible event reaches the new extension too (deco.s)
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
