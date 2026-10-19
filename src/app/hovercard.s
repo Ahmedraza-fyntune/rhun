@@ -451,21 +451,38 @@ take_answer:
     add rax, r13
     cmp rax, HC_ALL_MAX
     ja 9f
+    mov rdi, rbx
+    call rank_of
+    mov [rsp], rax
     xor r14d, r14d
 4:  cmp r14, [rip + hc_secs + VEC_len]
     jae 5f
-    imul rax, r14, HCX_SIZE
-    add rax, [rip + hc_secs + VEC_ptr]
+    imul r15, r14, HCX_SIZE
+    add r15, [rip + hc_secs + VEC_ptr]
     inc r14
-    cmp [rax + HCX_len], r13
+    cmp [r15 + HCX_len], r13
     jne 4b
-    mov rdi, [rax + HCX_text]
+    mov rdi, [r15 + HCX_text]
     mov rsi, [rip + hc_buf + SB_ptr]
     mov rdx, r13
     call mem_eq
     test eax, eax
     jz 4b
-    jmp 9f                      # identical: once
+    # identical: once, from the better ranked provider
+    mov rax, [rsp]
+    cmp rax, [r15 + HCX_rank]
+    jae 9f
+    mov rdi, [r15 + HCX_text]
+    call mem_free
+    mov rax, [r15 + HCX_len]
+    sub [rip + hc_bytes], rax
+    mov rdi, r15
+    lea rsi, [r15 + HCX_SIZE]
+    mov rdx, [rip + hc_secs + VEC_len]
+    sub rdx, r14
+    imul rdx, rdx, HCX_SIZE
+    call memmove
+    dec qword ptr [rip + hc_secs + VEC_len]
 5:  add [rip + hc_bytes], r13
     mov rdi, r13
     call mem_alloc
@@ -475,9 +492,7 @@ take_answer:
     mov rdx, r13
     call memcpy
     # its place: by rank
-    mov rdi, rbx
-    call rank_of
-    mov r14, rax
+    mov r14, [rsp]
     lea rdi, [rip + hc_secs]
     mov esi, HCX_SIZE
     call vec_push
