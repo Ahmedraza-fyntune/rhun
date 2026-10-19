@@ -57,8 +57,8 @@ c_print_scm_ext:
     xor eax, eax
     EPILOGUE
 
-# word(): the next word of the rest (r13 ptr, r14 len) -> rax ptr, rdx len
-word:
+# arg_word(): the next word of the rest (r13 ptr, r14 len) -> rax ptr, rdx len
+arg_word:
     mov rdi, r13
     mov rsi, r14
     call next_word
@@ -66,15 +66,15 @@ word:
     sub r14, rcx
     ret
 
-# num() -> rax the next word as a number
-num:
-    call word
+# arg_num() -> rax the next word as a number
+arg_num:
+    call arg_word
     mov rdi, rax
     mov rsi, rdx
     jmp parse_u64
 
-# no(): "scm: no such provider or row"
-no:
+# say_no(): "scm: no such provider or row"
+say_no:
     mov rdi, rbx
     lea rsi, [rip + .Lno]
     jmp sb_push_cstr
@@ -84,12 +84,12 @@ c_scm_click:
     mov rbx, rdi
     mov r13, rsi
     mov r14, rdx
-    call num
+    call arg_num
     mov r15, rax
-    call word
+    call arg_word
     mov [rsp], rax
     mov [rsp + 8], rdx
-    call word
+    call arg_word
     mov rcx, rax
     mov r8, rdx
     mov edi, r15d
@@ -98,7 +98,7 @@ c_scm_click:
     call scmpanel_click
     test eax, eax
     jnz 9f
-    call no
+    call say_no
 9:  xor eax, eax
     EPILOGUE
 
@@ -107,15 +107,15 @@ c_scm_action:
     mov rbx, rdi
     mov r13, rsi
     mov r14, rdx
-    call num
+    call arg_num
     mov r15, rax
-    call num
+    call arg_num
     mov edi, r15d
     mov esi, eax
     call scmpanel_action
     test eax, eax
     jnz 9f
-    call no
+    call say_no
 9:  xor eax, eax
     EPILOGUE
 
@@ -125,9 +125,9 @@ c_scm_menu:
     mov rbx, rdi
     mov r13, rsi
     mov r14, rdx
-    call num
+    call arg_num
     mov r15, rax
-    call word
+    call arg_word
     lea rdi, [rip + id_buf + 1]
     mov rsi, rax
     mov rcx, rdx
@@ -135,7 +135,7 @@ c_scm_menu:
     ja 8f
     mov r12, rdx
     rep movsb
-    call word
+    call arg_word
     test rdx, rdx
     jnz 1f
     mov byte ptr [rip + id_buf], 'g'
@@ -158,7 +158,7 @@ c_scm_menu:
     call scmpanel_menu
     test eax, eax
     jnz 9f
-8:  call no
+8:  call say_no
 9:  xor eax, eax
     EPILOGUE
 
@@ -167,12 +167,12 @@ c_scm_focus:
     mov rbx, rdi
     mov r13, rsi
     mov r14, rdx
-    call num
+    call arg_num
     mov edi, eax
     call scmpanel_focus
     test eax, eax
     jnz 9f
-    call no
+    call say_no
 9:  xor eax, eax
     EPILOGUE
 
@@ -181,7 +181,7 @@ c_wait_scm:
     PROLOGUE 16
     mov r13, rsi
     mov r14, rdx
-    call num
+    call arg_num
     mov r15, rax
     # the rest after one space is the text
     mov rdi, r13
