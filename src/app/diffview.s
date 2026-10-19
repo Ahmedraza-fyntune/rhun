@@ -45,6 +45,8 @@ open_diff:
     mov rax, [r15 + DOC_diff]
     test rax, rax
     jz 2f
+    cmp qword ptr [rax + DV_path], 0
+    je 2f                       # a Review tab (review.s) has no file of its own
     mov [rsp], rax
     mov ecx, [rax + DV_two]
     cmp ecx, [rsp + 32]

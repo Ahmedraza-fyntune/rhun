@@ -587,7 +587,7 @@ ws_resume:
     jne .Lwm_stale
     jmp 1b
 2:  mov rdi, [r12 + WG_real]
-    call file_stamp
+    call vfs_stamp
     cmp rax, [r12 + WG_stamp]
     jne .Lwm_stale
     jmp 1b

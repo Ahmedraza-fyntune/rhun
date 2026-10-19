@@ -172,7 +172,7 @@ reopen_probe:
     je .Lrp_diff
     # a file, as long as it is still there
     mov rdi, [rbx + CT_path]
-    call file_type
+    call vfs_type
     test eax, eax
     jz 8f
     mov rdi, [rbx + CT_path]
@@ -270,6 +270,8 @@ probe_open:
     test r14, r14
     jz 5f
     mov rdi, [r14 + DV_path]
+    test rdi, rdi
+    jz 5f                       # a Review tab (review.s): no file
     mov rsi, [r12 + CT_path]
     call str_same
     test eax, eax
