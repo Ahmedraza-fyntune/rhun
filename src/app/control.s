@@ -2324,7 +2324,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 # other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
 ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
+<<<<<<< HEAD
     .quad ws_ctl                # workspace edits and the editor model (wsctl.s)
+=======
+    .quad test_ctl              # testing (testview.s)
+>>>>>>> 0.18.0
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
@@ -2361,7 +2365,8 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
-    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
+    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
+    .quad 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:

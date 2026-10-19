@@ -670,6 +670,18 @@ g_commands:
     COMMAND check_for_updates, "Check for Updates", cmd_check_for_updates, ""
     COMMAND install_update, "Install Update", cmd_install_update, ""
     COMMAND restart_to_update, "Restart to Update", cmd_restart_to_update, ""
+    # testing (testview.s)
+    COMMAND testing, "Testing", cmd_testing, ""
+    COMMAND test_run_all, "Run All Tests", cmd_test_run_all, ""
+    COMMAND test_run_file, "Run Tests in Current File", cmd_test_run_file, ""
+    COMMAND test_run_cursor, "Run Test at Cursor", cmd_test_run_cursor, ""
+    COMMAND test_debug_cursor, "Debug Test at Cursor", cmd_test_debug_cursor, ""
+    COMMAND test_coverage_all, "Run All Tests with Coverage", cmd_test_coverage_all, ""
+    COMMAND test_rerun_failed, "Re-run Failed Tests", cmd_test_rerun_failed, ""
+    COMMAND test_rerun_last, "Re-run Last Test Run", cmd_test_rerun_last, ""
+    COMMAND test_cancel, "Cancel Test Runs", cmd_test_cancel, ""
+    COMMAND test_coverage_toggle, "Show Test Coverage", cmd_test_coverage_toggle, ""
+    COMMAND test_next_failure, "Go to Next Test Failure", cmd_test_next_failure, ""
     .quad 0, 0, 0, 0
 
 .bss
