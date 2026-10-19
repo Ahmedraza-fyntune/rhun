@@ -11,30 +11,12 @@ outsb: .quad 0
 
 .text
 
-# FN ai_control(name, len, rest, rest_len, out sb) -> rax 0 handled, -1 unknown
-FN ai_control
-    PROLOGUE
-    mov r12, rdi
-    mov r13, rsi
-    mov [rip + args_p], rdx
-    mov [rip + args_n], rcx
-    mov [rip + outsb], r8
-    lea rbx, [rip + ai_table]
-1:  mov rdx, [rbx]
-    test rdx, rdx
-    jz 8f
-    mov rdi, r12
-    mov rsi, r13
-    call str_eq_cstr
-    test eax, eax
-    jnz 2f
-    add rbx, 16
-    jmp 1b
-2:  call [rbx + 8]
-    xor eax, eax
-    EPILOGUE
-8:  mov rax, -1
-    EPILOGUE
+# ai_set(out, rest, len): the arguments the command's handler reads (every handler calls it first)
+ai_set:
+    mov [rip + outsb], rdi
+    mov [rip + args_p], rsi
+    mov [rip + args_n], rdx
+    ret
 
 # FN ai_arg() -> rax ptr, rdx len: the next space-separated argument
 FN ai_arg
@@ -61,24 +43,29 @@ FN ai_out
 # agents-source OWNER/NAME: its switch in Settings > Agents, flipped
 c_agents_source:
     PROLOGUE
+    call ai_set
     call ai_arg
     mov rdi, rax
     mov rsi, rdx
     call agentext_toggle_named
+    xor eax, eax
     EPILOGUE
 
 # print-review: the proposals, their files and hunks
 c_print_review:
     PROLOGUE
+    call ai_set
     call ai_out
     mov rdi, rax
     call review_dump
+    xor eax, eax
     EPILOGUE
 
 # review accept|reject FILE|all [HUNK]: decide in the active Review tab (else the newest one); FILE and
 #   HUNK count from 1
 c_review:
     PROLOGUE 16
+    call ai_set
     call review_current
     test rax, rax
     jz 9f
@@ -127,7 +114,8 @@ c_review:
     mov rdx, r14
     mov ecx, r12d
     call review_decide
-9:  EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
 
 .section .rodata
 .Lc_agents_source: .asciz "agents-source"
@@ -137,7 +125,8 @@ c_review:
 .Lw_reject: .asciz "reject"
 .Lw_all: .asciz "all"
 .p2align 3
-ai_table:
+.globl ai_ctl
+ai_ctl:
     .quad .Lc_agents_source, c_agents_source
     .quad .Lc_print_review, c_print_review, .Lc_review, c_review
     .quad 0, 0

@@ -768,9 +768,7 @@ install_commit:
 FN ext_remove_ask
     PROLOGUE
     mov rbx, rdi
-    cmp qword ptr [rip + g_ext_prepared_catalog_active], 0
-    jne .Lremove_ask_done
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lremove_ask_done
     mov [rip + rm_ext], rbx
@@ -801,10 +799,8 @@ remove_commit:
     test rbx, rbx
     jz 9f
     mov qword ptr [rip + rm_ext], 0
-    cmp qword ptr [rip + g_ext_prepared_catalog_active], 0
-    jne 9f
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     mov rdi, rbx
@@ -907,10 +903,3 @@ install_script:
     .ascii "[ -f \"$tmp/x/extension.ini\" ] || fail \"the archive has no extension.ini\"\n"
     .ascii "rm -f \"$tmp/a.tgz\" \"$tmp/sums\" \"$tmp/list\"\n"
     .asciz "echo \"ok $tmp\"\n"
-
-.text
-# The pending remove association is a borrower; owned installer state is separate.
-FN ext_remove_catalog_invalidate_pure
-    mov qword ptr [rip + rm_ext], 0
-    lea rdi, [rip + remove_commit]
-    jmp app_confirm_revoke_pure

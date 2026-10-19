@@ -166,7 +166,7 @@ FN config_path
     ret
 
 # setting_find(sec, seclen, key, keylen) -> SET* or 0
-setting_find:
+FN setting_find
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
@@ -354,7 +354,6 @@ FN parse_decimal
 # config_load(): read the config file if present
 FN config_load
     PROLOGUE 16
-    call config_key_source_begin
     xor r15d, r15d              # owned input buffer, if the config exists
     mov dword ptr [rip + cfg_theme_keys], 0
     # [keys] lines come from this read only
@@ -457,7 +456,6 @@ FN config_load
 1:  call config_agent_sources
     mov rdi, r15
     call mem_free
-    call config_key_source_end
     EPILOGUE
 
 # legacy_sources(): [agents] sources from before the switches names the providers listed. OpenCode came

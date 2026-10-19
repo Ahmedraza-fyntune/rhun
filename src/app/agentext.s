@@ -883,7 +883,7 @@ FN agentext_fetch
     test r12, r12
     js 9f
     mov r13, [rbx + AS_ext]
-    test dword ptr [r13 + EXT_features], FEAT_AGENTS
+    FEAT_TEST r13, FEAT_AGENTS
     jz 9f
     lea rdi, [rip + tmp]
     call sb_clear

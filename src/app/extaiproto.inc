@@ -3,12 +3,13 @@
 # tools.s.
 .text
 
-# ai_agreed(bit) -> eax 1 when cur agreed the feature, else 0 after replying unknown
+# ai_agreed(feature index) -> eax 1 when cur agreed the feature, else 0 after replying unknown
 ai_agreed:
-    mov rax, [rip + cur]
-    test [rax + EXT_features], edi
+    mov esi, edi
+    mov rdi, [rip + cur]
+    call ext_feature
+    test eax, eax
     jz 1f
-    mov eax, 1
     ret
 1:  mov rdi, [rip + cur_id]
     lea rsi, [rip + .Le_unknown]
@@ -254,7 +255,7 @@ FN extproto_ai_answer
 # ai_reply(ext, id, ok, body, len) -> eax 1 when the reply answered one of the AI requests rhun sent
 ai_reply:
     PROLOGUE 32
-    test dword ptr [rdi + EXT_features], FEAT_AI
+    FEAT_TEST rdi, FEAT_AGENTS
     jz 8f
     mov rbx, rdi
     mov [rsp], rsi
@@ -272,8 +273,4 @@ ai_reply:
 .Lv_agent_changed: .asciz "agent-changed"
 .Lv_propose: .asciz "propose"
 .Lv_unpropose: .asciz "unpropose"
-.Lf_agents: .asciz "agents"
-.Lf_edit_review: .asciz "edit-review"
-.Lf_tools: .asciz "tools"
-.Lf_agent_prompts: .asciz "agent-prompts"
 .text
