@@ -6,6 +6,7 @@ API through the glyph-test kind). Driven headlessly with the fake extension test
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -89,7 +90,9 @@ class Base(unittest.TestCase):
         self.env['PRESENT_HELLO'] = hello
 
     def run_p(self, actions, files=('m.rs',), **kw):
-        return self.run_editor(actions, exts=self.exts, files=files, **kw)
+        out = self.run_editor(actions, exts=self.exts, files=files, **kw)
+        # glyph kinds are numbered as built-in code registers them: tests look at shapes
+        return [re.sub(r' kind=\d+', '', l) if l.startswith('glyph ') else l for l in out]
 
     def replies(self):
         if not self.plog.exists():
@@ -425,7 +428,7 @@ class Presentation(Base):
 
     def test_glyph_api_clicks_edits_and_tips(self):
         out = self.run_p(['glyph-test', 'glyph 3 6', 'print-present glyphs', 'print-xy 3 1'])
-        self.assertIn('glyph 3 kind=1 shape=6', out)
+        self.assertIn('glyph 3 shape=6', out)
         _, y3 = map(int, out[-1].split())
         # (x 10: the window's resize edge takes the first pixels)
         out = self.run_p(['glyph-test', 'glyph 3 6', f'print-hit 10 {y3}', f'click 10 {y3}',
@@ -436,14 +439,14 @@ class Presentation(Base):
         self.assertIn('click 2 1 0', out)       # an empty line: the GK_EMPTY kind, glyph 0
         self.assertIn('click 2 1 2', out)       # its circle, the second time
         self.assertIn('click 3 3 0', out)       # right button (the first click removed the glyph)
-        self.assertNotIn('glyph 2 kind=1 shape=2', out)
+        self.assertNotIn('glyph 2 shape=2', out)
         # two lines inserted above move it down; deleting its line gives it to the next one
         out = self.run_p(['glyph-test', 'glyph 3 6', 'glyph 4 7', 'key ctrl+Home', 'key Return', 'key Return',
                           'print-present glyphs', 'key Down', 'key Down', 'key Home',
                           'key shift+Down', 'key BackSpace', 'print-present glyphs'])
         self.assertEqual([l for l in out if l.startswith('glyph')][:2],
-                         ['glyph 5 kind=1 shape=6', 'glyph 6 kind=1 shape=7'])
-        self.assertEqual([l for l in out if l.startswith('glyph')][2:], ['glyph 5 kind=1 shape=6'])
+                         ['glyph 5 shape=6', 'glyph 6 shape=7'])
+        self.assertEqual([l for l in out if l.startswith('glyph')][2:], ['glyph 5 shape=6'])
         out = self.run_p(['glyph-test', 'glyph 3 6', f'move 10 {y3}', 'wait 650', 'print-tip'])
         self.assertIn('Test glyph', '\n'.join(out))
 
@@ -454,11 +457,12 @@ class Presentation(Base):
         accent = host.ppm_pixel(path, 8, y2)
         self.assertNotEqual(accent, host.ppm_pixel(path, 8, y2 + 21))
         out = self.run_p(['cmd toggle_line_numbers', 'print-xy 2 1', 'glyph-test', 'print-xy 2 1',
-                          'print-hit 10 ' + str(y2), 'print-hit 20 ' + str(y2), 'cmd toggle_line_numbers'])
+                          'print-hit 10 ' + str(y2), 'print-hit 20 ' + str(y2), 'print-hit 32 ' + str(y2),
+                          'cmd toggle_line_numbers'])
         x_before, x_after = int(out[0].split()[0]), int(out[1].split()[0])
         self.assertEqual(x_after - x_before, 16)
-        self.assertEqual(out[2], 'left-lane 2')
-        self.assertEqual(out[3], 'git 2')
+        # the left lane, the fold lane, the git bar
+        self.assertEqual(out[2:5], ['left-lane 2', 'fold-lane 2', 'git 2'])
 
 
 if __name__ == '__main__':
