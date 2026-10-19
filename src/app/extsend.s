@@ -8,19 +8,9 @@
 FN ext_send_checked
     test rdi, rdi
     jz .Lesc_invalid
-    push rdi
-    push rsi
-    push rdx
-    call ext_can_act
-    pop rdx
-    pop rsi
-    pop rdi
+    call ext_is_visible
     test eax, eax
     jz .Lesc_closed
-    test dword ptr [rdi + EXT_host_cleanup_mask], (1 << 0) | (1 << 8)
-    jnz .Lesc_closed
-    cmp dword ptr [rdi + EXT_retiring], 0
-    jne .Lesc_closed
     cmp dword ptr [rdi + EXT_status], ES_RUNNING
     jne .Lesc_closed
     cmp dword ptr [rdi + EXT_in], 0
@@ -47,13 +37,9 @@ FN ext_send_checked
     mov rbx, rdi
     call ext_send
     mov rdi, rbx
-    call ext_can_act
+    call ext_is_visible
     test eax, eax
     jz 2f
-    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 0) | (1 << 8)
-    jnz 2f
-    cmp dword ptr [rbx + EXT_retiring], 0
-    jne 2f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 2f
     cmp dword ptr [rbx + EXT_in], 0

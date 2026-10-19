@@ -44,7 +44,6 @@
 .equ SYS_kill, 62
 .equ SYS_uname, 63
 .equ SYS_fcntl, 72
-.equ SYS_flock, 73
 .equ SYS_fsync, 74
 .equ SYS_ftruncate, 77
 .equ SYS_getcwd, 79
@@ -84,8 +83,6 @@
 .equ SYS_landlock_restrict_self, 446
 .equ SYS_sandbox_init, 290          # macOS only: a pseudo number the translator maps to sandbox_init
 .equ SYS_realpath, 291              # macOS only: realpath(path, buf) -> buf or 0
-.equ SYS_rename_new, 292            # macOS only: renamex_np(old, new, RENAME_EXCL)
-.equ SYS_renameat2, 316
 .equ CLONE_NEWUSER, 0x10000000
 .equ CLONE_NEWNET, 0x40000000
 .equ O_PATH, 0x200000
@@ -235,27 +232,6 @@
 .endm
 
 # ---- struct layout ----
-# Caller-owned SHA-256 context. Byte input length must fit the standard's 64-bit bit count.
-.equ SH256_state, 0
-.equ SH256_bytes, 32
-.equ SH256_used, 40
-.equ SH256_block, 48
-.equ SH256_finalized, 112
-.equ SH256_SIZE, 128
-.equ SH256_BYTES_MAX, (1 << 61) - 1
-
-# Immutable managed extension selection record, little-endian on supported targets.
-.equ EXI_format, 8
-.equ EXI_flags, 12
-.equ EXI_generation, 16
-.equ EXI_reserved, 24
-.equ EXI_active, 32
-.equ EXI_previous, 96
-.equ EXI_SIZE, 160
-.equ EXI_ACTIVE, 1
-.equ EXI_REMOVED, 2
-.equ EXI_FILENAME_LEN, 20
-
 # Private per-call context for strict directory enumeration.
 .equ DSC_max, 0
 .equ DSC_count, 8
@@ -640,7 +616,6 @@ F DOC_multilastcp, 8    # last scalar inserted by a multiple-selection typing ru
 F DOC_language_mode, 4  # DL_AUTO, DL_PLAIN or DL_NAMED
 F DOC_language_syncing, 4
 F DOC_language_name, 8  # owned explicit language name, retained even while unavailable
-F DOC_language_owner, 8 # owned prepared GP reference for DOC_lang, or 0
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
@@ -1566,7 +1541,6 @@ F GR_wchar, 256         # 1 for identifier bytes
 F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it), or 0
 F GR_srclen, 8
 F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
-F GR_owner, 8           # prepared GP owner, or 0 for legacy/built-in grammar
 ENDSTRUCT GR_SIZE
 .equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
@@ -1705,32 +1679,7 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
-F EXT_activation_plan, 8 # borrowed immutable KE128, catalog retains its captured inputs and lease
-F EXT_keeper, 8         # stable independent process-service handle, 0 without an owned lifetime
-F EXT_retiring, 4       # contributions withdrawn; raw output drains independently of protocol
-F EXT_stdout_eof, 4
-F EXT_finish_code, 4    # final application exit/failure while whole lifetime is collected
-F EXT_startaccepted, 4  # hello timer begins only after exact START frame acceptance
-F EXT_activation_stale, 4 # catalog must supply a fresh owned activation plan before restart
-F EXT_keeper_pad, 4
-F EXT_prepare_at, 8     # bounded closed-gate preparation start time
-F EXT_start_record, 160 # copied fresh selected authorization, zero for legacy
-F EXT_start_armed, 4    # candidates remain closed until root publishes and explicitly arms
-F EXT_start_pad, 4
-F EXT_metadata_owner, 8 # owned ready EP for borrowed slot metadata
-F EXT_activation_owner, 8 # owned activation owner, independent from catalog
-F EXT_activation_required, 4 # permanent prepared activation latch
-F EXT_activation_owner_pad, 4
-F EXT_identity_owner, 8 # owned typed lease-free durable host identity
-F EXT_catalog_state, 4 #0staging,1visible,2hidden historical
-F EXT_catalog_pad, 4
-F EXT_host_child_in, 4 # retained temporary target stdin endpoint
-F EXT_host_child_out, 4 # retained temporary target stdout endpoint
 ENDSTRUCT EXT_SIZE
-.equ EXT_host_cleanup_mask, EXT_start_pad
-.equ EXT_host_cleanup_error, EXT_activation_owner_pad
-.equ EXT_host_native_result, EXT_keeper_pad
-.equ EXT_host_setup_error, EXT_catalog_pad
 
 # an extension's view (extview.s)
 STRUCT
@@ -1869,7 +1818,6 @@ F TH_pad, 4
 F TH_src, 8             # embedded text or 0
 F TH_len, 8
 F TH_path, 8            # user file path or 0
-F TH_owner, 8           # prepared EP owner, or 0 for legacy/built-in theme
 ENDSTRUCT TH_SIZE
 
 # ---- terminal ----

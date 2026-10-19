@@ -18,17 +18,13 @@ FN ext_flush_quota
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    call ext_can_act
+    call ext_is_visible
     test eax, eax
     jz .Lef_closed
-    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 0) | (1 << 8)
-    jnz .Lef_closed
     cmp dword ptr [rbx + EXT_in], 0
     jl .Lef_closed
     cmp qword ptr [rbx + EXT_in_closed_at], 0
     jne .Lef_closed
-    xor r15d, r15d
-.Lef_core:
     mov rax, [rbx + EXT_wq + SB_len]
     cmp rax, [rbx + EXT_wq + SB_cap]
     ja .Lef_invalid
@@ -46,14 +42,7 @@ FN ext_flush_quota
     xor edx, edx
     SYS SYS_fcntl
     test rax, rax
-    jns 91f
-    test r15, r15
-    jz .Lef_return
-    cmp rax, -32
-    jne .Lef_return
-    mov rax, -5
-    jmp .Lef_return
-91:
+    js .Lef_return
     test eax, O_NONBLOCK
     jz .Lef_nonblock
 .Lef_write:
@@ -111,22 +100,9 @@ FN ext_flush_quota
 .Lef_below:
     mov qword ptr [rbx + EXT_full_since], 0
     jmp .Lef_ok
-# Legacy mode retains its old mapping. Channel mode returns EPIPE only from write EPIPE.
+# EPIPE: the program closed its input (macOS does not report that through poll on the write end);
+# its exit status, if it comes within 300 ms, is the reason to keep
 .Lef_write_error:
-    test r15, r15
-    jz .Lef_broken
-    mov r14, rax
-    test r14, r14
-    js 92f
-    mov r14, -5
-92: call time_ms
-    cmp rax, 1
-    jge 93f
-    mov eax, 1
-93: mov [rbx + EXT_in_closed_at], rax
-    mov rax, r14
-    EPILOGUE
-.Lef_broken:
     call time_ms
     mov [rbx + EXT_in_closed_at], rax
 .Lef_closed:
@@ -143,26 +119,3 @@ FN ext_flush_quota
     mov rax, -22
     ret
 
-# TABLE,ordinal,session,bytes,attempts ->0/-errno. Only this proved entry selects channel mode.
-FN ext_flush_channel_quota
-    PROLOGUE
-    mov r12, rcx
-    mov r13, r8
-    test r12, r12
-    jz .Lef_channel_bad
-    cmp r12, 65536
-    ja .Lef_channel_bad
-    test r13, r13
-    jz .Lef_channel_bad
-    cmp r13, 16
-    ja .Lef_channel_bad
-    call rt_session_channel_check
-    test rax, rax
-    jnz .Lef_channel_return
-    mov rbx, rdx
-    mov r15d, 1
-    jmp .Lef_core
-.Lef_channel_bad:
-    mov rax, -22
-.Lef_channel_return:
-    EPILOGUE

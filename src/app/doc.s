@@ -43,7 +43,6 @@ FN doc_new
     mov [rbx + DOC_language_mode], eax
     mov [rbx + DOC_language_syncing], eax
     mov [rbx + DOC_language_name], rax
-    mov [rbx + DOC_language_owner], rax
     mov [rbx + DOC_language_epoch], rax
     mov [rbx + DOC_language_pending], rax
     mov qword ptr [rbx + DOC_language_revision], 1

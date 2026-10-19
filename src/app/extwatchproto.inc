@@ -68,7 +68,7 @@ FN extproto_watch_event
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING

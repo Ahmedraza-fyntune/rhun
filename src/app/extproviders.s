@@ -315,7 +315,7 @@ pp_match_for:
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     cmp dword ptr [rbx + EXT_manifest_ok], 0
@@ -618,7 +618,7 @@ pp_context:
 pp_declared:
     PROLOGUE
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     cmp dword ptr [rbx + EXT_manifest_ok], 0
@@ -1061,12 +1061,3 @@ pp_names: .quad 0, 0, 0, .Lsymbols, 0, .Lrename, .Lformat, .Lsignature
 pp_patterns: .quad 0, 0, 0, EXT_pv_symbols, 0, EXT_pv_rename, EXT_pv_format, EXT_pv_signature
 pp_titles: .quad 0, 0, 0, .Lsymbols_title, 0, .Lrename_title, .Lformat_title, .Lsignature_title
 pp_features: .long 0, 0, 0, FEAT_SYMBOLS, 0, FEAT_RENAME, FEAT_FORMAT, FEAT_SIGNATURE
-
-.text
-# Owned labels/path/preferences survive for ordinary cleanup; action authority does not.
-FN ext_provider_catalog_invalidate_pure
-    mov qword ptr [rip + pp_state], 0
-    mov qword ptr [rip + pp_ext], 0
-    mov qword ptr [rip + pp_transfer], 0
-    mov qword ptr [rip + pp_deadline], 0
-    ret

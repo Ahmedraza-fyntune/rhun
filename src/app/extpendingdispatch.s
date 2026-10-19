@@ -24,7 +24,7 @@ FN ext_cmd_index_owned
     jae .Lpco_no
     mov r13, rax
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lpco_no
     mov rcx, [rip + g_ext_owner + VEC_ptr]
@@ -44,7 +44,7 @@ FN ext_pending_reconcile
     cmp qword ptr [rdi + EXT_pending], 0
     je .Lpr_no
     push rdi
-    call ext_has_metadata
+    call ext_is_visible
     pop rdi
     test eax, eax
     jz .Lpr_clear
@@ -83,7 +83,7 @@ FN ext_pending_set
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lps_closed
     cmp dword ptr [rbx + EXT_disabled], 0
@@ -132,7 +132,7 @@ FN ext_pending_resolve
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     call ext_cmd_manifest_count
@@ -170,7 +170,7 @@ FN ext_pending_try
     mov rbx, rdi
     cmp qword ptr [rbx + EXT_pending], 0
     je .Lpt_ok
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lpt_closed
     cmp qword ptr [rip + ext_pending_shutting_down], 0

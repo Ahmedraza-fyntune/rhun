@@ -260,7 +260,7 @@ providers_any:
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     mov edx, [rbx + EXT_status]
@@ -357,7 +357,7 @@ ask:
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -586,7 +586,7 @@ FN complete_tick
     add r13, [rip + g_exts + VEC_ptr]
     inc r12
     mov rdi, r13
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [r13 + EXT_status], ES_STARTING
@@ -644,7 +644,7 @@ FN complete_reply
     mov rdi, r13
     call req_remove
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     mov dword ptr [rip + g_dirty], 1
@@ -808,7 +808,7 @@ cp_merge:
     mov r12, rsi
     mov r13, rdx
     mov [rsp], rcx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp r13, CP_BODY_MAX
@@ -1527,7 +1527,7 @@ sig_ask:
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     call focused_doc
@@ -1893,7 +1893,7 @@ cp_accept:
     call item
     mov r12, rax
     mov rdi, [r12 + CI_ext]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     call focused_doc
@@ -3627,23 +3627,3 @@ cp_choice_accept:
 .section .rodata
 .Lchoice_empty: .ascii "(empty)"
 .Lchoice_blank: .ascii "(blank line)"
-
-.text
-# Native literal snippet choices have no extension supplier and remain usable.
-FN complete_catalog_invalidate_pure
-    cmp dword ptr [rip + cp_source], CP_CHOICES
-    je 1f
-    mov dword ptr [rip + cp_open], 0
-    mov qword ptr [rip + cp_due], 0
-    mov dword ptr [rip + cp_reask], 0
-    mov dword ptr [rip + cp_more], 0
-    mov dword ptr [rip + cp_sel], 0
-    mov dword ptr [rip + cp_top], 0
-    mov dword ptr [rip + cp_nshown], 0
-    mov dword ptr [rip + cp_rect + 12], 0
-1:  mov dword ptr [rip + sg_open], 0
-    mov dword ptr [rip + sg_wait], 0
-    mov dword ptr [rip + sg_again], 0
-    mov qword ptr [rip + sg_ext], 0
-    mov dword ptr [rip + sg_rect + 12], 0
-    ret

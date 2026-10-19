@@ -60,7 +60,6 @@ FN parse_combo
     EPILOGUE
 
 # combo_token(ptr, len) -> edx mod bit if a modifier, else eax keysym
-FN keys_combo_token
 combo_token:
     PROLOGUE
     mov r12, rdi
@@ -459,11 +458,6 @@ FN keys_for
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
-
-# Stable process-lifetime target for an explicitly unbound shortcut.
-FN keys_none_command
-    lea rax, [rip + none_cmd]
-    ret
 
 FN cmd_none
     ret

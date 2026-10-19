@@ -289,21 +289,6 @@ FN main
     jne est_fail
     mov qword ptr [rip + est_ext + EXT_wq + SB_len], 0
     mov qword ptr [rip + est_ext + EXT_wq_off], 0
-    mov dword ptr [rip + est_ext + EXT_retiring], 1
-    lea rsi, [rip + est_binary]
-    mov edx, 3
-    call est_send
-    cmp rax, -32
-    jne est_fail
-    cmp qword ptr [rip + est_ext + EXT_wq + SB_len], 0
-    jne est_fail
-    lea rdi, [rip + est_ext]
-    lea rsi, [rip + est_binary]
-    mov edx, 3
-    call ext_send
-    cmp qword ptr [rip + est_ext + EXT_wq + SB_len], 0
-    jne est_fail
-    mov dword ptr [rip + est_ext + EXT_retiring], 0
     mov qword ptr [rip + est_stage], 7
     mov rdi, [rip + est_ext + EXT_wq + SB_ptr]
     lea rsi, [rip + est_prefix]
