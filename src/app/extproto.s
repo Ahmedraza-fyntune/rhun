@@ -497,6 +497,15 @@ handle_line:
     call ai_reply
     test eax, eax
     jnz 9f
+    # source control (wider-parity C): commit-message and quickdiff answers (scmext.s)
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call scmext_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -554,6 +563,17 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call ai_reply
+    test eax, eax
+    jnz 9f
+    # source control (wider-parity C): commit-message and quickdiff errors (scmext.s)
+    mov edi, 2
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call scmext_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -733,6 +753,66 @@ reply_error_u64:
     mov edi, 10
     call out_byte
     jmp out_end
+
+# ---------------- for verb handlers in other files (editor presentation) ----------------
+
+# xp_field(i) -> rax ptr, rdx len of field i of the message being handled (0, 0 past its fields)
+FN xp_field
+    cmp rdi, [rip + nfields]
+    jae 1f
+    jmp field_at
+1:  xor eax, eax
+    xor edx, edx
+    ret
+# xp_field_u64(i) -> rax value, rdx 1 when field i is a decimal u64
+FN xp_field_u64
+    jmp field_u64
+# xp_nfields() -> rax
+FN xp_nfields
+    mov rax, [rip + nfields]
+    ret
+# xp_cur() -> rax the EXT being served; xp_cur_id() -> rax its request id
+FN xp_cur
+    mov rax, [rip + cur]
+    ret
+FN xp_cur_id
+    mov rax, [rip + cur_id]
+    ret
+# xp_body() -> rax ptr, rdx len of the message's body
+FN xp_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+# xp_reply_ok(id), xp_reply_error(id, "code text"), xp_reply_error_u64(id, "code text ", value),
+# xp_reply_syntax(id)
+FN xp_reply_ok
+    jmp reply_ok
+FN xp_reply_error
+    jmp reply_error
+FN xp_reply_error_u64
+    jmp reply_error_u64
+FN xp_reply_syntax
+    jmp reply_syntax
+# xp_arg_doc(i) -> rax DOC* of field i, or 0 after replying
+FN xp_arg_doc
+    jmp arg_doc
+# xp_need(NEEDS_*) -> eax 1, or 0 after replying needs
+FN xp_need
+    jmp need
+# xp_send(ext, ptr, len): bytes to an extension as one message (an event line and its body)
+FN xp_send
+    PROLOGUE
+    mov r12, [rip + cur]
+    mov [rip + cur], rdi
+    mov rbx, rsi
+    mov r13, rdx
+    call out_begin
+    mov rdi, rbx
+    mov rsi, r13
+    call out_bytes
+    call out_end
+    mov [rip + cur], r12
+    EPILOGUE
 
 # ---------------- for verb handlers in other files (language features: query.s) ----------------
 
@@ -3218,6 +3298,8 @@ hello_features:
     jb 41b
     test r14, r14
     jz 9f
+    call pres_enable            # answers about older versions move through the edit tapes (edtape.s)
+    call deco_visible_again     # and the visible event reaches the new extension too (deco.s)
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
@@ -3799,6 +3881,13 @@ verbs:
     .quad .Lv_provides, query_h_provides, 0
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
+    # source control (wider-parity C): gitdata.s
+    .quad .Lv_git_repo, gitdata_h_repo, 0
+    .quad .Lv_git_status, gitdata_h_status, 0
+    .quad .Lv_git_blame, gitdata_h_blame, 0
+    .quad .Lv_git_log, gitdata_h_log, 4096
+    .quad .Lv_git_show, gitdata_h_show, 4096
+    .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -3811,6 +3900,9 @@ verbs:
     .quad .Lv_agent_changed, h_agent_changed, 0
     .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
     .quad .Lv_unpropose, h_unpropose, 0
+    # editor presentation (deco.s)
+    .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
+    .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
@@ -3821,9 +3913,17 @@ verbs:
 .Lv_test_end: .asciz "test-end"
 .Lv_test_coverage: .asciz "test-coverage"
 .Lv_test_exec: .asciz "test-exec"
+.Lpv_decoration_type: .asciz "decoration-type"
+.Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
+.Lv_git_repo: .asciz "git-repo"
+.Lv_git_status: .asciz "git-status"
+.Lv_git_blame: .asciz "git-blame"
+.Lv_git_log: .asciz "git-log"
+.Lv_git_show: .asciz "git-show"
+.Lv_git_diff_open: .asciz "git-diff-open"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -3975,6 +4075,14 @@ feature_names:
 .Lr_body: .asciz "a body over its cap"
 .Lr_framing: .asciz "invalid body framing"
 .Lr_syntax: .asciz "three unparsable lines in a row"
+
+# ---------------- source control (wider-parity C): for verb handlers in other files ----------------
+.text
+# FN extproto_answer_syntax(): "error ID syntax ..." for the request being served (counts toward the
+# three in a row that end a program)
+FN extproto_answer_syntax
+    mov rdi, [rip + cur_id]
+    jmp reply_syntax
 
 .include "app/extwatchproto.inc"
 .include "app/extaiproto.inc"

@@ -125,6 +125,8 @@ python3 tests/terminal-tabs.py || fail=1
 python3 tests/terminal-panel.py || fail=1
 python3 tests/terminal-keys.py || fail=1
 python3 tests/terminal-links.py || fail=1
+python3 tests/terminals.py || fail=1       # tasks and terminals: programs' tabs, run-as-user approval
+python3 tests/task-patterns.py || fail=1   # tasks and terminals: patterns, matchers, the Problems store
 python3 tests/new-window.py || fail=1
 python3 tests/file-launch.py || fail=1
 python3 tests/readonly-save.py || fail=1
@@ -170,6 +172,10 @@ python3 tests/ext-commands.py || fail=1
 # contributions and commands
 python3 tests/when.py || fail=1
 python3 tests/ext-command-args.py || fail=1
+# editor presentation
+python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
+check edtape build/edtape_test
+python3 tests/presentation.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1
@@ -185,6 +191,12 @@ python3 tests/ext-watch-native.py || fail=1
 python3 tests/ext-boundaries.py || fail=1
 python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
+# extension management: versions, roll back, updates, removal, development installs
+python3 tests/ext-updates.py || fail=1
+python3 tests/ext-remove-clean.py || fail=1
+python3 tests/ext-dev-install.py || fail=1
+python3 tests/ext-browse.py || fail=1
+python3 tests/ext-packs.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
 for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime; do
