@@ -2389,6 +2389,7 @@ ctl_tables:
     .quad pres_ctl              # editor presentation (presctl.s)
     .quad extmgr_ctl            # extension management (extmgrctl.s)
     .quad ws_ctl                # workspace edits and the editor model (wsctl.s)
+    .quad res_commands          # resources, workspaces, secrets and lifecycle (extres.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap

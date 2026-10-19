@@ -2,8 +2,12 @@
 """The debug view (src/app/debugview.s): the Variables, Watch, Call Stack and Breakpoints sidebar
 sections and the Debug Console panel tab (views' places and tree widget), driven with the keyboard
 as a user would, and the debugger's keys (F5, F9, F10, Shift+F5, Ctrl+Shift+Y) and prompts."""
+import re
 import unittest
 import debughost
+
+IC = {m.group(1): int(m.group(2)) for m in
+      re.finditer(r'^\.equ IC_(\w+), (\d+)$', (debughost.ROOT / 'src/rhun.inc').read_text(), re.M)}
 
 
 class View(debughost.DebugHost):
@@ -138,9 +142,10 @@ class View(debughost.DebugHost):
         self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\nstopOnEntry = yes\n')
         out = self.run_editor([*self.start(), 'wait-debug paused', 'print-debug-toolbar'])
         buttons = self.toolbar(out)
-        self.assertEqual(sorted(buttons), [21, 149, 151, 152, 153, 154])   # restart, play, over, into, out, stop
-        x, y, size = buttons[151]                                         # step over
-        sx, sy, _ = buttons[154]
+        self.assertEqual(sorted(buttons), sorted(IC[n] for n in ('REFRESH', 'PLAY', 'DBG_OVER', 'DBG_INTO',
+                                                                 'DBG_OUT', 'STOP')))
+        x, y, size = buttons[IC['DBG_OVER']]
+        sx, sy, _ = buttons[IC['STOP']]
         out = self.run_editor([*self.start(), 'wait-debug paused', 'print-debug-toolbar',
                                'click %d %d' % (x + size // 2, y + size // 2), 'wait-debug paused', 'print-debug',
                                'click %d %d' % (sx + size // 2, sy + size // 2), 'wait-debug ended', 'print-debug'])
@@ -154,7 +159,7 @@ class View(debughost.DebugHost):
         self.scenario(steps)
         self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\n')
         out = self.run_editor([*self.start(run=True), 'wait-debug running', 'wait 100', 'print-debug-toolbar'])
-        self.assertEqual(sorted(self.toolbar(out)), [21, 154])
+        self.assertEqual(sorted(self.toolbar(out)), sorted([IC['REFRESH'], IC['STOP']]))
 
     def test_context_keys(self):
         out = self.paused(['print-context', 'echo --', 'debug-stop', 'wait-debug ended', 'wait 50', 'print-context'])

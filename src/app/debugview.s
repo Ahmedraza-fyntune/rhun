@@ -1987,7 +1987,7 @@ FN dview_toolbar
     mov [rsp + 40], rax
     mov eax, [rax]              # icon
     # Continue becomes Pause while the program runs
-    cmp eax, IC_DBG_PLAY
+    cmp eax, IC_PLAY
     jne 61f
     cmp dword ptr [rbx + DS_state], DSS_RUNNING
     jne 61f
@@ -2443,13 +2443,13 @@ FN dview_terminal_key
 .Lt_stop: .asciz "Stop (Shift+F5)"
 .p2align 3
 # toolbar entries: icon (qword), command, tooltip
-tbe_continue: .quad IC_DBG_PLAY, cmd_debug_continue, .Lt_continue
+tbe_continue: .quad IC_PLAY, cmd_debug_continue, .Lt_continue
 tbe_pause: .quad IC_DBG_PAUSE, cmd_debug_pause, .Lt_pause
 tbe_over: .quad IC_DBG_OVER, cmd_debug_step_over, .Lt_over
 tbe_into: .quad IC_DBG_INTO, cmd_debug_step_into, .Lt_into
 tbe_out: .quad IC_DBG_OUT, cmd_debug_step_out, .Lt_out
 tbe_restart: .quad IC_REFRESH, cmd_debug_restart, .Lt_restart
-tbe_stop: .quad IC_DBG_STOP, cmd_debug_stop, .Lt_stop
+tbe_stop: .quad IC_STOP, cmd_debug_stop, .Lt_stop
 .Lm_add: .asciz "Add Breakpoint"
 .Lm_cond: .asciz "Add Conditional Breakpoint..."
 .Lm_log: .asciz "Add Logpoint..."
