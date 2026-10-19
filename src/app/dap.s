@@ -1123,19 +1123,29 @@ adapter_gone:
     xor esi, esi
     call ds_end
     EPILOGUE
-1:  lea rdi, [rip + dlg_text]
+1:  # its exit code, once it has exited (half a second at most after its output closed)
+    mov edi, [rbx + DS_pid]
+    test edi, edi
+    jz 11f
+    mov esi, 1
+    call proc_wait
+    mov r13d, eax
+    test eax, eax
+    jns 12f
+    call time_ms
+    sub rax, [rbx + DS_exited_at]
+    cmp rax, 500
+    jb 9f                       # the next frame looks again
+    jmp 11f
+12: mov dword ptr [rbx + DS_pid], 0
+11: lea rdi, [rip + dlg_text]
     lea rsi, [rip + .Lm_crash]
     call cstr_copy
     mov r12, rax
-    mov edi, [rbx + DS_pid]
-    test edi, edi
-    jz 3f
-    mov esi, 1
-    call proc_wait
-    test eax, eax
+    test r13d, r13d
     js 3f
-    mov dword ptr [rbx + DS_pid], 0
-    mov r13d, eax
+    cmp dword ptr [rbx + DS_pid], 0
+    jne 3f
     mov rdi, r12
     lea rsi, [rip + .Lm_exitcode]
     call cstr_copy
@@ -1171,7 +1181,7 @@ adapter_gone:
 5:  mov rdi, rbx
     lea rsi, [rip + dlg_text]
     call ds_fail
-    EPILOGUE
+9:  EPILOGUE
 
 # ---------------- Stop ----------------
 

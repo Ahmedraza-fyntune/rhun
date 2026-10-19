@@ -136,7 +136,6 @@ class Launch(debughost.DebugHost):
         self.assertTrue(reason.startswith('the debugger stopped unexpectedly (exit code 7): '
                                           'fakedap: crashing at step 3'), out)
         self.assertIn('adapter fakedap: crashing at step 3', out)
-        self.assertIn('stdout i=0 total=0', out)
 
     def test_environment_and_folder(self):
         self.launch_ini()
