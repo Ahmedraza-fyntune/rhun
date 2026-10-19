@@ -29,6 +29,10 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
+    # WebAssembly worker modes (src/wasm): rhun --wasm-host, rhun --wasm-spec
+    mov rdi, [rip + g_argc]
+    mov rsi, [rip + g_argv]
+    call wasm_worker_main
     call keeper_helper_entry
     test rax, rax
     js .Lmain_not_keeper
