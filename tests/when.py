@@ -134,7 +134,7 @@ class When(contribhost.Contrib):
         out = self.run_editor(exts=exts, files=('main.rs',), drop_waits=True,
                               actions=['ctx-set debugState running', 'ctx-set debugState -',
                                        'print-context debugState', 'print-context demo.mode',
-                                       'print-problems alice/demo', 'open ' + png.as_posix(),
+                                       'print-contrib-problems alice/demo', 'open ' + png.as_posix(),
                                        'when activeTab == image && !editorFocus'])
         self.assertEqual(out[0], 'debugState=inactive')
         self.assertEqual(out[1], 'error at 0: ambiguous extension name demo')
