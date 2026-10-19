@@ -150,6 +150,9 @@
 .equ MREMAP_MAYMOVE, 1
 
 .equ AF_UNIX, 1
+.equ AF_INET, 2                 # remote hosts: forwarded ports (remotefwd.s, ragent.s)
+.equ AF_INET6, 10
+.equ SHUT_WR, 1
 .equ SOCK_STREAM, 1
 .equ SOCK_NONBLOCK, 0x800
 .equ SOCK_CLOEXEC, 0x80000

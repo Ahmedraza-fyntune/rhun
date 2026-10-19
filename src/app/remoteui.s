@@ -16,6 +16,8 @@
 .p2align 3
 ru_opened: .long 0              # the project was opened (a reconnect keeps it)
 ru_pick: .long 0                # RP_* of the open pick list
+ru_fw_prompt: .long 0           # 1 while the prompt asks for a port to forward (remotefwd.s)
+ru_fw_msg: .zero 300
 ru_ps_pid: .long 0              # docker ps / podman ps for Attach to Container
 .globl g_remote_shell
 g_remote_shell: .zero 256       # the user's shell on the host (its name names terminal tabs)
@@ -27,7 +29,7 @@ ru_ps_kind: .zero 16            # "docker:" or "podman:"
 ru_spec: .zero 512
 ru_label: .zero 512             # the project's name in a remote window: "HOST: name"
 ru_mask: .zero TF_SIZE          # a password's field as drawn: one * for each character
-ru_menu: .zero 16 * 8
+ru_menu: .zero 16 * 10
 ru_recent: .zero SB_SIZE        # the recent remotes file
 ru_exe: .zero 4200
 ru_ap_dir: .zero 128            # askpass: the private folder and its socket
@@ -631,19 +633,32 @@ FN remote_menu_open
     mov [rbx], rax
     lea rax, [rip + cmd_remote_show_log]
     mov [rbx + 8], rax
-    lea rax, [rip + .Lm_line]
+    lea rax, [rip + .Lm_forward]
     mov [rbx + 16], rax
-    mov qword ptr [rbx + 24], 0
+    lea rax, [rip + cmd_remote_forward_port]
+    mov [rbx + 24], rax
+    add rbx, 32
+    call remote_forwards_count
+    test eax, eax
+    jz 3f
+    lea rax, [rip + .Lm_unforward]
+    mov [rbx], rax
+    lea rax, [rip + cmd_remote_stop_forwarding]
+    mov [rbx + 8], rax
+    add rbx, 16
+3:  lea rax, [rip + .Lm_line]
+    mov [rbx], rax
+    mov qword ptr [rbx + 8], 0
     lea rax, [rip + .Lm_host]
-    mov [rbx + 32], rax
+    mov [rbx + 16], rax
     lea rax, [rip + cmd_connect_to_host]
-    mov [rbx + 40], rax
+    mov [rbx + 24], rax
     lea rax, [rip + .Lm_container]
-    mov [rbx + 48], rax
+    mov [rbx + 32], rax
     lea rax, [rip + cmd_attach_to_container]
-    mov [rbx + 56], rax
-    mov qword ptr [rbx + 64], 0
-    mov qword ptr [rbx + 72], 0
+    mov [rbx + 40], rax
+    mov qword ptr [rbx + 48], 0
+    mov qword ptr [rbx + 56], 0
     lea rdi, [rip + ru_menu]
     mov esi, r12d
     mov edx, r13d
@@ -655,6 +670,82 @@ FN remote_menu_open
 
 FN cmd_remote_disconnect
     jmp remote_disconnect
+
+# cmd_remote_forward_port(): Forward a Port: its number on the host, asked in the prompt
+FN cmd_remote_forward_port
+    sub rsp, 8
+    call remote_is_up
+    test eax, eax
+    jnz 1f
+    lea rdi, [rip + .Lfw_down]
+    call app_toast
+    add rsp, 8
+    ret
+1:  mov dword ptr [rip + ru_fw_prompt], 1
+    lea rdi, [rip + .Lfw_label]
+    mov esi, PROMPT_REMOTE
+    xor edx, edx
+    xor ecx, ecx
+    call palette_ext_prompt_open
+    add rsp, 8
+    ret
+
+# cmd_remote_stop_forwarding(): every forwarded port stops
+FN cmd_remote_stop_forwarding
+    sub rsp, 8
+    xor edi, edi
+    call remote_unforward
+    lea rdi, [rip + .Lfw_stopped]
+    call app_toast
+    add rsp, 8
+    ret
+
+# ru_fw_answer(text, len): the port typed: forwarded, and the toast says where it is reached
+ru_fw_answer:
+    PROLOGUE
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    mov r12, rdx
+    call parse_u64
+    test rdx, rdx
+    jz 8f
+    cmp rdx, r12
+    jne 8f
+    mov r13, rax
+    mov edi, eax
+    call remote_forward
+    test eax, eax
+    jle 7f
+    mov ebx, eax
+    lea rdi, [rip + ru_fw_msg]
+    lea rsi, [rip + .Lfw_ok1]
+    call cstr_copy
+    mov rdi, rax
+    mov esi, ebx
+    call fmt_u64                # rdi after the digits
+    lea rsi, [rip + .Lfw_ok2]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, r13
+    call fmt_u64
+    lea rsi, [rip + .Lfw_ok3]
+    call cstr_copy
+    mov rbx, rax
+    call remote_host
+    mov rdi, rbx
+    mov rsi, rax
+    call cstr_copy
+    lea rdi, [rip + ru_fw_msg]
+    call app_toast
+    jmp 9f
+7:  lea rdi, [rip + .Lfw_failed]
+    call app_toast
+    jmp 9f
+8:  lea rdi, [rip + .Lfw_bad]
+    call app_toast
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
 FN cmd_remote_reconnect
     jmp remote_reconnect
 
@@ -1928,9 +2019,12 @@ ru_ap_ask:
     EPILOGUE
 .endif
 
-# remote_ui_prompt_done(text, len, kind): ssh's question answered in a prompt
+# remote_ui_prompt_done(text, len, kind): ssh's question answered in a prompt (or the port to forward)
 FN remote_ui_prompt_done
-    jmp ru_ap_answer
+    cmp dword ptr [rip + ru_fw_prompt], 0
+    je ru_ap_answer
+    mov dword ptr [rip + ru_fw_prompt], 0
+    jmp ru_fw_answer
 
 # ru_ap_answer(text, len): "y" and the answer to the askpass program, which prints it for ssh
 ru_ap_answer:
@@ -1971,6 +2065,7 @@ ru_ap_answer:
 FN remote_ui_cancel
     sub rsp, 8
     mov dword ptr [rip + ru_pick], 0
+    mov dword ptr [rip + ru_fw_prompt], 0
     mov edi, [rip + ru_ap_conn]
     test edi, edi
     js 1f
@@ -2128,6 +2223,16 @@ FN remote_askpass_main
 .Lm_disconnect: .asciz "Disconnect"
 .Lm_reconnect: .asciz "Reconnect"
 .Lm_log: .asciz "Show Remote Log"
+.Lm_forward: .asciz "Forward a Port..."
+.Lm_unforward: .asciz "Stop Forwarding Ports"
+.Lfw_label: .asciz "Port on the host to forward"
+.Lfw_down: .asciz "Not connected to the host"
+.Lfw_stopped: .asciz "Forwarded ports stopped"
+.Lfw_bad: .asciz "Not a port number"
+.Lfw_failed: .asciz "That port could not be forwarded"
+.Lfw_ok1: .asciz "localhost:"
+.Lfw_ok2: .asciz " reaches port "
+.Lfw_ok3: .asciz " on "
 .Lm_line: .asciz "-"
 .Lm_host: .asciz "Connect to Host\xe2\x80\xa6"
 .Lm_container: .asciz "Attach to Container\xe2\x80\xa6"

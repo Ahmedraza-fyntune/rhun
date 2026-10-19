@@ -261,7 +261,9 @@ pal_remote_cancel:
     cmp dword ptr [rip + pal_mode], PM_PROMPT
     jne 2f
     cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
-    jb 2f
+    je 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE_SECRET
+    jne 2f
 1:  mov dword ptr [rip + pal_mode], PM_NONE
     jmp remote_ui_cancel
 2:  ret
@@ -2995,8 +2997,10 @@ palette_accept:
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 690: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
-    jb 692f
-    # remote hosts: ssh's question answered
+    je 693f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE_SECRET
+    jne 692f
+693: # remote hosts: ssh's question answered (or the port to forward)
     lea rdi, [rip + pal_tf]
     call tf_text
     mov ebx, [rip + pal_prompt]

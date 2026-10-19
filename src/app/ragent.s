@@ -35,6 +35,7 @@
 .equ AM_PTY, 2                  # a program on a pseudo-terminal
 .equ AM_ERR, 3                  # a program's error output, on a channel of its own
 .equ AM_STREAM, 4               # a file list or search sent as data, then e
+.equ AM_SOCK, 5                 # a TCP connection to one of the host's loopback ports (forwarding)
 
 # channel flags
 .equ ACF_IEOF, 1                # the client ended the input: close it once written
@@ -1528,6 +1529,8 @@ ag_message:
     mov eax, [r15 + AC_mode]
     cmp eax, AM_PIPE
     je 1f
+    cmp eax, AM_SOCK
+    je 1f
     cmp eax, AM_PTY
     jne 9f
 1:  test dword ptr [r15 + AC_flags], ACF_ICLOSED
@@ -1626,7 +1629,12 @@ ag_close_input:
     mov edi, [rbx + AC_in]
     test edi, edi
     js 1f
-    SYS SYS_close
+    cmp dword ptr [rbx + AC_mode], AM_SOCK
+    jne 2f
+    mov esi, SHUT_WR            # a connection: the server sees the end, its answer still comes
+    SYS SYS_shutdown
+    ret
+2:  SYS SYS_close
     cmp dword ptr [rbx + AC_mode], AM_PTY
     jne 1f
     mov dword ptr [rbx + AC_in], -1
@@ -1688,7 +1696,16 @@ ag_read_program:
 5:  or dword ptr [rbx + AC_flags], ACF_OEOF
     mov edi, r12d
     call ag_push_eof
-    mov edi, r12d
+    cmp dword ptr [rbx + AC_mode], AM_SOCK
+    jne 6f
+    # a connection the server ended: its exit, so the window can forget it
+    or dword ptr [rbx + AC_flags], ACF_EXITED
+    mov dword ptr [rbx + AC_status], 0
+    lea rdi, [rip + .Lx]
+    mov esi, r12d
+    xor edx, edx
+    call ag_push_head
+6:  mov edi, r12d
     call ag_maybe_free
 9:  EPILOGUE
 
@@ -2182,6 +2199,118 @@ ag_confine:
 .Lac_inval:
     lea rdx, [rip + .Lac_bad]
     mov eax, CONFINED_NO
+    EPILOGUE
+
+# connect CH PORT 0: a TCP connection to the host's PORT on 127.0.0.1, else on ::1, on channel CH
+#   (a forwarded port: remotefwd.s); its bytes flow as a program's
+ag_connect:
+    PROLOGUE 48
+    mov r12, rdi
+    mov edi, 2
+    call ag_num
+    mov r13, rax
+    mov rax, -22
+    test r13, r13
+    jz .Lcn_err
+    cmp r13, AG_MAXCH
+    jae .Lcn_err
+    mov edi, 3
+    call ag_num
+    mov r14, rax
+    mov rax, -22
+    test r14, r14
+    jz .Lcn_err
+    cmp r14, 65535
+    ja .Lcn_err
+    mov edi, r13d
+    call ag_chan
+    mov rbx, rax
+    mov rax, -16
+    cmp dword ptr [rbx + AC_mode], AM_FREE
+    jne .Lcn_err
+    # 127.0.0.1:PORT
+    mov edi, AF_INET
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js .Lcn_err
+    mov r15d, eax
+    xor eax, eax
+    mov [rsp], rax
+    mov [rsp + 8], rax
+    mov [rsp + 16], rax
+    mov [rsp + 24], rax
+    mov word ptr [rsp], AF_INET
+    mov eax, r14d               # the port, big-endian
+    shr eax, 8
+    mov ecx, r14d
+    shl ecx, 8
+    or eax, ecx
+    mov [rsp + 2], ax
+    mov dword ptr [rsp + 4], 0x0100007f
+    mov edi, r15d
+    lea rsi, [rsp]
+    mov edx, 16
+    SYS SYS_connect
+    test rax, rax
+    jns .Lcn_ok
+    mov [rsp + 40], rax
+    mov edi, r15d
+    SYS SYS_close
+    # [::1]:PORT
+    mov edi, AF_INET6
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js 1f
+    mov r15d, eax
+    xor eax, eax
+    mov [rsp], rax
+    mov [rsp + 8], rax
+    mov [rsp + 16], rax
+    mov [rsp + 24], rax
+    mov word ptr [rsp], AF_INET6
+    mov eax, r14d               # the port, big-endian
+    shr eax, 8
+    mov ecx, r14d
+    shl ecx, 8
+    or eax, ecx
+    mov [rsp + 2], ax
+    mov byte ptr [rsp + 23], 1  # ::1
+    mov edi, r15d
+    lea rsi, [rsp]
+    mov edx, 28
+    SYS SYS_connect
+    test rax, rax
+    jns .Lcn_ok
+    mov edi, r15d
+    SYS SYS_close
+1:  mov rax, [rsp + 40]         # the first one's error (ECONNREFUSED, usually)
+    jmp .Lcn_err
+.Lcn_ok:
+    mov edi, r15d
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    mov dword ptr [rbx + AC_mode], AM_SOCK
+    mov [rbx + AC_in], r15d
+    mov [rbx + AC_out], r15d
+    mov dword ptr [rbx + AC_pid], 0
+    mov dword ptr [rbx + AC_flags], 0
+    mov dword ptr [rbx + AC_status], 0
+    mov qword ptr [rbx + AC_credit], AG_WINDOW
+    mov qword ptr [rbx + AC_ioff], 0
+    mov qword ptr [rbx + AC_grant], 0
+    mov rdi, r12
+    xor esi, esi
+    call ag_reply
+    EPILOGUE
+.Lcn_err:
+    mov rdi, r12
+    mov rsi, rax
+    call ag_error
     EPILOGUE
 
 # ag_env_exact(list) -> envp (mem_free it): the 0-terminated list, and PATH= from the login
@@ -3567,7 +3696,7 @@ ag_verbs:
     .quad .Lv_mkdir, ag_mkdir, .Lv_rename, ag_rename, .Lv_remove, ag_remove
     .quad .Lv_watch, ag_watch, .Lv_unwatch, ag_unwatch
     .quad .Lv_access, ag_access, .Lv_files, ag_files, .Lv_grep, ag_grep
-    .quad .Lv_stats, ag_stats, .Lv_attach, ag_attach
+    .quad .Lv_stats, ag_stats, .Lv_attach, ag_attach, .Lv_connect, ag_connect
     .quad 0, 0
 .Linfo_keys:
     .quad .Lk_home_env, .Lk_home, .Lk_shell_env, .Lk_shell, .Lk_user_env, .Lk_user, 0, 0
@@ -3595,6 +3724,7 @@ ag_verbs:
 .Lv_grep: .asciz "grep"
 .Lv_stats: .asciz "stats"
 .Lv_attach: .asciz "attach"
+.Lv_connect: .asciz "connect"
 .Lopt_session: .asciz "--session"
 .Lsession_dir: .asciz "/.cache/rhun-remote/s"
 .Lk_home_env: .asciz "HOME"

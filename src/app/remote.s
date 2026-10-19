@@ -69,6 +69,7 @@ ENDSTRUCT RQ_SIZE
 .equ CHF_ERRCH, 32              # a program's error output on a socketpair of its own (freed with it)
 .equ CHF_DETACHED, 64           # the connection went; the program may still run in the host's session
 .equ CHF_SEEN, 128              # remote_attach: the session still has it
+.equ CHF_PENDING, 256           # a forwarded connection the host has not made yet: nothing is read
 
 STRUCT
 F CH_kind, 4                    # 0 free
@@ -1206,6 +1207,95 @@ FN remote_quit
 1:  add rsp, 8
     ret
 
+# remote_sock_open(fd, port) -> 0 or -errno: a local TCP connection (remotefwd.s accepted it) becomes
+#   a channel to PORT on the host's loopback; the channel owns fd from now on, also on failure
+FN remote_sock_open
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    cmp dword ptr [rip + g_remote_state], RS_UP
+    jne 7f
+    call rm_alloc_chan
+    test eax, eax
+    js 6f
+    mov r14d, eax
+    mov rbx, rdx
+    mov dword ptr [rbx + CH_kind], CK_PROC
+    mov [rbx + CH_fd], r12d
+    mov dword ptr [rbx + CH_pid], 0
+    mov dword ptr [rbx + CH_flags], CHF_PENDING | CHF_COLLECTED   # nobody waits for its exit
+    # connect CH PORT
+    lea rdi, [rip + rm_kill_line]
+    call sb_clear
+    lea rdi, [rip + rm_kill_line]
+    lea rsi, [rip + .Lv_connect]
+    call sb_push_cstr
+    lea rdi, [rip + rm_kill_line]
+    mov esi, r14d
+    call sb_push_u64
+    lea rdi, [rip + rm_kill_line]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + rm_kill_line]
+    mov esi, r13d
+    call sb_push_u64
+    mov rdi, [rip + rm_kill_line + SB_ptr]
+    mov rsi, [rip + rm_kill_line + SB_len]
+    xor edx, edx
+    xor ecx, ecx
+    lea r8, [rip + rm_on_connected]
+    mov r9, rbx
+    call remote_request_cb
+    test eax, eax
+    jz 5f
+    mov edi, r12d
+    xor esi, esi
+    lea rdx, [rip + rm_on_chan]
+    mov rcx, rbx
+    call watch_add
+    mov dword ptr [rbx + CH_events], 0
+    xor eax, eax
+    EPILOGUE
+5:  mov dword ptr [rbx + CH_kind], 0     # never asked for: forgotten at once
+    mov dword ptr [rbx + CH_fd], -1
+6:  mov rax, -24
+    jmp 8f
+7:  mov rax, -107
+8:  mov rbx, rax
+    mov edi, r12d
+    SYS SYS_close
+    mov rax, rbx
+    EPILOGUE
+
+# rm_on_connected(CH*, status, ptr, len): the host made the connection (it flows), or could not (the
+#   local one closes)
+rm_on_connected:
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + CH_kind], CK_PROC
+    jne 9f
+    test dword ptr [rbx + CH_flags], CHF_PENDING
+    jz 9f
+    and dword ptr [rbx + CH_flags], ~CHF_PENDING
+    test rsi, rsi
+    js 1f
+    mov rdi, rbx
+    call rm_events
+    jmp 9f
+1:  # refused: as if the host's side had ended at once
+    or dword ptr [rbx + CH_flags], CHF_EXITED | CHF_REOF | CHF_LCLOSED
+    mov dword ptr [rbx + CH_status], 1
+    call time_ms
+    mov [rbx + CH_exited_at], rax
+    mov edi, [rbx + CH_fd]
+    test edi, edi
+    js 9f
+    call watch_remove
+    mov edi, [rbx + CH_fd]
+    SYS SYS_close
+    mov dword ptr [rbx + CH_fd], -1
+9:  EPILOGUE
+
 # rm_send_close(ch): close CH, the agent forgets the channel
 rm_send_close:
     push rbx
@@ -1993,7 +2083,7 @@ rm_events:
     xor esi, esi
     test dword ptr [rdi + CH_flags], CHF_LCLOSED
     jnz 2f
-    test dword ptr [rdi + CH_flags], CHF_DETACHED
+    test dword ptr [rdi + CH_flags], CHF_DETACHED | CHF_PENDING
     jnz 1f                      # what it writes waits in the socket until remote_attach
     cmp qword ptr [rdi + CH_credit], 0
     jle 1f
@@ -3283,6 +3373,8 @@ FN remote_dump
     mov rdi, rbx
     mov esi, r12d
     call sb_push_u64
+    mov rdi, rbx
+    call remote_forwards_dump   # remotefwd.s
     cmp byte ptr [rip + rm_error], 0
     je 3f
     mov rdi, rbx
@@ -3646,6 +3738,7 @@ rm_rq_ready: .long 0
 .Lv_cwd: .asciz "cwd "
 .Lv_close: .asciz "close "
 .Lv_attach: .asciz "attach"
+.Lv_connect: .asciz "connect "
 .Lrlog_attached: .asciz "attached to session "
 .Lrlog_attach: .asciz "the session has: "
 .Lquit_req: .asciz "0 quit 0\n"

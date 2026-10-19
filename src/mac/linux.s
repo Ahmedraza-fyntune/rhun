@@ -633,6 +633,8 @@ sys_socket:
 // sockaddr_mac(x1 Linux sockaddr, x9 buffer of 112) -> x1 Darwin sockaddr, w2 length
 sockaddr_mac:
     ldrh w10, [x1]
+    cmp w10, #2
+    b.eq 5f
     cmp w10, #1
     b.ne 9f
     mov w10, #0
@@ -652,6 +654,19 @@ sockaddr_mac:
     strb w13, [x9, #1]
     mov x1, x9
 9:  ret
+5:  // AF_INET (forwarded ports, remotefwd.s): sin_len and sin_family bytes, then port, address and
+    // zeroes as they are
+    ldr x11, [x1]
+    ldr x12, [x1, #8]
+    str x11, [x9]
+    str x12, [x9, #8]
+    mov w13, #16
+    strb w13, [x9]
+    mov w13, #2
+    strb w13, [x9, #1]
+    mov x1, x9
+    mov w2, #16
+    ret
 
 .macro SOCKADDR name, fn
 \name:

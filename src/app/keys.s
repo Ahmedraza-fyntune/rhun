@@ -2190,5 +2190,7 @@ g_commands:
     COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
     COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
     COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
+    COMMAND remote_forward_port, "Remote: Forward a Port", cmd_remote_forward_port, ""
+    COMMAND remote_stop_forwarding, "Remote: Stop Forwarding Ports", cmd_remote_stop_forwarding, ""
     .quad 0, 0, 0, 0
 

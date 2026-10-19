@@ -312,6 +312,50 @@ class Remote(unittest.TestCase):
         self.assertIn('main.rs', out)
         self.assertIn('in-/root/proj/src', out)
 
+    def test_forwarded_port(self):
+        """A port of the host's loopback is reached here: remote-forward listens on 127.0.0.1 and the
+        agent connects each connection to the host's server; remote_forward_url rewrites loopback
+        URLs (resources' external-uri) and leaves others alone."""
+        import urllib.request
+        docker('exec', '-d', HOST, 'sh', '-c', 'cd /root/proj && exec python3 -m http.server 8765 --bind 127.0.0.1')
+        script = self.dir / 't.rsc'
+        script.write_text('wait-remote 90\nwait 500\nremote-forward 8765\necho ready\nwait 6000\n'
+                          'print-forward-url http://localhost:8765/a.txt?x=1#y\nprint-forward-url http://[::1]:8765/\n'
+                          'print-forward-url https://example.com:8765/\nprint-forward-url http://localhost:9/\n'
+                          'print-remote\nremote-unforward 0\nprint-remote\nquit\n')
+        env = dict(os.environ, HOME=str(self.dir / 'home'), XDG_CONFIG_HOME=str(self.dir / 'config'),
+                   XDG_STATE_HOME=str(self.dir / 'state'), TMPDIR=str(self.dir / 'tmp'))
+        p = subprocess.Popen([str(EXE), '--headless', '1000x700', '--remote', 'docker:' + HOST, '/root/proj',
+                              '--script', str(script)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+        out = b''
+        try:
+            while b'ready' not in out:
+                chunk = os.read(p.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                out += chunk
+            local = int(out.split(b'local=')[1].split()[0])
+            body = b''
+            for _ in range(20):         # the server may still be starting
+                try:
+                    body = urllib.request.urlopen('http://127.0.0.1:%d/a.txt' % local, timeout=5).read()
+                    break
+                except OSError:
+                    time.sleep(0.25)
+            out += p.communicate(timeout=60)[0]
+        finally:
+            if p.poll() is None:
+                p.kill()
+            docker('exec', HOST, 'sh', '-c', 'pkill -f "http.server 8765" || true', check=False)
+        text = out.decode(errors='replace')
+        self.assertIn(b'hello\n', body, text)
+        self.assertIn('url=http://localhost:%d/a.txt?x=1#y' % local, text)
+        self.assertIn('url=http://127.0.0.1:%d/' % local, text)
+        self.assertIn('url=-\n', text)                    # not the host's loopback
+        self.assertIn('url=http://localhost:10009/', text)  # a low port is forwarded above 10000
+        self.assertIn(' forwards=8765:%d,9:10009' % local, text)
+        self.assertEqual(text.count(' forwards='), 1, text)
+
     def echo_on_host(self, exts, command='echo.swrite'):
         (self.dir / 'config/rhun/config').write_text('[remote]\nagent_binary = %s\n%s' % (LINUX_EXE, ECHO_CONFIG))
         return self.run_script('docker:' + HOST, '/root/proj',
