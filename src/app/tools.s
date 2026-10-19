@@ -1523,7 +1523,7 @@ target:
     mov rax, r13
     EPILOGUE
 3:  mov rdi, r12
-    call file_type
+    call vfs_type
     cmp eax, 0x8000
     jne .Ltg_nofile_free
     mov rdi, [rbx + TCL_caller]
@@ -1827,7 +1827,7 @@ bt_open:
     jz 9f
     mov r12, rax
     mov rdi, r12
-    call file_type
+    call vfs_type
     cmp eax, 0x8000
     jne .Lbo_nofile
     mov rdi, [rbx + TCL_caller]
