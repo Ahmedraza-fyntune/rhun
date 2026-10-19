@@ -2247,7 +2247,7 @@ ENDSTRUCT RW_SIZE
 .equ TRF_APPEND, 16              # tree_add_begin: children are appended
 # one record of a patch or of a node's extra bytes: "NAME ARGS... LEN" LF, then LEN bytes
 STRUCT
-F RR_f, 16 * 8          # ptr, len of each field of the header line (8 at most)
+F RR_f, 16*8            # ptr, len of each field of the header line (8 at most)
 F RR_n, 8               # fields
 F RR_data, 8            # the LEN bytes
 F RR_len, 8
