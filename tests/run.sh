@@ -209,7 +209,7 @@ python3 tests/ext-browse.py || fail=1
 python3 tests/ext-packs.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
-for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime; do
+for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter; do
     python3 tests/$t.py || fail=1
 done
 # testing: the test explorer (feature "tests")

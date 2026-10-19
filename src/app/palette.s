@@ -2955,7 +2955,20 @@ palette_accept:
     call langfeat_rename_to
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-691: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
+691: cmp dword ptr [rip + pal_prompt], PROMPT_DEBUG    # debugger (debugview.s)
+    jne 690f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call dview_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+690: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
     jb 692f
     # remote hosts: ssh's question answered
     lea rdi, [rip + pal_tf]
