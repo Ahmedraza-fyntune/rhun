@@ -1221,6 +1221,10 @@ has_byte:
 8:  inc eax
 9:  ret
 
+# FN agentext_config_done(): the config file was read: every source's switch from what it said
+FN agentext_config_done
+    jmp hidden_apply
+
 # FN agentext_config_save(sb): the hidden sources, as lines of [agents]
 FN agentext_config_save
     PROLOGUE

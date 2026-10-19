@@ -56,6 +56,9 @@ while True:
             propose('Rename things', 's1', [
                 group(c, '-', [(2, 1, 2, 7, 'LINE 2'), (10, 6, 10, 8, '10 and more\nnew line')]),
                 group(b, '-', [(1, 9, 1, 10, 'beta')])])
+        elif name == 'longer':
+            propose('Longer', '', [
+                group(c, '-', [(2, 1, 2, 7, 'LONG LINE 2'), (10, 6, 10, 8, '10 and more\nnew line')])])
         elif name == 'many':
             for i in range(9):
                 propose(f'p{i}', '', [group(c, '-', [(1, 1, 1, 1, f'{i}')])])
@@ -91,7 +94,7 @@ class Review(unittest.TestCase):
         folder.mkdir(parents=True, exist_ok=True)
         (folder / 'extension.ini').write_text(
             'name = prop\nowner = acme\ntitle = Proposer\nversion = 1\nprotocol = 1\n'
-            'runtime = python3\nrun = main.py\n[commands]\npropose = Propose\nmany = Many\nbad = Bad\n'
+            'runtime = python3\nrun = main.py\n[commands]\npropose = Propose\nmany = Many\nbad = Bad\nlonger = Longer\n'
             'open = Open\nwithdraw = Withdraw\n[needs]\n' + needs)
         (folder / 'main.py').write_text(f'HELLO = {json.dumps(hello)}\nOPEN_VERSION = {json.dumps(version)}\n'
                                         + PROGRAM)
@@ -135,6 +138,26 @@ class Review(unittest.TestCase):
         self.assertEqual((self.proj / 'c.txt').read_text(), C_TXT)    # unsaved: the user saves
         self.assertTrue(any('c.txt' in l and 'b.go' in l for l in out if l.startswith('tabs=')), out)
         self.assertEqual((self.proj / 'b.go').read_text(), 'package b\n')
+
+    def test_hunks_accepted_together_refer_to_the_same_text(self):
+        # the first hunk grows the text: the second must still land on line 10 (Codex review)
+        c = (self.proj / 'c.txt').as_posix()
+        out = self.go(['cmd acme/prop.longer', 'wait 300', 'review accept 1', 'wait 200', 'open ' + c,
+                       'print-doc'])
+        want = C_TXT.replace('line 2\n', 'LONG LINE 2\n').replace('line 10\n', 'line 10 and more\nnew line\n')
+        self.assertEqual('\n'.join(out[out.index('<eod>') - 14:out.index('<eod>')]), want)
+        self.assertEqual(self.events(), ['0 proposal 1 1 accepted', '0 proposal 1 done 1 0'])
+
+    def test_git_open_changes_with_a_review_tab_open(self):
+        # Git: Open Changes looks through the diff views; a Review tab has no file (Codex review)
+        import subprocess
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text().replace('[git]\nenabled = false\n', '[git]\nenabled = true\n'))
+        subprocess.run(['git', 'init', '-q', str(self.proj)], check=True, env=self.env)
+        c = (self.proj / 'c.txt').as_posix()
+        out = self.go(['cmd acme/prop.propose', 'wait 300', 'open ' + c, 'cmd git_changes', 'wait 300',
+                       'print-tabs'])
+        self.assertTrue(any('Review: Rename things' in l for l in out), out)
 
     def test_hunks_are_decided_one_by_one(self):
         out = self.go(['cmd acme/prop.propose', 'wait 300', 'review accept 1 2', 'review reject 1 1',

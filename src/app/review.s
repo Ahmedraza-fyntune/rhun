@@ -2160,11 +2160,7 @@ accept_hunks:
     pop rsi
     lea rdi, [rip + text]
     call sb_push
-    mov rdi, r12
-    mov rsi, r14
-    call hunk_growth
-    add [rsp + 24], rax
-    jmp 12b
+    jmp 12b                     # the edits all refer to the current text: chosen hunks do not shift
 15: mov rdi, [rip + text + SB_ptr]
     mov rsi, [rip + text + SB_len]
     call ws_apply
