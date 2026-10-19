@@ -561,6 +561,7 @@ test_ctl:
     .quad .Lc_runs, testctl_runs, .Lc_coverage, testctl_coverage
     .quad .Lc_view, testctl_print_view, .Lc_gutter, testctl_gutter
     .quad .Lc_gutter_click, testctl_gutter_click, .Lc_status, testctl_status
+    .quad .Lc_filter, testctl_filter, .Lc_failed, testctl_failed
     .quad 0, 0
 .Lc_select: .asciz "test-select"
 .Lc_expand: .asciz "test-expand"
@@ -576,6 +577,8 @@ test_ctl:
 .Lc_gutter: .asciz "print-gutter"
 .Lc_gutter_click: .asciz "test-gutter"
 .Lc_status: .asciz "print-test-status"
+.Lc_filter: .asciz "test-filter"
+.Lc_failed: .asciz "test-failed-only"
 .text
 
 testctl_expand_open:
@@ -1329,8 +1332,10 @@ tv_kid:
     jge 1f
     test dword ptr [r13 + TSI_flags], TSF_LAZY
     jz 2f
-1:  mov r9d, KIDS_CLOSED
-    test dword ptr [r13 + TSI_flags], TSF_EXPANDED
+1:  mov rdi, r13
+    call tv_is_open
+    mov r9d, KIDS_CLOSED
+    test eax, eax
     jz 2f
     mov r9d, KIDS_OPEN
 2:  mov r14d, r9d
@@ -1374,12 +1379,13 @@ tv_kid:
     cmp eax, -1
     je 9f
 3:  mov r15d, eax
-    mov rdi, [rip + tv_tree]
-    mov esi, r15d
-    mov edx, [r13 + TSI_flags]
-    and edx, TSF_EXPANDED
     cmp r14d, KIDS_LEAF
     je 31f
+    mov rdi, r13
+    call tv_is_open
+    mov edx, eax
+    mov rdi, [rip + tv_tree]
+    mov esi, r15d
     call tree_expand
 31: # the state's icon
     mov eax, [r13 + TSI_state]
@@ -1463,6 +1469,7 @@ FN testview_rebuild
     je 9f
     mov dword ptr [rip + g_ts_dirty], 0
     mov qword ptr [rip + tv_stack + VEC_len], 0
+    call tv_filter_marks
     mov rdi, [rip + tv_tree]
     xor esi, esi
     call tree_kids_begin
@@ -1479,7 +1486,9 @@ FN testview_rebuild
     mov rdi, rbx
     xor esi, esi
     call testmodel_item
-    test dword ptr [rax + TSI_flags], TSF_EXPANDED
+    mov rdi, rax
+    call tv_is_open
+    test eax, eax
     jz 2f
     mov edi, r13d
     mov rsi, rbx
@@ -1526,7 +1535,14 @@ FN testview_rebuild
     movsxd r14, dword ptr [rax + TSI_first]
 5:  test r14, r14
     js 7f
+    cmp dword ptr [rip + tv_fon], 0
+    je 50f
     mov rdi, rbx
+    mov rsi, r14
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_SHOW
+    jz 6f                       # the filter hides it
+50: mov rdi, rbx
     mov rsi, r14
     call tv_kid
     cmp eax, -1
@@ -1535,8 +1551,15 @@ FN testview_rebuild
     mov rdi, rbx
     mov rsi, r14
     call testmodel_item
-    test dword ptr [rax + TSI_flags], TSF_EXPANDED
+    push rax
+    push rax
+    mov rdi, rax
+    call tv_is_open
+    pop rcx
+    pop rcx
+    test eax, eax
     jz 6f
+    mov rax, rcx
     cmp dword ptr [rax + TSI_first], 0
     jge 51f
     test dword ptr [rax + TSI_flags], TSF_LAZY
@@ -1720,7 +1743,46 @@ tv_keys:
     mov r12d, esi
     mov r13d, edx
     mov r14d, ecx
-    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    cmp dword ptr [rip + tv_find], 0
+    je 10f
+    # the filter field: Escape clears it, then leaves it, as Enter and Down do
+    cmp r12d, KEY_ESCAPE
+    jne 11f
+    lea rdi, [rip + tv_ftf]
+    call tf_text
+    test rdx, rdx
+    jz 12f
+    lea rdi, [rip + tv_ftf]
+    call tf_clear
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov eax, 1
+    EPILOGUE
+11: cmp r12d, KEY_RETURN
+    je 12f
+    cmp r12d, KEY_DOWN
+    jne 13f
+12: mov dword ptr [rip + tv_find], 0
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+13: lea rdi, [rip + tv_ftf]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call tf_key
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + g_ts_dirty], 1
+    EPILOGUE
+10: cmp r14d, MOD_CTRL          # ctrl+f: the filter
+    jne 14f
+    cmp r12d, 'f'
+    jne 14f
+    mov dword ptr [rip + tv_find], 1
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+14: test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
     jnz 8f
     cmp r13d, 'r'
     jne 1f
@@ -1737,7 +1799,7 @@ tv_keys:
     mov edx, r13d
     mov ecx, r14d
     call tree_key
-    EPILOGUE
+9:  EPILOGUE
 
 # tv_header(ctx, right, y, h) -> eax the x left of its buttons: Run All, Run with Coverage, Re-run
 #   Failed, Cancel
@@ -1757,6 +1819,14 @@ tv_header:
     lea rax, [rip + header_icons]
     mov r9d, [rax + rbx*4]
     call ui_icon_btn
+    mov r8d, eax
+    lea edi, [rbx + ID_TV_BTN]
+    mov esi, r12d
+    lea edx, [r13 + r14]
+    M ecx, MI_24
+    lea rax, [rip + header_tips]
+    mov r9, [rax + rbx*8]
+    call tip_note_text
     test eax, UB_CLICK
     jz 2f
     lea rax, [rip + header_cmds]
@@ -1821,6 +1891,13 @@ tv_draw:
     push rax
     call ui_text_v
     add rsp, 16
+    # the filter row: the field and Failed only; it is part of the counts' height from here on
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    add esi, [rsp + 16]
+    mov edx, [rsp + 8]
+    call filter_row
+    add [rsp + 16], eax
     # the details' height: a third of the section for an item with something to show
     call details_lines
     mov r15d, eax               # lines
@@ -2308,6 +2385,7 @@ state_icons:
 header_icons: .long IC_PLAY, IC_BEAKER, IC_REFRESH, IC_STOP
 .p2align 3
 header_cmds: .quad cmd_test_run_all, cmd_test_coverage_all, cmd_test_rerun_failed, cmd_test_cancel
+header_tips: .quad .Lht_run, .Lht_coverage, .Lht_rerun, .Lht_cancel
 tv_menu_items:
     .quad .Ltm_run, tv_m_run, .Ltm_debug, tv_m_debug, .Ltm_coverage, tv_m_coverage
     .quad .Ltm_goto, tv_m_goto, .Ltm_failure, tv_m_failure, .Ltm_diff, tv_m_diff
@@ -2626,4 +2704,351 @@ testctl_status:
 .Ls_text: .asciz " text="
 .Ls_passed: .asciz "passed="
 .Ls_failed: .asciz " failed="
+.text
+
+# ---------------- the filter ----------------
+# A field above the tree keeps the rows whose label words start with each typed word (a capital
+# after a small letter starts a word: "add" finds TestAdd), with everything under them, plus their
+# ancestors, opened; Failed only keeps the failed and errored tests (and their ancestors).
+
+.equ ID_TV_FILTER, ID_TV_BTN + 12
+.equ ID_TV_FAILED, ID_TV_BTN + 13
+
+.bss
+.p2align 3
+tv_ftf: .zero TF_SIZE           # the filter's text
+tv_find: .long 0                # the field has the keys
+tv_failed: .long 0              # Failed only
+tv_fon: .long 0                 # the last rebuild filtered
+.text
+
+# tv_is_open(TSI*) -> eax nonzero when its children are listed: the filter opens the ancestors of
+#   what it keeps, else the item's own expansion counts
+tv_is_open:
+    mov eax, [rdi + TSI_flags]
+    cmp dword ptr [rip + tv_fon], 0
+    je 1f
+    and eax, TSF_FOPEN
+    ret
+1:  and eax, TSF_EXPANDED
+    ret
+
+# filter_row(x, y, w) -> eax its height: the field, and Failed only at its right
+filter_row:
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    M ebx, MI_24                # the field's height
+    M r12d, MI_8
+    mov dword ptr [rip + tv_ftf + TF_id], ID_TV_FILTER
+    # a press elsewhere takes the keys from the field
+    test dword ptr [rip + g_pressed], 1 << BTN_LEFT
+    jz 1f
+    cmp dword ptr [rip + g_active], ID_TV_FILTER
+    je 1f
+    mov dword ptr [rip + tv_find], 0
+1:  xor r9d, r9d
+    cmp dword ptr [rip + tv_find], 0
+    je 2f
+    call place_focused
+    xor r9d, r9d
+    cmp eax, [rip + g_tv_place]
+    sete r9b
+2:  lea rdi, [rip + tv_ftf]
+    mov esi, [rsp]
+    add esi, r12d
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    sub ecx, r12d
+    sub ecx, r12d
+    sub ecx, ebx
+    M eax, MI_4
+    sub ecx, eax
+    mov r8d, ebx
+    lea rax, [rip + .Ltv_filter]
+    push rax
+    push rax
+    call ui_textfield
+    add rsp, 16
+    test eax, UB_PRESS
+    jz 3f
+    mov dword ptr [rip + tv_find], 1
+    mov edi, [rip + g_tv_place]
+    call place_focus
+3:  # Failed only: a cross, on a selected background while it filters
+    mov r13d, [rsp]
+    add r13d, [rsp + 8]
+    sub r13d, r12d
+    sub r13d, ebx
+    cmp dword ptr [rip + tv_failed], 0
+    je 4f
+    mov edi, r13d
+    mov esi, [rsp + 4]
+    mov edx, ebx
+    mov ecx, ebx
+    COLOR r8d, T_SELECTION
+    call gfx_fill
+4:  mov edi, ID_TV_FAILED
+    mov esi, r13d
+    mov edx, [rsp + 4]
+    mov ecx, ebx
+    mov r8d, ebx
+    mov r9d, IC_ERROR
+    call ui_icon_btn
+    mov r8d, eax
+    mov edi, ID_TV_FAILED
+    mov esi, r13d
+    mov edx, [rsp + 4]
+    add edx, ebx
+    mov ecx, ebx
+    lea r9, [rip + .Ltv_failed_only]
+    call tip_note_text
+    test eax, UB_CLICK
+    jz 5f
+    xor dword ptr [rip + tv_failed], 1
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_dirty], 1
+5:  M eax, MI_4
+    add eax, ebx
+    EPILOGUE
+
+# tv_filter_marks(): tv_fon, and with a filter the items' TSF_SHOW, TSF_FOPEN and TSF_HIT
+tv_filter_marks:
+    PROLOGUE
+    lea rdi, [rip + tv_ftf]
+    call tf_text
+    xor eax, eax
+    test rdx, rdx
+    setnz al
+    or eax, [rip + tv_failed]
+    mov [rip + tv_fon], eax
+    test eax, eax
+    jz 9f
+    lea rbx, [rip + g_ts_ctrls]
+    xor r12d, r12d
+1:  cmp qword ptr [rbx + TSC_ext], 0
+    je 8f
+    mov rdi, rbx
+    xor esi, esi
+    call testmodel_item
+    and dword ptr [rax + TSI_flags], ~(TSF_SHOW | TSF_FOPEN | TSF_HIT)
+    or dword ptr [rax + TSI_flags], TSF_SHOW    # the controller's row stays
+    xor r13d, r13d
+2:  mov rdi, rbx
+    mov rsi, r13
+    mov edx, 1
+    call testmodel_next
+    test rax, rax
+    js 8f
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, r13
+    call testmodel_item
+    mov r14, rax
+    and dword ptr [r14 + TSI_flags], ~(TSF_SHOW | TSF_FOPEN | TSF_HIT)
+    # the text: its label, or an ancestor's
+    movsxd rsi, dword ptr [r14 + TSI_parent]
+    test rsi, rsi
+    jle 3f
+    mov rdi, rbx
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_HIT
+    jnz 4f
+3:  mov rdi, [r14 + TSI_label]
+    call tv_text_ok
+    test eax, eax
+    jz 2b
+4:  or dword ptr [r14 + TSI_flags], TSF_HIT
+    # Failed only: a test that failed or errored, with no children
+    cmp dword ptr [rip + tv_failed], 0
+    je 5f
+    cmp dword ptr [r14 + TSI_first], 0
+    jge 2b
+    test dword ptr [r14 + TSI_flags], TSF_LAZY
+    jnz 2b
+    mov eax, [r14 + TSI_state]
+    cmp eax, TSS_FAILED
+    je 5f
+    cmp eax, TSS_ERRORED
+    jne 2b
+5:  or dword ptr [r14 + TSI_flags], TSF_SHOW
+    movsxd r15, dword ptr [r14 + TSI_parent]
+6:  test r15, r15
+    js 2b
+    mov rdi, rbx
+    mov rsi, r15
+    call testmodel_item
+    mov ecx, [rax + TSI_flags]
+    and ecx, TSF_SHOW | TSF_FOPEN
+    cmp ecx, TSF_SHOW | TSF_FOPEN
+    je 2b
+    or dword ptr [rax + TSI_flags], TSF_SHOW | TSF_FOPEN
+    movsxd r15, dword ptr [rax + TSI_parent]
+    jmp 6b
+8:  add rbx, TSC_SIZE
+    inc r12d
+    cmp r12d, TS_CTRL_MAX
+    jb 1b
+9:  EPILOGUE
+
+# tv_text_ok(label) -> eax 1 when the filter's text finds the label (no text finds every label)
+tv_text_ok:
+    push rbx
+    mov rbx, rdi
+    lea rdi, [rip + tv_ftf]
+    call tf_text
+    mov rdi, rbx
+    mov rsi, rax
+    pop rbx
+    test rdx, rdx
+    jz 1f
+    test rdi, rdi
+    jz 2f
+    jmp tv_match
+1:  mov eax, 1
+    ret
+2:  xor eax, eax
+    ret
+
+# tv_match(label cstr, text, len) -> eax 1 when each word of the text starts a word of the label,
+#   ignoring case
+FN tv_match
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call strlen
+    mov [rsp], rax
+    xor r14d, r14d              # where the next word of the text starts
+1:  cmp r14, r13
+    jae 8f
+    cmp byte ptr [r12 + r14], ' '
+    jne 2f
+    inc r14
+    jmp 1b
+2:  mov r15, r14                # the word: r15 up to r14
+3:  inc r14
+    cmp r14, r13
+    jae 4f
+    cmp byte ptr [r12 + r14], ' '
+    jne 3b
+4:  xor ecx, ecx                # where it may start in the label
+5:  mov rdx, r14
+    sub rdx, r15
+    add rdx, rcx
+    cmp rdx, [rsp]
+    ja 9f
+    mov [rsp + 8], rcx
+    mov rdi, rbx
+    mov rsi, rcx
+    call tv_wstart
+    mov rcx, [rsp + 8]
+    test eax, eax
+    jz 7f
+    xor edx, edx
+6:  lea r8, [r15 + rdx]
+    cmp r8, r14
+    jae 1b                      # this word is found: the next
+    lea r9, [rcx + rdx]
+    movzx eax, byte ptr [rbx + r9]
+    movzx r9d, byte ptr [r12 + r8]
+    lea r10d, [rax - 'A']
+    cmp r10d, 25
+    ja 61f
+    add eax, 32
+61: lea r10d, [r9 - 'A']
+    cmp r10d, 25
+    ja 62f
+    add r9d, 32
+62: cmp eax, r9d
+    jne 7f
+    inc rdx
+    jmp 6b
+7:  inc rcx
+    jmp 5b
+8:  mov eax, 1
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
+
+# tv_wstart(label, i) -> eax 1 when a word starts at byte i: the first byte, after a byte that is
+#   not a letter or a digit, a capital after a small letter, a digit after a non-digit
+tv_wstart:
+    mov eax, 1
+    test rsi, rsi
+    jz 9f
+    movzx ecx, byte ptr [rdi + rsi - 1]   # the byte before
+    movzx edx, byte ptr [rdi + rsi]       # the byte
+    # before is not a letter or a digit (UTF-8 bytes count as letters)
+    lea r8d, [rcx - '0']
+    cmp r8d, 9
+    jbe 2f
+    lea r8d, [rcx - 'A']
+    cmp r8d, 25
+    jbe 3f
+    lea r8d, [rcx - 'a']
+    cmp r8d, 25
+    jbe 4f
+    cmp ecx, 0x80
+    jb 9f
+    jmp 8f
+2:  # after a digit: never a new word
+    jmp 8f
+3:  # after a capital: a digit starts one
+    lea r8d, [rdx - '0']
+    cmp r8d, 9
+    jbe 9f
+    jmp 8f
+4:  # after a small letter: a capital or a digit starts one
+    lea r8d, [rdx - 'A']
+    cmp r8d, 25
+    jbe 9f
+    lea r8d, [rdx - '0']
+    cmp r8d, 9
+    jbe 9f
+8:  xor eax, eax
+9:  ret
+
+# testctl_filter(sb, rest, len): test-filter TEXT: the filter's text (none clears it)
+testctl_filter:
+    PROLOGUE
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    lea rdi, [rip + tv_ftf]
+    mov rsi, rax
+    call tf_set
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_dirty], 1
+    xor eax, eax
+    EPILOGUE
+
+# testctl_failed(sb, rest, len): test-failed-only on|off
+testctl_failed:
+    PROLOGUE
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    xor ecx, ecx
+    cmp rdx, 2
+    jne 1f
+    cmp byte ptr [rax], 'o'
+    jne 1f
+    cmp byte ptr [rax + 1], 'n'
+    jne 1f
+    mov ecx, 1
+1:  mov [rip + tv_failed], ecx
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_dirty], 1
+    xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Ltv_filter: .asciz "Filter tests"
+.Ltv_failed_only: .asciz "Show only failed tests"
+.Lht_run: .asciz "Run All Tests"
+.Lht_coverage: .asciz "Run All Tests with Coverage"
+.Lht_rerun: .asciz "Re-run Failed Tests"
+.Lht_cancel: .asciz "Cancel Test Runs"
 .text

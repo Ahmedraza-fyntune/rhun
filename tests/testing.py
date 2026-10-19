@@ -371,6 +371,32 @@ class Testing(unittest.TestCase):
         bars = [l for l in out if l.startswith('testing title=Testing')]
         self.assertTrue(bars and ' visible' in bars[-1], out)
 
+    def test_the_filter_keeps_matching_rows_and_failed_only(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'test-collapse testsfake go:example/pkg',
+                               'echo @all', 'print-testing', 'test-filter b', 'echo @b', 'print-testing',
+                               'test-filter test c', 'echo @c', 'print-testing', 'test-filter', 'test-failed-only on',
+                               'echo @failed', 'print-testing', 'test-failed-only off', 'echo @off', 'print-testing'])
+        def labels(a, b):
+            seg = out[out.index(a) + 1:out.index(b) if b else len(out)]
+            return [l.split(' label=')[1].split(' icon=')[0].split(' desc=')[0] for l in seg if l.startswith('row ')]
+        self.assertEqual(labels('@all', '@b'), ['Fake Tests', 'pkg', 'other'])
+        self.assertEqual(labels('@b', '@c'), ['Fake Tests', 'pkg', 'a_test.go', 'TestB'])
+        self.assertEqual(labels('@c', '@failed'), ['Fake Tests', 'pkg', 'a_test.go', 'TestC'])
+        self.assertEqual(labels('@failed', '@off'), ['Fake Tests', 'pkg', 'a_test.go', 'TestB'])
+        # without a filter the tree is as the user left it
+        self.assertEqual(labels('@off', None), ['Fake Tests', 'pkg', 'other'])
+        # typing in the field filters; Escape clears it, then leaves it; the buttons say what they do
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'move 80 374', 'click 80 374', 'type c',
+                               'wait 50', 'echo @typed', 'print-testing', 'key Escape', 'key Escape', 'echo @cleared',
+                               'print-testing', 'move 220 374', 'wait 900', 'print-tip', 'move 152 321', 'wait 900',
+                               'print-tip'])
+        typed = [l for l in out[out.index('@typed'):out.index('@cleared')] if l.startswith('row ')]
+        self.assertTrue(typed[-1].startswith('row 3 ') and ' label=TestC ' in typed[-1], typed)
+        self.assertEqual(len([l for l in out[out.index('@cleared'):] if l.startswith('row ')]), 7, out)
+        tips = [l for l in out if l.startswith('tip')]
+        self.assertTrue(any('Show only failed tests' in l for l in tips), tips)
+        self.assertTrue(any('Run All Tests' in l for l in tips), tips)
+
     # --- the Testing section ---
 
     def section(self, out):
