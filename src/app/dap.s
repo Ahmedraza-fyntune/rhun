@@ -128,6 +128,8 @@ ds_free_mem:
     call mem_free
     mov rdi, [rbx + DS_desc]
     call mem_free
+    mov rdi, [rbx + DS_after]
+    call mem_free
     mov rdi, rbx
     call pend_clear
     # keep the buffers' memory, empty
@@ -201,6 +203,7 @@ FN dap_start
     mov r13, rsi
     mov [rsp], edx
     mov dword ptr [rip + dstart_resolved], 0
+    mov dword ptr [rip + dstart_before], 0
     call dbgx_resolving
     test eax, eax
     jnz .Lst_preparing          # one launch waits for its extension at a time
@@ -236,7 +239,18 @@ FN dap_start
     jz .Lst_resfail
     xor eax, eax
     EPILOGUE
-1:  mov dword ptr [rsp + 4], DTR_STDIO
+1:  # before = TASK: the tasks group runs it first; the launch goes on in dap_start_after_before
+    cmp qword ptr [rip + g_lc_before + SB_len], 0
+    je 2f
+    cmp dword ptr [rip + dstart_before], 0
+    jne 2f
+    mov rdi, [rip + g_lc_before + SB_ptr]
+    call dbgx_before_begin
+    test eax, eax
+    jz .Lst_resfail
+    xor eax, eax
+    EPILOGUE
+2:  mov dword ptr [rsp + 4], DTR_STDIO
     mov dword ptr [rsp + 8], DAP_LOOPBACK
     cmp qword ptr [rip + g_lc_server + SB_len], 0
     jne .Lst_server
@@ -264,6 +278,13 @@ FN dap_start
     mov [rbx + DS_owner], rax
     mov rax, [rip + dstart_oid]
     mov [rbx + DS_owner_id], rax
+    lea rdi, [rbx + DS_after]       # after = TASK runs when the session ends
+    mov rsi, [rip + g_lc_after + SB_ptr]
+    mov rdx, [rip + g_lc_after + SB_len]
+    test rdx, rdx
+    jnz 3f
+    xor esi, esi
+3:  call ds_set_str
     mov eax, [rip + g_lc_request]
     mov [rbx + DS_request], eax
     mov eax, [rip + g_lc_nodebug]
@@ -369,6 +390,7 @@ FN dap_start_ext
     mov [rip + dstart_owner], rdi
     mov [rip + dstart_oid], rsi
     mov dword ptr [rip + dstart_resolved], 0
+    mov dword ptr [rip + dstart_before], 1      # its bodies have no before
     jmp .Lst_prepared
 
 # dap_start_resolved() -> eax the session's id, 0: the debugger's extension answered debug-resolve
@@ -378,6 +400,17 @@ FN dap_start_resolved
     mov qword ptr [rip + dstart_owner], 0
     mov qword ptr [rip + dstart_oid], 0
     mov dword ptr [rip + dstart_resolved], 1
+    mov dword ptr [rip + dstart_before], 0
+    jmp .Lst_prepared
+
+# dap_start_after_before() -> eax the session's id, 0: launch.ini's before task ended well
+#   (debugext.s) and g_lc_* still hold the configuration
+FN dap_start_after_before
+    PROLOGUE 16
+    mov qword ptr [rip + dstart_owner], 0
+    mov qword ptr [rip + dstart_oid], 0
+    mov dword ptr [rip + dstart_resolved], 1
+    mov dword ptr [rip + dstart_before], 1
     jmp .Lst_prepared
 
 # dap_error(cstr): a failure to start or run, in the console and as a toast
@@ -1303,7 +1336,19 @@ ds_end:
     jnz 22f
     mov edx, -1
 22: call dbgx_ended
-3:  # the console says so
+3:  # after = TASK, unless rhun quits
+    mov rdi, [rbx + DS_after]
+    test rdi, rdi
+    jz 4f
+    cmp dword ptr [rip + dap_quitting], 0
+    jne 31f
+    xor esi, esi
+    xor edx, edx
+    call tasks_run_named
+31: mov rdi, [rbx + DS_after]
+    call mem_free
+    mov qword ptr [rbx + DS_after], 0
+4:  # the console says so
     mov edi, [rbx + DS_id]
     mov esi, DCON_INFO
     lea rdx, [rip + .Lm_ended]
@@ -1541,6 +1586,7 @@ send_disconnect:
 # dap_shutdown(): rhun quits: disconnect every session (300 ms in all), then their groups are killed
 FN dap_shutdown
     PROLOGUE
+    mov dword ptr [rip + dap_quitting], 1
     xor r12d, r12d
     xor r13d, r13d              # any disconnect sent
 1:  cmp r12d, DS_MAX
@@ -4213,6 +4259,8 @@ FN dap_find_node
 dstart_owner: .quad 0           # dap_start_ext's caller for the session being made, 0 the user
 dstart_oid: .quad 0
 dstart_resolved: .long 0        # 1: debug-resolve answered for this launch
+dstart_before: .long 0          # 1: the before task ran (or there is none to run)
+dap_quitting: .long 0           # dap_shutdown: no after tasks
 .p2align 3
 .globl g_dstart_msg
 g_dstart_msg: .quad 0           # why the last dap_start* could not make a session

@@ -2952,6 +2952,7 @@ F DS_rit_seq, 4         # the runInTerminal request still owed an answer, 0 none
 F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
 F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
 F DS_owner_id, 8        # and its request still owed an answer, 0 none
+F DS_after, 8           # owned cstr: launch.ini's after task, run when the session ends, or 0
 F DS_seq, 4             # the next request number
 F DS_epoch, 4           # bumped on every stop and resume
 F DS_flags, 4           # DSF_*

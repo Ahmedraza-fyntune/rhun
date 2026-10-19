@@ -22,6 +22,7 @@ rs_deadline: .quad 0
 rs_body: .zero SB_SIZE          # the configuration sent
 rs_line: .zero SB_SIZE
 rs_keep: .zero SB_SIZE * 3      # before, after, server while the answer is read
+rs_task: .zero SB_SIZE          # rs_state 3: the before task that runs
 win_ext: .zero 8 * DBGX_SLOTS   # EXT*, 0 free
 win_at: .zero 8 * DBGX_SLOTS    # time_ms of its last command
 xmsg: .zero SB_SIZE             # a reply or event being built
@@ -358,6 +359,67 @@ rs_fail:
     pop rbx
     ret
 
+# dbgx_before_begin(task name cstr) -> eax 1 when launch.ini's before task started (the launch goes
+#   on in dap_start_after_before once it exits 0), 0 with g_dstart_msg
+FN dbgx_before_begin
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + rs_line]
+    lea rsi, [rip + .Lm_before]
+    call sb_set_cstr_x
+    lea rdi, [rip + rs_line]
+    mov rsi, rbx
+    call sb_push_cstr
+    xor edi, edi
+    mov esi, DCON_INFO
+    mov rdx, [rip + rs_line + SB_ptr]
+    mov rcx, [rip + rs_line + SB_len]
+    call dcon_line
+    lea rdi, [rip + rs_task]
+    mov rsi, rbx
+    call sb_set_cstr_x
+    mov dword ptr [rip + rs_state], 3
+    mov rdi, rbx
+    lea rsi, [rip + before_done]
+    xor edx, edx
+    call tasks_run_named
+    test eax, eax
+    jz 8f
+    mov dword ptr [rip + rs_state], 0
+    lea rcx, [rip + .Lm_notask]
+    cmp eax, -1
+    je 1f
+    lea rcx, [rip + .Lm_taskbusy]
+1:  mov [rip + g_dstart_msg], rcx
+    xor eax, eax
+    EPILOGUE
+8:  mov eax, 1
+    EPILOGUE
+
+# before_done(cookie, TASK_DONE | TASK_FAILED): the before task ended
+before_done:
+    PROLOGUE
+    cmp dword ptr [rip + rs_state], 3
+    jne 9f                      # Stop abandoned the launch meanwhile
+    mov dword ptr [rip + rs_state], 0
+    cmp esi, TASK_DONE
+    jne 1f
+    call dap_start_after_before
+    EPILOGUE
+1:  lea rdi, [rip + rs_line]
+    lea rsi, [rip + .Lm_taskfailed]
+    call sb_set_cstr_x
+    lea rdi, [rip + rs_line]
+    mov rsi, [rip + rs_task + SB_ptr]
+    mov rdx, [rip + rs_task + SB_len]
+    call sb_push
+    lea rdi, [rip + rs_line]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + rs_line + SB_ptr]
+    call dap_error
+9:  EPILOGUE
+
 # dbgx_resolving() -> eax 1 while a launch waits for its extension (dap_start refuses another)
 FN dbgx_resolving
     xor eax, eax
@@ -374,6 +436,8 @@ FN dbgx_resolve_tick
     mov rbx, [rip + rs_ext]
     call time_ms
     mov r12, rax
+    cmp dword ptr [rip + rs_state], 3
+    je 9f                       # the before task has no deadline of rhun's
     cmp dword ptr [rip + rs_state], 1
     jne 3f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -410,6 +474,8 @@ FN dbgx_resolve_timeout
     sub rsp, 8
     mov rax, -1
     cmp dword ptr [rip + rs_state], 0
+    je 9f
+    cmp dword ptr [rip + rs_state], 3
     je 9f
     call time_ms
     mov rcx, [rip + rs_deadline]
@@ -733,6 +799,10 @@ sb_set_cstr_x:
 .Lm_noanswer: .asciz "the debugger's extension did not answer in 60 s"
 .Lm_feat: .asciz "the extension does not answer debug-resolve (feature debug not agreed)"
 .Lm_unsent: .asciz "the debugger's extension could not be asked to prepare the launch"
+.Lm_before: .asciz "Running the prelaunch task "
+.Lm_notask: .asciz "the configuration's before task is not a task (or more than one task has that name)"
+.Lm_taskbusy: .asciz "the tasks are busy: the before task could not start"
+.Lm_taskfailed: .asciz "the prelaunch task failed: "
 .Lm_badanswer: .asciz "the debugger's extension answered with a configuration that does not parse, or not of its own type"
 .globl dbgx_v_debug_start
 dbgx_v_debug_start: .asciz "debug-start"
