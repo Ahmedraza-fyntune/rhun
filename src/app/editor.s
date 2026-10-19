@@ -450,6 +450,9 @@ FN ed_type
     jz .Lty_ret
     mov r12d, edi
     mov rdi, rbx
+    mov esi, r12d
+    call ws_linked_typed        # wsedit: a character outside the word ends linked editing first
+    mov rdi, rbx
     call snippet_user_begin
     mov edi, r12d
     lea rsi, [rsp]
@@ -3426,6 +3429,13 @@ draw_line:
     mov r8d, [rsp + 40]
     mov r9d, [rsp]
     call sel_row
+    mov rdi, r14                # wsedit: linked editing's ranges outlined
+    mov rsi, [rsp + 24]
+    mov rdx, [rsp + 96]
+    mov rcx, [rsp + 32]
+    mov r8d, [rsp + 40]
+    mov r9d, [rsp]
+    call ws_linked_row
     # ---- find matches ----
     mov rcx, [rip + g_ed_find + SB_len]
     test rcx, rcx
