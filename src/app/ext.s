@@ -1943,9 +1943,23 @@ manifest_kv:
     lea rsi, [rip + .Ls_provides]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 5f
     lea rdi, [rip + pv_keys]
     call parse_keyed
+    jmp 9f
+5:  # debugger: [debugger.TYPE] (debugcfg.s)
+    cmp qword ptr [rip + g_ext_manifest_private], 0
+    jne 9f
+    mov rdi, [r12 + INI_sec]
+    mov rsi, [r12 + INI_seclen]
+    lea rdx, [rip + .Ls_debugger_dot]
+    mov ecx, 9
+    call str_starts
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call dbg_manifest_kv
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -2254,9 +2268,17 @@ parse_needs:
     lea rsi, [rip + .Ln_run]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 6f
     call val_dup
     mov [rbx + EXT_runs], rax
+    jmp 9f
+6:  mov rdi, r12                # debugger: debug = yes starts debug adapters as the user
+    lea rsi, [rip + .Ln_debug]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov edi, NEEDS_DEBUG
+    call needs_yes
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -5750,6 +5772,8 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_debug: .asciz "debug"
+.Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"
 .Lo_command: .asciz "command"
 .Lo_project: .asciz "project"
