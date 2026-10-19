@@ -291,6 +291,28 @@ FN testproto_resolving
     jb 1b
     ret
 
+# testproto_debug_window(ext) -> eax 1 while the extension has a queued or running run of profile
+#   debug (the user asked to debug its tests): the debugger lets it start a session (debug-start)
+FN testproto_debug_window
+    xor eax, eax
+    lea rcx, [rip + g_ts_runs]
+    xor edx, edx
+1:  cmp [rcx + TSR_ext], rdi
+    jne 2f
+    cmp dword ptr [rcx + TSR_profile], TSP_DEBUG
+    jne 2f
+    cmp dword ptr [rcx + TSR_state], TSRS_QUEUED
+    je 3f
+    cmp dword ptr [rcx + TSR_state], TSRS_RUNNING
+    je 3f
+2:  add rcx, TSR_SIZE
+    inc edx
+    cmp edx, TS_RUNS_MAX
+    jb 1b
+    ret
+3:  mov eax, 1
+    ret
+
 # testproto_forget_requests(ext): its tests-resolve requests are dropped (the extension goes)
 FN testproto_forget_requests
     mov esi, 1
