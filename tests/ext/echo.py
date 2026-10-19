@@ -18,6 +18,8 @@ test can assert catch-up and events. ECHO_MODE makes it misbehave:
   eof        hello, then close stdout and sleep
   syntax     hello, then three unparsable lines
   badargs    hello, then three requests with ids whose arguments cannot be parsed
+  badlen     hello, then a toast whose body length is not a number and a status, then normal
+  bigtext    hello, then four text requests for document 1 at once, and it never reads
   noisy      normal, but writes 2 MB to its error output after hello
 
 Commands (from tests/ext/exts/rhun-tests/echo/extension.ini): echo.shout upper-cases the active document,
@@ -179,6 +181,15 @@ def main():
     if MODE == 'badargs':
         for i in range(1, 4):
             send(f'{i} insert blah')
+        time.sleep(600)
+        return
+    if MODE == 'badlen':
+        send('1 toast abc')
+        send('2 status 7', b'echo ok')
+        next_id = 10
+    if MODE == 'bigtext':
+        out.write(b''.join(f'{i} text 1\n'.encode() for i in range(1, 5)))
+        out.flush()
         time.sleep(600)
         return
     if MODE == 'badbodies':

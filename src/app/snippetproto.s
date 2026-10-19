@@ -127,8 +127,8 @@ FN snippet_decode_fields
     jmp .Lsdf_record
 .Lsdf_transforms:
     mov rax, [rsp + 624]
-    and eax, FEAT_SNIPPETS | FEAT_SNIPPET_TRANSFORMS
-    cmp eax, FEAT_SNIPPETS | FEAT_SNIPPET_TRANSFORMS
+    and eax, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_TRANSFORMS)
+    cmp eax, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_TRANSFORMS)
     jne .Lsdf_bad
     cmp qword ptr [rsp + 632], 0
     jne .Lsdf_bad
@@ -165,8 +165,8 @@ FN snippet_decode_fields
     jmp .Lsdf_record
 .Lsdf_variant:
     mov rax, [rsp + 624]
-    and eax, FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS
-    cmp eax, FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS
+    and eax, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_VARIANTS)
+    cmp eax, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_VARIANTS)
     jne .Lsdf_bad
     call ps_word
     test rdx, rdx

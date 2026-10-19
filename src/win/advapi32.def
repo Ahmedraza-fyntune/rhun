@@ -1,13 +1,6 @@
 LIBRARY advapi32.dll
 EXPORTS
     RegGetValueW
-    OpenProcessToken
-    GetTokenInformation
-    ConvertSidToStringSidW
-    ConvertStringSecurityDescriptorToSecurityDescriptorW
-    GetSecurityInfo
-    GetSecurityDescriptorControl
-    GetSecurityDescriptorDacl
     CredWriteW
     CredReadW
     CredDeleteW

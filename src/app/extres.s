@@ -1229,34 +1229,6 @@ FN extres_card_cost
 
 # ---------------- headless commands ----------------
 
-# res_control(name ptr, name len, out sb, rest ptr, rest len) -> rax the command's result, or -2
-# when the name is not one of this group's
-FN res_control
-    PROLOGUE 16
-    mov r12, rdi
-    mov r13, rsi
-    mov [rsp], rdx
-    mov r14, rcx
-    mov r15, r8
-    lea rbx, [rip + res_commands]
-1:  mov rdx, [rbx]
-    test rdx, rdx
-    jz 8f
-    mov rdi, r12
-    mov rsi, r13
-    call str_eq_cstr
-    test eax, eax
-    jnz 2f
-    add rbx, 16
-    jmp 1b
-2:  mov rdi, [rsp]
-    mov rsi, r14
-    mov rdx, r15
-    call [rbx + 8]
-    EPILOGUE
-8:  mov rax, -2
-    EPILOGUE
-
 # ext_named(ptr, len) -> rax the extension (name or owner/name), or 0 after "no such extension"
 # in rbx's sb (the caller's out)
 ext_named:
@@ -1483,7 +1455,8 @@ kinds:   # verb, threshold, the word the page shows
     .quad .Lq_rename, 2500, .Lq_rename, .Lq_format, 1000, .Lq_format
     .quad .Lq_save_actions, 1000, .Lq_save_actions, .Lq_content, 2500, .Lq_content, 0, 0, 0
 kind_other: .quad .Lq_request, 2500, .Lq_request
-res_commands:
+.globl res_commands
+res_commands:   # headless commands of the group (control.s ctl_tables): fn(out, rest, rest len)
     .quad .Lc_print_ext_cost, c_print_ext_cost, .Lc_print_startup, c_print_startup
     .quad .Lc_print_resources, c_print_resources
     .quad .Lc_secret_backend, c_secret_backend, .Lc_print_secrets, c_print_secrets
