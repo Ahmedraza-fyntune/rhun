@@ -497,9 +497,17 @@ apply_choice:
     lea rsi, [rip + .Lk_pinned]
     call ini_key_is
     test eax, eax
-    jz 3f
+    jz 21f
     call ini_val_yes
     mov [rbx + EXT_pinned], eax
+    jmp 9f
+21: lea rdi, [rip + ini_it]       # wsedit: edits = yes
+    lea rsi, [rip + .Lk_edits]
+    call ini_key_is
+    test eax, eax
+    jz 3f
+    call ini_val_yes
+    mov [rbx + EXT_edits], eax
     jmp 9f
 3:  # setting.KEY
     mov rdi, [rip + ini_it + INI_key]
@@ -597,6 +605,7 @@ FN ext_settings_save
     # anything to write?
     mov eax, [rbx + EXT_pinned]
     or eax, [rbx + EXT_disabled]
+    or eax, [rbx + EXT_edits]
     jnz 2f
     cmp qword ptr [rbx + EXT_xset], 0
     jne 2f
@@ -625,9 +634,14 @@ FN ext_settings_save
     lea rsi, [rip + .Lw_disabled_yes]
     call sb_push_cstr
 3:  cmp dword ptr [rbx + EXT_pinned], 0
-    je 4f
+    je 31f
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_pinned_yes]
+    call sb_push_cstr
+31: cmp dword ptr [rbx + EXT_edits], 0
+    je 4f
+    lea rdi, [rip + tmp2]
+    lea rsi, [rip + .Lw_edits_yes]
     call sb_push_cstr
 4:  mov rdi, rbx                # the projects it may run programs in (runallow.s)
     lea rsi, [rip + tmp2]
@@ -685,6 +699,20 @@ FN ext_set_pinned
     test eax, eax
     jz 9f
     mov [rbx + EXT_pinned], r12d
+    call ext_settings_save
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# wsedit: ext_set_edits(ext, yes): it may change project files without the confirmation list
+# (workspace edits), remembered; Off takes the permission back
+FN ext_set_edits
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    call ext_is_visible
+    test eax, eax
+    jz 9f
+    mov [rbx + EXT_edits], r12d
     call ext_settings_save
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
@@ -996,6 +1024,8 @@ FN ext_retire
     call rview_ext_gone         # its declared views leave their places (views group)
     mov rdi, rbx
     call complete_ext_gone
+    mov rdi, rbx
+    call ws_ext_gone            # wsedit: its waiting workspace edit, its diff tabs
     mov rdi, rbx
     call langfeat_ext_gone
     mov rdi, rbx
@@ -3694,6 +3724,8 @@ FN ext_exited
     mov rdi, rbx
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
+    call ws_ext_gone            # wsedit: its waiting workspace edit, its diff tabs
+    mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
     mov rdi, rbx
     call scm_ext_gone           # and its source control requests and providers (gitdata.s, scmext.s)
@@ -4805,7 +4837,8 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
-    .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
+    .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover
+    .quad 0, 0
 env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
 .ifdef MACOS
     .quad .Le_xcrun_db, .Le_devdir
@@ -5082,6 +5115,7 @@ ext_target: .asciz "linux-x86_64"
 .Lr_settings_change: .asciz "restarting after a settings change"
 .Lf_extensions_ini: .asciz "/extensions.ini"
 .Lk_pinned: .asciz "pinned"
+.Lk_edits: .asciz "edits"         # wsedit
 .Lk_description: .asciz "description"
 .Ls_settings: .asciz "settings"
 .Lsf_type: .asciz "type"
@@ -5097,6 +5131,7 @@ ext_target: .asciz "linux-x86_64"
 .Lv_no: .asciz "no"
 .Lw_close_sec: .asciz "]\n"
 .Lw_pinned_yes: .asciz "pinned = yes\n"
+.Lw_edits_yes: .asciz "edits = yes\n"
 .Lw_setting: .asciz "setting."
 .Lw_eq: .asciz " = "
 .Lr_turned_off: .asciz "turned off"

@@ -65,10 +65,20 @@ FN doc_new
     pop rbx
     ret
 
+# FN doc_renew_id(doc): a new DOC_id (wsedit: a renamed file is a reopened one for extensions, which
+# see it closed and opened again, v1 section 6)
+FN doc_renew_id
+    inc qword ptr [rip + doc_next_id]
+    mov rax, [rip + doc_next_id]
+    mov [rdi + DOC_id], rax
+    ret
+
 # doc_free(doc)
 FN doc_free
     push rbx
     mov rbx, rdi
+    call tx_doc_closed          # wsedit: its part of a workspace edit stays undoable on disk, or is lost
+    mov rdi, rbx
     call save_forget
     mov rdi, rbx
     call snippet_forget
@@ -845,6 +855,7 @@ new_record:
     mov qword ptr [rax + UR_aftercur], -1
     mov qword ptr [rax + UR_afteranchor], -1
     mov qword ptr [rax + UR_afterselections], -1
+    mov qword ptr [rax + UR_tx], 0
     mov [rsp + 24], rax
     xor eax, eax
     cmp qword ptr [rbx + DOC_selectionbatch], 0
@@ -951,6 +962,10 @@ FN doc_end_group
 FN doc_undo
     PROLOGUE 32
     mov rbx, rdi
+    call tx_undo_hook           # wsedit: a step of a workspace edit undoes all of it
+    test eax, eax
+    jns .Lu_ret
+    mov rdi, rbx
     call snippet_forget
     mov rax, [rbx + DOC_undo + VEC_len]
     test rax, rax
@@ -1012,12 +1027,17 @@ FN doc_undo
     EPILOGUE
 .Lu_none:
     xor eax, eax
+.Lu_ret:
     EPILOGUE
 
 # doc_redo(doc) -> 1 if something was redone
 FN doc_redo
     PROLOGUE 32
     mov rbx, rdi
+    call tx_redo_hook           # wsedit: and redoes all of it
+    test eax, eax
+    jns .Lr_ret
+    mov rdi, rbx
     call snippet_forget
     mov rax, [rbx + DOC_redo + VEC_len]
     test rax, rax
@@ -1089,6 +1109,7 @@ FN doc_redo
     EPILOGUE
 .Lr_none:
     xor eax, eax
+.Lr_ret:
     EPILOGUE
 
 # doc_dirty(doc) -> 1 if modified since load/save

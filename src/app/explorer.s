@@ -601,7 +601,18 @@ file_target:
 # explorer_delete_target(): remove the confirmed file or directory and its contents
 FN explorer_delete_target
     push rbx
-    lea rdi, [rip + delete_path]
+    mov edi, WK_DELETE          # wsedit: a workspace edit of its own, undoable
+    lea rsi, [rip + delete_path]
+    xor edx, edx
+    call ws_user_op
+    test eax, eax
+    js 2f
+    jz 3f
+    mov byte ptr [rip + g_explorer_target], 0
+3:  mov byte ptr [rip + delete_path], 0
+    pop rbx
+    ret
+2:  lea rdi, [rip + delete_path]
     call file_remove_tree
     mov rbx, rax
     # A failed deletion can still have removed some children.
@@ -1704,7 +1715,7 @@ FN menu_print
 .Lrename: .asciz "Rename"
 .Ldelete_a: .asciz "Delete "
 .Ldelete_b: .asciz "?"
-.Ldelete_text: .asciz "This permanently deletes the item and any folder contents."
+.Ldelete_text: .asciz "Undo Last Multi-File Edit brings it back until rhun quits."
 .Lp_none: .asciz "none\n"
 .Lp_line: .asciz "-"
 .Lnot_deleted: .asciz "Could not delete. Check permissions and whether files are in use."

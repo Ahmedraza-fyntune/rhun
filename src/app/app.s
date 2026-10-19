@@ -2591,6 +2591,11 @@ FN editor_key
     jmp 9f
 87: cmp eax, KEY_ESCAPE
     jne 88f
+    # several selections go back to the primary first (multi-cursor)
+    mov rdi, [rip + g_doc]
+    call sel_escape
+    test eax, eax
+    jnz 9f
     # collapse selection
     mov rax, [rip + g_doc]
     mov rcx, [rax + DOC_cur]
@@ -2680,6 +2685,7 @@ timeout_fns:
     .quad remote_timeout
     .quad extupdate_timeout      # extension management
     .quad keys_timeout           # a chord's pause (keys.s)
+    .quad ws_difftab_timeout    # wsedit: diff tabs whose sides changed
     .quad 0
 .text
 
@@ -2688,6 +2694,7 @@ FN app_tick
     call query_tick             # language features: expired requests, before their askers' ticks
     call complete_tick
     call langfeat_tick
+    call ws_difftab_tick        # wsedit: diff tabs follow their sides
     call save_tick
     call ext_options_apply
     call watch_tick
@@ -4716,7 +4723,10 @@ FN statusbar_draw
     lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Lsel_close]
     call sb_push_cstr
-1:  mov esi, [rsp + 24]
+1:  mov rdi, rbx
+    lea rsi, [rip + tmp_sb]
+    call sel_status             # "  3 selections" (multi-cursor)
+    mov esi, [rsp + 24]
     mov [rsp + 16], esi
     # vim: the command line in place of the position, else the mode and the keys typed so far
     cmp dword ptr [rip + cfg_vim], 0
@@ -6171,7 +6181,12 @@ FN cmd_newline_below
 
 FN cmd_newline_above
     READONLY_RET
-    PROLOGUE 272
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_newline_above              # several selections (editorlines.s)
+1:  PROLOGUE 272
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
