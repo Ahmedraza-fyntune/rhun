@@ -30,7 +30,9 @@ BOOLS = {
     'ui': 'follow_system sidebar agents_panel tooltips auto_hide_scrollbars',
     'editor': ('insert_spaces line_numbers highlight_line animate_disk_changes match_brackets '
                'indent_guides word_wrap whitespace cursor_blink smooth_caret auto_pairs '
-               'scroll_past_end vim_mode'),
+               'scroll_past_end vim_mode '
+               # language features
+               'complete_replace complete_commit_characters lightbulb format_on_type format_on_paste'),
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
