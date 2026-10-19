@@ -31,7 +31,15 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
 
 
+def sdk_has(path, text):
+    """the SDK checkout knows wasm32-wasip1 (an older one would build a module that cannot run)"""
+    f = SDK / path
+    if not f.exists() or text not in f.read_text(encoding='utf-8'):
+        raise OSError('the SDK at %s has no wasm32-wasip1 support (%s); set RHUN_EXT_SDK' % (SDK, path))
+
+
 def build_rust():
+    sdk_has('rust/rhun-ext/src/lib.rs', 'target_os = "wasi"')
     work = OUT / 'rust'
     work.mkdir(parents=True, exist_ok=True)
     shutil.copytree(SRC / 'rust/src', work / 'src', dirs_exist_ok=True)
@@ -42,6 +50,7 @@ def build_rust():
 
 
 def build_go():
+    sdk_has('go/rhunext/stdin_wasip1.go', 'SetNonblock')
     work = OUT / 'go'
     work.mkdir(parents=True, exist_ok=True)
     shutil.copy(SRC / 'go/main.go', work / 'main.go')
@@ -214,8 +223,10 @@ class Wasm(unittest.TestCase):
         self.assertFalse(alive(pid), 'the spinning module outlived the editor')
 
     def test_a_trap_ends_the_program(self):
-        out = self.run_editor(['cmd %s.trap' % self.NAME, 'wait-ext %s crashed' % self.NAME, 'print-extensions'],
-                              self.install())
+        # it answers a command first, so the trap is the command's and not a module that could not run
+        out = self.run_editor(['cmd %s.hello' % self.NAME, 'wait-toast hello', 'cmd %s.trap' % self.NAME,
+                               'wait-ext %s crashed' % self.NAME, 'print-extensions'], self.install())
+        self.assertEqual(out[0], 'toast=hello from wasm')
         self.assertIn(' state=crashed reason=exited with status 134 ', self.ext_line(out))
         log = self.log()
         self.assertIn('rhun --wasm-host: trap: unreachable', log)
@@ -253,8 +264,9 @@ class WasmGo(Wasm):
         # Go's runtime catches the index error and exits with status 2; unwinding, rhunext closes
         # standard output first, and rhun ends a program whose output ended (status 137 when that
         # comes first), as it does a native one
-        out = self.run_editor(['cmd %s.trap' % self.NAME, 'wait-ext %s crashed' % self.NAME, 'print-extensions'],
-                              self.install())
+        out = self.run_editor(['cmd %s.hello' % self.NAME, 'wait-toast hello', 'cmd %s.trap' % self.NAME,
+                               'wait-ext %s crashed' % self.NAME, 'print-extensions'], self.install())
+        self.assertEqual(out[0], 'toast=hello from wasm')
         self.assertRegex(self.ext_line(out), r' state=crashed reason=exited with status (2|137) ')
 
 
