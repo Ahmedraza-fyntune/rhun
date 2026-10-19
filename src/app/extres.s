@@ -484,8 +484,7 @@ idle_held:
 # extres_group_holds(ext) -> eax 1 while a secret request, a pending link or a search of it runs
 # (the parts of the group add their checks here as they arrive)
 FN extres_group_holds
-    xor eax, eax
-    ret
+    jmp secrets_pending
 
 # idle_pass(): once a second: requests nobody answers, and idle = stop extensions quiet for
 # their period that hold nothing
@@ -1487,6 +1486,8 @@ kind_other: .quad .Lq_request, 2500, .Lq_request
 res_commands:
     .quad .Lc_print_ext_cost, c_print_ext_cost, .Lc_print_startup, c_print_startup
     .quad .Lc_print_resources, c_print_resources
+    .quad .Lc_secret_backend, c_secret_backend, .Lc_print_secrets, c_print_secrets
+    .quad .Lc_secrets_refresh, c_secrets_refresh, .Lc_secret_forget, c_secret_forget
     .quad 0, 0
 .Lv_complete: .asciz "complete"
 .Lq_complete: .asciz "completion"
@@ -1503,6 +1504,10 @@ res_commands:
 .Lc_print_ext_cost: .asciz "print-ext-cost"
 .Lc_print_startup: .asciz "print-startup"
 .Lc_print_resources: .asciz "print-ext-resources"
+.Lc_secret_backend: .asciz "secret-backend"
+.Lc_print_secrets: .asciz "print-secrets"
+.Lc_secrets_refresh: .asciz "secrets-refresh"
+.Lc_secret_forget: .asciz "secret-forget"
 .Lr_idle: .asciz "idle"
 .Lenv_scale: .asciz "RHUN_IDLE_SCALE"
 .Lk_idle: .asciz "idle"

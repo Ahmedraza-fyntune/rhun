@@ -31,6 +31,7 @@ for s in $x86 build/assets.s; do
         { [ "$s" = src/app/extproto.s ] && [ src/app/extwatchproto.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/extproto.s ] && [ src/app/extprotoevents.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/extproto.s ] && [ src/app/extresproto.inc -nt "$o" ]; } ||
+        { [ "$s" = src/app/extpage.s ] && [ src/app/extpageres.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/ext.s ] && [ src/app/extvalidateparse.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/extvalidatemanifest.s ] && [ src/app/extvalidatemanifest.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/extvalidatetree.s ] && [ src/app/extvalidatetree.inc -nt "$o" ]; } ||
@@ -81,7 +82,7 @@ for s in src/mac/*.s; do
     objs="$objs $o"
 done
 
-LIBS="-framework AppKit -framework QuartzCore -framework IOSurface -framework CoreServices -framework Carbon"
+LIBS="-framework AppKit -framework QuartzCore -framework IOSurface -framework CoreServices -framework Carbon -framework Security"
 link() { # out objs...
     out=$1; shift
     clang -arch arm64 -mmacosx-version-min=$MINOS -o "$out" "$@" $LIBS

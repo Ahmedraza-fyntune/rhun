@@ -1806,6 +1806,7 @@ F EL_rss, 8             # resident bytes of its live processes at the last sampl
 F EL_slowest, 8         # cstr: the kind of the slowest answer, or 0
 F EL_contains, 8        # cstr: its on = contains: patterns, or 0
 F EL_schemes, 8         # cstr: [provides] schemes, or 0
+F EL_skeys, 8           # cstr: its stored secrets' keys, each followed by LF, as last read, or 0
 F EL_ready_ms, 4        # the last start: milliseconds until hello
 F EL_procs, 4           # processes at the last sample
 F EL_slow, 4
@@ -1818,13 +1819,15 @@ F EL_flags, 4           # ELF_*
 F EL_starts, 4          # starts this session
 F EL_nreq, 4            # entries in EL_req
 F EL_features, 4        # RF_*: the group's features agreed after hello (extresproto.inc)
-F EL_req, ELQ_SIZE * ELQ_MAX
+F EL_req, ELQ_SIZE*ELQ_MAX
 ENDSTRUCT EL_SIZE
 .equ ELF_IDLE, 1                # idle = stop
 .equ ELF_IDLE_STOPPING, 2       # the stop in progress is for idleness: it returns to idle
 .equ ELF_OPEN_URLS, 4           # open_urls = yes: open-url opens without asking
 .equ ELF_RUNS_LOCAL, 8          # runs = local
 .equ ELF_STARTUP, 16            # this run started for on = startup (print-startup)
+.equ ELF_SKEYS_ASKED, 32        # its page asked the store for the keys
+.equ ELF_SECRETS_TOLD, 64       # the toast about secrets kept in memory was shown
 .equ IDLE_AFTER_DEFAULT, 300    # seconds
 # the group's protocol features, kept in EL_features beside EXT_features (res_feature_names)
 .equ RF_IDLE, 1                 # idle: busy yes|no
@@ -1835,6 +1838,41 @@ ENDSTRUCT EL_SIZE
 .equ RF_SCOPED, 32              # scoped-settings
 .equ RF_FOLDERS, 64             # workspace-folders
 .equ EXT_STARTS_PER_FRAME, 4    # on = startup and waiting extensions start at most this many a frame
+# a secret request (secrets.s); src/mac/keychain.s reads the first fields by these offsets
+.equ SECRET_KEY_MAX, 64
+.equ SECRET_VALUE_MAX, 8192
+.equ SECRET_KEYS_MAX, 64        # keys per extension
+.equ SECRET_OUTSTANDING, 8      # requests per extension
+.equ SECRET_BUF, 12288          # an answer: a value, or every key and its LF
+STRUCT
+F SR_op, 4              # SO_*
+F SR_status, 4          # SS_*
+F SR_fd, 4              # macOS: the pipe the keychain's worker reports on
+F SR_pad, 4
+F SR_service, 8         # owned cstr: the store's service name for the extension
+F SR_key, 8             # owned cstr, or 0 (keys, clear)
+F SR_val, 8             # owned value (set), or 0
+F SR_len, 8
+F SR_outlen, 8          # the answer's bytes in SR_buf
+F SR_next, 8            # the queue
+F SR_ext, 8
+F SR_id, 8              # the request's id, 0 for rhun's own (the page, a removal)
+F SR_gen, 8             # EL_starts when it was asked: an answer for an earlier run is dropped
+F SR_buf, SECRET_BUF
+ENDSTRUCT SR_SIZE
+.equ SO_GET, 1
+.equ SO_SET, 2
+.equ SO_DELETE, 3
+.equ SO_KEYS, 4
+.equ SO_CLEAR, 5                # every key of the extension
+.equ SS_OK, 0
+.equ SS_NONE, 1                 # get: nothing stored under the key
+.equ SS_REFUSED, -1             # locked and the unlock was cancelled, or access was denied
+.equ SS_NOSTORE, -2             # no store is available
+.equ SS_TOOBIG, -3              # 64 keys already
+.equ SB_SYSTEM, 0               # [extensions] secrets
+.equ SB_MEMORY, 1
+.equ SB_FILE, 2
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
 STRUCT

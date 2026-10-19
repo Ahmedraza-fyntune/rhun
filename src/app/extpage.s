@@ -574,6 +574,8 @@ draw_detail:
     call section
     mov rdi, rbx
     call draw_permissions
+    mov rdi, rbx                # resources group: its passwords and tokens (extpageres.inc)
+    call draw_res_secrets
     # the pin
     lea rsi, [rip + .Ls_toolbar]
     call section
@@ -1944,3 +1946,5 @@ draw_diagnostic:
 FN extpage_prompt_invalidate_pure
     mov qword ptr [rip + xp_prompt_sd], 0
     ret
+
+.include "app/extpageres.inc"     # resources group: the details page's parts

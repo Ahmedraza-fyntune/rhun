@@ -953,6 +953,8 @@ FN ext_retire
 2:  mov dword ptr [rbx + EXT_status], ES_REMOVED
     mov dword ptr [rbx + EXT_restart], 0
     mov rdi, rbx
+    call secrets_ext_removed    # resources group: its secrets go with it
+    mov rdi, rbx
     call ext_pending_clear
     mov rdi, rbx
     call extpage_forget         # its details page goes back to the list (a reinstall is a new record)

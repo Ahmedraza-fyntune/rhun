@@ -8,3 +8,8 @@ EXPORTS
     GetSecurityInfo
     GetSecurityDescriptorControl
     GetSecurityDescriptorDacl
+    CredWriteW
+    CredReadW
+    CredDeleteW
+    CredEnumerateW
+    CredFree

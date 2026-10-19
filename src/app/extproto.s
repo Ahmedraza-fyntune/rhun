@@ -3461,6 +3461,10 @@ verbs:
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # resources group (extresproto.inc)
     .quad .Lres_v_busy, h_res_busy, 0
+    .quad .Lres_v_secret_get, h_res_secret_get, 0
+    .quad .Lres_v_secret_set, h_res_secret_set, 65536
+    .quad .Lres_v_secret_delete, h_res_secret_delete, 0
+    .quad .Lres_v_secret_keys, h_res_secret_keys, 0
     .quad 0, 0, 0
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
