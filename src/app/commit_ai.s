@@ -731,7 +731,7 @@ describe:
 .Lollama: .asciz "ollama"
 .Lext: .asciz "ext"
 .Ldiff: .asciz "diff"
-.Lext_desc: .asciz "An extension writes the messages. Generate sends it the staged diff (or what Commit All takes)."
+.Lext_desc: .asciz "An extension writes the messages."
 .ifdef WINDOWS
 .Lshell: .asciz "powershell.exe"
 .Loutputformat: .asciz "-OutputFormat"

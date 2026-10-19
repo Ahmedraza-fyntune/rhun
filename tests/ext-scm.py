@@ -257,6 +257,45 @@ class GitData(Base):
                                                           'error 2 refused git is paused in this folder'])
 
 
+class Menus(Base):
+    """C2: menus on history and Source Control rows, with their targets and when-clause keys"""
+
+    def test_commit_and_commit_file_menus(self):
+        sha = self.git('rev-parse', 'HEAD').strip()
+        out = self.run_editor(['wait-git', 'cmd git_history', 'wait-git', 'wait 200', 'click 200 118 right',
+                               'wait 100', 'print-menu', 'print-scm-ext', 'print-context scmProvider',
+                               'key Escape', 'click 200 118', 'wait-git', 'wait 200', 'click 700 202 right',
+                               'wait 100', 'print-menu', 'print-scm-ext', 'print-context scmResourceStatus',
+                               'menu-pick Open Changes', 'wait-git', 'print-tabs'], drop_waits=True)
+        self.assertEqual(out[0], 'Copy Commit ID')
+        self.assertIn('menu=history_commit commit ' + sha, out)
+        self.assertIn('scmProvider=git', out)
+        self.assertIn('Open Changes', out)
+        self.assertIn('menu=history_file commit ' + sha + ' a.txt', out)
+        self.assertIn('scmResourceStatus=M', out)
+        self.assertIn('a.txt (' + sha[:7] + ')', out[-1])
+
+    def test_changed_file_menu(self):
+        (self.proj / 'a.txt').write_text('changed\n', encoding='utf-8')
+        (self.proj / 'c.txt').write_text('new\n', encoding='utf-8')
+        self.git('add', 'c.txt')
+        out = self.run_editor(['wait-git', 'cmd git_history', 'wait-git', 'wait 200', 'click 700 314 right',
+                               'wait 100', 'print-scm-ext', 'print-context scmResourceGroup', 'key Escape',
+                               'click 700 378 right', 'wait 100', 'print-menu', 'print-scm-ext',
+                               'print-context scmResourceGroup', 'menu-pick Open File', 'wait 100',
+                               'print-tabs'], drop_waits=True)
+        self.assertIn('menu=scm_resource resource staged c.txt', out)
+        self.assertIn('scmResourceGroup=staged', out)
+        self.assertIn('menu=scm_resource resource changes a.txt', out)
+        self.assertIn('scmResourceGroup=changes', out)
+        self.assertIn('Open File', out)
+        self.assertTrue(out[-1].startswith('tabs=*a.txt'), out)     # it was open: shown again
+
+    def test_git_trusted_key(self):
+        out = self.run_editor(['wait-git', 'print-context gitTrusted'], drop_waits=True)
+        self.assertIn('gitTrusted=true', out)
+
+
 class CommitMessage(Base):
     """C2: a commit-message extension beside the built-in providers"""
 
@@ -309,6 +348,16 @@ class CommitMessage(Base):
         exts = self.ext('writer', needs='', hello='hello 1', ini='\n[provides]\ncommit_message = yes')
         out = self.generate(exts)
         self.assertIn('The extension does not provide commit messages (it did not agree commit-message).', out)
+
+    def test_settings_lists_it_and_saves_its_name(self):
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text().replace('commit_ai = ext:rhun-tests/writer\n', ''))
+        exts = self.writer(body='x')
+        out = self.run_editor(['cmd settings', 'wait 200', 'type commit', 'wait 200', 'click 812 348',
+                               'wait 200', 'print-scm-ext', 'print-ai'], exts=exts, drop_waits=True)
+        self.assertIn('commit-provider=rhun-tests/writer asked=0', out)
+        self.assertIn('An extension writes the messages.', out)
+        self.assertIn('commit_ai = ext:rhun-tests/writer', config.read_text())
 
     def test_a_missing_extension_is_named(self):
         out = self.generate(self.work / 'none')
