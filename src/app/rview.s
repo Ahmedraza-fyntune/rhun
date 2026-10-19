@@ -957,7 +957,7 @@ FN rview_open_at
     PATH_ABSOLUTE r12, 2f
     jmp 8f
 2:  mov rdi, r12
-    call file_type
+    call vfs_type
     cmp eax, 0x8000             # a regular file
     jne 8f
     mov rdi, rbx
