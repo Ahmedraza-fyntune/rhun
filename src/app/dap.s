@@ -3303,6 +3303,7 @@ FN dap_reply_fail
 FN dap_resume
     PROLOGUE
     mov r12d, edi
+    call bp_tick                # breakpoint changes reach the adapter before the program runs on
     call dap_focused
     test rax, rax
     jz 9f
