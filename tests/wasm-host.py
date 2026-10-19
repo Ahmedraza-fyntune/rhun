@@ -168,7 +168,7 @@ class Wasm(unittest.TestCase):
         self.assertEqual(self.command('env', 'env'), 'toast=env rhun-tests/%s args 1' % self.NAME)
 
     def test_the_state_folder_is_its_own(self):
-        self.assertEqual(self.command('files', 'files'), 'toast=files ok written by wasm 1 16')
+        self.assertEqual(self.command('files', 'files'), 'toast=files ok written by wasm 2 16')
         self.assertEqual((self.state / 'sub/moved.txt').read_text(encoding='utf-8'), 'written by wasm\n')
 
     def test_the_project_as_needs_says(self):
@@ -230,6 +230,32 @@ class Wasm(unittest.TestCase):
         self.assertIn(' state=crashed ', self.ext_line(out))
         log = self.log()
         self.assertIn('rhun --wasm-host: the module cannot run: ', log)
+
+
+class WasmGo(Wasm):
+    """the same commands from Go (GOOS=wasip1): one thread, goroutines scheduled around a reader
+    parked on standard input by WASI poll_oneoff"""
+    NAME = 'wasmtest-go'
+    BUILDER = staticmethod(build_go)
+    MANIFEST = SRC / 'go/extension.ini'
+
+    def test_goroutines_run_while_the_reader_waits(self):
+        self.assertEqual(self.command('tick', 'ticks'), 'toast=ticks 5')
+
+    def test_a_trap_ends_the_program(self):
+        # Go's runtime catches the index error and exits with status 2; unwinding, rhunext closes
+        # standard output first, and rhun ends a program whose output ended (status 137 when that
+        # comes first), as it does a native one
+        out = self.run_editor(['cmd %s.trap' % self.NAME, 'wait-ext %s crashed' % self.NAME, 'print-extensions'],
+                              self.install())
+        self.assertRegex(self.ext_line(out), r' state=crashed reason=exited with status (2|137) ')
+
+
+class WasmC(Wasm):
+    """the same commands from C (rhunext.h on wasi-libc: blocking stdio)"""
+    NAME = 'wasmtest-c'
+    BUILDER = staticmethod(build_c)
+    MANIFEST = SRC / 'c/extension.ini'
 
 
 def alive(pid):

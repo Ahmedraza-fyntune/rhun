@@ -1190,14 +1190,15 @@ w_path_open:
     test eax, eax
     jnz 9f
     mov [rsp + 8], r8d              # the directory may be written to
-    # writing: creating, truncating, appending, or write rights asked for
+    # writing: creating, truncating, appending, or the right to write or allocate asked for (Go
+    # asks for fd_filestat_set_size even to read, wasi-libc only to write: it does not count)
     xor r13d, r13d
     test dword ptr [r12 + 32], 9
     jnz 1f
     test dword ptr [r12 + 56], 1
     jnz 1f
     mov rax, [r12 + 40]
-    test rax, (1 << 6) | (1 << 8) | (1 << 22)
+    test rax, (1 << 6) | (1 << 8)
     jz 2f
 1:  mov r13d, 1
     mov ecx, WE_NOTCAPABLE
@@ -1245,9 +1246,8 @@ w_path_open:
     mov edi, r14d
     SYS SYS_close
     call wasi_fd_new
-    mov ecx, WE_MFILE
     test rax, rax
-    jz 9f
+    jz 53f
     mov rbx, rax
     mov [rsp + 16], ecx
     mov dword ptr [rbx + WFD_kind], 2
@@ -1303,6 +1303,8 @@ w_path_open:
     test ecx, ecx
     jnz 9b
     mov ecx, WE_MFILE
+    ANSWER
+53: mov ecx, WE_MFILE
     ANSWER
 8:  call wasi_errno
     mov ecx, eax
