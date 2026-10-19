@@ -495,6 +495,48 @@ FN ws_wait
 8:  xor eax, eax
     EPILOGUE
 
+# win_wait_code(pid, nohang) -> the child's whole 32-bit exit code once it has exited (its handles
+#   close, as ws_wait's do), -1 still running, -2 not a child (uproc_wait: wait4's status keeps 8 bits)
+FN win_wait_code
+    PROLOGUE 112
+    mov r13d, esi
+    lea rbx, [rip + children]
+    mov ecx, CHILD_MAX
+1:  cmp [rbx], rdi
+    je 2f
+    add rbx, CHILD_SIZE
+    dec ecx
+    jnz 1b
+    mov rax, -2
+    EPILOGUE
+2:  mov rcx, [rbx + 8]
+    mov edx, -1
+    test r13d, 1
+    jz 3f
+    xor edx, edx
+3:  API WaitForSingleObject
+    cmp eax, 258
+    je 8f
+    test eax, eax
+    jnz 7f
+    mov rcx, [rbx + 8]
+    lea rdx, [rsp + 96]
+    API GetExitCodeProcess
+    test eax, eax
+    jz 7f
+    mov rcx, [rbx + 8]
+    API CloseHandle
+    mov rcx, [rbx + 16]
+    API CloseHandle
+    mov qword ptr [rbx], 0
+    mov qword ptr [rbx + 16], 0
+    mov eax, [rsp + 96]         # zero-extended: a code like 0xC0000005 is not -1 or -2
+    EPILOGUE
+7:  mov rax, -2
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
 FN ws_kill
     PROLOGUE 96
     mov r12d, esi

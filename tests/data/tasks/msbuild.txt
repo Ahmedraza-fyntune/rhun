@@ -1,0 +1,3 @@
+Program.cs(10,5): warning CS0168: The variable 'e' is declared but never used [/work/app.csproj]
+Program.cs(12,9,12,13): error CS0103: The name 'nope' does not exist in the current context [/work/app.csproj]
+Build FAILED.
