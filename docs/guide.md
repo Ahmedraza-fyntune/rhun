@@ -468,7 +468,9 @@ its right picks the kernel. Clicking a cell's `[ ]` column runs it.
 | command | i i, 0 0 | interrupt, restart the kernel (asks) |
 | command | o | hide or show the cell's outputs |
 
-Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
+Kernels run as you, outside the extension's sandbox: the first time a notebook extension starts
+one in a project, rhun shows the command and asks (Allow or Cancel); Forget on the extension's
+page takes the permission back. Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
 and opens whole in a tab of its own. Every action is in the command palette as Notebook: ....
 Notebook: Reopen as Text shows the file itself.
 

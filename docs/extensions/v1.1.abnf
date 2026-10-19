@@ -68,6 +68,10 @@ request      =/ id SP "nb-output" SP id SP id SP id SP nb-op SP ( num / nb-token
               ; an output body; clear and clear-wait carry none (LEN 0)
 request      =/ id SP "nb-stream" SP id SP id SP id SP ( "stdout" / "stderr" ) SP len
 request      =/ id SP "nb-kernel-label" SP id SP nb-kstate SP len
+request      =/ id SP "nb-exec" SP id SP len
+              ; NB, then a command body as test-exec's; answered "ok" SP id SP num (EXEC)
+request      =/ id SP "nb-exec-signal" SP num SP ( "interrupt" / "terminate" / "kill" )
+event        =/ "0" SP "nb-exec-exit" SP num SP ( num / "killed" )
 nb-state     = "queued" / "running" / "done" / "failed" / "cancelled"
 nb-kstate    = "idle" / "busy" / "starting" / "dead" / "none"
 nb-op        = "append" / "replace" / "clear" / "clear-wait"
