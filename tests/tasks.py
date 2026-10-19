@@ -85,10 +85,12 @@ while True:
         tasks_set([task('a', 'A', 'true', rec('ready', '', b'{nope}'))])
     elif name == 'missing':
         send('task-start nothing-here')
+    elif name == 'cmdbuild':
+        send('cmd run_build_task')
 '''
 
 COMMANDS = ('chain', 'smoke', 'after', 'par', 'serve', 'build', 'adhoc', 'dup', 'nodep', 'cycle', 'badpat',
-            'missing')
+            'missing', 'cmdbuild')
 
 
 @unittest.skipIf(WINDOWS, 'POSIX shell tasks')
@@ -155,6 +157,15 @@ class Tasks(unittest.TestCase):
         self.assertIn('term=1 kind=task owner=t/driver task=build state=exited code=0', '\n'.join(out))
         self.assertRegex(self.dlog(), r'0 terminal-started 1 \d+ build\n')
 
+    def test_cmd_runs_the_task_commands_with_terminal_run(self):
+        # v1's cmd list gains the task commands (design 2) for terminal = run, not below it
+        out = self.go(['cmd t/driver.cmdbuild', *self.allow(), 'wait-terminal 1 ended', 'print-terminals'])
+        self.assertRegex(self.dlog(), r'ok 2\n')
+        self.assertIn('term=1 kind=task owner=t/driver task=build state=exited code=0', '\n'.join(out))
+        self.run_editor(drop_waits=True, exts=self.driver(level='yes'),
+                        actions=['wait-ext driver running', 'wait 300', 'cmd t/driver.cmdbuild', 'wait 300'])
+        self.assertRegex(self.dlog(), r'error \d+ needs terminal=run\n')
+
     def test_sequence_runs_dependencies_in_order(self):
         out = self.go(['cmd t/driver.chain', *self.allow(), 'wait-terminal 3 ended', 'wait 300',
                        'print-terminals'])
@@ -178,10 +189,13 @@ class Tasks(unittest.TestCase):
         self.assertIn('task=after state=failed', '\n'.join(out))
 
     def test_a_background_dependency_is_ready_not_ended(self):
-        out = self.go(['cmd t/driver.smoke', *self.allow(), 'wait-terminal 2 ended', 'wait 300',
-                       'print-terminals', 'cmd t/driver.serve', 'wait 300'])
+        out = self.go(['print-task-status', 'cmd t/driver.smoke', *self.allow(), 'wait-terminal 2 ended',
+                       'wait 300', 'print-terminals', 'print-task-status', 'cmd t/driver.serve', 'wait 300'])
         log = self.dlog()
         self.assertEqual(self.started_order(log), ['serve', 'smoke'])
+        # the status bar's item: the running task (design 1.2)
+        self.assertEqual([line for line in out if line.startswith('task-status=')],
+                         ['task-status=none', 'task-status=Serve'])
         self.assertRegex(log, r'0 task-ready 1 0 0\n')
         self.assertIn('task=serve state=running', '\n'.join(out))
         # starting it again while it runs: its TERM, not a second run

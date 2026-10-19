@@ -10,6 +10,7 @@
 #   print-pattern PATTERN<TAB>LINE "match=0", "match=1 file=... line=..." or "error=REASON"
 #   print-problems                 the Problems store, a line per problem
 #   print-problems-tab             the Problems tab's rows
+#   print-task-status              the status bar's running-task item: task-status=TEXT|none
 #   print-tasks                    published tasks: "OWNER/NAME id=ID group=G default=0|1 label=L"
 #   print-terminal-records         extensions' terminals: "TERM ext=OWNER/NAME live=0|1 output=0|1 task=ID"
 #   term-stop TERM | term-restart TERM | term-close TERM
@@ -52,6 +53,7 @@ TCTL t_term_stop, c_term_stop
 TCTL t_term_restart, c_term_restart
 TCTL t_term_close, c_term_close
 TCTL t_print_uproc, c_print_uproc
+TCTL t_print_task_status, c_print_task_status
 TCTL t_print_allowed, c_print_allowed
 TCTL t_run_approve, c_run_approve
 TCTL t_print_approve, c_print_approve
@@ -124,6 +126,13 @@ c_print_uproc:
     sub rsp, 8
     mov rdi, r15
     call uproc_dump
+    add rsp, 8
+    ret
+
+c_print_task_status:
+    sub rsp, 8
+    mov rdi, r15
+    call term_tasks_status_dump
     add rsp, 8
     ret
 
@@ -606,6 +615,7 @@ c_print_approve:
 .Lc_term_restart: .asciz "term-restart"
 .Lc_term_close: .asciz "term-close"
 .Lc_print_uproc: .asciz "print-uproc"
+.Lc_print_task_status: .asciz "print-task-status"
 .Lc_print_allowed: .asciz "print-allowed"
 .Lc_run_approve: .asciz "run-approve"
 .Lc_print_approve: .asciz "print-approve"
@@ -664,7 +674,7 @@ tasks_ctl:
     .quad .Lc_print_approve, t_print_approve, .Lc_wait_terminal, t_wait_terminal
     .quad .Lc_print_pattern, t_print_pattern, .Lc_print_problems, t_print_problems
     .quad .Lc_print_problems_tab, t_print_problems_tab, .Lc_print_tasks, t_print_tasks
-    .quad .Lc_print_records, t_print_records, 0, 0
+    .quad .Lc_print_records, t_print_records, .Lc_print_task_status, t_print_task_status, 0, 0
 options:
     .quad .Lo_cwd, o_cwd, .Lo_env, o_env, .Lo_unset, o_unset, .Lo_title, o_title
     .quad .Lo_task, o_task, .Lo_silent, o_silent, .Lo_sh, o_sh, .Lo_matcher, o_matcher
