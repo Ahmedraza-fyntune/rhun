@@ -1,5 +1,6 @@
 # X11 client over a unix socket (fallback when there is no Wayland display)
 .include "rhun.inc"
+.include "plat/x11.inc"
 
 .equ XOUT, 65536
 .equ XIN, 262144
@@ -11,19 +12,39 @@
 
 .bss
 .p2align 4
+.globl x_wire_output
+x_wire_output:
 xout: .zero XOUT
+.globl x_wire_input
+x_wire_input:
 xin: .zero XIN
+.globl x_wire_output_len
+x_wire_output_len:
 xout_len: .long 0
 xin_len: .long 0
+.globl x_wire_sequence
+x_wire_sequence:
 seq: .long 0
 id_base: .long 0
+.globl x_paste_id_mask
+x_paste_id_mask:
 id_mask: .long 0
+.globl x_paste_id_next
+x_paste_id_next:
 id_next: .long 0
+.globl x_paste_root
+x_paste_root:
 root: .long 0
 root_depth: .long 0
+.globl x_send_main_window
+x_send_main_window:
 win: .long 0
 gc: .long 0
+.globl x_wire_max_request
+x_wire_max_request:
 max_req: .long 0                # in 4-byte units
+.globl x_wire_big_requests
+x_wire_big_requests:
 big_req: .long 0
 win_w: .long 0
 win_h: .long 0
@@ -44,10 +65,24 @@ a_wm_protocols: .long 0
 a_wm_delete: .long 0
 a_net_wm_name: .long 0
 a_net_active: .long 0
+.globl x_wire_utf8_atom
+x_wire_utf8_atom:
 a_utf8: .long 0
+.globl x_wire_native_atom
+x_wire_native_atom:
+a_clip_native: .long 0
+.globl x_paste_clipboard_atom
+x_paste_clipboard_atom:
 a_clipboard: .long 0
+.globl x_wire_targets_atom
+x_wire_targets_atom:
 a_targets: .long 0
+.globl x_paste_property_atom
+x_paste_property_atom:
 a_sel_prop: .long 0
+.globl x_paste_incr_atom
+x_paste_incr_atom:
+a_incr: .long 0
 a_net_wm_state: .long 0
 a_max_h: .long 0
 a_max_v: .long 0
@@ -65,8 +100,26 @@ reply_buf: .zero 32
 reply_extra: .quad 0            # pointer into xin (valid until the next read)
 reply_extra_len: .quad 0
 .p2align 3
+.globl x_wire_clipboard
+x_wire_clipboard:
 xclip: .zero SB_SIZE
+# Native source owns the base; xclip is then a borrowed counted text view into it.
+.globl x_clip_native
+x_clip_native: .quad 0,0
+.globl x_paste_owned
+x_paste_owned:
 own_clip: .long 0
+.p2align 3
+.globl x_paste_record
+x_paste_record: .zero XR_SIZE
+.globl x_paste_generation
+x_paste_generation: .quad 0
+.p2align 3
+.globl x_send_slots, x_send_watchers, x_send_budget
+x_send_slots: .zero XS_SIZE * XS_COUNT
+x_send_watchers: .zero XW_SIZE * XS_COUNT
+x_send_budget: .quad 0
+x_send_order: .quad 0
 addr: .zero 110
 tmp: .zero SB_SIZE
 iov2: .zero 32
@@ -85,30 +138,45 @@ x_new_id:
     or eax, [rip + id_base]
     ret
 
-# x_req(ptr, len): append a request, bump the sequence number
-x_req:
-    push rbx
-    push r12
+# x_req(ptr, len): append a request, bump the sequence number exactly once.
+FN x_req
     sub rsp, 8
+    call x_queue_bytes
+    inc dword ptr [rip + seq]
+    add rsp, 8
+    ret
+
+# Trusted spans larger than the fixed queue are written directly after pending bytes.
+x_queue_bytes:
+    PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    test r12, r12
+    jz .Lxq_ret
+    cmp r12, XOUT
+    ja .Lxq_direct
     mov eax, [rip + xout_len]
-    add eax, r12d
-    cmp eax, XOUT
-    jb 1f
+    add rax, r12
+    cmp rax, XOUT
+    jbe .Lxq_append
     call x_flush
-1:  lea rdi, [rip + xout]
+.Lxq_append:
+    lea rdi, [rip + xout]
     mov eax, [rip + xout_len]
     add rdi, rax
     mov rsi, rbx
     mov rcx, r12
     rep movsb
     add [rip + xout_len], r12d
-    inc dword ptr [rip + seq]
-    add rsp, 8
-    pop r12
-    pop rbx
-    ret
+    jmp .Lxq_ret
+.Lxq_direct:
+    call x_flush
+    mov edi, [rip + xfd]
+    mov rsi, rbx
+    mov rdx, r12
+    call write_all
+.Lxq_ret:
+    EPILOGUE
 
 FN x_flush
     mov eax, [rip + xout_len]
@@ -260,6 +328,10 @@ x_message:
     jbe .Lxm_mapping
     jmp .Lxm_ret
 .Lxm_error:
+    mov rdi, rbx
+    call x_send_error
+    mov rdi, rbx
+    call x_paste_error
     # errors are non-fatal for us (e.g. a stale property), but one answering the request a reply is
     # awaited for ends the wait: reply_buf then starts with 0
     movzx eax, word ptr [rbx + 2]
@@ -275,19 +347,18 @@ x_message:
     mov dword ptr [rip + got_reply], 1
     jmp .Lxm_ret
 .Lxm_reply:
+    mov rdi, rbx
+    mov esi, r12d
+    call x_send_reply
+    test eax, eax
+    jnz .Lxm_ret
+    mov rdi, rbx
+    mov esi, r12d
+    call x_paste_reply
+    test eax, eax
+    jnz .Lxm_ret
     movzx eax, word ptr [rbx + 2]
-    # a paste reply is handled right here (the buffer moves after this). It has a sequence number of
-    # its own, as it may come while a synchronous request (want_seq) waits for its reply.
-    cmp dword ptr [rip + paste_wait], 0
-    je 1f
-    cmp eax, [rip + paste_seq]
-    jne 1f
-    mov dword ptr [rip + paste_wait], 0
-    lea rdi, [rbx + 32]
-    mov esi, [rbx + 16]         # value length in format units (format 8)
-    call app_on_paste
-    jmp .Lxm_ret
-1:  cmp eax, [rip + want_seq]
+    cmp eax, [rip + want_seq]
     jne .Lxm_ret
     lea rdi, [rip + reply_buf]
     mov rsi, rbx
@@ -402,11 +473,8 @@ x_message:
     call x_serve_selection
     jmp .Lxm_ret
 .Lxm_selnotify:
-    # property with the pasted text is ready: fetch it
-    mov eax, [rbx + 20]
-    test eax, eax
-    jz .Lxm_ret
-    call x_get_paste
+    mov rdi, rbx
+    call x_paste_notify
     jmp .Lxm_ret
 .Lxm_client:
     mov eax, [rbx + 8]
@@ -429,6 +497,10 @@ x_message:
     call x_load_keymap_async
     jmp .Lxm_ret
 .Lxm_property:
+    mov rdi, rbx
+    call x_send_property
+    mov rdi, rbx
+    call x_paste_property
     # the XSETTINGS manager's settings changed
     mov eax, [rbx + 4]
     test eax, eax
@@ -441,6 +513,10 @@ x_message:
     mov dword ptr [rip + xs_stale], 1
     jmp .Lxm_ret
 .Lxm_destroy:
+    mov rdi, rbx
+    call x_send_destroy
+    mov rdi, rbx
+    call x_paste_destroy
     # the manager quit
     mov eax, [rbx + 8]
     test eax, eax
@@ -712,57 +788,98 @@ x_intern:
     mov eax, [rip + reply_buf + 8]
     EPILOGUE
 
-# x_change_prop(window, prop, type, format(8/32), data, nunits)
-x_change_prop:
-    PROLOGUE 32
+# Build an independently owned ChangeProperty request, or return 0/0 before allocation.
+# x_property_request(window, prop, type, format(8/32), data, nunits) -> rax bytes, rdx length.
+FN x_property_request
+    PROLOGUE 48
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
     mov r15d, ecx
     mov rbx, r8
-    mov [rsp + 16], r9
-    # bytes of data
-    mov eax, r9d
-    cmp r15d, 32
-    jne 1f
-    shl eax, 2
-1:  mov [rsp + 24], eax
-    add eax, 3
-    and eax, -4
-    add eax, 24
-    mov [rsp + 28], eax         # request bytes
-    lea rdi, [rip + tmp]
-    call sb_clear
-    lea rdi, [rip + tmp]
-    mov esi, [rsp + 28]
-    call sb_reserve
+    mov [rsp], r9
+    mov rax, r9
+    cmp ecx, 8
+    je .Lxpr_bytes
+    cmp ecx, 32
+    jne .Lxpr_fail
+    cmp rax, DOC_MULTI_BYTES_MAX / 4
+    ja .Lxpr_fail
+    shl rax, 2
+.Lxpr_bytes:
+    cmp rax, DOC_MULTI_BYTES_MAX
+    ja .Lxpr_fail
+    test rbx, rbx
+    jnz 1f
+    test rax, rax
+    jnz .Lxpr_fail
+1:  mov [rsp + 8], rax
+    add rax, 3
+    and rax, -4
+    add rax, 24
+    mov qword ptr [rsp + 24], 24
+    mov rcx, rax
+    shr rcx, 2
+    cmp rcx, 65535
+    jbe .Lxpr_max
+    cmp dword ptr [rip + big_req], 0
+    je .Lxpr_fail
+    add rax, 4                 # BIG-REQUESTS adds its own 32-bit length word
+    inc rcx
+    mov qword ptr [rsp + 24], 28
+.Lxpr_max:
+    mov edx, [rip + max_req]
+    cmp rcx, rdx
+    ja .Lxpr_fail
+    mov [rsp + 16], rax
     mov rdi, rax
-    mov byte ptr [rdi], 18      # ChangeProperty
-    mov byte ptr [rdi + 1], 0   # Replace
-    mov eax, [rsp + 28]
-    shr eax, 2
-    mov [rdi + 2], ax
+    call mem_alloc
+    mov [rsp + 32], rax
+    mov byte ptr [rax], 18     # ChangeProperty, Replace; allocation zeroes padding
+    mov rdi, rax
+    mov rdx, [rsp + 16]
+    shr rdx, 2
+    cmp qword ptr [rsp + 24], 24
+    jne .Lxpr_big
+    mov [rdi + 2], dx
+    jmp .Lxpr_fields
+.Lxpr_big:
+    mov [rdi + 4], edx
+    add rdi, 4
+.Lxpr_fields:
     mov [rdi + 4], r12d
     mov [rdi + 8], r13d
     mov [rdi + 12], r14d
     mov [rdi + 16], r15b
-    mov byte ptr [rdi + 17], 0
-    mov word ptr [rdi + 18], 0
-    mov rax, [rsp + 16]
-    mov [rdi + 20], eax
-    lea rdi, [rdi + 24]
+    mov rdx, [rsp]
+    mov [rdi + 20], edx
+    mov rdi, [rsp + 32]
+    add rdi, [rsp + 24]
     mov rsi, rbx
-    mov ecx, [rsp + 24]
-    rep movsb
-    mov ecx, [rsp + 28]
-    sub ecx, [rsp + 24]
-    sub ecx, 24
-    xor eax, eax
-    rep stosb
-    mov rdi, [rip + tmp + SB_ptr]
-    mov esi, [rsp + 28]
-    call x_req
+    mov rdx, [rsp + 8]
+    call memcpy
+    mov rax, [rsp + 32]
+    mov rdx, [rsp + 16]
     EPILOGUE
+.Lxpr_fail:
+    xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
+# x_change_prop(window, prop, type, format(8/32), data, nunits) -> queued request accepted.
+FN x_change_prop
+    PROLOGUE
+    call x_property_request
+    test rax, rax
+    jz 1f
+    mov rbx, rax
+    mov rdi, rax
+    mov rsi, rdx
+    call x_req
+    mov rdi, rbx
+    call mem_free
+    mov eax, 1
+1:  EPILOGUE
 
 # ---- connection ----
 
@@ -1036,19 +1153,9 @@ FN x_connect
     xor eax, eax
     EPILOGUE
 
-# append bytes without counting a request
-x_req_raw:
-    push rbx
-    mov rbx, rdi
-    mov ecx, esi
-    lea rdi, [rip + xout]
-    mov eax, [rip + xout_len]
-    add rdi, rax
-    add [rip + xout_len], ecx
-    mov rsi, rbx
-    rep movsb
-    pop rbx
-    ret
+# Append setup bytes without counting a request, with the same bounded queue.
+FN x_req_raw
+    jmp x_queue_bytes
 
 # big requests: lift the 256 KiB request limit if the server allows
 x_big_requests:
@@ -1248,6 +1355,9 @@ FN x_open_window
     lea rdi, [rip + .La_utf8]
     call x_intern
     mov [rip + a_utf8], eax
+    lea rdi, [rip + .La_clip_native]
+    call x_intern
+    mov [rip + a_clip_native], eax
     lea rdi, [rip + .La_clipboard]
     call x_intern
     mov [rip + a_clipboard], eax
@@ -1257,6 +1367,9 @@ FN x_open_window
     lea rdi, [rip + .La_sel_prop]
     call x_intern
     mov [rip + a_sel_prop], eax
+    lea rdi, [rip + .La_incr]
+    call x_intern
+    mov [rip + a_incr], eax
     lea rdi, [rip + .La_net_wm_state]
     call x_intern
     mov [rip + a_net_wm_state], eax
@@ -1364,6 +1477,8 @@ FN x_open_window
     mov dword ptr [rip + g_csd], 0
     call x_resize_fb
     # vtable
+    lea rax, [rip + x_clip_write]
+    mov [rip + g_plat + P_clip_write], rax
     lea rax, [rip + x_flush]
     mov [rip + g_plat + P_flush], rax
     lea rax, [rip + x_timeout]
@@ -1400,14 +1515,28 @@ x_nop:
 
 # x_timeout(): at once when the last frame asked for another, otherwise forever
 x_timeout:
-    xor eax, eax
+    push rbx
+    call x_paste_timeout
+    mov ebx, eax
+    call x_send_timeout
+    cmp ebx, -1
+    je 2f
+    cmp eax, -1
+    je 3f
+    cmp eax, ebx
+    cmova eax, ebx
+    jmp 2f
+3:  mov eax, ebx
+2:  pop rbx
     cmp dword ptr [rip + g_dirty], 0
-    jne 1f
-    mov eax, -1
+    je 1f
+    xor eax, eax
 1:  ret
 
 x_tick:
     push rbx
+    call x_paste_tick
+    call x_send_tick
 1:  cmp dword ptr [rip + xs_stale], 0
     je 2f
     call xs_refresh
@@ -1468,15 +1597,9 @@ xs_refresh:
     je 1f
     mov [rip + xs_owner], r12d
     # its property changes, and its window going away
-    mov byte ptr [rsp], 2       # ChangeWindowAttributes
-    mov byte ptr [rsp + 1], 0
-    mov word ptr [rsp + 2], 4
-    mov [rsp + 4], r12d
-    mov dword ptr [rsp + 8], 0x800      # CWEventMask
-    mov dword ptr [rsp + 12], 0x420000  # PropertyChange | StructureNotify
-    lea rdi, [rsp]
-    mov esi, 16
-    call x_req
+    mov edi, r12d
+    mov esi, 0x420000           # PropertyChange | StructureNotify
+    call x_send_window_mask
 1:  mov byte ptr [rsp], 20      # GetProperty
     mov byte ptr [rsp + 1], 0
     mov word ptr [rsp + 2], 6
@@ -1765,19 +1888,116 @@ x_set_cursor:
     add rsp, 24
 1:  ret
 
-# clipboard: become the CLIPBOARD owner
-x_clip_set:
-    push rbx
-    push r12
-    sub rsp, 24
+# Free the owning base, never the text interior borrowed from a native envelope.
+FN x_clip_reset
+    PROLOGUE
+    mov rbx, [rip + x_clip_native]
+    test rbx, rbx
+    jnz 1f
+    mov rbx, [rip + xclip + SB_ptr]
+1:  lea rdi, [rip + xclip]
+    xor esi, esi
+    mov edx, SB_SIZE + 16
+    call memset
+    mov rdi, rbx
+    call mem_free
+    EPILOGUE
+
+# A detached counted copy, with a spare NUL; source may alias the current clipboard.
+x_clip_snapshot:
+    PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    lea rdi, [rip + xclip]
-    call sb_clear
-    lea rdi, [rip + xclip]
+    lea rdi, [rsi + 1]
+    call mem_alloc_try
+    mov r13, rax
+    test rax, rax
+    jz 1f
+    mov rdi, rax
     mov rsi, rbx
     mov rdx, r12
-    call sb_push
+    call memcpy
+1:  mov rax, r13
+    EPILOGUE
+
+# Raw writes own text; rich writes own one envelope and borrow its text interior.
+FN x_clip_set
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    cmp dword ptr [rip + win], 0
+    je .Lxc_plain_fail
+    cmp dword ptr [rip + a_clipboard], 0
+    je .Lxc_plain_fail
+    cmp rsi, XR_LIMIT
+    ja .Lxc_plain_fail
+    test rdi, rdi
+    jnz 1f
+    test rsi, rsi
+    jnz .Lxc_plain_fail
+1:  call snippet_utf8_valid
+    test eax, eax
+    jz .Lxc_plain_fail
+    mov rdi, rbx
+    mov rsi, r12
+    call x_clip_snapshot
+    test rax, rax
+    jz .Lxc_plain_fail
+    mov r13, rax
+    call x_clip_reset
+    mov [rip + xclip + SB_ptr], r13
+    mov [rip + xclip + SB_len], r12
+    lea rax, [r12 + 1]
+    mov [rip + xclip + SB_cap], rax
+    call x_clip_claim
+    mov eax, 1
+    EPILOGUE
+.Lxc_plain_fail:
+    xor eax, eax
+    EPILOGUE
+
+FN x_clip_write
+    PROLOGUE CWB_SIZE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdx, rsp
+    call clip_wire_decode
+    test eax, eax
+    jz .Lxc_native_fail
+    cmp dword ptr [rip + win], 0
+    je .Lxc_native_fail
+    cmp dword ptr [rip + a_clipboard], 0
+    je .Lxc_native_fail
+    cmp dword ptr [rip + a_clip_native], 0
+    je .Lxc_native_fail
+    mov r13, [rsp + CWB_text]
+    sub r13, rbx
+    mov r14, [rsp + CWB_len]
+    mov rdi, rbx
+    mov rsi, r12
+    call x_clip_snapshot
+    test rax, rax
+    jz .Lxc_native_fail
+    mov r15, rax
+    call x_clip_reset
+    mov [rip + x_clip_native], r15
+    mov [rip + x_clip_native + 8], r12
+    add r13, r15
+    mov [rip + xclip + SB_ptr], r13
+    mov [rip + xclip + SB_len], r14
+    lea rax, [r14 + 1]
+    mov [rip + xclip + SB_cap], rax
+    call x_clip_claim
+    mov eax, 1
+    EPILOGUE
+.Lxc_native_fail:
+    xor eax, eax
+    EPILOGUE
+
+# Acceptance preserves the existing contract: SetSelectionOwner was queued.
+x_clip_claim:
+    PROLOGUE 16
+    mov qword ptr [rsp], 0
     mov byte ptr [rsp], 22      # SetSelectionOwner
     mov word ptr [rsp + 2], 4
     mov eax, [rip + win]
@@ -1789,26 +2009,114 @@ x_clip_set:
     mov esi, 16
     call x_req
     mov dword ptr [rip + own_clip], 1
-    add rsp, 24
-    pop r12
-    pop rbx
-    ret
+    EPILOGUE
 
-# paste: ask the owner to convert CLIPBOARD to UTF8_STRING into our property
+# Each receive has a private requestor window and a bounded, owned payload.
 x_clip_get:
+    jmp x_paste_begin
+
+FN x_paste_begin
+    PROLOGUE 64
+    mov rax, [rip + app_clip_active_token]
+    mov [rsp + 48], rax
+    call x_paste_tick
+    mov rax, [rsp + 48]
+    cmp rax, [rip + app_clip_active_token]
+    jne .Lxp_begin_done
+    lea rbx, [rip + x_paste_record]
+    cmp dword ptr [rbx + XR_state], 0
+    jne .Lxp_begin_busy
     cmp dword ptr [rip + own_clip], 0
-    je 1f
+    je .Lxp_begin_foreign
+    cmp qword ptr [rip + x_clip_native], 0
+    je .Lxp_begin_plain
+    mov rdi, [rip + x_clip_native]
+    mov rsi, [rip + x_clip_native + 8]
+    mov [rsp + 40], rsi
+    call x_clip_snapshot
+    test rax, rax
+    jz .Lxp_begin_plain
+    mov r13, rax
+    mov rdi, [rsp + 48]
+    mov rsi, rax
+    mov rdx, [rsp + 40]
+    call app_clip_complete_native
+    mov r12d, eax
+    mov rdi, r13
+    call mem_free
+    test r12d, r12d
+    jnz .Lxp_begin_done
+.Lxp_begin_plain:
+    mov r12, [rip + xclip + SB_len]
     mov rdi, [rip + xclip + SB_ptr]
-    mov rsi, [rip + xclip + SB_len]
-    jmp app_on_paste
-1:  sub rsp, 40
-    mov byte ptr [rsp], 24      # ConvertSelection
-    mov word ptr [rsp + 2], 6
-    mov eax, [rip + win]
+    mov rsi, r12
+    call x_clip_snapshot
+    test rax, rax
+    jz .Lxp_begin_busy
+    mov r13, rax
+    mov rdi, [rsp + 48]
+    mov rsi, r13
+    mov rdx, r12
+    mov ecx, 1
+    call app_clip_complete
+    mov rdi, r13
+    call mem_free
+    jmp .Lxp_begin_done
+.Lxp_begin_foreign:
+    mov rdi, [rsp + 48]
+    mov esi, [rip + a_clip_native]
+    test esi, esi
+    cmovz esi, [rip + a_utf8]
+    call x_paste_start
+.Lxp_begin_done:
+    EPILOGUE
+.Lxp_begin_busy:
+    mov rdi, [rsp + 48]
+    xor esi, esi
+    xor edx, edx
+    xor ecx, ecx
+    call app_clip_complete
+    jmp .Lxp_begin_done
+
+# Start one format attempt. Fallback gets a new window and keeps the captured token.
+x_paste_start:
+    PROLOGUE 64
+    lea rbx, [rip + x_paste_record]
+    inc qword ptr [rip + x_paste_generation]
+    mov [rbx + XR_token], rdi
+    mov [rbx + XR_type], esi
+    call time_ms
+    add rax, XR_MILLISECONDS
+    mov [rbx + XR_deadline], rax
+    mov qword ptr [rbx + XR_remaining], -1
+    call x_new_id
+    mov [rbx + XR_window], eax
+    mov dword ptr [rbx + XR_state], XR_NOTIFY
+    mov rdi, rsp
+    xor esi, esi
+    mov edx, 48
+    call memset
+    mov byte ptr [rsp], 1
+    mov word ptr [rsp + 2], 9
+    mov eax, [rbx + XR_window]
     mov [rsp + 4], eax
+    mov eax, [rip + root]
+    mov [rsp + 8], eax
+    mov word ptr [rsp + 16], 1
+    mov word ptr [rsp + 18], 1
+    mov word ptr [rsp + 22], 2  # InputOnly, CopyFromParent depth and visual
+    mov dword ptr [rsp + 28], 0x800
+    mov dword ptr [rsp + 32], 0x420000
+    mov rdi, rsp
+    mov esi, 36
+    call x_req
+    movzx eax, word ptr [rip + seq]
+    mov [rbx + XR_create_seq], eax
+    mov byte ptr [rsp], 24
+    mov word ptr [rsp + 2], 6
     mov eax, [rip + a_clipboard]
     mov [rsp + 8], eax
-    mov eax, [rip + a_utf8]
+    mov eax, [rbx + XR_type]
     mov [rsp + 12], eax
     mov eax, [rip + a_sel_prop]
     mov [rsp + 16], eax
@@ -1816,91 +2124,467 @@ x_clip_get:
     mov rdi, rsp
     mov esi, 24
     call x_req
-    add rsp, 40
+    movzx eax, word ptr [rip + seq]
+    mov [rbx + XR_convert_seq], eax
+    EPILOGUE
+
+# An invalid/refused native attempt may try plain once. Expiry/cancel never retries.
+x_paste_fallback:
+    mov eax, [rip + a_clip_native]
+    test eax, eax
+    jz x_paste_cancel
+    cmp eax, [rip + x_paste_record + XR_type]
+    jne x_paste_cancel
+    PROLOGUE
+    mov r12, [rip + x_paste_record + XR_token]
+    call x_paste_dispose
+    cmp r12, [rip + app_clip_active_token]
+    jne 1f
+    mov rdi, r12
+    mov esi, [rip + a_utf8]
+    call x_paste_start
+1:  EPILOGUE
+
+# Clear state before releasing storage or invoking editor code.
+FN x_paste_cancel
+    PROLOGUE
+    mov r12, [rip + x_paste_record + XR_token]
+    mov r13d, [rip + x_paste_record + XR_state]
+    call x_paste_dispose
+    test r13d, r13d
+    jz 1f
+    mov rdi, r12
+    xor esi, esi
+    xor edx, edx
+    xor ecx, ecx
+    call app_clip_complete
+1:  EPILOGUE
+
+x_paste_dispose:
+    PROLOGUE 16
+    inc qword ptr [rip + x_paste_generation]
+    lea rbx, [rip + x_paste_record]
+    mov r12d, [rbx + XR_window]
+    mov r13, [rbx + XR_buffer + SB_ptr]
+    mov rdi, rbx
+    xor esi, esi
+    mov edx, XR_SIZE
+    call memset
+    test r12d, r12d
+    jz 1f
+    mov qword ptr [rsp], 0
+    mov byte ptr [rsp], 4
+    mov word ptr [rsp + 2], 2
+    mov [rsp + 4], r12d
+    mov rdi, rsp
+    mov esi, 8
+    call x_req
+1:  mov rdi, r13
+    call mem_free
+    EPILOGUE
+
+x_paste_progress:
+    sub rsp, 8
+    call time_ms
+    add rax, XR_MILLISECONDS
+    mov [rip + x_paste_record + XR_deadline], rax
+    add rsp, 8
     ret
 
-# SelectionNotify arrived: GetProperty (delete) and deliver the reply asynchronously
-x_get_paste:
-    sub rsp, 40
-    mov byte ptr [rsp], 20      # GetProperty
-    mov byte ptr [rsp + 1], 1   # delete
+x_paste_limit:
+    mov eax, XR_LIMIT
+    mov ecx, [rip + x_paste_record + XR_type]
+    test ecx, ecx
+    jz 1f
+    cmp ecx, [rip + a_clip_native]
+    jne 1f
+    mov eax, CLW_MAX
+1:  ret
+
+x_paste_fetch:
+    PROLOGUE 32
+    lea rbx, [rip + x_paste_record]
+    mov rdi, rsp
+    xor esi, esi
+    mov edx, 32
+    call memset
+    mov byte ptr [rsp], 20
+    mov byte ptr [rsp + 1], 1
     mov word ptr [rsp + 2], 6
-    mov eax, [rip + win]
+    mov eax, [rbx + XR_window]
     mov [rsp + 4], eax
     mov eax, [rip + a_sel_prop]
     mov [rsp + 8], eax
-    mov dword ptr [rsp + 12], 0         # AnyPropertyType
-    mov dword ptr [rsp + 16], 0
-    mov dword ptr [rsp + 20], 0x1000000 # up to 64 MiB
+    mov eax, [rbx + XR_offset]
+    mov [rsp + 16], eax
+    mov dword ptr [rsp + 20], XR_PAGE / 4
     mov rdi, rsp
     mov esi, 24
     call x_req
-    mov eax, [rip + seq]
-    and eax, 0xffff
-    mov [rip + paste_seq], eax
-    mov dword ptr [rip + paste_wait], 1
-    add rsp, 40
+    movzx eax, word ptr [rip + seq]
+    mov [rbx + XR_get_seq], eax
+    mov dword ptr [rbx + XR_state], XR_PROPERTY
+    EPILOGUE
+
+FN x_paste_notify
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rip + x_paste_generation]
+    call x_paste_tick
+    cmp r12, [rip + x_paste_generation]
+    jne 1f
+    mov rdi, rbx
+    call x_paste_notify_live
+1:  EPILOGUE
+x_paste_notify_live:
+    cmp dword ptr [rip + x_paste_record + XR_state], XR_NOTIFY
+    jne .Lxp_notify_ret
+    mov eax, [rdi + 8]
+    cmp eax, [rip + x_paste_record + XR_window]
+    jne .Lxp_notify_ret
+    mov eax, [rdi + 12]
+    cmp eax, [rip + a_clipboard]
+    jne .Lxp_notify_ret
+    mov eax, [rdi + 16]
+    cmp eax, [rip + x_paste_record + XR_type]
+    jne x_paste_cancel
+    mov eax, [rdi + 20]
+    test eax, eax
+    jz x_paste_fallback
+    cmp eax, [rip + a_sel_prop]
+    jne x_paste_cancel
+    sub rsp, 8
+    call x_paste_progress
+    call x_paste_fetch
+    add rsp, 8
+.Lxp_notify_ret:
     ret
 
-# x_serve_selection(event): answer another client's paste request
-x_serve_selection:
-    PROLOGUE 48
+# x_paste_reply(packet, complete_length) -> claimed. Never borrow xin into a callback.
+FN x_paste_reply
+    PROLOGUE 64
+    mov r12, rdi
+    mov r13, rsi
+    mov rax, [rip + x_paste_generation]
+    mov [rsp], rax
+    mov qword ptr [rsp + 8], 0
+    call x_paste_tick
+    mov rax, [rsp]
+    cmp rax, [rip + x_paste_generation]
+    jne .Lxp_reply_other
+    lea rbx, [rip + x_paste_record]
+    cmp dword ptr [rbx + XR_state], XR_PROPERTY
+    jne .Lxp_reply_other
+    cmp r13, 4
+    jb .Lxp_reply_other
+    movzx eax, word ptr [r12 + 2]
+    cmp eax, [rbx + XR_get_seq]
+    jne .Lxp_reply_other
+    cmp r13, 32
+    jb .Lxp_reply_bad
+    cmp byte ptr [r12], 1
+    jne .Lxp_reply_bad
+    mov eax, [r12 + 4]
+    shl rax, 2
+    add rax, 32
+    cmp rax, r13
+    jne .Lxp_reply_bad
+    mov eax, [r12 + 8]
+    cmp eax, [rip + a_incr]
+    je .Lxp_reply_marker
+    cmp eax, [rbx + XR_type]
+    jne .Lxp_reply_bad
+    cmp byte ptr [r12 + 1], 8
+    jne .Lxp_reply_bad
+    mov r14d, [r12 + 16]
+    cmp r14, XR_PAGE
+    ja .Lxp_reply_bad
+    lea rax, [r14 + 3]
+    and rax, -4
+    add rax, 32
+    cmp rax, r13
+    jne .Lxp_reply_bad
+    mov r15d, [r12 + 12]
+    call x_paste_limit
+    mov rdx, rax
+    lea rax, [r14 + r15]
+    sub rdx, [rbx + XR_buffer + SB_len]
+    cmp rax, rdx
+    ja .Lxp_reply_bad
+    cmp qword ptr [rbx + XR_remaining], -1
+    je 1f
+    cmp rax, [rbx + XR_remaining]
+    jne .Lxp_reply_bad
+1:  test r15, r15
+    jz 2f
+    test r14, r14
+    jz .Lxp_reply_bad
+    test r14, 3
+    jnz .Lxp_reply_bad
+2:  lea rdi, [rbx + XR_buffer]
+    lea rsi, [r12 + 32]
+    mov rdx, r14
+    call sb_push
+    call x_paste_progress
+    test r15, r15
+    jz .Lxp_reply_property_end
+    mov rax, r14
+    shr rax, 2
+    add [rbx + XR_offset], rax
+    mov [rbx + XR_remaining], r15
+    call x_paste_fetch
+    jmp .Lxp_reply_claimed
+.Lxp_reply_property_end:
+    mov qword ptr [rbx + XR_offset], 0
+    mov qword ptr [rbx + XR_remaining], -1
+    cmp dword ptr [rbx + XR_incr], 0
+    je .Lxp_reply_complete
+    test r14, r14
+    jz .Lxp_reply_complete
+    mov dword ptr [rbx + XR_state], XR_CHUNK
+    jmp .Lxp_reply_claimed
+.Lxp_reply_marker:
+    cmp dword ptr [rbx + XR_incr], 0
+    jne .Lxp_reply_bad
+    cmp qword ptr [rbx + XR_offset], 0
+    jne .Lxp_reply_bad
+    cmp qword ptr [rbx + XR_buffer + SB_len], 0
+    jne .Lxp_reply_bad
+    cmp byte ptr [r12 + 1], 32
+    jne .Lxp_reply_bad
+    cmp r13, 36
+    jne .Lxp_reply_bad
+    cmp dword ptr [r12 + 16], 1
+    jne .Lxp_reply_bad
+    cmp dword ptr [r12 + 12], 0
+    jne .Lxp_reply_bad
+    mov r14d, [r12 + 32]
+    call x_paste_limit
+    cmp r14, rax
+    ja .Lxp_reply_bad
+    mov [rbx + XR_lower], r14
+    mov dword ptr [rbx + XR_incr], 1
+    mov dword ptr [rbx + XR_state], XR_CHUNK
+    call x_paste_progress
+    jmp .Lxp_reply_claimed
+.Lxp_reply_complete:
+    mov rdi, [rbx + XR_buffer + SB_ptr]
+    mov rsi, [rbx + XR_buffer + SB_len]
+    cmp rsi, [rbx + XR_lower]
+    jb .Lxp_reply_bad
+    mov eax, [rbx + XR_type]
+    test eax, eax
+    jz .Lxp_reply_plain_validate
+    cmp eax, [rip + a_clip_native]
+    jne .Lxp_reply_plain_validate
+    mov qword ptr [rsp + 8], 1
+    lea rdx, [rsp + 16]
+    call clip_wire_decode
+    jmp .Lxp_reply_validated
+.Lxp_reply_plain_validate:
+    call snippet_utf8_valid
+.Lxp_reply_validated:
+    test eax, eax
+    jz .Lxp_reply_bad
+    call x_paste_tick
+    mov rax, [rsp]
+    cmp rax, [rip + x_paste_generation]
+    jne .Lxp_reply_claimed
+    mov r14, [rbx + XR_buffer + SB_ptr]
+    mov r15, [rbx + XR_buffer + SB_len]
+    test r14, r14
+    jnz 3f
+    mov edi, 1
+    call mem_alloc
+    mov r14, rax
+3:  mov qword ptr [rbx + XR_buffer + SB_ptr], 0
+    mov r12, [rbx + XR_token]
+    call x_paste_dispose
+    mov rdi, r12
+    mov rsi, r14
+    mov rdx, r15
+    cmp qword ptr [rsp + 8], 0
+    je .Lxp_reply_plain_complete
+    call app_clip_complete_native
+    jmp .Lxp_reply_free
+.Lxp_reply_plain_complete:
+    mov ecx, 1
+    call app_clip_complete
+.Lxp_reply_free:
+    mov rdi, r14
+    call mem_free
+    jmp .Lxp_reply_claimed
+.Lxp_reply_bad:
+    call x_paste_fallback
+.Lxp_reply_claimed:
+    mov eax, 1
+    EPILOGUE
+.Lxp_reply_other:
+    xor eax, eax
+    EPILOGUE
+
+FN x_paste_property
+    PROLOGUE
     mov rbx, rdi
-    mov r12d, [rbx + 12]        # requestor
-    mov r13d, [rbx + 16]        # selection
-    mov r14d, [rbx + 20]        # target
-    mov r15d, [rbx + 24]        # property
-    test r15d, r15d
+    mov r12, [rip + x_paste_generation]
+    call x_paste_tick
+    cmp r12, [rip + x_paste_generation]
+    jne 1f
+    mov rdi, rbx
+    call x_paste_property_live
+1:  EPILOGUE
+x_paste_property_live:
+    test byte ptr [rdi], 0x80
+    jnz .Lxp_event_ret
+    mov eax, [rdi + 4]
+    cmp eax, [rip + x_paste_record + XR_window]
+    jne .Lxp_event_ret
+    mov eax, [rdi + 8]
+    cmp eax, [rip + a_sel_prop]
+    jne .Lxp_event_ret
+    cmp byte ptr [rdi + 16], 0  # PropertyNewValue
+    jne .Lxp_event_ret
+    cmp dword ptr [rip + x_paste_record + XR_state], XR_PROPERTY
+    je x_paste_fallback
+    cmp dword ptr [rip + x_paste_record + XR_state], XR_CHUNK
+    jne .Lxp_event_ret
+    sub rsp, 8
+    call x_paste_progress
+    call x_paste_fetch
+    add rsp, 8
+.Lxp_event_ret:
+    ret
+
+FN x_paste_error
+    mov eax, [rip + x_paste_record + XR_state]
+    cmp eax, XR_NOTIFY
+    je 1f
+    cmp eax, XR_PROPERTY
+    jne .Lxp_error_ret
+    movzx eax, word ptr [rdi + 2]
+    cmp eax, [rip + x_paste_record + XR_get_seq]
+    je x_paste_cancel
+    ret
+1:  movzx eax, word ptr [rdi + 2]
+    cmp eax, [rip + x_paste_record + XR_create_seq]
+    je x_paste_cancel
+    cmp eax, [rip + x_paste_record + XR_convert_seq]
+    je x_paste_cancel
+.Lxp_error_ret:
+    ret
+
+FN x_paste_destroy
+    test byte ptr [rdi], 0x80
     jnz 1f
-    mov r15d, r14d
-1:  cmp r14d, [rip + a_targets]
-    jne 2f
-    mov eax, [rip + a_targets]
-    mov [rsp + 32], eax
-    mov eax, [rip + a_utf8]
-    mov [rsp + 36], eax
-    mov dword ptr [rsp + 40], 31        # STRING
-    mov edi, r12d
-    mov esi, r15d
-    mov edx, 4
-    mov ecx, 32
-    lea r8, [rsp + 32]
-    mov r9d, 3
-    call x_change_prop
-    jmp 4f
-2:  cmp r14d, [rip + a_utf8]
+    cmp dword ptr [rip + x_paste_record + XR_state], 0
+    je 1f
+    mov eax, [rdi + 8]
+    cmp eax, [rip + x_paste_record + XR_window]
+    jne 1f
+    mov dword ptr [rip + x_paste_record + XR_window], 0
+    jmp x_paste_cancel
+1:  ret
+
+FN x_paste_tick
+    cmp dword ptr [rip + x_paste_record + XR_state], 0
+    je 1f
+    sub rsp, 8
+    call time_ms
+    add rsp, 8
+    cmp rax, [rip + x_paste_record + XR_deadline]
+    jae x_paste_cancel
+1:  ret
+
+FN x_paste_timeout
+    cmp dword ptr [rip + x_paste_record + XR_state], 0
+    jne 1f
+    mov eax, -1
+    ret
+1:  sub rsp, 8
+    call time_ms
+    add rsp, 8
+    mov rcx, [rip + x_paste_record + XR_deadline]
+    sub rcx, rax
+    jbe 2f
+    cmp rcx, XR_MILLISECONDS
+    ja 2f
+    mov eax, ecx
+    ret
+2:  xor eax, eax
+    ret
+
+# Legacy STRING is printable Latin1 plus TAB and LF, never raw UTF8 bytes.
+# x_string_supported(ptr, count) -> bool. No allocation or clipboard mutation.
+FN x_string_supported
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    cmp r12, XR_LIMIT
+    ja .Lxstr_bad
+    test rbx, rbx
+    jnz 1f
+    test r12, r12
+    jnz .Lxstr_bad
+1:  call snippet_utf8_valid
+    test eax, eax
+    jz .Lxstr_bad
+    xor r13d, r13d
+2:  cmp r13, r12
+    jae .Lxstr_good
+    lea rdi, [rbx + r13]
+    mov rsi, r12
+    sub rsi, r13
+    call utf8_decode
+    cmp eax, 0xff
+    ja .Lxstr_bad
+    cmp eax, 0xa0
+    jae 3f
+    cmp eax, 0x7e
+    ja .Lxstr_bad
+    cmp eax, 0x20
+    jae 3f
+    cmp eax, 9
     je 3f
-    cmp r14d, 31
-    je 3f
-    xor r15d, r15d              # refuse
-    jmp 4f
-3:  mov edi, r12d
-    mov esi, r15d
-    mov edx, r14d
-    mov ecx, 8
-    mov r8, [rip + xclip + SB_ptr]
-    mov r9, [rip + xclip + SB_len]
-    call x_change_prop
-4:  # SendEvent SelectionNotify
-    lea rdi, [rsp]
-    xor esi, esi
-    mov edx, 44
-    call memset
-    mov byte ptr [rsp], 25      # SendEvent
-    mov byte ptr [rsp + 1], 0
-    mov word ptr [rsp + 2], 11
-    mov [rsp + 4], r12d
-    mov dword ptr [rsp + 8], 0
-    mov byte ptr [rsp + 12], 31 # SelectionNotify
-    mov eax, [rbx + 4]
-    mov [rsp + 16], eax         # time
-    mov [rsp + 20], r12d
-    mov [rsp + 24], r13d
-    mov [rsp + 28], r14d
-    mov [rsp + 32], r15d
-    lea rdi, [rsp]
-    mov esi, 44
-    call x_req
+    cmp eax, 10
+    jne .Lxstr_bad
+3:  add r13, rdx
+    jmp 2b
+.Lxstr_good:
+    mov eax, 1
+    EPILOGUE
+.Lxstr_bad:
+    xor eax, eax
+    EPILOGUE
+
+# x_string_convert(ptr, count) -> owned bytes, count; failure 0,0.
+FN x_string_convert
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    call x_string_supported
+    test eax, eax
+    jz .Lxstr_convert_bad
+    lea rdi, [r12 + 1]
+    call mem_alloc
+    mov r13, rax
+    xor r14d, r14d
+    xor r15d, r15d
+1:  cmp r14, r12
+    jae 2f
+    lea rdi, [rbx + r14]
+    mov rsi, r12
+    sub rsi, r14
+    call utf8_decode
+    mov [r13 + r15], al
+    add r14, rdx
+    inc r15
+    jmp 1b
+2:  mov rax, r13
+    mov rdx, r15
+    EPILOGUE
+.Lxstr_convert_bad:
+    xor eax, eax
+    xor edx, edx
     EPILOGUE
 
 # _NET_WM_STATE toggle (maximize) via a client message to the root window
@@ -1996,9 +2680,11 @@ x_minimize:
 .La_wm_delete: .asciz "WM_DELETE_WINDOW"
 .La_net_wm_name: .asciz "_NET_WM_NAME"
 .La_utf8: .asciz "UTF8_STRING"
+.La_clip_native: .asciz "application/x-rhun-clipboard-v1"
 .La_clipboard: .asciz "CLIPBOARD"
 .La_targets: .asciz "TARGETS"
 .La_sel_prop: .asciz "RHUN_SELECTION"
+.La_incr: .asciz "INCR"
 .La_net_wm_state: .asciz "_NET_WM_STATE"
 .La_net_active: .asciz "_NET_ACTIVE_WINDOW"
 .La_max_h: .asciz "_NET_WM_STATE_MAXIMIZED_HORZ"
@@ -2016,8 +2702,6 @@ x_minimize:
 cursor_glyphs: .byte 68, 152, 60, 108, 116, 14, 12, 68
 
 .bss
-paste_wait: .long 0
-paste_seq: .long 0              # the sequence number of the paste's GetProperty, while paste_wait
 keymap_stale: .long 0
 keymap_busy: .long 0            # loading it, or replaying keys that waited for it
 pend_n: .long 0
@@ -2026,6 +2710,926 @@ pend: .zero PEND_MAX * 8        # keycode, state
 xkb_event: .long 0              # first event code of XKEYBOARD, 0 without it
 
 .data
+.globl x_wire_fd
+x_wire_fd:
 xfd: .long -1
 cur_shape: .long -1
 want_seq: .long -1
+
+.text
+# Sender helpers. Notification metadata lives independently of the clipboard source.
+# x_send_notify(slot, property-or-None)
+x_send_notify:
+    PROLOGUE 48
+    mov rbx, rdi
+    mov r12d, esi
+    mov rdi, rsp
+    xor esi, esi
+    mov edx, 48
+    call memset
+    mov byte ptr [rsp], 25
+    mov word ptr [rsp + 2], 11
+    mov eax, [rbx + XS_window]
+    mov [rsp + 4], eax
+    mov [rsp + 20], eax
+    mov byte ptr [rsp + 12], 31
+    mov eax, [rbx + XS_time]
+    mov [rsp + 16], eax
+    mov eax, [rbx + XS_selection]
+    mov [rsp + 24], eax
+    mov eax, [rbx + XS_target]
+    mov [rsp + 28], eax
+    mov [rsp + 32], r12d
+    mov rdi, rsp
+    mov esi, 44
+    call x_req
+    EPILOGUE
+
+x_send_mask_raw:
+    PROLOGUE 16
+    mov dword ptr [rsp], 0x00040002
+    mov [rsp + 4], edi
+    mov dword ptr [rsp + 8], 0x800
+    mov [rsp + 12], esi
+    mov rdi, rsp
+    mov esi, 16
+    call x_req
+    EPILOGUE
+
+# Dynamic native mask updates preserve active clipboard subscriptions and their new baseline.
+FN x_send_window_mask
+    lea r8, [rip + x_send_watchers]
+    mov ecx, XS_COUNT
+1:  cmp dword ptr [r8 + XW_state], 0
+    je 3f
+    cmp [r8 + XW_window], edi
+    jne 3f
+    cmp dword ptr [r8 + XW_state], XW_QUERY
+    jne 2f
+    mov dword ptr [r8 + XW_override], 1
+    mov [r8 + XW_override_mask], esi
+    jmp x_send_mask_raw
+2:  mov [r8 + XW_mask], esi
+    or esi, 0x420000
+    jmp x_send_mask_raw
+3:  add r8, XW_SIZE
+    dec ecx
+    jnz 1b
+    jmp x_send_mask_raw
+
+x_send_watch_release:
+    PROLOGUE
+    cmp edi, -1
+    je 3f
+    imul eax, edi, XW_SIZE
+    lea rbx, [rip + x_send_watchers]
+    add rbx, rax
+    dec dword ptr [rbx + XW_refs]
+    jnz 3f
+    mov r12d, [rbx + XW_window]
+    mov r13d, [rbx + XW_mask]
+    cmp dword ptr [rbx + XW_state], XW_READY
+    je 1f
+    xor r12d, r12d
+1:  mov rdi, rbx
+    xor esi, esi
+    mov edx, XW_SIZE
+    call memset
+    test r12d, r12d
+    jz 3f
+    mov edi, r12d
+    mov esi, r13d
+    call x_send_mask_raw
+3:  EPILOGUE
+
+# Retire slot and accounting before freeing bytes or restoring shared event masks.
+x_send_release:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rbx + XS_ptr]
+    mov r13d, [rbx + XS_watch]
+    mov rax, [rbx + XS_charge]
+    sub [rip + x_send_budget], rax
+    mov rdi, rbx
+    xor esi, esi
+    mov edx, XS_SIZE
+    call memset
+    mov rdi, r12
+    call mem_free
+    mov edi, r13d
+    call x_send_watch_release
+    EPILOGUE
+
+x_send_same_tuple:
+    xor eax, eax
+    mov ecx, [rdi + XS_window]
+    cmp ecx, [rsi + XS_window]
+    jne 1f
+    mov rcx, [rdi + XS_target]
+    cmp rcx, [rsi + XS_target]
+    jne 1f
+    mov ecx, [rdi + XS_time]
+    cmp ecx, [rsi + XS_time]
+    jne 1f
+    inc eax
+1:  ret
+
+# Earliest active decision not yet notified for a tuple, including pending confirmations.
+x_send_first:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+    mov r13, -1
+    lea r14, [rip + x_send_slots]
+    mov r15d, XS_COUNT
+1:  cmp dword ptr [r14 + XS_state], 0
+    je 2f
+    cmp dword ptr [r14 + XS_notified], 0
+    jne 2f
+    mov rax, [r14 + XS_order]
+    cmp rax, r13
+    jae 2f
+    mov rdi, rbx
+    mov rsi, r14
+    call x_send_same_tuple
+    test eax, eax
+    jz 2f
+    mov r12, r14
+    mov r13, [r14 + XS_order]
+2:  add r14, XS_SIZE
+    dec r15d
+    jnz 1b
+    mov rax, r12
+    EPILOGUE
+
+x_send_drain:
+    PROLOGUE
+.Lxsd_restart:
+    lea rbx, [rip + x_send_slots]
+    mov r12d, XS_COUNT
+.Lxsd_scan:
+    cmp dword ptr [rbx + XS_state], XS_READY
+    jne .Lxsd_next
+    mov rdi, rbx
+    call x_send_first
+    cmp rax, rbx
+    jne .Lxsd_next
+    # Cleanup can unblock this decision before the outer tick reaches its physical slot.
+    call time_ms
+    cmp rax, [rbx + XS_deadline]
+    jb .Lxsd_deadline_ok
+    mov dword ptr [rbx + XS_failed], 1
+.Lxsd_deadline_ok:
+    mov dword ptr [rbx + XS_notified], 1
+    mov esi, [rbx + XS_property]
+    cmp dword ptr [rbx + XS_failed], 0
+    je 1f
+    xor esi, esi
+1:  mov rdi, rbx
+    call x_send_notify
+    cmp dword ptr [rbx + XS_failed], 0
+    jne 2f
+    cmp dword ptr [rbx + XS_incremental], 0
+    je 2f
+    mov dword ptr [rbx + XS_state], XS_DELETE
+    mov rdi, rbx
+    call x_send_progress
+    jmp .Lxsd_restart
+2:  mov rdi, rbx
+    call x_send_release
+    jmp .Lxsd_restart
+.Lxsd_next:
+    add rbx, XS_SIZE
+    dec r12d
+    jnz .Lxsd_scan
+    EPILOGUE
+
+# A pre-notification failure retains its decision until arrival order permits notification.
+x_send_fail:
+    cmp dword ptr [rdi + XS_notified], 0
+    jne x_send_release
+    mov dword ptr [rdi + XS_failed], 1
+    mov dword ptr [rdi + XS_state], XS_READY
+    jmp x_send_drain
+
+# Overload/expiry cannot create an unbounded refusal queue or spin behind an earlier decision.
+# Force all unnotified decisions for this tuple to fail in order; notified streams stay intact.
+x_send_fail_tuple:
+    PROLOGUE XS_SIZE
+    mov rsi, rdi
+    mov rdi, rsp
+    mov edx, XS_SIZE
+    call memcpy
+1:  mov rdi, rsp
+    call x_send_first
+    test rax, rax
+    jz 2f
+    mov rdx, [rax + XS_order]
+    cmp rdx, [rsp + XS_order]
+    ja 2f
+    mov rbx, rax
+    mov dword ptr [rbx + XS_failed], 1
+    mov dword ptr [rbx + XS_state], XS_READY
+    # One ordered failure at a time avoids accidentally draining a later ready success.
+    mov dword ptr [rbx + XS_notified], 1
+    mov rdi, rbx
+    xor esi, esi
+    call x_send_notify
+    mov rdi, rbx
+    call x_send_release
+    jmp 1b
+2:  call x_send_drain
+    EPILOGUE
+
+x_send_progress:
+    push rbx
+    mov rbx, rdi
+    call time_ms
+    add rax, XR_MILLISECONDS
+    mov [rbx + XS_deadline], rax
+    pop rbx
+    ret
+
+# Admission captures counted bytes before any asynchronous protocol work.
+FN x_serve_selection
+    PROLOGUE 160
+    mov rbx, rdi
+    call x_send_tick
+    cmp byte ptr [rbx], 30
+    jne .Lxsa_done
+    mov eax, [rbx + 8]
+    cmp eax, [rip + win]
+    jne .Lxsa_done
+    mov eax, [rbx + 16]
+    cmp eax, [rip + a_clipboard]
+    jne .Lxsa_done
+    cmp dword ptr [rip + max_req], 11
+    jb .Lxsa_done
+    cmp dword ptr [rbx + 12], 0
+    je .Lxsa_done
+    mov rdi, rsp
+    xor esi, esi
+    mov edx, 160
+    call memset
+    mov dword ptr [rsp + XS_state], XS_ATTRIBUTES
+    mov dword ptr [rsp + XS_watch], -1
+    mov eax, [rbx + 12]
+    mov [rsp + XS_window], eax
+    mov eax, [rbx + 16]
+    mov [rsp + XS_selection], eax
+    mov eax, [rbx + 20]
+    mov [rsp + XS_target], eax
+    mov edx, [rbx + 24]
+    test edx, edx
+    cmovz edx, eax
+    mov [rsp + XS_property], edx
+    mov eax, [rbx + 4]
+    mov [rsp + XS_time], eax
+    inc qword ptr [rip + x_send_order]
+    mov rax, [rip + x_send_order]
+    mov [rsp + XS_order], rax
+    xor r12d, r12d
+    xor r14d, r14d
+    lea r13, [rip + x_send_slots]
+    mov r15d, XS_COUNT
+.Lxsa_slots:
+    cmp dword ptr [r13 + XS_state], 0
+    jne 1f
+    test r12, r12
+    cmovz r12, r13
+    jmp 2f
+1:  mov eax, [r13 + XS_window]
+    cmp eax, [rsp + XS_window]
+    jne 2f
+    mov eax, [r13 + XS_property]
+    cmp eax, [rsp + XS_property]
+    jne 2f
+    mov r14d, 1
+2:  add r13, XS_SIZE
+    dec r15d
+    jnz .Lxsa_slots
+    test r12, r12
+    jz .Lxsa_pressure
+    mov rdi, r12
+    mov rsi, rsp
+    mov edx, XS_SIZE
+    call memcpy
+    mov rdi, r12
+    call x_send_progress
+    test r14d, r14d
+    jnz .Lxsa_fail
+    cmp dword ptr [rip + own_clip], 0
+    je .Lxsa_fail
+    mov eax, [rip + max_req]
+    cmp eax, 65535
+    jbe 3f
+    mov eax, 65535
+3:  shl rax, 2
+    sub rax, 24
+    cmp rax, XR_PAGE
+    jbe 4f
+    mov eax, XR_PAGE
+4:  mov [r12 + XS_chunk], rax
+    mov eax, [r12 + XS_target]
+    cmp eax, [rip + a_targets]
+    je .Lxsa_targets
+    cmp eax, [rip + a_clip_native]
+    je .Lxsa_native
+    cmp eax, [rip + a_utf8]
+    je .Lxsa_utf8
+    cmp eax, 31
+    jne .Lxsa_fail
+    mov dword ptr [r12 + XS_type], 31
+    jmp .Lxsa_text_charge
+.Lxsa_utf8:
+    mov [r12 + XS_type], eax
+.Lxsa_text_charge:
+    mov r13, [rip + xclip + SB_len]
+    cmp r13, XR_LIMIT
+    ja .Lxsa_fail
+    mov dword ptr [r12 + XS_format], 8
+    mov rax, [rip + x_send_budget]
+    add rax, r13
+    cmp rax, XS_BUDGET
+    ja .Lxsa_fail
+    mov [rip + x_send_budget], rax
+    mov [r12 + XS_charge], r13
+    mov rdi, [rip + xclip + SB_ptr]
+    mov rsi, r13
+    cmp dword ptr [r12 + XS_type], 31
+    je .Lxsa_latin1
+    test rdi, rdi
+    jnz 5f
+    test rsi, rsi
+    jnz .Lxsa_fail
+5:  call snippet_utf8_valid
+    test eax, eax
+    jz .Lxsa_fail
+    mov rdi, [rip + xclip + SB_ptr]
+    mov rsi, r13
+    call mem_dup
+    mov rdx, r13
+    jmp .Lxsa_snapshot
+.Lxsa_latin1:
+    call x_string_convert
+    test rax, rax
+    jz .Lxsa_fail
+    jmp .Lxsa_snapshot
+.Lxsa_native:
+    mov [r12 + XS_type], eax
+    mov dword ptr [r12 + XS_format], 8
+    mov r14, [rip + x_clip_native]
+    mov r13, [rip + x_clip_native + 8]
+    test r14, r14
+    jz .Lxsa_fail
+    cmp r13, CLW_MAX
+    ja .Lxsa_fail
+    mov rax, [rip + x_send_budget]
+    add rax, r13
+    cmp rax, XS_BUDGET
+    ja .Lxsa_fail
+    mov [rip + x_send_budget], rax
+    mov [r12 + XS_charge], r13
+    mov rdi, r14
+    mov rsi, r13
+    lea rdx, [rsp + 128]
+    call clip_wire_decode
+    test eax, eax
+    jz .Lxsa_fail
+    lea rdi, [r13 + 1]
+    call mem_alloc_try
+    test rax, rax
+    jz .Lxsa_fail
+    mov r15, rax
+    mov rdi, rax
+    mov rsi, r14
+    mov rdx, r13
+    call memcpy
+    mov rax, r15
+    mov rdx, r13
+    jmp .Lxsa_snapshot
+.Lxsa_targets:
+    mov dword ptr [r12 + XS_type], 4
+    mov dword ptr [r12 + XS_format], 32
+    mov eax, [rip + a_targets]
+    mov [rsp + 128], eax
+    mov eax, [rip + a_utf8]
+    mov [rsp + 132], eax
+    mov rdi, [rip + xclip + SB_ptr]
+    mov rsi, [rip + xclip + SB_len]
+    call x_string_supported
+    mov r14d, eax
+    mov ebx, 8
+    cmp qword ptr [rip + x_clip_native], 0
+    je 6f
+    mov eax, [rip + a_clip_native]
+    test eax, eax
+    jz 6f
+    mov [rsp + 136], eax
+    add ebx, 4
+6:  test r14d, r14d
+    jz 7f
+    mov dword ptr [rsp + rbx + 128], 31
+    add ebx, 4
+7:  mov r13, rbx
+    mov rax, [rip + x_send_budget]
+    add rax, r13
+    cmp rax, XS_BUDGET
+    ja .Lxsa_fail
+    mov [rip + x_send_budget], rax
+    mov [r12 + XS_charge], r13
+    lea rdi, [rsp + 128]
+    mov rsi, r13
+    call mem_dup
+    mov rdx, r13
+.Lxsa_snapshot:
+    mov [r12 + XS_ptr], rax
+    mov [r12 + XS_len], rdx
+    cmp rdx, [r12 + XS_chunk]
+    ja .Lxsa_incremental
+    mov rdi, r12
+    call x_send_initial
+    jmp .Lxsa_done
+.Lxsa_incremental:
+    mov dword ptr [r12 + XS_incremental], 1
+    mov rdi, r12
+    call x_send_watch_acquire
+    jmp .Lxsa_done
+.Lxsa_fail:
+    mov rdi, r12
+    call x_send_fail
+    jmp .Lxsa_done
+.Lxsa_pressure:
+    mov rdi, rsp
+    call x_send_fail_tuple
+    mov rdi, rsp
+    xor esi, esi
+    call x_send_notify
+.Lxsa_done:
+    EPILOGUE
+
+# GetInputFocus is an asynchronous, window-independent server-order fence.
+x_send_fence:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov dword ptr [rsp], 0x0001002b
+    mov rdi, rsp
+    mov esi, 4
+    call x_req
+    movzx eax, word ptr [rip + seq]
+    mov [rbx + XS_fence_seq], eax
+    EPILOGUE
+
+x_send_initial:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov edi, [rbx + XS_window]
+    mov esi, [rbx + XS_property]
+    mov edx, [rbx + XS_type]
+    mov ecx, [rbx + XS_format]
+    mov r8, [rbx + XS_ptr]
+    mov r9, [rbx + XS_len]
+    cmp dword ptr [rbx + XS_incremental], 0
+    je 1f
+    mov eax, r9d
+    mov [rsp], eax
+    mov edx, [rip + a_incr]
+    mov ecx, 32
+    mov r8, rsp
+    mov r9d, 1
+    jmp 2f
+1:  cmp ecx, 32
+    jne 2f
+    shr r9, 2
+2:  call x_change_prop
+    test eax, eax
+    jz 3f
+    movzx eax, word ptr [rip + seq]
+    mov [rbx + XS_property_seq], eax
+    mov dword ptr [rbx + XS_state], XS_INITIAL
+    mov rdi, rbx
+    call x_send_fence
+    jmp 4f
+3:  mov rdi, rbx
+    call x_send_fail
+4:  EPILOGUE
+
+# Called only after acknowledgement of the prior property and confirmation of its storage.
+x_send_next:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rbx + XS_len]
+    sub r12, [rbx + XS_offset]
+    cmp r12, [rbx + XS_chunk]
+    jbe 1f
+    mov r12, [rbx + XS_chunk]
+1:  mov edi, [rbx + XS_window]
+    mov esi, [rbx + XS_property]
+    mov edx, [rbx + XS_type]
+    mov ecx, [rbx + XS_format]
+    mov r8, [rbx + XS_ptr]
+    add r8, [rbx + XS_offset]
+    mov r9, r12
+    cmp ecx, 32
+    jne 2f
+    shr r9, 2
+2:  call x_property_request
+    test rax, rax
+    jz 5f
+    mov r13, rax
+    mov byte ptr [rax + 1], 2  # Append, property was deleted by requestor.
+    mov rdi, rax
+    mov rsi, rdx
+    call x_req
+    mov rdi, r13
+    call mem_free
+    movzx eax, word ptr [rip + seq]
+    mov [rbx + XS_property_seq], eax
+    add [rbx + XS_offset], r12
+    mov dword ptr [rbx + XS_state], XS_CHUNK
+    test r12, r12
+    jnz 3f
+    mov dword ptr [rbx + XS_state], XS_FINAL
+3:  mov dword ptr [rbx + XS_early_delete], 0
+    mov rdi, rbx
+    call x_send_fence
+    jmp 6f
+5:  mov rdi, rbx
+    call x_send_fail
+6:  EPILOGUE
+
+x_send_watch_acquire:
+    PROLOGUE 16
+    mov rbx, rdi
+    xor r12d, r12d
+    mov r13d, -1
+    lea r14, [rip + x_send_watchers]
+1:  cmp dword ptr [r14 + XW_state], 0
+    jne 2f
+    cmp r13d, -1
+    cmove r13d, r12d
+    jmp 3f
+2:  mov eax, [rbx + XS_window]
+    cmp eax, [r14 + XW_window]
+    je .Lxswa_found
+3:  add r14, XW_SIZE
+    inc r12d
+    cmp r12d, XS_COUNT
+    jb 1b
+    cmp r13d, -1
+    je .Lxswa_fail
+    mov r12d, r13d
+    imul eax, r12d, XW_SIZE
+    lea r14, [rip + x_send_watchers]
+    add r14, rax
+    mov eax, [rbx + XS_window]
+    mov [r14 + XW_window], eax
+    mov dword ptr [r14 + XW_state], XW_QUERY
+    mov dword ptr [r14 + XW_refs], 1
+    mov dword ptr [r14 + XW_select_seq], -1
+    mov [rbx + XS_watch], r12d
+    mov dword ptr [rsp], 0x00020003
+    mov [rsp + 4], eax
+    mov rdi, rsp
+    mov esi, 8
+    call x_req
+    movzx eax, word ptr [rip + seq]
+    mov [r14 + XW_attributes_seq], eax
+    jmp .Lxswa_done
+.Lxswa_found:
+    cmp dword ptr [r14 + XW_failed], 0
+    jne .Lxswa_fail
+    inc dword ptr [r14 + XW_refs]
+    mov [rbx + XS_watch], r12d
+    cmp dword ptr [r14 + XW_state], XW_READY
+    jne .Lxswa_done
+    mov rdi, rbx
+    call x_send_initial
+    jmp .Lxswa_done
+.Lxswa_fail:
+    mov rdi, rbx
+    call x_send_fail
+.Lxswa_done:
+    EPILOGUE
+
+# Fail all dependants. Failed watches remain reserved until their ordered decisions retire.
+x_send_watch_fail:
+    PROLOGUE
+    mov ebx, edi
+    imul eax, ebx, XW_SIZE
+    lea rcx, [rip + x_send_watchers]
+    mov dword ptr [rcx + rax + XW_failed], 1
+    mov dword ptr [rcx + rax + XW_select_seq], -1
+    lea r12, [rip + x_send_slots]
+    mov r13d, XS_COUNT
+1:  cmp dword ptr [r12 + XS_state], 0
+    je 2f
+    cmp [r12 + XS_watch], ebx
+    jne 2f
+    mov rdi, r12
+    cmp dword ptr [r12 + XS_notified], 0
+    jne 3f
+    mov dword ptr [r12 + XS_failed], 1
+    mov dword ptr [r12 + XS_state], XS_READY
+    jmp 2f
+3:  call x_send_release
+2:  add r12, XS_SIZE
+    dec r13d
+    jnz 1b
+    call x_send_drain
+    EPILOGUE
+
+FN x_send_reply
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    call x_send_tick
+    cmp r13, 4
+    jb .Lxsr_other
+    movzx r14d, word ptr [r12 + 2]
+    lea rbx, [rip + x_send_watchers]
+    xor r15d, r15d
+.Lxsr_watch:
+    cmp dword ptr [rbx + XW_state], XW_QUERY
+    jne .Lxsr_watch_next
+    cmp dword ptr [rbx + XW_failed], 0
+    jne .Lxsr_watch_next
+    cmp [rbx + XW_attributes_seq], r14d
+    je .Lxsr_attributes
+.Lxsr_watch_next:
+    add rbx, XW_SIZE
+    inc r15d
+    cmp r15d, XS_COUNT
+    jb .Lxsr_watch
+    lea rbx, [rip + x_send_slots]
+    mov r15d, XS_COUNT
+.Lxsr_fences:
+    mov eax, [rbx + XS_state]
+    cmp eax, XS_INITIAL
+    je 1f
+    cmp eax, XS_CHUNK
+    je 1f
+    cmp eax, XS_FINAL
+    jne .Lxsr_fence_next
+1:  cmp [rbx + XS_fence_seq], r14d
+    je .Lxsr_fence
+.Lxsr_fence_next:
+    add rbx, XS_SIZE
+    dec r15d
+    jnz .Lxsr_fences
+.Lxsr_other:
+    xor eax, eax
+    EPILOGUE
+.Lxsr_attributes:
+    cmp r13, 44
+    jne .Lxsr_attributes_bad
+    cmp byte ptr [r12], 1
+    jne .Lxsr_attributes_bad
+    cmp dword ptr [r12 + 4], 3
+    jne .Lxsr_attributes_bad
+    mov esi, [r12 + 36]
+    cmp dword ptr [rbx + XW_override], 0
+    je 2f
+    mov esi, [rbx + XW_override_mask]
+2:  mov [rbx + XW_mask], esi
+    mov dword ptr [rbx + XW_state], XW_READY
+    or esi, 0x420000
+    mov edi, [rbx + XW_window]
+    call x_send_mask_raw
+    movzx eax, word ptr [rip + seq]
+    mov [rbx + XW_select_seq], eax
+    lea r14, [rip + x_send_slots]
+    mov r13d, XS_COUNT
+.Lxsr_start_waiting:
+    cmp dword ptr [r14 + XS_state], XS_ATTRIBUTES
+    jne 3f
+    cmp [r14 + XS_watch], r15d
+    jne 3f
+    mov rdi, r14
+    call x_send_progress
+    mov rdi, r14
+    call x_send_initial
+3:  add r14, XS_SIZE
+    dec r13d
+    jnz .Lxsr_start_waiting
+    jmp .Lxsr_claimed
+.Lxsr_attributes_bad:
+    mov edi, r15d
+    call x_send_watch_fail
+    jmp .Lxsr_claimed
+.Lxsr_fence:
+    cmp r13, 32
+    jne .Lxsr_fence_bad
+    cmp byte ptr [r12], 1
+    jne .Lxsr_fence_bad
+    cmp dword ptr [r12 + 4], 0
+    jne .Lxsr_fence_bad
+    mov rdi, rbx
+    call x_send_progress
+    cmp dword ptr [rbx + XS_failed], 0
+    jne .Lxsr_fence_bad
+    cmp dword ptr [rbx + XS_state], XS_INITIAL
+    je .Lxsr_initial_ready
+    cmp dword ptr [rbx + XS_early_delete], 0
+    jne .Lxsr_early
+    mov eax, XS_DELETE
+    cmp dword ptr [rbx + XS_state], XS_FINAL
+    jne 4f
+    mov eax, XS_FINAL_DELETE
+4:  mov [rbx + XS_state], eax
+    jmp .Lxsr_claimed
+.Lxsr_early:
+    mov rdi, rbx
+    cmp dword ptr [rbx + XS_state], XS_FINAL
+    je 5f
+    call x_send_next
+    jmp .Lxsr_claimed
+5:  call x_send_release
+    jmp .Lxsr_claimed
+.Lxsr_initial_ready:
+    mov eax, [rbx + XS_watch]
+    cmp eax, -1
+    je 6f
+    imul eax, eax, XW_SIZE
+    lea rcx, [rip + x_send_watchers]
+    mov dword ptr [rcx + rax + XW_select_seq], -1
+6:  mov dword ptr [rbx + XS_state], XS_READY
+    call x_send_drain
+    jmp .Lxsr_claimed
+.Lxsr_fence_bad:
+    mov rdi, rbx
+    call x_send_fail
+.Lxsr_claimed:
+    mov eax, 1
+    EPILOGUE
+
+FN x_send_error
+    PROLOGUE
+    movzx r12d, word ptr [rdi + 2]
+    lea rbx, [rip + x_send_watchers]
+    xor r13d, r13d
+1:  cmp dword ptr [rbx + XW_state], XW_QUERY
+    jne 2f
+    cmp [rbx + XW_attributes_seq], r12d
+    je 4f
+    jmp 3f
+2:  cmp dword ptr [rbx + XW_state], XW_READY
+    jne 3f
+    cmp [rbx + XW_select_seq], r12d
+    je 4f
+3:  add rbx, XW_SIZE
+    inc r13d
+    cmp r13d, XS_COUNT
+    jb 1b
+    lea rbx, [rip + x_send_slots]
+    mov r13d, XS_COUNT
+.Lxs_error_slots:
+    mov eax, [rbx + XS_state]
+    cmp eax, XS_INITIAL
+    je 5f
+    cmp eax, XS_CHUNK
+    je 5f
+    cmp eax, XS_FINAL
+    jne 7f
+5:  cmp [rbx + XS_fence_seq], r12d
+    jne 6f
+    mov rdi, rbx
+    call x_send_fail
+    jmp .Lxs_error_done
+6:  cmp [rbx + XS_property_seq], r12d
+    jne 7f
+    mov dword ptr [rbx + XS_failed], 1
+    jmp .Lxs_error_done
+7:  add rbx, XS_SIZE
+    dec r13d
+    jnz .Lxs_error_slots
+    jmp .Lxs_error_done
+4:  mov edi, r13d
+    call x_send_watch_fail
+.Lxs_error_done:
+    EPILOGUE
+
+FN x_send_property
+    PROLOGUE
+    mov rbx, rdi
+    call x_send_tick
+    cmp byte ptr [rbx], 28
+    jne .Lxs_prop_done
+    cmp byte ptr [rbx + 16], 1
+    jne .Lxs_prop_done
+    lea r12, [rip + x_send_slots]
+    mov r13d, XS_COUNT
+1:  cmp dword ptr [r12 + XS_state], 0
+    je 4f
+    cmp dword ptr [r12 + XS_notified], 0
+    je 4f
+    mov eax, [rbx + 4]
+    cmp eax, [r12 + XS_window]
+    jne 4f
+    mov eax, [rbx + 8]
+    cmp eax, [r12 + XS_property]
+    jne 4f
+    mov eax, [r12 + XS_state]
+    cmp eax, XS_DELETE
+    je 2f
+    cmp eax, XS_FINAL_DELETE
+    je 3f
+    cmp eax, XS_CHUNK
+    je 5f
+    cmp eax, XS_FINAL
+    jne .Lxs_prop_done
+5:  cmp dword ptr [r12 + XS_early_delete], 0
+    jne .Lxs_prop_done
+    mov dword ptr [r12 + XS_early_delete], 1
+    mov rdi, r12
+    call x_send_progress
+    jmp .Lxs_prop_done
+2:  mov rdi, r12
+    call x_send_progress
+    mov rdi, r12
+    call x_send_next
+    jmp .Lxs_prop_done
+3:  mov rdi, r12
+    call x_send_release
+    jmp .Lxs_prop_done
+4:  add r12, XS_SIZE
+    dec r13d
+    jnz 1b
+.Lxs_prop_done:
+    EPILOGUE
+
+FN x_send_destroy
+    PROLOGUE
+    mov rbx, rdi
+    cmp byte ptr [rbx], 17
+    jne .Lxs_destroy_done
+    mov r12d, [rbx + 8]
+    lea rbx, [rip + x_send_watchers]
+    mov r13d, XS_COUNT
+1:  cmp [rbx + XW_window], r12d
+    jne 2f
+    mov dword ptr [rbx + XW_window], 0
+2:  add rbx, XW_SIZE
+    dec r13d
+    jnz 1b
+    lea rbx, [rip + x_send_slots]
+    mov r13d, XS_COUNT
+3:  cmp dword ptr [rbx + XS_state], 0
+    je 4f
+    cmp [rbx + XS_window], r12d
+    jne 4f
+    mov rdi, rbx
+    call x_send_release
+4:  add rbx, XS_SIZE
+    dec r13d
+    jnz 3b
+    call x_send_drain
+.Lxs_destroy_done:
+    EPILOGUE
+
+FN x_send_tick
+    PROLOGUE
+    call time_ms
+    mov r12, rax
+    lea rbx, [rip + x_send_slots]
+    mov r13d, XS_COUNT
+1:  cmp dword ptr [rbx + XS_state], 0
+    je 3f
+    cmp [rbx + XS_deadline], r12
+    ja 3f
+    mov rdi, rbx
+    cmp dword ptr [rbx + XS_notified], 0
+    je 2f
+    call x_send_release
+    jmp 3f
+2:  call x_send_fail_tuple
+3:  add rbx, XS_SIZE
+    dec r13d
+    jnz 1b
+    EPILOGUE
+
+FN x_send_timeout
+    PROLOGUE
+    call time_ms
+    mov r12, rax
+    mov r13d, -1
+    lea rbx, [rip + x_send_slots]
+    mov r14d, XS_COUNT
+1:  cmp dword ptr [rbx + XS_state], 0
+    je 3f
+    mov rax, [rbx + XS_deadline]
+    cmp rax, r12
+    jbe 4f
+    sub rax, r12
+    cmp rax, XR_MILLISECONDS
+    ja 4f
+    cmp eax, r13d
+    jae 3f
+    mov r13d, eax
+3:  add rbx, XS_SIZE
+    dec r14d
+    jnz 1b
+    mov eax, r13d
+    EPILOGUE
+4:  xor eax, eax
+    EPILOGUE

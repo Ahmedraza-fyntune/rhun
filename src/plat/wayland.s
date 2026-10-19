@@ -1,9 +1,12 @@
 # native wayland client: wire protocol over a unix socket, no libwayland
 .include "rhun.inc"
+.include "plat/wayland.inc"
 
 .equ OUTSZ, 65536
 .equ INSZ, 65536
-.equ MAXFDQ, 16
+.equ MAXFDQ, WCF_COUNT
+.equ WCL_LIMIT, 67108864
+.equ WCL_TIMEOUT, 30000
 
 # wl_shm format
 .equ WL_SHM_XRGB8888, 1
@@ -11,15 +14,23 @@
 .bss
 .p2align 4
 out_buf: .zero OUTSZ
+.globl wl_wire_input, wl_wire_input_len, wl_wire_fdqueue_len, wl_wire_next_id
+wl_wire_input:
 in_buf: .zero INSZ
+wl_paste_wire_output_len:
 out_len: .long 0
+wl_wire_input_len:
 in_len: .long 0
 msg_start: .long 0
+.globl wl_paste_wire_fd, wl_paste_wire_output_len
+wl_paste_wire_fd:
 wl_fd: .long 0
+wl_wire_next_id:
 next_id: .long 0
 free_ids: .zero 4 * 256
 free_n: .long 0
 fdq: .zero 4 * MAXFDQ
+wl_wire_fdqueue_len:
 fdq_n: .long 0
 .p2align 3
 cmsg_buf: .zero 256
@@ -32,7 +43,10 @@ id_registry: .long 0
 id_compositor: .long 0
 id_shm: .long 0
 id_wm_base: .long 0
+wl_wire_seat:
 id_seat: .long 0
+.globl wl_send_manager
+wl_send_manager:
 id_ddm: .long 0
 id_deco_mgr: .long 0
 id_cursor_mgr: .long 0
@@ -42,6 +56,7 @@ id_activation: .long 0
 activation_sent: .long 0
 id_sync: .long 0
 sync_done: .long 0
+wl_wire_seat_version:
 seat_ver: .long 0
 
 id_surface: .long 0
@@ -51,8 +66,12 @@ id_deco: .long 0
 id_viewport: .long 0
 id_fscale: .long 0
 id_pointer: .long 0
+.globl wl_wire_keyboard, wl_wire_seat, wl_wire_seat_version
+wl_wire_keyboard:
 id_keyboard: .long 0
 id_cursor_dev: .long 0
+.globl wl_paste_device
+wl_paste_device:
 id_ddev: .long 0
 id_frame_cb: .long 0
 id_pool: .long 0
@@ -75,6 +94,9 @@ scale120: .long 0          # fractional scale * 120, 0 if unused
 g_win_states: .long 0      # bit0 maximized, bit1 fullscreen, bit2 activated, bit3 tiled
 
 last_serial: .long 0
+.globl wl_send_serial_known
+wl_send_serial_known:
+last_serial_known: .long 0
 enter_serial: .long 0
 cur_shape: .long 0
 ptr_x: .long 0             # fixed 24.8 logical
@@ -90,14 +112,45 @@ rep_key: .long 0
 rep_next: .quad 0
 
 # clipboard
+.globl wl_paste_offer_new, wl_paste_offer_new_mime, wl_paste_offer, wl_paste_mime
+wl_paste_offer_new:
 offer_new: .long 0
+wl_paste_offer_new_mime:
 offer_new_text: .long 0
+.globl wl_paste_offer_new_native, wl_paste_offer_native
+wl_paste_offer_new_native: .long 0
+wl_paste_offer:
 sel_offer: .long 0
+wl_paste_mime:
 sel_offer_text: .long 0
+wl_paste_offer_native: .long 0
+.p2align 3
+.globl wl_paste_offer_generation
+wl_paste_offer_generation: .quad 0
+.globl wl_paste_source_id
+wl_paste_source_id:
 id_source: .long 0
 .p2align 3
+.globl wl_paste_source_buffer, wl_paste_buffer, wl_paste_deadline, wl_paste_generation
+wl_paste_source_buffer:
 clip_sb: .zero SB_SIZE
+wl_paste_buffer:
 paste_sb: .zero SB_SIZE
+wl_paste_deadline: .quad 0
+wl_paste_generation: .quad 0
+.globl wl_paste_token
+wl_paste_token: .quad 0
+.globl wl_paste_format, wl_paste_attempt_offer, wl_paste_attempt_generation, wl_paste_plain
+wl_paste_format: .long 0
+wl_paste_attempt_offer: .long 0
+wl_paste_attempt_generation: .quad 0
+wl_paste_plain: .long 0
+.globl wl_send_sources, wl_send_jobs, wl_send_charge
+wl_send_sources: .zero WCS_SIZE * WCS_COUNT
+wl_send_jobs: .zero WCJ_SIZE * WCJ_COUNT
+wl_send_charge: .quad 0
+wl_send_generation: .quad 0
+retired_keyboards: .zero 4 * WCK_COUNT
 
 .text
 
@@ -257,6 +310,143 @@ FN wl_flush
 
 # ---------------- receiving ----------------
 
+FN wl_keyboard_is_retired
+    lea rax, [rip + retired_keyboards]
+    mov ecx, WCK_COUNT
+1:  cmp [rax], edi
+    je 3f
+    add rax, 4
+    dec ecx
+    jnz 1b
+    xor eax, eax
+    ret
+3:  test edi, edi
+    setnz al
+    movzx eax, al
+    ret
+
+FN wl_keyboard_retire
+    lea rax, [rip + retired_keyboards]
+    mov ecx, WCK_COUNT
+1:  cmp dword ptr [rax], 0
+    je 2f
+    add rax, 4
+    dec ecx
+    jnz 1b
+    lea rdi, [rip + .Ldisconnected]
+    jmp die
+2:  mov [rax], edi
+    ret
+
+FN wl_keyboard_deleted
+    lea rax, [rip + retired_keyboards]
+    mov ecx, WCK_COUNT
+1:  cmp [rax], edi
+    je 2f
+    add rax, 4
+    dec ecx
+    jnz 1b
+    ret
+2:  mov dword ptr [rax], 0
+    ret
+
+# A descriptor may arrive later than its complete message bytes.
+FN wl_message_needs_fd
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    test esi, esi
+    jnz 1f
+    cmp edi, [rip + id_keyboard]
+    je 2f
+    call wl_keyboard_is_retired
+    test eax, eax
+    jnz 2f
+1:  xor eax, eax
+    cmp r12d, 1
+    jne 3f
+    mov edi, ebx
+    call wl_source_find
+    test rax, rax
+    setnz al
+    movzx eax, al
+    jmp 3f
+2:  mov eax, 1
+3:  EPILOGUE
+
+# Collect only bounded SCM_RIGHTS and close all owned descriptors if order is lost.
+FN wl_collect_fds
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r15d, edx
+    and r15d, 8                  # MSG_CTRUNC
+.Lwcf_next:
+    test r13, r13
+    jz .Lwcf_done
+    cmp r13, 16
+    jb .Lwcf_tail
+    mov r14, [r12]
+    cmp r14, 16
+    jb .Lwcf_bad
+    cmp r14, r13
+    ja .Lwcf_bad
+    cmp dword ptr [r12 + 8], SOL_SOCKET
+    jne .Lwcf_advance
+    cmp dword ptr [r12 + 12], SCM_RIGHTS
+    jne .Lwcf_advance
+    mov rax, r14
+    sub rax, 16
+    test eax, 3
+    jz 1f
+    mov r15d, 1
+1:  mov ebx, 16
+.Lwcf_fd:
+    lea rax, [rbx + 4]
+    cmp rax, r14
+    ja .Lwcf_advance
+    mov edi, [r12 + rbx]
+    mov eax, [rip + fdq_n]
+    cmp eax, MAXFDQ
+    jae .Lwcf_overflow
+    lea rdx, [rip + fdq]
+    mov [rdx + rax*4], edi
+    inc dword ptr [rip + fdq_n]
+    jmp .Lwcf_fd_next
+.Lwcf_overflow:
+    mov r15d, 1
+    SYS SYS_close
+.Lwcf_fd_next:
+    add rbx, 4
+    jmp .Lwcf_fd
+.Lwcf_advance:
+    add r14, 7
+    and r14, -8
+    cmp r14, r13
+    jae .Lwcf_done
+    add r12, r14
+    sub r13, r14
+    jmp .Lwcf_next
+.Lwcf_tail:
+    cmp r13, 7
+    jbe .Lwcf_done
+.Lwcf_bad:
+    mov r15d, 1
+.Lwcf_done:
+    test r15d, r15d
+    jz .Lwcf_success
+1:  call fdq_pop
+    test eax, eax
+    js 2f
+    mov edi, eax
+    SYS SYS_close
+    jmp 1b
+2:  xor eax, eax
+    EPILOGUE
+.Lwcf_success:
+    mov eax, 1
+    EPILOGUE
+
 # wl_read(): recvmsg into in_buf, collect fds. returns bytes read (<=0 on error/eof)
 wl_read:
     push rbx
@@ -266,6 +456,7 @@ wl_read:
     mov [rip + iov], rax
     mov eax, INSZ
     sub eax, ecx
+    jz .Lwr_capacity
     mov [rip + iov + 8], rax
     lea rdi, [rip + msghdr]
     xor eax, eax
@@ -285,34 +476,14 @@ wl_read:
     test rax, rax
     jle 9f
     add [rip + in_len], eax
-    # walk control messages
-    mov rcx, [rip + msghdr + 40]   # controllen
-    lea rsi, [rip + cmsg_buf]
-1:  cmp rcx, 16
-    jb 9f
-    mov rdx, [rsi]                 # cmsg_len
-    cmp rdx, 16
-    jb 9f
-    cmp dword ptr [rsi + 12], SCM_RIGHTS
-    jne 3f
-    lea r8, [rsi + 16]
-    lea r9, [rsi + rdx]
-2:  cmp r8, r9
-    jae 3f
-    mov eax, [rip + fdq_n]
-    cmp eax, MAXFDQ
-    jae 21f
-    mov r10d, [r8]
-    lea r11, [rip + fdq]
-    mov [r11 + rax*4], r10d
-    inc dword ptr [rip + fdq_n]
-21: add r8, 4
-    jmp 2b
-3:  add rdx, 7
-    and rdx, -8
-    add rsi, rdx
-    sub rcx, rdx
-    ja 1b
+    lea rdi, [rip + cmsg_buf]
+    mov rsi, [rip + msghdr + 40]
+    mov edx, [rip + msghdr + 48]
+    call wl_collect_fds
+    test eax, eax
+    jnz 9f
+.Lwr_capacity:
+    mov rbx, -71                # EPROTO, the stream cannot safely continue
 9:  mov rax, rbx
     pop rbx
     ret
@@ -335,7 +506,7 @@ fdq_pop:
     ret
 
 # wl_on_readable(fd, revents, ctx)
-wl_on_readable:
+FN wl_on_readable
     push rbx
     push r12
     push r13
@@ -344,10 +515,16 @@ wl_on_readable:
     call wl_read
     test rax, rax
     jz 7f
-    js 9f
+    jns 1f
+    cmp rax, -EAGAIN
+    je 9f
+    cmp rax, -EINTR
+    je 9f
+    jmp 7f
     # dispatch whole messages
-    xor ebx, ebx                   # offset
-1:  mov eax, [rip + in_len]
+1:  xor ebx, ebx                   # offset
+.Lwor_message:
+    mov eax, [rip + in_len]
     sub eax, ebx
     cmp eax, 8
     jb 5f
@@ -357,15 +534,26 @@ wl_on_readable:
     shr edx, 16                    # size
     cmp edx, 8
     jb 7f
+    test edx, 3
+    jnz 7f
     cmp eax, edx
     jb 5f
     mov r13d, edx
+    cmp dword ptr [rip + fdq_n], 0
+    jne .Lwor_dispatch
+    mov edi, [r12]
+    movzx esi, word ptr [r12 + 4]
+    call wl_message_needs_fd
+    test eax, eax
+    jnz 5f
+.Lwor_dispatch:
     mov edi, [r12]                 # object
     movzx esi, word ptr [r12 + 4]  # opcode
     lea rdx, [r12 + 8]             # args
+    lea ecx, [r13 - 8]
     call wl_dispatch
     add ebx, r13d
-    jmp 1b
+    jmp .Lwor_message
 5:  # keep the partial tail
     mov ecx, [rip + in_len]
     sub ecx, ebx
@@ -413,14 +601,13 @@ wl_roundtrip:
 
 # ---------------- dispatch ----------------
 
-# wl_dispatch(obj, opcode, args)
-wl_dispatch:
-    push rbx
-    push r12
-    push r13
+# wl_dispatch(obj, opcode, args, argument_length)
+FN wl_dispatch
+    PROLOGUE
     mov ebx, edi
     mov r12d, esi
     mov r13, rdx
+    mov r14, rcx
     cmp ebx, 1
     je .Ld_display
     cmp ebx, [rip + id_registry]
@@ -451,8 +638,14 @@ wl_dispatch:
     je .Ld_surface
     cmp ebx, [rip + id_ddev]
     je .Ld_ddev
-    cmp ebx, [rip + id_source]
-    je .Ld_source
+    mov edi, ebx
+    call wl_source_find
+    test rax, rax
+    jnz .Ld_source
+    mov edi, ebx
+    call wl_keyboard_is_retired
+    test eax, eax
+    jnz .Ld_old_keyboard
     cmp ebx, [rip + offer_new]
     je .Ld_offer
     cmp ebx, [rip + id_deco]
@@ -470,6 +663,14 @@ wl_dispatch:
     mov edi, 1
     call sys_exit
 1:  # delete_id
+    cmp r12d, 1
+    jne .Ld_ret
+    cmp r14, 4
+    jne .Ld_ret
+    mov edi, [r13]
+    call wl_source_deleted
+    mov edi, [r13]
+    call wl_keyboard_deleted
     mov eax, [r13]
     mov ecx, [rip + free_n]
     cmp ecx, 256
@@ -615,6 +816,8 @@ wl_dispatch:
     jmp .Ld_ret
 3:  cmp dword ptr [rip + id_keyboard], 0
     je .Ld_ret
+    mov edi, [rip + id_keyboard]
+    call wl_keyboard_retire
     cmp dword ptr [rip + seat_ver], 3
     jb 31f
     MSG [rip + id_keyboard], 0    # release
@@ -652,6 +855,13 @@ wl_dispatch:
     call on_pointer
     jmp .Ld_ret
 .Ld_keyboard:
+    test r12d, r12d
+    jnz 1f
+    cmp r14, 8
+    jne .Ld_old_keyboard
+    cmp dword ptr [r13], 1       # XKB_V1 only; discard other keymap descriptors
+    jne .Ld_old_keyboard
+1:
     mov rdi, r12
     mov rsi, r13
     call on_keyboard
@@ -660,13 +870,18 @@ wl_dispatch:
 .Ld_ddev:
     test r12d, r12d
     jnz 1f
+    cmp r14, 4
+    jne .Ld_ret
     # data_offer(new id)
     mov eax, [r13]
     mov [rip + offer_new], eax
     mov dword ptr [rip + offer_new_text], 0
+    mov dword ptr [rip + wl_paste_offer_new_native], 0
     jmp .Ld_ret
 1:  cmp r12d, 5                   # selection
     jne 2f
+    cmp r14, 4
+    jne .Ld_ret
     mov eax, [r13]
     mov ecx, [rip + sel_offer]
     cmp ecx, eax
@@ -678,13 +893,19 @@ wl_dispatch:
     END
     pop rax
 3:  mov [rip + sel_offer], eax
+    inc qword ptr [rip + wl_paste_offer_generation]
+    mov dword ptr [rip + wl_paste_offer_native], 0
     xor ecx, ecx
     cmp eax, [rip + offer_new]
     jne 4f
+    mov ecx, [rip + wl_paste_offer_new_native]
+    mov [rip + wl_paste_offer_native], ecx
     mov ecx, [rip + offer_new_text]
 4:  mov [rip + sel_offer_text], ecx
     jmp .Ld_ret
 2:  cmp r12d, 1                   # dnd enter: not supported, drop the offer
+    jne .Ld_ret
+    cmp r14, 20
     jne .Ld_ret
     mov eax, [r13 + 16]
     test eax, eax
@@ -696,64 +917,133 @@ wl_dispatch:
 .Ld_offer:
     test r12d, r12d
     jnz .Ld_ret
-    lea rdi, [r13 + 4]
-    mov esi, [r13]
-    dec esi
-    call mime_is_text
+    mov rdi, r13
+    mov rsi, r14
+    call wl_paste_decode_mime
     test eax, eax
     jz .Ld_ret
-    mov dword ptr [rip + offer_new_text], 1
+    cmp eax, 4
+    jne 2f
+    mov dword ptr [rip + wl_paste_offer_new_native], 1
+    jmp .Ld_ret
+2:
+    cmp dword ptr [rip + offer_new_text], 0
+    je 1f
+    cmp eax, [rip + offer_new_text]
+    jae .Ld_ret
+1:  mov [rip + offer_new_text], eax
     jmp .Ld_ret
 
 .Ld_source:
+    mov r15, rax
     cmp r12d, 1                   # send(mime, fd)
     jne 1f
     call fdq_pop
     mov ebx, eax
     test eax, eax
     js .Ld_ret
-    mov edi, ebx
-    mov rsi, [rip + clip_sb + SB_ptr]
-    mov rdx, [rip + clip_sb + SB_len]
-    call write_all
-    mov edi, ebx
-    SYS SYS_close
+    mov rdi, r13
+    mov rsi, r14
+    call wl_paste_decode_mime
+    mov edx, eax
+    mov rdi, r15
+    mov esi, ebx
+    call wl_send_start
     jmp .Ld_ret
 1:  cmp r12d, 2                   # cancelled
     jne .Ld_ret
-    MSG [rip + id_source], 1
-    END
-    mov dword ptr [rip + id_source], 0
+    test r14, r14
+    jnz .Ld_ret
+    mov rdi, r15
+    call wl_source_retire
+    jmp .Ld_ret
+
+.Ld_old_keyboard:
+    test r12d, r12d
+    jnz .Ld_ret
+    call fdq_pop
+    test eax, eax
+    js .Ld_ret
+    mov edi, eax
+    SYS SYS_close
     jmp .Ld_ret
 
 .Ld_ret:
-    pop r13
-    pop r12
-    pop rbx
-    ret
+    EPILOGUE
 
-# mime_is_text(ptr, len) -> 1 for utf-8 text types
-mime_is_text:
-    push rbx
-    push r12
+# Focus loss invalidates the selected offer before any application callback.
+FN wl_paste_offer_clear
+    PROLOGUE
+    mov ebx, [rip + sel_offer]
+    mov dword ptr [rip + sel_offer], 0
+    mov dword ptr [rip + sel_offer_text], 0
+    mov dword ptr [rip + wl_paste_offer_native], 0
+    inc qword ptr [rip + wl_paste_offer_generation]
+    test ebx, ebx
+    jz 1f
+    MSG ebx, 2
+    END
+1:  EPILOGUE
+
+# Counted supported MIME name -> preference enum, zero when unsupported.
+FN mime_is_text
+    PROLOGUE
     mov rbx, rdi
     mov r12, rsi
     lea rdx, [rip + .Lmime_utf8]
     call str_eq_cstr
     test eax, eax
-    jnz 1f
+    jnz .Lmime_utf8_match
     mov rdi, rbx
     mov rsi, r12
     lea rdx, [rip + .Lmime_plain]
     call str_eq_cstr
     test eax, eax
-    jnz 1f
+    jnz .Lmime_plain_match
     mov rdi, rbx
     mov rsi, r12
     lea rdx, [rip + .Lmime_utf8str]
     call str_eq_cstr
-1:  pop r12
-    pop rbx
+    test eax, eax
+    jnz .Lmime_string_match
+    mov rdi, rbx
+    mov rsi, r12
+    lea rdx, [rip + .Lmime_native]
+    call str_eq_cstr
+    test eax, eax
+    jz .Lmime_done
+    mov eax, 4
+    jmp .Lmime_done
+.Lmime_string_match:
+    mov eax, 3
+    jmp .Lmime_done
+.Lmime_plain_match:
+    mov eax, 2
+    jmp .Lmime_done
+.Lmime_utf8_match:
+    mov eax, 1
+.Lmime_done:
+    EPILOGUE
+
+# One wire string argument: length includes NUL and padding occupies the complete span.
+FN wl_paste_decode_mime
+    xor eax, eax
+    cmp rsi, 4
+    jb .Lmime_invalid
+    mov ecx, [rdi]
+    test ecx, ecx
+    jz .Lmime_invalid
+    lea rdx, [rcx + 3]
+    and rdx, -4
+    add rdx, 4
+    cmp rdx, rsi
+    jne .Lmime_invalid
+    cmp byte ptr [rdi + rcx + 3], 0
+    jne .Lmime_invalid
+    add rdi, 4
+    lea esi, [rcx - 1]
+    jmp mime_is_text
+.Lmime_invalid:
     ret
 
 # wl_on_global(args): name, interface, version
@@ -1073,6 +1363,7 @@ on_pointer:
 .Lp_button:
     mov eax, [r12]
     mov [rip + last_serial], eax
+    mov dword ptr [rip + last_serial_known], 1
     mov eax, [r12 + 8]            # linux button code
     mov edi, BTN_LEFT
     cmp eax, 0x110
@@ -1199,17 +1490,20 @@ on_keyboard:
 .Lk_enter:
     mov eax, [r12]
     mov [rip + last_serial], eax
+    mov dword ptr [rip + last_serial_known], 1
     mov edi, 1
     call app_on_focus
     jmp .Lk_ret
 .Lk_leave:
     mov dword ptr [rip + rep_key], 0
+    call wl_paste_offer_clear
     xor edi, edi
     call app_on_focus
     jmp .Lk_ret
 .Lk_key:
     mov eax, [r12]
     mov [rip + last_serial], eax
+    mov dword ptr [rip + last_serial_known], 1
     mov edi, [r12 + 8]
     add edi, 8
     mov esi, [r12 + 12]
@@ -1593,6 +1887,31 @@ cursor_drop:
 # ---------------- vtable entries ----------------
 
 wl_timeout:
+    push rbx
+    call wl_paste_timeout
+    mov ebx, eax
+    call wl_send_timeout
+    cmp ebx, -1
+    je 3f
+    cmp eax, -1
+    je 4f
+    cmp eax, ebx
+    cmova eax, ebx
+3:  mov ebx, eax
+4:
+    call wl_repeat_timeout
+    cmp ebx, -1
+    je 1f
+    cmp eax, -1
+    je 2f
+    cmp eax, ebx
+    cmova eax, ebx
+    jmp 1f
+2:  mov eax, ebx
+1:  pop rbx
+    ret
+
+wl_repeat_timeout:
     cmp dword ptr [rip + rep_key], 0
     je 1f
     cmp dword ptr [rip + rep_rate], 0
@@ -1608,6 +1927,14 @@ wl_timeout:
     ret
 
 wl_tick:
+    sub rsp, 8
+    call wl_paste_tick
+    call wl_send_tick
+    call wl_repeat_tick
+    add rsp, 8
+    ret
+
+wl_repeat_tick:
     cmp dword ptr [rip + rep_key], 0
     je 1f
     cmp dword ptr [rip + rep_rate], 0
@@ -1725,27 +2052,226 @@ phys_to_logical:
     div dword ptr [rip + int_scale]
     ret
 
-# clipboard: copy
-wl_clip_set:
+# An immutable source owns its bytes until server deletion and its last job release.
+FN wl_source_find
+    test edi, edi
+    jz 4f
+    lea rax, [rip + wl_send_sources]
+    mov ecx, WCS_COUNT
+1:  cmp dword ptr [rax + WCS_state], 1
+    jb 2f
+    cmp dword ptr [rax + WCS_state], 2
+    ja 2f
+    cmp [rax + WCS_id], edi
+    je 3f
+2:  add rax, WCS_SIZE
+    dec ecx
+    jnz 1b
+4:  xor eax, eax
+3:  ret
+
+FN wl_source_create
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    cmp rsi, WCL_LIMIT
+    ja .Lwsc_reject
+    test rsi, rsi
+    jz 1f
+    test rdi, rdi
+    jz .Lwsc_reject
+1:  mov rax, [rip + wl_send_charge]
+    add rax, r13
+    cmp rax, WCS_BUDGET
+    ja .Lwsc_reject
+    lea rbx, [rip + wl_send_sources]
+    mov ecx, WCS_COUNT
+2:  cmp dword ptr [rbx + WCS_state], 0
+    je 3f
+    add rbx, WCS_SIZE
+    dec ecx
+    jnz 2b
+    jmp .Lwsc_reject
+3:  call snippet_utf8_valid
+    test eax, eax
+    jz .Lwsc_reject
+    lea rdi, [r13 + 1]
+    call mem_alloc_try
+    test rax, rax
+    jz .Lwsc_reject
+    mov [rbx + WCS_ptr], rax
+    mov [rbx + WCS_len], r13
+    mov [rbx + WCS_charge], r13
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call memcpy
+    mov dword ptr [rbx + WCS_state], 1
+    add [rip + wl_send_charge], r13
+    mov rax, rbx
+    EPILOGUE
+.Lwsc_reject:
+    xor eax, eax
+    EPILOGUE
+
+# Native source owns one envelope; the text pointer borrows its interior.
+FN wl_source_create_native
+    PROLOGUE CWB_SIZE
+    mov r12, rdi
+    mov r13, rsi
+    mov rdx, rsp
+    call clip_wire_decode
+    test eax, eax
+    jz .Lwscn_fail
+    mov rax, [rip + wl_send_charge]
+    add rax, r13
+    cmp rax, WCS_BUDGET
+    ja .Lwscn_fail
+    lea rbx, [rip + wl_send_sources]
+    mov ecx, WCS_COUNT
+1:  cmp dword ptr [rbx + WCS_state], 0
+    je 2f
+    add rbx, WCS_SIZE
+    dec ecx
+    jnz 1b
+    jmp .Lwscn_fail
+2:  mov r14, [rsp + CWB_text]
+    sub r14, r12
+    lea rdi, [r13 + 1]
+    call mem_alloc_try
+    test rax, rax
+    jz .Lwscn_fail
+    mov r15, rax
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call memcpy
+    mov [rbx + WCS_wire], r15
+    mov [rbx + WCS_wirelen], r13
+    mov [rbx + WCS_charge], r13
+    add r14, r15
+    mov [rbx + WCS_ptr], r14
+    mov rax, [rsp + CWB_len]
+    mov [rbx + WCS_len], rax
+    mov dword ptr [rbx + WCS_state], 1
+    add [rip + wl_send_charge], r13
+    mov rax, rbx
+    EPILOGUE
+.Lwscn_fail:
+    xor eax, eax
+    EPILOGUE
+
+# Clear only the current borrowed view. It never owns an allocation.
+wl_source_detach:
+    mov eax, [rdi + WCS_id]
+    cmp eax, [rip + id_source]
+    jne 1f
+    mov dword ptr [rip + id_source], 0
+    mov qword ptr [rip + clip_sb + SB_ptr], 0
+    mov qword ptr [rip + clip_sb + SB_len], 0
+    mov qword ptr [rip + clip_sb + SB_cap], 0
+1:  ret
+
+FN wl_source_release
+    cmp dword ptr [rdi + WCS_state], 3
+    jne 1f
+    cmp dword ptr [rdi + WCS_refs], 0
+    jne 1f
     push rbx
-    push r12
-    push r13
     mov rbx, rdi
-    mov r12, rsi
-    lea rdi, [rip + clip_sb]
-    call sb_clear
-    lea rdi, [rip + clip_sb]
-    mov rsi, rbx
-    mov rdx, r12
-    call sb_push
-    cmp dword ptr [rip + id_ddm], 0
-    je 9f
-    cmp dword ptr [rip + id_source], 0
-    je 1f
-    MSG [rip + id_source], 1
+    mov rax, [rbx + WCS_charge]
+    sub [rip + wl_send_charge], rax
+    mov rdi, [rbx + WCS_wire]
+    test rdi, rdi
+    cmovz rdi, [rbx + WCS_ptr]
+    mov dword ptr [rbx + WCS_state], 0
+    call mem_free
+    mov rdi, rbx
+    xor esi, esi
+    mov edx, WCS_SIZE
+    call memset
+    pop rbx
+1:  ret
+
+FN wl_source_retire
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + WCS_state], 1
+    jne 1f
+    mov dword ptr [rbx + WCS_state], 2
+    call wl_source_detach
+    MSG [rbx + WCS_id], 1
     END
+1:  EPILOGUE
+
+FN wl_source_deleted
+    sub rsp, 8
+    call wl_source_find
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call wl_source_detach
+    mov dword ptr [rdi + WCS_state], 3
+    call wl_source_release
+1:  add rsp, 8
+    ret
+
+# clipboard: accept the new source before changing the old one.
+FN wl_clip_set
+    cmp dword ptr [rip + id_ddm], 0
+    je .Lwc_unavailable
+    cmp dword ptr [rip + id_ddev], 0
+    je .Lwc_unavailable
+    cmp dword ptr [rip + last_serial_known], 0
+    je .Lwc_unavailable
+    PROLOGUE
+    call wl_source_create
+    test rax, rax
+    jz .Lwc_reject
+    mov rdi, rax
+    call wl_clip_publish
+    EPILOGUE
+.Lwc_reject:
+    xor eax, eax
+    EPILOGUE
+.Lwc_unavailable:
+    xor eax, eax
+    ret
+
+FN wl_clip_write
+    cmp dword ptr [rip + id_ddm], 0
+    je .Lwc_unavailable
+    cmp dword ptr [rip + id_ddev], 0
+    je .Lwc_unavailable
+    cmp dword ptr [rip + last_serial_known], 0
+    je .Lwc_unavailable
+    PROLOGUE
+    call wl_source_create_native
+    test rax, rax
+    jz .Lwc_reject
+    mov rdi, rax
+    call wl_clip_publish
+    EPILOGUE
+
+wl_clip_publish:
+    PROLOGUE
+    mov rax, rdi
+    mov rbx, rax
+    mov edi, [rip + id_source]
+    call wl_source_find
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call wl_source_retire
 1:  call wl_new_id
+    mov [rbx + WCS_id], eax
     mov [rip + id_source], eax
+    mov rax, [rbx + WCS_ptr]
+    mov [rip + clip_sb + SB_ptr], rax
+    mov rax, [rbx + WCS_len]
+    mov [rip + clip_sb + SB_len], rax
+    inc rax
+    mov [rip + clip_sb + SB_cap], rax
     MSG [rip + id_ddm], 0
     ARG [rip + id_source]
     END
@@ -1758,81 +2284,640 @@ wl_clip_set:
     MSG [rip + id_source], 0
     SARG .Lmime_utf8str
     END
-    MSG [rip + id_ddev], 1
+    cmp qword ptr [rbx + WCS_wire], 0
+    je 2f
+    MSG [rip + id_source], 0
+    SARG .Lmime_native
+    END
+2:  MSG [rip + id_ddev], 1
     ARG [rip + id_source]
     ARG [rip + last_serial]
     END
-9:  pop r13
-    pop r12
-    pop rbx
-    ret
+    mov eax, 1
+    EPILOGUE
+# Detached counted storage, never a borrowed source across delivery callbacks.
+wl_clip_snapshot:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    lea rdi, [rsi + 1]
+    call mem_alloc_try
+    mov r13, rax
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    mov rsi, rbx
+    mov rdx, r12
+    call memcpy
+1:  mov rax, r13
+    EPILOGUE
 
-# clipboard: paste (async, delivers app_on_paste)
-wl_clip_get:
-    push rbx
-    sub rsp, 16
-    cmp dword ptr [rip + id_source], 0
-    je 1f
-    # we own the selection
-    mov rdi, [rip + clip_sb + SB_ptr]
-    mov rsi, [rip + clip_sb + SB_len]
-    call app_on_paste
-    jmp 9f
-1:  cmp dword ptr [rip + sel_offer], 0
-    je 9f
-    cmp dword ptr [rip + sel_offer_text], 0
-    je 9f
+# clipboard: one counted receive for the currently submitted shared request.
+FN wl_clip_get
+    PROLOGUE 32
+    mov rax, [rip + app_clip_active_token]
+    mov [rsp + 8], rax
+    call wl_paste_tick
+    mov rax, [rsp + 8]
+    cmp rax, [rip + app_clip_active_token]
+    jne .Lwpg_done
     cmp dword ptr [rip + paste_fd], -1
-    jne 9f
+    jne .Lwpg_rejected
+    cmp dword ptr [rip + id_source], 0
+    je .Lwpg_foreign
+    mov edi, [rip + id_source]
+    call wl_source_find
+    test rax, rax
+    jz .Lwpg_self_plain
+    cmp qword ptr [rax + WCS_wire], 0
+    je .Lwpg_self_plain
+    mov rdi, [rax + WCS_wire]
+    mov rsi, [rax + WCS_wirelen]
+    mov [rsp + 16], rsi
+    call wl_clip_snapshot
+    test rax, rax
+    jz .Lwpg_self_plain
+    mov r13, rax
+    mov rdi, [rsp + 8]
+    mov rsi, rax
+    mov rdx, [rsp + 16]
+    call app_clip_complete_native
+    mov r12d, eax
+    mov rdi, r13
+    call mem_free
+    test r12d, r12d
+    jnz .Lwpg_done
+.Lwpg_self_plain:
+    mov r12, [rip + clip_sb + SB_len]
+    mov rdi, [rip + clip_sb + SB_ptr]
+    mov rsi, r12
+    call wl_clip_snapshot
+    test rax, rax
+    jz .Lwpg_rejected
+    mov r13, rax
+    mov rdi, [rsp + 8]
+    mov rsi, r13
+    mov rdx, r12
+    mov ecx, 1
+    call app_clip_complete
+    mov rdi, r13
+    call mem_free
+    jmp .Lwpg_done
+.Lwpg_foreign:
+    mov r12d, [rip + sel_offer]
+    mov r13d, [rip + sel_offer_text]
+    mov r14, [rip + wl_paste_offer_generation]
+    mov r15d, r13d
+    cmp dword ptr [rip + wl_paste_offer_native], 0
+    je 1f
+    mov r15d, 4
+1:  mov rdi, [rsp + 8]
+    mov esi, r12d
+    mov edx, r15d
+    mov ecx, r13d
+    mov r8, r14
+    call wl_paste_start
+    test eax, eax
+    jnz .Lwpg_done
+    cmp r15d, 4
+    jne .Lwpg_rejected
+    mov rdi, [rsp + 8]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r13d
+    mov r8, r14
+    call wl_paste_start
+    test eax, eax
+    jnz .Lwpg_done
+.Lwpg_rejected:
+    mov rdi, [rsp + 8]
+    xor esi, esi
+    xor edx, edx
+    xor ecx, ecx
+    call app_clip_complete
+.Lwpg_done:
+    EPILOGUE
+
+# One format attempt on a still-current offer; no completion on setup failure.
+# (token, offer, format, plain preference, offer generation) -> accepted.
+FN wl_paste_start
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    mov r15, r8
+    cmp rbx, [rip + app_clip_active_token]
+    jne .Lwps_fail
+    test r12d, r12d
+    jz .Lwps_fail
+    cmp r12d, [rip + sel_offer]
+    jne .Lwps_fail
+    cmp r15, [rip + wl_paste_offer_generation]
+    jne .Lwps_fail
+    lea eax, [r13 - 1]
+    cmp eax, 3
+    ja .Lwps_fail
     mov rdi, rsp
     mov esi, O_CLOEXEC
     SYS SYS_pipe2
     test rax, rax
-    js 9f
-    MSG [rip + sel_offer], 1      # receive(mime, fd)
+    js .Lwps_fail
+    mov edi, [rsp]
+    mov rsi, rbx
+    call wl_paste_receive_fd_tagged
+    test eax, eax
+    jz .Lwps_close_fail
+    mov [rip + wl_paste_format], r13d
+    mov [rip + wl_paste_attempt_offer], r12d
+    mov [rip + wl_paste_attempt_generation], r15
+    mov [rip + wl_paste_plain], r14d
+    MSG r12d, 1
+    cmp r13d, 4
+    je .Lwps_native
+    cmp r13d, 2
+    je .Lwps_plain
+    cmp r13d, 3
+    je .Lwps_string
     SARG .Lmime_utf8
+    jmp .Lwps_send
+.Lwps_native:
+    SARG .Lmime_native
+    jmp .Lwps_send
+.Lwps_plain:
+    SARG .Lmime_plain
+    jmp .Lwps_send
+.Lwps_string:
+    SARG .Lmime_utf8str
+.Lwps_send:
     END
     mov edi, [rsp + 4]
     call wl_flush_fd
     mov edi, [rsp + 4]
     SYS SYS_close
-    mov edi, [rsp]
-    mov [rip + paste_fd], edi
-    lea rdi, [rip + paste_sb]
-    call sb_clear
-    mov edi, [rip + paste_fd]
+    mov eax, 1
+    EPILOGUE
+.Lwps_close_fail:
+    mov edi, [rsp + 4]
+    SYS SYS_close
+.Lwps_fail:
+    xor eax, eax
+    EPILOGUE
+
+# Takes ownership of a fresh read descriptor. Busy alias of the active fd is never closed.
+FN wl_paste_receive_fd
+    mov rsi, [rip + app_clip_active_token]
+    jmp wl_paste_receive_fd_tagged
+
+wl_paste_receive_fd_tagged:
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rsi
+    test ebx, ebx
+    js .Lwpr_no_close
+    cmp ebx, [rip + paste_fd]
+    je .Lwpr_no_close
+    call wl_paste_tick
+    cmp r12, [rip + app_clip_active_token]
+    jne .Lwpr_close
+    cmp dword ptr [rip + paste_fd], -1
+    je .Lwpr_setup
+    cmp ebx, [rip + paste_fd]
+    je .Lwpr_no_close
+    jmp .Lwpr_close
+.Lwpr_setup:
+    mov edi, ebx
+    mov esi, 3                  # F_GETFL
+    SYS SYS_fcntl
+    test rax, rax
+    js .Lwpr_close
+    mov rdx, rax
+    or edx, O_NONBLOCK
+    mov edi, ebx
+    mov esi, F_SETFL
+    SYS SYS_fcntl
+    test rax, rax
+    js .Lwpr_close
+    call time_ms
+    add rax, WCL_TIMEOUT
+    mov [rip + wl_paste_deadline], rax
+    inc qword ptr [rip + wl_paste_generation]
+    mov [rip + wl_paste_token], r12
+    mov [rip + paste_fd], ebx
+    mov dword ptr [rip + wl_paste_format], 0
+    mov dword ptr [rip + wl_paste_attempt_offer], 0
+    mov qword ptr [rip + wl_paste_attempt_generation], 0
+    mov dword ptr [rip + wl_paste_plain], 0
+    mov edi, ebx
     mov esi, POLLIN
     lea rdx, [rip + on_paste_readable]
-    xor ecx, ecx
-    call watch_add
-9:  add rsp, 16
-    pop rbx
+    mov rcx, [rip + wl_paste_generation]
+    call watch_try_add
+    test eax, eax
+    jz .Lwpr_cancel
+    mov eax, 1
+    EPILOGUE
+.Lwpr_cancel:
+    call wl_paste_dispose
+    jmp .Lwpr_no_close
+.Lwpr_close:
+    mov edi, ebx
+    SYS SYS_close
+.Lwpr_no_close:
+    xor eax, eax
+    EPILOGUE
+
+# Retire global state before any cleanup or delivery can start another receive.
+wl_paste_retire:
+    mov dword ptr [rip + paste_fd], -1
+    mov qword ptr [rip + wl_paste_deadline], 0
+    mov qword ptr [rip + wl_paste_token], 0
+    mov dword ptr [rip + wl_paste_format], 0
+    mov dword ptr [rip + wl_paste_attempt_offer], 0
+    mov qword ptr [rip + wl_paste_attempt_generation], 0
+    mov dword ptr [rip + wl_paste_plain], 0
+    mov qword ptr [rip + paste_sb + SB_ptr], 0
+    mov qword ptr [rip + paste_sb + SB_len], 0
+    mov qword ptr [rip + paste_sb + SB_cap], 0
+    inc qword ptr [rip + wl_paste_generation]
     ret
 
-on_paste_readable:
-    push rbx
-    mov ebx, edi
-    lea rdi, [rip + paste_sb]
-    mov esi, 65536
-    call sb_reserve
+FN wl_paste_cancel
+    PROLOGUE
+    mov r12, [rip + wl_paste_token]
+    mov r13d, [rip + paste_fd]
+    call wl_paste_dispose
+    test r13d, r13d
+    js 1f
+    mov rdi, r12
+    xor esi, esi
+    xor edx, edx
+    xor ecx, ecx
+    call app_clip_complete
+1:  EPILOGUE
+
+wl_paste_dispose:
+    PROLOGUE
+    mov ebx, [rip + paste_fd]
+    cmp ebx, -1
+    je 1f
+    mov r12, [rip + paste_sb + SB_ptr]
+    call wl_paste_retire
     mov edi, ebx
-    mov rsi, rax
-    mov edx, 65536
-    SYS SYS_read
-    test rax, rax
-    jle 1f
-    add [rip + paste_sb + SB_len], rax
-    pop rbx
-    ret
-1:  mov edi, ebx
     call watch_remove
     mov edi, ebx
     SYS SYS_close
-    mov dword ptr [rip + paste_fd], -1
-    mov rdi, [rip + paste_sb + SB_ptr]
-    mov rsi, [rip + paste_sb + SB_len]
-    call app_on_paste
-    pop rbx
+    mov rdi, r12
+    call mem_free
+1:  EPILOGUE
+
+# Invalid native data can retry plain only on the same still-valid offer.
+FN wl_paste_reject
+    PROLOGUE 16
+    mov ebx, [rip + paste_fd]
+    mov r12, [rip + wl_paste_token]
+    mov rax, [rip + wl_paste_generation]
+    mov [rsp], rax
+    call wl_paste_tick
+    mov rax, [rsp]
+    cmp rax, [rip + wl_paste_generation]
+    jne .Lwpre_done
+    cmp ebx, [rip + paste_fd]
+    jne .Lwpre_done
+    cmp r12, [rip + wl_paste_token]
+    jne .Lwpre_done
+    test ebx, ebx
+    js .Lwpre_done
+    cmp dword ptr [rip + wl_paste_format], 4
+    jne .Lwpre_cancel
+    mov r13d, [rip + wl_paste_attempt_offer]
+    mov r14, [rip + wl_paste_attempt_generation]
+    mov r15d, [rip + wl_paste_plain]
+    call wl_paste_dispose
+    mov rdi, r12
+    mov esi, r13d
+    mov edx, r15d
+    mov ecx, r15d
+    mov r8, r14
+    # Reject unsupported plain enums, including a second native attempt.
+    lea eax, [r15 - 1]
+    cmp eax, 2
+    ja .Lwpre_failed
+    call wl_paste_start
+    test eax, eax
+    jnz .Lwpre_done
+.Lwpre_failed:
+    mov rdi, r12
+    xor esi, esi
+    xor edx, edx
+    xor ecx, ecx
+    call app_clip_complete
+    jmp .Lwpre_done
+.Lwpre_cancel:
+    call wl_paste_cancel
+.Lwpre_done:
+    EPILOGUE
+
+FN wl_paste_complete
+    PROLOGUE CWB_SIZE + 16
+    mov ebx, [rip + paste_fd]
+    test ebx, ebx
+    js .Lwpc_done
+    mov r12, [rip + paste_sb + SB_ptr]
+    mov r13, [rip + paste_sb + SB_len]
+    mov r14, [rip + wl_paste_generation]
+    mov r15, [rip + wl_paste_token]
+    mov eax, [rip + wl_paste_format]
+    mov [rsp + CWB_SIZE], eax
+    mov rdi, r12
+    mov rsi, r13
+    cmp eax, 4
+    jne 1f
+    mov rdx, rsp
+    call clip_wire_decode
+    jmp 2f
+1:  call snippet_utf8_valid
+2:  mov [rsp + CWB_SIZE + 8], eax
+    # Validation time counts against the attempt deadline, even for invalid wire.
+    call wl_paste_tick
+    cmp r14, [rip + wl_paste_generation]
+    jne .Lwpc_done
+    cmp r15, [rip + wl_paste_token]
+    jne .Lwpc_done
+    cmp ebx, [rip + paste_fd]
+    jne .Lwpc_done
+    cmp dword ptr [rsp + CWB_SIZE + 8], 0
+    je .Lwpc_reject
+    test r12, r12
+    jnz 3f
+    mov edi, 1
+    call mem_alloc
+    mov r12, rax
+3:  call wl_paste_retire
+    mov edi, ebx
+    call watch_remove
+    mov edi, ebx
+    SYS SYS_close
+    mov rdi, r15
+    mov rsi, r12
+    mov rdx, r13
+    cmp dword ptr [rsp + CWB_SIZE], 4
+    jne 4f
+    call app_clip_complete_native
+    jmp 5f
+4:  mov ecx, 1
+    call app_clip_complete
+5:  mov rdi, r12
+    call mem_free
+    jmp .Lwpc_done
+.Lwpc_reject:
+    call wl_paste_reject
+.Lwpc_done:
+    EPILOGUE
+
+# Counted cap depends on the selected MIME, never on untrusted payload fields.
+FN wl_paste_limit
+    mov eax, WCL_LIMIT
+    cmp dword ptr [rip + wl_paste_format], 4
+    jne 1f
+    mov eax, CLW_MAX
+1:  ret
+
+# Bounded send jobs retain the source record, not the current clipboard view.
+FN wl_send_find
+    test edi, edi
+    js 3f
+    lea rax, [rip + wl_send_jobs]
+    mov ecx, WCJ_COUNT
+1:  cmp dword ptr [rax + WCJ_active], 0
+    je 2f
+    cmp [rax + WCJ_fd], edi
+    je 4f
+2:  add rax, WCJ_SIZE
+    dec ecx
+    jnz 1b
+3:  xor eax, eax
+4:  ret
+
+FN wl_send_cancel
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + WCJ_active], 0
+    je 1f
+    mov r12d, [rbx + WCJ_fd]
+    mov r13, [rbx + WCJ_source]
+    mov dword ptr [rbx + WCJ_active], 0
+    mov qword ptr [rbx + WCJ_deadline], 0
+    mov qword ptr [rbx + WCJ_source], 0
+    mov qword ptr [rbx + WCJ_ptr], 0
+    mov qword ptr [rbx + WCJ_len], 0
+    mov edi, r12d
+    call watch_remove
+    mov edi, r12d
+    SYS SYS_close
+    dec dword ptr [r13 + WCS_refs]
+    mov rdi, r13
+    call wl_source_release
+1:  EPILOGUE
+
+# wl_send_start(source, fresh_fd, mime_enum) -> accepted, owns the fresh fd.
+FN wl_send_start
+    PROLOGUE 16
+    mov r12, rdi
+    mov r13d, esi
+    mov r14d, edx
+    call wl_send_tick
+    mov edi, r13d
+    call wl_send_find
+    test rax, rax
+    jnz .Lwss_no_close
+    test r13d, r13d
+    js .Lwss_no_close
+    lea eax, [r14 - 1]
+    cmp eax, 3
+    ja .Lwss_close
+    test r12, r12
+    jz .Lwss_close
+    mov eax, [r12 + WCS_state]
+    dec eax
+    cmp eax, 1
+    ja .Lwss_close
+    mov rax, [r12 + WCS_ptr]
+    mov rcx, [r12 + WCS_len]
+    cmp r14d, 4
+    jne 3f
+    mov rax, [r12 + WCS_wire]
+    mov rcx, [r12 + WCS_wirelen]
+    test rax, rax
+    jz .Lwss_close
+3:  mov [rsp], rax
+    mov [rsp + 8], rcx
+    lea rbx, [rip + wl_send_jobs]
+    mov ecx, WCJ_COUNT
+1:  cmp dword ptr [rbx + WCJ_active], 0
+    je 2f
+    add rbx, WCJ_SIZE
+    dec ecx
+    jnz 1b
+    jmp .Lwss_close
+2:  mov edi, r13d
+    mov esi, 3
+    SYS SYS_fcntl
+    test rax, rax
+    js .Lwss_close
+    mov rdx, rax
+    or edx, O_NONBLOCK
+    mov edi, r13d
+    mov esi, F_SETFL
+    SYS SYS_fcntl
+    test rax, rax
+    js .Lwss_close
+    cmp qword ptr [rsp + 8], 0
+    je .Lwss_empty
+    call time_ms
+    add rax, WCL_TIMEOUT
+    mov [rbx + WCJ_deadline], rax
+    inc qword ptr [rip + wl_send_generation]
+    mov rcx, [rip + wl_send_generation]
+    mov [rbx + WCJ_generation], rcx
+    mov rax, [rsp]
+    mov [rbx + WCJ_ptr], rax
+    mov rax, [rsp + 8]
+    mov [rbx + WCJ_len], rax
+    mov [rbx + WCJ_source], r12
+    mov [rbx + WCJ_fd], r13d
+    mov qword ptr [rbx + WCJ_offset], 0
+    inc dword ptr [r12 + WCS_refs]
+    mov dword ptr [rbx + WCJ_active], 1
+    mov edi, r13d
+    mov esi, POLLOUT
+    lea rdx, [rip + on_clip_writable]
+    call watch_try_add
+    test eax, eax
+    jnz .Lwss_accepted
+    mov rdi, rbx
+    call wl_send_cancel
+    jmp .Lwss_no_close
+.Lwss_empty:
+    mov edi, r13d
+    SYS SYS_close
+.Lwss_accepted:
+    mov eax, 1
+    EPILOGUE
+.Lwss_close:
+    mov edi, r13d
+    SYS SYS_close
+.Lwss_no_close:
+    xor eax, eax
+    EPILOGUE
+
+FN on_clip_writable
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rdx
+    call wl_send_tick
+    mov edi, ebx
+    call wl_send_find
+    test rax, rax
+    jz 1f
+    cmp r12, [rax + WCJ_generation]
+    jne 1f
+    mov r9, [rax + WCJ_offset]
+    mov rsi, [rax + WCJ_ptr]
+    add rsi, r9
+    mov rdx, [rax + WCJ_len]
+    sub rdx, r9
+    mov eax, 65536
+    cmp rdx, rax
+    cmova rdx, rax
+    mov edi, ebx
+    SYS SYS_write
+    mov rdx, rax
+    mov edi, ebx
+    mov rsi, r12
+    call wl_send_write_result
+1:  EPILOGUE
+
+# Actual callback and injected syscall outcomes share deadline/result handling.
+FN wl_send_write_result
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call wl_send_find
+    test rax, rax
+    jz .Lwsr_done
+    mov rbx, rax
+    cmp r12, [rbx + WCJ_generation]
+    jne .Lwsr_done
+    call time_ms
+    cmp rax, [rbx + WCJ_deadline]
+    jae .Lwsr_cancel
+    test r13, r13
+    jg .Lwsr_positive
+    cmp r13, -EAGAIN
+    je .Lwsr_done
+    cmp r13, -EINTR
+    je .Lwsr_done
+    jmp .Lwsr_cancel
+.Lwsr_positive:
+    cmp r13, 65536
+    ja .Lwsr_cancel
+    mov r9, [rbx + WCJ_len]
+    sub r9, [rbx + WCJ_offset]
+    cmp r13, r9
+    ja .Lwsr_cancel
+    add [rbx + WCJ_offset], r13
+    cmp r13, r9
+    je .Lwsr_cancel
+    add rax, WCL_TIMEOUT
+    mov [rbx + WCJ_deadline], rax
+    jmp .Lwsr_done
+.Lwsr_cancel:
+    mov rdi, rbx
+    call wl_send_cancel
+.Lwsr_done:
+    EPILOGUE
+
+FN wl_send_tick
+    PROLOGUE
+    call time_ms
+    mov r12, rax
+    lea rbx, [rip + wl_send_jobs]
+    mov r13d, WCJ_COUNT
+1:  cmp dword ptr [rbx + WCJ_active], 0
+    je 2f
+    cmp r12, [rbx + WCJ_deadline]
+    jb 2f
+    mov rdi, rbx
+    call wl_send_cancel
+2:  add rbx, WCJ_SIZE
+    dec r13d
+    jnz 1b
+    EPILOGUE
+
+FN wl_send_timeout
+    sub rsp, 8
+    call time_ms
+    mov r8, rax
+    lea r9, [rip + wl_send_jobs]
+    mov ecx, WCJ_COUNT
+    mov r10, -1
+1:  cmp dword ptr [r9 + WCJ_active], 0
+    je 2f
+    mov rdx, [r9 + WCJ_deadline]
+    sub rdx, r8
+    jns 3f
+    xor edx, edx
+3:  cmp r10, -1
+    je 4f
+    cmp rdx, r10
+    jae 2f
+4:  mov r10, rdx
+2:  add r9, WCJ_SIZE
+    dec ecx
+    jnz 1b
+    mov eax, r10d
+    add rsp, 8
     ret
 
 # ---------------- setup ----------------
@@ -2035,6 +3120,8 @@ FN wl_open_window
     mov [rip + g_plat + P_title], rax
     lea rax, [rip + wl_menu]
     mov [rip + g_plat + P_menu], rax
+    lea rax, [rip + wl_clip_write]
+    mov [rip + g_plat + P_clip_write], rax
     mov edi, [rip + wl_fd]
     mov esi, POLLIN
     lea rdx, [rip + wl_on_readable]
@@ -2086,6 +3173,7 @@ global_table:
 .Lapp_id: .asciz "rhun"
 .Lkmdump: .asciz "RHUN_DUMP_KEYMAP"
 .Lmime_utf8: .asciz "text/plain;charset=utf-8"
+.Lmime_native: .asciz "application/x-rhun-clipboard-v1"
 .Lmime_plain: .asciz "text/plain"
 .Lmime_utf8str: .asciz "UTF8_STRING"
 .Lproto_err: .asciz "wayland protocol error: "
@@ -2101,6 +3189,8 @@ f_120: .float 120.0
 int_scale: .long 1
 rep_rate: .long 25
 rep_delay: .long 400
+.globl wl_paste_fd
+wl_paste_fd:
 paste_fd: .long -1
 .globl g_csd, g_dpi_scale
 g_csd: .long 1
@@ -2114,3 +3204,152 @@ cur_hy: .zero 4 * 8
 xcur: .zero XC_SIZE
 deco_mode: .long 0
 g_dpi_scale: .float 1.0
+
+.text
+FN on_paste_readable
+    PROLOGUE 16
+    mov ebx, edi
+    mov r15, rdx
+    mov rax, [rip + wl_paste_token]
+    mov [rsp + 8], rax
+    test ebx, ebx
+    js .Lwread_done
+    cmp ebx, [rip + paste_fd]
+    jne .Lwread_done
+    cmp rdx, [rip + wl_paste_generation]
+    jne .Lwread_done
+    call wl_paste_tick
+    cmp r15, [rip + wl_paste_generation]
+    jne .Lwread_done
+    mov rax, [rsp + 8]
+    cmp rax, [rip + wl_paste_token]
+    jne .Lwread_done
+    cmp ebx, [rip + paste_fd]
+    jne .Lwread_done
+    call wl_paste_limit
+    mov r14, rax
+    sub r14, [rip + paste_sb + SB_len]
+    jc .Lwread_cancel
+    xor r13d, r13d
+    test r14, r14
+    jz .Lwread_probe
+    cmp r14, 65536
+    jbe 1f
+    mov r14d, 65536
+1:  lea rdi, [rip + paste_sb]
+    mov rsi, r14
+    call sb_reserve
+    mov r12, rax
+    jmp .Lwread_read
+.Lwread_probe:
+    mov r13d, 1
+    mov r12, rsp
+    mov r14d, 1
+.Lwread_read:
+    call wl_paste_tick
+    cmp r15, [rip + wl_paste_generation]
+    jne .Lwread_done
+    mov rax, [rsp + 8]
+    cmp rax, [rip + wl_paste_token]
+    jne .Lwread_done
+    cmp ebx, [rip + paste_fd]
+    jne .Lwread_done
+    mov edi, ebx
+    mov rsi, r12
+    mov rdx, r14
+    SYS SYS_read
+    mov rdi, rbx
+    mov rsi, rax
+    mov edx, r13d
+    call wl_paste_read_result
+    jmp .Lwread_done
+.Lwread_cancel:
+    call wl_paste_reject
+.Lwread_done:
+    EPILOGUE
+
+# Signed syscall result. Positive bytes already occupy the reserved tail, except a limit probe.
+FN wl_paste_read_result
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rsi
+    mov r13d, edx
+    mov r14, [rip + wl_paste_generation]
+    mov r15, [rip + wl_paste_token]
+    test ebx, ebx
+    js .Lwresult_done
+    cmp ebx, [rip + paste_fd]
+    jne .Lwresult_done
+    call wl_paste_tick
+    cmp r14, [rip + wl_paste_generation]
+    jne .Lwresult_done
+    cmp r15, [rip + wl_paste_token]
+    jne .Lwresult_done
+    cmp ebx, [rip + paste_fd]
+    jne .Lwresult_done
+    test r12, r12
+    js .Lwresult_error
+    jz .Lwresult_eof
+    test r13d, r13d
+    jnz .Lwresult_cancel
+    call wl_paste_limit
+    sub rax, [rip + paste_sb + SB_len]
+    jc .Lwresult_cancel
+    cmp r12, rax
+    ja .Lwresult_cancel
+    mov rax, [rip + paste_sb + SB_ptr]
+    test rax, rax
+    jz .Lwresult_cancel
+    add [rip + paste_sb + SB_len], r12
+    mov rcx, [rip + paste_sb + SB_len]
+    mov byte ptr [rax + rcx], 0
+    call time_ms
+    cmp rax, [rip + wl_paste_deadline]
+    jae .Lwresult_expired
+    add rax, WCL_TIMEOUT
+    mov [rip + wl_paste_deadline], rax
+    jmp .Lwresult_done
+.Lwresult_error:
+    cmp r12, -EINTR
+    je .Lwresult_done
+    cmp r12, -EAGAIN
+    je .Lwresult_done
+.Lwresult_cancel:
+    call wl_paste_reject
+    jmp .Lwresult_done
+.Lwresult_expired:
+    call wl_paste_cancel
+    jmp .Lwresult_done
+.Lwresult_eof:
+    call wl_paste_complete
+.Lwresult_done:
+    EPILOGUE
+
+FN wl_paste_tick
+    cmp dword ptr [rip + paste_fd], -1
+    je 1f
+    sub rsp, 8
+    call time_ms
+    add rsp, 8
+    cmp rax, [rip + wl_paste_deadline]
+    jae wl_paste_cancel
+1:  ret
+
+FN wl_paste_timeout
+    cmp dword ptr [rip + paste_fd], -1
+    jne 1f
+    mov eax, -1
+    ret
+1:  sub rsp, 8
+    call time_ms
+    add rsp, 8
+    mov rcx, [rip + wl_paste_deadline]
+    cmp rcx, rax
+    jbe 2f
+    sub rcx, rax
+    cmp rcx, WCL_TIMEOUT
+    ja 2f
+    mov eax, ecx
+    ret
+2:  xor eax, eax
+    ret

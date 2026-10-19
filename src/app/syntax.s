@@ -1,5 +1,7 @@
 # syntax highlighting: grammar files (runtime/syntax/*.syn) and a per-line tokenizer
 .include "rhun.inc"
+.include "app/extvalidate.inc"
+.include "app/extprepare.inc"
 
 STRUCT
 F W_ptr, 8
@@ -31,7 +33,6 @@ tk_c: .long 0
 .p2align 3
 .globl g_grammars
 g_grammars: .zero VEC_SIZE      # GR* items
-it: .zero INI_SIZE
 .globl g_grammars_parsed, g_grammar_warnings
 g_grammars_parsed: .long 0      # built-in grammars parsed so far (they are parsed when first used)
 g_grammar_warnings: .long 0     # unknown keys and class names the parser met
@@ -85,8 +86,11 @@ word_hash:
 
 # gr_word_slot(gr, ptr, len) -> rax slot ptr (W entry: empty or matching)
 gr_word_slot:
-    PROLOGUE
+    PROLOGUE 16
     mov rbx, rdi
+    mov rax, [rdi + GR_owner]
+    mov [rsp], rax
+    mov qword ptr [rsp + 8], 0
     mov r12, rsi
     mov r13, rdx
     mov rdi, rsi
@@ -98,7 +102,20 @@ gr_word_slot:
     dec r14
     and rax, r14
     mov r15, rax
-1:  imul rax, r15, W_SIZE
+1:  mov rax, [rsp]
+    test rax, rax
+    jz 10f
+    cmp qword ptr [rax + PO_ready], 0
+    jne 10f
+    inc qword ptr [rsp + 8]
+    cmp qword ptr [rsp + 8], 512
+    jbe 10f
+    cmp qword ptr [rax + PO_error], 0
+    jne 19f
+    mov qword ptr [rax + PO_error], -EV_RESOURCE
+19: xor eax, eax
+    EPILOGUE
+10: imul rax, r15, W_SIZE
     add rax, [rbx + GR_words]
     cmp qword ptr [rax + W_ptr], 0
     je 9f
@@ -126,44 +143,94 @@ gr_word_slot:
 
 # gr_add_word(gr, ptr, len, class)
 gr_add_word:
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
     mov [rsp], ecx
-    # grow at 50% load
+    mov rax, [rbx + GR_owner]
+    mov [rsp + 8], rax
+    test rax, rax
+    jz .Lgaw_grow
+    cmp qword ptr [rax + PO_error], 0
+    jne .Lgaw_done
+    cmp qword ptr [rbx + GR_wcap], 0
+    je .Lgaw_new
+    call gr_word_slot
+    test rax, rax
+    jz .Lgaw_done
+    cmp qword ptr [rax + W_ptr], 0
+    je .Lgaw_new
+    mov r14, rax
+    jmp .Lgaw_class
+.Lgaw_new:
+    cmp qword ptr [rbx + GR_wn], 65536
+    jb .Lgaw_grow
+    mov rax, [rsp + 8]
+    mov qword ptr [rax + PO_error], -EV_RESOURCE
+    jmp .Lgaw_done
+.Lgaw_grow:
     mov rax, [rbx + GR_wn]
     add rax, rax
     cmp rax, [rbx + GR_wcap]
     jb 1f
     call gr_grow
+    mov rax, [rsp + 8]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + PO_error], 0
+    jne .Lgaw_done
 1:  mov rdi, rbx
     mov rsi, r12
     mov rdx, r13
     call gr_word_slot
+    test rax, rax
+    jz .Lgaw_done
     mov r14, rax
     cmp qword ptr [r14 + W_ptr], 0
-    jne 2f
-    mov rdi, r12
+    jne .Lgaw_class
+    mov rdi, [rsp + 8]
+    test rdi, rdi
+    jz 2f
+    mov rsi, r12
+    mov rdx, r13
+    call prep_owned_dup
+    jmp 3f
+2:  mov rdi, r12
     mov rsi, r13
     call mem_dup
+3:  test rax, rax
+    jz .Lgaw_done
     mov [r14 + W_ptr], rax
     mov [r14 + W_len], r13d
     inc qword ptr [rbx + GR_wn]
-2:  mov eax, [rsp]
+.Lgaw_class:
+    mov eax, [rsp]
     mov [r14 + W_class], eax
+.Lgaw_done:
     EPILOGUE
 
 gr_grow:
-    PROLOGUE
+    PROLOGUE 32
     mov r12, [rbx + GR_words]
     mov r13, [rbx + GR_wcap]
+    mov rax, [rbx + GR_owner]
+    mov [rsp], rax
     lea r14, [r13 + r13]
     mov eax, 64
     cmp r14, rax
     cmovb r14, rax
-    imul rdi, r14, W_SIZE
+    imul rsi, r14, W_SIZE
+    mov rdi, [rsp]
+    test rdi, rdi
+    jz 11f
+    call prep_owned_alloc
+    jmp 12f
+11: mov rdi, rsi
     call mem_alloc
+12: test rax, rax
+    jz .Lgg_done
+    mov [rsp + 8], rax
     mov [rbx + GR_words], rax
     mov [rbx + GR_wcap], r14
     xor r15d, r15d
@@ -173,22 +240,36 @@ gr_grow:
     add rax, r12
     cmp qword ptr [rax + W_ptr], 0
     je 3f
-    push rax
-    push rax
+    mov [rsp + 16], rax
     mov rdi, rbx
     mov rsi, [rax + W_ptr]
     mov edx, [rax + W_len]
     call gr_word_slot
-    pop rcx
-    pop rcx
+    test rax, rax
+    jz .Lgg_restore
+    mov rcx, [rsp + 16]
     mov rdx, [rcx]
     mov [rax], rdx
     mov rdx, [rcx + 8]
     mov [rax + 8], rdx
 3:  inc r15
     jmp 1b
-2:  mov rdi, r12
+2:  mov rdi, [rsp]
+    test rdi, rdi
+    jz 4f
+    mov rsi, r12
+    call prep_owned_free
+    jmp .Lgg_done
+4:  mov rdi, r12
     call mem_free
+.Lgg_done:
+    EPILOGUE
+.Lgg_restore:
+    mov [rbx + GR_words], r12
+    mov [rbx + GR_wcap], r13
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call prep_owned_free
     EPILOGUE
 
 # add_words(gr, ptr, len, class): space separated list
@@ -211,6 +292,11 @@ add_words:
     mov rsi, rax
     mov ecx, [rsp]
     call gr_add_word
+    mov rax, [rbx + GR_owner]
+    test rax, rax
+    jz 1b
+    cmp qword ptr [rax + PO_error], 0
+    jne 9f
     jmp 1b
 9:  EPILOGUE
 
@@ -235,9 +321,12 @@ add_region:
     mov r14, rcx
     mov r15, r8
     mov [rsp], r9d
-    lea rdi, [rbx + GR_regions]
-    mov esi, REG_SIZE
-    call vec_push
+    mov rdi, rbx
+    lea rsi, [rbx + GR_regions]
+    mov edx, REG_SIZE
+    call grammar_rule_push
+    test rax, rax
+    jz .Lgar_done
     mov [rsp + 8], rax
     lea rdi, [rax + REG_start]
     mov rsi, r12
@@ -264,6 +353,7 @@ add_region:
     shr eax, 1
     and eax, 1
     mov [rcx + REG_bol], al
+.Lgar_done:
     EPILOGUE
 
 # grammar_parse(text, len) -> GR*
@@ -281,7 +371,14 @@ FN grammar_parse
 
 # grammar_fill(gr, text, len) -> gr: the grammar in text, into gr
 FN grammar_fill
-    PROLOGUE 96
+    xor ecx, ecx
+    jmp grammar_fill_context
+
+# Same parser body, with private owner context or0 for legacy callers.
+FN grammar_fill_context
+    PROLOGUE 176
+    mov [rsp + 96], rcx
+    mov [rdi + GR_owner], rcx
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -292,17 +389,23 @@ FN grammar_fill
     mov [rbx + GR_first], rax
     mov [rbx + GR_icon], rax
     mov qword ptr [rbx + GR_ficon], 0
-    lea rdi, [rip + it]
+    lea rdi, [rsp + 112]
     mov rsi, r12
     mov rdx, r13
     call ini_init
 .Lgp_next:
-    lea rdi, [rip + it]
+    mov rax, [rsp + 96]
+    test rax, rax
+    jz .Lgp_read_next
+    cmp qword ptr [rax + PO_error], 0
+    jne .Lgp_done
+.Lgp_read_next:
+    lea rdi, [rsp + 112]
     call ini_next
     test eax, eax
     jz .Lgp_done
-    mov r14, [rip + it + INI_val]
-    mov r15, [rip + it + INI_vallen]
+    mov r14, [rsp + 112 + INI_val]
+    mov r15, [rsp + 112 + INI_vallen]
     lea rsi, [rip + .Lk_name]
     call .Lgp_key
     jnz .Lgp_name
@@ -390,8 +493,8 @@ FN grammar_fill
     test eax, eax
     jnz .Lgp_next
     # word lists: "<class>s = words" e.g. keywords, types, constants, builtins, attributes, variables, tags, preprocs
-    mov rdi, [rip + it + INI_key]
-    mov rsi, [rip + it + INI_keylen]
+    mov rdi, [rsp + 112 + INI_key]
+    mov rsi, [rsp + 112 + INI_keylen]
     cmp rsi, 2
     jb .Lgp_warn
     cmp byte ptr [rdi + rsi - 1], 's'
@@ -408,30 +511,35 @@ FN grammar_fill
     jmp .Lgp_next
 
 .Lgp_warn:
-    inc dword ptr [rip + g_grammar_warnings]
+    call .Lgp_warn_count
     jmp .Lgp_next
 .Lgp_name:
+    mov rax, [rsp + 96]
+    test rax, rax
+    jz .Lgp_name_copy
+    mov [rax + GP_name_len], r15
+.Lgp_name_copy:
     mov rdi, r14
     mov rsi, r15
-    call mem_dup
+    call .Lgp_dup
     mov [rbx + GR_name], rax
     jmp .Lgp_next
 .Lgp_files:
     mov rdi, r14
     mov rsi, r15
-    call mem_dup
+    call .Lgp_dup
     mov [rbx + GR_files], rax
     jmp .Lgp_next
 .Lgp_first:
     mov rdi, r14
     mov rsi, r15
-    call mem_dup
+    call .Lgp_dup
     mov [rbx + GR_first], rax
     jmp .Lgp_next
 .Lgp_icon:
     mov rdi, r14
     mov rsi, r15
-    call mem_dup
+    call .Lgp_dup
     mov [rbx + GR_icon], rax
     jmp .Lgp_next
 .Lgp_toggle:
@@ -453,7 +561,7 @@ FN grammar_fill
     jne 2f
     mov rdi, rax
     mov rsi, rdx
-    call mem_dup
+    call .Lgp_dup
     mov [rbx + GR_comment], rax
     mov rax, [rsp + 8]
     mov [rbx + GR_commentlen], rax
@@ -484,7 +592,7 @@ FN grammar_fill
     js 32f
     mov r9d, eax
     jmp 3f
-32: inc dword ptr [rip + g_grammar_warnings]
+32: call .Lgp_warn_count
     mov r9d, C_COMMENT
 3:  mov rdi, rbx
     mov rsi, [rsp]
@@ -563,7 +671,10 @@ FN grammar_fill
     pop rcx
     test rax, rax
     js 8f
-    movzx eax, byte ptr [r14 + rax + 7]
+    add rax, 7
+    cmp rax, r15
+    jae 8f
+    movzx eax, byte ptr [r14 + rax]
     or ecx, eax
 8:  mov [rsp + 56], ecx
     # "eol" as end means end of line
@@ -595,9 +706,12 @@ FN grammar_fill
     test eax, eax
     js .Lgp_warn
     mov [rsp + 48], eax
-    lea rdi, [rbx + GR_lines]
-    mov esi, LR_SIZE
-    call vec_push
+    mov rdi, rbx
+    lea rsi, [rbx + GR_lines]
+    mov edx, LR_SIZE
+    call grammar_rule_push
+    test rax, rax
+    jz .Lgp_next
     mov [rsp + 56], rax
     lea rdi, [rax + LR_prefix]
     mov rsi, [rsp]
@@ -644,17 +758,67 @@ FN grammar_fill
 3:  mov rax, rbx
     EPILOGUE
 
+# The parent parser frame has context96 and local INI112.
+.Lgp_dup:
+    mov rax, [rsp + 104]
+    test rax, rax
+    jz 1f
+    mov rdx, rsi
+    mov rsi, rdi
+    mov rdi, rax
+    jmp prep_owned_dup
+1:  jmp mem_dup
+.Lgp_warn_count:
+    mov rax, [rsp + 104]
+    test rax, rax
+    jz 1f
+    inc qword ptr [rax + GP_warnings]
+    cmp qword ptr [rax + GP_legacy], 1
+    je 2f
+    cmp qword ptr [rax + PO_error], 0
+    jne 2f
+    mov qword ptr [rax + PO_error], -EV_BAD_GRAMMAR
+2:  ret
+1:  inc dword ptr [rip + g_grammar_warnings]
+    ret
+
+# One shared bounded region/line allocator. A private GR carries its unexposed GP.
+grammar_rule_push:
+    PROLOGUE
+    mov rbx, [rdi + GR_owner]
+    mov r12, rsi
+    mov r13, rdx
+    test rbx, rbx
+    jz 1f
+    cmp qword ptr [rbx + GP_rules], 4096
+    jae 8f
+    mov rdi, rbx
+    call prep_owned_vec_push
+    test rax, rax
+    jz 9f
+    inc qword ptr [rbx + GP_rules]
+9:  EPILOGUE
+1:  mov rdi, r12
+    mov rsi, r13
+    call vec_push
+    EPILOGUE
+8:  cmp qword ptr [rbx + PO_error], 0
+    jne 81f
+    mov qword ptr [rbx + PO_error], -EV_RESOURCE
+81: xor eax, eax
+    EPILOGUE
+
 # helpers for grammar_parse (use caller frame: [rsp+8..] after return address)
 # .Lgp_key: ZF clear (jnz) if the current key equals cstr rsi
 .Lgp_key:
-    lea rdi, [rip + it]
+    lea rdi, [rsp + 120]
     call ini_key_is
     test eax, eax
     ret
 # .Lgp_flag: key rsi -> set/clear flag r8 by boolean value
 .Lgp_flag:
     push r8
-    lea rdi, [rip + it]
+    lea rdi, [rsp + 128]
     call ini_key_is
     pop r8
     test eax, eax
@@ -1539,7 +1703,9 @@ FN syntax_prepare
     PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
-    mov r13, [rbx + DOC_lang]
+    mov rdi, rbx
+    call doc_language
+    mov r13, rax
     test r13, r13
     jz 9f
     cmp r12, [rbx + DOC_nlines]
@@ -1585,27 +1751,31 @@ FN syntax_prepare
 
 # syntax_line(doc, line, text, len, out): classes for one line (states must be prepared)
 FN syntax_line
-    push rbx
-    mov rbx, [rdi + DOC_lang]
-    test rbx, rbx
+    PROLOGUE 48
+    mov rbx, rdi
+    mov [rsp], rsi
+    mov [rsp + 8], rdx
+    mov [rsp + 16], rcx
+    mov [rsp + 24], r8
+    call doc_language
+    test rax, rax
     jz 2f
-    cmp rsi, [rdi + DOC_svalid]
+    mov rsi, [rsp]
+    cmp rsi, [rbx + DOC_svalid]
     jae 2f
-    mov rax, [rdi + DOC_states]
-    mov eax, [rax + rsi*4]
-    mov rdi, rbx
-    mov rsi, rdx
-    mov rdx, rcx
-    mov ecx, eax
+    mov rdx, [rbx + DOC_states]
+    mov ecx, [rdx + rsi*4]
+    mov rdi, rax
+    mov rsi, [rsp + 8]
+    mov rdx, [rsp + 16]
+    mov r8, [rsp + 24]
     call tokenize
-    pop rbx
-    ret
-2:  # plain text
-    mov rdi, r8
+    EPILOGUE
+2:  mov rdi, [rsp + 24]
+    mov rcx, [rsp + 16]
     xor eax, eax
     rep stosb
-    pop rbx
-    ret
+    EPILOGUE
 
 .section .rodata
 op_chars: .ascii "+-*/%=<>!&|^~?:"

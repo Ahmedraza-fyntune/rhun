@@ -49,6 +49,7 @@ zip=build/rhun-$version-macos-arm64.zip
 dmg=build/rhun-$version-macos-arm64.dmg
 
 tools/build-mac.sh release
+cp assets/licenses/LICENSE-Unicode.txt "$app/Contents/Resources/LICENSE-Unicode.txt"
 codesign --force --options runtime --timestamp --sign "$id" "$app"
 codesign --verify --strict --verbose=2 "$app"
 

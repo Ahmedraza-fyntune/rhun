@@ -1,5 +1,6 @@
 # themes: parse "key = #rrggbb" files, derive missing colors, registry of built-in + user themes
 .include "rhun.inc"
+.include "app/extvalidate.inc"
 
 
 .bss
@@ -14,7 +15,6 @@ pending_dark: .quad 0           # and the dark mode's setting before the unknown
 defined: .zero 16                # bit per slot given by the theme
 g_themes: .zero VEC_SIZE
 g_theme_cur: .quad 0            # index into g_themes
-it: .zero INI_SIZE
 
 .data
 .globl g_sys_dark
@@ -22,96 +22,183 @@ g_sys_dark: .long -1            # the system's dark mode as the platform reports
 
 .text
 
-# theme_load(text, len)
+# Legacy active-palette entry reuses the private destination parser, strict0.
 FN theme_load
-    PROLOGUE 16
-    mov qword ptr [rip + defined], 0
-    mov qword ptr [rip + defined + 8], 0
-    mov dword ptr [rip + g_theme_dark], 1
-    mov rdx, rsi
-    mov rsi, rdi
-    lea rdi, [rip + it]
+    mov r8, rsi
+    mov rcx, rdi
+    lea rdi, [rip + g_theme]
+    lea rsi, [rip + defined]
+    lea rdx, [rip + g_theme_dark]
+    xor r9d, r9d
+    jmp theme_parse_into
+
+# theme_parse_into(palette,defined16,kind32,bytes,len,strict). No registry or allocation.
+FN theme_parse_into
+    PROLOGUE 80
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov [rsp + 64], r9
+    mov [rsp + 72], rcx
+    mov r14, r8
+    test r9, r9
+    jz 1f
+    cmp r14, 65536
+    ja .Ltpi_resource
+    mov rdi, rcx
+    mov rsi, r14
+    call prep_ini_text_valid
+    test eax, eax
+    jz .Ltpi_bad
+1:  mov rdi, rbx
+    xor esi, esi
+    mov edx, 4 * T_COUNT
+    call memset
+    mov qword ptr [r12], 0
+    mov qword ptr [r12 + 8], 0
+    mov dword ptr [r13], 1
+    mov rdi, rsp
+    mov rsi, [rsp + 72]
+    mov rdx, r14
     call ini_init
 .Ltl_next:
-    lea rdi, [rip + it]
+    mov rdi, rsp
     call ini_next
     test eax, eax
     jz .Ltl_derive
-    lea rdi, [rip + it]
+    mov rdi, rsp
     lea rsi, [rip + .Lkind]
     call ini_key_is
     test eax, eax
     jz 1f
-    mov rdi, [rip + it + INI_val]
-    mov rsi, [rip + it + INI_vallen]
+    mov rdi, [rsp + INI_val]
+    mov rsi, [rsp + INI_vallen]
     lea rdx, [rip + .Llight]
     call str_eq_cstr
-    xor eax, 1
-    mov [rip + g_theme_dark], eax
+    test eax, eax
+    jnz .Ltpi_light
+    cmp qword ptr [rsp + 64], 0
+    je .Ltpi_dark
+    mov rdi, [rsp + INI_val]
+    mov rsi, [rsp + INI_vallen]
+    lea rdx, [rip + .Ltpi_dark_name]
+    call str_eq_cstr
+    test eax, eax
+    jz .Ltpi_bad
+.Ltpi_dark:
+    mov dword ptr [r13], 1
     jmp .Ltl_next
-1:  # slot name lookup
-    lea rbx, [rip + slot_names]
-    xor r12d, r12d
-2:  cmp r12d, T_COUNT
+.Ltpi_light:
+    mov dword ptr [r13], 0
+    jmp .Ltl_next
+1:  lea r15, [rip + slot_names]
+    xor r14d, r14d
+2:  cmp r14d, T_COUNT
     jae .Ltl_next
-    mov rdi, [rip + it + INI_key]
-    mov rsi, [rip + it + INI_keylen]
-    mov rdx, [rbx + r12*8]
+    mov rdi, [rsp + INI_key]
+    mov rsi, [rsp + INI_keylen]
+    mov rdx, [r15 + r14*8]
     call str_eq_cstr
     test eax, eax
     jnz 3f
-    inc r12d
+    inc r14d
     jmp 2b
-3:  mov rdi, [rip + it + INI_val]
-    mov rsi, [rip + it + INI_vallen]
+3:  mov rdi, [rsp + INI_val]
+    mov rsi, [rsp + INI_vallen]
+    cmp qword ptr [rsp + 64], 0
+    je .Ltpi_legacy_color
+    call theme_color_strict
+    jmp .Ltpi_color_checked
+.Ltpi_legacy_color:
     call parse_color
+.Ltpi_color_checked:
     test edx, edx
-    jz .Ltl_next
-    lea rcx, [rip + g_theme]
-    mov [rcx + r12*4], eax
-    bts qword ptr [rip + defined], r12
+    jnz 4f
+    cmp qword ptr [rsp + 64], 0
+    je .Ltl_next
+    jmp .Ltpi_bad
+4:  mov [rbx + r14*4], eax
+    bts qword ptr [r12], r14
     jmp .Ltl_next
 .Ltl_derive:
-    call theme_derive
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, [r13]
+    call theme_derive_into
+    xor eax, eax
     EPILOGUE
+.Ltpi_resource:
+    mov rax, -EV_RESOURCE
+    EPILOGUE
+.Ltpi_bad:
+    mov rax, -EV_BAD_THEME
+    EPILOGUE
+
+# Strict managed color syntax; preserve the legacy RGBA conversion after exact validation.
+theme_color_strict:
+    cmp rsi, 7
+    je 1f
+    cmp rsi, 9
+    jne 8f
+1:  cmp byte ptr [rdi], '#'
+    jne 8f
+    mov ecx, 1
+2:  cmp rcx, rsi
+    jae 9f
+    movzx eax, byte ptr [rdi + rcx]
+    cmp eax, '0'
+    jb 8f
+    cmp eax, '9'
+    jbe 3f
+    or eax, 32
+    cmp eax, 'a'
+    jb 8f
+    cmp eax, 'f'
+    ja 8f
+3:  inc rcx
+    jmp 2b
+8:  xor eax, eax
+    xor edx, edx
+    ret
+9:  jmp parse_color
 
 # ISDEF slot: carry set when the theme gave the slot
 .macro ISDEF slot
-    bt qword ptr [rip + defined + 8 * ((\slot) / 64)], (\slot) % 64
+    bt qword ptr [r15 + 8 * ((\slot) / 64)], (\slot) % 64
 .endm
 
 # DERIVE slot, a, b, t  : if slot undefined, slot = mix(color a, color b, t)
 .macro DERIVE slot, a, b, t
     ISDEF \slot
     jc 88f
-    mov edi, [rip + g_theme + 4*(\a)]
-    mov esi, [rip + g_theme + 4*(\b)]
+    mov edi, [r14 + 4*(\a)]
+    mov esi, [r14 + 4*(\b)]
     mov edx, \t
     call color_mix
-    mov [rip + g_theme + 4*(\slot)], eax
+    mov [r14 + 4*(\slot)], eax
 88:
 .endm
 .macro DERIVE_C slot, a, c, t
     ISDEF \slot
     jc 88f
-    mov edi, [rip + g_theme + 4*(\a)]
+    mov edi, [r14 + 4*(\a)]
     mov esi, \c
     mov edx, \t
     call color_mix
-    mov [rip + g_theme + 4*(\slot)], eax
+    mov [r14 + 4*(\slot)], eax
 88:
 .endm
 .macro COPY slot, src
     ISDEF \slot
     jc 88f
-    mov eax, [rip + g_theme + 4*(\src)]
-    mov [rip + g_theme + 4*(\slot)], eax
+    mov eax, [r14 + 4*(\src)]
+    mov [r14 + 4*(\slot)], eax
 88:
 .endm
 .macro CONST slot, c
     ISDEF \slot
     jc 88f
-    mov dword ptr [rip + g_theme + 4*(\slot)], \c
+    mov dword ptr [r14 + 4*(\slot)], \c
 88:
 .endm
 
@@ -123,8 +210,8 @@ FN theme_load
     mov eax, \c
     ISDEF \term
     jnc 87f
-    mov eax, [rip + g_theme + 4*(\term)]
-87: mov [rip + g_theme + 4*(\slot)], eax
+    mov eax, [r14 + 4*(\term)]
+87: mov [r14 + 4*(\slot)], eax
 88:
 .endm
 
@@ -132,18 +219,28 @@ FN theme_load
 .macro LEGIBLE slot
     ISDEF \slot
     jc 88f
-    mov edi, [rip + g_theme + 4*(\slot)]
-    call legible
-    mov [rip + g_theme + 4*(\slot)], eax
+    mov edi, [r14 + 4*(\slot)]
+    mov rsi, r14
+    call legible_into
+    mov [r14 + 4*(\slot)], eax
 88:
 .endm
 
 theme_derive:
-    push rbx
+    lea rdi, [rip + g_theme]
+    lea rsi, [rip + defined]
+    mov edx, [rip + g_theme_dark]
+    jmp theme_derive_into
+
+FN theme_derive_into
+    PROLOGUE
+    mov r14, rdi
+    mov r15, rsi
+    mov r12d, edx
     CONST T_BG, 0xff1e1f24
     CONST T_FG, 0xffd4d6dc
     CONST T_ACCENT, 0xff7aa2f7
-    cmp dword ptr [rip + g_theme_dark], 0
+    test r12d, r12d
     je .Ltd_light
     DERIVE_C T_PANEL, T_BG, 0xff000000, 40
     DERIVE_C T_BORDER, T_PANEL, 0xff000000, 70
@@ -183,7 +280,7 @@ theme_derive:
     # text on accent: black or white by luminance
     ISDEF T_ACCENT_FG
     jc 1f
-    mov eax, [rip + g_theme + 4*T_ACCENT]
+    mov eax, [r14 + 4*T_ACCENT]
     movzx ecx, al               # b
     imul ecx, ecx, 29
     movzx edx, ah               # g
@@ -198,7 +295,7 @@ theme_derive:
     mov edx, 0xff111217
     cmp eax, 165
     cmova ecx, edx
-    mov [rip + g_theme + 4*T_ACCENT_FG], ecx
+    mov [r14 + 4*T_ACCENT_FG], ecx
 1:  # syntax defaults
     COPY T_SYN + C_TEXT, T_FG
     COPY T_SYN + C_KEYWORD, T_ACCENT
@@ -259,8 +356,7 @@ theme_derive:
     COPY T_GIT_ADD, T_SUCCESS
     COPY T_GIT_MOD, T_WARNING
     COPY T_GIT_DEL, T_ERROR
-    pop rbx
-    ret
+    EPILOGUE
 
 # luma(argb) -> eax: 54 r^2 + 183 g^2 + 18 b^2, relative luminance with squares for the curve
 luma:
@@ -286,15 +382,18 @@ luma:
 # and the panel is 3 times as bright as the other (WCAG's 3:1 for graphics: (hi + .05) / (lo + .05))
 .equ LUMA_MAX, 255 * 65025
 legible:
-    push rbx
-    push r12
-    push r13
+    lea rsi, [rip + g_theme]
+    jmp legible_into
+
+FN legible_into
+    PROLOGUE
+    mov r14, rsi
     mov ebx, edi
     mov r12d, 8
 1:  mov edi, ebx
     call luma
     mov r13d, eax
-    mov edi, [rip + g_theme + 4*T_PANEL]
+    mov edi, [r14 + 4*T_PANEL]
     call luma
     mov ecx, eax
     cmp r13d, ecx
@@ -312,16 +411,13 @@ legible:
     dec r12d
     jz 9f
     mov edi, ebx
-    mov esi, [rip + g_theme + 4*T_FG]
+    mov esi, [r14 + 4*T_FG]
     mov edx, 48
     call color_mix
     mov ebx, eax
     jmp 1b
 9:  mov eax, ebx
-    pop r13
-    pop r12
-    pop rbx
-    ret
+    EPILOGUE
 
 # theme_scan(): register "Follow Omarchy" (on Omarchy), built-in themes and ~/.config/rhun/themes/*.theme
 FN theme_scan
@@ -886,3 +982,6 @@ slot_names:
 .Li7: .asciz "icon_cyan"
 .Li8: .asciz "icon_grey"
 .Li9: .asciz "icon_white"
+
+.section .rodata
+.Ltpi_dark_name: .asciz "dark"

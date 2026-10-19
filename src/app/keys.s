@@ -60,6 +60,7 @@ FN parse_combo
     EPILOGUE
 
 # combo_token(ptr, len) -> edx mod bit if a modifier, else eax keysym
+FN keys_combo_token
 combo_token:
     PROLOGUE
     mov r12, rdi
@@ -459,6 +460,11 @@ FN keys_for
 8:  xor eax, eax
     EPILOGUE
 
+# Stable process-lifetime target for an explicitly unbound shortcut.
+FN keys_none_command
+    lea rax, [rip + none_cmd]
+    ret
+
 FN cmd_none
     ret
 
@@ -555,6 +561,9 @@ g_commands:
     COMMAND command_palette, "Command Palette", cmd_command_palette, "ctrl+shift+p F1"
     COMMAND new_file, "New File", cmd_new_file, "ctrl+n"
     COMMAND save, "Save", cmd_save, "ctrl+s"
+    COMMAND save_without_formatting, "Save Without Formatting", cmd_save_without_formatting, ""
+    COMMAND cancel_save, "Cancel Save", cmd_cancel_save, ""
+    COMMAND save_all, "Save All", cmd_save_all, ""
     COMMAND save_as, "Save As", cmd_save_as, "ctrl+shift+s"
     COMMAND close_tab, "Close Tab", cmd_close_tab, "ctrl+w ctrl+F4"
     COMMAND close_all_tabs, "Close All Tabs", cmd_close_all, "ctrl+shift+w"
@@ -566,6 +575,10 @@ g_commands:
     COMMAND quit, "Quit", cmd_quit, "ctrl+q"
     COMMAND undo, "Undo", cmd_undo, "ctrl+z"
     COMMAND redo, "Redo", cmd_redo, "ctrl+shift+z ctrl+y"
+    COMMAND snippet_choose, "Snippet: Choose Value", cmd_snippet_choose, ""
+    COMMAND snippet_next, "Snippet: Next Field", cmd_snippet_next, ""
+    COMMAND snippet_previous, "Snippet: Previous Field", cmd_snippet_previous, ""
+    COMMAND snippet_cancel, "Snippet: Finish Editing Fields", cmd_snippet_cancel, ""
     COMMAND cut, "Cut", cmd_cut, "ctrl+x shift+Delete"
     COMMAND copy, "Copy", cmd_copy, "ctrl+c ctrl+Insert"
     COMMAND paste, "Paste", cmd_paste, "ctrl+v shift+Insert"
@@ -617,6 +630,10 @@ g_commands:
     COMMAND symbols, "Go to Symbol in File", cmd_symbols, "ctrl+r"
     COMMAND code_actions, "Show Code Actions", cmd_code_actions, "ctrl+."
     COMMAND format_document, "Format Document", cmd_format_document, "shift+alt+f"
+    COMMAND select_default_formatter, "Select Default Formatter", cmd_select_default_formatter, ""
+    COMMAND select_rename_provider, "Select Rename Provider", cmd_select_rename_provider, ""
+    COMMAND select_signature_provider, "Select Signature Provider", cmd_select_signature_provider, ""
+    COMMAND select_symbol_provider, "Select Symbol Provider", cmd_select_symbol_provider, ""
     COMMAND toggle_whitespace, "Toggle Whitespace", cmd_toggle_whitespace, ""
     COMMAND toggle_line_numbers, "Toggle Line Numbers", cmd_toggle_line_numbers, ""
     COMMAND toggle_vim, "Toggle Vim Mode", cmd_toggle_vim, ""

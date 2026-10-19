@@ -95,7 +95,12 @@ LIBC sys_read, _read
 LIBC sys_write, _write
 LIBC sys_fsync, _fsync, 32
 LIBC sys_fchmod, _fchmod, 32
+LIBC sys_flock, _flock, 32
 LIBC sys_rename, _rename, 32
+sys_rename_new:
+    mov w2, #4                 // RENAME_EXCL: refuse an existing destination
+    b sys_rename_new_native
+LIBC sys_rename_new_native, _renamex_np, 32
 LIBC sys_mkdir, _mkdir, 32
 LIBC sys_rmdir, _rmdir, 32
 LIBC sys_unlink, _unlink, 32
@@ -113,6 +118,24 @@ LIBC sys_dup2, _dup2, 32
 LIBC sys_setsid, _setsid, 32
 LIBC sys_chdir, _chdir, 32
 LIBC sys_execve, _execve, 32
+
+// The core only uses RLIMIT_NOFILE: Linux resource 7 is Darwin resource 8; both use
+// two uint64_t limits, and an infinite hard limit stays larger than our requested soft limit.
+sys_getrlimit:
+    cmp w0, #7
+    b.ne .Lrlimit_unknown
+    mov w0, #8
+    b sys_getrlimit_native
+sys_setrlimit:
+    cmp w0, #7
+    b.ne .Lrlimit_unknown
+    mov w0, #8
+    b sys_setrlimit_native
+.Lrlimit_unknown:
+    mov x0, #-L_ENOSYS
+    ret
+LIBC sys_getrlimit_native, _getrlimit, 32
+LIBC sys_setrlimit_native, _setrlimit, 32
 
 // vfork: a fork, as the child only reads memory before it execs (proc_spawn)
 LIBC sys_vfork, _fork, 32
@@ -492,9 +515,11 @@ sys_getdents64:
     ldr x25, [x9, w19, uxtw #3]
     str xzr, [x9, w19, uxtw #3]
     cbnz x25, 2f
+    bl ___error
+    str wzr, [x0]              // distinguish a readdir error from ordinary EOF
     mov x0, x23
     bl _readdir
-    cbz x0, 7f
+    cbz x0, .Ldent_eof
     mov x25, x0
 2:  ldrh w26, [x25, #18]        // d_namlen
     add x27, x26, #19 + 1 + 7   // header, name, NUL, rounded to 8
@@ -527,6 +552,15 @@ sys_getdents64:
     b 9f
 8:  mov x0, #-1
     bl linux_ret
+    b 9f
+.Ldent_eof:
+    bl ___error
+    ldr w0, [x0]
+    cbz w0, 7b
+    bl linux_errno
+    cmp w0, #4                // retry EINTR without discarding this batch
+    b.eq 1b
+    neg x0, x0
 9:  LEAVE
     ret
 
@@ -812,6 +846,7 @@ sys_table:
     SYS 61, sys_wait4
     SYS 62, sys_kill
     SYS 72, sys_fcntl
+    SYS 73, sys_flock
     SYS 74, sys_fsync
     SYS 77, sys_ftruncate
     SYS 79, sys_getcwd
@@ -822,7 +857,9 @@ sys_table:
     SYS 87, sys_unlink
     SYS 89, sys_readlink
     SYS 91, sys_fchmod
+    SYS 97, sys_getrlimit
     SYS 112, sys_setsid
+    SYS 160, sys_setrlimit
     SYS 217, sys_getdents64
     SYS 228, sys_clock_gettime
     SYS 231, sys_exit
@@ -832,6 +869,7 @@ sys_table:
     SYS 288, sys_accept4
     SYS 290, sys_sandbox_init
     SYS 291, sys_realpath
+    SYS 292, sys_rename_new
     SYS 293, sys_pipe2
     SYS 294, sys_inotify_init1
     .org sys_table + NSYS * 8

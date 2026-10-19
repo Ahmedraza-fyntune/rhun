@@ -31,11 +31,13 @@ BOOLS = {
     'editor': ('insert_spaces line_numbers highlight_line animate_disk_changes match_brackets '
                'indent_guides word_wrap whitespace cursor_blink smooth_caret auto_pairs '
                'scroll_past_end vim_mode'),
-    'files': 'trim_trailing_whitespace final_newline restore_session restore_project',
+    'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
 }
 INTS = {
+    ('files', 'format_on_save_timeout'): (250, 30000, 250),
+    ('files', 'code_actions_on_save_timeout'): (250, 30000, 250),
     ('ui', 'scale'): (.5, 3., .1), ('ui', 'font_size'): (9, 24, 1),
     ('ui', 'sidebar_width'): (140, 600, 10), ('ui', 'agents_width'): (240, 900, 10),
     ('ui', 'scroll_sensitivity'): (.1, 10., .1), ('ui', 'fast_scroll_sensitivity'): (.1, 10., .1),
@@ -47,10 +49,12 @@ INTS = {
 STRINGS = {
     ('ui', 'font'): 'missing font café.ttf', ('editor', 'font'): 'missing mono café.ttf',
     ('files', 'exclude'): '.git hidden café',
+    ('files', 'code_actions_on_save'): 'source.organizeImports source.fixAll',
     ('terminal', 'shell'): 'missing shell café', ('terminal', 'font'): 'missing term café.ttf',
     ('git', 'commit_model'): 'model:café',
 }
-CHOICES = {('ui', 'decorations'): ('auto', 'client', 'server'),
+CHOICES = {('editor', 'multi_cursor_paste'): ('spread', 'full'),
+           ('ui', 'decorations'): ('auto', 'client', 'server'),
            ('git', 'commit_ai'): ('off', 'claude', 'codex', 'ollama')}
 
 
@@ -85,7 +89,7 @@ class SettingsUI(unittest.TestCase):
             k + ' = ' + v + '\n' for k, v in values.items()) for s, values in data.items()),
             encoding='utf-8')
 
-    def run_editor(self, actions, height=4600, width=1400):
+    def run_editor(self, actions, height=6000, width=1400):
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join(['cmd settings', *actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), self.work.as_posix(), '--headless', f'{width}x{height}',
@@ -135,14 +139,14 @@ class SettingsUI(unittest.TestCase):
                 self.configure(section, key, 'original')
                 y = self.compact_row_y(section, key)
                 self.run_editor([f'click 240 {y}', f'key {MOD}+a', 'type ' + value,
-                                 'key Return'], width=480, height=7000)
+                                 'key Return'], width=480, height=8000)
                 self.assertEqual(self.value(section, key), value)
         for (section, key), choices in CHOICES.items():
             for index, value in enumerate(choices):
                 with self.subTest(setting=f'{section}.{key}', value=value):
                     self.configure()
                     y = self.compact_row_y(section, key) + index * 32
-                    self.run_editor([f'click 240 {y}'], width=480, height=7000)
+                    self.run_editor([f'click 240 {y}'], width=480, height=8000)
                     self.assertEqual(self.value(section, key), value)
 
     def test_inventory_requires_cases_for_every_setting(self):
@@ -199,8 +203,9 @@ class SettingsUI(unittest.TestCase):
                     self.assertEqual(self.value(section, key), expected)
 
     def test_every_choice_segment(self):
-        # Pixel widths of the built-in 13 point font plus the documented 24 point padding.
-        widths = {('ui', 'decorations'): (55, 55, 78),
+        # Control widths place each click well inside its segment.
+        widths = {('editor', 'multi_cursor_paste'): (108, 86),
+                  ('ui', 'decorations'): (55, 55, 78),
                   ('git', 'commit_ai'): (45, 92, 59, 116)}
         for (section, key), options in CHOICES.items():
             for index, option in enumerate(options):
@@ -210,6 +215,13 @@ class SettingsUI(unittest.TestCase):
                     x = 1044 - sum(parts) + sum(parts[:index]) + parts[index] // 2
                     self.run_editor([f'click {x} {self.row_y(section, key)}'])
                     self.assertEqual(self.value(section, key), option)
+
+    def test_multi_cursor_paste_survives_reload(self):
+        self.configure('editor', 'multi_cursor_paste', 'full')
+        y = self.row_y('editor', 'multi_cursor_paste')
+        for x, value in ((900, 'spread'), (1001, 'full'), (900, 'spread')):
+            self.run_editor([f'click {x} {y}'])
+            self.assertEqual(self.value('editor', 'multi_cursor_paste'), value)
 
     def test_theme_button_preview_cancel_and_accept(self):
         self.configure('ui', 'follow_system', 'false')

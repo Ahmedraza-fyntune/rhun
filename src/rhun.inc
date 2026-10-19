@@ -1,6 +1,13 @@
 # rhun: shared macros and constants
 .intel_syntax noprefix
 
+# Managed save flags and completion results. Pending callbacks receive stable document IDs.
+.equ SAVE_READONLY, 1
+.equ SAVE_BYPASS, 2
+.equ SAVE_INTENT, 4
+.equ SAVE_CANCELLED, -2
+.equ SAVE_SUPERSEDED, -3
+
 # ---- linux x86-64 syscalls ----
 .equ SYS_read, 0
 .equ SYS_write, 1
@@ -37,6 +44,7 @@
 .equ SYS_kill, 62
 .equ SYS_uname, 63
 .equ SYS_fcntl, 72
+.equ SYS_flock, 73
 .equ SYS_fsync, 74
 .equ SYS_ftruncate, 77
 .equ SYS_getcwd, 79
@@ -47,6 +55,8 @@
 .equ SYS_readlink, 89
 .equ SYS_chmod, 90
 .equ SYS_fchmod, 91
+.equ SYS_getrlimit, 97
+.equ SYS_setrlimit, 160
 .equ SYS_setsid, 112
 .equ SYS_shmdt, 67
 .equ SYS_getdents64, 217
@@ -74,6 +84,8 @@
 .equ SYS_landlock_restrict_self, 446
 .equ SYS_sandbox_init, 290          # macOS only: a pseudo number the translator maps to sandbox_init
 .equ SYS_realpath, 291              # macOS only: realpath(path, buf) -> buf or 0
+.equ SYS_rename_new, 292            # macOS only: renamex_np(old, new, RENAME_EXCL)
+.equ SYS_renameat2, 316
 .equ CLONE_NEWUSER, 0x10000000
 .equ CLONE_NEWNET, 0x40000000
 .equ O_PATH, 0x200000
@@ -124,6 +136,7 @@
 .equ O_TRUNC, 0x200
 .equ O_APPEND, 0x400
 .equ O_NONBLOCK, 0x800
+.equ O_NOFOLLOW, 0x20000
 .equ O_DIRECTORY, 0x10000
 .equ O_CLOEXEC, 0x80000
 
@@ -222,6 +235,35 @@
 .endm
 
 # ---- struct layout ----
+# Caller-owned SHA-256 context. Byte input length must fit the standard's 64-bit bit count.
+.equ SH256_state, 0
+.equ SH256_bytes, 32
+.equ SH256_used, 40
+.equ SH256_block, 48
+.equ SH256_finalized, 112
+.equ SH256_SIZE, 128
+.equ SH256_BYTES_MAX, (1 << 61) - 1
+
+# Immutable managed extension selection record, little-endian on supported targets.
+.equ EXI_format, 8
+.equ EXI_flags, 12
+.equ EXI_generation, 16
+.equ EXI_reserved, 24
+.equ EXI_active, 32
+.equ EXI_previous, 96
+.equ EXI_SIZE, 160
+.equ EXI_ACTIVE, 1
+.equ EXI_REMOVED, 2
+.equ EXI_FILENAME_LEN, 20
+
+# Private per-call context for strict directory enumeration.
+.equ DSC_max, 0
+.equ DSC_count, 8
+.equ DSC_callback, 16
+.equ DSC_user, 24
+.equ DSC_SIZE, 32
+.equ DSC_CAP_MAX, 1048576
+
 .macro STRUCT
     .set __so, 0
 .endm
@@ -395,7 +437,7 @@ F PW_events, 4
 F PW_handler, 8         # handler(fd, revents, ctx)
 F PW_ctx, 8
 ENDSTRUCT PW_SIZE
-.equ MAX_WATCH, 96
+.equ MAX_WATCH, 512
 
 # ---- platform vtable (wayland / x11 / headless) ----
 STRUCT
@@ -404,14 +446,15 @@ F P_timeout, 8          # () -> ms or -1
 F P_tick, 8             # ()
 F P_draw, 8             # () renders if possible
 F P_cursor, 8           # (shape)
-F P_clip_set, 8         # (ptr, len)
-F P_clip_get, 8         # () -> async app_on_paste
+F P_clip_set, 8         # (ptr, len) -> 1 accepted write request, 0 known failure
+F P_clip_get, 8         # () snapshots app_clip_active_token, completes through app_clip_complete
 F P_move, 8             # ()
 F P_resize, 8           # (edges)
 F P_minimize, 8         # ()
 F P_maximize, 8         # () toggle
 F P_title, 8            # (cstr)
 F P_menu, 8             # (x, y)
+F P_clip_write, 8       # optional (native wire, len) -> accepted bool; zero for plain fallback
 ENDSTRUCT PLAT_SIZE
 
 .equ EDGE_TOP, 1
@@ -590,11 +633,472 @@ F DOC_xpad, 4
 F DOC_oval, 16          # extensions: option overrides (section 6c), u32 each: OPT_TAB the width,
                         #   the booleans 1 = no, 2 = yes; 0 = no override
 F DOC_oown, 32          # extensions: the EXT* that set each of them
+F DOC_snippet, 8        # native prepared-field session, owned, or 0
+F DOC_selections, 8     # owned secondary selection block, or 0; scalar primary remains authoritative
+F DOC_selectionbatch, 8 # batch edits capture selection history only at their boundaries
+F DOC_multilastcp, 8    # last scalar inserted by a multiple-selection typing run
+F DOC_language_mode, 4  # DL_AUTO, DL_PLAIN or DL_NAMED
+F DOC_language_syncing, 4
+F DOC_language_name, 8  # owned explicit language name, retained even while unavailable
+F DOC_language_owner, 8 # owned prepared GP reference for DOC_lang, or 0
+F DOC_language_epoch, 8
+F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
+F DOC_language_pending, 8
 ENDSTRUCT DOC_SIZE
+.equ DL_AUTO, 0
+.equ DL_PLAIN, 1
+.equ DL_NAMED, 2
+.equ DOC_SELECTIONS_MAX, 512
+.equ DOC_MULTI_BYTES_MAX, 67108864
+STRUCT
+F DMR_start, 8
+F DMR_end, 8
+F DMR_index, 8          # lowest original selection index in a merged range
+F DMR_caret, 8
+ENDSTRUCT DMR_SIZE
+STRUCT
+F DNS_count, 8
+F DNS_doclen, 8
+F DNS_ranges, DMR_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT DNS_SIZE
+STRUCT
+F DMS_count, 8          # number of secondary selections
+ENDSTRUCT DMS_DATA
+STRUCT
+F DMP_cur, 8
+F DMP_anchor, 8
+ENDSTRUCT DMP_SIZE
+.equ DOC_BATCH_EDITS_MAX, 1024
+STRUCT
+F DBE_start, 8
+F DBE_end, 8
+F DBE_text, 8
+F DBE_len, 8
+ENDSTRUCT DBE_SIZE
+# Trusted native precommit guard. Context remains owned by the caller until return.
+STRUCT
+F GDC_callback, 8
+F GDC_context, 8
+ENDSTRUCT GDC_SIZE
+STRUCT
+F DBA_doc, 8
+F DBA_count, 8
+F DBA_npairs, 8
+F DBA_doclen, 8
+F DBA_final, 8
+F DBA_inserted, 8
+F DBA_deleted, 8
+F DBA_text, 8           # owned aggregate payload
+F DBA_before, 8         # owned extras snapshot until transferred to the first record
+F DBA_cur, 8
+F DBA_anchor, 8
+F DBA_undo, 8
+F DBA_grouped, 8
+F DBA_error, 8
+F DBA_callback, 8
+F DBA_context, 8
+F DBA_snapshot, 8      # owned DOC bytes, only for guarded preparation
+F DBA_extras, 8        # owned secondary endpoints for the stale-state check
+F DBA_edits, DBE_SIZE*DOC_BATCH_EDITS_MAX
+F DBA_pairs, DMP_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT DBA_SIZE
+# Native owned clipboard pieces and prepared multi-selection Copy/Cut.
+STRUCT
+F ECS_offset, 8
+F ECS_len, 8
+ENDSTRUCT ECS_SIZE
+STRUCT
+F ECM_count, 8
+F ECM_total, 8
+F ECM_segments, ECS_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT ECM_SIZE
+# Native clipboard envelope. Header's count/total/table is a borrowed ECM view.
+.equ CLW_MAGIC, 0x00504c434e554852
+.equ CLW_VERSION, 1
+.equ CLW_HEADER, 32
+.equ CLW_MAX, DOC_MULTI_BYTES_MAX + 32 + ECS_SIZE*DOC_SELECTIONS_MAX
+STRUCT
+F CWB_text, 8
+F CWB_len, 8
+F CWB_line, 8
+F CWB_metadata, 8
+ENDSTRUCT CWB_SIZE
+STRUCT
+F ECR_start, 8
+F ECR_end, 8
+F ECR_append, 8
+F ECR_unused, 8
+ENDSTRUCT ECR_SIZE
+STRUCT
+F ECP_doc, 8
+F ECP_cut, 8
+F ECP_limit, 8
+F ECP_dns, 8
+F ECP_metadata, 8
+F ECP_text, SB_SIZE
+F ECP_npieces, 8
+F ECP_ncuts, 8
+F ECP_nedits, 8
+F ECP_line, 8
+F ECP_lastline, 8
+F ECP_error, 8
+F ECP_pieces, ECR_SIZE*DOC_SELECTIONS_MAX
+F ECP_cuts, DMR_SIZE*DOC_SELECTIONS_MAX
+F ECP_edits, DBE_SIZE*DOC_SELECTIONS_MAX
+F ECP_pairs, DMP_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT ECP_SIZE
+# Owned multiple-selection paste plan and copied native preparation options.
+STRUCT
+F PPO_mode, 8
+F PPO_metadata, 8
+F PPO_line, 8
+F PPO_limit, 8
+ENDSTRUCT PPO_SIZE
+STRUCT
+F EPP_doc, 8
+F EPP_mode, 8
+F EPP_line, 8
+F EPP_limit, 8
+F EPP_input, 8
+F EPP_inputlen, 8
+F EPP_dns, 8
+F EPP_cooked, 8
+F EPP_cookedlen, 8
+F EPP_nspans, 8
+F EPP_distributed, 8
+F EPP_nedits, 8
+F EPP_npairs, 8
+F EPP_delta, 8
+F EPP_inserted, 8
+F EPP_lastline, 8
+F EPP_noop, 8
+F EPP_metadata, ECM_SIZE
+F EPP_spans, ECS_SIZE*DOC_SELECTIONS_MAX
+F EPP_payloads, ECS_SIZE*DOC_SELECTIONS_MAX
+F EPP_edits, DBE_SIZE*DOC_SELECTIONS_MAX
+F EPP_pairs, DMP_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT EPP_SIZE
+STRUCT
+F DME_input, 8          # borrowed until the general batch copies all payloads
+F DME_len, 8
+F DME_count, 8
+F DME_doclen, 8
+F DME_deleted, 8
+F DME_error, 8
+F DME_nedits, 8
+F DME_ranges, DMR_SIZE*DOC_SELECTIONS_MAX
+F DME_pairs, DMP_SIZE*DOC_SELECTIONS_MAX
+F DME_edits, DBE_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT DME_SIZE
+STRUCT
+F ETP_doc, 8
+F ETP_ranges, 8
+F ETP_scalar, 8
+F ETP_encoded, 8
+F ETP_elen, 8
+F ETP_nedits, 8
+F ETP_bytes, 8
+F ETP_delta, 8
+F ETP_undo, 8
+F ETP_joined, 8
+F ETP_error, 8
+F ETP_direction, 8
+F ETP_temp, 8
+F ETP_tlen, 8
+F ETP_cur, 8
+F ETP_anchor, 8
+F ETP_write, 8
+F ETP_built, 8
+F ETP_edits, DBE_SIZE*DOC_SELECTIONS_MAX
+F ETP_payloads, 8*DOC_SELECTIONS_MAX
+F ETP_pairs, DMP_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT ETP_SIZE
+STRUCT
+F ENP_ranges, 8
+F ENP_limit, 8
+F ENP_bytes, 8
+F ENP_scan, 8
+F ENP_delta, 8
+F ENP_built, 8
+F ENP_error, 8
+F ENP_edits, DBE_SIZE*DOC_SELECTIONS_MAX
+F ENP_payloads, 8*DOC_SELECTIONS_MAX
+F ENP_pairs, DMP_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT ENP_SIZE
+STRUCT
+F EDP_ranges, 8
+F EDP_expanded, 8
+F EDP_direction, 8
+F EDP_word, 8
+F EDP_scan, 8
+F EDP_delta, 8
+F EDP_kind, 8
+F EDP_undo, 8
+F EDP_joined, 8
+F EDP_nedits, 8
+F EDP_error, 8
+F EDP_candidates, DMP_SIZE*DOC_SELECTIONS_MAX
+F EDP_pairs, DMP_SIZE*DOC_SELECTIONS_MAX
+F EDP_edits, DBE_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT EDP_SIZE
+# Multiple selection Tab planning. Payloads are owned inline, never DOC views.
+.equ ETB_CANDIDATES_MAX, DOC_BATCH_EDITS_MAX + DOC_SELECTIONS_MAX
+STRUCT
+F ETC_start, 8
+F ETC_end, 8
+F ETC_len, 8
+F ETC_kind, 8          # 0 line prefix, 1 selection replacement
+F ETC_data, 32
+F ETC_output, 8        # compact output index
+ENDSTRUCT ETC_SIZE
+STRUCT
+F ETL_line, 8
+F ETL_empty, 8
+ENDSTRUCT ETL_SIZE
+STRUCT
+F ETB_doc, 8
+F ETB_ranges, 8
+F ETB_mode, 8
+F ETB_width, 8
+F ETB_spaces, 8
+F ETB_limit, 8
+F ETB_scan, 8
+F ETB_editlimit, 8
+F ETB_ncandidates, 8
+F ETB_nlines, 8
+F ETB_nedits, 8
+F ETB_bytes, 8
+F ETB_error, 8
+F ETB_candidates, ETC_SIZE*ETB_CANDIDATES_MAX
+F ETB_order, 8*ETB_CANDIDATES_MAX
+F ETB_lines, ETL_SIZE*DOC_BATCH_EDITS_MAX
+F ETB_direction, 8*DOC_SELECTIONS_MAX
+F ETB_class, 8*DOC_SELECTIONS_MAX
+F ETB_replacements, 8*DOC_SELECTIONS_MAX
+F ETB_sourcepairs, DMP_SIZE*DOC_SELECTIONS_MAX
+F ETB_rangeorder, 8*DOC_SELECTIONS_MAX
+F ETB_edits, DBE_SIZE*DOC_BATCH_EDITS_MAX
+F ETB_payloads, 32*DOC_BATCH_EDITS_MAX
+F ETB_pairs, DMP_SIZE*DOC_SELECTIONS_MAX
+ENDSTRUCT ETB_SIZE
 .equ OPT_TAB, 0
 .equ OPT_SPACES, 1
 .equ OPT_TRIM, 2
 .equ OPT_FINAL, 3
+
+# Prepared snippet fields and propagation. All indices are stable for a session.
+.equ SN_FIELDS_MAX, 512
+.equ SN_GROUPS_MAX, 256
+.equ SN_DEPTH_MAX, 32
+.equ SN_BYTES_MAX, 4194304
+.equ SN_SESSIONS_MAX, 32
+.equ SN_OPTIONS_MAX, 256
+.equ SN_OPTION_MAX, 1048576
+STRUCT
+F SC_refs, 8
+F SC_bytes, 8
+ENDSTRUCT SC_DATA
+STRUCT
+F SF_group, 8
+F SF_start, 8
+F SF_end, 8
+F SF_parent, 8          # zero, or one-based index of an earlier primary occurrence
+F SF_gindex, 8
+F SF_flags, 8           # bit0 alive, bit1 primary; higher bits replacement provenance
+F SF_transform, 8       # one-based immutable transform record offset, or zero
+ENDSTRUCT SF_SIZE
+STRUCT
+F SG_id, 8
+F SG_primary, 8
+F SG_alive, 8
+F SG_dirty, 8
+F SG_choice, 8         # one-based byte offset in immutable choice payload, or zero
+ENDSTRUCT SG_SIZE
+STRUCT
+F SN_parent, 8         # owned enclosing session, or zero
+F SN_child, 8          # borrowed current inner session, or zero
+F SN_identity, 8
+F SN_activation, 8
+F SN_choice_pending, 8
+F SN_choice, 8         # owned reference to immutable SC payload
+F SN_choicebytes, 8
+F SN_transform, 8       # owned immutable transform payload
+F SN_transformbytes, 8
+F SN_indent, 8          # owned original insertion whitespace, common SC header
+F SN_indentbytes, 8
+F SN_nfields, 8
+F SN_ngroups, 8
+F SN_docid, 8
+F SN_active, 8
+F SN_final, 8
+F SN_finalend, 8
+F SN_finalfield, 8
+F SN_finalspan, 8
+F SN_finalowner, 8
+F SN_finalcollapseowner, 8
+F SN_valid, 8
+F SN_user, 8
+F SN_beginundo, 8       # undo length at the outermost user operation
+F SN_mutating, 8
+F SN_replacing, 8
+F SN_repla, 8
+F SN_replb, 8
+F SN_lastrecord, 8
+F SN_lastpos, 8
+F SN_lastlen, 8
+F SN_lastkind, 8
+F SN_lasttime, 8
+F SN_lastgroup, 8
+F SN_lastflags, 8
+F SN_text, 8            # borrowed during validation only
+F SN_tlen, 8
+F SN_ntopo, 8           # surviving groups in propagation order; group indices stay stable
+F SN_fields, SF_SIZE*SN_FIELDS_MAX
+F SN_groups, SG_SIZE*SN_GROUPS_MAX
+F SN_edges, SN_GROUPS_MAX*SN_GROUPS_MAX
+F SN_topo, 8*SN_GROUPS_MAX
+F SN_degree, 8*SN_GROUPS_MAX
+F SN_done, SN_FIELDS_MAX        # occurrences already mirrored in one propagation
+ENDSTRUCT SN_SIZE
+
+# Canonical private per-occurrence transform payload.
+.equ STP_MAGIC, 0x58544e53
+.equ STP_HEADER, 32
+.equ STP_RECORD, 24
+
+# A bounded private regex execution context. Program/input storage belongs to the caller.
+.equ RX_WORK_MAX, 16777216
+.equ RX_BRANCH_MAX, 4096
+.equ RX_TRAIL_MAX, 65536
+.equ RX_CALL_MAX, 32
+.equ RX_VALUES_MAX, 642
+.equ RX_PROGRAM_ERROR, 1
+.equ RX_INPUT_ERROR, 2
+.equ RX_START_ERROR, 3
+.equ RX_WORK_ERROR, 4
+.equ RX_BRANCH_ERROR, 5
+.equ RX_TRAIL_ERROR, 6
+.equ RX_CALL_ERROR, 7
+.equ RX_STATE_ERROR, 8
+.equ RX_TIME_ERROR, 9
+STRUCT
+F RX_program, 8
+F RX_plen, 8
+F RX_code, 8
+F RX_classes, 8
+F RX_ranges, 8
+F RX_repeats, 8
+F RX_flags, 8
+F RX_ncaps, 8
+F RX_ncode, 8
+F RX_nclasses, 8
+F RX_nranges, 8
+F RX_nrepeats, 8
+F RX_input, 8
+F RX_ilen, 8
+F RX_work, 8
+F RX_deadline, 8
+F RX_clockat, 8
+F RX_pc, 8
+F RX_pos, 8
+F RX_backward, 8
+F RX_attempt, 8
+F RX_nvalues, 8
+F RX_nslots, 8
+F RX_ntrail, 8
+F RX_nbranches, 8
+F RX_ncalls, 8
+F RX_error, 8
+F RX_errpc, 8
+F RX_errbyte, 8
+F RX_tstage, 8
+F RX_trecord, 8
+F RX_ready, 8
+F RX_hasmatch, 8
+F RX_start, 8
+F RX_end, 8
+F RX_values, 8*RX_VALUES_MAX
+F RX_trail, 16*RX_TRAIL_MAX
+F RX_branches, 24*RX_BRANCH_MAX
+F RX_calls, 48*RX_CALL_MAX
+F RX_captures, 16*65
+ENDSTRUCT RX_SIZE
+
+.equ RX_CASE_OP_ERROR, 10
+.equ RX_CASE_OUTPUT_ERROR, 11
+.equ RX_CASE_ALLOC_ERROR, 12
+# Private fixed stack scratch for native case conversion.
+STRUCT
+F SC_rx, 8
+F SC_out, SB_SIZE
+F SC_prep, SB_SIZE
+F SC_pad, 8
+ENDSTRUCT SC_SIZE
+.equ RX_REPLACEMENT_ERROR, 13
+.equ TRANSFORM_ARGUMENTS, 1
+.equ TRANSFORM_FORMAT, 2
+.equ TRANSFORM_MATCH, 3
+.equ TRANSFORM_CASE, 4
+.equ TRANSFORM_OUTPUT, 5
+STRUCT
+F TD_regex, 8
+F TD_rlen, 8
+F TD_format, 8
+F TD_flen, 8
+F TD_input, 8
+F TD_ilen, 8
+ENDSTRUCT TD_SIZE
+STRUCT
+F TI_input, 8
+F TI_ilen, 8
+F TI_prefix, 8
+F TI_plen, 8
+F TI_width, 8
+F TI_spaces, 8
+ENDSTRUCT TI_SIZE
+STRUCT
+F TXF_sc, SC_SIZE
+F TXF_desc, 8
+F TXF_format, 8
+F TXF_blob, 8
+F TXF_nrecords, 8
+F TXF_cursor, 8
+F TXF_next, 8
+F TXF_found, 8
+F TXF_fallback, 8
+F TXF_temp, 8
+F TXF_temp_len, 8
+F TXF_pad, 16
+ENDSTRUCT TXF_SIZE
+
+STRUCT
+F STLR_field, 8
+F STLR_output, 8
+F STLR_len, 8
+F STLR_done, 8
+ENDSTRUCT STLR_SIZE
+STRUCT
+F STL_sc, SC_SIZE
+F STL_doc, 8
+F STL_state, 8
+F STL_plan, 8
+F STL_count, 8
+F STL_bytes, 8
+F STL_total, 8
+F STL_clone, 8
+F STL_raw, 8
+F STL_temp, 8
+F STL_tlen, 8
+F STL_group, 8
+F STL_width, 8
+F STL_spaces, 8
+F STL_flags, 8
+F STL_index, 8
+F STL_td, TD_SIZE
+F STL_ti, TI_SIZE
+F STL_pad, 8
+ENDSTRUCT STL_SIZE
+
 
 # a diagnostic mark on a document
 STRUCT
@@ -709,6 +1213,10 @@ F UR_text, 8
 F UR_group, 8
 F UR_cur, 8
 F UR_anchor, 8
+F UR_aftercur, 8        # optional group replay caret; -1 for ordinary records
+F UR_afteranchor, 8
+F UR_beforeselections, 8 # owned secondary selection snapshot, or 0
+F UR_afterselections, 8  # owned snapshot, 0 = single, -1 = unspecified
 ENDSTRUCT UR_SIZE
 
 .equ EK_OTHER, 0
@@ -765,7 +1273,34 @@ F TF_top, 4             # text area: the first visual row shown
 F TF_width, 4           # text area: available text width in pixels
 F TF_prefx, 4           # text area: preferred x for vertical motion, -1 = none
 F TF_pad, 4
+F TF_revision, 8        # content or destination lifecycle mutation
 ENDSTRUCT TF_SIZE
+
+# Owned destination snapshot and queued clipboard request. No document pointers retained.
+.equ CPX_kind, 0
+.equ CPX_focus, 8
+.equ CPX_identity, 16
+.equ CPX_revision, 24
+.equ CPX_cur, 32
+.equ CPX_anchor, 40
+.equ CPX_flags, 48
+.equ CPX_vim, 56
+.equ CPX_submode, 64
+.equ CPX_extras, 72
+.equ CPX_owner, 80
+.equ CPX_length, 88
+.equ CPX_SIZE, 96
+.equ CPR_token, 96
+.equ CPR_started, 104
+.equ CPR_operation, 112
+.equ CPR_putkind, 120
+.equ CPR_putcount, 128
+.equ CPR_putmode, 136
+.equ CPR_SIZE, 144
+.equ CPR_COUNT, 16
+.equ CPX_DOCUMENT, 1
+.equ CPX_FIELD, 2
+.equ CPX_TERMINAL, 3
 
 # icons
 .equ IC_CHEV_R, 0
@@ -945,9 +1480,15 @@ ENDSTRUCT TF_SIZE
 .equ FEAT_ACTIONS, 64
 .equ FEAT_RENAME, 128
 .equ FEAT_FORMAT, 256
+.equ FEAT_COMMANDS, 512          # protocol 1.1: remove a runtime command
+.equ FEAT_SAVE_ACTIONS, 1024     # source code actions before saving
+.equ FEAT_SNIPPET_TRANSFORMS, 8192 # compiled field-exit transforms
+.equ FEAT_SNIPPET_VARIANTS, 4096 # declared unequal initial mirrors
+.equ FEAT_SNIPPETS, 2048        # prepared fields and native editable sessions
 # the features whose requests rhun sends (and whose ok ID LEN replies it frames)
-.equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT
-.equ FEAT_HOST, FEAT_VIEWS | FEAT_PROVIDERS   # what this rhun implements: only these are agreed
+.equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
+.equ FEAT_WORKSPACE_WATCH, 16384
+.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1025,6 +1566,7 @@ F GR_wchar, 256         # 1 for identifier bytes
 F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it), or 0
 F GR_srclen, 8
 F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
+F GR_owner, 8           # prepared GP owner, or 0 for legacy/built-in grammar
 ENDSTRUCT GR_SIZE
 .equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
@@ -1119,14 +1661,15 @@ F EXT_sub_hover, 8
 F EXT_status_text, 8    # cstr, its status-bar text, or 0
 F EXT_known, VEC_SIZE   # XK records: the documents this extension has seen, and what it was told
 F EXT_active, 8         # DOC id last reported active, -1 before catch-up
-F EXT_pending, 8        # a command invoked before hello: its g_ext_cmds index + 1, or 0
+F EXT_pending, 8 # owned exact PN request, or0; never a command index
 F EXT_throttled, 4      # 1 while its reads wait for the next frame's budget
-F EXT_wait_slot, 4      # 1 while it waits for one of the 16 slots
+F EXT_wait_slot, 4      # 1 while it waits for a process slot
 F EXT_fbytes, 8         # bytes parsed in the current 16 ms window
 F EXT_win_t0, 8         # when that window began
 F EXT_win_msgs, 8       # messages parsed in it
 F EXT_win_hit, 4        # 1 when the window reached a cap (the rest waited)
-F EXT_win_pad, 4
+F EXT_global_wait, 4    # shared parse budget, separate from this extension's flood limits
+F EXT_global_until, 8   # deadline of the shared window that actually blocked this program
 F EXT_in_closed_at, 8   # time_ms when the program closed its input, 0 otherwise
 F EXT_mname, 8          # the manifest's name and owner (checked against the folders)
 F EXT_mowner, 8
@@ -1161,7 +1704,33 @@ F EXT_pv_symbols, 8
 F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
+F EXT_pv_save_actions, 8
+F EXT_activation_plan, 8 # borrowed immutable KE128, catalog retains its captured inputs and lease
+F EXT_keeper, 8         # stable independent process-service handle, 0 without an owned lifetime
+F EXT_retiring, 4       # contributions withdrawn; raw output drains independently of protocol
+F EXT_stdout_eof, 4
+F EXT_finish_code, 4    # final application exit/failure while whole lifetime is collected
+F EXT_startaccepted, 4  # hello timer begins only after exact START frame acceptance
+F EXT_activation_stale, 4 # catalog must supply a fresh owned activation plan before restart
+F EXT_keeper_pad, 4
+F EXT_prepare_at, 8     # bounded closed-gate preparation start time
+F EXT_start_record, 160 # copied fresh selected authorization, zero for legacy
+F EXT_start_armed, 4    # candidates remain closed until root publishes and explicitly arms
+F EXT_start_pad, 4
+F EXT_metadata_owner, 8 # owned ready EP for borrowed slot metadata
+F EXT_activation_owner, 8 # owned activation owner, independent from catalog
+F EXT_activation_required, 4 # permanent prepared activation latch
+F EXT_activation_owner_pad, 4
+F EXT_identity_owner, 8 # owned typed lease-free durable host identity
+F EXT_catalog_state, 4 #0staging,1visible,2hidden historical
+F EXT_catalog_pad, 4
+F EXT_host_child_in, 4 # retained temporary target stdin endpoint
+F EXT_host_child_out, 4 # retained temporary target stdout endpoint
 ENDSTRUCT EXT_SIZE
+.equ EXT_host_cleanup_mask, EXT_start_pad
+.equ EXT_host_cleanup_error, EXT_activation_owner_pad
+.equ EXT_host_native_result, EXT_keeper_pad
+.equ EXT_host_setup_error, EXT_catalog_pad
 
 # an extension's view (extview.s)
 STRUCT
@@ -1190,6 +1759,7 @@ F VW_ax, 4               # where the button went down, logical: a click is a rel
 F VW_ay, 4
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
+.equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini
 STRUCT
 F SD_key, 8             # cstr
@@ -1227,7 +1797,18 @@ F XK_cur, 8
 F XK_anchor, 8
 F XK_seen, 8            # scratch: 1 when the document is still open (events pass)
 F XK_eoff, 8            # edit records (DOC_xedits) delivered so far, as a byte offset
+F XK_language_revision, 8
+F XK_phase, 8           # XP_* accepted lifecycle prefix
+F XK_text_ver, 8        # last accepted edit/resync/full-text baseline
+F XK_resync, 8          # per-peer debt survives clearing DOC_xresync
+F XK_replay, 8          # pending active1/cursor2/selection4 catch-up
+F XK_selcur, 8          # cursor of last accepted selection, independent of XK_cur
 ENDSTRUCT XK_SIZE
+.equ XP_NEED_OPEN, 0
+.equ XP_READY, 1
+.equ XP_NEED_CLOSE, 2
+.equ XP_POSITIONS, 3
+.equ XP_DORMANT, 4       # no opened state; current path does not match the subscription
 
 .equ ES_IDLE, 0                 # not started
 .equ ES_STARTING, 1             # running, no hello yet
@@ -1253,7 +1834,7 @@ ENDSTRUCT XK_SIZE
 .equ NEEDS_NETWORK, 32
 .equ NEEDS_TERMINAL, 64
 
-.equ EXT_MAX_RUNNING, 16
+.equ EXT_MAX_RUNNING, EXT_CAP
 .equ EXT_HELLO_MS, 5000
 .equ EXT_LINE_MAX, 65536
 .equ EXT_BODY_MAX, 4194304
@@ -1264,6 +1845,9 @@ ENDSTRUCT XK_SIZE
 .equ EXT_WIN_MS, 16             # the window: a frame at 60 Hz
 .equ EXT_WIN_BYTES, 262144      # per extension per window
 .equ EXT_WIN_MSGS, 500
+.equ EXT_GLOBAL_MS, 4           # all extension parsing per window (soft, complete handlers finish)
+.equ EXT_GLOBAL_MSGS, 2000
+.equ EXT_GLOBAL_BYTES, 1048576
 .equ EXT_PUMP_MS, 2             # one parsing run
 .equ EXT_FLOOD_FRAMES, 30       # windows in a row at a cap
 
@@ -1285,6 +1869,7 @@ F TH_pad, 4
 F TH_src, 8             # embedded text or 0
 F TH_len, 8
 F TH_path, 8            # user file path or 0
+F TH_owner, 8           # prepared EP owner, or 0 for legacy/built-in theme
 ENDSTRUCT TH_SIZE
 
 # ---- terminal ----

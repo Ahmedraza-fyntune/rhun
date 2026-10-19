@@ -67,6 +67,9 @@ FN extview_open
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
+    call ext_has_metadata
+    test eax, eax
+    jz 8f
     # how many it has, and a free slot
     xor ecx, ecx                # its views
     mov r15, -1                 # the free slot
@@ -290,10 +293,11 @@ send_event:
 event_head:
     PROLOGUE
     mov rbx, rdi
-    mov rax, [rbx + VW_ext]
-    xor ecx, ecx
-    test rax, rax
+    mov rdi, [rbx + VW_ext]
+    call ext_has_metadata
+    test eax, eax
     jz 8f
+    mov rax, [rbx + VW_ext]
     cmp dword ptr [rax + EXT_status], ES_RUNNING
     jne 8f
     test dword ptr [rax + EXT_features], FEAT_VIEWS

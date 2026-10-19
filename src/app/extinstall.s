@@ -435,7 +435,8 @@ offer:
     call sb_push_cstr
     call in_sb_cstr
     mov rdi, rax
-    call file_read_all
+    mov esi, EXT_MANIFEST_MAX
+    call file_read_limited
     test rax, rax
     jz .Lof_bad
     mov rbx, rax
@@ -766,8 +767,13 @@ install_commit:
 # ext_remove_ask(ext): Remove asks first
 FN ext_remove_ask
     PROLOGUE
-    mov [rip + rm_ext], rdi
     mov rbx, rdi
+    cmp qword ptr [rip + g_ext_prepared_catalog_active], 0
+    jne .Lremove_ask_done
+    call ext_has_metadata
+    test eax, eax
+    jz .Lremove_ask_done
+    mov [rip + rm_ext], rbx
     lea rdi, [rip + in_title]
     lea rsi, [rip + .Lq_remove]
     call cstr_copy
@@ -785,6 +791,7 @@ FN ext_remove_ask
     lea rdx, [rip + .Lb_remove]
     lea rcx, [rip + remove_commit]
     call app_confirm
+.Lremove_ask_done:
     EPILOGUE
 
 # remove_commit(): the program stops, its folder and its saved data go
@@ -794,6 +801,12 @@ remove_commit:
     test rbx, rbx
     jz 9f
     mov qword ptr [rip + rm_ext], 0
+    cmp qword ptr [rip + g_ext_prepared_catalog_active], 0
+    jne 9f
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     mov rdi, rbx
     call ext_retire
     mov rdi, [rbx + EXT_dir]
@@ -894,3 +907,10 @@ install_script:
     .ascii "[ -f \"$tmp/x/extension.ini\" ] || fail \"the archive has no extension.ini\"\n"
     .ascii "rm -f \"$tmp/a.tgz\" \"$tmp/sums\" \"$tmp/list\"\n"
     .asciz "echo \"ok $tmp\"\n"
+
+.text
+# The pending remove association is a borrower; owned installer state is separate.
+FN ext_remove_catalog_invalidate_pure
+    mov qword ptr [rip + rm_ext], 0
+    lea rdi, [rip + remove_commit]
+    jmp app_confirm_revoke_pure

@@ -15,6 +15,7 @@ body_len: .quad 0
 syntax_seen: .quad 0            # a syntax reply went out while handling this message
 toast_buf: .zero 256
 pr_ext: .quad 0                 # the open prompt (choose, ask, term): its extension,
+pr_revoked: .quad 0             # logical cancellation retains owned copied bytes until normal cleanup
 pr_id: .quad 0                  #   request id (0: no prompt is open),
 pr_kind: .quad 0                #   1 choose, 2 ask, 3 term,
 pr_body: .quad 0                #   the items' bytes (choose), owned
@@ -30,9 +31,24 @@ pr_cmd: .zero SB_SIZE           # the command sent to the terminal
 FN extproto_pump
     PROLOGUE 16
     mov rbx, rdi
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     mov [rip + cur], rbx
     call time_ms
-    mov r15, rax                # this run's start: EXT_PUMP_MS at most
+    mov r15, rax                # the per-extension window uses milliseconds
+    call time_us
+    mov [rsp + 8], rax          # aggregate work includes sub-millisecond callbacks
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je .Lpp_budget_enter
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 9f
+.Lpp_budget_enter:
+    mov rdi, r15
+    call ext_budget_enter
+    test eax, eax
+    jz .Lpp_global_cap
+    mov dword ptr [rbx + EXT_global_wait], 0
     # the window: a new one after EXT_WIN_MS; a window that hit a cap counts toward flooding,
     # one that did not ends the count
     mov rax, r15
@@ -53,6 +69,10 @@ FN extproto_pump
     mov qword ptr [rbx + EXT_fbytes], 0
     mov dword ptr [rbx + EXT_win_hit], 0
 .Lpp_next:
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -89,6 +109,7 @@ FN extproto_pump
     mov rdi, [rbx + EXT_body_len]
     add [rbx + EXT_fbytes], rdi
     inc qword ptr [rbx + EXT_win_msgs]
+    call ext_budget_message
     call consume
     jmp .Lpp_time
 2:  # a complete line?
@@ -117,6 +138,7 @@ FN extproto_pump
     lea rdi, [r14 + 1]
     add [rbx + EXT_fbytes], rdi
     inc qword ptr [rbx + EXT_win_msgs]
+    call ext_budget_message
     call consume
     mov qword ptr [rip + body_ptr], 0
     mov qword ptr [rip + body_len], 0
@@ -124,10 +146,22 @@ FN extproto_pump
     mov rsi, [rip + out + SB_len]
     call handle_line
 .Lpp_time:
+    # A handler may have stopped the extension and released its watches/buffers.
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je .Lpp_live
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 9f
+.Lpp_live:
     # one run takes EXT_PUMP_MS at most; the rest waits like a capped window (ext_tick resumes it)
-    call time_ms
-    sub rax, r15
-    cmp rax, EXT_PUMP_MS
+    call time_us
+    sub rax, [rsp + 8]
+    mov r12, rax
+    mov rdi, rax
+    call ext_budget_room
+    test eax, eax
+    jz .Lpp_global_cap
+    mov rax, r12
+    cmp rax, EXT_PUMP_MS * 1000
     jl .Lpp_next
 .Lpp_cap:
     # the window's cap: the rest waits for the next window (ext_tick resumes it)
@@ -138,12 +172,21 @@ FN extproto_pump
     mov edi, [rbx + EXT_out]
     xor esi, esi
     call watch_set_events
-9:  EPILOGUE
+    jmp 9f
+.Lpp_global_cap:
+    mov rdi, rbx
+    call ext_budget_pause
+9:  call time_us
+    sub rax, [rsp + 8]
+    mov rdi, rax
+    call ext_budget_leave
+    EPILOGUE
 
 # consume(n): drop n bytes from the front of rbx's receive buffer
 consume:
     push rbx
     push rdi
+    call ext_budget_bytes
     mov rax, [rbx + EXT_rbuf + SB_len]
     sub rax, rdi
     mov rsi, [rbx + EXT_rbuf + SB_ptr]
@@ -195,7 +238,7 @@ split:
     jmp 1b
 9:  ret
 
-# field_u64(i) -> rax value, rdx 1 when it was a number (and only digits)
+# field_u64(i) -> rax value, rdx 1 for a complete decimal u64 without overflow.
 field_u64:
     cmp rdi, [rip + nfields]
     jae 8f                      # past the line's fields: what is there is an older line's
@@ -205,11 +248,23 @@ field_u64:
     mov rdi, [r8 + rdi]
     test rsi, rsi
     jz 8f
-    push rsi
-    call parse_u64
-    pop rsi
-    cmp rdx, rsi
-    jne 8f
+    xor eax, eax
+    xor ecx, ecx
+1:  movzx edx, byte ptr [rdi + rcx]
+    sub edx, '0'
+    cmp edx, 9
+    ja 8f
+    mov r9, 1844674407370955161
+    cmp rax, r9
+    ja 8f
+    jb 2f
+    cmp edx, 5
+    ja 8f
+2:  imul rax, rax, 10
+    add rax, rdx
+    inc rcx
+    cmp rcx, rsi
+    jb 1b
     mov edx, 1
     ret
 8:  xor eax, eax
@@ -291,13 +346,8 @@ handle_line:
     call send_settings          # its own settings, before anything else
     mov rdi, rbx
     call extproto_events        # catch-up: nothing is known yet, so everything open is reported
-    mov rax, [rbx + EXT_pending]
-    test rax, rax
-    jz 9f
-    mov qword ptr [rbx + EXT_pending], 0
     mov rdi, rbx
-    lea rsi, [rax - 1]
-    call extproto_send_run
+    call ext_pending_try
     jmp 9f
 3:  mov rdi, rbx
     lea rsi, [rip + .Lr_no_hello]
@@ -323,11 +373,11 @@ handle_line:
     xor edi, edi
     call field_u64
     test edx, edx
-    jz .Lhl_syntax
+    jz .Lhl_bad_request_id
     test rax, rax
-    jz .Lhl_syntax              # events come from rhun, not from extensions
+    jz .Lhl_bad_request_id      # events come from rhun, not from extensions
     cmp rax, 2147483647
-    ja .Lhl_syntax
+    ja .Lhl_bad_request_id
     mov [rip + cur_id], rax
     cmp qword ptr [rip + nfields], 2
     jb .Lhl_syntax
@@ -350,9 +400,16 @@ handle_line:
     jne 7f
     mov rdi, [rip + nfields]
     dec rdi
+    lea rax, [rip + h_snippet]
+    cmp [r12 + 8], rax
+    jne .Lhl_body_number
+    call save_number           # snippet lengths must not wrap before framing
+    jmp .Lhl_body_parsed
+.Lhl_body_number:
     call field_u64
+.Lhl_body_parsed:
     test edx, edx
-    jz .Lhl_syntax_id
+    jz .Lhl_bad_frame
     cmp rax, [r12 + 16]
     jbe 61f
     # over the cap: the body cannot be skipped without reading it, and reading megabytes to
@@ -378,19 +435,21 @@ handle_line:
     call reply_error
     jmp 9f
 .Lhl_ok:
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
     cmp qword ptr [rip + nfields], 3
-    jb 9f
+    jb .Lhl_bad_frame
     mov edi, 1
     call field_u64
+    xor r12d, r12d              # invalid/stray ids still have their framed bodies drained
     test edx, edx
-    jz 9f
-    mov r12, rax                # the id
+    jz .Lhl_ok_length
+    cmp rax, 2147483647
+    ja .Lhl_ok_length
+    mov r12, rax
+.Lhl_ok_length:
     mov edi, 2
     call field_u64
     test edx, edx
-    jz 9f
+    jz .Lhl_bad_frame
     cmp qword ptr [rip + body_ptr], 0
     jne 2f
     test rax, rax
@@ -407,7 +466,19 @@ handle_line:
     call mem_dup
     mov [rbx + EXT_body], rax
     jmp 9f
-2:  mov rdi, rbx
+2:  test r12, r12
+    jz 9f
+    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call save_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
     mov rsi, r12
     mov edx, 1
     mov rcx, [rip + body_ptr]
@@ -435,6 +506,14 @@ handle_line:
     xor edx, edx
     xor ecx, ecx
     xor r8d, r8d
+    call save_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
     call complete_reply
     test eax, eax
     jnz 9f
@@ -456,6 +535,26 @@ handle_line:
     mov rdi, [rip + cur_id]
     call reply_syntax
 9:  EPILOGUE
+
+# An invalid request id on a body verb cannot let its payload become new requests.
+.Lhl_bad_request_id:
+    lea r12, [rip + verbs]
+1:  cmp qword ptr [r12], 0
+    je .Lhl_syntax
+    cmp qword ptr [r12 + 16], 0
+    je 2f
+    mov edi, 1
+    mov rsi, [r12]
+    call field_is
+    test eax, eax
+    jnz .Lhl_bad_frame
+2:  add r12, 24
+    jmp 1b
+.Lhl_bad_frame:
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_framing]
+    call ext_kill
+    jmp 9b
 
 # reply_syntax(id): "error ID syntax ..."; the third in a row ends the program
 reply_syntax:
@@ -501,7 +600,7 @@ out_end:
     mov rdi, [rip + cur]
     mov rsi, [rip + out + SB_ptr]
     mov rdx, [rip + out + SB_len]
-    jmp ext_send
+    jmp ext_send_checked
 
 # reply_ok(id)
 reply_ok:
@@ -699,6 +798,12 @@ h_text:
     test rax, rax
     jz 9f
     mov rbx, rax
+    # Flush edits before the snapshot. Later batches then start after this text's
+    # version, even when text and edit requests arrive in the same pump.
+    mov rdi, [rip + cur]
+    call extproto_events
+    test rax, rax
+    js 9f
     mov rdi, rbx
     call doc_len
     mov r12, rax
@@ -727,6 +832,8 @@ h_text:
     call doc_copy
     add [rip + out + SB_len], r12
     call out_end
+    test rax, rax
+    js 9f
     mov rdi, rbx
     call snapshot_taken
 9:  EPILOGUE
@@ -766,7 +873,11 @@ h_range:
     lea rsi, [rip + .Le_badpos]
     call reply_error
     jmp 9f
-1:  call out_begin
+1:  mov rdi, [rip + cur]
+    call extproto_events
+    test rax, rax
+    js 9f
+    call out_begin
     lea rdi, [rip + .Lw_ok_sp]
     call out_cstr
     mov rdi, [rip + cur_id]
@@ -791,8 +902,6 @@ h_range:
     call doc_copy
     add [rip + out + SB_len], r13
     call out_end
-    mov rdi, rbx
-    call snapshot_taken
 9:  EPILOGUE
 .Lhr_syntax:
     mov rdi, [rip + cur_id]
@@ -866,6 +975,251 @@ h_replace:
     call reply_syntax
     EPILOGUE
 
+# ID snippet-context DOC VERSION L1 C1 L2 C2 -> ok ID VERSION LEN + context.
+h_snippet_context:
+    PROLOGUE
+    mov edi, NEEDS_DOC_READ
+    call need
+    test eax, eax
+    jz 9f
+    mov rax, [rip + cur]
+    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    jz .Lhsc_unknown
+    cmp qword ptr [rip + nfields], 8
+    jne .Lhsc_syntax
+    xor r12d, r12d
+1:  mov rdi, r12
+    call save_number
+    test edx, edx
+    jz .Lhsc_syntax
+    test r12, r12
+    jnz 2f
+    test rax, rax
+    jz .Lhsc_syntax
+    cmp rax, 2147483647
+    ja .Lhsc_syntax
+2:  inc r12
+    cmp r12, 1
+    jne 3f
+    inc r12
+3:  cmp r12, 8
+    jb 1b
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov edi, 3
+    call field_u64
+    cmp rax, [rbx + DOC_version]
+    jne .Lhsc_stale
+    mov rdi, rbx
+    mov esi, 4
+    call arg_pos
+    test rax, rax
+    js 9f
+    mov r12, rax
+    mov rdi, rbx
+    mov esi, 6
+    call arg_pos
+    test rax, rax
+    js 9f
+    sub rax, r12
+    js .Lhsc_badpos
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, rax
+    call snippet_context
+    cmp rax, -1
+    je .Lhsc_large
+    cmp rax, -2
+    je .Lhsc_utf8
+    mov r12, rax
+    mov r13, rdx
+    # Send pending edits before the context, without granting a full-text snapshot.
+    mov rdi, [rip + cur]
+    call extproto_events
+    call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, [rip + cur_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rbx + DOC_version]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r13
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, r12
+    mov rsi, r13
+    call out_bytes
+    call out_end
+    mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+.Lhsc_unknown:
+    lea rsi, [rip + .Le_unknown]
+    jmp .Lhsc_error
+.Lhsc_large:
+    lea rsi, [rip + .Le_context_large]
+    jmp .Lhsc_error
+.Lhsc_utf8:
+    lea rsi, [rip + .Le_context_utf8]
+    jmp .Lhsc_error
+.Lhsc_badpos:
+    lea rsi, [rip + .Le_badpos]
+.Lhsc_error:
+    mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+.Lhsc_stale:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_stale]
+    mov rdx, [rbx + DOC_version]
+    call reply_error_u64
+    EPILOGUE
+.Lhsc_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# ID snippet DOC VERSION L1 C1 L2 C2 LEN + one prepared completion record.
+h_snippet:
+    PROLOGUE 32
+    mov edi, NEEDS_DOC_WRITE
+    call need
+    test eax, eax
+    jz 9f
+    mov rax, [rip + cur]
+    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    jz .Lhsn_unknown
+    cmp qword ptr [rip + nfields], 9
+    jne .Lhsn_syntax
+    xor r12d, r12d
+.Lhsn_numbers:
+    mov rdi, r12
+    call save_number
+    test edx, edx
+    jz .Lhsn_syntax
+    inc r12
+    cmp r12, 1
+    jne 1f
+    inc r12                    # field 1 is the verb
+1:  cmp r12, 9
+    jb .Lhsn_numbers
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    test dword ptr [rbx + DOC_flags], DF_READONLY
+    jnz .Lhsn_readonly
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz .Lhsn_syntax
+    cmp rax, [rbx + DOC_version]
+    jne .Lhsn_stale
+    mov rdi, rbx
+    mov esi, 4
+    call arg_pos
+    test rax, rax
+    js 9f
+    mov r12, rax
+    mov rdi, rbx
+    mov esi, 6
+    call arg_pos
+    test rax, rax
+    js 9f
+    sub rax, r12
+    js .Lhsn_badpos
+    mov r13, rax
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    mov rax, [rip + cur]
+    mov edx, [rax + EXT_features]
+    call snippet_decode_record
+    test rax, rax
+    jz .Lhsn_syntax
+    mov r14, rax
+    cmp qword ptr [r14 + SN_transform], 0
+    je .Lhsn_indent_done
+    mov rdi, rbx
+    mov rsi, r14
+    mov rdx, r12
+    call snippet_capture_indent
+    test eax, eax
+    jnz .Lhsn_indent_done
+    mov rdi, r14
+    call snippet_free_node
+    jmp .Lhsn_syntax
+.Lhsn_indent_done:
+    mov rax, [rbx + DOC_undo + VEC_len]
+    mov [rsp], rax
+    mov rdi, rbx
+    mov rsi, r14
+    mov rdx, r12
+    lea rcx, [r12 + r13]
+    call snippet_insertion_begin
+    mov rdi, rbx
+    mov rsi, r12
+    lea rdx, [r12 + r13]
+    call snippet_replace_range
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, [r14 + SN_text]
+    mov r8, [r14 + SN_tlen]
+    call apply_replace
+    mov rax, [r14 + SN_tlen]
+    add rax, r12
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+    mov rdi, rbx
+    mov rsi, r12
+    call snippet_insertion_finish
+    mov r12, rax
+    mov rdi, rbx
+    mov rsi, r14
+    mov rdx, r12
+    call snippet_push
+    mov rdi, rbx
+    mov rsi, [rsp]
+    call snippet_record_after
+    mov rdi, [rip + cur_id]
+    mov rsi, [rbx + DOC_version]
+    call reply_ok_u64
+9:  EPILOGUE
+.Lhsn_unknown:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    EPILOGUE
+.Lhsn_stale:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_stale]
+    mov rdx, [rbx + DOC_version]
+    call reply_error_u64
+    EPILOGUE
+.Lhsn_readonly:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_readonly]
+    call reply_error
+    EPILOGUE
+.Lhsn_badpos:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_badpos]
+    call reply_error
+    EPILOGUE
+.Lhsn_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
 # apply LEN + a workspace edit (section 12g): checked whole, then each document changed as one
 # undo step; files that are not open open in tabs, unsaved
 h_apply:
@@ -887,6 +1241,104 @@ h_apply:
     mov rsi, rdx
     call reply_error
 9:  EPILOGUE
+
+# Additive protocol identity/position fields are decimal int64 values, with overflow rejected.
+save_number:
+    call field_at
+    test rdx, rdx
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    xor eax, eax
+    xor ecx, ecx
+1:  cmp rcx, rsi
+    jae 7f
+    movzx edx, byte ptr [rdi + rcx]
+    sub edx, '0'
+    cmp edx, 9
+    ja 8f
+    mov r8, 922337203685477580
+    cmp rax, r8
+    ja 8f
+    jb 2f
+    cmp edx, 7
+    ja 8f
+2:  imul rax, rax, 10
+    add rax, rdx
+    inc rcx
+    jmp 1b
+7:  mov edx, 1
+    ret
+8:  xor eax, eax
+    xor edx, edx
+    ret
+
+# save-apply SAVE_REQUEST DOC VERSION LEN. The source job alone grants intermediate authority.
+h_save_apply:
+    PROLOGUE
+    mov rax, [rip + cur]
+    test dword ptr [rax + EXT_features], FEAT_SAVE_ACTIONS
+    jz .Lhsa_unknown
+    mov edi, NEEDS_DOC_WRITE
+    call need
+    test eax, eax
+    jz .Lhsa_done
+    cmp qword ptr [rip + nfields], 6
+    jne .Lhsa_syntax
+    mov edi, 2
+    call save_number
+    test edx, edx
+    jz .Lhsa_syntax
+    test rax, rax
+    jz .Lhsa_syntax
+    cmp rax, 2147483647
+    ja .Lhsa_syntax
+    mov r12, rax
+    mov edi, 3
+    call save_number
+    test edx, edx
+    jz .Lhsa_syntax
+    test rax, rax
+    jle .Lhsa_syntax
+    mov r13, rax
+    mov edi, 4
+    call save_number
+    test edx, edx
+    jz .Lhsa_syntax
+    test rax, rax
+    js .Lhsa_syntax
+    mov rdi, [rip + cur]
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, rax
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    call save_apply
+    test rax, rax
+    js 1f
+    mov rsi, rax
+    mov rdi, [rip + cur_id]
+    call reply_ok_u64
+    jmp .Lhsa_done
+1:  cmp rax, -2
+    jne 2f
+    lea rsi, [rip + .Le_stale]
+    mov rdi, [rip + cur_id]
+    call reply_error_u64
+    jmp .Lhsa_done
+2:  lea rsi, [rip + .Le_save_apply]
+    jmp .Lhsa_error
+.Lhsa_unknown:
+    lea rsi, [rip + .Le_unknown]
+.Lhsa_error:
+    mov rdi, [rip + cur_id]
+    call reply_error
+    jmp .Lhsa_done
+.Lhsa_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+.Lhsa_done:
+    EPILOGUE
 
 # apply_replace(doc, pos, len, ptr, blen): one undo step; the cursor and anchor follow the text
 apply_replace:
@@ -956,7 +1408,7 @@ set_marks:
     je 1f
     mov [rdi + DOC_cur], rsi
     mov [rdi + DOC_anchor], rdx
-    ret
+    jmp snippet_selection_changed
 1:  push rbx
     push rsi
     mov rbx, rdi
@@ -1466,6 +1918,59 @@ h_register:
     call reply_syntax
     EPILOGUE
 
+# ID unregister NAME -> ok ID: negotiated command lifecycle, only the caller's runtime commands.
+h_unregister:
+    PROLOGUE
+    mov rax, [rip + cur]
+    test dword ptr [rax + EXT_features], FEAT_COMMANDS
+    jz .Lhun_unknown
+    cmp qword ptr [rip + nfields], 3
+    jne .Lhun_syntax
+    mov edi, 2
+    call field_at
+    mov r12, rax
+    mov r13, rdx
+    test rdx, rdx
+    jz .Lhun_syntax
+    cmp rdx, 40
+    ja .Lhun_syntax
+    xor ecx, ecx
+1:  cmp rcx, r13
+    jae 2f
+    movzx eax, byte ptr [r12 + rcx]
+    inc rcx
+    cmp al, '_'
+    je 1b
+    sub al, '0'
+    cmp al, 9
+    jbe 1b
+    sub al, 'a' - '0'
+    cmp al, 25
+    jbe 1b
+    jmp .Lhun_syntax
+2:  mov rdi, [rip + cur]
+    mov rsi, r12
+    mov rdx, r13
+    call ext_cmd_unregister
+    test eax, eax
+    jnz .Lhun_refused
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+.Lhun_unknown:
+    lea rsi, [rip + .Le_unknown]
+    jmp .Lhun_error
+.Lhun_refused:
+    lea rsi, [rip + .Le_refused_unregister]
+.Lhun_error:
+    mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+.Lhun_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
 # ID option DOC KEY VALUE -> ok ID: a per-document override (section 6c)
 h_option:
     PROLOGUE
@@ -1545,7 +2050,12 @@ h_option:
 
 # prompt_busy() -> 1 after replying busy when a prompt or the palette is open
 prompt_busy:
-    cmp qword ptr [rip + pr_id], 0
+    cmp qword ptr [rip + pr_revoked], 0
+    je 2f
+    push rax
+    call prompt_clear
+    pop rax
+2:  cmp qword ptr [rip + pr_id], 0
     jne 1f
     push rax
     call palette_is_open
@@ -1563,6 +2073,7 @@ prompt_busy:
 # prompt_begin(kind): the open prompt is cur's current request
 prompt_begin:
     push rbx
+    mov qword ptr [rip + pr_revoked], 0
     mov [rip + pr_kind], rdi
     mov rax, [rip + cur]
     mov [rip + pr_ext], rax
@@ -1577,6 +2088,8 @@ prompt_begin:
 # early was meant for whatever had the focus before the prompt appeared
 FN extproto_prompt_fresh
     xor eax, eax
+    cmp qword ptr [rip + pr_revoked], 0
+    jne 9f
     cmp qword ptr [rip + pr_kind], 3
     jne 9f
     push rbx
@@ -1593,6 +2106,7 @@ FN extproto_prompt_fresh
 # prompt_clear(): no prompt is open
 prompt_clear:
     push rbx
+    mov qword ptr [rip + pr_revoked], 0
     mov rdi, [rip + pr_body]
     call mem_free
     mov qword ptr [rip + pr_body], 0
@@ -1848,6 +2362,9 @@ view_arg:
     call field_u64
     test edx, edx
     jz 8f
+    mov rdx, rax
+    shr rdx, 32
+    jnz 8f                     # reject before narrowing the native view id
     mov rdi, [rip + cur]
     mov esi, eax
     call extview_find
@@ -2033,6 +2550,11 @@ plain_text:
 # changed mode under it)
 FN extproto_prompt_abort
     PROLOGUE
+    cmp qword ptr [rip + pr_revoked], 0
+    je 1f
+    call prompt_clear
+    jmp 9f
+1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov rbx, [rip + cur]
@@ -2048,6 +2570,11 @@ FN extproto_prompt_abort
 # extproto_prompt_chose(n): the user picked item n of the choose prompt
 FN extproto_prompt_chose
     PROLOGUE
+    cmp qword ptr [rip + pr_revoked], 0
+    je 1f
+    call prompt_clear
+    jmp 9f
+1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov r12, rdi
@@ -2064,6 +2591,11 @@ FN extproto_prompt_chose
 # extproto_prompt_text(ptr, len, PROMPT_ASK | PROMPT_TERM): the user accepted the field's text
 FN extproto_prompt_text
     PROLOGUE
+    cmp qword ptr [rip + pr_revoked], 0
+    je 1f
+    call prompt_clear
+    jmp 9f
+1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov r12, rdi
@@ -2151,6 +2683,9 @@ FN extproto_prompt_owner_gone
 send_settings:
     PROLOGUE
     mov rbx, rdi
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     xor r12d, r12d
 1:  cmp r12, [rbx + EXT_sdefs + VEC_len]
     jae 9f
@@ -2205,12 +2740,16 @@ FN extproto_host_request
     jne 8f
     mov rdi, rbx
     call extproto_events
-    mov rdi, rbx
-    mov rsi, [r12 + DOC_id]
-    call known_find
     test rax, rax
+    js 8f
+    mov rdi, rbx
+    mov rsi, r12
+    call extproto_doc_ready
+    test eax, eax
     jz 8f
     mov [rip + cur], rbx
+    cmp qword ptr [rbx + EXT_hreq], 2147483647
+    jae 8f                      # never reuse a cancelled request's authority
     inc qword ptr [rbx + EXT_hreq]
     mov r13, [rbx + EXT_hreq]
     call out_begin
@@ -2260,6 +2799,8 @@ FN extproto_host_request
     mov edi, 10
     call out_byte
     call out_end
+    test rax, rax
+    js 8f
     mov rax, r13
     EPILOGUE
 8:  xor eax, eax
@@ -2277,12 +2818,16 @@ FN extproto_host_send
     jne 8f
     mov rdi, rbx
     call extproto_events
-    mov rdi, rbx
-    mov rsi, [r12 + DOC_id]
-    call known_find
     test rax, rax
+    js 8f
+    mov rdi, rbx
+    mov rsi, r12
+    call extproto_doc_ready
+    test eax, eax
     jz 8f
     mov [rip + cur], rbx
+    cmp qword ptr [rbx + EXT_hreq], 2147483647
+    jae 8f                      # exhausted IDs are never reused
     inc qword ptr [rbx + EXT_hreq]
     mov r15, [rbx + EXT_hreq]
     call out_begin
@@ -2296,6 +2841,8 @@ FN extproto_host_send
     mov edi, 10
     call out_byte
     call out_end
+    test rax, rax
+    js 8f
     mov rax, r15
     EPILOGUE
 8:  xor eax, eax
@@ -2307,6 +2854,9 @@ FN extproto_send_action
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 9f
     mov [rip + cur], rbx
@@ -2340,23 +2890,43 @@ FN extproto_send_cancel
     EPILOGUE
 
 # send_ready(ext): "0 ready PROJECT"
-# hello_features(ext): EXT_features from the names after "hello 1" (the fields of the current line),
+# hello_features(ext): EXT_features from every name after "hello 1" in the bounded line,
 # and "0 features NAME..." with those rhun knows, when there are any
 hello_features:
     PROLOGUE
     mov rbx, rdi
     mov [rip + cur], rdi
     mov dword ptr [rbx + EXT_features], 0
-    mov r12d, 2                 # the field
-1:  cmp r12, [rip + nfields]
+    mov edi, 2
+    call rest_from
+    mov r12, rax
+    lea r15, [rax + rdx]
+1:  cmp r12, r15
     jae 4f
-    lea r13, [rip + feature_names]
+    cmp byte ptr [r12], ' '
+    jne .Lhf_token
+    inc r12
+    jmp 1b
+.Lhf_token:
+    mov rax, r12
+.Lhf_token_end:
+    cmp rax, r15
+    jae .Lhf_token_found
+    cmp byte ptr [rax], ' '
+    je .Lhf_token_found
+    inc rax
+    jmp .Lhf_token_end
+.Lhf_token_found:
+    mov r13, rax
+    sub r13, r12
     xor r14d, r14d              # the feature's bit index
-2:  mov rsi, [r13 + r14*8]
-    test rsi, rsi
+2:  lea rax, [rip + feature_names]
+    mov rdx, [rax + r14*8]
+    test rdx, rdx
     jz 3f
-    mov edi, r12d
-    call field_is
+    mov rdi, r12
+    mov rsi, r13
+    call str_eq_cstr
     test eax, eax
     jz 21f
     mov ecx, r14d
@@ -2365,7 +2935,7 @@ hello_features:
     or [rbx + EXT_features], eax
 21: inc r14d
     jmp 2b
-3:  inc r12d
+3:  add r12, r13
     jmp 1b
 4:  and dword ptr [rbx + EXT_features], FEAT_HOST
     cmp dword ptr [rbx + EXT_features], 0
@@ -2416,19 +2986,37 @@ send_ready:
 # extproto_send_run(ext, command index): "0 run NAME DOC"
 FN extproto_send_run
     PROLOGUE
+    mov r12, rdi
     mov rbx, rsi
-    # what changed since the last tick goes first: the extension must know the document
-    # (opened, active) before it is asked to act on it
+    cmp qword ptr [rip + ext_pending_shutting_down], 0
+    jne .Lpsr_closed
+    cmp dword ptr [r12 + EXT_status], ES_RUNNING
+    jne .Lpsr_closed
+    cmp dword ptr [r12 + EXT_disabled], 0
+    jne .Lpsr_closed
+    call ext_cmd_index_owned
+    test eax, eax
+    jz .Lpsr_missing
+    mov rdi, r12
     call extproto_events
-    mov rax, [rip + cur]
-    cmp dword ptr [rax + EXT_status], ES_RUNNING
-    jne 9f
+    test rax, rax
+    js 9f
+    cmp dword ptr [r12 + EXT_status], ES_RUNNING
+    jne .Lpsr_closed
+    mov rdi, r12
+    mov rsi, rbx
+    call ext_cmd_index_owned
+    test eax, eax
+    jz .Lpsr_missing
+    imul rax, rbx, CMD_SIZE
+    add rax, [rip + g_ext_cmds + VEC_ptr]
+    mov r13, [rax + CMD_name]
+    test r13, r13
+    jz .Lpsr_missing
     call out_begin
     lea rdi, [rip + .Lev_run]
     call out_cstr
-    imul rax, rbx, CMD_SIZE
-    add rax, [rip + g_ext_cmds + VEC_ptr]
-    mov rdi, [rax + CMD_name]
+    mov rdi, r13
     call out_cstr
     mov edi, ' '
     call out_byte
@@ -2439,6 +3027,12 @@ FN extproto_send_run
     call out_byte
     call out_end
 9:  EPILOGUE
+.Lpsr_closed:
+    mov rax, -32
+    EPILOGUE
+.Lpsr_missing:
+    mov rax, -2
+    EPILOGUE
 
 # active_doc_id() -> the active document's id, or 0
 active_doc_id:
@@ -2459,236 +3053,7 @@ active_doc_id:
 8:  xor eax, eax
     ret
 
-# extproto_events(ext): what changed since the extension was last told, as events
-FN extproto_events
-    PROLOGUE
-    mov rbx, rdi
-    mov [rip + cur], rbx
-    # forget nothing yet: mark every known document unseen
-    xor ecx, ecx
-1:  cmp rcx, [rbx + EXT_known + VEC_len]
-    jae 2f
-    imul rax, rcx, XK_SIZE
-    add rax, [rbx + EXT_known + VEC_ptr]
-    mov qword ptr [rax + XK_seen], 0
-    inc rcx
-    jmp 1b
-2:  # every open document
-    xor r12d, r12d
-.Lev_tabs:
-    cmp r12, [rip + g_tabs + VEC_len]
-    jae .Lxe_closed
-    imul rax, r12, TAB_SIZE
-    add rax, [rip + g_tabs + VEC_ptr]
-    inc r12
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne .Lev_tabs
-    mov r13, [rax + TAB_doc]
-    test r13, r13
-    jz .Lev_tabs
-    mov rdi, rbx
-    mov rsi, [r13 + DOC_id]
-    call known_find
-    test rax, rax
-    jnz 3f
-    # new to this extension
-    mov rdi, [rbx + EXT_sub_opened]
-    mov rsi, r13
-    call sub_matches            # opened is the gate: a document never opened to it stays unknown
-    test eax, eax
-    jz .Lev_tabs
-    lea rdi, [rbx + EXT_known]
-    mov esi, XK_SIZE
-    call vec_push
-    mov r14, rax
-    mov rcx, [r13 + DOC_id]
-    mov [r14 + XK_id], rcx
-    mov rcx, [r13 + DOC_version]
-    mov [r14 + XK_ver], rcx
-    mov rcx, [r13 + DOC_saves]
-    mov [r14 + XK_saves], rcx
-    mov rcx, [r13 + DOC_cur]
-    mov [r14 + XK_cur], rcx
-    mov rcx, [r13 + DOC_anchor]
-    mov [r14 + XK_anchor], rcx
-    mov qword ptr [r14 + XK_seen], 2    # new this pass: no edits for it yet
-    mov rax, [r13 + DOC_xedits]
-    xor rcx, rcx
-    test rax, rax
-    jz 30f
-    mov rcx, [rax + SB_len]
-30: mov [r14 + XK_eoff], rcx           # the records so far are in the text it is told about
-    cmp qword ptr [rbx + EXT_sub_opened], 0
-    je 31f
-    mov rdi, r13
-    call send_opened
-31: # the active document's position is part of the snapshot, sent after `active` below
-    call active_doc_id
-    cmp rax, [r13 + DOC_id]
-    jne .Lev_tabs
-    mov qword ptr [r14 + XK_cur], -1
-    mov qword ptr [r14 + XK_anchor], -1
-    jmp .Lev_tabs
-3:  mov r14, rax
-    mov qword ptr [r14 + XK_seen], 1
-    # edits since the last frame, or a resync, for an edits subscriber
-    mov rdi, [rbx + EXT_sub_edits]
-    mov rsi, r13
-    call sub_matches
-    test eax, eax
-    jz 30f
-    cmp dword ptr [r13 + DOC_xresync], 0
-    je 29f
-    lea rdi, [rip + .Lev_resync]
-    mov rsi, r13
-    call send_doc_version
-    jmp 30f
-29: mov rax, [r13 + DOC_xedits]
-    test rax, rax
-    jz 30f
-    mov rcx, [r14 + XK_eoff]
-    cmp rcx, [rax + SB_len]
-    jae 30f
-    mov rdi, r13
-    mov rsi, r14
-    call send_edits
-30: # changed? (before saved, so a save after a change reports both)
-    mov rcx, [r13 + DOC_version]
-    cmp rcx, [r14 + XK_ver]
-    je 4f
-    mov [r14 + XK_ver], rcx
-    mov rdi, [rbx + EXT_sub_changed]
-    mov rsi, r13
-    call sub_matches
-    test eax, eax
-    jz 4f
-    lea rdi, [rip + .Lev_changed]
-    mov rsi, r13
-    call send_doc_version
-4:  # saved?
-    mov rcx, [r13 + DOC_saves]
-    cmp rcx, [r14 + XK_saves]
-    je 5f
-    mov [r14 + XK_saves], rcx
-    mov rdi, [rbx + EXT_sub_saved]
-    mov rsi, r13
-    call sub_matches
-    test eax, eax
-    jz 5f
-    lea rdi, [rip + .Lev_saved]
-    mov rsi, r13
-    call send_doc_version
-5:  # cursor or selection?
-    mov rcx, [r13 + DOC_cur]
-    mov rdx, [r13 + DOC_anchor]
-    cmp rcx, [r14 + XK_cur]
-    jne 6f
-    cmp rdx, [r14 + XK_anchor]
-    je .Lev_tabs
-6:  mov rax, [r14 + XK_cur]
-    cmp rax, [r14 + XK_anchor]
-    setne r15b                  # a selection existed before
-    cmp rax, rcx
-    sete r15b                   # bit 1: the cursor itself did not move
-    shl r15b, 1
-    mov rax, [r14 + XK_cur]
-    cmp rax, [r14 + XK_anchor]
-    setne al
-    or r15b, al
-    mov [r14 + XK_cur], rcx
-    mov [r14 + XK_anchor], rdx
-    # the cursor moved: cursor subscribers hear it, selection or not
-    test r15b, 2
-    jnz 62f
-    mov rdi, [rbx + EXT_sub_cursor]
-    mov rsi, r13
-    call sub_matches
-    test eax, eax
-    jz 62f
-    mov rdi, r13
-    call send_cursor
-62: # a selection exists, or one just collapsed: selection subscribers hear the range
-    mov rcx, [r14 + XK_cur]
-    cmp rcx, [r14 + XK_anchor]
-    jne 7f
-    test r15b, 1
-    jz .Lev_tabs
-7:  mov rdi, [rbx + EXT_sub_selection]
-    mov rsi, r13
-    call sub_matches
-    test eax, eax
-    jz .Lev_tabs
-    mov rdi, r13
-    call send_selection
-    jmp .Lev_tabs
-.Lxe_closed:
-    # known documents that are gone
-    xor r12d, r12d
-8:  cmp r12, [rbx + EXT_known + VEC_len]
-    jae .Lxe_active
-    imul rax, r12, XK_SIZE
-    add rax, [rbx + EXT_known + VEC_ptr]
-    cmp qword ptr [rax + XK_seen], 0
-    jne 81f
-    mov rdi, [rax + XK_id]
-    call send_closed
-    # remove: move the last into this slot
-    mov rcx, [rbx + EXT_known + VEC_len]
-    dec rcx
-    mov [rbx + EXT_known + VEC_len], rcx
-    imul rsi, rcx, XK_SIZE
-    add rsi, [rbx + EXT_known + VEC_ptr]
-    imul rdi, r12, XK_SIZE
-    add rdi, [rbx + EXT_known + VEC_ptr]
-    mov edx, XK_SIZE
-    call memcpy
-    jmp 8b
-81: inc r12
-    jmp 8b
-.Lxe_active:
-    call active_doc_id
-    cmp rax, [rbx + EXT_active]
-    je 85f
-    mov [rbx + EXT_active], rax
-    mov rdi, rax
-    call send_active
-85: # positions held back during catch-up (XK_cur -1): the active document's, now
-    xor r12d, r12d
-86: cmp r12, [rbx + EXT_known + VEC_len]
-    jae 9f
-    imul r14, r12, XK_SIZE
-    add r14, [rbx + EXT_known + VEC_ptr]
-    inc r12
-    cmp qword ptr [r14 + XK_cur], -1
-    jne 86b
-    mov rdi, [r14 + XK_id]
-    call doc_by_id
-    test rax, rax
-    jz 86b
-    mov r13, rax
-    mov rcx, [r13 + DOC_cur]
-    mov rdx, [r13 + DOC_anchor]
-    mov [r14 + XK_cur], rcx
-    mov [r14 + XK_anchor], rdx
-    mov rdi, [rbx + EXT_sub_cursor]
-    mov rsi, r13
-    call sub_matches
-    test eax, eax
-    jz 88f
-    mov rdi, r13
-    call send_cursor
-88: mov rcx, [r14 + XK_cur]
-    cmp rcx, [r14 + XK_anchor]
-    je 86b
-    mov rdi, [rbx + EXT_sub_selection]
-    mov rsi, r13
-    call sub_matches
-    test eax, eax
-    jz 86b
-    mov rdi, r13
-    call send_selection
-    jmp 86b
-9:  EPILOGUE
+.include "app/extprotoevents.inc"
 
 # extproto_known(ext, id) -> XK* or 0: what the extension was told about the document
 FN extproto_known
@@ -2735,6 +3100,12 @@ sub_matches:
 send_opened:
     PROLOGUE
     mov rbx, rdi
+    call doc_sync_grammar
+    test rax, rax
+    js 9f
+    mov rdi, rbx
+    call doc_language
+    mov r12, rax
     call out_begin
     lea rdi, [rip + .Lev_opened]
     call out_cstr
@@ -2746,7 +3117,7 @@ send_opened:
     call out_u64
     mov edi, ' '
     call out_byte
-    mov rax, [rbx + DOC_lang]
+    mov rax, r12
     test rax, rax
     jz 1f
     mov rdi, [rax + GR_name]
@@ -2764,7 +3135,7 @@ send_opened:
     mov edi, 10
     call out_byte
     call out_end
-    EPILOGUE
+9:  EPILOGUE
 
 # out_word(cstr): the text with each space as an underscore
 out_word:
@@ -2791,6 +3162,10 @@ FN extproto_send_project_all
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
     mov [rip + cur], rbx
@@ -2856,14 +3231,16 @@ send_edits:
     add rdi, r13
     mov rsi, [rax + SB_len]
     sub rsi, r13
-    mov [r12 + XK_eoff], rsi
-    add [r12 + XK_eoff], r13
     call out_bytes
     call out_end
-    EPILOGUE
+    test rax, rax
+    js 1f
+    mov rcx, [rbx + DOC_xedits]
+    mov rcx, [rcx + SB_len]
+    mov [r12 + XK_eoff], rcx
+1:  EPILOGUE
 
-# snapshot_taken(doc): the extension was just given the document's text (text, range): the
-# records so far are in what it has
+# snapshot_taken(doc): a complete full-text reply was accepted in this nonyielding handler
 snapshot_taken:
     push rbx
     mov rbx, rdi
@@ -2878,6 +3255,9 @@ snapshot_taken:
     jz 1f
     mov rdx, [rcx + SB_len]
 1:  mov [rax + XK_eoff], rdx
+    mov rcx, [rbx + DOC_version]
+    mov [rax + XK_text_ver], rcx
+    mov qword ptr [rax + XK_resync], 0
 9:  pop rbx
     ret
 
@@ -2893,6 +3273,10 @@ FN extproto_send_hover_all
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
     mov rdi, [rbx + EXT_sub_hover]
@@ -3004,9 +3388,13 @@ send_active:
 .p2align 3
 # verb table: name, handler, body cap (0: no body)
 verbs:
+    .quad .Lewp_watch_verb, h_watch_workspace, 0
+    .quad .Lewp_unwatch_verb, h_unwatch_workspace, 0
     .quad .Lv_text, h_text, 0
     .quad .Lv_range, h_range, 0
     .quad .Lv_replace, h_replace, EXT_BODY_MAX
+    .quad .Lv_snippet, h_snippet, SN_BYTES_MAX
+    .quad .Lv_snippet_context, h_snippet_context, 0
     .quad .Lv_insert, h_insert, EXT_BODY_MAX
     .quad .Lv_select, h_select, 0
     .quad .Lv_toast, h_toast, EXT_BODY_MAX
@@ -3016,6 +3404,7 @@ verbs:
     .quad .Lv_diagnostics, h_diagnostics, EXT_BODY_MAX
     .quad .Lv_hover, h_hover, EXT_BODY_MAX
     .quad .Lv_register, h_register, 0
+    .quad .Lv_unregister, h_unregister, 0
     .quad .Lv_option, h_option, 0
     .quad .Lv_choose, h_choose, EXT_BODY_MAX
     .quad .Lv_ask, h_ask, EXT_BODY_MAX
@@ -3025,8 +3414,11 @@ verbs:
     .quad .Lv_draw, h_draw, VIEW_BODY_MAX
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
+    .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     .quad 0, 0, 0
 .Lv_register: .asciz "register"
+.Lv_unregister: .asciz "unregister"
+.Le_refused_unregister: .asciz "refused not a runtime command of this extension"
 .Lv_option: .asciz "option"
 .Lv_choose: .asciz "choose"
 .Lv_ask: .asciz "ask"
@@ -3036,6 +3428,10 @@ verbs:
 .Lv_draw: .asciz "draw"
 .Lv_unview: .asciz "unview"
 .Lv_apply: .asciz "apply"
+.Lv_snippet: .asciz "snippet"
+.Lv_snippet_context: .asciz "snippet-context"
+.Le_context_large: .asciz "toobig snippet context exceeds 4 MiB"
+.Le_context_utf8: .asciz "refused snippet context is not UTF-8"
 .Le_toobig_views: .asciz "toobig 8 views"
 .Le_noview: .asciz "noview no such view"
 .Le_syntax_line: .asciz "syntax line "
@@ -3133,9 +3529,16 @@ cmd_allow:
 .Lf_actions: .asciz "actions"
 .Lf_rename: .asciz "rename"
 .Lf_format: .asciz "format"
+.Lf_commands: .asciz "commands"
+.Lf_snippet_transforms: .asciz "snippet-transforms"
+.Lf_snippet_variants: .asciz "snippet-variants"
+.Lf_snippets: .asciz "snippets"
+.Lf_save_actions: .asciz "save-actions"
+.Lv_save_apply: .asciz "save-apply"
+.Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, 0
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "
@@ -3169,4 +3572,23 @@ feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf
 .Lr_no_hello: .asciz "the first line was not hello 1"
 .Lr_protocol: .asciz "protocol version not supported (rhun speaks 1)"
 .Lr_body: .asciz "a body over its cap"
+.Lr_framing: .asciz "invalid body framing"
 .Lr_syntax: .asciz "three unparsable lines in a row"
+
+.include "app/extwatchproto.inc"
+.section .rodata
+.Lewp_watch_verb: .asciz "watch-workspace"
+.Lewp_unwatch_verb: .asciz "unwatch-workspace"
+.Lewp_feature: .asciz "workspace_watch"
+
+.text
+# Pure logical cancellation. Retain the copied prompt body/command for ordinary cleanup.
+FN extproto_prompt_catalog_invalidate_pure
+    mov qword ptr [rip + pr_revoked], 1
+    ret
+
+# Outside pure publication, one normal owned body cleanup with no reply or terminal action.
+FN extproto_prompt_collect_revoked
+    cmp qword ptr [rip + pr_revoked], 0
+    jne prompt_clear
+    ret

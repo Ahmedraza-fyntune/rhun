@@ -215,25 +215,28 @@ def markdown(md):
     return '\n'.join(out), toc
 
 
-spec = (SOURCE.parent.parent / 'docs/extensions/v1.md').read_text()
-spec_html, spec_toc = markdown(re.sub(r'\A# .*\n', '', spec))   # its title is the page's
-toc = '<nav class="page-toc" aria-label="On this page"><p class="toc-title">Sections</p>' + ''.join(
-    f'<a href="#{sid}" data-track="{sid}">{esc(title)}</a>' for sid, title in spec_toc) + '</nav>'
-body = f'''<main id="main" class="wrap guide-layout">
+for revision in ('v1', 'v1.1'):
+    spec = (SOURCE.parent.parent / f'docs/extensions/{revision}.md').read_text()
+    title = f'Extension protocol, version {revision[1:]}'
+    page_spec = spec.replace('](v1.md)', '](/extensions/v1/)')
+    spec_html, spec_toc = markdown(re.sub(r'\A# .*\n', '', page_spec))
+    toc = '<nav class="page-toc" aria-label="On this page"><p class="toc-title">Sections</p>' + ''.join(
+        f'<a href="#{sid}" data-track="{sid}">{esc(heading)}</a>' for sid, heading in spec_toc) + '</nav>'
+    body = f'''<main id="main" class="wrap guide-layout">
     <aside class="guide-sidebar">{guide_nav('extensions')}</aside>
     <div class="guide-main">
-      <header class="guide-heading"><h1>Extension protocol, version 1</h1><p>How a program becomes a rhun extension. Also as <a href="/extensions/v1/v1.md">Markdown</a> for agents, with its <a href="https://github.com/rhun-editor/extension-protocol/blob/main/v1/v1.abnf">grammar</a> and the manifest's <a href="https://github.com/rhun-editor/extension-protocol/blob/main/v1/v1.json">JSON Schema</a>.</p></header>
+      <header class="guide-heading"><h1>{esc(title)}</h1><p>How a program becomes a rhun extension. Also as <a href="/extensions/{revision}/{revision}.md">Markdown</a> for agents, with its <a href="https://github.com/rhun-editor/extension-protocol/blob/main/{revision}/{revision}.abnf">grammar</a> and the manifest's <a href="https://github.com/rhun-editor/extension-protocol/blob/main/{revision}/{revision}.json">JSON Schema</a>.</p></header>
       <article class="guide-content spec" aria-label="Extension protocol">{spec_html}</article>
     </div><aside class="guide-toc">{toc}</aside>
     </main>'''
-target = out / 'extensions' / 'v1'
-target.mkdir(parents=True, exist_ok=True)
-(target / 'index.html').write_text(document('Extension protocol, version 1', 'How a program becomes a rhun extension: the messages, the manifest, permissions, views, completion and signature help.', '/extensions/v1/', body, 'docs-guide'))
-(target / 'v1.md').write_text(spec)
+    target = out / 'extensions' / revision
+    target.mkdir(parents=True, exist_ok=True)
+    (target / 'index.html').write_text(document(title, 'How a program becomes a rhun extension: messages, permissions and negotiated features.', f'/extensions/{revision}/', body, 'docs-guide'))
+    (target / f'{revision}.md').write_text(spec.replace('](v1.md)', '](../v1/v1.md)'))
 (out / 'extensions' / 'index.html').write_text('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=/docs/extensions/"><link rel="canonical" href="https://rhun.app/docs/extensions/"><title>Extensions</title><a href="/docs/extensions/">Extensions</a>\n')
 
 # Keep discovery URLs in sync with the actual generated pages.
 sitemap = out / 'sitemap.xml'
 xml = sitemap.read_text()
-urls = ['/docs/'] + [f'/docs/{p["slug"]}/' for p in pages] + ['/extensions/v1/']
+urls = ['/docs/'] + [f'/docs/{p["slug"]}/' for p in pages] + ['/extensions/v1/', '/extensions/v1.1/']
 sitemap.write_text(xml.replace('</urlset>', ''.join(f'  <url><loc>https://rhun.app{url}</loc></url>\n' for url in urls) + '</urlset>'))

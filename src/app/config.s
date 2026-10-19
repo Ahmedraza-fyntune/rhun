@@ -37,10 +37,17 @@ cfg_agents_w: .long AGENTS_W_DEFAULT
 cfg_ui_scale: .long 100
 cfg_final_newline: .long 1
 cfg_trim_trailing: .long 0
+.globl cfg_format_on_save, cfg_format_save_timeout
+cfg_format_on_save: .long 0
+cfg_format_save_timeout: .long 2000
+.globl cfg_save_actions_timeout
+cfg_save_actions_timeout: .long 2000
 cfg_scroll_past_end: .long 1
 cfg_smooth_caret: .long 1
 cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
+.globl cfg_multi_cursor_paste
+cfg_multi_cursor_paste: .long 0
 cfg_word_wrap: .long 0
 cfg_vim: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
@@ -73,6 +80,8 @@ cfg_exclude: .quad .Ldef_exclude
 cfg_term_shell: .quad .Lempty
 cfg_term_font: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
+.globl cfg_save_actions
+cfg_save_actions: .quad .Lempty
 .Lcfg_strings_end:
 cfg_agent_sources: .quad .Ldef_sources  # the switched-on providers' names, for the discovery worker
 
@@ -249,9 +258,20 @@ FN setting_assign
 22: mov [r14], r15d
     jmp 9f
 3:  # Copy first: the input may be the current setting's own allocation.
+    lea rax, [rip + cfg_save_actions]
+    cmp r14, rax
+    jne 31f
+    mov rdi, r12
+    mov rsi, r13
+    call save_actions_config
+    test rax, rax
+    jz 9f                       # invalid candidate preserves the last valid setting
+    jmp 32f
+31:
     mov rdi, r12
     mov rsi, r13
     call mem_dup
+32:
     mov r15, rax
     lea rax, [rip + cfg_theme]
     mov rcx, r14
@@ -334,6 +354,7 @@ FN parse_decimal
 # config_load(): read the config file if present
 FN config_load
     PROLOGUE 16
+    call config_key_source_begin
     xor r15d, r15d              # owned input buffer, if the config exists
     mov dword ptr [rip + cfg_theme_keys], 0
     # [keys] lines come from this read only
@@ -428,6 +449,7 @@ FN config_load
 1:  call config_agent_sources
     mov rdi, r15
     call mem_free
+    call config_key_source_end
     EPILOGUE
 
 # legacy_sources(): [agents] sources from before the switches names the providers listed. OpenCode came
@@ -831,10 +853,15 @@ g_settings:
     SETTING .Ls_editor, cursor_blink, ST_BOOL, cfg_cursor_blink, 0, 1, 1, 0, "Blinking cursor", "Blink the text cursor while idle."
     SETTING .Ls_editor, smooth_caret, ST_BOOL, cfg_smooth_caret, 0, 1, 1, 0, "Wide caret", "Draw a 2 point caret instead of a hairline."
     SETTING .Ls_editor, auto_pairs, ST_BOOL, cfg_auto_pairs, 0, 1, 1, 0, "Auto-close brackets", "Insert the closing bracket or quote."
+    SETTING .Ls_editor, multi_cursor_paste, ST_CHOICE, cfg_multi_cursor_paste, 0, 1, 1, 0, "Paste at multiple cursors", "Keep copied selections paired. Choose how other multiline text is pasted.", .Lpaste_opts
     SETTING .Ls_editor, scroll_past_end, ST_BOOL, cfg_scroll_past_end, 0, 1, 1, 0, "Scroll past end", "Allow scrolling the last line to the top."
     SETTING .Ls_editor, vim_mode, ST_BOOL, cfg_vim, 0, 1, 1, 0, "Vim mode", "Normal, insert and visual modes with vim keys."
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
+    SETTING .Ls_files, format_on_save, ST_BOOL, cfg_format_on_save, 0, 1, 1, 0, "Format before saving", "Use the default formatter before writing a file."
+    SETTING .Ls_files, format_on_save_timeout, ST_INT, cfg_format_save_timeout, 250, 30000, 250, 0, "Formatting wait (ms)", "Save without formatting when this wait expires."
+    SETTING .Ls_files, code_actions_on_save, ST_STR, cfg_save_actions, 0, 0, 0, 0, "Code actions before saving", "Source kinds, such as source.organizeImports source.fixAll. Empty disables them."
+    SETTING .Ls_files, code_actions_on_save_timeout, ST_INT, cfg_save_actions_timeout, 250, 30000, 250, 0, "Code actions wait (ms)", "Total wait for source actions before continuing to formatting and saving."
     SETTING .Ls_files, restore_session, ST_BOOL, cfg_restore_session, 0, 1, 1, 0, "Restore open files", "Reopen the files from the last session of a project."
     SETTING .Ls_files, restore_project, ST_BOOL, cfg_restore_project, 0, 1, 1, 0, "Reopen last project", "Reopen the project you closed with when no file or folder is given."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
@@ -856,6 +883,7 @@ g_settings:
     SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_version_text, g_update_desc
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
+.Lpaste_opts: .asciz "spread", "Spread lines", "full", "Full text", ""
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"

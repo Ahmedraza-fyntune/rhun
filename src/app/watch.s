@@ -23,6 +23,8 @@
 .p2align 3
 wd_paths: .zero 8 * MAXWD
 wd_kinds: .zero MAXWD
+wd_broker_refs: .zero 4 * MAXWD
+wd_native: .zero 8 * MAXWD       # native descriptor + 1, zero for a free logical slot
 evbuf: .zero 16384
 wait_path: .zero 4096
 next_tick: .quad 0              # earliest pending reload or fade frame; 0 means no timer
@@ -55,7 +57,31 @@ FN watch_init
     call add_watch
 9:  EPILOGUE
 
-# add_watch(path, kind) -> descriptor or -1
+# Native descriptor numbers can grow beyond MAXWD after removals. Editor users
+# retain bounded logical slots; stale native events never alias a released slot.
+.Lwatch_descriptor:
+    cmp rdi, MAXWD
+    jae 1f
+    lea r8, [rip + wd_native]
+    lea rdx, [rdi + 1]
+    cmp [r8 + rdi*8], rdx
+    jne 1f
+    mov rax, rdi
+    ret
+1:  lea r8, [rip + wd_native]
+    lea rdx, [rdi + 1]
+    xor ecx, ecx
+2:  cmp [r8 + rcx*8], rdx
+    je 3f
+    inc ecx
+    cmp ecx, MAXWD
+    jb 2b
+    mov rax, -1
+    ret
+3:  mov eax, ecx
+    ret
+
+# add_watch(path, kind) -> logical descriptor or -1.
 add_watch:
     PROLOGUE
     mov rbx, rdi
@@ -69,23 +95,94 @@ add_watch:
     SYS SYS_inotify_add_watch
     test rax, rax
     js 9f
-    cmp rax, MAXWD
-    jae 9f
-    mov r13, rax
-    lea rcx, [rip + wd_kinds]
-    or [rcx + r13], r12b
-    lea rcx, [rip + wd_paths]
-    cmp qword ptr [rcx + r13*8], 0
-    jne 9f
-    mov rdi, rbx
+    mov r14, rax
+    mov rdi, rax
+    call .Lwatch_descriptor
+    test rax, rax
+    jns 5f
+    # Prefer the native number when free, preserving ordinary small ids.
+    lea r15, [rip + wd_native]
+    cmp r14, MAXWD
+    jae 1f
+    cmp qword ptr [r15 + r14*8], 0
+    jne 1f
+    mov r13, r14
+    jmp 3f
+1:  xor r13d, r13d
+2:  cmp qword ptr [r15 + r13*8], 0
+    je 3f
+    inc r13
+    cmp r13, MAXWD
+    jb 2b
+    jmp 8f
+3:  mov rdi, rbx
     call strlen
     mov rdi, rbx
     mov rsi, rax
-    call mem_dup
+    call mem_dup_try
+    test rax, rax
+    jz 8f
     lea rcx, [rip + wd_paths]
     mov [rcx + r13*8], rax
+    lea rax, [r14 + 1]
+    mov [r15 + r13*8], rax
+    jmp 6f
+5:  mov r13, rax
+6:  lea rcx, [rip + wd_kinds]
+    or [rcx + r13], r12b
+    jmp 9f
+8:  mov edi, [rip + ino_fd]
+    mov esi, r14d
+    SYS SYS_inotify_rm_watch
+    mov r13, -1
 9:  mov rax, r13
     EPILOGUE
+
+# Broker references share the existing native descriptors and owned paths.
+# Ordinary editor kind bits and broker references must both be zero to remove.
+FN watch_broker_acquire
+    PROLOGUE
+    xor esi, esi
+    call add_watch
+    test rax, rax
+    js 1f
+    lea rcx, [rip + wd_broker_refs]
+    inc dword ptr [rcx + rax*4]
+1:  EPILOGUE
+
+FN watch_broker_release
+    cmp edi, MAXWD
+    jae 9f
+    PROLOGUE
+    mov ebx, edi
+    lea rax, [rip + wd_broker_refs]
+    cmp dword ptr [rax + rbx*4], 0
+    je 8f
+    dec dword ptr [rax + rbx*4]
+    jne 8f
+    lea rax, [rip + wd_kinds]
+    cmp byte ptr [rax + rbx], 0
+    jne 8f
+    lea rax, [rip + wd_native]
+    mov rsi, [rax + rbx*8]
+    mov qword ptr [rax + rbx*8], 0
+    dec rsi
+    mov edi, [rip + ino_fd]
+    SYS SYS_inotify_rm_watch
+    lea rax, [rip + wd_paths]
+    mov rdi, [rax + rbx*8]
+    mov qword ptr [rax + rbx*8], 0
+    call mem_free
+8:  EPILOGUE
+9:  ret
+
+FN watch_broker_count
+    xor eax, eax
+    cmp edi, MAXWD
+    jae 9f
+    lea rax, [rip + wd_broker_refs]
+    mov eax, [rax + rdi*4]
+9:  ret
 
 # watch_forget_agents(): no folder watched so far reports to the agents panel (a new project's folders
 # are added again; the kernel keeps the watches of folders other kinds still use)
@@ -475,8 +572,20 @@ on_inotify:
     mov r15d, [r14 + 4]         # mask
     mov eax, [r14 + 12]         # name len
     lea r13, [r13 + rax + 16]
-    cmp ebx, MAXWD
-    jae .Lin_ev
+    mov edi, ebx
+    test r15d, 0x4000          # overflow uses native wd=-1
+    jz .Lin_slot
+    mov esi, r15d
+    call extwatch_native_event
+    jmp .Lin_ev
+.Lin_slot:
+    call .Lwatch_descriptor
+    test rax, rax
+    js .Lin_ev
+    mov ebx, eax
+    mov edi, ebx
+    mov esi, r15d
+    call extwatch_native_event
     lea rcx, [rip + wd_kinds]
     movzx ecx, byte ptr [rcx + rbx]
     # a folder an open file needs was removed or moved away (its watch goes with it), or one above

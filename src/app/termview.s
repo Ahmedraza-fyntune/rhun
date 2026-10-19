@@ -7,6 +7,7 @@ F TS_wbuf, SB_SIZE      # bytes the program has not taken yet
 F TS_pid, 4
 F TS_fd, 4
 F TS_name, 32
+F TS_id, 8
 ENDSTRUCT TS_SIZE
 
 .equ ID_TSPLIT, 0x6000
@@ -26,6 +27,7 @@ ENDSTRUCT TS_SIZE
 .bss
 .p2align 3
 sessions: .zero VEC_SIZE        # TS*
+session_next_id: .quad 0
 cur: .quad 0
 env: .quad 0
 .globl g_face_term, g_term_open
@@ -97,6 +99,16 @@ cur_sess:
     jae 1f
     jmp sess
 1:  ret
+
+# Stable identity without exposing the allocation or its reusable descriptor.
+FN term_clip_identity
+    sub rsp, 8
+    call cur_sess
+    test rax, rax
+    jz 1f
+    mov rax, [rax + TS_id]
+1:  add rsp, 8
+    ret
 
 # term_metrics(): the terminal face at the configured size, in its font (the editor's unless it has
 #   one of its own), and the line height: the font's own (ascent and descent) * line_height / 100,
@@ -220,6 +232,9 @@ FN term_spawn
 3:  mov edi, TS_SIZE
     call mem_alloc
     mov rbx, rax
+    inc qword ptr [rip + session_next_id]
+    mov rax, [rip + session_next_id]
+    mov [rbx + TS_id], rax
     mov [rbx + TS_pid], r15d
     mov [rbx + TS_fd], r13d
     mov edi, 80
@@ -663,12 +678,13 @@ FN cmd_term_copy
     mov rsi, [rip + tmp + SB_len]
     test rsi, rsi
     jz 9f
-    PCALL P_clip_set
+    xor edx, edx
+    call ed_clip_set
+    call editor_clip_result
 9:  EPILOGUE
 
 FN cmd_term_paste
-    PCALL P_clip_get
-    ret
+    jmp app_clip_request
 
 # term_panel_paste(ptr, len): the clipboard arrived for the terminal
 FN term_panel_paste

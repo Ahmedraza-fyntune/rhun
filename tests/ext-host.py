@@ -155,6 +155,28 @@ class Host(unittest.TestCase):
         self.assertIn('o/notitle state=failed reason=extension.ini has no title pid=0 cmds= confined=0', states)
         self.assertIn('o/v2 state=failed reason=protocol version not supported (rhun speaks 1) pid=0 cmds= confined=0', states)
 
+    def test_exactly_64_kib_manifest_is_loaded(self):
+        exts = self.manifest_variant('manifest-limit')
+        path = exts / 'rhun-tests/echo/extension.ini'
+        manifest = path.read_bytes()
+        path.write_bytes(manifest + b'\n#' + b'x' * (65536 - len(manifest) - 2))
+        out = self.run_editor(['print-extensions'], exts=exts)
+        self.assertIn('state=idle', out[0])
+        self.assertIn('echo.toast', out[0])
+        self.assertFalse(self.log.exists())
+
+    def test_oversize_manifest_cannot_start_or_restart(self):
+        for size in (65537, 1 << 32):
+            with self.subTest(size=size):
+                exts = self.manifest_variant('manifest-too-big-' + str(size))
+                with (exts / 'rhun-tests/echo/extension.ini').open('r+b') as manifest:
+                    manifest.truncate(size)
+                out = self.run_editor(['cmd echo.toast', 'ext-set echo restart',
+                                       'wait 100', 'print-extensions'], exts=exts)
+                self.assertEqual(out, ['rhun-tests/echo state=failed '
+                                      'reason=extension.ini exceeds 64 KiB pid=0 cmds= confined=0'])
+                self.assertFalse(self.log.exists())
+
     # --- handshake and events ---
 
     def test_overlong_program_names_fail_without_starting(self):
@@ -401,9 +423,9 @@ class Host(unittest.TestCase):
         out = self.run_editor(['cmd echo.toast', 'wait 8000', 'print-extensions'], mode='slowhello')
         self.assertIn('state=stopped reason=no hello within 5 s', out[0])
 
-    def test_three_requests_with_bad_arguments(self):
+    def test_a_body_request_without_a_valid_length_ends_the_stream(self):
         out = self.run_editor(['cmd echo.toast', 'wait 600', 'print-extensions'], mode='badargs')
-        self.assertIn('state=stopped reason=three unparsable lines in a row', out[0])
+        self.assertIn('state=stopped reason=invalid body framing', out[0])
 
     def test_the_error_log_is_kept_under_its_cap(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 2500', 'print-extensions'], mode='noisy')

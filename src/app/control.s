@@ -727,6 +727,93 @@ c_print_extensions:
     xor eax, eax
     ret
 
+# apply-document DOC FILE: apply a workspace-edit fixture to one existing document,
+# preserving the current tab, focus, Vim mode and scroll context.
+c_apply_document:
+    PROLOGUE
+    call next_int
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov r14, rax
+    mov rdi, rax
+    call file_read_all
+    mov r15, rax
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    mov rsi, rdx
+    mov rdx, r13
+    mov ecx, 1
+    call ws_apply_document
+    mov rdi, r15
+    call mem_free
+1:  mov rdi, r14
+    call mem_free
+    xor eax, eax
+    EPILOGUE
+
+# provider-set KIND LANGUAGE OWNER/NAME (or - to clear). The file format also permits
+# language names containing spaces; the control interface uses one word per argument.
+c_provider_set:
+    PROLOGUE 16
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_provider_kind
+    test eax, eax
+    jz 8f
+    mov r13d, eax
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov [rsp], rax
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov r14, rax
+    mov rdx, rax
+    cmp byte ptr [rax], '-'
+    jne 1f
+    cmp byte ptr [rax + 1], 0
+    jne 1f
+    xor edx, edx
+1:  mov edi, r13d
+    mov rsi, [rsp]
+    mov ecx, 1
+    call ext_provider_set
+    mov r15, rax
+    mov rdi, [rsp]
+    call mem_free
+    mov rdi, r14
+    call mem_free
+    mov rax, r15
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+c_print_ext_budget:
+    push rbx
+    lea rdi, [rip + out]
+    call ext_budget_dump
+    xor eax, eax
+    pop rbx
+    ret
+
+c_print_providers:
+    push rbx
+    lea rdi, [rip + out]
+    call ext_provider_dump
+    xor eax, eax
+    pop rbx
+    ret
+
 # wait-ext NAME STATE: until the extension (name or owner/name) is in that state (10 s at most);
 # prints "ext=NAME state=S" at the end either way
 c_wait_ext:
@@ -1660,7 +1747,8 @@ c_print_state:
     lea rdi, [rip + out]
     lea rsi, [rip + .Ls_lang]
     call sb_push_cstr
-    mov rax, [rbx + DOC_lang]
+    mov rdi, rbx
+    call doc_language
     lea rsi, [rip + .Lnone]
     test rax, rax
     jz 2f
@@ -2130,6 +2218,10 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_wait_update: .asciz "wait-update"
 .Lc_print_update: .asciz "print-update"
 .Lc_print_frames: .asciz "print-frames"
+.Lc_apply_document: .asciz "apply-document"
+.Lc_provider_set: .asciz "provider-set"
+.Lc_print_providers: .asciz "print-providers"
+.Lc_print_ext_budget: .asciz "print-ext-budget"
 .Lc_print_extensions: .asciz "print-extensions"
 .Lc_wait_ext: .asciz "wait-ext"
 .Lc_print_marks: .asciz "print-marks"
@@ -2231,6 +2323,9 @@ ctl_table:
     .quad .Lc_print_settings, c_print_settings
     .quad .Lc_scroll_x, c_scroll_x
     .quad .Lc_appearance, c_appearance, .Lc_print_appearance, c_print_appearance
+    .quad .Lc_print_ext_budget, c_print_ext_budget
+    .quad .Lc_apply_document, c_apply_document
+    .quad .Lc_provider_set, c_provider_set, .Lc_print_providers, c_print_providers
     .quad .Lc_print_extensions, c_print_extensions, .Lc_wait_ext, c_wait_ext
     .quad .Lc_print_marks, c_print_marks, .Lc_print_hover, c_print_hover, .Lc_print_text_cell, c_print_text_cell
     .quad .Lc_print_options, c_print_options, .Lc_ext_set, c_ext_set

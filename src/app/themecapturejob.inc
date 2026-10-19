@@ -1,0 +1,43 @@
+.include "app/themecapturedecode.inc"
+.equ TCJ_state, 0
+.equ TCJ_primary, 8
+.equ TCJ_cleanup, 16
+.equ TCJ_observation, 24
+.equ TCJ_authority, 32
+.equ TCJ_exit, 40
+.equ TCJ_context, 48
+.equ TCJ_deadline, 56
+.equ TCJ_now, 64
+.equ TCJ_request, 72
+.equ TCJ_result, 80
+.equ TCJ_native, 88
+.equ TCJ_reservation, 96
+.equ TCJ_result_reservation, 104
+.equ TCJ_fallback_request, 112
+.equ TCJ_closing, 120
+.equ TCJ_input_closed, 128
+.equ TCJ_killed, 136
+.equ TCJ_eof, 144
+.equ TCJ_tx_offset, 152
+.equ TCJ_tx_pending, 160
+.equ TCJ_tx_chunk, 168
+.equ TCJ_used, 176
+.equ TCJ_native_retired, 184
+.equ TCJ_cleanup_only, 192
+.equ TCJ_retry_due, 200
+.equ TCJ_retry_delay, 208
+.equ TCJ_read_stream, 216
+.equ TCJ_decode, 224
+.equ TCJ_scratch, TCJ_decode + TCD_SIZE
+.equ TCJ_SIZE, 4592
+.equ TCJS_RUNNING, 0
+.equ TCJS_CLOSING, 1
+.equ TCJS_DECODING, 2
+.equ TCJS_READY, 3
+.equ TCJS_FAILED, 4
+.equ TCJS_TAKEN, 5
+# Local per-step budget, never retained.
+.equ TCB_bytes, 0
+.equ TCB_calls, 8
+.equ TCB_SIZE, 16
+.equ TCJ_retire_requested, 4576

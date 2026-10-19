@@ -11,6 +11,8 @@ FN main
     jne .Lfail
     cmp dword ptr [rip + cfg_tab_width], 3
     jne .Lfail
+    cmp dword ptr [rip + cfg_multi_cursor_paste], 1
+    jne .Lfail
     cmp qword ptr [rip + g_keylines + VEC_len], 1
     jne .Lfail
     mov rax, [rip + g_keylines + VEC_ptr]

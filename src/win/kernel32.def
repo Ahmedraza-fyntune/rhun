@@ -26,25 +26,33 @@ EXPORTS
     FreeEnvironmentStringsW
     GetCommandLineW
     GetCurrentDirectoryW
+    GetCurrentProcess
     GetCurrentProcessId
     GetEnvironmentStringsW
     GetEnvironmentVariableW
     GetExitCodeProcess
     GetFileAttributesW
     GetFileInformationByHandle
+    GetFileInformationByHandleEx
+    GetFileType
     GetFinalPathNameByHandleW
     GetLastError
     GetModuleFileNameW
     GetModuleHandleW
+    GetProcessHandleCount
     GetStdHandle
     GetSystemTimeAsFileTime
+    QueryPerformanceCounter
+    QueryPerformanceFrequency
     GetTickCount64
     GlobalAlloc
     GlobalFree
     GlobalLock
+    GlobalSize
     GlobalUnlock
     InitializeProcThreadAttributeList
     LocalFree
+    LockFileEx
     MoveFileExW
     MultiByteToWideChar
     PeekNamedPipe
@@ -60,18 +68,27 @@ EXPORTS
     SetEvent
     SetFileAttributesW
     SetFilePointerEx
+    QueryInformationJobObject
     SetInformationJobObject
     SetNamedPipeHandleState
+    SetLastError
     Sleep
     TerminateJobObject
     TerminateProcess
     UpdateProcThreadAttribute
+    UnlockFileEx
     VirtualAlloc
     VirtualFree
     WaitForSingleObject
     WideCharToMultiByte
     WriteFile
     GetFullPathNameW
+    GetHandleInformation
     GetConsoleWindow
     GetWindowsDirectoryW
     CompareStringOrdinal
+    CreateNamedPipeW
+    ConnectNamedPipe
+    GetOverlappedResult
+    CancelIoEx
+    GetProcessId

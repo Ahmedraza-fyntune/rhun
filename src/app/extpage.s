@@ -47,21 +47,33 @@ FN cmd_extensions
 # extpage_show(ext): the page with that extension's details (0: the list)
 FN extpage_show
     PROLOGUE
-    mov [rip + g_xp_detail], rdi
+    mov rbx, rdi
+    mov qword ptr [rip + xp_prompt_sd], 0
+    test rbx, rbx
+    jz 1f
+    call ext_has_identity
+    test eax, eax
+    jnz 1f
+    xor ebx, ebx
+1:  mov [rip + g_xp_detail], rbx
     mov dword ptr [rip + xp_scroll], 0
     call cmd_extensions
     EPILOGUE
 
 # extpage_forget(): the extension shown in detail was removed: back to the list
 FN extpage_forget
-    mov rax, [rip + g_xp_detail]
-    test rax, rax
+    push rbx
+    mov rdi, [rip + g_xp_detail]
+    test rdi, rdi
     jz 1f
-    cmp dword ptr [rax + EXT_status], ES_REMOVED
-    jne 1f
+    call ext_has_identity
+    test eax, eax
+    jnz 1f
     mov qword ptr [rip + g_xp_detail], 0
+    mov qword ptr [rip + xp_prompt_sd], 0
     mov dword ptr [rip + xp_scroll], 0
-1:  ret
+1:  pop rbx
+    ret
 
 # extpage_draw(x, y, w, h)
 FN extpage_draw
@@ -70,6 +82,11 @@ FN extpage_draw
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
+    call extpage_forget
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
     COLOR r8d, T_BG
     call gfx_fill
     mov edi, [rsp]
@@ -178,8 +195,10 @@ draw_list:
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
-    cmp dword ptr [rbx + EXT_status], ES_REMOVED
-    je 2b
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 2b
     inc r13d
     lea edi, [r12 - 1]
     call draw_card
@@ -199,6 +218,13 @@ draw_list:
 draw_card:
     PROLOGUE 48
     mov r15d, edi
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jnz .Lxp_card_metadata
+    call draw_diagnostic
+    EPILOGUE
+.Lxp_card_metadata:
     shl r15d, 2
     add r15d, ID_XP + 0x10      # this card's ids
     # its height: 28 badge row, 24 description, a problem line, 32 buttons, padding
@@ -400,6 +426,13 @@ draw_detail:
     EPILOGUE
 1:  M eax, MI_40
     add [rip + xp_y], eax
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jnz .Lxp_detail_metadata
+    call draw_diagnostic
+    EPILOGUE
+.Lxp_detail_metadata:
     # badge, title, switch
     mov edi, [rip + xp_x]
     mov esi, [rip + xp_y]
@@ -734,6 +767,11 @@ copy_title:
 draw_settings:
     PROLOGUE 48
     mov rbx, rdi
+    call ext_has_metadata
+    test eax, eax
+    jnz .Lxp_settings_metadata
+    EPILOGUE
+.Lxp_settings_metadata:
     xor r12d, r12d
 1:  cmp r12, [rbx + EXT_sdefs + VEC_len]
     jae 9f
@@ -946,21 +984,9 @@ draw_settings:
     call row_button
     test eax, UB_CLICK
     jz .Lds_next
-    mov [rip + xp_prompt_sd], r13
-    mov rdi, [r13 + SD_title]
-    test rdi, rdi
-    jnz 8f
-    mov rdi, [r13 + SD_key]
-8:  push rdi
-    push rdi
-    mov rdi, [r13 + SD_value]
-    call strlen
-    mov rcx, rax
-    pop rdi
-    pop rdi
-    mov esi, PROMPT_EXT_SETTING
-    mov rdx, [r13 + SD_value]
-    call palette_ext_prompt_open
+    mov rdi, rbx
+    mov rsi, r13
+    call extpage_setting_prompt_open
 .Lds_next:
     # the row ends below its description
     mov eax, [rsp + 4]
@@ -970,25 +996,59 @@ draw_settings:
     jmp 1b
 9:  EPILOGUE
 
+# One synchronous opening slice. Capture the association only after palette replacement
+# has invalidated its predecessor and the exact current row has been revalidated.
+FN extpage_setting_prompt_open
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    call ext_setting_prompt_resolve
+    test rax, rax
+    js .Lxpo_done
+    mov r13, [r12 + SD_title]
+    test r13, r13
+    jnz 1f
+    mov r13, [r12 + SD_key]
+1:  mov rdi, [r12 + SD_value]
+    call strlen
+    mov rcx, rax
+    mov rdi, r13
+    mov esi, PROMPT_EXT_SETTING
+    mov rdx, [r12 + SD_value]
+    call palette_ext_prompt_open
+    mov rdi, rbx
+    mov rsi, r12
+    call ext_setting_prompt_resolve
+    test rax, rax
+    js .Lxpo_refused
+    mov [rip + xp_prompt_sd], r12
+    xor eax, eax
+.Lxpo_done:
+    EPILOGUE
+.Lxpo_refused:
+    mov r13, rax
+    call palette_close_extensions_pure
+    mov rax, r13
+    EPILOGUE
+
 # extpage_prompt_done(ptr, len): the text setting's new value
 FN extpage_prompt_done
     PROLOGUE
+    mov r13, rdi
+    mov r14, rsi
     mov rbx, [rip + g_xp_detail]
     mov r12, [rip + xp_prompt_sd]
-    test rbx, rbx
-    jz 9f
-    test r12, r12
-    jz 9f
     mov qword ptr [rip + xp_prompt_sd], 0
-    mov rdx, rsi
-    mov rsi, rdi
+    mov rdi, rbx
+    mov rsi, r12
+    call ext_setting_prompt_resolve
+    test rax, rax
+    js 9f
     lea rdi, [rip + xp_line]
-    push rsi
-    push rdx
     call sb_clear
-    pop rdx
-    pop rsi
     lea rdi, [rip + xp_line]
+    mov rsi, r13
+    mov rdx, r14
     call sb_push
     call line_cstr
     mov rdi, rbx
@@ -1046,11 +1106,25 @@ choice_width:
 
 # ext_title(ext) -> its title, or its name
 FN ext_title
-    mov rax, [rdi + EXT_title]
+    PROLOGUE
+    mov rbx, rdi
+    call ext_has_identity
+    test eax, eax
+    jz .Lxp_title_empty
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz .Lxp_title_name
+    mov rax, [rbx + EXT_title]
     test rax, rax
-    jnz 1f
-    mov rax, [rdi + EXT_name]
-1:  ret
+    jnz .Lxp_title_done
+.Lxp_title_name:
+    mov rax, [rbx + EXT_name]
+.Lxp_title_done:
+    EPILOGUE
+.Lxp_title_empty:
+    lea rax, [rip + .Lempty]
+    EPILOGUE
 
 # ext_problem(ext) -> what is wrong, in words, or 0 (a stop the user asked for is not a problem)
 FN ext_problem
@@ -1549,6 +1623,7 @@ item:
 FN extpage_dump
     PROLOGUE
     mov r12, rdi
+    call extpage_forget
     mov rbx, [rip + g_xp_detail]
     test rbx, rbx
     jnz .Lxd_detail
@@ -1558,8 +1633,10 @@ FN extpage_dump
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
-    cmp dword ptr [rbx + EXT_status], ES_REMOVED
-    je 1b
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 1b
     call dump_head
     mov rdi, r12
     mov esi, 10
@@ -1567,6 +1644,15 @@ FN extpage_dump
     jmp 1b
 .Lxd_detail:
     call dump_head
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jnz .Lxd_detail_metadata
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    jmp 9f
+.Lxd_detail_metadata:
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
@@ -1681,6 +1767,10 @@ dump_head:
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 1f
     mov rsi, [rbx + EXT_version]
     test rsi, rsi
     jz 1f
@@ -1758,3 +1848,51 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ld_can: .asciz "can: "
 .Ld_held: .asciz "held="
 .Ld_setting: .asciz "setting "
+
+.text
+# Publication revokes raw SD/detail borrows without destroying owned scratch bytes.
+FN extpage_catalog_invalidate_pure
+    mov qword ptr [rip + g_xp_detail], 0
+    mov qword ptr [rip + xp_prompt_sd], 0
+    mov dword ptr [rip + xp_scroll], 0
+    mov dword ptr [rip + xp_content_h], 0
+    ret
+
+.text
+# Valid failed identities stay visible without any EP-borrowed metadata or controls.
+draw_diagnostic:
+    PROLOGUE
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    call ext_full_name
+    mov r8, rax
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rip + xp_x]
+    mov edx, [rip + xp_y]
+    M ecx, MI_28
+    COLOR r9d, T_FG
+    call ui_text_c
+    M eax, MI_32
+    add [rip + xp_y], eax
+    mov rdi, rbx
+    call ext_problem
+    test rax, rax
+    jz 1f
+    mov rsi, rax
+    lea rdi, [rip + g_face_small]
+    COLOR edx, T_ERROR
+    mov ecx, MI_24
+    call line_text
+1:  M eax, MI_24
+    add [rip + xp_y], eax
+9:  EPILOGUE
+
+.text
+# Delayed completion has no remaining source authority after replacement or cancellation.
+# Preserve all registers and flags; callers may use this before their first mutation.
+FN extpage_prompt_invalidate_pure
+    mov qword ptr [rip + xp_prompt_sd], 0
+    ret

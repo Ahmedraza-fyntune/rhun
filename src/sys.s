@@ -159,6 +159,33 @@ FN die
     mov edi, 1
     jmp sys_exit
 
+# Process-local headroom for extension pipes, logs and the editor's other services. Preserve
+# larger inherited limits and the hard limit. A restricted hard limit remains an OS constraint.
+FN sys_file_capacity
+.ifdef WINDOWS
+    ret
+.else
+    PROLOGUE 16
+    mov edi, 7                  # Linux RLIMIT_NOFILE (translated on macOS)
+    mov rsi, rsp
+    SYS SYS_getrlimit
+    test rax, rax
+    js 9f
+    cmp qword ptr [rsp], 1024
+    jae 9f
+    mov rax, [rsp + 8]
+    cmp rax, 1024
+    jbe 1f
+    mov eax, 1024
+1:  cmp rax, [rsp]
+    jbe 9f
+    mov [rsp], rax
+    mov edi, 7
+    mov rsi, rsp
+    SYS SYS_setrlimit
+9:  EPILOGUE
+.endif
+
 # time_ms() -> monotonic milliseconds
 FN time_ms
     mov edi, CLOCK_MONOTONIC
@@ -170,6 +197,21 @@ FN time_ms
     mov rax, [rip + ts_buf + 8]
     xor edx, edx
     mov r8d, 1000000
+    div r8
+    add rax, rcx
+    ret
+
+# time_us() -> monotonic microseconds, for aggregate work across sub-millisecond callbacks
+FN time_us
+    mov edi, CLOCK_MONOTONIC
+    lea rsi, [rip + ts_buf]
+    SYS SYS_clock_gettime
+    mov rax, [rip + ts_buf]
+    imul rax, rax, 1000000
+    mov rcx, rax
+    mov rax, [rip + ts_buf + 8]
+    xor edx, edx
+    mov r8d, 1000
     div r8
     add rax, rcx
     ret
@@ -314,7 +356,23 @@ FN file_read_all
 # file_read_all_extra(path, extra) -> as file_read_all, with room for extra bytes after the text (a
 #   document's gap, which then needs no copy of the whole file to grow into)
 FN file_read_all_extra
-    PROLOGUE
+    mov rdx, -1
+    jmp .Lfr_begin
+
+# file_read_limited(path, max): snapshot read, refusing an oversized regular file before
+# allocating its contents. max must be in 0..INT64_MAX-1; errors use file_read_all's contract.
+FN file_read_limited
+    mov rax, 0x7ffffffffffffffe
+    cmp rsi, rax
+    jbe 1f
+    mov rdx, -22
+    xor eax, eax
+    ret
+1:  mov rdx, rsi
+    xor esi, esi
+.Lfr_begin:
+    PROLOGUE 16
+    mov [rsp], rdx
     mov r15, rsi
     # without blocking: opening a FIFO to read waits for a writer (a repository's .git/HEAD can be
     # one, and a rhun:// link opens a repository); the regular-file check below then refuses it
@@ -337,7 +395,11 @@ FN file_read_all_extra
     jne .Lfr_close_fail
     mov rax, -21               # EISDIR
     jmp .Lfr_close_fail
-1:
+1:  cmp rax, [rsp]
+    jbe 2f
+    mov rax, -27               # EFBIG: do not allocate an oversized input
+    jmp .Lfr_close_fail
+2:
     mov r12, rax            # size
     lea rdi, [rax + r15 + 1]
     call mem_alloc

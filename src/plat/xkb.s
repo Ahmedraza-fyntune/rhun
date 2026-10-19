@@ -271,6 +271,15 @@ find_section:
     pop rbx
     ret
 
+# Exact name lookup only. The resumable combination parser handles numeric inputs separately.
+FN keysym_name_value
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    jmp .Lkv_names
+
 # keysym_value(ptr, len) -> keysym (0 if unknown)
 FN keysym_value
     push rbx
@@ -303,6 +312,7 @@ FN keysym_value
     add eax, 0x1000000
     jmp .Lkv_ret
 3:  # binary search by name
+.Lkv_names:
     xor r13d, r13d                  # lo
     mov r8, [rip + keysym_names_count] # hi
 4:  cmp r13, r8

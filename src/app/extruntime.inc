@@ -1,0 +1,23 @@
+# Owned immutable runtime command identity and strings. Liveness is separately revocable.
+.equ RO_refs, 0
+.equ RO_target, 8
+.equ RO_session, 16
+.equ RO_incarnation, 24
+.equ RO_live, 32
+.equ RO_ownerlen, 40
+.equ RO_namelen, 48
+.equ RO_keylen, 56
+.equ RO_titlelen, 64
+.equ RO_keyslen, 72
+.equ RO_allocsize, 80
+.equ RO_SIZE, 96
+.equ RO_LIMIT, 65536
+.equ ROC_target, 0
+.equ ROC_session, 8
+.equ ROC_owner, 16
+.equ ROC_name, 24
+.equ ROC_key, 32
+.equ ROC_title, 40
+.equ ROC_keys, 48
+.equ ROC_keyslen, 56
+.equ ROC_SIZE, 64

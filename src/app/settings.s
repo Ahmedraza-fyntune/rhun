@@ -39,6 +39,8 @@ FN settings_field
 FN settings_focus
     push rax
     call commit_edit
+    lea rdi, [rip + set_search]
+    call tf_revision_touch
     pop rax
     mov dword ptr [rip + set_find], 1
     ret

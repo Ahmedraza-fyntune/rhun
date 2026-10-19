@@ -44,6 +44,10 @@ open_bar:
     mov dword ptr [rip + g_find_word], 0
     mov dword ptr [rip + find_open], 1
     mov dword ptr [rip + find_sub], 0
+    lea rdi, [rip + tf_find]
+    call tf_revision_touch
+    lea rdi, [rip + tf_repl]
+    call tf_revision_touch
     mov dword ptr [rip + tf_find + TF_id], ID_FIND_TF
     mov dword ptr [rip + tf_repl + TF_id], ID_REPL_TF
     mov dword ptr [rip + g_focus], FOCUS_FIND

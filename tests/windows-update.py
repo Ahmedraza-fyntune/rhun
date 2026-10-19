@@ -37,8 +37,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
     (project / 'example.txt').write_text('saved\n')
     personal = portable / 'personal.txt'
     personal.write_bytes(b'keep this')
-    for name in ('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1'):
-        source = ROOT / ('build/windows/' + name if name.startswith('rhun.') else name)
+    for name in ('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1', 'LICENSE-Unicode.txt'):
+        source = ROOT / ('build/windows/' + name if name.startswith('rhun.') else 'assets/licenses/'+name if name=='LICENSE-Unicode.txt' else name)
         shutil.copyfile(source, portable / name)
     original = (portable / 'rhun.exe').read_bytes()
     release = temp / 'releases/download' / ('v' + LATEST)
@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
     (latest / 'VERSION').write_text(LATEST + '\n')
     asset = f'rhun-{LATEST}-windows-x86_64.zip'
     with zipfile.ZipFile(release / asset, 'w', zipfile.ZIP_DEFLATED) as archive:
-        for name in ('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1'):
+        for name in ('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1', 'LICENSE-Unicode.txt'):
             data = (portable / name).read_bytes()
             if name.startswith('rhun.'):
                 # Change only the embedded version string for this synthetic release.
@@ -139,13 +139,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
         # Each scenario applies the same synthetic release to a fresh portable installation.
         installation = temp / (name + " portable café ' $ &") / 'rhun'
         installation.mkdir(parents=True)
-        for filename in ('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1'):
+        for filename in ('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1', 'LICENSE-Unicode.txt'):
             shutil.copyfile(portable / filename, installation / filename)
         restart_env = dict(env, RHUN_UPDATE_TARGET=str(installation / 'rhun.com'))
         result = run(name, [*check, 'cmd install_update', 'wait-update', 'print-update',
                      *before, 'cmd restart_to_update', *after], restart_env,
                      paths=paths, installation=installation)
         assert result.returncode == 0 and b'state=ready' in result.stdout, result.stdout
+        assert (installation/'LICENSE-Unicode.txt').read_bytes()==(ROOT/'assets/licenses/LICENSE-Unicode.txt').read_bytes()
         reopened = list(paths) if expected is None else expected
         user, window, ids = restarted_window(installation, reopened[-1].name if reopened else 'rhûn')
         try:

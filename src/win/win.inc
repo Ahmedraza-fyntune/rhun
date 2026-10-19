@@ -54,3 +54,13 @@
 .equ FD_PTY, 4
 .equ FD_SLAVE, 5
 .equ FD_WATCH, 6
+
+# Private deferred window events. Metadata occupies the unused MSG time/point fields.
+.equ WD_hwnd, 0
+.equ WD_message, 8
+.equ WD_wparam, 16
+.equ WD_lparam, 24
+.equ WD_mods, 32
+.equ WD_rect, 48
+.equ WD_SIZE, 64
+.equ WD_CAP, 256

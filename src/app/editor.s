@@ -1,6 +1,20 @@
 # editor view: rendering, mouse, keyboard editing on the active document
 .include "rhun.inc"
 
+.text
+# Drop every grammar-dependent class/bracket cache without touching the document text.
+FN editor_language_changed
+    cmp [rip + cls_doc], rdi
+    jne 1f
+    mov qword ptr [rip + cls_doc], 0
+1:  cmp [rip + g_long_doc], rdi
+    jne 2f
+    mov qword ptr [rip + g_long_doc], 0
+2:  cmp [rip + g_br_doc], rdi
+    jne 3f
+    mov qword ptr [rip + g_br_doc], 0
+3:  ret
+
 .equ ID_EDITOR, 0x1001
 .equ ID_EDSCROLL, 0x1002
 .equ ID_EDHSCROLL, 0x1004          # along the bottom, when lines do not wrap
@@ -55,6 +69,8 @@ FN ed_sel
 
 # ed_touch(): cursor activity (reveal + solid caret)
 FN ed_touch
+    mov rdi, [rip + g_doc]
+    call snippet_selection_changed
     mov dword ptr [rip + g_reveal], 1
     mov dword ptr [rip + g_dirty], 1
     call time_ms
@@ -77,6 +93,8 @@ FN ed_delete_sel
     push r13
     mov rbx, rdi
     mov r13d, esi
+    call snippet_user_begin
+    mov rdi, rbx
     call ed_sel
     cmp rax, rdx
     je 1f
@@ -91,7 +109,11 @@ FN ed_delete_sel
     mov eax, 1
     jmp 2f
 1:  xor eax, eax
-2:  pop r13
+2:  push rax
+    mov rdi, rbx
+    call snippet_user_end
+    pop rax
+    pop r13
     pop r12
     pop rbx
     ret
@@ -99,11 +121,17 @@ FN ed_delete_sel
 # ed_insert(doc, ptr, len, editkind): replace selection with text, cursor after it
 FN ed_insert
     READONLY_RET rdi
+    cmp qword ptr [rdi + DOC_selections], 0
+    jne editor_multi_insert
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
     mov r14d, ecx
+    call snippet_user_begin
+    mov rdi, rbx
+    call snippet_replace_begin
+    mov rdi, rbx
     call ed_sel
     cmp rax, rdx
     je 1f
@@ -134,6 +162,8 @@ FN ed_insert
     mov [rbx + DOC_anchor], r15
     mov qword ptr [rbx + DOC_prefx], -1
     call ed_touch
+    mov rdi, rbx
+    call snippet_user_end
     EPILOGUE
 
 # line_indent(doc, line) -> rax = bytes of leading blanks, edx = visual columns
@@ -380,11 +410,28 @@ page_lines:
 # ed_type(cp): insert a typed character (auto-pairs, closing bracket overtype)
 FN ed_type
     READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz .Lty_single
+    cmp qword ptr [rax + DOC_selections], 0
+    je .Lty_single
+    mov esi, edi
+    mov rdi, rax
+    call editor_multi_type
+    test eax, eax
+    jnz .Lty_multi_done
+    mov edi, edx
+    jmp editor_multi_error
+.Lty_multi_done:
+    ret
+.Lty_single:
     PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Lty_ret
     mov r12d, edi
+    mov rdi, rbx
+    call snippet_user_begin
     mov edi, r12d
     lea rsi, [rsp]
     call utf8_encode
@@ -531,15 +578,32 @@ FN ed_type
     mov ecx, EK_TYPE
     call ed_insert
 .Lty_ret:
+    mov rdi, rbx
+    call snippet_user_end
     EPILOGUE
 
 # ed_newline(): newline keeping indentation, extra level after an opening bracket or ':'
 FN ed_newline
     READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    je 1f
+    mov rdi, rax
+    call editor_multi_newline
+    test eax, eax
+    jnz 2f
+    mov edi, edx
+    jmp editor_multi_error
+2:  ret
+1:
     PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Lnl_ret
+    mov rdi, rbx
+    call snippet_user_begin
     lea rdi, [rsp]
     xor esi, esi
     mov edx, SB_SIZE
@@ -590,7 +654,11 @@ FN ed_newline
     je 5f
     cmp al, ':'
     jne 3f
-    mov rcx, [rbx + DOC_lang]
+    mov [rsp + 24], eax
+    mov rdi, rbx
+    call doc_language
+    mov rcx, rax
+    mov eax, [rsp + 24]
     test rcx, rcx
     jz 3f
     test qword ptr [rcx + GR_flags], GF_COLON
@@ -646,6 +714,8 @@ FN ed_newline
 9:  lea rdi, [rsp]
     call sb_free
 .Lnl_ret:
+    mov rdi, rbx
+    call snippet_user_end
     EPILOGUE
 
 # push_indent_unit(): append one indentation unit to the sb at [rsp+8] of the caller frame
@@ -670,11 +740,23 @@ push_indent_unit:
 # ed_backspace(word)
 FN ed_backspace
     READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    je 1f
+    mov edx, edi
+    xor esi, esi
+    mov rdi, rax
+    jmp editor_multi_delete_ui
+1:
     PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
     mov r12d, edi
+    mov rdi, rbx
+    call snippet_user_begin
     mov rdi, rbx
     mov esi, EK_BACK
     call ed_delete_sel
@@ -782,16 +864,30 @@ FN ed_backspace
     mov [rbx + DOC_anchor], r13
 8:  mov qword ptr [rbx + DOC_prefx], -1
     call ed_touch
-9:  EPILOGUE
+9:  mov rdi, rbx
+    call snippet_user_end
+    EPILOGUE
 
 # ed_delete_fwd(word)
 FN ed_delete_fwd
     READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    je 1f
+    mov edx, edi
+    mov esi, 1
+    mov rdi, rax
+    jmp editor_multi_delete_ui
+1:
     PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
     mov r12d, edi
+    mov rdi, rbx
+    call snippet_user_begin
     mov rdi, rbx
     mov esi, EK_DEL
     call ed_delete_sel
@@ -816,7 +912,9 @@ FN ed_delete_fwd
     mov [rbx + DOC_anchor], r13
 8:  mov qword ptr [rbx + DOC_prefx], -1
     call ed_touch
-9:  EPILOGUE
+9:  mov rdi, rbx
+    call snippet_user_end
+    EPILOGUE
 
 # sel_lines(doc) -> rax first line, rdx last line (selection end at column 0 excluded)
 sel_lines:
@@ -854,12 +952,25 @@ sel_lines:
 
 # ed_indent(dir): +1 indent selected lines, -1 outdent
 FN ed_indent
-    READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 99f
+    cmp qword ptr [rax + DOC_selections], 0
+    je 99f
+    mov esi, 1
+    test edi, edi
+    jns 98f
+    mov rsi, -1
+98: mov rdi, rax
+    jmp editor_multi_tab_ui
+99: READONLY_RET
     PROLOGUE 48
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Lin_ret
     mov [rsp + 32], edi
+    mov rdi, rbx
+    call snippet_user_begin
     mov rdi, rbx
     call sel_lines
     mov r12, rax
@@ -926,6 +1037,8 @@ FN ed_indent
     call sb_free
     call ed_touch
 .Lin_ret:
+    mov rdi, rbx
+    call snippet_user_end
     EPILOGUE
 
 push_indent_unit_rsp:
@@ -934,7 +1047,15 @@ push_indent_unit_rsp:
 
 # ed_tab(): indent selection spanning lines, else insert indentation at the cursor
 FN ed_tab
-    READONLY_RET
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 99f
+    cmp qword ptr [rax + DOC_selections], 0
+    je 99f
+    mov rdi, rax
+    xor esi, esi
+    jmp editor_multi_tab_ui
+99: READONLY_RET
     PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -977,10 +1098,12 @@ FN ed_tab
 
 # selection text or whole current line (with newline) -> clip_sb ; eax = 1 if it was a whole line
 copy_to_clip:
-    PROLOGUE
+    PROLOGUE 32
     mov rbx, rdi
-    lea rdi, [rip + clip_sb]
-    call sb_clear
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset
     mov rdi, rbx
     call ed_sel
     cmp rax, rdx
@@ -1008,9 +1131,27 @@ copy_to_clip:
     call doc_len
     mov r13, rax
 4:  mov r15d, 1
-2:  mov rsi, r13
+2:  mov rax, r13
+    sub rax, r12
+    cmp rax, DOC_MULTI_BYTES_MAX
+    ja .Lcopy_fail
+    test r15d, r15d
+    jz .Lcopy_size_ready
+    test rax, rax
+    jz .Lcopy_size_ready
+    mov rdi, rbx
+    lea rsi, [r13 - 1]
+    call doc_byte
+    cmp eax, 10
+    je .Lcopy_size_ready
+    mov rax, r13
+    sub rax, r12
+    cmp rax, DOC_MULTI_BYTES_MAX
+    jae .Lcopy_fail
+.Lcopy_size_ready:
+    mov rsi, r13
     sub rsi, r12
-    lea rdi, [rip + clip_sb]
+    lea rdi, [rsp]
     call sb_reserve
     mov rcx, rax
     mov rdi, rbx
@@ -1020,31 +1161,45 @@ copy_to_clip:
     call doc_copy
     mov rax, r13
     sub rax, r12
-    add [rip + clip_sb + SB_len], rax
+    add [rsp + SB_len], rax
     # whole last line without newline: add one so paste works line-wise
     test r15d, r15d
     jz 5f
-    mov rax, [rip + clip_sb + SB_len]
+    mov rax, [rsp + SB_len]
     test rax, rax
     jz 5f
-    mov rcx, [rip + clip_sb + SB_ptr]
+    mov rcx, [rsp + SB_ptr]
     cmp byte ptr [rcx + rax - 1], 10
     je 5f
-    lea rdi, [rip + clip_sb]
+    lea rdi, [rsp]
     mov esi, 10
     call sb_push_byte
-5:  mov rdi, [rip + clip_sb + SB_ptr]
-    mov rsi, [rip + clip_sb + SB_len]
-    PCALL P_clip_set
+5:  mov rdi, [rsp + SB_ptr]
+    mov rsi, [rsp + SB_len]
+    mov edx, r15d
+    call ed_clip_set
+    test eax, eax
+    jnz .Lcopy_done
+.Lcopy_fail:
+    mov r15d, -1
+.Lcopy_done:
+    lea rdi, [rsp]
+    call sb_free
     mov eax, r15d
-    mov [rip + g_clip_line], eax
     EPILOGUE
 
 FN cmd_copy
     mov rdi, [rip + g_doc]
     test rdi, rdi
     jz 1f
-    call copy_to_clip
+    cmp qword ptr [rdi + DOC_selections], 0
+    je 2f
+    xor esi, esi
+    jmp editor_multi_copy_ui
+2:  call copy_to_clip
+    cmp eax, -1
+    jne 1f
+    jmp editor_clip_failure
 1:  ret
 
 FN cmd_cut
@@ -1053,8 +1208,12 @@ FN cmd_cut
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
+    cmp qword ptr [rbx + DOC_selections], 0
+    jne .Lcut_multi
     mov rdi, rbx
     call copy_to_clip
+    cmp eax, -1
+    je .Lcut_failed
     test eax, eax
     jz 1f
     # whole line
@@ -1064,24 +1223,37 @@ FN cmd_cut
     xor esi, esi
     call ed_delete_sel
     call ed_touch
+    jmp 9f
+.Lcut_multi:
+    mov rdi, rbx
+    mov esi, 1
+    call editor_multi_copy_ui
+    jmp 9f
+.Lcut_failed:
+    call editor_clip_failure
 9:  pop rbx
     ret
 
 FN cmd_paste
-    PCALL P_clip_get
-    ret
+    jmp app_clip_request
 
 # ed_paste(ptr, len): line-wise when the clipboard came from a whole-line copy of ours
 FN ed_paste
-    READONLY_RET
     PROLOGUE
-    mov rbx, [rip + g_doc]
-    test rbx, rbx
-    jz 9f
     mov r12, rdi
     mov r13, rsi
+    call ed_clip_observe
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz .Lpaste_return
+    test dword ptr [rbx + DOC_flags], DF_READONLY
+    jnz .Lpaste_return
     test r13, r13
-    jz 9f
+    jz .Lpaste_return
+    cmp qword ptr [rbx + DOC_selections], 0
+    jne .Lpaste_multiple
+    mov rdi, rbx
+    call snippet_user_begin
     mov rdi, r12
     mov rsi, r13
     call ed_clip_linewise
@@ -1117,7 +1289,17 @@ FN ed_paste
     mov rdx, r13
     xor ecx, ecx
     call ed_insert
-9:  EPILOGUE
+9:  mov rdi, rbx
+    call snippet_user_end
+.Lpaste_return:
+    EPILOGUE
+.Lpaste_multiple:
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, [rip + cfg_multi_cursor_paste]
+    call editor_multi_paste_ui
+    EPILOGUE
 
 FN cmd_select_all
     mov rdi, [rip + g_doc]
@@ -1324,6 +1506,8 @@ FN cmd_duplicate_line
     test rbx, rbx
     jz 9f
     mov rdi, rbx
+    call snippet_user_begin
+    mov rdi, rbx
     call sel_lines
     mov r12, rax
     mov r13, rdx
@@ -1368,7 +1552,10 @@ FN cmd_duplicate_line
 2:  mov rdi, [rsp]
     call mem_free
     call ed_touch
-9:  EPILOGUE
+9:
+    mov rdi, rbx
+    call snippet_user_end
+    EPILOGUE
 
 FN cmd_delete_line
     READONLY_RET
@@ -1376,6 +1563,8 @@ FN cmd_delete_line
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
+    mov rdi, rbx
+    call snippet_user_begin
     mov rdi, rbx
     call sel_lines
     mov r12, rax
@@ -1417,7 +1606,10 @@ FN cmd_delete_line
     mov [rbx + DOC_cur], rax
     mov [rbx + DOC_anchor], rax
     call ed_touch
-9:  EPILOGUE
+9:
+    mov rdi, rbx
+    call snippet_user_end
+    EPILOGUE
 
 # ed_move_lines(dir): move selected lines up (-1) or down (1)
 FN ed_move_lines
@@ -1427,6 +1619,8 @@ FN ed_move_lines
     test rbx, rbx
     jz .Lml_ret
     mov [rsp + 40], edi
+    mov rdi, rbx
+    call snippet_user_begin
     mov rdi, rbx
     call sel_lines
     mov r12, rax                # first
@@ -1542,6 +1736,8 @@ FN ed_move_lines
     call mem_free
     call ed_touch
 .Lml_ret:
+    mov rdi, rbx
+    call snippet_user_end
     EPILOGUE
 
 # toggle line comments using the grammar's comment token
@@ -1551,7 +1747,10 @@ FN cmd_toggle_comment
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Ltc_ret
-    mov rax, [rbx + DOC_lang]
+    mov rdi, rbx
+    call snippet_user_begin
+    mov rdi, rbx
+    call doc_language
     test rax, rax
     jz .Ltc_ret
     mov rcx, [rax + GR_commentlen]
@@ -1655,6 +1854,8 @@ FN cmd_toggle_comment
     call doc_end_group
     call ed_touch
 .Ltc_ret:
+    mov rdi, rbx
+    call snippet_user_end
     EPILOGUE
 
 FN cmd_undo
@@ -2198,6 +2399,8 @@ FN editor_draw
     jbe 33f
 32: mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
+    mov rdi, rbx
+    call snippet_selection_changed
 33: lea rdi, [rip + editor_menu]
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
@@ -2285,6 +2488,8 @@ FN editor_draw
     je 6f
     mov [rbx + DOC_cur], rax
     mov dword ptr [rip + g_dirty], 1
+    mov rdi, rbx
+    call snippet_selection_changed
     call time_ms
     mov [rip + g_blink_t0], rax
 6:  # autoscroll when dragging outside
@@ -2756,7 +2961,8 @@ draw_line:
     mov rax, [rbx + DOC_svalid]
     cmp [rip + long_svalid], rax
     jne 11f
-    mov rax, [rbx + DOC_lang]
+    mov rdi, rbx
+    call doc_language
     cmp [rip + long_lang], rax
     je 12f
 11: mov [rip + g_long_doc], rbx
@@ -2766,7 +2972,8 @@ draw_line:
     mov [rip + long_ver], rax
     mov rax, [rbx + DOC_svalid]
     mov [rip + long_svalid], rax
-    mov rax, [rbx + DOC_lang]
+    mov rdi, rbx
+    call doc_language
     mov [rip + long_lang], rax
     lea rdi, [rip + long_cls]
     mov qword ptr [rdi + SB_len], 0
@@ -3362,35 +3569,122 @@ draw_block:
     call text_draw
 9:  EPILOGUE
 
-# ed_clip_set(ptr, len, linewise): the text becomes the clipboard; linewise text pastes as whole lines
+# ed_clip_set(ptr, len, linewise0/1) -> accepted write; retain the old cache on failure.
 FN ed_clip_set
-    PROLOGUE
+    xor ecx, ecx
+    jmp ed_clip_set_metadata
+
+# Prepared Copy/Cut metadata is borrowed until the accepted platform write returns.
+FN ed_clip_set_metadata
+    PROLOGUE 32
+    mov [rsp], rcx
     mov r12, rdi
     mov r13, rsi
-    mov r14d, edx
-    lea rdi, [rip + clip_sb]
-    call sb_clear
-    lea rdi, [rip + clip_sb]
-    mov rsi, r12
-    mov rdx, r13
-    call sb_push
-    mov rdi, [rip + clip_sb + SB_ptr]
-    mov rsi, [rip + clip_sb + SB_len]
+    mov r14, rdx
+    cmp rsi, DOC_MULTI_BYTES_MAX
+    ja .Lclip_invalid
+    cmp rdx, 1
+    ja .Lclip_invalid
+    test rdi, rdi
+    jnz 1f
+    test rsi, rsi
+    jnz .Lclip_invalid
+1:  call snippet_utf8_valid
+    test eax, eax
+    jz .Lclip_invalid
+    mov rdi, r12
+    mov rsi, r13
+    call mem_dup_try
+    test rax, rax
+    jz .Lclip_invalid
+    mov rbx, rax
+    cmp qword ptr [rip + g_plat + P_clip_write], 0
+    je .Lclip_plain
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r14
+    mov rcx, [rsp]
+    call clip_wire_encode
+    test rax, rax
+    jz .Lclip_rejected
+    mov [rsp + 8], rax
+    mov rdi, rax
+    mov rsi, rdx
+    PCALL P_clip_write
+    mov [rsp + 16], rax
+    mov rdi, [rsp + 8]
+    call mem_free
+    mov rax, [rsp + 16]
+    jmp .Lclip_written
+.Lclip_plain:
+    mov rdi, rax
+    mov rsi, r13
     PCALL P_clip_set
+.Lclip_written:
+    test eax, eax
+    jz .Lclip_rejected
+    call editor_clip_segments_clear
+    lea rdi, [rip + clip_sb]
+    call sb_free
+    mov [rip + clip_sb + SB_ptr], rbx
+    mov [rip + clip_sb + SB_len], r13
+    lea rax, [r13 + 1]
+    mov [rip + clip_sb + SB_cap], rax
     mov [rip + g_clip_line], r14d
+    mov eax, 1
+    EPILOGUE
+.Lclip_rejected:
+    mov rdi, rbx
+    call mem_free
+.Lclip_invalid:
+    xor eax, eax
     EPILOGUE
 
-# ed_clip_linewise(ptr, len) -> 1 when the text is our last whole-line copy
-FN ed_clip_linewise
+# Copy callers share one failure message and preserve the boolean return value.
+FN editor_clip_result
+    test eax, eax
+    jnz 1f
+    jmp editor_clip_failure
+1:  mov eax, 1
+    ret
+FN editor_clip_failure
+    lea rdi, [rip + .Lclip_failure]
+    call app_toast
     xor eax, eax
-    cmp dword ptr [rip + g_clip_line], 0
-    je 1f
+    ret
+
+# Exact cache matching does not depend on the whole-line flag.
+FN ed_clip_matches
+    xor eax, eax
     cmp rsi, [rip + clip_sb + SB_len]
     jne 1f
+    test rsi, rsi
+    jz 2f
+    test rdi, rdi
+    jz 1f
     mov rdx, rsi
     mov rsi, [rip + clip_sb + SB_ptr]
     jmp memeq
+2:  mov eax, 1
 1:  ret
+
+# ed_clip_linewise(ptr, len) -> matching last whole-line copy, permanently invalidated on mismatch.
+FN ed_clip_linewise
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    call clip_delivery_get
+    test rax, rax
+    jz 2f
+    mov rax, [rax + CWB_line]
+    jmp 1f
+2:  mov rdi, rbx
+    mov rsi, r12
+    call ed_clip_observe
+    test eax, eax
+    jz 1f
+    mov eax, [rip + g_clip_line]
+1:  EPILOGUE
 
 # blink_elapsed() -> ms since the last caret activity, -1 if no caret blinks (turned off, the last
 # frame drew no caret with the keyboard, the window does not have it, BLINK_FOR idle); 0 while the
@@ -3520,6 +3814,7 @@ FN ed_blink_tick
 editor_menu:
     .quad .Lem1, cmd_cut, .Lem2, cmd_copy, .Lem3, cmd_paste, .Lem4, cmd_select_all
     .quad .Lem5, cmd_toggle_comment, .Lem6, cmd_quick_open, 0, 0
+.globl pair_open, pair_close
 pair_open: .asciz "([{\"'`"
 pair_close: .asciz ")]}\"'`"
 .Lspace: .ascii " "
@@ -3876,3 +4171,6 @@ long_cls: .zero SB_SIZE
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0
+
+.section .rodata
+.Lclip_failure: .asciz "Could not copy to the clipboard."

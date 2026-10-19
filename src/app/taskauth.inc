@@ -1,0 +1,34 @@
+# Copied native extension activation plan, internal callers own all borrowed pointers.
+.equ KE_root, 0
+.equ KE_owner, 8
+.equ KE_name, 16
+.equ KE_payload, 24
+.equ KE_state, 32
+.equ KE_program, 40
+.equ KE_script, 48
+.equ KE_runs, 56
+.equ KE_project, 64
+.equ KE_home, 72
+.equ KE_expected, 80
+.equ KE_id, 88
+.equ KE_needs, 96
+.equ KE_fallback, 100
+.equ KE_context, 104
+.equ KE_kind, 112
+.equ KE_lease, 120
+.equ KE_SIZE, 128
+.equ KA_SELECTED, 1
+.equ KA_LEGACY, 2
+.equ KA_CANDIDATE, 3
+.equ KA_HEADER, 320
+.equ KA_MAX, 49152
+.equ KA_MAGIC, 0x315455414b485252
+# Parsed pointers refer only to immutable copied authorization bytes.
+.equ AX_kind, 0
+.equ AX_needs, 8
+.equ AX_fallback, 16
+.equ AX_context, 24
+.equ AX_expected, 32
+.equ AX_id, 40
+.equ AX_strings, 48
+.equ AX_SIZE, 144

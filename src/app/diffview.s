@@ -113,11 +113,8 @@ FN git_open_diff
     call mem_dup
     mov [rbx + DV_name], rax
     mov [r15 + DOC_name], rax
-    mov rdi, [rbx + DV_path]
-    lea rsi, [rip + .Lempty]
-    xor edx, edx
-    call syntax_detect
-    mov [r15 + DOC_lang], rax
+    mov rdi, r15
+    call doc_language_refresh
     mov rdi, r15
     mov esi, TAB_DOC
     call app_add_tab

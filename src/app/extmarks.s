@@ -214,6 +214,7 @@ FN ext_note_resync
 FN ext_edits_clear
     PROLOGUE
     mov rbx, rdi
+    call extproto_edits_debt
     mov dword ptr [rbx + DOC_xresync], 0
     mov r12, [rbx + DOC_xedits]
     test r12, r12
@@ -227,6 +228,10 @@ FN ext_edits_clear
     imul r15, r14, EXT_SIZE
     add r15, [rip + g_exts + VEC_ptr]
     inc r14
+    mov rdi, r15
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
     cmp dword ptr [r15 + EXT_status], ES_RUNNING
     jne 1b
     cmp qword ptr [r15 + EXT_sub_edits], 0
@@ -236,6 +241,10 @@ FN ext_edits_clear
     call extproto_known
     test rax, rax
     jz 1b                       # not told of the document yet: its opened snapshot will be current
+    cmp qword ptr [rax + XK_phase], XP_NEED_OPEN
+    je 1b
+    cmp qword ptr [rax + XK_phase], XP_DORMANT
+    je 1b
     mov rax, [rax + XK_eoff]
     cmp rax, r13
     cmovb r13, rax
@@ -582,31 +591,35 @@ FN extmarks_clear_owner
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
+# Clear visual diagnostics without losing the document's pending edit history.
+FN extmarks_language_changed
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rbx + DOC_xmarks]
+    test r12, r12
+    jz 9f
+    mov qword ptr [rbx + DOC_xmarks], 0
+    xor r13d, r13d
+1:  cmp r13, [r12 + VEC_len]
+    jae 2f
+    imul rax, r13, MK_SIZE
+    add rax, [r12 + VEC_ptr]
+    mov rdi, [rax + MK_msg]
+    call mem_free
+    inc r13
+    jmp 1b
+2:  mov rdi, r12
+    call vec_free
+    mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
 # extmarks_free(doc): the document is closing
 FN extmarks_free
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + DOC_xmarks]
-    test rdi, rdi
-    jz 1f
-    xor ecx, ecx
-2:  cmp rcx, [rdi + VEC_len]
-    jae 3f
-    imul rax, rcx, MK_SIZE
-    add rax, [rdi + VEC_ptr]
-    inc rcx
-    push rcx
-    push rdi
-    mov rdi, [rax + MK_msg]
-    call mem_free
-    pop rdi
-    pop rcx
-    jmp 2b
-3:  call vec_free
-    mov rdi, [rbx + DOC_xmarks]
-    call mem_free
-    mov qword ptr [rbx + DOC_xmarks], 0
-1:  mov rdi, [rbx + DOC_xedits]
+    call extmarks_language_changed
+    mov rdi, [rbx + DOC_xedits]
     test rdi, rdi
     jz 9f
     mov rdi, [rdi + SB_ptr]
@@ -643,6 +656,8 @@ FN extmarks_line
     imul rax, rcx, MK_SIZE
     add rax, [rdi + VEC_ptr]
     inc rcx
+    call mark_visible_flags
+    jz 1b
     mov rdx, [rax + MK_start]
     cmp rdx, r14
     ja 1b                       # starts after this line
@@ -738,6 +753,10 @@ FN extmarks_row
     imul r15, r14, MK_SIZE
     add r15, [rdi + VEC_ptr]
     inc r14
+    mov rdi, [r15 + MK_owner]
+    call ext_has_metadata
+    test eax, eax
+    jz .Lmr_each
     # the mark's byte range on this line, as offsets within the line, clipped to the row
     mov rax, [r15 + MK_start]
     sub rax, r13
@@ -806,48 +825,61 @@ FN extmarks_row
 
 # extmarks_counts(doc) -> eax errors, edx warnings
 FN extmarks_counts
-    xor eax, eax
-    xor edx, edx
+    PROLOGUE
+    xor r13d, r13d
+    xor r14d, r14d
     test rdi, rdi
     jz 9f
-    mov rdi, [rdi + DOC_xmarks]
-    test rdi, rdi
+    mov rbx, [rdi + DOC_xmarks]
+    test rbx, rbx
     jz 9f
-    xor ecx, ecx
-1:  cmp rcx, [rdi + VEC_len]
+    xor r12d, r12d
+1:  cmp r12, [rbx + VEC_len]
     jae 9f
-    imul r8, rcx, MK_SIZE
-    add r8, [rdi + VEC_ptr]
-    inc rcx
-    cmp dword ptr [r8 + MK_sev], SEV_ERROR
+    imul r15, r12, MK_SIZE
+    add r15, [rbx + VEC_ptr]
+    inc r12
+    mov rdi, [r15 + MK_owner]
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
+    cmp dword ptr [r15 + MK_sev], SEV_ERROR
     jne 2f
-    inc eax
+    inc r13d
     jmp 1b
-2:  cmp dword ptr [r8 + MK_sev], SEV_WARNING
+2:  cmp dword ptr [r15 + MK_sev], SEV_WARNING
     jne 1b
-    inc edx
+    inc r14d
     jmp 1b
-9:  ret
+9:  mov eax, r13d
+    mov edx, r14d
+    EPILOGUE
 
-# extmarks_at(doc, pos) -> the message of the first mark covering pos (cstr), or 0
+# extmarks_at(doc, pos) -> owned message for a visible supplier, or0.
 FN extmarks_at
-    mov rax, [rdi + DOC_xmarks]
-    test rax, rax
+    PROLOGUE
+    mov rbx, [rdi + DOC_xmarks]
+    mov r12, rsi
+    test rbx, rbx
     jz 8f
-    xor ecx, ecx
-1:  cmp rcx, [rax + VEC_len]
+    xor r13d, r13d
+1:  cmp r13, [rbx + VEC_len]
     jae 8f
-    imul rdx, rcx, MK_SIZE
-    add rdx, [rax + VEC_ptr]
-    inc rcx
-    cmp [rdx + MK_start], rsi
+    imul r14, r13, MK_SIZE
+    add r14, [rbx + VEC_ptr]
+    inc r13
+    cmp [r14 + MK_start], r12
     ja 1b
-    cmp [rdx + MK_end], rsi
+    cmp [r14 + MK_end], r12
     jbe 1b
-    mov rax, [rdx + MK_msg]
-    ret
+    mov rdi, [r14 + MK_owner]
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
+    mov rax, [r14 + MK_msg]
+    EPILOGUE
 8:  xor eax, eax
-    ret
+    EPILOGUE
 
 # ---------------- hover ----------------
 
@@ -921,33 +953,35 @@ FN ext_hover_tip
 
 # ext_hover_due() -> ms until the hover event is due for the rest position, or -1
 FN ext_hover_due
+    PROLOGUE
     cmp qword ptr [rip + g_hover_doc], 0
     je 8f
     cmp dword ptr [rip + g_hover_sent], 0
     jne 8f
-    # only when a running extension would hear it: otherwise the deadline would be due forever
-    xor ecx, ecx
-7:  cmp rcx, [rip + g_exts + VEC_len]
+    xor ebx, ebx
+7:  cmp rbx, [rip + g_exts + VEC_len]
     jae 8f
-    imul rdx, rcx, EXT_SIZE
-    add rdx, [rip + g_exts + VEC_ptr]
-    inc rcx
-    cmp dword ptr [rdx + EXT_status], ES_RUNNING
+    imul r12, rbx, EXT_SIZE
+    add r12, [rip + g_exts + VEC_ptr]
+    inc rbx
+    mov rdi, r12
+    call ext_has_metadata
+    test eax, eax
+    jz 7b
+    cmp dword ptr [r12 + EXT_status], ES_RUNNING
     jne 7b
-    cmp qword ptr [rdx + EXT_sub_hover], 0
+    cmp qword ptr [r12 + EXT_sub_hover], 0
     je 7b
-    push rbx
     call time_ms
-    pop rbx
     mov rcx, [rip + g_hover_since]
     add rcx, HOVER_REST_MS
     sub rcx, rax
     jns 1f
     xor ecx, ecx
 1:  mov eax, ecx
-    ret
+    EPILOGUE
 8:  mov eax, -1
-    ret
+    EPILOGUE
 
 # ext_hover_forget(doc): the document is going away (or an extension did): nothing rests on it
 FN ext_hover_forget
@@ -986,21 +1020,51 @@ FN ext_hover_text_set
 
 # ext_hooks_update(): g_ext_hooks from the running extensions' edits subscriptions and the marks
 FN ext_hooks_update
-    xor eax, eax
-    xor ecx, ecx
-1:  cmp rcx, [rip + g_exts + VEC_len]
+    PROLOGUE
+    xor r12d, r12d
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_exts + VEC_len]
     jae 2f
-    imul rdx, rcx, EXT_SIZE
-    add rdx, [rip + g_exts + VEC_ptr]
-    inc rcx
-    cmp dword ptr [rdx + EXT_status], ES_RUNNING
+    imul r13, rbx, EXT_SIZE
+    add r13, [rip + g_exts + VEC_ptr]
+    inc rbx
+    mov rdi, r13
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
+    cmp dword ptr [r13 + EXT_status], ES_RUNNING
     jne 1b
-    cmp qword ptr [rdx + EXT_sub_edits], 0
+    cmp qword ptr [r13 + EXT_sub_edits], 0
     je 1b
-    inc eax
+    inc r12d
     jmp 1b
-2:  add eax, [rip + g_marks_ever]
-    mov [rip + g_ext_hooks], eax
+2:  add r12d, [rip + g_marks_ever]
+    mov [rip + g_ext_hooks], r12d
+    EPILOGUE
+
+# RAX mark -> ZF1 when unavailable. Preserve every caller register for the range scan.
+mark_visible_flags:
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    mov rdi, [rax + MK_owner]
+    call ext_has_metadata
+    test eax, eax
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
     ret
 
 .section .rodata
@@ -1014,3 +1078,11 @@ sev_names: .quad .Lsv_error, .Lsv_warning, .Lsv_info, .Lsv_hint, 0
 .Le_badmark: .asciz "syntax a diagnostics line is not L1 C1 L2 C2 SEVERITY MESSAGE"
 .Le_badpos_mark: .asciz "badpos a diagnostics range is outside the document or inside a character"
 .Le_count: .asciz "syntax the body does not have N lines"
+
+.text
+FN ext_hover_catalog_invalidate_pure
+    mov qword ptr [rip + g_hover_doc], 0
+    mov qword ptr [rip + g_hover_pos], 0
+    mov dword ptr [rip + g_hover_sent], 0
+    mov byte ptr [rip + g_hover_text], 0
+    ret

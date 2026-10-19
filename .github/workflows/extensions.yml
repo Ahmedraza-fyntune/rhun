@@ -47,6 +47,24 @@ jobs:
           cat /tmp/probe/s/rhun/extensions/*.log 2>/dev/null || true
       - name: Host tests
         run: python3 tests/ext-host.py
+      - name: Save participants and text snapshots
+        run: |
+          python3 tests/ext-snapshots.py
+          python3 tests/save.py
+          python3 tests/save-actions.py
+      - name: Extension commands
+        run: python3 tests/ext-commands.py
+      - name: Snippet fields
+        run: |
+          python3 tests/snippets.py
+          python3 tests/snippet-variants.py
+          python3 tests/snippet-choices.py
+          python3 tests/snippet-final.py
+          python3 tests/snippet-context.py
+      - name: Provider choices
+        run: python3 tests/ext-providers.py
+      - name: Extension scheduling
+        run: python3 tests/ext-scheduling.py
       - name: Confinement tests
         run: python3 tests/ext-confine.py -v
       - name: Fuzz
@@ -63,6 +81,24 @@ jobs:
         run: ./build.sh
       - name: Host tests
         run: python3 tests/ext-host.py
+      - name: Save participants and text snapshots
+        run: |
+          python3 tests/ext-snapshots.py
+          python3 tests/save.py
+          python3 tests/save-actions.py
+      - name: Extension commands
+        run: python3 tests/ext-commands.py
+      - name: Snippet fields
+        run: |
+          python3 tests/snippets.py
+          python3 tests/snippet-variants.py
+          python3 tests/snippet-choices.py
+          python3 tests/snippet-final.py
+          python3 tests/snippet-context.py
+      - name: Provider choices
+        run: python3 tests/ext-providers.py
+      - name: Extension scheduling
+        run: python3 tests/ext-scheduling.py
       - name: Confinement tests
         run: python3 tests/ext-confine.py -v
       - name: Install the showcase from GitHub and use it

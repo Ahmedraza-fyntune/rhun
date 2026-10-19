@@ -998,6 +998,10 @@ FN tf_text
 1:  ret
 
 # tf_set(tf, ptr, len): replace contents, cursor at end
+FN tf_revision_touch
+    inc qword ptr [rdi + TF_revision]
+    ret
+
 FN tf_set
     push rbx
     push r12
@@ -1005,6 +1009,7 @@ FN tf_set
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
+    inc qword ptr [rbx + TF_revision]
     lea rdi, [rbx + TF_sb]
     call sb_clear
     lea rdi, [rbx + TF_sb]
@@ -1064,6 +1069,7 @@ tf_delete_sel:
 tf_remove:
     push rbx
     mov rbx, rdi
+    inc qword ptr [rbx + TF_revision]
     mov r8, [rbx + TF_sb + SB_ptr]
     lea rdi, [r8 + rsi]
     lea r9, [rsi + rdx]
@@ -1098,6 +1104,7 @@ tf_insert_as:
     push r15
     mov r15d, ecx
     mov rbx, rdi
+    inc qword ptr [rbx + TF_revision]
     mov r12, rsi
     mov r13, rdx
     call tf_delete_sel
@@ -1228,7 +1235,7 @@ FN tf_key
     je .Ltk_copy
     cmp r12d, 'v'
     jne 2f
-    PCALL P_clip_get
+    call app_clip_request
     jmp .Ltk_yes
 2:  cmp r12d, KEY_BACKSPACE
     jne .Ltk_nav
@@ -1254,12 +1261,19 @@ FN tf_key
     sub rsi, rax
     mov rdi, [rbx + TF_sb + SB_ptr]
     add rdi, rax
-    PCALL P_clip_set
+    xor edx, edx
+    call ed_clip_set
+    call editor_clip_result
+    test eax, eax
+    jz .Ltk_copy_failed
     cmp r12d, 'x'
     jne .Ltk_yes
     mov rdi, rbx
     call tf_delete_sel
     jmp .Ltk_yes
+.Ltk_copy_failed:
+    mov eax, 1
+    EPILOGUE
 .Ltk_nav:
     mov r15, [rbx + TF_cur]
     cmp r12d, KEY_LEFT

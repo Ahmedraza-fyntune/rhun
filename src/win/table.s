@@ -258,7 +258,7 @@ win_systable:
     .quad ws_nosys # 252
     .quad ws_nosys # 253
     .quad ws_watch_add # 254
-    .quad ws_zero # 255
+    .quad ws_watch_remove # 255
     .quad ws_nosys # 256
     .quad ws_openat # 257
     .quad ws_nosys # 258

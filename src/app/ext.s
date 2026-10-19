@@ -7,6 +7,8 @@
 # first frame; programs start lazily: on a command, on a matching document, or at startup (after
 # the first frame, from ext_tick).
 .include "rhun.inc"
+.include "app/taskproc.inc"
+.include "app/taskauth.inc"
 
 .bss
 .p2align 3
@@ -22,6 +24,7 @@ ext_startup_done: .long 0       # on = startup extensions have been started
 ext_project_done: .long 0       # on = project extensions have been started for this project
 .p2align 3
 ext_last_doc: .quad 0           # the highest DOC_id ext_tick has seen (new documents trigger activations)
+ext_round_robin: .long 0
 ext_ticks: .long 0              # ticks so far (the log check runs every 64th)
 .p2align 3
 ext_project_seen: .quad 0       # owned copy of the project at the last tick
@@ -36,6 +39,7 @@ argv_vec: .zero VEC_SIZE
 env_vec: .zero VEC_SIZE
 pipe_in: .zero 8                # the program's input: read end, write end
 pipe_out: .zero 8               # the program's output: read end, write end
+ext_retire_bytes: .zero 16384
 reason_buf: .zero 256
 ext_ini_path: .zero SB_SIZE     # ~/.config/rhun/extensions.ini
 
@@ -51,27 +55,40 @@ g_insert_spaces: .long 1        #   extension's option override (ext_options_app
 # ext_options_apply(): g_tab_width and g_insert_spaces for the active document (its overrides, or
 # the settings); called every tick and when the active tab changes. Clobbers rax, rcx only.
 FN ext_options_apply
+    push rdi
+    push rsi
+    push rdx
     mov eax, [rip + cfg_tab_width]
     mov [rip + g_tab_width], eax
     mov eax, [rip + cfg_insert_spaces]
     mov [rip + g_insert_spaces], eax
-    mov rcx, [rip + g_doc]
-    test rcx, rcx
-    jz 9f
-    mov eax, [rcx + DOC_oval + 4*OPT_TAB]
+    mov rdi, [rip + g_doc]
+    mov esi, OPT_TAB
+    call ext_doc_option
     test eax, eax
     jz 1f
     mov [rip + g_tab_width], eax
-1:  mov eax, [rcx + DOC_oval + 4*OPT_SPACES]
+1:  mov rdi, [rip + g_doc]
+    mov esi, OPT_SPACES
+    call ext_doc_option
     test eax, eax
     jz 9f
-    dec eax                     # 1 = no -> 0, 2 = yes -> 1
+    dec eax
     mov [rip + g_insert_spaces], eax
-9:  ret
+9:  pop rdx
+    pop rsi
+    pop rdi
+    ret
 
 # ext_opt_bool(doc, OPT_TRIM | OPT_FINAL) -> eax: the effective yes (1) or no (0)
 FN ext_opt_bool
-    mov eax, [rdi + DOC_oval + rsi*4]
+    push rdi
+    push rsi
+    push rdx
+    call ext_doc_option
+    pop rdx
+    pop rsi
+    pop rdi
     test eax, eax
     jz 1f
     dec eax
@@ -137,9 +154,10 @@ FN ext_cmd_register
     pop rsi
     lea rdi, [rip + tmp]
     call sb_push
-    mov rdi, [rip + tmp + SB_ptr]
-    mov rsi, [rip + tmp + SB_len]
-    call cmd_find
+    mov rdi, rbx
+    mov rsi, [rip + tmp + SB_ptr]
+    mov rdx, [rip + tmp + SB_len]
+    call ext_cmd_find_owned
     test rax, rax
     jz 1f
     mov eax, 1
@@ -198,6 +216,101 @@ FN ext_cmd_register
     call ext_cmds_changed
     xor eax, eax
 .Lcr_ret:
+    EPILOGUE
+
+# ext_cmd_find_owned(ext, legacy name, len) -> CMD* or 0. Runtime command names belong to
+# their publisher, even when another publisher uses the same extension and command names.
+ext_cmd_find_owned:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    sub rbx, [rip + g_exts + VEC_ptr]
+    mov rax, rbx
+    xor edx, edx
+    mov ecx, EXT_SIZE
+    div rcx
+    mov rbx, rax
+    xor r14d, r14d
+1:  cmp r14, [rip + g_ext_cmds + VEC_len]
+    jae 8f
+    mov rax, [rip + g_ext_owner + VEC_ptr]
+    cmp [rax + r14*8], rbx
+    jne 2f
+    imul r15, r14, CMD_SIZE
+    add r15, [rip + g_ext_cmds + VEC_ptr]
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [r15 + CMD_name]
+    call str_eq_cstr
+    test eax, eax
+    jnz 9f
+2:  inc r14
+    jmp 1b
+8:  xor r15d, r15d
+9:  mov rax, r15
+    EPILOGUE
+
+# ext_cmd_unregister(ext, local name, len) -> 0 removed, 1 not an own runtime command.
+FN ext_cmd_unregister
+    PROLOGUE
+    mov rbx, rdi
+    push rsi
+    push rdx
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '.'
+    call sb_push_byte
+    pop rdx
+    pop rsi
+    lea rdi, [rip + tmp]
+    call sb_push
+    mov rdi, rbx
+    mov rsi, [rip + tmp + SB_ptr]
+    mov rdx, [rip + tmp + SB_len]
+    call ext_cmd_find_owned
+    test rax, rax
+    jz 8f
+    mov r12, rax
+    sub rax, [rip + g_ext_cmds + VEC_ptr]
+    xor edx, edx
+    mov ecx, CMD_SIZE
+    div rcx
+    cmp rax, [rip + ext_manifest_cmds]
+    jb 8f
+    mov r13, rax
+    mov rdi, [r12 + CMD_name]
+    call mem_free
+    mov rdi, [r12 + CMD_title]
+    call mem_free
+    mov rdi, [r12 + CMD_keys]
+    call mem_free
+    mov rdi, r12
+    lea rsi, [r12 + CMD_SIZE]
+    mov rdx, [rip + g_ext_cmds + VEC_len]
+    sub rdx, r13
+    dec rdx
+    imul rdx, rdx, CMD_SIZE
+    call memmove
+    dec qword ptr [rip + g_ext_cmds + VEC_len]
+    mov rdi, [rip + g_ext_owner + VEC_ptr]
+    lea rdi, [rdi + r13*8]
+    lea rsi, [rdi + 8]
+    mov rdx, [rip + g_ext_owner + VEC_len]
+    sub rdx, r13
+    dec rdx
+    shl rdx, 3
+    call memmove
+    dec qword ptr [rip + g_ext_owner + VEC_len]
+    dec dword ptr [rbx + EXT_rtcmds]
+    call ext_cmds_changed
+    xor eax, eax
+    EPILOGUE
+8:  mov eax, 1
     EPILOGUE
 
 # ext_cmds_remove_runtime(ext): its runtime commands leave g_ext_cmds (the manifests' entries
@@ -304,6 +417,10 @@ ext_settings_load:
     test eax, eax
     jz 8f
     lea rdi, [rip + ini_it]
+    call ext_provider_load_line
+    test eax, eax
+    jnz 1b
+    lea rdi, [rip + ini_it]
     call ext_by_section
     test rax, rax
     jz 1b
@@ -314,8 +431,9 @@ ext_settings_load:
     call mem_free
 9:  EPILOGUE
 
-# ext_settings_load_one(ext): the choices of one extension (after an install)
-ext_settings_load_one:
+# ext_settings_load_one(ext): choices for this exact record, including a replacement whose
+# previous record is still live while an install can be rolled back.
+FN ext_settings_load_one
     PROLOGUE
     mov r13, rdi
     call ext_ini_file
@@ -331,11 +449,14 @@ ext_settings_load_one:
     call ini_next
     test eax, eax
     jz 8f
+    mov rdi, r13
+    call ext_full_name
     lea rdi, [rip + ini_it]
-    call ext_by_section
-    cmp rax, r13
-    jne 1b
-    mov rdi, rax
+    mov rsi, rax
+    call ini_sec_is
+    test eax, eax
+    jz 1b
+    mov rdi, r13
     call apply_choice
     jmp 1b
 8:  mov rdi, r12
@@ -382,6 +503,8 @@ apply_choice:
     test rax, rax
     jz 9f
     mov r12, rax
+    test dword ptr [r12 + SD_pad], 1
+    jnz 9f
     mov rdi, [rip + ini_it + INI_val]
     mov rsi, [rip + ini_it + INI_vallen]
     call mem_dup
@@ -407,8 +530,10 @@ ext_by_section:
     imul r13, r12, EXT_SIZE
     add r13, [rip + g_exts + VEC_ptr]
     inc r12
-    cmp dword ptr [r13 + EXT_status], ES_REMOVED
-    je 1b
+    mov rdi, r13
+    call ext_has_identity
+    test eax, eax
+    jz 1b
     mov rdi, r13
     call ext_full_name
     mov rdi, rbx
@@ -455,6 +580,10 @@ FN ext_settings_save
     inc r12
     cmp dword ptr [rbx + EXT_status], ES_REMOVED
     je 1b
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 1b
     # anything to write?
     mov eax, [rbx + EXT_pinned]
     or eax, [rbx + EXT_disabled]
@@ -511,7 +640,9 @@ FN ext_settings_save
     mov esi, 10
     call sb_push_byte
     jmp 5b
-8:  call config_dir
+8:  lea rdi, [rip + tmp2]
+    call ext_provider_dump
+    call config_dir
     mov rdi, rax
     call mkdir_p
     call ext_ini_file
@@ -524,19 +655,30 @@ FN ext_settings_save
 # ext_set_pinned(ext, yes): its button in the title bar, remembered
 FN ext_set_pinned
     PROLOGUE
-    mov [rdi + EXT_pinned], esi
+    mov rbx, rdi
+    mov r12d, esi
+    call ext_has_identity
+    test eax, eax
+    jz 9f
+    mov [rbx + EXT_pinned], r12d
     call ext_settings_save
     mov dword ptr [rip + g_dirty], 1
-    EPILOGUE
+9:  EPILOGUE
 
 # ext_set_disabled(ext, yes): Off stops it and keeps it stopped; On starts it
 FN ext_set_disabled
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
-    cmp dword ptr [rbx + EXT_status], ES_REMOVED
-    je 9f                       # a menu or page left open on a removed record
-    mov [rbx + EXT_disabled], esi
+    call ext_has_identity
+    test eax, eax
+    jz 9f
+    mov [rbx + EXT_disabled], r12d
+    test r12d, r12d
+    jz .Lpn_enabled_choices
+    mov rdi, rbx
+    call ext_pending_clear
+.Lpn_enabled_choices:
     call ext_settings_save
     test r12d, r12d
     jz 2f
@@ -598,8 +740,26 @@ FN ext_restart_now
 
 # ext_stop_user(ext): stopped by the user
 FN ext_stop_user
+    PROLOGUE
+    mov rbx, rdi
+    mov dword ptr [rbx + EXT_restart], 0
+    mov dword ptr [rbx + EXT_wait_slot], 0
+    mov rdi, rbx
+    call ext_pending_clear
+    cmp dword ptr [rbx + EXT_status], ES_IDLE
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_CRASHED
+    je 1f
     lea rsi, [rip + .Lr_settings_stop]
-    jmp ext_stop
+    mov rdi, rbx
+    call ext_stop
+    EPILOGUE
+1:  mov dword ptr [rbx + EXT_status], ES_STOPPED
+    lea rax, [rip + .Lr_settings_stop]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rip + g_dirty], 1
+    call ext_hooks_update
+    EPILOGUE
 
 # ---------------- installing and removing (extinstall.s asks; these change the records) ------
 
@@ -792,7 +952,9 @@ FN ext_retire
     call ext_kill
 2:  mov dword ptr [rbx + EXT_status], ES_REMOVED
     mov dword ptr [rbx + EXT_restart], 0
-    mov qword ptr [rbx + EXT_pending], 0
+    mov rdi, rbx
+    call ext_pending_clear
+    mov rdi, rbx
     call extpage_forget         # its details page goes back to the list (a reinstall is a new record)
     mov rdi, rbx
     call ext_icon_free
@@ -837,6 +999,9 @@ FN sdef_take_value
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    # A fresh proposed value is consumed even when immutable metadata rejects it.
+    test dword ptr [rbx + SD_pad], 1
+    jnz 7f
     mov eax, [rbx + SD_type]
     cmp eax, SDT_BOOL
     jne 2f
@@ -962,6 +1127,8 @@ FN ext_setting_set
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    test dword ptr [r12 + SD_pad], 1
+    jnz .Leset_private
     mov rdi, rdx
     call dup_cstr
     mov rdi, r12
@@ -974,7 +1141,10 @@ FN ext_setting_set
     mov rsi, r12
     call extproto_send_setting
 9:  mov dword ptr [rip + g_dirty], 1
+.Leset_private:
     EPILOGUE
+
+.include "app/extvalidate.inc"
 
 # parse_setting(): one [settings] line of the manifest: KEY.FIELD = VALUE, FIELD one of type,
 # default, title, description, min, max, options
@@ -1000,17 +1170,31 @@ parse_setting:
     call sdef_find
     test rax, rax
     jnz 2f
+    mov rax, [rip + g_ext_manifest_owner]
+    test rax, rax
+    jz .Lps_unbounded_legacy
+    cmp qword ptr [rbx + EXT_sdefs + VEC_len], 256
+    jb .Lps_unbounded_legacy
+    mov qword ptr [rax + PO_error], -EV_RESOURCE
+    jmp 9f
+.Lps_unbounded_legacy:
     lea rdi, [rbx + EXT_sdefs]
     mov esi, SD_SIZE
-    call vec_push
+    call ext_manifest_vec_push
+    test rax, rax
+    jz 9f
     mov r13, rax
     mov rdi, [r12 + INI_key]
     mov rsi, [rsp]
-    call mem_dup
+    call ext_manifest_dup
     mov [r13 + SD_key], rax
     mov dword ptr [r13 + SD_max], 0x7fffffff
     mov rax, r13
 2:  mov r13, rax
+    cmp qword ptr [rip + g_ext_manifest_owner], 0
+    je .Lps_public_row
+    or dword ptr [r13 + SD_pad], 1
+.Lps_public_row:
     mov r14, [rsp + 8]
     mov r15, [r12 + INI_key]
     add r15, [r12 + INI_keylen]
@@ -1095,7 +1279,7 @@ field_cstr:
     test eax, eax
     jz 9f
     mov rdi, [rbx]
-    call mem_free
+    call ext_manifest_free
     call val_dup
     mov [rbx], rax
     mov eax, 1
@@ -1110,15 +1294,28 @@ val_int:
 
 # parse_int31(ptr, len) -> rax the number, at most 2147483647 (settings compare as 32-bit signed);
 # rdx as parse_u64 leaves it
+FN ext_prepare_parse_int31
 parse_int31:
-    push rbx
-    call parse_u64
-    pop rbx
-    mov ecx, 0x7fffffff
-    cmp rax, rcx
-    jbe 1f
-    mov eax, ecx
-1:  ret
+    xor eax, eax
+    xor edx, edx
+1:  cmp rdx, rsi
+    jae 4f
+    movzx ecx, byte ptr [rdi + rdx]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja 4f
+    inc rdx
+    cmp rax, 214748364
+    ja 3f
+    jb 2f
+    cmp ecx, 7
+    ja 3f
+2:  imul rax, rax, 10
+    add rax, rcx
+    jmp 1b
+3:  mov eax, 2147483647
+    jmp 1b
+4:  ret
 
 # sdefs_init_values(ext): each default made to fit its type (a switch is yes or no, a number within
 # its range, a choice one of its options, the first when the default is not), then the value
@@ -1222,6 +1419,7 @@ dup_cstr_r14:
 # ext_init(): read every OWNER/NAME/extension.ini under the extensions folder
 FN ext_init
     PROLOGUE
+    call extpage_prompt_invalidate_pure
     lea rdi, [rip + ext_root]
     call sb_clear
     mov rax, [rip + g_ext_dir]
@@ -1343,6 +1541,7 @@ FN ext_load
     mov [rsp], rdi
     mov [rsp + 8], rsi
     mov [rsp + 16], rdx
+    call extpage_prompt_invalidate_pure
     xor eax, eax
     cmp qword ptr [rip + g_exts + VEC_len], EXT_CAP
     jae .Lel_full                # the table never moves: past its size nothing more is read
@@ -1393,7 +1592,8 @@ FN ext_load
     call path_join
     mov r12, rax
     mov rdi, rax
-    call file_read_all
+    mov esi, EXT_MANIFEST_MAX
+    call file_read_limited
     mov r13, rax
     mov r14, rdx
     mov rdi, r12
@@ -1401,6 +1601,9 @@ FN ext_load
     test r13, r13
     jnz 1f
     lea rdi, [rip + .Lr_no_manifest]
+    cmp r14, -27
+    jne .Lel_fail
+    lea rdi, [rip + .Lr_manifest_large]
     jmp .Lel_fail
 1:  lea rdi, [rip + ini_it]
     mov rsi, r13
@@ -1665,7 +1868,7 @@ manifest_kv:
     test eax, eax
     jz 5f
     mov rdi, [rbx + EXT_prog]
-    call mem_free
+    call ext_manifest_free
     call val_dup
     mov [rbx + EXT_prog], rax
     cmp qword ptr [rbx + EXT_script], 0
@@ -1703,6 +1906,14 @@ manifest_kv:
     call ini_sec_is
     test eax, eax
     jz 1f
+    cmp qword ptr [rip + g_ext_manifest_private], 2
+    jne 81f
+    mov rdi, [rip + g_ext_manifest_owner]
+    mov rsi, r12
+    call ext_prepare_command_add
+    jmp 9f
+81: cmp qword ptr [rip + g_ext_manifest_private], 0
+    jne 9f
     mov rdi, rbx
     mov rsi, r12
     call ext_cmd_add
@@ -1741,10 +1952,19 @@ manifest_kv:
 val_dup:
     mov rdi, [r12 + INI_val]
     mov rsi, [r12 + INI_vallen]
-    jmp mem_dup
+    jmp ext_manifest_dup
 
 # val_join(dir) -> dir joined with r12's value (relative paths are inside the extension folder)
 val_join:
+    mov rax, [rip + g_ext_manifest_owner]
+    test rax, rax
+    jz .Lvj_legacy
+    mov rsi, rdi
+    mov rdi, rax
+    mov rdx, [r12 + INI_val]
+    mov rcx, [r12 + INI_vallen]
+    jmp prep_owned_join
+.Lvj_legacy:
     push rbx
     push rbx
     mov rbx, rdi
@@ -1765,7 +1985,7 @@ val_join:
     pop rdi
     push rax
     push rax
-    call mem_free
+    call ext_manifest_free
     pop rax
     pop rax
     pop rbx
@@ -1864,6 +2084,15 @@ parse_on:
 
 # list_append(slot*, ptr, len): "a b" lists kept as owned cstrs
 list_append:
+    mov rax, [rip + g_ext_manifest_owner]
+    test rax, rax
+    jz .Lla_legacy
+    mov rcx, rdx
+    mov rdx, rsi
+    mov rsi, rdi
+    mov rdi, rax
+    jmp prep_owned_list_append
+.Lla_legacy:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
@@ -1883,7 +2112,7 @@ list_append:
     mov rdx, r13
     call sb_push
     mov rdi, [rbx]
-    call mem_free
+    call ext_manifest_free
     mov rdi, [rip + tmp + SB_ptr]
     call dup_cstr
     mov [rbx], rax
@@ -1912,7 +2141,7 @@ parse_subscribe:
 2:  mov rcx, [r13 + r14*8 + 8]
     lea r15, [rbx + rcx]
     mov rdi, [r15]
-    call mem_free
+    call ext_manifest_free
     call val_dup
     mov [r15], rax
 9:  EPILOGUE
@@ -1934,7 +2163,7 @@ parse_keyed:
 2:  mov rcx, [r13 + r14*8 + 8]
     lea r15, [rbx + rcx]
     mov rdi, [r15]
-    call mem_free
+    call ext_manifest_free
     call val_dup
     mov [r15], rax
 9:  EPILOGUE
@@ -2177,28 +2406,49 @@ FN ext_cmd_add
 # ext_cmd_run(cmd*): a manifest command was invoked: tell the extension, starting it first
 FN ext_cmd_run
     PROLOGUE
+    cmp qword ptr [rip + ext_pending_shutting_down], 0
+    jne 9f
     mov rax, rdi
     lea rcx, [rip + g_ext_cmds]
     sub rax, [rcx + VEC_ptr]
+    jc 9f
     xor edx, edx
     mov ecx, CMD_SIZE
     div rcx
+    test rdx, rdx
+    jnz 9f
     mov r12, rax                # command index
     cmp r12, [rip + g_ext_cmds + VEC_len]
     jae 9f
+    cmp r12, [rip + g_ext_owner + VEC_len]
+    jae 9f
     mov rax, [rip + g_ext_owner + VEC_ptr]
     mov rax, [rax + r12*8]
+    cmp rax, [rip + g_exts + VEC_len]
+    jae 9f
     imul rax, rax, EXT_SIZE
     add rax, [rip + g_exts + VEC_ptr]
     mov rbx, rax
-    cmp dword ptr [rbx + EXT_status], ES_REMOVED
-    je 9f
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1f
+    call ext_cmd_manifest_count
+    cmp r12, rax
+    jb .Lpc_capture
+    # A runtime command remains local to this live process session.
+    mov rdi, rbx
+    call ext_pending_clear
     mov rdi, rbx
     mov rsi, r12
     call extproto_send_run
-    EPILOGUE
+    test rax, rax
+    jns 9f
+    lea rdi, [rip + .Lpc_send_failed]
+    call app_toast
+    jmp 9f
 1:  # it cannot run now: say why, and keep nothing for later (turning it on must not run an old
     # command)
     cmp dword ptr [rbx + EXT_status], ES_FAILED
@@ -2207,8 +2457,22 @@ FN ext_cmd_run
     je 7f
     cmp dword ptr [rbx + EXT_status], ES_STOPPED
     je 8f                       # by the user or a limit: its page starts it again
-    lea rax, [r12 + 1]
-    mov [rbx + EXT_pending], rax
+.Lpc_capture:
+    mov rdi, rbx
+    mov rsi, r12
+    call ext_pending_set
+    test rax, rax
+    jns .Lpc_captured
+    lea rdi, [rip + .Lpc_queue_failed]
+    call app_toast
+    jmp 9f
+.Lpc_captured:
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne .Lpc_not_running
+    mov rdi, rbx
+    call ext_pending_try
+    jmp 9f
+.Lpc_not_running:
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 9f
     cmp dword ptr [rbx + EXT_status], ES_STOPPING
@@ -2243,24 +2507,98 @@ FN ext_cmd_run
 
 # ext_cmd_live(index) -> 1 when the g_ext_cmds entry belongs to an extension that is not removed
 FN ext_cmd_live
+    PROLOGUE
+    cmp rdi, [rip + g_ext_cmds + VEC_len]
+    jae .Lcmd_live_no
+    cmp rdi, [rip + g_ext_owner + VEC_len]
+    jae .Lcmd_live_no
     mov rax, [rip + g_ext_owner + VEC_ptr]
+    test rax, rax
+    jz .Lcmd_live_no
     mov rax, [rax + rdi*8]
+    cmp rax, [rip + g_exts + VEC_len]
+    jae .Lcmd_live_no
+    imul rdi, rax, EXT_SIZE
+    add rdi, [rip + g_exts + VEC_ptr]
+    call ext_has_metadata
+    EPILOGUE
+.Lcmd_live_no:
+    xor eax, eax
+    EPILOGUE
+
+# ext_cmd_identity(cmd*, sb*): append its qualified host identity, leaving wire names unchanged.
+FN ext_cmd_identity
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rax, rdi
+    sub rax, [rip + g_ext_cmds + VEC_ptr]
+    jc .Lcmd_identity_done
+    xor edx, edx
+    mov ecx, CMD_SIZE
+    div rcx
+    test rdx, rdx
+    jnz .Lcmd_identity_done
+    mov r13, rax
+    mov rdi, rax
+    call ext_cmd_live
+    test eax, eax
+    jz .Lcmd_identity_done
+    mov rax, r13
+    mov rcx, [rip + g_ext_owner + VEC_ptr]
+    mov rax, [rcx + rax*8]
     imul rax, rax, EXT_SIZE
     add rax, [rip + g_exts + VEC_ptr]
-    xor ecx, ecx
-    cmp dword ptr [rax + EXT_status], ES_REMOVED
-    setne cl
-    mov eax, ecx
-    ret
+    mov rdi, r12
+    mov rsi, [rax + EXT_owner]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, '/'
+    call sb_push_byte
+    mov rdi, r12
+    mov rsi, [rbx + CMD_name]
+    call sb_push_cstr
+.Lcmd_identity_done:
+    EPILOGUE
 
-# ext_cmd_find(ptr, len) -> CMD* or 0, among the extensions' commands
+# ext_cmd_find(ptr, len) -> CMD* or 0. Qualified owner/name.command is stable; a legacy
+# alias requires a unique installed extension name, even after a disabled owner's runtime
+# commands disappear. It must never start routing to a different publisher after a stop.
 FN ext_cmd_find
-    PROLOGUE
+    PROLOGUE 16
     mov r12, rdi
     mov r13, rsi
+    lea rdx, [rip + .Lqualified_slash]
+    mov ecx, 1
+    call str_find
+    mov [rsp], rax             # owner length, or -1 for a legacy alias
+    test rax, rax
+    jns .Lcf_qualified
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lqualified_dot]
+    mov ecx, 1
+    call str_find
+    test rax, rax
+    jle 8f
+    mov rdi, r12
+    mov rsi, rax
+    call ext_by_name
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call ext_cmd_find_owned
+    EPILOGUE
+.Lcf_qualified:
+    lea r12, [r12 + rax + 1]
+    sub r13, rax
+    dec r13
+0:  xor r15d, r15d             # one match; a second fails closed
     xor ebx, ebx
 1:  cmp rbx, [rip + g_ext_cmds + VEC_len]
-    jae 8f
+    jae 9f
     imul rax, rbx, CMD_SIZE
     add rax, [rip + g_ext_cmds + VEC_ptr]
     mov r14, rax
@@ -2269,17 +2607,33 @@ FN ext_cmd_find
     inc rbx
     test eax, eax
     jz 1b
-    dec rbx
     mov rdi, r12
     mov rsi, r13
     mov rdx, [r14 + CMD_name]
     call str_eq_cstr
     test eax, eax
-    jnz 9f
-    inc rbx
+    jz 1b
+    mov rcx, [rsp]
+    test rcx, rcx
+    js 2f
+    mov rax, [rip + g_ext_owner + VEC_ptr]
+    mov rax, [rax + rbx*8 - 8]
+    imul rax, rax, EXT_SIZE
+    add rax, [rip + g_exts + VEC_ptr]
+    mov rdi, r12
+    sub rdi, rcx
+    dec rdi
+    mov rsi, rcx
+    mov rdx, [rax + EXT_owner]
+    call str_eq_cstr
+    test eax, eax
+    jz 1b
+2:  test r15, r15
+    jnz 8f
+    mov r15, r14
     jmp 1b
-8:  xor r14d, r14d
-9:  mov rax, r14
+8:  xor r15d, r15d
+9:  mov rax, r15
     EPILOGUE
 
 # ---------------- processes ----------------
@@ -2292,7 +2646,29 @@ FN ext_running
     jae 9f
     imul rdx, rcx, EXT_SIZE
     add rdx, [rip + g_exts + VEC_ptr]
-    cmp dword ptr [rdx + EXT_status], ES_STARTING
+    cmp qword ptr [rdx + EXT_keeper], 0
+    jne 2f
+    cmp dword ptr [rdx + EXT_pid], 0
+    jne 2f
+    cmp dword ptr [rdx + EXT_activation_required], 1
+    jne 4f
+    cmp dword ptr [rdx + EXT_host_cleanup_mask], 0
+    jne 2f
+    cmp dword ptr [rdx + EXT_in], 0
+    jns 2f
+    cmp dword ptr [rdx + EXT_out], 0
+    jns 2f
+    cmp dword ptr [rdx + EXT_log], 0
+    jns 2f
+    cmp dword ptr [rdx + EXT_host_child_in], 0
+    jns 2f
+    cmp dword ptr [rdx + EXT_host_child_out], 0
+    jns 2f
+    cmp dword ptr [rdx + EXT_retiring], 1
+    je 2f
+    cmp dword ptr [rdx + EXT_retiring], 3
+    je 2f
+4:  cmp dword ptr [rdx + EXT_status], ES_STARTING
     je 2f
     cmp dword ptr [rdx + EXT_status], ES_RUNNING
     je 2f
@@ -2303,9 +2679,25 @@ FN ext_running
     jmp 1b
 9:  ret
 
-# ext_start(ext): the program, with pipes on its input and output and the log on its errors
+# The unadopted legacy path is staging-only. Catalog adoption removes this fallback before release.
 FN ext_start
+    push rdi
+    call ext_has_metadata
+    pop rdi
+    test eax, eax
+    jnz 8f
+    mov rax, -116
+    ret
+8:  cmp dword ptr [rdi + EXT_activation_required], 0
+    jne ext_supervised_start
+    cmp qword ptr [rdi + EXT_activation_plan], 0
+    jne ext_supervised_start
+    jmp ext_legacy_start
+
+# ext_start(ext): the program, with pipes on its input and output and the log on its errors
+FN ext_legacy_start_impl
     PROLOGUE 32
+    mov qword ptr [rsp + 24], 0
     mov rbx, rdi
     cmp dword ptr [rbx + EXT_manifest_ok], 0
     je 9f
@@ -2339,6 +2731,7 @@ FN ext_start
     mov dword ptr [rbx + EXT_features], 0
     mov dword ptr [rbx + EXT_flood], 0
     mov dword ptr [rbx + EXT_throttled], 0
+    mov dword ptr [rbx + EXT_global_wait], 0
     mov dword ptr [rbx + EXT_win_hit], 0
     mov qword ptr [rbx + EXT_win_t0], 0
     mov qword ptr [rbx + EXT_win_msgs], 0
@@ -2366,6 +2759,20 @@ FN ext_start
     call sb_push_cstr
     mov rdi, [rip + tmp + SB_ptr]
     call mkdir_p
+    lea rdi, [rip + argv_vec]
+    lea rsi, [rip + env_vec]
+    call ext_launch_scratch_begin
+    mov [rsp + 24], rdx
+    test rax, rax
+    js .Llegacy_es_memory
+    mov rdi, rbx
+    call build_argv
+    test rax, rax
+    js .Llegacy_es_memory
+    mov rdi, rbx
+    call build_env
+    test rax, rax
+    js .Llegacy_es_memory
     # the log: ROOT/OWNER--NAME.log, appended
     lea rdi, [rip + tmp]
     call sb_clear
@@ -2385,31 +2792,31 @@ FN ext_start
     mov esi, O_CLOEXEC
     SYS SYS_pipe2
     test rax, rax
-    js .Les_fail
+    js .Llegacy_es_fail
     lea rdi, [rip + pipe_out]
     mov esi, O_CLOEXEC
     SYS SYS_pipe2
     test rax, rax
-    js .Les_fail2
+    js .Llegacy_es_fail2
     mov rdi, rbx
     # confinement (confine.s): prepared here, applied in the child
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
 .ifdef WINDOWS
     lea rax, [rip + .Lr_windows]    # nothing holds it there yet: it runs, and its page says so
     mov [rbx + EXT_confine_why], rax
-    jmp .Les_spawn
+    jmp .Llegacy_es_spawn
 .endif
     cmp dword ptr [rbx + EXT_noconfine], 0
-    jne .Les_spawn              # the child could not confine itself before: the reason stays
+    jne .Llegacy_es_spawn              # the child could not confine itself before: the reason stays
     mov qword ptr [rbx + EXT_confine_why], 0
     mov rdi, rbx
     call confine_prepare
     test rax, rax
-    jz .Les_spawn
+    jz .Llegacy_es_spawn
     # this system cannot hold it to its permissions: it runs, and its page says so
     mov [rbx + EXT_confine_why], rax
-    jmp .Les_spawn
-.Les_unconfined_fail:
+    jmp .Llegacy_es_spawn
+.Llegacy_es_unconfined_fail:
     lea rdi, [rip + reason_buf]
     lea rsi, [rip + .Lr_not_confined]
     call cstr_copy
@@ -2434,12 +2841,8 @@ FN ext_start
     mov edi, [rip + pipe_out + 4]
     SYS SYS_close
     mov dword ptr [rip + g_dirty], 1
-    EPILOGUE
-.Les_spawn:
-    mov rdi, rbx
-    call build_argv
-    mov rdi, rbx
-    call build_env
+    jmp .Llegacy_es_scratch_return
+.Llegacy_es_spawn:
     mov rdi, [rip + argv_vec + VEC_ptr]
     mov rsi, [rip + env_vec + VEC_ptr]
     mov rdx, [rbx + EXT_dir]
@@ -2480,7 +2883,7 @@ FN ext_start
 .else
     lea rdi, [rip + .Lr_spawn]
 .endif
-    jmp .Les_failed
+    jmp .Llegacy_es_failed
 3:  mov [rbx + EXT_pid], r12d
     mov eax, [rip + pipe_in + 4]
     mov [rbx + EXT_in], eax
@@ -2508,15 +2911,15 @@ FN ext_start
     mov [rbx + EXT_started], rax
     mov dword ptr [rbx + EXT_status], ES_STARTING
     mov dword ptr [rip + g_dirty], 1
-9:  EPILOGUE
-.Les_fail2:
+9:  jmp .Llegacy_es_scratch_return
+.Llegacy_es_fail2:
     mov edi, [rip + pipe_in]
     SYS SYS_close
     mov edi, [rip + pipe_in + 4]
     SYS SYS_close
-.Les_fail:
+.Llegacy_es_fail:
     lea rdi, [rip + .Lr_pipes]
-.Les_failed:
+.Llegacy_es_failed:
     mov [rbx + EXT_reason], rdi
     mov dword ptr [rbx + EXT_status], ES_FAILED
     mov edi, [rbx + EXT_log]
@@ -2525,6 +2928,695 @@ FN ext_start
     SYS SYS_close
     mov dword ptr [rbx + EXT_log], -1
 91: mov dword ptr [rip + g_dirty], 1
+    jmp .Llegacy_es_scratch_return
+
+.Llegacy_es_memory:
+    lea rax, [rip + .Lr_launch_memory]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    mov dword ptr [rip + g_dirty], 1
+.Llegacy_es_scratch_return:
+    cmp qword ptr [rsp + 24], 0
+    je .Llegacy_es_scratch_done
+    mov [rsp + 16], rax
+    call ext_launch_scratch_end
+    mov rax, [rsp + 16]
+.Llegacy_es_scratch_done:
+    EPILOGUE
+
+# Explicit verified plan view. The host retains its activation owner through collection.
+FN ext_start_plan
+    PROLOGUE
+    mov rbx, rdi
+    test rsi, rsi
+    jz 8f
+    cmp qword ptr [rbx + EXT_keeper], 0
+    jne 7f
+    mov r12, rsi
+    mov rdi, rbx
+    call ext_activation_host_check
+    test rax, rax
+    js 8f
+    cmp [rbx + EXT_activation_plan], r12
+    jne 8f
+    mov dword ptr [rbx + EXT_activation_stale], 0
+    cmp dword ptr [rbx + EXT_status], ES_FAILED
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPED
+    je 1f
+    cmp dword ptr [rbx + EXT_status], ES_CRASHED
+    jne 2f
+1:  mov dword ptr [rbx + EXT_status], ES_IDLE
+2:  mov rdi, rbx
+    call ext_supervised_start
+    mov rax, [rbx + EXT_keeper]
+    test rax, rax
+    jnz 9f
+    mov rax, -11
+9:  EPILOGUE
+8:  mov rax, -22
+    EPILOGUE
+7:  mov rax, -16
+    EPILOGUE
+
+# ext_start(ext): use a captured verified plan and protected native process service.
+FN ext_supervised_start_impl
+    PROLOGUE 32
+    mov qword ptr [rsp + 24], 0
+    mov rbx, rdi
+    cmp qword ptr [rbx + EXT_keeper], 0
+    jne 9f
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 9f
+    cmp dword ptr [rbx + EXT_disabled], 0
+    jne 9f
+    mov rdi, rbx
+    call ext_activation_host_check
+    test rax, rax
+    js .Les_wait_verified
+    cmp qword ptr [rbx + EXT_activation_plan], 0
+    je .Les_wait_verified
+    cmp dword ptr [rbx + EXT_activation_stale], 0
+    jne .Les_wait_verified
+    cmp dword ptr [rbx + EXT_manifest_ok], 0
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_STOPPING
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_FAILED
+    je 9f
+    cmp dword ptr [rbx + EXT_disabled], 0
+    jne 9f
+    cmp dword ptr [rbx + EXT_status], ES_DISABLED
+    je 9f
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 9f
+    call ext_running
+    cmp eax, EXT_MAX_RUNNING
+    jb 1f
+    lea rax, [rip + .Lr_slots]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_wait_slot], 1
+    mov dword ptr [rbx + EXT_status], ES_IDLE
+    jmp 9f
+1:  mov rdi, rbx
+    call ext_host_prepared_start_admit
+    test rax, rax
+    js 9f
+    mov dword ptr [rbx + EXT_retiring], 0
+    mov dword ptr [rbx + EXT_stdout_eof], 0
+    mov dword ptr [rbx + EXT_finish_code], -1
+    mov dword ptr [rbx + EXT_startaccepted], 0
+    mov dword ptr [rbx + EXT_start_armed], 0
+    mov dword ptr [rbx + EXT_pid], 0
+    mov dword ptr [rbx + EXT_wait_slot], 0
+    mov qword ptr [rbx + EXT_reason], 0
+    mov qword ptr [rbx + EXT_status_text], 0
+    mov dword ptr [rbx + EXT_hello], 0
+    mov dword ptr [rbx + EXT_syntax_errs], 0
+    mov dword ptr [rbx + EXT_features], 0
+    mov dword ptr [rbx + EXT_flood], 0
+    mov dword ptr [rbx + EXT_throttled], 0
+    mov dword ptr [rbx + EXT_global_wait], 0
+    mov dword ptr [rbx + EXT_win_hit], 0
+    mov qword ptr [rbx + EXT_win_t0], 0
+    mov qword ptr [rbx + EXT_win_msgs], 0
+    mov qword ptr [rbx + EXT_fbytes], 0
+    mov qword ptr [rbx + EXT_full_since], 0
+    mov qword ptr [rbx + EXT_in_closed_at], 0
+    mov qword ptr [rbx + EXT_body], 0
+    mov qword ptr [rbx + EXT_wq_off], 0
+    mov qword ptr [rbx + EXT_active], -1
+    mov qword ptr [rbx + EXT_known + VEC_len], 0
+    lea rdi, [rbx + EXT_rbuf]
+    call sb_clear
+    lea rdi, [rbx + EXT_wq]
+    call sb_clear
+    # the state folder and its tmp
+    mov rdi, [rbx + EXT_state]
+    call mkdir_p
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_state]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lsub_tmp]
+    call sb_push_cstr
+    mov rdi, [rip + tmp + SB_ptr]
+    call mkdir_p
+    lea rdi, [rip + argv_vec]
+    lea rsi, [rip + env_vec]
+    call ext_launch_scratch_begin
+    mov [rsp + 24], rdx
+    test rax, rax
+    js .Les_memory
+    mov rdi, rbx
+    call build_argv
+    test rax, rax
+    js .Les_memory
+    mov rdi, rbx
+    call build_env
+    test rax, rax
+    js .Les_memory
+    # Every prepared endpoint is installed before its first fallible flag operation.
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_state]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lsuf_log]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + tmp + SB_ptr]
+    xor edx, edx
+    call ext_host_log_open
+    test rax, rax
+    jns .Les_log_ready
+    mov r14, rax
+    mov rdi, rbx
+    mov esi, 2
+    call ext_host_close_field
+    test rax, rax
+    js .Les_log_failed
+    cmp rdx, 1
+    jne .Les_log_failed
+    mov rdi, rbx
+    xor esi, esi
+    mov edx, 1
+    call ext_host_log_open
+    test rax, rax
+    js .Les_setup_abort
+.Les_log_ready:
+    mov rdi, rbx
+    xor esi, esi
+    call ext_host_pipe_create
+    test rax, rax
+    js .Les_setup_abort
+    mov rdi, rbx
+    mov esi, 1
+    call ext_host_pipe_create
+    test rax, rax
+    js .Les_setup_abort
+    mov dword ptr [rbx + EXT_confined], CONFINED_NO
+    lea rax, [rip + .Lkp_preparing]
+    mov [rbx + EXT_confine_why], rax
+.Les_spawn:
+    mov edi, [rbx + EXT_out]
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    test rax, rax
+    js .Les_setup_abort
+    mov edi, [rbx + EXT_in]
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    test rax, rax
+    js .Les_setup_abort
+    mov rdi, rbx
+    call ext_prepare_supervised
+    mov r12, rax
+    mov r13, rdx
+    test r12, r12
+    js .Les_prepare_refused
+    # Positive failed ids retain native ownership before either child close.
+    mov [rbx + EXT_keeper], r12
+    mov rdi, rbx
+    call ext_host_prepared_children_close
+    test rax, rax
+    js .Les_owned_cleanup_failed
+    cmp dword ptr [rbx + EXT_host_cleanup_error], 0
+    jne .Les_owned_cleanup_failed
+    cmp dword ptr [rbx + EXT_host_cleanup_mask], 0
+    jne .Les_owned_cleanup_failed
+    test r13, r13
+    js .Les_owned_prepare_failed
+    mov edi, [rbx + EXT_out]
+    mov esi, POLLIN
+    lea rdx, [rip + ext_on_out]
+    mov rcx, rbx
+    call watch_try_add
+    test eax, eax
+    jz .Les_watch_failed
+    mov edi, [rbx + EXT_in]
+    xor esi, esi
+    lea rdx, [rip + ext_on_in]
+    mov rcx, rbx
+    call watch_try_add
+    test eax, eax
+    jz .Les_watch_failed
+    call time_ms
+    mov [rbx + EXT_prepare_at], rax
+    mov qword ptr [rbx + EXT_started], 0
+    mov dword ptr [rbx + EXT_status], ES_STARTING
+    mov rax, [rbx + EXT_activation_plan]
+    cmp qword ptr [rax + KE_kind], KA_CANDIDATE
+    je .Lkp_new_arm_done
+    mov rdi, rbx
+    mov rsi, [rax + KE_expected]
+    mov rdx, [rax + KE_context]
+    call ext_arm_plan
+    test rax, rax
+    jns .Lkp_new_arm_done
+    mov dword ptr [rbx + EXT_activation_stale], 1
+    mov rdi, rbx
+    lea rsi, [rip + .Lkp_context_changed]
+    call ext_kill
+.Lkp_new_arm_done:
+    mov dword ptr [rip + g_dirty], 1
+9:  jmp .Les_scratch_return
+.Les_wait_verified:
+    lea rax, [rip + .Lkp_wait_verified]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Les_scratch_return
+.Les_log_failed:
+    mov rax, r14
+    jmp .Les_setup_abort
+.Les_prepare_refused:
+    mov rax, r12
+.Les_setup_abort:
+    mov r14, rax
+    lea rcx, [rip + .Lkp_setup_failed]
+    mov [rbx + EXT_reason], rcx
+    mov rdi, rbx
+    mov rsi, r14
+    call ext_host_prepared_abort
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Les_scratch_return
+.Les_watch_failed:
+    mov rdi, rbx
+    mov rsi, -28
+    call ext_host_prepared_setup_note
+    lea rsi, [rip + .Lkp_setup_failed]
+    jmp .Les_owned_abort
+.Les_owned_prepare_failed:
+    mov [rbx + EXT_host_native_result], r13d
+.Les_owned_cleanup_failed:
+    lea rsi, [rip + .Lkp_process_failed]
+.Les_owned_abort:
+    mov dword ptr [rbx + EXT_activation_stale], 1
+    mov rdi, rbx
+    call ext_kill
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Les_scratch_return
+.Les_memory:
+    jmp .Les_setup_abort
+.Les_scratch_return:
+    cmp qword ptr [rsp + 24], 0
+    je .Les_scratch_done
+    mov [rsp + 16], rax
+    call ext_launch_scratch_end
+    mov rax, [rsp + 16]
+.Les_scratch_done:
+    EPILOGUE
+
+# Root calls after publication for a candidate. Authorization bytes are copied synchronously.
+FN ext_arm_plan
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov rdi, rbx
+    call ext_activation_host_check
+    test rax, rax
+    js .Lkp_arm_stale
+    cmp dword ptr [rbx + EXT_disabled], 0
+    jne .Lkp_arm_busy
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    jne .Lkp_arm_busy
+    cmp dword ptr [rbx + EXT_activation_stale], 0
+    jne .Lkp_arm_stale
+    cmp qword ptr [rbx + EXT_keeper], 0
+    je .Lkp_arm_missing
+    cmp dword ptr [rbx + EXT_startaccepted], 0
+    jne .Lkp_arm_busy
+    cmp dword ptr [rbx + EXT_retiring], 0
+    jne .Lkp_arm_busy
+    mov r14, [rbx + EXT_activation_plan]
+    test r14, r14
+    jz .Lkp_arm_stale
+    cmp r13, [r14 + KE_context]
+    jne .Lkp_arm_stale
+    call ext_activation_epoch_get
+    cmp r13, rax
+    jne .Lkp_arm_stale
+    cmp qword ptr [r14 + KE_kind], KA_LEGACY
+    jne 1f
+    test r12, r12
+    jnz .Lkp_arm_stale
+    lea rdi, [rbx + EXT_start_record]
+    xor esi, esi
+    mov edx, EXI_SIZE
+    call memset
+    jmp 2f
+1:  test r12, r12
+    jz .Lkp_arm_stale
+    mov rdi, r12
+    mov esi, EXI_SIZE
+    mov rdx, [r12 + EXI_generation]
+    call ext_index_check
+    test eax, eax
+    jz .Lkp_arm_stale
+    cmp dword ptr [r12 + EXI_flags], EXI_ACTIVE
+    jne .Lkp_arm_stale
+    mov rsi, [r14 + KE_id]
+    test rsi, rsi
+    jz .Lkp_arm_stale
+    lea rdi, [r12 + EXI_active]
+    mov edx, 64
+    call memeq
+    test eax, eax
+    jz .Lkp_arm_stale
+    lea rdi, [rbx + EXT_start_record]
+    mov rsi, r12
+    mov edx, EXI_SIZE
+    call memcpy
+2:  mov dword ptr [rbx + EXT_start_armed], 1
+    xor eax, eax
+    EPILOGUE
+.Lkp_arm_stale:
+    mov rax, -116
+    EPILOGUE
+.Lkp_arm_busy:
+    mov rax, -16
+    EPILOGUE
+.Lkp_arm_missing:
+    mov rax, -2
+    EPILOGUE
+
+# Actual helper readiness, not merely the editor-side pipe/handle allocation.
+FN ext_plan_ready
+    PROLOGUE 32
+    mov qword ptr [rsp + 24], 0
+    mov rbx, rdi
+    mov rdi, [rbx + EXT_keeper]
+    test rdi, rdi
+    jz .Lkp_ready_missing
+    call keeper_poll
+    test rax, rax
+    js 9f
+    mov r12, rax
+    mov r13d, r8d
+    jmp .Lkp_ready_snapshot
+
+ext_plan_snapshot:
+    PROLOGUE 32
+    mov qword ptr [rsp + 24], 0
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13d, edx
+    jmp .Lkp_ready_snapshot
+
+ext_plan_accepted_snapshot:
+    PROLOGUE 32
+    mov qword ptr [rsp + 24], 1
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13d, edx
+.Lkp_ready_snapshot:
+    cmp qword ptr [rsp + 24], 0
+    jne .Lkp_snapshot_accepted_check
+    mov rdi, rbx
+    call ext_activation_host_check
+    jmp .Lkp_snapshot_checked
+.Lkp_snapshot_accepted_check:
+    mov rdi, rbx
+    mov rsi, [rbx + EXT_activation_owner]
+    mov rdx, [rbx + EXT_keeper]
+    call ext_activation_host_accepted_check
+.Lkp_snapshot_checked:
+    test rax, rax
+    js .Lkp_ready_stale
+    mov rdi, [rbx + EXT_keeper]
+    mov rsi, rsp
+    call keeper_info
+    test rax, rax
+    js 9f
+    mov eax, [rsp]
+    mov [rbx + EXT_pid], eax
+    mov eax, [rsp + 8]
+    mov [rbx + EXT_confined], eax
+    mov qword ptr [rbx + EXT_confine_why], 0
+    mov eax, [rsp + 12]
+    test eax, eax
+    jz 1f
+    cmp eax, EXITC_NNP
+    jb 2f
+    mov edi, eax
+    call confine_exit_reason
+    test rax, rax
+    jnz 3f
+2:  lea rax, [rip + .Lkp_confinement_unavailable]
+3:  mov [rbx + EXT_confine_why], rax
+1:  test r12d, KP_FAILED | KP_DONE | KP_DEFERRED
+    jnz .Lkp_ready_failed
+    cmp qword ptr [rsp + 24], 0
+    je 8f
+    xor eax, eax
+    jmp 9f
+8:  mov r14, [rbx + EXT_activation_plan]
+    test r14, r14
+    jz .Lkp_ready_stale
+    call ext_activation_epoch_get
+    cmp rax, [r14 + KE_context]
+    jne .Lkp_ready_stale
+    xor eax, eax
+    test r12d, KP_READY
+    setnz al
+9:  EPILOGUE
+.Lkp_ready_failed:
+    movsxd rax, r13d
+    test rax, rax
+    js 9b
+    mov rax, -5
+    EPILOGUE
+.Lkp_ready_stale:
+    mov rax, -116
+    EPILOGUE
+.Lkp_ready_missing:
+    mov rax, -2
+    EPILOGUE
+
+# Returns1 when protocol work must be skipped,0 when the accepted host may use normal budgets.
+ext_keeper_tick:
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_retiring], 0
+    jne 901f
+    cmp dword ptr [rbx + EXT_startaccepted], 0
+    jne .Lkp_tick_accepted_check
+    mov rdi, rbx
+    call ext_activation_host_check
+    jmp .Lkp_tick_checked
+.Lkp_tick_accepted_check:
+    mov rdi, rbx
+    mov rsi, [rbx + EXT_activation_owner]
+    mov rdx, [rbx + EXT_keeper]
+    call ext_activation_host_accepted_check
+.Lkp_tick_checked:
+    test rax, rax
+    js .Lkp_tick_stale
+    cmp dword ptr [rbx + EXT_startaccepted], 0
+    jne 901f
+    cmp dword ptr [rbx + EXT_status], ES_STARTING
+    jne .Lkp_tick_unopened_stop
+    cmp dword ptr [rbx + EXT_disabled], 0
+    jne .Lkp_tick_unopened_stop
+901:
+    cmp dword ptr [rbx + EXT_retiring], 0
+    je 1f
+    mov esi, [rbx + EXT_finish_code]
+    call ext_exited
+    mov eax, 1
+    EPILOGUE
+1:  mov rdi, [rbx + EXT_keeper]
+    call keeper_poll
+    test rax, rax
+    js .Lkp_tick_failed
+    mov r12, rax
+    mov r13d, edx
+    test eax, KP_FAILED | KP_DEFERRED
+    jnz .Lkp_tick_failed
+    test eax, KP_DONE
+    jz 2f
+    mov rdi, rbx
+    mov esi, r13d
+    call ext_exited
+    mov eax, 1
+    EPILOGUE
+2:  mov rdi, rbx
+    mov rsi, r12
+    mov edx, r8d
+    cmp dword ptr [rbx + EXT_startaccepted], 0
+    jne .Lkp_tick_accepted_snapshot
+    call ext_plan_snapshot
+    jmp .Lkp_tick_snapshotted
+.Lkp_tick_accepted_snapshot:
+    call ext_plan_accepted_snapshot
+.Lkp_tick_snapshotted:
+    cmp rax, -116
+    je .Lkp_tick_stale
+    test rax, rax
+    js .Lkp_tick_failed
+    cmp dword ptr [rbx + EXT_startaccepted], 0
+    jne 5f
+    cmp eax, 1
+    jne 4f
+    cmp dword ptr [rbx + EXT_start_armed], 0
+    je 4f
+    mov rax, [rbx + EXT_activation_plan]
+    mov rdx, [rax + KE_context]
+    lea rsi, [rbx + EXT_start_record]
+    cmp qword ptr [rax + KE_kind], KA_LEGACY
+    jne 3f
+    xor esi, esi
+3:  mov rdi, [rbx + EXT_keeper]
+    call keeper_start_selected
+    cmp rax, -116
+    je .Lkp_tick_stale
+    test rax, rax
+    js .Lkp_tick_failed
+    cmp eax, 1
+    jne 4f
+    mov dword ptr [rbx + EXT_startaccepted], 1
+    call time_ms
+    mov [rbx + EXT_started], rax
+5:  xor eax, eax
+    EPILOGUE
+4:  mov eax, 1
+    EPILOGUE
+.Lkp_tick_unopened_stop:
+    mov rdi, rbx
+    mov esi, -1
+    call ext_exited
+    mov eax, 1
+    EPILOGUE
+.Lkp_tick_stale:
+    mov dword ptr [rbx + EXT_activation_stale], 1
+    mov rdi, rbx
+    lea rsi, [rip + .Lkp_context_changed]
+    call ext_kill
+    mov eax, 1
+    EPILOGUE
+.Lkp_tick_failed:
+    mov rdi, rbx
+    lea rsi, [rip + .Lkp_process_failed]
+    call ext_kill
+    mov eax, 1
+    EPILOGUE
+
+# Nullable string equality for captured optional project/script/run inputs.
+ext_plan_equal:
+    test rdi, rdi
+    jnz 1f
+    lea rdi, [rip + .Lkp_empty]
+1:  test rsi, rsi
+    jnz 2f
+    lea rsi, [rip + .Lkp_empty]
+2:  jmp strcmp_eq
+
+ext_prepare_supervised:
+    PROLOGUE 112
+    mov rbx, rdi
+    mov rdi, rbx
+    call ext_activation_host_check
+    test rax, rax
+    js .Lkp_prepare_stale
+    mov r12, [rbx + EXT_activation_plan]
+    test r12, r12
+    jz .Lkp_prepare_stale
+    call ext_activation_epoch_get
+    cmp rax, [r12 + KE_context]
+    jne .Lkp_prepare_stale
+    mov rdi, [rbx + EXT_owner]
+    mov rsi, [r12 + KE_owner]
+    call ext_plan_equal
+    test eax, eax
+    jz .Lkp_prepare_stale
+    mov rdi, [rbx + EXT_name]
+    mov rsi, [r12 + KE_name]
+    call ext_plan_equal
+    test eax, eax
+    jz .Lkp_prepare_stale
+    mov rdi, [rbx + EXT_state]
+    mov rsi, [r12 + KE_state]
+    call ext_plan_equal
+    test eax, eax
+    jz .Lkp_prepare_stale
+    mov rdi, [rbx + EXT_script]
+    mov rsi, [r12 + KE_script]
+    call ext_plan_equal
+    test eax, eax
+    jz .Lkp_prepare_stale
+    mov rdi, [rbx + EXT_runs]
+    mov rsi, [r12 + KE_runs]
+    call ext_plan_equal
+    test eax, eax
+    jz .Lkp_prepare_stale
+    mov eax, [rbx + EXT_needs]
+    cmp eax, [r12 + KE_needs]
+    jne .Lkp_prepare_stale
+    mov rdi, [rip + g_project]
+    mov rsi, [r12 + KE_project]
+    call ext_plan_equal
+    test eax, eax
+    jz .Lkp_prepare_stale
+    lea rdi, [rip + .Le_home]
+    call getenv
+    mov rdi, rax
+    mov rsi, [r12 + KE_home]
+    call ext_plan_equal
+    test eax, eax
+    jz .Lkp_prepare_stale
+    mov rdi, r12
+    call keeper_extension_auth
+    test rax, rax
+    jz .Lkp_prepare_auth_error
+    mov [rsp + 80], rax
+    mov [rsp + KP_auth], rax
+    mov [rsp + KP_auth_len], rdx
+    mov rax, [rip + argv_vec + VEC_ptr]
+    mov [rsp + KP_argv], rax
+    mov rax, [rip + env_vec + VEC_ptr]
+    mov [rsp + KP_envp], rax
+    mov rax, [rbx + EXT_dir]
+    mov [rsp + KP_cwd], rax
+    movsxd rax, dword ptr [rbx + EXT_host_child_in]
+    mov [rsp + KP_stdin], rax
+    movsxd rax, dword ptr [rbx + EXT_host_child_out]
+    mov [rsp + KP_stdout], rax
+    movsxd rax, dword ptr [rbx + EXT_log]
+    mov [rsp + KP_stderr], rax
+    mov qword ptr [rsp + KP_mode], KP_EXTENSION
+    mov rax, [r12 + KE_lease]
+    mov [rsp + KP_parentlease], rax
+    mov rdi, rsp
+    call keeper_prepare
+    mov r12, rax
+    mov [rsp + 88], rdx
+    mov rdi, rbx
+    mov rsi, rcx
+    call ext_host_cleanup_note
+    mov rdi, [rsp + 80]
+    call mem_free
+    mov rax, r12
+    mov rdx, [rsp + 88]
+    EPILOGUE
+.Lkp_prepare_auth_error:
+    mov rax, rdx
+    xor edx, edx
+    EPILOGUE
+.Lkp_prepare_stale:
+    mov dword ptr [rbx + EXT_activation_stale], 1
+    mov rax, -116
+    xor edx, edx
     EPILOGUE
 
 # build_argv(ext): argv_vec = program [script] args..., 0
@@ -2534,7 +3626,9 @@ build_argv:
     mov qword ptr [rip + argv_vec + VEC_len], 0
     lea rdi, [rip + argv_vec]
     mov esi, 8
-    call vec_push
+    call ext_launch_scratch_push
+    test rax, rax
+    jz .Largv_scratch_error
     mov rcx, [rbx + EXT_prog]
     mov [rax], rcx
     mov rax, [rbx + EXT_script]
@@ -2544,7 +3638,9 @@ build_argv:
     je 1f
     lea rdi, [rip + argv_vec]
     mov esi, 8
-    call vec_push
+    call ext_launch_scratch_push
+    test rax, rax
+    jz .Largv_scratch_error
     mov rcx, [rbx + EXT_script]
     mov [rax], rcx
 1:  mov r12, [rbx + EXT_args]
@@ -2564,16 +3660,26 @@ build_argv:
     jz 8f
     mov rdi, rax
     mov rsi, rdx
-    call mem_dup                # leaked on purpose: argv strings live as long as the process
+    call ext_launch_scratch_dup
+    test rax, rax
+    jz .Largv_scratch_error
     mov r14, rax
     lea rdi, [rip + argv_vec]
     mov esi, 8
-    call vec_push
+    call ext_launch_scratch_push
+    test rax, rax
+    jz .Largv_scratch_error
     mov [rax], r14
     jmp 2b
 8:  lea rdi, [rip + argv_vec]
     mov esi, 8
-    call vec_push
+    call ext_launch_scratch_push
+    test rax, rax
+    jz .Largv_scratch_error
+    xor eax, eax
+    EPILOGUE
+.Largv_scratch_error:
+    call ext_launch_scratch_error
     EPILOGUE
 
 # build_env(ext): env_vec, the environment of section 4 of the spec. In a --extensions session the
@@ -2596,7 +3702,9 @@ build_env:
     jnz 3f
     lea rdi, [rip + env_vec]
     mov esi, 8
-    call vec_push
+    call ext_launch_scratch_push
+    test rax, rax
+    jz .Lenv_scratch_error
     mov rcx, [r12]
     mov [rax], rcx
 3:  add r12, 8
@@ -2608,36 +3716,58 @@ build_env:
     lea rdi, [rip + .Le_path_eq]
     mov rsi, rax
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
 4:  lea rdi, [rip + .Le_home_eq]
     mov rsi, [rbx + EXT_state]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_tmpdir_eq]
     lea rsi, [rip + .Lsub_tmp]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_cache_eq]
     lea rsi, [rip + .Lsub_cache]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_gocache_eq]
     lea rsi, [rip + .Lsub_gocache]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_gomod_eq]
     lea rsi, [rip + .Lsub_gomod]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_gopath_eq]
     lea rsi, [rip + .Lsub_gopath]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_npm_eq]
     lea rsi, [rip + .Lsub_npm]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_lang]
     lea rsi, [rip + .Le_lang_eq]
     call env_copy
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_lc_all]
     lea rsi, [rip + .Le_lc_all_eq]
     call env_copy
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_tz]
     lea rsi, [rip + .Le_tz_eq]
     call env_copy
+    test rax, rax
+    js .Lenv_scratch_error
 .ifdef MACOS
     # Xcode's /usr/bin shims: xcrun's cache private to the extension (the user's shared cache is
     # not writable from the sandbox: an entry it wrote would run unconfined later), and the Xcode
@@ -2649,11 +3779,17 @@ build_env:
     lea rdi, [rip + .Le_xcrun_db_eq]
     mov rsi, rax
     call env_add
+    mov r13, rax
     mov rdi, r12
     call mem_free
+    mov rax, r13
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_devdir]
     lea rsi, [rip + .Le_devdir_eq]
     call env_copy
+    test rax, rax
+    js .Lenv_scratch_error
 .endif
 .ifdef WINDOWS
     # what Windows programs need to start at all (Winsock fails without SYSTEMROOT), and their
@@ -2664,30 +3800,46 @@ build_env:
     jz 7f
     mov rsi, [r12 + 8]
     call env_copy
+    test rax, rax
+    js .Lenv_scratch_error
     add r12, 16
     jmp 6b
 7:  lea rdi, [rip + .Le_temp_eq]
     lea rsi, [rip + .Lsub_tmp]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_tmp_eq]
     lea rsi, [rip + .Lsub_tmp]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_userprofile_eq]
     mov rsi, [rbx + EXT_state]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_appdata_eq]
     lea rsi, [rip + .Lsub_roaming]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_localappdata_eq]
     lea rsi, [rip + .Lsub_local]
     call env_add_state
+    test rax, rax
+    js .Lenv_scratch_error
 .endif
     lea rdi, [rip + .Le_version_eq]
     lea rsi, [rip + rhun_version]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_protocol_eq]
-    lea rsi, [rip + .Lone]
+    lea rsi, [rip + .Lprotocol_max]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + tmp]
     call sb_clear
     lea rdi, [rip + tmp]
@@ -2702,17 +3854,25 @@ build_env:
     lea rdi, [rip + .Le_extension_eq]
     mov rsi, [rip + tmp + SB_ptr]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_target_eq]
     lea rsi, [rip + ext_target]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
     lea rdi, [rip + .Le_state_eq]
     mov rsi, [rbx + EXT_state]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
     mov rsi, [rip + g_project]
     test rsi, rsi
     jz 5f
     lea rdi, [rip + .Le_project_eq]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
 5:  cmp qword ptr [rip + g_ext_dir], 0
     je 51f
     mov rsi, [rip + g_control_path]
@@ -2720,9 +3880,17 @@ build_env:
     jz 51f
     lea rdi, [rip + .Le_socket_eq]
     call env_add
+    test rax, rax
+    js .Lenv_scratch_error
 51: lea rdi, [rip + env_vec]
     mov esi, 8
-    call vec_push
+    call ext_launch_scratch_push
+    test rax, rax
+    jz .Lenv_scratch_error
+    xor eax, eax
+    EPILOGUE
+.Lenv_scratch_error:
+    call ext_launch_scratch_error
     EPILOGUE
 
 # env_is_ours(entry) -> 1 when the entry's name is one build_env sets itself (or starts with RHUN_)
@@ -2767,12 +3935,23 @@ env_add:
     mov rsi, r12
     call sb_push_cstr
     mov rdi, [rip + tmp2 + SB_ptr]
-    call dup_cstr                # lives as long as the process; freed with the next start's vec? no: leaked
+    call strlen
+    mov rsi, rax
+    mov rdi, [rip + tmp2 + SB_ptr]
+    call ext_launch_scratch_dup
+    test rax, rax
+    jz .Lenv_add_scratch_error
     mov r13, rax
     lea rdi, [rip + env_vec]
     mov esi, 8
-    call vec_push
+    call ext_launch_scratch_push
+    test rax, rax
+    jz .Lenv_add_scratch_error
     mov [rax], r13
+    xor eax, eax
+    EPILOGUE
+.Lenv_add_scratch_error:
+    call ext_launch_scratch_error
     EPILOGUE
 
 # env_add_state(prefix, suffix): NAME=STATE/suffix, the folder created
@@ -2870,6 +4049,18 @@ env_copy:
 ext_on_out:
     PROLOGUE
     mov rbx, rdx
+    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 1) | (1 << 9)
+    jnz 9f
+    cmp dword ptr [rbx + EXT_retiring], 0
+    je 901f
+    mov rdi, rbx
+    call ext_retire_drain
+    EPILOGUE
+901:
+    mov rdi, rbx
+    call ext_can_act
+    test eax, eax
+    jz 9f
     # a program that is not reading what rhun wrote gets nothing more read from it either, and
     # the not-reading clock runs
     mov rax, [rbx + EXT_wq + SB_len]
@@ -2931,12 +4122,17 @@ ext_on_out:
 
 # ext_on_in(fd, revents, ctx = EXT*): the program reads again
 ext_on_in:
-    test esi, POLLERR | POLLHUP
-    jz 1f
-    # the program closed its input (or exited: its output's end of file follows, and that exit
-    # status is the reason to keep); ext_tick ends it after 300 ms if it is still there
-    push rbx
+    PROLOGUE
     mov rbx, rdx
+    mov r12d, esi
+    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 0) | (1 << 8)
+    jnz 9f
+    mov rdi, rbx
+    call ext_can_act
+    test eax, eax
+    jz 9f
+    test r12d, POLLERR | POLLHUP
+    jz 1f
     cmp qword ptr [rbx + EXT_in_closed_at], 0
     jne 2f
     call time_ms
@@ -2944,15 +4140,26 @@ ext_on_in:
 2:  mov edi, [rbx + EXT_in]
     xor esi, esi
     call watch_set_events
-    pop rbx
-    ret
-1:  mov rdi, rdx
-    jmp ext_flush
+    jmp 9f
+1:  mov rdi, rbx
+    call ext_flush
+9:  EPILOGUE
 
 # ext_send(ext, ptr, len): queue bytes for the program and write what the pipe takes
 FN ext_send
     PROLOGUE
     mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call ext_can_act
+    test eax, eax
+    jz 9f
+    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 0) | (1 << 8)
+    jnz 9f
+    mov rsi, r12
+    mov rdx, r13
+    cmp dword ptr [rbx + EXT_retiring], 0
+    jne 9f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -2992,64 +4199,24 @@ FN ext_send
     call ext_flush
 9:  EPILOGUE
 
-# ext_flush(ext): write the queue to the program; what does not fit waits for POLLOUT
+# ext_flush(ext): bounded compatibility entry point; pending output waits for POLLOUT.
 FN ext_flush
-    PROLOGUE
-    mov rbx, rdi
-    cmp dword ptr [rbx + EXT_in], 0
-    jl 9f
-    cmp qword ptr [rbx + EXT_in_closed_at], 0
-    jne 9f
-1:  mov rdx, [rbx + EXT_wq + SB_len]
-    sub rdx, [rbx + EXT_wq_off]
-    jz 5f
-    mov rsi, [rbx + EXT_wq + SB_ptr]
-    add rsi, [rbx + EXT_wq_off]
-    mov edi, [rbx + EXT_in]
-    SYS SYS_write
-    cmp rax, -EINTR
-    je 1b
-    cmp rax, -EAGAIN
-    je 6f
-    test rax, rax
-    jle 7f
-    add [rbx + EXT_wq_off], rax
-    jmp 1b
-5:  # all written
-    lea rdi, [rbx + EXT_wq]
-    call sb_clear
-    mov qword ptr [rbx + EXT_wq_off], 0
-    mov qword ptr [rbx + EXT_full_since], 0
-    mov edi, [rbx + EXT_in]
-    xor esi, esi
-    call watch_set_events
-    jmp 9f
-6:  # the pipe is full: wait for POLLOUT; note when the queue went over its cap
-    mov edi, [rbx + EXT_in]
-    mov esi, POLLOUT
-    call watch_set_events
-    mov rax, [rbx + EXT_wq + SB_len]
-    sub rax, [rbx + EXT_wq_off]
-    cmp rax, EXT_WQ_MAX
-    jb 61f
-    cmp qword ptr [rbx + EXT_full_since], 0
-    jne 9f
-    call time_ms
-    mov [rbx + EXT_full_since], rax
-    jmp 9f
-61: mov qword ptr [rbx + EXT_full_since], 0
-    jmp 9f
-7:  # EPIPE: the program closed its input (macOS does not report that through poll on the
-    # write end); its exit status, if it comes within 300 ms, is the reason to keep
-    cmp qword ptr [rbx + EXT_in_closed_at], 0
-    jne 9f
-    call time_ms
-    mov [rbx + EXT_in_closed_at], rax
-9:  EPILOGUE
+    mov esi, 65536
+    mov edx, 16
+    jmp ext_flush_quota
+
+FN ext_exited
+    cmp qword ptr [rdi + EXT_keeper], 0
+    jne ext_supervised_exited
+    cmp dword ptr [rdi + EXT_activation_required], 1
+    je ext_supervised_exited
+    cmp dword ptr [rdi + EXT_retiring], 0
+    jne ext_supervised_exited
+    jmp ext_legacy_exited
 
 # ext_exited(ext, status): the program is gone; reap it and record why
 #   status -1: not known yet (end of file on its output): the group is killed and waited for
-FN ext_exited
+FN ext_legacy_exited
     PROLOGUE
     mov rbx, rdi
     cmp dword ptr [rbx + EXT_status], ES_STARTING
@@ -3082,6 +4249,11 @@ FN ext_exited
     SYS SYS_close
     mov dword ptr [rbx + EXT_log], -1
 2:  mov dword ptr [rbx + EXT_pid], 0
+    mov dword ptr [rbx + EXT_throttled], 0
+    mov dword ptr [rbx + EXT_global_wait], 0
+    mov qword ptr [rbx + EXT_full_since], 0
+    mov rdi, rbx
+    call extwatch_owner_gone
     mov rdi, rbx
     call extmarks_clear_owner
     mov rdi, rbx
@@ -3110,8 +4282,7 @@ FN ext_exited
     lea rdi, [rbx + EXT_wq]
     call sb_clear
     mov qword ptr [rbx + EXT_wq_off], 0
-    mov r13, [rbx + EXT_pending]    # the command that started it, for a restart without confinement
-    mov qword ptr [rbx + EXT_pending], 0
+    # Owned request stays on EXT through an authorized confinement/successor retry.
     cmp qword ptr [rbx + EXT_reason], 0
     jne 5f
     # it left on its own; 127 is the child that could not exec its program; a code in the shared
@@ -3131,7 +4302,6 @@ FN ext_exited
     mov dword ptr [rbx + EXT_noconfine], 1
     mov dword ptr [rbx + EXT_status], ES_IDLE
     mov dword ptr [rbx + EXT_confined], CONFINED_NO
-    mov [rbx + EXT_pending], r13
     mov dword ptr [rip + g_dirty], 1
     call ext_hooks_update
     mov rdi, rbx
@@ -3186,7 +4356,170 @@ FN ext_exited
     jmp 9f
 8:  mov dword ptr [rip + g_dirty], 1
     call ext_hooks_update
-9:  EPILOGUE
+9:  mov rdi, rbx
+    call ext_pending_reconcile
+    EPILOGUE
+
+# Retire contributions once, then collect output and the complete protected lifetime asynchronously.
+FN ext_supervised_exited
+    PROLOGUE 32
+    mov rbx, rdi
+    cmp qword ptr [rbx + EXT_keeper], 0
+    jne .Lkp_retire_owned
+    mov eax, [rbx + EXT_retiring]
+    cmp eax, 1
+    je .Lkp_retire_poll
+    cmp eax, 3
+    je .Lkp_retire_poll
+    jmp 9f
+.Lkp_retire_owned:
+    cmp dword ptr [rbx + EXT_retiring], 0
+    jne .Lkp_retire_poll
+    mov [rbx + EXT_finish_code], esi
+    mov dword ptr [rbx + EXT_retiring], 1
+    mov qword ptr [rbx + EXT_fbytes], 0
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 100f
+    mov dword ptr [rbx + EXT_status], ES_STOPPING
+100:
+    mov rdi, [rbx + EXT_keeper]
+    call keeper_stop
+    mov edi, [rbx + EXT_out]
+    test edi, edi
+    js 101f
+    call watch_remove
+101: mov edi, [rbx + EXT_in]
+    test edi, edi
+    js 102f
+    call watch_remove
+    mov rdi, rbx
+    lea rsi, [rbx + EXT_in]
+    xor edx, edx
+    call ext_host_close_at
+102:
+    mov dword ptr [rbx + EXT_throttled], 0
+    mov dword ptr [rbx + EXT_global_wait], 0
+    mov qword ptr [rbx + EXT_full_since], 0
+    mov rdi, rbx
+    call extwatch_owner_gone
+    mov rdi, rbx
+    call extmarks_clear_owner
+    mov rdi, rbx
+    call ext_cmds_remove_runtime
+    mov rdi, rbx
+    call ext_options_clear
+    mov rdi, rbx
+    call extproto_prompt_owner_gone
+    mov rdi, rbx
+    call extview_owner_gone     # its views close with it
+    mov rdi, rbx
+    call complete_ext_gone      # and its completion items and signature help
+    mov rdi, rbx
+    call langfeat_ext_gone      # and the language queries it was asked
+    xor edi, edi
+    call ext_hover_forget       # its hover text, if the tooltip shows one
+    mov rdi, [rbx + EXT_body]
+    call mem_free
+    mov qword ptr [rbx + EXT_body], 0
+    mov rdi, [rbx + EXT_status_text]
+    call mem_free
+    mov qword ptr [rbx + EXT_status_text], 0
+    mov qword ptr [rbx + EXT_known + VEC_len], 0
+    lea rdi, [rbx + EXT_rbuf]
+    call sb_clear
+    lea rdi, [rbx + EXT_wq]
+    call sb_clear
+    mov qword ptr [rbx + EXT_wq_off], 0
+    mov rdi, rbx
+    call ext_pending_reconcile
+    mov dword ptr [rip + g_dirty], 1
+    call ext_hooks_update
+.Lkp_retire_poll:
+    mov rdi, rbx
+    call ext_host_prepared_collect
+    test eax, eax
+    jz 9f
+    mov r12d, edx
+104: cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    jne 1041f
+    mov dword ptr [rip + g_dirty], 1
+    call ext_hooks_update
+    jmp 9f
+1041: cmp r12d, 0
+    jge 105f
+    cmp qword ptr [rbx + EXT_reason], 0
+    jne 105f
+    lea rax, [rip + .Lkp_process_failed]
+    mov [rbx + EXT_reason], rax
+105:
+    cmp qword ptr [rbx + EXT_reason], 0
+    jne 5f
+20: cmp r12d, 127
+    jne 21f
+    lea rax, [rip + .Lr_exec]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+    jmp 8f
+21: mov dword ptr [rbx + EXT_status], ES_CRASHED
+    lea rdi, [rip + reason_buf]
+    lea rsi, [rip + .Lr_exited]
+    call cstr_copy
+    mov rdi, rax
+    mov esi, r12d
+    call fmt_u64
+    lea rdi, [rip + reason_buf]
+    call dup_cstr
+    mov [rbx + EXT_reason], rax
+    call time_ms
+    mov rcx, rax
+    sub rcx, [rbx + EXT_crash_t0]
+    cmp rcx, 60000
+    jb 3f
+    mov [rbx + EXT_crash_t0], rax
+    mov dword ptr [rbx + EXT_crashes], 0
+3:  inc dword ptr [rbx + EXT_crashes]
+    cmp dword ptr [rbx + EXT_crashes], 3
+    jb 8f
+    lea rax, [rip + .Lr_three]
+    mov [rbx + EXT_reason], rax
+    mov dword ptr [rbx + EXT_status], ES_STOPPED
+    jmp 8f
+5:  mov dword ptr [rbx + EXT_status], ES_STOPPED
+    lea rax, [rip + .Lkp_process_failed]
+    cmp [rbx + EXT_reason], rax
+    jne 501f
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+501:
+    cmp dword ptr [rbx + EXT_host_setup_error], 0
+    jns 502f
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+502: cmp dword ptr [rbx + EXT_disabled], 0
+    je 51f
+    mov dword ptr [rbx + EXT_status], ES_DISABLED
+    lea rax, [rip + .Lr_disabled]
+    mov [rbx + EXT_reason], rax
+51: cmp dword ptr [rbx + EXT_restart], 0
+    je 8f
+    cmp dword ptr [rbx + EXT_activation_stale], 0
+    jne 8f
+    mov dword ptr [rbx + EXT_restart], 0
+    cmp dword ptr [rbx + EXT_disabled], 0
+    jne 8f                      # turned off again meanwhile
+    mov dword ptr [rbx + EXT_status], ES_IDLE
+    mov dword ptr [rip + g_dirty], 1
+    call ext_hooks_update
+    mov rdi, rbx
+    call ext_start
+    jmp 9f
+8:  mov dword ptr [rip + g_dirty], 1
+    call ext_hooks_update
+9:  mov rdi, rbx
+    call ext_pending_reconcile
+    EPILOGUE
+
+# <=64KiB per tick, a fixed shared buffer, no protocol dispatch or allocations.
+ext_retire_drain:
+    jmp ext_host_retire_drain
 
 # ext_kill(ext, reason): end the program now, keeping the reason
 FN ext_kill
@@ -3204,11 +4537,22 @@ FN ext_stop
     PROLOGUE
     mov rbx, rdi
     mov [rbx + EXT_reason], rsi
+    cmp qword ptr [rbx + EXT_keeper], 0
+    je 901f
+    cmp dword ptr [rbx + EXT_startaccepted], 0
+    jne 901f
+    mov rdi, rbx
+    mov esi, -1
+    call ext_exited
+    EPILOGUE
+901:
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
     jne 9f
 1:  mov rdi, rbx
+    call extwatch_owner_gone
+    mov rdi, rbx
     call extproto_prompt_owner_gone     # a prompt of a stopping program must not act any more
     mov rdi, rbx
     lea rsi, [rip + .Lbye]
@@ -3223,6 +4567,9 @@ FN ext_stop
 FN ext_restart
     push rbx
     mov rbx, rdi
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     cmp dword ptr [rbx + EXT_manifest_ok], 0
     je 9f
     mov dword ptr [rbx + EXT_crashes], 0
@@ -3255,7 +4602,8 @@ ext_project_check:
     call strcmp_eq
     test eax, eax
     jnz 9f
-1:  mov rdi, [rip + ext_project_seen]
+1:  call ext_activation_invalidate
+    mov rdi, [rip + ext_project_seen]
     call mem_free
     mov qword ptr [rip + ext_project_seen], 0
     mov rdi, [rip + g_project]
@@ -3266,6 +4614,7 @@ ext_project_check:
 2:  mov dword ptr [rip + ext_project_done], 0
     cmp dword ptr [rip + ext_startup_done], 0
     je 9f                      # the initial project, before any activation
+    call extwatch_project_changed
     call extproto_send_project_all
     xor r12d, r12d
 3:  cmp r12, [rip + g_exts + VEC_len]
@@ -3289,10 +4638,18 @@ ext_project_check:
 # ext_tick(): once per frame: the budget, deadlines, and the events for each program
 FN ext_tick
     PROLOGUE
+    call extproto_prompt_collect_revoked
+    call time_ms
+    mov rdi, rax
+    call ext_prepare_pump_tick
+    call time_ms
+    mov rdi, rax
+    call ext_store_jobs_step
     cmp qword ptr [rip + g_exts + VEC_len], 0
     je 9f
     inc dword ptr [rip + ext_ticks]
     call ext_project_check
+    call extwatch_tick
     # on = startup, once; on = project when a project is open
     cmp dword ptr [rip + ext_startup_done], 0
     jne 1f
@@ -3306,8 +4663,7 @@ FN ext_tick
     mov dword ptr [rip + ext_project_done], 1
     mov edi, ON_PROJECT
     call ext_start_matching
-2:  # documents opened since the last tick start the extensions whose lang:/open: lists match;
-    # tabs are not in creation order, so the mark moves only after the whole scan
+2:  # Both new documents and language-only changes reevaluate activation.
     mov r15, [rip + ext_last_doc]
     xor r12d, r12d
 21: cmp r12, [rip + g_tabs + VEC_len]
@@ -3317,16 +4673,35 @@ FN ext_tick
     inc r12
     cmp qword ptr [rax + TAB_kind], TAB_DOC
     jne 21b
-    mov rdi, [rax + TAB_doc]
-    test rdi, rdi
+    mov r14, [rax + TAB_doc]
+    test r14, r14
     jz 21b
-    mov rax, [rdi + DOC_id]
+    mov rdi, r14
+    call doc_sync_grammar
+    test rax, rax
+    js 21b
+    cmp qword ptr [r14 + DOC_language_pending], 0
+    jne .Let_language
+    mov rax, [r14 + DOC_id]
     cmp rax, [rip + ext_last_doc]
     jbe 21b
+    jmp .Let_document
+.Let_language:
+    mov qword ptr [r14 + DOC_language_pending], 0
+    mov rdi, r14
+    call complete_language_changed
+    mov rdi, r14
+    call langfeat_language_changed
+    mov rdi, r14
+    call ext_hover_forget
+    mov rdi, r14
+    call extmarks_language_changed
+.Let_document:
+    mov rax, [r14 + DOC_id]
     cmp rax, r15
-    jbe 23f
-    mov r15, rax
-23: call ext_doc_opened
+    cmova r15, rax
+    mov rdi, r14
+    call ext_doc_opened
     jmp 21b
 22: mov [rip + ext_last_doc], r15
     # extensions waiting for a slot
@@ -3362,14 +4737,39 @@ FN ext_tick
     mov rdi, [rip + g_hover_doc]
     mov rsi, [rip + g_hover_pos]
     call extproto_send_hover_all
-26: xor r12d, r12d
+26: mov r15d, [rip + ext_round_robin]
+    cmp r15, [rip + g_exts + VEC_len]
+    jb 261f
+    xor r15d, r15d
+261: lea rax, [r15 + 1]
+    cmp rax, [rip + g_exts + VEC_len]
+    jb 262f
+    xor eax, eax
+262: mov [rip + ext_round_robin], eax
+    xor r12d, r12d
 .Let_each:
     cmp r12, [rip + g_exts + VEC_len]
     jae 9f
-    imul rbx, r12, EXT_SIZE
+    lea r13, [r12 + r15]
+    cmp r13, [rip + g_exts + VEC_len]
+    jb 263f
+    sub r13, [rip + g_exts + VEC_len]
+263: imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
-    mov eax, [rbx + EXT_status]
+    cmp qword ptr [rbx + EXT_keeper], 0
+    jne .Lhost_tick_owned
+    mov eax, [rbx + EXT_retiring]
+    cmp eax, 1
+    je .Lhost_tick_owned
+    cmp eax, 3
+    jne 264f
+.Lhost_tick_owned:
+    mov rdi, rbx
+    call ext_keeper_tick
+    test eax, eax
+    jnz .Let_each
+264: mov eax, [rbx + EXT_status]
     cmp eax, ES_STARTING
     je .Let_starting
     cmp eax, ES_RUNNING
@@ -3378,6 +4778,11 @@ FN ext_tick
     je .Let_stopping
     jmp .Let_each
 .Let_starting:
+    cmp qword ptr [rbx + EXT_keeper], 0
+    je 265f
+    cmp dword ptr [rbx + EXT_startaccepted], 0
+    je .Let_each
+265:
     mov rax, r14
     sub rax, [rbx + EXT_started]
     cmp rax, EXT_HELLO_MS
@@ -3387,6 +4792,17 @@ FN ext_tick
     call ext_kill
     jmp .Let_each
 .Let_stopping:
+    cmp qword ptr [rbx + EXT_keeper], 0
+    je .Lkp_legacy_stopping
+    mov rax, r14
+    sub rax, [rbx + EXT_started]
+    cmp rax, 1000
+    jl .Let_common
+    mov rdi, rbx
+    mov esi, -1
+    call ext_exited
+    jmp .Let_each
+.Lkp_legacy_stopping:
     mov rax, r14
     sub rax, [rbx + EXT_started]
     cmp rax, 1000
@@ -3404,7 +4820,13 @@ FN ext_tick
     jmp .Let_common
 .Let_running:
     mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz .Let_common
+    mov rdi, rbx
     call extproto_events
+    mov rdi, rbx
+    call ext_pending_try
 .Let_common:
     # a program that closed its input and is still there 300 ms later
     mov rax, [rbx + EXT_in_closed_at]
@@ -3430,7 +4852,9 @@ FN ext_tick
     lea rsi, [rip + .Lr_not_reading]
     call ext_kill
     jmp .Let_each
-4:  # its error log stays under its cap (the program keeps its descriptor, so it is cut, not rotated)
+4:  # historical native log ownership remains independently serviceable
+    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 2) | (1 << 10)
+    jnz 42f
     mov edi, [rbx + EXT_log]
     test edi, edi
     js 42f
@@ -3446,10 +4870,10 @@ FN ext_tick
     # windows in a row that hit a cap (extproto_pump keeps it)
     cmp dword ptr [rbx + EXT_throttled], 0
     je .Let_each
-    mov rax, r14
-    sub rax, [rbx + EXT_win_t0]
-    cmp rax, EXT_WIN_MS
-    jl .Let_each
+    mov rdi, rbx
+    call ext_budget_due
+    cmp r14, rax
+    jb .Let_each
     cmp dword ptr [rbx + EXT_flood], EXT_FLOOD_FRAMES
     jb 43f
     mov rdi, rbx
@@ -3457,10 +4881,17 @@ FN ext_tick
     call ext_kill
     jmp .Let_each
 43: mov dword ptr [rbx + EXT_throttled], 0
+    mov dword ptr [rbx + EXT_global_wait], 0
     mov rdi, rbx
     call extproto_pump          # what is buffered already; it may throttle again
     cmp dword ptr [rbx + EXT_throttled], 0
     jne .Let_each
+    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 1) | (1 << 9)
+    jnz .Let_each
+    mov rdi, rbx
+    call ext_can_act
+    test eax, eax
+    jz .Let_each
     cmp dword ptr [rbx + EXT_out], 0
     jl .Let_each
     mov edi, [rbx + EXT_out]
@@ -3491,25 +4922,77 @@ FN ext_tick
 FN ext_timeout
     PROLOGUE
     mov r12, -1                 # the earliest deadline, as a time
+    call time_ms
+    mov rdi, rax
+    call ext_store_jobs_timeout
+    cmp rax, -1
+    je .Lesj_timeout_none
+    mov r13, rax
+    call time_ms
+    add rax, r13
+    call deadline
+.Lesj_timeout_none:
+    call time_ms
+    mov rdi, rax
+    call ext_prepare_pump_timeout
+    cmp rax, -1
+    je .Lprep_timeout_none
+    mov r13, rax
+    call time_ms
+    add rax, r13
+    call deadline
+.Lprep_timeout_none:
+    call extwatch_timeout
+    cmp rax, -1
+    je .Lew_timeout_none
+    mov r13, rax
+    call time_ms
+    add rax, r13
+    call deadline
+.Lew_timeout_none:
     xor r13d, r13d
 1:  cmp r13, [rip + g_exts + VEC_len]
     jae 8f
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
-    cmp dword ptr [rbx + EXT_throttled], 0
-    je 11f
-    mov rax, [rbx + EXT_win_t0]
-    add rax, EXT_WIN_MS
+    mov rdi, rbx
+    call time_ms
+    mov r14, rax
+    mov rsi, rax
+    mov rdi, rbx
+    call ext_host_prepared_timeout
+    cmp rax, -1
+    je 101f
+    add rax, r14
     call deadline
-11: mov eax, [rbx + EXT_status]
+101: cmp dword ptr [rbx + EXT_throttled], 0
+    je 11f
+    mov rdi, rbx
+    call ext_budget_due
+    call deadline
+11: cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne .Lpn_timeout_status
+    cmp qword ptr [rbx + EXT_pending], 0
+    je .Lpn_timeout_status
+    call time_ms
+    add rax, 16
+    call deadline
+.Lpn_timeout_status:
+    mov eax, [rbx + EXT_status]
     cmp eax, ES_STARTING
     jne 2f
-    mov rax, [rbx + EXT_started]
+    cmp qword ptr [rbx + EXT_keeper], 0
+    je 102f
+    cmp dword ptr [rbx + EXT_startaccepted], 0
+    je 3f
+102: mov rax, [rbx + EXT_started]
     add rax, EXT_HELLO_MS
     call deadline
     jmp 3f
 2:  cmp eax, ES_STOPPING
+    jne 3f
+    cmp dword ptr [rbx + EXT_retiring], 0
     jne 3f
     mov rax, [rbx + EXT_started]
     add rax, 1000
@@ -3570,6 +5053,10 @@ FN ext_start_matching
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
     test [rbx + EXT_on], r12d
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_IDLE
@@ -3589,6 +5076,10 @@ FN ext_doc_opened
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
     cmp dword ptr [rbx + EXT_status], ES_IDLE
     jne 1b
     test dword ptr [rbx + EXT_on], ON_LANG | ON_OPEN
@@ -3608,7 +5099,16 @@ FN ext_activation_matches
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov rax, [r12 + DOC_lang]
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 8f
+    mov rdi, r12
+    call doc_sync_grammar
+    test rax, rax
+    js 8f
+    mov rdi, r12
+    call doc_language
     test rax, rax
     jz 1f
     mov rdi, [rax + GR_name]
@@ -3702,18 +5202,46 @@ FN ext_path_matches
 # SIGTERM to the rest (on Linux they die with rhun regardless)
 FN ext_shutdown
     PROLOGUE
+    mov qword ptr [rip + ext_pending_shutting_down], 1
+    xor r12d, r12d
+.Lpn_shutdown_clear:
+    cmp r12, [rip + g_exts + VEC_len]
+    jae .Lpn_shutdown_ready
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov dword ptr [rbx + EXT_restart], 0
+    mov dword ptr [rbx + EXT_wait_slot], 0
+    mov rdi, rbx
+    call ext_pending_clear
+    jmp .Lpn_shutdown_clear
+.Lpn_shutdown_ready:
     xor r12d, r12d
 1:  cmp r12, [rip + g_exts + VEC_len]
     jae 2f
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
+    mov rdi, [rbx + EXT_keeper]
+    test rdi, rdi
+    jz 101f
+    call keeper_stop
+    jmp 1b
+101: cmp dword ptr [rbx + EXT_activation_required], 1
+    je .Lhost_shutdown_pending
+    cmp dword ptr [rbx + EXT_retiring], 0
+    jne .Lhost_shutdown_pending
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
     mov rdi, rbx
     lea rsi, [rip + .Lbye]
     mov edx, 6
     call ext_send
+    jmp 1b
+.Lhost_shutdown_pending:
+    mov rdi, rbx
+    mov esi, [rbx + EXT_finish_code]
+    call ext_exited
     jmp 1b
 2:  call time_ms
     lea r13, [rax + 300]
@@ -3725,6 +5253,12 @@ FN ext_shutdown
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
+    cmp qword ptr [rbx + EXT_keeper], 0
+    jne 4b
+    cmp dword ptr [rbx + EXT_activation_required], 1
+    je 4b
+    cmp dword ptr [rbx + EXT_retiring], 0
+    jne 4b
     mov eax, [rbx + EXT_status]
     cmp eax, ES_RUNNING
     je 41f
@@ -3755,6 +5289,12 @@ FN ext_shutdown
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
+    cmp qword ptr [rbx + EXT_keeper], 0
+    jne 7b
+    cmp dword ptr [rbx + EXT_activation_required], 1
+    je 7b
+    cmp dword ptr [rbx + EXT_retiring], 0
+    jne 7b
     mov eax, [rbx + EXT_status]
     cmp eax, ES_RUNNING
     je 71f
@@ -3841,6 +5381,10 @@ FN ext_status_draw
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
     mov r13, [rbx + EXT_status_text]
@@ -3895,8 +5439,10 @@ FN ext_dump
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
-    cmp dword ptr [rbx + EXT_status], ES_REMOVED
-    je 1b
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 1b
     mov rdi, r12
     mov rsi, [rbx + EXT_owner]
     call sb_push_cstr
@@ -3932,6 +5478,10 @@ FN ext_dump
     mov rdi, r12
     lea rsi, [rip + .Ld_cmds]
     call sb_push_cstr
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 32f
     mov r14d, [rbx + EXT_cmd0]
     mov r15d, [rbx + EXT_ncmd]
     add r15d, r14d
@@ -4018,46 +5568,54 @@ FN ext_dump
     jmp 1b
 9:  EPILOGUE
 
-# ext_by_name(ptr, len) -> EXT* or 0: "name" or "owner/name"
+# ext_by_name(ptr, len) -> EXT* or 0: a unique "name" or qualified "owner/name".
 FN ext_by_name
-    PROLOGUE
+    PROLOGUE 16
     mov r12, rdi
     mov r13, rsi
+    lea rdx, [rip + .Lqualified_slash]
+    mov ecx, 1
+    call str_find
+    mov [rsp], rax
+    test rax, rax
+    js 0f
+    lea r12, [r12 + rax + 1]
+    sub r13, rax
+    dec r13
+0:  xor r15d, r15d
     xor r14d, r14d
 1:  cmp r14, [rip + g_exts + VEC_len]
-    jae 8f
+    jae 9f
     imul rbx, r14, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r14
-    cmp dword ptr [rbx + EXT_status], ES_REMOVED
-    je 1b
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 1b
     mov rdi, r12
     mov rsi, r13
     mov rdx, [rbx + EXT_name]
     call str_eq_cstr
     test eax, eax
-    jnz 9f
-    # owner/name
-    lea rdi, [rip + tmp]
-    call sb_clear
-    lea rdi, [rip + tmp]
-    mov rsi, [rbx + EXT_owner]
-    call sb_push_cstr
-    lea rdi, [rip + tmp]
-    mov esi, '/'
-    call sb_push_byte
-    lea rdi, [rip + tmp]
-    mov rsi, [rbx + EXT_name]
-    call sb_push_cstr
+    jz 1b
+    mov rcx, [rsp]
+    test rcx, rcx
+    js 2f
     mov rdi, r12
-    mov rsi, r13
-    mov rdx, [rip + tmp + SB_ptr]
+    sub rdi, rcx
+    dec rdi
+    mov rsi, rcx
+    mov rdx, [rbx + EXT_owner]
     call str_eq_cstr
     test eax, eax
-    jnz 9f
+    jz 1b
+2:  test r15, r15
+    jnz 8f
+    mov r15, rbx
     jmp 1b
-8:  xor ebx, ebx
-9:  mov rax, rbx
+8:  xor r15d, r15d
+9:  mov rax, r15
     EPILOGUE
 
 .data
@@ -4068,12 +5626,13 @@ cur_start: .quad 0              # the EXT being started (env_add_state)
 .p2align 3
 state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled, .Lst_removed
 pv_more: .quad EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename
-    .quad EXT_pv_format, 0
+    .quad EXT_pv_format, EXT_pv_save_actions, 0
 pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig
     .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
     .quad .Lpv_symbols, EXT_pv_symbols, .Lpv_actions, EXT_pv_actions
-    .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format, 0, 0
+    .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format
+    .quad .Lpv_save_actions, EXT_pv_save_actions, 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -4144,6 +5703,9 @@ ext_target: .asciz "linux-x86_64"
 .Ldashdash: .asciz "--"
 .Lempty: .asciz ""
 .Lone: .asciz "1"
+.Lprotocol_max: .asciz "1.1"
+.Lqualified_slash: .asciz "/"
+.Lqualified_dot: .asciz "."
 .Lno: .asciz "no"
 .Lyes: .asciz "yes"
 .Lread: .asciz "read"
@@ -4173,6 +5735,7 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_actions: .asciz "actions"
 .Lpv_rename: .asciz "rename"
 .Lpv_format: .asciz "format"
+.Lpv_save_actions: .asciz "save_actions"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"
@@ -4275,6 +5838,7 @@ ext_target: .asciz "linux-x86_64"
 .Le_state_eq: .asciz "RHUN_STATE="
 .Le_project_eq: .asciz "RHUN_PROJECT="
 .Lr_no_manifest: .asciz "no extension.ini"
+.Lr_manifest_large: .asciz "extension.ini exceeds 64 KiB"
 .Lr_no_title: .asciz "extension.ini has no title"
 .Lr_no_protocol: .asciz "extension.ini has no protocol"
 .Lr_protocol: .asciz "protocol version not supported (rhun speaks 1)"
@@ -4354,3 +5918,58 @@ ext_target: .asciz "linux-x86_64"
 .Ld_warnings: .asciz " warnings"
 .Ld_warning: .asciz " warning"
 .Ld_comma: .asciz ", "
+
+.include "app/extvalidateparse.inc"
+
+.section .rodata
+.Lkp_empty: .asciz ""
+.Lkp_preparing: .asciz "preparing a protected extension host"
+.Lkp_wait_verified: .asciz "waiting for verified extension metadata and lifetime protection"
+.Lkp_context_changed: .asciz "extension activation context changed; reload required"
+.Lkp_process_failed: .asciz "extension process supervisor failed"
+.Lkp_confinement_unavailable: .asciz "native permission confinement is unavailable on this system"
+.text
+
+# Pure current command boundary, also used by pending identity resolution.
+FN ext_cmd_manifest_count
+    mov rax, [rip + ext_manifest_cmds]
+    ret
+
+FN ext_legacy_start
+    PROLOGUE
+    mov rbx, rdi
+    cmp qword ptr [rip + ext_pending_shutting_down], 0
+    jne .Lpn_start_closed
+    call ext_legacy_start_impl
+    mov r12, rax
+    mov rdi, rbx
+    call ext_pending_reconcile
+    mov rax, r12
+    EPILOGUE
+
+FN ext_supervised_start
+    PROLOGUE
+    mov rbx, rdi
+    cmp qword ptr [rip + ext_pending_shutting_down], 0
+    jne .Lpn_start_closed
+    call ext_supervised_start_impl
+    mov r12, rax
+    mov rdi, rbx
+    call ext_pending_reconcile
+    mov rax, r12
+    EPILOGUE
+.Lpn_start_closed:
+    mov rdi, rbx
+    call ext_pending_clear
+    mov rax, -32
+    EPILOGUE
+
+.section .rodata
+.Lpc_queue_failed: .asciz "Could not queue the extension command"
+.Lpc_send_failed: .asciz "The extension command could not be sent. Try again."
+
+.section .rodata
+.Lr_launch_memory: .asciz "cannot allocate extension launch inputs"
+
+.section .rodata
+.Lkp_setup_failed: .asciz "extension process setup failed"

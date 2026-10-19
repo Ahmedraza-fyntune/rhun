@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--wine', metavar='WINE64')
+parser.add_argument('--metadata-prebuilt', type=Path, help='complete prebuilt metadata matrix artifact')
+parser.add_argument('--catalog-prebuilt', type=Path, help='complete prebuilt registry matrix artifact')
 args = parser.parse_args()
 if os.name != 'nt' and not args.wine:
     parser.error('run on Windows, or supply --wine for the compatibility checks')
@@ -88,10 +90,331 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             env['XDG_CONFIG_HOME'] = winpath(ROOT / 'tests/data/config')
         if name == 'config':
             env['XDG_CONFIG_HOME'] = winpath(ROOT / 'tests/data/config-reload')
+        if name == 'ext-settings-target':
+            env['XDG_CONFIG_HOME'] = winpath(ROOT / 'tests/data/ext-settings-target')
         equal(run(exe + '.exe', *arguments, env=env).stdout,
               (ROOT / 'tests/data' / (name + '.expected')).read_bytes())
 
-    for name, exe in [('cpu', 'cpu'), ('doc', 'doc'), ('syntax', 'syntax'), ('themes', 'theme'),
+    check('installer-unicode', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/installer-unicode.py')], check=True))
+    check('ext-settings-target', lambda: golden('ext-settings-target', 'ext_settings_target_test'))
+    check('ext-index', lambda: golden('ext-index', 'ext_index_test'))
+    check('ext-enqueue', lambda: golden('ext-enqueue', 'ext_enqueue_test'))
+    check('ext-settings-queue', lambda: golden('ext-settings-queue', 'ext_settingsqueue_test'))
+    check('ext-settings-ack', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-ack.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-settings-queue-hash', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-queue-hash.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    for driver in ('ext-enqueue', 'ext-flush', 'ext-settings-queue', 'ext-settings-wire'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--faults'] if driver == 'ext-enqueue' else []),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+    for driver in ('ext-pending-commands', 'ext-pending-owner', 'ext-runtime-owner'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+    for driver, extra in [('command-generation', []), ('command-generation-owner', ['--negative-controls']),
+                          ('command-generation-build', ['--negative-controls']),
+                          ('command-generation-defaults', ['--negative-controls']), ('command-generation-defaults', ['--limits']),
+                          ('keyline-snapshot', ['--negative-controls']), ('command-key-copy', ['--negative-controls'])]:
+        check(driver, lambda driver=driver, extra=extra: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')), *extra,
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+    for driver, extra in [('ext-launch-scratch', ['--negative-controls']),
+                          ('ext-launch-scratch', ['--optional-environment', '--negative-controls']),
+                          ('ext-launch-scratch-unit', ['--negative-controls']),
+                          ('ext-launch-scratch-faults', [])]:
+        check(driver + ('-optional' if '--optional-environment' in extra else ''),
+              lambda driver=driver, extra=extra: subprocess.run(
+                  [sys.executable, str(ROOT / ('tests/' + driver + '.py')), *extra,
+                   *(['--wine', args.wine] if args.wine else [])], check=True))
+    def metadata_platform_gate():
+        command = [sys.executable, str(ROOT / 'tests/metadata-platform-gates.py')]
+        wine_arguments = ['--wine', args.wine, '--wine-drive-root',
+                          str(Path(os.environ.get('WINEPREFIX', str(Path.home() / '.wine'))) / 'drive_c')] if args.wine else []
+        if args.metadata_prebuilt:
+            subprocess.run([*command, '--prebuilt', str(args.metadata_prebuilt), *wine_arguments], check=True)
+        elif args.wine:
+            with tempfile.TemporaryDirectory(prefix='rhun-metadata-platform-') as folder:
+                subprocess.run([*command, '--build-only', folder], check=True)
+                subprocess.run([*command, '--prebuilt', folder, *wine_arguments], check=True)
+        else:
+            subprocess.run(command, check=True)
+    check('metadata-platform', metadata_platform_gate)
+    for driver, artifact, single in [('catalog-foundation-faults', 'foundation', False),
+                                     ('catalog-map-faults', 'map', False),
+                                     ('catalog-merge-faults', 'merge', False),
+                                     ('catalog-limits', 'limits.exe', True),
+                                     ('catalog-admission-faults', 'admission', False),
+                                     ('catalog-retire', 'retire', False),
+                                     ('catalog-capacity', 'capacity', False)]:
+        def catalog_gate(driver=driver, artifact=artifact, single=single):
+            command = [sys.executable, str(ROOT / ('tests/' + driver + '.py'))]
+            wine_arguments = ['--wine', args.wine] if args.wine else []
+            if args.catalog_prebuilt:
+                subprocess.run([*command, '--exe' if single else '--prebuilt',
+                                str(args.catalog_prebuilt / artifact), *wine_arguments], check=True)
+            elif args.wine:
+                with tempfile.TemporaryDirectory(prefix='rhun-catalog-platform-') as folder:
+                    target = Path(folder) / artifact
+                    subprocess.run([*command, '--windows', '--build-only', str(target)], check=True)
+                    subprocess.run([*command, '--exe' if single else '--prebuilt',
+                                    str(target), *wine_arguments], check=True)
+            else:
+                # Each driver chooses windows=True on native Windows, with no GNU-as path.
+                subprocess.run(command, check=True)
+        check(driver, catalog_gate)
+    check('ext-keeper-host', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-keeper-host.py'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('key-combo', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/key-combo.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-events', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-events.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('windows-nonblock', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/windows-nonblock.py'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('doc-language', lambda: golden('doc-language', 'doc_language_test'))
+    check('doc-language-choice', lambda: golden('doc-language-choice', 'doc_language_choice_test'))
+    check('file-read-limited', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/file-read-limited.py'),
+         '--exe', str(OUT / 'file_read_limited_test.exe'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('sha256', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/sha256.py'),
+         '--exe', str(OUT / 'sha256_test.exe'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    rooted_arguments = ['--wine', args.wine, '--wine-drive-root',
+                        str(Path(os.environ.get('WINEPREFIX', str(Path.home() / '.wine'))) / 'drive_c')] if args.wine else []
+    check('ext-root', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-root.py'), '--exe', str(OUT / 'ext_root_test.exe'),
+         *rooted_arguments], check=True))
+    check('ext-store', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-store.py'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    for driver in ('ext-store-read', 'ext-store-guards', 'ext-store-write', 'ext-store-faults', 'ext-store-job', 'ext-store-job-faults', 'ext-store-job-legacy', 'ext-store-job-legacy-real', 'ext-store-job-legacy-faults', 'ext-store-job-legacy-native-faults', 'ext-store-job-legacy-context-faults', 'ext-store-job-legacy-stream-faults', 'ext-discovery', 'ext-discovery-faults', 'native-cleanup', 'native-cleanup-launch', 'native-cleanup-start', 'native-cleanup-unpack-job'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')), *rooted_arguments], check=True))
+    def settings_snapshot_gate():
+        command = [sys.executable, str(ROOT / 'tests/ext-settings-snapshot.py')]
+        if args.wine:
+            fixture = OUT / 'settings-snapshot-gate.exe'
+            subprocess.run([*command, '--build-only', '--exe', str(fixture)], check=True)
+            command += ['--exe', str(fixture), '--wine', args.wine]
+        subprocess.run(command, check=True)
+    check('ext-settings-snapshot', settings_snapshot_gate)
+    check('ext-settings-request', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-request.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    for driver in ('ext-settings-service', 'ext-settings-service-source'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+    def settings_service_worker_gate():
+        command = [sys.executable, str(ROOT / 'tests/ext-settings-service-worker.py')]
+        if not args.wine:
+            subprocess.run(command, check=True)
+            subprocess.run([*command, '--negative-controls'], check=True)
+            return
+        drive = Path(os.environ.get('WINEPREFIX', str(Path.home() / '.wine'))) / 'drive_c'
+        with tempfile.TemporaryDirectory(prefix='rhun-svc-', dir=drive) as native:
+            native = Path(native)
+            for mutation in (None, 'finish-cadence', 'read-abort', 'postcommit-retry',
+                             'read-close-expiry', 'read-close-eligibility'):
+                extra = ['--mutation', mutation] if mutation else []
+                name = 'service-worker-' + (mutation or 'baseline') + '.exe'
+                fixture = OUT / name
+                subprocess.run([*command, *extra, '--build-only', '--exe', str(fixture)], check=True)
+                shutil.copyfile(fixture, native / name)
+                subprocess.run([*command, *extra, '--exe', 'C:/' + native.name + '/' + name,
+                                '--wine', args.wine, '--temp-root', str(native),
+                                '--virtual-root', 'C:/' + native.name], check=True)
+    check('ext-settings-service-worker', settings_service_worker_gate)
+    def settings_adoption_gate(driver, mutations):
+        command = [sys.executable, str(ROOT / ('tests/' + driver + '.py'))]
+        if not args.wine:
+            subprocess.run(command, check=True)
+            if mutations:
+                subprocess.run([*command, '--negative-controls'], check=True)
+            return
+        drive = Path(os.environ.get('WINEPREFIX', str(Path.home() / '.wine'))) / 'drive_c'
+        with tempfile.TemporaryDirectory(prefix='rhun-sap-', dir=drive) as native:
+            native = Path(native)
+            for mutation in (None, *mutations):
+                extra = ['--mutation', mutation] if mutation else []
+                name = driver + '-' + (mutation or 'baseline') + '.exe'
+                fixture = OUT / name
+                subprocess.run([*command, *extra, '--build-only', '--exe', str(fixture)], check=True)
+                shutil.copyfile(fixture, native / name)
+                subprocess.run([*command, *extra, '--exe', 'C:/' + native.name + '/' + name,
+                                '--wine', args.wine, '--temp-root', str(native),
+                                '--virtual-root', 'C:/' + native.name], check=True)
+    for driver, mutations in (
+        ('ext-settings-service-initial', ('replacement-epoch', 'source-token', 'future-source', 'source-overflow', 'pure-publication')),
+        ('ext-settings-adoption-empty', ('ack-missing', 'source-missing', 'ticket-missing', 'gc-one', 'pure-publication', 'ack-newer')),
+        ('ext-settings-adoption-unchanged', ('unchanged-epoch', 'source-swap')),
+        ('ext-settings-adoption-sparse', ()),
+        ('ext-settings-adoption-max', ()),
+        ('ext-settings-adoption-service', ('unusable-grant', 'ready-ack', 'cancel-grant', 'stale-bound', 'debt-phase', 'debt-refs')),
+        ('ext-settings-adoption-read', ('allocation-sticky', 'serial-atomic', 'retire-first')),
+        ('ext-settings-adoption-native', ('oldmodel-release', 'retired-charge', 'early-charge')),
+        ('ext-settings-adoption-constructor', ('svc-retain', 'model-retain', 'source-retain', 'source-overflow', 'gc-one')),
+    ):
+        check(driver, lambda driver=driver, mutations=mutations:
+              settings_adoption_gate(driver, mutations))
+    check('ext-settings-view', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-view.py'), '--faults', '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-settings-catalog', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-catalog.py'), '--faults', '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-settings-active', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-active.py'), '--faults', '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-settings-editor', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-editor.py'), '--real-metadata', '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-settings-prompt', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-prompt.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-settings-effective', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-effective.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-settings-release', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-release.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-settings-retire', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-settings-retire.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    for settings_kind in ('job', 'memory', 'receipts', 'faults', 'pipe'):
+        def settings_job_gate(kind=settings_kind):
+            command = [sys.executable, str(ROOT / 'tests/ext-settings-job.py'), '--kind', kind]
+            if args.wine:
+                fixture = OUT / ('settings-parent-' + kind + '.exe')
+                subprocess.run([*command, '--build-only', '--exe', str(fixture)], check=True)
+                drive = Path(os.environ.get('WINEPREFIX', str(Path.home() / '.wine'))) / 'drive_c'
+                command += ['--exe', str(fixture), '--wine', args.wine,
+                            '--temp-root', str(drive), '--virtual-root', 'C:/']
+            subprocess.run(command, check=True)
+        check('ext-settings-job-' + settings_kind, settings_job_gate)
+    for driver in ('theme-capture', 'theme-capture-build', 'theme-capture-cleanup', 'theme-capture-faults', 'theme-capture-file-cleanup', 'theme-capture-file-faults', 'theme-capture-files', 'theme-capture-job', 'theme-capture-omarchy', 'theme-capture-omarchy-faults', 'theme-capture-omarchy-files', 'theme-capture-proof-faults', 'theme-capture-proof-mutations', 'theme-capture-startup', 'theme-capture-worker'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')), *rooted_arguments], check=True))
+    for driver in ('theme-capture-candidate', 'theme-capture-candidate-purity', 'theme-capture-job-faults', 'theme-capture-job-owners', 'theme-capture-native', 'theme-capture-native-poison', 'theme-capture-result', 'theme-capture-result-decode', 'theme-capture-result-faults', 'theme-capture-startup-faults', 'theme-capture-timeout', 'theme-intent', 'theme-intent-faults', 'theme-intent-migration', 'theme-intent-migration-faults', 'theme-intent-reduce', 'theme-intent-reduce-faults'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('theme-capture-native-negative', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/theme-capture-native-poison.py'), '--negative-control',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    for driver in ('ext-settings-native', 'ext-settings-native-faults'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-validate', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-validate.py'), '--exe', str(OUT / 'ext_validate_test.exe'),
+         '--helper', str(OUT / 'rhun.exe'), '--resource', *rooted_arguments], check=True))
+    check('ext-validate-faults', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-validate-faults.py'), *rooted_arguments], check=True))
+    check('ext-prepare', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-prepare.py'), '--exe', str(OUT / 'ext_prepare_owner_test.exe'),
+         '--grammar-exe', str(OUT / 'grammar_prepare_test.exe'),
+         '--theme-exe', str(OUT / 'theme_prepare_test.exe'), *rooted_arguments], check=True))
+    check('ext-prepare-products', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-prepare-products.py'), '--exe', str(OUT / 'ext_prepare_test.exe'),
+         '--probe', str(OUT / 'ext_validate_probe_test.exe'), *rooted_arguments], check=True))
+    def host_native_gate():
+        faults = temp / 'host-native-faults'
+        subprocess.run([sys.executable, str(ROOT / 'tests/faults/ext_host_native_build.py'),
+                        '--windows', '--out', str(faults)], check=True)
+        subprocess.run([sys.executable, str(ROOT / 'tests/ext-host-native.py'), '--dir', str(OUT),
+                        '--fault-exe', str(faults / 'host-native-fault.exe'),
+                        *(['--wine', args.wine] if args.wine else [])], check=True)
+    check('ext-host-native', host_native_gate)
+    check('ext-activation-owner', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-activation-owner.py'), '--dir', str(OUT),
+         *rooted_arguments], check=True))
+    check('ext-int31', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-int31.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-prepare-retire', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-prepare-retire.py'), '--dir', str(OUT), *rooted_arguments], check=True))
+    check('custom-retire-capacity', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/custom-retire-capacity.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-legacy-parsers', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-legacy-parsers.py'), '--dir', str(OUT), *rooted_arguments], check=True))
+    check('ext-prepare-legacy', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-prepare-legacy.py'), '--exe', str(OUT / 'ext_prepare_legacy_test.exe'),
+         '--probe', str(OUT / 'ext_validate_probe_test.exe'), *rooted_arguments], check=True))
+    check('ext-legacy-snapshot', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-legacy-snapshot.py'), '--producer', str(OUT / 'ext_legacy_snapshot_test.exe'),
+         '--importer', str(OUT / 'ext_prepare_legacy_import_test.exe'),
+         '--probe', str(OUT / 'ext_validate_probe_test.exe'), *rooted_arguments], check=True))
+    check('ext-legacy-faults', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-legacy-faults.py'), '--probe', str(OUT / 'ext_validate_probe_test.exe'),
+         *rooted_arguments], check=True))
+    check('ext-validate-wire', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-validate-wire.py'), '--exe', str(OUT / 'ext_validate_wire_test.exe'),
+         '--helper', str(OUT / 'rhun.exe'), *rooted_arguments], check=True))
+    check('ext-prepare-faults', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-prepare-faults.py'), '--probe', str(OUT / 'ext_validate_probe_test.exe'),
+         *rooted_arguments], check=True))
+    check('ext-choices-disk', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-choices-disk.py'), *rooted_arguments], check=True))
+    check('extension-keeper', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/extension-keeper.py'),
+         *(['--wine', args.wine, '--drive', str(Path(os.environ.get('WINEPREFIX', str(Path.home() / '.wine'))) / 'drive_c')] if args.wine else [])], check=True))
+    check('task-keeper', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/task-keeper.py'), '--exe', str(OUT / 'task_keeper_test.exe'), '--extensions', '--faults',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    for driver in ('keeper-cleanup', 'keeper-cleanup-launch', 'keeper-cleanup-terminal',
+                   'keeper-cleanup-status', 'keeper-cleanup-cancel', 'keeper-cleanup-active',
+                   'keeper-cleanup-backend', 'keeper-cleanup-win-producers'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('keeper-cleanup-live', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/keeper-cleanup-live.py'), *rooted_arguments], check=True))
+    if not args.wine:
+        check('ext-settings-worker', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/ext-settings-worker.py'), '--deadlines'], check=True))
+        check('ext-settings-worker-faults', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/ext-settings-worker.py'), '--faults'], check=True))
+        check('mem-try', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/mem-try.py')], check=True))
+        check('mem-uninit', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/mem-uninit.py'), '--negative-controls'], check=True))
+        check('discovery-alloc', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/discovery-alloc.py'), '--negative-controls'], check=True))
+        check('discovery-gp', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/discovery-gp.py'), '--controls'], check=True))
+        check('discovery-gp-transfer', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/discovery-gp-transfer.py'), '--controls'], check=True))
+        check('runtime-service-table', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-service-table.py'), '--all'], check=True))
+        check('runtime-service-session', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-service-session.py'), '--negative-controls'], check=True))
+        check('runtime-channel', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-channel.py'), '--negative-controls'], check=True))
+        check('runtime-channel-native', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-channel-native.py'), '--negative-controls'], check=True))
+        check('runtime-channel-compact', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-channel-compact.py'), '--negative-controls'], check=True))
+        check('runtime-ticket', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-ticket.py'), '--negative-controls'], check=True))
+        check('runtime-admission', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-admission.py'), '--negative-controls'], check=True))
+        check('runtime-reply', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-reply.py'), '--negative-controls'], check=True))
+        check('runtime-reply-native', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-reply-native.py'), '--negative-controls'], check=True))
+        check('runtime-remove', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-remove.py'), '--negative-controls'], check=True))
+        check('runtime-debt-timer', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-debt-timer.py'), '--negative-controls'], check=True))
+        check('runtime-session-clock', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/runtime-session-clock.py'), '--negative-controls'], check=True))
+        check('ext-activation-eo-audit', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/ext-activation-eo-audit.py'), '--negative-controls'], check=True))
+        check('mem-helpers', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/mem-helpers.py')], check=True))
+        check('file-read-try', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/file-read-try.py')], check=True))
+        check('file-ops', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/file-ops.py')], check=True))
+        check('dir-scan', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/dir-scan.py')], check=True))
+    check('windows-package', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/windows-package.py')], check=True))
+    for driver in ('task-core', 'task-view', 'task-clipboard', 'ext-watch-native', 'ext-choices'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--faults'] if driver in ('task-core', 'task-view', 'ext-choices') else []),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+
+    for name, exe in [('ext-send', 'ext_send'), ('cpu', 'cpu'), ('doc', 'doc'), ('doc-selections', 'doc_selections'), ('doc-multi-edit', 'doc_multi_edit'), ('doc-batch', 'doc_batch'), ('doc-batch-guard', 'doc_batch_guard'), ('editor-multi-type', 'editor_multi_type'), ('editor-multi-newline', 'editor_multi_newline'), ('editor-multi-delete', 'editor_multi_delete'), ('editor-multi-tab', 'editor_multi_tab'), ('clipboard-write', 'clipboard_write'), ('clipboard-wire', 'clipboard_wire'), ('clipboard-metadata', 'clipboard_metadata'), ('clipboard-context', 'clipboard_context'), ('clipboard-paste-queue', 'clipboard_paste_queue'), ('editor-clipboard', 'editor_clipboard'), ('editor-paste', 'editor_paste'), ('snippet', 'snippet'), ('snippet-choice', 'snippet_choice'), ('snippet-unicode', 'snippet_unicode'), ('snippet-regex', 'snippet_regex'), ('snippet-regex-state', 'snippet_regex_state'), ('snippet-regex-scope', 'snippet_regex_scope'), ('snippet-regex-match', 'snippet_regex_match'), ('snippet-regex-limits', 'snippet_regex_limits'), ('snippet-replacement', 'snippet_replacement'), ('snippet-case', 'snippet_case'), ('snippet-case-api', 'snippet_case_api'), ('snippet-transform', 'snippet_transform'), ('snippet-transform-api', 'snippet_transform_api'), ('snippet-transform-indent', 'snippet_transform_indent'), ('snippet-transform-payload', 'snippet_transform_payload'), ('snippet-indent-capture', 'snippet_indent_capture'), ('snippet-transform-leave', 'snippet_transform_leave'), ('snippet-base64', 'snippet_base64'), ('syntax', 'syntax'), ('themes', 'theme'),
                       ('term', 'term'), ('diff', 'diff'), ('cols', 'cols'), ('config', 'config'),
                       ('textarea', 'textarea'), ('ui-clip', 'ui_clip'), ('fill', 'fill'), ('memmove', 'memmove'), ('keys', 'keys'),
                       ('config-strings', 'config_strings')]:
@@ -112,6 +435,10 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                                   b'rhun ' + (ROOT / 'VERSION').read_bytes().strip() + b'\n'))
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
     check('input/wheel-and-touchpad-steps', lambda: run('wheel_test.exe'))
+    check('clipboard/bounded-read', lambda: golden('windows-clipboard-read', 'clipboard_read_test'))
+    if not args.wine or os.environ.get('DISPLAY'):
+        check('clipboard/native-metadata', lambda: golden('windows-clipboard-metadata', 'clipboard_native_metadata_test'))
+        check('clipboard/owner-reentry', lambda: run('clipboard_reentry_test.exe'))
     if not args.wine:
         # Wine's MapVirtualKeyW gives VK_NUMPAD0 no character
         check('input/keypad-zoom', lambda: run('keypad_test.exe'))
@@ -120,6 +447,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             [sys.executable, str(ROOT / 'tests/windows-longpaths.py')], check=True))
         check('clipboard/contention-copy-and-paste', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
+        check('clipboard/native-failures', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/windows-clipboard-faults.py')], check=True))
         for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity',
                      'file-launch', 'readonly-save', 'field-blink', 'window-focus',
                      'new-tab', 'tab-view', 'tab-drag', 'tab-pin', 'settings-search'):
@@ -155,7 +484,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
         # extensions: the host with the Python test extension, the title bar and page with installs
         # from a local release tree, and the showcase installed from GitHub (its Windows build)
-        for name in ('ext-host', 'ext-ui', 'ext-showcase'):
+        for name in ('save', 'save-actions', 'snippets', 'snippet-choices', 'snippet-variants', 'snippet-transforms', 'snippet-final', 'snippet-context', 'ext-host', 'ext-commands', 'ext-snapshots', 'ext-providers', 'ext-language', 'ext-scheduling', 'ext-watch', 'ext-boundaries', 'ext-ui', 'ext-showcase'):
             check('extensions/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))

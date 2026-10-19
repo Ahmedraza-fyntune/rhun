@@ -28,7 +28,7 @@ if ([Environment]::OSVersion.Version.Build -lt 17763) {
     throw 'rhun requires Windows 10 version 1809 or later.'
 }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\', '/')
-$knownFiles = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1', '.rhun-install')
+$knownFiles = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1', 'LICENSE-Unicode.txt', '.rhun-install')
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'rhun.lnk'
 
 if ($MakeDefault -and ($NoMakeDefault -or $NoFileAssociations)) { throw 'Conflicting default editor options.' }
@@ -321,6 +321,10 @@ if ($ApplyUpdate) {
     $receipt = Get-Content -LiteralPath (Join-Path $UpdateStage 'update.json') -Raw | ConvertFrom-Json
     if ($receipt.target -ine $InstallDir -or $receipt.version -cne $Version) { throw 'Invalid staged update.' }
     $files = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1')
+    $noticePresent = Test-Path -LiteralPath (Join-Path $UpdateStage 'LICENSE-Unicode.txt') -PathType Leaf
+    $noticeRecorded = $receipt.hashes.PSObject.Properties.Name -contains 'LICENSE-Unicode.txt'
+    if ($noticePresent -ne $noticeRecorded) { throw 'The staged Unicode notice and checksum receipt disagree.' }
+    if ($noticePresent) { $files += 'LICENSE-Unicode.txt' }
     foreach ($name in $files) {
         $destination = Join-Path $InstallDir $name
         if (Test-Path -LiteralPath $destination) {
@@ -499,8 +503,13 @@ try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($archive)
     try {
-        # Extract only the four known files to explicit destinations, never archive-supplied paths.
-        foreach ($name in @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1')) {
+        # Extract known files to explicit destinations, never archive-supplied paths.
+        # The separate Unicode notice is optional for archives from older releases.
+        $releaseFiles = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1')
+        $notices = @($zip.Entries | Where-Object { $_.FullName -ceq "rhun-$Version/LICENSE-Unicode.txt" })
+        if ($notices.Count -gt 1) { throw 'The archive contains duplicate Unicode notices.' }
+        if ($notices.Count -eq 1) { $releaseFiles += 'LICENSE-Unicode.txt' }
+        foreach ($name in $releaseFiles) {
             $entries = @($zip.Entries | Where-Object { $_.FullName -ceq "rhun-$Version/$name" })
             if ($entries.Count -ne 1) { throw "The archive must contain exactly one $name." }
             [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], (Join-Path $stage $name), $false)
@@ -510,7 +519,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $reported -cne "rhun $Version") { throw 'The staged executable has the wrong version.' }
     if ($PrepareUpdate) {
         $hashes = @{}
-        foreach ($name in @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1')) {
+        foreach ($name in $releaseFiles) {
             $hashes[$name] = File-Sha256 (Join-Path $stage $name)
         }
         @{ target = $InstallDir; version = $Version; hashes = $hashes } | ConvertTo-Json |

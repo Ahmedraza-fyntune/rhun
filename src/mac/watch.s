@@ -70,6 +70,7 @@ FN sys_inotify_add_watch
     mov x23, x0
     // the same directory is the same watch, however it is spelled
     mov x20, #0
+    mov x26, #-1
     ADR x21, watches
     ADR x9, nwatch
     ldr w22, [x9]
@@ -78,15 +79,21 @@ FN sys_inotify_add_watch
     mov x9, #W_SIZE
     madd x9, x9, x20, x21
     ldr x0, [x9, #W_real]
-    mov x1, x23
+    cbnz x0, 11f
+    cmp x26, #-1
+    csel x26, x20, x26, eq
+    b 12f
+11: mov x1, x23
     bl _strcmp
     cbz w0, 3f
-    add x20, x20, #1
+12: add x20, x20, #1
     b 1b
 3:  mov x0, x23
     bl _free
     b 7f
-2:  cmp w22, #MAXW
+2:  cmp x26, #-1
+    csel x26, x22, x26, eq
+    cmp w26, #MAXW
     b.hs 6f
     mov x0, x23
     bl _strlen
@@ -96,17 +103,19 @@ FN sys_inotify_add_watch
     mov x25, x0
     LOCK
     mov x9, #W_SIZE
-    madd x9, x9, x22, x21
+    madd x9, x9, x26, x21
     str x25, [x9, #W_path]
     str x23, [x9, #W_real]
     str x24, [x9, #W_len]
+    cmp x26, x22
+    b.lo 21f
     add w22, w22, #1
     ADR x9, nwatch
     str w22, [x9]
+21:
     UNLOCK
     bl restart
-    mov x20, x22
-    sub x20, x20, #1
+    mov x20, x26
 7:  add x0, x20, #1
     b 9f
 5:  mov x0, #-1
@@ -119,7 +128,32 @@ FN sys_inotify_add_watch
     ret
 
 FN sys_inotify_rm_watch
+    ENTER 16
+    sub x19, x1, #1
+    ADR x9, nwatch
+    ldr w20, [x9]
+    cmp x19, x20
+    b.hs 8f
+    ADR x21, watches
+    mov x9, #W_SIZE
+    madd x21, x9, x19, x21
+    LOCK
+    ldr x22, [x21, #W_path]
+    ldr x23, [x21, #W_real]
+    str xzr, [x21, #W_path]
+    str xzr, [x21, #W_real]
+    str xzr, [x21, #W_len]
+    UNLOCK
+    cbz x23, 8f
+    mov x0, x22
+    bl _free
+    mov x0, x23
+    bl _free
+    bl restart
     mov x0, #0
+    b 9f
+8:  mov x0, #-22
+9:  LEAVE
     ret
 
 // restart(): a stream over every watched directory
@@ -158,6 +192,7 @@ restart:
     mov x9, #W_SIZE
     madd x9, x9, x23, x21
     ldr x1, [x9, #W_real]
+    cbz x1, 21f
     mov x0, #0
     mov w2, #0x0100             // kCFStringEncodingUTF8 is 0x08000100
     movk w2, #0x0800, lsl #16
@@ -168,7 +203,7 @@ restart:
     bl _CFArrayAppendValue
     mov x0, x24
     bl _CFRelease
-    add x23, x23, #1
+21: add x23, x23, #1
     b 2b
 3:  mov x0, #0
     ADR x1, on_events
@@ -284,6 +319,7 @@ lookup:
     mov x10, #W_SIZE
     madd x23, x10, x22, x9
     ldr x10, [x23, #W_len]
+    cbz x10, 3f
     cmp x10, x20
     b.ne 3f
     ldr x0, [x23, #W_real]

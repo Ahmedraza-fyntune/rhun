@@ -62,8 +62,10 @@ FN extbar_buttons
     imul rbx, r14, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r14
-    cmp dword ptr [rbx + EXT_status], ES_REMOVED
-    je 2b
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 2b
     cmp dword ptr [rbx + EXT_pinned], 0
     je 2b
     sub r12d, [rsp + 4]
@@ -107,20 +109,24 @@ FN extbar_buttons
 
 # extbar_count() -> how many buttons extbar_buttons draws: the puzzle and each pinned extension
 FN extbar_count
-    mov eax, 1
-    xor ecx, ecx
-1:  cmp rcx, [rip + g_exts + VEC_len]
+    PROLOGUE
+    mov r12d, 1
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_exts + VEC_len]
     jae 9f
-    imul rdx, rcx, EXT_SIZE
-    add rdx, [rip + g_exts + VEC_ptr]
-    inc rcx
-    cmp dword ptr [rdx + EXT_status], ES_REMOVED
+    imul r13, rbx, EXT_SIZE
+    add r13, [rip + g_exts + VEC_ptr]
+    inc rbx
+    mov rdi, r13
+    call ext_has_identity
+    test eax, eax
+    jz 1b
+    cmp dword ptr [r13 + EXT_pinned], 0
     je 1b
-    cmp dword ptr [rdx + EXT_pinned], 0
-    je 1b
-    inc eax
+    inc r12d
     jmp 1b
-9:  ret
+9:  mov eax, r12d
+    EPILOGUE
 
 # extbar_toggle(): the dropdown opens, or closes
 FN extbar_toggle
@@ -166,14 +172,15 @@ FN extbar_draw
     mov r12d, eax               # w
     M ebx, MI_32                # a row's height
     xor r13d, r13d              # rows
-    xor ecx, ecx
-1:  cmp rcx, [rip + g_exts + VEC_len]
+    xor r15d, r15d
+1:  cmp r15, [rip + g_exts + VEC_len]
     jae 2f
-    imul rax, rcx, EXT_SIZE
-    add rax, [rip + g_exts + VEC_ptr]
-    inc rcx
-    cmp dword ptr [rax + EXT_status], ES_REMOVED
-    je 1b
+    imul rdi, r15, EXT_SIZE
+    add rdi, [rip + g_exts + VEC_ptr]
+    inc r15
+    call ext_has_identity
+    test eax, eax
+    jz 1b
     inc r13d
     jmp 1b
 2:  mov [rsp + 40], r13d
@@ -235,8 +242,10 @@ FN extbar_draw
     imul r13, r15, EXT_SIZE
     add r13, [rip + g_exts + VEC_ptr]
     inc r15
-    cmp dword ptr [r13 + EXT_status], ES_REMOVED
-    je 4b
+    mov rdi, r13
+    call ext_has_identity
+    test eax, eax
+    jz 4b
     lea edi, [r15 - 1]
     mov esi, [rsp]
     mov edx, [rsp + 8]
@@ -478,6 +487,13 @@ FN ext_action
     mov rbx, rdi
     mov [rsp], esi
     mov [rsp + 4], edx
+    call ext_has_metadata
+    test eax, eax
+    jnz .Laction_metadata
+    mov rdi, rbx
+    call extpage_show
+    EPILOGUE
+.Laction_metadata:
     mov [rip + xb_ext], rbx
     call extbar_close
     # its commands: manifest ones and registered ones, labels without " (Extension)"
@@ -694,7 +710,10 @@ remove_item:
 # menu_ext() -> rdi the extension the menu was opened for; ZF when it was removed meanwhile
 menu_ext:
     mov rdi, [rip + xb_ext]
-    cmp dword ptr [rdi + EXT_status], ES_REMOVED
+    push rdi
+    call ext_can_act
+    pop rdi
+    test eax, eax
     ret
 
 # copy_name(dst, cstr): the command name into an XB_NAME slot, empty when it does not fit
@@ -734,8 +753,10 @@ FN extbar_dump
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
-    cmp dword ptr [rbx + EXT_status], ES_REMOVED
-    je 2b
+    mov rdi, rbx
+    call ext_has_identity
+    test eax, eax
+    jz 2b
     cmp dword ptr [rbx + EXT_pinned], 0
     je 2b
     test r14d, r14d
@@ -768,3 +789,15 @@ FN extbar_dump
 .Ld_open: .asciz "menu=open\n"
 .Ld_closed: .asciz "menu=closed\n"
 .Ld_pinned: .asciz "pinned="
+
+.text
+FN extbar_catalog_invalidate_pure
+    PROLOGUE
+    mov qword ptr [rip + xb_ext], 0
+    mov dword ptr [rip + xb_open], 0
+    call ctx_menu_list
+    lea rcx, [rip + xb_items]
+    cmp rax, rcx
+    jne 1f
+    call ctx_menu_close
+1:  EPILOGUE

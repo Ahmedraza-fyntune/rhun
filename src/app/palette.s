@@ -12,6 +12,7 @@
 .equ PM_GREP, 7
 .equ PM_BROWSE, 8
 .equ PM_CHOOSE, 9               # an extension's pick list (choose)
+.equ PM_PROVIDERS, 11
 .equ PM_RESULTS, 10             # results from extensions: locations, symbols, code actions (langfeat.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
@@ -29,6 +30,12 @@
 .equ BRW_DIR, 1                 # IT_data of the path browser: a folder
 .equ BRW_HERE, 2                # the "Open <folder>" row
 .equ BRW_NEW, 4                 # and "Open <folder> in a new window" under it
+
+.data
+.p2align 3
+.globl command_catalog_epoch, theme_catalog_epoch
+command_catalog_epoch: .quad 1
+theme_catalog_epoch: .quad 1
 
 STRUCT
 F IT_label, 8
@@ -64,6 +71,8 @@ results: .zero VEC_SIZE
 strings: .zero SB_SIZE          # label storage for file items
 pal_label: .quad 0              # prompt label
 pal_theme_slot: .quad 0         # the theme setting the theme list picks for (theme_slot)
+pal_catalog_epoch: .quad 0
+pal_command_cache_epoch: .quad 0
 pal_path: .zero 4096
 scan_depth: .long 0
 scan_prefix: .zero 4096         # relative dir during scan
@@ -102,10 +111,97 @@ FN palette_field
     lea rax, [rip + pal_tf]
     ret
 
+# Publication calls this before replacing any catalog. No allocation, release or theme IO.
+# Cached shortcut/detail strings own their bytes; invalidating their epoch detaches their use.
+FN palette_close_catalogs_pure
+    mov qword ptr [rip + pal_command_cache_epoch], 0
+    mov eax, [rip + pal_mode]
+    cmp eax, PM_COMMANDS
+    je 1f
+    cmp eax, PM_THEMES
+    je 1f
+    cmp eax, PM_LANGS
+    jne 2f
+1:  jmp .Lpal_detach_borrowers_pure
+2:  ret
+
+# Publication also detaches extension prompts/results, preserving ordinary user prompts.
+FN palette_close_extensions_pure
+    mov qword ptr [rip + pal_command_cache_epoch], 0
+    mov eax, [rip + pal_mode]
+    cmp eax, PM_COMMANDS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_THEMES
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_LANGS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_PROVIDERS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_RESULTS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_CHOOSE
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_PROMPT
+    jne 9f
+    mov eax, [rip + pal_prompt]
+    cmp eax, PROMPT_ASK
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PROMPT_TERM
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PROMPT_EXT_SETTING
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PROMPT_RENAME_SYMBOL
+    je .Lpal_detach_borrowers_pure
+9:  ret
+.Lpal_detach_borrowers_pure:
+    push rax
+    call extpage_prompt_invalidate_pure
+    pop rax
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + pal_prompt], 0
+    mov qword ptr [rip + pal_label], 0
+    mov dword ptr [rip + pal_sel], 0
+    mov dword ptr [rip + pal_scroll], 0
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    mov qword ptr [rip + pal_catalog_epoch], 0
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, [rip + g_focus]
+    cmp eax, FOCUS_PALETTE
+    je pal_return_focus
+    cmp eax, FOCUS_PROMPT
+    je pal_return_focus
+    ret
+
+# Every catalog row consumer checks its epoch before touching borrowed item data.
+pal_catalog_check:
+    mov eax, [rip + pal_mode]
+    cmp eax, PM_LANGS
+    jne 1f
+    mov rax, [rip + syntax_catalog_epoch]
+    jmp 3f
+1:  cmp eax, PM_THEMES
+    jne 2f
+    mov rax, [rip + theme_catalog_epoch]
+    jmp 3f
+2:  cmp eax, PM_COMMANDS
+    jne 4f
+    mov rax, [rip + command_catalog_epoch]
+3:  cmp rax, [rip + pal_catalog_epoch]
+    jne 5f
+4:  mov eax, 1
+    ret
+5:  call palette_close_catalogs_pure
+    xor eax, eax
+    ret
+
 # palette_open(mode)
 palette_open:
     PROLOGUE
     mov ebx, edi
+    call extpage_prompt_invalidate_pure
+    call pal_save_cancel
+    call ext_provider_cancel
     call extproto_prompt_abort  # an extension's prompt that was open is cancelled
     # from the theme list to another list (its shortcut): the settings' theme again, as on closing
     cmp dword ptr [rip + pal_mode], PM_THEMES
@@ -133,14 +229,20 @@ palette_open:
     jmp 8f
 1:  cmp ebx, PM_COMMANDS
     jne 2f
+    mov rax, [rip + command_catalog_epoch]
+    mov [rip + pal_catalog_epoch], rax
     call load_commands
     jmp 8f
 2:  cmp ebx, PM_THEMES
     jne 3f
+    mov rax, [rip + theme_catalog_epoch]
+    mov [rip + pal_catalog_epoch], rax
     call load_themes
     jmp 8f
 3:  cmp ebx, PM_LANGS
     jne 8f
+    mov rax, [rip + syntax_catalog_epoch]
+    mov [rip + pal_catalog_epoch], rax
     call load_langs
 8:  call palette_filter
     # the theme list shows its setting's theme, which need not be the one shown (the light mode's
@@ -153,6 +255,9 @@ palette_open:
 
 FN palette_close
     push rbx
+    call extpage_prompt_invalidate_pure
+    call pal_save_cancel
+    call ext_provider_cancel
     call extproto_prompt_abort
     # themes: the settings' theme again, after a preview or a change of the system's mode
     cmp dword ptr [rip + pal_mode], PM_THEMES
@@ -164,6 +269,16 @@ FN palette_close
     mov dword ptr [rip + g_dirty], 1
     pop rbx
     ret
+
+# Accepting a prompt clears pal_mode before invoking its completion, so this handles only
+# Escape, outside clicks and replacement by another palette.
+pal_save_cancel:
+    cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_SAVE_AS
+    jne 1f
+    jmp app_save_prompt_cancel
+1:  ret
 
 # pal_return_focus(): back to the terminal the palette was opened from, otherwise to the editor,
 # so a command from the palette acts where its shortcut would
@@ -860,6 +975,15 @@ FN palette_results_open
     pop rbx
     ret
 
+FN palette_providers_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_PROVIDERS
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
 FN palette_results_add
     jmp item_add
 
@@ -871,6 +995,25 @@ FN palette_results_close
     jne 1f
     jmp palette_close
 1:  ret
+
+# Close only a palette owned by the provider operation that is being abandoned.
+FN palette_provider_close
+    cmp dword ptr [rip + pal_mode], PM_PROVIDERS
+    je 1f
+    cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 2f
+    cmp dword ptr [rip + pal_prompt], PROMPT_RENAME_SYMBOL
+    jne 2f
+1:  push rbx
+    mov ebx, [rip + g_focus]
+    call palette_close
+    cmp ebx, FOCUS_PALETTE
+    je 3f
+    cmp ebx, FOCUS_PROMPT
+    je 3f
+    mov [rip + g_focus], ebx     # cancellation must not undo a focus change to another component
+3:  pop rbx
+2:  ret
 
 # palette_ext_prompt_open(label cstr, PROMPT_ASK | PROMPT_TERM, text, len): a text prompt with
 # the field preset
@@ -941,6 +1084,24 @@ item_add:   # (label, len, detail, data)
 
 load_commands:
     PROLOGUE
+    mov rax, [rip + command_catalog_epoch]
+    cmp [rip + pal_command_cache_epoch], rax
+    je .Llc_cached
+    call palette_ext_keys_reset
+    xor ebx, ebx
+.Llc_reset:
+    cmp ebx, 256
+    jae .Llc_reset_done
+    lea rax, [rip + keys_cache]
+    mov rdi, [rax + rbx*8]
+    mov qword ptr [rax + rbx*8], 0
+    call mem_free
+    inc ebx
+    jmp .Llc_reset
+.Llc_reset_done:
+    mov rax, [rip + command_catalog_epoch]
+    mov [rip + pal_command_cache_epoch], rax
+.Llc_cached:
     lea rbx, [rip + g_commands]
 1:  mov r12, [rbx + CMD_title]
     test r12, r12
@@ -981,7 +1142,7 @@ load_commands:
     call item_add
 2:  add rbx, CMD_SIZE
     jmp 1b
-9:  # the extensions' commands (no shortcut cache: there are few of them)
+9:  # extension details carry the qualified identity and shortcut; both are cached per command
     xor r14d, r14d
 5:  cmp r14, [rip + g_ext_cmds + VEC_len]
     jae 8f
@@ -1003,15 +1164,27 @@ load_commands:
     mov rax, [rax + r14*8 - 8]
     test rax, rax
     jnz 6f
+    lea rdi, [rip + tmp]
+    call sb_clear
+    mov rdi, rbx
+    lea rsi, [rip + tmp]
+    call ext_cmd_identity
     mov rdi, rbx
     call keys_for
+    mov r15, rax
     test rax, rax
-    jz 6f
-    mov rdi, rax
-    push rax
-    call strlen
-    pop rdi
-    mov rsi, rax
+    jz 61f
+    lea rdi, [rip + tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, r15
+    call sb_push_cstr
+61: mov rdi, [rip + tmp + SB_ptr]
+    mov rsi, [rip + tmp + SB_len]
     call mem_dup
     mov rcx, [rip + ext_keys_cache + VEC_ptr]
     mov [rcx + r14*8 - 8], rax
@@ -1073,6 +1246,11 @@ load_themes:
 
 load_langs:
     PROLOGUE
+    lea rdi, [rip + .Lautomatic]
+    mov esi, 9
+    xor edx, edx
+    mov rcx, -1
+    call item_add
     lea rdi, [rip + .Lplain]
     mov esi, 10
     xor edx, edx
@@ -1653,6 +1831,7 @@ pal_query:
 FN palette_print
     PROLOGUE
     mov rbx, rdi
+    call pal_catalog_check
     cmp dword ptr [rip + pal_mode], PM_NONE
     jne 1f
     lea rsi, [rip + .Lpp_none]
@@ -1661,6 +1840,8 @@ FN palette_print
 1:  cmp dword ptr [rip + pal_mode], PM_PROMPT
     je 10f
     cmp dword ptr [rip + pal_mode], PM_CHOOSE
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_PROVIDERS
     je 13f
     cmp dword ptr [rip + pal_mode], PM_RESULTS
     jne 11f
@@ -1828,6 +2009,9 @@ FN fuzzy
 # palette_filter(): results = items matching the query, best first
 FN palette_filter
     PROLOGUE 16
+    call pal_catalog_check
+    test eax, eax
+    jz 9f
     mov dword ptr [rip + pal_reveal], 1
     mov dword ptr [rip + pal_wheel], 0
     mov qword ptr [rip + results + VEC_len], 0
@@ -1848,18 +2032,55 @@ FN palette_filter
     call tf_text
     mov r14, rax
     mov r15, rdx
+    mov qword ptr [rsp], 0     # an exact qualified command takes precedence over fuzzy matches
+    cmp dword ptr [rip + pal_mode], PM_COMMANDS
+    jne .Lpf_command_query_ready
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Lcommand_slash]
+    mov ecx, 1
+    call str_find
+    test rax, rax
+    js .Lpf_command_query_ready
+    mov rdi, r14
+    mov rsi, r15
+    call ext_cmd_find
+    mov [rsp], rax
+.Lpf_command_query_ready:
     xor ebx, ebx
 1:  cmp rbx, [rip + items + VEC_len]
     jae 45f
     imul r12, rbx, IT_SIZE
     add r12, [rip + items + VEC_ptr]
+    mov rax, [rsp]
+    test rax, rax
+    jz 11f
+    cmp [r12 + IT_data], rax
+    jne 4f
+    xor eax, eax
+    jmp 12f
+11:
     mov rdi, [r12 + IT_label]
     mov rsi, [r12 + IT_len]
     mov rdx, r14
     mov rcx, r15
     call fuzzy
     test eax, eax
+    jns 12f
+    cmp dword ptr [rip + pal_mode], PM_COMMANDS
+    jne 4f
+    mov rdi, [r12 + IT_detail]
+    test rdi, rdi
+    jz 4f
+    call strlen
+    mov rsi, rax
+    mov rdi, [r12 + IT_detail]
+    mov rdx, r14
+    mov rcx, r15
+    call fuzzy
+    test eax, eax
     js 4f
+12:
     mov r13d, eax
     lea rdi, [rip + results]
     mov esi, RS_SIZE
@@ -1932,6 +2153,9 @@ FN palette_changed
 
 # selected item -> IT* or 0
 selected_item:
+    call pal_catalog_check
+    test eax, eax
+    jz 1f
     mov eax, [rip + pal_sel]
     cmp rax, [rip + results + VEC_len]
     jae 1f
@@ -2103,11 +2327,18 @@ palette_accept:
     jne 31f
     cmp qword ptr [rip + g_doc], 0
     je .Lpa_close
-    mov rdi, [r12 + IT_data]
-    call syntax_ready
-    mov rcx, [rip + g_doc]
-    mov [rcx + DOC_lang], rax
-    mov qword ptr [rcx + DOC_svalid], 0
+    mov rdi, [rip + g_doc]
+    mov rdx, [r12 + IT_data]
+    mov esi, DL_AUTO
+    cmp rdx, -1
+    je .Lpa_language_set
+    mov esi, DL_PLAIN
+    test rdx, rdx
+    jz .Lpa_language_set
+    mov esi, DL_NAMED
+    mov rdx, [rdx + GR_name]
+.Lpa_language_set:
+    call doc_language_set
     jmp .Lpa_close
 31: cmp ebx, PM_RESULTS
     jne 32f
@@ -2117,7 +2348,15 @@ palette_accept:
     call langfeat_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-32: cmp ebx, PM_CHOOSE
+32: cmp ebx, PM_PROVIDERS
+    jne 33f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call ext_provider_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+33: cmp ebx, PM_CHOOSE
     jne .Lpa_close
     # the extension's pick: the item's number, with the palette closed first (the reply may
     # open another prompt)
@@ -2412,31 +2651,8 @@ prompt_done:
     mov r12d, esi
     cmp r12d, PROMPT_SAVE_AS
     jne 1f
-    mov r13, [rip + g_doc]
-    test r13, r13
-    jz 9f
-    # onto a read-only file (or a symlink to one): ask first
     mov rdi, rbx
-    call file_readonly
-    test eax, eax
-    jz 0f
-    mov rdi, rbx
-    call app_save_as_readonly
-    jmp 9f
-0:  mov rdi, r13
-    mov rsi, rbx
-    call doc_set_path
-    mov rdi, rbx
-    call mkdir_parent
-    mov rdi, r13
-    call doc_save
-    test rax, rax
-    js 8f
-    mov rdi, r13
-    call app_detect_lang
-    mov rdi, r13
-    call app_after_save
-    call app_update_title
+    call app_save_as_finish
     jmp 9f
 1:  cmp r12d, PROMPT_NEW_FILE
     jne 2f
@@ -2482,6 +2698,9 @@ prompt_done:
 
 FN palette_draw
     PROLOGUE 64
+    call pal_catalog_check
+    test eax, eax
+    jz .Lpd_ret
     cmp dword ptr [rip + pal_mode], PM_NONE
     je .Lpd_ret
     # find in files reads its files once this frame is on screen
@@ -3049,10 +3268,12 @@ hint_text:
 1:  ret
 
 .section .rodata
+.Lcommand_slash: .asciz "/"
 .Lhome: .asciz "HOME"
 .Ldark: .asciz "dark"
 .Llight: .asciz "light"
 .Lplain: .asciz "Plain Text"
+.Lautomatic: .asciz "Automatic"
 .Lempty: .asciz ""
 .Lfailed: .asciz "That didn't work"
 .Lph_files: .asciz "Search files by name  (> commands, : line)"

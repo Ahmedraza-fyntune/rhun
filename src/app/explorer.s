@@ -1527,8 +1527,9 @@ cmd_copy_path:
     call strlen
     pop rdi
     mov rsi, rax
-    PCALL P_clip_set
-    ret
+    xor edx, edx
+    call ed_clip_set
+    jmp editor_clip_result
 
 copy_project_path:
     mov rdi, [rip + g_project]
@@ -1538,7 +1539,9 @@ copy_project_path:
     call strlen
     pop rdi
     mov rsi, rax
-    PCALL P_clip_set
+    xor edx, edx
+    call ed_clip_set
+    jmp editor_clip_result
 1:  ret
 
 reveal_project:

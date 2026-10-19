@@ -1,7 +1,7 @@
 # Native child processes and Windows pseudoconsoles.
 .include "win.inc"
 .equ CHILD_SIZE, 24
-.equ CHILD_MAX, 128
+.equ CHILD_MAX, 256
 .equ PT_pc, 0
 .equ PT_in, 8
 .equ PT_out, 16

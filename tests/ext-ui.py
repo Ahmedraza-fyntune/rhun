@@ -369,6 +369,34 @@ class UI(host.Host):
         self.assertFalse(any(p.name.startswith('.install') for p in exts.iterdir()))
         self.assertFalse(any(l.startswith('demo/hello') for l in out))
 
+    def test_exactly_64_kib_manifest_can_be_installed(self):
+        manifest = HELLO_INI + '\n#' + 'x' * (65536 - len(HELLO_INI.encode()) - 2)
+        self.release({'extension.ini': manifest, 'main.py': HELLO_PY})
+        exts = self.manifest_variant('install-manifest-limit')
+        out = self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes',
+                       'wait-ext hello running', 'print-extensions'], exts=exts)
+        self.assertEqual(out[0], 'install=asking')
+        self.assertTrue(any(line.startswith('demo/hello state=running') for line in out), out)
+        self.assertEqual((exts / 'demo/hello/extension.ini').stat().st_size, 65536)
+
+    def test_oversize_preview_preserves_the_running_installation(self):
+        self.release()
+        exts = self.manifest_variant('install-manifest-too-big')
+        self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes',
+                 'wait-ext hello running'], exts=exts)
+        path = exts / 'demo/hello/extension.ini'
+        previous = path.read_bytes()
+        manifest = HELLO_INI + '\n#' + 'x' * (65537 - len(HELLO_INI.encode()) - 2)
+        self.release({'extension.ini': manifest, 'main.py': HELLO_PY})
+        out = self.ui(['wait-ext hello running', 'ext-install demo/hello', 'wait-install',
+                       'print-extensions', 'cmd hello.say', 'wait 300', 'wait 300',
+                       'print-doc'], exts=exts)
+        self.assertEqual(out[0], 'install=failed')
+        self.assertTrue(any(line.startswith('demo/hello state=running') for line in out), out)
+        self.assertIn('hihello world', out)
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertFalse(any(p.name.startswith('.install') for p in exts.iterdir()))
+
     def test_an_installed_invalid_manifest_keeps_its_failure(self):
         ini = HELLO_INI.replace('runtime = python3\nrun = main.py\n', '')
         self.release({'extension.ini': ini, 'main.py': HELLO_PY})

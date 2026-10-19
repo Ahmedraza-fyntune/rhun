@@ -376,6 +376,10 @@ FN scm_key
     EPILOGUE
 
 # scm_paste(ptr, len): into the commit message
+FN scm_field
+    lea rax, [rip + tf_msg]
+    ret
+
 FN scm_paste
     mov rdx, rsi
     mov rsi, rdi

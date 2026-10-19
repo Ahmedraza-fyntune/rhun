@@ -90,6 +90,14 @@ dlg_ok: .quad 0
 dlg_fn: .quad 0
 dlg_cancel: .quad 0              # app_confirm's Cancel calls this when it is set
 ro_doc: .quad 0                  # ask_readonly: the file asked about, and the question
+ro_id: .quad 0
+ro_save_flags: .quad 0
+ro_save_kind: .quad 0
+.globl app_save_epoch
+app_save_epoch: .quad 0
+save_prompt_id: .quad 0
+save_prompt_kind: .quad 0
+save_prompt_flags: .quad 0
 ro_kind: .long 0                 # a close or quit that asked about it (dlg_kind), carried on after Overwrite
 ro_close: .long 0                # vim's :wq asked: Overwrite closes the file too
 ro_title: .zero 256
@@ -1325,23 +1333,7 @@ FN app_tab_label
 
 # app_detect_lang(doc)
 FN app_detect_lang
-    PROLOGUE
-    mov rbx, rdi
-    mov rdi, rbx
-    xor esi, esi
-    call doc_line_text
-    mov r12, rax
-    mov r13, rdx
-    mov rdi, [rbx + DOC_path]
-    test rdi, rdi
-    jnz 1f
-    lea rdi, [rip + .Lempty]
-1:  mov rsi, r12
-    mov rdx, r13
-    call syntax_detect
-    mov [rbx + DOC_lang], rax
-    mov qword ptr [rbx + DOC_svalid], 0
-    EPILOGUE
+    jmp doc_language_refresh
 
 # cmd_new_file()
 FN cmd_new_file
@@ -1427,6 +1419,7 @@ FN app_close_tab_now
 # app_close_tab(i): ask when modified
 FN app_close_tab
     PROLOGUE
+    inc qword ptr [rip + app_save_epoch]
     mov rbx, rdi
     call tab_at
     cmp qword ptr [rax + TAB_kind], TAB_DOC
@@ -1501,6 +1494,7 @@ ask_unsaved:
     jz 2f
     mov [rip + dlg_tab], rbx
     mov [rip + dlg_kind], r12d
+    inc qword ptr [rip + app_save_epoch]
     mov rdi, rbx
     call app_activate_tab
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
@@ -1559,64 +1553,197 @@ FN cmd_prev_tab
 # cmd_save(): save, or ask for a path for untitled docs; a read-only file asks before it is replaced
 FN cmd_save
     xor edi, edi
+    xor esi, esi
+    jmp save_doc
+
+FN cmd_save_without_formatting
+    xor edi, edi
+    mov esi, SAVE_BYPASS
     jmp save_doc
 
 # app_save_close(): vim's :wq: save, and close the file once it is saved (after Overwrite, for a
 #   read-only one)
 FN app_save_close
     mov edi, 1
+    xor esi, esi
 save_doc:
     READONLY_RET
     PROLOGUE
     mov r13d, edi
+    mov r14d, esi
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
     cmp qword ptr [rbx + DOC_path], 0
     jne 1f
-    call cmd_save_as
+    mov rdi, rbx
+    mov esi, r13d
+    mov rdx, r14
+    call app_save_prompt
     jmp 9f
 1:  mov rdi, rbx
     call doc_readonly
     test eax, eax
     jz 3f
     mov [rip + ro_close], r13d
+    mov [rip + ro_save_flags], r14
+    mov [rip + ro_save_kind], r13
     mov rdi, rbx
     lea rsi, [rip + save_readonly_confirmed]
     call ask_readonly
     jmp 9f
 3:  mov rdi, rbx
-    call doc_save
-    test rax, rax
-    js 2f
-    mov rdi, rbx
-    call app_after_save
-    test r13d, r13d
-    jz 9f
-    call cmd_close_tab
-    jmp 9f
-2:  lea rdi, [rip + .Lsave_failed]
-    call app_toast
+    mov rsi, r14
+    mov rdx, r13
+    call app_save_managed
 9:  EPILOGUE
 
 # save_readonly_confirmed(): Overwrite, for cmd_save and :wq
 save_readonly_confirmed:
     PROLOGUE
-    mov rbx, [rip + ro_doc]
-    cmp rbx, [rip + g_doc]
-    jne 9f
-    mov rdi, rbx
-    call doc_save_readonly
+    mov rdi, [rip + ro_id]
+    call extproto_doc
     test rax, rax
-    js 2f
-    mov rdi, rbx
-    call app_after_save
-    cmp dword ptr [rip + ro_close], 0
+    jz 9f
+    mov rdi, rax
+    mov rsi, [rip + ro_save_flags]
+    or esi, SAVE_READONLY
+    mov rdx, [rip + ro_save_kind]
+    call app_save_managed
+9:  EPILOGUE
+
+# app_save_managed(doc, flags, kind): kind 0 ordinary, 1 close, 8+dialog kind unsaved flow.
+# A continuation owns its generation and frees it even when cancelled or superseded.
+FN app_save_managed
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    xor r14d, r14d
+    test r13, r13
+    jz 1f
+    inc qword ptr [rip + app_save_epoch]
+    mov edi, 16
+    call mem_alloc
+    mov r14, rax
+    mov rcx, [rip + app_save_epoch]
+    mov [rax], rcx
+    mov [rax + 8], r13
+    or r12d, SAVE_INTENT
+1:  mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    test r14, r14
+    jz 2f
+    lea rdx, [rip + app_save_completed]
+2:  mov rcx, r14
+    call save_start
+    mov r12, rax
+    cmp rax, 1
     je 9f
-    call cmd_close_tab
+    test r14, r14
+    jz 9f
+    mov rdi, [rbx + DOC_id]
+    mov rsi, r14
+    mov rdx, r12
+    call app_save_completed
+9:  mov rax, r12
+    EPILOGUE
+
+app_save_completed:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, [r12 + 8]
+    mov r15, [r12]
+    mov rdi, r12
+    call mem_free
+    cmp r15, [rip + app_save_epoch]
+    jne 9f
+    test r13, r13
+    jnz 8f
+    mov rdi, rbx
+    call app_doc_tab
+    test rax, rax
+    js 8f
+    cmp r14, 1
+    jne 2f
+    mov rbx, rax
+    mov rdi, rax
+    call tab_pinned
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
+    call app_close_tab
     jmp 9f
-2:  lea rdi, [rip + .Lsave_failed]
-    call app_toast
+2:  mov [rip + dlg_tab], rax
+    lea rdi, [r14 - 8]
+    call unsaved_done
+    jmp 9f
+8:  cmp r14, 8
+    jb 9f
+    call unsaved_kept
+9:  EPILOGUE
+
+# Save As is bound to the initiating document, including an untitled :wq or unsaved dialog.
+app_save_prompt:
+    PROLOGUE
+    mov rbx, [rdi + DOC_id]
+    mov r12, rsi
+    mov r13, rdx
+    lea rdi, [rip + .Lsave_as]
+    mov esi, PROMPT_SAVE_AS
+    call prompt_open
+    mov [rip + save_prompt_id], rbx
+    mov [rip + save_prompt_kind], r12
+    mov [rip + save_prompt_flags], r13
+    EPILOGUE
+
+FN app_save_prompt_cancel
+    mov rax, [rip + save_prompt_kind]
+    mov qword ptr [rip + save_prompt_id], 0
+    mov qword ptr [rip + save_prompt_kind], 0
+    mov qword ptr [rip + save_prompt_flags], 0
+    cmp rax, 8
+    jae unsaved_kept
+    test rax, rax
+    jz 1f
+    inc qword ptr [rip + app_save_epoch]
+1:  ret
+
+FN app_save_as_finish
+    PROLOGUE
+    mov r12, rdi
+    mov rdi, [rip + save_prompt_id]
+    call extproto_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, r12
+    call file_readonly
+    test eax, eax
+    jz 1f
+    mov rax, [rip + save_prompt_kind]
+    mov [rip + ro_save_kind], rax
+    mov rax, [rip + save_prompt_flags]
+    mov [rip + ro_save_flags], rax
+    mov rax, [rbx + DOC_id]
+    mov [rip + ro_id], rax
+    mov rdi, r12
+    call app_save_as_readonly
+    jmp 9f
+1:  mov rdi, rbx
+    mov rsi, r12
+    call doc_set_path
+    mov rdi, r12
+    call mkdir_parent
+    mov rdi, rbx
+    call app_detect_lang
+    mov rdi, rbx
+    mov rsi, [rip + save_prompt_flags]
+    mov rdx, [rip + save_prompt_kind]
+    call app_save_managed
 9:  EPILOGUE
 
 # doc_readonly(doc) -> eax 1 when saving it would replace a file that says not to write it: file_readonly,
@@ -1734,8 +1861,6 @@ FN app_save_as_readonly
     lea rdi, [rip + ro_path]
     mov rsi, rbx
     call cstr_copy
-    mov rax, [rip + g_doc]
-    mov [rip + ro_doc], rax
     lea rdi, [rip + ro_path]
     call strlen
     lea rdi, [rip + ro_path]
@@ -1744,36 +1869,37 @@ FN app_save_as_readonly
     mov rdi, rax
     lea rsi, [rip + save_as_readonly_confirmed]
     call ask_readonly_named
+    cmp qword ptr [rip + ro_save_kind], 8
+    jb 9f
+    lea rax, [rip + unsaved_kept]
+    mov [rip + dlg_cancel], rax
 9:  EPILOGUE
 
 # save_as_readonly_confirmed(): Overwrite, for Save As
 save_as_readonly_confirmed:
     PROLOGUE
-    mov rbx, [rip + ro_doc]
-    test rbx, rbx
+    mov rdi, [rip + ro_id]
+    call extproto_doc
+    test rax, rax
     jz 9f
-    cmp rbx, [rip + g_doc]
-    jne 9f
+    mov rbx, rax
     mov rdi, rbx
     lea rsi, [rip + ro_path]
     call doc_set_path
     mov rdi, rbx
-    call doc_save_readonly
-    test rax, rax
-    js 2f
-    mov rdi, rbx
     call app_detect_lang
     mov rdi, rbx
-    call app_after_save
-    call app_update_title
-    jmp 9f
-2:  lea rdi, [rip + .Lsave_failed]
-    call app_toast
+    mov rsi, [rip + ro_save_flags]
+    or esi, SAVE_READONLY
+    mov rdx, [rip + ro_save_kind]
+    call app_save_managed
 9:  EPILOGUE
 
 # ask_readonly(doc, fn): "Overwrite read-only NAME?", whose button calls fn
 ask_readonly:
     mov [rip + ro_doc], rdi
+    mov rax, [rdi + DOC_id]
+    mov [rip + ro_id], rax
     mov rdi, [rdi + DOC_name]
 # ask_readonly_named(name, fn): the same for a file of that name
 ask_readonly_named:
@@ -1806,7 +1932,9 @@ FN app_after_save
     PROLOGUE
     mov rbx, rdi
     inc qword ptr [rbx + DOC_saves]
-    cmp qword ptr [rbx + DOC_lang], 0
+    mov rdi, rbx
+    call doc_language
+    test rax, rax
     jne 1f
     mov rdi, rbx
     call app_detect_lang
@@ -1832,9 +1960,13 @@ FN app_after_save
 
 FN cmd_save_as
     READONLY_RET
-    lea rdi, [rip + .Lsave_as]
-    mov esi, PROMPT_SAVE_AS
-    jmp prompt_open
+    mov rdi, [rip + g_doc]
+    test rdi, rdi
+    jz 1f
+    xor esi, esi
+    xor edx, edx
+    jmp app_save_prompt
+1:  ret
 
 FN cmd_quit
     PROLOGUE
@@ -2046,6 +2178,9 @@ FN app_on_paste
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    call ed_clip_observe
+    mov rdi, rbx
+    mov rsi, r12
     call vim_paste
     test eax, eax
     jnz 9f
@@ -2082,8 +2217,10 @@ FN app_on_paste
     EPILOGUE
 
 # focused_field() -> TF* that has keyboard focus, or 0
-focused_field:
+FN focused_field
     mov eax, [rip + g_focus]
+    cmp eax, FOCUS_SCM
+    je scm_field
     cmp eax, FOCUS_PALETTE
     je palette_field
     cmp eax, FOCUS_PROMPT
@@ -2136,6 +2273,7 @@ FN app_on_key
 1:  # Esc closes a context menu, then the extensions dropdown
     cmp r12d, KEY_ESCAPE
     jne 10f
+    call ext_provider_cancel
     call explorer_menu_open
     test eax, eax
     jz 11f
@@ -2222,6 +2360,18 @@ FN app_on_key
     test eax, eax
     jnz 9f
     mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call snippet_key
+    test eax, eax
+    jnz 9f
+    cmp r12d, KEY_ESCAPE
+    jne 72f
+    mov rdi, [rip + g_doc]
+    call save_cancel_key
+    test eax, eax
+    jnz 9f
+72: mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call vim_key
@@ -2405,6 +2555,11 @@ FN app_timeout
     PROLOGUE
     call ed_blink_timeout
     mov ebx, eax
+    call app_clip_timeout
+    cmp eax, -1
+    je 0f
+    mov ebx, eax
+0:
     # toast expiry
     mov rax, [rip + g_toast_until]
     test rax, rax
@@ -2524,13 +2679,30 @@ FN app_timeout
     cmp eax, ebx
     jge 92f
 93: mov ebx, eax
-92: mov eax, ebx
+92: call ext_provider_timeout
+    cmp eax, -1
+    je 94f
+    cmp ebx, -1
+    je 95f
+    cmp eax, ebx
+    jge 94f
+95: mov ebx, eax
+94: call save_timeout
+    cmp eax, -1
+    je 96f
+    cmp ebx, -1
+    je 97f
+    cmp eax, ebx
+    jge 96f
+97: mov ebx, eax
+96: mov eax, ebx
     EPILOGUE
 
 FN app_tick
     PROLOGUE
     call complete_tick
     call langfeat_tick
+    call save_tick
     call ext_options_apply
     call watch_tick
     call tip_tick
@@ -2552,6 +2724,8 @@ FN app_tick
     call palette_tick
     call editor_tick
     call ext_tick
+    call ext_provider_tick
+    call app_clip_tick
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -4580,7 +4754,8 @@ FN statusbar_draw
     lea r13, [rsp + 32]
 3:  call .Lsb_item
     lea r13, [rip + .Lplain]
-    mov rax, [rbx + DOC_lang]
+    mov rdi, rbx
+    call doc_language
     test rax, rax
     jz 4f
     mov r13, [rax + GR_name]
@@ -5215,14 +5390,20 @@ dialog_choose:
     test eax, eax
     jnz 6f
     mov rdi, rbx
-    call doc_save
-    test rax, rax
-    js 7f
-    jmp 1f
-2:  call cmd_save_as
-    jmp 8f
+    xor esi, esi
+    lea rdx, [r12 + 8]
+    call app_save_managed
+    jmp 9f
+2:  mov rdi, rbx
+    lea rsi, [r12 + 8]
+    xor edx, edx
+    call app_save_prompt
+    jmp 9f
 6:  # a read-only file asks first: Overwrite saves it and goes on, Cancel stops here
     mov [rip + ro_kind], r12d
+    lea rax, [r12 + 8]
+    mov [rip + ro_save_kind], rax
+    mov qword ptr [rip + ro_save_flags], SAVE_READONLY
     mov rdi, rbx
     lea rsi, [rip + close_readonly_confirmed]
     call ask_readonly
@@ -5264,6 +5445,7 @@ unsaved_done:
 # unsaved_kept(): not quitting after all: no restart into an update either, no other project, and the
 #   session is saved again when it comes to that
 unsaved_kept:
+    inc qword ptr [rip + app_save_epoch]
     mov dword ptr [rip + g_restart], 0
     mov dword ptr [rip + switch_pending], 0
     mov dword ptr [rip + g_session_final], 0
@@ -5272,18 +5454,14 @@ unsaved_kept:
 # close_readonly_confirmed(): Overwrite, for a close or quit that asked to save a read-only file
 close_readonly_confirmed:
     PROLOGUE
-    mov rdi, [rip + dlg_tab]
-    call tab_at
-    mov rdi, [rax + TAB_doc]
-    call doc_save_readonly
+    mov rdi, [rip + ro_id]
+    call extproto_doc
     test rax, rax
-    js 1f
-    mov edi, [rip + ro_kind]
-    call unsaved_done
-    jmp 9f
-1:  lea rdi, [rip + .Lsave_failed]
-    call app_toast
-    call unsaved_kept
+    jz 9f
+    mov rdi, rax
+    mov esi, SAVE_READONLY
+    mov rdx, [rip + ro_save_kind]
+    call app_save_managed
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -6292,3 +6470,22 @@ FN app_goto_line
 4:  mov dword ptr [rip + g_reveal], 1
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
+
+.text
+# Revoke only this exact borrow-only confirmation, never invoke an owned Cancel callback.
+FN app_confirm_revoke_pure
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 9f
+    cmp [rip + dlg_fn], rdi
+    jne 9f
+    cmp qword ptr [rip + dlg_cancel], 0
+    jne 9f
+    mov dword ptr [rip + dlg_kind], 0
+    mov qword ptr [rip + dlg_title], 0
+    mov qword ptr [rip + dlg_text], 0
+    mov qword ptr [rip + dlg_ok], 0
+    mov qword ptr [rip + dlg_fn], 0
+    cmp dword ptr [rip + g_focus], FOCUS_DIALOG
+    jne 9f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+9:  ret

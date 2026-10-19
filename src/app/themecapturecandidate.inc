@@ -1,0 +1,27 @@
+# Caller-retained sealed row/query borrows, no TH/global registry access.
+.equ TCNR_SIZE, 32
+.equ TCL_rows, 0
+.equ TCL_count, 8
+.equ TCL_follow, 16
+.equ TCL_epoch, 24
+.equ TCL_query, 32
+.equ TCL_query_length, 40
+.equ TCL_index, 48
+.equ TCL_offset, 56
+.equ TCL_held, 64
+.equ TCL_has_held, 72
+.equ TCL_state, 80
+.equ TCL_result, 88
+.equ TCL_bytes, 96
+.equ TCL_units, 104
+.equ TCL_self, 112
+.equ TCL_kind, 120
+.equ TCL_current, 128
+.equ TCL_length, 136
+.equ TCL_loaded, 144
+.equ TCL_SIZE, 160
+.equ TCL_PENDING, 0
+.equ TCL_DONE, 1
+.equ TCL_FAILED, 2
+.equ TCL_ROW_CAP, 65536
+.equ TCL_ID_CAP, 4095

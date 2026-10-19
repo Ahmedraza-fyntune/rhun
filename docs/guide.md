@@ -484,6 +484,12 @@ alt+z = none
 
 Key names are those of the command palette entries in snake case (see `src/app/keys.s`). `none` removes a binding.
 
+At multiple cursors, copied selections stay paired with their destinations. For other multiline text, `multi_cursor_paste = spread` under `[editor]` pastes one line per cursor when the counts match. Set it to `full` to paste all the text at each cursor. The same choice is available as **Paste at multiple cursors** in Settings.
+
+Tab uses each cursor’s own column. Indent and Outdent update each shared line once and preserve selection direction. One Undo restores the whole edit.
+
+Paste waits for clipboard data without changing its destination. If the original document, field, terminal, or selection no longer matches when the data arrives, that Paste is discarded. Repeated Paste requests run in order, using the clipboard contents available when each request starts. Empty clipboard text leaves the destination unchanged.
+
 ### Themes
 
 The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
@@ -592,12 +598,98 @@ commands:
 | shift+F12 | Find All References | the references in the palette, this file's first; choosing one opens it |
 | ctrl+r | Go to Symbol in File | the file's functions, types and variables, indented by nesting; type to filter |
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
-| F2 | Rename | on a word, asks for the new name; every file it changes opens unsaved for you to review (on no word, F2 renames the file) |
+| F2 | Rename | on a word, asks for the new name; every file it changes opens unsaved for you to review (without a matching rename provider, F2 renames the file) |
 | shift+alt+f | Format Document | with the document's tab width and spaces |
 
 An edit across files is checked whole before anything changes: if a document changed meanwhile
 or a range is off, nothing changes and rhun says why. Each document's changes are one undo
 step.
+
+Formatting, symbol rename, file symbols and signature help use a saved provider for the document's language.
+With one matching extension, rhun uses it. With several, a chooser shows their `owner/name`
+identities and remembers your choice. **Select Default Formatter**, **Select Rename Provider**,
+**Select Symbol Provider** and **Select Signature Provider** change the choice without running the action. **Automatic**
+clears this language's choice; a global default can still apply.
+
+A chosen extension starts when needed. If you edit the document, move its cursor or switch tabs
+while it starts, the pending action is cancelled. An unavailable saved provider reports an error
+so you can enable it or choose another. F2 keeps its symbol-rename meaning while that provider
+starts or needs attention.
+
+Choices live in `extensions.ini`, alongside extension settings:
+
+```ini
+[providers]
+format.Go = rhun-editor/format
+format.* = rhun-editor/lsp
+rename.Go = rhun-editor/lsp
+symbols.Go = rhun-editor/lsp
+signature.Go = rhun-editor/lsp
+```
+
+An exact language name overrides `*`. Language names match **Change Language Mode**; `-` means
+no selected language. Values must include the owner. A missing, disabled, stopped or incompatible
+saved provider never causes another extension to run silently.
+
+**Format before saving** in Settings enables formatting on Save, Save As, Save All and save-before-close.
+It is off by default. Its configuration is:
+
+```ini
+[files]
+format_on_save = true
+format_on_save_timeout = 2000
+code_actions_on_save = source.organizeImports source.fixAll
+code_actions_on_save_timeout = 2000
+```
+
+Saving uses the default formatter, or the sole eligible formatter, without opening a chooser.
+An ambiguous or unavailable choice, formatter error or timeout saves the current text and reports
+why formatting was skipped. The wait is in milliseconds, between 250 and 30,000. Typing while a
+formatter runs discards its stale result and saves your latest text. Automatic formatting only
+changes the document being saved and keeps your current tab and focus.
+
+**Code actions before saving** runs the listed source kinds before formatting. It is empty by default.
+Matching providers run in qualified name order, with one total time limit for the source phase.
+Source kinds include `source.organizeImports`, `source.fixAll`, or a narrower kind such as
+`source.fixAll.eslint`. An ancestor covers its descendants, so listing `source` runs all source
+actions once. Invalid kinds keep the previous setting. Source actions can only edit the saving
+document. A failure or timeout continues to formatting and saving with a warning. Typing during
+this phase saves the latest text and skips further automatic changes.
+
+**Cancel Save**, or Escape in the editor while a save is pending, keeps the document modified
+without writing it. **Save Without Formatting** bypasses source actions and formatting, writes the current text, and preserves a pending
+save-before-close intent. Save All waits for each document in turn; a failed or cancelled write
+stops it. Vim's `:w`, `:wq`, `:wa` and `:wqa` follow the same save pipeline.
+
+The host supports up to 128 running extensions. Busy extensions share a parsing budget and take
+turns when that budget is exhausted, keeping time available for editor input and quieter peers.
+**Stop** cancels an activation that has not started yet as well as a running extension.
+
+Signature help while typing stays quiet when the provider choice is ambiguous or unavailable.
+Use **Show Signature Help** to choose one explicitly. Help that is already open keeps using
+its original provider as you type and move between parameters.
+
+Extensions can insert snippets with editable fields. Type to replace the selected field;
+repeated copies update together. Tab selects the next numbered field, Shift+Tab selects the
+previous one, and Escape finishes field editing. The command palette also offers **Snippet:
+Next Field**, **Snippet: Previous Field** and **Snippet: Finish Editing Fields** for custom keys.
+Undo includes linked copies, and redo restores the final selection. Switching tabs pauses field
+editing in that document. Editing outside the selected field or applying an external document
+change finishes its session. A completion list takes Tab before snippet navigation.
+Inserting another snippet inside a field preserves the enclosing snippet's linked copies.
+Finish its inner fields with Tab, then continue through the enclosing fields. Moving the
+selection outside the active field or pressing Escape finishes every nested level.
+
+A field can offer a list of values. Up and Down select a value; Enter or a click applies it,
+and Tab applies it and moves to the next field. Shift+Tab leaves the value unchanged and
+moves to the previous field. Escape closes the list first. You can also type your own value,
+or reopen the list with **Snippet: Choose Value**. Choices keep working after the extension
+stops. **Show Completions** opens the provider list from a fully selected field by placing the
+caret at its end. Some snippets finish with text selected, ready for an ordinary replacement.
+Extensions can read a versioned insertion context with the exact range's text, current line,
+file and project paths, indentation, document settings and grammar comment token. It works
+with inactive and readonly documents and preserves the editor's selection. See the
+[native snippet protocol](extensions/v1.1.md#read-only-insertion-context) for the request and SDKs.
 
 ### Install and manage
 
@@ -608,6 +700,11 @@ the files you have open, read your project, use the network, run named programs)
 **Extensions** page turns each one on or off, pins its badge to the title bar, shows its
 settings and its log, and removes it. Installed extensions live in
 `~/.config/rhun/extensions/OWNER/NAME/` (`%APPDATA%\rhun\extensions` on Windows).
+
+The command palette shows each extension command's qualified name, `owner/name.command`,
+beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
+works when only one installed extension has that name. With two publishers using the same
+name, use the qualified name so turning an extension off cannot change which command runs.
 
 From [rhun-editor](https://github.com/rhun-editor):
 

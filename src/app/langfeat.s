@@ -24,6 +24,7 @@ F LR_ext, 8
 F LR_id, 8
 F LR_session, 4
 F LR_pad, 4
+F LR_language_revision, 8
 ENDSTRUCT LR_SIZE
 
 # a result: a location, a symbol or an action
@@ -75,6 +76,7 @@ lf_ready: .long 0               # every provider answered: the tick finishes it
 lf_list_kind: .long 0           # what the palette's list shows
 lf_doc: .quad 0                 # the document asked about, and its id
 lf_doc_id: .quad 0
+lf_language_revision: .quad 0
 lf_deadline: .quad 0
 lf_ws_ext: .quad 0
 lf_reqs: .zero VEC_SIZE         # LR records
@@ -85,6 +87,7 @@ lf_line: .zero SB_SIZE          # a request being built
 lf_name: .zero SB_SIZE          # the new name of a rename
 lf_err: .zero 256               # what the rename provider said instead
 ws_quiet: .long 0               # ws_apply for an extension's request: no toast
+ws_preserve_context: .long 0    # restricted background edit: never activate or reveal a tab
 .p2align 3
 ws_only: .quad 0                # a document id: ws_apply may change that document only
 ws_request_ext: .quad 0         # unsolicited apply: its permissions gate opening closed files
@@ -295,6 +298,7 @@ lf_cancel_all:
     EPILOGUE
 
 # lf_reset(): the query before goes, and the list it showed
+FN langfeat_provider_cancel
 lf_reset:
     push rbx
     call lf_cancel_all
@@ -311,16 +315,52 @@ lf_reset:
     pop rbx
     ret
 
+# May run in a protocol reply: no output or session disposal here.
+lf_language_current:
+    PROLOGUE
+    mov rdi, [rip + lf_doc_id]
+    call extproto_doc
+    test rax, rax
+    jz 1f
+    cmp rax, [rip + lf_doc]
+    jne 1f
+    mov rdi, rax
+    mov rsi, [rip + lf_language_revision]
+    call doc_language_matches
+    EPILOGUE
+1:  xor eax, eax
+    EPILOGUE
+
+# Normal tick only; keep queries created under the new language.
+FN langfeat_language_changed
+    mov rax, [rdi + DOC_id]
+    cmp [rip + lf_doc_id], rax
+    jne 1f
+    mov rax, [rdi + DOC_language_revision]
+    cmp [rip + lf_language_revision], rax
+    jne langfeat_provider_cancel
+1:  ret
+
 # ---------------- asking ----------------
 
-# lf_start(kind): ask the providers of the focused document
+# lf_start(kind, chosen extension or 0): ask the focused document
+FN langfeat_provider_start
 lf_start:
-    PROLOGUE 16
+    PROLOGUE 32
+    mov [rsp + 16], rsi
     mov r12d, edi
     call lf_focused_doc
     test rax, rax
     jz 9f
     mov rbx, rax
+    mov rdi, rbx
+    call doc_sync_grammar
+    test rax, rax
+    js 9f
+    mov rax, [rbx + DOC_language_revision]
+    test rax, rax
+    jz 9f
+    mov [rip + lf_language_revision], rax
     call lf_reset
     mov [rip + lf_kind], r12d
     inc dword ptr [rip + lf_session]
@@ -433,6 +473,14 @@ lf_start:
     imul r14, r13, EXT_SIZE
     add r14, [rip + g_exts + VEC_ptr]
     inc r13
+    cmp qword ptr [rsp + 16], 0
+    je 61f
+    cmp r14, [rsp + 16]
+    jne 6b
+61: mov rdi, r14
+    call ext_has_metadata
+    test eax, eax
+    jz 6b
     cmp dword ptr [r14 + EXT_status], ES_RUNNING
     jne 6b
     lea rax, [rip + lf_feats]
@@ -463,6 +511,8 @@ lf_start:
     mov [rax + LR_id], r15
     mov ecx, [rip + lf_session]
     mov [rax + LR_session], ecx
+    mov rcx, [rbx + DOC_language_revision]
+    mov [rax + LR_language_revision], rcx
     inc dword ptr [rsp + 8]
     lea rax, [rip + lf_single]
     cmp byte ptr [rax + r12], 0
@@ -484,14 +534,22 @@ FN cmd_references
     jmp lf_start_cmd
 FN cmd_symbols
     mov edi, LF_SYMS
-    jmp lf_start_cmd
+    xor esi, esi
+    jmp ext_provider_begin
 FN cmd_code_actions
     mov edi, LF_ACTS
     jmp lf_start_cmd
 FN cmd_format_document
     mov edi, LF_FORMAT
+    xor esi, esi
+    jmp ext_provider_begin
 lf_start_cmd:
     push rbx
+    mov ebx, edi
+    call ext_provider_cancel
+    call palette_provider_close
+    mov edi, ebx
+    xor esi, esi
     call lf_start
     pop rbx
     ret
@@ -499,26 +557,13 @@ lf_start_cmd:
 # FN langfeat_rename_start() -> eax 1 when the focused document has a rename provider: the palette
 # asks for the new name, the word under the cursor filled in (F2 renames the file otherwise)
 FN langfeat_rename_start
+    mov edi, LF_RENAME
+    xor esi, esi
+    jmp ext_provider_begin
+
+FN langfeat_rename_prompt
     PROLOGUE 16
-    call lf_focused_doc
-    test rax, rax
-    jz 8f
-    mov rbx, rax
-    xor r13d, r13d
-1:  cmp r13, [rip + g_exts + VEC_len]
-    jae 8f
-    imul r14, r13, EXT_SIZE
-    add r14, [rip + g_exts + VEC_ptr]
-    inc r13
-    cmp dword ptr [r14 + EXT_status], ES_RUNNING
-    jne 1b
-    test dword ptr [r14 + EXT_features], FEAT_RENAME
-    jz 1b
-    mov rdi, [r14 + EXT_pv_rename]
-    mov rsi, rbx
-    call extproto_matches
-    test eax, eax
-    jz 1b
+    mov rbx, [rip + g_doc]
     # the word under the cursor
     mov r12, [rbx + DOC_cur]
 2:  test r12, r12
@@ -580,6 +625,10 @@ FN langfeat_rename_to
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
+    call ext_provider_rename_take
+    test rax, rax
+    jz 9f
+    mov r14, rax
     test r13, r13
     jz 9f
     xor ecx, ecx
@@ -599,6 +648,7 @@ FN langfeat_rename_to
     mov rdx, r13
     call sb_push
     mov edi, LF_RENAME
+    mov rsi, r14
     call lf_start
 9:  EPILOGUE
 
@@ -626,6 +676,8 @@ FN langfeat_reply
     jmp 1b
 3:  mov ecx, [rax + LR_session]
     mov [rsp + 4], ecx
+    mov rcx, [rax + LR_language_revision]
+    mov [rsp + 8], rcx
     # its record goes
     mov rax, [rip + lf_reqs + VEC_len]
     dec rax
@@ -638,9 +690,19 @@ FN langfeat_reply
     mov rdi, rsi
     add rsi, LR_SIZE
     call memmove
-4:  mov eax, [rsp + 4]
+4:  mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
+    mov eax, [rsp + 4]
     cmp eax, [rip + lf_session]
     jne 9f
+    mov rax, [rsp + 8]
+    cmp rax, [rip + lf_language_revision]
+    jne 9f
+    call lf_language_current
+    test eax, eax
+    jz 9f
     mov eax, [rip + lf_kind]
     test eax, eax
     jz 9f
@@ -1390,6 +1452,12 @@ FN langfeat_tick
     push rbx
     cmp dword ptr [rip + lf_kind], 0
     je 9f
+    call lf_language_current
+    test eax, eax
+    jnz 0f
+    call langfeat_provider_cancel
+    jmp 9f
+0:
     cmp dword ptr [rip + lf_ready], 0
     jne 1f
     call time_ms
@@ -1592,6 +1660,15 @@ FN langfeat_chosen
     cmp rdi, [rip + lf_res + VEC_len]
     jae 9f
     mov rbx, rdi
+    call lf_language_current
+    test eax, eax
+    jz 9f
+    imul r12, rbx, LS_SIZE
+    add r12, [rip + lf_res + VEC_ptr]
+    mov rdi, [r12 + LS_ext]
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     cmp dword ptr [rip + lf_list_kind], LF_ACTS
     je 1f
     mov rdi, rbx
@@ -1727,6 +1804,42 @@ FN ws_apply_request
     mov rdx, [rip + ws_code]
     pop rbx
     ret
+
+# ws_apply_document(body, len, doc id, quiet): one already open document, with no
+# activation, tab creation, or cursor reveal. Restore caller state on every outcome.
+FN ws_apply_document
+    PROLOGUE 48
+    mov [rsp + 16], rdi
+    mov [rsp + 24], rsi
+    mov [rsp + 32], rdx
+    mov [rsp + 40], ecx
+    mov rdi, rdx
+    call extproto_doc
+    test rax, rax
+    jz 8f
+    mov rax, [rip + ws_only]
+    mov [rsp], rax
+    mov eax, [rip + ws_quiet]
+    mov [rsp + 8], eax
+    mov eax, [rip + ws_preserve_context]
+    mov [rsp + 12], eax
+    mov rdx, [rsp + 32]
+    mov [rip + ws_only], rdx
+    mov ecx, [rsp + 40]
+    mov [rip + ws_quiet], ecx
+    mov dword ptr [rip + ws_preserve_context], 1
+    mov rdi, [rsp + 16]
+    mov rsi, [rsp + 24]
+    call ws_apply
+    mov rdx, [rsp]
+    mov [rip + ws_only], rdx
+    mov edx, [rsp + 8]
+    mov [rip + ws_quiet], edx
+    mov edx, [rsp + 12]
+    mov [rip + ws_preserve_context], edx
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # FN ws_apply(body, len) -> eax 1 when every edit was made, 0 when none was (and a toast says why):
 # "N", then per file PATH_LEN VERSION M and the path, then M edits L1 C1 L2 C2 LEN and the text
@@ -1878,6 +1991,8 @@ FN ws_apply
     call app_find_tab
     test rax, rax
     jns 42f
+    cmp qword ptr [rip + ws_only], 0
+    jne .Lws_badpath            # restricted edits never open an unrecognized file
     mov rdi, [rip + ws_request_ext]
     lea rsi, [rip + lf_path]
     call ext_open_path
@@ -1904,7 +2019,12 @@ FN ws_apply
     jne .Lws_gone               # it was open when the edit was made
     jmp .Lws_find
 5:  mov rax, [r12 + WG_doc]
-    mov rcx, [r12 + WG_version]
+    mov rcx, [rip + ws_only]
+    test rcx, rcx
+    jz 50f
+    cmp rcx, [rax + DOC_id]
+    jne .Lws_badpath            # reject before the disk/tab opening pass
+50: mov rcx, [r12 + WG_version]
     cmp rcx, -1
     jne 51f
     # made from the file on disk: right for an open document only while it has no changes
@@ -2052,6 +2172,8 @@ FN ws_apply
     call ws_apply_group
     jmp 8b
 .Lws_done:
+    cmp dword ptr [rip + ws_preserve_context], 0
+    jne 81f
     # back to the document the user was in
     mov rdi, [rsp + 16]
     test rdi, rdi
@@ -2120,6 +2242,8 @@ FN ws_apply
     lea rdi, [rip + .Lws_e_overlap]
 .Lws_out:
     call ws_fail
+    cmp dword ptr [rip + ws_preserve_context], 0
+    jne 3f                     # restricted resolution opened nothing; keep current interaction
     # nothing changes: the tabs this edit opened close, and the user's document is active again
     mov rbx, [rip + wg_vec + VEC_len]
 1:  test rbx, rbx
@@ -2380,7 +2504,11 @@ ws_apply_group:
     jmp 1b
 8:  mov rdi, rbx
     call doc_end_group
-    call ed_touch
+    cmp dword ptr [rip + ws_preserve_context], 0
+    je 8f
+    mov dword ptr [rip + g_dirty], 1
+    jmp 9f
+8:  call ed_touch
 9:  EPILOGUE
 
 # FN langfeat_ext_gone(ext): an extension stopped: its requests go (state only)
@@ -2491,3 +2619,13 @@ lf_single: .byte 0, 0, 0, 1, 0, 1, 1
 .Lwc_range: .asciz "badpos a range is outside its text or inside a character"
 .Lwc_many: .asciz "toobig too many edits out of order in one file"
 .Lwc_overlap: .asciz "badpos two edits overlap"
+
+.text
+# Keep result/request allocations owned; prevent pending and selected actions from resuming.
+FN langfeat_catalog_invalidate_pure
+    mov dword ptr [rip + lf_kind], 0
+    mov dword ptr [rip + lf_ready], 0
+    mov dword ptr [rip + lf_list_kind], 0
+    mov qword ptr [rip + lf_ws_ext], 0
+    mov qword ptr [rip + lf_deadline], 0
+    ret

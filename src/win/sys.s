@@ -1,6 +1,10 @@
 # Windows implementations of the small Linux syscall surface used by the editor.
 .include "win.inc"
 
+.bss
+.p2align 3
+clock_frequency: .quad 0
+
 .text
 FN ws_nosys
     mov rax, -38
@@ -47,6 +51,32 @@ FN ws_clock
     mov rbx, rsi
     test edi, edi
     jz 1f
+    mov r12, [rip + clock_frequency]
+    test r12, r12
+    jnz 2f
+    lea rcx, [rsp + 96]
+    API QueryPerformanceFrequency
+    test eax, eax
+    jz 3f
+    mov r12, [rsp + 96]
+    test r12, r12
+    jz 3f
+    mov [rip + clock_frequency], r12
+2:  lea rcx, [rsp + 96]
+    API QueryPerformanceCounter
+    test eax, eax
+    jz 3f
+    mov rax, [rsp + 96]
+    xor edx, edx
+    div r12
+    mov [rbx], rax
+    mov rax, rdx
+    mov ecx, 1000000000
+    mul rcx
+    div r12
+    mov [rbx + 8], rax
+    jmp 9f
+3:  # Counter APIs are available on supported Windows versions; keep a monotonic fallback.
     API GetTickCount64
     xor edx, edx
     mov ecx, 1000
@@ -1100,67 +1130,96 @@ FN ws_pipe
     PROLOGUE 128
     mov rbx, rdi
     mov r12d, esi
+    # Reserve both virtual owners before acquiring any native handle.
+    xor edi, edi
+    mov esi, FD_PIPE
+    mov edx, r12d
+    call win_fd_alloc
+    test rax, rax
+    js .Lpipe_return
+    mov r13d, eax
+    mov r14, r8
+    xor edi, edi
+    mov esi, FD_PIPE
+    mov edx, r12d
+    call win_fd_alloc
+    test rax, rax
+    js .Lpipe_first
+    mov r15d, eax
+    mov [rsp + 112], r8
     lea rcx, [rsp + 96]
     lea rdx, [rsp + 104]
     xor r8d, r8d
     mov r9d, 65536
     API CreatePipe
     test eax, eax
-    jz 7f
-    mov rdi, [rsp + 96]
-    mov esi, FD_PIPE
-    mov edx, r12d
-    call win_fd_alloc
-    test rax, rax
-    js 6f
-    mov r13d, eax
-    mov [rbx], eax
-    mov rdi, [rsp + 104]
-    mov esi, FD_PIPE
-    mov edx, r12d
-    call win_fd_alloc
-    test rax, rax
-    js 5f
-    mov dword ptr [r8 + FD_wend], 1     # win_fd_alloc leaves the slot in r8
-    mov [rbx + 4], eax
+    jz .Lpipe_native_fail
+    # No allocation or other fallible operation follows native acquisition.
+    mov rax, [rsp + 96]
+    mov [r14 + FD_handle], rax
+    mov [r14 + FD_write], rax
+    mov r8, [rsp + 112]
+    mov rax, [rsp + 104]
+    mov [r8 + FD_handle], rax
+    mov [r8 + FD_write], rax
+    mov dword ptr [r8 + FD_wend], 1
+    mov [rbx], r13d
+    mov [rbx + 4], r15d
     xor eax, eax
     EPILOGUE
-5:  mov edi, r13d
-    call ws_close
-    jmp 61f
-6:  mov rcx, [rsp + 96]
-    API CloseHandle
-61: mov rcx, [rsp + 104]
-    API CloseHandle
-    mov rax, -24
-    EPILOGUE
-7:  call win_error
+.Lpipe_native_fail:
+    # Failed CreatePipe outputs are indeterminate. Only empty reservations are released.
+    call win_error
+    mov r12, rax
+    mov rdi, [rsp + 112]
+    xor esi, esi
+    mov edx, FD_SIZE
+    call memset
+    mov rax, r12
+.Lpipe_first:
+    mov r12, rax
+    mov rdi, r14
+    xor esi, esi
+    mov edx, FD_SIZE
+    call memset
+    mov rax, r12
+.Lpipe_return:
     EPILOGUE
 
 FN ws_fcntl
     PROLOGUE 112
+    mov r12d, edx
+    mov r13d, esi
     call win_fd
     test rax, rax
     jz 8f
-    cmp esi, 4
+    mov rbx, rax
+    cmp r13d, 3                # F_GETFL: report only the last committed native/software state.
+    je 2f
+    cmp r13d, F_SETFL
     jne 1f
-    mov [rax + FD_flags], edx
-    cmp dword ptr [rax + FD_kind], FD_PIPE
-    jne 1f
-    cmp dword ptr [rax + FD_wend], 0
-    je 1f
-    # a pipe's write end: O_NONBLOCK makes WriteFile return at once when the reader is behind
-    # (PIPE_NOWAIT on this end only; the child's reads keep waiting)
-    xor ecx, ecx
-    test edx, O_NONBLOCK
-    setnz cl
-    mov [rsp + 96], ecx
-    mov rcx, [rax + FD_handle]
+    cmp dword ptr [rbx + FD_kind], FD_PIPE
+    jne 3f
+    cmp dword ptr [rbx + FD_wend], 0
+    je 3f
+    # Commit software flags only after Windows accepts the write-end pipe mode.
+    xor eax, eax
+    test r12d, O_NONBLOCK
+    setnz al
+    mov [rsp + 96], eax
+    mov rcx, [rbx + FD_handle]
     lea rdx, [rsp + 96]
     xor r8d, r8d
     xor r9d, r9d
     API SetNamedPipeHandleState
+    test eax, eax
+    jz 7f
+3:  mov [rbx + FD_flags], r12d
 1:  xor eax, eax
+    EPILOGUE
+2:  mov eax, [rbx + FD_flags]
+    EPILOGUE
+7:  call win_error
     EPILOGUE
 8:  mov rax, -9
     EPILOGUE

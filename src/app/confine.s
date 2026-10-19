@@ -36,6 +36,16 @@ conf_page: .quad 0              # a page shared with the forked children: byte [
                                 #   the program can exit with any code, but after exec it has no
                                 #   way to this page
 conf_slot: .quad 0              # the EXT being prepared, as an index into g_exts
+conf_helper_mode: .quad 0
+conf_helper_home: .quad 0
+conf_helper_cancel: .quad 0
+conf_helper_user: .quad 0
+conf_helper_error: .quad 0
+conf_helper_cleanup: .quad 0
+conf_helper_cleanup_init: .quad 0
+conf_helper_scratch: .zero 16
+conf_helper_scratch_masks: .zero 16
+conf_helper_rule_disposition: .zero 2048
 pathbuf: .zero 4200
 pathbuf2: .zero 4200
 realbuf: .zero 4200             # profile_path's resolved path (never the buffer it reads from)
@@ -107,8 +117,37 @@ confine_probe:
 3:  mov edi, 1
     SYS SYS_exit
 2:  mov edi, eax
-    xor esi, esi
+    mov rbx, rdi
+.Lconf_probe_wait:
+    mov rdi, rbx
+    mov esi, 1
     call proc_wait
+    cmp eax, -1
+    jne .Lconf_probe_collected
+    call confine_helper_check
+    test rax, rax
+    js .Lconf_probe_cancel
+    xor edi, edi
+    xor esi, esi
+    mov edx, 10
+    SYS SYS_poll
+    jmp .Lconf_probe_wait
+.Lconf_probe_cancel:
+    mov rdi, rbx
+    mov esi, 9
+    SYS SYS_kill
+.Lconf_probe_cancel_wait:
+    mov rdi, rbx
+    mov esi, 1
+    call proc_wait
+    cmp eax, -1
+    jne 9f
+    xor edi, edi
+    xor esi, esi
+    mov edx, 10
+    SYS SYS_poll
+    jmp .Lconf_probe_cancel_wait
+.Lconf_probe_collected:
     test eax, eax
     jnz 9f
     mov dword ptr [rip + conf_userns], 1
@@ -184,7 +223,11 @@ FN confine_prepare
     jnz .Lcp_fail
     or dword ptr [rip + conf_flags], CF_LANDLOCK
 .endif
-    mov dword ptr [rip + conf_pending], 1
+    cmp qword ptr [rip + conf_helper_error], 0
+    je 99f
+    lea rax, [rip + .Lconf_helper_rejected]
+    jmp .Lcp_fail
+99: mov dword ptr [rip + conf_pending], 1
     xor eax, eax
     EPILOGUE
 .Lcp_fail:
@@ -267,6 +310,8 @@ FN confine_release
     ret
 
 rules_release:
+    cmp qword ptr [rip + conf_helper_mode], 0
+    jne confine_helper_release_checked
     PROLOGUE
     xor ebx, ebx
 1:  cmp rbx, [rip + conf_rules + VEC_len]
@@ -329,7 +374,7 @@ rules_build:
     test dword ptr [rbx + EXT_needs], NEEDS_HOME_READ
     jz 5f
     lea rdi, [rip + .Lenv_home]
-    call getenv
+    call confine_home
     test rax, rax
     jz 5f
     mov rdi, rax
@@ -429,16 +474,37 @@ add_rule:
     PROLOGUE 160
     mov rbx, rdi
     mov r12, rsi
+    call confine_helper_check
+    test rax, rax
+    js 8f
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 91f
+    cmp qword ptr [rip + conf_rules + VEC_len], 2048
+    jb 91f
+    mov qword ptr [rip + conf_helper_error], -7
+    jmp 8f
+91: mov rdi, rbx
     mov esi, O_PATH | O_CLOEXEC
     xor edx, edx
     SYS SYS_open
     test rax, rax
     js 8f
     mov r13d, eax
-    mov edi, eax
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 911f
+    mov [rip + conf_helper_scratch + 8], rax
+911: mov edi, r13d
     mov rsi, rsp
     SYS SYS_fstat
-    mov eax, [rsp + 24]         # st_mode
+    test rax, rax
+    jns 912f
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 912f
+    mov [rip + conf_helper_error], rax
+    mov edi, 1
+    call conf_helper_close_scratch
+    jmp 8f
+912: mov eax, [rsp + 24]         # st_mode
     and eax, 0xf000
     cmp eax, 0x4000
     je 1f
@@ -450,7 +516,14 @@ add_rule:
     mov [rax + CR_access], r12
     mov [rax + CR_fd], r13d
     mov dword ptr [rax + CR_pad], 0
-    cmp byte ptr [rip + conf_log], 0
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 913f
+    mov qword ptr [rip + conf_helper_scratch + 8], -1
+    mov rax, [rip + conf_rules + VEC_len]
+    dec rax
+    lea rcx, [rip + conf_helper_rule_disposition]
+    mov byte ptr [rcx + rax], 0
+913: cmp byte ptr [rip + conf_log], 0
     je 2f
     lea rdi, [rip + logbuf]
     lea rsi, [rip + .Llog_rule]
@@ -479,16 +552,41 @@ add_rule:
 # #! interpreter in out, 0 when it has none (a static binary, a script with no #!); on macOS only
 # the #! one counts (dyld comes from /usr/lib, readable to all)
 interp_of:
-    PROLOGUE 16
+    PROLOGUE 160
     mov rbx, rdi
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 90f
+    cmp qword ptr [rip + conf_helper_scratch], -1
+    jne 8f
+90:
     mov r12, rsi
-    mov esi, O_RDONLY | O_CLOEXEC
+    call confine_helper_check
+    test rax, rax
+    js 8f
+    mov rdi, rbx
+    mov esi, O_RDONLY | O_NONBLOCK | O_CLOEXEC
     xor edx, edx
     SYS SYS_open
     test rax, rax
     js 8f
     mov r13d, eax
-    mov edi, eax
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 91f
+    mov [rip + conf_helper_scratch], rax
+91: mov edi, r13d
+    lea rsi, [rsp + 16]
+    SYS SYS_fstat
+    test rax, rax
+    js .Lio_bad_probe
+    mov eax, [rsp + 40]
+    and eax, 0xf000
+    cmp eax, 0x8000
+    jne .Lio_bad_probe
+    lea rdi, [rip + elfhdr]
+    xor esi, esi
+    mov edx, 64
+    call memset
+    mov edi, r13d
     lea rsi, [rip + elfhdr]
     mov edx, 64
     SYS SYS_read
@@ -503,7 +601,10 @@ interp_of:
     movzx r15d, word ptr [rip + elfhdr + 56]        # e_phnum
     movzx eax, word ptr [rip + elfhdr + 54]         # e_phentsize
     mov [rsp], rax
-1:  test r15d, r15d
+1:  call confine_helper_check
+    test rax, rax
+    js .Lio_none
+    test r15d, r15d
     jz .Lio_none
     dec r15d
     mov edi, r13d
@@ -556,12 +657,29 @@ interp_of:
     test ecx, ecx
     jz .Lio_none
 .Lio_yes:
-    mov edi, r13d
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 92f
+    xor edi, edi
+    call conf_helper_close_scratch
+    test rax, rax
+    js 8f
+    mov eax, 1
+    EPILOGUE
+92: mov edi, r13d
     SYS SYS_close
     mov eax, 1
     EPILOGUE
+.Lio_bad_probe:
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je .Lio_none
+    mov qword ptr [rip + conf_helper_error], -22
 .Lio_none:
-    mov edi, r13d
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 93f
+    xor edi, edi
+    call conf_helper_close_scratch
+    jmp 8f
+93: mov edi, r13d
     SYS SYS_close
 8:  xor eax, eax
     EPILOGUE
@@ -627,7 +745,7 @@ profile_build:
     call sb_clear
     lea rdi, [rip + conf_profile]
     lea rsi, [rip + .Lsb_head]
-    call sb_push_cstr
+    call conf_sb_push_cstr
     # the extension folder, its script and its state folder
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsb_ro]
@@ -654,7 +772,7 @@ profile_build:
 2:  test dword ptr [rbx + EXT_needs], NEEDS_HOME_READ
     jz 3f
     lea rdi, [rip + .Lenv_home]
-    call getenv
+    call confine_home
     test rax, rax
     jz 3f
     mov rdi, rax
@@ -666,7 +784,7 @@ profile_build:
     jz 31f
     lea rsi, [rip + .Lsb_net_allow]
 31: lea rdi, [rip + conf_profile]
-    call sb_push_cstr
+    call conf_sb_push_cstr
     # programs
     mov rdi, [rbx + EXT_prog]
     call profile_program
@@ -713,7 +831,7 @@ profile_build:
     call write_all
 81: lea rdi, [rip + conf_profile]
     xor esi, esi
-    call sb_push_byte           # the profile is a cstr
+    call conf_sb_push_byte           # the profile is a cstr
     xor eax, eax
     EPILOGUE
 
@@ -722,6 +840,10 @@ profile_path:
     PROLOGUE
     mov rbx, rsi
     mov r14, rdi
+    call confine_helper_check
+    test rax, rax
+    js 9f
+    mov rdi, r14
     lea rsi, [rip + realbuf]
     SYS SYS_realpath
     lea r12, [rip + realbuf]
@@ -744,14 +866,14 @@ profile_path:
     mov rdx, rax
     push rax
     push rax
-    call sb_push
+    call conf_sb_push
     mov rdi, r12
     call push_sbpl_string
     pop rax
     pop rax
     lea rdi, [rip + conf_profile]
     lea rsi, [rbx + rax + 2]
-    call sb_push_cstr
+    call conf_sb_push_cstr
 9:  EPILOGUE
 
 # push_sbpl_string(cstr): the bytes into the profile with the quote and the backslash escaped,
@@ -769,10 +891,10 @@ push_sbpl_string:
     jne 3f
 2:  lea rdi, [rip + conf_profile]
     mov esi, '\\'
-    call sb_push_byte
+    call conf_sb_push_byte
 3:  lea rdi, [rip + conf_profile]
     mov esi, r12d
-    call sb_push_byte
+    call conf_sb_push_byte
     jmp 1b
 9:  EPILOGUE
 
@@ -780,6 +902,10 @@ push_sbpl_string:
 profile_program:
     PROLOGUE
     mov rbx, rdi
+    call confine_helper_check
+    test rax, rax
+    js 9f
+    mov rdi, rbx
     lea rsi, [rip + pathbuf2]
     SYS SYS_realpath
     lea r12, [rip + pathbuf2]
@@ -789,6 +915,16 @@ profile_program:
 1:  mov rdi, r12
     lea rsi, [rip + .Lsb_exec_lit]
     call profile_path
+    # A directly launched /bin/sh selects the same native shell as a script interpreter.
+    mov rdi, r12
+    lea rsi, [rip + .Lbin_sh]
+    call strcmp_eq
+    test eax, eax
+    jz 11f
+    lea rdi, [rip + .Lselect_sh]
+    lea rsi, [rip + .Lsb_exec_lit]
+    call profile_path
+11:
     # a script: its #! interpreter runs it (an ELF loader cannot be one here)
     mov rdi, r12
     lea rsi, [rip + pathbuf]
@@ -950,7 +1086,7 @@ xcode_shim:
     call mem_free
     lea rdi, [rip + conf_profile]
     lea rsi, [rip + .Lsb_xcrun]
-    call sb_push_cstr
+    call conf_sb_push_cstr
     # xcrun looks a tool up the first time (its cache is the extension's own, xcrun_db in the
     # state folder) through popen: /bin/sh and the shell it starts
     lea rdi, [rip + .Lbin_sh]
@@ -1243,3 +1379,224 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Ldev_dirs: .quad .Lxcode_link, .Lxcode_app, .Lclt, 0
 .Lsb_xcrun: .asciz "(allow file-read* (literal \"/private/var/db/xcode_select_link\"))\n"
 .Lsb_net_allow: .asciz "(allow network*)\n"
+
+
+.section .rodata
+.Lconf_helper_rejected: .asciz "confinement preparation rejected"
+.text
+# These hooks are local to an independent helper; editor-side behavior remains unchanged.
+confine_home:
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 1f
+    mov rax, [rip + conf_helper_home]
+    test rax, rax
+    jz 9f
+    cmp byte ptr [rax], 0
+    jne 9f
+    xor eax, eax
+9:  ret
+1:  jmp getenv
+
+confine_helper_check:
+    PROLOGUE
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 1f
+    mov rax, [rip + conf_helper_error]
+    test rax, rax
+    js 9f
+    mov rax, [rip + conf_helper_cancel]
+    test rax, rax
+    jz 1f
+    mov rdi, [rip + conf_helper_user]
+    call rax
+    test rax, rax
+    jns 1f
+    mov [rip + conf_helper_error], rax
+9:  EPILOGUE
+1:  xor eax, eax
+    EPILOGUE
+
+# Capacity is checked before expansion. A failed helper preparation cannot become fallback.
+conf_sb_check:
+    PROLOGUE
+    mov rbx, rdx
+    call confine_helper_check
+    test rax, rax
+    js 8f
+    cmp qword ptr [rip + conf_helper_mode], 0
+    je 1f
+    mov rax, [rip + conf_profile + SB_len]
+    add rax, rbx
+    jc 7f
+    cmp rax, 2097152
+    jbe 1f
+7:  mov qword ptr [rip + conf_helper_error], -7
+8:  xor eax, eax
+    EPILOGUE
+1:  mov eax, 1
+    EPILOGUE
+
+conf_sb_push:
+    PROLOGUE 32
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov [rsp + 16], rdx
+    call conf_sb_check
+    test eax, eax
+    jz 1f
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    mov rdx, [rsp + 16]
+    call sb_push
+1:  EPILOGUE
+
+conf_sb_push_cstr:
+    PROLOGUE 32
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov rdi, rsi
+    call strlen
+    mov rdx, rax
+    call conf_sb_check
+    test eax, eax
+    jz 1f
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call sb_push_cstr
+1:  EPILOGUE
+
+conf_sb_push_byte:
+    PROLOGUE 16
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov edx, 1
+    call conf_sb_check
+    test eax, eax
+    jz 1f
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call sb_push_byte
+1:  EPILOGUE
+
+# confine_helper_prepare(ext,actualHome,cancelFn,ctx,allowFallback)->level/-errno, reason enum inrdx.
+FN confine_helper_prepare
+    PROLOGUE 16
+    mov rbx, rdi
+    mov [rsp], r8
+    cmp qword ptr [rip + conf_helper_cleanup_init], 0
+    jne 90f
+    mov qword ptr [rip + conf_helper_cleanup_init], 1
+    mov qword ptr [rip + conf_helper_scratch], -1
+    mov qword ptr [rip + conf_helper_scratch + 8], -1
+90: mov qword ptr [rip + conf_helper_mode], 1
+    mov [rip + conf_helper_home], rsi
+    mov [rip + conf_helper_cancel], rdx
+    mov [rip + conf_helper_user], rcx
+    cmp qword ptr [rip + conf_helper_cleanup], 0
+    jne 91f
+    mov qword ptr [rip + conf_helper_error], 0
+    call confine_prepare
+    jmp 92f
+91: mov rax, [rip + conf_helper_cleanup]
+92:
+    mov r12, rax
+    mov rax, [rip + conf_helper_error]
+    test rax, rax
+    js 9f
+    test r12, r12
+    jz 1f
+.ifdef MACOS
+    jmp 8f                  # profile or filesystem failures are never unconfined fallback
+.else
+    lea rax, [rip + .Lr_no_landlock]
+    cmp r12, rax
+    je 21f
+    lea rax, [rip + .Lr_old_landlock]
+    cmp r12, rax
+    je 21f
+    lea rax, [rip + .Lr_no_net]
+    cmp r12, rax
+    jne 8f
+21:
+.endif
+    cmp qword ptr [rsp], 0
+    je 8f
+    xor eax, eax
+    mov edx, 1              # explicit system unavailable fallback
+    mov rcx, [rip + conf_helper_cleanup]
+    EPILOGUE
+1:  mov eax, [rbx + EXT_confined]
+    xor edx, edx
+9:  mov rcx, [rip + conf_helper_cleanup]
+    EPILOGUE
+8:  mov rax, -13
+    mov edx, 1
+    mov rcx, [rip + conf_helper_cleanup]
+    EPILOGUE
+
+# Keeper-only checked release. Ordinary editor confinement release keeps its old ABI.
+# Unconsumed entries and scratch are retained until this owned helper is collected.
+conf_helper_note_cleanup:
+    test rax, rax
+    jns 2f
+    cmp qword ptr [rip + conf_helper_cleanup], 0
+    jne 1f
+    mov [rip + conf_helper_cleanup], rax
+1:  cmp qword ptr [rip + conf_helper_error], 0
+    jne 2f
+    mov [rip + conf_helper_error], rax
+2:  ret
+conf_helper_close_scratch:
+    PROLOGUE
+    mov r12, rdi
+    lea rdi, [rip + conf_helper_scratch]
+    lea rdi, [rdi + r12*8]
+    lea rsi, [rip + conf_helper_scratch_masks]
+    mov rdx, r12
+    xor ecx, ecx
+    call kp_close_owned
+    mov r13, rax
+    call conf_helper_note_cleanup
+    mov rax, r13
+    EPILOGUE
+FN confine_helper_release_checked
+    cmp qword ptr [rip + conf_helper_cleanup_init], 0
+    jne 90f
+    xor eax, eax
+    xor ecx, ecx
+    ret
+90: PROLOGUE
+    mov dword ptr [rip + conf_pending], 0
+    xor r12d, r12d
+1:  cmp r12, [rip + conf_rules + VEC_len]
+    jae 5f
+    imul rax, r12, CR_SIZE
+    add rax, [rip + conf_rules + VEC_ptr]
+    mov rbx, rax
+    mov edi, [rbx + CR_fd]
+    test edi, edi
+    js 4f
+    lea r13, [rip + conf_helper_rule_disposition]
+    cmp byte ptr [r13 + r12], 0
+    jne 4f
+    call ext_fd_close_checked
+    mov r14, rax
+    cmp rdx, 1
+    je 2f
+    mov byte ptr [r13 + r12], 2
+    cmp rdx, 2
+    jne 3f
+    mov byte ptr [r13 + r12], 3
+    jmp 3f
+2:  mov dword ptr [rbx + CR_fd], -1
+3:  mov rax, r14
+    call conf_helper_note_cleanup
+4:  inc r12
+    jmp 1b
+5:  xor edi, edi
+    call conf_helper_close_scratch
+    mov edi, 1
+    call conf_helper_close_scratch
+    mov rax, [rip + conf_helper_cleanup]
+    mov rcx, rax
+    EPILOGUE

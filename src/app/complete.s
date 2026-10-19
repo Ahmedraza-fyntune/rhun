@@ -5,6 +5,7 @@
 # tick, never from complete_reply.
 .include "rhun.inc"
 
+.equ CP_CHOICES, 1
 .equ CP_SHOW, 50                # items kept after filtering, best first
 .equ CP_ROWS, 10                # rows the list shows at once
 .equ CP_TYPED_MS, 150           # the pause after typing in a word before the list is asked for
@@ -39,6 +40,7 @@ F HR_id, 8
 F HR_kind, 4                    # HR_COMPLETE, HR_SIGNATURE
 F HR_session, 4                 # cp_session or sg_session when it went out
 F HR_req, 8                     # the cursor then
+F HR_language_revision, 8
 ENDSTRUCT HR_SIZE
 
 .data
@@ -49,10 +51,12 @@ cp_hover: .long -1              # the row under the pointer
 
 .bss
 .p2align 3
+cp_source: .long 0              # 0 providers, CP_CHOICES native literal values
 cp_open: .long 0                # 0 closed, 1 asked, 2 items to show
 cp_session: .long 0             # each new list: answers for an older one are dropped
 cp_doc: .quad 0                 # the session's DOC* and its id (a freed DOC's address can return)
 cp_doc_id: .quad 0
+cp_language_revision: .quad 0
 cp_start: .quad 0               # where the word starts; the filter text runs from it to the cursor
 cp_tail: .quad 0                # bytes after the cursor: the same while the user types in the word
 cp_seen_cur: .quad 0            # the cursor and version the list was filtered for
@@ -63,8 +67,11 @@ cp_reask: .long 0               # ask again from the frame (an answer came in th
 cp_sel: .long 0                 # the selected row
 cp_top: .long 0                 # the first row shown
 cp_nshown: .long 0
-cp_shown: .zero 4 * CP_SHOW     # item indices, best first
-cp_scores: .zero 4 * CP_SHOW
+cp_choice_identity: .quad 0
+cp_choice_activation: .quad 0
+cp_choice_primary: .quad 0
+cp_shown: .zero 4 * SN_OPTIONS_MAX     # item indices, best first
+cp_scores: .zero 4 * SN_OPTIONS_MAX
 cp_rect: .zero 16               # where the list was drawn: x y w h (h 0: nowhere)
 cp_items: .zero VEC_SIZE        # CI records
 cp_bytes: .zero SB_SIZE         # their text
@@ -82,6 +89,7 @@ sg_from: .long 0                # the active parameter's bytes in the signature 
 sg_to: .long 0
 sg_doc: .quad 0                 # the DOC* and id it is for
 sg_doc_id: .quad 0
+sg_language_revision: .quad 0
 sg_cur: .quad 0                 # the cursor and version it was last asked for
 sg_ver: .quad 0
 sg_ext: .quad 0                 # EXT* that answers
@@ -194,40 +202,82 @@ focused_doc:
 
 # doc_alive() -> eax 1 when cp_doc is still the open document it was (answers arrive between frames)
 doc_alive:
-    push rbx
+    PROLOGUE
     mov rdi, [rip + cp_doc_id]
     call extproto_doc
-    xor ecx, ecx
+    test rax, rax
+    jz 1f
     cmp rax, [rip + cp_doc]
-    sete cl
-    mov eax, ecx
-    pop rbx
-    ret
+    jne 1f
+    mov rdi, rax
+    mov rsi, [rip + cp_language_revision]
+    call doc_language_matches
+    EPILOGUE
+1:  xor eax, eax
+    EPILOGUE
+
+sg_doc_alive:
+    PROLOGUE
+    mov rdi, [rip + sg_doc_id]
+    call extproto_doc
+    test rax, rax
+    jz 1f
+    cmp rax, [rip + sg_doc]
+    jne 1f
+    mov rdi, rax
+    mov rsi, [rip + sg_language_revision]
+    call doc_language_matches
+    EPILOGUE
+1:  xor eax, eax
+    EPILOGUE
+
+# Normal tick only. Preserve fresh sessions created after the language changed.
+FN complete_language_changed
+    PROLOGUE
+    mov rbx, rdi
+    cmp [rip + cp_doc], rbx
+    jne 1f
+    mov rax, [rbx + DOC_language_revision]
+    cmp [rip + cp_language_revision], rax
+    je 1f
+    call cp_close
+1:  cmp [rip + sg_doc], rbx
+    jne 2f
+    mov rax, [rbx + DOC_language_revision]
+    cmp [rip + sg_language_revision], rax
+    je 2f
+    call sg_close
+2:  EPILOGUE
 
 # providers_any() -> eax 1 when an extension that is running or starting provides completion or
 # signature help (one still starting asks once it has: typing in the meantime keeps the timer)
 providers_any:
-    xor ecx, ecx
-1:  cmp rcx, [rip + g_exts + VEC_len]
+    PROLOGUE
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
     jae 8f
-    imul rax, rcx, EXT_SIZE
-    add rax, [rip + g_exts + VEC_ptr]
-    inc rcx
-    mov edx, [rax + EXT_status]
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
+    mov edx, [rbx + EXT_status]
     cmp edx, ES_RUNNING
     je 2f
     cmp edx, ES_STARTING
     je 2f
-    cmp edx, ES_IDLE            # an opened document activates its providers at the next tick
+    cmp edx, ES_IDLE
     jne 1b
-2:  cmp qword ptr [rax + EXT_pv_complete], 0
+2:  cmp qword ptr [rbx + EXT_pv_complete], 0
     jne 9f
-    cmp qword ptr [rax + EXT_pv_signature], 0
+    cmp qword ptr [rbx + EXT_pv_signature], 0
     je 1b
 9:  mov eax, 1
-    ret
+    EPILOGUE
 8:  xor eax, eax
-    ret
+    EPILOGUE
 
 # req_remove(i): drop cp_reqs[i]
 req_remove:
@@ -306,6 +356,10 @@ ask:
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
     test dword ptr [rbx + EXT_features], FEAT_COMPLETE
@@ -343,6 +397,8 @@ ask:
     mov [rax + HR_session], ecx
     mov rcx, [r15 + DOC_cur]
     mov [rax + HR_req], rcx
+    mov rcx, [r15 + DOC_language_revision]
+    mov [rax + HR_language_revision], rcx
     inc dword ptr [rsp + 16]
     jmp 1b
 9:  mov eax, [rsp + 16]
@@ -359,6 +415,14 @@ cp_begin:
     test rax, rax
     jz 9f
     mov rbx, rax
+    mov rdi, rbx
+    call doc_sync_grammar
+    test rax, rax
+    js 9f
+    mov rax, [rbx + DOC_language_revision]
+    test rax, rax
+    jz 9f
+    mov [rip + cp_language_revision], rax
     mov rdi, rbx
     call ed_sel
     cmp rax, rdx
@@ -397,6 +461,7 @@ cp_begin:
 cp_close:
     push rbx
     mov dword ptr [rip + cp_open], 0
+    mov dword ptr [rip + cp_source], 0
     mov dword ptr [rip + cp_nshown], 0
     mov dword ptr [rip + cp_sel], 0
     mov dword ptr [rip + cp_top], 0
@@ -457,6 +522,12 @@ FN complete_typed
 # FN cmd_complete(): ctrl+space, the list at once
 FN cmd_complete
     push rbx
+    call focused_doc
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call snippet_complete_collapse
+1:
     lea rdi, [rip + .Lk_invoked]
     mov esi, '-'
     xor edx, edx
@@ -514,6 +585,10 @@ FN complete_tick
     imul r13, r12, EXT_SIZE
     add r13, [rip + g_exts + VEC_ptr]
     inc r12
+    mov rdi, r13
+    call ext_has_metadata
+    test eax, eax
+    jz 1b
     cmp dword ptr [r13 + EXT_status], ES_STARTING
     jne 1b
     mov rdi, [r13 + EXT_pv_complete]
@@ -564,8 +639,14 @@ FN complete_reply
     mov [rsp + 8], ecx
     mov rcx, [rax + HR_req]
     mov [rsp + 16], rcx
+    mov rcx, [rax + HR_language_revision]
+    mov [rsp + 24], rcx
     mov rdi, r13
     call req_remove
+    mov rdi, rbx
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     mov dword ptr [rip + g_dirty], 1
     cmp dword ptr [rsp + 4], HR_SIGNATURE
     je 5f
@@ -577,6 +658,9 @@ FN complete_reply
     jne 9f
     cmp dword ptr [rip + cp_open], 0
     je 9f
+    mov rax, [rsp + 24]
+    cmp rax, [rip + cp_language_revision]
+    jne 9f
     call doc_alive
     test eax, eax
     jz 9f                       # closed meanwhile: the next frame ends the list
@@ -586,10 +670,16 @@ FN complete_reply
     mov rcx, [rsp + 16]
     call cp_merge
     jmp 9f
-5:  mov dword ptr [rip + sg_wait], 0
-    mov eax, [rsp + 8]
+5:  mov eax, [rsp + 8]
     cmp eax, [rip + sg_session]
     jne 9f
+    mov dword ptr [rip + sg_wait], 0
+    mov rax, [rsp + 24]
+    cmp rax, [rip + sg_language_revision]
+    jne 9f
+    call sg_doc_alive
+    test eax, eax
+    jz 9f
     cmp dword ptr [rsp], 0
     je 51f
     mov rdi, r14
@@ -630,7 +720,10 @@ FN complete_ext_gone
 11: mov rdi, r12
     call req_remove
     jmp 1b
-2:  # its items
+2:  # Native choices own their text and are unrelated to this process.
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    je 3f
+    # its items
     mov rdi, rbx
     call keep_others
     lea rdi, [rip + cp_new_items]
@@ -715,6 +808,9 @@ cp_merge:
     mov r12, rsi
     mov r13, rdx
     mov [rsp], rcx
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     cmp r13, CP_BODY_MAX
     ja 9f
     mov rdi, rbx
@@ -1158,7 +1254,11 @@ item:
 # query_for(o1): cp_q and cp_qlen, the text from o1 to cp_doc's cursor (empty when the cursor is
 # before it or the text is longer than CP_QMAX)
 query_for:
-    push rbx
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    jne 0f
+    mov qword ptr [rip + cp_qlen], 0
+    ret
+0:  push rbx
     mov rax, [rip + cp_doc]
     mov rcx, [rax + DOC_cur]
     cmp rdi, [rip + cp_qo1]
@@ -1262,7 +1362,13 @@ cp_filter:
 # edit elsewhere or another document ends it
 cp_check:
     PROLOGUE
-    cmp dword ptr [rip + cp_open], 0
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    jne 0f
+    call cp_choice_check
+    test rax, rax
+    jz 7f
+    jmp 9f
+0:  cmp dword ptr [rip + cp_open], 0
     je 9f
     call focused_doc
     test rax, rax
@@ -1273,6 +1379,9 @@ cp_check:
     mov rax, [rbx + DOC_id]
     cmp rax, [rip + cp_doc_id]
     jne 7f
+    call doc_alive
+    test eax, eax
+    jz 7f
     mov rdi, rbx
     call ed_sel
     cmp rax, rdx
@@ -1342,29 +1451,42 @@ cp_check:
 
 # ---------------- signature help ----------------
 
-# sig_provider() -> rax the first running extension that agreed signature help and whose patterns
-# match the focused document, or 0
+# Automatic signature help resolves quietly. Explicit requests use the provider chooser.
 sig_provider:
+    push rbx
+    call focused_doc
+    test rax, rax
+    jz 9f
+    mov rsi, rax
+    mov edi, 7
+    call ext_provider_running
+9:  pop rbx
+    ret
+
+# sig_active_provider() -> the current session's provider, validated without rerouting it.
+sig_active_provider:
     PROLOGUE
     call focused_doc
     test rax, rax
     jz 8f
-    mov r12, rax
-    xor r13d, r13d
-1:  cmp r13, [rip + g_exts + VEC_len]
-    jae 8f
-    imul rbx, r13, EXT_SIZE
-    add rbx, [rip + g_exts + VEC_ptr]
-    inc r13
-    cmp dword ptr [rbx + EXT_status], ES_RUNNING
-    jne 1b
-    test dword ptr [rbx + EXT_features], FEAT_SIGNATURE
-    jz 1b
-    mov rdi, [rbx + EXT_pv_signature]
-    mov rsi, r12
-    call extproto_matches
+    cmp rax, [rip + sg_doc]
+    jne 8f
+    mov rcx, [rax + DOC_id]
+    cmp rcx, [rip + sg_doc_id]
+    jne 8f
+    call sg_doc_alive
     test eax, eax
-    jz 1b
+    jz 8f
+    mov rax, [rip + sg_doc]
+    mov rbx, [rip + sg_ext]
+    test rbx, rbx
+    jz 8f
+    mov rdi, rbx
+    mov esi, 7
+    mov rdx, rax
+    call ext_provider_supports
+    test eax, eax
+    jz 8f
     mov rax, rbx
     EPILOGUE
 8:  xor eax, eax
@@ -1374,7 +1496,17 @@ sig_provider:
 sig_trigger:
     PROLOGUE
     mov r12d, edi
-    call sig_provider
+    mov eax, [rip + sg_open]
+    or eax, [rip + sg_wait]
+    or eax, [rip + sg_again]
+    jz 1f
+    call sig_active_provider
+    test rax, rax
+    jnz 2f
+    call sg_close
+    jmp 9f
+1:  call sig_provider
+2:
     test rax, rax
     jz 9f
     mov rbx, rax
@@ -1395,10 +1527,21 @@ sig_ask:
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
+    call ext_has_metadata
+    test eax, eax
+    jz 9f
     call focused_doc
     test rax, rax
     jz 9f
     mov r14, rax
+    mov rdi, r14
+    call doc_sync_grammar
+    test rax, rax
+    js 9f
+    mov rax, [r14 + DOC_language_revision]
+    test rax, rax
+    jz 9f
+    mov [rip + sg_language_revision], rax
     cmp qword ptr [rip + cp_reqs + VEC_len], HR_MAX
     jae 9f
     # a new help (not an update) starts a session: answers for older ones are dropped
@@ -1438,21 +1581,25 @@ sig_ask:
     mov [rax + HR_session], ecx
     mov rcx, [r14 + DOC_cur]
     mov [rax + HR_req], rcx
+    mov rcx, [r14 + DOC_language_revision]
+    mov [rax + HR_language_revision], rcx
     mov dword ptr [rip + sg_wait], 1
 9:  EPILOGUE
 
 # FN cmd_signature_help(): ctrl+shift+space
 FN cmd_signature_help
     push rbx
-    call sig_provider
-    test rax, rax
-    jz 9f
-    mov rdi, rax
+    call sg_close
+    mov edi, 7
+    xor esi, esi
+    call ext_provider_begin
+    pop rbx
+    ret
+
+FN complete_signature_start
     lea rsi, [rip + .Lk_invoked]
     mov edx, '-'
-    call sig_ask
-9:  pop rbx
-    ret
+    jmp sig_ask
 
 # sg_set(body, len): "FROM TO", the signature, the documentation; an empty body hides it
 sg_set:
@@ -1532,11 +1679,15 @@ sg_check:
     mov rax, [rbx + DOC_id]
     cmp rax, [rip + sg_doc_id]
     jne 7f
+    call sg_doc_alive
+    test eax, eax
+    jz 7f
     mov rax, [rip + sg_ext]
     test rax, rax
     jz 7f
-    cmp dword ptr [rax + EXT_status], ES_RUNNING
-    jne 7f
+    call sig_active_provider
+    test rax, rax
+    jz 7f
     cmp dword ptr [rip + sg_wait], 0
     jne 9f                      # asked: the answer says what comes next
     cmp dword ptr [rip + sg_open], 0
@@ -1579,6 +1730,51 @@ FN complete_key
     PROLOGUE
     mov r12d, edi
     mov r14d, edx
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    jne .Lcpk_ordinary
+    call cp_choice_check
+    test rax, rax
+    jnz .Lcpk_choice
+    call cp_close
+    jmp .Lcpk_ordinary
+.Lcpk_choice:
+    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    jnz .Lcpk_close_choice
+    cmp r12d, KEY_ISO_LEFT_TAB
+    je .Lcpk_previous
+    cmp r12d, KEY_TAB
+    jne 0f
+    test r14d, MOD_SHIFT
+    jnz .Lcpk_previous
+0:  test r14d, MOD_SHIFT
+    jnz .Lcpk_close_choice
+    cmp r12d, KEY_UP
+    je .Lcpk_ordinary
+    cmp r12d, KEY_DOWN
+    je .Lcpk_ordinary
+    cmp r12d, KEY_PAGEUP
+    je .Lcpk_ordinary
+    cmp r12d, KEY_PAGEDOWN
+    je .Lcpk_ordinary
+    cmp r12d, KEY_RETURN
+    je .Lcpk_ordinary
+    cmp r12d, KEY_KP_ENTER
+    je .Lcpk_ordinary
+    cmp r12d, KEY_TAB
+    je .Lcpk_ordinary
+    cmp r12d, KEY_ESCAPE
+    je .Lcpk_ordinary
+.Lcpk_close_choice:
+    call cp_close
+    jmp 8f
+.Lcpk_previous:
+    mov rbx, [rip + cp_doc]
+    call cp_close
+    mov rdi, rbx
+    mov esi, -1
+    call snippet_step
+    jmp 9f
+.Lcpk_ordinary:
     test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER | MOD_SHIFT
     jnz 8f
     # Escape withdraws what was asked and not shown yet, and leaves the key to the editor
@@ -1638,7 +1834,14 @@ FN complete_key
     je 41f
     cmp r12d, KEY_TAB
     jne 5f
-41: call cp_accept
+41: cmp dword ptr [rip + cp_source], CP_CHOICES
+    jne 42f
+    xor edi, edi
+    cmp r12d, KEY_TAB
+    sete dil
+    call cp_choice_accept
+    jmp 9f
+42: call cp_accept
     jmp 9f
 5:  cmp r12d, KEY_ESCAPE
     jne 7f
@@ -1676,7 +1879,12 @@ cp_select:
 # cp_accept(): the selected item goes in: its range, extended to the cursor by what was typed
 # since, and its extra edits, as one undo step
 cp_accept:
-    PROLOGUE 96
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    jne 0f
+    xor edi, edi
+    jmp cp_choice_accept
+0:  PROLOGUE 128
+    mov qword ptr [rsp + 96], 0   # validated snippet candidate, owned until attached
     mov eax, [rip + cp_sel]
     cmp eax, [rip + cp_nshown]
     jae 8f
@@ -1684,6 +1892,10 @@ cp_accept:
     mov edi, [rcx + rax*4]
     call item
     mov r12, rax
+    mov rdi, [r12 + CI_ext]
+    call ext_has_metadata
+    test eax, eax
+    jz 8f
     call focused_doc
     test rax, rax
     jz 8f
@@ -1693,6 +1905,9 @@ cp_accept:
     mov rax, [rbx + DOC_id]
     cmp rax, [rip + cp_doc_id]
     jne 8f
+    call doc_alive
+    test eax, eax
+    jz 8f
     test dword ptr [rbx + DOC_flags], DF_READONLY
     jnz 8f
     mov r13, [rbx + DOC_cur]
@@ -1739,6 +1954,19 @@ cp_accept:
     mov ecx, [r12 + CI_xlen]
     add rax, rcx
     mov [rip + ps_end], rax
+    mov rax, [r12 + CI_ext]
+    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    jz .Lcpa_no_fields
+    mov rdi, [rsp + 64]
+    mov esi, [r12 + CI_ilen]
+    mov rdx, [rip + ps_ptr]
+    mov ecx, [r12 + CI_xlen]
+    xor r8d, r8d
+    mov rax, [r12 + CI_ext]
+    mov r9d, [rax + EXT_features]
+    call snippet_decode_fields
+    mov [rsp + 96], rax
+.Lcpa_no_fields:
     mov rdi, rbx
     mov rsi, [r12 + CI_req]
     call req_coords
@@ -1856,8 +2084,44 @@ cp_accept:
     ja 5f
     mov [rip + ps_ptr], rcx
     jmp 4b
-5:  # from the last to the first, so each edit's offsets hold when it is made
+5:  # Preserve the main insertion line before any additional edits move it.
+    mov rsi, [rsp + 96]
+    test rsi, rsi
+    jz .Lcpa_indent_done
+    cmp qword ptr [rsi + SN_transform], 0
+    je .Lcpa_indent_done
+    mov rdi, rbx
+    mov rdx, r14
+    call snippet_capture_indent
+    test eax, eax
+    jnz .Lcpa_indent_done
+    mov rdi, [rsp + 96]
+    mov qword ptr [rsp + 96], 0
+    call snippet_free_node
+.Lcpa_indent_done:
+    # From the last to the first, so each edit's offsets hold when it is made.
     call ae_sort
+    mov rax, [rbx + DOC_undo + VEC_len]
+    mov [rsp + 112], rax
+    mov rdx, -1
+    xor ecx, ecx
+    xor r8d, r8d
+.Lcpa_bounds:
+    cmp r8, [rip + ae_n]
+    jae .Lcpa_scope
+    imul rax, r8, 32
+    lea rdi, [rip + ae_list]
+    add rax, rdi
+    cmp [rax], rdx
+    cmovb rdx, [rax]
+    cmp [rax + 8], rcx
+    cmova rcx, [rax + 8]
+    inc r8
+    jmp .Lcpa_bounds
+.Lcpa_scope:
+    mov rdi, rbx
+    mov rsi, [rsp + 96]
+    call snippet_insertion_begin
     mov rdi, rbx
     call doc_begin_group
     xor r13d, r13d
@@ -1867,6 +2131,11 @@ cp_accept:
     lea rcx, [rip + ae_list]
     add rax, rcx
     mov [rsp + 8], rax
+    mov rdi, rbx
+    mov rsi, [rax]
+    mov rdx, [rax + 8]
+    call snippet_replace_range
+    mov rax, [rsp + 8]
     mov rdx, [rax + 8]
     sub rdx, [rax]
     jz 61f
@@ -1883,7 +2152,9 @@ cp_accept:
     mov rdx, [rax + 16]
     mov r8d, EK_OTHER
     call doc_insert
-62: inc r13
+62: mov rdi, rbx
+    call snippet_replace_done
+    inc r13
     jmp 6b
 7:  mov rdi, rbx
     call doc_end_group
@@ -1910,7 +2181,11 @@ cp_accept:
     add r13, [rax]
     sub r13, [rax + 8]
     jmp 71b
-72: mov rax, [rsp + 72]
+72: mov eax, [r12 + CI_ilen]
+    mov rcx, r13
+    sub rcx, rax
+    mov [rsp + 104], rcx        # actual inserted start after earlier additional edits
+    mov rax, [rsp + 72]
     test rax, rax
     js 74f
     mov ecx, [r12 + CI_ilen]    # a cursor record: that far into the item's text
@@ -1918,8 +2193,25 @@ cp_accept:
     add r13, rax
 74: mov [rbx + DOC_cur], r13
     mov [rbx + DOC_anchor], r13
+    mov rdi, rbx
+    mov rsi, [rsp + 104]
+    call snippet_insertion_finish
+    mov [rsp + 104], rax
+    cmp qword ptr [rsp + 96], 0
+    je .Lcpa_attached
+    mov rdi, rbx
+    mov rsi, [rsp + 96]
+    mov rdx, [rsp + 104]
+    mov qword ptr [rsp + 96], 0
+    call snippet_push
+    mov rdi, rbx
+    mov rsi, [rsp + 112]
+    call snippet_record_after
+.Lcpa_attached:
     call ed_touch
-8:  call cp_close
+8:  mov rdi, [rsp + 96]
+    call snippet_free_node
+    call cp_close
     EPILOGUE
 
 # ae_add(start, end, ptr, len): one edit of the item being accepted, unless it overlaps one before
@@ -2001,6 +2293,7 @@ FN complete_hole
 # FN complete_draw(): the frame's list and signature help, over everything but menus and dialogs
 FN complete_draw
     PROLOGUE
+    call cp_choice_pending
     call cp_check
     call sg_check
     mov dword ptr [rip + g_hole2 + 12], 0   # the list's rows take the pointer themselves
@@ -3048,3 +3341,309 @@ kind_colors: .byte T_MUTED, T_ICON + 5, T_ICON + 5, T_ICON + 4, T_ICON + 4, T_IC
 .Ld_from: .asciz " from="
 .Ld_to: .asciz " to="
 .Ld_text: .asciz " text="
+
+# ---------------- native snippet choices ----------------
+.text
+
+# The current live top must match the popup's immutable activation snapshot.
+cp_choice_check:
+    PROLOGUE
+    call focused_doc
+    test rax, rax
+    jz 8f
+    cmp rax, [rip + cp_doc]
+    jne 8f
+    mov rcx, [rax + DOC_id]
+    cmp rcx, [rip + cp_doc_id]
+    jne 8f
+    mov rbx, rax
+    call doc_alive
+    test eax, eax
+    jz 8f
+    mov rax, rbx
+    mov rcx, [rax + DOC_version]
+    cmp rcx, [rip + cp_seen_ver]
+    jne 8f
+    mov rdi, rax
+    call snippet_check
+    test rax, rax
+    jz 8f
+    mov rcx, [rax + SN_identity]
+    cmp rcx, [rip + cp_choice_identity]
+    jne 8f
+    mov rcx, [rax + SN_activation]
+    cmp rcx, [rip + cp_choice_activation]
+    jne 8f
+    mov rcx, [rax + SN_active]
+    cmp rcx, [rip + cp_choice_primary]
+    jne 8f
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# Open only from the editor's own frame. Inactive documents and palettes keep focus.
+cp_choice_pending:
+    PROLOGUE
+    cmp dword ptr [rip + cp_open], 0
+    jne 9f
+    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    jne 9f
+    mov rbx, [rip + g_doc]
+    mov rdi, rbx
+    call snippet_check
+    test rax, rax
+    jz 9f
+    cmp qword ptr [rax + SN_choice_pending], 0
+    je 9f
+    mov qword ptr [rax + SN_choice_pending], 0
+    mov rsi, rax
+    mov rdi, rbx
+    call cp_choice_begin
+9:  EPILOGUE
+
+FN cmd_snippet_choose
+    PROLOGUE
+    call focused_doc
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    call snippet_check
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    call snippet_activate
+    call cp_close
+9:  EPILOGUE
+
+# Build owned synthetic completion rows. No EXT or mutable snippet pointers are retained.
+cp_choice_begin:
+    PROLOGUE 64
+    mov rbx, rdi
+    mov r12, rsi
+    call doc_sync_grammar
+    test rax, rax
+    js .Lccb_done
+    mov rax, [rbx + DOC_language_revision]
+    test rax, rax
+    jz .Lccb_done
+    mov [rip + cp_language_revision], rax
+    mov rdi, r12
+    call snippet_choice_get
+    test rax, rax
+    jz .Lccb_done
+    mov [rsp], rax              # next option header
+    add rdx, rax
+    mov [rsp + 8], rdx          # options end
+    mov [rsp + 16], rcx         # count
+    call cp_close
+    inc dword ptr [rip + cp_session]
+    mov dword ptr [rip + cp_source], CP_CHOICES
+    mov [rip + cp_doc], rbx
+    mov rax, [rbx + DOC_id]
+    mov [rip + cp_doc_id], rax
+    mov rax, [rbx + DOC_version]
+    mov [rip + cp_seen_ver], rax
+    mov rax, [r12 + SN_identity]
+    mov [rip + cp_choice_identity], rax
+    mov rax, [r12 + SN_activation]
+    mov [rip + cp_choice_activation], rax
+    mov rax, [r12 + SN_active]
+    mov [rip + cp_choice_primary], rax
+    mov qword ptr [rip + cp_qlen], 0
+    xor r13d, r13d
+.Lccb_row:
+    cmp r13, [rsp + 16]
+    jae .Lccb_ready
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call snippet_choice_option
+    test rcx, rcx
+    jz .Lccb_bad
+    mov [rsp], rcx
+    mov [rsp + 24], rax         # full option bytes
+    mov [rsp + 32], rdx
+    mov [rsp + 40], rax         # label bytes
+    xor ecx, ecx
+1:  cmp rcx, rdx
+    jae 2f
+    cmp rcx, 256
+    jae 2f
+    cmp byte ptr [rax + rcx], 10
+    je 2f
+    cmp byte ptr [rax + rcx], 13
+    je 2f
+    inc rcx
+    jmp 1b
+2:  cmp rcx, rdx
+    jae 4f
+3:  test rcx, rcx
+    jz 4f
+    movzx esi, byte ptr [rax + rcx]
+    and esi, 0xc0
+    cmp esi, 0x80
+    jne 4f
+    dec rcx
+    jmp 3b
+4:  test rcx, rcx
+    jnz 6f
+    lea rax, [rip + .Lchoice_empty]
+    mov ecx, 7
+    cmp qword ptr [rsp + 32], 0
+    je 5f
+    lea rax, [rip + .Lchoice_blank]
+    mov ecx, 12
+5:  mov [rsp + 40], rax
+6:  mov [rsp + 48], rcx
+    mov rax, [rip + cp_bytes + SB_len]
+    add rax, rcx
+    add rax, [rsp + 32]
+    jc .Lccb_bad
+    cmp rax, SN_BYTES_MAX + 65536
+    ja .Lccb_bad
+    lea rdi, [rip + cp_items]
+    mov esi, CI_SIZE
+    call vec_push
+    mov r15, rax
+    mov rdi, rax
+    xor esi, esi
+    mov edx, CI_SIZE
+    call memset
+    mov rax, [rip + cp_bytes + SB_len]
+    mov [r15 + CI_off], rax
+    mov rax, [rsp + 48]
+    mov [r15 + CI_llen], eax
+    mov rax, [rsp + 32]
+    mov [r15 + CI_ilen], eax
+    mov dword ptr [r15 + CI_kind], 12
+    lea rdi, [rip + cp_bytes]
+    mov rsi, [rsp + 40]
+    mov rdx, [rsp + 48]
+    call sb_push
+    lea rdi, [rip + cp_bytes]
+    mov rsi, [rsp + 24]
+    mov rdx, [rsp + 32]
+    call sb_push
+    lea rax, [rip + cp_shown]
+    mov [rax + r13*4], r13d
+    inc r13
+    jmp .Lccb_row
+.Lccb_ready:
+    mov [rip + cp_nshown], r13d
+    mov dword ptr [rip + cp_open], 2
+    mov dword ptr [rip + cp_hover], -1
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lccb_done
+.Lccb_bad:
+    call cp_close
+.Lccb_done:
+    EPILOGUE
+
+# Replace the whole active primary. Tab also advances exactly once after mirror propagation.
+cp_choice_accept:
+    PROLOGUE 64
+    mov [rsp], edi             # advance after acceptance
+    call cp_choice_check
+    test rax, rax
+    jz .Lcca_close
+    mov rbx, [rip + cp_doc]
+    mov rcx, [rax + SN_active]
+    imul rcx, rcx, SF_SIZE
+    lea r12, [rax + rcx + SN_fields]
+    mov eax, [rip + cp_sel]
+    cmp eax, [rip + cp_nshown]
+    jae .Lcca_close
+    lea rcx, [rip + cp_shown]
+    mov edi, [rcx + rax*4]
+    call item
+    mov r14d, [rax + CI_ilen]
+    mov r13, [rax + CI_off]
+    mov ecx, [rax + CI_llen]
+    add r13, rcx
+    add r13, [rip + cp_bytes + SB_ptr]
+    mov rax, [rbx + DOC_cur]
+    mov [rsp + 8], rax
+    mov rax, [rbx + DOC_anchor]
+    mov [rsp + 16], rax
+    mov rax, [rbx + DOC_undo + VEC_len]
+    mov [rsp + 24], rax
+    # Same bytes are a navigation operation, without touching an old undo record.
+    mov rdx, [r12 + SF_end]
+    sub rdx, [r12 + SF_start]
+    cmp rdx, r14
+    jne .Lcca_edit
+    mov rdi, rbx
+    mov rsi, [r12 + SF_start]
+    call doc_range
+    mov rdi, rax
+    mov rsi, r13
+    mov rcx, r14
+    test rcx, rcx
+    jz .Lcca_same
+    repe cmpsb
+    je .Lcca_same
+.Lcca_edit:
+    mov rdi, rbx
+    call snippet_user_begin
+    mov rax, [r12 + SF_start]
+    mov [rbx + DOC_anchor], rax
+    mov rax, [r12 + SF_end]
+    mov [rbx + DOC_cur], rax
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r14
+    mov ecx, EK_OTHER
+    call ed_insert
+    mov rdi, rbx
+    call snippet_user_end
+    mov rax, [rsp + 24]
+    cmp rax, [rbx + DOC_undo + VEC_len]
+    jae .Lcca_next
+    imul rax, rax, UR_SIZE
+    add rax, [rbx + DOC_undo + VEC_ptr]
+    mov rcx, [rsp + 8]
+    mov [rax + UR_cur], rcx
+    mov rcx, [rsp + 16]
+    mov [rax + UR_anchor], rcx
+    jmp .Lcca_next
+.Lcca_same:
+    mov rax, [r12 + SF_end]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
+.Lcca_next:
+    call cp_close
+    cmp dword ptr [rsp], 0
+    je 1f
+    mov rdi, rbx
+    mov esi, 1
+    call snippet_step
+1:  mov rdi, rbx
+    mov rsi, [rsp + 24]
+    call snippet_record_after
+    call ed_touch
+    EPILOGUE
+.Lcca_close:
+    call cp_close
+    EPILOGUE
+.section .rodata
+.Lchoice_empty: .ascii "(empty)"
+.Lchoice_blank: .ascii "(blank line)"
+
+.text
+# Native literal snippet choices have no extension supplier and remain usable.
+FN complete_catalog_invalidate_pure
+    cmp dword ptr [rip + cp_source], CP_CHOICES
+    je 1f
+    mov dword ptr [rip + cp_open], 0
+    mov qword ptr [rip + cp_due], 0
+    mov dword ptr [rip + cp_reask], 0
+    mov dword ptr [rip + cp_more], 0
+    mov dword ptr [rip + cp_sel], 0
+    mov dword ptr [rip + cp_top], 0
+    mov dword ptr [rip + cp_nshown], 0
+    mov dword ptr [rip + cp_rect + 12], 0
+1:  mov dword ptr [rip + sg_open], 0
+    mov dword ptr [rip + sg_wait], 0
+    mov dword ptr [rip + sg_again], 0
+    mov qword ptr [rip + sg_ext], 0
+    mov dword ptr [rip + sg_rect + 12], 0
+    ret
