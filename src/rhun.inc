@@ -949,6 +949,7 @@ F SN_lastflags, 8
 F SN_text, 8            # borrowed during validation only
 F SN_tlen, 8
 F SN_ntopo, 8           # surviving groups in propagation order; group indices stay stable
+F SN_linked, 8          # wsedit: a linked-editing session (wslinked.s): Tab passes, no final caret
 F SN_fields, SF_SIZE*SN_FIELDS_MAX
 F SN_groups, SG_SIZE*SN_GROUPS_MAX
 F SN_edges, SN_GROUPS_MAX*SN_GROUPS_MAX
@@ -1414,6 +1415,7 @@ ENDSTRUCT TF_SIZE
 .equ CPX_DOCUMENT, 1
 .equ CPX_FIELD, 2
 .equ CPX_TERMINAL, 3
+.equ CPX_PICTURE, 68             # views group: a picture with the keyboard (viewpic.s)
 
 # icons
 .equ IC_CHEV_R, 0
@@ -1694,6 +1696,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_VIEW_LOG, "view-log", 0          # views group: log views (with view-tree)
     FEATURE FEAT_NOTIFY, "notify", 0              # views group: notify, notify-set, unnotify
     FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
+    FEATURE FEAT_VIEW_KEYS, "view-keys", 1        # views group: keys and focus for pictures; rhun asks vcopy
+    FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1763,7 +1767,8 @@ FEATURE_LIST
 .equ PK_COLORS, 39
 .equ PK_COLOR_EDIT, 40
 .equ PK_HIGHLIGHTS, 41
-.equ PK_COUNT, 42
+.equ PK_LINKED, 42               # wsedit: linked-editing ranges (wslinked.s)
+.equ PK_COUNT, 43
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
@@ -1773,6 +1778,7 @@ FEATURE_LIST
 .equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
 .equ QO_NOTEBOOK, 7               # nbdoc.s's nb_reply
 .equ QO_PRESENT, 8               # editor presentation (present.s)
+.equ QO_LINKED, 9                # wsedit: linked editing (wslinked.s)
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -2007,6 +2013,7 @@ F EXT_pv_save_actions, 8
 # source control (wider-parity C): [provides] commit_message, quickdiff, scm (cstr values or 0)
 F EXT_pv_commit, 8      # "yes": a commit-message provider (scmext.s)
 F EXT_pv_quickdiff, 8   # file patterns it gives quick-diff bases for
+F EXT_pv_linked, 8      # wsedit: [provides] linked: patterns of documents it links ranges in
 F EXT_pv_scm, 8         # "yes": it registers VCS provider tabs
 F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
 F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
@@ -2082,6 +2089,8 @@ F VW_down, 4             # the left button went down over it and is still down
 F VW_fgen, 4             # g_face_gen when the metrics were last sent
 F VW_ax, 4               # where the button went down, logical: a click is a release near it
 F VW_ay, 4
+F VW_pl, 4              # views group: a tab picture's place item for the keyboard, + 1 (0: none)
+F VW_inplace, 4         # views group: 1 a picture view's instance (a place), 2 hosted elsewhere (a custom editor)
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 .equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview

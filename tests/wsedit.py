@@ -42,6 +42,7 @@ project = {project}
 
 [provides]
 rename = *.txt *.go
+linked = *.html
 '''
 
 

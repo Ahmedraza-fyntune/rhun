@@ -803,6 +803,13 @@ nothing. Every write is first recorded in `~/.local/state/rhun/edits`: a write t
 puts everything back, and an edit cut short by a crash is put back at the next start ("Restored 3
 files from a workspace edit that was cut short").
 
+Extensions can also show a read-only **diff tab** of two documents (it follows both as they
+change and closes with them; a side may be a document an extension provides, such as a file at a
+git revision, which needs no tab of its own), scroll a document to a place without moving its cursor, list
+locations in the palette as Find All References does, and offer **linked editing**: in an HTML
+tag, renaming the opening tag's name renames the closing one as you type; the linked names are
+outlined, and a space, Escape, Undo or moving away ends it.
+
 Formatting, symbol rename, file symbols and signature help use a saved provider for the document's language.
 With one matching extension, rhun uses it. With several, a chooser shows their `owner/name`
 identities and remembers your choice. **Select Default Formatter**, **Select Rename Provider**,
