@@ -2785,6 +2785,7 @@ FN app_tick
     call uproc_tick
     call term_tick
     call problems_tick          # documents opened since get their problems' marks
+    call termproto_tick         # extensions' terminal output
     call git_tick
     call update_tick
     call ai_tick
@@ -2800,6 +2801,8 @@ FN app_tick
     call nb_tick
     call app_clip_tick
     call dap_tick               # debugger
+    call dview_context
+    call dg_tick
     call remote_tick            # remote hosts
     call keys_tick              # a chord's pause (keys.s)
     EPILOGUE
@@ -3564,7 +3567,16 @@ FN titlebar_draw
     mov esi, [rsp + 4]
     add esi, [rsp + 12]
     call project_menu_open
-44: # active file, centered (the branch is in the status bar)
+44: # debugger: the toolbar takes the title's place while a session lives (debugview.s)
+    mov edi, r12d
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    mov r8d, [rsp + 36]
+    call dview_toolbar
+    test eax, eax
+    jnz 6f
+    # active file, centered (the branch is in the status bar)
     mov rbx, [rip + g_file]
     test rbx, rbx
     jz 6f
@@ -4750,6 +4762,11 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call remote_status_item
+    # debugger: the session's state, or the configuration F5 starts (debugview.s)
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call dview_status_item
     # the branch; the file's items follow it
     mov edi, eax
     mov esi, [rsp + 4]

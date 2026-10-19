@@ -639,6 +639,17 @@ print-state
 
 Commands: `key`, `type`, `click x y [right|middle|shift|ctrl]` (ctrl is Cmd+click on macOS), `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [MODS]` (modifiers as a key combination names them: `ctrl`, `shift+alt`), `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents-runs` (discovery runs started so far), `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-panels` (whether the explorer, the agents panel and the terminal are shown), `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-term-cell ROW COL` (the middle of that terminal cell), `print-link` (the terminal link under the pointer), `print-settings` (the rows the Settings page shows, `section.key` each), `print-scroll` (the editor's horizontal scroll, its vertical one in 1/256 lines, the horizontal limit and the scrollbar's track), `scroll-x dx` (a sideways wheel), `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `appearance dark|light|unknown` (the system's dark mode changes, as a platform reports it), `print-appearance` (that mode, `follow_system`, the three theme settings and the theme shown), `focus out|in` (the window loses or gets the keyboard, as a platform reports it), `echo`, `quit`. A headless run takes the system's mode from `RHUN_APPEARANCE` (`dark` or `light`). `cmd` runs anything from the command palette by its snake case name.
 
+Managing extensions: `ext-install OWNER/NAME[@VERSION]` and `wait-install` (then `print-dialog`,
+`dialog yes|no`), `ext-install-folder PATH [copy|link]`, `ext-install-archive PATH`,
+`ext-rollback NAME`, `print-ext-versions NAME` (`version= source= tag= previous= link= fresh=`),
+`ext-check-updates`, `wait-ext-updates` (until the check and the updates it queued are done, or a
+dialog asks), `print-ext-updates` (a line per extension: `installed= latest=
+state=current|available|asks|skipped|error`), `ext-update NAME`, `ext-update-all`, `ext-browse`,
+`ext-index-refresh`, `wait-index`, `ext-search TEXT`, `print-ext-browse` (the Browse list with
+each card's button) and `ext-browse-install NAME`. `RHUN_EXT_BASE` points installs, checks and the
+index at another place than `https://github.com` (tests use a `file://` tree or a local server);
+`RHUN_EXT_UPDATE_EVERY=MS` turns on automatic checks in a headless run, every MS milliseconds.
+
 ## Extensions
 
 Extensions are separate programs that rhun starts and talks to over their standard input and

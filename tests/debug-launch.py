@@ -50,11 +50,10 @@ class Launch(debughost.DebugHost):
                                'debug-start Run', 'print-dialog', 'wait-debug ended', 'print-debug'])
         dialog = [line for line in out if line.startswith('dialog=')]
         self.assertEqual(dialog[0], 'dialog=Let Debug Fake run programs in proj?', out)
-        text = out[out.index(dialog[0]) + 1]
-        self.assertTrue(text.startswith('text=Fake Debugger will run '), text)
-        self.assertIn('python3', text)
+        text = out[out.index(dialog[0]) + 1]                # the tasks group's approval: the command, where
+        self.assertTrue(text.startswith('text=') and 'python3 -I ' in text, text)
         self.assertIn('fakedap.py', text)
-        self.assertIn('as you, with access to all your files', text)
+        self.assertTrue(text.endswith('   in ~/proj'), text)
         self.assertEqual(dialog[1], 'dialog=none', out)      # the second start does not ask
         sessions = self.debug_lines(out)
         self.assertEqual(self.field(sessions[0], 'state'), 'approval')
@@ -138,12 +137,13 @@ class Launch(debughost.DebugHost):
         self.assertIn('adapter fakedap: crashing at step 3', out)
 
     def test_environment_and_folder(self):
-        self.launch_ini()
-        self.env['FAKEDAP_MODE'] = ''
-        out = self.run_editor([*self.start(), 'wait-debug ended', 'print-debug'])
+        self.scenario()
+        self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\nstopOnEntry = yes\n')
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'print-debug'])
         pid = self.field(self.debug_lines(out)[0], 'pid')
         self.assertTrue(pid and pid != '0', out)
         self.assertIn('pid ' + pid, self.dap_log())
+        self.assertIn('session 1 cwd ' + self.proj.as_posix(), self.dap_log())
 
 
 if __name__ == '__main__':

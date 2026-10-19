@@ -264,6 +264,27 @@ class Testing(unittest.TestCase):
         self.assertEqual(self.logged('run '), ['run 1 debug 1 go:example/pkg.TestA'])
         self.assertTrue([l for l in out if 'cannot be debugged' in l], out)
 
+    def test_a_debug_run_opens_the_debug_start_window(self):
+        exts = self.work / 'exts'
+        dst = exts / 'rhun-tests/testsfake'
+        dst.mkdir(parents=True)
+        manifest = (EXTS / 'rhun-tests/testsfake/extension.ini').read_text(encoding='utf-8')
+        manifest = manifest.replace('tests.profiles = run coverage', 'tests.profiles = run debug coverage')
+        manifest = manifest.replace('run = ../../../testsfake.py', 'run = ' + (ROOT / 'tests/ext/testsfake.py').as_posix())
+        (dst / 'extension.ini').write_text(manifest, encoding='utf-8')
+        out = self.run_editor([*EXPAND, 'test-select testsfake go:example/pkg.TestA', 'test-action run', 'wait 300',
+                               'echo @run', 'print-test-runs', 'test-action cancel', 'wait-tests',
+                               'test-action debug', 'wait 300', 'echo @debug', 'print-test-runs',
+                               'test-action cancel', 'wait-tests', 'echo @over', 'print-test-runs'],
+                              exts=exts, mode='slow')
+        def runs(a, b):
+            seg = out[out.index(a) + 1:out.index(b) if b else len(out)]
+            return [l for l in seg if l.startswith('run=')]
+        self.assertFalse([l for l in runs('@run', '@debug') if 'debug-window' in l], out)
+        debug = runs('@debug', '@over')
+        self.assertTrue(debug[-1].startswith('run=2 ') and ' profile=debug state=running debug-window ' in debug[-1], out)
+        self.assertFalse([l for l in runs('@over', None) if 'debug-window' in l], out)
+
     def test_coverage_is_bounded_by_its_lines_and_merges_by_path(self):
         out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests'], mode='covbig,covunion', timeout=120)
         log = self.fake_log()
