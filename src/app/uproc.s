@@ -9,7 +9,7 @@
 #                                             the "NAME" list unsets. mem_free the array only: its
 #                                             strings are borrowed (the caller's live until the spawn)
 #   uproc_which(name, envp)                   -> path to run (mem_free it), or 0: a name without a slash
-#                                             is looked up on that environment's PATH
+#                                             is looked up on that environment's PATH (Windows too)
 #   uproc_spawn(argv, envp, cwd, in, out, err, pty) -> pid, or -errno (-EAGAIN with 128 running)
 #                                             argv[0] is the path; pty 1 makes `in` (a pty_open slave)
 #                                             the controlling terminal; else a session without one
@@ -17,7 +17,9 @@
 #   uproc_signal(pid, sig)                    the signal to its whole group while the leader is not
 #                                             reaped yet (Windows: any signal but 0 ends the job)
 #   uproc_wait(pid, nohang)                   -> exit code (0-255 or 128 + signal; Windows the 32-bit
-#                                             code), -1 still running, -2 not one of ours (any more)
+#                                             code), -1 still running, -2 not one of ours (any more).
+#                                             What the leader left is killed: SIGHUP and SIGTERM to
+#                                             its group then, SIGKILL 2 s later (see "processes")
 #   uproc_end(pid, grace ms)                  the caller is done with it: SIGHUP and SIGTERM to the
 #                                             group now, SIGKILL at the deadline, reaped here
 #   uproc_env_failed() -> 1 when the login shell could not tell its environment (rhun's own is used)
@@ -26,6 +28,10 @@
 .equ UP_MAX, 128
 .equ UPF_ORPHAN, 1              # nobody waits for it: reaped by uproc_tick
 .equ UPF_NOGROUP, 2             # never signalled (reap_later: an editor window, a closed shell)
+.equ UPF_EXITED, 4              # the leader is reaped (UP_code), its group is not empty yet
+.equ UPF_KILLED, 8              # the group has had SIGKILL
+.equ LINGER_MS, 2000            # what a leader left: SIGHUP and SIGTERM when it goes, SIGKILL 2 s on
+.equ GIVEUP_MS, 5000            # a group still there this long after SIGKILL is given up
 .equ ENV_MS, 5000               # the login shell's time to tell its environment
 .equ ENV_MAX, 1048576
 .equ QUIT_MS, 300
@@ -36,7 +42,9 @@
 STRUCT
 F UP_pid, 4
 F UP_flags, 4
-F UP_kill_at, 8                 # time_ms of the SIGKILL to the group, 0 none
+F UP_kill_at, 8                 # time_ms of the SIGKILL to the group (after it: giving up), 0 none
+F UP_code, 4                    # the leader's exit code, once UPF_EXITED
+F UP_pad, 4
 ENDSTRUCT UP_SIZE
 
 .bss
@@ -264,7 +272,7 @@ env_done:
     mov edi, [rip + env_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rip + env_pid]
     call reap_later
     # RHUN-ENV-BEGIN\0 NAME=value\0 ... RHUN-ENV-END\0
@@ -512,6 +520,18 @@ name_in:
     xor ecx, ecx
 2:  movzx eax, byte ptr [rdi + rcx]
     movzx edx, byte ptr [r8 + rcx]
+.ifdef WINDOWS
+    # names in any case: "Path" is PATH
+    lea r9d, [rax - 65]
+    cmp r9d, 25
+    ja 21f
+    or eax, 0x20
+21: lea r9d, [rdx - 65]
+    cmp r9d, 25
+    ja 22f
+    or edx, 0x20
+22:
+.endif
     cmp al, '='
     jne 3f
     xor eax, eax                # the entry's name ends
@@ -533,19 +553,20 @@ name_in:
 
 # uproc_which(name, envp) -> path to run (mem_free it) or 0
 FN uproc_which
-.ifdef WINDOWS
-    jmp proc_which
-.else
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    # PATH of that environment, else the default
+    # PATH of that environment (any case of it on Windows), else rhun's own
     xor esi, esi
 1:  mov rdi, [r12]
     test rdi, rdi
     jz 2f
     add r12, 8
-    cmp dword ptr [rdi], 0x48544150     # "PATH"
+    mov eax, [rdi]
+.ifdef WINDOWS
+    and eax, 0xdfdfdfdf         # "Path" as "PATH" (only letters fold to these four)
+.endif
+    cmp eax, 0x48544150         # "PATH"
     jne 1b
     cmp byte ptr [rdi + 4], '='
     jne 1b
@@ -553,11 +574,16 @@ FN uproc_which
 2:  mov rdi, rbx
     call proc_which_in
     EPILOGUE
-.endif
 
 # ---------------- processes ----------------
+# A program's group can outlive its leader: a descendant that ignores SIGHUP and SIGTERM, or one
+# that let go of the terminal. So the leader's exit is not the end of an entry: the group has SIGHUP
+# and SIGTERM then, SIGKILL 2 s later, and the entry (UPF_EXITED, the leader's code kept) stays until
+# kill(-pgid, 0) finds the group empty, whether or not the PTY reached its end and whoever reaped
+# the leader. The group's id is not reused while any process is in it. Windows: reaping the leader
+# closes its job object, which kills the rest of it (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).
 
-# slot(pid) -> rax its entry, or 0
+# slot(pid) -> rax its entry, or 0 (pid 0: a free entry)
 slot:
     lea rax, [rip + procs]
     mov ecx, UP_MAX
@@ -599,20 +625,32 @@ FN uproc_spawn
     add rsp, 16
     test rax, rax
     jle 9f
+    # an entry still holding this pid lets go: the pid is free again, so that group is gone
+    lea rcx, [rip + procs]
+    mov edx, UP_MAX
+2:  cmp [rcx + UP_pid], eax
+    jne 3f
+    mov dword ptr [rcx + UP_pid], 0
+3:  add rcx, UP_SIZE
+    dec edx
+    jnz 2b
     mov [rbx + UP_pid], eax
     mov dword ptr [rbx + UP_flags], 0
     mov qword ptr [rbx + UP_kill_at], 0
+    mov dword ptr [rbx + UP_code], 0
 9:  EPILOGUE
 .Lsp_full:
     mov rax, -EAGAIN
     EPILOGUE
 
-# uproc_signal(pid, sig) -> 0, or -3 when it is not a running program of ours (no signal)
+# uproc_signal(pid, sig) -> 0, or -3 when it is not a program of ours with a group left (no signal)
 FN uproc_signal
     push rbx
     mov ebx, esi
     test edi, edi
     jle 8f
+    test edi, REMOTE_PID_TAG    # a remote window's program (remote.s): its host knows it
+    jnz 1f
     push rdi
     call slot
     pop rdi
@@ -620,9 +658,9 @@ FN uproc_signal
     jz 8f
     test dword ptr [rax + UP_flags], UPF_NOGROUP
     jnz 8f
-    neg edi
+1:  neg edi
     mov esi, ebx
-    SYS SYS_kill
+    call proc_kill
     xor eax, eax
     pop rbx
     ret
@@ -642,22 +680,99 @@ wait_code:
     ret
 .endif
 
-# uproc_wait(pid, nohang) -> exit code, -1 running, -2 unknown
+# uproc_wait(pid, nohang) -> exit code, -1 running, -2 unknown. Once known the code stays while what
+#   the leader left is still going
 FN uproc_wait
-    push rbx
-    mov ebx, edi
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    mov rax, -2
+    test edi, edi
+    jle 9f
+    call slot
+    mov rbx, rax
+    test rax, rax
+    jz 1f
+    test dword ptr [rbx + UP_flags], UPF_EXITED
+    jz 1f
+    mov eax, [rbx + UP_code]
+    jmp 9f
+1:  mov edi, r12d
+    mov esi, r13d
     call wait_code
     cmp rax, -1
     je 9f
-    push rax
-    mov edi, ebx
-    call slot
+    test rbx, rbx
+    jz 9f
+    mov r13, rax
+    cmp rax, -2
+    jne 2f
+    mov dword ptr [rbx + UP_pid], 0
+    jmp 3f
+2:  mov rdi, rbx
+    mov esi, eax
+    call leader_gone
+3:  mov rax, r13
+9:  EPILOGUE
+
+# leader_gone(entry, code): its leader is reaped: the entry goes, or stays for the group it left
+leader_gone:
+    PROLOGUE
+    mov rbx, rdi
+    mov [rbx + UP_code], esi
+.ifndef WINDOWS
+    test dword ptr [rbx + UP_flags], UPF_NOGROUP
+    jnz 8f
+    mov edi, [rbx + UP_pid]
+    test edi, REMOTE_PID_TAG    # a remote window's program: its host has the group
+    jnz 8f
+    or dword ptr [rbx + UP_flags], UPF_EXITED
+    neg edi
+    xor esi, esi
+    call proc_kill
     test rax, rax
-    jz 1f
-    mov dword ptr [rax + UP_pid], 0
-1:  pop rax
-9:  pop rbx
-    ret
+    jnz 8f                      # the group went with its leader
+    cmp qword ptr [rbx + UP_kill_at], 0
+    jne 9f                      # already going (uproc_end, a quit)
+    mov rdi, rbx
+    mov esi, LINGER_MS
+    call group_term
+    jmp 9f
+.endif
+8:  mov dword ptr [rbx + UP_pid], 0
+9:  EPILOGUE
+
+# group_term(entry, grace ms): SIGHUP and SIGTERM to its group now, SIGKILL at the deadline
+group_term:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov edi, [rbx + UP_pid]
+    neg edi
+    mov esi, SIGHUP
+    call proc_kill
+    mov edi, [rbx + UP_pid]
+    neg edi
+    mov esi, SIGTERM
+    call proc_kill
+    call time_ms
+    add rax, r12
+    mov [rbx + UP_kill_at], rax
+    EPILOGUE
+
+# group_kill(entry): SIGKILL to its group; 5 s on, an entry whose leader is gone is given up
+group_kill:
+    PROLOGUE
+    mov rbx, rdi
+    mov edi, [rbx + UP_pid]
+    neg edi
+    mov esi, SIGKILL
+    call proc_kill
+    or dword ptr [rbx + UP_flags], UPF_KILLED
+    call time_ms
+    add rax, GIVEUP_MS
+    mov [rbx + UP_kill_at], rax
+    EPILOGUE
 
 # uproc_end(pid, grace ms): see the top of the file
 FN uproc_end
@@ -668,23 +783,78 @@ FN uproc_end
     jle 9f
     call slot
     test rax, rax
+    jnz 1f
+    # a remote window's program is not in the table: it goes in now, to be killed and reaped
+    test r12d, REMOTE_PID_TAG
     jz 9f
-    mov rbx, rax
+    xor edi, edi
+    call slot
+    test rax, rax
+    jz 9f
+    mov [rax + UP_pid], r12d
+    mov dword ptr [rax + UP_flags], 0
+    mov qword ptr [rax + UP_kill_at], 0
+1:  mov rbx, rax
     test dword ptr [rbx + UP_flags], UPF_NOGROUP
     jnz 9f
     or dword ptr [rbx + UP_flags], UPF_ORPHAN
-    mov edi, r12d
-    neg edi
-    mov esi, SIGHUP
-    SYS SYS_kill
-    mov edi, r12d
-    neg edi
-    mov esi, SIGTERM
-    SYS SYS_kill
+    test dword ptr [rbx + UP_flags], UPF_KILLED
+    jnz 9f                      # past SIGTERM already
+    test dword ptr [rbx + UP_flags], UPF_EXITED
+    jz 3f
+    # the leader is gone and its group had SIGTERM then: only an earlier SIGKILL
     call time_ms
     add rax, r13
-    mov [rbx + UP_kill_at], rax
+    mov rcx, [rbx + UP_kill_at]
+    test rcx, rcx
+    jz 2f
+    cmp rax, rcx
+    jae 9f
+2:  mov [rbx + UP_kill_at], rax
+    jmp 9f
+3:  mov rdi, rbx
+    mov esi, r13d
+    call group_term
 9:  EPILOGUE
+
+# uproc_adopt(pid) -> 1 when a program started elsewhere is now one of ours (remote hosts: a program
+#   remote_spawn started on the host, signalled, waited for and ended as the others are; vfs.s)
+FN uproc_adopt
+    push rbx
+    mov ebx, edi
+    xor edi, edi
+    call slot
+    test rax, rax
+    jz 9f
+    mov [rax + UP_pid], ebx
+    mov dword ptr [rax + UP_flags], 0
+    mov qword ptr [rax + UP_kill_at], 0
+    mov dword ptr [rax + UP_code], 0
+    mov eax, 1
+9:  pop rbx
+    ret
+
+# uproc_env_owned(entry) -> 1 when the "NAME=value" string is the login environment's (remote hosts:
+#   a program on the host gets the host's login environment, not this one's)
+FN uproc_env_owned
+    xor eax, eax
+    mov rcx, [rip + env_block]
+    test rcx, rcx
+    jz 9f
+    cmp rdi, rcx
+    jb 9f
+    push rdi
+    push rcx
+    mov rdi, rcx
+    call mem_capacity
+    pop rcx
+    pop rdi
+    add rcx, rax
+    xor eax, eax
+    cmp rdi, rcx
+    jae 9f
+    mov eax, 1
+9:  ret
 
 # reap_later(pid): another child to reap once it exits, never signalled: an editor window
 #   app_new_window started, a shell whose tab closed, the login shell
@@ -704,7 +874,7 @@ FN reap_later
     ret
 
 # uproc_tick(): the login shell's deadline; programs nobody waits for are killed at their deadline and
-#   reaped
+#   reaped; groups whose leader has gone are watched until they are empty, killed at their deadline
 FN uproc_tick
     PROLOGUE
 .ifndef WINDOWS
@@ -720,10 +890,18 @@ FN uproc_tick
     xor r12d, r12d              # time_ms, once needed
     lea rbx, [rip + procs]
     mov r13d, UP_MAX
-2:  cmp dword ptr [rbx + UP_pid], 0
-    je 5f
-    test dword ptr [rbx + UP_flags], UPF_ORPHAN
-    jz 5f
+.Lut_next:
+    mov eax, [rbx + UP_pid]
+    test eax, eax
+    jz .Lut_skip
+    mov ecx, [rbx + UP_flags]
+    test ecx, UPF_EXITED
+    jnz .Lut_group
+    test ecx, UPF_ORPHAN
+    jz .Lut_skip
+    # nobody waits for its leader: SIGKILL at the deadline, then its exit
+    test ecx, UPF_KILLED
+    jnz 4f
     cmp qword ptr [rbx + UP_kill_at], 0
     je 4f
     test r12, r12
@@ -731,22 +909,47 @@ FN uproc_tick
     call time_ms
     mov r12, rax
 3:  cmp r12, [rbx + UP_kill_at]
-    jb 5f
-    # the deadline: the leader is not reaped before it, so its group is still its own
-    mov qword ptr [rbx + UP_kill_at], 0
-    mov edi, [rbx + UP_pid]
-    neg edi
-    mov esi, SIGKILL
-    SYS SYS_kill
+    jb 4f
+    mov rdi, rbx
+    call group_kill
 4:  mov edi, [rbx + UP_pid]
     mov esi, 1
     call wait_code
     cmp rax, -1
-    je 5f
+    je .Lut_skip
+    cmp rax, -2
+    je .Lut_free
+    mov rdi, rbx
+    mov esi, eax
+    call leader_gone
+    jmp .Lut_skip
+.Lut_group:
+    # the leader is gone, what it left not yet: the entry goes when the group is empty
+    mov edi, eax
+    neg edi
+    xor esi, esi
+    call proc_kill
+    test rax, rax
+    jnz .Lut_free
+    cmp qword ptr [rbx + UP_kill_at], 0
+    je .Lut_skip
+    test r12, r12
+    jnz 5f
+    call time_ms
+    mov r12, rax
+5:  cmp r12, [rbx + UP_kill_at]
+    jb .Lut_skip
+    test dword ptr [rbx + UP_flags], UPF_KILLED
+    jnz .Lut_free               # still there 5 s after SIGKILL (stuck in the kernel): given up
+    mov rdi, rbx
+    call group_kill
+    jmp .Lut_skip
+.Lut_free:
     mov dword ptr [rbx + UP_pid], 0
-5:  add rbx, UP_SIZE
+.Lut_skip:
+    add rbx, UP_SIZE
     dec r13d
-    jnz 2b
+    jnz .Lut_next
     EPILOGUE
 
 # uproc_timeout() -> ms until uproc_tick has work, or -1
@@ -765,7 +968,7 @@ FN uproc_timeout
     mov ecx, UP_MAX
 2:  cmp dword ptr [rax + UP_pid], 0
     je 3f
-    test dword ptr [rax + UP_flags], UPF_ORPHAN
+    test dword ptr [rax + UP_flags], UPF_ORPHAN | UPF_EXITED
     jz 3f
     mov edx, 250
     cmp ebx, -1
@@ -791,7 +994,7 @@ FN uproc_quit_begin
     mov edi, [rip + env_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
 1:
 .endif
     lea rbx, [rip + procs]
@@ -803,17 +1006,18 @@ FN uproc_quit_begin
     jnz 3f
     neg edi
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + UP_pid]
     neg edi
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill
 3:  add rbx, UP_SIZE
     dec r12d
     jnz 2b
     EPILOGUE
 
-# uproc_quit_end(): up to 300 ms after uproc_quit_begin for the groups to go, then SIGKILL
+# uproc_quit_end(): up to 300 ms after uproc_quit_begin for the groups to go, leaders and what they
+#   left, then SIGKILL to every group still there
 FN uproc_quit_end
     PROLOGUE 16
 1:  # reap what has gone; count what has not
@@ -823,15 +1027,33 @@ FN uproc_quit_end
 2:  mov edi, [rbx + UP_pid]
     test edi, edi
     jz 3f
+    test dword ptr [rbx + UP_flags], UPF_EXITED
+    jnz 24f
     mov esi, 1
     call wait_code
     cmp rax, -1
     je 21f
-    mov dword ptr [rbx + UP_pid], 0
+    cmp rax, -2
+    je 23f
+    mov rdi, rbx
+    mov esi, eax
+    call leader_gone            # the entry goes unless the group lives on
+    cmp dword ptr [rbx + UP_pid], 0
+    je 3f
+    inc r13d
     jmp 3f
 21: test dword ptr [rbx + UP_flags], UPF_NOGROUP
     jnz 3f
     inc r13d
+    jmp 3f
+24: neg edi
+    xor esi, esi
+    call proc_kill
+    test rax, rax
+    jnz 23f
+    inc r13d
+    jmp 3f
+23: mov dword ptr [rbx + UP_pid], 0
 3:  add rbx, UP_SIZE
     dec r12d
     jnz 2b
@@ -856,7 +1078,9 @@ FN uproc_quit_end
     jnz 7f
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
+    test dword ptr [rbx + UP_flags], UPF_EXITED
+    jnz 7f
     mov edi, [rbx + UP_pid]
     mov esi, 1
     call wait_code
@@ -865,7 +1089,8 @@ FN uproc_quit_end
     jnz 6b
 9:  EPILOGUE
 
-# uproc_dump(sb): "uproc=N" and the pids of the running ones (print-uproc, for tests)
+# uproc_dump(sb): "uproc=N" and the pids of the entries, "*" after one nobody waits for, "+" after
+#   one whose leader is gone while its group is not (print-uproc, for tests)
 FN uproc_dump
     PROLOGUE
     mov r12, rdi
@@ -883,9 +1108,14 @@ FN uproc_dump
     mov esi, [rbx + UP_pid]
     call sb_push_u64
     test dword ptr [rbx + UP_flags], UPF_ORPHAN
-    jz 2f
+    jz 11f
     mov rdi, r12
     mov esi, '*'
+    call sb_push_byte
+11: test dword ptr [rbx + UP_flags], UPF_EXITED
+    jz 2f
+    mov rdi, r12
+    mov esi, '+'
     call sb_push_byte
 2:  add rbx, UP_SIZE
     dec r13d

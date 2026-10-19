@@ -995,7 +995,7 @@ class CodexDiscovery(unittest.TestCase):
         # Codex's switch, on the page beside the agents panel
         script.write_text('wait-agents\ncmd settings\n' + f'click 955 {y}\n'
                           'wait-agents\nprint-agents\nquit\n')
-        result = subprocess.run([str(EXE), str(self.project), '--headless', '1400x3800',
+        result = subprocess.run([str(EXE), str(self.project), '--headless', '1400x8000',
                                  '--scale', '1', '--script', str(script)], env=self.env,
                                 capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)

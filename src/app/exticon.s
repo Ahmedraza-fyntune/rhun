@@ -104,36 +104,58 @@ icon_read:
     PROLOGUE
     mov rbx, rdi
     mov dword ptr [rbx + EXT_icon_state], 2
-    # a path inside the extension's folder: relative, without .., a drive or backslashes
+    mov rdi, [rbx + EXT_dir]
     mov rsi, [rbx + EXT_icon]
+    mov edx, ICON_MAXBYTES
+    mov ecx, ICON_MAXDIM
+    lea r8, [rbx + EXT_icon_img]
+    call png_icon_read
+    test eax, eax
+    jz 9f
+    mov dword ptr [rbx + EXT_icon_state], 1
+9:  EPILOGUE
+
+# FN png_icon_read(dir, rel, max bytes, max dim, IMG*) -> eax 1 with the PNG decoded into IMG, or 0:
+#   rel is a path inside dir (relative, without .., a drive or backslashes); the file is at most max
+#   bytes and its header says at most max dim pixels a side, checked before anything is decoded
+FN png_icon_read
+    PROLOGUE 32
+    mov rbx, rdi
+    mov [rsp], rsi
+    mov [rsp + 8], rdx
+    mov [rsp + 16], ecx
+    mov [rsp + 24], r8
+    mov rsi, [rsp]
+    test rsi, rsi
+    jz 8f
     cmp byte ptr [rsi], 0
-    je 9f
+    je 8f
     cmp byte ptr [rsi], '/'
-    je 9f
+    je 8f
     mov rdi, rsi
 1:  movzx eax, byte ptr [rdi]
     test eax, eax
     jz 3f
     cmp eax, 92
-    je 9f
+    je 8f
     cmp eax, ':'
-    je 9f
+    je 8f
     cmp eax, '.'
     jne 2f
     cmp byte ptr [rdi + 1], '.'
-    je 9f
+    je 8f
 2:  inc rdi
     jmp 1b
 3:  lea rdi, [rip + ic_path]
     call sb_clear
     lea rdi, [rip + ic_path]
-    mov rsi, [rbx + EXT_dir]
+    mov rsi, rbx
     call sb_push_cstr
     lea rdi, [rip + ic_path]
     mov esi, '/'
     call sb_push_byte
     lea rdi, [rip + ic_path]
-    mov rsi, [rbx + EXT_icon]
+    mov rsi, [rsp]
     call sb_push_cstr
     lea rdi, [rip + ic_path]
     xor esi, esi
@@ -142,14 +164,14 @@ icon_read:
     mov rdi, [rip + ic_path + SB_ptr]
     call file_open_read
     test rax, rax
-    js 9f
+    js 8f
     mov r12d, eax               # fd
     mov edi, eax
     call file_size
     mov r13, rax
     test rax, rax
     jle 7f
-    cmp rax, ICON_MAXBYTES
+    cmp rax, [rsp + 8]
     ja 7f
     mov rdi, rax
     call mem_alloc
@@ -170,7 +192,8 @@ icon_read:
     jmp 4b
 5:  mov edi, r12d
     SYS SYS_close
-    # a PNG whose header says at most ICON_MAXDIM pixels a side
+    # a PNG whose header says at most max dim pixels a side
+    xor ebx, ebx                # the result
     cmp r13, 24
     jb 61f
     mov rax, 0x0a1a0a0d474e5089
@@ -181,35 +204,47 @@ icon_read:
     mov eax, [r14 + 16]
     bswap eax
     lea ecx, [rax - 1]
-    cmp ecx, ICON_MAXDIM - 1
-    ja 61f
+    cmp ecx, [rsp + 16]
+    jae 61f
     mov eax, [r14 + 20]
     bswap eax
     lea ecx, [rax - 1]
-    cmp ecx, ICON_MAXDIM - 1
-    ja 61f
+    cmp ecx, [rsp + 16]
+    jae 61f
     mov rdi, r14
     mov rsi, r13
     mov edx, IMF_PNG
-    lea rcx, [rbx + EXT_icon_img]
+    mov rcx, [rsp + 24]
     call image_decode
     test eax, eax
     jnz 61f
-    mov dword ptr [rbx + EXT_icon_state], 1
+    mov ebx, 1
 61: mov rdi, r14
     call mem_free
-    jmp 9f
+    mov eax, ebx
+    EPILOGUE
 6:  mov rdi, r14
     call mem_free
 7:  mov edi, r12d
     SYS SYS_close
-9:  EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN icon_fit(IMG*, size) -> size x size premultiplied ARGB (mem_alloc'd), or 0: icon_scale without
+#   rounding the corners (an icon, not a badge)
+FN icon_fit
+    xor edx, edx
+    jmp icon_scale_r
 
 # icon_scale(IMG*, size) -> size x size premultiplied ARGB (mem_alloc'd), or 0: the image fitted
 # and centered, each pixel the average of the source pixels it covers, corners rounded
 icon_scale:
+    mov edx, 1
+# icon_scale_r(IMG*, size, round corners?)
+icon_scale_r:
     PROLOGUE 64
     mov rbx, rdi
+    mov [rsp + 44], edx
     mov [rsp], esi              # size
     mov eax, esi
     imul eax, esi
@@ -370,10 +405,12 @@ icon_scale:
     jmp .Lis_row
 .Lis_round:
     # the badge's corners: gfx_round_rect's radius for this size
+    cmp dword ptr [rsp + 44], 0
+    je 8f
     mov rdi, r12
     mov esi, [rsp]
     mov edx, esi
     shr edx, 2
     call gfx_round_mask
-    mov rax, r12
+8:  mov rax, r12
 9:  EPILOGUE

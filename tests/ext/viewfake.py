@@ -7,17 +7,37 @@ body after its line). VIEWFAKE_MODE: normal, nofeature (agrees nothing).
 Commands: rescan (the same ids again, with a new count), renamed (new ids), vanish (removes the
 selected node), badpatch (a patch whose third op names a missing node), big (100001 nodes), show
 (vshow items focus), empty (state empty with a text and a key), msg (a message line), busy (busy 1),
-expand (expands f:main.rs).
+expand (expands f:main.rs), reveal (vreveal t:lib.rs:1 select,focus after collapsing lib.rs),
+multi (items becomes multi-select), delpin (removes the pin action), log (lines of every severity
+with SGR colors to the logs view), logmany (12000 lines), logclear, tab (a tree in an editor tab
+of its own), untab (unview of that tab), clearmain (f:main.rs keeps no children), loadthen (state loading, then the root's children again),
+note, noteask (a
+warning with Reload, which runs rescan, and Later), noteerr, notemany (6 sticky), notes17, noteset,
+unnote, prog (status, cancellable, then 42% "crates"), prognote, progview (in todo), progbad,
+progend (VIEWFAKE_NOTIFY agrees notify and progress), img (a red PNG drawn in pic), badimg,
+imgs65, unimg (twice), tabpic (a 12a tab picture; VIEWFAKE_PIC agrees views, view-images and,
+unless it is nokeys, view-keys; a vcopy is answered "copied text" or "cut text"), fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
+view-log is not asked for. VIEWFAKE_DELAY: seconds before hello.
+
+The items view (panel) has a lazy node "a" (its children come with vkids: VIEWFAKE_LAZY answer,
+error, late (after 1 s), or never) and pages of root children (vmore adds two, three pages).
+TODO has a title action "rescan" and node actions "pin" (inline) and "pin hide" (menu).
 """
+import threading
+import time
 import os
+import struct
 import sys
+import zlib
 
 MODE = os.environ.get('VIEWFAKE_MODE', 'normal')
 LOG = os.environ.get('VIEWFAKE_LOG')
 ROOT = os.environ.get('VIEWFAKE_ROOT', '/nonexistent')
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
+LAZY = os.environ.get('VIEWFAKE_LAZY', 'answer')
 next_id = 1
+lock = threading.Lock()
 views = {}              # manifest key -> VIEW
 selected = {}           # VIEW -> selected node id
 rescans = 0
@@ -30,8 +50,9 @@ def log(data):
 
 
 def send(line, body=b''):
-    out.write(line.encode() + b'\n' + body)
-    out.flush()
+    with lock:
+        out.write(line.encode() + b'\n' + body)
+        out.flush()
 
 
 def request(verb, body=None):
@@ -68,7 +89,8 @@ def patch(view, ops):
 
 def todo_tree(view, prefix='', count=2):
     files = [('main.rs', 'src', 2), ('lib.rs', 'src', 1), ('README.md', '', 1)]
-    ops = [rec('title', data=b'TODO'), rec('badge', '4')]
+    ops = [rec('title', data=b'TODO'), rec('badge', '4'), rec('action', 'rescan refresh title', b'Rescan'),
+           rec('action', 'pin pin node', b'Pin'), rec('action', 'hide - node', b'Hide')]
     top = []
     for name, folder, n in files:
         extra = rec('icon', f'file:{name} -') + rec('badge', f'{n}')
@@ -82,7 +104,8 @@ def todo_tree(view, prefix='', count=2):
         for i in range(n):
             text = f'TODO: item {i + 1} of {name} ({count})'
             extra = rec('hl', '0 4') + rec('icon', 'warning warning') + \
-                rec('open', f'{i + 1} 1', path.encode()) + rec('tip', data=f'tip of {i + 1}'.encode())
+                rec('open', f'{i + 1} 1', path.encode()) + rec('tip', data=f'tip of {i + 1}'.encode()) + \
+                rec('inline', data=b'pin') + rec('menu', data=b'pin hide')
             items.append(node(f'{prefix}t:{name}:{i + 1}', text, 'leaf', extra))
         ops.append(kids(f'{prefix}f:{name}', items))
     ops.append(rec('state', 'ready 0'))
@@ -90,10 +113,100 @@ def todo_tree(view, prefix='', count=2):
 
 
 def items_tree(view):
-    ops = [kids('', [node('a', 'Alpha', 'closed'), node('b', 'Beta'), node('c', 'Gamma', 'leaf', rec('check', '0'))])]
-    ops.append(kids('a', [node('a1', 'Alpha one'), node('a2', 'Alpha two')]))
+    ops = [kids('', [node('a', 'Alpha', 'closed'), node('b', 'Beta'), node('c', 'Gamma', 'leaf', rec('check', '0'))],
+                more=1)]
     ops.append(rec('state', 'ready 0'))
     patch(view, ops)
+
+
+pages = 0
+pending_tab = []        # vtab requests waiting for their view's number
+tabs = []
+on_reply = {}           # request id -> fn(fields) for its ok
+notes = []              # NOTE of each notification rhun took, in order
+progs = []              # P of each progress
+
+
+images = []             # IMG of each image rhun took
+PIC = os.environ.get('VIEWFAKE_PIC', '')
+
+
+def png(w, h, rgba):
+    """A w x h PNG of one RGBA color."""
+    def chunk(kind, data):
+        c = kind + data
+        return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+    raw = b''.join(b'\0' + bytes(rgba) * w for _ in range(h))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) +
+            chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+
+
+def draw(view, picture):
+    request(f'draw {view}', picture.encode())
+
+
+def vimage(data, then=None):
+    rid = request('vimage', data)
+
+    def took(f):
+        images.append(int(f[2]))
+        if then:
+            then(int(f[2]))
+    on_reply[rid] = took
+
+
+def note_body(msg, detail=None, buttons=(), sticky=False):
+    extra = b''
+    if detail:
+        extra += rec('detail', data=detail.encode())
+    if sticky:
+        extra += rec('sticky', '0')
+    for title, command in buttons:
+        extra += rec('button', data=title.encode())
+        if command:
+            extra += rec('command', f'{command}', b'')
+    msg = msg.encode()
+    return f'{len(msg)} {len(extra)}\n'.encode() + msg + extra
+
+
+def notify(sev, body):
+    rid = request(f'notify {sev}', body)
+    on_reply[rid] = lambda f: notes.append(int(f[2]))
+
+
+def progress(where, cancel, title):
+    rid = request(f'progress {where} {cancel}', title.encode())
+    on_reply[rid] = lambda f: progs.append(int(f[2]))
+    return rid
+
+
+def answer(rid, body):
+    send(f'ok {rid} {len(body)}', body)
+
+
+def host_request(rid, verb, fields, body):
+    """vkids VIEW REV LEN + id, vmore VIEW REV HAVE LEN + id."""
+    global pages
+    if verb == 'vkids':
+        nid = body.decode()
+        if LAZY == 'error':
+            send(f'error {rid} refused cannot list {nid}')
+            return
+        if LAZY == 'never':
+            return
+        reply = f'1\n'.encode() + kids(nid, [node(nid + '1', nid.upper() + ' one'), node(nid + '2', nid.upper() + ' two')])
+        if LAZY == 'late':
+            threading.Timer(1.0, answer, (rid, reply)).start()
+        else:
+            answer(rid, reply)
+    elif verb == 'vmore':
+        pages += 1
+        have = int(fields[3])
+        more = 1 if pages < 3 else 0
+        items = [node(f'p{have + i}', f'Page item {have + i}') for i in range(2)]
+        answer(rid, b'1\n' + kids('', items, more=more, op='add'))
+    else:
+        send(f'error {rid} unknown')
 
 
 def on_command(name):
@@ -123,10 +236,112 @@ def on_command(name):
         patch(todo, [rec('busy', '1')])
     elif name == 'expand' and todo:
         patch(todo, [rec('collapse', data=b'f:main.rs'), rec('expand', data=b'f:lib.rs')])
+    elif name == 'reveal' and todo:
+        patch(todo, [rec('collapse', data=b'f:lib.rs')])
+        request(f'vreveal {todo} select,focus', b't:lib.rs:1')
+    elif name == 'multi' and views.get('items'):
+        patch(views['items'], [rec('select-mode', 'multi')])
+    elif name == 'delpin' and todo:
+        patch(todo, [rec('action', 'pin - none', b'')])
+    elif name == 'log' and views.get('logs'):
+        lines = (b'info starting\n'
+                 b'warn \x1b[33myellow\x1b[0m and plain\n'
+                 b'error failed: \x1b[1;31mred\x1b[0m\n'
+                 b'debug details\tafter a tab\n'
+                 b'trace \x07bell\x1b]0;title\x07 gone\n'
+                 b'- no severity\n')
+        patch(views['logs'], [rec('log', '6', lines)])
+    elif name == 'logmany' and views.get('logs'):
+        lines = b''.join(f'info line {i}\n'.encode() for i in range(12000))
+        patch(views['logs'], [rec('log', '12000', lines)])
+    elif name == 'logclear' and views.get('logs'):
+        patch(views['logs'], [rec('clear', '', b'')])
+    elif name == 'clearmain' and todo:
+        patch(todo, [kids('f:main.rs', [])])  # expanded, with no children
+    elif name == 'loadthen' and todo:
+        patch(todo, [rec('state', 'loading 0')])
+        patch(todo, [kids('', [node(f'f:{n}', n, 'open') for n in ('main.rs', 'lib.rs', 'README.md')])])
+    elif name == 'fatset' and todo:
+        # seven nodes given 3,000,000 bytes each, one patch apiece: past 16 MB they are refused
+        for nid in ('f:main.rs', 'f:lib.rs', 'f:README.md', 't:main.rs:1', 't:main.rs:2', 't:lib.rs:1',
+                    't:README.md:1'):
+            kind = 'open' if nid.startswith('f:') else 'leaf'
+            patch(todo, [rec('set', '', node(nid, nid, kind, rec('blob', '', b'x' * 3000000)))])
+    elif name == 'fatrelist' and todo:
+        # after fatset (15 MB kept): the root's three children listed again with 1,200,000 bytes
+        # each replace their 3 MB, then 3,000,000 more on another node still fit
+        top = [node(f'f:{n}', n, 'open', rec('blob', '', b'y' * 1200000)) for n in ('main.rs', 'lib.rs', 'README.md')]
+        patch(todo, [kids('', top)])
+        patch(todo, [rec('set', '', node('t:lib.rs:1', 'one', 'leaf', rec('blob', '', b'z' * 3000000)))])
+    elif name == 'note':
+        notify('info', note_body('Indexed 12 files', 'workspace'))
+    elif name == 'noteask':
+        notify('warning', note_body('Reload the window to use the new settings?',
+                                    buttons=[('Reload', 'rescan'), ('Later', None)]))
+    elif name == 'noteerr':
+        notify('error', note_body('The server stopped. ' * 8 + 'Its log has more.\nSecond line.'))
+    elif name == 'notemany':
+        for i in range(6):
+            notify('info', note_body(f'Note {i + 1}', sticky=True))
+    elif name == 'notes17':
+        for i in range(17):
+            notify('info', note_body(f'Note {i + 1}', sticky=True))
+    elif name == 'noteset' and notes:
+        request(f'notify-set {notes[-1]}', note_body('Indexed 40 files', buttons=[('Open', None)]))
+    elif name == 'unnote' and notes:
+        request(f'unnotify {notes[-1]}')
+    elif name == 'prog':
+        rid = progress('status', 'cancel', 'Indexing')
+        prev = on_reply[rid]
+
+        def started(f):
+            prev(f)
+            request(f'progress-set {f[2]} 42', b'crates')
+        on_reply[rid] = started
+    elif name == 'prognote':
+        progress('note', 'cancel', 'Downloading')
+    elif name == 'progview' and views.get('todo'):
+        progress(f'view:{views["todo"]}', '-', 'Scanning')
+    elif name == 'progbad':
+        progress('view:999', '-', 'Nowhere')
+        progress('status', 'maybe', 'Bad cancel')
+    elif name == 'progend' and progs:
+        request(f'progress-end {progs[-1]}')
+    elif name == 'img' and views.get('pic'):
+        vimage(png(2, 2, (255, 0, 0, 255)), lambda img: draw(views['pic'], f'image 0 0 40 40 {img}\n'))
+    elif name == 'badimg':
+        request('vimage', b'not an image at all')
+    elif name == 'imgs65':
+        for i in range(65):
+            vimage(png(1, 1, (0, 0, 255, 255)))
+    elif name == 'unimg' and images:
+        request(f'unimage {images[-1]}')
+        request(f'unimage {images[-1]}')
+    elif name == 'tabpic':
+        rid = request('view Pic Tab')
+
+        def opened(f):
+            views['tabpic'] = int(f[2])
+            draw(int(f[2]), 'rect 0 0 200 100 accent\n')
+        on_reply[rid] = opened
+    elif name == 'tab':
+        def opened_tab(reply):
+            pass
+        rid = request('vtab tree Commit 3fa2c1')
+        pending_tab.append(rid)
+    elif name == 'untab' and tabs:
+        request(f'unview {tabs[-1]}')
 
 
 def main():
+    time.sleep(float(os.environ.get('VIEWFAKE_DELAY', '0')))     # a slow start
     features = '' if MODE == 'nofeature' else ' view-tree'
+    if features and not os.environ.get('VIEWFAKE_NOLOG'):
+        features += ' view-log'
+    if os.environ.get('VIEWFAKE_NOTIFY'):
+        features += ' notify progress'
+    if PIC:
+        features += ' views view-images' + ('' if PIC == 'nokeys' else ' view-keys')
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -135,15 +350,35 @@ def main():
         line = line.rstrip(b'\n')
         log(line)
         fields = line.decode('utf-8', 'replace').split(' ')
+        if fields[:2] == ['0', 'bye']:
+            os._exit(0)
         body = b''
         # a line whose last field is a length carries a body
         if fields[0] == '0' and len(fields) >= 3 and fields[1] == 'view' and \
-                fields[3] in ('select', 'activate', 'expand', 'collapse', 'check', 'action', 'discarded'):
+                fields[3] in ('select', 'activate', 'expand', 'collapse', 'check', 'action', 'discarded', 'text', 'paste'):
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
-        elif fields[0] == 'ok' and len(fields) == 3:
-            pass
+        elif fields[0] == 'ok' and len(fields) >= 3 and int(fields[1]) in on_reply:
+            on_reply.pop(int(fields[1]))(fields)
+            continue
+        elif fields[0] == 'ok' and len(fields) >= 3 and int(fields[1]) in pending_tab:
+            pending_tab.remove(int(fields[1]))
+            view = int(fields[2])
+            tabs.append(view)
+            patch(view, [kids('', [node('m', 'main.rs', 'open', rec('icon', 'file:main.rs -')),
+                                  node('r', 'README.md')]),
+                         kids('m', [node('m1', '+12 -3')]), rec('state', 'ready 0')])
+            continue
+        elif fields[0].isdigit() and fields[0] != '0' and len(fields) >= 3 and fields[1] == 'vcopy':
+            answer(fields[0], b'copied text' if fields[3] == 'copy' else b'cut text')
+            continue
+        elif fields[0].isdigit() and fields[0] != '0' and len(fields) >= 3 and fields[1] in ('vkids', 'vmore'):
+            n = int(fields[-1])
+            body = inp.read(n)
+            log(body)
+            host_request(fields[0], fields[1], fields[1:], body)
+            continue
         if fields[0] == '0' and len(fields) >= 3 and fields[1] == 'view':
             view = int(fields[2])
             what = fields[3]
@@ -154,6 +389,8 @@ def main():
                     todo_tree(view)
                 elif key == 'items':
                     items_tree(view)
+                elif key == 'pic':
+                    draw(view, 'rect 0 0 300 120 accent\n')
             elif what == 'select':
                 ids = body.split(b'\n')
                 selected[view] = ids[0].decode() if ids and ids[0] else None
