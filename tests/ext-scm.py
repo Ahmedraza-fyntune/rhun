@@ -399,6 +399,135 @@ class QuickDiff(Base):
         self.assertEqual(self.replies('qd'), [('error 1 unknown no such request', None)])
 
 
+def act(icon, name, args='', label=''):
+    return f'action {icon} {name} {len(args.encode())} {len(label.encode())}\n{args}{label}'
+
+
+def scm_body(status, placeholder, actions, groups):
+    """an scm-update body: groups are (id, label, actions, resources), a resource (code, color, path,
+    records)"""
+    out = f'{len(status)} {len(placeholder)} {len(actions)} {len(groups)}\n{status}{placeholder}'
+    out += ''.join(actions)
+    for gid, label, gacts, res in groups:
+        out += f'group {gid} {len(label)} {len(gacts)} {len(res)}\n{label}' + ''.join(gacts)
+        for code, color, path, recs in res:
+            out += f'res {code} {color} {len(path.encode())} {len(recs)}\n{path}' + ''.join(recs)
+    return out
+
+
+class ScmPanel(Base):
+    """C4: a second version control system's panel, its colors and its quick-diff root"""
+
+    def provider(self, body, root=None, extra=(), hello='hello 1 scm command-args'):
+        root = str(root or self.proj)
+        reg = f'{len(root.encode())} 9\n{root}Mercurial'
+        cmds = {'start': [[f'scm-register {len(reg.encode())}', reg],
+                          [f'scm-update $SCM {len(body.encode())}', body], *extra],
+                'commit': [], 'open': [], 'stage': [], 'forget': [], 'input': [['scm-input $SCM', None]],
+                'set': [['scm-input-set $SCM 5', 'hello']]}
+        return self.ext('hg', needs='project = read', hello=hello, commands=cmds,
+                        ini='[provides]\nscm = yes')
+
+    def body(self):
+        return scm_body('3 changes on default', 'Message (Ctrl+Enter to commit)',
+                        [act('check', 'commit', 'go', 'Commit'), act('refresh', 'stage')],
+                        [('changes', 'Changes', [act('plus', 'stage', 'all', 'Add All')],
+                          [('M', 'modified', 'a.txt', ['command open 5\na.txt', act('plus', 'stage', 'a.txt', 'Add'),
+                                                        act('minus', 'forget', 'a.txt', 'Forget')]),
+                           ('?', 'untracked', 'src/new.txt', ['strike 0\n', 'tip 3\nnew']),
+                           ('!', 'deleted', 'gone.txt', [])])])
+
+    def start(self, exts, *actions):
+        return self.run_editor(['cmd hg.start', 'wait-ext hg running', 'wait 400', *actions, 'print-scm-ext'],
+                               exts=exts, drop_waits=True)
+
+    def test_the_panel_shows_status_buttons_and_groups(self):
+        out = self.start(self.provider(self.body()), 'cmd toggle_sidebar', 'wait 300', 'move 80 509', 'wait 700',
+                         'print-tip')
+        self.assertIn('tip=new', out)                               # src/new.txt's tip record
+        line = [l for l in out if l.startswith('scm 1 rhun-tests/hg ')]
+        self.assertEqual(line, [f'scm 1 rhun-tests/hg {self.proj.as_posix()} label=Mercurial '
+                                'status=3 changes on default input= actions=Commit,Stage'], out)
+        rows = [l for l in out if l.startswith('row ')]
+        self.assertEqual(len(rows), 4, out)
+        self.assertIn('label=Changes', rows[0])
+        self.assertIn('badge=3', rows[0])
+        self.assertIn('label=a.txt desc=M', rows[1])
+        self.assertIn('label=new.txt desc=?  src', rows[2])
+        self.assertEqual([r for r, _ in self.replies('hg')], ['ok 1 1', 'ok 2'])
+
+    def test_clicks_buttons_and_menus_run_its_commands(self):
+        out = self.start(self.provider(self.body()), 'scm-click 1 changes a.txt', 'wait 200', 'scm-action 1 0',
+                         'wait 200', 'scm-menu 1 changes a.txt', 'print-menu', 'print-scm-ext',
+                         'print-context scmProvider', 'print-context scmResourceStatus', 'menu-pick Forget', 'wait 200',
+                         'scm-menu 1 changes', 'print-menu', 'menu-pick Add All', 'wait 200',
+                         'scm-click 1 changes gone.txt', 'wait 200', 'print-tabs')
+        self.assertIn('Add', out)
+        self.assertIn('Forget', out)
+        self.assertIn('Open File', out)
+        self.assertIn('Add All', out)
+        self.assertIn('menu=scm_resource resource changes a.txt', out)
+        self.assertIn('scmProvider=rhun-tests/hg', out)
+        self.assertIn('scmResourceStatus=M', out)
+        self.assertIn('menu=scm_group group changes', out)
+        log = self.fake_log('hg')
+        # "< 0 run hg.NAME DOC ref LEN", then "| BODY"
+        runs = [(l.split()[3], log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run hg.') and ' ref ' in l]
+        self.assertEqual(runs, [('hg.open', "| 'a.txt'"), ('hg.commit', "| 'go'"), ('hg.forget', "| 'a.txt'"),
+                                ('hg.stage', "| 'all'")])
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertTrue(tabs[-1].endswith('*gone.txt'), out)     # a resource without a command opens its file
+
+    def test_the_message_box(self):
+        out = self.start(self.provider(self.body()), 'scm-focus 1', 'type fix it', 'cmd hg.input', 'wait 200',
+                         'key ctrl+Return', 'wait 200', 'cmd hg.set', 'wait 200')
+        self.assertIn(('ok 3 6', 'fix it'), self.replies('hg'))
+        self.assertIn('input=hello', [l for l in out if l.startswith('scm 1 ')][0])
+        log = self.fake_log('hg')
+        # Ctrl+Enter in the message box runs the first button: Commit, its ARGS "go"
+        self.assertIn(("< 0 run hg.commit 1 ref 2", "| 'go'"),
+                      [(l, log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run hg.commit')])
+
+    def test_explorer_colors_and_letters(self):
+        shutil.rmtree(self.proj / '.git')
+        out = self.start(self.provider(self.body()), f'print-vcs {self.proj / "a.txt"}',
+                         f'print-vcs {self.proj / "src/new.txt"}', f'print-vcs {self.proj / "src"}',
+                         f'print-vcs {self.proj / "b.go"}')
+        vcs = [l for l in out if l.startswith('vcs=')]
+        self.assertTrue(vcs[0].startswith('vcs=M dir=0 color='), vcs)
+        self.assertTrue(vcs[1].startswith('vcs=? dir=0 color='), vcs)
+        self.assertTrue(vcs[2].startswith('vcs=? dir=1 color='), vcs)
+        self.assertEqual(vcs[3], 'vcs=- dir=0 color=000000')
+        self.assertNotEqual(vcs[0].split('color=')[1], vcs[1].split('color=')[1])
+
+    def test_a_registered_root_takes_quick_diff_inside_git(self):
+        reg = f'{len(str(self.proj).encode())} 2\n{self.proj}hg'
+        exts = self.ext('hg', needs='project = read', hello='hello 1 scm quickdiff',
+                        ini='on = startup\n[provides]\nscm = yes\nquickdiff = *.txt',
+                        answers={'quickdiff': {'body': 'hello world\nold line\nthird line\n'}},
+                        events={'0 ready': [[f'scm-register {len(reg.encode())}', reg]]})
+        out = self.run_editor(['wait-ext hg running', 'wait 500', 'cmd save', 'wait 500', 'print-git'],
+                              exts=exts, drop_waits=True)
+        self.assertIn('marks .~..', out)
+
+    def test_stopping_removes_its_panels(self):
+        out = self.start(self.provider(self.body()), 'ext-set hg stop', 'wait 400')
+        self.assertFalse([l for l in out if l.startswith('scm 1 ')], out)
+
+    def test_bad_updates_and_handles(self):
+        bad = '1 0 0 1\nxgroup g 1 0 1\nGres M nocolor 1 0\na'
+        exts = self.provider(self.body(), extra=[[f'scm-update $SCM {len(bad)}', bad], ['scm-input 99', None]])
+        out = self.start(exts)
+        got = [r for r, _ in self.replies('hg')]
+        self.assertTrue(got[2].startswith('error 3 syntax'), got)
+        self.assertEqual(got[3], 'error 4 refused no such provider')
+        self.assertIn('label=a.txt desc=M', ' '.join(out))       # the bad update changed nothing
+        n = len(got)                                                # the log goes on in the same folder
+        exts = self.provider(self.body(), hello='hello 1')
+        self.start(exts)
+        self.assertTrue(self.replies('hg')[n][0].startswith('error 1 unknown'), self.replies('hg'))
+
+
 class CommitMessage(Base):
     """C2: a commit-message extension beside the built-in providers"""
 

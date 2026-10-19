@@ -4244,7 +4244,7 @@ tab_draw:
     xor eax, eax
     test rdi, rdi
     jz 87f
-    call git_path_color
+    call vcs_path_color         # git's, or a version control provider's (scmpanel.s)
 87: mov r9d, eax
     test eax, eax
     jnz 88f

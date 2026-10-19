@@ -580,10 +580,6 @@ FN scmext_ext_gone
     call ai_describe
 9:  EPILOGUE
 
-# FN scm_root_ext(path) -> rax the provider whose registered root holds the path, or 0 (C4: scm-register)
-FN scm_root_ext
-    xor eax, eax
-    ret
 
 # ---------------- quick diff (feature quickdiff) ----------------
 # A provider gives a file's base text; rhun hashes it and draws the gutter marks as it does for
