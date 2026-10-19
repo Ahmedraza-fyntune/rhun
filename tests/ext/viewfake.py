@@ -186,6 +186,8 @@ def main():
         line = line.rstrip(b'\n')
         log(line)
         fields = line.decode('utf-8', 'replace').split(' ')
+        if fields[:2] == ['0', 'bye']:
+            os._exit(0)
         body = b''
         # a line whose last field is a length carries a body
         if fields[0] == '0' and len(fields) >= 3 and fields[1] == 'view' and \

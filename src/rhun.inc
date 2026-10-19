@@ -1480,6 +1480,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
+    FEATURE FEAT_VIEW_LOG, "view-log", 0          # log views (with view-tree)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
