@@ -1701,7 +1701,7 @@ FN menu_print
 .Lrename: .asciz "Rename"
 .Ldelete_a: .asciz "Delete "
 .Ldelete_b: .asciz "?"
-.Ldelete_text: .asciz "Ctrl+Z in the explorer, or Undo Last Multi-File Edit, brings it back until rhun quits."
+.Ldelete_text: .asciz "Undo Last Multi-File Edit brings it back until rhun quits."
 .Lp_none: .asciz "none\n"
 .Lp_line: .asciz "-"
 .Lnot_deleted: .asciz "Could not delete. Check permissions and whether files are in use."

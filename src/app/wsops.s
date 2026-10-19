@@ -24,6 +24,7 @@ wo_a: .zero 4100                # resolved paths
 wo_b: .zero 4100
 wo_c: .zero 4100
 wo_tmp: .zero 4100
+wo_stat: .zero 256              # lstat's answer
 
 .text
 
@@ -246,6 +247,21 @@ wo_dirty_inside:
 8:  xor eax, eax
     EPILOGUE
 
+# wo_is_link(path) -> eax 1 for a symbolic link (not followed: a delete takes the link itself)
+wo_is_link:
+    lea rsi, [rip + wo_stat]
+    SYS SYS_lstat
+    test rax, rax
+    js 8f
+    mov eax, [rip + wo_stat + 24]   # st_mode (each platform's layer fills Linux's layout)
+    and eax, 0xf000
+    cmp eax, 0xa000
+    sete al
+    movzx eax, al
+    ret
+8:  xor eax, eax
+    ret
+
 # wo_count_cb(ctx, name): one entry more
 wo_count_cb:
     inc qword ptr [rip + wo_count]
@@ -286,8 +302,12 @@ wo_count_tree_cb:
     call path_join_cstr
     mov rbx, rax
     mov rdi, rax
-    call wo_tree_count1
+    call wo_is_link
+    test eax, eax
+    jnz 1f                      # a link to a folder is one entry: never followed
     mov rdi, rbx
+    call wo_tree_count1
+1:  mov rdi, rbx
     call mem_free
 9:  EPILOGUE
 
@@ -413,10 +433,13 @@ FN ws_ops_resolve
     call wo_project_or_above
     test eax, eax
     jnz .Lor_refused
+    cmp dword ptr [rip + ws_user], 0
+    jne 21f                     # the user's own delete keeps tabs with unsaved changes open
     lea rdi, [rip + wo_a]
     call wo_dirty_inside
     test eax, eax
     jnz .Lor_refused
+21:
     lea rdi, [rip + wo_a]
     call file_is_dir
     mov [r12 + WG_folder], rax
@@ -1027,6 +1050,10 @@ wo_copy:
     mov rbx, rdi
     mov r12, rsi
     mov rdi, rbx
+    call wo_is_link
+    test eax, eax
+    jnz 8f                      # links are not followed (nor kept: the copy is the fallback)
+    mov rdi, rbx
     call file_is_dir
     test eax, eax
     jnz 2f
@@ -1062,6 +1089,8 @@ wo_copy:
     js 9f
     mov rax, -5
 9:  EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 # wo_copy_cb(ctx [src, dst], name): one entry copied
 wo_copy_cb:
     PROLOGUE
@@ -1296,6 +1325,10 @@ wo_close_tabs:
     call app_path_inside
     test eax, eax
     jz 1b
+    mov rdi, r12
+    call doc_dirty
+    test eax, eax
+    jnz 1b                      # unsaved changes: the tab stays (the user's own delete)
     lea rdi, [rip + wo_b]
     mov rsi, [r14 + TP_path]
     call strcmp_eq

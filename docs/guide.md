@@ -372,7 +372,7 @@ holds the path, which can include folders that do not exist yet. Right-click a f
 menu; right-click the empty space below the list for the project folder's: New File, New Folder,
 Copy Path and Show in Finder (Show in Explorer, Open in File Manager).
 
-Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder permanently removes its contents, including hidden files. Links are removed without deleting their targets. The tabs of deleted files close, except those with unsaved changes. Renaming a file or folder keeps its open tabs on the new path.
+Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder removes its contents, including hidden files; links are removed without deleting their targets. The tabs of deleted files close, except those with unsaved changes. Renaming a file or folder keeps its open tabs on the new path. Both can be undone until rhun quits: `ctrl+z` while the explorer has the focus, or **Undo Last Multi-File Edit**, brings the file or folder back (deleted items wait in `~/.local/state/rhun/edits`).
 
 Right-click a file or directory in the explorer and choose **Show in Finder** (macOS), **Show in Explorer** (Windows), or **Open in File Manager** (Linux). Finder and Explorer select the item in its parent folder. Linux opens the containing folder through `xdg-open`, using your desktop's default file manager. The command palette also has **Show File in System File Manager** for the active file.
 
@@ -598,12 +598,41 @@ commands:
 | shift+F12 | Find All References | the references in the palette, this file's first; choosing one opens it |
 | ctrl+r | Go to Symbol in File | the file's functions, types and variables, indented by nesting; type to filter |
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
-| F2 | Rename | on a word, asks for the new name; every file it changes opens unsaved for you to review (without a matching rename provider, F2 renames the file) |
+| F2 | Rename | on a word, asks for the new name, then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
 | shift+alt+f | Format Document | with the document's tab width and spaces |
 
-An edit across files is checked whole before anything changes: if a document changed meanwhile
-or a range is off, nothing changes and rhun says why. Each document's changes are one undo
-step.
+#### Edits across files
+
+A rename, a code action or an extension's edit across files is checked whole before anything
+changes: if a document changed meanwhile or a range is off, nothing changes and rhun says why.
+Then it is made everywhere at once, and one **Undo** (`ctrl+z`, or `u` in vim) in any tab it
+touched takes all of it back: "Undid 'Rename to total' in 5 files". Redo redoes it everywhere.
+If one of its files changed since (you typed in it, or it changed on disk), Undo asks whether to
+undo in that file only, in the files that did not change, or not at all. **Undo Last Multi-File
+Edit** and **Redo Last Multi-File Edit** reach the newest one when none of its files is open.
+
+Extensions that support it (the first-party language server extension does) change files you do
+not have open directly on disk, without opening tabs, and save the open files they change that
+had no unsaved changes; files with unsaved changes are edited and stay unsaved. They can also
+create, rename and delete files: a renamed file's tab follows it, a deleted file's tab closes
+and comes back with Undo. When an extension's edit would change files on disk and its manifest
+does not ask for `project = write`, rhun asks first in the palette:
+
+```
+Language Server: 'Rename to total' changes 3 files that are not open and 1 open file, renames 1
+> Apply
+  Apply, and let Language Server change project files from now on
+  Preview changes
+  M  internal/calc.go    2 edits
+  R  util.go → helpers.go
+```
+
+**Preview changes** (or Enter on a file's row) opens a read-only tab with the changes as a diff,
+then the question again. The second row remembers the permission (`edits = yes` in
+`extensions.ini`); the extension's page shows it with a switch to take it back. Escape changes
+nothing. Every write is first recorded in `~/.local/state/rhun/edits`: a write the system refuses
+puts everything back, and an edit cut short by a crash is put back at the next start ("Restored 3
+files from a workspace edit that was cut short").
 
 Formatting, symbol rename, file symbols and signature help use a saved provider for the document's language.
 With one matching extension, rhun uses it. With several, a chooser shows their `owner/name`
