@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Feature selections (docs/extensions/v1.1.md): the selections and visible events, select-many,
+"""Feature selections (docs/extensions/v1.1.md): the selections event, select-many,
 insert at every selection, select collapsing. A small fake extension written by the test agrees
 the feature, logs every line rhun sends (SEL_LOG, in its state folder) and sends requests when
 its commands run."""
@@ -38,7 +38,7 @@ opened = *
 changed = *
 cursor = *
 selection = *
-{visible}
+
 [needs]
 documents = write
 '''
@@ -121,11 +121,11 @@ class Selections(unittest.TestCase):
                 time.sleep(0.2)
         self.tmp.cleanup()
 
-    def extension(self, visible=False):
+    def extension(self):
         folder = self.exts / 'fixture' / 'sel'
         folder.mkdir(parents=True, exist_ok=True)
         (folder / 'extension.ini').write_text(
-            MANIFEST.format(visible='visible = *\n' if visible else ''), encoding='utf-8')
+            MANIFEST, encoding='utf-8')
         (folder / 'main.py').write_text(MAIN, encoding='utf-8')
 
     def run_editor(self, actions, files=('a.txt',)):
@@ -210,29 +210,6 @@ class Selections(unittest.TestCase):
         self.assertEqual(sels[1], ['1 1 1 4', '2 1 2 3'])
         self.assertEqual(sels[2], ['2 2 2 2'])
         self.assertTrue([l for l in self.sel_log() if l.startswith('ok 2 ')], self.sel_log())
-
-    def test_visible_lines_on_scroll_and_resize(self):
-        self.extension(visible=True)
-        self.run_editor(['wait 100', 'move 400 300', 'scroll 210', 'wait 100', 'scroll 210',
-                         'scroll 210', 'wait 150', 'resize 1000 400', 'wait 150'],
-                        files=('long.txt',))
-        vis = self.events('visible')
-        self.assertTrue(vis, self.sel_log())
-        first = vis[0].split()
-        self.assertEqual(first[:5], ['0', 'visible', '1', '1', '1'])
-        last = int(first[5])
-        self.assertGreater(last, 15)
-        # scrolled: the shown lines move down; the last state is always told
-        later = [list(map(int, v.split()[4:6])) for v in vis[1:]]
-        self.assertTrue(later, vis)
-        self.assertTrue(all(a > 1 for a, b in later), vis)
-        # the smaller window shows fewer lines
-        heights = [b - a for a, b in later]
-        self.assertLess(heights[-1], last - 1, vis)
-
-    def test_without_visible_in_subscribe_no_visible_events(self):
-        self.run_editor(['move 400 300', 'scroll 210', 'wait 150'], files=('long.txt',))
-        self.assertFalse(self.events('visible'), self.sel_log())
 
 
 if __name__ == '__main__':

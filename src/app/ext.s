@@ -431,6 +431,10 @@ ext_settings_load:
     test eax, eax
     jnz 1b
     lea rdi, [rip + ini_it]
+    call run_allow_load_line    # allow_run = PROJECT (runallow.s)
+    test eax, eax
+    jnz 1b
+    lea rdi, [rip + ini_it]
     call ext_by_section
     test rax, rax
     jz 1b
@@ -600,6 +604,10 @@ FN ext_settings_save
     or eax, [rbx + EXT_edits]
     jnz 2f
     mov rdi, rbx
+    call run_allow_has
+    test eax, eax
+    jnz 2f
+    mov rdi, rbx
     call sdefs_changed
     test eax, eax
     jz 1b
@@ -629,7 +637,10 @@ FN ext_settings_save
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_edits_yes]
     call sb_push_cstr
-4:  # the settings that differ from their defaults
+4:  mov rdi, rbx                # the projects it may run programs in (runallow.s)
+    lea rsi, [rip + tmp2]
+    call run_allow_write
+    # the settings that differ from their defaults
     xor r13d, r13d
 5:  cmp r13, [rbx + EXT_sdefs + VEC_len]
     jae 1b
@@ -2820,8 +2831,6 @@ ext_spawn:
     mov qword ptr [rbx + EXT_wq_off], 0
     mov qword ptr [rbx + EXT_active], -1
     mov qword ptr [rbx + EXT_known + VEC_len], 0
-    mov qword ptr [rbx + EXT_vis_doc], 0     # feature selections: visible again at catch-up
-    mov qword ptr [rbx + EXT_vis_due], 0
     lea rdi, [rbx + EXT_rbuf]
     call sb_clear
     lea rdi, [rbx + EXT_wq]
@@ -4134,13 +4143,6 @@ FN ext_timeout
     call deadline
 11: cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne .Lpn_timeout_status
-    cmp qword ptr [rbx + EXT_vis_due], 0     # feature selections: visible lines waiting
-    je 12f
-    mov rax, [rbx + EXT_vis_t]
-    add rax, 50
-    call deadline
-12: cmp dword ptr [rbx + EXT_status], ES_RUNNING
-    jne .Lpn_timeout_status
     cmp qword ptr [rbx + EXT_pending], 0
     je .Lpn_timeout_status
     call time_ms
@@ -4770,7 +4772,6 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover
-    .quad .Lsk_visible, EXT_sub_visible     # feature selections
     .quad 0, 0
 env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
 .ifdef MACOS
@@ -4895,7 +4896,6 @@ ext_target: .asciz "linux-x86_64"
 .Lsk_changed: .asciz "changed"
 .Lsk_cursor: .asciz "cursor"
 .Lsk_selection: .asciz "selection"
-.Lsk_visible: .asciz "visible"
 .Lsk_edits: .asciz "edits"
 .Lsk_hover: .asciz "hover"
 .Ln_documents: .asciz "documents"

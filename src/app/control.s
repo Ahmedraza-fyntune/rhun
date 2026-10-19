@@ -20,6 +20,10 @@ wait_ext_state_len: .quad 0
 addr: .zero 110
 .globl g_headless
 g_headless: .long 0
+.p2align 3
+.globl g_ctl_cur, g_ctl_cur_len
+g_ctl_cur: .quad 0              # the control line being run
+g_ctl_cur_len: .quad 0
 
 .text
 
@@ -123,6 +127,8 @@ FN control_exec
     dec r12
 8:
 .endif
+    mov [rip + g_ctl_cur], rbx  # the line being run (the frame probes log it)
+    mov [rip + g_ctl_cur_len], r12
     lea rdi, [rip + out]
     call sb_clear
     call next_arg
@@ -174,6 +180,7 @@ FN control_exec
 2:  call [r15 + 8]
 .Lce_done:
     push rax
+3:  push rax
     push rax
     call term_frame_now         # a command ends with a frame that shows all output so far
     call flush_frame
@@ -942,9 +949,18 @@ c_ext_set:
     lea rdx, [rip + .Lx_restart]
     call str_eq_cstr
     test eax, eax
-    jz 2f
+    jz 11f
     mov rdi, r15
     call ext_restart
+    jmp 9f
+11: mov rdi, r13                # forget: the projects it may run programs in (runallow.s)
+    mov rsi, r14
+    lea rdx, [rip + .Lx_forget]
+    call str_eq_cstr
+    test eax, eax
+    jz 2f
+    mov rdi, r15
+    call run_forget
     jmp 9f
 2:  call next_int
     mov [rsp], eax
@@ -1251,7 +1267,18 @@ c_print_marks:
     lea rdi, [rip + out]
     mov esi, ' '
     call sb_push_byte
+    test dword ptr [r13 + MK_pad], MKF_SOURCE
+    jz 2f
+    # a Problems store source's (problems.s): "problems:LABEL"
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_problems_src]
+    call sb_push_cstr
     mov rax, [r13 + MK_owner]
+    lea rdi, [rip + out]
+    mov rsi, [rax + PS_label]
+    call sb_push_cstr
+    jmp 3f
+2:  mov rax, [r13 + MK_owner]
     lea rdi, [rip + out]
     mov rsi, [rax + EXT_owner]
     call sb_push_cstr
@@ -1262,6 +1289,7 @@ c_print_marks:
     lea rdi, [rip + out]
     mov rsi, [rax + EXT_name]
     call sb_push_cstr
+3:
     lea rdi, [rip + out]
     mov esi, ' '
     call sb_push_byte
@@ -2194,6 +2222,7 @@ on_client:
 .Lno_listen: .asciz "rhun: cannot create the control socket"
 .Ls_ext: .asciz "ext="
 .Ls_errors: .asciz "errors="
+.Ls_problems_src: .asciz "problems:"
 .Ls_warnings: .asciz " warnings="
 .Ls_hover: .asciz "hover="
 .Ls_sent: .asciz "sent="
@@ -2299,6 +2328,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lx_disabled: .asciz "disabled"
 .Lx_stop: .asciz "stop"
 .Lx_restart: .asciz "restart"
+.Lx_forget: .asciz "forget"
 .Ls_opts: .asciz "tab_width="
 .Ls_opt_spaces: .asciz " insert_spaces="
 .Ls_opt_trim: .asciz " trim_trailing_whitespace="
@@ -2350,11 +2380,13 @@ ctl_tables:
     .quad scm_ctl               # source control (scmctl.s)
     .quad langfeat_ctl          # language features (lfcontrol.s)
     .quad debug_ctl             # debugger (debugctl.s)
+    .quad tasks_ctl             # tasks and terminals (runctl.s)
     .quad test_ctl              # testing (testview.s)
     .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
     .quad views_ctl             # views group: places and retained views (viewsctl.s)
     .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
     .quad remote_ctl            # remote hosts (remotectl.s)
+    .quad pres_ctl              # editor presentation (presctl.s)
     .quad ws_ctl                # workspace edits and the editor model (wsctl.s)
     .quad 0
 ctl_table:

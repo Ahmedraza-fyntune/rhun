@@ -516,6 +516,8 @@ draw_detail:
     call section
     mov rdi, rbx
     call draw_permissions
+    mov rdi, rbx
+    call draw_run_allowed
     # wsedit: the user's standing permission to change project files (workspace edits), with a
     # switch that takes it back
     cmp dword ptr [rbx + EXT_edits], 0
@@ -663,6 +665,40 @@ draw_permissions:
     mov ecx, MI_24
     call line_text
     EPILOGUE
+
+# draw_run_allowed(ext): the projects it may run programs in as you (runallow.s), with Forget
+draw_run_allowed:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + xp_line]
+    call sb_clear
+    lea rdi, [rip + xp_line]
+    lea rsi, [rip + .Lt_runs_in]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + xp_line]
+    call run_allow_projects
+    test eax, eax
+    jz 9f
+    call line_cstr
+    mov rsi, rax
+    lea rdi, [rip + g_face_ui]
+    COLOR edx, T_FG
+    mov ecx, MI_28
+    call line_text
+    mov eax, [rip + xp_x]
+    mov [rip + xp_bx], eax
+    mov edi, ID_XP + 0x0e
+    lea rsi, [rip + .Lb_forget]
+    xor edx, edx
+    call row_button
+    test eax, UB_CLICK
+    jz 1f
+    mov rdi, rbx
+    call run_forget
+1:  M eax, MI_40
+    add [rip + xp_y], eax
+9:  EPILOGUE
 
 # cstr_copy_cap(dst, src, max): src with its first letter upper case, at most max bytes
 cstr_copy_cap:
@@ -1821,6 +1857,25 @@ FN extpage_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
+    # where it may run programs as you: "runs-in=~/code/app, ~/b" when anywhere
+    lea rdi, [rip + xp_line]
+    call sb_clear
+    mov rdi, rbx
+    lea rsi, [rip + xp_line]
+    call run_allow_projects
+    test eax, eax
+    jz 1f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_runs_in]
+    call sb_push_cstr
+    call line_cstr
+    mov rdi, r12
+    mov rsi, rax
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+1:
     # settings
     xor r13d, r13d
 2:  cmp r13, [rbx + EXT_sdefs + VEC_len]
@@ -1937,6 +1992,9 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ld_hex: .ascii "0123456789abcdef"
 .Ld_can: .asciz "can: "
 .Ld_held: .asciz "held="
+.Ld_runs_in: .asciz "runs-in="
+.Lt_runs_in: .asciz "Runs programs as you in: "
+.Lb_forget: .asciz "Forget"
 .Ld_setting: .asciz "setting "
 
 .text

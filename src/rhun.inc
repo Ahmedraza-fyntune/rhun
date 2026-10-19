@@ -627,6 +627,7 @@ F DOC_language_pending, 8
 # source control (wider-parity C): quick-diff bases from extensions (scmext.s)
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
+F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1
@@ -1609,6 +1610,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
     FEATURE FEAT_COMPLETE_ITEMS, "complete-items", 1  # complete-resolve
     FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
+    # editor presentation (deco.s ...)
+    FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
     # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):
     # ws_features_agreed withholds the ones whose host side is not in yet
     FEATURE FEAT_WORKSPACE_EDITS, "workspace-edits", 0
@@ -1929,13 +1932,6 @@ F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use,
 F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
 F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
 F EXT_wasm_pad, 4
-# feature selections (extproto.s): the visible event
-F EXT_sub_visible, 8    # [subscribe] visible: its patterns (cstr) or 0
-F EXT_vis_doc, 8        # the visible event last sent: DOC id (0: none since the start), its lines
-F EXT_vis_l1, 8
-F EXT_vis_l2, 8
-F EXT_vis_t, 8          # time_ms it was sent
-F EXT_vis_due, 8        # 1: the lines changed since; sent once 50 ms have passed
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
@@ -2433,6 +2429,8 @@ F TM_tabs, 8            # byte per column, 1 = tab stop
 F TM_out, SB_SIZE       # replies for the program
 F TM_str, SB_SIZE       # OSC string
 F TM_title, SB_SIZE
+F TM_tap, 8             # SB* that each finished line goes to (tasks' matchers), or 0
+F TM_tapdrop, 8         # lines left out while the tap held 64 KB
 ENDSTRUCT TM_SIZE
 
 # Branch on rooted paths without clobbering registers.
@@ -2729,6 +2727,49 @@ ENDSTRUCT BP_SIZE
 .equ DCON_INPUT, 7          # an expression typed into the console
 .equ DCON_RESULT, 8         # its value
 .equ DCON_LINE_MAX, 4096
+# ---- tasks and terminals: programs run as the user (uproc.s) in terminal tabs (termview.s) ----
+.equ SIGINT, 2
+.equ TK_SHELL, 0                # a terminal tab's kind: the user's shell
+.equ TK_TERMINAL, 1             # a program an extension opened (terminal-open, a debugger's runInTerminal)
+.equ TK_TASK, 2                 # a task
+.equ TRV_FOCUS, 0x100           # term_run: the new tab also gets the keyboard
+.equ TRV_SILENT, 0x200          # term_run: the tab is added without showing the panel
+.equ TE_EXIT, 0                 # term_run's fn(cookie, TERM, event, code): exited with code
+.equ TE_STOPPED, 1              # stopped (Stop, Restart, its tab closed while it ran)
+.equ TE_FAILED, 2               # could not start (no TE_STARTED before it)
+.equ TE_CLOSED, 3               # its tab closed: the TERM is gone
+.equ TE_STARTED, 4              # started, code its pid; again after each restart
+# a program for term_run (the lists are copied)
+STRUCT
+F PG_argv, 8            # 0-terminated cstr list; argv[0] a name looked up on the login PATH, or a path
+F PG_sets, 8            # "NAME=value" list, or 0
+F PG_unsets, 8          # "NAME" list, or 0
+F PG_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
+ENDSTRUCT PG_SIZE
+# the Problems store (problems.s): a source, and a problem
+STRUCT
+F PS_key, 8             # owned cstr: what finds it again
+F PS_label, 8           # owned cstr: shown as the problems' source
+F PS_count, 4
+F PS_errors, 4
+F PS_warnings, 4
+F PS_dropped, 4         # not kept: past the caps
+ENDSTRUCT PS_SIZE
+STRUCT
+F PR_src, 8             # PS*
+F PR_path, 8            # absolute path (owned in the store)
+F PR_line, 4            # 1-based, 0 none
+F PR_col, 4             # 1-based bytes (characters with PRF_CHARS), 0 the line's first non-blank
+F PR_endline, 4         # exclusive end, 0 none
+F PR_endcol, 4
+F PR_sev, 4             # SEV_*
+F PR_flags, 4           # PRF_*
+F PR_msg, 8             # cstr
+F PR_code, 8            # cstr or 0
+F PR_seq, 8             # set by the store: its id in the Problems tab
+ENDSTRUCT PR_SIZE
+.equ PRF_CHARS, 1
+.equ MKF_SOURCE, 1              # MK_pad: the mark's owner is a problems source (PS*), not an extension
 .equ AS_KIND_EXT, 5
 .equ AGS_IDLE, 0
 .equ AGS_WORKING, 1
@@ -2903,3 +2944,149 @@ F RR_n, 8               # fields
 F RR_data, 8            # the LEN bytes
 F RR_len, 8
 ENDSTRUCT RR_SIZE
+
+# ---- editor presentation (edtape.s, deco.s, gutter.s, presctl.s) ----
+# per-document presentation state, DOC_pres: the edit tape, decorations, glyph-lane entries
+.equ TAPE_N, 256                # edits the tape keeps
+STRUCT
+F PRS_tape, 8            # TE[TAPE_N], a ring
+F PRS_tn, 8              # edits written since the tape began (entry tn % TAPE_N is the next)
+F PRS_tbase, 8           # the oldest version tape_map moves positions from
+F PRS_gen, 8             # bumped by every change to what is drawn
+F PRS_deco, VEC_SIZE     # DR decoration ranges, unsorted
+F PRS_dpool, SB_SIZE     # their texts (before, after, tip, extra)
+F PRS_dgarbage, 8        # pool bytes no range uses any more
+F PRS_glyphs, VEC_SIZE   # GLE glyph-lane entries, sorted by position then kind
+ENDSTRUCT PRS_SIZE
+STRUCT
+F TE_version, 8         # DOC_version after the edit
+F TE_pos, 8
+F TE_del, 8             # one of del and ins is 0
+F TE_ins, 8
+F TE_line, 8            # where pos was: 0-based line and byte column
+F TE_col, 8
+F TE_nl, 8              # line feeds in the inserted or deleted text
+F TE_tail, 8            # its bytes after the last line feed (all of them when it has none)
+ENDSTRUCT TE_SIZE
+.equ GR_RIGHT, 0                # an insert at the position moves it (range start, marks)
+.equ GR_LEFT, 1                 # an insert at the position leaves it (range end)
+
+# decoration types (deco.s): one per extension and name; COLOR is two SPECs, dark and light
+STRUCT
+F DCS_value, 4           # argb, or the theme slot
+F DCS_kind, 1            # DCSK_*
+F DCS_pct, 1             # a slot's opacity, 0-100
+F DCS_pad, 2
+ENDSTRUCT DCS_SIZE
+.equ DCSK_NONE, 0
+.equ DCSK_ARGB, 1
+.equ DCSK_SLOT, 2
+.equ DCSK_TEXT, 3                # strike COLOR "-": the text's color
+STRUCT
+F DTY_owner, 8           # EXT*, 0 for a free slot
+F DTY_name, 48           # cstr, 1-40 bytes of [a-z0-9_-]
+F DTY_flags, 4           # DTYF_*
+F DTY_prio, 4            # 0-100
+F DTY_bwidth, 4          # border width 1-3
+F DTY_ustyle, 4          # US_*
+F DTY_gshape, 4          # GS_* in the gutter's left lane
+F DTY_grow, 4            # DG_*
+F DTY_width, 4           # before/after text cells, 0 natural
+F DTY_seq, 4             # registration order, for ties
+F DTY_color, 2*DCS_SIZE
+F DTY_bg, 2*DCS_SIZE
+F DTY_linebg, 2*DCS_SIZE
+F DTY_border, 2*DCS_SIZE
+F DTY_under, 2*DCS_SIZE
+F DTY_strike, 2*DCS_SIZE
+F DTY_gutter, 2*DCS_SIZE
+F DTY_scroll, 2*DCS_SIZE
+F DTY_before, 2*DCS_SIZE
+F DTY_beforebg, 2*DCS_SIZE
+F DTY_after, 2*DCS_SIZE
+F DTY_afterbg, 2*DCS_SIZE
+ENDSTRUCT DTY_SIZE
+.equ DTYF_COLOR, 1
+.equ DTYF_BG, 2
+.equ DTYF_LINEBG, 4
+.equ DTYF_BORDER, 8
+.equ DTYF_UNDER, 16
+.equ DTYF_STRIKE, 32
+.equ DTYF_FADED, 64
+.equ DTYF_BEFORE, 128
+.equ DTYF_AFTER, 256
+.equ DTYF_GUTTER, 512
+.equ DTYF_SCROLL, 1024
+.equ US_SOLID, 1
+.equ US_DOUBLE, 2
+.equ US_DOTTED, 3
+.equ US_DASHED, 4
+.equ US_SQUIGGLE, 5
+.equ DG_NONE, 0
+.equ DG_START, 1
+.equ DG_END, 2
+.equ DG_BOTH, 3
+# a decorated range on a document
+STRUCT
+F DR_start, 8
+F DR_end, 8
+F DR_type, 4            # index into the types
+F DR_flags, 4           # DRF_*
+F DR_text, 4            # offset of its texts in PRS_dpool
+F DR_blen, 2            # before, after, tip lengths
+F DR_alen, 2
+F DR_tlen, 2
+F DR_pad, 2
+F DR_xlen, 4            # extra records' length
+ENDSTRUCT DR_SIZE
+.equ DRF_WASEMPTY, 1            # empty when it came: kept at an edge of a deletion
+
+# the gutter's glyph lane (gutter.s): GLE entries per document, kinds registered by built-in code
+STRUCT
+F GLE_pos, 8            # start of the glyph's line (moves with the text before it)
+F GLE_kind, 4
+F GLE_glyph, 4          # shape | slot << 8 | GF_* << 16
+ENDSTRUCT GLE_SIZE
+.equ GS_DOT, 1                  # glyph shapes (gutter_shape_draw)
+.equ GS_CIRCLE, 2
+.equ GS_RING, 3
+.equ GS_SQUARE, 4
+.equ GS_DIAMOND, 5
+.equ GS_TRIANGLE, 6             # pointing right: run
+.equ GS_BAR, 7
+.equ GS_CHECK, 8
+.equ GS_CROSS, 9
+.equ GS_PLUS, 10
+.equ GS_MINUS, 11
+.equ GS_ARROW, 12               # the debugger's current line
+.equ GS_CIRCLE_BAR, 13          # a circle with a bar (a breakpoint with a condition)
+.equ GS_CIRCLE_TRI, 14          # a circle with a warning triangle (rejected)
+.equ GS_BULB, 15
+.equ GS_COUNT, 16
+.equ GF_FAINT, 1                # glyph flags (bits 16-23): drawn at a third of the color's alpha
+.equ GK_EMPTY, 1                # gutter_kind flags: clicks on lines without a glyph come here
+.equ GK_RESERVE, 2              # the lane keeps its width with line numbers off
+.equ GK_MAX, 32
+.equ LANE_NONE, 0                 # gutter_hit lanes
+.equ LANE_LEFT, 1
+.equ LANE_DIGITS, 2
+.equ LANE_FOLD, 3
+.equ LANE_GIT, 4
+.equ GK_PRIO_DOT, 10            # built-in lane priorities: the diagnostic dot, decoration icons,
+.equ GK_PRIO_DECO, 20           #   suggested ones for the others (the highest shows on a line)
+.equ GK_PRIO_TEST, 40
+.equ GK_PRIO_BULB, 50
+.equ GK_PRIO_BREAKPOINT, 80
+.equ GK_PRIO_DEBUG_LINE, 90
+# caps
+.equ DTY_MAX_EXT, 64             # decoration types per extension
+.equ DTY_MAX, 512                # in all
+.equ DTY_BODY_MAX, 4096
+.equ DECO_BODY_MAX, 4194304     # a decorate body
+.equ DECO_MAX_MSG, 20000        # records per message, and per extension and document
+.equ DECO_MAX_DOC, 50000        # per document in all
+.equ DECO_TEXT_MAX, 200         # before/after bytes
+.equ DECO_TIP_MAX, 1000
+.equ DECO_EXTRA_MAX, 9000
+.equ DECO_PIECES, 4096          # decoration pieces drawn per frame
+.equ DECO_TICKS, 1024           # scrollbar ticks

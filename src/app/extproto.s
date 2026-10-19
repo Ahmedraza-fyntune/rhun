@@ -754,6 +754,66 @@ reply_error_u64:
     call out_byte
     jmp out_end
 
+# ---------------- for verb handlers in other files (editor presentation) ----------------
+
+# xp_field(i) -> rax ptr, rdx len of field i of the message being handled (0, 0 past its fields)
+FN xp_field
+    cmp rdi, [rip + nfields]
+    jae 1f
+    jmp field_at
+1:  xor eax, eax
+    xor edx, edx
+    ret
+# xp_field_u64(i) -> rax value, rdx 1 when field i is a decimal u64
+FN xp_field_u64
+    jmp field_u64
+# xp_nfields() -> rax
+FN xp_nfields
+    mov rax, [rip + nfields]
+    ret
+# xp_cur() -> rax the EXT being served; xp_cur_id() -> rax its request id
+FN xp_cur
+    mov rax, [rip + cur]
+    ret
+FN xp_cur_id
+    mov rax, [rip + cur_id]
+    ret
+# xp_body() -> rax ptr, rdx len of the message's body
+FN xp_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+# xp_reply_ok(id), xp_reply_error(id, "code text"), xp_reply_error_u64(id, "code text ", value),
+# xp_reply_syntax(id)
+FN xp_reply_ok
+    jmp reply_ok
+FN xp_reply_error
+    jmp reply_error
+FN xp_reply_error_u64
+    jmp reply_error_u64
+FN xp_reply_syntax
+    jmp reply_syntax
+# xp_arg_doc(i) -> rax DOC* of field i, or 0 after replying
+FN xp_arg_doc
+    jmp arg_doc
+# xp_need(NEEDS_*) -> eax 1, or 0 after replying needs
+FN xp_need
+    jmp need
+# xp_send(ext, ptr, len): bytes to an extension as one message (an event line and its body)
+FN xp_send
+    PROLOGUE
+    mov r12, [rip + cur]
+    mov [rip + cur], rdi
+    mov rbx, rsi
+    mov r13, rdx
+    call out_begin
+    mov rdi, rbx
+    mov rsi, r13
+    call out_bytes
+    call out_end
+    mov [rip + cur], r12
+    EPILOGUE
+
 # ---------------- for verb handlers in other files (language features: query.s) ----------------
 
 # FN extproto_cur() -> rax the EXT being served; extproto_req_id() -> rax its request's id
@@ -3278,6 +3338,8 @@ hello_features:
     jb 41b
     test r14, r14
     jz 9f
+    call pres_enable            # answers about older versions move through the edit tapes (edtape.s)
+    call deco_visible_again     # and the visible event reaches the new extension too (deco.s)
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
@@ -4208,79 +4270,6 @@ send_selections:
     call out_end
     EPILOGUE
 
-# xe_visible(ext) -> 0 or -errno: "0 visible DOC 1 L1 L2", the lines of the active document the last
-# frame showed, to an extension subscribed to them: when they change (at most every 50 ms; once
-# more when they stop changing, ext_timeout's deadline) and at catch-up
-xe_visible:
-    PROLOGUE
-    mov rbx, rdi
-    xor eax, eax
-    cmp qword ptr [rbx + EXT_sub_visible], 0
-    je 9f
-    mov r12, [rip + g_doc]
-    test r12, r12
-    jz 9f
-    mov rdi, rbx
-    mov rsi, [r12 + DOC_id]
-    call known_find
-    test rax, rax
-    jz 8f
-    cmp qword ptr [rax + XK_phase], XP_READY
-    jne 8f
-    mov rdi, [rbx + EXT_sub_visible]
-    mov rsi, r12
-    call sub_matches
-    test eax, eax
-    jz 8f
-    mov rdi, r12
-    call sel_visible
-    test rax, rax
-    js 8f
-    mov r13, rax
-    mov r14, rdx
-    mov rax, [r12 + DOC_id]
-    cmp rax, [rbx + EXT_vis_doc]
-    jne 2f                      # another document, or the first time: now
-    cmp r13, [rbx + EXT_vis_l1]
-    jne 1f
-    cmp r14, [rbx + EXT_vis_l2]
-    jne 1f
-    mov qword ptr [rbx + EXT_vis_due], 0
-    jmp 8f
-1:  call time_ms
-    sub rax, [rbx + EXT_vis_t]
-    cmp rax, 50
-    jge 2f
-    mov qword ptr [rbx + EXT_vis_due], 1
-    jmp 8f
-2:  call out_begin
-    lea rdi, [rip + .Lev_visible]
-    call out_cstr
-    mov rdi, [r12 + DOC_id]
-    call out_u64
-    lea rdi, [rip + .Lev_visible_one]
-    call out_cstr
-    lea rdi, [r13 + 1]
-    call out_u64
-    mov edi, ' '
-    call out_byte
-    lea rdi, [r14 + 1]
-    call out_u64
-    mov edi, 10
-    call out_byte
-    call out_end
-    test rax, rax
-    js 9f
-    mov rax, [r12 + DOC_id]
-    mov [rbx + EXT_vis_doc], rax
-    mov [rbx + EXT_vis_l1], r13
-    mov [rbx + EXT_vis_l2], r14
-    call time_ms
-    mov [rbx + EXT_vis_t], rax
-    mov qword ptr [rbx + EXT_vis_due], 0
-8:  xor eax, eax
-9:  EPILOGUE
-
 # ---------------- end feature selections ----------------
 
 # send_closed(id): "0 closed DOC"
@@ -4370,6 +4359,9 @@ verbs:
     .quad .Lv_agent_changed, h_agent_changed, 0
     .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
     .quad .Lv_unpropose, h_unpropose, 0
+    # editor presentation (deco.s)
+    .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
+    .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
@@ -4380,6 +4372,8 @@ verbs:
 .Lv_test_end: .asciz "test-end"
 .Lv_test_coverage: .asciz "test-coverage"
 .Lv_test_exec: .asciz "test-exec"
+.Lpv_decoration_type: .asciz "decoration-type"
+.Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
@@ -4518,8 +4512,6 @@ feature_names:
 .Lev_cursor: .asciz "0 cursor "
 .Lev_selection: .asciz "0 selection "
 .Lev_selections: .asciz "0 selections "     # feature selections
-.Lev_visible: .asciz "0 visible "
-.Lev_visible_one: .asciz " 1 "
 .Lv_select_many: .asciz "select-many"
 .Lv_reveal: .asciz "reveal"                 # feature reveal (wsedit)
 .Lv_show_locations: .asciz "show-locations"

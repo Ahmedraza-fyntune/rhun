@@ -155,8 +155,15 @@ env_overridden:
 # proc_which(name) -> path to run (mem_free it), or 0; names with a slash are taken as they are
 .ifndef WINDOWS
 FN proc_which
+    xor esi, esi
+    jmp proc_which_in
+
+# proc_which_in(name, PATH value or 0 for rhun's own) -> the same, searching that PATH (uproc.s: the
+#   user's login environment)
+FN proc_which_in
     PROLOGUE
     mov rbx, rdi
+    mov r15, rsi
     call strlen
     mov r12, rax
     cmp r12, 4096
@@ -172,7 +179,10 @@ FN proc_which
     mov rsi, r12
     call mem_dup
     EPILOGUE
-1:  lea rdi, [rip + .Lpath]
+1:  mov r13, r15
+    test r13, r13
+    jnz 2f
+    lea rdi, [rip + .Lpath]
     call getenv
     mov r13, rax
     test rax, rax
@@ -225,7 +235,8 @@ FN proc_which
 
 # proc_spawn(argv, envp, cwd, fd_in, fd_out, fd_err, ctty) -> pid or -errno
 #   argv[0] is the path to run; cwd may be 0; ctty 1 makes fd_in the controlling terminal of a new
-#   session; ctty 2 makes a new session without one that dies with rhun (extensions)
+#   session; ctty 2 makes a new session without one that dies with rhun (extensions); ctty 3 the same
+#   without the extension's confinement (programs run as the user, uproc.s)
 .ifndef WINDOWS
 FN proc_spawn
     PROLOGUE 32
@@ -252,6 +263,8 @@ FN proc_spawn
     SYS SYS_setsid
     cmp dword ptr [rsp + 12], 2
     je 11f
+    cmp dword ptr [rsp + 12], 3
+    je 13f
     mov edi, [rsp]
     mov esi, TIOCSCTTY
     xor edx, edx
@@ -268,6 +281,17 @@ FN proc_spawn
     SYS SYS_prctl
 .endif
     call confine_child          # what confine_prepare set up, if anything; exits on failure
+    jmp 1f
+13:
+.ifndef MACOS
+    # ctty 3: a program run as the user; it dies with rhun too
+    mov edi, PR_SET_PDEATHSIG
+    mov esi, SIGKILL
+    xor edx, edx
+    xor r10d, r10d
+    xor r8d, r8d
+    SYS SYS_prctl
+.endif
 1:  mov edi, [rsp]
     xor esi, esi
     SYS SYS_dup2

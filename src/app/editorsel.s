@@ -28,10 +28,6 @@ sc_list: .zero 16*SEL_MAX       # {position, column}
 sf_n: .quad 0
 sf_list: .zero SF_SIZE*SEL_MAX
 sf_carets: .quad 0              # the secondary carets the rows drew: x, y (dwords), position
-vis_doc: .quad 0                # the document the frame draws (feature selections)
-vis_id: .quad 0                 # the lines the last frame drew of the document with this DOC_id
-vis_first: .quad 0              # -1 none
-vis_last: .quad 0
 sf_caret: .zero 16*SEL_MAX
 # ctrl+d: a selection made from the word at the cursor looks for whole words of the same case
 sn_doc: .quad 0                 # DOC_id, 0 none
@@ -1324,11 +1320,6 @@ FN sel_drag_end
 FN sel_frame
     PROLOGUE 16
     mov [rsp], rdi
-    mov [rip + vis_doc], rdi
-    mov rax, [rdi + DOC_id]
-    mov [rip + vis_id], rax
-    mov qword ptr [rip + vis_first], -1
-    mov qword ptr [rip + vis_last], -1
     mov qword ptr [rip + sf_n], 0
     mov qword ptr [rip + sf_carets], 0
     mov r12, [rdi + DOC_selections]
@@ -1408,23 +1399,6 @@ FN sel_row
     PROLOGUE 48
     mov r12, rdi
     mov r13, rsi
-    # the lines on screen (one call a row, top to bottom)
-    mov [rsp], rdx
-    mov [rsp + 8], rcx
-    mov [rsp + 16], r8d
-    mov [rsp + 20], r9d
-    mov rdi, [rip + vis_doc]
-    test rdi, rdi
-    jz 1f
-    call doc_line_of
-    mov [rip + vis_last], rax
-    cmp qword ptr [rip + vis_first], -1
-    jne 1f
-    mov [rip + vis_first], rax
-1:  mov rdx, [rsp]
-    mov rcx, [rsp + 8]
-    mov r8d, [rsp + 16]
-    mov r9d, [rsp + 20]
     cmp qword ptr [rip + sf_n], 0
     je .Lsr_ret
     mov [rsp], rdx
@@ -1737,17 +1711,6 @@ FN sel_body
     jmp 1b
 9:  mov rax, r13
     EPILOGUE
-
-# sel_visible(doc) -> rax first, rdx last line (from 0) the last frame drew of it, rax -1 when it
-# drew none
-FN sel_visible
-    mov rax, [rdi + DOC_id]
-    cmp rax, [rip + vis_id]
-    mov rax, -1
-    jne 1f
-    mov rax, [rip + vis_first]
-    mov rdx, [rip + vis_last]
-1:  ret
 
 # ---------------- control (--script) ----------------
 

@@ -508,14 +508,7 @@ FN extproto_events
 .Lxe_active_pending:
     mov qword ptr [rsp], -11
 .Lxe_result:
-    cmp qword ptr [rsp], 0
-    jne 1f
-    mov rdi, rbx
-    call xe_visible             # feature selections: the lines on screen
-    test rax, rax
-    jns 1f
-    mov [rsp], rax
-1:  mov rax, [rsp]
+    mov rax, [rsp]
 .Lxe_return:
     EPILOGUE
 .Lxe_pipe:

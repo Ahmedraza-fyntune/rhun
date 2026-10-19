@@ -214,6 +214,7 @@ map_insert:
     jbe 1f
     mov rdi, rbx
     call map_grow
+    EPILOGUE                    # the node is live: map_grow put it in (a second entry would outlive it)
 1:  NDP r13, rbx, r12
     mov rdi, [r13 + ND_blob]
     mov esi, [r13 + ND_idlen]
