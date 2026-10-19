@@ -89,6 +89,9 @@ dlg_text: .quad 0
 dlg_ok: .quad 0
 dlg_fn: .quad 0
 dlg_cancel: .quad 0              # app_confirm's Cancel calls this when it is set
+dlg_alt: .quad 0                 # app_confirm_alt: a middle button's label and function (AI: tools.s)
+dlg_alt_fn: .quad 0
+dlg_no: .quad 0                  #   and Cancel's label instead of Cancel
 ro_doc: .quad 0                  # ask_readonly: the file asked about, and the question
 ro_id: .quad 0
 ro_save_flags: .quad 0
@@ -415,7 +418,7 @@ app_adopt_folder:
     call mem_dup
     mov r12, rax
     mov rdi, rax
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 8f
     mov dword ptr [rip + g_project_adopted], 1
@@ -1036,7 +1039,7 @@ FN app_open_file
 1:  # regular files only: opening a pipe or a device blocks until the other end comes (a missing
     # file can still be created)
     mov rdi, r12
-    call file_type
+    call vfs_type
     test eax, eax
     jz 12f
     cmp eax, 0x8000
@@ -1058,7 +1061,7 @@ FN app_open_file
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     call iv_new
     mov [rbx + DOC_img], rax
@@ -1755,7 +1758,7 @@ FN app_save_as_finish
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call mkdir_parent
+    call vfs_mkdir_parent
     mov rdi, rbx
     call app_detect_lang
     mov rdi, rbx
@@ -1801,7 +1804,7 @@ FN path_readonly
     PROLOGUE
     mov rbx, rdi
     mov esi, 2                  # W_OK
-    SYS SYS_access
+    call vfs_access
     cmp rax, -13                # EACCES
     jne 8f
     mov rdi, rbx
@@ -1823,7 +1826,7 @@ FN path_readonly
     mov byte ptr [rdi], 0
     lea rdi, [rip + ro_dir]
     mov esi, 2
-    SYS SYS_access
+    call vfs_access
     test rax, rax
     jnz 8f
 7:  mov eax, 1
@@ -2241,7 +2244,7 @@ FN app_on_paste
     jne 9f
     mov rdi, rbx
     mov rsi, r12
-    call ed_paste
+    call langextra_paste        # ed_paste, then format_on_paste (language features)
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -2577,6 +2580,8 @@ FN editor_key
     cmp eax, KEY_KP_ENTER
     jne 84f
 83: call ed_newline
+    mov edi, 10
+    call langextra_typed        # language features: formatting as you type
     jmp 9f
 84: cmp eax, KEY_TAB
     jne 85f
@@ -2614,6 +2619,8 @@ FN editor_key
     call ed_type
     mov edi, r13d
     call complete_typed         # completion and signature help follow typing
+    mov edi, r13d
+    call langextra_typed        # language features: formatting as you type
 9:  EPILOGUE
 
 # ---------------- timers ----------------
@@ -2665,8 +2672,10 @@ FN app_timeout
 timeout_fns:
     .quad agents_timeout
     .quad git_timeout
+    .quad scmext_timeout        # source control: quick-diff requests' time
     .quad update_timeout
     .quad ai_timeout
+    .quad tools_timeout         # AI: tool calls waiting for the user (tools.s)
     .quad watch_timeout
     .quad tip_timeout
     .quad palette_timeout
@@ -2718,6 +2727,7 @@ FN app_tick
     call git_tick
     call update_tick
     call ai_tick
+    call tools_tick             # AI: tool calls waiting for the user's answer (tools.s)
     call palette_tick
     call editor_tick
     call ext_tick
@@ -5333,12 +5343,22 @@ FN dialog_draw
     jae .Ldd_ret
     lea rax, [rip + dlg_labels]
     mov r13, [rax + rcx*8]
-    # a question: Cancel and its button
+    # a question: Cancel and its button (and app_confirm_alt's between them)
     cmp dword ptr [rip + dlg_kind], 4
     jne 0f
-    cmp ecx, 1
-    je 4f
-    cmp ecx, 2
+    test ecx, ecx
+    jnz 71f
+    cmp qword ptr [rip + dlg_no], 0
+    je 0f
+    mov r13, [rip + dlg_no]
+    jmp 0f
+71: cmp ecx, 1
+    jne 72f
+    mov r13, [rip + dlg_alt]
+    test r13, r13
+    jz 4f
+    jmp 0f
+72: cmp ecx, 2
     jne 0f
     mov r13, [rip + dlg_ok]
 0:  mov rdi, r13
@@ -5455,7 +5475,15 @@ dialog_choose:
     mov qword ptr [rip + dlg_cancel], 0
     cmp ebx, 2
     je 5f
+    cmp ebx, 1
+    jne 6f
+    mov rax, [rip + dlg_alt_fn]  # app_confirm_alt's button
+    mov qword ptr [rip + dlg_alt], 0
     test rax, rax
+    jz 9f
+    call rax
+    jmp 9f
+6:  test rax, rax
     jz 9f
     call rax
     jmp 9f
@@ -5581,6 +5609,8 @@ FN app_confirm
     mov [rip + dlg_ok], rdx
     mov [rip + dlg_fn], rcx
     mov qword ptr [rip + dlg_cancel], 0
+    mov qword ptr [rip + dlg_alt], 0
+    mov qword ptr [rip + dlg_no], 0
     mov dword ptr [rip + dlg_kind], 4
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
     mov dword ptr [rip + g_dirty], 1
@@ -5597,6 +5627,23 @@ dlg_drop:
     mov qword ptr [rip + dlg_cancel], 0
     mov dword ptr [rip + dlg_kind], 0
     jmp rax
+1:  ret
+
+# app_confirm_alt(label, fn, cancel label or 0): the open app_confirm gets a second button, between
+#   Cancel and its own, that calls fn; Cancel may say something else (AI: tools.s, Allow once / Allow
+#   for this session / Deny)
+FN app_confirm_alt
+    mov [rip + dlg_alt], rdi
+    mov [rip + dlg_alt_fn], rsi
+    mov [rip + dlg_no], rdx
+    ret
+
+# FN app_dialog_button(i): the open dialog's button i, as if clicked (0 Cancel, 1 app_confirm_alt's,
+#   2 its own)
+FN app_dialog_button
+    cmp dword ptr [rip + dlg_kind], 0
+    je 1f
+    jmp dialog_choose
 1:  ret
 
 # app_confirm_cancel(fn): the open app_confirm's Cancel calls fn
@@ -6433,7 +6480,7 @@ FN app_open_path
     cmp rax, -2
     jne 1f
     mov rdi, rbx
-    call file_type
+    call vfs_type
     test eax, eax
     jnz .Lop_path
     mov rdi, rbx
@@ -6500,7 +6547,7 @@ FN app_open_path
 2:  mov rdi, rbx
     call path_normalize
     mov rdi, rbx
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 3f
     # once started, a folder (Finder, the Dock, :e, open) takes up the window the way Open Folder
@@ -6533,7 +6580,7 @@ FN app_path_is_dir
     test rax, rax
     jns 1f
     mov rdi, rbx
-1:  call file_is_dir
+1:  call vfs_is_dir
     EPILOGUE
 
 # app_goto_line(line, col): the cursor of the text file shown to LINE and COL (counted from 1; COL in

@@ -215,6 +215,8 @@ python3 tests/testing.py || fail=1
 # WebAssembly extension host (src/wasm): the core spec suite needs wabt's wast2json
 if command -v wast2json >/dev/null; then python3 tests/wasm-spec.py || fail=1; else echo "skip wasm-spec (no wast2json)"; fi
 python3 tests/wasm-host.py || fail=1
+python3 tests/wasm-wasi.py || fail=1
+python3 tests/wasm-fuzz.py 1 2 --count 100 || fail=1
 # workspace edits and the editor model: transactions, disk edits, file operations
 python3 tests/wsedit.py || fail=1
 python3 tests/ext-reveal.py || fail=1

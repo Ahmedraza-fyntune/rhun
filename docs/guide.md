@@ -619,6 +619,13 @@ native binaries, written in Rust, Go, C or C++, so they start in milliseconds an
 else installed. One that crashes or hangs cannot take the editor with it, and on Linux and macOS
 the kernel holds each one to the permissions its manifest declares.
 
+An extension can also be a single **WebAssembly** module (compiled for `wasm32-wasip1` from Rust,
+Go or C), which rhun runs itself: the same file works on Linux, macOS and Windows, and it can
+reach only its own state folder and the project and home folders its permissions name, on every
+system, Windows included (its page says "It runs as WebAssembly"). A system with a native build
+of the extension runs that instead. WebAssembly extensions start as quickly as native ones; heavy
+computation is slower. Writing one: [protocol 1.1](extensions/v1.1.md#webassembly-extensions-runwasm32-wasip1).
+
 They can add commands to the palette with their own keys, read and edit the open documents (each
 edit one undo step), put marks with messages in the gutter, **decorate** text (colors,
 backgrounds, underlines, strikethrough, faded text, icons in the gutter, ticks in the scrollbar,
@@ -777,6 +784,31 @@ file and project paths, indentation, document settings and grammar comment token
 with inactive and readonly documents and preserves the editor's selection. See the
 [native snippet protocol](extensions/v1.1.md#read-only-insertion-context) for the request and SDKs.
 
+### Agents, reviews and tools
+
+rhun does not drive agents; you talk to them in a terminal. Extensions add to what rhun shows
+of them:
+
+- **More agents in the agents panel.** An extension can list the sessions of another agent
+  (Gemini CLI, Aider, a local model): they appear with the built-in ones, with the extension's
+  badge, the model, the age and whether the agent works or waits for you, and open as the same
+  conversation view. Settings > Agents has a switch for each such source.
+- **The Review tab.** An extension, or an agent through the MCP bridge, can propose a change. rhun
+  shows it in a Review tab: each file with its added and removed lines, each change with a few
+  lines around it. Accept or reject a file, a single change, or everything: the buttons on each
+  line, or `a` and `r` for the file under the cursor, `A` and `R` for the change, `]` `[` and
+  `}` `{` to move between files and changes, Ctrl+Enter to accept everything. What you accept is
+  one undo step per decision and stays unsaved until you save; a file you changed meanwhile is
+  left alone. Closing the tab rejects the rest.
+- **Tools.** Extensions can offer tools that other extensions call through rhun (search an index,
+  read the open files, propose an edit). A tool that changes anything asks you first: Allow once,
+  Allow for this session, or Deny.
+- **MCP for terminal agents.** The `rhun-editor/mcp` extension lets Claude Code, Codex, Grok,
+  OpenCode and other MCP clients use those tools on the project you have open: what is open and
+  selected, unsaved text, the problems shown, open a file, propose changes for the Review tab,
+  and put a command in rhun's terminal prompt (it runs when you press Enter). After installing it,
+  **MCP: Add rhun to Claude Code** (or **to Codex**) puts the setup command in rhun's prompt.
+
 ### Install and manage
 
 The extensions button in the title bar (the puzzle piece) opens a menu of what is installed.
@@ -916,6 +948,37 @@ From [rhun-editor](https://github.com/rhun-editor):
 | `rhun-editor/wordfreq` | the open file's most frequent words as a bar chart that follows your typing (C) |
 | `rhun-editor/words` | completion from the words in your open files (C++) |
 | `rhun-editor/showcase` | a tour of everything an extension can do |
+| `rhun-editor/tests` | Go and Rust tests in the Testing section: run, results, diffs, coverage (Go) |
+
+### Testing
+
+Extensions that run tests (such as `rhun-editor/tests` for Go and Rust) fill the **Testing**
+section of the sidebar (command Testing). Its tree shows each extension's tests by module,
+package or file, with their state: not run, queued, running, passed, failed, errored, skipped. The
+section's buttons run all tests, run them with coverage, run the failed ones again and cancel;
+`r` runs the selected test, `d` debugs it, and its menu also goes to the test or its failure,
+opens the expected and actual values as a diff tab and shows its output. Under the tree the
+selected test's last result: its message, the expected and actual values as a colored line diff,
+and the end of its output.
+
+In the editor each test has a run button in the gutter at its first line (`[testing] gutter =
+false` hides them): a click runs it, a right click opens its menu, and after a run the button
+shows the result. A failure with a place is a problem (the Problems tab, a mark in the file with
+the expected and actual values on hover) until the test passes. After a run with coverage the line
+numbers are tinted: covered green, missed red, partly covered yellow (Show Test Coverage toggles
+them).
+
+Commands, without default keys (bind them in `[keys]`): Run All Tests, Run Tests in Current File,
+Run Test at Cursor, Debug Test at Cursor, Run All Tests with Coverage, Re-run Failed Tests, Re-run
+Last Test Run, Cancel Test Runs, Show Test Coverage, Go to Next Test Failure.
+
+The test programs (`go test`, `cargo test`) are started by rhun, not by the extension: as you, with
+your environment, in your project, only during runs you start. The extension's manifest names
+them (`[needs] tests = go cargo`, shown before you install it), and the first run in a project
+asks once, showing the command (Forget on the extension's page asks again). A folder opened from
+a link runs none until you trust it. Results are kept until rhun quits.
+
+| `rhun-editor/mcp` | lets the agents in your terminal use rhun over MCP: open files, the selection, unsaved text, problems, and changes you review |
 
 ### Write your own
 
