@@ -40,6 +40,15 @@ FN ext_wasm_program
 8:  mov eax, 1
     EPILOGUE
 
+# ext_wasm_held(ext): a WebAssembly extension is held to its permissions by its WASI host on every
+# system, whatever the kernel adds (confine.s still prepares the kernel's part where it can)
+FN ext_wasm_held
+    cmp dword ptr [rdi + EXT_wasm_run], 0
+    je 1f
+    mov dword ptr [rdi + EXT_confined], CONFINED_FULL
+    mov qword ptr [rdi + EXT_confine_why], 0
+1:  ret
+
 # ext_wasm_argv(ext, argv vec) -> rax 0 or -errno: rhun --wasm-host, the folders, the module, the
 # manifest's args; the strings are launch scratch (extlaunchscratch.s)
 FN ext_wasm_argv

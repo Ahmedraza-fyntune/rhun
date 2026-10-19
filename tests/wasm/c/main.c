@@ -13,6 +13,9 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#ifndef __wasi__
+#include <sys/random.h>             /* getentropy (wasi-libc has it in unistd.h) */
+#endif
 
 static void toastf(rx_ext *ext, const char *fmt, const char *a, long b, long c) {
     char buf[300];

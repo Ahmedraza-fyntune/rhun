@@ -158,6 +158,10 @@ class Wasm(unittest.TestCase):
         self.assertTrue(out[1].endswith('bin/%s.wasm' % self.NAME), out)
         self.assertEqual(out[2], 'toast=hello from wasm')
         self.assertIn(' state=running ', out[3])
+        # held to its permissions by its host on every system, with or without a kernel sandbox
+        self.assertTrue(out[3].endswith(' confined=1'), out[3])
+        out = self.run_editor(['ext-page %s' % self.NAME, 'print-ext-page'], exts)
+        self.assertIn('held=1', out)
 
     def test_a_versioned_edit(self):
         out = self.run_editor(['cmd %s.upper' % self.NAME, 'wait-toast upper', 'print-doc'], self.install())

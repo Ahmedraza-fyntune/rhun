@@ -583,6 +583,13 @@ native binaries, written in Rust, Go, C or C++, so they start in milliseconds an
 else installed. One that crashes or hangs cannot take the editor with it, and on Linux and macOS
 the kernel holds each one to the permissions its manifest declares.
 
+An extension can also be a single **WebAssembly** module (compiled for `wasm32-wasip1` from Rust,
+Go or C), which rhun runs itself: the same file works on Linux, macOS and Windows, and it can
+reach only its own state folder and the project and home folders its permissions name, on every
+system, Windows included (its page says "It runs as WebAssembly"). A system with a native build
+of the extension runs that instead. WebAssembly extensions start as quickly as native ones; heavy
+computation is slower. Writing one: [protocol 1.1](extensions/v1.1.md#webassembly-extensions-runwasm32-wasip1).
+
 They can add commands to the palette with their own keys, read and edit the open documents (each
 edit one undo step), put marks with messages in the gutter, answer hover, open prompts and pick
 lists, suggest terminal commands, set per-document options, ship themes and grammars, and keep

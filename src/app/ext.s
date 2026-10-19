@@ -2857,6 +2857,8 @@ ext_spawn:
     mov dword ptr [rip + g_dirty], 1
     jmp .Les_scratch_return
 .Les_spawn:
+    mov rdi, rbx
+    call ext_wasm_held          # a WebAssembly extension's host holds it everywhere (extwasm.s)
     mov rdi, [rip + argv_vec + VEC_ptr]
     mov rsi, [rip + env_vec + VEC_ptr]
     mov rdx, [rbx + EXT_dir]

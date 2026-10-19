@@ -632,7 +632,10 @@ draw_permissions:
     cmp qword ptr [rbx + EXT_confine_why], 0
     je 6f
     lea rsi, [rip + .Lt_not_held]
-6:  lea rdi, [rip + g_face_small]
+6:  cmp dword ptr [rbx + EXT_wasm_run], 0      # WebAssembly: its host holds it everywhere (extwasm.s)
+    je 7f
+    lea rsi, [rip + .Lt_wasm]
+7:  lea rdi, [rip + g_face_small]
     COLOR edx, T_MUTED
     mov ecx, MI_24
     call line_text
@@ -1869,6 +1872,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Lt_held: .asciz "rhun holds it to these permissions."
 .Lt_not_held: .asciz "This system cannot hold it to these permissions; it runs with yours."
 .Lt_windows: .asciz "Windows cannot hold it to these permissions; it runs with yours."
+.Lt_wasm: .asciz "It runs as WebAssembly: rhun holds it to these permissions on every system."
 .Ls_permissions: .asciz "It can"
 .Ls_toolbar: .asciz "Title bar"
 .Ls_commands: .asciz "Commands"
