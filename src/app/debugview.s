@@ -33,6 +33,8 @@ cfg_first: .zero SB_SIZE        # launch.ini's names, for the status bar
 tb_rects: .zero 16 * 8          # the toolbar's buttons as last drawn: icon, x, y, size
 tb_n: .long 0
 cfg_checked: .quad 0
+menu_line: .long 0              # a line for the next cursor_line (the gutter menu), 0 none
+menu_target: .long 0
 ctx_gen: .long 0
 
 .data
@@ -1568,7 +1570,12 @@ prompt_on_line:
 #   0 without a file
 cursor_line:
     PROLOGUE
-    mov rbx, [rip + g_doc]
+    mov eax, [rip + menu_line]
+    test eax, eax
+    jz 1f
+    mov dword ptr [rip + menu_line], 0     # the gutter menu's line (prompt_path is set)
+    EPILOGUE
+1:  mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 8f
     mov rsi, [rbx + DOC_path]
@@ -1627,6 +1634,55 @@ sb_set:
     ret
 
 # ---------------- commands ----------------
+
+# dview_bp_menu(doc, line): the gutter's right-click menu for a line (zero-based): add a breakpoint,
+#   a conditional one or a logpoint there, or edit, disable or remove the one there
+FN dview_bp_menu
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rsi, [rbx + DOC_path]
+    test rsi, rsi
+    jz 9f
+    lea rdi, [rip + prompt_path]
+    call sb_setc
+    lea eax, [r12 + 1]
+    mov [rip + menu_target], eax
+    mov rdi, [rip + prompt_path + SB_ptr]
+    mov esi, eax
+    call bp_find
+    lea rdi, [rip + menu_add]
+    test eax, eax
+    js 1f
+    lea rdi, [rip + menu_edit]
+1:  mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call ctx_menu_open
+9:  EPILOGUE
+
+# the menu's items: each acts on the menu's line (menu_line is consumed by cursor_line)
+mi_target:
+    mov eax, [rip + menu_target]
+    mov [rip + menu_line], eax
+    ret
+mi_add:
+    call mi_target
+    jmp cmd_debug_toggle_breakpoint
+mi_condition:
+    call mi_target
+    jmp cmd_debug_condition
+mi_hit:
+    call mi_target
+    jmp cmd_debug_hit_count
+mi_log:
+    call mi_target
+    jmp cmd_debug_logpoint
+mi_disable:
+    call mi_target
+    jmp cmd_debug_disable_breakpoint
+mi_remove:
+    call mi_target
+    jmp cmd_debug_toggle_breakpoint
 
 # cmd_debug_start (F5): continue the focused paused session, else start the selected configuration
 #   (the first in launch.ini until one is selected)
@@ -2346,9 +2402,9 @@ FN dview_terminal_key
 .Lslash_t: .asciz "/t"
 .Lslash_f: .asciz "/f"
 .Lparens: .asciz "()"
-.Lif: .asciz "if"
-.Lhits: .asciz "hit"
-.Llog: .asciz "log"
+.Lif: .asciz "if "
+.Lhits: .asciz "hit "
+.Llog: .asciz "log "
 .Lsep: .asciz "-"
 .Lgt: .asciz "> "
 .Lph_eval: .asciz "Evaluate in the paused frame"
@@ -2394,6 +2450,18 @@ tbe_into: .quad IC_DBG_INTO, cmd_debug_step_into, .Lt_into
 tbe_out: .quad IC_DBG_OUT, cmd_debug_step_out, .Lt_out
 tbe_restart: .quad IC_REFRESH, cmd_debug_restart, .Lt_restart
 tbe_stop: .quad IC_DBG_STOP, cmd_debug_stop, .Lt_stop
+.Lm_add: .asciz "Add Breakpoint"
+.Lm_cond: .asciz "Add Conditional Breakpoint..."
+.Lm_log: .asciz "Add Logpoint..."
+.Lm_editcond: .asciz "Edit Condition..."
+.Lm_edithit: .asciz "Edit Hit Count..."
+.Lm_editlog: .asciz "Edit Log Message..."
+.Lm_disable: .asciz "Enable or Disable Breakpoint"
+.Lm_remove: .asciz "Remove Breakpoint"
+.p2align 3
+menu_add: .quad .Lm_add, mi_add, .Lm_cond, mi_condition, .Lm_log, mi_log, 0
+menu_edit: .quad .Lm_editcond, mi_condition, .Lm_edithit, mi_hit, .Lm_editlog, mi_log
+    .quad .Lm_disable, mi_disable, .Lm_remove, mi_remove, 0
 tb_debug: .quad tbe_continue, tbe_over, tbe_into, tbe_out, tbe_restart, tbe_stop, 0
 tb_nodebug: .quad tbe_restart, tbe_stop, 0
 term_cmds: .quad cmd_debug_start, cmd_debug_stop, cmd_debug_pause, cmd_debug_continue

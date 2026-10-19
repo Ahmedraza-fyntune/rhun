@@ -2685,6 +2685,7 @@ FN app_tick
     call app_clip_tick
     call dap_tick               # debugger
     call dview_context
+    call dg_tick
     call remote_tick            # remote hosts
     EPILOGUE
 

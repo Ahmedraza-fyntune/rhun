@@ -2151,6 +2151,12 @@ draw_wrapped:
     mov ecx, [rip + g_lh]
     imul ecx, r14d
     call deco_line_back
+    mov rdi, rbx                # debugger: the paused line's background (debuggutter.s)
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    imul ecx, r14d
+    call dbg_line_back
     # line number on the first row
     cmp qword ptr [rbx + DOC_diff], 0
     jne .Ldw_diff
@@ -2678,6 +2684,11 @@ FN editor_draw
     mov edx, r13d
     mov ecx, [rip + g_lh]
     call deco_line_back         # whole-line decoration backgrounds
+    mov rdi, rbx                # debugger: the paused line's background (debuggutter.s)
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    call dbg_line_back
     # line number
     cmp qword ptr [rbx + DOC_diff], 0
     jne .Led_diffline
