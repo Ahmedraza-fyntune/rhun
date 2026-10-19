@@ -2524,7 +2524,11 @@ FN ext_cmd_run
     mov rbx, rdi
     lea rdi, [rsp]
     call invoke_take
-    mov rdi, rbx
+    cmp qword ptr [rsp + INV_doc], 0
+    jne 0f
+    call invoke_active_doc      # the document is the one active now, also after a lazy start
+    mov [rsp + INV_doc], rax
+0:  mov rdi, rbx
     cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 9f
     mov rax, rdi
@@ -3907,6 +3911,7 @@ FN ext_tick
     inc dword ptr [rip + ext_ticks]
     call ext_project_check
     call extwatch_tick
+    call invoke_tick            # calls between extensions (invoke.s)
     # on = startup, once; on = project when a project is open
     cmp dword ptr [rip + ext_startup_done], 0
     jne 1f
@@ -4151,6 +4156,14 @@ FN ext_timeout
     add rax, r13
     call deadline
 .Lew_timeout_none:
+    call invoke_timeout
+    cmp rax, -1
+    je .Liv_timeout_none
+    mov r13, rax
+    call time_ms
+    add rax, r13
+    call deadline
+.Liv_timeout_none:
     xor r13d, r13d
 1:  cmp r13, [rip + g_exts + VEC_len]
     jae 8f

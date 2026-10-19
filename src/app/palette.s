@@ -14,6 +14,7 @@
 .equ PM_CHOOSE, 9               # an extension's pick list (choose)
 .equ PM_PROVIDERS, 11
 .equ PM_RESULTS, 10             # results from extensions: locations, symbols, code actions (langfeat.s)
+.equ PM_KEYS, 12                # Keyboard Shortcuts: every binding (keys.s keys_list)
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
@@ -112,6 +113,8 @@ FN palette_close_extensions_pure
     mov eax, [rip + pal_mode]
     cmp eax, PM_COMMANDS
     je .Lpal_detach_borrowers_pure
+    cmp eax, PM_KEYS
+    je .Lpal_detach_borrowers_pure
     cmp eax, PM_THEMES
     je .Lpal_detach_borrowers_pure
     cmp eax, PM_LANGS
@@ -195,8 +198,13 @@ palette_open:
     call load_themes
     jmp 8f
 3:  cmp ebx, PM_LANGS
-    jne 8f
+    jne 4f
     call load_langs
+    jmp 8f
+4:  cmp ebx, PM_KEYS
+    jne 8f
+    lea rdi, [rip + item_add]
+    call keys_list
 8:  call palette_filter
     # the theme list shows its setting's theme, which need not be the one shown (the light mode's
     # theme from Settings while the system is dark)
@@ -282,6 +290,10 @@ FN cmd_quick_open
 FN cmd_command_palette
     mov edi, PM_COMMANDS
     jmp palette_open
+# Keyboard Shortcuts: every binding with its source and clause; Enter runs its command
+FN cmd_keyboard_shortcuts
+    mov edi, PM_KEYS
+    jmp palette_open
 # Select Color Theme picks for the setting in use: theme, or the dark or light mode's theme
 # while the theme follows the system (VS Code saves it in the same place)
 FN cmd_select_theme
@@ -362,6 +374,18 @@ FN cmd_find_in_files
     call tf_select_all
 8:  call palette_filter
 9:  EPILOGUE
+
+# FN palette_set_query(ptr, len): the open palette's field holds this text, filtered (run-command
+# quick_open, command_palette, find_in_files with ARGS)
+FN palette_set_query
+    PROLOGUE
+    mov rdx, rsi
+    mov rsi, rdi
+    lea rdi, [rip + pal_tf]
+    call tf_set
+    call palette_filter
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
 
 # palette_timeout() -> 0 while find in files has files to read and has been drawn, else -1
 FN palette_timeout
@@ -1022,6 +1046,15 @@ FN palette_ext_prompt_open
 # just moved or went: a palette showing it closes
 FN palette_close_commands
     cmp dword ptr [rip + pal_mode], PM_COMMANDS
+    je 2f
+    cmp dword ptr [rip + pal_mode], PM_KEYS
+    jne 1f
+2:  jmp palette_close
+1:  ret
+
+# FN palette_close_keys(): the bindings were made again: the Keyboard Shortcuts list closes
+FN palette_close_keys
+    cmp dword ptr [rip + pal_mode], PM_KEYS
     jne 1f
     jmp palette_close
 1:  ret
@@ -1125,6 +1158,8 @@ load_commands:
 2:  add rbx, CMD_SIZE
     jmp 1b
 9:  # extension details carry the qualified identity and shortcut; both are cached per command
+    mov edi, [rip + pal_focus_before]
+    call ctx_focus_as           # [command-options] when clauses see the focus before the palette
     xor r14d, r14d
 5:  cmp r14, [rip + g_ext_cmds + VEC_len]
     jae 8f
@@ -1135,6 +1170,10 @@ load_commands:
     inc r14
     test eax, eax
     jz 5b                       # an extension removed this session
+    mov rdi, rbx
+    call cmd_in_palette         # [command-options] palette = no, or its when is false
+    test eax, eax
+    jz 5b
     mov r12, [rbx + CMD_title]
     mov rdi, r12
     call strlen
@@ -1176,7 +1215,9 @@ load_commands:
     mov rcx, rbx
     call item_add
     jmp 5b
-8:  EPILOGUE
+8:  mov edi, -1
+    call ctx_focus_as
+    EPILOGUE
 
 # vec_ensure(vec, item size): grow vec to g_ext_cmds' length (zeroed slots)
 vec_ensure:
@@ -2046,8 +2087,10 @@ FN palette_filter
     test eax, eax
     jns 12f
     cmp dword ptr [rip + pal_mode], PM_COMMANDS
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_KEYS
     jne 4f
-    mov rdi, [r12 + IT_detail]
+13: mov rdi, [r12 + IT_detail]
     test rdi, rdi
     jz 4f
     call strlen
@@ -2286,8 +2329,10 @@ palette_accept:
     call mem_free
     jmp .Lpa_ret
 1:  cmp ebx, PM_COMMANDS
+    je 11f
+    cmp ebx, PM_KEYS
     jne 2f
-    mov dword ptr [rip + pal_mode], PM_NONE
+11: mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
     mov rax, [r12 + IT_data]
     mov rdi, rax
@@ -3238,6 +3283,9 @@ placeholder_text:
     lea rcx, [rip + .Lph_cmds]
     cmp eax, PM_COMMANDS
     je 1f
+    lea rcx, [rip + .Lph_keys]
+    cmp eax, PM_KEYS
+    je 1f
     cmp eax, PM_THEMES
     jne 2f
     lea rcx, [rip + .Lph_dark]
@@ -3312,6 +3360,7 @@ hint_text:
 .Lfailed: .asciz "That didn't work"
 .Lph_files: .asciz "Search files by name  (> commands, : line)"
 .Lph_cmds: .asciz "Type a command"
+.Lph_keys: .asciz "Search keyboard shortcuts"
 .Lph_themes: .asciz "Select a color theme"
 .Lph_dark: .asciz "Select a theme for dark mode"
 .Lph_light: .asciz "Select a theme for light mode"

@@ -2433,10 +2433,7 @@ FN editor_draw
     mov [rbx + DOC_anchor], r12
     mov rdi, rbx
     call snippet_selection_changed
-33: lea rdi, [rip + editor_menu]
-    mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+33: call menu_open_editor       # with the extensions' items (menu.s)
     jmp .Led_noinput
 31: # mouse press in the text area
     test dword ptr [rip + g_pressed], 1 << BTN_LEFT
@@ -3909,6 +3906,7 @@ FN ed_blink_tick
 .Lem5: .asciz "Toggle Comment"
 .Lem6: .asciz "Go to File"
 .p2align 3
+.globl editor_menu
 editor_menu:
     .quad .Lem1, cmd_cut, .Lem2, cmd_copy, .Lem3, cmd_paste, .Lem4, cmd_select_all
     .quad .Lem5, cmd_toggle_comment, .Lem6, cmd_quick_open, 0, 0

@@ -323,7 +323,7 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+Shift+O | Open folder |
 | Ctrl+Shift+P, F1 | Command palette |
 | Ctrl+, | Settings |
-| Ctrl+K | Color theme |
+| Ctrl+K Ctrl+T | Color theme |
 | Ctrl+B | Toggle explorer |
 | Ctrl+Shift+A | Toggle agents panel |
 | Ctrl+\` | Toggle terminal |
@@ -483,9 +483,20 @@ enabled = false
 [keys]
 ctrl+shift+d = duplicate_line
 alt+z = none
+ctrl+k ctrl+c = toggle_comment when editorFocus
+ctrl+alt+g = goto_line
+ctrl+alt+p = owner/ext.command some arguments
 ```
 
-Key names are those of the command palette entries in snake case (see `src/app/keys.s`). `none` removes a binding.
+Command names are those of the command palette entries in snake case (see `src/app/keys.s`);
+an extension's command is `name.command` or `owner/name.command`. `none` removes every binding of
+those keys. A binding is one key or a chord of two (`ctrl+k ctrl+c`): after the first, the status
+bar shows `Ctrl+K — waiting for the next key` until the second, Escape, a click or five seconds.
+Text after the command is passed to an extension command as its arguments, and `when CLAUSE`
+limits the binding to a context (`editorFocus`, `resourceLang == Rust`, `terminalFocus`, ...; the
+clause language and its keys are in the extension protocol's "When clauses"). Your bindings win
+over extensions', which win over rhun's own. **Keyboard Shortcuts** in the command palette lists
+every binding, where it comes from, its clause and what overrides it.
 
 At multiple cursors, copied selections stay paired with their destinations. For other multiline text, `multi_cursor_paste = spread` under `[editor]` pastes one line per cursor when the counts match. Set it to `full` to paste all the text at each cursor. The same choice is available as **Paste at multiple cursors** in Settings.
 
@@ -495,7 +506,7 @@ Paste waits for clipboard data without changing its destination. If the original
 
 ### Themes
 
-The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
+The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K Ctrl+T), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
 
 rhun reads the mode as VS Code does and switches as soon as the system does:
 
