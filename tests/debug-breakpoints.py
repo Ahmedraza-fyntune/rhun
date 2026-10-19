@@ -155,6 +155,24 @@ class Breakpoints(debughost.DebugHost):
         self.run_editor(['bp-clear', 'debug-watch remove total', 'exc-filter fake raised 0'])
         self.assertIn('x\tfake\traised\t0', state[0].read_text())
 
+    def test_state_stays_with_its_project_when_the_folder_changes(self):
+        # review P1: a breakpoint of project A was written into B's file after a folder switch
+        b = self.work / 'projb'
+        b.mkdir()
+        (b / 'b.c').write_text('int main(void) { return 0; }\n')
+        self.run_editor(['bp %s 3' % self.src, 'debug-watch add total', 'open ' + b.as_posix(), 'wait 300',
+                         'bp %s 1' % (b / 'b.c')])
+        files = {f.name: f.read_text() for f in (self.work / 'state/rhun').glob('*.debug')}
+        mine = [t for n, t in files.items() if n.endswith('%proj.debug')]
+        other = [t for n, t in files.items() if 'projb' in n]
+        self.assertEqual(len(mine), 1, files)
+        self.assertEqual(len(other), 1, files)
+        self.assertIn('b\ta.c\t3', mine[0])
+        self.assertIn('w\ttotal', mine[0])
+        self.assertNotIn('a.c', other[0])
+        self.assertNotIn('total', other[0])
+        self.assertIn('b\tb.c\t1', other[0])
+
 
 if __name__ == '__main__':
     unittest.main()

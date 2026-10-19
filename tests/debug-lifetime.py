@@ -141,6 +141,59 @@ class Lifetime(debughost.DebugHost):
             if proc.poll() is None:
                 proc.kill()
 
+    def orphan_dies(self, mode, actions):
+        """the fake adapter's child ignores SIGTERM; after the session ends it must still go (SIGKILL to
+        the group a second later) while rhun runs on"""
+        self.scenario()
+        self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\nstopOnEntry = yes\n')
+        script = self.work / 'actions.rsc'
+        script.write_text('\n'.join(['wait 100', 'open ' + self.src.as_posix(), *self.start(), *actions,
+                                     'wait-debug ended', 'wait 30000', 'quit']) + '\n')
+        env = dict(self.env, FAKEDAP_MODE=mode)
+        proc = subprocess.Popen([str(debughost.EXE), self.proj.as_posix(), '--headless', '1000x600',
+                                 '--extensions', str(debughost.EXTS), '--script', script.as_posix()],
+                                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            orphan = None
+            for _ in range(100):
+                for line in self.dap_log():
+                    if line.startswith('orphan '):
+                        orphan = int(line[7:])
+                if orphan and ('EXIT' in self.dap_log() or 'CRASH' in self.dap_log()):
+                    break
+                time.sleep(0.1)
+            self.assertIsNotNone(orphan, self.dap_log())
+            for _ in range(40):
+                if not alive(orphan):
+                    break
+                time.sleep(0.1)
+            self.assertFalse(alive(orphan), 'the adapter\'s child outlived its session by 4 s')
+            self.assertIsNone(proc.poll(), 'rhun still runs: its quit did not do it')
+        finally:
+            proc.kill()
+            proc.wait()
+
+    def test_group_killed_after_a_crash(self):
+        # review: reaping the adapter cancelled the SIGKILL to its group
+        self.orphan_dies('orphan,crash-at=3', ['wait-debug paused', 'debug-continue'])
+
+    def test_group_killed_after_a_normal_end(self):
+        self.orphan_dies('orphan', ['wait-debug paused', 'debug-stop'])
+
+    def test_incomplete_frame_does_not_spin(self):
+        # review: a partial message in the buffer made the loop poll without waiting
+        self.launch_ini()
+        script = self.work / 'actions.rsc'
+        script.write_text('\n'.join(['wait 100', *self.start(), 'wait-console after the pause', 'quit']) + '\n')
+        env = dict(self.env, FAKEDAP_MODE='partial-pause')
+        proc = subprocess.Popen([str(debughost.EXE), self.proj.as_posix(), '--headless', '1000x600',
+                                 '--extensions', str(debughost.EXTS), '--script', script.as_posix()],
+                                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _, status, usage = os.wait4(proc.pid, 0)
+        proc.returncode = 0
+        cpu = usage.ru_utime + usage.ru_stime
+        self.assertLess(cpu, 1.5, 'rhun spent %.2f s of CPU waiting 2 s for the rest of a message' % cpu)
+
 
 if __name__ == '__main__':
     unittest.main()

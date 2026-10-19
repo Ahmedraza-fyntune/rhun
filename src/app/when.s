@@ -80,7 +80,7 @@ ctx_publen: .zero CTX_COUNT * 4
 ctx_pub: .zero CTX_COUNT * CTX_VAL_MAX   # published values (keys without a FN)
 ctx_num: .zero CTX_COUNT * 24   # numbers formatted for a key
 ctx_lang: .zero 128             # resourceLang, spaces as _
-ctx_prov: .zero 128             # editorProviders
+ctx_prov: .zero 512             # editorProviders
 .p2align 3
 ctx_target: .quad 0             # MTG* a menu pushed, or 0
 ctx_targets: .zero 8 * 8        # targets pushed before the current one (ctx_push_target)
@@ -1783,6 +1783,9 @@ ck_active_tab:
     jmp ck_cstr
 # FN ctx_tab_kind_name(TAB_*) -> rax "doc" "image" "settings" "git" "extensions" "view", or 0
 FN ctx_tab_kind_name
+    lea rax, [rip + .Lv_notebook]   # notebooks: TAB_NOTEBOOK (from the notebooks' block) is "notebook"
+    cmp rdi, TAB_NOTEBOOK
+    je 9f
     xor eax, eax
     dec rdi
     cmp rdi, 5
@@ -2027,7 +2030,10 @@ ck_editor_providers:
     jz 2b
     cmp dword ptr [rbx + EXT_disabled], 0
     jne 2b
-    mov rdi, [rbx + r14]
+    mov rdi, rbx                # the values in force (language features' provider-scope)
+    mov rsi, r14
+    call ext_pv
+    mov rdi, rax
     test rdi, rdi
     jz 2b
     mov rsi, r12
@@ -2364,9 +2370,16 @@ ctx_defaults:
 tab_kind_names: .quad .Lv_doc, .Lv_settings, .Lv_image, .Lv_git, .Lv_extensions, .Lv_view
 vim_names: .quad .Lv_normal, .Lv_insert, .Lv_visual, .Lv_vline
 prov_fields: .quad EXT_pv_complete, EXT_pv_signature, EXT_pv_definition, EXT_pv_references
-    .quad EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format, 0
+    .quad EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format
+    # language features (protocol 1.1)
+    .quad EXT_pv_hover, EXT_pv_declaration, EXT_pv_type_definition, EXT_pv_implementation
+    .quad EXT_pv_selection_ranges, EXT_pv_call_hierarchy, EXT_pv_type_hierarchy
+    .quad EXT_pv_workspace_symbols, EXT_pv_range_format, EXT_pv_type_format, EXT_pv_document_links, 0
 prov_names: .quad .Lp_complete, .Lp_signature, .Lp_definition, .Lp_references, .Lp_symbols
     .quad .Lp_actions, .Lp_rename, .Lp_format
+    .quad .Lp_hover, .Lp_declaration, .Lp_type_definition, .Lp_implementation
+    .quad .Lp_selection_ranges, .Lp_call_hierarchy, .Lp_type_hierarchy
+    .quad .Lp_workspace_symbols, .Lp_range_format, .Lp_type_format, .Lp_document_links
 .Lp_complete: .asciz "complete"
 .Lp_signature: .asciz "signature"
 .Lp_definition: .asciz "definition"
@@ -2375,12 +2388,24 @@ prov_names: .quad .Lp_complete, .Lp_signature, .Lp_definition, .Lp_references, .
 .Lp_actions: .asciz "actions"
 .Lp_rename: .asciz "rename"
 .Lp_format: .asciz "format"
+.Lp_hover: .asciz "hover"
+.Lp_declaration: .asciz "declaration"
+.Lp_type_definition: .asciz "type_definition"
+.Lp_implementation: .asciz "implementation"
+.Lp_selection_ranges: .asciz "selection_ranges"
+.Lp_call_hierarchy: .asciz "call_hierarchy"
+.Lp_type_hierarchy: .asciz "type_hierarchy"
+.Lp_workspace_symbols: .asciz "workspace_symbols"
+.Lp_range_format: .asciz "range_format"
+.Lp_type_format: .asciz "type_format"
+.Lp_document_links: .asciz "document_links"
 .Lv_doc: .asciz "doc"
 .Lv_image: .asciz "image"
 .Lv_settings: .asciz "settings"
 .Lv_git: .asciz "git"
 .Lv_extensions: .asciz "extensions"
 .Lv_view: .asciz "view"
+.Lv_notebook: .asciz "notebook"
 .Lv_normal: .asciz "normal"
 .Lv_insert: .asciz "insert"
 .Lv_visual: .asciz "visual"

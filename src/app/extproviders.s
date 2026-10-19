@@ -6,10 +6,13 @@
 .equ PP_RENAME, 5
 .equ PP_FORMAT, 6
 .equ PP_SIGNATURE, 7
+.equ PP_RANGE_FORMAT, 10        # language features: range-format (langfeat.s LF_RANGEFMT)
+.equ PP_TYPE_FORMAT, 11         # and type-format (langextra.s), both with the formatter's choice
 .equ PP_CHOOSING, 1
 .equ PP_STARTING, 2
 .equ PP_RENAMING, 3
 .equ PP_ACCEPTING, 4
+.equ PP_PREPARING, 5            # prepare-rename asked: the prompt waits for its answer
 .equ PP_MAX_PREFS, 512
 
 STRUCT
@@ -113,10 +116,14 @@ pp_valid_owner:
 8:  xor eax, eax
     ret
 
-# pp_find(kind, language cstr) -> preference slot, including a cleared slot, or 0.
+# pp_find(kind, language cstr) -> preference slot, including a cleared slot, or 0. Range
+# formatting (language features) uses the formatter's choice.
 pp_find:
     PROLOGUE
-    mov r12, rdi
+    cmp rdi, PP_RANGE_FORMAT
+    jb 0f
+    mov edi, PP_FORMAT
+0:  mov r12, rdi
     mov r13, rsi
     xor r14d, r14d
 1:  cmp r14, [rip + pp_prefs + VEC_len]
@@ -140,7 +147,10 @@ pp_find:
 # Stage one pointer while the atomic settings write runs synchronously. Roll it back on failure.
 FN ext_provider_set
     PROLOGUE 16
-    mov r12, rdi
+    cmp rdi, PP_RANGE_FORMAT    # range formatting saves the formatter's choice
+    jb 0f
+    mov edi, PP_FORMAT
+0:  mov r12, rdi
     mov r13, rsi
     mov r14, rdx
     mov r15, rcx
@@ -987,6 +997,8 @@ FN ext_provider_tick
     call pp_context
     test eax, eax
     jz 8f
+    cmp qword ptr [rip + pp_state], PP_PREPARING
+    je .Lpt_preparing
     cmp qword ptr [rip + pp_state], PP_STARTING
     jne 9f
     call time_ms
@@ -1011,19 +1023,56 @@ FN ext_provider_tick
     mov rsi, rbx
     call langfeat_provider_start
     jmp 9f
-1:  mov qword ptr [rip + pp_transfer], 1
-    call langfeat_rename_prompt
-    mov qword ptr [rip + pp_transfer], 0
-    mov qword ptr [rip + pp_state], PP_RENAMING
+1:  # prepare-rename (protocol 1.1): the provider is asked before the prompt opens
+    mov rdi, rbx
+    mov esi, FEAT_PREPARE_RENAME
+    call ext_feature
+    test eax, eax
+    jz 11f
+    mov rdi, rbx
+    call langfeat_prepare_send
+    test eax, eax
+    jz 11f
+    mov qword ptr [rip + pp_state], PP_PREPARING
+    jmp 9f
+11: call pp_rename_prompt
 9:  EPILOGUE
 8:  call pp_changed
     EPILOGUE
 7:  call pp_unavailable
     EPILOGUE
+.Lpt_preparing:
+    call langfeat_prepare_state     # 0 waiting, 1 prompt, 2 refused (said why)
+    test eax, eax
+    jz 9b
+    cmp eax, 1
+    jne 21f
+    call pp_rename_prompt
+    EPILOGUE
+21: call ext_provider_cancel        # neither the prompt nor a file rename follows
+    EPILOGUE
+
+# pp_rename_prompt(): the new name's prompt opens; the snapshot follows what it selected
+pp_rename_prompt:
+    push rbx
+    mov qword ptr [rip + pp_transfer], 1
+    call langfeat_rename_prompt
+    mov qword ptr [rip + pp_transfer], 0
+    mov qword ptr [rip + pp_state], PP_RENAMING
+    mov rax, [rip + pp_doc]
+    mov rcx, [rax + DOC_cur]
+    mov [rip + pp_cursor], rcx
+    mov rcx, [rax + DOC_anchor]
+    mov [rip + pp_anchor], rcx
+    pop rbx
+    ret
 
 FN ext_provider_timeout
+    cmp qword ptr [rip + pp_state], PP_PREPARING
+    je 0f
     cmp qword ptr [rip + pp_state], PP_STARTING
     jne 1f
+0:
     mov eax, 20                # also notices document changes while hello/slot waiting
     ret
 1:  cmp qword ptr [rip + pp_state], 0
@@ -1091,6 +1140,10 @@ FN cmd_select_symbol_provider
 .Lwrite_error: .asciz "Could not save provider choice. Check the extensions settings file."
 .p2align 3
 pp_names: .quad 0, 0, 0, .Lsymbols, 0, .Lrename, .Lformat, .Lsignature
+    .quad 0, 0, .Lformat, .Lformat      # language features: range- and type-format share format's
 pp_patterns: .quad 0, 0, 0, EXT_pv_symbols, 0, EXT_pv_rename, EXT_pv_format, EXT_pv_signature
+    .quad 0, 0, EXT_pv_range_format, EXT_pv_type_format
 pp_titles: .quad 0, 0, 0, .Lsymbols_title, 0, .Lrename_title, .Lformat_title, .Lsignature_title
+    .quad 0, 0, .Lformat_title, .Lformat_title
 pp_features: .long -1, -1, -1, FEAT_SYMBOLS, -1, FEAT_RENAME, FEAT_FORMAT, FEAT_SIGNATURE
+    .long -1, -1, FEAT_PARTIAL_FORMAT, FEAT_PARTIAL_FORMAT

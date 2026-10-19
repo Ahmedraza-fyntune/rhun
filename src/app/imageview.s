@@ -149,7 +149,7 @@ iv_load:
     mov r15, rdi
     mov rbx, [rdi + DOC_img]
     mov rdi, [r15 + DOC_path]
-    call file_read_all
+    call vfs_read_all
     test rax, rax
     jz 7f
     mov r12, rax

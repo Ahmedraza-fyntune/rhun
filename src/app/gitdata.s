@@ -46,7 +46,7 @@ pbuf: .zero 4104                # a path argument as a cstr
 rev1: .zero REV_MAX + 8
 rev2: .zero REV_MAX + 8
 nbuf: .zero 64                  # numbers made into arguments
-lbuf: .zero 4200                # -L L1,L2:PATH
+lbuf: .zero 4400                # REV:PATH (200 + 1 + 4095 + NUL), -L L1,L2:PATH
 head_moved: .long 0             # HEAD moved since the last "0 git changed"
 ncommits: .long 0
 nruns: .long 0
@@ -717,13 +717,18 @@ send_ok_plain:
     lea rdi, [rip + rb]
     mov rsi, [rip + body + SB_len]
     call sb_push_u64
-1:  lea rdi, [rip + rb]
+    lea rdi, [rip + rb]
     mov esi, 10
     call sb_push_byte
     lea rdi, [rip + rb]
     mov rsi, [rip + body + SB_ptr]
     mov rdx, [rip + body + SB_len]
     call sb_push
+    jmp 2f
+1:  lea rdi, [rip + rb]         # a plain "ok ID": no body
+    mov esi, 10
+    call sb_push_byte
+2:
     mov rdi, rbx
     mov rsi, [rip + rb + SB_ptr]
     mov rdx, [rip + rb + SB_len]
@@ -1538,7 +1543,8 @@ status_sig:
     xor rbx, rax
     mov eax, [rip + g_git_ahead]
     shl rax, 32
-    or eax, [rip + g_git_behind]
+    mov ecx, [rip + g_git_behind]
+    or rax, rcx
     imul rbx, rbx, 31
     xor rbx, rax
     mov eax, [rip + g_git_head]
@@ -1691,7 +1697,8 @@ FN gitdata_timeout
 
 # ---------------- for the tests ----------------
 
-# gitdata_dump(sb): "git-data pending=N sig=…" (print-git-data)
+# gitdata_dump(sb): "git-data pending=N", then "git-data sig=N", the signature of the status now
+#   (print-git-data)
 FN gitdata_dump
     PROLOGUE
     mov rbx, rdi
@@ -1699,6 +1706,16 @@ FN gitdata_dump
     call sb_push_cstr
     mov rdi, rbx
     mov rsi, [rip + pending + VEC_len]
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_sig]
+    call sb_push_cstr
+    call status_sig
+    mov rdi, rbx
+    mov rsi, rax
     call sb_push_u64
     mov rdi, rbx
     mov esi, 10
@@ -1759,3 +1776,4 @@ FN gitdata_dump
 .La_cat_file: .asciz "cat-file"
 .La_blob: .asciz "blob"
 .Ld_pending: .asciz "git-data pending="
+.Ld_sig: .asciz "git-data sig="

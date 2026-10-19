@@ -58,10 +58,11 @@ class DebugHost(unittest.TestCase):
         total = 0
         for i in range(3):
             steps.append({'file': a, 'line': 8, 'function': 'main', 'locals': {'total': total, 'i': i}})
-            stack = [{'function': 'add', 'file': a, 'line': 2}, {'function': 'main', 'file': a, 'line': 8}]
+            main = {'function': 'main', 'file': a, 'line': 8, 'locals': {'total': total, 'i': i}}
+            stack = [{'function': 'add', 'file': a, 'line': 2}, main]
             steps.append({'file': a, 'line': 2, 'function': 'add', 'depth': 2, 'stack': stack,
                           'locals': {'a': total, 'b': i}})
-            stack = [{'function': 'add', 'file': a, 'line': 3}, {'function': 'main', 'file': a, 'line': 8}]
+            stack = [{'function': 'add', 'file': a, 'line': 3}, main]
             steps.append({'file': a, 'line': 3, 'function': 'add', 'depth': 2, 'stack': stack,
                           'locals': {'a': total, 'b': i, 's': total + i},
                           'output': 'i=%d total=%d\n' % (i, total)})
