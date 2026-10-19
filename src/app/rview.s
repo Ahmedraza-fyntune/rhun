@@ -70,6 +70,7 @@ F RV_pl, 4              # its place item (a declared view's, or its own for a ta
 F RV_tabclosing, 4      # its tab is being closed by the extension: no "closed" event
 F RV_prog, 4            # progress shows in it (notify.s: progress view:VIEW)
 F RV_ppct, 4            # its percent, -1 indeterminate
+F RV_vw, 8              # a picture view's 12a picture (extview.s), or 0
 ENDSTRUCT RV_SIZE
 
 # an action of a retained view: TA's layout (the tree looks inline keys up in them), TA_pad its WHERE
@@ -506,7 +507,18 @@ rv_open:
     pop rcx
     pop rcx
     mov [rcx + RV_log], rax
-4:  mov eax, r15d
+4:  cmp r12d, RK_PICTURE        # a picture view: a 12a picture of its own, shown at once
+    jne 5f
+    push rcx
+    push rcx
+    mov rdi, rbx
+    mov esi, [rcx + RV_view]
+    call extview_open_place
+    pop rcx
+    pop rcx
+    mov [rcx + RV_vw], rax
+    mov dword ptr [rcx + RV_state], RS_READY
+5:  mov eax, r15d
     EPILOGUE
 8:  mov eax, -1
     EPILOGUE
@@ -547,6 +559,8 @@ rv_close:
     call pq_drop_slot
     mov edi, ebx
     call notify_view_closed     # its progress shows nowhere now
+    mov rdi, [r12 + RV_vw]      # a picture view's picture
+    call extview_free_place
     movsxd rdi, dword ptr [r12 + RV_decl]
     cmp rdi, -1
     je 2f
@@ -565,6 +579,8 @@ FN rview_owner_gone
     PROLOGUE
     mov r12, rdi
     call notify_owner_gone      # its notifications and progress go too
+    mov rdi, r12
+    call viewimg_owner_gone     # and its images (viewpic.s)
     xor ebx, ebx
 1:  cmp ebx, RV_MAX
     jae 9f
@@ -1452,7 +1468,23 @@ pq_node_alive:
 #   makes the node's error row
 FN rview_reply
     PROLOGUE 16
-    mov rbx, rdi
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push r8
+    push r8
+    call viewpic_reply          # a vcopy's answer (viewpic.s)
+    pop r8
+    pop r8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jz 11f
+    EPILOGUE
+11: mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
     mov [rsp], rcx
@@ -1889,12 +1921,39 @@ kind_agreed:
     jz 9f
     cmp edi, RK_TREE
     je 8f
-    cmp edi, RK_LOG
+    cmp edi, RK_PICTURE
+    jne 1f
+    FEAT_TEST rsi, FEAT_VIEWS   # a picture view: section 12a's draw and events
+    jz 9f
+    jmp 8f
+1:  cmp edi, RK_LOG
     jne 9f
     FEAT_TEST rsi, FEAT_VIEW_LOG
     jz 9f
 8:  mov eax, 1
 9:  ret
+
+# rview_picture_of_place(place item) -> rax the picture of the picture view it holds, or 0
+FN rview_picture_of_place
+    PROLOGUE
+    mov r12d, edi
+    xor ebx, ebx
+1:  cmp ebx, RV_MAX
+    jae 8f
+    mov edi, ebx
+    call rv_at
+    cmp qword ptr [rax + RV_ext], 0
+    je 2f
+    cmp [rax + RV_pl], r12d
+    jne 2f
+    cmp dword ptr [rax + RV_kind], RK_PICTURE
+    jne 2f
+    mov rax, [rax + RV_vw]
+    EPILOGUE
+2:  inc ebx
+    jmp 1b
+8:  xor eax, eax
+    EPILOGUE
 
 # rv_menu(slot, tr, node, x, y): the node's menu record's actions as a context menu; a pick sends
 #   "action REV KEY LEN" + id, or "discarded REV action LEN" + id when the node went meanwhile
@@ -2416,6 +2475,18 @@ rv_instance_draw:
 .Lid_content:
     cmp dword ptr [r14 + RV_kind], RK_LOG
     je .Lid_log
+    cmp dword ptr [r14 + RV_kind], RK_PICTURE
+    jne 1f
+    mov rdi, [r14 + RV_vw]
+    test rdi, rdi
+    jz 9f
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call extview_draw_vw
+    jmp 9f
+1:
     mov rdi, [r14 + RV_tree]
     mov esi, [rsp]
     mov edx, [rsp + 4]
@@ -2502,11 +2573,23 @@ rv_instance_key:
     call rv_at
     cmp dword ptr [rax + RV_kind], RK_LOG
     je 1f
+    cmp dword ptr [rax + RV_kind], RK_PICTURE
+    je 2f
     mov rdi, [rax + RV_tree]
     mov esi, r12d
     mov edx, r13d
     mov ecx, r14d
     call tree_key
+    EPILOGUE
+2:  mov rdi, [rax + RV_vw]      # a picture view (viewpic.s: with view-keys)
+    test rdi, rdi
+    jz 3f
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call viewpic_key
+    EPILOGUE
+3:  xor eax, eax
     EPILOGUE
 1:  mov rdi, [rax + RV_log]
     mov esi, r12d

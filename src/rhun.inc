@@ -1414,6 +1414,7 @@ ENDSTRUCT TF_SIZE
 .equ CPX_DOCUMENT, 1
 .equ CPX_FIELD, 2
 .equ CPX_TERMINAL, 3
+.equ CPX_PICTURE, 68             # views group: a picture with the keyboard (viewpic.s)
 
 # icons
 .equ IC_CHEV_R, 0
@@ -1692,6 +1693,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_VIEW_LOG, "view-log", 0          # views group: log views (with view-tree)
     FEATURE FEAT_NOTIFY, "notify", 0              # views group: notify, notify-set, unnotify
     FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
+    FEATURE FEAT_VIEW_KEYS, "view-keys", 1        # views group: keys and focus for pictures; rhun asks vcopy
+    FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -2080,6 +2083,8 @@ F VW_down, 4             # the left button went down over it and is still down
 F VW_fgen, 4             # g_face_gen when the metrics were last sent
 F VW_ax, 4               # where the button went down, logical: a click is a release near it
 F VW_ay, 4
+F VW_pl, 4              # views group: a tab picture's place item for the keyboard, + 1 (0: none)
+F VW_inplace, 4         # views group: 1 a picture view's instance (a place), 2 hosted elsewhere (a custom editor)
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 .equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview

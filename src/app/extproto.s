@@ -3139,6 +3139,64 @@ h_progress_end:
     call reply_syntax
 9:  EPILOGUE
 
+# ID vimage LEN + PNG, JPEG or GIF -> ok ID IMG: decoded once, kept until unimage or the end
+h_vimage:
+    PROLOGUE
+    mov edi, FEAT_VIEW_IMAGES
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov rdi, [rip + cur]
+    mov rsi, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    call viewimg_request
+    cmp rax, -1
+    je 7f
+    cmp rax, -2
+    je 6f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_images]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID unimage IMG -> ok ID
+h_unimage:
+    PROLOGUE
+    mov edi, FEAT_VIEW_IMAGES
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call viewimg_unimage
+    test eax, eax
+    jnz 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noimage]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 # ID vreveal VIEW HOW LEN + node id -> ok ID: its ancestors expand, it scrolls into view
 h_vreveal:
     PROLOGUE
@@ -3928,6 +3986,8 @@ hello_features:
     jmp 1b
 4:  mov rdi, rbx                # wsedit: which of its features it may have yet
     call ws_features_agreed
+    mov rdi, rbx                # views group: features only with what they need (viewpic.s)
+    call views_features_agreed
     # tasks only with terminals (a task's terminal is a TERM)
     FEAT_TEST rbx, FEAT_TASKS
     jz 40f
@@ -4971,6 +5031,8 @@ verbs:
     .quad .Lv_progress, h_progress, 65536
     .quad .Lv_progress_set, h_progress_set, 65536
     .quad .Lv_progress_end, h_progress_end, 0
+    .quad .Lv_vimage, h_vimage, 8388608         # view-images (viewpic.s)
+    .quad .Lv_unimage, h_unimage, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # language features (query.s)
@@ -5095,6 +5157,10 @@ verbs:
 .Lv_progress: .asciz "progress"
 .Lv_progress_set: .asciz "progress-set"
 .Lv_progress_end: .asciz "progress-end"
+.Lv_vimage: .asciz "vimage"
+.Lv_unimage: .asciz "unimage"
+.Le_toobig_images: .asciz "toobig 64 images or 128 MB"
+.Le_noimage: .asciz "noview no such image"
 .Le_toobig_notes: .asciz "toobig 16 notifications"
 .Le_toobig_progress: .asciz "toobig 8 progress"
 .Le_nonote: .asciz "noview no such notification"

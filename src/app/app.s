@@ -2271,7 +2271,12 @@ FN app_on_paste
     mov rsi, r12
     call scm_paste
     jmp 9f
-0:  mov rdi, rbx
+0:  mov rdi, rbx                # a picture with the keyboard (views group, viewpic.s)
+    mov rsi, r12
+    call views_paste
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
     mov rsi, r12
     call focused_field
     test rax, rax
