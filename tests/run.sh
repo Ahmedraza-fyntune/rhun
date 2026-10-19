@@ -165,6 +165,9 @@ python3 tests/shift-wheel.py || fail=1
 python3 tests/stress.py || fail=1
 python3 tests/ext-host.py || fail=1
 python3 tests/ext-commands.py || fail=1
+# contributions and commands
+python3 tests/when.py || fail=1
+python3 tests/ext-command-args.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1

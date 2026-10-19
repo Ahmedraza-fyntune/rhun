@@ -166,7 +166,7 @@ FN config_path
     ret
 
 # setting_find(sec, seclen, key, keylen) -> SET* or 0
-setting_find:
+FN setting_find
     PROLOGUE
     mov r12, rdi
     mov r13, rsi

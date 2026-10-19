@@ -52,6 +52,7 @@ cp_hover: .long -1              # the row under the pointer
 .bss
 .p2align 3
 cp_source: .long 0              # 0 providers, CP_CHOICES native literal values
+.globl cp_open, sg_open
 cp_open: .long 0                # 0 closed, 1 asked, 2 items to show
 cp_session: .long 0             # each new list: answers for an older one are dropped
 cp_doc: .quad 0                 # the session's DOC* and its id (a freed DOC's address can return)
@@ -362,7 +363,7 @@ ask:
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
-    test dword ptr [rbx + EXT_features], FEAT_COMPLETE
+    FEAT_TEST rbx, FEAT_COMPLETE
     jz 1b
     mov rdi, [rbx + EXT_pv_complete]
     mov rsi, r15
@@ -1955,7 +1956,7 @@ cp_accept:
     add rax, rcx
     mov [rip + ps_end], rax
     mov rax, [r12 + CI_ext]
-    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    FEAT_TEST rax, FEAT_SNIPPETS
     jz .Lcpa_no_fields
     mov rdi, [rsp + 64]
     mov esi, [r12 + CI_ilen]

@@ -1122,7 +1122,7 @@ save_source_tick:
     je .Lsst_failed
     jmp .Lsst_pending
 21:
-    test dword ptr [r13 + EXT_features], FEAT_SAVE_ACTIONS
+    FEAT_TEST r13, FEAT_SAVE_ACTIONS
     jz .Lsst_advance
     cmp qword ptr [rbx + SJ_state], 2
     je .Lsst_pending

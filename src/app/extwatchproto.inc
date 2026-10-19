@@ -5,7 +5,7 @@ h_watch_workspace:
     cmp qword ptr [rip + nfields], 2
     jne .Lewp_bad
     mov rdi, [rip + cur]
-    test dword ptr [rdi + EXT_features], FEAT_WORKSPACE_WATCH
+    FEAT_TEST rdi, FEAT_WORKSPACE_WATCH
     jz .Lewp_feature_failed
     call extwatch_add
     test rax, rax
