@@ -1485,6 +1485,10 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
     FEATURE FEAT_COMPLETE_ITEMS, "complete-items", 1  # complete-resolve
     FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
+    FEATURE FEAT_NAVIGATION, "navigation", 1          # declaration, type-definition, implementation
+    FEATURE FEAT_PARTIAL_FORMAT, "partial-format", 1  # range-format, type-format
+    FEATURE FEAT_CODE_ACTIONS, "code-actions", 1      # code-actions, code-action-resolve
+    FEATURE FEAT_PREPARE_RENAME, "prepare-rename", 1  # prepare-rename
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
