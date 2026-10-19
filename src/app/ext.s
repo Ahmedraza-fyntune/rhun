@@ -369,6 +369,7 @@ FN ext_cmds_remove_runtime
 # palette's shortcut labels for extension commands are per index: drop them
 ext_cmds_changed:
     push rbx
+    call scmext_providers_changed   # source control (wider-parity C): installs and removals
     call keys_reload
     call palette_ext_keys_reset
     call palette_close_commands # an open command palette holds pointers into the vector
@@ -1488,6 +1489,7 @@ FN ext_init
     mov rax, [rip + g_ext_cmds + VEC_len]
     mov [rip + ext_manifest_cmds], rax
     call ext_settings_load
+    call scmext_providers_changed   # source control (wider-parity C): commit-message providers
     EPILOGUE
 
 # owner_cb(ctx, name, is_dir): one owner folder
@@ -5648,7 +5650,10 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
     .quad .Lpv_symbols, EXT_pv_symbols, .Lpv_actions, EXT_pv_actions
     .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format
-    .quad .Lpv_save_actions, EXT_pv_save_actions, 0, 0
+    .quad .Lpv_save_actions, EXT_pv_save_actions
+    # source control (wider-parity C)
+    .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
+    .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -5767,6 +5772,9 @@ ext_target: .asciz "linux-x86_64"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
 .Ln_git: .asciz "git"
+.Lpv_commit: .asciz "commit_message"
+.Lpv_quickdiff: .asciz "quickdiff"
+.Lpv_scm: .asciz "scm"
 .Lo_startup: .asciz "startup"
 .Lo_command: .asciz "command"
 .Lo_project: .asciz "project"

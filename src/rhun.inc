@@ -1491,7 +1491,10 @@ ENDSTRUCT TF_SIZE
 .equ FEAT_WORKSPACE_WATCH, 16384
 # source control (wider-parity C)
 .equ FEAT_GIT_DATA, 32768        # git-repo, git-status, git-blame, git-log, git-show, git-diff-open; 0 git changed
-.equ FEAT_SCM_ALL, FEAT_GIT_DATA
+.equ FEAT_COMMIT_MESSAGE, 65536  # rhun asks a commit-message provider (scmext.s)
+.equ FEAT_QUICKDIFF, 131072      # rhun asks a quick-diff provider for a file's base text (scmext.s)
+.equ FEAT_SCM, 262144            # a second VCS provider's tabs (scmext.s)
+.equ FEAT_SCM_ALL, FEAT_GIT_DATA | FEAT_COMMIT_MESSAGE | FEAT_QUICKDIFF | FEAT_SCM
 .equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS | FEAT_SCM_ALL
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
@@ -1730,6 +1733,10 @@ F EXT_catalog_state, 4 #0staging,1visible,2hidden historical
 F EXT_catalog_pad, 4
 F EXT_host_child_in, 4 # retained temporary target stdin endpoint
 F EXT_host_child_out, 4 # retained temporary target stdout endpoint
+# source control (wider-parity C): [provides] commit_message, quickdiff, scm (cstr values or 0)
+F EXT_pv_commit, 8      # "yes": a commit-message provider (scmext.s)
+F EXT_pv_quickdiff, 8   # file patterns it gives quick-diff bases for
+F EXT_pv_scm, 8         # "yes": it registers VCS provider tabs
 ENDSTRUCT EXT_SIZE
 .equ EXT_host_cleanup_mask, EXT_start_pad
 .equ EXT_host_cleanup_error, EXT_activation_owner_pad

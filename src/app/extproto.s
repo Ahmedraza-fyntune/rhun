@@ -468,7 +468,18 @@ handle_line:
     jmp 9f
 2:  test r12, r12
     jz 9f
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
+    # source control (wider-parity C): commit-message and quickdiff answers (scmext.s)
+    test dword ptr [rbx + EXT_features], FEAT_COMMIT_MESSAGE | FEAT_QUICKDIFF
+    jz 3f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call scmext_reply
+    test eax, eax
+    jnz 9f
+3:  test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
     jz 9f
     mov rdi, rbx
     mov rsi, r12
@@ -494,13 +505,26 @@ handle_line:
     call langfeat_reply
     jmp 9f
 .Lhl_err:
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
     mov edi, 1
     call field_u64
     test edx, edx
     jz 9f
     mov r12, rax
+    # source control (wider-parity C): commit-message and quickdiff errors (scmext.s)
+    test dword ptr [rbx + EXT_features], FEAT_COMMIT_MESSAGE | FEAT_QUICKDIFF
+    jz 1f
+    mov edi, 2
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call scmext_reply
+    test eax, eax
+    jnz 9f
+1:  test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
+    jz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -3545,6 +3569,9 @@ cmd_allow:
 .Lf_commands: .asciz "commands"
 .Lf_snippet_transforms: .asciz "snippet-transforms"
 .Lf_git_data: .asciz "git-data"
+.Lf_commit_message: .asciz "commit-message"
+.Lf_quickdiff: .asciz "quickdiff"
+.Lf_scm: .asciz "scm"
 .Lf_snippet_variants: .asciz "snippet-variants"
 .Lf_snippets: .asciz "snippets"
 .Lf_save_actions: .asciz "save-actions"
@@ -3553,7 +3580,7 @@ cmd_allow:
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
     .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature
-    .quad .Lf_git_data                    # source control (wider-parity C)
+    .quad .Lf_git_data, .Lf_commit_message, .Lf_quickdiff, .Lf_scm   # source control (wider-parity C)
     .quad 0
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
@@ -3631,6 +3658,47 @@ FN extproto_body
 FN extproto_answer_syntax
     mov rdi, [rip + cur_id]
     jmp reply_syntax
+
+# FN extproto_host_post(ext, line ptr, len, body ptr, len) -> rax the id of "ID LINE" and the body sent
+#   to a running extension (a request about no document), or 0
+FN extproto_host_post
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov [rsp], r8
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 8f
+    mov rdi, rbx
+    call extproto_events
+    test rax, rax
+    js 8f
+    mov [rip + cur], rbx
+    cmp qword ptr [rbx + EXT_hreq], 2147483647
+    jae 8f
+    inc qword ptr [rbx + EXT_hreq]
+    mov r15, [rbx + EXT_hreq]
+    call out_begin
+    mov rdi, r15
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r12
+    mov rsi, r13
+    call out_bytes
+    mov edi, 10
+    call out_byte
+    mov rdi, r14
+    mov rsi, [rsp]
+    call out_bytes
+    call out_end
+    test rax, rax
+    js 8f
+    mov rax, r15
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 .include "app/extwatchproto.inc"
 .section .rodata

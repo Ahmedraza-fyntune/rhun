@@ -1420,6 +1420,13 @@ c_print_git_data:
     xor eax, eax
     ret
 
+# print-scm-ext: extension source control providers (scmext.s)
+c_print_scm_ext:
+    lea rdi, [rip + out]
+    call scmext_dump
+    xor eax, eax
+    ret
+
 # print-project: the project folder (the home folder as ~)
 c_print_project:
     lea rdi, [rip + out]
@@ -2252,6 +2259,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lc_print_git_data: .asciz "print-git-data"
+.Lc_print_scm_ext: .asciz "print-scm-ext"
 .Lx_yes: .asciz "yes"
 .Lx_list: .asciz "list"
 .Lx_install_states: .quad .Lxi_idle, .Lxi_busy, .Lxi_asking, .Lxi_done, .Lxi_failed
@@ -2346,7 +2354,7 @@ ctl_table:
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
     .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
     # source control (wider-parity C)
-    .quad .Lc_print_git_data, c_print_git_data
+    .quad .Lc_print_git_data, c_print_git_data, .Lc_print_scm_ext, c_print_scm_ext
     .quad 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

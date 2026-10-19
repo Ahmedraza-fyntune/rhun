@@ -40,7 +40,7 @@ def parse_blame(body):
     return commits, runs
 
 
-class Scm(unittest.TestCase):
+class Base(unittest.TestCase):
     # the host tests' isolated run without their test methods
     run_editor = host.Host.run_editor
     tearDown = host.Host.tearDown
@@ -96,7 +96,10 @@ class Scm(unittest.TestCase):
         return self.run_editor([f'cmd {name}.{cmd}', f'wait-ext {name} running', 'wait 300', 'wait-git',
                                 'wait 300', *actions], drop_waits=True, **kw)
 
-    # --- C1: Git data ---
+
+
+class GitData(Base):
+    """C1: Git data through rhun"""
 
     def test_repo_and_status_answer_from_rhuns_status(self):
         (self.proj / 'a.txt').write_text('changed\n', encoding='utf-8')
@@ -252,6 +255,65 @@ class Scm(unittest.TestCase):
         self.assertIn('git paused', result.stdout.decode())
         self.assertEqual([r for r, _ in self.replies()], ['error 1 refused git is paused in this folder',
                                                           'error 2 refused git is paused in this folder'])
+
+
+class CommitMessage(Base):
+    """C2: a commit-message extension beside the built-in providers"""
+
+    def setUp(self):
+        super().setUp()
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text() + '[git]\ncommit_ai = ext:rhun-tests/writer\n')
+        (self.proj / 'a.txt').write_text('hello world\nsecond line\nthird line\nfourth line\n', encoding='utf-8')
+        self.git('add', 'a.txt')
+
+    def writer(self, **answer):
+        return self.ext('writer', needs='', hello='hello 1 commit-message',
+                        ini='\n[provides]\ncommit_message = yes', answers={'commit-message': answer})
+
+    def generate(self, exts, *more):
+        return self.run_editor(['wait-git', 'cmd git_history', 'wait-git', 'cmd git_generate_message', *more,
+                                'wait-ai', 'print-scm', 'print-ai', 'print-scm-ext'], exts=exts, drop_waits=True)
+
+    def test_generate_asks_the_extension_with_the_staged_diff(self):
+        out = self.generate(self.writer(body='Add a fourth line\n\nIt was missing.'))
+        self.assertIn('message=Add a fourth line||It was missing.', out)
+        self.assertIn('Ready. Review the generated message before committing.', out)
+        self.assertIn('commit-provider=rhun-tests/writer asked=0', out)
+        log = self.fake_log('writer')
+        request = [l for l in log if ' commit-message ' in l]
+        self.assertEqual(len(request), 1, log)
+        body = eval(log[log.index(request[0]) + 1][2:])
+        head, rest = body.split('\n', 1)
+        bl, dl = map(int, head.split())
+        self.assertEqual(rest[:bl], 'main')
+        self.assertEqual(len(rest[bl:].encode()), dl)
+        self.assertIn('+fourth line', rest[bl:])
+        self.assertIn('a.txt', rest[bl:])
+
+    def test_cancel_sends_cancel_and_keeps_the_draft(self):
+        out = self.generate(self.writer(body='Too late', delay=3), 'wait 1500', 'cmd git_generate_message')
+        self.assertIn('Cancelled. Your draft was kept.', out)
+        self.assertNotIn('message=Too late', out)
+        self.assertTrue(any(l.startswith('< 0 cancel ') for l in self.fake_log('writer')), self.fake_log('writer'))
+
+    def test_an_error_is_shown(self):
+        out = self.generate(self.writer(error='refused no model is configured'))
+        self.assertIn('Writer: refused no model is configured', out)
+
+    def test_control_characters_are_refused(self):
+        out = self.generate(self.writer(body='\x1b[31mred'))
+        self.assertIn('The extension returned an empty, oversized or invalid message. Your draft was kept.', out)
+
+    def test_an_extension_without_the_feature(self):
+        exts = self.ext('writer', needs='', hello='hello 1', ini='\n[provides]\ncommit_message = yes')
+        out = self.generate(exts)
+        self.assertIn('The extension does not provide commit messages (it did not agree commit-message).', out)
+
+    def test_a_missing_extension_is_named(self):
+        out = self.generate(self.work / 'none')
+        self.assertIn('The selected commit message extension is not installed.', out)
+        self.assertIn('commit-provider=rhun-tests/writer asked=0', out)
 
 
 if __name__ == '__main__':
