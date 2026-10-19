@@ -2334,6 +2334,7 @@ ctl_tables:
     .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
     .quad views_ctl             # views group: places and retained views (viewsctl.s)
     .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
+    .quad remote_ctl            # remote hosts (remotectl.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap

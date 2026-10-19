@@ -71,6 +71,11 @@
 .equ SYS_inotify_init1, 294
 .equ SYS_memfd_create, 319
 .equ SYS_close_range, 436
+# remote hosts (src/app/remote.s): channels are socketpairs; remote pids carry REMOTE_PID_TAG
+.equ SYS_shutdown, 48
+.equ SYS_socketpair, 53
+.equ SYS_renameat2, 316         # the agent's rename without replacing (Linux only)
+.equ REMOTE_PID_TAG, 0x20000000
 .equ SYS_prctl, 157
 .equ PR_SET_PDEATHSIG, 1
 .equ PR_SET_NO_NEW_PRIVS, 38
@@ -1653,6 +1658,8 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_INSTALL, 7      # Install from GitHub: owner/name
 .equ PROMPT_EXT_SETTING, 8      # a text setting of an extension (extpage.s)
 .equ PROMPT_RENAME_SYMBOL, 9    # the new name of a symbol (langfeat.s)
+.equ PROMPT_REMOTE, 40          # remote hosts: a question for ssh, answered in plain text (remoteui.s)
+.equ PROMPT_REMOTE_SECRET, 41   # remote hosts: a password or passphrase, drawn masked
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -1913,6 +1920,9 @@ ENDSTRUCT CRF_SIZE
     CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
     CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
     CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+    # remote hosts (remote.s): "ssh", "docker", "podman", "wsl", "local" in a remote window, else empty
+    CTXKEY CTX_REMOTE_NAME, "remoteName", 0
+    CTXKEY CTX_REMOTE_HOST, "remoteHost", 0
 .endm
 # when.s expands the list as records: FN, the name, padding to 8 bytes
 .macro CTXKEY sym, name, fn
