@@ -1846,7 +1846,12 @@ mac_key_syms:
 # built-in chords: command, strokes (one line each)
 builtin_chords:
     .quad .Lc_select_theme, .Lk_select_theme
+    .quad .Lc_fold_all, .Lk_fold_all, .Lc_unfold_all, .Lk_unfold_all   # editor presentation
     .quad 0, 0
+.Lc_fold_all: .asciz "fold_all"
+.Lk_fold_all: .asciz "ctrl+k ctrl+0"
+.Lc_unfold_all: .asciz "unfold_all"
+.Lk_unfold_all: .asciz "ctrl+k ctrl+j"
 .Lc_select_theme: .asciz "select_theme"
 .Lk_select_theme: .asciz "ctrl+k ctrl+t"
 # linux: / mac: / windows: before a binding's strokes: 1 for this system
@@ -2127,5 +2132,14 @@ g_commands:
     COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
     COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
     COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
+    # editor presentation (fold.s)
+    COMMAND fold, "Fold", cmd_fold, "ctrl+shift+[ ctrl+shift+{"
+    COMMAND unfold, "Unfold", cmd_unfold, "ctrl+shift+] ctrl+shift+}"
+    COMMAND toggle_fold, "Toggle Fold", cmd_toggle_fold, ""
+    COMMAND fold_all, "Fold All", cmd_fold_all, ""
+    COMMAND unfold_all, "Unfold All", cmd_unfold_all, ""
+    COMMAND fold_level_1, "Fold Level 1", cmd_fold_level_1, ""
+    COMMAND fold_level_2, "Fold Level 2", cmd_fold_level_2, ""
+    COMMAND fold_level_3, "Fold Level 3", cmd_fold_level_3, ""
     .quad 0, 0, 0, 0
 

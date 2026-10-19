@@ -81,6 +81,10 @@ c_print_view:
     test rbx, rbx
     jz 9f
     lea rdi, [rip + .Ls_view_lines]
+    call rows_mode
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + .Ls_view_rows]
     cmp dword ptr [rip + cfg_word_wrap], 0
     je 1f
     lea rdi, [rip + .Ls_view_wrap]
@@ -93,8 +97,9 @@ c_print_view:
     call out_cstr
     mov rdi, [rbx + DOC_scrolly]
     and edi, 255
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    je 2f
+    call rows_mode
+    test eax, eax
+    jz 2f
     mov rdi, [rbx + DOC_woff]
 2:  call out_u64
     lea rdi, [rip + .Ls_rows]
@@ -106,8 +111,9 @@ c_print_view:
     call out_u64
     lea rdi, [rip + .Ls_content]
     call out_cstr
-    mov rdi, [rbx + DOC_nlines]
-    inc rdi
+    mov rdi, rbx
+    call fold_scroll_rows
+    lea rdi, [rax + 1]
     movsxd rax, dword ptr [rip + g_lh]
     imul rdi, rax
     call out_u64
@@ -339,6 +345,12 @@ c_print_present:
     call str_eq_cstr
     test eax, eax
     jnz .Lpp_tape
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_folds]
+    call str_eq_cstr
+    test eax, eax
+    jnz .Lpp_folds
 9:  xor eax, eax
     EPILOGUE
 .Lpp_types:
@@ -498,6 +510,46 @@ c_print_present:
     call out_byte
     jmp 9b
 
+# "fold H-E" for each fold (1-based header and last hidden line), then "hidden N"
+.Lpp_folds:
+    mov r14, [rbx + DOC_pres]
+    test r14, r14
+    jz 9f
+    xor r12d, r12d
+1:  cmp r12, [r14 + PRS_folds + VEC_len]
+    jae 2f
+    imul r13, r12, FD_SIZE
+    add r13, [r14 + PRS_folds + VEC_ptr]
+    inc r12
+    lea rdi, [rip + .Ls_fold_sp]
+    call out_cstr
+    mov rdi, rbx
+    mov rsi, [r13 + FD_a]
+    call doc_line_of
+    lea rdi, [rax + 1]
+    call out_u64
+    mov edi, '-'
+    call out_byte
+    mov rdi, rbx
+    mov rsi, [r13 + FD_b]
+    call doc_line_of
+    lea rdi, [rax + 1]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    jmp 1b
+2:  lea rdi, [rip + .Ls_hidden]
+    call out_cstr
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_nlines]
+    call fold_hidden_before
+    mov rdi, rax
+    call out_u64
+    mov edi, 10
+    call out_byte
+9:  xor eax, eax
+    EPILOGUE
+
 # put_text(label, len; r15 the text, advanced): " label=TEXT" when there is text
 put_text:
     test esi, esi
@@ -643,6 +695,7 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Ls_stale: .asciz "stale"
 .Ls_view_lines: .asciz "view mode=lines top="
 .Ls_view_wrap: .asciz "view mode=wrap top="
+.Ls_view_rows: .asciz "view mode=rows top="
 .Ls_off: .asciz " off="
 .Ls_rows: .asciz " rows="
 .Ls_content: .asciz " content="
@@ -663,6 +716,9 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Ls_deco: .asciz "deco"
 .Ls_glyphs: .asciz "glyphs"
 .Ls_tape: .asciz "tape"
+.Ls_folds: .asciz "folds"
+.Ls_fold_sp: .asciz "fold "
+.Ls_hidden: .asciz "hidden "
 .Ls_type: .asciz "type "
 .Ls_flags: .asciz " flags="
 .Ls_prio: .asciz " prio="

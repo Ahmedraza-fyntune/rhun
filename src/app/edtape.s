@@ -70,6 +70,19 @@ FN pres_free
     call mem_free
     lea rdi, [r12 + PRS_glyphs]
     call vec_free
+    xor r13d, r13d              # the folds' collapsed texts
+1:  cmp r13, [r12 + PRS_folds + VEC_len]
+    jae 2f
+    imul rax, r13, FD_SIZE
+    add rax, [r12 + PRS_folds + VEC_ptr]
+    mov rdi, [rax + FD_text]
+    call mem_free
+    inc r13
+    jmp 1b
+2:  lea rdi, [r12 + PRS_folds]
+    call vec_free
+    lea rdi, [r12 + PRS_hid]
+    call vec_free
     mov rdi, r12
     call mem_free
 9:  EPILOGUE
@@ -229,6 +242,9 @@ pres_shift:
     mov rdi, rbx
     mov rsi, r12
     call gutter_shift
+    mov rdi, rbx
+    mov rsi, r12
+    call fold_shift
     EPILOGUE
 
 # tape_shift(value, pos, del, ins, gravity) -> rax the value after the edit (one of del and ins is

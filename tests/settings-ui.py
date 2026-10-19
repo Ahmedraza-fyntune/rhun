@@ -32,7 +32,9 @@ BOOLS = {
                'indent_guides word_wrap whitespace cursor_blink smooth_caret auto_pairs '
                'scroll_past_end vim_mode '
                # language features
-               'complete_replace complete_commit_characters lightbulb format_on_type format_on_paste'),
+               'complete_replace complete_commit_characters lightbulb format_on_type format_on_paste '
+               # editor presentation
+               'folding'),
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',

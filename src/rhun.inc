@@ -1125,6 +1125,7 @@ ENDSTRUCT MK_SIZE
 .equ DF_DISK_CHANGED, 8          # external contents differ and unsaved edits were kept
 .equ DF_REVEAL, 16               # its cursor was placed while it was not shown: in view when next drawn
 .equ DF_CENTER, 32               # with DF_REVEAL: that reveal puts the cursor's line in the middle
+.equ DF_ROWS, 64                 # presentation (fold.s): the view scrolls by rows (folds), not lines
 
 # return 0 at once when the document is read-only: g_doc, or the one in reg
 .macro READONLY_RET reg=0
@@ -3020,7 +3021,25 @@ F PRS_deco, VEC_SIZE     # DR decoration ranges, unsorted
 F PRS_dpool, SB_SIZE     # their texts (before, after, tip, extra)
 F PRS_dgarbage, 8        # pool bytes no range uses any more
 F PRS_glyphs, VEC_SIZE   # GLE glyph-lane entries, sorted by position then kind
+F PRS_folds, VEC_SIZE    # FD folds (fold.s), sorted by their header's end
+F PRS_hid, VEC_SIZE      # HI the hidden lines, merged (a cache of the folds)
+F PRS_hidver, 8          # DOC_version and PRS_gen the cache was built for
+F PRS_hidgen, 8
+F PRS_hidden, 8          # hidden lines in all
 ENDSTRUCT PRS_SIZE
+# a fold: the lines after its header up to its last line are hidden; it follows edits as positions
+STRUCT
+F FD_a, 8               # the header line's line feed
+F FD_b, 8               # the last hidden line's line feed (or the text's end)
+F FD_text, 8            # owned cstr: a provider's collapsed text, or 0
+ENDSTRUCT FD_SIZE
+STRUCT
+F HI_first, 8           # hidden lines first..last (0-based)
+F HI_last, 8
+F HI_before, 8          # hidden lines before them
+ENDSTRUCT HI_SIZE
+.equ FOLD_ALL_MAX, 4000000      # fold_all scans at most this many lines
+.equ FOLD_SESSION_MAX, 1000     # folds a session line keeps per file
 STRUCT
 F TE_version, 8         # DOC_version after the edit
 F TE_pos, 8

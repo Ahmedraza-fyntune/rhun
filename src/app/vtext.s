@@ -92,6 +92,9 @@ FN vt_line
     # the sources
     mov rdi, rbx
     mov rsi, r12
+    call fold_line_inlays       # a folded header's pill (fold.s)
+    mov rdi, rbx
+    mov rsi, r12
     call deco_line_inlays
 .Lvl_have:
     lea rax, [rip + vt_items]
@@ -628,7 +631,14 @@ FN vt_click
     PROLOGUE
     mov rbx, rdi
     lea r12, [rip + vt_hit_item]
-    cmp byte ptr [r12 + VI_kind], VK_DECO
+    cmp byte ptr [r12 + VI_kind], VK_FOLD
+    jne 1f
+    mov rdi, rbx                # a fold's pill unfolds it
+    mov rsi, [r12 + VI_ref]
+    call fold_unfold_line
+    mov eax, 1
+    EPILOGUE
+1:  cmp byte ptr [r12 + VI_kind], VK_DECO
     jne 8f
     mov rdi, rbx
     mov rsi, [r12 + VI_ref]

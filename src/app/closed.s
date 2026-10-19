@@ -17,6 +17,7 @@ F CT_scrolly, 8
 F CT_scrollx, 8
 F CT_wtop, 8
 F CT_woff, 8
+F CT_folds, 8                   # its folds, "H-E,..." (owned; fold.s), or 0
 ENDSTRUCT CT_SIZE
 
 .bss
@@ -72,6 +73,9 @@ FN closed_note
     mov [rbx + CT_wtop], rax
     mov rax, [r13 + DOC_woff]
     mov [rbx + CT_woff], rax
+    mov rdi, r13
+    call fold_session_string
+    mov [rbx + CT_folds], rax
     jmp .Lcn_push
 .Lcn_diff:
     test dword ptr [r14 + DV_flags], DVF_OWN
@@ -196,6 +200,9 @@ reopen_probe:
     mov [r12 + DOC_wtop], rax
     mov rax, [rbx + CT_woff]
     mov [r12 + DOC_woff], rax
+    mov rdi, r12
+    mov rsi, [rbx + CT_folds]
+    call fold_session_in        # its folds (fold.s)
     mov rdi, r12
     call ed_top_inside          # the file may be shorter now
     mov dword ptr [rip + g_reveal], 0     # the view as it was, even with the cursor out of it
@@ -336,8 +343,11 @@ entry_free:
     call mem_free
     mov rdi, [rbx + CT_rev]
     call mem_free
+    mov rdi, [rbx + CT_folds]
+    call mem_free
     mov qword ptr [rbx + CT_path], 0
     mov qword ptr [rbx + CT_rev], 0
+    mov qword ptr [rbx + CT_folds], 0
     pop rbx
     ret
 

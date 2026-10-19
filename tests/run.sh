@@ -181,6 +181,7 @@ python3 tests/ext-menus.py || fail=1
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 check edtape build/edtape_test
 python3 tests/presentation.py || fail=1
+python3 tests/folding.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1
