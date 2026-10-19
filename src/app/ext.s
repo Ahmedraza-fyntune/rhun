@@ -431,6 +431,10 @@ ext_settings_load:
     test eax, eax
     jnz 1b
     lea rdi, [rip + ini_it]
+    call run_allow_load_line    # allow_run = PROJECT (runallow.s)
+    test eax, eax
+    jnz 1b
+    lea rdi, [rip + ini_it]
     call ext_by_section
     test rax, rax
     jz 1b
@@ -597,6 +601,10 @@ FN ext_settings_save
     cmp qword ptr [rbx + EXT_xset], 0
     jne 2f
     mov rdi, rbx
+    call run_allow_has
+    test eax, eax
+    jnz 2f
+    mov rdi, rbx
     call sdefs_changed
     test eax, eax
     jz 1b
@@ -621,7 +629,10 @@ FN ext_settings_save
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_pinned_yes]
     call sb_push_cstr
-4:  # the settings that differ from their defaults, and those another version declares
+4:  mov rdi, rbx                # the projects it may run programs in (runallow.s)
+    lea rsi, [rip + tmp2]
+    call run_allow_write
+    # the settings that differ from their defaults, and those another version declares
     mov rsi, [rbx + EXT_xset]
     test rsi, rsi
     jz 41f

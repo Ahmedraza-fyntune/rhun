@@ -652,6 +652,8 @@ g_commands:
     COMMAND link_extension_folder, "Link Extension Folder (development)", cmd_link_extension_folder, ""
     COMMAND install_extension_archive, "Install Extension from Archive", cmd_install_extension_archive, ""
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
+    # tasks and terminals
+    COMMAND toggle_problems, "Toggle Problems", cmd_toggle_problems, "ctrl+shift+m"
     COMMAND kill_terminal, "Kill Terminal", cmd_kill_terminal, ""
     COMMAND clear_terminal, "Clear Terminal", cmd_clear_terminal, ""
     COMMAND git_history, "Git: Show History", cmd_git_history, ""

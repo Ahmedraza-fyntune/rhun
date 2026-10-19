@@ -58,6 +58,17 @@ FN main
     mov rdi, [rax + 8]
 1:  call remote_askpass_main
 .Lnot_askpass:
+    # rhun --print-env: the login shell asks for its environment (uproc.s)
+    cmp qword ptr [rip + g_argc], 2
+    jne 2f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lprint_env]
+    call strcmp_eq
+    test eax, eax
+    jz 2f
+    call uproc_print_env
+2:
     cmp qword ptr [rip + g_argc], 5
     jb 1f
     cmp qword ptr [rip + g_argc], 6
@@ -138,8 +149,10 @@ FN main
     call headless_clip_reset
     call dap_shutdown           # debugger: sessions disconnect, adapters are stopped
     call bp_save
+    call uproc_quit_begin       # programs run as the user: SIGTERM now, up to 300 ms with the extensions
     call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
+    call uproc_quit_end
     call remote_shutdown        # remote hosts: the askpass socket
     call agents_shutdown
     call ai_shutdown
@@ -158,6 +171,7 @@ FN main
 
 .section .rodata
 .Lagent_worker: .asciz "--agent-index"
+.Lprint_env: .asciz "--print-env"
 .text
 parse_args:
     PROLOGUE

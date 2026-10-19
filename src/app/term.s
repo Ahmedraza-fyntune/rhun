@@ -15,6 +15,8 @@
 .equ S_SKIP, 10
 .equ MAXP, 16
 .equ MAX_OSC, 4096
+.equ TAP_MAX, 65536             # finished lines a tap holds before more are counted as left out
+.equ TAP_LINE, 4096             # a tapped line's bytes at most
 
 # address of cell col in line
 .macro CELLP out, line, col
@@ -1406,7 +1408,10 @@ control:
     jb 1f
     cmp edi, 12
     ja 1f
-    call index
+    cmp qword ptr [rbx + TM_tap], 0
+    je 0f
+    call tap_line
+0:  call index
     test dword ptr [rbx + TM_modes], TMM_LNM
     jz 9f
     mov dword ptr [rbx + TM_cx], 0
@@ -1438,6 +1443,80 @@ control:
     mov dword ptr [rbx + TM_state], S_ESC
     mov dword ptr [rbx + TM_inter], 0
 9:  ret
+
+# tap_line(): a line feed: the line the cursor is on, with the rows the terminal wrapped into it,
+#   goes to TM_tap as the screen shows it (escapes applied, trailing blanks dropped, at most 4096
+#   bytes) and an LF; not on the alternate screen, where a full-screen program has no lines
+tap_line:
+    test dword ptr [rbx + TM_modes], TMM_ALT
+    jnz 9f
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, [rbx + TM_tap]
+    cmp qword ptr [r12 + SB_len], TAP_MAX
+    jb 1f
+    inc qword ptr [rbx + TM_tapdrop]
+    jmp 8f
+1:  mov r13d, [rbx + TM_cy]     # the line's last row
+    mov r15d, r13d              # and its first: back over the rows that wrapped (64 at most)
+2:  mov eax, r13d
+    sub eax, r15d
+    cmp eax, 63
+    jae 3f
+    lea esi, [r15 - 1]
+    mov rdi, rbx
+    call term_row
+    test rax, rax
+    jz 3f
+    test dword ptr [rax + LN_flags], LF_WRAPPED
+    jz 3f
+    dec r15d
+    jmp 2b
+3:  mov r14, [r12 + SB_len]     # where the line starts
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r15d
+    xor ecx, ecx
+    mov r8d, r13d
+    mov r9d, [rbx + TM_cols]
+    call term_text
+    mov rax, [r12 + SB_len]
+    sub rax, r14
+    cmp rax, TAP_LINE
+    jbe 4f
+    lea rax, [r14 + TAP_LINE]
+    mov [r12 + SB_len], rax
+4:  mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+8:  pop r15
+    pop r14
+    pop r13
+    pop r12
+9:  ret
+
+# term_tap_flush(t): the program has ended: the cursor's line, when it has text, goes to the tap as if
+#   a line feed had come
+FN term_tap_flush
+    push rbx
+    mov rbx, rdi
+    mov rax, [rbx + TM_tap]
+    test rax, rax
+    jz 9f
+    mov rcx, [rax + SB_len]
+    push rcx
+    call tap_line
+    pop rcx
+    mov rax, [rbx + TM_tap]
+    mov rdx, [rax + SB_len]
+    sub rdx, rcx
+    cmp rdx, 1                  # only the LF: an empty line is not one
+    jne 9f
+    dec qword ptr [rax + SB_len]
+9:  pop rbx
+    ret
 
 # param(i, default) -> eax; 0 and missing parameters take the default
 param:
