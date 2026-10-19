@@ -7,6 +7,8 @@
 #   scm-menu SCM GROUP [PATH] a group's or resource's menu (then menu-pick)
 #   scm-focus SCM             the panel's message box gets the keyboard (then type)
 #   print-vcs PATH            "vcs=LETTER dir=0|1 color=RRGGBB" as the explorer colors the path
+#   wait-scm SCM [TEXT]       until panel SCM has an update whose status line holds TEXT (15 s at most)
+#   wait-quickdiff            until no document waits for a quick-diff base (15 s at most)
 .include "rhun.inc"
 
 .bss
@@ -19,7 +21,8 @@ id_buf: .zero 4200
 scm_ctl:
     .quad .Lc_print_git_data, c_print_git_data, .Lc_print_scm_ext, c_print_scm_ext
     .quad .Lc_scm_click, c_scm_click, .Lc_scm_action, c_scm_action, .Lc_scm_menu, c_scm_menu
-    .quad .Lc_scm_focus, c_scm_focus, .Lc_print_vcs, c_print_vcs
+    .quad .Lc_scm_focus, c_scm_focus, .Lc_print_vcs, c_print_vcs, .Lc_wait_scm, c_wait_scm
+    .quad .Lc_wait_qd, c_wait_qd
     .quad 0, 0
 .Lc_print_git_data: .asciz "print-git-data"
 .Lc_print_scm_ext: .asciz "print-scm-ext"
@@ -28,6 +31,8 @@ scm_ctl:
 .Lc_scm_menu: .asciz "scm-menu"
 .Lc_scm_focus: .asciz "scm-focus"
 .Lc_print_vcs: .asciz "print-vcs"
+.Lc_wait_scm: .asciz "wait-scm"
+.Lc_wait_qd: .asciz "wait-quickdiff"
 .Lno: .asciz "scm: no such provider or row\n"
 .Lvcs: .asciz "vcs="
 .Ldir: .asciz " dir="
@@ -170,6 +175,67 @@ c_scm_focus:
     call no
 9:  xor eax, eax
     EPILOGUE
+
+# wait-scm SCM [TEXT]: the frames go on (extensions answer) until the panel's status holds TEXT
+c_wait_scm:
+    PROLOGUE 16
+    mov r13, rsi
+    mov r14, rdx
+    call num
+    mov r15, rax
+    # the rest after one space is the text
+    mov rdi, r13
+    mov rsi, r14
+    call skip_spaces_n
+    mov r13, rax
+    mov r14, rdx
+    call time_ms
+    lea rbx, [rax + 15000]
+1:  mov edi, r15d
+    mov rsi, r13
+    mov rdx, r14
+    call scmpanel_status_has
+    test eax, eax
+    jnz 9f
+    call time_ms
+    cmp rax, rbx
+    jae 9f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 1b
+9:  xor eax, eax
+    EPILOGUE
+
+# wait-quickdiff
+c_wait_qd:
+    PROLOGUE
+    call time_ms
+    lea rbx, [rax + 15000]
+1:  mov edi, 20
+    call loop_poll
+    call app_tick
+    call scmext_qd_busy
+    test eax, eax
+    jz 9f
+    call time_ms
+    cmp rax, rbx
+    jb 1b
+9:  xor eax, eax
+    EPILOGUE
+
+# skip_spaces_n(ptr, len) -> rax, rdx without leading spaces
+skip_spaces_n:
+    mov rax, rdi
+    mov rdx, rsi
+1:  test rdx, rdx
+    jz 2f
+    cmp byte ptr [rax], ' '
+    jne 2f
+    inc rax
+    dec rdx
+    jmp 1b
+2:  ret
 
 # print-vcs PATH
 c_print_vcs:

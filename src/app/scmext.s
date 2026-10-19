@@ -1095,14 +1095,19 @@ FN scm_row_menu
     xor esi, esi
     call sb_push_byte
     dec qword ptr [rip + g_scm_menu_target + SB_len]
-    mov eax, [rsp]
+    # rhun's items, then the extensions' for the location (menu.s)
+    xor r8d, r8d
+    test r13, r13
+    jz 4f
+    call menu_abs
+    mov r8, rax
+4:  mov eax, [rsp]
     lea rcx, [rip + menu_tables]
-    mov rdi, [rcx + rax*8]
-    test rdi, rdi
-    jz 9f
-    mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+    mov rsi, [rcx + rax*8]
+    mov edi, eax
+    mov rdx, [rip + g_scm_menu_target + SB_ptr]
+    mov rcx, [rip + g_scm_menu_target + SB_len]
+    call menu_open_scm
 9:  EPILOGUE
 
 # cstr_copy_72(dest, src): at most 71 bytes and a NUL
@@ -1185,6 +1190,17 @@ menu_abs:
     call mem_free
     mov rax, [rip + menu_abs_path + SB_ptr]
 9:  EPILOGUE
+
+# FN scmext_qd_busy() -> eax 1 while documents wait for a quick-diff base or requests are out
+#   (headless wait-quickdiff)
+FN scmext_qd_busy
+    mov eax, 1
+    cmp dword ptr [rip + qd_dirty], 0
+    jne 1f
+    cmp qword ptr [rip + qd_pend + VEC_len], 0
+    jne 1f
+    xor eax, eax
+1:  ret
 
 # scmext_dump(sb): "commit-provider=OWNER/NAME|- asked=0|1" (print-scm-ext)
 FN scmext_dump

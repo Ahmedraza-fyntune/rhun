@@ -2151,16 +2151,20 @@ sp_menu:
     mov [rcx + rax + 8], rdx
     inc dword ptr [rip + menu_n]
 5:  mov eax, [rip + menu_n]
-    test eax, eax
-    jz 9f
     shl eax, 4
     lea rcx, [rip + menu_items]
     mov qword ptr [rcx + rax], 0
     mov qword ptr [rcx + rax + 8], 0
-    lea rdi, [rip + menu_items]
-    mov esi, [rsp]
-    mov edx, [rsp + 4]
-    call ctx_menu_open
+    # the provider's actions, then other extensions' items for the location (menu.s)
+    xor r8d, r8d
+    cmp qword ptr [rip + menu_path + SB_len], 0
+    je 6f
+    mov r8, [rip + menu_path + SB_ptr]
+6:  mov edi, [rip + g_scm_menu_loc]
+    lea rsi, [rip + menu_items]
+    mov rdx, [rip + g_scm_menu_target + SB_ptr]
+    mov rcx, [rip + g_scm_menu_target + SB_len]
+    call menu_open_scm
 9:  EPILOGUE
 
 # menu_note(sp, GR*, RS* or 0): the menu's target as rhun's own source control rows say it
@@ -2393,6 +2397,29 @@ FN scmpanel_find
     ret
 8:  xor eax, eax
     ret
+
+# FN scmpanel_status_has(handle, ptr, len) -> eax 1 when that provider has sent an update whose status
+#   line holds the text (any update for an empty text)
+FN scmpanel_status_has
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call scmpanel_find
+    test rax, rax
+    jz 8f
+    cmp qword ptr [rax + SP_body], 0
+    je 8f
+    mov rdi, [rax + SP_status]
+    mov rsi, [rax + SP_statlen]
+    mov rdx, r12
+    mov rcx, r13
+    call str_find
+    test rax, rax
+    js 8f
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # FN scmpanel_click(handle, group ptr, len, path ptr, len) -> eax 1 when that resource was clicked
 FN scmpanel_click

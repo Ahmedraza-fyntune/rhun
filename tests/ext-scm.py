@@ -323,6 +323,21 @@ class Menus(Base):
         self.assertIn('Open File', out)
         self.assertTrue(out[-1].startswith('tabs=*a.txt'), out)     # it was open: shown again
 
+    def test_extensions_add_items_to_history_rows(self):
+        sha = self.git('rev-parse', 'HEAD').strip()
+        exts = self.ext('tools', needs='', hello='hello 1 command-args', commands={'show_commit': []},
+                        ini="[menu.history_commit]\nshow_commit.group = 5_tools\n"
+                            "[menu.scm_resource]\nshow_commit.when = scmProvider == 'nobody'\n")
+        out = self.run_editor(['wait-git', 'cmd git_history', 'wait-git', 'wait 200', 'click 200 118 right',
+                               'wait 100', 'print-menu', 'menu-pick Show_Commit', 'wait-ext tools running', 'wait 300'],
+                              exts=exts, drop_waits=True)
+        self.assertEqual(out[:3], ['Copy Commit ID', '-', 'Show_Commit [rhun-tests/tools]'], out)
+        log = self.fake_log('tools')
+        runs = [(l, log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run tools.show_commit')]
+        self.assertEqual(len(runs), 1, log)
+        self.assertRegex(runs[0][0], r'^< 0 run tools\.show_commit \d+ menu \d+$')
+        self.assertEqual(runs[0][1], '| ' + repr(f'commit {sha}\n'))
+
     def test_git_trusted_key(self):
         out = self.run_editor(['wait-git', 'print-context gitTrusted'], drop_waits=True)
         self.assertIn('gitTrusted=true', out)
@@ -510,6 +525,19 @@ class ScmPanel(Base):
         out = self.run_editor(['wait-ext hg running', 'wait 500', 'cmd save', 'wait 500', 'print-git'],
                               exts=exts, drop_waits=True)
         self.assertIn('marks .~..', out)
+
+    def test_other_extensions_add_items_to_its_rows(self):
+        self.provider(self.body())
+        exts = self.ext('tools', needs='', hello='hello 1 command-args', commands={'lint': [], 'other': []},
+                        ini="[menu.scm_resource]\nlint.when = scmProvider == 'rhun-tests/hg' && scmResourceStatus == M\n"
+                            "other.when = scmProvider == 'git'\n")
+        out = self.start(exts, 'scm-menu 1 changes a.txt', 'print-menu', 'menu-pick Lint', 'wait 500')
+        rows = out[:out.index('Open File') + 4]
+        self.assertIn('Lint [rhun-tests/tools]', rows)
+        self.assertNotIn('Other [rhun-tests/tools]', rows)
+        log = self.fake_log('tools')
+        runs = [log[i + 1] for i, l in enumerate(log) if l.startswith('< 0 run tools.lint')]
+        self.assertEqual(runs, ['| ' + repr('resource changes a.txt\n')], log)
 
     def test_stopping_removes_its_panels(self):
         out = self.start(self.provider(self.body()), 'ext-set hg stop', 'wait 400')
