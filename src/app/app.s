@@ -144,7 +144,9 @@ FN app_init
     call theme_apply_config
     call app_load_fonts
     call syntax_load_all
+    call places_init            # the explorer is the sidebar's first section
     call ext_init               # manifests: their commands take keys below
+    call rview_init             # their declared views take their places
     call keys_init
     call vim_sync
     call watch_init
@@ -1524,6 +1526,10 @@ FN cmd_next_tab
     mov esi, 1
     cmp dword ptr [rip + g_focus], FOCUS_TERMINAL   # in the terminal: the next terminal
     je term_cycle
+    call panel_view_focused     # in one of the panel's view tabs: the next of its tabs
+    mov esi, 1
+    test eax, eax
+    jnz term_cycle
     mov rax, [rip + g_tab_cur]
     test rax, rax
     js 1f
@@ -1539,6 +1545,10 @@ FN cmd_prev_tab
     mov esi, -1
     cmp dword ptr [rip + g_focus], FOCUS_TERMINAL
     je term_cycle
+    call panel_view_focused
+    mov esi, -1
+    test eax, eax
+    jnz term_cycle
     mov rax, [rip + g_tab_cur]
     test rax, rax
     js 1f
@@ -2342,7 +2352,16 @@ FN app_on_key
     test eax, eax
     jnz 9f
     jmp .Lk_bind
-71: cmp eax, FOCUS_SCM
+71: cmp eax, FOCUS_VIEW
+    jne 73f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call place_key              # a view in a place (places.s)
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+73: cmp eax, FOCUS_SCM
     jne .Lk_bind
     mov edi, r12d
     mov esi, r13d
@@ -2357,6 +2376,12 @@ FN app_on_key
     mov esi, r13d
     mov edx, r14d
     call complete_key           # the completion list, when it shows, takes its keys first
+    test eax, eax
+    jnz 9f
+    mov edi, r12d               # AI: a Review tab's keys (review.s)
+    mov esi, r13d
+    mov edx, r14d
+    call review_key
     test eax, eax
     jnz 9f
     mov edi, r12d
@@ -2856,7 +2881,7 @@ FN app_render
     mov esi, [rsp + 20]
     mov edx, [rip + g_side_px]
     mov ecx, [rsp + 24]
-    call explorer_draw
+    call sidebar_draw
     mov eax, [rip + g_side_px]
     mov [rsp + 28], eax
     # border + splitter
@@ -2874,7 +2899,7 @@ FN app_render
     mov esi, [rsp + 20]
     mov edx, [rip + g_agents_px]
     mov ecx, [rsp + 24]
-    call agents_draw
+    call side_draw              # the agents panel, or a side view (places.s)
     mov edi, [rsp + 32]
     mov esi, [rsp + 20]
     M edx, MI_1
@@ -2983,6 +3008,7 @@ FN app_render
     call toast_draw
     call tip_commit             # after every button with a tooltip has been drawn
     call tip_draw
+    call places_frame_end       # views hear focus and visibility changes once a frame
     mov edi, [rsp + 36]
     test edi, edi
     jz 2f
