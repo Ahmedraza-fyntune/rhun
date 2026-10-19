@@ -111,7 +111,7 @@ class Terminals(unittest.TestCase):
         out = self.run_editor(['term-run --cwd sub --env RHUN_T1=hello --unset HOME --sh -- '
                                'pwd; echo "[$RHUN_T1]"; echo "home=${HOME-none}"; echo "term=$TERM"',
                                'wait-terminal 1 ended', 'print-term'])
-        self.assertIn((self.proj / 'sub').as_posix(), out)
+        self.assertIn((self.proj / 'sub').as_posix(), ''.join(out))     # a long path wraps
         self.assertIn('[hello]', out)
         self.assertIn('home=none', out)
         self.assertIn('term=xterm-256color', out)
@@ -182,6 +182,83 @@ class Terminals(unittest.TestCase):
                          'wait 800'])
         time.sleep(0.2)
         self.assertEqual(count(m), 0)
+
+    # a leader that does not ignore SIGTERM, a child that ignores it and SIGHUP: the group outlives
+    # its leader, and is killed all the same (reviews: the group stays until it is empty)
+    def deaf_child(self, redirect=''):
+        return f"( trap '' INT TERM HUP; exec {marked()}{redirect} )"
+
+    @unittest.skipIf(WINDOWS, 'ps')
+    def test_closing_the_tab_kills_what_outlives_the_leader(self):
+        m = self.marker
+        out = self.run_editor([f'term-run --env RHUN_MARK={m} --title deaf --sh -- {self.deaf_child()} & wait',
+                               'wait 800', 'term-close 1', 'wait 500', 'print-uproc', 'wait 2200', counter(m),
+                               'wait-terminal 2 ended', 'print-term', 'print-uproc'])
+        self.assertIn('count=0', out)
+        uprocs = [line for line in out if line.startswith('uproc=')]
+        self.assertIn('+', uprocs[0])                   # the leader went, its group is still watched
+        self.assertNotIn('+', uprocs[1])
+
+    @unittest.skipIf(WINDOWS, 'ps')
+    def test_quitting_kills_what_outlives_the_leader(self):
+        m = self.marker
+        self.run_editor([f'term-run --env RHUN_MARK={m} --sh -- {self.deaf_child()} & wait', 'wait 800'])
+        time.sleep(0.2)
+        self.assertEqual(count(m), 0)
+
+    @unittest.skipIf(WINDOWS, 'ps')
+    def test_what_let_go_of_the_terminal_is_killed_after_the_leader(self):
+        # the child's output goes elsewhere, so the terminal ends with the leader: the tab ends at once
+        m = self.marker
+        child = self.deaf_child(' </dev/null >/dev/null 2>&1')
+        out = self.run_editor([f'term-run --env RHUN_MARK={m} --title gone --sh -- {child} & sleep 0.5; exit 5',
+                               'wait-terminal 1 ended', 'print-terminals', 'wait 2600', counter(m),
+                               'wait-terminal 2 ended', 'print-term'])
+        self.assertIn('state=exited code=5', self.terminals(out)[0])
+        self.assertIn('count=0', out)
+
+    @unittest.skipIf(WINDOWS, 'ps')
+    def test_quitting_kills_what_let_go_of_the_terminal(self):
+        m = self.marker
+        child = self.deaf_child(' </dev/null >/dev/null 2>&1')
+        self.run_editor([f'term-run --env RHUN_MARK={m} --sh -- {child} & sleep 0.5; exit 0',
+                         'wait-terminal 1 ended'])
+        time.sleep(0.2)
+        self.assertEqual(count(m), 0)
+
+    # --- the panel ---
+
+    def test_a_program_shows_the_terminals_over_another_view(self):
+        out = self.run_editor(['cmd toggle_problems', 'print-panel-tabs', 'term-run --title t -- true',
+                               'wait-terminal 1 ended', 'print-panel-tabs', 'cmd toggle_problems',
+                               'print-panel-tabs', 'term-select 1', 'print-panel-tabs'])
+        heads = [line for line in out if line.startswith('terminals=')]
+        self.assertEqual(len(heads), 4, out)
+        self.assertNotIn(' chosen', heads[0])
+        self.assertIn(' chosen', heads[1])
+        self.assertNotIn(' chosen', heads[2])
+        self.assertIn(' chosen', heads[3])
+
+    # --- finding the program ---
+
+    def test_a_program_is_found_on_its_own_path(self):
+        # the tool is only on the PATH the program gets (Windows too: not rhun's own PATH)
+        bin_dir = self.work / 'only-here'
+        bin_dir.mkdir()
+        if WINDOWS:
+            import shutil
+            shutil.copy(Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/hostname.exe',
+                        bin_dir / 'rhun-path-tool.exe')
+        else:
+            tool = bin_dir / 'rhun-path-tool'
+            tool.write_text('#!/bin/sh\necho found-on-path\n', encoding='utf-8')
+            tool.chmod(0o755)
+        path = str(bin_dir) if WINDOWS else bin_dir.as_posix()
+        out = self.run_editor([f'term-run --env PATH={path} --title p -- rhun-path-tool',
+                               'wait-terminal 1 ended', 'print-terminals', 'print-term'])
+        self.assertIn('state=exited code=0', self.terminals(out)[0])
+        if not WINDOWS:
+            self.assertIn('found-on-path', out)
 
     # --- the login environment ---
 
