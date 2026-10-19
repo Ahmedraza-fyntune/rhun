@@ -194,7 +194,11 @@ is_commit_provider:
     xor eax, eax
     cmp dword ptr [rbx + EXT_status], ES_REMOVED
     je 9f
-    mov rdi, [rbx + EXT_pv_commit]
+    mov rdi, rbx
+    mov esi, EXT_pv_commit
+    call ext_pv
+    mov rdi, rax
+    xor eax, eax
     test rdi, rdi
     jz 9f
     lea rsi, [rip + .Lyes]
@@ -334,14 +338,20 @@ try_send:
     mov rsi, [rip + cm_diff + SB_len]
     call sb_push_u64
     mov rdi, rbx
-    mov rsi, [rip + cm_line + SB_ptr]
-    mov rdx, [rip + cm_line + SB_len]
-    mov rcx, [rip + cm_diff + SB_ptr]
-    mov r8, [rip + cm_diff + SB_len]
-    call extproto_host_post
+    xor esi, esi
+    mov rdx, [rip + cm_line + SB_ptr]
+    mov rcx, [rip + cm_line + SB_len]
+    mov r8, [rip + cm_diff + SB_ptr]
+    mov r9, [rip + cm_diff + SB_len]
+    call extproto_host_send_body
     test rax, rax
     jz 7f
     mov [rip + cm_id], rax
+    mov rdi, rbx
+    mov rsi, rax
+    mov edx, PK_COMMIT_MESSAGE
+    mov ecx, QO_SCM
+    call query_track
     mov eax, [rbx + EXT_pid]
     mov [rip + cm_pid], eax
     call time_ms
@@ -407,7 +417,7 @@ FN scmext_commit_cancel
     cmp eax, [rip + cm_pid]
     jne 1f
     mov rdi, rbx
-    call extproto_send_cancel
+    call query_withdraw
 1:  call forget
 9:  EPILOGUE
 

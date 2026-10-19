@@ -353,7 +353,7 @@ class CommitMessage(Base):
         config = self.work / 'config/rhun/config'
         config.write_text(config.read_text().replace('commit_ai = ext:rhun-tests/writer\n', ''))
         exts = self.writer(body='x')
-        out = self.run_editor(['cmd settings', 'wait 200', 'type commit', 'wait 200', 'click 812 348',
+        out = self.run_editor(['cmd settings', 'wait 200', 'type message ai', 'wait 200', 'click 812 348',
                                'wait 200', 'print-scm-ext', 'print-ai'], exts=exts, drop_waits=True)
         self.assertIn('commit-provider=rhun-tests/writer asked=0', out)
         self.assertIn('An extension writes the messages.', out)

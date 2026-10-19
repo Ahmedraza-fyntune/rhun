@@ -73,13 +73,13 @@ FN gitdata_h_status
 settled_request:
     PROLOGUE 16
     mov [rsp], edi
-    call extproto_req
+    call req
     mov rbx, rax
     mov r12, rdx
     call gate
     test eax, eax
     jz 9f
-    call extproto_nargs
+    call extproto_nfields
     cmp rax, 2
     jne 8f
     # answered from the status in memory once no refresh runs or waits
@@ -102,17 +102,17 @@ settled_request:
 # ID git-blame DOC -> the blame of the document's current text (git blame --contents -)
 FN gitdata_h_blame
     PROLOGUE 32
-    call extproto_req
+    call req
     mov rbx, rax
     mov r12, rdx
     call gate
     test eax, eax
     jz 9f
-    call extproto_nargs
+    call extproto_nfields
     cmp rax, 3
     jne 8f
     mov edi, 2
-    call extproto_arg_u64
+    call extproto_field
     test edx, edx
     jz 8f
     mov rdi, rax
@@ -195,17 +195,17 @@ FN gitdata_h_blame
 #   it at HEAD (git log -L); no path: the history of HEAD
 FN gitdata_h_log
     PROLOGUE 32
-    call extproto_req
+    call req
     mov rbx, rax
     mov r12, rdx
     call gate
     test eax, eax
     jz 9f
-    call extproto_nargs
+    call extproto_nfields
     cmp rax, 6
     jne 8f
     mov edi, 2
-    call extproto_arg_u64
+    call extproto_field
     test edx, edx
     jz 8f
     test rax, rax
@@ -214,12 +214,12 @@ FN gitdata_h_log
     ja 8f
     mov r13, rax                # MAX
     mov edi, 3
-    call extproto_arg_u64
+    call extproto_field
     test edx, edx
     jz 8f
     mov r14, rax                # L1
     mov edi, 4
-    call extproto_arg_u64
+    call extproto_field
     test edx, edx
     jz 8f
     mov r15, rax                # L2
@@ -320,13 +320,13 @@ FN gitdata_h_log
 # ID git-show REV LEN + path -> the file's bytes at REV
 FN gitdata_h_show
     PROLOGUE 16
-    call extproto_req
+    call req
     mov rbx, rax
     mov r12, rdx
     call gate
     test eax, eax
     jz 9f
-    call extproto_nargs
+    call extproto_nfields
     cmp rax, 4
     jne 8f
     mov edi, 2
@@ -381,13 +381,13 @@ FN gitdata_h_show
 #   REV2 (REV2 "-": the file in the work tree)
 FN gitdata_h_diff_open
     PROLOGUE 16
-    call extproto_req
+    call req
     mov rbx, rax
     mov r12, rdx
     call gate
     test eax, eax
     jz 9f
-    call extproto_nargs
+    call extproto_nfields
     cmp rax, 5
     jne 8f
     mov edi, 2
@@ -397,7 +397,7 @@ FN gitdata_h_diff_open
     jz 8f
     xor r14d, r14d
     mov edi, 3
-    call extproto_arg
+    call extproto_field_at
     cmp rdx, 1
     jne 1f
     cmp byte ptr [rax], '-'
@@ -427,6 +427,17 @@ FN gitdata_h_diff_open
 9:  EPILOGUE
 8:  call extproto_answer_syntax
     EPILOGUE
+
+# req() -> rax the extension being served, rdx its request id
+req:
+    push rbx
+    call extproto_cur
+    mov rbx, rax
+    call extproto_req_id
+    mov rdx, rax
+    mov rax, rbx
+    pop rbx
+    ret
 
 # gate() -> eax 1 when the extension (rbx, request r12) may have Git data now; else it was answered
 gate:
@@ -485,7 +496,7 @@ room:
 rev_arg:
     PROLOGUE
     mov r13, rsi
-    call extproto_arg
+    call extproto_field_at
     test rdx, rdx
     jz 8f
     cmp rdx, REV_MAX

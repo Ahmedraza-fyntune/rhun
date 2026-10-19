@@ -2722,6 +2722,14 @@ FN app_timeout
 97: mov ebx, eax
 96: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
     cmp eax, -1
+    je 961f
+    cmp ebx, -1
+    je 962f
+    cmp eax, ebx
+    jge 961f
+962: mov ebx, eax
+961: call query_timeout         # language features: the next request to expire
+    cmp eax, -1
     je 98f
     cmp ebx, -1
     je 99f
@@ -2733,6 +2741,7 @@ FN app_timeout
 
 FN app_tick
     PROLOGUE
+    call query_tick             # language features: expired requests, before their askers' ticks
     call complete_tick
     call langfeat_tick
     call save_tick
