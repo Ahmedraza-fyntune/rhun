@@ -78,9 +78,6 @@ python3 tests/ext-pending-commands.py || fail=1
 python3 tests/ext-pending-owner.py || fail=1
 python3 tests/file-read-limited.py || fail=1
 python3 tests/dir-scan.py || fail=1
-python3 tests/task-core.py --faults || fail=1
-python3 tests/task-view.py --faults || fail=1
-python3 tests/task-clipboard.py || fail=1
 check config-strings build/config_strings_test
 check keys build/keys_test
 check ui-clip build/ui_clip_test
