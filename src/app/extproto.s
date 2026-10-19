@@ -479,6 +479,14 @@ handle_line:
     call testproto_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # AI: transcripts, tool answers, prompts (extaiproto.inc)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ai_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -518,6 +526,16 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call testproto_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # AI: the code and text go with the error (extaiproto.inc)
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call ai_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -3584,6 +3602,11 @@ verbs:
     .quad .Lv_test_end, h_tests, 0
     .quad .Lv_test_coverage, h_tests, TS_COVER_BODY
     .quad .Lv_test_exec, h_tests, TS_EXEC_BODY
+    # AI (wider-parity D, extaiproto.inc)
+    .quad .Lv_agent_sessions, h_agent_sessions, 1048576
+    .quad .Lv_agent_changed, h_agent_changed, 0
+    .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
+    .quad .Lv_unpropose, h_unpropose, 0
     .quad 0, 0, 0
 .Lv_test_items: .asciz "test-items"
 .Lv_test_remove: .asciz "test-remove"
@@ -3743,6 +3766,7 @@ feature_names:
 .Lr_syntax: .asciz "three unparsable lines in a row"
 
 .include "app/extwatchproto.inc"
+.include "app/extaiproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

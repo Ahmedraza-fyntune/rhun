@@ -2359,6 +2359,12 @@ FN app_on_key
     call complete_key           # the completion list, when it shows, takes its keys first
     test eax, eax
     jnz 9f
+    mov edi, r12d               # AI: a Review tab's keys (review.s)
+    mov esi, r13d
+    mov edx, r14d
+    call review_key
+    test eax, eax
+    jnz 9f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d

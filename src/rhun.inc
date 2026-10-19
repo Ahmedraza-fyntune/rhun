@@ -1139,6 +1139,7 @@ F DV_rev, 8             # commit, or 0 for the work tree
 F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
 F DV_pad, 4
+F DV_review, 8          # AI (review.s): the proposal a Review tab shows, or 0
 ENDSTRUCT DV_SIZE
 STRUCT
 F DL_kind, 4            # DK_*
@@ -1150,6 +1151,7 @@ ENDSTRUCT DL_SIZE
 .equ DK_DEL, 2
 .equ DK_HUNK, 3
 .equ DK_INFO, 4
+.equ DK_FILE, 5                 # AI (review.s): a file's header in a Review tab
 
 # a changed file in the history view
 STRUCT
@@ -1473,6 +1475,9 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_CONTEXT_KEYS, "context-keys", 0  # set-context
     # testing (testproto.s): test items, runs, results, coverage, test-exec
     FEATURE FEAT_TESTS, "tests", 1
+    # AI (wider-parity D: agentext.s, review.s, tools.s)
+    FEATURE FEAT_AGENTS, "agents", 1              # agent-sessions; rhun asks agent-transcript
+    FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1554,6 +1559,7 @@ ENDSTRUCT TAB_SIZE
 .equ FOCUS_PROMPT, 7
 .equ FOCUS_TERMINAL, 8
 .equ FOCUS_SCM, 9               # the commit message
+.equ FOCUS_AGENT_INPUT, 10      # AI (D4): the prompt box of an extension's agent session
 
 # grammar (syntax definition)
 STRUCT
@@ -2254,4 +2260,37 @@ F AS_bytes, 8           # worker, OpenCode: the conversation copy's estimated si
 F AS_model, 8           # the model the session last used (its row), or 0
 F AS_log_model, 8       # parse: the model the log names for the replies that follow
 F AS_shown_model, 8     # parse: the model on the last reply labeled with one
+# AI (wider-parity D1): a row an extension lists (AS_kind 5) keeps its title, model, CWD (AS_cwd)
+# and worktree in the fields above
+F AS_ext, 8             # kind 5: the extension that lists it (EXT*)
+F AS_sid, 8             # kind 5: its session id, cstr
+F AS_state, 4           # kind 5: AGS_*
+F AS_xflags, 4          # kind 5: AXF_*
+F AS_total, 8           # kind 5: messages the extension says the session has
+F AS_dirty, 8           # kind 5: the first message to fetch again, -1 when the copy is current
+F AS_req, 8             # kind 5: the agent-transcript request in flight (its id), 0 when none
+F AS_from, 8            # kind 5: the FROM of that request
+F AS_ask, 8             # kind 5 (D4): the open card, an AK record, or 0
 ENDSTRUCT AS_SIZE
+.equ AS_KIND_EXT, 5
+.equ AGS_IDLE, 0
+.equ AGS_WORKING, 1
+.equ AGS_WAITING, 2
+.equ AGS_ERROR, 3
+.equ AXF_MATCH, 1               # its CWD is the project or one of its worktrees
+.equ AXF_FETCHED, 2             # a transcript answer came at least once
+.equ ID_AI_SOURCE, 0x7a00       # + extension index: its switch in Settings > Agents
+.equ ID_AI_REVIEW, 0x7b00       # review.s: the Review tab's buttons
+.equ ID_AI_CARD, 0x7c00         # D4: the prompt box, Stop and card buttons
+
+# AI (wider-parity D): what one extension contributes, indexed like g_exts (ai_ext)
+STRUCT
+F AX_agents, 4          # [provides] agents = yes
+F AX_hidden, 4          # its sessions are switched off ([agents] OWNER/NAME = false)
+F AX_title, 8           # agents.title, cstr or 0
+F AX_rows, VEC_SIZE     # AS*, its session rows, owned
+F AX_tools, VEC_SIZE    # TL records from [tools] (tools.s)
+F AX_grants, 8          # tools.s: bit i set when the user allowed tool i for this session
+F AX_proposals, 4       # review.s: proposals of it still pending
+F AX_pad, 4
+ENDSTRUCT AX_SIZE
