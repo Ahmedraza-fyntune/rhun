@@ -561,6 +561,35 @@ c_print_dap_log:
     xor eax, eax
     ret
 
+# print-debug-tree variables|watch|stack|breakpoints: that section's tree rows (tree_dump), filled now
+c_print_debug_tree:
+    PROLOGUE
+    call next_arg
+    mov r13, rax
+    mov r14, rdx
+    call dview_sync_all
+    xor r15d, r15d
+1:  cmp r15d, 4
+    jae 9f
+    lea rax, [rip + tree_names]
+    mov rdx, [rax + r15*8]
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    inc r15d
+    jmp 1b
+2:  mov edi, r15d
+    call dview_tree
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, [rip + outp]
+    call tree_dump
+9:  xor eax, eax
+    EPILOGUE
+
 # print-configs: launch.ini's configuration names, "config=NAME" per line
 c_print_configs:
     PROLOGUE
@@ -620,6 +649,7 @@ DCTL c_print_console
 DCTL c_print_bps
 DCTL c_print_dap_log
 DCTL c_print_configs
+DCTL c_print_debug_tree
 
 .section .rodata
 .Ls_into: .asciz "into"
@@ -658,7 +688,14 @@ DCTL c_print_configs
 .Lc_print_bps: .asciz "print-bps"
 .Lc_print_dap_log: .asciz "print-dap-log"
 .Lc_print_configs: .asciz "print-configs"
+.Lc_print_debug_tree: .asciz "print-debug-tree"
+.Lt_variables: .asciz "variables"
+.Lt_watch: .asciz "watch"
+.Lt_stack: .asciz "stack"
+.Lt_breakpoints: .asciz "breakpoints"
 .p2align 3
+tree_names:
+    .quad .Lt_variables, .Lt_watch, .Lt_stack, .Lt_breakpoints
 opt_keys:
     .quad .Lk_cond, optc, .Lk_hits, opth, .Lk_log, optl, 0, 0
 .globl debug_ctl
@@ -674,4 +711,5 @@ debug_ctl:
     .quad .Lc_print_vars, e_c_print_vars, .Lc_print_watch, e_c_print_watch
     .quad .Lc_print_console, e_c_print_console, .Lc_print_bps, e_c_print_bps
     .quad .Lc_print_dap_log, e_c_print_dap_log, .Lc_print_configs, e_c_print_configs
+    .quad .Lc_print_debug_tree, e_c_print_debug_tree
     .quad 0, 0

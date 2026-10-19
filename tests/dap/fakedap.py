@@ -394,8 +394,13 @@ def handle(req):
             log('STALE frame %s' % fid)
             respond(req, success=False, message='stale frame')
             return
-        step = prog.steps[prog.frames[fid][0]]
-        scopes = [{'name': 'Locals', 'variablesReference': prog.ref(step.get('locals', {})), 'expensive': False},
+        pc, k = prog.frames[fid]
+        step = prog.steps[pc]
+        locals_ = step.get('locals', {})
+        stack = step.get('stack')
+        if stack and k > 0:
+            locals_ = stack[k].get('locals', {})
+        scopes = [{'name': 'Locals', 'variablesReference': prog.ref(locals_), 'expensive': False},
                   {'name': 'Globals', 'variablesReference': prog.ref(step.get('globals', {'G': 1})),
                    'expensive': True}]
         respond(req, {'scopes': scopes})

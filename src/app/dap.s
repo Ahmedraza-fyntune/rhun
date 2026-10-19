@@ -17,12 +17,21 @@ approval_slot: .long -1         # the session whose start waits for the approval
 g_dmsg: .zero SB_SIZE           # the message being built (jw_*)
 pd: .zero PD_SIZE               # pend_take's copy
 pathz: .zero SB_SIZE            # a NUL-terminated path from the pool
+g_nodep:
 nodep: .zero SB_SIZE            # a node's path
 approvals: .zero VEC_SIZE       # until the tasks group's approval store lands: (EXT*, project cstr)
 dlg_text: .zero 2048
 dlg_title: .zero 256
-.globl g_watches
+.globl g_watches, g_nodep
+restart_name: .zero SB_SIZE
+restart_after: .long 0          # a restart waits for this session to end
+watch_gen: .long 0              # send_watches' round
+restart_nodebug: .long 0
 g_watches: .zero SB_SIZE        # watch expressions, one per line
+.data
+.globl g_dap_gen
+g_dap_gen: .long 1              # bumped by every change the debug view shows
+.bss
 
 .text
 
@@ -506,7 +515,9 @@ launch_now:
     lea rdx, [rip + .Lm_starting]
     mov ecx, .Lm_starting_end - .Lm_starting
     call dcon_line
+    call dview_session_started
     mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
     EPILOGUE
 
 # ---------------- building requests ----------------
@@ -776,6 +787,7 @@ FN dap_tick
 8:  inc r12d
     jmp 1b
 9:  call bp_tick
+    call restart_check
     EPILOGUE
 
 # ds_tick(ds)
@@ -1082,6 +1094,7 @@ ds_end:
     mov ecx, .Lm_ended_end - .Lm_ended
     call dcon_line
     mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
 9:  EPILOGUE
 
 # reap(ds): an ended session's adapter is waited for; SIGKILL when SIGTERM was not enough
@@ -1402,6 +1415,7 @@ on_message:
     mov rsi, r12
     call on_reverse
 9:  mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
     EPILOGUE
 
 # jkey(obj, key cstr) -> JV* (json_get)
@@ -2607,6 +2621,7 @@ r_scopes:
 # vn_expand(ds, node) -> eax 1 when its children were asked for (or are there): it is marked open
 FN vn_expand
     PROLOGUE
+    inc dword ptr [rip + g_dap_gen]
     mov rbx, rdi
     mov r12d, esi
     mov rdi, rbx
@@ -2653,6 +2668,7 @@ FN vn_expand
 # vn_collapse(ds, node): closed, and not reopened at the next stop
 FN vn_collapse
     PROLOGUE
+    inc dword ptr [rip + g_dap_gen]
     mov rbx, rdi
     mov r12d, esi
     call vn_node
@@ -2887,9 +2903,11 @@ open_path_remove:
 
 # ---------------- watches ----------------
 
-# send_watches(ds): each watch expression evaluated in the focused frame
+# send_watches(ds): each watch expression evaluated in the focused frame (a new round: answers to an
+#   earlier one are dropped)
 send_watches:
     PROLOGUE
+    inc dword ptr [rip + watch_gen]
     mov rbx, rdi
     cmp dword ptr [rbx + DS_state], DSS_PAUSED
     jne 9f
@@ -2928,7 +2946,9 @@ send_watches:
     call akv
     mov rdi, rbx
     mov esi, RQ_WATCH
-    mov edx, r14d
+    mov edx, [rip + watch_gen]
+    shl rdx, 32
+    or rdx, r14
     call dap_req_send
     pop rcx
     pop rcx
@@ -2973,6 +2993,9 @@ r_watch:
     mov eax, [r15 + PD_epoch]
     cmp eax, [rbx + DS_epoch]
     jne 9f
+    mov eax, [r15 + PD_ctx + 4]
+    cmp eax, [rip + watch_gen]
+    jne 9f                      # an earlier round's answer
     mov eax, [r15 + PD_ctx]
     mov [rsp + 4], eax          # the watch's index
     mov rdi, rbx
@@ -3110,6 +3133,7 @@ refresh_watches:
 2:  mov rdi, rbx
     call send_watches
 9:  mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
     EPILOGUE
 
 # ---------------- the console's input ----------------
@@ -3347,6 +3371,7 @@ FN dap_resume
     inc dword ptr [rbx + DS_epoch]
     or dword ptr [rbx + DS_flags], DSF_STALE
     mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
 9:  EPILOGUE
 
 # dap_pause(): Pause on the focused running session
@@ -3387,6 +3412,95 @@ send_pause:
     mov esi, RQ_PAUSE
     xor edx, edx
     call dap_req_send
+9:  EPILOGUE
+
+# dap_focus_slot(slot): that session is the focused one (the toolbar, the view and stepping act on it)
+FN dap_focus_slot
+    cmp edi, DS_MAX
+    jae 1f
+    mov [rip + g_dfocus], edi
+    inc dword ptr [rip + g_dap_gen]
+    mov dword ptr [rip + g_dirty], 1
+1:  ret
+
+# dap_focus_frame(ds, index): another frame of the stopped thread: revealed, its scopes and the
+#   watches asked for again (the variables of the old frame go)
+FN dap_focus_frame
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    cmp dword ptr [rbx + DS_state], DSS_PAUSED
+    jne 9f
+    cmp r12, [rbx + DS_frames + VEC_len]
+    jae 9f
+    mov [rbx + DS_frame], r12d
+    mov qword ptr [rbx + DS_vars + VEC_len], 0
+    mov rdi, rbx
+    call reveal_frame
+    mov rdi, rbx
+    call send_scopes
+    mov rdi, rbx
+    call send_watches
+    inc dword ptr [rip + g_dap_gen]
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# dap_restart(): Restart: the focused session stops and its configuration starts again when it ended
+FN dap_restart
+    PROLOGUE
+    call dap_focused
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, [rbx + DS_name]
+    test rdi, rdi
+    jz 9f
+    lea rdi, [rip + restart_name]
+    call sb_clear
+    lea rdi, [rip + restart_name]
+    mov rsi, [rbx + DS_name]
+    call sb_push_cstr
+    mov eax, [rbx + DS_nodebug]
+    mov [rip + restart_nodebug], eax
+    mov eax, [rbx + DS_id]
+    mov [rip + restart_after], eax
+    cmp dword ptr [rbx + DS_state], DSS_ENDED
+    je 1f
+    mov rdi, rbx
+    call dap_stop_session
+    EPILOGUE
+1:  call restart_check
+9:  EPILOGUE
+
+# restart_check(): a restart waits for its session to end, then starts the configuration again
+restart_check:
+    PROLOGUE
+    mov eax, [rip + restart_after]
+    test eax, eax
+    jz 9f
+    # the session with that id
+    xor r12d, r12d
+1:  cmp r12d, DS_MAX
+    jae 2f
+    mov edi, r12d
+    call dap_slot
+    cmp dword ptr [rax + DS_state], DSS_FREE
+    je 11f
+    mov ecx, [rip + restart_after]
+    cmp [rax + DS_id], ecx
+    jne 11f
+    cmp dword ptr [rax + DS_state], DSS_ENDED
+    jne 9f                      # still ending
+    cmp dword ptr [rax + DS_pid], 0
+    jne 9f
+    jmp 2f
+11: inc r12d
+    jmp 1b
+2:  mov dword ptr [rip + restart_after], 0
+    mov rdi, [rip + restart_name + SB_ptr]
+    mov rsi, [rip + restart_name + SB_len]
+    mov edx, [rip + restart_nodebug]
+    call dap_start
 9:  EPILOGUE
 
 # ---------------- state for tests and drawing ----------------

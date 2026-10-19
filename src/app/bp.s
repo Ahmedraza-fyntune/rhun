@@ -175,6 +175,49 @@ set_opt:
     pop rbx
     ret
 
+# bp_index_of_id(id) -> eax its index, -1
+FN bp_index_of_id
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_bps + VEC_len]
+    jae 8f
+    imul rax, rcx, BP_SIZE
+    add rax, [rip + g_bps + VEC_ptr]
+    cmp [rax + BP_id], edi
+    je 9f
+    inc rcx
+    jmp 1b
+8:  mov eax, -1
+    ret
+9:  mov eax, ecx
+    ret
+
+# bp_set_option(index, which, cstr): 1 its condition, 2 its hit count, 3 its log message (an empty
+#   text removes it); the file's list goes to the sessions again
+FN bp_set_option
+    PROLOGUE
+    mov r12d, esi
+    mov r13, rdx
+    call bp_row
+    mov rbx, rax
+    lea rdi, [rbx + BP_cond]
+    cmp r12d, 2
+    jne 1f
+    lea rdi, [rbx + BP_hit]
+1:  cmp r12d, 3
+    jne 2f
+    lea rdi, [rbx + BP_log]
+2:  mov rsi, r13
+    call set_opt
+    mov rdi, [rbx + BP_path]
+    call mark_dirty
+    call changed
+    EPILOGUE
+
+# bp_save_soon(): the state file is written at the next tick (a watch changed)
+FN bp_save_soon
+    mov dword ptr [rip + save_due], 1
+    ret
+
 # bp_toggle(path cstr, line): removes the line breakpoint there, or adds one
 FN bp_toggle
     PROLOGUE
@@ -1002,7 +1045,7 @@ FN bp_exc_set
 9:  EPILOGUE
 
 # sb_push_clean_bp(sb, ptr, len): bytes with tabs and newlines as spaces
-sb_push_clean_bp:
+FN sb_push_clean_bp
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi

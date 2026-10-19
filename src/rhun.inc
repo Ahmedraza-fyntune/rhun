@@ -2564,6 +2564,7 @@ ENDSTRUCT BP_SIZE
 .equ DCON_INFO, 6           # rhun's notes ("Program exited with code 3")
 .equ DCON_INPUT, 7          # an expression typed into the console
 .equ DCON_RESULT, 8         # its value
+.equ PROMPT_DEBUG, 40           # the debugger's text prompts (debugview.s: condition, watch...)
 .equ DCON_LINE_MAX, 4096
 .equ AS_KIND_EXT, 5
 .equ AGS_IDLE, 0
