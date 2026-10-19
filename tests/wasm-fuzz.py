@@ -34,6 +34,9 @@ HAND = [
 ]
 # messages of loads that failed for reasons other than the module itself
 LINK = ('unknown import', 'incompatible import type', 'memory too large', 'table too large')
+# what wabt 1.0.41 accepts that the spec calls malformed: data segment flags past 2 (it reads two
+# bits of them)
+WABT_LENIENT = ('malformed data segment kind',)
 
 
 def corpus():
@@ -109,7 +112,7 @@ def run(seed, count, mods, work, validate):
         if not (answer == 'ok' or answer.startswith('error ') or answer.startswith('trap ')):
             problems.append('seed %d %s: %s' % (seed, f.name, answer))
             continue
-        if validate is None or answer.startswith('trap ') or any(x in answer for x in LINK):
+        if validate is None or answer.startswith('trap ') or any(x in answer for x in LINK + WABT_LENIENT):
             continue
         v = subprocess.run([validate, '--disable-simd', str(f)], capture_output=True)
         theirs = v.returncode == 0
