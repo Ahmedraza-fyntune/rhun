@@ -3,22 +3,22 @@
 # change (at most every 100 ms) and closes when either side closes or its extension stops.
 .include "rhun.inc"
 
-.equ DT_MAX, 128                # diff tabs in all
-.equ DT_PER_EXT, 32             # and per extension
-.equ DT_SIDE_MAX, 16777216      # a side larger than this is not compared
-.equ DT_EVERY, 100              # ms between computations while a side changes
+.equ DFT_MAX, 128                # diff tabs in all
+.equ DFT_PER_EXT, 32             # and per extension
+.equ DFT_SIDE_MAX, 16777216      # a side larger than this is not compared
+.equ DFT_EVERY, 100              # ms between computations while a side changes
 
 STRUCT
-F DT_ext, 8                     # its extension
-F DT_left, 8                    # the two documents' ids
-F DT_right, 8
-F DT_doc, 8                     # the diff tab's document
-F DT_title, 8                   # owned cstr
-F DT_lv, 8                      # the sides' versions it shows
-F DT_rv, 8
-F DT_at, 8                      # time_ms of its last computation
-F DT_dead, 8                    # 1: it closes at the next tick
-ENDSTRUCT DT_SIZE
+F DFT_ext, 8                     # its extension
+F DFT_left, 8                    # the two documents' ids
+F DFT_right, 8
+F DFT_doc, 8                     # the diff tab's document
+F DFT_title, 8                   # owned cstr
+F DFT_lv, 8                      # the sides' versions it shows
+F DFT_rv, 8
+F DFT_at, 8                      # time_ms of its last computation
+F DFT_dead, 8                    # 1: it closes at the next tick
+ENDSTRUCT DFT_SIZE
 
 .bss
 .p2align 3
@@ -38,7 +38,7 @@ dt_text:
     call sb_clear
     mov rdi, rbx
     call doc_len
-    cmp rax, DT_SIDE_MAX
+    cmp rax, DFT_SIDE_MAX
     ja 8f
     mov r13, rax
     mov rdi, r12
@@ -59,10 +59,10 @@ dt_text:
 dt_compute:
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + DT_left]
+    mov rdi, [rbx + DFT_left]
     call extproto_doc
     mov r12, rax
-    mov rdi, [rbx + DT_right]
+    mov rdi, [rbx + DFT_right]
     call extproto_doc
     mov r13, rax
     test r12, r12
@@ -70,11 +70,11 @@ dt_compute:
     test r13, r13
     jz 9f
     mov rax, [r12 + DOC_version]
-    mov [rbx + DT_lv], rax
+    mov [rbx + DFT_lv], rax
     mov rax, [r13 + DOC_version]
-    mov [rbx + DT_rv], rax
+    mov [rbx + DFT_rv], rax
     call time_ms
-    mov [rbx + DT_at], rax
+    mov [rbx + DFT_at], rax
     lea rdi, [rip + dt_sb]
     call sb_clear
     mov rdi, r12
@@ -99,7 +99,7 @@ dt_compute:
     lea rdi, [rip + dt_sb]
     lea rsi, [rip + .Ltoo_large]
     call sb_push_cstr
-8:  mov rdi, [rbx + DT_doc]
+8:  mov rdi, [rbx + DFT_doc]
     mov rsi, [rip + dt_sb + SB_ptr]
     mov rdx, [rip + dt_sb + SB_len]
     call wsdiff_show
@@ -120,23 +120,23 @@ FN ws_diff_open
     xor ecx, ecx
 1:  cmp rcx, [rip + dt_vec + VEC_len]
     jae 3f
-    imul r15, rcx, DT_SIZE
+    imul r15, rcx, DFT_SIZE
     add r15, [rip + dt_vec + VEC_ptr]
     inc rcx
-    cmp [r15 + DT_ext], rbx
+    cmp [r15 + DFT_ext], rbx
     jne 1b
-    cmp qword ptr [r15 + DT_dead], 0
+    cmp qword ptr [r15 + DFT_dead], 0
     jne 1b
     inc r14
     mov rax, [r12 + DOC_id]
-    cmp [r15 + DT_left], rax
+    cmp [r15 + DFT_left], rax
     jne 1b
     mov rax, [r13 + DOC_id]
-    cmp [r15 + DT_right], rax
+    cmp [r15 + DFT_right], rax
     jne 1b
     push rcx
     push rcx
-    mov rdi, [r15 + DT_title]
+    mov rdi, [r15 + DFT_title]
     call strlen
     pop rcx
     pop rcx
@@ -144,7 +144,7 @@ FN ws_diff_open
     jne 1b
     push rcx
     push rcx
-    mov rdi, [r15 + DT_title]
+    mov rdi, [r15 + DFT_title]
     mov rsi, [rsp + 16]
     mov rdx, [rsp + 24]
     call memeq
@@ -155,27 +155,27 @@ FN ws_diff_open
     mov rdi, r15
     call dt_compute
     jmp 6f
-3:  cmp r14, DT_PER_EXT
+3:  cmp r14, DFT_PER_EXT
     jae 8f
-    cmp qword ptr [rip + dt_vec + VEC_len], DT_MAX
+    cmp qword ptr [rip + dt_vec + VEC_len], DFT_MAX
     jae 8f
     lea rdi, [rip + dt_vec]
-    mov esi, DT_SIZE
+    mov esi, DFT_SIZE
     call vec_push
     mov r15, rax
     mov rdi, rax
     xor esi, esi
-    mov edx, DT_SIZE
+    mov edx, DFT_SIZE
     call memset
-    mov [r15 + DT_ext], rbx
+    mov [r15 + DFT_ext], rbx
     mov rax, [r12 + DOC_id]
-    mov [r15 + DT_left], rax
+    mov [r15 + DFT_left], rax
     mov rax, [r13 + DOC_id]
-    mov [r15 + DT_right], rax
+    mov [r15 + DFT_right], rax
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
     call mem_dup
-    mov [r15 + DT_title], rax
+    mov [r15 + DFT_title], rax
     mov rdi, rax
     lea rsi, [rip + .Lempty]
     xor edx, edx
@@ -184,21 +184,21 @@ FN ws_diff_open
     mov rcx, [rip + dt_vec + VEC_ptr]   # (vec_push may have moved the records: find it again)
     mov rdx, [rip + dt_vec + VEC_len]
     dec rdx
-    imul rdx, rdx, DT_SIZE
+    imul rdx, rdx, DFT_SIZE
     lea r15, [rcx + rdx]
-    mov [r15 + DT_doc], rax
+    mov [r15 + DFT_doc], rax
     mov rdi, r15
     call dt_compute
     jmp 7f
 6:  cmp dword ptr [rsp + 16], 0
     je 7f
-    mov rdi, [r15 + DT_doc]
+    mov rdi, [r15 + DFT_doc]
     call doc_tab
     test rax, rax
     js 7f
     mov rdi, rax
     call app_activate_tab
-7:  mov rax, [r15 + DT_doc]
+7:  mov rax, [r15 + DFT_doc]
     mov rax, [rax + DOC_id]
     EPILOGUE
 8:  xor eax, eax
@@ -210,17 +210,17 @@ FN ws_diff_close
     xor ecx, ecx
 1:  cmp rcx, [rip + dt_vec + VEC_len]
     jae 8f
-    imul rax, rcx, DT_SIZE
+    imul rax, rcx, DFT_SIZE
     add rax, [rip + dt_vec + VEC_ptr]
     inc rcx
-    cmp [rax + DT_ext], rdi
+    cmp [rax + DFT_ext], rdi
     jne 1b
-    cmp qword ptr [rax + DT_dead], 0
+    cmp qword ptr [rax + DFT_dead], 0
     jne 1b
-    mov rdx, [rax + DT_doc]
+    mov rdx, [rax + DFT_doc]
     cmp [rdx + DOC_id], rsi
     jne 1b
-    mov qword ptr [rax + DT_dead], 1
+    mov qword ptr [rax + DFT_dead], 1
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
     ret
@@ -236,37 +236,37 @@ FN ws_difftab_doc_closed
 1:  test rcx, rcx
     jz 9f
     dec rcx
-    imul rax, rcx, DT_SIZE
+    imul rax, rcx, DFT_SIZE
     add rax, [rip + dt_vec + VEC_ptr]
-    cmp [rax + DT_doc], rbx
+    cmp [rax + DFT_doc], rbx
     jne 2f
     # the tab itself: the record goes (the last takes its place)
     push rcx
     push rax
-    mov rdi, [rax + DT_title]
+    mov rdi, [rax + DFT_title]
     call mem_free
     pop rdi
     pop rcx
     mov rax, [rip + dt_vec + VEC_len]
     dec rax
     mov [rip + dt_vec + VEC_len], rax
-    imul rsi, rax, DT_SIZE
+    imul rsi, rax, DFT_SIZE
     add rsi, [rip + dt_vec + VEC_ptr]
     cmp rsi, rdi
     je 1b
     push rcx
     push rcx
-    mov edx, DT_SIZE
+    mov edx, DFT_SIZE
     call memcpy
     pop rcx
     pop rcx
     jmp 1b
 2:  mov rdx, [rbx + DOC_id]
-    cmp [rax + DT_left], rdx
+    cmp [rax + DFT_left], rdx
     je 3f
-    cmp [rax + DT_right], rdx
+    cmp [rax + DFT_right], rdx
     jne 1b
-3:  mov qword ptr [rax + DT_dead], 1
+3:  mov qword ptr [rax + DFT_dead], 1
     mov dword ptr [rip + g_dirty], 1
     jmp 1b
 9:  pop rbx
@@ -277,12 +277,12 @@ FN ws_difftab_ext_gone
     xor ecx, ecx
 1:  cmp rcx, [rip + dt_vec + VEC_len]
     jae 9f
-    imul rax, rcx, DT_SIZE
+    imul rax, rcx, DFT_SIZE
     add rax, [rip + dt_vec + VEC_ptr]
     inc rcx
-    cmp [rax + DT_ext], rdi
+    cmp [rax + DFT_ext], rdi
     jne 1b
-    mov qword ptr [rax + DT_dead], 1
+    mov qword ptr [rax + DFT_dead], 1
     mov dword ptr [rip + g_dirty], 1
     jmp 1b
 9:  ret
@@ -296,18 +296,18 @@ FN ws_difftab_timeout
     xor ebx, ebx
 1:  cmp rbx, [rip + dt_vec + VEC_len]
     jae 9f
-    imul r14, rbx, DT_SIZE
+    imul r14, rbx, DFT_SIZE
     add r14, [rip + dt_vec + VEC_ptr]
     inc rbx
     xor eax, eax
-    cmp qword ptr [r14 + DT_dead], 0
+    cmp qword ptr [r14 + DFT_dead], 0
     jne 3f
     mov rdi, r14
     call dt_changed
     test eax, eax
     jz 1b
-    mov rax, [r14 + DT_at]
-    add rax, DT_EVERY
+    mov rax, [r14 + DFT_at]
+    add rax, DFT_EVERY
     sub rax, r13
     jns 3f
     xor eax, eax
@@ -324,19 +324,19 @@ FN ws_difftab_timeout
 dt_changed:
     push rbx
     mov rbx, rdi
-    mov rdi, [rbx + DT_left]
+    mov rdi, [rbx + DFT_left]
     call extproto_doc
     test rax, rax
     jz 8f
     mov rcx, [rax + DOC_version]
-    cmp rcx, [rbx + DT_lv]
+    cmp rcx, [rbx + DFT_lv]
     jne 9f
-    mov rdi, [rbx + DT_right]
+    mov rdi, [rbx + DFT_right]
     call extproto_doc
     test rax, rax
     jz 8f
     mov rcx, [rax + DOC_version]
-    cmp rcx, [rbx + DT_rv]
+    cmp rcx, [rbx + DFT_rv]
     jne 9f
 8:  xor eax, eax
     pop rbx
@@ -357,26 +357,26 @@ FN ws_difftab_tick
     dec rbx
     cmp rbx, [rip + dt_vec + VEC_len]
     jae 1b                      # (closing one removed records)
-    imul r12, rbx, DT_SIZE
+    imul r12, rbx, DFT_SIZE
     add r12, [rip + dt_vec + VEC_ptr]
-    cmp qword ptr [r12 + DT_dead], 0
+    cmp qword ptr [r12 + DFT_dead], 0
     je 2f
-    mov rdi, [r12 + DT_doc]
+    mov rdi, [r12 + DFT_doc]
     call doc_tab
     test rax, rax
     js 11f
     mov rdi, rax
     call app_close_tab_now      # its record goes with its document
     jmp 1b
-11: mov rdi, [r12 + DT_doc]     # no tab (cannot happen): the record goes all the same
+11: mov rdi, [r12 + DFT_doc]     # no tab (cannot happen): the record goes all the same
     call ws_difftab_doc_closed
     jmp 1b
 2:  mov rdi, r12
     call dt_changed
     test eax, eax
     jz 1b
-    mov rax, [r12 + DT_at]
-    add rax, DT_EVERY
+    mov rax, [r12 + DFT_at]
+    add rax, DFT_EVERY
     cmp r13, rax
     jb 1b
     mov rdi, r12

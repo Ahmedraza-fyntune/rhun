@@ -235,8 +235,84 @@ for revision in ('v1', 'v1.1'):
     (target / f'{revision}.md').write_text(spec.replace('](v1.md)', '](../v1/v1.md)'))
 (out / 'extensions' / 'index.html').write_text('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=/docs/extensions/"><link rel="canonical" href="https://rhun.app/docs/extensions/"><title>Extensions</title><a href="/docs/extensions/">Extensions</a>\n')
 
+# The extension catalog: the rhun extensions index (rhun-editor/extensions' latest release, fetched by
+# site/build.sh into OUT/extension-index.ini) as cards with rhun://extension Install links, which open
+# rhun's Add dialog. Without an index the page says how to install from GitHub.
+NEEDS_WORDS = [('documents=write', 'read and change the files you have open'),
+               ('documents=read', 'read the files you have open'),
+               ('project=write', 'read and change the files in your project'),
+               ('project=read', 'read the files in your project'),
+               ('home=read', 'read the files in your home folder'),
+               ('network=yes', 'use the internet'), ('terminal=yes', 'suggest terminal commands for you to run')]
+
+
+def read_index(path):
+    """index.ini as {'format': N, 'entries': [(owner/name, {key: value})]} (whole-line comments)."""
+    entries, current, fmt = [], None, 0
+    for line in path.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line or line[0] in '#;':
+            continue
+        if line[0] == '[' and line[-1] == ']':
+            current = {}
+            entries.append((line[1:-1], current))
+        elif '=' in line:
+            key, value = (part.strip() for part in line.split('=', 1))
+            if current is None:
+                if key == 'format':
+                    fmt = int(value) if value.isdigit() else 0
+            else:
+                current[key] = value
+    return fmt, [(n, e) for n, e in entries if e.get('title') and e.get('version') and e.get('tag')]
+
+
+def can_words(needs):
+    words = [w for k, w in NEEDS_WORDS if k in needs.split()]
+    for item in needs.split():
+        if item.startswith('run='):
+            words.append('run ' + ' '.join(item[4:].split(',')))
+    return ', '.join(words) or 'only use its own commands and settings'
+
+
+index_file = out / 'extension-index.ini'
+cards = ''
+fmt, entries = read_index(index_file) if index_file.exists() else (0, [])
+if fmt == 1:
+    entries.sort(key=lambda e: (e[1].get('featured') != 'yes', e[1]['title'].lower()))
+    for name, e in entries:
+        words = ' '.join([e['title'], name, e.get('description', ''), e.get('keywords', '')]).lower()
+        cards += f'''<article class="ext-card" data-words="{esc(words)}">
+      <h3>{esc(e['title'])} <span class="ext-name">{esc(name)} · {esc(e['version'])}</span></h3>
+      <p>{esc(e.get('description', ''))}</p>
+      <p class="ext-can">It can {esc(can_words(e.get('needs', '')))}.</p>
+      <p><a class="button" href="rhun://extension/{esc(name)}">Install</a> <span class="ext-or">or in rhun: Install from GitHub, <code>{esc(name)}</code></span></p>
+    </article>'''
+    intro = ('Every version listed here was reviewed before rhun offers it: the release is pinned by its digest, '
+             'and rhun installs updates of these by themselves only when they ask for no more access.')
+    listing = f'''<input class="ext-search" type="search" placeholder="Search extensions" aria-label="Search extensions">
+    <div class="ext-cards">{cards}</div>
+    <script>document.querySelector('.ext-search').addEventListener('input', function (e) {{
+      var words = e.target.value.toLowerCase().split(/\\s+/).filter(Boolean);
+      document.querySelectorAll('.ext-card').forEach(function (card) {{
+        var text = ' ' + card.dataset.words.replace(/[^a-z0-9]+/g, ' ');
+        card.hidden = !words.every(function (w) {{ return text.indexOf(' ' + w) >= 0; }});
+      }});
+    }});</script>'''
+else:
+    intro = 'The catalog of reviewed extensions appears here once rhun-editor/extensions publishes its index.'
+    listing = '<p>Meanwhile, install any extension from GitHub: the puzzle piece in the title bar, then <strong>Install from GitHub…</strong>, then its <code>owner/name</code>.</p>'
+body = f'''<main id="main" class="wrap guide-layout">
+    <aside class="guide-sidebar">{guide_nav('extensions')}</aside>
+    <div class="guide-main">
+      <header class="guide-heading"><h1>Extensions</h1><p>{esc(intro)}</p></header>
+      <article class="guide-content catalog" aria-label="Extensions">{listing}</article>
+    </div>
+    </main>'''
+(out / 'extensions' / 'catalog').mkdir(parents=True, exist_ok=True)
+(out / 'extensions' / 'catalog' / 'index.html').write_text(document('Extensions', 'Reviewed extensions for rhun, with Install links that open rhun.', '/extensions/catalog/', body, 'docs-guide'))
+
 # Keep discovery URLs in sync with the actual generated pages.
 sitemap = out / 'sitemap.xml'
 xml = sitemap.read_text()
-urls = ['/docs/'] + [f'/docs/{p["slug"]}/' for p in pages] + ['/extensions/v1/', '/extensions/v1.1/']
+urls = ['/docs/'] + [f'/docs/{p["slug"]}/' for p in pages] + ['/extensions/v1/', '/extensions/v1.1/', '/extensions/catalog/']
 sitemap.write_text(xml.replace('</urlset>', ''.join(f'  <url><loc>https://rhun.app{url}</loc></url>\n' for url in urls) + '</urlset>'))

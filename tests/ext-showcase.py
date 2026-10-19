@@ -142,7 +142,10 @@ class Showcase(unittest.TestCase):
             self.assertIn('from github.com/rhun-editor/showcase. It can read and change the files you have open, '
                           'read the files in your project, suggest terminal commands for you to run.',
                           out['dialog'][1])
-            self.assertEqual(out['dialog'][2], 'button=Add extension')
+            # the index's word on a line of its own (reviewed once rhun-editor/extensions lists it)
+            self.assertIn(out['dialog'][2], ('Not in the rhun extensions index: nobody has reviewed it.',
+                                             'Reviewed for the rhun extensions index.'))
+            self.assertEqual(out['dialog'][3], 'button=Add extension')
         self.assertTrue(self.ext_dir.joinpath('extension.ini').exists())
 
         running = out['running'][0]

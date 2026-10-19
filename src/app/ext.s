@@ -523,8 +523,12 @@ apply_choice:
     mov rdx, rbx
     call sdef_find
     test rax, rax
-    jz 9f
-    mov r12, rax
+    jnz 31f
+    mov rdi, rbx
+    lea rsi, [rip + ini_it]
+    call xset_keep              # extension management: kept for a version that declares it
+    jmp 9f
+31: mov r12, rax
     mov rdi, [rip + ini_it + INI_val]
     mov rsi, [rip + ini_it + INI_vallen]
     call mem_dup
@@ -603,6 +607,8 @@ FN ext_settings_save
     or eax, [rbx + EXT_disabled]
     or eax, [rbx + EXT_edits]
     jnz 2f
+    cmp qword ptr [rbx + EXT_xset], 0
+    jne 2f
     mov rdi, rbx
     call run_allow_has
     test eax, eax
@@ -640,8 +646,13 @@ FN ext_settings_save
 4:  mov rdi, rbx                # the projects it may run programs in (runallow.s)
     lea rsi, [rip + tmp2]
     call run_allow_write
-    # the settings that differ from their defaults
-    xor r13d, r13d
+    # the settings that differ from their defaults, and those another version declares
+    mov rsi, [rbx + EXT_xset]
+    test rsi, rsi
+    jz 41f
+    lea rdi, [rip + tmp2]
+    call sb_push_cstr
+41: xor r13d, r13d
 5:  cmp r13, [rbx + EXT_sdefs + VEC_len]
     jae 1b
     imul r14, r13, SD_SIZE
@@ -855,6 +866,12 @@ FN ext_preview
     call ini_key_is
     lea r13, [rbx + EXT_mowner]
     test eax, eax
+    jnz 4f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_pack]
+    call ini_key_is
+    lea r13, [rbx + EXT_pack]
+    test eax, eax
     jz 1b
 4:  call val_dup
     mov [r13], rax
@@ -925,6 +942,8 @@ FN ext_install_load
     jmp 7f
 6:  cmp qword ptr [rbx + EXT_reason], 0
     jne 7f                      # a bad manifest stays failed
+    cmp qword ptr [rbx + EXT_prog], 0
+    je 7f                       # a pack without a program never starts
     mov rdi, rbx
     call ext_start
 7:  mov rax, rbx
@@ -1596,6 +1615,8 @@ FN ext_load
     mov rdi, [rsp + 16]
     call dup_cstr
     mov [rbx + EXT_name], rax
+    mov rdi, rbx
+    call extrec_load            # extension management: its install record (a link moves EXT_dir)
     # the state folder: ROOT/OWNER--NAME
     lea rdi, [rip + tmp]
     call sb_clear
@@ -1618,7 +1639,7 @@ FN ext_load
     call dup_cstr
     mov [rbx + EXT_state], rax
     # the manifest
-    mov rdi, [rsp]
+    mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lmanifest]
     call path_join
     mov r12, rax
@@ -1707,7 +1728,13 @@ FN ext_load
 41: lea rdi, [rip + .Lr_protocol]
     jmp .Lel_fail
 5:  mov dword ptr [rbx + EXT_hello], 0
-    cmp qword ptr [rbx + EXT_prog], 0
+    mov rdi, rbx
+    call pack_check             # extension management: a pack's list
+    test rax, rax
+    jz 51f
+    mov rdi, rax
+    jmp .Lel_fail
+51: cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
     # no program for this system: a WebAssembly module runs in rhun --wasm-host
     mov rdi, rbx
@@ -1717,7 +1744,11 @@ FN ext_load
     mov rdi, rax
     cmp rax, 1
     jne .Lel_fail
-    lea rdi, [rip + .Lr_no_program]
+    cmp qword ptr [rbx + EXT_pack], 0
+    je 52f
+    mov dword ptr [rbx + EXT_manifest_ok], 1    # a pack without a program never starts
+    jmp 83f
+52: lea rdi, [rip + .Lr_no_program]
     jmp .Lel_fail
 6:  # a script needs its runtime on PATH
     cmp qword ptr [rbx + EXT_script], 0
@@ -1776,7 +1807,17 @@ FN ext_load
     call provides_merge
     inc r12d
     jmp 82b
-83: # its data files: themes and grammars
+83: # source control (wider-parity C): a quick-diff provider hears opened for its files, so that
+    # rhun can ask about them (scmext.s); it starts by its own `on`
+    mov r12, [rbx + EXT_pv_quickdiff]
+    test r12, r12
+    jz 84f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    lea rdi, [rbx + EXT_sub_opened]
+    call merge_into
+84: # its data files: themes and grammars
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsub_themes]
     call path_join
@@ -1836,9 +1877,17 @@ manifest_kv:
     lea rsi, [rip + .Lk_icon]
     call ini_key_is
     test eax, eax
-    jz 13f
+    jz 15f
     call val_dup
     mov [rbx + EXT_icon], rax
+    jmp 9f
+15: mov rdi, r12
+    lea rsi, [rip + .Lk_pack]
+    call ini_key_is
+    test eax, eax
+    jz 13f
+    call val_dup
+    mov [rbx + EXT_pack], rax
     jmp 9f
 13: mov rdi, r12
     lea rsi, [rip + .Lk_color]
@@ -2505,7 +2554,11 @@ FN ext_cmd_run
     mov rbx, rdi
     lea rdi, [rsp]
     call invoke_take
-    mov rdi, rbx
+    cmp qword ptr [rsp + INV_doc], 0
+    jne 0f
+    call invoke_active_doc      # the document is the one active now, also after a lazy start
+    mov [rsp + INV_doc], rax
+0:  mov rdi, rbx
     cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 9f
     mov rax, rdi
@@ -2767,7 +2820,11 @@ FN ext_start
     call ext_is_visible
     test eax, eax
     jz 8f
-    cmp qword ptr [rip + ext_pending_shutting_down], 0
+    cmp qword ptr [rbx + EXT_prog], 0
+    jne 6f
+    cmp qword ptr [rbx + EXT_pack], 0
+    jne 7f                      # extension management: a pack without a program never starts
+6:  cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 7f
     mov rdi, rbx
     call ext_spawn
@@ -3886,6 +3943,7 @@ FN ext_tick
     inc dword ptr [rip + ext_ticks]
     call ext_project_check
     call extwatch_tick
+    call invoke_tick            # calls between extensions (invoke.s)
     # on = startup, once; on = project when a project is open
     cmp dword ptr [rip + ext_startup_done], 0
     jne 1f
@@ -4130,6 +4188,14 @@ FN ext_timeout
     add rax, r13
     call deadline
 .Lew_timeout_none:
+    call invoke_timeout
+    cmp rax, -1
+    je .Liv_timeout_none
+    mov r13, rax
+    call time_ms
+    add rax, r13
+    call deadline
+.Liv_timeout_none:
     xor r13d, r13d
 1:  cmp r13, [rip + g_exts + VEC_len]
     jae 8f
@@ -4857,6 +4923,7 @@ ext_target: .asciz "linux-x86_64"
 .Lk_runtime: .asciz "runtime"
 .Lk_run_wasm: .asciz "run.wasm32-wasip1"
 .Lk_icon: .asciz "icon"
+.Lk_pack: .asciz "pack"
 .Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
 .Lk_args: .asciz "args"

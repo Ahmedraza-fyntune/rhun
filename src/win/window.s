@@ -15,6 +15,7 @@ win_capacity: .quad 0
 win_width: .long 0
 win_height: .long 0
 win_surrogate: .long 0
+win_drop_char: .long 0          # a chord's second stroke went as WM_KEYDOWN: drop its WM_CHAR
 win_cursor: .quad 0
 win_class: .zero 80
 win_bmi: .zero 44
@@ -740,7 +741,12 @@ win_wndproc_deferred:
     shl eax, 10
     lea r13d, [rax + r13 - 0xdc00 + 0x10000]
 3:  mov dword ptr [rip + win_surrogate], 0
-    mov eax, [rsp + 176]
+    # a chord's second stroke already went as WM_KEYDOWN: its character is dropped
+    cmp dword ptr [rip + win_drop_char], 0
+    je 4f
+    mov dword ptr [rip + win_drop_char], 0
+    jmp .Lwm_zero
+4:  mov eax, [rsp + 176]
     test eax, eax
     jns 8f
     call win_mods
@@ -753,6 +759,21 @@ win_wndproc_deferred:
     call app_on_key
     jmp .Lwm_zero
 .Lwm_keydown:
+    mov dword ptr [rip + win_drop_char], 0
+    # the key's US position for bindings on any layout (g_key_latin): letters and digits
+    xor eax, eax
+    mov ecx, r13d
+    cmp ecx, '0'
+    jb 7f
+    cmp ecx, '9'
+    jbe 6f
+    cmp ecx, 'A'
+    jb 7f
+    cmp ecx, 'Z'
+    ja 7f
+    add ecx, 32
+6:  mov eax, ecx
+7:  mov [rip + g_key_latin], eax
     mov eax, [rsp + 176]
     test eax, eax
     jns 8f
@@ -775,8 +796,16 @@ win_wndproc_deferred:
     inc ecx
     jmp 1b
 2:  test r15d, MOD_CTRL | MOD_ALT
+    jnz 21f
+    # a chord waits for its second stroke (keys.s): the key goes to rhun now, its WM_CHAR is dropped
+    call keys_chord_pending
+    test eax, eax
     jz .Lwm_default
-    mov ecx, r13d
+    mov dword ptr [rip + win_drop_char], 1
+    mov edi, [rip + g_key_latin]
+    test edi, edi
+    jnz 3f
+21: mov ecx, r13d
     mov edx, 2
     API MapVirtualKeyW
     and eax, 0x7fffffff
@@ -791,12 +820,14 @@ win_wndproc_deferred:
 3:  mov esi, edi                # the terminal derives Ctrl+C and other control bytes from cp
     mov edx, r15d
     call app_on_key
+    mov dword ptr [rip + g_key_latin], 0
     jmp .Lwm_zero
 4:  mov edi, [rdx + rcx*8 + 4]
     xor esi, esi
     mov edx, r15d
     call app_on_key
 .Lwm_zero:
+    mov dword ptr [rip + g_key_latin], 0
     xor eax, eax
 .Lwm_ret:
     CALLBACK_END 96
