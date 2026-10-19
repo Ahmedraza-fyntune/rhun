@@ -184,8 +184,11 @@ python3 tests/ext-boundaries.py || fail=1
 python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
+# testing: the test explorer (feature "tests")
+python3 tests/testing.py || fail=1
 # WebAssembly extension host (src/wasm): the core spec suite needs wabt's wast2json
 if command -v wast2json >/dev/null; then python3 tests/wasm-spec.py || fail=1; else echo "skip wasm-spec (no wast2json)"; fi
+python3 tests/wasm-host.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?

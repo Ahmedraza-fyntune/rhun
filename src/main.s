@@ -111,6 +111,7 @@ FN main
 .Lm_exit:
     call app_clip_reset
     call headless_clip_reset
+    call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
     call agents_shutdown
     call ai_shutdown
