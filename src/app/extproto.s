@@ -456,6 +456,17 @@ handle_line:
     jz 2f                       # no body: answered at once
     cmp rax, REPLY_BODY_MAX
     jbe 1f
+    # notebooks: a request may have a cap of its own (nb-open, nb-save: 64 MB)
+    push rax
+    push rax
+    mov rdi, rbx
+    mov rsi, r12
+    call ext_reply_cap
+    mov rcx, rax
+    pop rax
+    pop rdx
+    cmp rax, rcx
+    jbe 1f
     mov rdi, rbx                # a body over the cap ends the program, as for requests
     lea rsi, [rip + .Lr_body]
     call ext_kill
@@ -470,6 +481,14 @@ handle_line:
     jz 9f
     test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
     jz 9f
+    mov rdi, rbx                # notebooks: nb-open, nb-save
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call nb_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -501,6 +520,16 @@ handle_line:
     test edx, edx
     jz 9f
     mov r12, rax
+    mov edi, 2                  # notebooks: nb-open, nb-save, with the code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call nb_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -3415,6 +3444,11 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # notebooks (nbproto.inc)
+    .quad .Lnb_v_state, h_nb_state, 0
+    .quad .Lnb_v_output, h_nb_output, NB_OUTPUT_MAX
+    .quad .Lnb_v_stream, h_nb_stream, NB_STREAM_MAX
+    .quad .Lnb_v_kernel_label, h_nb_kernel_label, 4096
     .quad 0, 0, 0
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
@@ -3538,7 +3572,9 @@ cmd_allow:
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature
+    .quad .Lnb_feature          # bit 15: notebooks
+    .quad 0
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "
@@ -3576,6 +3612,7 @@ feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf
 .Lr_syntax: .asciz "three unparsable lines in a row"
 
 .include "app/extwatchproto.inc"
+.include "app/nbproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

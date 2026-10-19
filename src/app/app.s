@@ -722,7 +722,13 @@ app_sync_doc_1:
     je 1f
     mov rdx, [rax + TAB_doc]
     mov [rip + g_file], rdx
-    cmp rcx, TAB_DOC
+    cmp rcx, TAB_NOTEBOOK       # notebooks: the selected cell's document
+    jne 3f
+    mov rdi, rdx
+    call nb_active_doc
+    mov [rip + g_doc], rax
+    jmp 1f
+3:  cmp rcx, TAB_DOC
     jne 2f
     mov [rip + g_doc], rdx
 1:  # the view's copies of an image are only kept while it is shown
@@ -811,6 +817,24 @@ FN app_update_title
     mov rdi, [rip + tmp_sb + SB_ptr]
     PCALL P_title
 9:  EPILOGUE
+
+# tab_dirty(TAB*) -> eax 1 when the tab holds unsaved changes: a document's, or a notebook's
+FN tab_dirty
+    mov rax, [rdi + TAB_kind]
+    cmp rax, TAB_NOTEBOOK
+    jne 1f
+    push rbx
+    mov rbx, [rdi + TAB_doc]
+    mov rdi, [rbx + DOC_nb]
+    call nb_sync_dirty
+    pop rbx
+    ret
+1:  cmp rax, TAB_DOC
+    jne 8f
+    mov rdi, [rdi + TAB_doc]
+    jmp doc_dirty
+8:  xor eax, eax
+    ret
 
 # doc_tab(doc) -> rax the index of its tab, or -1
 FN doc_tab
@@ -1036,7 +1060,18 @@ FN app_open_file
     call app_toast
     mov rax, -1
     EPILOGUE
-12: mov r14d, TAB_DOC
+12: # notebooks: a file an extension reads as a notebook opens in a notebook tab
+    cmp dword ptr [rip + g_nb_open_text], 0
+    jne 13f
+    mov rdi, r12
+    call nb_provider
+    test rax, rax
+    jz 13f
+    mov rdi, r12
+    mov rsi, rax
+    call nb_open_tab
+    EPILOGUE
+13: mov r14d, TAB_DOC
     call doc_new
     mov rbx, rax
     # images open in an image tab, decoded when first shown
@@ -1372,7 +1407,15 @@ FN app_close_tab_now
     call extview_tab_closed     # its extension hears it, the view's slot is freed
     pop rax
     pop rax
-0:  mov rbx, [rax + TAB_doc]
+0:  cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    jne 70f
+    push rax
+    push rax
+    mov rdi, [rax + TAB_doc]
+    call nb_tab_closed          # its extension hears it, its cells go
+    pop rax
+    pop rax
+70: mov rbx, [rax + TAB_doc]
     test rbx, rbx
     jz 1f
     mov rdi, rbx
@@ -1422,10 +1465,8 @@ FN app_close_tab
     inc qword ptr [rip + app_save_epoch]
     mov rbx, rdi
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 1f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+    mov rdi, rax
+    call tab_dirty
     test eax, eax
     jz 1f
     call dlg_drop
@@ -1486,10 +1527,8 @@ ask_unsaved:
     jae 3f
     mov rdi, rbx
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+    mov rdi, rax
+    call tab_dirty
     test eax, eax
     jz 2f
     mov [rip + dlg_tab], rbx
@@ -1572,7 +1611,11 @@ save_doc:
     mov r13d, edi
     mov r14d, esi
     mov rbx, [rip + g_doc]
-    test rbx, rbx
+    call nb_active              # notebooks: the notebook, not its cell
+    test rax, rax
+    jz 0f
+    mov rbx, [rax + NB_host]
+0:  test rbx, rbx
     jz 9f
     cmp qword ptr [rbx + DOC_path], 0
     jne 1f
@@ -1602,7 +1645,7 @@ save_doc:
 save_readonly_confirmed:
     PROLOGUE
     mov rdi, [rip + ro_id]
-    call extproto_doc
+    call app_doc_by_id
     test rax, rax
     jz 9f
     mov rdi, rax
@@ -1637,7 +1680,7 @@ FN app_save_managed
     jz 2f
     lea rdx, [rip + app_save_completed]
 2:  mov rcx, r14
-    call save_start
+    call app_save_start         # save_start, or a notebook's save through its extension
     mov r12, rax
     cmp rax, 1
     je 9f
@@ -1716,7 +1759,7 @@ FN app_save_as_finish
     PROLOGUE
     mov r12, rdi
     mov rdi, [rip + save_prompt_id]
-    call extproto_doc
+    call app_doc_by_id
     test rax, rax
     jz 9f
     mov rbx, rax
@@ -1961,7 +2004,11 @@ FN app_after_save
 FN cmd_save_as
     READONLY_RET
     mov rdi, [rip + g_doc]
-    test rdi, rdi
+    call nb_active              # notebooks: the notebook's document
+    test rax, rax
+    jz 2f
+    mov rdi, [rax + NB_host]
+2:  test rdi, rdi
     jz 1f
     xor esi, esi
     xor edx, edx
@@ -2371,7 +2418,13 @@ FN app_on_key
     call save_cancel_key
     test eax, eax
     jnz 9f
-72: mov edi, r12d
+72: mov edi, r12d                # notebooks: command and edit mode keys
+    mov esi, r13d
+    mov edx, r14d
+    call nb_key
+    test eax, eax
+    jnz 9f
+    mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call vim_key
@@ -2695,7 +2748,15 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: mov eax, ebx
+96: call nb_timeout
+    cmp eax, -1
+    je 98f
+    cmp ebx, -1
+    je 99f
+    cmp eax, ebx
+    jge 98f
+99: mov ebx, eax
+98: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2725,6 +2786,7 @@ FN app_tick
     call editor_tick
     call ext_tick
     call ext_provider_tick
+    call nb_tick
     call app_clip_tick
     EPILOGUE
 
@@ -3248,12 +3310,21 @@ FN center_draw
     call extpage_draw
     EPILOGUE
 12: cmp qword ptr [rax + TAB_kind], TAB_VIEW
-    jne 2f
+    jne 13f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call extview_draw
+    EPILOGUE
+13: cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    jne 2f
+    mov edi, [rip + g_editor_rect]
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call nb_draw
+    call find_draw
     EPILOGUE
 2:  mov rbx, [rip + g_doc]
     mov rdi, rbx
@@ -4276,11 +4347,8 @@ tab_draw:
     mov r8d, r12d
     call ui_btn
     mov [rsp + 28], eax
-89: xor r14d, r14d              # modified?
-    cmp qword ptr [r15 + TAB_kind], TAB_DOC
-    jne 82f
-    mov rdi, [r15 + TAB_doc]
-    call doc_dirty
+89: mov rdi, r15                # modified?
+    call tab_dirty
     mov r14d, eax
 82: test dword ptr [r15 + TAB_flags], TF_PIN
     jnz .Ltw_pin
@@ -5455,7 +5523,7 @@ unsaved_kept:
 close_readonly_confirmed:
     PROLOGUE
     mov rdi, [rip + ro_id]
-    call extproto_doc
+    call app_doc_by_id
     test rax, rax
     jz 9f
     mov rdi, rax

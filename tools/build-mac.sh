@@ -30,6 +30,7 @@ for s in $x86 build/assets.s; do
         { case "$s" in src/app/catalogretire.s|src/app/catalogregistry*.s|tests/catalog*_test.s) catalog_stale=0; for h in src/app/catalogretire.inc src/app/catalogregistry.inc src/app/catalogregistrywork.inc src/app/catalogregistrymap.inc src/app/extprepare.inc src/app/extprepareretire.inc src/app/extvalidate.inc; do [ "$h" -nt "$o" ] && catalog_stale=1; done; [ "$catalog_stale" = 1 ];; *) false;; esac; } ||
         { [ "$s" = src/app/extproto.s ] && [ src/app/extwatchproto.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/extproto.s ] && [ src/app/extprotoevents.inc -nt "$o" ]; } ||
+        { [ "$s" = src/app/extproto.s ] && [ src/app/nbproto.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/ext.s ] && [ src/app/extvalidateparse.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/extvalidatemanifest.s ] && [ src/app/extvalidatemanifest.inc -nt "$o" ]; } ||
         { [ "$s" = src/app/extvalidatetree.s ] && [ src/app/extvalidatetree.inc -nt "$o" ]; } ||

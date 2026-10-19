@@ -666,6 +666,27 @@ g_commands:
     COMMAND check_for_updates, "Check for Updates", cmd_check_for_updates, ""
     COMMAND install_update, "Install Update", cmd_install_update, ""
     COMMAND restart_to_update, "Restart to Update", cmd_restart_to_update, ""
+    # notebooks (nbkeys.s): the notebook's own keys are its command and edit modes
+    COMMAND notebook.run_cell, "Notebook: Run Cell", cmd_nb_run_cell, ""
+    COMMAND notebook.run_and_select_below, "Notebook: Run Cell and Select Below", cmd_nb_run_next, ""
+    COMMAND notebook.run_and_insert_below, "Notebook: Run Cell and Insert Below", cmd_nb_run_insert, ""
+    COMMAND notebook.run_all, "Notebook: Run All", cmd_nb_run_all, ""
+    COMMAND notebook.interrupt, "Notebook: Interrupt Kernel", cmd_nb_interrupt, ""
+    COMMAND notebook.restart, "Notebook: Restart Kernel", cmd_nb_restart, ""
+    COMMAND notebook.select_kernel, "Notebook: Select Kernel", cmd_nb_kernel, ""
+    COMMAND notebook.clear_outputs, "Notebook: Clear All Outputs", cmd_nb_clear_outputs, ""
+    COMMAND notebook.insert_above, "Notebook: Insert Code Cell Above", cmd_nb_insert_above, ""
+    COMMAND notebook.insert_below, "Notebook: Insert Code Cell Below", cmd_nb_insert_below, ""
+    COMMAND notebook.delete_cell, "Notebook: Delete Cell", cmd_nb_delete_cell, ""
+    COMMAND notebook.undo_cell, "Notebook: Undo Cell Operation", cmd_nb_undo_cell, ""
+    COMMAND notebook.to_markup, "Notebook: Change Cell to Markdown", cmd_nb_to_markup, ""
+    COMMAND notebook.to_code, "Notebook: Change Cell to Code", cmd_nb_to_code, ""
+    COMMAND notebook.move_up, "Notebook: Move Cell Up", cmd_nb_move_up, ""
+    COMMAND notebook.move_down, "Notebook: Move Cell Down", cmd_nb_move_down, ""
+    COMMAND notebook.toggle_outputs, "Notebook: Show or Hide Outputs", cmd_nb_toggle_outputs, ""
+    COMMAND notebook.edit_cell, "Notebook: Edit Cell", cmd_nb_edit, ""
+    COMMAND notebook.command_mode, "Notebook: Command Mode", cmd_nb_command_mode, ""
+    COMMAND notebook.reopen_as_text, "Notebook: Reopen as Text", cmd_nb_open_as_text, ""
     .quad 0, 0, 0, 0
 
 .bss

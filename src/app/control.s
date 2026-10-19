@@ -1060,6 +1060,56 @@ c_print_complete:
     xor eax, eax
     EPILOGUE
 
+# ---- notebooks (nbkeys.s) ----
+# print-notebook: a line per cell of the active notebook, then its state
+c_print_notebook:
+    PROLOGUE
+    call flush_frame
+    lea rdi, [rip + out]
+    call nb_dump
+    xor eax, eax
+    EPILOGUE
+
+# print-nb-output I J: cell I's output J (kind, items, text), then <eoo>
+c_print_nb_output:
+    PROLOGUE
+    call flush_frame
+    call next_int
+    mov r13, rax
+    call next_int
+    mov rdx, rax
+    mov rsi, r13
+    lea rdi, [rip + out]
+    call nb_dump_output
+    xor eax, eax
+    EPILOGUE
+
+# nb-mode edit|command
+c_nb_mode:
+    mov rdi, rbx
+    mov rsi, r12
+    call nb_ctl_mode
+    xor eax, eax
+    ret
+
+# nb-select I
+c_nb_select:
+    PROLOGUE
+    call next_int
+    mov rdi, rax
+    call nb_ctl_select
+    xor eax, eax
+    EPILOGUE
+
+# nb-run I: as cell I's run button
+c_nb_run:
+    PROLOGUE
+    call next_int
+    mov rdi, rax
+    call nb_ctl_run
+    xor eax, eax
+    EPILOGUE
+
 c_print_extbar:
     PROLOGUE
     call flush_frame
@@ -2240,6 +2290,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_ext_menu: .asciz "ext-menu"
 .Lc_print_views: .asciz "print-views"
 .Lc_print_complete: .asciz "print-complete"
+.Lc_print_notebook: .asciz "print-notebook"
+.Lc_print_nb_output: .asciz "print-nb-output"
+.Lc_nb_mode: .asciz "nb-mode"
+.Lc_nb_select: .asciz "nb-select"
+.Lc_nb_run: .asciz "nb-run"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lx_yes: .asciz "yes"
@@ -2334,7 +2389,11 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
-    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
+    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
+    # notebooks
+    .quad .Lc_print_notebook, c_print_notebook, .Lc_print_nb_output, c_print_nb_output
+    .quad .Lc_nb_mode, c_nb_mode, .Lc_nb_select, c_nb_select, .Lc_nb_run, c_nb_run
+    .quad 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:

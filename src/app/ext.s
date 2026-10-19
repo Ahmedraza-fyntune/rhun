@@ -964,6 +964,8 @@ FN ext_retire
     call complete_ext_gone
     mov rdi, rbx
     call langfeat_ext_gone
+    mov rdi, rbx
+    call nb_ext_gone
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -4268,6 +4270,8 @@ FN ext_legacy_exited
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
+    mov rdi, rbx
+    call nb_ext_gone            # and its notebooks' requests, runs and kernels
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -5632,7 +5636,9 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
     .quad .Lpv_symbols, EXT_pv_symbols, .Lpv_actions, EXT_pv_actions
     .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format
-    .quad .Lpv_save_actions, EXT_pv_save_actions, 0, 0
+    .quad .Lpv_save_actions, EXT_pv_save_actions
+    .quad .Lpv_notebook, EXT_pv_notebook, .Lpv_nbtitle, EXT_pv_nbtitle, .Lpv_nbkernel, EXT_pv_nbkernel  # notebooks
+    .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -5736,6 +5742,9 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_rename: .asciz "rename"
 .Lpv_format: .asciz "format"
 .Lpv_save_actions: .asciz "save_actions"
+.Lpv_notebook: .asciz "notebook"
+.Lpv_nbtitle: .asciz "notebook.title"
+.Lpv_nbkernel: .asciz "notebook.kernel"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"

@@ -644,6 +644,7 @@ F DOC_language_owner, 8 # owned prepared GP reference for DOC_lang, or 0
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
+F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1
@@ -1130,6 +1131,7 @@ ENDSTRUCT MK_SIZE
 .equ DF_DISK_CHANGED, 8          # external contents differ and unsaved edits were kept
 .equ DF_REVEAL, 16               # its cursor was placed while it was not shown: in view when next drawn
 .equ DF_CENTER, 32               # with DF_REVEAL: that reveal puts the cursor's line in the middle
+.equ DF_CELL, 64                 # notebooks: a cell's text (nbdoc.s): no path and no tab of its own
 
 # return 0 at once when the document is read-only: g_doc, or the one in reg
 .macro READONLY_RET reg=0
@@ -1486,9 +1488,10 @@ ENDSTRUCT TF_SIZE
 .equ FEAT_SNIPPET_VARIANTS, 4096 # declared unequal initial mirrors
 .equ FEAT_SNIPPETS, 2048        # prepared fields and native editable sessions
 # the features whose requests rhun sends (and whose ok ID LEN replies it frames)
-.equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
+.equ FEAT_NOTEBOOKS, 32768        # notebooks (wider-parity A): nb-open, nb-save, runs and outputs
+.equ FEAT_PROVIDERS, FEAT_NOTEBOOKS | FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
 .equ FEAT_WORKSPACE_WATCH, 16384
-.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+.equ FEAT_HOST, FEAT_NOTEBOOKS | FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1515,6 +1518,7 @@ ENDSTRUCT IMG_SIZE
 .equ TAB_GIT, 4
 .equ TAB_EXT, 5                 # the Extensions page (extpage.s)
 .equ TAB_VIEW, 6                # an extension's view (extview.s); TAB_flags >> TF_VIEW_SHIFT is its slot + 1
+.equ TAB_NOTEBOOK, 7            # a notebook (nbview.s): TAB_doc is a DOC without text, DOC_nb its NB
 .equ TF_VIEW_SHIFT, 16
 .equ ID_VIEW, 0x7700            # + slot: a view's area
 .equ VW_MAX, 32                 # views open at once, all extensions
@@ -1726,6 +1730,9 @@ F EXT_catalog_state, 4 #0staging,1visible,2hidden historical
 F EXT_catalog_pad, 4
 F EXT_host_child_in, 4 # retained temporary target stdin endpoint
 F EXT_host_child_out, 4 # retained temporary target stdout endpoint
+F EXT_pv_notebook, 8    # notebooks: [provides] notebook (patterns), notebook.title, notebook.kernel
+F EXT_pv_nbtitle, 8
+F EXT_pv_nbkernel, 8
 ENDSTRUCT EXT_SIZE
 .equ EXT_host_cleanup_mask, EXT_start_pad
 .equ EXT_host_cleanup_error, EXT_activation_owner_pad
@@ -2008,3 +2015,133 @@ F AS_model, 8           # the model the session last used (its row), or 0
 F AS_log_model, 8       # parse: the model the log names for the replies that follow
 F AS_shown_model, 8     # parse: the model on the last reply labeled with one
 ENDSTRUCT AS_SIZE
+
+# ---- notebooks (wider-parity design, part A: nbdoc.s, nbview.s, nbout.s, nbproto.inc) ----
+# A notebook is a TAB_NOTEBOOK tab whose cells are DOCs of their own (DF_CELL). The extension that
+# provides the file's notebook reads and writes it (nb-open, nb-save) and runs cells (nb-run);
+# rhun keeps the cells, their outputs and what they show.
+STRUCT
+F NB_host, 8            # DOC*: the tab's document (path and name, no text; DOC_nb points back)
+F NB_ext, 8             # EXT*: the extension that reads, writes and runs it
+F NB_id, 8              # the number extensions know it by (session-unique)
+F NB_cells, VEC_SIZE    # CL* each, in order
+F NB_meta, SB_SIZE      # the notebook's metadata, opaque, returned on save
+F NB_undo, VEC_SIZE     # NU records: the last cell operations, for z
+F NB_kernel, SB_SIZE    # the kernel button's text
+F NB_err, SB_SIZE       # why it could not be opened
+F NB_scroll, 8          # px from the top of the cells to the top of the view
+F NB_sel, 8             # the selected cell
+F NB_req, 8             # the nb-open or nb-save rhun waits on, 0 none
+F NB_reqat, 8           # when it went out (time_ms), or when the wait for the program began
+F NB_savefn, 8          # nb_save_start's callback(doc id, arg, result) and its argument, or 0
+F NB_savearg, 8
+F NB_outbytes, 8        # bytes of all its outputs' items
+F NB_total, 8           # px of all cells at the last layout
+F NB_lastkey, 8         # command mode: the last key and when (d d, i i, 0 0)
+F NB_lastkeyt, 8
+F NB_state, 4           # NBS_*
+F NB_reqkind, 4         # NBR_* of NB_req
+F NB_want, 4            # NBR_* waiting for the program to run
+F NB_editing, 4         # 1 edit mode, 0 command mode
+F NB_kstate, 4          # NBK_*
+F NB_dirty, 4           # cell operations or outputs changed since it was read or saved
+F NB_reveal, 4          # bring the selected cell into view at the next frame
+F NB_layoutw, 4         # the width the cached heights are for
+F NB_vy, 4              # where its cells were drawn last (physical px), for tests and clicks
+F NB_vh, 4
+ENDSTRUCT NB_SIZE
+.equ NBS_OPENING, 0
+.equ NBS_READY, 1
+.equ NBS_FAILED, 2
+.equ NBR_OPEN, 1
+.equ NBR_SAVE, 2
+.equ NBK_NONE, 0
+.equ NBK_IDLE, 1
+.equ NBK_BUSY, 2
+.equ NBK_STARTING, 3
+.equ NBK_DEAD, 4
+STRUCT
+F CL_doc, 8             # DOC* (DF_CELL): its source
+F CL_id, 8              # the number extensions know it by (session-unique, stable while it exists)
+F CL_run, 8             # the run in progress or the last one, 0 none
+F CL_count, 8           # execution count, -1 none
+F CL_lang, 8            # owned cstr: LANG as the extension named it (spaces as _), 0 for markup
+F CL_meta, SB_SIZE      # its metadata, opaque, returned on save
+F CL_outs, VEC_SIZE     # OU* each, in order
+F CL_outrev, 8          # changes with its outputs (the layout cache)
+F CL_h, 8               # height at the last layout
+F CL_hkey, 8            # what that height was measured for
+F CL_kind, 4            # CLK_*
+F CL_state, 4           # RUN_*
+F CL_collapsed, 4       # its outputs are hidden (o)
+F CL_clearwait, 4       # clear-wait: the outputs clear when the next one arrives
+F CL_y, 4               # where it was drawn last (physical px; -1 not on screen)
+F CL_unsent, 4           # its run waits for the extension to run before nb-run goes out
+ENDSTRUCT CL_SIZE
+.equ CLK_CODE, 0
+.equ CLK_MARKUP, 1
+.equ RUN_NONE, 0
+.equ RUN_QUEUED, 1
+.equ RUN_RUNNING, 2
+.equ RUN_DONE, 3
+.equ RUN_FAILED, 4
+.equ RUN_CANCELLED, 5
+STRUCT
+F OU_kind, 4            # OUK_*
+F OU_ierr, 4            # its image cannot be decoded
+F OU_id, 8              # owned cstr: OUTID (Jupyter's display_id), or 0
+F OU_keep, SB_SIZE      # opaque bytes returned on save (the jupyter extension keeps the JSON there)
+F OU_items, VEC_SIZE    # NI records, in order of preference
+F OU_show, 8            # the item drawn: the first one rhun supports, -1 none
+F OU_lines, 8           # text items: lines in all
+F OU_bytes, 8           # bytes its items count against NB_outbytes
+F OU_img, 8             # an image item scaled to fit (owned pixels), or 0
+F OU_iw, 4              # their size, physical px
+F OU_ih, 4
+F OU_ikey, 4            # the width they were made for
+F OU_pad, 4
+ENDSTRUCT OU_SIZE
+.equ OUK_STDOUT, 1
+.equ OUK_STDERR, 2
+.equ OUK_RESULT, 3
+.equ OUK_DISPLAY, 4
+.equ OUK_ERROR, 5
+STRUCT
+F NI_type, 4            # NIT_*
+F NI_w, 4               # intrinsic logical size (images, pictures), 0 0 natural
+F NI_h, 4
+F NI_pad, 4
+F NI_name, 8            # owned cstr: a type rhun does not know, kept to be returned, or 0
+F NI_data, SB_SIZE
+ENDSTRUCT NI_SIZE
+.equ NIT_OTHER, 0
+.equ NIT_TEXT, 1
+.equ NIT_ANSI, 2
+.equ NIT_PNG, 3
+.equ NIT_JPEG, 4
+.equ NIT_GIF, 5
+.equ NIT_RICH, 6
+.equ NIT_PICTURE, 7
+STRUCT
+F NU_op, 8              # NUO_*
+F NU_index, 8           # where
+F NU_index2, 8          # move: where to; kind: the old kind
+F NU_cell, 8            # delete: the cell taken out (owned by the record), or 0
+ENDSTRUCT NU_SIZE
+.equ NUO_INSERT, 1
+.equ NUO_DELETE, 2
+.equ NUO_MOVE, 3
+.equ NUO_KIND, 4
+.equ NB_BODY_MAX, 67108864      # nb-open's answer and nb-save's body, each way
+.equ NB_CELLS_MAX, 5000
+.equ NB_SOURCE_MAX, 4194304     # a cell's source
+.equ NB_OUTS_MAX, 1000          # outputs a cell
+.equ NB_ITEMS_MAX, 32           # items an output
+.equ NB_ITEM_MAX, 16777216      # an item
+.equ NB_STREAM_MAX, 65536       # an nb-stream message
+.equ NB_OUTALL_MAX, 67108864    # outputs in all, a notebook
+.equ NB_OUTPUT_MAX, NB_ITEM_MAX + 1048576   # an nb-output body
+.equ NB_UNDO_MAX, 100
+.equ NB_TEXT_LINES, 400         # lines of a text output shown before "N more lines"
+.equ NB_LABEL_MAX, 200          # the kernel button's text
+.equ NB_OPEN_MS, 30000          # an nb-open or nb-save without an answer fails after this
