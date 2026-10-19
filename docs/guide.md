@@ -916,6 +916,35 @@ From [rhun-editor](https://github.com/rhun-editor):
 | `rhun-editor/wordfreq` | the open file's most frequent words as a bar chart that follows your typing (C) |
 | `rhun-editor/words` | completion from the words in your open files (C++) |
 | `rhun-editor/showcase` | a tour of everything an extension can do |
+| `rhun-editor/tests` | Go and Rust tests in the Testing section: run, results, diffs, coverage (Go) |
+
+### Testing
+
+Extensions that run tests (such as `rhun-editor/tests` for Go and Rust) fill the **Testing**
+section of the sidebar (command Testing). Its tree shows each extension's tests by module,
+package or file, with their state: not run, queued, running, passed, failed, errored, skipped. The
+section's buttons run all tests, run them with coverage, run the failed ones again and cancel;
+`r` runs the selected test, `d` debugs it, and its menu also goes to the test or its failure,
+opens the expected and actual values as a diff tab and shows its output. Under the tree the
+selected test's last result: its message, the expected and actual values as a colored line diff,
+and the end of its output.
+
+In the editor each test has a run button in the gutter at its first line (`[testing] gutter =
+false` hides them): a click runs it, a right click opens its menu, and after a run the button
+shows the result. A failure with a place is a problem (the Problems tab, a mark in the file with
+the expected and actual values on hover) until the test passes. After a run with coverage the line
+numbers are tinted: covered green, missed red, partly covered yellow (Show Test Coverage toggles
+them).
+
+Commands, without default keys (bind them in `[keys]`): Run All Tests, Run Tests in Current File,
+Run Test at Cursor, Debug Test at Cursor, Run All Tests with Coverage, Re-run Failed Tests, Re-run
+Last Test Run, Cancel Test Runs, Show Test Coverage, Go to Next Test Failure.
+
+The test programs (`go test`, `cargo test`) are started by rhun, not by the extension: as you, with
+your environment, in your project, only during runs you start. The extension's manifest names
+them (`[needs] tests = go cargo`, shown before you install it), and the first run in a project
+asks once, showing the command (Forget on the extension's page asks again). A folder opened from
+a link runs none until you trust it. Results are kept until rhun quits.
 
 ### Write your own
 

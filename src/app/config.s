@@ -16,6 +16,8 @@
 .globl cfg_restore_project
 .globl cfg_follow_system, cfg_dark_theme, cfg_light_theme, cfg_theme_keys
 cfg_restore_project: .long 1
+.globl cfg_test_gutter
+cfg_test_gutter: .long 1        # testing: [testing] gutter, the tests' glyphs in the gutter
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
 cfg_line_height: .long 150
@@ -828,6 +830,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Ls_git: .asciz "git"
 .Ls_updates: .asciz "updates"
 .Ls_remote: .asciz "remote"
+.Ls_testing: .asciz "testing"
 .Ls_extensions: .asciz "extensions"
 
 .macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0, live_desc=0
@@ -930,6 +933,8 @@ g_settings:
     SETTING .Ls_updates, extensions, ST_CHOICE, cfg_ext_updates, 0, 2, 1, 0, "Extension updates", "Install reviewed versions by themselves, or only show updates.", .Lextup_opts
     SETTING_ACTION .Ls_updates, check_extensions, cmd_check_extensions, .Lextup_label, g_extup_desc
     SETTING .Ls_remote, agent_binary, ST_STR, cfg_remote_agent_binary, 0, 0, 0, 0, "Remote agent binary", "A Linux rhun to start on remote hosts. Empty uses this release's own."
+    # testing (testgutter.s)
+    SETTING .Ls_testing, gutter, ST_BOOL, cfg_test_gutter, 0, 1, 1, 0, "Test buttons in the gutter", "A run button and the result at each test's first line."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Lextup_opts: .asciz "install", "Install", "check", "Show only", "off", "Off", ""
