@@ -1896,6 +1896,9 @@ h_status:
     call mem_dup
     mov [rbx + EXT_status_text], rax
 1:  mov dword ptr [rip + g_dirty], 1
+    mov rdi, rbx                # the status item _v1 (statusitems.s)
+    mov rsi, [rbx + EXT_status_text]
+    call status_v1_set
     mov rdi, [rip + cur_id]
     call reply_ok
     EPILOGUE
@@ -3247,6 +3250,56 @@ h_cmd:
 FN extproto_set_cur
     mov [rip + cur], rdi
     ret
+
+# ID status-item ITEM LEN + body -> ok ID: adds or replaces a status bar item (feature status-items,
+# statusitems.s)
+h_status_item:
+    PROLOGUE
+    mov rbx, [rip + cur]
+    FEAT_TEST rbx, FEAT_STATUS_ITEMS
+    jz .Lhsi_unknown
+    cmp qword ptr [rip + nfields], 4
+    jne .Lhsi_syntax
+    mov edi, 2
+    call field_at
+    mov rdi, rbx
+    mov rsi, rax
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call status_item_set
+    test eax, eax
+    jz .Lhsi_ok
+    cmp eax, 1
+    jne .Lhsi_syntax
+    lea rsi, [rip + .Le_toobig_status]
+    jmp .Lhsi_error
+# ID status-remove ITEM -> ok ID
+h_status_remove:
+    PROLOGUE
+    mov rbx, [rip + cur]
+    FEAT_TEST rbx, FEAT_STATUS_ITEMS
+    jz .Lhsi_unknown
+    cmp qword ptr [rip + nfields], 3
+    jne .Lhsi_syntax
+    mov edi, 2
+    call field_at
+    mov rdi, rbx
+    mov rsi, rax
+    call status_item_remove
+.Lhsi_ok:
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+.Lhsi_unknown:
+    lea rsi, [rip + .Le_unknown]
+.Lhsi_error:
+    mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+.Lhsi_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
 
 # ID run-command NAME LEN + ARGS: a built-in, or another extension's callable command (feature
 # command-args; invoke.s answers, now or when the call comes back)
@@ -4911,6 +4964,8 @@ verbs:
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
     .quad .Lv_run_command, h_run_command, INV_BODY_MAX
+    .quad .Lv_status_item, h_status_item, 16384
+    .quad .Lv_status_remove, h_status_remove, 0
     # source control (wider-parity C): gitdata.s
     .quad .Lv_git_repo, gitdata_h_repo, 0
     .quad .Lv_git_status, gitdata_h_status, 0
@@ -4987,6 +5042,9 @@ verbs:
 .Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
 .Lv_run_command: .asciz "run-command"
+.Lv_status_item: .asciz "status-item"
+.Lv_status_remove: .asciz "status-remove"
+.Le_toobig_status: .asciz "toobig 8 items"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
 .Lv_git_repo: .asciz "git-repo"

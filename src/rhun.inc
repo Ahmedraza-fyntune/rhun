@@ -1657,6 +1657,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_REVEAL, "reveal", 0
     FEATURE FEAT_DIFF, "diff", 0
     FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
+    # contributions and commands: status bar items (statusitems.s)
+    FEATURE FEAT_STATUS_ITEMS, "status-items", 0  # status-item, status-remove
     # resources, workspaces, secrets and lifecycle (extres.s, secrets.s and the files they name)
     FEATURE FEAT_IDLE, "idle", 0                  # busy yes|no
     FEATURE FEAT_SECRETS, "secrets", 0
@@ -2305,6 +2307,8 @@ F MTG_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal
 F MTG_doc, 8             # its DOC*, or 0
 F MTG_path, 8            # cstr: its path, or 0
 F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+F MTG_view, 8            # cstr: the view a view_title / view_item target is in (the key view), or 0
+F MTG_item, 8            # cstr: the targeted tree item's context value (the key viewItem), or 0
 ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
