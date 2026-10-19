@@ -875,6 +875,7 @@ FN ext_install_load
     mov rdi, rbx
     call ext_settings_load_one
     call ext_cmds_changed
+    call rview_init             # its declared views take their places (views group)
     cmp dword ptr [rbx + EXT_status], ES_FAILED
     je 7f                      # keep the validation failure; its commands must not start it
     mov dword ptr [rbx + EXT_status], ES_IDLE
@@ -961,6 +962,8 @@ FN ext_retire
     mov rdi, rbx
     call extview_owner_gone
     mov rdi, rbx
+    call rview_ext_gone         # its declared views leave their places (views group)
+    mov rdi, rbx
     call complete_ext_gone
     mov rdi, rbx
     call langfeat_ext_gone
@@ -968,6 +971,8 @@ FN ext_retire
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
     call testmodel_forget       # testing: its tests and results go
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1586,7 +1591,9 @@ FN ext_load
     jne .Lel_fail
     lea rdi, [rip + .Lr_manifest_large]
     jmp .Lel_fail
-1:  lea rdi, [rip + ini_it]
+1:  mov rdi, rbx                # AI: nothing from an earlier manifest (agentext.s)
+    call ai_ext_reset
+    lea rdi, [rip + ini_it]
     mov rsi, r13
     mov rdx, r14
     call ini_init
@@ -1921,9 +1928,32 @@ manifest_kv:
     lea rsi, [rip + .Ls_provides]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 5f
+    mov rdi, rbx                # AI: agents, agents.title (agentext.s)
+    mov rsi, r12
+    call agentext_manifest_kv
+    test eax, eax
+    jnz 9f
     lea rdi, [rip + pv_keys]
     call parse_keyed
+    jmp 9f
+5:  mov rdi, r12                # AI: [tools] (tools.s)
+    lea rsi, [rip + .Ls_tools]
+    call ini_sec_is
+    test eax, eax
+    jz 6f
+    mov rdi, rbx
+    mov rsi, r12
+    call tools_manifest_kv
+    jmp 9f
+6:  mov rdi, r12                # views group: [views] (rview.s)
+    lea rsi, [rip + .Ls_views]
+    call ini_sec_is
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call rview_manifest_kv
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -3540,6 +3570,8 @@ FN ext_exited
     call langfeat_ext_gone      # and the language queries it was asked
     mov rdi, rbx
     call testproto_ext_gone     # testing: its runs end errored and their processes stop
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4722,6 +4754,8 @@ ext_target: .asciz "linux-x86_64"
 .Ls_commands: .asciz "commands"
 .Ls_subscribe: .asciz "subscribe"
 .Ls_provides: .asciz "provides"
+.Ls_views: .asciz "views"
+.Ls_tools: .asciz "tools"           # AI (tools.s)
 .Lpv_complete: .asciz "complete"
 .Lpv_ctrig: .asciz "complete.triggers"
 .Lpv_signature: .asciz "signature"

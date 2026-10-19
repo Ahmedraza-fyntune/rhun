@@ -1070,8 +1070,11 @@ c_print_views:
     call flush_frame
     lea rdi, [rip + out]
     call extview_dump
+    lea rdi, [rip + out]
+    call rview_dump             # the retained views too (views group)
     xor eax, eax
     EPILOGUE
+
 
 # print-complete: the completion list and the signature help (complete_dump)
 c_print_complete:
@@ -2326,6 +2329,8 @@ ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
     .quad langfeat_ctl          # language features (lfcontrol.s)
     .quad test_ctl              # testing (testview.s)
+    .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
+    .quad views_ctl             # views group: places and retained views (viewsctl.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
