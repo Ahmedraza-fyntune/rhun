@@ -163,6 +163,37 @@ class GitData(Base):
         self.assertTrue(got[0][0].startswith('error 1 toobig'), got)
         self.assertTrue(got[1][0].startswith('ok 2 '), got)
 
+    def test_the_longest_revision_and_path_together(self):
+        # review: REV (200 bytes) and PATH (4095) together once overran the copy of REV:PATH
+        rev, path = 'a' * 200, 'd/' * 2046 + 'abc'
+        exts = self.ext(commands={'go': [[f'git-show {rev} {len(path)}', path], ['git-repo', None]]})
+        self.run_cmd('go', exts=exts)
+        got = self.replies()
+        self.assertTrue(got[0][0].startswith('error 1 nofile'), got)
+        self.assertTrue(got[1][0].startswith('ok 2 '), got)
+        self.assertEqual(got[1][1].split('\n', 1)[1], self.proj.as_posix() + 'main')
+
+    def test_a_plain_ok_carries_no_old_body(self):
+        # review: git-diff-open's "ok ID" once came with the body of the git-show before it
+        exts = self.ext(commands={'go': [['git-show HEAD 5', 'a.txt'], ['git-diff-open HEAD~1 HEAD 5', 'a.txt'],
+                                         ['git-repo', None]]})
+        self.run_cmd('go', exts=exts)
+        log = self.fake_log()
+        i, j = log.index('< ok 2'), [k for k, l in enumerate(log) if l.startswith('< ok 3 ')][0]
+        self.assertTrue(all(l.startswith('< 0 ') for l in log[i + 1:j]), log[i:j + 1])
+
+    def test_ahead_alone_changes_the_signature(self):
+        # review: the ahead count was dropped from what decides "0 git changed"
+        sigs = []
+        self.git('branch', '-f', 'up', 'HEAD~1')
+        self.git('branch', '--set-upstream-to=up')
+        for ahead in (1, 2):
+            out = self.run_editor(['wait-git', 'wait 200', 'print-git', 'print-git-data'], drop_waits=True)
+            self.assertIn(f'ahead={ahead}', out[0])
+            sigs.append([l for l in out if l.startswith('git-data sig=')][0])
+            self.git('commit', '-q', '--allow-empty', '-m', 'Empty')     # the status stays clean
+        self.assertNotEqual(sigs[0], sigs[1])
+
     def test_a_stopped_extension_gets_no_old_answers(self):
         exts = self.ext(commands={'go': [['git-log 1000 0 0 0', None]]})
         out = self.run_editor(['cmd fake.go', 'wait-ext fake running', 'ext-set fake stop', 'wait 300',
@@ -341,6 +372,27 @@ class QuickDiff(Base):
         self.assertEqual(len([l for l in self.fake_log('qd') if ' quickdiff ' in l]), 3)
         self.assertEqual([r for r, _ in self.replies('qd')][-2:], ['ok 1', 'ok 2'])
 
+    def test_a_silent_provider_has_one_request_per_document(self):
+        # review: every save added a request that never ended, until language queries had no room
+        shutil.rmtree(self.proj / '.git')
+        answers = {'quickdiff': {'never': True}}
+        exts = self.ext('qd', needs='', hello='hello 1 quickdiff', answers=answers,
+                        ini='on = startup\n[provides]\nquickdiff = *.txt')
+        saves = []
+        for _ in range(70):
+            saves += ['type x', 'key ctrl+s', 'wait 20']
+        out = self.run_editor(['wait-ext qd running', 'wait 300', *saves, 'wait 300', 'print-scm-ext'],
+                              exts=exts, drop_waits=True)
+        self.assertIn('quickdiff-pending=1', ' '.join(out))
+        self.assertGreaterEqual(len([l for l in self.fake_log('qd') if l.startswith('< 0 cancel ')]), 60)
+
+    def test_a_stopped_provider_takes_its_base_with_it(self):
+        # review: a base stayed after its provider stopped
+        shutil.rmtree(self.proj / '.git')
+        out = self.run_editor(['wait-ext qd running', 'wait 500', 'print-git', 'ext-set qd stop', 'wait 500',
+                               'print-git'], exts=self.provider(), drop_waits=True)
+        self.assertEqual(self.marks(out), ['marks .~..'])
+
     def test_refresh_without_the_feature(self):
         exts = self.ext('qd', needs='', hello='hello 1', commands={'refresh': [['quickdiff-refresh 1', '-']]})
         self.run_editor(['cmd qd.refresh', 'wait-ext qd running', 'wait 500'], exts=exts, drop_waits=True)
@@ -369,7 +421,7 @@ class CommitMessage(Base):
         out = self.generate(self.writer(body='Add a fourth line\n\nIt was missing.'))
         self.assertIn('message=Add a fourth line||It was missing.', out)
         self.assertIn('Ready. Review the generated message before committing.', out)
-        self.assertIn('commit-provider=rhun-tests/writer asked=0', out)
+        self.assertIn('commit-provider=rhun-tests/writer asked=0 quickdiff-pending=0', out)
         log = self.fake_log('writer')
         request = [l for l in log if ' commit-message ' in l]
         self.assertEqual(len(request), 1, log)
@@ -406,14 +458,14 @@ class CommitMessage(Base):
         exts = self.writer(body='x')
         out = self.run_editor(['cmd settings', 'wait 200', 'type message ai', 'wait 200', 'click 812 348',
                                'wait 200', 'print-scm-ext', 'print-ai'], exts=exts, drop_waits=True)
-        self.assertIn('commit-provider=rhun-tests/writer asked=0', out)
+        self.assertIn('commit-provider=rhun-tests/writer asked=0 quickdiff-pending=0', out)
         self.assertIn('An extension writes the messages.', out)
         self.assertIn('commit_ai = ext:rhun-tests/writer', config.read_text())
 
     def test_a_missing_extension_is_named(self):
         out = self.generate(self.work / 'none')
         self.assertIn('The selected commit message extension is not installed.', out)
-        self.assertIn('commit-provider=rhun-tests/writer asked=0', out)
+        self.assertIn('commit-provider=rhun-tests/writer asked=0 quickdiff-pending=0', out)
 
 
 if __name__ == '__main__':

@@ -36,6 +36,8 @@ BOOLS = {
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
+    'testing': 'gutter',
+    'debug': 'show_on_start keys_in_terminal',
 }
 INTS = {
     ('files', 'format_on_save_timeout'): (250, 30000, 250),
@@ -47,6 +49,7 @@ INTS = {
     ('editor', 'tab_width'): (1, 16, 1), ('terminal', 'font_size'): (8, 40, 1),
     ('terminal', 'line_height'): (1., 2.5, .05),
     ('terminal', 'scrollback'): (0, 100000, 1000), ('terminal', 'height'): (80, 2000, 10),
+    ('debug', 'console_lines'): (1000, 100000, 1000),
 }
 STRINGS = {
     ('ui', 'font'): 'missing font café.ttf', ('editor', 'font'): 'missing mono café.ttf',
@@ -60,7 +63,8 @@ CHOICES = {('editor', 'multi_cursor_paste'): ('spread', 'full'),
            ('editor', 'multi_cursor_modifier'): ('alt', 'ctrl'),
            ('ui', 'decorations'): ('auto', 'client', 'server'),
            ('git', 'commit_ai'): ('off', 'claude', 'codex', 'ollama'),
-           ('updates', 'extensions'): ('install', 'check', 'off')}
+           ('updates', 'extensions'): ('install', 'check', 'off'),
+           ('extensions', 'secrets'): ('system', 'memory', 'file')}
 
 
 # Theme shows without Follow system dark mode, the dark and light mode's themes with it.
@@ -214,7 +218,8 @@ class SettingsUI(unittest.TestCase):
                   ('editor', 'multi_cursor_modifier'): (42, 49),
                   ('ui', 'decorations'): (55, 55, 78),
                   ('git', 'commit_ai'): (45, 92, 59, 116),
-                  ('updates', 'extensions'): (67, 84, 45)}
+                  ('updates', 'extensions'): (67, 84, 45),
+                  ('extensions', 'secrets'): (76, 70, 44)}
         for (section, key), options in CHOICES.items():
             for index, option in enumerate(options):
                 with self.subTest(setting=f'{section}.{key}', option=option):

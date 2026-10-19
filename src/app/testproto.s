@@ -142,6 +142,12 @@ FN testproto_reply_error
     pop rbx
     ret
 
+# FN testproto_set_ext(ext): the replies that follow go to this extension (testexec.s's answers to a
+# request that waited for the user's approval)
+FN testproto_set_ext
+    mov [rip + req_ext], rdi
+    ret
+
 # FN testproto_reply_ok_u64(id, value) for testexec.s
 FN testproto_reply_ok_u64
     jmp reply_ok_u64
@@ -187,6 +193,7 @@ FN testproto_ready
     jz 9f
     mov r12, rax
     mov dword ptr [r12 + TSC_ready], 1
+    call testview_ensure        # the Testing section shows its controllers
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -416,7 +423,12 @@ FN testproto_resolve
     jz 4f
     mov qword ptr [r15 + RQ_ext], 0
     jmp 9f
-4:  mov rdi, r12
+4:  mov rdi, rbx                # the query engine keeps its 30 s and counts it
+    mov rsi, [r15 + RQ_id]
+    mov edx, PK_TESTS_RESOLVE
+    mov ecx, QO_TESTS
+    call query_track
+    mov rdi, r12
     mov rsi, r13
     mov edx, 1
     call testmodel_resolving
@@ -538,6 +550,14 @@ FN testproto_reply
     call toast_bytes
     call testproto_dispatch
     jmp 8b
+
+# testproto_expired(ext, id, ...): the query engine gave up on a tests-resolve (30 s) or a test-run
+#   (10 s): it is answered as an error saying so
+FN testproto_expired
+    xor edx, edx
+    lea rcx, [rip + .Lm_no_answer]
+    mov r8d, 17
+    jmp testproto_reply
 
 # entry_note_bytes(TSE*, ptr, len): as entry_note with bytes
 entry_note_bytes:
@@ -737,6 +757,11 @@ send_run:
     call ob_send
     test rax, rax
     jnz 8f
+    mov rdi, r12
+    mov rsi, [rbx + TSR_req]
+    mov edx, PK_TEST_RUN
+    mov ecx, QO_TESTS
+    call query_track
     mov dword ptr [rip + g_ts_dirty], 1
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -780,45 +805,6 @@ FN testing_tick
     PROLOGUE
     call time_ms
     mov r15, rax
-    lea rbx, [rip + rq]
-    xor r12d, r12d
-1:  mov r13, [rbx + RQ_ext]
-    test r13, r13
-    jz 2f
-    mov rax, r15
-    sub rax, [rbx + RQ_t0]
-    cmp rax, TS_RESOLVE_MS
-    jb 2f
-    mov qword ptr [rbx + RQ_ext], 0
-    mov rdi, r13
-    mov rsi, [rbx + RQ_id]
-    call extproto_send_cancel
-    mov rdi, r13
-    call testmodel_ctrl
-    test rax, rax
-    jz 2f
-    mov r14, rax
-    mov rdi, rax
-    mov rsi, [rbx + RQ_item]
-    mov rdx, [rbx + RQ_gen]
-    call testmodel_live
-    test eax, eax
-    jz 2f
-    mov rdi, r14
-    mov rsi, [rbx + RQ_item]
-    xor edx, edx
-    call testmodel_resolving
-    lea rdi, [rip + .Lm_no_answer]
-    call strlen
-    mov rcx, rax
-    mov rdi, r14
-    mov rsi, [rbx + RQ_item]
-    lea rdx, [rip + .Lm_no_answer]
-    call testmodel_set_error
-2:  add rbx, RQ_SIZE
-    inc r12d
-    cmp r12d, TS_RESOLVE_MAX
-    jb 1b
     # Cancel: processes stop after 2 s, the run ends after 5 s
     lea rbx, [rip + g_ts_runs]
     xor r12d, r12d
@@ -856,25 +842,13 @@ FN testing_tick
     jb 3b
     call testproto_dispatch
     call testexec_tick
+    call testgutter_tick        # failures as problems
     EPILOGUE
 
 # testing_timeout() -> ms until testing_tick has something to do, -1 when nothing waits
 FN testing_timeout
     PROLOGUE
     mov r12, -1                 # the earliest deadline
-    lea rbx, [rip + rq]
-    xor r13d, r13d
-1:  cmp qword ptr [rbx + RQ_ext], 0
-    je 2f
-    mov rax, [rbx + RQ_t0]
-    add rax, TS_RESOLVE_MS
-    cmp rax, r12
-    jae 2f
-    mov r12, rax
-2:  add rbx, RQ_SIZE
-    inc r13d
-    cmp r13d, TS_RESOLVE_MAX
-    jb 1b
     lea rbx, [rip + g_ts_runs]
     xor r13d, r13d
 3:  cmp qword ptr [rbx + TSR_ext], 0
@@ -1210,6 +1184,7 @@ apply_results:
     jmp 1b
 4:  call testmodel_budget
     mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_ts_marks], 1
     mov dword ptr [rip + g_dirty], 1
     xor eax, eax
     EPILOGUE
@@ -1698,7 +1673,7 @@ output_append:
 .Lm_cancelled: .asciz "cancelled; the extension did not end the run within 5 s"
 .Lm_no_slot: .asciz "Too many test runs: wait for one to finish"
 .Lm_cut: .asciz "\n[output cut]\n"
-.Lm_no_answer: .asciz "no answer in 30 s"
+.Lm_no_answer: .asciz "no answer in time"     # 17 bytes
 .Lm_not_running: .asciz "the extension is not running"
 .p2align 3
 result_words: .quad .Lr_queued, .Lr_started, .Lr_passed, .Lr_failed, .Lr_errored, .Lr_skipped, 0

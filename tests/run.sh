@@ -198,6 +198,8 @@ python3 tests/ext-watch-native.py || fail=1
 python3 tests/ext-boundaries.py || fail=1
 python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
+# notebooks and custom editors (wider parity A, B)
+python3 tests/ext-notebooks.py || fail=1
 # extension management: versions, roll back, updates, removal, development installs
 python3 tests/ext-updates.py || fail=1
 python3 tests/ext-remove-clean.py || fail=1
@@ -206,7 +208,7 @@ python3 tests/ext-browse.py || fail=1
 python3 tests/ext-packs.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
-for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime; do
+for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter; do
     python3 tests/$t.py || fail=1
 done
 # testing: the test explorer (feature "tests")
@@ -214,6 +216,8 @@ python3 tests/testing.py || fail=1
 # WebAssembly extension host (src/wasm): the core spec suite needs wabt's wast2json
 if command -v wast2json >/dev/null; then python3 tests/wasm-spec.py || fail=1; else echo "skip wasm-spec (no wast2json)"; fi
 python3 tests/wasm-host.py || fail=1
+python3 tests/wasm-wasi.py || fail=1
+python3 tests/wasm-fuzz.py 1 2 --count 100 || fail=1
 # workspace edits and the editor model: transactions, disk edits, file operations
 python3 tests/wsedit.py || fail=1
 python3 tests/ext-reveal.py || fail=1

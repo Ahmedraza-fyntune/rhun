@@ -29,10 +29,10 @@ errchunk: .zero 4096
 
 # ---------------- the process ----------------
 
-# dap_spawn(ds) -> rax 0, or -errno: starts the adapter from DS_args with three pipes, in a process
-#   group of its own that dies with rhun on Linux, with rhun's environment plus RHUN_DEBUG_SESSION,
-#   in the project folder (else the extension's). This is the one place adapters start; it moves to
-#   the tasks group's user-process helper when that lands.
+# dap_spawn(ds) -> rax 0, or -errno: starts the adapter from DS_args with three pipes through the
+#   tasks group's user-process helper (uproc.s: outside every sandbox, a process group of its own
+#   that dies with rhun on Linux, a job object on Windows), with the user's login environment plus
+#   RHUN_DEBUG_SESSION, in the project folder (else the extension's). Adapters start nowhere else.
 FN dap_spawn
     PROLOGUE 96
     mov rbx, rdi
@@ -74,7 +74,9 @@ FN dap_spawn
     mov [rip + env_extra], rax
     mov qword ptr [rip + env_extra + 8], 0
     lea rdi, [rip + env_extra]
-    call env_make
+    xor esi, esi
+    xor edx, edx
+    call uproc_env_make
     mov [rsp + 32], rax
     # pipes
     lea rdi, [rsp]
@@ -103,10 +105,10 @@ FN dap_spawn
     mov ecx, [rsp]
     mov r8d, [rsp + 12]
     mov r9d, [rsp + 20]
-    mov eax, 2                          # its own session; on Linux it dies with rhun
+    xor eax, eax                        # no terminal: a session of its own
     push rax
     push rax
-    call proc_spawn
+    call uproc_spawn
     add rsp, 16
     mov r14, rax
     # the child's ends

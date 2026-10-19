@@ -142,6 +142,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                                   b'rhun ' + (ROOT / 'VERSION').read_bytes().strip() + b'\n'))
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
     check('input/wheel-and-touchpad-steps', lambda: run('wheel_test.exe'))
+    # resources group: secrets in the Credential Manager, what an extension's job costs
+    check('extensions/secrets-and-cost', lambda: run('resources_test.exe'))
     check('clipboard/bounded-read', lambda: golden('windows-clipboard-read', 'clipboard_read_test'))
     if not args.wine or os.environ.get('DISPLAY'):
         check('clipboard/native-metadata', lambda: golden('windows-clipboard-metadata', 'clipboard_native_metadata_test'))
