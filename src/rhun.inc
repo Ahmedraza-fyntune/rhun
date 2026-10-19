@@ -1161,9 +1161,10 @@ F DV_lines, 8           # DL per line
 F DV_n, 8
 F DV_name, 8            # tab title
 F DV_rev, 8             # commit, or 0 for the work tree
+F DV_rev2, 8            # with DV_two: the second revision, or 0 for the work tree
 F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
-F DV_pad, 4
+F DV_two, 4             # 1: DV_rev against DV_rev2 (git-diff-open), not a commit against its parent
 ENDSTRUCT DV_SIZE
 STRUCT
 F DL_kind, 4            # DK_*
@@ -1488,7 +1489,10 @@ ENDSTRUCT TF_SIZE
 # the features whose requests rhun sends (and whose ok ID LEN replies it frames)
 .equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
 .equ FEAT_WORKSPACE_WATCH, 16384
-.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+# source control (wider-parity C)
+.equ FEAT_GIT_DATA, 32768        # git-repo, git-status, git-blame, git-log, git-show, git-diff-open; 0 git changed
+.equ FEAT_SCM_ALL, FEAT_GIT_DATA
+.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS | FEAT_SCM_ALL
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1833,6 +1837,7 @@ ENDSTRUCT XK_SIZE
 .equ NEEDS_HOME_READ, 16
 .equ NEEDS_NETWORK, 32
 .equ NEEDS_TERMINAL, 64
+.equ NEEDS_GIT_READ, 128        # [needs] git = read: the project's Git data through rhun (gitdata.s)
 
 .equ EXT_MAX_RUNNING, EXT_CAP
 .equ EXT_HELLO_MS, 5000

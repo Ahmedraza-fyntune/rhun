@@ -3415,7 +3415,20 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # source control (wider-parity C): gitdata.s
+    .quad .Lv_git_repo, gitdata_h_repo, 0
+    .quad .Lv_git_status, gitdata_h_status, 0
+    .quad .Lv_git_blame, gitdata_h_blame, 0
+    .quad .Lv_git_log, gitdata_h_log, 4096
+    .quad .Lv_git_show, gitdata_h_show, 4096
+    .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     .quad 0, 0, 0
+.Lv_git_repo: .asciz "git-repo"
+.Lv_git_status: .asciz "git-status"
+.Lv_git_blame: .asciz "git-blame"
+.Lv_git_log: .asciz "git-log"
+.Lv_git_show: .asciz "git-show"
+.Lv_git_diff_open: .asciz "git-diff-open"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -3531,6 +3544,7 @@ cmd_allow:
 .Lf_format: .asciz "format"
 .Lf_commands: .asciz "commands"
 .Lf_snippet_transforms: .asciz "snippet-transforms"
+.Lf_git_data: .asciz "git-data"
 .Lf_snippet_variants: .asciz "snippet-variants"
 .Lf_snippets: .asciz "snippets"
 .Lf_save_actions: .asciz "save-actions"
@@ -3538,7 +3552,9 @@ cmd_allow:
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature
+    .quad .Lf_git_data                    # source control (wider-parity C)
+    .quad 0
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "
@@ -3574,6 +3590,47 @@ feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf
 .Lr_body: .asciz "a body over its cap"
 .Lr_framing: .asciz "invalid body framing"
 .Lr_syntax: .asciz "three unparsable lines in a row"
+
+# ---------------- source control (wider-parity C): request access for handlers in other files ----------------
+.text
+# FN extproto_req() -> rax the extension being served, rdx its request id
+FN extproto_req
+    mov rax, [rip + cur]
+    mov rdx, [rip + cur_id]
+    ret
+
+# FN extproto_nargs() -> rax the fields of the request line ("ID VERB ..." counts 2)
+FN extproto_nargs
+    mov rax, [rip + nfields]
+    ret
+
+# FN extproto_arg(i) -> rax ptr, rdx len of field i; 0, 0 past the line's fields
+FN extproto_arg
+    xor eax, eax
+    xor edx, edx
+    cmp rdi, [rip + nfields]
+    jae 1f
+    lea r8, [rip + fields]
+    shl rdi, 4
+    mov rax, [r8 + rdi]
+    mov rdx, [r8 + rdi + 8]
+1:  ret
+
+# FN extproto_arg_u64(i) -> rax value, edx 1 for a complete decimal field
+FN extproto_arg_u64
+    jmp field_u64
+
+# FN extproto_body() -> rax ptr, rdx len of the request's body (0, 0 without one)
+FN extproto_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+
+# FN extproto_answer_syntax(): "error ID syntax ..." for the request being served (counts toward the
+# three in a row that end a program)
+FN extproto_answer_syntax
+    mov rdi, [rip + cur_id]
+    jmp reply_syntax
 
 .include "app/extwatchproto.inc"
 .section .rodata

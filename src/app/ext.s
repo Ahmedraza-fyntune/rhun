@@ -964,6 +964,8 @@ FN ext_retire
     call complete_ext_gone
     mov rdi, rbx
     call langfeat_ext_gone
+    mov rdi, rbx
+    call scm_ext_gone
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -2254,9 +2256,19 @@ parse_needs:
     lea rsi, [rip + .Ln_run]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 6f
     call val_dup
     mov [rbx + EXT_runs], rax
+    jmp 9f
+6:  # source control (wider-parity C): git = read, the project's Git data through rhun
+    mov rdi, r12
+    lea rsi, [rip + .Ln_git]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov edi, NEEDS_GIT_READ
+    xor esi, esi
+    call needs_level
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -4268,6 +4280,8 @@ FN ext_legacy_exited
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
+    mov rdi, rbx
+    call scm_ext_gone           # and its source control requests and providers (gitdata.s, scmext.s)
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4416,6 +4430,8 @@ FN ext_supervised_exited
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
+    mov rdi, rbx
+    call scm_ext_gone           # and its source control requests and providers (gitdata.s, scmext.s)
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -5750,6 +5766,7 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_git: .asciz "git"
 .Lo_startup: .asciz "startup"
 .Lo_command: .asciz "command"
 .Lo_project: .asciz "project"
