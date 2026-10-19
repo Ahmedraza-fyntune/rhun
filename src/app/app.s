@@ -2674,6 +2674,7 @@ FN app_tick
     call uproc_tick
     call term_tick
     call problems_tick          # documents opened since get their problems' marks
+    call termproto_tick         # extensions' terminal output
     call git_tick
     call update_tick
     call ai_tick

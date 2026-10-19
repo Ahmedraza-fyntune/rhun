@@ -633,6 +633,17 @@ handle_line:
 
 # testing (testproto.s): every tests verb goes to testproto_request(ext, id, line, len, body,
 # body length), which parses the line itself and answers through ext_send_checked
+# tasks and terminals (termproto.s, tasks.s): every terminal and task verb goes to
+# termproto_request(ext, id, line, len, body, body length), which answers itself
+h_terminals:
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov rdx, [rip + line + SB_ptr]
+    mov rcx, [rip + line + SB_len]
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    jmp termproto_request
+
 h_tests:
     mov rdi, [rip + cur]
     mov rsi, [rip + cur_id]
@@ -1942,7 +1953,15 @@ h_hover:
 
 # ID cancel ID2 -> ok ID: requests are handled as they arrive, so there is nothing to withdraw
 h_cancel:
-    # of this extension's open prompt: the prompt closes, answered cancelled
+    # a terminal-open waiting for the approval dialog: answered cancelled (termproto.s)
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 0f
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call termproto_cancel
+0:  # of this extension's open prompt: the prompt closes, answered cancelled
     cmp qword ptr [rip + pr_id], 0
     je 1f
     mov rax, [rip + cur]
@@ -2722,6 +2741,7 @@ h_set_context:
     call reply_syntax
     EPILOGUE
 
+.globl plain_text              # (also taskdef.s: labels and commands of tasks)
 # plain_text(ptr, len) -> 1 when the bytes are one line of valid UTF-8 with no control
 # character (C0, DEL, C1), no bidi control (U+202A-202E, U+2066-2069) and no zero-width
 # character (U+200B-200F, U+2060, U+FEFF): text that shows as it is
@@ -3230,7 +3250,14 @@ hello_features:
     mov dword ptr [rbx + EXT_feat_asks], 1
 3:  add r12, r13
     jmp 1b
-4:  xor r14d, r14d              # anything agreed?
+4:  # tasks only with terminals (a task's terminal is a TERM)
+    FEAT_TEST rbx, FEAT_TASKS
+    jz 40f
+    FEAT_TEST rbx, FEAT_TERMINALS
+    jnz 40f
+    mov eax, FEAT_TASKS
+    btr dword ptr [rbx + EXT_features], eax
+40: xor r14d, r14d              # anything agreed?
     xor ecx, ecx
 41: or r14, [rbx + EXT_features + rcx*8]
     inc ecx
@@ -3838,11 +3865,26 @@ verbs:
     .quad .Lv_agent_changed, h_agent_changed, 0
     .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
     .quad .Lv_unpropose, h_unpropose, 0
+    # tasks and terminals (termproto.s)
+    .quad .Lv_terminal_open, h_terminals, 131072
+    .quad .Lv_terminal_stop, h_terminals, 0
+    .quad .Lv_terminal_restart, h_terminals, 0
+    .quad .Lv_terminal_close, h_terminals, 0
+    .quad .Lv_terminal_show, h_terminals, 0
+    .quad .Lv_terminal_input, h_terminals, 65536
+    .quad .Lv_terminal_screen, h_terminals, 0
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
 .Lv_provides: .asciz "provides"
 .Lv_test_items: .asciz "test-items"
+.Lv_terminal_open: .asciz "terminal-open"
+.Lv_terminal_stop: .asciz "terminal-stop"
+.Lv_terminal_restart: .asciz "terminal-restart"
+.Lv_terminal_close: .asciz "terminal-close"
+.Lv_terminal_show: .asciz "terminal-show"
+.Lv_terminal_input: .asciz "terminal-input"
+.Lv_terminal_screen: .asciz "terminal-screen"
 .Lv_test_remove: .asciz "test-remove"
 .Lv_test_update: .asciz "test-update"
 .Lv_test_end: .asciz "test-end"

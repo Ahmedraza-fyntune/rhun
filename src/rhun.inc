@@ -1499,6 +1499,9 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
+    # tasks and terminals (termproto.s, tasks.s)
+    FEATURE FEAT_TERMINALS, "terminals", 0        # terminal-* requests; terminal-started/-ended/-output/-closed
+    FEATURE FEAT_TASKS, "tasks", 0                # tasks-set, task-start, task-run; agreed only with terminals
     # language features (query.s, complete.s, langfeat.s)
     FEATURE FEAT_QUERY_STREAM, "query-stream", 0      # query-part, query-progress
     FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
@@ -2647,6 +2650,53 @@ F PR_seq, 8             # set by the store: its id in the Problems tab
 ENDSTRUCT PR_SIZE
 .equ PRF_CHARS, 1
 .equ MKF_SOURCE, 1              # MK_pad: the mark's owner is a problems source (PS*), not an extension
+# [needs] terminal is a ladder (tasks design 2): suggest (= v1's yes, NEEDS_TERMINAL) < run < input < output
+.equ NEEDS_TERM_RUN, 0x100000   # run programs in terminal tabs, once allowed per project
+.equ NEEDS_TERM_INPUT, 0x200000 # and type into them
+.equ NEEDS_TERM_OUTPUT, 0x400000 # and read what they show
+# a program or task definition from the wire (termproto.s def_parse; tasks design 3.2)
+.equ DF_MATCHERS, 4
+.equ DF_PATTERNS, 8
+STRUCT
+F DF_strs, 8            # owned block: every string below, each with its NUL
+F DF_id, 8              # cstr: the task id ("-" for a terminal)
+F DF_label, 8           # cstr
+F DF_detail, 8          # cstr, "" for none (lists show the command)
+F DF_cmd, 8             # shell: the command (cstr, "" an interactive shell); argv: the arguments
+F DF_cmdlen, 8          #   each with its NUL, DF_cmdlen bytes in all
+F DF_cwd, 8             # cstr, "" for the project
+F DF_env, 8             # owned "NAME=value" list
+F DF_unset, 8           # owned "NAME" list
+F DF_deps, 8            # owned list of task ids
+F DF_form, 4            # 0 shell, 1 argv
+F DF_group, 4           # 0 none, 1 build, 2 test
+F DF_default, 4         # the default task of its group
+F DF_reveal, 4          # 0 show, 1 focus, 2 silent
+F DF_output, 4          # 1: terminal-output for it
+F DF_order, 4           # its depends: 1 sequence, 2 parallel
+F DF_nmatch, 4
+F DF_mown, 4            # bit i: DF_match[i] was compiled for it (freed with it); else a built-in
+F DF_nready, 4
+F DF_nbusy, 4
+F DF_match, 8 * DF_MATCHERS     # MT*
+F DF_ready, 8 * DF_PATTERNS     # compiled patterns (taskmatch.s CP, owned)
+F DF_busy, 8 * DF_PATTERNS
+ENDSTRUCT DF_SIZE
+# an extension's terminal or task run (termproto.s; tasks.s)
+STRUCT
+F TR_term, 8            # its TERM (termview.s)
+F TR_ext, 8             # the extension that opened it
+F TR_live, 4            # 1 while that runtime runs: then the TERM is its handle
+F TR_flags, 4           # TRF_*
+F TR_out, SB_SIZE       # finished lines waiting for terminal-output
+F TR_dropped, 8         # lines left out since the last terminal-output
+F TR_mrun, 8            # its matchers (taskmatch.s mrun), owned, or 0
+F TR_task, 8            # owned cstr: the task id it runs, or 0
+F TR_hook, 8            # tasks.s: fn(cookie, TR*, TE_* event, code), or 0
+F TR_linefn, 8          # tasks.s: fn(cookie, line, len) for each finished line (len -1: a run begins)
+F TR_cookie, 8
+ENDSTRUCT TR_SIZE
+.equ TRF_OUTPUT, 1              # terminal-output for it
 .equ AS_KIND_EXT, 5
 .equ AGS_IDLE, 0
 .equ AGS_WORKING, 1

@@ -11,8 +11,9 @@
 #   print-problems                 the Problems store, a line per problem
 #   print-problems-tab             the Problems tab's rows
 #   term-stop TERM | term-restart TERM | term-close TERM
-#   wait-terminal TERM STATE [RUNS] until the tab is running, exited, stopped, failed or ended (not
-#                                  running), having started RUNS times when given; 10 s at most
+#   wait-terminal TERM STATE [RUNS] until the tab is there and running, exited, stopped, failed or
+#                                  ended (not running), having started RUNS times when given; 10 s
+#                                  at most
 #   print-uproc                    programs run as the user, and the login environment's state
 #   print-allowed                  run approvals ("OWNER/NAME PROJECT")
 #   run-approve OWNER/NAME COMMAND ask as an extension's first program in the project would; prints
@@ -170,7 +171,7 @@ c_wait_terminal:
 1:  mov rdi, r13
     call term_state
     cmp eax, -1
-    je 9f
+    je 4f                       # not there yet (an extension's terminal-open is on its way)
     cmp dword ptr [rsp], 0
     je 2f
     cmp edx, [rsp]

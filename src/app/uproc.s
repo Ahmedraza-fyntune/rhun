@@ -264,7 +264,7 @@ env_done:
     mov edi, [rip + env_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rip + env_pid]
     call reap_later
     # RHUN-ENV-BEGIN\0 NAME=value\0 ... RHUN-ENV-END\0
@@ -613,6 +613,8 @@ FN uproc_signal
     mov ebx, esi
     test edi, edi
     jle 8f
+    test edi, REMOTE_PID_TAG    # a remote window's program (remote.s): its host knows it
+    jnz 1f
     push rdi
     call slot
     pop rdi
@@ -620,9 +622,9 @@ FN uproc_signal
     jz 8f
     test dword ptr [rax + UP_flags], UPF_NOGROUP
     jnz 8f
-    neg edi
+1:  neg edi
     mov esi, ebx
-    SYS SYS_kill
+    call proc_kill
     xor eax, eax
     pop rbx
     ret
@@ -668,19 +670,28 @@ FN uproc_end
     jle 9f
     call slot
     test rax, rax
+    jnz 1f
+    # a remote window's program is not in the table: it goes in now, to be killed and reaped
+    test r12d, REMOTE_PID_TAG
     jz 9f
-    mov rbx, rax
+    xor edi, edi
+    call slot
+    test rax, rax
+    jz 9f
+    mov [rax + UP_pid], r12d
+    mov dword ptr [rax + UP_flags], 0
+1:  mov rbx, rax
     test dword ptr [rbx + UP_flags], UPF_NOGROUP
     jnz 9f
     or dword ptr [rbx + UP_flags], UPF_ORPHAN
     mov edi, r12d
     neg edi
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, r12d
     neg edi
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill
     call time_ms
     add rax, r13
     mov [rbx + UP_kill_at], rax
@@ -737,7 +748,7 @@ FN uproc_tick
     mov edi, [rbx + UP_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
 4:  mov edi, [rbx + UP_pid]
     mov esi, 1
     call wait_code
@@ -791,7 +802,7 @@ FN uproc_quit_begin
     mov edi, [rip + env_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
 1:
 .endif
     lea rbx, [rip + procs]
@@ -803,11 +814,11 @@ FN uproc_quit_begin
     jnz 3f
     neg edi
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + UP_pid]
     neg edi
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill
 3:  add rbx, UP_SIZE
     dec r12d
     jnz 2b
@@ -856,7 +867,7 @@ FN uproc_quit_end
     jnz 7f
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + UP_pid]
     mov esi, 1
     call wait_code

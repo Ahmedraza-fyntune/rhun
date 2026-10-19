@@ -986,6 +986,8 @@ FN ext_retire
     mov rdi, rbx
     call testmodel_forget       # testing: its tests and results go
     mov rdi, rbx
+    call termproto_ext_gone     # tasks and terminals: its programs stop, their tabs stay
+    mov rdi, rbx
     call ai_ext_gone            # AI: its sessions, tool calls and cards
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
@@ -2283,8 +2285,7 @@ parse_needs:
     call ini_key_is
     test eax, eax
     jz 5f
-    mov edi, NEEDS_TERMINAL
-    call needs_yes
+    call needs_terminal
     jmp 9f
 5:  mov rdi, r12
     lea rsi, [rip + .Ln_run]
@@ -2347,6 +2348,27 @@ needs_level:
     jz 9f
     or [rbx + EXT_needs], r13d
     or [rbx + EXT_needs], r14d
+9:  EPILOGUE
+
+# needs_terminal(): terminal = no, yes or suggest (v1's yes: propose a line), run (programs in terminal
+#   tabs, once allowed per project), input (and type into them), output (and read what they show):
+#   a ladder, each level with the ones before it (tasks and terminals)
+needs_terminal:
+    PROLOGUE
+    xor r13d, r13d
+    lea r14, [rip + term_levels]
+1:  mov rdx, [r14]
+    test rdx, rdx
+    jz 9f
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    add r14, 16
+    jmp 1b
+2:  mov eax, [r14 + 8]
+    or [rbx + EXT_needs], eax
 9:  EPILOGUE
 
 # needs_yes(bit): the value is yes or no
@@ -3642,6 +3664,8 @@ FN ext_exited
     call scm_ext_gone           # and its source control requests and providers (gitdata.s, scmext.s)
     mov rdi, rbx
     call testproto_ext_gone     # testing: its runs end errored and their processes stop
+    mov rdi, rbx
+    call termproto_ext_gone     # tasks and terminals: its programs stop, their tabs stay
     mov rdi, rbx
     call ai_ext_gone            # AI: its sessions, tool calls and cards
     xor edi, edi
@@ -5014,6 +5038,19 @@ ext_target: .asciz "linux-x86_64"
 .Lr_settings_stop: .asciz "stopped on its page"
 .Lr_settings_change: .asciz "restarting after a settings change"
 .Lf_extensions_ini: .asciz "/extensions.ini"
+.Lt_yes: .asciz "yes"
+.Lt_suggest: .asciz "suggest"
+.Lt_run: .asciz "run"
+.Lt_input: .asciz "input"
+.Lt_output: .asciz "output"
+.p2align 3
+# [needs] terminal's levels and their bits (needs_terminal)
+term_levels:
+    .quad .Lt_yes, NEEDS_TERMINAL, .Lt_suggest, NEEDS_TERMINAL
+    .quad .Lt_run, NEEDS_TERMINAL | NEEDS_TERM_RUN
+    .quad .Lt_input, NEEDS_TERMINAL | NEEDS_TERM_RUN | NEEDS_TERM_INPUT
+    .quad .Lt_output, NEEDS_TERMINAL | NEEDS_TERM_RUN | NEEDS_TERM_INPUT | NEEDS_TERM_OUTPUT
+    .quad 0, 0
 .Lk_pinned: .asciz "pinned"
 .Lk_description: .asciz "description"
 .Ls_settings: .asciz "settings"

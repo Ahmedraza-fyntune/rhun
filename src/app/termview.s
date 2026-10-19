@@ -868,6 +868,8 @@ session_spawn:
     mov [rsp + 32], rax         # the path to run
     mov [rsp + 40], rax         # the environment
     mov [rsp + 48], rax         # the folder
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lss_remote
     # the user's environment, with what a terminal's programs get and the program's own
     lea rdi, [rip + env_extras]
     mov rsi, [rsp + PG_sets]
@@ -942,7 +944,9 @@ session_spawn:
     neg rsi
     call sb_push_u64
     jmp .Lss_fail
-2:  mov [rbx + TS_pid], r15d
+2:
+.Lss_started:
+    mov [rbx + TS_pid], r15d
     mov [rbx + TS_fd], r12d
     mov edi, r12d
     mov esi, POLLIN
@@ -964,6 +968,38 @@ session_spawn:
     mov [rbx + TS_t0], rax
     mov [rbx + TS_t1], rax
     jmp .Lss_free
+.Lss_remote:
+    # a remote window (vfs.s): the program runs on the host, found on the host's PATH, in the host's
+    # environment with what a terminal's programs get and its own on top
+    lea rdi, [rip + env_extras]
+    mov rsi, [rsp + PG_sets]
+    call list_join
+    mov [rsp + 40], rax
+    mov rdi, [rsp + PG_cwd]
+    call run_folder
+    mov [rsp + 48], rax
+    mov rax, [rbx + TS_term]
+    mov ecx, [rax + TM_cols]
+    mov r8d, [rax + TM_rows]
+    mov rdi, [rsp + PG_argv]
+    mov rsi, [rsp + 40]
+    mov rdx, [rsp + 48]
+    call vfs_pty_spawn
+    mov r15, rax
+    mov r12d, edx
+    test r15, r15
+    jg .Lss_started
+    mov rax, [rsp + PG_argv]
+    mov rdi, [rax]
+    call msg_could_not
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lerr_errno]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov rsi, r15
+    neg rsi
+    call sb_push_u64
+    jmp .Lss_fail
 .Lss_notfound:
     mov rax, [rsp + PG_argv]
     mov rdi, [rax]
@@ -1019,6 +1055,46 @@ session_spawn:
     mov rdi, [rsp + PG_argv]
     call mem_free
     mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# list_join(list, list or 0) -> an owned 0-terminated list of both lists' strings (borrowed)
+list_join:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    xor r13d, r13d
+1:  cmp qword ptr [rbx + r13*8], 0
+    je 2f
+    inc r13
+    jmp 1b
+2:  xor r14d, r14d
+    test r12, r12
+    jz 4f
+3:  cmp qword ptr [r12 + r14*8], 0
+    je 4f
+    inc r14
+    jmp 3b
+4:  lea rdi, [r13 + r14 + 1]
+    shl rdi, 3
+    call mem_alloc
+    mov r15, rax
+    xor ecx, ecx
+5:  cmp rcx, r13
+    jae 6f
+    mov rdx, [rbx + rcx*8]
+    mov [r15 + rcx*8], rdx
+    inc rcx
+    jmp 5b
+6:  xor edx, edx
+7:  cmp rdx, r14
+    jae 8f
+    mov r8, [r12 + rdx*8]
+    mov [r15 + rcx*8], r8
+    inc rcx
+    inc rdx
+    jmp 7b
+8:  mov qword ptr [r15 + rcx*8], 0
+    mov rax, r15
     EPILOGUE
 
 # session_eof(session): its terminal's output ended (every process of its session let go of it); the
@@ -1314,7 +1390,7 @@ session_close_program:
     mov edi, [rbx + TS_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
 .endif
 2:  mov eax, [rbx + TS_flags]
     and eax, ~(TSF_RUNNING | TSF_EOF | TSF_REAPED | TSF_RESTART)
@@ -1446,7 +1522,7 @@ programs_tick:
     mov edi, [rbx + TS_pid]
     neg edi
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill
     cmp qword ptr [rbx + TS_kill_at], 0
     jne 2f
     lea rax, [r14 + STOP_MS]
@@ -1475,7 +1551,7 @@ programs_tick:
     mov edi, [rbx + TS_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill
 .endif
 5:  test dword ptr [rbx + TS_flags], TSF_REAPED
     jz .Lpt_next
@@ -1826,6 +1902,86 @@ FN term_state
 8:  mov eax, -1
     xor edx, edx
     ret
+
+# term_input(TERM, ptr, len) -> 0, -1 without such a tab, -2 busy (1 MB waits for the program): the
+#   bytes as typed (LF is Enter); nothing for a program that has ended
+FN term_input
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call sess_by_id
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz 7f
+    mov rax, [rbx + TS_wbuf + SB_len]
+    add rax, r13
+    cmp rax, 1048576
+    ja 6f
+    mov rdi, [rbx + TS_term]
+    mov rsi, r12
+    mov rdx, r13
+    call term_write
+    call send_replies
+7:  xor eax, eax
+    EPILOGUE
+6:  mov eax, -2
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
+
+# term_screen(TERM, sb): "ROWS COLS CURSOR_ROW CURSOR_COL" and its LF, then each row of the screen (as
+#   shown, trailing blanks dropped) with its LF (terminal-screen)
+FN term_screen
+    PROLOGUE
+    mov r12, rsi
+    call sess_by_id
+    test rax, rax
+    jz 9f
+    mov rbx, [rax + TS_term]
+    mov rdi, r12
+    mov esi, [rbx + TM_rows]
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, r12
+    mov esi, [rbx + TM_cols]
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, r12
+    mov esi, [rbx + TM_cy]
+    inc esi
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, r12
+    mov esi, [rbx + TM_cx]
+    inc esi
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    xor r13d, r13d
+1:  cmp r13d, [rbx + TM_rows]
+    jae 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    xor ecx, ecx
+    mov r8d, r13d
+    mov r9d, [rbx + TM_cols]
+    call term_text
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    inc r13d
+    jmp 1b
+9:  EPILOGUE
 
 # term_select(TERM) -> 1 when that tab is now the current one (term-select)
 FN term_select
