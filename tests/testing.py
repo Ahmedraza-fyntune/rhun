@@ -323,6 +323,35 @@ class Testing(unittest.TestCase):
         self.assertTrue([l for l in out if 'Run with Coverage' in l], out)
         self.assertEqual(out[-1], 'cov=')
 
+    def test_glyphs_problems_and_coverage_follow_edits_until_replaced(self):
+        # two lines typed at the top after a coverage run; TestA runs again, so the problems and
+        # glyphs are set again from the model: TestB's old place and the coverage move with the text
+        out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'wait 100', 'echo @before',
+                               'print-gutter', 'print-marks', 'cmd goto_line', 'type 1', 'key Return',
+                               'type //a', 'key Return', 'type //b', 'key Return',
+                               'test-select testsfake go:example/pkg.TestA', 'test-action run', 'wait-tests',
+                               'wait 100', 'echo @after', 'print-gutter', 'print-marks',
+                               'test-select testsfake go:example/pkg.TestB', 'test-action failure', 'print-state',
+                               'test-select testsfake go:example/pkg.TestC', 'test-action goto', 'print-state',
+                               'test-gutter 9', 'wait-tests',
+                               'cmd goto_line', 'type 10', 'key Return', 'cmd test_run_cursor', 'wait-tests'])
+        at = out.index('@after')
+        before, after = out[out.index('@before'):at], out[at:]
+        self.assertIn('line=7 glyph=failed item=go:example/pkg.TestB', before)
+        self.assertIn('cov=3:C,5:C,6:P,7:C', before)
+        self.assertIn('line=5 glyph=passed item=go:example/pkg.TestA', after)
+        self.assertIn('line=9 glyph=failed item=go:example/pkg.TestB', after)
+        self.assertIn('line=13 glyph=skipped item=go:example/pkg.TestC', after)
+        self.assertIn('cov=5:C,7:C,8:P,9:C', after)
+        self.assertIn('10 2 10 7 error problems:Fake Tests TestB: Greet mismatch', after)
+        # TestB's failure and TestC are where they are now; a click on TestB's glyph where it is now
+        # runs it, as Run Test at Cursor in its body does
+        self.assertIn('run 3 run 1 go:example/pkg.TestB', self.fake_log())
+        self.assertIn('run 4 run 1 go:example/pkg.TestB', self.fake_log())
+        states = [l for l in after if l.startswith('tabs=')]
+        self.assertIn(' line=10 col=5 ', states[0])
+        self.assertIn(' line=13 col=1 ', states[1])
+
     # --- the Testing section ---
 
     def section(self, out):

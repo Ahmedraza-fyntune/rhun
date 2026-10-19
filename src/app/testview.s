@@ -508,9 +508,16 @@ holds_cursor:
     mov rsi, r12
     call testmodel_item
     mov r13, rax
-    mov ecx, [r13 + TSI_l1]
-    test ecx, ecx
+    cmp dword ptr [r13 + TSI_l1], 0
+    je 8f
+    # its range moved through the edits since it came
+    mov rdi, [rip + g_doc]
+    mov rsi, r13
+    call testgutter_item_lines
+    test eax, eax
     jz 8f
+    mov ecx, eax
+    mov r14d, edx
     mov rax, [rip + cur_line]
     cmp rax, rcx
     jb 8f
@@ -518,7 +525,7 @@ holds_cursor:
     mov ecx, [r13 + TSI_c1]
     cmp [rip + cur_col], rcx
     jb 8f
-1:  mov ecx, [r13 + TSI_l2]
+1:  mov ecx, r14d
     cmp rax, rcx
     ja 8f
     jb 2f
@@ -807,8 +814,15 @@ FN testview_action
     mov rdi, [rax + TSI_path]
     test rdi, rdi
     jz 9b
-    mov r13d, [rax + TSI_l1]
     mov r14d, [rax + TSI_c1]
+    mov rsi, [rax + TSI_ver]
+    mov edx, [rax + TSI_l1]
+    push rdi
+    push rdi
+    call testgutter_map_path    # its first line moved through the edits since it came
+    mov r13d, eax
+    pop rdi
+    pop rdi
     call app_open_file
     test rax, rax
     js 9b
@@ -864,14 +878,19 @@ FN testview_action
     mov esi, [rax + TSM_path]
     call mem_dup
     mov r14, rax
-    mov rdi, rax
+    mov rdi, rax                # its line moved through the edits since it came
+    mov rsi, [r13 + TSM_ver]
+    mov edx, [r13 + TSM_l1]
+    call testgutter_map_path
+    mov r12d, eax
+    mov rdi, r14
     call app_open_file
     mov r15, rax
     mov rdi, r14
     call mem_free
     test r15, r15
     js 9b
-    mov edi, [r13 + TSM_l1]
+    mov edi, r12d
     mov esi, [r13 + TSM_c1]
     call app_goto_line
     EPILOGUE

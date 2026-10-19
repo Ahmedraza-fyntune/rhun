@@ -8,6 +8,7 @@ STRUCT
 F CF_path, 8            # owned cstr
 F CF_lines, 8           # owned bytes, CF_n of them: line L at index L - 1
 F CF_n, 8
+F CF_ver, 8             # the version of the file's open document when its first range came, -1 none
 ENDSTRUCT CF_SIZE
 .equ COV_HIT, 1
 .equ COV_MISS, 2
@@ -399,6 +400,9 @@ file_for:
     mov rsi, r13
     call mem_dup
     mov [r14 + CF_path], rax
+    mov rdi, rax
+    call testgutter_doc_ver
+    mov [r14 + CF_ver], rax
     mov rdi, [rip + files + VEC_len]
     dec rdi
     call map_put
@@ -446,6 +450,16 @@ FN testcover_file
     mov rdi, rbx
     call file_find
     pop rbx
+    ret
+
+# testcover_ver(CF*) -> rax the version of the file's open document its coverage refers to, -1 none
+FN testcover_ver
+    mov rax, [rdi + CF_ver]
+    ret
+
+# testcover_count(CF*) -> rax the lines it has a byte for
+FN testcover_count
+    mov rax, [rdi + CF_n]
     ret
 
 # testcover_line(CF*, line one-based) -> eax 0 unknown, COV_HIT covered, COV_MISS missed, 3 partly

@@ -2466,6 +2466,8 @@ F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed test
 F TSI_path, 8           # owned cstr or 0: the file its range is in
 F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
 F TSI_phash, 8          # hash_line of TSI_path (0 without one): the gutter compares this first
+F TSI_ver, 8            # the version of TSI_path's open document when the range came, -1 none:
+                        #   the gutter moves the range through later edits (edtape.s)
 F TSI_idlen, 4
 F TSI_kind, 4           # TSK_*
 F TSI_flags, 4          # TSF_*
@@ -2533,6 +2535,7 @@ F TSM_text, 4           # lengths of the bytes after the header
 F TSM_path, 4
 F TSM_exp, 4            # -1: no expected value
 F TSM_act, 4            # -1: no actual value
+F TSM_ver, 8            # the version of the path's open document when it came, -1 none
 ENDSTRUCT TSM_SIZE
 
 # json

@@ -1492,7 +1492,10 @@ item_apply:
     mov rdi, [r13 + TSI_path]
     call hash_line
     mov [r13 + TSI_phash], rax
-6:  mov dword ptr [rip + g_ts_glyphs], 1
+6:  mov rdi, [r13 + TSI_path]
+    call testgutter_doc_ver
+    mov [r13 + TSI_ver], rax
+    mov dword ptr [rip + g_ts_glyphs], 1
     mov rdi, [rbx + TSC_ext]
     mov rsi, r12
     call testgutter_item_changed
