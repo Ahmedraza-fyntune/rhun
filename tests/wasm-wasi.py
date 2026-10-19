@@ -17,6 +17,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 PROBES = ROOT / 'tests/wasm/wasi'
+# Windows under Wine: RHUN_WASM_HOST="wine64 Z:/path/rhun.com", RHUN_WASM_PATH_PREFIX=Z:
+HOST = os.environ['RHUN_WASM_HOST'].split() if os.environ.get('RHUN_WASM_HOST') else [str(EXE)]
+PREFIX = os.environ.get('RHUN_WASM_PATH_PREFIX', '')
 WE_NOTCAPABLE = 76
 
 
@@ -29,10 +32,10 @@ class Wasi(unittest.TestCase):
         self.tmp.cleanup()
 
     def host(self, module, args=(), dirs=(), stdin=b'', timeout=30):
-        argv = [str(EXE), '--wasm-host']
+        argv = HOST + ['--wasm-host']
         for kind, d in dirs:
-            argv += [kind, d.as_posix()]
-        argv += [str(PROBES / module), *args]
+            argv += [kind, PREFIX + d.as_posix()]
+        argv += [PREFIX + (PROBES / module).as_posix(), *args]
         r = subprocess.run(argv, input=stdin, capture_output=True, timeout=timeout)
         return r.returncode, r.stdout.decode(errors='replace'), r.stderr.decode(errors='replace')
 
@@ -117,7 +120,7 @@ class Wasi(unittest.TestCase):
 
     def test_poll_returns_what_is_ready_without_waiting_for_input(self):
         # standard input stays open and empty: the write is ready all the same
-        p = subprocess.Popen([str(EXE), '--wasm-host', str(PROBES / 'probe.wasm'), 'poll-ready'],
+        p = subprocess.Popen(HOST + ['--wasm-host', PREFIX + (PROBES / 'probe.wasm').as_posix(), 'poll-ready'],
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         watchdog = threading.Timer(10, p.kill)
         watchdog.start()
