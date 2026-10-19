@@ -85,6 +85,11 @@ class Testing(unittest.TestCase):
         # collapsed items still count
         self.assertEqual(out[-1], 'passed=0 failed=0 errored=0 skipped=0 notrun=3')
 
+    def test_an_unanswered_resolve_gives_up_after_30_s(self):
+        out = self.run_editor(['cmd testing', 'wait 31500', 'print-tests'], mode='resolveslow', timeout=120)
+        self.assertIn('notrun Fake Tests id=rhun-tests/testsfake kind=controller ms=- error=no answer in time', out)
+        self.assertIn('recv 0 cancel 1', self.fake_log())
+
     def test_bad_bodies_are_refused_and_change_nothing(self):
         out = self.run_editor(['cmd testing', 'wait-test-items 2', 'wait 800', 'print-tests all'], mode='remove')
         log = self.fake_log()

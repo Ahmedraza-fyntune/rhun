@@ -1537,11 +1537,14 @@ FEATURE_LIST
 .equ PK_TYPE_FORMAT, 22
 .equ PK_LINKS, 23
 .equ PK_SAVE_ACTIONS, 24
-.equ PK_COUNT, 25
+.equ PK_TESTS_RESOLVE, 25        # testing (testproto.s)
+.equ PK_TEST_RUN, 26
+.equ PK_COUNT, 27
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
+.equ QO_TESTS, 4                 # testing (testproto.s)
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body

@@ -75,8 +75,11 @@ FN testing_sync
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
-    cmp qword ptr [rbx + EXT_pv_tests], 0
-    je 1b
+    mov rdi, rbx
+    mov esi, EXT_pv_tests
+    call ext_pv
+    test rax, rax
+    jz 1b
     cmp dword ptr [rbx + EXT_manifest_ok], 0
     je 1b
     cmp dword ptr [rbx + EXT_status], ES_REMOVED
