@@ -16,6 +16,8 @@
 .globl cfg_restore_project
 .globl cfg_follow_system, cfg_dark_theme, cfg_light_theme, cfg_theme_keys
 cfg_restore_project: .long 1
+.globl cfg_test_gutter
+cfg_test_gutter: .long 1        # testing: [testing] gutter, the tests' glyphs in the gutter
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
 cfg_line_height: .long 150
@@ -478,6 +480,7 @@ FN config_load
     je 1f
     mov dword ptr [rip + cfg_agents_grok], 1
 1:  call config_agent_sources
+    call agentext_config_done   # AI: the extension sources' switches from this read
     mov rdi, r15
     call mem_free
     EPILOGUE
@@ -828,6 +831,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Ls_git: .asciz "git"
 .Ls_updates: .asciz "updates"
 .Ls_remote: .asciz "remote"
+.Ls_testing: .asciz "testing"
 .Ls_debug: .asciz "debug"
 .Ls_extensions: .asciz "extensions"
 
@@ -935,6 +939,8 @@ g_settings:
     SETTING .Ls_debug, keys_in_terminal, ST_BOOL, g_debug_keys_in_terminal, 0, 1, 1, 0, "Debug keys in the terminal", "While a session runs, F5, F6, F10, F11 and Shift+F5 reach the debugger even when the terminal has focus."
     SETTING .Ls_debug, console_lines, ST_INT, g_dcon_max, 1000, 100000, 1000, 0, "Debug console lines", "Lines the Debug Console keeps; older ones go."
     SETTING .Ls_remote, agent_binary, ST_STR, cfg_remote_agent_binary, 0, 0, 0, 0, "Remote agent binary", "A Linux rhun to start on remote hosts. Empty uses this release's own."
+    # testing (testgutter.s)
+    SETTING .Ls_testing, gutter, ST_BOOL, cfg_test_gutter, 0, 1, 1, 0, "Test buttons in the gutter", "A run button and the result at each test's first line."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Lextup_opts: .asciz "install", "Install", "check", "Show only", "off", "Off", ""

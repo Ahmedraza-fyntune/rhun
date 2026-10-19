@@ -36,6 +36,7 @@ BOOLS = {
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
+    'testing': 'gutter',
     'debug': 'show_on_start keys_in_terminal',
 }
 INTS = {

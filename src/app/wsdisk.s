@@ -101,7 +101,7 @@ FN ws_doc_bytes
 FN ws_file_hash
     push rbx
     mov esi, WS_READ_MAX
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 8f
     mov rbx, rax
@@ -128,7 +128,7 @@ FN ws_doc_written
     mov rax, [rbx + DOC_undo + VEC_len]
     mov [rbx + DOC_savepoint], rax
     mov rdi, [rbx + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     mov rdi, rbx
     call doc_note_eol
@@ -220,7 +220,7 @@ FN ws_disk_resolve
     test eax, eax
     jz .Lwr_needs
     lea rdi, [rip + wd_real]
-    call file_type
+    call vfs_type
     cmp eax, 0x8000
     jne .Lwr_nofile
     # named twice under two spellings?
@@ -245,7 +245,7 @@ FN ws_disk_resolve
     mov [r12 + WG_real], rax
     lea rdi, [rip + wd_real]
     mov esi, WS_FILE_MAX
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz .Lwr_unreadable
     mov [r12 + WG_orig], rax
@@ -267,7 +267,7 @@ FN ws_disk_resolve
     cmp rax, [r12 + WG_hash]
     jne .Lwr_stale
 3:  mov rdi, [r12 + WG_real]
-    call file_stamp
+    call vfs_stamp
     mov [r12 + WG_stamp], rax
     # the hidden document: the text as rhun keeps it (CR before LF dropped)
     call doc_new
@@ -472,7 +472,7 @@ wd_edits_dir:
     call sb_push_byte
     dec qword ptr [rbx + SB_len]
     mov rdi, [rbx + SB_ptr]
-    call mkdir_p
+    call vfs_mkdir_p
     mov eax, 1
 9:  pop rbx
     ret
@@ -505,9 +505,9 @@ wd_journal_new:
     mov rdi, [rip + wd_path + SB_ptr]
     call file_remove_tree       # a leftover of an earlier process with this pid
     mov rdi, [rip + wd_path + SB_ptr]
-    call mkdir_p
+    call vfs_mkdir_p
     mov rdi, [rip + wd_path + SB_ptr]
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 8f
     mov rdi, [rip + wd_path + SB_ptr]
@@ -539,7 +539,7 @@ FN wd_plan_write
     mov rdi, rax
     mov rsi, [rip + wd_plan + SB_ptr]
     mov rdx, [rip + wd_plan + SB_len]
-    call file_write_all
+    call vfs_write_all
     pop rbx
     ret
 
@@ -614,7 +614,7 @@ FN wd_keep
     mov rdi, rax
     mov rsi, r12
     mov rdx, r13
-    call file_write_all
+    call vfs_write_all
     EPILOGUE
 
 # FN wd_step(): one disk step of a commit; with RHUN_TEST_EDIT_CRASH=N the process exits (status
@@ -861,13 +861,13 @@ wd_put:
     call wd_jpath
     mov rdi, rax
     mov esi, WS_READ_MAX
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 8f
     mov r13, rax
     mov rdi, [r12 + TP_path]
     mov rsi, rax
-    call file_write_all
+    call vfs_write_all
     mov r14, rax
     mov rdi, r13
     call mem_free
@@ -916,7 +916,7 @@ wd_write_clean:
     # the file as it is (its bytes before), the buffer as it will be written
     mov rdi, [r13 + DOC_path]
     mov esi, WS_READ_MAX
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 1b                       # gone meanwhile: the buffer stays unsaved
     mov [rsp], rax
@@ -974,7 +974,7 @@ wd_write_clean:
     mov rdi, [r14 + TP_path]
     mov rsi, [rip + wd_sb + SB_ptr]
     mov rdx, [rip + wd_sb + SB_len]
-    call file_write_all
+    call vfs_write_all
     test rax, rax
     js 9f
     mov qword ptr [r14 + TP_wrote], 1
@@ -1234,7 +1234,7 @@ FN ws_disk_rewrite
     mov rdi, [r14 + DOC_path]   # where it is now (a rename of the edit moves it)
     mov rsi, [rip + wd_sb + SB_ptr]
     mov rdx, [rip + wd_sb + SB_len]
-    call file_write_all
+    call vfs_write_all
     test rax, rax
     js 8f
     mov rdi, r14
@@ -1263,7 +1263,7 @@ FN ws_journal_drop
     mov rdi, [rbx + TX_journal]
     test rdi, rdi
     jz 9f
-    call file_remove_tree
+    call vfs_remove_tree
     mov rdi, [rbx + TX_journal]
     call mem_free
     mov qword ptr [rbx + TX_journal], 0
@@ -1343,7 +1343,7 @@ FN ws_recover
     mov rdi, rax
     lea rsi, [rip + wd_name_cb]
     xor edx, edx
-    call dir_each_names
+    call vfs_dir_each_names
     xor ebx, ebx                # offset of the next name
 1:  cmp rbx, [rip + wd_names + SB_len]
     jae 8f
@@ -1383,7 +1383,7 @@ FN ws_recover
     mov rdi, r13
     call wd_recover_one
     mov rdi, r13
-    call file_remove_tree
+    call vfs_remove_tree
     mov rdi, r13
     call mem_free
     jmp 1b
@@ -1440,7 +1440,7 @@ wd_recover_one:
     call sb_push_byte
     mov rdi, [rip + wd_sb + SB_ptr]
     mov esi, 16777216
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 9f
     mov r12, rax                # the plan
@@ -1499,13 +1499,13 @@ FN ws_recover_write
     call sb_push_byte
     mov rdi, [rip + wd_path + SB_ptr]
     mov esi, WS_READ_MAX
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 8f
     mov [rsp], rax
     mov rdi, r15
     mov rsi, rax
-    call file_write_all
+    call vfs_write_all
     mov r14, rax
     mov rdi, [rsp]
     call mem_free
@@ -1541,7 +1541,7 @@ FN ws_journal_print
     mov rdi, rax
     lea rsi, [rip + wd_name_cb]
     xor edx, edx
-    call dir_each_names
+    call vfs_dir_each_names
     xor r12d, r12d
 1:  cmp r12, [rip + wd_names + SB_len]
     jae 6f
@@ -1576,7 +1576,7 @@ FN ws_journal_print
     call sb_push_byte
     mov rdi, [rip + wd_sb + SB_ptr]
     mov esi, 16777216
-    call file_read_limited
+    call vfs_read_limited
     xor r14d, r14d
     test rax, rax
     jz 4f

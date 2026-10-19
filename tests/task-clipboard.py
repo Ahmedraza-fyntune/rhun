@@ -66,7 +66,7 @@ def build(platform, folder):
     exe = folder / ('task-clipboard.exe' if platform == 'windows' else 'task-clipboard')
     if platform == 'macos':
         command = ['clang', '-arch', 'arm64', '-mmacosx-version-min=12.0', '-o', exe, *objects]
-        for framework in ('AppKit', 'QuartzCore', 'IOSurface', 'CoreServices', 'Carbon'):
+        for framework in ('AppKit', 'QuartzCore', 'IOSurface', 'CoreServices', 'Carbon', 'Security'):
             command.extend(('-framework', framework))
     elif platform == 'windows':
         libraries = [ROOT / 'build/windows' / (source.stem + '.lib') for source in sorted((ROOT / 'src/win').glob('*.def'))]

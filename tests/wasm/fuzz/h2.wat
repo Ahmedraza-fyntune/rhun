@@ -1,0 +1,10 @@
+(module
+  (func (export "g") (param f64 i64) (result f64 i64)
+    (local.get 0) (f64.sqrt) (local.get 1) (i64.const 5) (i64.rem_s)
+    (if (param f64 i64) (result f64 i64) (i32.const 1) (then) (else))
+    )
+  (func (result externref) (ref.null extern))
+  (table 1 externref)
+  (data "passive")
+  (func (memory.init 0 (i32.const 0) (i32.const 0) (i32.const 1)) (data.drop 0))
+  (memory 1))

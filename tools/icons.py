@@ -119,6 +119,9 @@ ICONS.append(('BEAKER', [('W', 10)] + line([(48, 14), (48, 52), (16, 110), (112,
                         + [('M', 40, 14), ('L', 88, 14), ('M', 30, 84), ('L', 98, 84)]))
 ICONS.append(('CLOUD', [('W', 10)] + line([(36, 98)] + arc(36, 78, 20, 90, 270, 6) + arc(60, 50, 26, 200, 340, 8)
                                           + arc(92, 70, 22, 270, 450, 8) + [(36, 98)])))
+# testing's states: a ring (queued, running) and a slashed circle (skipped)
+ICONS.append(('RING', [('W', 12), ('O', 64, 64, 34)]))
+ICONS.append(('SLASH', [('W', 11), ('O', 64, 64, 38), ('M', 37, 91), ('L', 91, 37)]))
 # the debugger's toolbar (debugview.s; PLAY and STOP above serve as Continue and Stop): pause, step
 # over, into and out
 ICONS.append(('DBG_PAUSE', [('P', 4, 32, 24, 54, 24, 54, 104, 32, 104), ('P', 4, 74, 24, 96, 24, 96, 104, 74, 104)]))

@@ -71,7 +71,7 @@ def fault_fixture(platform, folder):
     executable = folder / ('ext_flush_fault' + ('.exe' if builder else ''))
     if platform == 'macos':
         command = ['clang', '-arch', 'arm64', '-mmacosx-version-min=12.0', '-o', executable, *objects]
-        for framework in ('AppKit', 'QuartzCore', 'IOSurface', 'CoreServices', 'Carbon'):
+        for framework in ('AppKit', 'QuartzCore', 'IOSurface', 'CoreServices', 'Carbon', 'Security'):
             command.extend(('-framework', framework))
     elif builder:
         libraries = [build / (path.stem + '.lib') for path in sorted((ROOT / 'src/win').glob('*.def'))]
