@@ -248,6 +248,19 @@ class Testing(unittest.TestCase):
                               mode='replaceafter')
         self.assertIn('errors=0 warnings=0', out)
 
+    def test_gutter_glyphs_follow_states_run_on_click_and_coverage_tints(self):
+        out = self.run_editor([*EXPAND, 'wait 300', 'print-gutter', 'test-gutter 7', 'wait-tests', 'print-gutter',
+                               'cmd test_coverage_all', 'wait-tests', 'print-gutter', 'test-gutter 11 right', 'print-menu',
+                               'key Escape', 'cmd test_coverage_toggle', 'print-gutter'])
+        self.assertEqual(out[2:6], ['line=3 glyph=play item=go:example/pkg.TestA', 'line=7 glyph=play item=go:example/pkg.TestB',
+                                    'line=11 glyph=play item=go:example/pkg.TestC', 'cov='])
+        self.assertIn('run 1 run 1 go:example/pkg.TestB', self.fake_log())
+        self.assertIn('line=7 glyph=failed item=go:example/pkg.TestB', out)
+        self.assertIn('line=4 glyph=passed item=go:example/pkg.TestA/sub', out)
+        self.assertIn('cov=3:C,5:C,6:P,7:C', out)
+        self.assertTrue([l for l in out if 'Run with Coverage' in l], out)
+        self.assertEqual(out[-1], 'cov=')
+
     # --- the Testing section ---
 
     def section(self, out):

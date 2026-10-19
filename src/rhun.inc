@@ -2196,6 +2196,7 @@ F TSI_desc, 8           # owned cstr or 0
 F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed tests-resolve
 F TSI_path, 8           # owned cstr or 0: the file its range is in
 F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
+F TSI_phash, 8          # hash_line of TSI_path (0 without one): the gutter compares this first
 F TSI_idlen, 4
 F TSI_kind, 4           # TSK_*
 F TSI_flags, 4          # TSF_*

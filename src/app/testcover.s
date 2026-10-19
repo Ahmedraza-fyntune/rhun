@@ -199,6 +199,7 @@ FN testcover_apply
     jmp .Ltc_pass
 7:  mov dword ptr [rip + g_dirty], 1
     mov dword ptr [rip + g_ts_dirty], 1
+    call testgutter_cov_changed
     xor eax, eax
     EPILOGUE
 .Ltc_syntax:
@@ -296,6 +297,7 @@ FN testcover_clear
     mov qword ptr [rip + g_cov_run], 0
     mov qword ptr [rip + ranges], 0
     mov dword ptr [rip + g_dirty], 1
+    call testgutter_cov_changed
     EPILOGUE
 
 # testcover_file(path cstr) -> CF* or 0

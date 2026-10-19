@@ -680,6 +680,7 @@ item_propagate:
     cmp ecx, edx
     je 9f
     mov [r13 + TSI_state], ecx
+    mov dword ptr [rip + g_ts_glyphs], 1
     movsxd r12, dword ptr [r13 + TSI_parent]
     test r12, r12
     js 9f
@@ -1443,6 +1444,16 @@ item_apply:
     xor edx, edx
 5:  lea rdi, [r13 + TSI_path]
     call set_str_opt
+    mov qword ptr [r13 + TSI_phash], 0
+    mov rdi, [r13 + TSI_path]
+    test rdi, rdi
+    jz 6f
+    call strlen
+    mov rsi, rax
+    mov rdi, [r13 + TSI_path]
+    call hash_line
+    mov [r13 + TSI_phash], rax
+6:  mov dword ptr [rip + g_ts_glyphs], 1
     mov rdi, [rbx + TSC_ext]
     mov rsi, r12
     call testgutter_item_changed

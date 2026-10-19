@@ -59,6 +59,7 @@ source_of:
 # testgutter_tick(): the problems again from the results, when they changed
 FN testgutter_tick
     PROLOGUE
+    call testgutter_glyphs
     cmp dword ptr [rip + g_ts_marks], 0
     je 9f
     mov dword ptr [rip + g_ts_marks], 0
@@ -260,3 +261,517 @@ FN testgutter_forget
 .Lcolon: .asciz ": "
 .Lexpected: .asciz "\nExpected: "
 .Lactual: .asciz "\nActual: "
+
+# ---------------- glyphs and coverage tints ----------------
+# A glyph in the gutter's left lane at the first line of each test or suite with a range in an open
+# file: a run triangle until it ran, then its state. A click runs it, a right click opens its menu.
+# The glyphs are set again from the model after it changed (at most every 100 ms), and for files
+# opened since; between those they follow edits (gutter.s). Coverage tints the line numbers.
+
+.equ TG_EVERY_MS, 100
+
+.bss
+.p2align 3
+.globl g_ts_glyphs
+g_ts_glyphs: .long 0            # items or states changed: the glyphs are set again
+tg_kind: .long 0                # the gutter kind, 0 before the first tick
+tg_force: .long 0               # set again now, not waiting for the 100 ms (print-gutter)
+.p2align 3
+tg_last: .quad 0                # time_ms of the last setting
+tg_doc_max: .quad 0             # the newest DOC_id that has its glyphs
+tg_cov_doc: .quad 0             # the tint's cache: the document, its coverage file, for which run
+tg_cov_cf: .quad 0
+tg_cov_run: .quad 0
+tg_tip: .zero 512
+
+.text
+
+# testgutter_glyphs(): kind and tint at the first call; glyphs set again when due
+FN testgutter_glyphs
+    PROLOGUE
+    cmp dword ptr [rip + tg_kind], 0
+    jne 1f
+    mov edi, GK_PRIO_TEST
+    xor esi, esi
+    lea rdx, [rip + tg_click]
+    lea rcx, [rip + tg_tipfn]
+    xor r8d, r8d
+    call gutter_kind
+    mov [rip + tg_kind], eax
+    lea rdi, [rip + tg_tint]
+    call gutter_tint
+    cmp dword ptr [rip + tg_kind], 0
+    je 9f
+1:  # a document opened since the last setting gets its glyphs too
+    xor ebx, ebx
+    xor r12d, r12d              # the newest id
+2:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rbx
+    inc rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 2b
+    mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 2b
+    mov rcx, [rax + DOC_id]
+    cmp rcx, r12
+    jbe 2b
+    mov r12, rcx
+    jmp 2b
+3:  cmp r12, [rip + tg_doc_max]
+    jbe 4f
+    mov dword ptr [rip + g_ts_glyphs], 1
+4:  cmp dword ptr [rip + g_ts_glyphs], 0
+    je 9f
+    call time_ms
+    cmp dword ptr [rip + tg_force], 0
+    jne 41f
+    mov rcx, rax
+    sub rcx, [rip + tg_last]
+    cmp rcx, TG_EVERY_MS
+    jb 9f
+41: mov dword ptr [rip + tg_force], 0
+    mov [rip + tg_last], rax
+    mov [rip + tg_doc_max], r12
+    mov dword ptr [rip + g_ts_glyphs], 0
+    xor edi, edi
+    mov esi, [rip + tg_kind]
+    call gutter_glyph_clear
+    cmp dword ptr [rip + cfg_test_gutter], 0
+    je 9f
+    xor ebx, ebx
+5:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    inc rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 5b
+    mov rdi, [rax + TAB_doc]
+    test rdi, rdi
+    jz 5b
+    cmp qword ptr [rdi + DOC_path], 0
+    je 5b
+    call doc_glyphs
+    jmp 5b
+9:  EPILOGUE
+
+# doc_glyphs(doc): its tests' glyphs
+doc_glyphs:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov rdi, [rbx + DOC_path]
+    call strlen
+    mov rsi, rax
+    mov rdi, [rbx + DOC_path]
+    call hash_line
+    mov [rsp], rax
+    lea r12, [rip + g_ts_ctrls]
+    xor r13d, r13d
+1:  cmp qword ptr [r12 + TSC_ext], 0
+    je 4f
+    mov r14d, 1
+2:  cmp r14, [r12 + TSC_items + VEC_len]
+    jae 4f
+    mov rdi, r12
+    mov rsi, r14
+    call testmodel_item
+    mov r15, rax
+    cmp qword ptr [r15 + TSI_id], 0
+    je 3f
+    mov rax, [rsp]
+    cmp [r15 + TSI_phash], rax
+    jne 3f
+    cmp dword ptr [r15 + TSI_l1], 0
+    je 3f
+    mov eax, [r15 + TSI_kind]
+    cmp eax, TSK_TEST
+    je 21f
+    cmp eax, TSK_SUITE
+    jne 3f
+21: mov rdi, [r15 + TSI_path]
+    mov rsi, [rbx + DOC_path]
+    call strcmp_eq
+    test eax, eax
+    jz 3f
+    mov eax, [r15 + TSI_state]
+    lea rcx, [rip + state_glyphs]
+    mov ecx, [rcx + rax*4]
+    mov rdi, rbx
+    mov esi, [rip + tg_kind]
+    mov edx, [r15 + TSI_l1]
+    dec edx
+    call gutter_glyph_set
+3:  inc r14
+    jmp 2b
+4:  add r12, TSC_SIZE
+    inc r13d
+    cmp r13d, TS_CTRL_MAX
+    jb 1b
+    EPILOGUE
+
+# at_line(doc, line) -> rax TSC*, rdx index of the test or suite whose glyph is on the line (its
+#   range's first line, else the deepest range holding the line), rax 0 for none
+at_line:
+    PROLOGUE 32
+    mov rbx, rdi
+    lea rax, [rsi + 1]
+    mov [rsp], rax              # one-based
+    mov qword ptr [rsp + 8], 0  # the best: TSC*, index, how good (2 first line, 1 holds it)
+    mov qword ptr [rsp + 16], 0
+    mov qword ptr [rsp + 24], 0
+    lea r12, [rip + g_ts_ctrls]
+    xor r13d, r13d
+1:  cmp qword ptr [r12 + TSC_ext], 0
+    je 4f
+    mov r14d, 1
+2:  cmp r14, [r12 + TSC_items + VEC_len]
+    jae 4f
+    mov rdi, r12
+    mov rsi, r14
+    call testmodel_item
+    mov r15, rax
+    cmp qword ptr [r15 + TSI_id], 0
+    je 3f
+    cmp dword ptr [r15 + TSI_l1], 0
+    je 3f
+    mov rdi, [r15 + TSI_path]
+    test rdi, rdi
+    jz 3f
+    mov rsi, [rbx + DOC_path]
+    call strcmp_eq
+    test eax, eax
+    jz 3f
+    mov rax, [rsp]
+    mov ecx, [r15 + TSI_l1]
+    cmp rax, rcx
+    jne 31f
+    mov edx, 2
+    jmp 32f
+31: jb 3f
+    mov ecx, [r15 + TSI_l2]
+    cmp rax, rcx
+    ja 3f
+    mov edx, 1
+32: cmp rdx, [rsp + 24]
+    jb 3f
+    mov [rsp + 8], r12
+    mov [rsp + 16], r14
+    mov [rsp + 24], rdx
+3:  inc r14
+    jmp 2b
+4:  add r12, TSC_SIZE
+    inc r13d
+    cmp r13d, TS_CTRL_MAX
+    jb 1b
+    mov rax, [rsp + 8]
+    mov rdx, [rsp + 16]
+    EPILOGUE
+
+# tg_click(doc, line, button, glyph): a click runs the test, a right click opens its menu
+tg_click:
+    PROLOGUE
+    mov r12d, edx
+    call at_line
+    test rax, rax
+    jz 9f
+    cmp r12d, BTN_RIGHT
+    je 1f
+    mov rdi, rax
+    mov rsi, rdx
+    xor edx, edx
+    call testview_run_item
+    EPILOGUE
+1:  mov rdi, rax
+    mov rsi, rdx
+    mov edx, [rip + g_mx]
+    mov ecx, [rip + g_my]
+    call testview_menu_at
+9:  EPILOGUE
+
+# tg_tipfn(doc, line, glyph) -> rax "Run NAME", or "NAME: STATE" and its first message line
+tg_tipfn:
+    PROLOGUE
+    call at_line
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    call testmodel_item
+    mov rbx, rax
+    lea rdi, [rip + tg_tip]
+    cmp dword ptr [rbx + TSI_state], TSS_NOTRUN
+    jne 1f
+    lea rsi, [rip + .Lrun]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, [rbx + TSI_label]
+    call tip_copy
+    jmp 7f
+1:  mov rsi, [rbx + TSI_label]
+    call tip_copy
+    mov rdi, rax
+    lea rsi, [rip + .Lcolon]
+    call cstr_copy
+    mov rdi, rax
+    push rax
+    push rax
+    mov edi, [rbx + TSI_state]
+    call testmodel_state_word
+    mov rsi, rax
+    pop rdi
+    pop rdi
+    call cstr_copy
+    mov rsi, [rbx + TSI_msg]
+    test rsi, rsi
+    jz 7f
+    mov rdi, rax
+    lea rsi, [rip + .Lnl]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, [rbx + TSI_msg]
+    call tip_copy
+7:  lea rax, [rip + tg_tip]
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# tip_copy(dst, cstr) -> dst's NUL: the text, cut where the tip buffer ends
+tip_copy:
+    lea rcx, [rip + tg_tip + 500]
+1:  cmp rdi, rcx
+    jae 2f
+    movzx eax, byte ptr [rsi]
+    test eax, eax
+    jz 2f
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    jmp 1b
+2:  mov byte ptr [rdi], 0
+    mov rax, rdi
+    ret
+
+# tg_tint(doc, line) -> eax argb: covered lines in the success color, missed ones in the error
+#   color, partly covered ones in the warning color, at 22 % (0 elsewhere, or with coverage hidden)
+tg_tint:
+    PROLOGUE
+    xor eax, eax
+    cmp dword ptr [rip + g_cov_on], 0
+    je 9f
+    cmp qword ptr [rip + g_cov_run], 0
+    je 9f
+    mov rbx, rdi
+    mov r12, rsi
+    cmp rbx, [rip + tg_cov_doc]
+    jne 1f
+    mov rax, [rip + g_cov_run]
+    cmp rax, [rip + tg_cov_run]
+    je 2f
+1:  mov [rip + tg_cov_doc], rbx
+    mov rax, [rip + g_cov_run]
+    mov [rip + tg_cov_run], rax
+    mov qword ptr [rip + tg_cov_cf], 0
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jz 2f
+    call testcover_file
+    mov [rip + tg_cov_cf], rax
+2:  xor eax, eax
+    mov rdi, [rip + tg_cov_cf]
+    test rdi, rdi
+    jz 9f
+    lea rsi, [r12 + 1]
+    call testcover_line
+    test eax, eax
+    jz 9f
+    lea rcx, [rip + cov_slots]
+    mov ecx, [rcx + rax*4]
+    lea rdx, [rip + g_theme]
+    mov eax, [rdx + rcx*4]
+    and eax, 0x00ffffff
+    or eax, 0x38000000          # 22 %
+9:  EPILOGUE
+
+# testgutter_cov_changed(): the tint cache forgets (coverage replaced or cleared)
+FN testgutter_cov_changed
+    mov qword ptr [rip + tg_cov_doc], 0
+    ret
+
+.section .rodata
+.Lrun: .asciz "Run "
+.Lnl: .asciz "\n"
+.p2align 2
+# per state: the glyph (GS_* | theme slot << 8 | GF_* << 16)
+state_glyphs:
+    .long GS_TRIANGLE | (T_MUTED << 8)          # not run: run it
+    .long GS_MINUS | (T_MUTED << 8)             # skipped
+    .long GS_CHECK | (T_SUCCESS << 8)           # passed
+    .long GS_CROSS | (T_ERROR << 8)             # failed
+    .long GS_CIRCLE_TRI | (T_ERROR << 8)        # errored
+    .long GS_RING | (T_MUTED << 8)              # queued
+    .long GS_RING | (T_ACCENT << 8)             # running
+cov_slots: .long 0, T_SUCCESS, T_ERROR, T_WARNING
+
+.text
+# testctl_gutter(sb, rest, len): print-gutter: the active document's test glyphs, "line=N glyph=NAME
+#   item=ID" per glyph (N one-based), then "cov=L:C,L:M,L:P..." for its tinted lines
+FN testctl_gutter
+    PROLOGUE 16
+    mov rbx, rdi
+    mov dword ptr [rip + tg_force], 1
+    call testgutter_glyphs
+    mov r12, [rip + g_doc]
+    test r12, r12
+    jz 9f
+    cmp dword ptr [rip + tg_kind], 0
+    je 6f
+    xor r13d, r13d              # the line to look from
+1:  mov rdi, r12
+    mov esi, [rip + tg_kind]
+    mov rdx, r13
+    call gutter_glyph_next
+    test rax, rax
+    js 6f
+    mov r13, rax
+    mov rdi, r12
+    mov esi, [rip + tg_kind]
+    mov rdx, r13
+    call gutter_glyph_get
+    mov r14d, eax
+    mov rdi, rbx
+    lea rsi, [rip + .Lp_line]
+    call sb_push_cstr
+    lea rsi, [r13 + 1]
+    mov rdi, rbx
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Lp_glyph]
+    call sb_push_cstr
+    # its name: the state whose glyph it is
+    xor ecx, ecx
+2:  cmp ecx, TSS_COUNT
+    jae 3f
+    lea rax, [rip + state_glyphs]
+    cmp [rax + rcx*4], r14d
+    je 3f
+    inc ecx
+    jmp 2b
+3:  lea rsi, [rip + .Lg_play]
+    test ecx, ecx
+    jz 31f
+    cmp ecx, TSS_COUNT
+    jae 31f
+    mov edi, ecx
+    call testmodel_state_word
+    mov rsi, rax
+31: mov rdi, rbx
+    call sb_push_cstr
+    mov rdi, r12
+    mov rsi, r13
+    call at_line
+    test rax, rax
+    jz 4f
+    mov r15, rax
+    mov rdi, rax
+    mov rsi, rdx
+    call testmodel_item
+    mov r14, rax
+    mov rdi, rbx
+    lea rsi, [rip + .Lp_item]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [r14 + TSI_id]
+    mov edx, [r14 + TSI_idlen]
+    call testmodel_escape
+4:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    inc r13
+    jmp 1b
+6:  # coverage
+    mov rdi, rbx
+    lea rsi, [rip + .Lp_cov]
+    call sb_push_cstr
+    xor r13d, r13d
+    xor r15d, r15d              # 1 after the first
+7:  cmp r13, [r12 + DOC_nlines]
+    jae 8f
+    mov rdi, r12
+    mov rsi, r13
+    call tg_tint
+    test eax, eax
+    jz 71f
+    mov rdi, [rip + tg_cov_cf]
+    lea rsi, [r13 + 1]
+    call testcover_line
+    mov r14d, eax
+    test r15d, r15d
+    jz 72f
+    mov rdi, rbx
+    mov esi, ','
+    call sb_push_byte
+72: mov r15d, 1
+    lea rsi, [r13 + 1]
+    mov rdi, rbx
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, ':'
+    call sb_push_byte
+    lea rax, [rip + .Lcov_letters]
+    movzx esi, byte ptr [rax + r14]
+    mov rdi, rbx
+    call sb_push_byte
+71: inc r13
+    jmp 7b
+8:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+9:  xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Lp_line: .asciz "line="
+.Lp_glyph: .asciz " glyph="
+.Lp_item: .asciz " item="
+.Lp_cov: .asciz "cov="
+.Lg_play: .asciz "play"
+.Lcov_letters: .ascii "-CMP"
+
+.text
+# testctl_gutter_click(sb, rest, len): test-gutter LINE [right]: a click (or right click) on the active
+#   document's test glyph at that one-based line, as the gutter would pass it
+FN testctl_gutter_click
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov rdi, r12
+    mov rsi, r13
+    call next_word
+    add r12, rcx
+    sub r13, rcx
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    test rax, rax
+    jz 9f
+    lea r14, [rax - 1]
+    mov r15d, BTN_LEFT
+    mov rdi, r12
+    mov rsi, r13
+    call trim
+    test rdx, rdx
+    jz 1f
+    mov r15d, BTN_RIGHT
+1:  mov rdi, [rip + g_doc]
+    test rdi, rdi
+    jz 9f
+    mov rsi, r14
+    mov edx, r15d
+    xor ecx, ecx
+    call tg_click
+9:  xor eax, eax
+    EPILOGUE

@@ -523,7 +523,8 @@ test_ctl:
     .quad .Lc_wait, testctl_wait, .Lc_wait_items, testctl_wait_items
     .quad .Lc_print, testctl_print, .Lc_result, testctl_result
     .quad .Lc_runs, testctl_runs, .Lc_coverage, testctl_coverage
-    .quad .Lc_view, testctl_print_view
+    .quad .Lc_view, testctl_print_view, .Lc_gutter, testctl_gutter
+    .quad .Lc_gutter_click, testctl_gutter_click
     .quad 0, 0
 .Lc_select: .asciz "test-select"
 .Lc_expand: .asciz "test-expand"
@@ -536,6 +537,8 @@ test_ctl:
 .Lc_runs: .asciz "print-test-runs"
 .Lc_coverage: .asciz "print-coverage"
 .Lc_view: .asciz "print-testing"
+.Lc_gutter: .asciz "print-gutter"
+.Lc_gutter_click: .asciz "test-gutter"
 .text
 
 testctl_expand_open:
@@ -1531,6 +1534,18 @@ tv_menu:
     mov edx, [rip + tv_menu_y]
     call ctx_menu_open
 9:  EPILOGUE
+
+# testview_menu_at(tsc, index, x, y): the item's menu (the gutter glyph's right click)
+FN testview_menu_at
+    PROLOGUE
+    mov r12d, edx
+    mov r13d, ecx
+    call testview_select
+    lea rdi, [rip + tv_menu_items]
+    mov esi, r12d
+    mov edx, r13d
+    call ctx_menu_open
+    EPILOGUE
 
 # the menu's items act on the selected item
 tv_m_run:
