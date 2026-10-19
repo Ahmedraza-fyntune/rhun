@@ -49,6 +49,13 @@ cfg_auto_pairs: .long 1
 .globl cfg_multi_cursor_paste
 cfg_multi_cursor_paste: .long 0
 cfg_word_wrap: .long 0
+# language features (query.s, complete.s, langfeat.s)
+.globl cfg_complete_replace, cfg_complete_commit, cfg_lightbulb, cfg_format_on_type, cfg_format_on_paste
+cfg_complete_replace: .long 0    # accepting replaces the rest of the word (the item's replace range)
+cfg_complete_commit: .long 1     # an item's commit characters accept it
+cfg_lightbulb: .long 1
+cfg_format_on_type: .long 0
+cfg_format_on_paste: .long 0
 cfg_vim: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
 cfg_follow_system: .long 1       # dark_theme or light_theme as the system's dark mode is on or off
@@ -82,6 +89,8 @@ cfg_term_font: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
 .globl cfg_save_actions
 cfg_save_actions: .quad .Lempty
+.globl cfg_remote_agent_binary
+cfg_remote_agent_binary: .quad .Lempty  # remote hosts: the Linux rhun to start on hosts (remote.s)
 .Lcfg_strings_end:
 cfg_agent_sources: .quad .Ldef_sources  # the switched-on providers' names, for the discovery worker
 
@@ -241,7 +250,16 @@ FN setting_assign
     jmp 9f
 2:  cmp eax, ST_CHOICE
     jne 3f
-    xor r15d, r15d
+    # source control (wider-parity C): commit_ai = ext:OWNER/NAME names an extension (scmext.s)
+    lea rax, [rip + cfg_commit_ai]
+    cmp r14, rax
+    jne 20f
+    mov rdi, r12
+    mov rsi, r13
+    call scmext_ai_config
+    test eax, eax
+    jnz 9f
+20: xor r15d, r15d
 21: mov rdi, [rbx + SET_opts]
     mov esi, r15d
     call choice_entry
@@ -803,6 +821,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Ls_terminal: .asciz "terminal"
 .Ls_git: .asciz "git"
 .Ls_updates: .asciz "updates"
+.Ls_remote: .asciz "remote"
 
 .macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0, live_desc=0
     .quad \sec, 1f, \ptr, 2f
@@ -867,6 +886,12 @@ g_settings:
     SETTING .Ls_editor, multi_cursor_paste, ST_CHOICE, cfg_multi_cursor_paste, 0, 1, 1, 0, "Paste at multiple cursors", "Keep copied selections paired. Choose how other multiline text is pasted.", .Lpaste_opts
     SETTING .Ls_editor, scroll_past_end, ST_BOOL, cfg_scroll_past_end, 0, 1, 1, 0, "Scroll past end", "Allow scrolling the last line to the top."
     SETTING .Ls_editor, vim_mode, ST_BOOL, cfg_vim, 0, 1, 1, 0, "Vim mode", "Normal, insert and visual modes with vim keys."
+    # language features
+    SETTING .Ls_editor, complete_replace, ST_BOOL, cfg_complete_replace, 0, 1, 1, 0, "Completion replaces the word", "Accepting a completion replaces the rest of the word after the cursor (shift+Enter does the other)."
+    SETTING .Ls_editor, complete_commit_characters, ST_BOOL, cfg_complete_commit, 0, 1, 1, 0, "Commit characters", "Typing a character the selected completion lists, such as a dot, accepts it first."
+    SETTING .Ls_editor, lightbulb, ST_BOOL, cfg_lightbulb, 0, 1, 1, 0, "Quick fix lightbulb", "Show a lightbulb in the gutter where a quick fix is available."
+    SETTING .Ls_editor, format_on_type, ST_BOOL, cfg_format_on_type, 0, 1, 1, 0, "Format as you type", "Ask the formatter after typing one of its trigger characters, such as Enter."
+    SETTING .Ls_editor, format_on_paste, ST_BOOL, cfg_format_on_paste, 0, 1, 1, 0, "Format pasted text", "Format the pasted lines with the formatter's range formatting."
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
     SETTING .Ls_files, format_on_save, ST_BOOL, cfg_format_on_save, 0, 1, 1, 0, "Format before saving", "Use the default formatter before writing a file."
@@ -887,16 +912,17 @@ g_settings:
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
     SETTING .Ls_terminal, height, ST_INT, cfg_term_h, 80, 2000, 10, 0, "Terminal height", "Height of the terminal panel in points."
     SETTING .Ls_git, enabled, ST_BOOL, cfg_git, 0, 1, 1, 0, "Git", "Changes in the gutter, tabs and explorer, and the history view."
-    SETTING .Ls_git, commit_ai, ST_CHOICE, cfg_commit_ai, 0, 3, 1, 0, "Commit message AI", "Optional. Cloud providers use your subscription.", .Lai_opts, g_ai_provider_desc
+    SETTING .Ls_git, commit_ai, ST_CHOICE, cfg_commit_ai, 0, 3, 1, 0, "Commit message AI", "Optional. Cloud providers use your subscription.", g_ai_opts, g_ai_provider_desc
     SETTING .Ls_git, commit_model, ST_STR, cfg_commit_model, 0, 0, 0, 0, "Local model", "Ollama model name. Default download: about 1 GB."
     SETTING_ACTION .Ls_git, ai_setup, cmd_ai_model_files, .Lai_setup, g_ai_local_desc
     SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
     SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_version_text, g_update_desc
+    SETTING .Ls_remote, agent_binary, ST_STR, cfg_remote_agent_binary, 0, 0, 0, 0, "Remote agent binary", "A Linux rhun to start on remote hosts. Empty uses this release's own."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Lpaste_opts: .asciz "spread", "Spread lines", "full", "Full text", ""
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"
-.Lai_opts: .asciz "off", "Off", "claude", "Claude Code", "codex", "Codex", "ollama", "Local (Ollama)", ""
+
 .Lai_setup: .asciz "Local model files"

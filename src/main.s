@@ -13,6 +13,7 @@ opt_paths: .long 0              # past a -- argument: the rest are paths
 .p2align 3
 opt_script: .quad 0
 opt_control: .quad 0
+opt_remote: .quad 0             # --remote SPEC: a remote window
 cwd: .zero 4096
 self_path: .zero 4096
 
@@ -40,6 +41,34 @@ FN main
     jz 2f
     call uproc_print_env
 2:
+    # WebAssembly worker modes (src/wasm): rhun --wasm-host, rhun --wasm-spec
+    mov rdi, [rip + g_argc]
+    mov rsi, [rip + g_argv]
+    call wasm_worker_main
+    # remote hosts: the agent a remote window starts on the host (remote.s, ragent.s)
+    cmp qword ptr [rip + g_argc], 2
+    jb .Lnot_remote_agent
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lremote_agent]
+    call strcmp_eq
+    test eax, eax
+    jz .Lnot_remote_agent
+    call remote_agent_main
+    EPILOGUE
+.Lnot_remote_agent:
+    # remote hosts: run by ssh as its askpass program (RHUN_ASKPASS names the window's socket)
+    lea rdi, [rip + .Lenv_askpass]
+    call getenv
+    test rax, rax
+    jz .Lnot_askpass
+    xor edi, edi
+    cmp qword ptr [rip + g_argc], 2
+    jb 1f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+1:  call remote_askpass_main
+.Lnot_askpass:
     cmp qword ptr [rip + g_argc], 5
     jb 1f
     cmp qword ptr [rip + g_argc], 6
@@ -118,10 +147,13 @@ FN main
 .Lm_exit:
     call app_clip_reset
     call headless_clip_reset
+    call dap_shutdown           # debugger: sessions disconnect, adapters are stopped
+    call bp_save
     call uproc_quit_begin       # programs run as the user: SIGTERM now, up to 300 ms with the extensions
     call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
     call uproc_quit_end
+    call remote_shutdown        # remote hosts: the askpass socket
     call agents_shutdown
     call ai_shutdown
     call session_remember_project
@@ -217,6 +249,17 @@ parse_args:
     mov dword ptr [rip + opt_empty], 1
     jmp 9f
 42: mov rdi, r14
+    lea rsi, [rip + .Lo_remote]
+    call strcmp_eq
+    test eax, eax
+    jz 43f
+    inc rbx
+    cmp rbx, r13
+    jae .Lpa_done
+    mov rax, [r12 + rbx*8]
+    mov [rip + opt_remote], rax
+    jmp 9f
+43: mov rdi, r14
     lea rsi, [rip + .Lo_extensions]
     call strcmp_eq
     test eax, eax
@@ -467,7 +510,18 @@ parse_size:
 
 open_initial:
     PROLOGUE
-    xor r12d, r12d              # got a directory
+    # a remote window opens its folder once connected (remoteui.s)
+    mov rdi, [rip + opt_remote]
+    test rdi, rdi
+    jz 10f
+    xor esi, esi
+    cmp qword ptr [rip + g_start_paths + VEC_len], 0
+    je 11f
+    mov rax, [rip + g_start_paths + VEC_ptr]
+    mov rsi, [rax]
+11: call remote_start
+    jmp 6f
+10: xor r12d, r12d              # got a directory
     xor ebx, ebx
 1:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 2f
@@ -548,6 +602,9 @@ open_initial:
 .Lo_wait: .asciz "--wait"
 .Lo_empty: .asciz "--empty"
 .Lo_extensions: .asciz "--extensions"
+.Lo_remote: .asciz "--remote"
+.Lremote_agent: .asciz "--remote-agent"
+.Lenv_askpass: .asciz "RHUN_ASKPASS"
 .Lo_dashdash: .asciz "--"
 .Ldevnull: .asciz "/dev/null"
 .Lself_exe: .asciz "/proc/self/exe"
@@ -566,6 +623,7 @@ open_initial:
     .ascii "  --script FILE    run control commands from FILE and exit\n"
     .ascii "  --control PATH   accept control commands on a unix socket\n"
     .ascii "  --extensions DIR load extensions from DIR instead of the config folder\n"
+    .ascii "  --remote HOST    open the folder on a remote host: ssh:HOST, docker:NAME, podman:NAME\n"
     .ascii "  --scale F        display scale where the platform has none\n"
     .ascii "  --               the arguments after it are paths (rhun://file/ links too)\n"
     .asciz "  --version        print the version\n"

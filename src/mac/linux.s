@@ -720,6 +720,28 @@ sys_pipe2:
 9:  ldp x29, x30, [sp], #32
     ret
 
+// socketpair(domain, type | flags, proto, sv): a remote window's channels (remote.s)
+sys_socketpair:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x1, x3, [sp, #16]
+    and w1, w1, #0xf
+    bl _socketpair
+    sxtw x0, w0
+    bl linux_ret
+    tbnz x0, #63, 9f
+    ldp x1, x9, [sp, #16]
+    ldr w0, [x9]
+    bl set_fl
+    ldp x1, x9, [sp, #16]
+    ldr w0, [x9, #4]
+    bl set_fl
+    mov x0, #0
+9:  ldp x29, x30, [sp], #32
+    ret
+
+LIBC sys_shutdown, _shutdown, 32
+
 // fcntl(fd, cmd, arg): the O_NONBLOCK and O_APPEND bits differ
 sys_fcntl:
     stp x29, x30, [sp, #-32]!
@@ -832,8 +854,10 @@ sys_table:
     SYS 39, sys_getpid
     SYS 41, sys_socket
     SYS 42, sys_connect
+    SYS 48, sys_shutdown
     SYS 49, sys_bind
     SYS 50, sys_listen
+    SYS 53, sys_socketpair
     SYS 57, sys_fork
     SYS 58, sys_vfork
     SYS 59, sys_execve

@@ -113,7 +113,8 @@ trust_path: .zero 4096           # the repository's folder, as shown (~ for the 
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
-pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folders, the end
+pm_items: .zero 16 * 24         # the project menu: 2 commands, a line, 9 folders, the remote items
+                                # (a line, 2 commands, 8 recent remotes; remoteui.s), the end
 .globl g_shot_path
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
@@ -241,6 +242,7 @@ set_project:
     mov rsi, rax
     call path_basename
     mov [rip + g_project_name], rax
+    call remote_project_label   # remote hosts: "HOST: name"
     mov eax, [rip + g_link_open]
     mov [rip + g_project_link], eax
     mov dword ptr [rip + trust_closed], 0
@@ -486,7 +488,11 @@ project_menu_open:
     add rbx, 16
     inc r15d
     jmp 1b
-2:  mov qword ptr [rbx], 0
+2:  mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
+    lea rsi, [rip + pm_items]
+    call remote_menu_append
+    mov rbx, rax
+    mov qword ptr [rbx], 0
     mov qword ptr [rbx + 8], 0
     lea rdi, [rip + pm_items]
     mov esi, r12d
@@ -2721,7 +2727,15 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: call uproc_timeout          # programs run as the user (tasks and terminals)
+96: call uproc_timeout    # programs run as the user (tasks and terminals)
+    cmp eax, -1
+    je 961f
+    cmp ebx, -1
+    je 962f
+    cmp eax, ebx
+    jge 961f
+962: mov ebx, eax
+961: call query_timeout    # language features: the next request to expire
     cmp eax, -1
     je 98f
     cmp ebx, -1
@@ -2729,7 +2743,7 @@ FN app_timeout
     cmp eax, ebx
     jge 98f
 99: mov ebx, eax
-98: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
+98: call testing_timeout  # testing: tests-resolve waits, Cancel deadlines, test processes
     cmp eax, -1
     je 100f
     cmp ebx, -1
@@ -2737,11 +2751,28 @@ FN app_timeout
     cmp eax, ebx
     jge 100f
 101: mov ebx, eax
-100: mov eax, ebx
+100: call dap_timeout      # debugger: adapters' messages and deadlines
+    cmp eax, -1
+    je 102f
+    cmp ebx, -1
+    je 103f
+    cmp eax, ebx
+    jge 102f
+103: mov ebx, eax
+102: call remote_timeout   # remote hosts
+    cmp eax, -1
+    je 104f
+    cmp ebx, -1
+    je 105f
+    cmp eax, ebx
+    jge 104f
+105: mov ebx, eax
+104: mov eax, ebx
     EPILOGUE
 
 FN app_tick
     PROLOGUE
+    call query_tick             # language features: expired requests, before their askers' ticks
     call complete_tick
     call langfeat_tick
     call save_tick
@@ -2771,6 +2802,8 @@ FN app_tick
     call ext_provider_tick
     call testing_tick           # testing (testproto.s)
     call app_clip_tick
+    call dap_tick               # debugger
+    call remote_tick            # remote hosts
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -2959,7 +2992,14 @@ FN app_render
     M eax, MI_3
     lea eax, [rax + rax + 1]
     mov [rip + g_hole + 12], eax
-54: # the trust bar over the column, while git is paused for a repository a link opened
+54: # remote hosts: the connection's bar over the column while it is not up
+    mov edi, [rsp + 40]
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 44]
+    call remote_bar
+    add [rsp + 20], eax
+    sub [rsp + 48], eax
+    # the trust bar over the column, while git is paused for a repository a link opened
     mov edi, [rsp + 40]
     mov esi, [rsp + 20]
     mov edx, [rsp + 44]
@@ -4682,8 +4722,13 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov ecx, [rsp + 12]
     call gfx_clip_push
-    # the branch at the left end; the file's items follow it
+    # remote hosts: "SSH: HOST" at the left end
     mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call remote_status_item
+    # the branch at the left end; the file's items follow it
+    mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     mov ecx, [rsp + 20]

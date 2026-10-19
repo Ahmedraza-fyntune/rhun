@@ -473,6 +473,14 @@ handle_line:
     jz 9f
     cmp dword ptr [rbx + EXT_feat_asks], 0
     je 9f
+    mov rdi, rbx                # language features: counted, and a late answer goes no further
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call query_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # testing: tests-resolve and test-run answers
     mov rsi, r12
     mov edx, 1
@@ -487,6 +495,15 @@ handle_line:
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
     call ai_reply
+    test eax, eax
+    jnz 9f
+    # source control (wider-parity C): commit-message and quickdiff answers (scmext.s)
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call scmext_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -520,6 +537,14 @@ handle_line:
     test edx, edx
     jz 9f
     mov r12, rax
+    mov rdi, rbx                # language features: counted, and a late answer goes no further
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call query_reply
+    test eax, eax
+    jnz 9f
     mov edi, 2                  # testing: the code and text go with the answer
     call rest_from
     mov rcx, rax
@@ -538,6 +563,17 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call ai_reply
+    test eax, eax
+    jnz 9f
+    # source control (wider-parity C): commit-message and quickdiff errors (scmext.s)
+    mov edi, 2
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call scmext_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -717,6 +753,43 @@ reply_error_u64:
     mov edi, 10
     call out_byte
     jmp out_end
+
+# ---------------- for verb handlers in other files (language features: query.s) ----------------
+
+# FN extproto_cur() -> rax the EXT being served; extproto_req_id() -> rax its request's id
+FN extproto_cur
+    mov rax, [rip + cur]
+    ret
+FN extproto_req_id
+    mov rax, [rip + cur_id]
+    ret
+# FN extproto_nfields() -> rax the fields of the request's line
+FN extproto_nfields
+    mov rax, [rip + nfields]
+    ret
+# FN extproto_field(i) -> rax value, rdx 1 for a decimal number; extproto_field_at(i) -> rax ptr,
+# rdx len (0 past the line's fields); extproto_rest(i) -> rax ptr, rdx len: field i to the end
+FN extproto_field
+    jmp field_u64
+FN extproto_field_at
+    cmp rdi, [rip + nfields]
+    jae 8f
+    jmp field_at
+8:  xor eax, eax
+    xor edx, edx
+    ret
+FN extproto_rest
+    jmp rest_from
+# FN extproto_body() -> rax ptr, rdx len of the request's body
+FN extproto_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+# FN extproto_ok(id), extproto_error(id, "code text"): the reply
+FN extproto_ok
+    jmp reply_ok
+FN extproto_error
+    jmp reply_error
 
 # ---------------- documents ----------------
 
@@ -3024,6 +3097,56 @@ FN extproto_host_send
 8:  xor eax, eax
     EPILOGUE
 
+# FN extproto_host_send_body(ext, doc or 0, line, len, body, blen) -> rax the id of "ID LINE" and
+# the body's bytes after it (language features: the line ends with blen), or 0. With a document,
+# every event about it goes first and a document the extension does not know is not asked about
+FN extproto_host_send_body
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov [rsp], r8
+    mov [rsp + 8], r9
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 8f
+    mov rdi, rbx
+    call extproto_events
+    test rax, rax
+    js 8f
+    test r12, r12
+    jz 1f
+    mov rdi, rbx
+    mov rsi, r12
+    call extproto_doc_ready
+    test eax, eax
+    jz 8f
+1:  mov [rip + cur], rbx
+    cmp qword ptr [rbx + EXT_hreq], 2147483647
+    jae 8f
+    inc qword ptr [rbx + EXT_hreq]
+    mov r15, [rbx + EXT_hreq]
+    call out_begin
+    mov rdi, r15
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r13
+    mov rsi, r14
+    call out_bytes
+    mov edi, 10
+    call out_byte
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call out_bytes
+    call out_end
+    test rax, rax
+    js 8f
+    mov rax, r15
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # FN extproto_send_action(ext, data, len): "0 action LEN" and the bytes of a chosen code action
 FN extproto_send_action
     PROLOGUE
@@ -3690,8 +3813,19 @@ verbs:
     .quad .Lv_vshow, h_vshow, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # language features (query.s)
+    .quad .Lv_query_part, query_h_part, REPLY_BODY_MAX
+    .quad .Lv_query_progress, query_h_progress, 4096
+    .quad .Lv_provides, query_h_provides, 0
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
+    # source control (wider-parity C): gitdata.s
+    .quad .Lv_git_repo, gitdata_h_repo, 0
+    .quad .Lv_git_status, gitdata_h_status, 0
+    .quad .Lv_git_blame, gitdata_h_blame, 0
+    .quad .Lv_git_log, gitdata_h_log, 4096
+    .quad .Lv_git_show, gitdata_h_show, 4096
+    .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -3705,6 +3839,9 @@ verbs:
     .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
     .quad .Lv_unpropose, h_unpropose, 0
     .quad 0, 0, 0
+.Lv_query_part: .asciz "query-part"
+.Lv_query_progress: .asciz "query-progress"
+.Lv_provides: .asciz "provides"
 .Lv_test_items: .asciz "test-items"
 .Lv_test_remove: .asciz "test-remove"
 .Lv_test_update: .asciz "test-update"
@@ -3714,6 +3851,12 @@ verbs:
 .Lv_set_context: .asciz "set-context"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
+.Lv_git_repo: .asciz "git-repo"
+.Lv_git_status: .asciz "git-status"
+.Lv_git_blame: .asciz "git-blame"
+.Lv_git_log: .asciz "git-log"
+.Lv_git_show: .asciz "git-show"
+.Lv_git_diff_open: .asciz "git-diff-open"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -3865,6 +4008,14 @@ feature_names:
 .Lr_body: .asciz "a body over its cap"
 .Lr_framing: .asciz "invalid body framing"
 .Lr_syntax: .asciz "three unparsable lines in a row"
+
+# ---------------- source control (wider-parity C): for verb handlers in other files ----------------
+.text
+# FN extproto_answer_syntax(): "error ID syntax ..." for the request being served (counts toward the
+# three in a row that end a program)
+FN extproto_answer_syntax
+    mov rdi, [rip + cur_id]
+    jmp reply_syntax
 
 .include "app/extwatchproto.inc"
 .include "app/extaiproto.inc"
