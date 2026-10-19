@@ -270,6 +270,8 @@ probe_open:
     test r14, r14
     jz 5f
     mov rdi, [r14 + DV_path]
+    test rdi, rdi
+    jz 5f                       # a Review tab (review.s): no file
     mov rsi, [r12 + CT_path]
     call str_same
     test eax, eax

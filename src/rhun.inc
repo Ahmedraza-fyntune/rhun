@@ -1624,6 +1624,7 @@ ENDSTRUCT TF_SIZE
     # AI (wider-parity D: agentext.s, review.s, tools.s)
     FEATURE FEAT_AGENTS, "agents", 1              # agent-sessions; rhun asks agent-transcript
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
+    FEATURE FEAT_TOOLS, "tools", 1                # tools, tool-call; rhun asks owners: tool
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
     # language features (query.s, complete.s, langfeat.s)
@@ -1705,13 +1706,17 @@ FEATURE_LIST
 .equ PK_QUICKDIFF, 26
 .equ PK_TESTS_RESOLVE, 27        # testing (testproto.s)
 .equ PK_TEST_RUN, 28
-.equ PK_COUNT, 29
+.equ PK_TRANSCRIPT, 29           # AI: agent-transcript (agentext.s)
+.equ PK_TOOL, 30                 # AI: tool, a call routed to its owner (tools.s)
+.equ PK_PROMPT, 31               # AI: agent-prompt (agentext.s, D4)
+.equ PK_COUNT, 32
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
 .equ QO_SCM, 4                   # source control (scmext.s)
 .equ QO_TESTS, 5                 # testing (testproto.s)
+.equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff

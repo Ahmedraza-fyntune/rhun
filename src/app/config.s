@@ -480,6 +480,7 @@ FN config_load
     je 1f
     mov dword ptr [rip + cfg_agents_grok], 1
 1:  call config_agent_sources
+    call agentext_config_done   # AI: the extension sources' switches from this read
     mov rdi, r15
     call mem_free
     EPILOGUE

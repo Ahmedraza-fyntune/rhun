@@ -16,9 +16,11 @@ ENUMS = {
     'TAB_': ['src/rhun.inc'],
     'PLACE_': ['src/rhun.inc'],
     'INV_': ['src/rhun.inc'],
+    'PK_': ['src/rhun.inc'],   # query kinds: index query.s's pk_table
+    'QO_': ['src/rhun.inc'],   # query askers: index qo_reply, qo_part, qo_trunc
 }
 # names that share a prefix but belong to another enumeration
-SEPARATE = {'PM_RECENT'}  # app.s: the project menu's first recent folder, not a palette mode
+SEPARATE = {'PM_RECENT', 'PK_COUNT'}  # app.s's project-menu row; the number of query kinds
 
 def values(prefix, globs, extra=None):
     seen = {}
