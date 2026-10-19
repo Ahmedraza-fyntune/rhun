@@ -458,8 +458,8 @@ class UI(host.Host):
         out = self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
                        'ext-page hello', 'ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
                        'ext-set hello disabled 1', 'print-ext-page'], exts=exts)
-        self.assertIn('Hello 1.2.0 off', out)          # the list, with the record that is installed now
-        self.assertFalse(any(l.startswith('pinned=') for l in out), out)
+        self.assertIn('Hello 1.2.0 off', out)          # the details of the record that is installed now
+        self.assertIn('versions update=- previous=1.2.0', out)
 
     def test_a_dialog_in_its_place_cancels_the_install(self):
         self.release()

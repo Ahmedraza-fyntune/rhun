@@ -1789,6 +1789,24 @@ ENDSTRUCT VW_SIZE
 .equ XM_INSTALL, 0              # [updates] extensions (cfg_ext_updates)
 .equ XM_CHECK, 1
 .equ XM_OFF, 2
+.equ FOCUS_EXT_SEARCH, 30       # the Extensions page's Browse search (extpage.s)
+# an entry of the rhun extensions index (extindexfile.s): pointers to cstrs, 0 when absent
+STRUCT
+F XI_name, 8                    # "owner/name"
+F XI_title, 8
+F XI_desc, 8
+F XI_version, 8
+F XI_tag, 8
+F XI_digest, 8                  # sha256 of this system's archive, or 0
+F XI_category, 8
+F XI_keywords, 8
+F XI_needs, 8                   # KEY=VALUE words (run=a,b)
+F XI_rhun, 8                    # the oldest rhun it works with, or 0
+F XI_pack, 8
+F XI_color, 4                   # ARGB, 0 without
+F XI_featured, 4
+ENDSTRUCT XI_SIZE
+.equ XI_FIELDS, 11              # the pointer fields above, in order
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini
 STRUCT
 F SD_key, 8             # cstr

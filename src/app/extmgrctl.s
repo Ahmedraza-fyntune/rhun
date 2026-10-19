@@ -7,6 +7,11 @@
 #   wait-ext-updates                      until the check and the updates it queued are done (or ask)
 #   print-ext-updates                     a line per extension (extupdate_dump)
 #   ext-update NAME, ext-update-all       Update, Update all
+#   ext-browse                            the Extensions page's Browse list (the index fetched when old)
+#   ext-index-refresh, wait-index         Refresh; until no fetch runs (1 minute at most), "index=..."
+#   ext-search TEXT                       Browse's search
+#   print-ext-browse                      extpage_browse_dump
+#   ext-browse-install NAME               the entry's Install or Update button
 .include "rhun.inc"
 
 .bss
@@ -234,6 +239,72 @@ c_update_all:
     call extupdate_update_all
     XM_DONE
 
+# ext-browse
+c_browse:
+    XM_ARGS
+    PROLOGUE
+    call cmd_extensions
+    call extpage_browse
+    XM_DONE
+
+# ext-index-refresh
+c_index_refresh:
+    XM_ARGS
+    PROLOGUE
+    call extindex_refresh
+    XM_DONE
+
+# wait-index
+c_wait_index:
+    XM_ARGS
+    PROLOGUE
+    call time_ms
+    lea r13, [rax + 60000]
+1:  call extindex_state
+    test edx, edx
+    jz 2f
+    call time_ms
+    cmp rax, r13
+    jae 2f
+    mov edi, 50
+    call loop_poll
+    call app_tick
+    call xm_flush
+    jmp 1b
+2:  XM_DONE
+
+# ext-search TEXT
+c_search:
+    XM_ARGS
+    PROLOGUE
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call extpage_search
+    XM_DONE
+
+# print-ext-browse
+c_print_browse:
+    XM_ARGS
+    PROLOGUE
+    mov rdi, [rip + xm_out]
+    call extpage_browse_dump
+    XM_DONE
+
+# ext-browse-install NAME
+c_browse_install:
+    XM_ARGS
+    PROLOGUE
+    call next_word
+    mov rdi, rax
+    mov rsi, rdx
+    call extpage_browse_click
+    test eax, eax
+    jnz 9f
+    lea rdi, [rip + .Lno_button]
+    call xm_push
+9:  XM_DONE
+
 # xm_rec_pair(" key=", record key): " key=VALUE" (or "-") for rbx's record
 xm_rec_pair:
     PROLOGUE
@@ -276,6 +347,13 @@ xm_rec_pair:
 .Lu_idle: .asciz "updates=idle\n"
 .Lu_asking: .asciz "updates=asking\n"
 .Lu_busy: .asciz "updates=busy\n"
+.Lc_browse: .asciz "ext-browse"
+.Lc_index_refresh: .asciz "ext-index-refresh"
+.Lc_wait_index: .asciz "wait-index"
+.Lc_search: .asciz "ext-search"
+.Lc_print_browse: .asciz "print-ext-browse"
+.Lc_browse_install: .asciz "ext-browse-install"
+.Lno_button: .asciz "no such button\n"
 .Lsp_link: .asciz " link"
 .Lsp_copy: .asciz " copy"
 .Lno_ext: .asciz "no such extension\n"
@@ -297,4 +375,6 @@ extmgr_ctl:
     .quad .Lc_rollback, c_rollback, .Lc_print_versions, c_print_versions
     .quad .Lc_check_updates, c_check_updates, .Lc_wait_updates, c_wait_updates
     .quad .Lc_print_updates, c_print_updates, .Lc_update, c_update, .Lc_update_all, c_update_all
+    .quad .Lc_browse, c_browse, .Lc_index_refresh, c_index_refresh, .Lc_wait_index, c_wait_index
+    .quad .Lc_search, c_search, .Lc_print_browse, c_print_browse, .Lc_browse_install, c_browse_install
     .quad 0, 0

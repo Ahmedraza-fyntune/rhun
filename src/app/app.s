@@ -2240,6 +2240,8 @@ FN focused_field
     je find_field
     cmp eax, FOCUS_SETTINGS
     je settings_field
+    cmp eax, FOCUS_EXT_SEARCH   # extension management: Browse's search
+    je extpage_field
     cmp eax, FOCUS_EDITOR
     je vim_field
     xor eax, eax
@@ -2318,11 +2320,20 @@ FN app_on_key
     jnz 9f
     jmp .Lk_bind
 4:  cmp eax, FOCUS_SETTINGS
-    jne 5f
+    jne 41f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call settings_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+41: cmp eax, FOCUS_EXT_SEARCH   # extension management: Browse's search
+    jne 5f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call extpage_key
     test eax, eax
     jnz 9f
     jmp .Lk_bind
