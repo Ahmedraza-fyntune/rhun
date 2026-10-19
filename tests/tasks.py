@@ -166,6 +166,17 @@ class Tasks(unittest.TestCase):
                         actions=['wait-ext driver running', 'wait 300', 'cmd t/driver.cmdbuild', 'wait 300'])
         self.assertRegex(self.dlog(), r'error \d+ needs terminal=run\n')
 
+    def test_the_debuggers_prelaunch_runs_a_task_by_name(self):
+        # tasks_run_named (design 4.9): OWNER/NAME:ID, an id or a label; done at exit 0 or when a
+        # background task is ready, failed otherwise
+        out = self.go(['task-prelaunch t/driver:serve', *self.allow(), 'wait-terminal 1 running', 'wait 800',
+                       'print-prelaunch', 'task-prelaunch fail', 'wait-terminal 2 ended', 'wait 300',
+                       'print-prelaunch', 'task-prelaunch Lint', 'wait-terminal 3 ended', 'wait 300',
+                       'print-prelaunch', 'task-prelaunch nothing-here'])
+        self.assertEqual([line for line in out if line.startswith('prelaunch=')],
+                         ['prelaunch=started', 'prelaunch=done', 'prelaunch=started', 'prelaunch=failed',
+                          'prelaunch=started', 'prelaunch=done', 'prelaunch=notfound'])
+
     def test_sequence_runs_dependencies_in_order(self):
         out = self.go(['cmd t/driver.chain', *self.allow(), 'wait-terminal 3 ended', 'wait 300',
                        'print-terminals'])
