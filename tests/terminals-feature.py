@@ -91,12 +91,14 @@ while True:
         send('terminal-open ' + str(len(d := definition('-', 'shell', 'l', 'true', extra=rec('group', 'build')))), d)
         send('terminal-open ' + str(len(d := definition('-', 'shell', 'l', 'true', extra=rec('location', 'remote')))), d)
         send('terminal-open 5', b'abcde')
+    elif name == 'quote':
+        send('terminal-open ' + str(len(d := definition('-', 'argv', 'q', b"sh\0-c\0echo 'it is'\0"))), d)
     elif name == 'outneed':
         send('terminal-open ' + str(len(d := definition('-', 'shell', 'l', 'true', extra=rec('output', '')))), d)
 '''
 
 COMMANDS = ('open', 'argv', 'cat', 'sleep', 'env', 'input', 'screen', 'stop', 'restart', 'close', 'show',
-            'other', 'bad', 'outneed')
+            'other', 'bad', 'outneed', 'quote')
 
 
 class Feature(unittest.TestCase):
@@ -144,6 +146,11 @@ class Feature(unittest.TestCase):
         self.assertIn('hi', out)
         self.assertIn('ok 2 2\n', log)          # the second one does not ask
         self.assertEqual(out[-1], 'dialog=none')
+
+    def test_the_question_quotes_arguments_as_a_shell_would(self):
+        out = self.go(['cmd t/driver.quote', 'wait-ext driver running', 'wait 200', 'print-dialog'], self.driver())
+        q = "'" + chr(92) + "''"            # a quote inside quotes
+        self.assertIn("text=sh -c 'echo " + q + "it is" + q + "'   in ~/proj", out)
 
     def test_cancel_and_busy(self):
         exts = self.driver()
