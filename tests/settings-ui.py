@@ -54,6 +54,7 @@ STRINGS = {
     ('git', 'commit_model'): 'model:café',
 }
 CHOICES = {('editor', 'multi_cursor_paste'): ('spread', 'full'),
+           ('editor', 'multi_cursor_modifier'): ('alt', 'ctrl'),
            ('ui', 'decorations'): ('auto', 'client', 'server'),
            ('git', 'commit_ai'): ('off', 'claude', 'codex', 'ollama')}
 
@@ -205,6 +206,7 @@ class SettingsUI(unittest.TestCase):
     def test_every_choice_segment(self):
         # Control widths place each click well inside its segment.
         widths = {('editor', 'multi_cursor_paste'): (108, 86),
+                  ('editor', 'multi_cursor_modifier'): (42, 49),
                   ('ui', 'decorations'): (55, 55, 78),
                   ('git', 'commit_ai'): (45, 92, 59, 116)}
         for (section, key), options in CHOICES.items():

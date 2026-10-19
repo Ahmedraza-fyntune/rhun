@@ -487,6 +487,8 @@ FN complete_typed
     test rax, rax
     jz 9f
     mov rbx, rax
+    cmp qword ptr [rbx + DOC_selections], 0
+    jne 9f                      # several selections: no automatic completion (multi-cursor)
     call providers_any
     test eax, eax
     jz 9f
@@ -521,6 +523,7 @@ FN complete_typed
 
 # FN cmd_complete(): ctrl+space, the list at once
 FN cmd_complete
+    call ed_single              # completion is about one place (multi-cursor)
     push rbx
     call focused_doc
     test rax, rax

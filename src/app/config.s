@@ -48,6 +48,8 @@ cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
 .globl cfg_multi_cursor_paste
 cfg_multi_cursor_paste: .long 0
+.globl cfg_multi_cursor_modifier
+cfg_multi_cursor_modifier: .long 0  # 0 alt, 1 ctrl (Command on macOS): adds carets with the mouse
 cfg_word_wrap: .long 0
 cfg_vim: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
@@ -854,6 +856,7 @@ g_settings:
     SETTING .Ls_editor, smooth_caret, ST_BOOL, cfg_smooth_caret, 0, 1, 1, 0, "Wide caret", "Draw a 2 point caret instead of a hairline."
     SETTING .Ls_editor, auto_pairs, ST_BOOL, cfg_auto_pairs, 0, 1, 1, 0, "Auto-close brackets", "Insert the closing bracket or quote."
     SETTING .Ls_editor, multi_cursor_paste, ST_CHOICE, cfg_multi_cursor_paste, 0, 1, 1, 0, "Paste at multiple cursors", "Keep copied selections paired. Choose how other multiline text is pasted.", .Lpaste_opts
+    SETTING .Ls_editor, multi_cursor_modifier, ST_CHOICE, cfg_multi_cursor_modifier, 0, 1, 1, 0, "Multi-cursor modifier", "Held with a click to add a caret, with a drag to add a selection.", .Lmodifier_opts
     SETTING .Ls_editor, scroll_past_end, ST_BOOL, cfg_scroll_past_end, 0, 1, 1, 0, "Scroll past end", "Allow scrolling the last line to the top."
     SETTING .Ls_editor, vim_mode, ST_BOOL, cfg_vim, 0, 1, 1, 0, "Vim mode", "Normal, insert and visual modes with vim keys."
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
@@ -884,6 +887,7 @@ g_settings:
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Lpaste_opts: .asciz "spread", "Spread lines", "full", "Full text", ""
+.Lmodifier_opts: .asciz "alt", "Alt", "ctrl", "Ctrl", ""
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"

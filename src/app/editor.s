@@ -201,7 +201,12 @@ FN line_indent
 
 # ed_move(kind, extend) ; kind: 0 left 1 right 2 up 3 down 4 home 5 end 6 wordl 7 wordr 8 pgup 9 pgdn 10 docstart 11 docend
 FN ed_move
-    PROLOGUE 16
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne sel_move                # several selections: each moves (editorsel.s)
+1:  PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Lmv_ret
@@ -1302,6 +1307,7 @@ FN ed_paste
     EPILOGUE
 
 FN cmd_select_all
+    call ed_single              # one selection (multi-cursor)
     mov rdi, [rip + g_doc]
     test rdi, rdi
     jz 1f
@@ -1315,6 +1321,7 @@ FN cmd_select_all
 
 # select the current line(s), extending on repeat
 FN cmd_select_line
+    call ed_single              # one selection (multi-cursor)
     push rbx
     push r12
     push r13
@@ -1385,9 +1392,15 @@ FN word_at
     mov rdx, r13
     EPILOGUE
 
-# ctrl+d: select word, or the next occurrence of the selection
-FN cmd_select_next
-    PROLOGUE 16
+# Move Selection to Next Match: select word, or the selection moves to the next occurrence (ctrl+d
+# before 0.18; editorsel.s's cmd_select_next adds the next match instead)
+FN cmd_select_next_skip
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne sel_next_skip           # several selections: the primary moves, the others stay
+1:  PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1500,6 +1513,7 @@ FN doc_search
     EPILOGUE
 
 FN cmd_duplicate_line
+    call ed_single              # one selection (multi-cursor)
     READONLY_RET
     PROLOGUE 16
     mov rbx, [rip + g_doc]
@@ -1558,6 +1572,7 @@ FN cmd_duplicate_line
     EPILOGUE
 
 FN cmd_delete_line
+    call ed_single              # one selection (multi-cursor)
     READONLY_RET
     PROLOGUE
     mov rbx, [rip + g_doc]
@@ -1613,6 +1628,9 @@ FN cmd_delete_line
 
 # ed_move_lines(dir): move selected lines up (-1) or down (1)
 FN ed_move_lines
+    push rdi
+    call ed_single              # one selection (multi-cursor)
+    pop rdi
     READONLY_RET
     PROLOGUE 48
     mov rbx, [rip + g_doc]
@@ -1742,6 +1760,7 @@ FN ed_move_lines
 
 # toggle line comments using the grammar's comment token
 FN cmd_toggle_comment
+    call ed_single              # one selection (multi-cursor)
     READONLY_RET
     PROLOGUE 32
     mov rbx, [rip + g_doc]
@@ -2026,7 +2045,7 @@ reveal:
     EPILOGUE
 
 # pos_at_point(doc, px, py) -> pos
-pos_at_point:
+FN pos_at_point
     cmp dword ptr [rip + cfg_word_wrap], 0
     jne wrap_pos_at
     PROLOGUE
@@ -2121,11 +2140,17 @@ draw_wrapped:
     cmp dword ptr [rip + cfg_highlight_line], 0
     je 12f
     cmp r12, [rsp + 8]
-    jne 12f
+    jne 14f
     mov rax, [rsp + 16]
     cmp rax, [rsp + 24]
     jne 12f
-    mov edi, [rip + g_ed_x]
+    jmp 15f
+14: mov rdi, rbx                # and the lines of the other carets
+    mov rsi, r12
+    call sel_line_tint
+    test eax, eax
+    jz 12f
+15: mov edi, [rip + g_ed_x]
     mov esi, r13d
     mov edx, [rip + g_ed_w]
     mov ecx, [rip + g_lh]
@@ -2397,7 +2422,9 @@ FN editor_draw
     jb 32f
     cmp r12, rdx
     jbe 33f
-32: mov [rbx + DOC_cur], r12
+32: mov rdi, rbx
+    call sel_collapse           # a click outside the selection: one caret (multi-cursor)
+    mov [rbx + DOC_cur], r12
     mov [rbx + DOC_anchor], r12
     mov rdi, rbx
     call snippet_selection_changed
@@ -2436,6 +2463,18 @@ FN editor_draw
     mov edx, [rip + g_my]
     call pos_at_point
     mov r12, rax
+    # multi-cursor: the modifier's clicks add carets, words or a box; a plain click collapses
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, [rip + g_clicks]
+    call sel_press
+    test eax, eax
+    jz 312f
+    cmp eax, 1
+    je .Led_noinput
+    mov dword ptr [rip + g_dragging], 0
+    jmp .Led_noinput
+312:
     mov eax, [rip + g_clicks]
     cmp eax, 2
     je .Led_dbl
@@ -2479,8 +2518,16 @@ FN editor_draw
     test dword ptr [rip + g_mdown], 1 << BTN_LEFT
     jnz 5f
     mov dword ptr [rip + g_dragging], 0
+    mov rdi, rbx
+    call sel_drag_end           # multi-cursor: a box is done, an alt+drag's selection merges
     jmp 4f
 5:  mov rdi, rbx
+    mov esi, [rip + g_mx]
+    mov edx, [rip + g_my]
+    call sel_drag               # multi-cursor: a shift+alt drag's box follows the pointer
+    test eax, eax
+    jnz 6f
+    mov rdi, rbx
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
     call pos_at_point
@@ -2566,6 +2613,8 @@ FN editor_draw
     mov qword ptr [rip + cls_doc], 0
     mov rdi, rbx
     call match_brackets
+    mov rdi, rbx
+    call sel_frame              # the other selections, for draw_line's rows
     mov dword ptr [rip + g_caret_ok], 0
     mov dword ptr [rip + dl_from], 0
     mov dword ptr [rip + dl_to], -1
@@ -2609,11 +2658,17 @@ FN editor_draw
     cmp dword ptr [rip + cfg_highlight_line], 0
     je 1f
     cmp r12, [rsp + 8]
-    jne 1f
+    jne 14f
     mov rax, [rsp + 16]
     cmp rax, [rsp + 24]
     jne 1f
-    mov edi, [rip + g_ed_x]
+    jmp 15f
+14: mov rdi, rbx                # and the lines of the other carets
+    mov rsi, r12
+    call sel_line_tint
+    test eax, eax
+    jz 1f
+15: mov edi, [rip + g_ed_x]
     mov esi, r13d
     mov edx, [rip + g_ed_w]
     mov ecx, [rip + g_lh]
@@ -2696,6 +2751,9 @@ FN editor_draw
     # caret
     mov rdi, rbx
     call draw_caret
+    mov rdi, rbx
+    mov esi, [rip + g_ed_tx]
+    call sel_carets             # and the other selections' carets
     # gutter separator shadow when scrolled horizontally
     cmp qword ptr [rbx + DOC_scrollx], 0
     je 8f
@@ -3069,6 +3127,14 @@ draw_line:
     COLOR r8d, T_SELECTION
     call gfx_fill
 .Ldl_nosel:
+    # the other selections' fills and carets on this row (multi-cursor)
+    mov rdi, r14
+    mov rsi, [rsp + 24]
+    mov rdx, [rsp + 96]
+    mov rcx, [rsp + 32]
+    mov r8d, [rsp + 40]
+    mov r9d, [rsp]
+    call sel_row
     # ---- find matches ----
     mov rcx, [rip + g_ed_find + SB_len]
     test rcx, rcx
@@ -4153,6 +4219,7 @@ g_caret_x: .long 0
 g_caret_y: .long 0
 g_caret_ok: .long 0
 dl_from: .long 0
+.globl dl_last                  # editorsel.s draws the other selections on draw_line's row
 dl_last: .long 0
 .p2align 3
 cls_doc: .quad 0

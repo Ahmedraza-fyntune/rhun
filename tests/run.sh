@@ -318,6 +318,7 @@ python3 tests/settings-search.py || fail=1
 python3 tests/appearance.py || fail=1
 python3 tests/editor-matrix.py || fail=1
 python3 tests/editor-hscroll.py || fail=1
+python3 tests/multicursor.py || fail=1
 python3 tests/splitter.py || fail=1
 python3 tests/scroll-sensitivity.py || fail=1
 python3 tests/window-focus.py || fail=1

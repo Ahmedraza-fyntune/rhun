@@ -533,6 +533,7 @@ FN cmd_references
     mov edi, LF_REFS
     jmp lf_start_cmd
 FN cmd_symbols
+    call ed_single              # one selection (multi-cursor)
     mov edi, LF_SYMS
     xor esi, esi
     jmp ext_provider_begin
@@ -546,6 +547,7 @@ FN cmd_format_document
 lf_start_cmd:
     push rbx
     mov ebx, edi
+    call ed_single              # about one place (multi-cursor)
     call ext_provider_cancel
     call palette_provider_close
     mov edi, ebx
@@ -557,6 +559,7 @@ lf_start_cmd:
 # FN langfeat_rename_start() -> eax 1 when the focused document has a rename provider: the palette
 # asks for the new name, the word under the cursor filled in (F2 renames the file otherwise)
 FN langfeat_rename_start
+    call ed_single              # one selection (multi-cursor)
     mov edi, LF_RENAME
     xor esi, esi
     jmp ext_provider_begin

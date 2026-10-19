@@ -251,6 +251,7 @@ find_raw_word:
 goto_match:
     PROLOGUE 32
     mov [rsp + 24], edi
+    call ed_single              # one selection (multi-cursor)
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
