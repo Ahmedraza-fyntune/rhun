@@ -67,6 +67,8 @@ ENDSTRUCT RQ_SIZE
 .equ CHF_EXITED, 8
 .equ CHF_COLLECTED, 16          # proc_wait has reported the status
 .equ CHF_ERRCH, 32              # a program's error output on a socketpair of its own (freed with it)
+.equ CHF_DETACHED, 64           # the connection went; the program may still run in the host's session
+.equ CHF_SEEN, 128              # remote_attach: the session still has it
 
 STRUCT
 F CH_kind, 4                    # 0 free
@@ -103,6 +105,8 @@ rm_need_open: .long 0           # connected: open the project on the next tick
 rm_gen: .long 0
 .p2align 3
 rm_spec: .zero 512              # "ssh:HOST" as given
+rm_sid: .zero 24                # the session the agent keeps on the host (16 hex digits), or empty
+rm_ending: .long 0              # 1 while Disconnect ends the session (programs end with it)
 rm_host: .zero 256              # HOST (or NAME)
 rm_port: .zero 16
 rm_path: .zero 4096             # the folder to open once connected
@@ -285,6 +289,7 @@ FN remote_start
     test eax, eax
     jz 8f
     mov dword ptr [rip + g_remote], 1
+    call rm_new_sid
     lea rdi, [rip + .Lenv_strict]
     call getenv
     test rax, rax
@@ -314,6 +319,63 @@ FN remote_start
     call app_toast
     xor eax, eax
     EPILOGUE
+
+# rm_new_sid(): rm_sid, this window's session on the host (its programs outlive a dropped
+#   connection); RHUN_REMOTE_SESSION=0 leaves it empty (they end with the connection, as before E5)
+rm_new_sid:
+    PROLOGUE 16
+    mov byte ptr [rip + rm_sid], 0
+    lea rdi, [rip + .Lenv_session]
+    call getenv
+    test rax, rax
+    jz 1f
+    cmp byte ptr [rax], '0'
+    je 9f
+1:  mov edi, 1                  # CLOCK_MONOTONIC
+    lea rsi, [rsp]
+    SYS SYS_clock_gettime
+    SYS SYS_getpid
+    mov rbx, 0xcbf29ce484222325
+    mov r8, 0x100000001b3
+    xor rbx, rax
+    imul rbx, r8
+    xor rbx, [rsp]
+    imul rbx, r8
+    xor rbx, [rsp + 8]
+    imul rbx, r8
+    call time_ms
+    xor rbx, rax
+    imul rbx, r8
+    lea rdi, [rip + rm_sid]
+    mov ecx, 60
+2:  mov rax, rbx
+    shr rax, cl
+    and eax, 15
+    lea rdx, [rip + hexdigits]
+    mov al, [rdx + rax]
+    mov [rdi], al
+    inc rdi
+    sub ecx, 4
+    jns 2b
+    mov byte ptr [rdi], 0
+9:  EPILOGUE
+
+# rm_push_exec(sb): `exec "$d/rhun" --remote-agent`, with --session SID when there is one
+rm_push_exec:
+    push rbx
+    mov rbx, rdi
+    lea rsi, [rip + .Lboot_exec]
+    call sb_push_cstr
+    cmp byte ptr [rip + rm_sid], 0
+    je 9f
+    mov rdi, rbx
+    lea rsi, [rip + .Lopt_session]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + rm_sid]
+    call sb_push_cstr
+9:  pop rbx
+    ret
 
 # rm_parse_spec() -> 1 when rm_spec names a transport: rm_kind, rm_host, rm_port. Host and container
 #   names are kept to letters, digits and ._@:- so no transport reads one as an option
@@ -889,8 +951,16 @@ rm_boot_line:
     call rm_kill_transport
     jmp 9f
 .Lbl_have:
-    lea rdi, [rip + .Lboot_exec]
-    call rm_send_cstr
+    lea rdi, [rip + rm_line]
+    call sb_clear
+    lea rdi, [rip + rm_line]
+    call rm_push_exec
+    lea rdi, [rip + rm_line]
+    mov esi, 10
+    call sb_push_byte
+    mov rsi, [rip + rm_line + SB_ptr]
+    mov rdx, [rip + rm_line + SB_len]
+    call rm_send
     mov dword ptr [rip + g_remote_state], RS_START
     jmp 9f
 .Lbl_need:
@@ -905,6 +975,11 @@ rm_boot_line:
     call sb_push_u64
     lea rdi, [rip + rm_line]
     lea rsi, [rip + .Lboot_up2]
+    call sb_push_cstr
+    lea rdi, [rip + rm_line]
+    call rm_push_exec
+    lea rdi, [rip + rm_line]
+    lea rsi, [rip + .Lboot_up3]
     call sb_push_cstr
     mov rsi, [rip + rm_line + SB_ptr]
     mov rdx, [rip + rm_line + SB_len]
@@ -1057,13 +1132,25 @@ rm_lost:
     lea rsi, [rip + rm_host]
     call rm_log2
 8:  call rm_kill_transport
-    # every program ends: its readers see the end, proc_wait an exit
+    # every program ends: its readers see the end, proc_wait an exit. With a session on the host
+    # (and not Disconnect) programs keep running there: their channels wait for remote_attach
     lea rbx, [rip + rm_ch]
     xor r12d, r12d
 3:  cmp dword ptr [rbx + CH_kind], 0
     je 4f
     test dword ptr [rbx + CH_flags], CHF_EXITED
     jnz 31f
+    cmp byte ptr [rip + rm_sid], 0
+    je 32f
+    cmp dword ptr [rip + rm_ending], 0
+    jne 32f
+    cmp dword ptr [rbx + CH_kind], CK_STREAM
+    je 32f
+    or dword ptr [rbx + CH_flags], CHF_DETACHED
+    mov rdi, rbx
+    call rm_events
+    jmp 4f
+32:
     or dword ptr [rbx + CH_flags], CHF_EXITED
     mov dword ptr [rbx + CH_status], 129     # as SIGHUP
     call time_ms
@@ -1102,8 +1189,190 @@ FN remote_disconnect
     lea rdi, [rip + .Lquit_req]
     call rm_send_cstr
     call rm_flush_now
+    mov dword ptr [rip + rm_ending], 1
     call rm_lost
+    mov dword ptr [rip + rm_ending], 0
 1:  add rsp, 8
+    ret
+
+# remote_quit(): the window closes: its session on the host ends with it (programs and all)
+FN remote_quit
+    sub rsp, 8
+    cmp dword ptr [rip + g_remote_state], RS_UP
+    jne 1f
+    lea rdi, [rip + .Lquit_req]
+    call rm_send_cstr
+    call rm_flush_now
+1:  add rsp, 8
+    ret
+
+# rm_send_close(ch): close CH, the agent forgets the channel
+rm_send_close:
+    push rbx
+    mov ebx, edi
+    lea rdi, [rip + rm_kill_line]
+    call sb_clear
+    lea rdi, [rip + rm_kill_line]
+    lea rsi, [rip + .Lv_close]
+    call sb_push_cstr
+    lea rdi, [rip + rm_kill_line]
+    mov esi, ebx
+    call sb_push_u64
+    mov rdi, [rip + rm_kill_line + SB_ptr]
+    call rm_request_async
+    pop rbx
+    ret
+
+# remote_attach(): connected again: the host's session says which detached channels still have a
+#   program (exited or not, its output ended or not); the others end as when the connection went.
+#   Both sides start the credits again (what was on the way when it went is lost).
+FN remote_attach
+    PROLOGUE
+    lea rbx, [rip + rm_ch]
+    xor r12d, r12d
+1:  test dword ptr [rbx + CH_flags], CHF_DETACHED
+    jnz 2f
+    add rbx, CH_SIZE
+    inc r12d
+    cmp r12d, MUX_MAXCH
+    jb 1b
+    jmp 9f                      # nothing waits
+2:  lea rdi, [rip + .Lv_attach]
+    mov esi, 6
+    xor edx, edx
+    xor ecx, ecx
+    call remote_call
+    test rax, rax
+    js 6f
+    lea rdi, [rip + .Lrlog_attach]
+    call rm_log_cstr
+    mov rdi, [rip + g_remote_reply + SB_ptr]
+    mov rsi, [rip + g_remote_reply + SB_len]
+    call rm_log_bytes
+    mov r13, [rip + g_remote_reply + SB_ptr]
+    mov r14, [rip + g_remote_reply + SB_len]
+3:  # CH MODE FLAGS STATUS
+    test r14, r14
+    jle 6f
+    mov rdi, r13
+    mov rsi, r14
+    call parse_u64
+    test rdx, rdx
+    jz 6f
+    mov r15, rax                # channel
+    lea r13, [r13 + rdx]
+    sub r14, rdx
+    call .Lat_skip_word         # past " MODE"
+    call .Lat_number            # FLAGS
+    mov r12, rax
+    call .Lat_number            # STATUS
+    mov r8, rax
+    mov rax, r12
+    # the rest of the line
+4:  test r14, r14
+    jle 41f
+    movzx edx, byte ptr [r13]
+    inc r13
+    dec r14
+    cmp edx, 10
+    jne 4b
+41: cmp r15, MUX_MAXCH
+    jae 3b
+    mov rdi, r15
+    imul rdi, rdi, CH_SIZE
+    lea rbx, [rip + rm_ch]
+    add rbx, rdi
+    test dword ptr [rbx + CH_flags], CHF_DETACHED
+    jnz 43f
+    mov edi, r15d               # not this window's any more: the session forgets it
+    call rm_send_close
+    jmp 3b
+43: or dword ptr [rbx + CH_flags], CHF_SEEN
+    mov qword ptr [rbx + CH_credit], MUX_WINDOW
+    mov qword ptr [rbx + CH_grant], 0
+    test eax, 1
+    jz 42f
+    or dword ptr [rbx + CH_flags], CHF_EXITED
+    mov [rbx + CH_status], r8d
+    push rax
+    push rax
+    call time_ms
+    mov [rbx + CH_exited_at], rax
+    pop rax
+    pop rax
+42: test r12d, 2
+    jz 3b
+    or dword ptr [rbx + CH_flags], CHF_REOF
+    jmp 3b
+6:  # the ones the session does not have end now; all of them are watched again
+    lea rbx, [rip + rm_ch]
+    xor r12d, r12d
+7:  mov eax, [rbx + CH_flags]
+    test eax, CHF_DETACHED
+    jz 8f
+    test eax, CHF_SEEN
+    jnz 71f
+    test eax, CHF_EXITED
+    jnz 72f
+    or dword ptr [rbx + CH_flags], CHF_EXITED
+    mov dword ptr [rbx + CH_status], 129     # as SIGHUP
+    call time_ms
+    mov [rbx + CH_exited_at], rax
+72: or dword ptr [rbx + CH_flags], CHF_REOF
+    jmp 73f
+71: test eax, CHF_LCLOSED
+    jz 73f
+    test eax, CHF_EXITED
+    jnz 73f
+    mov edi, r12d               # its tab closed meanwhile: the program's input ends now
+    call rm_send_eof
+73: and dword ptr [rbx + CH_flags], ~(CHF_DETACHED | CHF_SEEN)
+    mov rdi, rbx
+    call rm_events
+    mov rdi, rbx
+    call rm_deliver
+8:  add rbx, CH_SIZE
+    inc r12d
+    cmp r12d, MUX_MAXCH
+    jb 7b
+    lea rdi, [rip + .Lrlog_attached]
+    lea rsi, [rip + rm_sid]
+    call rm_log2
+9:  EPILOGUE
+# remote_attach's reader of the reply (r13 position, r14 bytes left): .Lat_skip_word skips a space
+#   and a word, .Lat_number reads a space and a number into rax
+.Lat_skip_word:
+    test r14, r14
+    jle 2f
+    cmp byte ptr [r13], ' '
+    jne 1f
+    inc r13
+    dec r14
+1:  test r14, r14
+    jle 2f
+    movzx eax, byte ptr [r13]
+    cmp eax, ' '
+    je 2f
+    cmp eax, 10
+    je 2f
+    inc r13
+    dec r14
+    jmp 1b
+2:  ret
+.Lat_number:
+    test r14, r14
+    jle 1f
+    cmp byte ptr [r13], ' '
+    jne 1f
+    inc r13
+    dec r14
+1:  mov rdi, r13
+    mov rsi, r14
+    sub rsp, 8
+    call parse_u64
+    add rsp, 8
+    add r13, rdx
+    sub r14, rdx
     ret
 
 # remote_drop(): the transport is killed (tests: a dropped connection)
@@ -1724,6 +1993,8 @@ rm_events:
     xor esi, esi
     test dword ptr [rdi + CH_flags], CHF_LCLOSED
     jnz 2f
+    test dword ptr [rdi + CH_flags], CHF_DETACHED
+    jnz 1f                      # what it writes waits in the socket until remote_attach
     cmp qword ptr [rdi + CH_credit], 0
     jle 1f
     mov rax, [rip + rm_wq + SB_len]
@@ -2995,6 +3266,23 @@ FN remote_dump
     mov rdi, rbx
     mov esi, eax
     call sb_push_u64
+    # programs waiting for the session to be reattached
+    lea rcx, [rip + rm_ch]
+    xor edx, edx
+    xor r12d, r12d
+4:  test dword ptr [rcx + CH_flags], CHF_DETACHED
+    jz 5f
+    inc r12d
+5:  add rcx, CH_SIZE
+    inc edx
+    cmp edx, MUX_MAXCH
+    jb 4b
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_detached]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, r12d
+    call sb_push_u64
     cmp byte ptr [rip + rm_error], 0
     je 3f
     mov rdi, rbx
@@ -3339,10 +3627,12 @@ rm_rq_ready: .long 0
 .Lboot_check: .ascii "\"; case \"$(uname -sm)\" in \"Linux x86_64\") if [ -x \"$d/rhun\" ]; then echo \"@rhun have\"; "
     .ascii "else mkdir -p \"$d\" && chmod 700 \"${d%/*}\" \"$d\" && echo \"@rhun need\" || echo \"@rhun error cannot create $d\"; fi;; "
     .asciz "*) echo \"@rhun unsupported $(uname -sm)\";; esac\n"
-.Lboot_exec: .asciz "exec \"$d/rhun\" --remote-agent\n"
+.Lboot_exec: .asciz "exec \"$d/rhun\" --remote-agent"
+.Lopt_session: .asciz " --session "
 .Lboot_up1: .asciz "echo \"@rhun go\"; head -c "
-.Lboot_up2: .ascii " > \"$d/rhun.part\" && chmod 700 \"$d/rhun.part\" && mv -f \"$d/rhun.part\" \"$d/rhun\" && "
-    .asciz "exec \"$d/rhun\" --remote-agent; echo \"@rhun error the upload failed\"\n"
+.Lboot_up2: .asciz " > \"$d/rhun.part\" && chmod 700 \"$d/rhun.part\" && mv -f \"$d/rhun.part\" \"$d/rhun\" && "
+.Lboot_up3: .asciz "; echo \"@rhun error the upload failed\"\n"
+.Lenv_session: .asciz "RHUN_REMOTE_SESSION"
 .Lat_rhun: .ascii "@rhun "
 .Lw_have: .ascii "have"
 .Lw_need: .ascii "need"
@@ -3355,6 +3645,9 @@ rm_rq_ready: .long 0
 .Lv_resize: .asciz "resize "
 .Lv_cwd: .asciz "cwd "
 .Lv_close: .asciz "close "
+.Lv_attach: .asciz "attach"
+.Lrlog_attached: .asciz "attached to session "
+.Lrlog_attach: .asciz "the session has: "
 .Lquit_req: .asciz "0 quit 0\n"
 .p2align 3
 .Lno_extras: .quad 0
@@ -3371,6 +3664,7 @@ rm_rq_ready: .long 0
 .Ld_in: .asciz " in="
 .Ld_out: .asciz " out="
 .Ld_procs: .asciz " procs="
+.Ld_detached: .asciz " detached="
 .Ld_error: .asciz " error="
 .Lremote_log: .asciz "/remote.log"
 .Lbad_spec: .asciz "Not a remote: use ssh:HOST, docker:NAME or podman:NAME"

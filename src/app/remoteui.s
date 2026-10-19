@@ -123,7 +123,8 @@ FN remote_connected
     call session_restore
     call app_update_title
     jmp 9f
-8:  call vfs_reconnected        # watches again, documents compared with the host's files
+8:  call remote_attach          # programs that outlived the connection (remote.s)
+    call vfs_reconnected        # watches again, documents compared with the host's files
     call ru_save_pending
 9:  call remote_ext_connected   # extensions that waited for the host (remoteext.s)
     mov dword ptr [rip + g_dirty], 1
@@ -1987,6 +1988,7 @@ FN remote_ui_cancel
 # remote_shutdown(): the askpass socket and its folder go
 FN remote_shutdown
     sub rsp, 8
+    call remote_quit            # the session on the host ends with the window (remote.s)
     cmp dword ptr [rip + ru_ap_listen], 0
     jl 1f
     mov edi, [rip + ru_ap_listen]

@@ -213,10 +213,34 @@ class Remote(unittest.TestCase):
                  'print-remote', 'remote-reconnect', 'wait-remote 90', 'print-remote',
                  'cmd toggle_terminal', 'wait 500', 'type echo back-$((1+1))', 'key Return',
                  'wait-term back-2', 'print-term']
-        out = self.run_script('docker:' + HOST, '/root/proj', lines)
+        out = self.run_script('docker:' + HOST, '/root/proj', lines, env_extra={'RHUN_REMOTE_SESSION': '0'})
         states = [self.field(l, 'remote=', 'state') for l in out.splitlines() if l.startswith('remote=')]
         self.assertEqual(states, ['lost', 'connected'], out)
         self.assertIn('back-2', out)
+
+    def test_the_session_outlives_a_drop(self):
+        """The agent keeps its programs when the connection goes: after Reconnect the same shell
+        answers in the same tab (its variable is still set), and a program that ended meanwhile
+        reports its exit."""
+        lines = ['wait-remote 90', 'cmd toggle_terminal', 'wait 500', 'type X=kept-$((20+1)); echo set-$X',
+                 'key Return', 'wait-term set-kept-21', 'term-run --title t --sh -- sleep 1; exit 7',
+                 'remote-drop', 'wait 2500', 'print-remote', 'remote-reconnect', 'wait-remote 90', 'wait 500',
+                 'print-remote', 'print-terminals', 'term-select 1', 'type echo got-$X', 'key Return',
+                 'wait-term got-kept-21', 'print-term']
+        out = self.run_script('docker:' + HOST, '/root/proj', lines)
+        remotes = [l for l in out.splitlines() if l.startswith('remote=')]
+        self.assertEqual([self.field(l, 'remote=', 'state') for l in remotes], ['lost', 'connected'], out)
+        self.assertNotEqual(self.field(remotes[0], 'remote=', 'detached'), '0', out)
+        self.assertEqual(self.field(remotes[1], 'remote=', 'detached'), '0', out)
+        self.assertIn('got-kept-21', out)
+        self.assertIn('term=2 kind=terminal owner=- task=- state=exited code=7 ', out)
+        self.assertIn('attached to session ', (self.dir / 'state/rhun/remote.log').read_text())
+        # Disconnect ends the session: nothing of it is left on the host
+        out = self.run_script('docker:' + HOST, '/root/proj',
+                              ['wait-remote 90', 'cmd toggle_terminal', 'wait 500', 'cmd remote_disconnect',
+                               'wait 1000', 'print-remote'])
+        left = docker('exec', HOST, 'sh', '-c', 'ls /root/.cache/rhun-remote/s 2>/dev/null; true').stdout.decode()
+        self.assertEqual(left.split(), [], left)
 
     def host_read(self, path):
         return docker('exec', HOST, 'cat', path).stdout.decode()
