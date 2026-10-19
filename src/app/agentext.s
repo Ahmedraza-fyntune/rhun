@@ -19,6 +19,8 @@ rd_p: .quad 0
 rd_end: .quad 0
 rows_new: .zero VEC_SIZE        # agentext_set_rows: the parsed rows (RW records)
 keep: .zero VEC_SIZE            # and the AS objects that stay
+hidden_names: .zero VEC_SIZE    # cstr OWNER/NAME of the sources switched off in Settings
+qual: .zero SB_SIZE
 tmp: .zero SB_SIZE
 match_len: .quad 0              # cwd_match: the longest root that holds the CWD so far
 match_name: .quad 0             #   its worktree name (a copy) when it is a linked worktree
@@ -266,6 +268,8 @@ FN agentext_manifest_kv
     mov rsi, [r12 + INI_vallen]
     call parse_bool
     mov [r13 + AX_agents], eax
+    mov rdi, rbx
+    call agentext_hidden_load
     mov eax, 1
     EPILOGUE
 1:  mov rdi, r12
@@ -1141,8 +1145,390 @@ FN agentext_set_hidden
     call agents_ext_rows
     EPILOGUE
 
+# ---------------- Settings > Agents: a switch per source ----------------
+# [agents] OWNER/NAME = false hides that extension's sessions. The names are kept as read, also for
+# extensions not installed now, and written back with the other agents settings.
+
+# FN agentext_config_reset(): the config file is read again
+FN agentext_config_reset
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + hidden_names + VEC_len]
+    jae 2f
+    mov rax, [rip + hidden_names + VEC_ptr]
+    mov rdi, [rax + rbx*8]
+    call mem_free
+    inc rbx
+    jmp 1b
+2:  mov qword ptr [rip + hidden_names + VEC_len], 0
+    EPILOGUE
+
+# FN agentext_config_key(sec, seclen, key, keylen, val, vallen): a key config.s does not know; under
+#   [agents], OWNER/NAME = false hides that source
+FN agentext_config_key
+    PROLOGUE 16
+    mov rbx, rdx
+    mov r12, rcx
+    mov r13, r8
+    mov r14, r9
+    lea rdx, [rip + .Ls_agents]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov dl, '/'
+    call has_byte
+    test eax, eax
+    jz 9f
+    mov rdi, r13
+    mov rsi, r14
+    call parse_bool
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call ai_dup
+    mov [rsp], rax
+    lea rdi, [rip + hidden_names]
+    mov esi, 8
+    call vec_push
+    mov rcx, [rsp]
+    mov [rax], rcx
+    call hidden_apply
+9:  EPILOGUE
+
+# has_byte(ptr, len, dl) -> eax 1 when the byte is there
+has_byte:
+    xor eax, eax
+    xor ecx, ecx
+1:  cmp rcx, rsi
+    jae 9f
+    cmp [rdi + rcx], dl
+    je 8f
+    inc rcx
+    jmp 1b
+8:  inc eax
+9:  ret
+
+# FN agentext_config_save(sb): the hidden sources, as lines of [agents]
+FN agentext_config_save
+    PROLOGUE
+    mov r12, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + hidden_names + VEC_len]
+    jae 9f
+    mov rax, [rip + hidden_names + VEC_ptr]
+    mov rsi, [rax + rbx*8]
+    inc rbx
+    mov rdi, r12
+    call sb_push_cstr
+    mov rdi, r12
+    lea rsi, [rip + .Ls_eq_false]
+    call sb_push_cstr
+    jmp 1b
+9:  EPILOGUE
+
+# hidden_index(ext) -> rax the index of its name among the hidden ones, or -1
+hidden_index:
+    PROLOGUE
+    mov rbx, rdi
+    call ext_qualified
+    mov r12, rax
+    xor r13d, r13d
+1:  cmp r13, [rip + hidden_names + VEC_len]
+    jae 8f
+    mov rax, [rip + hidden_names + VEC_ptr]
+    mov rdi, [rax + r13*8]
+    mov rsi, r12
+    call strcmp_eq
+    test eax, eax
+    jnz 2f
+    inc r13
+    jmp 1b
+2:  mov rax, r13
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# ext_qualified(ext) -> "OWNER/NAME" in qual (a static buffer)
+ext_qualified:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + qual]
+    call sb_clear
+    lea rdi, [rip + qual]
+    mov rsi, [rbx + EXT_owner]
+    call sb_push_cstr
+    lea rdi, [rip + qual]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + qual]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + qual]
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rip + qual + SB_ptr]
+    EPILOGUE
+
+# hidden_apply(): AX_hidden of every source from the names
+hidden_apply:
+    PROLOGUE
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov rdi, rbx
+    call ai_ext
+    mov r13, rax
+    cmp dword ptr [r13 + AX_agents], 0
+    je 1b
+    mov rdi, rbx
+    call hidden_index
+    xor ecx, ecx
+    test rax, rax
+    setns cl
+    mov [r13 + AX_hidden], ecx
+    jmp 1b
+9:  call agents_ext_rows
+    EPILOGUE
+
+# FN agentext_hidden_load(ext): a loaded manifest that provides agents learns whether it is switched off
+FN agentext_hidden_load
+    PROLOGUE
+    mov rbx, rdi
+    call ai_ext
+    mov r12, rax
+    cmp dword ptr [r12 + AX_agents], 0
+    je 9f
+    mov rdi, rbx
+    call hidden_index
+    xor ecx, ecx
+    test rax, rax
+    setns cl
+    mov [r12 + AX_hidden], ecx
+9:  EPILOGUE
+
+# toggle(ext): Settings switched the source
+toggle:
+    PROLOGUE 16
+    mov rbx, rdi
+    call hidden_index
+    test rax, rax
+    js 1f
+    mov r12, rax                # shown again: its name goes
+    mov rcx, [rip + hidden_names + VEC_ptr]
+    mov rdi, [rcx + r12*8]
+    call mem_free
+    mov rcx, [rip + hidden_names + VEC_ptr]
+    mov rdx, [rip + hidden_names + VEC_len]
+    dec rdx
+    mov [rip + hidden_names + VEC_len], rdx
+    mov rax, [rcx + rdx*8]
+    mov [rcx + r12*8], rax
+    jmp 2f
+1:  mov rdi, rbx
+    call ext_qualified
+    mov rdi, rax
+    call strlen
+    mov rsi, rax
+    mov rdi, [rip + qual + SB_ptr]
+    call ai_dup
+    mov [rsp], rax
+    lea rdi, [rip + hidden_names]
+    mov esi, 8
+    call vec_push
+    mov rcx, [rsp]
+    mov [rax], rcx
+2:  call hidden_apply
+    mov dword ptr [rip + g_settings_changed], 1
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# sources_each: rbx walks the installed extensions that provide agents (r12 index); used by the two
+# functions below
+
+# FN agentext_settings_rows(x, y, w) -> eax the height of the rows: a switch per source, under the
+#   built-in agents in Settings
+FN agentext_settings_rows
+    PROLOGUE 48
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], esi         # y cursor
+    xor r12d, r12d
+.Lsrow_next:
+    cmp r12, [rip + g_exts + VEC_len]
+    jae .Lsrow_done
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je .Lsrow_next
+    mov rdi, rbx
+    call ai_ext
+    mov r13, rax
+    cmp dword ptr [r13 + AX_agents], 0
+    je .Lsrow_next
+    M r14d, MI_64
+    mov edi, [rsp]
+    mov esi, [rsp + 12]
+    mov edx, [rsp + 8]
+    mov ecx, r14d
+    M r8d, MI_RADIUS
+    COLOR r9d, T_BORDER
+    COLOR eax, T_PANEL
+    push rax
+    push rax
+    call gfx_frame
+    add rsp, 16
+    mov rdi, rbx
+    call agentext_title
+    mov r8, rax
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, [rsp + 12]
+    add edx, [rip + g_mt + 4*MI_10]
+    M ecx, MI_24
+    COLOR r9d, T_FG
+    call ui_text_c
+    # "Show the sessions OWNER/NAME lists in the agents panel."
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Ls_show]
+    call sb_push_cstr
+    mov rdi, rbx
+    call ext_qualified
+    lea rdi, [rip + tmp]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Ls_lists]
+    call sb_push_cstr
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, [rsp + 12]
+    add edx, [rip + g_mt + 4*MI_32]
+    M ecx, MI_20
+    mov r8, [rip + tmp + SB_ptr]
+    mov r9, [rip + tmp + SB_len]
+    COLOR r10d, T_MUTED
+    mov r11d, [rsp + 8]
+    sub r11d, [rip + g_mt + 4*MI_64]
+    sub r11d, [rip + g_mt + 4*MI_16]
+    push r11
+    push r10
+    call ui_text_v_fit
+    add rsp, 16
+    M eax, MI_14
+    add eax, [rip + g_mt + 4*MI_20]
+    mov esi, [rsp]
+    add esi, [rsp + 8]
+    sub esi, [rip + g_mt + 4*MI_16]
+    sub esi, eax
+    mov edx, r14d
+    sub edx, [rip + g_mt + 4*MI_20]
+    sar edx, 1
+    add edx, [rsp + 12]
+    lea edi, [r12 + ID_AI_SOURCE - 1]
+    xor ecx, ecx
+    cmp dword ptr [r13 + AX_hidden], 0
+    sete cl
+    call ui_toggle
+    test eax, eax
+    jz 1f
+    mov rdi, rbx
+    call toggle
+1:  add r14d, [rip + g_mt + 4*MI_8]
+    add [rsp + 12], r14d
+    jmp .Lsrow_next
+.Lsrow_done:
+    mov eax, [rsp + 12]
+    sub eax, [rsp + 4]
+    EPILOGUE
+
+# FN agentext_settings_dump(sb): "agents.OWNER/NAME=true|false" per source (print-settings)
+FN agentext_settings_dump
+    PROLOGUE
+    mov r15, rdi
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 1b
+    mov rdi, rbx
+    call ai_ext
+    mov r13, rax
+    cmp dword ptr [r13 + AX_agents], 0
+    je 1b
+    mov rdi, r15
+    lea rsi, [rip + .Ls_agents_dot]
+    call sb_push_cstr
+    mov rdi, rbx
+    call ext_qualified
+    mov rdi, r15
+    mov rsi, rax
+    call sb_push_cstr
+    lea rsi, [rip + .Ls_eq_true_nl]
+    cmp dword ptr [r13 + AX_hidden], 0
+    je 2f
+    lea rsi, [rip + .Ls_eq_false_nl]
+2:  mov rdi, r15
+    call sb_push_cstr
+    jmp 1b
+9:  EPILOGUE
+
+# FN agentext_toggle_named(name ptr, len) -> eax 1 when a source of that OWNER/NAME was switched
+#   (the agents-source control command)
+FN agentext_toggle_named
+    PROLOGUE
+    mov r13, rdi
+    mov r14, rsi
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 8f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 1b
+    mov rdi, rbx
+    call ai_ext
+    cmp dword ptr [rax + AX_agents], 0
+    je 1b
+    mov rdi, rbx
+    call ext_qualified
+    mov rdx, rax
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jz 1b
+    mov rdi, rbx
+    call toggle
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 .section .rodata
 .Lk_agents: .asciz "agents"
+.Ls_agents: .asciz "agents"
+.Ls_agents_dot: .asciz "agents."
+.Ls_eq_false: .asciz " = false\n"
+.Ls_eq_true_nl: .asciz "=true\n"
+.Ls_eq_false_nl: .asciz "=false\n"
+.Ls_show: .asciz "Show the sessions "
+.Ls_lists: .asciz " lists in the agents panel."
 .Lk_agents_title: .asciz "agents.title"
 .Lv_transcript: .asciz "agent-transcript "
 .Le_provides: .asciz "refused the manifest does not say [provides] agents = yes"

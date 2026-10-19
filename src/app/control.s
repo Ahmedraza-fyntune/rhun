@@ -140,7 +140,7 @@ FN control_exec
     lea r15, [rip + ctl_table]
 1:  mov rdx, [r15]
     test rdx, rdx
-    jz .Lce_unknown
+    jz .Lce_ai
     mov rdi, r13
     mov rsi, r14
     call str_eq_cstr
@@ -158,6 +158,23 @@ FN control_exec
     EPILOGUE
 .Lce_ok:
     xor eax, eax
+    EPILOGUE
+.Lce_ai:
+    # AI commands (aictl.s): the agents panel's extension sessions, the Review tab, tools
+    mov rdi, r13
+    mov rsi, r14
+    mov rdx, rbx
+    mov rcx, r12
+    lea r8, [rip + out]
+    call ai_control
+    test rax, rax
+    js .Lce_unknown
+    push rax
+    push rax
+    call term_frame_now
+    call flush_frame
+    pop rax
+    pop rax
     EPILOGUE
 .Lce_unknown:
     lea rdi, [rip + out]

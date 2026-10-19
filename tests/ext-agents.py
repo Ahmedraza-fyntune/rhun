@@ -88,7 +88,7 @@ class Agents(unittest.TestCase):
     def extension(self, hello='hello 1 agents', provides=True, page=100):
         root = self.work / 'agents-exts'
         folder = root / 'acme' / 'gem'
-        folder.mkdir(parents=True)
+        folder.mkdir(parents=True, exist_ok=True)
         ini = ('name = gem\nowner = acme\ntitle = Gem Bridge\nversion = 1\nprotocol = 1\n'
                'runtime = python3\nrun = main.py\n[commands]\ngrow = Grow\ndrop = Drop\nbad = Bad\n')
         if provides:
@@ -173,6 +173,21 @@ class Agents(unittest.TestCase):
         self.run_editor(exts=self.extension(hello='hello 1 agents tools'), actions=[
             'wait-ext acme/gem running', 'wait 300'])
         self.assertIn('0 features agents\n', self.agent_log())
+
+    def test_settings_switch_hides_a_source_and_is_saved(self):
+        out = self.run_editor(exts=self.extension(), drop_waits=True, actions=[
+            'wait-ext acme/gem running', 'wait 300', 'print-settings', 'agents-source acme/gem',
+            'wait 100', 'print-agents', 'print-settings'])
+        self.assertIn('agents.acme/gem=true', out)
+        self.assertIn('agents.acme/gem=false', out)
+        self.assertEqual(self.rows(out), [])
+        config = (self.work / 'config/rhun/config').read_text()
+        self.assertIn('[agents]', config)
+        self.assertIn('acme/gem = false', config)
+        # read back: the source stays hidden in the next session
+        out = self.run_editor(exts=self.extension(), drop_waits=True, actions=[
+            'wait-ext acme/gem running', 'wait 300', 'print-agents'])
+        self.assertEqual(self.rows(out), [])
 
 
 if __name__ == '__main__':
