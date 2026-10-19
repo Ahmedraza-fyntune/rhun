@@ -420,7 +420,7 @@ def handle(req):
         expr = args.get('expression', '')
         step = prog.steps[prog.pc] if 0 <= prog.pc < len(prog.steps) else {}
         value = step.get('locals', {})
-        for part in expr.split('.'):
+        for part in expr.replace('->', '.').split('.'):
             if isinstance(value, dict) and part in value:
                 value = value[part]
             else:

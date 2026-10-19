@@ -918,6 +918,9 @@ FN ext_hover_tip
     # hides another
     lea r12, [rip + hover_both]
     mov byte ptr [r12], 0
+    call dg_hover_text          # debugger: while paused, the value under the pointer wins
+    test rax, rax
+    jnz 1f
     mov rdi, rbx
     mov rsi, [rip + g_hover_pos]
     call extmarks_at

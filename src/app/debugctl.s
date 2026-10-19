@@ -597,6 +597,18 @@ c_print_debug_toolbar:
     xor eax, eax
     ret
 
+# print-debug-hover: the debugger's hover for the position the pointer rests on, or none
+c_print_debug_hover:
+    call dg_hover_text
+    lea rdi, [rip + .Ls_none]
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+1:  call out_cstr
+    mov rdi, [rip + outp]
+    mov esi, 10
+    jmp sb_push_byte
+
 # print-configs: launch.ini's configuration names, "config=NAME" per line
 c_print_configs:
     PROLOGUE
@@ -658,6 +670,7 @@ DCTL c_print_dap_log
 DCTL c_print_configs
 DCTL c_print_debug_tree
 DCTL c_print_debug_toolbar
+DCTL c_print_debug_hover
 
 .section .rodata
 .Ls_into: .asciz "into"
@@ -698,6 +711,7 @@ DCTL c_print_debug_toolbar
 .Lc_print_configs: .asciz "print-configs"
 .Lc_print_debug_tree: .asciz "print-debug-tree"
 .Lc_print_debug_toolbar: .asciz "print-debug-toolbar"
+.Lc_print_debug_hover: .asciz "print-debug-hover"
 .Lt_variables: .asciz "variables"
 .Lt_watch: .asciz "watch"
 .Lt_stack: .asciz "stack"
@@ -721,4 +735,5 @@ debug_ctl:
     .quad .Lc_print_console, e_c_print_console, .Lc_print_bps, e_c_print_bps
     .quad .Lc_print_dap_log, e_c_print_dap_log, .Lc_print_configs, e_c_print_configs
     .quad .Lc_print_debug_tree, e_c_print_debug_tree, .Lc_print_debug_toolbar, e_c_print_debug_toolbar
+    .quad .Lc_print_debug_hover, e_c_print_debug_hover
     .quad 0, 0

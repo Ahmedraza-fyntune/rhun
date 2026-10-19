@@ -667,6 +667,7 @@ FN dap_tick
     jmp 1b
 9:  call bp_tick
     call restart_check
+    call dg_hover_tick
     EPILOGUE
 
 # ds_tick(ds)
@@ -794,7 +795,11 @@ FN dap_timeout
     jmp 9f
 8:  inc r12d
     jmp 1b
-9:  mov rax, r13
+9:  call dg_hover_due           # the pointer's rest before a hover evaluation
+    cmp eax, -1
+    je 91f
+    call near_ms
+91: mov rax, r13
     EPILOGUE
 # near_deadline: r13 = min(r13, [r15] - now) for a set deadline
 near_deadline:
@@ -3025,6 +3030,62 @@ FN dap_eval
     call dap_error
     EPILOGUE
 
+# dap_hover_eval(ds, expr cstr): evaluate for the pointer's hover in the focused frame (context hover
+#   when the adapter offers it, else watch)
+FN dap_hover_eval
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdi, rbx
+    call dap_frame_ptr
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    mov rdi, rbx
+    lea rsi, [rip + .Lc_evaluate]
+    call dap_req_begin
+    lea rdi, [rip + .Lk_expression]
+    mov rsi, r12
+    call akv
+    lea rdi, [rip + .Lk_frameId]
+    mov rsi, [r13 + FR_id]
+    call aki
+    lea rsi, [rip + .Lv_hover]
+    test qword ptr [rbx + DS_caps], CAP_HOVER
+    jnz 1f
+    lea rsi, [rip + .Lv_watch]
+1:  lea rdi, [rip + .Lk_context]
+    call akv
+    mov rdi, rbx
+    mov esi, RQ_HOVER
+    mov edx, [rip + g_dap_gen]
+    call dap_req_send
+9:  EPILOGUE
+
+# r_hover(ds, root, body, success, pd): the hover's value (an error shows nothing)
+r_hover:
+    PROLOGUE
+    mov rbx, rdx
+    test ecx, ecx
+    jz 9f
+    mov eax, [r8 + PD_epoch]
+    cmp eax, [rdi + DS_epoch]
+    jne 9f
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_result]
+    call jstr
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_type]
+    call jstr
+    mov rcx, rdx
+    mov rdx, rax
+    mov rdi, r12
+    mov rsi, r13
+    call dg_hover_answer
+9:  EPILOGUE
+
 # r_repl(ds, root, body, success, pd): the value, or the error, in the console
 r_repl:
     PROLOGUE
@@ -3870,6 +3931,7 @@ FN dap_find_node
 .Lv_subtle: .asciz "subtle"
 .Lv_watch: .asciz "watch"
 .Lv_repl: .asciz "repl"
+.Lv_hover: .asciz "hover"
 .Lv_stdout: .asciz "stdout"
 .Lv_stderr: .asciz "stderr"
 .Lv_console: .asciz "console"
@@ -3917,7 +3979,7 @@ event_table:
 resp_table:     # by RQ_*
     .quad 0, r_initialize, r_launch, r_none, r_config, r_config, r_config, r_threads, r_stack
     .quad r_scopes, r_variables, r_none, r_none, r_none, r_none, r_disconnect, r_none, r_excinfo
-    .quad r_none, r_repl, r_watch, r_none, 0
+    .quad r_none, r_repl, r_watch, r_hover, 0
 resume_cmds:
     .quad .Lc_continue, .Lc_next, .Lc_stepIn, .Lc_stepOut
 state_names:

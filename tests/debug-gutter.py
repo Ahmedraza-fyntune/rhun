@@ -109,6 +109,44 @@ class Gutter(debughost.DebugHost):
         self.assertEqual(list(self.glyphs(out)), [(5, list(self.glyphs(out))[0][1])])
         self.assertIn('%s 5 enabled=1' % self.src, out[-1])
 
+    def hover_setup(self):
+        h = self.proj / 'h.c'
+        h.write_text('int f(void) {\n    return p->x + p.y + total;\n}\n')
+        steps = [{'file': h.as_posix(), 'line': 2, 'function': 'f',
+                  'locals': {'total': 3, 'p': {'x': 1, 'y': 2}}}]
+        self.scenario(steps)
+        self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\nstopOnEntry = yes\n')
+        return h
+
+    def hover_at(self, col, extra=()):
+        self.hover_setup()
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'print-xy 2 %d' % col], files=('h.c',))
+        x, y = map(int, out[-1].split())
+        out = self.run_editor([*self.start(), 'wait-debug paused', *extra, 'move %d %d' % (x + 2, y), 'wait 700',
+                               'wait 600', 'print-debug-hover', 'print-tip'], files=('h.c',))
+        return out
+
+    def test_hover_on_a_name(self):
+        out = self.hover_at(26)                         # total
+        self.assertEqual(out[-2:], ['total = 3  int', 'tip=total = 3  int'])
+
+    def test_hover_on_a_member_chain(self):
+        out = self.hover_at(15)                         # the x of p->x
+        self.assertEqual(out[-2], 'p->x = 1  int')
+        out = self.hover_at(21)                         # the y of p.y
+        self.assertEqual(out[-2], 'p.y = 2  int')
+        self.assertIn('"context": "hover"', ' '.join(self.requests()))
+
+    def test_no_hover_on_blanks_or_while_running(self):
+        out = self.hover_at(2)
+        self.assertEqual(out[-2], 'none')
+        out = self.hover_at(26, extra=['debug-continue', 'wait-debug ended'])
+        self.assertEqual(out[-2], 'none')
+
+    def test_hover_on_the_selection(self):
+        out = self.hover_at(19, extra=['key ctrl+Home', 'key Down', *(['key Right'] * 18),
+                                       'key shift+Right', 'key shift+Right', 'key shift+Right'])
+        self.assertEqual(out[-2], 'p.y = 2  int')        # the selected text, not the word p
 
 if __name__ == '__main__':
     unittest.main()
