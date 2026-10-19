@@ -272,6 +272,21 @@ FN remote_start
     test eax, eax
     jz 8f
     mov dword ptr [rip + g_remote], 1
+    # the when-clause keys remoteName and remoteHost
+    call remote_kind_name
+    mov rbx, rax
+    mov rdi, rax
+    call strlen
+    mov edi, CTX_REMOTE_NAME
+    mov rsi, rbx
+    mov rdx, rax
+    call ctx_set
+    lea rdi, [rip + rm_host]
+    call strlen
+    mov edi, CTX_REMOTE_HOST
+    lea rsi, [rip + rm_host]
+    mov rdx, rax
+    call ctx_set
     call rm_connect
     mov eax, 1
     EPILOGUE

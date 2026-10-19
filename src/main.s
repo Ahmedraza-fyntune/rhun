@@ -30,11 +30,6 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
-    call keeper_helper_entry
-    test rax, rax
-    js .Lmain_not_keeper
-    EPILOGUE
-.Lmain_not_keeper:
     # remote hosts: run by ssh as its askpass program (RHUN_ASKPASS names the window's socket)
     lea rdi, [rip + .Lenv_askpass]
     call getenv
@@ -48,7 +43,7 @@ FN main
 1:  call remote_askpass_main
 .Lnot_askpass:
     cmp qword ptr [rip + g_argc], 2
-    jb .Lmv_regular
+    jb .Lnot_remote_agent
     # remote hosts: the agent a remote window starts on the host (remote.s, ragent.s)
     mov rax, [rip + g_argv]
     mov rdi, [rax + 8]
@@ -59,83 +54,6 @@ FN main
     call remote_agent_main
     EPILOGUE
 .Lnot_remote_agent:
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Ltheme_source_worker]
-    call strcmp_eq
-    test eax, eax
-    jz .Ltheme_not_worker
-    mov rdi, [rip + g_argc]
-    mov rsi, [rip + g_argv]
-    call theme_capture_worker_main
-    EPILOGUE
-.Ltheme_not_worker:
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Lsettings_worker]
-    call strcmp_eq
-    test eax, eax
-    jz .Lsettings_not_worker
-    mov rdi, [rip + g_argc]
-    mov rsi, [rip + g_argv]
-    call ext_settings_worker_main
-    EPILOGUE
-.Lsettings_not_worker:
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Lstore_worker]
-    call strcmp_eq
-    test eax, eax
-    jz .Lstore_not_worker
-    mov rdi, [rip + g_argc]
-    mov rsi, [rip + g_argv]
-    call ext_store_snapshot_main
-    EPILOGUE
-.Lstore_not_worker:
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Lvalidate_anchored_worker]
-    call strcmp_eq
-    test eax, eax
-    jz .Lvalidate_not_anchored
-    mov rdi, [rip + g_argc]
-    mov rsi, [rip + g_argv]
-    call ext_validate_anchored_main
-    EPILOGUE
-.Lvalidate_not_anchored:
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Lvalidate_legacy_worker]
-    call strcmp_eq
-    test eax, eax
-    jz .Lvalidate_not_legacy
-    mov rdi, [rip + g_argc]
-    mov rsi, [rip + g_argv]
-    call ext_validate_legacy_anchored_main
-    EPILOGUE
-.Lvalidate_not_legacy:
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Lsnapshot_legacy_worker]
-    call strcmp_eq
-    test eax, eax
-    jz .Lsnapshot_not_legacy
-    mov rdi, [rip + g_argc]
-    mov rsi, [rip + g_argv]
-    call ext_legacy_snapshot_anchored_main
-    EPILOGUE
-.Lsnapshot_not_legacy:
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Lvalidate_worker]
-    call strcmp_eq
-    test eax, eax
-    jz .Lmv_regular
-    mov rdi, [rip + g_argc]
-    mov rsi, [rip + g_argv]
-    call ext_validate_main
-    EPILOGUE
-.Lmv_regular:
     cmp qword ptr [rip + g_argc], 5
     jb 1f
     cmp qword ptr [rip + g_argc], 6
@@ -152,8 +70,6 @@ FN main
     call sys_file_capacity
     call parse_args
     call detach
-    # Cache the executable before interactive work; legacy jobs never resolve it lazily.
-    call ext_store_job_legacy_cache_executable
     call raster_init
     call appearance_init
     call app_init
@@ -216,17 +132,6 @@ FN main
 .Lm_exit:
     call app_clip_reset
     call headless_clip_reset
-    # Final quitting phase: retire helpers without dispatching application or UI callbacks.
-    call ext_store_jobs_shutdown_begin
-.Lm_store_retire:
-    call time_ms
-    mov rdi, rax
-    call ext_store_jobs_shutdown_step
-    test rax, rax
-    jnz .Lm_store_retired
-    call ext_store_job_retire_wait
-    jmp .Lm_store_retire
-.Lm_store_retired:
     call ext_shutdown
     call remote_shutdown        # remote hosts: the askpass socket
     call agents_shutdown
@@ -704,15 +609,3 @@ open_initial:
 .p2align 2
 .Lf100: .float 100.0
 
-.section .rodata
-.Lvalidate_worker: .asciz "--validate-extension"
-.Lvalidate_anchored_worker: .asciz "--validate-extension-anchored"
-.Lvalidate_legacy_worker: .asciz "--validate-legacy-anchored"
-.Lsnapshot_legacy_worker: .asciz "--snapshot-legacy-anchored"
-
-.section .rodata
-.Lstore_worker: .asciz "--extension-store-snapshot"
-
-.section .rodata
-.Ltheme_source_worker: .asciz "--theme-source-worker"
-.Lsettings_worker: .asciz "--extension-settings-worker"

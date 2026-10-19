@@ -1573,6 +1573,19 @@ FN remote_askpass_env
     EPILOGUE
 .endif
 
+# ru_ap_drop(): the askpass connection ends without an answer
+ru_ap_drop:
+    sub rsp, 8
+    mov edi, [rip + ru_ap_conn]
+    test edi, edi
+    js 1f
+    call watch_remove
+    mov edi, [rip + ru_ap_conn]
+    SYS SYS_close
+    mov dword ptr [rip + ru_ap_conn], -1
+1:  add rsp, 8
+    ret
+
 .ifndef WINDOWS
 # ru_ap_listen_start() -> 1 when the askpass socket listens: /tmp/rhun-askpass-PID-N/s, a folder
 #   this window just made (0700), so only the user reaches it
@@ -1707,19 +1720,6 @@ ru_ap_on_conn:
     jmp 9f
 8:  call ru_ap_drop
 9:  EPILOGUE
-
-# ru_ap_drop(): the askpass connection ends without an answer
-ru_ap_drop:
-    sub rsp, 8
-    mov edi, [rip + ru_ap_conn]
-    test edi, edi
-    js 1f
-    call watch_remove
-    mov edi, [rip + ru_ap_conn]
-    SYS SYS_close
-    mov dword ptr [rip + ru_ap_conn], -1
-1:  add rsp, 8
-    ret
 
 # ru_ap_ask(): the question in a prompt: yes/no as a pick list, a password masked, anything else plain
 ru_ap_ask:

@@ -140,7 +140,7 @@ FN control_exec
     lea r15, [rip + ctl_table]
 1:  mov rdx, [r15]
     test rdx, rdx
-    jz .Lce_unknown
+    jz .Lce_more
     mov rdi, r13
     mov rsi, r14
     call str_eq_cstr
@@ -148,6 +148,28 @@ FN control_exec
     jnz 2f
     add r15, 16
     jmp 1b
+.Lce_more:
+    # the other parts' tables (ctl_tables): fn(out, rest, rest len) -> rax as above
+    lea rax, [rip + ctl_tables]
+    mov [rsp], rax
+11: mov rax, [rsp]
+    mov r15, [rax]
+    test r15, r15
+    jz .Lce_unknown
+    add qword ptr [rsp], 8
+12: mov rdx, [r15]
+    test rdx, rdx
+    jz 11b
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 13f
+    add r15, 16
+    jmp 12b
+13: lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
 2:  call [r15 + 8]
     push rax
     push rax
@@ -529,94 +551,6 @@ c_shot:
     je 1f
     PCALL P_draw
 1:  xor eax, eax
-    ret
-
-# ---- remote hosts (remote.s) ----
-
-# print-remote: remote=KIND host=H state=S channels=N rtt=MS in=B out=B procs=P [error=TEXT]
-c_print_remote:
-    lea rdi, [rip + out]
-    call remote_dump
-    xor eax, eax
-    ret
-
-# remote-connect SPEC [PATH]: this window becomes a remote window (--remote SPEC PATH)
-c_remote_connect:
-    push r13
-    push r14
-    push r15
-    call next_arg
-    mov rdi, rax
-    mov rsi, rdx
-    call mem_dup
-    mov r13, rax
-    mov rdi, rbx
-    mov rsi, r12
-    call trim
-    mov rdi, rax
-    mov rsi, rdx
-    call mem_dup
-    mov r14, rax
-    mov rdi, r13
-    mov rsi, r14
-    call remote_start
-    mov rdi, r13
-    call mem_free
-    mov rdi, r14
-    call mem_free
-    pop r15
-    pop r14
-    pop r13
-    xor eax, eax
-    ret
-
-# remote-drop: the transport is killed, as a dropped connection
-c_remote_drop:
-    sub rsp, 8
-    call remote_drop
-    add rsp, 8
-    xor eax, eax
-    ret
-
-c_remote_reconnect:
-    sub rsp, 8
-    call remote_reconnect
-    add rsp, 8
-    xor eax, eax
-    ret
-
-# wait-remote [SECONDS]: until the connection is up, failed or lost (60 s unless given)
-c_wait_remote:
-    push r13
-    push r14
-    push r15
-    call next_int
-    test rax, rax
-    jnz 1f
-    mov eax, 60
-1:  imul r13, rax, 1000
-    call time_ms
-    add r13, rax
-2:  mov eax, [rip + g_remote_state]
-    cmp eax, 6                  # RS_UP
-    jae 3f
-    test eax, eax
-    jz 3f
-    call time_ms
-    cmp rax, r13
-    jae 3f
-    mov edi, 20
-    call loop_poll
-    call app_tick
-    call flush_frame
-    jmp 2b
-3:  # the tick that opens the project
-    call app_tick
-    call flush_frame
-    pop r15
-    pop r14
-    pop r13
-    xor eax, eax
     ret
 
 # wait-term TEXT: until the current terminal's screen shows TEXT (10 s at most): a shell's prompt,
@@ -2299,11 +2233,6 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_agents_runs: .asciz "print-agents-runs"
 .Lc_wait_grep: .asciz "wait-grep"
 .Lc_wait_term: .asciz "wait-term"
-.Lc_print_remote: .asciz "print-remote"
-.Lc_remote_connect: .asciz "remote-connect"
-.Lc_remote_drop: .asciz "remote-drop"
-.Lc_wait_remote: .asciz "wait-remote"
-.Lc_remote_reconnect: .asciz "remote-reconnect"
 .Lc_print_gitlog: .asciz "print-gitlog"
 .Lc_print_scm: .asciz "print-scm"
 .Lc_wait_ai: .asciz "wait-ai"
@@ -2392,6 +2321,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
+# other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
+ctl_tables:
+    .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad remote_ctl            # remote hosts (remotectl.s)
+    .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open
@@ -2427,12 +2361,7 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
-    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
-    # remote hosts (remote.s)
-    .quad .Lc_print_remote, c_print_remote, .Lc_remote_connect, c_remote_connect
-    .quad .Lc_remote_drop, c_remote_drop, .Lc_wait_remote, c_wait_remote
-    .quad .Lc_remote_reconnect, c_remote_reconnect
-    .quad 0, 0
+    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:

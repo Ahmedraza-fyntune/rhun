@@ -95,12 +95,7 @@ LIBC sys_read, _read
 LIBC sys_write, _write
 LIBC sys_fsync, _fsync, 32
 LIBC sys_fchmod, _fchmod, 32
-LIBC sys_flock, _flock, 32
 LIBC sys_rename, _rename, 32
-sys_rename_new:
-    mov w2, #4                 // RENAME_EXCL: refuse an existing destination
-    b sys_rename_new_native
-LIBC sys_rename_new_native, _renamex_np, 32
 LIBC sys_mkdir, _mkdir, 32
 LIBC sys_rmdir, _rmdir, 32
 LIBC sys_unlink, _unlink, 32
@@ -870,7 +865,6 @@ sys_table:
     SYS 61, sys_wait4
     SYS 62, sys_kill
     SYS 72, sys_fcntl
-    SYS 73, sys_flock
     SYS 74, sys_fsync
     SYS 77, sys_ftruncate
     SYS 79, sys_getcwd
@@ -893,7 +887,6 @@ sys_table:
     SYS 288, sys_accept4
     SYS 290, sys_sandbox_init
     SYS 291, sys_realpath
-    SYS 292, sys_rename_new
     SYS 293, sys_pipe2
     SYS 294, sys_inotify_init1
     .org sys_table + NSYS * 8

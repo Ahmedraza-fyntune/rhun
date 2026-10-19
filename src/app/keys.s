@@ -60,7 +60,6 @@ FN parse_combo
     EPILOGUE
 
 # combo_token(ptr, len) -> edx mod bit if a modifier, else eax keysym
-FN keys_combo_token
 combo_token:
     PROLOGUE
     mov r12, rdi
@@ -347,6 +346,14 @@ FN keys_lookup
 5:  xor eax, eax
     ret
 
+# FN keys_run(cmd*): run the command keys_lookup found, as invoked by a key (FROM key)
+FN keys_run
+    mov esi, INV_KEY
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    jmp cmd_invoke
+
 # keys_for(cmd*) -> first binding formatted into a static buffer ("Ctrl+Shift+P"), or 0
 FN keys_for
     PROLOGUE
@@ -459,11 +466,6 @@ FN keys_for
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
-
-# Stable process-lifetime target for an explicitly unbound shortcut.
-FN keys_none_command
-    lea rax, [rip + none_cmd]
-    ret
 
 FN cmd_none
     ret

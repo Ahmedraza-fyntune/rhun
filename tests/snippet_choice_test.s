@@ -17,7 +17,7 @@ FN main
     mov rdx, [r12 + 16]
     mov rcx, [r12 + 24]
     mov r8d, 1
-    mov r9d, FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS
+    mov r9d, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_VARIANTS)
     call snippet_decode_fields
     mov rbx, rax
     test rax, rax
@@ -46,7 +46,7 @@ FN main
 .Lowned:
     lea rdi, [rip + record]
     mov esi, record_end - record
-    mov edx, FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS
+    mov edx, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_VARIANTS)
     call snippet_decode_record
     test rax, rax
     jz .Lfail
@@ -110,7 +110,7 @@ FN main
     lea rdx, [rip + twofields]
     mov ecx, twofields_end - twofields
     mov r8d, 1
-    mov r9d, FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS
+    mov r9d, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_VARIANTS)
     call snippet_decode_fields
     test rax, rax
     jz .Lfail
@@ -137,7 +137,7 @@ FN main
     # Retained payload totals, not field-local totals, bound nesting.
     lea rdi, [rip + record]
     mov esi, record_end - record
-    mov edx, FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS
+    mov edx, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_VARIANTS)
     call snippet_decode_record
     mov r12, rax
     mov r15, [r12 + SN_choicebytes]
