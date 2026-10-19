@@ -1744,7 +1744,7 @@ ENDSTRUCT IMG_SIZE
 .equ TAB_GIT, 4
 .equ TAB_EXT, 5                 # the Extensions page (extpage.s)
 .equ TAB_VIEW, 6                # an extension's view (extview.s); TAB_flags >> TF_VIEW_SHIFT is its slot + 1
-.equ TAB_NOTEBOOK, 7            # a notebook (nbview.s): TAB_doc is a DOC without text, DOC_nb its NB
+.equ TAB_NOTEBOOK, 120          # a notebook (nbview.s): TAB_doc is a DOC without text, DOC_nb its NB (notebooks' block 120-123)
 .equ TF_VIEW_SHIFT, 16
 .equ ID_VIEW, 0x7700            # + slot: a view's area
 .equ VW_MAX, 32                 # views open at once, all extensions
