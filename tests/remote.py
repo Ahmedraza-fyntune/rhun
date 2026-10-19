@@ -174,14 +174,27 @@ class Remote(unittest.TestCase):
         self.assertEqual(self.field(out, 'remote=', 'state'), 'failed', out)
         self.assertIn('error=Could not connect to no-such-container-here', out)
 
-    @unittest.skipUnless(sys.platform.startswith('linux'), 'local: runs the agent on this machine')
+@unittest.skipUnless(sys.platform.startswith('linux'), 'local: runs the agent on this machine')
+class LocalTransport(unittest.TestCase):
+    """sh -s on this machine: the whole remote path without docker or sshd."""
+
     def test_local_transport(self):
-        proj = self.dir / 'proj'
-        proj.mkdir()
-        out = self.run_script('local:', str(proj), ['wait-remote 60', 'print-remote', 'print-project'],
-                              env_extra={'SHELL': '/bin/sh'})
-        self.assertEqual(self.field(out, 'remote=', 'state'), 'connected', out)
-        self.assertIn('project=%s' % proj, out)
+        with tempfile.TemporaryDirectory(prefix='rhun-remote-local-') as tmp:
+            base = Path(tmp)
+            for d in ('home', 'config', 'state', 'tmp', 'proj'):
+                (base / d).mkdir()
+            script = base / 't.rsc'
+            script.write_text('wait-remote 60\nprint-remote\nprint-project\ncmd toggle_terminal\nwait 500\n'
+                              'type echo hi-$((40+2))\nkey Return\nwait-term hi-42\nprint-term\nquit\n')
+            env = dict(os.environ, HOME=str(base / 'home'), XDG_CONFIG_HOME=str(base / 'config'),
+                       XDG_STATE_HOME=str(base / 'state'), TMPDIR=str(base / 'tmp'), SHELL='/bin/sh')
+            out = subprocess.run([str(EXE), '--headless', '1000x700', '--remote', 'local:', str(base / 'proj'),
+                                  '--script', str(script)], capture_output=True, timeout=120,
+                                 env=env).stdout.decode(errors='replace')
+            self.assertIn('state=connected', out)
+            self.assertIn('project=%s' % (base / 'proj'), out)
+            self.assertIn('hi-42', out)
+            self.assertTrue(list((base / 'home/.cache/rhun-remote').glob('*/rhun')))
 
 
 if __name__ == '__main__':
