@@ -183,6 +183,8 @@ python3 tests/ext-watch-native.py || fail=1
 python3 tests/ext-boundaries.py || fail=1
 python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
+# notebooks and custom editors (wider parity A, B)
+python3 tests/ext-notebooks.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0

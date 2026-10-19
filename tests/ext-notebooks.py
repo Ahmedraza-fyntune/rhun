@@ -177,6 +177,24 @@ class Notebooks(unittest.TestCase):
         self.assertEqual(field(runs[0][1], 'kind'), 'markup')
         self.assertEqual(len(runs[1]), 4)
 
+    def test_mouse_selects_edits_runs_and_scrolls(self):
+        out = self.run_editor(['print-notebook'])
+        x, y = map(int, field(cells(out)[2], 'at').split(','))
+        out = self.run_editor([f'click {x + 34} {y + 10}', 'type Z', 'print-notebook', 'print-doc',
+                               f'click {x - 26} {y + 10}', *SETTLE, 'print-notebook'])
+        runs = dumps(out)
+        self.assertEqual((field(runs[0][2], 'sel'), field(runs[0][2], 'editing')), ('1', '1'))
+        self.assertIn('y Z= 2', out)
+        self.assertEqual(field(runs[1][2], 'state'), 'done')    # the count column runs the cell
+        # a long notebook scrolls with the wheel; cells above the view are not drawn
+        self.nb.write_text(''.join(f'%% code python -\nx{i} = {i}\n' for i in range(40)), encoding='utf-8')
+        out = self.run_editor(['print-notebook', 'move 500 300', 'scroll 600', 'print-notebook', 'key End', 'print-notebook'])
+        runs = dumps(out)
+        self.assertEqual(field(runs[0][20], 'at'), '-1')
+        self.assertEqual(field(runs[1][0], 'at'), '-1')
+        self.assertNotEqual(field(runs[1][20], 'at'), '-1')
+        self.assertNotEqual(field(runs[2][39], 'at'), '-1')    # End brings the last cell into view
+
     # --- runs ---
 
     def test_run_states_count_and_stream(self):
