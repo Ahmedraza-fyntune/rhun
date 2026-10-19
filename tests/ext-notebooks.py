@@ -259,6 +259,22 @@ class Notebooks(unittest.TestCase):
         self.assertIn('0 nb-kernel 1', self.fake_log())
         self.assertIn('kernel=Other Kernel', [l for l in out if l.startswith('dirty=')][-1])
 
+    # --- find across the cells (A4) ---
+
+    def test_find_next_and_previous_cross_cells(self):
+        # typing in the find bar selects the first match; Find Next goes on to the next cell's
+        out = self.run_editor(['key Return', 'cmd find', 'type =', 'print-notebook', 'print-state',
+                               'cmd find_next', 'print-notebook', 'print-state', 'cmd find_next', 'print-notebook',
+                               'cmd find_prev', 'print-notebook'])
+        runs = dumps(out)
+        sel = [[field(c, 'sel') for c in r] for r in runs]
+        self.assertEqual(sel, [['1', '0', '0'], ['0', '0', '1'], ['1', '0', '0'], ['0', '0', '1']], out)
+        self.assertEqual(field(runs[1][2], 'editing'), '1')
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('line=2 col=4 sel=1 ', states[0])       # x =| in the first cell
+        self.assertIn('line=1 col=4 sel=1 ', states[1])       # y =| in the third
+        self.assertIn('focus=2', states[1])                   # the find bar keeps the keys
+
     # --- cells for language providers (A3) ---
 
     def test_cells_reach_language_providers(self):

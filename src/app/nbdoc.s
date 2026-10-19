@@ -204,7 +204,7 @@ FN nb_open_tab
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     mov edi, NB_SIZE
     call mem_alloc
@@ -772,7 +772,7 @@ nb_saved:
     mov rdi, [r14 + DOC_path]
     mov rsi, r12
     mov rdx, r13
-    call file_write_all
+    call vfs_write_all
     test rax, rax
     jns 2f
     lea rdi, [rip + tmp]
@@ -787,7 +787,7 @@ nb_saved:
     jmp 9f
 2:  mov r15, [rbx + NB_host]
     mov rdi, [r15 + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [r15 + DOC_mtime], rax
     inc qword ptr [r15 + DOC_saves]
     and dword ptr [r15 + DOC_flags], ~DF_DISK_CHANGED
@@ -912,7 +912,7 @@ FN nb_disk_reload
     cmp qword ptr [rbx + NB_req], 0
     jne 8f
     mov rdi, [r12 + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [r12 + DOC_mtime], rax
     mov dword ptr [rbx + NB_want], NBR_OPEN
     call time_ms
@@ -934,7 +934,7 @@ FN nb_reload
     jne 9f
     mov r12, [rbx + NB_host]
     mov rdi, [r12 + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [r12 + DOC_mtime], rax
     mov dword ptr [rbx + NB_want], NBR_OPEN
     call time_ms

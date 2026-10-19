@@ -177,7 +177,7 @@ FN nb_send_open
     mov r12, [rbx + NB_host]
     mov rdi, [r12 + DOC_path]
     mov esi, NB_BODY_MAX
-    call file_read_limited
+    call vfs_read_limited
     mov r13, rax
     mov r14, rdx
     test rax, rax

@@ -470,7 +470,8 @@ its right picks the kernel. Clicking a cell's `[ ]` column runs it.
 
 Kernels run as you, outside the extension's sandbox: the first time a notebook extension starts
 one in a project, rhun shows the command and asks (Allow or Cancel); Forget on the extension's
-page takes the permission back. Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
+page takes the permission back. Find (Ctrl+F) searches the cell being edited, and Find Next and Find Previous go on to the next or
+previous cell with a match. Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
 and opens whole in a tab of its own. Every action is in the command palette as Notebook: ....
 Notebook: Reopen as Text shows the file itself.
 
