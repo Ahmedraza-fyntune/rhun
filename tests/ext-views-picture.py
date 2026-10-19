@@ -40,12 +40,12 @@ class Pictures(ViewsBase):
     def test_keys_and_text_go_to_the_picture_with_the_keyboard(self):
         x, y = self.shown()
         self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}', 'type a', 'key shift+Return',
-                         'key F5', 'key ctrl+a', 'wait 100'])
+                         'key Insert', 'key ctrl+a', 'wait 100'])
         log = self.fake_log()
         i = log.index(f'0 view {PIC} key - a')
         self.assertEqual(log[i + 1:i + 3], [f'0 view {PIC} text 1', 'a'])
         self.assertIn(f'0 view {PIC} key shift Return', log)
-        self.assertIn(f'0 view {PIC} key - F5', log)
+        self.assertIn(f'0 view {PIC} key - Insert', log)    # F-keys have bindings
         self.assertIn(f'0 view {PIC} selectall', log)
 
     def test_copy_asks_the_picture_and_paste_brings_text_to_it(self):

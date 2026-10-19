@@ -547,6 +547,11 @@ FN viewpic_paste
     call keys_on
     test eax, eax
     jz 9f
+    mov rdi, r13                # at most 4 MB, whole characters (an extension reads no more)
+    mov rsi, r12
+    mov edx, 4194304
+    call utf8_cut
+    mov r13, rax
     mov rdi, rbx
     mov rsi, r13
     mov rdx, r12
