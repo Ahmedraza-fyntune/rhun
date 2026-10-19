@@ -658,6 +658,11 @@ dispatch:
     jz 8f
     mov [rbx + CL_oreq], rax
     mov dword ptr [rbx + CL_state], CS_OWNER
+    mov rdi, r12                # counted with the language queries (query.s)
+    mov rsi, rax
+    mov edx, PK_TOOL
+    mov ecx, QO_AI
+    call query_track
     EPILOGUE
 8:  mov rdi, rbx
     lea rsi, [rip + .Le_not_running]
@@ -1082,9 +1087,9 @@ withdraw:
     mov rbx, rdi
     cmp dword ptr [rbx + CL_state], CS_OWNER
     jne 1f
-    mov rdi, [rbx + CL_owner]
+    mov rdi, [rbx + CL_owner]   # 0 cancel ID to the owner
     mov rsi, [rbx + CL_oreq]
-    call extproto_send_cancel
+    call query_withdraw
 1:  cmp dword ptr [rbx + CL_state], CS_REVIEW
     jne 2f
     mov rdi, [rbx + CL_oreq]    # the proposal it waits for stays for the user

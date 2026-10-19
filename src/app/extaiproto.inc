@@ -278,6 +278,22 @@ ai_reply:
 8:  xor eax, eax
 9:  EPILOGUE
 
+# FN ai_query_expired(ext, id, 0, 0, 0): query.s gave up waiting for one of the AI requests: its
+#   asker hears it as an error answer
+FN ai_query_expired
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    lea rdi, [rip + .Le_no_answer]
+    call strlen
+    mov r8, rax
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    lea rcx, [rip + .Le_no_answer]
+    call ai_reply
+    EPILOGUE
+
 # ID tools (feature tools) -> ok ID LEN + every tool rhun offers (tools.s)
 h_tools:
     PROLOGUE
@@ -408,5 +424,6 @@ pr_tool: .quad 0                # the rhun.run call the open term prompt answers
 .Lv_propose: .asciz "propose"
 .Lv_unpropose: .asciz "unpropose"
 .Lv_tools: .asciz "tools"
+.Le_no_answer: .asciz "busy the extension did not answer in time"
 .Lv_tool_call: .asciz "tool-call"
 .text

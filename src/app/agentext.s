@@ -708,7 +708,12 @@ set_slot:
 row_free:
     PROLOGUE
     mov rbx, rdi
-    mov rdi, rbx
+    mov rsi, [rbx + AS_req]     # a transcript asked for is no longer wanted
+    test rsi, rsi
+    jz 1f
+    mov rdi, [rbx + AS_ext]
+    call query_withdraw
+1:  mov rdi, rbx
     call agentext_ask_drop
     mov rdi, [rbx + AS_sid]
     call mem_free
@@ -910,6 +915,11 @@ FN agentext_fetch
     mov [rbx + AS_req], rax
     mov [rbx + AS_from], r12
     mov qword ptr [rbx + AS_dirty], -1
+    mov rdi, r13                # counted and timed with the language queries (query.s)
+    mov rsi, rax
+    mov edx, PK_TRANSCRIPT
+    mov ecx, QO_AI
+    call query_track
 9:  EPILOGUE
 
 # FN agentext_reply(ext, id, ok, body, len) -> eax 1 when it answered an agent-transcript request:

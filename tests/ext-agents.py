@@ -170,7 +170,7 @@ class Agents(unittest.TestCase):
         self.assertNotIn('0 features', self.agent_log())
 
     def test_feature_is_agreed(self):
-        self.run_editor(exts=self.extension(hello='hello 1 agents tools'), actions=[
+        self.run_editor(exts=self.extension(hello='hello 1 agents no-such-feature'), actions=[
             'wait-ext acme/gem running', 'wait 300'])
         self.assertIn('0 features agents\n', self.agent_log())
 
