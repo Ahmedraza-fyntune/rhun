@@ -2938,7 +2938,11 @@ hello_features:
 3:  add r12, r13
     jmp 1b
 4:  and dword ptr [rbx + EXT_features], FEAT_HOST
-    cmp dword ptr [rbx + EXT_features], 0
+    # wsedit: file-operations only together with workspace-edits
+    test dword ptr [rbx + EXT_features], FEAT_WORKSPACE_EDITS
+    jnz 41f
+    and dword ptr [rbx + EXT_features], ~FEAT_FILE_OPERATIONS
+41: cmp dword ptr [rbx + EXT_features], 0
     je 9f
     call out_begin
     lea rdi, [rip + .Lev_features]
@@ -3535,10 +3539,18 @@ cmd_allow:
 .Lf_snippets: .asciz "snippets"
 .Lf_save_actions: .asciz "save-actions"
 .Lv_save_apply: .asciz "save-apply"
+# wsedit: feature names
+.Lf_workspace_edits: .asciz "workspace-edits"
+.Lf_file_operations: .asciz "file-operations"
+.Lf_selections: .asciz "selections"
+.Lf_reveal: .asciz "reveal"
+.Lf_diff: .asciz "diff"
+.Lf_linked_editing: .asciz "linked-editing"
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature
+    .quad .Lf_workspace_edits, .Lf_file_operations, .Lf_selections, .Lf_reveal, .Lf_diff, .Lf_linked_editing, 0   # wsedit
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "

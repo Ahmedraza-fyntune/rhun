@@ -1488,7 +1488,17 @@ ENDSTRUCT TF_SIZE
 # the features whose requests rhun sends (and whose ok ID LEN replies it frames)
 .equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
 .equ FEAT_WORKSPACE_WATCH, 16384
-.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+# workspace edits and the editor model (wsedit; docs/extensions/v1.1.md): transactions, file
+# operations, several selections, reveal, diff tabs, linked editing. Each joins FEAT_HOST when
+# its host side is in; file-operations is agreed only together with workspace-edits
+.equ FEAT_WORKSPACE_EDITS, 32768
+.equ FEAT_FILE_OPERATIONS, 65536
+.equ FEAT_SELECTIONS, 131072
+.equ FEAT_REVEAL, 262144
+.equ FEAT_DIFF, 524288
+.equ FEAT_LINKED_EDITING, 1048576
+.equ FEAT_WSEDIT_HOST, 0
+.equ FEAT_HOST, FEAT_WSEDIT_HOST | FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
