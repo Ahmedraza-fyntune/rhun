@@ -619,6 +619,13 @@ native binaries, written in Rust, Go, C or C++, so they start in milliseconds an
 else installed. One that crashes or hangs cannot take the editor with it, and on Linux and macOS
 the kernel holds each one to the permissions its manifest declares.
 
+An extension can also be a single **WebAssembly** module (compiled for `wasm32-wasip1` from Rust,
+Go or C), which rhun runs itself: the same file works on Linux, macOS and Windows, and it can
+reach only its own state folder and the project and home folders its permissions name, on every
+system, Windows included (its page says "It runs as WebAssembly"). A system with a native build
+of the extension runs that instead. WebAssembly extensions start as quickly as native ones; heavy
+computation is slower. Writing one: [protocol 1.1](extensions/v1.1.md#webassembly-extensions-runwasm32-wasip1).
+
 They can add commands to the palette with their own keys, read and edit the open documents (each
 edit one undo step), put marks with messages in the gutter, **decorate** text (colors,
 backgrounds, underlines, strikethrough, faded text, icons in the gutter, ticks in the scrollbar,
@@ -805,6 +812,28 @@ the files you have open, read your project, use the network, run named programs)
 settings and its log, and removes it. Installed extensions live in
 `~/.config/rhun/extensions/OWNER/NAME/` (`%APPDATA%\rhun\extensions` on Windows).
 
+Each extension's page also shows what it costs: how long it has run and how long it took to
+start, its CPU time and use now, the memory and processes of the program and whatever it started,
+the messages and bytes each way, and how many of rhun's questions it answered slowly, too late or
+with an error. The cards show memory and CPU while an extension runs. An extension whose manifest
+says `idle = stop` is stopped after five minutes without work (its page says so) and starts again
+by itself the next time it is needed.
+
+An extension that signs in to a service keeps its tokens in your system's keychain: the macOS
+Keychain, the Windows Credential Manager, or on Linux the Secret Service (GNOME Keyring, KWallet,
+KeePassXC); its install dialog says "store passwords and tokens in your keychain". Its page lists
+the keys it stored (never the values) with **Forget**, and removing the extension removes them.
+Without a keyring (a Linux server, a bare window manager), they last until rhun quits. **Extension
+secrets** in Settings changes where they go:
+
+```ini
+[extensions]
+secrets = system        # or memory (until rhun quits), or file (a file only you can read)
+```
+
+`file` keeps them in `~/.local/state/rhun/secrets/`, readable only by you, in plain text: as safe
+as a `~/.netrc`.
+
 The command palette shows each extension command's qualified name, `owner/name.command`,
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same
@@ -912,6 +941,36 @@ From [rhun-editor](https://github.com/rhun-editor):
 | `rhun-editor/wordfreq` | the open file's most frequent words as a bar chart that follows your typing (C) |
 | `rhun-editor/words` | completion from the words in your open files (C++) |
 | `rhun-editor/showcase` | a tour of everything an extension can do |
+| `rhun-editor/tests` | Go and Rust tests in the Testing section: run, results, diffs, coverage (Go) |
+
+### Testing
+
+Extensions that run tests (such as `rhun-editor/tests` for Go and Rust) fill the **Testing**
+section of the sidebar (command Testing). Its tree shows each extension's tests by module,
+package or file, with their state: not run, queued, running, passed, failed, errored, skipped. The
+section's buttons run all tests, run them with coverage, run the failed ones again and cancel;
+`r` runs the selected test, `d` debugs it, and its menu also goes to the test or its failure,
+opens the expected and actual values as a diff tab and shows its output. Under the tree the
+selected test's last result: its message, the expected and actual values as a colored line diff,
+and the end of its output.
+
+In the editor each test has a run button in the gutter at its first line (`[testing] gutter =
+false` hides them): a click runs it, a right click opens its menu, and after a run the button
+shows the result. A failure with a place is a problem (the Problems tab, a mark in the file with
+the expected and actual values on hover) until the test passes. After a run with coverage the line
+numbers are tinted: covered green, missed red, partly covered yellow (Show Test Coverage toggles
+them).
+
+Commands, without default keys (bind them in `[keys]`): Run All Tests, Run Tests in Current File,
+Run Test at Cursor, Debug Test at Cursor, Run All Tests with Coverage, Re-run Failed Tests, Re-run
+Last Test Run, Cancel Test Runs, Show Test Coverage, Go to Next Test Failure.
+
+The test programs (`go test`, `cargo test`) are started by rhun, not by the extension: as you, with
+your environment, in your project, only during runs you start. The extension's manifest names
+them (`[needs] tests = go cargo`, shown before you install it), and the first run in a project
+asks once, showing the command (Forget on the extension's page asks again). A folder opened from
+a link runs none until you trust it. Results are kept until rhun quits.
+
 | `rhun-editor/mcp` | lets the agents in your terminal use rhun over MCP: open files, the selection, unsaved text, problems, and changes you review |
 
 ### Write your own

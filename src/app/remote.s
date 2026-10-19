@@ -28,6 +28,16 @@
 .equ MUX_RPC_MS, 10000          # a request waits this long without hearing anything from the host
 .equ MUX_GC_MS, 30000           # an exited program nobody asked about is forgotten after this
 .equ RLOG_MAX, 240
+.equ RQ_MAX, 8                  # requests answered later (remote_request_cb)
+
+STRUCT
+F RQ_id, 4                      # 0 free
+F RQ_done, 4
+F RQ_status, 8                  # 0 or -errno
+F RQ_cb, 8                      # cb(ctx, status, ptr, len) from remote_tick
+F RQ_ctx, 8
+F RQ_reply, SB_SIZE
+ENDSTRUCT RQ_SIZE
 
 # connection states (g_remote_state)
 .equ RS_OFF, 0
@@ -272,7 +282,14 @@ FN remote_start
     test eax, eax
     jz 8f
     mov dword ptr [rip + g_remote], 1
-    # the when-clause keys remoteName and remoteHost
+    lea rdi, [rip + .Lenv_strict]
+    call getenv
+    test rax, rax
+    jz 2f
+    cmp byte ptr [rax], '1'
+    jne 2f
+    mov dword ptr [rip + g_remote_strict], 1
+2:  # the when-clause keys remoteName and remoteHost
     call remote_kind_name
     mov rbx, rax
     mov rdi, rax
@@ -1056,6 +1073,7 @@ rm_lost:
     cmp r12d, MUX_MAXCH
     jb 3b
     call vfs_remote_lost
+    call rm_rq_fail_all
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -1516,6 +1534,15 @@ rm_message:
     jne 9f
     mov edi, 1
     call rm_num
+    mov edi, eax
+    xor esi, esi
+    mov rdx, r12
+    mov rcx, r13
+    call rm_rq_answer
+    test eax, eax
+    jnz 9f
+    mov edi, 1
+    call rm_num
     cmp eax, [rip + rm_wait_id]
     jne 9f
     test eax, eax
@@ -1537,17 +1564,29 @@ rm_message:
     call str_eq
     test eax, eax
     jz 9f
+    mov edi, 2
+    call rm_num
+    test eax, eax
+    jnz 2f
+    mov eax, 5
+2:  mov r14, rax
+    mov edi, 1
+    call rm_num
+    mov edi, eax
+    mov rsi, r14
+    neg rsi
+    xor edx, edx
+    xor ecx, ecx
+    call rm_rq_answer
+    test eax, eax
+    jnz 9f
     mov edi, 1
     call rm_num
     cmp eax, [rip + rm_wait_id]
     jne 9f
     test eax, eax
     jz 9f
-    mov edi, 2
-    call rm_num
-    test eax, eax
-    jnz 1f
-    mov eax, 5
+    mov eax, r14d
 1:  mov [rip + rm_got_err], eax
     mov dword ptr [rip + rm_got], 1
 9:  EPILOGUE
@@ -1977,7 +2016,10 @@ rm_pump_once:
 9:  EPILOGUE
 
 # rm_request_async(line cstr): a request nobody waits for (id 0; its answer is dropped)
+FN remote_request_async
 rm_request_async:
+    cmp dword ptr [rip + g_remote_state], RS_UP
+    jne 9f
     push rbx
     mov rbx, rdi
     lea rdi, [rip + rm_line]
@@ -1995,7 +2037,154 @@ rm_request_async:
     mov rdx, [rip + rm_line + SB_len]
     call rm_send
     pop rbx
-    ret
+9:  ret
+
+# remote_request_cb(line ptr, len, body ptr, body len, cb, ctx) -> id, or 0 when not connected or
+#   too many wait: a request whose answer comes later: remote_tick calls cb(ctx, status, ptr, len)
+#   (status 0 or -errno; the bytes are valid during the call). Typing never waits for the host.
+FN remote_request_cb
+    PROLOGUE 16
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov r15, rcx
+    mov [rsp], r8
+    mov [rsp + 8], r9
+    cmp dword ptr [rip + g_remote_state], RS_UP
+    jne 8f
+    lea rbx, [rip + rm_rq]
+    xor ecx, ecx
+1:  cmp dword ptr [rbx + RQ_id], 0
+    je 2f
+    add rbx, RQ_SIZE
+    inc ecx
+    cmp ecx, RQ_MAX
+    jb 1b
+    jmp 8f
+2:  inc dword ptr [rip + rm_next_id]
+    cmp dword ptr [rip + rm_next_id], 0x7fffffff
+    jb 3f
+    mov dword ptr [rip + rm_next_id], 1
+3:  mov eax, [rip + rm_next_id]
+    mov [rbx + RQ_id], eax
+    mov dword ptr [rbx + RQ_done], 0
+    mov rax, [rsp]
+    mov [rbx + RQ_cb], rax
+    mov rax, [rsp + 8]
+    mov [rbx + RQ_ctx], rax
+    lea rdi, [rip + rm_line]
+    call sb_clear
+    lea rdi, [rip + rm_line]
+    mov esi, [rbx + RQ_id]
+    call sb_push_u64
+    lea rdi, [rip + rm_line]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + rm_line]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    lea rdi, [rip + rm_line]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + rm_line]
+    mov rsi, r15
+    call sb_push_u64
+    lea rdi, [rip + rm_line]
+    mov esi, 10
+    call sb_push_byte
+    mov rsi, [rip + rm_line + SB_ptr]
+    mov rdx, [rip + rm_line + SB_len]
+    call rm_send
+    test r15, r15
+    jz 4f
+    mov rsi, r14
+    mov rdx, r15
+    call rm_send
+4:  mov eax, [rbx + RQ_id]
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# rm_rq_answer(id, status, ptr, len) -> eax 1 when id was a remote_request_cb's: its answer is kept
+rm_rq_answer:
+    PROLOGUE
+    test edi, edi
+    jz 8f
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    lea rbx, [rip + rm_rq]
+    xor ecx, ecx
+1:  cmp [rbx + RQ_id], edi
+    je 2f
+    add rbx, RQ_SIZE
+    inc ecx
+    cmp ecx, RQ_MAX
+    jb 1b
+8:  xor eax, eax
+    EPILOGUE
+2:  cmp dword ptr [rbx + RQ_done], 0
+    jne 8f
+    mov [rbx + RQ_status], r12
+    lea rdi, [rbx + RQ_reply]
+    call sb_clear
+    test r14, r14
+    jz 3f
+    lea rdi, [rbx + RQ_reply]
+    mov rsi, r13
+    mov rdx, r14
+    call sb_push
+3:  mov dword ptr [rbx + RQ_done], 1
+    mov dword ptr [rip + rm_rq_ready], 1
+    mov eax, 1
+    EPILOGUE
+
+# rm_rq_dispatch(): the answers that came go to their callbacks (remote_tick: nothing is being parsed)
+rm_rq_dispatch:
+    PROLOGUE
+    cmp dword ptr [rip + rm_rq_ready], 0
+    je 9f
+    mov dword ptr [rip + rm_rq_ready], 0
+    lea rbx, [rip + rm_rq]
+    xor r12d, r12d
+1:  cmp dword ptr [rbx + RQ_id], 0
+    je 2f
+    cmp dword ptr [rbx + RQ_done], 0
+    je 2f
+    mov dword ptr [rbx + RQ_id], 0          # free before the call: it may ask again
+    mov rdi, [rbx + RQ_ctx]
+    mov rsi, [rbx + RQ_status]
+    mov rdx, [rbx + RQ_reply + SB_ptr]
+    mov rcx, [rbx + RQ_reply + SB_len]
+    call [rbx + RQ_cb]
+    lea rdi, [rbx + RQ_reply]
+    call sb_clear
+2:  add rbx, RQ_SIZE
+    inc r12d
+    cmp r12d, RQ_MAX
+    jb 1b
+9:  EPILOGUE
+
+# rm_rq_fail_all(): the connection went: the waiting requests are answered ENOTCONN
+rm_rq_fail_all:
+    PROLOGUE
+    lea rbx, [rip + rm_rq]
+    xor r12d, r12d
+1:  cmp dword ptr [rbx + RQ_id], 0
+    je 2f
+    cmp dword ptr [rbx + RQ_done], 0
+    jne 2f
+    mov qword ptr [rbx + RQ_status], -107
+    lea rdi, [rbx + RQ_reply]
+    call sb_clear
+    mov dword ptr [rbx + RQ_done], 1
+    mov dword ptr [rip + rm_rq_ready], 1
+2:  add rbx, RQ_SIZE
+    inc r12d
+    cmp r12d, RQ_MAX
+    jb 1b
+    EPILOGUE
 
 # ---------------- programs ----------------
 
@@ -2058,7 +2247,7 @@ rm_free_chan:
 #   errfd: -1 error output to /dev/null, -2 merged with the output, else a descriptor that receives
 #   it (a log; kept open by the channel until the program ends). Only envp's entries that are not the
 #   window's own environment go along: the host has its login environment. input (pipes): bytes
-#   for the program's input, which then ends.
+#   for the program's input (any length), which then ends.
 FN remote_spawn
     PROLOGUE 64
     mov [rsp], rdi              # argv
@@ -2239,13 +2428,11 @@ FN remote_spawn
     call parse_u64
     mov [r13 + CH_pid], eax
     # the input, then its end
+    # (all of it at once: the agent keeps what the program has not read; the credit comes back
+    # as it reads)
     mov rdx, [rsp + 40]
     test rdx, rdx
     jz 8f
-    cmp rdx, MUX_WINDOW
-    jbe 72f
-    mov edx, MUX_WINDOW
-72: mov [rsp + 40], rdx
     sub [r13 + CH_credit], rdx
     lea rdi, [rip + rm_line]
     call sb_clear
@@ -2522,6 +2709,11 @@ FN remote_pid_cwd
 FN remote_timeout
     cmp dword ptr [rip + rm_need_open], 0
     jne 1f
+    call vfs_pending_events
+    test eax, eax
+    jnz 1f
+    cmp dword ptr [rip + rm_rq_ready], 0
+    jne 1f
     cmp dword ptr [rip + g_remote], 0
     je 2f
     # forgotten programs are collected every few seconds
@@ -2541,7 +2733,9 @@ FN remote_tick
     je 1f
     mov dword ptr [rip + rm_need_open], 0
     call remote_connected
-1:  call time_ms
+1:  call vfs_tick               # watch events from the host
+    call rm_rq_dispatch         # answers of requests made with remote_request_cb
+    call time_ms
     mov r13, rax
     lea rbx, [rip + rm_ch + CH_SIZE]
     mov r12d, 1
@@ -2928,6 +3122,8 @@ rm_spawn_body: .zero SB_SIZE
 rm_kill_line: .zero SB_SIZE
 rm_reset_gen: .long 0
 rm_tenv: .quad 0
+rm_rq: .zero RQ_SIZE * RQ_MAX
+rm_rq_ready: .long 0
 
 .section .rodata
 .p2align 3
@@ -2985,6 +3181,7 @@ rm_tenv: .quad 0
 .Lbin_sh: .asciz "/bin/sh"
 .Lself_exe: .asciz "/proc/self/exe"
 .Lenv_ssh: .asciz "RHUN_SSH"
+.Lenv_strict: .asciz "RHUN_REMOTE_STRICT"
 .Lcolon: .ascii ":"
 .Lcolon_sp: .asciz ": "
 .Lhex: .ascii "0123456789abcdef"

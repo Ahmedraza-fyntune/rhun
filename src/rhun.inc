@@ -628,6 +628,7 @@ F DOC_language_pending, 8
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
+F DOC_uri, 8            # resources group: a virtual document's URI (owned; vdoc.s), or 0
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1
@@ -1568,7 +1569,9 @@ ENDSTRUCT TF_SIZE
 .equ IC_LIST, 164
 .equ IC_BEAKER, 165
 .equ IC_CLOUD, 166
-.equ IC_COUNT, 167
+.equ IC_RING, 167
+.equ IC_SLASH, 168
+.equ IC_COUNT, 169
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
@@ -1640,6 +1643,14 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_REVEAL, "reveal", 0
     FEATURE FEAT_DIFF, "diff", 0
     FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
+    # resources, workspaces, secrets and lifecycle (extres.s, secrets.s and the files they name)
+    FEATURE FEAT_IDLE, "idle", 0                  # busy yes|no
+    FEATURE FEAT_SECRETS, "secrets", 0
+    FEATURE FEAT_URLS, "urls", 0                  # open-url, external-uri, link
+    FEATURE FEAT_URIS, "uris", 1                  # URIs, virtual documents (content requests)
+    FEATURE FEAT_FILES, "files", 0                # find-files, search-text
+    FEATURE FEAT_SCOPED_SETTINGS, "scoped-settings", 0
+    FEATURE FEAT_WORKSPACE_FOLDERS, "workspace-folders", 0
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1694,16 +1705,19 @@ FEATURE_LIST
 .equ PK_SAVE_ACTIONS, 24
 .equ PK_COMMIT_MESSAGE, 25       # source control (scmext.s)
 .equ PK_QUICKDIFF, 26
-.equ PK_TRANSCRIPT, 27           # AI: agent-transcript (agentext.s)
-.equ PK_TOOL, 28                 # AI: tool, a call routed to its owner (tools.s)
-.equ PK_PROMPT, 29               # AI: agent-prompt (agentext.s, D4)
-.equ PK_COUNT, 30
+.equ PK_TESTS_RESOLVE, 27        # testing (testproto.s)
+.equ PK_TEST_RUN, 28
+.equ PK_TRANSCRIPT, 29           # AI: agent-transcript (agentext.s)
+.equ PK_TOOL, 30                 # AI: tool, a call routed to its owner (tools.s)
+.equ PK_PROMPT, 31               # AI: agent-prompt (agentext.s, D4)
+.equ PK_COUNT, 32
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
 .equ QO_SCM, 4                   # source control (scmext.s)
-.equ QO_AI, 5                   # AI: agentext.s and tools.s (ai_query_expired)
+.equ QO_TESTS, 5                 # testing (testproto.s)
+.equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -2058,6 +2072,91 @@ ENDSTRUCT SD_SIZE
 .equ EXT_CHOOSE_MAX, 1000       # choose: items
 .equ EXT_TERM_MAX, 4096         # term: the command's bytes
 
+# ---- resources, workspaces, secrets and lifecycle (extres.s and the files it names) ----
+# a request rhun asked an extension, for the cost counters: answered slow, dropped or failed
+STRUCT
+F ELQ_id, 8
+F ELQ_t, 8               # time_ms it went out
+F ELQ_kind, 8            # cstr: its verb ("complete"), for "slowest"
+F ELQ_cancelled, 8       # 1 after rhun sent 0 cancel ID
+ENDSTRUCT ELQ_SIZE
+.equ ELQ_MAX, 16                 # outstanding requests remembered per extension
+# per extension, beside each EXT slot (extres_row): EL for "extension lifecycle": lifecycle and cost
+STRUCT
+F EL_last_work, 8       # time_ms of the last message either way
+F EL_msgs_in, 8
+F EL_msgs_out, 8
+F EL_bytes_in, 8
+F EL_bytes_out, 8
+F EL_start_t, 8         # time_ms of the current run's start, 0 when it is not running
+F EL_cpu_ns, 8          # the last sample: CPU nanoseconds of its processes, and when it was taken
+F EL_cpu_t, 8
+F EL_cpu0_ns, 8         # the older sample the rate "now" is measured from
+F EL_cpu0_t, 8
+F EL_rss, 8             # resident bytes of its live processes at the last sample
+F EL_slowest, 8         # cstr: the kind of the slowest answer, or 0
+F EL_contains, 8        # cstr: its on = contains: patterns, or 0
+F EL_schemes, 8         # cstr: [provides] schemes, or 0
+F EL_skeys, 8           # cstr: its stored secrets' keys, each followed by LF, as last read, or 0
+F EL_ready_ms, 4        # the last start: milliseconds until hello
+F EL_procs, 4           # processes at the last sample
+F EL_slow, 4
+F EL_dropped, 4
+F EL_failed, 4
+F EL_slowest_ms, 4
+F EL_idle_cfg, 4        # idle.after in seconds, 0 when the manifest does not say
+F EL_busy, 4            # 1 after busy yes
+F EL_flags, 4           # ELF_*
+F EL_starts, 4          # starts this session
+F EL_nreq, 4            # entries in EL_req
+F EL_pad, 4
+F EL_req, ELQ_SIZE*ELQ_MAX
+ENDSTRUCT EL_SIZE
+.equ ELF_IDLE, 1                # idle = stop
+.equ ELF_IDLE_STOPPING, 2       # the stop in progress is for idleness: it returns to idle
+.equ ELF_OPEN_URLS, 4           # open_urls = yes: open-url opens without asking
+.equ ELF_RUNS_LOCAL, 8          # runs = local
+.equ ELF_STARTUP, 16            # this run started for on = startup (print-startup)
+.equ ELF_SKEYS_ASKED, 32        # its page asked the store for the keys
+.equ ELF_SECRETS_TOLD, 64       # the toast about secrets kept in memory was shown
+.equ IDLE_AFTER_DEFAULT, 300    # seconds
+.equ EXT_STARTS_PER_FRAME, 4    # on = startup and waiting extensions start at most this many a frame
+# a secret request (secrets.s); src/mac/keychain.s reads the first fields by these offsets
+.equ SECRET_KEY_MAX, 64
+.equ SECRET_VALUE_MAX, 8192
+.equ SECRET_KEYS_MAX, 64        # keys per extension
+.equ SECRET_OUTSTANDING, 8      # requests per extension
+.equ SECRET_BUF, 12288          # an answer: a value, or every key and its LF
+STRUCT
+F SECR_op, 4              # SO_*
+F SECR_status, 4          # SS_*
+F SECR_fd, 4              # macOS: the pipe the keychain's worker reports on
+F SECR_pad, 4
+F SECR_service, 8         # owned cstr: the store's service name for the extension
+F SECR_key, 8             # owned cstr, or 0 (keys, clear)
+F SECR_val, 8             # owned value (set), or 0
+F SECR_len, 8
+F SECR_outlen, 8          # the answer's bytes in SECR_buf
+F SECR_next, 8            # the queue
+F SECR_ext, 8
+F SECR_id, 8              # the request's id, 0 for rhun's own (the page, a removal)
+F SECR_gen, 8             # EL_starts when it was asked: an answer for an earlier run is dropped
+F SECR_buf, SECRET_BUF
+ENDSTRUCT SECR_SIZE
+.equ SECO_GET, 1
+.equ SECO_SET, 2
+.equ SECO_DELETE, 3
+.equ SECO_KEYS, 4
+.equ SECO_CLEAR, 5                # every key of the extension
+.equ SECS_OK, 0
+.equ SECS_NONE, 1                 # get: nothing stored under the key
+.equ SECS_REFUSED, -1             # locked and the unlock was cancelled, or access was denied
+.equ SECS_NOSTORE, -2             # no store is available
+.equ SECS_TOOBIG, -3              # 64 keys already
+.equ SECB_SYSTEM, 0               # [extensions] secrets
+.equ SECB_MEMORY, 1
+.equ SECB_FILE, 2
+
 # ---- contributions and commands (invoke.s, when.s, extcontext.s) ----
 # How a command was invoked (feature command-args): cmd_invoke takes these as arguments and
 # ext_cmd_run sends them as "0 run EXT.NAME DOC FROM LEN" + body
@@ -2219,6 +2318,7 @@ ENDSTRUCT XK_SIZE
 .equ ON_LANG, 4
 .equ ON_OPEN, 8
 .equ ON_PROJECT, 16
+.equ ON_CONTAINS, 0x100000         # resources group: on = contains:NAME
 
 .equ NEEDS_DOC_READ, 1
 .equ NEEDS_DOC_WRITE, 2
@@ -2228,6 +2328,7 @@ ENDSTRUCT XK_SIZE
 .equ NEEDS_NETWORK, 32
 .equ NEEDS_TERMINAL, 64
 .equ NEEDS_GIT_READ, 128        # [needs] git = read: the project's Git data through rhun (gitdata.s)
+.equ NEEDS_SECRETS, 0x1000000      # resources group: [needs] secrets = yes
 
 .equ EXT_MAX_RUNNING, EXT_CAP
 .equ EXT_HELLO_MS, 5000
@@ -2330,6 +2431,7 @@ F TSI_desc, 8           # owned cstr or 0
 F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed tests-resolve
 F TSI_path, 8           # owned cstr or 0: the file its range is in
 F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
+F TSI_phash, 8          # hash_line of TSI_path (0 without one): the gutter compares this first
 F TSI_idlen, 4
 F TSI_kind, 4           # TSK_*
 F TSI_flags, 4          # TSF_*
@@ -2383,6 +2485,7 @@ F TSE_prev_run, 4
 F TSE_prev_rent, 4
 F TSE_nmsg, 4
 F TSE_cut, 4            # 1 once its output was cut
+F TSE_prev_msg, 8       # owned copy of the item's summary before this run touched it, or 0
 F TSE_msgs, SB_SIZE     # messages: TSM header + text, path, expected, actual
 F TSE_out, SB_SIZE      # its output
 ENDSTRUCT TSE_SIZE
