@@ -83,3 +83,6 @@ EXPORTS
     GetConsoleWindow
     GetWindowsDirectoryW
     CompareStringOrdinal
+    OpenProcess
+    K32GetProcessMemoryInfo
+    QueryInformationJobObject

@@ -2282,7 +2282,7 @@ state_icons:
     .long IC_SLASH, T_MUTED         # skipped
     .long IC_CHECK, T_SUCCESS       # passed
     .long IC_CLOSE, T_ERROR         # failed
-    .long IC_WARN, T_ERROR          # errored
+    .long IC_WARNING, T_ERROR          # errored
     .long IC_RING, T_MUTED          # queued
     .long IC_RING, T_ACCENT         # running
 header_icons: .long IC_PLAY, IC_BEAKER, IC_REFRESH, IC_STOP

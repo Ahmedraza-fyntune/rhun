@@ -7,7 +7,7 @@
 #   print-keys [EXT]          every binding (or an extension's): strokes, command, source, rank, state
 #   print-chord               "chord=none" or "chord=STROKE fallback=COMMAND ms=N"
 #   key-latin LATIN COMBO     a key press whose Latin-layout key is LATIN (a layout that is not Latin)
-#   print-problems EXT        the extension's dropped contribution entries
+#   print-contrib-problems EXT  the extension's dropped contribution entries
 .include "rhun.inc"
 
 .bss
@@ -34,7 +34,7 @@ contrib_ctl:
 .Lc_print_keys: .asciz "print-keys"
 .Lc_print_chord: .asciz "print-chord"
 .Lc_key_latin: .asciz "key-latin"
-.Lc_print_problems: .asciz "print-problems"
+.Lc_print_problems: .asciz "print-contrib-problems"
 .Lcommand_sp: .asciz "command "
 .Lbad_ref: .asciz "cmdref=bad\n"
 .Lno_ext: .asciz "no such extension\n"
@@ -225,7 +225,7 @@ c_key_latin:
 9:  xor eax, eax
     EPILOGUE
 
-# print-problems EXT
+# print-contrib-problems EXT
 c_print_problems:
     PROLOGUE
     mov rbx, rdi

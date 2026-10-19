@@ -780,6 +780,28 @@ the files you have open, read your project, use the network, run named programs)
 settings and its log, and removes it. Installed extensions live in
 `~/.config/rhun/extensions/OWNER/NAME/` (`%APPDATA%\rhun\extensions` on Windows).
 
+Each extension's page also shows what it costs: how long it has run and how long it took to
+start, its CPU time and use now, the memory and processes of the program and whatever it started,
+the messages and bytes each way, and how many of rhun's questions it answered slowly, too late or
+with an error. The cards show memory and CPU while an extension runs. An extension whose manifest
+says `idle = stop` is stopped after five minutes without work (its page says so) and starts again
+by itself the next time it is needed.
+
+An extension that signs in to a service keeps its tokens in your system's keychain: the macOS
+Keychain, the Windows Credential Manager, or on Linux the Secret Service (GNOME Keyring, KWallet,
+KeePassXC); its install dialog says "store passwords and tokens in your keychain". Its page lists
+the keys it stored (never the values) with **Forget**, and removing the extension removes them.
+Without a keyring (a Linux server, a bare window manager), they last until rhun quits. **Extension
+secrets** in Settings changes where they go:
+
+```ini
+[extensions]
+secrets = system        # or memory (until rhun quits), or file (a file only you can read)
+```
+
+`file` keeps them in `~/.local/state/rhun/secrets/`, readable only by you, in plain text: as safe
+as a `~/.netrc`.
+
 The command palette shows each extension command's qualified name, `owner/name.command`,
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same

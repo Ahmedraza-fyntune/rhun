@@ -2819,5 +2819,5 @@ icon_names:
     .quad .Li_discard, IC_DISCARD, .Li_gear, IC_SLIDERS
     # testing's icons (tools/icons.py), for extension trees too
     .quad .Li_play, IC_PLAY, .Li_ring, IC_RING, .Li_circle, IC_RING, .Li_circle_filled, IC_DOT
-    .quad .Li_circle_slash, IC_SLASH, .Li_warning, IC_WARN, .Li_error, IC_CLOSE, .Li_bug, IC_BUG
+    .quad .Li_circle_slash, IC_SLASH, .Li_warning, IC_WARNING, .Li_error, IC_ERROR, .Li_bug, IC_BUG
     .quad .Li_beaker, IC_BEAKER, .Li_stop, IC_STOP, 0, 0

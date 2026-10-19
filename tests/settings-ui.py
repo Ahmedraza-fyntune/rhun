@@ -61,7 +61,8 @@ CHOICES = {('editor', 'multi_cursor_paste'): ('spread', 'full'),
            ('editor', 'multi_cursor_modifier'): ('alt', 'ctrl'),
            ('ui', 'decorations'): ('auto', 'client', 'server'),
            ('git', 'commit_ai'): ('off', 'claude', 'codex', 'ollama'),
-           ('updates', 'extensions'): ('install', 'check', 'off')}
+           ('updates', 'extensions'): ('install', 'check', 'off'),
+           ('extensions', 'secrets'): ('system', 'memory', 'file')}
 
 
 # Theme shows without Follow system dark mode, the dark and light mode's themes with it.
@@ -215,7 +216,8 @@ class SettingsUI(unittest.TestCase):
                   ('editor', 'multi_cursor_modifier'): (42, 49),
                   ('ui', 'decorations'): (55, 55, 78),
                   ('git', 'commit_ai'): (45, 92, 59, 116),
-                  ('updates', 'extensions'): (67, 84, 45)}
+                  ('updates', 'extensions'): (67, 84, 45),
+                  ('extensions', 'secrets'): (76, 70, 44)}
         for (section, key), options in CHOICES.items():
             for index, option in enumerate(options):
                 with self.subTest(setting=f'{section}.{key}', option=option):
