@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import unittest
 import urllib.parse
 
@@ -526,6 +527,41 @@ class ScmPanel(Base):
         exts = self.provider(self.body(), hello='hello 1')
         self.start(exts)
         self.assertTrue(self.replies('hg')[n][0].startswith('error 1 unknown'), self.replies('hg'))
+
+
+class ToolInVenv(Base):
+    """A version control extension runs its tool, a script whose #! names a virtual environment's
+    Python: under the kernel sandbox, the #! line past 64 bytes and the interpreter's install tree
+    (a framework Python runs itself again from inside it) are allowed with run = TOOL"""
+
+    def test_a_script_with_a_long_interpreter_path_runs(self):
+        venv = self.work / ('a-virtual-environment-with-a-rather-long-name-' + 'x' * 40)
+        subprocess.run([sys.executable, '-m', 'venv', '--without-pip', str(venv)], check=True, capture_output=True)
+        tool = venv / 'bin' / 'vcstool'
+        tool.write_text(f'#!{venv}/bin/python3\nimport sys\nprint("tool ran", sys.version_info[0])\n')
+        tool.chmod(0o755)
+        self.assertGreater(len(f'{venv}/bin/python3'), 64)
+        self.env['PATH'] = f'{venv}/bin:' + self.env.get('PATH', '/usr/bin:/bin')
+        # the extension is a shell script, as a compiled one would be: nothing else lets Python run
+        dst = self.work / 'exts/rhun-tests/hg'
+        dst.mkdir(parents=True)
+        (dst / 'extension.ini').write_text('name = hg\nowner = rhun-tests\ntitle = Hg\nversion = 1\nprotocol = 1\n'
+                                           'runtime = sh\nrun = fake.sh\non = command\n[commands]\ntool = Tool\n'
+                                           '[needs]\nproject = read\nrun = vcstool\n')
+        (dst / 'fake.sh').write_text('printf "hello 1\\n"\n'
+                                     'while IFS= read -r line; do\n'
+                                     '  case "$line" in\n'
+                                     '    "0 run "*) if out=$(vcstool 2>&1); then r="exec ok"; else r="exec failed"; fi\n'
+                                     '      printf "%s %s\\n" "$r" "$out" >> "$RHUN_STATE/log.txt" ;;\n'
+                                     '    "0 bye"*) exit 0 ;;\n'
+                                     '  esac\n'
+                                     'done\n')
+        out = self.run_editor(['cmd hg.tool', 'wait-ext hg running', 'wait 2000', 'print-extensions'],
+                              exts=self.work / 'exts', drop_waits=True)
+        log = [l.strip() for l in self.fake_log('hg') if l.startswith('exec ')]
+        if 'confined=0' in ' '.join(out):
+            self.skipTest('the kernel cannot confine here')
+        self.assertEqual(log, ['exec ok tool ran 3'], out)
 
 
 class CommitMessage(Base):
