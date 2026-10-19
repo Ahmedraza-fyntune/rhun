@@ -31,7 +31,15 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
 
 
+def sdk_has(path, text):
+    """the SDK checkout knows wasm32-wasip1 (an older one would build a module that cannot run)"""
+    f = SDK / path
+    if not f.exists() or text not in f.read_text(encoding='utf-8'):
+        raise OSError('the SDK at %s has no wasm32-wasip1 support (%s); set RHUN_EXT_SDK' % (SDK, path))
+
+
 def build_rust():
+    sdk_has('rust/rhun-ext/src/lib.rs', 'target_os = "wasi"')
     work = OUT / 'rust'
     work.mkdir(parents=True, exist_ok=True)
     shutil.copytree(SRC / 'rust/src', work / 'src', dirs_exist_ok=True)
@@ -42,6 +50,7 @@ def build_rust():
 
 
 def build_go():
+    sdk_has('go/rhunext/stdin_wasip1.go', 'SetNonblock')
     work = OUT / 'go'
     work.mkdir(parents=True, exist_ok=True)
     shutil.copy(SRC / 'go/main.go', work / 'main.go')
@@ -158,6 +167,10 @@ class Wasm(unittest.TestCase):
         self.assertTrue(out[1].endswith('bin/%s.wasm' % self.NAME), out)
         self.assertEqual(out[2], 'toast=hello from wasm')
         self.assertIn(' state=running ', out[3])
+        # held to its permissions by its host on every system, with or without a kernel sandbox
+        self.assertTrue(out[3].endswith(' confined=1'), out[3])
+        out = self.run_editor(['ext-page %s' % self.NAME, 'print-ext-page'], exts)
+        self.assertIn('held=1', out)
 
     def test_a_versioned_edit(self):
         out = self.run_editor(['cmd %s.upper' % self.NAME, 'wait-toast upper', 'print-doc'], self.install())
@@ -168,7 +181,7 @@ class Wasm(unittest.TestCase):
         self.assertEqual(self.command('env', 'env'), 'toast=env rhun-tests/%s args 1' % self.NAME)
 
     def test_the_state_folder_is_its_own(self):
-        self.assertEqual(self.command('files', 'files'), 'toast=files ok written by wasm 1 16')
+        self.assertEqual(self.command('files', 'files'), 'toast=files ok written by wasm 2 16')
         self.assertEqual((self.state / 'sub/moved.txt').read_text(encoding='utf-8'), 'written by wasm\n')
 
     def test_the_project_as_needs_says(self):
@@ -182,9 +195,13 @@ class Wasm(unittest.TestCase):
 
     def test_nothing_outside(self):
         self.assertEqual(self.command('escape', 'escape'), 'toast=escape absolute=false climb=false')
-        # home = read opens the home folder (where the secret is), read only
-        self.assertEqual(self.command('escape', 'escape', needs='documents = write\nhome = read'),
-                         'toast=escape absolute=true climb=false')
+        # home = read opens the home folder (where the secret is), read only (a climbing path that
+        # a runtime cleans into the home folder may reach it too: Go cleans paths itself)
+        self.assertTrue(self.command('escape', 'escape', needs='documents = write\nhome = read').startswith(
+            'toast=escape absolute=true climb='))
+
+    def test_its_own_folder_read_only(self):
+        self.assertEqual(self.command('own', 'own'), 'toast=own read=true write=false')
 
     def test_clocks(self):
         self.assertTrue(self.command('time', 'time').startswith('toast=time true slept=true'))
@@ -207,8 +224,10 @@ class Wasm(unittest.TestCase):
         self.assertFalse(alive(pid), 'the spinning module outlived the editor')
 
     def test_a_trap_ends_the_program(self):
-        out = self.run_editor(['cmd %s.trap' % self.NAME, 'wait-ext %s crashed' % self.NAME, 'print-extensions'],
-                              self.install())
+        # it answers a command first, so the trap is the command's and not a module that could not run
+        out = self.run_editor(['cmd %s.hello' % self.NAME, 'wait-toast hello', 'cmd %s.trap' % self.NAME,
+                               'wait-ext %s crashed' % self.NAME, 'print-extensions'], self.install())
+        self.assertEqual(out[0], 'toast=hello from wasm')
         self.assertIn(' state=crashed reason=exited with status 134 ', self.ext_line(out))
         log = self.log()
         self.assertIn('rhun --wasm-host: trap: unreachable', log)
@@ -230,6 +249,120 @@ class Wasm(unittest.TestCase):
         self.assertIn(' state=crashed ', self.ext_line(out))
         log = self.log()
         self.assertIn('rhun --wasm-host: the module cannot run: ', log)
+
+
+class WasmGo(Wasm):
+    """the same commands from Go (GOOS=wasip1): one thread, goroutines scheduled around a reader
+    parked on standard input by WASI poll_oneoff"""
+    NAME = 'wasmtest-go'
+    BUILDER = staticmethod(build_go)
+    MANIFEST = SRC / 'go/extension.ini'
+
+    def test_goroutines_run_while_the_reader_waits(self):
+        self.assertEqual(self.command('tick', 'ticks'), 'toast=ticks 5')
+
+    def test_a_trap_ends_the_program(self):
+        # Go's runtime catches the index error and exits with status 2; unwinding, rhunext closes
+        # standard output first, and rhun ends a program whose output ended (status 137 when that
+        # comes first), as it does a native one
+        out = self.run_editor(['cmd %s.hello' % self.NAME, 'wait-toast hello', 'cmd %s.trap' % self.NAME,
+                               'wait-ext %s crashed' % self.NAME, 'print-extensions'], self.install())
+        self.assertEqual(out[0], 'toast=hello from wasm')
+        self.assertRegex(self.ext_line(out), r' state=crashed reason=exited with status (2|137) ')
+
+
+class WasmC(Wasm):
+    """the same commands from C (rhunext.h on wasi-libc: blocking stdio)"""
+    NAME = 'wasmtest-c'
+    BUILDER = staticmethod(build_c)
+    MANIFEST = SRC / 'c/extension.ini'
+
+
+class Direct(unittest.TestCase):
+    """The modules driven through `rhun --wasm-host` alone, as rhun drives them over the pipes:
+    where the editor's headless tests cannot run (Windows under Wine: RHUN_WASM_HOST="wine64
+    Z:/path/rhun.com", RHUN_WASM_PATH_PREFIX=Z: for the paths the host sees)."""
+
+    def setUp(self):
+        host = os.environ.get('RHUN_WASM_HOST')
+        self.host = host.split() if host else [str(EXE)]
+        self.prefix = os.environ.get('RHUN_WASM_PATH_PREFIX', '')
+        self.tmp = tempfile.TemporaryDirectory(prefix='rhun-wasm-direct-')
+        self.work = Path(self.tmp.name).resolve()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hp(self, p):
+        return self.prefix + p.as_posix()
+
+    def drive(self, name, builder, commands):
+        wasm = get(name, builder)
+        if wasm is None:
+            self.skipTest('no %s module' % name)
+        ext = self.work / name
+        if ext.exists():
+            shutil.rmtree(ext)
+        (ext / 'bin').mkdir(parents=True)
+        shutil.copy(wasm, ext / 'bin' / (name + '.wasm'))
+        (ext / 'extension.ini').write_text('name = %s\n' % name, encoding='utf-8')
+        state = self.work / ('state-' + name)
+        shutil.rmtree(state, ignore_errors=True)
+        state.mkdir()
+        secret = self.work / 'secret.txt'
+        secret.write_text('secret\n', encoding='utf-8')
+        env = dict(os.environ, RHUN_STATE=self.hp(state), RHUN_EXTENSION='rhun-tests/' + name,
+                   WASMTEST_SECRET=self.hp(secret))
+        p = subprocess.Popen(self.host + ['--wasm-host', '--dir', self.hp(state), '--dir-ro', self.hp(ext),
+                                          self.hp(ext / 'bin' / (name + '.wasm'))],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(self.work / 'err.txt', 'wb'),
+                             env=env)
+        out = p.stdout
+
+        def line():
+            b = out.readline()
+            if not b:
+                raise EOFError('the module ended: ' + (self.work / 'err.txt').read_text(errors='replace')[-500:])
+            return b.decode().rstrip('\n')
+        self.assertEqual(line(), 'hello 1')
+        p.stdin.write(b'0 ready -\n')
+        toasts = []
+        for c in commands:
+            p.stdin.write(('0 run %s.%s 7\n' % (name, c)).encode())
+            p.stdin.flush()
+            while True:
+                rid, verb, *fields = line().split(' ')
+                if verb == 'toast':
+                    toasts.append(out.read(int(fields[-1])).decode())
+                    p.stdin.write(('ok %s\n' % rid).encode())
+                    p.stdin.flush()
+                    break
+                p.stdin.write(('error %s unknown\n' % rid).encode())
+                p.stdin.flush()
+        p.stdin.write(b'0 bye\n')
+        p.stdin.close()
+        p.wait(timeout=30)
+        return toasts
+
+    def check(self, name, builder):
+        commands = ['hello', 'env', 'files', 'escape', 'own', 'time']
+        toasts = self.drive(name, builder, commands)
+        self.assertEqual(toasts[0], 'hello from wasm')
+        self.assertEqual(toasts[1], 'env rhun-tests/%s args 1' % name)
+        self.assertEqual(toasts[2], 'files ok written by wasm 2 16')
+        self.assertEqual(toasts[3], 'escape absolute=false climb=false')
+        self.assertEqual(toasts[4], 'own read=true write=false')
+        self.assertTrue(toasts[5].startswith('time true slept=true'), toasts[5])
+
+    def test_rust(self):
+        self.check('wasmtest', build_rust)
+
+    def test_go(self):
+        self.check('wasmtest-go', build_go)
+        self.assertEqual(self.drive('wasmtest-go', build_go, ['tick'])[0], 'ticks 5')
+
+    def test_c(self):
+        self.check('wasmtest-c', build_c)
 
 
 def alive(pid):

@@ -6,7 +6,8 @@
 
 .bss
 .p2align 3
-.globl g_wasm_exit
+.globl g_wasm_exit, g_wasm_caller
+g_wasm_caller: .quad 0              # the instance whose call reached the running host function
 g_wasm_vstack: .quad 0              # the value stack
 g_wasm_vend: .quad 0
 g_wasm_frames: .quad 0              # the call frame stack
@@ -171,7 +172,9 @@ FN wasm_call_rdi
     mov rsi, [rdi + WFN_code]
     NEXT
 .Lcall_host:
-    # host(args, function) with the caller's instance in rbx; the results replace the arguments
+    # host(args, function) with the caller's instance in rbx (and g_wasm_caller); the results
+    # replace the arguments
+    mov [rip + g_wasm_caller], rbx
     push rsi
     push rdi
     mov eax, [rdi + WFN_nparams]

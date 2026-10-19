@@ -78,7 +78,7 @@ def expand(text, ctx):
                     break
             j += 1
         inner = text[i + 5:j]
-        text = text[:i] + str(len(fill(inner, ctx))) + text[j + 1:]
+        text = text[:i] + str(len(expand(inner, ctx))) + text[j + 1:]
     return fill(text, ctx)
 
 
