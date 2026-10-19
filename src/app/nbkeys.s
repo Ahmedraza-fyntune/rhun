@@ -667,6 +667,76 @@ nb_toggle_outputs:
 1:  pop rbx
     ret
 
+# ---------------- when-clause keys (when.s calls them: rax the value's bytes, rdx their length) ----
+
+# notebookFocus: a notebook tab has the keyboard
+FN ck_nb_focus
+    call nb_active
+    test rax, rax
+    jz 8f
+    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    jne 8f
+    lea rax, [rip + .Lw_true]
+    mov edx, 4
+    ret
+8:  lea rax, [rip + .Lw_false]
+    mov edx, 5
+    ret
+
+# notebookCellEditing: and its selected cell is in edit mode
+FN ck_nb_editing
+    call nb_active
+    test rax, rax
+    jz 8f
+    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    jne 8f
+    cmp dword ptr [rax + NB_editing], 0
+    je 8f
+    lea rax, [rip + .Lw_true]
+    mov edx, 4
+    ret
+8:  lea rax, [rip + .Lw_false]
+    mov edx, 5
+    ret
+
+# notebookCellType: "code" or "markup" for the selected cell, empty outside a notebook
+FN ck_nb_cell_type
+    call nb_active
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    call nb_sel_cell
+    test rax, rax
+    jz 8f
+    cmp dword ptr [rax + CL_kind], CLK_CODE
+    jne 1f
+    lea rax, [rip + .Lw_code]
+    mov edx, 4
+    ret
+1:  lea rax, [rip + .Lw_markup]
+    mov edx, 6
+    ret
+8:  lea rax, [rip + .Lw_false]
+    xor edx, edx
+    ret
+
+# notebookKernelState: none, idle, busy, starting or dead; empty outside a notebook
+FN ck_nb_kernel_state
+    call nb_active
+    test rax, rax
+    jz 8f
+    mov eax, [rax + NB_kstate]
+    lea rcx, [rip + kernel_names]
+    mov rdi, [rcx + rax*8]
+    push rdi
+    call strlen
+    mov rdx, rax
+    pop rax
+    ret
+8:  lea rax, [rip + .Lw_false]
+    xor edx, edx
+    ret
+
 # ---------------- tests: print and drive ----------------
 
 # nb_dump(sb): print-notebook: a line per cell, then the notebook's state
@@ -1126,6 +1196,10 @@ kernel_names: .quad .Lr_none, .Lk_idle, .Lk_busy, .Lk_starting, .Lk_dead
 .Lno_runs: .asciz "This notebook's extension does not run cells"
 .Lnot_notebook: .asciz "No notebook is open in this tab"
 .Ldash: .asciz "-"
+.Lw_true: .asciz "true"
+.Lw_false: .asciz "false"
+.Lw_code: .asciz "code"
+.Lw_markup: .asciz "markup"
 .Ld_none: .asciz "notebook=none\n"
 .Ld_opening: .asciz "notebook=opening error="
 .Ld_failed: .asciz "notebook=failed error="

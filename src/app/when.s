@@ -1702,7 +1702,7 @@ ck_active_tab:
 FN ctx_tab_kind_name
     xor eax, eax
     dec rdi
-    cmp rdi, 5
+    cmp rdi, 6                  # notebooks: TAB_NOTEBOOK is "notebook"
     ja 9f
     lea rax, [rip + tab_kind_names]
     mov rax, [rax + rdi*8]
@@ -2249,7 +2249,7 @@ FN ctx_ctl_set
 .set CTXKEY_NAMES, 1
 ctx_table:
     CTXKEY_LIST
-tab_kind_names: .quad .Lv_doc, .Lv_image, .Lv_settings, .Lv_git, .Lv_extensions, .Lv_view
+tab_kind_names: .quad .Lv_doc, .Lv_image, .Lv_settings, .Lv_git, .Lv_extensions, .Lv_view, .Lv_notebook
 vim_names: .quad .Lv_normal, .Lv_insert, .Lv_visual, .Lv_vline
 prov_fields: .quad EXT_pv_complete, EXT_pv_signature, EXT_pv_definition, EXT_pv_references
     .quad EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format, 0
@@ -2269,6 +2269,7 @@ prov_names: .quad .Lp_complete, .Lp_signature, .Lp_definition, .Lp_references, .
 .Lv_git: .asciz "git"
 .Lv_extensions: .asciz "extensions"
 .Lv_view: .asciz "view"
+.Lv_notebook: .asciz "notebook"
 .Lv_normal: .asciz "normal"
 .Lv_insert: .asciz "insert"
 .Lv_visual: .asciz "visual"

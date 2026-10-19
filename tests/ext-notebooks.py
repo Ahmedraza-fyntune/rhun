@@ -195,6 +195,16 @@ class Notebooks(unittest.TestCase):
         self.assertNotEqual(field(runs[1][20], 'at'), '-1')
         self.assertNotEqual(field(runs[2][39], 'at'), '-1')    # End brings the last cell into view
 
+    def test_context_keys(self):
+        out = self.run_editor(['print-context notebookFocus', 'print-context activeTab',
+                               'print-context notebookCellType', 'print-context notebookKernelState',
+                               'key Return', 'print-context notebookCellEditing',
+                               'when notebookFocus && !notebookCellEditing', 'key Escape', 'key j',
+                               'print-context notebookCellType', 'when notebookFocus && !notebookCellEditing'])
+        self.assertEqual(out, ['notebookFocus=true', 'activeTab=notebook', 'notebookCellType=code',
+                               'notebookKernelState=idle', 'notebookCellEditing=true', 'when=0',
+                               'notebookCellType=markup', 'when=1'])
+
     # --- runs ---
 
     def test_run_states_count_and_stream(self):

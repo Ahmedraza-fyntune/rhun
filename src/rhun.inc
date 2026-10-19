@@ -1852,6 +1852,11 @@ ENDSTRUCT CRF_SIZE
     CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
     CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
     CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+    # notebooks (nbkeys.s)
+    CTXKEY CTX_NOTEBOOK_FOCUS, "notebookFocus", ck_nb_focus
+    CTXKEY CTX_NOTEBOOK_CELL_EDITING, "notebookCellEditing", ck_nb_editing
+    CTXKEY CTX_NOTEBOOK_CELL_TYPE, "notebookCellType", ck_nb_cell_type
+    CTXKEY CTX_NOTEBOOK_KERNEL_STATE, "notebookKernelState", ck_nb_kernel_state
 .endm
 # when.s expands the list as records: FN, the name, padding to 8 bytes
 .macro CTXKEY sym, name, fn
