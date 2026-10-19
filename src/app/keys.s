@@ -2058,6 +2058,8 @@ g_commands:
     COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
     COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
+    # tasks and terminals
+    COMMAND toggle_problems, "Toggle Problems", cmd_toggle_problems, "ctrl+shift+m"
     COMMAND kill_terminal, "Kill Terminal", cmd_kill_terminal, ""
     COMMAND clear_terminal, "Clear Terminal", cmd_clear_terminal, ""
     COMMAND git_history, "Git: Show History", cmd_git_history, ""

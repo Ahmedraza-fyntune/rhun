@@ -1500,6 +1500,7 @@ ask_unsaved:
     call doc_dirty
     test eax, eax
     jz 2f
+    call dlg_drop
     mov [rip + dlg_tab], rbx
     mov [rip + dlg_kind], r12d
     inc qword ptr [rip + app_save_epoch]
@@ -2744,7 +2745,7 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
+96: call uproc_timeout          # programs run as the user (tasks and terminals)
     cmp eax, -1
     je 961f
     cmp ebx, -1
@@ -2760,15 +2761,23 @@ FN app_timeout
     cmp eax, ebx
     jge 98f
 99: mov ebx, eax
-98: call dap_timeout             # debugger: adapters' messages and deadlines
+98: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
     cmp eax, -1
     je 100f
     cmp ebx, -1
     je 101f
     cmp eax, ebx
     jge 100f
-101:mov ebx, eax
-100:call remote_timeout         # remote hosts
+101: mov ebx, eax
+100: call dap_timeout           # debugger: adapters' messages and deadlines
+    cmp eax, -1
+    je 104f
+    cmp ebx, -1
+    je 105f
+    cmp eax, ebx
+    jge 104f
+105: mov ebx, eax
+104: call remote_timeout        # remote hosts
     cmp eax, -1
     je 102f
     cmp ebx, -1
@@ -2807,7 +2816,9 @@ FN app_tick
     mov qword ptr [rip + g_toast_until], 0
     mov dword ptr [rip + g_dirty], 1
 2:  call agents_tick
+    call uproc_tick
     call term_tick
+    call problems_tick          # documents opened since get their problems' marks
     call git_tick
     call update_tick
     call ai_tick
@@ -5639,6 +5650,27 @@ dlg_drop:
 FN app_confirm_cancel
     mov [rip + dlg_cancel], rdi
     ret
+
+# app_dialog_open() -> eax nonzero while a dialog is open (one at a time: the run approval asks only
+#   when none is)
+FN app_dialog_open
+    mov eax, [rip + dlg_kind]
+    ret
+
+# app_confirm_revoke(fn): the open app_confirm whose button calls fn goes away unanswered (its Cancel
+#   is not called: the question was withdrawn)
+FN app_confirm_revoke
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 9f
+    cmp [rip + dlg_fn], rdi
+    jne 9f
+    mov dword ptr [rip + dlg_kind], 0
+    mov qword ptr [rip + dlg_cancel], 0
+    cmp dword ptr [rip + g_focus], FOCUS_DIALOG
+    jne 1f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+1:  mov dword ptr [rip + g_dirty], 1
+9:  ret
 
 # app_dialog_dump(sb): "dialog=none", or "dialog=QUESTION" and its line and button (tests)
 FN app_dialog_dump
