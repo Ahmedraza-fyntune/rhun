@@ -473,6 +473,14 @@ handle_line:
     jz 9f
     cmp dword ptr [rbx + EXT_feat_asks], 0
     je 9f
+    mov rdi, rbx                # views group: vkids and vmore answers (rview.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call rview_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # testing: tests-resolve and test-run answers
     mov rsi, r12
     mov edx, 1
@@ -520,6 +528,14 @@ handle_line:
     test edx, edx
     jz 9f
     mov r12, rax
+    mov rdi, rbx                # views group: a failed vkids or vmore (rview.s)
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call rview_reply
+    test eax, eax
+    jnz 9f
     mov edi, 2                  # testing: the code and text go with the answer
     call rest_from
     mov rcx, rax
@@ -2512,6 +2528,46 @@ h_vpatch:
     call reply_syntax
 9:  EPILOGUE
 
+# ID vreveal VIEW HOW LEN + node id -> ok ID: its ancestors expand, it scrolls into view
+h_vreveal:
+    PROLOGUE
+    call vtree_agreed
+    jz 9f
+    cmp qword ptr [rip + nfields], 5
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov r12, rax
+    mov edi, 3
+    call field_at
+    mov rdi, [rip + cur]
+    mov esi, r12d
+    mov rcx, rdx
+    mov rdx, rax
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    call rview_reveal
+    cmp eax, 1
+    je 5f
+    cmp eax, 2
+    je 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noview]
+    call reply_error
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_badpos_vreveal]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 # ID vshow NAME FOCUS -> ok ID VIEW: a declared view's place opens on it
 h_vshow:
     PROLOGUE
@@ -3688,6 +3744,7 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_vpatch, h_vpatch, EXT_BODY_MAX     # views group: retained views
     .quad .Lv_vshow, h_vshow, 0
+    .quad .Lv_vreveal, h_vreveal, EXT_BODY_MAX
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # contributions and commands
@@ -3728,6 +3785,8 @@ verbs:
 .Lv_vpatch: .asciz "vpatch"
 .Lv_vshow: .asciz "vshow"
 .Lvs_focus: .asciz "focus"
+.Lv_vreveal: .asciz "vreveal"
+.Le_badpos_vreveal: .asciz "badpos no such node"
 .Le_refused_vshow: .asciz "refused no such view"
 .Lv_apply: .asciz "apply"
 .Lv_snippet: .asciz "snippet"

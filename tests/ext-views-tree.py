@@ -66,6 +66,7 @@ class Views(unittest.TestCase):
         for line in out:
             if line.startswith('at='):
                 on = True
+                self.view_x = int(line[3:].split(',')[0])
                 continue
             if on and line.startswith('row '):
                 rows.append(line)
@@ -77,7 +78,7 @@ class Views(unittest.TestCase):
         for r in rows:
             if f' id={ident} ' in r + ' ':
                 y = int(r.split(' y=')[1].split(' ')[0])
-                return 120, y + 10
+                return getattr(self, 'view_x', 0) + 120, y + 10
         self.fail(f'no row {ident} in {rows}')
 
     # --- places ---
@@ -102,7 +103,7 @@ class Views(unittest.TestCase):
         self.assertIn('view=1 kind=tree place=sidebar name=todo rev=1 state=ready busy=0 title=TODO badge=4 '
                       'visible=1 nodes=7', out)
         self.assertIn('view=2 kind=tree place=panel name=items rev=1 state=ready busy=0 title=Items badge=0 '
-                      'visible=0 nodes=5', out)
+                      'visible=0 nodes=3', out)
         rows = self.rows(out)
         self.assertEqual(len(rows), 7)
         self.assertEqual(rows[0], 'row 0 y=335 d=0 open id=f:main.rs label=main.rs desc=src badge=2 icon=116')
@@ -188,7 +189,7 @@ class Views(unittest.TestCase):
         self.assertIn('terminals=0 open=1', out)
         self.assertTrue(any(l.startswith('rhun-tests/viewfake.items ') and l.endswith(' visible chosen focus')
                             for l in out), out)
-        self.assertEqual(len(self.rows(out)), 3)
+        self.assertEqual(len(self.rows(out)), 9)    # with three pages of more
         log = self.fake_log()
         self.assertIn('ok 3 2', log)
         self.assertIn('0 view 2 visible 1', log)
@@ -222,6 +223,118 @@ class Views(unittest.TestCase):
                                'print-sidebar'])
         self.assertFalse(any(l.startswith('view=') for l in out))
         self.assertIn('rhun-tests/viewfake.todo title=TODO at=0,335 size=240x239 badge=4 visible', out)
+
+    # --- lazy children, paging, checkboxes, actions, menus, reveal, multi-select ---
+
+    def run_lazy(self, actions, lazy='answer'):
+        self.env['VIEWFAKE_LAZY'] = lazy
+        return self.run_editor(['view-show items', 'wait 200', 'wait 200', *actions])
+
+    def test_lazy_children_are_asked_for_when_expanded(self):
+        out = self.run_lazy(['print-view items'])
+        x, y = self.row_xy(self.rows(out), 'a')
+        out = self.run_lazy([f'click {x} {y}', 'wait 200', 'wait 100', 'print-view items', 'print-views'])
+        rows = self.rows(out)
+        self.assertTrue(rows[0].startswith('row 0 y=344 d=0 open cur id=a'), rows)
+        self.assertTrue(rows[1].startswith('row 1 y=372 d=1 leaf id=a1 label=A one'), rows)
+        log = self.fake_log()
+        i = log.index('0 view 2 expand 4 1')             # after three pages: REV 4
+        self.assertTrue(any(l.startswith('4 vkids 2 4 ') and l.endswith(' 1') for l in log[i:]), log)
+        line = [l for l in out if l.startswith('view=2 ')][0]
+        self.assertIn(' rev=5 ', line)          # three vmore pages and the vkids answer
+
+    def test_a_failed_request_shows_an_error_row_and_retry_asks_again(self):
+        out = self.run_lazy(['print-view items'], lazy='error')
+        x, y = self.row_xy(self.rows(out), 'a')
+        out = self.run_lazy([f'click {x} {y}', 'wait 200', 'wait 100', 'print-view items'], lazy='error')
+        rows = self.rows(out)
+        self.assertTrue(rows[1].startswith('row 1 y=372 d=1 error'), rows)
+        out = self.run_lazy([f'click {x} {y}', 'wait 200', 'wait 100', f'click {x} {y + 28}', 'wait 200',
+                             'wait 100', 'print-view items'], lazy='error')
+        log = self.fake_log()
+        last = len(log) - 1 - log[::-1].index('0 features view-tree')
+        vkids = [l for l in log[last:] if ' vkids ' in l]
+        self.assertEqual(len(vkids), 2)         # Retry asked again
+
+    def test_a_collapse_cancels_the_wait_and_drops_the_late_answer(self):
+        out = self.run_lazy(['print-view items'], lazy='late')
+        x, y = self.row_xy(self.rows(out), 'a')
+        out = self.run_lazy([f'click {x} {y}', 'wait 600', f'click {x} {y}', 'wait 600', 'wait 600',
+                             'wait 200', 'print-view items'], lazy='late')
+        rows = self.rows(out)
+        self.assertTrue(rows[0].startswith('row 0 y=344 d=0 closed cur id=a'), rows)
+        log = self.fake_log()
+        rid = [l for l in log if ' vkids ' in l][0].split(' ')[0]
+        self.assertIn(f'0 cancel {rid}', log)
+        out = self.run_lazy([f'click {x} {y}', 'wait 600', f'click {x} {y}', 'wait 600', 'wait 600',
+                             f'click {x} {y}', 'wait 600', 'wait 600', 'wait 200', 'print-view items'], lazy='late')
+        self.assertTrue(any('id=a1 ' in r for r in self.rows(out)))     # asked again, answered
+
+    def test_load_more_pages_while_its_row_is_in_view(self):
+        out = self.run_lazy(['print-view items'])
+        ids = [r.split(' id=')[1].split(' ')[0] for r in self.rows(out)]
+        self.assertEqual(ids, ['a', 'b', 'c', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'])
+        vmore = [l for l in self.fake_log() if ' vmore ' in l]
+        self.assertEqual([l.split(' ')[4] for l in vmore], ['3', '5', '7'])   # HAVE
+
+    def test_a_checkbox_toggles_and_says_so(self):
+        out = self.run_lazy(['print-view items'])
+        x, y = self.row_xy(self.rows(out), 'c')
+        out = self.run_lazy([f'click {241 + 8 + 16 + 4} {y}', 'wait 100', 'print-view items'])
+        self.assertIn(' check=1 ', [r for r in self.rows(out) if 'id=c ' in r][0])
+        log = self.fake_log()
+        i = log.index('0 view 2 check 4 1 1')
+        self.assertEqual(log[i + 1], 'c')
+
+    def test_title_and_inline_actions(self):
+        out = self.run_editor(['print-view todo'])
+        x, y = self.row_xy(self.rows(out), 't:lib.rs:1')
+        # a hovered row shows its inline button at the right; the header's button shows on hover
+        out = self.run_editor([f'move {x} {y}', 'wait 50', f'click {240 - 16 - 2 - 12} {y}', 'wait 100',
+                               'move 100 320', 'wait 50', f'click {240 - 4 - 12} 321', 'wait 100'])
+        log = self.fake_log()
+        i = log.index('0 view 1 action 1 pin 10')
+        self.assertEqual(log[i + 1], 't:lib.rs:1')
+        self.assertIn('0 view 1 action 1 rescan 0', log)
+
+    def test_a_context_menu_runs_an_action_or_discards_it(self):
+        out = self.run_editor(['print-view todo'])
+        x, y = self.row_xy(self.rows(out), 't:main.rs:1')
+        out = self.run_editor([f'click {x} {y} right', 'print-menu', 'menu-pick Hide'])
+        self.assertIn('Pin', out)
+        self.assertIn('Hide', out)
+        log = self.fake_log()
+        i = log.index('0 view 1 action 1 hide 11')
+        self.assertEqual(log[i + 1], 't:main.rs:1')
+        out = self.run_editor([f'click {x} {y} right', 'cmd viewfake.renamed', 'wait 200', 'menu-pick Pin'])
+        log = self.fake_log()
+        i = log.index('0 view 1 discarded 1 action 11')
+        self.assertEqual(log[i + 1], 't:main.rs:1')
+
+    def test_vreveal_expands_selects_and_focuses(self):
+        out = self.run_editor(['cmd viewfake.reveal', 'wait 300', 'print-view todo', 'print-sidebar'])
+        rows = self.rows(out)
+        self.assertIn(' cur ', [r for r in rows if 'id=t:lib.rs:1 ' in r][0])
+        self.assertTrue([r for r in rows if 'id=f:lib.rs ' in r][0].split(' ')[4] == 'open')
+        self.assertTrue(any(l.startswith('rhun-tests/viewfake.todo ') and l.endswith(' focus') for l in out))
+        self.assertIn('ok 4', ' '.join(self.fake_log()))
+
+    def test_multi_select_with_ctrl_and_shift(self):
+        out = self.run_lazy(['print-view items'])
+        rows = self.rows(out)
+        xa, ya = self.row_xy(rows, 'b')
+        xc, yc = self.row_xy(rows, 'p4')
+        out = self.run_lazy(['cmd viewfake.multi', 'wait 100', f'click {xa} {ya}', f'click {xc} {yc} shift',
+                             'wait 100'])
+        log = self.fake_log()
+        sel = [i for i, l in enumerate(log) if l.startswith('0 view 2 select ')]
+        last = log[sel[-1]]
+        self.assertEqual(last.split(' ')[5], '4')       # b, c, p3, p4
+        self.assertEqual(log[sel[-1] + 1:sel[-1] + 5], ['b', 'c', 'p3', 'p4'])
+
+    def test_removing_an_action_takes_its_buttons(self):
+        out = self.run_editor(['cmd viewfake.delpin', 'wait 200', 'print-views'])
+        self.assertTrue(any(l.startswith('view=1 ') and ' rev=2 ' in l for l in out))
 
     # --- the built-in API ---
 

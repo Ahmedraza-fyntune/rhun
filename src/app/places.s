@@ -1422,6 +1422,15 @@ FN panel_view_focused
 1:  xor eax, eax
     ret
 
+# views_timeout() -> ms until something of the views group is due (a wait for children times out),
+#   or -1
+FN views_timeout
+    jmp rview_timeout
+
+# views_tick(): what is due
+FN views_tick
+    jmp rview_tick
+
 # places_init(): the explorer, the sidebar's first section
 FN places_init
     PROLOGUE

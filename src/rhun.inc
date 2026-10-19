@@ -2397,7 +2397,16 @@ F TRO_more, 8           # more(ctx, tr, parent): its "Load more" row came on scr
 F TRO_retry, 8          # retry(ctx, tr, node): Retry on its error row
 F TRO_load, 8           # load(ctx, tr, node): it is expanded and on screen with its children not
                         #   given: they are wanted (NF_LOADING is set until tree_kids_end)
+F TRO_action, 8         # action(ctx, tr, node, key, keylen): one of its inline buttons was pressed
 ENDSTRUCT TRO_SIZE
+# an action a tree's nodes may show as inline buttons (record "inline LEN" + keys): tree_set_actions
+STRUCT
+F TA_key, 8             # its key's bytes
+F TA_keylen, 8
+F TA_icon, 4            # IC_*, -1: its title as text
+F TA_pad, 4
+F TA_title, 8           # cstr: the tooltip (or the text)
+ENDSTRUCT TA_SIZE
 STRUCT
 F TR_nodes, VEC_SIZE    # ND
 F TR_free, 8            # first free slot, -1 for none
@@ -2425,6 +2434,10 @@ F TR_hover, 4           # the row under the pointer, -1
 F TR_typed_at, 8        # when the last character came
 F TR_loading_at, 8      # when a Loading row first showed (it waits 300 ms)
 F TR_user, 8            # its owner's value
+F TR_actions, 8         # TA records the inline keys are looked up in (tree_set_actions), or 0
+F TR_nactions, 8
+F TR_selanchor, 4       # multi-select: where a Shift range starts
+F TR_pad2, 4
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame

@@ -2728,7 +2728,15 @@ FN app_timeout
     cmp eax, ebx
     jge 98f
 99: mov ebx, eax
-98: mov eax, ebx
+98: call views_timeout          # views group: waits for children, notifications, progress
+    cmp eax, -1
+    je 980f
+    cmp ebx, -1
+    je 981f
+    cmp eax, ebx
+    jge 980f
+981:mov ebx, eax
+980:mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2759,6 +2767,7 @@ FN app_tick
     call ext_tick
     call ext_provider_tick
     call testing_tick           # testing (testproto.s)
+    call views_tick             # views group (places.s)
     call app_clip_tick
     EPILOGUE
 

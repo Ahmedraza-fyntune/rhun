@@ -7,8 +7,15 @@ body after its line). VIEWFAKE_MODE: normal, nofeature (agrees nothing).
 Commands: rescan (the same ids again, with a new count), renamed (new ids), vanish (removes the
 selected node), badpatch (a patch whose third op names a missing node), big (100001 nodes), show
 (vshow items focus), empty (state empty with a text and a key), msg (a message line), busy (busy 1),
-expand (expands f:main.rs).
+expand (expands f:main.rs), reveal (vreveal t:lib.rs:1 select,focus after collapsing lib.rs),
+multi (items becomes multi-select), delpin (removes the pin action).
+
+The items view (panel) has a lazy node "a" (its children come with vkids: VIEWFAKE_LAZY answer,
+error, late (after 1 s), or never) and pages of root children (vmore adds two, three pages).
+TODO has a title action "rescan" and node actions "pin" (inline) and "pin hide" (menu).
 """
+import threading
+import time
 import os
 import sys
 
@@ -17,7 +24,9 @@ LOG = os.environ.get('VIEWFAKE_LOG')
 ROOT = os.environ.get('VIEWFAKE_ROOT', '/nonexistent')
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
+LAZY = os.environ.get('VIEWFAKE_LAZY', 'answer')
 next_id = 1
+lock = threading.Lock()
 views = {}              # manifest key -> VIEW
 selected = {}           # VIEW -> selected node id
 rescans = 0
@@ -30,8 +39,9 @@ def log(data):
 
 
 def send(line, body=b''):
-    out.write(line.encode() + b'\n' + body)
-    out.flush()
+    with lock:
+        out.write(line.encode() + b'\n' + body)
+        out.flush()
 
 
 def request(verb, body=None):
@@ -68,7 +78,8 @@ def patch(view, ops):
 
 def todo_tree(view, prefix='', count=2):
     files = [('main.rs', 'src', 2), ('lib.rs', 'src', 1), ('README.md', '', 1)]
-    ops = [rec('title', data=b'TODO'), rec('badge', '4')]
+    ops = [rec('title', data=b'TODO'), rec('badge', '4'), rec('action', 'rescan refresh title', b'Rescan'),
+           rec('action', 'pin pin node', b'Pin'), rec('action', 'hide - node', b'Hide')]
     top = []
     for name, folder, n in files:
         extra = rec('icon', f'file:{name} -') + rec('badge', f'{n}')
@@ -82,7 +93,8 @@ def todo_tree(view, prefix='', count=2):
         for i in range(n):
             text = f'TODO: item {i + 1} of {name} ({count})'
             extra = rec('hl', '0 4') + rec('icon', 'warning warning') + \
-                rec('open', f'{i + 1} 1', path.encode()) + rec('tip', data=f'tip of {i + 1}'.encode())
+                rec('open', f'{i + 1} 1', path.encode()) + rec('tip', data=f'tip of {i + 1}'.encode()) + \
+                rec('inline', data=b'pin') + rec('menu', data=b'pin hide')
             items.append(node(f'{prefix}t:{name}:{i + 1}', text, 'leaf', extra))
         ops.append(kids(f'{prefix}f:{name}', items))
     ops.append(rec('state', 'ready 0'))
@@ -90,10 +102,42 @@ def todo_tree(view, prefix='', count=2):
 
 
 def items_tree(view):
-    ops = [kids('', [node('a', 'Alpha', 'closed'), node('b', 'Beta'), node('c', 'Gamma', 'leaf', rec('check', '0'))])]
-    ops.append(kids('a', [node('a1', 'Alpha one'), node('a2', 'Alpha two')]))
+    ops = [kids('', [node('a', 'Alpha', 'closed'), node('b', 'Beta'), node('c', 'Gamma', 'leaf', rec('check', '0'))],
+                more=1)]
     ops.append(rec('state', 'ready 0'))
     patch(view, ops)
+
+
+pages = 0
+
+
+def answer(rid, body):
+    send(f'ok {rid} {len(body)}', body)
+
+
+def host_request(rid, verb, fields, body):
+    """vkids VIEW REV LEN + id, vmore VIEW REV HAVE LEN + id."""
+    global pages
+    if verb == 'vkids':
+        nid = body.decode()
+        if LAZY == 'error':
+            send(f'error {rid} refused cannot list {nid}')
+            return
+        if LAZY == 'never':
+            return
+        reply = f'1\n'.encode() + kids(nid, [node(nid + '1', nid.upper() + ' one'), node(nid + '2', nid.upper() + ' two')])
+        if LAZY == 'late':
+            threading.Timer(1.0, answer, (rid, reply)).start()
+        else:
+            answer(rid, reply)
+    elif verb == 'vmore':
+        pages += 1
+        have = int(fields[3])
+        more = 1 if pages < 3 else 0
+        items = [node(f'p{have + i}', f'Page item {have + i}') for i in range(2)]
+        answer(rid, b'1\n' + kids('', items, more=more, op='add'))
+    else:
+        send(f'error {rid} unknown')
 
 
 def on_command(name):
@@ -123,6 +167,13 @@ def on_command(name):
         patch(todo, [rec('busy', '1')])
     elif name == 'expand' and todo:
         patch(todo, [rec('collapse', data=b'f:main.rs'), rec('expand', data=b'f:lib.rs')])
+    elif name == 'reveal' and todo:
+        patch(todo, [rec('collapse', data=b'f:lib.rs')])
+        request(f'vreveal {todo} select,focus', b't:lib.rs:1')
+    elif name == 'multi' and views.get('items'):
+        patch(views['items'], [rec('select-mode', 'multi')])
+    elif name == 'delpin' and todo:
+        patch(todo, [rec('action', 'pin - none', b'')])
 
 
 def main():
@@ -142,8 +193,12 @@ def main():
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
-        elif fields[0] == 'ok' and len(fields) == 3:
-            pass
+        elif fields[0].isdigit() and fields[0] != '0' and len(fields) >= 3 and fields[1] in ('vkids', 'vmore'):
+            n = int(fields[-1])
+            body = inp.read(n)
+            log(body)
+            host_request(fields[0], fields[1], fields[1:], body)
+            continue
         if fields[0] == '0' and len(fields) >= 3 and fields[1] == 'view':
             view = int(fields[2])
             what = fields[3]

@@ -446,4 +446,4 @@ views_ctl:
 .Lactivated: .asciz "activated "
 .p2align 3
 demo_place_ops: .quad demo_draw, demo_key, 0, 0, 0, 0
-demo_tree_ops: .quad demo_activate, 0, 0, 0, 0, 0, 0, demo_load
+demo_tree_ops: .quad demo_activate, 0, 0, 0, 0, 0, 0, demo_load, 0
