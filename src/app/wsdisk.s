@@ -735,6 +735,8 @@ FN ws_disk_commit
     call wd_plan_write
     mov dword ptr [rip + ws_wrote], 1
     call ws_ops_done            # tabs follow, the explorer catches up
+    cmp dword ptr [rip + ws_user], 0
+    jne 72f
     # "Applied 'Rename to total' to 4 files"
     lea rdi, [rip + wd_sb]
     call sb_clear
@@ -756,6 +758,22 @@ FN ws_disk_commit
     jne 71f
     lea rsi, [rip + .Lfile]
 71: call sb_push_cstr
+    lea rdi, [rip + wd_sb]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + wd_sb + SB_ptr]
+    call app_toast
+    mov eax, 1
+    EPILOGUE
+72: # the explorer's own: "Delete util.go: Undo Last Multi-File Edit (Ctrl+Z here) brings it back"
+    lea rdi, [rip + wd_sb]
+    call sb_clear
+    lea rdi, [rip + wd_sb]
+    mov rsi, [r15 + TX_label]
+    call sb_push_cstr
+    lea rdi, [rip + wd_sb]
+    lea rsi, [rip + .Luser_undo]
+    call sb_push_cstr
     lea rdi, [rip + wd_sb]
     xor esi, esi
     call sb_push_byte
@@ -1034,6 +1052,7 @@ FN wd_rollback
 # before left (dir 0: T's result, to be undone; dir 1: the original, to be redone)
 FN ws_disk_ready
     PROLOGUE
+    mov r13, rdi
     mov rbx, rsi
     mov r12d, edx
     cmp qword ptr [rbx + TP_kind], TPK_BUF
@@ -1045,9 +1064,35 @@ FN ws_disk_ready
     jz 8f
     cmp qword ptr [rbx + TP_slot], 0
     jl 8f
+    # where its file is now: an open document's own path; else moved by T's renames while T is
+    # applied
+    mov rax, [rbx + TP_doc]
+    test rax, rax
+    jz 11f
+    mov rdi, [rax + DOC_path]
+    test rdi, rdi
+    jz 8f
+    jmp 12f
+11: test r12d, r12d
+    jnz 12f
+    mov rsi, rdi
+    mov rdi, r13                # T
+    call ws_ops_map
+    mov rdi, rax
+12: mov r14, rdi
     call ws_file_hash
     test edx, edx
+    jnz 13f
+    # missing: fine on redo when T creates it first
+    test r12d, r12d
     jz 8f
+    mov rdi, r13
+    mov rsi, r14
+    call ws_ops_creates_path
+    test eax, eax
+    jz 8f
+    EPILOGUE
+13:
     mov rcx, [rbx + TP_after]
     test r12d, r12d
     jz 2f
@@ -1186,7 +1231,7 @@ FN ws_disk_rewrite
     mov rdi, r14
     lea rsi, [rip + wd_sb]
     call ws_doc_bytes
-    mov rdi, [r12 + TP_path]
+    mov rdi, [r14 + DOC_path]   # where it is now (a rename of the edit moves it)
     mov rsi, [rip + wd_sb + SB_ptr]
     mov rdx, [rip + wd_sb + SB_len]
     call file_write_all
@@ -1580,6 +1625,7 @@ ws_s_new:
 .Lhex: .ascii "0123456789abcdef"
 .Lenv_crash: .asciz "RHUN_TEST_EDIT_CRASH"
 .Lapplied: .asciz "Applied '"
+.Luser_undo: .asciz ": Ctrl+Z in the explorer, or Undo Last Multi-File Edit, takes it back"
 .Lto: .asciz "' to "
 .Lfiles: .asciz " files"
 .Lfile: .asciz " file"

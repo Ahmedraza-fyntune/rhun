@@ -2646,6 +2646,12 @@ prompt_done:
     jmp 9f
 3:  cmp r12d, PROMPT_RENAME
     jne 9f
+    mov edi, WK_RENAME          # wsedit: a workspace edit of its own, undoable
+    lea rsi, [rip + g_explorer_target]
+    mov rdx, rbx
+    call ws_user_op
+    test eax, eax
+    jns 9f                      # made, or refused with a toast
     lea rdi, [rip + g_explorer_target]
     mov rsi, rbx
     SYS SYS_rename

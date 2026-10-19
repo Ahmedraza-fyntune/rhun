@@ -1859,6 +1859,8 @@ FN cmd_toggle_comment
     EPILOGUE
 
 FN cmd_undo
+    cmp dword ptr [rip + g_focus], FOCUS_EXPLORER
+    je cmd_undo_workspace_edit  # wsedit: the explorer's Rename and Delete undo from there
     READONLY_RET
     mov rdi, [rip + g_doc]
     test rdi, rdi

@@ -35,6 +35,8 @@ ws_quiet: .long 0               # an extension's request: no toast
 ws_preserve_context: .long 0    # restricted background edit: never activate or reveal a tab
 .globl ws_wrote
 ws_wrote: .long 0               # the last edit wrote files (no "save them" advice)
+.globl ws_user
+ws_user: .long 0                # the edit is the user's own (the explorer's Rename and Delete)
 ws_pad: .long 0
 ws_label: .zero SB_SIZE         # the edit's name: its label record, else the caller's
 ws_codesb: .zero SB_SIZE
@@ -1384,14 +1386,123 @@ FN ws_apply_group
 8:  call ed_touch
 9:  EPILOGUE
 
+# FN ws_user_op(kind WK_RENAME | WK_DELETE, path cstr, to cstr or 0) -> eax 1 made, 0 refused (a toast
+# says why), -1 when it is not the engine's (no project, or outside it: the caller does it itself).
+# The explorer's Rename and Delete: a transaction of one file operation, with a journal, so Undo
+# Last Multi-File Edit brings it back
+FN ws_user_op
+    PROLOGUE 16
+    mov r12d, edi
+    mov r13, rsi
+    mov r14, rdx
+    call ws_parked
+    test eax, eax
+    jnz 8f
+    cmp qword ptr [rip + g_project], 0
+    je 8f
+    mov rdi, r13
+    lea rsi, [rip + ws_pathbuf]
+    call ws_real_new
+    test eax, eax
+    jz 8f
+    mov qword ptr [rip + ws_ext], 0
+    lea rdi, [rip + ws_pathbuf]
+    call ws_inside
+    test eax, eax
+    jz 8f
+    mov qword ptr [rip + wg_vec + VEC_len], 0
+    mov qword ptr [rip + we_vec + VEC_len], 0
+    mov qword ptr [rip + ws_confirm], 0
+    mov qword ptr [rip + ws_entry], 0
+    mov qword ptr [rip + ws_body], 0
+    mov qword ptr [rip + ws_deflabel], 0
+    mov qword ptr [rip + ws_request_ext], 0
+    mov qword ptr [rip + ws_only], 0
+    mov dword ptr [rip + ws_quiet], 0
+    mov dword ptr [rip + ws_wrote], 0
+    mov qword ptr [rip + ws_feats], WSF_EDITS | WSF_OPS
+    mov rax, [rip + g_doc]
+    mov [rip + ws_back], rax
+    lea rdi, [rip + wg_vec]
+    mov esi, WG_SIZE
+    call vec_push
+    mov rbx, rax
+    mov rdi, rax
+    xor esi, esi
+    mov edx, WG_SIZE
+    call memset
+    mov [rbx + WG_kind], r12
+    mov qword ptr [rbx + WG_version], -1
+    mov [rbx + WG_path], r13
+    mov rdi, r13
+    call strlen
+    mov [rbx + WG_plen], rax
+    test r14, r14
+    jz 1f
+    mov [rbx + WG_path2], r14
+    mov rdi, r14
+    call strlen
+    mov [rbx + WG_plen2], rax
+    cmp r12d, WK_DELETE
+    jne 1f
+1:  cmp r12d, WK_DELETE
+    jne 2f
+    or qword ptr [rbx + WG_flags], WF_RECURSIVE
+2:  # its name: "Delete util.go", "Rename util.go to helpers.go"
+    lea rdi, [rip + ws_label]
+    call sb_clear
+    lea rsi, [rip + .Lu_delete]
+    cmp r12d, WK_DELETE
+    je 3f
+    lea rsi, [rip + .Lu_rename]
+3:  lea rdi, [rip + ws_label]
+    call sb_push_cstr
+    mov rdi, r13
+    call strlen
+    mov rsi, rax
+    mov rdi, r13
+    call path_basename
+    lea rdi, [rip + ws_label]
+    mov rsi, rax
+    call sb_push
+    test r14, r14
+    jz 4f
+    lea rdi, [rip + ws_label]
+    lea rsi, [rip + .Lu_to]
+    call sb_push_cstr
+    mov rdi, r14
+    call strlen
+    mov rsi, rax
+    mov rdi, r14
+    call path_basename
+    lea rdi, [rip + ws_label]
+    mov rsi, rax
+    call sb_push
+4:  mov dword ptr [rip + ws_user], 1
+    call ws_disk_resolve
+    test eax, eax
+    jz 7f
+    call ws_commit
+    test eax, eax
+    jz 7f
+    call ws_finish
+    mov dword ptr [rip + ws_user], 0
+    mov eax, 1
+    EPILOGUE
+7:  call ws_unwind
+    mov dword ptr [rip + ws_user], 0
+    xor eax, eax
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
+
 # FN ws_features_agreed(ext): after hello: the features of this work whose host side is not in
 # yet are not agreed, and file-operations only together with workspace-edits
 FN ws_features_agreed
     FEAT_TEST rdi, FEAT_WORKSPACE_EDITS
     jnz 1f
     FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS
-1:  FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS       # not yet
-    FEAT_CLEAR rdi, FEAT_SELECTIONS
+1:  FEAT_CLEAR rdi, FEAT_SELECTIONS             # not yet
     FEAT_CLEAR rdi, FEAT_REVEAL
     FEAT_CLEAR rdi, FEAT_DIFF
     FEAT_CLEAR rdi, FEAT_LINKED_EDITING
@@ -1415,6 +1526,9 @@ FN ws_ext_gone
 .Lrename_to: .asciz "Rename to '"
 .Ledit_from: .asciz "Edit from "
 .Lan_extension: .asciz "an extension"
+.Lu_delete: .asciz "Delete "
+.Lu_rename: .asciz "Rename "
+.Lu_to: .asciz " to "
 .Lws_e_bad: .asciz "The extension's edit could not be read: nothing changed"
 .Lws_e_path: .asciz "The extension's edit names a file it cannot: nothing changed"
 .Lws_e_gone: .asciz "A document the edit was made for is closed: nothing changed"

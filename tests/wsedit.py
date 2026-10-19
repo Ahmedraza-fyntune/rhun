@@ -416,6 +416,182 @@ class Ws(host.Host):
         self.assertEqual((self.proj / 'b.go').read_text(), 'package b\n')
 
 
+    # --- file-operations: create, rename, delete with the rest, tabs follow ---
+
+    def op(self, kind, path, flags='-', to=None):
+        if kind == 'rename':
+            return 'rename %d %d %s\n%s%s' % (len(str(path).encode()), len(str(to).encode()), flags, path, to)
+        return '%s %d %s\n%s' % (kind, len(str(path).encode()), flags, path)
+
+    def test_create_edit_rename_delete_in_one_and_undo_brings_all_back(self):
+        p = self.proj
+        (p / 'old.txt').write_text('old\n')
+        body = edit(self.op('create', p / 'new.txt'),
+                    (str(p / 'new.txt'), '-', [(1, 1, 1, 1, 'made\n')]),
+                    (str(p / 'a.txt'), '{ver:a.txt}', [(1, 1, 1, 6, 'HELLO')]),
+                    self.op('rename', p / 'a.txt', to=p / 'sub' / 'moved.txt'),
+                    self.op('delete', p / 'old.txt'), records=[('label', '', 'Shuffle')])
+        exts = self.ext({'go': 'apply LEN\n' + body}, features='workspace-edits file-operations',
+                        project='write')
+        out = self.run_ws(exts, ['open ' + str(p / 'old.txt'), 'key ctrl+Tab', 'key ctrl+Tab', 'cmd wsx.go',
+                                 'wait-ext wsx running', 'wait 400', 'print-tabs', 'print-tx', 'echo ---',
+                                 'cmd undo_workspace_edit', 'wait 200', 'print-tabs', 'print-tx', 'echo ---',
+                                 'cmd redo_workspace_edit', 'wait 200', 'print-tabs', 'print-tx'])
+        self.assertIn('0 features workspace-edits file-operations', self.extlines())
+        self.assertIn('ok 1', self.replies())
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertEqual(tabs[0], 'tabs=moved.txt | *b.go', out)            # old.txt's tab closed
+        self.assertTrue([l for l in out if l.startswith('tx=')][0].startswith('tx=1 state=applied parts=5'), out)
+        self.assertEqual((p / 'new.txt').read_text(), 'made\n')
+        self.assertEqual((p / 'sub/moved.txt').read_text(), 'HELLO world\nsecond line\n')
+        self.assertFalse((p / 'a.txt').exists())
+        self.assertFalse((p / 'old.txt').exists())
+        # extensions saw a.txt closed and opened again under its new name
+        log = self.extlines()
+        self.assertTrue(any(l.startswith('0 opened ') and l.endswith('/sub/moved.txt') for l in log), log)
+        # undone: all back, old.txt's tab again; redone
+        self.assertIn('a.txt', tabs[1], out)
+        self.assertIn('old.txt', tabs[1], out)
+        self.assertTrue([l for l in out if l.startswith('tx=')][1].startswith('tx=1 state=undone'), out)
+        self.assertEqual(tabs[2], 'tabs=moved.txt | *b.go', out)
+
+    def test_undo_restores_disk_after_the_ops(self):
+        p = self.proj
+        (p / 'old.txt').write_text('old\n')
+        body = edit(self.op('create', p / 'new.txt'),
+                    self.op('rename', p / 'c.txt', to=p / 'renamed.txt'),
+                    self.op('delete', p / 'old.txt'))
+        exts = self.ext({'go': 'apply LEN\n' + body}, features='workspace-edits file-operations',
+                        project='write')
+        self.run_ws(exts, ['cmd wsx.go', 'wait-ext wsx running', 'wait 400', 'cmd undo_workspace_edit',
+                           'wait 200'])
+        self.assertFalse((p / 'new.txt').exists())
+        self.assertEqual((p / 'c.txt').read_text(), 'third file\n')
+        self.assertFalse((p / 'renamed.txt').exists())
+        self.assertEqual((p / 'old.txt').read_text(), 'old\n')
+
+    def test_rename_onto_an_existing_file_needs_overwrite_and_undo_restores_both(self):
+        p = self.proj
+        bad = edit(self.op('rename', p / 'c.txt', to=p / 'b.go'))
+        good = edit(self.op('rename', p / 'c.txt', 'overwrite', to=p / 'b.go'))
+        exts = self.ext({'bad': 'apply LEN\n' + bad, 'good': 'apply LEN\n' + good},
+                        features='workspace-edits file-operations', project='write')
+        self.run_ws(exts, ['cmd wsx.bad', 'wait-ext wsx running', 'wait 300', 'cmd wsx.good', 'wait 300'],
+                    files=('a.txt',))
+        r = self.replies()
+        self.assertTrue(r[0].startswith('error 1 refused 1 '), r)
+        self.assertEqual(r[1], 'ok 2')
+        self.assertEqual((p / 'b.go').read_text(), 'third file\n')
+        self.assertFalse((p / 'c.txt').exists())
+        self.run_ws(exts, ['cmd undo_workspace_edit', 'wait 200'], files=('a.txt',))
+        # a new session cannot undo the last one's edit: its journal was dropped at quit
+        self.assertEqual((p / 'b.go').read_text(), 'third file\n')
+        (p / 'c.txt').write_text('third file\n')
+        (p / 'b.go').write_text('package b\n')
+        self.run_ws(exts, ['cmd wsx.good', 'wait-ext wsx running', 'wait 300', 'cmd undo_workspace_edit',
+                           'wait 200'], files=('a.txt',))
+        self.assertEqual((p / 'b.go').read_text(), 'package b\n')
+        self.assertEqual((p / 'c.txt').read_text(), 'third file\n')
+
+    def test_case_only_rename(self):
+        p = self.proj
+        body = edit(self.op('rename', p / 'c.txt', to=p / 'C.txt'))
+        exts = self.ext({'go': 'apply LEN\n' + body}, features='workspace-edits file-operations',
+                        project='write')
+        self.run_ws(exts, ['cmd wsx.go', 'wait-ext wsx running', 'wait 300'], files=('a.txt',))
+        self.assertEqual(self.replies()[0], 'ok 1')
+        self.assertIn('C.txt', os.listdir(p))
+        self.assertNotIn('c.txt', os.listdir(p))
+
+    def test_folder_delete_needs_recursive_and_comes_back(self):
+        p = self.proj
+        (p / 'dir/deep').mkdir(parents=True)
+        (p / 'dir/deep/x.txt').write_text('x\n')
+        (p / 'dir/y.txt').write_text('y\n')
+        bad = edit(self.op('delete', p / 'dir'))
+        good = edit(self.op('delete', p / 'dir', 'recursive'))
+        exts = self.ext({'bad': 'apply LEN\n' + bad, 'good': 'apply LEN\n' + good},
+                        features='workspace-edits file-operations', project='write')
+        out = self.run_ws(exts, ['cmd wsx.bad', 'wait-ext wsx running', 'wait 300', 'cmd wsx.good', 'wait 300',
+                                 'echo gone=' + str(int(True)), 'cmd undo_workspace_edit', 'wait 200'],
+                          files=('a.txt',))
+        r = self.replies()
+        self.assertTrue(r[0].startswith('error 1 refused 1 '), r)
+        self.assertEqual(r[1], 'ok 2')
+        self.assertEqual((p / 'dir/deep/x.txt').read_text(), 'x\n')
+        self.assertEqual((p / 'dir/y.txt').read_text(), 'y\n')
+
+    def test_refusals(self):
+        p = self.proj
+        (p / '.git').mkdir()
+        cases = {
+            'git': edit(self.op('create', p / '.git' / 'hooks')),
+            'project': edit(self.op('delete', p, 'recursive')),
+            'twice': edit(self.op('create', p / 'n.txt'), self.op('delete', p / 'n.txt', 'ignore-missing')),
+            'textdel': edit((str(p / 'c.txt'), '-', [(1, 1, 1, 6, 'X')]), self.op('delete', p / 'c.txt')),
+            'flag': edit(self.op('delete', p / 'c.txt', 'overwrite')),
+        }
+        plans = {k: 'apply LEN\n' + v for k, v in cases.items()}
+        plans['x'] = 'toast LEN\nhi'
+        exts = self.ext(plans, features='workspace-edits file-operations', project='write')
+        acts = ['cmd wsx.x', 'wait-ext wsx running', 'wait 200']
+        for k in cases:
+            acts += ['cmd wsx.' + k, 'wait 200']
+        self.run_ws(exts, acts, files=('a.txt',))
+        r = self.replies()[1:]
+        self.assertEqual(len(r), 5, r)
+        self.assertTrue(r[0].startswith('error 2 refused 1 '), r)
+        self.assertTrue(r[1].startswith('error 3 refused 1 '), r)
+        self.assertTrue(r[2].startswith('error 4 refused '), r)
+        self.assertTrue(r[3].startswith('error 5 refused '), r)
+        self.assertTrue(r[4].startswith('error 6 syntax 1 '), r)
+        self.assertTrue((p / 'c.txt').exists())
+
+    def test_explorer_delete_and_rename_are_undoable(self):
+        p = self.proj
+        exts = self.ext({}, features='')
+        out = self.run_ws(exts, ['cmd delete_file', 'print-dialog', 'dialog yes', 'wait 100', 'print-toast',
+                                 'print-tabs', 'echo ---', 'cmd undo_workspace_edit', 'wait 100', 'print-tabs'],
+                          files=('c.txt',))
+        self.assertIn("toast=Delete c.txt: Ctrl+Z in the explorer, or Undo Last Multi-File Edit, takes it back", out)
+        self.assertEqual((p / 'c.txt').read_text(), 'third file\n')
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertNotIn('c.txt', tabs[0])
+        self.assertIn('c.txt', tabs[1])
+        (p / 'e.md').write_text('# e\n')
+        out = self.run_ws(exts, ['cmd rename_file', 'key ctrl+a', 'type ' + str(p / 'f.md'), 'key Return',
+                                 'wait 100', 'print-tabs', 'cmd undo_workspace_edit', 'wait 100', 'print-tabs'],
+                          files=('e.md',))
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertEqual(tabs[0], 'tabs=*f.md', out)
+        self.assertEqual(tabs[1], 'tabs=*e.md', out)
+        self.assertEqual((p / 'e.md').read_text(), '# e\n')
+
+    def test_crash_during_file_operations_is_rolled_back(self):
+        p = self.proj
+        (p / 'old.txt').write_text('old\n')
+        body = edit(self.op('create', p / 'new.txt'), (str(p / 'c.txt'), '-', [(1, 1, 1, 6, 'THIRD')]),
+                    self.op('rename', p / 'b.go', to=p / 'renamed.go'), self.op('delete', p / 'old.txt'))
+        exts = self.ext({'go': 'apply LEN\n' + body}, features='workspace-edits file-operations',
+                        project='write')
+        env = dict(self.env, RHUN_TEST_EDIT_CRASH='3')
+        script = self.work / 'crash.rsc'
+        script.write_text('\n'.join(['wait 100', 'cmd wsx.go', 'wait-ext wsx running', 'wait 600', 'quit']) + '\n')
+        import subprocess
+        r = subprocess.run([str(host.EXE), str(p), '--headless', '1000x600', '--scale', '1',
+                            '--extensions', str(exts), '--script', str(script)], env=env,
+                           capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 70, r.stderr)
+        self.assertTrue((p / 'renamed.go').exists())               # three steps: create, write, rename
+        out = self.run_ws(exts, ['print-journal', 'print-toast'], files=())
+        self.assertIn('journal=none', out)
+        self.assertFalse((p / 'new.txt').exists())
+        self.assertEqual((p / 'c.txt').read_text(), 'third file\n')
+        self.assertEqual((p / 'b.go').read_text(), 'package b\n')
+        self.assertFalse((p / 'renamed.go').exists())
+        self.assertEqual((p / 'old.txt').read_text(), 'old\n')
+
+
 for name in dir(host.Host):
     if name.startswith('test_'):
         setattr(Ws, name, None)

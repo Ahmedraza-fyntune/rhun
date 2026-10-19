@@ -65,6 +65,14 @@ FN doc_new
     pop rbx
     ret
 
+# FN doc_renew_id(doc): a new DOC_id (wsedit: a renamed file is a reopened one for extensions, which
+# see it closed and opened again, v1 section 6)
+FN doc_renew_id
+    inc qword ptr [rip + doc_next_id]
+    mov rax, [rip + doc_next_id]
+    mov [rdi + DOC_id], rax
+    ret
+
 # doc_free(doc)
 FN doc_free
     push rbx
