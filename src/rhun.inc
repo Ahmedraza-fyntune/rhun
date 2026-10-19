@@ -3058,77 +3058,77 @@ ENDSTRUCT NB_SIZE
 .equ NBK_STARTING, 3
 .equ NBK_DEAD, 4
 STRUCT
-F CL_doc, 8             # DOC* (DF_CELL): its source
-F CL_id, 8              # the number extensions know it by (session-unique, stable while it exists)
-F CL_run, 8             # the run in progress or the last one, 0 none
-F CL_count, 8           # execution count, -1 none
-F CL_lang, 8            # owned cstr: LANG as the extension named it (spaces as _), 0 for markup
-F CL_meta, SB_SIZE      # its metadata, opaque, returned on save
-F CL_outs, VEC_SIZE     # OU* each, in order
-F CL_outrev, 8          # changes with its outputs (the layout cache)
-F CL_h, 8               # height at the last layout
-F CL_hkey, 8            # what that height was measured for
-F CL_kind, 4            # CLK_*
-F CL_state, 4           # RUN_*
-F CL_collapsed, 4       # its outputs are hidden (o)
-F CL_clearwait, 4       # clear-wait: the outputs clear when the next one arrives
-F CL_y, 4               # where it was drawn last (physical px; -1 not on screen)
-F CL_unsent, 4           # its run waits for the extension to run before nb-run goes out
-ENDSTRUCT CL_SIZE
-.equ CLK_CODE, 0
-.equ CLK_MARKUP, 1
-.equ RUN_NONE, 0
-.equ RUN_QUEUED, 1
-.equ RUN_RUNNING, 2
-.equ RUN_DONE, 3
-.equ RUN_FAILED, 4
-.equ RUN_CANCELLED, 5
+F NBC_doc, 8             # DOC* (DF_CELL): its source
+F NBC_id, 8              # the number extensions know it by (session-unique, stable while it exists)
+F NBC_run, 8             # the run in progress or the last one, 0 none
+F NBC_count, 8           # execution count, -1 none
+F NBC_lang, 8            # owned cstr: LANG as the extension named it (spaces as _), 0 for markup
+F NBC_meta, SB_SIZE      # its metadata, opaque, returned on save
+F NBC_outs, VEC_SIZE     # OU* each, in order
+F NBC_outrev, 8          # changes with its outputs (the layout cache)
+F NBC_h, 8               # height at the last layout
+F NBC_hkey, 8            # what that height was measured for
+F NBC_kind, 4            # NBCK_*
+F NBC_state, 4           # RUN_*
+F NBC_collapsed, 4       # its outputs are hidden (o)
+F NBC_clearwait, 4       # clear-wait: the outputs clear when the next one arrives
+F NBC_y, 4               # where it was drawn last (physical px; -1 not on screen)
+F NBC_unsent, 4           # its run waits for the extension to run before nb-run goes out
+ENDSTRUCT NBC_SIZE
+.equ NBCK_CODE, 0
+.equ NBCK_MARKUP, 1
+.equ NBRUN_NONE, 0
+.equ NBRUN_QUEUED, 1
+.equ NBRUN_RUNNING, 2
+.equ NBRUN_DONE, 3
+.equ NBRUN_FAILED, 4
+.equ NBRUN_CANCELLED, 5
 STRUCT
-F OU_kind, 4            # OUK_*
-F OU_ierr, 4            # its image cannot be decoded
-F OU_id, 8              # owned cstr: OUTID (Jupyter's display_id), or 0
-F OU_keep, SB_SIZE      # opaque bytes returned on save (the jupyter extension keeps the JSON there)
-F OU_items, VEC_SIZE    # NI records, in order of preference
-F OU_show, 8            # the item drawn: the first one rhun supports, -1 none
-F OU_lines, 8           # text items: lines in all
-F OU_bytes, 8           # bytes its items count against NB_outbytes
-F OU_img, 8             # an image item scaled to fit (owned pixels), or 0
-F OU_iw, 4              # their size, physical px
-F OU_ih, 4
-F OU_ikey, 4            # the width they were made for
-F OU_pad, 4
-ENDSTRUCT OU_SIZE
-.equ OUK_STDOUT, 1
-.equ OUK_STDERR, 2
-.equ OUK_RESULT, 3
-.equ OUK_DISPLAY, 4
-.equ OUK_ERROR, 5
+F NBO_kind, 4            # NBOK_*
+F NBO_ierr, 4            # its image cannot be decoded
+F NBO_id, 8              # owned cstr: OUTID (Jupyter's display_id), or 0
+F NBO_keep, SB_SIZE      # opaque bytes returned on save (the jupyter extension keeps the JSON there)
+F NBO_items, VEC_SIZE    # NI records, in order of preference
+F NBO_show, 8            # the item drawn: the first one rhun supports, -1 none
+F NBO_lines, 8           # text items: lines in all
+F NBO_bytes, 8           # bytes its items count against NB_outbytes
+F NBO_img, 8             # an image item scaled to fit (owned pixels), or 0
+F NBO_iw, 4              # their size, physical px
+F NBO_ih, 4
+F NBO_ikey, 4            # the width they were made for
+F NBO_pad, 4
+ENDSTRUCT NBO_SIZE
+.equ NBOK_STDOUT, 1
+.equ NBOK_STDERR, 2
+.equ NBOK_RESULT, 3
+.equ NBOK_DISPLAY, 4
+.equ NBOK_ERROR, 5
 STRUCT
-F NI_type, 4            # NIT_*
-F NI_w, 4               # intrinsic logical size (images, pictures), 0 0 natural
-F NI_h, 4
-F NI_pad, 4
-F NI_name, 8            # owned cstr: a type rhun does not know, kept to be returned, or 0
-F NI_data, SB_SIZE
-ENDSTRUCT NI_SIZE
-.equ NIT_OTHER, 0
-.equ NIT_TEXT, 1
-.equ NIT_ANSI, 2
-.equ NIT_PNG, 3
-.equ NIT_JPEG, 4
-.equ NIT_GIF, 5
-.equ NIT_RICH, 6
-.equ NIT_PICTURE, 7
+F NBI_type, 4            # NBIT_*
+F NBI_w, 4               # intrinsic logical size (images, pictures), 0 0 natural
+F NBI_h, 4
+F NBI_pad, 4
+F NBI_name, 8            # owned cstr: a type rhun does not know, kept to be returned, or 0
+F NBI_data, SB_SIZE
+ENDSTRUCT NBI_SIZE
+.equ NBIT_OTHER, 0
+.equ NBIT_TEXT, 1
+.equ NBIT_ANSI, 2
+.equ NBIT_PNG, 3
+.equ NBIT_JPEG, 4
+.equ NBIT_GIF, 5
+.equ NBIT_RICH, 6
+.equ NBIT_PICTURE, 7
 STRUCT
-F NU_op, 8              # NUO_*
-F NU_index, 8           # where
-F NU_index2, 8          # move: where to; kind: the old kind
-F NU_cell, 8            # delete: the cell taken out (owned by the record), or 0
-ENDSTRUCT NU_SIZE
-.equ NUO_INSERT, 1
-.equ NUO_DELETE, 2
-.equ NUO_MOVE, 3
-.equ NUO_KIND, 4
+F NBU_op, 8              # NBUO_*
+F NBU_index, 8           # where
+F NBU_index2, 8          # move: where to; kind: the old kind
+F NBU_cell, 8            # delete: the cell taken out (owned by the record), or 0
+ENDSTRUCT NBU_SIZE
+.equ NBUO_INSERT, 1
+.equ NBUO_DELETE, 2
+.equ NBUO_MOVE, 3
+.equ NBUO_KIND, 4
 .equ NB_BODY_MAX, 67108864      # nb-open's answer and nb-save's body, each way
 .equ NB_CELLS_MAX, 5000
 .equ NB_SOURCE_MAX, 4194304     # a cell's source

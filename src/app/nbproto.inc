@@ -320,7 +320,7 @@ FN nb_send_closed
     jmp nb_send_simple
 
 # nb_send_run(nb, cl) -> eax 1 when "0 nb-run NB CELL RUN LANG LEN" + the cell's source went out
-#   for its run CL_run
+#   for its run NBC_run
 FN nb_send_run
     PROLOGUE
     mov rbx, rdi
@@ -334,18 +334,18 @@ FN nb_send_run
     mov esi, ' '
     call sb_push_byte
     lea rdi, [rip + nbev]
-    mov rsi, [r12 + CL_id]
+    mov rsi, [r12 + NBC_id]
     call sb_push_u64
     lea rdi, [rip + nbev]
     mov esi, ' '
     call sb_push_byte
     lea rdi, [rip + nbev]
-    mov rsi, [r12 + CL_run]
+    mov rsi, [r12 + NBC_run]
     call sb_push_u64
     lea rdi, [rip + nbev]
     mov esi, ' '
     call sb_push_byte
-    mov rsi, [r12 + CL_lang]
+    mov rsi, [r12 + NBC_lang]
     test rsi, rsi
     jnz 1f
     lea rsi, [rip + .Ldash]
@@ -354,7 +354,7 @@ FN nb_send_run
     lea rdi, [rip + nbev]
     mov esi, ' '
     call sb_push_byte
-    mov rdi, [r12 + CL_doc]
+    mov rdi, [r12 + NBC_doc]
     call doc_len
     mov r13, rax
     lea rdi, [rip + nbev]
@@ -367,7 +367,7 @@ FN nb_send_run
     mov rsi, r13
     call sb_reserve
     mov rcx, rax
-    mov rdi, [r12 + CL_doc]
+    mov rdi, [r12 + NBC_doc]
     xor esi, esi
     mov rdx, r13
     call doc_copy
@@ -417,7 +417,7 @@ nb_arg:
     jz .Lna_syntax
     test rax, rax
     jz .Lna_stale
-    cmp rax, [r13 + CL_run]
+    cmp rax, [r13 + NBC_run]
     jne .Lna_stale
     mov rax, rbx
     mov rdx, r13
@@ -468,11 +468,11 @@ h_nb_state:
     call field_u64
     test edx, edx
     jz .Lns_syntax
-    cmp rax, [r12 + CL_count]
+    cmp rax, [r12 + NBC_count]
     je 2f
-    mov [r12 + CL_count], rax
+    mov [r12 + NBC_count], rax
     mov dword ptr [rbx + NB_dirty], 1
-2:  mov [r12 + CL_state], r13d
+2:  mov [r12 + NBC_state], r13d
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
     call reply_ok
@@ -528,7 +528,7 @@ h_nb_output:
     call field_u64
     test edx, edx
     jz 3f
-    cmp rax, [r12 + CL_outs + VEC_len]
+    cmp rax, [r12 + NBC_outs + VEC_len]
     jae .Lno_stale_out
     mov r14, r12
     mov r15, rax
@@ -543,37 +543,37 @@ h_nb_output:
     mov r14, rax
     mov r15, rdx
 5:  # the old one's bytes give way to the new one's
-    mov rax, [r14 + CL_outs + VEC_ptr]
+    mov rax, [r14 + NBC_outs + VEC_ptr]
     mov rdi, [rax + r15*8]
     mov rax, [rbx + NB_outbytes]
-    sub rax, [rdi + OU_bytes]
-    add rax, [r13 + OU_bytes]
+    sub rax, [rdi + NBO_bytes]
+    add rax, [r13 + NBO_bytes]
     cmp rax, NB_OUTALL_MAX
     ja .Lno_toobig
     mov [rbx + NB_outbytes], rax
     call ou_free
-    mov rax, [r14 + CL_outs + VEC_ptr]
+    mov rax, [r14 + NBC_outs + VEC_ptr]
     mov [rax + r15*8], r13
-    inc qword ptr [r14 + CL_outrev]
+    inc qword ptr [r14 + NBC_outrev]
     jmp .Lno_done
 .Lno_append:
-    cmp dword ptr [r12 + CL_clearwait], 0
+    cmp dword ptr [r12 + NBC_clearwait], 0
     je 6f
     mov rdi, rbx
     mov rsi, r12
     call nb_clear_outputs
-6:  cmp qword ptr [r12 + CL_outs + VEC_len], NB_OUTS_MAX
+6:  cmp qword ptr [r12 + NBC_outs + VEC_len], NB_OUTS_MAX
     jae .Lno_toobig
     mov rax, [rbx + NB_outbytes]
-    add rax, [r13 + OU_bytes]
+    add rax, [r13 + NBO_bytes]
     cmp rax, NB_OUTALL_MAX
     ja .Lno_toobig
     mov [rbx + NB_outbytes], rax
-    lea rdi, [r12 + CL_outs]
+    lea rdi, [r12 + NBC_outs]
     mov esi, 8
     call vec_push
     mov [rax], r13
-    inc qword ptr [r12 + CL_outrev]
+    inc qword ptr [r12 + NBC_outrev]
     jmp .Lno_done
 .Lno_clear:
     mov rdi, rbx
@@ -581,7 +581,7 @@ h_nb_output:
     call nb_clear_outputs
     jmp .Lno_done_ok
 .Lno_wait:
-    mov dword ptr [r12 + CL_clearwait], 1
+    mov dword ptr [r12 + NBC_clearwait], 1
     jmp .Lno_done_ok
 .Lno_done:
     mov dword ptr [rbx + NB_dirty], 1
@@ -625,12 +625,12 @@ nb_find_outid:
     mov r15, [rax + r14*8]
     inc r14
     xor ecx, ecx
-2:  cmp rcx, [r15 + CL_outs + VEC_len]
+2:  cmp rcx, [r15 + NBC_outs + VEC_len]
     jae 1b
-    mov rax, [r15 + CL_outs + VEC_ptr]
+    mov rax, [r15 + NBC_outs + VEC_ptr]
     mov rax, [rax + rcx*8]
     inc rcx
-    mov rdx, [rax + OU_id]
+    mov rdx, [rax + NBO_id]
     test rdx, rdx
     jz 2b
     push rcx
@@ -658,19 +658,19 @@ h_nb_stream:
     jz 9f
     mov rbx, rax
     mov r12, rdx
-    mov r13d, OUK_STDOUT
+    mov r13d, NBOK_STDOUT
     mov edi, 5
     lea rsi, [rip + .Lnb_stdout]
     call field_is
     test eax, eax
     jnz 1f
-    mov r13d, OUK_STDERR
+    mov r13d, NBOK_STDERR
     mov edi, 5
     lea rsi, [rip + .Lnb_stderr]
     call field_is
     test eax, eax
     jz .Lnst_syntax
-1:  cmp dword ptr [r12 + CL_clearwait], 0
+1:  cmp dword ptr [r12 + NBC_clearwait], 0
     je 2f
     mov rdi, rbx
     mov rsi, r12
@@ -680,48 +680,48 @@ h_nb_stream:
     cmp rax, NB_OUTALL_MAX
     ja .Lnst_toobig
     # the last output, when it is this stream
-    mov rax, [r12 + CL_outs + VEC_len]
+    mov rax, [r12 + NBC_outs + VEC_len]
     test rax, rax
     jz 3f
-    mov rcx, [r12 + CL_outs + VEC_ptr]
+    mov rcx, [r12 + NBC_outs + VEC_ptr]
     mov r14, [rcx + rax*8 - 8]
-    cmp [r14 + OU_kind], r13d
+    cmp [r14 + NBO_kind], r13d
     jne 3f
-    cmp qword ptr [r14 + OU_id], 0
+    cmp qword ptr [r14 + NBO_id], 0
     jne 3f
-    cmp qword ptr [r14 + OU_items + VEC_len], 1
+    cmp qword ptr [r14 + NBO_items + VEC_len], 1
     jne 3f
-    mov rax, [r14 + OU_items + VEC_ptr]
-    cmp dword ptr [rax + NI_type], NIT_ANSI
+    mov rax, [r14 + NBO_items + VEC_ptr]
+    cmp dword ptr [rax + NBI_type], NBIT_ANSI
     jne 3f
-    mov rcx, [rax + NI_data + SB_len]
+    mov rcx, [rax + NBI_data + SB_len]
     add rcx, [rip + body_len]
     cmp rcx, NB_ITEM_MAX
     ja .Lnst_toobig
     jmp 4f
 3:  # a stream output of its own
-    cmp qword ptr [r12 + CL_outs + VEC_len], NB_OUTS_MAX
+    cmp qword ptr [r12 + NBC_outs + VEC_len], NB_OUTS_MAX
     jae .Lnst_toobig
-    mov edi, OU_SIZE
+    mov edi, NBO_SIZE
     call mem_alloc
     mov r14, rax
-    mov [r14 + OU_kind], r13d
-    lea rdi, [r14 + OU_items]
-    mov esi, NI_SIZE
+    mov [r14 + NBO_kind], r13d
+    lea rdi, [r14 + NBO_items]
+    mov esi, NBI_SIZE
     call vec_push
-    mov dword ptr [rax + NI_type], NIT_ANSI
-    lea rdi, [r12 + CL_outs]
+    mov dword ptr [rax + NBI_type], NBIT_ANSI
+    lea rdi, [r12 + NBC_outs]
     mov esi, 8
     call vec_push
     mov [rax], r14
-4:  mov rax, [r14 + OU_items + VEC_ptr]
-    lea r15, [rax + NI_data]
+4:  mov rax, [r14 + NBO_items + VEC_ptr]
+    lea r15, [rax + NBI_data]
     mov rax, [r15 + SB_len]
     sub [rbx + NB_outbytes], rax
-    sub [r14 + OU_bytes], rax
+    sub [r14 + NBO_bytes], rax
     # its lines: the line feeds it had, and those the bytes add (a carriage return never takes
     # a line feed away), then one more when it does not end in one
-    mov rax, [r14 + OU_lines]
+    mov rax, [r14 + NBO_lines]
     mov [rsp], rax
     mov rcx, [r15 + SB_len]
     test rcx, rcx
@@ -737,7 +737,7 @@ h_nb_stream:
     add [rsp], rax
     mov rax, [r15 + SB_len]
     add [rbx + NB_outbytes], rax
-    add [r14 + OU_bytes], rax
+    add [r14 + NBO_bytes], rax
     mov rcx, [rsp]
     test rax, rax
     jz 42f
@@ -745,9 +745,9 @@ h_nb_stream:
     cmp byte ptr [rdx + rax - 1], 10
     je 42f
     inc rcx
-42: mov [r14 + OU_lines], rcx
-    mov qword ptr [r14 + OU_show], 0
-    inc qword ptr [r12 + CL_outrev]
+42: mov [r14 + NBO_lines], rcx
+    mov qword ptr [r14 + NBO_show], 0
+    inc qword ptr [r12 + NBC_outrev]
     mov dword ptr [rbx + NB_dirty], 1
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]

@@ -73,22 +73,22 @@ nb_metrics:
 
 # cell_box_h(cl) -> eax px of the cell's frame: its lines and the padding
 cell_box_h:
-    mov rax, [rdi + CL_doc]
+    mov rax, [rdi + NBC_doc]
     mov rax, [rax + DOC_nlines]
     imul eax, [rip + g_lh]
     add eax, [rip + nv_pady]
     add eax, [rip + nv_pady]
     ret
 
-# nb_cell_height(cl) -> rax px the cell takes, the gap under it included (kept in CL_h)
+# nb_cell_height(cl) -> rax px the cell takes, the gap under it included (kept in NBC_h)
 FN nb_cell_height
     PROLOGUE
     mov rbx, rdi
     # what the height depends on
-    mov rax, [rbx + CL_doc]
+    mov rax, [rbx + NBC_doc]
     mov rax, [rax + DOC_version]
     imul rax, rax, 1000003
-    mov rcx, [rbx + CL_outrev]
+    mov rcx, [rbx + NBC_outrev]
     shl rcx, 40
     xor rax, rcx
     mov ecx, [rip + nv_boxw]
@@ -96,32 +96,32 @@ FN nb_cell_height
     mov ecx, [rip + g_lh]
     shl rcx, 24
     xor rax, rcx
-    mov ecx, [rbx + CL_collapsed]
+    mov ecx, [rbx + NBC_collapsed]
     shl rcx, 62
     xor rax, rcx
     mov ecx, [rip + g_cw]
     shl rcx, 32
     xor rax, rcx
     mov r12, rax
-    cmp rax, [rbx + CL_hkey]
+    cmp rax, [rbx + NBC_hkey]
     jne 1f
-    cmp qword ptr [rbx + CL_h], 0
+    cmp qword ptr [rbx + NBC_h], 0
     jne 8f
 1:  mov rdi, rbx
     call cell_box_h
     mov r13d, eax
-    cmp qword ptr [rbx + CL_outs + VEC_len], 0
+    cmp qword ptr [rbx + NBC_outs + VEC_len], 0
     je 4f
     add r13d, [rip + nv_ogap]
-    cmp dword ptr [rbx + CL_collapsed], 0
+    cmp dword ptr [rbx + NBC_collapsed], 0
     je 2f
     add r13d, [rip + g_lh]
     add r13d, [rip + g_mt + 4*MI_8]
     jmp 4f
 2:  xor r14d, r14d
-3:  cmp r14, [rbx + CL_outs + VEC_len]
+3:  cmp r14, [rbx + NBC_outs + VEC_len]
     jae 4f
-    mov rax, [rbx + CL_outs + VEC_ptr]
+    mov rax, [rbx + NBC_outs + VEC_ptr]
     mov rdi, [rax + r14*8]
     inc r14
     mov esi, [rip + nv_boxw]
@@ -129,9 +129,9 @@ FN nb_cell_height
     add r13d, eax
     jmp 3b
 4:  add r13d, [rip + nv_gap]
-    mov [rbx + CL_h], r13
-    mov [rbx + CL_hkey], r12
-8:  mov rax, [rbx + CL_h]
+    mov [rbx + NBC_h], r13
+    mov [rbx + NBC_hkey], r12
+8:  mov rax, [rbx + NBC_h]
     EPILOGUE
 
 # nb_cell_top(nb, i) -> rax px from the top of the cells to cell i's top
@@ -303,12 +303,12 @@ FN nb_draw
     mov rdi, r13
     call nb_cell_height
     mov [rsp + 32], rax
-    mov dword ptr [r13 + CL_y], -1
+    mov dword ptr [r13 + NBC_y], -1
     movsxd rcx, dword ptr [rsp + 20]
     lea rdx, [r14 + rax]
     cmp rdx, rcx
     jle 61f                     # above the view
-    mov [r13 + CL_y], r14d
+    mov [r13 + NBC_y], r14d
     mov rdi, rbx
     mov rsi, r13
     mov rdx, r12
@@ -323,7 +323,7 @@ FN nb_draw
     jae 71f
     mov rax, [rbx + NB_cells + VEC_ptr]
     mov rax, [rax + r12*8]
-    mov dword ptr [rax + CL_y], -1
+    mov dword ptr [rax + NBC_y], -1
     inc r12
     jmp 7b
 71: # the cell with the keyboard last: the completion list and the caret follow the last editor drawn
@@ -421,7 +421,7 @@ nb_reveal:
     call nb_sel_cell
     test rax, rax
     jz 9f
-    mov r13, [rax + CL_doc]
+    mov r13, [rax + NBC_doc]
     test dword ptr [r13 + DOC_flags], DF_REVEAL
     jnz 3f
     cmp dword ptr [rip + g_reveal], 0
@@ -900,7 +900,7 @@ nb_draw_cell:
 21: call gfx_frame
     add rsp, 16
     # the count column of a code cell, and its run button
-    cmp dword ptr [r12 + CL_kind], CLK_CODE
+    cmp dword ptr [r12 + NBC_kind], NBCK_CODE
     jne 3f
     mov rdi, rbx
     mov rsi, r12
@@ -938,7 +938,7 @@ nb_draw_cell:
     sub ecx, eax
     mov [rsp + 44], ecx         # visible height
     # how much of it is above the view, in 1/256 lines
-    mov r15, [r12 + CL_doc]
+    mov r15, [r12 + NBC_doc]
     sub eax, [rsp + 32]
     movsxd rax, eax
     shl rax, 8
@@ -967,18 +967,18 @@ nb_draw_cell:
     xor r9d, r9d
     call editor_draw_cell
 4:  # its outputs
-    cmp qword ptr [r12 + CL_outs + VEC_len], 0
+    cmp qword ptr [r12 + NBC_outs + VEC_len], 0
     je 9f
     mov eax, [rsp + 4]
     add eax, [rsp + 8]
     add eax, [rip + nv_ogap]
     mov r14d, eax               # y
-    cmp dword ptr [r12 + CL_collapsed], 0
+    cmp dword ptr [r12 + NBC_collapsed], 0
     je 5f
     lea rdi, [rip + tmp]
     call sb_clear
     lea rdi, [rip + tmp]
-    mov rsi, [r12 + CL_outs + VEC_len]
+    mov rsi, [r12 + NBC_outs + VEC_len]
     call sb_push_u64
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lhidden]
@@ -995,11 +995,11 @@ nb_draw_cell:
     call text_draw
     jmp 9f
 5:  xor r15d, r15d
-6:  cmp r15, [r12 + CL_outs + VEC_len]
+6:  cmp r15, [r12 + NBC_outs + VEC_len]
     jae 9f
     cmp r14d, [rip + g_cv + CV_cy1]
     jge 9f
-    mov rax, [r12 + CL_outs + VEC_ptr]
+    mov rax, [r12 + NBC_outs + VEC_ptr]
     mov r13, [rax + r15*8]
     inc r15
     mov rdi, r13
@@ -1052,12 +1052,12 @@ nb_draw_prompt:
 1:  lea rdi, [rip + numbuf]
     mov byte ptr [rdi], '['
     inc rdi
-    mov eax, [r12 + CL_state]
-    cmp eax, RUN_QUEUED
+    mov eax, [r12 + NBC_state]
+    cmp eax, NBRUN_QUEUED
     je 2f
-    cmp eax, RUN_RUNNING
+    cmp eax, NBRUN_RUNNING
     je 2f
-    mov rsi, [r12 + CL_count]
+    mov rsi, [r12 + NBC_count]
     test rsi, rsi
     js 3f
     call fmt_u64
@@ -1084,10 +1084,10 @@ nb_draw_prompt:
     sub esi, eax
     mov r14d, esi
     COLOR r9d, T_MUTED
-    mov eax, [r12 + CL_state]
-    cmp eax, RUN_QUEUED
+    mov eax, [r12 + NBC_state]
+    cmp eax, NBRUN_QUEUED
     je 41f
-    cmp eax, RUN_RUNNING
+    cmp eax, NBRUN_RUNNING
     jne 42f
 41: COLOR r9d, T_ACCENT
 42: lea rdi, [rip + g_face_code]

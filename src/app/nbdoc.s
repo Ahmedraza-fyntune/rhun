@@ -115,7 +115,7 @@ FN nb_cell_by_id
     mov rax, [rdi + NB_cells + VEC_ptr]
     mov rax, [rax + rcx*8]
     inc rcx
-    cmp [rax + CL_id], rsi
+    cmp [rax + NBC_id], rsi
     jne 1b
     lea rdx, [rcx - 1]
     ret
@@ -181,7 +181,7 @@ FN nb_active_doc
     call nb_sel_cell
     test rax, rax
     jz 8f
-    mov rax, [rax + CL_doc]
+    mov rax, [rax + NBC_doc]
     ret
 8:  xor eax, eax
     ret
@@ -253,7 +253,7 @@ FN nb_free
     jae 2f
     mov rax, [rbx + NB_cells + VEC_ptr]
     mov rdi, [rax + r13*8]
-    mov rax, [rdi + CL_doc]
+    mov rax, [rdi + NBC_doc]
     cmp rax, [rip + g_doc]
     jne 11f
     mov qword ptr [rip + g_doc], 0
@@ -362,13 +362,13 @@ FN nb_ext_gone
     mov rax, [rbx + NB_cells + VEC_ptr]
     mov rax, [rax + r14*8]
     inc r14
-    mov ecx, [rax + CL_state]
-    cmp ecx, RUN_QUEUED
+    mov ecx, [rax + NBC_state]
+    cmp ecx, NBRUN_QUEUED
     je 21f
-    cmp ecx, RUN_RUNNING
+    cmp ecx, NBRUN_RUNNING
     jne 2b
-21: mov dword ptr [rax + CL_state], RUN_CANCELLED
-    mov dword ptr [rax + CL_unsent], 0
+21: mov dword ptr [rax + NBC_state], NBRUN_CANCELLED
+    mov dword ptr [rax + NBC_unsent], 0
     jmp 2b
 3:  cmp qword ptr [rbx + NB_req], 0
     je 1b
@@ -564,7 +564,7 @@ FN nb_tick
     mov rax, [rbx + NB_cells + VEC_ptr]
     mov rax, [rax + r13*8]
     inc r13
-    mov rax, [rax + CL_doc]
+    mov rax, [rax + NBC_doc]
     mov rcx, [rax + DOC_xedits]
     test rcx, rcx
     jz 3b
@@ -683,7 +683,7 @@ nb_opened:
     jae 3f
     mov rax, [rbx + NB_cells + VEC_ptr]
     mov rdi, [rax + r12*8]
-    mov rax, [rdi + CL_doc]
+    mov rax, [rdi + NBC_doc]
     cmp rax, [rip + g_doc]
     jne 21f
     mov qword ptr [rip + g_doc], 0
@@ -720,7 +720,7 @@ nb_opened:
     # an empty notebook gets one code cell to type in
     cmp qword ptr [rbx + NB_cells + VEC_len], 0
     jne 4f
-    mov edi, CLK_CODE
+    mov edi, NBCK_CODE
     xor esi, esi
     xor edx, edx
     xor ecx, ecx
@@ -849,7 +849,7 @@ FN nb_mark_saved
     jae 2f
     mov rax, [rbx + NB_cells + VEC_ptr]
     mov rax, [rax + r12*8]
-    mov rax, [rax + CL_doc]
+    mov rax, [rax + NBC_doc]
     mov rcx, [rax + DOC_undo + VEC_len]
     mov [rax + DOC_savepoint], rcx
     inc r12
@@ -874,7 +874,7 @@ FN nb_sync_dirty
     mov rax, [rbx + NB_cells + VEC_ptr]
     mov rax, [rax + r12*8]
     inc r12
-    mov rdi, [rax + CL_doc]
+    mov rdi, [rax + NBC_doc]
     call doc_dirty
     test eax, eax
     jz 1b
@@ -949,17 +949,17 @@ FN cl_new
     mov r14, rdx
     mov r15, rcx
     mov [rsp], r8
-    mov edi, CL_SIZE
+    mov edi, NBC_SIZE
     call mem_alloc
     mov rbx, rax
-    mov [rbx + CL_kind], r12d
-    mov qword ptr [rbx + CL_count], -1
-    mov dword ptr [rbx + CL_y], -1
+    mov [rbx + NBC_kind], r12d
+    mov qword ptr [rbx + NBC_count], -1
+    mov dword ptr [rbx + NBC_y], -1
     inc qword ptr [rip + g_nb_cell_seq]
     mov rax, [rip + g_nb_cell_seq]
-    mov [rbx + CL_id], rax
+    mov [rbx + NBC_id], rax
     call doc_new
-    mov [rbx + CL_doc], rax
+    mov [rbx + NBC_doc], rax
     or dword ptr [rax + DOC_flags], DF_CELL
     lea rcx, [rip + .Lcell_name]
     mov [rax + DOC_name], rcx
@@ -971,7 +971,7 @@ FN cl_new
     lea rsi, [rip + .Lempty]
     xor edx, edx
 1:  call doc_replace_all
-    mov rax, [rbx + CL_doc]
+    mov rax, [rbx + NBC_doc]
     mov qword ptr [rax + DOC_cur], 0
     mov qword ptr [rax + DOC_anchor], 0
     # its language as named (code), or "-" for none
@@ -984,7 +984,7 @@ FN cl_new
 3:  mov rdi, r13
     mov rsi, r14
     call mem_dup
-    mov [rbx + CL_lang], rax
+    mov [rbx + NBC_lang], rax
 2:  mov rdi, rbx
     call cl_set_language
     mov rax, rbx
@@ -995,9 +995,9 @@ FN cl_set_language
     PROLOGUE
     mov rbx, rdi
     lea rsi, [rip + .Lmarkdown]
-    cmp dword ptr [rbx + CL_kind], CLK_MARKUP
+    cmp dword ptr [rbx + NBC_kind], NBCK_MARKUP
     je 3f
-    mov rsi, [rbx + CL_lang]
+    mov rsi, [rbx + NBC_lang]
     test rsi, rsi
     jz 9f
     # "Visual_Basic" names "Visual Basic"
@@ -1016,7 +1016,7 @@ FN cl_set_language
     jmp 1b
 2:  mov byte ptr [rdi + rcx], 0
     lea rsi, [rip + langbuf]
-3:  mov rdi, [rbx + CL_doc]
+3:  mov rdi, [rbx + NBC_doc]
     mov rdx, rsi
     mov esi, DL_NAMED
     call doc_language_set
@@ -1026,17 +1026,17 @@ FN cl_set_language
 FN cl_free
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + CL_doc]
+    mov rdi, [rbx + NBC_doc]
     call vim_forget
-    mov rdi, [rbx + CL_doc]
+    mov rdi, [rbx + NBC_doc]
     call doc_free
     mov rdi, rbx
     call cl_clear_outputs
-    lea rdi, [rbx + CL_outs]
+    lea rdi, [rbx + NBC_outs]
     call vec_free
-    lea rdi, [rbx + CL_meta]
+    lea rdi, [rbx + NBC_meta]
     call sb_free
-    mov rdi, [rbx + CL_lang]
+    mov rdi, [rbx + NBC_lang]
     call mem_free
     mov rdi, rbx
     call mem_free
@@ -1048,17 +1048,17 @@ FN cl_clear_outputs
     mov rbx, rdi
     xor r12d, r12d
     xor r13d, r13d
-1:  cmp r12, [rbx + CL_outs + VEC_len]
+1:  cmp r12, [rbx + NBC_outs + VEC_len]
     jae 2f
-    mov rax, [rbx + CL_outs + VEC_ptr]
+    mov rax, [rbx + NBC_outs + VEC_ptr]
     mov rdi, [rax + r12*8]
-    add r13, [rdi + OU_bytes]
+    add r13, [rdi + NBO_bytes]
     call ou_free
     inc r12
     jmp 1b
-2:  mov qword ptr [rbx + CL_outs + VEC_len], 0
-    inc qword ptr [rbx + CL_outrev]
-    mov dword ptr [rbx + CL_clearwait], 0
+2:  mov qword ptr [rbx + NBC_outs + VEC_len], 0
+    inc qword ptr [rbx + NBC_outrev]
+    mov dword ptr [rbx + NBC_clearwait], 0
     mov rax, r13
     EPILOGUE
 
@@ -1068,7 +1068,7 @@ FN nb_clear_outputs
     push r12
     mov rbx, rdi
     mov r12, rsi
-    cmp qword ptr [r12 + CL_outs + VEC_len], 0
+    cmp qword ptr [r12 + NBC_outs + VEC_len], 0
     je 9f
     mov rdi, r12
     call cl_clear_outputs
@@ -1089,11 +1089,11 @@ nb_count_bytes:
     mov rdx, [rdx + rcx*8]
     inc rcx
     xor r8d, r8d
-2:  cmp r8, [rdx + CL_outs + VEC_len]
+2:  cmp r8, [rdx + NBC_outs + VEC_len]
     jae 1b
-    mov r9, [rdx + CL_outs + VEC_ptr]
+    mov r9, [rdx + NBC_outs + VEC_ptr]
     mov r9, [r9 + r8*8]
-    add rax, [r9 + OU_bytes]
+    add rax, [r9 + NBO_bytes]
     inc r8
     jmp 2b
 3:  mov [rdi + NB_outbytes], rax
@@ -1106,24 +1106,24 @@ FN ou_free
     test rbx, rbx
     jz 9f
     xor r12d, r12d
-1:  cmp r12, [rbx + OU_items + VEC_len]
+1:  cmp r12, [rbx + NBO_items + VEC_len]
     jae 2f
-    imul rax, r12, NI_SIZE
-    add rax, [rbx + OU_items + VEC_ptr]
+    imul rax, r12, NBI_SIZE
+    add rax, [rbx + NBO_items + VEC_ptr]
     mov r13, rax
-    mov rdi, [r13 + NI_name]
+    mov rdi, [r13 + NBI_name]
     call mem_free
-    lea rdi, [r13 + NI_data]
+    lea rdi, [r13 + NBI_data]
     call sb_free
     inc r12
     jmp 1b
-2:  lea rdi, [rbx + OU_items]
+2:  lea rdi, [rbx + NBO_items]
     call vec_free
-    lea rdi, [rbx + OU_keep]
+    lea rdi, [rbx + NBO_keep]
     call sb_free
-    mov rdi, [rbx + OU_id]
+    mov rdi, [rbx + NBO_id]
     call mem_free
-    mov rdi, [rbx + OU_img]
+    mov rdi, [rbx + NBO_img]
     call mem_free
     mov rdi, rbx
     call mem_free
@@ -1137,9 +1137,9 @@ FN nb_default_lang
     mov rax, [rdi + NB_cells + VEC_ptr]
     mov rax, [rax + rcx*8]
     inc rcx
-    cmp dword ptr [rax + CL_kind], CLK_CODE
+    cmp dword ptr [rax + NBC_kind], NBCK_CODE
     jne 1b
-    mov rax, [rax + CL_lang]
+    mov rax, [rax + NBC_lang]
     test rax, rax
     jz 1b
     ret
@@ -1197,28 +1197,28 @@ nu_push:
     cmp qword ptr [rbx + NB_undo + VEC_len], NB_UNDO_MAX
     jb 1f
     mov rax, [rbx + NB_undo + VEC_ptr]
-    mov rdi, [rax + NU_cell]
+    mov rdi, [rax + NBU_cell]
     test rdi, rdi
     jz 2f
     call cl_free
 2:  mov rdi, [rbx + NB_undo + VEC_ptr]
-    lea rsi, [rdi + NU_SIZE]
+    lea rsi, [rdi + NBU_SIZE]
     mov rdx, [rbx + NB_undo + VEC_len]
     dec rdx
-    imul rdx, rdx, NU_SIZE
+    imul rdx, rdx, NBU_SIZE
     call memmove
     dec qword ptr [rbx + NB_undo + VEC_len]
 1:  lea rdi, [rbx + NB_undo]
-    mov esi, NU_SIZE
+    mov esi, NBU_SIZE
     call vec_push
     mov rcx, [rsp]
-    mov [rax + NU_op], rcx
+    mov [rax + NBU_op], rcx
     mov rcx, [rsp + 8]
-    mov [rax + NU_index], rcx
+    mov [rax + NBU_index], rcx
     mov rcx, [rsp + 16]
-    mov [rax + NU_index2], rcx
+    mov [rax + NBU_index2], rcx
     mov rcx, [rsp + 24]
-    mov [rax + NU_cell], rcx
+    mov [rax + NBU_cell], rcx
     EPILOGUE
 
 # nu_clear(nb): its undo records go, with the cells they kept
@@ -1228,9 +1228,9 @@ nu_clear:
     xor r12d, r12d
 1:  cmp r12, [rbx + NB_undo + VEC_len]
     jae 2f
-    imul rax, r12, NU_SIZE
+    imul rax, r12, NBU_SIZE
     add rax, [rbx + NB_undo + VEC_ptr]
-    mov rdi, [rax + NU_cell]
+    mov rdi, [rax + NBU_cell]
     inc r12
     test rdi, rdi
     jz 1b
@@ -1273,7 +1273,7 @@ FN nb_insert_cell
     mov rdx, r14
     call vec_ptr_insert
     mov rdi, rbx
-    mov esi, NUO_INSERT
+    mov esi, NBUO_INSERT
     mov rdx, r12
     xor ecx, ecx
     xor r8d, r8d
@@ -1302,13 +1302,13 @@ FN nb_delete_cell
     mov rsi, r12
     call vec_ptr_remove
     mov r13, rax
-    mov rax, [r13 + CL_doc]
+    mov rax, [r13 + NBC_doc]
     cmp rax, [rip + g_doc]
     jne 1f
     mov qword ptr [rip + g_doc], 0
-1:  mov dword ptr [r13 + CL_state], RUN_NONE
+1:  mov dword ptr [r13 + NBC_state], NBRUN_NONE
     mov rdi, rbx
-    mov esi, NUO_DELETE
+    mov esi, NBUO_DELETE
     mov rdx, r12
     xor ecx, ecx
     mov r8, r13
@@ -1318,7 +1318,7 @@ FN nb_delete_cell
     jne 2f
     mov rdi, rbx
     xor esi, esi
-    mov edx, CLK_CODE
+    mov edx, NBCK_CODE
     call nb_insert_cell
 2:  mov rax, [rbx + NB_cells + VEC_len]
     dec rax
@@ -1352,7 +1352,7 @@ FN nb_move_cell
     mov rdx, r13
     call nb_swap
     mov rdi, rbx
-    mov esi, NUO_MOVE
+    mov esi, NBUO_MOVE
     mov rdx, r12
     mov rcx, r13
     xor r8d, r8d
@@ -1387,11 +1387,11 @@ FN nb_set_kind
     test rax, rax
     jz 9f
     mov r14, rax
-    mov ecx, [r14 + CL_kind]
+    mov ecx, [r14 + NBC_kind]
     cmp ecx, r13d
     je 9f
     mov rdi, rbx
-    mov esi, NUO_KIND
+    mov esi, NBUO_KIND
     mov rdx, r12
     xor r8d, r8d
     call nu_push
@@ -1406,15 +1406,15 @@ nb_kind_now:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov [r12 + CL_kind], edx
-    mov qword ptr [r12 + CL_count], -1
-    mov dword ptr [r12 + CL_state], RUN_NONE
+    mov [r12 + NBC_kind], edx
+    mov qword ptr [r12 + NBC_count], -1
+    mov dword ptr [r12 + NBC_state], NBRUN_NONE
     mov rdi, rbx
     mov rsi, r12
     call nb_clear_outputs
-    cmp dword ptr [r12 + CL_kind], CLK_CODE
+    cmp dword ptr [r12 + NBC_kind], NBCK_CODE
     jne 1f
-    cmp qword ptr [r12 + CL_lang], 0
+    cmp qword ptr [r12 + NBC_lang], 0
     jne 1f
     mov rdi, rbx
     call nb_default_lang
@@ -1422,7 +1422,7 @@ nb_kind_now:
     jz 1f
     mov rdi, rax
     call dup_cstr
-    mov [r12 + CL_lang], rax
+    mov [r12 + NBC_lang], rax
 1:  mov rdi, r12
     call cl_set_language
     mov dword ptr [rbx + NB_dirty], 1
@@ -1439,31 +1439,31 @@ FN nb_undo_op
     jz 8f
     dec rax
     mov [rbx + NB_undo + VEC_len], rax
-    imul rax, rax, NU_SIZE
+    imul rax, rax, NBU_SIZE
     add rax, [rbx + NB_undo + VEC_ptr]
     mov r12, rax
-    mov rax, [r12 + NU_op]
-    cmp rax, NUO_INSERT
+    mov rax, [r12 + NBU_op]
+    cmp rax, NBUO_INSERT
     je .Lnu_insert
-    cmp rax, NUO_DELETE
+    cmp rax, NBUO_DELETE
     je .Lnu_delete
-    cmp rax, NUO_MOVE
+    cmp rax, NBUO_MOVE
     je .Lnu_move
     # kind: back to the old one
     mov rdi, rbx
-    mov rsi, [r12 + NU_index]
+    mov rsi, [r12 + NBU_index]
     call nb_cell
     test rax, rax
     jz 7f
     mov rsi, rax
     mov rdi, rbx
-    mov edx, [r12 + NU_index2]
+    mov edx, [r12 + NBU_index2]
     call nb_kind_now
-    mov rax, [r12 + NU_index]
+    mov rax, [r12 + NBU_index]
     mov [rbx + NB_sel], rax
     jmp 7f
 .Lnu_insert:
-    mov r13, [r12 + NU_index]
+    mov r13, [r12 + NBU_index]
     cmp r13, [rbx + NB_cells + VEC_len]
     jae 7f
     cmp qword ptr [rbx + NB_cells + VEC_len], 1
@@ -1472,7 +1472,7 @@ FN nb_undo_op
     mov rsi, r13
     call vec_ptr_remove
     mov rdi, rax
-    mov rax, [rdi + CL_doc]
+    mov rax, [rdi + NBC_doc]
     cmp rax, [rip + g_doc]
     jne 1f
     mov qword ptr [rip + g_doc], 0
@@ -1485,27 +1485,27 @@ FN nb_undo_op
 2:  mov [rbx + NB_sel], r13
     jmp 7f
 .Lnu_delete:
-    mov r13, [r12 + NU_index]
+    mov r13, [r12 + NBU_index]
     mov rax, [rbx + NB_cells + VEC_len]
     cmp r13, rax
     cmova r13, rax
     lea rdi, [rbx + NB_cells]
     mov rsi, r13
-    mov rdx, [r12 + NU_cell]
-    mov qword ptr [r12 + NU_cell], 0
+    mov rdx, [r12 + NBU_cell]
+    mov qword ptr [r12 + NBU_cell], 0
     call vec_ptr_insert
     mov [rbx + NB_sel], r13
     jmp 7f
 .Lnu_move:
-    mov rsi, [r12 + NU_index2]
-    mov rdx, [r12 + NU_index]
+    mov rsi, [r12 + NBU_index2]
+    mov rdx, [r12 + NBU_index]
     cmp rsi, [rbx + NB_cells + VEC_len]
     jae 7f
     cmp rdx, [rbx + NB_cells + VEC_len]
     jae 7f
     mov rdi, rbx
     call nb_swap
-    mov rax, [r12 + NU_index]
+    mov rax, [r12 + NBU_index]
     mov [rbx + NB_sel], rax
 7:  mov dword ptr [rbx + NB_dirty], 1
     mov dword ptr [rbx + NB_reveal], 1
@@ -1720,7 +1720,7 @@ FN nb_parse
     call rd_line
     cmp eax, 6
     jb .Lnp_bad
-    xor r13d, r13d              # CLK_CODE
+    xor r13d, r13d              # NBCK_CODE
     xor edi, edi
     lea rsi, [rip + .Lk_code]
     call rd_is
@@ -1731,7 +1731,7 @@ FN nb_parse
     call rd_is
     test eax, eax
     jz .Lnp_bad
-    mov r13d, CLK_MARKUP
+    mov r13d, NBCK_MARKUP
 1:  # LANG, kept to make the cell
     mov edi, 1
     call rd_field
@@ -1786,12 +1786,12 @@ FN nb_parse
     call vec_push
     mov [rax], rbx
     mov rax, [rsp + 32]
-    mov [rbx + CL_count], rax
+    mov [rbx + NBC_count], rax
     mov rdi, r15
     call rd_bytes
     test rax, rax
     jz .Lnp_bad
-    lea rdi, [rbx + CL_meta]
+    lea rdi, [rbx + NBC_meta]
     mov rsi, rax
     mov rdx, r15
     call sb_push
@@ -1804,7 +1804,7 @@ FN nb_parse
     test rax, rax
     jz .Lnp_bad
     mov r14, rax
-    lea rdi, [rbx + CL_outs]
+    lea rdi, [rbx + NBC_outs]
     mov esi, 8
     call vec_push
     mov [rax], r14
@@ -1866,11 +1866,11 @@ FN nb_rd_output
     cmp rax, NB_ITEMS_MAX
     ja 8f
     mov r15, rax                # NITEM
-    mov edi, OU_SIZE
+    mov edi, NBO_SIZE
     call mem_alloc
     mov rbx, rax
-    mov [rbx + OU_kind], r13d
-    mov qword ptr [rbx + OU_show], -1
+    mov [rbx + NBO_kind], r13d
+    mov qword ptr [rbx + NBO_show], -1
     # OUTID
     mov edi, 1
     call rd_field
@@ -1889,16 +1889,16 @@ FN nb_rd_output
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
     call mem_dup
-    mov [rbx + OU_id], rax
+    mov [rbx + NBO_id], rax
 3:  mov rdi, r14
     call rd_bytes
     test rax, rax
     jz 7f
-    lea rdi, [rbx + OU_keep]
+    lea rdi, [rbx + NBO_keep]
     mov rsi, rax
     mov rdx, r14
     call sb_push
-    add [rbx + OU_bytes], r14
+    add [rbx + NBO_bytes], r14
     # the items
 4:  test r15, r15
     jz 6f
@@ -1906,8 +1906,8 @@ FN nb_rd_output
     call rd_line
     cmp eax, 4
     jb 7f
-    lea rdi, [rbx + OU_items]
-    mov esi, NI_SIZE
+    lea rdi, [rbx + NBO_items]
+    mov esi, NBI_SIZE
     call vec_push
     mov r12, rax
     mov edi, 1
@@ -1916,14 +1916,14 @@ FN nb_rd_output
     jz 7f
     cmp rax, 65536
     ja 7f
-    mov [r12 + NI_w], eax
+    mov [r12 + NBI_w], eax
     mov edi, 2
     call rd_u64
     test edx, edx
     jz 7f
     cmp rax, 65536
     ja 7f
-    mov [r12 + NI_h], eax
+    mov [r12 + NBI_h], eax
     mov edi, 3
     call rd_u64
     test edx, edx
@@ -1942,7 +1942,7 @@ FN nb_rd_output
     inc r13d
     test eax, eax
     jz 5b
-    mov [r12 + NI_type], r13d
+    mov [r12 + NBI_type], r13d
     jmp 52f
 51: xor edi, edi
     call rd_field
@@ -1957,16 +1957,16 @@ FN nb_rd_output
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
     call mem_dup
-    mov [r12 + NI_name], rax
+    mov [r12 + NBI_name], rax
 52: mov rdi, r14
     call rd_bytes
     test rax, rax
     jz 7f
-    lea rdi, [r12 + NI_data]
+    lea rdi, [r12 + NBI_data]
     mov rsi, rax
     mov rdx, r14
     call sb_push
-    add [rbx + OU_bytes], r14
+    add [rbx + NBO_bytes], r14
     jmp 4b
 6:  mov rdi, rbx
     call ou_ready
@@ -1981,34 +1981,34 @@ FN nb_rd_output
 FN ou_ready
     PROLOGUE
     mov rbx, rdi
-    mov qword ptr [rbx + OU_show], -1
-    mov qword ptr [rbx + OU_lines], 0
-    mov dword ptr [rbx + OU_ikey], 0
-    mov dword ptr [rbx + OU_ierr], 0
-    mov rdi, [rbx + OU_img]
+    mov qword ptr [rbx + NBO_show], -1
+    mov qword ptr [rbx + NBO_lines], 0
+    mov dword ptr [rbx + NBO_ikey], 0
+    mov dword ptr [rbx + NBO_ierr], 0
+    mov rdi, [rbx + NBO_img]
     call mem_free
-    mov qword ptr [rbx + OU_img], 0
+    mov qword ptr [rbx + NBO_img], 0
     xor r12d, r12d
-1:  cmp r12, [rbx + OU_items + VEC_len]
+1:  cmp r12, [rbx + NBO_items + VEC_len]
     jae 9f
-    imul r13, r12, NI_SIZE
-    add r13, [rbx + OU_items + VEC_ptr]
+    imul r13, r12, NBI_SIZE
+    add r13, [rbx + NBO_items + VEC_ptr]
     inc r12
-    mov eax, [r13 + NI_type]
-    cmp eax, NIT_TEXT
+    mov eax, [r13 + NBI_type]
+    cmp eax, NBIT_TEXT
     jb 1b
-    cmp eax, NIT_GIF
+    cmp eax, NBIT_GIF
     ja 1b
     lea rax, [r12 - 1]
-    mov [rbx + OU_show], rax
-    mov eax, [r13 + NI_type]
-    cmp eax, NIT_ANSI
+    mov [rbx + NBO_show], rax
+    mov eax, [r13 + NBI_type]
+    cmp eax, NBIT_ANSI
     ja 9f
     # lines: line feeds, and one more when the text does not end in one
-    mov rdi, [r13 + NI_data + SB_ptr]
-    mov rsi, [r13 + NI_data + SB_len]
+    mov rdi, [r13 + NBI_data + SB_ptr]
+    mov rsi, [r13 + NBI_data + SB_len]
     call count_lines
-    mov [rbx + OU_lines], rax
+    mov [rbx + NBO_lines], rax
 9:  EPILOGUE
 
 # count_lines(ptr, len) -> lines of the text
@@ -2062,7 +2062,7 @@ FN nb_write
     mov r14, [rax + r13*8]
     inc r13
     lea rsi, [rip + .Lk_code]
-    cmp dword ptr [r14 + CL_kind], CLK_CODE
+    cmp dword ptr [r14 + NBC_kind], NBCK_CODE
     je 2f
     lea rsi, [rip + .Lk_markup]
 2:  mov rdi, r12
@@ -2070,8 +2070,8 @@ FN nb_write
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
-    mov rsi, [r14 + CL_lang]
-    cmp dword ptr [r14 + CL_kind], CLK_CODE
+    mov rsi, [r14 + NBC_lang]
+    cmp dword ptr [r14 + NBC_kind], NBCK_CODE
     jne 21f
     test rsi, rsi
     jnz 22f
@@ -2081,7 +2081,7 @@ FN nb_write
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
-    mov rsi, [r14 + CL_count]
+    mov rsi, [r14 + NBC_count]
     test rsi, rsi
     js 23f
     mov rdi, r12
@@ -2093,7 +2093,7 @@ FN nb_write
 24: mov rdi, r12
     mov esi, ' '
     call sb_push_byte
-    mov rdi, [r14 + CL_doc]
+    mov rdi, [r14 + NBC_doc]
     call doc_len
     mov r15, rax
     mov rdi, r12
@@ -2103,13 +2103,13 @@ FN nb_write
     mov esi, ' '
     call sb_push_byte
     mov rdi, r12
-    mov rsi, [r14 + CL_meta + SB_len]
+    mov rsi, [r14 + NBC_meta + SB_len]
     call sb_push_u64
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
     mov rdi, r12
-    mov rsi, [r14 + CL_outs + VEC_len]
+    mov rsi, [r14 + NBC_outs + VEC_len]
     call sb_push_u64
     mov rdi, r12
     mov esi, 10
@@ -2119,19 +2119,19 @@ FN nb_write
     mov rsi, r15
     call sb_reserve
     mov rcx, rax
-    mov rdi, [r14 + CL_doc]
+    mov rdi, [r14 + NBC_doc]
     xor esi, esi
     mov rdx, r15
     call doc_copy
     add [r12 + SB_len], r15
     mov rdi, r12
-    mov rsi, [r14 + CL_meta + SB_ptr]
-    mov rdx, [r14 + CL_meta + SB_len]
+    mov rsi, [r14 + NBC_meta + SB_ptr]
+    mov rdx, [r14 + NBC_meta + SB_len]
     call sb_push
     xor r15d, r15d
-3:  cmp r15, [r14 + CL_outs + VEC_len]
+3:  cmp r15, [r14 + NBC_outs + VEC_len]
     jae 1b
-    mov rax, [r14 + CL_outs + VEC_ptr]
+    mov rax, [r14 + NBC_outs + VEC_ptr]
     mov rdi, [rax + r15*8]
     mov rsi, r12
     call nb_write_output
@@ -2150,7 +2150,7 @@ FN nb_write_output
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov eax, [rbx + OU_kind]
+    mov eax, [rbx + NBO_kind]
     dec eax
     lea rcx, [rip + ouk_names]
     mov rsi, [rcx + rax*8]
@@ -2159,7 +2159,7 @@ FN nb_write_output
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
-    mov rsi, [rbx + OU_id]
+    mov rsi, [rbx + NBO_id]
     test rsi, rsi
     jnz 1f
     lea rsi, [rip + .Ldash]
@@ -2169,31 +2169,31 @@ FN nb_write_output
     mov esi, ' '
     call sb_push_byte
     mov rdi, r12
-    mov rsi, [rbx + OU_keep + SB_len]
+    mov rsi, [rbx + NBO_keep + SB_len]
     call sb_push_u64
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
     mov rdi, r12
-    mov rsi, [rbx + OU_items + VEC_len]
+    mov rsi, [rbx + NBO_items + VEC_len]
     call sb_push_u64
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
     mov rdi, r12
-    mov rsi, [rbx + OU_keep + SB_ptr]
-    mov rdx, [rbx + OU_keep + SB_len]
+    mov rsi, [rbx + NBO_keep + SB_ptr]
+    mov rdx, [rbx + NBO_keep + SB_len]
     call sb_push
     xor r13d, r13d
-2:  cmp r13, [rbx + OU_items + VEC_len]
+2:  cmp r13, [rbx + NBO_items + VEC_len]
     jae 9f
-    imul r14, r13, NI_SIZE
-    add r14, [rbx + OU_items + VEC_ptr]
+    imul r14, r13, NBI_SIZE
+    add r14, [rbx + NBO_items + VEC_ptr]
     inc r13
-    mov rsi, [r14 + NI_name]
+    mov rsi, [r14 + NBI_name]
     test rsi, rsi
     jnz 3f
-    mov eax, [r14 + NI_type]
+    mov eax, [r14 + NBI_type]
     dec eax
     lea rcx, [rip + nit_names]
     mov rsi, [rcx + rax*8]
@@ -2203,26 +2203,26 @@ FN nb_write_output
     mov esi, ' '
     call sb_push_byte
     mov rdi, r12
-    mov esi, [r14 + NI_w]
+    mov esi, [r14 + NBI_w]
     call sb_push_u64
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
     mov rdi, r12
-    mov esi, [r14 + NI_h]
+    mov esi, [r14 + NBI_h]
     call sb_push_u64
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
     mov rdi, r12
-    mov rsi, [r14 + NI_data + SB_len]
+    mov rsi, [r14 + NBI_data + SB_len]
     call sb_push_u64
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
     mov rdi, r12
-    mov rsi, [r14 + NI_data + SB_ptr]
-    mov rdx, [r14 + NI_data + SB_len]
+    mov rsi, [r14 + NBI_data + SB_ptr]
+    mov rdx, [r14 + NBI_data + SB_len]
     call sb_push
     jmp 2b
 9:  EPILOGUE

@@ -571,23 +571,23 @@ FN nb_ou_height
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
-    mov rax, [rbx + OU_show]
+    mov rax, [rbx + NBO_show]
     test rax, rax
     js .Loh_row
-    imul rax, rax, NI_SIZE
-    add rax, [rbx + OU_items + VEC_ptr]
+    imul rax, rax, NBI_SIZE
+    add rax, [rbx + NBO_items + VEC_ptr]
     mov r13, rax
-    mov eax, [r13 + NI_type]
-    cmp eax, NIT_ANSI
+    mov eax, [r13 + NBI_type]
+    cmp eax, NBIT_ANSI
     ja .Loh_image
     mov edi, r12d
     call ou_text_cols
     mov edx, eax
-    mov rdi, [r13 + NI_data + SB_ptr]
-    mov rsi, [r13 + NI_data + SB_len]
+    mov rdi, [r13 + NBI_data + SB_ptr]
+    mov rsi, [r13 + NBI_data + SB_len]
     xor ecx, ecx
     xor r8d, r8d
-    cmp dword ptr [r13 + NI_type], NIT_ANSI
+    cmp dword ptr [r13 + NBI_type], NBIT_ANSI
     sete r8b
     call nb_tx_walk
     add eax, edx                # "N more lines"
@@ -599,7 +599,7 @@ FN nb_ou_height
     call nb_ou_image
     test eax, eax
     jz .Loh_row
-    mov eax, [rbx + OU_ih]
+    mov eax, [rbx + NBO_ih]
     jmp .Loh_pad
 .Loh_row:
     mov eax, [rip + g_lh]
@@ -608,7 +608,7 @@ FN nb_ou_height
     add eax, [rip + g_mt + 4*MI_4]
     EPILOGUE
 
-# nb_ou_image(ou, w) -> eax 1 with OU_img scaled for a column w px wide, 0 when it cannot be shown
+# nb_ou_image(ou, w) -> eax 1 with NBO_img scaled for a column w px wide, 0 when it cannot be shown
 FN nb_ou_image
     PROLOGUE 48
     mov rbx, rdi
@@ -618,21 +618,21 @@ FN nb_ou_image
     cmp r12d, 1
     jge 1f
     mov r12d, 1
-1:  cmp dword ptr [rbx + OU_ierr], 0
+1:  cmp dword ptr [rbx + NBO_ierr], 0
     jne 8f
-    cmp qword ptr [rbx + OU_img], 0
+    cmp qword ptr [rbx + NBO_img], 0
     je 2f
-    cmp [rbx + OU_ikey], r12d
+    cmp [rbx + NBO_ikey], r12d
     je 7f
-    mov rdi, [rbx + OU_img]
+    mov rdi, [rbx + NBO_img]
     call mem_free
-    mov qword ptr [rbx + OU_img], 0
-2:  mov rax, [rbx + OU_show]
-    imul rax, rax, NI_SIZE
-    add rax, [rbx + OU_items + VEC_ptr]
+    mov qword ptr [rbx + NBO_img], 0
+2:  mov rax, [rbx + NBO_show]
+    imul rax, rax, NBI_SIZE
+    add rax, [rbx + NBO_items + VEC_ptr]
     mov r13, rax
-    mov rdi, [r13 + NI_data + SB_ptr]
-    mov rsi, [r13 + NI_data + SB_len]
+    mov rdi, [r13 + NBI_data + SB_ptr]
+    mov rsi, [r13 + NBI_data + SB_len]
     test rdi, rdi
     jz 6f
     lea rdx, [rip + .Lnopath]
@@ -644,15 +644,15 @@ FN nb_ou_image
     cmp eax, IMF_GIF
     jne 6f
 3:  mov edx, eax
-    mov rdi, [r13 + NI_data + SB_ptr]
-    mov rsi, [r13 + NI_data + SB_len]
+    mov rdi, [r13 + NBI_data + SB_ptr]
+    mov rsi, [r13 + NBI_data + SB_len]
     lea rcx, [rsp]
     call image_decode
     test eax, eax
     jnz 6f
     # the size to show: its logical size (the output's, or one image pixel each) at the scale
-    mov eax, [r13 + NI_w]
-    mov ecx, [r13 + NI_h]
+    mov eax, [r13 + NBI_w]
+    mov ecx, [r13 + NBI_h]
     test eax, eax
     jnz 31f
     mov eax, [rsp + IMG_w]
@@ -665,7 +665,7 @@ FN nb_ou_image
     xor edx, edx
     div dword ptr [rsp + IMG_w]
     xchg eax, ecx
-    mov eax, [r13 + NI_w]
+    mov eax, [r13 + NBI_w]
 32: mov [rsp + 24], ecx
     mov edi, eax
     call sc
@@ -697,17 +697,17 @@ FN nb_ou_image
     mov ecx, r14d
     mov r8d, r15d
     call nb_scale
-    mov [rbx + OU_img], rax
+    mov [rbx + NBO_img], rax
     lea rdi, [rsp]
     call image_free
-    cmp qword ptr [rbx + OU_img], 0
+    cmp qword ptr [rbx + NBO_img], 0
     je 6f
-    mov [rbx + OU_iw], r14d
-    mov [rbx + OU_ih], r15d
-    mov [rbx + OU_ikey], r12d
+    mov [rbx + NBO_iw], r14d
+    mov [rbx + NBO_ih], r15d
+    mov [rbx + NBO_ikey], r12d
 7:  mov eax, 1
     EPILOGUE
-6:  mov dword ptr [rbx + OU_ierr], 1
+6:  mov dword ptr [rbx + NBO_ierr], 1
 8:  xor eax, eax
     EPILOGUE
 
@@ -847,12 +847,12 @@ FN nb_ou_draw
     call nb_ou_height
     mov [rsp + 16], eax         # h
     # errors and stderr: a tint and a bar at the left
-    mov eax, [rbx + OU_kind]
+    mov eax, [rbx + NBO_kind]
     xor r12d, r12d
-    cmp eax, OUK_ERROR
+    cmp eax, NBOK_ERROR
     jne 1f
     COLOR r12d, T_ERROR
-1:  cmp eax, OUK_STDERR
+1:  cmp eax, NBOK_STDERR
     jne 2f
     COLOR r12d, T_WARNING
 2:  test r12d, r12d
@@ -872,14 +872,14 @@ FN nb_ou_draw
     mov ecx, [rsp + 16]
     mov r8d, r12d
     call gfx_fill
-3:  mov rax, [rbx + OU_show]
+3:  mov rax, [rbx + NBO_show]
     test rax, rax
     js .Lod_none
-    imul rax, rax, NI_SIZE
-    add rax, [rbx + OU_items + VEC_ptr]
+    imul rax, rax, NBI_SIZE
+    add rax, [rbx + NBO_items + VEC_ptr]
     mov r13, rax
-    mov eax, [r13 + NI_type]
-    cmp eax, NIT_ANSI
+    mov eax, [r13 + NBI_type]
+    cmp eax, NBIT_ANSI
     ja .Lod_image
     # text
     mov eax, [rsp]
@@ -893,11 +893,11 @@ FN nb_ou_draw
     mov edi, [rsp + 8]
     call ou_text_cols
     mov edx, eax
-    mov rdi, [r13 + NI_data + SB_ptr]
-    mov rsi, [r13 + NI_data + SB_len]
+    mov rdi, [r13 + NBI_data + SB_ptr]
+    mov rsi, [r13 + NBI_data + SB_len]
     mov ecx, 1
     xor r8d, r8d
-    cmp dword ptr [r13 + NI_type], NIT_ANSI
+    cmp dword ptr [r13 + NBI_type], NBIT_ANSI
     sete r8b
     call nb_tx_walk
     mov [rsp + 20], eax         # rows
@@ -907,7 +907,7 @@ FN nb_ou_draw
     lea rdi, [rip + tmp]
     call sb_clear
     mov esi, [rip + tx_lines]
-    mov rax, [rbx + OU_lines]
+    mov rax, [rbx + NBO_lines]
     sub rax, rsi
     jle 31f
     lea rdi, [rip + tmp]
@@ -976,9 +976,9 @@ FN nb_ou_draw
     add edi, [rip + g_mt + 4*MI_8]
     mov esi, [rsp + 4]
     add esi, [rip + g_mt + 4*MI_4]
-    mov rdx, [rbx + OU_img]
-    mov ecx, [rbx + OU_iw]
-    mov r8d, [rbx + OU_ih]
+    mov rdx, [rbx + NBO_img]
+    mov ecx, [rbx + NBO_iw]
+    mov r8d, [rbx + NBO_ih]
     call gfx_blit
     jmp 9f
 .Lod_none:
@@ -988,13 +988,13 @@ FN nb_ou_draw
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lnot_shown]
     call sb_push_cstr
-    cmp qword ptr [rbx + OU_items + VEC_len], 0
+    cmp qword ptr [rbx + NBO_items + VEC_len], 0
     je 7f
-    mov rax, [rbx + OU_items + VEC_ptr]
-    mov rsi, [rax + NI_name]
+    mov rax, [rbx + NBO_items + VEC_ptr]
+    mov rsi, [rax + NBI_name]
     test rsi, rsi
     jnz 6f
-    mov ecx, [rax + NI_type]
+    mov ecx, [rax + NBI_type]
     dec ecx
     js 7f
     lea rax, [rip + nb_nit_names]
@@ -1020,16 +1020,16 @@ FN nb_ou_draw
 FN nb_output_tab
     PROLOGUE
     mov rbx, rdi
-    mov rax, [rbx + OU_show]
+    mov rax, [rbx + NBO_show]
     test rax, rax
     js 9f
-    imul rax, rax, NI_SIZE
-    add rax, [rbx + OU_items + VEC_ptr]
+    imul rax, rax, NBI_SIZE
+    add rax, [rbx + NBO_items + VEC_ptr]
     mov r12, rax
     lea rdi, [rip + tmp]
     call sb_clear
-    mov rdi, [r12 + NI_data + SB_ptr]
-    mov rsi, [r12 + NI_data + SB_len]
+    mov rdi, [r12 + NBI_data + SB_ptr]
+    mov rsi, [r12 + NBI_data + SB_len]
     lea rdx, [rip + tmp]
     call nb_strip
     call doc_new
