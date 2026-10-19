@@ -352,6 +352,25 @@ class Testing(unittest.TestCase):
         self.assertIn(' line=10 col=5 ', states[0])
         self.assertIn(' line=13 col=1 ', states[1])
 
+    def test_the_status_bar_item_counts_runs_then_results_and_shows_testing(self):
+        out = self.run_editor(['wait 200', 'print-test-status', *EXPAND, 'print-test-status', 'cmd test_run_all',
+                               'wait 300', 'print-test-status', 'cmd test_cancel', 'wait-tests', 'wait 100',
+                               'print-test-status'], mode='slow')
+        status = [l for l in out if l.startswith('test-status')]
+        self.assertEqual(status[:2], ['test-status none'] * 2)
+        self.assertTrue(status[2].endswith(' text=Testing 0/3'), status)
+        self.assertTrue(status[3].endswith(' text=passed=0 failed=0'), status)
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 100', 'print-test-status',
+                               'key Escape', 'print-sidebar'])
+        status = [l for l in out if l.startswith('test-status')][-1]
+        self.assertTrue(status.endswith(' text=passed=1 failed=1'), status)
+        f = dict(kv.split('=', 1) for kv in status.split(' ')[1:5])
+        x, y = int(f['x']) + int(f['w']) // 2, int(f['y']) + int(f['h']) // 2
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 100', 'print-sidebar',
+                               'move %d %d' % (x, y), 'click %d %d' % (x, y), 'wait 100', 'print-sidebar'])
+        bars = [l for l in out if l.startswith('testing title=Testing')]
+        self.assertTrue(bars and ' visible' in bars[-1], out)
+
     # --- the Testing section ---
 
     def section(self, out):

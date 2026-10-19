@@ -560,7 +560,7 @@ test_ctl:
     .quad .Lc_print, testctl_print, .Lc_result, testctl_result
     .quad .Lc_runs, testctl_runs, .Lc_coverage, testctl_coverage
     .quad .Lc_view, testctl_print_view, .Lc_gutter, testctl_gutter
-    .quad .Lc_gutter_click, testctl_gutter_click
+    .quad .Lc_gutter_click, testctl_gutter_click, .Lc_status, testctl_status
     .quad 0, 0
 .Lc_select: .asciz "test-select"
 .Lc_expand: .asciz "test-expand"
@@ -575,6 +575,7 @@ test_ctl:
 .Lc_view: .asciz "print-testing"
 .Lc_gutter: .asciz "print-gutter"
 .Lc_gutter_click: .asciz "test-gutter"
+.Lc_status: .asciz "print-test-status"
 .text
 
 testctl_expand_open:
@@ -2313,3 +2314,316 @@ tv_menu_items:
     .quad .Ltm_output, tv_m_output, 0, 0
 tv_place_ops: .quad tv_draw, tv_keys, 0, 0, tv_header, 0
 tv_tree_ops: .quad tv_activate, tv_expand, tv_select, 0, tv_menu, 0, tv_load, tv_load
+
+# ---------------- the status bar item ----------------
+# "Testing N/M" while runs are active (N of their M results finished), then the passed and failed
+# tests of every controller (a check and a cross with their counts); nothing before the session's
+# first run. A click shows Testing.
+
+.equ ID_TV_STATUS, 0x5e8010
+
+.bss
+.p2align 3
+st_lab: .zero SB_SIZE           # the text drawn ("Testing 3/5"), or the counts as text for print
+st_cnt: .zero 4*TSS_COUNT
+st_run: .zero 4*TSS_COUNT
+st_x: .long 0                   # where it was drawn last (print-test-status), w 0 for not drawn
+st_y: .long 0
+st_w: .long 0
+st_h: .long 0
+st_pass: .long 0
+st_fail: .long 0
+.text
+
+# st_text(): st_lab for the state now: eax 1 while runs are active, 0 after, -1 before the first run
+st_text:
+    PROLOGUE
+    lea rdi, [rip + st_lab]
+    call sb_clear
+    cmp dword ptr [rip + g_ts_ran], 0
+    je 8f
+    xor r12d, r12d              # finished
+    xor r13d, r13d              # all
+    xor r14d, r14d              # active runs
+    lea rbx, [rip + g_ts_runs]
+    xor r15d, r15d
+1:  cmp qword ptr [rbx + TSR_ext], 0
+    je 3f
+    cmp dword ptr [rbx + TSR_state], TSRS_QUEUED
+    je 2f
+    cmp dword ptr [rbx + TSR_state], TSRS_RUNNING
+    jne 3f
+2:  inc r14d
+    mov rdi, rbx
+    lea rsi, [rip + st_run]
+    call testmodel_counts
+    lea rcx, [rip + st_run]
+    xor edx, edx
+21: mov eax, [rcx + rdx*4]
+    add r13d, eax
+    cmp edx, TSS_SKIPPED
+    jb 22f
+    cmp edx, TSS_ERRORED
+    ja 22f
+    add r12d, eax
+22: inc edx
+    cmp edx, TSS_COUNT
+    jb 21b
+3:  add rbx, TSR_SIZE
+    inc r15d
+    cmp r15d, TS_RUNS_MAX
+    jb 1b
+    test r14d, r14d
+    jz 5f
+    lea rdi, [rip + st_lab]
+    lea rsi, [rip + .Ls_testing]
+    call sb_push_cstr
+    lea rdi, [rip + st_lab]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + st_lab]
+    mov esi, r13d
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    xor esi, esi
+    call sb_push_byte
+    mov eax, 1
+    EPILOGUE
+5:  lea rdi, [rip + st_cnt]
+    call testmodel_tally
+    lea rcx, [rip + st_cnt]
+    mov eax, [rcx + 4*TSS_PASSED]
+    mov [rip + st_pass], eax
+    mov eax, [rcx + 4*TSS_FAILED]
+    add eax, [rcx + 4*TSS_ERRORED]
+    mov [rip + st_fail], eax
+    xor eax, eax
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
+
+# testview_status_item(x, y, h) -> eax the x after it (the status bar calls it)
+FN testview_status_item
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov dword ptr [rip + st_w], 0
+    call st_text
+    test eax, eax
+    js 9f
+    mov [rsp + 12], eax
+    M ebx, MI_8                 # the padding
+    lea r15d, [rbx + rbx]       # the width
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rip + st_lab + SB_ptr]
+    mov rdx, [rip + st_lab + SB_len]
+    dec rdx
+    call text_width
+    add r15d, eax
+    jmp 2f
+1:  # two icons and their counts
+    lea rdi, [rip + st_lab]
+    mov esi, [rip + st_pass]
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    call sb_z_tv
+    lea rdi, [rip + g_face_small]
+    mov rsi, rax
+    mov rdx, [rip + st_lab + SB_len]
+    call text_width
+    add r15d, eax
+    lea rdi, [rip + st_lab]
+    call sb_clear
+    lea rdi, [rip + st_lab]
+    mov esi, [rip + st_fail]
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    call sb_z_tv
+    lea rdi, [rip + g_face_small]
+    mov rsi, rax
+    mov rdx, [rip + st_lab + SB_len]
+    call text_width
+    add r15d, eax
+    M eax, MI_ICON
+    lea r15d, [r15 + rax*2]
+    M eax, MI_4
+    lea r15d, [r15 + rax*2]     # icon to count
+    add r15d, ebx               # between the two
+2:  mov eax, [rsp]
+    mov [rip + st_x], eax
+    mov eax, [rsp + 4]
+    mov [rip + st_y], eax
+    mov [rip + st_w], r15d
+    mov eax, [rsp + 8]
+    mov [rip + st_h], eax
+    mov edi, ID_TV_STATUS
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, r15d
+    mov r8d, [rsp + 8]
+    call ui_btn
+    mov [rsp + 16], eax
+    test eax, UB_HOVER
+    jz 3f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, r15d
+    mov ecx, [rsp + 8]
+    COLOR r8d, T_HOVER
+    call gfx_fill
+3:  mov r12d, [rsp]
+    add r12d, ebx               # the pen
+    cmp dword ptr [rsp + 12], 0
+    je 4f
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8, [rip + st_lab + SB_ptr]
+    COLOR r9d, T_ACCENT
+    call ui_text_c
+    jmp 7f
+4:  mov edi, IC_CHECK
+    mov esi, r12d
+    mov edx, [rip + st_pass]
+    COLOR ecx, T_SUCCESS
+    call st_icon_count
+    lea r12d, [rax + rbx]
+    mov edi, IC_CLOSE
+    mov esi, r12d
+    mov edx, [rip + st_fail]
+    COLOR ecx, T_ERROR
+    call st_icon_count
+7:  test dword ptr [rsp + 16], UB_CLICK
+    jz 8f
+    call cmd_testing
+8:  mov eax, [rsp]
+    add eax, r15d
+    EPILOGUE
+9:  mov eax, [rsp]
+    EPILOGUE
+
+# st_icon_count(icon, x, count, argb) -> eax the x after them: the icon in that color, then the count
+st_icon_count:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    M eax, MI_ICON
+    mov ecx, [rip + st_h]
+    sub ecx, eax
+    sar ecx, 1
+    mov edx, [rip + st_y]
+    add edx, ecx
+    mov edi, ebx
+    mov esi, r12d
+    mov ecx, eax
+    mov r8d, r14d
+    call icon_draw
+    M eax, MI_ICON
+    add r12d, eax
+    M eax, MI_4
+    add r12d, eax
+    lea rdi, [rip + st_lab]
+    call sb_clear
+    lea rdi, [rip + st_lab]
+    mov esi, r13d
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    call sb_z_tv
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    mov edx, [rip + st_y]
+    mov ecx, [rip + st_h]
+    mov r8, rax
+    COLOR r9d, T_FG
+    call ui_text_c
+    EPILOGUE
+
+# sb_z_tv(sb) -> rax its bytes with a NUL after them (not counted)
+sb_z_tv:
+    push rbx
+    mov rbx, rdi
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rbx + SB_len]
+    mov rax, [rbx + SB_ptr]
+    pop rbx
+    ret
+
+# testctl_status(sb, rest, len): print-test-status: "test-status none", or "test-status x= y= w= h=
+#   text=Testing N/M" / "text=passed=P failed=F" as the bar drew it last
+testctl_status:
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Ls_status]
+    call sb_push_cstr
+    cmp dword ptr [rip + st_w], 0
+    jne 1f
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_none]
+    call sb_push_cstr
+    jmp 8f
+1:  lea r12, [rip + .Ls_fields]
+    lea r13, [rip + st_x]
+    xor r14d, r14d
+2:  mov rdi, rbx
+    mov rsi, r12
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r13 + r14*4]
+    call sb_push_u64
+    mov rdi, r12
+    call strlen
+    lea r12, [r12 + rax + 1]
+    inc r14d
+    cmp r14d, 4
+    jb 2b
+    call st_text
+    mov r12d, eax
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_text]
+    call sb_push_cstr
+    test r12d, r12d
+    jz 3f
+    mov rdi, rbx
+    mov rsi, [rip + st_lab + SB_ptr]
+    call sb_push_cstr
+    jmp 8f
+3:  mov rdi, rbx
+    lea rsi, [rip + .Ls_passed]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [rip + st_pass]
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_failed]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [rip + st_fail]
+    call sb_push_u64
+8:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Ls_testing: .asciz "Testing "
+.Ls_status: .asciz "test-status"
+.Ls_none: .asciz " none"
+.Ls_fields: .asciz " x="
+            .asciz " y="
+            .asciz " w="
+            .asciz " h="
+.Ls_text: .asciz " text="
+.Ls_passed: .asciz "passed="
+.Ls_failed: .asciz " failed="
+.text

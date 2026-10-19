@@ -6,6 +6,9 @@
 .include "rhun.inc"
 
 .bss
+.p2align 2
+.globl g_ts_ran
+g_ts_ran: .long 0             # 1 once the session had a run (the status bar item shows)
 .p2align 3
 .globl g_ts_ctrls, g_ts_runs, g_ts_dirty, g_ts_runnum, g_ts_items_all, g_ts_bytes
 g_ts_ctrls: .zero TSC_SIZE * TS_CTRL_MAX
@@ -1657,7 +1660,8 @@ FN testmodel_run_new
     mov r13, rax
     mov rdi, rax
     call run_free
-3:  mov [r13 + TSR_ext], rbx
+3:  mov dword ptr [rip + g_ts_ran], 1
+    mov [r13 + TSR_ext], rbx
     inc qword ptr [rip + g_ts_runnum]
     mov rax, [rip + g_ts_runnum]
     mov [r13 + TSR_num], rax
