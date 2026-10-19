@@ -13,7 +13,6 @@
 .ifndef MACOS
 .ifndef WINDOWS
 
-.equ SYS_getuid, 102
 .equ SS_MSG_MAX, 1 << 20        # a message from the bus, at most
 .equ SS_WAIT_MS, 2500           # connecting: the bus and the keyring may be starting
 # what the request waits for (ss_step)
@@ -83,19 +82,19 @@ FN ss_start
     mov dword ptr [rip + ss_state], -1
     jmp 8f
 2:  mov [rip + ss_sr], rbx
-    mov qword ptr [rbx + SR_outlen], 0
-    mov dword ptr [rbx + SR_status], SS_REFUSED
-    mov eax, [rbx + SR_op]
-    cmp eax, SO_SET
+    mov qword ptr [rbx + SECR_outlen], 0
+    mov dword ptr [rbx + SECR_status], SECS_REFUSED
+    mov eax, [rbx + SECR_op]
+    cmp eax, SECO_SET
     je 3f
     # get and delete look for the key's item; keys and clear for all of the extension's
     mov edi, ST_SEARCH_GET
-    cmp eax, SO_GET
+    cmp eax, SECO_GET
     je 21f
     mov edi, ST_SEARCH_DEL
-    cmp eax, SO_DELETE
+    cmp eax, SECO_DELETE
     je 21f
-    cmp eax, SO_CLEAR
+    cmp eax, SECO_CLEAR
     je 22f
     mov edi, ST_SEARCH_KEYS
 22: xor esi, esi                # without the account
@@ -434,7 +433,7 @@ b_array_end:
     mov [rdi], ecx
     ret
 
-# b_attrs(with account): a{ss} {service: SR_service, account: SR_key}
+# b_attrs(with account): a{ss} {service: SECR_service, account: SECR_key}
 b_attrs:
     PROLOGUE
     mov r12d, edi
@@ -447,7 +446,7 @@ b_attrs:
     call b_pad
     lea rdi, [rip + .La_service]
     call b_str
-    mov rdi, [rbx + SR_service]
+    mov rdi, [rbx + SECR_service]
     call b_str
     test r12d, r12d
     jz 1f
@@ -455,7 +454,7 @@ b_attrs:
     call b_pad
     lea rdi, [rip + .La_account]
     call b_str
-    mov rdi, [rbx + SR_key]
+    mov rdi, [rbx + SECR_key]
     call b_str
 1:  mov rdi, r13
     mov rsi, r14
@@ -677,13 +676,13 @@ ss_create:
     lea rdi, [rip + ss_tmp]
     call sb_clear
     lea rdi, [rip + ss_tmp]
-    mov rsi, [rbx + SR_service]
+    mov rsi, [rbx + SECR_service]
     call sb_push_cstr
     lea rdi, [rip + ss_tmp]
     mov esi, ' '
     call sb_push_byte
     lea rdi, [rip + ss_tmp]
-    mov rsi, [rbx + SR_key]
+    mov rsi, [rbx + SECR_key]
     call sb_push_cstr
     lea rdi, [rip + ss_tmp]
     xor esi, esi
@@ -708,8 +707,8 @@ ss_create:
     call b_str
     xor edi, edi                    # no parameters ("plain")
     call b_u32
-    mov rdi, [rbx + SR_val]
-    mov rsi, [rbx + SR_len]
+    mov rdi, [rbx + SECR_val]
+    mov rsi, [rbx + SECR_len]
     call b_ay
     lea rdi, [rip + .Ltext_plain]
     call b_str
@@ -754,7 +753,7 @@ ss_finish:
     mov rbx, [rip + ss_sr]
     test rbx, rbx
     jz 9f
-    mov [rbx + SR_status], edi
+    mov [rbx + SECR_status], edi
     mov qword ptr [rip + ss_sr], 0
     mov dword ptr [rip + ss_step], 0
     mov dword ptr [rip + ss_wait], 0
@@ -785,7 +784,7 @@ ss_readable:
     call ss_consume
     jmp 2b
 8:  call ss_close               # the bus or the keyring went away: the request is refused
-    mov edi, SS_REFUSED
+    mov edi, SECS_REFUSED
     call ss_finish
 9:  EPILOGUE
 
@@ -1011,7 +1010,7 @@ ss_dispatch:
     jne 9f
     cmp eax, MT_ERROR
     jne 2f
-    mov edi, SS_REFUSED             # locked, no such object, denied
+    mov edi, SECS_REFUSED             # locked, no such object, denied
     call ss_finish
     jmp 9f
 2:  mov r14, [rip + m_body]
@@ -1042,7 +1041,7 @@ ss_dispatch:
     je .Ld_attrs
     jmp 9f
 .Ld_bad:
-    mov edi, SS_REFUSED
+    mov edi, SECS_REFUSED
     call ss_finish
 9:  EPILOGUE
 
@@ -1083,7 +1082,7 @@ ss_dispatch:
     jc .Ld_bad
     test eax, eax
     jnz 2f
-    mov edi, SS_NONE
+    mov edi, SECS_NONE
     call ss_finish
     jmp 9b
 1:  mov rdi, [rip + ss_items + SB_ptr]
@@ -1129,11 +1128,11 @@ ss_dispatch:
     cmp rdx, SECRET_VALUE_MAX
     ja .Ld_bad
     mov r12, [rip + ss_sr]
-    mov [r12 + SR_outlen], rdx
-    lea rdi, [r12 + SR_buf]
+    mov [r12 + SECR_outlen], rdx
+    lea rdi, [r12 + SECR_buf]
     mov rsi, rax
     call memcpy
-    mov edi, SS_OK
+    mov edi, SECS_OK
     call ss_finish
     jmp 9b
 
@@ -1165,7 +1164,7 @@ ss_dispatch:
     jc .Ld_bad
     add eax, r12d
     jnz 1f
-    mov edi, SS_TOOBIG
+    mov edi, SECS_TOOBIG
     call ss_finish
     jmp 9b
 1:  call ss_create
@@ -1181,7 +1180,7 @@ ss_dispatch:
     jne 1f
     cmp byte ptr [rax], '/'
     jne 1f
-    mov edi, SS_OK
+    mov edi, SECS_OK
     call ss_finish
     jmp 9b
 1:  mov byte ptr [rax + rdx], 0
@@ -1219,7 +1218,7 @@ ss_dispatch:
     mov rdi, rax
     call ss_delete_item
     jmp 9b
-1:  mov edi, SS_OK
+1:  mov edi, SECS_OK
     call ss_finish
     jmp 9b
 .Ld_attrs:
@@ -1255,21 +1254,21 @@ ss_dispatch:
     mov rsi, [rsp + 16]
     mov rdx, [rsp + 24]
     mov r12, [rip + ss_sr]
-    mov rax, [r12 + SR_outlen]
+    mov rax, [r12 + SECR_outlen]
     lea rcx, [rax + rdx + 1]
     cmp rcx, SECRET_BUF
     ja .Ld_next_attrs
-    lea rdi, [r12 + SR_buf + rax]
+    lea rdi, [r12 + SECR_buf + rax]
     push rdx
     push rdx
     call memcpy
     pop rdx
     pop rdx
-    mov rax, [r12 + SR_outlen]
+    mov rax, [r12 + SECR_outlen]
     add rax, rdx
-    mov byte ptr [r12 + SR_buf + rax], 10
+    mov byte ptr [r12 + SECR_buf + rax], 10
     inc rax
-    mov [r12 + SR_outlen], rax
+    mov [r12 + SECR_outlen], rax
 .Ld_next_attrs:
     call next_item
     test rax, rax
@@ -1277,7 +1276,7 @@ ss_dispatch:
     mov rdi, rax
     call ss_get_attrs
     jmp 9b
-1:  mov edi, SS_OK
+1:  mov edi, SECS_OK
     call ss_finish
     jmp 9b
 
@@ -1310,7 +1309,7 @@ ss_continue:
     je 2f
     cmp eax, ST_UNLOCK_DEL
     je 3f
-    mov edi, SS_OK                  # CreateItem's prompt: stored
+    mov edi, SECS_OK                  # CreateItem's prompt: stored
     call ss_finish
     EPILOGUE
 1:  mov rdi, [rip + ss_items + SB_ptr]
@@ -1326,7 +1325,7 @@ ss_continue:
     mov rdi, rax
     call ss_delete_item
     EPILOGUE
-4:  mov edi, SS_OK
+4:  mov edi, SECS_OK
     call ss_finish
     EPILOGUE
 

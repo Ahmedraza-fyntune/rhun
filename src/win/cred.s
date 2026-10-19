@@ -19,22 +19,22 @@
 
 .text
 
-# win_cred_op(sr): the request, answered in SR_status and SR_buf
+# win_cred_op(sr): the request, answered in SECR_status and SECR_buf
 FN win_cred_op
     PROLOGUE CF_SIZE
     mov rbx, rdi
-    mov dword ptr [rbx + SR_status], SS_REFUSED
-    mov qword ptr [rbx + SR_outlen], 0
-    mov eax, [rbx + SR_op]
-    cmp eax, SO_GET
+    mov dword ptr [rbx + SECR_status], SECS_REFUSED
+    mov qword ptr [rbx + SECR_outlen], 0
+    mov eax, [rbx + SECR_op]
+    cmp eax, SECO_GET
     je .Lco_get
-    cmp eax, SO_SET
+    cmp eax, SECO_SET
     je .Lco_set
-    cmp eax, SO_DELETE
+    cmp eax, SECO_DELETE
     je .Lco_delete
-    cmp eax, SO_KEYS
+    cmp eax, SECO_KEYS
     je .Lco_keys
-    cmp eax, SO_CLEAR
+    cmp eax, SECO_CLEAR
     je .Lco_clear
     EPILOGUE
 
@@ -57,19 +57,19 @@ FN win_cred_op
     API GetLastError
     cmp eax, ERROR_NOT_FOUND
     jne 9f
-    mov dword ptr [rbx + SR_status], SS_NONE
+    mov dword ptr [rbx + SECR_status], SECS_NONE
     EPILOGUE
 2:  mov r13, [rsp + CF_PTR]
     mov r14d, [r13 + 32]        # CredentialBlobSize
-    mov rax, [rbx + SR_outlen]
+    mov rax, [rbx + SECR_outlen]
     lea rcx, [rax + r14]
     cmp rcx, SECRET_VALUE_MAX
     ja 3f
-    lea rdi, [rbx + SR_buf + rax]
+    lea rdi, [rbx + SECR_buf + rax]
     mov rsi, [r13 + 40]         # CredentialBlob
     mov rdx, r14
     call memcpy
-    add [rbx + SR_outlen], r14
+    add [rbx + SECR_outlen], r14
 3:  mov rcx, r13
     API CredFree
     cmp r14d, CRED_BLOB_MAX
@@ -77,7 +77,7 @@ FN win_cred_op
     inc r12d
     cmp r12d, CRED_PARTS
     jbe 1b
-8:  mov dword ptr [rbx + SR_status], SS_OK
+8:  mov dword ptr [rbx + SECR_status], SECS_OK
 9:  EPILOGUE
 
 .Lco_set:
@@ -103,7 +103,7 @@ FN win_cred_op
     call key_count
     cmp eax, SECRET_KEYS_MAX
     jb 2f
-    mov dword ptr [rbx + SR_status], SS_TOOBIG
+    mov dword ptr [rbx + SECR_status], SECS_TOOBIG
     EPILOGUE
 2:  xor r12d, r12d              # bytes written
     mov r13d, 1                 # the part
@@ -119,13 +119,13 @@ FN win_cred_op
     mov dword ptr [rsp + CF_CRED + 4], CRED_TYPE_GENERIC
     lea rax, [rsp + CF_WIDE]
     mov [rsp + CF_CRED + 8], rax            # TargetName
-    mov r14, [rbx + SR_len]
+    mov r14, [rbx + SECR_len]
     sub r14, r12
     cmp r14, CRED_BLOB_MAX
     jbe 4f
     mov r14d, CRED_BLOB_MAX
 4:  mov [rsp + CF_CRED + 32], r14d          # CredentialBlobSize
-    mov rax, [rbx + SR_val]
+    mov rax, [rbx + SECR_val]
     add rax, r12
     mov [rsp + CF_CRED + 40], rax           # CredentialBlob
     mov dword ptr [rsp + CF_CRED + 48], CRED_PERSIST_LOCAL_MACHINE
@@ -136,7 +136,7 @@ FN win_cred_op
     jz 9b
     add r12, r14
     inc r13d
-    cmp r12, [rbx + SR_len]
+    cmp r12, [rbx + SECR_len]
     jb 3b
     # the parts a longer value left behind go
 5:  cmp r13d, CRED_PARTS
@@ -179,7 +179,7 @@ FN win_cred_op
     test eax, eax
     jz 1b
     # past "SERVICE/"; a part ("#2") is not a key
-    mov rdi, [rbx + SR_service]
+    mov rdi, [rbx + SECR_service]
     call strlen
     lea r14, [rsp + CF_UTF8 + rax + 1]
     mov rdi, r14
@@ -194,19 +194,19 @@ FN win_cred_op
     je 1b
     inc rcx
     jmp 2b
-3:  mov rax, [rbx + SR_outlen]
+3:  mov rax, [rbx + SECR_outlen]
     lea rcx, [rax + r15 + 1]
     cmp rcx, SECRET_BUF
     ja 1b
-    lea rdi, [rbx + SR_buf + rax]
+    lea rdi, [rbx + SECR_buf + rax]
     mov rsi, r14
     mov rdx, r15
     call memcpy
-    mov rax, [rbx + SR_outlen]
+    mov rax, [rbx + SECR_outlen]
     add rax, r15
-    mov byte ptr [rbx + SR_buf + rax], 10
+    mov byte ptr [rbx + SECR_buf + rax], 10
     inc rax
-    mov [rbx + SR_outlen], rax
+    mov [rbx + SECR_outlen], rax
     jmp 1b
 7:  mov rcx, [rip + en_array]
     API CredFree
@@ -242,11 +242,11 @@ target_name:
     mov r13, rdx
     mov r14, rcx
     mov rdi, r13
-    mov rsi, [rbx + SR_service]
+    mov rsi, [rbx + SECR_service]
     call cstr_copy
     mov byte ptr [rax], '/'
     lea rdi, [rax + 1]
-    mov rsi, [rbx + SR_key]
+    mov rsi, [rbx + SECR_key]
     call cstr_copy
     cmp r12d, 1
     je 1f
@@ -296,7 +296,7 @@ enumerate:
     mov r12, rsi
     mov r13, rdx
     mov rdi, r12
-    mov rsi, [rbx + SR_service]
+    mov rsi, [rbx + SECR_service]
     call cstr_copy
     mov byte ptr [rax], '/'
     mov byte ptr [rax + 1], '*'

@@ -6,28 +6,28 @@
 // local build may be asked again after a rebuild.
 .include "mac.inc"
 
-// the secret request's fields (SR_* in src/rhun.inc)
-.equ SR_op, 0
-.equ SR_status, 4
-.equ SR_fd, 8
-.equ SR_service, 16
-.equ SR_key, 24
-.equ SR_val, 32
-.equ SR_len, 40
-.equ SR_outlen, 48
-.equ SR_buf, 88
-.equ SECRET_BUF, 12288
-.equ SECRET_VALUE_MAX, 8192
-.equ SECRET_KEYS_MAX, 64
-.equ SO_GET, 1
-.equ SO_SET, 2
-.equ SO_DELETE, 3
-.equ SO_KEYS, 4
-.equ SO_CLEAR, 5
-.equ SS_OK, 0
-.equ SS_NONE, 1
-.equ SS_REFUSED, -1
-.equ SS_TOOBIG, -3
+// the secret request's fields: SECR_* of the shared definitions (keep them equal)
+.equ KC_SR_op, 0
+.equ KC_SR_status, 4
+.equ KC_SR_fd, 8
+.equ KC_SR_service, 16
+.equ KC_SR_key, 24
+.equ KC_SR_val, 32
+.equ KC_SR_len, 40
+.equ KC_SR_outlen, 48
+.equ KC_SR_buf, 88
+.equ KC_SECRET_BUF, 12288
+.equ KC_SECRET_VALUE_MAX, 8192
+.equ KC_SECRET_KEYS_MAX, 64
+.equ KC_SO_GET, 1
+.equ KC_SO_SET, 2
+.equ KC_SO_DELETE, 3
+.equ KC_SO_KEYS, 4
+.equ KC_SO_CLEAR, 5
+.equ KC_SS_OK, 0
+.equ KC_SS_NONE, 1
+.equ KC_SS_REFUSED, -1
+.equ KC_SS_TOOBIG, -3
 .equ ERR_NOT_FOUND, -25300          // errSecItemNotFound
 .equ UTF8, 0x08000100               // kCFStringEncodingUTF8
 
@@ -60,9 +60,9 @@ FN mac_secret_start
 kc_worker:
     ENTER 1184
     mov x19, x0
-    str xzr, [x19, #SR_outlen]
-    mov w9, #SS_REFUSED
-    str w9, [x19, #SR_status]
+    str xzr, [x19, #KC_SR_outlen]
+    mov w9, #KC_SS_REFUSED
+    str w9, [x19, #KC_SR_status]
     // no keychain folder in this HOME (a test's own HOME): the keychain is not asked, because it
     // would wait for a "keychain not found" dialog
     mov x20, #0
@@ -87,19 +87,19 @@ kc_worker:
     mov w1, #0
     bl _access
     cbz w0, 01f
-0:  mov w9, #-2                     // SS_NOSTORE
-    str w9, [x19, #SR_status]
+0:  mov w9, #-2                     // KC_SS_NOSTORE
+    str w9, [x19, #KC_SR_status]
     b 9f
 01:
     // the service and the account as CFStrings
     mov x0, #0
-    ldr x1, [x19, #SR_service]
+    ldr x1, [x19, #KC_SR_service]
     mov w2, #(UTF8 & 0xffff)
     movk w2, #(UTF8 >> 16), lsl #16
     bl _CFStringCreateWithCString
     mov x20, x0                     // service
     mov x21, #0                     // account
-    ldr x1, [x19, #SR_key]
+    ldr x1, [x19, #KC_SR_key]
     cbz x1, 1f
     mov x0, #0
     mov w2, #(UTF8 & 0xffff)
@@ -107,20 +107,20 @@ kc_worker:
     bl _CFStringCreateWithCString
     mov x21, x0
 1:  cbz x20, 9f
-    ldr w9, [x19, #SR_op]
-    cmp w9, #SO_GET
+    ldr w9, [x19, #KC_SR_op]
+    cmp w9, #KC_SO_GET
     b.eq kc_get
-    cmp w9, #SO_SET
+    cmp w9, #KC_SO_SET
     b.eq kc_set
-    cmp w9, #SO_DELETE
+    cmp w9, #KC_SO_DELETE
     b.eq kc_delete
-    cmp w9, #SO_KEYS
+    cmp w9, #KC_SO_KEYS
     b.eq kc_keys
-    cmp w9, #SO_CLEAR
+    cmp w9, #KC_SO_CLEAR
     b.eq kc_clear
     b 8f
 
-// get: the item's data into SR_buf
+// get: the item's data into KC_SR_buf
 kc_get:
     mov w3, #2
     GOTVAL x9, _kSecReturnData
@@ -143,33 +143,33 @@ kc_get:
     movk w10, #0xffff, lsl #16
     cmp w23, w10
     b.ne 8f
-    mov w9, #SS_NONE
-    str w9, [x19, #SR_status]
+    mov w9, #KC_SS_NONE
+    str w9, [x19, #KC_SR_status]
     b 8f
 2:  ldr x22, [sp, #64]
     mov x0, x22
     bl _CFDataGetLength
     mov x23, x0
-    cmp x23, #SECRET_VALUE_MAX
+    cmp x23, #KC_SECRET_VALUE_MAX
     b.ls 3f
-    mov x23, #SECRET_VALUE_MAX
+    mov x23, #KC_SECRET_VALUE_MAX
 3:  mov x0, x22
     bl _CFDataGetBytePtr
     mov x1, x0
-    add x0, x19, #SR_buf
+    add x0, x19, #KC_SR_buf
     mov x2, x23
     bl _memcpy
-    str x23, [x19, #SR_outlen]
+    str x23, [x19, #KC_SR_outlen]
     mov x0, x22
     bl _CFRelease
-    str wzr, [x19, #SR_status]
+    str wzr, [x19, #KC_SR_status]
     b 8f
 
-// set: update the item, or add it while the extension has fewer than SECRET_KEYS_MAX
+// set: update the item, or add it while the extension has fewer than KC_SECRET_KEYS_MAX
 kc_set:
     mov x0, #0
-    ldr x1, [x19, #SR_val]
-    ldr x2, [x19, #SR_len]
+    ldr x1, [x19, #KC_SR_val]
+    ldr x2, [x19, #KC_SR_len]
     bl _CFDataCreate
     mov x24, x0                     // the data
     cbz x24, 8f
@@ -201,10 +201,10 @@ kc_set:
     b.ne 6f
     // a new key: how many it has
     bl kc_count
-    cmp x0, #SECRET_KEYS_MAX
+    cmp x0, #KC_SECRET_KEYS_MAX
     b.lo 4f
-    mov w9, #SS_TOOBIG
-    str w9, [x19, #SR_status]
+    mov w9, #KC_SS_TOOBIG
+    str w9, [x19, #KC_SR_status]
     b 6f
 4:  GOTVAL x9, _kSecValueData
     stp x9, x24, [sp]
@@ -219,7 +219,7 @@ kc_set:
     mov x0, x22
     bl _CFRelease
     cbnz w23, 6f
-5:  str wzr, [x19, #SR_status]
+5:  str wzr, [x19, #KC_SR_status]
 6:  mov x0, x24
     bl _CFRelease
     b 8f
@@ -238,7 +238,7 @@ kc_delete:
     movk w10, #0xffff, lsl #16
     cmp w23, w10
     b.ne 8f
-1:  str wzr, [x19, #SR_status]
+1:  str wzr, [x19, #KC_SR_status]
     b 8f
 
 // clear: every item of the service (SecItemDelete again until none is left)
@@ -252,19 +252,19 @@ kc_clear:
     mov x0, x22
     bl _CFRelease
     add x26, x26, #1
-    cmp x26, #(SECRET_KEYS_MAX + 8)
+    cmp x26, #(KC_SECRET_KEYS_MAX + 8)
     b.hs 2f
     cbz w23, 1b
     mov w10, #(ERR_NOT_FOUND & 0xffff)
     movk w10, #0xffff, lsl #16
     cmp w23, w10
     b.ne 8f
-2:  str wzr, [x19, #SR_status]
+2:  str wzr, [x19, #KC_SR_status]
     b 8f
 
 // keys: each item's account, followed by LF
 kc_keys:
-    str wzr, [x19, #SR_status]
+    str wzr, [x19, #KC_SR_status]
     bl kc_list
     mov x22, x0
     cbz x22, 7f
@@ -281,28 +281,28 @@ kc_keys:
     GOTVAL x1, _kSecAttrAccount
     bl _CFDictionaryGetValue
     cbz x0, 1b
-    ldr x9, [x19, #SR_outlen]
-    mov x10, #(SECRET_BUF - 2)
+    ldr x9, [x19, #KC_SR_outlen]
+    mov x10, #(KC_SECRET_BUF - 2)
     sub x2, x10, x9
     cmp x2, #8
     b.lt 6f
-    add x1, x19, #SR_buf
+    add x1, x19, #KC_SR_buf
     add x1, x1, x9
     mov w3, #(UTF8 & 0xffff)
     movk w3, #(UTF8 >> 16), lsl #16
     bl _CFStringGetCString
     cbz w0, 1b
-    ldr x9, [x19, #SR_outlen]
-    add x0, x19, #SR_buf
+    ldr x9, [x19, #KC_SR_outlen]
+    add x0, x19, #KC_SR_buf
     add x0, x0, x9
     bl _strlen
-    ldr x9, [x19, #SR_outlen]
+    ldr x9, [x19, #KC_SR_outlen]
     add x9, x9, x0
-    add x10, x19, #SR_buf
+    add x10, x19, #KC_SR_buf
     mov w11, #10
     strb w11, [x10, x9]
     add x9, x9, #1
-    str x9, [x19, #SR_outlen]
+    str x9, [x19, #KC_SR_outlen]
     b 1b
 6:  mov x0, x22
     bl _CFRelease
@@ -316,7 +316,7 @@ kc_keys:
     mov x0, x21
     bl _CFRelease
 9:  strb wzr, [sp, #128]
-    ldr w0, [x19, #SR_fd]
+    ldr w0, [x19, #KC_SR_fd]
     add x1, sp, #128
     mov x2, #1
     bl _write
@@ -369,7 +369,7 @@ kc_query:
     ret
 
 // kc_list() -> x0 a CFArray of the service's items' attributes, or 0 (none, or refused: then
-// SR_status says so)
+// KC_SR_status says so)
 .p2align 2
 kc_list:
     stp x29, x30, [sp, #-16]!
@@ -401,8 +401,8 @@ kc_list:
     movk w10, #0xffff, lsl #16
     cmp w9, w10
     b.eq 9f
-    mov w9, #SS_REFUSED             // not a list: refused
-    str w9, [x19, #SR_status]
+    mov w9, #KC_SS_REFUSED             // not a list: refused
+    str w9, [x19, #KC_SR_status]
     ldp x21, x22, [sp, #48]
     mov sp, x29
     ldp x29, x30, [sp], #16

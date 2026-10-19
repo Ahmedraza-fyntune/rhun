@@ -22,16 +22,16 @@ FN main
     jb 0b
     xor eax, eax
     EPILOGUE
-1:  mov edi, SR_SIZE
+1:  mov edi, SECR_SIZE
     call mem_alloc
     mov [rip + sr], rax
     mov rbx, rax
     mov rdi, rax
     xor esi, esi
-    mov edx, SR_SIZE - SECRET_BUF
+    mov edx, SECR_SIZE - SECRET_BUF
     call memset
     lea rax, [rip + .Lservice]
-    mov [rbx + SR_service], rax
+    mov [rbx + SECR_service], rax
     # a value of BIG bytes: two credentials
     lea rdi, [rip + big]
     mov esi, 'z'
@@ -39,58 +39,58 @@ FN main
     call memset
     mov byte ptr [rip + big + BIG - 1], 'E'
     lea rax, [rip + .Ltoken]
-    mov [rbx + SR_key], rax
+    mov [rbx + SECR_key], rax
     lea rax, [rip + big]
-    mov [rbx + SR_val], rax
-    mov qword ptr [rbx + SR_len], BIG
-    mov edi, SO_SET
+    mov [rbx + SECR_val], rax
+    mov qword ptr [rbx + SECR_len], BIG
+    mov edi, SECO_SET
     call op
     jnz .Lfail_set
-    mov edi, SO_GET
+    mov edi, SECO_GET
     call op
     jnz .Lfail_get
-    cmp qword ptr [rbx + SR_outlen], BIG
+    cmp qword ptr [rbx + SECR_outlen], BIG
     jne .Lfail_get
-    cmp byte ptr [rbx + SR_buf + BIG - 1], 'E'
+    cmp byte ptr [rbx + SECR_buf + BIG - 1], 'E'
     jne .Lfail_get
     # a second key, then the keys
     lea rax, [rip + .Lother]
-    mov [rbx + SR_key], rax
-    mov qword ptr [rbx + SR_len], 1
-    mov edi, SO_SET
+    mov [rbx + SECR_key], rax
+    mov qword ptr [rbx + SECR_len], 1
+    mov edi, SECO_SET
     call op
     jnz .Lfail_set
-    mov edi, SO_KEYS
+    mov edi, SECO_KEYS
     call op
     jnz .Lfail_keys
-    cmp qword ptr [rbx + SR_outlen], 12     # "token\nother\n" in some order
+    cmp qword ptr [rbx + SECR_outlen], 12     # "token\nother\n" in some order
     jne .Lfail_keys
     # delete: gone, and a get says none
     lea rax, [rip + .Ltoken]
-    mov [rbx + SR_key], rax
-    mov edi, SO_DELETE
+    mov [rbx + SECR_key], rax
+    mov edi, SECO_DELETE
     call op
     jnz .Lfail_delete
-    mov edi, SO_GET
+    mov edi, SECO_GET
     call op_status
-    cmp eax, SS_NONE
+    cmp eax, SECS_NONE
     jne .Lfail_delete
     # a shorter value replaces the long one without its old second part
-    mov qword ptr [rbx + SR_len], 5
-    mov edi, SO_SET
+    mov qword ptr [rbx + SECR_len], 5
+    mov edi, SECO_SET
     call op
     jnz .Lfail_set
-    mov edi, SO_GET
+    mov edi, SECO_GET
     call op
-    cmp qword ptr [rbx + SR_outlen], 5
+    cmp qword ptr [rbx + SECR_outlen], 5
     jne .Lfail_get
     # clear: nothing left
-    mov edi, SO_CLEAR
+    mov edi, SECO_CLEAR
     call op
     jnz .Lfail_clear
-    mov edi, SO_KEYS
+    mov edi, SECO_KEYS
     call op
-    cmp qword ptr [rbx + SR_outlen], 0
+    cmp qword ptr [rbx + SECR_outlen], 0
     jne .Lfail_clear
     lea rdi, [rip + .Lok_secrets]
     call log_cstr
@@ -157,19 +157,19 @@ FN main
     mov edi, 1
     call sys_exit
 
-# op(op) -> ZF set when the store answered SS_OK
+# op(op) -> ZF set when the store answered SECS_OK
 op:
     call op_status
     test eax, eax
     ret
-# op_status(op) -> eax SR_status
+# op_status(op) -> eax SECR_status
 op_status:
     push rbx
     mov rbx, [rip + sr]
-    mov [rbx + SR_op], edi
+    mov [rbx + SECR_op], edi
     mov rdi, rbx
     call win_cred_op
-    mov eax, [rbx + SR_status]
+    mov eax, [rbx + SECR_status]
     pop rbx
     ret
 

@@ -61,19 +61,19 @@ h_res_busy:
 
 # ID secret-get KEY -> ok ID 1 LEN + value, or ok ID 0 0 when nothing is stored
 h_res_secret_get:
-    mov edi, SO_GET
+    mov edi, SECO_GET
     jmp res_secret
 # ID secret-set KEY LEN + value -> ok ID
 h_res_secret_set:
-    mov edi, SO_SET
+    mov edi, SECO_SET
     jmp res_secret
 # ID secret-delete KEY -> ok ID (also when nothing was stored)
 h_res_secret_delete:
-    mov edi, SO_DELETE
+    mov edi, SECO_DELETE
     jmp res_secret
 # ID secret-keys -> ok ID LEN + the keys, each followed by LF
 h_res_secret_keys:
-    mov edi, SO_KEYS
+    mov edi, SECO_KEYS
 
 # res_secret(op): checks, then the request joins the queue (secrets.s answers it)
 res_secret:
@@ -91,16 +91,16 @@ res_secret:
     call reply_error
     jmp 9f
 1:  mov eax, 3
-    cmp r12d, SO_SET
+    cmp r12d, SECO_SET
     jne 11f
     mov eax, 4
-11: cmp r12d, SO_KEYS
+11: cmp r12d, SECO_KEYS
     jne 12f
     mov eax, 2
 12: cmp [rip + nfields], rax
     jne 8f
     xor r13d, r13d
-    cmp r12d, SO_KEYS
+    cmp r12d, SECO_KEYS
     je 3f
     # KEY: [a-z0-9_.-], 1 to 64 bytes
     lea r8, [rip + fields]
@@ -130,7 +130,7 @@ res_secret:
     jb 2b
     mov byte ptr [rsp + rcx], 0
     lea r13, [rsp]
-    cmp r12d, SO_SET
+    cmp r12d, SECO_SET
     jne 3f
     cmp qword ptr [rip + body_len], SECRET_VALUE_MAX
     jbe 3f
@@ -160,32 +160,32 @@ FN extproto_secret_reply
     PROLOGUE
     mov rbx, rdi
     mov r12, [rip + cur]
-    mov rax, [rbx + SR_ext]
+    mov rax, [rbx + SECR_ext]
     mov [rip + cur], rax
-    mov eax, [rbx + SR_status]
+    mov eax, [rbx + SECR_status]
     lea rsi, [rip + .Lres_e_refused]
-    cmp eax, SS_REFUSED
+    cmp eax, SECS_REFUSED
     je 7f
     lea rsi, [rip + .Lres_e_nostore]
-    cmp eax, SS_NOSTORE
+    cmp eax, SECS_NOSTORE
     je 7f
     lea rsi, [rip + .Lres_e_keys_big]
-    cmp eax, SS_TOOBIG
+    cmp eax, SECS_TOOBIG
     je 7f
-    mov eax, [rbx + SR_op]
-    cmp eax, SO_GET
+    mov eax, [rbx + SECR_op]
+    cmp eax, SECO_GET
     je 1f
-    cmp eax, SO_KEYS
+    cmp eax, SECO_KEYS
     je 2f
-    mov rdi, [rbx + SR_id]
+    mov rdi, [rbx + SECR_id]
     call reply_ok
     jmp 9f
 1:  call out_begin
     lea rdi, [rip + .Lw_ok_sp]
     call out_cstr
-    mov rdi, [rbx + SR_id]
+    mov rdi, [rbx + SECR_id]
     call out_u64
-    cmp dword ptr [rbx + SR_status], SS_NONE
+    cmp dword ptr [rbx + SECR_status], SECS_NONE
     jne 11f
     lea rdi, [rip + .Lres_none]
     call out_cstr
@@ -197,20 +197,20 @@ FN extproto_secret_reply
 2:  call out_begin
     lea rdi, [rip + .Lw_ok_sp]
     call out_cstr
-    mov rdi, [rbx + SR_id]
+    mov rdi, [rbx + SECR_id]
     call out_u64
     mov edi, ' '
     call out_byte
-3:  mov rdi, [rbx + SR_outlen]
+3:  mov rdi, [rbx + SECR_outlen]
     call out_u64
     mov edi, 10
     call out_byte
-    lea rdi, [rbx + SR_buf]
-    mov rsi, [rbx + SR_outlen]
+    lea rdi, [rbx + SECR_buf]
+    mov rsi, [rbx + SECR_outlen]
     call out_bytes
     call out_end
     jmp 9f
-7:  mov rdi, [rbx + SR_id]
+7:  mov rdi, [rbx + SECR_id]
     call reply_error
 9:  mov [rip + cur], r12
     EPILOGUE

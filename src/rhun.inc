@@ -2099,34 +2099,34 @@ ENDSTRUCT EL_SIZE
 .equ SECRET_OUTSTANDING, 8      # requests per extension
 .equ SECRET_BUF, 12288          # an answer: a value, or every key and its LF
 STRUCT
-F SR_op, 4              # SO_*
-F SR_status, 4          # SS_*
-F SR_fd, 4              # macOS: the pipe the keychain's worker reports on
-F SR_pad, 4
-F SR_service, 8         # owned cstr: the store's service name for the extension
-F SR_key, 8             # owned cstr, or 0 (keys, clear)
-F SR_val, 8             # owned value (set), or 0
-F SR_len, 8
-F SR_outlen, 8          # the answer's bytes in SR_buf
-F SR_next, 8            # the queue
-F SR_ext, 8
-F SR_id, 8              # the request's id, 0 for rhun's own (the page, a removal)
-F SR_gen, 8             # EL_starts when it was asked: an answer for an earlier run is dropped
-F SR_buf, SECRET_BUF
-ENDSTRUCT SR_SIZE
-.equ SO_GET, 1
-.equ SO_SET, 2
-.equ SO_DELETE, 3
-.equ SO_KEYS, 4
-.equ SO_CLEAR, 5                # every key of the extension
-.equ SS_OK, 0
-.equ SS_NONE, 1                 # get: nothing stored under the key
-.equ SS_REFUSED, -1             # locked and the unlock was cancelled, or access was denied
-.equ SS_NOSTORE, -2             # no store is available
-.equ SS_TOOBIG, -3              # 64 keys already
-.equ SB_SYSTEM, 0               # [extensions] secrets
-.equ SB_MEMORY, 1
-.equ SB_FILE, 2
+F SECR_op, 4              # SO_*
+F SECR_status, 4          # SS_*
+F SECR_fd, 4              # macOS: the pipe the keychain's worker reports on
+F SECR_pad, 4
+F SECR_service, 8         # owned cstr: the store's service name for the extension
+F SECR_key, 8             # owned cstr, or 0 (keys, clear)
+F SECR_val, 8             # owned value (set), or 0
+F SECR_len, 8
+F SECR_outlen, 8          # the answer's bytes in SECR_buf
+F SECR_next, 8            # the queue
+F SECR_ext, 8
+F SECR_id, 8              # the request's id, 0 for rhun's own (the page, a removal)
+F SECR_gen, 8             # EL_starts when it was asked: an answer for an earlier run is dropped
+F SECR_buf, SECRET_BUF
+ENDSTRUCT SECR_SIZE
+.equ SECO_GET, 1
+.equ SECO_SET, 2
+.equ SECO_DELETE, 3
+.equ SECO_KEYS, 4
+.equ SECO_CLEAR, 5                # every key of the extension
+.equ SECS_OK, 0
+.equ SECS_NONE, 1                 # get: nothing stored under the key
+.equ SECS_REFUSED, -1             # locked and the unlock was cancelled, or access was denied
+.equ SECS_NOSTORE, -2             # no store is available
+.equ SECS_TOOBIG, -3              # 64 keys already
+.equ SECB_SYSTEM, 0               # [extensions] secrets
+.equ SECB_MEMORY, 1
+.equ SECB_FILE, 2
 
 # ---- contributions and commands (invoke.s, when.s, extcontext.s) ----
 # How a command was invoked (feature command-args): cmd_invoke takes these as arguments and

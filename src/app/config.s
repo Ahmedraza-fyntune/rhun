@@ -939,6 +939,6 @@ g_settings:
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"
-.Lsecrets_opts: .asciz "system", "System keychain", "memory", "Memory (until rhun quits)", "file", "A file only you can read", ""
+.Lsecrets_opts: .asciz "system", "Keychain", "memory", "Memory", "file", "File", ""
 
 .Lai_setup: .asciz "Local model files"

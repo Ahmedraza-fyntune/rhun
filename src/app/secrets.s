@@ -55,54 +55,54 @@ FN secrets_queue
     mov rax, [rip + sec_head]
 1:  test rax, rax
     jz 2f
-    cmp [rax + SR_ext], rbx
+    cmp [rax + SECR_ext], rbx
     jne 11f
     inc ecx
-11: mov rax, [rax + SR_next]
+11: mov rax, [rax + SECR_next]
     jmp 1b
 2:  cmp ecx, SECRET_OUTSTANDING
     jb 3f
     mov rax, -16
     EPILOGUE
-3:  mov edi, SR_SIZE - SECRET_BUF
+3:  mov edi, SECR_SIZE - SECRET_BUF
     add edi, SECRET_BUF
     call mem_alloc
     mov r15, rax
     mov rdi, rax
     xor esi, esi
-    mov edx, SR_SIZE - SECRET_BUF
+    mov edx, SECR_SIZE - SECRET_BUF
     call memset
     mov eax, [rsp + 8]
-    mov [r15 + SR_op], eax
-    mov dword ptr [r15 + SR_fd], -1
-    mov [r15 + SR_ext], rbx
+    mov [r15 + SECR_op], eax
+    mov dword ptr [r15 + SECR_fd], -1
+    mov [r15 + SECR_ext], rbx
     mov rax, [rsp]
-    mov [r15 + SR_id], rax
+    mov [r15 + SECR_id], rax
     mov rdi, rbx
     call extres_row
     test rax, rax
     jz 4f
     mov eax, [rax + EL_starts]
-    mov [r15 + SR_gen], rax
+    mov [r15 + SECR_gen], rax
 4:  mov rdi, rbx
     call service_name
-    mov [r15 + SR_service], rax
+    mov [r15 + SECR_service], rax
     test r12, r12
     jz 5f
     mov rdi, r12
     call dup_cstr
-    mov [r15 + SR_key], rax
-5:  cmp dword ptr [rsp + 8], SO_SET
+    mov [r15 + SECR_key], rax
+5:  cmp dword ptr [rsp + 8], SECO_SET
     jne 6f
     mov rdi, r13
     mov rsi, r14
     call mem_dup
-    mov [r15 + SR_val], rax
-    mov [r15 + SR_len], r14
+    mov [r15 + SECR_val], rax
+    mov [r15 + SECR_len], r14
 6:  mov rax, [rip + sec_tail]
     test rax, rax
     jz 7f
-    mov [rax + SR_next], r15
+    mov [rax + SECR_next], r15
     jmp 8f
 7:  mov [rip + sec_head], r15
 8:  mov [rip + sec_tail], r15
@@ -115,9 +115,9 @@ FN secrets_pending
     mov rax, [rip + sec_head]
 1:  test rax, rax
     jz 8f
-    cmp [rax + SR_ext], rdi
+    cmp [rax + SECR_ext], rdi
     je 9f
-    mov rax, [rax + SR_next]
+    mov rax, [rax + SECR_next]
     jmp 1b
 8:  xor eax, eax
     ret
@@ -179,11 +179,11 @@ FN secrets_backend
     test eax, eax
     jns 3f
     mov eax, [rip + cfg_secrets]
-3:  cmp eax, SB_SYSTEM
+3:  cmp eax, SECB_SYSTEM
     jne 9f
     cmp dword ptr [rip + sec_fallback], 0
     je 9f
-    mov eax, SB_MEMORY
+    mov eax, SECB_MEMORY
 9:  EPILOGUE
 
 # backend_named(cstr) -> eax SB_*, or -1
@@ -215,9 +215,9 @@ FN secrets_pump
     cmp dword ptr [rip + sec_busy], 0
     jne 9f
     call secrets_backend
-    cmp eax, SB_MEMORY
+    cmp eax, SECB_MEMORY
     je .Lsp_memory
-    cmp eax, SB_FILE
+    cmp eax, SECB_FILE
     je .Lsp_file
 .ifdef WINDOWS
     mov rdi, rbx
@@ -229,7 +229,7 @@ FN secrets_pump
     test eax, eax
     jz .Lsp_nostore
     mov eax, [rip + sec_pipe + 4]
-    mov [rbx + SR_fd], eax
+    mov [rbx + SECR_fd], eax
     mov dword ptr [rip + sec_busy], 1
     mov rdi, rbx
     call mac_secret_start
@@ -250,7 +250,7 @@ FN secrets_pump
 .endif
 .endif
 .Lsp_nostore:
-    mov dword ptr [rbx + SR_status], SS_NOSTORE
+    mov dword ptr [rbx + SECR_status], SECS_NOSTORE
     jmp .Lsp_done
 .Lsp_memory:
     lea rdi, [rip + sec_mem]
@@ -280,13 +280,13 @@ FN secrets_done
 # so ("No keyring is running: Title's sign-in lasts until rhun quits")
 told_memory:
     PROLOGUE
-    cmp dword ptr [rbx + SR_op], SO_SET
+    cmp dword ptr [rbx + SECR_op], SECO_SET
     jne 9f
-    cmp dword ptr [rbx + SR_status], SS_OK
+    cmp dword ptr [rbx + SECR_status], SECS_OK
     jne 9f
     cmp dword ptr [rip + sec_fallback], 0
     je 9f
-    mov rdi, [rbx + SR_ext]
+    mov rdi, [rbx + SECR_ext]
     call extres_row
     test rax, rax
     jz 9f
@@ -298,7 +298,7 @@ told_memory:
     lea rdi, [rip + sec_line]
     lea rsi, [rip + .Lt_no_keyring]
     call sb_push_cstr
-    mov rdi, [rbx + SR_ext]
+    mov rdi, [rbx + SECR_ext]
     call ext_title
     lea rdi, [rip + sec_line]
     mov rsi, rax
@@ -318,34 +318,34 @@ told_memory:
 complete:
     PROLOGUE
     mov rbx, [rip + sec_head]
-    mov rax, [rbx + SR_next]
+    mov rax, [rbx + SECR_next]
     mov [rip + sec_head], rax
     test rax, rax
     jnz 1f
     mov qword ptr [rip + sec_tail], 0
-1:  mov r12, [rbx + SR_ext]
+1:  mov r12, [rbx + SECR_ext]
     mov rdi, r12
     call extres_row
     mov r13, rax
     test r13, r13
     jz 5f
     # the reply
-    cmp qword ptr [rbx + SR_id], 0
+    cmp qword ptr [rbx + SECR_id], 0
     je 3f
     cmp dword ptr [r12 + EXT_status], ES_RUNNING
     jne 3f
     mov eax, [r13 + EL_starts]
-    cmp rax, [rbx + SR_gen]
+    cmp rax, [rbx + SECR_gen]
     jne 3f
     mov rdi, rbx
     call extproto_secret_reply
 3:  # what the page knows of its keys
-    cmp dword ptr [rbx + SR_status], SS_OK
+    cmp dword ptr [rbx + SECR_status], SECS_OK
     jne 5f
-    mov eax, [rbx + SR_op]
-    cmp eax, SO_KEYS
+    mov eax, [rbx + SECR_op]
+    cmp eax, SECO_KEYS
     je 31f
-    cmp eax, SO_GET
+    cmp eax, SECO_GET
     je 5f
     # a set, delete or clear changed them: the page asks again when it shows
     mov rdi, [r13 + EL_skeys]
@@ -355,16 +355,16 @@ complete:
     jmp 4f
 31: mov rdi, [r13 + EL_skeys]
     call mem_free
-    lea rdi, [rbx + SR_buf]
-    mov rsi, [rbx + SR_outlen]
+    lea rdi, [rbx + SECR_buf]
+    mov rsi, [rbx + SECR_outlen]
     call mem_dup
     mov [r13 + EL_skeys], rax
 4:  mov dword ptr [rip + g_dirty], 1
-5:  mov rdi, [rbx + SR_service]
+5:  mov rdi, [rbx + SECR_service]
     call mem_free
-    mov rdi, [rbx + SR_key]
+    mov rdi, [rbx + SECR_key]
     call mem_free
-    mov rdi, [rbx + SR_val]
+    mov rdi, [rbx + SECR_val]
     call mem_free
     mov rdi, rbx
     call mem_free
@@ -423,23 +423,23 @@ ms_op:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov r13, [r12 + SR_ext]
-    mov dword ptr [r12 + SR_status], SS_OK
-    mov qword ptr [r12 + SR_outlen], 0
-    mov eax, [r12 + SR_op]
-    cmp eax, SO_KEYS
+    mov r13, [r12 + SECR_ext]
+    mov dword ptr [r12 + SECR_status], SECS_OK
+    mov qword ptr [r12 + SECR_outlen], 0
+    mov eax, [r12 + SECR_op]
+    cmp eax, SECO_KEYS
     je .Lmo_keys
-    cmp eax, SO_CLEAR
+    cmp eax, SECO_CLEAR
     je .Lmo_clear
     mov rdi, rbx
     mov rsi, r13
-    mov rdx, [r12 + SR_key]
+    mov rdx, [r12 + SECR_key]
     call ms_find
     mov r14, rax
-    mov eax, [r12 + SR_op]
-    cmp eax, SO_GET
+    mov eax, [r12 + SECR_op]
+    cmp eax, SECO_GET
     je .Lmo_get
-    cmp eax, SO_DELETE
+    cmp eax, SECO_DELETE
     je .Lmo_delete
     # set: replace the value, or a new entry while it has fewer than SECRET_KEYS_MAX
     test r14, r14
@@ -462,33 +462,33 @@ ms_op:
     jmp 2b
 21: cmp ecx, SECRET_KEYS_MAX
     jb 22f
-    mov dword ptr [r12 + SR_status], SS_TOOBIG
+    mov dword ptr [r12 + SECR_status], SECS_TOOBIG
     EPILOGUE
 22: mov rdi, rbx
     mov esi, MS_SIZE
     call vec_push
     mov r15, rax
     mov [r15 + MS_ext], r13
-    mov rdi, [r12 + SR_key]
+    mov rdi, [r12 + SECR_key]
     call dup_cstr
     mov [r15 + MS_key], rax
-3:  mov rdi, [r12 + SR_val]
-    mov rsi, [r12 + SR_len]
+3:  mov rdi, [r12 + SECR_val]
+    mov rsi, [r12 + SECR_len]
     call mem_dup
     mov [r15 + MS_val], rax
-    mov rax, [r12 + SR_len]
+    mov rax, [r12 + SECR_len]
     mov [r15 + MS_len], rax
     EPILOGUE
 .Lmo_get:
     test r14, r14
     jns 1f
-    mov dword ptr [r12 + SR_status], SS_NONE
+    mov dword ptr [r12 + SECR_status], SECS_NONE
     EPILOGUE
 1:  imul r15, r14, MS_SIZE
     add r15, [rbx + VEC_ptr]
     mov rdx, [r15 + MS_len]
-    mov [r12 + SR_outlen], rdx
-    lea rdi, [r12 + SR_buf]
+    mov [r12 + SECR_outlen], rdx
+    lea rdi, [r12 + SECR_buf]
     mov rsi, [r15 + MS_val]
     call memcpy
     EPILOGUE
@@ -511,22 +511,22 @@ ms_op:
     mov rdi, [r15 + MS_key]
     call strlen
     mov rdx, rax
-    mov rcx, [r12 + SR_outlen]
+    mov rcx, [r12 + SECR_outlen]
     lea rax, [rcx + rdx + 1]
     cmp rax, SECRET_BUF
     ja 1b
-    lea rdi, [r12 + SR_buf + rcx]
+    lea rdi, [r12 + SECR_buf + rcx]
     mov rsi, [r15 + MS_key]
     push rdx
     push rdx
     call memcpy
     pop rdx
     pop rdx
-    mov rcx, [r12 + SR_outlen]
+    mov rcx, [r12 + SECR_outlen]
     add rcx, rdx
-    mov byte ptr [r12 + SR_buf + rcx], 10
+    mov byte ptr [r12 + SECR_buf + rcx], 10
     inc rcx
-    mov [r12 + SR_outlen], rcx
+    mov [r12 + SECR_outlen], rcx
     jmp 1b
 .Lmo_clear:
     xor r14d, r14d
@@ -594,11 +594,11 @@ file_path:
 file_op:
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + SR_ext]
+    mov rdi, [rbx + SECR_ext]
     call file_path
     test eax, eax
     jnz 1f
-    mov dword ptr [rbx + SR_status], SS_NOSTORE
+    mov dword ptr [rbx + SECR_status], SECS_NOSTORE
     EPILOGUE
 1:  mov rdi, [rip + sec_path + SB_ptr]
     mov esi, 1 << 20
@@ -609,24 +609,24 @@ file_op:
     jz 4f
     mov rdi, r12
     mov rsi, r13
-    mov rdx, [rbx + SR_ext]
+    mov rdx, [rbx + SECR_ext]
     call file_parse
     mov rdi, r12
     call mem_free
 4:  lea rdi, [rip + sec_file]
     mov rsi, rbx
     call ms_op
-    mov eax, [rbx + SR_op]
-    cmp eax, SO_GET
+    mov eax, [rbx + SECR_op]
+    cmp eax, SECO_GET
     je 8f
-    cmp eax, SO_KEYS
+    cmp eax, SECO_KEYS
     je 8f
-    cmp dword ptr [rbx + SR_status], SS_OK
+    cmp dword ptr [rbx + SECR_status], SECS_OK
     jne 8f
     call file_write
     test eax, eax
     jnz 8f
-    mov dword ptr [rbx + SR_status], SS_NOSTORE
+    mov dword ptr [rbx + SECR_status], SECS_NOSTORE
 8:  # the entries go
 81: cmp qword ptr [rip + sec_file + VEC_len], 0
     je 9f
@@ -820,7 +820,7 @@ FN secrets_keys_refresh
     or dword ptr [rax + EL_flags], ELF_SKEYS_ASKED
     mov rdi, rbx
     xor esi, esi
-    mov edx, SO_KEYS
+    mov edx, SECO_KEYS
     xor ecx, ecx
     xor r8d, r8d
     xor r9d, r9d
@@ -832,10 +832,10 @@ FN secrets_forget
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov edx, SO_DELETE
+    mov edx, SECO_DELETE
     test r12, r12
     jnz 1f
-    mov edx, SO_CLEAR
+    mov edx, SECO_CLEAR
 1:  mov rdi, rbx
     xor esi, esi
     mov rcx, r12
