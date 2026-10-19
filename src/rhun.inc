@@ -1569,7 +1569,9 @@ ENDSTRUCT TF_SIZE
 .equ IC_LIST, 164
 .equ IC_BEAKER, 165
 .equ IC_CLOUD, 166
-.equ IC_COUNT, 167
+.equ IC_RING, 167
+.equ IC_SLASH, 168
+.equ IC_COUNT, 169
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
@@ -1701,12 +1703,15 @@ FEATURE_LIST
 .equ PK_SAVE_ACTIONS, 24
 .equ PK_COMMIT_MESSAGE, 25       # source control (scmext.s)
 .equ PK_QUICKDIFF, 26
-.equ PK_COUNT, 27
+.equ PK_TESTS_RESOLVE, 27        # testing (testproto.s)
+.equ PK_TEST_RUN, 28
+.equ PK_COUNT, 29
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
 .equ QO_SCM, 4                   # source control (scmext.s)
+.equ QO_TESTS, 5                 # testing (testproto.s)
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -2420,6 +2425,7 @@ F TSI_desc, 8           # owned cstr or 0
 F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed tests-resolve
 F TSI_path, 8           # owned cstr or 0: the file its range is in
 F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
+F TSI_phash, 8          # hash_line of TSI_path (0 without one): the gutter compares this first
 F TSI_idlen, 4
 F TSI_kind, 4           # TSK_*
 F TSI_flags, 4          # TSF_*
@@ -2473,6 +2479,7 @@ F TSE_prev_run, 4
 F TSE_prev_rent, 4
 F TSE_nmsg, 4
 F TSE_cut, 4            # 1 once its output was cut
+F TSE_prev_msg, 8       # owned copy of the item's summary before this run touched it, or 0
 F TSE_msgs, SB_SIZE     # messages: TSM header + text, path, expected, actual
 F TSE_out, SB_SIZE      # its output
 ENDSTRUCT TSE_SIZE
