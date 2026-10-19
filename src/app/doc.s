@@ -549,7 +549,17 @@ FN raw_insert
     mov rdx, r14
     call doc_selections_insert
     inc qword ptr [rbx + DOC_version]
-    cmp dword ptr [rip + g_ext_hooks], 0
+    # debugger: breakpoints below move with new lines (until the presentation group's edit tape)
+    cmp dword ptr [rip + g_bp_hooks], 0
+    je 87f
+    cmp qword ptr [rsp], 0
+    je 87f
+    mov rdi, rbx
+    mov rsi, r15
+    mov rdx, [rsp]
+    mov rcx, r12
+    call bp_note_insert
+87: cmp dword ptr [rip + g_ext_hooks], 0
     je .Lri_ret
     mov rdi, rbx
     mov rsi, r12
@@ -653,7 +663,16 @@ FN raw_delete
     mov rdx, r13
     call doc_selections_delete
     inc qword ptr [rbx + DOC_version]
-    cmp dword ptr [rip + g_ext_hooks], 0
+    # debugger: breakpoints on joined lines move up (until the presentation group's edit tape)
+    cmp dword ptr [rip + g_bp_hooks], 0
+    je 67f
+    cmp qword ptr [rsp], 0
+    je 67f
+    mov rdi, rbx
+    mov rsi, r15
+    mov rdx, [rsp]
+    call bp_note_delete
+67: cmp dword ptr [rip + g_ext_hooks], 0
     je .Lrd_ret
     mov rdi, rbx
     mov rsi, r12
