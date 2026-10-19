@@ -113,3 +113,10 @@ host-request =/ id SP "semantic-tokens" SP doc SP version SP ( sem-id / "-" )
 host-request =/ id SP "semantic-tokens-range" SP doc SP version SP num SP num
 sem-answer   = ( sem-id / "-" ) SP sem-id SP ( "full" / "range" ) SP num LF *( num ( SP / LF ) )
 sem-answer   =/ ( sem-id / "-" ) SP sem-id SP "delta" SP num LF *( num SP num SP num LF *( num ( SP / LF ) ) )
+feature      =/ "inlay-hints"
+host-request =/ id SP "inlay-hints" SP doc SP version SP num SP num
+              ; answered "ok" SP id SP len LF + num LF *hint
+hint         = num SP num SP ( "after" / "before" ) SP num SP len LF 1*8hint-part
+              ; LINE COL SIDE NPARTS EXTRA_LEN; the parts, then EXTRA (edit records)
+hint-part    = len SP len SP len LF
+              ; LABEL TIP PEXTRA (command, goto records) of those lengths

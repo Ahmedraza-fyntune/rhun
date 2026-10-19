@@ -96,6 +96,9 @@ FN vt_line
     mov rdi, rbx
     mov rsi, r12
     call deco_line_inlays
+    mov rdi, rbx
+    mov rsi, r12
+    call inlay_line_inlays      # inlay hints (inlay.s)
 .Lvl_have:
     lea rax, [rip + vt_items]
     mov rdx, [rip + vt_n]
@@ -608,14 +611,22 @@ FN vt_hover
     PROLOGUE
     mov rbx, rdi
     lea r12, [rip + vt_hit_item]
-    cmp byte ptr [r12 + VI_kind], VK_DECO
+    cmp byte ptr [r12 + VI_kind], VK_HINT
+    jne 1f
+    mov rdi, rbx                # a hint part's tooltip (inlay.s)
+    mov rsi, [r12 + VI_ref]
+    call inlay_tip
+    test rax, rax
+    jz 9f
+    jmp 2f
+1:  cmp byte ptr [r12 + VI_kind], VK_DECO
     jne 9f
     mov rdi, rbx
     mov rsi, [r12 + VI_ref]
     call deco_dr_tip
     test rax, rax
     jz 9f
-    mov r9, rax
+2:  mov r9, rax
     mov edi, ID_VT_TIP
     add edi, [r12 + VI_off]
     mov esi, [rip + g_mx]
@@ -638,7 +649,13 @@ FN vt_click
     call fold_unfold_line
     mov eax, 1
     EPILOGUE
-1:  cmp byte ptr [r12 + VI_kind], VK_DECO
+1:  cmp byte ptr [r12 + VI_kind], VK_HINT
+    jne 2f
+    mov rdi, rbx                # a hint part's command, place or edits (inlay.s)
+    mov rsi, [r12 + VI_ref]
+    call inlay_click
+    EPILOGUE
+2:  cmp byte ptr [r12 + VI_kind], VK_DECO
     jne 8f
     mov rdi, rbx
     mov rsi, [r12 + VI_ref]

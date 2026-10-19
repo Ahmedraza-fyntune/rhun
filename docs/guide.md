@@ -525,6 +525,16 @@ lines. An edit inside a fold's hidden lines, or one that joins its first line wi
 the fold. Folds are kept with the session and in reopened tabs. `folding = false` under `[editor]`
 (**Folding** in Settings) turns the lane and folding off.
 
+### Inlay hints
+
+An extension that knows the code (a language server, through the lsp extension) can show what is
+not written: inferred types after names, parameter names before arguments, the ends of long
+blocks. Hints are drawn in a muted pill inside the line but are not part of the text: the cursor
+steps over them, and copying, searching and the status bar's column never see them. The pointer
+resting on a hint shows its tooltip; a click on a part that has a command runs it, or goes to the
+definition it names; a double click writes the hint into the text when it offers that (a type, for
+example). `inlay_hints = false` under `[editor]` (**Inlay hints** in Settings) turns them off.
+
 ### Semantic highlighting
 
 An extension that knows the code (a language server, through the lsp extension) can color it by

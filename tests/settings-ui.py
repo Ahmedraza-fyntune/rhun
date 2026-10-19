@@ -34,7 +34,7 @@ BOOLS = {
                # language features
                'complete_replace complete_commit_characters lightbulb format_on_type format_on_paste '
                # editor presentation
-               'folding semantic_highlighting'),
+               'folding inlay_hints semantic_highlighting'),
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',

@@ -27,16 +27,6 @@ F PQK_scroll, 4                 # 1: a scroll out of the asked lines asks again
 F PQK_pad, 4
 ENDSTRUCT PQK_SIZE
 
-# a request out
-STRUCT
-F PQR_ext, 8
-F PQR_id, 8
-F PQR_doc, 8                     # DOC_id
-F PQR_kind, 8
-F PQR_ver, 8                     # the version it asked about
-F PQR_l1, 8                      # the lines it asked about (0-based, inclusive)
-F PQR_l2, 8
-ENDSTRUCT PQR_SIZE
 
 .bss
 .p2align 3
@@ -214,9 +204,13 @@ FN present_tick
     cmp rcx, r13
     ja 2f
     mov qword ptr [rax + r12*8], 0
-    cmp r12d, PQ_TOKENS
-    jne 11f
+    cmp r12d, PQ_TOKENS         # kinds turned off in Settings are not asked for
+    jne 10f
     cmp dword ptr [rip + cfg_semantic_highlighting], 0
+    je 2f
+10: cmp r12d, PQ_HINTS
+    jne 11f
+    cmp dword ptr [rip + cfg_inlay_hints], 0
     je 2f
 11: mov rdi, rbx
     mov esi, r12d
@@ -527,6 +521,8 @@ FN present_ext_gone
     call fold_ext_gone
     mov rdi, rbx
     call semtok_ext_gone
+    mov rdi, rbx
+    call inlay_ext_gone
     EPILOGUE
 
 # ---------------- answers ----------------
@@ -763,7 +759,7 @@ pq_table:
     .long FEAT_FOLDING_RANGES, PP_FOLDING, PK_FOLDING, 500, 0, 0
     .quad .Lv_tokens, semtok_reply, semtok_args, EXT_pv_semantic_tokens
     .long FEAT_SEMANTIC_TOKENS, PP_TOKENS, PK_TOKENS, 150, 0, 0
-    .quad .Lv_hints, reply_none, present_args_window, EXT_pv_inlay_hints
+    .quad .Lv_hints, inlay_reply, present_args_window, EXT_pv_inlay_hints
     .long FEAT_INLAY_HINTS, -1, PK_HINTS, 250, 1, 0
     .quad .Lv_lens, reply_none, present_args_window, EXT_pv_code_lens
     .long FEAT_CODE_LENS, -1, PK_LENS, 500, 1, 0

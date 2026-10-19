@@ -89,6 +89,8 @@ FN pres_free
     call vec_free
     mov rdi, r12                # semantic tokens (semtok.s)
     call semtok_free
+    mov rdi, r12                # inlay hints (inlay.s)
+    call inlay_free
     mov rdi, r12
     call mem_free
 9:  EPILOGUE
@@ -254,6 +256,9 @@ pres_shift:
     mov rdi, rbx
     mov rsi, r12
     call semtok_shift
+    mov rdi, rbx
+    mov rsi, r12
+    call inlay_shift
     EPILOGUE
 
 # tape_shift(value, pos, del, ins, gravity) -> rax the value after the edit (one of del and ins is

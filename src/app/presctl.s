@@ -470,10 +470,20 @@ c_print_present:
     lea rdx, [rip + .Ls_tokens]
     call str_eq_cstr
     test eax, eax
-    jz 9f
+    jz 1f
     mov rdi, rbx                # semantic tokens (semtok.s)
     mov rsi, [rip + outp]
     call semtok_dump
+    jmp 9f
+1:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_hints]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov rdi, rbx                # inlay hints (inlay.s)
+    mov rsi, [rip + outp]
+    call inlay_dump
 9:  xor eax, eax
     EPILOGUE
 .Lpp_types:
@@ -886,6 +896,7 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Ls_classes: .asciz "classes "
 .Ls_fx: .asciz "fx "
 .Ls_tokens: .asciz "tokens"
+.Ls_hints: .asciz "hints"
 .Ls_stale: .asciz "stale"
 .Ls_view_lines: .asciz "view mode=lines top="
 .Ls_view_wrap: .asciz "view mode=wrap top="

@@ -3415,6 +3415,7 @@ F PRS_hidden, 8          # hidden lines in all
 F PRS_fr, VEC_SIZE       # FRG a folding provider's ranges, sorted by their header's line feed
 F PRS_frext, 8           # the extension they came from; 0 while indentation decides
 F PRS_tks, 8             # semantic tokens (semtok.s), owned, or 0
+F PRS_hints, VEC_SIZE    # IH inlay hints (inlay.s), sorted by position
 ENDSTRUCT PRS_SIZE
 # a fold: the lines after its header up to its last line are hidden; it follows edits as positions
 STRUCT
@@ -3463,6 +3464,51 @@ ENDSTRUCT STK_SIZE
 .equ SEMT_HUGE_LINES, 200000    # a document past these is asked about in ranges
 .equ SEMT_HUGE_BYTES, 8388608
 .equ SEMT_FX_MAX, 256           # effects drawn per line
+# a presentation request out (present.s; its answer's handler gets it)
+STRUCT
+F PQR_ext, 8
+F PQR_id, 8
+F PQR_doc, 8            # DOC_id
+F PQR_kind, 8
+F PQR_ver, 8            # the version it asked about
+F PQR_l1, 8             # the lines it asked about (0-based, inclusive)
+F PQR_l2, 8
+ENDSTRUCT PQR_SIZE
+# inlay hints (inlay.s)
+STRUCT
+F IH_pos, 8
+F IH_owner, 8           # EXT*
+F IH_blob, 8            # owned: IHP parts, IHE edits, then their bytes
+F IH_ver, 8             # the version its edits are about
+F IH_side, 1            # VS_*
+F IH_nparts, 1
+F IH_nedits, 1
+F IH_pad, 5
+ENDSTRUCT IH_SIZE
+STRUCT
+F IHP_loff, 4           # offsets into the blob: label, tip, extra records
+F IHP_llen, 4
+F IHP_toff, 4
+F IHP_tlen, 4
+F IHP_xoff, 4
+F IHP_xlen, 4
+ENDSTRUCT IHP_SIZE
+STRUCT
+F IHE_l1, 4             # 0-based, in the hint's version
+F IHE_c1, 4
+F IHE_l2, 4
+F IHE_c2, 4
+F IHE_toff, 4
+F IHE_tlen, 4
+ENDSTRUCT IHE_SIZE
+.equ IH_MAX, 5000               # hints per answer
+.equ IH_DOC_MAX, 50000          # per document
+.equ IH_LABEL_MAX, 120          # a hint's label, all parts
+.equ IH_PARTS, 8
+.equ IH_TIP_MAX, 4000
+.equ IH_PEXTRA_MAX, 9000
+.equ IH_EDITS, 16
+.equ IH_EXTRA_MAX, 65536
 # the kinds present.s asks for
 .equ PQ_FOLDING, 0
 .equ PQ_TOKENS, 1
