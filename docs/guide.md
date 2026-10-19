@@ -587,7 +587,9 @@ else installed. One that crashes or hangs cannot take the editor with it, and on
 the kernel holds each one to the permissions its manifest declares.
 
 They can add commands to the palette with their own keys, read and edit the open documents (each
-edit one undo step), put marks with messages in the gutter, answer hover, open prompts and pick
+edit one undo step), put marks with messages in the gutter, **decorate** text (colors,
+backgrounds, underlines, strikethrough, faded text, icons in the gutter, ticks in the scrollbar,
+tips when the pointer rests on them), answer hover, open prompts and pick
 lists, suggest terminal commands, set per-document options, ship themes and grammars, and keep
 settings on their page. They can also open **views**, tabs they draw in with shapes and text in
 the theme's colors (charts, pictures, previews) that hear the pointer, and provide **completion

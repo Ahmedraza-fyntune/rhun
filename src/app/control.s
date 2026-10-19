@@ -19,6 +19,10 @@ wait_ext_state_len: .quad 0
 addr: .zero 110
 .globl g_headless
 g_headless: .long 0
+.p2align 3
+.globl g_ctl_cur, g_ctl_cur_len
+g_ctl_cur: .quad 0              # the control line being run
+g_ctl_cur_len: .quad 0
 
 .text
 
@@ -122,6 +126,8 @@ FN control_exec
     dec r12
 8:
 .endif
+    mov [rip + g_ctl_cur], rbx  # the line being run (the frame probes log it)
+    mov [rip + g_ctl_cur_len], r12
     lea rdi, [rip + out]
     call sb_clear
     call next_arg
@@ -2363,6 +2369,7 @@ ctl_tables:
     .quad views_ctl             # views group: places and retained views (viewsctl.s)
     .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
     .quad remote_ctl            # remote hosts (remotectl.s)
+    .quad pres_ctl              # editor presentation (presctl.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
