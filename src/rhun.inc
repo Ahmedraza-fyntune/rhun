@@ -629,6 +629,7 @@ F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HE
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
 F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
+F DOC_ce, 8             # custom editors: the CE whose tab shows this document, or 0 (customed.s)
 F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
 F DOC_uri, 8            # resources group: a virtual document's URI (owned; vdoc.s), or 0
 ENDSTRUCT DOC_SIZE
@@ -1660,6 +1661,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_WORKSPACE_FOLDERS, "workspace-folders", 0
     # notebooks (wider-parity A: nbdoc.s, nbproto.inc)
     FEATURE FEAT_NOTEBOOKS, "notebooks", 1        # nb-open, nb-save; runs and outputs
+    FEATURE FEAT_CUSTOM_EDITORS, "custom-editors", 1   # custom editors (customed.s, ceproto.inc)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1721,7 +1723,10 @@ FEATURE_LIST
 .equ PK_PROMPT, 31               # AI: agent-prompt (agentext.s, D4)
 .equ PK_NB_OPEN, 32              # notebooks: nb-open, nb-save (nbproto.inc)
 .equ PK_NB_SAVE, 33
-.equ PK_COUNT, 34
+.equ PK_ED_OPEN, 34              # custom editors: editor-open, editor-save, undo/redo/revert (ceproto.inc)
+.equ PK_ED_SAVE, 35
+.equ PK_ED_CMD, 36
+.equ PK_COUNT, 37
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
@@ -1730,6 +1735,7 @@ FEATURE_LIST
 .equ QO_TESTS, 5                 # testing (testproto.s)
 .equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
 .equ QO_NOTEBOOK, 7               # nbdoc.s's nb_reply
+.equ QO_CUSTOM, 8                # customed.s's ce_reply
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -1776,6 +1782,7 @@ F TAB_flags, 8
 ENDSTRUCT TAB_SIZE
 # TAB_flags
 .equ TF_PIN, 1                  # pinned: the pinned tabs are the first ones in the strip
+.equ TF_CUSTOM, 2               # custom editors: a TAB_VIEW tab that is an extension's editor of TAB_doc
 
 .equ SIDEBAR_W_DEFAULT, 240        # points: the explorer's and the agents panel's widths
 .equ AGENTS_W_DEFAULT, 380
@@ -1988,6 +1995,10 @@ F EXT_pv_notebook, 8    # notebooks: [provides] notebook (patterns), notebook.ti
 F EXT_pv_nbtitle, 8
 F EXT_pv_nbkernel, 8
 F EXT_nb_kernels, 8     # [needs] kernels: programs rhun may start as the user for its notebooks (cstr) or 0
+F EXT_pv_editor, 8      # custom editors: [provides] editor (patterns), editor.title, editor.model, editor.priority
+F EXT_pv_edtitle, 8
+F EXT_pv_edmodel, 8
+F EXT_pv_edprio, 8
 # WebAssembly extensions (extwasm.s)
 F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
 F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
@@ -3280,6 +3291,46 @@ ENDSTRUCT NBU_SIZE
 .equ NB_TEXT_LINES, 400         # lines of a text output shown before "N more lines"
 .equ NB_LABEL_MAX, 200          # the kernel button's text
 .equ NB_OPEN_MS, 30000          # an nb-open or nb-save without an answer fails after this
+
+# ---- custom editors (wider-parity design, part B: customed.s, ceproto.inc) ----
+# A file an extension's [provides] editor matches opens in a TAB_VIEW tab with TF_CUSTOM: a 12a view
+# the extension draws, bound to a CE. Text model: TAB_doc is the file's DOC (rhun's undo, dirty and
+# save). Owned model: TAB_doc is a stand-in with the path and no text; the extension keeps the model
+# and rhun asks it for the bytes in parts.
+STRUCT
+F CE_doc, 8             # DOC* (DOC_ce points back); its DOC_id is the CDOC extensions know
+F CE_ext, 8             # EXT*: the extension
+F CE_vid, 8             # its view's id (VW_id)
+F CE_req, 8             # the request rhun waits on, 0 none
+F CE_reqat, 8           # when it went out (time_ms)
+F CE_savefn, 8          # app_save_start's callback(doc id, arg, result) and its argument, or 0
+F CE_savearg, 8
+F CE_buf, SB_SIZE       # owned saves: the parts so far
+F CE_target, 8          # owned cstr: the path the save in progress writes
+F CE_path, 8            # owned cstr: the path the extension was last told
+F CE_part, 8            # the part asked for
+F CE_model, 4           # CEM_*
+F CE_state, 4           # CES_*
+F CE_dirty, 4           # owned: the extension said its model differs from the file
+F CE_reqkind, 4         # CER_* of CE_req
+F CE_want, 4            # CER_OPEN: editor-open waits for the extension to run
+F CE_skind, 4           # CEK_* of the save in progress
+ENDSTRUCT CE_SIZE
+.equ CEM_TEXT, 0
+.equ CEM_OWNED, 1
+.equ CES_OPENING, 0
+.equ CES_READY, 1
+.equ CER_OPEN, 1
+.equ CER_SAVE, 2
+.equ CER_CMD, 3
+.equ CEK_SAVE, 0
+.equ CEK_SAVEAS, 1
+.equ CEK_BACKUP, 2
+.equ CE_PART_MAX, 4194304       # an editor-save part's bytes
+.equ CE_SAVE_MAX, 1073741824    # a save's bytes in all
+.equ CE_READ_MAX, 4194304       # an editor-read answer
+.equ CE_WAIT_MS, 30000          # a request without an answer fails after this
+.equ PM_REOPEN, 120             # the palette's Reopen With list (notebooks' block 120-123)
 # ---- editor presentation (edtape.s, deco.s, gutter.s, presctl.s) ----
 # per-document presentation state, DOC_pres: the edit tape, decorations, glyph-lane entries
 .equ TAPE_N, 256                # edits the tape keeps

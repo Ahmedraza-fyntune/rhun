@@ -161,7 +161,9 @@ FN app_doc_by_id
     cmp [rax + DOC_id], rbx
     jne 1b
     jmp 9f
-8:  xor eax, eax
+8:  mov rdi, rbx                # custom editors: an owned model's stand-in (customed.s)
+    pop rbx
+    jmp ce_any_by_id
 9:  pop rbx
     ret
 
@@ -844,7 +846,12 @@ FN nb_save_start
 FN app_save_start
     cmp qword ptr [rdi + DOC_nb], 0
     jne nb_save_start
-    jmp save_start
+    mov rax, [rdi + DOC_ce]     # custom editors: an owned model's bytes come from its extension
+    test rax, rax
+    jz 1f
+    cmp dword ptr [rax + CE_model], CEM_OWNED
+    je ce_save_start
+1:  jmp save_start
 
 # nb_mark_saved(nb): what is shown is what the file holds
 FN nb_mark_saved

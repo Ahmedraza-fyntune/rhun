@@ -398,6 +398,7 @@ FN config_load
 2:  mov qword ptr [rip + g_keylines + VEC_len], 0
     mov dword ptr [rip + old_sources], 0
     call agentext_config_reset  # AI: the extension sources switched off come from this read
+    call ce_config_reset        # custom editors: the [editors] choices too (customed.s)
     # taken before the read: a write that lands during it still counts as a change
     call config_path
     mov rdi, rax
@@ -440,7 +441,18 @@ FN config_load
     mov rax, [rip + it + INI_vallen]
     mov [rbx + 24], rax
     jmp .Lcl_next
-1:  mov rdi, [rip + it + INI_sec]
+1:  lea rdi, [rip + it]         # custom editors: [editors] PATTERN = OWNER/NAME | text
+    lea rsi, [rip + .Leditors]
+    call ini_sec_is
+    test eax, eax
+    jz 11f
+    mov rdi, [rip + it + INI_key]
+    mov rsi, [rip + it + INI_keylen]
+    mov rdx, [rip + it + INI_val]
+    mov rcx, [rip + it + INI_vallen]
+    call ce_config_kv
+    jmp .Lcl_next
+11: mov rdi, [rip + it + INI_sec]
     mov rsi, [rip + it + INI_seclen]
     mov rdx, [rip + it + INI_key]
     mov rcx, [rip + it + INI_keylen]
@@ -699,7 +711,9 @@ FN config_save
     call sb_push_byte
     inc rbx
     jmp 6b
-7:  call config_dir
+7:  lea rdi, [rsp]              # custom editors: [editors] (customed.s)
+    call ce_config_write
+    call config_dir
     lea rdi, [rip + cfg_dir_buf]
     call mkdir_p
     call config_path
@@ -813,6 +827,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Lrhun: .asciz "/rhun"
 .Lslash_config: .asciz "/config"
 .Lkeys: .asciz "keys"
+.Leditors: .asciz "editors"
 .Lheader: .ascii "# rhun configuration. Also editable from Settings (ctrl+,).\n"
           .asciz "# Changes are picked up while rhun is running.\n"
 .Lnl_bracket: .asciz "\n["

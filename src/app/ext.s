@@ -1036,7 +1036,10 @@ FN ext_retire
     call langfeat_ext_gone
     mov rdi, rbx
     call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
-    call nb_ext_gone
+    mov rdi, rbx
+    call nb_ext_gone            # its notebooks' requests, runs and kernels
+    mov rdi, rbx
+    call ce_ext_gone            # its custom editors' requests (customed.s)
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
@@ -3776,6 +3779,8 @@ FN ext_exited
     call ai_ext_gone            # AI: its sessions, tool calls and cards
     mov rdi, rbx
     call nb_ext_gone            # and its notebooks' requests, runs and kernels
+    mov rdi, rbx
+    call ce_ext_gone            # and its custom editors' requests
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4900,6 +4905,8 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     # source control (wider-parity C)
     .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
     .quad .Lpv_notebook, EXT_pv_notebook, .Lpv_nbtitle, EXT_pv_nbtitle, .Lpv_nbkernel, EXT_pv_nbkernel  # notebooks
+    .quad .Lpv_editor, EXT_pv_editor, .Lpv_edtitle, EXT_pv_edtitle  # custom editors
+    .quad .Lpv_edmodel, EXT_pv_edmodel, .Lpv_edprio, EXT_pv_edprio
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -5026,6 +5033,10 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_notebook: .asciz "notebook"
 .Lpv_nbtitle: .asciz "notebook.title"
 .Lpv_nbkernel: .asciz "notebook.kernel"
+.Lpv_editor: .asciz "editor"
+.Lpv_edtitle: .asciz "editor.title"
+.Lpv_edmodel: .asciz "editor.model"
+.Lpv_edprio: .asciz "editor.priority"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"

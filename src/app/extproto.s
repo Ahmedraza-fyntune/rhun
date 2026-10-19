@@ -549,6 +549,14 @@ handle_line:
     call nb_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # custom editors (ceproto.inc)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ce_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -664,6 +672,16 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call nb_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # custom editors, with the code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call ce_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -962,7 +980,13 @@ doc_by_id:
     cmp [rax + DOC_id], rdi
     jne 1b
     ret
-8:  jmp nb_cell_doc_by_id          # notebooks (A3): a cell, which has no tab
+8:  push rdi                    # notebooks (A3): a cell, which has no tab
+    call nb_cell_doc_by_id
+    pop rdi
+    test rax, rax
+    jnz 9f
+    jmp ce_doc_by_id            # custom editors: a text model's document, in a view's tab
+9:  ret
 
 # arg_doc(i) -> DOC* from field i, or 0 after replying nodoc
 arg_doc:
@@ -4587,6 +4611,9 @@ verbs:
     .quad .Lnb_v_kernel_label, h_nb_kernel_label, 4096
     .quad .Lnb_v_exec, h_nb_exec, 262144
     .quad .Lnb_v_exec_signal, h_nb_exec_signal, 0
+    # custom editors (ceproto.inc)
+    .quad .Lce_v_read, h_ed_read, 0
+    .quad .Lce_v_dirty, h_ed_dirty, 0
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
@@ -4798,6 +4825,7 @@ FN extproto_answer_syntax
 .include "app/extresproto.inc"    # resources group: idle, secrets, urls, uris, files, folders
 .include "app/extaiproto.inc"
 .include "app/nbproto.inc"
+.include "app/ceproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

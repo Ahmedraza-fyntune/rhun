@@ -378,11 +378,11 @@ FN extproto_events
 .Lxe_exhausted:
     mov qword ptr [rsp], -75
     jmp .Lxe_tabs
-.Lxe_cells:                     # notebooks (A3): then the cells, for one that agreed notebooks
-    mov rdi, rbx
+.Lxe_cells:                     # notebooks (A3): then the cells, for one that agreed notebooks, and
+    mov rdi, rbx                # the custom editors' text documents (customed.s)
     mov rsi, r12
     sub rsi, [rip + g_tabs + VEC_len]
-    call nb_ext_doc_at
+    call ce_ext_doc_at
     test rax, rax
     jz .Lxe_cells_done
     inc r12
@@ -462,11 +462,11 @@ FN extproto_events
 .Lxe_positions_pending:
     mov qword ptr [rsp], -11
     jmp .Lxe_positions
-.Lxe_cell_positions:            # notebooks (A3): the cells' positions too
+.Lxe_cell_positions:            # notebooks (A3): the cells' positions too (and custom editors')
     mov rdi, rbx
     mov rsi, r12
     sub rsi, [rip + g_tabs + VEC_len]
-    call nb_ext_doc_at
+    call ce_ext_doc_at
     test rax, rax
     jz .Lxe_closed_begin
     inc r12
