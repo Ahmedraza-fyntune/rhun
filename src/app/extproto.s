@@ -1155,6 +1155,8 @@ h_snippet:
     cmp rax, [rbx + DOC_version]
     jne .Lhsn_stale
     mov rdi, rbx
+    call sel_collapse           # a snippet is about one place (multi-cursor)
+    mov rdi, rbx
     mov esi, 4
     call arg_pos
     test rax, rax
