@@ -173,6 +173,7 @@ FN control_exec
 2:  call [r15 + 8]
 .Lce_done:
     push rax
+3:  push rax
     push rax
     call term_frame_now         # a command ends with a frame that shows all output so far
     call flush_frame
@@ -2353,10 +2354,10 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 # other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
 ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
-    .quad tasks_ctl             # tasks and terminals (runctl.s)
     .quad scm_ctl               # source control (scmctl.s)
     .quad langfeat_ctl          # language features (lfcontrol.s)
     .quad debug_ctl             # debugger (debugctl.s)
+    .quad tasks_ctl             # tasks and terminals (runctl.s)
     .quad test_ctl              # testing (testview.s)
     .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
     .quad views_ctl             # views group: places and retained views (viewsctl.s)

@@ -30,17 +30,6 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
-    # rhun --print-env: the login shell asks for its environment (uproc.s)
-    cmp qword ptr [rip + g_argc], 2
-    jne 2f
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Lprint_env]
-    call strcmp_eq
-    test eax, eax
-    jz 2f
-    call uproc_print_env
-2:
     # WebAssembly worker modes (src/wasm): rhun --wasm-host, rhun --wasm-spec
     mov rdi, [rip + g_argc]
     mov rsi, [rip + g_argv]
@@ -69,6 +58,17 @@ FN main
     mov rdi, [rax + 8]
 1:  call remote_askpass_main
 .Lnot_askpass:
+    # rhun --print-env: the login shell asks for its environment (uproc.s)
+    cmp qword ptr [rip + g_argc], 2
+    jne 2f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lprint_env]
+    call strcmp_eq
+    test eax, eax
+    jz 2f
+    call uproc_print_env
+2:
     cmp qword ptr [rip + g_argc], 5
     jb 1f
     cmp qword ptr [rip + g_argc], 6
