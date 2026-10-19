@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fake custom editors for the host tests (docs/extensions/v1.1.md, "Feature: custom-editors"),
 standard library only. "owned" (argv[1]) keeps the file's bytes: it reads them with editor-read in
-pages of 4 bytes, flips the first byte on a click (undo and redo step through its flips), tells
-editor-dirty, and answers editor-save in parts of 3 bytes. "text" lets rhun keep the document and
+pages of 4 bytes and more, flips the first byte on a click (undo and redo step through its flips), tells
+editor-dirty, and answers editor-save in parts of 3 bytes (1 MB for files of 64 bytes or more). "text" lets rhun keep the document and
 upper-cases the first line on a click with replace. Both draw "N bytes: XX XX ..." in their view.
 EDFAKE_LOG names a file (in the state folder) that receives every line rhun sends. EDFAKE_MODE:
 refuse (editor-open fails), badpart (a save part without its MORE line)."""
@@ -60,13 +60,14 @@ def draw(cdoc):
 
 
 def read_all(cdoc):
-    data, off = b'', 0
+    data, off, page = b'', 0, 4      # pages of 4 bytes, then twice as many each time
     while True:
-        line, body = ask(f'editor-read {cdoc} {off} 4')
+        line, body = ask(f'editor-read {cdoc} {off} {page}')
         if not line.startswith(b'ok') or not body:
             break
         data += body
         off += len(body)
+        page = min(page * 2, 4 << 20)
     return data
 
 
@@ -185,8 +186,9 @@ def main():
             e = eds[cdoc]
             if part == 0:
                 e['snap'] = e['data']
-            chunk = e['snap'][part * 3:part * 3 + 3]
-            more = 1 if len(e['snap']) > part * 3 + 3 else 0
+            size = 3 if len(e['snap']) < 64 else 1 << 20      # parts of 3 bytes for small files
+            chunk = e['snap'][part * size:part * size + size]
+            more = 1 if len(e['snap']) > part * size + size else 0
             reply = chunk if MODE == 'badpart' else b'%d\n' % more + chunk
             if not more:
                 e['saved'] = e['snap']
