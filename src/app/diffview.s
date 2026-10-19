@@ -14,10 +14,23 @@ dseq: .quad 0
 
 # git_open_diff(rev cstr or 0, path ptr, len): a file's changes in a commit (or the work tree against HEAD)
 FN git_open_diff
-    PROLOGUE 16
+    mov rcx, rdx
+    mov rdx, rsi
+    xor esi, esi
+    xor r8d, r8d
+    jmp open_diff
+# git_open_diff2(rev1 cstr, rev2 cstr or 0, path ptr, len): the file's changes from rev1 to rev2 (0: the
+#   file in the work tree), for extensions (git-diff-open, gitdata.s)
+FN git_open_diff2
+    mov r8d, 1
+# open_diff(rev, rev2, path ptr, len, two)
+open_diff:
+    PROLOGUE 48
     mov r12, rdi
-    mov r13, rsi
-    mov r14, rdx
+    mov [rsp + 24], rsi         # rev2
+    mov r13, rdx
+    mov r14, rcx
+    mov [rsp + 32], r8d         # two
     cmp dword ptr [rip + g_git_on], 0
     je 9f
     # open already: show it, fetched again
@@ -33,6 +46,9 @@ FN git_open_diff
     test rax, rax
     jz 2f
     mov [rsp], rax
+    mov ecx, [rax + DV_two]
+    cmp ecx, [rsp + 32]
+    jne 2f
     mov rdi, [rax + DV_path]
     call strlen
     cmp rax, r14
@@ -46,18 +62,17 @@ FN git_open_diff
     jz 2f
     mov rax, [rsp]
     mov rdi, [rax + DV_rev]
-    test r12, r12
-    jnz 11f
-    test rdi, rdi
-    jnz 2f
-    jmp 12f
-11: test rdi, rdi
-    jz 2f
     mov rsi, r12
-    call strcmp_eq
+    call same_rev
     test eax, eax
     jz 2f
-12: mov rdi, rbx
+    mov rax, [rsp]
+    mov rdi, [rax + DV_rev2]
+    mov rsi, [rsp + 24]
+    call same_rev
+    test eax, eax
+    jz 2f
+    mov rdi, rbx
     call app_activate_tab
     mov rdi, r15
     call diff_fetch
@@ -71,19 +86,19 @@ FN git_open_diff
     call mem_alloc
     mov rbx, rax
     mov [r15 + DOC_diff], rax
+    mov eax, [rsp + 32]
+    mov [rbx + DV_two], eax
     mov rdi, r13
     mov rsi, r14
     call mem_dup
     mov [rbx + DV_path], rax
-    test r12, r12
-    jz 4f
     mov rdi, r12
-    call strlen
-    mov rdi, r12
-    mov rsi, rax
-    call mem_dup
+    call dup_rev
     mov [rbx + DV_rev], rax
-4:  # "name (changes)", "name (1a2b3c4)"
+    mov rdi, [rsp + 24]
+    call dup_rev
+    mov [rbx + DV_rev2], rax
+4:  # "name (changes)", "name (1a2b3c4)", "name (1a2b3c4..5d6e7f8)", "name (1a2b3c4..changes)"
     lea rdi, [rip + tmp_sb]
     call sb_clear
     mov rdi, r13
@@ -97,10 +112,17 @@ FN git_open_diff
     call sb_push_cstr
     test r12, r12
     jz 5f
+    mov rdi, r12
+    call push_rev7
+    cmp dword ptr [rsp + 32], 0
+    je 6f
     lea rdi, [rip + tmp_sb]
-    mov rsi, r12
-    mov edx, 7
-    call sb_push
+    lea rsi, [rip + .Ldots]
+    call sb_push_cstr
+    mov rdi, [rsp + 24]
+    test rdi, rdi
+    jz 5f
+    call push_rev7
     jmp 6f
 5:  lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Lchanges]
@@ -122,6 +144,52 @@ FN git_open_diff
     call diff_fetch
 9:  EPILOGUE
 
+# same_rev(a cstr or 0, b cstr or 0) -> eax 1 when both are none or equal
+same_rev:
+    mov eax, 1
+    test rdi, rdi
+    jnz 1f
+    test rsi, rsi
+    jz 9f
+    xor eax, eax
+    ret
+1:  test rsi, rsi
+    jnz 2f
+    xor eax, eax
+    ret
+2:  jmp strcmp_eq
+9:  ret
+
+# dup_rev(rev cstr or 0) -> an owned copy, or 0
+dup_rev:
+    test rdi, rdi
+    jz 9f
+    push rbx
+    mov rbx, rdi
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call mem_dup
+    pop rbx
+    ret
+9:  xor eax, eax
+    ret
+
+# push_rev7(rev cstr): its first 7 bytes onto tmp_sb (a commit id shortened; a name as far as it goes)
+push_rev7:
+    push rbx
+    mov rbx, rdi
+    call strlen
+    mov rdx, rax
+    cmp rdx, 7
+    jbe 1f
+    mov edx, 7
+1:  lea rdi, [rip + tmp_sb]
+    mov rsi, rbx
+    call sb_push
+    pop rbx
+    ret
+
 # diff_fetch(doc): ask git for the diff shown in doc
 diff_fetch:
     PROLOGUE 96
@@ -140,6 +208,8 @@ diff_fetch:
     mov [rsp + 8], rax
     lea rax, [rip + .Lno_ext]
     mov [rsp + 16], rax
+    cmp dword ptr [r12 + DV_two], 0
+    jne 7f
     mov rax, [r12 + DV_rev]
     test rax, rax
     jnz 3f
@@ -179,6 +249,18 @@ diff_fetch:
     mov rax, [r12 + DV_rev]
     mov [rsp + 48], rax
     mov ecx, 7
+    jmp 5f
+7:  # two revisions (git-diff-open): rev1 against rev2, or against the work tree
+    lea rax, [rip + .Ldiff]
+    mov [rsp], rax
+    mov rax, [r12 + DV_rev]
+    mov [rsp + 24], rax
+    mov ecx, 4
+    mov rax, [r12 + DV_rev2]
+    test rax, rax
+    jz 5f
+    mov [rsp + 32], rax
+    mov ecx, 5
 5:  lea rax, [rip + .Ldashdash]
     mov [rsp + rcx*8], rax
     mov rax, [r12 + DV_path]
@@ -438,6 +520,8 @@ FN diffview_free
     call mem_free
     mov rdi, [rbx + DV_rev]
     call mem_free
+    mov rdi, [rbx + DV_rev2]
+    call mem_free
     mov rdi, [rbx + DV_path]
     call mem_free
     mov rdi, rbx
@@ -644,6 +728,7 @@ FN cmd_git_changes
 .section .rodata
 .Lparen: .asciz " ("
 .Lchanges: .asciz "changes"
+.Ldots: .asciz ".."
 .Lempty: .asciz ""
 .Ldiff: .asciz "diff"
 .Lshow: .asciz "show"

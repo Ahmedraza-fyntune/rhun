@@ -420,8 +420,9 @@ FN scm_reset
 # Capture the user's draft before starting. Result insertion requires exact equality.
 FN cmd_git_generate_message
     PROLOGUE
-    cmp dword ptr [rip + g_ai_kind], 3
-    jne 1f
+    call ai_generating
+    test eax, eax
+    jz 1f
     call ai_cancel_generation
     jmp 9f
 1:  cmp dword ptr [rip + cfg_commit_ai], 0
@@ -502,9 +503,11 @@ draw_ai:
 3:
     lea rdi, [rip + lbl]
     call sb_clear
+    call ai_generating
+    mov r14d, eax
     lea rsi, [rip + .Lai_label]
-    cmp dword ptr [rip + g_ai_kind], 3
-    jne 1f
+    test r14d, r14d
+    jz 1f
     lea rsi, [rip + .Lai_cancel]
 1:  lea rdi, [rip + lbl]
     call sb_push_cstr
@@ -516,8 +519,8 @@ draw_ai:
     sub esi, ecx
     M r8d, MI_32
     mov r9d, IC_SPARK
-    cmp dword ptr [rip + g_ai_kind], 3
-    jne 2f
+    test r14d, r14d
+    jz 2f
     mov r9d, IC_CLOSE
 2:  call draw_button
     test eax, eax
@@ -2274,7 +2277,19 @@ draw_file:
     mov r8, [r12 + GF_path]
     call ui_text_v_fit
     add rsp, 16
-6:  # a click on the row: the file's changes (not for untracked folders)
+6:  # a right press: its menu (source control, wider-parity C)
+    test r14d, UB_RPRESS
+    jz 61f
+    mov rdi, [r12 + GF_path]
+    call strlen
+    mov rcx, rax
+    mov rdx, [r12 + GF_path]
+    xor esi, esi
+    mov edi, SL_SCM_RESOURCE
+    mov r8d, [r12 + GF_group]
+    mov r9d, [r12 + GF_code]
+    call scm_row_menu
+61: # a click on the row: the file's changes (not for untracked folders)
     test r14d, UB_CLICK
     jz 9f
     mov rdi, [r12 + GF_path]

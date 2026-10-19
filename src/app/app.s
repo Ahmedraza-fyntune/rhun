@@ -1539,6 +1539,7 @@ ask_unsaved:
     call tab_dirty
     test eax, eax
     jz 2f
+    call dlg_drop
     mov [rip + dlg_tab], rbx
     mov [rip + dlg_kind], r12d
     inc qword ptr [rip + app_save_epoch]
@@ -2659,168 +2660,50 @@ FN app_timeout
     cmp ecx, ebx
     jge 1f
 12: mov ebx, ecx
-1:  call agents_timeout
+1:  lea r12, [rip + timeout_fns]   # the soonest of the parts' deadlines (-1: none)
+2:  mov rax, [r12]
+    test rax, rax
+    jz 9f
+    add r12, 8
+    call rax
     cmp eax, -1
-    je 2f
+    je 2b
     cmp ebx, -1
-    je 21f
-    cmp eax, ebx
-    jge 2f
-21: mov ebx, eax
-2:  call git_timeout
-    cmp eax, -1
     je 3f
-    cmp ebx, -1
-    je 31f
     cmp eax, ebx
-    jge 3f
-31: mov ebx, eax
-3:  call update_timeout
-    cmp eax, -1
-    je 4f
-    cmp ebx, -1
-    je 41f
-    cmp eax, ebx
-    jge 4f
-41: mov ebx, eax
-4:  call ai_timeout
-    cmp eax, -1
-    je 5f
-    cmp ebx, -1
-    je 51f
-    cmp eax, ebx
-    jge 5f
-51: mov ebx, eax
-5:  call watch_timeout
-    cmp eax, -1
-    je 6f
-    cmp ebx, -1
-    je 61f
-    cmp eax, ebx
-    jge 6f
-61: mov ebx, eax
-6:  call tip_timeout
-    cmp eax, -1
-    je 7f
-    cmp ebx, -1
-    je 71f
-    cmp eax, ebx
-    jge 7f
-71: mov ebx, eax
-7:  call palette_timeout
-    cmp eax, -1
-    je 8f
-    cmp ebx, -1
-    je 81f
-    cmp eax, ebx
-    jge 8f
-81: mov ebx, eax
-8:  call editor_timeout
-    cmp eax, -1
-    je 82f
-    cmp ebx, -1
-    je 83f
-    cmp eax, ebx
-    jge 82f
-83: mov ebx, eax
-82: call sb_timeout
-    cmp eax, -1
-    je 84f
-    cmp ebx, -1
-    je 85f
-    cmp eax, ebx
-    jge 84f
-85: mov ebx, eax
-84: call term_timeout
-    cmp eax, -1
-    je 86f
-    cmp ebx, -1
-    je 87f
-    cmp eax, ebx
-    jge 86f
-87: mov ebx, eax
-86: call ext_timeout
-    cmp eax, -1
-    je 88f
-    cmp ebx, -1
-    je 89f
-    cmp eax, ebx
-    jge 88f
-89: mov ebx, eax
-88: call complete_timeout
-    cmp eax, -1
-    je 90f
-    cmp ebx, -1
-    je 91f
-    cmp eax, ebx
-    jge 90f
-91: mov ebx, eax
-90: call langfeat_timeout
-    cmp eax, -1
-    je 92f
-    cmp ebx, -1
-    je 93f
-    cmp eax, ebx
-    jge 92f
-93: mov ebx, eax
-92: call ext_provider_timeout
-    cmp eax, -1
-    je 94f
-    cmp ebx, -1
-    je 95f
-    cmp eax, ebx
-    jge 94f
-95: mov ebx, eax
-94: call save_timeout
-    cmp eax, -1
-    je 96f
-    cmp ebx, -1
-    je 97f
-    cmp eax, ebx
-    jge 96f
-97: mov ebx, eax
-96: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
-    cmp eax, -1
-    je 961f
-    cmp ebx, -1
-    je 962f
-    cmp eax, ebx
-    jge 961f
-962: mov ebx, eax
-961: call query_timeout         # language features: the next request to expire
-    cmp eax, -1
-    je 98f
-    cmp ebx, -1
-    je 99f
-    cmp eax, ebx
-    jge 98f
-99: mov ebx, eax
-98: call dap_timeout             # debugger: adapters' messages and deadlines
-    cmp eax, -1
-    je 100f
-    cmp ebx, -1
-    je 101f
-    cmp eax, ebx
-    jge 100f
-101:mov ebx, eax
-100:call remote_timeout         # remote hosts
-    cmp eax, -1
-    je 102f
-    cmp ebx, -1
-    je 103f
-    cmp eax, ebx
-    jge 102f
-103: mov ebx, eax
-102: call nb_timeout             # notebooks: requests waiting for their program
-    cmp eax, -1
-    je 104f
-    cmp ebx, -1
-    je 105f
-    cmp eax, ebx
-    jge 104f
-105: mov ebx, eax
-104: mov eax, ebx
+    jge 2b
+3:  mov ebx, eax
+    jmp 2b
+9:  mov eax, ebx
     EPILOGUE
+
+.section .rodata
+.p2align 3
+# app_timeout's parts: each fn() -> eax milliseconds until it needs a tick, or -1; 0-ended
+timeout_fns:
+    .quad agents_timeout
+    .quad git_timeout
+    .quad update_timeout
+    .quad ai_timeout
+    .quad watch_timeout
+    .quad tip_timeout
+    .quad palette_timeout
+    .quad editor_timeout
+    .quad sb_timeout
+    .quad term_timeout
+    .quad ext_timeout
+    .quad complete_timeout
+    .quad langfeat_timeout
+    .quad ext_provider_timeout
+    .quad save_timeout
+    .quad uproc_timeout
+    .quad query_timeout
+    .quad testing_timeout
+    .quad dap_timeout
+    .quad remote_timeout
+    .quad nb_timeout              # notebooks: requests waiting for their program
+    .quad 0
+.text
 
 FN app_tick
     PROLOGUE
@@ -2842,7 +2725,9 @@ FN app_tick
     mov qword ptr [rip + g_toast_until], 0
     mov dword ptr [rip + g_dirty], 1
 2:  call agents_tick
+    call uproc_tick
     call term_tick
+    call problems_tick          # documents opened since get their problems' marks
     call git_tick
     call update_tick
     call ai_tick
@@ -5666,6 +5551,27 @@ dlg_drop:
 FN app_confirm_cancel
     mov [rip + dlg_cancel], rdi
     ret
+
+# app_dialog_open() -> eax nonzero while a dialog is open (one at a time: the run approval asks only
+#   when none is)
+FN app_dialog_open
+    mov eax, [rip + dlg_kind]
+    ret
+
+# app_confirm_revoke(fn): the open app_confirm whose button calls fn goes away unanswered (its Cancel
+#   is not called: the question was withdrawn)
+FN app_confirm_revoke
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 9f
+    cmp [rip + dlg_fn], rdi
+    jne 9f
+    mov dword ptr [rip + dlg_kind], 0
+    mov qword ptr [rip + dlg_cancel], 0
+    cmp dword ptr [rip + g_focus], FOCUS_DIALOG
+    jne 1f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+1:  mov dword ptr [rip + g_dirty], 1
+9:  ret
 
 # app_dialog_dump(sb): "dialog=none", or "dialog=QUESTION" and its line and button (tests)
 FN app_dialog_dump

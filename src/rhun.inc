@@ -624,6 +624,9 @@ F DOC_language_name, 8  # owned explicit language name, retained even while unav
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
+# source control (wider-parity C): quick-diff bases from extensions (scmext.s)
+F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
+F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
@@ -1143,9 +1146,10 @@ F DV_lines, 8           # DL per line
 F DV_n, 8
 F DV_name, 8            # tab title
 F DV_rev, 8             # commit, or 0 for the work tree
+F DV_rev2, 8            # with DV_two: the second revision, or 0 for the work tree
 F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
-F DV_pad, 4
+F DV_two, 4             # 1: DV_rev against DV_rev2 (git-diff-open), not a commit against its parent
 F DV_review, 8          # AI (review.s): the proposal a Review tab shows, or 0
 ENDSTRUCT DV_SIZE
 STRUCT
@@ -1172,6 +1176,11 @@ ENDSTRUCT GF_SIZE
 .equ GG_MERGE, 1                # conflicts
 .equ GG_STAGED, 2
 .equ GG_CHANGES, 3              # not staged, untracked
+# source control row menus (scm_row_menu, scmext.s): their locations
+.equ SL_HISTORY_COMMIT, 1
+.equ SL_HISTORY_FILE, 2
+.equ SL_SCM_RESOURCE, 3
+.equ SL_SCM_GROUP, 4
 
 # what HEAD is (g_git_head)
 .equ HD_BRANCH, 0
@@ -1480,6 +1489,11 @@ ENDSTRUCT TF_SIZE
     # contributions and commands (invoke.s, when.s, extcontext.s)
     FEATURE FEAT_COMMAND_ARGS, "command-args", 1  # 0 run ... FROM LEN, run-command, call
     FEATURE FEAT_CONTEXT_KEYS, "context-keys", 0  # set-context
+    # source control (wider-parity C): gitdata.s, scmext.s
+    FEATURE FEAT_GIT_DATA, "git-data", 0          # git-repo, git-status, git-blame, git-log, git-show, git-diff-open
+    FEATURE FEAT_COMMIT_MESSAGE, "commit-message", 1   # rhun asks a commit-message provider
+    FEATURE FEAT_QUICKDIFF, "quickdiff", 1        # rhun asks a quick-diff provider for a base text
+    FEATURE FEAT_SCM, "scm", 0                    # a second VCS provider's tabs
     # testing (testproto.s): test items, runs, results, coverage, test-exec
     FEATURE FEAT_TESTS, "tests", 1
     # AI (wider-parity D: agentext.s, review.s, tools.s)
@@ -1546,14 +1560,17 @@ FEATURE_LIST
 .equ PK_TYPE_FORMAT, 22
 .equ PK_LINKS, 23
 .equ PK_SAVE_ACTIONS, 24
-.equ PK_NB_OPEN, 25              # notebooks: nb-open, nb-save (nbproto.inc)
-.equ PK_NB_SAVE, 26
-.equ PK_COUNT, 27
+.equ PK_COMMIT_MESSAGE, 25       # source control (scmext.s)
+.equ PK_QUICKDIFF, 26
+.equ PK_NB_OPEN, 27              # notebooks: nb-open, nb-save (nbproto.inc)
+.equ PK_NB_SAVE, 28
+.equ PK_COUNT, 29
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
-.equ QO_NOTEBOOK, 4             # nbdoc.s's nb_reply
+.equ QO_SCM, 4                   # source control (scmext.s)
+.equ QO_NOTEBOOK, 5             # nbdoc.s's nb_reply
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1774,6 +1791,10 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
+# source control (wider-parity C): [provides] commit_message, quickdiff, scm (cstr values or 0)
+F EXT_pv_commit, 8      # "yes": a commit-message provider (scmext.s)
+F EXT_pv_quickdiff, 8   # file patterns it gives quick-diff bases for
+F EXT_pv_scm, 8         # "yes": it registers VCS provider tabs
 F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
 F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
 F EXT_tests_progs, 8    # [needs] tests: programs rhun may start for its test runs (cstr) or 0
@@ -1931,6 +1952,11 @@ ENDSTRUCT CRF_SIZE
     CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
     CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
     CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+    # source control (wider-parity C): gitTrusted (git.s), and a row menu's target (scmext.s)
+    CTXKEY CTX_GIT_TRUSTED, "gitTrusted", 0         # false while git is paused for a linked folder
+    CTXKEY CTX_SCM_PROVIDER, "scmProvider", 0       # "git" or the provider extension's OWNER/NAME
+    CTXKEY CTX_SCM_RESOURCE_GROUP, "scmResourceGroup", 0   # merge, staged, changes, or a provider's
+    CTXKEY CTX_SCM_RESOURCE_STATUS, "scmResourceStatus", 0 # the resource's letter (M A D R C U ?)
     # notebooks (nbkeys.s)
     CTXKEY CTX_NOTEBOOK_FOCUS, "notebookFocus", ck_nb_focus
     CTXKEY CTX_NOTEBOOK_CELL_EDITING, "notebookCellEditing", ck_nb_editing
@@ -2019,6 +2045,7 @@ ENDSTRUCT XK_SIZE
 .equ NEEDS_HOME_READ, 16
 .equ NEEDS_NETWORK, 32
 .equ NEEDS_TERMINAL, 64
+.equ NEEDS_GIT_READ, 128        # [needs] git = read: the project's Git data through rhun (gitdata.s)
 
 .equ EXT_MAX_RUNNING, EXT_CAP
 .equ EXT_HELLO_MS, 5000
@@ -2295,6 +2322,8 @@ F TM_tabs, 8            # byte per column, 1 = tab stop
 F TM_out, SB_SIZE       # replies for the program
 F TM_str, SB_SIZE       # OSC string
 F TM_title, SB_SIZE
+F TM_tap, 8             # SB* that each finished line goes to (tasks' matchers), or 0
+F TM_tapdrop, 8         # lines left out while the tap held 64 KB
 ENDSTRUCT TM_SIZE
 
 # Branch on rooted paths without clobbering registers.
@@ -2591,6 +2620,49 @@ ENDSTRUCT BP_SIZE
 .equ DCON_INPUT, 7          # an expression typed into the console
 .equ DCON_RESULT, 8         # its value
 .equ DCON_LINE_MAX, 4096
+# ---- tasks and terminals: programs run as the user (uproc.s) in terminal tabs (termview.s) ----
+.equ SIGINT, 2
+.equ TK_SHELL, 0                # a terminal tab's kind: the user's shell
+.equ TK_TERMINAL, 1             # a program an extension opened (terminal-open, a debugger's runInTerminal)
+.equ TK_TASK, 2                 # a task
+.equ TRV_FOCUS, 0x100           # term_run: the new tab also gets the keyboard
+.equ TRV_SILENT, 0x200          # term_run: the tab is added without showing the panel
+.equ TE_EXIT, 0                 # term_run's fn(cookie, TERM, event, code): exited with code
+.equ TE_STOPPED, 1              # stopped (Stop, Restart, its tab closed while it ran)
+.equ TE_FAILED, 2               # could not start (no TE_STARTED before it)
+.equ TE_CLOSED, 3               # its tab closed: the TERM is gone
+.equ TE_STARTED, 4              # started, code its pid; again after each restart
+# a program for term_run (the lists are copied)
+STRUCT
+F PG_argv, 8            # 0-terminated cstr list; argv[0] a name looked up on the login PATH, or a path
+F PG_sets, 8            # "NAME=value" list, or 0
+F PG_unsets, 8          # "NAME" list, or 0
+F PG_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
+ENDSTRUCT PG_SIZE
+# the Problems store (problems.s): a source, and a problem
+STRUCT
+F PS_key, 8             # owned cstr: what finds it again
+F PS_label, 8           # owned cstr: shown as the problems' source
+F PS_count, 4
+F PS_errors, 4
+F PS_warnings, 4
+F PS_dropped, 4         # not kept: past the caps
+ENDSTRUCT PS_SIZE
+STRUCT
+F PR_src, 8             # PS*
+F PR_path, 8            # absolute path (owned in the store)
+F PR_line, 4            # 1-based, 0 none
+F PR_col, 4             # 1-based bytes (characters with PRF_CHARS), 0 the line's first non-blank
+F PR_endline, 4         # exclusive end, 0 none
+F PR_endcol, 4
+F PR_sev, 4             # SEV_*
+F PR_flags, 4           # PRF_*
+F PR_msg, 8             # cstr
+F PR_code, 8            # cstr or 0
+F PR_seq, 8             # set by the store: its id in the Problems tab
+ENDSTRUCT PR_SIZE
+.equ PRF_CHARS, 1
+.equ MKF_SOURCE, 1              # MK_pad: the mark's owner is a problems source (PS*), not an extension
 .equ AS_KIND_EXT, 5
 .equ AGS_IDLE, 0
 .equ AGS_WORKING, 1
