@@ -58,11 +58,39 @@ FN mac_secret_start
 // kc_worker(sr): on a dispatch thread, plain AAPCS
 .p2align 2
 kc_worker:
-    ENTER 160
+    ENTER 1184
     mov x19, x0
     str xzr, [x19, #SR_outlen]
     mov w9, #SS_REFUSED
     str w9, [x19, #SR_status]
+    // no keychain folder in this HOME (a test's own HOME): the keychain is not asked, because it
+    // would wait for a "keychain not found" dialog
+    mov x20, #0
+    mov x21, #0
+    ADR x0, s_home
+    bl _getenv
+    cbz x0, 0f
+    mov x22, x0
+    bl _strlen
+    cmp x0, #900
+    b.hs 0f
+    mov x2, x0
+    mov x23, x0
+    add x0, sp, #160
+    mov x1, x22
+    bl _memcpy
+    add x0, sp, #160
+    add x0, x0, x23
+    ADR x1, s_keychains
+    bl _strcpy
+    add x0, sp, #160
+    mov w1, #0
+    bl _access
+    cbz w0, 01f
+0:  mov w9, #-2                     // SS_NOSTORE
+    str w9, [x19, #SR_status]
+    b 9f
+01:
     // the service and the account as CFStrings
     mov x0, #0
     ldr x1, [x19, #SR_service]
@@ -406,3 +434,7 @@ kc_count:
     mov sp, x29
     ldp x29, x30, [sp], #16
     ret
+
+.section __TEXT,__cstring,cstring_literals
+s_home: .asciz "HOME"
+s_keychains: .asciz "/Library/Keychains"

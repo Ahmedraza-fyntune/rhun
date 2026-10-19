@@ -84,3 +84,4 @@ EXPORTS
     CompareStringOrdinal
     OpenProcess
     K32GetProcessMemoryInfo
+    QueryInformationJobObject

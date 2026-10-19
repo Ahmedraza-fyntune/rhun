@@ -560,9 +560,17 @@ file_path:
     mov rdi, [rip + sec_path + SB_ptr]
     call mkdir_p
     mov rdi, [rip + sec_path + SB_ptr]
+    mov esi, O_RDONLY | O_DIRECTORY | O_CLOEXEC
+    SYS SYS_open
+    test rax, rax
+    js 1f
+    mov r12d, eax
+    mov edi, eax
     mov esi, 0700
-    SYS SYS_chmod
-    lea rdi, [rip + sec_path]
+    SYS SYS_fchmod
+    mov edi, r12d
+    SYS SYS_close
+1:  lea rdi, [rip + sec_path]
     mov esi, '/'
     call sb_push_byte
     lea rdi, [rip + sec_path]

@@ -101,16 +101,27 @@ def command(name):
         request('status 2', b'on')
     elif name == 'unstatus':
         request('status 0')
+    elif name == 'batch':
+        # every line of RES_ARGS as a request, at once
+        while True:
+            line = arg()
+            if not line:
+                break
+            send_line(line)
     elif name == 'request':
         # any request with its arguments from RES_ARGS: "verb args" or "verb args|body"
-        line = arg()
+        send_line(arg())
+    elif name == 'quiet':
+        pass
+
+
+def send_line(line):
+    if True:
         verb, _, body = line.partition('|')
         body = body.encode().replace(b'\\n', b'\n')
         if '{LEN}' in verb:
             verb = verb.replace('{LEN}', str(len(body)))
         request(verb, body)
-    elif name == 'quiet':
-        pass
 
 
 def main():
