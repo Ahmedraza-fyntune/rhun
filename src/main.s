@@ -111,6 +111,8 @@ FN main
 .Lm_exit:
     call app_clip_reset
     call headless_clip_reset
+    call dap_shutdown           # debugger: sessions disconnect, adapters are stopped
+    call bp_save
     call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
     call agents_shutdown

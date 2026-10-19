@@ -2736,7 +2736,15 @@ FN app_timeout
     cmp eax, ebx
     jge 98f
 99: mov ebx, eax
-98: mov eax, ebx
+98: call dap_timeout             # debugger: adapters' messages and deadlines
+    cmp eax, -1
+    je 100f
+    cmp ebx, -1
+    je 101f
+    cmp eax, ebx
+    jge 100f
+101:mov ebx, eax
+100:mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2769,6 +2777,7 @@ FN app_tick
     call ext_provider_tick
     call testing_tick           # testing (testproto.s)
     call app_clip_tick
+    call dap_tick               # debugger
     EPILOGUE
 
 # ---------------- rendering ----------------

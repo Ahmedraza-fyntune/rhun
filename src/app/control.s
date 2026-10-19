@@ -171,6 +171,7 @@ FN control_exec
     mov rsi, rbx
     mov rdx, r12
 2:  call [r15 + 8]
+.Lce_done:
     push rax
     push rax
     call term_frame_now         # a command ends with a frame that shows all output so far
@@ -2328,6 +2329,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
     .quad langfeat_ctl          # language features (lfcontrol.s)
+    .quad debug_ctl             # debugger (debugctl.s)
     .quad test_ctl              # testing (testview.s)
     .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
     .quad views_ctl             # views group: places and retained views (viewsctl.s)
