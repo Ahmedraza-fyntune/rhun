@@ -74,6 +74,8 @@ FN closed_note
     mov [rbx + CT_woff], rax
     jmp .Lcn_push
 .Lcn_diff:
+    test dword ptr [r14 + DV_flags], DVF_OWN
+    jnz 9f                      # a workspace edit's preview or an extension's diff: not git's
     mov qword ptr [rbx + CT_kind], CK_DIFF
     mov rdi, [r14 + DV_path]
     call str_own
