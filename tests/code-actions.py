@@ -78,7 +78,7 @@ class Actions(lang.Lang):
                                 'cmd code_actions', 'wait 300', 'key Escape', 'key Down', 'key Home',
                                 'cmd code_actions', 'wait 300'],
                          extra='[commands]\ndiag = Diagnose\n')
-        req = self.requests('code-actions')
+        req = [r for r in self.requests('code-actions') if ' invoked ' in r]     # not the lightbulb's
         self.assertEqual(req[0].split()[4:8], ['2', '9', '2', '14'], req)
         self.assertEqual(req[1].split()[4:8], ['3', '5', '3', '10'], req)
 
@@ -102,6 +102,21 @@ class Actions(lang.Lang):
                                       'print-doc'], extra='[commands]\nfix = Fix\n')
         self.assertEqual(self.doc_lines(out)[0], '// fixed', out)
         self.assertTrue(any(l.startswith('0 run lang.fix 1 ref 2') for l in self.lang_log()), self.lang_log())
+
+    def test_the_lightbulb_shows_only_on_lines_with_diagnostics(self):
+        diag = '2 9 2 14 error unused\n'
+        body = '2\n' + action('quickfix', 'Fix it', FIX, rec('preferred')) + action('quickfix', 'No', '', rec('disabled', 'x'))
+        spec = self.spec({'code-actions': {'body': body}}, run={'diag': [[f'diagnostics 1 0 1 {len(diag)}', diag]]})
+        out = self.run_actions(spec, ['cmd lang.diag', 'wait 200', 'key ctrl+Home', 'wait 400', 'print-lightbulb',
+                                      'key Down', 'wait 500', 'print-lightbulb', 'key Down', 'wait 400',
+                                      'print-lightbulb', 'cmd quick_fix', 'wait 300', 'print-palette'],
+                               extra='[commands]\ndiag = Diagnose\n')
+        bulbs = [l for l in out if l.startswith('lightbulb')]
+        self.assertEqual(bulbs, ['lightbulb=none', 'lightbulb line=2 count=1 preferred=1', 'lightbulb=none'], out)
+        req = self.requests('code-actions')
+        self.assertEqual(req[0].split()[8:10], ['auto', 'quickfix'], req)
+        self.assertEqual(len([r for r in req if ' auto ' in r]), 1, req)      # lines without diagnostics: nothing
+        self.assertTrue(any(l.endswith('Fix it') or 'Fix it' in l for l in out if l.startswith('> ')), out)
 
     def test_v1_providers_keep_actions_and_get_no_kinds(self):
         spec = self.spec({'actions': {'body': '0\n'}}, hello='hello 1 actions')

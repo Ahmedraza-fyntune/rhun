@@ -2699,6 +2699,7 @@ timeout_fns:
     .quad langfeat_timeout
     .quad outline_timeout       # language features: the Outline's debounce (outline.s)
     .quad hovercard_timeout     # and the hover card's rest, show time and grace (hovercard.s)
+    .quad lightbulb_timeout     # and the lightbulb's rest (lightbulb.s)
     .quad ext_provider_timeout
     .quad save_timeout
     .quad uproc_timeout

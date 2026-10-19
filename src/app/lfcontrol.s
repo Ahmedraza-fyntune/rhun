@@ -32,6 +32,7 @@ lc_rlen: .quad 0
     LCWRAP w_print_peek, c_print_peek
     LCWRAP w_print_hover_card, c_print_hover_card
     LCWRAP w_hover_at, c_hover_at
+    LCWRAP w_print_lightbulb, c_print_lightbulb
 
 # lc_arg() -> rax ptr, rdx len of the next word of the rest (rdx 0 at its end)
 lc_arg:
@@ -172,6 +173,14 @@ c_hover_at:
     pop rbx
     ret
 
+# print-lightbulb: the lightbulb (lightbulb.s)
+c_print_lightbulb:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call lightbulb_dump
+    pop rbx
+    ret
+
 # print-query: the requests rhun waits on, with their progress
 c_print_query:
     push rbx
@@ -191,6 +200,7 @@ c_print_query:
 .Lc_print_peek: .asciz "print-peek"
 .Lc_print_hover_card: .asciz "print-hover-card"
 .Lc_hover_at: .asciz "hover-at"
+.Lc_print_lightbulb: .asciz "print-lightbulb"
 .p2align 3
 .globl langfeat_ctl
 langfeat_ctl:
@@ -203,4 +213,5 @@ langfeat_ctl:
     .quad .Lc_print_peek, w_print_peek
     .quad .Lc_print_hover_card, w_print_hover_card
     .quad .Lc_hover_at, w_hover_at
+    .quad .Lc_print_lightbulb, w_print_lightbulb
     .quad 0, 0

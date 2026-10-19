@@ -85,6 +85,7 @@ lf_pr_state: .long 0            # 1 out, 2 answered, 3 refused, 4 failed
 lf_pr_use: .long 0              # the prompt takes the range and the placeholder (in lf_name)
 lf_pr_body: .zero SB_SIZE
 lf_list_kind: .long 0           # what the palette's list shows
+lf_auto: .long 0                # lf_actions_line builds the lightbulb's request
 lf_next_dest: .long 0           # LFD_* for the next query (set by its command), 0: the palette
 lf_dest: .long 0                # and for the query in flight
 lf_word: .zero LF_WORD_MAX + 4  # the word at the cursor when it was asked (the Results title)
@@ -616,6 +617,10 @@ lf_actions_cmd:                 # esi kinds cstr or 0, edx LA_* mode
 FN cmd_quick_fix_auto
     lea rsi, [rip + .Lk_quickfix]
     mov edx, LA_AUTO
+    jmp lf_actions_cmd
+FN cmd_quick_fix                # the quick fixes listed (the lightbulb's click)
+    lea rsi, [rip + .Lk_quickfix]
+    xor edx, edx
     jmp lf_actions_cmd
 FN cmd_organize_imports
     lea rsi, [rip + .Lk_organize]
@@ -2003,6 +2008,18 @@ lf_range_format_first:
 8:  xor eax, eax
     EPILOGUE
 
+# FN langfeat_actions_auto(ext, doc) -> rax ptr, rdx len: the lightbulb's request (lightbulb.s), the
+# line below with TRIGGER auto and KINDS quickfix
+FN langfeat_actions_auto
+    mov dword ptr [rip + lf_auto], 1
+    push rdi
+    call lf_actions_line
+    pop rdi
+    mov dword ptr [rip + lf_auto], 0
+    mov rax, [rip + lf_line2 + SB_ptr]
+    mov rdx, [rip + lf_line2 + SB_len]
+    ret
+
 # lf_actions_line(ext, doc): lf_line2 = "code-actions DOC VERSION L1 C1 L2 C2 TRIGGER KINDS DIAGS".
 # Without a selection, when the extension has diagnostics on the cursor's line, the range is the
 # one containing the cursor, else the line's first (a server fixes the diagnostic it is given)
@@ -2076,15 +2093,21 @@ lf_actions_line:
     mov rdi, rbx
     mov rsi, r13
     call lf_push_pos2
-    lea rdi, [rip + lf_line2]
     lea rsi, [rip + .Linvoked]
+    cmp dword ptr [rip + lf_auto], 0
+    je 51f
+    lea rsi, [rip + .Lauto_quickfix]
+51: lea rdi, [rip + lf_line2]
     call sb_push_cstr
+    cmp dword ptr [rip + lf_auto], 0
+    jne 61f
     mov rsi, [rip + lf_act_kinds]
     test rsi, rsi
     jnz 6f
     lea rsi, [rip + .Ldash]
 6:  lea rdi, [rip + lf_line2]
     call sb_push_cstr
+61:
     # DIAGS: the ids of its file-diagnostics in the range
     lea rdi, [rip + lf_dbuf]
     call sb_clear
@@ -2123,6 +2146,7 @@ lf_actions_line:
 
 # lf_mark_mine(ext, owner) -> eax 1 when a mark's owner is the extension or one of its
 # file-diagnostics sources
+FN langfeat_mark_mine
 lf_mark_mine:
     cmp rdi, rsi
     je 1f
@@ -2797,6 +2821,7 @@ FN langfeat_tick
     call langextra_tick
     call outline_tick
     call hovercard_tick
+    call lightbulb_tick
     cmp dword ptr [rip + lf_show_due], 0
     je 0f
     mov dword ptr [rip + lf_show_due], 0  # the first parts of a query still out, shown
@@ -3503,6 +3528,8 @@ FN langfeat_ext_gone
     call outline_ext_gone
     mov rdi, [rsp]
     call hovercard_ext_gone
+    mov rdi, [rsp]
+    call lightbulb_ext_gone
     pop rdi
     pop rdi
     xor ecx, ecx
@@ -3573,6 +3600,8 @@ lf_lists: .quad 0, .Ll_def, .Ll_refs, .Ll_syms, .Ll_acts, 0, 0
     .quad .Ll_decl, .Ll_typedef, .Ll_impl, 0
 lf_single: .byte 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1
 .p2align 3
+.Lauto_quickfix: .asciz " auto quickfix"
+.p2align 3
 lf_peek_titles: .quad 0, .Lpk_def, .Lpk_refs, 0, 0, 0, 0, .Lpk_decl, .Lpk_typedef, .Lpk_impl, 0
 .Lpk_def: .asciz "definition"
 .Lpk_refs: .asciz "references"
@@ -3580,7 +3609,7 @@ lf_peek_titles: .quad 0, .Lpk_def, .Lpk_refs, 0, 0, 0, 0, .Lpk_decl, .Lpk_typede
 .Lpk_typedef: .asciz "type definition"
 .Lpk_impl: .asciz "implementation"
 .p2align 3
-lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, hovercard_reply, 0
+lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, hovercard_reply, lightbulb_reply, 0
 .Lv_definition: .asciz "definition"
 .Lv_references: .asciz "references"
 .Lv_symbols: .asciz "symbols"

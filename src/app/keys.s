@@ -2070,6 +2070,7 @@ g_commands:
     COMMAND implementation, "Go to Implementation", cmd_implementation, "ctrl+F12"
     COMMAND format_selection, "Format Selection", cmd_format_selection, ""
     COMMAND quick_fix_auto, "Auto Fix", cmd_quick_fix_auto, "shift+alt+."
+    COMMAND quick_fix, "Quick Fix...", cmd_quick_fix, ""
     COMMAND organize_imports, "Organize Imports", cmd_organize_imports, "shift+alt+o"
     COMMAND fix_all, "Fix All", cmd_fix_all, ""
     COMMAND refactor, "Refactor...", cmd_refactor, "ctrl+shift+r"
