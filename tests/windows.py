@@ -159,7 +159,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             [sys.executable, str(ROOT / 'tests/windows-clipboard-faults.py')], check=True))
         for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity',
                      'file-launch', 'readonly-save', 'field-blink', 'window-focus',
-                     'new-tab', 'tab-view', 'tab-drag', 'tab-pin', 'settings-search'):
+                     'new-tab', 'tab-view', 'tab-drag', 'tab-pin', 'settings-search',
+                     'multicursor', 'multicursor-vim'):
             check('ui/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
@@ -193,7 +194,7 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         # extensions: the host with the Python test extension, the title bar and page with installs
         # from a local release tree, and the showcase installed from GitHub (its Windows build)
         for name in ('save', 'save-actions', 'snippets', 'snippet-choices', 'snippet-variants', 'snippet-transforms', 'snippet-final', 'snippet-context', 'ext-host', 'ext-commands', 'ext-snapshots', 'ext-providers', 'ext-language', 'ext-scheduling', 'ext-watch', 'ext-boundaries', 'ext-ui', 'ext-showcase',
-                     'ext-updates', 'ext-remove-clean', 'ext-dev-install', 'ext-browse', 'ext-packs', 'ext-updates-github'):
+                     'ext-updates', 'ext-remove-clean', 'ext-dev-install', 'ext-browse', 'ext-packs', 'ext-updates-github', 'ext-selections'):
             check('extensions/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))

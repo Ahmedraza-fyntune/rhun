@@ -42,7 +42,7 @@ class FileDiagnostics(lang.Lang):
         d2 = fdiag(other, '-', [diag(1, 4, 1, 9, 'error', 'bad\nname')])
         root = self.provider(self.spec({'one': [list(d1)], 'two': [list(d2)]}), 'actions = *.rs\n',
                              extra=self.manifest(['one', 'two']))
-        out = self.run_lang(root, ['cmd lang.one', 'cmd lang.two', 'wait 300', 'print-problems', 'print-marks',
+        out = self.run_lang(root, ['cmd lang.one', 'cmd lang.two', 'wait 300', 'print-file-diagnostics', 'print-marks',
                                    'open ' + other, 'wait 300', 'print-state', 'print-marks'])
         p = self.problems(out)
         self.assertTrue(any('line=2 col=9 end=2:14 severity=warning code=lint(W1) source=fake/lang message=unused total' in l for l in p), out)
@@ -58,9 +58,9 @@ class FileDiagnostics(lang.Lang):
         b = fdiag('#1', 0, [diag(3, 1, 3, 3, 'info', 'third')])
         root = self.provider(self.spec({'a': [list(a)], 'b': [list(b)], 'reset': [['file-diagnostics-reset', '']]}),
                              'actions = *.rs\n', extra=self.manifest(['a', 'b', 'reset']))
-        out = self.run_lang(root, ['cmd lang.a', 'wait 200', 'echo ---', 'print-problems', 'cmd lang.b', 'wait 200',
-                                   'echo ---', 'print-problems', 'cmd lang.reset', 'wait 200', 'echo ---',
-                                   'print-problems', 'print-marks'])
+        out = self.run_lang(root, ['cmd lang.a', 'wait 200', 'echo ---', 'print-file-diagnostics', 'cmd lang.b', 'wait 200',
+                                   'echo ---', 'print-file-diagnostics', 'cmd lang.reset', 'wait 200', 'echo ---',
+                                   'print-file-diagnostics', 'print-marks'])
         parts = '\n'.join(out).split('---')
         self.assertEqual(parts[1].count('problem '), 2, out)
         self.assertEqual(parts[2].count('problem '), 1, out)
@@ -75,7 +75,7 @@ class FileDiagnostics(lang.Lang):
         root = self.provider(self.spec({'a': [list(a)], 'b': [list(b)], 'bad': [list(bad)]}), 'actions = *.rs\n',
                              extra=self.manifest(['a', 'b', 'bad']))
         out = self.run_lang(root, ['cmd lang.a', 'cmd lang.bad', 'wait 200', 'type x', 'cmd lang.b', 'wait 300',
-                                   'print-problems'])
+                                   'print-file-diagnostics'])
         log = self.lang_log()
         self.assertIn('error 1 stale 0', log)
         self.assertTrue(any(l.startswith('error 2 syntax') for l in log), log)
@@ -95,7 +95,7 @@ class FileDiagnostics(lang.Lang):
                             diag(3, 5, 3, 10, 'warning', 'other', rec('id', 'u-2'))])
         root = self.provider(self.spec({'a': [list(a)]}), 'actions = *.rs\n', extra=self.manifest(['a']))
         out = self.run_lang(root, ['cmd lang.a', 'wait 200', 'key ctrl+Home', 'key Down', 'cmd code_actions',
-                                   'wait 300', 'key Escape', 'ext-set fake/lang stop', 'wait 300', 'print-problems',
+                                   'wait 300', 'key Escape', 'ext-set fake/lang stop', 'wait 300', 'print-file-diagnostics',
                                    'print-marks'])
         req = [l for l in self.lang_log() if ' code-actions ' in l and l[:2] != '0 ']
         self.assertEqual(req[0].split()[4:], ['2', '9', '2', '14', 'invoked', '-', 'u-1'], req)

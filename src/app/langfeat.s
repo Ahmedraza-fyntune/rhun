@@ -18,12 +18,10 @@
 .equ LF_MAX, 10000              # locations or symbols in one answer
 .equ LF_ACTS_MAX, 1000
 .equ LF_BODY_MAX, 1048576
-.equ WS_BODY_MAX, 4194304       # a workspace edit (12g)
-.equ WS_FILES_MAX, 1000
-.equ WS_EDITS_MAX, 100000
 .equ LR_MAX, 64
 .equ LA_AUTO, 1                 # Auto Fix: the one preferred quick fix, applied
 .equ LA_ONE, 2                  # Organize Imports: one action that comes is applied
+.equ WS_BODY_MAX, 4194304       # a workspace edit (12g)
 
 # a request rhun waits on
 STRUCT
@@ -59,29 +57,6 @@ ENDSTRUCT LS_SIZE
 .equ LSF_DISABLED, 2            # LS_detail is the reason
 .equ LSF_RESOLVE, 4             # LS_data is resolve data (code-action-resolve), not v1's action data
 .equ LSF_QUICKFIX, 8
-
-# a group of a workspace edit: one file
-STRUCT
-F WG_path, 8                    # its PATH bytes
-F WG_plen, 8
-F WG_version, 8                 # -1: not open
-F WG_doc, 8                     # DOC* once resolved
-F WG_first, 8                   # its edits: we[first .. first + count)
-F WG_count, 8
-F WG_opened, 8                  # 1: this edit opened its tab (closed again if the edit fails)
-ENDSTRUCT WG_SIZE
-
-# an edit of a workspace edit
-STRUCT
-F WE_l1, 4
-F WE_c1, 4
-F WE_l2, 4
-F WE_c2, 4
-F WE_start, 8                   # byte offsets, once resolved
-F WE_end, 8
-F WE_text, 8
-F WE_len, 8
-ENDSTRUCT WE_SIZE
 
 .bss
 .p2align 3
@@ -126,18 +101,12 @@ la_reason: .quad 0
 la_reasonlen: .quad 0
 lf_name: .zero SB_SIZE          # the new name of a rename
 lf_err: .zero 256               # what the rename provider said instead
-ws_quiet: .long 0               # ws_apply for an extension's request: no toast
-ws_preserve_context: .long 0    # restricted background edit: never activate or reveal a tab
 .p2align 3
-ws_only: .quad 0                # a document id: ws_apply may change that document only
-ws_request_ext: .quad 0         # unsolicited apply: its permissions gate opening closed files
 .p2align 3
-ws_code: .quad 0                # the reply for the last failure ("CODE TEXT")
-wg_vec: .zero VEC_SIZE          # a workspace edit being applied
-we_vec: .zero VEC_SIZE
 lf_path: .zero 4100             # a path as a cstr
 
 .text
+.globl lf_head, lf_take, lf_four, lf_tmp4, lf_pos, lf_doc_ref, lf_is_abs, lf_msort   # wsedit.s reads with them
 
 # ---------------- helpers ----------------
 
@@ -612,6 +581,7 @@ FN cmd_references
     mov edi, LF_REFS
     jmp lf_start_cmd
 FN cmd_symbols
+    call ed_single              # one selection (multi-cursor)
     mov edi, LF_SYMS
     xor esi, esi
     jmp ext_provider_begin
@@ -669,6 +639,7 @@ FN cmd_format_document
 lf_start_cmd:
     push rbx
     mov ebx, edi
+    call ed_single              # about one place (multi-cursor)
     call ext_provider_cancel
     call palette_provider_close
     mov edi, ebx
@@ -680,6 +651,7 @@ lf_start_cmd:
 # FN langfeat_rename_start() -> eax 1 when the focused document has a rename provider: the palette
 # asks for the new name, the word under the cursor filled in (F2 renames the file otherwise)
 FN langfeat_rename_start
+    call ed_single              # one selection (multi-cursor)
     mov edi, LF_RENAME
     xor esi, esi
     jmp ext_provider_begin
@@ -2491,12 +2463,26 @@ lf_action_run:
     jmp 9f
 2:  cmp qword ptr [r12 + LS_elen], 0
     je 3f
+    # the edit in the extension's grammar (workspace-edits), named by the action's title; v1's
+    # data goes with it when the confirmation list waits (wsedit.s)
+    mov rcx, [r12 + LS_label]
+    add rcx, [rip + lf_bytes + SB_ptr]
     mov rdi, [r12 + LS_edit]
     add rdi, [rip + lf_bytes + SB_ptr]
     mov rsi, [r12 + LS_elen]
-    call ws_apply
-    test eax, eax
-    jz 9f                       # an edit that cannot be made: nothing more either
+    mov rdx, [r12 + LS_ext]
+    xor r8d, r8d
+    xor r9d, r9d
+    test dword ptr [r12 + LS_flags], LSF_RESOLVE
+    jnz 21f
+    cmp qword ptr [r12 + LS_clen], 0
+    jne 21f
+    mov r8, [r12 + LS_data]     # v1 data
+    add r8, [rip + lf_bytes + SB_ptr]
+    mov r9, [r12 + LS_dlen]
+21: call ws_apply_action
+    cmp eax, 1
+    jne 9f                      # not made (or the confirmation list waits): nothing more now
 3:  mov rdi, rbx
     call lf_action_command
 9:  EPILOGUE
@@ -2679,11 +2665,16 @@ lf_rs_tick:
     mov r15, [rip + ps_ptr]
     test r13, r13
     jz 1f
+    mov rcx, [rip + lf_res + VEC_ptr]   # in the extension's grammar, named by the action
+    imul rax, r12, LS_SIZE
+    mov rcx, [rcx + rax + LS_label]
+    add rcx, [rip + lf_bytes + SB_ptr]
     mov rdi, r15
     mov rsi, r13
-    call ws_apply
-    test eax, eax
-    jz 9f
+    mov rdx, rbx
+    call ws_apply_from
+    cmp eax, 1
+    jne 9f
 1:  # its command: the answer's, else the action's own
     test r14, r14
     jz 2f
@@ -2824,11 +2815,18 @@ lf_finish:
     lea rdi, [rip + .Lnothing_renamed]
     call app_toast
     jmp 9f
-6:  mov rdi, [rip + lf_ws + SB_ptr]
+6:  mov rdi, [rip + lf_name + SB_ptr]
+    mov rsi, [rip + lf_name + SB_len]
+    call ws_rename_label
+    mov rcx, rax
+    mov rdi, [rip + lf_ws + SB_ptr]
     mov rsi, [rip + lf_ws + SB_len]
-    call ws_apply
-    test eax, eax
-    jz 9f
+    mov rdx, [rip + lf_ws_ext]
+    call ws_apply_from
+    cmp eax, 1
+    jne 9f                      # refused, or waiting for the confirmation list
+    cmp dword ptr [rip + ws_wrote], 0
+    jne 9f                      # written to disk: it said so itself
     lea rdi, [rip + .Lrenamed]
     call app_toast
     jmp 9f
@@ -2966,26 +2964,6 @@ FN langfeat_chosen
     jmp 9f
 1:  mov rdi, rbx                # code actions: disabled, resolve, edit, command (lf_action_run)
     call lf_action_run
-    jmp 9f
-    imul r12, rbx, LS_SIZE
-    add r12, [rip + lf_res + VEC_ptr]
-    cmp qword ptr [r12 + LS_elen], 0
-    je 2f
-    mov rdi, [r12 + LS_edit]
-    add rdi, [rip + lf_bytes + SB_ptr]
-    mov rsi, [r12 + LS_elen]
-    call ws_apply
-    test eax, eax
-    jz 9f                       # an edit that cannot be made: nothing more either
-2:  cmp qword ptr [r12 + LS_dlen], 0
-    je 9f
-    cmp qword ptr [r12 + LS_ext], 0
-    je 9f                       # its extension stopped since
-    mov rdi, [r12 + LS_ext]
-    mov rsi, [r12 + LS_data]
-    add rsi, [rip + lf_bytes + SB_ptr]
-    mov rdx, [r12 + LS_dlen]
-    call extproto_send_action
 9:  EPILOGUE
 
 # lf_goto(i): the editor at result i: its file open, its range selected
@@ -3072,567 +3050,6 @@ lf_open_path:
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
-
-# ---------------- workspace edits (12g) ----------------
-
-# ws_fail(cstr) -> eax 0: says why nothing changed
-ws_fail:
-    push rbx
-    cmp dword ptr [rip + ws_quiet], 0
-    jne 1f
-    call app_toast
-1:  xor eax, eax
-    pop rbx
-    ret
-
-# FN ws_apply_request(body, len, ext) -> eax 1 when every edit was made; 0 when none was, with rdx the
-# error reply's "CODE TEXT" (an extension's apply request: no toast, the extension hears why)
-FN ws_apply_request
-    push rbx
-    mov [rip + ws_request_ext], rdx
-    mov dword ptr [rip + ws_quiet], 1
-    call ws_apply
-    mov dword ptr [rip + ws_quiet], 0
-    mov qword ptr [rip + ws_request_ext], 0
-    mov rdx, [rip + ws_code]
-    pop rbx
-    ret
-
-# ws_apply_document(body, len, doc id, quiet): one already open document, with no
-# activation, tab creation, or cursor reveal. Restore caller state on every outcome.
-FN ws_apply_document
-    PROLOGUE 48
-    mov [rsp + 16], rdi
-    mov [rsp + 24], rsi
-    mov [rsp + 32], rdx
-    mov [rsp + 40], ecx
-    mov rdi, rdx
-    call extproto_doc
-    test rax, rax
-    jz 8f
-    mov rax, [rip + ws_only]
-    mov [rsp], rax
-    mov eax, [rip + ws_quiet]
-    mov [rsp + 8], eax
-    mov eax, [rip + ws_preserve_context]
-    mov [rsp + 12], eax
-    mov rdx, [rsp + 32]
-    mov [rip + ws_only], rdx
-    mov ecx, [rsp + 40]
-    mov [rip + ws_quiet], ecx
-    mov dword ptr [rip + ws_preserve_context], 1
-    mov rdi, [rsp + 16]
-    mov rsi, [rsp + 24]
-    call ws_apply
-    mov rdx, [rsp]
-    mov [rip + ws_only], rdx
-    mov edx, [rsp + 8]
-    mov [rip + ws_quiet], edx
-    mov edx, [rsp + 12]
-    mov [rip + ws_preserve_context], edx
-    EPILOGUE
-8:  xor eax, eax
-    EPILOGUE
-
-# FN ws_apply(body, len) -> eax 1 when every edit was made, 0 when none was (and a toast says why):
-# "N", then per file PATH_LEN VERSION M and the path, then M edits L1 C1 L2 C2 LEN and the text
-FN ws_apply
-    PROLOGUE 48
-    mov qword ptr [rsp + 16], 0
-    mov qword ptr [rip + wg_vec + VEC_len], 0
-    mov qword ptr [rip + we_vec + VEC_len], 0
-    cmp rsi, WS_BODY_MAX
-    ja .Lws_big
-    mov edx, 0x7fffffff
-    call lf_head
-    test rax, rax
-    js .Lws_bad
-    cmp rax, WS_FILES_MAX
-    ja .Lws_big
-    mov r15, rax                # groups
-    # read the groups and their edits
-.Lws_group:
-    test r15, r15
-    jz .Lws_read
-    dec r15
-    call ps_line
-    test eax, eax
-    jz .Lws_bad
-    call ps_num
-    test edx, edx
-    jz .Lws_bad
-    test rax, rax
-    jz .Lws_bad
-    cmp rax, 4096
-    ja .Lws_bad
-    mov r12, rax                # the path's length
-    call ps_word                # the version, or -
-    test rdx, rdx
-    jz .Lws_bad
-    mov r13, -1
-    cmp rdx, 1
-    jne 1f
-    cmp byte ptr [rax], '-'
-    je 2f
-1:  cmp rdx, 18
-    ja .Lws_bad
-    mov rbx, rdx
-    mov rdi, rax
-    mov rsi, rdx
-    call parse_u64
-    cmp rdx, rbx
-    jne .Lws_bad
-    mov r13, rax
-2:  call ps_num
-    test edx, edx
-    jz .Lws_bad
-    mov r14, rax                # the edits
-    call ps_eol
-    test eax, eax
-    jz .Lws_bad
-    mov rdi, r12
-    call lf_take
-    test rax, rax
-    jz .Lws_bad
-    mov rbx, rax
-    lea rdi, [rip + wg_vec]
-    mov esi, WG_SIZE
-    call vec_push
-    mov [rax + WG_path], rbx
-    mov [rax + WG_plen], r12
-    mov [rax + WG_version], r13
-    mov rcx, [rip + we_vec + VEC_len]
-    mov [rax + WG_first], rcx
-    mov [rax + WG_count], r14
-    mov rcx, [rip + we_vec + VEC_len]
-    add rcx, r14
-    cmp rcx, WS_EDITS_MAX
-    ja .Lws_big
-3:  test r14, r14
-    jz .Lws_group
-    dec r14
-    call ps_line
-    test eax, eax
-    jz .Lws_bad
-    call lf_four
-    test eax, eax
-    jz .Lws_bad
-    call ps_num
-    test edx, edx
-    jz .Lws_bad
-    mov r12, rax
-    call ps_eol
-    test eax, eax
-    jz .Lws_bad
-    mov rdi, r12
-    call lf_take
-    test rax, rax
-    jz .Lws_bad
-    mov rbx, rax
-    lea rdi, [rip + we_vec]
-    mov esi, WE_SIZE
-    call vec_push
-    lea rcx, [rip + lf_tmp4]
-    mov edx, [rcx]
-    mov [rax + WE_l1], edx
-    mov edx, [rcx + 4]
-    mov [rax + WE_c1], edx
-    mov edx, [rcx + 8]
-    mov [rax + WE_l2], edx
-    mov edx, [rcx + 12]
-    mov [rax + WE_c2], edx
-    mov [rax + WE_text], rbx
-    mov [rax + WE_len], r12
-    jmp 3b
-.Lws_read:
-    mov rax, [rip + ps_ptr]
-    cmp rax, [rip + ps_end]
-    jne .Lws_bad
-    # the documents: open ones by id or path at their versions; files that are not open come next
-    mov rax, [rip + g_doc]
-    mov [rsp + 16], rax         # the document to come back to
-    xor ebx, ebx
-.Lws_find:
-    cmp rbx, [rip + wg_vec + VEC_len]
-    jae .Lws_open
-    imul r12, rbx, WG_SIZE
-    add r12, [rip + wg_vec + VEC_ptr]
-    inc rbx
-    mov qword ptr [r12 + WG_doc], 0
-    mov qword ptr [r12 + WG_opened], 0
-    mov rdi, r12
-    call ws_path
-    test eax, eax
-    jz .Lws_badpath
-    cmp byte ptr [rip + lf_path], '#'
-    jne 4f
-    lea rdi, [rip + lf_path]
-    call lf_doc_ref
-    test rax, rax
-    js .Lws_badpath
-    mov rdi, rax
-    call extproto_doc
-    test rax, rax
-    jz .Lws_gone
-    mov [r12 + WG_doc], rax
-    jmp 5f
-4:  lea rdi, [rip + lf_path]
-    call lf_is_abs
-    test eax, eax
-    jz .Lws_badpath
-    lea rdi, [rip + lf_path]
-    call app_find_tab
-    test rax, rax
-    jns 42f
-    cmp qword ptr [rip + ws_only], 0
-    jne .Lws_badpath            # restricted edits never open an unrecognized file
-    mov rdi, [rip + ws_request_ext]
-    lea rsi, [rip + lf_path]
-    call ext_open_path
-    test rax, rax
-    jz 41f                     # the open pass distinguishes missing and forbidden files
-    mov r13, rax
-    lea rdi, [rip + lf_path]
-    mov rsi, r13
-    call cstr_copy
-    mov rdi, r13
-    call mem_free
-    lea rdi, [rip + lf_path]
-    call app_find_tab
-    test rax, rax
-    js 41f
-42: mov rdi, rax
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne .Lws_badpath
-    mov rax, [rax + TAB_doc]
-    mov [r12 + WG_doc], rax
-    jmp 5f
-41: cmp qword ptr [r12 + WG_version], -1
-    jne .Lws_gone               # it was open when the edit was made
-    jmp .Lws_find
-5:  mov rax, [r12 + WG_doc]
-    mov rcx, [rip + ws_only]
-    test rcx, rcx
-    jz 50f
-    cmp rcx, [rax + DOC_id]
-    jne .Lws_badpath            # reject before the disk/tab opening pass
-50: mov rcx, [r12 + WG_version]
-    cmp rcx, -1
-    jne 51f
-    # made from the file on disk: right for an open document only while it has no changes
-    mov rdi, rax
-    call doc_dirty
-    test eax, eax
-    jnz .Lws_stale
-    jmp .Lws_find
-51: mov rax, [r12 + WG_doc]
-    mov rcx, [r12 + WG_version]
-    cmp rcx, [rax + DOC_version]
-    jne .Lws_stale
-    jmp .Lws_find
-.Lws_open:
-    # files that are not open open in tabs of their own
-    xor ebx, ebx
-6:  cmp rbx, [rip + wg_vec + VEC_len]
-    jae .Lws_check
-    imul r12, rbx, WG_SIZE
-    add r12, [rip + wg_vec + VEC_ptr]
-    inc rbx
-    cmp qword ptr [r12 + WG_doc], 0
-    jne 6b
-    mov rdi, r12
-    call ws_path
-    lea rdi, [rip + lf_path]
-    call file_type
-    cmp eax, 0x8000
-    jne .Lws_unreadable         # missing (it would open empty), a folder, a device
-    # Every edit resolves existing aliases; only unsolicited edits gate disk roots.
-    mov rdi, [rip + ws_request_ext]
-    lea rsi, [rip + lf_path]
-    call ext_open_path
-    test rax, rax
-    jz .Lws_denied
-    mov r13, rax
-    lea rdi, [rip + lf_path]
-    mov rsi, r13
-    call cstr_copy
-    mov rdi, r13
-    call mem_free
-60: lea rdi, [rip + lf_path]
-    call app_find_tab
-    test rax, rax
-    js 62f
-    # Another group may already have opened this canonical path. Never own its rollback.
-    mov rdi, rax
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne .Lws_badpath
-    mov rdi, [rax + TAB_doc]
-    mov [r12 + WG_doc], rdi
-    call doc_dirty
-    test eax, eax
-    jnz .Lws_stale
-    jmp 6b
-62: mov dword ptr [rip + g_open_keep_tab], 1
-    lea rdi, [rip + lf_path]
-    call app_open_file
-    mov dword ptr [rip + g_open_keep_tab], 0
-    test rax, rax
-    js .Lws_unreadable
-    mov [rsp + 24], rax
-    mov rdi, rax
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    je 61f
-    mov rdi, [rsp + 24]         # an image: its tab goes again
-    call app_close_tab_now
-    jmp .Lws_unreadable
-61: mov rax, [rax + TAB_doc]
-    mov [r12 + WG_doc], rax
-    mov qword ptr [r12 + WG_opened], 1
-    jmp 6b
-.Lws_check:
-    # every range in its text, in order, none over another
-    xor ebx, ebx
-7:  cmp rbx, [rip + wg_vec + VEC_len]
-    jae .Lws_apply
-    imul r12, rbx, WG_SIZE
-    add r12, [rip + wg_vec + VEC_ptr]
-    inc rbx
-    mov r13, [r12 + WG_doc]
-    mov rax, [rip + ws_only]
-    test rax, rax
-    jz 75f
-    cmp rax, [r13 + DOC_id]
-    jne .Lws_badpath            # a format edit for another document
-75: # a document named twice (by id and by path) would get edits made for a text it no longer has
-    mov rcx, [rip + wg_vec + VEC_ptr]
-73: cmp rcx, r12
-    jae 74f
-    cmp [rcx + WG_doc], r13
-    je .Lws_bad
-    add rcx, WG_SIZE
-    jmp 73b
-74: test dword ptr [r13 + DOC_flags], DF_READONLY
-    jnz .Lws_readonly
-    mov r14, [r12 + WG_first]
-    mov r15, r14
-    add r15, [r12 + WG_count]
-71: cmp r14, r15
-    jae 72f
-    imul rax, r14, WE_SIZE
-    add rax, [rip + we_vec + VEC_ptr]
-    mov [rsp], rax
-    mov rdi, r13
-    mov esi, [rax + WE_l1]
-    mov edx, [rax + WE_c1]
-    call lf_pos
-    test rax, rax
-    js .Lws_badrange
-    mov rcx, [rsp]
-    mov [rcx + WE_start], rax
-    mov rdi, r13
-    mov esi, [rcx + WE_l2]
-    mov edx, [rcx + WE_c2]
-    call lf_pos
-    test rax, rax
-    js .Lws_badrange
-    mov rcx, [rsp]
-    mov [rcx + WE_end], rax
-    cmp rax, [rcx + WE_start]
-    jb .Lws_badrange
-    inc r14
-    jmp 71b
-72: mov rdi, r12
-    call ws_sort
-    test eax, eax
-    jz .Lws_toomany
-    mov rdi, r12
-    call ws_overlap
-    test eax, eax
-    jnz .Lws_overlap
-    jmp 7b
-.Lws_apply:
-    # each file as one undo step, from its last edit to its first
-    xor ebx, ebx
-8:  cmp rbx, [rip + wg_vec + VEC_len]
-    jae .Lws_done
-    imul r12, rbx, WG_SIZE
-    add r12, [rip + wg_vec + VEC_ptr]
-    inc rbx
-    mov rdi, r12
-    call ws_apply_group
-    jmp 8b
-.Lws_done:
-    cmp dword ptr [rip + ws_preserve_context], 0
-    jne 81f
-    # back to the document the user was in
-    mov rdi, [rsp + 16]
-    test rdi, rdi
-    jz 81f
-    call doc_tab
-    test rax, rax
-    js 81f
-    mov rdi, rax
-    call app_activate_tab
-81: mov dword ptr [rip + g_dirty], 1
-    mov eax, 1
-    EPILOGUE
-.Lws_big:
-    lea rax, [rip + .Lwc_big]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_big]
-    jmp .Lws_out
-.Lws_denied:
-    lea rax, [rip + .Lwc_denied]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_path]
-    jmp .Lws_out
-.Lws_bad:
-    lea rax, [rip + .Lwc_bad]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_bad]
-    jmp .Lws_out
-.Lws_badpath:
-    lea rax, [rip + .Lwc_path]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_path]
-    jmp .Lws_out
-.Lws_gone:
-    lea rax, [rip + .Lwc_gone]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_gone]
-    jmp .Lws_out
-.Lws_stale:
-    lea rax, [rip + .Lwc_stale]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_stale]
-    jmp .Lws_out
-.Lws_unreadable:
-    lea rax, [rip + .Lwc_open]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_open]
-    jmp .Lws_out
-.Lws_readonly:
-    lea rax, [rip + .Lwc_readonly]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_readonly]
-    jmp .Lws_out
-.Lws_badrange:
-    lea rax, [rip + .Lwc_range]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_range]
-    jmp .Lws_out
-.Lws_toomany:
-    lea rax, [rip + .Lwc_many]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_many]
-    jmp .Lws_out
-.Lws_overlap:
-    lea rax, [rip + .Lwc_overlap]
-    mov [rip + ws_code], rax
-    lea rdi, [rip + .Lws_e_overlap]
-.Lws_out:
-    call ws_fail
-    cmp dword ptr [rip + ws_preserve_context], 0
-    jne 3f                     # restricted resolution opened nothing; keep current interaction
-    # nothing changes: the tabs this edit opened close, and the user's document is active again
-    mov rbx, [rip + wg_vec + VEC_len]
-1:  test rbx, rbx
-    jz 2f
-    dec rbx
-    imul r12, rbx, WG_SIZE
-    add r12, [rip + wg_vec + VEC_ptr]
-    cmp qword ptr [r12 + WG_opened], 0
-    je 1b
-    mov rdi, [r12 + WG_doc]
-    call doc_tab
-    test rax, rax
-    js 1b
-    mov rdi, rax
-    call app_close_tab_now
-    jmp 1b
-2:  mov rdi, [rsp + 16]
-    test rdi, rdi
-    jz 3f
-    call doc_tab
-    test rax, rax
-    js 3f
-    mov rdi, rax
-    call app_activate_tab
-3:  mov dword ptr [rip + g_dirty], 1
-    xor eax, eax
-    EPILOGUE
-
-# ws_path(WG*) -> eax 1 with its path in lf_path as a cstr, 0 when it holds a NUL or is too long
-ws_path:
-    mov rsi, [rdi + WG_path]
-    mov rcx, [rdi + WG_plen]
-    cmp rcx, 4096
-    ja 8f
-    lea rdx, [rip + lf_path]
-    xor eax, eax
-1:  cmp rax, rcx
-    jae 2f
-    movzx r8d, byte ptr [rsi + rax]
-    test r8d, r8d
-    jz 8f
-    mov [rdx + rax], r8b
-    inc rax
-    jmp 1b
-2:  mov byte ptr [rdx + rax], 0
-    mov eax, 1
-    ret
-8:  xor eax, eax
-    ret
-
-# ws_sort(WG*) -> eax 1 with its edits by start (an insertion keeps its place among equals), 0
-# when they are out of order and too many to sort
-ws_sort:
-    PROLOGUE
-    mov rbx, [rdi + WG_first]
-    mov r12, [rdi + WG_count]
-    # already in order (by we_cmp: a replacement listed before an insertion at its start is not)?
-    mov r13, 1
-1:  cmp r13, r12
-    jae 8f
-    lea rax, [rbx + r13]
-    imul rax, rax, WE_SIZE
-    add rax, [rip + we_vec + VEC_ptr]
-    lea rdi, [rax - WE_SIZE]
-    mov rsi, rax
-    call we_cmp
-    test eax, eax
-    jg 2f
-    inc r13
-    jmp 1b
-2:  imul rdi, rbx, WE_SIZE
-    add rdi, [rip + we_vec + VEC_ptr]
-    mov rsi, r12
-    mov edx, WE_SIZE
-    lea rcx, [rip + we_cmp]
-    call lf_msort
-8:  mov eax, 1
-    EPILOGUE
-
-# we_cmp(a, b) -> eax < 0 when edit a goes first: by start, then by end (an insertion before a
-# replacement that starts where it is); equal ones keep their order
-we_cmp:
-    mov rax, [rdi + WE_start]
-    cmp rax, [rsi + WE_start]
-    jb 8f
-    ja 9f
-    mov rax, [rdi + WE_end]
-    cmp rax, [rsi + WE_end]
-    jb 8f
-    ja 9f
-    xor eax, eax
-    ret
-8:  mov eax, -1
-    ret
-9:  mov eax, 1
-    ret
 
 # lf_msort(base, n, size, cmp): a stable sort of n records of size bytes; cmp(a, b) -> eax < 0
 # when a goes before b (a merge sort of pointers, then the records copied in their order)
@@ -3742,67 +3159,71 @@ lf_msort:
     call mem_free
 9:  EPILOGUE
 
-# ws_overlap(WG*) -> eax 1 when one of its (sorted) edits starts inside the one before
-ws_overlap:
-    mov rsi, [rdi + WG_first]
-    mov rcx, 1
-1:  cmp rcx, [rdi + WG_count]
-    jae 8f
-    lea rax, [rsi + rcx]
-    imul rax, rax, WE_SIZE
-    add rax, [rip + we_vec + VEC_ptr]
-    mov rdx, [rax - WE_SIZE + WE_end]
-    cmp rdx, [rax + WE_start]
-    ja 9f
-    inc rcx
-    jmp 1b
-8:  xor eax, eax
-    ret
-9:  mov eax, 1
-    ret
-
-# ws_apply_group(WG*): its edits made, as one undo step (the cursor and the selection move with the
-# text around them: doc_insert and doc_delete move them)
-ws_apply_group:
+# wsedit: FN langfeat_show_locations(ext, title ptr, len, body, len) -> eax 1 with the locations
+# body (12d) listed in the palette under the title as Find All References lists its results, 0
+# when it breaks 12d's rules (feature reveal's show-locations; the Results panel takes it over)
+FN langfeat_show_locations
     PROLOGUE 16
-    mov r12, rdi
-    mov rbx, [r12 + WG_doc]
-    cmp qword ptr [r12 + WG_count], 0
-    je 9f
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov [rsp], rcx
+    mov [rsp + 8], r8
+    call lf_reset
+    mov rax, [rip + g_doc]      # choosing one checks the document asked about: the active one
+    mov [rip + lf_doc], rax
+    test rax, rax
+    jz 1f
+    mov rcx, [rax + DOC_id]
+    mov [rip + lf_doc_id], rcx
+    mov rcx, [rax + DOC_language_revision]
+    mov [rip + lf_language_revision], rcx
+1:  # the title, at most 200 bytes, as the list's placeholder
+    mov rdi, r13
+    mov rsi, r12
+    mov edx, 200
+    call utf8_cut
+    mov rcx, rax
+    lea rdi, [rip + lf_show_title]
+    mov rsi, r12
+    rep movsb
+    mov byte ptr [rdi], 0
     mov rdi, rbx
-    call doc_begin_group
-    mov r13, [r12 + WG_count]
-1:  test r13, r13
-    jz 8f
-    dec r13
-    mov rax, [r12 + WG_first]
-    add rax, r13
-    imul r14, rax, WE_SIZE
-    add r14, [rip + we_vec + VEC_ptr]
-    mov rdx, [r14 + WE_end]
-    sub rdx, [r14 + WE_start]
-    jz 2f
-    mov rdi, rbx
-    mov rsi, [r14 + WE_start]
-    mov ecx, EK_OTHER
-    call doc_delete
-2:  cmp qword ptr [r14 + WE_len], 0
-    je 1b
-    mov rdi, rbx
-    mov rsi, [r14 + WE_start]
-    mov rdx, [r14 + WE_text]
-    mov rcx, [r14 + WE_len]
-    mov r8d, EK_OTHER
-    call doc_insert
-    jmp 1b
-8:  mov rdi, rbx
-    call doc_end_group
-    cmp dword ptr [rip + ws_preserve_context], 0
-    je 8f
-    mov dword ptr [rip + g_dirty], 1
-    jmp 9f
-8:  call ed_touch
-9:  EPILOGUE
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call lf_parse_locations
+    test rax, rax
+    js 8f
+    call lf_sort
+    mov dword ptr [rip + lf_list_kind], LF_REFS
+    lea rdi, [rip + lf_show_title]
+    call palette_results_open
+    xor r13d, r13d
+2:  cmp r13, [rip + lf_res + VEC_len]
+    jae 4f
+    imul r14, r13, LS_SIZE
+    add r14, [rip + lf_res + VEC_ptr]
+    mov rdi, [r14 + LS_label]
+    add rdi, [rip + lf_bytes + SB_ptr]
+    call strlen
+    mov rsi, rax
+    mov rdi, [r14 + LS_label]
+    add rdi, [rip + lf_bytes + SB_ptr]
+    xor edx, edx
+    mov rax, [r14 + LS_detail]
+    test rax, rax
+    js 3f
+    mov rdx, rax
+    add rdx, [rip + lf_bytes + SB_ptr]
+3:  mov rcx, r13
+    call palette_results_add
+    inc r13
+    jmp 2b
+4:  call palette_results_ready
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # FN langfeat_ext_gone(ext): an extension stopped: its requests go (state only)
 FN langfeat_ext_gone
@@ -3859,6 +3280,7 @@ FN langfeat_ext_gone
 .bss
 .p2align 2
 lf_tmp4: .zero 16
+lf_show_title: .zero 208        # wsedit: show-locations' title
 
 .section .rodata
 .p2align 3
@@ -3936,24 +3358,3 @@ lf_single: .byte 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1
 .Lname_spaces: .asciz "A name cannot hold spaces"
 .Lnothing_renamed: .asciz "Nothing to rename"
 .Lrenamed: .asciz "Renamed: check the changed files and save them"
-.Lws_e_bad: .asciz "The extension's edit could not be read: nothing changed"
-.Lws_e_path: .asciz "The extension's edit names a file it cannot: nothing changed"
-.Lws_e_gone: .asciz "A document the edit was made for is closed: nothing changed"
-.Lws_e_stale: .asciz "A document changed since the edit was made: nothing changed"
-.Lws_e_open: .asciz "A file the edit changes cannot be opened: nothing changed"
-.Lws_e_readonly: .asciz "A file the edit changes is read-only: nothing changed"
-.Lws_e_range: .asciz "The edit's ranges are not in the text: nothing changed"
-.Lws_e_many: .asciz "Too many edits out of order in one file: nothing changed"
-.Lws_e_overlap: .asciz "The edit's ranges overlap: nothing changed"
-.Lwc_bad: .asciz "syntax the edit cannot be read"
-.Lwc_big: .asciz "toobig over 4 MB, 1000 files or 100000 edits"
-.Lws_e_big: .asciz "The extension's edit is too big: nothing changed"
-.Lwc_path: .asciz "nofile a path is not absolute or not a document"
-.Lwc_denied: .asciz "needs the file is outside the extension's read permissions"
-.Lwc_gone: .asciz "nodoc a document it names is closed"
-.Lwc_stale: .asciz "stale a document changed since the edit was made"
-.Lwc_open: .asciz "nofile a file cannot be opened"
-.Lwc_readonly: .asciz "readonly a document cannot be edited"
-.Lwc_range: .asciz "badpos a range is outside its text or inside a character"
-.Lwc_many: .asciz "toobig too many edits out of order in one file"
-.Lwc_overlap: .asciz "badpos two edits overlap"
