@@ -1,6 +1,6 @@
-# Headless control commands of the language features (--script and --control; control.s hands
-# over the commands it does not know): print-langstats, print-provides, print-query and the ones
-# later stages add. Each writes its answer into the control's output buffer.
+# Headless control commands of the language features (--script and --control; control.s looks
+# them up in langfeat_ctl): print-langstats, print-provides, print-query and the ones later stages
+# add. Each writes its answer into the control's output buffer.
 .include "rhun.inc"
 
 .bss
@@ -11,31 +11,21 @@ lc_rlen: .quad 0
 
 .text
 
-# FN lfcontrol_exec(name ptr, len, rest ptr, len, out SB*) -> rax 0 when it was one of these
-# commands, -1 otherwise
-FN lfcontrol_exec
-    PROLOGUE
-    mov r12, rdi
-    mov r13, rsi
-    mov [rip + lc_rest], rdx
-    mov [rip + lc_rlen], rcx
-    mov [rip + lc_out], r8
-    lea rbx, [rip + lc_table]
-1:  mov rdx, [rbx]
-    test rdx, rdx
-    jz 8f
-    mov rdi, r12
-    mov rsi, r13
-    call str_eq_cstr
-    test eax, eax
-    jnz 2f
-    add rbx, 16
-    jmp 1b
-2:  call [rbx + 8]
+# LCWRAP: a table entry fn(out, rest, rest len) that keeps them for lc_arg, then runs the command
+.macro LCWRAP name, target
+\name:
+    mov [rip + lc_out], rdi
+    mov [rip + lc_rest], rsi
+    mov [rip + lc_rlen], rdx
+    sub rsp, 8
+    call \target
+    add rsp, 8
     xor eax, eax
-    EPILOGUE
-8:  mov rax, -1
-    EPILOGUE
+    ret
+.endm
+    LCWRAP w_print_langstats, c_print_langstats
+    LCWRAP w_print_provides, c_print_provides
+    LCWRAP w_print_query, c_print_query
 
 # lc_arg() -> rax ptr, rdx len of the next word of the rest (rdx 0 at its end)
 lc_arg:
@@ -132,8 +122,9 @@ c_print_query:
 .Lc_print_provides: .asciz "print-provides"
 .Lc_print_query: .asciz "print-query"
 .p2align 3
-lc_table:
-    .quad .Lc_print_langstats, c_print_langstats
-    .quad .Lc_print_provides, c_print_provides
-    .quad .Lc_print_query, c_print_query
+.globl langfeat_ctl
+langfeat_ctl:
+    .quad .Lc_print_langstats, w_print_langstats
+    .quad .Lc_print_provides, w_print_provides
+    .quad .Lc_print_query, w_print_query
     .quad 0, 0

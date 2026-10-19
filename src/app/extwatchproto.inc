@@ -5,7 +5,7 @@ h_watch_workspace:
     cmp qword ptr [rip + nfields], 2
     jne .Lewp_bad
     mov rdi, [rip + cur]
-    test dword ptr [rdi + EXT_features], FEAT_WORKSPACE_WATCH
+    FEAT_TEST rdi, FEAT_WORKSPACE_WATCH
     jz .Lewp_feature_failed
     call extwatch_add
     test rax, rax
@@ -68,7 +68,7 @@ FN extproto_watch_event
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING

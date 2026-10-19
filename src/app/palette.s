@@ -31,12 +31,6 @@
 .equ BRW_HERE, 2                # the "Open <folder>" row
 .equ BRW_NEW, 4                 # and "Open <folder> in a new window" under it
 
-.data
-.p2align 3
-.globl command_catalog_epoch, theme_catalog_epoch
-command_catalog_epoch: .quad 1
-theme_catalog_epoch: .quad 1
-
 STRUCT
 F IT_label, 8
 F IT_len, 8
@@ -71,8 +65,7 @@ results: .zero VEC_SIZE
 strings: .zero SB_SIZE          # label storage for file items
 pal_label: .quad 0              # prompt label
 pal_theme_slot: .quad 0         # the theme setting the theme list picks for (theme_slot)
-pal_catalog_epoch: .quad 0
-pal_command_cache_epoch: .quad 0
+pal_keys_cached: .quad 0        # 1 while keys_cache holds the built-in commands' shortcuts
 pal_path: .zero 4096
 scan_depth: .long 0
 scan_prefix: .zero 4096         # relative dir during scan
@@ -111,23 +104,10 @@ FN palette_field
     lea rax, [rip + pal_tf]
     ret
 
-# Publication calls this before replacing any catalog. No allocation, release or theme IO.
-# Cached shortcut/detail strings own their bytes; invalidating their epoch detaches their use.
-FN palette_close_catalogs_pure
-    mov qword ptr [rip + pal_command_cache_epoch], 0
-    mov eax, [rip + pal_mode]
-    cmp eax, PM_COMMANDS
-    je 1f
-    cmp eax, PM_THEMES
-    je 1f
-    cmp eax, PM_LANGS
-    jne 2f
-1:  jmp .Lpal_detach_borrowers_pure
-2:  ret
-
-# Publication also detaches extension prompts/results, preserving ordinary user prompts.
+# palette_close_extensions_pure(): an extension's prompt or results close (their owner went
+# away), ordinary user prompts stay. No allocation or release.
 FN palette_close_extensions_pure
-    mov qword ptr [rip + pal_command_cache_epoch], 0
+    mov qword ptr [rip + pal_keys_cached], 0
     mov eax, [rip + pal_mode]
     cmp eax, PM_COMMANDS
     je .Lpal_detach_borrowers_pure
@@ -164,35 +144,12 @@ FN palette_close_extensions_pure
     mov dword ptr [rip + pal_scroll], 0
     mov qword ptr [rip + items + VEC_len], 0
     mov qword ptr [rip + results + VEC_len], 0
-    mov qword ptr [rip + pal_catalog_epoch], 0
     mov dword ptr [rip + g_dirty], 1
     mov eax, [rip + g_focus]
     cmp eax, FOCUS_PALETTE
     je pal_return_focus
     cmp eax, FOCUS_PROMPT
     je pal_return_focus
-    ret
-
-# Every catalog row consumer checks its epoch before touching borrowed item data.
-pal_catalog_check:
-    mov eax, [rip + pal_mode]
-    cmp eax, PM_LANGS
-    jne 1f
-    mov rax, [rip + syntax_catalog_epoch]
-    jmp 3f
-1:  cmp eax, PM_THEMES
-    jne 2f
-    mov rax, [rip + theme_catalog_epoch]
-    jmp 3f
-2:  cmp eax, PM_COMMANDS
-    jne 4f
-    mov rax, [rip + command_catalog_epoch]
-3:  cmp rax, [rip + pal_catalog_epoch]
-    jne 5f
-4:  mov eax, 1
-    ret
-5:  call palette_close_catalogs_pure
-    xor eax, eax
     ret
 
 # palette_open(mode)
@@ -229,20 +186,14 @@ palette_open:
     jmp 8f
 1:  cmp ebx, PM_COMMANDS
     jne 2f
-    mov rax, [rip + command_catalog_epoch]
-    mov [rip + pal_catalog_epoch], rax
     call load_commands
     jmp 8f
 2:  cmp ebx, PM_THEMES
     jne 3f
-    mov rax, [rip + theme_catalog_epoch]
-    mov [rip + pal_catalog_epoch], rax
     call load_themes
     jmp 8f
 3:  cmp ebx, PM_LANGS
     jne 8f
-    mov rax, [rip + syntax_catalog_epoch]
-    mov [rip + pal_catalog_epoch], rax
     call load_langs
 8:  call palette_filter
     # the theme list shows its setting's theme, which need not be the one shown (the light mode's
@@ -1084,9 +1035,8 @@ item_add:   # (label, len, detail, data)
 
 load_commands:
     PROLOGUE
-    mov rax, [rip + command_catalog_epoch]
-    cmp [rip + pal_command_cache_epoch], rax
-    je .Llc_cached
+    cmp qword ptr [rip + pal_keys_cached], 0
+    jne .Llc_cached
     call palette_ext_keys_reset
     xor ebx, ebx
 .Llc_reset:
@@ -1099,8 +1049,7 @@ load_commands:
     inc ebx
     jmp .Llc_reset
 .Llc_reset_done:
-    mov rax, [rip + command_catalog_epoch]
-    mov [rip + pal_command_cache_epoch], rax
+    mov qword ptr [rip + pal_keys_cached], 1
 .Llc_cached:
     lea rbx, [rip + g_commands]
 1:  mov r12, [rbx + CMD_title]
@@ -1831,7 +1780,6 @@ pal_query:
 FN palette_print
     PROLOGUE
     mov rbx, rdi
-    call pal_catalog_check
     cmp dword ptr [rip + pal_mode], PM_NONE
     jne 1f
     lea rsi, [rip + .Lpp_none]
@@ -2009,9 +1957,6 @@ FN fuzzy
 # palette_filter(): results = items matching the query, best first
 FN palette_filter
     PROLOGUE 16
-    call pal_catalog_check
-    test eax, eax
-    jz 9f
     mov dword ptr [rip + pal_reveal], 1
     mov dword ptr [rip + pal_wheel], 0
     mov qword ptr [rip + results + VEC_len], 0
@@ -2153,9 +2098,6 @@ FN palette_changed
 
 # selected item -> IT* or 0
 selected_item:
-    call pal_catalog_check
-    test eax, eax
-    jz 1f
     mov eax, [rip + pal_sel]
     cmp rax, [rip + results + VEC_len]
     jae 1f
@@ -2698,9 +2640,6 @@ prompt_done:
 
 FN palette_draw
     PROLOGUE 64
-    call pal_catalog_check
-    test eax, eax
-    jz .Lpd_ret
     cmp dword ptr [rip + pal_mode], PM_NONE
     je .Lpd_ret
     # find in files reads its files once this frame is on screen

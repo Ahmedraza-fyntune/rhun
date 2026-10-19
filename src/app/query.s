@@ -514,12 +514,15 @@ FN query_progress_of
 
 # ---------------- query-stream (extension requests) ----------------
 
-# qp_agreed(bit) -> eax 1 when cur agreed that language feature; otherwise "unknown" is answered
+# qp_agreed(FEAT_*) -> eax 1 when cur agreed that feature; otherwise "unknown" is answered
 qp_agreed:
     push rbx
     mov ebx, edi
     call extproto_cur
-    test [rax + EXT_lfeatures], ebx
+    mov rdi, rax
+    mov esi, ebx
+    call ext_feature
+    test eax, eax
     jnz 1f
     call extproto_req_id
     mov rdi, rax
@@ -543,7 +546,7 @@ qp_error:
 # FN query_h_part(): ID query-part REQ LEN + a part of REQ's answer, in its answer's grammar
 FN query_h_part
     PROLOGUE 16
-    mov edi, LFEAT_QUERY_STREAM
+    mov edi, FEAT_QUERY_STREAM
     call qp_agreed
     test eax, eax
     jz 9f
@@ -667,7 +670,7 @@ FN query_h_part
 # moves REQ's hard limit to now + its kind's base, up to its ceiling
 FN query_h_progress
     PROLOGUE 16
-    mov edi, LFEAT_QUERY_STREAM
+    mov edi, FEAT_QUERY_STREAM
     call qp_agreed
     test eax, eax
     jz 9f
@@ -878,7 +881,7 @@ scope_set:
 # (a subset of the manifest's own, each written as there), * the manifest's again, - none
 FN query_h_provides
     PROLOGUE 16
-    mov edi, LFEAT_PROVIDER_SCOPE
+    mov edi, FEAT_PROVIDER_SCOPE
     call qp_agreed
     test eax, eax
     jz 9f
@@ -1363,29 +1366,9 @@ FN query_dump_pending
 .Lk_type_format: .asciz "type-format"
 .Lk_links: .asciz "document-links"
 .Lk_save_actions: .asciz "save-actions"
-.Lf_query_stream: .asciz "query-stream"
-.Lf_provider_scope: .asciz "provider-scope"
-.Lf_hover_query: .asciz "hover-query"
-.Lf_complete_items: .asciz "complete-items"
-.Lf_signature_list: .asciz "signature-list"
-.Lf_navigation: .asciz "navigation"
-.Lf_selection_ranges: .asciz "selection-ranges"
-.Lf_hierarchy: .asciz "hierarchy"
-.Lf_workspace_symbols: .asciz "workspace-symbols"
-.Lf_prepare_rename: .asciz "prepare-rename"
-.Lf_partial_format: .asciz "partial-format"
-.Lf_code_actions: .asciz "code-actions"
-.Lf_file_diagnostics: .asciz "file-diagnostics"
-.Lf_document_links: .asciz "document-links"
 .p2align 3
 qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_expired
     .quad .Lq_late, .Lq_dropped, .Lq_cancelled, 0
-# bit i of EXT_lfeatures (extproto.s agrees them after hello)
-.globl lfeat_names
-lfeat_names: .quad .Lf_query_stream, .Lf_provider_scope, .Lf_hover_query, .Lf_complete_items
-    .quad .Lf_signature_list, .Lf_navigation, .Lf_selection_ranges, .Lf_hierarchy
-    .quad .Lf_workspace_symbols, .Lf_prepare_rename, .Lf_partial_format, .Lf_code_actions
-    .quad .Lf_file_diagnostics, .Lf_document_links, 0
 # per asker (QO_*): its reply handler (an expired request is an error answer to it), what takes a
 # query-part, and what hears that the Query cap cut a request short
 qo_reply: .quad 0, langfeat_reply, complete_reply, 0

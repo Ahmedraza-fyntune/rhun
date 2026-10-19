@@ -76,6 +76,7 @@ cp_hover: .long -1              # the row under the pointer
 .bss
 .p2align 3
 cp_source: .long 0              # 0 providers, CP_CHOICES native literal values
+.globl cp_open, sg_open
 cp_open: .long 0                # 0 closed, 1 asked, 2 items to show
 cp_session: .long 0             # each new list: answers for an older one are dropped
 cp_doc: .quad 0                 # the session's DOC* and its id (a freed DOC's address can return)
@@ -299,7 +300,7 @@ providers_any:
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     mov edx, [rbx + EXT_status]
@@ -400,12 +401,12 @@ ask:
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
-    test dword ptr [rbx + EXT_features], FEAT_COMPLETE
+    FEAT_TEST rbx, FEAT_COMPLETE
     jz 1b
     mov rdi, rbx
     mov esi, EXT_pv_complete
@@ -696,7 +697,7 @@ FN complete_tick
     add r13, [rip + g_exts + VEC_ptr]
     inc r12
     mov rdi, r13
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [r13 + EXT_status], ES_STARTING
@@ -761,7 +762,7 @@ FN complete_reply
     mov rdi, r13
     call req_remove
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     mov dword ptr [rip + g_dirty], 1
@@ -818,7 +819,7 @@ FN complete_reply
     je 51f
     mov rdi, r14
     mov rsi, r15
-    test dword ptr [rbx + EXT_lfeatures], LFEAT_SIGNATURE_LIST
+    FEAT_TEST rbx, FEAT_SIGNATURE_LIST
     jz 50f
     call sgl_set
     jmp 52f
@@ -949,13 +950,13 @@ cp_merge_mode:
     mov r13, rdx
     mov [rsp], rcx
     mov [rsp + 16], r8d
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     cmp r13, CP_BODY_MAX
     ja 8f
     xor eax, eax
-    test dword ptr [rbx + EXT_lfeatures], LFEAT_COMPLETE_ITEMS
+    FEAT_TEST rbx, FEAT_COMPLETE_ITEMS
     setnz al
     mov [rip + cp_parse_lf], eax
     mov rdi, rbx
@@ -1717,7 +1718,7 @@ sig_ask:
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     call focused_doc
@@ -1754,7 +1755,7 @@ sig_ask:
     mov dword ptr [rip + sg_again], 0
     mov rdi, rbx
     lea rsi, [rip + .Lv_signature]
-    test dword ptr [rbx + EXT_lfeatures], LFEAT_SIGNATURE_LIST
+    FEAT_TEST rbx, FEAT_SIGNATURE_LIST
     jz 2f
     lea rsi, [rip + .Lv_signatures]   # signature-list: every overload
 2:  mov rdx, r14
@@ -2222,7 +2223,7 @@ cp_accept_ci:
     mov [rsp + 136], rax        # the text's length (adjust may change it)
     mov qword ptr [rsp + 144], 0    # the indentation adjust adds to each later line
     mov rdi, [r12 + CI_ext]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     call focused_doc
@@ -2276,7 +2277,7 @@ cp_accept_ci:
     test dword ptr [r12 + CI_flags], CF_ADJUST
     jz 0f
     mov rax, [r12 + CI_ext]
-    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    FEAT_TEST rax, FEAT_SNIPPETS
     jnz 0f
     mov rdi, rbx
     mov rsi, r14
@@ -2304,7 +2305,7 @@ cp_accept_ci:
     add rax, rcx
     mov [rip + ps_end], rax
     mov rax, [r12 + CI_ext]
-    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    FEAT_TEST rax, FEAT_SNIPPETS
     jz .Lcpa_no_fields
     mov rdi, [rsp + 64]
     mov esi, [r12 + CI_ilen]
@@ -3044,7 +3045,7 @@ res_send:
     cmp eax, CF_RESOLVE
     jne 9f
     mov rdi, [rbx + CI_ext]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     mov edi, 1
@@ -5108,23 +5109,3 @@ cp_choice_accept:
 .section .rodata
 .Lchoice_empty: .ascii "(empty)"
 .Lchoice_blank: .ascii "(blank line)"
-
-.text
-# Native literal snippet choices have no extension supplier and remain usable.
-FN complete_catalog_invalidate_pure
-    cmp dword ptr [rip + cp_source], CP_CHOICES
-    je 1f
-    mov dword ptr [rip + cp_open], 0
-    mov qword ptr [rip + cp_due], 0
-    mov dword ptr [rip + cp_reask], 0
-    mov dword ptr [rip + cp_more], 0
-    mov dword ptr [rip + cp_sel], 0
-    mov dword ptr [rip + cp_top], 0
-    mov dword ptr [rip + cp_nshown], 0
-    mov dword ptr [rip + cp_rect + 12], 0
-1:  mov dword ptr [rip + sg_open], 0
-    mov dword ptr [rip + sg_wait], 0
-    mov dword ptr [rip + sg_again], 0
-    mov qword ptr [rip + sg_ext], 0
-    mov dword ptr [rip + sg_rect + 12], 0
-    ret

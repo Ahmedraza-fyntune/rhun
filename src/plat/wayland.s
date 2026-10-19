@@ -3093,6 +3093,7 @@ FN wl_open_window
     END
 3:  MSG [rip + id_surface], 6     # initial commit
     END
+    mov dword ptr [rip + g_wayland], 1   # the isWayland context key (when.s)
     # vtable
     lea rax, [rip + wl_flush]
     mov [rip + g_plat + P_flush], rax
