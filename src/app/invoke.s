@@ -329,6 +329,16 @@ FN cmdopt_find
 8:  xor eax, eax
     EPILOGUE
 
+# FN cmd_icon(cmd*) -> rax the [command-options] icon of an extension command (cstr), or 0
+FN cmd_icon
+    sub rsp, 8
+    call cmd_options
+    test rax, rax
+    jz 1f
+    mov rax, [rax + CO_icon]
+1:  add rsp, 8
+    ret
+
 # FN cmd_options(cmd*) -> rax the CO record of an extension command, or 0
 FN cmd_options
     PROLOGUE

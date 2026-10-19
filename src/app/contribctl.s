@@ -9,11 +9,15 @@
 #   key-latin LATIN COMBO     a key press whose Latin-layout key is LATIN (a layout that is not Latin)
 #   print-contrib-problems EXT  the extension's dropped contribution entries
 #   print-status              the status items: side, priority, owner, text, command, where drawn
+#   print-title-buttons       the tab strip's editor_title buttons: command, where drawn; its "…"
+#   view-item-menu VIEW ID [CONTEXT]  a tree row's view_item menu (CONTEXT: its viewItem) at the mouse
 .include "rhun.inc"
 
 .bss
 .p2align 3
 cc_buf: .zero SB_SIZE
+cc_view: .zero 128
+cc_item: .zero 256
 
 .text
 
@@ -26,6 +30,7 @@ contrib_ctl:
     .quad .Lc_when, c_when, .Lc_print_context, c_print_context, .Lc_ctx_set, c_ctx_set
     .quad .Lc_print_keys, c_print_keys, .Lc_print_chord, c_print_chord, .Lc_key_latin, c_key_latin
     .quad .Lc_print_problems, c_print_problems, .Lc_print_status, c_print_status
+    .quad .Lc_print_title_buttons, c_print_title_buttons, .Lc_view_item_menu, c_view_item_menu
     .quad 0, 0
 .Lc_cmd_args: .asciz "cmd-args"
 .Lc_cmd_ref: .asciz "cmd-ref"
@@ -37,6 +42,8 @@ contrib_ctl:
 .Lc_key_latin: .asciz "key-latin"
 .Lc_print_problems: .asciz "print-contrib-problems"
 .Lc_print_status: .asciz "print-status"
+.Lc_print_title_buttons: .asciz "print-title-buttons"
+.Lc_view_item_menu: .asciz "view-item-menu"
 .Lcommand_sp: .asciz "command "
 .Lbad_ref: .asciz "cmdref=bad\n"
 .Lno_ext: .asciz "no such extension\n"
@@ -249,6 +256,54 @@ c_print_problems:
     call sb_push_cstr
     xor eax, eax
     EPILOGUE
+
+# view-item-menu VIEW ID [CONTEXT]: menu_open_view_item at the mouse
+c_view_item_menu:
+    PROLOGUE 16
+    mov r13, rsi
+    mov r14, rdx
+    call cc_word
+    lea rdi, [rip + cc_view]
+    mov rsi, rax
+    mov ecx, 127
+    call cc_copy
+    call cc_word
+    mov r15, rax                # ID
+    mov rbx, rdx
+    call cc_word
+    xor ecx, ecx
+    test rdx, rdx
+    jz 1f
+    lea rdi, [rip + cc_item]
+    mov rsi, rax
+    mov ecx, 255
+    call cc_copy
+    lea rcx, [rip + cc_item]
+1:  lea rdi, [rip + cc_view]
+    mov rsi, r15
+    mov rdx, rbx
+    mov r8d, [rip + g_mx]
+    mov r9d, [rip + g_my]
+    call menu_open_view_item
+    xor eax, eax
+    EPILOGUE
+# cc_copy(dst, src, rdx len, rcx max): at most max bytes, NUL-ended
+cc_copy:
+    cmp rdx, rcx
+    cmova rdx, rcx
+    mov byte ptr [rdi + rdx], 0
+    jmp memcpy
+
+# print-title-buttons: after a frame, as print-status
+c_print_title_buttons:
+    push rdi
+    push rdi
+    cmp dword ptr [rip + g_dirty], 0
+    je 1f
+    PCALL P_draw
+1:  pop rdi
+    pop rdi
+    jmp menu_title_dump
 
 # print-status: after a frame, so the items' places are the ones on screen
 c_print_status:

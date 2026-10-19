@@ -3941,7 +3941,29 @@ FN tabs_draw
     M ecx, MI_1
     COLOR r8d, T_BORDER
     call gfx_fill
+    # the extensions' editor_title buttons at the strip's end; the tabs and the + keep the rest
+    M ecx, MI_24
+    mov eax, [rsp + 12]
+    sub eax, ecx
+    sar eax, 1
+    mov [rsp + 48], eax         # the margin around them
     mov edi, [rsp]
+    add edi, [rsp + 8]
+    sub edi, eax
+    mov esi, [rsp + 4]
+    add esi, eax
+    mov edx, ecx
+    call menu_title_buttons
+    test eax, eax
+    jz 0f
+    add eax, [rsp + 48]
+    sub [rsp + 8], eax
+    mov eax, [rsp + 8]
+    sub eax, [rsp + 12]
+    jns 01f
+    xor eax, eax
+01: mov [rsp + 36], eax
+0:  mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
