@@ -2715,14 +2715,11 @@ FN agents_runs_dump
 # open_session(i)
 open_session:
     PROLOGUE
-    push rdi
-    push rdi
-    call agentext_new_end       # AI (D4): it replaces a new session being written
-    pop rdi
-    pop rdi
     mov [rip + view], rdi
     mov rax, [rip + sessions + VEC_ptr]
     mov rbx, [rax + rdi*8]
+    mov rdi, rbx
+    call agentext_opened        # AI (D4): it replaces a new session being written; the box is its
     mov dword ptr [rbx + AS_loaded], 1
     cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
     jne 1f
@@ -2898,10 +2895,18 @@ FN agents_key
 4:  call agentext_new_active
     test rax, rax
     jz 7f
+    cmp r12d, KEY_RETURN        # writing a new session: Enter or Tab goes back to its box
+    je 8f
+    cmp r12d, KEY_TAB
+    je 8f
     cmp r12d, KEY_ESCAPE
     jne 7f
     call agentext_new_leave
 5:  mov eax, 1
+    EPILOGUE
+8:  mov dword ptr [rip + g_focus], FOCUS_AGENT_INPUT
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
     EPILOGUE
 7:  mov edi, r12d
     call key_list

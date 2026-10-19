@@ -2980,8 +2980,8 @@ ENDSTRUCT PR_SIZE
 .equ AXF_MATCH, 1               # its CWD is the project or one of its worktrees
 .equ AXF_FETCHED, 2             # a transcript answer came at least once
 .equ ID_AI_SOURCE, 0x7a00       # + extension index: its switch in Settings > Agents
-.equ ID_AI_REVIEW, 0x7b00       # review.s: the Review tab's buttons
-.equ ID_AI_CARD, 0x7c00         # D4: the prompt box, Stop and card buttons
+.equ ID_AI_REVIEW, 0x8100       # review.s: the Review tab's buttons
+.equ ID_AI_CARD, 0x8200         # D4: the prompt box, Stop and card buttons
 
 # AI (wider-parity D): what one extension contributes, indexed like g_exts (ai_ext)
 STRUCT

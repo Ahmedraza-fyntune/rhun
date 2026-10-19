@@ -1626,6 +1626,8 @@ new_ext: .quad 0                # a new session of this extension is being writt
 pend_id: .quad 0                # the agent-prompt in flight: its id, extension
 pend_ext: .quad 0
 pend_new: .quad 0               # 1 when it starts a new session
+pend_gen: .quad 0               # in_gen when it was sent: a refused text goes back to that box only
+in_gen: .quad 0                 # changes whenever the box changes owner
 pend_text: .zero SB_SIZE        # and its text, back in the box when it fails
 want_ext: .quad 0               # open this extension's session when it is listed
 want_sid: .quad 0               # cstr
@@ -1855,7 +1857,7 @@ FN agentext_send
     cmp eax, ' '
     jbe 71b
     cmp r13, AX_PROMPT_MAX
-    ja 9f
+    ja 7f
     xor ebx, ebx
     mov r14, [rip + new_ext]
     test r14, r14
@@ -1869,6 +1871,10 @@ FN agentext_send
     test eax, eax
     jz 9f
     mov r14, [rbx + AS_ext]
+    cmp [rip + in_as], rbx      # the box is this session's from now on
+    je 1f
+    mov [rip + in_as], rbx
+    inc qword ptr [rip + in_gen]
 1:  test r14, r14
     jz 9f
     lea rdi, [rip + tmp]
@@ -1902,6 +1908,8 @@ FN agentext_send
     test rbx, rbx
     sete cl
     mov [rip + pend_new], rcx
+    mov rcx, [rip + in_gen]
+    mov [rip + pend_gen], rcx
     mov rdi, r14
     mov rsi, rax
     mov edx, PK_PROMPT
@@ -1918,6 +1926,9 @@ FN agentext_send
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 8:  lea rdi, [rip + .Lnot_running]
+    call app_toast
+    EPILOGUE
+7:  lea rdi, [rip + .Lprompt_long]
     call app_toast
 9:  EPILOGUE
 
@@ -1938,27 +1949,27 @@ FN agentext_prompt_reply
     mov r13, r8
     test edx, edx
     jz 5f
-    # a new session: opened once it is listed (it may be already)
+    # a new session: opened once it is listed (it may be already), unless the user went elsewhere
     cmp qword ptr [rip + pend_new], 0
     je 4f
+    cmp [rip + new_ext], rbx
+    jne 4f
     mov rdi, r12
     mov rsi, r13
     mov edx, AGENT_SID_MAX
     call ai_word_ok
     test eax, eax
     jz 4f
-    mov rdi, [rip + want_sid]
-    call mem_free
+    call want_clear
     mov rdi, r12
     mov rsi, r13
     call ai_dup
     mov [rip + want_sid], rax
     mov [rip + want_ext], rbx
-    mov qword ptr [rip + new_ext], 0
     call open_wanted
 4:  mov eax, 1
     EPILOGUE
-5:  # refused: the text goes back in the box, and the reason shows
+5:  # refused: the reason shows, and the text goes back in its box
     lea rdi, [rip + tmp]
     call sb_clear
     lea rdi, [rip + tmp]
@@ -1975,26 +1986,48 @@ FN agentext_prompt_reply
     xor esi, esi
     call sb_push_byte
     mov rdi, [rip + tmp + SB_ptr]
+    call restore_pending
+    mov eax, 1
+9:  EPILOGUE
+
+# restore_pending(cstr): the prompt in flight failed: the reason shows, and its text goes back in
+#   the box when the box still belongs to the same session and the user typed nothing new
+restore_pending:
+    PROLOGUE
     call app_toast
+    mov rax, [rip + in_gen]
+    cmp rax, [rip + pend_gen]
+    jne 9f
     lea rdi, [rip + in_tf]
     call tf_text
     test rdx, rdx
-    jnz 6f                      # the user typed something new meanwhile: kept
+    jnz 9f
     lea rdi, [rip + in_tf]
     mov rsi, [rip + pend_text + SB_ptr]
     mov rdx, [rip + pend_text + SB_len]
     call tf_set
-6:  mov dword ptr [rip + g_dirty], 1
-    mov eax, 1
-9:  EPILOGUE
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
 
-# open_wanted(): the session a new prompt started opens when its extension lists it
+# want_clear(): no session waits to be opened
+want_clear:
+    PROLOGUE
+    mov rdi, [rip + want_sid]
+    call mem_free
+    mov qword ptr [rip + want_sid], 0
+    mov qword ptr [rip + want_ext], 0
+    EPILOGUE
+
+# open_wanted(): the session a new prompt started opens when its extension lists it (and the page
+#   shows it); the wish ends when it opens, the user opens another, or the extension stops
 open_wanted:
     PROLOGUE
     mov rbx, [rip + want_sid]
     test rbx, rbx
     jz 9f
     mov rdi, [rip + want_ext]
+    test rdi, rdi
+    jz 8f
     call ai_ext
     mov r12, rax
     mov rdi, rbx
@@ -2005,12 +2038,10 @@ open_wanted:
     call row_find
     test rax, rax
     jz 9f
-    mov r12, rax
-    mov rdi, rbx
-    call mem_free
-    mov qword ptr [rip + want_sid], 0
-    mov rdi, r12
-    call agents_open_as
+    mov rdi, rax
+    call agents_open_as         # opening it ends the wish (agentext_opened)
+    jmp 9f
+8:  call want_clear
 9:  EPILOGUE
 
 # FN agentext_row_gone(AS*): a row is freed: the box forgets it
@@ -2018,6 +2049,7 @@ FN agentext_row_gone
     cmp [rip + in_as], rdi
     jne 1f
     mov qword ptr [rip + in_as], 0
+    inc qword ptr [rip + in_gen]
 1:  ret
 
 # FN agentext_stop(AS*): "0 agent-stop SID"
@@ -2046,18 +2078,57 @@ FN agentext_stop
 # FN agentext_new(ext): a new session of the extension is being written (the box, no messages yet)
 FN agentext_new
     PROLOGUE
-    mov [rip + new_ext], rdi
+    mov rbx, rdi
+    call prompts_ok
+    test eax, eax
+    jz 9f
+    mov [rip + new_ext], rbx
     mov qword ptr [rip + in_as], 0
+    inc qword ptr [rip + in_gen]
     lea rdi, [rip + in_tf]
     call tf_clear
     mov dword ptr [rip + g_focus], FOCUS_AGENT_INPUT
     mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# prompts_ok(ext) -> eax 1 when a new session of it can be written: it runs, agreed agents and
+#   agent-prompts, lists sessions, and is switched on in Settings > Agents
+prompts_ok:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+    test rbx, rbx
+    jz 9f
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 9f
+    FEAT_TEST rbx, FEAT_AGENTS
+    jz 9f
+    FEAT_TEST rbx, FEAT_AGENT_PROMPTS
+    jz 9f
+    mov rdi, rbx
+    call ai_ext
+    cmp dword ptr [rax + AX_agents], 0
+    je 9f
+    cmp dword ptr [rax + AX_hidden], 0
+    jne 9f
+    mov r12d, 1
+9:  mov eax, r12d
     EPILOGUE
 
-# FN agentext_new_end(): another session opened: no new one is written
-FN agentext_new_end
+# FN agentext_opened(AS*): a session opened: no new one is written, and the box is its own (a box
+#   that belonged to another session is emptied)
+FN agentext_opened
+    PROLOGUE
+    mov rbx, rdi
     mov qword ptr [rip + new_ext], 0
-    ret
+    call want_clear
+    cmp [rip + in_as], rbx
+    je 9f
+    mov [rip + in_as], rbx
+    inc qword ptr [rip + in_gen]
+    lea rdi, [rip + in_tf]
+    call tf_clear
+9:  EPILOGUE
 
 # FN agentext_new_active() -> rax the extension a new session is written for, or 0
 FN agentext_new_active
@@ -2094,7 +2165,11 @@ FN agentext_input_key
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
-    cmp qword ptr [rip + new_ext], 0
+    cmp dword ptr [rip + g_show_agents], 0
+    jne 6f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR   # the panel was hidden: the editor has the keys
+    jmp 9f
+6:  cmp qword ptr [rip + new_ext], 0
     jne 0f
     call agents_ext_open        # the box has no session any more: the panel takes the keys
     test rax, rax
@@ -2257,6 +2332,7 @@ FN agentext_bottom_draw
     test rbx, rbx
     jz 1f
     mov [rip + in_as], rbx
+    inc qword ptr [rip + in_gen]
     lea rdi, [rip + in_tf]
     call tf_clear
 1:  mov edi, [rsp]
@@ -2275,12 +2351,33 @@ FN agentext_bottom_draw
     test eax, eax
     jz 2f
     mov [rsp + 20], eax
+    mov rdi, rbx                # the box keeps its room; a card that does not fit is cut
+    call agentext_prompts
+    xor ecx, ecx
+    test eax, eax
+    jz 11f
+    mov edi, [rsp + 8]
+    call input_h
+    mov ecx, eax
+11: mov eax, [rsp + 12]
+    sub eax, ecx
+    cmp eax, [rsp + 20]
+    jge 12f
+    mov [rsp + 20], eax
+12: cmp dword ptr [rsp + 20], 0
+    jle 2f
+    mov edi, [rsp]
+    mov esi, [rsp + 16]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 20]
+    call gfx_clip_push
     mov rdi, rbx
     mov esi, [rsp]
     mov edx, [rsp + 16]
     mov ecx, [rsp + 8]
-    mov r8d, eax
+    mov r8d, [rsp + 20]
     call card_draw
+    call gfx_clip_pop
     mov eax, [rsp + 20]
     add [rsp + 16], eax
 2:  mov rdi, rbx
@@ -2624,14 +2721,10 @@ FN agentext_list_buttons
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
-    cmp dword ptr [rbx + EXT_status], ES_RUNNING
-    jne 1b
-    FEAT_TEST rbx, FEAT_AGENT_PROMPTS
-    jz 1b
     mov rdi, rbx
-    call ai_ext
-    cmp dword ptr [rax + AX_hidden], 0
-    jne 1b                      # switched off in Settings > Agents
+    call prompts_ok
+    test eax, eax
+    jz 1b
     lea rdi, [rip + tmp]
     call sb_clear
     lea rdi, [rip + tmp]
@@ -2764,17 +2857,23 @@ FN agentext_input_dump
 
 # FN agentext_prompts_gone(ext): an extension stopped: its prompt in flight and new session end
 FN agentext_prompts_gone
-    cmp [rip + pend_ext], rdi
+    PROLOGUE
+    mov rbx, rdi
+    cmp [rip + pend_ext], rbx
     jne 1f
-    mov qword ptr [rip + pend_id], 0
     mov qword ptr [rip + pend_ext], 0
-1:  cmp [rip + new_ext], rdi
+    cmp qword ptr [rip + pend_id], 0
+    je 1f
+    mov qword ptr [rip + pend_id], 0
+    lea rdi, [rip + .Lnot_running]
+    call restore_pending
+1:  cmp [rip + new_ext], rbx
     jne 2f
     mov qword ptr [rip + new_ext], 0
-2:  cmp [rip + want_ext], rdi
+2:  cmp [rip + want_ext], rbx
     jne 3f
-    mov qword ptr [rip + want_ext], 0
-3:  ret
+    call want_clear
+3:  EPILOGUE
 
 .section .rodata
 .Lv_prompt: .asciz "agent-prompt "
@@ -2782,6 +2881,7 @@ FN agentext_prompts_gone
 .Ldash: .asciz "-"
 .Lnot_running: .asciz "The agent's extension is not running"
 .Lprompt_failed: .asciz "The agent refused the prompt: "
+.Lprompt_long: .asciz "The prompt is longer than 64 KB"
 .Lph_reply: .asciz "Reply to the agent (Enter sends, Shift+Enter a new line)"
 .Lph_new: .asciz "What should the agent do? (Enter starts the session)"
 .Lb_send: .asciz "Send"

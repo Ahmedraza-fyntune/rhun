@@ -43,6 +43,7 @@ def listing():
         body += row(now - i, state, sid, title)
     request('agent-sessions', body)
 asks = []
+deferred = []
 send(HELLO)
 while True:
     line = inp.readline()
@@ -63,6 +64,10 @@ while True:
             send(f'error {f[0]} refused the agent is busy')
         elif text.startswith('slow'):
             pass                                # never answered: rhun gives up after a while
+        elif text.startswith('deferred'):
+            deferred.append(f[0])               # refused when the refuse command runs
+        elif text.startswith('unlisted'):
+            send(f'ok {f[0]} 2', b'zz')         # a session it never lists
         elif f[2] == '-':
             sid = f's{len(sessions) + 1}'
             sessions[sid] = ['working', text, [msg('user', text)]]
@@ -90,6 +95,8 @@ while True:
             request('agent-ask s1', b'Empty option\nA\n\nB')
             request('agent-ask nosuch', b'Q\nA')
             request('agent-ask s1', b'Too many\n' + b'\n'.join(b'o%d' % i for i in range(17)))
+        elif name == 'refuse':
+            send(f'error {deferred.pop()} refused not now')
         elif name == 'drop':
             del sessions['s1']
             listing()
@@ -114,7 +121,7 @@ class Prompts(unittest.TestCase):
         (folder / 'extension.ini').write_text(
             'name = gem\nowner = acme\ntitle = Gem Bridge\nversion = 1\nprotocol = 1\n'
             'runtime = python3\nrun = main.py\n[commands]\nask = Ask\nreask = Ask again\nwithdraw = Withdraw\n'
-            'bad = Bad\ndrop = Drop\n[provides]\nagents = yes\nagents.title = Gemini CLI\n')
+            'bad = Bad\ndrop = Drop\nrefuse = Refuse\n[provides]\nagents = yes\nagents.title = Gemini CLI\n')
         (folder / 'main.py').write_text(f'HELLO = {json.dumps(hello)}\n' + PROGRAM)
         return root
 
@@ -229,6 +236,39 @@ class Prompts(unittest.TestCase):
         self.assertEqual(self.inputs(out), ['input=typed after a click focus=1 new=- pending=0',
                                             'input=typed after a click focus=0 new=- pending=0'])
 
+    def test_an_extension_that_stops_ends_the_session_waiting_to_open(self):
+        # the answer named a session it never listed; after a restart its next list must not use
+        # the stopped extension's wish (Sonnet review: crash)
+        out = self.editor(['agent-new acme/gem', 'agent-prompt unlisted one', 'wait 300',
+                           'ext-set acme/gem stop', 'wait 1500', 'ext-set acme/gem restart', 'wait 1500',
+                           'wait 300', 'print-extensions', 'print-agent-input'])
+        self.assertIn(' state=running ', out[-2])
+        self.assertEqual(out[-1], 'input= focus=1 new=- pending=0')
+        self.assertEqual(sum(l.startswith('0 ready ') for l in self.agent_log()), 2)
+
+    def test_a_late_refusal_stays_out_of_another_sessions_box(self):
+        out = self.editor(['agent-new acme/gem', 'agent-prompt second one', 'wait 300', 'wait 300',
+                           'agent-prompt deferred hi', 'wait 100', 'print-agents 1', 'wait 100',
+                           'cmd acme/gem.refuse', 'wait 300', 'print-agent-input'])
+        self.assertTrue(self.logged('agent-prompt s2 11 deferred hi'))
+        self.assertEqual(out[-1], 'input= focus=1 new=- pending=0')
+
+    def test_a_refusal_comes_back_when_the_extension_stops(self):
+        out = self.editor(['print-agents 1', 'wait 300', 'agent-prompt deferred text', 'wait 100',
+                           'ext-set acme/gem stop', 'wait 1500', 'print-agent-input'])
+        self.assertEqual(out[-1], 'input=deferred text focus=0 new=- pending=0')
+
+    def test_hiding_the_panel_gives_the_keys_back(self):
+        out = self.editor(['cmd focus_agents', 'print-agents 1', 'wait 300', 'key Return', 'type ab',
+                           'cmd toggle_agents', 'wait 50', 'type cd', 'print-agent-input'])
+        self.assertEqual(out[-1], 'input=ab focus=0 new=- pending=0')
+
+    def test_enter_goes_back_to_a_new_sessions_box(self):
+        out = self.editor(['agent-new acme/gem', 'key Escape', 'print-agent-input', 'key Return',
+                           'print-agent-input'])
+        self.assertEqual(self.inputs(out), ['input= focus=0 new=acme/gem pending=0',
+                                            'input= focus=1 new=acme/gem pending=0'])
+
     def test_without_the_feature_there_is_no_box(self):
         out = self.editor(['print-agents 1', 'wait 300', 'cmd acme/gem.ask', 'wait 300',
                            'agent-prompt hello', 'wait 300', 'print-agent-input'], hello='hello 1 agents')
@@ -236,6 +276,8 @@ class Prompts(unittest.TestCase):
         self.assertIn('error 2 unknown no such request', log)
         self.assertFalse([l for l in log if 'agent-prompt' in l])
         self.assertIn('input=hello focus=0 new=- pending=0', out)
+        out = self.editor(['agent-new acme/gem', 'print-agent-input'], hello='hello 1 agents')
+        self.assertEqual(out[-1], 'input= focus=0 new=- pending=0')
 
 
 if __name__ == '__main__':
