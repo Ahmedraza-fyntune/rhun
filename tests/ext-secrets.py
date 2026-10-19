@@ -140,6 +140,17 @@ class Secrets(lifecycle.Base):
 
     @unittest.skipUnless(sys.platform == 'darwin', 'the macOS login keychain')
     def test_macos_keychain(self):
+        # Never read the value with security(1): another program reading rhun's item makes the
+        # keychain ask the user in a dialog. Its attributes and its removal ask nothing.
+        def security(*args):
+            p = subprocess.Popen(['security', *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 start_new_session=True)
+            try:
+                out, _ = p.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, 9)
+                self.fail('security(1) waited for the user')
+            return p.returncode, out.decode(errors='replace')
         service = 'rhun-test-' + pysecrets.token_hex(6)
         self.env['RHUN_SECRETS_SERVICE'] = service
         # the login keychain belongs to the real home (a test's own HOME has none: rhun then does
@@ -150,15 +161,16 @@ class Secrets(lifecycle.Base):
             out, log = self.requests('secret-set token {LEN}|keychain value', 'secret-keys',
                                      backend='system')
             self.assertEqual(self.answers(log)[:3], ['ok 1', 'ok 2 6', 'body token'], log)
-            found = subprocess.run(['security', 'find-generic-password', '-s', full, '-a', 'token', '-w'],
-                                   capture_output=True, text=True)
-            self.assertEqual(found.stdout.strip(), 'keychain value')
+            code, attrs = security('find-generic-password', '-s', full, '-a', 'token')
+            self.assertEqual(code, 0)
+            self.assertIn('"acct"<blob>="token"', attrs)
             out, log = self.requests('secret-get token', 'secret-delete token', 'secret-get token',
                                      backend='system')
             self.assertEqual(self.answers(log), ['ok 1 1 14', 'body keychain value', 'ok 2', 'ok 3 0 0'], log)
+            code, _ = security('find-generic-password', '-s', full, '-a', 'token')
+            self.assertNotEqual(code, 0)
         finally:
-            subprocess.run(['security', 'delete-generic-password', '-s', full, '-a', 'token'],
-                           capture_output=True)
+            security('delete-generic-password', '-s', full, '-a', 'token')
 
     @unittest.skipUnless(sys.platform.startswith('linux') and os.environ.get('DBUS_SESSION_BUS_ADDRESS')
                          and shutil.which('secret-tool'), 'a Linux Secret Service')
