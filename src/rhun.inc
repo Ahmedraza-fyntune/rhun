@@ -2250,6 +2250,7 @@ F TSE_prev_run, 4
 F TSE_prev_rent, 4
 F TSE_nmsg, 4
 F TSE_cut, 4            # 1 once its output was cut
+F TSE_prev_msg, 8       # owned copy of the item's summary before this run touched it, or 0
 F TSE_msgs, SB_SIZE     # messages: TSM header + text, path, expected, actual
 F TSE_out, SB_SIZE      # its output
 ENDSTRUCT TSE_SIZE

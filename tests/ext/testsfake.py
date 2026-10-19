@@ -135,7 +135,26 @@ def wait_exit(ex, timeout=30):
 def run(run_no, profile, ids):
     """One test-run, in its own thread."""
     tests = ids or ['go:example/pkg.TestA', 'go:example/pkg.TestB', 'go:example/pkg.TestC']
-    if 'slow' in MODE or 'stubborn' in MODE or 'slowexec' in MODE:
+    if 'overlap' in MODE:
+        # two runs start the same tests; the first ends first; neither finishes them
+        update(run_no, *[record('started', '-', t) for t in tests])
+        time.sleep(0.3 if run_no == 1 else 1.0)
+        request('test-end', str(run_no), None)
+        return
+    if 'slow2' in MODE and run_no == 1:
+        pass                            # the first run reports as usual (below)
+    elif 'survivor' in MODE:
+        script = ('import subprocess,sys,time\n'
+                  'p=subprocess.Popen([sys.executable,"-c","import signal,time\\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\\ntime.sleep(60)"],'
+                  'stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n'
+                  'print(p.pid,flush=True)\ntime.sleep(60)\n')
+        r = exec_cmd(run_no, 'python3', ['-c', script])
+        log('survivor ' + r)
+        while run_no not in cancelled:
+            time.sleep(0.05)
+        request('test-end', str(run_no), None)
+        return
+    elif 'slow' in MODE or 'slow2' in MODE or 'stubborn' in MODE or 'slowexec' in MODE:
         update(run_no, *[record('started', '-', t) for t in tests])
         if 'slowexec' in MODE:
             r = exec_cmd(run_no, 'python3', ['-c', 'import time\nprint("sleeping", flush=True)\ntime.sleep(60)'])
@@ -211,6 +230,16 @@ def run(run_no, profile, ids):
         f = tests_file().encode()
         body = b'1\n' + f'{len(f)} 3\n'.encode() + f + b'3 3 1\n5 7 2\n6 6 0\n'
         log('coverage ' + request('test-coverage', str(run_no), body))
+        if 'covbig' in MODE:
+            # 70 files with one line at the last allowed line: 70 MiB of lines
+            files = [f'/cov/big{i}.go'.encode() for i in range(70)]
+            body = f'{len(files)}\n'.encode() + b''.join(f'{len(p)} 1\n'.encode() + p + b'1048576 1048576 1\n' for p in files)
+            log('covbig ' + request('test-coverage', str(run_no), body))
+        if 'covunion' in MODE:
+            files = [f'/cov/f{i}.go'.encode() for i in range(12000)]
+            body = f'{len(files)}\n'.encode() + b''.join(f'{len(p)} 1\n'.encode() + p + b'1 1 1\n' for p in files)
+            log('covunion1 ' + request('test-coverage', str(run_no), body))
+            log('covunion2 ' + request('test-coverage', str(run_no), body))
     request('test-end', str(run_no), None)
     if 'replaceafter' in MODE:
         f = tests_file()
@@ -298,7 +327,10 @@ def main():
                 if 'flood' in MODE:
                     threading.Thread(target=lambda: (log('flood-body ' + flood(10001)),
                                                      log('flood-ok ' + flood(10000)),
-                                                     log('flood-add ' + flood_more())), daemon=True).start()
+                                                     log('flood-add ' + flood_more()),
+                                                     log('flood-replace ' + request('test-items', 'replace',
+                                                         items_body('', [item('test', 'one', 'one')])))),
+                                     daemon=True).start()
                 if 'remove' in MODE:
                     threading.Thread(target=removal, daemon=True).start()
             elif parent == 'go:example/pkg':

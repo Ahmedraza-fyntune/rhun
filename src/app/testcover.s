@@ -12,6 +12,7 @@ ENDSTRUCT CF_SIZE
 .equ COV_HIT, 1
 .equ COV_MISS, 2
 .equ COV_SPAN_MSG, 4194304      # lines one message may mark, all its ranges together
+.equ TS_COVER_BYTES, 67108864   # line bytes all files of a run may hold (64 MiB)
 
 .bss
 .p2align 3
@@ -19,6 +20,9 @@ ENDSTRUCT CF_SIZE
 files: .zero VEC_SIZE           # CF records
 g_cov_run: .quad 0              # the run they are from, 0 for none
 ranges: .quad 0                 # ranges taken from that run so far
+cov_bytes: .quad 0              # line bytes the files hold
+map: .quad 0                    # path index: u32 slots holding a file's index + 1, 0 empty
+mapcap: .quad 0
 apply: .long 0                  # 0 checking a body, 1 applying it
 cnt: .zero 16
 
@@ -29,13 +33,19 @@ g_cov_on: .long 1               # tints show (Show Test Coverage toggles)
 .text
 
 # testcover_apply(run, body, len) -> rax 0 when applied, else the error text: "N" LF, then N files
-#   "PATH_LEN M" LF PATH and M records "L1 L2 COUNT" LF (lines one-based, inclusive)
+#   "PATH_LEN M" LF PATH and M records "L1 L2 COUNT" LF (lines one-based, inclusive). The whole body
+#   is checked first, the files and line bytes it would add counted against the caps
 FN testcover_apply
-    PROLOGUE 48
+    PROLOGUE 80
     mov rbx, rdi
     mov [rsp], rsi
     mov [rsp + 8], rdx
     mov dword ptr [rip + apply], 0
+    xor eax, eax                # does it add to what the store holds (the same run)?
+    mov rcx, [rbx + TSR_num]
+    cmp rcx, [rip + g_cov_run]
+    sete al
+    mov [rsp + 56], rax
 .Ltc_pass:
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
@@ -57,23 +67,13 @@ FN testcover_apply
     mov r12, rax                # files
     xor r15d, r15d              # lines marked
     mov qword ptr [rsp + 32], 0 # ranges in this message
+    mov qword ptr [rsp + 64], 0 # files it adds
+    mov qword ptr [rsp + 72], 0 # line bytes it adds
     cmp dword ptr [rip + apply], 0
-    jne 11f
-    # checking: the files and ranges this run would hold
-    mov rax, [rbx + TSR_num]
-    cmp rax, [rip + g_cov_run]
-    jne 1f
-    mov rax, [rip + files + VEC_len]
-    add rax, r12
-    cmp rax, TS_COVER_FILES
-    ja .Ltc_toobig
-    jmp 1f
-11:
-    # a new run's data replaces the old
-    mov rax, [rbx + TSR_num]
-    cmp rax, [rip + g_cov_run]
     je 1f
-    call testcover_clear
+    cmp qword ptr [rsp + 56], 0
+    jne 1f
+    call testcover_clear        # a new run's data replaces the old
     mov rax, [rbx + TSR_num]
     mov [rip + g_cov_run], rax
 1:  test r12, r12
@@ -108,6 +108,7 @@ FN testcover_apply
     test rax, rax
     jz .Ltc_syntax
     mov [rsp + 16], rax
+    mov [rsp + 40], r13
     mov rdi, rax
     mov rsi, r13
     call tsb_oneline
@@ -120,19 +121,18 @@ FN testcover_apply
     jb .Ltc_syntax
     cmp byte ptr [rax + 1], ':'
     jne .Ltc_syntax
-2:  mov qword ptr [rsp + 24], 0 # the file (when applying)
-    add [rsp + 32], r14
-    cmp dword ptr [rip + apply], 0
-    jne 21f
-    mov rax, [rsp + 32]
-    mov rcx, [rbx + TSR_num]
-    cmp rcx, [rip + g_cov_run]
-    jne 20f
-    add rax, [rip + ranges]
-20: cmp rax, TS_COVER_RANGES
-    ja .Ltc_toobig
-    jmp 3f
-21: add [rip + ranges], r14
+2:  add [rsp + 32], r14
+    mov qword ptr [rsp + 24], 0 # the file (applying), or its existing record (checking)
+    mov qword ptr [rsp + 48], 0 # its highest line (checking)
+    cmp qword ptr [rsp + 56], 0
+    je 21f
+    mov rdi, [rsp + 16]
+    mov rsi, r13
+    call file_find
+    mov [rsp + 24], rax
+21: cmp dword ptr [rip + apply], 0
+    je 3f
+    add [rip + ranges], r14
     mov rdi, [rsp + 16]
     mov rsi, r13
     call file_for
@@ -140,7 +140,7 @@ FN testcover_apply
     jz .Ltc_toobig
     mov [rsp + 24], rax
 3:  test r14, r14
-    jz 1b
+    jz 5f
     dec r14
     call tsb_line
     test rax, rax
@@ -170,7 +170,10 @@ FN testcover_apply
     lea r15, [r15 + rcx + 1]
     cmp r15, COV_SPAN_MSG
     ja .Ltc_toobig
-    push rax
+    cmp rax, [rsp + 48]
+    jbe 31f
+    mov [rsp + 48], rax
+31: push rax
     push rax
     mov edi, 2
     call tsb_num
@@ -179,7 +182,7 @@ FN testcover_apply
     pop rsi
     test edx, edx
     jz .Ltc_syntax
-    cmp qword ptr [rsp + 24], 0
+    cmp dword ptr [rip + apply], 0
     je 3b
     mov edx, COV_MISS
     test rcx, rcx
@@ -190,11 +193,41 @@ FN testcover_apply
     mov rcx, rax
     call mark
     jmp 3b
+5:  # checking: what the file adds, a new file or more lines of one held
+    cmp dword ptr [rip + apply], 0
+    jne 1b
+    mov rax, [rsp + 48]
+    call line_bytes
+    mov rcx, [rsp + 24]
+    test rcx, rcx
+    jnz 51f
+    inc qword ptr [rsp + 64]
+    add [rsp + 72], rax
+    jmp 1b
+51: sub rax, [rcx + CF_n]
+    jbe 1b
+    add [rsp + 72], rax
+    jmp 1b
 6:  call tsb_left
     test rax, rax
     jnz .Ltc_syntax
     cmp dword ptr [rip + apply], 0
     jne 7f
+    # the caps over what the run would hold
+    mov rax, [rsp + 64]
+    mov rcx, [rsp + 72]
+    mov rdx, [rsp + 32]
+    cmp qword ptr [rsp + 56], 0
+    je 61f
+    add rax, [rip + files + VEC_len]
+    add rcx, [rip + cov_bytes]
+    add rdx, [rip + ranges]
+61: cmp rax, TS_COVER_FILES
+    ja .Ltc_toobig
+    cmp rcx, TS_COVER_BYTES
+    ja .Ltc_toobig
+    cmp rdx, TS_COVER_RANGES
+    ja .Ltc_toobig
     mov dword ptr [rip + apply], 1
     jmp .Ltc_pass
 7:  mov dword ptr [rip + g_dirty], 1
@@ -209,7 +242,13 @@ FN testcover_apply
     lea rax, [rip + .Le_toobig]
     EPILOGUE
 
-# mark(CF*, l1, bit, l2): lines l1..l2 get the bit (the file's array grows to l2)
+# line_bytes(rax lines) -> rax the bytes a file holding that many lines takes: whole 4 KiB steps
+line_bytes:
+    add rax, 4095
+    and rax, -4096
+    ret
+
+# mark(CF*, l1, bit, l2): lines l1..l2 get the bit (the file's array grows to hold l2, in 4 KiB steps)
 mark:
     PROLOGUE
     mov rbx, rdi
@@ -218,13 +257,10 @@ mark:
     mov r14, rcx
     cmp r14, [rbx + CF_n]
     jbe 2f
-    # grow to at least l2, doubling
-    mov r15, [rbx + CF_n]
-    add r15, r15
-    cmp r15, r14
-    jae 1f
-    mov r15, r14
-1:  mov rdi, [rbx + CF_lines]
+    mov rax, r14
+    call line_bytes
+    mov r15, rax
+    mov rdi, [rbx + CF_lines]
     mov rsi, r15
     call mem_realloc
     mov [rbx + CF_lines], rax
@@ -234,6 +270,9 @@ mark:
     mov rdx, r15
     sub rdx, [rbx + CF_n]
     call memset
+    mov rax, r15
+    sub rax, [rbx + CF_n]
+    add [rip + cov_bytes], rax
     mov [rbx + CF_n], r15
 2:  mov rax, [rbx + CF_lines]
     lea rcx, [r12 - 1]
@@ -244,26 +283,113 @@ mark:
     jmp 3b
 9:  EPILOGUE
 
+# file_find(path, len) -> CF* for that path, or 0 (the index: open addressing on hash_line)
+file_find:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    cmp qword ptr [rip + mapcap], 0
+    je 8f
+    call hash_line
+    mov r14, [rip + mapcap]
+    dec r14
+    and rax, r14
+    mov r15, rax
+1:  mov rcx, [rip + map]
+    mov eax, [rcx + r15*4]
+    test eax, eax
+    jz 8f
+    dec eax
+    imul rbx, rax, CF_SIZE
+    add rbx, [rip + files + VEC_ptr]
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [rbx + CF_path]
+    call str_eq_cstr
+    test eax, eax
+    jnz 7f
+    inc r15
+    and r15, r14
+    jmp 1b
+7:  mov rax, rbx
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# map_put(index): the file at that index into the index (grown to twice the files when half full)
+map_put:
+    PROLOGUE
+    mov rbx, rdi
+    mov rax, [rip + files + VEC_len]
+    add rax, rax
+    cmp rax, [rip + mapcap]
+    jbe 3f
+    # grown: every file again
+    mov r12, [rip + mapcap]
+    add r12, r12
+    mov eax, 64
+    cmp r12, rax
+    cmovb r12, rax
+4:  cmp r12, [rip + files + VEC_len]
+    ja 41f
+    add r12, r12
+    jmp 4b
+41: add r12, r12
+    mov rdi, [rip + map]
+    call mem_free
+    lea rdi, [r12*4]
+    call mem_alloc
+    mov [rip + map], rax
+    mov rdi, rax
+    xor esi, esi
+    lea rdx, [r12*4]
+    call memset
+    mov [rip + mapcap], r12
+    xor r13d, r13d
+5:  cmp r13, [rip + files + VEC_len]
+    jae 9f                      # the new one is among them
+    mov rdi, r13
+    call map_slot
+    inc r13
+    jmp 5b
+3:  mov rdi, rbx
+    call map_slot
+9:  EPILOGUE
+
+# map_slot(index): the file into the first free slot from its hash
+map_slot:
+    PROLOGUE
+    mov rbx, rdi
+    imul rax, rbx, CF_SIZE
+    add rax, [rip + files + VEC_ptr]
+    mov r12, [rax + CF_path]
+    mov rdi, r12
+    call strlen
+    mov rsi, rax
+    mov rdi, r12
+    call hash_line
+    mov rcx, [rip + mapcap]
+    dec rcx
+    and rax, rcx
+    mov rdx, [rip + map]
+1:  cmp dword ptr [rdx + rax*4], 0
+    je 2f
+    inc rax
+    and rax, rcx
+    jmp 1b
+2:  lea esi, [rbx + 1]
+    mov [rdx + rax*4], esi
+    EPILOGUE
+
 # file_for(path, len) -> CF* for that path, added when it has none (0 past 20000 files)
 file_for:
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
-    xor ebx, ebx
-1:  cmp rbx, [rip + files + VEC_len]
-    jae 2f
-    imul r14, rbx, CF_SIZE
-    add r14, [rip + files + VEC_ptr]
-    inc rbx
-    mov rdi, r12
-    mov rsi, r13
-    mov rdx, [r14 + CF_path]
-    call str_eq_cstr
-    test eax, eax
-    jz 1b
-    mov rax, r14
-    EPILOGUE
-2:  cmp qword ptr [rip + files + VEC_len], TS_COVER_FILES
+    call file_find
+    test rax, rax
+    jnz 9f
+    cmp qword ptr [rip + files + VEC_len], TS_COVER_FILES
     jae 8f
     lea rdi, [rip + files]
     mov esi, CF_SIZE
@@ -273,8 +399,14 @@ file_for:
     mov rsi, r13
     call mem_dup
     mov [r14 + CF_path], rax
-    mov rax, r14
-    EPILOGUE
+    mov rdi, [rip + files + VEC_len]
+    dec rdi
+    call map_put
+    mov rax, [rip + files + VEC_len]
+    dec rax
+    imul rax, rax, CF_SIZE
+    add rax, [rip + files + VEC_ptr]
+9:  EPILOGUE
 8:  xor eax, eax
     EPILOGUE
 
@@ -294,6 +426,11 @@ FN testcover_clear
     jmp 1b
 2:  lea rdi, [rip + files]
     call vec_free
+    mov rdi, [rip + map]
+    call mem_free
+    mov qword ptr [rip + map], 0
+    mov qword ptr [rip + mapcap], 0
+    mov qword ptr [rip + cov_bytes], 0
     mov qword ptr [rip + g_cov_run], 0
     mov qword ptr [rip + ranges], 0
     mov dword ptr [rip + g_dirty], 1
@@ -302,23 +439,14 @@ FN testcover_clear
 
 # testcover_file(path cstr) -> CF* or 0
 FN testcover_file
-    PROLOGUE
-    mov r12, rdi
-    xor ebx, ebx
-1:  cmp rbx, [rip + files + VEC_len]
-    jae 8f
-    imul r13, rbx, CF_SIZE
-    add r13, [rip + files + VEC_ptr]
-    inc rbx
-    mov rdi, r12
-    mov rsi, [r13 + CF_path]
-    call strcmp_eq
-    test eax, eax
-    jz 1b
-    mov rax, r13
-    EPILOGUE
-8:  xor eax, eax
-    EPILOGUE
+    push rbx
+    mov rbx, rdi
+    call strlen
+    mov rsi, rax
+    mov rdi, rbx
+    call file_find
+    pop rbx
+    ret
 
 # testcover_line(CF*, line one-based) -> eax 0 unknown, COV_HIT covered, COV_MISS missed, 3 partly
 FN testcover_line
@@ -409,7 +537,7 @@ FN testcover_dump
 
 .section .rodata
 .Le_syntax: .asciz "syntax bad coverage body"
-.Le_toobig: .asciz "toobig coverage: 20000 files, 1000000 ranges a run, 1048576 lines a file"
+.Le_toobig: .asciz "toobig coverage: 20000 files, 1000000 ranges and 64 MiB of lines a run, 1048576 lines a file"
 .Lp_covered: .asciz "covered="
 .Lp_partial: .asciz " partial="
 .Lp_missed: .asciz " missed="

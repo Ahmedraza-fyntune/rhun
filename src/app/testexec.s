@@ -19,7 +19,7 @@ F TX_status, 4          # its wait status once reaped, -1 before
 F TX_killed, 4          # 1: rhun stopped it (Cancel, the run ending, the extension stopping)
 F TX_paused, 4          # 1: its pipes wait for the extension's queue
 F TX_orphan, 4          # 1: its extension stopped; nothing more is sent
-F TX_pad, 4
+F TX_handed, 4          # 1: stopped through uproc_end, which kills and reaps its whole group
 F TX_term_at, 8         # time_ms of the SIGTERM to its group, 0 none: SIGKILL 2 s later
 F TX_exit_at, 8         # time_ms it was reaped with a pipe still open (a child keeps it)
 ENDSTRUCT TX_SIZE
@@ -1000,7 +1000,16 @@ set_pipes:
 try_finish:
     PROLOGUE
     mov rbx, rdi
-    cmp dword ptr [rbx + TX_status], -1
+    cmp dword ptr [rbx + TX_handed], 0
+    je 0f
+    cmp dword ptr [rbx + TX_out], 0
+    jge 9f
+    cmp dword ptr [rbx + TX_err], 0
+    jge 9f
+    mov rdi, rbx
+    call report_exit            # "killed"; uproc reaps it
+    jmp 9f
+0:  cmp dword ptr [rbx + TX_status], -1
     jne 1f
     mov rdi, rbx
     call reap
@@ -1166,10 +1175,23 @@ term:
     mov rbx, rdi
     cmp qword ptr [rbx + TX_term_at], 0
     jne 9f
-    mov esi, SIGTERM
-    call stop
+    mov dword ptr [rbx + TX_killed], 1
     call time_ms
     mov [rbx + TX_term_at], rax
+    cmp dword ptr [rbx + TX_status], -1
+    jne 9f                      # reaped: its group is no longer ours to signal
+    test dword ptr [rbx + TX_pid], REMOTE_PID_TAG
+    jnz 1f
+    # uproc keeps the group to the end: SIGTERM now, SIGKILL in 2 s even when the leader is gone
+    # by then (a child that ignores SIGTERM dies too), reaped there
+    mov dword ptr [rbx + TX_handed], 1
+    mov edi, [rbx + TX_pid]
+    mov esi, TS_CANCEL_KILL_MS
+    call uproc_end
+    jmp 9f
+1:  mov rdi, rbx
+    mov esi, SIGTERM
+    call stop
 9:  pop rbx
     ret
 
@@ -1265,7 +1287,16 @@ FN testexec_tick
     jnz 2f
 11: mov rdi, rbx
     call resume_pipes
-2:  cmp dword ptr [rbx + TX_status], -1
+2:  cmp dword ptr [rbx + TX_handed], 0
+    je 21f
+    mov rcx, r14                # handed to uproc: done once its pipes close, or a while after
+    sub rcx, [rbx + TX_term_at] #   the SIGKILL with pipes a stray process keeps
+    cmp rcx, TS_CANCEL_KILL_MS + TX_LINGER_MS
+    jb 6f
+    mov rdi, rbx
+    call report_exit
+    jmp 6f
+21: cmp dword ptr [rbx + TX_status], -1
     jne 3f
     mov rdi, rbx
     call reap
@@ -1278,7 +1309,7 @@ FN testexec_tick
     jb 4f
     mov rdi, rbx
     mov esi, SIGKILL
-    call stop
+    call stop                   # a remote window's program (local ones are handed)
 4:  cmp dword ptr [rbx + TX_status], -1
     je 6f
     # ended: done when its pipes are, or a while after with pipes a child keeps

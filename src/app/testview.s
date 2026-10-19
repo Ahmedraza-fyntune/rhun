@@ -218,6 +218,18 @@ FN testview_run_item
     mov r12, rsi
     mov r13d, edx
     test r12, r12
+    jz 0f
+    cmp r13d, TSP_DEBUG
+    jne 1f
+    mov rdi, rbx                # an item marked nodebug is not debugged
+    mov rsi, r12
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_NODEBUG
+    jz 1f
+    lea rdi, [rip + .Lm_nodebug]
+    call app_toast
+    EPILOGUE
+0:  test r12, r12
     jnz 1f
     mov rdi, rbx
     mov esi, r13d
@@ -403,9 +415,19 @@ run_doc:
 21: mov rsi, [rip + best_item]
     test rsi, rsi
     jz 3f
+    cmp r15d, TSP_DEBUG
+    jne 22f
     mov rdi, rbx
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_NODEBUG
+    jnz 23f
+    mov rsi, [rip + best_item]
+22: mov rdi, rbx
     call ids_add
     jmp 7f
+23: lea rdi, [rip + .Lm_nodebug]
+    call app_toast
+    jmp 8f
 3:  # the file's items: in the file, with no ancestor in it
     mov r13d, 1
 4:  cmp r13, [rbx + TSC_items + VEC_len]
@@ -435,7 +457,14 @@ run_doc:
     call testmodel_item
     movsxd r8, dword ptr [rax + TSI_parent]
     jmp 5b
-51: mov rdi, rbx
+51: cmp r15d, TSP_DEBUG
+    jne 52f
+    mov rdi, rbx
+    mov rsi, r13
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_NODEBUG
+    jnz 6f
+52: mov rdi, rbx
     mov rsi, r13
     call ids_add
 6:  inc r13
@@ -1040,6 +1069,7 @@ FN testctl_coverage
 .section .rodata
 .Lm_no_item: .asciz "no such test item\n"
 .Lm_no_profile: .asciz "The test controller does not offer that kind of run"
+.Lm_nodebug: .asciz "This test cannot be debugged"
 .Lm_idle: .asciz "tests=idle\n"
 .Lm_busy: .asciz "tests=busy\n"
 .Lm_items: .asciz "items="

@@ -43,7 +43,7 @@ class Testing(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_editor(self, actions, mode=None, files=('a_test.go',), timeout=90):
+    def run_editor(self, actions, mode=None, files=('a_test.go',), timeout=90, exts=EXTS):
         env = dict(self.env)
         if mode:
             env['TESTS_MODE'] = mode
@@ -51,7 +51,7 @@ class Testing(unittest.TestCase):
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join(['wait 100', *opens, *actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), self.proj.as_posix(), '--headless', '1000x600', '--scale', '1',
-                                 '--extensions', str(EXTS), '--script', script.as_posix()],
+                                 '--extensions', str(exts), '--script', script.as_posix()],
                                 env=env, capture_output=True, timeout=timeout)
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
         return result.stdout.decode('utf-8', errors='replace').splitlines()
@@ -108,6 +108,8 @@ class Testing(unittest.TestCase):
         self.assertTrue(any(l.startswith('flood-ok ok') for l in log), log)
         self.assertTrue(any(l.startswith('flood-add step 3: error ') and 'toobig 50000 items per extension' in l
                             for l in log), log)
+        # replacing the roots counts what goes: one test in place of 40,001 items fits
+        self.assertTrue(any(l.startswith('flood-replace ok') for l in log), log)
 
     def test_replace_keeps_the_results_of_kept_ids(self):
         out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 300', 'print-tests all'],
@@ -233,6 +235,42 @@ class Testing(unittest.TestCase):
                                'print-state'])
         self.assertIn(' line=8 col=5 ', [l for l in out if l.startswith('tabs=')][-1])
 
+    def test_overlapping_runs_leave_no_stale_running_state(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'cmd test_run_all', 'wait-tests', 'print-tests all',
+                               'print-test-runs'], mode='overlap')
+        self.assertIn('tests=idle', out)
+        self.assertFalse([l for l in out if l.lstrip().startswith('running ')], out)
+        self.assertIn('passed=0 failed=0 errored=0 skipped=0 notrun=3', out)
+
+    def test_an_unfinished_rerun_brings_back_the_last_result_and_its_summary(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'cmd test_run_all', 'wait 400',
+                               'cmd test_cancel', 'wait-tests', 'print-test-result testsfake go:example/pkg.TestB'],
+                              mode='slow2')
+        self.assertIn('recv 0 test-cancel 2', self.fake_log())
+        self.assertTrue([l for l in out if l.startswith('state=failed ms=30 run=1 first=Greet mismatch')], out)
+
+    def test_nodebug_items_are_not_debugged(self):
+        exts = self.work / 'exts'
+        dst = exts / 'rhun-tests/testsfake'
+        dst.mkdir(parents=True)
+        manifest = (EXTS / 'rhun-tests/testsfake/extension.ini').read_text(encoding='utf-8')
+        manifest = manifest.replace('tests.profiles = run coverage', 'tests.profiles = run debug coverage')
+        manifest = manifest.replace('run = ../../../testsfake.py', 'run = ' + (ROOT / 'tests/ext/testsfake.py').as_posix())
+        (dst / 'extension.ini').write_text(manifest, encoding='utf-8')
+        out = self.run_editor([*EXPAND, 'test-select testsfake go:example/pkg.TestC', 'test-action debug', 'print-toast',
+                               'cmd goto_line', 'type 12', 'key Return', 'cmd test_debug_cursor',
+                               'test-select testsfake go:example/pkg.TestA', 'test-action debug', 'wait-tests'],
+                              exts=exts, mode='refuse')
+        self.assertEqual(self.logged('run '), ['run 1 debug 1 go:example/pkg.TestA'])
+        self.assertTrue([l for l in out if 'cannot be debugged' in l], out)
+
+    def test_coverage_is_bounded_by_its_lines_and_merges_by_path(self):
+        out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests'], mode='covbig,covunion', timeout=120)
+        log = self.fake_log()
+        self.assertTrue([l for l in log if l.startswith('covbig error ') and ' toobig ' in l], log)
+        self.assertTrue([l for l in log if l.startswith('covunion1 ok')], log)
+        self.assertTrue([l for l in log if l.startswith('covunion2 ok')], log)
+
     def test_coverage_run(self):
         f = (self.proj / 'a_test.go').as_posix()
         out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'print-test-runs',
@@ -339,6 +377,23 @@ class Testing(unittest.TestCase):
         log = self.fake_log()
         self.assertTrue([l for l in log if l.startswith('recv 0 test-out ') and 'sleeping' in l], log)
         self.assertIn('exit killed', log)
+
+    def test_a_stopped_programs_children_go_too(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog yes', 'wait 800', 'cmd test_cancel',
+                               'wait-tests', 'wait 3500'], mode='survivor')
+        log = self.fake_log()
+        pid = [l for l in log if l.startswith('recv 0 test-out ') and ' out ' in l]
+        self.assertTrue(pid, log)
+        child = int(pid[0].split("b'")[1].split('\\n')[0])
+        time.sleep(0.5)
+        try:
+            os.kill(child, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        if alive:
+            os.kill(child, 9)
+        self.assertFalse(alive, 'the child that ignored SIGTERM outlived the run')
 
     def test_back_pressure_keeps_a_chatty_process_waiting(self):
         self.env['TESTS_CHATTY'] = str(8 << 20)
