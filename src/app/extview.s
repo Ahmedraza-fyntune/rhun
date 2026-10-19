@@ -19,6 +19,7 @@
 .equ VO_TEXT, 9
 .equ VO_CLIP, 10
 .equ VO_UNCLIP, 11
+.equ VO_IMAGE, 12               # views group (view-images): x y w h IMG
 # op table flags
 .equ OF_COLOR, 1                # a color after the fixed numbers
 .equ OF_POINTS, 2               # then pairs of numbers
@@ -88,6 +89,8 @@ FN extview_open
     jmp 21f
 2:  cmp rdx, r12
     jne 21f
+    cmp dword ptr [rax + VW_inplace], 0
+    jne 21f
     inc ecx
 21: inc ebx
     jmp 1b
@@ -133,6 +136,58 @@ FN extview_open
 8:  mov rax, -1
     EPILOGUE
 
+# extview_open_hosted(ext, id) -> rax a VW that another part of rhun shows (a custom editor's
+#   view): as extview_open_place, and a press gives it the keyboard (view-keys); free it with
+#   extview_free_place
+FN extview_open_hosted
+    mov edx, 2
+    jmp open_inplace
+
+# extview_open_place(ext, id) -> rax a VW for a picture view's instance (rview.s), or 0: no tab,
+#   the instance's number, not counted among the extension's 8
+FN extview_open_place
+    mov edx, 1
+open_inplace:
+    PROLOGUE
+    mov r12, rdi
+    mov r13d, esi
+    mov r14d, edx
+    xor ebx, ebx
+1:  cmp ebx, VW_MAX
+    jae 8f
+    imul rax, rbx, VW_SIZE
+    lea rdx, [rip + g_views]
+    add rax, rdx
+    cmp qword ptr [rax + VW_ext], 0
+    je 2f
+    inc ebx
+    jmp 1b
+2:  mov rbx, rax
+    mov rdi, rbx
+    xor esi, esi
+    mov edx, VW_SIZE
+    call memset
+    mov [rbx + VW_ext], r12
+    mov [rbx + VW_id], r13d
+    mov [rbx + VW_inplace], r14d
+    mov dword ptr [rbx + VW_dirty], 1
+    mov dword ptr [rbx + VW_lw], -1
+    mov dword ptr [rbx + VW_lh], -1
+    lea rdi, [rip + .Lt_view]
+    call dup_cstr
+    mov [rbx + VW_title], rax
+    mov rax, rbx
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# extview_free_place(VW*): a picture view's instance ended
+FN extview_free_place
+    test rdi, rdi
+    jz 1f
+    jmp free_slot
+1:  ret
+
 # extview_next_id() -> eax a new view number: 12a views and retained views share the sequence
 FN extview_next_id
     inc dword ptr [rip + view_seq]
@@ -155,8 +210,27 @@ FN extview_find
 8:  xor eax, eax
 9:  ret
 
-# extview_of_tab(tab flags) -> VW* or 0
+# extview_count(ext) -> eax its open 12a views
+FN extview_count
+    xor eax, eax
+    xor ecx, ecx
+    lea rdx, [rip + g_views]
+1:  cmp ecx, VW_MAX
+    jae 9f
+    cmp [rdx + VW_ext], rdi
+    jne 2f
+    cmp dword ptr [rdx + VW_inplace], 0
+    jne 2f                      # a picture view's instance is not one of its 8
+    inc eax
+2:  add rdx, VW_SIZE
+    inc ecx
+    jmp 1b
+9:  ret
+
+# extview_of_tab(tab flags) -> VW* or 0 (a retained view's tab is not one: rview.s)
 FN extview_of_tab
+    test rdi, TF_RVIEW
+    jnz 8f
     mov rax, rdi
     shr rax, TF_VIEW_SHIFT
     and eax, 255
@@ -175,6 +249,8 @@ FN extview_of_tab
 
 # extview_title(tab flags) -> cstr for the tab strip
 FN extview_title
+    test rdi, TF_RVIEW
+    jnz rview_tab_title
     call extview_of_tab
     test rax, rax
     jz 1f
@@ -232,6 +308,8 @@ FN extview_close
 # extview_tab_closed(tab flags): a view's tab is closing (app_close_tab_now): its extension hears
 # "closed" unless it closed it itself, and the slot is freed
 FN extview_tab_closed
+    test rdi, TF_RVIEW
+    jnz rview_tab_closed
     PROLOGUE
     call extview_of_tab
     test rax, rax
@@ -259,6 +337,8 @@ FN extview_owner_gone
     add rbx, rax
     cmp [rbx + VW_ext], r12
     jne 2f
+    cmp dword ptr [rbx + VW_inplace], 0
+    jne 2f                      # a picture view's: its instance frees it (rview.s)
     mov rdi, rbx
     call extview_close
 2:  inc r13d
@@ -268,7 +348,12 @@ FN extview_owner_gone
 free_slot:
     PROLOGUE
     mov rbx, rdi
-    mov rdi, [rbx + VW_title]
+    mov edi, [rbx + VW_pl]      # a tab picture's place item for the keyboard (viewpic.s)
+    test edi, edi
+    jz 1f
+    dec edi
+    call place_remove
+1:  mov rdi, [rbx + VW_title]
     call mem_free
     mov rdi, [rbx + VW_px]
     call mem_free
@@ -841,17 +926,46 @@ FN extview_draw
     mov rdi, [rip + g_tab_cur]
     call tab_at
     mov rdi, [rax + TAB_flags]
-    call extview_of_tab
+    test rdi, TF_RVIEW
+    jz 1f
+    mov esi, [rsp]              # a retained view's tab (rview.s)
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call rview_tab_draw
+    jmp 9f
+1:  call extview_of_tab
     test rax, rax
     jz 9f
-    mov rbx, rax
-    # only the view on screen keeps its pixels
+    mov rdi, rax
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call extview_draw_vw
+9:  EPILOGUE
+
+# extview_draw_vw(VW*, x, y, w, h): a view's picture there (a tab's, or a picture view's in a place),
+#   rendered again first when it must be; the pointer's moves, clicks and the wheel go to its
+#   extension (with view-keys: modifiers, double clicks, and the keyboard on a press)
+FN extview_draw_vw
+    PROLOGUE 48
+    mov rbx, rdi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    # only the tab view on screen keeps its pixels (picture views' instances keep theirs)
+    cmp dword ptr [rbx + VW_inplace], 0
+    jne 92f
     xor ecx, ecx
     lea rax, [rip + g_views]
 91: cmp ecx, VW_MAX
     jae 92f
     cmp rax, rbx
     je 93f
+    cmp dword ptr [rax + VW_inplace], 0
+    jne 93f
     mov rdi, [rax + VW_px]
     test rdi, rdi
     jz 93f
@@ -988,8 +1102,18 @@ FN extview_draw
     mov dword ptr [rbx + VW_down], 1
     mov [rbx + VW_ax], r12d
     mov [rbx + VW_ay], r13d
+    mov rdi, rbx                # view-keys: the keyboard to it (viewpic.s)
+    call viewpic_pressed
     lea rsi, [rip + .Le_down]
     call point_event
+    test dword ptr [rsp + 16], UB_DOUBLE
+    jz 511f
+    mov rax, [rbx + VW_ext]
+    FEAT_TEST rax, FEAT_VIEW_KEYS
+    jz 511f
+    lea rsi, [rip + .Le_dblclick]
+    call point_event
+511:
     test dword ptr [rip + g_released], 1 << BTN_LEFT
     jnz 53f                     # it came up in the same frame
     jmp 55f
@@ -1057,6 +1181,7 @@ FN extview_draw
     cvtsi2ss xmm0, edi
     divss xmm0, [rip + g_s]
     call push_num
+    call push_mods
     mov rdi, rbx
     call event_send
     jmp 9f
@@ -1081,9 +1206,40 @@ point_event:
     call sb_push_cstr
     call push_xy
     dec qword ptr [rip + evbuf + SB_len]    # the space after Y
-    mov rdi, rbx
+    lea rax, [rip + .Le_hover]  # view-keys: the modifiers after down, up, click, drag, dblclick
+    cmp r12, rax
+    je 1f
+    call push_mods
+1:  mov rdi, rbx
     call event_send
 9:  EPILOGUE
+
+# push_mods(): " MODS" onto evbuf when its extension agreed view-keys (rbx the view)
+push_mods:
+    mov rax, [rbx + VW_ext]
+    FEAT_TEST rax, FEAT_VIEW_KEYS
+    jz 9f
+    push rbx
+    push rbx
+    lea rdi, [rip + evbuf]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + evbuf]
+    mov esi, [rip + g_mods]
+    call viewpic_push_mods
+    pop rbx
+    pop rbx
+9:  ret
+
+# extview_event_head(VW*) -> eax 1 with "0 view ID " in the event buffer; extview_event_send(VW*);
+#   extview_evbuf() -> rax the buffer (viewpic.s writes its events with them)
+FN extview_event_head
+    jmp event_head
+FN extview_event_send
+    jmp event_send
+FN extview_evbuf
+    lea rax, [rip + evbuf]
+    ret
 
 # push_xy(): "X Y " of the pointer (rbx the view) onto evbuf
 push_xy:
@@ -1203,7 +1359,7 @@ render:
     lea rax, [r15 + rax]
     mov [rsp + 16], rax
     movzx eax, byte ptr [rsp]
-    cmp eax, VO_UNCLIP
+    cmp eax, VO_IMAGE
     ja 7f
     lea rcx, [rip + draw_ops]
     call [rcx + rax*8]
@@ -1521,6 +1677,50 @@ d_unclip:
     mov dword ptr [rip + clip_on], 0
     jmp gfx_clip_pop
 1:  ret
+
+# d_image: one of the extension's decoded images (view-images) scaled into the box
+d_image:
+    PROLOGUE 32
+    P 0, xmm0
+    P 1, xmm1
+    P 2, xmm2
+    P 3, xmm3
+    addss xmm2, xmm0
+    addss xmm3, xmm1
+    cvtss2si eax, xmm0
+    mov [rsp], eax
+    cvtss2si eax, xmm1
+    mov [rsp + 4], eax
+    cvtss2si eax, xmm2
+    sub eax, [rsp]
+    mov [rsp + 8], eax
+    cvtss2si eax, xmm3
+    sub eax, [rsp + 4]
+    mov [rsp + 12], eax
+    cmp dword ptr [rsp + 8], 0
+    jle 9f
+    cmp dword ptr [rsp + 12], 0
+    jle 9f
+    movss xmm0, [r14 + 16]
+    cvtss2si esi, xmm0
+    mov rdi, [rbx + VW_ext]
+    call viewimg_find
+    test rax, rax
+    jz 9f
+    mov [rsp + 16], rax
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call spend
+    mov rax, [rsp + 16]
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    mov r8, rax
+    call viewimg_blit
+9:  EPILOGUE
 
 # ---------------- shapes: edges into the rasterizer ----------------
 
@@ -2154,9 +2354,11 @@ ops:
     .byte VO_CLIP, 4, 0, 0, 0, 0, 0, 0
     .quad .Lo_unclip
     .byte VO_UNCLIP, 0, 0, 0, 0, 0, 0, 0
+    .quad .Lo_image
+    .byte VO_IMAGE, 5, 0, 0, 0, 0, 0, 0
     .quad 0, 0
 draw_ops: .quad d_none, d_rect, d_rrect, d_line, d_poly, d_fill, d_circle, d_ring, d_pie, d_text
-    .quad d_clip, d_unclip
+    .quad d_clip, d_unclip, d_image
 sizes: .quad .Ls_small, .Ls_normal, .Ls_large, .Ls_mono, 0
 faces: .quad g_face_small, g_face_ui, g_face_big, g_face_code
 aligns: .quad .La_left, .La_center, .La_right, 0
@@ -2200,6 +2402,7 @@ f_c10: .float -0.0000002755731922398589
 .Lo_text: .asciz "text"
 .Lo_clip: .asciz "clip"
 .Lo_unclip: .asciz "unclip"
+.Lo_image: .asciz "image"
 .Ls_small: .asciz "small"
 .Ls_normal: .asciz "normal"
 .Ls_large: .asciz "large"
@@ -2226,6 +2429,7 @@ f_c10: .float -0.0000002755731922398589
 .Le_down: .asciz "down "
 .Le_up: .asciz "up "
 .Le_drag: .asciz "drag "
+.Le_dblclick: .asciz "dblclick "
 .Le_metrics: .asciz "metrics "
 .Lt_view: .asciz "View"
 .Ld_view: .asciz "view="

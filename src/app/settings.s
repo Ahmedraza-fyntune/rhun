@@ -433,6 +433,9 @@ section_title:
     lea rax, [rip + .Lt_git]
     cmp byte ptr [rdi], 'g'
     je 1f
+    lea rax, [rip + .Lt_debug]          # debugger
+    cmp byte ptr [rdi], 'd'
+    je 1f
     lea rax, [rip + .Lt_agents]
 1:  ret
 
@@ -1575,6 +1578,7 @@ FN ui_text_v_fit
 .Lt_terminal: .asciz "Terminal"
 .Lt_git: .asciz "Git"
 .Lt_updates: .asciz "Updates"
+.Lt_debug: .asciz "Debugger"
 .Lwebsite: .asciz "https://rhun.app"
 .Lemail: .asciz "hi@rhun.app"
 .Lfeedback: .asciz "Feedback and issues: GitHub"

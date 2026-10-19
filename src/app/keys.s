@@ -1846,7 +1846,12 @@ mac_key_syms:
 # built-in chords: command, strokes (one line each)
 builtin_chords:
     .quad .Lc_select_theme, .Lk_select_theme
+    .quad .Lc_fold_all, .Lk_fold_all, .Lc_unfold_all, .Lk_unfold_all   # editor presentation
     .quad 0, 0
+.Lc_fold_all: .asciz "fold_all"
+.Lk_fold_all: .asciz "ctrl+k ctrl+0"
+.Lc_unfold_all: .asciz "unfold_all"
+.Lk_unfold_all: .asciz "ctrl+k ctrl+j"
 .Lc_select_theme: .asciz "select_theme"
 .Lk_select_theme: .asciz "ctrl+k ctrl+t"
 # linux: / mac: / windows: before a binding's strokes: 1 for this system
@@ -2086,6 +2091,8 @@ g_commands:
     # views group: places
     COMMAND toggle_panel, "Toggle Panel", cmd_toggle_panel, "ctrl+j"
     COMMAND toggle_side, "Toggle Side Views", cmd_toggle_side, ""
+    COMMAND focus_notifications, "Focus Notifications", cmd_focus_notifications, ""
+    COMMAND clear_notifications, "Clear All Notifications", cmd_clear_notifications, ""
     COMMAND extensions, "Extensions", cmd_extensions, ""
     COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
     COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""
@@ -2096,6 +2103,14 @@ g_commands:
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
     # tasks and terminals
     COMMAND toggle_problems, "Toggle Problems", cmd_toggle_problems, "ctrl+shift+m"
+    COMMAND run_task, "Run Task", cmd_run_task, ""
+    COMMAND run_build_task, "Run Build Task", cmd_run_build_task, "ctrl+shift+b"
+    COMMAND run_test_task, "Run Test Task", cmd_run_test_task, ""
+    COMMAND rerun_last_task, "Re-run Last Task", cmd_rerun_last_task, ""
+    COMMAND restart_task, "Restart Task", cmd_restart_task, ""
+    COMMAND stop_task, "Stop Task", cmd_stop_task, ""
+    COMMAND show_task, "Show Task", cmd_show_task, ""
+    COMMAND clear_task_problems, "Clear Task Problems", cmd_clear_task_problems, ""
     COMMAND kill_terminal, "Kill Terminal", cmd_kill_terminal, ""
     COMMAND clear_terminal, "Clear Terminal", cmd_clear_terminal, ""
     COMMAND git_history, "Git: Show History", cmd_git_history, ""
@@ -2119,6 +2134,28 @@ g_commands:
     COMMAND check_for_updates, "Check for Updates", cmd_check_for_updates, ""
     COMMAND install_update, "Install Update", cmd_install_update, ""
     COMMAND restart_to_update, "Restart to Update", cmd_restart_to_update, ""
+    # debugger (debugview.s)
+    COMMAND debug_start, "Debug: Start or Continue", cmd_debug_start, "F5"
+    COMMAND debug_run, "Debug: Run Without Debugging", cmd_debug_run, "ctrl+F5"
+    COMMAND debug_stop, "Debug: Stop", cmd_debug_stop, "shift+F5"
+    COMMAND debug_restart, "Debug: Restart", cmd_debug_restart, "ctrl+shift+F5"
+    COMMAND debug_pause, "Debug: Pause", cmd_debug_pause, "F6"
+    COMMAND debug_continue, "Debug: Continue", cmd_debug_continue, ""
+    COMMAND debug_step_over, "Debug: Step Over", cmd_debug_step_over, "F10"
+    COMMAND debug_step_into, "Debug: Step Into", cmd_debug_step_into, "F11"
+    COMMAND debug_step_out, "Debug: Step Out", cmd_debug_step_out, "shift+F11"
+    COMMAND debug_toggle_breakpoint, "Debug: Toggle Breakpoint", cmd_debug_toggle_breakpoint, "F9"
+    COMMAND debug_show, "Debug: Show or Hide", cmd_debug_show, "ctrl+shift+y"
+    COMMAND debug_condition, "Debug: Edit Breakpoint Condition", cmd_debug_condition, ""
+    COMMAND debug_hit_count, "Debug: Edit Breakpoint Hit Count", cmd_debug_hit_count, ""
+    COMMAND debug_logpoint, "Debug: Add Logpoint", cmd_debug_logpoint, ""
+    COMMAND debug_disable_breakpoint, "Debug: Enable or Disable Breakpoint", cmd_debug_disable_breakpoint, ""
+    COMMAND debug_remove_all_breakpoints, "Debug: Remove All Breakpoints", cmd_debug_remove_all_breakpoints, ""
+    COMMAND debug_add_function_breakpoint, "Debug: Add Function Breakpoint", cmd_debug_add_function_breakpoint, ""
+    COMMAND debug_add_watch, "Debug: Add Watch Expression", cmd_debug_add_watch, ""
+    COMMAND debug_evaluate_selection, "Debug: Evaluate Selection in Console", cmd_debug_evaluate_selection, ""
+    COMMAND debug_focus_console, "Debug: Focus Debug Console", cmd_debug_focus_console, ""
+    COMMAND debug_open_configurations, "Debug: Open Launch Configurations", cmd_debug_open_configurations, ""
     # testing (testview.s)
     COMMAND testing, "Testing", cmd_testing, ""
     COMMAND test_run_all, "Run All Tests", cmd_test_run_all, ""
@@ -2160,5 +2197,14 @@ g_commands:
     COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
     COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
     COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
+    # editor presentation (fold.s)
+    COMMAND fold, "Fold", cmd_fold, "ctrl+shift+[ ctrl+shift+{"
+    COMMAND unfold, "Unfold", cmd_unfold, "ctrl+shift+] ctrl+shift+}"
+    COMMAND toggle_fold, "Toggle Fold", cmd_toggle_fold, ""
+    COMMAND fold_all, "Fold All", cmd_fold_all, ""
+    COMMAND unfold_all, "Unfold All", cmd_unfold_all, ""
+    COMMAND fold_level_1, "Fold Level 1", cmd_fold_level_1, ""
+    COMMAND fold_level_2, "Fold Level 2", cmd_fold_level_2, ""
+    COMMAND fold_level_3, "Fold Level 3", cmd_fold_level_3, ""
     .quad 0, 0, 0, 0
 

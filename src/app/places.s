@@ -295,6 +295,10 @@ FN place_key
     test rax, rax
     jz 7f
     mov rbx, rax
+    mov rdi, rbx
+    call column_shown
+    test eax, eax
+    jz 71f
     mov rax, [rbx + PL_ops]
     mov rax, [rax + PLO_key]
     test rax, rax
@@ -311,8 +315,27 @@ FN place_key
 7:  mov dword ptr [rip + g_focus], FOCUS_EDITOR
     mov eax, 1
     EPILOGUE
+71: mov dword ptr [rip + g_focus], FOCUS_EDITOR   # its column was hidden: the editor's again
 8:  xor eax, eax
 9:  EPILOGUE
+
+# column_shown(PL*) -> eax 0 when the column or panel holding the item is hidden (a tab or a hidden
+#   item of rhun's own: 1)
+column_shown:
+    mov eax, 1
+    mov ecx, [rdi + PL_place]
+    cmp ecx, PLACE_SIDEBAR
+    jne 1f
+    mov eax, [rip + g_show_side]
+    ret
+1:  cmp ecx, PLACE_PANEL
+    jne 2f
+    mov eax, [rip + g_term_open]
+    ret
+2:  cmp ecx, PLACE_SIDE
+    jne 3f
+    mov eax, [rip + g_show_agents]
+3:  ret
 
 # place_call_focus(id, on): its focus callback
 place_call_focus:
@@ -335,7 +358,18 @@ place_call_focus:
 #   for the items that came on or went off screen
 FN places_frame_end
     PROLOGUE
-    call place_focused
+    call place_focused          # an item whose column went away gives the keyboard back
+    mov edi, eax
+    call place_at
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call column_shown
+    test eax, eax
+    jnz 1f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov dword ptr [rip + g_dirty], 1
+1:  call place_focused
     mov ebx, eax
     cmp ebx, [rip + last_focus]
     je 3f
@@ -431,7 +465,7 @@ place_mark_drawn:
     ret
 
 # place_body(id, x, y, w, h): the item's body, clipped; a press inside first gives it the keyboard
-place_body:
+FN place_body
     PROLOGUE 32
     mov ebx, edi
     mov [rsp], esi
@@ -465,7 +499,18 @@ place_body:
     je 1f                       # the explorer's rows set its own focus
     mov edi, ebx
     call place_focus
-1:  mov edi, [rsp]
+1:  mov edi, [rsp]             # its background: the panel's in the sidebar and the side column,
+    mov esi, [rsp + 4]          # the editor's in the bottom panel and a tab
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_PANEL
+    cmp dword ptr [r12 + PL_place], PLACE_PANEL
+    je 11f
+    cmp dword ptr [r12 + PL_place], PLACE_TAB
+    jne 12f
+11: COLOR r8d, T_BG
+12: call gfx_fill
+    mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
@@ -844,7 +889,17 @@ FN places_panel_tabs
     lea rsi, [rip + pt_order]
     call place_list
     mov [rsp + 20], eax
-    test eax, eax
+    xor ecx, ecx                # no tab drawn yet (tests: place_dump's tab lines)
+91: cmp ecx, eax
+    jae 92f
+    lea rdx, [rip + pt_order]
+    mov edx, [rdx + rcx*4]
+    imul edx, edx, PL_SIZE
+    lea r8, [rip + g_places]
+    mov dword ptr [r8 + rdx + PL_pad], 0
+    inc ecx
+    jmp 91b
+92: test eax, eax
     jz .Lpt_ret
     cmp dword ptr [rsp + 16], 0
     je 1f
@@ -876,6 +931,10 @@ FN places_panel_tabs
     add eax, r14d
     cmp eax, [rsp + 8]
     jg .Lpt_ret                 # no room: not cut off with its close button out of reach
+    mov eax, [rsp]
+    inc eax
+    mov [r13 + PL_pad], eax     # where it was drawn (tests)
+    mov [r13 + PL_hy], r14d
     mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, r14d
@@ -1032,6 +1091,39 @@ FN places_panel_body
     EPILOGUE
 8:  mov dword ptr [rip + g_panel_cur], -1
     xor eax, eax
+    EPILOGUE
+
+# places_panel_actions(right, y, h) -> eax the x left of them: the chosen view tab's title actions
+#   in the panel's strip, left of its + and hide buttons
+FN places_panel_actions
+    mov ecx, edx
+    mov edx, esi
+    mov esi, edi
+    mov edi, [rip + g_panel_cur]
+    jmp item_actions
+
+# item_actions(id, right, y, h) -> eax the x left of them: the item's actions callback
+item_actions:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    call place_at
+    test rax, rax
+    jz 8f
+    mov rcx, [rax + PL_ops]
+    mov rcx, [rcx + PLO_actions]
+    test rcx, rcx
+    jz 8f
+    mov rdi, [rax + PL_ctx]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    mov rax, [rax + PL_ops]
+    call [rax + PLO_actions]
+    EPILOGUE
+8:  mov eax, r12d
     EPILOGUE
 
 # places_panel_count() -> eax the panel's view tabs shown
@@ -1221,7 +1313,16 @@ FN side_draw
     cmp r12d, [rsp + 16]
     jb .Lsdt_tab
 .Lsdt_done:
-    M eax, MI_28
+    cmp dword ptr [rip + g_side_cur], -1
+    je 51f
+    mov edi, [rip + g_side_cur] # the side view's title actions at the strip's right
+    mov esi, [rsp]
+    add esi, [rsp + 8]
+    sub esi, [rip + g_mt + 4*MI_8]
+    mov edx, [rsp + 4]
+    M ecx, MI_28
+    call item_actions
+51: M eax, MI_28
     mov edx, [rsp + 4]
     add edx, eax                # the body under the strip
     mov r8d, [rsp + 12]
@@ -1251,6 +1352,16 @@ FN cmd_toggle_side
     je 1f
     mov dword ptr [rip + g_show_agents], 0
     mov dword ptr [rip + g_dirty], 1
+    cmp dword ptr [rip + g_focus], FOCUS_VIEW   # a hidden view gives the keyboard back
+    jne 9f
+    call place_focused
+    mov edi, eax
+    call place_at
+    test rax, rax
+    jz 9f
+    cmp dword ptr [rax + PL_place], PLACE_SIDE
+    jne 9f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
     ret
 1:  mov edi, [rip + g_side_cur]
     call place_at
@@ -1390,11 +1501,42 @@ FN place_dump
 6:  mov rdi, rbx
     mov esi, 10
     call sb_push_byte
+    cmp r15d, PLACE_PANEL       # a panel tab drawn in the strip: "tab NAME x=X w=W"
+    jne 8f
+    cmp dword ptr [rip + g_term_open], 0
+    je 8f
+    cmp dword ptr [r13 + PL_pad], 0
+    je 8f
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_tab]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [r13 + PL_name]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_x]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r13 + PL_pad]
+    dec esi
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_w]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r13 + PL_hy]
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
 8:  inc r12d
     jmp 1b
 9:  EPILOGUE
 
 .section .rodata
+.Ld_tab: .asciz "tab "
+.Ld_x: .asciz " x="
+.Ld_w: .asciz " w="
 .Lbusy: .asciz "\342\200\246"
 .Lagents: .asciz "Agents"
 .Ld_title: .asciz " title="
@@ -1420,6 +1562,36 @@ FN panel_view_focused
     mov eax, 1
     ret
 1:  xor eax, eax
+    ret
+
+# views_timeout() -> ms until something of the views group is due (a wait for children times out,
+#   a card goes, a spinner turns), or -1
+FN views_timeout
+    push rbx
+    push r12
+    sub rsp, 8
+    call rview_timeout
+    movsxd rbx, eax
+    call notify_timeout
+    movsxd rax, eax
+    cmp rbx, -1
+    je 1f
+    cmp rax, -1
+    je 2f
+    cmp rbx, rax
+    jge 1f
+2:  mov rax, rbx
+1:  add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# views_tick(): what is due
+FN views_tick
+    sub rsp, 8
+    call rview_tick
+    call notify_tick
+    add rsp, 8
     ret
 
 # places_init(): the explorer, the sidebar's first section

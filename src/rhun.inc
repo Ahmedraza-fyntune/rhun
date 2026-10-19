@@ -515,7 +515,16 @@ ENDSTRUCT INI_SIZE
 .equ T_GIT_MOD, T_TERM + 17
 .equ T_GIT_DEL, T_TERM + 18
 .equ T_ICON, T_TERM + 19        # file icons: red orange yellow green blue purple pink cyan grey white
-.equ T_COUNT, T_ICON + 10
+# editor presentation's colors (derived when a theme leaves them out)
+.equ T_INLAY, T_ICON + 10       # inlay hints' text, and their pill
+.equ T_INLAY_BG, T_INLAY + 1
+.equ T_GHOST, T_INLAY + 2       # inline completion's text
+.equ T_CODELENS, T_INLAY + 3
+.equ T_HIGHLIGHT, T_INLAY + 4   # document highlights, and the written ones
+.equ T_HIGHLIGHT_WRITE, T_INLAY + 5
+.equ T_INFO, T_INLAY + 6        # info and hint diagnostics
+.equ T_HINT, T_INLAY + 7
+.equ T_COUNT, T_INLAY + 8
 
 .macro COLOR reg, slot
     mov \reg, [rip + g_theme + 4*(\slot)]
@@ -1094,13 +1103,15 @@ F MK_owner, 8           # EXT*
 F MK_start, 8           # byte positions, half-open
 F MK_end, 8
 F MK_sev, 4             # SEV_*
-F MK_pad, 4
+F MK_pad, 4             # MKF_SOURCE, and MKT_* tags (feature diagnostic-tags)
 F MK_msg, 8             # cstr (owned)
 ENDSTRUCT MK_SIZE
 .equ SEV_ERROR, 0
 .equ SEV_WARNING, 1
 .equ SEV_INFO, 2
 .equ SEV_HINT, 3
+.equ MKT_UNNECESSARY, 2         # MK_pad: faded (a hint then draws no underline)
+.equ MKT_DEPRECATED, 4          # MK_pad: struck through
 .equ MARKS_MAX, 2000
 .equ MARK_MSG_MAX, 200
 .equ HOVER_MAX, 4000
@@ -1119,6 +1130,7 @@ ENDSTRUCT MK_SIZE
 .equ DF_REVEAL, 16               # its cursor was placed while it was not shown: in view when next drawn
 .equ DF_CENTER, 32               # with DF_REVEAL: that reveal puts the cursor's line in the middle
 .equ DF_CELL, 64                 # notebooks: a cell's text (nbdoc.s): no path and no tab of its own
+.equ DF_ROWS, 128                # presentation (fold.s): the view scrolls by rows (folds), not lines
 
 # return 0 at once when the document is read-only: g_doc, or the one in reg
 .macro READONLY_RET reg=0
@@ -1403,6 +1415,7 @@ ENDSTRUCT TF_SIZE
 .equ CPX_DOCUMENT, 1
 .equ CPX_FIELD, 2
 .equ CPX_TERMINAL, 3
+.equ CPX_PICTURE, 68             # views group: a picture with the keyboard (viewpic.s)
 
 # icons
 .equ IC_CHEV_R, 0
@@ -1575,7 +1588,11 @@ ENDSTRUCT TF_SIZE
 .equ IC_CLOUD, 166
 .equ IC_RING, 167
 .equ IC_SLASH, 168
-.equ IC_COUNT, 169
+.equ IC_DBG_PAUSE, 169
+.equ IC_DBG_OVER, 170
+.equ IC_DBG_INTO, 171
+.equ IC_DBG_OUT, 172
+.equ IC_COUNT, 173
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
@@ -1631,6 +1648,9 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_TOOLS, "tools", 1                # tools, tool-call; rhun asks owners: tool
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
+    # tasks and terminals (termproto.s, tasks.s)
+    FEATURE FEAT_TERMINALS, "terminals", 0        # terminal-* requests; terminal-started/-ended/-output/-closed
+    FEATURE FEAT_TASKS, "tasks", 0                # tasks-set, task-start, task-run; agreed only with terminals
     # language features (query.s, complete.s, langfeat.s)
     FEATURE FEAT_QUERY_STREAM, "query-stream", 0      # query-part, query-progress
     FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
@@ -1651,6 +1671,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_REVEAL, "reveal", 0
     FEATURE FEAT_DIFF, "diff", 0
     FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
+    # contributions and commands: status bar items (statusitems.s)
+    FEATURE FEAT_STATUS_ITEMS, "status-items", 0  # status-item, status-remove
     # resources, workspaces, secrets and lifecycle (extres.s, secrets.s and the files they name)
     FEATURE FEAT_IDLE, "idle", 0                  # busy yes|no
     FEATURE FEAT_SECRETS, "secrets", 0
@@ -1659,8 +1681,21 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_FILES, "files", 0                # find-files, search-text
     FEATURE FEAT_SCOPED_SETTINGS, "scoped-settings", 0
     FEATURE FEAT_WORKSPACE_FOLDERS, "workspace-folders", 0
+    FEATURE FEAT_DIAG_TAGS, "diagnostic-tags", 0  # SEVERITY+TAG in diagnostics: faded, struck
+    FEATURE FEAT_FOLDING_RANGES, "folding-ranges", 1  # rhun asks folding-ranges
+    FEATURE FEAT_SEMANTIC_TOKENS, "semantic-tokens", 1    # semantic-legend; rhun asks semantic-tokens
+    FEATURE FEAT_INLAY_HINTS, "inlay-hints", 1    # rhun asks inlay-hints
+    FEATURE FEAT_CODE_LENS, "code-lens", 1        # rhun asks code-lens
+    FEATURE FEAT_INLINE_COMPLETE, "inline-complete", 1    # rhun asks inline-complete
+    FEATURE FEAT_DOC_COLORS, "document-colors", 1 # rhun asks colors, color-edit
+    FEATURE FEAT_DOC_HIGHLIGHTS, "document-highlights", 1 # rhun asks highlights
     # notebooks (wider-parity A: nbdoc.s, nbproto.inc)
     FEATURE FEAT_NOTEBOOKS, "notebooks", 1        # nb-open, nb-save; runs and outputs
+    FEATURE FEAT_VIEW_LOG, "view-log", 0          # views group: log views (with view-tree)
+    FEATURE FEAT_NOTIFY, "notify", 0              # views group: notify, notify-set, unnotify
+    FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
+    FEATURE FEAT_VIEW_KEYS, "view-keys", 1        # views group: keys and focus for pictures; rhun asks vcopy
+    FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
     FEATURE FEAT_CUSTOM_EDITORS, "custom-editors", 1   # custom editors (customed.s, ceproto.inc)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
@@ -1723,10 +1758,18 @@ FEATURE_LIST
 .equ PK_PROMPT, 31               # AI: agent-prompt (agentext.s, D4)
 .equ PK_NB_OPEN, 32              # notebooks: nb-open, nb-save (nbproto.inc)
 .equ PK_NB_SAVE, 33
-.equ PK_ED_OPEN, 34              # custom editors: editor-open, editor-save, undo/redo/revert (ceproto.inc)
-.equ PK_ED_SAVE, 35
-.equ PK_ED_CMD, 36
-.equ PK_COUNT, 37
+.equ PK_FOLDING, 34              # editor presentation (present.s)
+.equ PK_TOKENS, 35
+.equ PK_HINTS, 36
+.equ PK_LENS, 37
+.equ PK_INLINE, 38
+.equ PK_COLORS, 39
+.equ PK_COLOR_EDIT, 40
+.equ PK_HIGHLIGHTS, 41
+.equ PK_ED_OPEN, 42              # custom editors: editor-open, editor-save, undo/redo/revert (ceproto.inc)
+.equ PK_ED_SAVE, 43
+.equ PK_ED_CMD, 44
+.equ PK_COUNT, 45
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
@@ -1735,7 +1778,8 @@ FEATURE_LIST
 .equ QO_TESTS, 5                 # testing (testproto.s)
 .equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
 .equ QO_NOTEBOOK, 7               # nbdoc.s's nb_reply
-.equ QO_CUSTOM, 8                # customed.s's ce_reply
+.equ QO_PRESENT, 8               # editor presentation (present.s)
+.equ QO_CUSTOM, 9                # customed.s's ce_reply
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -1782,7 +1826,8 @@ F TAB_flags, 8
 ENDSTRUCT TAB_SIZE
 # TAB_flags
 .equ TF_PIN, 1                  # pinned: the pinned tabs are the first ones in the strip
-.equ TF_CUSTOM, 2               # custom editors: a TAB_VIEW tab that is an extension's editor of TAB_doc
+.equ TF_RVIEW, 2                # TAB_VIEW: a retained view's tab (rview.s); the slot field is its instance
+.equ TF_CUSTOM, 4               # custom editors: a TAB_VIEW tab that is an extension's editor of TAB_doc
 
 .equ SIDEBAR_W_DEFAULT, 240        # points: the explorer's and the agents panel's widths
 .equ AGENTS_W_DEFAULT, 380
@@ -1988,6 +2033,14 @@ F EXT_pv_range_format, 8
 F EXT_pv_type_format, 8
 F EXT_pv_ttrig, 8       # type_format.triggers
 F EXT_pv_document_links, 8
+# editor presentation (present.s): [provides] keys
+F EXT_pv_semantic_tokens, 8
+F EXT_pv_inlay_hints, 8
+F EXT_pv_code_lens, 8
+F EXT_pv_inline_complete, 8
+F EXT_pv_colors, 8
+F EXT_pv_highlights, 8
+F EXT_pv_folding, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
 F EXT_fdsrc, VEC_SIZE   # PS*: its file-diagnostics sources in the Problems store (filediag.s)
@@ -2011,6 +2064,9 @@ F EXT_pack, 8           # cstr: a pack's members (OWNER/NAME, space separated), 
 F EXT_xset, 8           # cstr: "setting.KEY = VALUE" lines its manifest does not declare, or 0
 F EXT_fresh, 4          # 1: a new version with a previous one to go back to, until its first hello
 F EXT_mgmt_pad, 4
+# remote hosts (remoteext.s)
+F EXT_where_local, 4    # 1: where = local: in a remote window it runs on this machine
+F EXT_remote_wait, 4    # 1: its Linux build is being fetched; it starts when it is here
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
@@ -2038,6 +2094,8 @@ F VW_down, 4             # the left button went down over it and is still down
 F VW_fgen, 4             # g_face_gen when the metrics were last sent
 F VW_ax, 4               # where the button went down, logical: a click is a release near it
 F VW_ay, 4
+F VW_pl, 4              # views group: a tab picture's place item for the keyboard, + 1 (0: none)
+F VW_inplace, 4         # views group: 1 a picture view's instance (a place), 2 hosted elsewhere (a custom editor)
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 .equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview
@@ -2305,6 +2363,8 @@ F MTG_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal
 F MTG_doc, 8             # its DOC*, or 0
 F MTG_path, 8            # cstr: its path, or 0
 F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+F MTG_view, 8            # cstr: the view a view_title / view_item target is in (the key view), or 0
+F MTG_item, 8            # cstr: the targeted tree item's context value (the key viewItem), or 0
 ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
@@ -2821,10 +2881,10 @@ ENDSTRUCT PD_SIZE
 
 # a thread of the paused program
 STRUCT
-F DT_id, 8
-F DT_name, 4            # offset into DS_strs
-F DT_namelen, 4
-ENDSTRUCT DT_SIZE
+F THR_id, 8
+F THR_name, 4            # offset into DS_strs
+F THR_namelen, 4
+ENDSTRUCT THR_SIZE
 
 # a stack frame of the focused thread
 STRUCT
@@ -2909,6 +2969,8 @@ F DS_args, SB_SIZE      # the adapter's argv, each NUL-terminated (copied from g
 F DS_nargs, 4
 F DS_reading, 4         # 1 while its output is watched (0: the read buffer is full)
 F DS_exited_at, 8       # time_ms the adapter's output closed, 0 before
+F DS_more, 4            # 1: complete messages wait for the next frame (the tick's budget ran out)
+F DS_pgrp, 4            # an exited adapter's process group still to be killed at DS_killat, 0 none
 F DS_dbg_ext, 8         # the debugger's EXT* when the session started
 F DS_pend, PD_SIZE*DS_PEND
 ENDSTRUCT DS_SIZE
@@ -2938,6 +3000,7 @@ ENDSTRUCT BP_SIZE
 .equ DCON_INFO, 6           # rhun's notes ("Program exited with code 3")
 .equ DCON_INPUT, 7          # an expression typed into the console
 .equ DCON_RESULT, 8         # its value
+.equ PROMPT_DEBUG, 80           # the debugger's text prompts (the debugger's block: 80-83) (debugview.s: condition, watch...)
 .equ DCON_LINE_MAX, 4096
 # ---- tasks and terminals: programs run as the user (uproc.s) in terminal tabs (termview.s) ----
 .equ SIGINT, 2
@@ -2946,6 +3009,9 @@ ENDSTRUCT BP_SIZE
 .equ TK_TASK, 2                 # a task
 .equ TRV_FOCUS, 0x100           # term_run: the new tab also gets the keyboard
 .equ TRV_SILENT, 0x200          # term_run: the tab is added without showing the panel
+.equ TRV_WAIT, 0x400            # term_run: the tab waits: its program starts with term_start
+.equ TASK_DONE, 0               # tasks_run_named's callback: the task exited 0 (or a background one is ready)
+.equ TASK_FAILED, 1             # another code, stopped, could not start, refused, or a dependency failed
 .equ TE_EXIT, 0                 # term_run's fn(cookie, TERM, event, code): exited with code
 .equ TE_STOPPED, 1              # stopped (Stop, Restart, its tab closed while it ran)
 .equ TE_FAILED, 2               # could not start (no TE_STARTED before it)
@@ -2953,11 +3019,11 @@ ENDSTRUCT BP_SIZE
 .equ TE_STARTED, 4              # started, code its pid; again after each restart
 # a program for term_run (the lists are copied)
 STRUCT
-F PG_argv, 8            # 0-terminated cstr list; argv[0] a name looked up on the login PATH, or a path
-F PG_sets, 8            # "NAME=value" list, or 0
-F PG_unsets, 8          # "NAME" list, or 0
-F PG_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
-ENDSTRUCT PG_SIZE
+F PGM_argv, 8            # 0-terminated cstr list; argv[0] a name looked up on the login PATH, or a path
+F PGM_sets, 8            # "NAME=value" list, or 0
+F PGM_unsets, 8          # "NAME" list, or 0
+F PGM_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
+ENDSTRUCT PGM_SIZE
 # the Problems store (problems.s): a source, and a problem
 STRUCT
 F PS_key, 8             # owned cstr: what finds it again
@@ -2982,6 +3048,58 @@ F PR_seq, 8             # set by the store: its id in the Problems tab
 ENDSTRUCT PR_SIZE
 .equ PRF_CHARS, 1
 .equ MKF_SOURCE, 1              # MK_pad: the mark's owner is a problems source (PS*), not an extension
+# [needs] terminal is a ladder (tasks design 2): suggest (= v1's yes, NEEDS_TERMINAL) < run < input < output
+.equ NEEDS_TERM_RUN, 0x100000   # run programs in terminal tabs, once allowed per project
+.equ NEEDS_TERM_INPUT, 0x200000 # and type into them
+.equ NEEDS_TERM_OUTPUT, 0x400000 # and read what they show
+# a program or task definition from the wire (termproto.s def_parse; tasks design 3.2)
+.equ DF_MATCHERS, 4
+.equ DF_PATTERNS, 8
+STRUCT
+F DF_strs, 8            # owned block: every string below, each with its NUL
+F DF_id, 8              # cstr: the task id ("-" for a terminal)
+F DF_label, 8           # cstr
+F DF_detail, 8          # cstr, "" for none (lists show the command)
+F DF_cmd, 8             # shell: the command (cstr, "" an interactive shell); argv: the arguments
+F DF_cmdlen, 8          #   each with its NUL, DF_cmdlen bytes in all
+F DF_cwd, 8             # cstr, "" for the project
+F DF_env, 8             # owned "NAME=value" list
+F DF_unset, 8           # owned "NAME" list
+F DF_deps, 8            # owned list of task ids
+F DF_form, 4            # 0 shell, 1 argv
+F DF_group, 4           # 0 none, 1 build, 2 test
+F DF_default, 4         # the default task of its group
+F DF_reveal, 4          # 0 show, 1 focus, 2 silent
+F DF_output, 4          # 1: terminal-output for it
+F DF_order, 4           # its depends: 1 sequence, 2 parallel
+F DF_nmatch, 4
+F DF_mown, 4            # bit i: DF_match[i] was compiled for it (freed with it); else a built-in
+F DF_nready, 4
+F DF_nbusy, 4
+F DF_match, 8*DF_MATCHERS       # MT*
+F DF_ready, 8*DF_PATTERNS       # compiled patterns (taskmatch.s CP, owned)
+F DF_busy, 8*DF_PATTERNS
+F DF_refs, 4            # tasks.s: holders beyond the first (the registry, run nodes, a tab)
+F DF_pad, 4
+ENDSTRUCT DF_SIZE
+# an extension's terminal or task run (termproto.s; tasks.s)
+STRUCT
+F TRC_term, 8            # its TERM (termview.s)
+F TRC_ext, 8             # the extension that opened it
+F TRC_live, 4            # 1 while that runtime runs: then the TERM is its handle
+F TRC_flags, 4           # TRCF_*
+F TRC_out, SB_SIZE       # finished lines waiting for terminal-output
+F TRC_dropped, 8         # lines left out since the last terminal-output
+F TRC_mrun, 8            # its matchers (taskmatch.s mrun), owned, or 0
+F TRC_task, 8            # owned cstr: the task id it runs, or 0
+F TRC_hook, 8            # tasks.s: fn(cookie, TR*, TE_* event, code), or 0
+F TRC_linefn, 8          # tasks.s: fn(cookie, line, len) for each finished line (len -1: a run begins)
+F TRC_cookie, 8
+F TRC_ready, 4           # tasks.s: a background task that is ready since its last start or busy
+F TRC_pad, 4
+F TRC_df, 8              # tasks.s: the task (held) whose ready and busy patterns read its lines
+ENDSTRUCT TRC_SIZE
+.equ TRCF_OUTPUT, 1             # terminal-output for it
 .equ AS_KIND_EXT, 5
 .equ AGS_IDLE, 0
 .equ AGS_WORKING, 1
@@ -3091,6 +3209,7 @@ ENDSTRUCT ND_SIZE
 .equ NF_CHECKED, 128
 .equ NF_SEL, 256                # selected (multi-select)
 .equ NF_MOREWAIT, 512           # "Load more" was asked for
+.equ NF_PCOUNT, 1024            # a patch check counted its bytes out (cleared after the check)
 .equ NDI_FILE, 0x40000000
 # the store's callbacks for its owner; a zero entry is not called
 STRUCT
@@ -3105,7 +3224,16 @@ F TRO_more, 8           # more(ctx, tr, parent): its "Load more" row came on scr
 F TRO_retry, 8          # retry(ctx, tr, node): Retry on its error row
 F TRO_load, 8           # load(ctx, tr, node): it is expanded and on screen with its children not
                         #   given: they are wanted (NF_LOADING is set until tree_kids_end)
+F TRO_action, 8         # action(ctx, tr, node, key, keylen): one of its inline buttons was pressed
 ENDSTRUCT TRO_SIZE
+# an action a tree's nodes may show as inline buttons (record "inline LEN" + keys): tree_set_actions
+STRUCT
+F TA_key, 8             # its key's bytes
+F TA_keylen, 8
+F TA_icon, 4            # IC_*, -1: its title as text
+F TA_pad, 4
+F TA_title, 8           # cstr: the tooltip (or the text)
+ENDSTRUCT TA_SIZE
 STRUCT
 F TR_nodes, VEC_SIZE    # ND
 F TR_free, 8            # first free slot, -1 for none
@@ -3133,6 +3261,10 @@ F TR_hover, 4           # the row under the pointer, -1
 F TR_typed_at, 8        # when the last character came
 F TR_loading_at, 8      # when a Loading row first showed (it waits 300 ms)
 F TR_user, 8            # its owner's value
+F TR_actions, 8         # TA records the inline keys are looked up in (tree_set_actions), or 0
+F TR_nactions, 8
+F TR_selanchor, 4       # multi-select: where a Shift range starts
+F TR_pad2, 4
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame
@@ -3343,7 +3475,46 @@ F PRS_deco, VEC_SIZE     # DR decoration ranges, unsorted
 F PRS_dpool, SB_SIZE     # their texts (before, after, tip, extra)
 F PRS_dgarbage, 8        # pool bytes no range uses any more
 F PRS_glyphs, VEC_SIZE   # GLE glyph-lane entries, sorted by position then kind
+F PRS_folds, VEC_SIZE    # FD folds (fold.s), sorted by their header's end
+F PRS_hid, VEC_SIZE      # HI the hidden lines, merged (a cache of the folds)
+F PRS_hidver, 8          # DOC_version and PRS_gen the cache was built for
+F PRS_hidgen, 8
+F PRS_hidden, 8          # hidden lines in all
+F PRS_fr, VEC_SIZE       # FRG a folding provider's ranges, sorted by their header's line feed
+F PRS_frext, 8           # the extension they came from; 0 while indentation decides
 ENDSTRUCT PRS_SIZE
+# a fold: the lines after its header up to its last line are hidden; it follows edits as positions
+STRUCT
+F FD_a, 8               # the header line's line feed
+F FD_b, 8               # the last hidden line's line feed (or the text's end)
+F FD_text, 8            # owned cstr: a provider's collapsed text, or 0
+ENDSTRUCT FD_SIZE
+STRUCT
+F HI_first, 8           # hidden lines first..last (0-based)
+F HI_last, 8
+F HI_before, 8          # hidden lines before them
+ENDSTRUCT HI_SIZE
+# a folding provider's range (present.s, fold.s): lines after the header up to the last can fold
+STRUCT
+F FRG_a, 8               # the header line's line feed
+F FRG_b, 8               # the last line's line feed
+F FRG_text, 8            # owned cstr: the collapsed text, or 0
+F FRG_kind, 4            # FRK_*
+F FRG_pad, 4
+ENDSTRUCT FRG_SIZE
+.equ FRK_NONE, 0
+.equ FRK_REGION, 1
+.equ FRK_COMMENT, 2
+.equ FRK_IMPORTS, 3
+.equ FRG_MAX, 50000              # ranges in one answer
+.equ FRG_TEXT_MAX, 80            # a collapsed text's bytes
+.equ FOLD_ALL_MAX, 4000000      # fold_all scans at most this many lines
+# single-provider kinds for automatic use (extproviders.s numbers 0-11 its own)
+.equ PP_TOKENS, 12
+.equ PP_INLINE, 13
+.equ PP_HIGHLIGHTS, 14
+.equ PP_FOLDING, 15
+.equ FOLD_SESSION_MAX, 1000     # folds a session line keeps per file
 STRUCT
 F TE_version, 8         # DOC_version after the edit
 F TE_pos, 8
@@ -3476,3 +3647,28 @@ ENDSTRUCT GLE_SIZE
 .equ DECO_EXTRA_MAX, 9000
 .equ DECO_PIECES, 4096          # decoration pieces drawn per frame
 .equ DECO_TICKS, 1024           # scrollbar ticks
+# virtual text (vtext.s): a line's inlays, merged from their sources, in drawing order
+STRUCT
+F VI_off, 8             # the gap it sits at: between bytes off - 1 and off of the line
+F VI_text, 8            # its text (one line, UTF-8)
+F VI_ref, 8             # what it came from (a DR* for a decoration)
+F VI_len, 4
+F VI_cells, 4           # its width in cells
+F VI_side, 1            # VS_AFTER: it belongs to the text before the gap; VS_BEFORE: after it
+F VI_kind, 1            # VK_*
+F VI_flags, 2
+F VI_fg, 4              # text color
+F VI_bg, 4              # its pill's color, 0 for none
+F VI_prio, 4
+ENDSTRUCT VI_SIZE
+.equ VS_AFTER, 0
+.equ VS_BEFORE, 1
+.equ VK_GHOST, 0                # kinds, in their order at one gap among the after ones
+.equ VK_FOLD, 1
+.equ VK_HINT, 2
+.equ VK_DECO, 3
+.equ VK_SWATCH, 4
+.equ VTM_LEFT, 0                # vt_x modes: before every inlay at the gap, after them, the caret's
+.equ VTM_RIGHT, 1
+.equ VTM_CARET, 2
+.equ VT_LINE_MAX, 256           # inlays on one line

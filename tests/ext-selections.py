@@ -167,7 +167,7 @@ class Selections(unittest.TestCase):
         return found
 
     def test_selections_replace_selection_events(self):
-        cell = lambda line, col: f'{56 + (col - 1) * 7} {86 + (line - 1) * 21}'
+        cell = lambda line, col: f'{68 + (col - 1) * 7} {86 + (line - 1) * 21}'  # text at 68 (fold lane)
         self.run_editor(['click ' + cell(2, 3) + ' alt', 'wait 100', 'key Right', 'wait 100',
                          'key Escape', 'wait 100', 'key Right', 'wait 100', 'key shift+Right',
                          'wait 200'])

@@ -15,6 +15,10 @@
 .equ AG_MAXPOLL, 2200
 .equ AG_ENV_MS, 5000            # the login shell's environment: how long it may take
 .equ AG_REQ_MAX, 67108864       # a request's body at most (a file written in one piece)
+.equ AG_ENV_MAX, 1000             # environment entries a spawn passes
+.equ AG_GROUPS, 256             # process groups whose leader is gone, watched until they are empty
+.equ AG_LINGER_MS, 2000         # SIGHUP and SIGTERM, then SIGKILL this much later
+.equ AG_GIVEUP_MS, 5000         # a group still there this long after SIGKILL is given up
 
 # channel modes
 .equ AM_FREE, 0
@@ -70,6 +74,8 @@ ag_envbuf: .quad 0              # the captured environment's strings (kept for t
 ag_envv: .quad 0
 ag_delay: .quad 0               # RHUN_REMOTE_DELAY_MS: every reply waits this long (tests)
 ag_argv: .zero 8 * 260
+ag_envl: .zero 8 * (AG_ENV_MAX + 1)  # a spawn's environment entries
+ag_groups: .zero 16 * AG_GROUPS # pgid (4), 1 once SIGKILLed (4), the deadline in ms (8)
 
 .data
 ag_inotify: .long -1
@@ -151,9 +157,11 @@ FN remote_agent_main
     jne .Lag_end
     call ag_poll
     call ag_reap
+    call ag_groups_tick
     jmp .Lag_loop
 .Lag_end:
-    # the window went away: its programs end with it
+    # the window went away: its programs end with it, and what they started: their groups get
+    # SIGHUP and SIGTERM, SIGKILL AG_LINGER_MS later if they are not empty by then
     lea rbx, [rip + ag_ch]
     xor r12d, r12d
 3:  mov eax, [rbx + AC_mode]
@@ -166,18 +174,164 @@ FN remote_agent_main
     jle 5f
     test dword ptr [rbx + AC_flags], ACF_EXITED
     jnz 5f
-    neg edi
-    mov esi, SIGHUP
-    SYS SYS_kill
-    mov edi, [rbx + AC_pid]
-    mov esi, SIGTERM
-    SYS SYS_kill
+    call ag_group_add
 5:  add rbx, AC_SIZE
     inc r12d
     cmp r12d, AG_MAXCH
     jb 3b
+    call time_ms
+    lea r12, [rax + AG_LINGER_MS]
+6:  # reap every child (a group whose leader is a zombie is not empty), then look at the groups
+    mov edi, -1
+    xor esi, esi
+    mov edx, WNOHANG
+    xor r10d, r10d
+    SYS SYS_wait4
+    test rax, rax
+    jg 6b
+    call ag_groups_live
+    test eax, eax
+    jz 8f
+    call time_ms
+    cmp rax, r12
+    jae 7f
     xor edi, edi
+    xor esi, esi
+    mov edx, 50
+    SYS SYS_poll
+    jmp 6b
+7:  call ag_groups_kill
+8:  xor edi, edi
     call sys_exit
+
+# ag_group_add(pgid): a program's process group: SIGHUP and SIGTERM now, then watched until it is
+#   empty (SIGKILL at its deadline); nothing when it is empty already
+ag_group_add:
+    PROLOGUE
+    mov ebx, edi
+    test ebx, ebx
+    jle 9f
+    mov edi, ebx
+    neg edi
+    xor esi, esi
+    SYS SYS_kill
+    test rax, rax
+    jnz 9f
+    mov edi, ebx
+    neg edi
+    mov esi, SIGHUP
+    SYS SYS_kill
+    mov edi, ebx
+    neg edi
+    mov esi, SIGTERM
+    SYS SYS_kill
+    lea r12, [rip + ag_groups]
+    xor ecx, ecx
+1:  cmp [r12], ebx
+    je 3f                       # already watched: its deadline stays
+    add r12, 16
+    inc ecx
+    cmp ecx, AG_GROUPS
+    jb 1b
+    lea r12, [rip + ag_groups]
+    xor ecx, ecx
+2:  cmp dword ptr [r12], 0
+    je 4f
+    add r12, 16
+    inc ecx
+    cmp ecx, AG_GROUPS
+    jb 2b
+    mov edi, ebx                # no room to watch it: it goes now
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+    jmp 9f
+4:  mov [r12], ebx
+    mov dword ptr [r12 + 4], 0
+    call time_ms
+    add rax, AG_LINGER_MS
+    mov [r12 + 8], rax
+3:
+9:  EPILOGUE
+
+# ag_groups_tick(): watched groups that are empty are forgotten; SIGKILL at the deadline; one still
+#   there AG_GIVEUP_MS after it (stuck in the kernel) is given up
+ag_groups_tick:
+    PROLOGUE
+    lea rbx, [rip + ag_groups]
+    xor r12d, r12d
+    xor r13d, r13d              # time_ms, once needed
+1:  mov edi, [rbx]
+    test edi, edi
+    jz 5f
+    neg edi
+    xor esi, esi
+    SYS SYS_kill
+    test rax, rax
+    jnz 4f
+    test r13, r13
+    jnz 2f
+    call time_ms
+    mov r13, rax
+2:  cmp r13, [rbx + 8]
+    jb 5f
+    cmp dword ptr [rbx + 4], 0
+    jne 4f
+    mov edi, [rbx]
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+    mov dword ptr [rbx + 4], 1
+    lea rax, [r13 + AG_GIVEUP_MS]
+    mov [rbx + 8], rax
+    jmp 5f
+4:  mov dword ptr [rbx], 0
+5:  add rbx, 16
+    inc r12d
+    cmp r12d, AG_GROUPS
+    jb 1b
+    EPILOGUE
+
+# ag_groups_live() -> eax 1 while a watched group is not empty (the empty ones are forgotten)
+ag_groups_live:
+    PROLOGUE
+    lea rbx, [rip + ag_groups]
+    xor r12d, r12d
+    xor r13d, r13d
+1:  mov edi, [rbx]
+    test edi, edi
+    jz 3f
+    neg edi
+    xor esi, esi
+    SYS SYS_kill
+    test rax, rax
+    jz 2f
+    mov dword ptr [rbx], 0
+    jmp 3f
+2:  mov r13d, 1
+3:  add rbx, 16
+    inc r12d
+    cmp r12d, AG_GROUPS
+    jb 1b
+    mov eax, r13d
+    EPILOGUE
+
+# ag_groups_kill(): SIGKILL to every watched group
+ag_groups_kill:
+    PROLOGUE
+    lea rbx, [rip + ag_groups]
+    xor r12d, r12d
+1:  mov edi, [rbx]
+    test edi, edi
+    jz 2f
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+2:  add rbx, 16
+    inc r12d
+    cmp r12d, AG_GROUPS
+    jb 1b
+    EPILOGUE
 
 # ag_push_hex(rsi value): 16 lowercase hex digits onto ag_wq
 ag_push_hex:
@@ -459,8 +613,16 @@ ag_padd:
     inc ebx
 1:  ret
 
-# ag_any_running() -> 1 while a program has not been reaped
+# ag_any_running() -> 1 while a program has not been reaped or a group it left is watched
 ag_any_running:
+    lea rcx, [rip + ag_groups]
+    xor edx, edx
+5:  cmp dword ptr [rcx], 0
+    jne 4f
+    add rcx, 16
+    inc edx
+    cmp edx, AG_GROUPS
+    jb 5b
     lea rcx, [rip + ag_ch]
     xor edx, edx
 1:  mov eax, [rcx + AC_mode]
@@ -505,6 +667,8 @@ ag_reap:
     mov eax, 255                # not a child any more (cannot happen): it is gone
 4:  mov [rbx + AC_status], eax
     or dword ptr [rbx + AC_flags], ACF_EXITED
+    mov edi, [rbx + AC_pid]     # what it started and left behind goes too (its session's group)
+    call ag_group_add
     lea rdi, [rip + ag_wq]
     lea rsi, [rip + .Lx]
     call sb_push_cstr
@@ -1133,11 +1297,16 @@ ag_cstr_list:
     ret
 
 # spawn CH MODE ERRCH COLS ROWS LEN: CWD NUL, then ARGV entries ending with an empty one, then ENV
-#   entries set on top of the login environment. MODE 0 pipe, 1 pty. ERRCH: 0 sends the error output
-#   to /dev/null, CH merges it with the output, another channel carries it. An empty ARGV in a pty
-#   is the user's shell. -> ok with the pid
+#   entries set on top of the login environment. MODE 0 pipe, 1 pty, 2 an extension (a pipe, its
+#   environment exactly ENV and the login PATH; remoteext.s), 3 an extension held by Landlock: ENV
+#   ends with an empty entry and NEEDS DIR SCRIPT STATE PROJECT RUNS follow (confine.s builds the
+#   rules from them as for a local extension). ERRCH: 0 sends the error output to /dev/null, CH
+#   merges it with the output, another channel carries it. An empty ARGV in a pty is the user's
+#   shell. -> ok with the pid; MODE 3: "PID CONFINED REASON" (CONFINED_*, why it is not held)
 ag_spawn:
-    PROLOGUE 96
+    PROLOGUE 128
+    mov dword ptr [rsp + 104], -1   # MODE 3's confinement, once asked
+    mov qword ptr [rsp + 112], 0
     mov [rsp], rdi              # id
     lea rax, [rsi + rdx]
     mov [rsp + 8], rax          # body end
@@ -1246,12 +1415,19 @@ ag_spawn:
     # the environment: the login one with the entries given set
     mov rdi, [rsp + 48]
     mov rsi, [rsp + 8]
-    lea rdx, [rip + ag_argv + 202 * 8]
-    mov ecx, 50
+    lea rdx, [rip + ag_envl]
+    mov ecx, AG_ENV_MAX
     call ag_cstr_list
-    lea rdi, [rip + ag_argv + 202 * 8]
+    mov [rsp + 96], rdx         # MODE 3: the confinement's fields
+    cmp dword ptr [rsp + 16], 2
+    jae 44f
+    lea rdi, [rip + ag_envl]
     call env_make
-    mov [rsp + 64], rax         # envp (freed below)
+    jmp 45f
+44: # an extension: exactly the environment given, with the host's PATH unless it names one
+    lea rdi, [rip + ag_envl]
+    call ag_env_exact
+45: mov [rsp + 64], rax         # envp (freed below)
     mov rax, [rsp + 32]
     cmp byte ptr [rax], 0
     jne 5f
@@ -1292,7 +1468,16 @@ ag_spawn:
     js .Las_close2
     mov r14d, [rsp + 88]
     mov r15d, [rsp + 92]
-7:  lea rdi, [rip + ag_argv]
+7:  cmp dword ptr [rsp + 16], 3
+    jne .Las_unconfined
+    mov rdi, [rsp + 96]
+    mov rsi, [rsp + 8]
+    mov rdx, [rsp + 56]
+    call ag_confine
+    mov [rsp + 104], eax
+    mov [rsp + 112], rdx
+.Las_unconfined:
+    lea rdi, [rip + ag_argv]
     mov rsi, [rsp + 64]
     mov rdx, [rsp + 32]
     mov ecx, [rsp + 72]
@@ -1303,6 +1488,7 @@ ag_spawn:
     call proc_spawn
     add rsp, 16
     mov [rsp + 88], rax
+    call confine_release        # the rules' descriptors (nothing when none was prepared)
     mov edi, [rsp + 72]
     SYS SYS_close
     mov edi, [rsp + 84]
@@ -1389,7 +1575,23 @@ ag_spawn:
     lea rdi, [rip + ag_tmp]
     mov esi, [rbx + AC_pid]
     call sb_push_u64
-    mov rdi, [rsp + 56]
+    cmp dword ptr [rsp + 104], 0
+    jl 91f
+    lea rdi, [rip + ag_tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    mov esi, [rsp + 104]
+    call sb_push_u64
+    lea rdi, [rip + ag_tmp]
+    mov esi, ' '
+    call sb_push_byte
+    mov rsi, [rsp + 112]
+    test rsi, rsi
+    jz 91f
+    lea rdi, [rip + ag_tmp]
+    call sb_push_cstr
+91: mov rdi, [rsp + 56]
     call mem_free
     mov rdi, [rsp + 64]
     call mem_free
@@ -1437,6 +1639,129 @@ ag_spawn:
     call ag_error
     EPILOGUE
 
+# ag_confine(fields, end, program) -> eax CONFINED_*, rdx why it cannot be held (cstr) or 0: the
+#   confinement of a local extension (confine.s) prepared for the next proc_spawn, from NEEDS DIR
+#   SCRIPT STATE PROJECT RUNS (NUL-terminated, the empty ones too). The rules are built on a record
+#   of its own in g_exts, which the agent has no other use for; its state folder is made first.
+ag_confine:
+    PROLOGUE 64
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    xor ecx, ecx
+1:  cmp ecx, 6
+    jae 3f
+    cmp r12, r13
+    jae .Lac_inval
+    mov [rsp + rcx*8], r12
+2:  cmp r12, r13
+    jae .Lac_inval
+    cmp byte ptr [r12], 0
+    lea r12, [r12 + 1]
+    jne 2b
+    inc ecx
+    jmp 1b
+3:  cmp qword ptr [rip + g_exts + VEC_len], 0
+    jne 4f
+    lea rdi, [rip + g_exts]
+    mov esi, EXT_SIZE
+    call vec_push
+4:  mov rbx, [rip + g_exts + VEC_ptr]
+    mov rdi, [rsp]
+    call strlen
+    mov rsi, rax
+    mov rdi, [rsp]
+    call parse_u64
+    mov [rbx + EXT_needs], eax
+    mov rax, [rsp + 8]
+    mov [rbx + EXT_dir], rax
+    mov rax, [rsp + 16]
+    cmp byte ptr [rax], 0
+    jne 5f
+    xor eax, eax
+5:  mov [rbx + EXT_script], rax
+    mov rax, [rsp + 24]
+    mov [rbx + EXT_state], rax
+    mov rax, [rsp + 40]
+    cmp byte ptr [rax], 0
+    jne 6f
+    xor eax, eax
+6:  mov [rbx + EXT_runs], rax
+    mov [rbx + EXT_prog], r14
+    mov dword ptr [rbx + EXT_log], -1
+    # its state folder and the tmp in it
+    mov rdi, [rsp + 24]
+    call mkdir_p
+    mov rdi, [rsp + 24]
+    lea rsi, [rip + .Lsub_tmp]
+    call path_join
+    mov r15, rax
+    mov rdi, rax
+    call mkdir_p
+    mov rdi, r15
+    call mem_free
+    # the project the rules may open, as [needs] says
+    mov rax, [rsp + 32]
+    cmp byte ptr [rax], 0
+    jne 7f
+    xor eax, eax
+7:  mov [rip + g_project], rax
+    mov rdi, rbx
+    call confine_prepare
+    mov qword ptr [rip + g_project], 0
+    test rax, rax
+    jnz 8f
+    mov eax, [rbx + EXT_confined]
+    xor edx, edx
+    EPILOGUE
+8:  mov rdx, rax
+    mov eax, CONFINED_NO
+    EPILOGUE
+.Lac_inval:
+    lea rdx, [rip + .Lac_bad]
+    mov eax, CONFINED_NO
+    EPILOGUE
+
+# ag_env_exact(list) -> envp (mem_free it): the 0-terminated list, and PATH= from the login
+#   environment when the list has none
+ag_env_exact:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d              # entries
+    xor r13d, r13d              # one is PATH=
+1:  mov rax, [rbx + r12*8]
+    test rax, rax
+    jz 2f
+    cmp dword ptr [rax], 0x48544150         # "PATH"
+    jne 11f
+    cmp byte ptr [rax + 4], '='
+    jne 11f
+    mov r13d, 1
+11: inc r12
+    jmp 1b
+2:  lea rdi, [r12*8 + 16]
+    call mem_alloc
+    mov r14, rax
+    xor ecx, ecx
+3:  cmp rcx, r12
+    jae 4f
+    mov rax, [rbx + rcx*8]
+    mov [r14 + rcx*8], rax
+    inc rcx
+    jmp 3b
+4:  test r13d, r13d
+    jnz 5f
+    lea rdi, [rip + .Lpath_env]
+    call getenv
+    test rax, rax
+    jz 5f
+    sub rax, 5                  # the entry "PATH=..."
+    mov [r14 + r12*8], rax
+    inc r12
+5:  mov qword ptr [r14 + r12*8], 0
+    mov rax, r14
+    EPILOGUE
+
 # kill CH SIG GROUP 0: the program on CH (GROUP 1: its process group, as kill(-pid))
 ag_kill:
     PROLOGUE
@@ -1452,8 +1777,12 @@ ag_kill:
     test edi, edi
     jle 8f
     test dword ptr [rbx + AC_flags], ACF_EXITED
-    jnz 7f                      # gone already (not reaped by anyone else: the pid is not reused)
-    mov edi, 4
+    jz 6f
+    mov edi, 4                  # the leader is gone: only what is left of its group (the pid is
+    call ag_num                 # not reused while that group lives)
+    test eax, eax
+    jz 7f
+6:  mov edi, 4
     call ag_num
     mov r13d, eax
     mov edi, 3
@@ -2812,8 +3141,11 @@ ag_verbs:
 .Lhex: .ascii "0123456789abcdef"
 .Lself: .asciz "/proc/self/exe"
 .Lat_self: .asciz "@self"
+.Lpath_env: .asciz "PATH"
 .Lproc_fd: .asciz "/proc/self/fd/"
 .Lshell: .asciz "SHELL"
+.Lsub_tmp: .asciz "tmp"
+.Lac_bad: .asciz "the request named no confinement"
 .Lbin_sh: .asciz "/bin/sh"
 .Ldash_lc: .asciz "-lc"
 .Lenv_cmd: .asciz "printf '\\n@rhun-env\\n'; exec cat /proc/self/environ"
