@@ -41,6 +41,7 @@ ru_ap_env: .zero 8 * 6
 ru_menu_base: .long 0
 ru_recent_labels: .zero 512 * RU_RECENT_MAX
 ru_key: .zero 4608
+ru_saves: .zero VEC_SIZE        # DOC ids whose save waits for the reconnect
 
 .data
 ru_ps_fd: .long -1
@@ -122,7 +123,67 @@ FN remote_connected
     call app_update_title
     jmp 9f
 8:  call vfs_reconnected        # watches again, documents compared with the host's files
+    call ru_save_pending
 9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# remote_save_later(doc): a save while the connection is down is made once it is back
+FN remote_save_later
+    PROLOGUE
+    mov rbx, [rdi + DOC_id]
+    xor ecx, ecx
+1:  cmp rcx, [rip + ru_saves + VEC_len]
+    jae 2f
+    mov rax, [rip + ru_saves + VEC_ptr]
+    cmp [rax + rcx*8], rbx
+    je 3f
+    inc rcx
+    jmp 1b
+2:  cmp qword ptr [rip + ru_saves + VEC_len], 256
+    jae 3f
+    lea rdi, [rip + ru_saves]
+    mov esi, 8
+    call vec_push
+    mov [rax], rbx
+3:  lea rdi, [rip + ru_sb]
+    call sb_clear
+    lea rdi, [rip + ru_sb]
+    lea rsi, [rip + .Lsave_later]
+    call sb_push_cstr
+    call remote_host
+    mov rsi, rax
+    lea rdi, [rip + ru_sb]
+    call sb_push_cstr
+    lea rdi, [rip + ru_sb]
+    lea rsi, [rip + .Lsave_later2]
+    call sb_push_cstr
+    mov rdi, [rip + ru_sb + SB_ptr]
+    call app_toast
+    EPILOGUE
+
+# ru_save_pending(): connected again: the saves that waited are made (of files still open and changed)
+ru_save_pending:
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + ru_saves + VEC_len]
+    jae 8f
+    mov rax, [rip + ru_saves + VEC_ptr]
+    mov rdi, [rax + rbx*8]
+    call extproto_doc
+    test rax, rax
+    jz 2f
+    mov r12, rax
+    mov rdi, rax
+    call doc_dirty
+    test eax, eax
+    jz 2f
+    mov rdi, r12
+    xor esi, esi
+    xor edx, edx
+    call app_save_managed
+2:  inc rbx
+    jmp 1b
+8:  mov qword ptr [rip + ru_saves + VEC_len], 0
     EPILOGUE
 
 # ru_copy_line(dst, ptr, len, max): a value of at most max bytes into dst with its NUL
@@ -2032,6 +2093,8 @@ FN remote_askpass_main
 .Lp_host: .asciz "Connect to host: a name from ~/.ssh/config, or user@host"
 .Lp_container: .asciz "Attach to container"
 .Lno_log: .asciz "No remote log yet"
+.Lsave_later: .asciz "Not connected: saved when "
+.Lsave_later2: .asciz " is back"
 .Lno_docker: .asciz "Neither docker nor podman was found"
 .Lno_containers: .asciz "No running containers"
 .Lno_window: .asciz "Could not open a new window"

@@ -59,7 +59,15 @@ class Remote(unittest.TestCase):
         # the host for docker exec, with a project
         docker('rm', '-f', HOST, check=False)
         docker('run', '-d', '--platform', 'linux/amd64', '--name', HOST, IMAGE, 'sleep', 'infinity')
-        docker('exec', HOST, 'sh', '-c', 'mkdir -p /root/proj && echo hello > /root/proj/a.txt')
+        docker('exec', HOST, 'sh', '-c',
+               'mkdir -p /root/proj/src/deep /root/proj/node_modules && cd /root/proj && '
+               'printf "hello\\nworld\\n" > a.txt && printf "fn main() {\\n    let needle = 1;\\n}\\n" > src/main.rs && '
+               'echo "needle deep" > src/deep/b.txt && echo needle > node_modules/x.js && git init -q && '
+               'git add . && git -c user.name=t -c user.email=t@t commit -qm init')
+        slug = '-root-proj'
+        docker('exec', '-i', HOST, 'sh', '-c', 'mkdir -p /root/.claude/projects/%s && cat > '
+               '/root/.claude/projects/%s/s1.jsonl' % (slug, slug),
+               input=(ROOT / 'tests/data/agents/claude.jsonl').read_bytes().replace(b'@PROJECT@', b'/root/proj'))
         # sshd: a key for root, a password for pw
         key = base / 'key'
         subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
@@ -127,7 +135,7 @@ class Remote(unittest.TestCase):
                  'type echo hi-$((40+2))', 'key Return', 'wait-term hi-42', 'print-term']
         out = self.run_script('docker:' + HOST, '/root/proj', lines)
         self.assertEqual(self.field(out, 'remote=', 'state'), 'connected', out)
-        self.assertIn('project=/root/proj', out)
+        self.assertIn('project=~/proj', out)          # the host's home as ~
         self.assertIn('hi-42', out.split('print-term')[-1] if 'print-term' in out else out)
         first = int(self.field(out, 'remote=', 'out'))
         self.assertGreater(first, 1000000)      # the binary went up
@@ -149,7 +157,7 @@ class Remote(unittest.TestCase):
                                                               'print-project'])
         self.assertIn("password:", out)
         self.assertEqual(self.field(out, 'remote=', 'state'), 'connected', out)
-        self.assertIn('project=/home/pw/proj', out)
+        self.assertIn('project=~/proj', out)
         # Escape answers no: it fails, saying so
         out = self.run_script('ssh:pwhost', '/home/pw/proj', ['wait 4000', 'key Escape', 'wait 3000',
                                                               'key Escape', 'wait 3000', 'key Escape',
@@ -168,6 +176,52 @@ class Remote(unittest.TestCase):
         states = [self.field(l, 'remote=', 'state') for l in out.splitlines() if l.startswith('remote=')]
         self.assertEqual(states, ['lost', 'connected'], out)
         self.assertIn('back-2', out)
+
+    def host_read(self, path):
+        return docker('exec', HOST, 'cat', path).stdout.decode()
+
+    def test_workspace_files_git_search_and_agents(self):
+        """The explorer, a document opened, edited and saved, a change made on the host reloading it,
+        Go to File, Find in Files, git's status and the agents panel, all of the host's, with
+        RHUN_REMOTE_STRICT=1 stopping rhun on any local access to the project."""
+        docker('exec', HOST, 'sh', '-c', 'cd /root/proj && git checkout -q -- . && rm -f fresh.txt')
+        lines = ['wait-remote 90', 'wait 500', 'print-explorer', 'open /root/proj/a.txt', 'wait 300', 'print-doc',
+                 'key ctrl+End', 'type saved here', 'key ctrl+s', 'wait 500', 'wait-git', 'print-git',
+                 'cmd quick_open', 'type main.r', 'print-palette', 'key Escape',
+                 'cmd find_in_files', 'type needle', 'wait-grep', 'print-palette', 'key Escape',
+                 'open /root/proj/src/deep/b.txt', 'wait 300', 'cmd toggle_terminal', 'wait 500',
+                 "type printf 'from the host\\n' > /root/proj/src/deep/b.txt; touch /root/proj/fresh.txt; echo done-1",
+                 'key Return', 'wait-term done-1', 'wait 1500', 'print-doc', 'print-explorer',
+                 'wait-agents', 'print-agents']
+        out = self.run_script('docker:' + HOST, '/root/proj', lines, env_extra={'RHUN_REMOTE_STRICT': '1'})
+        self.assertNotIn('RHUN_REMOTE_STRICT', out)
+        self.assertIn('src/\na.txt\n', out)
+        self.assertNotIn('node_modules', out.split('field=')[0])
+        self.assertIn('hello\nworld\n', out)
+        self.assertEqual(self.host_read('/root/proj/a.txt'), 'hello\nworld\nsaved here\n')
+        self.assertIn('git on branch=master', out)
+        self.assertIn('M a.txt', out)
+        self.assertIn('field=main.r\n> src/main.rs', out)
+        self.assertIn('field=needle\n', out)
+        grep = out.split('field=needle\n')[1]
+        self.assertIn('needle deep', grep)
+        self.assertIn('let needle = 1;', grep)
+        self.assertIn('from the host\n\n<eod>', out)        # reloaded from the host's change
+        self.assertIn('fresh.txt', out.split('from the host\n\n<eod>')[1])
+        self.assertIn('Claude: Status bar work', out)
+
+    def test_unsaved_text_survives_a_drop(self):
+        docker('exec', HOST, 'sh', '-c', 'cd /root/proj && git checkout -q -- .')
+        # the text stays, a save while the connection is down is made once it is back
+        lines = ['wait-remote 90', 'open /root/proj/a.txt', 'wait 300', 'key ctrl+End', 'type kept',
+                 'remote-drop', 'wait 200', 'print-remote', 'print-doc', 'key ctrl+s', 'wait 300', 'print-toast',
+                 'remote-reconnect', 'wait-remote 90', 'print-remote', 'wait 1000', 'print-doc']
+        out = self.run_script('docker:' + HOST, '/root/proj', lines)
+        states = [self.field(l, 'remote=', 'state') for l in out.splitlines() if l.startswith('remote=')]
+        self.assertEqual(states, ['lost', 'connected'], out)
+        self.assertIn('kept', out)
+        self.assertIn('Not connected: saved when %s is back' % HOST, out)
+        self.assertEqual(self.host_read('/root/proj/a.txt'), 'hello\nworld\nkept\n')
 
     def test_failure_is_reported(self):
         out = self.run_script('docker:no-such-container-here', '', ['wait-remote 60', 'print-remote'])
