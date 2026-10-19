@@ -22,18 +22,15 @@ def build(folder,windows=False):
             assert old in region, (begin, old)
             region = region.replace(old, new)
         return before + begin + region + end + after
-    ext=replace_region(ext,'FN ext_legacy_start_impl\n','FN ext_start_plan\n',[
+    ext=replace_region(ext,'ext_spawn:\n','# build_argv(ext)',[
         ('call mkdir_p','call pct_native_noop'),('SYS SYS_open','call pct_native_open'),
         ('SYS SYS_close','call pct_native_close'),('SYS SYS_pipe2','call pct_native_pipe'),
         ('call build_argv','call pct_native_noop'),('call build_env','call pct_native_noop'),
         ('call proc_spawn','call pct_native_spawn')])
-    ext=replace_region(ext,'FN ext_legacy_exited\n','FN ext_supervised_exited\n',[
+    ext=replace_region(ext,'FN ext_exited\n','# ext_is_visible(ext',[
         ('SYS SYS_kill','call pct_native_noop'),('SYS SYS_close','call pct_native_noop'),
         ('call proc_wait','call pct_native_noop'),('call confine_failed','call pct_confine_failed'),
         ('call confine_exit_reason','call pct_confine_reason'),('call ext_start','call pct_retry_start')])
-    ext=replace_region(ext,'FN ext_supervised_exited\n','ext_retire_drain:\n',[
-        ('call keeper_stop','call pct_keeper_stop'),('call keeper_poll','call pct_keeper_poll'),
-        ('call keeper_close','call pct_keeper_close')])
     ext=replace_region(ext,'FN ext_shutdown\n','FN ext_status_draw\n',[
         ('call proc_wait','call pct_shutdown_wait'),('call loop_poll','call pct_shutdown_poll')])
     proto=(ROOT/'src/app/extproto.s').read_text()
@@ -58,5 +55,5 @@ def main():
             a.exe.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(exe,a.exe);return
         result=subprocess.run(([a.wine,'Z:'+exe.as_posix()] if a.wine else [str(exe)]),cwd=ROOT,capture_output=True,timeout=30)
         assert result.returncode==0 and result.stdout==b'ok pending commands\n' and not result.stderr,result
-        print('ok owned pending command retries, hello refusal, stop, native startup faults, confinement, keeper retirement and shutdown callbacks')
+        print('ok owned pending command retries, hello refusal, stop, native startup faults, confinement and shutdown callbacks')
 if __name__=='__main__':main()

@@ -457,7 +457,7 @@ FN nb_pump
     mov rsi, rax
     call nb_req_failed
     jmp 9f
-3:  test dword ptr [r12 + EXT_features], FEAT_NOTEBOOKS
+3:  FEAT_TEST r12, FEAT_NOTEBOOKS
     jnz 4f
     mov rdi, r12
     lea rsi, [rip + .Lno_feature]

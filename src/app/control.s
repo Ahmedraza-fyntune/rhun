@@ -140,7 +140,7 @@ FN control_exec
     lea r15, [rip + ctl_table]
 1:  mov rdx, [r15]
     test rdx, rdx
-    jz .Lce_unknown
+    jz .Lce_more
     mov rdi, r13
     mov rsi, r14
     call str_eq_cstr
@@ -148,6 +148,28 @@ FN control_exec
     jnz 2f
     add r15, 16
     jmp 1b
+.Lce_more:
+    # the other parts' tables (ctl_tables): fn(out, rest, rest len) -> rax as above
+    lea rax, [rip + ctl_tables]
+    mov [rsp], rax
+11: mov rax, [rsp]
+    mov r15, [rax]
+    test r15, r15
+    jz .Lce_unknown
+    add qword ptr [rsp], 8
+12: mov rdx, [r15]
+    test rdx, rdx
+    jz 11b
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 13f
+    add r15, 16
+    jmp 12b
+13: lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
 2:  call [r15 + 8]
     push rax
     push rax
@@ -1057,68 +1079,6 @@ c_print_complete:
     call flush_frame
     lea rdi, [rip + out]
     call complete_dump
-    xor eax, eax
-    EPILOGUE
-
-# ---- notebooks (nbkeys.s) ----
-# print-notebook: a line per cell of the active notebook, then its state
-c_print_notebook:
-    PROLOGUE
-    call flush_frame
-    lea rdi, [rip + out]
-    call nb_dump
-    xor eax, eax
-    EPILOGUE
-
-# print-nb-output I J: cell I's output J (kind, items, text), then <eoo>
-c_print_nb_output:
-    PROLOGUE
-    call flush_frame
-    call next_int
-    mov r13, rax
-    call next_int
-    mov rdx, rax
-    mov rsi, r13
-    lea rdi, [rip + out]
-    call nb_dump_output
-    xor eax, eax
-    EPILOGUE
-
-# nb-mode edit|command
-c_nb_mode:
-    mov rdi, rbx
-    mov rsi, r12
-    call nb_ctl_mode
-    xor eax, eax
-    ret
-
-# nb-select I
-c_nb_select:
-    PROLOGUE
-    call next_int
-    mov rdi, rax
-    call nb_ctl_select
-    xor eax, eax
-    EPILOGUE
-
-# nb-output-tab I J: as cell I's output J's Open in Tab
-c_nb_output_tab:
-    PROLOGUE
-    call next_int
-    mov r13, rax
-    call next_int
-    mov rsi, rax
-    mov rdi, r13
-    call nb_ctl_output_tab
-    xor eax, eax
-    EPILOGUE
-
-# nb-run I: as cell I's run button
-c_nb_run:
-    PROLOGUE
-    call next_int
-    mov rdi, rax
-    call nb_ctl_run
     xor eax, eax
     EPILOGUE
 
@@ -2302,12 +2262,6 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_ext_menu: .asciz "ext-menu"
 .Lc_print_views: .asciz "print-views"
 .Lc_print_complete: .asciz "print-complete"
-.Lc_print_notebook: .asciz "print-notebook"
-.Lc_print_nb_output: .asciz "print-nb-output"
-.Lc_nb_mode: .asciz "nb-mode"
-.Lc_nb_select: .asciz "nb-select"
-.Lc_nb_run: .asciz "nb-run"
-.Lc_nb_output_tab: .asciz "nb-output-tab"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lx_yes: .asciz "yes"
@@ -2367,6 +2321,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
+# other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
+ctl_tables:
+    .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad nb_ctl                # notebooks (nbctl.s)
+    .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open
@@ -2403,10 +2362,6 @@ ctl_table:
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
     .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
-    # notebooks
-    .quad .Lc_print_notebook, c_print_notebook, .Lc_print_nb_output, c_print_nb_output
-    .quad .Lc_nb_mode, c_nb_mode, .Lc_nb_select, c_nb_select, .Lc_nb_run, c_nb_run
-    .quad .Lc_nb_output_tab, c_nb_output_tab
     .quad 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

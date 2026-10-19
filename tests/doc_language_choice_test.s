@@ -20,7 +20,7 @@ FN main
     lea rdx, [rip + dlc_fields]
     mov ecx, dlc_fields_end - dlc_fields
     mov r8d, 1
-    mov r9d, FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS
+    mov r9d, (1 << FEAT_SNIPPETS) | (1 << FEAT_SNIPPET_VARIANTS)
     call snippet_decode_fields
     test rax, rax
     jz .Ldlc_bad

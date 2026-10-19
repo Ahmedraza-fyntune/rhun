@@ -81,13 +81,9 @@ nb_send_bytes:
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    call ext_can_act
+    call ext_is_visible
     test eax, eax
     jz 9f
-    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 0) | (1 << 8)
-    jnz 9f
-    cmp dword ptr [rbx + EXT_retiring], 0
-    jne 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 9f
     mov rcx, [rbx + EXT_wq_off]
@@ -262,7 +258,7 @@ nb_event_begin:
     mov rax, [rbx + NB_ext]
     cmp dword ptr [rax + EXT_status], ES_RUNNING
     jne 8f
-    test dword ptr [rax + EXT_features], FEAT_NOTEBOOKS
+    FEAT_TEST rax, FEAT_NOTEBOOKS
     jz 8f
     lea rdi, [rip + nbev]
     call sb_clear
@@ -383,7 +379,7 @@ nb_arg:
     PROLOGUE
     mov r12, rdi
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_NOTEBOOKS
+    FEAT_TEST rax, FEAT_NOTEBOOKS
     jz .Lna_unknown
     cmp [rip + nfields], r12
     jne .Lna_syntax
@@ -778,7 +774,7 @@ FN nb_stream_append
 h_nb_kernel_label:
     PROLOGUE
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_NOTEBOOKS
+    FEAT_TEST rax, FEAT_NOTEBOOKS
     jz .Lnk_unknown
     cmp qword ptr [rip + nfields], 5
     jne .Lnk_syntax
@@ -881,7 +877,6 @@ nb_kernel_names: .quad .Lnb_k_none, .Lnb_k_idle, .Lnb_k_busy, .Lnb_k_starting, .
 .Lnb_v_output: .asciz "nb-output"
 .Lnb_v_stream: .asciz "nb-stream"
 .Lnb_v_kernel_label: .asciz "nb-kernel-label"
-.Lnb_feature: .asciz "notebooks"
 .Lnb_e_stale: .asciz "stale the run was superseded"
 .Lnb_e_toobig: .asciz "toobig outputs over their cap"
 .Lnb_e_nooutput: .asciz "badpos no such output"

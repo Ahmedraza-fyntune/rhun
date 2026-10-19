@@ -16,7 +16,7 @@ FN ext_icon
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     cmp qword ptr [rbx + EXT_icon], 0
@@ -69,7 +69,7 @@ FN ext_icon
 FN ext_icon_state
     PROLOGUE
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     xor eax, eax
