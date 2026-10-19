@@ -270,8 +270,11 @@ FN main
     jne est_fail
     cmp qword ptr [rip + est_ext + EXT_wq + SB_len], EXT_WQ_HARD - 1
     jne est_fail
-    cmp qword ptr [rip + est_ext + EXT_full_since], 123
-    jne est_fail
+    # the queue at its hard limit: not reading, so the next tick stops the program
+    call time_ms
+    sub rax, 10000
+    cmp [rip + est_ext + EXT_full_since], rax
+    jg est_fail
     mov qword ptr [rip + est_ext + EXT_wq + SB_len], 0
     mov qword ptr [rip + est_ext + EXT_full_since], 0
     lea rsi, [rip + est_binary]
@@ -279,6 +282,7 @@ FN main
     call est_send
     cmp rax, -11
     jne est_fail
+    mov qword ptr [rip + est_ext + EXT_full_since], 0
     mov qword ptr [rip + est_stage], 6
     mov qword ptr [rip + est_ext + EXT_wq + SB_len], 5
     mov qword ptr [rip + est_ext + EXT_wq_off], 6

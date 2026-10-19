@@ -2,7 +2,8 @@
 .include "rhun.inc"
 .text
 
-# ext_send_checked(ext, bytes, length) -> 0 accepted, -EPIPE/-EAGAIN/-EINVAL.
+# ext_send_checked(ext, bytes, length) -> 0 accepted, -EPIPE/-EAGAIN/-EINVAL. -EAGAIN: the queue
+# would reach EXT_WQ_HARD, and the program is stopped at the next tick.
 # Acceptance means queued/written without a known pipe failure, not peer receipt.
 # Same readable, disjoint payload and generic allocation policy as ext_send.
 FN ext_send_checked
@@ -54,6 +55,13 @@ FN ext_send_checked
     mov rax, -32
     ret
 .Lesc_full:
+    # a program that lets 8 MB pile up is not reading: the next tick ends it (v1, section 3);
+    # nothing more is queued
+    push rdi
+    call time_ms
+    pop rdi
+    sub rax, 20000
+    mov [rdi + EXT_full_since], rax
     mov rax, -11
     ret
 .Lesc_invalid:

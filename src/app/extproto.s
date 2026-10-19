@@ -408,7 +408,7 @@ handle_line:
     call field_u64
 .Lhl_body_parsed:
     test edx, edx
-    jz .Lhl_bad_frame
+    jz .Lhl_syntax_id          # v1: error ID syntax, the line dropped, no body read
     cmp rax, [r12 + 16]
     jbe 61f
     # over the cap: the body cannot be skipped without reading it, and reading megabytes to
