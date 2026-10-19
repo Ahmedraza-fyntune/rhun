@@ -149,6 +149,7 @@ FN app_init
     call app_load_fonts
     call syntax_load_all
     call places_init            # the explorer is the sidebar's first section
+    call notify_init            # notification cards take the keyboard through a place item
     call ext_init               # manifests: their commands take keys below
     call rview_init             # their declared views take their places
     call keys_init
@@ -2298,6 +2299,8 @@ FN app_on_paste
 # focused_field() -> TF* that has keyboard focus, or 0
 FN focused_field
     mov eax, [rip + g_focus]
+    cmp eax, FOCUS_VIEW
+    je views_field              # a view's own field (views group, rview.s)
     cmp eax, FOCUS_SCM
     je scm_field
     cmp eax, FOCUS_PALETTE
@@ -2745,6 +2748,7 @@ timeout_fns:
     .quad testing_timeout
     .quad dap_timeout
     .quad remote_timeout
+    .quad views_timeout         # views group: waits for children, notifications, progress
     .quad extupdate_timeout      # extension management
     .quad keys_timeout           # a chord's pause (keys.s)
     .quad ws_difftab_timeout    # wsedit: diff tabs whose sides changed
@@ -2788,6 +2792,7 @@ FN app_tick
     call extupdate_tick         # and update checks
     call ext_provider_tick
     call testing_tick           # testing (testproto.s)
+    call views_tick             # views group (places.s)
     call nb_tick
     call app_clip_tick
     call dap_tick               # debugger
@@ -2818,6 +2823,7 @@ FN app_render
     jz 1f
     mov dword ptr [rip + g_block], 1
 1:  call complete_hole          # the completion list drawn last frame keeps the pointer
+    call notify_hole            # and the notification cards
     # no background: the bars, panels, dividers and the editor column cover the window, each with
     # its own color (a whole-window fill under them was a fifth of every frame). A theme with a
     # translucent color (#rrggbbaa) still gets it, so nothing blends with the frame before.
@@ -3045,6 +3051,7 @@ FN app_render
     call complete_draw
     call extbar_draw
     call explorer_menu_draw
+    call notify_draw            # notification cards (notify.s), under the palette and dialogs
     call palette_draw
     call dialog_draw
     call toast_draw
@@ -3067,7 +3074,7 @@ FN app_render
 9:  EPILOGUE
 
 # app_modal_open() -> 1 when a modal layer should block the base ui
-app_modal_open:
+FN app_modal_open
     cmp dword ptr [rip + dlg_kind], 0
     jne 1f
     call explorer_menu_open
@@ -4718,7 +4725,11 @@ FN statusbar_draw
     mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
-    call ext_status_draw        # the extensions' status texts, left of the updater's item
+    call notify_status_draw     # progress (notify.s), left of the updater's item
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call ext_status_draw        # the extensions' status texts, left of that
     mov [rsp + 20], eax
     # Keep branch and position glyphs out of the updater's reserved area.
     mov edx, eax

@@ -2980,6 +2980,7 @@ header_draw:
     call places_panel_tabs_width
     mov r14d, [rsp + 24]
     sub r14d, eax               # the view tabs after the sessions keep their room
+    mov [rsp + 44], r14d        # right edge of the sessions' tabs
     sub r14d, r12d              # room for the tabs
     mov [rsp + 32], r13d        # widest tab
     mov dword ptr [rsp + 36], 0 # first tab shown
@@ -3026,7 +3027,7 @@ header_draw:
 .Lhd_tab:
     cmp rbx, [rip + sessions + VEC_len]
     jae .Lhd_buttons
-    cmp r12d, [rsp + 24]
+    cmp r12d, [rsp + 44]
     jge .Lhd_buttons
     mov rdi, rbx
     call sess
@@ -3069,7 +3070,7 @@ header_draw:
     cmp r14d, eax
     cmovg r14d, eax
     lea eax, [r12 + r14]        # never a tab cut off, with its close button out of reach
-    cmp eax, [rsp + 24]
+    cmp eax, [rsp + 44]         # nor into the view tabs' room
     jg .Lhd_buttons
     mov edi, r12d
     mov esi, [rbp + 20]
@@ -3228,7 +3229,15 @@ header_draw:
     jz 3f
     call cmd_new_terminal
     jmp 4f
-3:  mov edi, r12d
+3:  cmp dword ptr [rip + g_panel_cur], -1
+    je 31f
+    mov edi, r12d               # a view tab: its title actions (places.s)
+    sub edi, [rip + g_mt + 4*MI_4]
+    mov esi, [rbp + 20]
+    mov edx, r15d
+    call places_panel_actions
+    jmp 4f
+31: mov edi, r12d
     sub edi, [rip + g_mt + 4*MI_4]
     mov esi, r14d
     mov edx, r13d
