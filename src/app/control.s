@@ -1048,6 +1048,41 @@ c_print_views:
     call flush_frame
     lea rdi, [rip + out]
     call extview_dump
+    lea rdi, [rip + out]
+    call rview_dump             # the retained views too (views group)
+    xor eax, eax
+    EPILOGUE
+
+# ---- views group: places and retained views (viewsctl.s) ----
+c_print_sidebar:
+    xor eax, eax
+    jmp c_views
+c_print_panel_tabs:
+    mov eax, 1
+    jmp c_views
+c_print_side_tabs:
+    mov eax, 2
+    jmp c_views
+c_print_view:
+    mov eax, 3
+    jmp c_views
+c_view_show:
+    mov eax, 4
+    jmp c_views
+c_view_focus:
+    mov eax, 5
+    jmp c_views
+c_places_demo:
+    mov eax, 6
+c_views:
+    PROLOGUE
+    mov r13d, eax
+    call flush_frame
+    lea rdi, [rip + out]
+    mov esi, r13d
+    mov rdx, rbx
+    mov rcx, r12
+    call views_control
     xor eax, eax
     EPILOGUE
 
@@ -2240,6 +2275,13 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_ext_menu: .asciz "ext-menu"
 .Lc_print_views: .asciz "print-views"
 .Lc_print_complete: .asciz "print-complete"
+.Lc_print_sidebar: .asciz "print-sidebar"
+.Lc_print_panel_tabs: .asciz "print-panel-tabs"
+.Lc_print_side_tabs: .asciz "print-side-tabs"
+.Lc_print_view: .asciz "print-view"
+.Lc_view_show: .asciz "view-show"
+.Lc_view_focus: .asciz "view-focus"
+.Lc_places_demo: .asciz "places-demo"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lx_yes: .asciz "yes"
@@ -2334,7 +2376,12 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
-    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
+    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
+    # views group (viewsctl.s)
+    .quad .Lc_print_sidebar, c_print_sidebar, .Lc_print_panel_tabs, c_print_panel_tabs
+    .quad .Lc_print_side_tabs, c_print_side_tabs, .Lc_print_view, c_print_view
+    .quad .Lc_view_show, c_view_show, .Lc_view_focus, c_view_focus, .Lc_places_demo, c_places_demo
+    .quad 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:

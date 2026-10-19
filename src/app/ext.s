@@ -875,6 +875,7 @@ FN ext_install_load
     mov rdi, rbx
     call ext_settings_load_one
     call ext_cmds_changed
+    call rview_init             # its declared views take their places (views group)
     cmp dword ptr [rbx + EXT_status], ES_FAILED
     je 7f                      # keep the validation failure; its commands must not start it
     mov dword ptr [rbx + EXT_status], ES_IDLE
@@ -960,6 +961,8 @@ FN ext_retire
     call ext_icon_free
     mov rdi, rbx
     call extview_owner_gone
+    mov rdi, rbx
+    call rview_ext_gone         # its declared views leave their places (views group)
     mov rdi, rbx
     call complete_ext_gone
     mov rdi, rbx
@@ -1943,9 +1946,20 @@ manifest_kv:
     lea rsi, [rip + .Ls_provides]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 5f
     lea rdi, [rip + pv_keys]
     call parse_keyed
+    jmp 9f
+5:  mov rdi, r12                # views group: [views] (rview.s)
+    lea rsi, [rip + .Ls_views]
+    call ini_sec_is
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + g_ext_manifest_private], 0
+    jne 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call rview_manifest_kv
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -5725,6 +5739,7 @@ ext_target: .asciz "linux-x86_64"
 .Ls_commands: .asciz "commands"
 .Ls_subscribe: .asciz "subscribe"
 .Ls_provides: .asciz "provides"
+.Ls_views: .asciz "views"
 .Lpv_complete: .asciz "complete"
 .Lpv_ctrig: .asciz "complete.triggers"
 .Lpv_signature: .asciz "signature"

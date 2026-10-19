@@ -1488,7 +1488,8 @@ ENDSTRUCT TF_SIZE
 # the features whose requests rhun sends (and whose ok ID LEN replies it frames)
 .equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
 .equ FEAT_WORKSPACE_WATCH, 16384
-.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+.equ FEAT_VIEW_TREE, 32768       # views group: retained views (vpatch, vshow; manifest [views])
+.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS | FEAT_VIEW_TREE
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -2008,3 +2009,155 @@ F AS_model, 8           # the model the session last used (its row), or 0
 F AS_log_model, 8       # parse: the model the log names for the replies that follow
 F AS_shown_model, 8     # parse: the model on the last reply labeled with one
 ENDSTRUCT AS_SIZE
+
+# ---- views group: places, the shared tree widget, retained extension views ----
+# (places.s, rtree.s, rview.s; docs/extensions/v1.1.md "Retained views")
+.equ FOCUS_VIEW, 10             # a place item has the keyboard (g_place_focus names it)
+
+# a place item: a sidebar section, a bottom panel tab or a side (right column) tab. Built-in code
+# and extension views register the same way (place_add); the slot index is the item's id.
+.equ PLACE_SIDEBAR, 1
+.equ PLACE_PANEL, 2
+.equ PLACE_SIDE, 3
+.equ PLACE_TAB, 4               # retained views only: an editor tab of its own (not a place item)
+.equ PL_MAX, 128
+STRUCT
+F PL_place, 4           # PLACE_*, 0 when the slot is free
+F PL_flags, 4           # PLF_*
+F PL_ops, 8             # PLO*: its callbacks, a table that outlives the item
+F PL_ctx, 8             # handed to every callback
+F PL_name, 8            # cstr, owned: its key in the config ("explorer", "OWNER/NAME.KEY")
+F PL_title, 8           # cstr, owned: shown in its header or tab
+F PL_icon, 4            # IC_* on panel and side tabs, -1 for none
+F PL_badge, 4           # a count beside the title, 0 for none
+F PL_weight, 4          # sidebar: its share of the height left by the headers
+F PL_seq, 4             # registration order (sections and tabs show in this order)
+F PL_x, 4               # its body as last drawn (tests point at it); w 0 when not drawn
+F PL_y, 4
+F PL_w, 4
+F PL_h, 4
+F PL_hy, 4              # sidebar: its header's top as last drawn
+F PL_pad, 4
+ENDSTRUCT PL_SIZE
+.equ PLF_COLLAPSED, 1           # sidebar: only its header shows
+.equ PLF_HIDDEN, 2              # left out of its place until shown again
+.equ PLF_BUSY, 4                # a spinner in its header or tab
+.equ PLF_DRAWN, 8               # drawn this frame (visibility)
+.equ PLF_VISIBLE, 16            # was drawn last frame: its visible(1) was called
+# a place item's callbacks; a zero entry is not called. Bodies are immediate-mode: draw also takes
+# the pointer (ui_btn, ui_in) as the rest of rhun's UI does; a press inside the body gives the item
+# the keyboard before draw runs.
+STRUCT
+F PLO_draw, 8           # draw(ctx, x, y, w, h): the body, clipped to it
+F PLO_key, 8            # key(ctx, keysym, cp, mods) -> eax 1 when taken (while it has the keyboard)
+F PLO_focus, 8          # focus(ctx, on): the keyboard came (1) or went (0); at most once a frame
+F PLO_close, 8          # close(ctx): the × on its panel or side tab; 0: no ×
+F PLO_actions, 8        # actions(ctx, right, y, h) -> eax the x left of the buttons it drew in its
+                        #   header (sidebar), right of its title
+F PLO_visible, 8        # visible(ctx, on): it came on (1) or went off (0) screen; at most once a frame
+ENDSTRUCT PLO_SIZE
+
+# the shared tree widget (rtree.s): a node store and its rows, drawn and driven by tree_draw and
+# tree_key; extension views fill it from patches, built-in code through tree_kids_begin/tree_kid/
+# tree_kids_end. Nodes are indices (u32) into TR_nodes; the root is node 0.
+.equ TREE_NODES_MAX, 100000
+.equ KIDS_LEAF, 0
+.equ KIDS_CLOSED, 1
+.equ KIDS_OPEN, 2
+STRUCT
+F ND_blob, 8            # owned: id bytes then label bytes then the raw extra records
+F ND_idlen, 4
+F ND_lablen, 4
+F ND_xlen, 4            # extra bytes after the label
+F ND_kids, 4            # KIDS_* as last given
+F ND_parent, 4          # node index, -1 for the root and free slots
+F ND_first, 4           # first child, -1 for none
+F ND_last, 4
+F ND_next, 4            # next sibling (the free list's link for free slots)
+F ND_prev, 4
+F ND_nkids, 4
+F ND_flags, 4           # NF_*
+F ND_icon, 4            # IC_*, or -1; NDI_FILE | its index: file:NAME (looked up once)
+F ND_icolor, 4          # T_* slot of the icon's color, -1: muted
+F ND_lcolor, 4          # T_* slot of the label's color, -1: panel text
+F ND_badge, 4
+F ND_mark, 4            # scratch generation marks (kids diffing, patch checks)
+F ND_desc, 8            # owned cstr or 0
+F ND_tip, 8             # owned cstr or 0
+F ND_user, 8            # its owner's value (built-in code)
+ENDSTRUCT ND_SIZE
+.equ NF_LIVE, 1
+.equ NF_OPEN, 2                 # expanded
+.equ NF_GIVEN, 4                # its children were given (lazy ones are asked for until then)
+.equ NF_MORE, 8                 # a "Load more" row after its children
+.equ NF_LOADING, 16             # its children were asked for
+.equ NF_ERROR, 32               # asking failed: an error row with Retry
+.equ NF_CHECK, 64               # has a checkbox
+.equ NF_CHECKED, 128
+.equ NF_SEL, 256                # selected (multi-select)
+.equ NF_MOREWAIT, 512           # "Load more" was asked for
+.equ NDI_FILE, 0x40000000
+# the store's callbacks for its owner; a zero entry is not called
+STRUCT
+F TRO_activate, 8       # activate(ctx, tr, node): Enter, a double click, a click on a leaf
+F TRO_expand, 8         # expand(ctx, tr, node, on): the user expanded (1) or collapsed (0) it;
+                        #   a node whose children were not given is then waiting for them
+F TRO_select, 8         # select(ctx, tr): the selection changed (at most once a frame)
+F TRO_check, 8          # check(ctx, tr, node, state): its checkbox was toggled
+F TRO_menu, 8           # menu(ctx, tr, node, x, y): right click or Shift+F10 on it
+F TRO_more, 8           # more(ctx, tr, parent): its "Load more" row came on screen (NF_MOREWAIT is
+                        #   set until tree_add_end)
+F TRO_retry, 8          # retry(ctx, tr, node): Retry on its error row
+F TRO_load, 8           # load(ctx, tr, node): it is expanded and on screen with its children not
+                        #   given: they are wanted (NF_LOADING is set until tree_kids_end)
+ENDSTRUCT TRO_SIZE
+STRUCT
+F TR_nodes, VEC_SIZE    # ND
+F TR_free, 8            # first free slot, -1 for none
+F TR_map, 8             # id hash: u32 node + 1 per slot (0 empty, -1 removed)
+F TR_mapcap, 8          # slots, a power of two
+F TR_mapused, 8         # slots not empty (live and removed)
+F TR_rows, VEC_SIZE     # RW: the rows shown, flattened from the expanded nodes
+F TR_order, VEC_SIZE    # u32: children listed since tree_kids_begin
+F TR_ops, 8             # TRO*
+F TR_ctx, 8
+F TR_count, 8           # live nodes, not counting the root
+F TR_bytes, 8           # their blob bytes
+F TR_scroll, 4          # pixels
+F TR_cursor, 4          # the keyboard's node, -1 for none
+F TR_flags, 4           # TRF_*
+F TR_idbase, 4          # ui ids of its rows: + visible row
+F TR_kparent, 4         # tree_kids_begin's parent
+F TR_kgen, 4            # its generation mark
+F TR_anchor, 4          # scroll anchor: a node, -1 none, and the pixels above its row's top
+F TR_anchor_off, 4
+F TR_rect, 16           # where it was last drawn
+F TR_typed, 32          # type-to-jump: the prefix typed so far
+F TR_typedlen, 4
+F TR_hover, 4           # the row under the pointer, -1
+F TR_typed_at, 8        # when the last character came
+F TR_loading_at, 8      # when a Loading row first showed (it waits 300 ms)
+F TR_user, 8            # its owner's value
+ENDSTRUCT TR_SIZE
+.equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
+.equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame
+.equ TRF_MULTI, 4               # multi-select
+.equ TRF_CHECKS, 8              # some node has a checkbox
+# a row: a node, or a marker row under a parent
+STRUCT
+F RW_node, 4            # node index; for a marker row the parent
+F RW_depth, 2
+F RW_kind, 2            # RWK_*
+ENDSTRUCT RW_SIZE
+.equ RWK_NODE, 0
+.equ RWK_LOADING, 1
+.equ RWK_MORE, 2
+.equ RWK_ERROR, 3
+.equ TRF_APPEND, 16              # tree_add_begin: children are appended
+# one record of a patch or of a node's extra bytes: "NAME ARGS... LEN" LF, then LEN bytes
+STRUCT
+F RR_f, 16 * 8          # ptr, len of each field of the header line (8 at most)
+F RR_n, 8               # fields
+F RR_data, 8            # the LEN bytes
+F RR_len, 8
+ENDSTRUCT RR_SIZE

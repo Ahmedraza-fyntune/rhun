@@ -347,6 +347,8 @@ handle_line:
     mov rdi, rbx
     call extproto_events        # catch-up: nothing is known yet, so everything open is reported
     mov rdi, rbx
+    call rview_ext_ready        # its declared views open (views group, rview.s)
+    mov rdi, rbx
     call ext_pending_try
     jmp 9f
 3:  mov rdi, rbx
@@ -2418,6 +2420,99 @@ h_unview:
     call reply_ok
 9:  EPILOGUE
 
+# ---- retained views (views group, rview.s) ----
+
+# vtree_agreed() -> ZF clear when view-tree was agreed; otherwise the reply is sent
+vtree_agreed:
+    mov rax, [rip + cur]
+    test dword ptr [rax + EXT_features], FEAT_VIEW_TREE
+    jnz 1f
+    push rax
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    pop rax
+    xor eax, eax
+1:  ret
+
+# ID vpatch VIEW LEN + patch -> ok ID REV, applied whole or not at all
+h_vpatch:
+    PROLOGUE
+    call vtree_agreed
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdx, rax
+    shr rdx, 32
+    jnz 8f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    mov rdx, [rip + body_ptr]
+    mov rcx, [rip + body_len]
+    call rview_patch
+    test rax, rax
+    js 6f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+6:  call rview_error
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noview]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID vshow NAME FOCUS -> ok ID VIEW: a declared view's place opens on it
+h_vshow:
+    PROLOGUE
+    call vtree_agreed
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    xor r12d, r12d
+    mov edi, 3
+    lea rsi, [rip + .Lvs_focus]
+    call field_is
+    test eax, eax
+    jz 1f
+    mov r12d, 1
+    jmp 2f
+1:  mov edi, 3
+    lea rsi, [rip + .Ldash]
+    call field_is
+    test eax, eax
+    jz 7f
+2:  mov edi, 2
+    call field_at
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    mov ecx, r12d
+    call rview_show
+    cmp eax, -1
+    je 6f
+    mov rdi, [rip + cur_id]
+    mov esi, eax
+    call reply_ok_u64
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_refused_vshow]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 h_cmd:
     PROLOGUE
     cmp qword ptr [rip + nfields], 3
@@ -3413,6 +3508,8 @@ verbs:
     .quad .Lv_view, h_view, 0
     .quad .Lv_draw, h_draw, VIEW_BODY_MAX
     .quad .Lv_unview, h_unview, 0
+    .quad .Lv_vpatch, h_vpatch, EXT_BODY_MAX     # views group: retained views
+    .quad .Lv_vshow, h_vshow, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     .quad 0, 0, 0
@@ -3427,6 +3524,10 @@ verbs:
 .Lv_view: .asciz "view"
 .Lv_draw: .asciz "draw"
 .Lv_unview: .asciz "unview"
+.Lv_vpatch: .asciz "vpatch"
+.Lv_vshow: .asciz "vshow"
+.Lvs_focus: .asciz "focus"
+.Le_refused_vshow: .asciz "refused no such view"
 .Lv_apply: .asciz "apply"
 .Lv_snippet: .asciz "snippet"
 .Lv_snippet_context: .asciz "snippet-context"
@@ -3538,7 +3639,8 @@ cmd_allow:
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
 feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
+    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, .Lf_view_tree, 0
+.Lf_view_tree: .asciz "view-tree"      # views group
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "

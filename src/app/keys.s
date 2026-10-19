@@ -639,6 +639,9 @@ g_commands:
     COMMAND toggle_vim, "Toggle Vim Mode", cmd_toggle_vim, ""
     COMMAND reload_file, "Revert File", cmd_reload_file, ""
     COMMAND toggle_terminal, "Toggle Terminal", cmd_toggle_terminal, "ctrl+`"
+    # views group: places
+    COMMAND toggle_panel, "Toggle Panel", cmd_toggle_panel, "ctrl+j"
+    COMMAND toggle_side, "Toggle Side Views", cmd_toggle_side, ""
     COMMAND extensions, "Extensions", cmd_extensions, ""
     COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
     COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""
