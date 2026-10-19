@@ -42,6 +42,9 @@ open_bar:
     call settings_take_find
     test eax, eax
     jnz 9f
+    call extpage_take_find      # extension management: Browse searches the index
+    test eax, eax
+    jnz 9f
     mov dword ptr [rip + g_find_word], 0
     mov dword ptr [rip + find_open], 1
     mov dword ptr [rip + find_sub], 0

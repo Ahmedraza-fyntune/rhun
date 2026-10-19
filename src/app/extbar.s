@@ -55,7 +55,21 @@ FN extbar_buttons
     mov eax, [rsp]
     mov [rip + xb_y], eax
     call extbar_toggle
-1:  # pinned extensions, right to left in table order
+1:  # extension management: a dot when updates wait
+    call extupdate_count
+    test eax, eax
+    jz 11f
+    mov edi, r12d
+    add edi, r13d
+    sub edi, [rip + g_mt + 4*MI_8]
+    mov esi, [rsp + 8]
+    add esi, [rip + g_mt + 4*MI_4]
+    M edx, MI_6
+    M ecx, MI_6
+    M r8d, MI_4
+    COLOR r9d, T_ACCENT
+    call gfx_round_rect
+11: # pinned extensions, right to left in table order
     xor r14d, r14d
 2:  cmp r14, [rip + g_exts + VEC_len]
     jae 9f
@@ -189,6 +203,12 @@ FN extbar_draw
     jnz 21f
     inc r14d                    # "No extensions yet"
 21: add r14d, 2
+    call extupdate_count        # extension management: "2 updates — Update all"
+    mov [rsp + 44], eax
+    test eax, eax
+    jz 22f
+    inc r14d
+22:
     imul r14d, ebx
     add r14d, [rip + g_mt + 4*MI_40]    # the header
     add r14d, [rip + g_mt + 4*MI_12]    # the line and padding
@@ -280,7 +300,31 @@ FN extbar_draw
     call gfx_fill
     mov eax, [rip + g_mt + 4*MI_12]
     add [rsp + 8], eax
-    mov edi, ID_XB_FOOT
+    # extension management: "2 updates — Update all"
+    cmp dword ptr [rsp + 44], 0
+    je 71f
+    lea rdi, [rip + xb_updates]
+    mov esi, [rsp + 44]
+    call fmt_u64
+    lea rsi, [rip + .Lt_updates_all]
+    cmp dword ptr [rsp + 44], 1
+    jne 72f
+    lea rsi, [rip + .Lt_update_all]
+72: call cstr_copy
+    mov edi, ID_XB_FOOT + 2
+    mov esi, [rsp]
+    mov edx, [rsp + 8]
+    mov ecx, r12d
+    mov r8d, IC_ARROW_DN
+    lea r9, [rip + xb_updates]
+    call foot_row
+    test eax, UB_CLICK
+    jz 73f
+    call extbar_close
+    call extupdate_update_all
+    jmp .Lxb_ret
+73: add [rsp + 8], ebx
+71: mov edi, ID_XB_FOOT
     mov esi, [rsp]
     mov edx, [rsp + 8]
     mov ecx, r12d
@@ -799,3 +843,9 @@ FN extbar_dump
 .Ld_open: .asciz "menu=open\n"
 .Ld_closed: .asciz "menu=closed\n"
 .Ld_pinned: .asciz "pinned="
+.Lt_update_all: .asciz " update \342\200\224 Update all"
+.Lt_updates_all: .asciz " updates \342\200\224 Update all"
+
+.bss
+xb_updates: .zero 64            # "2 updates — Update all"
+

@@ -2446,7 +2446,29 @@ palette_accept:
     mov dword ptr [rip + g_reveal], 0
     jmp .Lpa_close
 .Lpa_prompt:
-    cmp dword ptr [rip + pal_prompt], PROMPT_EXT_INSTALL
+    # extension management: the folder or archive to install
+    mov ecx, [rip + pal_prompt]
+    cmp ecx, PROMPT_EXT_FOLDER
+    jb 67f
+    cmp ecx, PROMPT_EXT_ARCHIVE
+    ja 67f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov ecx, [rip + pal_prompt]
+    push rax
+    push rdx
+    push rcx
+    push rcx
+    call pal_return_focus
+    pop rdx
+    pop rdx
+    pop rsi
+    pop rdi
+    call ext_install_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+67: cmp dword ptr [rip + pal_prompt], PROMPT_EXT_INSTALL
     jne 68f
     lea rdi, [rip + pal_tf]
     call tf_text

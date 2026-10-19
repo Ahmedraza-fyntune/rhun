@@ -354,7 +354,8 @@ class UI(host.Host):
         self.assertEqual(out[1], 'dialog=Add “Hello”?')
         self.assertEqual(out[2], 'text=Version 1.2.0 from github.com/demo/hello. It can read and change the files you have '
                                  'open, read the files in your project.')
-        self.assertEqual(out[3], 'button=Add extension')
+        self.assertEqual(out[3], 'Not in the rhun extensions index: nobody has reviewed it.')
+        self.assertEqual(out[4], 'button=Add extension')
         self.assertTrue((exts / 'demo/hello/extension.ini').exists())
         self.assertFalse(any(p.name.startswith('.install') for p in exts.iterdir()))
         self.assertIn('hihello world', out)
@@ -449,7 +450,7 @@ class UI(host.Host):
                        'ext-remove hello', 'print-dialog', 'dialog no'], exts=exts)
         cut = 'a' + '€' * 39 + '…'
         self.assertEqual(out[1], 'dialog=Add “' + cut + '”?')
-        self.assertEqual(out[4], 'dialog=Remove “' + cut + '”?')
+        self.assertEqual(out[5], 'dialog=Remove “' + cut + '”?')
 
     def test_the_details_page_follows_a_reinstall(self):
         self.release()
@@ -457,8 +458,8 @@ class UI(host.Host):
         out = self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
                        'ext-page hello', 'ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
                        'ext-set hello disabled 1', 'print-ext-page'], exts=exts)
-        self.assertIn('Hello 1.2.0 off', out)          # the list, with the record that is installed now
-        self.assertFalse(any(l.startswith('pinned=') for l in out), out)
+        self.assertIn('Hello 1.2.0 off', out)          # the details of the record that is installed now
+        self.assertIn('versions update=- previous=1.2.0', out)
 
     def test_a_dialog_in_its_place_cancels_the_install(self):
         self.release()
