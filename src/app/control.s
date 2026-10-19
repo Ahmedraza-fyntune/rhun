@@ -1101,6 +1101,18 @@ c_nb_select:
     xor eax, eax
     EPILOGUE
 
+# nb-output-tab I J: as cell I's output J's Open in Tab
+c_nb_output_tab:
+    PROLOGUE
+    call next_int
+    mov r13, rax
+    call next_int
+    mov rsi, rax
+    mov rdi, r13
+    call nb_ctl_output_tab
+    xor eax, eax
+    EPILOGUE
+
 # nb-run I: as cell I's run button
 c_nb_run:
     PROLOGUE
@@ -2295,6 +2307,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_nb_mode: .asciz "nb-mode"
 .Lc_nb_select: .asciz "nb-select"
 .Lc_nb_run: .asciz "nb-run"
+.Lc_nb_output_tab: .asciz "nb-output-tab"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lx_yes: .asciz "yes"
@@ -2393,6 +2406,7 @@ ctl_table:
     # notebooks
     .quad .Lc_print_notebook, c_print_notebook, .Lc_print_nb_output, c_print_nb_output
     .quad .Lc_nb_mode, c_nb_mode, .Lc_nb_select, c_nb_select, .Lc_nb_run, c_nb_run
+    .quad .Lc_nb_output_tab, c_nb_output_tab
     .quad 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

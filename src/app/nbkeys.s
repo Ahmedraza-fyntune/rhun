@@ -1069,6 +1069,26 @@ FN nb_ctl_select
 9:  pop rbx
     ret
 
+# nb_ctl_output_tab(i, j): nb-output-tab I J (as the output's Open in Tab)
+FN nb_ctl_output_tab
+    PROLOGUE
+    mov r12, rsi
+    mov rbx, rdi
+    call nb_cmd_target
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rbx
+    call nb_cell
+    test rax, rax
+    jz 9f
+    cmp r12, [rax + CL_outs + VEC_len]
+    jae 9f
+    mov rax, [rax + CL_outs + VEC_ptr]
+    mov rdi, [rax + r12*8]
+    call nb_output_tab
+9:  EPILOGUE
+
 # nb_ctl_run(i): nb-run I (as its run button)
 FN nb_ctl_run
     push rbx

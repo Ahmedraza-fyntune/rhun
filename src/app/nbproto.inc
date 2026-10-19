@@ -174,11 +174,14 @@ FN nb_send_open
     mov rdi, [r12 + DOC_path]
     mov esi, NB_BODY_MAX
     call file_read_limited
-    test rax, rax
-    jz 8f
     mov r13, rax
     mov r14, rdx
-    lea rdi, [rip + nbb]
+    test rax, rax
+    jnz 1f
+    cmp rdx, -2                 # no such file yet: an empty notebook, written on save
+    jne 8f
+    xor r14d, r14d
+1:  lea rdi, [rip + nbb]
     call sb_clear
     mov rdi, [r12 + DOC_path]
     call strlen
