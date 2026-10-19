@@ -718,8 +718,12 @@ rm_transport_env:
     sub rsp, 8
     mov rdi, [rip + rm_tenv]
     call mem_free
+    lea rdi, [rip + .Lno_extras]
+    cmp dword ptr [rip + rm_kind], RT_SSH
+    jne 1f
     call remote_askpass_env
     mov rdi, rax
+1:
     call env_make
     mov [rip + rm_tenv], rax
     add rsp, 8
@@ -3009,6 +3013,8 @@ rm_tenv: .quad 0
 .Lv_cwd: .asciz "cwd "
 .Lv_close: .asciz "close "
 .Lquit_req: .asciz "0 quit 0\n"
+.p2align 3
+.Lno_extras: .quad 0
 .Lzero_sp: .asciz "0 "
 .Lsp_zero_nl: .asciz " 0\n"
 .Ld_sp: .asciz "d "

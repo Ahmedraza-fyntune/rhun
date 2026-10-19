@@ -52,6 +52,7 @@ STRINGS = {
     ('files', 'code_actions_on_save'): 'source.organizeImports source.fixAll',
     ('terminal', 'shell'): 'missing shell café', ('terminal', 'font'): 'missing term café.ttf',
     ('git', 'commit_model'): 'model:café',
+    ('remote', 'agent_binary'): '/opt/rhun café/linux/rhun',
 }
 CHOICES = {('editor', 'multi_cursor_paste'): ('spread', 'full'),
            ('ui', 'decorations'): ('auto', 'client', 'server'),

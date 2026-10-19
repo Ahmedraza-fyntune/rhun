@@ -30,6 +30,18 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
+    # remote hosts: the agent a remote window starts on the host (remote.s, ragent.s)
+    cmp qword ptr [rip + g_argc], 2
+    jb .Lnot_remote_agent
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lremote_agent]
+    call strcmp_eq
+    test eax, eax
+    jz .Lnot_remote_agent
+    call remote_agent_main
+    EPILOGUE
+.Lnot_remote_agent:
     # remote hosts: run by ssh as its askpass program (RHUN_ASKPASS names the window's socket)
     lea rdi, [rip + .Lenv_askpass]
     call getenv
@@ -42,18 +54,6 @@ FN main
     mov rdi, [rax + 8]
 1:  call remote_askpass_main
 .Lnot_askpass:
-    cmp qword ptr [rip + g_argc], 2
-    jb .Lnot_remote_agent
-    # remote hosts: the agent a remote window starts on the host (remote.s, ragent.s)
-    mov rax, [rip + g_argv]
-    mov rdi, [rax + 8]
-    lea rsi, [rip + .Lremote_agent]
-    call strcmp_eq
-    test eax, eax
-    jz .Lnot_remote_agent
-    call remote_agent_main
-    EPILOGUE
-.Lnot_remote_agent:
     cmp qword ptr [rip + g_argc], 5
     jb 1f
     cmp qword ptr [rip + g_argc], 6

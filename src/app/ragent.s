@@ -79,6 +79,11 @@ ag_inotify: .long -1
 # remote_agent_main(): never returns
 FN remote_agent_main
     PROLOGUE 16
+    # only the stream: descriptors the shell left open (its script, the binary) close
+    mov edi, 3
+    mov esi, -1
+    xor edx, edx
+    SYS SYS_close_range
     call sys_file_capacity
     mov edi, 0
     mov esi, F_SETFL
