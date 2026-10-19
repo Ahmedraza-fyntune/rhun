@@ -1480,6 +1480,11 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
+    # language features (query.s, complete.s, langfeat.s)
+    FEATURE FEAT_QUERY_STREAM, "query-stream", 0      # query-part, query-progress
+    FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
+    FEATURE FEAT_COMPLETE_ITEMS, "complete-items", 1  # complete-resolve
+    FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1506,6 +1511,37 @@ FEATURE_LIST
 .macro FEAT_TEST base, feat
     test byte ptr [\base + EXT_features + ((\feat) >> 3)], 1 << ((\feat) & 7)
 .endm
+# the kinds of request rhun sends providers (query.s's pk_table rows)
+.equ PK_COMPLETE, 0
+.equ PK_RESOLVE, 1               # complete-resolve
+.equ PK_SIGNATURE, 2
+.equ PK_HOVER, 3
+.equ PK_DEFINITION, 4
+.equ PK_DECLARATION, 5
+.equ PK_TYPEDEF, 6
+.equ PK_IMPLEMENTATION, 7
+.equ PK_REFERENCES, 8
+.equ PK_SYMBOLS, 9
+.equ PK_WSYMBOLS, 10
+.equ PK_SELECTION, 11
+.equ PK_CALLH, 12                # call-hierarchy
+.equ PK_TYPEH, 13                # type-hierarchy
+.equ PK_HIERCALLS, 14            # calls-in, calls-out, supertypes, subtypes
+.equ PK_ACTIONS, 15
+.equ PK_ACTIONS_AUTO, 16         # code actions asked for the lightbulb
+.equ PK_ACTION_RESOLVE, 17
+.equ PK_PREPARE_RENAME, 18
+.equ PK_RENAME, 19
+.equ PK_FORMAT, 20
+.equ PK_RANGE_FORMAT, 21
+.equ PK_TYPE_FORMAT, 22
+.equ PK_LINKS, 23
+.equ PK_SAVE_ACTIONS, 24
+.equ PK_COUNT, 25
+# who asked (query.s routes parts and expiries to them)
+.equ QO_LANGFEAT, 1
+.equ QO_COMPLETE, 2
+.equ QO_SAVE, 3
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1726,6 +1762,22 @@ F EXT_pv_save_actions, 8
 F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
 F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
 F EXT_tests_progs, 8    # [needs] tests: programs rhun may start for its test runs (cstr) or 0
+# language features (query.s): the [provides] keys of 0.18's kinds, provider-scope's narrowed
+# values and the session's statistics per kind
+F EXT_pv_hover, 8       # [provides] hover: patterns, cstr, or 0
+F EXT_pv_declaration, 8
+F EXT_pv_type_definition, 8
+F EXT_pv_implementation, 8
+F EXT_pv_selection_ranges, 8
+F EXT_pv_call_hierarchy, 8
+F EXT_pv_type_hierarchy, 8
+F EXT_pv_workspace_symbols, 8
+F EXT_pv_range_format, 8
+F EXT_pv_type_format, 8
+F EXT_pv_ttrig, 8       # type_format.triggers
+F EXT_pv_document_links, 8
+F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
+F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
