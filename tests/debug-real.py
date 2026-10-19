@@ -41,6 +41,94 @@ int main(void) {
 '''
 
 
+MAIN_GO = '''package main
+
+import (
+	"fmt"
+	"os"
+	"sync"
+)
+
+type Point struct {
+	X, Y int
+	Name string
+}
+
+func add(a, b int) int {
+	s := a + b
+	return s
+}
+
+func main() {
+	p := Point{X: 1, Y: 2, Name: "pt"}
+	m := map[string]int{"one": 1, "two": 2}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(n int) { defer wg.Done(); _ = n * 2 }(i)
+	}
+	wg.Wait()
+	total := add(p.X, m["two"])
+	fmt.Println("total", total)
+	os.Exit(total)
+}
+'''
+
+CALC_TEST_GO = '''package main
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+	if got := add(1, 2); got != 3 {
+		t.Fatalf("add = %d", got)
+	}
+}
+
+func TestOther(t *testing.T) {
+	t.Log("other")
+}
+'''
+
+APP_PY = '''class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+def add(a, b):
+    s = a + b
+    return s
+
+
+def main():
+    d = {'one': 1, 'two': 2}
+    items = list(range(500))
+    p = Point(1, 2)
+    total = add(p.x, d['two'])
+    print('total', total)
+    if total == 3:
+        raise ValueError('three')
+
+
+main()
+'''
+
+INPUT_PY = '''name = input('name? ')
+print('hello', name)
+'''
+
+
+def dlv():
+    path = os.environ.get('RHUN_TEST_DLV') or shutil.which('dlv')
+    return path if path and os.access(path, os.X_OK) and shutil.which('go') else None
+
+
+def debugpy_python():
+    python = os.environ.get('RHUN_TEST_PYTHON', 'python3')
+    r = subprocess.run([python, '-c', 'import debugpy'], capture_output=True)
+    return shutil.which(python) if r.returncode == 0 else None
+
+
 def lldb_dap():
     if sys.platform == 'darwin':
         r = subprocess.run(['xcrun', '-f', 'lldb-dap'], capture_output=True, text=True)
@@ -120,6 +208,102 @@ class LldbDap(Real):
         self.assertLess(time.time() - start, 60)
         ps = subprocess.run(['ps', '-A', '-o', 'command='], capture_output=True, text=True).stdout
         self.assertNotIn(spin.as_posix(), ps)
+
+
+@unittest.skipUnless(dlv(), 'needs go and dlv (RHUN_TEST_DLV or on PATH)')
+class Delve(Real):
+    def setUp(self):
+        super().setUp()
+        self.src.unlink()                   # the harness's a.c: Go refuses C files without cgo
+        (self.proj / 'go.mod').write_text('module example.com/hello\n\ngo 1.21\n', encoding='utf-8')
+        self.main = self.proj / 'main.go'
+        self.main.write_text(MAIN_GO, encoding='utf-8')
+        self.test = self.proj / 'calc_test.go'
+        self.test.write_text(CALC_TEST_GO, encoding='utf-8')
+        # Delve on PATH; Go's caches outlive the test (a fresh one rebuilds the standard library)
+        cache = Path(os.environ.get('TMPDIR', '/tmp')) / 'rhun-test-go'
+        self.env['PATH'] = str(Path(dlv()).parent) + os.pathsep + self.env['PATH']
+        self.env['GOCACHE'] = str(cache / 'cache')
+        self.env['GOPATH'] = str(cache / 'path')
+        self.env['GOFLAGS'] = '-p=2'
+
+    def test_program_goroutines_struct_map_step_into_exit_code(self):
+        self.launch_ini('[Run]\ntype = go\nprogram = ${project}\n')
+        out = self.run_real(['bp %s 28' % self.main, *self.start(), 'wait-debug paused 120000', 'print-debug',
+                             'print-stack', 'debug-expand Locals/p', 'debug-expand Locals/m', 'wait 1000',
+                             'print-vars', 'echo --', 'debug-step into', 'wait-debug paused', 'print-debug',
+                             'bp-clear', 'debug-continue', 'wait-debug ended 30000', 'print-debug',
+                             'print-console'], timeout=240, files=('main.go',))
+        first, second = out[:out.index('--')], out[out.index('--') + 1:]
+        session = self.debug_lines(first)[0]
+        self.assertTrue(self.field(session, 'at').endswith('main.go:28'), out)
+        threads = [l for l in first if l.startswith('thread ')]
+        self.assertGreater(len(threads), 1, first)          # goroutines are threads
+        self.assertIn('main.main', threads[0])
+        variables = self.vars(first)
+        for line in ('X = 1 : int', 'Y = 2 : int', 'Name = "pt" : string', '"two" = 2 : string: int'):
+            self.assertIn(line, variables)
+        stepped = self.debug_lines(second)[0]
+        self.assertEqual(self.field(stepped, 'reason'), 'step')
+        self.assertTrue(self.field(stepped, 'at').endswith('main.go:14'), stepped)
+        ended = self.debug_lines(second)[1]
+        self.assertEqual(self.field(ended, 'exit'), '3', second)
+        self.assertIn('stdout total 3', second)              # the program's own output
+
+    def test_one_test_in_test_mode(self):
+        self.launch_ini('[Test]\ntype = go\nmode = test\nprogram = ${project}\nargs = -test.run ^TestAdd$ -test.v\n')
+        out = self.run_real(['bp %s 6' % self.test, *self.start('Test'), 'wait-debug paused 120000',
+                             'print-debug', 'print-stack', 'bp-clear', 'debug-continue', 'wait-debug ended 30000',
+                             'print-debug', 'print-console'], timeout=240, files=('calc_test.go',))
+        sessions = self.debug_lines(out)
+        self.assertTrue(self.field(sessions[0], 'at').endswith('calc_test.go:6'), out)
+        self.assertTrue(any('.TestAdd ' in l for l in out if l.startswith('  frame 0')), out)
+        self.assertEqual(self.field(sessions[1], 'exit'), '0', out)
+        self.assertTrue(any('--- PASS: TestAdd' in l for l in out), out)
+        self.assertFalse(any('TestOther' in l for l in out), out)
+
+
+@unittest.skipUnless(debugpy_python(), 'needs a python with debugpy (RHUN_TEST_PYTHON)')
+class Debugpy(Real):
+    def setUp(self):
+        super().setUp()
+        self.app = self.proj / 'app.py'
+        self.app.write_text(APP_PY, encoding='utf-8')
+
+    def ini(self, console='internalConsole', program='app.py'):
+        self.launch_ini('[Run]\ntype = python\nprogram = %s\npython = %s\nconsole = %s\n'
+                        % (program, debugpy_python(), console))
+
+    def test_locals_eval_uncaught_exception_exit_code(self):
+        self.ini()
+        out = self.run_real(['bp %s 17' % self.app, 'exc-filter python uncaught 1', *self.start(),
+                             'wait-debug paused 60000', 'print-debug', 'print-stack', 'debug-expand Locals/d',
+                             'debug-expand Locals/p', 'wait 1500', 'print-vars', 'debug-eval total * 10', 'wait 500',
+                             'bp-clear', 'debug-continue', 'wait-debug paused 30000', 'print-debug',
+                             'debug-continue', 'wait-debug ended 30000', 'print-debug', 'print-console'],
+                            files=('app.py',))
+        sessions = self.debug_lines(out)
+        self.assertTrue(self.field(sessions[0], 'at').endswith('app.py:17'), out)
+        frames = [l.split()[2] for l in out if l.startswith('  frame ')]
+        self.assertEqual(frames[:2], ['main', '<module>'], out)
+        variables = self.vars(out)
+        for line in ("'two' = 2 : int", 'x = 1 : int', 'y = 2 : int', 'total = 3 : int'):
+            self.assertIn(line, variables)
+        self.assertIn('result 30', out)
+        self.assertEqual(self.field(sessions[1], 'reason'), 'exception', out)
+        self.assertTrue(self.field(sessions[1], 'at').endswith('app.py:19'), out)
+        self.assertIn('error ValueError: three', out)
+        self.assertEqual(self.field(sessions[2], 'exit'), '1', out)
+        self.assertIn('stdout total 3', out)
+
+    def test_integrated_terminal_reads_input(self):
+        (self.proj / 'ask.py').write_text(INPUT_PY, encoding='utf-8')
+        self.ini('integratedTerminal', 'ask.py')
+        out = self.run_real([*self.start(), 'wait-term name?', 'type rhun', 'key Return', 'wait-term hello rhun',
+                             'wait-debug ended 30000', 'print-terminals', 'print-term', 'print-debug'])
+        self.assertTrue(any('hello rhun' in l for l in out), out)
+        self.assertTrue(any('kind=terminal' in l for l in out), out)
+        self.assertEqual(self.field(self.debug_lines(out)[0], 'exit'), '0', out)
 
 
 if __name__ == '__main__':
