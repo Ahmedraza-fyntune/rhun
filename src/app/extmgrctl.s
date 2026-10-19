@@ -1,4 +1,4 @@
-# extension management's headless commands (control.s hands them the commands it does not know):
+# extension management's headless commands (registered in control.s's ctl_tables):
 #   ext-install-folder PATH [copy|link]   Install from Folder (copied) or Link a Folder
 #   ext-install-archive PATH              Install from Archive
 #   ext-rollback NAME                     Roll back to the previous version (asks when it may do more)
@@ -12,32 +12,18 @@ xm_buf: .zero 4096
 
 .text
 
-# extmgr_control(cmd ptr, len, rest ptr, len, out sb) -> rax 0 done, -1 not one of these
-FN extmgr_control
-    PROLOGUE
-    mov r12, rdi
-    mov r13, rsi
-    mov r14, rdx
-    mov r15, rcx
-    mov [rip + xm_out], r8
-    lea rbx, [rip + xm_table]
-1:  mov rdx, [rbx]
-    test rdx, rdx
-    jz 8f
-    mov rdi, r12
-    mov rsi, r13
-    call str_eq_cstr
-    test eax, eax
-    jnz 2f
-    add rbx, 16
-    jmp 1b
-2:  mov rdi, r14
-    mov rsi, r15
-    call [rbx + 8]
+# XM_ARGS: a command's (out sb, rest, rest len) as rest in rdi, len in rsi, the output kept
+.macro XM_ARGS
+    mov [rip + xm_out], rdi
+    mov rdi, rsi
+    mov rsi, rdx
+.endm
+
+# XM_DONE: a command's end: rax 0 (done)
+.macro XM_DONE
     xor eax, eax
     EPILOGUE
-8:  mov rax, -1
-    EPILOGUE
+.endm
 
 # xm_push(cstr): onto the output
 xm_push:
@@ -64,6 +50,7 @@ xm_ext:
 
 # ext-install-folder PATH [copy|link]
 c_install_folder:
+    XM_ARGS
     PROLOGUE
     call trim
     mov rbx, rax
@@ -91,27 +78,30 @@ c_install_folder:
     mov rsi, r12
     mov edx, r13d
     call ext_install_local
-    EPILOGUE
+    XM_DONE
 
 # ext-install-archive PATH
 c_install_archive:
+    XM_ARGS
     PROLOGUE
     mov edx, IK_ARCHIVE
     call ext_install_local
-    EPILOGUE
+    XM_DONE
 
 # ext-rollback NAME
 c_rollback:
+    XM_ARGS
     PROLOGUE
     call xm_ext
     test rax, rax
     jz 9f
     mov rdi, rax
     call ext_rollback_ask
-9:  EPILOGUE
+9:  XM_DONE
 
 # print-ext-versions NAME
 c_print_versions:
+    XM_ARGS
     PROLOGUE
     call xm_ext
     test rax, rax
@@ -151,7 +141,7 @@ c_print_versions:
     mov rdi, [rip + xm_out]
     mov esi, 10
     call sb_push_byte
-9:  EPILOGUE
+9:  XM_DONE
 
 # xm_rec_pair(" key=", record key): " key=VALUE" (or "-") for rbx's record
 xm_rec_pair:
@@ -202,7 +192,8 @@ xm_rec_pair:
 .Lyes: .asciz "yes"
 .Lno: .asciz "no"
 .p2align 3
-xm_table:
+.globl extmgr_ctl
+extmgr_ctl:
     .quad .Lc_install_folder, c_install_folder, .Lc_install_archive, c_install_archive
     .quad .Lc_rollback, c_rollback, .Lc_print_versions, c_print_versions
     .quad 0, 0

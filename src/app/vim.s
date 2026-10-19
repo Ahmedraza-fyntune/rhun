@@ -766,7 +766,7 @@ vfeed_edit:
     test rax, rax
     jz 1f
     mov rdi, rdx
-    call rax
+    call keys_run
     EPILOGUE
 1:  mov edi, r12d
     mov esi, r13d
