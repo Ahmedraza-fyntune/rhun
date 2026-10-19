@@ -2415,6 +2415,12 @@ FN app_on_key
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
+    call peek_key               # language features: the peek view, when it shows (peek.s)
+    test eax, eax
+    jnz 9f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
     call complete_key           # the completion list, when it shows, takes its keys first
     test eax, eax
     jnz 9f
@@ -3289,6 +3295,7 @@ FN center_draw
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call editor_draw
+    call peek_draw              # language features: the peek view over the text (peek.s)
     call find_draw
     EPILOGUE
 

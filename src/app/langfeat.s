@@ -637,6 +637,24 @@ FN cmd_source_action
 FN cmd_declaration
     mov edi, LF_DECL
     jmp lf_start_cmd
+# the peek view (peek.s): the same queries, their locations under the cursor's line
+FN cmd_peek_definition
+    mov edi, LF_DEF
+    jmp lf_peek_cmd
+FN cmd_peek_declaration
+    mov edi, LF_DECL
+    jmp lf_peek_cmd
+FN cmd_peek_type_definition
+    mov edi, LF_TYPEDEF
+    jmp lf_peek_cmd
+FN cmd_peek_implementation
+    mov edi, LF_IMPL
+    jmp lf_peek_cmd
+FN cmd_peek_references
+    mov edi, LF_REFS
+lf_peek_cmd:
+    mov dword ptr [rip + lf_next_dest], LFD_PEEK
+    jmp lf_start_cmd
 FN cmd_type_definition
     mov edi, LF_TYPEDEF
     jmp lf_start_cmd
@@ -2785,8 +2803,8 @@ FN langfeat_tick
     je 0f
     cmp qword ptr [rip + lf_res + VEC_len], 0
     je 0f
-    cmp dword ptr [rip + lf_dest], LFD_RESULTS
-    je 3f
+    cmp dword ptr [rip + lf_dest], 0
+    jne 3f
     cmp dword ptr [rip + lf_partial], 0
     je 3f
     call palette_results_showing
@@ -2800,7 +2818,11 @@ FN langfeat_tick
     mov edi, 1                  # still searching
     call lf_to_results
     jmp 0f
-31: call lf_present_list
+31: cmp dword ptr [rip + lf_dest], LFD_PEEK
+    jne 32f
+    call lf_to_peek
+    jmp 0f
+32: call lf_present_list
 0:
     cmp dword ptr [rip + lf_kind], 0
     je 9f
@@ -2849,7 +2871,11 @@ lf_finish:
     xor edi, edi                # done searching
     call lf_to_results
     jmp 9f
-10: cmp dword ptr [rip + lf_partial], 0
+10: cmp dword ptr [rip + lf_dest], LFD_PEEK
+    jne 101f
+    call lf_to_peek
+    jmp 9f
+101: cmp dword ptr [rip + lf_partial], 0
     je 11f
     call palette_results_showing    # shown at its first part: refreshed while still open
     test eax, eax
@@ -2998,6 +3024,38 @@ lf_to_results:
 2:  mov rdi, r12
     mov esi, [rsp]
     call results_refs_end
+    EPILOGUE
+
+# lf_to_peek(): the locations so far into the peek view
+lf_to_peek:
+    PROLOGUE
+    call lf_sort
+    mov eax, [rip + lf_kind]
+    test eax, eax
+    jnz 1f
+    mov eax, [rip + lf_list_kind]
+1:  lea rcx, [rip + lf_peek_titles]
+    mov rdi, [rcx + rax*8]
+    mov esi, [rip + lf_session]
+    call peek_begin
+    xor ebx, ebx
+2:  cmp rbx, [rip + lf_res + VEC_len]
+    jae 3f
+    imul r13, rbx, LS_SIZE
+    add r13, [rip + lf_res + VEC_ptr]
+    inc rbx
+    cmp qword ptr [r13 + LS_path], 0
+    jl 2b
+    mov rdi, r13
+    call lf_preview
+    mov rcx, rdx
+    mov rdx, rax
+    mov rdi, [r13 + LS_path]
+    add rdi, [rip + lf_bytes + SB_ptr]
+    lea rsi, [r13 + LS_l1]
+    call peek_loc
+    jmp 2b
+3:  call peek_end
     EPILOGUE
 
 # lf_preview(LS*) -> rax ptr, rdx len of a location's preview: its label after "name:LINE  "
@@ -3511,6 +3569,13 @@ lf_empty: .quad 0, .Le_def, .Le_refs, .Le_syms, .Le_acts, 0, 0
 lf_lists: .quad 0, .Ll_def, .Ll_refs, .Ll_syms, .Ll_acts, 0, 0
     .quad .Ll_decl, .Ll_typedef, .Ll_impl, 0
 lf_single: .byte 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1
+.p2align 3
+lf_peek_titles: .quad 0, .Lpk_def, .Lpk_refs, 0, 0, 0, 0, .Lpk_decl, .Lpk_typedef, .Lpk_impl, 0
+.Lpk_def: .asciz "definition"
+.Lpk_refs: .asciz "references"
+.Lpk_decl: .asciz "declaration"
+.Lpk_typedef: .asciz "type definition"
+.Lpk_impl: .asciz "implementation"
 .p2align 3
 lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, 0
 .Lv_definition: .asciz "definition"

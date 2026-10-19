@@ -29,6 +29,7 @@ lc_rlen: .quad 0
     LCWRAP w_print_fd, c_print_fd
     LCWRAP w_print_results, c_print_results
     LCWRAP w_print_outline, c_print_outline
+    LCWRAP w_print_peek, c_print_peek
 
 # lc_arg() -> rax ptr, rdx len of the next word of the rest (rdx 0 at its end)
 lc_arg:
@@ -135,6 +136,14 @@ c_print_outline:
     pop rbx
     ret
 
+# print-peek: the peek view (peek.s)
+c_print_peek:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call peek_dump
+    pop rbx
+    ret
+
 # print-query: the requests rhun waits on, with their progress
 c_print_query:
     push rbx
@@ -151,6 +160,7 @@ c_print_query:
 .Lc_print_fd: .asciz "print-file-diagnostics"
 .Lc_print_results: .asciz "print-results"
 .Lc_print_outline: .asciz "print-outline"
+.Lc_print_peek: .asciz "print-peek"
 .p2align 3
 .globl langfeat_ctl
 langfeat_ctl:
@@ -160,4 +170,5 @@ langfeat_ctl:
     .quad .Lc_print_fd, w_print_fd
     .quad .Lc_print_results, w_print_results
     .quad .Lc_print_outline, w_print_outline
+    .quad .Lc_print_peek, w_print_peek
     .quad 0, 0
