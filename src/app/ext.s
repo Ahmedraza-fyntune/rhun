@@ -1975,10 +1975,22 @@ manifest_kv:
     lea rsi, [rip + .Ls_views]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 7f
     mov rdi, rbx
     mov rsi, r12
     call rview_manifest_kv
+    jmp 9f
+7:  # debugger: [debugger.TYPE] (debugcfg.s)
+    mov rdi, [r12 + INI_sec]
+    mov rsi, [r12 + INI_seclen]
+    lea rdx, [rip + .Ls_debugger_dot]
+    mov ecx, 9
+    call str_starts
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call dbg_manifest_kv
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -2284,7 +2296,15 @@ parse_needs:
     call val_dup
     mov [rbx + EXT_tests_progs], rax
     jmp 9f
-7:  mov rdi, r12                # resources group: secrets = yes (the system keychain)
+7:  mov rdi, r12                # debugger: debug = yes starts debug adapters as the user
+    lea rsi, [rip + .Ln_debug]
+    call ini_key_is
+    test eax, eax
+    jz 8f
+    mov edi, NEEDS_DEBUG
+    call needs_yes
+    jmp 9f
+8:  mov rdi, r12                # resources group: secrets = yes (the system keychain)
     lea rsi, [rip + .Ln_secrets]
     call ini_key_is
     test eax, eax
@@ -3339,6 +3359,7 @@ env_add_state:
 # win_runtime(name) -> path or 0: proc_which, except that python3 is also looked for as python and
 # py (Windows installs Python as python.exe and the py launcher), and the Microsoft Store's stubs in
 # WindowsApps (which only offer to install Python) are taken only when nothing else is there
+.globl win_runtime               # the debugger finds adapters the same way (debugcfg.s)
 win_runtime:
     PROLOGUE
     mov r12, rdi
@@ -4866,6 +4887,8 @@ ext_target: .asciz "linux-x86_64"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
 .Ln_secrets: .asciz "secrets"
+.Ln_debug: .asciz "debug"
+.Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"
 .Lo_command: .asciz "command"
 .Lo_project: .asciz "project"
