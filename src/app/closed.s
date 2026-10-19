@@ -78,6 +78,8 @@ FN closed_note
     jnz 9f                      # a workspace edit's preview or an extension's diff: not git's
     mov qword ptr [rbx + CT_kind], CK_DIFF
     mov rdi, [r14 + DV_path]
+    test rdi, rdi
+    jz 9f                       # testing's expected/actual diff: nothing to fetch again
     call str_own
     mov [rbx + CT_path], rax
     mov rdi, [r14 + DV_rev]

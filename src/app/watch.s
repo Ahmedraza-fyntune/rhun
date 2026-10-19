@@ -1143,7 +1143,13 @@ FN app_reload_doc
     EPILOGUE
 
 FN cmd_reload_file
-    mov rdi, [rip + g_file]
+    mov rdi, [rip + g_doc]      # resources group: a virtual document asks its provider again
+    test rdi, rdi
+    jz 0f
+    cmp qword ptr [rdi + DOC_uri], 0
+    je 0f
+    jmp vdoc_retry
+0:  mov rdi, [rip + g_file]
     test rdi, rdi
     jz 1f
     jmp app_reload_doc
