@@ -18,7 +18,7 @@ CONFIG = ('[ui]\nagents_panel = false\n[editor]\ncursor_blink = false\n'
 
 class ViewsBase(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix='rhun-views-')
+        self.tmp = tempfile.TemporaryDirectory(prefix='rhun-views-', ignore_cleanup_errors=True)  # shells may still write
         self.work = Path(self.tmp.name).resolve()
         self.proj = self.work / 'proj'
         (self.proj / 'src').mkdir(parents=True)

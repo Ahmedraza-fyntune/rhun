@@ -2932,6 +2932,7 @@ ENDSTRUCT ND_SIZE
 .equ NF_CHECKED, 128
 .equ NF_SEL, 256                # selected (multi-select)
 .equ NF_MOREWAIT, 512           # "Load more" was asked for
+.equ NF_PCOUNT, 1024            # a patch check counted its bytes out (cleared after the check)
 .equ NDI_FILE, 0x40000000
 # the store's callbacks for its owner; a zero entry is not called
 STRUCT

@@ -27,6 +27,7 @@
 .equ TIP_MAX, 4000
 .equ NODES_ALL_MAX, 400000
 .equ BYTES_MAX, 16777216         # node bytes per instance
+.equ BYTES_ALL_MAX, 67108864     # node bytes in all instances
 .equ OVF, 0x80000000             # a patch check's reference to a node it creates (else a live node)
 
 # a declared view
@@ -100,6 +101,8 @@ F OV_removed, 4
 F OV_mark, 4
 F OV_first, 4           # first entry created under it, -1
 F OV_next, 4            # the next one under its parent
+F OV_bytes, 4           # its record's bytes (the last given)
+F OV_pad, 4
 ENDSTRUCT OV_SIZE
 
 .bss
@@ -122,7 +125,10 @@ p_rmark: .long 0                # live nodes the patch removes hold this mark
 p_kmark: .long 0                # children listed by the kids op being checked
 p_created: .quad 0              # nodes the patch creates
 p_removed: .quad 0              # live nodes it removes
-p_bytes: .quad 0                # record bytes it brings
+p_bytes: .quad 0                # record bytes it brings to live nodes (created ones: OV_bytes)
+p_freed: .quad 0                # bytes of live nodes it replaces or removes
+p_touched: .zero VEC_SIZE       # live nodes holding NF_PCOUNT (u32 each)
+g_rv_bytes: .quad 0             # node bytes in all instances
 p_op: .quad 0                   # the op being checked, from 1
 p_rv: .quad 0                   # its instance
 p_kind: .long 0                 # and its kind
@@ -522,6 +528,8 @@ rv_close:
     jz 1f
     mov rax, [rdi + TR_count]
     sub [rip + g_rv_nodes], rax
+    mov rax, [rdi + TR_bytes]
+    sub [rip + g_rv_bytes], rax
     call tree_free
 1:  mov rdi, [r12 + RV_title]
     call mem_free
@@ -629,6 +637,16 @@ FN rview_ext_ready
     mov esi, eax
     mov edi, r14d
     call send_visible
+    call place_focused          # its place has the keyboard already (shown before it ran)
+    mov r15d, eax
+    mov rdi, rbx
+    call vd_at
+    cmp r15d, [rax + VD_pl]
+    jne 8f
+    mov edi, r14d
+    mov esi, 1
+    mov rdx, [rax + VD_name]
+    call rv_focus_event
 8:  inc rbx
     jmp 1b
 9:  EPILOGUE
@@ -3083,8 +3101,12 @@ remove_ref:
     imul rax, r12, ND_SIZE
     add rax, [rbx + TR_nodes + VEC_ptr]
     mov [rax + ND_mark], r15d
-    # count it and what under it was not removed before
+    # count it and what under it was not removed before (nodes and bytes)
     inc qword ptr [rip + p_removed]
+    mov edi, r12d
+    call live_free
+    imul rax, r12, ND_SIZE
+    add rax, [rbx + TR_nodes + VEC_ptr]
     movsxd r13, dword ptr [rax + ND_first]
 2:  cmp r13, -1
     je 9f
@@ -3093,6 +3115,10 @@ remove_ref:
     cmp [rax + ND_mark], r15d
     je 3f
     inc qword ptr [rip + p_removed]
+    mov edi, r13d
+    call live_free
+    imul rax, r13, ND_SIZE
+    add rax, [rbx + TR_nodes + VEC_ptr]
     movsxd rcx, dword ptr [rax + ND_first]
     cmp rcx, -1
     je 3f
@@ -3305,6 +3331,70 @@ has_byte:
 
 # patch_check(slot, body, len) -> eax 0 when the patch can be applied whole, else 1 with errbuf
 patch_check:
+    PROLOGUE
+    mov qword ptr [rip + p_touched + VEC_len], 0
+    mov qword ptr [rip + p_freed], 0
+    call patch_check_ops
+    mov ebx, eax
+    # the live nodes it counted out lose the mark
+    mov r12, [rip + p_tree]
+    xor r13d, r13d
+1:  cmp r13, [rip + p_touched + VEC_len]
+    jae 2f
+    mov rax, [rip + p_touched + VEC_ptr]
+    mov eax, [rax + r13*4]
+    imul rax, rax, ND_SIZE
+    add rax, [r12 + TR_nodes + VEC_ptr]
+    and dword ptr [rax + ND_flags], ~NF_PCOUNT
+    inc r13
+    jmp 1b
+2:  mov eax, ebx
+    EPILOGUE
+
+# nrec_bytes() -> rax the bytes the node record in nrec keeps (id, label, extra); edi kept
+nrec_bytes:
+    mov rax, [rip + nrec + 8]
+    add rax, [rip + nrec + 24]
+    add rax, [rip + nrec + 40]
+    ret
+
+# live_free(node): the patch replaces or removes a live node: its bytes count out (once)
+live_free:
+    PROLOGUE
+    mov rbx, [rip + p_tree]
+    mov r12d, edi
+    imul rax, r12, ND_SIZE
+    add rax, [rbx + TR_nodes + VEC_ptr]
+    test dword ptr [rax + ND_flags], NF_PCOUNT
+    jnz 9f
+    or dword ptr [rax + ND_flags], NF_PCOUNT
+    mov ecx, [rax + ND_idlen]
+    add ecx, [rax + ND_lablen]
+    add ecx, [rax + ND_xlen]
+    add [rip + p_freed], rcx
+    lea rdi, [rip + p_touched]
+    mov esi, 4
+    call vec_push
+    mov [rax], r12d
+9:  EPILOGUE
+
+# ref_bytes(ref, bytes): a record lands on a node: a created one keeps its bytes, a live one's
+#   bytes count out and the record's in
+ref_bytes:
+    PROLOGUE
+    mov rbx, rsi
+    test edi, OVF
+    jz 1f
+    and edi, ~OVF
+    call ov_at
+    mov [rax + OV_bytes], ebx
+    EPILOGUE
+1:  call live_free
+    add [rip + p_bytes], rbx
+    EPILOGUE
+
+# patch_check_ops(slot, body, len) -> eax as patch_check (which clears the marks this leaves)
+patch_check_ops:
     PROLOGUE 48
     mov [rsp], edi
     mov r12, rsi                # p
@@ -3570,6 +3660,12 @@ patch_check:
     je 72f
     test eax, eax
     jz 72f
+    mov [rsp + 8], eax
+    mov edi, eax
+    call nrec_bytes
+    mov rsi, rax
+    call ref_bytes
+    mov eax, [rsp + 8]
     cmp qword ptr [rip + nrec + 48], KIDS_LEAF
     jne .Lpc_op
     mov edi, eax
@@ -3638,10 +3734,6 @@ patch_check:
     call nrec_check
     test eax, eax
     jz .Lpc_syntax
-    mov rax, [rip + nrec + 8]
-    add rax, [rip + nrec + 24]
-    add rax, [rip + nrec + 40]
-    add [rip + p_bytes], rax
     mov rdi, [rip + nrec]
     mov rsi, [rip + nrec + 8]
     call resolve
@@ -3662,6 +3754,10 @@ patch_check:
     mov edi, [rsp + 8]
     mov esi, [rip + p_kmark]
     call set_mark
+    mov edi, [rsp + 8]
+    call nrec_bytes
+    mov rsi, rax
+    call ref_bytes
     cmp qword ptr [rip + nrec + 48], KIDS_LEAF
     jne .Lpc_rec
     mov edi, [rsp + 8]          # a leaf now: its children go
@@ -3673,6 +3769,11 @@ patch_check:
     mov rsi, [rip + nrec + 8]
     mov edx, [rsp + 40]
     call ov_new
+    or eax, OVF
+    mov edi, eax
+    call nrec_bytes
+    mov rsi, rax
+    call ref_bytes
     jmp .Lpc_rec
 .Lpc_rec_bad:
     lea rdi, [rip + .Lo_kids]
@@ -3714,9 +3815,30 @@ patch_check:
     sub rdx, [rip + p_removed]
     cmp rdx, NODES_ALL_MAX
     jg .Lpc_toobig
-    mov rcx, [rax + TR_bytes]
-    add rcx, [rip + p_bytes]
-    cmp rcx, BYTES_MAX * 2      # bytes kept plus brought: a patch never doubles the cap
+    # the bytes it leaves: kept, less what it replaces or removes, plus what it brings
+    mov r14, [rax + TR_bytes]
+    sub r14, [rip + p_freed]
+    add r14, [rip + p_bytes]
+    xor ebx, ebx
+86: cmp rbx, [rip + ov + VEC_len]
+    jae 87f
+    mov edi, ebx
+    call ov_alive
+    test eax, eax
+    jz 861f
+    mov edi, ebx
+    call ov_at
+    mov eax, [rax + OV_bytes]
+    add r14, rax
+861:inc ebx
+    jmp 86b
+87: cmp r14, BYTES_MAX
+    jg .Lpc_toobig
+    mov rax, [rip + p_tree]
+    mov rcx, [rip + g_rv_bytes]
+    sub rcx, [rax + TR_bytes]
+    add rcx, r14
+    cmp rcx, BYTES_ALL_MAX
     jg .Lpc_toobig
     xor eax, eax
     EPILOGUE
@@ -3952,14 +4074,12 @@ state_word:
 
 # ---- applying ----
 
-# apply_log_op(RV*): rr's lines appended to the log; a log with lines is ready
+# apply_log_op(RV*): rr's lines appended to the log; a log given lines is ready
 apply_log_op:
     PROLOGUE
     mov rbx, rdi
-    cmp dword ptr [rbx + RV_state], RS_NONE
-    jne 1f
     mov dword ptr [rbx + RV_state], RS_READY
-1:  mov r12, [rip + rr + RR_data]
+    mov r12, [rip + rr + RR_data]
     mov r13, r12
     add r13, [rip + rr + RR_len]
 2:  cmp r12, r13
@@ -4021,8 +4141,10 @@ patch_apply:
     call rv_at
     mov r14, rax                # RV*
     mov rax, [r14 + RV_tree]
-    mov rax, [rax + TR_count]
-    sub [rip + g_rv_nodes], rax
+    mov rcx, [rax + TR_count]
+    sub [rip + g_rv_nodes], rcx
+    mov rcx, [rax + TR_bytes]
+    sub [rip + g_rv_bytes], rcx
     # past the count line
 1:  cmp byte ptr [r12], 10
     je 2f
@@ -4299,9 +4421,7 @@ patch_apply:
     jnz 81f
     test r15d, r15d
     jnz 81f
-    cmp dword ptr [r14 + RV_state], RS_NONE
-    jne 81f
-    mov dword ptr [r14 + RV_state], RS_READY    # the root's children: the tree shows
+    mov dword ptr [r14 + RV_state], RS_READY    # the root's children: the tree shows, whatever the state was
 81: mov rdi, [r14 + RV_tree]
     mov esi, eax
     test r15d, r15d
@@ -4337,8 +4457,10 @@ patch_apply:
     jmp .Lpa_op
 .Lpa_done:
     mov rax, [r14 + RV_tree]
-    mov rax, [rax + TR_count]
-    add [rip + g_rv_nodes], rax
+    mov rcx, [rax + TR_count]
+    add [rip + g_rv_nodes], rcx
+    mov rcx, [rax + TR_bytes]
+    add [rip + g_rv_bytes], rcx
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 

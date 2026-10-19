@@ -286,5 +286,63 @@ class Views(ViewsBase):
         self.assertIn('toast=activated Carrot', out)
 
 
+class Corners(ViewsBase):
+    """Cases from review: state after root children, the byte cap, focus and hidden columns, the
+    panel strip's room, Right Arrow on an open node without children."""
+
+    def test_root_children_after_loading_make_it_ready(self):
+        out = self.run_editor(['cmd viewfake.loadthen', 'wait 300', 'print-views'])
+        line = [l for l in out if l.startswith('view=1 ')][0]
+        self.assertIn(' state=ready ', line)
+        self.assertIn(' nodes=7', line)
+
+    def replies(self):
+        return [l for l in self.fake_log() if l.startswith('ok ') or l.startswith('error ')]
+
+    def test_node_bytes_count_replacements_and_stop_at_16_mb(self):
+        self.run_editor(['cmd viewfake.fatset', 'wait 1000', 'wait 1000', 'cmd viewfake.fatrelist', 'wait 1000',
+                         'wait 500', 'print-views'])
+        last = self.replies()[-9:]
+        self.assertEqual([l.split(' ')[0] for l in last[:7]], ['ok'] * 5 + ['error'] * 2, last)
+        self.assertTrue(all(' toobig ' in l for l in last[5:7]), last)
+        self.assertEqual([l.split(' ')[0] for l in last[7:]], ['ok', 'ok'], last)
+
+    def test_hiding_a_column_gives_the_keyboard_back(self):
+        out = self.run_editor(['cmd toggle_side', 'wait 100', 'view-focus logs', 'print-state', 'cmd toggle_side',
+                               'print-state', 'view-focus todo', 'print-state', 'cmd toggle_sidebar', 'wait 50',
+                               'print-state'])
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('focus=10', states[0])
+        self.assertNotIn('focus=10', states[1])
+        self.assertIn('focus=10', states[2])
+        self.assertNotIn('focus=10', states[3])
+
+    def test_view_tabs_keep_their_room_beside_many_terminals(self):
+        out = self.run_editor([*['cmd new_terminal'] * 12, 'wait 300', 'view-show items', 'wait 200',
+                               'print-panel-tabs'])
+        self.assertTrue(any(l.startswith('terminals=12 ') for l in out), out)
+        tab = [l for l in out if l.startswith('tab rhun-tests/viewfake.items ')]
+        self.assertEqual(len(tab), 1, out)
+        x = int(tab[0].split(' x=')[1].split(' ')[0])
+        w = int(tab[0].split(' w=')[1])
+        self.assertLessEqual(x + w, 1000)
+
+    def test_an_instance_started_in_a_focused_place_hears_it(self):
+        self.env['VIEWFAKE_DELAY'] = '0.8'
+        self.run_editor(['view-show items', 'wait 100', 'wait-ext viewfake running', 'wait 300', 'wait 200',
+                         'print-views'], start=False)
+        log = self.fake_log()
+        self.assertIn('0 view 2 open tree panel items', log)
+        self.assertIn('0 view 2 focus 1', log)
+
+    def test_right_on_an_open_node_without_children_stays(self):
+        out = self.run_editor(['cmd viewfake.clearmain', 'wait 200', 'view-focus todo', 'key Down', 'key Right',
+                               'print-view todo'])
+        rows = self.rows(out)
+        self.assertIn(' cur ', rows[0])
+        self.assertIn('id=f:main.rs', rows[0])
+        self.assertNotIn(' cur ', rows[1])
+
+
 if __name__ == '__main__':
     unittest.main()

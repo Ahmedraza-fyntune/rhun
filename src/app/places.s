@@ -295,6 +295,10 @@ FN place_key
     test rax, rax
     jz 7f
     mov rbx, rax
+    mov rdi, rbx
+    call column_shown
+    test eax, eax
+    jz 71f
     mov rax, [rbx + PL_ops]
     mov rax, [rax + PLO_key]
     test rax, rax
@@ -311,8 +315,27 @@ FN place_key
 7:  mov dword ptr [rip + g_focus], FOCUS_EDITOR
     mov eax, 1
     EPILOGUE
+71: mov dword ptr [rip + g_focus], FOCUS_EDITOR   # its column was hidden: the editor's again
 8:  xor eax, eax
 9:  EPILOGUE
+
+# column_shown(PL*) -> eax 0 when the column or panel holding the item is hidden (a tab or a hidden
+#   item of rhun's own: 1)
+column_shown:
+    mov eax, 1
+    mov ecx, [rdi + PL_place]
+    cmp ecx, PLACE_SIDEBAR
+    jne 1f
+    mov eax, [rip + g_show_side]
+    ret
+1:  cmp ecx, PLACE_PANEL
+    jne 2f
+    mov eax, [rip + g_term_open]
+    ret
+2:  cmp ecx, PLACE_SIDE
+    jne 3f
+    mov eax, [rip + g_show_agents]
+3:  ret
 
 # place_call_focus(id, on): its focus callback
 place_call_focus:
@@ -335,7 +358,18 @@ place_call_focus:
 #   for the items that came on or went off screen
 FN places_frame_end
     PROLOGUE
-    call place_focused
+    call place_focused          # an item whose column went away gives the keyboard back
+    mov edi, eax
+    call place_at
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call column_shown
+    test eax, eax
+    jnz 1f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov dword ptr [rip + g_dirty], 1
+1:  call place_focused
     mov ebx, eax
     cmp ebx, [rip + last_focus]
     je 3f
@@ -855,7 +889,17 @@ FN places_panel_tabs
     lea rsi, [rip + pt_order]
     call place_list
     mov [rsp + 20], eax
-    test eax, eax
+    xor ecx, ecx                # no tab drawn yet (tests: place_dump's tab lines)
+91: cmp ecx, eax
+    jae 92f
+    lea rdx, [rip + pt_order]
+    mov edx, [rdx + rcx*4]
+    imul edx, edx, PL_SIZE
+    lea r8, [rip + g_places]
+    mov dword ptr [r8 + rdx + PL_pad], 0
+    inc ecx
+    jmp 91b
+92: test eax, eax
     jz .Lpt_ret
     cmp dword ptr [rsp + 16], 0
     je 1f
@@ -887,6 +931,10 @@ FN places_panel_tabs
     add eax, r14d
     cmp eax, [rsp + 8]
     jg .Lpt_ret                 # no room: not cut off with its close button out of reach
+    mov eax, [rsp]
+    inc eax
+    mov [r13 + PL_pad], eax     # where it was drawn (tests)
+    mov [r13 + PL_hy], r14d
     mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, r14d
@@ -1304,6 +1352,16 @@ FN cmd_toggle_side
     je 1f
     mov dword ptr [rip + g_show_agents], 0
     mov dword ptr [rip + g_dirty], 1
+    cmp dword ptr [rip + g_focus], FOCUS_VIEW   # a hidden view gives the keyboard back
+    jne 9f
+    call place_focused
+    mov edi, eax
+    call place_at
+    test rax, rax
+    jz 9f
+    cmp dword ptr [rax + PL_place], PLACE_SIDE
+    jne 9f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
     ret
 1:  mov edi, [rip + g_side_cur]
     call place_at
@@ -1443,11 +1501,42 @@ FN place_dump
 6:  mov rdi, rbx
     mov esi, 10
     call sb_push_byte
+    cmp r15d, PLACE_PANEL       # a panel tab drawn in the strip: "tab NAME x=X w=W"
+    jne 8f
+    cmp dword ptr [rip + g_term_open], 0
+    je 8f
+    cmp dword ptr [r13 + PL_pad], 0
+    je 8f
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_tab]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [r13 + PL_name]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_x]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r13 + PL_pad]
+    dec esi
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_w]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r13 + PL_hy]
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
 8:  inc r12d
     jmp 1b
 9:  EPILOGUE
 
 .section .rodata
+.Ld_tab: .asciz "tab "
+.Ld_x: .asciz " x="
+.Ld_w: .asciz " w="
 .Lbusy: .asciz "\342\200\246"
 .Lagents: .asciz "Agents"
 .Ld_title: .asciz " title="

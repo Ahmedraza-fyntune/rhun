@@ -10,7 +10,9 @@ selected node), badpatch (a patch whose third op names a missing node), big (100
 expand (expands f:main.rs), reveal (vreveal t:lib.rs:1 select,focus after collapsing lib.rs),
 multi (items becomes multi-select), delpin (removes the pin action), log (lines of every severity
 with SGR colors to the logs view), logmany (12000 lines), logclear, tab (a tree in an editor tab
-of its own), untab (unview of that tab). VIEWFAKE_NOLOG: view-log is not asked for.
+of its own), untab (unview of that tab), clearmain (f:main.rs keeps no children), loadthen (state loading, then the root's children again),
+fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
+view-log is not asked for. VIEWFAKE_DELAY: seconds before hello.
 
 The items view (panel) has a lazy node "a" (its children come with vkids: VIEWFAKE_LAZY answer,
 error, late (after 1 s), or never) and pages of root children (vmore adds two, three pages).
@@ -191,6 +193,23 @@ def on_command(name):
         patch(views['logs'], [rec('log', '12000', lines)])
     elif name == 'logclear' and views.get('logs'):
         patch(views['logs'], [rec('clear', '', b'')])
+    elif name == 'clearmain' and todo:
+        patch(todo, [kids('f:main.rs', [])])  # expanded, with no children
+    elif name == 'loadthen' and todo:
+        patch(todo, [rec('state', 'loading 0')])
+        patch(todo, [kids('', [node(f'f:{n}', n, 'open') for n in ('main.rs', 'lib.rs', 'README.md')])])
+    elif name == 'fatset' and todo:
+        # seven nodes given 3,000,000 bytes each, one patch apiece: past 16 MB they are refused
+        for nid in ('f:main.rs', 'f:lib.rs', 'f:README.md', 't:main.rs:1', 't:main.rs:2', 't:lib.rs:1',
+                    't:README.md:1'):
+            kind = 'open' if nid.startswith('f:') else 'leaf'
+            patch(todo, [rec('set', '', node(nid, nid, kind, rec('blob', '', b'x' * 3000000)))])
+    elif name == 'fatrelist' and todo:
+        # after fatset (15 MB kept): the root's three children listed again with 1,200,000 bytes
+        # each replace their 3 MB, then 3,000,000 more on another node still fit
+        top = [node(f'f:{n}', n, 'open', rec('blob', '', b'y' * 1200000)) for n in ('main.rs', 'lib.rs', 'README.md')]
+        patch(todo, [kids('', top)])
+        patch(todo, [rec('set', '', node('t:lib.rs:1', 'one', 'leaf', rec('blob', '', b'z' * 3000000)))])
     elif name == 'tab':
         def opened_tab(reply):
             pass
@@ -201,6 +220,7 @@ def on_command(name):
 
 
 def main():
+    time.sleep(float(os.environ.get('VIEWFAKE_DELAY', '0')))     # a slow start
     features = '' if MODE == 'nofeature' else ' view-tree'
     if features and not os.environ.get('VIEWFAKE_NOLOG'):
         features += ' view-log'

@@ -1768,6 +1768,10 @@ FN tree_key
     jae .Ltk_yes
     cmp word ptr [rcx + rsi*8 + RW_kind], RWK_NODE
     jne .Ltk_yes
+    mov eax, [rcx + rsi*8 + RW_node]    # its own child, not the next sibling (no children)
+    NDP rax, rbx, rax
+    cmp [rax + ND_parent], r8d
+    jne .Ltk_yes
     jmp .Ltk_move
 8:  cmp r12d, KEY_RETURN
     je 81f
