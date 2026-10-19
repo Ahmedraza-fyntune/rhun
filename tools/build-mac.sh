@@ -1,7 +1,7 @@
 #!/bin/sh
 # macOS on Apple silicon: tools/arm64.py translates the x86-64 sources to AArch64, src/mac holds
 # the native parts (entry, Linux system calls on libSystem, the AppKit window)
-# usage: tools/build-mac.sh [release|test]
+# usage: tools/build-mac.sh [release|test]   (RHUN_JOBS=N caps parallel translations; default: all CPUs)
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p build/obj build/a64
@@ -41,7 +41,7 @@ for s in $x86 build/assets.s; do
     case $s in tests/*) ;; *) objs="$objs $o" ;; esac
 done
 if [ -n "$todo" ]; then
-    printf '%s\n' $todo | xargs -P "$(sysctl -n hw.ncpu)" -n 1 sh -c '
+    printf '%s\n' $todo | xargs -P "${RHUN_JOBS:-$(sysctl -n hw.ncpu)}" -n 1 sh -c '
         n=$(echo "$1" | sed "s|/|_|g; s|\.s$||")
         python3 tools/arm64.py -I src -D MACOS "$1" "build/a64/$n.s" &&
         as '"$ASFLAGS"' -o "build/obj/$n.o" "build/a64/$n.s"' sh
