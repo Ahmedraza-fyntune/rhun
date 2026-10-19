@@ -1072,9 +1072,73 @@ FN cmd_test_coverage_toggle
     mov dword ptr [rip + g_dirty], 1
     ret
 
-# cmd_test_next_failure: the next failure's place in the editor (testgutter.s)
+# cmd_test_next_failure: the place of the next failed item's first message with one, in the
+#   controllers' item order after the last one gone to (round, from the first again)
+.bss
+.p2align 3
+nf_ctrl: .quad 0
+nf_item: .quad 0
+.text
 FN cmd_test_next_failure
-    ret
+    PROLOGUE
+    xor r15d, r15d              # 0: after the last one; 1: from the start again
+1:  lea rbx, [rip + g_ts_ctrls]
+    xor r12d, r12d
+2:  cmp qword ptr [rbx + TSC_ext], 0
+    je 6f
+    mov r13d, 1
+3:  cmp r13, [rbx + TSC_items + VEC_len]
+    jae 6f
+    test r15d, r15d
+    jnz 31f
+    # past the last one gone to
+    cmp rbx, [rip + nf_ctrl]
+    jb 5f
+    ja 31f
+    cmp r13, [rip + nf_item]
+    jbe 5f
+31: mov rdi, rbx
+    mov rsi, r13
+    call testmodel_item
+    cmp qword ptr [rax + TSI_id], 0
+    je 5f
+    mov ecx, [rax + TSI_own]
+    cmp ecx, TSS_FAILED
+    je 4f
+    cmp ecx, TSS_ERRORED
+    jne 5f
+4:  mov rdi, rbx
+    mov rsi, r13
+    call testmodel_result
+    test rax, rax
+    jz 5f
+    mov rax, [rax + TSE_msgs + SB_ptr]
+    test rax, rax
+    jz 5f
+    cmp dword ptr [rax + TSM_l1], 0
+    je 5f
+    mov [rip + nf_ctrl], rbx
+    mov [rip + nf_item], r13
+    mov rdi, rbx
+    mov rsi, r13
+    call testview_select
+    mov rdi, rbx
+    mov rsi, r13
+    lea rdx, [rip + .La_failure]
+    mov ecx, 7
+    call testview_action
+    EPILOGUE
+5:  inc r13
+    jmp 3b
+6:  add rbx, TSC_SIZE
+    inc r12d
+    cmp r12d, TS_CTRL_MAX
+    jb 2b
+    test r15d, r15d
+    jnz 9f
+    mov r15d, 1
+    jmp 1b
+9:  EPILOGUE
 
 # ---------------- the Testing section ----------------
 # A sidebar section (places.s) drawing the shared tree widget (rtree.s). The tree is a mirror of the

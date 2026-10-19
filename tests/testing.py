@@ -229,6 +229,9 @@ class Testing(unittest.TestCase):
         states = [l for l in out if l.startswith('tabs=3 ')]
         self.assertIn(' line=8 col=5 ', states[0])       # 8:2, after a tab four columns wide
         self.assertIn(' line=11 col=1 ', states[1])
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'key ctrl+Home', 'cmd test_next_failure',
+                               'print-state'])
+        self.assertIn(' line=8 col=5 ', [l for l in out if l.startswith('tabs=')][-1])
 
     def test_coverage_run(self):
         f = (self.proj / 'a_test.go').as_posix()
