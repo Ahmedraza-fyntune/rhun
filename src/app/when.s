@@ -1154,6 +1154,10 @@ ev_in:
 8:  xor eax, eax
     EPILOGUE
 
+# FN when_number(ptr, len) -> rax a signed decimal integer, edx 1 when the whole text is one
+FN when_number
+    jmp ev_int
+
 # ev_int(ptr, len) -> rax a signed decimal integer, edx 1 when the whole value is one that fits
 #   in 64 bits (leading zeros allowed)
 ev_int:

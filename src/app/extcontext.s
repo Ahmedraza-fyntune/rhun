@@ -491,6 +491,8 @@ FN contrib_ext_gone
     call xp_clear
     mov rdi, rbx
     call keys_manifest_clear
+    mov rdi, rbx
+    call menu_ext_gone
     EPILOGUE
 
 # ---------------- problems: manifest entries that were dropped, shown on its page ----------------
@@ -650,7 +652,11 @@ FN contrib_manifest_kv
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov rdi, r12
+    call menu_manifest_kv       # [menu.LOCATION], [submenu.NAME] (menu.s)
+    test eax, eax
+    jz 0f
+    EPILOGUE
+0:  mov rdi, r12
     lea rsi, [rip + .Ls_command_options]
     call ini_sec_is
     test eax, eax

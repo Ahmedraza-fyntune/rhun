@@ -170,6 +170,7 @@ python3 tests/when.py || fail=1
 python3 tests/ext-command-args.py || fail=1
 python3 tests/ext-run-command.py || fail=1
 python3 tests/keys-chords.py || fail=1
+python3 tests/ext-menus.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1

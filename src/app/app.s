@@ -4569,6 +4569,7 @@ tab_drag_step:
 # tab_menu_open(i): the menu of tab i, for a right click on it: pin or unpin, close, close all
 tab_menu_open:
     PROLOGUE
+    mov rbx, rdi
     call tab_at
     mov rcx, [rax + TAB_kind]
     mov [rip + menu_tab_kind], rcx
@@ -4578,9 +4579,8 @@ tab_menu_open:
     test dword ptr [rax + TAB_flags], TF_PIN
     jz 1f
     lea rdi, [rip + tab_menu_pinned]
-1:  mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+1:  mov rsi, rbx
+    call menu_open_tab          # with the extensions' items (menu.s)
     mov dword ptr [rip + g_menu_keys], 1
     EPILOGUE
 
