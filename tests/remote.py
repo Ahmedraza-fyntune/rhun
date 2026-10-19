@@ -226,6 +226,19 @@ class Remote(unittest.TestCase):
         self.assertIn('fresh.txt', out.split('from the host\n\n<eod>')[1])
         self.assertIn('Claude: Status bar work', out)
 
+    def test_journaled_delete_and_undo(self):
+        """The explorer's Delete is a workspace edit: the host's file moves into the local journal and
+        Undo Last Multi-File Edit puts it back on the host."""
+        docker('exec', HOST, 'sh', '-c', 'cd /root/proj && git checkout -q -- . && rm -f fresh.txt')
+        lines = ['wait-remote 90', 'wait 300', 'click 60 122 right', 'menu-pick Delete', 'print-dialog',
+                 'dialog yes', 'wait 500', 'print-explorer', 'cmd undo_workspace_edit', 'wait 500', 'print-tx',
+                 'print-explorer']
+        out = self.run_script('docker:' + HOST, '/root/proj', lines, env_extra={'RHUN_REMOTE_STRICT': '1'})
+        self.assertNotIn('RHUN_REMOTE_STRICT', out)
+        self.assertIn('dialog=Delete a.txt?', out)
+        self.assertIn('state=undone', out)
+        self.assertEqual(self.host_read('/root/proj/a.txt'), 'hello\nworld\n')
+
     def test_unsaved_text_survives_a_drop(self):
         docker('exec', HOST, 'sh', '-c', 'cd /root/proj && git checkout -q -- .')
         # the text stays, a save while the connection is down is made once it is back

@@ -2247,7 +2247,7 @@ rm_free_chan:
 #   errfd: -1 error output to /dev/null, -2 merged with the output, else a descriptor that receives
 #   it (a log; kept open by the channel until the program ends). Only envp's entries that are not the
 #   window's own environment go along: the host has its login environment. input (pipes): bytes
-#   for the program's input, which then ends.
+#   for the program's input (any length), which then ends.
 FN remote_spawn
     PROLOGUE 64
     mov [rsp], rdi              # argv
@@ -2428,13 +2428,11 @@ FN remote_spawn
     call parse_u64
     mov [r13 + CH_pid], eax
     # the input, then its end
+    # (all of it at once: the agent keeps what the program has not read; the credit comes back
+    # as it reads)
     mov rdx, [rsp + 40]
     test rdx, rdx
     jz 8f
-    cmp rdx, MUX_WINDOW
-    jbe 72f
-    mov edx, MUX_WINDOW
-72: mov [rsp + 40], rdx
     sub [r13 + CH_credit], rdx
     lea rdi, [rip + rm_line]
     call sb_clear

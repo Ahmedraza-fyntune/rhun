@@ -19,10 +19,140 @@ vfs_statbuf: .zero 144          # the last vfs_stat / vfs_lstat (Linux struct st
 vfs_tmp: .zero 4200
 vfs_cache: .zero SB_SIZE        # vfs_stats_prefetch: "PATH\0" + "o" stat (144) or "e" errno (4), each
 vfs_cache_on: .long 0
+vfs_roots_done: .byte 0
+vfs_root_state: .zero 4096      # rhun's own folders: here even in a remote window
+vfs_root_config: .zero 4096
 .globl g_remote_strict
 g_remote_strict: .long 0        # RHUN_REMOTE_STRICT=1 in a remote window (tests)
 
 .text
+
+# ---------------- which side ----------------
+
+# vfs_remote_path(rdi path) -> eax 0 when the path is handled here: the window is not remote, or the
+#   path is inside rhun's own state or config folder (the workspace edits' journal); 1 when it is the
+#   host's. Keeps every other register
+FN vfs_remote_path
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    xor eax, eax
+    cmp dword ptr [rip + g_remote], 0
+    je 9f
+    mov eax, 1
+    test rdi, rdi
+    jz 9f
+    push rdi
+    call vfs_local_roots
+    pop rdi
+    lea rsi, [rip + vfs_root_state]
+    call vfs_under
+    test eax, eax
+    jnz 8f
+    lea rsi, [rip + vfs_root_config]
+    call vfs_under
+    test eax, eax
+    jnz 8f
+    mov eax, 1
+    jmp 9f
+8:  xor eax, eax
+9:  pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    ret
+
+# vfs_remote_paths2(rdi, rsi) -> as vfs_remote_path for two paths; when one is here and the other on
+#   the host, rax -EXDEV and a return from the caller is the caller's to make (vfs_rename)
+vfs_remote_paths2:
+    call vfs_remote_path
+    xchg rdi, rsi
+    push rax
+    call vfs_remote_path
+    pop rcx
+    xchg rdi, rsi
+    cmp eax, ecx
+    jne 2f
+    ret                         # both on one side: eax as vfs_remote_path's
+2:  add rsp, 8                  # mixed: the caller returns EXDEV
+    mov rax, -18
+    ret
+
+# vfs_under(rdi path, rsi root) -> eax 1 when path is root or inside it (root empty: no)
+vfs_under:
+    xor ecx, ecx
+    cmp byte ptr [rsi], 0
+    je 8f
+1:  mov al, [rsi + rcx]
+    test al, al
+    jz 2f
+    cmp al, [rdi + rcx]
+    jne 8f
+    inc rcx
+    jmp 1b
+2:  mov al, [rdi + rcx]
+    test al, al
+    jz 9f
+    cmp al, '/'
+    je 9f
+8:  xor eax, eax
+    ret
+9:  mov eax, 1
+    ret
+
+# vfs_local_roots(): rhun's own folders, found once
+vfs_local_roots:
+    cmp byte ptr [rip + vfs_roots_done], 0
+    jne 9f
+    push rbx
+    mov byte ptr [rip + vfs_roots_done], 1
+    lea rdi, [rip + vfs_acc]
+    call session_state_dir
+    test eax, eax
+    jz 1f
+    mov rsi, [rip + vfs_acc + SB_ptr]
+    lea rdi, [rip + vfs_root_state]
+    call vfs_copy_root
+1:  call config_dir
+    mov rsi, rax
+    lea rdi, [rip + vfs_root_config]
+    call vfs_copy_root
+    pop rbx
+9:  ret
+
+# vfs_copy_root(dst 4096, src): src without a trailing slash, or nothing when too long
+vfs_copy_root:
+    push rdi
+    push rsi
+    mov rdi, rsi
+    call strlen
+    pop rsi
+    pop rdi
+    cmp rax, 4000
+    jae 9f
+1:  test rax, rax
+    jz 2f
+    cmp byte ptr [rsi + rax - 1], '/'
+    jne 2f
+    dec rax
+    jmp 1b
+2:  mov rdx, rax
+    push rdi
+    push rdx
+    call memcpy
+    pop rdx
+    pop rdi
+    mov byte ptr [rdi + rdx], 0
+9:  ret
 
 # ---------------- requests ----------------
 
@@ -107,14 +237,16 @@ FN vfs_read_all
 
 # vfs_read_all_extra(path, extra) -> as file_read_all_extra
 FN vfs_read_all_extra
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_read_all_extra
     mov rdx, -1
     jmp vfs_read_remote
 
 # vfs_read_limited(path, max) -> as file_read_limited: EFBIG past max, no allocation of it
 FN vfs_read_limited
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_read_limited
     mov rdx, rsi
     xor esi, esi
@@ -198,7 +330,8 @@ FN vfs_read_at
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 5f
     call file_open_read
     test rax, rax
@@ -292,7 +425,8 @@ FN vfs_read_head
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 5f
     call file_open_read
     test rax, rax
@@ -334,7 +468,8 @@ FN vfs_read_head
 # vfs_write_all(path, ptr, len) -> as file_write_all: 0 or -errno. On the host a file replaced keeps
 #   its mode (the agent writes a temporary file and renames it over); a big one goes in parts
 FN vfs_write_all
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_write_all
     PROLOGUE 16
     mov rbx, rdi
@@ -439,6 +574,60 @@ vfs_write_req:
     pop r15
     pop rbx
     ret
+
+# vfs_create_new(path, mode) -> 0 or -errno: an empty file made there, EEXIST when something is there
+FN vfs_create_new
+    call vfs_remote_path
+    test eax, eax
+    jne 1f
+    push rbx
+    mov edx, esi
+    mov esi, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
+    SYS SYS_open
+    test rax, rax
+    js 9f
+    mov edi, eax
+    SYS SYS_close
+    xor eax, eax
+9:  pop rbx
+    ret
+1:  PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov rdi, rbx
+    call strlen
+    mov r14, rax
+    lea rdi, [rip + vfs_line_write]
+    call vfs_line_start
+    mov edi, 2                  # create only
+    call vfs_line_num
+    # the mode as octal digits
+    lea rdi, [rip + vfs_line]
+    mov esi, ' '
+    call sb_push_byte
+    mov eax, r12d
+    shr eax, 6
+    and eax, 7
+    lea esi, [rax + '0']
+    lea rdi, [rip + vfs_line]
+    call sb_push_byte
+    mov eax, r12d
+    shr eax, 3
+    and eax, 7
+    lea esi, [rax + '0']
+    lea rdi, [rip + vfs_line]
+    call sb_push_byte
+    mov eax, r12d
+    and eax, 7
+    lea esi, [rax + '0']
+    lea rdi, [rip + vfs_line]
+    call sb_push_byte
+    mov rdi, r14
+    call vfs_line_num
+    mov rdi, rbx
+    mov rsi, r14
+    call vfs_line_call
+    EPILOGUE
 
 # vfs_cat_tmp(a, b) -> vfs_tmp holding a then b, or 0 when too long
 vfs_cat_tmp:
@@ -596,15 +785,17 @@ FN vfs_stat
     jz 1f
     mov rax, rdx
     ret
-1:  mov eax, 4                  # stat
+1:  mov r10d, 4                 # stat
     lea rsi, [rip + .Lv_stat]
     jmp vfs_stat_common
 FN vfs_lstat
-    mov eax, SYS_lstat
+    mov r10d, SYS_lstat
     lea rsi, [rip + .Lv_lstat]
 vfs_stat_common:
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 1f
+    mov eax, r10d
     lea rsi, [rip + vfs_statbuf]
     XSYS
     ret
@@ -626,7 +817,8 @@ vfs_stat_common:
 
 # vfs_stamp(path) -> as file_stamp: mtime and size mixed (0 when missing), rdx the size, rcx the mtime
 FN vfs_stamp
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_stamp
     sub rsp, 8
     call vfs_stat
@@ -649,7 +841,8 @@ FN vfs_stamp
 
 # vfs_missing(path) -> as file_missing
 FN vfs_missing
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_missing
     sub rsp, 8
     call vfs_lstat
@@ -665,7 +858,8 @@ FN vfs_missing
 
 # vfs_mtime(path) -> as file_mtime (lstat, seconds)
 FN vfs_mtime
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_mtime
     sub rsp, 8
     call vfs_lstat
@@ -679,7 +873,8 @@ FN vfs_mtime
 
 # vfs_mtime_ns(path) -> as file_mtime_ns (lstat)
 FN vfs_mtime_ns
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_mtime_ns
     sub rsp, 8
     call vfs_lstat
@@ -695,7 +890,8 @@ FN vfs_mtime_ns
 
 # vfs_is_dir(path) -> as file_is_dir (follows links)
 FN vfs_is_dir
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_is_dir
     sub rsp, 8
     call vfs_stat
@@ -713,7 +909,8 @@ FN vfs_is_dir
 
 # vfs_type(path) -> as file_type: the S_IFMT bits, 0 when missing (follows links)
 FN vfs_type
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_type
     sub rsp, 8
     call vfs_stat
@@ -728,7 +925,8 @@ FN vfs_type
 
 # vfs_id(path) -> as file_id: rax inode, rdx device
 FN vfs_id
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_id
     sub rsp, 8
     call vfs_stat
@@ -744,7 +942,8 @@ FN vfs_id
 
 # vfs_access(path, mode) -> 0 or -errno, access(2)
 FN vfs_access
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 1f
     SYS SYS_access
     ret
@@ -770,7 +969,8 @@ FN vfs_access
 # vfs_readlink(path, buf, cap) -> as readlink(2): the link's text in buf (not NUL-terminated, cut at
 #   cap), its length, or -errno (-EINVAL when path is no symlink)
 FN vfs_readlink
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 1f
 .ifdef WINDOWS
     jmp win_readlink_one
@@ -843,7 +1043,8 @@ FN vfs_unwatch
 
 # vfs_realpath(path, buf 4096) -> length of the resolved path in buf (NUL-terminated), or -errno
 FN vfs_realpath
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 1f
 .ifdef MACOS
     push rsi
@@ -920,14 +1121,16 @@ FN vfs_realpath
 # vfs_dir_each(path, cb, ctx) -> as dir_each: cb(ctx, name, is_dir) for each entry, folders through
 #   links counting as folders
 FN vfs_dir_each
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je dir_each
     xor ecx, ecx
     jmp vfs_list
 
 # vfs_dir_each_names(path, cb, ctx) -> as dir_each_names
 FN vfs_dir_each_names
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je dir_each_names
     mov ecx, 1
 vfs_list:
@@ -1073,7 +1276,8 @@ FN vfs_grep
 
 # vfs_mkdir(path, mode) -> 0 or -errno
 FN vfs_mkdir
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 1f
     SYS SYS_mkdir
     ret
@@ -1082,7 +1286,8 @@ FN vfs_mkdir
 
 # vfs_mkdir_p(path): the folder and those on the way (as mkdir_p)
 FN vfs_mkdir_p
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je mkdir_p
     mov esi, 1
 vfs_mkdir_req:
@@ -1107,7 +1312,8 @@ vfs_mkdir_req:
 
 # vfs_mkdir_parent(path): the folders a file's path lives in (as mkdir_parent)
 FN vfs_mkdir_parent
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je mkdir_parent
     push rbx
     mov rbx, rdi
@@ -1135,21 +1341,24 @@ FN vfs_mkdir_parent
 
 # vfs_remove_tree(path) -> as file_remove_tree
 FN vfs_remove_tree
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     je file_remove_tree
     mov esi, 1
     jmp vfs_remove_req
 
 # vfs_unlink(path) / vfs_rmdir(path) -> 0 or -errno (the host's remove does either)
 FN vfs_unlink
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 1f
     SYS SYS_unlink
     ret
 1:  xor esi, esi
     jmp vfs_remove_req
 FN vfs_rmdir
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
+    test eax, eax
     jne 1f
     mov eax, 84                 # rmdir
     XSYS
@@ -1178,7 +1387,8 @@ vfs_remove_req:
 # vfs_rename(old, new, flags) -> 0 or -errno; flags 1 refuses an existing destination (on the host
 #   with renameat2; here it looks first)
 FN vfs_rename
-    cmp dword ptr [rip + g_remote], 0
+    call vfs_remote_paths2      # 0: both here; -EXDEV when one is here and one on the host
+    test eax, eax
     jne 1f
     test edx, 1
     jz 2f

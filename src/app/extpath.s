@@ -9,6 +9,17 @@
 .globl ext_realpath             # testing: test-exec's working folder (testexec.s); wsedit: where a
                                 # workspace edit's disk changes may go
 ext_realpath:
+    call vfs_remote_path        # remote hosts: the host resolves its own paths (vfs.s)
+    test eax, eax
+    jz 1f
+    sub rsp, 8
+    call vfs_realpath
+    add rsp, 8
+    test rax, rax
+    setg al
+    movzx eax, al
+    ret
+1:
 .ifdef MACOS
     SYS SYS_realpath
     test rax, rax
