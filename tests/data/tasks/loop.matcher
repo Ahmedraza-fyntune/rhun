@@ -1,0 +1,5 @@
+severity warning
+columns chars
+1 In {file}:
+2  line {line}, col {col}: {message}
+loop

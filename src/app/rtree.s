@@ -214,9 +214,7 @@ map_insert:
     jbe 1f
     mov rdi, rbx
     call map_grow
-    # the new table holds every live node, this one too (node_alloc made it live): inserting it
-    # again would leave a second entry that outlives its release (found by the debugger's view)
-    EPILOGUE
+    EPILOGUE                    # the node is live: map_grow put it in (a second entry would outlive it)
 1:  NDP r13, rbx, r12
     mov rdi, [r13 + ND_blob]
     mov esi, [r13 + ND_idlen]
