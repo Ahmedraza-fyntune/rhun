@@ -3874,7 +3874,7 @@ verbs:
     .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
     .quad .Lv_unpropose, h_unpropose, 0
     # editor presentation (deco.s)
-    .quad .Lpv_decoration_type, h_decoration_type, DT_BODY_MAX
+    .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"

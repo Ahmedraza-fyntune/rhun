@@ -171,6 +171,7 @@ python3 tests/ext-commands.py || fail=1
 python3 tests/when.py || fail=1
 python3 tests/ext-command-args.py || fail=1
 # editor presentation
+python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 check edtape build/edtape_test
 python3 tests/presentation.py || fail=1
 python3 tests/ext-snapshots.py || fail=1

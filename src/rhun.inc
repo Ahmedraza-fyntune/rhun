@@ -2791,40 +2791,40 @@ ENDSTRUCT DCS_SIZE
 .equ DCSK_SLOT, 2
 .equ DCSK_TEXT, 3                # strike COLOR "-": the text's color
 STRUCT
-F DT_owner, 8           # EXT*, 0 for a free slot
-F DT_name, 48           # cstr, 1-40 bytes of [a-z0-9_-]
-F DT_flags, 4           # DTF_*
-F DT_prio, 4            # 0-100
-F DT_bwidth, 4          # border width 1-3
-F DT_ustyle, 4          # US_*
-F DT_gshape, 4          # GS_* in the gutter's left lane
-F DT_grow, 4            # DG_*
-F DT_width, 4           # before/after text cells, 0 natural
-F DT_seq, 4             # registration order, for ties
-F DT_color, 2*DCS_SIZE
-F DT_bg, 2*DCS_SIZE
-F DT_linebg, 2*DCS_SIZE
-F DT_border, 2*DCS_SIZE
-F DT_under, 2*DCS_SIZE
-F DT_strike, 2*DCS_SIZE
-F DT_gutter, 2*DCS_SIZE
-F DT_scroll, 2*DCS_SIZE
-F DT_before, 2*DCS_SIZE
-F DT_beforebg, 2*DCS_SIZE
-F DT_after, 2*DCS_SIZE
-F DT_afterbg, 2*DCS_SIZE
-ENDSTRUCT DT_SIZE
-.equ DTF_COLOR, 1
-.equ DTF_BG, 2
-.equ DTF_LINEBG, 4
-.equ DTF_BORDER, 8
-.equ DTF_UNDER, 16
-.equ DTF_STRIKE, 32
-.equ DTF_FADED, 64
-.equ DTF_BEFORE, 128
-.equ DTF_AFTER, 256
-.equ DTF_GUTTER, 512
-.equ DTF_SCROLL, 1024
+F DTY_owner, 8           # EXT*, 0 for a free slot
+F DTY_name, 48           # cstr, 1-40 bytes of [a-z0-9_-]
+F DTY_flags, 4           # DTYF_*
+F DTY_prio, 4            # 0-100
+F DTY_bwidth, 4          # border width 1-3
+F DTY_ustyle, 4          # US_*
+F DTY_gshape, 4          # GS_* in the gutter's left lane
+F DTY_grow, 4            # DG_*
+F DTY_width, 4           # before/after text cells, 0 natural
+F DTY_seq, 4             # registration order, for ties
+F DTY_color, 2*DCS_SIZE
+F DTY_bg, 2*DCS_SIZE
+F DTY_linebg, 2*DCS_SIZE
+F DTY_border, 2*DCS_SIZE
+F DTY_under, 2*DCS_SIZE
+F DTY_strike, 2*DCS_SIZE
+F DTY_gutter, 2*DCS_SIZE
+F DTY_scroll, 2*DCS_SIZE
+F DTY_before, 2*DCS_SIZE
+F DTY_beforebg, 2*DCS_SIZE
+F DTY_after, 2*DCS_SIZE
+F DTY_afterbg, 2*DCS_SIZE
+ENDSTRUCT DTY_SIZE
+.equ DTYF_COLOR, 1
+.equ DTYF_BG, 2
+.equ DTYF_LINEBG, 4
+.equ DTYF_BORDER, 8
+.equ DTYF_UNDER, 16
+.equ DTYF_STRIKE, 32
+.equ DTYF_FADED, 64
+.equ DTYF_BEFORE, 128
+.equ DTYF_AFTER, 256
+.equ DTYF_GUTTER, 512
+.equ DTYF_SCROLL, 1024
 .equ US_SOLID, 1
 .equ US_DOUBLE, 2
 .equ US_DOTTED, 3
@@ -2887,9 +2887,9 @@ ENDSTRUCT GLE_SIZE
 .equ GK_PRIO_BREAKPOINT, 80
 .equ GK_PRIO_DEBUG_LINE, 90
 # caps
-.equ DT_MAX_EXT, 64             # decoration types per extension
-.equ DT_MAX, 512                # in all
-.equ DT_BODY_MAX, 4096
+.equ DTY_MAX_EXT, 64             # decoration types per extension
+.equ DTY_MAX, 512                # in all
+.equ DTY_BODY_MAX, 4096
 .equ DECO_BODY_MAX, 4194304     # a decorate body
 .equ DECO_MAX_MSG, 20000        # records per message, and per extension and document
 .equ DECO_MAX_DOC, 50000        # per document in all

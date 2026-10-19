@@ -84,14 +84,14 @@ dt_find:
     xor r14d, r14d
 1:  cmp r14, [rip + g_dtypes + VEC_len]
     jae 8f
-    imul r15, r14, DT_SIZE
+    imul r15, r14, DTY_SIZE
     add r15, [rip + g_dtypes + VEC_ptr]
     inc r14
-    cmp [r15 + DT_owner], rbx
+    cmp [r15 + DTY_owner], rbx
     jne 1b
     mov rdi, r12
     mov rsi, r13
-    lea rdx, [r15 + DT_name]
+    lea rdx, [r15 + DTY_name]
     call str_eq_cstr
     test eax, eax
     jz 1b
@@ -122,10 +122,10 @@ FN h_decoration_type
     # the style into a scratch type first: a bad line leaves the old one as it was
     lea rdi, [rip + dt_scratch]
     xor esi, esi
-    mov edx, DT_SIZE
+    mov edx, DTY_SIZE
     call memset
-    mov dword ptr [rip + dt_scratch + DT_prio], 50
-    mov dword ptr [rip + dt_scratch + DT_bwidth], 1
+    mov dword ptr [rip + dt_scratch + DTY_prio], 50
+    mov dword ptr [rip + dt_scratch + DTY_bwidth], 1
     call xp_body
     mov rdi, rax
     mov rsi, rdx
@@ -144,52 +144,52 @@ FN h_decoration_type
     xor ecx, ecx
 1:  cmp rcx, [rip + g_dtypes + VEC_len]
     jae 2f
-    imul rax, rcx, DT_SIZE
+    imul rax, rcx, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
     inc rcx
-    cmp qword ptr [rax + DT_owner], 0
+    cmp qword ptr [rax + DTY_owner], 0
     je 1b
     inc r15d
-    cmp [rax + DT_owner], rbx
+    cmp [rax + DTY_owner], rbx
     jne 1b
     inc r14d
     jmp 1b
-2:  cmp r14d, DT_MAX_EXT
+2:  cmp r14d, DTY_MAX_EXT
     jae .Lht_toobig
-    cmp r15d, DT_MAX
+    cmp r15d, DTY_MAX
     jae .Lht_toobig
     xor ecx, ecx
 3:  cmp rcx, [rip + g_dtypes + VEC_len]
     jae 4f
-    imul rax, rcx, DT_SIZE
+    imul rax, rcx, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
     inc rcx
-    cmp qword ptr [rax + DT_owner], 0
+    cmp qword ptr [rax + DTY_owner], 0
     je 5f
     jmp 3b
 4:  lea rdi, [rip + g_dtypes]
-    mov esi, DT_SIZE
+    mov esi, DTY_SIZE
     call vec_push
 5:  mov r14, rax
     inc dword ptr [rip + dt_seq]
     mov eax, [rip + dt_seq]
-    mov [rip + dt_scratch + DT_seq], eax
+    mov [rip + dt_scratch + DTY_seq], eax
     jmp .Lht_store
 .Lht_replace:
     mov r14, rax
-    mov eax, [r14 + DT_seq]
-    mov [rip + dt_scratch + DT_seq], eax
+    mov eax, [r14 + DTY_seq]
+    mov [rip + dt_scratch + DTY_seq], eax
 .Lht_store:
     mov rdi, r14
     lea rsi, [rip + dt_scratch]
-    mov edx, DT_SIZE
+    mov edx, DTY_SIZE
     call memcpy
-    mov [r14 + DT_owner], rbx
-    lea rdi, [r14 + DT_name]
+    mov [r14 + DTY_owner], rbx
+    lea rdi, [r14 + DTY_name]
     mov rsi, r12
     mov rdx, r13
     call memcpy
-    mov byte ptr [r14 + DT_name + r13], 0
+    mov byte ptr [r14 + DTY_name + r13], 0
     inc qword ptr [rip + g_deco_gen]
     mov dword ptr [rip + g_dirty], 1
     call xp_cur_id
@@ -337,20 +337,20 @@ key_index:
 
 # key parsers: read the rest of the line (r12, r13) into dt_scratch -> eax 1, or 0
 k_color:
-    mov r14d, DTF_COLOR
-    lea r15, [rip + dt_scratch + DT_color]
+    mov r14d, DTYF_COLOR
+    lea r15, [rip + dt_scratch + DTY_color]
     jmp k_one_color
 k_background:
-    mov r14d, DTF_BG
-    lea r15, [rip + dt_scratch + DT_bg]
+    mov r14d, DTYF_BG
+    lea r15, [rip + dt_scratch + DTY_bg]
     jmp k_one_color
 k_linebg:
-    mov r14d, DTF_LINEBG
-    lea r15, [rip + dt_scratch + DT_linebg]
+    mov r14d, DTYF_LINEBG
+    lea r15, [rip + dt_scratch + DTY_linebg]
     jmp k_one_color
 k_scrollbar:
-    mov r14d, DTF_SCROLL
-    lea r15, [rip + dt_scratch + DT_scroll]
+    mov r14d, DTYF_SCROLL
+    lea r15, [rip + dt_scratch + DTY_scroll]
 k_one_color:
     push r14
     push r15
@@ -364,7 +364,7 @@ k_one_color:
     call color_parse
     test eax, eax
     jz 9f
-    or [rip + dt_scratch + DT_flags], r14d
+    or [rip + dt_scratch + DTY_flags], r14d
     mov eax, 1
 9:  ret
 k_border:
@@ -376,9 +376,9 @@ k_border:
     jl 8f
     cmp eax, 3
     jg 8f
-    mov [rip + dt_scratch + DT_bwidth], eax
-    mov r14d, DTF_BORDER
-    lea r15, [rip + dt_scratch + DT_border]
+    mov [rip + dt_scratch + DTY_bwidth], eax
+    mov r14d, DTYF_BORDER
+    lea r15, [rip + dt_scratch + DTY_border]
     jmp k_one_color
 8:  xor eax, eax
     ret
@@ -390,9 +390,9 @@ k_underline:
     call word_index
     test eax, eax
     jle 8f
-    mov [rip + dt_scratch + DT_ustyle], eax
-    mov r14d, DTF_UNDER
-    lea r15, [rip + dt_scratch + DT_under]
+    mov [rip + dt_scratch + DTY_ustyle], eax
+    mov r14d, DTYF_UNDER
+    lea r15, [rip + dt_scratch + DTY_under]
     jmp k_one_color
 8:  xor eax, eax
     ret
@@ -400,25 +400,25 @@ k_strike:
     call tp_word
     mov rdi, rax
     mov rsi, rdx
-    lea rdx, [rip + dt_scratch + DT_strike]
+    lea rdx, [rip + dt_scratch + DTY_strike]
     mov ecx, 1                  # "-": the text's color
     call color_parse
     test eax, eax
     jz 9f
-    or dword ptr [rip + dt_scratch + DT_flags], DTF_STRIKE
+    or dword ptr [rip + dt_scratch + DTY_flags], DTYF_STRIKE
     mov eax, 1
 9:  ret
 k_faded:
-    or dword ptr [rip + dt_scratch + DT_flags], DTF_FADED
+    or dword ptr [rip + dt_scratch + DTY_flags], DTYF_FADED
     mov eax, 1
     ret
 k_before:
-    mov r14d, DTF_BEFORE
-    lea r15, [rip + dt_scratch + DT_before]
+    mov r14d, DTYF_BEFORE
+    lea r15, [rip + dt_scratch + DTY_before]
     jmp k_two_colors
 k_after:
-    mov r14d, DTF_AFTER
-    lea r15, [rip + dt_scratch + DT_after]
+    mov r14d, DTYF_AFTER
+    lea r15, [rip + dt_scratch + DTY_after]
 k_two_colors:
     # COLOR BACKGROUND (- for none)
     push r14
@@ -435,14 +435,14 @@ k_two_colors:
     mov rdi, rax
     mov rsi, rdx
     mov rdx, [rsp]
-    add rdx, 2 * DCS_SIZE        # DT_beforebg follows DT_before, DT_afterbg DT_after
+    add rdx, 2 * DCS_SIZE        # DTY_beforebg follows DTY_before, DTY_afterbg DTY_after
     mov ecx, 2                  # "-": none
     call color_parse
     test eax, eax
     jz 8f
     pop r15
     pop r14
-    or [rip + dt_scratch + DT_flags], r14d
+    or [rip + dt_scratch + DTY_flags], r14d
     mov eax, 1
     ret
 8:  pop r15
@@ -458,7 +458,7 @@ k_width:
     js 8f
     cmp eax, 200
     jg 8f
-    mov [rip + dt_scratch + DT_width], eax
+    mov [rip + dt_scratch + DTY_width], eax
     mov eax, 1
     ret
 8:  xor eax, eax
@@ -471,9 +471,9 @@ k_gutter:
     call word_index
     test eax, eax
     jle 8f
-    mov [rip + dt_scratch + DT_gshape], eax
-    mov r14d, DTF_GUTTER
-    lea r15, [rip + dt_scratch + DT_gutter]
+    mov [rip + dt_scratch + DTY_gshape], eax
+    mov r14d, DTYF_GUTTER
+    lea r15, [rip + dt_scratch + DTY_gutter]
     jmp k_one_color
 8:  xor eax, eax
     ret
@@ -486,7 +486,7 @@ k_grow:
     test eax, eax
     jle 8f
     dec eax
-    mov [rip + dt_scratch + DT_grow], eax
+    mov [rip + dt_scratch + DTY_grow], eax
     mov eax, 1
     ret
 8:  xor eax, eax
@@ -500,7 +500,7 @@ k_priority:
     js 8f
     cmp eax, 100
     jg 8f
-    mov [rip + dt_scratch + DT_prio], eax
+    mov [rip + dt_scratch + DTY_prio], eax
     mov eax, 1
     ret
 8:  xor eax, eax
@@ -757,7 +757,7 @@ FN h_decorate
     jz .Lhd_notype
     sub rax, [rip + g_dtypes + VEC_ptr]
     xor edx, edx
-    mov ecx, DT_SIZE
+    mov ecx, DTY_SIZE
     div rcx
     mov [rsp + 8], eax          # type index
     mov edi, 5
@@ -964,9 +964,9 @@ FN h_decorate
     jnz 8b
     inc r9d
     mov eax, [rdx + DR_type]
-    imul rax, rax, DT_SIZE
+    imul rax, rax, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
-    cmp [rax + DT_owner], rbx
+    cmp [rax + DTY_owner], rbx
     jne 8b
     inc r8d
     jmp 8b
@@ -1223,9 +1223,9 @@ FN deco_shift
     imul r15, r14, DR_SIZE
     add r15, [r13 + PS_deco + VEC_ptr]
     mov eax, [r15 + DR_type]
-    imul rax, rax, DT_SIZE
+    imul rax, rax, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
-    mov r9d, [rax + DT_grow]
+    mov r9d, [rax + DTY_grow]
     # the edges' gravity: a growing edge takes an insert at it
     mov r10d, GR_RIGHT
     test r9d, DG_START
@@ -1316,9 +1316,9 @@ FN deco_clear_owner
     imul rsi, r14, DR_SIZE
     add rsi, [r13 + PS_deco + VEC_ptr]
     mov eax, [rsi + DR_type]
-    imul rax, rax, DT_SIZE
+    imul rax, rax, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
-    cmp [rax + DT_owner], rbx
+    cmp [rax + DTY_owner], rbx
     je 3f
     inc r14
     jmp 2b
@@ -1328,12 +1328,12 @@ FN deco_clear_owner
 5:  xor ecx, ecx
 6:  cmp rcx, [rip + g_dtypes + VEC_len]
     jae 7f
-    imul rax, rcx, DT_SIZE
+    imul rax, rcx, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
     inc rcx
-    cmp [rax + DT_owner], rbx
+    cmp [rax + DTY_owner], rbx
     jne 6b
-    mov qword ptr [rax + DT_owner], 0
+    mov qword ptr [rax + DTY_owner], 0
     jmp 6b
 7:  inc qword ptr [rip + g_deco_gen]
     mov dword ptr [rip + g_dirty], 1
@@ -1357,7 +1357,7 @@ type_of:
     imul rcx, rax, DR_SIZE
     add rcx, [r13 + PS_deco + VEC_ptr]
     mov eax, [rcx + DR_type]
-    imul rax, rax, DT_SIZE
+    imul rax, rax, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
     ret
 
@@ -1422,7 +1422,7 @@ FN deco_frame
     mov eax, r12d
     call type_of
     inc r12
-    cmp qword ptr [rax + DT_owner], 0
+    cmp qword ptr [rax + DTY_owner], 0
     je .Ldf_each
     cmp [rcx + DR_start], r15
     ja .Ldf_each
@@ -1432,15 +1432,15 @@ FN deco_frame
     cmp rdx, DECO_PIECES
     jae .Ldf_over
     # key: priority, the extension's order, the type's registration
-    movzx r8d, byte ptr [rax + DT_prio]
+    movzx r8d, byte ptr [rax + DTY_prio]
     shl r8, 56
-    mov r9, [rax + DT_owner]
+    mov r9, [rax + DTY_owner]
     sub r9, [rip + g_exts + VEC_ptr]
     shr r9, 6                   # (EXT_SIZE is larger than 64: monotone in the index)
     and r9d, 0xfff
     shl r9, 44
     or r8, r9
-    mov r9d, [rax + DT_seq]
+    mov r9d, [rax + DTY_seq]
     and r9d, 0xfff
     shl r9, 32
     or r8, r9
@@ -1497,7 +1497,7 @@ FN deco_line_back
     mov rdi, r12
     call win_at
     inc r12
-    test dword ptr [rax + DT_flags], DTF_LINEBG
+    test dword ptr [rax + DTY_flags], DTYF_LINEBG
     jz 1b
     cmp [rcx + DR_start], r15
     ja 1b
@@ -1507,7 +1507,7 @@ FN deco_line_back
     jne 2f
     cmp rdx, [rcx + DR_start]   # ending at the line's start: only an empty range is on it
     jne 1b
-2:  lea rdi, [rax + DT_linebg]
+2:  lea rdi, [rax + DTY_linebg]
     call deco_color
     mov r8d, eax
     mov edi, [rip + g_ed_tx]
@@ -1565,7 +1565,7 @@ FN deco_row_back
     inc r12
     mov r14, rax                # DT*
     mov r15, rcx                # DR*
-    test dword ptr [r14 + DT_flags], DTF_COLOR | DTF_FADED
+    test dword ptr [r14 + DTY_flags], DTYF_COLOR | DTYF_FADED
     jz 2f
     call row_clip
     cmp rax, rdx
@@ -1574,7 +1574,7 @@ FN deco_row_back
     mov rsi, rdx
     mov rdx, r14
     call span_paint
-2:  test dword ptr [r14 + DT_flags], DTF_BG
+2:  test dword ptr [r14 + DTY_flags], DTYF_BG
     jz 1b
     mov rcx, r15
     call row_clip
@@ -1591,7 +1591,7 @@ FN deco_row_back
     sub eax, [rsp + 8]
     jle 1b
     mov [rsp + 12], eax
-    lea rdi, [r14 + DT_bg]
+    lea rdi, [r14 + DTY_bg]
     call deco_color
     mov r8d, eax
     mov edi, [rsp + 8]
@@ -1620,13 +1620,13 @@ span_paint:
     mov rbx, rdx
     xor r14d, r14d              # the span's color and flags
     xor r15d, r15d
-    test dword ptr [rbx + DT_flags], DTF_COLOR
+    test dword ptr [rbx + DTY_flags], DTYF_COLOR
     jz 1f
-    lea rdi, [rbx + DT_color]
+    lea rdi, [rbx + DTY_color]
     call deco_color
     mov r14d, eax
     or r15d, SPF_COLOR
-1:  test dword ptr [rbx + DT_flags], DTF_FADED
+1:  test dword ptr [rbx + DTY_flags], DTYF_FADED
     jz 2f
     or r15d, SPF_FADED
 2:  # the old list into sp_tmp, parts outside [from, to) kept, the new span in its place
@@ -1762,7 +1762,7 @@ FN deco_row_front
     mov rdi, r12
     call win_at
     inc r12
-    test dword ptr [rax + DT_flags], DTF_STRIKE | DTF_UNDER | DTF_BORDER
+    test dword ptr [rax + DTY_flags], DTYF_STRIKE | DTYF_UNDER | DTYF_BORDER
     jz .Lrf_each
     mov r14, rax
     call row_clip
@@ -1779,9 +1779,9 @@ FN deco_row_front
     sub eax, [rsp + 8]
     jle .Lrf_each
     mov [rsp + 12], eax         # w
-    test dword ptr [r14 + DT_flags], DTF_STRIKE
+    test dword ptr [r14 + DTY_flags], DTYF_STRIKE
     jz 1f
-    lea rdi, [r14 + DT_strike]
+    lea rdi, [r14 + DTY_strike]
     call deco_color
     cmp eax, 1
     jne 11f
@@ -1794,22 +1794,22 @@ FN deco_row_front
     mov edx, [rsp + 12]
     M ecx, MI_1
     call gfx_fill
-1:  test dword ptr [r14 + DT_flags], DTF_UNDER
+1:  test dword ptr [r14 + DTY_flags], DTYF_UNDER
     jz 2f
-    lea rdi, [r14 + DT_under]
+    lea rdi, [r14 + DTY_under]
     call deco_color
-    mov edi, [r14 + DT_ustyle]
+    mov edi, [r14 + DTY_ustyle]
     mov esi, eax
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
     mov r8d, [rip + g_row_y]
     call underline_draw
-2:  test dword ptr [r14 + DT_flags], DTF_BORDER
+2:  test dword ptr [r14 + DTY_flags], DTYF_BORDER
     jz .Lrf_each
-    lea rdi, [r14 + DT_border]
+    lea rdi, [r14 + DTY_border]
     call deco_color
     mov [rsp + 16], eax
-    mov eax, [r14 + DT_bwidth]
+    mov eax, [r14 + DTY_bwidth]
     imul eax, [rip + g_mt + 4*MI_1]
     mov [rsp + 20], eax
     # four sides
@@ -1970,7 +1970,7 @@ FN deco_gutter_icon
     mov rdi, rcx
     inc qword ptr [rsp]
     call win_at
-    test dword ptr [rax + DT_flags], DTF_GUTTER
+    test dword ptr [rax + DTY_flags], DTYF_GUTTER
     jz 1b
     push rax
     push rax
@@ -1982,8 +1982,8 @@ FN deco_gutter_icon
     pop rax
     cmp rcx, r12
     jne 1b
-    mov r14d, [rax + DT_gshape] # later ones are higher
-    lea rdi, [rax + DT_gutter]
+    mov r14d, [rax + DTY_gshape] # later ones are higher
+    lea rdi, [rax + DTY_gutter]
     call deco_color
     mov r15d, eax
     jmp 1b
@@ -2010,7 +2010,7 @@ FN deco_gutter_tip
     jae 8f
     inc qword ptr [rsp]
     call win_at
-    test dword ptr [rax + DT_flags], DTF_GUTTER
+    test dword ptr [rax + DTY_flags], DTYF_GUTTER
     jz 1b
     cmp word ptr [rcx + DR_tlen], 0
     je 1b
@@ -2063,7 +2063,7 @@ FN deco_tip_at
     mov eax, r15d
     call type_of
     inc r15
-    cmp qword ptr [rax + DT_owner], 0
+    cmp qword ptr [rax + DTY_owner], 0
     je 1b
     cmp word ptr [rcx + DR_tlen], 0
     je 1b
@@ -2075,7 +2075,7 @@ FN deco_tip_at
     jb 1b
     cmp rdx, [rcx + DR_start]   # an empty range at the position holds it
     jne 1b
-2:  movzx edx, byte ptr [rax + DT_prio]
+2:  movzx edx, byte ptr [rax + DTY_prio]
     cmp rdx, r8
     jl 1b
     mov r8, rdx
@@ -2160,9 +2160,9 @@ FN deco_scroll_ticks
     mov eax, r14d
     call type_of
     inc r14
-    cmp qword ptr [rax + DT_owner], 0
+    cmp qword ptr [rax + DTY_owner], 0
     je 3b
-    test dword ptr [rax + DT_flags], DTF_SCROLL
+    test dword ptr [rax + DTY_flags], DTYF_SCROLL
     jz 3b
     mov [rsp + 16], rax
     mov rdi, rbx
@@ -2178,7 +2178,7 @@ FN deco_scroll_ticks
     jb 4f
     lea rax, [r12 - 1]
 4:  mov rdx, [rsp + 16]
-    movzx ecx, byte ptr [rdx + DT_prio]
+    movzx ecx, byte ptr [rdx + DTY_prio]
     inc ecx                     # 1..101: 0 is empty
     mov rdi, [rip + tk_prio]
     movzx r8d, byte ptr [rdi + rax]
@@ -2191,7 +2191,7 @@ FN deco_scroll_ticks
     jb 3b
     mov [rdi + rax], cl
     mov [rsp + 20], rax
-    lea rdi, [rdx + DT_scroll]
+    lea rdi, [rdx + DTY_scroll]
     call deco_color
     mov rcx, [rsp + 20]
     mov rdi, [rip + tk_rows]
@@ -2398,5 +2398,5 @@ shape_names: .quad .Ls_dot, .Ls_circle, .Ls_ring, .Ls_square, .Ls_diamond, .Ls_t
 
 .bss
 .p2align 3
-dt_scratch: .zero DT_SIZE
+dt_scratch: .zero DTY_SIZE
 sp_spare: .zero SP_SIZE

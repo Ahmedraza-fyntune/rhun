@@ -318,33 +318,33 @@ c_print_present:
     xor r12d, r12d
 1:  cmp r12, [rip + g_dtypes + VEC_len]
     jae 9b
-    imul r13, r12, DT_SIZE
+    imul r13, r12, DTY_SIZE
     add r13, [rip + g_dtypes + VEC_ptr]
     inc r12
-    mov rax, [r13 + DT_owner]
+    mov rax, [r13 + DTY_owner]
     test rax, rax
     jz 1b
     lea rdi, [rip + .Ls_type]
     call out_cstr
-    mov rax, [r13 + DT_owner]
+    mov rax, [r13 + DTY_owner]
     mov rdi, [rax + EXT_owner]
     call out_cstr
     mov edi, '/'
     call out_byte
-    mov rax, [r13 + DT_owner]
+    mov rax, [r13 + DTY_owner]
     mov rdi, [rax + EXT_name]
     call out_cstr
     mov edi, ' '
     call out_byte
-    lea rdi, [r13 + DT_name]
+    lea rdi, [r13 + DTY_name]
     call out_cstr
     lea rdi, [rip + .Ls_flags]
     call out_cstr
-    mov edi, [r13 + DT_flags]
+    mov edi, [r13 + DTY_flags]
     call out_u64
     lea rdi, [rip + .Ls_prio]
     call out_cstr
-    mov edi, [r13 + DT_prio]
+    mov edi, [r13 + DTY_prio]
     call out_u64
     mov edi, 10
     call out_byte
@@ -384,9 +384,9 @@ c_print_present:
     lea rdi, [rip + .Ls_deco_sp]
     call out_cstr
     mov eax, [r13 + DR_type]
-    imul rax, rax, DT_SIZE
+    imul rax, rax, DTY_SIZE
     add rax, [rip + g_dtypes + VEC_ptr]
-    lea rdi, [rax + DT_name]
+    lea rdi, [rax + DTY_name]
     call out_cstr
     mov edi, ' '
     call out_byte
