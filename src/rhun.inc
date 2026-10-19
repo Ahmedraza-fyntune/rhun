@@ -1138,8 +1138,9 @@ F DV_name, 8            # tab title
 F DV_rev, 8             # commit, or 0 for the work tree
 F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
-F DV_pad, 4
+F DV_pad, 4             # DVF_*
 ENDSTRUCT DV_SIZE
+.equ DVF_OWN, 1                 # wsedit: a diff tab of wsdiff.s, not git's (not reopened, not fetched)
 STRUCT
 F DL_kind, 4            # DK_*
 F DL_old, 4             # line number before, 0 none
@@ -1792,6 +1793,8 @@ F EXT_confined, 4       # CONFINED_* of the running program
 F EXT_runs, 8           # cstr: the [needs] run list (program names), or 0
 F EXT_pinned, 4         # 1: its button is in the title bar (extensions.ini)
 F EXT_disabled, 4       # 1: turned off (extensions.ini)
+F EXT_edits, 4          # wsedit: 1: may change project files without asking (extensions.ini, the user allowed it)
+F EXT_edits_pad, 4
 F EXT_confine_why, 8    # cstr: why rhun cannot hold it to its permissions on this system, or 0
 F EXT_restart, 4        # 1: start again once the stop in progress completes (a settings change)
 F EXT_noconfine, 4      # 1: confinement failed in the child once: it runs without (EXT_confine_why)

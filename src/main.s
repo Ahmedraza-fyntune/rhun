@@ -109,6 +109,7 @@ FN main
     call headless_clip_reset
     call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
+    call ws_journal_cleanup     # wsedit: nothing can undo this session's workspace edits now
     call agents_shutdown
     call ai_shutdown
     call session_remember_project
@@ -491,7 +492,8 @@ open_initial:
     js 3f
     lea rdi, [rip + cwd]
     call app_set_project
-3:  xor ebx, ebx
+3:  call ws_recover             # wsedit: workspace edits a crash cut short are put back first
+    xor ebx, ebx
 4:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 5f
     mov rax, [rip + g_start_paths + VEC_ptr]

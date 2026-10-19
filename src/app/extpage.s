@@ -516,7 +516,33 @@ draw_detail:
     call section
     mov rdi, rbx
     call draw_permissions
-    # the pin
+    # wsedit: the user's standing permission to change project files (workspace edits), with a
+    # switch that takes it back
+    cmp dword ptr [rbx + EXT_edits], 0
+    je 51f
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + .Lt_edits]
+    COLOR edx, T_FG
+    mov ecx, MI_28
+    mov r8d, [rip + xp_x]
+    call text_at_keep
+    mov edi, ID_XP + 6
+    mov esi, [rip + xp_x]
+    add esi, [rip + xp_w]
+    sub esi, [rip + g_mt + 4*MI_20]
+    sub esi, [rip + g_mt + 4*MI_14]
+    mov edx, [rip + xp_y]
+    add edx, [rip + g_mt + 4*MI_4]
+    mov ecx, 1
+    call ui_toggle
+    test eax, eax
+    jz 52f
+    mov rdi, rbx
+    xor esi, esi
+    call ext_set_edits
+52: M eax, MI_28
+    add [rip + xp_y], eax
+51: # the pin
     lea rsi, [rip + .Ls_toolbar]
     call section
     lea rdi, [rip + g_face_ui]
@@ -1658,6 +1684,15 @@ FN extpage_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
+    mov rdi, r12                # wsedit
+    lea rsi, [rip + .Ld_edits]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rbx + EXT_edits]
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
     # "badge=letter|icon|unreadable color=#rrggbb|-"
     mov rdi, rbx
     call ext_icon_state
@@ -1829,6 +1864,8 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ld_off: .asciz " off"
 .Ld_problem: .asciz " problem="
 .Ld_pinned: .asciz "pinned="
+.Ld_edits: .asciz "edits="                 # wsedit
+.Lt_edits: .asciz "Can change files in your project (you allowed it)"
 .Ld_badge_letter: .asciz "badge=letter"
 .Ld_badge_icon: .asciz "badge=icon"
 .Ld_badge_bad: .asciz "badge=unreadable"

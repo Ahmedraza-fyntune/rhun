@@ -14,7 +14,7 @@
 .bss
 .p2align 3
 .globl wg_vec, we_vec, ws_only, ws_act_data, ws_act_dlen, ws_req_id, ws_quiet, ws_feats, ws_ext
-.globl ws_entry, ws_pathbuf, ws_confirm, ws_request_ext, ws_back, ws_code, ws_deflabel, ws_preserve_context, ws_body
+.globl ws_entry, ws_pathbuf, ws_confirm, ws_request_ext, ws_back, ws_code, ws_deflabel, ws_preserve_context, ws_body, ws_label
 wg_vec: .zero VEC_SIZE          # the workspace edit being made
 we_vec: .zero VEC_SIZE
 ws_only: .quad 0                # a document id: the edit may change that document only
@@ -1387,8 +1387,7 @@ FN ws_features_agreed
     FEAT_TEST rdi, FEAT_WORKSPACE_EDITS
     jnz 1f
     FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS
-1:  FEAT_CLEAR rdi, FEAT_WORKSPACE_EDITS       # not yet
-    FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS
+1:  FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS       # not yet
     FEAT_CLEAR rdi, FEAT_SELECTIONS
     FEAT_CLEAR rdi, FEAT_REVEAL
     FEAT_CLEAR rdi, FEAT_DIFF

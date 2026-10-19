@@ -527,7 +527,7 @@ wd_journal_new:
 # FN wd_plan_write(T) -> rax 0 or -errno: the plan as it is now, durably in the journal
 FN wd_plan_write
     push rbx
-    mov esi, -1
+    mov rsi, -1
     lea rdx, [rip + .Lplan]
     call wd_jpath
     mov rdi, rax

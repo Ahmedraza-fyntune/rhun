@@ -555,6 +555,7 @@ FN tx_list_cancel
 FN tx_doc_closed
     PROLOGUE
     mov r12, rdi
+    call ws_park_doc_closed     # an edit waiting for the user that names it is stale
     xor ebx, ebx
 1:  cmp rbx, [rip + tx_count]
     jae 9f

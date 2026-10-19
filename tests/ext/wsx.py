@@ -5,10 +5,11 @@ It says `hello 1` with the features in the file `features` next to it (one line,
 logs every line rhun sends to $RHUN_STATE/wsx.log (bodies as `body N` lines with their bytes
 escaped), and acts on its commands: `0 run wsx.NAME DOC` sends the request in the file `plans/NAME`
 next to it. A plan's first line is the request after its id; the rest is its body. Placeholders
-anywhere in a plan: {doc:NAME} the id and {ver:NAME} the version of the open document whose path
+anywhere in a plan (a first line "!write PATH" makes it write the body to PATH instead): {doc:NAME} the id and {ver:NAME} the version of the open document whose path
 ends in /NAME (from the opened/edits/changed events), {fnv:PATH} the FNV-1a hash of that file's
 bytes on disk now; the word LEN in the first line becomes the body's length.
-As a rename provider it answers `ID rename ...` with `ok ID LEN` and the body of plans/rename.
+As a rename provider it answers `ID rename ...` with `ok ID LEN` and the body of plans/rename (its
+first line is not sent).
 """
 import os
 import re
@@ -125,7 +126,12 @@ def main():
             elif ev == b'run':
                 name = fields[2].decode().split('.', 1)[1]
                 head, body = plan(name)
-                if head is not None:
+                if head is not None and head.startswith('!write '):
+                    # not a request: the extension writes a file itself (a change on disk)
+                    with open(head[7:], 'wb') as f:
+                        f.write(body)
+                    log(('wrote ' + head[7:]).encode())
+                elif head is not None:
                     rid = next_id
                     next_id += 1
                     log(('sent %d %s' % (rid, head)).encode())

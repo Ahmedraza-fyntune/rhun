@@ -166,3 +166,20 @@ ro_steps: .zero SB_SIZE
 
 .section .rodata
 .Lwrite_sp: .asciz "write "
+
+# FN ws_ops_summary(sb): the confirmation list's ", creates N, renames N, deletes N"
+FN ws_ops_summary
+    ret
+
+# FN ws_ops_row(WG*, sb): a file operation's row in the confirmation list
+FN ws_ops_row
+    ret
+
+# FN ws_ops_preview(WG*, sb): a file operation in the preview's unified diff
+FN ws_ops_preview
+    ret
+
+# FN ws_ops_recheck() -> eax 1 when the file operations' paths are as the edit found them
+FN ws_ops_recheck
+    mov eax, 1
+    ret
