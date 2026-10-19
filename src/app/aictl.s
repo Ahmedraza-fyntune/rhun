@@ -117,8 +117,55 @@ c_review:
 9:  xor eax, eax
     EPILOGUE
 
+# print-tools: the tools a tools request lists, then the calls in flight
+c_print_tools:
+    PROLOGUE
+    call ai_set
+    call ai_out
+    mov rdi, rax
+    call tools_dump
+    xor eax, eax
+    EPILOGUE
+
+# tool-confirm once|session|deny: the answer to the tool dialog
+c_tool_confirm:
+    PROLOGUE
+    call ai_set
+    call tools_asking
+    test rax, rax
+    jz 9f
+    call ai_arg
+    mov rbx, rax
+    mov r12, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    lea rdx, [rip + .Lw_once]
+    call str_eq_cstr
+    test eax, eax
+    jz 1f
+    mov edi, 2                  # Allow once, the dialog's own button
+    call app_dialog_button
+    jmp 9f
+1:  mov rdi, rbx
+    mov rsi, r12
+    lea rdx, [rip + .Lw_session]
+    call str_eq_cstr
+    test eax, eax
+    jz 2f
+    mov edi, 1                  # Allow for this session, between
+    call app_dialog_button
+    jmp 9f
+2:  xor edi, edi
+    call app_dialog_button
+9:  xor eax, eax
+    EPILOGUE
+
 .section .rodata
 .Lc_agents_source: .asciz "agents-source"
+.Lc_print_tools: .asciz "print-tools"
+.Lc_tool_confirm: .asciz "tool-confirm"
+.Lw_once: .asciz "once"
+.Lw_session: .asciz "session"
 .Lc_print_review: .asciz "print-review"
 .Lc_review: .asciz "review"
 .Lw_accept: .asciz "accept"
@@ -129,4 +176,5 @@ c_review:
 ai_ctl:
     .quad .Lc_agents_source, c_agents_source
     .quad .Lc_print_review, c_print_review, .Lc_review, c_review
+    .quad .Lc_print_tools, c_print_tools, .Lc_tool_confirm, c_tool_confirm
     .quad 0, 0

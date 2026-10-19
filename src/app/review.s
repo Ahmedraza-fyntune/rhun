@@ -641,6 +641,10 @@ FN doc_text_copy
     mov rdx, r12
     EPILOGUE
 
+# FN review_read_text(path): read_text, for the tools
+FN review_read_text
+    jmp read_text
+
 # read_text(path) -> rax the file's text as rhun keeps it (CR before LF gone), rdx length; rax 0 when
 #   it cannot be read, is over 4 MB or holds a NUL
 read_text:

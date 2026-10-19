@@ -349,6 +349,8 @@ handle_line:
     call testproto_ready        # testing: a controller is asked for its roots
     mov rdi, rbx
     call ext_pending_try
+    mov rdi, rbx
+    call tools_owner_ready      # AI: tool calls that waited for it to start (tools.s)
     jmp 9f
 3:  mov rdi, rbx
     lea rsi, [rip + .Lr_no_hello]
@@ -1867,6 +1869,15 @@ h_hover:
 
 # ID cancel ID2 -> ok ID: requests are handled as they arrive, so there is nothing to withdraw
 h_cancel:
+    push rbx
+    mov edi, 2                  # AI: a tool call it no longer wants (tools.s)
+    call field_u64
+    test edx, edx
+    jz 0f
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call tools_cancel
+0:  pop rbx
     # of this extension's open prompt: the prompt closes, answered cancelled
     cmp qword ptr [rip + pr_id], 0
     je 1f
@@ -2152,6 +2163,7 @@ prompt_clear:
     mov qword ptr [rip + pr_id], 0
     mov qword ptr [rip + pr_ext], 0
     mov qword ptr [rip + pr_kind], 0
+    mov qword ptr [rip + pr_tool], 0    # AI (extaiproto.inc)
     pop rbx
     ret
 
@@ -2651,9 +2663,8 @@ FN extproto_prompt_abort
     mov rbx, [rip + cur]
     mov rax, [rip + pr_ext]
     mov [rip + cur], rax
-    mov rdi, [rip + pr_id]
-    lea rsi, [rip + .Le_cancelled]
-    call reply_error
+    xor edi, edi                # cancelled (AI: rhun.run's call, extaiproto.inc)
+    call prompt_term_answer
     mov [rip + cur], rbx
     call prompt_clear
 9:  EPILOGUE
@@ -2707,9 +2718,8 @@ FN extproto_prompt_text
 5:  # term: an empty line is a dismissal; otherwise the line runs in the terminal panel
     test r13, r13
     jnz 6f
-    mov rdi, [rip + pr_id]
-    lea rsi, [rip + .Le_cancelled]
-    call reply_error
+    xor edi, edi                # (AI: rhun.run answers its call, extaiproto.inc)
+    call prompt_term_answer
     jmp 8f
 6:  mov rdi, r12
     mov rsi, r13
@@ -2733,12 +2743,11 @@ FN extproto_prompt_text
     call term_panel_write       # typed into the shell, not pasted: Enter is Enter
     test eax, eax
     jz 61f
-    mov rdi, [rip + pr_id]
-    call reply_ok
+    mov edi, 1
+    call prompt_term_answer
     jmp 8f
-61: mov rdi, [rip + pr_id]
-    lea rsi, [rip + .Le_cancelled]
-    call reply_error
+61: xor edi, edi
+    call prompt_term_answer
 8:  mov [rip + cur], rbx
     call prompt_clear
 9:  EPILOGUE
@@ -3607,6 +3616,8 @@ verbs:
     .quad .Lv_agent_changed, h_agent_changed, 0
     .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
     .quad .Lv_unpropose, h_unpropose, 0
+    .quad .Lv_tools, h_tools, 0
+    .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
     .quad 0, 0, 0
 .Lv_test_items: .asciz "test-items"
 .Lv_test_remove: .asciz "test-remove"

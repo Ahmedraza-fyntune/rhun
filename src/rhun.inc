@@ -1478,6 +1478,7 @@ ENDSTRUCT TF_SIZE
     # AI (wider-parity D: agentext.s, review.s, tools.s)
     FEATURE FEAT_AGENTS, "agents", 1              # agent-sessions; rhun asks agent-transcript
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
+    FEATURE FEAT_TOOLS, "tools", 1                # tools, tool-call; rhun asks owners: tool
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks

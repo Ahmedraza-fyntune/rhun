@@ -89,6 +89,9 @@ dlg_text: .quad 0
 dlg_ok: .quad 0
 dlg_fn: .quad 0
 dlg_cancel: .quad 0              # app_confirm's Cancel calls this when it is set
+dlg_alt: .quad 0                 # app_confirm_alt: a middle button's label and function (AI: tools.s)
+dlg_alt_fn: .quad 0
+dlg_no: .quad 0                  #   and Cancel's label instead of Cancel
 ro_doc: .quad 0                  # ask_readonly: the file asked about, and the question
 ro_id: .quad 0
 ro_save_flags: .quad 0
@@ -2613,7 +2616,15 @@ FN app_timeout
     cmp eax, ebx
     jge 5f
 51: mov ebx, eax
-5:  call watch_timeout
+5:  call tools_timeout          # AI (tools.s)
+    cmp eax, -1
+    je 52f
+    cmp ebx, -1
+    je 53f
+    cmp eax, ebx
+    jge 52f
+53: mov ebx, eax
+52: call watch_timeout
     cmp eax, -1
     je 6f
     cmp ebx, -1
@@ -2735,6 +2746,7 @@ FN app_tick
     call git_tick
     call update_tick
     call ai_tick
+    call tools_tick             # AI: tool calls waiting for the user's answer (tools.s)
     call palette_tick
     call editor_tick
     call ext_tick
@@ -5299,12 +5311,22 @@ FN dialog_draw
     jae .Ldd_ret
     lea rax, [rip + dlg_labels]
     mov r13, [rax + rcx*8]
-    # a question: Cancel and its button
+    # a question: Cancel and its button (and app_confirm_alt's between them)
     cmp dword ptr [rip + dlg_kind], 4
     jne 0f
-    cmp ecx, 1
-    je 4f
-    cmp ecx, 2
+    test ecx, ecx
+    jnz 71f
+    cmp qword ptr [rip + dlg_no], 0
+    je 0f
+    mov r13, [rip + dlg_no]
+    jmp 0f
+71: cmp ecx, 1
+    jne 72f
+    mov r13, [rip + dlg_alt]
+    test r13, r13
+    jz 4f
+    jmp 0f
+72: cmp ecx, 2
     jne 0f
     mov r13, [rip + dlg_ok]
 0:  mov rdi, r13
@@ -5385,7 +5407,15 @@ dialog_choose:
     mov qword ptr [rip + dlg_cancel], 0
     cmp ebx, 2
     je 5f
+    cmp ebx, 1
+    jne 6f
+    mov rax, [rip + dlg_alt_fn]  # app_confirm_alt's button
+    mov qword ptr [rip + dlg_alt], 0
     test rax, rax
+    jz 9f
+    call rax
+    jmp 9f
+6:  test rax, rax
     jz 9f
     call rax
     jmp 9f
@@ -5511,6 +5541,8 @@ FN app_confirm
     mov [rip + dlg_ok], rdx
     mov [rip + dlg_fn], rcx
     mov qword ptr [rip + dlg_cancel], 0
+    mov qword ptr [rip + dlg_alt], 0
+    mov qword ptr [rip + dlg_no], 0
     mov dword ptr [rip + dlg_kind], 4
     mov dword ptr [rip + g_focus], FOCUS_DIALOG
     mov dword ptr [rip + g_dirty], 1
@@ -5528,6 +5560,30 @@ dlg_drop:
     mov dword ptr [rip + dlg_kind], 0
     jmp rax
 1:  ret
+
+# app_confirm_alt(label, fn, cancel label or 0): the open app_confirm gets a second button, between
+#   Cancel and its own, that calls fn; Cancel may say something else (AI: tools.s, Allow once / Allow
+#   for this session / Deny)
+FN app_confirm_alt
+    mov [rip + dlg_alt], rdi
+    mov [rip + dlg_alt_fn], rsi
+    mov [rip + dlg_no], rdx
+    ret
+
+# FN app_dialog_button(i): the open dialog's button i, as if clicked (0 Cancel, 1 app_confirm_alt's,
+#   2 its own)
+FN app_dialog_button
+    cmp dword ptr [rip + dlg_kind], 0
+    je 1f
+    jmp dialog_choose
+1:  ret
+
+# FN app_dialog_open() -> eax 1 while a dialog is on screen
+FN app_dialog_open
+    xor eax, eax
+    cmp dword ptr [rip + dlg_kind], 0
+    setne al
+    ret
 
 # app_confirm_cancel(fn): the open app_confirm's Cancel calls fn
 FN app_confirm_cancel

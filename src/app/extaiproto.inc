@@ -255,22 +255,158 @@ FN extproto_ai_answer
 # ai_reply(ext, id, ok, body, len) -> eax 1 when the reply answered one of the AI requests rhun sent
 ai_reply:
     PROLOGUE 32
-    FEAT_TEST rdi, FEAT_AGENTS
-    jz 8f
     mov rbx, rdi
     mov [rsp], rsi
     mov [rsp + 8], edx
     mov [rsp + 16], rcx
     mov [rsp + 24], r8
+    FEAT_TEST rbx, FEAT_AGENTS
+    jz 1f
     call agentext_reply
+    test eax, eax
+    jnz 9f
+1:  FEAT_TEST rbx, FEAT_TOOLS
+    jz 8f
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov edx, [rsp + 8]
+    mov rcx, [rsp + 16]
+    mov r8, [rsp + 24]
+    call tools_reply
     test eax, eax
     jnz 9f
 8:  xor eax, eax
 9:  EPILOGUE
+
+# ID tools (feature tools) -> ok ID LEN + every tool rhun offers (tools.s)
+h_tools:
+    PROLOGUE
+    mov edi, FEAT_TOOLS
+    call ai_agreed
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + ai_body]
+    call sb_clear
+    lea rdi, [rip + ai_body]
+    call tools_list
+    call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, [rip + cur_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rip + ai_body + SB_len]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, [rip + ai_body + SB_ptr]
+    mov rsi, [rip + ai_body + SB_len]
+    call out_bytes
+    call out_end
+9:  EPILOGUE
+
+# ID tool-call TOOL LEN + input (feature tools): answered when the tool is done (tools.s)
+h_tool_call:
+    PROLOGUE
+    mov edi, FEAT_TOOLS
+    call ai_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 8f
+    mov edi, 2
+    call field_at
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov rcx, rdx
+    mov rdx, rax
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    call tools_call
+    jmp 9f
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# FN extproto_tool_term(caller, id, ptr, len, call) -> rax 0 with the command in rhun's prompt as a
+#   term request of the caller's would put it (rhun.run), or the error reply
+FN extproto_tool_term
+    PROLOGUE 16
+    mov rbx, rdi
+    mov [rsp], rsi
+    mov r12, rdx
+    mov r13, rcx
+    mov [rsp + 8], r8
+    lea rax, [rip + .Le_syntax]
+    test r13, r13
+    jz 9f
+    lea rax, [rip + .Le_toobig_term]
+    cmp r13, EXT_TERM_MAX
+    ja 9f
+    mov rdi, r12
+    mov rsi, r13
+    call plain_text             # what is shown is what runs
+    mov ecx, eax
+    lea rax, [rip + .Le_syntax]
+    test ecx, ecx
+    jz 9f
+    lea rax, [rip + .Le_busy]
+    cmp qword ptr [rip + pr_id], 0
+    jne 9f
+    call palette_is_open
+    mov ecx, eax
+    lea rax, [rip + .Le_busy]
+    test ecx, ecx
+    jnz 9f
+    lea rdi, [rip + .Lrun_label]
+    mov esi, PROMPT_TERM
+    mov rdx, r12
+    mov rcx, r13
+    call palette_ext_prompt_open
+    call palette_field
+    mov qword ptr [rax + TF_cur], 0
+    mov qword ptr [rax + TF_anchor], 0
+    mov qword ptr [rip + pr_kind], 3
+    mov [rip + pr_ext], rbx
+    mov rax, [rsp]
+    mov [rip + pr_id], rax
+    mov rax, [rsp + 8]
+    mov [rip + pr_tool], rax
+    call time_ms
+    mov [rip + pr_opened], rax
+    xor eax, eax
+9:  EPILOGUE
+
+# prompt_term_answer(ran): a term prompt closed: ok, or cancelled; for rhun.run the tool call is
+#   answered instead (tools.s)
+prompt_term_answer:
+    mov rax, [rip + pr_tool]
+    test rax, rax
+    jnz 1f
+    test edi, edi
+    jz 2f
+    mov rdi, [rip + pr_id]
+    jmp reply_ok
+2:  mov rdi, [rip + pr_id]
+    lea rsi, [rip + .Le_cancelled]
+    jmp reply_error
+1:  mov esi, edi
+    mov rdi, rax
+    mov qword ptr [rip + pr_tool], 0
+    jmp tools_term_done
+
+.bss
+.p2align 3
+ai_body: .zero SB_SIZE
+pr_tool: .quad 0                # the rhun.run call the open term prompt answers, or 0
+.text
 
 .section .rodata
 .Lv_agent_sessions: .asciz "agent-sessions"
 .Lv_agent_changed: .asciz "agent-changed"
 .Lv_propose: .asciz "propose"
 .Lv_unpropose: .asciz "unpropose"
+.Lv_tools: .asciz "tools"
+.Lv_tool_call: .asciz "tool-call"
 .text
