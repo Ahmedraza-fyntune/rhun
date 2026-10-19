@@ -462,10 +462,15 @@ dap_on_err:
 dap_on_aout:
     mov ecx, DS_aout
 on_lines:
-    PROLOGUE
+    PROLOGUE 16
     mov r12d, edi
     mov rbx, rdx
     mov r15d, ecx               # the field that holds this fd
+    # a tcp adapter's standard output is where the program it starts writes (Delve's debuggee)
+    mov dword ptr [rsp], DCON_ADAPTER
+    cmp ecx, DS_aout
+    jne 1f
+    mov dword ptr [rsp], DCON_STDOUT
 1:  mov edi, r12d
     lea rsi, [rip + errchunk]
     mov edx, 4096
@@ -478,6 +483,7 @@ on_lines:
     je 9f
     # closed: what is left is a last line
     mov rdi, rbx
+    mov esi, [rsp]              # the category
     call err_flush
     mov edi, r12d
     call watch_remove
@@ -495,6 +501,7 @@ on_lines:
     cmp esi, 10
     jne 4f
     mov rdi, rbx
+    mov esi, [rsp]              # the category
     call err_flush
     jmp 3b
 4:  lea rdi, [rbx + DS_ebuf]
@@ -502,14 +509,16 @@ on_lines:
     cmp qword ptr [rbx + DS_ebuf + SB_len], DAP_LINE_MAX
     jb 3b
     mov rdi, rbx
+    mov esi, [rsp]              # the category
     call err_flush
     jmp 3b
 9:  EPILOGUE
 
-# err_flush(ds): the error-output line in progress, if any, to the console and the tail
+# err_flush(ds, category): the line in progress, if any, to the console and the tail
 err_flush:
     PROLOGUE
     mov rbx, rdi
+    mov r14d, esi
     mov r12, [rbx + DS_ebuf + SB_ptr]
     mov r13, [rbx + DS_ebuf + SB_len]
     test r13, r13
@@ -518,7 +527,7 @@ err_flush:
     jne 1f
     dec r13
 1:  mov edi, [rbx + DS_id]
-    mov esi, DCON_ADAPTER
+    mov esi, r14d
     mov rdx, r12
     mov rcx, r13
     call dcon_line

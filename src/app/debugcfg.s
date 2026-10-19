@@ -339,6 +339,23 @@ FN dbg_row
     add rax, rcx
     ret
 
+# dbg_ext_declares(EXT*) -> eax 1 when the extension declares a debugger (ext.s: such an extension
+#   needs no program of its own); clobbers rax, rcx, rdx only
+FN dbg_ext_declares
+    xor ecx, ecx
+    lea rdx, [rip + g_debuggers]
+1:  cmp ecx, [rip + g_ndebuggers]
+    jae 2f
+    cmp [rdx + DBG_ext], rdi
+    je 3f
+    add rdx, DBG_SIZE
+    inc ecx
+    jmp 1b
+2:  xor eax, eax
+    ret
+3:  mov eax, 1
+    ret
+
 # dbg_live(index) -> eax 1 when the debugger's extension is installed and usable
 FN dbg_live
     call dbg_row

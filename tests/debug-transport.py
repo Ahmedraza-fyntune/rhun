@@ -37,8 +37,9 @@ class Transport(debughost.DebugHost):
         port = int(argv.rsplit(':', 1)[1])
         self.assertTrue(0 < port < 65536, argv)
         self.assertIn('accepted', log)
-        # what the adapter prints on its standard output is console text, not protocol
-        self.assertIn('adapter DAP server listening at: 127.0.0.1:%d' % port, out)
+        # what the adapter (or the program it starts) prints on its standard output is program
+        # output, not protocol
+        self.assertIn('stdout DAP server listening at: 127.0.0.1:%d' % port, out)
         reqs = [r.split(' ')[0] for r in self.requests()]
         self.assertEqual(reqs[0], 'initialize')
         self.assertEqual(reqs[-1], 'disconnect')

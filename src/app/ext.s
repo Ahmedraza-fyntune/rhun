@@ -1755,7 +1755,14 @@ FN ext_load
     je 52f
     mov dword ptr [rbx + EXT_manifest_ok], 1    # a pack without a program never starts
     jmp 83f
-52: lea rdi, [rip + .Lr_no_program]
+52: # debugger: an extension that only declares debuggers needs no program of its own
+    mov rdi, rbx
+    call dbg_ext_declares
+    test eax, eax
+    jz 53f
+    mov dword ptr [rbx + EXT_manifest_ok], 1
+    jmp 83f
+53: lea rdi, [rip + .Lr_no_program]
     jmp .Lel_fail
 6:  # a script needs its runtime on PATH
     cmp qword ptr [rbx + EXT_script], 0
@@ -2842,6 +2849,10 @@ FN ext_start
     jne 6f
     cmp qword ptr [rbx + EXT_pack], 0
     jne 7f                      # extension management: a pack without a program never starts
+    mov rdi, rbx                # debugger: nor does one that only declares debuggers
+    call dbg_ext_declares
+    test eax, eax
+    jnz 7f
 6:  cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 7f
     mov rdi, rbx
