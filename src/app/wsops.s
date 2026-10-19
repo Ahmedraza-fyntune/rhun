@@ -183,3 +183,8 @@ FN ws_ops_preview
 FN ws_ops_recheck
     mov eax, 1
     ret
+
+# FN ws_ops_textcheck() -> eax 1 when no text group names a deleted path or a rename's target
+FN ws_ops_textcheck
+    mov eax, 1
+    ret

@@ -186,6 +186,9 @@ FN ws_inside
 FN ws_disk_resolve
     PROLOGUE
     mov qword ptr [rip + wd_budget], 0
+    call ws_ops_resolve         # file operations first: text groups may name created files (wsops.s)
+    test eax, eax
+    jz .Lwr_fail
     xor ebx, ebx
 .Lwr_next:
     cmp rbx, [rip + wg_vec + VEC_len]
@@ -308,7 +311,10 @@ FN ws_disk_resolve
     mov [r12 + WG_real], rax
     jmp .Lwr_next
 .Lwr_ok:
-    call ws_ops_resolve         # file operations (wsops.s)
+    call ws_ops_textcheck       # text groups against the file operations' paths (wsops.s)
+    EPILOGUE
+.Lwr_fail:
+    xor eax, eax
     EPILOGUE
 .Lwr_nofile:
     lea rdi, [rip + .Lwc_nofile]

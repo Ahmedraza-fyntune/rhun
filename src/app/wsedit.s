@@ -363,6 +363,9 @@ FN ws_release
     mov rdi, [r12 + WG_real]
     mov qword ptr [r12 + WG_real], 0
     call mem_free
+    mov rdi, [r12 + WG_real2]
+    mov qword ptr [r12 + WG_real2], 0
+    call mem_free
     jmp 1b
 2:  mov rdi, [rip + ws_body]
     mov qword ptr [rip + ws_body], 0

@@ -1232,6 +1232,9 @@ ENDSTRUCT TP_SIZE
 .equ TPF_FOLDER, 1      # a create or delete of a folder
 .equ TPF_PICK, 2        # tx_run: undo or redo this one
 .equ TPF_DONE, 4        # a commit made its disk step (a rollback puts it back)
+.equ TPF_HADTAB, 8      # a deleted file had a clean tab (undo opens it again)
+.equ TPF_CASE, 16       # a rename that changes only letter case
+.equ TPF_OVER, 32       # a create or rename replaced a file (in the journal as SLOT.over)
 # a workspace edit being made (wsedit.s reads it, wsdisk.s writes its files)
 .equ WK_TEXT, 0                 # entry kinds
 .equ WK_CREATE, 1
@@ -1273,6 +1276,12 @@ F WG_new, 8                     # owned: a closed file's bytes to write
 F WG_nlen, 8
 F WG_before, 8                  # FNV-1a of the bytes read, and of the bytes to write
 F WG_after, 8
+F WG_real2, 8                   # owned: a rename's target as it will be on disk
+F WG_skip, 8                    # a file operation that ignore-existing or ignore-missing skips
+F WG_folder, 8                  # a file operation on a folder
+F WG_exists, 8                  # its target exists (overwrite moves it into the journal)
+F WG_case, 8                    # a rename that changes only letter case (two steps)
+F WG_created, 8                 # a text group for a file an earlier create makes
 ENDSTRUCT WG_SIZE
 
 # an edit of a text group
