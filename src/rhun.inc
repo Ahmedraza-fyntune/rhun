@@ -628,6 +628,7 @@ F DOC_language_pending, 8
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
+F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1
@@ -1150,7 +1151,10 @@ F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
 F DV_two, 4             # 1: DV_rev against DV_rev2 (git-diff-open), not a commit against its parent
 F DV_review, 8          # AI (review.s): the proposal a Review tab shows, or 0
+F DV_flags, 4           # wsedit: DVF_*
+F DV_flags_pad, 4
 ENDSTRUCT DV_SIZE
+.equ DVF_OWN, 1                 # wsedit: a diff tab of wsdiff.s, not git's (not reopened, not fetched)
 STRUCT
 F DL_kind, 4            # DK_*
 F DL_old, 4             # line number before, 0 none
@@ -1209,7 +1213,109 @@ F UR_aftercur, 8        # optional group replay caret; -1 for ordinary records
 F UR_afteranchor, 8
 F UR_beforeselections, 8 # owned secondary selection snapshot, or 0
 F UR_afterselections, 8  # owned snapshot, 0 = single, -1 = unspecified
+F UR_tx, 8              # wsedit: the workspace-edit transaction this group belongs to, 0 for none
 ENDSTRUCT UR_SIZE
+
+# ---- workspace-edit transactions (wsedit: wsedit.s, wstx.s, wsdisk.s) ----
+# a transaction: one workspace edit across documents and files, undone and redone as one step
+STRUCT
+F TX_id, 8              # session-unique, never 0 (UR_tx names it)
+F TX_label, 8           # owned cstr: names it in toasts and lists
+F TX_journal, 8         # owned cstr: its journal folder, or 0 when it wrote nothing to disk
+F TX_nparts, 8
+F TX_parts, 8           # owned array of TP
+F TX_flags, 8           # TXF_*
+ENDSTRUCT TX_SIZE
+.equ TX_MAX, 64
+.equ TXF_DISK, 1        # it changed files on disk
+# a participant of a transaction
+STRUCT
+F TP_kind, 8            # TPK_*
+F TP_doc, 8             # TPK_BUF: the document
+F TP_state, 8           # TPS_*
+F TP_wrote, 8           # TPK_BUF: its text was also written to disk
+F TP_path, 8            # owned cstr: the file (TPK_FILE, a written TPK_BUF, the file operations)
+F TP_path2, 8           # owned cstr: a rename's target
+F TP_before, 8          # FNV-1a of the file's bytes before and after (disk participants)
+F TP_after, 8
+F TP_slot, 8            # its journal slot, -1 for none
+F TP_flags, 8           # TPF_*
+ENDSTRUCT TP_SIZE
+.equ TPK_BUF, 1         # an open document's buffer
+.equ TPK_FILE, 2        # a file on disk that was not open
+.equ TPK_CREATE, 3
+.equ TPK_RENAME, 4
+.equ TPK_DELETE, 5
+.equ TPS_APPLIED, 0
+.equ TPS_UNDONE, 1
+.equ TPS_LOST, 2        # closed unsaved, or otherwise out of reach: skipped
+.equ TPF_FOLDER, 1      # a create or delete of a folder
+.equ TPF_PICK, 2        # tx_run: undo or redo this one
+.equ TPF_DONE, 4        # a commit made its disk step (a rollback puts it back)
+.equ TPF_HADTAB, 8      # a deleted file had a clean tab (undo opens it again)
+.equ TPF_CASE, 16       # a rename that changes only letter case
+.equ TPF_OVER, 32       # a create or rename replaced a file (in the journal as SLOT.over)
+# a workspace edit being made (wsedit.s reads it, wsdisk.s writes its files)
+.equ WK_TEXT, 0                 # entry kinds
+.equ WK_CREATE, 1
+.equ WK_RENAME, 2
+.equ WK_DELETE, 3
+
+.equ WP_VERSION, 0              # what a text group was made for (PRE)
+.equ WP_DASH, 1                 # "-": the file on disk as it is
+.equ WP_HASH, 2                 # "fnv1a64:HEX": the file whose bytes hash so
+
+.equ WF_OVERWRITE, 1            # entry flags
+.equ WF_IGNORE_EXISTING, 2
+.equ WF_RECURSIVE, 4
+.equ WF_IGNORE_MISSING, 8
+
+# an entry of a workspace edit: a text group (one file) or a file operation
+STRUCT
+F WG_kind, 8                    # WK_*
+F WG_path, 8                    # its PATH bytes (a rename's FROM)
+F WG_plen, 8
+F WG_path2, 8                   # a rename's TO
+F WG_plen2, 8
+F WG_pre, 8                     # WP_*
+F WG_version, 8                 # WP_VERSION: the version; -1 otherwise
+F WG_hash, 8                    # WP_HASH: the hash
+F WG_flags, 8                   # WF_*
+F WG_doc, 8                     # DOC* once resolved: the open document, or a hidden one (WG_hidden)
+F WG_hidden, 8                  # 1: WG_doc was read for a closed file, never shown, freed after
+F WG_first, 8                   # its edits: we[first .. first + count)
+F WG_count, 8
+F WG_opened, 8                  # 1: this edit opened its tab (v1; closed again if the edit fails)
+F WG_real, 8                    # owned: the file's path as written on disk, or 0
+F WG_stamp, 8                   # the file's stamp when it was read
+F WG_orig, 8                    # owned: a closed file's bytes as read, raw
+F WG_olen, 8
+F WG_clean, 8                   # an open document that had no unsaved changes
+F WG_ver0, 8                    # an open document's version when it was checked
+F WG_new, 8                     # owned: a closed file's bytes to write
+F WG_nlen, 8
+F WG_before, 8                  # FNV-1a of the bytes read, and of the bytes to write
+F WG_after, 8
+F WG_real2, 8                   # owned: a rename's target as it will be on disk
+F WG_skip, 8                    # a file operation that ignore-existing or ignore-missing skips
+F WG_folder, 8                  # a file operation on a folder
+F WG_exists, 8                  # its target exists (overwrite moves it into the journal)
+F WG_case, 8                    # a rename that changes only letter case (two steps)
+F WG_created, 8                 # a text group for a file an earlier create makes
+ENDSTRUCT WG_SIZE
+
+# an edit of a text group
+STRUCT
+F WE_l1, 4
+F WE_c1, 4
+F WE_l2, 4
+F WE_c2, 4
+F WE_start, 8                   # byte offsets, once resolved
+F WE_end, 8
+F WE_text, 8
+F WE_len, 8
+ENDSTRUCT WE_SIZE
+
 
 .equ EK_OTHER, 0
 .equ EK_TYPE, 1
@@ -1505,6 +1611,16 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
     FEATURE FEAT_COMPLETE_ITEMS, "complete-items", 1  # complete-resolve
     FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
+    # editor presentation (deco.s ...)
+    FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
+    # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):
+    # ws_features_agreed withholds the ones whose host side is not in yet
+    FEATURE FEAT_WORKSPACE_EDITS, "workspace-edits", 0
+    FEATURE FEAT_FILE_OPERATIONS, "file-operations", 0   # agreed only with workspace-edits
+    FEATURE FEAT_SELECTIONS, "selections", 0
+    FEATURE FEAT_REVEAL, "reveal", 0
+    FEATURE FEAT_DIFF, "diff", 0
+    FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1565,6 +1681,10 @@ FEATURE_LIST
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
 .equ QO_SCM, 4                   # source control (scmext.s)
+# FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
+.macro FEAT_CLEAR base, feat
+    and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
+.endm
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1678,6 +1798,10 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_RENAME_SYMBOL, 9    # the new name of a symbol (langfeat.s)
 .equ PROMPT_REMOTE, 40          # remote hosts: a question for ssh, answered in plain text (remoteui.s)
 .equ PROMPT_REMOTE_SECRET, 41   # remote hosts: a password or passphrase, drawn masked
+# extension management: development installs (extinstall.s)
+.equ PROMPT_EXT_FOLDER, 20      # Install from Folder: the folder, copied
+.equ PROMPT_EXT_LINK, 21        # Link a Folder: the folder, linked
+.equ PROMPT_EXT_ARCHIVE, 22     # Install from Archive: the .tar.gz
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -1756,6 +1880,8 @@ F EXT_confined, 4       # CONFINED_* of the running program
 F EXT_runs, 8           # cstr: the [needs] run list (program names), or 0
 F EXT_pinned, 4         # 1: its button is in the title bar (extensions.ini)
 F EXT_disabled, 4       # 1: turned off (extensions.ini)
+F EXT_edits, 4          # wsedit: 1: may change project files without asking (extensions.ini, the user allowed it)
+F EXT_edits_pad, 4
 F EXT_confine_why, 8    # cstr: why rhun cannot hold it to its permissions on this system, or 0
 F EXT_restart, 4        # 1: start again once the stop in progress completes (a settings change)
 F EXT_noconfine, 4      # 1: confinement failed in the child once: it runs without (EXT_confine_why)
@@ -1811,6 +1937,14 @@ F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use,
 F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
 F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
 F EXT_wasm_pad, 4
+# extension management (extrecord.s, extinstall.s, extupdate.s)
+F EXT_rec, 8            # cstr: its install record (.rhun-install), or 0
+F EXT_inst, 8           # cstr: a linked install's stub folder (EXT_dir is the linked folder), or 0
+F EXT_prev, 8           # cstr: the version of its previous version (Roll back), or 0
+F EXT_pack, 8           # cstr: a pack's members (OWNER/NAME, space separated), or 0
+F EXT_xset, 8           # cstr: "setting.KEY = VALUE" lines its manifest does not declare, or 0
+F EXT_fresh, 4          # 1: a new version with a previous one to go back to, until its first hello
+F EXT_mgmt_pad, 4
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
@@ -1841,6 +1975,45 @@ F VW_ay, 4
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 .equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview
+# extension management (extinstall.s, extupdate.s): where an install comes from, why it runs, and
+# how an update ended
+.equ IK_GITHUB, 0               # a release on GitHub (or RHUN_EXT_BASE)
+.equ IK_ARCHIVE, 1              # a release archive on this computer
+.equ IK_FOLDER, 2               # a folder, copied
+.equ IK_LINK, 3                 # a folder, linked (development)
+.equ IP_ADD, 0                  # Add: the permission dialog
+.equ IP_UPDATE, 1               # an update asked for: a dialog when unreviewed or wider
+.equ IP_AUTO, 2                 # an automatic update: never asks; wider waits
+.equ XU_UPDATED, 0
+.equ XU_ASKS, 1                 # it asks for more access: waits for the user
+.equ XU_FAILED, 2
+.equ XU_CANCELLED, 3
+.equ XS_NONE, 0                 # extupdate_state: current, or nothing known
+.equ XS_AVAILABLE, 1
+.equ XS_ASKS, 2                 # it asks for more access: waits for the user
+.equ XS_SKIPPED, 3              # the version rolled back from
+.equ XS_ERROR, 4
+.equ XM_INSTALL, 0              # [updates] extensions (cfg_ext_updates)
+.equ XM_CHECK, 1
+.equ XM_OFF, 2
+.equ FOCUS_EXT_SEARCH, 30       # the Extensions page's Browse search (extpage.s)
+# an entry of the rhun extensions index (extindexfile.s): pointers to cstrs, 0 when absent
+STRUCT
+F XI_name, 8                    # "owner/name"
+F XI_title, 8
+F XI_desc, 8
+F XI_version, 8
+F XI_tag, 8
+F XI_digest, 8                  # sha256 of this system's archive, or 0
+F XI_category, 8
+F XI_keywords, 8
+F XI_needs, 8                   # KEY=VALUE words (run=a,b)
+F XI_rhun, 8                    # the oldest rhun it works with, or 0
+F XI_pack, 8
+F XI_color, 4                   # ARGB, 0 without
+F XI_featured, 4
+ENDSTRUCT XI_SIZE
+.equ XI_FIELDS, 11              # the pointer fields above, in order
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini
 STRUCT
 F SD_key, 8             # cstr
@@ -1971,12 +2144,12 @@ CTXKEY_LIST
 .equ WHEN_DEPTH_MAX, 8
 # a menu target the resource and editor keys describe while a menu evaluates (ctx_push_target)
 STRUCT
-F CT_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
+F MTG_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
                         #   "view" "item" (targetKind), or 0 for no target
-F CT_doc, 8             # its DOC*, or 0
-F CT_path, 8            # cstr: its path, or 0
-F CT_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
-ENDSTRUCT CT_SIZE
+F MTG_doc, 8             # its DOC*, or 0
+F MTG_path, 8            # cstr: its path, or 0
+F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
 STRUCT
@@ -2000,6 +2173,7 @@ F XK_text_ver, 8        # last accepted edit/resync/full-text baseline
 F XK_resync, 8          # per-peer debt survives clearing DOC_xresync
 F XK_replay, 8          # pending active1/cursor2/selection4 catch-up
 F XK_selcur, 8          # cursor of last accepted selection, independent of XK_cur
+F XK_selhash, 8         # feature selections: sel_hash of the selections last told (0: one caret)
 ENDSTRUCT XK_SIZE
 .equ XP_NEED_OPEN, 0
 .equ XP_READY, 1
@@ -2822,3 +2996,149 @@ F RR_n, 8               # fields
 F RR_data, 8            # the LEN bytes
 F RR_len, 8
 ENDSTRUCT RR_SIZE
+
+# ---- editor presentation (edtape.s, deco.s, gutter.s, presctl.s) ----
+# per-document presentation state, DOC_pres: the edit tape, decorations, glyph-lane entries
+.equ TAPE_N, 256                # edits the tape keeps
+STRUCT
+F PRS_tape, 8            # TE[TAPE_N], a ring
+F PRS_tn, 8              # edits written since the tape began (entry tn % TAPE_N is the next)
+F PRS_tbase, 8           # the oldest version tape_map moves positions from
+F PRS_gen, 8             # bumped by every change to what is drawn
+F PRS_deco, VEC_SIZE     # DR decoration ranges, unsorted
+F PRS_dpool, SB_SIZE     # their texts (before, after, tip, extra)
+F PRS_dgarbage, 8        # pool bytes no range uses any more
+F PRS_glyphs, VEC_SIZE   # GLE glyph-lane entries, sorted by position then kind
+ENDSTRUCT PRS_SIZE
+STRUCT
+F TE_version, 8         # DOC_version after the edit
+F TE_pos, 8
+F TE_del, 8             # one of del and ins is 0
+F TE_ins, 8
+F TE_line, 8            # where pos was: 0-based line and byte column
+F TE_col, 8
+F TE_nl, 8              # line feeds in the inserted or deleted text
+F TE_tail, 8            # its bytes after the last line feed (all of them when it has none)
+ENDSTRUCT TE_SIZE
+.equ GR_RIGHT, 0                # an insert at the position moves it (range start, marks)
+.equ GR_LEFT, 1                 # an insert at the position leaves it (range end)
+
+# decoration types (deco.s): one per extension and name; COLOR is two SPECs, dark and light
+STRUCT
+F DCS_value, 4           # argb, or the theme slot
+F DCS_kind, 1            # DCSK_*
+F DCS_pct, 1             # a slot's opacity, 0-100
+F DCS_pad, 2
+ENDSTRUCT DCS_SIZE
+.equ DCSK_NONE, 0
+.equ DCSK_ARGB, 1
+.equ DCSK_SLOT, 2
+.equ DCSK_TEXT, 3                # strike COLOR "-": the text's color
+STRUCT
+F DTY_owner, 8           # EXT*, 0 for a free slot
+F DTY_name, 48           # cstr, 1-40 bytes of [a-z0-9_-]
+F DTY_flags, 4           # DTYF_*
+F DTY_prio, 4            # 0-100
+F DTY_bwidth, 4          # border width 1-3
+F DTY_ustyle, 4          # US_*
+F DTY_gshape, 4          # GS_* in the gutter's left lane
+F DTY_grow, 4            # DG_*
+F DTY_width, 4           # before/after text cells, 0 natural
+F DTY_seq, 4             # registration order, for ties
+F DTY_color, 2*DCS_SIZE
+F DTY_bg, 2*DCS_SIZE
+F DTY_linebg, 2*DCS_SIZE
+F DTY_border, 2*DCS_SIZE
+F DTY_under, 2*DCS_SIZE
+F DTY_strike, 2*DCS_SIZE
+F DTY_gutter, 2*DCS_SIZE
+F DTY_scroll, 2*DCS_SIZE
+F DTY_before, 2*DCS_SIZE
+F DTY_beforebg, 2*DCS_SIZE
+F DTY_after, 2*DCS_SIZE
+F DTY_afterbg, 2*DCS_SIZE
+ENDSTRUCT DTY_SIZE
+.equ DTYF_COLOR, 1
+.equ DTYF_BG, 2
+.equ DTYF_LINEBG, 4
+.equ DTYF_BORDER, 8
+.equ DTYF_UNDER, 16
+.equ DTYF_STRIKE, 32
+.equ DTYF_FADED, 64
+.equ DTYF_BEFORE, 128
+.equ DTYF_AFTER, 256
+.equ DTYF_GUTTER, 512
+.equ DTYF_SCROLL, 1024
+.equ US_SOLID, 1
+.equ US_DOUBLE, 2
+.equ US_DOTTED, 3
+.equ US_DASHED, 4
+.equ US_SQUIGGLE, 5
+.equ DG_NONE, 0
+.equ DG_START, 1
+.equ DG_END, 2
+.equ DG_BOTH, 3
+# a decorated range on a document
+STRUCT
+F DR_start, 8
+F DR_end, 8
+F DR_type, 4            # index into the types
+F DR_flags, 4           # DRF_*
+F DR_text, 4            # offset of its texts in PRS_dpool
+F DR_blen, 2            # before, after, tip lengths
+F DR_alen, 2
+F DR_tlen, 2
+F DR_pad, 2
+F DR_xlen, 4            # extra records' length
+ENDSTRUCT DR_SIZE
+.equ DRF_WASEMPTY, 1            # empty when it came: kept at an edge of a deletion
+
+# the gutter's glyph lane (gutter.s): GLE entries per document, kinds registered by built-in code
+STRUCT
+F GLE_pos, 8            # start of the glyph's line (moves with the text before it)
+F GLE_kind, 4
+F GLE_glyph, 4          # shape | slot << 8 | GF_* << 16
+ENDSTRUCT GLE_SIZE
+.equ GS_DOT, 1                  # glyph shapes (gutter_shape_draw)
+.equ GS_CIRCLE, 2
+.equ GS_RING, 3
+.equ GS_SQUARE, 4
+.equ GS_DIAMOND, 5
+.equ GS_TRIANGLE, 6             # pointing right: run
+.equ GS_BAR, 7
+.equ GS_CHECK, 8
+.equ GS_CROSS, 9
+.equ GS_PLUS, 10
+.equ GS_MINUS, 11
+.equ GS_ARROW, 12               # the debugger's current line
+.equ GS_CIRCLE_BAR, 13          # a circle with a bar (a breakpoint with a condition)
+.equ GS_CIRCLE_TRI, 14          # a circle with a warning triangle (rejected)
+.equ GS_BULB, 15
+.equ GS_COUNT, 16
+.equ GF_FAINT, 1                # glyph flags (bits 16-23): drawn at a third of the color's alpha
+.equ GK_EMPTY, 1                # gutter_kind flags: clicks on lines without a glyph come here
+.equ GK_RESERVE, 2              # the lane keeps its width with line numbers off
+.equ GK_MAX, 32
+.equ LANE_NONE, 0                 # gutter_hit lanes
+.equ LANE_LEFT, 1
+.equ LANE_DIGITS, 2
+.equ LANE_FOLD, 3
+.equ LANE_GIT, 4
+.equ GK_PRIO_DOT, 10            # built-in lane priorities: the diagnostic dot, decoration icons,
+.equ GK_PRIO_DECO, 20           #   suggested ones for the others (the highest shows on a line)
+.equ GK_PRIO_TEST, 40
+.equ GK_PRIO_BULB, 50
+.equ GK_PRIO_BREAKPOINT, 80
+.equ GK_PRIO_DEBUG_LINE, 90
+# caps
+.equ DTY_MAX_EXT, 64             # decoration types per extension
+.equ DTY_MAX, 512                # in all
+.equ DTY_BODY_MAX, 4096
+.equ DECO_BODY_MAX, 4194304     # a decorate body
+.equ DECO_MAX_MSG, 20000        # records per message, and per extension and document
+.equ DECO_MAX_DOC, 50000        # per document in all
+.equ DECO_TEXT_MAX, 200         # before/after bytes
+.equ DECO_TIP_MAX, 1000
+.equ DECO_EXTRA_MAX, 9000
+.equ DECO_PIECES, 4096          # decoration pieces drawn per frame
+.equ DECO_TICKS, 1024           # scrollbar ticks

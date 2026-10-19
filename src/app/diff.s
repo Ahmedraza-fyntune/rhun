@@ -11,6 +11,7 @@ tcap: .quad 0
 delpts: .quad 0                 # per document line + 1: lines deleted before it
 delcap: .quad 0
 marks: .quad 0                  # the document's marks while diffing
+amarks: .quad 0                 # diff_lines: a byte per line of a, 1 when it went (else 0: unused)
 
 .text
 
@@ -264,6 +265,38 @@ FN diff_marks
     mov [rbx + DOC_gver], rax
     EPILOGUE
 
+# FN diff_lines(a hashes, n, b hashes, m, amark, bmark) -> eax 1 with amark[i] 1 for each line of a
+# that went and bmark[j] 1 for each line of b that came (both n and m bytes, cleared by the
+# caller), 0 when there are more than 1000 differences (wsdiff.s's unified diffs)
+FN diff_lines
+    PROLOGUE 16
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov r12, rdx
+    mov r13, rcx
+    mov [rip + amarks], r8
+    mov [rip + marks], r9
+    # deletion points, a byte per line of b and one more
+    mov rdi, [rip + delpts]
+    lea rsi, [r13 + 2]
+    cmp rsi, [rip + delcap]
+    jbe 1f
+    mov [rip + delcap], rsi
+    call mem_realloc
+    mov [rip + delpts], rax
+1:  mov rdi, [rip + delpts]
+    mov rcx, [rip + delcap]
+    xor eax, eax
+    rep stosb
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    mov rdx, r12
+    mov rcx, r13
+    xor r8d, r8d
+    call myers
+    mov qword ptr [rip + amarks], 0
+    EPILOGUE
+
 # myers(a, n, b, m, offset) -> 1, or 0 when there are more than DMAX differences
 #   marks GM_ADD for inserted lines of b and deletion points in delpts, offset by the common prefix
 myers:
@@ -415,6 +448,10 @@ myers:
     mov r9, [rip + delpts]
     lea r10, [r15 + r8]
     mov byte ptr [r9 + r10], 1
+    mov r9, [rip + amarks]      # diff_lines: which lines of a went
+    test r9, r9
+    jz 7f
+    mov byte ptr [r9 + r14 - 1], 1
 7:  mov r14, rax
     mov r15, rdx
     dec r12

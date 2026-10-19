@@ -31,6 +31,16 @@ cp assets/icons/rhun-256.png "$out/apple-touch-icon.png"
 cp assets/fonts/IosevkaFixed-Regular.ttf assets/fonts/LICENSE-Iosevka.md "$out/fonts/"
 cp docs/guide.md "$out/guide.md"
 { cat "$out/llms.txt"; printf '\n---\n\n'; cat docs/guide.md; } > "$out/llms-full.txt"
+# the extension catalog's index, checked against its sha256sums.txt (none yet: the page says so)
+index_url=https://github.com/rhun-editor/extensions/releases/latest/download
+if curl -fsSL --max-time 30 -o "$out/extension-index.ini" "$index_url/index.ini" 2>/dev/null &&
+   want=$(curl -fsSL --max-time 30 "$index_url/sha256sums.txt" 2>/dev/null | awk '$2 == "index.ini" { print $1 }') &&
+   [ "$want" = "$( (sha256sum "$out/extension-index.ini" 2>/dev/null || shasum -a 256 "$out/extension-index.ini") | cut -d ' ' -f 1)" ]; then
+    :
+else
+    rm -f "$out/extension-index.ini"
+fi
 python3 site/docs/build.py "$out" "$version" "$asset_version"
+rm -f "$out/extension-index.ini"
 cp site/docs/docs.css site/docs/docs.js "$out/docs/"
 echo "site $version in $out"

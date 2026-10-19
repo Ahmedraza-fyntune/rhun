@@ -48,6 +48,8 @@ cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
 .globl cfg_multi_cursor_paste
 cfg_multi_cursor_paste: .long 0
+.globl cfg_multi_cursor_modifier
+cfg_multi_cursor_modifier: .long 0  # 0 alt, 1 ctrl (Command on macOS): adds carets with the mouse
 cfg_word_wrap: .long 0
 # language features (query.s, complete.s, langfeat.s)
 .globl cfg_complete_replace, cfg_complete_commit, cfg_lightbulb, cfg_format_on_type, cfg_format_on_paste
@@ -77,6 +79,8 @@ cfg_git: .long 1
 cfg_commit_ai: .long 0
 .globl cfg_update_check
 cfg_update_check: .long 1
+.globl cfg_ext_updates
+cfg_ext_updates: .long 0         # [updates] extensions: XM_INSTALL, XM_CHECK or XM_OFF (extension management)
 .p2align 3
 cfg_theme: .quad cfg_def_theme
 cfg_dark_theme: .quad cfg_def_theme
@@ -884,6 +888,7 @@ g_settings:
     SETTING .Ls_editor, smooth_caret, ST_BOOL, cfg_smooth_caret, 0, 1, 1, 0, "Wide caret", "Draw a 2 point caret instead of a hairline."
     SETTING .Ls_editor, auto_pairs, ST_BOOL, cfg_auto_pairs, 0, 1, 1, 0, "Auto-close brackets", "Insert the closing bracket or quote."
     SETTING .Ls_editor, multi_cursor_paste, ST_CHOICE, cfg_multi_cursor_paste, 0, 1, 1, 0, "Paste at multiple cursors", "Keep copied selections paired. Choose how other multiline text is pasted.", .Lpaste_opts
+    SETTING .Ls_editor, multi_cursor_modifier, ST_CHOICE, cfg_multi_cursor_modifier, 0, 1, 1, 0, "Multi-cursor modifier", "Held with a click to add a caret, with a drag to add a selection.", .Lmodifier_opts
     SETTING .Ls_editor, scroll_past_end, ST_BOOL, cfg_scroll_past_end, 0, 1, 1, 0, "Scroll past end", "Allow scrolling the last line to the top."
     SETTING .Ls_editor, vim_mode, ST_BOOL, cfg_vim, 0, 1, 1, 0, "Vim mode", "Normal, insert and visual modes with vim keys."
     # language features
@@ -917,10 +922,16 @@ g_settings:
     SETTING_ACTION .Ls_git, ai_setup, cmd_ai_model_files, .Lai_setup, g_ai_local_desc
     SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
     SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_version_text, g_update_desc
+    # extension management
+    SETTING .Ls_updates, extensions, ST_CHOICE, cfg_ext_updates, 0, 2, 1, 0, "Extension updates", "Install reviewed versions by themselves, or only show updates.", .Lextup_opts
+    SETTING_ACTION .Ls_updates, check_extensions, cmd_check_extensions, .Lextup_label, g_extup_desc
     SETTING .Ls_remote, agent_binary, ST_STR, cfg_remote_agent_binary, 0, 0, 0, 0, "Remote agent binary", "A Linux rhun to start on remote hosts. Empty uses this release's own."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
+.Lextup_opts: .asciz "install", "Install", "check", "Show only", "off", "Off", ""
+.Lextup_label: .asciz "Check extensions now"
 .Lpaste_opts: .asciz "spread", "Spread lines", "full", "Full text", ""
+.Lmodifier_opts: .asciz "alt", "Alt", "ctrl", "Ctrl", ""
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"

@@ -511,6 +511,15 @@ handle_line:
     mov edx, 1
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
+    call invoke_reply           # a call's answer goes to its caller (invoke.s)
+    mov [rip + cur], rbx
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
     call save_reply
     test eax, eax
     jnz 9f
@@ -574,6 +583,17 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call scmext_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # a call's error goes to its caller with its code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call invoke_reply           # (invoke.s)
+    mov [rip + cur], rbx
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -753,6 +773,66 @@ reply_error_u64:
     mov edi, 10
     call out_byte
     jmp out_end
+
+# ---------------- for verb handlers in other files (editor presentation) ----------------
+
+# xp_field(i) -> rax ptr, rdx len of field i of the message being handled (0, 0 past its fields)
+FN xp_field
+    cmp rdi, [rip + nfields]
+    jae 1f
+    jmp field_at
+1:  xor eax, eax
+    xor edx, edx
+    ret
+# xp_field_u64(i) -> rax value, rdx 1 when field i is a decimal u64
+FN xp_field_u64
+    jmp field_u64
+# xp_nfields() -> rax
+FN xp_nfields
+    mov rax, [rip + nfields]
+    ret
+# xp_cur() -> rax the EXT being served; xp_cur_id() -> rax its request id
+FN xp_cur
+    mov rax, [rip + cur]
+    ret
+FN xp_cur_id
+    mov rax, [rip + cur_id]
+    ret
+# xp_body() -> rax ptr, rdx len of the message's body
+FN xp_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+# xp_reply_ok(id), xp_reply_error(id, "code text"), xp_reply_error_u64(id, "code text ", value),
+# xp_reply_syntax(id)
+FN xp_reply_ok
+    jmp reply_ok
+FN xp_reply_error
+    jmp reply_error
+FN xp_reply_error_u64
+    jmp reply_error_u64
+FN xp_reply_syntax
+    jmp reply_syntax
+# xp_arg_doc(i) -> rax DOC* of field i, or 0 after replying
+FN xp_arg_doc
+    jmp arg_doc
+# xp_need(NEEDS_*) -> eax 1, or 0 after replying needs
+FN xp_need
+    jmp need
+# xp_send(ext, ptr, len): bytes to an extension as one message (an event line and its body)
+FN xp_send
+    PROLOGUE
+    mov r12, [rip + cur]
+    mov [rip + cur], rdi
+    mov rbx, rsi
+    mov r13, rdx
+    call out_begin
+    mov rdi, rbx
+    mov rsi, r13
+    call out_bytes
+    call out_end
+    mov [rip + cur], r12
+    EPILOGUE
 
 # ---------------- for verb handlers in other files (language features: query.s) ----------------
 
@@ -1248,6 +1328,8 @@ h_snippet:
     cmp rax, [rbx + DOC_version]
     jne .Lhsn_stale
     mov rdi, rbx
+    call sel_collapse           # a snippet is about one place (multi-cursor)
+    mov rdi, rbx
     mov esi, 4
     call arg_pos
     test rax, rax
@@ -1354,7 +1436,10 @@ h_apply:
     mov rdi, [rip + body_ptr]
     mov rsi, [rip + body_len]
     mov rdx, [rip + cur]
+    mov rcx, [rip + cur_id]
     call ws_apply_request
+    cmp eax, 2
+    je 9f                       # wsedit: the confirmation list answers when the user does
     test eax, eax
     jz 1f
     mov rdi, [rip + cur_id]
@@ -1364,6 +1449,23 @@ h_apply:
     mov rsi, rdx
     call reply_error
 9:  EPILOGUE
+
+# wsedit: FN extproto_reply_to(ext, id, error "CODE TEXT" or 0): a reply that waited (an apply
+# request the confirmation list held)
+FN extproto_reply_to
+    PROLOGUE
+    mov rbx, [rip + cur]
+    mov [rip + cur], rdi
+    mov r12, rdx
+    mov rdi, rsi
+    test r12, r12
+    jnz 1f
+    call reply_ok
+    jmp 2f
+1:  mov rsi, r12
+    call reply_error
+2:  mov [rip + cur], rbx
+    EPILOGUE
 
 # Additive protocol identity/position fields are decimal int64 values, with overflow rejected.
 save_number:
@@ -1567,7 +1669,21 @@ h_insert:
     jz .Lhi_syntax
     cmp rax, [rbx + DOC_version]
     jne .Lhi_stale
+    # feature selections: at every selection, as typing would
+    cmp qword ptr [rbx + DOC_selections], 0
+    je 2f
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_SELECTIONS
+    jz 2f
     mov rdi, rbx
+    call sel_insert_all
+    test rax, rax
+    jz 9f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
+    jmp 9f
+2:  mov rdi, rbx
     call ed_sel
     mov r12, rax
     mov r13, rdx
@@ -1623,6 +1739,8 @@ h_select:
     test rax, rax
     js 9f
     mov r13, rax
+    mov rdi, rbx
+    call sel_collapse           # one selection (multi-cursor)
     mov rdi, rbx
     mov rsi, r13
     mov rdx, r12
@@ -2667,6 +2785,44 @@ h_cmd:
 
 # ---------------- contributions and commands ----------------
 
+# FN extproto_set_cur(ext): the extension being served again (extproto_cur), after sending to
+# another one (events and cancels switch it)
+FN extproto_set_cur
+    mov [rip + cur], rdi
+    ret
+
+# ID run-command NAME LEN + ARGS: a built-in, or another extension's callable command (feature
+# command-args; invoke.s answers, now or when the call comes back)
+h_run_command:
+    PROLOGUE
+    mov rbx, [rip + cur]
+    FEAT_TEST rbx, FEAT_COMMAND_ARGS
+    jz .Lhrc_unknown
+    cmp qword ptr [rip + nfields], 4
+    jne .Lhrc_syntax
+    mov edi, 2
+    call field_at
+    mov rdi, rbx
+    mov rsi, [rip + cur_id]
+    mov rcx, rdx
+    mov rdx, rax
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    call invoke_run
+    mov [rip + cur], rbx
+    test eax, eax
+    jnz .Lhrc_syntax
+    EPILOGUE
+.Lhrc_unknown:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    EPILOGUE
+.Lhrc_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
 # ID set-context KEY VALUE -> ok ID: the extension's context key KEY (feature context-keys);
 # VALUE is the rest of the line, "-" removes it (extcontext.s)
 h_set_context:
@@ -3230,7 +3386,9 @@ hello_features:
     mov dword ptr [rbx + EXT_feat_asks], 1
 3:  add r12, r13
     jmp 1b
-4:  xor r14d, r14d              # anything agreed?
+4:  mov rdi, rbx                # wsedit: which of its features it may have yet
+    call ws_features_agreed
+    xor r14d, r14d              # anything agreed?
     xor ecx, ecx
 41: or r14, [rbx + EXT_features + rcx*8]
     inc ecx
@@ -3238,6 +3396,8 @@ hello_features:
     jb 41b
     test r14, r14
     jz 9f
+    call pres_enable            # answers about older versions move through the edit tapes (edtape.s)
+    call deco_visible_again     # and the visible event reaches the new extension too (deco.s)
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
@@ -3376,15 +3536,16 @@ FN extproto_send_invoke
     call out_cstr
     mov edi, ' '
     call out_byte
-    # the document: the invocation's while it is open, else the active one
+    # the document: the invocation's while it is open (0 once it closed), else the active one
     test r14, r14
     jz 1f
     mov rdi, [r14 + INV_doc]
     test rdi, rdi
     jz 1f
     call doc_by_id
+    xor edi, edi
     test rax, rax
-    jz 1f
+    jz 2f
     mov rdi, [rax + DOC_id]
     jmp 2f
 1:  call active_doc_id
@@ -3444,7 +3605,12 @@ active_doc_id:
     mov rax, [rax + TAB_doc]
     test rax, rax
     jz 8f
-    mov rax, [rax + DOC_id]
+    mov rcx, [rax + DOC_diff]   # wsedit: a diff tab of wsdiff.s is no document for extensions
+    test rcx, rcx
+    jz 1f
+    test dword ptr [rcx + DV_flags], DVF_OWN
+    jnz 8f
+1:  mov rax, [rax + DOC_id]
     ret
 8:  xor eax, eax
     ret
@@ -3756,6 +3922,415 @@ send_selection:
     call out_end
     EPILOGUE
 
+# ---------------- feature selections (multi-cursor) ----------------
+
+# sel_insert_all(doc) -> rax 0 after replying ok ID VERSION, else the error text: the body at
+# every selection of the document, as typing would
+sel_insert_all:
+    PROLOGUE
+    mov rbx, rdi
+    mov rsi, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    call doc_selections_replace
+    test eax, eax
+    jz 1f
+    mov dword ptr [rip + g_dirty], 1
+    cmp rbx, [rip + g_doc]
+    jne 2f
+    mov qword ptr [rbx + DOC_prefx], -1
+    call ed_touch
+2:  mov rdi, [rip + cur_id]
+    mov rsi, [rbx + DOC_version]
+    call reply_ok_u64
+    xor eax, eax
+    EPILOGUE
+1:  lea rax, [rip + .Le_sel_refused]
+    cmp edx, 2
+    jne 3f
+    lea rax, [rip + .Le_sel_large]
+3:  cmp edx, 3
+    jne 4f
+    lea rax, [rip + .Le_readonly]
+4:  EPILOGUE
+
+# ID select-many DOC N LEN + N lines "L1 C1 L2 C2" -> ok ID: the selections (anchor, cursor),
+# the first the primary; overlapping ones merge
+h_select_many:
+    PROLOGUE 16
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_SELECTIONS
+    jz .Lsm_unknown
+    cmp qword ptr [rip + nfields], 5
+    jb .Lsm_syntax
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz .Lsm_syntax
+    test rax, rax
+    jz .Lsm_toobig
+    cmp rax, DOC_SELECTIONS_MAX
+    ja .Lsm_toobig
+    mov r12, rax                # selections
+    mov r13, [rip + body_ptr]   # the numbers go on from here
+    mov r14, r13
+    add r14, [rip + body_len]
+    xor r15d, r15d
+1:  cmp r15, r12
+    jae 2f
+    call sm_number              # anchor line, column
+    mov [rsp], rax
+    call sm_number
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, rax
+    call sm_pos
+    test rax, rax
+    js .Lsm_badpos
+    mov rcx, r15
+    shl rcx, 4
+    lea rdx, [rip + sel_pairs]
+    mov [rdx + rcx + DMP_anchor], rax
+    call sm_number              # cursor line, column
+    mov [rsp], rax
+    call sm_number
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, rax
+    call sm_pos
+    test rax, rax
+    js .Lsm_badpos
+    mov rcx, r15
+    shl rcx, 4
+    lea rdx, [rip + sel_pairs]
+    mov [rdx + rcx + DMP_cur], rax
+    inc r15
+    jmp 1b
+2:  mov rdi, rbx
+    lea rsi, [rip + sel_pairs]
+    mov rdx, r12
+    call sel_install
+    test rax, rax
+    jz .Lsm_badpos
+    mov qword ptr [rbx + DOC_prefx], -1
+    cmp rbx, [rip + g_doc]
+    jne 3f
+    call ed_touch
+    jmp 4f
+3:  mov rdi, rbx
+    call snippet_selection_changed
+4:  mov rdi, [rip + cur_id]
+    call reply_ok
+9:  EPILOGUE
+.Lsm_unknown:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    EPILOGUE
+.Lsm_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+.Lsm_toobig:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_sel_toobig]
+    call reply_error
+    EPILOGUE
+.Lsm_badpos:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_badpos]
+    call reply_error
+    EPILOGUE
+
+# ---------------- feature reveal (wsedit) ----------------
+
+# ID reveal DOC LINE COL WHERE -> ok ID: the document's view scrolls so the position shows (WHERE
+# top, center, nearest or center-if-outside); the cursor does not move, no tab is activated
+h_reveal:
+    PROLOGUE
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_REVEAL
+    jz .Lrv_unknown
+    cmp qword ptr [rip + nfields], 6
+    jne .Lrv_syntax
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, rbx
+    mov esi, 3
+    call arg_pos
+    test rax, rax
+    js 9f
+    mov r12, rax
+    mov edi, 5
+    call field_at
+    mov r14, rax
+    mov r15, rdx
+    xor r13d, r13d              # RV_* by its word
+1:  cmp r13d, 4
+    jae .Lrv_syntax
+    lea rax, [rip + rv_words]
+    mov rdx, [rax + r13*8]
+    mov rdi, r14
+    mov rsi, r15
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    inc r13d
+    jmp 1b
+2:  mov rdi, rbx
+    mov rsi, r12
+    mov edx, r13d
+    call ws_reveal
+    mov rdi, [rip + cur_id]
+    call reply_ok
+9:  EPILOGUE
+.Lrv_unknown:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    EPILOGUE
+.Lrv_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# ID show-locations LEN + a title line and a 12d locations body -> ok ID: the palette lists them as
+# Find All References does; busy while a prompt or the palette is open
+h_show_locations:
+    PROLOGUE
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_REVEAL
+    jz .Lrv_unknown
+    cmp qword ptr [rip + nfields], 3
+    jne .Lrv_syntax
+    call prompt_busy
+    test eax, eax
+    jnz 9f
+    mov r12, [rip + body_ptr]
+    mov r13, [rip + body_len]
+    xor ebx, ebx                # the title line
+1:  cmp rbx, r13
+    jae .Lrv_syntax
+    cmp byte ptr [r12 + rbx], 10
+    je 2f
+    inc rbx
+    jmp 1b
+2:  mov rdi, [rip + cur]
+    mov rsi, r12
+    mov rdx, rbx
+    lea rcx, [r12 + rbx + 1]
+    mov r8, r13
+    sub r8, rbx
+    dec r8
+    call langfeat_show_locations
+    test eax, eax
+    jz .Lrv_syntax
+    mov rdi, [rip + cur_id]
+    call reply_ok
+9:  EPILOGUE
+
+# ---------------- feature diff (wsedit) ----------------
+
+# ID diff LEFT RIGHT FLAGS LEN + TITLE -> ok ID DOC: a read-only diff tab from document LEFT to
+# document RIGHT (FLAGS show or background); the same pair and title again: the tab it has
+h_diff:
+    PROLOGUE
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_DIFF
+    jz .Lrv_unknown
+    cmp qword ptr [rip + nfields], 6
+    jne .Lrv_syntax
+    mov edi, 2
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov edi, 3
+    call arg_doc
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov edi, 4
+    call field_at
+    mov r14, rax
+    mov r15, rdx
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Ldf_show]
+    call str_eq_cstr
+    mov r13d, eax
+    test eax, eax
+    jnz 1f
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Ldf_background]
+    call str_eq_cstr
+    test eax, eax
+    jz .Lrv_syntax
+1:  # the title: its first line, at most 200 bytes
+    mov rsi, [rip + body_ptr]
+    xor ecx, ecx
+2:  cmp rcx, [rip + body_len]
+    jae 3f
+    cmp byte ptr [rsi + rcx], 10
+    je 3f
+    inc rcx
+    jmp 2b
+3:  mov rdi, rcx
+    mov edx, 200
+    call utf8_cut
+    mov r8, rax
+    mov rdi, [rip + cur]
+    mov rsi, rbx
+    mov rdx, r12
+    mov rcx, [rip + body_ptr]
+    mov r9d, r13d
+    call ws_diff_open
+    test rax, rax
+    jz 4f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+9:  EPILOGUE
+4:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_diff_toobig]
+    call reply_error
+    EPILOGUE
+
+# ID diff-close DOC -> ok ID: one of the extension's diff tabs closes
+h_diff_close:
+    PROLOGUE
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_DIFF
+    jz .Lrv_unknown
+    cmp qword ptr [rip + nfields], 3
+    jne .Lrv_syntax
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz .Lrv_syntax
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call ws_diff_close
+    test eax, eax
+    jz 8f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nodoc]
+    call reply_error
+    EPILOGUE
+
+# sm_number() -> rax the next decimal number of the body between r13 and r14 (r13 moves past it),
+# 0 when there is none (no line or column is 0)
+sm_number:
+    xor eax, eax
+1:  cmp r13, r14
+    jae 9f
+    movzx ecx, byte ptr [r13]
+    cmp ecx, ' '
+    je 2f
+    cmp ecx, 10
+    jne 3f
+2:  inc r13
+    jmp 1b
+3:  cmp r13, r14
+    jae 9f
+    movzx ecx, byte ptr [r13]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja 9f
+    imul rax, rax, 10
+    add rax, rcx
+    mov rcx, 0xffffffffff
+    cmp rax, rcx
+    ja 8f
+    inc r13
+    jmp 3b
+8:  xor eax, eax
+9:  ret
+
+# sm_pos(doc, line, column) -> rax byte position (lines and byte columns from 1, arg_pos's rules),
+# -1 when it is outside the document or inside a character
+sm_pos:
+    PROLOGUE
+    mov rbx, rdi
+    test rsi, rsi
+    jz 8f
+    cmp rsi, [rbx + DOC_nlines]
+    ja 8f
+    test rdx, rdx
+    jz 8f
+    lea r12, [rsi - 1]
+    lea r13, [rdx - 1]
+    mov rsi, r12
+    call doc_line_start
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_end
+    sub rax, r14
+    cmp r13, rax
+    ja 8f
+    add r14, r13
+    cmp r13, rax
+    je 9f
+    mov rdi, rbx
+    mov rsi, r14
+    call doc_byte
+    and eax, 0xc0
+    cmp eax, 0x80
+    je 8f
+9:  mov rax, r14
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# send_selections(doc): "0 selections DOC N LEN" + N lines "L1 C1 L2 C2", the primary first
+send_selections:
+    PROLOGUE 32
+    mov rbx, rdi
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset
+    mov rdi, rbx
+    lea rsi, [rsp]
+    call sel_body
+    mov r12, rax
+    call out_begin
+    lea rdi, [rip + .Lev_selections]
+    call out_cstr
+    mov rdi, [rbx + DOC_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r12
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rsp + SB_len]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, [rsp + SB_ptr]
+    mov rsi, [rsp + SB_len]
+    call out_bytes
+    lea rdi, [rsp]
+    call sb_free
+    call out_end
+    EPILOGUE
+
+# ---------------- end feature selections ----------------
+
 # send_closed(id): "0 closed DOC"
 send_closed:
     push rdi
@@ -3793,6 +4368,11 @@ verbs:
     .quad .Lv_snippet_context, h_snippet_context, 0
     .quad .Lv_insert, h_insert, EXT_BODY_MAX
     .quad .Lv_select, h_select, 0
+    .quad .Lv_select_many, h_select_many, EXT_BODY_MAX    # feature selections
+    .quad .Lv_reveal, h_reveal, 0                         # feature reveal (wsedit)
+    .quad .Lv_show_locations, h_show_locations, EXT_BODY_MAX
+    .quad .Lv_diff, h_diff, EXT_BODY_MAX                  # feature diff (wsedit)
+    .quad .Lv_diff_close, h_diff_close, 0
     .quad .Lv_toast, h_toast, EXT_BODY_MAX
     .quad .Lv_status, h_status, EXT_BODY_MAX
     .quad .Lv_open, h_open, 0
@@ -3819,6 +4399,7 @@ verbs:
     .quad .Lv_provides, query_h_provides, 0
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
+    .quad .Lv_run_command, h_run_command, INV_BODY_MAX
     # source control (wider-parity C): gitdata.s
     .quad .Lv_git_repo, gitdata_h_repo, 0
     .quad .Lv_git_status, gitdata_h_status, 0
@@ -3839,6 +4420,9 @@ verbs:
     .quad .Lv_agent_changed, h_agent_changed, 0
     .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
     .quad .Lv_unpropose, h_unpropose, 0
+    # editor presentation (deco.s)
+    .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
+    .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
@@ -3849,7 +4433,10 @@ verbs:
 .Lv_test_end: .asciz "test-end"
 .Lv_test_coverage: .asciz "test-coverage"
 .Lv_test_exec: .asciz "test-exec"
+.Lpv_decoration_type: .asciz "decoration-type"
+.Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
+.Lv_run_command: .asciz "run-command"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
 .Lv_git_repo: .asciz "git-repo"
@@ -3903,6 +4490,7 @@ opt_names: .quad .Lo_tab, .Lo_spaces, .Lo_trim, .Lo_final
 # the commands cmd may run (section 8a): name, what it needs (0, NEEDS_DOC_WRITE for the ones
 # that change the document, NEEDS_TERMINAL for the terminal panel's); cut, copy and paste are
 # not here: the clipboard is no extension's, and a paste can reach the terminal
+.globl cmd_allow
 cmd_allow:
     .quad .La_undo, NEEDS_DOC_WRITE, .La_redo, NEEDS_DOC_WRITE, .La_select_all, 0, .La_select_line, 0
     .quad .La_select_next, 0, .La_duplicate_line, NEEDS_DOC_WRITE, .La_delete_line, NEEDS_DOC_WRITE
@@ -3987,6 +4575,24 @@ feature_names:
 .Lev_changed: .asciz "0 changed "
 .Lev_cursor: .asciz "0 cursor "
 .Lev_selection: .asciz "0 selection "
+.Lev_selections: .asciz "0 selections "     # feature selections
+.Lv_select_many: .asciz "select-many"
+.Lv_reveal: .asciz "reveal"                 # feature reveal (wsedit)
+.Lv_show_locations: .asciz "show-locations"
+.Lrv_top: .asciz "top"
+.Lrv_center: .asciz "center"
+.Lrv_nearest: .asciz "nearest"
+.Lrv_center_outside: .asciz "center-if-outside"
+.p2align 3
+rv_words: .quad .Lrv_top, .Lrv_center, .Lrv_nearest, .Lrv_center_outside
+.Lv_diff: .asciz "diff"                     # feature diff (wsedit)
+.Lv_diff_close: .asciz "diff-close"
+.Ldf_show: .asciz "show"
+.Ldf_background: .asciz "background"
+.Le_diff_toobig: .asciz "toobig 32 diff tabs"
+.Le_sel_toobig: .asciz "toobig 512 selections at most"
+.Le_sel_refused: .asciz "refused the text could not be inserted"
+.Le_sel_large: .asciz "toobig the text at every selection exceeds 64 MiB"
 .Lev_closed: .asciz "0 closed "
 .Lev_active: .asciz "0 active "
 .Lev_project: .asciz "0 project "

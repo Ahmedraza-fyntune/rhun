@@ -525,6 +525,7 @@ FN settings_draw
     jge 13f
     mov dword ptr [rip + set_scroll], 0
 13: call update_desc_refresh
+    call extupdate_desc_refresh # extension management
     # a changed query scrolls back to the first match
     lea rdi, [rip + set_search]
     call tf_text
