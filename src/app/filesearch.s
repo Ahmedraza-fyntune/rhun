@@ -73,7 +73,7 @@ F FSR_job, 8            # git job
 F FSR_list, SB_SIZE     # paths to take, each with a NUL (a folder's with its /)
 F FSR_lpos, 8
 F FSR_walk, VEC_SIZE    # folders still to read: owned relative paths, "" the root
-F FSR_chain, 16 * (FSR_DEPTH + 1)   # with FSF_LINKS: inode and device of the folders on the way
+F FSR_chain, 16*(FSR_DEPTH+1)   # with FSF_LINKS: inode and device of the folders on the way
 F FSR_dir, 8            # the folder a walk reads (relative, borrowed during vfs_dir_each)
 F FSR_count, 8          # paths listed, or matches
 F FSR_files, 8

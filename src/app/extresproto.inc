@@ -1,6 +1,9 @@
 # The resources group's messages (docs/extensions/v1.1.md: idle, secrets, urls, uris, files,
 # scoped-settings, workspace-folders), part of extproto.s: it uses the line's fields, the replies
 # and `cur`.
+.equ LK_URL_MAX_WIRE, 8192      # links.s's LK_URL_MAX
+.equ FSK_FIND_WIRE, 1           # filesearch.s's kinds
+.equ FSK_SEARCH_WIRE, 2
 .text
 
 # res_agreed(feature) -> eax 1 when cur agreed the feature (FEAT_*), else 0 after "error ID unknown"
@@ -860,7 +863,6 @@ h_res_setting_get:
 res_url_label: .zero SB_SIZE
 res_url_host: .zero 208
 .section .rodata
-.equ LK_URL_MAX_WIRE, 8192
 .Lres_v_open_url: .asciz "open-url"
 .Lres_v_external_uri: .asciz "external-uri"
 .Lres_v_link: .asciz "link"
@@ -886,6 +888,4 @@ res_url_host: .zero 208
 .Lres_v_setting_get: .asciz "setting-get"
 .Lres_e_not_setting: .asciz "refused not a setting of this extension"
 .Lres_e_no_folder: .asciz "nofile no such folder"
-.equ FSK_FIND_WIRE, 1           # filesearch.s's kinds
-.equ FSK_SEARCH_WIRE, 2
 .text
