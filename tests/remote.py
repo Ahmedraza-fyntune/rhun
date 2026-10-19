@@ -5,9 +5,13 @@ password logins), and on Linux the `local:` transport (sh -s on this machine). C
 bootstrap, the upload and the cached second start, a remote terminal, ssh's password question
 through askpass, a dropped connection and Reconnect, and a failed connection's message.
 
+Extensions in a remote window run on the host (src/app/remoteext.s): the echo extension is copied
+into the host's cache once, writes its state there, and where = local keeps one on this machine.
+
 Needs docker. A macOS or Windows client needs a Linux build of rhun to send: RHUN_TEST_LINUX_EXE
 (the Linux client sends itself). Each run gets its own HOME, config and state."""
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -46,6 +50,27 @@ def ensure_image():
 
 
 DOCKER = have_docker()
+ECHO_CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[files]\nrestore_session = false\n'
+               'restore_project = false\n[updates]\ncheck = false\n[git]\nenabled = false\n')
+
+
+def echo_extension(folder, **changes):
+    """A copy of the echo extension (tests/ext/echo.py) with its script inside its folder, as an
+    installed extension has it; changes replace parts of its manifest."""
+    dst = Path(folder) / 'rhun-tests' / 'echo'
+    dst.mkdir(parents=True)
+    manifest = (ROOT / 'tests/ext/exts/rhun-tests/echo/extension.ini').read_text(encoding='utf-8')
+    manifest = manifest.replace('run = ../../../echo.py', 'run = echo.py')
+    for old, new in changes.items():
+        assert old in manifest, old
+        manifest = manifest.replace(old, new)
+    (dst / 'extension.ini').write_text(manifest, encoding='utf-8')
+    shutil.copy(ROOT / 'tests/ext/echo.py', dst / 'echo.py')
+    return Path(folder)
+
+
+def ext_line(out):
+    return next((l for l in out.splitlines() if l.startswith('rhun-tests/echo ')), '')
 
 
 @unittest.skipUnless(DOCKER, 'needs docker')
@@ -112,7 +137,7 @@ class Remote(unittest.TestCase):
             (self.dir / d).mkdir(parents=True)
         (self.dir / 'config/rhun/config').write_text('[remote]\nagent_binary = %s\n' % LINUX_EXE)
 
-    def run_script(self, spec, path, lines, timeout=120, env_extra=None, home=None):
+    def run_script(self, spec, path, lines, timeout=120, env_extra=None, home=None, extra=()):
         script = self.dir / 't.rsc'
         script.write_text('\n'.join(lines) + '\nquit\n')
         env = dict(os.environ)
@@ -123,7 +148,7 @@ class Remote(unittest.TestCase):
         args = [str(EXE), '--headless', '1000x700', '--remote', spec]
         if path:
             args.append(path)
-        args += ['--script', str(script)]
+        args += [*extra, '--script', str(script)]
         p = subprocess.run(args, capture_output=True, timeout=timeout, env=env)
         return p.stdout.decode(errors='replace')
 
@@ -251,6 +276,121 @@ class Remote(unittest.TestCase):
         self.assertIn('kept', out)
         self.assertIn('Not connected: saved when %s is back' % HOST, out)
         self.assertEqual(self.host_read('/root/proj/a.txt'), 'hello\nworld\nkept\n')
+
+    def test_task_terminal_runs_on_the_host(self):
+        out = self.run_script('docker:' + HOST, '/root/proj',
+                              ['wait-remote 90', 'term-run --title t -- cat a.txt', 'wait-terminal 1 ended',
+                               'wait 300', 'print-term', 'print-terminals'])
+        self.assertIn('hello\nworld', out)
+        out = self.run_script('docker:' + HOST, '/root/proj',
+                              ['wait-remote 90', 'term-run --title t --cwd src --sh -- ls; echo in-$PWD',
+                               'wait-terminal 1 ended', 'wait 300', 'print-term'])
+        self.assertIn('main.rs', out)
+        self.assertIn('in-/root/proj/src', out)
+
+    def echo_on_host(self, exts, command='echo.swrite'):
+        (self.dir / 'config/rhun/config').write_text('[remote]\nagent_binary = %s\n%s' % (LINUX_EXE, ECHO_CONFIG))
+        return self.run_script('docker:' + HOST, '/root/proj',
+                               ['wait-remote 90', 'cmd ' + command, 'wait-ext echo running', 'wait 1500',
+                                'print-toast', 'print-extensions'], extra=['--extensions', str(exts)])
+
+    def test_extension_runs_on_the_host(self):
+        docker('exec', HOST, 'rm', '-rf', '/root/.cache/rhun-remote/extensions',
+               '/root/.local/state/rhun/extensions')
+        exts = echo_extension(self.dir / 'exts')
+        out = self.echo_on_host(exts)
+        self.assertIn('toast=probe ok', out)
+        line = ext_line(out)
+        self.assertIn('state=running', line, out)
+        self.assertIn(' confined=', line)
+        # its files in the host's cache, its state folder the host's (the probe wrote there)
+        listing = docker('exec', HOST, 'ls', '/root/.cache/rhun-remote/extensions/rhun-tests/echo').stdout.decode()
+        self.assertTrue(re.fullmatch(r'0\.0\.1-[0-9a-f]{16}\n', listing), listing)
+        version = listing.strip()
+        docker('exec', HOST, 'test', '-f', '/root/.cache/rhun-remote/extensions/rhun-tests/echo/%s/echo.py' % version)
+        docker('exec', HOST, 'test', '-f', '/root/.local/state/rhun/extensions/rhun-tests--echo/state.txt')
+        self.assertFalse(list((self.dir / 'state').rglob('state.txt')))
+        log = (self.dir / 'state/rhun/remote.log').read_text()
+        self.assertIn('extension copied: ', log)
+        # the second start finds it there; a changed file is copied again
+        (self.dir / 'state/rhun/remote.log').unlink()
+        out = self.echo_on_host(exts)
+        self.assertIn('toast=probe ok', out)
+        log = (self.dir / 'state/rhun/remote.log').read_text()
+        self.assertIn('extension on the host: ', log)
+        self.assertNotIn('extension copying', log)
+        with open(exts / 'rhun-tests/echo/echo.py', 'a') as f:
+            f.write('# changed\n')
+        out = self.echo_on_host(exts)
+        self.assertIn('toast=probe ok', out)
+        listing = docker('exec', HOST, 'ls', '/root/.cache/rhun-remote/extensions/rhun-tests/echo').stdout.decode()
+        self.assertEqual(len(listing.split()), 2, listing)
+
+    @unittest.skipIf(sys.platform.startswith('linux'), 'a Linux client runs its own build on the host')
+    def test_extension_linux_build_from_its_release(self):
+        """An installed program extension whose folder holds this system's build only: its release's
+        linux-x86_64 archive is fetched here once (RHUN_EXT_BASE serves the release from files),
+        checked against the release's sha256sums.txt, and copied to the host."""
+        import hashlib
+        import tarfile
+        docker('exec', HOST, 'rm', '-rf', '/root/.cache/rhun-remote/extensions', '/root/.local/state/rhun/extensions')
+        manifest = (ROOT / 'tests/ext/exts/rhun-tests/echo/extension.ini').read_text(encoding='utf-8')
+        manifest = manifest.replace('runtime = python3\nrun = ../../../echo.py\n',
+                                    'run.linux-x86_64 = bin/echo-linux\nrun.macos-arm64 = bin/echo-mac\n'
+                                    'run.windows-x64 = bin/echo.exe\n')
+        launcher = '#!/bin/sh\nexec python3 "$(dirname "$0")/../echo.py"\n'
+        # the release: echo-linux-x86_64.tar.gz and sha256sums.txt
+        build = self.dir / 'build'
+        (build / 'bin').mkdir(parents=True)
+        (build / 'extension.ini').write_text(manifest, encoding='utf-8')
+        (build / 'bin/echo-linux').write_text(launcher)
+        (build / 'bin/echo-linux').chmod(0o755)
+        shutil.copy(ROOT / 'tests/ext/echo.py', build / 'echo.py')
+        release = self.dir / 'releases/rhun-tests/echo/releases/download/v1'
+        release.mkdir(parents=True)
+        archive = release / 'echo-linux-x86_64.tar.gz'
+        with tarfile.open(archive, 'w:gz') as tar:
+            for name in ('extension.ini', 'bin', 'bin/echo-linux', 'echo.py'):
+                tar.add(build / name, arcname=name, recursive=False)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        (release / 'sha256sums.txt').write_text('%s  echo-linux-x86_64.tar.gz\n' % digest)
+        # installed here from that release, with this system's build only
+        inst = self.dir / 'config/rhun/extensions/rhun-tests/echo'
+        (inst / 'bin').mkdir(parents=True)
+        (inst / 'extension.ini').write_text(manifest, encoding='utf-8')
+        for name in ('echo-mac', 'echo.exe'):
+            (inst / 'bin' / name).write_text(launcher)
+            (inst / 'bin' / name).chmod(0o755)
+        shutil.copy(ROOT / 'tests/ext/echo.py', inst / 'echo.py')
+        (inst / '.rhun-install').write_text('source = github\nrepository = rhun-tests/echo\ntag = v1\n'
+                                            'sha256 = %s\nreviewed = no\n' % digest)
+        (self.dir / 'config/rhun/config').write_text('[remote]\nagent_binary = %s\n%s' % (LINUX_EXE, ECHO_CONFIG))
+        out = self.run_script('docker:' + HOST, '/root/proj',
+                              ['wait-remote 90', 'cmd echo.swrite', 'wait-ext echo running', 'wait 1500',
+                               'print-toast', 'print-extensions'],
+                              env_extra={'RHUN_EXT_BASE': (self.dir / 'releases').as_uri()})
+        self.assertIn('toast=probe ok', out)
+        self.assertTrue((self.dir / 'state/rhun/remote/extensions/rhun-tests--echo--v1/bin/echo-linux').is_file())
+        docker('exec', HOST, 'test', '-f', '/root/.local/state/rhun/extensions/rhun-tests--echo/state.txt')
+        log = (self.dir / 'state/rhun/remote.log').read_text()
+        self.assertIn("extension's Linux build fetched into ", log)
+        self.assertIn('extension copied: ', log)
+
+    def test_where_local_runs_here(self):
+        docker('exec', HOST, 'rm', '-rf', '/root/.local/state/rhun/extensions')
+        needs = 'documents = write\nterminal = yes\nproject = read'
+        exts = echo_extension(self.dir / 'exts', **{'on = command': 'on = command\nwhere = local',
+                                                    needs: 'documents = write\nterminal = yes'})
+        out = self.echo_on_host(exts)
+        self.assertIn('toast=probe ok', out)
+        self.assertTrue(list((self.dir / 'state').rglob('state.txt')), out)
+        self.assertNotEqual(docker('exec', HOST, 'test', '-e', '/root/.local/state/rhun/extensions',
+                                   check=False).returncode, 0)
+        # where = local may not ask for the project
+        exts = echo_extension(self.dir / 'exts2', **{'on = command': 'on = command\nwhere = local'})
+        out = self.echo_on_host(exts)
+        self.assertIn('state=failed', ext_line(out), out)
+        self.assertIn('reason=where = local cannot go with project or home', ext_line(out))
 
     def test_failure_is_reported(self):
         out = self.run_script('docker:no-such-container-here', '', ['wait-remote 60', 'print-remote'])

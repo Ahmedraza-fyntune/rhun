@@ -264,7 +264,7 @@ env_done:
     mov edi, [rip + env_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
     mov edi, [rip + env_pid]
     call reap_later
     # RHUN-ENV-BEGIN\0 NAME=value\0 ... RHUN-ENV-END\0
@@ -622,7 +622,7 @@ FN uproc_signal
     jnz 8f
     neg edi
     mov esi, ebx
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
     xor eax, eax
     pop rbx
     ret
@@ -676,15 +676,53 @@ FN uproc_end
     mov edi, r12d
     neg edi
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
     mov edi, r12d
     neg edi
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
     call time_ms
     add rax, r13
     mov [rbx + UP_kill_at], rax
 9:  EPILOGUE
+
+# uproc_adopt(pid) -> 1 when a program started elsewhere is now one of ours (remote hosts: a program
+#   remote_spawn started on the host, signalled, waited for and ended as the others are; vfs.s)
+FN uproc_adopt
+    push rbx
+    mov ebx, edi
+    xor edi, edi
+    call slot
+    test rax, rax
+    jz 9f
+    mov [rax + UP_pid], ebx
+    mov dword ptr [rax + UP_flags], 0
+    mov qword ptr [rax + UP_kill_at], 0
+    mov eax, 1
+9:  pop rbx
+    ret
+
+# uproc_env_owned(entry) -> 1 when the "NAME=value" string is the login environment's (remote hosts:
+#   a program on the host gets the host's login environment, not this one's)
+FN uproc_env_owned
+    xor eax, eax
+    mov rcx, [rip + env_block]
+    test rcx, rcx
+    jz 9f
+    cmp rdi, rcx
+    jb 9f
+    push rdi
+    push rcx
+    mov rdi, rcx
+    call mem_capacity
+    pop rcx
+    pop rdi
+    add rcx, rax
+    xor eax, eax
+    cmp rdi, rcx
+    jae 9f
+    mov eax, 1
+9:  ret
 
 # reap_later(pid): another child to reap once it exits, never signalled: an editor window
 #   app_new_window started, a shell whose tab closed, the login shell
@@ -737,7 +775,7 @@ FN uproc_tick
     mov edi, [rbx + UP_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
 4:  mov edi, [rbx + UP_pid]
     mov esi, 1
     call wait_code
@@ -791,7 +829,7 @@ FN uproc_quit_begin
     mov edi, [rip + env_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
 1:
 .endif
     lea rbx, [rip + procs]
@@ -803,11 +841,11 @@ FN uproc_quit_begin
     jnz 3f
     neg edi
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
     mov edi, [rbx + UP_pid]
     neg edi
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
 3:  add rbx, UP_SIZE
     dec r12d
     jnz 2b
@@ -856,7 +894,7 @@ FN uproc_quit_end
     jnz 7f
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill              # remote hosts: a remote program's group too (proc.s)
     mov edi, [rbx + UP_pid]
     mov esi, 1
     call wait_code

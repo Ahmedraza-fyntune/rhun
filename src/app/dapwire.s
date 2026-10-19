@@ -76,6 +76,8 @@ FN dap_spawn
     lea rdi, [rip + env_extra]
     call env_make
     mov [rsp + 32], rax
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the adapter runs on the host (vfs.s)
+    jne .Lsp_remote
     # pipes
     lea rdi, [rsp]
     mov esi, O_CLOEXEC
@@ -139,6 +141,35 @@ FN dap_spawn
     mov edi, [rbx + DS_err]
     mov esi, F_SETFL
     mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    mov rdi, rbx
+    call dap_watch
+    xor r14d, r14d
+    jmp .Lsp_done
+.Lsp_remote:
+    mov rdi, [rsp + 24]
+    mov rsi, [rsp + 32]
+    mov rdx, [rip + g_project]
+    xor ecx, ecx
+    xor r8d, r8d
+    push 2                      # its error output apart
+    push 2
+    call vfs_uproc_spawn
+    add rsp, 16
+    mov r14, rax
+    test rax, rax
+    js .Lsp_done
+    mov [rbx + DS_pid], r14d
+    mov [rbx + DS_out], edx
+    mov [rbx + DS_err], ecx
+    mov edi, edx                # the input: a second descriptor of the same socket
+    xor esi, esi                # F_DUPFD
+    mov edx, 3
+    SYS SYS_fcntl
+    mov [rbx + DS_in], eax
+    mov edi, eax
+    mov esi, 2                  # F_SETFD FD_CLOEXEC
+    mov edx, 1
     SYS SYS_fcntl
     mov rdi, rbx
     call dap_watch

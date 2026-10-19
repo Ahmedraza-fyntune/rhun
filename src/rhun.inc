@@ -1962,6 +1962,9 @@ F EXT_pack, 8           # cstr: a pack's members (OWNER/NAME, space separated), 
 F EXT_xset, 8           # cstr: "setting.KEY = VALUE" lines its manifest does not declare, or 0
 F EXT_fresh, 4          # 1: a new version with a previous one to go back to, until its first hello
 F EXT_mgmt_pad, 4
+# remote hosts (remoteext.s)
+F EXT_where_local, 4    # 1: where = local: in a remote window it runs on this machine
+F EXT_remote_wait, 4    # 1: its Linux build is being fetched; it starts when it is here
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)

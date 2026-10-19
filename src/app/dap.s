@@ -1066,7 +1066,7 @@ ds_end:
     jz 2f
     neg edi                     # the adapter's process group
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill              # remote hosts: on the host too (proc.s)
     call time_ms
     add rax, 1000
     mov [rbx + DS_killat], rax
@@ -1106,7 +1106,7 @@ reap:
     mov edi, [rbx + DS_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill              # remote hosts: on the host too (proc.s)
     jmp 9f
 2:  mov dword ptr [rbx + DS_pid], 0
     mov qword ptr [rbx + DS_killat], 0
@@ -1355,7 +1355,7 @@ FN dap_shutdown
     jz 6f
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill              # remote hosts: on the host too (proc.s)
     mov edi, [rbx + DS_pid]
     xor esi, esi
     call proc_wait

@@ -572,6 +572,8 @@ FN testexec_spawn
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the test runs on the host (vfs.s)
+    jne .Ltx_remote
     mov dword ptr [rsp + 16], -1
     mov dword ptr [rsp + 20], -1
     mov dword ptr [rsp + 24], -1
@@ -644,6 +646,18 @@ FN testexec_spawn
     SYS SYS_close
 71: mov rax, r15
 9:  EPILOGUE
+.Ltx_remote:
+    xor ecx, ecx
+    xor r8d, r8d
+    push 2                      # its error output apart
+    push 2
+    call vfs_uproc_spawn
+    add rsp, 16
+    test rax, rax
+    js 9b
+    mov [rip + pipe_out], edx
+    mov [rip + pipe_err], ecx
+    EPILOGUE
 
 # on_pipe(fd, events, TX*): what the process wrote, as a test-out event; end of file closes the pipe
 on_pipe:
@@ -906,7 +920,7 @@ stop:
     mov rbx, rdi
     mov edi, [rbx + TX_pid]
     neg edi
-    SYS SYS_kill
+    call proc_kill              # remote hosts: on the host too (proc.s)
     pop rbx
     ret
 
