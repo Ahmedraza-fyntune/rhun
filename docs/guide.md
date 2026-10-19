@@ -446,6 +446,34 @@ PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame
 
 The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
+### Notebooks
+
+A notebook file an extension provides for (the `jupyter` extension reads and writes `.ipynb`)
+opens in a notebook tab: its cells one under the other, each with its language's colors and every
+editor command, and under a code cell its outputs (text with its colors, errors, images). The
+toolbar runs all cells, interrupts or restarts the kernel and clears the outputs; the button at
+its right picks the kernel. Clicking a cell's `[ ]` column runs it.
+
+| Mode | Key | Action |
+| --- | --- | --- |
+| edit | Esc | command mode |
+| edit | Shift+Enter, Ctrl+Enter, Alt+Enter | run and select the next cell, run, run and insert a cell below |
+| edit | Up on the first line, Down on the last | the previous or next cell |
+| command | Enter | edit the selected cell |
+| command | Up / k, Down / j | select the previous or next cell |
+| command | a, b | insert a code cell above, below |
+| command | d d, z | delete the cell, undo the last cell operation |
+| command | m, y | make the cell Markdown, code |
+| command | Alt+Up, Alt+Down | move the cell |
+| command | i i, 0 0 | interrupt, restart the kernel (asks) |
+| command | o | hide or show the cell's outputs |
+
+Kernels run as you, outside the extension's sandbox: the first time a notebook extension starts
+one in a project, rhun shows the command and asks (Allow or Cancel); Forget on the extension's
+page takes the permission back. Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
+and opens whole in a tab of its own. Every action is in the command palette as Notebook: ....
+Notebook: Reopen as Text shows the file itself.
+
 ### Multiple cursors
 
 Several selections edit together: typing, Backspace and Delete (by character and by word), Enter, Tab and Shift+Tab, Indent and Outdent, Cut, Copy and Paste act at every one, as one Undo step that also brings the selections back. The newest selection is the primary: the view follows it and the status bar shows its position and how many selections there are.

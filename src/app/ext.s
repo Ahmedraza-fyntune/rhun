@@ -1036,6 +1036,7 @@ FN ext_retire
     call langfeat_ext_gone
     mov rdi, rbx
     call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
+    call nb_ext_gone
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
@@ -2416,9 +2417,20 @@ parse_needs:
     lea rsi, [rip + .Ln_secrets]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 10f
     mov edi, NEEDS_SECRETS
     call needs_yes
+    jmp 9f
+10: # notebooks: kernels = the programs rhun may start as the user for its notebooks (nbexec.s)
+    mov rdi, r12
+    lea rsi, [rip + .Ln_kernels]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov rdi, [rbx + EXT_nb_kernels]
+    call mem_free
+    call val_dup
+    mov [rbx + EXT_nb_kernels], rax
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -3762,6 +3774,8 @@ FN ext_exited
     call testproto_ext_gone     # testing: its runs end errored and their processes stop
     mov rdi, rbx
     call ai_ext_gone            # AI: its sessions, tool calls and cards
+    mov rdi, rbx
+    call nb_ext_gone            # and its notebooks' requests, runs and kernels
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4885,6 +4899,7 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links
     # source control (wider-parity C)
     .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
+    .quad .Lpv_notebook, EXT_pv_notebook, .Lpv_nbtitle, EXT_pv_nbtitle, .Lpv_nbkernel, EXT_pv_nbkernel  # notebooks
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -5008,6 +5023,9 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_document_links: .asciz "document_links"
 .Lpv_tests: .asciz "tests"
 .Lpv_tests_profiles: .asciz "tests.profiles"
+.Lpv_notebook: .asciz "notebook"
+.Lpv_nbtitle: .asciz "notebook.title"
+.Lpv_nbkernel: .asciz "notebook.kernel"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"
@@ -5024,6 +5042,7 @@ ext_target: .asciz "linux-x86_64"
 .Ln_run: .asciz "run"
 .Ln_secrets: .asciz "secrets"
 .Ln_git: .asciz "git"
+.Ln_kernels: .asciz "kernels"           # notebooks
 .Lpv_commit: .asciz "commit_message"
 .Lpv_quickdiff: .asciz "quickdiff"
 .Lpv_scm: .asciz "scm"
