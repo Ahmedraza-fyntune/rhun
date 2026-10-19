@@ -616,7 +616,10 @@ FN session_save
     lea rdi, [rip + out]
     lea rsi, [rip + .Lpin]
     call sb_push_cstr
-12: lea rdi, [rip + out]
+12: mov rdi, r12                # "<TAB>folds=H-E,..." (fold.s)
+    lea rsi, [rip + out]
+    call fold_session_out
+    lea rdi, [rip + out]
     mov esi, 10
     call sb_push_byte
 2:  inc rbx
@@ -729,6 +732,9 @@ FN session_restore
     mov [rax + DOC_cur], rcx
     mov [rax + DOC_anchor], rcx
     or dword ptr [rax + DOC_flags], DF_REVEAL
+    mov rdi, rax                # its folds (fold.s)
+    mov rsi, [rsp + 24]
+    call fold_session_in
 7:  lea r14, [r15 + 1]
     jmp 1b
 8:  mov rdi, r12

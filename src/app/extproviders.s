@@ -8,6 +8,7 @@
 .equ PP_SIGNATURE, 7
 .equ PP_RANGE_FORMAT, 10        # language features: range-format (langfeat.s LF_RANGEFMT)
 .equ PP_TYPE_FORMAT, 11         # and type-format (langextra.s), both with the formatter's choice
+.equ PP_LAST, PP_FOLDING        # PP_TOKENS..PP_FOLDING: editor presentation's (rhun.inc)
 .equ PP_CHOOSING, 1
 .equ PP_STARTING, 2
 .equ PP_RENAMING, 3
@@ -61,7 +62,7 @@ FN ext_provider_kind
     test eax, eax
     jnz 3f
 2:  inc r13
-    cmp r13, PP_SIGNATURE
+    cmp r13, PP_LAST
     jbe 1b
     xor eax, eax
     EPILOGUE
@@ -122,6 +123,8 @@ pp_find:
     PROLOGUE
     cmp rdi, PP_RANGE_FORMAT
     jb 0f
+    cmp rdi, PP_TYPE_FORMAT     # (editor presentation's kinds follow: their own choices)
+    ja 0f
     mov edi, PP_FORMAT
 0:  mov r12, rdi
     mov r13, rsi
@@ -149,6 +152,8 @@ FN ext_provider_set
     PROLOGUE 16
     cmp rdi, PP_RANGE_FORMAT    # range formatting saves the formatter's choice
     jb 0f
+    cmp rdi, PP_TYPE_FORMAT     # (editor presentation's kinds follow: their own choices)
+    ja 0f
     mov edi, PP_FORMAT
 0:  mov r12, rdi
     mov r13, rsi
@@ -161,7 +166,11 @@ FN ext_provider_set
     cmp r12d, PP_FORMAT
     je 1f
     cmp r12d, PP_SIGNATURE
-    jne 8f
+    je 1f
+    cmp r12d, PP_TOKENS
+    jb 8f
+    cmp r12d, PP_LAST
+    ja 8f
 1:  mov rdi, r13
     call strlen
     test rax, rax
@@ -1141,9 +1150,21 @@ FN cmd_select_symbol_provider
 .p2align 3
 pp_names: .quad 0, 0, 0, .Lsymbols, 0, .Lrename, .Lformat, .Lsignature
     .quad 0, 0, .Lformat, .Lformat      # language features: range- and type-format share format's
+    .quad .Lpp_tokens, .Lpp_inline, .Lpp_highlights, .Lpp_folding     # editor presentation
 pp_patterns: .quad 0, 0, 0, EXT_pv_symbols, 0, EXT_pv_rename, EXT_pv_format, EXT_pv_signature
     .quad 0, 0, EXT_pv_range_format, EXT_pv_type_format
+    .quad EXT_pv_semantic_tokens, EXT_pv_inline_complete, EXT_pv_highlights, EXT_pv_folding
 pp_titles: .quad 0, 0, 0, .Lsymbols_title, 0, .Lrename_title, .Lformat_title, .Lsignature_title
     .quad 0, 0, .Lformat_title, .Lformat_title
+    .quad .Lpp_tokens_title, .Lpp_inline_title, .Lpp_highlights_title, .Lpp_folding_title
 pp_features: .long -1, -1, -1, FEAT_SYMBOLS, -1, FEAT_RENAME, FEAT_FORMAT, FEAT_SIGNATURE
     .long -1, -1, FEAT_PARTIAL_FORMAT, FEAT_PARTIAL_FORMAT
+    .long FEAT_SEMANTIC_TOKENS, FEAT_INLINE_COMPLETE, FEAT_DOC_HIGHLIGHTS, FEAT_FOLDING_RANGES
+.Lpp_tokens: .asciz "tokens"
+.Lpp_inline: .asciz "inline"
+.Lpp_highlights: .asciz "highlights"
+.Lpp_folding: .asciz "folding"
+.Lpp_tokens_title: .asciz "Choose Semantic Tokens Provider"
+.Lpp_inline_title: .asciz "Choose Inline Completion Provider"
+.Lpp_highlights_title: .asciz "Choose Highlights Provider"
+.Lpp_folding_title: .asciz "Choose Folding Provider"

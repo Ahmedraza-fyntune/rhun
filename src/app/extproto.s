@@ -557,6 +557,14 @@ handle_line:
     call nb_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # editor presentation: folding ranges, tokens, hints ... (present.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call present_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -659,6 +667,14 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call scmext_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # editor presentation: an error changes nothing (present.s)
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call present_reply
     test eax, eax
     jnz 9f
     mov edi, 2                  # a call's error goes to its caller with its code and text
@@ -3929,6 +3945,8 @@ hello_features:
     jz 9f
     call pres_enable            # answers about older versions move through the edit tapes (edtape.s)
     call deco_visible_again     # and the visible event reaches the new extension too (deco.s)
+    mov rdi, rbx
+    call present_hello          # and the active document is asked what it provides (present.s)
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr

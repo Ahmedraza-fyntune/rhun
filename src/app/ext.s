@@ -4949,6 +4949,10 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     # source control (wider-parity C)
     .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
     .quad .Lpv_notebook, EXT_pv_notebook, .Lpv_nbtitle, EXT_pv_nbtitle, .Lpv_nbkernel, EXT_pv_nbkernel  # notebooks
+    # editor presentation (present.s)
+    .quad .Lpv_semantic_tokens, EXT_pv_semantic_tokens, .Lpv_inlay_hints, EXT_pv_inlay_hints
+    .quad .Lpv_code_lens, EXT_pv_code_lens, .Lpv_inline_complete, EXT_pv_inline_complete
+    .quad .Lpv_colors, EXT_pv_colors, .Lpv_highlights, EXT_pv_highlights, .Lpv_folding, EXT_pv_folding
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -5097,6 +5101,13 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_commit: .asciz "commit_message"
 .Lpv_quickdiff: .asciz "quickdiff"
 .Lpv_scm: .asciz "scm"
+.Lpv_semantic_tokens: .asciz "semantic_tokens"
+.Lpv_inlay_hints: .asciz "inlay_hints"
+.Lpv_code_lens: .asciz "code_lens"
+.Lpv_inline_complete: .asciz "inline_complete"
+.Lpv_colors: .asciz "colors"
+.Lpv_highlights: .asciz "highlights"
+.Lpv_folding: .asciz "folding"
 .Ln_debug: .asciz "debug"
 .Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"

@@ -72,6 +72,8 @@ FN ed_sel
 # ed_touch(): cursor activity (reveal + solid caret)
 FN ed_touch
     mov rdi, [rip + g_doc]
+    call fold_touch             # a fold hiding the caret opens (fold.s)
+    mov rdi, [rip + g_doc]
     call snippet_selection_changed
     mov dword ptr [rip + g_reveal], 1
     mov dword ptr [rip + g_dirty], 1
@@ -258,23 +260,32 @@ FN ed_move
     mov rsi, r14
     call doc_prev_char
     mov r14, rax
-    jmp .Lmv_set_h
+    jmp .Lmv_skip_l
 .Lmv_right:
     mov rdi, rbx
     mov rsi, r14
     call doc_next_char
     mov r14, rax
-    jmp .Lmv_set_h
+    jmp .Lmv_skip_r
 .Lmv_wordl:
     mov rdi, rbx
     mov rsi, r14
     call doc_word_left
     mov r14, rax
-    jmp .Lmv_set_h
+.Lmv_skip_l:
+    mov edx, -1
+    jmp .Lmv_skip
 .Lmv_wordr:
     mov rdi, rbx
     mov rsi, r14
     call doc_word_right
+    mov r14, rax
+.Lmv_skip_r:
+    mov edx, 1
+.Lmv_skip:
+    mov rdi, rbx                # a position folds hide is stepped over (fold.s)
+    mov rsi, r14
+    call fold_skip
     mov r14, rax
     jmp .Lmv_set_h
 .Lmv_home:
@@ -329,13 +340,14 @@ FN ed_move
     call page_lines
     mov r15, rax
 .Lmv_vert:
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    jne .Lmv_wrap
+    call rows_mode              # wrapped lines or folds: one row at a time (fold.s)
+    test eax, eax
+    jnz .Lmv_wrap
     cmp qword ptr [rbx + DOC_prefx], -1
     jne 3f
     mov rdi, rbx
     mov rsi, r14
-    call doc_col_of
+    call vt_doc_col             # visual cells, inlays included (vtext.s)
     mov [rbx + DOC_prefx], rax
 3:  mov rdi, rbx
     mov rsi, r14
@@ -354,7 +366,7 @@ FN ed_move
 5:  mov rdi, rbx
     mov rsi, rax
     mov rdx, [rbx + DOC_prefx]
-    call doc_pos_at_col
+    call vt_doc_pos_at_col
     mov r14, rax
     jmp .Lmv_set_v
 .Lmv_wrap:
@@ -950,7 +962,10 @@ sel_lines:
     cmp rcx, r13
     jne 1f
     dec rax
-1:  mov rdx, rax
+1:  mov rdi, rbx                # a folded last line brings its hidden lines (fold.s)
+    mov rsi, rax
+    call fold_last_line
+    mov rdx, rax
     mov rax, r12
     pop r13
     pop r12
@@ -1127,6 +1142,10 @@ copy_to_clip:
     mov rsi, rax
     call doc_line_start
     mov r12, rax
+    mov rdi, rbx                # a folded line with its hidden lines (fold.s)
+    mov rsi, r14
+    call fold_last_line
+    mov r14, rax
     lea rsi, [r14 + 1]
     cmp rsi, [rbx + DOC_nlines]
     jae 3f
@@ -1977,8 +1996,9 @@ clamp_scroll:
     mov rax, [rdi + DOC_nlines]
     cmp dword ptr [rip + cfg_scroll_past_end], 0
     jne 1f
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    jne wrap_clamp
+    call rows_mode
+    test eax, eax
+    jnz wrap_clamp
     # last line at the bottom
     mov ecx, [rip + g_ed_h]
     xor edx, edx
@@ -2037,7 +2057,16 @@ reveal:
     cmp [rbx + DOC_scrolly], rax
     jge 5f
     mov [rbx + DOC_scrolly], rax
-5:  # horizontal
+5:  mov rdi, rbx
+    call reveal_h
+    mov rdi, rbx
+    call clamp_scroll
+    EPILOGUE
+
+# reveal_h(doc): scroll sideways so the cursor is visible
+reveal_h:
+    PROLOGUE
+    mov rbx, rdi
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
     call doc_col_of
@@ -2075,9 +2104,7 @@ reveal:
     mov rsi, rax
     sub rsi, rdx
 61: mov [rbx + DOC_scrollx], rsi
-7:  mov rdi, rbx
-    call clamp_scroll
-    EPILOGUE
+7:  EPILOGUE
 
 # pos_at_point_editor(doc, px, py) -> pos: pos_at_point for other files
 FN pos_at_point_editor
@@ -2085,8 +2112,9 @@ FN pos_at_point_editor
 
 # pos_at_point(doc, px, py) -> pos
 FN pos_at_point
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    jne wrap_pos_at
+    call rows_mode
+    test eax, eax
+    jnz wrap_pos_at
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
@@ -2112,6 +2140,12 @@ FN pos_at_point
     call doc_len
     jmp 9f
 2:  # column
+    mov qword ptr [rip + g_vt_hit], 0
+    mov rdi, rbx
+    mov rsi, r14
+    call vt_has
+    test eax, eax
+    jnz 4f
     mov eax, r12d
     sub eax, [rip + g_ed_tx]
     add eax, [rbx + DOC_scrollx]
@@ -2127,11 +2161,23 @@ FN pos_at_point
     mov edx, eax
     call doc_pos_at_col
 9:  EPILOGUE
+4:  # a line with inlays: the pixel against its cells (vtext.s)
+    movsxd rdx, r12d
+    movsxd rax, dword ptr [rip + g_ed_tx]
+    sub rdx, rax
+    add rdx, [rbx + DOC_scrollx]
+    jns 5f
+    xor edx, edx
+5:  mov rdi, rbx
+    mov rsi, r14
+    call vt_pos_at
+    EPILOGUE
 
 # drag_scroll(rbx doc, esi px)
 drag_scroll:
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    je 1f
+    call rows_mode
+    test eax, eax
+    jz 1f
     mov rdi, rbx
     jmp scroll_by_px
 1:  movsxd rax, esi
@@ -2175,6 +2221,8 @@ draw_wrapped:
     mov rsi, r12
     call line_breaks
     mov r14d, eax               # rows
+    test eax, eax
+    jz .Ldw_hidden              # a folded line has none (fold.s)
     # current line highlight across all its rows
     cmp dword ptr [rip + cfg_highlight_line], 0
     je 12f
@@ -2304,6 +2352,14 @@ draw_wrapped:
 .Ldw_next:
     inc r12
     jmp .Ldw_line
+.Ldw_hidden:
+    mov rdi, rbx
+    mov rsi, r12
+    call fold_next_visible
+    cmp rax, r12
+    jbe .Ldw_next
+    mov r12, rax
+    jmp .Ldw_line
 .Ldw_diff:
     mov rdi, rbx
     mov rsi, r12
@@ -2405,6 +2461,8 @@ FN editor_draw
     mov [rip + g_ed_tx], eax
     mov rdi, rbx
     call gutter_frame           # the lanes' positions (gutter.s)
+    mov rdi, rbx
+    call fold_view_sync         # the scroll's form for folds (fold.s)
     mov edi, [rsp]
     call hscroll_measure
     cmp dword ptr [rip + g_ed_cell], 0      # a cell: no scrollbars, and input only with the keyboard
@@ -2434,11 +2492,23 @@ FN editor_draw
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
     call pos_at_point
+    cmp qword ptr [rip + g_vt_hit], 0
+    jne 14f
     mov rdi, rbx
     mov rsi, rax
     call ext_hover_track
     call ext_hover_tip
     call gutter_unhover
+    jmp 13f
+14: xor edi, edi                # over an inlay: its own tip (vtext.s)
+    xor esi, esi
+    call ext_hover_track
+    mov rdi, rbx
+    call vt_hover
+    call gutter_unhover
+    cmp dword ptr [rip + g_cursor], CUR_TEXT
+    jne 13f
+    mov dword ptr [rip + g_cursor], CUR_DEFAULT
     jmp 13f
 12: xor edi, edi
     xor esi, esi
@@ -2453,8 +2523,14 @@ FN editor_draw
     mov eax, edx
     test eax, eax
     jz 2f
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    je 11f
+    push rax
+    push rax
+    call rows_mode
+    mov ecx, eax
+    pop rax
+    pop rax
+    test ecx, ecx
+    jz 11f
     mov rdi, rbx
     mov esi, eax
     call scroll_by_px
@@ -2545,6 +2621,16 @@ FN editor_draw
     mov edx, [rip + g_my]
     call pos_at_point
     mov r12, rax
+    cmp qword ptr [rip + g_vt_hit], 0
+    je 313f
+    mov rdi, rbx                # an inlay with a command runs it (vtext.s)
+    call vt_click
+    test eax, eax
+    jz 313f
+    mov dword ptr [rip + g_dragging], 0
+    mov dword ptr [rip + g_active], 0
+    jmp .Led_noinput
+313:
     # multi-cursor: the modifier's clicks add carets, words or a box; a plain click collapses
     mov rdi, rbx
     mov rsi, r12
@@ -2664,8 +2750,9 @@ FN editor_draw
     # its line in the middle of the view, now that the view's height is known (app_goto_line)
     and dword ptr [rbx + DOC_flags], ~DF_CENTER
     mov rdi, rbx
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    je 72f
+    call rows_mode
+    test eax, eax
+    jz 72f
     call center_wrap
     jmp 7f
 72:
@@ -2683,9 +2770,14 @@ FN editor_draw
 73: shl rcx, 8
     mov [rbx + DOC_scrolly], rcx
 47: mov rdi, rbx
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    je 71f
+    call rows_mode
+    test eax, eax
+    jz 71f
     call reveal_wrap
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne 7f
+    mov rdi, rbx                # rows because of folds: sideways as without them
+    call reveal_h
     jmp 7f
 71: call reveal
 7:  mov rdi, rbx
@@ -2726,10 +2818,13 @@ FN editor_draw
     mov dword ptr [rip + dl_from], 0
     mov dword ptr [rip + dl_to], -1
     mov dword ptr [rip + dl_last], 1
+    call rows_mode
+    test eax, eax
+    jz 72f
     cmp dword ptr [rip + cfg_word_wrap], 0
-    je 72f
+    je 74f
     mov qword ptr [rbx + DOC_scrollx], 0
-    mov rdi, rbx
+74: mov rdi, rbx
     call draw_wrapped
     jmp .Led_lines_done
 72: mov rax, [rbx + DOC_scrolly]
@@ -2871,11 +2966,15 @@ FN editor_draw
     jz 21b
     jmp .Led_adv
 .Led_lines_done:
-    # the lines shown, for extensions (`0 visible`, deco.s)
+    # the lines shown, for extensions (`0 visible`, deco.s; the providers' windows, present.s)
     mov rdi, rbx
     mov rsi, [rbx + DOC_scrolly]
     shr rsi, 8
-    mov rdx, [rip + g_row_line]
+    call rows_mode
+    test eax, eax
+    jz 0f
+    mov rsi, [rbx + DOC_wtop]
+0:  mov rdx, [rip + g_row_line]
     cmp rdx, rsi
     jae 1f
     mov rdx, rsi
@@ -2903,7 +3002,9 @@ FN editor_draw
     jne 93f
     # scrollbar: px in 64 bits, a million lines' offset overflows 32. ui_scrollbar takes i32, so a
     # document past 2^31 px goes in units of 2^k px, the whole of it still under the thumb.
-    mov rax, [rbx + DOC_nlines]
+    # Folded lines are not counted (fold.s: the rows the view scrolls through).
+    mov rdi, rbx
+    call fold_scroll_rows
     inc rax
     movsxd rcx, dword ptr [rip + g_lh]
     imul rax, rcx
@@ -2927,7 +3028,8 @@ FN editor_draw
     or [rip + g_block], eax
     mov eax, [rip + g_block]
     mov [rsp + 108], eax
-    mov rax, [rbx + DOC_scrolly]
+    mov rdi, rbx
+    call fold_scroll_value      # DOC_scrolly, or its row with folds
     movsxd rcx, dword ptr [rip + g_lh]
     imul rax, rcx
     sar rax, 8
@@ -2977,7 +3079,9 @@ FN editor_draw
     cqo
     movsxd rcx, dword ptr [rip + g_lh]
     idiv rcx
-    mov [rbx + DOC_scrolly], rax
+    mov rdi, rbx
+    mov rsi, rax
+    call fold_scroll_set        # DOC_scrolly, through the rows with folds
 91: # horizontal scrollbar: the widest line against the text area, when lines do not wrap
     cmp dword ptr [rip + hs_on], 0
     je 93f
@@ -3266,6 +3370,7 @@ draw_line:
     mov [rip + g_row_x], eax
     mov eax, [rsp]
     mov [rip + g_row_y], eax
+    call vt_row_set             # its inlays (vtext.s): every x below goes through vt_x
     call deco_row_back
     # ---- selection ----
     mov rax, [rsp + 8]
@@ -3292,25 +3397,22 @@ draw_line:
     jz .Ldl_nosel
 5:  mov [rsp + 48], r8
     mov [rsp + 60], r9d
-    mov rdi, r14
-    mov rsi, [rsp + 96]
-    mov rdx, rax
-    sub rdx, [rsp + 24]
-    mov [rsp + 104], rdx
-    call seg_cols
-    mov [rsp + 56], eax         # start col
-    mov rdi, r14
-    mov rsi, [rsp + 96]
-    mov rdx, [rsp + 48]
-    sub rdx, [rsp + 24]
-    call seg_cols
-    add eax, [rsp + 60]
+    mov rdi, rax
+    sub rdi, [rsp + 24]
+    mov [rsp + 104], rdi
+    mov esi, VTM_RIGHT          # a range covers the inlays after its start, before its end
+    call vt_x
+    mov [rsp + 56], eax         # start x
+    mov rdi, [rsp + 48]
+    sub rdi, [rsp + 24]
+    mov esi, VTM_LEFT
+    call vt_x
+    mov edx, [rsp + 60]
+    imul edx, [rip + g_cw]
+    add eax, edx
     sub eax, [rsp + 56]
-    imul eax, [rip + g_cw]
     mov edx, eax
     mov edi, [rsp + 56]
-    imul edi, [rip + g_cw]
-    add edi, [rsp + 40]
     mov esi, [rsp]
     mov ecx, [rip + g_lh]
     COLOR r8d, T_SELECTION
@@ -3358,6 +3460,8 @@ draw_line:
     jae 63f
     mov [rsp + 48], rdx
     mov [rsp + 104], rax
+    cmp qword ptr [rip + g_row_vt], 0
+    jne 64f
     mov rdi, r14
     mov rsi, [rsp + 112]
     mov rdx, rax
@@ -3391,6 +3495,27 @@ draw_line:
     call gfx_round_rect
 63: add r13, [rip + g_ed_find + SB_len]
     jmp 6b
+64: # a row with inlays: the match's edges by the range rule (vtext.s)
+    mov rdi, [rsp + 104]
+    mov esi, VTM_RIGHT
+    call vt_x
+    mov [rsp + 56], eax
+    cmp eax, [rip + g_cv + CV_cx1]
+    jge .Ldl_nofind
+    mov rdi, [rsp + 48]
+    mov esi, VTM_LEFT
+    call vt_x
+    sub eax, [rsp + 56]
+    mov edx, eax
+    mov edi, [rsp + 56]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_1]
+    mov ecx, [rip + g_lh]
+    sub ecx, [rip + g_mt + 4*MI_2]
+    M r8d, MI_3
+    COLOR r9d, T_MATCH
+    call gfx_round_rect
+    jmp 63b
 .Ldl_nofind:
     # ---- bracket pair ----
     mov qword ptr [rsp + 112], 0
@@ -3407,12 +3532,9 @@ draw_line:
     jb .Ldl_br
     cmp rax, [rsp + 32]
     jae .Ldl_br
-    mov rdi, r14
-    mov rsi, [rsp + 96]
-    mov rdx, rax
-    call seg_cols
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 40]
+    mov rdi, rax
+    mov esi, VTM_RIGHT
+    call vt_x
     mov edi, eax
     mov esi, [rsp]
     add esi, [rip + g_mt + 4*MI_1]
@@ -3434,12 +3556,9 @@ draw_line:
     ja 7f
     cmp dword ptr [rip + dl_last], 0
     je 7f
-71: mov rdi, r14
-    mov rsi, [rsp + 96]
-    mov rdx, rax
-    call seg_cols
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 40]
+71: mov rdi, rax
+    mov esi, VTM_CARET          # the caret touches the text it extends (vtext.s)
+    call vt_x
     mov [rip + g_caret_x], eax
     mov eax, [rsp]
     mov [rip + g_caret_y], eax
@@ -3453,7 +3572,14 @@ draw_line:
     mov eax, [rip + g_cv + CV_cx1]
     mov [rsp + 76], eax
 .Ldl_glyph:
-    cmp r13, [rsp + 32]
+    cmp qword ptr [rip + g_row_vt], 0
+    je 70f
+    mov rdi, r13                # the inlays at this gap (vtext.s)
+    mov esi, [rsp + 64]
+    mov edx, [rsp + 72]
+    call vt_draw_at
+    mov [rsp + 64], eax
+70: cmp r13, [rsp + 32]
     jae .Ldl_guides
     mov eax, [rsp + 64]
     imul eax, [rip + g_cw]
@@ -3532,7 +3658,7 @@ draw_line:
     movzx ecx, byte ptr [rcx + r13]
     lea rdx, [rip + g_theme]
     mov r9d, [rdx + rcx*4 + 4*T_SYN]
-    cmp dword ptr [rip + g_deco_spans], 0
+    cmp dword ptr [rip + g_row_fx], 0
     je 94f
     mov rdi, r13                # a decoration's text color (deco.s)
     mov esi, r9d
@@ -4158,7 +4284,15 @@ FN editor_timeout
     push rbx
     call deco_visible_due       # the visible event (deco.s)
     mov ebx, eax
-    mov rax, [rip + widest_due]
+    call present_timeout        # and the providers' requests (present.s)
+    cmp eax, -1
+    je 6f
+    cmp ebx, -1
+    je 5f
+    cmp eax, ebx
+    jge 6f
+5:  mov ebx, eax
+6:  mov rax, [rip + widest_due]
     test rax, rax
     jz 1f
     call time_ms
@@ -4179,6 +4313,7 @@ FN editor_timeout
 FN editor_tick
     sub rsp, 8
     call deco_visible_tick
+    call present_tick           # the providers' requests that are due (present.s)
     add rsp, 8
     cmp qword ptr [rip + widest_due], 0
     je 1f
@@ -4301,8 +4436,14 @@ hscroll_measure:
     mov [rip + hs_view], eax
     cmp dword ptr [rip + cfg_word_wrap], 0
     jne 9f
-    mov rdi, rbx
+    cmp rbx, [rip + vt_wide_doc]
+    je 1f
+    mov [rip + vt_wide_doc], rbx    # the widest inlays are measured again per document
+    mov dword ptr [rip + g_vt_widest], 0
+1:  mov rdi, rbx
     call doc_widest
+    mov ecx, [rip + g_vt_widest]
+    add rax, rcx
     call hscroll_extent
 9:  EPILOGUE
 
@@ -4440,6 +4581,8 @@ long_ver: .quad 0
 long_svalid: .quad 0
 long_lang: .quad 0
 long_cls: .zero SB_SIZE
+.p2align 3
+vt_wide_doc: .quad 0            # the document g_vt_widest was measured on
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0

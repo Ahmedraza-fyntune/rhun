@@ -32,7 +32,9 @@ BOOLS = {
                'indent_guides word_wrap whitespace cursor_blink smooth_caret auto_pairs '
                'scroll_past_end vim_mode '
                # language features
-               'complete_replace complete_commit_characters lightbulb format_on_type format_on_paste'),
+               'complete_replace complete_commit_characters lightbulb format_on_type format_on_paste '
+               # editor presentation
+               'folding'),
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
@@ -98,7 +100,7 @@ class SettingsUI(unittest.TestCase):
             k + ' = ' + v + '\n' for k, v in values.items()) for s, values in data.items()),
             encoding='utf-8')
 
-    def run_editor(self, actions, height=6000, width=1400):
+    def run_editor(self, actions, height=7200, width=1400):   # the whole page: every row
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join(['cmd settings', *actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), self.work.as_posix(), '--headless', f'{width}x{height}',

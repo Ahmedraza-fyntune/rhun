@@ -1442,24 +1442,22 @@ FN sel_row
     jz .Lsr_caret
 2:  mov [rsp + 24], r8
     mov [rsp + 32], r9d
-    mov rdi, r12
-    mov rsi, [rsp]
-    mov rdx, rax
-    sub rdx, r13
-    call seg_cols
-    mov [rsp + 36], eax         # start column
-    mov rdi, r12
-    mov rsi, [rsp]
-    mov rdx, [rsp + 24]
-    sub rdx, r13
-    call seg_cols
-    add eax, [rsp + 32]
+    # x of both ends through the row's inlays (presentation, vtext.s: draw_line set the row)
+    mov rdi, rax
+    sub rdi, r13
+    mov esi, VTM_RIGHT
+    call vt_x
+    mov [rsp + 36], eax         # start x
+    mov rdi, [rsp + 24]
+    sub rdi, r13
+    mov esi, VTM_LEFT
+    call vt_x
+    mov edx, [rsp + 32]
+    imul edx, [rip + g_cw]
+    add eax, edx
     sub eax, [rsp + 36]
-    imul eax, [rip + g_cw]
     mov edx, eax
     mov edi, [rsp + 36]
-    imul edi, [rip + g_cw]
-    add edi, [rsp + 16]
     mov esi, [rsp + 20]
     mov ecx, [rip + g_lh]
     COLOR r8d, T_SELECTION
@@ -1477,12 +1475,9 @@ FN sel_row
     je 4f
 3:  cmp qword ptr [rip + sf_carets], SEL_MAX
     jae 4f
-    mov rdi, r12
-    mov rsi, [rsp]
-    mov rdx, rax
-    call seg_cols
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 16]
+    mov rdi, rax                # the caret's rule over the row's inlays (vtext.s)
+    mov esi, VTM_CARET
+    call vt_x
     mov rcx, [rip + sf_carets]
     shl rcx, 4
     lea rdx, [rip + sf_caret]
