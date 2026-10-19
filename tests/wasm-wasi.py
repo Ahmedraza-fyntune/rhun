@@ -4,7 +4,7 @@ tests/wasm/wasi (built modules kept beside their sources, so this runs anywhere)
 allowed folder cannot lead out of it (reading, creating, removing, statting), a start section may
 call WASI, an unknown import links only when an errno can answer it, poll_oneoff returns ready
 subscriptions at once and clocks only when due (absolute realtime ones too), append mode set after
-the open appends. Symbolic links are made only where the system lets this user make them."""
+the open appends, linear memory stops at its cap. Symbolic links are made only where the system lets this user make them."""
 import os
 from pathlib import Path
 import shutil
@@ -115,6 +115,13 @@ class Wasi(unittest.TestCase):
     def test_a_start_section_may_call_wasi(self):
         code, out, err = self.host('start.wasm')
         self.assertEqual((code, out), (0, 'start ok\n'), err)
+
+    def test_memory_is_capped(self):
+        code, out, err = self.host('grow.wasm')
+        self.assertEqual(code, 3, err)
+        code, out, err = self.host('bigmem.wasm')
+        self.assertEqual(code, 1)
+        self.assertIn('memory too large', err)
 
     def test_an_unknown_import_links_only_when_an_errno_answers_it(self):
         code, out, err = self.host('badimport.wasm')
