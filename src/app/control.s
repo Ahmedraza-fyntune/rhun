@@ -149,6 +149,7 @@ FN control_exec
     add r15, 16
     jmp 1b
 2:  call [r15 + 8]
+.Lce_done:
     push rax
     push rax
     call term_frame_now         # a command ends with a frame that shows all output so far
@@ -160,6 +161,14 @@ FN control_exec
     xor eax, eax
     EPILOGUE
 .Lce_unknown:
+    mov rdi, r13                # resources group: its commands (extres.s res_control)
+    mov rsi, r14
+    lea rdx, [rip + out]
+    mov rcx, rbx
+    mov r8, r12
+    call res_control
+    cmp rax, -2
+    jne .Lce_done
     lea rdi, [rip + out]
     lea rsi, [rip + .Lunknown]
     call sb_push_cstr

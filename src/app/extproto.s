@@ -106,6 +106,10 @@ FN extproto_pump
 11: mov rdi, [rbx + EXT_body]
     call mem_free
     mov qword ptr [rbx + EXT_body], 0
+    mov rdi, rbx                # resources group: bytes in
+    mov rsi, [rbx + EXT_body_len]
+    xor edx, edx
+    call extres_in
     mov rdi, [rbx + EXT_body_len]
     add [rbx + EXT_fbytes], rdi
     inc qword ptr [rbx + EXT_win_msgs]
@@ -135,6 +139,10 @@ FN extproto_pump
     mov rsi, r12
     mov rdx, [rsp]
     call sb_push
+    mov rdi, rbx                # resources group: a message in
+    lea rsi, [r14 + 1]
+    mov edx, 1
+    call extres_in
     lea rdi, [r14 + 1]
     add [rbx + EXT_fbytes], rdi
     inc qword ptr [rbx + EXT_win_msgs]
@@ -337,6 +345,8 @@ handle_line:
     jne 4f
     mov dword ptr [rbx + EXT_hello], 1
     mov dword ptr [rbx + EXT_status], ES_RUNNING
+    mov rdi, rbx
+    call extres_hello           # resources group: how long the start took
     call ext_hooks_update
     mov rdi, rbx
     call hello_features         # the features it named that rhun knows, said back before ready
@@ -468,6 +478,10 @@ handle_line:
     jmp 9f
 2:  test r12, r12
     jz 9f
+    mov rdi, rbx                # resources group: slow, dropped
+    mov rsi, r12
+    mov edx, 1
+    call extres_req_answer
     test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
     jz 9f
     mov rdi, rbx
@@ -494,13 +508,20 @@ handle_line:
     call langfeat_reply
     jmp 9f
 .Lhl_err:
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
     mov edi, 1
     call field_u64
     test edx, edx
     jz 9f
     mov r12, rax
+    mov edi, 2                  # resources group: failed, dropped
+    lea rsi, [rip + .Le_cancelled]
+    call field_is
+    lea edx, [rax + rax]        # 2 for cancelled, 0 for any other error
+    mov rdi, rbx
+    mov rsi, r12
+    call extres_req_answer
+    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
+    jz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -2801,6 +2822,13 @@ FN extproto_host_request
     call out_end
     test rax, rax
     js 8f
+    mov rdi, [rsp]              # resources group: the request's kind and time
+    call strlen
+    mov rcx, rax
+    mov rdx, [rsp]
+    mov rdi, rbx
+    mov rsi, r13
+    call extres_req_sent
     mov rax, r13
     EPILOGUE
 8:  xor eax, eax
@@ -2843,6 +2871,14 @@ FN extproto_host_send
     call out_end
     test rax, rax
     js 8f
+    mov rdi, r13                # resources group: the request's kind (its first word) and time
+    mov rsi, r14
+    call next_word
+    mov rcx, rdx
+    mov rdx, rax
+    mov rdi, rbx
+    mov rsi, r15
+    call extres_req_sent
     mov rax, r15
     EPILOGUE
 8:  xor eax, eax
@@ -2878,6 +2914,7 @@ FN extproto_send_cancel
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    call extres_req_cancel      # resources group: an answer after this is dropped
     mov [rip + cur], rbx
     call out_begin
     lea rdi, [rip + .Lev_cancel]
@@ -2938,8 +2975,13 @@ hello_features:
 3:  add r12, r13
     jmp 1b
 4:  and dword ptr [rbx + EXT_features], FEAT_HOST
+    mov rdi, rbx                # resources group: its features (extresproto.inc)
+    call res_features
+    test eax, eax
+    jnz 41f
     cmp dword ptr [rbx + EXT_features], 0
     je 9f
+41:
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
@@ -2962,7 +3004,9 @@ hello_features:
     call out_cstr
 6:  inc r14d
     jmp 5b
-7:  mov edi, 10
+7:  mov rdi, rbx                # resources group: its agreed names
+    call res_features_out
+    mov edi, 10
     call out_byte
     call out_end
 9:  EPILOGUE
@@ -3415,6 +3459,8 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # resources group (extresproto.inc)
+    .quad .Lres_v_busy, h_res_busy, 0
     .quad 0, 0, 0
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
@@ -3576,6 +3622,7 @@ feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf
 .Lr_syntax: .asciz "three unparsable lines in a row"
 
 .include "app/extwatchproto.inc"
+.include "app/extresproto.inc"    # resources group: idle, secrets, urls, uris, files, folders
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

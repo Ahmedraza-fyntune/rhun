@@ -1419,6 +1419,7 @@ dup_cstr_r14:
 # ext_init(): read every OWNER/NAME/extension.ini under the extensions folder
 FN ext_init
     PROLOGUE
+    call extres_init            # resources group: the session's start, for print-startup
     call extpage_prompt_invalidate_pure
     lea rdi, [rip + ext_root]
     call sb_clear
@@ -1772,6 +1773,9 @@ manifest_kv:
     PROLOGUE
     mov r12, rdi
     mov rbx, [rip + cur_ext]
+    mov rdi, r12                # resources group: idle, runs, contains:, schemes (extres.s)
+    mov rsi, rbx
+    call extres_manifest_kv
     cmp qword ptr [r12 + INI_seclen], 0
     jne .Lmk_sections
     # top level
@@ -2254,9 +2258,17 @@ parse_needs:
     lea rsi, [rip + .Ln_run]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 6f
     call val_dup
     mov [rbx + EXT_runs], rax
+    jmp 9f
+6:  mov rdi, r12                # resources group: secrets = yes (the system keychain)
+    lea rsi, [rip + .Ln_secrets]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov edi, NEEDS_SECRETS
+    call needs_yes
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -2911,6 +2923,8 @@ FN ext_legacy_start_impl
     mov [rbx + EXT_started], rax
     mov dword ptr [rbx + EXT_status], ES_STARTING
     mov dword ptr [rip + g_dirty], 1
+    mov rdi, rbx
+    call extres_started         # resources group: start time and the counters of this run
 9:  jmp .Llegacy_es_scratch_return
 .Llegacy_es_fail2:
     mov edi, [rip + pipe_in]
@@ -4166,7 +4180,12 @@ FN ext_send
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_STOPPING
     jne 9f
-1:  mov rax, [rbx + EXT_wq + SB_len]
+1:  mov rdi, rbx                # resources group: messages and bytes out
+    mov rsi, r13
+    call extres_out
+    mov rsi, r12
+    mov rdx, r13
+    mov rax, [rbx + EXT_wq + SB_len]
     sub rax, [rbx + EXT_wq_off]
     add rax, rdx
     cmp rax, EXT_WQ_HARD
@@ -4253,6 +4272,8 @@ FN ext_legacy_exited
     mov dword ptr [rbx + EXT_global_wait], 0
     mov qword ptr [rbx + EXT_full_since], 0
     mov rdi, rbx
+    call extres_exited          # resources group: what this run held
+    mov rdi, rbx
     call extwatch_owner_gone
     mov rdi, rbx
     call extmarks_clear_owner
@@ -4337,7 +4358,11 @@ FN ext_legacy_exited
     mov [rbx + EXT_reason], rax
     mov dword ptr [rbx + EXT_status], ES_STOPPED
     jmp 8f
-5:  mov dword ptr [rbx + EXT_status], ES_STOPPED
+5:  mov rdi, rbx
+    call extres_stopped         # resources group: an idle stop leaves it idle, ready to start
+    test eax, eax
+    jnz 8f
+    mov dword ptr [rbx + EXT_status], ES_STOPPED
     cmp dword ptr [rbx + EXT_disabled], 0
     je 51f
     mov dword ptr [rbx + EXT_status], ES_DISABLED
@@ -4648,6 +4673,7 @@ FN ext_tick
     cmp qword ptr [rip + g_exts + VEC_len], 0
     je 9f
     inc dword ptr [rip + ext_ticks]
+    call extres_frame           # resources group: start pacing, idle = stop, cost samples
     call ext_project_check
     call extwatch_tick
     # on = startup, once; on = project when a project is open
@@ -4715,6 +4741,11 @@ FN ext_tick
     je 24b
     cmp dword ptr [rbx + EXT_status], ES_IDLE
     jne 24b
+    mov rdi, rbx                # resources group: EXT_STARTS_PER_FRAME
+    xor esi, esi
+    call extres_pace
+    test eax, eax
+    jz 25f
     call ext_running
     cmp eax, EXT_MAX_RUNNING
     jae 25f
@@ -4950,6 +4981,11 @@ FN ext_timeout
     add rax, r13
     call deadline
 .Lew_timeout_none:
+    call extres_timeout         # resources group: idle = stop, cost samples
+    cmp rax, -1
+    je .Lres_timeout_none
+    call deadline
+.Lres_timeout_none:
     xor r13d, r13d
 1:  cmp r13, [rip + g_exts + VEC_len]
     jae 8f
@@ -5061,7 +5097,14 @@ FN ext_start_matching
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_IDLE
     jne 1b
+    cmp r12d, ON_STARTUP        # resources group: on = startup starts EXT_STARTS_PER_FRAME a frame
+    jne 2f
     mov rdi, rbx
+    mov esi, 1
+    call extres_pace
+    test eax, eax
+    jz 1b
+2:  mov rdi, rbx
     call ext_start
     jmp 1b
 9:  EPILOGUE
@@ -5750,6 +5793,7 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_secrets: .asciz "secrets"
 .Lo_startup: .asciz "startup"
 .Lo_command: .asciz "command"
 .Lo_project: .asciz "project"

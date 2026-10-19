@@ -18,6 +18,7 @@ for s in $(find src -name "*.s" ! -path "src/mac/*" ! -path "src/win/*" | LC_ALL
     [ "$s" = src/plat/wayland.s ] && [ src/plat/wayland.inc -nt "$o" ] && stale=1
     [ "$s" = src/app/extproto.s ] && [ src/app/extwatchproto.inc -nt "$o" ] && stale=1
     [ "$s" = src/app/extproto.s ] && [ src/app/extprotoevents.inc -nt "$o" ] && stale=1
+    [ "$s" = src/app/extproto.s ] && [ src/app/extresproto.inc -nt "$o" ] && stale=1
     [ "$s" = src/app/ext.s ] && [ src/app/extvalidateparse.inc -nt "$o" ] && stale=1
     [ "$s" = src/app/extvalidatemanifest.s ] && [ src/app/extvalidatemanifest.inc -nt "$o" ] && stale=1
     [ "$s" = src/app/extvalidatetree.s ] && [ src/app/extvalidatetree.inc -nt "$o" ] && stale=1

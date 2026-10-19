@@ -1781,6 +1781,61 @@ ENDSTRUCT SD_SIZE
 .equ EXT_CHOOSE_MAX, 1000       # choose: items
 .equ EXT_TERM_MAX, 4096         # term: the command's bytes
 
+# ---- resources, workspaces, secrets and lifecycle (extres.s and the files it names) ----
+# a request rhun asked an extension, for the cost counters: answered slow, dropped or failed
+STRUCT
+F ELQ_id, 8
+F ELQ_t, 8               # time_ms it went out
+F ELQ_kind, 8            # cstr: its verb ("complete"), for "slowest"
+F ELQ_cancelled, 8       # 1 after rhun sent 0 cancel ID
+ENDSTRUCT ELQ_SIZE
+.equ ELQ_MAX, 16                 # outstanding requests remembered per extension
+# per extension, beside each EXT slot (extres_row): EL for "extension lifecycle": lifecycle and cost
+STRUCT
+F EL_last_work, 8       # time_ms of the last message either way
+F EL_msgs_in, 8
+F EL_msgs_out, 8
+F EL_bytes_in, 8
+F EL_bytes_out, 8
+F EL_start_t, 8         # time_ms of the current run's start, 0 when it is not running
+F EL_cpu_ns, 8          # the last sample: CPU nanoseconds of its processes, and when it was taken
+F EL_cpu_t, 8
+F EL_cpu0_ns, 8         # the older sample the rate "now" is measured from
+F EL_cpu0_t, 8
+F EL_rss, 8             # resident bytes of its live processes at the last sample
+F EL_slowest, 8         # cstr: the kind of the slowest answer, or 0
+F EL_contains, 8        # cstr: its on = contains: patterns, or 0
+F EL_schemes, 8         # cstr: [provides] schemes, or 0
+F EL_ready_ms, 4        # the last start: milliseconds until hello
+F EL_procs, 4           # processes at the last sample
+F EL_slow, 4
+F EL_dropped, 4
+F EL_failed, 4
+F EL_slowest_ms, 4
+F EL_idle_cfg, 4        # idle.after in seconds, 0 when the manifest does not say
+F EL_busy, 4            # 1 after busy yes
+F EL_flags, 4           # ELF_*
+F EL_starts, 4          # starts this session
+F EL_nreq, 4            # entries in EL_req
+F EL_features, 4        # RF_*: the group's features agreed after hello (extresproto.inc)
+F EL_req, ELQ_SIZE * ELQ_MAX
+ENDSTRUCT EL_SIZE
+.equ ELF_IDLE, 1                # idle = stop
+.equ ELF_IDLE_STOPPING, 2       # the stop in progress is for idleness: it returns to idle
+.equ ELF_OPEN_URLS, 4           # open_urls = yes: open-url opens without asking
+.equ ELF_RUNS_LOCAL, 8          # runs = local
+.equ ELF_STARTUP, 16            # this run started for on = startup (print-startup)
+.equ IDLE_AFTER_DEFAULT, 300    # seconds
+# the group's protocol features, kept in EL_features beside EXT_features (res_feature_names)
+.equ RF_IDLE, 1                 # idle: busy yes|no
+.equ RF_SECRETS, 2              # secrets
+.equ RF_URLS, 4                 # urls: open-url, external-uri, link
+.equ RF_URIS, 8                 # uris and virtual documents
+.equ RF_FILES, 16               # files: find-files, search-text
+.equ RF_SCOPED, 32              # scoped-settings
+.equ RF_FOLDERS, 64             # workspace-folders
+.equ EXT_STARTS_PER_FRAME, 4    # on = startup and waiting extensions start at most this many a frame
+
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
 STRUCT
 F CR_access, 8
@@ -1825,6 +1880,7 @@ ENDSTRUCT XK_SIZE
 .equ ON_LANG, 4
 .equ ON_OPEN, 8
 .equ ON_PROJECT, 16
+.equ ON_CONTAINS, 0x100000         # resources group: on = contains:NAME
 
 .equ NEEDS_DOC_READ, 1
 .equ NEEDS_DOC_WRITE, 2
@@ -1833,6 +1889,7 @@ ENDSTRUCT XK_SIZE
 .equ NEEDS_HOME_READ, 16
 .equ NEEDS_NETWORK, 32
 .equ NEEDS_TERMINAL, 64
+.equ NEEDS_SECRETS, 0x1000000      # resources group: [needs] secrets = yes
 
 .equ EXT_MAX_RUNNING, EXT_CAP
 .equ EXT_HELLO_MS, 5000

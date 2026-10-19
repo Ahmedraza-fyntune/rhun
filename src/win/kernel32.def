@@ -92,3 +92,5 @@ EXPORTS
     GetOverlappedResult
     CancelIoEx
     GetProcessId
+    OpenProcess
+    K32GetProcessMemoryInfo
