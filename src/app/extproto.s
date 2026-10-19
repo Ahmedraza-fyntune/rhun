@@ -2149,6 +2149,13 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call tools_cancel
+    mov edi, 2                  # resources group: a find or search (filesearch.s)
+    call field_u64
+    test edx, edx
+    jz 0f
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call filesearch_cancel
 0:  pop rbx
     # of this extension's open prompt: the prompt closes, answered cancelled
     cmp qword ptr [rip + pr_id], 0
@@ -4552,6 +4559,8 @@ verbs:
     .quad .Lres_v_open_url, h_res_open_url, 65536
     .quad .Lres_v_external_uri, h_res_external_uri, 65536
     .quad .Lres_v_link, h_res_link, 0
+    .quad .Lres_v_find_files, h_res_find_files, 65536
+    .quad .Lres_v_search_text, h_res_search_text, 340000
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX

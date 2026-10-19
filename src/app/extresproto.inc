@@ -713,6 +713,69 @@ FN extproto_send_link
     mov [rip + cur], r15
     EPILOGUE
 
+# ---------------- files: find-files, search-text (filesearch.s) ----------------
+
+# ID find-files FOLDER MAX FLAGS LEN + globs -> "0 found ID LEN" batches, then ok ID COUNT STATUS
+h_res_find_files:
+    mov edi, FSK_FIND_WIRE
+    jmp res_files
+# ID search-text FOLDER MAX FLAGS LEN + PATTERN_LEN GLOBS_LEN LF pattern globs -> batches, then
+# ok ID MATCHES FILES SKIPPED STATUS
+h_res_search_text:
+    mov edi, FSK_SEARCH_WIRE
+res_files:
+    PROLOGUE 16
+    mov [rsp], rdi
+    mov edi, FEAT_FILES
+    call res_agreed
+    test eax, eax
+    jz 9f
+    mov rbx, [rip + cur]
+    test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ
+    jz 7f
+    cmp qword ptr [rip + nfields], 6
+    jne 8f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 8f
+    mov r12, rax                # FOLDER
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz 8f
+    mov r13, rax                # MAX
+    mov edi, 4
+    call field_u64
+    test edx, edx
+    jz 8f
+    cmp rax, 0xffff
+    ja 8f
+    mov r14, rax                # FLAGS
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call filesearch_body
+    mov rdi, rbx
+    mov rsi, [rip + cur_id]
+    mov edx, [rsp]
+    mov rcx, r12
+    mov r8, r13
+    mov r9, r14
+    call filesearch_start
+    test rax, rax
+    jz 9f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lres_e_needs_project]
+    call reply_error
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 .bss
 .p2align 3
 res_url_label: .zero SB_SIZE
@@ -738,4 +801,9 @@ res_url_host: .zero 208
 
 .section .rodata
 .Lres_v_busy: .asciz "busy"
+.Lres_v_find_files: .asciz "find-files"
+.Lres_v_search_text: .asciz "search-text"
+.Lres_e_needs_project: .asciz "needs project=read"
+.equ FSK_FIND_WIRE, 1           # filesearch.s's kinds
+.equ FSK_SEARCH_WIRE, 2
 .text

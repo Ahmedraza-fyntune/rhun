@@ -336,6 +336,8 @@ FN extres_exited
     call vdoc_ext_exited        # the virtual documents waiting for it say so
     mov rdi, rbx
     call links_ext_exited       # and its links will not be taken
+    mov rdi, rbx
+    call filesearch_ext_gone    # nor its finds and searches answered
 9:  EPILOGUE
 
 # extres_stopped(ext) -> eax 1 when the stop that ended it was for idleness: it is idle again
@@ -495,7 +497,14 @@ FN extres_group_holds
     pop rdi
     test eax, eax
     jnz 9f
-    jmp links_pending
+    push rdi
+    push rdi
+    call links_pending
+    pop rdi
+    pop rdi
+    test eax, eax
+    jnz 9f
+    jmp filesearch_pending
 9:  ret
 
 # idle_pass(): once a second: requests nobody answers, and idle = stop extensions quiet for
@@ -586,6 +595,7 @@ FN extres_frame
     call sample_all
     mov dword ptr [rip + g_dirty], 1
 9:  call vdoc_tick              # virtual documents waiting for their providers
+    call filesearch_tick        # finds and searches of extensions
     EPILOGUE
 
 # extres_timeout() -> rax the time (time_ms) the loop must come back for idleness and samples,
@@ -620,7 +630,18 @@ FN extres_timeout
     cmp rax, r12
     jae 31f
 30: mov r12, rax
-31: call time_ms
+31: call filesearch_timeout     # finds and searches: now, or in 10 ms
+    test eax, eax
+    js 32f
+    mov r13d, eax
+    call time_ms
+    add rax, r13
+    cmp r12, -1
+    je 33f
+    cmp rax, r12
+    jae 32f
+33: mov r12, rax
+32: call time_ms
     sub rax, [rip + el_page_t]
     cmp rax, 3000
     jae 9f
@@ -1550,6 +1571,7 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
     .quad .Lc_secrets_refresh, c_secrets_refresh, .Lc_secret_forget, c_secret_forget
     .quad .Lc_print_vdocs, c_print_vdocs
     .quad .Lc_link_deliver, c_link_deliver, .Lc_print_links, c_print_links
+    .quad .Lc_print_file_runs, c_print_file_runs
     .quad 0, 0
 .Lv_complete: .asciz "complete"
 .Lq_complete: .asciz "completion"
@@ -1573,6 +1595,7 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
 .Lc_print_vdocs: .asciz "print-vdocs"
 .Lc_link_deliver: .asciz "link-deliver"
 .Lc_print_links: .asciz "print-links"
+.Lc_print_file_runs: .asciz "print-file-runs"
 .Lr_idle: .asciz "idle"
 .Lk_open_urls: .asciz "open_urls"
 .Lv_yes: .asciz "yes"
