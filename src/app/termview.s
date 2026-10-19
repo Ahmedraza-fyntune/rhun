@@ -1377,22 +1377,13 @@ session_close_program:
     test dword ptr [rbx + TS_flags], TSF_RUNNING
     jz 9f
     test dword ptr [rbx + TS_flags], TSF_REAPED
-    jnz 1f
+    jz 1f
+    test dword ptr [rbx + TS_pid], REMOTE_PID_TAG
+    jnz 2f                      # a remote leader that is gone: its host has the rest
+1:  # (with the leader gone, what it left had SIGTERM then: SIGKILL in 2 s at the latest)
     mov edi, [rbx + TS_pid]
     mov esi, STOP_MS
     call uproc_end
-    jmp 2f
-1:
-.ifndef WINDOWS
-    test dword ptr [rbx + TS_flags], TSF_EOF
-    jnz 2f
-    # the leader is gone, others still have its terminal (so the session is still theirs); they had
-    # SIGTERM when it went
-    mov edi, [rbx + TS_pid]
-    neg edi
-    mov esi, SIGKILL
-    call proc_kill
-.endif
 2:  mov eax, [rbx + TS_flags]
     and eax, ~(TSF_RUNNING | TSF_EOF | TSF_REAPED | TSF_RESTART)
     or eax, TSF_NOTIFY | TSF_STOP
@@ -1518,18 +1509,9 @@ programs_tick:
     lea rax, [r14 + FINISH_MS]
     mov [rbx + TS_finish_at], rax
 .else
-    # the leader is gone, others of its session still have the terminal (so the session is still
-    # theirs): they go too, SIGKILL in 2 s; the program is done when the output ends
-    mov edi, [rbx + TS_pid]
-    neg edi
-    mov esi, SIGTERM
-    call proc_kill
-    cmp qword ptr [rbx + TS_kill_at], 0
-    jne 2f
-    lea rax, [r14 + STOP_MS]
-    mov [rbx + TS_kill_at], rax
-2:  mov rax, [rbx + TS_kill_at]
-    add rax, 1000
+    # the leader is gone, others of its group still have the terminal: they had SIGHUP and SIGTERM
+    # with its exit (uproc_wait), SIGKILL 2 s later; the program is done when the output ends
+    lea rax, [r14 + STOP_MS + 1000]
     mov [rbx + TS_finish_at], rax
 .endif
 3:  # Stop's deadline
@@ -1539,21 +1521,9 @@ programs_tick:
     cmp r14, rax
     jb 5f
     mov qword ptr [rbx + TS_kill_at], 0
-    test dword ptr [rbx + TS_flags], TSF_REAPED
-    jnz 4f
-    mov edi, [rbx + TS_pid]
+    mov edi, [rbx + TS_pid]     # its group, while there is one (after the leader too)
     mov esi, SIGKILL
     call uproc_signal
-    jmp 5f
-4:
-.ifndef WINDOWS
-    test dword ptr [rbx + TS_flags], TSF_EOF
-    jnz 5f
-    mov edi, [rbx + TS_pid]
-    neg edi
-    mov esi, SIGKILL
-    call proc_kill
-.endif
 5:  test dword ptr [rbx + TS_flags], TSF_REAPED
     jz .Lpt_next
     test dword ptr [rbx + TS_flags], TSF_EOF
@@ -1728,6 +1698,7 @@ FN term_run
     dec rax
     mov [rip + cur], rax
     mov dword ptr [rip + sel_on], 0
+    call panel_to_terminals
     mov dword ptr [rip + g_term_open], 1
     test r14d, TRV_FOCUS
     jz 3f
@@ -1802,6 +1773,20 @@ FN term_close
 8:  mov rax, -1
     EPILOGUE
 
+# panel_to_terminals(): the panel shows its terminals, not another of its views; that view's keyboard
+#   goes back to the editor (a hidden view does not take keys)
+panel_to_terminals:
+    mov eax, [rip + g_panel_cur]
+    cmp eax, -1
+    je 9f
+    mov dword ptr [rip + g_panel_cur], -1
+    cmp dword ptr [rip + g_focus], FOCUS_VIEW
+    jne 9f
+    cmp [rip + g_place_focus], eax
+    jne 9f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+9:  ret
+
 # term_reveal(TERM, focus) -> 0 or -1: the panel opens at the tab; focus 1 gives it the keyboard
 FN term_reveal
     PROLOGUE
@@ -1821,6 +1806,7 @@ FN term_reveal
     jmp 1b
 2:  mov [rip + cur], rbx
     mov dword ptr [rip + sel_on], 0
+    call panel_to_terminals
     mov dword ptr [rip + g_term_open], 1
     test r12d, r12d
     jz 3f
