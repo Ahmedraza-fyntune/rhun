@@ -67,7 +67,7 @@ FN extview_open
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     # how many it has, and a free slot
@@ -301,13 +301,13 @@ event_head:
     PROLOGUE
     mov rbx, rdi
     mov rdi, [rbx + VW_ext]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     mov rax, [rbx + VW_ext]
     cmp dword ptr [rax + EXT_status], ES_RUNNING
     jne 8f
-    test dword ptr [rax + EXT_features], FEAT_VIEWS
+    FEAT_TEST rax, FEAT_VIEWS
     jz 8f
     lea rdi, [rip + evbuf]
     call sb_clear

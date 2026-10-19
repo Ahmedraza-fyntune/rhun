@@ -373,6 +373,13 @@ class Host(unittest.TestCase):
         self.assertIn('state=stopped', out[2])
         self.assertEqual(out[3], 'okhello world')
 
+    def test_a_program_that_lets_8_mb_pile_up_is_stopped_at_once(self):
+        # four replies of 3 MiB that it never reads: the third would take the queue past 8 MB
+        (self.proj / 'big.txt').write_text(('x' * 127 + '\n') * 24576, encoding='utf-8')
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 1500', 'print-extensions'],
+                              mode='bigtext', files=('big.txt',))
+        self.assertIn('state=stopped reason=not reading', out[1])
+
     def test_garbage_without_a_newline(self):
         out = self.run_editor(['cmd echo.toast', 'wait 600', 'print-extensions'], mode='garbage')
         self.assertIn('state=stopped reason=a line over 64 KB without an end', out[0])
@@ -423,9 +430,18 @@ class Host(unittest.TestCase):
         out = self.run_editor(['cmd echo.toast', 'wait 8000', 'print-extensions'], mode='slowhello')
         self.assertIn('state=stopped reason=no hello within 5 s', out[0])
 
-    def test_a_body_request_without_a_valid_length_ends_the_stream(self):
+    def test_three_requests_with_bad_arguments(self):
         out = self.run_editor(['cmd echo.toast', 'wait 600', 'print-extensions'], mode='badargs')
-        self.assertIn('state=stopped reason=invalid body framing', out[0])
+        self.assertIn('state=stopped reason=three unparsable lines in a row', out[0])
+
+    def test_a_body_request_whose_length_is_not_a_number_is_a_syntax_error(self):
+        # v1: error ID syntax and only the line is dropped; the requests after it still work
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 400', 'print-extensions'],
+                              mode='badlen')
+        log = self.echo_log()
+        self.assertTrue(any(line.startswith('error 1 syntax') for line in log), log)
+        self.assertIn('ok 2', log)
+        self.assertIn('state=running', out[1])
 
     def test_the_error_log_is_kept_under_its_cap(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 2500', 'print-extensions'], mode='noisy')

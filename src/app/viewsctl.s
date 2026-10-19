@@ -17,6 +17,54 @@ demo_panel: .long -1
 
 .text
 
+# the commands for control.s's ctl_tables: fn(out, rest, rest len) -> rax 0
+c_print_sidebar:
+    xor eax, eax
+    jmp c_views
+c_print_panel_tabs:
+    mov eax, 1
+    jmp c_views
+c_print_side_tabs:
+    mov eax, 2
+    jmp c_views
+c_print_view:
+    mov eax, 3
+    jmp c_views
+c_view_show:
+    mov eax, 4
+    jmp c_views
+c_view_focus:
+    mov eax, 5
+    jmp c_views
+c_places_demo:
+    mov eax, 6
+c_views:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14d, eax
+    call views_flush            # what a command looks at is drawn first
+    mov rdi, rbx
+    mov esi, r14d
+    mov rdx, r12
+    mov rcx, r13
+    call views_control
+    xor eax, eax
+    EPILOGUE
+
+# views_flush(): a frame now when one is due (control.s's flush_frame: headless and the Windows
+#   renderer draw synchronously)
+views_flush:
+.ifndef WINDOWS
+    cmp dword ptr [rip + g_headless], 0
+    je 1f
+.endif
+    cmp dword ptr [rip + g_dirty], 0
+    je 1f
+    PCALL P_draw
+1:  ret
+
 # views_control(sb, which, ptr, len): command `which` (0 print-sidebar, 1 print-panel-tabs,
 #   2 print-side-tabs, 3 print-view, 4 view-show, 5 view-focus, 6 places-demo) with its argument
 FN views_control
@@ -359,6 +407,20 @@ demo_load:
     EPILOGUE
 
 .section .rodata
+.p2align 3
+.globl views_ctl
+views_ctl:
+    .quad .Lc_print_sidebar, c_print_sidebar, .Lc_print_panel_tabs, c_print_panel_tabs
+    .quad .Lc_print_side_tabs, c_print_side_tabs, .Lc_print_view, c_print_view
+    .quad .Lc_view_show, c_view_show, .Lc_view_focus, c_view_focus, .Lc_places_demo, c_places_demo
+    .quad 0, 0
+.Lc_print_sidebar: .asciz "print-sidebar"
+.Lc_print_panel_tabs: .asciz "print-panel-tabs"
+.Lc_print_side_tabs: .asciz "print-side-tabs"
+.Lc_print_view: .asciz "print-view"
+.Lc_view_show: .asciz "view-show"
+.Lc_view_focus: .asciz "view-focus"
+.Lc_places_demo: .asciz "places-demo"
 .Lterminals: .asciz "terminals="
 .Lchosen: .asciz " chosen"
 .Lopen: .asciz " open="

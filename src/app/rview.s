@@ -511,7 +511,7 @@ rv_find:
 FN rview_ext_ready
     PROLOGUE
     mov r12, rdi
-    test dword ptr [r12 + EXT_features], FEAT_VIEW_TREE
+    FEAT_TEST r12, FEAT_VIEW_TREE
     jz 9f
     xor ebx, ebx
 1:  cmp rbx, [rip + vdecls + VEC_len]
@@ -896,35 +896,18 @@ command_record:
 9:  EPILOGUE
 
 # rview_run_command(ext, name, nlen, args, alen): one of the extension's commands, as a command
-#   reference runs it (the contributions group's command-args sends the ARGS; until then v1's run)
+#   reference runs it (invoke.s: FROM ref, ARGS as the body with command-args)
 FN rview_run_command
-    PROLOGUE 16
-    mov rbx, rdi
-    mov r12, rsi
-    mov r13, rdx
-    # its full name: OWNER/NAME.COMMAND, as the palette knows it
-    mov rdi, rbx
-    call ext_full_name
-    mov [rsp], rax
-    lea rdi, [rip + evbuf]
-    call sb_clear
-    lea rdi, [rip + evbuf]
-    mov rsi, [rsp]
-    call sb_push_cstr
-    lea rdi, [rip + evbuf]
-    mov esi, '.'
-    call sb_push_byte
-    lea rdi, [rip + evbuf]
-    mov rsi, r12
-    mov rdx, r13
-    call sb_push
-    mov rdi, [rip + evbuf + SB_ptr]
-    mov rsi, [rip + evbuf + SB_len]
-    call ext_cmd_find
+    PROLOGUE
+    call cmdref_new
     test rax, rax
     jz 9f
+    mov rbx, rax
     mov rdi, rax
-    call ext_cmd_run
+    xor esi, esi
+    call cmdref_invoke
+    mov rdi, rbx
+    call cmdref_free
 9:  EPILOGUE
 
 # rv_expand(slot, tr, node, on): "expand REV LEN" + id, or collapse
@@ -1224,10 +1207,28 @@ rv_place_key:
 8:  xor eax, eax
     EPILOGUE
 
-# rv_place_focus(vd, on): "focus 0|1"
+# rv_place_focus(vd, on): "focus 0|1"; the context keys viewFocus and view follow it
 rv_place_focus:
     PROLOGUE
+    mov rbx, rdi
     mov r12d, esi
+    mov edi, CTX_VIEW_FOCUS
+    mov esi, r12d
+    call ctx_set_bool
+    mov rdi, rbx
+    call vd_at
+    mov r13, [rax + VD_name]
+    xor r14d, r14d
+    test r12d, r12d
+    jz 1f
+    mov rdi, r13
+    call strlen
+    mov r14, rax
+1:  mov edi, CTX_VIEW
+    mov rsi, r13
+    mov rdx, r14
+    call ctx_set
+    mov rdi, rbx
     call rv_of_vd
     cmp eax, -1
     je 9f

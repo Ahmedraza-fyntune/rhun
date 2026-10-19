@@ -36,7 +36,11 @@ assign_all:
     je 2f
     cmp eax, ST_THEME
     jne 8f
-2:  mov rdi, rbx
+2:  # code actions on save take source kinds only (tests/save-actions.py checks them)
+    lea rax, [rip + cfg_save_actions]
+    cmp [rbx + SET_ptr], rax
+    je 8f
+    mov rdi, rbx
     lea rsi, [rip + value]
     mov edx, 5
     call setting_assign

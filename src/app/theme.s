@@ -1,6 +1,5 @@
 # themes: parse "key = #rrggbb" files, derive missing colors, registry of built-in + user themes
 .include "rhun.inc"
-.include "app/extvalidate.inc"
 
 
 .bss
@@ -22,35 +21,25 @@ g_sys_dark: .long -1            # the system's dark mode as the platform reports
 
 .text
 
-# Legacy active-palette entry reuses the private destination parser, strict0.
+# theme_load(text, len): the theme in text, as the active palette
 FN theme_load
     mov r8, rsi
     mov rcx, rdi
     lea rdi, [rip + g_theme]
     lea rsi, [rip + defined]
     lea rdx, [rip + g_theme_dark]
-    xor r9d, r9d
     jmp theme_parse_into
 
-# theme_parse_into(palette,defined16,kind32,bytes,len,strict). No registry or allocation.
-FN theme_parse_into
+# theme_parse_into(palette, defined bits (16 bytes), dark (u32), text, len): the palette starts
+# empty, the theme's slots are set and the rest derived. No registry or allocation.
+theme_parse_into:
     PROLOGUE 80
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    mov [rsp + 64], r9
     mov [rsp + 72], rcx
     mov r14, r8
-    test r9, r9
-    jz 1f
-    cmp r14, 65536
-    ja .Ltpi_resource
-    mov rdi, rcx
-    mov rsi, r14
-    call prep_ini_text_valid
-    test eax, eax
-    jz .Ltpi_bad
-1:  mov rdi, rbx
+    mov rdi, rbx
     xor esi, esi
     mov edx, 4 * T_COUNT
     call memset
@@ -77,15 +66,6 @@ FN theme_parse_into
     call str_eq_cstr
     test eax, eax
     jnz .Ltpi_light
-    cmp qword ptr [rsp + 64], 0
-    je .Ltpi_dark
-    mov rdi, [rsp + INI_val]
-    mov rsi, [rsp + INI_vallen]
-    lea rdx, [rip + .Ltpi_dark_name]
-    call str_eq_cstr
-    test eax, eax
-    jz .Ltpi_bad
-.Ltpi_dark:
     mov dword ptr [r13], 1
     jmp .Ltl_next
 .Ltpi_light:
@@ -105,19 +85,10 @@ FN theme_parse_into
     jmp 2b
 3:  mov rdi, [rsp + INI_val]
     mov rsi, [rsp + INI_vallen]
-    cmp qword ptr [rsp + 64], 0
-    je .Ltpi_legacy_color
-    call theme_color_strict
-    jmp .Ltpi_color_checked
-.Ltpi_legacy_color:
     call parse_color
-.Ltpi_color_checked:
     test edx, edx
-    jnz 4f
-    cmp qword ptr [rsp + 64], 0
-    je .Ltl_next
-    jmp .Ltpi_bad
-4:  mov [rbx + r14*4], eax
+    jz .Ltl_next
+    mov [rbx + r14*4], eax
     bts qword ptr [r12], r14
     jmp .Ltl_next
 .Ltl_derive:
@@ -127,40 +98,6 @@ FN theme_parse_into
     call theme_derive_into
     xor eax, eax
     EPILOGUE
-.Ltpi_resource:
-    mov rax, -EV_RESOURCE
-    EPILOGUE
-.Ltpi_bad:
-    mov rax, -EV_BAD_THEME
-    EPILOGUE
-
-# Strict managed color syntax; preserve the legacy RGBA conversion after exact validation.
-theme_color_strict:
-    cmp rsi, 7
-    je 1f
-    cmp rsi, 9
-    jne 8f
-1:  cmp byte ptr [rdi], '#'
-    jne 8f
-    mov ecx, 1
-2:  cmp rcx, rsi
-    jae 9f
-    movzx eax, byte ptr [rdi + rcx]
-    cmp eax, '0'
-    jb 8f
-    cmp eax, '9'
-    jbe 3f
-    or eax, 32
-    cmp eax, 'a'
-    jb 8f
-    cmp eax, 'f'
-    ja 8f
-3:  inc rcx
-    jmp 2b
-8:  xor eax, eax
-    xor edx, edx
-    ret
-9:  jmp parse_color
 
 # ISDEF slot: carry set when the theme gave the slot
 .macro ISDEF slot
@@ -232,7 +169,7 @@ theme_derive:
     mov edx, [rip + g_theme_dark]
     jmp theme_derive_into
 
-FN theme_derive_into
+theme_derive_into:
     PROLOGUE
     mov r14, rdi
     mov r15, rsi
@@ -385,7 +322,7 @@ legible:
     lea rsi, [rip + g_theme]
     jmp legible_into
 
-FN legible_into
+legible_into:
     PROLOGUE
     mov r14, rsi
     mov ebx, edi
@@ -982,6 +919,3 @@ slot_names:
 .Li7: .asciz "icon_cyan"
 .Li8: .asciz "icon_grey"
 .Li9: .asciz "icon_white"
-
-.section .rodata
-.Ltpi_dark_name: .asciz "dark"

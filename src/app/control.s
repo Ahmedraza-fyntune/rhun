@@ -140,7 +140,7 @@ FN control_exec
     lea r15, [rip + ctl_table]
 1:  mov rdx, [r15]
     test rdx, rdx
-    jz .Lce_unknown
+    jz .Lce_more
     mov rdi, r13
     mov rsi, r14
     call str_eq_cstr
@@ -148,6 +148,28 @@ FN control_exec
     jnz 2f
     add r15, 16
     jmp 1b
+.Lce_more:
+    # the other parts' tables (ctl_tables): fn(out, rest, rest len) -> rax as above
+    lea rax, [rip + ctl_tables]
+    mov [rsp], rax
+11: mov rax, [rsp]
+    mov r15, [rax]
+    test r15, r15
+    jz .Lce_unknown
+    add qword ptr [rsp], 8
+12: mov rdx, [r15]
+    test rdx, rdx
+    jz 11b
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 13f
+    add r15, 16
+    jmp 12b
+13: lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
 2:  call [r15 + 8]
     push rax
     push rax
@@ -1053,38 +1075,6 @@ c_print_views:
     xor eax, eax
     EPILOGUE
 
-# ---- views group: places and retained views (viewsctl.s) ----
-c_print_sidebar:
-    xor eax, eax
-    jmp c_views
-c_print_panel_tabs:
-    mov eax, 1
-    jmp c_views
-c_print_side_tabs:
-    mov eax, 2
-    jmp c_views
-c_print_view:
-    mov eax, 3
-    jmp c_views
-c_view_show:
-    mov eax, 4
-    jmp c_views
-c_view_focus:
-    mov eax, 5
-    jmp c_views
-c_places_demo:
-    mov eax, 6
-c_views:
-    PROLOGUE
-    mov r13d, eax
-    call flush_frame
-    lea rdi, [rip + out]
-    mov esi, r13d
-    mov rdx, rbx
-    mov rcx, r12
-    call views_control
-    xor eax, eax
-    EPILOGUE
 
 # print-complete: the completion list and the signature help (complete_dump)
 c_print_complete:
@@ -2275,13 +2265,6 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_ext_menu: .asciz "ext-menu"
 .Lc_print_views: .asciz "print-views"
 .Lc_print_complete: .asciz "print-complete"
-.Lc_print_sidebar: .asciz "print-sidebar"
-.Lc_print_panel_tabs: .asciz "print-panel-tabs"
-.Lc_print_side_tabs: .asciz "print-side-tabs"
-.Lc_print_view: .asciz "print-view"
-.Lc_view_show: .asciz "view-show"
-.Lc_view_focus: .asciz "view-focus"
-.Lc_places_demo: .asciz "places-demo"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lx_yes: .asciz "yes"
@@ -2341,6 +2324,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
+# other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
+ctl_tables:
+    .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad views_ctl             # views group: places and retained views (viewsctl.s)
+    .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open
@@ -2376,12 +2364,7 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
-    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
-    # views group (viewsctl.s)
-    .quad .Lc_print_sidebar, c_print_sidebar, .Lc_print_panel_tabs, c_print_panel_tabs
-    .quad .Lc_print_side_tabs, c_print_side_tabs, .Lc_print_view, c_print_view
-    .quad .Lc_view_show, c_view_show, .Lc_view_focus, c_view_focus, .Lc_places_demo, c_places_demo
-    .quad 0, 0
+    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:
