@@ -71,6 +71,11 @@
 .equ SYS_inotify_init1, 294
 .equ SYS_memfd_create, 319
 .equ SYS_close_range, 436
+# remote hosts (src/app/remote.s): channels are socketpairs; remote pids carry REMOTE_PID_TAG
+.equ SYS_shutdown, 48
+.equ SYS_socketpair, 53
+.equ SYS_renameat2, 316         # the agent's rename without replacing (Linux only)
+.equ REMOTE_PID_TAG, 0x20000000
 .equ SYS_prctl, 157
 .equ PR_SET_PDEATHSIG, 1
 .equ PR_SET_NO_NEW_PRIVS, 38
@@ -1480,6 +1485,11 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
+    # language features (query.s, complete.s, langfeat.s)
+    FEATURE FEAT_QUERY_STREAM, "query-stream", 0      # query-part, query-progress
+    FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
+    FEATURE FEAT_COMPLETE_ITEMS, "complete-items", 1  # complete-resolve
+    FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1506,6 +1516,37 @@ FEATURE_LIST
 .macro FEAT_TEST base, feat
     test byte ptr [\base + EXT_features + ((\feat) >> 3)], 1 << ((\feat) & 7)
 .endm
+# the kinds of request rhun sends providers (query.s's pk_table rows)
+.equ PK_COMPLETE, 0
+.equ PK_RESOLVE, 1               # complete-resolve
+.equ PK_SIGNATURE, 2
+.equ PK_HOVER, 3
+.equ PK_DEFINITION, 4
+.equ PK_DECLARATION, 5
+.equ PK_TYPEDEF, 6
+.equ PK_IMPLEMENTATION, 7
+.equ PK_REFERENCES, 8
+.equ PK_SYMBOLS, 9
+.equ PK_WSYMBOLS, 10
+.equ PK_SELECTION, 11
+.equ PK_CALLH, 12                # call-hierarchy
+.equ PK_TYPEH, 13                # type-hierarchy
+.equ PK_HIERCALLS, 14            # calls-in, calls-out, supertypes, subtypes
+.equ PK_ACTIONS, 15
+.equ PK_ACTIONS_AUTO, 16         # code actions asked for the lightbulb
+.equ PK_ACTION_RESOLVE, 17
+.equ PK_PREPARE_RENAME, 18
+.equ PK_RENAME, 19
+.equ PK_FORMAT, 20
+.equ PK_RANGE_FORMAT, 21
+.equ PK_TYPE_FORMAT, 22
+.equ PK_LINKS, 23
+.equ PK_SAVE_ACTIONS, 24
+.equ PK_COUNT, 25
+# who asked (query.s routes parts and expiries to them)
+.equ QO_LANGFEAT, 1
+.equ QO_COMPLETE, 2
+.equ QO_SAVE, 3
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1617,6 +1658,8 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_INSTALL, 7      # Install from GitHub: owner/name
 .equ PROMPT_EXT_SETTING, 8      # a text setting of an extension (extpage.s)
 .equ PROMPT_RENAME_SYMBOL, 9    # the new name of a symbol (langfeat.s)
+.equ PROMPT_REMOTE, 40          # remote hosts: a question for ssh, answered in plain text (remoteui.s)
+.equ PROMPT_REMOTE_SECRET, 41   # remote hosts: a password or passphrase, drawn masked
 # extension management: development installs (extinstall.s)
 .equ PROMPT_EXT_FOLDER, 20      # Install from Folder: the folder, copied
 .equ PROMPT_EXT_LINK, 21        # Link a Folder: the folder, linked
@@ -1730,6 +1773,26 @@ F EXT_pv_save_actions, 8
 F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
 F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
 F EXT_tests_progs, 8    # [needs] tests: programs rhun may start for its test runs (cstr) or 0
+# language features (query.s): the [provides] keys of 0.18's kinds, provider-scope's narrowed
+# values and the session's statistics per kind
+F EXT_pv_hover, 8       # [provides] hover: patterns, cstr, or 0
+F EXT_pv_declaration, 8
+F EXT_pv_type_definition, 8
+F EXT_pv_implementation, 8
+F EXT_pv_selection_ranges, 8
+F EXT_pv_call_hierarchy, 8
+F EXT_pv_type_hierarchy, 8
+F EXT_pv_workspace_symbols, 8
+F EXT_pv_range_format, 8
+F EXT_pv_type_format, 8
+F EXT_pv_ttrig, 8       # type_format.triggers
+F EXT_pv_document_links, 8
+F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
+F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
+# WebAssembly extensions (extwasm.s)
+F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
+F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
+F EXT_wasm_pad, 4
 # extension management (extrecord.s, extinstall.s, extupdate.s)
 F EXT_rec, 8            # cstr: its install record (.rhun-install), or 0
 F EXT_inst, 8           # cstr: a linked install's stub folder (EXT_dir is the linked folder), or 0
@@ -1908,6 +1971,9 @@ ENDSTRUCT CRF_SIZE
     CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
     CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
     CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+    # remote hosts (remote.s): "ssh", "docker", "podman", "wsl", "local" in a remote window, else empty
+    CTXKEY CTX_REMOTE_NAME, "remoteName", 0
+    CTXKEY CTX_REMOTE_HOST, "remoteHost", 0
 .endm
 # when.s expands the list as records: FN, the name, padding to 8 bytes
 .macro CTXKEY sym, name, fn
@@ -2325,6 +2391,241 @@ F AS_req, 8             # kind 5: the agent-transcript request in flight (its id
 F AS_from, 8            # kind 5: the FROM of that request
 F AS_ask, 8             # kind 5 (D4): the open card, an AK record, or 0
 ENDSTRUCT AS_SIZE
+
+# ---- debugger (DAP client): debugcfg.s, dapwire.s, dap.s, bp.s, debugconsole.s, debugctl.s ----
+.equ NEEDS_DEBUG, 0x10000           # [needs] debug = yes: start debug adapters that run as the user
+.equ DBG_MAX, 64                    # debuggers ([debugger.TYPE] sections), in all
+.equ DBG_PER_EXT, 8
+.equ DBG_ATTRS_MAX, 128             # attr.* per debugger
+.equ DS_MAX, 8                      # sessions, child sessions included
+.equ DS_PEND, 256                   # requests in flight per session
+.equ DAP_BODY_MAX, 8388608          # one message
+.equ DAP_HEADER_MAX, 1024
+.equ DAP_WQ_MAX, 4194304            # bytes queued for one adapter
+.equ DAP_NODES_MAX, 262144          # JSON values in one message
+.equ DAP_DEPTH_MAX, 64
+.equ DAP_MSGS_TICK, 64              # messages handled per session per frame
+.equ DAP_TICK_US, 2000              # and time spent on them
+.equ DAP_INIT_MS, 10000             # the initialize answer
+.equ DAP_REQ_MS, 10000              # UI requests (stack, scopes, variables, evaluate)
+.equ DAP_VARS_MAX, 20000            # variable nodes per stop
+.equ DAP_STRS_MAX, 4194304          # their strings
+.equ DAP_FRAMES, 20                 # frames asked for at a time
+.equ DAP_THREADS_MAX, 1024
+.equ DAP_EXPANDED_MAX, 512
+.equ BP_MAX, 4096
+.equ BP_PER_FILE, 1000
+.equ WATCH_MAX, 64
+
+# debugger: a [debugger.TYPE] section of an extension's manifest
+STRUCT
+F DBG_ext, 8            # EXT*
+F DBG_type, 8           # cstr
+F DBG_title, 8          # cstr or 0
+F DBG_languages, 8      # cstr: grammar names, space separated, or 0
+F DBG_program, 8        # cstr: names tried in order, or a path inside the extension (with a /)
+F DBG_program_t, 8      # program.TARGET for this system, or 0
+F DBG_paths, 8          # cstr: extra folders to search, or 0
+F DBG_args, 8           # cstr: words with variables, or 0
+F DBG_args_t, 8         # args.TARGET, or 0
+F DBG_requests, 8       # cstr or 0 (launch attach)
+F DBG_templates, 8      # cstr or 0
+F DBG_install, 8        # cstr or 0
+F DBG_attrs, 8          # owned SB* of "NAME\tTYPE\n" lines, or 0
+F DBG_transport, 4      # 0 stdio, 1 tcp
+F DBG_resolve, 4        # 1: debug-resolve before every launch
+F DBG_nattrs, 4
+F DBG_pad, 4
+ENDSTRUCT DBG_SIZE
+
+# a request in flight to an adapter
+STRUCT
+F PD_seq, 4
+F PD_kind, 4            # RQ_*
+F PD_epoch, 4
+F PD_pad, 4
+F PD_ctx, 8             # per kind: a node index, an owned list of breakpoint ids...
+F PD_sent, 8            # time_ms
+ENDSTRUCT PD_SIZE
+.equ RQ_INITIALIZE, 1
+.equ RQ_LAUNCH, 2
+.equ RQ_CONFIGDONE, 3
+.equ RQ_SETBP, 4
+.equ RQ_SETFBP, 5
+.equ RQ_SETEXC, 6
+.equ RQ_THREADS, 7
+.equ RQ_STACK, 8
+.equ RQ_SCOPES, 9
+.equ RQ_VARIABLES, 10
+.equ RQ_EVALUATE, 11
+.equ RQ_RESUME, 12      # continue, next, stepIn, stepOut
+.equ RQ_PAUSE, 13
+.equ RQ_TERMINATE, 14
+.equ RQ_DISCONNECT, 15
+.equ RQ_SETVARIABLE, 16
+.equ RQ_EXCINFO, 17
+.equ RQ_RESTART, 18
+.equ RQ_REPL, 19        # evaluate from the console
+.equ RQ_WATCH, 20       # evaluate for a watch
+.equ RQ_HOVER, 21
+.equ RQ_REVERSE, 22     # (never pending) an answer rhun sent
+
+# session states
+.equ DSS_FREE, 0
+.equ DSS_INITIALIZING, 1
+.equ DSS_CONFIGURING, 2
+.equ DSS_RUNNING, 3
+.equ DSS_PAUSED, 4
+.equ DSS_TERMINATING, 5
+.equ DSS_ENDED, 6
+.equ DSS_CONNECTING, 7
+.equ DSS_APPROVAL, 8        # waiting for the user to allow it
+
+# session flags
+.equ DSF_INITIALIZED, 1     # the initialized event came
+.equ DSF_CONFIGDONE, 2      # configurationDone went out (or was not needed)
+.equ DSF_TERMINATED, 4      # the terminated event came
+.equ DSF_DISCONNECT, 8      # disconnect went out
+.equ DSF_EOF, 16            # the adapter closed its output
+.equ DSF_LAUNCHED, 32       # the launch answer came, successfully
+.equ DSF_EXITED, 64         # the exited event came
+.equ DSF_STALE, 128         # the variables shown are from an earlier stop
+.equ DSF_THREADS, 256       # the thread list must be fetched again
+
+# adapter capabilities (initialize answer)
+.equ CAP_CONFIGDONE, 1
+.equ CAP_COND, 2
+.equ CAP_HIT, 4
+.equ CAP_LOG, 8
+.equ CAP_FUNCBP, 16
+.equ CAP_TERMINATE, 32
+.equ CAP_RESTART, 64
+.equ CAP_SETVAR, 128
+.equ CAP_HOVER, 256
+.equ CAP_EXCINFO, 512
+.equ CAP_CANCEL, 1024
+.equ CAP_EXCOPTIONS, 2048
+
+# a thread of the paused program
+STRUCT
+F DT_id, 8
+F DT_name, 4            # offset into DS_strs
+F DT_namelen, 4
+ENDSTRUCT DT_SIZE
+
+# a stack frame of the focused thread
+STRUCT
+F FR_id, 8
+F FR_name, 4
+F FR_namelen, 4
+F FR_path, 4            # offset into DS_strs (0 length: no source path)
+F FR_pathlen, 4
+F FR_line, 4
+F FR_col, 4
+F FR_hint, 4            # 0 normal, 1 subtle, 2 label
+F FR_pad, 4
+ENDSTRUCT FR_SIZE
+
+# a variables-tree node: a scope (depth 0), a variable, or a watch result
+STRUCT
+F VN_ref, 8             # variablesReference (0: no children)
+F VN_parent, 4          # node index, -1 for roots
+F VN_kid0, 4            # first child (children are contiguous), -1 before they load
+F VN_nkids, 4
+F VN_depth, 4
+F VN_flags, 4           # VNF_*
+F VN_epoch, 4
+F VN_name, 4            # offsets and lengths into DS_strs
+F VN_namelen, 4
+F VN_value, 4
+F VN_valuelen, 4
+F VN_type, 4
+F VN_typelen, 4
+F VN_eval, 4
+F VN_evallen, 4
+ENDSTRUCT VN_SIZE
+.equ VNF_EXPANDED, 1
+.equ VNF_LOADING, 2
+.equ VNF_ERROR, 4
+.equ VNF_EXPENSIVE, 8
+.equ VNF_CHANGED, 16
+.equ VNF_WATCH, 32      # a watch expression's result (a root)
+
+# a debug session
+STRUCT
+F DS_state, 4           # DSS_*
+F DS_id, 4              # 1, 2, ... (never reused in a run)
+F DS_dbg, 4             # index into g_debuggers
+F DS_parent, 4          # the parent session's id, or 0
+F DS_request, 4         # 0 launch, 1 attach
+F DS_nodebug, 4
+F DS_pid, 4             # the adapter, 0 when none (or reaped)
+F DS_in, 4              # its input (rhun writes), -1
+F DS_out, 4             # its output (rhun reads), -1
+F DS_err, 4             # its error output, -1
+F DS_seq, 4             # the next request number
+F DS_epoch, 4           # bumped on every stop and resume
+F DS_flags, 4           # DSF_*
+F DS_cfgwait, 4         # configuration answers still awaited
+F DS_stopstep, 4        # Stop's escalation step, 0 before the first press
+F DS_exit, 4            # the debuggee's exit code, -1 unknown
+F DS_thread, 8          # the focused thread's id, 0 for none
+F DS_frame, 4           # the focused frame's index
+F DS_hasvars, 4         # scopes were asked for this stop
+F DS_caps, 8            # CAP_*
+F DS_name, 8            # owned cstr: the configuration's name
+F DS_reason, 8          # owned cstr: why it stopped or ended, or 0
+F DS_desc, 8            # owned cstr: the stop's description, or 0
+F DS_deadline, 8        # time_ms: initialize, a Stop step, a kill, or 0
+F DS_killat, 8          # time_ms when SIGKILL follows SIGTERM, or 0
+F DS_launch, SB_SIZE    # the launch or attach arguments (JSON), kept for restart
+F DS_rbuf, SB_SIZE      # bytes from the adapter not yet parsed
+F DS_wq, SB_SIZE        # bytes to write to it
+F DS_wq_off, 8
+F DS_ebuf, SB_SIZE      # its error output: the line in progress
+F DS_etail, SB_SIZE     # and the last lines (for a crash message)
+F DS_filters, SB_SIZE   # exception filters: "FILTER\tLABEL\tDEFAULT\n" lines
+F DS_threads, VEC_SIZE  # TH
+F DS_frames, VEC_SIZE   # FR of the focused thread
+F DS_vars, VEC_SIZE     # VN
+F DS_strs, SB_SIZE      # their strings
+F DS_expanded, SB_SIZE  # paths of expanded nodes, one per line, kept across stops
+F DS_total_frames, 4    # the stack's total as the adapter reports it
+F DS_npend, 4
+F DS_args, SB_SIZE      # the adapter's argv, each NUL-terminated (copied from g_lc_args)
+F DS_nargs, 4
+F DS_reading, 4         # 1 while its output is watched (0: the read buffer is full)
+F DS_exited_at, 8       # time_ms the adapter's output closed, 0 before
+F DS_dbg_ext, 8         # the debugger's EXT* when the session started
+F DS_pend, PD_SIZE*DS_PEND
+ENDSTRUCT DS_SIZE
+
+# a breakpoint (line or function), with what each session reports about it
+STRUCT
+F BP_id, 4
+F BP_line, 4            # one-based; the user's line
+F BP_enabled, 4
+F BP_kind, 4            # 0 line, 1 function
+F BP_path, 8            # owned cstr: the file (or the function's name)
+F BP_cond, 8            # owned cstrs or 0
+F BP_hit, 8
+F BP_log, 8
+F BP_sid, 4*DS_MAX      # the adapter's id per session slot, 0 none
+F BP_aline, 4*DS_MAX    # the line it reports, 0 unknown
+F BP_ver, 4*DS_MAX      # 0 not sent, 1 unverified, 2 verified, 3 rejected
+F BP_msg, 8*DS_MAX      # owned message cstrs or 0
+ENDSTRUCT BP_SIZE
+# debug console categories
+.equ DCON_STDOUT, 0
+.equ DCON_STDERR, 1
+.equ DCON_CONSOLE, 2
+.equ DCON_IMPORTANT, 3
+.equ DCON_ADAPTER, 4        # the adapter's own error output and stray bytes
+.equ DCON_ERROR, 5          # rhun's messages about a failure
+.equ DCON_INFO, 6           # rhun's notes ("Program exited with code 3")
+.equ DCON_INPUT, 7          # an expression typed into the console
+.equ DCON_RESULT, 8         # its value
+.equ DCON_LINE_MAX, 4096
 .equ AS_KIND_EXT, 5
 .equ AGS_IDLE, 0
 .equ AGS_WORKING, 1

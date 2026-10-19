@@ -1,0 +1,109 @@
+# headless control commands of remote windows (control.s's ctl_tables):
+#   print-remote              remote=KIND host=H state=S channels=N rtt=MS in=B out=B procs=P [error=TEXT]
+#   remote-connect SPEC [PATH] this window becomes a remote window (as --remote SPEC PATH)
+#   remote-drop               the transport is killed, as a dropped connection
+#   remote-reconnect          Reconnect
+#   wait-remote [SECONDS]     until the connection is up, failed or lost (60 s unless given)
+.include "rhun.inc"
+
+.text
+
+# each fn(out sb, rest, rest len) -> rax 0
+.section .rodata
+.p2align 3
+.globl remote_ctl
+remote_ctl:
+    .quad .Lc_print_remote, c_print_remote, .Lc_remote_connect, c_remote_connect
+    .quad .Lc_remote_drop, c_remote_drop, .Lc_remote_reconnect, c_remote_reconnect
+    .quad .Lc_wait_remote, c_wait_remote
+    .quad 0, 0
+.Lc_print_remote: .asciz "print-remote"
+.Lc_remote_connect: .asciz "remote-connect"
+.Lc_remote_drop: .asciz "remote-drop"
+.Lc_remote_reconnect: .asciz "remote-reconnect"
+.Lc_wait_remote: .asciz "wait-remote"
+.text
+
+c_print_remote:
+    sub rsp, 8
+    call remote_dump
+    add rsp, 8
+    xor eax, eax
+    ret
+
+c_remote_connect:
+    PROLOGUE
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, rax
+    mov rsi, rdx
+    call next_word
+    mov rbx, rcx                # consumed
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov r14, rax                # SPEC
+    lea rdi, [r12 + rbx]
+    mov rsi, r13
+    sub rsi, rbx
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov r15, rax                # PATH ("" for the home folder)
+    mov rdi, r14
+    mov rsi, r15
+    call remote_start
+    mov rdi, r14
+    call mem_free
+    mov rdi, r15
+    call mem_free
+    xor eax, eax
+    EPILOGUE
+
+c_remote_drop:
+    sub rsp, 8
+    call remote_drop
+    add rsp, 8
+    xor eax, eax
+    ret
+
+c_remote_reconnect:
+    sub rsp, 8
+    call remote_reconnect
+    add rsp, 8
+    xor eax, eax
+    ret
+
+c_wait_remote:
+    PROLOGUE
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    test rax, rax
+    jnz 1f
+    mov eax, 60
+1:  imul r13, rax, 1000
+    call time_ms
+    add r13, rax
+2:  mov eax, [rip + g_remote_state]
+    cmp eax, 6                  # RS_UP and after
+    jae 3f
+    test eax, eax
+    jz 3f
+    call time_ms
+    cmp rax, r13
+    jae 3f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 2b
+3:  call app_tick               # the tick that opens the project
+    xor eax, eax
+    EPILOGUE

@@ -14,6 +14,7 @@
 .equ PM_CHOOSE, 9               # an extension's pick list (choose)
 .equ PM_PROVIDERS, 11
 .equ PM_RESULTS, 10             # results from extensions: locations, symbols, code actions (langfeat.s)
+.equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -158,6 +159,7 @@ palette_open:
     mov ebx, edi
     call extpage_prompt_invalidate_pure
     call pal_save_cancel
+    call pal_remote_cancel
     call ext_provider_cancel
     call extproto_prompt_abort  # an extension's prompt that was open is cancelled
     # from the theme list to another list (its shortcut): the settings' theme again, as on closing
@@ -208,6 +210,7 @@ FN palette_close
     push rbx
     call extpage_prompt_invalidate_pure
     call pal_save_cancel
+    call pal_remote_cancel
     call ext_provider_cancel
     call extproto_prompt_abort
     # themes: the settings' theme again, after a preview or a change of the system's mode
@@ -230,6 +233,36 @@ pal_save_cancel:
     jne 1f
     jmp app_save_prompt_cancel
 1:  ret
+
+# pal_remote_cancel(): remote hosts: a remote list or question closed without an answer
+pal_remote_cancel:
+    cmp dword ptr [rip + pal_mode], PM_REMOTE
+    je 1f
+    cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 2f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
+    jb 2f
+1:  mov dword ptr [rip + pal_mode], PM_NONE
+    jmp remote_ui_cancel
+2:  ret
+
+# palette_remote_open(label cstr): remote hosts: a pick list (palette_choose_add, then
+# palette_choose_ready); Enter gives remote_ui_accept the item or the typed text
+FN palette_remote_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_REMOTE
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+# palette_remote_field() -> the field (remote_field_for_draw draws a password masked)
+FN palette_remote_field
+    lea rax, [rip + pal_tf]
+    mov edx, [rip + pal_mode]
+    mov ecx, [rip + pal_prompt]
+    ret
 
 # pal_return_focus(): back to the terminal the palette was opened from, otherwise to the editor,
 # so a command from the palette acts where its shortcut would
@@ -2225,6 +2258,8 @@ FN palette_key
 palette_accept:
     PROLOGUE 16
     mov ebx, [rip + pal_mode]
+    cmp ebx, PM_REMOTE
+    je .Lpa_remote
     cmp ebx, PM_GOTO
     je .Lpa_goto
     cmp ebx, PM_PROMPT
@@ -2306,6 +2341,25 @@ palette_accept:
     call pal_return_focus
     mov rdi, [r12 + IT_data]
     call extproto_prompt_chose
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+.Lpa_remote:
+    # remote hosts: the item picked, or the text typed when it matches none
+    call selected_item
+    mov rbx, -1
+    test rax, rax
+    jz 1f
+    mov rbx, [rax + IT_data]
+1:  lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rdx
+    pop rsi
+    mov rdi, rbx
+    call remote_ui_accept
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 .Lpa_goto:
@@ -2408,7 +2462,23 @@ palette_accept:
     call langfeat_rename_to
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-691: cmp dword ptr [rip + pal_prompt], PROMPT_ASK
+691: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
+    jb 692f
+    # remote hosts: ssh's question answered
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov ebx, [rip + pal_prompt]
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    mov edx, ebx
+    call remote_ui_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+692: cmp dword ptr [rip + pal_prompt], PROMPT_ASK
     jb 70f
     # an extension's prompt: the field's text goes back to it. A terminal command's prompt that
     # just appeared ignores Enter: a keystroke meant for the editor must not run it
@@ -2794,6 +2864,7 @@ FN palette_draw
 .Lpd_field:
     push r10
     push r10
+    call remote_field_for_draw  # remote hosts: a password's field is drawn masked
     call ui_textfield
     add rsp, 16
     # hint under the field for prompts / goto
@@ -3225,6 +3296,8 @@ hint_text:
     lea rax, [rip + .Lhint_ext_install]
     cmp dword ptr [rip + pal_prompt], PROMPT_EXT_INSTALL
     je 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE     # remote hosts: ssh's questions
+    jae 1f
     lea rax, [rip + .Lhint_path]
 1:  ret
 
