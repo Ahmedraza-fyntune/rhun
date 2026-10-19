@@ -1739,7 +1739,7 @@ ENDSTRUCT TAB_SIZE
 .equ FOCUS_PROMPT, 7
 .equ FOCUS_TERMINAL, 8
 .equ FOCUS_SCM, 9               # the commit message
-.equ FOCUS_AGENT_INPUT, 10      # AI (D4): the prompt box of an extension's agent session
+.equ FOCUS_AGENT_INPUT, 56      # AI (D4): the prompt box of an extension's agent session
 
 # grammar (syntax definition)
 STRUCT
