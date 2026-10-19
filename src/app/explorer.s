@@ -601,7 +601,18 @@ file_target:
 # explorer_delete_target(): remove the confirmed file or directory and its contents
 FN explorer_delete_target
     push rbx
-    lea rdi, [rip + delete_path]
+    mov edi, WK_DELETE          # wsedit: a workspace edit of its own, undoable
+    lea rsi, [rip + delete_path]
+    xor edx, edx
+    call ws_user_op
+    test eax, eax
+    js 2f
+    jz 3f
+    mov byte ptr [rip + g_explorer_target], 0
+3:  mov byte ptr [rip + delete_path], 0
+    pop rbx
+    ret
+2:  lea rdi, [rip + delete_path]
     call file_remove_tree
     mov rbx, rax
     # A failed deletion can still have removed some children.
@@ -1077,9 +1088,9 @@ FN explorer_body_draw
     mov [rsp], rax
 50: pop rdi
     pop rax
-    mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+    mov rsi, [r14 + N_path]
+    mov edx, [r14 + N_dir]
+    call menu_open_explorer     # with the extensions' items (menu.s)
 51: # background: active document, keyboard cursor, hover
     M eax, MI_6
     mov edi, [rsp]
@@ -1290,9 +1301,7 @@ root_menu_open:
     lea rdi, [rip + g_explorer_dir]
     call cstr_copy
     lea rdi, [rip + menu_items_root]
-    mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+    call menu_open_root         # with the extensions' items (menu.s)
 9:  EPILOGUE
 
 # explorer_menu_draw(): context menu overlay. An item without a handler is a separating line; with
@@ -1522,7 +1531,14 @@ item_width:
 
 # item_keys(i) -> the shortcut of the command the menu item runs (with g_menu_keys), or 0
 item_keys:
-    xor eax, eax
+    push rdi
+    call menu_row_cmd           # an extension's item: its command's shortcut (menu.s)
+    pop rdi
+    test rax, rax
+    jz 2f
+    mov rdi, rax
+    jmp keys_for
+2:  xor eax, eax
     cmp dword ptr [rip + g_menu_keys], 0
     je 1f
     mov rax, [rip + menu_list]
@@ -1662,6 +1678,7 @@ FN menu_print
     call sb_push_cstr
     EPILOGUE
 1:  mov r12, [rip + menu_list]
+    xor r14d, r14d
 2:  mov r13, [r12]
     test r13, r13
     jz 9f
@@ -1671,10 +1688,18 @@ FN menu_print
 3:  mov rdi, rbx
     mov rsi, r13
     call sb_push_cstr
+    mov edi, r14d               # an extension's row: " [OWNER/NAME]", a submenu " >" (menu.s)
+    call menu_row_note
+    test rax, rax
+    jz 4f
     mov rdi, rbx
+    mov rsi, rax
+    call sb_push_cstr
+4:  mov rdi, rbx
     mov esi, 10
     call sb_push_byte
     add r12, 16
+    inc r14d
     jmp 2b
 9:  EPILOGUE
 
@@ -1690,7 +1715,7 @@ FN menu_print
 .Lrename: .asciz "Rename"
 .Ldelete_a: .asciz "Delete "
 .Ldelete_b: .asciz "?"
-.Ldelete_text: .asciz "This permanently deletes the item and any folder contents."
+.Ldelete_text: .asciz "Undo Last Multi-File Edit brings it back until rhun quits."
 .Lp_none: .asciz "none\n"
 .Lp_line: .asciz "-"
 .Lnot_deleted: .asciz "Could not delete. Check permissions and whether files are in use."

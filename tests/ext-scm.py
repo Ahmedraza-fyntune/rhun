@@ -296,6 +296,57 @@ class Menus(Base):
         self.assertIn('gitTrusted=true', out)
 
 
+class QuickDiff(Base):
+    """C3: a quick-diff provider's base text draws the gutter marks"""
+
+    def provider(self, body='hello world\nold line\nthird line\n', **kw):
+        answers = {'quickdiff': {'body': body}}
+        return self.ext('qd', needs='', hello='hello 1 quickdiff', answers=answers,
+                        ini='on = startup\n[provides]\nquickdiff = *.txt', **kw)
+
+    def marks(self, out):
+        return [l for l in out if l.startswith('marks ')]
+
+    def test_a_file_outside_git_gets_the_providers_marks(self):
+        shutil.rmtree(self.proj / '.git')
+        out = self.run_editor(['wait-ext qd running', 'wait 500', 'print-git'], exts=self.provider(),
+                              drop_waits=True)
+        self.assertEqual(self.marks(out), ['marks .~..'])
+        log = self.fake_log('qd')
+        asks = [l for l in log if ' quickdiff ' in l]
+        self.assertEqual(len(asks), 1, log)
+        self.assertRegex(asks[0], r'^< \d+ quickdiff 1 0$')
+
+    def test_saving_asks_again_and_an_empty_base_clears_the_marks(self):
+        shutil.rmtree(self.proj / '.git')
+        out = self.run_editor(['wait-ext qd running', 'wait 500', 'print-git', 'key ctrl+s', 'wait 500',
+                               'print-git'], exts=self.provider(body=''), drop_waits=True)
+        self.assertEqual(self.marks(out), [])
+        self.assertEqual(len([l for l in self.fake_log('qd') if ' quickdiff ' in l]), 2)
+
+    def test_rhuns_git_keeps_its_files(self):
+        (self.proj / 'a.txt').write_text('hello world\nsecond line\nthird line\nfourth\n', encoding='utf-8')
+        out = self.run_editor(['wait-ext qd running', 'wait-git', 'wait 500', 'print-git'], exts=self.provider(),
+                              drop_waits=True)
+        self.assertEqual(self.marks(out), ['marks ...+.'])
+        self.assertEqual([l for l in self.fake_log('qd') if ' quickdiff ' in l], [])
+
+    def test_refresh_asks_again(self):
+        shutil.rmtree(self.proj / '.git')
+        exts = self.provider(commands={'refresh': [['quickdiff-refresh 1', '-']],
+                                       'one': [[f'quickdiff-refresh {len(str(self.proj / "a.txt"))}',
+                                                str(self.proj / 'a.txt')]]})
+        self.run_editor(['wait-ext qd running', 'wait 500', 'cmd qd.refresh', 'wait 500', 'cmd qd.one',
+                         'wait 500'], exts=exts, drop_waits=True)
+        self.assertEqual(len([l for l in self.fake_log('qd') if ' quickdiff ' in l]), 3)
+        self.assertEqual([r for r, _ in self.replies('qd')][-2:], ['ok 1', 'ok 2'])
+
+    def test_refresh_without_the_feature(self):
+        exts = self.ext('qd', needs='', hello='hello 1', commands={'refresh': [['quickdiff-refresh 1', '-']]})
+        self.run_editor(['cmd qd.refresh', 'wait-ext qd running', 'wait 500'], exts=exts, drop_waits=True)
+        self.assertEqual(self.replies('qd'), [('error 1 unknown no such request', None)])
+
+
 class CommitMessage(Base):
     """C2: a commit-message extension beside the built-in providers"""
 

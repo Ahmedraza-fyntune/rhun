@@ -72,6 +72,9 @@ jobs:
       - name: Install the showcase from GitHub and use it
         if: matrix.userns == 'restricted'
         run: python3 tests/ext-showcase.py -v
+      - name: Update the showcase from GitHub and roll it back
+        if: matrix.userns == 'restricted'
+        run: python3 tests/ext-updates-github.py -v
   macos:
     runs-on: macos-latest
     timeout-minutes: 25
@@ -103,3 +106,5 @@ jobs:
         run: python3 tests/ext-confine.py -v
       - name: Install the showcase from GitHub and use it
         run: python3 tests/ext-showcase.py -v
+      - name: Update the showcase from GitHub and roll it back
+        run: python3 tests/ext-updates-github.py -v

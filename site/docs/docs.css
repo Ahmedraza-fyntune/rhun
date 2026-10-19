@@ -135,3 +135,12 @@
 .spec th { color: var(--muted); font-weight: 500; }
 .spec h3 { margin-top: 34px; }
 .spec h2 { margin-top: 52px; padding-top: 20px; border-top: 1px solid var(--line); scroll-margin-top: 24px; }
+
+/* the extension catalog (/extensions/catalog/) */
+.catalog .ext-search { width: 100%; padding: 10px 12px; margin-bottom: 18px; font: inherit; border-radius: 8px; border: 1px solid var(--line, #3334); background: transparent; color: inherit; }
+.catalog .ext-cards { display: grid; gap: 14px; }
+.catalog .ext-card { border: 1px solid var(--line, #3334); border-radius: 10px; padding: 14px 16px; }
+.catalog .ext-card h3 { margin: 0 0 6px; }
+.catalog .ext-name { font-weight: 400; opacity: .7; font-size: .85em; }
+.catalog .ext-can { opacity: .8; font-size: .9em; }
+.catalog .ext-or { opacity: .7; font-size: .85em; margin-left: 8px; }
