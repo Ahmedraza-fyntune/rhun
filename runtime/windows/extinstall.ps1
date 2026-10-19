@@ -55,8 +55,7 @@ if ($kind -eq 'github') {
         if ($tag -eq 'latest') {
             $loc = & $curl -fsS @proto -o NUL --max-time 20 -w '%{redirect_url}' "$base/$owner/$name/releases/latest" 2>$null
             if ($LASTEXITCODE -ne 0) { Fail "no answer from $base" }
-            if ($loc -notmatch '/releases/tag/([^/]+)$') { Fail "$owner/$name has no release" }
-            $tag = $Matches[1]
+            if ("$loc" -match '/releases/tag/([^/]+)$') { $tag = $Matches[1] } else { Fail "$owner/$name has no release" }
             if ($tag -notmatch '^[0-9A-Za-z._-]+$') { Fail 'the latest release has an unusable tag' }
         }
         $url = "$base/$owner/$name/releases/download/$tag"
