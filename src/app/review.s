@@ -1449,6 +1449,7 @@ open_tab:
     mov r13, rax
     mov [r12 + DOC_diff], rax
     mov [r13 + DV_review], rbx
+    mov dword ptr [r13 + DV_flags], 0   # wsedit: not a wsdiff.s tab (mem_alloc does not clear)
     lea rdi, [rip + line]
     call sb_clear
     lea rdi, [rip + line]

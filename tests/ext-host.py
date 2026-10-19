@@ -855,21 +855,27 @@ class Host(unittest.TestCase):
         self.assertIn('0 action 5', log)
         self.assertEqual(log[log.index('0 action 5') + 1], 'hello')
 
-    def test_rename_edits_open_and_closed_files_as_one_undo_step_each(self):
+    def test_rename_edits_open_and_closed_files_and_undoes_as_one_step(self):
+        # a v1 rename opens the closed file in a tab, unsaved; one undo reverts both documents
+        # (workspace-edit transactions, docs/extensions/v1.1.md)
         self.lang()
         out = self.run_editor(['wait-ext echo running', 'wait 300', 'key ctrl+End', 'key F2', 'print-palette',
                                'type start', 'key Return', 'wait 300', 'wait 300', 'print-tabs', 'print-doc',
-                               'cmd undo', 'print-doc', 'key ctrl+Tab', 'print-state', 'print-doc'],
+                               'key ctrl+Tab', 'print-state', 'print-doc', 'key ctrl+Tab', 'cmd undo',
+                               'print-doc', 'key ctrl+Tab', 'print-state', 'print-doc'],
                               mode='lang', files=('p.rs',))
         self.assertIn('prompt=New name', out)
-        state = [l for l in out if l.startswith('tabs=2 ')][0]
-        self.assertIn(' active=other.rs ', state)
-        self.assertIn(' dirty=1 ', state)
+        states = [l for l in out if l.startswith('tabs=2 ')]
+        self.assertIn(' active=other.rs ', states[0])
+        self.assertIn(' dirty=1 ', states[0])
+        self.assertIn(' active=other.rs ', states[1])
+        self.assertIn(' dirty=0 ', states[1])
         self.assertIn('fn start_ref() {}', out)
         self.assertIn('tabs=*p.rs | other.rs', out)
         docs = [i for i, l in enumerate(out) if l.startswith('fn ')]
         self.assertEqual(out[docs[0]:docs[0] + 2], ['fn  start( ) {', '    let x = start;'])
-        self.assertEqual(out[docs[1]:docs[1] + 2], ['fn  main( ) {', '    let x = main;'])
+        self.assertEqual(out[docs[2]:docs[2] + 2], ['fn  main( ) {', '    let x = main;'])
+        self.assertEqual(out[docs[3]], 'fn main_ref() {}')
         self.assertEqual((self.proj / 'other.rs').read_text(), 'fn main_ref() {}\n', 'nothing saved')
 
     @unittest.skipIf(os.name == 'nt', 'creating symlinks requires Windows developer mode')

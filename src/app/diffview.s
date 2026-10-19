@@ -90,6 +90,7 @@ open_diff:
     mov [r15 + DOC_diff], rax
     mov eax, [rsp + 32]
     mov [rbx + DV_two], eax
+    mov dword ptr [rbx + DV_flags], 0   # wsedit: git's (mem_alloc does not clear)
     mov rdi, r13
     mov rsi, r14
     call mem_dup

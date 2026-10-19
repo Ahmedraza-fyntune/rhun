@@ -1150,7 +1150,10 @@ F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
 F DV_two, 4             # 1: DV_rev against DV_rev2 (git-diff-open), not a commit against its parent
 F DV_review, 8          # AI (review.s): the proposal a Review tab shows, or 0
+F DV_flags, 4           # wsedit: DVF_*
+F DV_flags_pad, 4
 ENDSTRUCT DV_SIZE
+.equ DVF_OWN, 1                 # wsedit: a diff tab of wsdiff.s, not git's (not reopened, not fetched)
 STRUCT
 F DL_kind, 4            # DK_*
 F DL_old, 4             # line number before, 0 none
@@ -1209,7 +1212,109 @@ F UR_aftercur, 8        # optional group replay caret; -1 for ordinary records
 F UR_afteranchor, 8
 F UR_beforeselections, 8 # owned secondary selection snapshot, or 0
 F UR_afterselections, 8  # owned snapshot, 0 = single, -1 = unspecified
+F UR_tx, 8              # wsedit: the workspace-edit transaction this group belongs to, 0 for none
 ENDSTRUCT UR_SIZE
+
+# ---- workspace-edit transactions (wsedit: wsedit.s, wstx.s, wsdisk.s) ----
+# a transaction: one workspace edit across documents and files, undone and redone as one step
+STRUCT
+F TX_id, 8              # session-unique, never 0 (UR_tx names it)
+F TX_label, 8           # owned cstr: names it in toasts and lists
+F TX_journal, 8         # owned cstr: its journal folder, or 0 when it wrote nothing to disk
+F TX_nparts, 8
+F TX_parts, 8           # owned array of TP
+F TX_flags, 8           # TXF_*
+ENDSTRUCT TX_SIZE
+.equ TX_MAX, 64
+.equ TXF_DISK, 1        # it changed files on disk
+# a participant of a transaction
+STRUCT
+F TP_kind, 8            # TPK_*
+F TP_doc, 8             # TPK_BUF: the document
+F TP_state, 8           # TPS_*
+F TP_wrote, 8           # TPK_BUF: its text was also written to disk
+F TP_path, 8            # owned cstr: the file (TPK_FILE, a written TPK_BUF, the file operations)
+F TP_path2, 8           # owned cstr: a rename's target
+F TP_before, 8          # FNV-1a of the file's bytes before and after (disk participants)
+F TP_after, 8
+F TP_slot, 8            # its journal slot, -1 for none
+F TP_flags, 8           # TPF_*
+ENDSTRUCT TP_SIZE
+.equ TPK_BUF, 1         # an open document's buffer
+.equ TPK_FILE, 2        # a file on disk that was not open
+.equ TPK_CREATE, 3
+.equ TPK_RENAME, 4
+.equ TPK_DELETE, 5
+.equ TPS_APPLIED, 0
+.equ TPS_UNDONE, 1
+.equ TPS_LOST, 2        # closed unsaved, or otherwise out of reach: skipped
+.equ TPF_FOLDER, 1      # a create or delete of a folder
+.equ TPF_PICK, 2        # tx_run: undo or redo this one
+.equ TPF_DONE, 4        # a commit made its disk step (a rollback puts it back)
+.equ TPF_HADTAB, 8      # a deleted file had a clean tab (undo opens it again)
+.equ TPF_CASE, 16       # a rename that changes only letter case
+.equ TPF_OVER, 32       # a create or rename replaced a file (in the journal as SLOT.over)
+# a workspace edit being made (wsedit.s reads it, wsdisk.s writes its files)
+.equ WK_TEXT, 0                 # entry kinds
+.equ WK_CREATE, 1
+.equ WK_RENAME, 2
+.equ WK_DELETE, 3
+
+.equ WP_VERSION, 0              # what a text group was made for (PRE)
+.equ WP_DASH, 1                 # "-": the file on disk as it is
+.equ WP_HASH, 2                 # "fnv1a64:HEX": the file whose bytes hash so
+
+.equ WF_OVERWRITE, 1            # entry flags
+.equ WF_IGNORE_EXISTING, 2
+.equ WF_RECURSIVE, 4
+.equ WF_IGNORE_MISSING, 8
+
+# an entry of a workspace edit: a text group (one file) or a file operation
+STRUCT
+F WG_kind, 8                    # WK_*
+F WG_path, 8                    # its PATH bytes (a rename's FROM)
+F WG_plen, 8
+F WG_path2, 8                   # a rename's TO
+F WG_plen2, 8
+F WG_pre, 8                     # WP_*
+F WG_version, 8                 # WP_VERSION: the version; -1 otherwise
+F WG_hash, 8                    # WP_HASH: the hash
+F WG_flags, 8                   # WF_*
+F WG_doc, 8                     # DOC* once resolved: the open document, or a hidden one (WG_hidden)
+F WG_hidden, 8                  # 1: WG_doc was read for a closed file, never shown, freed after
+F WG_first, 8                   # its edits: we[first .. first + count)
+F WG_count, 8
+F WG_opened, 8                  # 1: this edit opened its tab (v1; closed again if the edit fails)
+F WG_real, 8                    # owned: the file's path as written on disk, or 0
+F WG_stamp, 8                   # the file's stamp when it was read
+F WG_orig, 8                    # owned: a closed file's bytes as read, raw
+F WG_olen, 8
+F WG_clean, 8                   # an open document that had no unsaved changes
+F WG_ver0, 8                    # an open document's version when it was checked
+F WG_new, 8                     # owned: a closed file's bytes to write
+F WG_nlen, 8
+F WG_before, 8                  # FNV-1a of the bytes read, and of the bytes to write
+F WG_after, 8
+F WG_real2, 8                   # owned: a rename's target as it will be on disk
+F WG_skip, 8                    # a file operation that ignore-existing or ignore-missing skips
+F WG_folder, 8                  # a file operation on a folder
+F WG_exists, 8                  # its target exists (overwrite moves it into the journal)
+F WG_case, 8                    # a rename that changes only letter case (two steps)
+F WG_created, 8                 # a text group for a file an earlier create makes
+ENDSTRUCT WG_SIZE
+
+# an edit of a text group
+STRUCT
+F WE_l1, 4
+F WE_c1, 4
+F WE_l2, 4
+F WE_c2, 4
+F WE_start, 8                   # byte offsets, once resolved
+F WE_end, 8
+F WE_text, 8
+F WE_len, 8
+ENDSTRUCT WE_SIZE
+
 
 .equ EK_OTHER, 0
 .equ EK_TYPE, 1
@@ -1508,6 +1613,14 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
     # editor presentation (deco.s ...)
     FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
+    # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):
+    # ws_features_agreed withholds the ones whose host side is not in yet
+    FEATURE FEAT_WORKSPACE_EDITS, "workspace-edits", 0
+    FEATURE FEAT_FILE_OPERATIONS, "file-operations", 0   # agreed only with workspace-edits
+    FEATURE FEAT_SELECTIONS, "selections", 0
+    FEATURE FEAT_REVEAL, "reveal", 0
+    FEATURE FEAT_DIFF, "diff", 0
+    FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1572,6 +1685,10 @@ FEATURE_LIST
 .equ QO_SAVE, 3
 .equ QO_SCM, 4                   # source control (scmext.s)
 .equ QO_AI, 5                   # AI: agentext.s and tools.s (ai_query_expired)
+# FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
+.macro FEAT_CLEAR base, feat
+    and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
+.endm
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1767,6 +1884,8 @@ F EXT_confined, 4       # CONFINED_* of the running program
 F EXT_runs, 8           # cstr: the [needs] run list (program names), or 0
 F EXT_pinned, 4         # 1: its button is in the title bar (extensions.ini)
 F EXT_disabled, 4       # 1: turned off (extensions.ini)
+F EXT_edits, 4          # wsedit: 1: may change project files without asking (extensions.ini, the user allowed it)
+F EXT_edits_pad, 4
 F EXT_confine_why, 8    # cstr: why rhun cannot hold it to its permissions on this system, or 0
 F EXT_restart, 4        # 1: start again once the stop in progress completes (a settings change)
 F EXT_noconfine, 4      # 1: confinement failed in the child once: it runs without (EXT_confine_why)
@@ -2029,12 +2148,12 @@ CTXKEY_LIST
 .equ WHEN_DEPTH_MAX, 8
 # a menu target the resource and editor keys describe while a menu evaluates (ctx_push_target)
 STRUCT
-F CT_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
+F MTG_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
                         #   "view" "item" (targetKind), or 0 for no target
-F CT_doc, 8             # its DOC*, or 0
-F CT_path, 8            # cstr: its path, or 0
-F CT_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
-ENDSTRUCT CT_SIZE
+F MTG_doc, 8             # its DOC*, or 0
+F MTG_path, 8            # cstr: its path, or 0
+F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
 STRUCT
@@ -2058,6 +2177,7 @@ F XK_text_ver, 8        # last accepted edit/resync/full-text baseline
 F XK_resync, 8          # per-peer debt survives clearing DOC_xresync
 F XK_replay, 8          # pending active1/cursor2/selection4 catch-up
 F XK_selcur, 8          # cursor of last accepted selection, independent of XK_cur
+F XK_selhash, 8         # feature selections: sel_hash of the selections last told (0: one caret)
 ENDSTRUCT XK_SIZE
 .equ XP_NEED_OPEN, 0
 .equ XP_READY, 1

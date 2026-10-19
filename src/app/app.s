@@ -2119,6 +2119,16 @@ FN app_on_pointer_leave
 # app_on_button(btn, pressed, mods)
 FN app_on_button
     mov [rip + g_mods], edx
+    test esi, esi
+    jz 1f
+    push rdi
+    push rsi
+    push rdx
+    call keys_chord_cancel      # a press ends a waiting chord
+    pop rdx
+    pop rsi
+    pop rdi
+1:
     # the caret shows at once, as after a key: a press or a release may have placed it
     push rdi
     push rsi
@@ -2182,6 +2192,7 @@ FN wheel_xy
 FN app_on_focus
     mov [rip + g_win_focused], edi
     push rdi
+    call keys_chord_cancel
     # files may have changed while away
     test edi, edi
     jz 1f
@@ -2281,6 +2292,13 @@ FN app_on_key
     mov dword ptr [rip + g_dirty], 1
     call time_ms
     mov [rip + g_blink_t0], rax
+    # a chord waiting for its second stroke takes the key first (keys.s)
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call keys_chord_key
+    test eax, eax
+    jnz 9f
     # dead keys and the Compose key
     mov edi, r12d
     mov esi, r14d
@@ -2576,6 +2594,11 @@ FN editor_key
     jmp 9f
 87: cmp eax, KEY_ESCAPE
     jne 88f
+    # several selections go back to the primary first (multi-cursor)
+    mov rdi, [rip + g_doc]
+    call sel_escape
+    test eax, eax
+    jnz 9f
     # collapse selection
     mov rax, [rip + g_doc]
     mov rcx, [rax + DOC_cur]
@@ -2665,6 +2688,8 @@ timeout_fns:
     .quad dap_timeout
     .quad remote_timeout
     .quad extupdate_timeout      # extension management
+    .quad keys_timeout           # a chord's pause (keys.s)
+    .quad ws_difftab_timeout    # wsedit: diff tabs whose sides changed
     .quad 0
 .text
 
@@ -2673,6 +2698,7 @@ FN app_tick
     call query_tick             # language features: expired requests, before their askers' ticks
     call complete_tick
     call langfeat_tick
+    call ws_difftab_tick        # wsedit: diff tabs follow their sides
     call save_tick
     call ext_options_apply
     call watch_tick
@@ -2705,6 +2731,7 @@ FN app_tick
     call app_clip_tick
     call dap_tick               # debugger
     call remote_tick            # remote hosts
+    call keys_tick              # a chord's pause (keys.s)
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -4529,6 +4556,7 @@ tab_drag_step:
 # tab_menu_open(i): the menu of tab i, for a right click on it: pin or unpin, close, close all
 tab_menu_open:
     PROLOGUE
+    mov rbx, rdi
     call tab_at
     mov rcx, [rax + TAB_kind]
     mov [rip + menu_tab_kind], rcx
@@ -4538,9 +4566,8 @@ tab_menu_open:
     test dword ptr [rax + TAB_flags], TF_PIN
     jz 1f
     lea rdi, [rip + tab_menu_pinned]
-1:  mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+1:  mov rsi, rbx
+    call menu_open_tab          # with the extensions' items (menu.s)
     mov dword ptr [rip + g_menu_keys], 1
     EPILOGUE
 
@@ -4623,12 +4650,25 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov ecx, [rsp + 12]
     call gfx_clip_push
-    # remote hosts: "SSH: HOST" at the left end
+    # a chord waiting for its second stroke says so at the left end (keys.s); else the remote
+    # host ("SSH: HOST"), the branch and the file's items
     mov edi, [rsp]
+    add edi, [rip + g_mt + 4*MI_12]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call keys_chord_draw
+    mov ecx, [rsp]
+    add ecx, [rip + g_mt + 4*MI_12]
+    cmp eax, ecx
+    je 2f
+    add eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 24], eax
+    jmp 3f
+2:  mov edi, [rsp]                # remote hosts: "SSH: HOST" at the left end
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call remote_status_item
-    # the branch at the left end; the file's items follow it
+    # the branch; the file's items follow it
     mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
@@ -4636,6 +4676,7 @@ FN statusbar_draw
     add ecx, [rip + g_mt + 4*MI_12]
     call statusbar_branch
     mov [rsp + 24], eax
+3:
     call app_image
     test rax, rax
     jz 1f
@@ -4687,7 +4728,10 @@ FN statusbar_draw
     lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Lsel_close]
     call sb_push_cstr
-1:  mov esi, [rsp + 24]
+1:  mov rdi, rbx
+    lea rsi, [rip + tmp_sb]
+    call sel_status             # "  3 selections" (multi-cursor)
+    mov esi, [rsp + 24]
     mov [rsp + 16], esi
     # vim: the command line in place of the position, else the mode and the keys typed so far
     cmp dword ptr [rip + cfg_vim], 0
@@ -6179,7 +6223,12 @@ FN cmd_newline_below
 
 FN cmd_newline_above
     READONLY_RET
-    PROLOGUE 272
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_newline_above              # several selections (editorlines.s)
+1:  PROLOGUE 272
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
