@@ -2407,8 +2407,21 @@ find_program:
     mov rdi, rbx
     call win_runtime
 .else
+    # the login environment's PATH (an app started from the Dock lacks ~/go/bin and friends)
+    xor edi, edi
+    xor esi, esi
+    xor edx, edx
+    call uproc_env_make
+    mov r14, rax
     mov rdi, rbx
-    call proc_which
+    mov rsi, rax
+    call uproc_which
+    push rax
+    push rax
+    mov rdi, r14
+    call mem_free
+    pop rax
+    pop rax
 .endif
     test rax, rax
     jnz 9f

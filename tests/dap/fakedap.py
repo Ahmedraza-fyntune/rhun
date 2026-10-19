@@ -466,6 +466,7 @@ def handle(req):
 
 def main():
     log('pid %d' % os.getpid())
+    log('session %s cwd %s' % (os.environ.get('RHUN_DEBUG_SESSION'), os.getcwd()))
     if 'junk-stdout' in MODE:
         write_raw(b'hello from the program\nmore junk\n')
     while True:

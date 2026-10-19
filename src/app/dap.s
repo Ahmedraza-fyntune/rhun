@@ -11,7 +11,6 @@ g_dsess: .zero DS_SIZE * DS_MAX
 .data
 g_dfocus: .long -1              # the focused session's slot, -1
 dnext_id: .long 1
-approval_slot: .long -1         # the session whose start waits for the approval dialog
 .bss
 .p2align 3
 g_dmsg: .zero SB_SIZE           # the message being built (jw_*)
@@ -19,9 +18,7 @@ pd: .zero PD_SIZE               # pend_take's copy
 pathz: .zero SB_SIZE            # a NUL-terminated path from the pool
 g_nodep:
 nodep: .zero SB_SIZE            # a node's path
-approvals: .zero VEC_SIZE       # until the tasks group's approval store lands: (EXT*, project cstr)
 dlg_text: .zero 2048
-dlg_title: .zero 256
 .globl g_watches, g_nodep
 restart_name: .zero SB_SIZE
 restart_after: .long 0          # a restart waits for this session to end
@@ -196,8 +193,6 @@ FN dap_start
     mov r12, rdi
     mov r13, rsi
     mov [rsp], edx
-    cmp dword ptr [rip + approval_slot], 0
-    jge .Lst_busy
     mov rdi, r12
     mov rsi, r13
     mov edx, [rsp]
@@ -247,19 +242,26 @@ FN dap_start
     mov rdi, rbx
     call slot_index
     mov [rip + g_dfocus], eax
-    # one approval per extension and project
-    mov rdi, r15
-    call approved
-    test eax, eax
-    jnz 1f
+    # one approval per extension and project (runallow.s): asked once, with the exact command
     mov dword ptr [rbx + DS_state], DSS_APPROVAL
+    mov rdi, r15
+    mov rsi, [rip + g_lc_cmd + SB_ptr]
+    lea rdx, [rip + approval_done]
+    mov ecx, [rbx + DS_id]
+    call run_approve
+    cmp eax, 1
+    je 1f
+    test eax, eax
+    jz 2f
+    # another dialog is open
     mov rdi, rbx
-    call ask_approval
-    mov eax, [rbx + DS_id]
+    lea rsi, [rip + .Lm_busy]
+    call ds_fail
+    xor eax, eax
     EPILOGUE
 1:  mov rdi, rbx
     call launch_now
-    mov eax, [rbx + DS_id]
+2:  mov eax, [rbx + DS_id]
     EPILOGUE
 .Lst_busy:
     lea rdi, [rip + .Lm_busy]
@@ -299,130 +301,45 @@ FN dap_error
     pop rbx
     ret
 
-# approved(ext) -> eax 1 when the extension may run programs as the user in this project
-approved:
+# approval_done(session id, allowed): the approval dialog's answer: the session starts, or ends
+#   without running anything
+approval_done:
     PROLOGUE
-    mov rbx, rdi
-    xor r12d, r12d
-1:  cmp r12, [rip + approvals + VEC_len]
+    mov r12d, edi
+    mov r13d, esi
+    call slot_of_id
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    cmp dword ptr [rbx + DS_state], DSS_APPROVAL
+    jne 9f
+    test r13d, r13d
+    jz 1f
+    mov rdi, rbx
+    call launch_now
+    EPILOGUE
+1:  mov rdi, rbx
+    lea rsi, [rip + .Lm_cancelled]
+    call ds_end
+9:  EPILOGUE
+
+# slot_of_id(id) -> rax DS* of the session with that id, or 0
+slot_of_id:
+    PROLOGUE
+    mov r12d, edi
+    xor ebx, ebx
+1:  cmp ebx, DS_MAX
     jae 8f
-    mov rax, r12
-    shl rax, 4
-    add rax, [rip + approvals + VEC_ptr]
-    cmp [rax], rbx
-    jne 2f
-    mov rdi, [rax + 8]
-    mov rsi, [rip + g_project]
-    call path_same
-    test eax, eax
-    jnz 9f
-2:  inc r12
+    mov edi, ebx
+    call dap_slot
+    cmp dword ptr [rax + DS_state], DSS_FREE
+    je 2f
+    cmp [rax + DS_id], r12d
+    je 9f
+2:  inc ebx
     jmp 1b
 8:  xor eax, eax
 9:  EPILOGUE
-
-# path_same(a cstr or 0, b cstr or 0) -> eax 1 when both are the same text or both are 0
-path_same:
-    test rdi, rdi
-    jz 1f
-    test rsi, rsi
-    jz 2f
-    jmp strcmp_eq
-1:  xor eax, eax
-    test rsi, rsi
-    sete al
-    ret
-2:  xor eax, eax
-    ret
-
-# ask_approval(ds): "Let Debug run programs in app?" with the exact command; Allow remembers it
-ask_approval:
-    PROLOGUE
-    mov rbx, rdi
-    mov rdi, rbx
-    call slot_index
-    mov [rip + approval_slot], eax
-    mov r12, [rbx + DS_dbg_ext]
-    # the title: Let TITLE run programs in PROJECT?
-    lea rdi, [rip + dlg_title]
-    lea rsi, [rip + .Ld_let]
-    call cstr_copy
-    mov rsi, [r12 + EXT_title]
-    test rsi, rsi
-    jnz 1f
-    mov rsi, [r12 + EXT_name]
-1:  mov rdi, rax
-    lea rdx, [rip + dlg_title + 160]
-    call cstr_copy_max
-    mov rdi, rax
-    lea rsi, [rip + .Ld_run]
-    call cstr_copy
-    mov rsi, [rip + g_project]
-    test rsi, rsi
-    jz 2f
-    push rax
-    push rax
-    mov rdi, rsi
-    call strlen
-    mov rdi, [rip + g_project]
-    mov rsi, rax
-    call path_basename
-    pop rdi
-    pop rdi
-    mov rsi, rax
-    mov rcx, rdx
-    lea rdx, [rip + dlg_title + 240]
-    call memcpy_max
-    jmp 3f
-2:  mov rdi, rax
-    lea rsi, [rip + .Ld_noproject]
-    call cstr_copy
-3:  mov byte ptr [rax], '?'
-    mov byte ptr [rax + 1], 0
-    # the text: the debugger, its command and where; it runs as the user
-    mov edi, [rbx + DS_dbg]
-    call dbg_row
-    mov r13, rax
-    lea rdi, [rip + dlg_text]
-    mov rsi, [r13 + DBG_title]
-    test rsi, rsi
-    jnz 4f
-    mov rsi, [r13 + DBG_type]
-4:  lea rdx, [rip + dlg_text + 200]
-    call cstr_copy_max
-    mov rdi, rax
-    lea rsi, [rip + .Ld_will]
-    call cstr_copy
-    mov rdi, rax
-    mov rsi, [rip + g_lc_cmd + SB_ptr]
-    lea rdx, [rip + dlg_text + 1500]
-    call cstr_copy_max
-    mov rdi, rax
-    lea rsi, [rip + .Ld_rights]
-    call cstr_copy
-    lea rdi, [rip + dlg_title]
-    lea rsi, [rip + dlg_text]
-    lea rdx, [rip + .Ld_allow]
-    lea rcx, [rip + approval_yes]
-    call app_confirm
-    lea rdi, [rip + approval_no]
-    call app_confirm_cancel
-    EPILOGUE
-
-# cstr_copy_max(dst, src, limit) -> end: src copied, stopping at limit
-cstr_copy_max:
-1:  cmp rdi, rdx
-    jae 2f
-    mov al, [rsi]
-    test al, al
-    jz 2f
-    mov [rdi], al
-    inc rdi
-    inc rsi
-    jmp 1b
-2:  mov byte ptr [rdi], 0
-    mov rax, rdi
-    ret
 
 # memcpy_max(dst, src, limit, n) -> end: n bytes, stopping at limit, NUL-terminated
 memcpy_max:
@@ -440,57 +357,19 @@ memcpy_max:
     mov rax, rdi
     ret
 
-# approval_yes(): Allow: remembered for the extension and project; the session starts
-approval_yes:
-    PROLOGUE
-    mov edi, [rip + approval_slot]
-    test edi, edi
-    js 9f
-    mov dword ptr [rip + approval_slot], -1
-    call dap_slot
-    mov rbx, rax
-    cmp dword ptr [rbx + DS_state], DSS_APPROVAL
-    jne 9f
-    lea rdi, [rip + approvals]
-    mov esi, 16
-    call vec_push
-    mov rcx, [rbx + DS_dbg_ext]
-    mov [rax], rcx
-    mov qword ptr [rax + 8], 0
-    mov rdi, [rip + g_project]
-    test rdi, rdi
-    jz 1f
-    push rax
-    push rax
-    call dup_cstr
-    mov rcx, rax
-    pop rax
-    pop rax
-    mov [rax + 8], rcx
-1:  mov rdi, rbx
-    call launch_now
-9:  EPILOGUE
-
-# approval_no(): Cancel: the session ends without running anything
-approval_no:
-    PROLOGUE
-    mov edi, [rip + approval_slot]
-    test edi, edi
-    js 9f
-    mov dword ptr [rip + approval_slot], -1
-    call dap_slot
-    mov rbx, rax
-    cmp dword ptr [rbx + DS_state], DSS_APPROVAL
-    jne 9f
-    mov rdi, rbx
-    lea rsi, [rip + .Lm_cancelled]
-    call ds_end
-9:  EPILOGUE
-
-# dap_forget_approvals(): Forget (tests and the extension page until the tasks group's store lands)
+# dap_forget_approvals(): Forget for every debugger's extension (tests)
 FN dap_forget_approvals
-    mov qword ptr [rip + approvals + VEC_len], 0
-    ret
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp ebx, [rip + g_ndebuggers]
+    jae 9f
+    mov edi, ebx
+    call dbg_row
+    mov rdi, [rax + DBG_ext]
+    call run_forget
+    inc ebx
+    jmp 1b
+9:  EPILOGUE
 
 # launch_now(ds): spawn the adapter and send initialize
 launch_now:
@@ -1076,12 +955,10 @@ ds_end:
     mov edi, [rbx + DS_pid]
     test edi, edi
     jz 2f
-    neg edi                     # the adapter's process group
-    mov esi, SIGTERM
-    SYS SYS_kill
-    call time_ms
-    add rax, 1000
-    mov [rbx + DS_killat], rax
+    # the adapter's group: SIGTERM now, SIGKILL in 1 s, reaped by uproc
+    mov esi, 1000
+    call uproc_end
+    mov dword ptr [rbx + DS_pid], 0
 2:  mov rdi, rbx
     call slot_index
     mov edi, eax
@@ -1097,33 +974,9 @@ ds_end:
     inc dword ptr [rip + g_dap_gen]
 9:  EPILOGUE
 
-# reap(ds): an ended session's adapter is waited for; SIGKILL when SIGTERM was not enough
+# reap(ds): nothing to do: uproc_end took the ended adapter over (kept for the tick's shape)
 reap:
-    PROLOGUE
-    mov rbx, rdi
-    mov edi, [rbx + DS_pid]
-    test edi, edi
-    jz 9f
-    mov esi, 1
-    call proc_wait
-    cmp eax, -1
-    jne 2f
-    mov rax, [rbx + DS_killat]
-    test rax, rax
-    jz 9f
-    mov r12, rax
-    call time_ms
-    cmp rax, r12
-    jb 9f
-    mov qword ptr [rbx + DS_killat], 0
-    mov edi, [rbx + DS_pid]
-    neg edi
-    mov esi, SIGKILL
-    SYS SYS_kill
-    jmp 9f
-2:  mov dword ptr [rbx + DS_pid], 0
-    mov qword ptr [rbx + DS_killat], 0
-9:  EPILOGUE
+    ret
 
 # adapter_gone(ds): its output closed. After terminated or disconnect that is the normal end; before,
 #   it crashed: the reason names its exit code and its last error lines
@@ -1141,7 +994,7 @@ adapter_gone:
     test edi, edi
     jz 11f
     mov esi, 1
-    call proc_wait
+    call uproc_wait
     mov r13d, eax
     test eax, eax
     jns 12f
@@ -1218,9 +1071,9 @@ FN dap_stop_session
     jz 9f
     cmp eax, DSS_APPROVAL
     jne 1f
-    # its dialog is still the open one (a newer dialog would have cancelled it): Cancel it
-    xor edi, edi
-    call app_dialog_answer
+    # the question goes away unanswered
+    mov edi, [rbx + DS_id]
+    call run_approve_cancel
     mov rdi, rbx
     lea rsi, [rip + .Lm_cancelled]
     call ds_end
@@ -1362,17 +1215,7 @@ FN dap_shutdown
     je 6f
     mov rdi, rbx
     xor esi, esi
-    call ds_end
-    mov edi, [rbx + DS_pid]
-    test edi, edi
-    jz 6f
-    neg edi
-    mov esi, SIGKILL
-    SYS SYS_kill
-    mov edi, [rbx + DS_pid]
-    xor esi, esi
-    call proc_wait
-    mov dword ptr [rbx + DS_pid], 0
+    call ds_end                 # uproc_end: its quit kills what is left
 6:  inc r12d
     jmp 5b
 9:  EPILOGUE
@@ -3904,12 +3747,6 @@ FN dap_find_node
 .Lm_exited: .asciz "Program exited with code "
 .Lm_nosession: .asciz "no debug session"
 .Lm_unsupported: .asciz "rhun does not support "
-.Ld_let: .asciz "Let "
-.Ld_run: .asciz " run programs in "
-.Ld_noproject: .asciz "this window"
-.Ld_will: .asciz " will run "
-.Ld_rights: .asciz " as you, with access to all your files and the network. Allowing it covers this extension's debuggers in this folder."
-.Ld_allow: .asciz "Allow"
 .Ld_session: .asciz "session="
 .Ld_name: .asciz " name="
 .Ld_type: .asciz " type="
