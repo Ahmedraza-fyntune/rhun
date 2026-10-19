@@ -23,12 +23,27 @@ children: .zero CHILD_SIZE * CHILD_MAX
 # SearchPathW's default order puts the application folder and the current directory first, where a
 # project could plant powershell.exe or git.exe.
 FN proc_which
+    xor esi, esi
+    jmp proc_which_in
+
+# proc_which_in(name, PATH value or 0 for rhun's own) -> the same, searching that PATH (uproc.s: a
+#   program's own environment)
+FN proc_which_in
     PROLOGUE 8320
+    mov r15, rsi
     call win_wide
     mov rbx, rax
     test rax, rax
     jz 8f
-    lea rcx, [rip + .Lpath_var]
+    test r15, r15
+    jz 2f
+    mov rdi, r15
+    call win_wide
+    mov r14, rax
+    test rax, rax
+    jz 7f
+    jmp 1f
+2:  lea rcx, [rip + .Lpath_var]
     xor edx, edx
     xor r8d, r8d
     API GetEnvironmentVariableW # the size PATH needs, with its NUL

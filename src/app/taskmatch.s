@@ -219,6 +219,34 @@ FN tpat_compile
     lea rax, [rip + .Le_toomany]
     EPILOGUE
 
+# tpat_new(ptr, len) -> rax a compiled pattern (mem_free it), or 0 with rdx the reason
+FN tpat_new
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov edi, CP_SIZE
+    call mem_alloc
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call tpat_compile
+    test rax, rax
+    jnz 1f
+    mov rax, r13
+    EPILOGUE
+1:  mov r12, rax
+    mov rdi, r13
+    call mem_free
+    mov rdx, r12
+    xor eax, eax
+    EPILOGUE
+
+# tpat_line(CP, line, len) -> 1 when the whole line matches
+FN tpat_line
+    lea rcx, [rip + caps_tmp]
+    jmp tpat_match
+
 # last_literal() -> the last token when it is a literal run, else 0 (r13 CP)
 last_literal:
     mov rcx, [r13 + CP_n]
@@ -1030,6 +1058,16 @@ FN mrun_new
     mov [rbx + MR_cwd], rax
     mov rax, rbx
     EPILOGUE
+
+# mrun_counts(MR*) -> eax errors, edx warnings of its run so far
+FN mrun_counts
+    mov rdi, [rdi + MR_src]
+    test rdi, rdi
+    jz 1f
+    jmp problems_counts
+1:  xor eax, eax
+    xor edx, edx
+    ret
 
 # mrun_bind(MR*, source, TERM): where its problems go and whose footer counts them (made before both)
 FN mrun_bind

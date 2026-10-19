@@ -78,9 +78,6 @@ python3 tests/ext-pending-commands.py || fail=1
 python3 tests/ext-pending-owner.py || fail=1
 python3 tests/file-read-limited.py || fail=1
 python3 tests/dir-scan.py || fail=1
-python3 tests/task-core.py --faults || fail=1
-python3 tests/task-view.py --faults || fail=1
-python3 tests/task-clipboard.py || fail=1
 check config-strings build/config_strings_test
 check keys build/keys_test
 check ui-clip build/ui_clip_test
@@ -127,6 +124,8 @@ python3 tests/terminal-keys.py || fail=1
 python3 tests/terminal-links.py || fail=1
 python3 tests/terminals.py || fail=1       # tasks and terminals: programs' tabs, run-as-user approval
 python3 tests/task-patterns.py || fail=1   # tasks and terminals: patterns, matchers, the Problems store
+python3 tests/terminals-feature.py || fail=1   # tasks and terminals: the terminals feature
+python3 tests/tasks.py || fail=1           # tasks and terminals: the tasks feature and commands
 python3 tests/new-window.py || fail=1
 python3 tests/file-launch.py || fail=1
 python3 tests/readonly-save.py || fail=1

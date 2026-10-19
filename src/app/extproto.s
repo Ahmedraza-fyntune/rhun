@@ -723,6 +723,17 @@ handle_line:
 
 # testing (testproto.s): every tests verb goes to testproto_request(ext, id, line, len, body,
 # body length), which parses the line itself and answers through ext_send_checked
+# tasks and terminals (termproto.s, tasks.s): every terminal and task verb goes to
+# termproto_request(ext, id, line, len, body, body length), which answers itself
+h_terminals:
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov rdx, [rip + line + SB_ptr]
+    mov rcx, [rip + line + SB_len]
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    jmp termproto_request
+
 h_tests:
     mov rdi, [rip + cur]
     mov rsi, [rip + cur_id]
@@ -2149,6 +2160,11 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call tools_cancel
+    mov edi, 2                  # a terminal-open waiting for the approval dialog: answered cancelled (termproto.s)
+    call field_u64
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call termproto_cancel
 0:  pop rbx
     # of this extension's open prompt: the prompt closes, answered cancelled
     cmp qword ptr [rip + pr_id], 0
@@ -2969,6 +2985,7 @@ h_set_context:
     call reply_syntax
     EPILOGUE
 
+.globl plain_text              # (also taskdef.s: labels and commands of tasks)
 # plain_text(ptr, len) -> 1 when the bytes are one line of valid UTF-8 with no control
 # character (C0, DEL, C1), no bidi control (U+202A-202E, U+2066-2069) and no zero-width
 # character (U+200B-200F, U+2060, U+FEFF): text that shows as it is
@@ -3492,7 +3509,14 @@ hello_features:
     jmp 1b
 4:  mov rdi, rbx                # wsedit: which of its features it may have yet
     call ws_features_agreed
-    xor r14d, r14d              # anything agreed?
+    # tasks only with terminals (a task's terminal is a TERM)
+    FEAT_TEST rbx, FEAT_TASKS
+    jz 40f
+    FEAT_TEST rbx, FEAT_TERMINALS
+    jnz 40f
+    mov eax, FEAT_TASKS
+    btr dword ptr [rbx + EXT_features], eax
+40: xor r14d, r14d              # anything agreed?
     xor ecx, ecx
 41: or r14, [rbx + EXT_features + rcx*8]
     inc ecx
@@ -4565,6 +4589,17 @@ verbs:
     .quad .Lnb_v_kernel_label, h_nb_kernel_label, 4096
     .quad .Lnb_v_exec, h_nb_exec, 262144
     .quad .Lnb_v_exec_signal, h_nb_exec_signal, 0
+    # tasks and terminals (termproto.s)
+    .quad .Lv_terminal_open, h_terminals, 131072
+    .quad .Lv_terminal_stop, h_terminals, 0
+    .quad .Lv_terminal_restart, h_terminals, 0
+    .quad .Lv_terminal_close, h_terminals, 0
+    .quad .Lv_terminal_show, h_terminals, 0
+    .quad .Lv_terminal_input, h_terminals, 65536
+    .quad .Lv_terminal_screen, h_terminals, 0
+    .quad .Lv_tasks_set, h_terminals, 1048576
+    .quad .Lv_task_start, h_terminals, 0
+    .quad .Lv_task_run, h_terminals, 131072
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
@@ -4575,6 +4610,16 @@ verbs:
 .Lv_file_diagnostics: .asciz "file-diagnostics"
 .Lv_file_diagnostics_reset: .asciz "file-diagnostics-reset"
 .Lv_test_items: .asciz "test-items"
+.Lv_terminal_open: .asciz "terminal-open"
+.Lv_terminal_stop: .asciz "terminal-stop"
+.Lv_terminal_restart: .asciz "terminal-restart"
+.Lv_terminal_close: .asciz "terminal-close"
+.Lv_terminal_show: .asciz "terminal-show"
+.Lv_terminal_input: .asciz "terminal-input"
+.Lv_terminal_screen: .asciz "terminal-screen"
+.Lv_tasks_set: .asciz "tasks-set"
+.Lv_task_start: .asciz "task-start"
+.Lv_task_run: .asciz "task-run"
 .Lv_test_remove: .asciz "test-remove"
 .Lv_test_update: .asciz "test-update"
 .Lv_test_end: .asciz "test-end"

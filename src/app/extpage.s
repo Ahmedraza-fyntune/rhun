@@ -1809,6 +1809,19 @@ FN ext_needs_words
     test r13d, NEEDS_TERMINAL
     jz 61f
     call item
+    # the terminal ladder (tasks and terminals): run, input, output
+    lea rsi, [rip + .Ln_term_run]
+    test r13d, NEEDS_TERM_RUN
+    jz 61f
+    call item
+    lea rsi, [rip + .Ln_term_input]
+    test r13d, NEEDS_TERM_INPUT
+    jz 61f
+    call item
+    lea rsi, [rip + .Ln_term_output]
+    test r13d, NEEDS_TERM_OUTPUT
+    jz 61f
+    call item
 61: lea rsi, [rip + .Ln_git]
     test r13d, NEEDS_GIT_READ
     jz 7f
@@ -3309,6 +3322,9 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ln_home: .asciz "read the files in your home folder"
 .Ln_net: .asciz "use the internet"
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
+.Ln_term_run: .asciz "run programs as you in terminal tabs once you allow it in a project"
+.Ln_term_input: .asciz "type into the terminals it started"
+.Ln_term_output: .asciz "read what they show and what you type there"
 .Ln_git: .asciz "read the project's Git history"
 .Ln_runs: .asciz "run "
 .Ln_kernels: .asciz "run notebook kernels as you: "
