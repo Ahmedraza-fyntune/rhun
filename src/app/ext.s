@@ -2368,7 +2368,11 @@ FN ext_cmd_run
     mov rbx, rdi
     lea rdi, [rsp]
     call invoke_take
-    mov rdi, rbx
+    cmp qword ptr [rsp + INV_doc], 0
+    jne 0f
+    call invoke_active_doc      # the document is the one active now, also after a lazy start
+    mov [rsp + INV_doc], rax
+0:  mov rdi, rbx
     cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 9f
     mov rax, rdi

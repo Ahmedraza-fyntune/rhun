@@ -12,7 +12,7 @@ PROGRAM = (ROOT / 'tests/ext/contrib.py').read_text(encoding='utf-8')
 
 class Contrib(host.Host):
     def make_ext(self, root, owner='alice', name='demo', hello='hello 1', actions=None,
-                 commands=('ping = Ping',), extra='', call='reverse', needs=''):
+                 commands=('ping = Ping',), extra='', call='reverse', needs='', delay=0):
         """An extension folder ROOT/OWNER/NAME running tests/ext/contrib.py."""
         folder = root / owner / name
         folder.mkdir(parents=True, exist_ok=True)
@@ -22,7 +22,7 @@ class Contrib(host.Host):
             ('[needs]\n' + needs + '\n' if needs else '') + '[commands]\n' +
             ''.join(c + '\n' for c in commands) + extra, encoding='utf-8')
         header = ('HELLO = ' + json.dumps(hello) + '\nACTIONS = ' + repr(actions or {}) +
-                  '\nCALL = ' + repr(call) + '\n')
+                  '\nCALL = ' + repr(call) + '\nDELAY = ' + repr(delay) + '\n')
         (folder / 'main.py').write_text(header + PROGRAM, encoding='utf-8')
         return folder
 

@@ -3,8 +3,8 @@
 # local command name to the requests it sends when run ("{args}" in a request is replaced by the
 # invocation's body; a (text, payload) pair sends a body, its LEN filled in where the text ends
 # with " #"), and CALL, how it answers "ID call" requests: reverse (ok + the ARGS reversed), error,
-# silent, big (a 1 MiB + 1 result) or echo-doc). Every line rhun sends, every body and every
-# run-command result goes to contrib.log in the state folder.
+# silent, big (a 1 MiB + 1 result) or echo-doc), and DELAY, seconds to wait before hello. Every
+# line rhun sends, every body and every run-command result goes to contrib.log in the state folder.
 import os
 import sys
 from pathlib import Path
@@ -32,6 +32,9 @@ def request(text, body=b''):
     next_id += 1
 
 
+if DELAY:
+    import time
+    time.sleep(DELAY)
 out.write(HELLO.encode() + b'\n')
 out.flush()
 while True:

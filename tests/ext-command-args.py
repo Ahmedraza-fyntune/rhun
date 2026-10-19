@@ -47,6 +47,14 @@ class CommandArgs(contribhost.Contrib):
         log = self.contrib_log()
         self.assertLess(log.index('0 ready ' + self.proj.as_posix()), log.index('0 run demo.ping 1 ref 5'))
 
+    def test_waiting_command_keeps_its_document(self):
+        root = self.work / 'exts'
+        self.make_ext(root, hello='hello 1 command-args', delay=0.5)
+        self.run_editor(exts=root, drop_waits=True, actions=[
+            'cmd-args demo.ping first', 'open ' + (self.proj / 'b.go').as_posix(),
+            'wait-ext demo running', 'wait 300'])
+        self.assertEqual(self.runs(), [('0 run demo.ping 1 ref 5', 'body=first')])
+
     def test_a_later_command_replaces_the_waiting_one(self):
         self.run_editor(exts=self.exts(), drop_waits=True, actions=[
             'cmd-args demo.ping first', 'cmd-args demo.ping second', 'wait-ext demo running', 'wait 300'])

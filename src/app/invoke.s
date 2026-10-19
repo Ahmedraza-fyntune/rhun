@@ -1044,7 +1044,8 @@ ip_send:
     call ip_free
     EPILOGUE
 
-# iv_active_doc() -> rax the active document's id, or 0
+# FN invoke_active_doc() -> rax the active document's id, or 0
+FN invoke_active_doc
 iv_active_doc:
     mov rdi, [rip + g_tab_cur]
     test rdi, rdi

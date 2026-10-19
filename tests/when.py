@@ -115,6 +115,25 @@ class When(contribhost.Contrib):
             'when viewItem =~ "y*"', 'ctx-set editorFocus false', 'when editorFocus'])
         self.assertEqual(out, ['when=1', 'when=1', 'debugState=', 'when=1', 'when=1'])
 
+    def test_large_numbers_and_tab_kinds(self):
+        out = self.run_editor(exts=self.exts(), files=('main.rs',), drop_waits=True, actions=[
+            'ctx-set viewItem 1000000000000000000', 'when viewItem > 0',
+            'ctx-set viewItem 0000000000000000005', 'when viewItem == 0000000000000000005 && viewItem > 4',
+            'ctx-set viewItem 9223372036854775807', 'when viewItem > 9223372036854775806',
+            'ctx-set viewItem 9223372036854775808', 'when viewItem > 0 || viewItem < 1',
+            'ctx-set viewItem -9223372036854775808', 'when viewItem < -9223372036854775807',
+            'cmd settings', 'when activeTab == settings && activeTab != image'])
+        self.assertEqual(out, ['when=1', 'when=1', 'when=1', 'when=0', 'when=1', 'when=1'])
+
+    def test_long_setting_names(self):
+        root = self.work / 'exts'
+        key = 'k' * 64
+        self.make_ext(root, hello='hello 1', extra=f'[settings]\n{key}.default = deep\n')
+        out = self.run_editor(exts=root, files=('main.rs',), drop_waits=True, actions=[
+            f'when demo.setting.{key} == deep', 'when demo.setting.' + 'k' * 65 + ' == deep'])
+        self.assertEqual(out[0], 'when=1')
+        self.assertTrue(out[1].startswith('when error at 0: unknown key'), out)
+
     def test_focus_and_panels(self):
         out = self.run_editor(exts=self.exts(), files=('main.rs',), drop_waits=True, actions=[
             'cmd command_palette', 'when paletteFocus && textInputFocus && !editorFocus',

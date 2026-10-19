@@ -153,9 +153,28 @@ FN xc_key_ok
 8:  mov eax, 1
 9:  ret
 
-# FN xc_setting_name_ok(ptr, len) -> eax 1 for a setting key: [a-z0-9_]
+# FN xc_setting_name_ok(ptr, len) -> eax 1 for a setting key: 1 to 64 of [a-z0-9_] ([settings])
 FN xc_setting_name_ok
-    jmp cmd_name_ok
+    xor eax, eax
+    test rsi, rsi
+    jz 9f
+    cmp rsi, 64
+    ja 9f
+    xor ecx, ecx
+1:  movzx edx, byte ptr [rdi + rcx]
+    inc rcx
+    cmp dl, '_'
+    je 2f
+    lea r8d, [rdx - '0']
+    cmp r8d, 9
+    jbe 2f
+    lea r8d, [rdx - 'a']
+    cmp r8d, 25
+    ja 9f
+2:  cmp rcx, rsi
+    jb 1b
+    mov eax, 1
+9:  ret
 
 # FN xc_names_ext(ext, name, len) -> eax 1 when the name is the extension's NAME or OWNER/NAME
 FN xc_names_ext

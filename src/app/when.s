@@ -1154,25 +1154,31 @@ ev_in:
 8:  xor eax, eax
     EPILOGUE
 
-# ev_int(ptr, len) -> rax a signed decimal integer, edx 1 when the whole value is one
+# ev_int(ptr, len) -> rax a signed decimal integer, edx 1 when the whole value is one that fits
+#   in 64 bits (leading zeros allowed)
 ev_int:
     xor eax, eax
     xor r8d, r8d                # negative
     test rsi, rsi
     jz 8f
     cmp byte ptr [rdi], '-'
-    jne 1f
+    jne 2f
     mov r8d, 1
     inc rdi
     dec rsi
     jz 8f
-1:  cmp rsi, 18
-    ja 8f
 2:  movzx ecx, byte ptr [rdi]
     sub ecx, '0'
     cmp ecx, 9
     ja 8f
-    imul rax, rax, 10
+    mov r9, 922337203685477580  # (2^63 - 1) / 10: one more digit must not pass 2^63 - 1 (2^63 negative)
+    cmp rax, r9
+    ja 8f
+    jb 4f
+    lea r10d, [r8 + 7]
+    cmp ecx, r10d
+    ja 8f
+4:  imul rax, rax, 10
     add rax, rcx
     inc rdi
     dec rsi
@@ -2268,7 +2274,8 @@ FN ctx_ctl_set
 .set CTXKEY_NAMES, 1
 ctx_table:
     CTXKEY_LIST
-tab_kind_names: .quad .Lv_doc, .Lv_image, .Lv_settings, .Lv_git, .Lv_extensions, .Lv_view
+# by TAB_*: TAB_DOC 1, TAB_SETTINGS 2, TAB_IMAGE 3, TAB_GIT 4, TAB_EXT 5, TAB_VIEW 6
+tab_kind_names: .quad .Lv_doc, .Lv_settings, .Lv_image, .Lv_git, .Lv_extensions, .Lv_view
 vim_names: .quad .Lv_normal, .Lv_insert, .Lv_visual, .Lv_vline
 prov_fields: .quad EXT_pv_complete, EXT_pv_signature, EXT_pv_definition, EXT_pv_references
     .quad EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format, 0
