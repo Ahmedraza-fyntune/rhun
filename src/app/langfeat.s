@@ -21,6 +21,9 @@
 .equ LR_MAX, 64
 .equ LA_AUTO, 1                 # Auto Fix: the one preferred quick fix, applied
 .equ LA_ONE, 2                  # Organize Imports: one action that comes is applied
+.equ LFD_RESULTS, 1             # where a query's locations go: the Results panel (references)
+.equ LFD_PEEK, 2                # the peek view
+.equ LF_WORD_MAX, 100
 .equ WS_BODY_MAX, 4194304       # a workspace edit (12g)
 
 # a request rhun waits on
@@ -82,6 +85,9 @@ lf_pr_state: .long 0            # 1 out, 2 answered, 3 refused, 4 failed
 lf_pr_use: .long 0              # the prompt takes the range and the placeholder (in lf_name)
 lf_pr_body: .zero SB_SIZE
 lf_list_kind: .long 0           # what the palette's list shows
+lf_next_dest: .long 0           # LFD_* for the next query (set by its command), 0: the palette
+lf_dest: .long 0                # and for the query in flight
+lf_word: .zero LF_WORD_MAX + 4  # the word at the cursor when it was asked (the Results title)
 lf_doc: .quad 0                 # the document asked about, and its id
 lf_doc_id: .quad 0
 lf_language_revision: .quad 0
@@ -109,13 +115,16 @@ lf_path: .zero 4100             # a path as a cstr
 
 .text
 .globl lf_head, lf_take, lf_four, lf_tmp4, lf_pos, lf_doc_ref, lf_is_abs, lf_msort   # wsedit.s reads with them
+.globl lf_pos_near, lf_open_path, lf_focused_doc, lf_active_doc, lf_line_col, lf_path_ok   # results.s, peek.s, outline.s
 
 # ---------------- helpers ----------------
 
-# lf_focused_doc() -> rax g_doc when a document tab's editor has the keyboard, else 0
+# lf_focused_doc() -> rax g_doc when a document tab's editor has the keyboard, else 0; lf_active_doc()
+# the same whoever has the keyboard
 lf_focused_doc:
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
     jne 8f
+lf_active_doc:
     mov rdi, [rip + g_tab_cur]
     test rdi, rdi
     js 8f
@@ -377,6 +386,11 @@ lf_start:
     mov [rip + lf_kind], r12d
     inc dword ptr [rip + lf_session]
     mov [rip + lf_doc], rbx
+    mov eax, [rip + lf_next_dest]
+    mov [rip + lf_dest], eax
+    mov dword ptr [rip + lf_next_dest], 0
+    mov rdi, rbx
+    call lf_take_word
     mov rax, [rbx + DOC_id]
     mov [rip + lf_doc_id], rax
     # the request: VERB DOC VERSION, then what the kind takes
@@ -582,6 +596,7 @@ FN cmd_definition
     mov edi, LF_DEF
     jmp lf_start_cmd
 FN cmd_references
+    mov dword ptr [rip + lf_next_dest], LFD_RESULTS   # the Results panel (language-features 1.5)
     mov edi, LF_REFS
     jmp lf_start_cmd
 FN cmd_symbols
@@ -960,29 +975,30 @@ FN langfeat_rename_to
 # only; an error's body is its CODE TEXT)
 FN langfeat_reply
     PROLOGUE 16
+    # the askers with their own requests first: code action resolve, prepare-rename, on-type and
+    # paste formatting, the Results panel's hierarchies
     push rdi
     push rsi
     push rdx
     push rcx
     push r8
     push r8
-    call lf_rs_reply            # a code action's resolve
-    test eax, eax
-    jnz 0f
+    lea rax, [rip + lf_chain]
+    mov [rsp + 48], rax
+01: mov rax, [rsp + 48]
+    mov rax, [rax]
+    test rax, rax
+    jz 0f
     mov rdi, [rsp + 40]
     mov rsi, [rsp + 32]
     mov rdx, [rsp + 24]
     mov rcx, [rsp + 16]
     mov r8, [rsp + 8]
-    call lf_pr_reply            # prepare-rename
+    call rax
     test eax, eax
     jnz 0f
-    mov rdi, [rsp + 40]
-    mov rsi, [rsp + 32]
-    mov rdx, [rsp + 24]
-    mov rcx, [rsp + 16]
-    mov r8, [rsp + 8]
-    call langextra_reply        # on-type and paste formatting
+    add qword ptr [rsp + 48], 8
+    jmp 01b
 0:  pop r8
     pop r8
     pop rcx
@@ -1223,7 +1239,14 @@ FN langfeat_part
     mov dword ptr [rip + lf_show_due], 1
 1:  mov rax, r12
 9:  EPILOGUE
-8:  xor eax, eax                # an answer nobody waits for any more: taken, and dropped
+8:  mov rdi, rbx                # not ours: a hierarchy row's children (results.s)?
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, r14
+    call results_part
+    cmp rax, -2
+    jne 9b
+    xor eax, eax                # an answer nobody waits for any more: taken, and dropped
     EPILOGUE
 
 # FN langfeat_truncated(ext, id): the query's cap cut that request short: what came is kept
@@ -2754,6 +2777,7 @@ FN langfeat_tick
     push rbx
     call lf_rs_tick
     call langextra_tick
+    call outline_tick
     cmp dword ptr [rip + lf_show_due], 0
     je 0f
     mov dword ptr [rip + lf_show_due], 0  # the first parts of a query still out, shown
@@ -2761,6 +2785,8 @@ FN langfeat_tick
     je 0f
     cmp qword ptr [rip + lf_res + VEC_len], 0
     je 0f
+    cmp dword ptr [rip + lf_dest], LFD_RESULTS
+    je 3f
     cmp dword ptr [rip + lf_partial], 0
     je 3f
     call palette_results_showing
@@ -2769,7 +2795,12 @@ FN langfeat_tick
 3:  mov dword ptr [rip + lf_partial], 1
     mov eax, [rip + lf_kind]
     mov [rip + lf_list_kind], eax
-    call lf_present_list
+    cmp dword ptr [rip + lf_dest], LFD_RESULTS
+    jne 31f
+    mov edi, 1                  # still searching
+    call lf_to_results
+    jmp 0f
+31: call lf_present_list
 0:
     cmp dword ptr [rip + lf_kind], 0
     je 9f
@@ -2813,7 +2844,12 @@ lf_finish:
     mov rdi, [rax + rbx*8]
     call app_toast
     jmp 9f
-1:  cmp dword ptr [rip + lf_partial], 0
+1:  cmp dword ptr [rip + lf_dest], LFD_RESULTS
+    jne 10f
+    xor edi, edi                # done searching
+    call lf_to_results
+    jmp 9f
+10: cmp dword ptr [rip + lf_partial], 0
     je 11f
     call palette_results_showing    # shown at its first part: refreshed while still open
     test eax, eax
@@ -2902,6 +2938,107 @@ lf_present_list:
     call ws_apply
     mov qword ptr [rip + ws_only], 0
 9:  EPILOGUE
+
+# lf_take_word(doc): lf_word = the word at the cursor (at most LF_WORD_MAX bytes), or empty
+lf_take_word:
+    PROLOGUE
+    mov rbx, rdi
+    mov byte ptr [rip + lf_word], 0
+    mov rsi, [rbx + DOC_cur]
+    call word_at
+    mov r12, rax
+    mov r13, rdx
+    sub r13, r12
+    jbe 9f
+    cmp r13, LF_WORD_MAX
+    jbe 1f
+    mov r13d, LF_WORD_MAX
+1:  xor r14d, r14d
+2:  cmp r14, r13
+    jae 3f
+    lea rsi, [r12 + r14]
+    mov rdi, rbx
+    call doc_byte
+    lea rcx, [rip + lf_word]
+    mov [rcx + r14], al
+    inc r14
+    jmp 2b
+3:  lea rcx, [rip + lf_word]
+    mov byte ptr [rcx + r14], 0
+9:  EPILOGUE
+
+# lf_to_results(busy): the locations so far into the Results panel's set of this query
+lf_to_results:
+    PROLOGUE 16
+    mov [rsp], edi
+    call lf_sort
+    lea rdi, [rip + lf_word]
+    mov esi, [rip + lf_session]
+    call results_refs_begin
+    mov r12, rax
+    xor ebx, ebx
+1:  cmp rbx, [rip + lf_res + VEC_len]
+    jae 2f
+    imul r13, rbx, LS_SIZE
+    add r13, [rip + lf_res + VEC_ptr]
+    inc rbx
+    mov rax, [r13 + LS_path]
+    test rax, rax
+    js 1b
+    mov rdi, r13
+    call lf_preview
+    mov rcx, rax
+    mov r8, rdx
+    mov rsi, [r13 + LS_path]
+    add rsi, [rip + lf_bytes + SB_ptr]
+    lea rdx, [r13 + LS_l1]
+    mov rdi, r12
+    call results_loc
+    jmp 1b
+2:  mov rdi, r12
+    mov esi, [rsp]
+    call results_refs_end
+    EPILOGUE
+
+# lf_preview(LS*) -> rax ptr, rdx len of a location's preview: its label after "name:LINE  "
+lf_preview:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + LS_path]
+    add rdi, [rip + lf_bytes + SB_ptr]
+    mov r12, rdi
+    call strlen
+    mov r13, rax                # the name's length: after the last separator
+1:  test rax, rax
+    jz 2f
+    movzx ecx, byte ptr [r12 + rax - 1]
+    cmp ecx, '/'
+    je 2f
+    cmp ecx, '\\'
+    je 2f
+    dec rax
+    jmp 1b
+2:  sub r13, rax
+    inc r13                     # ':'
+    mov eax, [rbx + LS_l1]      # the line's digits
+3:  inc r13
+    xor edx, edx
+    mov ecx, 10
+    div ecx
+    test eax, eax
+    jnz 3b
+    add r13, 2                  # the two spaces
+    mov r12, [rbx + LS_label]
+    add r12, [rip + lf_bytes + SB_ptr]
+    mov rdi, r12
+    call strlen
+    cmp r13, rax
+    jbe 4f
+    mov r13, rax
+4:  sub rax, r13
+    mov rdx, rax
+    lea rax, [r12 + r13]
+    EPILOGUE
 
 # lf_sort(): the results in their order: by rank (actions), and locations of this document first
 # (insertion sort; a long list keeps the providers' order)
@@ -3301,6 +3438,10 @@ FN langfeat_ext_gone
     call langextra_ext_gone
     mov rdi, [rsp]
     call filediag_ext_gone      # its diagnostics in the Problems store go
+    mov rdi, [rsp]
+    call results_ext_gone       # hierarchy rows waiting on it
+    mov rdi, [rsp]
+    call outline_ext_gone
     pop rdi
     pop rdi
     xor ecx, ecx
@@ -3370,6 +3511,8 @@ lf_empty: .quad 0, .Le_def, .Le_refs, .Le_syms, .Le_acts, 0, 0
 lf_lists: .quad 0, .Ll_def, .Ll_refs, .Ll_syms, .Ll_acts, 0, 0
     .quad .Ll_decl, .Ll_typedef, .Ll_impl, 0
 lf_single: .byte 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1
+.p2align 3
+lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, 0
 .Lv_definition: .asciz "definition"
 .Lv_references: .asciz "references"
 .Lv_symbols: .asciz "symbols"

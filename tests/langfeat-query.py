@@ -99,8 +99,8 @@ class Query(Lang):
                                      ['1\n' + loc('{path}', 2, 9, 2, 14, 'let total = 1;'), 0.05]],
                            'delay': 0.05, 'body': '1\n' + loc('{path}', 3, 5, 3, 10, 'total + 1')}}},
             'references = *.rs\n')
-        out = self.run_lang(root, ['cmd references', 'wait 600', 'print-palette', 'print-langstats fake/lang'])
-        rows = [l for l in out if l.startswith('  ') or l.startswith('> ')]
+        out = self.run_lang(root, ['cmd references', 'wait 600', 'print-results', 'print-langstats fake/lang'])
+        rows = [l for l in out if l.startswith('row ') and ' leaf ' in l]    # the Results panel's locations
         self.assertEqual(len(rows), 3, out)
         self.assertEqual(self.stats(out, 'references')['answered'], '1', out)
         log = self.lang_log()
@@ -111,10 +111,10 @@ class Query(Lang):
             'references': {'parts': [['1\n' + loc('{path}', 1, 4, 1, 8, 'fn main() {'), 0.05]],
                            'delay': 1.2, 'body': '1\n' + loc('{path}', 3, 5, 3, 10, 'total + 1')}}},
             'references = *.rs\n')
-        out = self.run_lang(root, ['cmd references', 'wait 500', 'echo ---', 'print-palette', 'wait 1200',
-                                   'echo ---', 'print-palette', 'print-langstats fake/lang'])
+        out = self.run_lang(root, ['cmd references', 'wait 500', 'echo ---', 'print-results', 'wait 1200',
+                                   'echo ---', 'print-results', 'print-langstats fake/lang'])
         first, second = '\n'.join(out).split('---')[1:3]
-        rows = lambda t: [l for l in t.split('\n') if l.startswith('  ') or l.startswith('> ')]
+        rows = lambda t: [l for l in t.split('\n') if l.startswith('row ') and ' leaf ' in l]
         self.assertEqual(len(rows(first)), 1, out)
         self.assertEqual(len(rows(second)), 2, out)
 
@@ -148,11 +148,11 @@ class Query(Lang):
         root = self.provider({'hello': 'hello 1 references query-stream', 'answers': {
             'references': {'parts': [['2\nbroken', 0.05]], 'delay': 0.2,
                            'body': '1\n' + loc('{path}', 1, 4, 1, 8, 'fn main() {')}}}, 'references = *.rs\n')
-        out = self.run_lang(root, ['cmd references', 'wait 600', 'print-palette', 'print-langstats fake/lang'])
+        out = self.run_lang(root, ['cmd references', 'wait 600', 'print-results', 'print-langstats fake/lang'])
         self.assertTrue(any(l.startswith('error 1 syntax') for l in self.lang_log()), self.lang_log())
         s = self.stats(out, 'references')
         self.assertEqual((s['dropped'], s['answered']), ('1', '1'), out)
-        rows = [l for l in out if l.startswith('  ') or l.startswith('> ')]
+        rows = [l for l in out if l.startswith('row ') and ' leaf ' in l]
         self.assertEqual(len(rows), 1, out)
 
     def test_a_second_answer_to_an_id_is_ignored(self):

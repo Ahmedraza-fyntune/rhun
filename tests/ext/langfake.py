@@ -7,7 +7,8 @@ library only. spec.json next to the running program says what it does:
   answers    per request verb: {"body": str, "delay": s, "parts": [[body, delay], ...],
              "progress": [[percent or "-", text, delay], ...], "error": "code text",
              "silent": true (never answer), "twice": true (answer twice), "text": true (ask for
-             the document's text first and fill {line1} with its first line)}
+             the document's text first and fill {line1} with its first line),
+             "match": {request body: answer} (a bodied request answered by what it carries)}
   run        per command name: requests to send when it runs: [[verb_and_args, body], ...]
 
 Bodies may hold {path} (the asked document's path), {project}, {doc}, {version}, {line1}.
@@ -82,8 +83,10 @@ def expand(text, ctx):
     return fill(text, ctx)
 
 
-def answer(rid, verb, fields):
+def answer(rid, verb, fields, body=b''):
     spec = SPEC.get('answers', {}).get(verb)
+    if spec is not None and body.decode(errors='replace') in spec.get('match', {}):
+        spec = spec['match'][body.decode(errors='replace')]
     if spec is None:
         send(f'error {rid} unknown no such request')
         return
@@ -155,10 +158,11 @@ def main():
         if fields[0] != '0':
             # a request from rhun: ID VERB ...; some carry a body (the last field is its length)
             rid, verb = int(fields[0]), fields[1]
+            body = b''
             if verb in SPEC.get('bodied', []) and fields[-1].isdigit():
                 body = read_body(int(fields[-1]))
                 log(b'body ' + body.replace(b'\n', b'\\n'))
-            answer(rid, verb, fields)
+            answer(rid, verb, fields, body)
             continue
         event = fields[1]
         if event in BODY_EVENTS:

@@ -1638,6 +1638,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_CODE_ACTIONS, "code-actions", 1      # code-actions, code-action-resolve
     FEATURE FEAT_PREPARE_RENAME, "prepare-rename", 1  # prepare-rename
     FEATURE FEAT_FILE_DIAGNOSTICS, "file-diagnostics", 0  # file-diagnostics into the Problems store
+    FEATURE FEAT_HIERARCHY, "hierarchy", 1            # call/type hierarchies in the Results panel
     # editor presentation (deco.s ...)
     FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
     # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):

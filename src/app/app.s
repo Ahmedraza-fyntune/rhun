@@ -2685,6 +2685,7 @@ timeout_fns:
     .quad ext_timeout
     .quad complete_timeout
     .quad langfeat_timeout
+    .quad outline_timeout       # language features: the Outline's debounce (outline.s)
     .quad ext_provider_timeout
     .quad save_timeout
     .quad uproc_timeout

@@ -27,6 +27,8 @@ lc_rlen: .quad 0
     LCWRAP w_print_provides, c_print_provides
     LCWRAP w_print_query, c_print_query
     LCWRAP w_print_fd, c_print_fd
+    LCWRAP w_print_results, c_print_results
+    LCWRAP w_print_outline, c_print_outline
 
 # lc_arg() -> rax ptr, rdx len of the next word of the rest (rdx 0 at its end)
 lc_arg:
@@ -117,6 +119,22 @@ c_print_fd:
     pop rbx
     ret
 
+# print-results: the Results panel's shown set and its rows (results.s)
+c_print_results:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call results_dump
+    pop rbx
+    ret
+
+# print-outline: the Outline section's rows (outline.s)
+c_print_outline:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call outline_dump
+    pop rbx
+    ret
+
 # print-query: the requests rhun waits on, with their progress
 c_print_query:
     push rbx
@@ -131,6 +149,8 @@ c_print_query:
 .Lc_print_provides: .asciz "print-provides"
 .Lc_print_query: .asciz "print-query"
 .Lc_print_fd: .asciz "print-file-diagnostics"
+.Lc_print_results: .asciz "print-results"
+.Lc_print_outline: .asciz "print-outline"
 .p2align 3
 .globl langfeat_ctl
 langfeat_ctl:
@@ -138,4 +158,6 @@ langfeat_ctl:
     .quad .Lc_print_provides, w_print_provides
     .quad .Lc_print_query, w_print_query
     .quad .Lc_print_fd, w_print_fd
+    .quad .Lc_print_results, w_print_results
+    .quad .Lc_print_outline, w_print_outline
     .quad 0, 0
