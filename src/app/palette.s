@@ -1104,6 +1104,8 @@ load_commands:
 2:  add rbx, CMD_SIZE
     jmp 1b
 9:  # extension details carry the qualified identity and shortcut; both are cached per command
+    mov edi, [rip + pal_focus_before]
+    call ctx_focus_as           # [command-options] when clauses see the focus before the palette
     xor r14d, r14d
 5:  cmp r14, [rip + g_ext_cmds + VEC_len]
     jae 8f
@@ -1159,7 +1161,9 @@ load_commands:
     mov rcx, rbx
     call item_add
     jmp 5b
-8:  EPILOGUE
+8:  mov edi, -1
+    call ctx_focus_as
+    EPILOGUE
 
 # vec_ensure(vec, item size): grow vec to g_ext_cmds' length (zeroed slots)
 vec_ensure:

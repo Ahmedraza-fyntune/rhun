@@ -65,6 +65,9 @@
 .equ OP_NIN, 16
 .equ EVAL_STACK, 64
 
+.data
+ctx_focus_over: .long -1        # ctx_focus_as
+
 .bss
 .p2align 3
 ctx_vals: .zero CTX_COUNT * 16  # (ptr, len) of each key, valid in round ctx_stamp
@@ -1586,11 +1589,24 @@ ck_number:
     pop r12
     ret
 
-ck_focus_is:                    # eax 1 when g_focus == edi
-    xor eax, eax
-    cmp [rip + g_focus], edi
+ck_focus_is:                    # eax 1 when the focus is edi
+    call ctx_focus
+    cmp eax, edi
     sete al
+    movzx eax, al
     ret
+# ctx_focus() -> eax g_focus, or the focus a list is evaluated for (ctx_focus_as)
+ctx_focus:
+    mov eax, [rip + ctx_focus_over]
+    test eax, eax
+    jns 1f
+    mov eax, [rip + g_focus]
+1:  ret
+# FN ctx_focus_as(focus or -1): clauses see this focus (the palette lists commands as of the
+# focus before it opened); -1 ends it
+FN ctx_focus_as
+    mov [rip + ctx_focus_over], edi
+    jmp ctx_refresh
 
 ck_editor_focus:
     call ctx_editor_focused
@@ -1600,14 +1616,17 @@ ctx_editor_focused:
     xor eax, eax
     cmp qword ptr [rip + g_doc], 0
     je 1f
-    cmp dword ptr [rip + g_focus], FOCUS_EDITOR
+    call ctx_focus
+    cmp eax, FOCUS_EDITOR
     sete al
+    movzx eax, al
 1:  ret
 ck_text_input_focus:
     call ctx_editor_focused
     test eax, eax
     jnz ck_bool
-    mov ecx, [rip + g_focus]
+    call ctx_focus
+    mov ecx, eax
     cmp ecx, FOCUS_PALETTE
     je 1f
     cmp ecx, FOCUS_PROMPT
