@@ -1008,7 +1008,7 @@ FN langfeat_reply
     push r8
     lea rax, [rip + lf_chain]
     mov [rsp + 48], rax
-01: mov rax, [rsp + 48]
+80: mov rax, [rsp + 48]
     mov rax, [rax]
     test rax, rax
     jz 0f
@@ -1021,7 +1021,7 @@ FN langfeat_reply
     test eax, eax
     jnz 0f
     add qword ptr [rsp + 48], 8
-    jmp 01b
+    jmp 80b
 0:  pop r8
     pop r8
     pop rcx
