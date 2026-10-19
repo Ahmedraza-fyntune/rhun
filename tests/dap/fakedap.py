@@ -8,7 +8,7 @@ Variables come from locals, with references allocated per stop. FAKEDAP_MODE (co
 picks behaviours: orderings (init-early, init-after-launch, launch-after-config, seq0), bad
 framing (split, coalesce, junk-stdout, no-length, bad-json, big=N, flood=N), failures (slow=MS,
 crash-at=STEP, ignore-terminate, ignore-disconnect, launch-fail, no-init-response,
-no-terminate-cap), lifetimes (strict-refs), features (exceptions, stderr). Every message is logged
+no-terminate-cap, no-cond-caps, preserve-focus), lifetimes (strict-refs), features (exceptions, stderr). Every message is logged
 to FAKEDAP_LOG. Standard library only; run with -I."""
 import json
 import os
@@ -116,6 +116,8 @@ class Program:
         self.frames = {}        # frame id -> step index
         self.done = False
         self.stop_on_entry = False
+        self.unblocked = set()
+        self.running = False
 
     def load(self, path):
         with open(path, encoding='utf-8') as f:
@@ -176,8 +178,14 @@ class Program:
         start_depth = self.depth(self.pc) if self.pc >= 0 else 0
         i = self.pc + 1
         while i < len(self.steps):
-            self.enter(i)
             step = self.steps[i]
+            if step.get('block') and kind == 'continue' and i not in self.unblocked:
+                # the program runs here until Pause
+                self.unblocked.add(i)
+                self.pc = i
+                self.running = True
+                return
+            self.enter(i)
             if kind in ('next', 'stepIn'):
                 return self.stop(i, 'step')
             if kind == 'stepOut' and self.depth(i) < start_depth:
@@ -210,7 +218,10 @@ class Program:
     def stop(self, i, reason, text=None, bp=None):
         self.pc = i
         self.epoch += 1
+        self.running = False
         body = {'reason': reason, 'threadId': 1, 'allThreadsStopped': True}
+        if 'preserve-focus' in MODE:
+            body['preserveFocusHint'] = True
         if bp:
             body['hitBreakpointIds'] = [bp['id']]
         if text:
@@ -271,10 +282,13 @@ def handle(req):
     if cmd == 'initialize':
         if 'no-init-response' in MODE:
             return
-        caps = {'supportsConfigurationDoneRequest': True, 'supportsConditionalBreakpoints': True,
-                'supportsHitConditionalBreakpoints': True, 'supportsLogPoints': True,
+        caps = {'supportsConfigurationDoneRequest': True}
+        if 'no-cond-caps' not in MODE:
+            caps.update({'supportsConditionalBreakpoints': True, 'supportsHitConditionalBreakpoints': True,
+                         'supportsLogPoints': True})
+        caps.update({
                 'supportsFunctionBreakpoints': True, 'supportsSetVariable': True,
-                'supportsEvaluateForHovers': True, 'supportsExceptionInfoRequest': True}
+                'supportsEvaluateForHovers': True, 'supportsExceptionInfoRequest': True})
         if 'no-terminate-cap' not in MODE:
             caps['supportsTerminateRequest'] = True
         if 'exceptions' in MODE:
@@ -310,7 +324,7 @@ def handle(req):
         if 'bad-json' in MODE:
             write_raw(b'Content-Length: 5\r\n\r\n{bad}')
         if 'no-length' in MODE:
-            write_raw(b'Content-Type: x\r\n\r\n')
+            write_raw(b'Content-Length: none\r\n\r\n')
         if 'launch-after-config' in MODE:
             held_launch[0] = req
             event('initialized')
@@ -419,7 +433,8 @@ def handle(req):
         return
     if cmd == 'pause':
         respond(req)
-        prog.stop(max(prog.pc, 0), 'pause')
+        if prog.running:
+            prog.stop(max(prog.pc, 0), 'pause')
         return
     if cmd == 'exceptionInfo':
         step = prog.steps[prog.pc]

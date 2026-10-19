@@ -450,7 +450,7 @@ c_wait_debug:
 2:  call dap_focused
     lea r15, [rip + .Ls_none]
     test rax, rax
-    jz 3f
+    jz 5f                       # no session: nothing will change
     mov edi, [rax + DS_state]
     call dap_state_name
     mov r15, rax
@@ -458,7 +458,12 @@ c_wait_debug:
     mov rsi, [rip + argb + SB_ptr]
     call strcmp_eq
     test eax, eax
-    jz 3f
+    jnz 4f
+    call dap_focused            # an ended session will not change
+    cmp dword ptr [rax + DS_state], DSS_ENDED
+    je 5f
+    jmp 3f
+4:
     # paused: once what the stop asked for has come (nothing in flight)
     call dap_focused
     cmp dword ptr [rax + DS_state], DSS_PAUSED

@@ -2527,7 +2527,7 @@ argw: .zero SB_SIZE
 .Lm_int: .asciz " must be a whole number"
 .Lm_bool: .asciz " must be true or false"
 .Lm_map: .asciz " is written as KEY.NAME = value"
-.Lm_choice: .asciz " must be one of:"
+.Lm_choice: .asciz " must be one of: "
 .Lm_quote: .asciz " has an unclosed quote"
 .Lm_conflict: .asciz " conflicts with another key (a value, an object and a list at once)"
 .Lm_toomany: .asciz ": too many values (4096 at most)"
