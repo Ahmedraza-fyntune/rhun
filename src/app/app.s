@@ -2695,7 +2695,15 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: call query_timeout          # language features: the next request to expire
+96: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
+    cmp eax, -1
+    je 961f
+    cmp ebx, -1
+    je 962f
+    cmp eax, ebx
+    jge 961f
+962: mov ebx, eax
+961: call query_timeout         # language features: the next request to expire
     cmp eax, -1
     je 98f
     cmp ebx, -1
@@ -2734,6 +2742,7 @@ FN app_tick
     call editor_tick
     call ext_tick
     call ext_provider_tick
+    call testing_tick           # testing (testproto.s)
     call app_clip_tick
     EPILOGUE
 
