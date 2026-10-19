@@ -486,7 +486,13 @@ idle_held:
 # extres_group_holds(ext) -> eax 1 while a secret request, a pending link or a search of it runs
 # (the parts of the group add their checks here as they arrive)
 FN extres_group_holds
+    push rdi
+    call termproto_holds        # tasks: a program it started still runs (tasks design 4.9)
+    pop rdi
+    test eax, eax
+    jnz 1f
     jmp secrets_pending
+1:  ret
 
 # idle_pass(): once a second: requests nobody answers, and idle = stop extensions quiet for
 # their period that hold nothing

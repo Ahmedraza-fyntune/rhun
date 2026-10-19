@@ -961,6 +961,16 @@ FN tasks_cancel
 9:  pop rbx
     ret
 
+# tasks_holds(ext) -> eax 1 while a start of its tasks waits for the dialog (termproto_holds)
+FN tasks_holds
+    xor eax, eax
+    cmp dword ptr [rip + pk_kind], PK_NONE
+    je 9f
+    cmp [rip + pk_ext], rdi
+    jne 9f
+    mov eax, 1
+9:  ret
+
 # tasks_ext_gone(ext): its runtime stopped: a start waiting for the dialog for it goes
 FN tasks_ext_gone
     PROLOGUE
