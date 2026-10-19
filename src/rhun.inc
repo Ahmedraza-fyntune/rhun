@@ -1445,7 +1445,25 @@ ENDSTRUCT TF_SIZE
 .equ IC_PIN, 146
 .equ IC_PUZZLE, 147
 .equ IC_MORE, 148
-.equ IC_COUNT, 149
+.equ IC_PLAY, 149
+.equ IC_STOP, 150
+.equ IC_DEBUG, 151
+.equ IC_BUG, 152
+.equ IC_WARNING, 153
+.equ IC_ERROR, 154
+.equ IC_INFO, 155
+.equ IC_BELL, 156
+.equ IC_GEAR, 157
+.equ IC_EDIT, 158
+.equ IC_TRASH, 159
+.equ IC_EYE, 160
+.equ IC_LOCK, 161
+.equ IC_COPY, 162
+.equ IC_FILTER, 163
+.equ IC_LIST, 164
+.equ IC_BEAKER, 165
+.equ IC_CLOUD, 166
+.equ IC_COUNT, 167
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
