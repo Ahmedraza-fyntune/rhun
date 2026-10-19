@@ -379,6 +379,18 @@ FN cmd_find_in_files
 8:  call palette_filter
 9:  EPILOGUE
 
+# FN palette_set_query(ptr, len): the open palette's field holds this text, filtered (run-command
+# quick_open, command_palette, find_in_files with ARGS)
+FN palette_set_query
+    PROLOGUE
+    mov rdx, rsi
+    mov rsi, rdi
+    lea rdi, [rip + pal_tf]
+    call tf_set
+    call palette_filter
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
 # palette_timeout() -> 0 while find in files has files to read and has been drawn, else -1
 FN palette_timeout
     mov eax, -1
@@ -1153,6 +1165,10 @@ load_commands:
     inc r14
     test eax, eax
     jz 5b                       # an extension removed this session
+    mov rdi, rbx
+    call cmd_in_palette         # [command-options] palette = no, or its when is false
+    test eax, eax
+    jz 5b
     mov r12, [rbx + CMD_title]
     mov rdi, r12
     call strlen

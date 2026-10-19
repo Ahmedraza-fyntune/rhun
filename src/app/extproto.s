@@ -475,6 +475,15 @@ handle_line:
     mov edx, 1
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
+    call invoke_reply           # a call's answer goes to its caller (invoke.s)
+    mov [rip + cur], rbx
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
     call save_reply
     test eax, eax
     jnz 9f
@@ -501,6 +510,17 @@ handle_line:
     test edx, edx
     jz 9f
     mov r12, rax
+    mov edi, 2                  # a call's error goes to its caller with its code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call invoke_reply
+    mov [rip + cur], rbx
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -2460,6 +2480,47 @@ h_cmd:
 
 # ---------------- contributions and commands ----------------
 
+# FN extproto_cur() -> rax the extension being served; FN extproto_set_cur(ext): it again, after
+# sending to another one (events and cancels switch it)
+FN extproto_cur
+    mov rax, [rip + cur]
+    ret
+FN extproto_set_cur
+    mov [rip + cur], rdi
+    ret
+
+# ID run-command NAME LEN + ARGS: a built-in, or another extension's callable command (feature
+# command-args; invoke.s answers, now or when the call comes back)
+h_run_command:
+    PROLOGUE
+    mov rbx, [rip + cur]
+    FEAT_TEST rbx, FEAT_COMMAND_ARGS
+    jz .Lhrc_unknown
+    cmp qword ptr [rip + nfields], 4
+    jne .Lhrc_syntax
+    mov edi, 2
+    call field_at
+    mov rdi, rbx
+    mov rsi, [rip + cur_id]
+    mov rcx, rdx
+    mov rdx, rax
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    call invoke_run
+    mov [rip + cur], rbx
+    test eax, eax
+    jnz .Lhrc_syntax
+    EPILOGUE
+.Lhrc_unknown:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    EPILOGUE
+.Lhrc_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
 # ID set-context KEY VALUE -> ok ID: the extension's context key KEY (feature context-keys);
 # VALUE is the rest of the line, "-" removes it (extcontext.s)
 h_set_context:
@@ -3571,8 +3632,10 @@ verbs:
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
+    .quad .Lv_run_command, h_run_command, INV_BODY_MAX
     .quad 0, 0, 0
 .Lv_set_context: .asciz "set-context"
+.Lv_run_command: .asciz "run-command"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
 .Lv_register: .asciz "register"
@@ -3615,6 +3678,7 @@ opt_names: .quad .Lo_tab, .Lo_spaces, .Lo_trim, .Lo_final
 # the commands cmd may run (section 8a): name, what it needs (0, NEEDS_DOC_WRITE for the ones
 # that change the document, NEEDS_TERMINAL for the terminal panel's); cut, copy and paste are
 # not here: the clipboard is no extension's, and a paste can reach the terminal
+.globl cmd_allow
 cmd_allow:
     .quad .La_undo, NEEDS_DOC_WRITE, .La_redo, NEEDS_DOC_WRITE, .La_select_all, 0, .La_select_line, 0
     .quad .La_select_next, 0, .La_duplicate_line, NEEDS_DOC_WRITE, .La_delete_line, NEEDS_DOC_WRITE

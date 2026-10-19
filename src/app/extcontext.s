@@ -10,10 +10,13 @@
 .equ XK_def, 16                 # owned cstr from [context], or 0
 .equ XK_SIZE, 24
 .equ XC_KEYS_MAX, 64            # keys per extension, defaults included
+.equ XP_MAX, 64                 # problems kept per extension
 
 .bss
 .p2align 3
 xc_keys: .zero EXT_CAP * VEC_SIZE
+xp_list: .zero EXT_CAP * VEC_SIZE   # per extension: its contribution problems (owned cstrs)
+xp_buf: .zero SB_SIZE
 
 .text
 
@@ -446,15 +449,179 @@ FN xc_dump_ext
 
 # ---------------- lifecycle hooks (ext.s calls them) ----------------
 
-# FN contrib_ext_stopped(ext): its program stopped: what it set at run time goes
+# FN contrib_ext_stopped(ext): its program stopped: what it set at run time goes, and the calls
+# it made or was asked
 FN contrib_ext_stopped
+    PROLOGUE
+    mov rbx, rdi
+    call invoke_ext_stopped
+    mov rdi, rbx
     xor esi, esi
-    jmp xc_clear
+    call xc_clear
+    EPILOGUE
 
 # FN contrib_ext_gone(ext): it was removed: everything of it goes
 FN contrib_ext_gone
+    PROLOGUE
+    mov rbx, rdi
     mov esi, 1
-    jmp xc_clear
+    call xc_clear
+    mov rdi, rbx
+    call cmdopt_clear
+    mov rdi, rbx
+    call xp_clear
+    EPILOGUE
+
+# ---------------- problems: manifest entries that were dropped, shown on its page ----------------
+
+# xp_vec(ext) -> rax its problems' VEC, or 0
+xp_vec:
+    call xc_vec
+    test rax, rax
+    jz 1f
+    lea rcx, [rip + xc_keys]
+    sub rax, rcx
+    lea rcx, [rip + xp_list]
+    add rax, rcx
+1:  ret
+
+# FN contrib_problem(ext, cstr): one more problem (a copy; at most XP_MAX are kept)
+FN contrib_problem
+    PROLOGUE
+    mov r12, rsi
+    call xp_vec
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    cmp qword ptr [rbx + VEC_len], XP_MAX
+    jae 9f
+    mov rdi, r12
+    call dup_cstr
+    mov r12, rax
+    mov rdi, rbx
+    mov esi, 8
+    call vec_push
+    mov [rax], r12
+9:  EPILOGUE
+
+# xp_begin(ini): xp_buf holds "[SECTION] KEY: "
+xp_begin:
+    push rbx
+    mov rbx, rdi
+    lea rdi, [rip + xp_buf]
+    call sb_clear
+    lea rdi, [rip + xp_buf]
+    mov esi, '['
+    call sb_push_byte
+    lea rdi, [rip + xp_buf]
+    mov rsi, [rbx + INI_sec]
+    mov rdx, [rbx + INI_seclen]
+    call sb_push
+    lea rdi, [rip + xp_buf]
+    lea rsi, [rip + .Lxp_sep]
+    call sb_push_cstr
+    lea rdi, [rip + xp_buf]
+    mov rsi, [rbx + INI_key]
+    mov rdx, [rbx + INI_keylen]
+    call sb_push
+    lea rdi, [rip + xp_buf]
+    lea rsi, [rip + .Lxp_colon]
+    call sb_push_cstr
+    pop rbx
+    ret
+
+# FN contrib_problem_line(ext, ini, text): "[SECTION] KEY: TEXT"
+FN contrib_problem_line
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rdx
+    mov rdi, rsi
+    call xp_begin
+    lea rdi, [rip + xp_buf]
+    mov rsi, r12
+    call sb_push_cstr
+    jmp xp_end
+
+# FN contrib_problem_when(ext, ini, byte, text): "[SECTION] KEY: when: TEXT at byte N"
+FN contrib_problem_when
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rdx
+    mov r13, rcx
+    mov rdi, rsi
+    call xp_begin
+    lea rdi, [rip + xp_buf]
+    lea rsi, [rip + .Lxp_when]
+    call sb_push_cstr
+    lea rdi, [rip + xp_buf]
+    mov rsi, r13
+    call sb_push_cstr
+    lea rdi, [rip + xp_buf]
+    lea rsi, [rip + .Lxp_at]
+    call sb_push_cstr
+    lea rdi, [rip + xp_buf]
+    mov rsi, r12
+    call sb_push_u64
+xp_end:                         # (shares the PROLOGUE of its two callers)
+    lea rdi, [rip + xp_buf]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + xp_buf + SB_ptr]
+    call contrib_problem
+    EPILOGUE
+
+# xp_clear(ext)
+xp_clear:
+    PROLOGUE
+    call xp_vec
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    xor r12d, r12d
+1:  cmp r12, [rbx + VEC_len]
+    jae 2f
+    mov rax, [rbx + VEC_ptr]
+    mov rdi, [rax + r12*8]
+    call mem_free
+    inc r12
+    jmp 1b
+2:  mov qword ptr [rbx + VEC_len], 0
+9:  EPILOGUE
+
+# FN contrib_problems_dump(out sb, ext): "problem=TEXT" lines (print-ext-page and tests)
+FN contrib_problems_dump
+    PROLOGUE
+    mov r12, rdi
+    mov rdi, rsi
+    call xp_vec
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    xor r13d, r13d
+1:  cmp r13, [rbx + VEC_len]
+    jae 9f
+    mov rdi, r12
+    lea rsi, [rip + .Lxp_problem]
+    call sb_push_cstr
+    mov rax, [rbx + VEC_ptr]
+    mov rsi, [rax + r13*8]
+    mov rdi, r12
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    inc r13
+    jmp 1b
+9:  EPILOGUE
+
+# FN contrib_problem_count(ext) -> rax
+FN contrib_problem_count
+    call xp_vec
+    test rax, rax
+    jz 1f
+    mov rax, [rax + VEC_len]
+1:  ret
 
 # FN contrib_manifest_kv(ext, ini) -> eax 1 when the manifest line was one of the contributions'
 # sections ([context] here; the others as they come)
@@ -463,6 +630,16 @@ FN contrib_manifest_kv
     mov rbx, rdi
     mov r12, rsi
     mov rdi, r12
+    lea rsi, [rip + .Ls_command_options]
+    call ini_sec_is
+    test eax, eax
+    jz 1f
+    mov rdi, rbx
+    mov rsi, r12
+    call cmdopt_parse
+    mov eax, 1
+    EPILOGUE
+1:  mov rdi, r12
     lea rsi, [rip + .Ls_context]
     call ini_sec_is
     test eax, eax
@@ -484,3 +661,9 @@ FN contrib_manifest_kv
 .section .rodata
 .Lslash: .asciz "/"
 .Ls_context: .asciz "context"
+.Ls_command_options: .asciz "command-options"
+.Lxp_sep: .asciz "] "
+.Lxp_colon: .asciz ": "
+.Lxp_when: .asciz "when: "
+.Lxp_at: .asciz " at byte "
+.Lxp_problem: .asciz "problem="
