@@ -1168,6 +1168,8 @@ FN invoke_tick
     je 3f
     jmp 4f                      # failed, stopped, disabled, removed, crashed
 21: cmp dword ptr [r14 + EXT_wait_slot], 0
+    jne 3f
+    cmp dword ptr [r14 + EXT_remote_wait], 0   # remote hosts: getting ready on the host
     je 4f
 3:  cmp r13, [rbx + IP_deadline]
     jb 5f

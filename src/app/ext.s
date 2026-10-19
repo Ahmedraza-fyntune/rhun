@@ -33,6 +33,7 @@ cur_owner_path: .quad 0
 tmp: .zero SB_SIZE
 tmp2: .zero SB_SIZE
 ini_it: .zero INI_SIZE          # the manifest iterator
+.globl argv_vec, env_vec         # remote hosts: remoteext.s rewrites them for the host
 argv_vec: .zero VEC_SIZE
 env_vec: .zero VEC_SIZE
 pipe_in: .zero 8                # the program's input: read end, write end
@@ -1749,7 +1750,14 @@ FN ext_load
     jz 51f
     mov rdi, rax
     jmp .Lel_fail
-51: cmp qword ptr [rbx + EXT_prog], 0
+51: mov rdi, rbx                # remote hosts: where = local may not need the project or home
+    call remote_ext_check
+    test rax, rax
+    jz .Lel_where_ok
+    mov rdi, rax
+    jmp .Lel_fail
+.Lel_where_ok:
+    cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
     # no program for this system: a WebAssembly module runs in rhun --wasm-host
     mov rdi, rbx
@@ -2012,7 +2020,19 @@ manifest_kv:
     call val_dup
     mov [rbx + EXT_args], rax
     jmp 9f
-7:  mov rdi, r12
+7:  mov rdi, r12                # remote hosts: where = local runs it here (remoteext.s)
+    lea rsi, [rip + .Lk_where]
+    call ini_key_is
+    test eax, eax
+    jz .Lmk_not_where
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lw_where_local]
+    call str_eq_cstr
+    mov [rbx + EXT_where_local], eax
+    jmp 9f
+.Lmk_not_where:
+    mov rdi, r12
     lea rsi, [rip + .Lk_on]
     call ini_key_is
     test eax, eax
@@ -2990,6 +3010,11 @@ ext_spawn:
     mov edx, 0644
     SYS SYS_open
     mov [rbx + EXT_log], eax
+    # remote hosts: in a remote window it runs on the host (remoteext.s)
+    mov rdi, rbx
+    call remote_ext_remote
+    test eax, eax
+    jnz .Les_remote
     # pipes
     lea rdi, [rip + pipe_in]
     mov esi, O_CLOEXEC
@@ -3094,7 +3119,8 @@ ext_spawn:
     mov [rbx + EXT_in], eax
     mov eax, [rip + pipe_out]
     mov [rbx + EXT_out], eax
-    mov edi, eax
+.Les_watch:
+    mov edi, [rbx + EXT_out]
     mov esi, F_SETFL
     mov edx, O_NONBLOCK
     SYS SYS_fcntl
@@ -3137,6 +3163,23 @@ ext_spawn:
 91: mov dword ptr [rip + g_dirty], 1
     jmp .Les_scratch_return
 
+.Les_remote:
+    # the host's: started there (EXT_pid, EXT_in, EXT_out set), waiting for its Linux build, or failed
+    # with EXT_reason set
+    mov rdi, rbx
+    call remote_ext_spawn
+    test rax, rax
+    jg .Les_watch
+    jz .Les_remote_wait         # it starts by itself once its files are on the host
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+.Les_remote_wait:
+    mov edi, [rbx + EXT_log]
+    test edi, edi
+    js 92f
+    SYS SYS_close
+    mov dword ptr [rbx + EXT_log], -1
+92: mov dword ptr [rip + g_dirty], 1
+    jmp .Les_scratch_return
 .Les_memory:
     lea rax, [rip + .Lr_launch_memory]
     mov [rbx + EXT_reason], rax
@@ -3749,7 +3792,7 @@ FN ext_exited
 1:  mov edi, [rbx + EXT_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill              # remote hosts: on the host too (proc.s)
     mov edi, [rbx + EXT_pid]
     xor esi, esi
     call proc_wait
@@ -4165,7 +4208,7 @@ FN ext_tick
     mov esi, -1
     call ext_exited
     jmp .Let_each
-3:  SYS SYS_kill
+3:  call proc_kill            # remote hosts: on the host too (proc.s)
     jmp .Let_common
 .Let_running:
     mov rdi, rbx
@@ -4596,7 +4639,7 @@ FN ext_shutdown
 71: mov edi, [rbx + EXT_pid]
     neg edi
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill              # remote hosts: on the host too (proc.s)
     jmp 7b
 9:  EPILOGUE
 
@@ -4997,6 +5040,8 @@ ext_target: .asciz "linux-x86_64"
 .Lk_pack: .asciz "pack"
 .Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
+.Lk_where: .asciz "where"
+.Lw_where_local: .asciz "local"
 .Lk_args: .asciz "args"
 .Lk_on: .asciz "on"
 .Ls_commands: .asciz "commands"

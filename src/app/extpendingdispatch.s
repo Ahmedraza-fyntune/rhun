@@ -62,6 +62,8 @@ FN ext_pending_reconcile
     jne 1f
     cmp dword ptr [rdi + EXT_wait_slot], 0
     jne .Lpr_yes
+    cmp dword ptr [rdi + EXT_remote_wait], 0   # remote hosts: getting ready on the host
+    jne .Lpr_yes
     jmp .Lpr_clear
 1:  cmp eax, ES_STOPPING
     jne .Lpr_clear
