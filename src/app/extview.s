@@ -133,6 +133,12 @@ FN extview_open
 8:  mov rax, -1
     EPILOGUE
 
+# extview_next_id() -> eax a new view number: 12a views and retained views share the sequence
+FN extview_next_id
+    inc dword ptr [rip + view_seq]
+    mov eax, [rip + view_seq]
+    ret
+
 # extview_find(ext, id) -> VW* or 0
 FN extview_find
     xor ecx, ecx
@@ -244,6 +250,7 @@ FN extview_tab_closed
 FN extview_owner_gone
     PROLOGUE
     mov r12, rdi
+    call rview_owner_gone       # its retained views end too (rview.s)
     xor r13d, r13d
 1:  cmp r13d, VW_MAX
     jae 9f
@@ -2157,6 +2164,7 @@ theme_names: .quad .Lc_fg, .Lc_muted, .Lc_bg, .Lc_panel, .Lc_border, .Lc_accent,
     .quad .Lc_warning, .Lc_success, 0
 theme_slots: .byte T_FG, T_MUTED, T_BG, T_PANEL, T_BORDER, T_ACCENT, T_ERROR, T_WARNING, T_SUCCESS
 .p2align 2
+.globl chart_colors
 chart_colors: .long 0xff4f7fd9, 0xffd9803f, 0xff3f9f6f, 0xffcf5050, 0xff9a6ad6, 0xff2f9fae, 0xffb88a2a, 0xffc0508f
 f_100: .float 100.0
 f_one: .float 1.0

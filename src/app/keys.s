@@ -641,6 +641,9 @@ g_commands:
     COMMAND toggle_vim, "Toggle Vim Mode", cmd_toggle_vim, ""
     COMMAND reload_file, "Revert File", cmd_reload_file, ""
     COMMAND toggle_terminal, "Toggle Terminal", cmd_toggle_terminal, "ctrl+`"
+    # views group: places
+    COMMAND toggle_panel, "Toggle Panel", cmd_toggle_panel, "ctrl+j"
+    COMMAND toggle_side, "Toggle Side Views", cmd_toggle_side, ""
     COMMAND extensions, "Extensions", cmd_extensions, ""
     COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
     COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""
@@ -668,6 +671,18 @@ g_commands:
     COMMAND check_for_updates, "Check for Updates", cmd_check_for_updates, ""
     COMMAND install_update, "Install Update", cmd_install_update, ""
     COMMAND restart_to_update, "Restart to Update", cmd_restart_to_update, ""
+    # testing (testview.s)
+    COMMAND testing, "Testing", cmd_testing, ""
+    COMMAND test_run_all, "Run All Tests", cmd_test_run_all, ""
+    COMMAND test_run_file, "Run Tests in Current File", cmd_test_run_file, ""
+    COMMAND test_run_cursor, "Run Test at Cursor", cmd_test_run_cursor, ""
+    COMMAND test_debug_cursor, "Debug Test at Cursor", cmd_test_debug_cursor, ""
+    COMMAND test_coverage_all, "Run All Tests with Coverage", cmd_test_coverage_all, ""
+    COMMAND test_rerun_failed, "Re-run Failed Tests", cmd_test_rerun_failed, ""
+    COMMAND test_rerun_last, "Re-run Last Test Run", cmd_test_rerun_last, ""
+    COMMAND test_cancel, "Cancel Test Runs", cmd_test_cancel, ""
+    COMMAND test_coverage_toggle, "Show Test Coverage", cmd_test_coverage_toggle, ""
+    COMMAND test_next_failure, "Go to Next Test Failure", cmd_test_next_failure, ""
     .quad 0, 0, 0, 0
 
 .bss

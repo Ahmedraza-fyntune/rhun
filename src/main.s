@@ -119,6 +119,7 @@ FN main
     call app_clip_reset
     call headless_clip_reset
     call uproc_quit_begin       # programs run as the user: SIGTERM now, up to 300 ms with the extensions
+    call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
     call uproc_quit_end
     call agents_shutdown
