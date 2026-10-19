@@ -29,9 +29,15 @@ prompt_kind: .long 0            # DP_* while the palette asks for the debugger
 prompt_bp: .long 0              # the breakpoint (id) a prompt edits
 .p2align 3
 prompt_path: .zero SB_SIZE
+cfg_first: .zero SB_SIZE        # launch.ini's names, for the status bar
+tb_rects: .zero 16 * 8          # the toolbar's buttons as last drawn: icon, x, y, size
+tb_n: .long 0
+cfg_checked: .quad 0
+ctx_gen: .long 0
 
 .data
-.globl g_dv_places, g_debug_show_on_start
+.globl g_dv_places, g_debug_show_on_start, g_debug_keys_in_terminal
+g_debug_keys_in_terminal: .long 1   # [debug] keys_in_terminal
 g_dv_places: .long -1, -1, -1, -1, -1   # the four sections, then the console tab
 g_debug_show_on_start: .long 1  # [debug] show_on_start
 hist_at: .long -1               # console history: Up/Down position, -1 at the input
@@ -1826,6 +1832,499 @@ FN cmd_debug_open_configurations
     call app_open_file
 9:  EPILOGUE
 
+
+# ---------------- the title bar's toolbar and the status bar's item ----------------
+
+.equ ID_DBG_TB, 0x5e0100        # + button
+
+# dview_toolbar(left, y, width, h, right) -> eax 1 when the toolbar took the title's place: a session
+#   picker (with more than one session), Continue or Pause, Step Over, Into and Out, Restart, Stop;
+#   a session without debugging has Restart and Stop only
+FN dview_toolbar
+    PROLOGUE 64
+    mov dword ptr [rip + tb_n], 0
+    mov [rsp], edi              # left limit
+    mov [rsp + 4], esi          # y
+    mov [rsp + 8], edx          # the title bar's width
+    mov [rsp + 12], ecx         # h
+    mov [rsp + 16], r8d         # right limit
+    call dap_focused
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    cmp dword ptr [rbx + DS_state], DSS_ENDED
+    je 8f
+    # the buttons for this session
+    lea r12, [rip + tb_debug]
+    cmp dword ptr [rbx + DS_nodebug], 0
+    je 1f
+    lea r12, [rip + tb_nodebug]
+1:  xor r13d, r13d              # count
+2:  cmp qword ptr [r12 + r13*8], 0
+    je 3f
+    inc r13d
+    jmp 2b
+3:  M eax, MI_28
+    mov [rsp + 20], eax         # button size
+    M ecx, MI_2
+    add eax, ecx
+    imul eax, r13d
+    mov [rsp + 24], eax         # buttons' width
+    # the picker: the session's name, when there are several
+    mov dword ptr [rsp + 28], 0
+    call dap_live_count
+    cmp eax, 1
+    jbe 4f
+    mov rsi, [rbx + DS_name]
+    test rsi, rsi
+    jz 4f
+    mov rdi, rsi
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rbx + DS_name]
+    mov rdx, rax
+    call text_width
+    M ecx, MI_16
+    add eax, ecx
+    mov [rsp + 28], eax
+4:  mov eax, [rsp + 24]
+    add eax, [rsp + 28]
+    mov [rsp + 32], eax         # total
+    mov ecx, [rsp + 8]
+    sub ecx, eax
+    sar ecx, 1                  # centered
+    cmp ecx, [rsp]
+    jge 41f
+    mov ecx, [rsp]
+41: mov edx, ecx
+    add edx, eax
+    cmp edx, [rsp + 16]
+    jg 8f                       # no room: the title stays
+    mov r14d, ecx               # x
+    # the picker cycles the focused session
+    cmp dword ptr [rsp + 28], 0
+    je 5f
+    mov edi, ID_DBG_TB + 15
+    mov esi, r14d
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 28]
+    mov r8d, [rsp + 12]
+    call ui_btn
+    mov r15d, eax
+    lea rdi, [rip + g_face_small]
+    mov esi, r14d
+    M eax, MI_8
+    add esi, eax
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    mov r8, [rbx + DS_name]
+    COLOR r9d, T_FG
+    call ui_text_c
+    test r15d, UB_CLICK
+    jz 42f
+    call focus_next_session
+42: add r14d, [rsp + 28]
+5:  xor r15d, r15d
+6:  cmp r15d, r13d
+    jae 7f
+    mov rax, [r12 + r15*8]      # the button's entry: icon, command, tooltip
+    mov [rsp + 40], rax
+    mov eax, [rax]              # icon
+    # Continue becomes Pause while the program runs
+    cmp eax, IC_DBG_PLAY
+    jne 61f
+    cmp dword ptr [rbx + DS_state], DSS_RUNNING
+    jne 61f
+    lea rcx, [rip + tbe_pause]
+    mov [rsp + 40], rcx
+    mov eax, IC_DBG_PAUSE
+61: lea edi, [r15 + ID_DBG_TB]
+    mov esi, r14d
+    mov edx, [rsp + 12]
+    sub edx, [rsp + 20]
+    sar edx, 1
+    add edx, [rsp + 4]
+    mov [rsp + 36], edx
+    mov ecx, [rsp + 20]
+    mov r8d, [rsp + 20]
+    mov r9d, eax
+    # where it is, for tests (print-debug-toolbar)
+    push rax
+    push rdx
+    mov ecx, [rip + tb_n]
+    cmp ecx, 8
+    jae 63f
+    inc dword ptr [rip + tb_n]
+    shl ecx, 4
+    lea r8, [rip + tb_rects]
+    mov [r8 + rcx], eax
+    mov [r8 + rcx + 4], r14d
+    mov [r8 + rcx + 8], edx
+    mov eax, [rsp + 16 + 20]
+    mov [r8 + rcx + 12], eax
+63: pop rdx
+    pop rax
+    mov ecx, [rsp + 20]
+    mov r8d, [rsp + 20]
+    mov r9d, eax
+    call ui_icon_btn
+    mov r8d, eax
+    lea edi, [r15 + ID_DBG_TB]
+    mov esi, r14d
+    mov edx, [rsp + 36]
+    add edx, [rsp + 20]
+    mov ecx, [rsp + 20]
+    mov rax, [rsp + 40]
+    mov r9, [rax + 16]
+    call tip_note_text
+    test eax, UB_CLICK
+    jz 62f
+    mov rax, [rsp + 40]
+    call [rax + 8]
+62: add r14d, [rsp + 20]
+    M eax, MI_2
+    add r14d, eax
+    inc r15d
+    jmp 6b
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# dview_toolbar_dump(sb): "button ICON x y size" for each toolbar button as last drawn
+FN dview_toolbar_dump
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12d, [rip + tb_n]
+    jae 9f
+    mov r13d, r12d
+    shl r13d, 4
+    lea r14, [rip + tb_rects]
+    add r14, r13
+    mov rdi, rbx
+    lea rsi, [rip + .Lbutton]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r14]
+    call sb_push_u64
+    xor r15d, r15d
+2:  mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, rbx
+    mov esi, [r14 + 4 + r15*4]
+    call sb_push_u64
+    inc r15d
+    cmp r15d, 3
+    jb 2b
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    inc r12d
+    jmp 1b
+9:  EPILOGUE
+
+# focus_next_session(): the toolbar's picker: the next live session is focused
+focus_next_session:
+    PROLOGUE
+    mov ebx, [rip + g_dfocus]
+    mov r12d, DS_MAX
+1:  inc ebx
+    cmp ebx, DS_MAX
+    jb 2f
+    xor ebx, ebx
+2:  mov edi, ebx
+    call dap_slot
+    mov ecx, [rax + DS_state]
+    test ecx, ecx
+    jz 3f
+    cmp ecx, DSS_ENDED
+    je 3f
+    mov edi, ebx
+    call dap_focus_slot
+    EPILOGUE
+3:  dec r12d
+    jnz 1b
+    EPILOGUE
+
+# dview_status_item(x, y, h) -> eax the x after it: the focused session's state ("Run: paused
+#   (breakpoint) a.c:3"), else "▶ CONFIG" for the configuration F5 starts; a click shows the debug view,
+#   or starts it
+.equ ID_DBG_STATUS, 0x5e0110
+FN dview_status_item
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov ebx, edi
+    lea rdi, [rip + lab]
+    call sb_clear
+    call dap_focused
+    test rax, rax
+    jz 5f
+    mov r12, rax
+    mov rsi, [r12 + DS_name]
+    test rsi, rsi
+    jz 1f
+    lea rdi, [rip + lab]
+    call sb_push_cstr
+    lea rdi, [rip + lab]
+    lea rsi, [rip + .Lcolon_sp]
+    call sb_push_cstr
+1:  mov edi, [r12 + DS_state]
+    call status_word
+    lea rdi, [rip + lab]
+    mov rsi, rax
+    call sb_push_cstr
+    cmp dword ptr [r12 + DS_state], DSS_PAUSED
+    jne 2f
+    mov rsi, [r12 + DS_reason]
+    test rsi, rsi
+    jz 11f
+    lea rdi, [rip + lab]
+    lea rsi, [rip + .Lparen_open]
+    call sb_push_cstr
+    lea rdi, [rip + lab]
+    mov rsi, [r12 + DS_reason]
+    call sb_push_cstr
+    lea rdi, [rip + lab]
+    mov esi, ')'
+    call sb_push_byte
+11: mov rdi, r12
+    call dap_frame_ptr
+    test rax, rax
+    jz 2f
+    mov r13, rax
+    cmp dword ptr [r13 + FR_pathlen], 0
+    je 2f
+    lea rdi, [rip + lab]
+    mov esi, ' '
+    call sb_push_byte
+    mov ecx, [r13 + FR_path]
+    mov rdi, [r12 + DS_strs + SB_ptr]
+    add rdi, rcx
+    mov esi, [r13 + FR_pathlen]
+    call path_basename
+    lea rdi, [rip + lab]
+    mov rsi, rax
+    call sb_push
+    lea rdi, [rip + lab]
+    mov esi, ':'
+    call sb_push_byte
+    lea rdi, [rip + lab]
+    mov esi, [r13 + FR_line]
+    call sb_push_u64
+2:  jmp 7f
+5:  # no session: the configuration F5 starts, when the project has some
+    call status_config
+    test eax, eax
+    jz 9f
+7:  lea rdi, [rip + lab]
+    call sb_z_dv
+    lea rdi, [rip + g_face_small]
+    mov rsi, rax
+    mov rdx, [rip + lab + SB_len]
+    call text_width
+    M ecx, MI_16
+    add eax, ecx
+    mov r14d, eax               # its width
+    mov edi, ID_DBG_STATUS
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, r14d
+    mov r8d, [rsp + 8]
+    call ui_btn
+    mov r15d, eax
+    test eax, UB_HOVER
+    jz 71f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, r14d
+    mov ecx, [rsp + 8]
+    COLOR r8d, T_HOVER
+    call gfx_fill
+71: lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    M eax, MI_8
+    add esi, eax
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8, [rip + lab + SB_ptr]
+    COLOR r9d, T_ACCENT
+    call ui_text_c
+    test r15d, UB_CLICK
+    jz 8f
+    call dap_focused
+    test rax, rax
+    jz 72f
+    call dview_show_on
+    jmp 8f
+72: call cmd_debug_start
+8:  mov eax, [rsp]
+    add eax, r14d
+    EPILOGUE
+9:  mov eax, [rsp]
+    EPILOGUE
+
+# status_word(state) -> cstr as the status bar says it
+status_word:
+    lea rax, [rip + .Lw_starting]
+    cmp edi, DSS_RUNNING
+    jne 1f
+    lea rax, [rip + .Lw_running]
+1:  cmp edi, DSS_PAUSED
+    jne 2f
+    lea rax, [rip + .Lw_paused]
+2:  cmp edi, DSS_TERMINATING
+    jne 3f
+    lea rax, [rip + .Lw_stopping]
+3:  cmp edi, DSS_ENDED
+    jne 4f
+    lea rax, [rip + .Lw_ended]
+4:  cmp edi, DSS_APPROVAL
+    jne 5f
+    lea rax, [rip + .Lw_waiting]
+5:  ret
+
+# status_config() -> eax 1 with lab = "▶ CONFIG": the selected configuration, else launch.ini's
+#   first (read again at most every 2 s)
+status_config:
+    PROLOGUE
+    call time_ms
+    mov rbx, rax
+    sub rax, [rip + cfg_checked]
+    cmp rax, 2000
+    jb 1f
+    mov [rip + cfg_checked], rbx
+    lea rdi, [rip + cfg_first]
+    call sb_clear
+    lea rdi, [rip + cfg_first]
+    call dcfg_names
+1:  mov rsi, [rip + g_dsel + SB_ptr]
+    mov rdx, [rip + g_dsel + SB_len]
+    test rdx, rdx
+    jnz 2f
+    mov rsi, [rip + cfg_first + SB_ptr]
+    mov rcx, [rip + cfg_first + SB_len]
+    test rcx, rcx
+    jz 8f
+    xor edx, edx
+11: cmp byte ptr [rsi + rdx], 10
+    je 2f
+    inc rdx
+    jmp 11b
+2:  push rsi
+    push rdx
+    lea rdi, [rip + lab]
+    lea rsi, [rip + .Lplay]
+    call sb_push_cstr
+    pop rdx
+    pop rsi
+    lea rdi, [rip + lab]
+    call sb_push
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# sb_z_dv(sb) -> its bytes NUL-terminated
+sb_z_dv:
+    push rbx
+    mov rbx, rdi
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rbx + SB_len]
+    mov rax, [rbx + SB_ptr]
+    pop rbx
+    ret
+
+# dview_show_on(): the debug view shown (not toggled)
+FN dview_show_on
+    PROLOGUE
+    call dview_ensure
+    mov dword ptr [rip + dv_shown], 0
+    call dview_show
+    EPILOGUE
+
+# ---------------- context keys and the terminal ----------------
+
+# dview_context(): debugState, inDebugMode and debugType for when clauses, from the focused session
+FN dview_context
+    PROLOGUE
+    mov eax, [rip + g_dap_gen]
+    cmp eax, [rip + ctx_gen]
+    je 9f
+    mov [rip + ctx_gen], eax
+    lea r12, [rip + .Ls_inactive]
+    xor r13d, r13d              # in debug mode
+    lea r14, [rip + .Lnone]     # type
+    call dap_focused
+    test rax, rax
+    jz 5f
+    mov rbx, rax
+    mov eax, [rbx + DS_state]
+    cmp eax, DSS_ENDED
+    je 5f
+    mov r13d, 1
+    mov edi, [rbx + DS_dbg]
+    call dbg_row
+    mov r14, [rax + DBG_type]
+    lea r12, [rip + .Ls_initializing]
+    mov eax, [rbx + DS_state]
+    cmp eax, DSS_RUNNING
+    jne 1f
+    lea r12, [rip + .Ls_running]
+1:  cmp eax, DSS_PAUSED
+    jne 5f
+    lea r12, [rip + .Ls_stopped]
+5:  mov rdi, r12
+    call strlen
+    mov edi, CTX_DEBUG_STATE
+    mov rsi, r12
+    mov rdx, rax
+    call ctx_set
+    mov edi, CTX_IN_DEBUG_MODE
+    mov esi, r13d
+    call ctx_set_bool
+    mov rdi, r14
+    call strlen
+    mov edi, CTX_DEBUG_TYPE
+    mov rsi, r14
+    mov rdx, rax
+    call ctx_set
+9:  EPILOGUE
+
+# dview_terminal_key(keysym, mods) -> eax 1 when the key is the debugger's now: while a session
+#   lives, Continue, Pause, Stop, Restart and the steps reach rhun even from the terminal
+#   ([debug] keys_in_terminal)
+FN dview_terminal_key
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    cmp dword ptr [rip + g_debug_keys_in_terminal], 0
+    je 8f
+    call dap_live_count
+    test eax, eax
+    jz 8f
+    mov edi, r12d
+    mov esi, r13d
+    call keys_lookup
+    test rax, rax
+    jz 8f
+    lea rcx, [rip + term_cmds]
+1:  mov rdx, [rcx]
+    test rdx, rdx
+    jz 8f
+    cmp rax, rdx
+    je 9f
+    add rcx, 8
+    jmp 1b
+8:  xor eax, eax
+    EPILOGUE
+9:  mov eax, 1
+    EPILOGUE
+
 .section .rodata
 .Ln_variables: .asciz "debug.variables"
 .Ln_watch: .asciz "debug.watch"
@@ -1865,6 +2364,40 @@ FN cmd_debug_open_configurations
     .ascii "# arguments. See the guide's Debugging chapter.\n"
     .ascii "#\n# [Run]\n# type = go\n# program = ${project}\n"
 .Ltemplate_end:
+.Lbutton: .asciz "button "
+.Lcolon_sp: .asciz ": "
+.Lparen_open: .asciz " ("
+.Lplay: .byte 0xe2, 0x96, 0xb6, 0x20, 0
+.Lw_starting: .asciz "starting"
+.Lw_running: .asciz "running"
+.Lw_paused: .asciz "paused"
+.Lw_stopping: .asciz "stopping"
+.Lw_ended: .asciz "ended"
+.Lw_waiting: .asciz "waiting for your answer"
+.Ls_inactive: .asciz "inactive"
+.Ls_initializing: .asciz "initializing"
+.Ls_running: .asciz "running"
+.Ls_stopped: .asciz "stopped"
+.Lt_continue: .asciz "Continue (F5)"
+.Lt_pause: .asciz "Pause (F6)"
+.Lt_over: .asciz "Step Over (F10)"
+.Lt_into: .asciz "Step Into (F11)"
+.Lt_out: .asciz "Step Out (Shift+F11)"
+.Lt_restart: .asciz "Restart (Ctrl+Shift+F5)"
+.Lt_stop: .asciz "Stop (Shift+F5)"
+.p2align 3
+# toolbar entries: icon (qword), command, tooltip
+tbe_continue: .quad IC_DBG_PLAY, cmd_debug_continue, .Lt_continue
+tbe_pause: .quad IC_DBG_PAUSE, cmd_debug_pause, .Lt_pause
+tbe_over: .quad IC_DBG_OVER, cmd_debug_step_over, .Lt_over
+tbe_into: .quad IC_DBG_INTO, cmd_debug_step_into, .Lt_into
+tbe_out: .quad IC_DBG_OUT, cmd_debug_step_out, .Lt_out
+tbe_restart: .quad IC_REFRESH, cmd_debug_restart, .Lt_restart
+tbe_stop: .quad IC_DBG_STOP, cmd_debug_stop, .Lt_stop
+tb_debug: .quad tbe_continue, tbe_over, tbe_into, tbe_out, tbe_restart, tbe_stop, 0
+tb_nodebug: .quad tbe_restart, tbe_stop, 0
+term_cmds: .quad cmd_debug_start, cmd_debug_stop, cmd_debug_pause, cmd_debug_continue
+    .quad cmd_debug_step_over, cmd_debug_step_into, cmd_debug_step_out, cmd_debug_restart, 0
 cat_slots:
     .byte T_FG, T_ERROR, T_MUTED, T_WARNING, T_MUTED, T_ERROR, T_MUTED, T_ACCENT, T_FG
 .p2align 3

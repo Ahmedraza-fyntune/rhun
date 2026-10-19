@@ -590,6 +590,13 @@ c_print_debug_tree:
 9:  xor eax, eax
     EPILOGUE
 
+# print-debug-toolbar: the title bar's debug buttons as last drawn
+c_print_debug_toolbar:
+    mov rdi, [rip + outp]
+    call dview_toolbar_dump
+    xor eax, eax
+    ret
+
 # print-configs: launch.ini's configuration names, "config=NAME" per line
 c_print_configs:
     PROLOGUE
@@ -650,6 +657,7 @@ DCTL c_print_bps
 DCTL c_print_dap_log
 DCTL c_print_configs
 DCTL c_print_debug_tree
+DCTL c_print_debug_toolbar
 
 .section .rodata
 .Ls_into: .asciz "into"
@@ -689,6 +697,7 @@ DCTL c_print_debug_tree
 .Lc_print_dap_log: .asciz "print-dap-log"
 .Lc_print_configs: .asciz "print-configs"
 .Lc_print_debug_tree: .asciz "print-debug-tree"
+.Lc_print_debug_toolbar: .asciz "print-debug-toolbar"
 .Lt_variables: .asciz "variables"
 .Lt_watch: .asciz "watch"
 .Lt_stack: .asciz "stack"
@@ -711,5 +720,5 @@ debug_ctl:
     .quad .Lc_print_vars, e_c_print_vars, .Lc_print_watch, e_c_print_watch
     .quad .Lc_print_console, e_c_print_console, .Lc_print_bps, e_c_print_bps
     .quad .Lc_print_dap_log, e_c_print_dap_log, .Lc_print_configs, e_c_print_configs
-    .quad .Lc_print_debug_tree, e_c_print_debug_tree
+    .quad .Lc_print_debug_tree, e_c_print_debug_tree, .Lc_print_debug_toolbar, e_c_print_debug_toolbar
     .quad 0, 0

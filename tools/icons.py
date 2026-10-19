@@ -85,6 +85,16 @@ ICONS.append(('PUZZLE', [('W', 10)] + line([(22, 38), (46, 38), (46, 30)] + arc(
                                            + [(70, 38), (90, 38), (90, 60), (98, 60)] + arc(98, 72, 12, 270, 450, 8)
                                            + [(90, 84), (90, 108), (22, 108), (22, 38)])))
 ICONS.append(('MORE', [('D', 64, 28, 10), ('D', 64, 64, 10), ('D', 64, 100, 10)]))
+# the debugger's toolbar (debugview.s): continue, pause, step over, into and out, stop
+ICONS.append(('DBG_PLAY', [('P', 3, 38, 22, 104, 64, 38, 106)]))
+ICONS.append(('DBG_PAUSE', [('P', 4, 32, 24, 54, 24, 54, 104, 32, 104), ('P', 4, 74, 24, 96, 24, 96, 104, 74, 104)]))
+ICONS.append(('DBG_OVER', [('W', 11)] + line(arc(64, 72, 40, 180, 340, 12)) + [('P', 3, 86, 60, 118, 56, 108, 86),
+                                                                              ('D', 64, 104, 11)]))
+ICONS.append(('DBG_INTO', [('W', 11), ('M', 64, 12), ('L', 64, 62), ('P', 3, 42, 48, 86, 48, 64, 78),
+                           ('D', 64, 104, 11)]))
+ICONS.append(('DBG_OUT', [('W', 11), ('M', 64, 84), ('L', 64, 34), ('P', 3, 42, 48, 86, 48, 64, 18),
+                          ('D', 64, 108, 11)]))
+ICONS.append(('DBG_STOP', [('P', 4, 30, 30, 98, 30, 98, 98, 30, 98)]))
 # icon_mask keys its cache by icon | size << 8
 assert len(ICONS) <= 256, len(ICONS)
 # the color names of file icons, in the order of their theme slots from T_ICON (src/app/theme.s)

@@ -2341,6 +2341,12 @@ FN term_panel_key
     mov r14d, edx
     test r14d, MOD_SUPER
     jnz .Ltk_no
+    # debugger: while a session lives its keys reach rhun from the terminal too (debugview.s)
+    mov edi, r12d
+    mov esi, r14d
+    call dview_terminal_key
+    test eax, eax
+    jnz .Ltk_no
     # Close All Tabs' keys are the terminal's, where Ctrl+Shift+W closes a tab in other terminals:
     # the program gets them as if unbound (with Command on macOS, or before the terminal has
     # started, they do nothing). The palette still runs the command.

@@ -129,6 +129,52 @@ class View(debughost.DebugHost):
         self.assertIn('launch.ini', [l for l in out if l.startswith('tabs=')][0])
         self.assertTrue((self.proj / '.rhun/launch.ini').read_text().startswith('# Launch configurations'))
 
+    def toolbar(self, out):
+        return {int(l.split()[1]): (int(l.split()[2]), int(l.split()[3]), int(l.split()[4]))
+                for l in out if l.startswith('button ')}
+
+    def test_toolbar(self):
+        self.scenario()
+        self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\nstopOnEntry = yes\n')
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'print-debug-toolbar'])
+        buttons = self.toolbar(out)
+        self.assertEqual(sorted(buttons), [21, 149, 151, 152, 153, 154])   # restart, play, over, into, out, stop
+        x, y, size = buttons[151]                                         # step over
+        sx, sy, _ = buttons[154]
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'print-debug-toolbar',
+                               'click %d %d' % (x + size // 2, y + size // 2), 'wait-debug paused', 'print-debug',
+                               'click %d %d' % (sx + size // 2, sy + size // 2), 'wait-debug ended', 'print-debug'])
+        sessions = self.debug_lines(out)
+        self.assertEqual(self.field(sessions[0], 'reason'), 'step', out)
+        self.assertEqual(self.field(sessions[1], 'state'), 'ended', out)
+
+    def test_toolbar_without_debugging(self):
+        steps = self.steps()
+        steps[3]['block'] = True
+        self.scenario(steps)
+        self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\n')
+        out = self.run_editor([*self.start(run=True), 'wait 300', 'print-debug-toolbar'])
+        self.assertEqual(sorted(self.toolbar(out)), [21, 154])
+
+    def test_context_keys(self):
+        out = self.paused(['print-context', 'echo --', 'debug-stop', 'wait-debug ended', 'wait 50', 'print-context'])
+        first = out[:out.index('--')]
+        self.assertIn('debugState=stopped', first)
+        self.assertIn('inDebugMode=true', first)
+        self.assertIn('debugType=fake', first)
+        second = out[out.index('--'):]
+        self.assertIn('debugState=inactive', second)
+        self.assertIn('inDebugMode=false', second)
+
+    def test_keys_reach_the_debugger_from_the_terminal(self):
+        self.scenario()
+        self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\nstopOnEntry = yes\n')
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'cmd toggle_terminal', 'wait 300', 'print-state',
+                               'key F10', 'wait-debug paused', 'print-debug'])
+        state = [l for l in out if l.startswith('tabs=')][0]
+        self.assertIn(' focus=8 ', state)            # the terminal has the keyboard
+        self.assertEqual(self.field(self.debug_lines(out)[0], 'reason'), 'step', out)
+
 
 if __name__ == '__main__':
     unittest.main()
