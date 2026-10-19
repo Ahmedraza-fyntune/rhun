@@ -270,7 +270,7 @@ def benchmark(base, project, home):
     subprocess.run(['clang', '-arch', 'arm64', '-mmacosx-version-min=12.0', '-o', str(executable),
                     str(obj), *objects, '-framework', 'AppKit', '-framework', 'QuartzCore',
                     '-framework', 'IOSurface', '-framework', 'CoreServices', '-framework',
-                    'Carbon'], check=True)
+                    'Carbon', '-framework', 'Security'], check=True)
     _, env = context(base, 'benchmark', home)
     runs = []
     for _ in range(3):
