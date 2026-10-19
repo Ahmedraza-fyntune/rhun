@@ -1623,9 +1623,9 @@ ENDSTRUCT AXK_SIZE
 in_tf: .zero TF_SIZE            # the prompt box
 in_as: .quad 0                  # the session it belongs to
 new_ext: .quad 0                # a new session of this extension is being written
-pend_id: .quad 0                # the agent-prompt in flight: its id, extension, session (0: new)
+pend_id: .quad 0                # the agent-prompt in flight: its id, extension
 pend_ext: .quad 0
-pend_as: .quad 0
+pend_new: .quad 0               # 1 when it starts a new session
 pend_text: .zero SB_SIZE        # and its text, back in the box when it fails
 want_ext: .quad 0               # open this extension's session when it is listed
 want_sid: .quad 0               # cstr
@@ -1898,7 +1898,10 @@ FN agentext_send
     jz 8f
     mov [rip + pend_id], rax
     mov [rip + pend_ext], r14
-    mov [rip + pend_as], rbx
+    xor ecx, ecx
+    test rbx, rbx
+    sete cl
+    mov [rip + pend_new], rcx
     mov rdi, r14
     mov rsi, rax
     mov edx, PK_PROMPT
@@ -1936,8 +1939,8 @@ FN agentext_prompt_reply
     test edx, edx
     jz 5f
     # a new session: opened once it is listed (it may be already)
-    cmp qword ptr [rip + pend_as], 0
-    jne 4f
+    cmp qword ptr [rip + pend_new], 0
+    je 4f
     mov rdi, r12
     mov rsi, r13
     mov edx, AGENT_SID_MAX
@@ -2010,15 +2013,12 @@ open_wanted:
     call agents_open_as
 9:  EPILOGUE
 
-# FN agentext_row_gone(AS*): a row is freed: the box and the prompt in flight forget it
+# FN agentext_row_gone(AS*): a row is freed: the box forgets it
 FN agentext_row_gone
     cmp [rip + in_as], rdi
     jne 1f
     mov qword ptr [rip + in_as], 0
-1:  cmp [rip + pend_as], rdi
-    jne 2f
-    mov qword ptr [rip + pend_as], 0
-2:  ret
+1:  ret
 
 # FN agentext_stop(AS*): "0 agent-stop SID"
 FN agentext_stop
