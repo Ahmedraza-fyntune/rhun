@@ -37,6 +37,7 @@ F WFD_host, 4                       # the host's descriptor (standard streams, f
 F WFD_write, 4                      # writing allowed
 F WFD_path, 8                       # directories: the host path (allocated)
 F WFD_root, 8                       # directories: the allowed folder it is in
+F WFD_rootreal, 8                   # directories: that folder's real path (links resolved)
 F WFD_guest, 8                      # preopened directories: the name the program sees
 F WFD_list, 8                       # directories: fd_readdir's names (type byte, name, NUL each)
 F WFD_listlen, 8
@@ -49,8 +50,10 @@ wasi_fds: .zero WASI_FDS * WFD_SIZE
 wasi_args: .quad 0                  # C strings
 wasi_nargs: .quad 0
 wasi_inst: .quad 0
+wasi_env: .quad 0                   # the program's environment (NULL-ended)
 wasi_path_buf: .zero WASI_PATH_MAX + 16
 wasi_path2_buf: .zero WASI_PATH_MAX + 16
+wasi_real_buf: .zero 4096 + 16
 wasi_list: .zero SB_SIZE
 wasi_fnmem: .zero VEC_SIZE          # host functions made so far (WFN pointers)
 
@@ -100,6 +103,7 @@ FN wasm_host_main
     mov [rip + wasi_nargs], rax
     lea rax, [r13 + r14*8]
     mov [rip + wasi_args], rax
+    call wasi_environment
     lea rax, [rip + wasi_resolve]
     mov [rip + g_wasm_resolve], rax
     mov rdi, [r13 + r14*8]
@@ -159,6 +163,37 @@ FN wasm_host_main
     lea rdi, [rip + .Lm_no_start]
     call die
 
+# wasi_environment(): the program's environment is the host's with PWD=/, so that a path that is
+# not absolute resolves against the root in every runtime (Go takes PWD as its working folder,
+# wasi-libc starts at /): on Windows C:/Users/me/a.txt is such a path, and finds /C:/Users/me
+wasi_environment:
+    PROLOGUE
+    mov r12, [rip + g_envp]
+    xor ebx, ebx
+1:  cmp qword ptr [r12 + rbx*8], 0
+    je 2f
+    inc rbx
+    jmp 1b
+2:  lea rdi, [rbx*8 + 16]
+    call mem_alloc
+    mov r13, rax
+    xor r14d, r14d                  # copied
+    xor ebx, ebx
+3:  mov rdi, [r12 + rbx*8]
+    test rdi, rdi
+    jz 5f
+    inc rbx
+    cmp dword ptr [rdi], 0x3d445750 # "PWD="
+    je 3b
+    mov [r13 + r14*8], rdi
+    inc r14
+    jmp 3b
+5:  lea rax, [rip + .Ls_pwd]
+    mov [r13 + r14*8], rax
+    mov qword ptr [r13 + r14*8 + 8], 0
+    mov [rip + wasi_env], r13
+    EPILOGUE
+
 # wasi_preopen(path, writable): the next descriptor is that folder, under its own name
 wasi_preopen:
     PROLOGUE
@@ -205,6 +240,35 @@ wasi_preopen:
     mov [rbx + WFD_path], rax
     mov [rbx + WFD_root], rax
     mov [rbx + WFD_guest], rax
+    # its real path, which every path resolved under it must stay within (the path itself when
+    # it cannot be resolved)
+    mov r14, rax
+    mov rdi, rax
+    lea rsi, [rip + wasi_real_buf]
+    call ext_realpath
+    test eax, eax
+    jz 6f
+    lea r14, [rip + wasi_real_buf]
+6:  mov rdi, r14
+    call strlen
+    mov rsi, rax
+    mov rdi, r14
+    call mem_dup
+    mov [rbx + WFD_rootreal], rax
+    mov rax, [rbx + WFD_guest]
+.ifdef WINDOWS
+    # the name it is seen under starts with a slash (/C:/Users/me): Go resolves C:/Users/me/a.txt
+    # against the root /, wasi-libc drops leading slashes before it compares
+    mov rdi, rax
+    call strlen
+    lea rdi, [rax + 2]
+    call mem_alloc
+    mov byte ptr [rax], '/'
+    mov [rbx + WFD_guest], rax
+    lea rdi, [rax + 1]
+    mov rsi, [rbx + WFD_path]
+    call cstr_copy
+.endif
 9:  EPILOGUE
 
 # wasi_fd_new() -> rax a free record (zeroed), or 0; ecx its number
@@ -309,8 +373,20 @@ wasi_resolve:
     mov r14d, eax
     mov r15, [rbx + 8]
     jmp 6f
-5:  # a function rhun does not know answers ENOSYS, whatever its type
-    lea r15, [rip + wasi_nosys]
+5:  # a function rhun does not know answers ENOSYS: with an i32 result or none (any other
+    # result would be a value of the wrong type), else it does not link
+    mov edi, r14d
+    call wasm_type
+    mov ecx, [rax + WTY_nresults]
+    test ecx, ecx
+    jz 51f
+    cmp ecx, 1
+    jne 8f
+    mov rdx, [rax + WTY_types]
+    mov ecx, [rax + WTY_nparams]
+    cmp byte ptr [rdx + rcx], WV_I32
+    jne 8f
+51: lea r15, [rip + wasi_nosys]
 6:  lea rdi, [rip + wasi_fnmem]
     mov esi, 8
     call vec_push
@@ -360,7 +436,7 @@ w_args_sizes_get:
     jmp .Lsizes
 # environ_sizes_get(count*, size*)
 w_environ_sizes_get:
-    lea rax, [rip + g_envp]
+    lea rax, [rip + wasi_env]
     xor ecx, ecx
 .Lsizes:
     PROLOGUE
@@ -386,7 +462,7 @@ w_environ_sizes_get:
     jmp 1b
 3:  pop r13
     pop rax
-    mov rbx, [rip + wasi_inst]
+    mov rbx, [rip + g_wasm_caller]
     mov edi, [r12]
     mov esi, 4
     call wmem
@@ -411,7 +487,7 @@ w_args_get:
     jmp .Lstrings
 # environ_get(environ*, buf*)
 w_environ_get:
-    lea rax, [rip + g_envp]
+    lea rax, [rip + wasi_env]
     xor ecx, ecx
 .Lstrings:
     PROLOGUE 16
@@ -419,7 +495,7 @@ w_environ_get:
     mov r13, [rax]
     mov r14, rcx
     xor r15d, r15d
-    mov rbx, [rip + wasi_inst]
+    mov rbx, [rip + g_wasm_caller]
     mov eax, [r12]
     mov [rsp], eax                  # the next pointer slot
     mov eax, [r12 + 8]
@@ -545,7 +621,16 @@ w_fd_write:
     cmp dword ptr [rax + WFD_write], 0
     je 9f
     mov r13d, [rax + WFD_host]
-    xor r14d, r14d                  # written
+    # a file in append mode (fd_fdstat_set_flags may set it after the open) writes at its end
+    cmp dword ptr [rax + WFD_kind], 3
+    jne 11f
+    test dword ptr [rax + WFD_flags], 1
+    jz 11f
+    mov edi, r13d
+    xor esi, esi
+    mov edx, 2
+    SYS SYS_lseek
+11: xor r14d, r14d                  # written
     xor r15d, r15d                  # iov
 1:  cmp r15d, [r12 + 16]
     jae 5f
@@ -1027,11 +1112,17 @@ w_fd_filestat_set_size:
     mov ecx, eax
 9:  ANSWER
 
-# wasi_path(dirfd edi, guest path esi, length edx, buffer rcx) -> rax 0 and the host path in the
-# buffer, or the WASI errno; r8d the directory's write permission. Components are resolved
-# lexically: "." stays, ".." climbs, and climbing above the allowed folder is refused.
+# wasi_path(dirfd edi, guest path esi, length edx, buffer rcx, mode r8d) -> rax 0 and the host
+# path in the buffer, or the WASI errno; r8d the directory's write permission, r9d 1 when the
+# target does not exist (open it without following a final link). Components are resolved
+# lexically ("." stays, ".." climbs, climbing above the allowed folder is refused), then the real
+# path decides, so that a link inside cannot lead out: mode 0 follows the target (its real path,
+# or its folder's when it does not exist, must be inside the allowed folder's real path); mode 1
+# acts on the target itself (a link, a name to remove or create: its folder's must be inside, and its own too when it resolves).
 wasi_path:
     PROLOGUE 32
+    mov [rsp + 20], r8d
+    mov dword ptr [rsp + 24], 0
     mov r12d, esi
     mov r13d, edx
     mov r14, rcx
@@ -1043,12 +1134,13 @@ wasi_path:
     cmp dword ptr [rax + WFD_kind], 2
     jne .Lp_fail
     mov rbx, rax
+    mov [rsp + 8], rax              # the directory's record
     mov eax, [rbx + WFD_write]
     mov [rsp + 16], eax
     mov edi, r12d
     mov esi, r13d
     push rbx
-    mov rbx, [rip + wasi_inst]
+    mov rbx, [rip + g_wasm_caller]
     call wmem
     pop rbx
     mov ecx, WE_FAULT
@@ -1143,9 +1235,91 @@ wasi_path:
     jmp 1b
 7:  mov rax, [rsp]
     mov byte ptr [r14 + rax], 0
-    mov r8d, [rsp + 16]
+    # the real path: the target's when it exists (in mode 1 too: Windows, or Wine's view of Unix
+    # links, may remove or rename what a link leads to), and its folder's
+    mov rdi, r14
+    lea rsi, [rip + wasi_real_buf]
+    call ext_realpath
+    test eax, eax
+    jz 71f
+    call .Lp_inside
+    jz .Lp_notcapable
+    cmp dword ptr [rsp + 20], 0
+    je 9f
+    jmp 8f
+71: mov dword ptr [rsp + 24], 1
+8:  # the folder: the buffer up to its last slash (the allowed folder itself when that is all)
+    mov rcx, [rsp]
+    mov rax, [rsp + 8]
+    mov rdi, [rax + WFD_root]
+    push rcx
+    push rcx
+    call strlen
+    pop rcx
+    pop rcx
+    cmp rcx, rax
+    jbe 82f
+81: dec rcx
+    cmp byte ptr [r14 + rcx], '/'
+    jne 81b
+    test rcx, rcx
+    jz 82f
+    mov byte ptr [r14 + rcx], 0
+    mov [rsp + 28], ecx
+    mov rdi, r14
+    lea rsi, [rip + wasi_real_buf]
+    call ext_realpath
+    mov ecx, [rsp + 28]
+    mov byte ptr [r14 + rcx], '/'
+    jmp 83f
+82: mov rdi, r14
+    lea rsi, [rip + wasi_real_buf]
+    call ext_realpath
+83: test eax, eax
+    jz .Lp_noent
+    call .Lp_inside
+    jz .Lp_notcapable
+9:  mov r8d, [rsp + 16]
+    mov r9d, [rsp + 24]
     xor eax, eax
     EPILOGUE
+# wasi_real_buf inside the directory's allowed folder ([rsp + 8 + 8] its record) -> ZF clear
+.Lp_inside:
+    mov rax, [rsp + 16]
+    mov rdi, [rax + WFD_rootreal]
+    call wasi_inside
+    test eax, eax
+    ret
+
+# wasi_inside(real path of the allowed folder) -> eax 1 when wasi_real_buf is that folder or in it
+wasi_inside:
+    push rdi
+    call strlen
+    pop rsi
+    cmp rax, 1
+    jne 1f
+    cmp byte ptr [rsi], '/'
+    je 3f                           # the root of everything: all is inside
+1:  push rax
+    lea rdi, [rip + wasi_real_buf]
+    mov rdx, rax
+    call memeq
+    pop rcx
+    test eax, eax
+    jz 2f
+    lea rdx, [rip + wasi_real_buf]
+    movzx eax, byte ptr [rdx + rcx]
+    test eax, eax
+    jz 3f
+    cmp eax, '/'
+    je 3f
+2:  xor eax, eax
+    ret
+3:  mov eax, 1
+    ret
+.Lp_noent:
+    mov ecx, WE_NOENT
+    jmp .Lp_fail
 .Lp_inval:
     mov ecx, WE_INVAL
     jmp .Lp_fail
@@ -1166,6 +1340,9 @@ w_path_filestat_get:
     mov esi, [r12 + 16]
     mov edx, [r12 + 24]
     lea rcx, [rip + wasi_path_buf]
+    mov r8d, [r12 + 8]
+    and r8d, 1
+    xor r8d, 1                      # following a final link: mode 0
     call wasi_path
     mov ecx, eax
     test eax, eax
@@ -1185,19 +1362,22 @@ w_path_open:
     mov esi, [r12 + 16]
     mov edx, [r12 + 24]
     lea rcx, [rip + wasi_path_buf]
+    xor r8d, r8d
     call wasi_path
     mov ecx, eax
     test eax, eax
     jnz 9f
     mov [rsp + 8], r8d              # the directory may be written to
-    # writing: creating, truncating, appending, or write rights asked for
+    mov [rsp + 12], r9d             # the target does not exist yet
+    # writing: creating, truncating, appending, or the right to write or allocate asked for (Go
+    # asks for fd_filestat_set_size even to read, wasi-libc only to write: it does not count)
     xor r13d, r13d
     test dword ptr [r12 + 32], 9
     jnz 1f
     test dword ptr [r12 + 56], 1
     jnz 1f
     mov rax, [r12 + 40]
-    test rax, (1 << 6) | (1 << 8) | (1 << 22)
+    test rax, (1 << 6) | (1 << 8)
     jz 2f
 1:  mov r13d, 1
     mov ecx, WE_NOTCAPABLE
@@ -1228,16 +1408,56 @@ w_path_open:
 34: test dword ptr [r12 + 56], 1
     jz 35f
     or esi, O_APPEND
-35: lea rdi, [rip + wasi_path_buf]
+35: # a final link is followed only when asked and when it resolved inside (wasi_path); a name
+    # that is there but does not resolve is a link to nowhere, which creating would follow out
+    # (Windows has no O_NOFOLLOW to stop it)
+    test dword ptr [r12 + 8], 1
+    jz 36f
+    cmp dword ptr [rsp + 12], 0
+    je 37f
+36: or esi, O_NOFOLLOW
+    cmp dword ptr [rsp + 12], 0
+    je 37f
+    mov [rsp + 16], esi
+    lea rdi, [rip + wasi_path_buf]
+    call wasi_os_lexists
+    mov esi, [rsp + 16]
+    mov ecx, WE_NOTCAPABLE
+    test eax, eax
+    jnz 9f
+37: lea rdi, [rip + wasi_path_buf]
     mov edx, 0644
     SYS SYS_open
     test rax, rax
     js 8f
     mov r14d, eax
-    # a directory becomes a path-based descriptor
+    # what was opened: its real path is inside, or it is closed again
+    lea rdi, [rip + wasi_path_buf]
+    lea rsi, [rip + wasi_real_buf]
+    call ext_realpath
+    test eax, eax
+    jz 38f
+    mov edi, [r12]
+    call wasi_fd
+    mov rdi, [rax + WFD_rootreal]
+    call wasi_inside
+    test eax, eax
+    jnz 38f
     mov edi, r14d
+    SYS SYS_close
+    # made outside through a link the checks could not see (Wine's view of Unix links): it did
+    # not exist before this call, so it goes again
+    cmp dword ptr [rsp + 12], 0
+    je 39f
+    lea rdi, [rip + wasi_real_buf]
+    SYS SYS_unlink
+39: mov ecx, WE_NOTCAPABLE
+    jmp 9f
+38:
+    # a directory becomes a path-based descriptor (stat by path: Windows' fstat knows files only)
+    lea rdi, [rip + wasi_path_buf]
     lea rsi, [rip + stat_tmp]
-    SYS SYS_fstat
+    SYS SYS_stat
     mov ecx, [rip + stat_tmp + 24]
     and ecx, 0xf000
     cmp ecx, 0x4000
@@ -1245,9 +1465,8 @@ w_path_open:
     mov edi, r14d
     SYS SYS_close
     call wasi_fd_new
-    mov ecx, WE_MFILE
     test rax, rax
-    jz 9f
+    jz 53f
     mov rbx, rax
     mov [rsp + 16], ecx
     mov dword ptr [rbx + WFD_kind], 2
@@ -1263,6 +1482,8 @@ w_path_open:
     # the allowed folder it lies in: the directory it was opened from's
     mov edi, [r12]
     call wasi_fd
+    mov rcx, [rax + WFD_rootreal]
+    mov [rbx + WFD_rootreal], rcx
     mov rax, [rax + WFD_root]
     mov [rbx + WFD_root], rax
     jmp 6f
@@ -1283,7 +1504,7 @@ w_path_open:
 6:  mov edi, [r12 + 64]
     mov esi, 4
     push rbx
-    mov rbx, [rip + wasi_inst]
+    mov rbx, [rip + g_wasm_caller]
     call wmem
     pop rbx
     mov ecx, WE_FAULT
@@ -1304,6 +1525,8 @@ w_path_open:
     jnz 9b
     mov ecx, WE_MFILE
     ANSWER
+53: mov ecx, WE_MFILE
+    ANSWER
 8:  call wasi_errno
     mov ecx, eax
     ANSWER
@@ -1314,6 +1537,7 @@ w_path_open:
     mov esi, [r12 + \pathoff]
     mov edx, [r12 + \lenoff]
     lea rcx, [rip + \buf]
+    mov r8d, 1
     call wasi_path
     mov ecx, eax
     test eax, eax
@@ -1401,7 +1625,7 @@ w_fd_readdir:
 1:  mov edi, [r12 + 8]
     mov esi, [r12 + 16]
     push rbx
-    mov rbx, [rip + wasi_inst]
+    mov rbx, [rip + g_wasm_caller]
     call wmem
     pop rbx
     mov ecx, WE_FAULT
@@ -1464,7 +1688,7 @@ w_fd_readdir:
 7:  mov edi, [r12 + 32]
     mov esi, 4
     push rbx
-    mov rbx, [rip + wasi_inst]
+    mov rbx, [rip + g_wasm_caller]
     call wmem
     pop rbx
     mov ecx, WE_FAULT
@@ -1505,10 +1729,10 @@ readdir_entry:
     pop rbx
     ret
 
-# poll_oneoff(subscriptions*, events*, count, nevents*): clocks and reads of the standard input
-# wait; every other descriptor is always ready
+# poll_oneoff(subscriptions*, events*, count, nevents*): waits until a clock is due or the standard
+# input can be read; reads of other descriptors and every write are ready at once
 w_poll_oneoff:
-    PROLOGUE 48
+    PROLOGUE 80
     mov r12, rdi
     mov ecx, WE_INVAL
     mov r13d, [r12 + 16]            # subscriptions
@@ -1530,11 +1754,15 @@ w_poll_oneoff:
     test rax, rax
     jz 9f
     mov r15, rax
-    # the earliest clock (ms from now; -1 none) and whether some read waits on a stream
+    # the earliest clock (an absolute monotonic time, -1 none), the standard input's descriptor
+    # when a read waits on it (-1 none), and whether something is ready at once
     call time_now_ns
-    mov [rsp + 16], rax             # now
-    mov qword ptr [rsp], -1         # wait in ms
-    mov qword ptr [rsp + 8], -1     # the standard input's descriptor when one waits
+    mov [rsp + 16], rax             # now, at the call
+    call time_real_ns
+    mov [rsp + 64], rax             # the realtime clock then
+    mov qword ptr [rsp + 40], -1    # the earliest deadline
+    mov qword ptr [rsp + 8], -1     # the standard input
+    mov qword ptr [rsp + 48], 0     # ready at once
     xor ecx, ecx
 1:  cmp ecx, r13d
     jae 4f
@@ -1543,28 +1771,13 @@ w_poll_oneoff:
     movzx eax, byte ptr [rdx + 8]
     test eax, eax
     jnz 2f
-    mov rax, [rdx + 24]             # timeout ns
-    test word ptr [rdx + 40], 1
-    jz 11f
-    sub rax, [rsp + 16]             # an absolute time
-    jns 11f
-    xor eax, eax
-11: push rdx
-    push rcx
-    add rax, 999999
-    xor edx, edx
-    mov r8d, 1000000
-    div r8
-    pop rcx
-    pop rdx
-    cmp qword ptr [rsp], -1
-    je 12f
-    cmp rax, [rsp]
+    call .Lpoll_deadline
+    cmp rax, [rsp + 40]
     jae 3f
-12: mov [rsp], rax
+    mov [rsp + 40], rax
     jmp 3f
 2:  cmp eax, 1
-    jne 3f
+    jne 21f
     mov edi, [rdx + 16]
     push rcx
     push rdx
@@ -1572,27 +1785,44 @@ w_poll_oneoff:
     pop rdx
     pop rcx
     test rax, rax
-    jz 3f
+    jz 21f
     cmp dword ptr [rax + WFD_kind], 1
-    jne 3f
+    jne 21f
     mov eax, [rax + WFD_host]
     mov [rsp + 8], rax
+    jmp 3f
+21: mov qword ptr [rsp + 48], 1
 3:  inc ecx
     jmp 1b
-4:  # wait for the standard input, or sleep until the clock
-    mov qword ptr [rsp + 24], 0     # the input is ready
+4:  # wait: for the standard input, or until the deadline, or not at all
+    call time_now_ns
+    mov rdi, [rsp + 40]
+    cmp rdi, -1
+    je 41f
+    sub rdi, rax
+    jns 42f
+    xor edi, edi
+42: add rdi, 999999
+    mov rax, rdi
+    xor edx, edx
+    mov ecx, 1000000
+    div rcx
+    mov rdi, rax                    # ms to the deadline
+41: cmp qword ptr [rsp + 48], 0
+    je 43f
+    xor edi, edi
+43: mov qword ptr [rsp + 24], 0     # the input is ready
+    cmp qword ptr [rsp + 8], -1
+    je 44f
+    mov rsi, rdi
     mov rdi, [rsp + 8]
-    test rdi, rdi
-    js 5f
-    mov rsi, [rsp]
     call wasi_os_wait_read
     mov [rsp + 24], rax
     jmp 6f
-5:  mov rdi, [rsp]
-    test rdi, rdi
-    js 6f
+44: test rdi, rdi
+    jle 6f
     call wasi_os_sleep_ms
-6:  # events: ready reads and writes, clocks that are due (all of them when nothing else is)
+6:  # events: ready reads and writes, clocks that are due
     call time_now_ns
     mov [rsp + 32], rax
     xor r9d, r9d                    # events (rbx stays the instance, for wmem)
@@ -1604,57 +1834,59 @@ w_poll_oneoff:
     movzx eax, byte ptr [rdx + 8]
     test eax, eax
     jz 71f
-    # a read or write: ready unless it is the waiting standard input
+    # a read or write: ready unless it is the standard input that did not become readable
     cmp eax, 1
     jne 72f
     mov edi, [rdx + 16]
-    cmp rdi, [rsp + 8]
+    push rcx
+    push rdx
+    push r9
+    call wasi_fd
+    pop r9
+    pop rdx
+    pop rcx
+    test rax, rax
+    jz 72f
+    cmp dword ptr [rax + WFD_kind], 1
     jne 72f
     cmp qword ptr [rsp + 24], 0
     je 75f
 72: call .Lpoll_event
     mov qword ptr [rdi + 16], 1
     jmp 75f
-71: # a clock: due now, or the earliest one when nothing else became ready
-    mov rax, [rdx + 24]
-    test word ptr [rdx + 40], 1
-    jnz 73f
-    add rax, [rsp + 16]
-73: cmp rax, [rsp + 32]
-    jbe 74f
-    cmp qword ptr [rsp + 24], 0
-    jne 75f
-    cmp qword ptr [rsp + 8], -1
-    jne 75f
-74: call .Lpoll_event
+71: call .Lpoll_deadline
+    cmp rax, [rsp + 32]
+    ja 75f
+    call .Lpoll_event
 75: inc ecx
     jmp 7b
 8:  test r9d, r9d
-    jnz 81f
-    # nothing due yet (a clock rounded down): report the first clock all the same
-    xor ecx, ecx
-82: cmp ecx, r13d
-    jae 81f
-    imul rdx, rcx, 48
-    add rdx, r14
-    cmp byte ptr [rdx + 8], 0
-    jne 83f
-    call .Lpoll_event
-    jmp 81f
-83: inc ecx
-    jmp 82b
-81: mov [rsp + 40], r9
+    jz 4b                           # woken early: wait for the rest
+    mov [rsp + 56], r9
     mov edi, [r12 + 24]
     mov esi, 4
     call wmem
     mov ecx, WE_FAULT
     test rax, rax
     jz 9f
-    mov rcx, [rsp + 40]
+    mov rcx, [rsp + 56]
     mov [rax], ecx
     xor ecx, ecx
 9:  ANSWER
-# an event for subscription rdx (its index ecx) at events[r9] -> rdi the event
+# the clock subscription rdx's deadline -> rax (absolute monotonic ns; keeps rcx, rdx): a
+# timeout from the call, or a time on its clock (realtime: moved to the monotonic clock)
+.Lpoll_deadline:
+    mov rax, [rdx + 24]
+    test word ptr [rdx + 40], 1
+    jnz 1f
+    add rax, [rsp + 16 + 8]
+    ret
+1:  cmp dword ptr [rdx + 16], 0
+    jne 2f
+    sub rax, [rsp + 64 + 8]
+    add rax, [rsp + 16 + 8]
+2:  ret
+# an event for subscription rdx at events[r9] -> rdi the event
 .Lpoll_event:
     mov rdi, r9
     shl rdi, 5
@@ -1667,6 +1899,18 @@ w_poll_oneoff:
     mov qword ptr [rdi + 16], 0
     mov qword ptr [rdi + 24], 0
     inc r9d
+    ret
+
+# time_real_ns() -> rax: the realtime clock
+time_real_ns:
+    sub rsp, 24
+    mov edi, CLOCK_REALTIME
+    mov rsi, rsp
+    SYS SYS_clock_gettime
+    mov rax, [rsp]
+    imul rax, rax, 1000000000
+    add rax, [rsp + 8]
+    add rsp, 24
     ret
 
 # time_now_ns() -> rax: the monotonic clock
@@ -1682,6 +1926,18 @@ time_now_ns:
     ret
 
 .ifndef WINDOWS
+# wasi_os_lexists(path) -> eax 1 when the name exists, a link counted as itself (not followed)
+FN wasi_os_lexists
+    sub rsp, 152
+    mov rsi, rsp
+    SYS SYS_lstat
+    add rsp, 152
+    xor ecx, ecx
+    test rax, rax
+    sete cl
+    mov eax, ecx
+    ret
+
 # wasi_os_random(buf, len) -> 0 or -errno
 FN wasi_os_random
     PROLOGUE
@@ -1763,6 +2019,7 @@ list_count: .quad 0
 .Ls_start: .ascii "_start"
 .Ls_wasi: .asciz "wasi_snapshot_preview1"
 .Ls_urandom: .asciz "/dev/urandom"
+.Ls_pwd: .asciz "PWD=/"
 .Lm_usage: .asciz "usage: rhun --wasm-host [--dir PATH | --dir-ro PATH]... FILE.wasm [ARG...]"
 .Lm_unreadable: .asciz "rhun --wasm-host: cannot read the module"
 .Lm_invalid: .asciz "rhun --wasm-host: the module cannot run: "

@@ -1114,7 +1114,12 @@ FN app_reload_doc
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
     jz 9f
-    cmp qword ptr [rbx + DOC_img], 0
+    cmp qword ptr [rbx + DOC_nb], 0     # notebooks: its extension reads the file again
+    je 1f
+    mov rdi, rbx
+    call nb_disk_reload
+    EPILOGUE
+1:  cmp qword ptr [rbx + DOC_img], 0
     jne .Lrd_image
     call vfs_stamp
     mov [rsp + 24], rax        # stamp belongs to the bytes read, not a later replacement
@@ -1223,10 +1228,21 @@ FN app_reload_doc
     EPILOGUE
 
 FN cmd_reload_file
-    mov rdi, [rip + g_file]
+    mov rdi, [rip + g_doc]      # resources group: a virtual document asks its provider again
+    test rdi, rdi
+    jz 0f
+    cmp qword ptr [rdi + DOC_uri], 0
+    je 0f
+    jmp vdoc_retry
+0:  mov rdi, [rip + g_file]
     test rdi, rdi
     jz 1f
-    jmp app_reload_doc
+    mov rax, [rdi + DOC_nb]     # notebooks: Revert File reads it again, its changes go
+    test rax, rax
+    jz 2f
+    mov rdi, rax
+    jmp nb_reload
+2:  jmp app_reload_doc
 1:  ret
 
 .section .rodata

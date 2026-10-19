@@ -16,6 +16,8 @@
 .globl cfg_restore_project
 .globl cfg_follow_system, cfg_dark_theme, cfg_light_theme, cfg_theme_keys
 cfg_restore_project: .long 1
+.globl cfg_test_gutter
+cfg_test_gutter: .long 1        # testing: [testing] gutter, the tests' glyphs in the gutter
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
 cfg_line_height: .long 150
@@ -79,6 +81,8 @@ cfg_git: .long 1
 cfg_commit_ai: .long 0
 .globl cfg_update_check
 cfg_update_check: .long 1
+.globl cfg_secrets               # resources group: where extensions keep secrets (SB_*)
+cfg_secrets: .long 0
 .globl cfg_ext_updates
 cfg_ext_updates: .long 0         # [updates] extensions: XM_INSTALL, XM_CHECK or XM_OFF (extension management)
 .p2align 3
@@ -476,6 +480,7 @@ FN config_load
     je 1f
     mov dword ptr [rip + cfg_agents_grok], 1
 1:  call config_agent_sources
+    call agentext_config_done   # AI: the extension sources' switches from this read
     mov rdi, r15
     call mem_free
     EPILOGUE
@@ -826,6 +831,9 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Ls_git: .asciz "git"
 .Ls_updates: .asciz "updates"
 .Ls_remote: .asciz "remote"
+.Ls_testing: .asciz "testing"
+.Ls_debug: .asciz "debug"
+.Ls_extensions: .asciz "extensions"
 
 .macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0, live_desc=0
     .quad \sec, 1f, \ptr, 2f
@@ -920,12 +928,19 @@ g_settings:
     SETTING .Ls_git, commit_ai, ST_CHOICE, cfg_commit_ai, 0, 3, 1, 0, "Commit message AI", "Optional. Cloud providers use your subscription.", g_ai_opts, g_ai_provider_desc
     SETTING .Ls_git, commit_model, ST_STR, cfg_commit_model, 0, 0, 0, 0, "Local model", "Ollama model name. Default download: about 1 GB."
     SETTING_ACTION .Ls_git, ai_setup, cmd_ai_model_files, .Lai_setup, g_ai_local_desc
+    SETTING .Ls_extensions, secrets, ST_CHOICE, cfg_secrets, 0, 2, 1, 0, "Extension secrets", "Where extensions keep passwords and tokens. A file is as safe as any file only you can read.", .Lsecrets_opts
     SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
     SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_version_text, g_update_desc
     # extension management
     SETTING .Ls_updates, extensions, ST_CHOICE, cfg_ext_updates, 0, 2, 1, 0, "Extension updates", "Install reviewed versions by themselves, or only show updates.", .Lextup_opts
     SETTING_ACTION .Ls_updates, check_extensions, cmd_check_extensions, .Lextup_label, g_extup_desc
+    # debugger (debugview.s, debugconsole.s)
+    SETTING .Ls_debug, show_on_start, ST_BOOL, g_debug_show_on_start, 0, 1, 1, 0, "Show the debug view on start", "Open the Variables, Watch, Call Stack and Breakpoints sections and the Debug Console when a session starts."
+    SETTING .Ls_debug, keys_in_terminal, ST_BOOL, g_debug_keys_in_terminal, 0, 1, 1, 0, "Debug keys in the terminal", "While a session runs, F5, F6, F10, F11 and Shift+F5 reach the debugger even when the terminal has focus."
+    SETTING .Ls_debug, console_lines, ST_INT, g_dcon_max, 1000, 100000, 1000, 0, "Debug console lines", "Lines the Debug Console keeps; older ones go."
     SETTING .Ls_remote, agent_binary, ST_STR, cfg_remote_agent_binary, 0, 0, 0, 0, "Remote agent binary", "A Linux rhun to start on remote hosts. Empty uses this release's own."
+    # testing (testgutter.s)
+    SETTING .Ls_testing, gutter, ST_BOOL, cfg_test_gutter, 0, 1, 1, 0, "Test buttons in the gutter", "A run button and the result at each test's first line."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
 .Lextup_opts: .asciz "install", "Install", "check", "Show only", "off", "Off", ""
@@ -935,5 +950,6 @@ g_settings:
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"
+.Lsecrets_opts: .asciz "system", "Keychain", "memory", "Memory", "file", "File", ""
 
 .Lai_setup: .asciz "Local model files"

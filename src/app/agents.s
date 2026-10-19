@@ -62,6 +62,8 @@ index_shown: .long 0           # the running worker shows as loading; routine ru
 last_visible: .long 0
 .p2align 3
 ext_listed: .quad 0             # rows of extensions' sessions in the page (agents_ext_rows)
+keep_empty: .long 0             # add_msg keeps an empty message (an extension's indices count it)
+.p2align 3
 ext_pinned: .zero VEC_SIZE      # agents_ext_rows: the rows after the page while extension rows go in
 index_debounce: .quad 0
 index_started: .quad 0
@@ -1163,7 +1165,9 @@ add_msg:
     test rdx, rdx
     jnz 1f
     test r15, r15
-    jz 9f
+    jnz 1f
+    cmp dword ptr [rip + keep_empty], 0
+    je 9f                       # an extension's messages keep their places (agents_ext_msg)
 1:  mov r13, rax
     mov r14, rdx
     # results are shown as a short excerpt
@@ -3057,7 +3061,9 @@ FN agents_ext_msg
     mov rdx, r13
     mov rcx, r14
     mov r8, r15
+    mov dword ptr [rip + keep_empty], 1
     call add_msg
+    mov dword ptr [rip + keep_empty], 0
     call time_ms
     mov [rbx + AS_changed], rax
     EPILOGUE

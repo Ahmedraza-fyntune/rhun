@@ -613,8 +613,10 @@ FN app_doc_tab
     add rax, [rip + g_tabs + VEC_ptr]
     inc rcx
     cmp qword ptr [rax + TAB_kind], TAB_DOC
+    je 2f
+    cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
     jne 1b
-    mov rax, [rax + TAB_doc]
+2:  mov rax, [rax + TAB_doc]
     cmp [rax + DOC_id], rdi
     jne 1b
     lea rax, [rcx - 1]
@@ -646,7 +648,13 @@ FN app_save_all
     mov rdi, rbx
     call tab_at
     inc rbx
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK     # notebooks save too
+    jne 11f
+    mov r14, [rax + TAB_doc]
+    mov rdi, [r14 + DOC_nb]
+    call nb_sync_dirty
+    jmp 12f
+11: cmp qword ptr [rax + TAB_kind], TAB_DOC
     jne 1b
     mov r14, [rax + TAB_doc]
     test dword ptr [r14 + DOC_flags], DF_READONLY
@@ -655,7 +663,7 @@ FN app_save_all
     je 1b
     mov rdi, r14
     call doc_dirty
-    test eax, eax
+12: test eax, eax
     jz 1b
     mov rdi, r14
     call doc_readonly
@@ -691,14 +699,14 @@ save_all_step:
     inc qword ptr [rbx + SA_pos]
     mov rcx, [rbx + SA_ids + VEC_ptr]
     mov rdi, [rcx + rax*8]
-    call extproto_doc
+    call app_doc_by_id
     test rax, rax
     jz 1b
     mov rdi, rax
     xor esi, esi
     lea rdx, [rip + save_all_completed]
     mov rcx, rbx
-    call save_start
+    call app_save_start
     test rax, rax
     jz 1b
     cmp rax, 1

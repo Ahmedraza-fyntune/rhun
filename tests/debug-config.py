@@ -102,6 +102,29 @@ class Config(debughost.DebugHost):
         for key in ('before', 'after', 'hidden', 'server', 'compound'):
             self.assertNotIn(key, args)
 
+    def argv(self):
+        for line in self.dap_log():
+            if line.startswith('argv '):
+                return line[5:].split(' ')
+        return None
+
+    def test_config_values_in_the_adapter_command(self):
+        # the fake debugger's args end with --count ${config:count|42} (review: cn_find's index)
+        args, out = self.args_for('count = 123\n')
+        self.assertEqual(self.argv()[-2:], ['--count', '123'])
+        self.log.unlink()
+        args, out = self.args_for('')
+        self.assertEqual(self.argv()[-2:], ['--count', '42'])
+
+    def test_integers_without_leading_zeros(self):
+        # review: count = 007 was sent as invalid JSON
+        for text, value in (('007', 7), ('-0', 0), ('-012', -12), ('0', 0)):
+            with self.subTest(text=text):
+                if self.log.exists():
+                    self.log.unlink()
+                args, out = self.args_for('count = %s\n' % text)
+                self.assertEqual(args['count'], value, out)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -119,6 +119,18 @@ ICONS.append(('BEAKER', [('W', 10)] + line([(48, 14), (48, 52), (16, 110), (112,
                         + [('M', 40, 14), ('L', 88, 14), ('M', 30, 84), ('L', 98, 84)]))
 ICONS.append(('CLOUD', [('W', 10)] + line([(36, 98)] + arc(36, 78, 20, 90, 270, 6) + arc(60, 50, 26, 200, 340, 8)
                                           + arc(92, 70, 22, 270, 450, 8) + [(36, 98)])))
+# testing's states: a ring (queued, running) and a slashed circle (skipped)
+ICONS.append(('RING', [('W', 12), ('O', 64, 64, 34)]))
+ICONS.append(('SLASH', [('W', 11), ('O', 64, 64, 38), ('M', 37, 91), ('L', 91, 37)]))
+# the debugger's toolbar (debugview.s; PLAY and STOP above serve as Continue and Stop): pause, step
+# over, into and out
+ICONS.append(('DBG_PAUSE', [('P', 4, 32, 24, 54, 24, 54, 104, 32, 104), ('P', 4, 74, 24, 96, 24, 96, 104, 74, 104)]))
+ICONS.append(('DBG_OVER', [('W', 11)] + line(arc(64, 72, 40, 180, 340, 12)) + [('P', 3, 86, 60, 118, 56, 108, 86),
+                                                                              ('D', 64, 104, 11)]))
+ICONS.append(('DBG_INTO', [('W', 11), ('M', 64, 12), ('L', 64, 62), ('P', 3, 42, 48, 86, 48, 64, 78),
+                           ('D', 64, 104, 11)]))
+ICONS.append(('DBG_OUT', [('W', 11), ('M', 64, 84), ('L', 64, 34), ('P', 3, 42, 48, 86, 48, 64, 18),
+                          ('D', 64, 108, 11)]))
 # icon_mask keys its cache by icon | size << 8
 assert len(ICONS) <= 256, len(ICONS)
 # the color names of file icons, in the order of their theme slots from T_ICON (src/app/theme.s)

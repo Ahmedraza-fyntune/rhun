@@ -730,6 +730,10 @@ FN ext_set_disabled
     jz .Lpn_enabled_choices
     mov rdi, rbx
     call ext_pending_clear
+    mov rdi, rbx
+    call vdoc_ext_gone          # resources group: the virtual documents it provides close
+    mov rdi, rbx
+    call tasks_forget           # tasks and terminals: turned off, its tasks go
 .Lpn_enabled_choices:
     call ext_settings_save
     test r12d, r12d
@@ -794,6 +798,7 @@ FN ext_restart_now
 FN ext_stop_user
     PROLOGUE
     mov rbx, rdi
+    call tasks_forget           # tasks and terminals: stopped by the user, its tasks go
     mov dword ptr [rbx + EXT_restart], 0
     mov dword ptr [rbx + EXT_wait_slot], 0
     mov rdi, rbx
@@ -1014,6 +1019,10 @@ FN ext_retire
 2:  mov dword ptr [rbx + EXT_status], ES_REMOVED
     mov dword ptr [rbx + EXT_restart], 0
     mov rdi, rbx
+    call secrets_ext_removed    # resources group: its secrets go with it
+    mov rdi, rbx
+    call vdoc_ext_gone          # and the virtual documents it provides
+    mov rdi, rbx
     call ext_pending_clear
     mov rdi, rbx
     call extpage_forget         # its details page goes back to the list (a reinstall is a new record)
@@ -1031,10 +1040,15 @@ FN ext_retire
     call langfeat_ext_gone
     mov rdi, rbx
     call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
+    call nb_ext_gone
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
     call testmodel_forget       # testing: its tests and results go
+    mov rdi, rbx
+    call termproto_ext_gone     # tasks and terminals: its programs stop, their tabs stay
+    mov rdi, rbx
+    call tasks_forget           # and its published tasks go
     mov rdi, rbx
     call ai_ext_gone            # AI: its sessions, tool calls and cards
     call ext_cmds_changed
@@ -1469,6 +1483,7 @@ dup_cstr_r14:
 # ext_init(): read every OWNER/NAME/extension.ini under the extensions folder
 FN ext_init
     PROLOGUE
+    call extres_init            # resources group: the session's start, for print-startup
     call extpage_prompt_invalidate_pure
     lea rdi, [rip + ext_root]
     call sb_clear
@@ -1862,6 +1877,9 @@ manifest_kv:
     PROLOGUE
     mov r12, rdi
     mov rbx, [rip + cur_ext]
+    mov rdi, r12                # resources group: idle, runs, contains:, schemes (extres.s)
+    mov rsi, rbx
+    call extres_manifest_kv
     cmp qword ptr [r12 + INI_seclen], 0
     jne .Lmk_sections
     # top level
@@ -2382,8 +2400,7 @@ parse_needs:
     call ini_key_is
     test eax, eax
     jz 5f
-    mov edi, NEEDS_TERMINAL
-    call needs_yes
+    call needs_terminal
     jmp 9f
 5:  mov rdi, r12
     lea rsi, [rip + .Ln_run]
@@ -2417,10 +2434,29 @@ parse_needs:
     lea rsi, [rip + .Ln_git]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 81f
     mov edi, NEEDS_GIT_READ
     xor esi, esi
     call needs_level
+    jmp 9f
+81: mov rdi, r12                # resources group: secrets = yes (the system keychain)
+    lea rsi, [rip + .Ln_secrets]
+    call ini_key_is
+    test eax, eax
+    jz 10f
+    mov edi, NEEDS_SECRETS
+    call needs_yes
+    jmp 9f
+10: # notebooks: kernels = the programs rhun may start as the user for its notebooks (nbexec.s)
+    mov rdi, r12
+    lea rsi, [rip + .Ln_kernels]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov rdi, [rbx + EXT_nb_kernels]
+    call mem_free
+    call val_dup
+    mov [rbx + EXT_nb_kernels], rax
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -2446,6 +2482,27 @@ needs_level:
     jz 9f
     or [rbx + EXT_needs], r13d
     or [rbx + EXT_needs], r14d
+9:  EPILOGUE
+
+# needs_terminal(): terminal = no, yes or suggest (v1's yes: propose a line), run (programs in terminal
+#   tabs, once allowed per project), input (and type into them), output (and read what they show):
+#   a ladder, each level with the ones before it (tasks and terminals)
+needs_terminal:
+    PROLOGUE
+    xor r13d, r13d
+    lea r14, [rip + term_levels]
+1:  mov rdx, [r14]
+    test rdx, rdx
+    jz 9f
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    add r14, 16
+    jmp 1b
+2:  mov eax, [r14 + 8]
+    or [rbx + EXT_needs], eax
 9:  EPILOGUE
 
 # needs_yes(bit): the value is yes or no
@@ -3014,6 +3071,8 @@ ext_spawn:
     mov dword ptr [rip + g_dirty], 1
     jmp .Les_scratch_return
 .Les_spawn:
+    mov rdi, rbx
+    call ext_wasm_held          # a WebAssembly extension's host holds it everywhere (extwasm.s)
     mov rdi, [rip + argv_vec + VEC_ptr]
     mov rsi, [rip + env_vec + VEC_ptr]
     mov rdx, [rbx + EXT_dir]
@@ -3083,6 +3142,8 @@ ext_spawn:
     mov [rbx + EXT_started], rax
     mov dword ptr [rbx + EXT_status], ES_STARTING
     mov dword ptr [rip + g_dirty], 1
+    mov rdi, rbx
+    call extres_started         # resources group: start time and the counters of this run
 9:  jmp .Les_scratch_return
 .Les_fail2:
     mov edi, [rip + pipe_in]
@@ -3672,7 +3733,12 @@ FN ext_send
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_STOPPING
     jne 9f
-1:  mov rax, [rbx + EXT_wq + SB_len]
+1:  mov rdi, rbx                # resources group: messages and bytes out
+    mov rsi, r13
+    call extres_out
+    mov rsi, r12
+    mov rdx, r13
+    mov rax, [rbx + EXT_wq + SB_len]
     sub rax, [rbx + EXT_wq_off]
     add rax, rdx
     cmp rax, EXT_WQ_HARD
@@ -3751,6 +3817,8 @@ FN ext_exited
     mov dword ptr [rbx + EXT_global_wait], 0
     mov qword ptr [rbx + EXT_full_since], 0
     mov rdi, rbx
+    call extres_exited          # resources group: what this run held
+    mov rdi, rbx
     call extwatch_owner_gone
     mov rdi, rbx
     call extmarks_clear_owner
@@ -3775,7 +3843,11 @@ FN ext_exited
     mov rdi, rbx
     call testproto_ext_gone     # testing: its runs end errored and their processes stop
     mov rdi, rbx
+    call termproto_ext_gone     # tasks and terminals: its programs stop, their tabs stay
+    mov rdi, rbx
     call ai_ext_gone            # AI: its sessions, tool calls and cards
+    mov rdi, rbx
+    call nb_ext_gone            # and its notebooks' requests, runs and kernels
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -3845,7 +3917,11 @@ FN ext_exited
     mov [rbx + EXT_reason], rax
     mov dword ptr [rbx + EXT_status], ES_STOPPED
     jmp 8f
-5:  mov dword ptr [rbx + EXT_status], ES_STOPPED
+5:  mov rdi, rbx
+    call extres_stopped         # resources group: an idle stop leaves it idle, ready to start
+    test eax, eax
+    jnz 8f
+    mov dword ptr [rbx + EXT_status], ES_STOPPED
     cmp dword ptr [rbx + EXT_disabled], 0
     je 51f
     mov dword ptr [rbx + EXT_status], ES_DISABLED
@@ -3959,6 +4035,7 @@ ext_project_check:
     je 9f                      # the initial project, before any activation
     call extwatch_project_changed
     call extproto_send_project_all
+    call tasks_project_changed  # tasks and terminals: the extensions publish again
     xor r12d, r12d
 3:  cmp r12, [rip + g_exts + VEC_len]
     jae 9f
@@ -3984,6 +4061,7 @@ FN ext_tick
     cmp qword ptr [rip + g_exts + VEC_len], 0
     je 9f
     inc dword ptr [rip + ext_ticks]
+    call extres_frame           # resources group: start pacing, idle = stop, cost samples
     call ext_project_check
     call extwatch_tick
     call invoke_tick            # calls between extensions (invoke.s)
@@ -4052,6 +4130,11 @@ FN ext_tick
     je 24b
     cmp dword ptr [rbx + EXT_status], ES_IDLE
     jne 24b
+    mov rdi, rbx                # resources group: EXT_STARTS_PER_FRAME
+    xor esi, esi
+    call extres_pace
+    test eax, eax
+    jz 25f
     call ext_running
     cmp eax, EXT_MAX_RUNNING
     jae 25f
@@ -4231,6 +4314,11 @@ FN ext_timeout
     add rax, r13
     call deadline
 .Lew_timeout_none:
+    call extres_timeout         # resources group: idle = stop, cost samples
+    cmp rax, -1
+    je .Lres_timeout_none
+    call deadline
+.Lres_timeout_none:
     call invoke_timeout
     cmp rax, -1
     je .Liv_timeout_none
@@ -4330,7 +4418,14 @@ FN ext_start_matching
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_IDLE
     jne 1b
+    cmp r12d, ON_STARTUP        # resources group: on = startup starts EXT_STARTS_PER_FRAME a frame
+    jne 2f
     mov rdi, rbx
+    mov esi, 1
+    call extres_pace
+    test eax, eax
+    jz 1b
+2:  mov rdi, rbx
     call ext_start
     jmp 1b
 9:  EPILOGUE
@@ -4877,6 +4972,7 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links
     # source control (wider-parity C)
     .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
+    .quad .Lpv_notebook, EXT_pv_notebook, .Lpv_nbtitle, EXT_pv_nbtitle, .Lpv_nbkernel, EXT_pv_nbkernel  # notebooks
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -5002,6 +5098,9 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_document_links: .asciz "document_links"
 .Lpv_tests: .asciz "tests"
 .Lpv_tests_profiles: .asciz "tests.profiles"
+.Lpv_notebook: .asciz "notebook"
+.Lpv_nbtitle: .asciz "notebook.title"
+.Lpv_nbkernel: .asciz "notebook.kernel"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"
@@ -5016,7 +5115,9 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_secrets: .asciz "secrets"
 .Ln_git: .asciz "git"
+.Ln_kernels: .asciz "kernels"           # notebooks
 .Lpv_commit: .asciz "commit_message"
 .Lpv_quickdiff: .asciz "quickdiff"
 .Lpv_scm: .asciz "scm"
@@ -5159,6 +5260,19 @@ ext_target: .asciz "linux-x86_64"
 .Lr_settings_stop: .asciz "stopped on its page"
 .Lr_settings_change: .asciz "restarting after a settings change"
 .Lf_extensions_ini: .asciz "/extensions.ini"
+.Lt_yes: .asciz "yes"
+.Lt_suggest: .asciz "suggest"
+.Lt_run: .asciz "run"
+.Lt_input: .asciz "input"
+.Lt_output: .asciz "output"
+.p2align 3
+# [needs] terminal's levels and their bits (needs_terminal)
+term_levels:
+    .quad .Lt_yes, NEEDS_TERMINAL, .Lt_suggest, NEEDS_TERMINAL
+    .quad .Lt_run, NEEDS_TERMINAL | NEEDS_TERM_RUN
+    .quad .Lt_input, NEEDS_TERMINAL | NEEDS_TERM_RUN | NEEDS_TERM_INPUT
+    .quad .Lt_output, NEEDS_TERMINAL | NEEDS_TERM_RUN | NEEDS_TERM_INPUT | NEEDS_TERM_OUTPUT
+    .quad 0, 0
 .Lk_pinned: .asciz "pinned"
 .Lk_edits: .asciz "edits"         # wsedit
 .Lk_description: .asciz "description"
