@@ -71,6 +71,11 @@
 .equ SYS_inotify_init1, 294
 .equ SYS_memfd_create, 319
 .equ SYS_close_range, 436
+# remote hosts (src/app/remote.s): channels are socketpairs; remote pids carry REMOTE_PID_TAG
+.equ SYS_shutdown, 48
+.equ SYS_socketpair, 53
+.equ SYS_renameat2, 316         # the agent's rename without replacing (Linux only)
+.equ REMOTE_PID_TAG, 0x20000000
 .equ SYS_prctl, 157
 .equ PR_SET_PDEATHSIG, 1
 .equ PR_SET_NO_NEW_PRIVS, 38
@@ -619,6 +624,9 @@ F DOC_language_name, 8  # owned explicit language name, retained even while unav
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
+# source control (wider-parity C): quick-diff bases from extensions (scmext.s)
+F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
+F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1
@@ -1136,9 +1144,10 @@ F DV_lines, 8           # DL per line
 F DV_n, 8
 F DV_name, 8            # tab title
 F DV_rev, 8             # commit, or 0 for the work tree
+F DV_rev2, 8            # with DV_two: the second revision, or 0 for the work tree
 F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
-F DV_pad, 4
+F DV_two, 4             # 1: DV_rev against DV_rev2 (git-diff-open), not a commit against its parent
 F DV_review, 8          # AI (review.s): the proposal a Review tab shows, or 0
 ENDSTRUCT DV_SIZE
 STRUCT
@@ -1165,6 +1174,11 @@ ENDSTRUCT GF_SIZE
 .equ GG_MERGE, 1                # conflicts
 .equ GG_STAGED, 2
 .equ GG_CHANGES, 3              # not staged, untracked
+# source control row menus (scm_row_menu, scmext.s): their locations
+.equ SL_HISTORY_COMMIT, 1
+.equ SL_HISTORY_FILE, 2
+.equ SL_SCM_RESOURCE, 3
+.equ SL_SCM_GROUP, 4
 
 # what HEAD is (g_git_head)
 .equ HD_BRANCH, 0
@@ -1473,6 +1487,11 @@ ENDSTRUCT TF_SIZE
     # contributions and commands (invoke.s, when.s, extcontext.s)
     FEATURE FEAT_COMMAND_ARGS, "command-args", 1  # 0 run ... FROM LEN, run-command, call
     FEATURE FEAT_CONTEXT_KEYS, "context-keys", 0  # set-context
+    # source control (wider-parity C): gitdata.s, scmext.s
+    FEATURE FEAT_GIT_DATA, "git-data", 0          # git-repo, git-status, git-blame, git-log, git-show, git-diff-open
+    FEATURE FEAT_COMMIT_MESSAGE, "commit-message", 1   # rhun asks a commit-message provider
+    FEATURE FEAT_QUICKDIFF, "quickdiff", 1        # rhun asks a quick-diff provider for a base text
+    FEATURE FEAT_SCM, "scm", 0                    # a second VCS provider's tabs
     # testing (testproto.s): test items, runs, results, coverage, test-exec
     FEATURE FEAT_TESTS, "tests", 1
     # AI (wider-parity D: agentext.s, review.s, tools.s)
@@ -1541,11 +1560,14 @@ FEATURE_LIST
 .equ PK_TYPE_FORMAT, 22
 .equ PK_LINKS, 23
 .equ PK_SAVE_ACTIONS, 24
-.equ PK_COUNT, 25
+.equ PK_COMMIT_MESSAGE, 25       # source control (scmext.s)
+.equ PK_QUICKDIFF, 26
+.equ PK_COUNT, 27
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
+.equ QO_SCM, 4                   # source control (scmext.s)
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1657,6 +1679,8 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_INSTALL, 7      # Install from GitHub: owner/name
 .equ PROMPT_EXT_SETTING, 8      # a text setting of an extension (extpage.s)
 .equ PROMPT_RENAME_SYMBOL, 9    # the new name of a symbol (langfeat.s)
+.equ PROMPT_REMOTE, 40          # remote hosts: a question for ssh, answered in plain text (remoteui.s)
+.equ PROMPT_REMOTE_SECRET, 41   # remote hosts: a password or passphrase, drawn masked
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -1763,6 +1787,10 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
+# source control (wider-parity C): [provides] commit_message, quickdiff, scm (cstr values or 0)
+F EXT_pv_commit, 8      # "yes": a commit-message provider (scmext.s)
+F EXT_pv_quickdiff, 8   # file patterns it gives quick-diff bases for
+F EXT_pv_scm, 8         # "yes": it registers VCS provider tabs
 F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
 F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
 F EXT_tests_progs, 8    # [needs] tests: programs rhun may start for its test runs (cstr) or 0
@@ -1782,6 +1810,10 @@ F EXT_pv_ttrig, 8       # type_format.triggers
 F EXT_pv_document_links, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
+# WebAssembly extensions (extwasm.s)
+F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
+F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
+F EXT_wasm_pad, 4
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
@@ -1913,6 +1945,14 @@ ENDSTRUCT CRF_SIZE
     CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
     CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
     CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+    # source control (wider-parity C): gitTrusted (git.s), and a row menu's target (scmext.s)
+    CTXKEY CTX_GIT_TRUSTED, "gitTrusted", 0         # false while git is paused for a linked folder
+    CTXKEY CTX_SCM_PROVIDER, "scmProvider", 0       # "git" or the provider extension's OWNER/NAME
+    CTXKEY CTX_SCM_RESOURCE_GROUP, "scmResourceGroup", 0   # merge, staged, changes, or a provider's
+    CTXKEY CTX_SCM_RESOURCE_STATUS, "scmResourceStatus", 0 # the resource's letter (M A D R C U ?)
+    # remote hosts (remote.s): "ssh", "docker", "podman", "wsl", "local" in a remote window, else empty
+    CTXKEY CTX_REMOTE_NAME, "remoteName", 0
+    CTXKEY CTX_REMOTE_HOST, "remoteHost", 0
 .endm
 # when.s expands the list as records: FN, the name, padding to 8 bytes
 .macro CTXKEY sym, name, fn
@@ -1993,6 +2033,7 @@ ENDSTRUCT XK_SIZE
 .equ NEEDS_HOME_READ, 16
 .equ NEEDS_NETWORK, 32
 .equ NEEDS_TERMINAL, 64
+.equ NEEDS_GIT_READ, 128        # [needs] git = read: the project's Git data through rhun (gitdata.s)
 
 .equ EXT_MAX_RUNNING, EXT_CAP
 .equ EXT_HELLO_MS, 5000
@@ -2269,6 +2310,8 @@ F TM_tabs, 8            # byte per column, 1 = tab stop
 F TM_out, SB_SIZE       # replies for the program
 F TM_str, SB_SIZE       # OSC string
 F TM_title, SB_SIZE
+F TM_tap, 8             # SB* that each finished line goes to (tasks' matchers), or 0
+F TM_tapdrop, 8         # lines left out while the tap held 64 KB
 ENDSTRUCT TM_SIZE
 
 # Branch on rooted paths without clobbering registers.
@@ -2330,6 +2373,284 @@ F AS_req, 8             # kind 5: the agent-transcript request in flight (its id
 F AS_from, 8            # kind 5: the FROM of that request
 F AS_ask, 8             # kind 5 (D4): the open card, an AK record, or 0
 ENDSTRUCT AS_SIZE
+
+# ---- debugger (DAP client): debugcfg.s, dapwire.s, dap.s, bp.s, debugconsole.s, debugctl.s ----
+.equ NEEDS_DEBUG, 0x10000           # [needs] debug = yes: start debug adapters that run as the user
+.equ DBG_MAX, 64                    # debuggers ([debugger.TYPE] sections), in all
+.equ DBG_PER_EXT, 8
+.equ DBG_ATTRS_MAX, 128             # attr.* per debugger
+.equ DS_MAX, 8                      # sessions, child sessions included
+.equ DS_PEND, 256                   # requests in flight per session
+.equ DAP_BODY_MAX, 8388608          # one message
+.equ DAP_HEADER_MAX, 1024
+.equ DAP_WQ_MAX, 4194304            # bytes queued for one adapter
+.equ DAP_NODES_MAX, 262144          # JSON values in one message
+.equ DAP_DEPTH_MAX, 64
+.equ DAP_MSGS_TICK, 64              # messages handled per session per frame
+.equ DAP_TICK_US, 2000              # and time spent on them
+.equ DAP_INIT_MS, 10000             # the initialize answer
+.equ DAP_REQ_MS, 10000              # UI requests (stack, scopes, variables, evaluate)
+.equ DAP_VARS_MAX, 20000            # variable nodes per stop
+.equ DAP_STRS_MAX, 4194304          # their strings
+.equ DAP_FRAMES, 20                 # frames asked for at a time
+.equ DAP_THREADS_MAX, 1024
+.equ DAP_EXPANDED_MAX, 512
+.equ BP_MAX, 4096
+.equ BP_PER_FILE, 1000
+.equ WATCH_MAX, 64
+
+# debugger: a [debugger.TYPE] section of an extension's manifest
+STRUCT
+F DBG_ext, 8            # EXT*
+F DBG_type, 8           # cstr
+F DBG_title, 8          # cstr or 0
+F DBG_languages, 8      # cstr: grammar names, space separated, or 0
+F DBG_program, 8        # cstr: names tried in order, or a path inside the extension (with a /)
+F DBG_program_t, 8      # program.TARGET for this system, or 0
+F DBG_paths, 8          # cstr: extra folders to search, or 0
+F DBG_args, 8           # cstr: words with variables, or 0
+F DBG_args_t, 8         # args.TARGET, or 0
+F DBG_requests, 8       # cstr or 0 (launch attach)
+F DBG_templates, 8      # cstr or 0
+F DBG_install, 8        # cstr or 0
+F DBG_attrs, 8          # owned SB* of "NAME\tTYPE\n" lines, or 0
+F DBG_transport, 4      # 0 stdio, 1 tcp
+F DBG_resolve, 4        # 1: debug-resolve before every launch
+F DBG_nattrs, 4
+F DBG_pad, 4
+ENDSTRUCT DBG_SIZE
+
+# a request in flight to an adapter
+STRUCT
+F PD_seq, 4
+F PD_kind, 4            # RQ_*
+F PD_epoch, 4
+F PD_pad, 4
+F PD_ctx, 8             # per kind: a node index, an owned list of breakpoint ids...
+F PD_sent, 8            # time_ms
+ENDSTRUCT PD_SIZE
+.equ RQ_INITIALIZE, 1
+.equ RQ_LAUNCH, 2
+.equ RQ_CONFIGDONE, 3
+.equ RQ_SETBP, 4
+.equ RQ_SETFBP, 5
+.equ RQ_SETEXC, 6
+.equ RQ_THREADS, 7
+.equ RQ_STACK, 8
+.equ RQ_SCOPES, 9
+.equ RQ_VARIABLES, 10
+.equ RQ_EVALUATE, 11
+.equ RQ_RESUME, 12      # continue, next, stepIn, stepOut
+.equ RQ_PAUSE, 13
+.equ RQ_TERMINATE, 14
+.equ RQ_DISCONNECT, 15
+.equ RQ_SETVARIABLE, 16
+.equ RQ_EXCINFO, 17
+.equ RQ_RESTART, 18
+.equ RQ_REPL, 19        # evaluate from the console
+.equ RQ_WATCH, 20       # evaluate for a watch
+.equ RQ_HOVER, 21
+.equ RQ_REVERSE, 22     # (never pending) an answer rhun sent
+
+# session states
+.equ DSS_FREE, 0
+.equ DSS_INITIALIZING, 1
+.equ DSS_CONFIGURING, 2
+.equ DSS_RUNNING, 3
+.equ DSS_PAUSED, 4
+.equ DSS_TERMINATING, 5
+.equ DSS_ENDED, 6
+.equ DSS_CONNECTING, 7
+.equ DSS_APPROVAL, 8        # waiting for the user to allow it
+
+# session flags
+.equ DSF_INITIALIZED, 1     # the initialized event came
+.equ DSF_CONFIGDONE, 2      # configurationDone went out (or was not needed)
+.equ DSF_TERMINATED, 4      # the terminated event came
+.equ DSF_DISCONNECT, 8      # disconnect went out
+.equ DSF_EOF, 16            # the adapter closed its output
+.equ DSF_LAUNCHED, 32       # the launch answer came, successfully
+.equ DSF_EXITED, 64         # the exited event came
+.equ DSF_STALE, 128         # the variables shown are from an earlier stop
+.equ DSF_THREADS, 256       # the thread list must be fetched again
+
+# adapter capabilities (initialize answer)
+.equ CAP_CONFIGDONE, 1
+.equ CAP_COND, 2
+.equ CAP_HIT, 4
+.equ CAP_LOG, 8
+.equ CAP_FUNCBP, 16
+.equ CAP_TERMINATE, 32
+.equ CAP_RESTART, 64
+.equ CAP_SETVAR, 128
+.equ CAP_HOVER, 256
+.equ CAP_EXCINFO, 512
+.equ CAP_CANCEL, 1024
+.equ CAP_EXCOPTIONS, 2048
+
+# a thread of the paused program
+STRUCT
+F DT_id, 8
+F DT_name, 4            # offset into DS_strs
+F DT_namelen, 4
+ENDSTRUCT DT_SIZE
+
+# a stack frame of the focused thread
+STRUCT
+F FR_id, 8
+F FR_name, 4
+F FR_namelen, 4
+F FR_path, 4            # offset into DS_strs (0 length: no source path)
+F FR_pathlen, 4
+F FR_line, 4
+F FR_col, 4
+F FR_hint, 4            # 0 normal, 1 subtle, 2 label
+F FR_pad, 4
+ENDSTRUCT FR_SIZE
+
+# a variables-tree node: a scope (depth 0), a variable, or a watch result
+STRUCT
+F VN_ref, 8             # variablesReference (0: no children)
+F VN_parent, 4          # node index, -1 for roots
+F VN_kid0, 4            # first child (children are contiguous), -1 before they load
+F VN_nkids, 4
+F VN_depth, 4
+F VN_flags, 4           # VNF_*
+F VN_epoch, 4
+F VN_name, 4            # offsets and lengths into DS_strs
+F VN_namelen, 4
+F VN_value, 4
+F VN_valuelen, 4
+F VN_type, 4
+F VN_typelen, 4
+F VN_eval, 4
+F VN_evallen, 4
+ENDSTRUCT VN_SIZE
+.equ VNF_EXPANDED, 1
+.equ VNF_LOADING, 2
+.equ VNF_ERROR, 4
+.equ VNF_EXPENSIVE, 8
+.equ VNF_CHANGED, 16
+.equ VNF_WATCH, 32      # a watch expression's result (a root)
+
+# a debug session
+STRUCT
+F DS_state, 4           # DSS_*
+F DS_id, 4              # 1, 2, ... (never reused in a run)
+F DS_dbg, 4             # index into g_debuggers
+F DS_parent, 4          # the parent session's id, or 0
+F DS_request, 4         # 0 launch, 1 attach
+F DS_nodebug, 4
+F DS_pid, 4             # the adapter, 0 when none (or reaped)
+F DS_in, 4              # its input (rhun writes), -1
+F DS_out, 4             # its output (rhun reads), -1
+F DS_err, 4             # its error output, -1
+F DS_seq, 4             # the next request number
+F DS_epoch, 4           # bumped on every stop and resume
+F DS_flags, 4           # DSF_*
+F DS_cfgwait, 4         # configuration answers still awaited
+F DS_stopstep, 4        # Stop's escalation step, 0 before the first press
+F DS_exit, 4            # the debuggee's exit code, -1 unknown
+F DS_thread, 8          # the focused thread's id, 0 for none
+F DS_frame, 4           # the focused frame's index
+F DS_hasvars, 4         # scopes were asked for this stop
+F DS_caps, 8            # CAP_*
+F DS_name, 8            # owned cstr: the configuration's name
+F DS_reason, 8          # owned cstr: why it stopped or ended, or 0
+F DS_desc, 8            # owned cstr: the stop's description, or 0
+F DS_deadline, 8        # time_ms: initialize, a Stop step, a kill, or 0
+F DS_killat, 8          # time_ms when SIGKILL follows SIGTERM, or 0
+F DS_launch, SB_SIZE    # the launch or attach arguments (JSON), kept for restart
+F DS_rbuf, SB_SIZE      # bytes from the adapter not yet parsed
+F DS_wq, SB_SIZE        # bytes to write to it
+F DS_wq_off, 8
+F DS_ebuf, SB_SIZE      # its error output: the line in progress
+F DS_etail, SB_SIZE     # and the last lines (for a crash message)
+F DS_filters, SB_SIZE   # exception filters: "FILTER\tLABEL\tDEFAULT\n" lines
+F DS_threads, VEC_SIZE  # TH
+F DS_frames, VEC_SIZE   # FR of the focused thread
+F DS_vars, VEC_SIZE     # VN
+F DS_strs, SB_SIZE      # their strings
+F DS_expanded, SB_SIZE  # paths of expanded nodes, one per line, kept across stops
+F DS_total_frames, 4    # the stack's total as the adapter reports it
+F DS_npend, 4
+F DS_args, SB_SIZE      # the adapter's argv, each NUL-terminated (copied from g_lc_args)
+F DS_nargs, 4
+F DS_reading, 4         # 1 while its output is watched (0: the read buffer is full)
+F DS_exited_at, 8       # time_ms the adapter's output closed, 0 before
+F DS_dbg_ext, 8         # the debugger's EXT* when the session started
+F DS_pend, PD_SIZE*DS_PEND
+ENDSTRUCT DS_SIZE
+
+# a breakpoint (line or function), with what each session reports about it
+STRUCT
+F BP_id, 4
+F BP_line, 4            # one-based; the user's line
+F BP_enabled, 4
+F BP_kind, 4            # 0 line, 1 function
+F BP_path, 8            # owned cstr: the file (or the function's name)
+F BP_cond, 8            # owned cstrs or 0
+F BP_hit, 8
+F BP_log, 8
+F BP_sid, 4*DS_MAX      # the adapter's id per session slot, 0 none
+F BP_aline, 4*DS_MAX    # the line it reports, 0 unknown
+F BP_ver, 4*DS_MAX      # 0 not sent, 1 unverified, 2 verified, 3 rejected
+F BP_msg, 8*DS_MAX      # owned message cstrs or 0
+ENDSTRUCT BP_SIZE
+# debug console categories
+.equ DCON_STDOUT, 0
+.equ DCON_STDERR, 1
+.equ DCON_CONSOLE, 2
+.equ DCON_IMPORTANT, 3
+.equ DCON_ADAPTER, 4        # the adapter's own error output and stray bytes
+.equ DCON_ERROR, 5          # rhun's messages about a failure
+.equ DCON_INFO, 6           # rhun's notes ("Program exited with code 3")
+.equ DCON_INPUT, 7          # an expression typed into the console
+.equ DCON_RESULT, 8         # its value
+.equ DCON_LINE_MAX, 4096
+# ---- tasks and terminals: programs run as the user (uproc.s) in terminal tabs (termview.s) ----
+.equ SIGINT, 2
+.equ TK_SHELL, 0                # a terminal tab's kind: the user's shell
+.equ TK_TERMINAL, 1             # a program an extension opened (terminal-open, a debugger's runInTerminal)
+.equ TK_TASK, 2                 # a task
+.equ TRV_FOCUS, 0x100           # term_run: the new tab also gets the keyboard
+.equ TRV_SILENT, 0x200          # term_run: the tab is added without showing the panel
+.equ TE_EXIT, 0                 # term_run's fn(cookie, TERM, event, code): exited with code
+.equ TE_STOPPED, 1              # stopped (Stop, Restart, its tab closed while it ran)
+.equ TE_FAILED, 2               # could not start (no TE_STARTED before it)
+.equ TE_CLOSED, 3               # its tab closed: the TERM is gone
+.equ TE_STARTED, 4              # started, code its pid; again after each restart
+# a program for term_run (the lists are copied)
+STRUCT
+F PG_argv, 8            # 0-terminated cstr list; argv[0] a name looked up on the login PATH, or a path
+F PG_sets, 8            # "NAME=value" list, or 0
+F PG_unsets, 8          # "NAME" list, or 0
+F PG_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
+ENDSTRUCT PG_SIZE
+# the Problems store (problems.s): a source, and a problem
+STRUCT
+F PS_key, 8             # owned cstr: what finds it again
+F PS_label, 8           # owned cstr: shown as the problems' source
+F PS_count, 4
+F PS_errors, 4
+F PS_warnings, 4
+F PS_dropped, 4         # not kept: past the caps
+ENDSTRUCT PS_SIZE
+STRUCT
+F PR_src, 8             # PS*
+F PR_path, 8            # absolute path (owned in the store)
+F PR_line, 4            # 1-based, 0 none
+F PR_col, 4             # 1-based bytes (characters with PRF_CHARS), 0 the line's first non-blank
+F PR_endline, 4         # exclusive end, 0 none
+F PR_endcol, 4
+F PR_sev, 4             # SEV_*
+F PR_flags, 4           # PRF_*
+F PR_msg, 8             # cstr
+F PR_code, 8            # cstr or 0
+F PR_seq, 8             # set by the store: its id in the Problems tab
+ENDSTRUCT PR_SIZE
+.equ PRF_CHARS, 1
+.equ MKF_SOURCE, 1              # MK_pad: the mark's owner is a problems source (PS*), not an extension
 .equ AS_KIND_EXT, 5
 .equ AGS_IDLE, 0
 .equ AGS_WORKING, 1

@@ -277,7 +277,12 @@ FN session_last_project
 # every / as % and every % as %%25: never %% otherwise, as a path has no //, so no two folders share
 # a name, and a path without % keeps the name it always had
 session_file:
+    lea rdi, [rip + .Lext]
+# session_project_file(suffix cstr) -> the state file for the current project with that suffix (a
+#   static buffer), or 0: the debugger keeps PROJECT.debug next to PROJECT.session
+FN session_project_file
     PROLOGUE
+    mov r13, rdi
     lea rdi, [rip + path_sb]
     call sb_clear
     mov rbx, [rip + g_project]
@@ -360,8 +365,12 @@ session_file:
 41:
 .endif
     lea rdi, [rip + path_sb]
-    lea rsi, [rip + .Lext]
+    mov rsi, r13
     call sb_push_cstr
+    lea rdi, [rip + path_sb]
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rip + path_sb + SB_len]
     mov rax, [rip + path_sb + SB_ptr]
     EPILOGUE
 8:  xor eax, eax
