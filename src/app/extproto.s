@@ -783,6 +783,66 @@ reply_error_u64:
     call out_byte
     jmp out_end
 
+# ---------------- for verb handlers in other files (editor presentation) ----------------
+
+# xp_field(i) -> rax ptr, rdx len of field i of the message being handled (0, 0 past its fields)
+FN xp_field
+    cmp rdi, [rip + nfields]
+    jae 1f
+    jmp field_at
+1:  xor eax, eax
+    xor edx, edx
+    ret
+# xp_field_u64(i) -> rax value, rdx 1 when field i is a decimal u64
+FN xp_field_u64
+    jmp field_u64
+# xp_nfields() -> rax
+FN xp_nfields
+    mov rax, [rip + nfields]
+    ret
+# xp_cur() -> rax the EXT being served; xp_cur_id() -> rax its request id
+FN xp_cur
+    mov rax, [rip + cur]
+    ret
+FN xp_cur_id
+    mov rax, [rip + cur_id]
+    ret
+# xp_body() -> rax ptr, rdx len of the message's body
+FN xp_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+# xp_reply_ok(id), xp_reply_error(id, "code text"), xp_reply_error_u64(id, "code text ", value),
+# xp_reply_syntax(id)
+FN xp_reply_ok
+    jmp reply_ok
+FN xp_reply_error
+    jmp reply_error
+FN xp_reply_error_u64
+    jmp reply_error_u64
+FN xp_reply_syntax
+    jmp reply_syntax
+# xp_arg_doc(i) -> rax DOC* of field i, or 0 after replying
+FN xp_arg_doc
+    jmp arg_doc
+# xp_need(NEEDS_*) -> eax 1, or 0 after replying needs
+FN xp_need
+    jmp need
+# xp_send(ext, ptr, len): bytes to an extension as one message (an event line and its body)
+FN xp_send
+    PROLOGUE
+    mov r12, [rip + cur]
+    mov [rip + cur], rdi
+    mov rbx, rsi
+    mov r13, rdx
+    call out_begin
+    mov rdi, rbx
+    mov rsi, r13
+    call out_bytes
+    call out_end
+    mov [rip + cur], r12
+    EPILOGUE
+
 # ---------------- for verb handlers in other files (language features: query.s) ----------------
 
 # FN extproto_cur() -> rax the EXT being served; extproto_req_id() -> rax its request's id
@@ -3267,6 +3327,8 @@ hello_features:
     jb 41b
     test r14, r14
     jz 9f
+    call pres_enable            # answers about older versions move through the edit tapes (edtape.s)
+    call deco_visible_again     # and the visible event reaches the new extension too (deco.s)
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
@@ -3855,6 +3917,7 @@ verbs:
     .quad .Lv_git_log, gitdata_h_log, 4096
     .quad .Lv_git_show, gitdata_h_show, 4096
     .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
+    .quad .Lv_qd_refresh, scmext_h_qd_refresh, 4096
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -3874,6 +3937,9 @@ verbs:
     .quad .Lnb_v_kernel_label, h_nb_kernel_label, 4096
     .quad .Lnb_v_exec, h_nb_exec, 262144
     .quad .Lnb_v_exec_signal, h_nb_exec_signal, 0
+    # editor presentation (deco.s)
+    .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
+    .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
@@ -3884,6 +3950,8 @@ verbs:
 .Lv_test_end: .asciz "test-end"
 .Lv_test_coverage: .asciz "test-coverage"
 .Lv_test_exec: .asciz "test-exec"
+.Lpv_decoration_type: .asciz "decoration-type"
+.Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
@@ -3893,6 +3961,7 @@ verbs:
 .Lv_git_log: .asciz "git-log"
 .Lv_git_show: .asciz "git-show"
 .Lv_git_diff_open: .asciz "git-diff-open"
+.Lv_qd_refresh: .asciz "quickdiff-refresh"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
