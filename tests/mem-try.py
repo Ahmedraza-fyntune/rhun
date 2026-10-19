@@ -76,7 +76,7 @@ def build_faults(folder, windows=False):
         if mac:
             command = ['clang', '-arch', 'arm64', '-mmacosx-version-min=12.0', '-o', str(executable),
                        *map(str, objects)]
-            for framework in ('AppKit', 'QuartzCore', 'IOSurface', 'CoreServices', 'Carbon'):
+            for framework in ('AppKit', 'QuartzCore', 'IOSurface', 'CoreServices', 'Carbon', 'Security'):
                 command += ['-framework', framework]
         else:
             command = ['ld', '-static', '-nostdlib', '--no-dynamic-linker', '-z', 'noexecstack',

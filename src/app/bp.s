@@ -95,7 +95,11 @@ bp_ensure:
     jmp 1f
 2:  test rsi, rsi
     jz 9f
-1:  call bp_load
+1:  # another project: what belongs to the one before is saved first (under its own name)
+    cmp dword ptr [rip + save_due], 0
+    je 3f
+    call bp_save
+3:  call bp_load
 9:  add rsp, 8
     pop rcx
     pop rdx
@@ -173,6 +177,49 @@ set_opt:
 1:  add rsp, 8
     pop r12
     pop rbx
+    ret
+
+# bp_index_of_id(id) -> eax its index, -1
+FN bp_index_of_id
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_bps + VEC_len]
+    jae 8f
+    imul rax, rcx, BP_SIZE
+    add rax, [rip + g_bps + VEC_ptr]
+    cmp [rax + BP_id], edi
+    je 9f
+    inc rcx
+    jmp 1b
+8:  mov eax, -1
+    ret
+9:  mov eax, ecx
+    ret
+
+# bp_set_option(index, which, cstr): 1 its condition, 2 its hit count, 3 its log message (an empty
+#   text removes it); the file's list goes to the sessions again
+FN bp_set_option
+    PROLOGUE
+    mov r12d, esi
+    mov r13, rdx
+    call bp_row
+    mov rbx, rax
+    lea rdi, [rbx + BP_cond]
+    cmp r12d, 2
+    jne 1f
+    lea rdi, [rbx + BP_hit]
+1:  cmp r12d, 3
+    jne 2f
+    lea rdi, [rbx + BP_log]
+2:  mov rsi, r13
+    call set_opt
+    mov rdi, [rbx + BP_path]
+    call mark_dirty
+    call changed
+    EPILOGUE
+
+# bp_save_soon(): the state file is written at the next tick (a watch changed)
+FN bp_save_soon
+    mov dword ptr [rip + save_due], 1
     ret
 
 # bp_toggle(path cstr, line): removes the line breakpoint there, or adds one
@@ -1002,7 +1049,7 @@ FN bp_exc_set
 9:  EPILOGUE
 
 # sb_push_clean_bp(sb, ptr, len): bytes with tabs and newlines as spaces
-sb_push_clean_bp:
+FN sb_push_clean_bp
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
@@ -1344,10 +1391,20 @@ FN bp_load
     inc dword ptr [rip + g_bp_gen]
     EPILOGUE
 
-# debug_file() -> rax the state file's path (static), or 0 without a project
+# debug_file() -> rax the state file's path (static) for the project the state was loaded for, or 0
+#   without one
 debug_file:
+    push rbx
+    mov rbx, [rip + g_project]
+    mov rax, [rip + loaded_for]
+    test rax, rax
+    jz 1f
+    mov [rip + g_project], rax
     lea rdi, [rip + .Lsuffix]
-    jmp session_project_file
+    call session_project_file
+    mov [rip + g_project], rbx
+1:  pop rbx
+    ret
 
 # field_next(ptr*, end) -> unescaped next tab-separated field in `field` (NUL-terminated); rax its
 #   length, -1 at the end of the line
@@ -1609,9 +1666,9 @@ FN bp_save
     lea rdi, [rip + line]
     lea rsi, [rip + .Lrec_b]
     call sb_push_cstr
-    # inside the project: relative
+    # inside the project (the one the state belongs to): relative
     mov r13, [rbx + BP_path]
-    mov r14, [rip + g_project]
+    mov r14, [rip + loaded_for]
     test r14, r14
     jz 2f
     mov rdi, r14

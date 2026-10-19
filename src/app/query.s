@@ -1426,16 +1426,18 @@ FN query_dump_pending
 .Lk_transcript: .asciz "agent-transcript"
 .Lk_tool: .asciz "tool"
 .Lk_prompt: .asciz "agent-prompt"
+.Lk_nb_open: .asciz "nb-open"
+.Lk_nb_save: .asciz "nb-save"
 .Lk_linked: .asciz "linked"
 .p2align 3
 qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_expired
     .quad .Lq_late, .Lq_dropped, .Lq_cancelled, 0
 # per asker (QO_*): its reply handler (an expired request is an error answer to it), what takes a
 # query-part, and what hears that the Query cap cut a request short
-qo_reply: .quad 0, langfeat_reply, complete_reply, 0, scmext_reply, testproto_expired, ai_query_expired
+qo_reply: .quad 0, langfeat_reply, complete_reply, 0, scmext_reply, testproto_expired, ai_query_expired, nb_reply
     .quad ws_linked_reply
-qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0, 0, 0
-qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0, 0, 0
+qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0, 0, 0, 0
+qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0, 0, 0, 0
 # the kinds (docs/extensions/v1.1.md, "Language feature queries"): name, [provides] key, show,
 # hard limit and ceiling (ms), flags, an answer's cap (records, bytes), the query's cap
 .macro PK name, pv, show, base, ceil, flags, items, bytes, qitems, qbytes
@@ -1479,5 +1481,8 @@ pk_table:
     PK .Lk_transcript, 0, 0, 30000, 0, PKF_SILENT, 2000, 4194304, 2000, 4194304
     PK .Lk_tool, 0, 0, 0, 0, PKF_SILENT, 1, 4194304, 1, 4194304
     PK .Lk_prompt, 0, 0, 30000, 0, PKF_SILENT, 1, 4096, 1, 4096
+    # notebooks: the notebook keeps its own deadline (nbdoc.s)
+    PK .Lk_nb_open, EXT_pv_notebook, 0, 0, 0, PKF_SILENT, 1, 67108864, 1, 67108864
+    PK .Lk_nb_save, EXT_pv_notebook, 0, 0, 0, PKF_SILENT | PKF_SUB, 1, 67108864, 1, 67108864
     # wsedit: linked editing (wslinked.s): an answer within a second, at most 64 ranges
     PK .Lk_linked, EXT_pv_linked, 0, 1000, 0, PKF_SILENT, 64, 65536, 64, 65536

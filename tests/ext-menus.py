@@ -50,7 +50,7 @@ first.order = 5
 '''
 
 
-class Menus(contribhost.Contrib):
+class MenuBase(contribhost.Contrib):
     def setUp(self):
         super().setUp()
         (self.work / 'config/rhun/config').write_text(CONFIG, encoding='utf-8')
@@ -73,6 +73,8 @@ class Menus(contribhost.Contrib):
     def explorer(self, row):
         return 'click 50 %d right' % ROW[row]
 
+
+class Menus(MenuBase):
     def test_explorer_groups_order_and_when(self):
         out = self.run_editor(exts=self.exts(), files=(), drop_waits=True, actions=[
             self.explorer('Makefile'), 'print-menu', 'key Escape',
@@ -164,6 +166,103 @@ class Menus(contribhost.Contrib):
         self.run_editor(exts=self.exts(hello='hello 1'), files=(), drop_waits=True, actions=[
             self.explorer('Makefile'), 'menu-pick Run Make Target', 'wait-ext demo running', 'wait 300'])
         self.assertEqual(self.runs()[0][0], '0 run demo.make 0')
+
+
+TITLE = '''[command-options]
+ping.icon = play
+lint.icon = ext:nosuch
+[menu.editor_title]
+a.command = ping
+a.args = from title
+a.order = 1
+b.command = lint
+b.order = 2
+b.when = resourceExt == .txt
+'''
+
+
+class TitleButtons(MenuBase):
+    """[menu.editor_title]: icon buttons at the tab strip's end for the active tab, "…" for more."""
+
+    def buttons(self, out):
+        res = []
+        for line in out:
+            if line.startswith(('button ', 'more ')):
+                words = line.split()
+                x, y, w, h = map(int, words[-1][3:].split(','))
+                res.append((words[1] if words[0] == 'button' else 'more', x + w // 2, y + h // 2))
+        return res
+
+    def test_buttons_follow_the_active_tab(self):
+        out = self.run_editor(exts=self.exts(TITLE), files=('a.txt', 'b.go'), drop_waits=True, actions=[
+            'print-title-buttons', 'key ctrl+Page_Up', 'print-title-buttons'])
+        b = self.buttons(out)
+        go = [n for n, *_ in b[:1]]
+        self.assertEqual(go, ['demo.ping'], out)            # b.go is active first: no lint
+        self.assertEqual([n for n, *_ in b[1:]], ['demo.ping', 'demo.lint'], out)
+        self.assertLess(b[1][1], b[2][1])                   # in order, ending at the strip's end
+        self.assertGreater(b[2][1], 900)
+
+    def test_click_runs_with_the_tab_target(self):
+        out = self.run_editor(exts=self.exts(TITLE), drop_waits=True, actions=['print-title-buttons'])
+        (_, x, y), _ = self.buttons(out)
+        self.run_editor(exts=self.exts(TITLE), drop_waits=True, actions=[
+            f'click {x} {y}', 'wait-ext demo running', 'wait 300'])
+        a = (self.proj / 'a.txt').as_posix()
+        line, body = self.runs()[0]
+        self.assertEqual(line, '0 run demo.ping 1 menu %d' % len('tab doc 1 %s\nfrom title' % a))
+        self.assertEqual(body, 'body=tab doc 1 ' + a)
+
+    def test_tooltip_is_the_title(self):
+        out = self.run_editor(exts=self.exts(TITLE), drop_waits=True, actions=['print-title-buttons'])
+        (_, x, y), _ = self.buttons(out)
+        out = self.run_editor(exts=self.exts(TITLE), drop_waits=True, actions=[
+            f'move {x} {y}', 'wait 700', 'wait 300', 'print-tip'])
+        self.assertEqual(out[-1], 'tip=Ping')
+
+    def test_more_than_three_go_into_the_overflow_menu(self):
+        many = TITLE + ''.join('m%d.command = %s\nm%d.order = %d\n' % (i, c, i, 10 + i)
+                               for i, c in enumerate(('make', 'copyrel', 'reg')))
+        out = self.run_editor(exts=self.exts(many), drop_waits=True, actions=['print-title-buttons'])
+        b = self.buttons(out)
+        self.assertEqual([n for n, *_ in b], ['demo.ping', 'demo.lint', 'demo.make', 'more'], out)
+        _, x, y = b[-1]
+        out = self.run_editor(exts=self.exts(many), drop_waits=True, actions=[
+            f'click {x} {y}', 'print-menu', 'menu-pick Copy Relative', 'wait-ext demo running', 'wait 300'])
+        self.assertEqual(out, ['Copy Relative [alice/demo]', 'Reg [alice/demo]'])
+        a = (self.proj / 'a.txt').as_posix()
+        self.assertEqual(self.runs()[0], ('0 run demo.copyrel 1 menu %d' % (len('tab doc 1 ' + a) + 1),
+                                          'body=tab doc 1 ' + a))
+
+    def test_no_buttons_without_items(self):
+        out = self.run_editor(exts=self.exts(), drop_waits=True, actions=['print-title-buttons'])
+        self.assertEqual(self.buttons(out), [])
+
+
+VIEWS = '''[menu.view_item]
+open.command = ping
+open.args = row
+open.when = view == alice/demo.files && viewItem == folder
+other.command = make
+other.when = view == bob/other.files
+[menu.view_title]
+refresh.command = lint
+'''
+
+
+class ViewMenus(MenuBase):
+    """[menu.view_item]: a tree row's menu, its target "item VIEW ID", the keys view and viewItem."""
+
+    def test_view_item_menu(self):
+        out = self.run_editor(exts=self.exts(VIEWS), drop_waits=True, actions=[
+            'move 300 300', 'view-item-menu alice/demo.files src/lib folder', 'print-menu', 'key Escape',
+            'view-item-menu alice/demo.files src/lib file', 'print-menu',
+            'view-item-menu bob/other.files x', 'print-menu', 'key Escape',
+            'view-item-menu alice/demo.files src/lib folder', 'menu-pick Ping', 'wait-ext demo running',
+            'wait 300'])
+        self.assertEqual(out, ['Ping [alice/demo]', 'none', 'Run Make Target [alice/demo]'])
+        self.assertEqual(self.runs()[0], ('0 run demo.ping 1 menu %d' % len('item alice/demo.files src/lib\nrow'),
+                                          'body=item alice/demo.files src/lib'))
 
 
 if __name__ == '__main__':

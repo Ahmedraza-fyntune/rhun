@@ -628,6 +628,7 @@ F DOC_language_pending, 8
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
+F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
 F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
 F DOC_uri, 8            # resources group: a virtual document's URI (owned; vdoc.s), or 0
 ENDSTRUCT DOC_SIZE
@@ -1117,6 +1118,7 @@ ENDSTRUCT MK_SIZE
 .equ DF_DISK_CHANGED, 8          # external contents differ and unsaved edits were kept
 .equ DF_REVEAL, 16               # its cursor was placed while it was not shown: in view when next drawn
 .equ DF_CENTER, 32               # with DF_REVEAL: that reveal puts the cursor's line in the middle
+.equ DF_CELL, 64                 # notebooks: a cell's text (nbdoc.s): no path and no tab of its own
 
 # return 0 at once when the document is read-only: g_doc, or the one in reg
 .macro READONLY_RET reg=0
@@ -1573,7 +1575,11 @@ ENDSTRUCT TF_SIZE
 .equ IC_CLOUD, 166
 .equ IC_RING, 167
 .equ IC_SLASH, 168
-.equ IC_COUNT, 169
+.equ IC_DBG_PAUSE, 169
+.equ IC_DBG_OVER, 170
+.equ IC_DBG_INTO, 171
+.equ IC_DBG_OUT, 172
+.equ IC_COUNT, 173
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
@@ -1629,6 +1635,9 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_TOOLS, "tools", 1                # tools, tool-call; rhun asks owners: tool
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
+    # tasks and terminals (termproto.s, tasks.s)
+    FEATURE FEAT_TERMINALS, "terminals", 0        # terminal-* requests; terminal-started/-ended/-output/-closed
+    FEATURE FEAT_TASKS, "tasks", 0                # tasks-set, task-start, task-run; agreed only with terminals
     # language features (query.s, complete.s, langfeat.s)
     FEATURE FEAT_QUERY_STREAM, "query-stream", 0      # query-part, query-progress
     FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
@@ -1649,6 +1658,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_REVEAL, "reveal", 0
     FEATURE FEAT_DIFF, "diff", 0
     FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
+    # contributions and commands: status bar items (statusitems.s)
+    FEATURE FEAT_STATUS_ITEMS, "status-items", 0  # status-item, status-remove
     # resources, workspaces, secrets and lifecycle (extres.s, secrets.s and the files they name)
     FEATURE FEAT_IDLE, "idle", 0                  # busy yes|no
     FEATURE FEAT_SECRETS, "secrets", 0
@@ -1657,6 +1668,11 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_FILES, "files", 0                # find-files, search-text
     FEATURE FEAT_SCOPED_SETTINGS, "scoped-settings", 0
     FEATURE FEAT_WORKSPACE_FOLDERS, "workspace-folders", 0
+    # notebooks (wider-parity A: nbdoc.s, nbproto.inc)
+    FEATURE FEAT_NOTEBOOKS, "notebooks", 1        # nb-open, nb-save; runs and outputs
+    FEATURE FEAT_VIEW_LOG, "view-log", 0          # views group: log views (with view-tree)
+    FEATURE FEAT_NOTIFY, "notify", 0              # views group: notify, notify-set, unnotify
+    FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1716,8 +1732,10 @@ FEATURE_LIST
 .equ PK_TRANSCRIPT, 29           # AI: agent-transcript (agentext.s)
 .equ PK_TOOL, 30                 # AI: tool, a call routed to its owner (tools.s)
 .equ PK_PROMPT, 31               # AI: agent-prompt (agentext.s, D4)
-.equ PK_LINKED, 32               # wsedit: linked-editing ranges (wslinked.s)
-.equ PK_COUNT, 33
+.equ PK_NB_OPEN, 32              # notebooks: nb-open, nb-save (nbproto.inc)
+.equ PK_NB_SAVE, 33
+.equ PK_LINKED, 34               # wsedit: linked-editing ranges (wslinked.s)
+.equ PK_COUNT, 35
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
@@ -1725,7 +1743,8 @@ FEATURE_LIST
 .equ QO_SCM, 4                   # source control (scmext.s)
 .equ QO_TESTS, 5                 # testing (testproto.s)
 .equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
-.equ QO_LINKED, 7                # wsedit: linked editing (wslinked.s)
+.equ QO_NOTEBOOK, 7               # nbdoc.s's nb_reply
+.equ QO_LINKED, 8                # wsedit: linked editing (wslinked.s)
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -1756,6 +1775,7 @@ ENDSTRUCT IMG_SIZE
 .equ TAB_GIT, 4
 .equ TAB_EXT, 5                 # the Extensions page (extpage.s)
 .equ TAB_VIEW, 6                # an extension's view (extview.s); TAB_flags >> TF_VIEW_SHIFT is its slot + 1
+.equ TAB_NOTEBOOK, 120          # a notebook (nbview.s): TAB_doc is a DOC without text, DOC_nb its NB (notebooks' block 120-123)
 .equ TF_VIEW_SHIFT, 16
 .equ ID_VIEW, 0x7700            # + slot: a view's area
 .equ VW_MAX, 32                 # views open at once, all extensions
@@ -1771,6 +1791,7 @@ F TAB_flags, 8
 ENDSTRUCT TAB_SIZE
 # TAB_flags
 .equ TF_PIN, 1                  # pinned: the pinned tabs are the first ones in the strip
+.equ TF_RVIEW, 2                # TAB_VIEW: a retained view's tab (rview.s); the slot field is its instance
 
 .equ SIDEBAR_W_DEFAULT, 240        # points: the explorer's and the agents panel's widths
 .equ AGENTS_W_DEFAULT, 380
@@ -1980,6 +2001,10 @@ F EXT_pv_document_links, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
 F EXT_fdsrc, VEC_SIZE   # PS*: its file-diagnostics sources in the Problems store (filediag.s)
+F EXT_pv_notebook, 8    # notebooks: [provides] notebook (patterns), notebook.title, notebook.kernel
+F EXT_pv_nbtitle, 8
+F EXT_pv_nbkernel, 8
+F EXT_nb_kernels, 8     # [needs] kernels: programs rhun may start as the user for its notebooks (cstr) or 0
 # WebAssembly extensions (extwasm.s)
 F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
 F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
@@ -1992,6 +2017,9 @@ F EXT_pack, 8           # cstr: a pack's members (OWNER/NAME, space separated), 
 F EXT_xset, 8           # cstr: "setting.KEY = VALUE" lines its manifest does not declare, or 0
 F EXT_fresh, 4          # 1: a new version with a previous one to go back to, until its first hello
 F EXT_mgmt_pad, 4
+# remote hosts (remoteext.s)
+F EXT_where_local, 4    # 1: where = local: in a remote window it runs on this machine
+F EXT_remote_wait, 4    # 1: its Linux build is being fetched; it starts when it is here
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
@@ -2252,6 +2280,11 @@ ENDSTRUCT CRF_SIZE
     CTXKEY CTX_SCM_PROVIDER, "scmProvider", 0       # "git" or the provider extension's OWNER/NAME
     CTXKEY CTX_SCM_RESOURCE_GROUP, "scmResourceGroup", 0   # merge, staged, changes, or a provider's
     CTXKEY CTX_SCM_RESOURCE_STATUS, "scmResourceStatus", 0 # the resource's letter (M A D R C U ?)
+    # notebooks (nbkeys.s)
+    CTXKEY CTX_NOTEBOOK_FOCUS, "notebookFocus", ck_nb_focus
+    CTXKEY CTX_NOTEBOOK_CELL_EDITING, "notebookCellEditing", ck_nb_editing
+    CTXKEY CTX_NOTEBOOK_CELL_TYPE, "notebookCellType", ck_nb_cell_type
+    CTXKEY CTX_NOTEBOOK_KERNEL_STATE, "notebookKernelState", ck_nb_kernel_state
     # remote hosts (remote.s): "ssh", "docker", "podman", "wsl", "local" in a remote window, else empty
     CTXKEY CTX_REMOTE_NAME, "remoteName", 0
     CTXKEY CTX_REMOTE_HOST, "remoteHost", 0
@@ -2281,6 +2314,8 @@ F MTG_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal
 F MTG_doc, 8             # its DOC*, or 0
 F MTG_path, 8            # cstr: its path, or 0
 F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+F MTG_view, 8            # cstr: the view a view_title / view_item target is in (the key view), or 0
+F MTG_item, 8            # cstr: the targeted tree item's context value (the key viewItem), or 0
 ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
@@ -2797,10 +2832,10 @@ ENDSTRUCT PD_SIZE
 
 # a thread of the paused program
 STRUCT
-F DT_id, 8
-F DT_name, 4            # offset into DS_strs
-F DT_namelen, 4
-ENDSTRUCT DT_SIZE
+F THR_id, 8
+F THR_name, 4            # offset into DS_strs
+F THR_namelen, 4
+ENDSTRUCT THR_SIZE
 
 # a stack frame of the focused thread
 STRUCT
@@ -2885,6 +2920,8 @@ F DS_args, SB_SIZE      # the adapter's argv, each NUL-terminated (copied from g
 F DS_nargs, 4
 F DS_reading, 4         # 1 while its output is watched (0: the read buffer is full)
 F DS_exited_at, 8       # time_ms the adapter's output closed, 0 before
+F DS_more, 4            # 1: complete messages wait for the next frame (the tick's budget ran out)
+F DS_pgrp, 4            # an exited adapter's process group still to be killed at DS_killat, 0 none
 F DS_dbg_ext, 8         # the debugger's EXT* when the session started
 F DS_pend, PD_SIZE*DS_PEND
 ENDSTRUCT DS_SIZE
@@ -2914,6 +2951,7 @@ ENDSTRUCT BP_SIZE
 .equ DCON_INFO, 6           # rhun's notes ("Program exited with code 3")
 .equ DCON_INPUT, 7          # an expression typed into the console
 .equ DCON_RESULT, 8         # its value
+.equ PROMPT_DEBUG, 80           # the debugger's text prompts (the debugger's block: 80-83) (debugview.s: condition, watch...)
 .equ DCON_LINE_MAX, 4096
 # ---- tasks and terminals: programs run as the user (uproc.s) in terminal tabs (termview.s) ----
 .equ SIGINT, 2
@@ -2922,6 +2960,9 @@ ENDSTRUCT BP_SIZE
 .equ TK_TASK, 2                 # a task
 .equ TRV_FOCUS, 0x100           # term_run: the new tab also gets the keyboard
 .equ TRV_SILENT, 0x200          # term_run: the tab is added without showing the panel
+.equ TRV_WAIT, 0x400            # term_run: the tab waits: its program starts with term_start
+.equ TASK_DONE, 0               # tasks_run_named's callback: the task exited 0 (or a background one is ready)
+.equ TASK_FAILED, 1             # another code, stopped, could not start, refused, or a dependency failed
 .equ TE_EXIT, 0                 # term_run's fn(cookie, TERM, event, code): exited with code
 .equ TE_STOPPED, 1              # stopped (Stop, Restart, its tab closed while it ran)
 .equ TE_FAILED, 2               # could not start (no TE_STARTED before it)
@@ -2929,11 +2970,11 @@ ENDSTRUCT BP_SIZE
 .equ TE_STARTED, 4              # started, code its pid; again after each restart
 # a program for term_run (the lists are copied)
 STRUCT
-F PG_argv, 8            # 0-terminated cstr list; argv[0] a name looked up on the login PATH, or a path
-F PG_sets, 8            # "NAME=value" list, or 0
-F PG_unsets, 8          # "NAME" list, or 0
-F PG_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
-ENDSTRUCT PG_SIZE
+F PGM_argv, 8            # 0-terminated cstr list; argv[0] a name looked up on the login PATH, or a path
+F PGM_sets, 8            # "NAME=value" list, or 0
+F PGM_unsets, 8          # "NAME" list, or 0
+F PGM_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
+ENDSTRUCT PGM_SIZE
 # the Problems store (problems.s): a source, and a problem
 STRUCT
 F PS_key, 8             # owned cstr: what finds it again
@@ -2958,6 +2999,58 @@ F PR_seq, 8             # set by the store: its id in the Problems tab
 ENDSTRUCT PR_SIZE
 .equ PRF_CHARS, 1
 .equ MKF_SOURCE, 1              # MK_pad: the mark's owner is a problems source (PS*), not an extension
+# [needs] terminal is a ladder (tasks design 2): suggest (= v1's yes, NEEDS_TERMINAL) < run < input < output
+.equ NEEDS_TERM_RUN, 0x100000   # run programs in terminal tabs, once allowed per project
+.equ NEEDS_TERM_INPUT, 0x200000 # and type into them
+.equ NEEDS_TERM_OUTPUT, 0x400000 # and read what they show
+# a program or task definition from the wire (termproto.s def_parse; tasks design 3.2)
+.equ DF_MATCHERS, 4
+.equ DF_PATTERNS, 8
+STRUCT
+F DF_strs, 8            # owned block: every string below, each with its NUL
+F DF_id, 8              # cstr: the task id ("-" for a terminal)
+F DF_label, 8           # cstr
+F DF_detail, 8          # cstr, "" for none (lists show the command)
+F DF_cmd, 8             # shell: the command (cstr, "" an interactive shell); argv: the arguments
+F DF_cmdlen, 8          #   each with its NUL, DF_cmdlen bytes in all
+F DF_cwd, 8             # cstr, "" for the project
+F DF_env, 8             # owned "NAME=value" list
+F DF_unset, 8           # owned "NAME" list
+F DF_deps, 8            # owned list of task ids
+F DF_form, 4            # 0 shell, 1 argv
+F DF_group, 4           # 0 none, 1 build, 2 test
+F DF_default, 4         # the default task of its group
+F DF_reveal, 4          # 0 show, 1 focus, 2 silent
+F DF_output, 4          # 1: terminal-output for it
+F DF_order, 4           # its depends: 1 sequence, 2 parallel
+F DF_nmatch, 4
+F DF_mown, 4            # bit i: DF_match[i] was compiled for it (freed with it); else a built-in
+F DF_nready, 4
+F DF_nbusy, 4
+F DF_match, 8*DF_MATCHERS       # MT*
+F DF_ready, 8*DF_PATTERNS       # compiled patterns (taskmatch.s CP, owned)
+F DF_busy, 8*DF_PATTERNS
+F DF_refs, 4            # tasks.s: holders beyond the first (the registry, run nodes, a tab)
+F DF_pad, 4
+ENDSTRUCT DF_SIZE
+# an extension's terminal or task run (termproto.s; tasks.s)
+STRUCT
+F TRC_term, 8            # its TERM (termview.s)
+F TRC_ext, 8             # the extension that opened it
+F TRC_live, 4            # 1 while that runtime runs: then the TERM is its handle
+F TRC_flags, 4           # TRCF_*
+F TRC_out, SB_SIZE       # finished lines waiting for terminal-output
+F TRC_dropped, 8         # lines left out since the last terminal-output
+F TRC_mrun, 8            # its matchers (taskmatch.s mrun), owned, or 0
+F TRC_task, 8            # owned cstr: the task id it runs, or 0
+F TRC_hook, 8            # tasks.s: fn(cookie, TR*, TE_* event, code), or 0
+F TRC_linefn, 8          # tasks.s: fn(cookie, line, len) for each finished line (len -1: a run begins)
+F TRC_cookie, 8
+F TRC_ready, 4           # tasks.s: a background task that is ready since its last start or busy
+F TRC_pad, 4
+F TRC_df, 8              # tasks.s: the task (held) whose ready and busy patterns read its lines
+ENDSTRUCT TRC_SIZE
+.equ TRCF_OUTPUT, 1             # terminal-output for it
 .equ AS_KIND_EXT, 5
 .equ AGS_IDLE, 0
 .equ AGS_WORKING, 1
@@ -3067,6 +3160,7 @@ ENDSTRUCT ND_SIZE
 .equ NF_CHECKED, 128
 .equ NF_SEL, 256                # selected (multi-select)
 .equ NF_MOREWAIT, 512           # "Load more" was asked for
+.equ NF_PCOUNT, 1024            # a patch check counted its bytes out (cleared after the check)
 .equ NDI_FILE, 0x40000000
 # the store's callbacks for its owner; a zero entry is not called
 STRUCT
@@ -3081,7 +3175,16 @@ F TRO_more, 8           # more(ctx, tr, parent): its "Load more" row came on scr
 F TRO_retry, 8          # retry(ctx, tr, node): Retry on its error row
 F TRO_load, 8           # load(ctx, tr, node): it is expanded and on screen with its children not
                         #   given: they are wanted (NF_LOADING is set until tree_kids_end)
+F TRO_action, 8         # action(ctx, tr, node, key, keylen): one of its inline buttons was pressed
 ENDSTRUCT TRO_SIZE
+# an action a tree's nodes may show as inline buttons (record "inline LEN" + keys): tree_set_actions
+STRUCT
+F TA_key, 8             # its key's bytes
+F TA_keylen, 8
+F TA_icon, 4            # IC_*, -1: its title as text
+F TA_pad, 4
+F TA_title, 8           # cstr: the tooltip (or the text)
+ENDSTRUCT TA_SIZE
 STRUCT
 F TR_nodes, VEC_SIZE    # ND
 F TR_free, 8            # first free slot, -1 for none
@@ -3109,6 +3212,10 @@ F TR_hover, 4           # the row under the pointer, -1
 F TR_typed_at, 8        # when the last character came
 F TR_loading_at, 8      # when a Loading row first showed (it waits 300 ms)
 F TR_user, 8            # its owner's value
+F TR_actions, 8         # TA records the inline keys are looked up in (tree_set_actions), or 0
+F TR_nactions, 8
+F TR_selanchor, 4       # multi-select: where a Shift range starts
+F TR_pad2, 4
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame
@@ -3133,6 +3240,135 @@ F RR_data, 8            # the LEN bytes
 F RR_len, 8
 ENDSTRUCT RR_SIZE
 
+# ---- notebooks (wider-parity design, part A: nbdoc.s, nbview.s, nbout.s, nbproto.inc) ----
+# A notebook is a TAB_NOTEBOOK tab whose cells are DOCs of their own (DF_CELL). The extension that
+# provides the file's notebook reads and writes it (nb-open, nb-save) and runs cells (nb-run);
+# rhun keeps the cells, their outputs and what they show.
+STRUCT
+F NB_host, 8            # DOC*: the tab's document (path and name, no text; DOC_nb points back)
+F NB_ext, 8             # EXT*: the extension that reads, writes and runs it
+F NB_id, 8              # the number extensions know it by (session-unique)
+F NB_cells, VEC_SIZE    # CL* each, in order
+F NB_meta, SB_SIZE      # the notebook's metadata, opaque, returned on save
+F NB_undo, VEC_SIZE     # NU records: the last cell operations, for z
+F NB_kernel, SB_SIZE    # the kernel button's text
+F NB_err, SB_SIZE       # why it could not be opened
+F NB_scroll, 8          # px from the top of the cells to the top of the view
+F NB_sel, 8             # the selected cell
+F NB_req, 8             # the nb-open or nb-save rhun waits on, 0 none
+F NB_reqat, 8           # when it went out (time_ms), or when the wait for the program began
+F NB_savefn, 8          # nb_save_start's callback(doc id, arg, result) and its argument, or 0
+F NB_savearg, 8
+F NB_outbytes, 8        # bytes of all its outputs' items
+F NB_total, 8           # px of all cells at the last layout
+F NB_lastkey, 8         # command mode: the last key and when (d d, i i, 0 0)
+F NB_lastkeyt, 8
+F NB_state, 4           # NBS_*
+F NB_reqkind, 4         # NBR_* of NB_req
+F NB_want, 4            # NBR_* waiting for the program to run
+F NB_editing, 4         # 1 edit mode, 0 command mode
+F NB_kstate, 4          # NBK_*
+F NB_dirty, 4           # cell operations or outputs changed since it was read or saved
+F NB_reveal, 4          # bring the selected cell into view at the next frame
+F NB_layoutw, 4         # the width the cached heights are for
+F NB_vy, 4              # where its cells were drawn last (physical px), for tests and clicks
+F NB_vh, 4
+ENDSTRUCT NB_SIZE
+.equ NBS_OPENING, 0
+.equ NBS_READY, 1
+.equ NBS_FAILED, 2
+.equ NBR_OPEN, 1
+.equ NBR_SAVE, 2
+.equ NBK_NONE, 0
+.equ NBK_IDLE, 1
+.equ NBK_BUSY, 2
+.equ NBK_STARTING, 3
+.equ NBK_DEAD, 4
+STRUCT
+F NBC_doc, 8             # DOC* (DF_CELL): its source
+F NBC_id, 8              # the number extensions know it by (session-unique, stable while it exists)
+F NBC_run, 8             # the run in progress or the last one, 0 none
+F NBC_count, 8           # execution count, -1 none
+F NBC_lang, 8            # owned cstr: LANG as the extension named it (spaces as _), 0 for markup
+F NBC_meta, SB_SIZE      # its metadata, opaque, returned on save
+F NBC_outs, VEC_SIZE     # OU* each, in order
+F NBC_outrev, 8          # changes with its outputs (the layout cache)
+F NBC_h, 8               # height at the last layout
+F NBC_hkey, 8            # what that height was measured for
+F NBC_kind, 4            # NBCK_*
+F NBC_state, 4           # RUN_*
+F NBC_collapsed, 4       # its outputs are hidden (o)
+F NBC_clearwait, 4       # clear-wait: the outputs clear when the next one arrives
+F NBC_y, 4               # where it was drawn last (physical px; -1 not on screen)
+F NBC_unsent, 4           # its run waits for the extension to run before nb-run goes out
+ENDSTRUCT NBC_SIZE
+.equ NBCK_CODE, 0
+.equ NBCK_MARKUP, 1
+.equ NBRUN_NONE, 0
+.equ NBRUN_QUEUED, 1
+.equ NBRUN_RUNNING, 2
+.equ NBRUN_DONE, 3
+.equ NBRUN_FAILED, 4
+.equ NBRUN_CANCELLED, 5
+STRUCT
+F NBO_kind, 4            # NBOK_*
+F NBO_ierr, 4            # its image cannot be decoded
+F NBO_id, 8              # owned cstr: OUTID (Jupyter's display_id), or 0
+F NBO_keep, SB_SIZE      # opaque bytes returned on save (the jupyter extension keeps the JSON there)
+F NBO_items, VEC_SIZE    # NI records, in order of preference
+F NBO_show, 8            # the item drawn: the first one rhun supports, -1 none
+F NBO_lines, 8           # text items: lines in all
+F NBO_bytes, 8           # bytes its items count against NB_outbytes
+F NBO_img, 8             # an image item scaled to fit (owned pixels), or 0
+F NBO_iw, 4              # their size, physical px
+F NBO_ih, 4
+F NBO_ikey, 4            # the width they were made for
+F NBO_pad, 4
+ENDSTRUCT NBO_SIZE
+.equ NBOK_STDOUT, 1
+.equ NBOK_STDERR, 2
+.equ NBOK_RESULT, 3
+.equ NBOK_DISPLAY, 4
+.equ NBOK_ERROR, 5
+STRUCT
+F NBI_type, 4            # NBIT_*
+F NBI_w, 4               # intrinsic logical size (images, pictures), 0 0 natural
+F NBI_h, 4
+F NBI_pad, 4
+F NBI_name, 8            # owned cstr: a type rhun does not know, kept to be returned, or 0
+F NBI_data, SB_SIZE
+ENDSTRUCT NBI_SIZE
+.equ NBIT_OTHER, 0
+.equ NBIT_TEXT, 1
+.equ NBIT_ANSI, 2
+.equ NBIT_PNG, 3
+.equ NBIT_JPEG, 4
+.equ NBIT_GIF, 5
+.equ NBIT_RICH, 6
+.equ NBIT_PICTURE, 7
+STRUCT
+F NBU_op, 8              # NBUO_*
+F NBU_index, 8           # where
+F NBU_index2, 8          # move: where to; kind: the old kind
+F NBU_cell, 8            # delete: the cell taken out (owned by the record), or 0
+ENDSTRUCT NBU_SIZE
+.equ NBUO_INSERT, 1
+.equ NBUO_DELETE, 2
+.equ NBUO_MOVE, 3
+.equ NBUO_KIND, 4
+.equ NB_BODY_MAX, 67108864      # nb-open's answer and nb-save's body, each way
+.equ NB_CELLS_MAX, 5000
+.equ NB_SOURCE_MAX, 4194304     # a cell's source
+.equ NB_OUTS_MAX, 1000          # outputs a cell
+.equ NB_ITEMS_MAX, 32           # items an output
+.equ NB_ITEM_MAX, 16777216      # an item
+.equ NB_STREAM_MAX, 65536       # an nb-stream message
+.equ NB_OUTALL_MAX, 67108864    # outputs in all, a notebook
+.equ NB_OUTPUT_MAX, NB_ITEM_MAX + 1048576   # an nb-output body
+.equ NB_UNDO_MAX, 100
+.equ NB_TEXT_LINES, 400         # lines of a text output shown before "N more lines"
+.equ NB_LABEL_MAX, 200          # the kernel button's text
+.equ NB_OPEN_MS, 30000          # an nb-open or nb-save without an answer fails after this
 # ---- editor presentation (edtape.s, deco.s, gutter.s, presctl.s) ----
 # per-document presentation state, DOC_pres: the edit tape, decorations, glyph-lane entries
 .equ TAPE_N, 256                # edits the tape keeps

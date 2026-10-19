@@ -16,6 +16,7 @@
 .equ PM_RESULTS, 10             # results from extensions: locations, symbols, code actions (langfeat.s)
 .equ PM_KEYS, 12                # Keyboard Shortcuts: every binding (keys.s keys_list)
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
+.equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
 .equ PM_WSLIST, 16              # wsedit: a workspace edit's question (wsconfirm.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
@@ -1388,6 +1389,23 @@ FN palette_results_close
     jne 1f
     jmp palette_close
 1:  ret
+
+# palette_tasks_open(label cstr), palette_tasks_add(ptr, len, detail cstr, n), palette_tasks_ready():
+#   a list of tasks (tasks.s); choosing item n calls tasks_chosen(n). The strings stay the tasks'
+FN palette_tasks_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_TASKS
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+FN palette_tasks_add
+    jmp item_add
+
+FN palette_tasks_ready
+    jmp palette_filter
 
 # Close only a palette owned by the provider operation that is being abandoned.
 FN palette_provider_close
@@ -2818,7 +2836,15 @@ palette_accept:
     call ext_provider_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-33: cmp ebx, PM_WSLIST           # wsedit
+33: cmp ebx, PM_TASKS
+    jne 331f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call tasks_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+331: cmp ebx, PM_WSLIST          # wsedit
     jne 34f
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
@@ -2955,7 +2981,20 @@ palette_accept:
     call langfeat_rename_to
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-691: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
+691: cmp dword ptr [rip + pal_prompt], PROMPT_DEBUG    # debugger (debugview.s)
+    jne 690f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call dview_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+690: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
     jb 692f
     # remote hosts: ssh's question answered
     lea rdi, [rip + pal_tf]

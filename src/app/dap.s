@@ -11,18 +11,24 @@ g_dsess: .zero DS_SIZE * DS_MAX
 .data
 g_dfocus: .long -1              # the focused session's slot, -1
 dnext_id: .long 1
-approval_slot: .long -1         # the session whose start waits for the approval dialog
 .bss
 .p2align 3
 g_dmsg: .zero SB_SIZE           # the message being built (jw_*)
 pd: .zero PD_SIZE               # pend_take's copy
 pathz: .zero SB_SIZE            # a NUL-terminated path from the pool
+g_nodep:
 nodep: .zero SB_SIZE            # a node's path
-approvals: .zero VEC_SIZE       # until the tasks group's approval store lands: (EXT*, project cstr)
 dlg_text: .zero 2048
-dlg_title: .zero 256
-.globl g_watches
+.globl g_watches, g_nodep
+restart_name: .zero SB_SIZE
+restart_after: .long 0          # a restart waits for this session to end
+watch_gen: .long 0              # send_watches' round
+restart_nodebug: .long 0
 g_watches: .zero SB_SIZE        # watch expressions, one per line
+.data
+.globl g_dap_gen
+g_dap_gen: .long 1              # bumped by every change the debug view shows
+.bss
 
 .text
 
@@ -89,7 +95,9 @@ ds_alloc:
     cmp dword ptr [rbx + DS_state], DSS_ENDED
     jne 11f
     cmp dword ptr [rbx + DS_pid], 0
-    je 2f
+    jne 11f
+    cmp dword ptr [rbx + DS_pgrp], 0
+    je 2f                       # a group still to be killed keeps the slot
 11: inc r12d
     jmp 1b
 2:  mov rdi, rbx
@@ -137,6 +145,8 @@ ds_free_mem:
     mov dword ptr [rbx + DS_nargs], 0
     mov dword ptr [rbx + DS_reading], 0
     mov qword ptr [rbx + DS_exited_at], 0
+    mov dword ptr [rbx + DS_more], 0
+    mov dword ptr [rbx + DS_pgrp], 0
     mov qword ptr [rbx + DS_dbg_ext], 0
     mov qword ptr [rbx + DS_wq_off], 0
     EPILOGUE
@@ -187,8 +197,6 @@ FN dap_start
     mov r12, rdi
     mov r13, rsi
     mov [rsp], edx
-    cmp dword ptr [rip + approval_slot], 0
-    jge .Lst_busy
     mov rdi, r12
     mov rsi, r13
     mov edx, [rsp]
@@ -238,19 +246,26 @@ FN dap_start
     mov rdi, rbx
     call slot_index
     mov [rip + g_dfocus], eax
-    # one approval per extension and project
-    mov rdi, r15
-    call approved
-    test eax, eax
-    jnz 1f
+    # one approval per extension and project (runallow.s): asked once, with the exact command
     mov dword ptr [rbx + DS_state], DSS_APPROVAL
+    mov rdi, r15
+    mov rsi, [rip + g_lc_cmd + SB_ptr]
+    lea rdx, [rip + approval_done]
+    mov ecx, [rbx + DS_id]
+    call run_approve
+    cmp eax, 1
+    je 1f
+    test eax, eax
+    jz 2f
+    # another dialog is open
     mov rdi, rbx
-    call ask_approval
-    mov eax, [rbx + DS_id]
+    lea rsi, [rip + .Lm_busy]
+    call ds_fail
+    xor eax, eax
     EPILOGUE
 1:  mov rdi, rbx
     call launch_now
-    mov eax, [rbx + DS_id]
+2:  mov eax, [rbx + DS_id]
     EPILOGUE
 .Lst_busy:
     lea rdi, [rip + .Lm_busy]
@@ -290,130 +305,45 @@ FN dap_error
     pop rbx
     ret
 
-# approved(ext) -> eax 1 when the extension may run programs as the user in this project
-approved:
+# approval_done(session id, allowed): the approval dialog's answer: the session starts, or ends
+#   without running anything
+approval_done:
     PROLOGUE
-    mov rbx, rdi
-    xor r12d, r12d
-1:  cmp r12, [rip + approvals + VEC_len]
+    mov r12d, edi
+    mov r13d, esi
+    call slot_of_id
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    cmp dword ptr [rbx + DS_state], DSS_APPROVAL
+    jne 9f
+    test r13d, r13d
+    jz 1f
+    mov rdi, rbx
+    call launch_now
+    EPILOGUE
+1:  mov rdi, rbx
+    lea rsi, [rip + .Lm_cancelled]
+    call ds_end
+9:  EPILOGUE
+
+# slot_of_id(id) -> rax DS* of the session with that id, or 0
+slot_of_id:
+    PROLOGUE
+    mov r12d, edi
+    xor ebx, ebx
+1:  cmp ebx, DS_MAX
     jae 8f
-    mov rax, r12
-    shl rax, 4
-    add rax, [rip + approvals + VEC_ptr]
-    cmp [rax], rbx
-    jne 2f
-    mov rdi, [rax + 8]
-    mov rsi, [rip + g_project]
-    call path_same
-    test eax, eax
-    jnz 9f
-2:  inc r12
+    mov edi, ebx
+    call dap_slot
+    cmp dword ptr [rax + DS_state], DSS_FREE
+    je 2f
+    cmp [rax + DS_id], r12d
+    je 9f
+2:  inc ebx
     jmp 1b
 8:  xor eax, eax
 9:  EPILOGUE
-
-# path_same(a cstr or 0, b cstr or 0) -> eax 1 when both are the same text or both are 0
-path_same:
-    test rdi, rdi
-    jz 1f
-    test rsi, rsi
-    jz 2f
-    jmp strcmp_eq
-1:  xor eax, eax
-    test rsi, rsi
-    sete al
-    ret
-2:  xor eax, eax
-    ret
-
-# ask_approval(ds): "Let Debug run programs in app?" with the exact command; Allow remembers it
-ask_approval:
-    PROLOGUE
-    mov rbx, rdi
-    mov rdi, rbx
-    call slot_index
-    mov [rip + approval_slot], eax
-    mov r12, [rbx + DS_dbg_ext]
-    # the title: Let TITLE run programs in PROJECT?
-    lea rdi, [rip + dlg_title]
-    lea rsi, [rip + .Ld_let]
-    call cstr_copy
-    mov rsi, [r12 + EXT_title]
-    test rsi, rsi
-    jnz 1f
-    mov rsi, [r12 + EXT_name]
-1:  mov rdi, rax
-    lea rdx, [rip + dlg_title + 160]
-    call cstr_copy_max
-    mov rdi, rax
-    lea rsi, [rip + .Ld_run]
-    call cstr_copy
-    mov rsi, [rip + g_project]
-    test rsi, rsi
-    jz 2f
-    push rax
-    push rax
-    mov rdi, rsi
-    call strlen
-    mov rdi, [rip + g_project]
-    mov rsi, rax
-    call path_basename
-    pop rdi
-    pop rdi
-    mov rsi, rax
-    mov rcx, rdx
-    lea rdx, [rip + dlg_title + 240]
-    call memcpy_max
-    jmp 3f
-2:  mov rdi, rax
-    lea rsi, [rip + .Ld_noproject]
-    call cstr_copy
-3:  mov byte ptr [rax], '?'
-    mov byte ptr [rax + 1], 0
-    # the text: the debugger, its command and where; it runs as the user
-    mov edi, [rbx + DS_dbg]
-    call dbg_row
-    mov r13, rax
-    lea rdi, [rip + dlg_text]
-    mov rsi, [r13 + DBG_title]
-    test rsi, rsi
-    jnz 4f
-    mov rsi, [r13 + DBG_type]
-4:  lea rdx, [rip + dlg_text + 200]
-    call cstr_copy_max
-    mov rdi, rax
-    lea rsi, [rip + .Ld_will]
-    call cstr_copy
-    mov rdi, rax
-    mov rsi, [rip + g_lc_cmd + SB_ptr]
-    lea rdx, [rip + dlg_text + 1500]
-    call cstr_copy_max
-    mov rdi, rax
-    lea rsi, [rip + .Ld_rights]
-    call cstr_copy
-    lea rdi, [rip + dlg_title]
-    lea rsi, [rip + dlg_text]
-    lea rdx, [rip + .Ld_allow]
-    lea rcx, [rip + approval_yes]
-    call app_confirm
-    lea rdi, [rip + approval_no]
-    call app_confirm_cancel
-    EPILOGUE
-
-# cstr_copy_max(dst, src, limit) -> end: src copied, stopping at limit
-cstr_copy_max:
-1:  cmp rdi, rdx
-    jae 2f
-    mov al, [rsi]
-    test al, al
-    jz 2f
-    mov [rdi], al
-    inc rdi
-    inc rsi
-    jmp 1b
-2:  mov byte ptr [rdi], 0
-    mov rax, rdi
-    ret
 
 # memcpy_max(dst, src, limit, n) -> end: n bytes, stopping at limit, NUL-terminated
 memcpy_max:
@@ -431,57 +361,19 @@ memcpy_max:
     mov rax, rdi
     ret
 
-# approval_yes(): Allow: remembered for the extension and project; the session starts
-approval_yes:
-    PROLOGUE
-    mov edi, [rip + approval_slot]
-    test edi, edi
-    js 9f
-    mov dword ptr [rip + approval_slot], -1
-    call dap_slot
-    mov rbx, rax
-    cmp dword ptr [rbx + DS_state], DSS_APPROVAL
-    jne 9f
-    lea rdi, [rip + approvals]
-    mov esi, 16
-    call vec_push
-    mov rcx, [rbx + DS_dbg_ext]
-    mov [rax], rcx
-    mov qword ptr [rax + 8], 0
-    mov rdi, [rip + g_project]
-    test rdi, rdi
-    jz 1f
-    push rax
-    push rax
-    call dup_cstr
-    mov rcx, rax
-    pop rax
-    pop rax
-    mov [rax + 8], rcx
-1:  mov rdi, rbx
-    call launch_now
-9:  EPILOGUE
-
-# approval_no(): Cancel: the session ends without running anything
-approval_no:
-    PROLOGUE
-    mov edi, [rip + approval_slot]
-    test edi, edi
-    js 9f
-    mov dword ptr [rip + approval_slot], -1
-    call dap_slot
-    mov rbx, rax
-    cmp dword ptr [rbx + DS_state], DSS_APPROVAL
-    jne 9f
-    mov rdi, rbx
-    lea rsi, [rip + .Lm_cancelled]
-    call ds_end
-9:  EPILOGUE
-
-# dap_forget_approvals(): Forget (tests and the extension page until the tasks group's store lands)
+# dap_forget_approvals(): Forget for every debugger's extension (tests)
 FN dap_forget_approvals
-    mov qword ptr [rip + approvals + VEC_len], 0
-    ret
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp ebx, [rip + g_ndebuggers]
+    jae 9f
+    mov edi, ebx
+    call dbg_row
+    mov rdi, [rax + DBG_ext]
+    call run_forget
+    inc ebx
+    jmp 1b
+9:  EPILOGUE
 
 # launch_now(ds): spawn the adapter and send initialize
 launch_now:
@@ -506,7 +398,9 @@ launch_now:
     lea rdx, [rip + .Lm_starting]
     mov ecx, .Lm_starting_end - .Lm_starting
     call dcon_line
+    call dview_session_started
     mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
     EPILOGUE
 
 # ---------------- building requests ----------------
@@ -776,6 +670,8 @@ FN dap_tick
 8:  inc r12d
     jmp 1b
 9:  call bp_tick
+    call restart_check
+    call dg_hover_tick
     EPILOGUE
 
 # ds_tick(ds)
@@ -792,6 +688,7 @@ ds_tick:
     call time_us
     mov r14, rax                # start
     xor r13d, r13d              # messages
+    mov dword ptr [rbx + DS_more], 1    # until a frame turns out incomplete: the budget stops it
 2:  cmp r13d, DAP_MSGS_TICK
     jae 5f
     call time_us
@@ -801,7 +698,10 @@ ds_tick:
     mov rdi, rbx
     call dap_frame
     test rax, rax
-    jz 5f
+    jnz 21f
+    mov dword ptr [rbx + DS_more], 0    # what is left is incomplete: input wakes the loop
+    jmp 5f
+21: test rax, rax
     js .Ltk_bad
     mov r15, rcx                # bytes to drop
     mov [rsp], rdx
@@ -877,10 +777,10 @@ FN dap_timeout
     jz 8f
     cmp eax, DSS_APPROVAL
     je 8f
-    # unparsed bytes from the adapter, or a closed output not yet handled: the next frame
+    # complete messages waiting, or a closed output not yet handled: the next frame
     cmp eax, DSS_ENDED
     je 4f
-    cmp qword ptr [rbx + DS_rbuf + SB_len], 0
+    cmp dword ptr [rbx + DS_more], 0
     jne 5f
     test dword ptr [rbx + DS_flags], DSF_EOF
     jnz 5f
@@ -903,7 +803,11 @@ FN dap_timeout
     jmp 9f
 8:  inc r12d
     jmp 1b
-9:  mov rax, r13
+9:  call dg_hover_due           # the pointer's rest before a hover evaluation
+    cmp eax, -1
+    je 91f
+    call near_ms
+91: mov rax, r13
     EPILOGUE
 # near_deadline: r13 = min(r13, [r15] - now) for a set deadline
 near_deadline:
@@ -1064,12 +968,10 @@ ds_end:
     mov edi, [rbx + DS_pid]
     test edi, edi
     jz 2f
-    neg edi                     # the adapter's process group
-    mov esi, SIGTERM
-    SYS SYS_kill
-    call time_ms
-    add rax, 1000
-    mov [rbx + DS_killat], rax
+    # the adapter's group: SIGTERM now, SIGKILL in 1 s, reaped by uproc
+    mov esi, 1000
+    call uproc_end
+    mov dword ptr [rbx + DS_pid], 0
 2:  mov rdi, rbx
     call slot_index
     mov edi, eax
@@ -1082,19 +984,16 @@ ds_end:
     mov ecx, .Lm_ended_end - .Lm_ended
     call dcon_line
     mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
 9:  EPILOGUE
 
-# reap(ds): an ended session's adapter is waited for; SIGKILL when SIGTERM was not enough
+# reap(ds): an adapter that exited before its session ended left its process group: SIGKILL to it
+#   when SIGTERM's second is up (uproc_end looks after adapters still running)
 reap:
     PROLOGUE
     mov rbx, rdi
-    mov edi, [rbx + DS_pid]
-    test edi, edi
-    jz 9f
-    mov esi, 1
-    call proc_wait
-    cmp eax, -1
-    jne 2f
+    cmp dword ptr [rbx + DS_pgrp], 0
+    je 9f
     mov rax, [rbx + DS_killat]
     test rax, rax
     jz 9f
@@ -1102,13 +1001,11 @@ reap:
     call time_ms
     cmp rax, r12
     jb 9f
-    mov qword ptr [rbx + DS_killat], 0
-    mov edi, [rbx + DS_pid]
+    mov edi, [rbx + DS_pgrp]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
-    jmp 9f
-2:  mov dword ptr [rbx + DS_pid], 0
+    call proc_kill
+    mov dword ptr [rbx + DS_pgrp], 0
     mov qword ptr [rbx + DS_killat], 0
 9:  EPILOGUE
 
@@ -1124,20 +1021,31 @@ adapter_gone:
     call ds_end
     EPILOGUE
 1:  # its exit code, once it has exited (half a second at most after its output closed)
+    mov r13d, -1
     mov edi, [rbx + DS_pid]
     test edi, edi
     jz 11f
     mov esi, 1
-    call proc_wait
-    mov r13d, eax
-    test eax, eax
-    jns 12f
-    call time_ms
+    call uproc_wait
+    cmp eax, -1
+    je 10f
+    mov r13d, eax               # its code, or -2: reaped elsewhere; not ours to wait for either way
+    jmp 12f
+10: call time_ms
     sub rax, [rbx + DS_exited_at]
     cmp rax, 500
     jb 9f                       # the next frame looks again
     jmp 11f
-12: mov dword ptr [rbx + DS_pid], 0
+12: # reaped: what it started is still its group's: SIGTERM now, SIGKILL in 1 s (reap)
+    mov edi, [rbx + DS_pid]
+    mov [rbx + DS_pgrp], edi
+    mov dword ptr [rbx + DS_pid], 0
+    neg edi
+    mov esi, SIGTERM
+    call proc_kill
+    call time_ms
+    add rax, 1000
+    mov [rbx + DS_killat], rax
 11: lea rdi, [rip + dlg_text]
     lea rsi, [rip + .Lm_crash]
     call cstr_copy
@@ -1205,9 +1113,9 @@ FN dap_stop_session
     jz 9f
     cmp eax, DSS_APPROVAL
     jne 1f
-    # its dialog is still the open one (a newer dialog would have cancelled it): Cancel it
-    xor edi, edi
-    call app_dialog_answer
+    # the question goes away unanswered
+    mov edi, [rbx + DS_id]
+    call run_approve_cancel
     mov rdi, rbx
     lea rsi, [rip + .Lm_cancelled]
     call ds_end
@@ -1349,17 +1257,14 @@ FN dap_shutdown
     je 6f
     mov rdi, rbx
     xor esi, esi
-    call ds_end
-    mov edi, [rbx + DS_pid]
+    call ds_end                 # uproc_end: its quit kills what is left
+    mov edi, [rbx + DS_pgrp]    # and a group an exited adapter left
     test edi, edi
     jz 6f
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
-    mov edi, [rbx + DS_pid]
-    xor esi, esi
-    call proc_wait
-    mov dword ptr [rbx + DS_pid], 0
+    call proc_kill
+    mov dword ptr [rbx + DS_pgrp], 0
 6:  inc r12d
     jmp 5b
 9:  EPILOGUE
@@ -1402,6 +1307,7 @@ on_message:
     mov rsi, r12
     call on_reverse
 9:  mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
     EPILOGUE
 
 # jkey(obj, key cstr) -> JV* (json_get)
@@ -1724,6 +1630,41 @@ r_none:
     mov edi, [rbx + DS_id]
     mov esi, DCON_ERROR
     call dcon_line
+9:  EPILOGUE
+
+# r_resume(ds, root, body, success, pd): continue, next, stepIn or stepOut refused: the program is
+#   still paused there; the stack is asked for again (its references were given up)
+r_resume:
+    PROLOGUE
+    mov rbx, rdi
+    test ecx, ecx
+    jnz 9f
+    mov rdi, rsi
+    mov rsi, rdx
+    call resp_message
+    mov rcx, rdx
+    mov rdx, rax
+    mov edi, [rbx + DS_id]
+    mov esi, DCON_ERROR
+    call dcon_line
+    cmp dword ptr [rbx + DS_state], DSS_RUNNING
+    jne 9f
+    mov rdi, rbx
+    call new_epoch
+    mov dword ptr [rbx + DS_state], DSS_PAUSED
+    and dword ptr [rbx + DS_flags], ~DSF_STALE
+    mov rdi, rbx
+    lea rsi, [rip + .Lc_threads]
+    call dap_req_begin
+    mov rdi, rbx
+    mov esi, RQ_THREADS
+    mov edx, 1
+    call dap_req_send
+    cmp qword ptr [rbx + DS_thread], 0
+    je 9f
+    mov rdi, rbx
+    mov esi, 1
+    call send_stack
 9:  EPILOGUE
 
 # r_disconnect(ds, ...): the adapter should exit now; it gets 2 s
@@ -2158,11 +2099,11 @@ r_threads:
     push rax
     push rax
     lea rdi, [rbx + DS_threads]
-    mov esi, DT_SIZE
+    mov esi, THR_SIZE
     call vec_push
     pop rcx
     pop rcx
-    mov [rax + DT_id], rcx
+    mov [rax + THR_id], rcx
     push rax
     push rax
     mov rdi, r12
@@ -2173,8 +2114,8 @@ r_threads:
     call pool_str
     pop rcx
     pop rcx
-    mov [rcx + DT_name], eax
-    mov [rcx + DT_namelen], edx
+    mov [rcx + THR_name], eax
+    mov [rcx + THR_namelen], edx
 11: inc r15d
     jmp 1b
 2:  # no thread named by the stop: the first one
@@ -2183,7 +2124,7 @@ r_threads:
     cmp qword ptr [rbx + DS_threads + VEC_len], 0
     je 9f
     mov rax, [rbx + DS_threads + VEC_ptr]
-    mov rax, [rax + DT_id]
+    mov rax, [rax + THR_id]
     mov [rbx + DS_thread], rax
     cmp dword ptr [rbx + DS_state], DSS_RUNNING
     jne 3f
@@ -2607,6 +2548,7 @@ r_scopes:
 # vn_expand(ds, node) -> eax 1 when its children were asked for (or are there): it is marked open
 FN vn_expand
     PROLOGUE
+    inc dword ptr [rip + g_dap_gen]
     mov rbx, rdi
     mov r12d, esi
     mov rdi, rbx
@@ -2653,6 +2595,7 @@ FN vn_expand
 # vn_collapse(ds, node): closed, and not reopened at the next stop
 FN vn_collapse
     PROLOGUE
+    inc dword ptr [rip + g_dap_gen]
     mov rbx, rdi
     mov r12d, esi
     call vn_node
@@ -2887,9 +2830,11 @@ open_path_remove:
 
 # ---------------- watches ----------------
 
-# send_watches(ds): each watch expression evaluated in the focused frame
+# send_watches(ds): each watch expression evaluated in the focused frame (a new round: answers to an
+#   earlier one are dropped)
 send_watches:
     PROLOGUE
+    inc dword ptr [rip + watch_gen]
     mov rbx, rdi
     cmp dword ptr [rbx + DS_state], DSS_PAUSED
     jne 9f
@@ -2928,7 +2873,9 @@ send_watches:
     call akv
     mov rdi, rbx
     mov esi, RQ_WATCH
-    mov edx, r14d
+    mov edx, [rip + watch_gen]
+    shl rdx, 32
+    or rdx, r14
     call dap_req_send
     pop rcx
     pop rcx
@@ -2973,6 +2920,9 @@ r_watch:
     mov eax, [r15 + PD_epoch]
     cmp eax, [rbx + DS_epoch]
     jne 9f
+    mov eax, [r15 + PD_ctx + 4]
+    cmp eax, [rip + watch_gen]
+    jne 9f                      # an earlier round's answer
     mov eax, [r15 + PD_ctx]
     mov [rsp + 4], eax          # the watch's index
     mov rdi, rbx
@@ -3110,6 +3060,7 @@ refresh_watches:
 2:  mov rdi, rbx
     call send_watches
 9:  mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
     EPILOGUE
 
 # ---------------- the console's input ----------------
@@ -3157,6 +3108,62 @@ FN dap_eval
 8:  lea rdi, [rip + .Lm_nosession]
     call dap_error
     EPILOGUE
+
+# dap_hover_eval(ds, expr cstr): evaluate for the pointer's hover in the focused frame (context hover
+#   when the adapter offers it, else watch)
+FN dap_hover_eval
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdi, rbx
+    call dap_frame_ptr
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    mov rdi, rbx
+    lea rsi, [rip + .Lc_evaluate]
+    call dap_req_begin
+    lea rdi, [rip + .Lk_expression]
+    mov rsi, r12
+    call akv
+    lea rdi, [rip + .Lk_frameId]
+    mov rsi, [r13 + FR_id]
+    call aki
+    lea rsi, [rip + .Lv_hover]
+    test qword ptr [rbx + DS_caps], CAP_HOVER
+    jnz 1f
+    lea rsi, [rip + .Lv_watch]
+1:  lea rdi, [rip + .Lk_context]
+    call akv
+    mov rdi, rbx
+    mov esi, RQ_HOVER
+    mov edx, [rip + g_dap_gen]
+    call dap_req_send
+9:  EPILOGUE
+
+# r_hover(ds, root, body, success, pd): the hover's value (an error shows nothing)
+r_hover:
+    PROLOGUE
+    mov rbx, rdx
+    test ecx, ecx
+    jz 9f
+    mov eax, [r8 + PD_epoch]
+    cmp eax, [rdi + DS_epoch]
+    jne 9f
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_result]
+    call jstr
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_type]
+    call jstr
+    mov rcx, rdx
+    mov rdx, rax
+    mov rdi, r12
+    mov rsi, r13
+    call dg_hover_answer
+9:  EPILOGUE
 
 # r_repl(ds, root, body, success, pd): the value, or the error, in the console
 r_repl:
@@ -3343,10 +3350,13 @@ FN dap_resume
     mov esi, RQ_RESUME
     xor edx, edx
     call dap_req_send
+    test eax, eax
+    jz 9f                       # it did not go out: still paused
     mov dword ptr [rbx + DS_state], DSS_RUNNING
     inc dword ptr [rbx + DS_epoch]
     or dword ptr [rbx + DS_flags], DSF_STALE
     mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
 9:  EPILOGUE
 
 # dap_pause(): Pause on the focused running session
@@ -3387,6 +3397,95 @@ send_pause:
     mov esi, RQ_PAUSE
     xor edx, edx
     call dap_req_send
+9:  EPILOGUE
+
+# dap_focus_slot(slot): that session is the focused one (the toolbar, the view and stepping act on it)
+FN dap_focus_slot
+    cmp edi, DS_MAX
+    jae 1f
+    mov [rip + g_dfocus], edi
+    inc dword ptr [rip + g_dap_gen]
+    mov dword ptr [rip + g_dirty], 1
+1:  ret
+
+# dap_focus_frame(ds, index): another frame of the stopped thread: revealed, its scopes and the
+#   watches asked for again (the variables of the old frame go)
+FN dap_focus_frame
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    cmp dword ptr [rbx + DS_state], DSS_PAUSED
+    jne 9f
+    cmp r12, [rbx + DS_frames + VEC_len]
+    jae 9f
+    mov [rbx + DS_frame], r12d
+    mov qword ptr [rbx + DS_vars + VEC_len], 0
+    mov rdi, rbx
+    call reveal_frame
+    mov rdi, rbx
+    call send_scopes
+    mov rdi, rbx
+    call send_watches
+    inc dword ptr [rip + g_dap_gen]
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# dap_restart(): Restart: the focused session stops and its configuration starts again when it ended
+FN dap_restart
+    PROLOGUE
+    call dap_focused
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, [rbx + DS_name]
+    test rdi, rdi
+    jz 9f
+    lea rdi, [rip + restart_name]
+    call sb_clear
+    lea rdi, [rip + restart_name]
+    mov rsi, [rbx + DS_name]
+    call sb_push_cstr
+    mov eax, [rbx + DS_nodebug]
+    mov [rip + restart_nodebug], eax
+    mov eax, [rbx + DS_id]
+    mov [rip + restart_after], eax
+    cmp dword ptr [rbx + DS_state], DSS_ENDED
+    je 1f
+    mov rdi, rbx
+    call dap_stop_session
+    EPILOGUE
+1:  call restart_check
+9:  EPILOGUE
+
+# restart_check(): a restart waits for its session to end, then starts the configuration again
+restart_check:
+    PROLOGUE
+    mov eax, [rip + restart_after]
+    test eax, eax
+    jz 9f
+    # the session with that id
+    xor r12d, r12d
+1:  cmp r12d, DS_MAX
+    jae 2f
+    mov edi, r12d
+    call dap_slot
+    cmp dword ptr [rax + DS_state], DSS_FREE
+    je 11f
+    mov ecx, [rip + restart_after]
+    cmp [rax + DS_id], ecx
+    jne 11f
+    cmp dword ptr [rax + DS_state], DSS_ENDED
+    jne 9f                      # still ending
+    cmp dword ptr [rax + DS_pid], 0
+    jne 9f
+    jmp 2f
+11: inc r12d
+    jmp 1b
+2:  mov dword ptr [rip + restart_after], 0
+    mov rdi, [rip + restart_name + SB_ptr]
+    mov rsi, [rip + restart_name + SB_len]
+    mov edx, [rip + restart_nodebug]
+    call dap_start
 9:  EPILOGUE
 
 # ---------------- state for tests and drawing ----------------
@@ -3530,24 +3629,24 @@ FN dap_stack_dump
     xor r12d, r12d
 1:  cmp r12, [rbx + DS_threads + VEC_len]
     jae 4f
-    imul r13, r12, DT_SIZE
+    imul r13, r12, THR_SIZE
     add r13, [rbx + DS_threads + VEC_ptr]
     mov rdi, r15
     lea rsi, [rip + .Ld_th]
     call sb_push_cstr
     mov rdi, r15
-    mov rsi, [r13 + DT_id]
+    mov rsi, [r13 + THR_id]
     call sb_push_u64
     mov rdi, r15
     mov esi, ' '
     call sb_push_byte
-    mov ecx, [r13 + DT_name]
+    mov ecx, [r13 + THR_name]
     mov rsi, [rbx + DS_strs + SB_ptr]
     add rsi, rcx
-    mov edx, [r13 + DT_namelen]
+    mov edx, [r13 + THR_namelen]
     mov rdi, r15
     call sb_push
-    mov rax, [r13 + DT_id]
+    mov rax, [r13 + THR_id]
     cmp rax, [rbx + DS_thread]
     jne 2f
     mov rdi, r15
@@ -3556,7 +3655,7 @@ FN dap_stack_dump
 2:  mov rdi, r15
     mov esi, 10
     call sb_push_byte
-    mov rax, [r13 + DT_id]
+    mov rax, [r13 + THR_id]
     cmp rax, [rbx + DS_thread]
     jne 3f
     mov rdi, r15
@@ -3790,12 +3889,6 @@ FN dap_find_node
 .Lm_exited: .asciz "Program exited with code "
 .Lm_nosession: .asciz "no debug session"
 .Lm_unsupported: .asciz "rhun does not support "
-.Ld_let: .asciz "Let "
-.Ld_run: .asciz " run programs in "
-.Ld_noproject: .asciz "this window"
-.Ld_will: .asciz " will run "
-.Ld_rights: .asciz " as you, with access to all your files and the network. Allowing it covers this extension's debuggers in this folder."
-.Ld_allow: .asciz "Allow"
 .Ld_session: .asciz "session="
 .Ld_name: .asciz " name="
 .Ld_type: .asciz " type="
@@ -3919,6 +4012,7 @@ FN dap_find_node
 .Lv_subtle: .asciz "subtle"
 .Lv_watch: .asciz "watch"
 .Lv_repl: .asciz "repl"
+.Lv_hover: .asciz "hover"
 .Lv_stdout: .asciz "stdout"
 .Lv_stderr: .asciz "stderr"
 .Lv_console: .asciz "console"
@@ -3965,8 +4059,8 @@ event_table:
     .quad 0, 0
 resp_table:     # by RQ_*
     .quad 0, r_initialize, r_launch, r_none, r_config, r_config, r_config, r_threads, r_stack
-    .quad r_scopes, r_variables, r_none, r_none, r_none, r_none, r_disconnect, r_none, r_excinfo
-    .quad r_none, r_repl, r_watch, r_none, 0
+    .quad r_scopes, r_variables, r_none, r_resume, r_none, r_none, r_disconnect, r_none, r_excinfo
+    .quad r_none, r_repl, r_watch, r_hover, 0
 resume_cmds:
     .quad .Lc_continue, .Lc_next, .Lc_stepIn, .Lc_stepOut
 state_names:
