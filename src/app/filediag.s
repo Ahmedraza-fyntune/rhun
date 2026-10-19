@@ -5,19 +5,19 @@
 # code actions (DIAGS).
 .include "rhun.inc"
 
-.equ FD_PER_TARGET, 2000
-.equ FD_MSG_MAX, 4000
-.equ FD_ID_MAX, 64
+.equ FDG_PER_TARGET, 2000
+.equ FDG_MSG_MAX, 4000
+.equ FDG_ID_MAX, 64
 
 # a diagnostic's id, for code-actions' DIAGS
 STRUCT
-F FD_ps, 8                      # its source (PS*)
+F FDG_ps, 8                      # its source (PS*)
 F FD_l1, 4
 F FD_c1, 4
 F FD_l2, 4
 F FD_c2, 4
-F FD_id, 8                      # owned cstr
-ENDSTRUCT FD_SIZE
+F FDG_id, 8                      # owned cstr
+ENDSTRUCT FDG_SIZE
 
 .bss
 .p2align 3
@@ -94,23 +94,23 @@ fd_forget_ids:
     xor ebx, ebx
 1:  cmp rbx, [rip + fd_ids + VEC_len]
     jae 9f
-    imul r13, rbx, FD_SIZE
+    imul r13, rbx, FDG_SIZE
     add r13, [rip + fd_ids + VEC_ptr]
-    cmp [r13 + FD_ps], r12
+    cmp [r13 + FDG_ps], r12
     je 2f
     inc rbx
     jmp 1b
-2:  mov rdi, [r13 + FD_id]
+2:  mov rdi, [r13 + FDG_id]
     call mem_free
     mov rax, [rip + fd_ids + VEC_len]
     dec rax
     mov [rip + fd_ids + VEC_len], rax
-    imul rsi, rax, FD_SIZE
+    imul rsi, rax, FDG_SIZE
     add rsi, [rip + fd_ids + VEC_ptr]
     cmp rsi, r13
     je 1b
     mov rdi, r13
-    mov edx, FD_SIZE
+    mov edx, FDG_SIZE
     call memcpy
     jmp 1b
 9:  EPILOGUE
@@ -195,7 +195,7 @@ FN filediag_h_set
     call extproto_field
     test edx, edx
     jz .Lfs_syntax
-    cmp rax, FD_PER_TARGET
+    cmp rax, FDG_PER_TARGET
     ja .Lfs_toobig
     mov r12, rax                # N
     mov edi, 4
@@ -418,7 +418,7 @@ fd_records:
     call fd_num
     test rax, rax
     js .Lfr_bad
-    cmp rax, FD_MSG_MAX
+    cmp rax, FDG_MSG_MAX
     ja .Lfr_bad
     test rax, rax
     jz .Lfr_bad
@@ -555,10 +555,10 @@ fd_add:
     call mem_dup
     mov rbx, rax
     lea rdi, [rip + fd_ids]
-    mov esi, FD_SIZE
+    mov esi, FDG_SIZE
     call vec_push
-    mov [rax + FD_ps], r15
-    mov [rax + FD_id], rbx
+    mov [rax + FDG_ps], r15
+    mov [rax + FDG_id], rbx
     lea rcx, [rip + fd_tmp]
     mov edx, [rcx]
     mov [rax + FD_l1], edx
@@ -658,7 +658,7 @@ fd_extra:
     mov rax, [rip + fe_len]
     test rax, rax
     jz .Lfx_bad
-    cmp rax, FD_ID_MAX
+    cmp rax, FDG_ID_MAX
     ja .Lfx_bad
     mov rdi, r14
     mov rsi, rax
@@ -793,13 +793,13 @@ FN filediag_ids
     xor r13d, r13d
 1:  cmp r13, [rip + fd_ids + VEC_len]
     jae 9f
-    imul r14, r13, FD_SIZE
+    imul r14, r13, FDG_SIZE
     add r14, [rip + fd_ids + VEC_ptr]
     inc r13
     cmp dword ptr [rsp + 24], 64
     jae 9f
     # its source is this extension's for this path
-    mov r15, [r14 + FD_ps]
+    mov r15, [r14 + FDG_ps]
     xor ecx, ecx
 2:  cmp rcx, [rbx + EXT_fdsrc + VEC_len]
     jae 1b
@@ -832,7 +832,7 @@ FN filediag_ids
     mov esi, ','
     call sb_push_byte
 6:  mov rdi, [rsp + 16]
-    mov rsi, [r14 + FD_id]
+    mov rsi, [r14 + FDG_id]
     call sb_push_cstr
     inc dword ptr [rsp + 24]
     jmp 1b
