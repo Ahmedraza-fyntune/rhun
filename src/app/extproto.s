@@ -346,6 +346,10 @@ handle_line:
     mov rdi, rbx
     call extproto_events        # catch-up: nothing is known yet, so everything open is reported
     mov rdi, rbx
+    call rview_ext_ready        # its declared views open (views group, rview.s)
+    mov rdi, rbx
+    call testproto_ready        # testing: a controller is asked for its roots
+    mov rdi, rbx
     call ext_pending_try
     jmp 9f
 3:  mov rdi, rbx
@@ -469,6 +473,30 @@ handle_line:
     jz 9f
     cmp dword ptr [rbx + EXT_feat_asks], 0
     je 9f
+    mov rdi, rbx                # language features: counted, and a late answer goes no further
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call query_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # testing: tests-resolve and test-run answers
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call testproto_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # AI: transcripts, tool answers, prompts (extaiproto.inc)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ai_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -500,6 +528,34 @@ handle_line:
     test edx, edx
     jz 9f
     mov r12, rax
+    mov rdi, rbx                # language features: counted, and a late answer goes no further
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call query_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # testing: the code and text go with the answer
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call testproto_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # AI: the code and text go with the error (extaiproto.inc)
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call ai_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -554,6 +610,17 @@ handle_line:
     lea rsi, [rip + .Lr_framing]
     call ext_kill
     jmp 9b
+
+# testing (testproto.s): every tests verb goes to testproto_request(ext, id, line, len, body,
+# body length), which parses the line itself and answers through ext_send_checked
+h_tests:
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov rdx, [rip + line + SB_ptr]
+    mov rcx, [rip + line + SB_len]
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    jmp testproto_request
 
 # reply_syntax(id): "error ID syntax ..."; the third in a row ends the program
 reply_syntax:
@@ -726,6 +793,43 @@ FN xp_send
     call out_end
     mov [rip + cur], r12
     EPILOGUE
+
+# ---------------- for verb handlers in other files (language features: query.s) ----------------
+
+# FN extproto_cur() -> rax the EXT being served; extproto_req_id() -> rax its request's id
+FN extproto_cur
+    mov rax, [rip + cur]
+    ret
+FN extproto_req_id
+    mov rax, [rip + cur_id]
+    ret
+# FN extproto_nfields() -> rax the fields of the request's line
+FN extproto_nfields
+    mov rax, [rip + nfields]
+    ret
+# FN extproto_field(i) -> rax value, rdx 1 for a decimal number; extproto_field_at(i) -> rax ptr,
+# rdx len (0 past the line's fields); extproto_rest(i) -> rax ptr, rdx len: field i to the end
+FN extproto_field
+    jmp field_u64
+FN extproto_field_at
+    cmp rdi, [rip + nfields]
+    jae 8f
+    jmp field_at
+8:  xor eax, eax
+    xor edx, edx
+    ret
+FN extproto_rest
+    jmp rest_from
+# FN extproto_body() -> rax ptr, rdx len of the request's body
+FN extproto_body
+    mov rax, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    ret
+# FN extproto_ok(id), extproto_error(id, "code text"): the reply
+FN extproto_ok
+    jmp reply_ok
+FN extproto_error
+    jmp reply_error
 
 # ---------------- documents ----------------
 
@@ -2468,6 +2572,99 @@ h_unview:
     call reply_ok
 9:  EPILOGUE
 
+# ---- retained views (views group, rview.s) ----
+
+# vtree_agreed() -> ZF clear when view-tree was agreed; otherwise the reply is sent
+vtree_agreed:
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_VIEW_TREE
+    jnz 1f
+    push rax
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    pop rax
+    xor eax, eax
+1:  ret
+
+# ID vpatch VIEW LEN + patch -> ok ID REV, applied whole or not at all
+h_vpatch:
+    PROLOGUE
+    call vtree_agreed
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdx, rax
+    shr rdx, 32
+    jnz 8f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    mov rdx, [rip + body_ptr]
+    mov rcx, [rip + body_len]
+    call rview_patch
+    test rax, rax
+    js 6f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+6:  call rview_error
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noview]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID vshow NAME FOCUS -> ok ID VIEW: a declared view's place opens on it
+h_vshow:
+    PROLOGUE
+    call vtree_agreed
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    xor r12d, r12d
+    mov edi, 3
+    lea rsi, [rip + .Lvs_focus]
+    call field_is
+    test eax, eax
+    jz 1f
+    mov r12d, 1
+    jmp 2f
+1:  mov edi, 3
+    lea rsi, [rip + .Ldash]
+    call field_is
+    test eax, eax
+    jz 7f
+2:  mov edi, 2
+    call field_at
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    mov ecx, r12d
+    call rview_show
+    cmp eax, -1
+    je 6f
+    mov rdi, [rip + cur_id]
+    mov esi, eax
+    call reply_ok_u64
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_refused_vshow]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 h_cmd:
     PROLOGUE
     cmp qword ptr [rip + nfields], 3
@@ -2932,6 +3129,56 @@ FN extproto_host_send
     call out_bytes
     mov edi, 10
     call out_byte
+    call out_end
+    test rax, rax
+    js 8f
+    mov rax, r15
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN extproto_host_send_body(ext, doc or 0, line, len, body, blen) -> rax the id of "ID LINE" and
+# the body's bytes after it (language features: the line ends with blen), or 0. With a document,
+# every event about it goes first and a document the extension does not know is not asked about
+FN extproto_host_send_body
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov [rsp], r8
+    mov [rsp + 8], r9
+    cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 8f
+    mov rdi, rbx
+    call extproto_events
+    test rax, rax
+    js 8f
+    test r12, r12
+    jz 1f
+    mov rdi, rbx
+    mov rsi, r12
+    call extproto_doc_ready
+    test eax, eax
+    jz 8f
+1:  mov [rip + cur], rbx
+    cmp qword ptr [rbx + EXT_hreq], 2147483647
+    jae 8f
+    inc qword ptr [rbx + EXT_hreq]
+    mov r15, [rbx + EXT_hreq]
+    call out_begin
+    mov rdi, r15
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r13
+    mov rsi, r14
+    call out_bytes
+    mov edi, 10
+    call out_byte
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call out_bytes
     call out_end
     test rax, rax
     js 8f
@@ -3604,14 +3851,41 @@ verbs:
     .quad .Lv_view, h_view, 0
     .quad .Lv_draw, h_draw, VIEW_BODY_MAX
     .quad .Lv_unview, h_unview, 0
+    .quad .Lv_vpatch, h_vpatch, EXT_BODY_MAX     # views group: retained views
+    .quad .Lv_vshow, h_vshow, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # language features (query.s)
+    .quad .Lv_query_part, query_h_part, REPLY_BODY_MAX
+    .quad .Lv_query_progress, query_h_progress, 4096
+    .quad .Lv_provides, query_h_provides, 0
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
+    # testing (testproto.s): feature "tests"
+    .quad .Lv_test_items, h_tests, EXT_BODY_MAX
+    .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
+    .quad .Lv_test_update, h_tests, TS_RESULTS_BODY
+    .quad .Lv_test_end, h_tests, 0
+    .quad .Lv_test_coverage, h_tests, TS_COVER_BODY
+    .quad .Lv_test_exec, h_tests, TS_EXEC_BODY
+    # AI (wider-parity D, extaiproto.inc)
+    .quad .Lv_agent_sessions, h_agent_sessions, 1048576
+    .quad .Lv_agent_changed, h_agent_changed, 0
+    .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
+    .quad .Lv_unpropose, h_unpropose, 0
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DT_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
     .quad 0, 0, 0
+.Lv_query_part: .asciz "query-part"
+.Lv_query_progress: .asciz "query-progress"
+.Lv_provides: .asciz "provides"
+.Lv_test_items: .asciz "test-items"
+.Lv_test_remove: .asciz "test-remove"
+.Lv_test_update: .asciz "test-update"
+.Lv_test_end: .asciz "test-end"
+.Lv_test_coverage: .asciz "test-coverage"
+.Lv_test_exec: .asciz "test-exec"
 .Lpv_decoration_type: .asciz "decoration-type"
 .Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
@@ -3628,6 +3902,10 @@ verbs:
 .Lv_view: .asciz "view"
 .Lv_draw: .asciz "draw"
 .Lv_unview: .asciz "unview"
+.Lv_vpatch: .asciz "vpatch"
+.Lv_vshow: .asciz "vshow"
+.Lvs_focus: .asciz "focus"
+.Le_refused_vshow: .asciz "refused no such view"
 .Lv_apply: .asciz "apply"
 .Lv_snippet: .asciz "snippet"
 .Lv_snippet_context: .asciz "snippet-context"
@@ -3766,6 +4044,7 @@ feature_names:
 .Lr_syntax: .asciz "three unparsable lines in a row"
 
 .include "app/extwatchproto.inc"
+.include "app/extaiproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

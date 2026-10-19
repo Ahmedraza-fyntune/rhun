@@ -1076,8 +1076,11 @@ c_print_views:
     call flush_frame
     lea rdi, [rip + out]
     call extview_dump
+    lea rdi, [rip + out]
+    call rview_dump             # the retained views too (views group)
     xor eax, eax
     EPILOGUE
+
 
 # print-complete: the completion list and the signature help (complete_dump)
 c_print_complete:
@@ -2330,6 +2333,10 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 # other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
 ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad langfeat_ctl          # language features (lfcontrol.s)
+    .quad test_ctl              # testing (testview.s)
+    .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
+    .quad views_ctl             # views group: places and retained views (viewsctl.s)
     .quad pres_ctl              # editor presentation (presctl.s)
     .quad 0
 ctl_table:
@@ -2367,7 +2374,8 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
-    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
+    .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
+    .quad 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
 panel_rows:
