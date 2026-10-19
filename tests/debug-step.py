@@ -33,7 +33,7 @@ class Step(debughost.DebugHost):
         steps[4]['block'] = True
         self.scenario(steps)
         self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\n')
-        out = self.run_editor([*self.start(), 'wait 300', 'print-debug', 'debug-pause', 'wait-debug paused',
+        out = self.run_editor([*self.start(), 'wait-debug running', 'wait 100', 'print-debug', 'debug-pause', 'wait-debug paused',
                                'print-debug', 'debug-continue', 'wait-debug ended', 'print-debug'])
         sessions = self.debug_lines(out)
         self.assertEqual(self.field(sessions[0], 'state'), 'running')

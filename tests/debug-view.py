@@ -153,7 +153,7 @@ class View(debughost.DebugHost):
         steps[3]['block'] = True
         self.scenario(steps)
         self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\n')
-        out = self.run_editor([*self.start(run=True), 'wait 300', 'print-debug-toolbar'])
+        out = self.run_editor([*self.start(run=True), 'wait-debug running', 'wait 100', 'print-debug-toolbar'])
         self.assertEqual(sorted(self.toolbar(out)), [21, 154])
 
     def test_context_keys(self):
