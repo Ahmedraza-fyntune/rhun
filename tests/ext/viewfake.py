@@ -14,7 +14,9 @@ of its own), untab (unview of that tab), clearmain (f:main.rs keeps no children)
 note, noteask (a
 warning with Reload, which runs rescan, and Later), noteerr, notemany (6 sticky), notes17, noteset,
 unnote, prog (status, cancellable, then 42% "crates"), prognote, progview (in todo), progbad,
-progend (VIEWFAKE_NOTIFY agrees notify and progress), fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
+progend (VIEWFAKE_NOTIFY agrees notify and progress), img (a red PNG drawn in pic), badimg,
+imgs65, unimg (twice), tabpic (a 12a tab picture; VIEWFAKE_PIC agrees views, view-images and,
+unless it is nokeys, view-keys; a vcopy is answered "copied text" or "cut text"), fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
 view-log is not asked for. VIEWFAKE_DELAY: seconds before hello.
 
 The items view (panel) has a lazy node "a" (its children come with vkids: VIEWFAKE_LAZY answer,
@@ -24,7 +26,9 @@ TODO has a title action "rescan" and node actions "pin" (inline) and "pin hide" 
 import threading
 import time
 import os
+import struct
 import sys
+import zlib
 
 MODE = os.environ.get('VIEWFAKE_MODE', 'normal')
 LOG = os.environ.get('VIEWFAKE_LOG')
@@ -121,6 +125,34 @@ tabs = []
 on_reply = {}           # request id -> fn(fields) for its ok
 notes = []              # NOTE of each notification rhun took, in order
 progs = []              # P of each progress
+
+
+images = []             # IMG of each image rhun took
+PIC = os.environ.get('VIEWFAKE_PIC', '')
+
+
+def png(w, h, rgba):
+    """A w x h PNG of one RGBA color."""
+    def chunk(kind, data):
+        c = kind + data
+        return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+    raw = b''.join(b'\0' + bytes(rgba) * w for _ in range(h))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) +
+            chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+
+
+def draw(view, picture):
+    request(f'draw {view}', picture.encode())
+
+
+def vimage(data, then=None):
+    rid = request('vimage', data)
+
+    def took(f):
+        images.append(int(f[2]))
+        if then:
+            then(int(f[2]))
+    on_reply[rid] = took
 
 
 def note_body(msg, detail=None, buttons=(), sticky=False):
@@ -275,6 +307,23 @@ def on_command(name):
         progress('status', 'maybe', 'Bad cancel')
     elif name == 'progend' and progs:
         request(f'progress-end {progs[-1]}')
+    elif name == 'img' and views.get('pic'):
+        vimage(png(2, 2, (255, 0, 0, 255)), lambda img: draw(views['pic'], f'image 0 0 40 40 {img}\n'))
+    elif name == 'badimg':
+        request('vimage', b'not an image at all')
+    elif name == 'imgs65':
+        for i in range(65):
+            vimage(png(1, 1, (0, 0, 255, 255)))
+    elif name == 'unimg' and images:
+        request(f'unimage {images[-1]}')
+        request(f'unimage {images[-1]}')
+    elif name == 'tabpic':
+        rid = request('view Pic Tab')
+
+        def opened(f):
+            views['tabpic'] = int(f[2])
+            draw(int(f[2]), 'rect 0 0 200 100 accent\n')
+        on_reply[rid] = opened
     elif name == 'tab':
         def opened_tab(reply):
             pass
@@ -291,6 +340,8 @@ def main():
         features += ' view-log'
     if os.environ.get('VIEWFAKE_NOTIFY'):
         features += ' notify progress'
+    if PIC:
+        features += ' views view-images' + ('' if PIC == 'nokeys' else ' view-keys')
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -304,7 +355,7 @@ def main():
         body = b''
         # a line whose last field is a length carries a body
         if fields[0] == '0' and len(fields) >= 3 and fields[1] == 'view' and \
-                fields[3] in ('select', 'activate', 'expand', 'collapse', 'check', 'action', 'discarded'):
+                fields[3] in ('select', 'activate', 'expand', 'collapse', 'check', 'action', 'discarded', 'text', 'paste'):
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
@@ -318,6 +369,9 @@ def main():
             patch(view, [kids('', [node('m', 'main.rs', 'open', rec('icon', 'file:main.rs -')),
                                   node('r', 'README.md')]),
                          kids('m', [node('m1', '+12 -3')]), rec('state', 'ready 0')])
+            continue
+        elif fields[0].isdigit() and fields[0] != '0' and len(fields) >= 3 and fields[1] == 'vcopy':
+            answer(fields[0], b'copied text' if fields[3] == 'copy' else b'cut text')
             continue
         elif fields[0].isdigit() and fields[0] != '0' and len(fields) >= 3 and fields[1] in ('vkids', 'vmore'):
             n = int(fields[-1])
@@ -335,6 +389,8 @@ def main():
                     todo_tree(view)
                 elif key == 'items':
                     items_tree(view)
+                elif key == 'pic':
+                    draw(view, 'rect 0 0 300 120 accent\n')
             elif what == 'select':
                 ids = body.split(b'\n')
                 selected[view] = ids[0].decode() if ids and ids[0] else None
