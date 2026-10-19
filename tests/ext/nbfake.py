@@ -223,9 +223,9 @@ def worker():
         elif b'colors' in source:
             stream(nb, cell, run, 'stdout', b'\x1b[1;32mgreen\x1b[0m plain \x1b[38;5;196mred\x1b[0m\n')
         elif b'toobig' in source:
-            chunk = b'x' * 65536
-            for _ in range(300):
-                stream(nb, cell, run, 'stdout', chunk)
+            body = output_body({'kind': b'display', 'id': b'-', 'keep': b'', 'items': [(b'text', b'.\n')]})
+            for _ in range(1001):
+                output(nb, cell, run, 'append', '-', body)
         else:
             stream(nb, cell, run, 'stdout', b'echo: ' + source + b'\n')
         state(nb, cell, run, 'done', n)

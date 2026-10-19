@@ -34,6 +34,18 @@ def cells(out):
     return [l for l in out if l.startswith('cell=')]
 
 
+def dumps(out):
+    """The print-notebook dumps in the output, each a list of its cell lines."""
+    groups, cur = [], []
+    for l in out:
+        if l.startswith('cell='):
+            cur.append(l)
+        elif l.startswith('dirty='):
+            groups.append(cur)
+            cur = []
+    return groups
+
+
 def field(line, name):
     m = re.search(r'(?:^| )' + name + r'=(\S*)', line)
     return m.group(1) if m else None
@@ -128,9 +140,9 @@ class Notebooks(unittest.TestCase):
                                'key b', 'print-notebook', 'key a', 'print-notebook',
                                'key d', 'key d', 'print-notebook', 'key z', 'print-notebook',
                                'key m', 'print-notebook', 'key y', 'print-notebook',
-                               'key alt+Up', 'print-notebook', 'key z', 'key z', 'key z', 'key z',
+                               'key alt+Up', 'print-notebook', 'key z', 'key z', 'key z', 'key z', 'key z',
                                'print-notebook', 'type q', 'print-notebook'])
-        runs = [cells(out[i:]) for i, l in enumerate(out) if l.startswith('cell=0')]
+        runs = dumps(out)
         sel = lambda cs: next(i for i, c in enumerate(cs) if field(c, 'sel') == '1')
         self.assertEqual(sel(runs[0]), 1)                       # j j k
         self.assertEqual((len(runs[1]), sel(runs[1])), (4, 2))  # b
@@ -140,7 +152,7 @@ class Notebooks(unittest.TestCase):
         self.assertEqual(field(runs[5][2], 'kind'), 'markup')   # m
         self.assertEqual(field(runs[6][2], 'kind'), 'code')     # y
         self.assertEqual(sel(runs[7]), 1)                       # alt+Up moved it
-        self.assertEqual([field(c, 'id') for c in runs[8]], ['1', '2', '3'])   # z z z z: back to the file
+        self.assertEqual([field(c, 'id') for c in runs[8]], ['1', '2', '3'])   # five z: back to the file
         self.assertEqual(runs[9], runs[8])                      # a letter in command mode types nothing
         self.assertIn('dirty=1', '\n'.join(out))
 
@@ -148,7 +160,7 @@ class Notebooks(unittest.TestCase):
         out = self.run_editor(['key Return', 'key Down', 'key Down', 'print-notebook', 'print-state',
                                'key Down', 'key Down', 'print-notebook', 'key Up', 'print-notebook',
                                'key Escape', 'print-notebook'])
-        runs = [cells(out[i:]) for i, l in enumerate(out) if l.startswith('cell=0')]
+        runs = dumps(out)
         sel = lambda cs: next(i for i, c in enumerate(cs) if field(c, 'sel') == '1')
         self.assertEqual(sel(runs[0]), 1)
         self.assertEqual(field(runs[0][1], 'editing'), '1')
@@ -160,7 +172,7 @@ class Notebooks(unittest.TestCase):
     def test_palette_commands(self):
         out = self.run_editor(['cmd notebook.insert_below', 'cmd notebook.to_markup', 'print-notebook',
                                'cmd notebook.delete_cell', 'cmd notebook.undo_cell', 'print-notebook'])
-        runs = [cells(out[i:]) for i, l in enumerate(out) if l.startswith('cell=0')]
+        runs = dumps(out)
         self.assertEqual(len(runs[0]), 4)
         self.assertEqual(field(runs[0][1], 'kind'), 'markup')
         self.assertEqual(len(runs[1]), 4)
@@ -185,7 +197,7 @@ class Notebooks(unittest.TestCase):
     def test_run_all_and_clear(self):
         out = self.run_editor(['cmd notebook.run_all', *SETTLE, 'wait 300', 'print-notebook',
                                'cmd notebook.clear_outputs', 'print-notebook'])
-        runs = [cells(out[i:]) for i, l in enumerate(out) if l.startswith('cell=0')]
+        runs = dumps(out)
         self.assertEqual([field(c, 'count') for c in runs[0]], ['1', '-', '2'])
         self.assertEqual([field(c, 'outputs') for c in runs[0]], ['1', '0', '1'])
         self.assertEqual([field(c, 'outputs') for c in runs[1]], ['0', '0', '0'])
@@ -194,7 +206,7 @@ class Notebooks(unittest.TestCase):
         self.nb.write_text('%% code python -\nsleep()\n', encoding='utf-8')
         out = self.run_editor(['key ctrl+Return', *SETTLE, 'print-notebook', 'key i', 'key i', *SETTLE,
                                'print-notebook', 'print-nb-output 0 0', 'print-nb-output 0 1'])
-        runs = [cells(out[i:]) for i, l in enumerate(out) if l.startswith('cell=0')]
+        runs = dumps(out)
         self.assertEqual(field(runs[0][0], 'state'), 'running')
         self.assertEqual(field(runs[1][0], 'state'), 'failed')
         self.assertIn('0 nb-interrupt 1', self.fake_log())
@@ -251,7 +263,7 @@ class Notebooks(unittest.TestCase):
         self.assertTrue(any(re.match(r'error \d+ stale', l) for l in log), log)
         self.assertTrue(any(re.match(r'error \d+ toobig', l) for l in log), log)
         c = cells(out)[1]
-        self.assertEqual(field(c, 'outputs'), '1')
+        self.assertEqual(field(c, 'outputs'), '1000')
 
     # --- failures ---
 
@@ -275,10 +287,13 @@ class Notebooks(unittest.TestCase):
         self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=1'))
         self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK)
 
-    def test_close_with_changes_asks(self):
-        out = self.run_editor(['key Return', 'type q', 'key ctrl+w', 'print-dialog', 'dialog no', 'print-state'])
-        self.assertTrue(any('a.nbt' in l for l in out if l.startswith('dialog') or 'Save' in l), out)
-        self.assertTrue(next(l for l in out if l.startswith('tabs=')).startswith('tabs=0'))
+    def test_close_with_changes_asks_and_saves(self):
+        out = self.run_editor(['key Return', 'type q', 'key ctrl+w', 'print-state', 'dialog yes', *SETTLE,
+                               'print-state'])
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('focus=5', states[0])         # the unsaved-changes dialog
+        self.assertTrue(states[1].startswith('tabs=0'), states)
+        self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK.replace('print("hi")', 'qprint("hi")'))
         self.assertIn('0 nb-closed 1', self.fake_log())
 
     def test_large_answer_passes_the_usual_cap(self):

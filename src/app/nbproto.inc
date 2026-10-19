@@ -707,19 +707,38 @@ h_nb_stream:
     call vec_push
     mov [rax], r14
 4:  mov rax, [r14 + OU_items + VEC_ptr]
-    lea rdi, [rax + NI_data]
-    mov rax, [rdi + SB_len]
+    lea r15, [rax + NI_data]
+    mov rax, [r15 + SB_len]
     sub [rbx + NB_outbytes], rax
     sub [r14 + OU_bytes], rax
+    # its lines: the line feeds it had, and those the bytes add (a carriage return never takes
+    # a line feed away), then one more when it does not end in one
+    mov rax, [r14 + OU_lines]
+    mov [rsp], rax
+    mov rcx, [r15 + SB_len]
+    test rcx, rcx
+    jz 41f
+    mov rdx, [r15 + SB_ptr]
+    cmp byte ptr [rdx + rcx - 1], 10
+    je 41f
+    dec qword ptr [rsp]
+41: mov rdi, r15
     mov rsi, [rip + body_ptr]
     mov rdx, [rip + body_len]
     call nb_stream_append
-    mov rax, [r14 + OU_items + VEC_ptr]
-    mov rax, [rax + NI_data + SB_len]
+    add [rsp], rax
+    mov rax, [r15 + SB_len]
     add [rbx + NB_outbytes], rax
     add [r14 + OU_bytes], rax
-    mov rdi, r14
-    call ou_ready
+    mov rcx, [rsp]
+    test rax, rax
+    jz 42f
+    mov rdx, [r15 + SB_ptr]
+    cmp byte ptr [rdx + rax - 1], 10
+    je 42f
+    inc rcx
+42: mov [r14 + OU_lines], rcx
+    mov qword ptr [r14 + OU_show], 0
     inc qword ptr [r12 + CL_outrev]
     mov dword ptr [rbx + NB_dirty], 1
     mov dword ptr [rip + g_dirty], 1
@@ -736,39 +755,56 @@ h_nb_stream:
     call reply_syntax
 9:  EPILOGUE
 
-# nb_stream_append(sb, ptr, len): the bytes after the stream's text; CR LF is a line feed, a
-#   carriage return alone takes the text back to its line's start (a progress bar draws over itself)
+# nb_stream_append(sb, ptr, len) -> rax the line feeds appended: the bytes after the stream's text;
+#   CR LF is a line feed, a carriage return alone takes the text back to its line's start (a
+#   progress bar draws over itself)
 FN nb_stream_append
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
     lea r13, [rsi + rdx]
+    xor r15d, r15d
 1:  cmp r12, r13
     jae 9f
-    movzx eax, byte ptr [r12]
-    inc r12
+    # a run without carriage returns goes in whole
+    mov r14, r12
+2:  cmp r14, r13
+    jae 3f
+    movzx eax, byte ptr [r14]
     cmp eax, 13
-    jne 3f
+    je 3f
+    cmp eax, 10
+    jne 21f
+    inc r15
+21: inc r14
+    jmp 2b
+3:  mov rdx, r14
+    sub rdx, r12
+    jz 4f
+    mov rdi, rbx
+    mov rsi, r12
+    call sb_push
+4:  mov r12, r14
     cmp r12, r13
-    jae 2f
+    jae 9f
+    inc r12                     # the CR
+    cmp r12, r13
+    jae 5f
     cmp byte ptr [r12], 10
     je 1b                       # CR LF: the LF follows
-2:  # back to the line's start
+5:  # back to the line's start
     mov rcx, [rbx + SB_len]
-21: test rcx, rcx
-    jz 22f
+51: test rcx, rcx
+    jz 52f
     mov rdx, [rbx + SB_ptr]
     cmp byte ptr [rdx + rcx - 1], 10
-    je 22f
+    je 52f
     dec rcx
-    jmp 21b
-22: mov [rbx + SB_len], rcx
+    jmp 51b
+52: mov [rbx + SB_len], rcx
     jmp 1b
-3:  mov rdi, rbx
-    mov esi, eax
-    call sb_push_byte
-    jmp 1b
-9:  EPILOGUE
+9:  mov rax, r15
+    EPILOGUE
 
 # ID nb-kernel-label NB STATE LEN + label -> ok ID: the kernel button's text and state
 h_nb_kernel_label:

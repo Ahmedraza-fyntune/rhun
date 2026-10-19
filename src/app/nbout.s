@@ -42,8 +42,8 @@ tmp: .zero SB_SIZE
 
 # ---------------- text ----------------
 
-# tx_walk(ptr, len, cols, draw, ansi) -> eax visual rows, edx 1 when it stopped at NB_TEXT_LINES
-#   lines; draws from (tx_x0, tx_y0) when draw is 1
+# tx_walk(ptr, len, cols, draw, ansi) -> eax visual rows, edx 1 when text is left after the first
+#   NB_TEXT_LINES rows; draws from (tx_x0, tx_y0) when draw is 1
 FN nb_tx_walk
     PROLOGUE
     mov [rip + tx_p], rdi
@@ -83,10 +83,7 @@ FN nb_tx_walk
     inc dword ptr [rip + tx_row]
     mov dword ptr [rip + tx_col], 0
     inc dword ptr [rip + tx_lines]
-    cmp dword ptr [rip + tx_lines], NB_TEXT_LINES
-    jb .Ltw_loop
-    mov r15d, 1
-    jmp .Ltw_end
+    jmp .Ltw_rowcap
 2:  cmp eax, 9
     jne 3f
     call tx_flush
@@ -97,7 +94,8 @@ FN nb_tx_walk
     cmp eax, [rip + tx_cols]
     jbe 21f
     inc dword ptr [rip + tx_row]
-    xor eax, eax
+    mov dword ptr [rip + tx_col], 0
+    jmp .Ltw_rowcap
 21: mov [rip + tx_col], eax
     jmp .Ltw_loop
 3:  cmp eax, 32
@@ -124,6 +122,8 @@ FN nb_tx_walk
     call tx_flush
     inc dword ptr [rip + tx_row]
     mov dword ptr [rip + tx_col], 0
+    cmp dword ptr [rip + tx_row], NB_TEXT_LINES
+    jae .Ltw_capped
 5:  cmp qword ptr [rip + tx_rs], 0
     jne 6f
     mov rax, [rip + tx_p]
@@ -133,6 +133,14 @@ FN nb_tx_walk
 6:  add [rip + tx_col], r13d
     add [rip + tx_p], r12
     jmp .Ltw_loop
+.Ltw_rowcap:
+    cmp dword ptr [rip + tx_row], NB_TEXT_LINES
+    jb .Ltw_loop
+.Ltw_capped:
+    mov rax, [rip + tx_p]
+    cmp rax, [rip + tx_e]
+    jae .Ltw_end
+    mov r15d, 1                 # text is left: a row says how much
 .Ltw_end:
     call tx_flush
     mov eax, [rip + tx_row]
@@ -582,10 +590,8 @@ FN nb_ou_height
     cmp dword ptr [r13 + NI_type], NIT_ANSI
     sete r8b
     call nb_tx_walk
-    cmp qword ptr [rbx + OU_lines], NB_TEXT_LINES
-    jbe 1f
-    inc eax                     # "N more lines"
-1:  imul eax, [rip + g_lh]
+    add eax, edx                # "N more lines"
+    imul eax, [rip + g_lh]
     jmp .Loh_pad
 .Loh_image:
     mov rdi, rbx
@@ -895,19 +901,26 @@ FN nb_ou_draw
     sete r8b
     call nb_tx_walk
     mov [rsp + 20], eax         # rows
-    mov rax, [rbx + OU_lines]
-    cmp rax, NB_TEXT_LINES
-    jbe 9f
+    test edx, edx
+    jz 9f
     # the lines not shown, and the button that opens all of them in a tab
     lea rdi, [rip + tmp]
     call sb_clear
+    mov esi, [rip + tx_lines]
+    mov rax, [rbx + OU_lines]
+    sub rax, rsi
+    jle 31f
     lea rdi, [rip + tmp]
-    mov rsi, [rbx + OU_lines]
-    sub rsi, NB_TEXT_LINES
+    mov rsi, rax
     call sb_push_u64
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lmore]
     call sb_push_cstr
+    jmp 32f
+31: lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lmore_text]
+    call sb_push_cstr
+32:
     mov eax, [rsp + 20]
     imul eax, [rip + g_lh]
     add eax, [rsp + 4]
@@ -1042,6 +1055,7 @@ FN nb_output_tab
 .section .rodata
 .Lnopath: .asciz ""
 .Lmore: .asciz " more lines \302\267 "
+.Lmore_text: .asciz "more \302\267 "
 .Lopen_tab: .asciz "Open in Tab"
 .Lnot_shown: .asciz "(an output rhun cannot show: "
 .Loutput_name: .asciz "Output"
