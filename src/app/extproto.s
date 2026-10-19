@@ -790,6 +790,9 @@ FN extproto_ok
     jmp reply_ok
 FN extproto_error
     jmp reply_error
+# FN extproto_error_u64(id, "code text ", value)
+FN extproto_error_u64
+    jmp reply_error_u64
 
 # ---------------- documents ----------------
 
@@ -3817,6 +3820,8 @@ verbs:
     .quad .Lv_query_part, query_h_part, REPLY_BODY_MAX
     .quad .Lv_query_progress, query_h_progress, 4096
     .quad .Lv_provides, query_h_provides, 0
+    .quad .Lv_file_diagnostics, filediag_h_set, EXT_BODY_MAX
+    .quad .Lv_file_diagnostics_reset, filediag_h_reset, 0
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
     # source control (wider-parity C): gitdata.s
@@ -3842,6 +3847,8 @@ verbs:
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
 .Lv_provides: .asciz "provides"
+.Lv_file_diagnostics: .asciz "file-diagnostics"
+.Lv_file_diagnostics_reset: .asciz "file-diagnostics-reset"
 .Lv_test_items: .asciz "test-items"
 .Lv_test_remove: .asciz "test-remove"
 .Lv_test_update: .asciz "test-update"

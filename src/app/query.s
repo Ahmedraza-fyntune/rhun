@@ -66,9 +66,9 @@ ENDSTRUCT QS_SIZE
 
 # a narrowed [provides] value (provider-scope)
 STRUCT
-F SC_off, 8                     # EXT offset of the key's field
-F SC_val, 8                     # owned cstr; "" when the kind is withdrawn
-ENDSTRUCT SC_SIZE
+F QSC_off, 8                     # EXT offset of the key's field
+F QSC_val, 8                     # owned cstr; "" when the kind is withdrawn
+ENDSTRUCT QSC_SIZE
 
 .bss
 .p2align 3
@@ -399,9 +399,9 @@ FN query_ext_gone
     xor r12d, r12d
 4:  cmp r12, [rbx + EXT_scope + VEC_len]
     jae 5f
-    imul rax, r12, SC_SIZE
+    imul rax, r12, QSC_SIZE
     add rax, [rbx + EXT_scope + VEC_ptr]
-    mov rdi, [rax + SC_val]
+    mov rdi, [rax + QSC_val]
     call mem_free
     inc r12
     jmp 4b
@@ -768,14 +768,14 @@ FN ext_pv
     mov rcx, [rdi + EXT_scope + VEC_ptr]
 1:  test rax, rax
     jz 8f
-    cmp [rcx + SC_off], rsi
+    cmp [rcx + QSC_off], rsi
     je 2f
-    add rcx, SC_SIZE
+    add rcx, QSC_SIZE
     dec rax
     jmp 1b
 8:  mov rax, [rdi + rsi]
     ret
-2:  mov rax, [rcx + SC_val]
+2:  mov rax, [rcx + QSC_val]
     cmp byte ptr [rax], 0
     jne 3f
     xor eax, eax
@@ -845,23 +845,23 @@ scope_set:
     xor r14d, r14d
 1:  cmp r14, [rbx + EXT_scope + VEC_len]
     jae 3f
-    imul r15, r14, SC_SIZE
+    imul r15, r14, QSC_SIZE
     add r15, [rbx + EXT_scope + VEC_ptr]
-    cmp [r15 + SC_off], r12
+    cmp [r15 + QSC_off], r12
     je 2f
     inc r14
     jmp 1b
-2:  mov rdi, [r15 + SC_val]
+2:  mov rdi, [r15 + QSC_val]
     call mem_free
     test r13, r13
     jz 21f
-    mov [r15 + SC_val], r13
+    mov [r15 + QSC_val], r13
     jmp 9f
 21: # the last record takes its place
     mov rax, [rbx + EXT_scope + VEC_len]
     dec rax
     mov [rbx + EXT_scope + VEC_len], rax
-    imul rax, rax, SC_SIZE
+    imul rax, rax, QSC_SIZE
     add rax, [rbx + EXT_scope + VEC_ptr]
     mov rcx, [rax]
     mov [r15], rcx
@@ -871,10 +871,10 @@ scope_set:
 3:  test r13, r13
     jz 9f
     lea rdi, [rbx + EXT_scope]
-    mov esi, SC_SIZE
+    mov esi, QSC_SIZE
     call vec_push
-    mov [rax + SC_off], r12
-    mov [rax + SC_val], r13
+    mov [rax + QSC_off], r12
+    mov [rax + QSC_val], r13
 9:  EPILOGUE
 
 # FN query_h_provides(): ID provides KEY VALUES: until the process stops, KEY's values are VALUES

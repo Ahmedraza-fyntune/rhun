@@ -115,6 +115,7 @@ lf_bytes: .zero SB_SIZE         # their strings
 lf_ws: .zero SB_SIZE            # a workspace edit to apply (rename, format)
 lf_line: .zero SB_SIZE          # a request being built
 lf_line2: .zero SB_SIZE         # a provider's own request (code-actions, a resolve)
+lf_dbuf: .zero SB_SIZE          # code-actions' DIAGS
 la_flags: .long 0               # lf_action_extra's findings
 la_pad: .long 0
 la_resolve: .quad 0
@@ -1985,9 +1986,13 @@ lf_actions_line:
     imul rax, r15, MK_SIZE
     add rax, [rcx + VEC_ptr]
     inc r15
-    cmp [rax + MK_owner], r14
-    jne 1b
     mov [rsp + 16], rax
+    mov rdi, r14
+    mov rsi, [rax + MK_owner]
+    call lf_mark_mine
+    test eax, eax
+    jz 1b
+    mov rax, [rsp + 16]
     mov rdi, rbx
     mov rsi, [rax + MK_start]
     call doc_line_of
@@ -2035,10 +2040,60 @@ lf_actions_line:
     lea rsi, [rip + .Ldash]
 6:  lea rdi, [rip + lf_line2]
     call sb_push_cstr
+    # DIAGS: the ids of its file-diagnostics in the range
+    lea rdi, [rip + lf_dbuf]
+    call sb_clear
+    mov rdi, rbx
+    mov rsi, r12
+    call lf_line_col
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    mov rdi, rbx
+    mov rsi, r13
+    call lf_line_col
+    lea rcx, [rip + lf_dbuf]
+    push rcx
+    push rcx
+    mov r8, rax
+    mov r9, rdx
+    mov rdi, r14
+    mov rsi, [rbx + DOC_path]
+    mov rdx, [rsp + 16]
+    mov rcx, [rsp + 24]
+    call filediag_ids
+    add rsp, 16
+    test eax, eax
+    jz 7f
     lea rdi, [rip + lf_line2]
-    lea rsi, [rip + .Lsp_dash]  # DIAGS: ids come with file-diagnostics
+    call lf_push_sp
+    lea rdi, [rip + lf_line2]
+    mov rsi, [rip + lf_dbuf + SB_ptr]
+    mov rdx, [rip + lf_dbuf + SB_len]
+    call sb_push
+    EPILOGUE
+7:  lea rdi, [rip + lf_line2]
+    lea rsi, [rip + .Lsp_dash]
     call sb_push_cstr
     EPILOGUE
+
+# lf_mark_mine(ext, owner) -> eax 1 when a mark's owner is the extension or one of its
+# file-diagnostics sources
+lf_mark_mine:
+    cmp rdi, rsi
+    je 1f
+    mov rcx, [rdi + EXT_fdsrc + VEC_len]
+    mov rdx, [rdi + EXT_fdsrc + VEC_ptr]
+2:  test rcx, rcx
+    jz 8f
+    cmp [rdx], rsi
+    je 1f
+    add rdx, 8
+    dec rcx
+    jmp 2b
+1:  mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
 
 # lf_push_pos2(doc, pos): " LINE COL" into lf_line2
 lf_push_pos2:
@@ -3756,6 +3811,8 @@ FN langfeat_ext_gone
     call query_ext_gone
     mov rdi, [rsp]
     call langextra_ext_gone
+    mov rdi, [rsp]
+    call filediag_ext_gone      # its diagnostics in the Problems store go
     pop rdi
     pop rdi
     xor ecx, ecx
