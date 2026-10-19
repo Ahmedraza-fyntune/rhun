@@ -254,6 +254,47 @@ class Notebooks(unittest.TestCase):
         self.assertIn('0 nb-kernel 1', self.fake_log())
         self.assertIn('kernel=Other Kernel', [l for l in out if l.startswith('dirty=')][-1])
 
+    # --- kernels that run as the user (nb-exec) ---
+
+    def test_kernel_runs_as_the_user_after_approval(self):
+        self.nb.write_text('%% code python -\nexec()\n%% code python -\nexec()\n', encoding='utf-8')
+        out = self.run_editor(['key ctrl+Return', 'wait 300', 'print-dialog', 'dialog yes', *SETTLE, 'wait 500',
+                               'print-notebook', 'print-nb-output 0 0', 'nb-select 1', 'key ctrl+Return',
+                               *SETTLE, 'wait 500', 'print-dialog', 'print-notebook', 'print-nb-output 1 0',
+                               'print-nb-exec'])
+        dialogs = [l for l in out if l.startswith('dialog=') and l != 'dialog=none']
+        self.assertEqual(dialogs[0], 'dialog=Let Fake Notebooks run programs in proj?', out)
+        self.assertEqual(len(dialogs), 1, out)  # once per extension and project
+        runs = dumps(out)
+        self.assertEqual(field(runs[0][0], 'state'), 'done')
+        self.assertEqual(field(runs[1][1], 'state'), 'done')
+        text = '\n'.join(out)
+        self.assertIn('exit=3 log=kernel in %s from-rhun' % self.proj, text)
+        self.assertEqual(text.count('exit=3 log='), 2)
+        self.assertNotIn('state=running', '\n'.join(l for l in out if l.startswith('exec=')))
+        ini = (self.work / 'config/rhun/extensions.ini').read_text(encoding='utf-8')
+        self.assertIn('allow_run = ' + str(self.proj), ini)
+
+    def test_kernel_refused_or_not_in_needs(self):
+        self.nb.write_text('%% code python -\nexec()\n%% code python -\nexecbad()\n', encoding='utf-8')
+        out = self.run_editor(['key ctrl+Return', 'wait 300', 'dialog no', *SETTLE, 'print-nb-output 0 0',
+                               'nb-select 1', 'key ctrl+Return', *SETTLE, 'print-dialog', 'print-notebook',
+                               'print-nb-output 1 0'])
+        self.assertIn('exec: refused the user did not allow it', '\n'.join(out))
+        self.assertIn('exec: needs kernels=sh', '\n'.join(out))
+        self.assertEqual([field(c, 'state') for c in dumps(out)[0]], ['failed', 'failed'])
+
+    def test_interrupt_stops_a_kernel_and_closing_ends_it(self):
+        self.nb.write_text('%% code python -\nexecsleep()\n', encoding='utf-8')
+        out = self.run_editor(['key ctrl+Return', 'wait 300', 'dialog yes', *SETTLE, 'print-nb-exec',
+                               'key i', 'key i', *SETTLE, 'wait 500', 'print-notebook', 'print-nb-output 0 0',
+                               'print-nb-exec'])
+        execs = [l for l in out if l.startswith('exec=')]
+        self.assertEqual(len(execs), 1, out)
+        self.assertIn('state=running', execs[0])
+        self.assertEqual(field(dumps(out)[0][0], 'state'), 'cancelled')
+        self.assertIn('exit=137 log=', '\n'.join(out))
+
     def test_outputs_rhun_draws(self):
         self.nb.write_text('%% code python -\npng()\n%% code python -\nerror()\n%% code python -\nprogress()\n'
                            '%% code python -\nclearwait()\n%% code python -\nreplace()\n%% code python -\ncolors()\n',

@@ -10,7 +10,10 @@ standard library only. It reads and writes .nbt files, a line-based toy format:
 and runs cells by what their source says: "sleep" waits until interrupted, "error" fails with a
 traceback, "png" shows an image, "many" prints 1000 lines, "progress" draws over its line with
 carriage returns, "clearwait" replaces its output, "replace" updates a display by its id, "stale"
-answers for an old run, "toobig" streams past the cap; anything else is echoed. NBFAKE_LOG names a
+answers for an old run, "toobig" streams past the cap, "exec" starts a kernel as the user (nb-exec:
+python3 printing its folder and a variable, exit 3) and streams its log, "execsleep" starts one that
+sleeps until interrupted (nb-exec-signal kill), "execbad" asks for a program [needs] does not name;
+anything else is echoed. NBFAKE_LOG names a
 file that receives every line rhun sends and every answer to the fake's requests. NBFAKE_MODE:
 openerror, badbody, slowopen, nofeature, saveerror, noread.
 """
@@ -34,6 +37,9 @@ interrupted = threading.Event()
 runs = queue.Queue()
 latest = {}                     # (nb, cell) -> latest run id
 choosing = {}                   # choose request id -> notebook
+answers = {}                    # request id -> queue for its answer line (nb-exec)
+exits = {}                      # EXEC -> queue for its nb-exec-exit code
+sleeping = []                   # the EXEC of an execsleep run
 
 
 def log(line):
@@ -180,6 +186,49 @@ def output(nb, cell, run, op, target, body):
     request(f'nb-output {nb} {cell} {run} {op} {target} {len(body)}', body)
 
 
+def ask(verb_and_args, body=b''):
+    """A request whose answer the worker waits for: the answer's line."""
+    q = queue.Queue()
+    with lock:
+        rid = next_id[0]
+        next_id[0] += 1
+        answers[rid] = q
+    send(f'{rid} {verb_and_args}', body)
+    return q.get(timeout=60)
+
+
+def command_body(program, cwd, args, env):
+    b = b'%d %d %d %d\n' % (len(program), len(cwd), len(args), len(env)) + program + cwd
+    for a in args + env:
+        b += b'%d\n' % len(a) + a
+    return b
+
+
+def kernel(nb, cell, run, n, source):
+    if b'execbad' in source:
+        body = command_body(b'sh', b'', [b'-c', b'true'], [])
+    elif b'execsleep' in source:
+        body = command_body(b'python3', b'', [b'-c', b'import time; time.sleep(60)'], [])
+    else:
+        code = b"import os, sys; print('kernel in', os.getcwd(), os.environ.get('NBFAKE_X')); sys.exit(3)"
+        body = command_body(b'python3', b'', [b'-c', code], [b'NBFAKE_X=from-rhun'])
+    answer = ask(f'nb-exec {nb} {len(body)}', body).split(b' ')
+    if answer[0] != b'ok':
+        stream(nb, cell, run, 'stderr', b'exec: ' + b' '.join(answer[2:]) + b'\n')
+        state(nb, cell, run, 'failed', n)
+        return
+    exe = int(answer[2])
+    q = exits.setdefault(exe, queue.Queue())
+    if b'execsleep' in source:
+        sleeping.append(exe)
+        stream(nb, cell, run, 'stdout', b'kernel %d sleeping\n' % exe)
+    code = q.get(timeout=60)
+    with open(os.path.join(os.environ['RHUN_STATE'], f'kernel-{exe}.log'), 'rb') as f:
+        text = f.read()
+    stream(nb, cell, run, 'stdout', b'exit=' + code + b' log=' + text)
+    state(nb, cell, run, 'cancelled' if b'execsleep' in source else 'done', n)
+
+
 def worker():
     while True:
         nb, cell, run, source = runs.get()
@@ -189,6 +238,9 @@ def worker():
         state(nb, cell, run, 'running')
         counter[0] += 1
         n = counter[0]
+        if b'exec' in source:
+            kernel(nb, cell, run, n, source)
+            continue
         if b'sleep' in source:
             stream(nb, cell, run, 'stdout', b'started\n')
             interrupted.wait(30)
@@ -271,6 +323,9 @@ def main():
             request(f'nb-kernel-label {nb} idle {len(label)}', label)
             continue
         if f[0] in (b'ok', b'error'):
+            q = answers.pop(int(f[1]), None) if len(f) >= 2 and f[1].isdigit() else None
+            if q:
+                q.put(line)
             continue
         if f[0] != b'0':
             rid = f[0].decode()
@@ -310,6 +365,10 @@ def main():
             runs.put((nb, cell, run, body))
         elif ev == b'nb-interrupt':
             interrupted.set()
+            while sleeping:
+                request(f'nb-exec-signal {sleeping.pop()} kill')
+        elif ev == b'nb-exec-exit':
+            exits.setdefault(int(f[2]), queue.Queue()).put(f[3])
         elif ev == b'nb-restart':
             counter[0] = 0
             request(f'nb-kernel-label {f[2].decode()} starting 11', b'Fake Kernel')
