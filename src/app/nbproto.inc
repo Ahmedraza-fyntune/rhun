@@ -157,6 +157,14 @@ nb_request:
     mov rsi, r14
     mov edx, NB_BODY_MAX
     call ext_reply_cap_set
+    mov rdi, r13                # counted with the other requests rhun waits on (query.s)
+    mov rsi, r14
+    mov edx, PK_NB_SAVE
+    cmp byte ptr [r12 + 3], 'o' # "nb-open"
+    jne 1f
+    mov edx, PK_NB_OPEN
+1:  mov ecx, QO_NOTEBOOK
+    call query_track
 9:  lea rdi, [rip + nbb]
     call sb_free
     mov rax, r14

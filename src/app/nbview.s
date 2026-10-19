@@ -680,8 +680,13 @@ nb_toolbar:
     mov rsi, [rsi + SB_ptr]
     jmp 22f
 21: lea rsi, [rip + .Lno_kernel]
-    mov rax, [rbx + NB_ext]
-    mov rax, [rax + EXT_pv_nbkernel]
+    push rsi
+    push rsi
+    mov rdi, [rbx + NB_ext]
+    mov esi, EXT_pv_nbkernel
+    call ext_pv
+    pop rsi
+    pop rsi
     test rax, rax
     jz 22f
     cmp byte ptr [rax], 'n'

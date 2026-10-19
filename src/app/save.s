@@ -951,7 +951,10 @@ save_source_eligible:
     jbe 1f
     cmp eax, ES_CRASHED
     jne 8f
-1:  mov rdi, [rbx + EXT_pv_save_actions]
+1:  mov rdi, rbx
+    mov esi, EXT_pv_save_actions
+    call ext_pv                 # provider-scope's narrowed values count
+    mov rdi, rax
     mov rsi, r12
     call extproto_matches
     EPILOGUE

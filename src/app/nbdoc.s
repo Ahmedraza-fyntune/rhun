@@ -42,8 +42,11 @@ FN nb_provider
     imul r13, rbx, EXT_SIZE
     add r13, [rip + g_exts + VEC_ptr]
     inc rbx
-    cmp qword ptr [r13 + EXT_pv_notebook], 0
-    je 1b
+    mov rdi, r13
+    mov esi, EXT_pv_notebook
+    call ext_pv
+    test rax, rax
+    jz 1b
     cmp dword ptr [r13 + EXT_disabled], 0
     jne 1b
     mov eax, [r13 + EXT_status]
@@ -53,8 +56,11 @@ FN nb_provider
     je 1b
     cmp eax, ES_REMOVED
     je 1b
+    mov rdi, r13
+    mov esi, EXT_pv_notebook
+    call ext_pv
+    mov rsi, rax
     mov rdi, r12
-    mov rsi, [r13 + EXT_pv_notebook]
     call ext_path_matches
     test eax, eax
     jz 1b
@@ -317,9 +323,12 @@ nb_req_drop:
     jz 1f
     mov qword ptr [rbx + NB_req], 0
     mov rdi, [rbx + NB_ext]
-    cmp dword ptr [rdi + EXT_status], ES_RUNNING
-    jne 1f
-    call extproto_send_cancel
+    push rsi
+    push rdi
+    call ext_reply_cap_drop
+    pop rdi
+    pop rsi
+    call query_withdraw         # "0 cancel ID" when it runs
 1:  mov dword ptr [rbx + NB_want], 0
     pop rbx
     ret
@@ -466,7 +475,11 @@ FN nb_pump
     mov rsi, rax
     call nb_req_failed
     jmp 9f
-4:  cmp dword ptr [rbx + NB_want], NBR_SAVE
+4:  xor edi, edi                # rhun waits on at most 64 requests
+    call query_room
+    test eax, eax
+    jz 9f
+    cmp dword ptr [rbx + NB_want], NBR_SAVE
     je 5f
     mov rdi, rbx
     call nb_send_open

@@ -4646,7 +4646,12 @@ state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_s
 pv_more: .quad EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename
     .quad EXT_pv_format, EXT_pv_save_actions
     .quad EXT_pv_tests              # testing: a controller hears its test files as a provider does
-    .quad 0
+    # language features (query.s)
+    .quad EXT_pv_hover, EXT_pv_declaration, EXT_pv_type_definition, EXT_pv_implementation
+    .quad EXT_pv_selection_ranges, EXT_pv_call_hierarchy, EXT_pv_type_hierarchy
+    .quad EXT_pv_workspace_symbols, EXT_pv_range_format, EXT_pv_type_format, EXT_pv_document_links, 0
+.globl ext_pv_keys               # [provides] keys and their EXT fields (query.s's provides too)
+ext_pv_keys:
 pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig
     .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
@@ -4654,6 +4659,13 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format
     .quad .Lpv_save_actions, EXT_pv_save_actions
     .quad .Lpv_tests, EXT_pv_tests, .Lpv_tests_profiles, EXT_tests_profiles     # testing
+    # language features (query.s)
+    .quad .Lpv_hover, EXT_pv_hover, .Lpv_declaration, EXT_pv_declaration
+    .quad .Lpv_type_definition, EXT_pv_type_definition, .Lpv_implementation, EXT_pv_implementation
+    .quad .Lpv_selection_ranges, EXT_pv_selection_ranges, .Lpv_call_hierarchy, EXT_pv_call_hierarchy
+    .quad .Lpv_type_hierarchy, EXT_pv_type_hierarchy, .Lpv_workspace_symbols, EXT_pv_workspace_symbols
+    .quad .Lpv_range_format, EXT_pv_range_format, .Lpv_type_format, EXT_pv_type_format
+    .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links
     .quad .Lpv_notebook, EXT_pv_notebook, .Lpv_nbtitle, EXT_pv_nbtitle, .Lpv_nbkernel, EXT_pv_nbkernel  # notebooks
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
@@ -4761,6 +4773,18 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_rename: .asciz "rename"
 .Lpv_format: .asciz "format"
 .Lpv_save_actions: .asciz "save_actions"
+.Lpv_hover: .asciz "hover"
+.Lpv_declaration: .asciz "declaration"
+.Lpv_type_definition: .asciz "type_definition"
+.Lpv_implementation: .asciz "implementation"
+.Lpv_selection_ranges: .asciz "selection_ranges"
+.Lpv_call_hierarchy: .asciz "call_hierarchy"
+.Lpv_type_hierarchy: .asciz "type_hierarchy"
+.Lpv_workspace_symbols: .asciz "workspace_symbols"
+.Lpv_range_format: .asciz "range_format"
+.Lpv_type_format: .asciz "type_format"
+.Lpv_ttrig: .asciz "type_format.triggers"
+.Lpv_document_links: .asciz "document_links"
 .Lpv_tests: .asciz "tests"
 .Lpv_tests_profiles: .asciz "tests.profiles"
 .Lpv_notebook: .asciz "notebook"

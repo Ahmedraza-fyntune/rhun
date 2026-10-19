@@ -119,8 +119,9 @@ FN nb_run
     mov r12, rax
     cmp dword ptr [r12 + CL_kind], CLK_CODE
     jne 7f
-    mov rax, [rbx + NB_ext]
-    mov rax, [rax + EXT_pv_nbkernel]
+    mov rdi, [rbx + NB_ext]
+    mov esi, EXT_pv_nbkernel
+    call ext_pv
     test rax, rax
     jz 1f
     cmp byte ptr [rax], 'n'
