@@ -1600,6 +1600,10 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_INSTALL, 7      # Install from GitHub: owner/name
 .equ PROMPT_EXT_SETTING, 8      # a text setting of an extension (extpage.s)
 .equ PROMPT_RENAME_SYMBOL, 9    # the new name of a symbol (langfeat.s)
+# extension management: development installs (extinstall.s)
+.equ PROMPT_EXT_FOLDER, 20      # Install from Folder: the folder, copied
+.equ PROMPT_EXT_LINK, 21        # Link a Folder: the folder, linked
+.equ PROMPT_EXT_ARCHIVE, 22     # Install from Archive: the .tar.gz
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -1726,6 +1730,14 @@ F EXT_catalog_state, 4 #0staging,1visible,2hidden historical
 F EXT_catalog_pad, 4
 F EXT_host_child_in, 4 # retained temporary target stdin endpoint
 F EXT_host_child_out, 4 # retained temporary target stdout endpoint
+# extension management (extrecord.s, extinstall.s, extupdate.s)
+F EXT_rec, 8            # cstr: its install record (.rhun-install), or 0
+F EXT_inst, 8           # cstr: a linked install's stub folder (EXT_dir is the linked folder), or 0
+F EXT_prev, 8           # cstr: the version of its previous version (Roll back), or 0
+F EXT_pack, 8           # cstr: a pack's members (OWNER/NAME, space separated), or 0
+F EXT_xset, 8           # cstr: "setting.KEY = VALUE" lines its manifest does not declare, or 0
+F EXT_fresh, 4          # 1: a new version with a previous one to go back to, until its first hello
+F EXT_mgmt_pad, 4
 ENDSTRUCT EXT_SIZE
 .equ EXT_host_cleanup_mask, EXT_start_pad
 .equ EXT_host_cleanup_error, EXT_activation_owner_pad
@@ -1760,6 +1772,19 @@ F VW_ay, 4
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 .equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview
+# extension management (extinstall.s, extupdate.s): where an install comes from, why it runs, and
+# how an update ended
+.equ IK_GITHUB, 0               # a release on GitHub (or RHUN_EXT_BASE)
+.equ IK_ARCHIVE, 1              # a release archive on this computer
+.equ IK_FOLDER, 2               # a folder, copied
+.equ IK_LINK, 3                 # a folder, linked (development)
+.equ IP_ADD, 0                  # Add: the permission dialog
+.equ IP_UPDATE, 1               # an update asked for: a dialog when unreviewed or wider
+.equ IP_AUTO, 2                 # an automatic update: never asks; wider waits
+.equ XU_UPDATED, 0
+.equ XU_ASKS, 1                 # it asks for more access: waits for the user
+.equ XU_FAILED, 2
+.equ XU_CANCELLED, 3
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini
 STRUCT
 F SD_key, 8             # cstr

@@ -160,7 +160,23 @@ FN control_exec
     xor eax, eax
     EPILOGUE
 .Lce_unknown:
-    lea rdi, [rip + out]
+    # extension management's commands (extmgrctl.s)
+    mov rdi, r13
+    mov rsi, r14
+    mov rdx, rbx
+    mov rcx, r12
+    lea r8, [rip + out]
+    call extmgr_control
+    cmp rax, -1
+    je 3f
+    push rax
+    push rax
+    call term_frame_now
+    call flush_frame
+    pop rax
+    pop rax
+    EPILOGUE
+3:  lea rdi, [rip + out]
     lea rsi, [rip + .Lunknown]
     call sb_push_cstr
     mov rax, -1

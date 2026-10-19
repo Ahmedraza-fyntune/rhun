@@ -354,7 +354,8 @@ class UI(host.Host):
         self.assertEqual(out[1], 'dialog=Add “Hello”?')
         self.assertEqual(out[2], 'text=Version 1.2.0 from github.com/demo/hello. It can read and change the files you have '
                                  'open, read the files in your project.')
-        self.assertEqual(out[3], 'button=Add extension')
+        self.assertEqual(out[3], 'Not in the rhun extensions index: nobody has reviewed it.')
+        self.assertEqual(out[4], 'button=Add extension')
         self.assertTrue((exts / 'demo/hello/extension.ini').exists())
         self.assertFalse(any(p.name.startswith('.install') for p in exts.iterdir()))
         self.assertIn('hihello world', out)
@@ -449,7 +450,7 @@ class UI(host.Host):
                        'ext-remove hello', 'print-dialog', 'dialog no'], exts=exts)
         cut = 'a' + '€' * 39 + '…'
         self.assertEqual(out[1], 'dialog=Add “' + cut + '”?')
-        self.assertEqual(out[4], 'dialog=Remove “' + cut + '”?')
+        self.assertEqual(out[5], 'dialog=Remove “' + cut + '”?')
 
     def test_the_details_page_follows_a_reinstall(self):
         self.release()

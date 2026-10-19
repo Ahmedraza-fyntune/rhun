@@ -706,6 +706,49 @@ beside its title. You can search that name or use it in `[keys]`. The shorter `n
 works when only one installed extension has that name. With two publishers using the same
 name, use the qualified name so turning an extension off cannot change which command runs.
 
+#### Versions and roll back
+
+`owner/name@0.1.0` (or `@v0.1.0`) installs that release's tag; without a version rhun asks
+GitHub which tag is the latest and installs exactly that one, so the archive and its checksums
+always come from one release. The Add dialog says whether the version was reviewed for the rhun
+extensions index. Archives that unpack to more than 64 MB, or hold links, devices or paths
+outside themselves, are refused.
+
+rhun keeps the version an install or update replaces in
+`~/.config/rhun/extensions/.previous/OWNER/NAME/`, one per extension. **Roll back to 0.1.0** on
+its page (or `ext-rollback` in a script) swaps the two, so rolling back twice returns to the
+newer one; when the older version may do more than the newer, rhun asks first. A new version
+that fails its first start (it cannot start, says no `hello` within 5 seconds, or exits before
+it) rolls back by itself with a note such as "Showcase 0.1.2 did not start (no hello within
+5 s); back to 0.1.0". Its settings stay across versions, including settings only one of them
+declares. Each install writes `.rhun-install` into the extension's folder: where it came from
+(`source = github`, `archive` or `folder`, the repository and tag or the path), the archive's
+SHA-256, whether the index reviewed it, when it was installed, and `started = yes` after its
+first start.
+
+**Remove** stops the extension and deletes its folder, its previous version, its saved data and
+log, its settings, pin and on/off choice, the provider choices that name it (rhun asks again
+rather than switching silently) and what rhun knew about its updates. Your `[keys]` stay.
+
+#### Development installs
+
+The page's **Install** menu (and the palette commands **Install Extension from Folder**, **Link
+Extension Folder (development)** and **Install Extension from Archive**) install what you are building:
+
+- **From a folder** copies a folder holding `extension.ini` (laid out as a release archive)
+  through the same checks as a download.
+- **Link a folder** runs the extension from your folder: rhun keeps only a stub with its record
+  in the extensions folder, so rebuild and **Restart** is the loop. Removing it leaves your
+  folder alone. A link that replaces a GitHub install keeps that install as the previous
+  version, so **Roll back** returns to the release.
+- **From an archive** takes a release `.tar.gz` on this computer; a `sha256sums.txt` beside it is
+  checked when there is one.
+
+Archive and folder installs are never checked for updates.
+
+`rhun://extension/OWNER/NAME` and `rhun://extension/OWNER/NAME@VERSION` links open the same Add
+dialog (the site's catalog uses them for its Install buttons).
+
 From [rhun-editor](https://github.com/rhun-editor):
 
 | Extension | What it does |

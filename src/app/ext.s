@@ -501,8 +501,12 @@ apply_choice:
     mov rdx, rbx
     call sdef_find
     test rax, rax
-    jz 9f
-    mov r12, rax
+    jnz 31f
+    mov rdi, rbx
+    lea rsi, [rip + ini_it]
+    call xset_keep              # extension management: kept for a version that declares it
+    jmp 9f
+31: mov r12, rax
     test dword ptr [r12 + SD_pad], 1
     jnz 9f
     mov rdi, [rip + ini_it + INI_val]
@@ -588,6 +592,8 @@ FN ext_settings_save
     mov eax, [rbx + EXT_pinned]
     or eax, [rbx + EXT_disabled]
     jnz 2f
+    cmp qword ptr [rbx + EXT_xset], 0
+    jne 2f
     mov rdi, rbx
     call sdefs_changed
     test eax, eax
@@ -613,8 +619,13 @@ FN ext_settings_save
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_pinned_yes]
     call sb_push_cstr
-4:  # the settings that differ from their defaults
-    xor r13d, r13d
+4:  # the settings that differ from their defaults, and those another version declares
+    mov rsi, [rbx + EXT_xset]
+    test rsi, rsi
+    jz 41f
+    lea rdi, [rip + tmp2]
+    call sb_push_cstr
+41: xor r13d, r13d
 5:  cmp r13, [rbx + EXT_sdefs + VEC_len]
     jae 1b
     imul r14, r13, SD_SIZE
@@ -815,6 +826,12 @@ FN ext_preview
     call ini_key_is
     lea r13, [rbx + EXT_mowner]
     test eax, eax
+    jnz 4f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_pack]
+    call ini_key_is
+    lea r13, [rbx + EXT_pack]
+    test eax, eax
     jz 1b
 4:  call val_dup
     mov [r13], rax
@@ -884,6 +901,8 @@ FN ext_install_load
     jmp 7f
 6:  cmp qword ptr [rbx + EXT_reason], 0
     jne 7f                      # a bad manifest stays failed
+    cmp qword ptr [rbx + EXT_prog], 0
+    je 7f                       # a pack without a program never starts
     mov rdi, rbx
     call ext_start
 7:  mov rax, rbx
@@ -1565,6 +1584,8 @@ FN ext_load
     mov rdi, [rsp + 16]
     call dup_cstr
     mov [rbx + EXT_name], rax
+    mov rdi, rbx
+    call extrec_load            # extension management: its install record (a link moves EXT_dir)
     # the state folder: ROOT/OWNER--NAME
     lea rdi, [rip + tmp]
     call sb_clear
@@ -1587,7 +1608,7 @@ FN ext_load
     call dup_cstr
     mov [rbx + EXT_state], rax
     # the manifest
-    mov rdi, [rsp]
+    mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lmanifest]
     call path_join
     mov r12, rax
@@ -1674,9 +1695,19 @@ FN ext_load
 41: lea rdi, [rip + .Lr_protocol]
     jmp .Lel_fail
 5:  mov dword ptr [rbx + EXT_hello], 0
-    cmp qword ptr [rbx + EXT_prog], 0
+    mov rdi, rbx
+    call pack_check             # extension management: a pack's list
+    test rax, rax
+    jz 51f
+    mov rdi, rax
+    jmp .Lel_fail
+51: cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
-    lea rdi, [rip + .Lr_no_program]
+    cmp qword ptr [rbx + EXT_pack], 0
+    je 52f
+    mov dword ptr [rbx + EXT_manifest_ok], 1    # a pack without a program never starts
+    jmp 83f
+52: lea rdi, [rip + .Lr_no_program]
     jmp .Lel_fail
 6:  # a script needs its runtime on PATH
     cmp qword ptr [rbx + EXT_script], 0
@@ -1795,9 +1826,17 @@ manifest_kv:
     lea rsi, [rip + .Lk_icon]
     call ini_key_is
     test eax, eax
-    jz 13f
+    jz 15f
     call val_dup
     mov [rbx + EXT_icon], rax
+    jmp 9f
+15: mov rdi, r12
+    lea rsi, [rip + .Lk_pack]
+    call ini_key_is
+    test eax, eax
+    jz 13f
+    call val_dup
+    mov [rbx + EXT_pack], rax
     jmp 9f
 13: mov rdi, r12
     lea rsi, [rip + .Lk_color]
@@ -5718,6 +5757,7 @@ ext_target: .asciz "linux-x86_64"
 .Lk_protocol: .asciz "protocol"
 .Lk_runtime: .asciz "runtime"
 .Lk_icon: .asciz "icon"
+.Lk_pack: .asciz "pack"
 .Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
 .Lk_args: .asciz "args"

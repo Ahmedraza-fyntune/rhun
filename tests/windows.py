@@ -484,7 +484,8 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
         # extensions: the host with the Python test extension, the title bar and page with installs
         # from a local release tree, and the showcase installed from GitHub (its Windows build)
-        for name in ('save', 'save-actions', 'snippets', 'snippet-choices', 'snippet-variants', 'snippet-transforms', 'snippet-final', 'snippet-context', 'ext-host', 'ext-commands', 'ext-snapshots', 'ext-providers', 'ext-language', 'ext-scheduling', 'ext-watch', 'ext-boundaries', 'ext-ui', 'ext-showcase'):
+        for name in ('save', 'save-actions', 'snippets', 'snippet-choices', 'snippet-variants', 'snippet-transforms', 'snippet-final', 'snippet-context', 'ext-host', 'ext-commands', 'ext-snapshots', 'ext-providers', 'ext-language', 'ext-scheduling', 'ext-watch', 'ext-boundaries', 'ext-ui', 'ext-showcase',
+                     'ext-updates', 'ext-remove-clean', 'ext-dev-install'):
             check('extensions/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
