@@ -17,6 +17,7 @@ ENDSTRUCT SF_SIZE
 
 .bss
 .p2align 3
+.globl sel_pairs, sel_cols      # vimmulti.s builds its sets here too
 sel_pairs: .zero DMP_SIZE*(SEL_MAX + 1)   # {cur, anchor} pairs being built, the primary first
 sel_cols: .zero 8*(SEL_MAX + 1)           # sel_move: the preferred column each one moved with
 # the secondaries' preferred columns for vertical motion, by caret position, for one document version
@@ -336,7 +337,7 @@ FN sel_move
     EPILOGUE
 
 # sel_col_store(doc, count): the secondaries' preferred columns (sel_cols) by where their carets are
-sel_col_store:
+FN sel_col_store
     mov rax, [rdi + DOC_id]
     mov [rip + sc_doc], rax
     mov rax, [rdi + DOC_version]
@@ -360,7 +361,7 @@ sel_col_store:
 2:  ret
 
 # sel_col_lookup(doc, caret position) -> rax the preferred column a secondary there moved with, or -1
-sel_col_lookup:
+FN sel_col_lookup
     mov rax, [rdi + DOC_id]
     cmp rax, [rip + sc_doc]
     jne 8f
@@ -463,7 +464,7 @@ FN cmd_remove_last_selection
 9:  EPILOGUE
 
 # sel_text(doc, start, end) -> rax owned copy of the bytes (the search moves the gap), rdx length
-sel_text:
+FN sel_text
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
@@ -524,7 +525,8 @@ sel_word_note:
     mov [rip + sn_end], rdx
     ret
 
-# sel_overlaps(doc, start, end) -> eax 1 when a selection shares a byte with [start, end) or equals it
+# sel_overlaps(doc, start, end) -> eax 1 when a selection shares a byte with [start, end), equals it,
+# or starts in it (a caret at the start or inside counts)
 sel_overlaps:
     PROLOGUE
     mov rbx, rdi
@@ -548,6 +550,8 @@ sel_overlaps:
     je 7f
 3:  cmp rax, r13
     jae 1b
+    cmp rax, r12
+    jae 7f
     cmp rdx, r12
     jbe 1b
 7:  mov eax, 1
@@ -588,7 +592,7 @@ sel_whole_word:
 # sel_find_next(doc, needle, length, from, word) -> rax the next match at or after from, wrapping
 # to the start, that overlaps no selection (and is a whole word when word is set), -1 when none.
 # The needle must not point into the document.
-sel_find_next:
+FN sel_find_next
     PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
@@ -1314,7 +1318,8 @@ FN sel_drag_end
 
 # sel_frame(doc): before the rows are drawn: the secondary selections sorted by start
 FN sel_frame
-    PROLOGUE
+    PROLOGUE 16
+    mov [rsp], rdi
     mov qword ptr [rip + sf_n], 0
     mov qword ptr [rip + sf_carets], 0
     mov r12, [rdi + DOC_selections]
@@ -1336,7 +1341,18 @@ FN sel_frame
     cmp r8, r9
     jbe 2f
     xchg r8, r9
-2:  mov rbx, [rip + sf_n]       # insertion: later starts move up
+2:  cmp dword ptr [rip + cfg_vim], 0
+    je 21f
+    cmp dword ptr [rip + g_vim_mode], VM_VISUAL
+    jb 21f
+    mov [rsp + 8], rcx          # vim's visual mode: as vim draws it
+    mov rsi, rcx
+    mov rdi, [rsp]
+    call vm_range
+    mov r8, rax
+    mov r9, rdx
+    mov rcx, [rsp + 8]
+21: mov rbx, [rip + sf_n]       # insertion: later starts move up
 3:  test rbx, rbx
     jz 4f
     imul rax, rbx, SF_SIZE
