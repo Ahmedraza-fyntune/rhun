@@ -30,6 +30,10 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
+    # WebAssembly worker modes (src/wasm): rhun --wasm-host, rhun --wasm-spec
+    mov rdi, [rip + g_argc]
+    mov rsi, [rip + g_argv]
+    call wasm_worker_main
     # remote hosts: the agent a remote window starts on the host (remote.s, ragent.s)
     cmp qword ptr [rip + g_argc], 2
     jb .Lnot_remote_agent
@@ -132,6 +136,8 @@ FN main
 .Lm_exit:
     call app_clip_reset
     call headless_clip_reset
+    call dap_shutdown           # debugger: sessions disconnect, adapters are stopped
+    call bp_save
     call testexec_quit          # testing: test processes do not outlive rhun
     call ext_shutdown
     call remote_shutdown        # remote hosts: the askpass socket
