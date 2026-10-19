@@ -172,6 +172,7 @@ FN control_exec
     mov rsi, rbx
     mov rdx, r12
 2:  call [r15 + 8]
+.Lce_done:
     push rax
     push rax
     call term_frame_now         # a command ends with a frame that shows all output so far
@@ -1450,6 +1451,7 @@ c_print_scm:
     xor eax, eax
     ret
 
+
 # print-project: the project folder (the home folder as ~)
 c_print_project:
     lea rdi, [rip + out]
@@ -2284,6 +2286,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_complete: .asciz "print-complete"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
+
 .Lx_yes: .asciz "yes"
 .Lx_list: .asciz "list"
 .Lx_install_states: .quad .Lxi_idle, .Lxi_busy, .Lxi_asking, .Lxi_done, .Lxi_failed
@@ -2344,10 +2347,14 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 # other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
 ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad scm_ctl               # source control (scmctl.s)
     .quad langfeat_ctl          # language features (lfcontrol.s)
+    .quad debug_ctl             # debugger (debugctl.s)
     .quad test_ctl              # testing (testview.s)
     .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
     .quad views_ctl             # views group: places and retained views (viewsctl.s)
+    .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
+    .quad remote_ctl            # remote hosts (remotectl.s)
     .quad ws_ctl                # workspace edits and the editor model (wsctl.s)
     .quad 0
 ctl_table:

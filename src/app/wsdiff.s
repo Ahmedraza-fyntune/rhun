@@ -413,7 +413,7 @@ FN wsdiff_tab
     xor esi, esi
     mov edx, DV_SIZE
     call memset
-    mov dword ptr [r12 + DV_pad], DVF_OWN
+    mov dword ptr [r12 + DV_flags], DVF_OWN
     mov [rbx + DOC_diff], r12
     mov rdi, [rsp]
     call strlen
