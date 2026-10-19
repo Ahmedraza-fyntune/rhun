@@ -4,6 +4,10 @@
 #   when CLAUSE               "when=1", "when=0" or "when error at N: TEXT"
 #   print-context [KEY]       the built-in context keys ("KEY=VALUE" lines), or one key
 #   ctx-set KEY VALUE         a published built-in key's value ("-" clears it), as another part would
+#   print-keys [EXT]          every binding (or an extension's): strokes, command, source, rank, state
+#   print-chord               "chord=none" or "chord=STROKE fallback=COMMAND ms=N"
+#   key-latin LATIN COMBO     a key press whose Latin-layout key is LATIN (a layout that is not Latin)
+#   print-problems EXT        the extension's dropped contribution entries
 .include "rhun.inc"
 
 .bss
@@ -19,12 +23,18 @@ cc_buf: .zero SB_SIZE
 contrib_ctl:
     .quad .Lc_cmd_args, c_cmd_args, .Lc_cmd_ref, c_cmd_ref
     .quad .Lc_when, c_when, .Lc_print_context, c_print_context, .Lc_ctx_set, c_ctx_set
+    .quad .Lc_print_keys, c_print_keys, .Lc_print_chord, c_print_chord, .Lc_key_latin, c_key_latin
+    .quad .Lc_print_problems, c_print_problems
     .quad 0, 0
 .Lc_cmd_args: .asciz "cmd-args"
 .Lc_cmd_ref: .asciz "cmd-ref"
 .Lc_when: .asciz "when"
 .Lc_print_context: .asciz "print-context"
 .Lc_ctx_set: .asciz "ctx-set"
+.Lc_print_keys: .asciz "print-keys"
+.Lc_print_chord: .asciz "print-chord"
+.Lc_key_latin: .asciz "key-latin"
+.Lc_print_problems: .asciz "print-problems"
 .Lcommand_sp: .asciz "command "
 .Lbad_ref: .asciz "cmdref=bad\n"
 .Lno_ext: .asciz "no such extension\n"
@@ -151,3 +161,89 @@ c_print_context:
 # ctx-set KEY VALUE
 c_ctx_set:
     jmp ctx_ctl_set
+
+# print-keys [EXT]
+c_print_keys:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    xor r12d, r12d
+    test rdx, rdx
+    jz 1f
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_by_name
+    mov r12, rax
+    test rax, rax
+    jz 8f
+1:  mov rdi, rbx
+    mov rsi, r12
+    call keys_dump
+    xor eax, eax
+    EPILOGUE
+8:  mov rdi, rbx
+    lea rsi, [rip + .Lno_ext]
+    call sb_push_cstr
+    xor eax, eax
+    EPILOGUE
+
+# print-chord
+c_print_chord:
+    jmp keys_chord_dump
+
+# key-latin LATIN COMBO: COMBO's key, as a layout that is not Latin reports it, with LATIN as the
+# key on the first layout (g_key_latin)
+c_key_latin:
+    PROLOGUE
+    mov r13, rsi
+    mov r14, rdx
+    call cc_word
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_combo
+    mov r15d, eax
+    mov rdi, r13
+    mov rsi, r14
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_combo
+    test eax, eax
+    jz 9f
+    mov r12d, eax
+    mov ebx, edx
+    mov [rip + g_key_latin], r15d
+    mov edi, r12d
+    call keysym_to_unicode
+    mov esi, eax
+    mov edi, r12d
+    mov edx, ebx
+    call app_on_key
+    mov dword ptr [rip + g_key_latin], 0
+9:  xor eax, eax
+    EPILOGUE
+
+# print-problems EXT
+c_print_problems:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_by_name
+    test rax, rax
+    jz 8f
+    mov rdi, rbx
+    mov rsi, rax
+    call contrib_problems_dump
+    xor eax, eax
+    EPILOGUE
+8:  mov rdi, rbx
+    lea rsi, [rip + .Lno_ext]
+    call sb_push_cstr
+    xor eax, eax
+    EPILOGUE

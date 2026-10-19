@@ -269,11 +269,12 @@ class CommitAI(unittest.TestCase):
         self.assertEqual(r.returncode,0,r.stderr); self.assertFalse((self.w/'deleted').exists())
 
     def test_settings_model_action_lifecycle(self):
-        r=self.native(['wait-ai','cmd settings','wait-ai','move 1000 500','scroll 4000',
-                       'click 1120 586','wait-ai','print-ai',
-                       'click 1120 586','key Escape','wait-ai',
-                       'click 1120 586','key Return','wait-ai','print-ai',
-                       'click 1120 586','wait-ai','print-ai'],provider='ollama',MISSING_MODEL='1')
+        # the search leaves one row, whatever other sections hold: its button at the top
+        r=self.native(['wait-ai','cmd settings','wait-ai','type local model files','wait 100',
+                       'click 1122 348','wait-ai','print-ai',
+                       'click 1122 348','key Escape','wait-ai',
+                       'click 1122 348','key Return','wait-ai','print-ai',
+                       'click 1122 348','wait-ai','print-ai'],provider='ollama',MISSING_MODEL='1')
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(r.stdout.count('Ready locally: qwen2.5-coder:1.5b'),2,r.stdout)
         self.assertIn('Deleted: qwen2.5-coder:1.5b',r.stdout)
@@ -281,8 +282,8 @@ class CommitAI(unittest.TestCase):
         self.assertTrue((self.w/'pulled').exists())
 
     def test_settings_existing_model_action_deletes(self):
-        r=self.native(['wait-ai','cmd settings','wait-ai','move 1000 500','scroll 4000',
-                       'click 1120 586','key Return','wait-ai','print-ai'],provider='ollama')
+        r=self.native(['wait-ai','cmd settings','wait-ai','type local model files','wait 100',
+                       'click 1122 348','key Return','wait-ai','print-ai'],provider='ollama')
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertIn('Deleted: qwen2.5-coder:1.5b',r.stdout)
         self.assertFalse(any('/api/pull' in ' '.join(a) for n,a in self.calls()))
@@ -391,8 +392,9 @@ class CommitAI(unittest.TestCase):
         self.assertLess(time.monotonic()-start,2)
 
     def test_settings_provider_persists(self):
-        r=self.native(['wait-git','wait-ai','cmd settings','move 1000 500','scroll 4000',
-                       'click 874 442','wait-ai','print-ai'])
+        # the search leaves the provider row alone at the top: Off is its first segment
+        r=self.native(['wait-git','wait-ai','cmd settings','type message ai','wait 100',
+                       'click 873 348','wait-ai','print-ai'])
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertIn('AI commit messages are off.',r.stdout)
         self.assertIn('commit_ai = off',(self.w/'config/rhun/config').read_text())
