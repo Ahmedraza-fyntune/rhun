@@ -177,7 +177,7 @@ class Snippets(host.Host):
         self.assertIn('xone two one',out)
 
     def test_mouse_leaving_then_returning_does_not_reactivate_fields(self):
-        out=self.run_snippet(['tap 100 86','tap 60 86','type q','print-doc'])
+        out=self.run_snippet(['tap 112 86','tap 72 86','type q','print-doc'])
         self.assertIn('oqne two one',out)
 
     def test_motion_inside_active_field_retains_links(self):
@@ -185,7 +185,7 @@ class Snippets(host.Host):
         self.assertIn('onxe two onxe',out)
 
     def test_right_click_selection_leaving_then_returning_cancels_fields(self):
-        out=self.run_snippet(['click 100 86 right','key Escape','tap 60 86','type q','print-doc'])
+        out=self.run_snippet(['click 112 86 right','key Escape','tap 72 86','type q','print-doc'])
         self.assertIn('oqne two one',out)
 
     def test_drag_selection_leaving_then_returning_cancels_fields(self):
