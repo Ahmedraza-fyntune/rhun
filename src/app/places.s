@@ -1564,14 +1564,35 @@ FN panel_view_focused
 1:  xor eax, eax
     ret
 
-# views_timeout() -> ms until something of the views group is due (a wait for children times out),
-#   or -1
+# views_timeout() -> ms until something of the views group is due (a wait for children times out,
+#   a card goes, a spinner turns), or -1
 FN views_timeout
-    jmp rview_timeout
+    push rbx
+    push r12
+    sub rsp, 8
+    call rview_timeout
+    movsxd rbx, eax
+    call notify_timeout
+    movsxd rax, eax
+    cmp rbx, -1
+    je 1f
+    cmp rax, -1
+    je 2f
+    cmp rbx, rax
+    jge 1f
+2:  mov rax, rbx
+1:  add rsp, 8
+    pop r12
+    pop rbx
+    ret
 
 # views_tick(): what is due
 FN views_tick
-    jmp rview_tick
+    sub rsp, 8
+    call rview_tick
+    call notify_tick
+    add rsp, 8
+    ret
 
 # places_init(): the explorer, the sidebar's first section
 FN places_init

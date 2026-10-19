@@ -2076,6 +2076,8 @@ g_commands:
     # views group: places
     COMMAND toggle_panel, "Toggle Panel", cmd_toggle_panel, "ctrl+j"
     COMMAND toggle_side, "Toggle Side Views", cmd_toggle_side, ""
+    COMMAND focus_notifications, "Focus Notifications", cmd_focus_notifications, ""
+    COMMAND clear_notifications, "Clear All Notifications", cmd_clear_notifications, ""
     COMMAND extensions, "Extensions", cmd_extensions, ""
     COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
     COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""

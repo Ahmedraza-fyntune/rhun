@@ -11,7 +11,10 @@ expand (expands f:main.rs), reveal (vreveal t:lib.rs:1 select,focus after collap
 multi (items becomes multi-select), delpin (removes the pin action), log (lines of every severity
 with SGR colors to the logs view), logmany (12000 lines), logclear, tab (a tree in an editor tab
 of its own), untab (unview of that tab), clearmain (f:main.rs keeps no children), loadthen (state loading, then the root's children again),
-fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
+note, noteask (a
+warning with Reload, which runs rescan, and Later), noteerr, notemany (6 sticky), notes17, noteset,
+unnote, prog (status, cancellable, then 42% "crates"), prognote, progview (in todo), progbad,
+progend (VIEWFAKE_NOTIFY agrees notify and progress), fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
 view-log is not asked for. VIEWFAKE_DELAY: seconds before hello.
 
 The items view (panel) has a lazy node "a" (its children come with vkids: VIEWFAKE_LAZY answer,
@@ -115,6 +118,34 @@ def items_tree(view):
 pages = 0
 pending_tab = []        # vtab requests waiting for their view's number
 tabs = []
+on_reply = {}           # request id -> fn(fields) for its ok
+notes = []              # NOTE of each notification rhun took, in order
+progs = []              # P of each progress
+
+
+def note_body(msg, detail=None, buttons=(), sticky=False):
+    extra = b''
+    if detail:
+        extra += rec('detail', data=detail.encode())
+    if sticky:
+        extra += rec('sticky', '0')
+    for title, command in buttons:
+        extra += rec('button', data=title.encode())
+        if command:
+            extra += rec('command', f'{command}', b'')
+    msg = msg.encode()
+    return f'{len(msg)} {len(extra)}\n'.encode() + msg + extra
+
+
+def notify(sev, body):
+    rid = request(f'notify {sev}', body)
+    on_reply[rid] = lambda f: notes.append(int(f[2]))
+
+
+def progress(where, cancel, title):
+    rid = request(f'progress {where} {cancel}', title.encode())
+    on_reply[rid] = lambda f: progs.append(int(f[2]))
+    return rid
 
 
 def answer(rid, body):
@@ -210,6 +241,40 @@ def on_command(name):
         top = [node(f'f:{n}', n, 'open', rec('blob', '', b'y' * 1200000)) for n in ('main.rs', 'lib.rs', 'README.md')]
         patch(todo, [kids('', top)])
         patch(todo, [rec('set', '', node('t:lib.rs:1', 'one', 'leaf', rec('blob', '', b'z' * 3000000)))])
+    elif name == 'note':
+        notify('info', note_body('Indexed 12 files', 'workspace'))
+    elif name == 'noteask':
+        notify('warning', note_body('Reload the window to use the new settings?',
+                                    buttons=[('Reload', 'rescan'), ('Later', None)]))
+    elif name == 'noteerr':
+        notify('error', note_body('The server stopped. ' * 8 + 'Its log has more.\nSecond line.'))
+    elif name == 'notemany':
+        for i in range(6):
+            notify('info', note_body(f'Note {i + 1}', sticky=True))
+    elif name == 'notes17':
+        for i in range(17):
+            notify('info', note_body(f'Note {i + 1}', sticky=True))
+    elif name == 'noteset' and notes:
+        request(f'notify-set {notes[-1]}', note_body('Indexed 40 files', buttons=[('Open', None)]))
+    elif name == 'unnote' and notes:
+        request(f'unnotify {notes[-1]}')
+    elif name == 'prog':
+        rid = progress('status', 'cancel', 'Indexing')
+        prev = on_reply[rid]
+
+        def started(f):
+            prev(f)
+            request(f'progress-set {f[2]} 42', b'crates')
+        on_reply[rid] = started
+    elif name == 'prognote':
+        progress('note', 'cancel', 'Downloading')
+    elif name == 'progview' and views.get('todo'):
+        progress(f'view:{views["todo"]}', '-', 'Scanning')
+    elif name == 'progbad':
+        progress('view:999', '-', 'Nowhere')
+        progress('status', 'maybe', 'Bad cancel')
+    elif name == 'progend' and progs:
+        request(f'progress-end {progs[-1]}')
     elif name == 'tab':
         def opened_tab(reply):
             pass
@@ -224,6 +289,8 @@ def main():
     features = '' if MODE == 'nofeature' else ' view-tree'
     if features and not os.environ.get('VIEWFAKE_NOLOG'):
         features += ' view-log'
+    if os.environ.get('VIEWFAKE_NOTIFY'):
+        features += ' notify progress'
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -241,6 +308,9 @@ def main():
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
+        elif fields[0] == 'ok' and len(fields) >= 3 and int(fields[1]) in on_reply:
+            on_reply.pop(int(fields[1]))(fields)
+            continue
         elif fields[0] == 'ok' and len(fields) >= 3 and int(fields[1]) in pending_tab:
             pending_tab.remove(int(fields[1]))
             view = int(fields[2])

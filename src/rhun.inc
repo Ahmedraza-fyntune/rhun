@@ -1639,6 +1639,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_DIFF, "diff", 0
     FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
     FEATURE FEAT_VIEW_LOG, "view-log", 0          # views group: log views (with view-tree)
+    FEATURE FEAT_NOTIFY, "notify", 0              # views group: notify, notify-set, unnotify
+    FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks

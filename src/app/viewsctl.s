@@ -41,6 +41,67 @@ c_places_demo:
     jmp c_views
 c_print_log:
     mov eax, 7
+    jmp c_views
+
+# print-notes: the notification cards and the progress entries (notify_dump)
+c_print_notes:
+    PROLOGUE
+    mov rbx, rdi
+    call views_flush
+    mov rdi, rbx
+    call notify_dump
+    EPILOGUE
+
+# note-press N B: card N among those shown (0 the oldest) has button B (1-3), close or cancel pressed
+c_note_press:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call views_flush
+    mov rdi, r12
+    mov rsi, r13
+    call parse_u64
+    test rdx, rdx
+    jz 8f
+    mov r14, rax
+    add r12, rdx
+    sub r13, rdx
+    cmp r13, 2
+    jb 8f
+    cmp byte ptr [r12], ' '
+    jne 8f
+    inc r12
+    dec r13
+    xor r15d, r15d
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lw_close]
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    mov r15d, -1
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lw_cancel]
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    mov rdi, r12
+    mov rsi, r13
+    call parse_u64
+    cmp rdx, r13
+    jne 8f
+    mov r15d, eax
+2:  mov edi, r14d
+    mov esi, r15d
+    call notify_press_test
+    EPILOGUE
+8:  mov rdi, rbx
+    lea rsi, [rip + .Lnone]
+    call sb_push_cstr
+    EPILOGUE
+
 c_views:
     PROLOGUE
     mov rbx, rdi
@@ -427,7 +488,7 @@ views_ctl:
     .quad .Lc_print_sidebar, c_print_sidebar, .Lc_print_panel_tabs, c_print_panel_tabs
     .quad .Lc_print_side_tabs, c_print_side_tabs, .Lc_print_view, c_print_view
     .quad .Lc_view_show, c_view_show, .Lc_view_focus, c_view_focus, .Lc_places_demo, c_places_demo
-    .quad .Lc_print_log, c_print_log
+    .quad .Lc_print_log, c_print_log, .Lc_print_notes, c_print_notes, .Lc_note_press, c_note_press
     .quad 0, 0
 .Lc_print_sidebar: .asciz "print-sidebar"
 .Lc_print_panel_tabs: .asciz "print-panel-tabs"
@@ -437,6 +498,10 @@ views_ctl:
 .Lc_view_focus: .asciz "view-focus"
 .Lc_places_demo: .asciz "places-demo"
 .Lc_print_log: .asciz "print-log"
+.Lc_print_notes: .asciz "print-notes"
+.Lc_note_press: .asciz "note-press"
+.Lw_close: .asciz "close"
+.Lw_cancel: .asciz "cancel"
 .Lterminals: .asciz "terminals="
 .Lchosen: .asciz " chosen"
 .Lopen: .asciz " open="

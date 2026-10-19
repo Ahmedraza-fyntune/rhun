@@ -68,6 +68,8 @@ F RV_actions, VEC_SIZE  # RA: its actions (key, icon, where, title), also the tr
 F RV_log, 8             # LG* of a log view
 F RV_pl, 4              # its place item (a declared view's, or its own for a tab), -1
 F RV_tabclosing, 4      # its tab is being closed by the extension: no "closed" event
+F RV_prog, 4            # progress shows in it (notify.s: progress view:VIEW)
+F RV_ppct, 4            # its percent, -1 indeterminate
 ENDSTRUCT RV_SIZE
 
 # an action of a retained view: TA's layout (the tree looks inline keys up in them), TA_pad its WHERE
@@ -543,6 +545,8 @@ rv_close:
     call actions_free
     mov edi, ebx
     call pq_drop_slot
+    mov edi, ebx
+    call notify_view_closed     # its progress shows nowhere now
     movsxd rdi, dword ptr [r12 + RV_decl]
     cmp rdi, -1
     je 2f
@@ -560,6 +564,7 @@ rv_close:
 FN rview_owner_gone
     PROLOGUE
     mov r12, rdi
+    call notify_owner_gone      # its notifications and progress go too
     xor ebx, ebx
 1:  cmp ebx, RV_MAX
     jae 9f
@@ -575,6 +580,35 @@ FN rview_owner_gone
 3:  call rv_close
 2:  inc ebx
     jmp 1b
+9:  EPILOGUE
+
+# rview_slot_of(ext, view) -> eax the instance's slot, or -1 (notify.s)
+FN rview_slot_of
+    jmp rv_find
+
+# rview_progress(slot, on, percent or -1): progress in the instance (a bar at its top, its section's
+#   spinner); a slot that is gone or -1 is ignored
+FN rview_progress
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    cmp ebx, RV_MAX
+    jae 9f
+    mov edi, ebx
+    call rv_at
+    mov r14, rax
+    cmp qword ptr [r14 + RV_ext], 0
+    je 9f
+    mov [r14 + RV_prog], r12d
+    mov [r14 + RV_ppct], r13d
+    mov dword ptr [rip + g_dirty], 1
+    mov edi, [r14 + RV_pl]
+    cmp edi, -1
+    je 9f
+    mov esi, r12d
+    or esi, [r14 + RV_busy]
+    call place_set_busy
 9:  EPILOGUE
 
 # rv_find(ext, view) -> eax the instance's slot, or -1
@@ -2235,8 +2269,16 @@ rv_instance_draw:
     M eax, MI_24
     add [rsp + 4], eax
     sub [rsp + 12], eax
-4:  # busy: a thin bar at the top
-    cmp dword ptr [r14 + RV_busy], 0
+4:  # busy: a thin bar at the top; progress: a bar with its share (or a moving third)
+    cmp dword ptr [r14 + RV_prog], 0
+    je 41f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [r14 + RV_ppct]
+    call notify_bar
+    jmp 5f
+41: cmp dword ptr [r14 + RV_busy], 0
     je 5f
     mov edi, [rsp]
     mov esi, [rsp + 4]
@@ -4619,7 +4661,21 @@ FN rview_dump
     mov rdi, rbx
     mov rsi, [r13 + RV_message]
     call sb_push_cstr
-6:  mov rdi, rbx
+6:  cmp dword ptr [r13 + RV_prog], 0     # progress shown in it: " progress=PERCENT|-"
+    je 61f
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_progress]
+    call sb_push_cstr
+    mov esi, [r13 + RV_ppct]
+    cmp esi, -1
+    jne 62f
+    mov rdi, rbx
+    mov esi, '-'
+    call sb_push_byte
+    jmp 61f
+62: mov rdi, rbx
+    call sb_push_u64
+61: mov rdi, rbx
     mov esi, 10
     call sb_push_byte
 8:  inc r12d
@@ -4729,6 +4785,7 @@ FN rview_tree_of
 .Ld_title: .asciz " title="
 .Ld_badge: .asciz " badge="
 .Ld_visible: .asciz " visible="
+.Ld_progress: .asciz " progress="
 .Ld_nodes: .asciz " nodes="
 .Ld_message: .asciz " message="
 .p2align 3

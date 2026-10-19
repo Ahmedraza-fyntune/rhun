@@ -2780,6 +2780,215 @@ h_vtab:
     call reply_syntax
 9:  EPILOGUE
 
+# feat_or_unknown(FEAT index) -> eax 1 when the extension agreed it, else unknown is answered
+feat_or_unknown:
+    push rbx
+    mov rax, [rip + cur]
+    mov esi, edi
+    mov rdi, rax
+    call ext_feature
+    test eax, eax
+    jnz 1f
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    xor eax, eax
+1:  pop rbx
+    ret
+
+# ID notify SEVERITY LEN + body -> ok ID NOTE: a notification card (notify.s)
+h_notify:
+    PROLOGUE
+    mov edi, FEAT_NOTIFY
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    mov edi, 2
+    call field_at
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call notify_request
+    cmp rax, -1
+    je 7f
+    cmp rax, -2
+    je 6f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_notes]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID notify-set NOTE LEN + body -> ok ID: new content (a card that is gone: ok, nothing changes)
+h_notify_set:
+    PROLOGUE
+    mov edi, FEAT_NOTIFY
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    mov rdx, [rip + body_ptr]
+    mov rcx, [rip + body_len]
+    call notify_set_request
+    cmp eax, 2
+    je 7f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID unnotify NOTE -> ok ID: the card closes without an event
+h_unnotify:
+    PROLOGUE
+    mov edi, FEAT_NOTIFY
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call notify_close_request
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID progress WHERE CANCEL LEN + title -> ok ID P
+h_progress:
+    PROLOGUE
+    mov edi, FEAT_PROGRESS
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 5
+    jne 7f
+    mov rcx, [rip + body_len]   # a title: one line, not empty
+    test rcx, rcx
+    jz 7f
+    mov rax, [rip + body_ptr]
+1:  cmp byte ptr [rax + rcx - 1], 10
+    je 7f
+    dec rcx
+    jnz 1b
+    mov edi, 3
+    call field_at
+    mov r12, rax
+    mov r13, rdx
+    mov edi, 2
+    call field_at
+    push qword ptr [rip + body_len]
+    push qword ptr [rip + body_len]
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    mov rcx, r12
+    mov r8, r13
+    mov r9, [rip + body_ptr]
+    call progress_request
+    add rsp, 16
+    cmp rax, -1
+    je 7f
+    cmp rax, -2
+    je 6f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_progress]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID progress-set P PERCENT LEN + message -> ok ID (PERCENT 0-100 or -; a progress that is gone: ok)
+h_progress_set:
+    PROLOGUE
+    mov edi, FEAT_PROGRESS
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 5
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov r12, rax
+    mov r13, -1
+    mov edi, 3
+    lea rsi, [rip + .Lw_dash_pct]
+    call field_is
+    test eax, eax
+    jnz 1f
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz 7f
+    cmp rax, 100
+    ja 7f
+    mov r13, rax
+1:  mov rdi, [rip + cur]
+    mov esi, r12d
+    mov edx, r13d
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call progress_set_request
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID progress-end P -> ok ID
+h_progress_end:
+    PROLOGUE
+    mov edi, FEAT_PROGRESS
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call progress_end_request
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 # ID vreveal VIEW HOW LEN + node id -> ok ID: its ancestors expand, it scrolls into view
 h_vreveal:
     PROLOGUE
@@ -4510,6 +4719,12 @@ verbs:
     .quad .Lv_vshow, h_vshow, 0
     .quad .Lv_vreveal, h_vreveal, EXT_BODY_MAX
     .quad .Lv_vtab, h_vtab, 0
+    .quad .Lv_notify, h_notify, 65536           # notifications and progress (notify.s)
+    .quad .Lv_notify_set, h_notify_set, 65536
+    .quad .Lv_unnotify, h_unnotify, 0
+    .quad .Lv_progress, h_progress, 65536
+    .quad .Lv_progress_set, h_progress_set, 65536
+    .quad .Lv_progress_end, h_progress_end, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # language features (query.s)
@@ -4581,6 +4796,15 @@ verbs:
 .Lvs_focus: .asciz "focus"
 .Lv_vreveal: .asciz "vreveal"
 .Lv_vtab: .asciz "vtab"
+.Lv_notify: .asciz "notify"
+.Lw_dash_pct: .asciz "-"
+.Lv_notify_set: .asciz "notify-set"
+.Lv_unnotify: .asciz "unnotify"
+.Lv_progress: .asciz "progress"
+.Lv_progress_set: .asciz "progress-set"
+.Lv_progress_end: .asciz "progress-end"
+.Le_toobig_notes: .asciz "toobig 16 notifications"
+.Le_toobig_progress: .asciz "toobig 8 progress"
 .Le_refused_unview: .asciz "refused a declared view: the user hides it"
 .Le_toobig_vtab: .asciz "toobig 8 views"
 .Le_badpos_vreveal: .asciz "badpos no such node"
