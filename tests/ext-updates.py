@@ -136,6 +136,21 @@ class Updates(host.Host):
         self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=0.1.1 link=no fresh=0', out)
         self.assertIn('skip = v0.1.1', self.updates_state())
 
+    def test_a_version_rolled_back_to_never_rolls_back_by_itself(self):
+        broken = lambda version: {'extension.ini': HELLO.format(version=version, needs='', extra_settings='')
+                                  .replace('runtime = python3', 'runtime = no-such-runtime'), 'main.py': MAIN}
+        self.rel.publish('demo', 'hello', broken('0.1.0'), 'v0.1.0')
+        self.rel.publish('demo', 'hello', broken('0.1.1'), 'v0.1.1')
+        out = self.ui(['ext-install demo/hello@0.1.0', 'wait-install', 'dialog yes', 'wait 200',
+                       'ext-install demo/hello@0.1.1', 'wait-install', 'dialog yes', 'wait 500', 'print-toast',
+                       'print-ext-versions demo/hello', 'ext-rollback demo/hello', 'wait 500', 'print-toast',
+                       'print-ext-versions demo/hello'])
+        self.assertIn('toast=Hello 0.1.1 did not start (runtime not found on PATH); back to 0.1.0', out)
+        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=0.1.1 link=no fresh=0', out)
+        self.assertIn('toast=Rolled back Hello to 0.1.1', out)
+        self.assertIn('version=0.1.1 source=github tag=v0.1.1 previous=0.1.0 link=no fresh=0', out)
+        self.assertEqual(self.record().get('kept'), 'yes')
+
     def test_rolling_back_to_a_version_that_may_do_more_asks(self):
         self.rel.publish('demo', 'hello', files('0.1.0', needs='network = yes'), 'v0.1.0')
         self.install('demo/hello@0.1.0')

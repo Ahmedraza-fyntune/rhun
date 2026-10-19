@@ -76,6 +76,11 @@ FN extrec_load
     test eax, eax
     jnz 5f
     mov rdi, rbx
+    lea rsi, [rip + .Lk_kept]
+    call rec_is_yes
+    test eax, eax
+    jnz 5f                      # a version rolled back to stays
+    mov rdi, rbx
     call prev_dir
     mov rdi, rax
     call file_is_dir
@@ -306,8 +311,27 @@ prev_dir:
 
 # extrec_started(ext): its first hello came: the record says so, and it is no longer fresh
 FN extrec_started
+    lea rsi, [rip + .Lline_started]
+    jmp extrec_mark
+
+# extrec_kept(ext): a version rolled back to is never rolled back by itself (unless it said hello)
+FN extrec_kept
+    push rdi
+    lea rsi, [rip + .Lk_started]
+    call rec_is_yes
+    pop rdi
+    mov dword ptr [rdi + EXT_fresh], 0
+    test eax, eax
+    jnz 1f
+    lea rsi, [rip + .Lline_kept]
+    jmp extrec_mark
+1:  ret
+
+# extrec_mark(ext, line): the line added to its record (in memory and on disk); not fresh any more
+extrec_mark:
     PROLOGUE
     mov rbx, rdi
+    mov r12, rsi
     mov dword ptr [rbx + EXT_fresh], 0
     lea rdi, [rip + rc_sb]
     call sb_clear
@@ -317,7 +341,7 @@ FN extrec_started
     lea rdi, [rip + rc_sb]
     call sb_push_cstr
 1:  lea rdi, [rip + rc_sb]
-    lea rsi, [rip + .Lline_started]
+    mov rsi, r12
     call sb_push_cstr
     lea rdi, [rip + rc_sb]
     xor esi, esi
@@ -636,6 +660,8 @@ FN ext_rollback
     test rax, rax
     jz .Lrb_full
     mov r15, rax
+    mov rdi, rax
+    call extrec_kept            # chosen: it does not roll back by itself
     cmp dword ptr [rsp + 24], 0
     je 1f
     mov [rip + g_xp_detail], r15
@@ -1164,6 +1190,8 @@ put_num:
 .Lyes: .asciz "yes"
 .Lempty: .asciz ""
 .Lline_started: .asciz "started = yes\n"
+.Lline_kept: .asciz "kept = yes\n"
+.Lk_kept: .asciz "kept"
 .Lno_hello: .asciz "no hello within 5 s"
 .Lt_not_started: .asciz " did not start ("
 .Lt_failed: .asciz "it failed"
