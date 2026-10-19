@@ -606,7 +606,38 @@ fd_extra:
     pop rcx
     test rax, rax
     js .Lfx_bad
-    lea r14, [rbx + 1]          # its bytes
+    # related L1 C1 L2 C2 PATH_LEN MSG_LEN: the path's bytes and the message's follow
+    push rax
+    push rcx
+    mov rdi, r12
+    mov rsi, rbx
+    sub rsi, r12
+    lea rdx, [rip + .Lx_related_sp]
+    mov ecx, 8
+    call str_starts
+    mov r8d, eax
+    pop rcx
+    pop rax
+    test r8d, r8d
+    jz 41f
+    lea rsi, [rcx - 1]          # PATH_LEN: the word before the last
+    mov rdi, rsi
+42: cmp rdi, r12
+    je .Lfx_bad
+    cmp byte ptr [rdi - 1], ' '
+    je 43f
+    dec rdi
+    jmp 42b
+43: push rax
+    push rax
+    call fd_num
+    mov rdx, rax
+    pop rax
+    pop rcx
+    test rdx, rdx
+    js .Lfx_bad
+    add rax, rdx
+41: lea r14, [rbx + 1]          # its bytes
     lea r15, [r14 + rax]
     cmp r15, r13
     ja .Lfx_bad
@@ -852,6 +883,7 @@ fe_srclen: .quad 0
 .Le_untitled: .asciz "nofile an untitled document takes v1 diagnostics"
 .Le_nofile: .asciz "nofile not an absolute path"
 .Le_stale: .asciz "stale "
+.Lx_related_sp: .ascii "related "
 .Lx_id: .asciz "id"
 .Lx_code: .asciz "code"
 .Lx_source: .asciz "source"
