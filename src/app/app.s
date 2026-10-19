@@ -5528,13 +5528,6 @@ FN app_dialog_button
     jmp dialog_choose
 1:  ret
 
-# FN app_dialog_open() -> eax 1 while a dialog is on screen
-FN app_dialog_open
-    xor eax, eax
-    cmp dword ptr [rip + dlg_kind], 0
-    setne al
-    ret
-
 # app_confirm_cancel(fn): the open app_confirm's Cancel calls fn
 FN app_confirm_cancel
     mov [rip + dlg_cancel], rdi
