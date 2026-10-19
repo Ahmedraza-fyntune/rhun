@@ -81,9 +81,13 @@ class Boundaries(host.Host):
             self.assertTrue(any(line.startswith('error ' + str(request) + ' syntax ') for line in lines), lines)
 
     def test_overflow_body_length_cannot_consume_a_small_wrapped_body(self):
+        # 2^64 + 1 must not wrap to 1 and take the next line's first byte as its body: it is a
+        # syntax error (v1), only its line is dropped, and the next line is a request of its own
         self.run_editor(['wait 400', 'print-extensions'], exts=self.extension(frames=['1 toast 18446744073709551617\n2 status 0\n']))
-        self.assertFalse(any(line == 'ok 1' for line in self.boundary_log()), self.boundary_log())
-        self.assertFalse(any(line == 'ok 2' for line in self.boundary_log()), self.boundary_log())
+        lines = self.boundary_log()
+        self.assertTrue(any(line.startswith('error 1 syntax ') for line in lines), lines)
+        self.assertFalse(any(line == 'ok 1' for line in lines), lines)
+        self.assertTrue(any(line == 'ok 2' for line in lines), lines)
 
     def test_invalid_reply_identity_never_executes_its_body(self):
         payload = '2 status 0\n'

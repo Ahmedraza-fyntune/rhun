@@ -229,7 +229,7 @@ FN ext_edits_clear
     add r15, [rip + g_exts + VEC_ptr]
     inc r14
     mov rdi, r15
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [r15 + EXT_status], ES_RUNNING
@@ -754,7 +754,7 @@ FN extmarks_row
     add r15, [rdi + VEC_ptr]
     inc r14
     mov rdi, [r15 + MK_owner]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lmr_each
     # the mark's byte range on this line, as offsets within the line, clipped to the row
@@ -840,7 +840,7 @@ FN extmarks_counts
     add r15, [rbx + VEC_ptr]
     inc r12
     mov rdi, [r15 + MK_owner]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [r15 + MK_sev], SEV_ERROR
@@ -873,7 +873,7 @@ FN extmarks_at
     cmp [r14 + MK_end], r12
     jbe 1b
     mov rdi, [r14 + MK_owner]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     mov rax, [r14 + MK_msg]
@@ -965,7 +965,7 @@ FN ext_hover_due
     add r12, [rip + g_exts + VEC_ptr]
     inc rbx
     mov rdi, r12
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 7b
     cmp dword ptr [r12 + EXT_status], ES_RUNNING
@@ -1029,7 +1029,7 @@ FN ext_hooks_update
     add r13, [rip + g_exts + VEC_ptr]
     inc rbx
     mov rdi, r13
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [r13 + EXT_status], ES_RUNNING
@@ -1054,7 +1054,7 @@ mark_visible_flags:
     push r10
     push r11
     mov rdi, [rax + MK_owner]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     pop r11
     pop r10
@@ -1078,11 +1078,3 @@ sev_names: .quad .Lsv_error, .Lsv_warning, .Lsv_info, .Lsv_hint, 0
 .Le_badmark: .asciz "syntax a diagnostics line is not L1 C1 L2 C2 SEVERITY MESSAGE"
 .Le_badpos_mark: .asciz "badpos a diagnostics range is outside the document or inside a character"
 .Le_count: .asciz "syntax the body does not have N lines"
-
-.text
-FN ext_hover_catalog_invalidate_pure
-    mov qword ptr [rip + g_hover_doc], 0
-    mov qword ptr [rip + g_hover_pos], 0
-    mov dword ptr [rip + g_hover_sent], 0
-    mov byte ptr [rip + g_hover_text], 0
-    ret

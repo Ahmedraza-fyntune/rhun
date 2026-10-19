@@ -432,7 +432,7 @@ FN gitdata_h_diff_open
 gate:
     PROLOGUE
     lea rsi, [rip + .Le_unknown]
-    test dword ptr [rbx + EXT_features], FEAT_GIT_DATA
+    FEAT_TEST rbx, FEAT_GIT_DATA
     jz 8f
     lea rsi, [rip + .Le_needs]
     test dword ptr [rbx + EXT_needs], NEEDS_GIT_READ
@@ -1548,7 +1548,7 @@ announce:
     inc r12
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
-    test dword ptr [rbx + EXT_features], FEAT_GIT_DATA
+    FEAT_TEST rbx, FEAT_GIT_DATA
     jz 1b
     test dword ptr [rbx + EXT_needs], NEEDS_GIT_READ
     jz 1b

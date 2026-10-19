@@ -51,7 +51,7 @@ FN extpage_show
     mov qword ptr [rip + xp_prompt_sd], 0
     test rbx, rbx
     jz 1f
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jnz 1f
     xor ebx, ebx
@@ -66,7 +66,7 @@ FN extpage_forget
     mov rdi, [rip + g_xp_detail]
     test rdi, rdi
     jz 1f
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jnz 1f
     mov qword ptr [rip + g_xp_detail], 0
@@ -195,10 +195,8 @@ draw_list:
     imul rbx, r12, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
-    mov rdi, rbx
-    call ext_has_identity
-    test eax, eax
-    jz 2b
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 2b
     inc r13d
     lea edi, [r12 - 1]
     call draw_card
@@ -218,13 +216,6 @@ draw_list:
 draw_card:
     PROLOGUE 48
     mov r15d, edi
-    mov rdi, rbx
-    call ext_has_metadata
-    test eax, eax
-    jnz .Lxp_card_metadata
-    call draw_diagnostic
-    EPILOGUE
-.Lxp_card_metadata:
     shl r15d, 2
     add r15d, ID_XP + 0x10      # this card's ids
     # its height: 28 badge row, 24 description, a problem line, 32 buttons, padding
@@ -426,13 +417,6 @@ draw_detail:
     EPILOGUE
 1:  M eax, MI_40
     add [rip + xp_y], eax
-    mov rdi, rbx
-    call ext_has_metadata
-    test eax, eax
-    jnz .Lxp_detail_metadata
-    call draw_diagnostic
-    EPILOGUE
-.Lxp_detail_metadata:
     # badge, title, switch
     mov edi, [rip + xp_x]
     mov esi, [rip + xp_y]
@@ -767,11 +751,6 @@ copy_title:
 draw_settings:
     PROLOGUE 48
     mov rbx, rdi
-    call ext_has_metadata
-    test eax, eax
-    jnz .Lxp_settings_metadata
-    EPILOGUE
-.Lxp_settings_metadata:
     xor r12d, r12d
 1:  cmp r12, [rbx + EXT_sdefs + VEC_len]
     jae 9f
@@ -1002,7 +981,7 @@ FN extpage_setting_prompt_open
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    call ext_setting_prompt_resolve
+    call setting_prompt_valid
     test rax, rax
     js .Lxpo_done
     mov r13, [r12 + SD_title]
@@ -1018,7 +997,7 @@ FN extpage_setting_prompt_open
     call palette_ext_prompt_open
     mov rdi, rbx
     mov rsi, r12
-    call ext_setting_prompt_resolve
+    call setting_prompt_valid
     test rax, rax
     js .Lxpo_refused
     mov [rip + xp_prompt_sd], r12
@@ -1031,6 +1010,36 @@ FN extpage_setting_prompt_open
     mov rax, r13
     EPILOGUE
 
+# setting_prompt_valid(ext, sd) -> rax 0 when ext is a record of g_exts that was not removed and sd
+# one of its settings, -EINVAL otherwise (the prompt outlived them). Clobbers rax, rcx, rdx.
+setting_prompt_valid:
+    mov rax, rdi
+    sub rax, [rip + g_exts + VEC_ptr]
+    jb 8f
+    xor edx, edx
+    mov ecx, EXT_SIZE
+    div rcx
+    test rdx, rdx
+    jnz 8f
+    cmp rax, [rip + g_exts + VEC_len]
+    jae 8f
+    cmp dword ptr [rdi + EXT_status], ES_REMOVED
+    je 8f
+    mov rax, rsi
+    sub rax, [rdi + EXT_sdefs + VEC_ptr]
+    jb 8f
+    xor edx, edx
+    mov ecx, SD_SIZE
+    div rcx
+    test rdx, rdx
+    jnz 8f
+    cmp rax, [rdi + EXT_sdefs + VEC_len]
+    jae 8f
+    xor eax, eax
+    ret
+8:  mov rax, -22
+    ret
+
 # extpage_prompt_done(ptr, len): the text setting's new value
 FN extpage_prompt_done
     PROLOGUE
@@ -1041,7 +1050,7 @@ FN extpage_prompt_done
     mov qword ptr [rip + xp_prompt_sd], 0
     mov rdi, rbx
     mov rsi, r12
-    call ext_setting_prompt_resolve
+    call setting_prompt_valid
     test rax, rax
     js 9f
     lea rdi, [rip + xp_line]
@@ -1108,17 +1117,12 @@ choice_width:
 FN ext_title
     PROLOGUE
     mov rbx, rdi
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz .Lxp_title_empty
-    mov rdi, rbx
-    call ext_has_metadata
-    test eax, eax
-    jz .Lxp_title_name
     mov rax, [rbx + EXT_title]
     test rax, rax
     jnz .Lxp_title_done
-.Lxp_title_name:
     mov rax, [rbx + EXT_name]
 .Lxp_title_done:
     EPILOGUE
@@ -1637,10 +1641,8 @@ FN extpage_dump
     imul rbx, r13, EXT_SIZE
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
-    mov rdi, rbx
-    call ext_has_identity
-    test eax, eax
-    jz 1b
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    je 1b
     call dump_head
     mov rdi, r12
     mov esi, 10
@@ -1648,15 +1650,6 @@ FN extpage_dump
     jmp 1b
 .Lxd_detail:
     call dump_head
-    mov rdi, rbx
-    call ext_has_metadata
-    test eax, eax
-    jnz .Lxd_detail_metadata
-    mov rdi, r12
-    mov esi, 10
-    call sb_push_byte
-    jmp 9f
-.Lxd_detail_metadata:
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
@@ -1771,10 +1764,6 @@ dump_head:
     mov rdi, r12
     mov esi, ' '
     call sb_push_byte
-    mov rdi, rbx
-    call ext_has_metadata
-    test eax, eax
-    jz 1f
     mov rsi, [rbx + EXT_version]
     test rsi, rsi
     jz 1f
@@ -1853,47 +1842,6 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ld_can: .asciz "can: "
 .Ld_held: .asciz "held="
 .Ld_setting: .asciz "setting "
-
-.text
-# Publication revokes raw SD/detail borrows without destroying owned scratch bytes.
-FN extpage_catalog_invalidate_pure
-    mov qword ptr [rip + g_xp_detail], 0
-    mov qword ptr [rip + xp_prompt_sd], 0
-    mov dword ptr [rip + xp_scroll], 0
-    mov dword ptr [rip + xp_content_h], 0
-    ret
-
-.text
-# Valid failed identities stay visible without any EP-borrowed metadata or controls.
-draw_diagnostic:
-    PROLOGUE
-    mov rdi, rbx
-    call ext_has_identity
-    test eax, eax
-    jz 9f
-    mov rdi, rbx
-    call ext_full_name
-    mov r8, rax
-    lea rdi, [rip + g_face_ui]
-    mov esi, [rip + xp_x]
-    mov edx, [rip + xp_y]
-    M ecx, MI_28
-    COLOR r9d, T_FG
-    call ui_text_c
-    M eax, MI_32
-    add [rip + xp_y], eax
-    mov rdi, rbx
-    call ext_problem
-    test rax, rax
-    jz 1f
-    mov rsi, rax
-    lea rdi, [rip + g_face_small]
-    COLOR edx, T_ERROR
-    mov ecx, MI_24
-    call line_text
-1:  M eax, MI_24
-    add [rip + xp_y], eax
-9:  EPILOGUE
 
 .text
 # Delayed completion has no remaining source authority after replacement or cancellation.

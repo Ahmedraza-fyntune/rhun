@@ -323,7 +323,7 @@ try_send:
     jne 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 9f
-    test dword ptr [rbx + EXT_features], FEAT_COMMIT_MESSAGE
+    FEAT_TEST rbx, FEAT_COMMIT_MESSAGE
     jz 7f
     lea rdi, [rip + cm_line]
     call sb_clear
