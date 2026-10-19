@@ -28,11 +28,17 @@ tipb: .zero 512
 
 .text
 
-# dg_kinds(): the two gutter kinds, registered once
+# dg_kinds(): the two gutter kinds, registered once, when a debugger is installed or a breakpoint
+#   exists (the left lane is reserved for them from then on)
 dg_kinds:
     PROLOGUE
     cmp dword ptr [rip + dg_kind_bp], 0
     jne 9f
+    cmp dword ptr [rip + g_ndebuggers], 0
+    jne 1f
+    cmp dword ptr [rip + g_bp_hooks], 0
+    je 9f
+1:
     mov edi, GK_PRIO_BREAKPOINT
     mov esi, GK_EMPTY | GK_RESERVE
     lea rdx, [rip + dg_click]

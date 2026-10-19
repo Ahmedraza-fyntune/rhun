@@ -2785,7 +2785,7 @@ ENDSTRUCT BP_SIZE
 .equ DCON_INFO, 6           # rhun's notes ("Program exited with code 3")
 .equ DCON_INPUT, 7          # an expression typed into the console
 .equ DCON_RESULT, 8         # its value
-.equ PROMPT_DEBUG, 30           # the debugger's text prompts (debugview.s: condition, watch...)
+.equ PROMPT_DEBUG, 80           # the debugger's text prompts (the debugger's block: 80-83) (debugview.s: condition, watch...)
 .equ DCON_LINE_MAX, 4096
 # ---- tasks and terminals: programs run as the user (uproc.s) in terminal tabs (termview.s) ----
 .equ SIGINT, 2
