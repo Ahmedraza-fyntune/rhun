@@ -5,6 +5,7 @@
 #   nb-select I               cell I selected, in command mode
 #   nb-run I                  as cell I's run button
 #   nb-output-tab I J         as cell I's output J's Open in Tab
+#   print-nb-exec             the kernels started as the user (nbexec_dump)
 .include "rhun.inc"
 
 .section .rodata
@@ -13,7 +14,7 @@
 nb_ctl:
     .quad .Lc_print_notebook, c_print_notebook, .Lc_print_nb_output, c_print_nb_output
     .quad .Lc_nb_mode, c_nb_mode, .Lc_nb_select, c_nb_select, .Lc_nb_run, c_nb_run
-    .quad .Lc_nb_output_tab, c_nb_output_tab
+    .quad .Lc_nb_output_tab, c_nb_output_tab, .Lc_print_nb_exec, c_print_nb_exec
     .quad 0, 0
 .Lc_print_notebook: .asciz "print-notebook"
 .Lc_print_nb_output: .asciz "print-nb-output"
@@ -21,6 +22,7 @@ nb_ctl:
 .Lc_nb_select: .asciz "nb-select"
 .Lc_nb_run: .asciz "nb-run"
 .Lc_nb_output_tab: .asciz "nb-output-tab"
+.Lc_print_nb_exec: .asciz "print-nb-exec"
 .text
 
 # each fn(out sb, rest, rest len) -> rax 0
@@ -95,5 +97,11 @@ c_nb_output_tab:
     mov rsi, rax
     mov rdi, rbx
     call nb_ctl_output_tab
+    xor eax, eax
+    EPILOGUE
+
+c_print_nb_exec:
+    PROLOGUE
+    call nbexec_dump
     xor eax, eax
     EPILOGUE

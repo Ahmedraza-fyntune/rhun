@@ -3872,6 +3872,8 @@ verbs:
     .quad .Lnb_v_output, h_nb_output, NB_OUTPUT_MAX
     .quad .Lnb_v_stream, h_nb_stream, NB_STREAM_MAX
     .quad .Lnb_v_kernel_label, h_nb_kernel_label, 4096
+    .quad .Lnb_v_exec, h_nb_exec, 262144
+    .quad .Lnb_v_exec_signal, h_nb_exec_signal, 0
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"

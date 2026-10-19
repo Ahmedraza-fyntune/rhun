@@ -1817,6 +1817,7 @@ F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use,
 F EXT_pv_notebook, 8    # notebooks: [provides] notebook (patterns), notebook.title, notebook.kernel
 F EXT_pv_nbtitle, 8
 F EXT_pv_nbkernel, 8
+F EXT_nb_kernels, 8     # [needs] kernels: programs rhun may start as the user for its notebooks (cstr) or 0
 # WebAssembly extensions (extwasm.s)
 F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
 F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode

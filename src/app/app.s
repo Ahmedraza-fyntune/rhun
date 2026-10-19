@@ -2020,8 +2020,8 @@ FN app_after_save
 
 FN cmd_save_as
     READONLY_RET
-    mov rdi, [rip + g_doc]
     call nb_active              # notebooks: the notebook's document
+    mov rdi, [rip + g_doc]
     test rax, rax
     jz 2f
     mov rdi, [rax + NB_host]

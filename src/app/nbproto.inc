@@ -874,6 +874,89 @@ h_nb_kernel_label:
     call reply_syntax
     EPILOGUE
 
+# ID nb-exec NB LEN + command body -> ok ID EXEC: a kernel started as the user (nbexec.s); the
+#   answer waits for the user's approval the first time in a project
+h_nb_exec:
+    PROLOGUE
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_NOTEBOOKS
+    jz .Lnx_unknown
+    cmp qword ptr [rip + nfields], 4
+    jne .Lnx_syntax
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz .Lnx_syntax
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call nb_by_id
+    test rax, rax
+    jz .Lnx_stale
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    mov rdx, [rip + cur_id]
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call nbexec_request
+    test rax, rax
+    jz 9f
+    mov rsi, rax
+    mov rdi, [rip + cur_id]
+    call reply_error
+9:  EPILOGUE
+.Lnx_unknown:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    EPILOGUE
+.Lnx_stale:
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lnb_e_nonb]
+    call reply_error
+    EPILOGUE
+.Lnx_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
+# ID nb-exec-signal EXEC interrupt|terminate|kill -> ok ID
+h_nb_exec_signal:
+    PROLOGUE
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_NOTEBOOKS
+    jz .Lnx_unknown
+    cmp qword ptr [rip + nfields], 4
+    jne .Lnx_syntax
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz .Lnx_syntax
+    mov rbx, rax
+    xor r12d, r12d
+1:  lea rax, [rip + nb_signal_names]
+    mov rsi, [rax + r12*8]
+    test rsi, rsi
+    jz .Lnx_syntax
+    mov edi, 3
+    call field_is
+    test eax, eax
+    jnz 2f
+    inc r12d
+    jmp 1b
+2:  mov rdi, [rip + cur]
+    mov rsi, rbx
+    mov edx, r12d
+    call nbexec_signal
+    test rax, rax
+    jnz 3f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+3:  mov rsi, rax
+    mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+
 # nb_push_line(sb, ptr, len): the bytes, control characters as spaces (a label is one line)
 nb_push_line:
     PROLOGUE
@@ -896,6 +979,7 @@ nb_push_line:
 .p2align 3
 nb_run_names: .quad .Lnb_s_queued, .Lnb_s_running, .Lnb_s_done, .Lnb_s_failed, .Lnb_s_cancelled, 0
 nb_kernel_names: .quad .Lnb_k_none, .Lnb_k_idle, .Lnb_k_busy, .Lnb_k_starting, .Lnb_k_dead, 0
+nb_signal_names: .quad .Lnb_x_interrupt, .Lnb_x_terminate, .Lnb_x_kill, 0
 .Lnb_s_queued: .asciz "queued"
 .Lnb_s_running: .asciz "running"
 .Lnb_s_done: .asciz "done"
@@ -921,6 +1005,12 @@ nb_kernel_names: .quad .Lnb_k_none, .Lnb_k_idle, .Lnb_k_busy, .Lnb_k_starting, .
 .Lnb_v_output: .asciz "nb-output"
 .Lnb_v_stream: .asciz "nb-stream"
 .Lnb_v_kernel_label: .asciz "nb-kernel-label"
+.Lnb_v_exec: .asciz "nb-exec"
+.Lnb_v_exec_signal: .asciz "nb-exec-signal"
+.Lnb_x_interrupt: .asciz "interrupt"
+.Lnb_x_terminate: .asciz "terminate"
+.Lnb_x_kill: .asciz "kill"
+.Lnb_e_nonb: .asciz "stale no such notebook"
 .Lnb_e_stale: .asciz "stale the run was superseded"
 .Lnb_e_toobig: .asciz "toobig outputs over their cap"
 .Lnb_e_nooutput: .asciz "badpos no such output"

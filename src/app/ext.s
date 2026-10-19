@@ -2319,10 +2319,21 @@ parse_needs:
     lea rsi, [rip + .Ln_git]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 10f
     mov edi, NEEDS_GIT_READ
     xor esi, esi
     call needs_level
+    jmp 9f
+10: # notebooks: kernels = the programs rhun may start as the user for its notebooks (nbexec.s)
+    mov rdi, r12
+    lea rsi, [rip + .Ln_kernels]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov rdi, [rbx + EXT_nb_kernels]
+    call mem_free
+    call val_dup
+    mov [rbx + EXT_nb_kernels], rax
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -4879,6 +4890,7 @@ ext_target: .asciz "linux-x86_64"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
 .Ln_git: .asciz "git"
+.Ln_kernels: .asciz "kernels"           # notebooks
 .Lpv_commit: .asciz "commit_message"
 .Lpv_quickdiff: .asciz "quickdiff"
 .Lpv_scm: .asciz "scm"

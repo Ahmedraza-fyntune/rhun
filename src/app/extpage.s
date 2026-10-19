@@ -1698,7 +1698,17 @@ FN ext_needs_words
     mov rdi, r12
     mov rsi, [rbx + EXT_runs]
     call sb_push_cstr
-8:  test r14d, r14d
+8:  mov rsi, [rbx + EXT_nb_kernels]  # notebooks: kernels run as the user
+    test rsi, rsi
+    jz 81f
+    cmp byte ptr [rsi], 0
+    je 81f
+    lea rsi, [rip + .Ln_kernels]
+    call item
+    mov rdi, r12
+    mov rsi, [rbx + EXT_nb_kernels]
+    call sb_push_cstr
+81: test r14d, r14d
     jnz 9f
     lea rsi, [rip + .Ln_nothing]
     call item
@@ -1916,6 +1926,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
 .Ln_git: .asciz "read the project's Git history"
 .Ln_runs: .asciz "run "
+.Ln_kernels: .asciz "run notebook kernels as you: "
 .Ln_nothing: .asciz "only use its own commands and settings"
 .Ln_sep: .asciz ", "
 .Lt_intro: .asciz "Extensions add commands, marks and tools to rhun. Each one gets only the access it asks for."

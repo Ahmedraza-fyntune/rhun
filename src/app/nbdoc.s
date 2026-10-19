@@ -310,7 +310,10 @@ FN nb_tab_closed
     mov rsi, [rbx + NB_savearg]
     mov rdx, -1
     call rax
-1:  mov rdi, rbx
+1:  mov rdi, [rbx + NB_ext]     # its kernels end soon (nbexec.s)
+    mov rsi, [rbx + NB_id]
+    call nbexec_nb_closed
+    mov rdi, rbx
     call nb_free
 9:  EPILOGUE
 
@@ -337,6 +340,8 @@ nb_req_drop:
 FN nb_ext_gone
     PROLOGUE
     mov r12, rdi
+    call nbexec_ext_gone        # its kernels stop
+    mov rdi, r12
     xor esi, esi
     call ext_reply_cap_drop
     xor r13d, r13d
@@ -524,6 +529,7 @@ nb_why:
 #   extension reads
 FN nb_tick
     PROLOGUE
+    call nbexec_tick            # kernels that ended
     xor r12d, r12d
 1:  cmp r12, [rip + g_nbs + VEC_len]
     jae 9f
@@ -567,7 +573,8 @@ FN nb_tick
     jmp 3b
 9:  EPILOGUE
 
-# nb_timeout() -> ms until nb_tick should look again: soon while a request waits for its program
+# nb_timeout() -> ms until nb_tick should look again: soon while a request waits for its program, or
+#   while a kernel runs
 FN nb_timeout
     xor ecx, ecx
 1:  cmp rcx, [rip + g_nbs + VEC_len]
@@ -583,8 +590,7 @@ FN nb_timeout
     ret
 2:  mov eax, 50
     ret
-8:  mov eax, -1
-    ret
+8:  jmp nbexec_timeout          # a running kernel's end is looked for
 
 # ---------------- the extension's answers ----------------
 
@@ -1518,6 +1524,7 @@ FN nb_undo_op
 
 # rd_line() -> eax the fields of the next line (at most 16), -1 when no line feed is left; rd_cur
 #   moves past the line feed
+FN nb_rd_line
 rd_line:
     mov rax, [rip + rd_cur]
     mov rdx, [rip + rd_end]
@@ -1564,6 +1571,7 @@ rd_line:
     ret
 
 # rd_u64(i) -> rax the value of field i, edx 1 when it is a plain decimal of at most 18 digits
+FN nb_rd_u64
 rd_u64:
     cmp rdi, [rip + rd_n]
     jae 8f
@@ -1616,6 +1624,7 @@ rd_is:
     ret
 
 # rd_bytes(n) -> rax a pointer to the next n bytes, 0 when fewer are left; rd_cur moves past them
+FN nb_rd_bytes
 rd_bytes:
     mov rax, [rip + rd_cur]
     mov rcx, [rip + rd_end]
