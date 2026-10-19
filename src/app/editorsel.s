@@ -28,7 +28,8 @@ sc_list: .zero 16*SEL_MAX       # {position, column}
 sf_n: .quad 0
 sf_list: .zero SF_SIZE*SEL_MAX
 sf_carets: .quad 0              # the secondary carets the rows drew: x, y (dwords), position
-vis_doc: .quad 0                # the lines the last frame drew of this document (feature selections)
+vis_doc: .quad 0                # the document the frame draws (feature selections)
+vis_id: .quad 0                 # the lines the last frame drew of the document with this DOC_id
 vis_first: .quad 0              # -1 none
 vis_last: .quad 0
 sf_caret: .zero 16*SEL_MAX
@@ -1324,6 +1325,8 @@ FN sel_frame
     PROLOGUE 16
     mov [rsp], rdi
     mov [rip + vis_doc], rdi
+    mov rax, [rdi + DOC_id]
+    mov [rip + vis_id], rax
     mov qword ptr [rip + vis_first], -1
     mov qword ptr [rip + vis_last], -1
     mov qword ptr [rip + sf_n], 0
@@ -1738,8 +1741,9 @@ FN sel_body
 # sel_visible(doc) -> rax first, rdx last line (from 0) the last frame drew of it, rax -1 when it
 # drew none
 FN sel_visible
+    mov rax, [rdi + DOC_id]
+    cmp rax, [rip + vis_id]
     mov rax, -1
-    cmp rdi, [rip + vis_doc]
     jne 1f
     mov rax, [rip + vis_first]
     mov rdx, [rip + vis_last]
