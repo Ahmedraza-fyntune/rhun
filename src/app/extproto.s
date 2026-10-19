@@ -348,6 +348,8 @@ handle_line:
     mov rdi, rbx
     call rview_ext_ready        # its declared views open (views group, rview.s)
     mov rdi, rbx
+    call testproto_ready        # testing: a controller is asked for its roots
+    mov rdi, rbx
     call ext_pending_try
     jmp 9f
 3:  mov rdi, rbx
@@ -471,6 +473,22 @@ handle_line:
     jz 9f
     cmp dword ptr [rbx + EXT_feat_asks], 0
     je 9f
+    mov rdi, rbx                # testing: tests-resolve and test-run answers
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call testproto_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # AI: transcripts, tool answers, prompts (extaiproto.inc)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ai_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -502,6 +520,26 @@ handle_line:
     test edx, edx
     jz 9f
     mov r12, rax
+    mov edi, 2                  # testing: the code and text go with the answer
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call testproto_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # AI: the code and text go with the error (extaiproto.inc)
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call ai_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -556,6 +594,17 @@ handle_line:
     lea rsi, [rip + .Lr_framing]
     call ext_kill
     jmp 9b
+
+# testing (testproto.s): every tests verb goes to testproto_request(ext, id, line, len, body,
+# body length), which parses the line itself and answers through ext_send_checked
+h_tests:
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov rdx, [rip + line + SB_ptr]
+    mov rcx, [rip + line + SB_len]
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    jmp testproto_request
 
 # reply_syntax(id): "error ID syntax ..."; the third in a row ends the program
 reply_syntax:
@@ -3643,7 +3692,25 @@ verbs:
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
+    # testing (testproto.s): feature "tests"
+    .quad .Lv_test_items, h_tests, EXT_BODY_MAX
+    .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
+    .quad .Lv_test_update, h_tests, TS_RESULTS_BODY
+    .quad .Lv_test_end, h_tests, 0
+    .quad .Lv_test_coverage, h_tests, TS_COVER_BODY
+    .quad .Lv_test_exec, h_tests, TS_EXEC_BODY
+    # AI (wider-parity D, extaiproto.inc)
+    .quad .Lv_agent_sessions, h_agent_sessions, 1048576
+    .quad .Lv_agent_changed, h_agent_changed, 0
+    .quad .Lv_propose, h_propose, EXT_BODY_MAX + 8192
+    .quad .Lv_unpropose, h_unpropose, 0
     .quad 0, 0, 0
+.Lv_test_items: .asciz "test-items"
+.Lv_test_remove: .asciz "test-remove"
+.Lv_test_update: .asciz "test-update"
+.Lv_test_end: .asciz "test-end"
+.Lv_test_coverage: .asciz "test-coverage"
+.Lv_test_exec: .asciz "test-exec"
 .Lv_set_context: .asciz "set-context"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
@@ -3800,6 +3867,7 @@ feature_names:
 .Lr_syntax: .asciz "three unparsable lines in a row"
 
 .include "app/extwatchproto.inc"
+.include "app/extaiproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"
