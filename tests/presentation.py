@@ -115,7 +115,7 @@ class Presentation(Base):
     # ---------------- stage 0: probes and print commands ----------------
 
     def test_view_xy_and_hit_agree_with_the_text_cells(self):
-        out = self.run_p(['print-view', 'print-xy 2 5', 'print-text-cell 2 5', 'print-hit 10 0'])
+        out = self.run_p(['print-viewport', 'print-xy 2 5', 'print-text-cell 2 5', 'print-hit 10 0'])
         self.assertTrue(out[0].startswith('view mode=lines top=1 off=0 rows='), out)
         x, y = map(int, out[1].split())
         cx, cy = map(int, out[2].split())
@@ -131,10 +131,10 @@ class Presentation(Base):
         under = self.work / 'under.log'
         self.env['RHUN_STALE'] = stale.as_posix()
         self.env['RHUN_UNDERPAINT'] = under.as_posix()
-        self.run_p(['type x', 'key Return', 'print-view'])
+        self.run_p(['type x', 'key Return', 'print-viewport'])
         self.assertFalse(stale.exists(), stale.read_text() if stale.exists() else '')
         self.assertFalse(under.exists(), under.read_text() if under.exists() else '')
-        self.run_p(['probe-plant stale', 'print-view', 'probe-plant under', 'print-view'])
+        self.run_p(['probe-plant stale', 'print-viewport', 'probe-plant under', 'print-viewport'])
         self.assertIn('stale probe-plant stale | ', stale.read_text())
         self.assertIn('underpaint probe-plant under | ', under.read_text())
 

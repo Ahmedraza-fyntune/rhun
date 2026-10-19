@@ -1,5 +1,5 @@
 # editor presentation: headless control commands (pres_ctl, in control.s's ctl_tables). Lines and columns are 1-based, columns in bytes, as in the protocol.
-#   print-view                  "view mode=lines|wrap top=L off=N rows=R content=PX"
+#   print-viewport              "view mode=lines|wrap top=L off=N rows=R content=PX"
 #   print-xy LINE COL           "X Y": the caret's x at that position and its row's middle
 #   print-hit X Y               "text L C" | "left-lane L" | "digits L" | "fold-lane L" | "git L" | "none"
 #   print-present deco|types|glyphs|tape
@@ -605,7 +605,7 @@ pres_ctl:                       # (control.s's ctl_tables)
     .quad .Lc_probe_plant, c_probe_plant
     .quad 0, 0
 lane_words: .quad 0, .Ls_left, .Ls_digits, .Ls_fold, .Ls_git
-.Lc_print_view: .asciz "print-view"
+.Lc_print_view: .asciz "print-viewport"
 .Lc_print_xy: .asciz "print-xy"
 .Lc_print_hit: .asciz "print-hit"
 .Lc_print_present: .asciz "print-present"
