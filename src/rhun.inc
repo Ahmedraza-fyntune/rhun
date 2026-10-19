@@ -2316,6 +2316,7 @@ F PR_sev, 4             # SEV_*
 F PR_flags, 4           # PRF_*
 F PR_msg, 8             # cstr
 F PR_code, 8            # cstr or 0
+F PR_seq, 8             # set by the store: its id in the Problems tab
 ENDSTRUCT PR_SIZE
 .equ PRF_CHARS, 1
 .equ MKF_SOURCE, 1              # MK_pad: the mark's owner is a problems source (PS*), not an extension

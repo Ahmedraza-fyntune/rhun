@@ -183,6 +183,31 @@ class Patterns(unittest.TestCase):
             '3 13 3 14 error problems:t cannot use "s" (untyped string constant) as int value in variable declaration',
             'errors=1 warnings=0'])
 
+    # --- the Problems tab ---
+
+    def test_problems_tab_lists_files_and_goes_to_a_problem(self):
+        (self.proj / 'main.go').write_text('package main\n\nfunc main() {\n\tx := undefinedThing\n'
+                                          '\tvar n int = "s"\n}\n', encoding='utf-8')
+        self.files('sub/s.go', 'sum_test.go')
+        out = self.run_editor(['print-problems-tab',
+                               f'term-run --title t --matcher go -- {CAT} {(DATA / "go.txt").as_posix()}',
+                               'wait-terminal 1 ended', 'cmd toggle_problems', 'wait 100', 'print-problems-tab',
+                               'print-state', 'key Down', 'key Down', 'key Down', 'key Down', 'key Return',
+                               'wait 200', 'print-state'])
+        self.assertEqual(out[0], 'tab=none')
+        rows = [line for line in out if line.startswith('row ')]
+        labels = [(r.split(' label=')[1].split(' desc=')[0].split(' badge=')[0]) for r in rows]
+        self.assertEqual(labels, ['sub/s.go', 'cannot use "s" (untyped string constant) as int value in variable '
+                                  'declaration', 'main.go', 'declared and not used: x', 'undefined: undefinedThing',
+                                  'declared and not used: n', 'cannot use "s" (untyped string constant) as int value '
+                                  'in variable declaration', 'sum_test.go', 'got 1, want 2'])
+        self.assertIn('badge=4', rows[2])
+        self.assertIn('desc=t  4:7', rows[4])
+        states = [line for line in out if line.startswith('tabs=')]
+        self.assertIn('focus=10', states[0])         # the tab has the keyboard
+        # the fourth row: main.go's first problem, at line 4 byte column 2 (x, after a tab: column 5)
+        self.assertIn('active=main.go line=4 col=5', states[1])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

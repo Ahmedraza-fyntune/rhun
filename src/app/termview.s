@@ -1988,6 +1988,8 @@ program_buttons:
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
+    cmp dword ptr [rip + g_panel_cur], -1
+    jne 9f                      # a view tab is shown instead (places.s)
     call cur_sess
     test rax, rax
     jz 9f
@@ -2643,6 +2645,8 @@ header_draw:
     mov [rsp + 20], eax
     call cur_sess               # a program's tab has Restart and Stop left of them
     xor ecx, ecx
+    cmp dword ptr [rip + g_panel_cur], -1
+    jne 10f
     test rax, rax
     jz 10f
     cmp dword ptr [rax + TS_kind], TK_SHELL

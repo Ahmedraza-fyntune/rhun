@@ -9,6 +9,7 @@
 #                                  turn its lines into problems; prints "term=ID"
 #   print-pattern PATTERN<TAB>LINE "match=0", "match=1 file=... line=..." or "error=REASON"
 #   print-problems                 the Problems store, a line per problem
+#   print-problems-tab             the Problems tab's rows
 #   term-stop TERM | term-restart TERM | term-close TERM
 #   wait-terminal TERM STATE [RUNS] until the tab is running, exited, stopped, failed or ended (not
 #                                  running), having started RUNS times when given; 10 s at most
@@ -54,6 +55,7 @@ TCTL t_print_approve, c_print_approve
 TCTL t_wait_terminal, c_wait_terminal
 TCTL t_print_pattern, c_print_pattern
 TCTL t_print_problems, c_print_problems
+TCTL t_print_problems_tab, c_print_problems_tab
 
 # rest_word() -> rax word, rdx its length: the next word of the rest (rbx, r12 move past it)
 rest_word:
@@ -133,6 +135,14 @@ c_print_problems:
     sub rsp, 8
     mov rdi, r15
     call problems_dump
+    add rsp, 8
+    ret
+
+c_print_problems_tab:
+    sub rsp, 8
+    call problems_tick          # a change made in this command's frame shows at once
+    mov rdi, r15
+    call problems_tab_dump
     add rsp, 8
     ret
 
@@ -581,6 +591,7 @@ c_print_approve:
 .Lc_wait_terminal: .asciz "wait-terminal"
 .Lc_print_pattern: .asciz "print-pattern"
 .Lc_print_problems: .asciz "print-problems"
+.Lc_print_problems_tab: .asciz "print-problems-tab"
 .Lw_running: .asciz "running"
 .Lw_exited: .asciz "exited"
 .Lw_stopped: .asciz "stopped"
@@ -627,7 +638,8 @@ tasks_ctl:
     .quad .Lc_term_close, t_term_close, .Lc_print_uproc, t_print_uproc
     .quad .Lc_print_allowed, t_print_allowed, .Lc_run_approve, t_run_approve
     .quad .Lc_print_approve, t_print_approve, .Lc_wait_terminal, t_wait_terminal
-    .quad .Lc_print_pattern, t_print_pattern, .Lc_print_problems, t_print_problems, 0, 0
+    .quad .Lc_print_pattern, t_print_pattern, .Lc_print_problems, t_print_problems
+    .quad .Lc_print_problems_tab, t_print_problems_tab, 0, 0
 options:
     .quad .Lo_cwd, o_cwd, .Lo_env, o_env, .Lo_unset, o_unset, .Lo_title, o_title
     .quad .Lo_task, o_task, .Lo_silent, o_silent, .Lo_sh, o_sh, .Lo_matcher, o_matcher
