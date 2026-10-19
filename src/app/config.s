@@ -373,6 +373,7 @@ FN config_load
     jmp 1b
 2:  mov qword ptr [rip + g_keylines + VEC_len], 0
     mov dword ptr [rip + old_sources], 0
+    call agentext_config_reset  # AI: the extension sources switched off come from this read
     # taken before the read: a write that lands during it still counts as a change
     call config_path
     mov rdi, rax
@@ -422,6 +423,13 @@ FN config_load
     call setting_find
     test rax, rax
     jnz 3f
+    mov rdi, [rip + it + INI_sec]   # AI: [agents] OWNER/NAME = false (agentext.s)
+    mov rsi, [rip + it + INI_seclen]
+    mov rdx, [rip + it + INI_key]
+    mov rcx, [rip + it + INI_keylen]
+    mov r8, [rip + it + INI_val]
+    mov r9, [rip + it + INI_vallen]
+    call agentext_config_key
     call legacy_sources
     jmp .Lcl_next
 3:  # which theme keys the file has: a file from before dark_theme and light_theme has theme only
@@ -632,6 +640,11 @@ FN config_save
 5:  lea rdi, [rsp]
     mov esi, 10
     call sb_push_byte
+    lea rax, [rip + cfg_agents_opencode]
+    cmp [rbx + SET_ptr], rax
+    jne .Lcs_skip
+    lea rdi, [rsp]              # AI: the extension sources switched off (agentext.s)
+    call agentext_config_save
 .Lcs_skip:
     add rbx, SET_SIZE
     jmp .Lcs_next

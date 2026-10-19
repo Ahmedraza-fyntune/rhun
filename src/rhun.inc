@@ -1144,6 +1144,7 @@ F DV_rev, 8             # commit, or 0 for the work tree
 F DV_path, 8            # path in the work tree
 F DV_maxno, 4           # largest line number
 F DV_pad, 4
+F DV_review, 8          # AI (review.s): the proposal a Review tab shows, or 0
 ENDSTRUCT DV_SIZE
 STRUCT
 F DL_kind, 4            # DK_*
@@ -1155,6 +1156,7 @@ ENDSTRUCT DL_SIZE
 .equ DK_DEL, 2
 .equ DK_HUNK, 3
 .equ DK_INFO, 4
+.equ DK_FILE, 5                 # AI (review.s): a file's header in a Review tab
 
 # a changed file in the history view
 STRUCT
@@ -1476,6 +1478,13 @@ ENDSTRUCT TF_SIZE
     # contributions and commands (invoke.s, when.s, extcontext.s)
     FEATURE FEAT_COMMAND_ARGS, "command-args", 1  # 0 run ... FROM LEN, run-command, call
     FEATURE FEAT_CONTEXT_KEYS, "context-keys", 0  # set-context
+    # testing (testproto.s): test items, runs, results, coverage, test-exec
+    FEATURE FEAT_TESTS, "tests", 1
+    # AI (wider-parity D: agentext.s, review.s, tools.s)
+    FEATURE FEAT_AGENTS, "agents", 1              # agent-sessions; rhun asks agent-transcript
+    FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
+    # views group (places.s, rtree.s, rview.s)
+    FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1557,6 +1566,7 @@ ENDSTRUCT TAB_SIZE
 .equ FOCUS_PROMPT, 7
 .equ FOCUS_TERMINAL, 8
 .equ FOCUS_SCM, 9               # the commit message
+.equ FOCUS_AGENT_INPUT, 10      # AI (D4): the prompt box of an extension's agent session
 
 # grammar (syntax definition)
 STRUCT
@@ -1720,6 +1730,9 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
+F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
+F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
+F EXT_tests_progs, 8    # [needs] tests: programs rhun may start for its test runs (cstr) or 0
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
@@ -1952,6 +1965,158 @@ ENDSTRUCT XK_SIZE
 .equ EXT_PUMP_MS, 2             # one parsing run
 .equ EXT_FLOOD_FRAMES, 30       # windows in a row at a cap
 
+# ---- testing (testmodel.s, testproto.s, testexec.s; feature "tests") ----
+.equ TSK_CTRL, 0                # item kinds; the controller's own row is item 0
+.equ TSK_GROUP, 1
+.equ TSK_FILE, 2
+.equ TSK_SUITE, 3
+.equ TSK_TEST, 4
+.equ TSS_NOTRUN, 0              # states, by precedence: a parent shows the highest of its own and
+.equ TSS_SKIPPED, 1             # its children's
+.equ TSS_PASSED, 2
+.equ TSS_FAILED, 3
+.equ TSS_ERRORED, 4
+.equ TSS_QUEUED, 5
+.equ TSS_RUNNING, 6
+.equ TSS_COUNT, 7
+.equ TSF_LAZY, 1                # item flags
+.equ TSF_NODEBUG, 2
+.equ TSF_EXPANDED, 4
+.equ TSF_RESOLVING, 8           # a tests-resolve for its children is out
+.equ TSF_MARK, 16               # scratch: kept by a replace
+.equ TSP_RUN, 0                 # run profiles (bit i of TSC_profiles)
+.equ TSP_DEBUG, 1
+.equ TSP_COVERAGE, 2
+.equ TSRS_FREE, 0               # run states
+.equ TSRS_QUEUED, 1             # waiting for a run slot: test-run not sent yet
+.equ TSRS_RUNNING, 2
+.equ TSRS_ENDED, 3
+.equ TS_ITEMS_BODY, 10000       # items per test-items body or tests-resolve answer
+.equ TS_ITEMS_EXT, 50000        # per controller
+.equ TS_ITEMS_ALL, 100000       # all controllers
+.equ TS_ID_MAX, 512
+.equ TS_LABEL_MAX, 200
+.equ TS_DESC_MAX, 200
+.equ TS_ERROR_MAX, 1000
+.equ TS_RESULTS_BODY, 1048576   # a test-update body
+.equ TS_RESULTS_MAX, 2000       # records in it
+.equ TS_MSG_MAX, 8000           # a message's text
+.equ TS_MSGS_ITEM, 16           # messages per item per run
+.equ TS_VALUE_MAX, 65536        # expected, actual
+.equ TS_OUT_ITEM, 262144        # an item's output per run
+.equ TS_OUT_RUN, 4194304        # the run's own output
+.equ TS_BUDGET, 33554432        # messages, values and outputs of all runs
+.equ TS_RUNS_KEPT, 10           # finished runs kept
+.equ TS_RUNS_EXT, 4             # active runs per controller
+.equ TS_RUNS_ACTIVE, 8          # active runs in all
+.equ TS_RUNS_MAX, 32            # run slots: active, queued and kept
+.equ TS_RESOLVE_MS, 30000       # a tests-resolve answer waits this long
+.equ TS_CANCEL_KILL_MS, 2000    # after Cancel: processes get SIGTERM, then SIGKILL as long again
+.equ TS_CANCEL_END_MS, 5000     # and rhun ends the run itself
+.equ TS_COVER_BODY, 4194304     # a test-coverage body
+.equ TS_COVER_FILES, 20000      # files per run
+.equ TS_COVER_RANGES, 1000000   # ranges per run
+.equ TS_COVER_LINES, 1048576    # lines per file
+.equ TS_EXEC_BODY, 262144       # a test-exec body
+.equ TS_EXEC_ARGS, 1000
+.equ TS_EXEC_ARG_MAX, 32768
+.equ TS_EXEC_ENVS, 64
+.equ TS_PROCS_RUN, 4
+.equ TS_PROCS_ALL, 8
+.equ TS_OUT_EVENT, 65536        # bytes per test-out event
+.equ TS_QUEUE_PAUSE, 262144     # pipes wait while the extension's queue holds this much
+.equ TS_PROGS_MAX, 16           # [needs] tests: program names
+.equ TS_PROG_NAME, 64
+.equ TS_CTRL_MAX, 64            # controllers (extensions with tests agreed or declared)
+.equ TS_RESOLVE_MAX, 64         # tests-resolve requests out at once, all controllers
+# a controller: an extension's test tree
+STRUCT
+F TSC_ext, 8            # its EXT, 0 for a free slot
+F TSC_items, VEC_SIZE   # TSI records; item 0 is the controller's own row, the parent of its roots
+F TSC_map, 8            # id -> item: u32 slots holding the item's index + 1, 0 empty
+F TSC_mapcap, 8         # slots, a power of two
+F TSC_mapn, 8           # slots in use
+F TSC_free, 4           # first free item slot (TSI_next chains them), -1 none
+F TSC_count, 4          # items besides row 0
+F TSC_ready, 4          # 1 once its program agreed tests (roots asked); 0 again when it stops
+F TSC_pad, 4
+ENDSTRUCT TSC_SIZE
+# a test item
+STRUCT
+F TSI_id, 8             # owned bytes with a NUL after them; 0 marks a free slot
+F TSI_label, 8          # owned cstr
+F TSI_desc, 8           # owned cstr or 0
+F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed tests-resolve
+F TSI_path, 8           # owned cstr or 0: the file its range is in
+F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
+F TSI_idlen, 4
+F TSI_kind, 4           # TSK_*
+F TSI_flags, 4          # TSF_*
+F TSI_l1, 4             # its range, one-based; all 0 for none
+F TSI_c1, 4
+F TSI_l2, 4
+F TSI_c2, 4
+F TSI_parent, 4         # item indices, -1 for none
+F TSI_first, 4
+F TSI_last, 4
+F TSI_next, 4
+F TSI_prev, 4
+F TSI_gen, 4            # bumped when the slot is freed: results name (index, gen)
+F TSI_own, 4            # TSS_* of its own last result
+F TSI_state, 4          # the highest of its own and its children's (derived)
+F TSI_ms, 4             # its last duration, -1 none
+F TSI_run, 4            # the run of its last result, 0 none (or dropped)
+F TSI_rent, 4           # that result's entry in the run
+F TSI_cnt, 4*TSS_COUNT    # its children by derived state
+ENDSTRUCT TSI_SIZE
+# a run
+STRUCT
+F TSR_ext, 8            # its controller's EXT, 0 for a free slot
+F TSR_num, 8            # the run number (unique for the session)
+F TSR_ids, SB_SIZE      # the items asked for, each ending in LF (none: everything)
+F TSR_out, SB_SIZE      # the run's own output
+F TSR_ents, VEC_SIZE    # TSE records
+F TSR_t0, 8             # time_ms it started (was sent), and ended
+F TSR_t1, 8
+F TSR_cancel_at, 8      # time_ms of the user's Cancel, 0 none
+F TSR_req, 8            # the id of its test-run request, 0 before it is sent
+F TSR_bytes, 8          # messages, values and outputs it holds
+F TSR_state, 4          # TSRS_*
+F TSR_profile, 4        # TSP_*
+F TSR_nids, 4
+F TSR_dropped, 4        # records for unknown items
+F TSR_procs, 4          # its live processes
+F TSR_err, 4            # 1 when the run itself errored
+F TSR_cut, 4            # 1 once output was cut for the budget
+F TSR_killed, 4         # 1 once its processes were sent SIGTERM after a Cancel
+ENDSTRUCT TSR_SIZE
+# a result: one item in one run (item -1: the run itself)
+STRUCT
+F TSE_item, 4
+F TSE_gen, 4
+F TSE_state, 4          # TSS_*; NOTRUN when the run ended with it queued or running
+F TSE_ms, 4
+F TSE_prev_own, 4       # the item's result before this run touched it
+F TSE_prev_ms, 4
+F TSE_prev_run, 4
+F TSE_prev_rent, 4
+F TSE_nmsg, 4
+F TSE_cut, 4            # 1 once its output was cut
+F TSE_msgs, SB_SIZE     # messages: TSM header + text, path, expected, actual
+F TSE_out, SB_SIZE      # its output
+ENDSTRUCT TSE_SIZE
+# a message's header in TSE_msgs
+STRUCT
+F TSM_l1, 4
+F TSM_c1, 4
+F TSM_l2, 4
+F TSM_c2, 4
+F TSM_text, 4           # lengths of the bytes after the header
+F TSM_path, 4
+F TSM_exp, 4            # -1: no expected value
+F TSM_act, 4            # -1: no actual value
+ENDSTRUCT TSM_SIZE
+
 # json
 .equ JT_NULL, 0
 .equ JT_FALSE, 1
@@ -2107,4 +2272,189 @@ F AS_bytes, 8           # worker, OpenCode: the conversation copy's estimated si
 F AS_model, 8           # the model the session last used (its row), or 0
 F AS_log_model, 8       # parse: the model the log names for the replies that follow
 F AS_shown_model, 8     # parse: the model on the last reply labeled with one
+# AI (wider-parity D1): a row an extension lists (AS_kind 5) keeps its title, model, CWD (AS_cwd)
+# and worktree in the fields above
+F AS_ext, 8             # kind 5: the extension that lists it (EXT*)
+F AS_sid, 8             # kind 5: its session id, cstr
+F AS_state, 4           # kind 5: AGS_*
+F AS_xflags, 4          # kind 5: AXF_*
+F AS_total, 8           # kind 5: messages the extension says the session has
+F AS_dirty, 8           # kind 5: the first message to fetch again, -1 when the copy is current
+F AS_req, 8             # kind 5: the agent-transcript request in flight (its id), 0 when none
+F AS_from, 8            # kind 5: the FROM of that request
+F AS_ask, 8             # kind 5 (D4): the open card, an AK record, or 0
 ENDSTRUCT AS_SIZE
+.equ AS_KIND_EXT, 5
+.equ AGS_IDLE, 0
+.equ AGS_WORKING, 1
+.equ AGS_WAITING, 2
+.equ AGS_ERROR, 3
+.equ AXF_MATCH, 1               # its CWD is the project or one of its worktrees
+.equ AXF_FETCHED, 2             # a transcript answer came at least once
+.equ ID_AI_SOURCE, 0x7a00       # + extension index: its switch in Settings > Agents
+.equ ID_AI_REVIEW, 0x7b00       # review.s: the Review tab's buttons
+.equ ID_AI_CARD, 0x7c00         # D4: the prompt box, Stop and card buttons
+
+# AI (wider-parity D): what one extension contributes, indexed like g_exts (ai_ext)
+STRUCT
+F AX_agents, 4          # [provides] agents = yes
+F AX_hidden, 4          # its sessions are switched off ([agents] OWNER/NAME = false)
+F AX_title, 8           # agents.title, cstr or 0
+F AX_rows, VEC_SIZE     # AS*, its session rows, owned
+F AX_tools, VEC_SIZE    # TL records from [tools] (tools.s)
+F AX_grants, 8          # tools.s: bit i set when the user allowed tool i for this session
+F AX_proposals, 4       # review.s: proposals of it still pending
+F AX_pad, 4
+ENDSTRUCT AX_SIZE
+
+# ---- views group: places, the shared tree widget, retained extension views ----
+# (places.s, rtree.s, rview.s; docs/extensions/v1.1.md "Retained views")
+.equ FOCUS_VIEW, 10             # a place item has the keyboard (g_place_focus names it)
+
+# a place item: a sidebar section, a bottom panel tab or a side (right column) tab. Built-in code
+# and extension views register the same way (place_add); the slot index is the item's id.
+.equ PLACE_SIDEBAR, 1
+.equ PLACE_PANEL, 2
+.equ PLACE_SIDE, 3
+.equ PLACE_TAB, 4               # retained views only: an editor tab of its own (not a place item)
+.equ PL_MAX, 128
+STRUCT
+F PL_place, 4           # PLACE_*, 0 when the slot is free
+F PL_flags, 4           # PLF_*
+F PL_ops, 8             # PLO*: its callbacks, a table that outlives the item
+F PL_ctx, 8             # handed to every callback
+F PL_name, 8            # cstr, owned: its key in the config ("explorer", "OWNER/NAME.KEY")
+F PL_title, 8           # cstr, owned: shown in its header or tab
+F PL_icon, 4            # IC_* on panel and side tabs, -1 for none
+F PL_badge, 4           # a count beside the title, 0 for none
+F PL_weight, 4          # sidebar: its share of the height left by the headers
+F PL_seq, 4             # registration order (sections and tabs show in this order)
+F PL_x, 4               # its body as last drawn (tests point at it); w 0 when not drawn
+F PL_y, 4
+F PL_w, 4
+F PL_h, 4
+F PL_hy, 4              # sidebar: its header's top as last drawn
+F PL_pad, 4
+ENDSTRUCT PL_SIZE
+.equ PLF_COLLAPSED, 1           # sidebar: only its header shows
+.equ PLF_HIDDEN, 2              # left out of its place until shown again
+.equ PLF_BUSY, 4                # a spinner in its header or tab
+.equ PLF_DRAWN, 8               # drawn this frame (visibility)
+.equ PLF_VISIBLE, 16            # was drawn last frame: its visible(1) was called
+# a place item's callbacks; a zero entry is not called. Bodies are immediate-mode: draw also takes
+# the pointer (ui_btn, ui_in) as the rest of rhun's UI does; a press inside the body gives the item
+# the keyboard before draw runs.
+STRUCT
+F PLO_draw, 8           # draw(ctx, x, y, w, h): the body, clipped to it
+F PLO_key, 8            # key(ctx, keysym, cp, mods) -> eax 1 when taken (while it has the keyboard)
+F PLO_focus, 8          # focus(ctx, on): the keyboard came (1) or went (0); at most once a frame
+F PLO_close, 8          # close(ctx): the × on its panel or side tab; 0: no ×
+F PLO_actions, 8        # actions(ctx, right, y, h) -> eax the x left of the buttons it drew in its
+                        #   header (sidebar), right of its title
+F PLO_visible, 8        # visible(ctx, on): it came on (1) or went off (0) screen; at most once a frame
+ENDSTRUCT PLO_SIZE
+
+# the shared tree widget (rtree.s): a node store and its rows, drawn and driven by tree_draw and
+# tree_key; extension views fill it from patches, built-in code through tree_kids_begin/tree_kid/
+# tree_kids_end. Nodes are indices (u32) into TR_nodes; the root is node 0.
+.equ TREE_NODES_MAX, 100000
+.equ KIDS_LEAF, 0
+.equ KIDS_CLOSED, 1
+.equ KIDS_OPEN, 2
+STRUCT
+F ND_blob, 8            # owned: id bytes then label bytes then the raw extra records
+F ND_idlen, 4
+F ND_lablen, 4
+F ND_xlen, 4            # extra bytes after the label
+F ND_kids, 4            # KIDS_* as last given
+F ND_parent, 4          # node index, -1 for the root and free slots
+F ND_first, 4           # first child, -1 for none
+F ND_last, 4
+F ND_next, 4            # next sibling (the free list's link for free slots)
+F ND_prev, 4
+F ND_nkids, 4
+F ND_flags, 4           # NF_*
+F ND_icon, 4            # IC_*, or -1; NDI_FILE | its index: file:NAME (looked up once)
+F ND_icolor, 4          # T_* slot of the icon's color, -1: muted
+F ND_lcolor, 4          # T_* slot of the label's color, -1: panel text
+F ND_badge, 4
+F ND_mark, 4            # scratch generation marks (kids diffing, patch checks)
+F ND_desc, 8            # owned cstr or 0
+F ND_tip, 8             # owned cstr or 0
+F ND_user, 8            # its owner's value (built-in code)
+ENDSTRUCT ND_SIZE
+.equ NF_LIVE, 1
+.equ NF_OPEN, 2                 # expanded
+.equ NF_GIVEN, 4                # its children were given (lazy ones are asked for until then)
+.equ NF_MORE, 8                 # a "Load more" row after its children
+.equ NF_LOADING, 16             # its children were asked for
+.equ NF_ERROR, 32               # asking failed: an error row with Retry
+.equ NF_CHECK, 64               # has a checkbox
+.equ NF_CHECKED, 128
+.equ NF_SEL, 256                # selected (multi-select)
+.equ NF_MOREWAIT, 512           # "Load more" was asked for
+.equ NDI_FILE, 0x40000000
+# the store's callbacks for its owner; a zero entry is not called
+STRUCT
+F TRO_activate, 8       # activate(ctx, tr, node): Enter, a double click, a click on a leaf
+F TRO_expand, 8         # expand(ctx, tr, node, on): the user expanded (1) or collapsed (0) it;
+                        #   a node whose children were not given is then waiting for them
+F TRO_select, 8         # select(ctx, tr): the selection changed (at most once a frame)
+F TRO_check, 8          # check(ctx, tr, node, state): its checkbox was toggled
+F TRO_menu, 8           # menu(ctx, tr, node, x, y): right click or Shift+F10 on it
+F TRO_more, 8           # more(ctx, tr, parent): its "Load more" row came on screen (NF_MOREWAIT is
+                        #   set until tree_add_end)
+F TRO_retry, 8          # retry(ctx, tr, node): Retry on its error row
+F TRO_load, 8           # load(ctx, tr, node): it is expanded and on screen with its children not
+                        #   given: they are wanted (NF_LOADING is set until tree_kids_end)
+ENDSTRUCT TRO_SIZE
+STRUCT
+F TR_nodes, VEC_SIZE    # ND
+F TR_free, 8            # first free slot, -1 for none
+F TR_map, 8             # id hash: u32 node + 1 per slot (0 empty, -1 removed)
+F TR_mapcap, 8          # slots, a power of two
+F TR_mapused, 8         # slots not empty (live and removed)
+F TR_rows, VEC_SIZE     # RW: the rows shown, flattened from the expanded nodes
+F TR_order, VEC_SIZE    # u32: children listed since tree_kids_begin
+F TR_ops, 8             # TRO*
+F TR_ctx, 8
+F TR_count, 8           # live nodes, not counting the root
+F TR_bytes, 8           # their blob bytes
+F TR_scroll, 4          # pixels
+F TR_cursor, 4          # the keyboard's node, -1 for none
+F TR_flags, 4           # TRF_*
+F TR_idbase, 4          # ui ids of its rows: + visible row
+F TR_kparent, 4         # tree_kids_begin's parent
+F TR_kgen, 4            # its generation mark
+F TR_anchor, 4          # scroll anchor: a node, -1 none, and the pixels above its row's top
+F TR_anchor_off, 4
+F TR_rect, 16           # where it was last drawn
+F TR_typed, 32          # type-to-jump: the prefix typed so far
+F TR_typedlen, 4
+F TR_hover, 4           # the row under the pointer, -1
+F TR_typed_at, 8        # when the last character came
+F TR_loading_at, 8      # when a Loading row first showed (it waits 300 ms)
+F TR_user, 8            # its owner's value
+ENDSTRUCT TR_SIZE
+.equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
+.equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame
+.equ TRF_MULTI, 4               # multi-select
+.equ TRF_CHECKS, 8              # some node has a checkbox
+# a row: a node, or a marker row under a parent
+STRUCT
+F RW_node, 4            # node index; for a marker row the parent
+F RW_depth, 2
+F RW_kind, 2            # RWK_*
+ENDSTRUCT RW_SIZE
+.equ RWK_NODE, 0
+.equ RWK_LOADING, 1
+.equ RWK_MORE, 2
+.equ RWK_ERROR, 3
+.equ TRF_APPEND, 16              # tree_add_begin: children are appended
+# one record of a patch or of a node's extra bytes: "NAME ARGS... LEN" LF, then LEN bytes
+STRUCT
+F RR_f, 16*8            # ptr, len of each field of the header line (8 at most)
+F RR_n, 8               # fields
+F RR_data, 8            # the LEN bytes
+F RR_len, 8
+ENDSTRUCT RR_SIZE
