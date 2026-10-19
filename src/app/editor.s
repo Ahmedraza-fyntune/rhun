@@ -1321,8 +1321,12 @@ FN cmd_select_all
 
 # select the current line(s), extending on repeat
 FN cmd_select_line
-    call ed_single              # one selection (multi-cursor)
-    push rbx
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_select              # several selections (editorlines.s)
+1:  push rbx
     push r12
     push r13
     mov rbx, [rip + g_doc]
@@ -1513,9 +1517,13 @@ FN doc_search
     EPILOGUE
 
 FN cmd_duplicate_line
-    call ed_single              # one selection (multi-cursor)
     READONLY_RET
-    PROLOGUE 16
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_duplicate              # several selections (editorlines.s)
+1:  PROLOGUE 16
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1572,9 +1580,13 @@ FN cmd_duplicate_line
     EPILOGUE
 
 FN cmd_delete_line
-    call ed_single              # one selection (multi-cursor)
     READONLY_RET
-    PROLOGUE
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_delete              # several selections (editorlines.s)
+1:  PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1628,11 +1640,16 @@ FN cmd_delete_line
 
 # ed_move_lines(dir): move selected lines up (-1) or down (1)
 FN ed_move_lines
-    push rdi
-    call ed_single              # one selection (multi-cursor)
-    pop rdi
     READONLY_RET
-    PROLOGUE 48
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    je 1f
+    test edi, edi               # several selections (editorlines.s)
+    js lines_move_up
+    jmp lines_move_down
+1:  PROLOGUE 48
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Lml_ret
@@ -1760,9 +1777,13 @@ FN ed_move_lines
 
 # toggle line comments using the grammar's comment token
 FN cmd_toggle_comment
-    call ed_single              # one selection (multi-cursor)
     READONLY_RET
-    PROLOGUE 32
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_comment              # several selections (editorlines.s)
+1:  PROLOGUE 32
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Ltc_ret

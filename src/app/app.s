@@ -6084,9 +6084,13 @@ FN cmd_newline_below
     ret
 
 FN cmd_newline_above
-    call ed_single              # one selection (multi-cursor)
     READONLY_RET
-    PROLOGUE 272
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_newline_above              # several selections (editorlines.s)
+1:  PROLOGUE 272
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f

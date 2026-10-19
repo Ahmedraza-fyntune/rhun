@@ -243,6 +243,51 @@ class MultiCursor(unittest.TestCase):
         self.assertEqual(sels[1], [((2, 8), (2, 8)), ((1, 6), (1, 6))])
         self.assertEqual(self.docs(out), ['  oneX\n  threeX\n'])
 
+    # ---------------- line commands ----------------
+
+    def test_line_commands_with_carets_on_three_lines(self):
+        three = ['key Down', 'key ctrl+alt+Down', 'key ctrl+alt+Down']
+        out = self.run_editor('one\ntwo\nthree\nfour\nfive\n', [
+            *three, 'key ctrl+shift+d', *DOC, 'print-selections', 'key ctrl+z', *DOC,
+            'print-selections', 'key alt+Down', *DOC, 'print-selections', 'key alt+Up',
+            'key alt+Up', *DOC, 'print-selections', 'key alt+Up', *DOC,
+            'key ctrl+shift+k', *DOC, 'print-selections', 'key ctrl+z', *DOC,
+            'print-selections', 'key ctrl+l', 'print-selections', 'key ctrl+l', 'print-selections'])
+        docs, sels = self.docs(out), self.selections(out)
+        carets = lambda *lines: [((line, 1), (line, 1)) for line in lines]
+        # each line once below itself, the carets onto the copies; one undo step back
+        self.assertEqual(docs[0], 'one\ntwo\ntwo\nthree\nthree\nfour\nfour\nfive\n')
+        self.assertEqual(sels[0], carets(7, 5, 3))
+        self.assertEqual(docs[1], 'one\ntwo\nthree\nfour\nfive\n')
+        self.assertEqual(sels[1], carets(4, 3, 2))
+        # the lines move as one block; at the top nothing moves
+        self.assertEqual(docs[2], 'one\nfive\ntwo\nthree\nfour\n')
+        self.assertEqual(sels[2], carets(5, 4, 3))
+        self.assertEqual(docs[3], 'two\nthree\nfour\none\nfive\n')
+        self.assertEqual(sels[3], carets(3, 2, 1))
+        self.assertEqual(docs[4], docs[3])
+        # the lines go, one caret is left; undo brings them and the carets back
+        self.assertEqual(docs[5], 'one\nfive\n')
+        self.assertEqual(sels[4], carets(1))
+        self.assertEqual(docs[6], docs[3])
+        self.assertEqual(sels[5], carets(3, 2, 1))
+        # Select Line: whole lines, then one more each (they merge)
+        self.assertEqual(sels[6], [((3, 1), (4, 1)), ((2, 1), (3, 1)), ((1, 1), (2, 1))])
+        self.assertEqual(sels[7], [((1, 1), (5, 1))])
+
+    def test_toggle_comment_and_insert_line_above_at_several_carets(self):
+        self.file = self.work / 'code.c'
+        out = self.run_editor('int a;\n  int b;\n\n}\n', [
+            'key ctrl+alt+Down', 'key ctrl+alt+Down', 'key ctrl+/', *DOC, 'key ctrl+/', *DOC,
+            'key ctrl+alt+Down', 'key ctrl+shift+Return', 'type X', *DOC, 'key ctrl+z',
+            'key ctrl+z', *DOC])
+        docs = self.docs(out)
+        self.assertEqual(docs[0], '// int a;\n  // int b;\n\n}\n')
+        self.assertEqual(docs[1], 'int a;\n  int b;\n\n}\n')
+        # a level more above a closing bracket; the caret at the end of the indentation
+        self.assertEqual(docs[2], 'X\nint a;\n  X\n  int b;\nX\n\n    X\n}\n')
+        self.assertEqual(docs[3], docs[1])
+
     # ---------------- clipboard ----------------
 
     def test_paste_paired_and_spread(self):
