@@ -2327,6 +2327,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
     .quad scm_ctl               # source control (scmctl.s)
+    .quad test_ctl              # testing (testview.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap

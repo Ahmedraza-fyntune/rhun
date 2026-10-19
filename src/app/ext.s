@@ -969,6 +969,8 @@ FN ext_retire
     call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
+    mov rdi, rbx
+    call testmodel_forget       # testing: its tests and results go
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -2220,7 +2222,18 @@ parse_needs:
     call val_dup
     mov [rbx + EXT_runs], rax
     jmp 9f
-6:  # source control (wider-parity C): git = read, the project's Git data through rhun
+6:  # testing: tests = the programs rhun may start, with the user's access, during test runs
+    mov rdi, r12
+    lea rsi, [rip + .Lpv_tests]
+    call ini_key_is
+    test eax, eax
+    jz 7f
+    mov rdi, [rbx + EXT_tests_progs]
+    call mem_free
+    call val_dup
+    mov [rbx + EXT_tests_progs], rax
+    jmp 9f
+7:  # source control (wider-parity C): git = read, the project's Git data through rhun
     mov rdi, r12
     lea rsi, [rip + .Ln_git]
     call ini_key_is
@@ -3541,6 +3554,8 @@ FN ext_exited
     call langfeat_ext_gone      # and the language queries it was asked
     mov rdi, rbx
     call scm_ext_gone           # and its source control requests and providers (gitdata.s, scmext.s)
+    mov rdi, rbx
+    call testproto_ext_gone     # testing: its runs end errored and their processes stop
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4609,13 +4624,16 @@ cur_start: .quad 0              # the EXT being started (env_add_state)
 .p2align 3
 state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled, .Lst_removed
 pv_more: .quad EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename
-    .quad EXT_pv_format, EXT_pv_save_actions, 0
+    .quad EXT_pv_format, EXT_pv_save_actions
+    .quad EXT_pv_tests              # testing: a controller hears its test files as a provider does
+    .quad 0
 pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig
     .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
     .quad .Lpv_symbols, EXT_pv_symbols, .Lpv_actions, EXT_pv_actions
     .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format
     .quad .Lpv_save_actions, EXT_pv_save_actions
+    .quad .Lpv_tests, EXT_pv_tests, .Lpv_tests_profiles, EXT_tests_profiles     # testing
     # source control (wider-parity C)
     .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
     .quad 0, 0
@@ -4722,6 +4740,8 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_rename: .asciz "rename"
 .Lpv_format: .asciz "format"
 .Lpv_save_actions: .asciz "save_actions"
+.Lpv_tests: .asciz "tests"
+.Lpv_tests_profiles: .asciz "tests.profiles"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"
