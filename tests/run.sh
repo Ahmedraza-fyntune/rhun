@@ -157,6 +157,8 @@ python3 tests/settings-search.py || fail=1
 python3 tests/appearance.py || fail=1
 python3 tests/editor-matrix.py || fail=1
 python3 tests/editor-hscroll.py || fail=1
+python3 tests/multicursor.py || fail=1
+python3 tests/multicursor-vim.py || fail=1
 python3 tests/splitter.py || fail=1
 python3 tests/scroll-sensitivity.py || fail=1
 python3 tests/window-focus.py || fail=1
@@ -188,6 +190,7 @@ python3 tests/snippet-final.py || fail=1
 python3 tests/snippet-context.py || fail=1
 python3 tests/ext-providers.py || fail=1
 python3 tests/ext-language.py || fail=1
+python3 tests/ext-selections.py || fail=1
 python3 tests/ext-scheduling.py || fail=1
 python3 tests/ext-watch.py || fail=1
 python3 tests/ext-watch-native.py || fail=1
@@ -210,6 +213,9 @@ python3 tests/testing.py || fail=1
 # WebAssembly extension host (src/wasm): the core spec suite needs wabt's wast2json
 if command -v wast2json >/dev/null; then python3 tests/wasm-spec.py || fail=1; else echo "skip wasm-spec (no wast2json)"; fi
 python3 tests/wasm-host.py || fail=1
+# workspace edits and the editor model: transactions, disk edits, file operations
+python3 tests/wsedit.py || fail=1
+python3 tests/ext-reveal.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?

@@ -60,21 +60,21 @@ with tempfile.TemporaryDirectory(prefix='rhun-explorer-tabs-') as temporary:
     print('ok   explorer-tabs/deleting-a-folder-closes-its-clean-tabs')
 
     if os.name != 'nt' and os.geteuid() != 0:
-        # a deletion that fails part way: the tab of the file still there stays open
+        # a folder with a subfolder that cannot be changed: the deletion moves the folder whole (it
+        # is a workspace edit that undo takes back), so its clean tabs close, and undo brings it back
         fresh()
         (project / 'd/sub').mkdir()
         (project / 'd/sub/kept.txt').write_text('kept\n', encoding='utf-8')
         (project / 'd/sub').chmod(0o500)
         try:
-            tabs = run([FOLDER_MENU, MENU_DELETE, CONFIRM, 'print-tabs'],
-                       project / 'd/sub/kept.txt', project / 'd/a.txt')
+            tabs = run([FOLDER_MENU, MENU_DELETE, CONFIRM, 'print-tabs', 'cmd undo_workspace_edit',
+                        'print-tabs'], project / 'd/sub/kept.txt', project / 'd/a.txt')
         finally:
-            (project / 'd/sub').chmod(0o700)
-        # the folder's entries come in the order the file system lists them: a.txt may go or stay
-        assert (project / 'd/sub/kept.txt').exists()
-        names = tabs[0].removeprefix('tabs=').replace('*', '').split(' | ')
-        assert names == ['kept.txt'] + ['a.txt'] * (project / 'd/a.txt').exists(), tabs
-        print('ok   explorer-tabs/a-failed-deletion-keeps-the-tabs-of-what-is-left')
+            if (project / 'd/sub').exists():
+                (project / 'd/sub').chmod(0o700)
+        assert tabs[0] == 'tabs=', tabs
+        assert (project / 'd/sub/kept.txt').read_text(encoding='utf-8') == 'kept\n'
+        print('ok   explorer-tabs/an-unchangeable-subfolder-goes-with-its-folder-and-comes-back')
 
     if os.name != 'nt' and os.geteuid() != 0:
         # the folder cannot be searched any more once its file is open: the deletion fails, and the

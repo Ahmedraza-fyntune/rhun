@@ -41,6 +41,8 @@ v_sdir: .long 1                 # direction of the last search; n follows it
 .bss
 .p2align 3
 .globl g_vim_mode, g_vim_cmdline
+.globl v_count, v_opcount, v_op, v_prefix, v_chgdoc, v_chglen, v_buf   # vimmulti.s
+.globl vcmd, vclamp, vesc_one, vput_text
 g_vim_mode: .long 0
 g_vim_cmdline: .long 0          # the key that opened the command line (: / ?), 0 when closed
 v_on: .long 0                   # cfg_vim when last applied
@@ -712,9 +714,22 @@ vesc_insert:
     call vfeed_edit
     jmp 2b
 3:  mov dword ptr [rip + g_vim_mode], VM_NORMAL
+    cmp qword ptr [rbx + DOC_selections], 0
+    jne 5f
+    call vesc_one
+    jmp 6f
+5:  call vm_esc                 # several cursors: each steps back (vimmulti.s)
+6:  mov dword ptr [rip + v_autoind], 0
+    call vcommit
+    EPILOGUE
+
+# vesc_one(): Esc's caret (the primary): an indentation o O cc S gave that nothing was typed on
+# goes, and the caret steps back onto a character
+vesc_one:
+    PROLOGUE
+    mov rbx, [rip + g_doc]
     cmp dword ptr [rip + v_autoind], 0
     je 31f
-    mov dword ptr [rip + v_autoind], 0
     mov rdi, [rbx + DOC_cur]
     call vline
     mov r13, rax
@@ -751,7 +766,6 @@ vesc_insert:
     mov r12, rax
 4:  mov rdi, r12
     call vset
-    call vcommit
     EPILOGUE
 
 # vfeed_edit(keysym, cp, mods): a key as the editor takes it without vim
@@ -898,7 +912,12 @@ FN vim_key
     mov edx, r14d
     call vrec
     mov edi, r15d
-    call vcmd
+    mov rax, [rip + g_doc]
+    cmp qword ptr [rax + DOC_selections], 0
+    je 6f
+    call vm_cmd                 # several cursors: the key at each (vimmulti.s)
+    jmp .Lvk_yes
+6:  call vcmd
 .Lvk_yes:
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
@@ -1173,6 +1192,11 @@ vcmd:
     jmp .Lc_done
 
 .Lc_g:
+    cmp r15d, 'b'
+    jne .Lc_gg
+    call vm_gb                  # gb: a cursor at the next occurrence (vimmulti.s)
+    jmp .Lc_done
+.Lc_gg:
     cmp r15d, 'g'
     jne 1f
     mov edi, VK_GG
@@ -1411,8 +1435,12 @@ vcmd:
     jnz 2b
 3:  test r13, r13
     js .Lc_done
+    cmp qword ptr [rbx + DOC_selections], 0
+    jne 4f
     mov rdi, r13
     call vsetc
+    jmp .Lc_done
+4:  call vm_carets              # it brought back several selections: they stay (vimmulti.s)
     jmp .Lc_done
 
 .Lc_dot:
@@ -2198,7 +2226,12 @@ vyank:
 73: lea rdi, [rip + v_buf]
     mov esi, 10
     call sb_push_byte
-1:  mov rdi, [rip + v_buf + SB_ptr]
+1:  cmp dword ptr [rip + vm_collect], 0
+    je 2f
+    mov edi, ebx
+    call vm_yank_piece          # several cursors: this one's piece of one copy (vimmulti.s)
+    jmp 9f
+2:  mov rdi, [rip + v_buf + SB_ptr]
     mov rsi, [rip + v_buf + SB_len]
     mov edx, ebx
     call ed_clip_set
@@ -2678,19 +2711,33 @@ FN vim_paste
 
 # vput(ptr, len): p or P with this text
 vput:
+    mov rax, [rip + g_doc]
+    cmp qword ptr [rax + DOC_selections], 0
+    jne vm_put                  # several cursors: a piece, or the text, at each (vimmulti.s)
+    push rdi
+    push rsi
+    sub rsp, 8
+    call ed_clip_observe
+    add rsp, 8
+    pop rsi
+    pop rdi
+# vput_text(ptr, len): vput once the clipboard was observed (vm_put: for one cursor)
+vput_text:
     PROLOGUE 16
     mov r12, rdi
     mov r13, rsi
     mov rbx, [rip + g_doc]
-    call ed_clip_observe
     test r13, r13
     jz 9f
     # whole lines: our line copy, or text ending in a newline
+    xor r14d, r14d
+    cmp dword ptr [rip + vm_piece], 0
+    jne 0f
     mov rdi, r12
     mov rsi, r13
     call ed_clip_linewise
     mov r14d, eax
-    cmp byte ptr [r12 + r13 - 1], 10
+0:  cmp byte ptr [r12 + r13 - 1], 10
     jne 1f
     mov r14d, 1
 1:  lea rdi, [rip + v_buf]
@@ -4013,6 +4060,7 @@ FN vim_view
     mov [rbx + DOC_cur], rax
     mov rax, [rip + v_exanchor]
     mov [rbx + DOC_anchor], rax
+    mov esi, 1
     jmp 9f
 5:  mov dword ptr [rip + g_vim_mode], VM_VISUAL
     # the end that is past the last character selected steps back onto it
@@ -4024,12 +4072,16 @@ FN vim_view
     mov rsi, [r13]
     call doc_prev_char
     mov [r13], rax
+    mov esi, 1
     jmp 9f
 3:  mov rdi, r12
     call vclamp
     mov [rbx + DOC_cur], rax
     mov [rbx + DOC_anchor], rax
-9:  EPILOGUE
+    xor esi, esi
+9:  mov rdi, rbx
+    call vm_view                # the other selections alike (vimmulti.s)
+    EPILOGUE
 
 # vim_export(): the visual selection becomes the editor's own, as drawn, for its commands
 # (vim_view turns it back into the same visual selection)
@@ -4060,7 +4112,9 @@ FN vim_export
     jmp 4f
 3:  mov [rbx + DOC_anchor], rdx
     mov [rbx + DOC_cur], rax
-4:  mov rax, [rbx + DOC_cur]
+4:  mov rdi, rbx
+    call vm_export              # the other selections alike (vimmulti.s)
+    mov rax, [rbx + DOC_cur]
     mov [rip + v_exout], rax
     mov rax, [rbx + DOC_anchor]
     mov [rip + v_exout + 8], rax
