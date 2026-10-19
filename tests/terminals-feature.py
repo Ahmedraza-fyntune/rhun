@@ -160,7 +160,7 @@ class Feature(unittest.TestCase):
                        'cmd t/driver.env', 'wait-terminal 2 ended', 'print-term'], exts)
         self.assertIn('argv-zero one two', out)
         self.assertIn('[one two] nohome', out)
-        self.assertIn((self.proj / 'sub').as_posix(), out)
+        self.assertIn((self.proj / 'sub').as_posix(), ''.join(out))     # a long path wraps
 
     # --- the handle ---
 

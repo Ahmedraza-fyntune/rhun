@@ -8,7 +8,7 @@
 #   def_parse(ptr, len, task) -> rax DF*, rcx the bytes it took; or 0 with rdx the reason ("label:
 #       1 to 128 bytes of plain text"). task 0: a terminal (TASK_ID "-", no task records)
 #   def_free(DF*)
-#   def_program(DF*, out PG) -> the program: PG_argv an owned list (mem_free it), the rest borrowed
+#   def_program(DF*, out PG) -> the program: PGM_argv an owned list (mem_free it), the rest borrowed
 #   def_command(DF*, sb): the command as the approval dialog shows it
 .include "rhun.inc"
 
@@ -1046,20 +1046,20 @@ FN def_program
     mov rbx, rdi
     mov r12, rsi
     mov rax, [rbx + DF_env]
-    mov [r12 + PG_sets], rax
+    mov [r12 + PGM_sets], rax
     mov rax, [rbx + DF_unset]
-    mov [r12 + PG_unsets], rax
+    mov [r12 + PGM_unsets], rax
     xor eax, eax
     mov rcx, [rbx + DF_cwd]
     cmp byte ptr [rcx], 0
     je 1f
     mov rax, rcx
-1:  mov [r12 + PG_cwd], rax
+1:  mov [r12 + PGM_cwd], rax
     cmp dword ptr [rbx + DF_form], 0
     jne 5f
     mov edi, 8 * 6
     call mem_alloc
-    mov [r12 + PG_argv], rax
+    mov [r12 + PGM_argv], rax
     mov r13, rax
     mov rcx, [rbx + DF_cmd]
     cmp byte ptr [rcx], 0
@@ -1100,7 +1100,7 @@ FN def_program
     inc rdi
     shl rdi, 3
     call mem_alloc
-    mov [r12 + PG_argv], rax
+    mov [r12 + PGM_argv], rax
     mov r13, rax
     mov rcx, [rbx + DF_cmd]
     mov rdx, rcx

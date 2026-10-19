@@ -3873,6 +3873,9 @@ verbs:
     .quad .Lv_terminal_show, h_terminals, 0
     .quad .Lv_terminal_input, h_terminals, 65536
     .quad .Lv_terminal_screen, h_terminals, 0
+    .quad .Lv_tasks_set, h_terminals, 1048576
+    .quad .Lv_task_start, h_terminals, 0
+    .quad .Lv_task_run, h_terminals, 131072
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
@@ -3885,6 +3888,9 @@ verbs:
 .Lv_terminal_show: .asciz "terminal-show"
 .Lv_terminal_input: .asciz "terminal-input"
 .Lv_terminal_screen: .asciz "terminal-screen"
+.Lv_tasks_set: .asciz "tasks-set"
+.Lv_task_start: .asciz "task-start"
+.Lv_task_run: .asciz "task-run"
 .Lv_test_remove: .asciz "test-remove"
 .Lv_test_update: .asciz "test-update"
 .Lv_test_end: .asciz "test-end"

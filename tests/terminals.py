@@ -111,7 +111,7 @@ class Terminals(unittest.TestCase):
         out = self.run_editor(['term-run --cwd sub --env RHUN_T1=hello --unset HOME --sh -- '
                                'pwd; echo "[$RHUN_T1]"; echo "home=${HOME-none}"; echo "term=$TERM"',
                                'wait-terminal 1 ended', 'print-term'])
-        self.assertIn((self.proj / 'sub').as_posix(), out)
+        self.assertIn((self.proj / 'sub').as_posix(), ''.join(out))     # a long path wraps
         self.assertIn('[hello]', out)
         self.assertIn('home=none', out)
         self.assertIn('term=xterm-256color', out)

@@ -690,6 +690,8 @@ FN ext_set_disabled
     jz .Lpn_enabled_choices
     mov rdi, rbx
     call ext_pending_clear
+    mov rdi, rbx
+    call tasks_forget           # tasks and terminals: turned off, its tasks go
 .Lpn_enabled_choices:
     call ext_settings_save
     test r12d, r12d
@@ -754,6 +756,7 @@ FN ext_restart_now
 FN ext_stop_user
     PROLOGUE
     mov rbx, rdi
+    call tasks_forget           # tasks and terminals: stopped by the user, its tasks go
     mov dword ptr [rbx + EXT_restart], 0
     mov dword ptr [rbx + EXT_wait_slot], 0
     mov rdi, rbx
@@ -987,6 +990,8 @@ FN ext_retire
     call testmodel_forget       # testing: its tests and results go
     mov rdi, rbx
     call termproto_ext_gone     # tasks and terminals: its programs stop, their tabs stay
+    mov rdi, rbx
+    call tasks_forget           # and its published tasks go
     mov rdi, rbx
     call ai_ext_gone            # AI: its sessions, tool calls and cards
     call ext_cmds_changed
@@ -3851,6 +3856,7 @@ ext_project_check:
     je 9f                      # the initial project, before any activation
     call extwatch_project_changed
     call extproto_send_project_all
+    call tasks_project_changed  # tasks and terminals: the extensions publish again
     xor r12d, r12d
 3:  cmp r12, [rip + g_exts + VEC_len]
     jae 9f

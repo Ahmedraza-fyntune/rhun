@@ -11,7 +11,7 @@
 #   termproto_ext_gone(ext)          its runtime stopped: its programs stop, their tabs stay
 #   termproto_cancel(ext, id) -> 1 when that request's approval question was withdrawn (cancel ID)
 #   tr_open(ext, DF*, kind) -> TR*, or 0 when every tab is taken: a program's tab of its own (tasks.s
-#                                    sets TR_mrun, TR_hook and TR_linefn after)
+#                                    sets TRC_mrun, TRC_hook and TRC_linefn after)
 #   tr_send(ext, sb): an event to the extension when it is running
 .include "rhun.inc"
 
@@ -218,13 +218,39 @@ FN tr_find_term
 1:  test rdx, rdx
     jz 2f
     mov rax, [rcx]
-    cmp [rax + TR_term], rdi
+    cmp [rax + TRC_term], rdi
     je 3f
     add rcx, 8
     dec rdx
     jmp 1b
 2:  xor eax, eax
 3:  ret
+
+# tr_find_task(ext, task id cstr) -> the TR* of the tab that runs that task of the extension (in any
+#   of its runtimes), or 0
+FN tr_find_task
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor ebx, ebx
+1:  cmp rbx, [rip + recs + VEC_len]
+    jae 8f
+    mov rax, [rip + recs + VEC_ptr]
+    mov r14, [rax + rbx*8]
+    inc rbx
+    cmp [r14 + TRC_ext], r12
+    jne 1b
+    mov rdi, [r14 + TRC_task]
+    test rdi, rdi
+    jz 1b
+    mov rsi, r13
+    call strcmp_eq
+    test eax, eax
+    jz 1b
+    mov rax, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # tr_of(ext, TERM) -> the extension's TR* for that terminal in its current runtime, or 0
 tr_of:
@@ -234,9 +260,9 @@ tr_of:
     call tr_find_term
     test rax, rax
     jz 9f
-    cmp [rax + TR_ext], rbx
+    cmp [rax + TRC_ext], rbx
     jne 8f
-    cmp dword ptr [rax + TR_live], 0
+    cmp dword ptr [rax + TRC_live], 0
     jne 9f
 8:  xor eax, eax
 9:  pop rbx
@@ -248,14 +274,14 @@ FN tr_open
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
-    mov edi, TR_SIZE
+    mov edi, TRC_SIZE
     call mem_alloc
     mov r14, rax
-    mov [r14 + TR_ext], rbx
-    mov dword ptr [r14 + TR_live], 1
+    mov [r14 + TRC_ext], rbx
+    mov dword ptr [r14 + TRC_live], 1
     cmp dword ptr [r12 + DF_output], 0
     je 1f
-    or dword ptr [r14 + TR_flags], TRF_OUTPUT
+    or dword ptr [r14 + TRC_flags], TRCF_OUTPUT
 1:  mov rax, [r12 + DF_id]
     cmp word ptr [rax], 0x002d  # "-": a terminal, no task
     je 2f
@@ -264,7 +290,7 @@ FN tr_open
     mov rdi, [r12 + DF_id]
     mov rsi, rax
     call mem_dup
-    mov [r14 + TR_task], rax
+    mov [r14 + TRC_task], rax
 2:  mov rdi, r12
     lea rsi, [rsp]
     call def_program
@@ -283,14 +309,14 @@ FN tr_open
     mov r8, r14
     call term_run
     mov r15, rax
-    mov rdi, [rsp + PG_argv]
+    mov rdi, [rsp + PGM_argv]
     call mem_free
     test r15, r15
     jle 8f
-    mov [r14 + TR_term], r15
+    mov [r14 + TRC_term], r15
     mov rdi, r15
     mov rsi, rbx
-    mov rdx, [r14 + TR_task]
+    mov rdx, [r14 + TRC_task]
     call term_set_owner
     mov rdi, r15
     lea rsi, [rip + tr_tap]
@@ -302,7 +328,7 @@ FN tr_open
     mov [rax], r14
     mov rax, r14
     EPILOGUE
-8:  mov rdi, [r14 + TR_task]
+8:  mov rdi, [r14 + TRC_task]
     call mem_free
     mov rdi, r14
     call mem_free
@@ -329,11 +355,16 @@ tr_free:
     shl rdx, 3
     call memmove
     dec qword ptr [rip + recs + VEC_len]
-3:  mov rdi, [rbx + TR_mrun]
+3:  mov rdi, [rbx + TRC_mrun]
     call mrun_free
-    mov rdi, [rbx + TR_task]
+    mov rdi, [rbx + TRC_df]
+    test rdi, rdi
+    jz 4f
+    call tasks_df_release
+4:
+    mov rdi, [rbx + TRC_task]
     call mem_free
-    lea rdi, [rbx + TR_out]
+    lea rdi, [rbx + TRC_out]
     call sb_free
     mov rdi, rbx
     call mem_free
@@ -342,9 +373,9 @@ tr_free:
 # tr_live_for(TR*) -> eax 1 when its extension's runtime is the one that opened it and has the feature
 tr_live_for:
     xor eax, eax
-    cmp dword ptr [rdi + TR_live], 0
+    cmp dword ptr [rdi + TRC_live], 0
     je 9f
-    mov rcx, [rdi + TR_ext]
+    mov rcx, [rdi + TRC_ext]
     test rcx, rcx
     jz 9f
     FEAT_TEST rcx, FEAT_TERMINALS
@@ -353,7 +384,7 @@ tr_live_for:
 9:  ret
 
 # tr_event(TR*, TERM, event, code): termview's news of the program: the extension hears it (output
-#   that waited goes first), then its task run (TR_hook); a closed tab's record goes
+#   that waited goes first), then its task run (TRC_hook); a closed tab's record goes
 tr_event:
     PROLOGUE
     mov rbx, rdi
@@ -393,7 +424,7 @@ tr_event:
 2:  # the problems this run made
     xor eax, eax
     xor edx, edx
-    mov rdi, [rbx + TR_mrun]
+    mov rdi, [rbx + TRC_mrun]
     test rdi, rdi
     jz 3f
     call mrun_counts
@@ -411,13 +442,13 @@ tr_event:
     call ob_u64
     mov edi, 10
     call ob_byte
-    mov rdi, [rbx + TR_ext]
+    mov rdi, [rbx + TRC_ext]
     call ob_send
     jmp 7f
 .Lte_started:
-    lea rdi, [rbx + TR_out]
+    lea rdi, [rbx + TRC_out]
     call sb_clear
-    mov qword ptr [rbx + TR_dropped], 0
+    mov qword ptr [rbx + TRC_dropped], 0
     mov rdi, rbx
     call tr_live_for
     test eax, eax
@@ -433,14 +464,14 @@ tr_event:
     call ob_u64
     mov edi, ' '
     call ob_byte
-    mov rdi, [rbx + TR_task]
+    mov rdi, [rbx + TRC_task]
     test rdi, rdi
     jnz 4f
     lea rdi, [rip + .Ldash]
 4:  call ob_cstr
     mov edi, 10
     call ob_byte
-    mov rdi, [rbx + TR_ext]
+    mov rdi, [rbx + TRC_ext]
     call ob_send
     jmp 7f
 .Lte_closed:
@@ -455,12 +486,12 @@ tr_event:
     call ob_u64
     mov edi, 10
     call ob_byte
-    mov rdi, [rbx + TR_ext]
+    mov rdi, [rbx + TRC_ext]
     call ob_send
-6:  mov rax, [rbx + TR_hook]
+6:  mov rax, [rbx + TRC_hook]
     test rax, rax
     jz 61f
-    mov rdi, [rbx + TR_cookie]
+    mov rdi, [rbx + TRC_cookie]
     mov rsi, rbx
     mov edx, r13d
     mov ecx, r14d
@@ -468,10 +499,10 @@ tr_event:
 61: mov rdi, rbx
     call tr_free
     EPILOGUE
-7:  mov rax, [rbx + TR_hook]
+7:  mov rax, [rbx + TRC_hook]
     test rax, rax
     jz 9f
-    mov rdi, [rbx + TR_cookie]
+    mov rdi, [rbx + TRC_cookie]
     mov rsi, rbx
     mov edx, r13d
     mov ecx, r14d
@@ -479,44 +510,44 @@ tr_event:
 9:  EPILOGUE
 
 # tr_tap(TR*, TERM, line, len): a finished line of its program: to its matchers, its task's ready and
-#   busy patterns (TR_linefn), and the extension's output batch; len -1: a run begins
+#   busy patterns (TRC_linefn), and the extension's output batch; len -1: a run begins
 tr_tap:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
     mov r14, rcx
-    mov rdi, [rbx + TR_mrun]
+    mov rdi, [rbx + TRC_mrun]
     test rdi, rdi
     jz 1f
     mov rsi, r12
     mov rdx, r13
     mov rcx, r14
     call mrun_tap
-1:  mov rax, [rbx + TR_linefn]
+1:  mov rax, [rbx + TRC_linefn]
     test rax, rax
     jz 2f
-    mov rdi, [rbx + TR_cookie]
+    mov rdi, [rbx + TRC_cookie]
     mov rsi, r13
     mov rdx, r14
     call rax
 2:  cmp r14, -1
     je 9f
-    test dword ptr [rbx + TRF_OUTPUT + TR_flags - TRF_OUTPUT], TRF_OUTPUT
+    test dword ptr [rbx + TRCF_OUTPUT + TRC_flags - TRCF_OUTPUT], TRCF_OUTPUT
     jz 9f
     # the line, as plain UTF-8 with its LF, while there is room
-    mov rax, [rbx + TR_out + SB_len]
+    mov rax, [rbx + TRC_out + SB_len]
     add rax, r14
     inc rax
     cmp rax, OUT_PENDING
     jbe 3f
-    inc qword ptr [rbx + TR_dropped]
+    inc qword ptr [rbx + TRC_dropped]
     jmp 9f
-3:  lea rdi, [rbx + TR_out]
+3:  lea rdi, [rbx + TRC_out]
     mov rsi, r13
     mov rdx, r14
     call sb_push
-    lea rdi, [rbx + TR_out]
+    lea rdi, [rbx + TRC_out]
     mov esi, 10
     call sb_push_byte
 9:  EPILOGUE
@@ -551,19 +582,19 @@ rate_slot:
 out_flush:
     PROLOGUE
     mov rbx, rdi
-    mov r12, [rbx + TR_out + SB_len]
+    mov r12, [rbx + TRC_out + SB_len]
     test r12, r12
     jnz 1f
-    cmp qword ptr [rbx + TR_dropped], 0
+    cmp qword ptr [rbx + TRC_dropped], 0
     je 9f
-1:  test dword ptr [rbx + TR_flags], TRF_OUTPUT
+1:  test dword ptr [rbx + TRC_flags], TRCF_OUTPUT
     jz 8f
     mov rdi, rbx
     call tr_live_for
     test eax, eax
     jz 8f
     # the extension reads what it got: none while its queue is long
-    mov rax, [rbx + TR_ext]
+    mov rax, [rbx + TRC_ext]
     mov rcx, [rax + EXT_wq + SB_len]
     sub rcx, [rax + EXT_wq_off]
     cmp rcx, OUT_QUEUE
@@ -580,7 +611,7 @@ out_flush:
     xor esi, esi
     mov edx, 16 * RATE_SLOTS
     call memset
-2:  mov rdi, [rbx + TR_ext]
+2:  mov rdi, [rbx + TRC_ext]
     call rate_slot
     test rax, rax
     jz .Lof_drop
@@ -603,7 +634,7 @@ out_flush:
     mov r15, r14
 4:  test r15, r15
     jz .Lof_drop
-    mov rax, [rbx + TR_out + SB_ptr]
+    mov rax, [rbx + TRC_out + SB_ptr]
     cmp byte ptr [rax + r15 - 1], 10
     je 5f
     dec r15
@@ -611,11 +642,11 @@ out_flush:
 5:  call ob_begin
     lea rdi, [rip + .Le_output]
     call ob_cstr
-    mov rdi, [rbx + TR_term]
+    mov rdi, [rbx + TRC_term]
     call ob_u64
     mov edi, ' '
     call ob_byte
-    mov rdi, [rbx + TR_dropped]
+    mov rdi, [rbx + TRC_dropped]
     call ob_u64
     mov edi, ' '
     call ob_byte
@@ -623,35 +654,35 @@ out_flush:
     call ob_u64
     mov edi, 10
     call ob_byte
-    mov rdi, [rbx + TR_out + SB_ptr]
+    mov rdi, [rbx + TRC_out + SB_ptr]
     mov rsi, r15
     call ob_bytes
-    mov rdi, [rbx + TR_ext]
+    mov rdi, [rbx + TRC_ext]
     call ob_send
     add [r13], r15
     add [rip + rate_all], r15
-    mov qword ptr [rbx + TR_dropped], 0
+    mov qword ptr [rbx + TRC_dropped], 0
     # the rest waits for the next frame
-    mov rdi, [rbx + TR_out + SB_ptr]
+    mov rdi, [rbx + TRC_out + SB_ptr]
     lea rsi, [rdi + r15]
     mov rdx, r12
     sub rdx, r15
     call memmove
-    sub [rbx + TR_out + SB_len], r15
+    sub [rbx + TRC_out + SB_len], r15
     jmp 9f
 .Lof_drop:
     # the lines that waited, counted
-    mov rax, [rbx + TR_out + SB_ptr]
+    mov rax, [rbx + TRC_out + SB_ptr]
     xor ecx, ecx
 6:  cmp rcx, r12
     jae 7f
     cmp byte ptr [rax + rcx], 10
     jne 61f
-    inc qword ptr [rbx + TR_dropped]
+    inc qword ptr [rbx + TRC_dropped]
 61: inc rcx
     jmp 6b
 7:
-8:  lea rdi, [rbx + TR_out]
+8:  lea rdi, [rbx + TRC_out]
     call sb_clear
 9:  EPILOGUE
 
@@ -664,7 +695,7 @@ FN termproto_tick
     mov rax, [rip + recs + VEC_ptr]
     mov rdi, [rax + rbx*8]
     inc rbx
-    cmp qword ptr [rdi + TR_out + SB_len], 0
+    cmp qword ptr [rdi + TRC_out + SB_len], 0
     je 1b
     call out_flush
     jmp 1b
@@ -677,18 +708,19 @@ FN termproto_tick
 FN termproto_ext_gone
     PROLOGUE
     mov r12, rdi
+    call tasks_ext_gone
     xor ebx, ebx
 1:  cmp rbx, [rip + recs + VEC_len]
     jae 3f
     mov rax, [rip + recs + VEC_ptr]
     mov r13, [rax + rbx*8]
     inc rbx
-    cmp [r13 + TR_ext], r12
+    cmp [r13 + TRC_ext], r12
     jne 1b
-    mov dword ptr [r13 + TR_live], 0
-    lea rdi, [r13 + TR_out]
+    mov dword ptr [r13 + TRC_live], 0
+    lea rdi, [r13 + TRC_out]
     call sb_clear
-    mov rdi, [r13 + TR_term]
+    mov rdi, [r13 + TRC_term]
     call term_stop
     jmp 1b
 3:  cmp [rip + park_ext], r12
@@ -714,6 +746,13 @@ park_clear:
 #   answered cancelled
 FN termproto_cancel
     push rbx
+    push rdi
+    push rsi
+    call tasks_cancel           # a task-start or task-run waiting for the dialog
+    pop rsi
+    pop rdi
+    test eax, eax
+    jnz 9f
     xor eax, eax
     cmp [rip + park_ext], rdi
     jne 9f
@@ -742,12 +781,30 @@ FN termproto_request
     mov [rip + req_id], rsi
     mov r12, r8                 # body
     mov r13, r9
+    mov [rsp], rcx              # the line, for tasks.s
+    mov [rsp + 8], rdx
     mov rdi, rdx
     mov rsi, rcx
     call split
     FEAT_TEST rbx, FEAT_TERMINALS
     jz .Lrq_unknown
-    mov edi, 1
+    # tasks-set, task-start, task-run: tasks.s
+    lea rax, [rip + words]
+    mov rdi, [rax + 16]
+    mov rsi, [rax + 24]
+    cmp rsi, 4
+    jbe 0f
+    cmp dword ptr [rdi], 0x6b736174     # "task"
+    jne 0f
+    mov rdi, rbx
+    mov rsi, [rip + req_id]
+    mov rdx, [rsp + 8]
+    mov rcx, [rsp]
+    mov r8, r12
+    mov r9, r13
+    call tasks_request
+    EPILOGUE
+0:  mov edi, 1
     lea rsi, [rip + .Lv_open]
     call word_is
     test eax, eax
@@ -786,13 +843,13 @@ FN termproto_request
     jnz .Lrq_show
     cmp qword ptr [rip + nwords], 3
     jne .Lrq_syntax
-    mov rdi, [r14 + TR_term]
+    mov rdi, [r14 + TRC_term]
     mov edi, 1
     lea rsi, [rip + .Lv_stop]
     call word_is
     test eax, eax
     jz 1f
-    mov rdi, [r14 + TR_term]
+    mov rdi, [r14 + TRC_term]
     call term_stop
     jmp .Lrq_ok
 1:  mov edi, 1
@@ -800,7 +857,7 @@ FN termproto_request
     call word_is
     test eax, eax
     jz 2f
-    mov rdi, [r14 + TR_term]
+    mov rdi, [r14 + TRC_term]
     call term_restart
     jmp .Lrq_ok
 2:  mov edi, 1
@@ -808,7 +865,7 @@ FN termproto_request
     call word_is
     test eax, eax
     jz .Lrq_unknown
-    mov rdi, [r14 + TR_term]
+    mov rdi, [r14 + TRC_term]
     call term_close             # its record goes with the tab (TE_CLOSED)
     jmp .Lrq_ok
 .Lrq_show:
@@ -825,7 +882,7 @@ FN termproto_request
     call word_is
     test eax, eax
     jz .Lrq_syntax
-3:  mov rdi, [r14 + TR_term]
+3:  mov rdi, [r14 + TRC_term]
     mov esi, r15d
     call term_reveal
 .Lrq_ok:
@@ -900,7 +957,7 @@ FN termproto_request
     call tr_of
     test rax, rax
     jz .Lrq_noterm
-    mov rdi, [rax + TR_term]
+    mov rdi, [rax + TRC_term]
     mov rsi, r12
     mov rdx, r13
     call term_input
@@ -927,7 +984,7 @@ FN termproto_request
     mov r14, rax
     lea rdi, [rip + screen]
     call sb_clear
-    mov rdi, [r14 + TR_term]
+    mov rdi, [r14 + TRC_term]
     lea rsi, [rip + screen]
     call term_screen
     call ob_begin
@@ -1029,7 +1086,7 @@ open_now:
     call def_free
     test r12, r12
     jz 8f
-    mov rdi, [r12 + TR_term]
+    mov rdi, [r12 + TRC_term]
     call reply_ok_u64
     EPILOGUE
 8:  lea rdi, [rip + .Le_busy_tabs]
@@ -1071,12 +1128,12 @@ FN termproto_dump
     mov r13, [rax + rbx*8]
     inc rbx
     mov rdi, r12
-    mov rsi, [r13 + TR_term]
+    mov rsi, [r13 + TRC_term]
     call sb_push_u64
     mov rdi, r12
     lea rsi, [rip + .Ld_ext]
     call sb_push_cstr
-    mov rdi, [r13 + TR_ext]
+    mov rdi, [r13 + TRC_ext]
     call ext_full_name
     mov rdi, r12
     mov rsi, rax
@@ -1085,20 +1142,20 @@ FN termproto_dump
     lea rsi, [rip + .Ld_live]
     call sb_push_cstr
     mov rdi, r12
-    mov esi, [r13 + TR_live]
+    mov esi, [r13 + TRC_live]
     call sb_push_u64
     mov rdi, r12
     lea rsi, [rip + .Ld_output]
     call sb_push_cstr
-    mov eax, [r13 + TR_flags]
-    and eax, TRF_OUTPUT
+    mov eax, [r13 + TRC_flags]
+    and eax, TRCF_OUTPUT
     mov rdi, r12
     mov esi, eax
     call sb_push_u64
     mov rdi, r12
     lea rsi, [rip + .Ld_task]
     call sb_push_cstr
-    mov rsi, [r13 + TR_task]
+    mov rsi, [r13 + TRC_task]
     test rsi, rsi
     jnz 2f
     lea rsi, [rip + .Ldash]

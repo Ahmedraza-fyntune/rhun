@@ -38,6 +38,7 @@ ENDSTRUCT TS_SIZE
 .equ TSF_RESTART, 16            # start again once it has ended
 .equ TSF_NOTIFY, 32             # TS_fn hears of the end at the next tick
 .equ TSF_NOTIFY_START, 64       # and of the start
+.equ TSF_WAITING, 128           # made with TRV_WAIT: its program waits for term_start
 .equ STOP_MS, 2000              # Ctrl+C, then the group is killed
 .equ FINISH_MS, 300             # Windows: the pseudoconsole's last output after the program exits
 
@@ -699,7 +700,7 @@ spec_build:
     inc r13d
     cmp r13d, 3
     jb 1b
-    mov rsi, [rbx + PG_cwd]
+    mov rsi, [rbx + PGM_cwd]
     test rsi, rsi
     jz 4f
     lea rdi, [rsp]
@@ -712,7 +713,7 @@ spec_build:
     EPILOGUE
 
 # spec_lists(spec, out PG): out's lists point into the spec (one array for the three: mem_free out's
-#   PG_argv), its cwd at the spec's, or 0 when it has none
+#   PGM_argv), its cwd at the spec's, or 0 when it has none
 spec_lists:
     PROLOGUE
     mov rbx, rdi
@@ -737,7 +738,7 @@ spec_lists:
     shl rdi, 3
     call mem_alloc
     mov r14, rax
-    mov [r12 + PG_argv], rax
+    mov [r12 + PGM_argv], rax
     mov rdi, rbx
     xor ecx, ecx
 4:  cmp byte ptr [rdi], 1
@@ -757,13 +758,13 @@ spec_lists:
     inc ecx
     cmp ecx, 3
     jae 7f
-    mov [r12 + rcx*8], r14      # PG_sets, then PG_unsets
+    mov [r12 + rcx*8], r14      # PGM_sets, then PGM_unsets
     jmp 4b
 7:  xor eax, eax
     cmp byte ptr [rdi], 0
     je 8f
     mov rax, rdi
-8:  mov [r12 + PG_cwd], rax
+8:  mov [r12 + PGM_cwd], rax
     EPILOGUE
 
 # run_folder(cwd or 0) -> owned folder to run in: the project (else home) for none, a relative one
@@ -872,18 +873,18 @@ session_spawn:
     jne .Lss_remote
     # the user's environment, with what a terminal's programs get and the program's own
     lea rdi, [rip + env_extras]
-    mov rsi, [rsp + PG_sets]
-    mov rdx, [rsp + PG_unsets]
+    mov rsi, [rsp + PGM_sets]
+    mov rdx, [rsp + PGM_unsets]
     call uproc_env_make
     mov [rsp + 40], rax
-    mov rax, [rsp + PG_argv]
+    mov rax, [rsp + PGM_argv]
     mov rdi, [rax]
     mov rsi, [rsp + 40]
     call uproc_which
     mov [rsp + 32], rax
     test rax, rax
     jz .Lss_notfound
-    mov rdi, [rsp + PG_cwd]
+    mov rdi, [rsp + PGM_cwd]
     call run_folder
     mov [rsp + 48], rax
     mov rdi, rax
@@ -911,7 +912,7 @@ session_spawn:
     js .Lss_nopty
     mov r12d, eax               # master
     mov r13d, edx               # slave
-    mov rax, [rsp + PG_argv]
+    mov rax, [rsp + PGM_argv]
     mov r14, [rax]              # the name, while its path stands in for it
     mov rcx, [rsp + 32]
     mov [rax], rcx
@@ -926,7 +927,7 @@ session_spawn:
     call uproc_spawn
     add rsp, 16
     mov r15, rax
-    mov rax, [rsp + PG_argv]
+    mov rax, [rsp + PGM_argv]
     mov [rax], r14
     mov edi, r13d
     SYS SYS_close
@@ -972,16 +973,16 @@ session_spawn:
     # a remote window (vfs.s): the program runs on the host, found on the host's PATH, in the host's
     # environment with what a terminal's programs get and its own on top
     lea rdi, [rip + env_extras]
-    mov rsi, [rsp + PG_sets]
+    mov rsi, [rsp + PGM_sets]
     call list_join
     mov [rsp + 40], rax
-    mov rdi, [rsp + PG_cwd]
+    mov rdi, [rsp + PGM_cwd]
     call run_folder
     mov [rsp + 48], rax
     mov rax, [rbx + TS_term]
     mov ecx, [rax + TM_cols]
     mov r8d, [rax + TM_rows]
-    mov rdi, [rsp + PG_argv]
+    mov rdi, [rsp + PGM_argv]
     mov rsi, [rsp + 40]
     mov rdx, [rsp + 48]
     call vfs_pty_spawn
@@ -989,7 +990,7 @@ session_spawn:
     mov r12d, edx
     test r15, r15
     jg .Lss_started
-    mov rax, [rsp + PG_argv]
+    mov rax, [rsp + PGM_argv]
     mov rdi, [rax]
     call msg_could_not
     lea rdi, [rip + msg]
@@ -1001,7 +1002,7 @@ session_spawn:
     call sb_push_u64
     jmp .Lss_fail
 .Lss_notfound:
-    mov rax, [rsp + PG_argv]
+    mov rax, [rsp + PGM_argv]
     mov rdi, [rax]
     call msg_could_not
     lea rdi, [rip + msg]
@@ -1009,7 +1010,7 @@ session_spawn:
     call sb_push_cstr
     jmp .Lss_fail
 .Lss_nofolder:
-    mov rax, [rsp + PG_argv]
+    mov rax, [rsp + PGM_argv]
     mov rdi, [rax]
     call msg_could_not
     lea rdi, [rip + msg]
@@ -1023,7 +1024,7 @@ session_spawn:
     call sb_push_cstr
     jmp .Lss_fail
 .Lss_nopty:
-    mov rax, [rsp + PG_argv]
+    mov rax, [rsp + PGM_argv]
     mov rdi, [rax]
     call msg_could_not
     lea rdi, [rip + msg]
@@ -1052,7 +1053,7 @@ session_spawn:
     call mem_free
     mov rdi, [rsp + 48]
     call mem_free
-    mov rdi, [rsp + PG_argv]
+    mov rdi, [rsp + PGM_argv]
     call mem_free
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1731,9 +1732,13 @@ FN term_run
     test r14d, TRV_FOCUS
     jz 3f
     mov dword ptr [rip + g_focus], FOCUS_TERMINAL
-3:  mov rdi, rbx
+3:  test r14d, TRV_WAIT
+    jz 4f
+    mov dword ptr [rbx + TS_flags], TSF_WAITING
+    jmp 5f
+4:  mov rdi, rbx
     call session_spawn
-    mov dword ptr [rip + g_dirty], 1
+5:  mov dword ptr [rip + g_dirty], 1
     mov rax, [rbx + TS_id]
     EPILOGUE
 .Ltr_busy:
@@ -1882,7 +1887,8 @@ FN term_owner_gone
     jmp 1b
 9:  EPILOGUE
 
-# term_state(TERM) -> eax 0 running, 1 exited, 2 stopped, 3 failed, -1 no such tab; edx its runs
+# term_state(TERM) -> eax 0 running, 1 exited, 2 stopped, 3 failed, 5 waiting, -1 no such tab; edx
+#   its runs
 FN term_state
     sub rsp, 8
     call sess_by_id
@@ -1892,6 +1898,11 @@ FN term_state
     mov edx, [rax + TS_runs]
     test dword ptr [rax + TS_flags], TSF_RUNNING
     jnz 1f
+    test dword ptr [rax + TS_flags], TSF_WAITING
+    jz 2f
+    mov eax, 5
+    ret
+2:
     cmp dword ptr [rax + TS_kind], TK_SHELL
     je 1f
     mov eax, [rax + TS_reason]
@@ -1902,6 +1913,100 @@ FN term_state
 8:  mov eax, -1
     xor edx, edx
     ret
+
+# term_start(TERM) -> 0, or -1 without such a tab: a waiting tab's program starts (TRV_WAIT)
+FN term_start
+    PROLOGUE
+    call sess_by_id
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    test dword ptr [rbx + TS_flags], TSF_WAITING
+    jz 1f
+    and dword ptr [rbx + TS_flags], ~TSF_WAITING
+    mov rdi, rbx
+    call session_spawn
+1:  xor eax, eax
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# term_note(TERM, text cstr): a program that will not run (a dependency failed): its waiting tab
+#   says so in a dim line "── TEXT ──" and shows a cross
+FN term_note
+    PROLOGUE
+    mov r12, rsi
+    call sess_by_id
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jnz 9f
+    and dword ptr [rbx + TS_flags], ~TSF_WAITING
+    mov dword ptr [rbx + TS_reason], TE_FAILED
+    mov dword ptr [rbx + TS_exit], -1
+    lea rdi, [rip + msg]
+    call sb_clear
+    call msg_line
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_open]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_close]
+    call sb_push_cstr
+    call msg_feed
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# term_set_program(TERM, program PGM, title) -> 0, or -1 when there is no such tab or its program
+#   runs: the tab gets another program and label (a task published again), fresh and waiting
+FN term_set_program
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call sess_by_id
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jnz 8f
+    mov rdi, r12
+    call spec_build
+    mov r14, rax
+    mov rdi, [rbx + TS_spec]
+    call mem_free
+    mov [rbx + TS_spec], r14
+    mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call mem_dup
+    mov r14, rax
+    mov rdi, [rbx + TS_title]
+    call mem_free
+    mov [rbx + TS_title], r14
+    # a fresh terminal (the tap follows it when the program starts)
+    mov r14, [rbx + TS_term]
+    mov edi, [r14 + TM_cols]
+    mov esi, [r14 + TM_rows]
+    mov edx, [rip + cfg_term_scrollback]
+    call term_new
+    mov [rbx + TS_term], rax
+    mov rdi, r14
+    call term_free
+    mov dword ptr [rip + sel_on], 0
+    mov eax, [rbx + TS_flags]
+    and eax, TSF_NOTIFY | TSF_NOTIFY_START
+    or eax, TSF_WAITING
+    mov [rbx + TS_flags], eax
+    mov dword ptr [rip + g_dirty], 1
+    xor eax, eax
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
 
 # term_input(TERM, ptr, len) -> 0, -1 without such a tab, -2 busy (1 MB waits for the program): the
 #   bytes as typed (LF is Enter); nothing for a program that has ended
@@ -2058,6 +2163,9 @@ FN term_programs_dump
     je 5f
     test dword ptr [rbx + TS_flags], TSF_RUNNING
     jnz 5f
+    lea rsi, [rip + .Ld_waiting]
+    test dword ptr [rbx + TS_flags], TSF_WAITING
+    jnz 5f
     mov eax, [rbx + TS_reason]
     lea rcx, [rip + .Ld_ends]
     mov rsi, [rcx + rax*8]
@@ -2128,7 +2236,20 @@ state_shape:
     COLOR r9d, T_ACCENT
     call gfx_round_rect
     EPILOGUE
-1:  cmp dword ptr [rbx + TS_reason], TE_STOPPED
+1:  test dword ptr [rbx + TS_flags], TSF_WAITING
+    jz 11f
+    mov eax, r14d
+    shr eax, 1
+    sub r13d, eax
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, r14d
+    mov r8d, eax
+    COLOR r9d, T_MUTED
+    call gfx_round_rect
+    EPILOGUE
+11: cmp dword ptr [rbx + TS_reason], TE_STOPPED
     jne 2f
     mov eax, r14d
     shr eax, 1
@@ -5108,6 +5229,7 @@ rep_cell: .long -1
 .Ld_task: .asciz " task="
 .Ld_state: .asciz " state="
 .Ld_running: .asciz "running"
+.Ld_waiting: .asciz "waiting"
 .Ld_exited: .asciz "exited"
 .Ld_stopped: .asciz "stopped"
 .Ld_failed: .asciz "failed"
