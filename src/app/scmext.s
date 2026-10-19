@@ -15,7 +15,10 @@ STRUCT
 F QD_ext, 8
 F QD_id, 8
 F QD_doc, 8                     # the document's id (it may close meanwhile)
+F QD_deadline, 8                # time_ms when rhun stops waiting (withdrawn)
 ENDSTRUCT QD_SIZE
+.equ QD_MS, 15000               # a provider's time for a base
+.equ QD_EXT_MAX, 64             # requests out to one provider
 
 .bss
 .p2align 3
@@ -577,6 +580,11 @@ FN scmext_ext_gone
     call ai_describe
 9:  EPILOGUE
 
+# FN scm_root_ext(path) -> rax the provider whose registered root holds the path, or 0 (C4: scm-register)
+FN scm_root_ext
+    xor eax, eax
+    ret
+
 # ---------------- quick diff (feature quickdiff) ----------------
 # A provider gives a file's base text; rhun hashes it and draws the gutter marks as it does for
 # HEAD (git.s, diff.s). It applies to files under a root the extension registered (scm-register),
@@ -641,6 +649,13 @@ qd_tick:
     test rax, rax
     jz 4b
     mov rbx, rax
+    # one request per document: an earlier one still out is withdrawn; a provider with too many
+    # out is not asked
+    mov rdi, rbx
+    mov rsi, [r13 + DOC_id]
+    call qd_supersede
+    cmp eax, QD_EXT_MAX
+    jae 4b
     # "quickdiff DOC VERSION"
     lea rdi, [rip + cm_line]
     call sb_clear
@@ -677,7 +692,91 @@ qd_tick:
     mov [rax + QD_id], rcx
     mov rcx, [r13 + DOC_id]
     mov [rax + QD_doc], rcx
+    mov [rsp + 8], rax
+    call time_ms
+    add rax, QD_MS
+    mov rcx, [rsp + 8]
+    mov [rcx + QD_deadline], rax
     jmp 4b
+9:  call qd_expire
+    EPILOGUE
+
+# qd_supersede(ext, doc id) -> eax the requests still out to the extension, after its earlier one for
+#   that document was withdrawn
+qd_supersede:
+    PROLOGUE
+    mov rbx, rdi
+    mov r13, rsi
+    xor r14d, r14d              # the others
+    xor r12d, r12d
+1:  cmp r12, [rip + qd_pend + VEC_len]
+    jae 9f
+    imul rax, r12, QD_SIZE
+    add rax, [rip + qd_pend + VEC_ptr]
+    cmp [rax + QD_ext], rbx
+    jne 3f
+    cmp [rax + QD_doc], r13
+    jne 2f
+    mov rsi, [rax + QD_id]
+    mov rdi, rbx
+    call query_withdraw
+    mov rdi, r12
+    call qd_remove
+    jmp 1b
+2:  inc r14d
+3:  inc r12
+    jmp 1b
+9:  mov eax, r14d
+    EPILOGUE
+
+# qd_expire(): requests past their time are withdrawn ("0 cancel ID"); what is shown stays
+qd_expire:
+    PROLOGUE
+    cmp qword ptr [rip + qd_pend + VEC_len], 0
+    je 9f
+    call time_ms
+    mov r13, rax
+    xor r12d, r12d
+1:  cmp r12, [rip + qd_pend + VEC_len]
+    jae 9f
+    imul rax, r12, QD_SIZE
+    add rax, [rip + qd_pend + VEC_ptr]
+    cmp r13, [rax + QD_deadline]
+    jae 2f
+    inc r12
+    jmp 1b
+2:  mov rdi, [rax + QD_ext]
+    mov rsi, [rax + QD_id]
+    call query_withdraw
+    mov rdi, r12
+    call qd_remove
+    jmp 1b
+9:  EPILOGUE
+
+# FN scmext_timeout() -> ms until the first quick-diff request's time is up, or -1 (app_timeout)
+FN scmext_timeout
+    PROLOGUE
+    mov eax, -1
+    mov rcx, [rip + qd_pend + VEC_len]
+    test rcx, rcx
+    jz 9f
+    mov rbx, -1
+    xor edx, edx
+1:  cmp rdx, rcx
+    jae 2f
+    imul rax, rdx, QD_SIZE
+    add rax, [rip + qd_pend + VEC_ptr]
+    mov rax, [rax + QD_deadline]
+    cmp rax, rbx
+    cmovb rbx, rax
+    inc rdx
+    jmp 1b
+2:  call time_ms
+    sub rbx, rax
+    mov eax, ebx
+    test rbx, rbx
+    jns 9f
+    xor eax, eax
 9:  EPILOGUE
 
 # qd_want_all(): every open document is to be asked about
@@ -783,6 +882,7 @@ qd_reply:
     mov rdi, rax
     test r15, r15
     jz 2f
+    mov [rdi + DOC_gext], rbx
     mov rsi, r14
     mov rdx, r15
     call git_set_base_ext
@@ -811,10 +911,31 @@ qd_remove:
 9:  pop rbx
     ret
 
-# qd_forget_ext(): rbx's quickdiff requests go
+# qd_forget_ext(): rbx's quickdiff requests go, and the bases it gave (another provider is asked)
 qd_forget_ext:
     push r12
     xor r12d, r12d
+1:  cmp r12, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, r12
+    inc r12
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov rdi, [rax + TAB_doc]
+    test rdi, rdi
+    jz 1b
+    cmp dword ptr [rdi + DOC_gsrc], 0
+    je 1b
+    cmp [rdi + DOC_gext], rbx
+    jne 1b
+    mov qword ptr [rdi + DOC_gext], 0
+    push rdi
+    call git_drop_base_ext
+    pop rdi
+    call scmext_qd_want
+    jmp 1b
+3:  xor r12d, r12d
 1:  cmp r12, [rip + qd_pend + VEC_len]
     jae 9f
     imul rax, r12, QD_SIZE
@@ -887,10 +1008,7 @@ FN scmext_h_qd_refresh
     EPILOGUE
 
 
-# FN scm_root_ext(path) -> rax the provider whose registered root holds the path, or 0 (C4: scm-register)
-FN scm_root_ext
-    xor eax, eax
-    ret
+
 
 # ---------------- menus on source control rows ----------------
 # A right press on a history commit, a file of a commit, a changed file or a change group opens its
@@ -1093,6 +1211,12 @@ FN scmext_dump
     mov rdi, rbx
     call sb_push_u64
     mov rdi, rbx
+    lea rsi, [rip + .Ld_qd]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + qd_pend + VEC_len]
+    call sb_push_u64
+    mov rdi, rbx
     mov esi, 10
     call sb_push_byte
     # the last row menu's target
@@ -1145,6 +1269,7 @@ ai_builtin_end:
 .Lgone: .asciz "The extension stopped before answering. Your draft was kept."
 .Ld_provider: .asciz "commit-provider="
 .Ld_menu: .asciz "menu="
+.Ld_qd: .asciz " quickdiff-pending="
 .Lp_git: .asciz "git"
 .Lempty: .asciz ""
 .Lt_commit: .asciz "commit "

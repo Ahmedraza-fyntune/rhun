@@ -16,10 +16,10 @@ mkdir -p "$work/obj"
 find src -name '*.s' ! -path 'src/mac/*' ! -path 'src/win/*' ! -path src/start.s | xargs -P "$(sysctl -n hw.ncpu)" -n 1 sh -c '
     n=$(echo "$1" | sed "s|/|_|g; s|\.s$||")
     python3 tools/arm64.py -I src "$1" "'"$work"'/obj/$n.s" && as -arch arm64 -o "'"$work"'/obj/$n.o" "'"$work"'/obj/$n.s"' sh
-for s in build/obj/build_assets.o build/obj/src_mac_rt.o build/obj/src_mac_linux.o build/obj/src_mac_watch.o; do
+for s in build/obj/build_assets.o build/obj/src_mac_rt.o build/obj/src_mac_linux.o build/obj/src_mac_watch.o build/obj/src_mac_keychain.o; do
     cp "$s" "$work/obj/"
 done
-clang -arch arm64 -o "$work/rhun-arm64" "$work"/obj/*.o -framework CoreServices
+clang -arch arm64 -o "$work/rhun-arm64" "$work"/obj/*.o -framework CoreServices -framework Security
 
 # the Linux build
 printf 'FROM debian:stable-slim\nRUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*\n' |

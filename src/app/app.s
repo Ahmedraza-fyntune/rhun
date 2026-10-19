@@ -149,6 +149,7 @@ FN app_init
     call app_load_fonts
     call syntax_load_all
     call places_init            # the explorer is the sidebar's first section
+    call notify_init            # notification cards take the keyboard through a place item
     call ext_init               # manifests: their commands take keys below
     call rview_init             # their declared views take their places
     call keys_init
@@ -734,7 +735,13 @@ app_sync_doc_1:
     je 1f
     mov rdx, [rax + TAB_doc]
     mov [rip + g_file], rdx
-    cmp rcx, TAB_DOC
+    cmp rcx, TAB_NOTEBOOK       # notebooks: the selected cell's document
+    jne 3f
+    mov rdi, rdx
+    call nb_active_doc
+    mov [rip + g_doc], rax
+    jmp 1f
+3:  cmp rcx, TAB_DOC
     jne 2f
     mov [rip + g_doc], rdx
 1:  # the view's copies of an image are only kept while it is shown
@@ -823,6 +830,24 @@ FN app_update_title
     mov rdi, [rip + tmp_sb + SB_ptr]
     PCALL P_title
 9:  EPILOGUE
+
+# tab_dirty(TAB*) -> eax 1 when the tab holds unsaved changes: a document's, or a notebook's
+FN tab_dirty
+    mov rax, [rdi + TAB_kind]
+    cmp rax, TAB_NOTEBOOK
+    jne 1f
+    push rbx
+    mov rbx, [rdi + TAB_doc]
+    mov rdi, [rbx + DOC_nb]
+    call nb_sync_dirty
+    pop rbx
+    ret
+1:  cmp rax, TAB_DOC
+    jne 8f
+    mov rdi, [rdi + TAB_doc]
+    jmp doc_dirty
+8:  xor eax, eax
+    ret
 
 # doc_tab(doc) -> rax the index of its tab, or -1
 FN doc_tab
@@ -1048,7 +1073,18 @@ FN app_open_file
     call app_toast
     mov rax, -1
     EPILOGUE
-12: mov r14d, TAB_DOC
+12: # notebooks: a file an extension reads as a notebook opens in a notebook tab
+    cmp dword ptr [rip + g_nb_open_text], 0
+    jne 13f
+    mov rdi, r12
+    call nb_provider
+    test rax, rax
+    jz 13f
+    mov rdi, r12
+    mov rsi, rax
+    call nb_open_tab
+    EPILOGUE
+13: mov r14d, TAB_DOC
     call doc_new
     mov rbx, rax
     # images open in an image tab, decoded when first shown
@@ -1384,7 +1420,15 @@ FN app_close_tab_now
     call extview_tab_closed     # its extension hears it, the view's slot is freed
     pop rax
     pop rax
-0:  mov rbx, [rax + TAB_doc]
+0:  cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    jne 70f
+    push rax
+    push rax
+    mov rdi, [rax + TAB_doc]
+    call nb_tab_closed          # its extension hears it, its cells go
+    pop rax
+    pop rax
+70: mov rbx, [rax + TAB_doc]
     test rbx, rbx
     jz 1f
     mov rdi, rbx
@@ -1434,10 +1478,8 @@ FN app_close_tab
     inc qword ptr [rip + app_save_epoch]
     mov rbx, rdi
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 1f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+    mov rdi, rax
+    call tab_dirty
     test eax, eax
     jz 1f
     call dlg_drop
@@ -1498,10 +1540,8 @@ ask_unsaved:
     jae 3f
     mov rdi, rbx
     call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 2f
-    mov rdi, [rax + TAB_doc]
-    call doc_dirty
+    mov rdi, rax
+    call tab_dirty
     test eax, eax
     jz 2f
     call dlg_drop
@@ -1593,7 +1633,11 @@ save_doc:
     mov r13d, edi
     mov r14d, esi
     mov rbx, [rip + g_doc]
-    test rbx, rbx
+    call nb_active              # notebooks: the notebook, not its cell
+    test rax, rax
+    jz 0f
+    mov rbx, [rax + NB_host]
+0:  test rbx, rbx
     jz 9f
     cmp qword ptr [rbx + DOC_path], 0
     jne 1f
@@ -1623,7 +1667,7 @@ save_doc:
 save_readonly_confirmed:
     PROLOGUE
     mov rdi, [rip + ro_id]
-    call extproto_doc
+    call app_doc_by_id
     test rax, rax
     jz 9f
     mov rdi, rax
@@ -1658,7 +1702,7 @@ FN app_save_managed
     jz 2f
     lea rdx, [rip + app_save_completed]
 2:  mov rcx, r14
-    call save_start
+    call app_save_start         # save_start, or a notebook's save through its extension
     mov r12, rax
     cmp rax, 1
     je 9f
@@ -1737,7 +1781,7 @@ FN app_save_as_finish
     PROLOGUE
     mov r12, rdi
     mov rdi, [rip + save_prompt_id]
-    call extproto_doc
+    call app_doc_by_id
     test rax, rax
     jz 9f
     mov rbx, rax
@@ -1981,8 +2025,12 @@ FN app_after_save
 
 FN cmd_save_as
     READONLY_RET
+    call nb_active              # notebooks: the notebook's document
     mov rdi, [rip + g_doc]
-    test rdi, rdi
+    test rax, rax
+    jz 2f
+    mov rdi, [rax + NB_host]
+2:  test rdi, rdi
     jz 1f
     xor esi, esi
     xor edx, edx
@@ -2244,13 +2292,15 @@ FN app_on_paste
     jne 9f
     mov rdi, rbx
     mov rsi, r12
-    call ed_paste
+    call langextra_paste        # ed_paste, then format_on_paste (language features)
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # focused_field() -> TF* that has keyboard focus, or 0
 FN focused_field
     mov eax, [rip + g_focus]
+    cmp eax, FOCUS_VIEW
+    je views_field              # a view's own field (views group, rview.s)
     cmp eax, FOCUS_SCM
     je scm_field
     cmp eax, FOCUS_PALETTE
@@ -2436,7 +2486,13 @@ FN app_on_key
     call save_cancel_key
     test eax, eax
     jnz 9f
-72: mov edi, r12d
+72: mov edi, r12d                # notebooks: command and edit mode keys
+    mov esi, r13d
+    mov edx, r14d
+    call nb_key
+    test eax, eax
+    jnz 9f
+    mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call vim_key
@@ -2580,6 +2636,8 @@ FN editor_key
     cmp eax, KEY_KP_ENTER
     jne 84f
 83: call ed_newline
+    mov edi, 10
+    call langextra_typed        # language features: formatting as you type
     jmp 9f
 84: cmp eax, KEY_TAB
     jne 85f
@@ -2617,6 +2675,8 @@ FN editor_key
     call ed_type
     mov edi, r13d
     call complete_typed         # completion and signature help follow typing
+    mov edi, r13d
+    call langextra_typed        # language features: formatting as you type
 9:  EPILOGUE
 
 # ---------------- timers ----------------
@@ -2668,6 +2728,7 @@ FN app_timeout
 timeout_fns:
     .quad agents_timeout
     .quad git_timeout
+    .quad scmext_timeout        # source control: quick-diff requests' time
     .quad update_timeout
     .quad ai_timeout
     .quad tools_timeout         # AI: tool calls waiting for the user (tools.s)
@@ -2687,9 +2748,11 @@ timeout_fns:
     .quad testing_timeout
     .quad dap_timeout
     .quad remote_timeout
+    .quad views_timeout         # views group: waits for children, notifications, progress
     .quad extupdate_timeout      # extension management
     .quad keys_timeout           # a chord's pause (keys.s)
     .quad ws_difftab_timeout    # wsedit: diff tabs whose sides changed
+    .quad nb_timeout              # notebooks: requests waiting for their program
     .quad 0
 .text
 
@@ -2717,6 +2780,7 @@ FN app_tick
     call uproc_tick
     call term_tick
     call problems_tick          # documents opened since get their problems' marks
+    call termproto_tick         # extensions' terminal output
     call git_tick
     call update_tick
     call ai_tick
@@ -2728,8 +2792,12 @@ FN app_tick
     call extupdate_tick         # and update checks
     call ext_provider_tick
     call testing_tick           # testing (testproto.s)
+    call views_tick             # views group (places.s)
+    call nb_tick
     call app_clip_tick
     call dap_tick               # debugger
+    call dview_context
+    call dg_tick
     call remote_tick            # remote hosts
     call keys_tick              # a chord's pause (keys.s)
     EPILOGUE
@@ -2755,6 +2823,7 @@ FN app_render
     jz 1f
     mov dword ptr [rip + g_block], 1
 1:  call complete_hole          # the completion list drawn last frame keeps the pointer
+    call notify_hole            # and the notification cards
     # no background: the bars, panels, dividers and the editor column cover the window, each with
     # its own color (a whole-window fill under them was a fifth of every frame). A theme with a
     # translucent color (#rrggbbaa) still gets it, so nothing blends with the frame before.
@@ -2982,6 +3051,7 @@ FN app_render
     call complete_draw
     call extbar_draw
     call explorer_menu_draw
+    call notify_draw            # notification cards (notify.s), under the palette and dialogs
     call palette_draw
     call dialog_draw
     call toast_draw
@@ -3004,7 +3074,7 @@ FN app_render
 9:  EPILOGUE
 
 # app_modal_open() -> 1 when a modal layer should block the base ui
-app_modal_open:
+FN app_modal_open
     cmp dword ptr [rip + dlg_kind], 0
     jne 1f
     call explorer_menu_open
@@ -3262,12 +3332,21 @@ FN center_draw
     call extpage_draw
     EPILOGUE
 12: cmp qword ptr [rax + TAB_kind], TAB_VIEW
-    jne 2f
+    jne 13f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call extview_draw
+    EPILOGUE
+13: cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    jne 2f
+    mov edi, [rip + g_editor_rect]
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call nb_draw
+    call find_draw
     EPILOGUE
 2:  mov rbx, [rip + g_doc]
     mov rdi, rbx
@@ -3483,7 +3562,16 @@ FN titlebar_draw
     mov esi, [rsp + 4]
     add esi, [rsp + 12]
     call project_menu_open
-44: # active file, centered (the branch is in the status bar)
+44: # debugger: the toolbar takes the title's place while a session lives (debugview.s)
+    mov edi, r12d
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    mov r8d, [rsp + 36]
+    call dview_toolbar
+    test eax, eax
+    jnz 6f
+    # active file, centered (the branch is in the status bar)
     mov rbx, [rip + g_file]
     test rbx, rbx
     jz 6f
@@ -4290,11 +4378,8 @@ tab_draw:
     mov r8d, r12d
     call ui_btn
     mov [rsp + 28], eax
-89: xor r14d, r14d              # modified?
-    cmp qword ptr [r15 + TAB_kind], TAB_DOC
-    jne 82f
-    mov rdi, [r15 + TAB_doc]
-    call doc_dirty
+89: mov rdi, r15                # modified?
+    call tab_dirty
     mov r14d, eax
 82: test dword ptr [r15 + TAB_flags], TF_PIN
     jnz .Ltw_pin
@@ -4640,7 +4725,11 @@ FN statusbar_draw
     mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
-    call ext_status_draw        # the extensions' status texts, left of the updater's item
+    call notify_status_draw     # progress (notify.s), left of the updater's item
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call ext_status_draw        # the extensions' status texts, left of that
     mov [rsp + 20], eax
     # Keep branch and position glyphs out of the updater's reserved area.
     mov edx, eax
@@ -4668,6 +4757,11 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call remote_status_item
+    # debugger: the session's state, or the configuration F5 starts (debugview.s)
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call dview_status_item
     # the branch; the file's items follow it
     mov edi, eax
     mov esi, [rsp + 4]
@@ -5561,7 +5655,7 @@ unsaved_kept:
 close_readonly_confirmed:
     PROLOGUE
     mov rdi, [rip + ro_id]
-    call extproto_doc
+    call app_doc_by_id
     test rax, rax
     jz 9f
     mov rdi, rax
