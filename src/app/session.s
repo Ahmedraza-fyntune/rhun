@@ -201,6 +201,8 @@ FN session_remember_project
     mov rbx, [rip + g_project]
     test rbx, rbx
     jz 9f
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: a remote folder is a recent remote instead
+    jne 9f
     cmp dword ptr [rip + g_project_adopted], 0
     jne 9f
     # nor one a link opened, while git is paused there: a launch without arguments would reopen it
@@ -295,6 +297,12 @@ FN session_project_file
     lea rdi, [rip + path_sb]
     mov esi, '/'
     call sb_push_byte
+    # remote hosts: a remote window's files are named by the remote and the folder (ssh:HOST/path)
+    cmp dword ptr [rip + g_remote], 0
+    je 3f
+    mov rdi, rbx
+    call remote_session_key
+    mov rbx, rax
 3:  movzx esi, byte ptr [rbx]
 .ifdef WINDOWS
     test esi, esi

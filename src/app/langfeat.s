@@ -2125,7 +2125,7 @@ FN ws_apply
     mov rdi, r12
     call ws_path
     lea rdi, [rip + lf_path]
-    call file_type
+    call vfs_type
     cmp eax, 0x8000
     jne .Lws_unreadable         # missing (it would open empty), a folder, a device
     # Every edit resolves existing aliases; only unsolicited edits gate disk roots.

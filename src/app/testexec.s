@@ -134,7 +134,7 @@ FN testexec_request
     test eax, eax
     jz .Lxr_cwd_free
     lea rdi, [rip + realcwd]
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz .Lxr_cwd_free
     # argv: the path, then the arguments

@@ -462,7 +462,7 @@ group_file:
     jnz 41f
     # not open: a readable text file the extension may read
     lea rdi, [rip + path_buf]
-    call file_type
+    call vfs_type
     cmp eax, 0x8000
     jne .Lgf_nofile
     mov rdi, [rip + cur_ext]
@@ -646,7 +646,7 @@ FN doc_text_copy
 read_text:
     PROLOGUE
     mov esi, RV_TEXT_MAX
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 9f
     mov rbx, rax

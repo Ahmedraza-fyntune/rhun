@@ -40,6 +40,7 @@ ru_ap_env_sock: .zero 160       # RHUN_ASKPASS=...
 ru_ap_env: .zero 8 * 6
 ru_menu_base: .long 0
 ru_recent_labels: .zero 512 * RU_RECENT_MAX
+ru_key: .zero 4608
 
 .data
 ru_ps_fd: .long -1
@@ -178,6 +179,29 @@ ru_copy_cap:
     jmp 1b
 2:  mov byte ptr [rdi], 0
     mov rax, rdi
+    ret
+
+# remote_session_key(path) -> "SPEC" and the path (static): the name of a remote window's session file
+FN remote_session_key
+    push rbx
+    mov rbx, rdi
+    call remote_spec
+    lea rdi, [rip + ru_key]
+    mov rsi, rax
+    call cstr_copy
+    lea rcx, [rip + ru_key + 4096]
+1:  cmp rax, rcx
+    jae 2f
+    mov dl, [rbx]
+    mov [rax], dl
+    test dl, dl
+    jz 2f
+    inc rax
+    inc rbx
+    jmp 1b
+2:  mov byte ptr [rip + ru_key + 4096], 0
+    lea rax, [rip + ru_key]
+    pop rbx
     ret
 
 # ---------------- the bar ----------------

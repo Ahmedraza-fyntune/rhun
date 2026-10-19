@@ -4,6 +4,7 @@
 #   remote-drop               the transport is killed, as a dropped connection
 #   remote-reconnect          Reconnect
 #   wait-remote [SECONDS]     until the connection is up, failed or lost (60 s unless given)
+#   print-explorer            the explorer's rows as shown (indented by depth, folders end in /)
 .include "rhun.inc"
 
 .text
@@ -15,13 +16,14 @@
 remote_ctl:
     .quad .Lc_print_remote, c_print_remote, .Lc_remote_connect, c_remote_connect
     .quad .Lc_remote_drop, c_remote_drop, .Lc_remote_reconnect, c_remote_reconnect
-    .quad .Lc_wait_remote, c_wait_remote
+    .quad .Lc_wait_remote, c_wait_remote, .Lc_print_explorer, c_print_explorer
     .quad 0, 0
 .Lc_print_remote: .asciz "print-remote"
 .Lc_remote_connect: .asciz "remote-connect"
 .Lc_remote_drop: .asciz "remote-drop"
 .Lc_remote_reconnect: .asciz "remote-reconnect"
 .Lc_wait_remote: .asciz "wait-remote"
+.Lc_print_explorer: .asciz "print-explorer"
 .text
 
 c_print_remote:
@@ -107,3 +109,10 @@ c_wait_remote:
 3:  call app_tick               # the tick that opens the project
     xor eax, eax
     EPILOGUE
+
+c_print_explorer:
+    sub rsp, 8
+    call explorer_dump
+    add rsp, 8
+    xor eax, eax
+    ret
