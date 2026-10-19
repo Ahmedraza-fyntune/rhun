@@ -1778,6 +1778,10 @@ F EXT_pv_ttrig, 8       # type_format.triggers
 F EXT_pv_document_links, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
+# WebAssembly extensions (extwasm.s)
+F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
+F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
+F EXT_wasm_pad, 4
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
