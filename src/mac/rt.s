@@ -298,3 +298,78 @@ FN mac_exe_path
 8:  mov x8, #-1
 9:  LEAVE
     XRET
+
+// ---- resources group: what an extension's processes cost (extres.s) ----
+
+// mac_proc_usage(pid, out) -> x8 0 or -3: out[0] CPU nanoseconds (user and system time of the
+// process and of its reaped children, for it and each live descendant: proc_pid_rusage
+// RUSAGE_INFO_V2, whose times are Mach ticks, scaled by mach_timebase_info), out[8] their
+// physical footprint (Activity Monitor's Memory), out[16] how many (at most 64, found through
+// proc_listchildpids)
+FN mac_proc_usage
+    ENTER 576
+    mov x19, x1
+    str xzr, [x19]
+    str xzr, [x19, #8]
+    str xzr, [x19, #16]
+    add x20, sp, #256           // the processes to look at: 64 pids
+    str w0, [x20]
+    mov x21, #1                 // how many are queued
+    mov x22, #0                 // the next one
+    add x0, sp, #512
+    bl _mach_timebase_info
+    ldr w23, [sp, #512]
+    ldr w24, [sp, #516]
+    cbz w24, 1f
+    cbnz w23, 2f
+1:  mov w23, #1
+    mov w24, #1
+2:  cmp x22, x21
+    b.hs 8f
+    ldr w25, [x20, x22, lsl #2]
+    add x22, x22, #1
+    mov w0, w25
+    mov w1, #2                  // RUSAGE_INFO_V2
+    mov x2, sp
+    bl _proc_pid_rusage
+    cbnz w0, 2b
+    ldr x9, [sp, #16]           // ri_user_time
+    ldr x10, [sp, #24]          // ri_system_time
+    add x9, x9, x10
+    ldr x10, [sp, #96]          // ri_child_user_time
+    add x9, x9, x10
+    ldr x10, [sp, #104]         // ri_child_system_time
+    add x9, x9, x10
+    mul x9, x9, x23
+    udiv x9, x9, x24
+    ldr x10, [x19]
+    add x10, x10, x9
+    str x10, [x19]
+    ldr x9, [sp, #72]           // ri_phys_footprint
+    ldr x10, [x19, #8]
+    add x10, x10, x9
+    str x10, [x19, #8]
+    ldr x10, [x19, #16]
+    add x10, x10, #1
+    str x10, [x19, #16]
+    // its children join the queue while there is room
+    mov x26, #64
+    sub x26, x26, x21
+    cbz x26, 2b
+    mov w0, w25
+    add x1, x20, x21, lsl #2
+    lsl x2, x26, #2
+    bl _proc_listchildpids
+    cmp w0, #0
+    b.le 2b
+    sxtw x0, w0
+    cmp x0, x26
+    csel x0, x0, x26, lo
+    add x21, x21, x0
+    b 2b
+8:  mov x8, #0
+    ldr x9, [x19, #16]
+    cbnz x9, 9f
+    mov x8, #-3
+9:  LEAVE
+    XRET

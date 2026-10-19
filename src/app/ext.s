@@ -729,6 +729,8 @@ FN ext_set_disabled
     jz .Lpn_enabled_choices
     mov rdi, rbx
     call ext_pending_clear
+    mov rdi, rbx
+    call vdoc_ext_gone          # resources group: the virtual documents it provides close
 .Lpn_enabled_choices:
     call ext_settings_save
     test r12d, r12d
@@ -1012,6 +1014,10 @@ FN ext_retire
     call ext_kill
 2:  mov dword ptr [rbx + EXT_status], ES_REMOVED
     mov dword ptr [rbx + EXT_restart], 0
+    mov rdi, rbx
+    call secrets_ext_removed    # resources group: its secrets go with it
+    mov rdi, rbx
+    call vdoc_ext_gone          # and the virtual documents it provides
     mov rdi, rbx
     call ext_pending_clear
     mov rdi, rbx
@@ -1468,6 +1474,7 @@ dup_cstr_r14:
 # ext_init(): read every OWNER/NAME/extension.ini under the extensions folder
 FN ext_init
     PROLOGUE
+    call extres_init            # resources group: the session's start, for print-startup
     call extpage_prompt_invalidate_pure
     lea rdi, [rip + ext_root]
     call sb_clear
@@ -1854,6 +1861,9 @@ manifest_kv:
     PROLOGUE
     mov r12, rdi
     mov rbx, [rip + cur_ext]
+    mov rdi, r12                # resources group: idle, runs, contains:, schemes (extres.s)
+    mov rsi, rbx
+    call extres_manifest_kv
     cmp qword ptr [r12 + INI_seclen], 0
     jne .Lmk_sections
     # top level
@@ -2397,10 +2407,18 @@ parse_needs:
     lea rsi, [rip + .Ln_git]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 81f
     mov edi, NEEDS_GIT_READ
     xor esi, esi
     call needs_level
+    jmp 9f
+81: mov rdi, r12                # resources group: secrets = yes (the system keychain)
+    lea rsi, [rip + .Ln_secrets]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov edi, NEEDS_SECRETS
+    call needs_yes
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -3057,6 +3075,8 @@ ext_spawn:
     mov [rbx + EXT_started], rax
     mov dword ptr [rbx + EXT_status], ES_STARTING
     mov dword ptr [rip + g_dirty], 1
+    mov rdi, rbx
+    call extres_started         # resources group: start time and the counters of this run
 9:  jmp .Les_scratch_return
 .Les_fail2:
     mov edi, [rip + pipe_in]
@@ -3629,7 +3649,12 @@ FN ext_send
     je 1f
     cmp dword ptr [rbx + EXT_status], ES_STOPPING
     jne 9f
-1:  mov rax, [rbx + EXT_wq + SB_len]
+1:  mov rdi, rbx                # resources group: messages and bytes out
+    mov rsi, r13
+    call extres_out
+    mov rsi, r12
+    mov rdx, r13
+    mov rax, [rbx + EXT_wq + SB_len]
     sub rax, [rbx + EXT_wq_off]
     add rax, rdx
     cmp rax, EXT_WQ_HARD
@@ -3707,6 +3732,8 @@ FN ext_exited
     mov dword ptr [rbx + EXT_throttled], 0
     mov dword ptr [rbx + EXT_global_wait], 0
     mov qword ptr [rbx + EXT_full_since], 0
+    mov rdi, rbx
+    call extres_exited          # resources group: what this run held
     mov rdi, rbx
     call extwatch_owner_gone
     mov rdi, rbx
@@ -3802,7 +3829,11 @@ FN ext_exited
     mov [rbx + EXT_reason], rax
     mov dword ptr [rbx + EXT_status], ES_STOPPED
     jmp 8f
-5:  mov dword ptr [rbx + EXT_status], ES_STOPPED
+5:  mov rdi, rbx
+    call extres_stopped         # resources group: an idle stop leaves it idle, ready to start
+    test eax, eax
+    jnz 8f
+    mov dword ptr [rbx + EXT_status], ES_STOPPED
     cmp dword ptr [rbx + EXT_disabled], 0
     je 51f
     mov dword ptr [rbx + EXT_status], ES_DISABLED
@@ -3941,6 +3972,7 @@ FN ext_tick
     cmp qword ptr [rip + g_exts + VEC_len], 0
     je 9f
     inc dword ptr [rip + ext_ticks]
+    call extres_frame           # resources group: start pacing, idle = stop, cost samples
     call ext_project_check
     call extwatch_tick
     call invoke_tick            # calls between extensions (invoke.s)
@@ -4009,6 +4041,11 @@ FN ext_tick
     je 24b
     cmp dword ptr [rbx + EXT_status], ES_IDLE
     jne 24b
+    mov rdi, rbx                # resources group: EXT_STARTS_PER_FRAME
+    xor esi, esi
+    call extres_pace
+    test eax, eax
+    jz 25f
     call ext_running
     cmp eax, EXT_MAX_RUNNING
     jae 25f
@@ -4188,6 +4225,11 @@ FN ext_timeout
     add rax, r13
     call deadline
 .Lew_timeout_none:
+    call extres_timeout         # resources group: idle = stop, cost samples
+    cmp rax, -1
+    je .Lres_timeout_none
+    call deadline
+.Lres_timeout_none:
     call invoke_timeout
     cmp rax, -1
     je .Liv_timeout_none
@@ -4287,7 +4329,14 @@ FN ext_start_matching
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_IDLE
     jne 1b
+    cmp r12d, ON_STARTUP        # resources group: on = startup starts EXT_STARTS_PER_FRAME a frame
+    jne 2f
     mov rdi, rbx
+    mov esi, 1
+    call extres_pace
+    test eax, eax
+    jz 1b
+2:  mov rdi, rbx
     call ext_start
     jmp 1b
 9:  EPILOGUE
@@ -4972,6 +5021,7 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_secrets: .asciz "secrets"
 .Ln_git: .asciz "git"
 .Lpv_commit: .asciz "commit_message"
 .Lpv_quickdiff: .asciz "quickdiff"
