@@ -81,16 +81,17 @@ class Terminals(unittest.TestCase):
 
     def test_exit_code_footer_and_the_tab_stays(self):
         out = self.run_editor(["term-run --title t --sh -- printf '\\033[32mok\\033[0m\\n'; exit 3",
-                               'wait 800', 'print-terminals', 'print-term', 'print-state'])
+                               'wait-terminal 1 ended', 'print-terminals', 'print-term', 'print-state'])
         self.assertEqual(out[0], 'term=1')
         self.assertIn('kind=terminal owner=- task=- state=exited code=3', out[1])
+        self.assertIn(' runs=1 title=t', out[1])
         self.assertIn('ok', out)                          # what it printed, its escapes applied
         foot = [line for line in out if 'exited with code' in line]
         self.assertEqual(len(foot), 1, out)
         self.assertTrue(foot[0].startswith('── t exited with code 3 after '), foot)
 
     def test_typing_into_an_ended_program_does_nothing(self):
-        out = self.run_editor(['term-run --title done -- true', 'wait 500', 'focus in', 'type hello',
+        out = self.run_editor(['term-run --title done -- true', 'wait-terminal 1 ended', 'focus in', 'type hello',
                                'key Return', 'wait 200', 'print-term'])
         self.assertNotIn('hello', '\n'.join(out))
 
@@ -109,7 +110,7 @@ class Terminals(unittest.TestCase):
     def test_environment_and_folder(self):
         out = self.run_editor(['term-run --cwd sub --env RHUN_T1=hello --unset HOME --sh -- '
                                'pwd; echo "[$RHUN_T1]"; echo "home=${HOME-none}"; echo "term=$TERM"',
-                               'wait 800', 'print-term'])
+                               'wait-terminal 1 ended', 'print-term'])
         self.assertIn((self.proj / 'sub').as_posix(), out)
         self.assertIn('[hello]', out)
         self.assertIn('home=none', out)
@@ -117,9 +118,9 @@ class Terminals(unittest.TestCase):
 
     @unittest.skipIf(WINDOWS, 'POSIX shell')
     def test_restart_runs_again_in_the_same_tab(self):
-        out = self.run_editor(['term-run --title r --sh -- echo run-$$; sleep 30', 'wait 500',
-                               'print-terminals', 'term-restart 1', 'wait 1500', 'print-terminals',
-                               'print-term'])
+        out = self.run_editor(['term-run --title r --sh -- echo run-$$; sleep 30', 'wait-term run-',
+                               'print-terminals', 'term-restart 1', 'wait-terminal 1 running 2', 'wait-term run-',
+                               'print-terminals', 'print-term'])
         terms = self.terminals(out)
         self.assertIn('term=1 kind=terminal', terms[0])
         self.assertIn('term=1 kind=terminal', terms[1])
@@ -137,8 +138,9 @@ class Terminals(unittest.TestCase):
         m = self.marker
         out = self.run_editor([f'term-run --env RHUN_MARK={m} --title tree --sh -- {marked()} & {marked()} & wait',
                                'wait 800',
-                               counter(m), 'wait 500', 'print-term', 'term-select 1', 'term-stop 1',
-                               'wait 1000', 'print-terminals', counter(m), 'wait 500', 'print-term'])
+                               counter(m), 'wait-terminal 2 ended', 'print-term', 'term-select 1', 'term-stop 1',
+                               'wait-terminal 1 ended', 'print-terminals', counter(m), 'wait-terminal 3 ended',
+                               'print-term'])
         self.assertIn('count=2', out)
         self.assertIn('state=stopped', self.terminals(out)[0])
         self.assertEqual([line for line in out if line.startswith('count=')], ['count=2', 'count=0'])
@@ -148,8 +150,9 @@ class Terminals(unittest.TestCase):
         m = self.marker
         out = self.run_editor([f"term-run --env RHUN_MARK={m} --title deaf --sh -- trap '' INT; {marked()}",
                                'wait 800',
-                               'term-stop 1', 'wait 800', counter(m), 'wait 400', 'print-term',
-                               'wait 1500', counter(m), 'wait 400', 'print-term', 'print-terminals'])
+                               'term-stop 1', 'wait 800', counter(m), 'wait-terminal 2 ended', 'print-term',
+                               'wait-terminal 1 ended', counter(m), 'wait-terminal 3 ended', 'print-term',
+                               'print-terminals'])
         self.assertEqual([line for line in out if line.startswith('count=')], ['count=1', 'count=0'])
         self.assertIn('term=1 kind=terminal owner=- task=- state=stopped', '\n'.join(out))
 
@@ -158,7 +161,7 @@ class Terminals(unittest.TestCase):
         m = self.marker
         out = self.run_editor([f"term-run --env RHUN_MARK={m} --title deaf --sh -- trap '' INT TERM HUP; "
                                f"{marked()} & wait",
-                               'wait 800', 'term-close 1', 'wait 2600', counter(m), 'wait 400',
+                               'wait 800', 'term-close 1', 'wait 2600', counter(m), 'wait-terminal 2 ended',
                                'print-term', 'print-terminals'])
         self.assertIn('count=0', out)
         self.assertNotIn('term=1 ', '\n'.join(self.terminals(out)))
@@ -167,8 +170,8 @@ class Terminals(unittest.TestCase):
     def test_a_leader_that_exits_takes_what_it_left(self):
         m = self.marker
         out = self.run_editor([f'term-run --env RHUN_MARK={m} --title leader --sh -- {marked()} & exit 4',
-                               'wait 3000',
-                               'print-terminals', counter(m), 'wait 400', 'print-term'])
+                               'wait-terminal 1 ended',
+                               'print-terminals', counter(m), 'wait-terminal 2 ended', 'print-term'])
         self.assertIn('state=exited code=4', self.terminals(out)[0])
         self.assertIn('count=0', out)
 
@@ -194,7 +197,7 @@ class Terminals(unittest.TestCase):
     def test_programs_get_the_login_shells_environment(self):
         # a login shell's profile exports a variable; it runs its last argument, as sh -c does
         env = self.fake_shell('export RHUN_LOGIN_MARK=from-login\nwhile [ $# -gt 1 ]; do shift; done\neval "$1"\n')
-        out = self.run_editor(['term-run --sh -- echo "[$RHUN_LOGIN_MARK]"', 'wait 800', 'print-term',
+        out = self.run_editor(['term-run --sh -- echo "[$RHUN_LOGIN_MARK]"', 'wait-terminal 1 ended', 'print-term',
                                'print-uproc'], env=env)
         self.assertIn('[from-login]', out)
         self.assertTrue(any(line.startswith('uproc=') and line.endswith(' env=known') for line in out), out)
@@ -203,8 +206,8 @@ class Terminals(unittest.TestCase):
     def test_a_login_shell_that_hangs_is_given_up_after_five_seconds(self):
         env = self.fake_shell(f'RHUN_MARK={self.marker}; exec {marked(60)}\n')
         start = time.monotonic()
-        out = self.run_editor(['term-run --sh -- echo "[${RHUN_LOGIN_MARK-none}]"', 'wait 800', 'print-term',
-                               'print-uproc'], env=env)
+        out = self.run_editor(['term-run --sh -- echo "[${RHUN_LOGIN_MARK-none}]"', 'wait-terminal 1 ended',
+                               'print-term', 'print-uproc'], env=env)
         self.assertGreater(time.monotonic() - start, 4.5)
         self.assertIn('[none]', out)
         self.assertTrue(any('could not read your login shell' in line for line in out), out)
@@ -215,8 +218,8 @@ class Terminals(unittest.TestCase):
     def test_started_from_a_terminal_its_environment_is_kept(self):
         env = self.fake_shell('export RHUN_LOGIN_MARK=from-login\nwhile [ $# -gt 1 ]; do shift; done\neval "$1"\n')
         env['TERM'] = 'xterm'
-        out = self.run_editor(['term-run --sh -- echo "[${RHUN_LOGIN_MARK-none}]"', 'wait 800', 'print-term'],
-                              env=env)
+        out = self.run_editor(['term-run --sh -- echo "[${RHUN_LOGIN_MARK-none}]"', 'wait-terminal 1 ended',
+                               'print-term'], env=env)
         self.assertIn('[none]', out)
 
     def test_print_env_prints_between_markers(self):

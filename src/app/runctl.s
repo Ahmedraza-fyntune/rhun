@@ -2,10 +2,16 @@
 #   print-terminals                a line per terminal tab (term_programs_dump)
 #   term-select TERM               that tab becomes the current one
 #   term-run [--cwd DIR] [--env NAME=VALUE]... [--unset NAME]... [--title WORD] [--task] [--silent]
-#            [--sh] -- ARGV...     a program in a tab of its own, as an extension's terminal runs one;
+#            [--matcher NAME] [--matcher-file PATH] [--sh] -- ARGV...
+#                                  a program in a tab of its own, as an extension's terminal runs one;
 #                                  with --sh the rest is one command for /bin/sh -c (PowerShell on
-#                                  Windows); prints "term=ID"
+#                                  Windows); up to 4 matchers (built-in, or a matcher's text in a file)
+#                                  turn its lines into problems; prints "term=ID"
+#   print-pattern PATTERN<TAB>LINE "match=0", "match=1 file=... line=..." or "error=REASON"
+#   print-problems                 the Problems store, a line per problem
 #   term-stop TERM | term-restart TERM | term-close TERM
+#   wait-terminal TERM STATE [RUNS] until the tab is running, exited, stopped, failed or ended (not
+#                                  running), having started RUNS times when given; 10 s at most
 #   print-uproc                    programs run as the user, and the login environment's state
 #   print-allowed                  run approvals ("OWNER/NAME PROJECT")
 #   run-approve OWNER/NAME COMMAND ask as an extension's first program in the project would; prints
@@ -19,6 +25,7 @@
 .bss
 .p2align 3
 approve_last: .long 0           # 0 none, 1 yes, 2 no
+key_buf: .zero 48
 
 .text
 
@@ -44,6 +51,9 @@ TCTL t_print_uproc, c_print_uproc
 TCTL t_print_allowed, c_print_allowed
 TCTL t_run_approve, c_run_approve
 TCTL t_print_approve, c_print_approve
+TCTL t_wait_terminal, c_wait_terminal
+TCTL t_print_pattern, c_print_pattern
+TCTL t_print_problems, c_print_problems
 
 # rest_word() -> rax word, rdx its length: the next word of the rest (rbx, r12 move past it)
 rest_word:
@@ -110,6 +120,22 @@ c_print_uproc:
     add rsp, 8
     ret
 
+c_print_pattern:
+    sub rsp, 8
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r15
+    call tpat_dump
+    add rsp, 8
+    ret
+
+c_print_problems:
+    sub rsp, 8
+    mov rdi, r15
+    call problems_dump
+    add rsp, 8
+    ret
+
 c_print_allowed:
     sub rsp, 8
     mov rdi, r15
@@ -117,14 +143,82 @@ c_print_allowed:
     add rsp, 8
     ret
 
+# wait-terminal TERM STATE [RUNS]
+c_wait_terminal:
+    PROLOGUE 16
+    call rest_term
+    mov r13, rax
+    call rest_word
+    mov rdi, rax
+    mov rsi, rdx
+    call state_word
+    mov r14d, eax
+    call rest_term
+    mov [rsp], eax              # runs, 0 any
+    call time_ms
+    lea r15, [rax + 10000]
+1:  mov rdi, r13
+    call term_state
+    cmp eax, -1
+    je 9f
+    cmp dword ptr [rsp], 0
+    je 2f
+    cmp edx, [rsp]
+    jb 4f
+2:  cmp r14d, eax
+    je 9f
+    cmp r14d, 4                 # ended: anything but running
+    jne 4f
+    test eax, eax
+    jnz 9f
+4:  call time_ms
+    cmp rax, r15
+    jae 9f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 1b
+9:  EPILOGUE
+
+# state_word(ptr, len) -> 0 running, 1 exited, 2 stopped, 3 failed, 4 ended
+state_word:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    xor r13d, r13d
+1:  lea rax, [rip + state_words]
+    mov rdx, [rax + r13*8]
+    test rdx, rdx
+    jz 2f
+    mov rdi, rbx
+    mov rsi, r12
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    inc r13d
+    jmp 1b
+2:  mov eax, r13d
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
 # term-run: see the top of the file
 c_term_run:
     PROLOGUE 1152
     # [rsp] PG, [rsp + 32] title, +40 shell command, +48 mode, +56 the copy of the rest,
-    # +64 counts (argv, sets, unsets), +88 --sh, +96 out, argv at +128, sets at +672, unsets at +816
+    # +64 counts (argv, sets, unsets), +88 --sh, +96 out, +104 matchers, argv at +160, sets at
+    # +704, unsets at +848
     mov [rsp + 96], r15
     xor eax, eax
     mov [rsp + 88], rax
+    mov [rsp + 104], rax        # +104: the matchers (4), +136 their count, +144 the run's MR
+    mov [rsp + 112], rax
+    mov [rsp + 120], rax
+    mov [rsp + 128], rax
+    mov [rsp + 136], rax
     mov [rsp + PG_cwd], rax
     mov [rsp + 32], rax
     mov [rsp + 40], rax
@@ -132,11 +226,11 @@ c_term_run:
     mov [rsp + 64], rax
     mov [rsp + 72], rax
     mov [rsp + 80], rax
-    lea rax, [rsp + 128]
+    lea rax, [rsp + 160]
     mov [rsp + PG_argv], rax
-    lea rax, [rsp + 672]
+    lea rax, [rsp + 704]
     mov [rsp + PG_sets], rax
-    lea rax, [rsp + 816]
+    lea rax, [rsp + 848]
     mov [rsp + PG_unsets], rax
     mov rdi, rbx
     mov rsi, r12
@@ -201,20 +295,20 @@ c_term_run:
     test rax, rax
     jz 1f
     lea rcx, [rip + .Lsh]
-    mov [rsp + 128], rcx
+    mov [rsp + 160], rcx
 .ifdef WINDOWS
     lea rcx, [rip + .Lnologo]
-    mov [rsp + 136], rcx
+    mov [rsp + 168], rcx
     lea rcx, [rip + .Lnoprofile]
-    mov [rsp + 144], rcx
+    mov [rsp + 176], rcx
     lea rcx, [rip + .Lcommand]
-    mov [rsp + 152], rcx
-    mov [rsp + 160], rax
+    mov [rsp + 184], rcx
+    mov [rsp + 192], rax
     mov qword ptr [rsp + 64], 5
 .else
     lea rcx, [rip + .Ldash_c]
-    mov [rsp + 136], rcx
-    mov [rsp + 144], rax
+    mov [rsp + 168], rcx
+    mov [rsp + 176], rax
     mov qword ptr [rsp + 64], 3
 .endif
 1:  mov rax, [rsp + 64]
@@ -235,8 +329,37 @@ c_term_run:
     mov rsi, [rsp + 40]
     test rsi, rsi
     jnz 2f
-    mov rsi, [rsp + 128]
-2:  lea rdi, [rsp]
+    mov rsi, [rsp + 160]
+2:  mov [rsp + 32], rsi
+    # the matchers' run, before the program starts so that no line is missed
+    mov qword ptr [rsp + 144], 0
+    cmp qword ptr [rsp + 136], 0
+    je 3f
+    xor edi, edi
+    mov rsi, [rsp + PG_cwd]
+    test rsi, rsi
+    jnz 21f
+    lea rsi, [rip + .Lempty]
+21: mov rdi, rsi
+    call term_run_folder
+    mov r13, rax
+    xor edi, edi
+    mov rsi, r13
+    xor edx, edx
+    call mrun_new
+    mov [rsp + 144], rax
+    mov rdi, r13
+    call mem_free
+    xor r13d, r13d
+22: cmp r13, [rsp + 136]
+    jae 3f
+    mov rdi, [rsp + 144]
+    mov rsi, [rsp + r13*8 + 104]
+    call mrun_add
+    inc r13
+    jmp 22b
+3:  lea rdi, [rsp]
+    mov rsi, [rsp + 32]
     mov rdx, [rsp + 48]
     xor ecx, ecx
     xor r8d, r8d
@@ -244,6 +367,23 @@ c_term_run:
     mov r12, rax
     test r12, r12
     jle .Ltr_busy
+    cmp qword ptr [rsp + 144], 0
+    je 4f
+    # its problems: a source of their own, labelled with the title
+    mov rdi, r12
+    call run_key
+    mov rdi, rax
+    mov rsi, [rsp + 32]
+    call problems_source
+    mov rdi, [rsp + 144]
+    mov rsi, rax
+    mov rdx, r12
+    call mrun_bind
+    mov rdi, r12
+    lea rsi, [rip + mrun_tap]
+    mov rdx, [rsp + 144]
+    call term_set_tap
+4:
     mov rdi, [rsp + 96]
     lea rsi, [rip + .Ls_term]
     call sb_push_cstr
@@ -297,12 +437,59 @@ o_title:
 o_task:
     mov qword ptr [rsp + 48], TK_TASK
     jmp .Ltr_word
+o_matcher:
+    call o_value
+    mov r12, rax
+    mov rdi, rax
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    call matcher_builtin
+    jmp o_add_matcher
+o_matcher_file:
+    call o_value
+    mov rdi, rax
+    call file_read_all
+    test rax, rax
+    jz .Ltr_word
+    mov r12, rax
+    mov rdi, rax
+    mov rsi, rdx
+    call matcher_compile
+    mov [rsp + 152], rax
+    mov rdi, r12
+    call mem_free
+    mov rax, [rsp + 152]
+o_add_matcher:
+    test rax, rax
+    jz .Ltr_word                # not a matcher: left out
+    mov rcx, [rsp + 136]
+    cmp rcx, 4
+    jae .Ltr_word
+    mov [rsp + rcx*8 + 104], rax
+    inc qword ptr [rsp + 136]
+    jmp .Ltr_word
 o_silent:
     or qword ptr [rsp + 48], TRV_SILENT
     jmp .Ltr_word
 o_sh:
     mov qword ptr [rsp + 88], 1
     jmp .Ltr_word
+# run_key(TERM) -> "term-run:TERM", the Problems source of a term-run's matchers (until the next call)
+run_key:
+    push rbx
+    mov rbx, rdi
+    lea rdi, [rip + key_buf]
+    lea rsi, [rip + .Lkey]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, rbx
+    call fmt_u64
+    mov byte ptr [rdi], 0
+    lea rax, [rip + key_buf]
+    pop rbx
+    ret
+
 # o_value() -> rax the next word, cut in place (r13 moves past it); "" at the end
 o_value:
 1:  cmp byte ptr [r13], ' '
@@ -391,6 +578,14 @@ c_print_approve:
 .Lc_print_allowed: .asciz "print-allowed"
 .Lc_run_approve: .asciz "run-approve"
 .Lc_print_approve: .asciz "print-approve"
+.Lc_wait_terminal: .asciz "wait-terminal"
+.Lc_print_pattern: .asciz "print-pattern"
+.Lc_print_problems: .asciz "print-problems"
+.Lw_running: .asciz "running"
+.Lw_exited: .asciz "exited"
+.Lw_stopped: .asciz "stopped"
+.Lw_failed: .asciz "failed"
+.Lw_ended: .asciz "ended"
 .Lo_end: .asciz "--"
 .Lo_cwd: .asciz "--cwd"
 .Lo_env: .asciz "--env"
@@ -399,6 +594,10 @@ c_print_approve:
 .Lo_task: .asciz "--task"
 .Lo_silent: .asciz "--silent"
 .Lo_sh: .asciz "--sh"
+.Lo_matcher: .asciz "--matcher"
+.Lo_matcher_file: .asciz "--matcher-file"
+.Lkey: .asciz "term-run:"
+.Lempty: .asciz ""
 .ifdef WINDOWS
 .Lsh: .asciz "powershell.exe"
 .Lnologo: .asciz "-NoLogo"
@@ -420,13 +619,16 @@ c_print_approve:
 .Ls_no: .asciz "approve=no\n"
 .p2align 3
 approve_words: .quad .Ls_none, .Ls_yes, .Ls_no
+state_words: .quad .Lw_running, .Lw_exited, .Lw_stopped, .Lw_failed, .Lw_ended, 0
 .globl tasks_ctl
 tasks_ctl:
     .quad .Lc_print_terminals, t_print_terminals, .Lc_term_select, t_term_select
     .quad .Lc_term_run, t_term_run, .Lc_term_stop, t_term_stop, .Lc_term_restart, t_term_restart
     .quad .Lc_term_close, t_term_close, .Lc_print_uproc, t_print_uproc
     .quad .Lc_print_allowed, t_print_allowed, .Lc_run_approve, t_run_approve
-    .quad .Lc_print_approve, t_print_approve, 0, 0
+    .quad .Lc_print_approve, t_print_approve, .Lc_wait_terminal, t_wait_terminal
+    .quad .Lc_print_pattern, t_print_pattern, .Lc_print_problems, t_print_problems, 0, 0
 options:
     .quad .Lo_cwd, o_cwd, .Lo_env, o_env, .Lo_unset, o_unset, .Lo_title, o_title
-    .quad .Lo_task, o_task, .Lo_silent, o_silent, .Lo_sh, o_sh, 0, 0
+    .quad .Lo_task, o_task, .Lo_silent, o_silent, .Lo_sh, o_sh, .Lo_matcher, o_matcher
+    .quad .Lo_matcher_file, o_matcher_file, 0, 0

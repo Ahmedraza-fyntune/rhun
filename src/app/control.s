@@ -1242,7 +1242,18 @@ c_print_marks:
     lea rdi, [rip + out]
     mov esi, ' '
     call sb_push_byte
+    test dword ptr [r13 + MK_pad], MKF_SOURCE
+    jz 2f
+    # a Problems store source's (problems.s): "problems:LABEL"
+    lea rdi, [rip + out]
+    lea rsi, [rip + .Ls_problems_src]
+    call sb_push_cstr
     mov rax, [r13 + MK_owner]
+    lea rdi, [rip + out]
+    mov rsi, [rax + PS_label]
+    call sb_push_cstr
+    jmp 3f
+2:  mov rax, [r13 + MK_owner]
     lea rdi, [rip + out]
     mov rsi, [rax + EXT_owner]
     call sb_push_cstr
@@ -1253,6 +1264,7 @@ c_print_marks:
     lea rdi, [rip + out]
     mov rsi, [rax + EXT_name]
     call sb_push_cstr
+3:
     lea rdi, [rip + out]
     mov esi, ' '
     call sb_push_byte
@@ -2181,6 +2193,7 @@ on_client:
 .Lno_listen: .asciz "rhun: cannot create the control socket"
 .Ls_ext: .asciz "ext="
 .Ls_errors: .asciz "errors="
+.Ls_problems_src: .asciz "problems:"
 .Ls_warnings: .asciz " warnings="
 .Ls_hover: .asciz "hover="
 .Ls_sent: .asciz "sent="

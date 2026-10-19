@@ -2728,6 +2728,7 @@ FN app_tick
 2:  call agents_tick
     call uproc_tick
     call term_tick
+    call problems_tick          # documents opened since get their problems' marks
     call git_tick
     call update_tick
     call ai_tick

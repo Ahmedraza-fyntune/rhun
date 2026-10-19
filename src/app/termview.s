@@ -23,6 +23,13 @@ F TS_owner, 8           # EXT* that opened it, or 0 (term-run, rhun's own)
 F TS_fn, 8              # fn(cookie, TERM, TE_* event, code), or 0
 F TS_cookie, 8
 F TS_task, 8            # owned cstr: the task id it runs (print-terminals), or 0
+F TS_runs, 4            # times its program started
+F TS_errors, 4          # problems its matchers found in this run (the footer)
+F TS_warnings, 4
+F TS_unchecked, 4       # lines not given to its matchers (too many at once)
+F TS_tap, SB_SIZE       # finished lines for its tap (term.s), then TS_tapfn
+F TS_tapfn, 8           # fn(cookie, TERM, line, len) for each finished line, or 0
+F TS_tapcookie, 8
 ENDSTRUCT TS_SIZE
 .equ TSF_RUNNING, 1             # started and not yet ended
 .equ TSF_EOF, 2                 # its terminal reached the end of its output
@@ -335,6 +342,7 @@ on_pty:
     lea rsi, [rip + rbuf]
     mov rdx, rax
     call term_feed
+    call tap_drain
     dec r13d
     jnz 2b
 3:  call send_replies
@@ -502,6 +510,8 @@ session_end:
 6:  mov rdi, [rbx + TS_term]
     call term_free
     lea rdi, [rbx + TS_wbuf]
+    call sb_free
+    lea rdi, [rbx + TS_tap]
     call sb_free
     mov rdi, [rbx + TS_title]
     call mem_free
@@ -732,7 +742,8 @@ spec_lists:
     EPILOGUE
 
 # run_folder(cwd or 0) -> owned folder to run in: the project (else home) for none, a relative one
-#   inside it, ~/ the home folder's, an absolute one as it is
+#   inside it, ~/ the home folder's, an absolute one as it is (term_run_folder for others)
+FN term_run_folder
 run_folder:
     PROLOGUE
     mov rbx, rdi
@@ -919,6 +930,8 @@ session_spawn:
     or eax, TSF_RUNNING | TSF_NOTIFY_START
     mov [rbx + TS_flags], eax
     mov dword ptr [rbx + TS_exit], 0
+    inc dword ptr [rbx + TS_runs]
+    call tap_attach
     xor eax, eax
     mov [rbx + TS_kill_at], rax
     mov [rbx + TS_finish_at], rax
@@ -1020,7 +1033,12 @@ session_done:
     mov dword ptr [rbx + TS_fd], -1
 1:  lea rdi, [rbx + TS_wbuf]
     call sb_clear
-    call time_ms
+    cmp qword ptr [rbx + TS_tapfn], 0
+    je 11f
+    mov rdi, [rbx + TS_term]
+    call term_tap_flush
+    call tap_drain
+11: call time_ms
     mov [rbx + TS_t1], rax
     mov dword ptr [rbx + TS_reason], TE_EXIT
     test dword ptr [rbx + TS_flags], TSF_STOP
@@ -1080,12 +1098,174 @@ session_done:
     lea rdi, [rip + msg]
     lea rsi, [rip + .Lfoot_s]
     call sb_push_cstr
+    call foot_counts
 4:  lea rdi, [rip + msg]
     lea rsi, [rip + .Lfoot_close]
     call sb_push_cstr
     call msg_feed
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
+
+# foot_counts(): onto msg, what rbx's matchers found: ", 2 errors, 1 warning", and lines they could
+#   not check
+foot_counts:
+    push r12
+    mov r12d, [rbx + TS_errors]
+    test r12d, r12d
+    jz 1f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_comma]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_error]
+    call sb_push_cstr
+    cmp r12d, 1
+    je 1f
+    lea rdi, [rip + msg]
+    mov esi, 's'
+    call sb_push_byte
+1:  mov r12d, [rbx + TS_warnings]
+    test r12d, r12d
+    jz 2f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_comma]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_warning]
+    call sb_push_cstr
+    cmp r12d, 1
+    je 2f
+    lea rdi, [rip + msg]
+    mov esi, 's'
+    call sb_push_byte
+2:  mov r12d, [rbx + TS_unchecked]
+    test r12d, r12d
+    jz 3f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_comma]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_unchecked]
+    call sb_push_cstr
+3:  pop r12
+    ret
+
+# tap_attach(): a (re)start of rbx's program: its counts are new, its tap follows the new terminal and
+#   hears the run begin (len -1)
+tap_attach:
+    sub rsp, 8
+    xor eax, eax
+    mov [rbx + TS_errors], eax
+    mov [rbx + TS_warnings], eax
+    mov [rbx + TS_unchecked], eax
+    mov qword ptr [rbx + TS_tap + SB_len], 0
+    mov rcx, [rbx + TS_term]
+    cmp qword ptr [rbx + TS_tapfn], 0
+    je 1f
+    lea rax, [rbx + TS_tap]
+    mov [rcx + TM_tap], rax
+    mov rdi, [rbx + TS_tapcookie]
+    mov rsi, [rbx + TS_id]
+    xor edx, edx
+    mov rcx, -1
+    call [rbx + TS_tapfn]
+    jmp 9f
+1:  mov [rcx + TM_tap], rax
+9:  add rsp, 8
+    ret
+
+# tap_drain(): rbx's finished lines to its tap fn, 2 ms of them at a time: the rest are counted as
+#   not checked (the footer says so)
+tap_drain:
+    cmp qword ptr [rbx + TS_tapfn], 0
+    je 9f
+    PROLOGUE
+    mov rax, [rbx + TS_term]
+    mov rcx, [rax + TM_tapdrop]
+    add [rbx + TS_unchecked], ecx
+    mov qword ptr [rax + TM_tapdrop], 0
+    cmp qword ptr [rbx + TS_tap + SB_len], 0
+    je 8f
+    call time_us
+    mov r15, rax
+    mov r12, [rbx + TS_tap + SB_ptr]
+    mov r13, r12
+    add r13, [rbx + TS_tap + SB_len]    # the end
+1:  cmp r12, r13
+    jae 7f
+    mov r14, r12
+2:  cmp r14, r13
+    jae 3f
+    cmp byte ptr [r14], 10
+    je 3f
+    inc r14
+    jmp 2b
+3:  call time_us
+    sub rax, r15
+    cmp rax, 2000
+    ja 5f
+    mov rdi, [rbx + TS_tapcookie]
+    mov rsi, [rbx + TS_id]
+    mov rdx, r12
+    mov rcx, r14
+    sub rcx, r12
+    call [rbx + TS_tapfn]
+    lea r12, [r14 + 1]
+    jmp 1b
+5:  # out of time: the lines left
+    cmp r12, r13
+    jae 7f
+    cmp byte ptr [r12], 10
+    jne 6f
+    inc dword ptr [rbx + TS_unchecked]
+6:  inc r12
+    jmp 5b
+7:  mov qword ptr [rbx + TS_tap + SB_len], 0
+8:  EPILOGUE
+9:  ret
+
+# term_set_tap(TERM, fn, cookie): each line its program finishes, as the screen shows it, goes to
+#   fn(cookie, TERM, line, len) (no LF; at most 4096 bytes); fn 0 stops it
+FN term_set_tap
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call sess_by_id
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov [rbx + TS_tapfn], r12
+    mov [rbx + TS_tapcookie], r13
+    mov rcx, [rbx + TS_term]
+    xor eax, eax
+    test r12, r12
+    jz 1f
+    lea rax, [rbx + TS_tap]
+1:  mov [rcx + TM_tap], rax
+9:  EPILOGUE
+
+# term_set_problems(TERM, errors, warnings): what its matchers found in this run, for the footer
+FN term_set_problems
+    push rbx
+    mov ebx, esi
+    push rdx
+    call sess_by_id
+    pop rdx
+    test rax, rax
+    jz 9f
+    mov [rax + TS_errors], ebx
+    mov [rax + TS_warnings], edx
+9:  pop rbx
+    ret
 
 # session_close_program(session): its tab is closing: a running program and its group are killed
 #   (SIGHUP and SIGTERM now, SIGKILL in 2 s: uproc_end); it ends as stopped (session_end tells the owner)
@@ -1601,6 +1781,27 @@ FN term_owner_gone
     jmp 1b
 9:  EPILOGUE
 
+# term_state(TERM) -> eax 0 running, 1 exited, 2 stopped, 3 failed, -1 no such tab; edx its runs
+FN term_state
+    sub rsp, 8
+    call sess_by_id
+    add rsp, 8
+    test rax, rax
+    jz 8f
+    mov edx, [rax + TS_runs]
+    test dword ptr [rax + TS_flags], TSF_RUNNING
+    jnz 1f
+    cmp dword ptr [rax + TS_kind], TK_SHELL
+    je 1f
+    mov eax, [rax + TS_reason]
+    inc eax
+    ret
+1:  xor eax, eax
+    ret
+8:  mov eax, -1
+    xor edx, edx
+    ret
+
 # term_select(TERM) -> 1 when that tab is now the current one (term-select)
 FN term_select
     sub rsp, 8
@@ -1702,6 +1903,12 @@ FN term_programs_dump
     call sb_push_cstr
     mov rdi, r12
     mov esi, [rbx + TS_pid]
+    call sb_push_u64
+    mov rdi, r12
+    lea rsi, [rip + .Ld_runs]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rbx + TS_runs]
     call sb_push_u64
     mov rdi, r12
     lea rsi, [rip + .Ld_title]
@@ -4645,6 +4852,10 @@ rep_cell: .long -1
 .Lfoot_code: .asciz " exited with code "
 .Lfoot_after: .asciz " after "
 .Lfoot_s: .asciz " s"
+.Lfoot_comma: .asciz ", "
+.Lfoot_error: .asciz " error"
+.Lfoot_warning: .asciz " warning"
+.Lfoot_unchecked: .asciz " lines were not checked for problems"
 .Lfoot_close: .asciz " \342\224\200\342\224\200\033[0m\r\n\033[?25l"
 .Ltip_restart: .asciz "Restart"
 .Ltip_stop: .asciz "Stop"
@@ -4662,6 +4873,7 @@ rep_cell: .long -1
 .Ld_failed: .asciz "failed"
 .Ld_code: .asciz " code="
 .Ld_pid: .asciz " pid="
+.Ld_runs: .asciz " runs="
 .Ld_title: .asciz " title="
 .Ld_dash: .asciz "-"
 .p2align 3

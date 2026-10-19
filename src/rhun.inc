@@ -2048,6 +2048,8 @@ F TM_tabs, 8            # byte per column, 1 = tab stop
 F TM_out, SB_SIZE       # replies for the program
 F TM_str, SB_SIZE       # OSC string
 F TM_title, SB_SIZE
+F TM_tap, 8             # SB* that each finished line goes to (tasks' matchers), or 0
+F TM_tapdrop, 8         # lines left out while the tap held 64 KB
 ENDSTRUCT TM_SIZE
 
 # Branch on rooted paths without clobbering registers.
@@ -2118,3 +2120,26 @@ F PG_sets, 8            # "NAME=value" list, or 0
 F PG_unsets, 8          # "NAME" list, or 0
 F PG_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
 ENDSTRUCT PG_SIZE
+# the Problems store (problems.s): a source, and a problem
+STRUCT
+F PS_key, 8             # owned cstr: what finds it again
+F PS_label, 8           # owned cstr: shown as the problems' source
+F PS_count, 4
+F PS_errors, 4
+F PS_warnings, 4
+F PS_dropped, 4         # not kept: past the caps
+ENDSTRUCT PS_SIZE
+STRUCT
+F PR_src, 8             # PS*
+F PR_path, 8            # absolute path (owned in the store)
+F PR_line, 4            # 1-based, 0 none
+F PR_col, 4             # 1-based bytes (characters with PRF_CHARS), 0 the line's first non-blank
+F PR_endline, 4         # exclusive end, 0 none
+F PR_endcol, 4
+F PR_sev, 4             # SEV_*
+F PR_flags, 4           # PRF_*
+F PR_msg, 8             # cstr
+F PR_code, 8            # cstr or 0
+ENDSTRUCT PR_SIZE
+.equ PRF_CHARS, 1
+.equ MKF_SOURCE, 1              # MK_pad: the mark's owner is a problems source (PS*), not an extension
