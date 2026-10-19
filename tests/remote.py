@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Remote windows (src/app/remote.s, remoteui.s, ragent.s) driven headlessly against real hosts:
+a Linux container reached with `docker exec` and with ssh (sshd in a second container, key and
+password logins), and on Linux the `local:` transport (sh -s on this machine). Checks the
+bootstrap, the upload and the cached second start, a remote terminal, ssh's password question
+through askpass, a dropped connection and Reconnect, and a failed connection's message.
+
+Needs docker. A macOS or Windows client needs a Linux build of rhun to send: RHUN_TEST_LINUX_EXE
+(the Linux client sends itself). Each run gets its own HOME, config and state."""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
+LINUX_EXE = os.environ.get('RHUN_TEST_LINUX_EXE') or (str(EXE) if sys.platform.startswith('linux') else '')
+IMAGE = 'rhun-remote-host'
+HOST = 'rhun-test-remote-host'
+SSHD = 'rhun-test-remote-sshd'
+SSH_PORT = int(os.environ.get('RHUN_TEST_SSH_PORT', '2222'))
+DOCKERFILE = ('FROM debian:stable-slim\n'
+              'RUN apt-get update && apt-get install -y --no-install-recommends openssh-server '
+              'openssh-client git python3 procps && rm -rf /var/lib/apt/lists/* && mkdir -p /run/sshd\n')
+
+
+def have_docker():
+    try:
+        return subprocess.run(['docker', 'info'], capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def docker(*args, check=True, input=None):
+    return subprocess.run(['docker', *args], capture_output=True, check=check, input=input, timeout=600)
+
+
+def ensure_image():
+    if docker('image', 'inspect', IMAGE, check=False).returncode != 0:
+        subprocess.run(['docker', 'build', '-q', '--platform', 'linux/amd64', '-t', IMAGE, '-'],
+                       input=DOCKERFILE.encode(), check=True, capture_output=True, timeout=900)
+
+
+DOCKER = have_docker()
+
+
+@unittest.skipUnless(DOCKER, 'needs docker')
+@unittest.skipUnless(LINUX_EXE, 'needs a Linux rhun to send (RHUN_TEST_LINUX_EXE)')
+class Remote(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_image()
+        cls.tmp = tempfile.TemporaryDirectory(prefix='rhun-remote-')
+        base = Path(cls.tmp.name)
+        # the host for docker exec, with a project
+        docker('rm', '-f', HOST, check=False)
+        docker('run', '-d', '--platform', 'linux/amd64', '--name', HOST, IMAGE, 'sleep', 'infinity')
+        docker('exec', HOST, 'sh', '-c', 'mkdir -p /root/proj && echo hello > /root/proj/a.txt')
+        # sshd: a key for root, a password for pw
+        key = base / 'key'
+        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
+        docker('rm', '-f', SSHD, check=False)
+        docker('run', '-d', '--platform', 'linux/amd64', '--name', SSHD, '-p', '127.0.0.1:%d:22' % SSH_PORT,
+               IMAGE, 'sh', '-c', 'ssh-keygen -A && exec /usr/sbin/sshd -D -e -o PasswordAuthentication=yes')
+        docker('exec', '-i', SSHD, 'sh', '-c',
+               'mkdir -p /root/.ssh /root/proj && cat > /root/.ssh/authorized_keys && '
+               'chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && '
+               'useradd -m -s /bin/bash pw && echo pw:s3cret-pw | chpasswd && mkdir -p /home/pw/proj && '
+               'chown pw /home/pw/proj', input=(base / 'key.pub').read_bytes())
+        conf = base / 'ssh_config'
+        common = ('  HostName 127.0.0.1\n  Port %d\n  StrictHostKeyChecking no\n'
+                  '  UserKnownHostsFile /dev/null\n  LogLevel ERROR\n' % SSH_PORT)
+        conf.write_text('Host keyhost\n  User root\n  IdentityFile %s\n  IdentitiesOnly yes\n%s'
+                        'Host pwhost\n  User pw\n  PubkeyAuthentication no\n'
+                        '  PreferredAuthentications password,keyboard-interactive\n%s' % (key, common, common))
+        cls.wrapper = base / 'ssh-wrapper'
+        cls.wrapper.write_text('#!/bin/sh\nexec ssh -F %s "$@"\n' % conf)
+        cls.wrapper.chmod(0o755)
+        end = time.time() + 30
+        while time.time() < end:
+            r = subprocess.run([str(cls.wrapper), 'keyhost', 'true'], capture_output=True, timeout=30)
+            if r.returncode == 0:
+                break
+            time.sleep(0.5)
+
+    @classmethod
+    def tearDownClass(cls):
+        docker('rm', '-f', HOST, check=False)
+        docker('rm', '-f', SSHD, check=False)
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='run-', dir=self.tmp.name))
+        for d in ('home', 'config/rhun', 'state', 'tmp'):
+            (self.dir / d).mkdir(parents=True)
+        (self.dir / 'config/rhun/config').write_text('[remote]\nagent_binary = %s\n' % LINUX_EXE)
+
+    def run_script(self, spec, path, lines, timeout=120, env_extra=None, home=None):
+        script = self.dir / 't.rsc'
+        script.write_text('\n'.join(lines) + '\nquit\n')
+        env = dict(os.environ)
+        env.update({'HOME': str(home or self.dir / 'home'), 'XDG_CONFIG_HOME': str(self.dir / 'config'),
+                    'XDG_STATE_HOME': str(self.dir / 'state'), 'TMPDIR': str(self.dir / 'tmp'),
+                    'RHUN_SSH': str(self.wrapper)})
+        env.update(env_extra or {})
+        args = [str(EXE), '--headless', '1000x700', '--remote', spec]
+        if path:
+            args.append(path)
+        args += ['--script', str(script)]
+        p = subprocess.run(args, capture_output=True, timeout=timeout, env=env)
+        return p.stdout.decode(errors='replace')
+
+    def field(self, out, line_start, key):
+        for line in out.splitlines():
+            if line.startswith(line_start):
+                for f in line.split(' '):
+                    if f.startswith(key + '='):
+                        return f[len(key) + 1:]
+        return None
+
+    def test_docker_bootstrap_cache_and_terminal(self):
+        lines = ['wait-remote 90', 'print-remote', 'print-project', 'cmd toggle_terminal', 'wait 500',
+                 'type echo hi-$((40+2))', 'key Return', 'wait-term hi-42', 'print-term']
+        out = self.run_script('docker:' + HOST, '/root/proj', lines)
+        self.assertEqual(self.field(out, 'remote=', 'state'), 'connected', out)
+        self.assertIn('project=/root/proj', out)
+        self.assertIn('hi-42', out.split('print-term')[-1] if 'print-term' in out else out)
+        first = int(self.field(out, 'remote=', 'out'))
+        self.assertGreater(first, 1000000)      # the binary went up
+        out = self.run_script('docker:' + HOST, '/root/proj', ['wait-remote 90', 'print-remote'])
+        self.assertEqual(self.field(out, 'remote=', 'state'), 'connected', out)
+        self.assertLess(int(self.field(out, 'remote=', 'out')), 10000)   # cached on the host
+
+    def test_ssh_key(self):
+        out = self.run_script('ssh:keyhost', '/root/proj', ['wait-remote 90', 'print-remote',
+                                                           'cmd toggle_terminal', 'wait 500',
+                                                           'type echo "$SSH_CONNECTION" | wc -w', 'key Return',
+                                                           'wait-term 4', 'print-term'])
+        self.assertEqual(self.field(out, 'remote=', 'state'), 'connected', out)
+        self.assertEqual(self.field(out, 'remote=', 'remote'), 'ssh')
+
+    def test_ssh_password_through_askpass(self):
+        out = self.run_script('ssh:pwhost', '/home/pw/proj', ['wait 4000', 'print-palette', 'type s3cret-pw',
+                                                              'key Return', 'wait-remote 90', 'print-remote',
+                                                              'print-project'])
+        self.assertIn("password:", out)
+        self.assertEqual(self.field(out, 'remote=', 'state'), 'connected', out)
+        self.assertIn('project=/home/pw/proj', out)
+        # Escape answers no: it fails, saying so
+        out = self.run_script('ssh:pwhost', '/home/pw/proj', ['wait 4000', 'key Escape', 'wait 3000',
+                                                              'key Escape', 'wait 3000', 'key Escape',
+                                                              'wait-remote 30', 'print-remote'])
+        self.assertEqual(self.field(out, 'remote=', 'state'), 'failed', out)
+        # the askpass folder went with the window
+        self.assertFalse([p for p in Path('/tmp').glob('rhun-askpass-*') if p.stat().st_uid == os.getuid()
+                          and p.stat().st_mtime > time.time() - 60])
+
+    def test_drop_and_reconnect(self):
+        lines = ['wait-remote 90', 'cmd toggle_terminal', 'wait 500', 'remote-drop', 'wait 200',
+                 'print-remote', 'remote-reconnect', 'wait-remote 90', 'print-remote',
+                 'cmd toggle_terminal', 'wait 500', 'type echo back-$((1+1))', 'key Return',
+                 'wait-term back-2', 'print-term']
+        out = self.run_script('docker:' + HOST, '/root/proj', lines)
+        states = [self.field(l, 'remote=', 'state') for l in out.splitlines() if l.startswith('remote=')]
+        self.assertEqual(states, ['lost', 'connected'], out)
+        self.assertIn('back-2', out)
+
+    def test_failure_is_reported(self):
+        out = self.run_script('docker:no-such-container-here', '', ['wait-remote 60', 'print-remote'])
+        self.assertEqual(self.field(out, 'remote=', 'state'), 'failed', out)
+        self.assertIn('error=Could not connect to no-such-container-here', out)
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'local: runs the agent on this machine')
+class LocalTransport(unittest.TestCase):
+    """sh -s on this machine: the whole remote path without docker or sshd."""
+
+    def test_local_transport(self):
+        with tempfile.TemporaryDirectory(prefix='rhun-remote-local-') as tmp:
+            base = Path(tmp)
+            for d in ('home', 'config', 'state', 'tmp', 'proj'):
+                (base / d).mkdir()
+            script = base / 't.rsc'
+            script.write_text('wait-remote 60\nprint-remote\nprint-project\ncmd toggle_terminal\nwait 500\n'
+                              'type echo hi-$((40+2))\nkey Return\nwait-term hi-42\nprint-term\nquit\n')
+            env = dict(os.environ, HOME=str(base / 'home'), XDG_CONFIG_HOME=str(base / 'config'),
+                       XDG_STATE_HOME=str(base / 'state'), TMPDIR=str(base / 'tmp'), SHELL='/bin/sh')
+            out = subprocess.run([str(EXE), '--headless', '1000x700', '--remote', 'local:', str(base / 'proj'),
+                                  '--script', str(script)], capture_output=True, timeout=120,
+                                 env=env).stdout.decode(errors='replace')
+            self.assertIn('state=connected', out)
+            self.assertIn('project=%s' % (base / 'proj'), out)
+            self.assertIn('hi-42', out)
+            self.assertTrue(list((base / 'home/.cache/rhun-remote').glob('*/rhun')))
+
+
+if __name__ == '__main__':
+    unittest.main()

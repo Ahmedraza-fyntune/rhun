@@ -42,6 +42,9 @@ open_bar:
     call settings_take_find
     test eax, eax
     jnz 9f
+    call extpage_take_find      # extension management: Browse searches the index
+    test eax, eax
+    jnz 9f
     mov dword ptr [rip + g_find_word], 0
     mov dword ptr [rip + find_open], 1
     mov dword ptr [rip + find_sub], 0
@@ -85,6 +88,17 @@ open_bar:
     call tf_select_all
     call update_matches
 9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# FN find_set_query(ptr, len): the find field holds this text (run-command find with ARGS)
+FN find_set_query
+    PROLOGUE
+    mov rdx, rsi
+    mov rsi, rdi
+    lea rdi, [rip + tf_find]
+    call tf_set
+    call update_matches
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 FN cmd_find_bar
@@ -252,6 +266,7 @@ find_raw_word:
 goto_match:
     PROLOGUE 32
     mov [rsp + 24], edi
+    call ed_single              # one selection (multi-cursor)
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f

@@ -1345,6 +1345,9 @@ Lkd_char:
     cbz w0, 51f
     mov w24, w0
 51:
+    // a chord waiting for its second stroke takes every key (keys.s)
+    XCALL keys_chord_pending
+    cbnz w0, 6f
     // letters bind lowercase, as rhun looks them up
     tst w22, #MOD_CTRL
     b.ne 6f
@@ -1355,15 +1358,17 @@ Lkd_char:
     mov w1, w22
     XCALL keys_lookup
     cbz x8, Lkd_ime
-6:  mov w0, w23               // and the key's unshifted character (g_key_base)
-    mov w1, #0
+6:  mov w0, w23               // and the key's unshifted character (g_key_base), the same on the
+    mov w1, #0                  // ASCII-capable layout for chords (g_key_latin)
     bl ascii_key
     STW w0, g_key_base
+    STW w0, g_key_latin
     mov w0, w24
     mov w1, w24
     mov w2, w22
     XCALL app_on_key
     STW wzr, g_key_base
+    STW wzr, g_key_latin
     b Lkd_done
 Lkd_ime:
     // the input method: plain text, dead keys, composed input

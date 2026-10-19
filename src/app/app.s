@@ -113,7 +113,8 @@ trust_path: .zero 4096           # the repository's folder, as shown (~ for the 
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
-pm_items: .zero 16 * 13         # the project menu: 2 commands, a line, 9 folders, the end
+pm_items: .zero 16 * 24         # the project menu: 2 commands, a line, 9 folders, the remote items
+                                # (a line, 2 commands, 8 recent remotes; remoteui.s), the end
 .globl g_shot_path
 g_shot_path: .quad 0
 tmp_sb: .zero SB_SIZE
@@ -151,6 +152,7 @@ FN app_init
     call vim_sync
     call watch_init
     call update_init
+    call extupdate_init         # extension management: update state, crashed installs' folders
     call ai_apply
     EPILOGUE
 
@@ -241,6 +243,7 @@ set_project:
     mov rsi, rax
     call path_basename
     mov [rip + g_project_name], rax
+    call remote_project_label   # remote hosts: "HOST: name"
     mov eax, [rip + g_link_open]
     mov [rip + g_project_link], eax
     mov dword ptr [rip + trust_closed], 0
@@ -486,7 +489,11 @@ project_menu_open:
     add rbx, 16
     inc r15d
     jmp 1b
-2:  mov qword ptr [rbx], 0
+2:  mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
+    lea rsi, [rip + pm_items]
+    call remote_menu_append
+    mov rbx, rax
+    mov qword ptr [rbx], 0
     mov qword ptr [rbx + 8], 0
     lea rdi, [rip + pm_items]
     mov esi, r12d
@@ -1494,6 +1501,7 @@ ask_unsaved:
     call doc_dirty
     test eax, eax
     jz 2f
+    call dlg_drop
     mov [rip + dlg_tab], rbx
     mov [rip + dlg_kind], r12d
     inc qword ptr [rip + app_save_epoch]
@@ -2108,6 +2116,16 @@ FN app_on_pointer_leave
 # app_on_button(btn, pressed, mods)
 FN app_on_button
     mov [rip + g_mods], edx
+    test esi, esi
+    jz 1f
+    push rdi
+    push rsi
+    push rdx
+    call keys_chord_cancel      # a press ends a waiting chord
+    pop rdx
+    pop rsi
+    pop rdi
+1:
     # the caret shows at once, as after a key: a press or a release may have placed it
     push rdi
     push rsi
@@ -2171,6 +2189,7 @@ FN wheel_xy
 FN app_on_focus
     mov [rip + g_win_focused], edi
     push rdi
+    call keys_chord_cancel
     # files may have changed while away
     test edi, edi
     jz 1f
@@ -2239,6 +2258,8 @@ FN focused_field
     je find_field
     cmp eax, FOCUS_SETTINGS
     je settings_field
+    cmp eax, FOCUS_EXT_SEARCH   # extension management: Browse's search
+    je extpage_field
     cmp eax, FOCUS_EDITOR
     je vim_field
     xor eax, eax
@@ -2268,6 +2289,13 @@ FN app_on_key
     mov dword ptr [rip + g_dirty], 1
     call time_ms
     mov [rip + g_blink_t0], rax
+    # a chord waiting for its second stroke takes the key first (keys.s)
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call keys_chord_key
+    test eax, eax
+    jnz 9f
     # dead keys and the Compose key
     mov edi, r12d
     mov esi, r14d
@@ -2317,11 +2345,20 @@ FN app_on_key
     jnz 9f
     jmp .Lk_bind
 4:  cmp eax, FOCUS_SETTINGS
-    jne 5f
+    jne 41f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call settings_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+41: cmp eax, FOCUS_EXT_SEARCH   # extension management: Browse's search
+    jne 5f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call extpage_key
     test eax, eax
     jnz 9f
     jmp .Lk_bind
@@ -2554,6 +2591,11 @@ FN editor_key
     jmp 9f
 87: cmp eax, KEY_ESCAPE
     jne 88f
+    # several selections go back to the primary first (multi-cursor)
+    mov rdi, [rip + g_doc]
+    call sel_escape
+    test eax, eax
+    jnz 9f
     # collapse selection
     mov rax, [rip + g_doc]
     mov rcx, [rax + DOC_cur]
@@ -2600,150 +2642,59 @@ FN app_timeout
     cmp ecx, ebx
     jge 1f
 12: mov ebx, ecx
-1:  call agents_timeout
+1:  lea r12, [rip + timeout_fns]   # the soonest of the parts' deadlines (-1: none)
+2:  mov rax, [r12]
+    test rax, rax
+    jz 9f
+    add r12, 8
+    call rax
     cmp eax, -1
-    je 2f
+    je 2b
     cmp ebx, -1
-    je 21f
-    cmp eax, ebx
-    jge 2f
-21: mov ebx, eax
-2:  call git_timeout
-    cmp eax, -1
     je 3f
-    cmp ebx, -1
-    je 31f
     cmp eax, ebx
-    jge 3f
-31: mov ebx, eax
-3:  call update_timeout
-    cmp eax, -1
-    je 4f
-    cmp ebx, -1
-    je 41f
-    cmp eax, ebx
-    jge 4f
-41: mov ebx, eax
-4:  call ai_timeout
-    cmp eax, -1
-    je 5f
-    cmp ebx, -1
-    je 51f
-    cmp eax, ebx
-    jge 5f
-51: mov ebx, eax
-5:  call watch_timeout
-    cmp eax, -1
-    je 6f
-    cmp ebx, -1
-    je 61f
-    cmp eax, ebx
-    jge 6f
-61: mov ebx, eax
-6:  call tip_timeout
-    cmp eax, -1
-    je 7f
-    cmp ebx, -1
-    je 71f
-    cmp eax, ebx
-    jge 7f
-71: mov ebx, eax
-7:  call palette_timeout
-    cmp eax, -1
-    je 8f
-    cmp ebx, -1
-    je 81f
-    cmp eax, ebx
-    jge 8f
-81: mov ebx, eax
-8:  call editor_timeout
-    cmp eax, -1
-    je 82f
-    cmp ebx, -1
-    je 83f
-    cmp eax, ebx
-    jge 82f
-83: mov ebx, eax
-82: call sb_timeout
-    cmp eax, -1
-    je 84f
-    cmp ebx, -1
-    je 85f
-    cmp eax, ebx
-    jge 84f
-85: mov ebx, eax
-84: call term_timeout
-    cmp eax, -1
-    je 86f
-    cmp ebx, -1
-    je 87f
-    cmp eax, ebx
-    jge 86f
-87: mov ebx, eax
-86: call ext_timeout
-    cmp eax, -1
-    je 88f
-    cmp ebx, -1
-    je 89f
-    cmp eax, ebx
-    jge 88f
-89: mov ebx, eax
-88: call complete_timeout
-    cmp eax, -1
-    je 90f
-    cmp ebx, -1
-    je 91f
-    cmp eax, ebx
-    jge 90f
-91: mov ebx, eax
-90: call langfeat_timeout
-    cmp eax, -1
-    je 92f
-    cmp ebx, -1
-    je 93f
-    cmp eax, ebx
-    jge 92f
-93: mov ebx, eax
-92: call ext_provider_timeout
-    cmp eax, -1
-    je 94f
-    cmp ebx, -1
-    je 95f
-    cmp eax, ebx
-    jge 94f
-95: mov ebx, eax
-94: call save_timeout
-    cmp eax, -1
-    je 96f
-    cmp ebx, -1
-    je 97f
-    cmp eax, ebx
-    jge 96f
-97: mov ebx, eax
-96: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
-    cmp eax, -1
-    je 961f
-    cmp ebx, -1
-    je 962f
-    cmp eax, ebx
-    jge 961f
-962: mov ebx, eax
-961: call query_timeout         # language features: the next request to expire
-    cmp eax, -1
-    je 98f
-    cmp ebx, -1
-    je 99f
-    cmp eax, ebx
-    jge 98f
-99: mov ebx, eax
-98: mov eax, ebx
+    jge 2b
+3:  mov ebx, eax
+    jmp 2b
+9:  mov eax, ebx
     EPILOGUE
+
+.section .rodata
+.p2align 3
+# app_timeout's parts: each fn() -> eax milliseconds until it needs a tick, or -1; 0-ended
+timeout_fns:
+    .quad agents_timeout
+    .quad git_timeout
+    .quad update_timeout
+    .quad ai_timeout
+    .quad watch_timeout
+    .quad tip_timeout
+    .quad palette_timeout
+    .quad editor_timeout
+    .quad sb_timeout
+    .quad term_timeout
+    .quad ext_timeout
+    .quad complete_timeout
+    .quad langfeat_timeout
+    .quad ext_provider_timeout
+    .quad save_timeout
+    .quad uproc_timeout
+    .quad query_timeout
+    .quad testing_timeout
+    .quad dap_timeout
+    .quad remote_timeout
+    .quad extupdate_timeout      # extension management
+    .quad keys_timeout           # a chord's pause (keys.s)
+    .quad ws_difftab_timeout    # wsedit: diff tabs whose sides changed
+    .quad 0
+.text
 
 FN app_tick
     PROLOGUE
     call query_tick             # language features: expired requests, before their askers' ticks
     call complete_tick
     call langfeat_tick
+    call ws_difftab_tick        # wsedit: diff tabs follow their sides
     call save_tick
     call ext_options_apply
     call watch_tick
@@ -2759,16 +2710,23 @@ FN app_tick
     mov qword ptr [rip + g_toast_until], 0
     mov dword ptr [rip + g_dirty], 1
 2:  call agents_tick
+    call uproc_tick
     call term_tick
+    call problems_tick          # documents opened since get their problems' marks
     call git_tick
     call update_tick
     call ai_tick
     call palette_tick
     call editor_tick
     call ext_tick
+    call extrec_tick            # extension management: first starts of new versions
+    call extupdate_tick         # and update checks
     call ext_provider_tick
     call testing_tick           # testing (testproto.s)
     call app_clip_tick
+    call dap_tick               # debugger
+    call remote_tick            # remote hosts
+    call keys_tick              # a chord's pause (keys.s)
     EPILOGUE
 
 # ---------------- rendering ----------------
@@ -2957,7 +2915,14 @@ FN app_render
     M eax, MI_3
     lea eax, [rax + rax + 1]
     mov [rip + g_hole + 12], eax
-54: # the trust bar over the column, while git is paused for a repository a link opened
+54: # remote hosts: the connection's bar over the column while it is not up
+    mov edi, [rsp + 40]
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 44]
+    call remote_bar
+    add [rsp + 20], eax
+    sub [rsp + 48], eax
+    # the trust bar over the column, while git is paused for a repository a link opened
     mov edi, [rsp + 40]
     mov esi, [rsp + 20]
     mov edx, [rsp + 44]
@@ -4586,6 +4551,7 @@ tab_drag_step:
 # tab_menu_open(i): the menu of tab i, for a right click on it: pin or unpin, close, close all
 tab_menu_open:
     PROLOGUE
+    mov rbx, rdi
     call tab_at
     mov rcx, [rax + TAB_kind]
     mov [rip + menu_tab_kind], rcx
@@ -4595,9 +4561,8 @@ tab_menu_open:
     test dword ptr [rax + TAB_flags], TF_PIN
     jz 1f
     lea rdi, [rip + tab_menu_pinned]
-1:  mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+1:  mov rsi, rbx
+    call menu_open_tab          # with the extensions' items (menu.s)
     mov dword ptr [rip + g_menu_keys], 1
     EPILOGUE
 
@@ -4680,14 +4645,33 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov ecx, [rsp + 12]
     call gfx_clip_push
-    # the branch at the left end; the file's items follow it
+    # a chord waiting for its second stroke says so at the left end (keys.s); else the remote
+    # host ("SSH: HOST"), the branch and the file's items
     mov edi, [rsp]
+    add edi, [rip + g_mt + 4*MI_12]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call keys_chord_draw
+    mov ecx, [rsp]
+    add ecx, [rip + g_mt + 4*MI_12]
+    cmp eax, ecx
+    je 2f
+    add eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 24], eax
+    jmp 3f
+2:  mov edi, [rsp]                # remote hosts: "SSH: HOST" at the left end
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call remote_status_item
+    # the branch; the file's items follow it
+    mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     mov ecx, [rsp + 20]
     add ecx, [rip + g_mt + 4*MI_12]
     call statusbar_branch
     mov [rsp + 24], eax
+3:
     call app_image
     test rax, rax
     jz 1f
@@ -4739,7 +4723,10 @@ FN statusbar_draw
     lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Lsel_close]
     call sb_push_cstr
-1:  mov esi, [rsp + 24]
+1:  mov rdi, rbx
+    lea rsi, [rip + tmp_sb]
+    call sel_status             # "  3 selections" (multi-cursor)
+    mov esi, [rsp + 24]
     mov [rsp + 16], esi
     # vim: the command line in place of the position, else the mode and the keys typed so far
     cmp dword ptr [rip + cfg_vim], 0
@@ -5218,14 +5205,13 @@ FN dialog_draw
     mov r12d, eax               # w
     # Confirmation details can include model names or file paths. Size to the
     # content where space allows, and fit the line inside the visible dialog.
+    # A confirmation's text may have several lines (\n between them: extension management)
+    mov dword ptr [rsp + 32], 1
     cmp dword ptr [rip + dlg_kind], 4
     jne 8f
     mov rdi, [rip + dlg_text]
-    call strlen
-    mov rdx, rax
-    mov rsi, [rip + dlg_text]
-    lea rdi, [rip + g_face_small]
-    call text_width
+    call dlg_text_size
+    mov [rsp + 32], edx
     add eax, [rip + g_mt + 4*MI_40]
     cmp eax, r12d
     cmovg r12d, eax
@@ -5237,6 +5223,10 @@ FN dialog_draw
     mov edi, 150
     call sc
     mov r13d, eax               # h
+    mov eax, [rsp + 32]
+    dec eax
+    imul eax, [rip + g_mt + 4*MI_24]
+    add r13d, eax
     mov eax, [rip + g_cv + CV_w]
     sub eax, r12d
     sar eax, 1
@@ -5292,8 +5282,11 @@ FN dialog_draw
     jne 3f
     mov r8, [rip + dlg_text]
 3:  mov [rsp + 16], r8
-    mov rdi, r8
-    call strlen
+    mov eax, r15d
+    add eax, [rip + g_mt + 4*MI_40]
+    mov [rsp + 40], eax         # the line's y
+31: mov rdi, [rsp + 16]
+    call dlg_line_len
     mov r9, rax
     mov eax, r12d
     sub eax, [rip + g_mt + 4*MI_40]
@@ -5303,12 +5296,22 @@ FN dialog_draw
     lea rdi, [rip + g_face_small]
     mov esi, r14d
     add esi, [rip + g_mt + 4*MI_20]
-    mov edx, r15d
-    add edx, [rip + g_mt + 4*MI_40]
+    mov edx, [rsp + 56]
     M ecx, MI_24
     mov r8, [rsp + 32]
     call ui_text_v_fit
     add rsp, 16
+    mov rdi, [rsp + 16]
+    call dlg_line_len
+    add rax, [rsp + 16]
+    cmp byte ptr [rax], 10
+    jne 32f
+    inc rax
+    mov [rsp + 16], rax
+    mov eax, [rip + g_mt + 4*MI_24]
+    add [rsp + 40], eax
+    jmp 31b
+32:
     # buttons: Save (primary), Don't Save, Cancel
     M ebx, MI_32
     mov eax, r15d
@@ -5400,6 +5403,42 @@ FN dialog_draw
     jmp .Ldd_btn
 .Ldd_ret:
     EPILOGUE
+
+# dlg_text_size(cstr) -> eax the widest line's width in the small face, edx the lines (\n between)
+dlg_text_size:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d              # widest
+    xor r13d, r13d              # lines
+1:  inc r13d
+    mov rdi, rbx
+    call dlg_line_len
+    mov r14, rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, rbx
+    mov rdx, rax
+    call text_width
+    cmp eax, r12d
+    cmovg r12d, eax
+    add rbx, r14
+    cmp byte ptr [rbx], 10
+    jne 9f
+    inc rbx
+    jmp 1b
+9:  mov eax, r12d
+    mov edx, r13d
+    EPILOGUE
+
+# dlg_line_len(cstr) -> rax the bytes before its first \n or its end
+dlg_line_len:
+    xor eax, eax
+1:  cmp byte ptr [rdi + rax], 0
+    je 2f
+    cmp byte ptr [rdi + rax], 10
+    je 2f
+    inc rax
+    jmp 1b
+2:  ret
 
 # dialog_choose(i): 0 cancel, 1 don't save, 2 save (or app_confirm's button)
 dialog_choose:
@@ -5562,6 +5601,27 @@ dlg_drop:
 FN app_confirm_cancel
     mov [rip + dlg_cancel], rdi
     ret
+
+# app_dialog_open() -> eax nonzero while a dialog is open (one at a time: the run approval asks only
+#   when none is)
+FN app_dialog_open
+    mov eax, [rip + dlg_kind]
+    ret
+
+# app_confirm_revoke(fn): the open app_confirm whose button calls fn goes away unanswered (its Cancel
+#   is not called: the question was withdrawn)
+FN app_confirm_revoke
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 9f
+    cmp [rip + dlg_fn], rdi
+    jne 9f
+    mov dword ptr [rip + dlg_kind], 0
+    mov qword ptr [rip + dlg_cancel], 0
+    cmp dword ptr [rip + g_focus], FOCUS_DIALOG
+    jne 1f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+1:  mov dword ptr [rip + g_dirty], 1
+9:  ret
 
 # app_dialog_dump(sb): "dialog=none", or "dialog=QUESTION" and its line and button (tests)
 FN app_dialog_dump
@@ -6121,7 +6181,12 @@ FN cmd_newline_below
 
 FN cmd_newline_above
     READONLY_RET
-    PROLOGUE 272
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 1f
+    cmp qword ptr [rax + DOC_selections], 0
+    jne lines_newline_above              # several selections (editorlines.s)
+1:  PROLOGUE 272
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -6369,6 +6434,10 @@ FN app_open_path
     call file_type
     test eax, eax
     jnz .Lop_path
+    mov rdi, rbx
+    call ext_link_open          # extension management: rhun://extension/OWNER/NAME[@VERSION]
+    test eax, eax
+    jnz 9f
     lea rdi, [rip + .Lbad_link]
     call app_toast
     EPILOGUE
