@@ -347,6 +347,14 @@ FN keys_lookup
 5:  xor eax, eax
     ret
 
+# FN keys_run(cmd*): run the command keys_lookup found, as invoked by a key (FROM key)
+FN keys_run
+    mov esi, INV_KEY
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    jmp cmd_invoke
+
 # keys_for(cmd*) -> first binding formatted into a static buffer ("Ctrl+Shift+P"), or 0
 FN keys_for
     PROLOGUE

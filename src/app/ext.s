@@ -251,6 +251,31 @@ ext_cmd_find_owned:
 9:  mov rax, r15
     EPILOGUE
 
+# FN ext_cmd_local(ext, local name, len) -> CMD* of the extension's own command (manifest or
+# runtime) of that local name, or 0 (command references resolve their names here)
+FN ext_cmd_local
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rbx + EXT_name]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, '.'
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov rdi, rbx
+    mov rsi, [rip + tmp + SB_ptr]
+    mov rdx, [rip + tmp + SB_len]
+    call ext_cmd_find_owned
+    EPILOGUE
+
 # ext_cmd_unregister(ext, local name, len) -> 0 removed, 1 not an own runtime command.
 FN ext_cmd_unregister
     PROLOGUE
@@ -964,6 +989,8 @@ FN ext_retire
     call complete_ext_gone
     mov rdi, rbx
     call langfeat_ext_gone
+    mov rdi, rbx
+    call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1901,6 +1928,11 @@ manifest_kv:
     call parse_on
     jmp 9f
 .Lmk_sections:
+    mov rdi, rbx                # the contributions' sections (extcontext.s)
+    mov rsi, r12
+    call contrib_manifest_kv
+    test eax, eax
+    jnz 9f
     mov rdi, r12
     lea rsi, [rip + .Ls_commands]
     call ini_sec_is
@@ -2403,9 +2435,14 @@ FN ext_cmd_add
     mov [rax], rcx
     EPILOGUE
 
-# ext_cmd_run(cmd*): a manifest command was invoked: tell the extension, starting it first
+# ext_cmd_run(cmd*): a manifest command was invoked: tell the extension, starting it first. How
+# it was invoked (g_invoke, cmd_invoke) goes with it: FROM, the body and the document.
 FN ext_cmd_run
-    PROLOGUE
+    PROLOGUE INV_SIZE
+    mov rbx, rdi
+    lea rdi, [rsp]
+    call invoke_take
+    mov rdi, rbx
     cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 9f
     mov rax, rdi
@@ -2443,7 +2480,8 @@ FN ext_cmd_run
     call ext_pending_clear
     mov rdi, rbx
     mov rsi, r12
-    call extproto_send_run
+    lea rdx, [rsp]
+    call extproto_send_invoke
     test rax, rax
     jns 9f
     lea rdi, [rip + .Lpc_send_failed]
@@ -2460,7 +2498,8 @@ FN ext_cmd_run
 .Lpc_capture:
     mov rdi, rbx
     mov rsi, r12
-    call ext_pending_set
+    lea rdx, [rsp]
+    call ext_pending_set_inv
     test rax, rax
     jns .Lpc_captured
     lea rdi, [rip + .Lpc_queue_failed]
@@ -4261,6 +4300,8 @@ FN ext_legacy_exited
     mov rdi, rbx
     call ext_cmds_remove_runtime
     mov rdi, rbx
+    call contrib_ext_stopped    # its context keys, status items (extcontext.s)
+    mov rdi, rbx
     call ext_options_clear
     mov rdi, rbx
     call extproto_prompt_owner_gone
@@ -4408,6 +4449,8 @@ FN ext_supervised_exited
     call extmarks_clear_owner
     mov rdi, rbx
     call ext_cmds_remove_runtime
+    mov rdi, rbx
+    call contrib_ext_stopped    # its context keys, status items (extcontext.s)
     mov rdi, rbx
     call ext_options_clear
     mov rdi, rbx

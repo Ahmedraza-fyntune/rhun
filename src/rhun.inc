@@ -1815,6 +1815,114 @@ ENDSTRUCT SD_SIZE
 .equ EXT_CHOOSE_MAX, 1000       # choose: items
 .equ EXT_TERM_MAX, 4096         # term: the command's bytes
 
+# ---- contributions and commands (invoke.s, when.s, extcontext.s) ----
+# How a command was invoked (feature command-args): cmd_invoke takes these as arguments and
+# ext_cmd_run sends them as "0 run EXT.NAME DOC FROM LEN" + body
+.equ INV_PALETTE, 0             # the palette, headless cmd, a menu of all commands (the default)
+.equ INV_KEY, 1                 # a key binding; body: its ARGS
+.equ INV_MENU, 2                # a menu item or title/item button; body: TARGET LF and its args
+.equ INV_REF, 3                 # a command reference (lens, tree item, status item, notification)
+STRUCT
+F INV_from, 4           # INV_*
+F INV_pad, 4
+F INV_doc, 8            # the DOC id it is about, 0 for the active document
+F INV_body, 8           # ptr, len: the body
+F INV_len, 8
+ENDSTRUCT INV_SIZE
+.equ INV_BODY_MAX, 65536        # a body kept for a command that waits for its extension to start
+# a command reference: "command NAME ARGS_LEN" + ARGS inside any body (cmdref_parse, cmdref_new)
+STRUCT
+F CRF_ext, 8            # EXT* whose command it names
+F CRF_len, 8            # ARGS' length; the bytes follow the record
+F CRF_name, 48          # the local command name, NUL-terminated (at most 40 bytes)
+ENDSTRUCT CRF_SIZE
+.equ CRF_ARGS_MAX, 8192
+.equ CMD_NAME_MAX, 40           # a local command name: [a-z0-9_], 1 to 40 bytes
+# When-clause context keys (when.s), one line each: CTXKEY SYMBOL, "name", FN. FN computes the
+# value from rhun's state when a clause reads it (when.s); 0 marks a key another part publishes
+# with ctx_set(SYMBOL, ptr, len) / ctx_set_bool(SYMBOL, 0|1) (at most CTX_VAL_MAX bytes, copied).
+# Adding a key is one line here, at the end.
+.macro CTXKEY_LIST
+    CTXKEY CTX_EDITOR_FOCUS, "editorFocus", ck_editor_focus
+    CTXKEY CTX_TEXT_INPUT_FOCUS, "textInputFocus", ck_text_input_focus
+    CTXKEY CTX_PALETTE_FOCUS, "paletteFocus", ck_palette_focus
+    CTXKEY CTX_FIND_FOCUS, "findFocus", ck_find_focus
+    CTXKEY CTX_EXPLORER_FOCUS, "explorerFocus", ck_explorer_focus
+    CTXKEY CTX_AGENTS_FOCUS, "agentsFocus", ck_agents_focus
+    CTXKEY CTX_TERMINAL_FOCUS, "terminalFocus", ck_terminal_focus
+    CTXKEY CTX_SCM_INPUT_FOCUS, "scmInputFocus", ck_scm_focus
+    CTXKEY CTX_SETTINGS_FOCUS, "settingsFocus", ck_settings_focus
+    CTXKEY CTX_FIND_VISIBLE, "findVisible", ck_find_visible
+    CTXKEY CTX_COMPLETION_VISIBLE, "completionVisible", ck_completion_visible
+    CTXKEY CTX_SIGNATURE_VISIBLE, "signatureVisible", ck_signature_visible
+    CTXKEY CTX_SNIPPET_ACTIVE, "snippetActive", ck_snippet_active
+    CTXKEY CTX_ACTIVE_TAB, "activeTab", ck_active_tab
+    CTXKEY CTX_ACTIVE_TAB_PINNED, "activeTabPinned", ck_active_tab_pinned
+    CTXKEY CTX_TAB_COUNT, "tabCount", ck_tab_count
+    CTXKEY CTX_RESOURCE_LANG, "resourceLang", ck_resource_lang
+    CTXKEY CTX_RESOURCE_EXT, "resourceExt", ck_resource_ext
+    CTXKEY CTX_RESOURCE_FILENAME, "resourceFilename", ck_resource_filename
+    CTXKEY CTX_RESOURCE_DIRNAME, "resourceDirname", ck_resource_dirname
+    CTXKEY CTX_RESOURCE_PATH, "resourcePath", ck_resource_path
+    CTXKEY CTX_RESOURCE_SCHEME, "resourceScheme", ck_resource_scheme
+    CTXKEY CTX_RESOURCE_IN_PROJECT, "resourceInProject", ck_resource_in_project
+    CTXKEY CTX_EDITOR_READONLY, "editorReadonly", ck_editor_readonly
+    CTXKEY CTX_EDITOR_DIRTY, "editorDirty", ck_editor_dirty
+    CTXKEY CTX_EDITOR_HAS_SELECTION, "editorHasSelection", ck_editor_has_selection
+    CTXKEY CTX_EDITOR_HAS_MULTIPLE_SELECTIONS, "editorHasMultipleSelections", ck_editor_multi
+    CTXKEY CTX_EDITOR_PROVIDERS, "editorProviders", ck_editor_providers
+    CTXKEY CTX_VIM_MODE, "vimMode", ck_vim_mode
+    CTXKEY CTX_SIDEBAR_VISIBLE, "sidebarVisible", ck_sidebar_visible
+    CTXKEY CTX_AGENTS_VISIBLE, "agentsVisible", ck_agents_visible
+    CTXKEY CTX_TERMINAL_VISIBLE, "terminalVisible", ck_terminal_visible
+    CTXKEY CTX_PROJECT_OPEN, "projectOpen", ck_project_open
+    CTXKEY CTX_PROJECT_PATH, "projectPath", ck_project_path
+    CTXKEY CTX_GIT_REPO, "gitRepo", ck_git_repo
+    CTXKEY CTX_GIT_BRANCH, "gitBranch", ck_git_branch
+    CTXKEY CTX_GIT_CHANGES, "gitChanges", ck_git_changes
+    CTXKEY CTX_IS_LINUX, "isLinux", ck_is_linux
+    CTXKEY CTX_IS_MAC, "isMac", ck_is_mac
+    CTXKEY CTX_IS_WINDOWS, "isWindows", ck_is_windows
+    CTXKEY CTX_IS_WAYLAND, "isWayland", ck_is_wayland
+    CTXKEY CTX_TARGET_KIND, "targetKind", ck_target_kind
+    CTXKEY CTX_EXPLORER_RESOURCE_IS_FOLDER, "explorerResourceIsFolder", ck_target_is_folder
+    CTXKEY CTX_EXPLORER_RESOURCE_IS_ROOT, "explorerResourceIsRoot", ck_target_is_root
+    CTXKEY CTX_TAB_KIND, "tabKind", ck_tab_kind
+    # published by other parts (ctx_set): views, debugging
+    CTXKEY CTX_VIEW_FOCUS, "viewFocus", 0
+    CTXKEY CTX_VIEW, "view", 0
+    CTXKEY CTX_VIEW_ITEM, "viewItem", 0
+    CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
+    CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
+    CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+.endm
+# when.s expands the list as records: FN, the name, padding to 8 bytes
+.macro CTXKEY sym, name, fn
+.ifdef CTXKEY_NAMES
+    .quad \fn
+    .asciz "\name"
+    .p2align 3
+.else
+    .equ \sym, __ctxk
+    .set __ctxk, __ctxk + 1
+.endif
+.endm
+.set __ctxk, 0
+CTXKEY_LIST
+.equ CTX_COUNT, __ctxk
+.equ CTX_VAL_MAX, 256           # a context value: published keys, set-context
+.equ WHEN_MAX, 512              # a clause's bytes, operations and nesting
+.equ WHEN_OPS_MAX, 64
+.equ WHEN_DEPTH_MAX, 8
+# a menu target the resource and editor keys describe while a menu evaluates (ctx_push_target)
+STRUCT
+F CT_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
+                        #   "view" "item" (targetKind), or 0 for no target
+F CT_doc, 8             # its DOC*, or 0
+F CT_path, 8            # cstr: its path, or 0
+F CT_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+ENDSTRUCT CT_SIZE
+
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
 STRUCT
 F CR_access, 8

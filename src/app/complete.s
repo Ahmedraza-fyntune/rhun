@@ -52,6 +52,7 @@ cp_hover: .long -1              # the row under the pointer
 .bss
 .p2align 3
 cp_source: .long 0              # 0 providers, CP_CHOICES native literal values
+.globl cp_open, sg_open
 cp_open: .long 0                # 0 closed, 1 asked, 2 items to show
 cp_session: .long 0             # each new list: answers for an older one are dropped
 cp_doc: .quad 0                 # the session's DOC* and its id (a freed DOC's address can return)

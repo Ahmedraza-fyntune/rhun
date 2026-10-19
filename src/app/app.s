@@ -2383,7 +2383,7 @@ FN app_on_key
     test rax, rax
     jz .Lk_editor
     mov rdi, rdx
-    call rax
+    call keys_run
     jmp 9f
 .Lk_editor:
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR

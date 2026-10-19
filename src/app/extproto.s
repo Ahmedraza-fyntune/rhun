@@ -2458,6 +2458,63 @@ h_cmd:
 .Lhcm_ret:
     EPILOGUE
 
+# ---------------- contributions and commands ----------------
+
+# ID set-context KEY VALUE -> ok ID: the extension's context key KEY (feature context-keys);
+# VALUE is the rest of the line, "-" removes it (extcontext.s)
+h_set_context:
+    PROLOGUE
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_CONTEXT_KEYS
+    jz .Lhctx_unknown
+    cmp qword ptr [rip + nfields], 4
+    jb .Lhctx_syntax
+    mov edi, 3
+    call rest_from
+    mov r12, rax
+    mov r13, rdx
+    cmp r13, CTX_VAL_MAX
+    ja .Lhctx_long
+    mov rdi, r12
+    mov rsi, r13
+    call plain_text
+    test eax, eax
+    jz .Lhctx_syntax
+    cmp r13, 1
+    jne 1f
+    cmp byte ptr [r12], '-'
+    jne 1f
+    xor r13d, r13d
+1:  mov edi, 2
+    call field_at
+    mov rsi, rax
+    mov rdi, [rip + cur]
+    mov rcx, r12
+    mov r8, r13
+    call xc_set
+    test eax, eax
+    jnz 2f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+2:  cmp eax, 1
+    jne .Lhctx_syntax
+    lea rsi, [rip + .Le_toobig_keys]
+    jmp .Lhctx_error
+.Lhctx_long:
+    lea rsi, [rip + .Le_toobig_value]
+    jmp .Lhctx_error
+.Lhctx_unknown:
+    lea rsi, [rip + .Le_unknown]
+.Lhctx_error:
+    mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+.Lhctx_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
 # plain_text(ptr, len) -> 1 when the bytes are one line of valid UTF-8 with no control
 # character (C0, DEL, C1), no bidi control (U+202A-202E, U+2066-2069) and no zero-width
 # character (U+200B-200F, U+2060, U+FEFF): text that shows as it is
@@ -3031,11 +3088,19 @@ send_ready:
     call out_end
     EPILOGUE
 
-# extproto_send_run(ext, command index): "0 run NAME DOC"
+# extproto_send_run(ext, command index): "0 run NAME DOC", from the palette without a body
 FN extproto_send_run
+    xor edx, edx
+    jmp extproto_send_invoke
+
+# extproto_send_invoke(ext, command index, INV* or 0): "0 run NAME DOC", and with command-args
+# " FROM LEN" LF and the body. DOC is the invocation's document while it is open, else the
+# active one.
+FN extproto_send_invoke
     PROLOGUE
     mov r12, rdi
     mov rbx, rsi
+    mov r14, rdx
     cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne .Lpsr_closed
     cmp dword ptr [r12 + EXT_status], ES_RUNNING
@@ -3061,6 +3126,7 @@ FN extproto_send_run
     mov r13, [rax + CMD_name]
     test r13, r13
     jz .Lpsr_missing
+    mov [rip + cur], r12
     call out_begin
     lea rdi, [rip + .Lev_run]
     call out_cstr
@@ -3068,12 +3134,52 @@ FN extproto_send_run
     call out_cstr
     mov edi, ' '
     call out_byte
-    call active_doc_id
+    # the document: the invocation's while it is open, else the active one
+    test r14, r14
+    jz 1f
+    mov rdi, [r14 + INV_doc]
+    test rdi, rdi
+    jz 1f
+    call doc_by_id
+    test rax, rax
+    jz 1f
+    mov rdi, [rax + DOC_id]
+    jmp 2f
+1:  call active_doc_id
     mov rdi, rax
-    call out_u64
+2:  call out_u64
+    FEAT_TEST r12, FEAT_COMMAND_ARGS
+    jz 5f
+    # command-args: " FROM LEN" and the body
+    mov edi, ' '
+    call out_byte
+    xor edi, edi
+    test r14, r14
+    jz 3f
+    mov edi, [r14 + INV_from]
+3:  call invoke_from_name
+    mov rdi, rax
+    call out_cstr
+    mov edi, ' '
+    call out_byte
+    xor edi, edi
+    test r14, r14
+    jz 4f
+    mov rdi, [r14 + INV_len]
+4:  call out_u64
     mov edi, 10
     call out_byte
-    call out_end
+    test r14, r14
+    jz 6f
+    mov rdi, [r14 + INV_body]
+    mov rsi, [r14 + INV_len]
+    test rsi, rsi
+    jz 6f
+    call out_bytes
+    jmp 6f
+5:  mov edi, 10
+    call out_byte
+6:  call out_end
 9:  EPILOGUE
 .Lpsr_closed:
     mov rax, -32
@@ -3463,7 +3569,12 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # contributions and commands
+    .quad .Lv_set_context, h_set_context, 0
     .quad 0, 0, 0
+.Lv_set_context: .asciz "set-context"
+.Le_toobig_keys: .asciz "toobig 64 keys"
+.Le_toobig_value: .asciz "toobig 256 bytes"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"

@@ -146,7 +146,7 @@ for s in $(find src -name "*.s" ! -path "src/mac/*" ! -path "src/win/*" | LC_ALL
             [ src/app/extvalidate.inc -nt "$o" ] && stale=1 ;;
     esac
     case "$s" in
-        src/app/extpending.s|tests/ext_pending_owner_test.s)
+        src/app/extpending.s|src/app/extpendingdispatch.s|tests/ext_pending_owner_test.s)
             [ src/app/extpending.inc -nt "$o" ] && stale=1 ;;
     esac
     case "$s" in

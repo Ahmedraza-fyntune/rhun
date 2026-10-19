@@ -159,6 +159,10 @@ FN ext_pending_release
     dec qword ptr [rdi + PN_refs]
     jnz 9f
     PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + PN_inv]
+    call mem_free
+    mov rdi, rbx
     call mem_free
     xor eax, eax
     EPILOGUE
