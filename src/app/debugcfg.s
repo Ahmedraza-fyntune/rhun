@@ -31,7 +31,7 @@ lini: .quad 0                   # launch.ini (owned bytes), or 0
 lini_len: .quad 0
 lini_stamp: .quad 0
 cn: .zero VEC_SIZE              # the configuration tree; node 0 is the root object
-cs: .zero SB_SIZE               # its names and values
+cstrs: .zero SB_SIZE               # its names and values
 cn_leaves: .long 0
 cur_line: .long 0               # launch.ini line of the value being read (for messages), 0 none
 g_dcfg_err: .zero 1024          # why the last step failed
@@ -149,18 +149,18 @@ FN dbg_manifest_kv
     cmp r14, 32
     ja 9f
     xor ecx, ecx
-0:  movzx eax, byte ptr [r13 + rcx]
+60: movzx eax, byte ptr [r13 + rcx]
     cmp al, '-'
-    je 01f
+    je 61f
     lea edx, [rax - 'a']
     cmp edx, 25
-    jbe 01f
+    jbe 61f
     lea edx, [rax - '0']
     cmp edx, 9
     ja 9f
-01: inc rcx
+61: inc rcx
     cmp rcx, r14
-    jb 0b
+    jb 60b
     # this extension's row for the type
     xor r15d, r15d
     xor edx, edx                # its rows so far
@@ -1499,7 +1499,7 @@ subst_one:
     cmp dword ptr [rax + CN_kind], 0
     jne 35f
     mov ecx, [rax + CN_val]
-    mov rsi, [rip + cs + SB_ptr]
+    mov rsi, [rip + cstrs + SB_ptr]
     add rsi, rcx
     mov edx, [rax + CN_vallen]
     mov rdi, rbx
@@ -1763,9 +1763,9 @@ fv_selection:
 FN cn_reset
     push rbx
     mov qword ptr [rip + cn + VEC_len], 0
-    lea rdi, [rip + cs]
+    lea rdi, [rip + cstrs]
     call sb_clear
-    lea rdi, [rip + cs]         # offset 0 stays unused
+    lea rdi, [rip + cstrs]         # offset 0 stays unused
     xor esi, esi
     call sb_push_byte
     mov dword ptr [rip + cn_leaves], 0
@@ -1788,10 +1788,10 @@ cn_node:
 # cs_add(ptr, len) -> eax the offset of a copy in cs
 cs_add:
     push rbx
-    mov rbx, [rip + cs + SB_len]
+    mov rbx, [rip + cstrs + SB_len]
     mov rdx, rsi
     mov rsi, rdi
-    lea rdi, [rip + cs]
+    lea rdi, [rip + cstrs]
     call sb_push
     mov eax, ebx
     pop rbx
@@ -1856,7 +1856,7 @@ cn_child:
     push rax
     push rax
     mov ecx, [rax + CN_name]
-    mov rdi, [rip + cs + SB_ptr]
+    mov rdi, [rip + cstrs + SB_ptr]
     add rdi, rcx
     mov esi, [rax + CN_namelen]
     mov rdx, r12
@@ -2132,7 +2132,7 @@ FN cn_write
     je 2f
     # a leaf
     mov ecx, [r13 + CN_val]
-    mov rsi, [rip + cs + SB_ptr]
+    mov rsi, [rip + cstrs + SB_ptr]
     add rsi, rcx
     mov edx, [r13 + CN_vallen]
     mov rdi, rbx
@@ -2156,7 +2156,7 @@ FN cn_write
     call cn_node
     mov r15, rax
     mov ecx, [r15 + CN_name]
-    mov rsi, [rip + cs + SB_ptr]
+    mov rsi, [rip + cstrs + SB_ptr]
     add rsi, rcx
     mov edx, [r15 + CN_namelen]
     mov rdi, rbx

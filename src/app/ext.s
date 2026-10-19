@@ -3276,6 +3276,7 @@ env_add_state:
 # win_runtime(name) -> path or 0: proc_which, except that python3 is also looked for as python and
 # py (Windows installs Python as python.exe and the py launcher), and the Microsoft Store's stubs in
 # WindowsApps (which only offer to install Python) are taken only when nothing else is there
+.globl win_runtime               # the debugger finds adapters the same way (debugcfg.s)
 win_runtime:
     PROLOGUE
     mov r12, rdi
