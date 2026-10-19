@@ -108,7 +108,7 @@ FN main
     js ewt_fail
     mov r14, rax
     lea rbx, [rip + ewt_a]
-    mov dword ptr [rbx + EXT_features], FEAT_WORKSPACE_WATCH
+    mov dword ptr [rbx + EXT_features], 1 << FEAT_WORKSPACE_WATCH
     mov dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ
     mov rdi, rbx
     call extwatch_add
@@ -119,7 +119,7 @@ FN main
     cmp rax, 1
     jne ewt_fail
     lea rbx, [rip + ewt_b]
-    mov dword ptr [rbx + EXT_features], FEAT_WORKSPACE_WATCH
+    mov dword ptr [rbx + EXT_features], 1 << FEAT_WORKSPACE_WATCH
     mov dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ
     mov rdi, rbx
     call extwatch_add

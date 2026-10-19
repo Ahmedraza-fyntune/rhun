@@ -447,14 +447,16 @@ lf_start:
     cmp r14, [rsp + 16]
     jne 6b
 61: mov rdi, r14
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 6b
     cmp dword ptr [r14 + EXT_status], ES_RUNNING
     jne 6b
     lea rax, [rip + lf_feats]
-    mov eax, [rax + r12*4]
-    test [r14 + EXT_features], eax
+    mov esi, [rax + r12*4]
+    mov rdi, r14
+    call ext_feature
+    test eax, eax
     jz 6b
     lea rax, [rip + lf_pvs]
     mov rax, [rax + r12*8]
@@ -660,7 +662,7 @@ FN langfeat_reply
     add rsi, LR_SIZE
     call memmove
 4:  mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     mov eax, [rsp + 4]
@@ -1642,7 +1644,7 @@ FN langfeat_chosen
     imul r12, rbx, LS_SIZE
     add r12, [rip + lf_res + VEC_ptr]
     mov rdi, [r12 + LS_ext]
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp dword ptr [rip + lf_list_kind], LF_ACTS
@@ -1923,7 +1925,7 @@ lf_tmp4: .zero 16
 # per kind (index LF_*): the verb, the feature, where its patterns are, how long it waits (ms), a
 # toast when nobody provides it, a toast when nothing came, the list's placeholder; one provider?
 lf_verbs: .quad 0, .Lv_definition, .Lv_references, .Lv_symbols, .Lv_actions, .Lv_rename, .Lv_format
-lf_feats: .long 0, FEAT_DEFINITION, FEAT_REFERENCES, FEAT_SYMBOLS, FEAT_ACTIONS, FEAT_RENAME, FEAT_FORMAT
+lf_feats: .long -1, FEAT_DEFINITION, FEAT_REFERENCES, FEAT_SYMBOLS, FEAT_ACTIONS, FEAT_RENAME, FEAT_FORMAT
 .p2align 3
 lf_pvs: .quad 0, EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format
 lf_waits: .quad 0, 5000, 10000, 5000, 3000, 15000, 10000
@@ -1958,13 +1960,3 @@ lf_single: .byte 0, 0, 0, 1, 0, 1, 1
 .Lname_spaces: .asciz "A name cannot hold spaces"
 .Lnothing_renamed: .asciz "Nothing to rename"
 .Lrenamed: .asciz "Renamed: check the changed files and save them"
-
-.text
-# Keep result/request allocations owned; prevent pending and selected actions from resuming.
-FN langfeat_catalog_invalidate_pure
-    mov dword ptr [rip + lf_kind], 0
-    mov dword ptr [rip + lf_ready], 0
-    mov dword ptr [rip + lf_list_kind], 0
-    mov qword ptr [rip + lf_ws_ext], 0
-    mov qword ptr [rip + lf_deadline], 0
-    ret

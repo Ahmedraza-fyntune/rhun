@@ -140,7 +140,7 @@ FN control_exec
     lea r15, [rip + ctl_table]
 1:  mov rdx, [r15]
     test rdx, rdx
-    jz .Lce_unknown
+    jz .Lce_more
     mov rdi, r13
     mov rsi, r14
     call str_eq_cstr
@@ -148,6 +148,28 @@ FN control_exec
     jnz 2f
     add r15, 16
     jmp 1b
+.Lce_more:
+    # the other parts' tables (ctl_tables): fn(out, rest, rest len) -> rax as above
+    lea rax, [rip + ctl_tables]
+    mov [rsp], rax
+11: mov rax, [rsp]
+    mov r15, [rax]
+    test r15, r15
+    jz .Lce_unknown
+    add qword ptr [rsp], 8
+12: mov rdx, [r15]
+    test rdx, rdx
+    jz 11b
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 13f
+    add r15, 16
+    jmp 12b
+13: lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
 2:  call [r15 + 8]
     push rax
     push rax
@@ -1607,19 +1629,6 @@ c_print_toast:
     xor eax, eax
     ret
 
-# wsedit: print-tx, the workspace-edit transactions (wstx.s); print-journal, their journals on
-# disk (wsdisk.s)
-c_print_tx:
-    lea rdi, [rip + out]
-    call tx_print
-    xor eax, eax
-    ret
-c_print_journal:
-    lea rdi, [rip + out]
-    call ws_journal_print
-    xor eax, eax
-    ret
-
 # print-term: the screen of the current terminal
 c_print_term:
     lea rdi, [rip + out]
@@ -2274,8 +2283,6 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_project: .asciz "print-project"
 .Lc_print_panels: .asciz "print-panels"
 .Lc_print_tabs: .asciz "print-tabs"
-.Lc_print_tx: .asciz "print-tx"            # wsedit
-.Lc_print_journal: .asciz "print-journal"
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
 .Lc_print_tip: .asciz "print-tip"
@@ -2314,6 +2321,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
+# other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
+ctl_tables:
+    .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad ws_ctl                # workspace edits and the editor model (wsctl.s)
+    .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open
@@ -2349,7 +2361,6 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
-    .quad .Lc_print_tx, c_print_tx, .Lc_print_journal, c_print_journal  # wsedit
     .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

@@ -8,6 +8,8 @@
 .equ WS_ENTRIES_MAX, 1000       # its entries (files, file operations)
 .equ WS_EDITS_MAX, 100000
 .equ WS_LABEL_MAX, 200
+.equ WSF_EDITS, 1               # ws_feats: the extension agreed workspace-edits
+.equ WSF_OPS, 2                 # and file-operations
 
 .bss
 .p2align 3
@@ -18,7 +20,7 @@ we_vec: .zero VEC_SIZE
 ws_only: .quad 0                # a document id: the edit may change that document only
 ws_request_ext: .quad 0         # an extension's apply request: its permissions gate closed files
 ws_ext: .quad 0                 # the extension whose agreed features decide the grammar, or 0
-ws_feats: .quad 0               # FEAT_WORKSPACE_EDITS and FEAT_FILE_OPERATIONS when agreed
+ws_feats: .quad 0               # WSF_*: the features the extension agreed
 ws_deflabel: .quad 0            # the caller's name for the edit (cstr), or 0
 ws_code: .quad 0                # the reply for the last failure ("CODE TEXT"; "CODE ENTRY TEXT")
 ws_toast: .quad 0               # and its toast
@@ -186,8 +188,12 @@ ws_run:
     jz 1f
     cmp qword ptr [rip + ws_only], 0
     jne 1f
-    mov eax, [rcx + EXT_features]
-    and eax, FEAT_WORKSPACE_EDITS | FEAT_FILE_OPERATIONS
+    FEAT_TEST rcx, FEAT_WORKSPACE_EDITS
+    jz 1f
+    mov eax, WSF_EDITS
+    FEAT_TEST rcx, FEAT_FILE_OPERATIONS
+    jz 1f
+    or eax, WSF_OPS
 1:  mov [rip + ws_feats], rax
     cmp r13, WS_BODY_MAX
     ja .Lwr_big
@@ -395,7 +401,7 @@ ws_parse:
     test eax, eax
     jz .Lwp_bad
     # a file operation (file-operations) or a text group
-    test qword ptr [rip + ws_feats], FEAT_FILE_OPERATIONS
+    test qword ptr [rip + ws_feats], WSF_OPS
     jz .Lwp_text
     mov rax, [rip + ps_ptr]
     mov rcx, [rip + ps_lend]
@@ -576,7 +582,7 @@ ws_parse:
     jmp .Lwp_entry
 .Lwp_records:
     mov qword ptr [rip + ws_entry], 0
-    test qword ptr [rip + ws_feats], FEAT_WORKSPACE_EDITS
+    test qword ptr [rip + ws_feats], WSF_EDITS
     jz .Lwp_end
     # extra records: NAME ARGS... LEN, then LEN bytes
 .Lwp_record:
@@ -690,7 +696,7 @@ ws_pre:
     mov edx, WP_DASH
     mov rcx, -1
     jmp 9f
-1:  test qword ptr [rip + ws_feats], FEAT_WORKSPACE_EDITS
+1:  test qword ptr [rip + ws_feats], WSF_EDITS
     jz 3f
     cmp r12, 24
     jne 3f
@@ -957,7 +963,7 @@ ws_resolve:
     jmp .Lwv_find
 .Lwv_open:
     # files that are not open
-    test qword ptr [rip + ws_feats], FEAT_WORKSPACE_EDITS
+    test qword ptr [rip + ws_feats], WSF_EDITS
     jz 60f
     call ws_disk_resolve        # read into hidden documents, file operations checked (wsdisk.s)
     test eax, eax
@@ -1374,6 +1380,20 @@ FN ws_apply_group
     jmp 9f
 8:  call ed_touch
 9:  EPILOGUE
+
+# FN ws_features_agreed(ext): after hello: the features of this work whose host side is not in
+# yet are not agreed, and file-operations only together with workspace-edits
+FN ws_features_agreed
+    FEAT_TEST rdi, FEAT_WORKSPACE_EDITS
+    jnz 1f
+    FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS
+1:  FEAT_CLEAR rdi, FEAT_WORKSPACE_EDITS       # not yet
+    FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS
+    FEAT_CLEAR rdi, FEAT_SELECTIONS
+    FEAT_CLEAR rdi, FEAT_REVEAL
+    FEAT_CLEAR rdi, FEAT_DIFF
+    FEAT_CLEAR rdi, FEAT_LINKED_EDITING
+    ret
 
 # FN ws_ext_gone(ext): an extension stopped: an edit of its that waits for the user is cancelled
 FN ws_ext_gone
