@@ -3215,7 +3215,10 @@ FN extproto_send_setting
     call out_cstr
     mov edi, ' '
     call out_byte
-    mov rdi, [rbx + SD_value]
+    mov rdi, [rip + cur]        # resources group: the window value (a workspace's, extconfig.s)
+    mov rsi, rbx
+    call extconfig_window
+    mov rdi, rax
     call out_cstr
     mov edi, 10
     call out_byte
@@ -4561,6 +4564,7 @@ verbs:
     .quad .Lres_v_link, h_res_link, 0
     .quad .Lres_v_find_files, h_res_find_files, 65536
     .quad .Lres_v_search_text, h_res_search_text, 340000
+    .quad .Lres_v_setting_get, h_res_setting_get, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX

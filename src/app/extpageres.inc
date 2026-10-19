@@ -2,7 +2,42 @@
 # and tokens (the keys, never the values, each with Forget) and where they are kept.
 .equ ID_XR_FORGET, 0x7d40       # + i: Forget for the i-th key; ID_XP + 7: Forget all
 .equ ID_XR_LINKS, 0x7d3f        # the open-links-without-asking switch
+.equ ID_XR_OVERRIDE, 0x7e80     # + the setting's row: Open for a workspace's value
 .text
+
+# draw_res_override(ext, sd, row): under a setting the workspace sets, "This workspace sets VALUE
+# (.rhun/extensions.ini)" and Open
+draw_res_override:
+    PROLOGUE
+    mov r12d, edx
+    call extconfig_override
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, rbx
+    COLOR edx, T_MUTED
+    mov ecx, MI_28
+    mov r8d, [rip + xp_x]
+    call text_at_keep
+    lea rdi, [rip + .Lxr_open]
+    call label_width
+    mov ecx, [rip + xp_x]
+    add ecx, [rip + xp_w]
+    sub ecx, eax
+    mov [rip + xp_bx], ecx
+    lea edi, [r12 + ID_XR_OVERRIDE]
+    lea rsi, [rip + .Lxr_open]
+    xor edx, edx
+    call row_button
+    test eax, UB_CLICK
+    jz 1f
+    call extconfig_open
+1:  M eax, MI_28
+    add [rip + xp_y], eax
+    M eax, MI_8
+    add [rip + xp_y], eax
+9:  EPILOGUE
 
 # draw_res_links(ext): "Opens links without asking" with a switch, once the user chose Always
 # for its open-url prompt
@@ -154,4 +189,5 @@ draw_res_secrets:
 .Lxr_forget: .asciz "Forget"
 .Lxr_forget_all: .asciz "Forget all"
 .Lxr_open_urls: .asciz "Opens links in your browser without asking"
+.Lxr_open: .asciz "Open"
 .text

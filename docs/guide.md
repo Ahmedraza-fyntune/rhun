@@ -874,6 +874,19 @@ and search them through rhun rather than walking the disk themselves: they see t
 (`.gitignore` applies), not the names in **Hidden in explorer**, and the text you have not saved
 yet. Their searches run a few milliseconds at a time, so typing never waits for them.
 
+A project can set some of an extension's settings for everyone who opens it, in
+`.rhun/extensions.ini` at the top of the folder, in the same form as your own file:
+
+```ini
+[rhun-editor/go]
+setting.style = goimports
+setting.style@Go = gofumpt     # for Go files only
+```
+
+Only settings the extension opens to projects take effect (never which program it runs), and only
+in a folder you opened yourself or trusted. The extension's page shows "This workspace sets
+goimports (.rhun/extensions.ini)" under such a setting, with **Open**.
+
 The command palette shows each extension command's qualified name, `owner/name.command`,
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same

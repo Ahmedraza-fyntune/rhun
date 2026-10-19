@@ -566,6 +566,7 @@ FN extres_busy
 FN extres_frame
     PROLOGUE
     mov dword ptr [rip + el_frame_starts], 0
+    call extconfig_poll         # the project files' settings (extconfig.s)
     call time_ms
     mov r12, rax
     cmp qword ptr [rip + el_first_frame], 0
@@ -1572,6 +1573,7 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
     .quad .Lc_print_vdocs, c_print_vdocs
     .quad .Lc_link_deliver, c_link_deliver, .Lc_print_links, c_print_links
     .quad .Lc_print_file_runs, c_print_file_runs
+    .quad .Lc_print_ext_setting, c_print_ext_setting
     .quad 0, 0
 .Lv_complete: .asciz "complete"
 .Lq_complete: .asciz "completion"
@@ -1596,6 +1598,7 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
 .Lc_link_deliver: .asciz "link-deliver"
 .Lc_print_links: .asciz "print-links"
 .Lc_print_file_runs: .asciz "print-file-runs"
+.Lc_print_ext_setting: .asciz "print-ext-setting"
 .Lr_idle: .asciz "idle"
 .Lk_open_urls: .asciz "open_urls"
 .Lv_yes: .asciz "yes"

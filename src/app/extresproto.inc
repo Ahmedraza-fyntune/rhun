@@ -776,6 +776,85 @@ res_files:
     call reply_syntax
 9:  EPILOGUE
 
+# ---------------- scoped-settings: setting-get (extconfig.s) ----------------
+
+# ID setting-get KEY FOLDER LANG -> ok ID LEN + the value in force for that folder (0: the window)
+# and language (- for none)
+h_res_setting_get:
+    PROLOGUE
+    mov edi, FEAT_SCOPED_SETTINGS
+    call res_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 5
+    jne 8f
+    mov edi, 2
+    call field_at
+    mov rdi, rax
+    mov rsi, rdx
+    mov rdx, [rip + cur]
+    call sdef_find
+    test rax, rax
+    jz 7f
+    mov rbx, rax
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz 8f
+    mov r12, rax
+    test r12, r12
+    jz 1f
+    mov rdi, r12
+    call wfold_index
+    test rax, rax
+    js 6f
+1:  mov edi, 4
+    call field_at
+    mov r13, rax
+    mov r14, rdx
+    cmp r14, 1
+    jne 2f
+    cmp byte ptr [r13], '-'
+    jne 2f
+    xor r14d, r14d
+2:  mov rdi, [rip + cur]
+    mov rsi, rbx
+    mov rdx, r12
+    mov rcx, r13
+    mov r8, r14
+    call extconfig_get
+    mov r15, rax
+    mov rdi, rax
+    call strlen
+    mov r14, rax
+    call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, [rip + cur_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r14
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, r15
+    mov rsi, r14
+    call out_bytes
+    call out_end
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lres_e_no_folder]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lres_e_not_setting]
+    call reply_error
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 .bss
 .p2align 3
 res_url_label: .zero SB_SIZE
@@ -804,6 +883,9 @@ res_url_host: .zero 208
 .Lres_v_find_files: .asciz "find-files"
 .Lres_v_search_text: .asciz "search-text"
 .Lres_e_needs_project: .asciz "needs project=read"
+.Lres_v_setting_get: .asciz "setting-get"
+.Lres_e_not_setting: .asciz "refused not a setting of this extension"
+.Lres_e_no_folder: .asciz "nofile no such folder"
 .equ FSK_FIND_WIRE, 1           # filesearch.s's kinds
 .equ FSK_SEARCH_WIRE, 2
 .text
