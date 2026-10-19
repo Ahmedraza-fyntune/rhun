@@ -607,11 +607,220 @@ FN pty_resize
 
 .endif
 
+
+# ---- resources group: what an extension's processes cost (extres.s) ----
+.ifndef WINDOWS
+# proc_usage(pid, out) -> rax 0 or -errno: out[0] CPU nanoseconds of the process, its reaped
+# children and its live descendants, out[8] resident bytes of the live ones, out[16] how many (at
+# most 64, eight levels deep). Linux reads /proc (clock ticks of 10 ms, pages of 4 KiB); macOS
+# asks proc_pid_rusage (mac_proc_usage); Windows asks the extension's job (src/win/proc.s).
+FN proc_usage
+.ifdef MACOS
+    jmp mac_proc_usage
+.else
+    PROLOGUE
+    mov rbx, rsi
+    mov qword ptr [rbx], 0
+    mov qword ptr [rbx + 8], 0
+    mov qword ptr [rbx + 16], 0
+    xor esi, esi
+    mov rdx, rbx
+    call pu_add
+    cmp qword ptr [rbx + 16], 0
+    je 8f
+    xor eax, eax
+    EPILOGUE
+8:  mov rax, -3                 # ESRCH
+    EPILOGUE
+
+# pu_path(dst, pid, suffix) -> rax the NUL's address: "/proc/PID" + suffix
+pu_path:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13, rdx
+    lea rsi, [rip + .Lpu_proc]
+    call cstr_copy
+    mov rbx, rax
+    mov rdi, rax
+    mov esi, r12d
+    call fmt_u64
+    lea rdi, [rbx + rax]
+    mov rsi, r13
+    call cstr_copy
+    EPILOGUE
+
+# pu_read(path, buf, cap) -> rax bytes read (NUL after them), or -errno
+pu_read:
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    xor esi, esi                # O_RDONLY
+    SYS SYS_open
+    test rax, rax
+    js 9f
+    mov ebx, eax
+    xor r14d, r14d
+1:  mov edi, ebx
+    lea rsi, [r12 + r14]
+    mov rdx, r13
+    sub rdx, r14
+    jz 2f
+    SYS SYS_read
+    test rax, rax
+    jle 2f
+    add r14, rax
+    jmp 1b
+2:  mov edi, ebx
+    SYS SYS_close
+    mov byte ptr [r12 + r14], 0
+    mov rax, r14
+9:  EPILOGUE
+
+# pu_skip(p) -> rax past the spaces at p
+pu_skip:
+    mov rax, rdi
+1:  cmp byte ptr [rax], ' '
+    jne 9f
+    inc rax
+    jmp 1b
+9:  ret
+
+# pu_num(p) -> rax the decimal number at p, rdx past it
+pu_num:
+    xor eax, eax
+    mov rdx, rdi
+1:  movzx ecx, byte ptr [rdx]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja 9f
+    imul rax, rax, 10
+    add rax, rcx
+    inc rdx
+    jmp 1b
+9:  ret
+
+# pu_add(pid, depth, out): one process, then its children
+pu_add:
+    PROLOGUE 4224
+    mov r12d, edi
+    mov r13d, esi
+    mov r14, rdx
+    cmp qword ptr [r14 + 16], 64
+    jae 9f
+    lea rdi, [rsp]
+    mov esi, r12d
+    lea rdx, [rip + .Lpu_stat]
+    call pu_path
+    lea rdi, [rsp]
+    lea rsi, [rsp + 128]
+    mov edx, 4000
+    call pu_read
+    test rax, rax
+    jle 9f
+    # the fields after the last ')': state is field 3, utime 14, stime 15, cutime 16, cstime 17
+    lea rcx, [rsp + 128 + rax]
+1:  dec rcx
+    lea rdx, [rsp + 128]
+    cmp rcx, rdx
+    jb 9f
+    cmp byte ptr [rcx], ')'
+    jne 1b
+    lea rdi, [rcx + 1]
+    mov ebx, 3                  # the field being looked at
+    xor r15d, r15d              # ticks
+2:  call pu_skip
+    mov rdi, rax
+    cmp byte ptr [rdi], 0
+    je 4f
+    cmp ebx, 14
+    jb 3f
+    call pu_num
+    add r15, rax
+    mov rdi, rdx
+    inc ebx
+    cmp ebx, 18
+    jae 4f
+    jmp 2b
+3:  cmp byte ptr [rdi], ' '     # skip a field
+    je 31f
+    cmp byte ptr [rdi], 0
+    je 4f
+    inc rdi
+    jmp 3b
+31: inc ebx
+    jmp 2b
+4:  imul r15, r15, 10000000
+    add [r14], r15
+    inc qword ptr [r14 + 16]
+    # statm: resident pages are its second number
+    lea rdi, [rsp]
+    mov esi, r12d
+    lea rdx, [rip + .Lpu_statm]
+    call pu_path
+    lea rdi, [rsp]
+    lea rsi, [rsp + 128]
+    mov edx, 4000
+    call pu_read
+    test rax, rax
+    jle 5f
+    lea rdi, [rsp + 128]
+    call pu_num
+    mov rdi, rdx
+    call pu_skip
+    mov rdi, rax
+    call pu_num
+    shl rax, 12
+    add [r14 + 8], rax
+5:  # its children: /proc/PID/task/PID/children
+    cmp r13d, 8
+    jae 9f
+    lea rdi, [rsp]
+    mov esi, r12d
+    lea rdx, [rip + .Lpu_task]
+    call pu_path
+    mov rbx, rax
+    mov rdi, rax
+    mov esi, r12d
+    call fmt_u64
+    lea rdi, [rbx + rax]
+    lea rsi, [rip + .Lpu_children]
+    call cstr_copy
+    lea rdi, [rsp]
+    lea rsi, [rsp + 128]
+    mov edx, 4000
+    call pu_read
+    test rax, rax
+    jle 9f
+    lea r15, [rsp + 128]
+6:  mov rdi, r15
+    call pu_skip
+    mov rdi, rax
+    cmp byte ptr [rdi], '0'
+    jb 9f
+    cmp byte ptr [rdi], '9'
+    ja 9f
+    call pu_num
+    mov r15, rdx
+    mov edi, eax
+    lea esi, [r13 + 1]
+    mov rdx, r14
+    call pu_add
+    jmp 6b
+9:  EPILOGUE
+.endif
+.endif
+
 .section .rodata
 .Lslash: .ascii "/"
 .Lpath: .asciz "PATH"
 .Ldef_path: .asciz "/usr/local/bin:/usr/bin:/bin"
 .Ldevnull: .asciz "/dev/null"
+.Lpu_proc: .asciz "/proc/"
+.Lpu_stat: .asciz "/stat"
+.Lpu_statm: .asciz "/statm"
+.Lpu_task: .asciz "/task/"
+.Lpu_children: .asciz "/children"
 .Lptmx: .asciz "/dev/ptmx"
 .Lpts: .asciz "/dev/pts/"
 .p2align 3

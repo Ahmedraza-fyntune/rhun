@@ -999,3 +999,78 @@ FN win_detach
     xor edi, edi
     call sys_exit
 9:  EPILOGUE
+
+# ---- resources group: what an extension's processes cost (extres.s) ----
+
+# proc_usage(pid, out) -> rax 0 or -errno: from the job proc_spawn gave the child: out[0] CPU
+# nanoseconds of every process ever in it (JobObjectBasicAccountingInformation, 100 ns units),
+# out[8] the working sets of the live ones (JobObjectBasicProcessIdList, K32GetProcessMemoryInfo),
+# out[16] how many are live
+FN proc_usage
+    PROLOGUE 704
+    mov r12, rsi
+    mov qword ptr [r12], 0
+    mov qword ptr [r12 + 8], 0
+    mov qword ptr [r12 + 16], 0
+    mov edi, edi
+    lea rbx, [rip + children]
+    mov ecx, CHILD_MAX
+1:  cmp [rbx], rdi
+    je 2f
+    add rbx, CHILD_SIZE
+    dec ecx
+    jnz 1b
+    mov rax, -3
+    EPILOGUE
+2:  mov rcx, [rbx + 16]
+    test rcx, rcx
+    jz 8f
+    mov edx, 1                  # JobObjectBasicAccountingInformation
+    lea r8, [rsp + 96]
+    mov r9d, 48
+    mov qword ptr [rsp + 32], 0
+    API QueryInformationJobObject
+    test eax, eax
+    jz 8f
+    mov rax, [rsp + 96]         # TotalUserTime
+    add rax, [rsp + 104]        # TotalKernelTime
+    imul rax, rax, 100
+    mov [r12], rax
+    mov eax, [rsp + 136]        # ActiveProcesses
+    mov [r12 + 16], rax
+    mov rcx, [rbx + 16]
+    mov edx, 3                  # JobObjectBasicProcessIdList, 64 ids at most
+    lea r8, [rsp + 160]
+    mov r9d, 8 + 8 * 64
+    mov qword ptr [rsp + 32], 0
+    API QueryInformationJobObject
+    test eax, eax
+    jz 9f
+    mov r13d, [rsp + 164]       # NumberOfProcessIdsInList
+    xor r14d, r14d
+3:  cmp r14d, r13d
+    jae 9f
+    mov r8, [rsp + 168 + r14*8]
+    inc r14d
+    mov ecx, 0x1000             # PROCESS_QUERY_LIMITED_INFORMATION
+    xor edx, edx
+    API OpenProcess
+    test rax, rax
+    jz 3b
+    mov r15, rax
+    mov rcx, rax
+    lea rdx, [rsp + 96]
+    mov dword ptr [rsp + 96], 72    # PROCESS_MEMORY_COUNTERS
+    mov r8d, 72
+    API K32GetProcessMemoryInfo
+    test eax, eax
+    jz 4f
+    mov rax, [rsp + 112]        # WorkingSetSize
+    add [r12 + 8], rax
+4:  mov rcx, r15
+    API CloseHandle
+    jmp 3b
+8:  mov rax, -3
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE

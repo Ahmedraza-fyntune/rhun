@@ -87,6 +87,7 @@ FN extpage_draw
     mov [rsp + 4], esi
     mov [rsp + 8], edx
     mov [rsp + 12], ecx
+    call extres_page_seen       # resources group: CPU and memory are sampled while it shows
     call extpage_forget
     mov edi, [rsp]
     mov esi, [rsp + 4]
@@ -416,7 +417,28 @@ draw_card:
     jz 8f
     mov rdi, rbx
     call extupdate_update
-8:  mov eax, [rsp + 8]
+8:  # resources group: memory and CPU while it runs (extres.s), at the right of the buttons
+    lea rdi, [rip + xp_line]
+    call sb_clear
+    mov rdi, rbx
+    lea rsi, [rip + xp_line]
+    call extres_card_cost
+    test eax, eax
+    jz 81f
+    call line_cstr
+    mov r14, rax
+    mov rdi, rax
+    call label_width_small
+    mov r8d, [rip + xp_x]
+    add r8d, [rip + xp_w]
+    sub r8d, r12d
+    sub r8d, eax
+    lea rdi, [rip + g_face_small]
+    mov rsi, r14
+    COLOR edx, T_MUTED
+    mov ecx, MI_32
+    call text_at_keep
+81: mov eax, [rsp + 8]
     add eax, r13d
     add eax, [rip + g_mt + 4*MI_12]
     mov [rip + xp_y], eax
@@ -555,7 +577,28 @@ draw_detail:
     test eax, eax
     jz 51f
     EPILOGUE                    # it rolled back: the record shown changed
-51: # what it may do
+51:
+    # resources group: how it runs and what it costs (extres.s)
+    lea rsi, [rip + .Ls_resources]
+    call section
+    xor r12d, r12d
+55: lea rdi, [rip + xp_line]
+    call sb_clear
+    mov rdi, rbx
+    mov esi, r12d
+    lea rdx, [rip + xp_line]
+    call extres_page_line
+    test eax, eax
+    jz 57f
+    call line_cstr
+    mov rsi, rax
+    lea rdi, [rip + g_face_small]
+    COLOR edx, T_MUTED
+    mov ecx, MI_24
+    call line_text
+    inc r12d
+    jmp 55b
+57: # what it may do
     lea rsi, [rip + .Ls_permissions]
     call section
     mov rdi, rbx
@@ -594,7 +637,10 @@ draw_detail:
     call ext_set_edits
 52: M eax, MI_28
     add [rip + xp_y], eax
-51: # the pin
+51:
+    mov rdi, rbx                # resources group: its passwords and tokens (extpageres.inc)
+    call draw_res_secrets
+    # the pin
     lea rsi, [rip + .Ls_toolbar]
     call section
     lea rdi, [rip + g_face_ui]
@@ -1777,7 +1823,11 @@ FN ext_needs_words
     mov rdi, r12
     mov rsi, [rbx + EXT_runs]
     call sb_push_cstr
-8:  test r14d, r14d
+8:  lea rsi, [rip + .Ln_secrets]  # resources group
+    test r13d, NEEDS_SECRETS
+    jz 81f
+    call item
+81: test r14d, r14d
     jnz 9f
     lea rsi, [rip + .Ln_nothing]
     call item
@@ -3252,6 +3302,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ln_git: .asciz "read the project's Git history"
 .Ln_runs: .asciz "run "
 .Ln_nothing: .asciz "only use its own commands and settings"
+.Ln_secrets: .asciz "store passwords and tokens in your keychain"
 .Ln_sep: .asciz ", "
 .Lt_intro: .asciz "Extensions add commands, marks and tools to rhun. Each one gets only the access it asks for."
 .Lt_none: .asciz "No extensions yet. Install one from GitHub, for example rhun-editor/showcase."
@@ -3266,6 +3317,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Lt_windows: .asciz "Windows cannot hold it to these permissions; it runs with yours."
 .Lt_wasm: .asciz "It runs as WebAssembly: rhun holds it to these permissions on every system."
 .Ls_permissions: .asciz "It can"
+.Ls_resources: .asciz "Resources"
 .Ls_toolbar: .asciz "Title bar"
 .Ls_commands: .asciz "Commands"
 .Ls_langfeat: .asciz "Language features"
@@ -3304,3 +3356,5 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 FN extpage_prompt_invalidate_pure
     mov qword ptr [rip + xp_prompt_sd], 0
     ret
+
+.include "app/extpageres.inc"     # resources group: the details page's parts

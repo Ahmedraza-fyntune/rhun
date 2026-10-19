@@ -45,6 +45,7 @@ FN doc_new
     mov [rbx + DOC_language_name], rax
     mov [rbx + DOC_language_epoch], rax
     mov [rbx + DOC_language_pending], rax
+    mov [rbx + DOC_uri], rax    # resources group: not a virtual document
     mov qword ptr [rbx + DOC_language_revision], 1
     mov edi, GAP_MIN
     call mem_alloc
@@ -124,6 +125,8 @@ FN doc_free
     call watch_hops_free
     mov rdi, [rbx + DOC_img]
     call iv_free
+    mov rdi, rbx
+    call vdoc_doc_freed         # resources group: a virtual document's provider hears it closed
     mov rdi, rbx
     call mem_free
     pop rbx
