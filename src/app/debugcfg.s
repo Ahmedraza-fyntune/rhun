@@ -36,6 +36,10 @@ cn_leaves: .long 0
 cur_line: .long 0               # launch.ini line of the value being read (for messages), 0 none
 g_dcfg_err: .zero 1024          # why the last step failed
 g_dcfg_code: .long 0            # dcfg_from_leaves: DCE_*
+lvn: .long 0                    # dcfg_leaves: the leaves so far
+.p2align 3
+lvb: .zero SB_SIZE              # and their records
+lpb: .zero SB_SIZE              # the path of the node being walked
 it: .zero INI_SIZE
 pathb: .zero SB_SIZE            # scratch for paths
 valb: .zero SB_SIZE             # a value with its variables replaced
@@ -2489,6 +2493,109 @@ FN dcfg_from_leaves
     lea rdi, [rip + .Lm_nottype]
     call err_set
     xor eax, eax
+    EPILOGUE
+
+# dcfg_leaves(sb): the prepared configuration (the tree dcfg_prepare built) as a configuration
+#   body: "N" LF and its leaves, appended to sb
+FN dcfg_leaves
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + lvb]
+    call sb_clear
+    lea rdi, [rip + lpb]
+    call sb_clear
+    mov dword ptr [rip + lvn], 0
+    cmp qword ptr [rip + cn + VEC_len], 0
+    je 1f
+    xor edi, edi
+    call cl_walk
+1:  mov rdi, rbx
+    mov esi, [rip + lvn]
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + lvb + SB_ptr]
+    mov rdx, [rip + lvb + SB_len]
+    call sb_push
+    EPILOGUE
+
+# cl_walk(node): its leaves into lvb with lpb as the path so far
+cl_walk:
+    PROLOGUE
+    mov r12d, edi
+    mov edi, r12d
+    call cn_node
+    mov r13, rax
+    mov eax, [r13 + CN_kind]
+    test eax, eax
+    jnz 3f
+    # a leaf: KIND PATH_LEN VALUE_LEN LF PATH VALUE
+    lea rdi, [rip + lvb]
+    mov esi, [r13 + CN_lkind]
+    call sb_push_byte
+    lea rdi, [rip + lvb]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + lvb]
+    mov rsi, [rip + lpb + SB_len]
+    call sb_push_u64
+    lea rdi, [rip + lvb]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + lvb]
+    mov esi, [r13 + CN_vallen]
+    call sb_push_u64
+    lea rdi, [rip + lvb]
+    mov esi, 10
+    call sb_push_byte
+    lea rdi, [rip + lvb]
+    mov rsi, [rip + lpb + SB_ptr]
+    mov rdx, [rip + lpb + SB_len]
+    call sb_push
+    mov edi, r12d
+    call cn_node
+    mov ecx, [rax + CN_val]
+    mov rsi, [rip + cstrs + SB_ptr]
+    add rsi, rcx
+    mov edx, [rax + CN_vallen]
+    lea rdi, [rip + lvb]
+    call sb_push
+    inc dword ptr [rip + lvn]
+    EPILOGUE
+3:  mov r15d, eax               # 1 object, 2 array
+    mov r14d, [r13 + CN_kid]
+    mov rbx, [rip + lpb + SB_len]   # this node's path length
+4:  test r14d, r14d
+    js 9f
+    mov [rip + lpb + SB_len], rbx
+    test rbx, rbx
+    jz 41f
+    lea rdi, [rip + lpb]
+    mov esi, '.'
+    call sb_push_byte
+41: mov edi, r14d
+    call cn_node
+    cmp r15d, 2
+    je 42f
+    mov ecx, [rax + CN_name]
+    mov rsi, [rip + cstrs + SB_ptr]
+    add rsi, rcx
+    mov edx, [rax + CN_namelen]
+    lea rdi, [rip + lpb]
+    call sb_push
+    jmp 43f
+42: mov rsi, [rax + CN_index]
+    lea rdi, [rip + lpb]
+    call sb_push_u64
+43: mov edi, r14d
+    call cl_walk
+    mov edi, r14d
+    call cn_node
+    mov r14d, [rax + CN_next]
+    jmp 4b
+9:  mov [rip + lpb + SB_len], rbx
     EPILOGUE
 
 # dec_at(ptr, end) -> rax a decimal number there, rdx the byte after its digits (0 without a digit

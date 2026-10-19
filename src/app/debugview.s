@@ -30,6 +30,7 @@ prompt_bp: .long 0              # the breakpoint (id) a prompt edits
 .p2align 3
 prompt_path: .zero SB_SIZE
 cfg_first: .zero SB_SIZE        # launch.ini's names, for the status bar
+cfg_prev: .zero SB_SIZE         # the names before the last read
 tb_rects: .zero 16 * 8          # the toolbar's buttons as last drawn: icon, x, y, size
 tb_n: .long 0
 cfg_checked: .quad 0
@@ -2247,17 +2248,7 @@ status_word:
 #   first (read again at most every 2 s)
 status_config:
     PROLOGUE
-    call time_ms
-    mov rbx, rax
-    sub rax, [rip + cfg_checked]
-    cmp rax, 2000
-    jb 1f
-    mov [rip + cfg_checked], rbx
-    lea rdi, [rip + cfg_first]
-    call sb_clear
-    lea rdi, [rip + cfg_first]
-    call dcfg_names
-1:  mov rsi, [rip + g_dsel + SB_ptr]
+    mov rsi, [rip + g_dsel + SB_ptr]
     mov rdx, [rip + g_dsel + SB_len]
     test rdx, rdx
     jnz 2f
@@ -2284,6 +2275,56 @@ status_config:
 8:  xor eax, eax
     EPILOGUE
 
+# cfg_refresh(): launch.ini's names for the status bar, read again at most every 2 s from the tick
+#   (never from drawing: in a remote window reading the file is a round trip)
+cfg_refresh:
+    PROLOGUE
+    call time_ms
+    mov rbx, rax
+    mov rcx, [rip + cfg_checked]
+    test rcx, rcx
+    jz 1f
+    sub rax, rcx
+    cmp rax, 2000
+    jb 9f
+1:  mov [rip + cfg_checked], rbx
+    lea rdi, [rip + cfg_prev]
+    lea rsi, [rip + cfg_first]
+    call sb_copy_dv
+    lea rdi, [rip + cfg_first]
+    call sb_clear
+    lea rdi, [rip + cfg_first]
+    call dcfg_names
+    mov rdx, [rip + cfg_first + SB_len]
+    cmp rdx, [rip + cfg_prev + SB_len]
+    jne 2f
+    mov rdi, [rip + cfg_first + SB_ptr]
+    mov rsi, [rip + cfg_prev + SB_ptr]
+    test rdx, rdx
+    jz 9f
+    call memeq
+    test eax, eax
+    jnz 9f
+2:  mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# sb_copy_dv(dst, src)
+sb_copy_dv:
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12, rsi
+    call sb_clear
+    mov rdi, rbx
+    mov rsi, [r12 + SB_ptr]
+    mov rdx, [r12 + SB_len]
+    call sb_push
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
 # sb_z_dv(sb) -> its bytes NUL-terminated
 sb_z_dv:
     push rbx
@@ -2308,6 +2349,7 @@ FN dview_show_on
 # dview_context(): debugState, inDebugMode and debugType for when clauses, from the focused session
 FN dview_context
     PROLOGUE
+    call cfg_refresh
     mov eax, [rip + g_dap_gen]
     cmp eax, [rip + ctx_gen]
     je 9f

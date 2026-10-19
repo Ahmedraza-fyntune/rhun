@@ -200,6 +200,10 @@ FN dap_start
     mov r12, rdi
     mov r13, rsi
     mov [rsp], edx
+    mov dword ptr [rip + dstart_resolved], 0
+    call dbgx_resolving
+    test eax, eax
+    jnz .Lst_preparing          # one launch waits for its extension at a time
     mov rdi, r12
     mov rsi, r13
     mov edx, [rsp]
@@ -217,7 +221,22 @@ FN dap_start
     mov r15, [r14 + DBG_ext]
     test dword ptr [r15 + EXT_needs], NEEDS_DEBUG
     jz .Lst_noneeds
-    mov dword ptr [rsp + 4], DTR_STDIO
+    # resolve = yes: the extension sees the configuration first (debugext.s); the launch goes on
+    # in dap_start_resolved. Not for its own debug-start sessions
+    cmp dword ptr [r14 + DBG_resolve], 0
+    je 1f
+    cmp qword ptr [rip + dstart_owner], 0
+    jne 1f
+    cmp dword ptr [rip + dstart_resolved], 0
+    jne 1f
+    mov rdi, r15
+    mov esi, [rip + g_lc_dbg]
+    call dbgx_resolve_begin
+    test eax, eax
+    jz .Lst_resfail
+    xor eax, eax
+    EPILOGUE
+1:  mov dword ptr [rsp + 4], DTR_STDIO
     mov dword ptr [rsp + 8], DAP_LOOPBACK
     cmp qword ptr [rip + g_lc_server + SB_len], 0
     jne .Lst_server
@@ -310,6 +329,12 @@ FN dap_start
 .Lst_badserver:
     lea rdi, [rip + .Lm_badserver]
     jmp .Lst_msg
+.Lst_preparing:
+    lea rdi, [rip + .Lm_preparing]
+    jmp .Lst_msg
+.Lst_resfail:
+    mov rdi, [rip + g_dstart_msg]
+    jmp .Lst_msg
 .Lst_tcp:
     # a free loopback port for ${port}; the adapter listens there and rhun connects
     call dap_pick_port
@@ -343,6 +368,16 @@ FN dap_start_ext
     PROLOGUE 16
     mov [rip + dstart_owner], rdi
     mov [rip + dstart_oid], rsi
+    mov dword ptr [rip + dstart_resolved], 0
+    jmp .Lst_prepared
+
+# dap_start_resolved() -> eax the session's id, 0: the debugger's extension answered debug-resolve
+#   (debugext.s) and g_lc_* hold the configuration to launch
+FN dap_start_resolved
+    PROLOGUE 16
+    mov qword ptr [rip + dstart_owner], 0
+    mov qword ptr [rip + dstart_oid], 0
+    mov dword ptr [rip + dstart_resolved], 1
     jmp .Lst_prepared
 
 # dap_error(cstr): a failure to start or run, in the console and as a toast
@@ -752,6 +787,7 @@ FN dap_tick
 9:  call bp_tick
     call restart_check
     call dg_hover_tick
+    call dbgx_resolve_tick
     EPILOGUE
 
 # ds_tick(ds)
@@ -892,7 +928,11 @@ FN dap_timeout
     cmp eax, -1
     je 91f
     call near_ms
-91: mov rax, r13
+91: call dbgx_resolve_timeout   # debug-resolve's deadlines
+    cmp rax, -1
+    je 92f
+    call near_ms
+92: mov rax, r13
     EPILOGUE
 # near_deadline: r13 = min(r13, [r15] - now) for a set deadline
 near_deadline:
@@ -1381,6 +1421,11 @@ adapter_gone:
 
 # dap_stop(): Stop on the focused session; a second press goes to the next step at once
 FN dap_stop
+    sub rsp, 8
+    call dbgx_resolve_cancel    # Stop while the extension prepares the launch withdraws it
+    add rsp, 8
+    test eax, eax
+    jnz 1f
     call dap_focused
     test rax, rax
     jz 1f
@@ -4167,6 +4212,8 @@ FN dap_find_node
 .p2align 3
 dstart_owner: .quad 0           # dap_start_ext's caller for the session being made, 0 the user
 dstart_oid: .quad 0
+dstart_resolved: .long 0        # 1: debug-resolve answered for this launch
+.p2align 3
 .globl g_dstart_msg
 g_dstart_msg: .quad 0           # why the last dap_start* could not make a session
 
@@ -4175,6 +4222,7 @@ g_dstart_msg: .quad 0           # why the last dap_start* could not make a sessi
 dap_m_busy:
 .Lm_busy: .asciz "a debug session is waiting for your answer"
 .Lm_compound: .asciz "compound configurations are not supported yet"
+.Lm_preparing: .asciz "a launch is being prepared by its debugger's extension"
 .Lm_badserver: .asciz "server must be PORT or HOST:PORT, with HOST localhost or an IPv4 address"
 .Lm_noport: .asciz "no free TCP port on 127.0.0.1 for the debugger (this system has no sockets for rhun yet?)"
 .Lm_nosocket: .asciz "rhun could not create a TCP socket for the debugger"

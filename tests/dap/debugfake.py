@@ -45,6 +45,44 @@ def debug_start(req):
     log('sent debug-start %d' % rid)
 
 
+def parse_body(body):
+    lines = body.split(b'\n', 1)
+    n, rest = int(lines[0]), lines[1]
+    leaves = []
+    for _ in range(n):
+        head, rest = rest.split(b'\n', 1)
+        kind, pl, vl = head.split(b' ')
+        pl, vl = int(pl), int(vl)
+        leaves.append([kind.decode(), rest[:pl].decode(), rest[pl:pl + vl].decode()])
+        rest = rest[pl + vl:]
+    return leaves, rest
+
+
+def resolve(rid, body):
+    how = MODE.get('resolve', 'unchanged')
+    if how == 'unchanged':
+        out.write(b'ok %d 0\n' % rid)
+    elif how == 'cancel':
+        out.write(b'error %d cancelled the user dismissed it\n' % rid)
+    elif how == 'refuse':
+        out.write(b'error %d refused no Go package in this folder\n' % rid)
+    elif how == 'silent':
+        return
+    elif how == 'crash':
+        sys.exit(1)
+    elif how == 'garbage':
+        out.write(b'ok %d 5\nnope!' % rid)
+    else:
+        leaves, _ = parse_body(body)
+        for path in how.get('remove', []):
+            leaves = [l for l in leaves if l[1] != path and not l[1].startswith(path + '.')]
+        for kind, path, value in how.get('set', []):
+            leaves = [l for l in leaves if l[1] != path] + [[kind, path, value]]
+        b = body_of(leaves)
+        out.write(b'ok %d %d\n' % (rid, len(b)) + b)
+    out.flush()
+
+
 def main():
     features = MODE.get('features', 'debug')
     out.write(('hello 1 %s\n' % features).strip().encode() + b'\n')
@@ -58,6 +96,11 @@ def main():
         fields = text.split(' ')
         if text.startswith('0 bye'):
             break
+        if len(fields) == 6 and fields[1] == 'debug-resolve':
+            body = inp.read(int(fields[5]))
+            log('BODY ' + json.dumps(body.decode('utf-8', 'replace')))
+            resolve(int(fields[0]), body)
+            continue
         if fields[:2] == ['0', 'run'] and len(fields) > 2 and fields[2].split('.')[-1] == 'start':
             if MODE.get('burst'):
                 while starts:

@@ -8,7 +8,7 @@ import unittest
 import debughost
 
 
-class Feature(debughost.DebugHost):
+class FeatureHost(debughost.DebugHost):
     def ext_state(self):
         return self.work / 'state/rhun/extensions/rhun-tests--debugfake'
 
@@ -28,6 +28,8 @@ class Feature(debughost.DebugHost):
             leaves.append([kind, path.replace('__', '.'), value])
         return leaves
 
+
+class Feature(FeatureHost):
     def test_debug_start_runs_a_session_and_reports_its_end(self):
         self.mode(start=[{'name': 'From ext', 'leaves': self.leaves(
             args__0=('s', 'x y'), args__1=('s', '-v'), count=('n', 7), stopOnEntry=('b', 'false'),
@@ -113,6 +115,94 @@ class Feature(debughost.DebugHost):
                 self.assertEqual(len(errors), 2, self.ext_log())
                 for i, line in enumerate(errors):
                     self.assertTrue(line.startswith('error %d syntax' % (i + 1)), errors)
+
+
+class Resolve(FeatureHost):
+    """debug-resolve: a debugger with resolve = yes shows the extension the configuration first"""
+
+    def ini(self, extra=''):
+        self.scenario()
+        self.launch_ini('[Run]\ntype = fakeres\nprogram = scenario.json\ncount = 5\nargs.0 = a\n' + extra)
+
+    def start(self, name='Run', run=False):
+        """the approval comes once the extension answered"""
+        return [('debug-run ' if run else 'debug-start ') + name, 'wait 800', 'dialog yes']
+
+    def resolve_lines(self):
+        return [l for l in self.ext_log() if ' debug-resolve ' in l]
+
+    def body(self):
+        line = [l for l in self.ext_log() if l.startswith('BODY ')][0]
+        return json.loads(line[5:])
+
+    def test_unchanged(self):
+        self.ini()
+        self.mode(resolve='unchanged')
+        out = self.run_editor([*self.start(), 'wait-debug ended', 'print-debug'])
+        (line,) = self.resolve_lines()
+        self.assertTrue(line.endswith(' debug-resolve fakeres launch 0 %d' % len(self.body().encode())), line)
+        body = self.body()
+        for leaf in ('s 4 7\ntypefakeres', 'n 5 1\ncount5', 's 6 1\nargs.0a', 's 4 3\nnameRun'):
+            self.assertIn(leaf, body)
+        self.assertIn('context 1 1 1 %d\n%s' % (len(self.src.as_posix()), self.src.as_posix()), body)
+        self.assertEqual(self.field(self.debug_lines(out)[0], 'exit'), '3', out)
+        self.assertEqual(self.args_sent()['count'], 5)
+
+    def test_replaced(self):
+        self.ini()
+        self.mode(resolve={'set': [['n', 'count', '9'], ['s', 'mode', 'test']], 'remove': ['args']})
+        self.run_editor([*self.start(), 'wait-debug ended'])
+        args = self.args_sent()
+        self.assertEqual(args['count'], 9)
+        self.assertEqual(args['mode'], 'test')
+        self.assertNotIn('args', args)
+        self.assertEqual(args['name'], 'Run')
+        self.assertEqual(args['type'], 'fakeres')
+
+    def test_run_without_debugging(self):
+        self.ini()
+        self.mode(resolve='unchanged')
+        self.run_editor([*self.start(run=True), 'wait-debug ended'])
+        self.assertTrue(self.resolve_lines()[0].split(' ')[4] == '1', self.resolve_lines())
+
+    def test_cancelled_quietly_and_refused_with_its_text(self):
+        for how, console in (('cancel', 'info Launch cancelled'), ('refuse', 'error no Go package in this folder')):
+            with self.subTest(how=how):
+                self.ini()
+                self.mode(resolve=how)
+                out = self.run_editor(['debug-start Run', 'wait 800', 'print-debug', 'print-dialog', 'print-console'])
+                self.assertEqual(self.debug_lines(out), [], out)
+                self.assertIn('dialog=none', out)          # nothing runs, nothing is asked
+                self.assertIn(console, out)
+                self.assertFalse(self.log.exists())
+
+    def test_an_answer_that_does_not_parse(self):
+        self.ini()
+        self.mode(resolve='garbage')
+        out = self.run_editor(['debug-start Run', 'wait 800', 'print-console'])
+        self.assertTrue(any(l.startswith('error the debugger\'s extension answered with a configuration') for l in out), out)
+
+    def test_stop_while_it_prepares(self):
+        self.ini()
+        self.mode(resolve='silent')
+        out = self.run_editor(['debug-start Run', 'wait 500', 'debug-start Run', 'debug-stop', 'wait 300',
+                               'print-console', 'print-debug'])
+        self.assertIn('error a launch is being prepared by its debugger\'s extension', out)
+        self.assertIn('info Launch cancelled', out)
+        rid = self.resolve_lines()[0].split(' ')[0]
+        self.assertIn('0 cancel %s' % rid, self.ext_log())
+
+    def test_an_extension_that_crashes(self):
+        self.ini()
+        self.mode(resolve='crash')
+        out = self.run_editor(['debug-start Run', 'wait 1000', 'print-console'])
+        self.assertIn("error the debugger's extension stopped while it prepared the launch", out)
+
+    def test_without_the_feature(self):
+        self.ini()
+        self.mode(features='', resolve='unchanged')
+        out = self.run_editor(['debug-start Run', 'wait 800', 'print-console'])
+        self.assertIn('error the extension does not answer debug-resolve (feature debug not agreed)', out)
 
 
 if __name__ == '__main__':

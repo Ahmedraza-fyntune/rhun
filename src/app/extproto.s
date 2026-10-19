@@ -557,6 +557,14 @@ handle_line:
     call nb_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # debugger: debug-resolve (debugext.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call dbgx_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -680,6 +688,16 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call nb_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # debugger: debug-resolve's code and text (debugext.s)
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call dbgx_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
