@@ -271,6 +271,26 @@ class Updates(host.Host):
         out = self.ui(['ext-check-updates', 'wait-ext-updates', 'print-ext-updates'])
         self.assertIn('demo/hello installed=0.1.0 latest=0.1.2 state=available from=github', out)
 
+    def test_update_all_updates_each_one_after_another(self):
+        self.serve()
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        other = {k: v.replace('name = hello', 'name = other').replace('title = Hello', 'title = Other')
+                 .replace('say = Say Hello', 'say = Say Other') for k, v in files('1.0.0').items()}
+        self.rel.publish('demo', 'other', other, 'v1.0.0')
+        self.install('demo/hello')
+        self.ui(['ext-install demo/other', 'wait-install', 'dialog yes', 'wait-ext other running'])
+        self.rel.publish('demo', 'hello', files('0.1.1'), 'v0.1.1')
+        other = {k: v.replace('1.0.0', '1.1.0') for k, v in other.items()}
+        self.rel.publish('demo', 'other', other, 'v1.1.0')
+        out = self.ui(['ext-check-updates', 'wait-ext-updates', 'print-ext-page', 'ext-update-all', 'wait-ext-updates',
+                       'print-dialog', 'dialog yes', 'wait-ext-updates', 'print-dialog', 'dialog yes',
+                       'wait-ext-updates', 'wait 300', 'print-ext-updates'])
+        self.assertIn('updates=2', out)
+        self.assertIn('dialog=Update “Hello” to 0.1.1?', out)
+        self.assertIn('dialog=Update “Other” to 1.1.0?', out)
+        self.assertIn('demo/hello installed=0.1.1 latest=0.1.1 state=current from=github', out)
+        self.assertIn('demo/other installed=1.1.0 latest=1.1.0 state=current from=github', out)
+
     def test_moved_repositories_and_ones_without_releases_say_why(self):
         self.serve()
         self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')

@@ -266,6 +266,8 @@ FN testmodel_forget
     mov rdi, rbx
     call testproto_forget_requests
     mov rdi, rbx
+    call testgutter_forget      # its problems
+    mov rdi, rbx
     call testmodel_ctrl
     test rax, rax
     jz 9f
@@ -678,6 +680,7 @@ item_propagate:
     cmp ecx, edx
     je 9f
     mov [r13 + TSI_state], ecx
+    mov dword ptr [rip + g_ts_glyphs], 1
     movsxd r12, dword ptr [r13 + TSI_parent]
     test r12, r12
     js 9f
@@ -884,7 +887,13 @@ FN testmodel_items
     call tsb_left
     mov [rsp + 40], rax         # where the items start, as bytes left
     mov qword ptr [rip + ib_new], 0
-    xor r15d, r15d
+    mov qword ptr [rsp + 48], 0 # replace: the items its removals take away
+    cmp qword ptr [rip + ib_mode], 0
+    je 21f
+    mov rdi, rbx                # the parent's children lose their marks; pass 1 marks those kept
+    mov rsi, [rsp + 32]
+    call clear_marks
+21: xor r15d, r15d
 3:  cmp r15, r13
     jae 4f
     call item_parse
@@ -895,14 +904,37 @@ FN testmodel_items
 4:  call tsb_left
     test rax, rax
     jnz .Lti_syntax_trailing
-    mov eax, [rbx + TSC_count]
+    cmp qword ptr [rip + ib_mode], 0
+    je 42f
+    # replace: what goes with the children not kept counts against what comes
+    mov rdi, rbx
+    mov rsi, [rsp + 32]
+    call testmodel_item
+    movsxd r14, dword ptr [rax + TSI_first]
+41: test r14, r14
+    js 42f
+    mov rdi, rbx
+    mov rsi, r14
+    call testmodel_item
+    movsxd r15, dword ptr [rax + TSI_next]
+    test dword ptr [rax + TSI_flags], TSF_MARK
+    jnz 43f
+    mov rdi, rbx
+    mov rsi, r14
+    call subtree_size
+    add [rsp + 48], rax
+43: mov r14, r15
+    jmp 41b
+42: mov eax, [rbx + TSC_count]
     add rax, [rip + ib_new]
+    sub rax, [rsp + 48]
     cmp rax, TS_ITEMS_EXT
-    ja .Lti_toobig_ext
+    jg .Lti_toobig_ext
     mov rax, [rip + g_ts_items_all]
     add rax, [rip + ib_new]
+    sub rax, [rsp + 48]
     cmp rax, TS_ITEMS_ALL
-    ja .Lti_toobig_all
+    jg .Lti_toobig_all
     # pass 2: apply
     mov rdi, [rsp]
     add rdi, [rsp + 8]
@@ -1320,12 +1352,22 @@ item_parse:
     xor eax, eax
     jmp 9f
 1:  # an item that exists moves under the parent: not when the parent is the item or below it
+    mov r12, rax
     mov rdi, rbx
     mov rsi, [rip + ib_parent]
     mov rdx, rax
     call testmodel_is_under
     test eax, eax
-    jz 2f
+    jnz 11f
+    mov rdi, rbx                # a child kept by a replace
+    mov rsi, r12
+    call testmodel_item
+    movsxd rcx, dword ptr [rax + TSI_parent]
+    cmp rcx, [rip + ib_parent]
+    jne 2f
+    or dword ptr [rax + TSI_flags], TSF_MARK
+    jmp 2f
+11:
     lea rax, [rip + .Le_cycle]
     jmp 9f
 2:  # a #DOC path names an open document with a file
@@ -1441,9 +1483,72 @@ item_apply:
     xor edx, edx
 5:  lea rdi, [r13 + TSI_path]
     call set_str_opt
+    mov qword ptr [r13 + TSI_phash], 0
+    mov rdi, [r13 + TSI_path]
+    test rdi, rdi
+    jz 6f
+    call strlen
+    mov rsi, rax
+    mov rdi, [r13 + TSI_path]
+    call hash_line
+    mov [r13 + TSI_phash], rax
+6:  mov dword ptr [rip + g_ts_glyphs], 1
     mov rdi, [rbx + TSC_ext]
     mov rsi, r12
     call testgutter_item_changed
+    EPILOGUE
+
+# clear_marks(tsc, index): the item's children lose TSF_MARK
+clear_marks:
+    PROLOGUE
+    mov rbx, rdi
+    call testmodel_item
+    movsxd r12, dword ptr [rax + TSI_first]
+1:  test r12, r12
+    js 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    and dword ptr [rax + TSI_flags], ~TSF_MARK
+    movsxd r12, dword ptr [rax + TSI_next]
+    jmp 1b
+9:  EPILOGUE
+
+# subtree_size(tsc, index) -> rax the item and its descendants
+subtree_size:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    xor r13d, r13d
+    mov qword ptr [rip + stack + VEC_len], 0
+    lea rdi, [rip + stack]
+    mov esi, 8
+    call vec_push
+    mov [rax], r12
+1:  mov rax, [rip + stack + VEC_len]
+    test rax, rax
+    jz 9f
+    dec rax
+    mov [rip + stack + VEC_len], rax
+    mov rcx, [rip + stack + VEC_ptr]
+    mov r12, [rcx + rax*8]
+    inc r13
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    movsxd r14, dword ptr [rax + TSI_first]
+2:  test r14, r14
+    js 1b
+    lea rdi, [rip + stack]
+    mov esi, 8
+    call vec_push
+    mov [rax], r14
+    mov rdi, rbx
+    mov rsi, r14
+    call testmodel_item
+    movsxd r14, dword ptr [rax + TSI_next]
+    jmp 2b
+9:  mov rax, r13
     EPILOGUE
 
 # set_str(slot*, ptr, len): an owned copy replaces the slot's string
@@ -1611,6 +1716,8 @@ run_free:
     call sb_free
     lea rdi, [r14 + TSE_out]
     call sb_free
+    mov rdi, [r14 + TSE_prev_msg]
+    call mem_free
     inc r13
     jmp 1b
 3:  lea rdi, [rbx + TSR_ents]
@@ -1626,6 +1733,7 @@ run_free:
     mov edx, TSR_SIZE
     call memset
     mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_ts_marks], 1
     EPILOGUE
 
 # sb_free(sb): its bytes, and it is empty
@@ -1725,6 +1833,19 @@ FN testmodel_entry
     mov ecx, [r14 + TSI_rent]
     mov [rax + TSE_prev_rent], ecx
     mov [r14 + TSI_rent], r15d
+    mov rdi, [r14 + TSI_msg]    # the summary, to come back if the run leaves it unfinished
+    test rdi, rdi
+    jz 4f
+    push rax
+    push rax
+    call strlen
+    mov rsi, rax
+    mov rdi, [r14 + TSI_msg]
+    call mem_dup
+    mov rcx, rax
+    pop rax
+    pop rax
+    mov [rax + TSE_prev_msg], rcx
 4:  mov ecx, [rbx + TSR_num]
     mov [r14 + TSI_run], ecx
 9:  EPILOGUE
@@ -1790,23 +1911,86 @@ FN testmodel_run_end
     jne 7f                      # a later run reported it since
     cmp [rax + TSI_rent], r13d
     jne 7f
-    mov ecx, [r14 + TSE_prev_ms]
-    mov [rax + TSI_ms], ecx
-    mov ecx, [r14 + TSE_prev_run]
-    mov [rax + TSI_run], ecx
-    mov ecx, [r14 + TSE_prev_rent]
-    mov [rax + TSI_rent], ecx
+    mov r15, rax
+    mov rdi, r14
+    call prev_result            # the result before this run, followed while it moved on
+    mov [r15 + TSI_ms], edx
+    mov [r15 + TSI_run], ecx
+    mov [r15 + TSI_rent], r8d
+    push rax
+    push rax
+    mov rdi, [r15 + TSI_msg]    # its summary comes back too
+    call mem_free
+    mov rax, [r14 + TSE_prev_msg]
+    mov [r15 + TSI_msg], rax
+    mov qword ptr [r14 + TSE_prev_msg], 0
+    pop rdx
+    pop rdx
     mov rdi, r12
     mov esi, [r14 + TSE_item]
-    mov edx, [r14 + TSE_prev_own]
     call testmodel_set_own
 7:  inc r13
     jmp 2b
 8:  mov rdi, rbx
     call testexec_run_over      # its processes stop
     call testmodel_budget
+    mov dword ptr [rip + g_ts_marks], 1
     mov dword ptr [rip + g_ts_dirty], 1
     mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# prev_result(TSE*) -> eax state, edx ms, ecx run, r8d entry: the item's result before this run.
+#   When that was a live state of another run (queued, running), it is followed: still live there
+#   (that run runs on), or that run's own outcome for it, or what that run had found before it
+prev_result:
+    PROLOGUE
+    mov rbx, rdi
+    mov eax, [rbx + TSE_prev_own]
+    mov edx, [rbx + TSE_prev_ms]
+    mov ecx, [rbx + TSE_prev_run]
+    mov r8d, [rbx + TSE_prev_rent]
+    cmp eax, TSS_QUEUED
+    jb 9f
+    # another run's live state: where does it stand now
+    mov edi, ecx
+    call testmodel_run_by_num
+    test rax, rax
+    jz 8f
+    mov r12, rax
+    mov ecx, [rbx + TSE_prev_rent]
+    cmp rcx, [r12 + TSR_ents + VEC_len]
+    jae 8f
+    imul r13, rcx, TSE_SIZE
+    add r13, [r12 + TSR_ents + VEC_ptr]
+    mov eax, [r13 + TSE_item]
+    cmp eax, [rbx + TSE_item]
+    jne 8f
+    mov eax, [r13 + TSE_gen]
+    cmp eax, [rbx + TSE_gen]
+    jne 8f
+    mov eax, [r13 + TSE_state]
+    cmp eax, TSS_NOTRUN
+    jne 1f
+    # that run ended without an outcome for it: what it had before that run, unless live too
+    mov eax, [r13 + TSE_prev_own]
+    cmp eax, TSS_QUEUED
+    jae 8f
+    mov edx, [r13 + TSE_prev_ms]
+    mov ecx, [r13 + TSE_prev_run]
+    mov r8d, [r13 + TSE_prev_rent]
+    jmp 9f
+1:  cmp eax, TSS_QUEUED
+    jb 2f
+    cmp dword ptr [r12 + TSR_state], TSRS_RUNNING
+    jne 8f                      # live in a run that is over: nothing
+2:  mov edx, [r13 + TSE_ms]
+    mov ecx, [rbx + TSE_prev_run]
+    mov r8d, [rbx + TSE_prev_rent]
+    jmp 9f
+8:  mov eax, TSS_NOTRUN
+    mov edx, -1
+    xor ecx, ecx
+    xor r8d, r8d
 9:  EPILOGUE
 
 # testmodel_counts(run, out[TSS_COUNT] u32): the run's results per state (its own entry left out)
@@ -2345,7 +2529,16 @@ FN testmodel_dump_runs
     mov rdi, rbx
     lea rsi, [rip + .Lr_errored]
     call sb_push_cstr
-4:  mov rdi, r13
+4:  cmp dword ptr [r13 + TSR_state], TSRS_ENDED
+    je 41f
+    mov rdi, [r13 + TSR_ext]
+    call testproto_debug_window
+    test eax, eax
+    jz 41f
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_debug_window]
+    call sb_push_cstr
+41: mov rdi, r13
     lea rsi, [rip + run_counts]
     call testmodel_counts
     mov rdi, rbx
@@ -2375,6 +2568,18 @@ FN testmodel_dump_runs
     mov rdi, rbx
     mov esi, 10
     call sb_push_byte
+    # the run's own messages (a problem that belongs to no item)
+    xor ecx, ecx
+7:  cmp rcx, [r13 + TSR_ents + VEC_len]
+    jae 1b
+    imul rax, rcx, TSE_SIZE
+    add rax, [r13 + TSR_ents + VEC_ptr]
+    inc rcx
+    cmp dword ptr [rax + TSE_item], -1
+    jne 7b
+    mov rdi, rbx
+    mov rsi, rax
+    call testmodel_dump_messages
     jmp 1b
 9:  EPILOGUE
 
@@ -2605,6 +2810,7 @@ FN testmodel_result
 .Lr_ext: .asciz " ext="
 .Lr_profile: .asciz " profile="
 .Lr_state: .asciz " state="
+.Lr_debug_window: .asciz " debug-window"
 .Lr_errored: .asciz " errored-run"
 .Lr_dropped: .asciz " dropped="
 .Lr_procs: .asciz " procs="

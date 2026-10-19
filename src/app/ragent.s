@@ -15,6 +15,10 @@
 .equ AG_MAXPOLL, 2200
 .equ AG_ENV_MS, 5000            # the login shell's environment: how long it may take
 .equ AG_REQ_MAX, 67108864       # a request's body at most (a file written in one piece)
+.equ AG_ENV_MAX, 1000             # environment entries a spawn passes
+.equ AG_GROUPS, 256             # process groups whose leader is gone, watched until they are empty
+.equ AG_LINGER_MS, 2000         # SIGHUP and SIGTERM, then SIGKILL this much later
+.equ AG_GIVEUP_MS, 5000         # a group still there this long after SIGKILL is given up
 
 # channel modes
 .equ AM_FREE, 0
@@ -70,9 +74,25 @@ ag_envbuf: .quad 0              # the captured environment's strings (kept for t
 ag_envv: .quad 0
 ag_delay: .quad 0               # RHUN_REMOTE_DELAY_MS: every reply waits this long (tests)
 ag_argv: .zero 8 * 260
+ag_envl: .zero 8 * (AG_ENV_MAX + 1)  # a spawn's environment entries
+ag_groups: .zero 16 * AG_GROUPS # pgid (4), 1 once SIGKILLed (4), the deadline in ms (8)
 
 .data
 ag_inotify: .long -1
+.bss
+.p2align 3
+ag_exclude: .quad 0
+ag_walk_cb: .quad 0
+ag_walk_max: .quad 0
+ag_walk_n: .quad 0
+ag_grep_bytes: .quad 0
+ag_query: .quad 0
+ag_query_len: .quad 0
+ag_rel_len: .long 0
+ag_depth: .long 0
+ag_walk_stop: .long 0
+ag_grep_case: .long 0
+ag_rel: .zero 4200
 
 .text
 
@@ -137,9 +157,11 @@ FN remote_agent_main
     jne .Lag_end
     call ag_poll
     call ag_reap
+    call ag_groups_tick
     jmp .Lag_loop
 .Lag_end:
-    # the window went away: its programs end with it
+    # the window went away: its programs end with it, and what they started: their groups get
+    # SIGHUP and SIGTERM, SIGKILL AG_LINGER_MS later if they are not empty by then
     lea rbx, [rip + ag_ch]
     xor r12d, r12d
 3:  mov eax, [rbx + AC_mode]
@@ -152,18 +174,164 @@ FN remote_agent_main
     jle 5f
     test dword ptr [rbx + AC_flags], ACF_EXITED
     jnz 5f
-    neg edi
-    mov esi, SIGHUP
-    SYS SYS_kill
-    mov edi, [rbx + AC_pid]
-    mov esi, SIGTERM
-    SYS SYS_kill
+    call ag_group_add
 5:  add rbx, AC_SIZE
     inc r12d
     cmp r12d, AG_MAXCH
     jb 3b
+    call time_ms
+    lea r12, [rax + AG_LINGER_MS]
+6:  # reap every child (a group whose leader is a zombie is not empty), then look at the groups
+    mov edi, -1
+    xor esi, esi
+    mov edx, WNOHANG
+    xor r10d, r10d
+    SYS SYS_wait4
+    test rax, rax
+    jg 6b
+    call ag_groups_live
+    test eax, eax
+    jz 8f
+    call time_ms
+    cmp rax, r12
+    jae 7f
     xor edi, edi
+    xor esi, esi
+    mov edx, 50
+    SYS SYS_poll
+    jmp 6b
+7:  call ag_groups_kill
+8:  xor edi, edi
     call sys_exit
+
+# ag_group_add(pgid): a program's process group: SIGHUP and SIGTERM now, then watched until it is
+#   empty (SIGKILL at its deadline); nothing when it is empty already
+ag_group_add:
+    PROLOGUE
+    mov ebx, edi
+    test ebx, ebx
+    jle 9f
+    mov edi, ebx
+    neg edi
+    xor esi, esi
+    SYS SYS_kill
+    test rax, rax
+    jnz 9f
+    mov edi, ebx
+    neg edi
+    mov esi, SIGHUP
+    SYS SYS_kill
+    mov edi, ebx
+    neg edi
+    mov esi, SIGTERM
+    SYS SYS_kill
+    lea r12, [rip + ag_groups]
+    xor ecx, ecx
+1:  cmp [r12], ebx
+    je 3f                       # already watched: its deadline stays
+    add r12, 16
+    inc ecx
+    cmp ecx, AG_GROUPS
+    jb 1b
+    lea r12, [rip + ag_groups]
+    xor ecx, ecx
+2:  cmp dword ptr [r12], 0
+    je 4f
+    add r12, 16
+    inc ecx
+    cmp ecx, AG_GROUPS
+    jb 2b
+    mov edi, ebx                # no room to watch it: it goes now
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+    jmp 9f
+4:  mov [r12], ebx
+    mov dword ptr [r12 + 4], 0
+    call time_ms
+    add rax, AG_LINGER_MS
+    mov [r12 + 8], rax
+3:
+9:  EPILOGUE
+
+# ag_groups_tick(): watched groups that are empty are forgotten; SIGKILL at the deadline; one still
+#   there AG_GIVEUP_MS after it (stuck in the kernel) is given up
+ag_groups_tick:
+    PROLOGUE
+    lea rbx, [rip + ag_groups]
+    xor r12d, r12d
+    xor r13d, r13d              # time_ms, once needed
+1:  mov edi, [rbx]
+    test edi, edi
+    jz 5f
+    neg edi
+    xor esi, esi
+    SYS SYS_kill
+    test rax, rax
+    jnz 4f
+    test r13, r13
+    jnz 2f
+    call time_ms
+    mov r13, rax
+2:  cmp r13, [rbx + 8]
+    jb 5f
+    cmp dword ptr [rbx + 4], 0
+    jne 4f
+    mov edi, [rbx]
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+    mov dword ptr [rbx + 4], 1
+    lea rax, [r13 + AG_GIVEUP_MS]
+    mov [rbx + 8], rax
+    jmp 5f
+4:  mov dword ptr [rbx], 0
+5:  add rbx, 16
+    inc r12d
+    cmp r12d, AG_GROUPS
+    jb 1b
+    EPILOGUE
+
+# ag_groups_live() -> eax 1 while a watched group is not empty (the empty ones are forgotten)
+ag_groups_live:
+    PROLOGUE
+    lea rbx, [rip + ag_groups]
+    xor r12d, r12d
+    xor r13d, r13d
+1:  mov edi, [rbx]
+    test edi, edi
+    jz 3f
+    neg edi
+    xor esi, esi
+    SYS SYS_kill
+    test rax, rax
+    jz 2f
+    mov dword ptr [rbx], 0
+    jmp 3f
+2:  mov r13d, 1
+3:  add rbx, 16
+    inc r12d
+    cmp r12d, AG_GROUPS
+    jb 1b
+    mov eax, r13d
+    EPILOGUE
+
+# ag_groups_kill(): SIGKILL to every watched group
+ag_groups_kill:
+    PROLOGUE
+    lea rbx, [rip + ag_groups]
+    xor r12d, r12d
+1:  mov edi, [rbx]
+    test edi, edi
+    jz 2f
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+2:  add rbx, 16
+    inc r12d
+    cmp r12d, AG_GROUPS
+    jb 1b
+    EPILOGUE
 
 # ag_push_hex(rsi value): 16 lowercase hex digits onto ag_wq
 ag_push_hex:
@@ -445,8 +613,16 @@ ag_padd:
     inc ebx
 1:  ret
 
-# ag_any_running() -> 1 while a program has not been reaped
+# ag_any_running() -> 1 while a program has not been reaped or a group it left is watched
 ag_any_running:
+    lea rcx, [rip + ag_groups]
+    xor edx, edx
+5:  cmp dword ptr [rcx], 0
+    jne 4f
+    add rcx, 16
+    inc edx
+    cmp edx, AG_GROUPS
+    jb 5b
     lea rcx, [rip + ag_ch]
     xor edx, edx
 1:  mov eax, [rcx + AC_mode]
@@ -491,6 +667,8 @@ ag_reap:
     mov eax, 255                # not a child any more (cannot happen): it is gone
 4:  mov [rbx + AC_status], eax
     or dword ptr [rbx + AC_flags], ACF_EXITED
+    mov edi, [rbx + AC_pid]     # what it started and left behind goes too (its session's group)
+    call ag_group_add
     lea rdi, [rip + ag_wq]
     lea rsi, [rip + .Lx]
     call sb_push_cstr
@@ -1119,11 +1297,16 @@ ag_cstr_list:
     ret
 
 # spawn CH MODE ERRCH COLS ROWS LEN: CWD NUL, then ARGV entries ending with an empty one, then ENV
-#   entries set on top of the login environment. MODE 0 pipe, 1 pty. ERRCH: 0 sends the error output
-#   to /dev/null, CH merges it with the output, another channel carries it. An empty ARGV in a pty
-#   is the user's shell. -> ok with the pid
+#   entries set on top of the login environment. MODE 0 pipe, 1 pty, 2 an extension (a pipe, its
+#   environment exactly ENV and the login PATH; remoteext.s), 3 an extension held by Landlock: ENV
+#   ends with an empty entry and NEEDS DIR SCRIPT STATE PROJECT RUNS follow (confine.s builds the
+#   rules from them as for a local extension). ERRCH: 0 sends the error output to /dev/null, CH
+#   merges it with the output, another channel carries it. An empty ARGV in a pty is the user's
+#   shell. -> ok with the pid; MODE 3: "PID CONFINED REASON" (CONFINED_*, why it is not held)
 ag_spawn:
-    PROLOGUE 96
+    PROLOGUE 128
+    mov dword ptr [rsp + 104], -1   # MODE 3's confinement, once asked
+    mov qword ptr [rsp + 112], 0
     mov [rsp], rdi              # id
     lea rax, [rsi + rdx]
     mov [rsp + 8], rax          # body end
@@ -1199,10 +1382,28 @@ ag_spawn:
 32: lea rcx, [rip + ag_argv]
     mov [rcx], rax
     mov qword ptr [rcx + 8], 0
-4:  # a name without a slash is looked up in the login PATH
+4:  # @self is this agent's own binary (the agents panel's index worker); a name without a slash is
+    # looked up in the login PATH
     lea rax, [rip + ag_argv]
     mov rdi, [rax]
+    lea rsi, [rip + .Lat_self]
+    call strcmp_eq
+    test eax, eax
+    jz 41f
+    lea rdi, [rip + .Lself]
+    lea rsi, [rip + ag_path2]
+    mov edx, 4095
+    SYS SYS_readlink
+    test rax, rax
+    jle .Las_noent
+    lea rdi, [rip + ag_path2]
+    mov byte ptr [rdi + rax], 0
+    call mem_dup_cstr
+    jmp 42f
+41: lea rax, [rip + ag_argv]
+    mov rdi, [rax]
     call proc_which
+42:
     test rax, rax
     jz .Las_noent
     mov [rsp + 56], rax         # path (freed below)
@@ -1214,12 +1415,19 @@ ag_spawn:
     # the environment: the login one with the entries given set
     mov rdi, [rsp + 48]
     mov rsi, [rsp + 8]
-    lea rdx, [rip + ag_argv + 202 * 8]
-    mov ecx, 50
+    lea rdx, [rip + ag_envl]
+    mov ecx, AG_ENV_MAX
     call ag_cstr_list
-    lea rdi, [rip + ag_argv + 202 * 8]
+    mov [rsp + 96], rdx         # MODE 3: the confinement's fields
+    cmp dword ptr [rsp + 16], 2
+    jae 44f
+    lea rdi, [rip + ag_envl]
     call env_make
-    mov [rsp + 64], rax         # envp (freed below)
+    jmp 45f
+44: # an extension: exactly the environment given, with the host's PATH unless it names one
+    lea rdi, [rip + ag_envl]
+    call ag_env_exact
+45: mov [rsp + 64], rax         # envp (freed below)
     mov rax, [rsp + 32]
     cmp byte ptr [rax], 0
     jne 5f
@@ -1260,7 +1468,16 @@ ag_spawn:
     js .Las_close2
     mov r14d, [rsp + 88]
     mov r15d, [rsp + 92]
-7:  lea rdi, [rip + ag_argv]
+7:  cmp dword ptr [rsp + 16], 3
+    jne .Las_unconfined
+    mov rdi, [rsp + 96]
+    mov rsi, [rsp + 8]
+    mov rdx, [rsp + 56]
+    call ag_confine
+    mov [rsp + 104], eax
+    mov [rsp + 112], rdx
+.Las_unconfined:
+    lea rdi, [rip + ag_argv]
     mov rsi, [rsp + 64]
     mov rdx, [rsp + 32]
     mov ecx, [rsp + 72]
@@ -1271,6 +1488,7 @@ ag_spawn:
     call proc_spawn
     add rsp, 16
     mov [rsp + 88], rax
+    call confine_release        # the rules' descriptors (nothing when none was prepared)
     mov edi, [rsp + 72]
     SYS SYS_close
     mov edi, [rsp + 84]
@@ -1357,7 +1575,23 @@ ag_spawn:
     lea rdi, [rip + ag_tmp]
     mov esi, [rbx + AC_pid]
     call sb_push_u64
-    mov rdi, [rsp + 56]
+    cmp dword ptr [rsp + 104], 0
+    jl 91f
+    lea rdi, [rip + ag_tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    mov esi, [rsp + 104]
+    call sb_push_u64
+    lea rdi, [rip + ag_tmp]
+    mov esi, ' '
+    call sb_push_byte
+    mov rsi, [rsp + 112]
+    test rsi, rsi
+    jz 91f
+    lea rdi, [rip + ag_tmp]
+    call sb_push_cstr
+91: mov rdi, [rsp + 56]
     call mem_free
     mov rdi, [rsp + 64]
     call mem_free
@@ -1405,6 +1639,129 @@ ag_spawn:
     call ag_error
     EPILOGUE
 
+# ag_confine(fields, end, program) -> eax CONFINED_*, rdx why it cannot be held (cstr) or 0: the
+#   confinement of a local extension (confine.s) prepared for the next proc_spawn, from NEEDS DIR
+#   SCRIPT STATE PROJECT RUNS (NUL-terminated, the empty ones too). The rules are built on a record
+#   of its own in g_exts, which the agent has no other use for; its state folder is made first.
+ag_confine:
+    PROLOGUE 64
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    xor ecx, ecx
+1:  cmp ecx, 6
+    jae 3f
+    cmp r12, r13
+    jae .Lac_inval
+    mov [rsp + rcx*8], r12
+2:  cmp r12, r13
+    jae .Lac_inval
+    cmp byte ptr [r12], 0
+    lea r12, [r12 + 1]
+    jne 2b
+    inc ecx
+    jmp 1b
+3:  cmp qword ptr [rip + g_exts + VEC_len], 0
+    jne 4f
+    lea rdi, [rip + g_exts]
+    mov esi, EXT_SIZE
+    call vec_push
+4:  mov rbx, [rip + g_exts + VEC_ptr]
+    mov rdi, [rsp]
+    call strlen
+    mov rsi, rax
+    mov rdi, [rsp]
+    call parse_u64
+    mov [rbx + EXT_needs], eax
+    mov rax, [rsp + 8]
+    mov [rbx + EXT_dir], rax
+    mov rax, [rsp + 16]
+    cmp byte ptr [rax], 0
+    jne 5f
+    xor eax, eax
+5:  mov [rbx + EXT_script], rax
+    mov rax, [rsp + 24]
+    mov [rbx + EXT_state], rax
+    mov rax, [rsp + 40]
+    cmp byte ptr [rax], 0
+    jne 6f
+    xor eax, eax
+6:  mov [rbx + EXT_runs], rax
+    mov [rbx + EXT_prog], r14
+    mov dword ptr [rbx + EXT_log], -1
+    # its state folder and the tmp in it
+    mov rdi, [rsp + 24]
+    call mkdir_p
+    mov rdi, [rsp + 24]
+    lea rsi, [rip + .Lsub_tmp]
+    call path_join
+    mov r15, rax
+    mov rdi, rax
+    call mkdir_p
+    mov rdi, r15
+    call mem_free
+    # the project the rules may open, as [needs] says
+    mov rax, [rsp + 32]
+    cmp byte ptr [rax], 0
+    jne 7f
+    xor eax, eax
+7:  mov [rip + g_project], rax
+    mov rdi, rbx
+    call confine_prepare
+    mov qword ptr [rip + g_project], 0
+    test rax, rax
+    jnz 8f
+    mov eax, [rbx + EXT_confined]
+    xor edx, edx
+    EPILOGUE
+8:  mov rdx, rax
+    mov eax, CONFINED_NO
+    EPILOGUE
+.Lac_inval:
+    lea rdx, [rip + .Lac_bad]
+    mov eax, CONFINED_NO
+    EPILOGUE
+
+# ag_env_exact(list) -> envp (mem_free it): the 0-terminated list, and PATH= from the login
+#   environment when the list has none
+ag_env_exact:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d              # entries
+    xor r13d, r13d              # one is PATH=
+1:  mov rax, [rbx + r12*8]
+    test rax, rax
+    jz 2f
+    cmp dword ptr [rax], 0x48544150         # "PATH"
+    jne 11f
+    cmp byte ptr [rax + 4], '='
+    jne 11f
+    mov r13d, 1
+11: inc r12
+    jmp 1b
+2:  lea rdi, [r12*8 + 16]
+    call mem_alloc
+    mov r14, rax
+    xor ecx, ecx
+3:  cmp rcx, r12
+    jae 4f
+    mov rax, [rbx + rcx*8]
+    mov [r14 + rcx*8], rax
+    inc rcx
+    jmp 3b
+4:  test r13d, r13d
+    jnz 5f
+    lea rdi, [rip + .Lpath_env]
+    call getenv
+    test rax, rax
+    jz 5f
+    sub rax, 5                  # the entry "PATH=..."
+    mov [r14 + r12*8], rax
+    inc r12
+5:  mov qword ptr [r14 + r12*8], 0
+    mov rax, r14
+    EPILOGUE
+
 # kill CH SIG GROUP 0: the program on CH (GROUP 1: its process group, as kill(-pid))
 ag_kill:
     PROLOGUE
@@ -1420,8 +1777,12 @@ ag_kill:
     test edi, edi
     jle 8f
     test dword ptr [rbx + AC_flags], ACF_EXITED
-    jnz 7f                      # gone already (not reaped by anyone else: the pid is not reused)
-    mov edi, 4
+    jz 6f
+    mov edi, 4                  # the leader is gone: only what is left of its group (the pid is
+    call ag_num                 # not reused while that group lives)
+    test eax, eax
+    jz 7f
+6:  mov edi, 4
     call ag_num
     mov r13d, eax
     mov edi, 3
@@ -1794,7 +2155,7 @@ ag_read:
 
 # write FLAGS MODE PLEN LEN + path + data: the file's new contents. FLAGS: 1 replace an existing file
 #   through a temporary one in its folder (its mode kept), 2 create only (EEXIST when it is there),
-#   4 append (a write in parts: the first part without 4). MODE: the mode of a new file (octal digits)
+#   4 append, 8 create or truncate (a write in parts: 8, then 4s). MODE: a new file's mode (octal)
 ag_write:
     PROLOGUE 16
     mov r12, rdi
@@ -1825,6 +2186,8 @@ ag_write:
     jnz .Law_append
     test ebx, 2
     jnz .Law_new
+    test ebx, 8
+    jnz .Law_trunc
     # the target's own file through its links, then a temporary file renamed over it
     lea rdi, [rip + ag_path]
     mov rsi, r13
@@ -1834,6 +2197,12 @@ ag_write:
 .Law_new:
     lea rdi, [rip + ag_path]
     mov esi, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
+    mov edx, [rsp]
+    SYS SYS_open
+    jmp 5f
+.Law_trunc:
+    lea rdi, [rip + ag_path]
+    mov esi, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
     mov edx, [rsp]
     SYS SYS_open
     jmp 5f
@@ -1878,8 +2247,8 @@ parse_octal:
     jmp 1b
 2:  ret
 
-# list LEN + path -> "T NAME\0" for each entry but . and .., T one of d f l o (a link's target is
-#   not followed: the client asks stat for that)
+# list LEN + path -> "T NAME\0" for each entry but . and .., T one of d f o, or for a symlink L when
+#   it leads to a folder and l otherwise (dir_each follows links)
 ag_list:
     PROLOGUE
     mov r12, rdi
@@ -1930,7 +2299,13 @@ ag_list:
     mov esi, 'f'
 41: cmp eax, 10
     jne 42f
-    mov esi, 'l'
+    push rsi
+    push rsi
+    lea rdi, [r15 + 19]
+    call ag_link_kind
+    pop rsi
+    pop rsi
+    mov esi, eax
 42: test eax, eax                    # DT_UNKNOWN: ask
     jnz 43f
     push rsi
@@ -1970,7 +2345,24 @@ ag_list:
     call ag_error
     EPILOGUE
 
-# ag_type_at(name) -> 'd' 'f' 'l' or 'o' for the entry name in the folder ag_path (lstat)
+# ag_link_kind(name) -> 'L' when the symlink name in the folder ag_path leads to a folder, else 'l'
+ag_link_kind:
+    push rbx
+    mov rbx, rdi
+    lea rdi, [rip + ag_path]
+    mov rsi, rbx
+    call path_join_tmp
+    mov rdi, rax
+    call file_is_dir
+    mov ecx, 'l'
+    test eax, eax
+    jz 1f
+    mov ecx, 'L'
+1:  mov eax, ecx
+    pop rbx
+    ret
+
+# ag_type_at(name) -> 'd' 'f' 'L' 'l' or 'o' for the entry name in the folder ag_path (lstat)
 ag_type_at:
     push rbx
     mov rbx, rdi
@@ -1993,7 +2385,9 @@ ag_type_at:
     mov ecx, 'f'
 2:  cmp eax, 0xa000
     jne 9f
-    mov ecx, 'l'
+    mov rdi, rbx
+    pop rbx
+    jmp ag_link_kind
 9:  mov eax, ecx
     pop rbx
     ret
@@ -2231,6 +2625,474 @@ ag_read_inotify:
     jmp 2b
 9:  EPILOGUE
 
+# access MODE LEN + path -> ok or the error of access(2) (W_OK 2: may it be written)
+ag_access:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov edi, 2
+    call ag_num
+    mov ebx, eax
+    mov rdi, r13
+    mov rsi, r14
+    call ag_path_arg
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov esi, ebx
+    SYS SYS_access
+    mov rdi, r12
+    mov rsi, rax
+    call ag_reply
+    EPILOGUE
+8:  mov rdi, r12
+    mov rsi, -36
+    call ag_error
+    EPILOGUE
+
+# stats LEN + paths, each with a NUL -> for each path in order: "o" and its 144-byte struct stat, or
+#   "e" and its errno as 4 bytes (the agents panel polls its sessions in one request)
+ag_stats:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    lea r14, [rsi + rdx]
+1:  cmp r13, r14
+    jae 8f
+    mov rdi, r13
+    call strlen
+    mov r15, rax
+    mov rdi, r13
+    mov rsi, rax
+    call ag_path_arg
+    lea r13, [r13 + r15 + 1]
+    mov rbx, -36
+    test rax, rax
+    jz 2f
+    mov rdi, rax
+    lea rsi, [rip + ag_statbuf]
+    mov eax, 4
+    syscall
+    mov rbx, rax
+    test rax, rax
+    js 2f
+    lea rdi, [rip + ag_tmp]
+    mov esi, 'o'
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    lea rsi, [rip + ag_statbuf]
+    mov edx, 144
+    call sb_push
+    jmp 1b
+2:  lea rdi, [rip + ag_tmp]
+    mov esi, 'e'
+    call sb_push_byte
+    neg rbx
+    mov [rip + ag_statbuf], ebx
+    lea rdi, [rip + ag_tmp]
+    lea rsi, [rip + ag_statbuf]
+    mov edx, 4
+    call sb_push
+    jmp 1b
+8:  mov rdi, r12
+    xor esi, esi
+    call ag_reply
+    EPILOGUE
+
+# ---------------- file lists and search ----------------
+
+# ag_walk_args(body, len) -> 1 with the root in ag_path2 and the excluded names in cfg_exclude
+#   (explorer_excluded reads it): "ROOT\0EXCLUDES[\0QUERY]"; rdx the query (or 0), rcx its length
+ag_walk_args:
+    PROLOGUE
+    mov rbx, rdi
+    lea r12, [rdi + rsi]        # end
+    mov rdi, rbx
+1:  cmp rdi, r12
+    jae 8f
+    cmp byte ptr [rdi], 0
+    je 2f
+    inc rdi
+    jmp 1b
+2:  mov r13, rdi                # the root's NUL
+    mov rax, rdi
+    sub rax, rbx
+    jz 8f
+    cmp rax, 4000
+    jae 8f
+    lea rdi, [rip + ag_path2]
+    mov rsi, rbx
+    mov rdx, rax
+    push rax
+    push rax
+    call memcpy
+    pop rax
+    pop rax
+    lea rcx, [rip + ag_path2]
+    mov byte ptr [rcx + rax], 0
+    # the excluded names, to the next NUL or the end
+    lea r14, [r13 + 1]
+    mov rdi, r14
+3:  cmp rdi, r12
+    jae 4f
+    cmp byte ptr [rdi], 0
+    je 4f
+    inc rdi
+    jmp 3b
+4:  mov r15, rdi
+    mov rdi, r14
+    mov rsi, r15
+    sub rsi, r14
+    call mem_dup
+    xchg rax, [rip + ag_exclude]
+    mov rdi, rax
+    call mem_free
+    mov rax, [rip + ag_exclude]
+    mov [rip + cfg_exclude], rax
+    # the query after it
+    xor edx, edx
+    xor ecx, ecx
+    lea rax, [r15 + 1]
+    cmp rax, r12
+    ja 5f
+    mov rdx, rax
+    mov rcx, r12
+    sub rcx, rax
+5:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# ag_walk(dir, cb): every file under dir as quick open walks the project (folders through links
+#   too, at most 16 deep, excluded names skipped), cb(rel path cstr, its length, abs path cstr) until
+#   ag_walk_stop; the relative path is built in ag_rel
+ag_walk:
+    PROLOGUE
+    mov rbx, rdi
+    mov [rip + ag_walk_cb], rsi
+    mov dword ptr [rip + ag_rel_len], 0
+    mov dword ptr [rip + ag_depth], 0
+    mov dword ptr [rip + ag_walk_stop], 0
+    mov rdi, rbx
+    call ag_walk_dir
+    EPILOGUE
+
+ag_walk_dir:
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rip + ag_depth], 16
+    jae 9f
+    inc dword ptr [rip + ag_depth]
+    mov rdi, rbx
+    lea rsi, [rip + ag_walk_entry]
+    mov rdx, rbx
+    call dir_each
+    dec dword ptr [rip + ag_depth]
+9:  EPILOGUE
+
+# ag_walk_entry(dir, name, is_dir): dir_each's callback
+ag_walk_entry:
+    PROLOGUE 16
+    mov r12, rdi
+    mov r13, rsi
+    mov r14d, edx
+    cmp dword ptr [rip + ag_walk_stop], 0
+    jne 9f
+    mov rdi, r13
+    call explorer_excluded
+    test eax, eax
+    jnz 9f
+    mov ebx, [rip + ag_rel_len]
+    lea rdi, [rip + ag_rel]
+    add rdi, rbx
+    mov rsi, r13
+    call cstr_copy
+    lea rcx, [rip + ag_rel]
+    sub rax, rcx
+    mov r15, rax
+    mov rdi, r12
+    mov rsi, r13
+    call path_join
+    mov [rsp], rax
+    test r14d, r14d
+    jz 1f
+    cmp r15, 4000
+    jae 8f
+    lea rax, [rip + ag_rel]
+    mov byte ptr [rax + r15], '/'
+    lea eax, [r15 + 1]
+    mov [rip + ag_rel_len], eax
+    mov rdi, [rsp]
+    call ag_walk_dir
+    mov [rip + ag_rel_len], ebx
+    jmp 8f
+1:  lea rdi, [rip + ag_rel]
+    mov rsi, r15
+    mov rdx, [rsp]
+    call [rip + ag_walk_cb]
+    lea rax, [rip + ag_rel]
+    mov byte ptr [rax + rbx], 0
+8:  mov rdi, [rsp]
+    call mem_free
+9:  EPILOGUE
+
+# files MAX LEN + "ROOT\0EXCLUDES" -> the files under ROOT relative to it, each with a NUL (Go to
+#   File's list), at most MAX
+ag_files:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov edi, 2
+    call ag_num
+    mov [rip + ag_walk_max], rax
+    mov qword ptr [rip + ag_walk_n], 0
+    mov rdi, r13
+    mov rsi, r14
+    call ag_walk_args
+    test eax, eax
+    jz 8f
+    lea rdi, [rip + ag_path2]
+    call mem_dup_cstr
+    mov rbx, rax
+    mov rdi, rax
+    lea rsi, [rip + ag_files_one]
+    call ag_walk
+    mov rdi, rbx
+    call mem_free
+    mov rdi, r12
+    xor esi, esi
+    call ag_reply
+    EPILOGUE
+8:  mov rdi, r12
+    mov rsi, -22
+    call ag_error
+    EPILOGUE
+
+ag_files_one:
+    push rbx
+    mov rbx, rsi
+    lea rsi, [rip + ag_rel]
+    mov rdx, rbx
+    lea rdi, [rip + ag_tmp]
+    call sb_push
+    lea rdi, [rip + ag_tmp]
+    xor esi, esi
+    call sb_push_byte
+    inc qword ptr [rip + ag_walk_n]
+    mov rax, [rip + ag_walk_n]
+    cmp rax, [rip + ag_walk_max]
+    jb 1f
+    mov dword ptr [rip + ag_walk_stop], 1
+1:  pop rbx
+    ret
+
+# mem_dup_cstr(cstr) -> a copy
+mem_dup_cstr:
+    push rbx
+    mov rbx, rdi
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call mem_dup
+    pop rbx
+    ret
+
+# grep MAX FLAGS LEN + "ROOT\0EXCLUDES\0QUERY" -> find in files on the host: for each line holding
+#   the query (FLAGS 1: case-sensitive, else ignoring case), "REL\0LINE\0COL\0LABEL\0" with LINE
+#   from 0, COL the match's byte in it, LABEL the line as the palette shows it; at most MAX lines,
+#   text files of at most 8 MB, 256 MB read in all
+ag_grep:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov edi, 2
+    call ag_num
+    mov [rip + ag_walk_max], rax
+    mov edi, 3
+    call ag_num
+    mov [rip + ag_grep_case], eax
+    mov qword ptr [rip + ag_walk_n], 0
+    mov qword ptr [rip + ag_grep_bytes], 0
+    mov rdi, r13
+    mov rsi, r14
+    call ag_walk_args
+    test eax, eax
+    jz 8f
+    test rdx, rdx
+    jz 8f
+    test rcx, rcx
+    jz 8f
+    mov [rip + ag_query], rdx
+    mov [rip + ag_query_len], rcx
+    lea rdi, [rip + ag_path2]
+    call mem_dup_cstr
+    mov rbx, rax
+    mov rdi, rax
+    lea rsi, [rip + ag_grep_file]
+    call ag_walk
+    mov rdi, rbx
+    call mem_free
+    mov rdi, r12
+    xor esi, esi
+    call ag_reply
+    EPILOGUE
+8:  mov rdi, r12
+    mov rsi, -22
+    call ag_error
+    EPILOGUE
+
+# ag_grep_file(rel, rel len, abs): the lines of one file that hold the query
+ag_grep_file:
+    PROLOGUE 48
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov rdi, rdx
+    mov esi, 8388608
+    call file_read_limited
+    test rax, rax
+    jz 9f
+    mov r12, rax                # text
+    mov r13, rdx                # length
+    add [rip + ag_grep_bytes], rdx
+    cmp qword ptr [rip + ag_grep_bytes], 268435456
+    jb 1f
+    mov dword ptr [rip + ag_walk_stop], 1
+1:  test r13, r13
+    jz 8f
+    # binary: a NUL in the first 8 KiB
+    mov rdi, r12
+    mov rcx, r13
+    cmp rcx, 8192
+    jbe 2f
+    mov ecx, 8192
+2:  xor eax, eax
+    repne scasb
+    je 8f
+    xor r14d, r14d              # scan position
+    xor r15d, r15d              # line
+    xor ebx, ebx                # line start
+.Lag_match:
+    mov rax, [rip + ag_walk_n]
+    cmp rax, [rip + ag_walk_max]
+    jae .Lag_full
+    lea rdi, [r12 + r14]
+    mov rsi, r13
+    sub rsi, r14
+    jbe 8f
+    mov rdx, [rip + ag_query]
+    mov rcx, [rip + ag_query_len]
+    cmp dword ptr [rip + ag_grep_case], 0
+    je 3f
+    call str_find
+    jmp 4f
+3:  call str_ifind
+4:  test rax, rax
+    js 8f
+    add rax, r14
+    mov [rsp + 16], rax         # the match
+5:  cmp r14, rax
+    jae 6f
+    cmp byte ptr [r12 + r14], 10
+    jne 51f
+    inc r15
+    lea rbx, [r14 + 1]
+51: inc r14
+    jmp 5b
+6:  cmp r14, r13                # the line's end; the next search starts there
+    jae 7f
+    cmp byte ptr [r12 + r14], 10
+    je 7f
+    inc r14
+    jmp 6b
+7:  # "REL\0LINE\0COL\0"
+    lea rdi, [rip + ag_tmp]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call sb_push
+    lea rdi, [rip + ag_tmp]
+    xor esi, esi
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    mov rsi, r15
+    call sb_push_u64
+    lea rdi, [rip + ag_tmp]
+    xor esi, esi
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    mov rsi, [rsp + 16]
+    sub rsi, rbx
+    call sb_push_u64
+    lea rdi, [rip + ag_tmp]
+    xor esi, esi
+    call sb_push_byte
+    # the label: the line without its indent, starting near the match when it is far right, at most
+    # 240 bytes, control bytes as blanks (as the palette's own search makes it)
+    mov rax, rbx
+71: cmp rax, [rsp + 16]
+    jae 72f
+    movzx ecx, byte ptr [r12 + rax]
+    cmp cl, ' '
+    je 711f
+    cmp cl, 9
+    jne 72f
+711: inc rax
+    jmp 71b
+72: mov rcx, [rsp + 16]
+    sub rcx, rax
+    cmp rcx, 60
+    jbe 74f
+    mov rax, [rsp + 16]
+    sub rax, 40
+73: movzx ecx, byte ptr [r12 + rax]
+    and ecx, 0xc0
+    cmp ecx, 0x80
+    jne 74f
+    inc rax
+    jmp 73b
+74: mov [rsp + 24], rax
+    lea rcx, [rax + 240]
+    cmp rcx, r14
+    jbe 75f
+    mov rcx, r14
+    jmp 76f
+75: movzx edx, byte ptr [r12 + rcx]
+    and edx, 0xc0
+    cmp edx, 0x80
+    jne 76f
+    inc rcx
+    jmp 75b
+76: sub rcx, rax
+    mov [rsp + 32], rcx
+    mov rax, [rip + ag_tmp + SB_len]
+    mov [rsp + 40], rax
+    lea rdi, [rip + ag_tmp]
+    mov rsi, r12
+    add rsi, [rsp + 24]
+    mov rdx, [rsp + 32]
+    call sb_push
+    mov rdi, [rip + ag_tmp + SB_ptr]
+    mov rcx, [rsp + 40]
+77: cmp rcx, [rip + ag_tmp + SB_len]
+    jae 78f
+    cmp byte ptr [rdi + rcx], ' '
+    jae 771f
+    mov byte ptr [rdi + rcx], ' '
+771: inc rcx
+    jmp 77b
+78: lea rdi, [rip + ag_tmp]
+    xor esi, esi
+    call sb_push_byte
+    inc qword ptr [rip + ag_walk_n]
+    jmp .Lag_match
+.Lag_full:
+    mov dword ptr [rip + ag_walk_stop], 1
+8:  mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
 .section .rodata
 .p2align 3
 ag_verbs:
@@ -2240,6 +3102,8 @@ ag_verbs:
     .quad .Lv_readlink, ag_readlink, .Lv_read, ag_read, .Lv_write, ag_write, .Lv_list, ag_list
     .quad .Lv_mkdir, ag_mkdir, .Lv_rename, ag_rename, .Lv_remove, ag_remove
     .quad .Lv_watch, ag_watch, .Lv_unwatch, ag_unwatch
+    .quad .Lv_access, ag_access, .Lv_files, ag_files, .Lv_grep, ag_grep
+    .quad .Lv_stats, ag_stats
     .quad 0, 0
 .Linfo_keys:
     .quad .Lk_home_env, .Lk_home, .Lk_shell_env, .Lk_shell, .Lk_user_env, .Lk_user, 0, 0
@@ -2262,6 +3126,10 @@ ag_verbs:
 .Lv_remove: .asciz "remove"
 .Lv_watch: .asciz "watch"
 .Lv_unwatch: .asciz "unwatch"
+.Lv_access: .asciz "access"
+.Lv_files: .asciz "files"
+.Lv_grep: .asciz "grep"
+.Lv_stats: .asciz "stats"
 .Lk_home_env: .asciz "HOME"
 .Lk_shell_env: .asciz "SHELL"
 .Lk_user_env: .asciz "USER"
@@ -2272,8 +3140,12 @@ ag_verbs:
 .Lhello: .asciz "hello rhun-remote "
 .Lhex: .ascii "0123456789abcdef"
 .Lself: .asciz "/proc/self/exe"
+.Lat_self: .asciz "@self"
+.Lpath_env: .asciz "PATH"
 .Lproc_fd: .asciz "/proc/self/fd/"
 .Lshell: .asciz "SHELL"
+.Lsub_tmp: .asciz "tmp"
+.Lac_bad: .asciz "the request named no confinement"
 .Lbin_sh: .asciz "/bin/sh"
 .Ldash_lc: .asciz "-lc"
 .Lenv_cmd: .asciz "printf '\\n@rhun-env\\n'; exec cat /proc/self/environ"

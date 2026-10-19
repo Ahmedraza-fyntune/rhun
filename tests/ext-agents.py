@@ -34,6 +34,7 @@ messages = {
     's1': [msg('user', '', 'fix the bug'), msg('assistant', '', 'Looking at it', 'gemini-2.5-pro'),
            msg('tool', 'read_file', 'src/main.rs'), msg('result', '', 'fn main() {}')],
     's2': [msg('user', '', 'old question')],
+    's4': [msg('user', '', ''), msg('assistant', '', 'one'), msg('assistant', '', 'two'), msg('result', '', 'old')],
 }
 now = int(time.time())
 project = '-'
@@ -59,6 +60,11 @@ while True:
             messages['s1'].append(msg('error', '', 'quota reached'))
             n = len(messages['s1'])
             request(f'agent-changed s1 {n} {n - 2}')
+        elif name == 'empty':
+            request('agent-sessions', b'1\n' + row(now, 'working', 's4', 'Empty start', '', ''))
+        elif name == 'redo':
+            messages['s4'][3] = msg('result', '', 'new')
+            request('agent-changed s4 4 3')
         elif name == 'drop':
             now += 5
             request('agent-sessions', b'1\n' + row(now, 'idle', 's2', 'Old talk', '', ''))
@@ -90,7 +96,7 @@ class Agents(unittest.TestCase):
         folder = root / 'acme' / 'gem'
         folder.mkdir(parents=True, exist_ok=True)
         ini = ('name = gem\nowner = acme\ntitle = Gem Bridge\nversion = 1\nprotocol = 1\n'
-               'runtime = python3\nrun = main.py\n[commands]\ngrow = Grow\ndrop = Drop\nbad = Bad\n')
+               'runtime = python3\nrun = main.py\n[commands]\ngrow = Grow\ndrop = Drop\nbad = Bad\nempty = Empty\nredo = Redo\n')
         if provides:
             ini += '[provides]\nagents = yes\nagents.title = Gemini CLI\n'
         (folder / 'extension.ini').write_text(ini)
@@ -170,9 +176,43 @@ class Agents(unittest.TestCase):
         self.assertNotIn('0 features', self.agent_log())
 
     def test_feature_is_agreed(self):
-        self.run_editor(exts=self.extension(hello='hello 1 agents tools'), actions=[
+        self.run_editor(exts=self.extension(hello='hello 1 agents no-such-feature'), actions=[
             'wait-ext acme/gem running', 'wait 300'])
         self.assertIn('0 features agents\n', self.agent_log())
+
+    def test_an_empty_message_keeps_its_place(self):
+        # replacing from index 3 replaces the fourth message, also after an empty first (Codex review)
+        out = self.run_editor(exts=self.extension(), drop_waits=True, actions=[
+            'wait-ext acme/gem running', 'wait 300', 'cmd acme/gem.empty', 'wait 300', 'print-agents 1',
+            'wait 300', 'cmd acme/gem.redo', 'wait 300', 'wait 300', 'print-agents'])
+        self.assertEqual(out[-4:], ['user ', 'agent one', 'agent two', 'result new'])
+        self.assertEqual(out.count('result old'), 0)
+
+    def test_a_config_reload_recomputes_the_switch(self):
+        import subprocess
+        config = self.work / 'config/rhun/config'
+        base = config.read_text()
+        config.write_text(base + '[agents]\nacme/gem = false\n')
+        exts = self.extension()
+        script = self.work / 'reload.rsc'
+        script.write_text('wait-ext acme/gem running\nwait 300\nprint-settings\nwait 2000\nprint-settings\nquit\n')
+        p = subprocess.Popen([str(host.EXE), self.proj.as_posix(), '--headless', '1000x600', '--scale', '1',
+                              '--extensions', str(exts), '--script', str(script)], env=self.env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            first = []
+            while not any(l.startswith('agents.acme/gem=') for l in first):
+                first.append(p.stdout.readline().decode().rstrip('\n'))
+            self.assertIn('agents.acme/gem=false', first)
+            config.write_text(base + '[agents]\nacme/gem = true\n')
+            out, err = p.communicate(timeout=30)
+            self.assertIn('agents.acme/gem=true', out.decode())
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.communicate()
+            p.stdout.close()
+            p.stderr.close()
 
     def test_settings_switch_hides_a_source_and_is_saved(self):
         out = self.run_editor(exts=self.extension(), drop_waits=True, actions=[

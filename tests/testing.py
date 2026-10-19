@@ -43,7 +43,7 @@ class Testing(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_editor(self, actions, mode=None, files=('a_test.go',), timeout=90):
+    def run_editor(self, actions, mode=None, files=('a_test.go',), timeout=90, exts=EXTS):
         env = dict(self.env)
         if mode:
             env['TESTS_MODE'] = mode
@@ -51,7 +51,7 @@ class Testing(unittest.TestCase):
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join(['wait 100', *opens, *actions, 'quit']) + '\n', encoding='utf-8')
         result = subprocess.run([str(EXE), self.proj.as_posix(), '--headless', '1000x600', '--scale', '1',
-                                 '--extensions', str(EXTS), '--script', script.as_posix()],
+                                 '--extensions', str(exts), '--script', script.as_posix()],
                                 env=env, capture_output=True, timeout=timeout)
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
         return result.stdout.decode('utf-8', errors='replace').splitlines()
@@ -85,6 +85,11 @@ class Testing(unittest.TestCase):
         # collapsed items still count
         self.assertEqual(out[-1], 'passed=0 failed=0 errored=0 skipped=0 notrun=3')
 
+    def test_an_unanswered_resolve_gives_up_after_30_s(self):
+        out = self.run_editor(['cmd testing', 'wait 31500', 'print-tests'], mode='resolveslow', timeout=120)
+        self.assertIn('notrun Fake Tests id=rhun-tests/testsfake kind=controller ms=- error=no answer in time', out)
+        self.assertIn('recv 0 cancel 1', self.fake_log())
+
     def test_bad_bodies_are_refused_and_change_nothing(self):
         out = self.run_editor(['cmd testing', 'wait-test-items 2', 'wait 800', 'print-tests all'], mode='remove')
         log = self.fake_log()
@@ -103,6 +108,8 @@ class Testing(unittest.TestCase):
         self.assertTrue(any(l.startswith('flood-ok ok') for l in log), log)
         self.assertTrue(any(l.startswith('flood-add step 3: error ') and 'toobig 50000 items per extension' in l
                             for l in log), log)
+        # replacing the roots counts what goes: one test in place of 40,001 items fits
+        self.assertTrue(any(l.startswith('flood-replace ok') for l in log), log)
 
     def test_replace_keeps_the_results_of_kept_ids(self):
         out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 300', 'print-tests all'],
@@ -211,6 +218,80 @@ class Testing(unittest.TestCase):
         self.assertTrue(output.endswith('\\n[output cut]\\n'), output[-80:])
         self.assertEqual(output.count('y'), 262144 - len('ok A\n'))
 
+    def test_expected_and_actual_open_as_a_diff_and_output_as_a_tab(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests',
+                               'test-select testsfake go:example/pkg.TestB', 'test-action diff', 'print-tabs',
+                               'print-doc', 'test-action output', 'print-doc', 'test-action failure', 'print-state',
+                               'test-select testsfake go:example/pkg.TestC', 'test-action goto', 'print-state'])
+        at = out.index('@@ -1,2 +1,1 @@')
+        self.assertEqual(out[at:at + 5], ['@@ -1,2 +1,1 @@', 'Hello, rhun!', 'Welcome.', 'Hello, rhun', '<eod>'])
+        self.assertIn('tabs=a_test.go | *Expected \u2194 Actual: TestB', out)
+        at = out.index('=== RUN TestB')
+        self.assertEqual(out[at:at + 4], ['=== RUN TestB', 'fail', '', '<eod>'])
+        states = [l for l in out if l.startswith('tabs=3 ')]
+        self.assertIn(' line=8 col=5 ', states[0])       # 8:2, after a tab four columns wide
+        self.assertIn(' line=11 col=1 ', states[1])
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'key ctrl+Home', 'cmd test_next_failure',
+                               'print-state'])
+        self.assertIn(' line=8 col=5 ', [l for l in out if l.startswith('tabs=')][-1])
+
+    def test_overlapping_runs_leave_no_stale_running_state(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'cmd test_run_all', 'wait-tests', 'print-tests all',
+                               'print-test-runs'], mode='overlap')
+        self.assertIn('tests=idle', out)
+        self.assertFalse([l for l in out if l.lstrip().startswith('running ')], out)
+        self.assertIn('passed=0 failed=0 errored=0 skipped=0 notrun=3', out)
+
+    def test_an_unfinished_rerun_brings_back_the_last_result_and_its_summary(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'cmd test_run_all', 'wait 400',
+                               'cmd test_cancel', 'wait-tests', 'print-test-result testsfake go:example/pkg.TestB'],
+                              mode='slow2')
+        self.assertIn('recv 0 test-cancel 2', self.fake_log())
+        self.assertTrue([l for l in out if l.startswith('state=failed ms=30 run=1 first=Greet mismatch')], out)
+
+    def test_nodebug_items_are_not_debugged(self):
+        exts = self.work / 'exts'
+        dst = exts / 'rhun-tests/testsfake'
+        dst.mkdir(parents=True)
+        manifest = (EXTS / 'rhun-tests/testsfake/extension.ini').read_text(encoding='utf-8')
+        manifest = manifest.replace('tests.profiles = run coverage', 'tests.profiles = run debug coverage')
+        manifest = manifest.replace('run = ../../../testsfake.py', 'run = ' + (ROOT / 'tests/ext/testsfake.py').as_posix())
+        (dst / 'extension.ini').write_text(manifest, encoding='utf-8')
+        out = self.run_editor([*EXPAND, 'test-select testsfake go:example/pkg.TestC', 'test-action debug', 'print-toast',
+                               'cmd goto_line', 'type 12', 'key Return', 'cmd test_debug_cursor',
+                               'test-select testsfake go:example/pkg.TestA', 'test-action debug', 'wait-tests'],
+                              exts=exts, mode='refuse')
+        self.assertEqual(self.logged('run '), ['run 1 debug 1 go:example/pkg.TestA'])
+        self.assertTrue([l for l in out if 'cannot be debugged' in l], out)
+
+    def test_a_debug_run_opens_the_debug_start_window(self):
+        exts = self.work / 'exts'
+        dst = exts / 'rhun-tests/testsfake'
+        dst.mkdir(parents=True)
+        manifest = (EXTS / 'rhun-tests/testsfake/extension.ini').read_text(encoding='utf-8')
+        manifest = manifest.replace('tests.profiles = run coverage', 'tests.profiles = run debug coverage')
+        manifest = manifest.replace('run = ../../../testsfake.py', 'run = ' + (ROOT / 'tests/ext/testsfake.py').as_posix())
+        (dst / 'extension.ini').write_text(manifest, encoding='utf-8')
+        out = self.run_editor([*EXPAND, 'test-select testsfake go:example/pkg.TestA', 'test-action run', 'wait 300',
+                               'echo @run', 'print-test-runs', 'test-action cancel', 'wait-tests',
+                               'test-action debug', 'wait 300', 'echo @debug', 'print-test-runs',
+                               'test-action cancel', 'wait-tests', 'echo @over', 'print-test-runs'],
+                              exts=exts, mode='slow')
+        def runs(a, b):
+            seg = out[out.index(a) + 1:out.index(b) if b else len(out)]
+            return [l for l in seg if l.startswith('run=')]
+        self.assertFalse([l for l in runs('@run', '@debug') if 'debug-window' in l], out)
+        debug = runs('@debug', '@over')
+        self.assertTrue(debug[-1].startswith('run=2 ') and ' profile=debug state=running debug-window ' in debug[-1], out)
+        self.assertFalse([l for l in runs('@over', None) if 'debug-window' in l], out)
+
+    def test_coverage_is_bounded_by_its_lines_and_merges_by_path(self):
+        out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests'], mode='covbig,covunion', timeout=120)
+        log = self.fake_log()
+        self.assertTrue([l for l in log if l.startswith('covbig error ') and ' toobig ' in l], log)
+        self.assertTrue([l for l in log if l.startswith('covunion1 ok')], log)
+        self.assertTrue([l for l in log if l.startswith('covunion2 ok')], log)
+
     def test_coverage_run(self):
         f = (self.proj / 'a_test.go').as_posix()
         out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'print-test-runs',
@@ -219,11 +300,68 @@ class Testing(unittest.TestCase):
         self.assertTrue(self.logged('coverage ok'), self.fake_log())
         self.assertIn('covered=3 partial=1 missed=0 lines=3:C,5:C,6:P,7:C', out)
 
+    def test_failures_become_problems_and_go_with_their_item(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 100', 'print-marks'])
+        at = out.index('tests=idle')
+        self.assertEqual(out[at + 1:at + 5], ['8 2 8 7 error problems:Fake Tests TestB: Greet mismatch',
+                                              'Expected: Hello, rhun!', 'Actual: Hello, rhun', 'errors=1 warnings=0'])
+        # the controller replaces the file's tests without TestB: its problem goes
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 400', 'print-marks', 'print-problems'],
+                              mode='replaceafter')
+        self.assertIn('errors=0 warnings=0', out)
+
+    def test_gutter_glyphs_follow_states_run_on_click_and_coverage_tints(self):
+        out = self.run_editor([*EXPAND, 'wait 300', 'print-gutter', 'test-gutter 7', 'wait-tests', 'print-gutter',
+                               'cmd test_coverage_all', 'wait-tests', 'print-gutter', 'test-gutter 11 right', 'print-menu',
+                               'key Escape', 'cmd test_coverage_toggle', 'print-gutter'])
+        self.assertEqual(out[2:6], ['line=3 glyph=play item=go:example/pkg.TestA', 'line=7 glyph=play item=go:example/pkg.TestB',
+                                    'line=11 glyph=play item=go:example/pkg.TestC', 'cov='])
+        self.assertIn('run 1 run 1 go:example/pkg.TestB', self.fake_log())
+        self.assertIn('line=7 glyph=failed item=go:example/pkg.TestB', out)
+        self.assertIn('line=4 glyph=passed item=go:example/pkg.TestA/sub', out)
+        self.assertIn('cov=3:C,5:C,6:P,7:C', out)
+        self.assertTrue([l for l in out if 'Run with Coverage' in l], out)
+        self.assertEqual(out[-1], 'cov=')
+
+    # --- the Testing section ---
+
+    def section(self, out):
+        return [l for l in out if l.startswith('row ')]
+
+    def test_the_testing_section_mirrors_the_tree_and_its_buttons_run(self):
+        # at 1000x600 the sidebar holds the explorer and Testing; Testing's header is above y=335,
+        # its buttons right to left from x=212: Cancel, Re-run Failed, Coverage, Run All
+        out = self.run_editor([*EXPAND, 'print-testing', 'move 150 321', 'click 150 321', 'wait-tests',
+                               'test-select testsfake go:example/pkg.TestB', 'print-testing', 'print-sidebar',
+                               'key r', 'wait-tests'])
+        rows = self.section(out)
+        self.assertTrue(rows[0].startswith('row 0 '), rows)
+        self.assertIn(' open id=00 label=Fake Tests ', rows[0])
+        self.assertIn(' leaf id=00go:example/pkg.TestB label=TestB icon=', rows[4])
+        self.assertIn('testing title=Testing at=0,335 size=240x239 badge=0 visible focus', out)
+        self.assertEqual(self.logged('run '), ['run 1 run 0 ', 'run 2 run 1 go:example/pkg.TestB'])
+        after = rows[len(rows) // 2:]
+        self.assertTrue([r for r in after if 'id=00go:example/pkg.TestB ' in r and ' cur ' in r and 'desc=30 ms' in r],
+                        after)
+
+    def test_a_lazy_item_expanded_in_the_section_is_resolved(self):
+        out = self.run_editor(['cmd testing', 'wait-test-items 2', 'print-testing', 'key Down', 'key Down',
+                               'key Right', 'wait 300', 'print-testing', 'print-tests'])
+        rows = self.section(out)
+        self.assertIn(' closed id=00go:example/pkg label=pkg ', rows[1])
+        self.assertTrue([r for r in rows if 'id=00go:example/pkg#a_test.go' in r], rows)
+        self.assertIn("recv 2 tests-resolve 14 b'go:example/pkg'", self.fake_log())
+
     # --- test-exec ---
 
     def test_exec_runs_a_program_as_the_user_and_passes_its_output(self):
-        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'print-test-runs',
-                               'print-test-result testsfake go:example/pkg.TestA'], mode='exec')
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'print-dialog', 'dialog yes', 'wait-tests',
+                               'print-test-runs', 'print-test-result testsfake go:example/pkg.TestA',
+                               'cmd test_run_all', 'wait-tests', 'print-dialog'], mode='exec')
+        # the first program in the project asks once, showing the command; the second run does not
+        self.assertIn('dialog=Let Fake Tests run programs in proj?', out)
+        self.assertTrue([l for l in out if l.startswith("text=python3 -c 'import sys print(")], out)
+        self.assertEqual(out[-1], 'dialog=none')
         log = self.fake_log()
         self.assertTrue([l for l in log if l.startswith('exec ok ') and l.endswith(' 1')], log)
         self.assertIn("exec-result exit=3 out=b'out-line\\n' err=b'err-line\\n'", log)
@@ -231,7 +369,7 @@ class Testing(unittest.TestCase):
         self.assertTrue([l for l in out if l.startswith('run=1 ') and ' procs=0' in l], out)
 
     def test_exec_refusals(self):
-        self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 4000'], mode='execbad')
+        self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog yes', 'wait-tests', 'wait 4000'], mode='execbad')
         log = self.fake_log()
         def reply(prefix):
             hit = [l for l in log if l.startswith(prefix + ' ')]
@@ -247,17 +385,41 @@ class Testing(unittest.TestCase):
         # the four that started were stopped when the run ended
         self.assertEqual(len([l for l in log if l.startswith('recv 0 test-exit ') and l.endswith(' killed')]), 4, log)
 
+    def test_a_declined_approval_answers_cancelled_and_asks_again(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog no', 'wait-tests',
+                               'cmd test_run_all', 'wait 500', 'print-dialog', 'dialog no', 'wait-tests'], mode='exec')
+        self.assertEqual(len([l for l in self.fake_log() if l.startswith('exec error ') and l.endswith(' cancelled')]), 2,
+                         self.fake_log())
+        self.assertEqual(len([l for l in out if l.startswith('dialog=Let Fake Tests')]), 1, out)
+
     def test_cancel_stops_processes_after_2_s(self):
-        self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 800', 'cmd test_cancel', 'wait-tests', 'wait 3000'],
-                        mode='slowexec')
+        self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog yes', 'wait 800', 'cmd test_cancel',
+                         'wait-tests', 'wait 3000'], mode='slowexec')
         log = self.fake_log()
         self.assertTrue([l for l in log if l.startswith('recv 0 test-out ') and 'sleeping' in l], log)
         self.assertIn('exit killed', log)
 
+    def test_a_stopped_programs_children_go_too(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog yes', 'wait 800', 'cmd test_cancel',
+                               'wait-tests', 'wait 3500'], mode='survivor')
+        log = self.fake_log()
+        pid = [l for l in log if l.startswith('recv 0 test-out ') and ' out ' in l]
+        self.assertTrue(pid, log)
+        child = int(pid[0].split("b'")[1].split('\\n')[0])
+        time.sleep(0.5)
+        try:
+            os.kill(child, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        if alive:
+            os.kill(child, 9)
+        self.assertFalse(alive, 'the child that ignored SIGTERM outlived the run')
+
     def test_back_pressure_keeps_a_chatty_process_waiting(self):
         self.env['TESTS_CHATTY'] = str(8 << 20)
-        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'print-extensions'], mode='chatty',
-                              timeout=180)
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'dialog yes', 'wait-tests', 'print-extensions'],
+                              mode='chatty', timeout=180)
         self.assertIn('chatty exit=0 bytes=%d' % (8 << 20), self.fake_log())
         self.assertTrue([l for l in out if l.startswith('rhun-tests/testsfake state=running')], out)
 

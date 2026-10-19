@@ -683,6 +683,11 @@ profile_build:
     lea rsi, [rip + .Lsb_net_allow]
 31: lea rdi, [rip + conf_profile]
     call sb_push_cstr
+    # a Unix socket in its state folder may listen whatever network says: the user's own programs
+    # reach it there (AI: the MCP bridge)
+    mov rdi, [rbx + EXT_state]
+    lea rsi, [rip + .Lsb_sock]
+    call profile_path
     # programs
     mov rdi, [rbx + EXT_prog]
     call profile_program
@@ -1285,3 +1290,4 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Ldev_dirs: .quad .Lxcode_link, .Lxcode_app, .Lclt, 0
 .Lsb_xcrun: .asciz "(allow file-read* (literal \"/private/var/db/xcode_select_link\"))\n"
 .Lsb_net_allow: .asciz "(allow network*)\n"
+.Lsb_sock: .asciz "(allow network-bind network-inbound (local unix-socket (subpath \"%s\")))\n"

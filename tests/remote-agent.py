@@ -279,6 +279,54 @@ class RemoteAgent(unittest.TestCase):
         self.assertEqual(a.call('remove 0', b2)[0], 'ok')
         self.assertFalse((d / 'b.txt').exists())
 
+    def test_links_access_and_parts(self):
+        a = self.agent
+        d = self.home / 'p'
+        (d / 'sub').mkdir(parents=True)
+        (d / 'f').write_text('x')
+        os.symlink('sub', d / 'tosub')
+        os.symlink('f', d / 'tof')
+        os.symlink('missing', d / 'dangling')
+        p = str(d).encode()
+        kind, listing = a.call('list', p)
+        self.assertEqual(sorted(e for e in listing.split(b'\0') if e),
+                         [b'L tosub', b'd sub', b'f f', b'l dangling', b'l tof'])
+        self.assertEqual(a.call('access 2', p + b'/f')[0], 'ok')
+        self.assertEqual(a.call('access 2', p + b'/none'), ('error', 2))
+        big = p + b'/big'
+        self.assertEqual(a.call('write 8 600 %d' % len(big), big + b'one,')[0], 'ok')
+        self.assertEqual(a.call('write 4 600 %d' % len(big), big + b'two')[0], 'ok')
+        self.assertEqual((d / 'big').read_bytes(), b'one,two')
+        self.assertEqual(oct((d / 'big').stat().st_mode & 0o777), '0o600')
+
+    def test_files_and_grep(self):
+        a = self.agent
+        d = self.home / 'proj'
+        (d / 'src/deep').mkdir(parents=True)
+        (d / '.git').mkdir()
+        (d / 'node_modules').mkdir()
+        (d / 'src/a.rs').write_text('fn main() {\n    let Needle = 1;\n}\n')
+        (d / 'src/deep/b.txt').write_text('needle here\nnothing\n\t\tneedle again\n')
+        (d / 'node_modules/x.js').write_text('needle')
+        (d / '.git/config').write_text('needle')
+        (d / 'bin.dat').write_bytes(b'needle\0\1\2')
+        body = str(d).encode() + b'\0.git node_modules'
+        kind, files = a.call('files 1000', body)
+        self.assertEqual(kind, 'ok')
+        self.assertEqual(sorted(f for f in files.split(b'\0') if f), [b'bin.dat', b'src/a.rs', b'src/deep/b.txt'])
+        kind, out = a.call('files 1', body)
+        self.assertEqual(len([f for f in out.split(b'\0') if f]), 1)
+        kind, out = a.call('grep 100 0', body + b'\0needle')
+        self.assertEqual(kind, 'ok')
+        f = out.split(b'\0')
+        recs = [tuple(f[i:i + 4]) for i in range(0, len(f) - 1, 4)]
+        self.assertEqual(sorted(recs), [(b'src/a.rs', b'1', b'8', b'let Needle = 1;'),
+                                        (b'src/deep/b.txt', b'0', b'0', b'needle here'),
+                                        (b'src/deep/b.txt', b'2', b'2', b'needle again')])
+        kind, out = a.call('grep 100 1', body + b'\0Needle')
+        self.assertEqual(out.split(b'\0')[:2], [b'src/a.rs', b'1'])
+        self.assertEqual(len(out.split(b'\0')), 5)
+
     def test_watch(self):
         a = self.agent
         d = self.home / 'w'
@@ -314,6 +362,44 @@ class RemoteAgent(unittest.TestCase):
             time.sleep(0.05)
         else:
             self.fail('sleep outlived the agent')
+
+    def gone_within(self, pid, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            # a zombie of a parent that has not reaped it yet counts as gone
+            try:
+                if Path('/proc/%d/stat' % pid).read_text().split(') ', 1)[1].startswith('Z'):
+                    return True
+            except (OSError, IndexError):
+                return True
+            time.sleep(0.05)
+        return False
+
+    # a child that ignores SIGHUP and SIGTERM, its output elsewhere: only its group's SIGKILL ends it
+    STUBBORN = "(trap '' HUP TERM; exec sleep 300) </dev/null >/dev/null 2>&1 & echo $!"
+
+    def test_what_a_program_leaves_behind_ends_with_it(self):
+        a = self.agent
+        kind, _ = a.call('spawn 15 0 0 0 0', spawn_body(['sh', '-c', self.STUBBORN + '; exit 0']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 15 in a.exits and 15 in a.eof)
+        child = int(a.data[15])
+        os.kill(child, 0)                       # still there right after its leader's exit
+        self.assertTrue(self.gone_within(child, 4), 'the stubborn child outlived its group')
+
+    def test_what_a_program_leaves_behind_ends_with_the_session(self):
+        a = self.agent
+        kind, _ = a.call('spawn 16 0 0 0 0', spawn_body(['sh', '-c', self.STUBBORN + '; exec sleep 300']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(16, b''))
+        child = int(a.data[16])
+        a.p.stdin.close()                       # the window went away
+        a.p.wait(10)
+        self.assertTrue(self.gone_within(child, 4), 'the stubborn child outlived the session')
 
     def test_login_environment(self):
         """The login shell's profile reaches programs (a PATH entry like ~/.cargo/bin)."""

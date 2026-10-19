@@ -1,0 +1,7 @@
+module sdkcommands
+
+go 1.22
+
+require github.com/rhun-editor/extension-protocol v0.0.0
+
+replace github.com/rhun-editor/extension-protocol => @SDK@
