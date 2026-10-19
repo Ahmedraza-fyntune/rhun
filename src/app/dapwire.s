@@ -198,7 +198,7 @@ FN dap_watch
 3:  pop rbx
     ret
 
-# dap_close_fds(ds): stop watching and close all three pipes
+# dap_close_fds(ds): stop watching and close its pipes and sockets
 FN dap_close_fds
     push rbx
     push r12
@@ -214,13 +214,181 @@ FN dap_close_fds
     SYS SYS_close
     mov dword ptr [r12 + r13*4], -1
 2:  inc r13d
-    cmp r13d, 3                 # DS_in, DS_out, DS_err are adjacent
+    cmp r13d, 6                 # DS_in, DS_out, DS_err, DS_aout, DS_ain, DS_csock are adjacent
     jb 1b
     mov dword ptr [rbx + DS_reading], 0
     pop r13
     pop r12
     pop rbx
     ret
+
+# ---------------- tcp ----------------
+
+# sa_make(buf, IPv4 address in network order, port): a Linux sockaddr_in (16 bytes)
+sa_make:
+    mov dword ptr [rdi], DSK_AF_INET    # the family; the port follows
+    mov eax, edx
+    shr eax, 8
+    mov [rdi + 2], al                   # network order
+    mov [rdi + 3], dl
+    mov [rdi + 4], esi
+    mov qword ptr [rdi + 8], 0
+    ret
+
+# dap_pick_port() -> eax a free loopback port, or -errno: bound to 127.0.0.1:0, read back, closed
+#   (the adapter binds it next)
+FN dap_pick_port
+    PROLOGUE 48
+    mov edi, DSK_AF_INET
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js 9f
+    mov r12d, eax
+    lea rdi, [rsp]
+    mov esi, DAP_LOOPBACK
+    xor edx, edx
+    call sa_make
+    mov edi, r12d
+    lea rsi, [rsp]
+    mov edx, 16
+    SYS SYS_bind
+    test rax, rax
+    js 8f
+    mov dword ptr [rsp + 16], 16
+    mov edi, r12d
+    lea rsi, [rsp]
+    lea rdx, [rsp + 16]
+    SYS DSK_getsockname
+    test rax, rax
+    js 8f
+    movzx eax, byte ptr [rsp + 2]
+    shl eax, 8
+    movzx ecx, byte ptr [rsp + 3]
+    or eax, ecx
+    jnz 8f
+    mov rax, -EIO               # no port came back
+8:  mov r13, rax
+    mov edi, r12d
+    SYS SYS_close
+    mov rax, r13
+9:  EPILOGUE
+
+# dap_tcp_split(ds): a tcp adapter was spawned with three pipes: its output becomes console lines
+#   (DS_aout) and its input is only kept (DS_ain, closed at the end) until the socket connects
+FN dap_tcp_split
+    push rbx
+    mov rbx, rdi
+    mov edi, [rbx + DS_out]
+    call watch_remove
+    mov edi, [rbx + DS_in]
+    call watch_remove
+    mov eax, [rbx + DS_out]
+    mov [rbx + DS_aout], eax
+    mov eax, [rbx + DS_in]
+    mov [rbx + DS_ain], eax
+    mov dword ptr [rbx + DS_out], -1
+    mov dword ptr [rbx + DS_in], -1
+    mov dword ptr [rbx + DS_reading], 0
+    mov edi, [rbx + DS_aout]
+    mov esi, POLLIN
+    lea rdx, [rip + dap_on_aout]
+    mov rcx, rbx
+    call watch_add
+    pop rbx
+    ret
+
+# dap_connect_try(ds) -> eax 1 connected (the socket is its input and output from now on), 0 not
+#   yet (refused or in progress: try again), or -errno when there is no socket at all. A
+#   nonblocking connect is asked again rather than polled (poll is the window system's on macOS):
+#   EALREADY means in progress; EISCONN means done, which macOS also says after a refusal, so
+#   getpeername decides
+FN dap_connect_try
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12d, [rbx + DS_csock]
+    test r12d, r12d
+    jns 2f
+    mov edi, DSK_AF_INET
+    mov esi, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js 9f
+    mov r12d, eax
+    mov [rbx + DS_csock], eax
+2:  lea rdi, [rsp]
+    mov esi, [rbx + DS_addr]
+    mov edx, [rbx + DS_port]
+    call sa_make
+    mov edi, r12d
+    lea rsi, [rsp]
+    mov edx, 16
+    SYS SYS_connect
+    test rax, rax
+    jz 5f
+    cmp rax, -DSK_EISCONN
+    je 3f
+    cmp rax, -DSK_EINPROGRESS
+    je 4f
+    cmp rax, -DSK_EALREADY
+    je 4f
+    cmp rax, -EINTR
+    je 4f
+    jmp 31f
+3:  # EISCONN: connected, or (macOS) refused after all: only a connected socket has a peer
+    mov dword ptr [rsp + 16], 16
+    mov edi, r12d
+    lea rsi, [rsp]
+    lea rdx, [rsp + 16]
+    SYS DSK_getpeername
+    test rax, rax
+    jz 5f
+31: # refused (nobody listens yet) or failed: a new socket next time
+    mov edi, r12d
+    SYS SYS_close
+    mov dword ptr [rbx + DS_csock], -1
+4:  xor eax, eax
+    EPILOGUE
+5:  # connected: reads and writes go through two descriptors of the one socket, each watched
+    mov dword ptr [rbx + DS_csock], -1
+    mov [rbx + DS_out], r12d
+    mov edi, r12d
+    mov esi, DSK_F_DUPFD
+    xor edx, edx
+    SYS SYS_fcntl
+    test rax, rax
+    js 6f
+    mov [rbx + DS_in], eax
+    mov edi, eax
+    mov esi, DSK_F_SETFD
+    mov edx, DSK_FD_CLOEXEC
+    SYS SYS_fcntl
+    mov edi, [rbx + DS_out]
+    mov esi, POLLIN
+    lea rdx, [rip + dap_on_out]
+    mov rcx, rbx
+    call watch_add
+    mov dword ptr [rbx + DS_reading], 1
+    mov edi, [rbx + DS_in]
+    xor esi, esi
+    lea rdx, [rip + dap_on_in]
+    mov rcx, rbx
+    call watch_add
+    # what waited goes out now
+    mov edi, [rbx + DS_in]
+    xor esi, esi
+    mov rdx, rbx
+    call dap_on_in
+    mov eax, 1
+    EPILOGUE
+6:  mov r13, rax
+    mov edi, r12d
+    SYS SYS_close
+    mov dword ptr [rbx + DS_out], -1
+    mov rax, r13
+9:  EPILOGUE
 
 # ---------------- reading ----------------
 
@@ -288,9 +456,16 @@ FN dap_resume_reading
 # dap_on_err(fd, revents, ds): its error output, line by line, to the console (adapter:) and the
 #   last 20 lines kept for a crash message
 dap_on_err:
+    mov ecx, DS_err
+    jmp on_lines
+# dap_on_aout(fd, revents, ds): a tcp adapter's standard output, as its error output is
+dap_on_aout:
+    mov ecx, DS_aout
+on_lines:
     PROLOGUE
     mov r12d, edi
     mov rbx, rdx
+    mov r15d, ecx               # the field that holds this fd
 1:  mov edi, r12d
     lea rsi, [rip + errchunk]
     mov edx, 4096
@@ -308,7 +483,7 @@ dap_on_err:
     call watch_remove
     mov edi, r12d
     SYS SYS_close
-    mov dword ptr [rbx + DS_err], -1
+    mov dword ptr [rbx + r15], -1
     jmp 9f
 2:  mov r13, rax
     lea r14, [rip + errchunk]
@@ -393,8 +568,10 @@ FN dap_send
     mov r12, rsi
     mov r13, rdx
     cmp dword ptr [rbx + DS_in], 0
-    jl 8f
-    mov rax, [rbx + DS_wq + SB_len]
+    jge 1f
+    cmp dword ptr [rbx + DS_state], DSS_CONNECTING
+    jne 8f                      # gone; while it connects, requests wait in the queue
+1:  mov rax, [rbx + DS_wq + SB_len]
     sub rax, [rbx + DS_wq_off]
     add rax, r13
     cmp rax, DAP_WQ_MAX

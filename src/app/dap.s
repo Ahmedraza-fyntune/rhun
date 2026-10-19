@@ -105,6 +105,9 @@ ds_alloc:
     mov dword ptr [rbx + DS_in], -1
     mov dword ptr [rbx + DS_out], -1
     mov dword ptr [rbx + DS_err], -1
+    mov dword ptr [rbx + DS_aout], -1
+    mov dword ptr [rbx + DS_ain], -1
+    mov dword ptr [rbx + DS_csock], -1
     mov eax, [rip + dnext_id]
     inc dword ptr [rip + dnext_id]
     mov [rbx + DS_id], eax
@@ -211,17 +214,27 @@ FN dap_start
     mov r15, [r14 + DBG_ext]
     test dword ptr [r15 + EXT_needs], NEEDS_DEBUG
     jz .Lst_noneeds
+    mov dword ptr [rsp + 4], DTR_STDIO
+    mov dword ptr [rsp + 8], DAP_LOOPBACK
     cmp qword ptr [rip + g_lc_server + SB_len], 0
     jne .Lst_server
     cmp dword ptr [r14 + DBG_transport], 0
     jne .Lst_tcp
+.Lst_cmd:
     call dcfg_adapter
     test eax, eax
     jz .Lst_cfgfail
+.Lst_alloc:
     call ds_alloc
     test rax, rax
     jz .Lst_full
     mov rbx, rax
+    mov eax, [rsp + 4]
+    mov [rbx + DS_transport], eax
+    mov eax, [rip + g_lc_port]
+    mov [rbx + DS_port], eax
+    mov eax, [rsp + 8]
+    mov [rbx + DS_addr], eax
     mov eax, [rip + g_lc_dbg]
     mov [rbx + DS_dbg], eax
     mov [rbx + DS_dbg_ext], r15
@@ -246,6 +259,9 @@ FN dap_start
     mov rdi, rbx
     call slot_index
     mov [rip + g_dfocus], eax
+    # a server runs already: nothing is started, so nothing is asked
+    cmp dword ptr [rbx + DS_transport], DTR_SERVER
+    je 1f
     # one approval per extension and project (runallow.s): asked once, with the exact command
     mov dword ptr [rbx + DS_state], DSS_APPROVAL
     mov rdi, r15
@@ -274,8 +290,29 @@ FN dap_start
     lea rdi, [rip + .Lm_compound]
     jmp .Lst_msg
 .Lst_server:
+    # server = HOST:PORT (or PORT): connect to an adapter that runs already
+    mov rdi, [rip + g_lc_server + SB_ptr]
+    call server_addr
+    test eax, eax
+    jz .Lst_badserver
+    mov [rip + g_lc_port], eax
+    mov [rsp + 8], edx
+    mov dword ptr [rsp + 4], DTR_SERVER
+    mov dword ptr [rip + g_lc_nargs], 0
+    jmp .Lst_alloc
+.Lst_badserver:
+    lea rdi, [rip + .Lm_badserver]
+    jmp .Lst_msg
 .Lst_tcp:
-    lea rdi, [rip + .Lm_tcp]
+    # a free loopback port for ${port}; the adapter listens there and rhun connects
+    call dap_pick_port
+    test eax, eax
+    js .Lst_noport
+    mov [rip + g_lc_port], eax
+    mov dword ptr [rsp + 4], DTR_TCP
+    jmp .Lst_cmd
+.Lst_noport:
+    lea rdi, [rip + .Lm_noport]
     jmp .Lst_msg
 .Lst_noneeds:
     lea rdi, [rip + .Lm_noneeds]
@@ -327,7 +364,8 @@ approval_done:
     call ds_end
 9:  EPILOGUE
 
-# slot_of_id(id) -> rax DS* of the session with that id, or 0
+# dap_slot_of_id(id) -> rax DS* of the session with that id, or 0
+FN dap_slot_of_id
 slot_of_id:
     PROLOGUE
     mov r12d, edi
@@ -375,10 +413,13 @@ FN dap_forget_approvals
     jmp 1b
 9:  EPILOGUE
 
-# launch_now(ds): spawn the adapter and send initialize
+# launch_now(ds): spawn the adapter and send initialize. A tcp adapter (or a server) is connected
+#   to first: initialize waits in the queue meanwhile
 launch_now:
     PROLOGUE
     mov rbx, rdi
+    cmp dword ptr [rbx + DS_transport], DTR_SERVER
+    je 2f
     mov rdi, rbx
     call dap_spawn
     test rax, rax
@@ -387,12 +428,25 @@ launch_now:
     lea rsi, [rip + .Lm_spawn]
     call ds_end
     EPILOGUE
-1:  mov dword ptr [rbx + DS_state], DSS_INITIALIZING
+1:  cmp dword ptr [rbx + DS_transport], DTR_STDIO
+    je 3f
+    mov rdi, rbx
+    call dap_tcp_split
+2:  mov dword ptr [rbx + DS_state], DSS_CONNECTING
+    call time_ms
+    mov [rbx + DS_deadline], rax        # while connecting: the next try
+    add rax, DAP_CONNECT_MS
+    mov [rbx + DS_conn_until], rax
+    mov rdi, rbx
+    call send_initialize
+    jmp 4f
+3:  mov dword ptr [rbx + DS_state], DSS_INITIALIZING
     mov rdi, rbx
     call send_initialize
     call time_ms
     add rax, DAP_INIT_MS
     mov [rbx + DS_deadline], rax
+4:
     mov edi, [rbx + DS_id]
     mov esi, DCON_INFO
     lea rdx, [rip + .Lm_starting]
@@ -685,7 +739,12 @@ ds_tick:
     EPILOGUE
 1:  cmp dword ptr [rbx + DS_state], DSS_APPROVAL
     je 9f
-    call time_us
+    cmp dword ptr [rbx + DS_state], DSS_CONNECTING
+    jne 11f
+    mov rdi, rbx
+    call connect_tick
+    EPILOGUE
+11: call time_us
     mov r14, rax                # start
     xor r13d, r13d              # messages
     mov dword ptr [rbx + DS_more], 1    # until a frame turns out incomplete: the budget stops it
@@ -919,6 +978,188 @@ on_timeout:
     mov ecx, .Lm_req_timeout_end - .Lm_req_timeout
     call dcon_line
     mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# connect_tick(ds): a tcp adapter or a server is tried every 100 ms for 10 s; a tcp adapter that
+#   exits meanwhile (its output and error output closed) ends the session with its last words
+connect_tick:
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + DS_transport], DTR_TCP
+    jne 1f
+    cmp dword ptr [rbx + DS_aout], 0
+    jge 1f
+    cmp dword ptr [rbx + DS_err], 0
+    jge 1f
+    cmp qword ptr [rbx + DS_exited_at], 0
+    jne 10f
+    call time_ms
+    mov [rbx + DS_exited_at], rax
+10: mov rdi, rbx
+    call adapter_gone
+    EPILOGUE
+1:  call time_ms
+    mov r12, rax
+    cmp r12, [rbx + DS_deadline]
+    jb 9f
+    mov rdi, rbx
+    call dap_connect_try
+    test eax, eax
+    jg 5f
+    js 7f
+    cmp r12, [rbx + DS_conn_until]
+    jae 6f
+    lea rax, [r12 + DAP_CONNECT_EVERY]
+    mov [rbx + DS_deadline], rax
+9:  EPILOGUE
+5:  # connected: initialize went out just now
+    mov dword ptr [rbx + DS_state], DSS_INITIALIZING
+    lea rax, [r12 + DAP_INIT_MS]
+    mov [rbx + DS_deadline], rax
+    xor ecx, ecx
+51: cmp ecx, [rbx + DS_npend]
+    jae 52f
+    mov eax, ecx
+    imul rax, rax, PD_SIZE
+    mov [rbx + DS_pend + rax + PD_sent], r12
+    inc ecx
+    jmp 51b
+52: mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
+    EPILOGUE
+6:  # "the debugger did not accept a connection on 127.0.0.1:PORT in 10 s"
+    lea rdi, [rip + dlg_text]
+    lea rsi, [rip + .Lm_noconn]
+    call cstr_copy
+    mov rdi, rax
+    mov esi, [rbx + DS_addr]
+    mov edx, [rbx + DS_port]
+    call fmt_addr
+    lea rsi, [rip + .Lm_noconn2]
+    mov rdi, rax
+    call cstr_copy
+    mov rdi, rbx
+    lea rsi, [rip + dlg_text]
+    call ds_fail
+    EPILOGUE
+7:  mov rdi, rbx
+    lea rsi, [rip + .Lm_nosocket]
+    call ds_fail
+    EPILOGUE
+
+# fmt_addr(dst, IPv4 address in network order, port) -> rax the end (NUL-terminated): A.B.C.D:PORT
+fmt_addr:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13d, edx
+    xor r14d, r14d
+1:  mov rdi, rbx
+    movzx esi, r12b
+    call fmt_u64
+    add rbx, rax
+    shr r12d, 8
+    inc r14d
+    mov byte ptr [rbx], '.'
+    cmp r14d, 4
+    jb 2f
+    mov byte ptr [rbx], ':'
+2:  inc rbx
+    cmp r14d, 4
+    jb 1b
+    mov rdi, rbx
+    mov esi, r13d
+    call fmt_u64
+    add rbx, rax
+    mov byte ptr [rbx], 0
+    mov rax, rbx
+    EPILOGUE
+
+# server_addr(cstr) -> eax the port (0 when it does not parse), edx the IPv4 address in network
+#   order: "PORT", "HOST:PORT" with HOST localhost or A.B.C.D
+server_addr:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, DAP_LOOPBACK
+    # a colon: the host comes first
+    mov rax, rbx
+10: movzx ecx, byte ptr [rax]
+    test ecx, ecx
+    jz 5f
+    cmp ecx, ':'
+    je 11f
+    inc rax
+    jmp 10b
+11: mov r13, rax                # the colon
+    mov r14, rax
+    sub r14, rbx                # the host's length
+    cmp r14, 9
+    jne 1f
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_localhost]
+    mov rdx, 9
+    call memeq
+    test eax, eax
+    jnz 4f
+1:  # four decimal numbers up to 255 separated by dots
+    xor r12d, r12d
+    xor r15d, r15d              # the part
+2:  xor eax, eax
+    xor ecx, ecx                # digits
+3:  cmp rbx, r13
+    jae 31f
+    movzx edx, byte ptr [rbx]
+    cmp edx, '.'
+    je 31f
+    sub edx, '0'
+    cmp edx, 9
+    ja .Lsa_bad
+    imul eax, eax, 10
+    add eax, edx
+    cmp eax, 255
+    ja .Lsa_bad
+    inc ecx
+    inc rbx
+    jmp 3b
+31: test ecx, ecx
+    jz .Lsa_bad
+    mov ecx, r15d
+    shl ecx, 3
+    shl eax, cl
+    or r12d, eax
+    inc r15d
+    cmp rbx, r13
+    jae 32f
+    inc rbx                     # the dot
+    cmp r15d, 4
+    jb 2b
+    jmp .Lsa_bad
+32: cmp r15d, 4
+    jne .Lsa_bad
+4:  lea rbx, [r13 + 1]
+5:  # the port: 1..65535
+    xor eax, eax
+    xor ecx, ecx
+6:  movzx edx, byte ptr [rbx]
+    test edx, edx
+    jz 7f
+    sub edx, '0'
+    cmp edx, 9
+    ja .Lsa_bad
+    imul eax, eax, 10
+    add eax, edx
+    cmp eax, 65535
+    ja .Lsa_bad
+    inc ecx
+    inc rbx
+    jmp 6b
+7:  test ecx, ecx
+    jz .Lsa_bad
+    mov edx, r12d
+    EPILOGUE
+.Lsa_bad:
+    xor eax, eax
+    xor edx, edx
     EPILOGUE
 
 # ---------------- ending ----------------
@@ -3237,7 +3478,7 @@ r_excinfo:
 
 # ---------------- reverse requests ----------------
 
-# on_reverse(ds, root): runInTerminal and startDebugging come with stage 7; others are refused
+# on_reverse(ds, root): runInTerminal (dapterm.s); others are refused
 on_reverse:
     PROLOGUE
     mov rbx, rdi
@@ -3251,6 +3492,21 @@ on_reverse:
     call jstr
     mov r14, rax
     mov r15, rdx
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Lc_runInTerminal]
+    call str_eq_cstr
+    test eax, eax
+    jz 1f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_arguments]
+    call jkey
+    mov rdx, rax
+    mov rdi, rbx
+    mov rsi, r13
+    call dap_run_in_terminal
+    EPILOGUE
+1:
     lea rdi, [rip + nodep]
     lea rsi, [rip + .Lm_unsupported]
     call sb_set_cstr
@@ -3865,7 +4121,12 @@ FN dap_find_node
 .section .rodata
 .Lm_busy: .asciz "a debug session is waiting for your answer"
 .Lm_compound: .asciz "compound configurations are not supported yet"
-.Lm_tcp: .asciz "this debugger connects over TCP, which is not supported yet"
+.Lm_badserver: .asciz "server must be PORT or HOST:PORT, with HOST localhost or an IPv4 address"
+.Lm_noport: .asciz "no free TCP port on 127.0.0.1 for the debugger (this system has no sockets for rhun yet?)"
+.Lm_nosocket: .asciz "rhun could not create a TCP socket for the debugger"
+.Lm_noconn: .asciz "the debugger did not accept a connection on "
+.Lm_noconn2: .asciz " in 10 s"
+.Ls_localhost: .ascii "localhost"
 .Lm_noneeds: .asciz "the debugger's extension does not declare debug = yes under [needs]"
 .Lm_full: .asciz "8 debug sessions are running already"
 .Lm_cancelled: .asciz "cancelled"
@@ -3962,6 +4223,8 @@ FN dap_find_node
 .Lk_supportsProgressReporting: .asciz "supportsProgressReporting"
 .Lk_supportsInvalidatedEvent: .asciz "supportsInvalidatedEvent"
 .Lk_supportsMemoryReferences: .asciz "supportsMemoryReferences"
+.Lk_supportsRunInTerminalRequest: .asciz "supportsRunInTerminalRequest"
+.Lc_runInTerminal: .asciz "runInTerminal"
 .Lk_terminateDebuggee: .asciz "terminateDebuggee"
 .Lk_exceptionBreakpointFilters: .asciz "exceptionBreakpointFilters"
 .Lk_filter: .asciz "filter"
@@ -4042,7 +4305,8 @@ FN dap_find_node
 .p2align 3
 init_true:
     .quad .Lk_linesStartAt1, .Lk_columnsStartAt1, .Lk_supportsVariableType
-    .quad .Lk_supportsVariablePaging, .Lk_supportsProgressReporting, .Lk_supportsInvalidatedEvent, 0
+    .quad .Lk_supportsVariablePaging, .Lk_supportsProgressReporting, .Lk_supportsInvalidatedEvent
+    .quad .Lk_supportsRunInTerminalRequest, 0
 cap_names:
     .quad .Lcap_configdone, CAP_CONFIGDONE, .Lcap_cond, CAP_COND, .Lcap_hit, CAP_HIT
     .quad .Lcap_log, CAP_LOG, .Lcap_funcbp, CAP_FUNCBP, .Lcap_terminate, CAP_TERMINATE
