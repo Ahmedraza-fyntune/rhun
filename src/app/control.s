@@ -7,8 +7,6 @@
 
 .bss
 .p2align 3
-.globl g_ctl_out
-g_ctl_out:                      # (what other files' commands print into)
 out: .zero SB_SIZE
 ctl_value: .zero 1024
 cbuf: .zero SB_SIZE
@@ -148,7 +146,7 @@ FN control_exec
     lea r15, [rip + ctl_table]
 1:  mov rdx, [r15]
     test rdx, rdx
-    jz .Lce_unknown
+    jz .Lce_more
     mov rdi, r13
     mov rsi, r14
     call str_eq_cstr
@@ -156,6 +154,28 @@ FN control_exec
     jnz 2f
     add r15, 16
     jmp 1b
+.Lce_more:
+    # the other parts' tables (ctl_tables): fn(out, rest, rest len) -> rax as above
+    lea rax, [rip + ctl_tables]
+    mov [rsp], rax
+11: mov rax, [rsp]
+    mov r15, [rax]
+    test r15, r15
+    jz .Lce_unknown
+    add qword ptr [rsp], 8
+12: mov rdx, [r15]
+    test rdx, rdx
+    jz 11b
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 13f
+    add r15, 16
+    jmp 12b
+13: lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
 2:  call [r15 + 8]
     push rax
     push rax
@@ -168,22 +188,7 @@ FN control_exec
     xor eax, eax
     EPILOGUE
 .Lce_unknown:
-    # editor presentation's commands (presctl.s)
-    mov rdi, r13
-    mov rsi, r14
-    mov rdx, rbx
-    mov rcx, r12
-    call presctl_exec
-    cmp rax, -2
-    je 1f
-    push rax
-    push rax
-    call term_frame_now
-    call flush_frame
-    pop rax
-    pop rax
-    EPILOGUE
-1:  lea rdi, [rip + out]
+    lea rdi, [rip + out]
     lea rsi, [rip + .Lunknown]
     call sb_push_cstr
     mov rax, -1
@@ -2322,6 +2327,11 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
+# other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
+ctl_tables:
+    .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad pres_ctl              # editor presentation (presctl.s)
+    .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open

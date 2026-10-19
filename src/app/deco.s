@@ -105,7 +105,7 @@ FN h_decoration_type
     PROLOGUE 128
     call xp_cur
     mov rbx, rax
-    test dword ptr [rbx + EXT_features], FEAT_DECORATIONS
+    FEAT_TEST rbx, FEAT_DECORATIONS
     jz .Lht_unknown
     call xp_nfields
     cmp rax, 4
@@ -719,7 +719,7 @@ FN h_decorate
     PROLOGUE 112
     call xp_cur
     mov rbx, rax
-    test dword ptr [rbx + EXT_features], FEAT_DECORATIONS
+    FEAT_TEST rbx, FEAT_DECORATIONS
     jz .Lhd_unknown
     mov edi, NEEDS_DOC_READ
     call xp_need
@@ -2310,7 +2310,7 @@ FN deco_visible_tick
     inc r12
     cmp dword ptr [r13 + EXT_status], ES_RUNNING
     jne 1b
-    test dword ptr [r13 + EXT_features], FEAT_DECORATIONS
+    FEAT_TEST r13, FEAT_DECORATIONS
     jz 1b
     test dword ptr [r13 + EXT_needs], NEEDS_DOC_READ
     jz 1b

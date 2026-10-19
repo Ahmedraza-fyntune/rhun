@@ -65,7 +65,8 @@ class Base(unittest.TestCase):
         folder = self.exts / 'rhun-tests/present'
         folder.mkdir(parents=True)
         (folder / 'extension.ini').write_text(MANIFEST.format(run=PRESENT.as_posix()), encoding='utf-8')
-        self.plog = self.work / 'present.log'
+        # a confined program reads its own folder and writes its state folder
+        self.plog = self.work / 'state/rhun/extensions/rhun-tests--present/present.log'
         self.env['PRESENT_LOG'] = self.plog.as_posix()
 
     def tearDown(self):
@@ -82,7 +83,7 @@ class Base(unittest.TestCase):
         return result.stdout.decode('utf-8', errors='replace').splitlines()
 
     def steps(self, steps, hello='hello 1 decorations'):
-        path = self.work / 'steps.json'
+        path = self.exts / 'rhun-tests/present/steps.json'
         path.write_text(json.dumps(steps), encoding='utf-8')
         self.env['PRESENT_STEPS'] = path.as_posix()
         self.env['PRESENT_HELLO'] = hello
@@ -268,7 +269,7 @@ class Presentation(Base):
         path = self.shot(self.start())
         colors = host.ppm_colors(path)
         for c in ('ff0000', '0000ff', '00ff00', 'ff00ff', 'ffff00', '00ffff', 'ff8000'):
-            self.assertIn(rgb(c), colors, c)
+            self.assertTrue(rgb(c) in colors, c)
         # the background sits under line 2's "let", the line background across line 4
         out = self.run_p(['print-xy 2 5', 'print-xy 2 8', 'print-xy 4 1'])
         (x1, y2), (x2, _), (_, y4) = (tuple(map(int, l.split())) for l in out[:3])

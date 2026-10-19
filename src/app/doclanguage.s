@@ -1,48 +1,20 @@
-# Document grammar ownership and lazy catalog synchronization.
+# A document's language: automatic, plain text or a named grammar, resolved lazily.
+# DOC_language_epoch is 1 once DOC_lang follows the document's intent, 0 when it is to be resolved
+# again (doc_language_refresh: the grammars or the file changed).
 .include "rhun.inc"
-.data
-.p2align 3
-.globl syntax_catalog_epoch
-syntax_catalog_epoch: .quad 1
 .section .rodata
 .Ldl_empty: .asciz ""
 .text
 
-# syntax_catalog_advance() -> 0/-EOVERFLOW. Caller preflights before pure publication.
-FN syntax_catalog_advance
-    cmp qword ptr [rip + syntax_catalog_epoch], -1
-    je .Ldl_overflow
-    inc qword ptr [rip + syntax_catalog_epoch]
-    xor eax, eax
-    ret
-.Ldl_overflow:
-    mov rax, -75
-    ret
-
-# doc_set_grammar(doc, borrowed current GR) -> status, post-apply cleanup diagnostic.
-# A negative RAX always leaves ownership unchanged. RAX0/RDX<0 means applied.
-# Selection and this call must not yield across a catalog publication.
+# doc_set_grammar(doc, GR or 0) -> rax 0, rdx 0: the document's grammar; a change starts its
+# highlighting over and tells the editor and the extensions (DOC_language_pending)
 FN doc_set_grammar
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    xor r13d, r13d
-    test r12, r12
-    jz 1f
-    mov r13, [r12 + GR_owner]
-1:  cmp [rbx + DOC_lang], r12
-    jne 2f
-    cmp [rbx + DOC_language_owner], r13
+    cmp [rbx + DOC_lang], r12
     je .Ldl_set_same
-2:  test r13, r13
-    jz 3f
-    mov rdi, r13
-    call grammar_prepare_retain
-    test rax, rax
-    js .Ldl_set_failed
-3:  mov r14, [rbx + DOC_language_owner]
     mov [rbx + DOC_lang], r12
-    mov [rbx + DOC_language_owner], r13
     mov qword ptr [rbx + DOC_svalid], 0
     mov qword ptr [rbx + DOC_sold], 0
     mov qword ptr [rbx + DOC_ehi], 0
@@ -52,24 +24,9 @@ FN doc_set_grammar
     je 6f
     inc qword ptr [rbx + DOC_language_revision]
 6:  mov qword ptr [rbx + DOC_language_pending], 1
-    mov rax, [rip + syntax_catalog_epoch]
-    mov [rbx + DOC_language_epoch], rax
-    xor edx, edx
-    test r14, r14
-    jz .Ldl_set_ok
-    mov rdi, r14
-    call grammar_prepare_release
-    mov rdx, rax
-.Ldl_set_ok:
-    xor eax, eax
-    EPILOGUE
 .Ldl_set_same:
-    mov rax, [rip + syntax_catalog_epoch]
-    mov [rbx + DOC_language_epoch], rax
+    mov qword ptr [rbx + DOC_language_epoch], 1
     xor eax, eax
-    xor edx, edx
-    EPILOGUE
-.Ldl_set_failed:
     xor edx, edx
     EPILOGUE
 
@@ -114,9 +71,8 @@ dl_resolve:
 FN doc_sync_grammar
     cmp dword ptr [rdi + DOC_language_syncing], 0
     jne .Ldl_busy
-    mov rax, [rip + syntax_catalog_epoch]
-    cmp [rdi + DOC_language_epoch], rax
-    je .Ldl_sync_same
+    cmp qword ptr [rdi + DOC_language_epoch], 0
+    jne .Ldl_sync_same
     PROLOGUE
     mov rbx, rdi
     mov dword ptr [rbx + DOC_language_syncing], 1
@@ -242,20 +198,44 @@ FN doc_language_set
     xor edx, edx
     ret
 
-# Consume every DOC-owned language reference before freeing the document.
+# doc_language_dispose(doc): its language state, before the document is freed
 FN doc_language_dispose
     PROLOGUE
     mov rbx, rdi
-    mov r12, [rbx + DOC_language_owner]
     mov rdi, [rbx + DOC_language_name]
     mov qword ptr [rbx + DOC_language_name], 0
-    mov qword ptr [rbx + DOC_language_owner], 0
     mov qword ptr [rbx + DOC_lang], 0
     mov qword ptr [rbx + DOC_language_epoch], 0
     call mem_free
     xor eax, eax
-    test r12, r12
-    jz 1f
-    mov rdi, r12
-    call grammar_prepare_release
-1:  EPILOGUE
+    EPILOGUE
+
+# ext_validate_text(ptr, len) -> eax 1 for printable text: valid shortest UTF-8 without C0 or C1
+# controls (a language name a user or an extension gives)
+FN ext_validate_text
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    test rsi, rsi
+    jz 8f
+    call snippet_utf8_valid
+    test eax, eax
+    jz 8f
+    xor r13d, r13d
+1:  lea rdi, [rbx + r13]
+    mov rsi, r12
+    sub rsi, r13
+    call utf8_decode
+    cmp eax, 32
+    jb 8f
+    cmp eax, 127
+    jb 2f
+    cmp eax, 160
+    jb 8f
+2:  add r13, rdx
+    cmp r13, r12
+    jb 1b
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE

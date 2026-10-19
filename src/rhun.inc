@@ -44,7 +44,6 @@
 .equ SYS_kill, 62
 .equ SYS_uname, 63
 .equ SYS_fcntl, 72
-.equ SYS_flock, 73
 .equ SYS_fsync, 74
 .equ SYS_ftruncate, 77
 .equ SYS_getcwd, 79
@@ -84,8 +83,6 @@
 .equ SYS_landlock_restrict_self, 446
 .equ SYS_sandbox_init, 290          # macOS only: a pseudo number the translator maps to sandbox_init
 .equ SYS_realpath, 291              # macOS only: realpath(path, buf) -> buf or 0
-.equ SYS_rename_new, 292            # macOS only: renamex_np(old, new, RENAME_EXCL)
-.equ SYS_renameat2, 316
 .equ CLONE_NEWUSER, 0x10000000
 .equ CLONE_NEWNET, 0x40000000
 .equ O_PATH, 0x200000
@@ -235,27 +232,6 @@
 .endm
 
 # ---- struct layout ----
-# Caller-owned SHA-256 context. Byte input length must fit the standard's 64-bit bit count.
-.equ SH256_state, 0
-.equ SH256_bytes, 32
-.equ SH256_used, 40
-.equ SH256_block, 48
-.equ SH256_finalized, 112
-.equ SH256_SIZE, 128
-.equ SH256_BYTES_MAX, (1 << 61) - 1
-
-# Immutable managed extension selection record, little-endian on supported targets.
-.equ EXI_format, 8
-.equ EXI_flags, 12
-.equ EXI_generation, 16
-.equ EXI_reserved, 24
-.equ EXI_active, 32
-.equ EXI_previous, 96
-.equ EXI_SIZE, 160
-.equ EXI_ACTIVE, 1
-.equ EXI_REMOVED, 2
-.equ EXI_FILENAME_LEN, 20
-
 # Private per-call context for strict directory enumeration.
 .equ DSC_max, 0
 .equ DSC_count, 8
@@ -640,7 +616,6 @@ F DOC_multilastcp, 8    # last scalar inserted by a multiple-selection typing ru
 F DOC_language_mode, 4  # DL_AUTO, DL_PLAIN or DL_NAMED
 F DOC_language_syncing, 4
 F DOC_language_name, 8  # owned explicit language name, retained even while unavailable
-F DOC_language_owner, 8 # owned prepared GP reference for DOC_lang, or 0
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
@@ -1472,27 +1447,59 @@ ENDSTRUCT TF_SIZE
 .equ IMF_PNM, 7
 .equ IMF_TGA, 8
 .equ IMG_MAXDIM, 32768
-.equ FEAT_VIEWS, 1               # section 12 of the spec: features agreed after hello
-.equ FEAT_COMPLETE, 2
-.equ FEAT_SIGNATURE, 4
-.equ FEAT_DEFINITION, 8
-.equ FEAT_REFERENCES, 16
-.equ FEAT_SYMBOLS, 32
-.equ FEAT_ACTIONS, 64
-.equ FEAT_RENAME, 128
-.equ FEAT_FORMAT, 256
-.equ FEAT_COMMANDS, 512          # protocol 1.1: remove a runtime command
-.equ FEAT_SAVE_ACTIONS, 1024     # source code actions before saving
-.equ FEAT_SNIPPET_TRANSFORMS, 8192 # compiled field-exit transforms
-.equ FEAT_SNIPPET_VARIANTS, 4096 # declared unequal initial mirrors
-.equ FEAT_SNIPPETS, 2048        # prepared fields and native editable sessions
-# the features whose requests rhun sends (and whose ok ID LEN replies it frames)
-.equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
-.equ FEAT_WORKSPACE_WATCH, 16384
-# editor presentation (deco.s ...): decorations and the visible event
-.equ FEAT_DECORATIONS, 32768
-.equ FEAT_PRESENTATION, FEAT_DECORATIONS
-.equ FEAT_HOST, FEAT_PRESENTATION | FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+# ---- protocol features (section 12 of the spec: named in "hello 1 NAME...", agreed by rhun's
+# "0 features" before ready) ----
+# One line per feature: FEATURE SYMBOL, "wire-name", ASKS. SYMBOL becomes the feature's index into
+# EXT_features (a bit set); ASKS is 1 when rhun sends that feature's requests, so the extension's
+# ok/error replies are read. Adding a feature is one line here, at the end (indices are not on the
+# wire; "0 features" lists names in this order). Test one with FEAT_TEST or ext_feature.
+.macro FEATURE_LIST
+    FEATURE FEAT_VIEWS, "views", 0
+    FEATURE FEAT_COMPLETE, "complete", 1
+    FEATURE FEAT_SIGNATURE, "signature", 1
+    FEATURE FEAT_DEFINITION, "definition", 1
+    FEATURE FEAT_REFERENCES, "references", 1
+    FEATURE FEAT_SYMBOLS, "symbols", 1
+    FEATURE FEAT_ACTIONS, "actions", 1
+    FEATURE FEAT_RENAME, "rename", 1
+    FEATURE FEAT_FORMAT, "format", 1
+    FEATURE FEAT_COMMANDS, "commands", 0          # protocol 1.1: remove a runtime command
+    FEATURE FEAT_SAVE_ACTIONS, "save-actions", 1  # source code actions before saving
+    FEATURE FEAT_SNIPPETS, "snippets", 0          # prepared fields and native editable sessions
+    FEATURE FEAT_SNIPPET_VARIANTS, "snippet-variants", 0   # declared unequal initial mirrors
+    FEATURE FEAT_SNIPPET_TRANSFORMS, "snippet-transforms", 0   # compiled field-exit transforms
+    FEATURE FEAT_WORKSPACE_WATCH, "workspace_watch", 0
+    # contributions and commands (invoke.s, when.s, extcontext.s)
+    FEATURE FEAT_COMMAND_ARGS, "command-args", 1  # 0 run ... FROM LEN, run-command, call
+    FEATURE FEAT_CONTEXT_KEYS, "context-keys", 0  # set-context
+    # editor presentation (deco.s ...)
+    FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
+.endm
+# extproto.s sets FEATURE_NAMES and expands the list again as its name table
+.macro FEATURE sym, name, asks
+.ifdef FEATURE_NAMES
+    .byte \asks
+    .asciz "\name"
+.else
+    .equ \sym, __feat
+    .set __feat, __feat + 1
+.endif
+.endm
+.set __feat, 0
+FEATURE_LIST
+.equ FEAT_COUNT, __feat
+.equ FEAT_MAX, 256              # EXT_features' bits
+.if FEAT_COUNT > FEAT_MAX
+.error "more features than EXT_features holds"
+.endif
+# The snippet decoders take the first 32 feature bits as one word (EXT_features' first dword).
+.if FEAT_SNIPPET_TRANSFORMS >= 32
+.error "the snippet features must stay in EXT_features' first dword"
+.endif
+# FEAT_TEST base, FEAT_X: ZF clear (jnz) when the extension at base agreed FEAT_X
+.macro FEAT_TEST base, feat
+    test byte ptr [\base + EXT_features + ((\feat) >> 3)], 1 << ((\feat) & 7)
+.endm
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1570,7 +1577,6 @@ F GR_wchar, 256         # 1 for identifier bytes
 F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it), or 0
 F GR_srclen, 8
 F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
-F GR_owner, 8           # prepared GP owner, or 0 for legacy/built-in grammar
 ENDSTRUCT GR_SIZE
 .equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
@@ -1695,7 +1701,8 @@ F EXT_icon_px, 8*ICON_SLOTS   # copies at the sizes badges ask for, corners roun
 F EXT_icon_sz, 4*ICON_SLOTS
 F EXT_icon_next, 4      # the slot the next new size replaces
 F EXT_icon_pad, 4
-F EXT_features, 4       # FEAT_*: what was agreed after hello (section 12 of the spec)
+F EXT_features, FEAT_MAX / 8    # bit FEAT_*: what was agreed after hello (section 12 of the spec)
+F EXT_feat_asks, 4      # 1 when an agreed feature has rhun send requests (its replies are read)
 F EXT_feat_pad, 4
 F EXT_pv_complete, 8    # [provides] complete: the files it completes in (patterns, cstr) or 0
 F EXT_pv_ctrig, 8       # complete.triggers: characters that ask at once, space separated, or 0
@@ -1709,32 +1716,7 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
-F EXT_activation_plan, 8 # borrowed immutable KE128, catalog retains its captured inputs and lease
-F EXT_keeper, 8         # stable independent process-service handle, 0 without an owned lifetime
-F EXT_retiring, 4       # contributions withdrawn; raw output drains independently of protocol
-F EXT_stdout_eof, 4
-F EXT_finish_code, 4    # final application exit/failure while whole lifetime is collected
-F EXT_startaccepted, 4  # hello timer begins only after exact START frame acceptance
-F EXT_activation_stale, 4 # catalog must supply a fresh owned activation plan before restart
-F EXT_keeper_pad, 4
-F EXT_prepare_at, 8     # bounded closed-gate preparation start time
-F EXT_start_record, 160 # copied fresh selected authorization, zero for legacy
-F EXT_start_armed, 4    # candidates remain closed until root publishes and explicitly arms
-F EXT_start_pad, 4
-F EXT_metadata_owner, 8 # owned ready EP for borrowed slot metadata
-F EXT_activation_owner, 8 # owned activation owner, independent from catalog
-F EXT_activation_required, 4 # permanent prepared activation latch
-F EXT_activation_owner_pad, 4
-F EXT_identity_owner, 8 # owned typed lease-free durable host identity
-F EXT_catalog_state, 4 #0staging,1visible,2hidden historical
-F EXT_catalog_pad, 4
-F EXT_host_child_in, 4 # retained temporary target stdin endpoint
-F EXT_host_child_out, 4 # retained temporary target stdout endpoint
 ENDSTRUCT EXT_SIZE
-.equ EXT_host_cleanup_mask, EXT_start_pad
-.equ EXT_host_cleanup_error, EXT_activation_owner_pad
-.equ EXT_host_native_result, EXT_keeper_pad
-.equ EXT_host_setup_error, EXT_catalog_pad
 
 # an extension's view (extview.s)
 STRUCT
@@ -1784,6 +1766,114 @@ ENDSTRUCT SD_SIZE
 .equ EXT_RTCMDS_MAX, 64         # register: commands per extension
 .equ EXT_CHOOSE_MAX, 1000       # choose: items
 .equ EXT_TERM_MAX, 4096         # term: the command's bytes
+
+# ---- contributions and commands (invoke.s, when.s, extcontext.s) ----
+# How a command was invoked (feature command-args): cmd_invoke takes these as arguments and
+# ext_cmd_run sends them as "0 run EXT.NAME DOC FROM LEN" + body
+.equ INV_PALETTE, 0             # the palette, headless cmd, a menu of all commands (the default)
+.equ INV_KEY, 1                 # a key binding; body: its ARGS
+.equ INV_MENU, 2                # a menu item or title/item button; body: TARGET LF and its args
+.equ INV_REF, 3                 # a command reference (lens, tree item, status item, notification)
+STRUCT
+F INV_from, 4           # INV_*
+F INV_pad, 4
+F INV_doc, 8            # the DOC id it is about, 0 for the active document
+F INV_body, 8           # ptr, len: the body
+F INV_len, 8
+ENDSTRUCT INV_SIZE
+.equ INV_BODY_MAX, 65536        # a body kept for a command that waits for its extension to start
+# a command reference: "command NAME ARGS_LEN" + ARGS inside any body (cmdref_parse, cmdref_new)
+STRUCT
+F CRF_ext, 8            # EXT* whose command it names
+F CRF_len, 8            # ARGS' length; the bytes follow the record
+F CRF_name, 48          # the local command name, NUL-terminated (at most 40 bytes)
+ENDSTRUCT CRF_SIZE
+.equ CRF_ARGS_MAX, 8192
+.equ CMD_NAME_MAX, 40           # a local command name: [a-z0-9_], 1 to 40 bytes
+# When-clause context keys (when.s), one line each: CTXKEY SYMBOL, "name", FN. FN computes the
+# value from rhun's state when a clause reads it (when.s); 0 marks a key another part publishes
+# with ctx_set(SYMBOL, ptr, len) / ctx_set_bool(SYMBOL, 0|1) (at most CTX_VAL_MAX bytes, copied).
+# Adding a key is one line here, at the end.
+.macro CTXKEY_LIST
+    CTXKEY CTX_EDITOR_FOCUS, "editorFocus", ck_editor_focus
+    CTXKEY CTX_TEXT_INPUT_FOCUS, "textInputFocus", ck_text_input_focus
+    CTXKEY CTX_PALETTE_FOCUS, "paletteFocus", ck_palette_focus
+    CTXKEY CTX_FIND_FOCUS, "findFocus", ck_find_focus
+    CTXKEY CTX_EXPLORER_FOCUS, "explorerFocus", ck_explorer_focus
+    CTXKEY CTX_AGENTS_FOCUS, "agentsFocus", ck_agents_focus
+    CTXKEY CTX_TERMINAL_FOCUS, "terminalFocus", ck_terminal_focus
+    CTXKEY CTX_SCM_INPUT_FOCUS, "scmInputFocus", ck_scm_focus
+    CTXKEY CTX_SETTINGS_FOCUS, "settingsFocus", ck_settings_focus
+    CTXKEY CTX_FIND_VISIBLE, "findVisible", ck_find_visible
+    CTXKEY CTX_COMPLETION_VISIBLE, "completionVisible", ck_completion_visible
+    CTXKEY CTX_SIGNATURE_VISIBLE, "signatureVisible", ck_signature_visible
+    CTXKEY CTX_SNIPPET_ACTIVE, "snippetActive", ck_snippet_active
+    CTXKEY CTX_ACTIVE_TAB, "activeTab", ck_active_tab
+    CTXKEY CTX_ACTIVE_TAB_PINNED, "activeTabPinned", ck_active_tab_pinned
+    CTXKEY CTX_TAB_COUNT, "tabCount", ck_tab_count
+    CTXKEY CTX_RESOURCE_LANG, "resourceLang", ck_resource_lang
+    CTXKEY CTX_RESOURCE_EXT, "resourceExt", ck_resource_ext
+    CTXKEY CTX_RESOURCE_FILENAME, "resourceFilename", ck_resource_filename
+    CTXKEY CTX_RESOURCE_DIRNAME, "resourceDirname", ck_resource_dirname
+    CTXKEY CTX_RESOURCE_PATH, "resourcePath", ck_resource_path
+    CTXKEY CTX_RESOURCE_SCHEME, "resourceScheme", ck_resource_scheme
+    CTXKEY CTX_RESOURCE_IN_PROJECT, "resourceInProject", ck_resource_in_project
+    CTXKEY CTX_EDITOR_READONLY, "editorReadonly", ck_editor_readonly
+    CTXKEY CTX_EDITOR_DIRTY, "editorDirty", ck_editor_dirty
+    CTXKEY CTX_EDITOR_HAS_SELECTION, "editorHasSelection", ck_editor_has_selection
+    CTXKEY CTX_EDITOR_HAS_MULTIPLE_SELECTIONS, "editorHasMultipleSelections", ck_editor_multi
+    CTXKEY CTX_EDITOR_PROVIDERS, "editorProviders", ck_editor_providers
+    CTXKEY CTX_VIM_MODE, "vimMode", ck_vim_mode
+    CTXKEY CTX_SIDEBAR_VISIBLE, "sidebarVisible", ck_sidebar_visible
+    CTXKEY CTX_AGENTS_VISIBLE, "agentsVisible", ck_agents_visible
+    CTXKEY CTX_TERMINAL_VISIBLE, "terminalVisible", ck_terminal_visible
+    CTXKEY CTX_PROJECT_OPEN, "projectOpen", ck_project_open
+    CTXKEY CTX_PROJECT_PATH, "projectPath", ck_project_path
+    CTXKEY CTX_GIT_REPO, "gitRepo", ck_git_repo
+    CTXKEY CTX_GIT_BRANCH, "gitBranch", ck_git_branch
+    CTXKEY CTX_GIT_CHANGES, "gitChanges", ck_git_changes
+    CTXKEY CTX_IS_LINUX, "isLinux", ck_is_linux
+    CTXKEY CTX_IS_MAC, "isMac", ck_is_mac
+    CTXKEY CTX_IS_WINDOWS, "isWindows", ck_is_windows
+    CTXKEY CTX_IS_WAYLAND, "isWayland", ck_is_wayland
+    CTXKEY CTX_TARGET_KIND, "targetKind", ck_target_kind
+    CTXKEY CTX_EXPLORER_RESOURCE_IS_FOLDER, "explorerResourceIsFolder", ck_target_is_folder
+    CTXKEY CTX_EXPLORER_RESOURCE_IS_ROOT, "explorerResourceIsRoot", ck_target_is_root
+    CTXKEY CTX_TAB_KIND, "tabKind", ck_tab_kind
+    # published by other parts (ctx_set): views, debugging
+    CTXKEY CTX_VIEW_FOCUS, "viewFocus", 0
+    CTXKEY CTX_VIEW, "view", 0
+    CTXKEY CTX_VIEW_ITEM, "viewItem", 0
+    CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
+    CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
+    CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+.endm
+# when.s expands the list as records: FN, the name, padding to 8 bytes
+.macro CTXKEY sym, name, fn
+.ifdef CTXKEY_NAMES
+    .quad \fn
+    .asciz "\name"
+    .p2align 3
+.else
+    .equ \sym, __ctxk
+    .set __ctxk, __ctxk + 1
+.endif
+.endm
+.set __ctxk, 0
+CTXKEY_LIST
+.equ CTX_COUNT, __ctxk
+.equ CTX_VAL_MAX, 256           # a context value: published keys, set-context
+.equ WHEN_MAX, 512              # a clause's bytes, operations and nesting
+.equ WHEN_OPS_MAX, 64
+.equ WHEN_DEPTH_MAX, 8
+# a menu target the resource and editor keys describe while a menu evaluates (ctx_push_target)
+STRUCT
+F CT_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
+                        #   "view" "item" (targetKind), or 0 for no target
+F CT_doc, 8             # its DOC*, or 0
+F CT_path, 8            # cstr: its path, or 0
+F CT_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+ENDSTRUCT CT_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
 STRUCT
@@ -1873,7 +1963,6 @@ F TH_pad, 4
 F TH_src, 8             # embedded text or 0
 F TH_len, 8
 F TH_path, 8            # user file path or 0
-F TH_owner, 8           # prepared EP owner, or 0 for legacy/built-in theme
 ENDSTRUCT TH_SIZE
 
 # ---- terminal ----

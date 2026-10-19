@@ -1,5 +1,4 @@
-# editor presentation: headless control commands (control.s passes it the commands it does not
-# know). Lines and columns are 1-based, columns in bytes, as in the protocol.
+# editor presentation: headless control commands (pres_ctl, in control.s's ctl_tables). Lines and columns are 1-based, columns in bytes, as in the protocol.
 #   print-view                  "view mode=lines|wrap top=L off=N rows=R content=PX"
 #   print-xy LINE COL           "X Y": the caret's x at that position and its row's middle
 #   print-hit X Y               "text L C" | "left-lane L" | "digits L" | "fold-lane L" | "git L" | "none"
@@ -11,6 +10,7 @@
 .bss
 .p2align 3
 args: .quad 0, 0                # the rest of the command line: ptr, len
+outp: .quad 0                   # what the command prints into
 test_kind: .long 0
 .p2align 3
 clicks: .zero SB_SIZE           # the test kind's clicks, "L button" each
@@ -20,30 +20,13 @@ nbuf: .zero 32
 .text
 
 #   probe-plant stale|under     the frame probes' positive controls (headless.s)
-# presctl_exec(cmd ptr, len, rest ptr, len) -> rax 0 ok, -1 failed, -2 not a command of this file
-FN presctl_exec
-    PROLOGUE
-    mov rbx, rdi
-    mov r12, rsi
-    mov [rip + args], rdx
-    mov [rip + args + 8], rcx
-    xor r13d, r13d
-1:  lea rax, [rip + cmd_table]
-    mov rdx, [rax + r13*8]
-    test rdx, rdx
-    jz 8f
-    mov rdi, rbx
-    mov rsi, r12
-    call str_eq_cstr
-    test eax, eax
-    jnz 2f
-    add r13, 2
-    jmp 1b
-2:  lea rax, [rip + cmd_table]
-    call [rax + r13*8 + 8]
-    EPILOGUE
-8:  mov rax, -2
-    EPILOGUE
+# take_args(out, rest, len): a command's output buffer and arguments (control.s's ctl_tables call
+# each command with them)
+take_args:
+    mov [rip + outp], rdi
+    mov [rip + args], rsi
+    mov [rip + args + 8], rdx
+    ret
 
 # arg_word() -> rax, rdx the next word of the arguments
 arg_word:
@@ -64,20 +47,20 @@ arg_int:
 # out_cstr(s), out_u64(v), out_byte(b)
 out_cstr:
     mov rsi, rdi
-    lea rdi, [rip + g_ctl_out]
+    mov rdi, [rip + outp]
     jmp sb_push_cstr
 out_u64:
     mov rsi, rdi
-    lea rdi, [rip + g_ctl_out]
+    mov rdi, [rip + outp]
     jmp sb_push_u64
 out_byte:
     mov esi, edi
-    lea rdi, [rip + g_ctl_out]
+    mov rdi, [rip + outp]
     jmp sb_push_byte
 out_bytes:
     mov rdx, rsi
     mov rsi, rdi
-    lea rdi, [rip + g_ctl_out]
+    mov rdi, [rip + outp]
     jmp sb_push
 
 # frame(): a frame drawn, so the layout is the current one
@@ -91,6 +74,7 @@ frame:
 # ---------------- print-view ----------------
 
 c_print_view:
+    call take_args
     PROLOGUE
     call frame
     mov rbx, [rip + g_doc]
@@ -135,6 +119,7 @@ c_print_view:
 # ---------------- print-xy ----------------
 
 c_print_xy:
+    call take_args
     PROLOGUE
     call arg_int
     mov r13, rax                # line
@@ -199,6 +184,7 @@ c_print_xy:
 # ---------------- print-hit ----------------
 
 c_print_hit:
+    call take_args
     PROLOGUE
     call arg_int
     mov r13, rax
@@ -293,6 +279,7 @@ put_lc:
 # ---------------- print-present ----------------
 
 c_print_present:
+    call take_args
     PROLOGUE
     call arg_word
     mov r12, rax
@@ -504,6 +491,7 @@ put_text:
 
 # probe-plant stale|under: the next frame's probe finds a planted fault (headless.s)
 c_probe_plant:
+    call take_args
 .ifndef WINDOWS
     PROLOGUE
     call arg_word
@@ -525,6 +513,7 @@ c_probe_plant:
 # ---------------- the test kind ----------------
 
 c_glyph_test:
+    call take_args
     PROLOGUE
     cmp dword ptr [rip + test_kind], 0
     jne 9f
@@ -539,6 +528,7 @@ c_glyph_test:
     EPILOGUE
 
 c_glyph:
+    call take_args
     PROLOGUE
     call arg_int
     mov r12, rax
@@ -608,7 +598,8 @@ test_tip:
 
 .section .rodata
 .p2align 3
-cmd_table:
+.globl pres_ctl
+pres_ctl:                       # (control.s's ctl_tables)
     .quad .Lc_print_view, c_print_view, .Lc_print_xy, c_print_xy, .Lc_print_hit, c_print_hit
     .quad .Lc_print_present, c_print_present, .Lc_glyph_test, c_glyph_test, .Lc_glyph, c_glyph
     .quad .Lc_probe_plant, c_probe_plant
