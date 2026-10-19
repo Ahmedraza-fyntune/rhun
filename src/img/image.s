@@ -13,17 +13,10 @@ head: .zero 64
 FN image_probe
     PROLOGUE
     mov rbx, rdi
-    call file_open_read
-    test rax, rax
-    js 8f
-    mov r12d, eax
-    mov edi, eax
     lea rsi, [rip + head]
     mov edx, 64
-    SYS SYS_read
+    call vfs_read_head          # the host's file in a remote window
     mov r13, rax
-    mov edi, r12d
-    SYS SYS_close
     test r13, r13
     jle 8f
     lea rdi, [rip + head]

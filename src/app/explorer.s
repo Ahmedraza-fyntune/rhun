@@ -45,6 +45,41 @@ delete_path: .zero 4096          # the path named by the open confirmation
 
 .text
 
+# explorer_dump(sb): print-explorer (remotectl.s): the rows shown, indented by depth, folders with a /
+FN explorer_dump
+    PROLOGUE
+    mov r12, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + rows + VEC_len]
+    jae 9f
+    mov rax, [rip + rows + VEC_ptr]
+    mov r13, [rax + rbx*8]
+    mov r14d, [r13 + N_depth]
+2:  test r14d, r14d
+    jle 3f
+    mov rdi, r12
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, r12
+    mov esi, ' '
+    call sb_push_byte
+    dec r14d
+    jmp 2b
+3:  mov rdi, r12
+    mov rsi, [r13 + N_name]
+    call sb_push_cstr
+    cmp dword ptr [r13 + N_dir], 0
+    je 4f
+    mov rdi, r12
+    mov esi, '/'
+    call sb_push_byte
+4:  mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    inc rbx
+    jmp 1b
+9:  EPILOGUE
+
 # explorer_excluded(name cstr) -> 1 if listed in cfg_exclude
 FN explorer_excluded
     PROLOGUE
@@ -194,7 +229,7 @@ node_load:
     mov rdi, [rbx + N_path]
     lea rsi, [rip + load_cb]
     mov rdx, rbx
-    call dir_each
+    call vfs_dir_each
     mov rdi, [rbx + N_kids + VEC_ptr]
     mov rsi, [rbx + N_kids + VEC_len]
     call sort_nodes
@@ -613,7 +648,7 @@ FN explorer_delete_target
     pop rbx
     ret
 2:  lea rdi, [rip + delete_path]
-    call file_remove_tree
+    call vfs_remove_tree
     mov rbx, rax
     # A failed deletion can still have removed some children.
     call explorer_refresh
@@ -655,7 +690,7 @@ close_deleted_tabs:
     test eax, eax
     jnz 1b
     mov rdi, [r12 + DOC_path]
-    call file_missing
+    call vfs_missing
     test eax, eax
     jz 1b
     mov rdi, rbx

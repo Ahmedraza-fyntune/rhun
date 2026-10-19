@@ -758,7 +758,10 @@ draw_permissions:
     cmp qword ptr [rbx + EXT_confine_why], 0
     je 6f
     lea rsi, [rip + .Lt_not_held]
-6:  lea rdi, [rip + g_face_small]
+6:  cmp dword ptr [rbx + EXT_wasm_run], 0      # WebAssembly: its host holds it everywhere (extwasm.s)
+    je 7f
+    lea rsi, [rip + .Lt_wasm]
+7:  lea rdi, [rip + g_face_small]
     COLOR edx, T_MUTED
     mov ecx, MI_24
     call line_text
@@ -1824,8 +1827,18 @@ FN ext_needs_words
     call sb_push_cstr
 8:  lea rsi, [rip + .Ln_secrets]  # resources group
     test r13d, NEEDS_SECRETS
-    jz 81f
+    jz 82f
     call item
+82: mov rsi, [rbx + EXT_nb_kernels]  # notebooks: kernels run as the user
+    test rsi, rsi
+    jz 81f
+    cmp byte ptr [rsi], 0
+    je 81f
+    lea rsi, [rip + .Ln_kernels]
+    call item
+    mov rdi, r12
+    mov rsi, [rbx + EXT_nb_kernels]
+    call sb_push_cstr
 81: test r14d, r14d
     jnz 9f
     lea rsi, [rip + .Ln_nothing]
@@ -3300,6 +3313,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
 .Ln_git: .asciz "read the project's Git history"
 .Ln_runs: .asciz "run "
+.Ln_kernels: .asciz "run notebook kernels as you: "
 .Ln_nothing: .asciz "only use its own commands and settings"
 .Ln_secrets: .asciz "store passwords and tokens in your keychain"
 .Ln_sep: .asciz ", "
@@ -3314,6 +3328,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Lt_held: .asciz "rhun holds it to these permissions."
 .Lt_not_held: .asciz "This system cannot hold it to these permissions; it runs with yours."
 .Lt_windows: .asciz "Windows cannot hold it to these permissions; it runs with yours."
+.Lt_wasm: .asciz "It runs as WebAssembly: rhun holds it to these permissions on every system."
 .Ls_permissions: .asciz "It can"
 .Ls_resources: .asciz "Resources"
 .Ls_toolbar: .asciz "Title bar"

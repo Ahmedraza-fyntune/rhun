@@ -167,6 +167,38 @@ class Items(lang.Lang):
         self.assertIn('overload=2/3', sig[2])
         self.assertTrue(any(' signatures 1 ' in l for l in self.lang_log()), self.lang_log())
 
+    def test_an_item_whose_resolve_was_withdrawn_resolves_again(self):
+        items = body(item('print', 'print', rec('resolve', 'r-A', '0')), item('process', 'process', rec('resolve', 'r-B', '0')))
+        out = self.run_items(self.spec(items, rec('doc', 'Docs'), delay=0.4),
+                             ['cmd complete', 'wait 150', 'key Down', 'wait 150', 'key Up', 'wait 800', 'print-complete'])
+        self.assertEqual(self.lang_log().count('body r-A'), 2, self.lang_log())
+        self.assertIn('selected label=print detail= doc=Docs resolved=1', '\n'.join(out))
+
+    def test_a_commit_character_waits_for_the_imports(self):
+        items = body(item('print', 'print', rec('resolve', 'r', '1') + rec('commit', '.')))
+        resolved = rec('edit', 'use std::fmt;\n', '1 1 1 1')
+        out = self.run_items(self.spec(items, resolved, delay=0.25),
+                             ['cmd complete', 'wait 20', 'type .', 'wait 600', 'print-doc'])
+        self.assertEqual(self.doc(out), 'use std::fmt;\nfn main() {\n    print.\n}')
+
+    def test_the_resolved_documentation_replaces_the_lists(self):
+        items = body(item('print', 'print', rec('doc', 'stub') + rec('resolve', 'r', '0')))
+        out = self.run_items(self.spec(items, rec('doc', 'Full documentation')), ['cmd complete', 'wait 400', 'print-complete'])
+        self.assertIn('doc=Full documentation resolved=1', '\n'.join(out))
+
+    def test_adjust_applies_to_plain_items_when_snippets_are_agreed(self):
+        items = body(item('pr_block', 'if x {\n    y\n}', rec('adjust')))
+        out = self.run_items(self.spec(items, hello='hello 1 complete complete-items snippets'),
+                             ['cmd complete', 'wait 300', 'key Return', 'print-doc'])
+        self.assertEqual(self.doc(out), 'fn main() {\n    if x {\n        y\n    }\n}')
+
+    def test_a_final_answer_cannot_pass_the_query_cap(self):
+        many = lambda n, p: body(*[item(f'{p}{i}', 'x', rng=(2, 5, 2, 6)) for i in range(n)])
+        spec = {'hello': 'hello 1 complete complete-items query-stream', 'answers': {'complete': {
+            'parts': [[many(4096, 'pa'), 0.02], [many(4096, 'pb'), 0.02]], 'delay': 0.05, 'body': many(5, 'pc')}}}
+        out = self.run_items(spec, ['cmd complete', 'wait 1500', 'print-complete'], text='fn main() {\n    p\n}\n')
+        self.assertTrue(any(' items=8192 ' in l for l in out), [l for l in out if 'items=' in l])
+
     def test_parts_grow_the_list(self):
         spec = {'hello': 'hello 1 complete complete-items query-stream', 'answers': {'complete': {
             'parts': [[body(item('print', 'print')), 0.05], [body(item('process', 'process')), 0.05]],
