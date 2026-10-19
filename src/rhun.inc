@@ -1680,6 +1680,10 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_RENAME_SYMBOL, 9    # the new name of a symbol (langfeat.s)
 .equ PROMPT_REMOTE, 40          # remote hosts: a question for ssh, answered in plain text (remoteui.s)
 .equ PROMPT_REMOTE_SECRET, 41   # remote hosts: a password or passphrase, drawn masked
+# extension management: development installs (extinstall.s)
+.equ PROMPT_EXT_FOLDER, 20      # Install from Folder: the folder, copied
+.equ PROMPT_EXT_LINK, 21        # Link a Folder: the folder, linked
+.equ PROMPT_EXT_ARCHIVE, 22     # Install from Archive: the .tar.gz
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -1813,6 +1817,14 @@ F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use,
 F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
 F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
 F EXT_wasm_pad, 4
+# extension management (extrecord.s, extinstall.s, extupdate.s)
+F EXT_rec, 8            # cstr: its install record (.rhun-install), or 0
+F EXT_inst, 8           # cstr: a linked install's stub folder (EXT_dir is the linked folder), or 0
+F EXT_prev, 8           # cstr: the version of its previous version (Roll back), or 0
+F EXT_pack, 8           # cstr: a pack's members (OWNER/NAME, space separated), or 0
+F EXT_xset, 8           # cstr: "setting.KEY = VALUE" lines its manifest does not declare, or 0
+F EXT_fresh, 4          # 1: a new version with a previous one to go back to, until its first hello
+F EXT_mgmt_pad, 4
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)
@@ -1843,6 +1855,45 @@ F VW_ay, 4
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 .equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview
+# extension management (extinstall.s, extupdate.s): where an install comes from, why it runs, and
+# how an update ended
+.equ IK_GITHUB, 0               # a release on GitHub (or RHUN_EXT_BASE)
+.equ IK_ARCHIVE, 1              # a release archive on this computer
+.equ IK_FOLDER, 2               # a folder, copied
+.equ IK_LINK, 3                 # a folder, linked (development)
+.equ IP_ADD, 0                  # Add: the permission dialog
+.equ IP_UPDATE, 1               # an update asked for: a dialog when unreviewed or wider
+.equ IP_AUTO, 2                 # an automatic update: never asks; wider waits
+.equ XU_UPDATED, 0
+.equ XU_ASKS, 1                 # it asks for more access: waits for the user
+.equ XU_FAILED, 2
+.equ XU_CANCELLED, 3
+.equ XS_NONE, 0                 # extupdate_state: current, or nothing known
+.equ XS_AVAILABLE, 1
+.equ XS_ASKS, 2                 # it asks for more access: waits for the user
+.equ XS_SKIPPED, 3              # the version rolled back from
+.equ XS_ERROR, 4
+.equ XM_INSTALL, 0              # [updates] extensions (cfg_ext_updates)
+.equ XM_CHECK, 1
+.equ XM_OFF, 2
+.equ FOCUS_EXT_SEARCH, 30       # the Extensions page's Browse search (extpage.s)
+# an entry of the rhun extensions index (extindexfile.s): pointers to cstrs, 0 when absent
+STRUCT
+F XI_name, 8                    # "owner/name"
+F XI_title, 8
+F XI_desc, 8
+F XI_version, 8
+F XI_tag, 8
+F XI_digest, 8                  # sha256 of this system's archive, or 0
+F XI_category, 8
+F XI_keywords, 8
+F XI_needs, 8                   # KEY=VALUE words (run=a,b)
+F XI_rhun, 8                    # the oldest rhun it works with, or 0
+F XI_pack, 8
+F XI_color, 4                   # ARGB, 0 without
+F XI_featured, 4
+ENDSTRUCT XI_SIZE
+.equ XI_FIELDS, 11              # the pointer fields above, in order
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini
 STRUCT
 F SD_key, 8             # cstr

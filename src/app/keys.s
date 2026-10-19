@@ -647,6 +647,10 @@ g_commands:
     COMMAND extensions, "Extensions", cmd_extensions, ""
     COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
     COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""
+    # extension management
+    COMMAND install_extension_folder, "Install Extension from Folder", cmd_install_extension_folder, ""
+    COMMAND link_extension_folder, "Link Extension Folder (development)", cmd_link_extension_folder, ""
+    COMMAND install_extension_archive, "Install Extension from Archive", cmd_install_extension_archive, ""
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
     # tasks and terminals
     COMMAND toggle_problems, "Toggle Problems", cmd_toggle_problems, "ctrl+shift+m"

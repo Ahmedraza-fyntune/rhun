@@ -2370,6 +2370,7 @@ ctl_tables:
     .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
     .quad remote_ctl            # remote hosts (remotectl.s)
     .quad pres_ctl              # editor presentation (presctl.s)
+    .quad extmgr_ctl            # extension management (extmgrctl.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
