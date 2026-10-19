@@ -691,6 +691,31 @@ file and project paths, indentation, document settings and grammar comment token
 with inactive and readonly documents and preserves the editor's selection. See the
 [native snippet protocol](extensions/v1.1.md#read-only-insertion-context) for the request and SDKs.
 
+### Agents, reviews and tools
+
+rhun does not drive agents; you talk to them in a terminal. Extensions add to what rhun shows
+of them:
+
+- **More agents in the agents panel.** An extension can list the sessions of another agent
+  (Gemini CLI, Aider, a local model): they appear with the built-in ones, with the extension's
+  badge, the model, the age and whether the agent works or waits for you, and open as the same
+  conversation view. Settings > Agents has a switch for each such source.
+- **The Review tab.** An extension, or an agent through the MCP bridge, can propose a change. rhun
+  shows it in a Review tab: each file with its added and removed lines, each change with a few
+  lines around it. Accept or reject a file, a single change, or everything: the buttons on each
+  line, or `a` and `r` for the file under the cursor, `A` and `R` for the change, `]` `[` and
+  `}` `{` to move between files and changes, Ctrl+Enter to accept everything. What you accept is
+  one undo step per decision and stays unsaved until you save; a file you changed meanwhile is
+  left alone. Closing the tab rejects the rest.
+- **Tools.** Extensions can offer tools that other extensions call through rhun (search an index,
+  read the open files, propose an edit). A tool that changes anything asks you first: Allow once,
+  Allow for this session, or Deny.
+- **MCP for terminal agents.** The `rhun-editor/mcp` extension lets Claude Code, Codex, Grok,
+  OpenCode and other MCP clients use those tools on the project you have open: what is open and
+  selected, unsaved text, the problems shown, open a file, propose changes for the Review tab,
+  and put a command in rhun's terminal prompt (it runs when you press Enter). After installing it,
+  **MCP: Add rhun to Claude Code** (or **to Codex**) puts the setup command in rhun's prompt.
+
 ### Install and manage
 
 The extensions button in the title bar (the puzzle piece) opens a menu of what is installed.
@@ -719,6 +744,7 @@ From [rhun-editor](https://github.com/rhun-editor):
 | `rhun-editor/wordfreq` | the open file's most frequent words as a bar chart that follows your typing (C) |
 | `rhun-editor/words` | completion from the words in your open files (C++) |
 | `rhun-editor/showcase` | a tour of everything an extension can do |
+| `rhun-editor/mcp` | lets the agents in your terminal use rhun over MCP: open files, the selection, unsaved text, problems, and changes you review |
 
 ### Write your own
 
