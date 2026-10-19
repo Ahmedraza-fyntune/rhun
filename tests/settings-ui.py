@@ -36,6 +36,7 @@ BOOLS = {
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
+    'testing': 'gutter',
 }
 INTS = {
     ('files', 'format_on_save_timeout'): (250, 30000, 250),
