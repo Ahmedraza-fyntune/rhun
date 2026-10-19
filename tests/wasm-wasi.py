@@ -69,7 +69,9 @@ class Wasi(unittest.TestCase):
         self.assertEqual(self.probe('open', 'outfile', dirs=ro), str(WE_NOTCAPABLE))
         self.assertEqual(self.probe('open', 'outlink', dirs=ro), str(WE_NOTCAPABLE))
         self.assertEqual(self.probe('stat', 'outfile', dirs=ro), '%d -1' % WE_NOTCAPABLE)
-        self.assertEqual(self.probe('lstat', 'outfile', dirs=ro), '0 7')       # the link itself
+        # not even the link itself is looked at when it leads out (Windows' stat sees through links)
+        self.assertEqual(self.probe('lstat', 'outfile', dirs=ro), '%d -1' % WE_NOTCAPABLE)
+        self.assertIn(self.probe('lstat', 'inlink', dirs=ro), ('0 7',) if not PREFIX else ('0 7', '0 3'))
         self.assertEqual(self.probe('open', '../B/secret.txt', dirs=ro), str(WE_NOTCAPABLE))
 
     def test_links_cannot_lead_out_of_a_writable_folder(self):
@@ -83,10 +85,13 @@ class Wasi(unittest.TestCase):
         self.assertFalse((b / 'newdir').exists())
         self.assertEqual(self.probe('unlink', 'outlink/secret.txt', dirs=rw), str(WE_NOTCAPABLE))
         self.assertTrue((b / 'secret.txt').exists())
-        # removing the link itself is the folder's business: the target stays
-        self.assertEqual(self.probe('unlink', 'outfile', dirs=rw), '0')
-        self.assertFalse(os.path.lexists(a / 'outfile'))
+        # a link that leads out is not removed either (Windows may remove what it leads to)
+        self.assertEqual(self.probe('unlink', 'outfile', dirs=rw), str(WE_NOTCAPABLE))
+        self.assertTrue(os.path.lexists(a / 'outfile'))
         self.assertTrue((b / 'secret.txt').exists())
+        if not PREFIX:                  # Wine sees a Unix link to nowhere as nothing
+            self.assertEqual(self.probe('unlink', 'dangling', dirs=rw), '0')
+            self.assertFalse(os.path.lexists(a / 'dangling'))
         self.assertEqual(self.probe('create', 'inlink/new.txt', dirs=rw), '0')
         self.assertTrue((a / 'sub/new.txt').exists())
 
@@ -118,6 +123,7 @@ class Wasi(unittest.TestCase):
         code, out, err = self.host('goodimport.wasm')
         self.assertEqual(code, 52, err)                 # ENOSYS, through proc_exit
 
+    @unittest.skipIf(PREFIX, 'under Wine a Unix pipe is no Windows pipe: the editor-driven tests cover it')
     def test_poll_returns_what_is_ready_without_waiting_for_input(self):
         # standard input stays open and empty: the write is ready all the same
         p = subprocess.Popen(HOST + ['--wasm-host', PREFIX + (PROBES / 'probe.wasm').as_posix(), 'poll-ready'],

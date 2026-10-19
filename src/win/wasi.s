@@ -64,3 +64,22 @@ FN wasi_os_sleep_ms
     mov rcx, rdi
     API Sleep
     EPILOGUE
+
+# wasi_os_lexists(path) -> eax 1 when the name exists, a link counted as itself (not followed)
+FN wasi_os_lexists
+    PROLOGUE 96
+    call win_file_path
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov rcx, rax
+    API GetFileAttributesW
+    mov r12d, eax
+    mov rdi, rbx
+    call mem_free
+    xor eax, eax
+    cmp r12d, -1
+    setne al
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE

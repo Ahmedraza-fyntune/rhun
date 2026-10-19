@@ -1118,7 +1118,7 @@ w_fd_filestat_set_size:
 # lexically ("." stays, ".." climbs, climbing above the allowed folder is refused), then the real
 # path decides, so that a link inside cannot lead out: mode 0 follows the target (its real path,
 # or its folder's when it does not exist, must be inside the allowed folder's real path); mode 1
-# acts on the target itself (a link, a name to remove or create: its folder's must be).
+# acts on the target itself (a link, a name to remove or create: its folder's must be inside, and its own too when it resolves).
 wasi_path:
     PROLOGUE 32
     mov [rsp + 20], r8d
@@ -1235,9 +1235,8 @@ wasi_path:
     jmp 1b
 7:  mov rax, [rsp]
     mov byte ptr [r14 + rax], 0
-    # the real path: the target's (mode 0, when it exists), else its folder's
-    cmp dword ptr [rsp + 20], 0
-    jne 8f
+    # the real path: the target's when it exists (in mode 1 too: Windows, or Wine's view of Unix
+    # links, may remove or rename what a link leads to), and its folder's
     mov rdi, r14
     lea rsi, [rip + wasi_real_buf]
     call ext_realpath
@@ -1245,7 +1244,9 @@ wasi_path:
     jz 71f
     call .Lp_inside
     jz .Lp_notcapable
-    jmp 9f
+    cmp dword ptr [rsp + 20], 0
+    je 9f
+    jmp 8f
 71: mov dword ptr [rsp + 24], 1
 8:  # the folder: the buffer up to its last slash (the allowed folder itself when that is all)
     mov rcx, [rsp]
@@ -1286,6 +1287,12 @@ wasi_path:
 .Lp_inside:
     mov rax, [rsp + 16]
     mov rdi, [rax + WFD_rootreal]
+    call wasi_inside
+    test eax, eax
+    ret
+
+# wasi_inside(real path of the allowed folder) -> eax 1 when wasi_real_buf is that folder or in it
+wasi_inside:
     push rdi
     call strlen
     pop rsi
@@ -1307,10 +1314,8 @@ wasi_path:
     cmp eax, '/'
     je 3f
 2:  xor eax, eax
-    test eax, eax
     ret
 3:  mov eax, 1
-    test eax, eax
     ret
 .Lp_noent:
     mov ecx, WE_NOENT
@@ -1403,18 +1408,52 @@ w_path_open:
 34: test dword ptr [r12 + 56], 1
     jz 35f
     or esi, O_APPEND
-35: # a final link is followed only when asked and when it resolved inside (wasi_path)
+35: # a final link is followed only when asked and when it resolved inside (wasi_path); a name
+    # that is there but does not resolve is a link to nowhere, which creating would follow out
+    # (Windows has no O_NOFOLLOW to stop it)
     test dword ptr [r12 + 8], 1
     jz 36f
     cmp dword ptr [rsp + 12], 0
     je 37f
 36: or esi, O_NOFOLLOW
+    cmp dword ptr [rsp + 12], 0
+    je 37f
+    mov [rsp + 16], esi
+    lea rdi, [rip + wasi_path_buf]
+    call wasi_os_lexists
+    mov esi, [rsp + 16]
+    mov ecx, WE_NOTCAPABLE
+    test eax, eax
+    jnz 9f
 37: lea rdi, [rip + wasi_path_buf]
     mov edx, 0644
     SYS SYS_open
     test rax, rax
     js 8f
     mov r14d, eax
+    # what was opened: its real path is inside, or it is closed again
+    lea rdi, [rip + wasi_path_buf]
+    lea rsi, [rip + wasi_real_buf]
+    call ext_realpath
+    test eax, eax
+    jz 38f
+    mov edi, [r12]
+    call wasi_fd
+    mov rdi, [rax + WFD_rootreal]
+    call wasi_inside
+    test eax, eax
+    jnz 38f
+    mov edi, r14d
+    SYS SYS_close
+    # made outside through a link the checks could not see (Wine's view of Unix links): it did
+    # not exist before this call, so it goes again
+    cmp dword ptr [rsp + 12], 0
+    je 39f
+    lea rdi, [rip + wasi_real_buf]
+    SYS SYS_unlink
+39: mov ecx, WE_NOTCAPABLE
+    jmp 9f
+38:
     # a directory becomes a path-based descriptor (stat by path: Windows' fstat knows files only)
     lea rdi, [rip + wasi_path_buf]
     lea rsi, [rip + stat_tmp]
@@ -1887,6 +1926,18 @@ time_now_ns:
     ret
 
 .ifndef WINDOWS
+# wasi_os_lexists(path) -> eax 1 when the name exists, a link counted as itself (not followed)
+FN wasi_os_lexists
+    sub rsp, 152
+    mov rsi, rsp
+    SYS SYS_lstat
+    add rsp, 152
+    xor ecx, ecx
+    test rax, rax
+    sete cl
+    mov eax, ecx
+    ret
+
 # wasi_os_random(buf, len) -> 0 or -errno
 FN wasi_os_random
     PROLOGUE
