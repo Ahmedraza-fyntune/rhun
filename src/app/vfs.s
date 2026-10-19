@@ -173,6 +173,51 @@ vfs_read_remote:
     xor eax, eax
     EPILOGUE
 
+# vfs_read_head(path, buf, max) -> bytes of the file's start read into buf (at most max), or -errno
+FN vfs_read_head
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    cmp dword ptr [rip + g_remote], 0
+    jne 5f
+    call file_open_read
+    test rax, rax
+    js 9f
+    mov r14d, eax
+    mov edi, eax
+    mov rsi, r12
+    mov rdx, r13
+    SYS SYS_read
+    mov r15, rax
+    mov edi, r14d
+    SYS SYS_close
+    mov rax, r15
+    EPILOGUE
+5:  lea rdi, [rip + vfs_line_read]
+    call vfs_line_start
+    xor edi, edi
+    call vfs_line_num
+    mov rdi, r13
+    call vfs_line_num
+    mov rdi, rbx
+    call strlen
+    mov rsi, rax
+    mov rdi, rbx
+    call vfs_line_call
+    test rax, rax
+    js 9f
+    mov rdx, [rip + g_remote_reply + SB_len]
+    cmp rdx, r13
+    jbe 6f
+    mov rdx, r13
+6:  mov r14, rdx
+    mov rdi, r12
+    mov rsi, [rip + g_remote_reply + SB_ptr]
+    call memcpy
+    mov rax, r14
+9:  EPILOGUE
+
 # vfs_write_all(path, ptr, len) -> as file_write_all: 0 or -errno. On the host a file replaced keeps
 #   its mode (the agent writes a temporary file and renames it over); a big one goes in parts
 FN vfs_write_all
