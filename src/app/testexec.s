@@ -354,7 +354,7 @@ exec_start:
     test eax, eax
     jz .Lxs_cwd
     lea rdi, [rip + realcwd]
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz .Lxs_cwd
     # argv: the path, then the arguments

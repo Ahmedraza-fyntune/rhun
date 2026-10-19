@@ -147,11 +147,11 @@ FN agents_shutdown
 .ifndef WINDOWS
     neg edi                    # the worker's process group includes its database CLI children
     mov esi, 9
-    SYS SYS_kill
+    call proc_kill             # (on the host in a remote window)
     mov edi, [rip + index_pid] # and the worker, also before its first instruction makes that group
 .endif
     mov esi, 9
-    SYS SYS_kill
+    call proc_kill
     lea rdi, [rip + reapers]
     mov esi, 8
     call vec_push
@@ -251,7 +251,10 @@ index_start:
     lea rcx, [rip + index_number]
     mov byte ptr [rcx + rax], 0
     lea rax, [rip + index_exe]
-    mov [rsp], rax
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the host's sessions, by the agent's binary
+    je 2f
+    lea rax, [rip + .Lat_self]
+2:  mov [rsp], rax
     lea rax, [rip + .Lindex_arg]
     mov [rsp + 8], rax
     mov rax, [rip + g_project]
@@ -277,7 +280,7 @@ index_start:
     xor ecx, ecx
     xor r8d, r8d
     mov r9d, 2
-    call run_piped_input
+    call vfs_run_piped_input
     test rax, rax
     jle .Lindex_start_fail
     mov [rip + index_pid], eax
@@ -767,6 +770,8 @@ FN agent_read_head
 
 # agent_read_window(path, max, offset): bounded read used by metadata discovery.
 FN agent_read_window
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the host's file
+    jne 20f
     PROLOGUE
     mov r12, rsi
     mov r15, rdx
@@ -816,6 +821,12 @@ FN agent_read_window
 8:  xor eax, eax
     xor edx, edx
     EPILOGUE
+20: xchg rsi, rdx
+    call vfs_read_at
+    test rax, rax
+    jnz 21f
+    xor edx, edx
+21: ret
 
 # agent_read_first_line(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
 # Failure returns rax=0, rdx=-errno for I/O errors or 0 for an oversized line.
@@ -2230,21 +2241,51 @@ FN session_update
     mov rbx, rdi
     cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
     je 9f                       # its extension sends its messages (agentext.s)
+    mov r12d, -1
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the size from the host, no descriptor
+    je 11f
     mov rdi, [rbx + AS_path]
+    call vfs_stat
+    test rax, rax
+    js 9f
+    mov rax, [rip + vfs_statbuf + 48]
+    jmp 12f
+11: mov rdi, [rbx + AS_path]
     call file_open_read
     test rax, rax
     js 9f
     mov r12d, eax
     mov edi, eax
     call file_size
-    mov r13, rax
+12: mov r13, rax
     cmp rax, [rbx + AS_off]
     jb 10f                      # truncated: reload
     je 8f
     # read the new bytes into the partial-line buffer
     mov r14, r13
     sub r14, [rbx + AS_off]
+    test r12d, r12d
+    jns 13f
+    mov rdi, [rbx + AS_path]
+    mov rsi, [rbx + AS_off]
+    mov rdx, r14
+    call vfs_read_at
+    test rax, rax
+    jz 8f
+    mov [rsp], rax
+    mov [rsp + 8], rdx
     lea rdi, [rbx + AS_part]
+    mov rsi, rdx
+    call sb_reserve
+    mov rdi, rax
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call memcpy
+    mov rdi, [rsp]
+    call mem_free
+    mov rax, [rsp + 8]
+    jmp 14f
+13: lea rdi, [rbx + AS_part]
     mov rsi, r14
     call sb_reserve
     mov rsi, rax
@@ -2253,7 +2294,7 @@ FN session_update
     mov r10, [rbx + AS_off]
     mov eax, 17                 # pread64
     XSYS
-    test rax, rax
+14: test rax, rax
     jle 8f
     add [rbx + AS_off], rax
     add [rbx + AS_part + SB_len], rax
@@ -2296,6 +2337,8 @@ FN session_update
     mov [rbx + AS_changed], rax
     mov dword ptr [rip + g_dirty], 1
 8:  mov edi, r12d
+    test edi, edi
+    js 9f
     SYS SYS_close
 9:  EPILOGUE
 10: mov qword ptr [rbx + AS_off], 0
@@ -2303,7 +2346,10 @@ FN session_update
     mov rdi, rbx
     call session_clear_msgs
     mov edi, r12d
+    test edi, edi
+    js 15f
     SYS SYS_close
+15:
     mov rdi, rbx
     call session_update
     EPILOGUE
@@ -2315,6 +2361,7 @@ FN agents_poll
     PROLOGUE
     call time_ms
     mov [rip + last_poll], rax
+    call agents_poll_prefetch   # remote hosts: their stats in one request
     xor ebx, ebx
     xor r13d, r13d
 1:  cmp rbx, [rip + page_count]
@@ -2336,11 +2383,52 @@ FN agents_poll
 31: mov rax, [rip + sessions + VEC_ptr]
     mov r12, [rax + rbx*8]
     call poll_session
-4:  test r13d, r13d
+4:  call vfs_stats_clear
+    test r13d, r13d
     jz 5f
     call sort_sessions
     mov dword ptr [rip + g_dirty], 1
 5:  EPILOGUE
+
+# agents_poll_prefetch(): remote hosts: the files agents_poll stats, asked for in one request
+agents_poll_prefetch:
+    cmp dword ptr [rip + g_remote], 0
+    je 9f
+    PROLOGUE 432
+    xor ebx, ebx                # rows
+    xor r12d, r12d              # paths
+1:  cmp rbx, [rip + page_count]
+    jae 2f
+    cmp ebx, 50
+    jae 2f
+    mov rax, [rip + sessions + VEC_ptr]
+    mov rax, [rax + rbx*8]
+    mov rcx, [rax + AS_path]
+    test rcx, rcx
+    jz 11f
+    mov [rsp + r12*8], rcx
+    inc r12
+11: inc rbx
+    jmp 1b
+2:  mov rbx, [rip + view]
+    test rbx, rbx
+    js 3f
+    cmp rbx, [rip + sessions + VEC_len]
+    jae 3f
+    mov rax, [rip + sessions + VEC_ptr]
+    mov rax, [rax + rbx*8]
+    mov rcx, [rax + AS_path]
+    test rcx, rcx
+    jz 3f
+    mov [rsp + r12*8], rcx
+    inc r12
+3:  test r12, r12
+    jz 8f
+    mov rdi, rsp
+    mov rsi, r12
+    call vfs_stats_prefetch
+8:  EPILOGUE
+9:  ret
 
 poll_session:
     cmp dword ptr [r12 + AS_kind], 4
@@ -2348,13 +2436,13 @@ poll_session:
     cmp dword ptr [r12 + AS_kind], AS_KIND_EXT
     je 9f                      # an extension says when its sessions change                      # the worker owns OpenCode snapshot replacement and database recency
     mov rdi, [r12 + AS_path]
-    call file_stamp
+    call vfs_stamp
     cmp rax, [r12 + AS_stamp]
     je 9f
     mov [r12 + AS_stamp], rax
     mov dword ptr [rip + index_pending], 1
     mov rdi, [r12 + AS_path]
-    call file_mtime_ns
+    call vfs_mtime_ns
     mov [r12 + AS_recency], rax
     xor edx, edx
     mov ecx, 1000000000
@@ -2398,7 +2486,7 @@ agents_watch_repo:
     mov rdi, r12
     lea rsi, [rip + registration_cb]
     mov rdx, r12
-    call dir_each
+    call vfs_dir_each
     mov rdi, r12
     call mem_free
 9:  EPILOGUE
@@ -4227,6 +4315,7 @@ ext_state_labels: .quad .Lr0, .Lst_working, .Lst_waiting, .Lst_error
 .Lcodex_name: .asciz "Codex"
 .Lgrok_name: .asciz "Grok"
 .Lopencode_name: .asciz "OpenCode"
+.Lat_self: .asciz "@self"
 .Lworktree_dump: .asciz " [worktree: "
 .Lmodel_dump: .asciz " [model: "
 .Lmsg_obj: .ascii "\"message\":{"
@@ -4904,7 +4993,7 @@ observe_session:
     cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
     je 1f
     mov rdi, [rbx + AS_path]
-    call file_stamp
+    call vfs_stamp
     cmp rax, [rbx + AS_stamp]
     je 1f
     mov [rbx + AS_stamp], rax
@@ -4918,7 +5007,7 @@ observe_session:
 2:
     mov dword ptr [rip + index_pending], 1
     mov rdi, [rbx + AS_path]
-    call file_mtime_ns
+    call vfs_mtime_ns
     mov [rbx + AS_recency], rax
     xor edx, edx
     mov ecx, 1000000000

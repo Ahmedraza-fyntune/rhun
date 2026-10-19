@@ -418,7 +418,7 @@ app_adopt_folder:
     call mem_dup
     mov r12, rax
     mov rdi, rax
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 8f
     mov dword ptr [rip + g_project_adopted], 1
@@ -1039,7 +1039,7 @@ FN app_open_file
 1:  # regular files only: opening a pipe or a device blocks until the other end comes (a missing
     # file can still be created)
     mov rdi, r12
-    call file_type
+    call vfs_type
     test eax, eax
     jz 12f
     cmp eax, 0x8000
@@ -1061,7 +1061,7 @@ FN app_open_file
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     call iv_new
     mov [rbx + DOC_img], rax
@@ -1758,7 +1758,7 @@ FN app_save_as_finish
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call mkdir_parent
+    call vfs_mkdir_parent
     mov rdi, rbx
     call app_detect_lang
     mov rdi, rbx
@@ -1804,7 +1804,7 @@ FN path_readonly
     PROLOGUE
     mov rbx, rdi
     mov esi, 2                  # W_OK
-    SYS SYS_access
+    call vfs_access
     cmp rax, -13                # EACCES
     jne 8f
     mov rdi, rbx
@@ -1826,7 +1826,7 @@ FN path_readonly
     mov byte ptr [rdi], 0
     lea rdi, [rip + ro_dir]
     mov esi, 2
-    SYS SYS_access
+    call vfs_access
     test rax, rax
     jnz 8f
 7:  mov eax, 1
@@ -6473,7 +6473,7 @@ FN app_open_path
     cmp rax, -2
     jne 1f
     mov rdi, rbx
-    call file_type
+    call vfs_type
     test eax, eax
     jnz .Lop_path
     mov rdi, rbx
@@ -6540,7 +6540,7 @@ FN app_open_path
 2:  mov rdi, rbx
     call path_normalize
     mov rdi, rbx
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 3f
     # once started, a folder (Finder, the Dock, :e, open) takes up the window the way Open Folder
@@ -6573,7 +6573,7 @@ FN app_path_is_dir
     test rax, rax
     jns 1f
     mov rdi, rbx
-1:  call file_is_dir
+1:  call vfs_is_dir
     EPILOGUE
 
 # app_goto_line(line, col): the cursor of the text file shown to LINE and COL (counted from 1; COL in

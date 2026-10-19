@@ -172,7 +172,7 @@ reopen_probe:
     je .Lrp_diff
     # a file, as long as it is still there
     mov rdi, [rbx + CT_path]
-    call file_type
+    call vfs_type
     test eax, eax
     jz 8f
     mov rdi, [rbx + CT_path]

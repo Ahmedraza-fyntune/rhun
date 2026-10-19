@@ -1932,7 +1932,7 @@ h_open:
     call win_slashes            # backslashes, as Windows programs write them
 .endif
     mov rdi, r14
-    call file_type
+    call vfs_type
     cmp eax, 0x8000             # a regular file
     jne .Lho_missing
     mov rdi, [rip + cur]

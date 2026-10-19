@@ -4488,7 +4488,7 @@ link_check:
     mov rbx, rdi
     call path_normalize
     mov rdi, rbx
-    call file_type
+    call vfs_type
     cmp eax, 0x8000
     jne 1f
     lea rdi, [rip + link_sb]
