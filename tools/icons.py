@@ -85,6 +85,18 @@ ICONS.append(('PUZZLE', [('W', 10)] + line([(22, 38), (46, 38), (46, 30)] + arc(
                                            + [(70, 38), (90, 38), (90, 60), (98, 60)] + arc(98, 72, 12, 270, 450, 8)
                                            + [(90, 84), (90, 108), (22, 108), (22, 38)])))
 ICONS.append(('MORE', [('D', 64, 28, 10), ('D', 64, 64, 10), ('D', 64, 100, 10)]))
+# testing (and extension trees): run, a test's states, debug, coverage, stop
+ICONS.append(('PLAY', [('P', 3, 40, 24, 106, 64, 40, 104)]))
+ICONS.append(('RING', [('W', 12), ('O', 64, 64, 34)]))
+ICONS.append(('SLASH', [('W', 11), ('O', 64, 64, 38), ('M', 37, 91), ('L', 91, 37)]))
+ICONS.append(('WARN', [('W', 10)] + line([(64, 14), (118, 108), (10, 108), (64, 14)])
+                      + [('M', 64, 48), ('L', 64, 78), ('D', 64, 93, 7)]))
+ICONS.append(('BUG', [('W', 9), ('O', 64, 74, 28), ('D', 64, 38, 13), ('M', 64, 50), ('L', 64, 102),
+                      ('M', 36, 62), ('L', 14, 52), ('M', 36, 78), ('L', 12, 78), ('M', 38, 94), ('L', 16, 108),
+                      ('M', 92, 62), ('L', 114, 52), ('M', 92, 78), ('L', 116, 78), ('M', 90, 94), ('L', 112, 108)]))
+ICONS.append(('BEAKER', [('W', 10)] + line([(50, 14), (50, 52), (18, 110), (110, 110), (78, 52), (78, 14)])
+                        + [('M', 40, 14), ('L', 88, 14), ('M', 32, 84), ('L', 96, 84)]))
+ICONS.append(('STOP', [('P', 4, 32, 32, 96, 32, 96, 96, 32, 96)]))
 # icon_mask keys its cache by icon | size << 8
 assert len(ICONS) <= 256, len(ICONS)
 # the color names of file icons, in the order of their theme slots from T_ICON (src/app/theme.s)

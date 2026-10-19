@@ -2798,6 +2798,16 @@ color_names:
 .Li_arrow_down: .asciz "arrow-down"
 .Li_discard: .asciz "discard"
 .Li_gear: .asciz "gear"
+.Li_play: .asciz "play"
+.Li_ring: .asciz "ring"
+.Li_circle: .asciz "circle"
+.Li_circle_filled: .asciz "circle-filled"
+.Li_circle_slash: .asciz "circle-slash"
+.Li_warning: .asciz "warning"
+.Li_error: .asciz "error"
+.Li_bug: .asciz "bug"
+.Li_beaker: .asciz "beaker"
+.Li_stop: .asciz "stop"
 .p2align 3
 icon_names:
     .quad .Li_file, IC_FILE, .Li_folder, IC_FOLDER, .Li_folder_open, IC_FOLDER, .Li_search, IC_SEARCH
@@ -2805,4 +2815,8 @@ icon_names:
     .quad .Li_dot, IC_DOT, .Li_refresh, IC_REFRESH, .Li_branch, IC_BRANCH, .Li_pin, IC_PIN
     .quad .Li_puzzle, IC_PUZZLE, .Li_more, IC_MORE, .Li_terminal, IC_TERMINAL, .Li_spark, IC_SPARK
     .quad .Li_user, IC_USER, .Li_arrow_up, IC_ARROW_UP, .Li_arrow_down, IC_ARROW_DN
-    .quad .Li_discard, IC_DISCARD, .Li_gear, IC_SLIDERS, 0, 0
+    .quad .Li_discard, IC_DISCARD, .Li_gear, IC_SLIDERS
+    # testing's icons (tools/icons.py), for extension trees too
+    .quad .Li_play, IC_PLAY, .Li_ring, IC_RING, .Li_circle, IC_RING, .Li_circle_filled, IC_DOT
+    .quad .Li_circle_slash, IC_SLASH, .Li_warning, IC_WARN, .Li_error, IC_CLOSE, .Li_bug, IC_BUG
+    .quad .Li_beaker, IC_BEAKER, .Li_stop, IC_STOP, 0, 0

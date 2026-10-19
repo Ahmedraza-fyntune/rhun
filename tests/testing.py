@@ -238,6 +238,35 @@ class Testing(unittest.TestCase):
         self.assertTrue(self.logged('coverage ok'), self.fake_log())
         self.assertIn('covered=3 partial=1 missed=0 lines=3:C,5:C,6:P,7:C', out)
 
+    # --- the Testing section ---
+
+    def section(self, out):
+        return [l for l in out if l.startswith('row ')]
+
+    def test_the_testing_section_mirrors_the_tree_and_its_buttons_run(self):
+        # at 1000x600 the sidebar holds the explorer and Testing; Testing's header is above y=335,
+        # its buttons right to left from x=212: Cancel, Re-run Failed, Coverage, Run All
+        out = self.run_editor([*EXPAND, 'print-testing', 'move 150 321', 'click 150 321', 'wait-tests',
+                               'test-select testsfake go:example/pkg.TestB', 'print-testing', 'print-sidebar',
+                               'key r', 'wait-tests'])
+        rows = self.section(out)
+        self.assertTrue(rows[0].startswith('row 0 '), rows)
+        self.assertIn(' open id=00 label=Fake Tests ', rows[0])
+        self.assertIn(' leaf id=00go:example/pkg.TestB label=TestB icon=', rows[4])
+        self.assertIn('testing title=Testing at=0,335 size=240x239 badge=0 visible focus', out)
+        self.assertEqual(self.logged('run '), ['run 1 run 0 ', 'run 2 run 1 go:example/pkg.TestB'])
+        after = rows[len(rows) // 2:]
+        self.assertTrue([r for r in after if 'id=00go:example/pkg.TestB ' in r and ' cur ' in r and 'desc=30 ms' in r],
+                        after)
+
+    def test_a_lazy_item_expanded_in_the_section_is_resolved(self):
+        out = self.run_editor(['cmd testing', 'wait-test-items 2', 'print-testing', 'key Down', 'key Down',
+                               'key Right', 'wait 300', 'print-testing', 'print-tests'])
+        rows = self.section(out)
+        self.assertIn(' closed id=00go:example/pkg label=pkg ', rows[1])
+        self.assertTrue([r for r in rows if 'id=00go:example/pkg#a_test.go' in r], rows)
+        self.assertIn("recv 2 tests-resolve 14 b'go:example/pkg'", self.fake_log())
+
     # --- test-exec ---
 
     def test_exec_runs_a_program_as_the_user_and_passes_its_output(self):

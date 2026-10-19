@@ -187,6 +187,7 @@ FN testproto_ready
     jz 9f
     mov r12, rax
     mov dword ptr [r12 + TSC_ready], 1
+    call testview_ensure        # the Testing section shows its controllers
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx

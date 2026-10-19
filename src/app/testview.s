@@ -51,10 +51,11 @@ FN testview_selected
     pop rbx
     ret
 
-# testview_select(tsc, index): that item is the selected one
+# testview_select(tsc, index): that item is the selected one (the tree's cursor too, when it shows)
 FN testview_select
-    push rbx
+    PROLOGUE
     mov rbx, rdi
+    mov r12, rsi
     mov rax, [rdi + TSC_ext]
     mov [rip + g_tv_ext], rax
     mov [rip + g_tv_item], rsi
@@ -62,8 +63,30 @@ FN testview_select
     mov eax, [rax + TSI_gen]
     mov [rip + g_tv_gen], rax
     mov dword ptr [rip + g_dirty], 1
-    pop rbx
-    ret
+    cmp qword ptr [rip + tv_tree], 0
+    je 9f
+    call testview_rebuild
+    mov rdi, rbx
+    mov rsi, r12
+    call node_id
+    mov rdi, [rip + tv_tree]
+    mov rsi, [rip + tv_id + SB_ptr]
+    mov rdx, [rip + tv_id + SB_len]
+    call tree_find
+    cmp eax, 0
+    jle 9f
+    mov r13d, eax
+    mov rdi, [rip + tv_tree]
+    call tree_cursor
+    cmp eax, r13d
+    je 9f                       # the tree chose it (its select callback): no change to tell
+    mov rdi, [rip + tv_tree]
+    mov esi, r13d
+    call tree_set_cursor
+    mov rdi, [rip + tv_tree]
+    mov esi, r13d
+    call tree_reveal
+9:  EPILOGUE
 
 # testing_sync(): every extension that declares [provides] tests has its controller row, and an
 #   idle one starts (its roots come once it agreed tests)
@@ -88,6 +111,7 @@ FN testing_sync
     je 1b
     mov rdi, rbx
     call testmodel_ctrl_make
+    call testview_ensure
     cmp dword ptr [rbx + EXT_status], ES_IDLE
     jne 1b
     mov rdi, rbx
@@ -499,6 +523,7 @@ test_ctl:
     .quad .Lc_wait, testctl_wait, .Lc_wait_items, testctl_wait_items
     .quad .Lc_print, testctl_print, .Lc_result, testctl_result
     .quad .Lc_runs, testctl_runs, .Lc_coverage, testctl_coverage
+    .quad .Lc_view, testctl_print_view
     .quad 0, 0
 .Lc_select: .asciz "test-select"
 .Lc_expand: .asciz "test-expand"
@@ -510,6 +535,7 @@ test_ctl:
 .Lc_result: .asciz "print-test-result"
 .Lc_runs: .asciz "print-test-runs"
 .Lc_coverage: .asciz "print-coverage"
+.Lc_view: .asciz "print-testing"
 .text
 
 testctl_expand_open:
@@ -1023,11 +1049,17 @@ FN testctl_coverage
 .Lt_diff: .asciz "Expected \342\206\224 Actual: "
 
 .text
-# cmd_testing: Testing: controllers start and show their tests
+# cmd_testing: Testing: controllers start and show their tests in the Testing section
 FN cmd_testing
     push rbx
     call testing_sync
-    mov dword ptr [rip + g_dirty], 1
+    call testview_ensure
+    mov edi, [rip + g_tv_place]
+    test edi, edi
+    js 1f
+    mov esi, 1
+    call place_show
+1:  mov dword ptr [rip + g_dirty], 1
     pop rbx
     ret
 
@@ -1040,3 +1072,1116 @@ FN cmd_test_coverage_toggle
 # cmd_test_next_failure: the next failure's place in the editor (testgutter.s)
 FN cmd_test_next_failure
     ret
+
+# ---------------- the Testing section ----------------
+# A sidebar section (places.s) drawing the shared tree widget (rtree.s). The tree is a mirror of the
+# model: rebuilt from it in a frame after the model changed (g_ts_dirty), listing the children of
+# the expanded items only; a node's id is the controller's slot as two digits and the item's id.
+# The model's TSF_EXPANDED is the expansion that counts: the tree's expand callback sets it, and the
+# rebuild expands the tree's nodes to match.
+
+.equ ID_TV_BTN, 0x5e8000        # + i: the section header's buttons
+.equ TV_DETAILS_LINES, 40       # an inline diff's lines at most
+
+.bss
+.p2align 3
+tv_tree: .quad 0
+tv_stack: .zero VEC_SIZE        # rebuild: (node, TSC*, item index) still to list
+tv_id: .zero SB_SIZE            # a node id being built
+tv_text: .zero SB_SIZE          # a desc, tip or details line being built
+tv_counts: .zero 4 * TSS_COUNT
+tv_menu_x: .long 0
+tv_menu_y: .long 0
+.data
+.p2align 2
+.globl g_tv_place
+g_tv_place: .long -1            # the section's place id, -1 before it exists
+.text
+
+# testview_ensure(): the section and its tree exist
+FN testview_ensure
+    PROLOGUE
+    cmp qword ptr [rip + tv_tree], 0
+    jne 1f
+    lea rdi, [rip + tv_tree_ops]
+    xor esi, esi
+    call tree_new
+    mov [rip + tv_tree], rax
+1:  cmp dword ptr [rip + g_tv_place], 0
+    jge 9f
+    mov edi, PLACE_SIDEBAR
+    lea rsi, [rip + .Ltv_name]
+    lea rdx, [rip + .Ltv_title]
+    lea rcx, [rip + tv_place_ops]
+    xor r8d, r8d
+    call place_add
+    mov [rip + g_tv_place], eax
+    test eax, eax
+    js 9f
+    mov edi, eax
+    mov esi, IC_BEAKER
+    call place_set_icon
+    mov dword ptr [rip + g_ts_dirty], 1
+9:  EPILOGUE
+
+# node_id(tsc, index): tv_id holds the node's id: the controller's slot as two digits, the item's id
+node_id:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    lea rdi, [rip + tv_id]
+    call sb_clear
+    mov rax, rbx
+    lea rcx, [rip + g_ts_ctrls]
+    sub rax, rcx
+    xor edx, edx
+    mov ecx, TSC_SIZE
+    div rcx                     # the slot
+    xor edx, edx
+    mov ecx, 10
+    div ecx
+    push rdx
+    push rdx
+    lea esi, [rax + '0']
+    lea rdi, [rip + tv_id]
+    call sb_push_byte
+    pop rsi
+    pop rsi
+    add esi, '0'
+    lea rdi, [rip + tv_id]
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    lea rdi, [rip + tv_id]
+    mov rsi, [rax + TSI_id]
+    mov edx, [rax + TSI_idlen]
+    call sb_push
+    EPILOGUE
+
+# node_item(tr, node) -> rax TSC*, rdx index of the item a node shows, rax 0 when it is gone
+FN testview_node_item
+    PROLOGUE
+    call tree_node_id
+    cmp rdx, 2
+    jb 8f
+    mov r12, rax
+    mov r13, rdx
+    movzx eax, byte ptr [r12]
+    sub eax, '0'
+    imul eax, eax, 10
+    movzx ecx, byte ptr [r12 + 1]
+    sub ecx, '0'
+    add eax, ecx
+    cmp eax, TS_CTRL_MAX
+    jae 8f
+    imul rbx, rax, TSC_SIZE
+    lea rcx, [rip + g_ts_ctrls]
+    add rbx, rcx
+    cmp qword ptr [rbx + TSC_ext], 0
+    je 8f
+    xor edx, edx
+    cmp r13, 2
+    je 7f
+    mov rdi, rbx
+    lea rsi, [r12 + 2]
+    lea rdx, [r13 - 2]
+    call testmodel_find
+    test rax, rax
+    js 8f
+    mov rdx, rax
+7:  mov rax, rbx
+    EPILOGUE
+8:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
+
+# tv_kid(tsc, index) -> eax the node listed for the item under the parent being listed, decorated
+tv_kid:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    call node_id
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    mov r13, rax
+    # its kind of children: leaf, or children (lazy ones count), expanded as the model says
+    mov r9d, KIDS_LEAF
+    cmp dword ptr [r13 + TSI_first], 0
+    jge 1f
+    test dword ptr [r13 + TSI_flags], TSF_LAZY
+    jz 2f
+1:  mov r9d, KIDS_CLOSED
+    test dword ptr [r13 + TSI_flags], TSF_EXPANDED
+    jz 2f
+    mov r9d, KIDS_OPEN
+2:  mov r14d, r9d
+    mov rdi, [rip + tv_tree]
+    mov rsi, [rip + tv_id + SB_ptr]
+    mov rdx, [rip + tv_id + SB_len]
+    mov rcx, [r13 + TSI_label]
+    push r9
+    push r9
+    mov rdi, rcx
+    call strlen
+    mov r8, rax
+    pop r9
+    pop r9
+    mov rdi, [rip + tv_tree]
+    mov rsi, [rip + tv_id + SB_ptr]
+    mov rdx, [rip + tv_id + SB_len]
+    mov rcx, [r13 + TSI_label]
+    call tree_kid
+    cmp eax, -1
+    jne 3f
+    # the id is elsewhere in the tree (the item moved): that node goes first
+    mov rdi, [rip + tv_tree]
+    mov rsi, [rip + tv_id + SB_ptr]
+    mov rdx, [rip + tv_id + SB_len]
+    call tree_find
+    cmp eax, 0
+    jle 9f
+    mov rdi, [rip + tv_tree]
+    mov esi, eax
+    call tree_del
+    mov rdi, [r13 + TSI_label]
+    call strlen
+    mov r8, rax
+    mov rdi, [rip + tv_tree]
+    mov rsi, [rip + tv_id + SB_ptr]
+    mov rdx, [rip + tv_id + SB_len]
+    mov rcx, [r13 + TSI_label]
+    mov r9d, r14d
+    call tree_kid
+    cmp eax, -1
+    je 9f
+3:  mov r15d, eax
+    mov rdi, [rip + tv_tree]
+    mov esi, r15d
+    mov edx, [r13 + TSI_flags]
+    and edx, TSF_EXPANDED
+    cmp r14d, KIDS_LEAF
+    je 31f
+    call tree_expand
+31: # the state's icon
+    mov eax, [r13 + TSI_state]
+    lea rcx, [rip + state_icons]
+    mov edx, [rcx + rax*8]
+    mov ecx, [rcx + rax*8 + 4]
+    mov rdi, [rip + tv_tree]
+    mov esi, r15d
+    call tree_set_icon
+    # the desc: the duration, else the item's desc
+    lea rdi, [rip + tv_text]
+    call sb_clear
+    mov esi, [r13 + TSI_ms]
+    cmp esi, -1
+    je 4f
+    lea rdi, [rip + tv_text]
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltv_ms]
+    call sb_push_cstr
+    jmp 5f
+4:  mov rsi, [r13 + TSI_desc]
+    test rsi, rsi
+    jz 5f
+    lea rdi, [rip + tv_text]
+    call sb_push_cstr
+5:  mov rdi, [rip + tv_tree]
+    mov esi, r15d
+    mov rdx, [rip + tv_text + SB_ptr]
+    mov rcx, [rip + tv_text + SB_len]
+    call tree_set_desc
+    # the tip: a discovery problem, else the last result's message
+    mov rsi, [r13 + TSI_error]
+    test rsi, rsi
+    jnz 6f
+    mov rsi, [r13 + TSI_msg]
+6:  xor ecx, ecx
+    xor edx, edx
+    test rsi, rsi
+    jz 61f
+    mov rdi, rsi
+    push rsi
+    push rsi
+    call strlen
+    mov rcx, rax
+    pop rdx
+    pop rdx
+61: mov rdi, [rip + tv_tree]
+    mov esi, r15d
+    call tree_set_tip
+    mov eax, r15d
+    EPILOGUE
+9:  mov eax, -1
+    EPILOGUE
+
+# stack_push(node, tsc, index)
+stack_push:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    lea rdi, [rip + tv_stack]
+    mov esi, 24
+    call vec_push
+    mov [rax], rbx
+    mov [rax + 8], r12
+    mov [rax + 16], r13
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+# testview_rebuild(): the tree again from the model (only after it changed)
+FN testview_rebuild
+    PROLOGUE
+    cmp qword ptr [rip + tv_tree], 0
+    je 9f
+    cmp dword ptr [rip + g_ts_dirty], 0
+    je 9f
+    mov dword ptr [rip + g_ts_dirty], 0
+    mov qword ptr [rip + tv_stack + VEC_len], 0
+    mov rdi, [rip + tv_tree]
+    xor esi, esi
+    call tree_kids_begin
+    lea rbx, [rip + g_ts_ctrls]
+    xor r12d, r12d
+1:  cmp qword ptr [rbx + TSC_ext], 0
+    je 2f
+    mov rdi, rbx
+    xor esi, esi
+    call tv_kid
+    cmp eax, -1
+    je 2f
+    mov r13d, eax
+    mov rdi, rbx
+    xor esi, esi
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_EXPANDED
+    jz 2f
+    mov edi, r13d
+    mov rsi, rbx
+    xor edx, edx
+    call stack_push
+2:  add rbx, TSC_SIZE
+    inc r12d
+    cmp r12d, TS_CTRL_MAX
+    jb 1b
+    mov rdi, [rip + tv_tree]
+    xor esi, esi
+    call tree_kids_end
+    # the expanded items' children, one parent at a time
+3:  mov rax, [rip + tv_stack + VEC_len]
+    test rax, rax
+    jz 9f
+    dec rax
+    mov [rip + tv_stack + VEC_len], rax
+    imul rax, rax, 24
+    add rax, [rip + tv_stack + VEC_ptr]
+    mov r13, [rax]              # node
+    mov rbx, [rax + 8]          # TSC*
+    mov r12, [rax + 16]         # item
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_LAZY
+    jz 4f
+    # lazy: asked for when the tree wants its children; a failed ask is an error row with Retry
+    test dword ptr [rax + TSI_flags], TSF_RESOLVING
+    jnz 3b
+    cmp qword ptr [rax + TSI_error], 0
+    je 3b
+    mov rdi, [rip + tv_tree]
+    mov esi, r13d
+    call tree_set_error
+    jmp 3b
+4:  mov rdi, [rip + tv_tree]
+    mov esi, r13d
+    call tree_kids_begin
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    movsxd r14, dword ptr [rax + TSI_first]
+5:  test r14, r14
+    js 7f
+    mov rdi, rbx
+    mov rsi, r14
+    call tv_kid
+    cmp eax, -1
+    je 6f
+    mov r15d, eax
+    mov rdi, rbx
+    mov rsi, r14
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_EXPANDED
+    jz 6f
+    cmp dword ptr [rax + TSI_first], 0
+    jge 51f
+    test dword ptr [rax + TSI_flags], TSF_LAZY
+    jz 6f
+51: mov edi, r15d
+    mov rsi, rbx
+    mov rdx, r14
+    call stack_push
+6:  mov rdi, rbx
+    mov rsi, r14
+    call testmodel_item
+    movsxd r14, dword ptr [rax + TSI_next]
+    jmp 5b
+7:  mov rdi, [rip + tv_tree]
+    xor esi, esi
+    call tree_kids_end
+    jmp 3b
+9:  EPILOGUE
+
+# ---- the tree's callbacks
+
+# tv_activate(ctx, tr, node): Enter or a double click: go to the test
+tv_activate:
+    PROLOGUE
+    mov rdi, rsi
+    mov esi, edx
+    call testview_node_item
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .La_goto]
+    mov ecx, 4
+    call testview_action
+9:  EPILOGUE
+
+# tv_expand(ctx, tr, node, on): the model's expansion follows (a lazy item is resolved)
+tv_expand:
+    PROLOGUE
+    mov r12d, ecx
+    mov rdi, rsi
+    mov esi, edx
+    call testview_node_item
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    mov edx, r12d
+    call testview_expand
+9:  EPILOGUE
+
+# tv_select(ctx, tr): the cursor's item is the selected one
+tv_select:
+    PROLOGUE
+    mov rbx, rsi
+    mov rdi, rbx
+    call tree_cursor
+    cmp eax, -1
+    je 9f
+    mov rdi, rbx
+    mov esi, eax
+    call testview_node_item
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call testview_select
+9:  EPILOGUE
+
+# tv_load(ctx, tr, node) and tv_retry: a lazy item's children are asked for
+tv_load:
+    PROLOGUE
+    mov rdi, rsi
+    mov esi, edx
+    call testview_node_item
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov r12, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_LAZY
+    jz 1f
+    mov rdi, [rbx + TSC_ext]
+    mov rsi, rbx
+    mov rdx, r12
+    call testproto_resolve
+    jmp 9f
+1:  mov dword ptr [rip + g_ts_dirty], 1    # given by the next rebuild
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# tv_menu(ctx, tr, node, x, y): the item's menu
+tv_menu:
+    PROLOGUE
+    mov [rip + tv_menu_x], ecx
+    mov [rip + tv_menu_y], r8d
+    mov rdi, rsi
+    mov esi, edx
+    call testview_node_item
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call testview_select
+    lea rdi, [rip + tv_menu_items]
+    mov esi, [rip + tv_menu_x]
+    mov edx, [rip + tv_menu_y]
+    call ctx_menu_open
+9:  EPILOGUE
+
+# the menu's items act on the selected item
+tv_m_run:
+    mov edi, TSP_RUN
+    jmp sel_run
+tv_m_debug:
+    mov edi, TSP_DEBUG
+    jmp sel_run
+tv_m_coverage:
+    mov edi, TSP_COVERAGE
+sel_run:
+    push rbx
+    mov ebx, edi
+    call testview_selected
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    mov edx, ebx
+    call testview_run_item
+9:  pop rbx
+    ret
+tv_m_goto:
+    lea rdi, [rip + .La_goto]
+    jmp sel_action
+tv_m_failure:
+    lea rdi, [rip + .La_failure]
+    jmp sel_action
+tv_m_diff:
+    lea rdi, [rip + .La_diff]
+    jmp sel_action
+tv_m_output:
+    lea rdi, [rip + .La_output]
+sel_action:
+    push rbx
+    mov rbx, rdi
+    call testview_selected
+    test rax, rax
+    jz 9f
+    push rax
+    push rdx
+    mov rdi, rbx
+    call strlen
+    mov rcx, rax
+    pop rsi
+    pop rdi
+    mov rdx, rbx
+    call testview_action
+9:  pop rbx
+    ret
+
+# ---- the section's callbacks
+
+# tv_keys(ctx, keysym, cp, mods) -> eax 1 when taken: r runs, d debugs the cursor's item; the
+#   tree's keys otherwise
+tv_keys:
+    PROLOGUE
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    jnz 8f
+    cmp r13d, 'r'
+    jne 1f
+    call tv_m_run
+    mov eax, 1
+    EPILOGUE
+1:  cmp r13d, 'd'
+    jne 8f
+    call tv_m_debug
+    mov eax, 1
+    EPILOGUE
+8:  mov rdi, [rip + tv_tree]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call tree_key
+    EPILOGUE
+
+# tv_header(ctx, right, y, h) -> eax the x left of its buttons: Run All, Run with Coverage, Re-run
+#   Failed, Cancel
+tv_header:
+    PROLOGUE 16
+    mov r12d, esi               # the right edge, moving left
+    mov r13d, edx
+    mov r14d, ecx
+    mov ebx, 3
+1:  M eax, MI_24
+    sub r12d, eax
+    lea edi, [rbx + ID_TV_BTN]
+    mov esi, r12d
+    mov edx, r13d
+    M ecx, MI_24
+    mov r8d, r14d
+    lea rax, [rip + header_icons]
+    mov r9d, [rax + rbx*4]
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 2f
+    lea rax, [rip + header_cmds]
+    call [rax + rbx*8]
+2:  dec ebx
+    jns 1b
+    mov eax, r12d
+    EPILOGUE
+
+# tv_draw(ctx, x, y, w, h): a line of counts, the tree, and the selected item's last result
+tv_draw:
+    PROLOGUE 48
+    mov [rsp], esi              # x
+    mov [rsp + 4], edx          # y
+    mov [rsp + 8], ecx          # w
+    mov [rsp + 12], r8d         # h
+    call testview_rebuild
+    # the counts: "N passed  N failed  N skipped" (and "running" while runs are)
+    M eax, MI_ROW
+    mov [rsp + 16], eax         # the counts line's height
+    lea rdi, [rip + tv_counts]
+    call testmodel_tally
+    lea rdi, [rip + tv_text]
+    call sb_clear
+    lea rdi, [rip + tv_text]
+    mov esi, [rip + tv_counts + 4*TSS_PASSED]
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltv_passed]
+    call sb_push_cstr
+    mov eax, [rip + tv_counts + 4*TSS_FAILED]
+    add eax, [rip + tv_counts + 4*TSS_ERRORED]
+    lea rdi, [rip + tv_text]
+    mov esi, eax
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltv_failed]
+    call sb_push_cstr
+    lea rdi, [rip + tv_text]
+    mov esi, [rip + tv_counts + 4*TSS_SKIPPED]
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltv_skipped]
+    call sb_push_cstr
+    xor edi, edi
+    call testmodel_active
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltv_running]
+    call sb_push_cstr
+1:  M ecx, MI_12
+    mov esi, [rsp]
+    add esi, ecx
+    lea rdi, [rip + g_face_small]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 16]
+    mov r8, [rip + tv_text + SB_ptr]
+    mov r9, [rip + tv_text + SB_len]
+    COLOR eax, T_MUTED
+    push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+    # the details' height: a third of the section for an item with something to show
+    call details_lines
+    mov r15d, eax               # lines
+    xor r14d, r14d              # the details' height
+    test r15d, r15d
+    jz 2f
+    call dd_lh
+    imul eax, r15d
+    M ecx, MI_8
+    add eax, ecx
+    mov ecx, [rsp + 12]
+    sub ecx, [rsp + 16]
+    shr ecx, 1                  # at most half of what is left
+    cmp eax, ecx
+    cmova eax, ecx
+    mov r14d, eax
+2:  # the tree
+    call place_focused
+    xor r9d, r9d
+    cmp eax, [rip + g_tv_place]
+    sete r9b
+    mov rdi, [rip + tv_tree]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    add edx, [rsp + 16]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    sub r8d, [rsp + 16]
+    sub r8d, r14d
+    call tree_draw
+    test r14d, r14d
+    jz 9f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    add esi, [rsp + 12]
+    sub esi, r14d
+    mov edx, [rsp + 8]
+    mov ecx, r14d
+    call details_draw
+9:  EPILOGUE
+
+# ---- the selected item's last result, under the tree
+
+# details_lines() -> eax the lines the details want: 0 without a result with messages or output
+details_lines:
+    PROLOGUE
+    call testview_selected
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov r12, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_result
+    test rax, rax
+    jz 8f
+    mov r13, rax
+    mov eax, [r13 + TSE_nmsg]
+    test eax, eax
+    jnz 1f
+    cmp qword ptr [r13 + TSE_out + SB_len], 0
+    je 8f
+1:  mov eax, 14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# details_draw(x, y, w, h): "STATE · N ms · run R", the first message (its first lines, then its
+#   values as a line diff), then the links Go to Failure, Open Diff, Output
+.bss
+.p2align 3
+dd_x: .long 0
+dd_y: .long 0
+dd_w: .long 0
+dd_bottom: .long 0
+.p2align 3
+dd_key: .quad 0                 # the result the cached diff is of, and its messages' length
+dd_keylen: .quad 0
+dd_cache: .zero SB_SIZE
+.text
+details_draw:
+    PROLOGUE 32
+    mov [rip + dd_x], edi
+    mov [rip + dd_y], esi
+    mov [rip + dd_w], edx
+    lea eax, [rsi + rcx]
+    mov [rip + dd_bottom], eax
+    mov r8d, ecx
+    mov ecx, edx
+    mov edx, esi
+    mov esi, edi
+    mov edi, esi
+    push r8
+    push r8
+    mov edi, [rip + dd_x]
+    mov esi, [rip + dd_y]
+    mov edx, [rip + dd_w]
+    mov ecx, 1
+    COLOR r8d, T_BORDER
+    call gfx_fill
+    pop r8
+    pop r8
+    mov edi, [rip + dd_x]
+    mov esi, [rip + dd_y]
+    mov edx, [rip + dd_w]
+    mov ecx, r8d
+    call gfx_clip_push
+    M eax, MI_4
+    add [rip + dd_y], eax
+    call testview_selected
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov r12, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_item
+    mov r15, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call testmodel_result
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    # the header
+    lea rdi, [rip + tv_text]
+    call sb_clear
+    mov rsi, [r15 + TSI_label]
+    lea rdi, [rip + tv_text]
+    call sb_push_cstr
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltv_dot]
+    call sb_push_cstr
+    mov edi, [r15 + TSI_own]
+    call testmodel_state_word
+    lea rdi, [rip + tv_text]
+    mov rsi, rax
+    call sb_push_cstr
+    mov esi, [r15 + TSI_ms]
+    cmp esi, -1
+    je 1f
+    push rsi
+    push rsi
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltv_dot]
+    call sb_push_cstr
+    pop rsi
+    pop rsi
+    lea rdi, [rip + tv_text]
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltv_ms]
+    call sb_push_cstr
+1:  mov eax, [r15 + TSI_own]
+    lea rcx, [rip + state_icons]
+    mov ecx, [rcx + rax*8 + 4]
+    COLOR eax, T_PANEL_FG
+    cmp ecx, -1
+    je 11f
+    lea rdx, [rip + g_theme]
+    mov eax, [rdx + rcx*4]
+11: mov edi, eax
+    call dd_line_text
+    # the first message: its lines (at most 4), then its values
+    mov r14, [r13 + TSE_msgs + SB_ptr]
+    test r14, r14
+    jz 5f
+    cmp dword ptr [r13 + TSE_nmsg], 0
+    je 5f
+    lea rsi, [r14 + TSM_SIZE]
+    mov edx, [r14 + TSM_text]
+    mov ecx, 4
+    COLOR edi, T_PANEL_FG
+    call dd_lines
+    # the values as a diff, expected removed and actual added
+    cmp dword ptr [r14 + TSM_exp], -1
+    je 4f
+    cmp dword ptr [r14 + TSM_act], -1
+    je 4f
+    # built again only when the result changed (a frame draws it again and again)
+    cmp r13, [rip + dd_key]
+    jne 31f
+    mov rax, [r13 + TSE_msgs + SB_len]
+    cmp rax, [rip + dd_keylen]
+    je 32f
+31: lea rdi, [r14 + TSM_SIZE]
+    mov eax, [r14 + TSM_text]
+    add rdi, rax
+    mov eax, [r14 + TSM_path]
+    add rdi, rax                # expected
+    mov esi, [r14 + TSM_exp]
+    lea rdx, [rdi + rsi]        # actual
+    mov ecx, [r14 + TSM_act]
+    call testdiff_build         # rax, rdx: the diff's text, its header first
+    push rax
+    push rdx
+    lea rdi, [rip + dd_cache]
+    call sb_clear
+    pop rdx
+    pop rsi
+    lea rdi, [rip + dd_cache]
+    call sb_push
+    mov [rip + dd_key], r13
+    mov rax, [r13 + TSE_msgs + SB_len]
+    mov [rip + dd_keylen], rax
+32: mov rdi, [rip + dd_cache + SB_ptr]
+    mov rsi, [rip + dd_cache + SB_len]
+    call dd_diff
+4:  # links: Go to Failure, Open Diff
+    mov edi, ID_TV_BTN + 8
+    cmp dword ptr [r14 + TSM_l1], 0
+    je 41f
+    lea rsi, [rip + .Ltv_goto_failure]
+    lea rdx, [rip + tv_m_failure]
+    call dd_link
+41: cmp dword ptr [r14 + TSM_exp], -1
+    je 5f
+    mov edi, ID_TV_BTN + 9
+    lea rsi, [rip + .Ltv_open_diff]
+    lea rdx, [rip + tv_m_diff]
+    call dd_link
+5:  cmp qword ptr [r13 + TSE_out + SB_len], 0
+    je 6f
+    mov edi, ID_TV_BTN + 10
+    lea rsi, [rip + .Ltv_output]
+    lea rdx, [rip + tv_m_output]
+    call dd_link
+6:  call dd_newline
+    # the output's last lines
+    cmp qword ptr [r13 + TSE_out + SB_len], 0
+    je 9f
+    mov rdi, [r13 + TSE_out + SB_ptr]
+    mov rsi, [r13 + TSE_out + SB_len]
+    call tail_lines             # rax, rdx: the last lines that fit
+    mov rsi, rax
+    mov ecx, 200
+    COLOR edi, T_MUTED
+    call dd_lines
+9:  call gfx_clip_pop
+    EPILOGUE
+
+# dd_line_text(argb): tv_text as one line of the details
+dd_line_text:
+    mov rsi, [rip + tv_text + SB_ptr]
+    mov rdx, [rip + tv_text + SB_len]
+    jmp dd_line
+
+# dd_line(argb, ptr, len): one line at the next y (none past the bottom)
+.bss
+dd_link_x: .long 0
+.text
+dd_line:
+    PROLOGUE
+    mov r12d, edi
+    mov r13, rsi
+    mov r14, rdx
+    mov eax, [rip + dd_y]
+    cmp eax, [rip + dd_bottom]
+    jge 9f
+    M ecx, MI_12
+    mov esi, [rip + dd_x]
+    add esi, ecx
+    mov edx, [rip + dd_y]
+    lea rdi, [rip + g_face_small]
+    call dd_lh
+    mov ecx, eax
+    lea rdi, [rip + g_face_small]
+    mov r8, r13
+    mov r9, r14
+    push r12
+    push r12
+    call ui_text_v
+    add rsp, 16
+    call dd_lh
+    add [rip + dd_y], eax
+    mov dword ptr [rip + dd_link_x], 0
+9:  EPILOGUE
+
+# dd_lh() -> eax a details line's height: the small face's line and 4 points
+dd_lh:
+    mov eax, [rip + g_face_small + FACE_lineh]
+    add eax, [rip + g_mt + 4*MI_4]
+    ret
+
+# dd_newline(): the links' line ends
+dd_newline:
+    cmp dword ptr [rip + dd_link_x], 0
+    je 1f
+    call dd_lh
+    add [rip + dd_y], eax
+    mov dword ptr [rip + dd_link_x], 0
+1:  ret
+
+# dd_lines(argb, ptr, len, max lines): the text's lines, each its own line of the details
+dd_lines:
+    PROLOGUE
+    mov r12d, edi
+    mov r13, rsi
+    lea r14, [rsi + rdx]
+    mov r15d, ecx
+1:  test r15d, r15d
+    jz 9f
+    cmp r13, r14
+    jae 9f
+    mov rcx, r13
+2:  cmp rcx, r14
+    jae 3f
+    cmp byte ptr [rcx], 10
+    je 3f
+    inc rcx
+    jmp 2b
+3:  mov rbx, rcx
+    mov edi, r12d
+    mov rsi, r13
+    mov rdx, rcx
+    sub rdx, r13
+    call dd_line
+    lea r13, [rbx + 1]
+    dec r15d
+    jmp 1b
+9:  EPILOGUE
+
+# dd_diff(ptr, len): a unified diff's lines (past its header), removed in the error color and added
+#   in the success color, at most TV_DETAILS_LINES
+dd_diff:
+    PROLOGUE
+    mov r13, rsi
+    lea r14, [rdi + rsi]
+    mov r13, rdi
+    xor r15d, r15d              # lines drawn, the header not counted
+    xor ebx, ebx                # 1 past the header
+1:  cmp r13, r14
+    jae 9f
+    cmp r15d, TV_DETAILS_LINES
+    jae 9f
+    mov rcx, r13
+2:  cmp rcx, r14
+    jae 3f
+    cmp byte ptr [rcx], 10
+    je 3f
+    inc rcx
+    jmp 2b
+3:  mov r12, rcx
+    test ebx, ebx
+    jnz 4f
+    mov ebx, 1
+    jmp 6f
+4:  COLOR edi, T_MUTED
+    cmp byte ptr [r13], '-'
+    jne 41f
+    COLOR edi, T_ERROR
+41: cmp byte ptr [r13], '+'
+    jne 42f
+    COLOR edi, T_SUCCESS
+42: mov rsi, r13
+    mov rdx, r12
+    sub rdx, r13
+    call dd_line
+    inc r15d
+6:  lea r13, [r12 + 1]
+    jmp 1b
+9:  EPILOGUE
+
+# dd_link(id, label cstr, fn): a link on the links' line; a click calls fn
+dd_link:
+    PROLOGUE 16
+    mov ebx, edi
+    mov r12, rsi
+    mov r13, rdx
+    mov eax, [rip + dd_y]
+    cmp eax, [rip + dd_bottom]
+    jge 9f
+    mov eax, [rip + dd_link_x]
+    test eax, eax
+    jnz 1f
+    M eax, MI_12
+    add eax, [rip + dd_x]
+    mov [rip + dd_link_x], eax
+1:  mov rdi, r12
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, r12
+    mov rdx, rax
+    call text_width
+    mov r14d, eax
+    call dd_lh
+    mov r8d, eax
+    mov edi, ebx
+    mov esi, [rip + dd_link_x]
+    mov edx, [rip + dd_y]
+    mov ecx, r14d
+    call ui_btn
+    mov r15d, eax
+    COLOR r9d, T_ACCENT
+    push r9
+    push r9
+    call dd_lh
+    mov ecx, eax
+    pop r9
+    pop r9
+    lea rdi, [rip + g_face_small]
+    mov esi, [rip + dd_link_x]
+    mov edx, [rip + dd_y]
+    mov r8, r12
+    call ui_text_c
+    M eax, MI_12
+    add eax, r14d
+    add [rip + dd_link_x], eax
+    test r15d, UB_HOVER
+    jz 2f
+    mov edi, CUR_POINTER
+    call ui_set_cursor
+2:  test r15d, UB_CLICK
+    jz 9f
+    call r13
+9:  EPILOGUE
+
+# tail_lines(ptr, len) -> rax, rdx: the last 8 lines of the text (a final LF left out)
+tail_lines:
+    lea rcx, [rdi + rsi]
+    test rsi, rsi
+    jz 9f
+    cmp byte ptr [rcx - 1], 10
+    jne 1f
+    dec rcx
+1:  mov rdx, rcx
+    mov r8d, 8
+2:  cmp rdx, rdi
+    jbe 8f
+    cmp byte ptr [rdx - 1], 10
+    jne 3f
+    dec r8d
+    jz 8f
+3:  dec rdx
+    jmp 2b
+8:  mov rax, rdx
+    sub rcx, rdx
+    mov rdx, rcx
+    ret
+9:  mov rax, rdi
+    xor edx, edx
+    ret
+
+# testctl_print_view(sb, rest, len): print-testing: the section's tree rows (tree_dump)
+FN testctl_print_view
+    PROLOGUE
+    mov rbx, rdi
+    call testview_ensure
+    call testview_rebuild
+    mov rdi, [rip + tv_tree]
+    mov rsi, rbx
+    call tree_dump
+    xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Ltv_name: .asciz "testing"
+.Ltv_title: .asciz "Testing"
+.Ltv_ms: .asciz " ms"
+.Ltv_dot: .asciz " \302\267 "
+.Ltv_passed: .asciz " passed  "
+.Ltv_failed: .asciz " failed  "
+.Ltv_skipped: .asciz " skipped"
+.Ltv_running: .asciz "  \302\267 running"
+.Ltv_goto_failure: .asciz "Go to Failure"
+.Ltv_open_diff: .asciz "Open Diff"
+.Ltv_output: .asciz "Output"
+.Ltm_run: .asciz "Run"
+.Ltm_debug: .asciz "Debug"
+.Ltm_coverage: .asciz "Run with Coverage"
+.Ltm_goto: .asciz "Go to Test"
+.Ltm_failure: .asciz "Go to Failure"
+.Ltm_diff: .asciz "Open Diff"
+.Ltm_output: .asciz "Show Output"
+.p2align 3
+# per state: icon, color slot (-1 muted)
+state_icons:
+    .long IC_DOT, T_MUTED           # not run
+    .long IC_SLASH, T_MUTED         # skipped
+    .long IC_CHECK, T_SUCCESS       # passed
+    .long IC_CLOSE, T_ERROR         # failed
+    .long IC_WARN, T_ERROR          # errored
+    .long IC_RING, T_MUTED          # queued
+    .long IC_RING, T_ACCENT         # running
+header_icons: .long IC_PLAY, IC_BEAKER, IC_REFRESH, IC_STOP
+.p2align 3
+header_cmds: .quad cmd_test_run_all, cmd_test_coverage_all, cmd_test_rerun_failed, cmd_test_cancel
+tv_menu_items:
+    .quad .Ltm_run, tv_m_run, .Ltm_debug, tv_m_debug, .Ltm_coverage, tv_m_coverage
+    .quad .Ltm_goto, tv_m_goto, .Ltm_failure, tv_m_failure, .Ltm_diff, tv_m_diff
+    .quad .Ltm_output, tv_m_output, 0, 0
+tv_place_ops: .quad tv_draw, tv_keys, 0, 0, tv_header, 0
+tv_tree_ops: .quad tv_activate, tv_expand, tv_select, 0, tv_menu, 0, tv_load, tv_load
