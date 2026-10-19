@@ -726,6 +726,28 @@ declares. Each install writes `.rhun-install` into the extension's folder: where
 SHA-256, whether the index reviewed it, when it was installed, and `started = yes` after its
 first start.
 
+#### Updates
+
+rhun checks for extension updates 60 seconds after it starts and then once a day (Settings >
+Updates > **Check extensions now**, or **Check for updates** on the Extensions page, checks at
+once). An extension the [rhun extensions index](https://github.com/rhun-editor/extensions) lists
+is offered only the version the index reviewed (its tag and archive digest); any other extension
+is asked about through its repository's latest release on GitHub. Waiting updates put a dot on
+the title bar's extensions button and an **Update all** row in its menu; the Extensions page
+lists them at the top, each card has **Update to 0.1.2**, and the details page links the
+release's notes (**What's new**).
+
+`[updates] extensions` decides what happens on its own: `install` (the default) installs reviewed
+versions by themselves, one at a time, with a note such as "Updated Showcase to 0.1.2"; `check`
+only shows updates; `off` stops the checks. An update the index has not reviewed is never
+installed by itself: **Update** says "Not in the rhun extensions index: nobody has reviewed this
+version." first. An update that asks for more access than the installed version (a higher level
+for your files or project, home, the network, the terminal, or a new program to run) always asks,
+naming what is new, and waits for you; Cancel keeps the installed version and stops automatic
+updates from fetching that version again. After **Roll back**, automatic updates leave the
+version you went back from alone until a newer one appears. What rhun learned is kept in
+`$XDG_STATE_HOME/rhun/extension-updates`.
+
 **Remove** stops the extension and deletes its folder, its previous version, its saved data and
 log, its settings, pin and on/off choice, the provider choices that name it (rhun asks again
 rather than switching silently) and what rhun knew about its updates. Your `[keys]` stay.

@@ -1768,6 +1768,14 @@ ENDSTRUCT VW_SIZE
 .equ XU_ASKS, 1                 # it asks for more access: waits for the user
 .equ XU_FAILED, 2
 .equ XU_CANCELLED, 3
+.equ XS_NONE, 0                 # extupdate_state: current, or nothing known
+.equ XS_AVAILABLE, 1
+.equ XS_ASKS, 2                 # it asks for more access: waits for the user
+.equ XS_SKIPPED, 3              # the version rolled back from
+.equ XS_ERROR, 4
+.equ XM_INSTALL, 0              # [updates] extensions (cfg_ext_updates)
+.equ XM_CHECK, 1
+.equ XM_OFF, 2
 # an extension's own setting: [settings] in its manifest, its value in extensions.ini
 STRUCT
 F SD_key, 8             # cstr

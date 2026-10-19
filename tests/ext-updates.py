@@ -197,6 +197,89 @@ class Updates(host.Host):
         self.assertEqual(out[1], 'toast=Could not install demo/nothing: demo/nothing has no release')
 
 
+    # --- update checks through GitHub's redirect (extensions the index does not list) ---
+
+    def serve(self):
+        srv = extrel.Server(self.rel)
+        srv.__enter__()
+        self.addCleanup(srv.__exit__)
+        self.env['RHUN_EXT_BASE'] = srv.url
+        return srv
+
+    def test_a_check_offers_the_latest_release_and_update_asks_because_nobody_reviewed_it(self):
+        self.serve()
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.publish('demo', 'hello', files('0.1.1'), 'v0.1.1')
+        out = self.ui(['wait-ext hello running', 'ext-check-updates', 'wait-ext-updates', 'print-ext-updates',
+                       'print-toast', 'ext-page hello', 'print-ext-page', 'ext-page list', 'print-ext-page'])
+        self.assertIn('demo/hello installed=0.1.0 latest=0.1.1 state=available from=github', out)
+        self.assertIn('toast=1 extension update available', out)
+        self.assertIn('versions update=0.1.1 previous=-', out)
+        self.assertIn('updates=1', out)
+        self.assertIn('latest = v0.1.1', self.updates_state())
+        out = self.ui(['wait-ext hello running', 'ext-update demo/hello', 'wait-ext-updates', 'print-dialog',
+                       'dialog yes', 'wait-ext-updates', 'wait-ext hello running', 'print-toast',
+                       'print-ext-versions demo/hello', 'print-ext-updates'])
+        self.assertIn('updates=asking', out)
+        self.assertIn('dialog=Update “Hello” to 0.1.1?', out)
+        self.assertIn('text=Not in the rhun extensions index: nobody has reviewed this version.', out)
+        self.assertIn('toast=Updated Hello to 0.1.1', out)
+        self.assertIn('version=0.1.1 source=github tag=v0.1.1 previous=0.1.0 link=no fresh=0', out)
+        self.assertIn('demo/hello installed=0.1.1 latest=0.1.1 state=current from=github', out)
+
+    def test_an_update_that_asks_for_more_says_what_and_cancel_keeps_it_waiting(self):
+        self.serve()
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.publish('demo', 'hello', files('0.2.0', needs='network = yes\nrun = cargo'), 'v0.2.0')
+        out = self.ui(['wait-ext hello running', 'ext-check-updates', 'wait-ext-updates', 'ext-update demo/hello',
+                       'wait-ext-updates', 'print-dialog', 'dialog no', 'wait-ext-updates', 'print-ext-updates',
+                       'print-ext-versions demo/hello'])
+        self.assertIn('dialog=Update “Hello” to 0.2.0?', out)
+        self.assertIn('text=Not in the rhun extensions index: nobody has reviewed this version.', out)
+        self.assertIn('It now also asks to: use the internet, run cargo.', out)
+        self.assertIn('demo/hello installed=0.1.0 latest=0.2.0 state=asks from=github', out)
+        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=- link=no fresh=0', out)
+        self.assertFalse(any(p.name.startswith('.install') for p in self.exts.iterdir()))
+
+    def test_a_version_rolled_back_from_is_skipped_until_a_newer_one(self):
+        self.serve()
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.publish('demo', 'hello', files('0.1.1'), 'v0.1.1')
+        self.install('demo/hello@0.1.1')
+        out = self.ui(['wait-ext hello running', 'ext-rollback demo/hello', 'wait-ext hello running',
+                       'ext-check-updates', 'wait-ext-updates', 'print-ext-updates'])
+        self.assertIn('demo/hello installed=0.1.0 latest=0.1.1 state=skipped from=github', out)
+        self.rel.publish('demo', 'hello', files('0.1.2'), 'v0.1.2')
+        out = self.ui(['ext-check-updates', 'wait-ext-updates', 'print-ext-updates'])
+        self.assertIn('demo/hello installed=0.1.0 latest=0.1.2 state=available from=github', out)
+
+    def test_moved_repositories_and_ones_without_releases_say_why(self):
+        self.serve()
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.moved['demo/hello'] = 'demo/hi'
+        out = self.ui(['ext-check-updates', 'wait-ext-updates', 'print-ext-updates', 'print-toast'])
+        self.assertIn('demo/hello installed=0.1.0 latest=- state=error moved to demo/hi', out)
+        del self.rel.moved['demo/hello']
+        del self.rel.latest['demo/hello']
+        out = self.ui(['ext-check-updates', 'wait-ext-updates', 'print-ext-updates'])
+        self.assertIn('demo/hello installed=0.1.0 latest=- state=error no release', out)
+
+    def test_local_installs_are_never_checked_and_the_check_runs_by_itself_when_due(self):
+        self.serve()
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.publish('demo', 'hello', files('0.1.1'), 'v0.1.1')
+        self.env['RHUN_EXT_UPDATE_EVERY'] = '400'
+        out = self.ui(['wait 1500', 'wait-ext-updates', 'print-ext-updates', 'print-ext-versions demo/hello'])
+        self.assertIn('checked=1 busy=0', out)
+        self.assertIn('demo/hello installed=0.1.0 latest=0.1.1 state=available from=github', out)
+        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=- link=no fresh=0', out)   # never by itself
+
+
 for _name in dir(host.Host):
     if _name.startswith('test_'):
         setattr(Updates, _name, None)

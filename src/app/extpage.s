@@ -5,6 +5,8 @@
 .equ ID_XP, 0x7100              # + 0x00 install, 0x01 back, 0x02 pin, 0x03 remove, 0x04 restart,
                                 #   0x10 + i*4 + k: a card's toggle, details, remove, restart
 .equ ID_XS, 0x7300              # + i*8 + k: a setting's controls (choice options k..)
+.equ ID_XM, 0x5a0000            # extension management: + 1 check, + 2 update all, + 3 update,
+                                #   + 4 what's new, + 5 roll back; + 0x1000 + i: a card's Update
 
 .bss
 .p2align 3
@@ -153,7 +155,7 @@ FN extpage_draw
 
 draw_list:
     PROLOGUE 16
-    # "Extensions", and Install from GitHub on the right
+    # "Extensions", and on the right Check for updates and the Install menu
     lea rdi, [rip + g_face_big]
     mov esi, [rip + xp_x]
     mov edx, [rip + xp_y]
@@ -166,19 +168,38 @@ draw_list:
     mov esi, [rip + xp_x]
     add esi, [rip + xp_w]
     sub esi, eax
+    mov [rsp], esi              # the Install button's x
     mov edx, [rip + xp_y]
     M eax, MI_40
     sub eax, [rip + g_mt + 4*MI_32]
     sar eax, 1
     add edx, eax
+    mov [rsp + 4], edx          # the buttons' y
     mov edi, ID_XP
     lea rcx, [rip + .Lb_install]
     mov r8d, 1                  # the accent
     call button
     test eax, UB_CLICK
     jz 1f
-    call cmd_install_extension
-1:  M eax, MI_40
+    lea rdi, [rip + install_items]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    add edx, [rip + g_mt + 4*MI_32]
+    call ctx_menu_open
+1:  lea rdi, [rip + .Lb_check]
+    call label_width
+    mov esi, [rsp]
+    sub esi, eax
+    sub esi, [rip + g_mt + 4*MI_6]
+    mov edi, ID_XM + 1
+    mov edx, [rsp + 4]
+    lea rcx, [rip + .Lb_check]
+    xor r8d, r8d
+    call button
+    test eax, UB_CLICK
+    jz 11f
+    call cmd_check_extensions
+11: M eax, MI_40
     add [rip + xp_y], eax
     lea rdi, [rip + g_face_small]
     lea rsi, [rip + .Lt_intro]
@@ -187,6 +208,7 @@ draw_list:
     call line_text
     M eax, MI_16
     add [rip + xp_y], eax
+    call draw_updates           # extension management
     # the cards
     xor r13d, r13d              # visible ones drawn
     xor r12d, r12d
@@ -216,6 +238,7 @@ draw_list:
 draw_card:
     PROLOGUE 48
     mov r15d, edi
+    mov [rsp + 40], edi         # its index
     shl r15d, 2
     add r15d, ID_XP + 0x10      # this card's ids
     # its height: 28 badge row, 24 description, a problem line, 32 buttons, padding
@@ -360,17 +383,31 @@ draw_card:
     mov rdi, rbx
     call ext_remove_ask
 7:  cmp qword ptr [rsp], 0
-    je 8f
+    je 71f
     cmp dword ptr [rbx + EXT_disabled], 0
-    jne 8f
+    jne 71f
     lea edi, [r15 + 3]
     lea rsi, [rip + .Lb_restart]
     xor edx, edx
     call row_button
     test eax, UB_CLICK
-    jz 8f
+    jz 71f
     mov rdi, rbx
     call ext_restart_now
+71: # extension management: Update to 0.1.2
+    mov rdi, rbx
+    call update_label
+    test rax, rax
+    jz 8f
+    mov edi, [rsp + 40]
+    add edi, ID_XM + 0x1000
+    mov rsi, rax
+    mov edx, 1
+    call row_button
+    test eax, UB_CLICK
+    jz 8f
+    mov rdi, rbx
+    call extupdate_update
 8:  mov eax, [rsp + 8]
     add eax, r13d
     add eax, [rip + g_mt + 4*MI_12]
@@ -463,14 +500,8 @@ draw_detail:
     jz 3f
     lea rdi, [rip + xp_line]
     call sb_push_cstr
-3:  lea rdi, [rip + xp_line]
-    lea rsi, [rip + .Lt_source]
-    call sb_push_cstr
-    mov rdi, rbx
-    call ext_full_name
-    lea rdi, [rip + xp_line]
-    mov rsi, rax
-    call sb_push_cstr
+3:  mov rdi, rbx
+    call push_source            # extension management: where it came from, an update
     call line_cstr
     mov rsi, rax
     lea rdi, [rip + g_face_small]
@@ -511,7 +542,12 @@ draw_detail:
     call ext_restart_now
 41: M eax, MI_8
     add [rip + xp_y], eax
-5:  # what it may do
+5:  mov rdi, rbx
+    call draw_versions          # extension management: Update, What's new, Roll back
+    test eax, eax
+    jz 51f
+    EPILOGUE                    # it rolled back: the record shown changed
+51: # what it may do
     lea rsi, [rip + .Ls_permissions]
     call section
     mov rdi, rbx
@@ -1621,6 +1657,283 @@ item:
     mov rdi, r12
     jmp sb_push_cstr
 
+# ---------------- extension management: updates, where it came from, roll back ----------------
+
+# draw_updates(): "2 updates available" with Update all, when there are any
+draw_updates:
+    PROLOGUE
+    call extupdate_count
+    test eax, eax
+    jz 9f
+    mov ebx, eax
+    lea rdi, [rip + xp_buf]
+    mov esi, ebx
+    call fmt_u64
+    lea rsi, [rip + .Lt_updates_avail]
+    cmp ebx, 1
+    jne 1f
+    lea rsi, [rip + .Lt_update_avail]
+1:  call cstr_copy
+    lea rdi, [rip + .Lb_update_all]
+    call label_width
+    mov esi, [rip + xp_x]
+    add esi, [rip + xp_w]
+    sub esi, eax
+    mov edi, ID_XM + 2
+    mov edx, [rip + xp_y]
+    lea rcx, [rip + .Lb_update_all]
+    mov r8d, 1
+    call button
+    test eax, UB_CLICK
+    jz 2f
+    call extupdate_update_all
+2:  lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + xp_buf]
+    COLOR edx, T_ACCENT
+    mov ecx, MI_32
+    mov r8d, [rip + xp_x]
+    call text_at_keep
+    M eax, MI_48
+    add [rip + xp_y], eax
+9:  EPILOGUE
+
+# update_label(ext) -> rax "Update to 0.1.2" when an update is offered, else 0
+update_label:
+    PROLOGUE
+    call extupdate_offer
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    lea rdi, [rip + xp_upd]
+    lea rsi, [rip + .Lb_update_to]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, rbx
+    mov ecx, 60
+1:  mov al, [rsi]
+    test al, al
+    jz 2f
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    dec ecx
+    jnz 1b
+2:  mov byte ptr [rdi], 0
+    lea rax, [rip + xp_upd]
+9:  EPILOGUE
+
+# push_source(ext): where it came from onto xp_line ("  ·  github.com/o/n", the archive, the folder,
+# a link), and "  ·  0.1.2 available"
+push_source:
+    PROLOGUE
+    mov rbx, rdi
+    cmp qword ptr [rbx + EXT_inst], 0
+    je 1f
+    lea rdi, [rip + xp_line]
+    lea rsi, [rip + .Lt_linked]
+    call sb_push_cstr
+    lea rdi, [rip + xp_line]
+    mov rsi, [rbx + EXT_dir]
+    call sb_push_cstr
+    lea rdi, [rip + xp_line]
+    lea rsi, [rip + .Lt_development]
+    call sb_push_cstr
+    jmp 5f
+1:  mov rdi, rbx
+    lea rsi, [rip + .Lk_source]
+    call extrec_get
+    test rax, rax
+    jz 4f
+    lea r12, [rip + .Lt_from_archive]
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lv_archive]
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_source]
+    call extrec_get
+    lea r12, [rip + .Lt_from_folder]
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lv_folder]
+    call str_eq_cstr
+    test eax, eax
+    jz 4f
+2:  lea rdi, [rip + xp_line]
+    mov rsi, r12
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_path]
+    call extrec_get
+    test rax, rax
+    jz 5f
+    lea rdi, [rip + xp_line]
+    mov rsi, rax
+    call sb_push
+    jmp 5f
+4:  lea rdi, [rip + xp_line]
+    lea rsi, [rip + .Lt_source]
+    call sb_push_cstr
+    mov rdi, rbx
+    call ext_full_name
+    lea rdi, [rip + xp_line]
+    mov rsi, rax
+    call sb_push_cstr
+5:  mov rdi, rbx
+    call extupdate_offer
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    lea rdi, [rip + xp_line]
+    lea rsi, [rip + .Lt_dot]
+    call sb_push_cstr
+    lea rdi, [rip + xp_line]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + xp_line]
+    lea rsi, [rip + .Lt_available]
+    call sb_push_cstr
+9:  EPILOGUE
+
+# from_github(ext) -> 1 when it came from a GitHub release (its record says so, or it has none)
+from_github:
+    PROLOGUE
+    mov rbx, rdi
+    xor eax, eax
+    cmp qword ptr [rbx + EXT_inst], 0
+    jne 9f
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_source]
+    call extrec_get
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lv_github]
+    call str_eq_cstr
+    EPILOGUE
+8:  mov eax, 1
+9:  EPILOGUE
+
+# draw_versions(ext) -> eax 1 when Roll back was clicked (the record shown changes): Update to 0.1.2,
+# What's new (its release page) and Roll back to 0.1.0, when they apply
+draw_versions:
+    PROLOGUE
+    mov rbx, rdi
+    xor r13d, r13d
+    mov rdi, rbx
+    call update_label
+    mov r12, rax
+    test r12, r12
+    jnz 1f
+    cmp qword ptr [rbx + EXT_prev], 0
+    je 9f
+1:  mov eax, [rip + xp_x]
+    mov [rip + xp_bx], eax
+    M eax, MI_8
+    add [rip + xp_y], eax
+    test r12, r12
+    jz 3f
+    mov edi, ID_XM + 3
+    mov rsi, r12
+    mov edx, 1
+    call row_button
+    test eax, UB_CLICK
+    jz 2f
+    mov rdi, rbx
+    call extupdate_update
+2:  mov rdi, rbx
+    call from_github
+    test eax, eax
+    jz 3f
+    mov edi, ID_XM + 4
+    lea rsi, [rip + .Lb_whats_new]
+    xor edx, edx
+    call row_button
+    test eax, UB_CLICK
+    jz 3f
+    lea rdi, [rip + xp_line]
+    call sb_clear
+    mov rdi, rbx
+    lea rsi, [rip + xp_line]
+    call extupdate_release_url
+    call line_cstr
+    mov rdi, rax
+    call desktop_open
+3:  mov rsi, [rbx + EXT_prev]
+    test rsi, rsi
+    jz 8f
+    lea rdi, [rip + xp_rb]
+    push rsi
+    push rsi
+    lea rsi, [rip + .Lb_rollback_to]
+    call cstr_copy
+    pop rsi
+    pop rsi
+    mov rdi, rax
+    mov ecx, 60
+4:  mov al, [rsi]
+    test al, al
+    jz 5f
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    dec ecx
+    jnz 4b
+5:  mov byte ptr [rdi], 0
+    mov edi, ID_XM + 5
+    lea rsi, [rip + xp_rb]
+    xor edx, edx
+    call row_button
+    test eax, UB_CLICK
+    jz 8f
+    mov rdi, rbx
+    call ext_rollback_ask
+    mov r13d, 1
+8:  M eax, MI_40
+    add [rip + xp_y], eax
+9:  mov eax, r13d
+    EPILOGUE
+
+.section .rodata
+.p2align 3
+install_items:
+    .quad .Lm_github, cmd_install_extension, .Lm_folder, cmd_install_extension_folder
+    .quad .Lm_link, cmd_link_extension_folder, .Lm_archive, cmd_install_extension_archive, 0, 0
+.Lm_github: .asciz "From GitHub\342\200\246"
+.Lm_folder: .asciz "From a Folder\342\200\246"
+.Lm_link: .asciz "Link a Folder (development)\342\200\246"
+.Lm_archive: .asciz "From an Archive\342\200\246"
+.Lb_check: .asciz "Check for updates"
+.Lb_update_all: .asciz "Update all"
+.Lb_update_to: .asciz "Update to "
+.Lb_whats_new: .asciz "What's new"
+.Lb_rollback_to: .asciz "Roll back to "
+.Lt_update_avail: .asciz " update available"
+.Lt_updates_avail: .asciz " updates available"
+.Lt_linked: .asciz "  \302\267  linked to "
+.Lt_development: .asciz " (development)"
+.Lt_from_archive: .asciz "  \302\267  from the archive "
+.Lt_from_folder: .asciz "  \302\267  from the folder "
+.Lt_dot: .asciz "  \302\267  "
+.Lt_available: .asciz " available"
+.Lk_source: .asciz "source"
+.Lk_path: .asciz "path"
+.Lv_archive: .asciz "archive"
+.Lv_folder: .asciz "folder"
+.Lv_github: .asciz "github"
+.Ld_updates: .asciz "updates="
+.Ld_versions: .asciz "versions update="
+.Ld_previous: .asciz " previous="
+.Ld_dash: .asciz "-"
+
+.bss
+xp_upd: .zero 128               # "Update to 0.1.2"
+xp_rb: .zero 128                # "Roll back to 0.1.0"
+
+.text
 # ---------------- for the tests: print-ext-page ----------------
 
 # extpage_dump(sb): the list ("Title version on|off [problem]") or the details of one extension
@@ -1631,7 +1944,21 @@ FN extpage_dump
     mov rbx, [rip + g_xp_detail]
     test rbx, rbx
     jnz .Lxd_detail
-    xor r13d, r13d
+    # extension management: "updates=N" when there are any
+    call extupdate_count
+    test eax, eax
+    jz 0f
+    mov r13d, eax
+    mov rdi, r12
+    lea rsi, [rip + .Ld_updates]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, r13d
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+0:  xor r13d, r13d
 1:  cmp r13, [rip + g_exts + VEC_len]
     jae 9f
     imul rbx, r13, EXT_SIZE
@@ -1655,6 +1982,30 @@ FN extpage_dump
     mov rdi, r12
     mov esi, [rbx + EXT_pinned]
     call sb_push_u64
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    # extension management: "versions update=0.1.2|- previous=0.1.0|-"
+    mov rdi, r12
+    lea rsi, [rip + .Ld_versions]
+    call sb_push_cstr
+    mov rdi, rbx
+    call extupdate_offer
+    mov rsi, rax
+    test rsi, rsi
+    jnz 0f
+    lea rsi, [rip + .Ld_dash]
+0:  mov rdi, r12
+    call sb_push_cstr
+    mov rdi, r12
+    lea rsi, [rip + .Ld_previous]
+    call sb_push_cstr
+    mov rsi, [rbx + EXT_prev]
+    test rsi, rsi
+    jnz 0f
+    lea rsi, [rip + .Ld_dash]
+0:  mov rdi, r12
+    call sb_push_cstr
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
@@ -1815,7 +2166,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ls_toolbar: .asciz "Title bar"
 .Ls_commands: .asciz "Commands"
 .Ls_settings: .asciz "Settings"
-.Lb_install: .asciz "Install from GitHub"
+.Lb_install: .asciz "Install \342\226\276"
 .Lb_details: .asciz "Details"
 .Lb_remove: .asciz "Remove"
 .Lb_remove_ext: .asciz "Remove extension"

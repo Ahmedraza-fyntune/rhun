@@ -70,6 +70,8 @@ cfg_git: .long 1
 cfg_commit_ai: .long 0
 .globl cfg_update_check
 cfg_update_check: .long 1
+.globl cfg_ext_updates
+cfg_ext_updates: .long 0         # [updates] extensions: XM_INSTALL, XM_CHECK or XM_OFF (extension management)
 .p2align 3
 cfg_theme: .quad cfg_def_theme
 cfg_dark_theme: .quad cfg_def_theme
@@ -879,8 +881,13 @@ g_settings:
     SETTING_ACTION .Ls_git, ai_setup, cmd_ai_model_files, .Lai_setup, g_ai_local_desc
     SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
     SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_version_text, g_update_desc
+    # extension management
+    SETTING .Ls_updates, extensions, ST_CHOICE, cfg_ext_updates, 0, 2, 1, 0, "Extension updates", "Install reviewed versions by themselves, or only show updates.", .Lextup_opts
+    SETTING_ACTION .Ls_updates, check_extensions, cmd_check_extensions, .Lextup_label, g_extup_desc
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
+.Lextup_opts: .asciz "install", "Install", "check", "Show only", "off", "Off", ""
+.Lextup_label: .asciz "Check extensions now"
 .Lpaste_opts: .asciz "spread", "Spread lines", "full", "Full text", ""
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 

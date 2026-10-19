@@ -11,3 +11,13 @@ FN extindex_pin
     xor eax, eax
     xor edx, edx
     ret
+
+# extindex_tag(name cstr) -> rax the pinned tag of a listed extension, or 0
+FN extindex_tag
+    xor eax, eax
+    ret
+
+# extindex_fetch(done fn): the index fetched when the cached copy is older than a day; done() is
+# called once it is in (or could not be had)
+FN extindex_fetch
+    jmp rdi

@@ -1848,6 +1848,7 @@ commit_one:
     xor r14d, r14d              # the installed version moved aside
     xor r15d, r15d              # its record, retired
     mov qword ptr [rsp], 0      # the new folder (owned)
+    mov qword ptr [rsp + 8], 0
     xor r12d, r12d
     xor r13d, r13d
     # a record for it first: nothing on disk changes when the table is full
@@ -1915,6 +1916,10 @@ commit_one:
     mov r15, rax
     test rax, rax
     jz 2f
+    xor ecx, ecx
+    cmp [rip + g_xp_detail], rax
+    sete cl
+    mov [rsp + 8], ecx          # its details are shown: the new version's will be
     mov rdi, rax
     call ext_retire
 2:  mov rdi, r13
@@ -1959,6 +1964,9 @@ commit_one:
     test rax, rax
     jz .Lco_full
     mov rbx, rax
+    cmp dword ptr [rsp + 8], 0
+    je 9f
+    mov [rip + g_xp_detail], rax
     jmp 9f
 .Lco_back:
     # the installed version comes back
