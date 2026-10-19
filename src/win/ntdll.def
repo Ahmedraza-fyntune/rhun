@@ -1,5 +1,0 @@
-LIBRARY ntdll.dll
-EXPORTS
-    NtCreateFile
-    RtlNtStatusToDosError
-    NtSetInformationFile
