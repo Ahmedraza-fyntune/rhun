@@ -136,12 +136,22 @@ FN extview_open
 8:  mov rax, -1
     EPILOGUE
 
+# extview_open_hosted(ext, id) -> rax a VW that another part of rhun shows (a custom editor's
+#   view): as extview_open_place, and a press gives it the keyboard (view-keys); free it with
+#   extview_free_place
+FN extview_open_hosted
+    mov edx, 2
+    jmp open_inplace
+
 # extview_open_place(ext, id) -> rax a VW for a picture view's instance (rview.s), or 0: no tab,
 #   the instance's number, not counted among the extension's 8
 FN extview_open_place
+    mov edx, 1
+open_inplace:
     PROLOGUE
     mov r12, rdi
     mov r13d, esi
+    mov r14d, edx
     xor ebx, ebx
 1:  cmp ebx, VW_MAX
     jae 8f
@@ -159,7 +169,7 @@ FN extview_open_place
     call memset
     mov [rbx + VW_ext], r12
     mov [rbx + VW_id], r13d
-    mov dword ptr [rbx + VW_inplace], 1
+    mov [rbx + VW_inplace], r14d
     mov dword ptr [rbx + VW_dirty], 1
     mov dword ptr [rbx + VW_lw], -1
     mov dword ptr [rbx + VW_lh], -1

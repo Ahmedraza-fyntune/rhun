@@ -2035,7 +2035,7 @@ F VW_fgen, 4             # g_face_gen when the metrics were last sent
 F VW_ax, 4               # where the button went down, logical: a click is a release near it
 F VW_ay, 4
 F VW_pl, 4              # views group: a tab picture's place item for the keyboard, + 1 (0: none)
-F VW_inplace, 4         # views group: 1 for a picture view's instance (a sidebar, panel or side place)
+F VW_inplace, 4         # views group: 1 a picture view's instance (a place), 2 hosted elsewhere (a custom editor)
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 .equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview

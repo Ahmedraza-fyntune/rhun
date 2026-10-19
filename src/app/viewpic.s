@@ -642,8 +642,8 @@ FN viewpic_pressed
     call keys_on
     test eax, eax
     jz 9f
-    cmp dword ptr [rbx + VW_inplace], 0
-    jne 9f
+    cmp dword ptr [rbx + VW_inplace], 1
+    je 9f
     mov rdi, rbx
     call viewpic_focus
 9:  EPILOGUE
