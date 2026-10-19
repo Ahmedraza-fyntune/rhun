@@ -514,10 +514,10 @@ rv_close:
     mov rdi, [r12 + RV_log]
     call log_free
     cmp dword ptr [r12 + RV_place], PLACE_TAB
-    jne 01f
+    jne 11f
     mov edi, [r12 + RV_pl]      # a tab's own place item
     call place_remove
-01: mov rdi, [r12 + RV_tree]
+11: mov rdi, [r12 + RV_tree]
     test rdi, rdi
     jz 1f
     mov rax, [rdi + TR_count]
@@ -560,7 +560,11 @@ FN rview_owner_gone
     cmp [rax + RV_ext], r12
     jne 2f
     mov edi, ebx
-    call rv_close
+    cmp dword ptr [rax + RV_place], PLACE_TAB
+    jne 3f
+    call rv_close_tab           # its tab closes too
+    jmp 2f
+3:  call rv_close
 2:  inc ebx
     jmp 1b
 9:  EPILOGUE

@@ -30,7 +30,9 @@ BOOLS = {
     'ui': 'follow_system sidebar agents_panel tooltips auto_hide_scrollbars',
     'editor': ('insert_spaces line_numbers highlight_line animate_disk_changes match_brackets '
                'indent_guides word_wrap whitespace cursor_blink smooth_caret auto_pairs '
-               'scroll_past_end vim_mode'),
+               'scroll_past_end vim_mode '
+               # language features
+               'complete_replace complete_commit_characters lightbulb format_on_type format_on_paste'),
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
@@ -52,6 +54,7 @@ STRINGS = {
     ('files', 'code_actions_on_save'): 'source.organizeImports source.fixAll',
     ('terminal', 'shell'): 'missing shell café', ('terminal', 'font'): 'missing term café.ttf',
     ('git', 'commit_model'): 'model:café',
+    ('remote', 'agent_binary'): '/opt/rhun café/linux/rhun',
 }
 CHOICES = {('editor', 'multi_cursor_paste'): ('spread', 'full'),
            ('ui', 'decorations'): ('auto', 'client', 'server'),
@@ -139,14 +142,14 @@ class SettingsUI(unittest.TestCase):
                 self.configure(section, key, 'original')
                 y = self.compact_row_y(section, key)
                 self.run_editor([f'click 240 {y}', f'key {MOD}+a', 'type ' + value,
-                                 'key Return'], width=480, height=8000)
+                                 'key Return'], width=480, height=12000)
                 self.assertEqual(self.value(section, key), value)
         for (section, key), choices in CHOICES.items():
             for index, value in enumerate(choices):
                 with self.subTest(setting=f'{section}.{key}', value=value):
                     self.configure()
                     y = self.compact_row_y(section, key) + index * 32
-                    self.run_editor([f'click 240 {y}'], width=480, height=8000)
+                    self.run_editor([f'click 240 {y}'], width=480, height=12000)
                     self.assertEqual(self.value(section, key), value)
 
     def test_inventory_requires_cases_for_every_setting(self):

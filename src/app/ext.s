@@ -378,6 +378,7 @@ FN ext_cmds_remove_runtime
 # palette's shortcut labels for extension commands are per index: drop them
 ext_cmds_changed:
     push rbx
+    call scmext_providers_changed   # source control (wider-parity C): installs and removals
     call keys_reload
     call palette_ext_keys_reset
     call palette_close_commands # an open command palette holds pointers into the vector
@@ -427,6 +428,10 @@ ext_settings_load:
     jz 8f
     lea rdi, [rip + ini_it]
     call ext_provider_load_line
+    test eax, eax
+    jnz 1b
+    lea rdi, [rip + ini_it]
+    call run_allow_load_line    # allow_run = PROJECT (runallow.s)
     test eax, eax
     jnz 1b
     lea rdi, [rip + ini_it]
@@ -590,6 +595,10 @@ FN ext_settings_save
     or eax, [rbx + EXT_disabled]
     jnz 2f
     mov rdi, rbx
+    call run_allow_has
+    test eax, eax
+    jnz 2f
+    mov rdi, rbx
     call sdefs_changed
     test eax, eax
     jz 1b
@@ -614,7 +623,10 @@ FN ext_settings_save
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_pinned_yes]
     call sb_push_cstr
-4:  # the settings that differ from their defaults
+4:  mov rdi, rbx                # the projects it may run programs in (runallow.s)
+    lea rsi, [rip + tmp2]
+    call run_allow_write
+    # the settings that differ from their defaults
     xor r13d, r13d
 5:  cmp r13, [rbx + EXT_sdefs + VEC_len]
     jae 1b
@@ -967,6 +979,8 @@ FN ext_retire
     call complete_ext_gone
     mov rdi, rbx
     call langfeat_ext_gone
+    mov rdi, rbx
+    call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
@@ -1472,6 +1486,7 @@ FN ext_init
     mov rax, [rip + g_ext_cmds + VEC_len]
     mov [rip + ext_manifest_cmds], rax
     call ext_settings_load
+    call scmext_providers_changed   # source control (wider-parity C): commit-message providers
     EPILOGUE
 
 # owner_cb(ctx, name, is_dir): one owner folder
@@ -1664,6 +1679,14 @@ FN ext_load
 5:  mov dword ptr [rbx + EXT_hello], 0
     cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
+    # no program for this system: a WebAssembly module runs in rhun --wasm-host
+    mov rdi, rbx
+    call ext_wasm_program
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    cmp rax, 1
+    jne .Lel_fail
     lea rdi, [rip + .Lr_no_program]
     jmp .Lel_fail
 6:  # a script needs its runtime on PATH
@@ -1843,12 +1866,23 @@ manifest_kv:
     lea rsi, [rip + .Lk_run_target]
     call ini_key_is
     test eax, eax
-    jz 4f
+    jz .Lel_wasm_key
     cmp qword ptr [rbx + EXT_script], 0
     jne 9f                      # runtime + run already set
     mov rdi, [rbx + EXT_dir]
     call val_join
     mov [rbx + EXT_prog], rax
+    jmp 9f
+.Lel_wasm_key:
+    # run.wasm32-wasip1: the WebAssembly module, used when no program runs here (extwasm.s)
+    mov rdi, r12
+    lea rsi, [rip + .Lk_run_wasm]
+    call ini_key_is
+    test eax, eax
+    jz 4f
+    mov rdi, [rbx + EXT_dir]
+    call val_join
+    mov [rbx + EXT_wasm], rax
     jmp 9f
 4:  mov rdi, r12
     lea rsi, [rip + .Lk_runtime]
@@ -1950,10 +1984,22 @@ manifest_kv:
     lea rsi, [rip + .Ls_views]
     call ini_sec_is
     test eax, eax
-    jz 9f
+    jz 7f
     mov rdi, rbx
     mov rsi, r12
     call rview_manifest_kv
+    jmp 9f
+7:  # debugger: [debugger.TYPE] (debugcfg.s)
+    mov rdi, [r12 + INI_sec]
+    mov rsi, [r12 + INI_seclen]
+    lea rdx, [rip + .Ls_debugger_dot]
+    mov ecx, 9
+    call str_starts
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call dbg_manifest_kv
 9:  EPILOGUE
 
 # val_dup() -> a copy of r12's value as a cstr
@@ -2253,11 +2299,29 @@ parse_needs:
     lea rsi, [rip + .Lpv_tests]
     call ini_key_is
     test eax, eax
-    jz 9f
+    jz 7f
     mov rdi, [rbx + EXT_tests_progs]
     call mem_free
     call val_dup
     mov [rbx + EXT_tests_progs], rax
+    jmp 9f
+7:  mov rdi, r12                # debugger: debug = yes starts debug adapters as the user
+    lea rsi, [rip + .Ln_debug]
+    call ini_key_is
+    test eax, eax
+    jz 8f
+    mov edi, NEEDS_DEBUG
+    call needs_yes
+    jmp 9f
+8:  # source control (wider-parity C): git = read, the project's Git data through rhun
+    mov rdi, r12
+    lea rsi, [rip + .Ln_git]
+    call ini_key_is
+    test eax, eax
+    jz 9f
+    mov edi, NEEDS_GIT_READ
+    xor esi, esi
+    call needs_level
 9:  EPILOGUE
 
 # needs_level(read bit, write bit): the value is none, read or write
@@ -2939,8 +3003,13 @@ ext_spawn:
 .Les_scratch_done:
     EPILOGUE
 
-# build_argv(ext): argv_vec = program [script] args..., 0
+# build_argv(ext): argv_vec = program [script] args..., 0 (a WebAssembly extension's: extwasm.s)
 build_argv:
+    cmp dword ptr [rdi + EXT_wasm_run], 0
+    je 1f
+    lea rsi, [rip + argv_vec]
+    jmp ext_wasm_argv
+1:
     PROLOGUE
     mov rbx, rdi
     mov qword ptr [rip + argv_vec + VEC_len], 0
@@ -3299,6 +3368,7 @@ env_add_state:
 # win_runtime(name) -> path or 0: proc_which, except that python3 is also looked for as python and
 # py (Windows installs Python as python.exe and the py launcher), and the Microsoft Store's stubs in
 # WindowsApps (which only offer to install Python) are taken only when nothing else is there
+.globl win_runtime               # the debugger finds adapters the same way (debugcfg.s)
 win_runtime:
     PROLOGUE
     mov r12, rdi
@@ -3568,6 +3638,8 @@ FN ext_exited
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
+    mov rdi, rbx
+    call scm_ext_gone           # and its source control requests and providers (gitdata.s, scmext.s)
     mov rdi, rbx
     call testproto_ext_gone     # testing: its runs end errored and their processes stop
     mov rdi, rbx
@@ -4642,7 +4714,12 @@ state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_s
 pv_more: .quad EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename
     .quad EXT_pv_format, EXT_pv_save_actions
     .quad EXT_pv_tests              # testing: a controller hears its test files as a provider does
-    .quad 0
+    # language features (query.s)
+    .quad EXT_pv_hover, EXT_pv_declaration, EXT_pv_type_definition, EXT_pv_implementation
+    .quad EXT_pv_selection_ranges, EXT_pv_call_hierarchy, EXT_pv_type_hierarchy
+    .quad EXT_pv_workspace_symbols, EXT_pv_range_format, EXT_pv_type_format, EXT_pv_document_links, 0
+.globl ext_pv_keys               # [provides] keys and their EXT fields (query.s's provides too)
+ext_pv_keys:
 pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig
     .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
@@ -4650,6 +4727,15 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format
     .quad .Lpv_save_actions, EXT_pv_save_actions
     .quad .Lpv_tests, EXT_pv_tests, .Lpv_tests_profiles, EXT_tests_profiles     # testing
+    # language features (query.s)
+    .quad .Lpv_hover, EXT_pv_hover, .Lpv_declaration, EXT_pv_declaration
+    .quad .Lpv_type_definition, EXT_pv_type_definition, .Lpv_implementation, EXT_pv_implementation
+    .quad .Lpv_selection_ranges, EXT_pv_selection_ranges, .Lpv_call_hierarchy, EXT_pv_call_hierarchy
+    .quad .Lpv_type_hierarchy, EXT_pv_type_hierarchy, .Lpv_workspace_symbols, EXT_pv_workspace_symbols
+    .quad .Lpv_range_format, EXT_pv_range_format, .Lpv_type_format, EXT_pv_type_format
+    .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links
+    # source control (wider-parity C)
+    .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -4735,6 +4821,7 @@ ext_target: .asciz "linux-x86_64"
 .Lk_version: .asciz "version"
 .Lk_protocol: .asciz "protocol"
 .Lk_runtime: .asciz "runtime"
+.Lk_run_wasm: .asciz "run.wasm32-wasip1"
 .Lk_icon: .asciz "icon"
 .Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
@@ -4756,6 +4843,18 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_rename: .asciz "rename"
 .Lpv_format: .asciz "format"
 .Lpv_save_actions: .asciz "save_actions"
+.Lpv_hover: .asciz "hover"
+.Lpv_declaration: .asciz "declaration"
+.Lpv_type_definition: .asciz "type_definition"
+.Lpv_implementation: .asciz "implementation"
+.Lpv_selection_ranges: .asciz "selection_ranges"
+.Lpv_call_hierarchy: .asciz "call_hierarchy"
+.Lpv_type_hierarchy: .asciz "type_hierarchy"
+.Lpv_workspace_symbols: .asciz "workspace_symbols"
+.Lpv_range_format: .asciz "range_format"
+.Lpv_type_format: .asciz "type_format"
+.Lpv_ttrig: .asciz "type_format.triggers"
+.Lpv_document_links: .asciz "document_links"
 .Lpv_tests: .asciz "tests"
 .Lpv_tests_profiles: .asciz "tests.profiles"
 .Ls_needs: .asciz "needs"
@@ -4772,6 +4871,12 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_git: .asciz "git"
+.Lpv_commit: .asciz "commit_message"
+.Lpv_quickdiff: .asciz "quickdiff"
+.Lpv_scm: .asciz "scm"
+.Ln_debug: .asciz "debug"
+.Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"
 .Lo_command: .asciz "command"
 .Lo_project: .asciz "project"

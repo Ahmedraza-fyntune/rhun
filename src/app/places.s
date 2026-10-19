@@ -431,7 +431,7 @@ place_mark_drawn:
     ret
 
 # place_body(id, x, y, w, h): the item's body, clipped; a press inside first gives it the keyboard
-place_body:
+FN place_body
     PROLOGUE 32
     mov ebx, edi
     mov [rsp], esi
@@ -465,7 +465,18 @@ place_body:
     je 1f                       # the explorer's rows set its own focus
     mov edi, ebx
     call place_focus
-1:  mov edi, [rsp]
+1:  mov edi, [rsp]             # its background: the panel's in the sidebar and the side column,
+    mov esi, [rsp + 4]          # the editor's in the bottom panel and a tab
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_PANEL
+    cmp dword ptr [r12 + PL_place], PLACE_PANEL
+    je 11f
+    cmp dword ptr [r12 + PL_place], PLACE_TAB
+    jne 12f
+11: COLOR r8d, T_BG
+12: call gfx_fill
+    mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
@@ -1034,6 +1045,39 @@ FN places_panel_body
     xor eax, eax
     EPILOGUE
 
+# places_panel_actions(right, y, h) -> eax the x left of them: the chosen view tab's title actions
+#   in the panel's strip, left of its + and hide buttons
+FN places_panel_actions
+    mov ecx, edx
+    mov edx, esi
+    mov esi, edi
+    mov edi, [rip + g_panel_cur]
+    jmp item_actions
+
+# item_actions(id, right, y, h) -> eax the x left of them: the item's actions callback
+item_actions:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    call place_at
+    test rax, rax
+    jz 8f
+    mov rcx, [rax + PL_ops]
+    mov rcx, [rcx + PLO_actions]
+    test rcx, rcx
+    jz 8f
+    mov rdi, [rax + PL_ctx]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    mov rax, [rax + PL_ops]
+    call [rax + PLO_actions]
+    EPILOGUE
+8:  mov eax, r12d
+    EPILOGUE
+
 # places_panel_count() -> eax the panel's view tabs shown
 FN places_panel_count
     mov edi, PLACE_PANEL
@@ -1221,7 +1265,16 @@ FN side_draw
     cmp r12d, [rsp + 16]
     jb .Lsdt_tab
 .Lsdt_done:
-    M eax, MI_28
+    cmp dword ptr [rip + g_side_cur], -1
+    je 51f
+    mov edi, [rip + g_side_cur] # the side view's title actions at the strip's right
+    mov esi, [rsp]
+    add esi, [rsp + 8]
+    sub esi, [rip + g_mt + 4*MI_8]
+    mov edx, [rsp + 4]
+    M ecx, MI_28
+    call item_actions
+51: M eax, MI_28
     mov edx, [rsp + 4]
     add edx, eax                # the body under the strip
     mov r8d, [rsp + 12]

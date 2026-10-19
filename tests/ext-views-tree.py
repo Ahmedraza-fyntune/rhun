@@ -5,82 +5,14 @@ panel and side places, showing one starts its extension, patches apply whole or 
 state follows node ids, and the events say what the user did. The built-in demo (places-demo)
 drives the same places and tree widget through the API built-in code uses."""
 import os
-from pathlib import Path
-import subprocess
-import tempfile
+import sys
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
-EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
-EXTS = ROOT / 'tests/ext/views'
-
-CONFIG = ('[ui]\nagents_panel = false\n[editor]\ncursor_blink = false\n'
-          '[files]\nrestore_session = false\nrestore_project = false\n'
-          '[updates]\ncheck = false\n[git]\nenabled = false\n')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from viewsharness import ViewsBase  # noqa: E402
 
 
-class Views(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix='rhun-views-')
-        self.work = Path(self.tmp.name).resolve()
-        self.proj = self.work / 'proj'
-        (self.proj / 'src').mkdir(parents=True)
-        (self.proj / 'src/main.rs').write_text('fn main() {\n    // TODO: parse\n}\n', encoding='utf-8')
-        (self.proj / 'src/lib.rs').write_text('// TODO: lib\n', encoding='utf-8')
-        (self.proj / 'README.md').write_text('# TODO\n', encoding='utf-8')
-        config = self.work / 'config/rhun/config'
-        config.parent.mkdir(parents=True)
-        config.write_text(CONFIG, encoding='utf-8')
-        self.log = self.work / 'state/rhun/extensions/rhun-tests--viewfake/vf.log'
-        self.env = dict(os.environ, HOME=self.work.as_posix(),
-                        XDG_CONFIG_HOME=(self.work / 'config').as_posix(),
-                        XDG_STATE_HOME=(self.work / 'state').as_posix(),
-                        VIEWFAKE_LOG=self.log.as_posix(), VIEWFAKE_ROOT=self.proj.as_posix())
-        self.env.pop('VIEWFAKE_MODE', None)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def run_editor(self, actions, mode=None, exts=EXTS, start=True):
-        env = dict(self.env)
-        if mode:
-            env['VIEWFAKE_MODE'] = mode
-        pre = ['wait 100', 'wait-ext viewfake running', 'wait 200', 'wait 100'] if start else ['wait 100']
-        script = self.work / 'actions.rsc'
-        script.write_text('\n'.join([*pre, *actions, 'quit']) + '\n', encoding='utf-8')
-        args = [str(EXE), self.proj.as_posix(), '--headless', '1000x600', '--scale', '1']
-        if exts:
-            args += ['--extensions', str(exts)]
-        result = subprocess.run(args + ['--script', script.as_posix()], env=env, capture_output=True,
-                                timeout=60)
-        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
-        return [l for l in result.stdout.decode('utf-8', errors='replace').splitlines()
-                if not l.startswith('ext=')]
-
-    def fake_log(self):
-        return self.log.read_bytes().decode('utf-8', 'replace').splitlines() if self.log.exists() else []
-
-    def rows(self, out, view='todo'):
-        """The row lines of a print-view in out (after its at= line)."""
-        rows, on = [], False
-        for line in out:
-            if line.startswith('at='):
-                on = True
-                self.view_x = int(line[3:].split(',')[0])
-                continue
-            if on and line.startswith('row '):
-                rows.append(line)
-            elif on:
-                break
-        return rows
-
-    def row_xy(self, rows, ident):
-        for r in rows:
-            if f' id={ident} ' in r + ' ':
-                y = int(r.split(' y=')[1].split(' ')[0])
-                return getattr(self, 'view_x', 0) + 120, y + 10
-        self.fail(f'no row {ident} in {rows}')
-
+class Views(ViewsBase):
     # --- places ---
 
     def test_the_explorer_alone_fills_the_sidebar(self):
@@ -110,7 +42,7 @@ class Views(unittest.TestCase):
         self.assertTrue(rows[1].startswith('row 1 y=363 d=1 leaf id=t:main.rs:1 label=TODO: item 1 of main.rs (2)'))
         self.assertTrue(rows[1].endswith('hl=0-4'))
         log = self.fake_log()
-        self.assertEqual(log[:2], ['0 features view-tree', log[1]])
+        self.assertEqual(log[:2], ['0 features view-tree view-log', log[1]])
         i = log.index('0 view 1 open tree sidebar todo')
         self.assertEqual(log[i + 1], '0 view 1 visible 1')
         self.assertEqual(log[i + 2], '0 view 2 open tree panel items')
@@ -252,7 +184,7 @@ class Views(unittest.TestCase):
         out = self.run_lazy([f'click {x} {y}', 'wait 200', 'wait 100', f'click {x} {y + 28}', 'wait 200',
                              'wait 100', 'print-view items'], lazy='error')
         log = self.fake_log()
-        last = len(log) - 1 - log[::-1].index('0 features view-tree')
+        last = len(log) - 1 - log[::-1].index('0 features view-tree view-log')
         vkids = [l for l in log[last:] if ' vkids ' in l]
         self.assertEqual(len(vkids), 2)         # Retry asked again
 

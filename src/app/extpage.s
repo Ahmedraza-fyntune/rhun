@@ -516,6 +516,8 @@ draw_detail:
     call section
     mov rdi, rbx
     call draw_permissions
+    mov rdi, rbx
+    call draw_run_allowed
     # the pin
     lea rsi, [rip + .Ls_toolbar]
     call section
@@ -550,6 +552,9 @@ draw_detail:
     # its commands
     mov rdi, rbx
     call draw_commands
+    # the language features it provides, with the session's numbers (query.s)
+    mov rdi, rbx
+    call draw_langfeat
     # its own settings
     cmp qword ptr [rbx + EXT_sdefs + VEC_len], 0
     je 7f
@@ -635,6 +640,40 @@ draw_permissions:
     call line_text
     EPILOGUE
 
+# draw_run_allowed(ext): the projects it may run programs in as you (runallow.s), with Forget
+draw_run_allowed:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + xp_line]
+    call sb_clear
+    lea rdi, [rip + xp_line]
+    lea rsi, [rip + .Lt_runs_in]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + xp_line]
+    call run_allow_projects
+    test eax, eax
+    jz 9f
+    call line_cstr
+    mov rsi, rax
+    lea rdi, [rip + g_face_ui]
+    COLOR edx, T_FG
+    mov ecx, MI_28
+    call line_text
+    mov eax, [rip + xp_x]
+    mov [rip + xp_bx], eax
+    mov edi, ID_XP + 0x0e
+    lea rsi, [rip + .Lb_forget]
+    xor edx, edx
+    call row_button
+    test eax, UB_CLICK
+    jz 1f
+    mov rdi, rbx
+    call run_forget
+1:  M eax, MI_40
+    add [rip + xp_y], eax
+9:  EPILOGUE
+
 # cstr_copy_cap(dst, src, max): src with its first letter upper case, at most max bytes
 cstr_copy_cap:
     xor edx, edx
@@ -712,6 +751,61 @@ draw_commands:
 7:  inc r12
     jmp 1b
 8:  EPILOGUE
+
+# draw_langfeat(ext): "Language features": each kind it provides, its file patterns in force and
+# its numbers this session, in the warning color when slow or failing (query.s)
+draw_langfeat:
+    PROLOGUE 16
+    mov rbx, rdi
+    xor r12d, r12d              # the kind
+    xor r13d, r13d              # rows shown
+1:  cmp r12d, PK_COUNT
+    jae 9f
+    mov rdi, rbx
+    mov esi, r12d
+    lea rdx, [rip + xp_line]
+    call query_kind_label
+    test eax, eax
+    jz 7f
+    test r13d, r13d
+    jnz 2f
+    lea rsi, [rip + .Ls_langfeat]
+    call section
+2:  inc r13d
+    lea rdi, [rip + g_face_ui]
+    mov rsi, [rip + xp_line + SB_ptr]
+    COLOR edx, T_FG
+    mov ecx, MI_28
+    mov r8d, [rip + xp_x]
+    call text_at_keep
+    mov rdi, rbx
+    mov esi, r12d
+    lea rdx, [rip + xp_line]
+    call query_kind_numbers
+    mov rdi, [rip + xp_line + SB_ptr]
+    call label_width_small
+    mov esi, [rip + xp_x]
+    add esi, [rip + xp_w]
+    sub esi, eax
+    mov [rsp], esi
+    mov rdi, rbx
+    mov esi, r12d
+    call query_kind_warn
+    COLOR r9d, T_MUTED
+    test eax, eax
+    jz 3f
+    COLOR r9d, T_WARNING
+3:  mov esi, [rsp]
+    lea rdi, [rip + g_face_small]
+    mov edx, [rip + xp_y]
+    M ecx, MI_28
+    mov r8, [rip + xp_line + SB_ptr]
+    call ui_text_c
+    M eax, MI_28
+    add [rip + xp_y], eax
+7:  inc r12d
+    jmp 1b
+9:  EPILOGUE
 
 # copy_title(dst, title): up to the last " (" (the extension's name that the palette adds)
 copy_title:
@@ -1588,6 +1682,10 @@ FN ext_needs_words
     call item
 6:  lea rsi, [rip + .Ln_terminal]
     test r13d, NEEDS_TERMINAL
+    jz 61f
+    call item
+61: lea rsi, [rip + .Ln_git]
+    test r13d, NEEDS_GIT_READ
     jz 7f
     call item
 7:  mov rsi, [rbx + EXT_runs]
@@ -1724,6 +1822,25 @@ FN extpage_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
+    # where it may run programs as you: "runs-in=~/code/app, ~/b" when anywhere
+    lea rdi, [rip + xp_line]
+    call sb_clear
+    mov rdi, rbx
+    lea rsi, [rip + xp_line]
+    call run_allow_projects
+    test eax, eax
+    jz 1f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_runs_in]
+    call sb_push_cstr
+    call line_cstr
+    mov rdi, r12
+    mov rsi, rax
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+1:
     # settings
     xor r13d, r13d
 2:  cmp r13, [rbx + EXT_sdefs + VEC_len]
@@ -1797,6 +1914,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ln_home: .asciz "read the files in your home folder"
 .Ln_net: .asciz "use the internet"
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
+.Ln_git: .asciz "read the project's Git history"
 .Ln_runs: .asciz "run "
 .Ln_nothing: .asciz "only use its own commands and settings"
 .Ln_sep: .asciz ", "
@@ -1814,6 +1932,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ls_permissions: .asciz "It can"
 .Ls_toolbar: .asciz "Title bar"
 .Ls_commands: .asciz "Commands"
+.Ls_langfeat: .asciz "Language features"
 .Ls_settings: .asciz "Settings"
 .Lb_install: .asciz "Install from GitHub"
 .Lb_details: .asciz "Details"
@@ -1836,6 +1955,9 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ld_hex: .ascii "0123456789abcdef"
 .Ld_can: .asciz "can: "
 .Ld_held: .asciz "held="
+.Ld_runs_in: .asciz "runs-in="
+.Lt_runs_in: .asciz "Runs programs as you in: "
+.Lb_forget: .asciz "Forget"
 .Ld_setting: .asciz "setting "
 
 .text

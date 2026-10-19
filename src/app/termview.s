@@ -8,7 +8,38 @@ F TS_pid, 4
 F TS_fd, 4
 F TS_name, 32
 F TS_id, 8
+# a program's tab (term_run: tasks, extension terminals); 0 for a user shell
+F TS_kind, 4            # TK_*
+F TS_flags, 4           # TSF_*
+F TS_exit, 4            # the exit code once the program is reaped
+F TS_reason, 4          # TE_EXIT, TE_STOPPED or TE_FAILED once it has ended
+F TS_t0, 8              # time_ms of the start and of the end (the footer's duration)
+F TS_t1, 8
+F TS_kill_at, 8         # time_ms of the SIGKILL to the group (Stop's grace), 0 none
+F TS_finish_at, 8       # the leader is gone but the output is still open: finish by then, 0 none
+F TS_title, 8           # owned cstr: the tab's label
+F TS_spec, 8            # owned program (spec_build): what Restart runs again
+F TS_owner, 8           # EXT* that opened it, or 0 (term-run, rhun's own)
+F TS_fn, 8              # fn(cookie, TERM, TE_* event, code), or 0
+F TS_cookie, 8
+F TS_task, 8            # owned cstr: the task id it runs (print-terminals), or 0
+F TS_runs, 4            # times its program started
+F TS_errors, 4          # problems its matchers found in this run (the footer)
+F TS_warnings, 4
+F TS_unchecked, 4       # lines not given to its matchers (too many at once)
+F TS_tap, SB_SIZE       # finished lines for its tap (term.s), then TS_tapfn
+F TS_tapfn, 8           # fn(cookie, TERM, line, len) for each finished line, or 0
+F TS_tapcookie, 8
 ENDSTRUCT TS_SIZE
+.equ TSF_RUNNING, 1             # started and not yet ended
+.equ TSF_EOF, 2                 # its terminal reached the end of its output
+.equ TSF_REAPED, 4              # the leader's exit code is known
+.equ TSF_STOP, 8                # stopped by the user, Restart or its owner: ends as TE_STOPPED
+.equ TSF_RESTART, 16            # start again once it has ended
+.equ TSF_NOTIFY, 32             # TS_fn hears of the end at the next tick
+.equ TSF_NOTIFY_START, 64       # and of the start
+.equ STOP_MS, 2000              # Ctrl+C, then the group is killed
+.equ FINISH_MS, 300             # Windows: the pseudoconsole's last output after the program exits
 
 .equ ID_TSPLIT, 0x6000
 .equ TERM_FRAME_MS, 16            # output keeps to about a frame a display refresh
@@ -18,9 +49,10 @@ ENDSTRUCT TS_SIZE
 .equ ID_TSCROLL, 0x6005
 .equ ID_TTAB, 0x6100            # + index
 .equ ID_TTABX, 0x6200           # + index
-.equ MAX_SESS, 16
+.equ ID_TRESTART, 0x6006      # the current program's Restart and Stop buttons
+.equ ID_TSTOP, 0x6007
+.equ MAX_SESS, 32
 .equ RBUF, 65536
-.equ MAX_ZOMB, 16
 .equ LMAX, 4096                 # cells of a line searched for a link
 .equ LROWS, 16                  # rows of a wrapped line before the pointer's, and after
 
@@ -56,8 +88,9 @@ sel_b: .quad 0                  # other end
 sel_s: .quad 0                  # ordered and extended to the unit
 sel_e: .quad 0
 scroll_px: .long 0
-zombies: .zero 4 * MAX_ZOMB
-nzomb: .long 0
+tick_poll: .quad 0              # time_ms of the last exit poll of running programs
+env_noted: .long 0              # a tab said the login environment could not be read
+msg: .zero SB_SIZE              # a footer or message for a program's tab
 .p2align 3
 out_frame: .quad 0              # time_ms of the last frame output asked for
 out_due: .quad 0                # time_ms of the next, held back while output keeps coming (0: none)
@@ -168,14 +201,18 @@ term_metrics:
 # term_spawn() -> 1 if a shell started
 FN term_spawn
     PROLOGUE 48
-    cmp qword ptr [rip + sessions + VEC_len], MAX_SESS
-    jae .Lsp_fail
+    call room_for_one
+    test eax, eax
+    jz .Lsp_fail
     cmp qword ptr [rip + env], 0
     jne 1f
     lea rdi, [rip + env_extras]
     call env_make
     mov [rip + env], rax
-1:  # the shell: the setting, $SHELL, /bin/sh
+1:  # remote hosts: in a remote window the shell is the user's shell on the host (vfs.s)
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lsp_remote
+    # the shell: the setting, $SHELL, /bin/sh
     mov dword ptr [rsp + 24], 0
     mov rdi, [rip + cfg_term_shell]
     cmp byte ptr [rdi], 0
@@ -284,6 +321,28 @@ FN term_spawn
     call app_toast
     xor eax, eax
     EPILOGUE
+.Lsp_remote:
+    # its name for the tab, from the host's $SHELL
+    lea rdi, [rip + g_remote_shell]
+    cmp byte ptr [rdi], 0
+    jne 1f
+    lea rdi, [rip + .Lsh_name]
+1:  call dup_cstr
+    mov r12, rax
+    lea rax, [rip + .Lempty_arg]
+    mov [rsp], rax
+    mov qword ptr [rsp + 8], 0
+    lea rdi, [rsp]
+    mov rsi, [rip + env]
+    mov rdx, [rip + g_project]
+    mov ecx, 80
+    mov r8d, 24
+    call vfs_pty_spawn
+    test rax, rax
+    jle .Lsp_free
+    mov r15, rax
+    mov r13d, edx
+    jmp 3b
 
 # on_pty(fd, revents, session): output of the shell, room to write more
 on_pty:
@@ -308,6 +367,7 @@ on_pty:
     lea rsi, [rip + rbuf]
     mov rdx, rax
     call term_feed
+    call tap_drain
     dec r13d
     jnz 2b
 3:  call send_replies
@@ -315,7 +375,11 @@ on_pty:
     EPILOGUE
 .Lop_end:
     mov rdi, rbx
-    call session_end
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 4f
+    call session_eof            # a program's tab stays with its output
+    EPILOGUE
+4:  call session_end
     EPILOGUE
 
 # send_replies(): answers of the emulator back to the program (rbx session)
@@ -402,10 +466,15 @@ flush_wbuf:
     pop r12
     ret
 
-# session_end(session): the shell is gone or is being closed
+# session_end(session): the shell is gone or is being closed; a program's tab closes, its program and
+#   whatever it started killed (SIGHUP and SIGTERM now, SIGKILL in 2 s)
 session_end:
     PROLOGUE
     mov rbx, rdi
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 1f
+    call session_close_program
+1:
     # take it out of the list
     xor ecx, ecx
 1:  cmp rcx, [rip + sessions + VEC_len]
@@ -444,29 +513,37 @@ session_end:
     mov edi, [rbx + TS_fd]
     SYS SYS_close
 4:  # the session's processes get SIGHUP; reap the shell now or later
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    jne 5f
     mov edi, [rbx + TS_pid]
     neg edi
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + TS_pid]
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + TS_pid]
     mov esi, 1
     call proc_wait
     cmp eax, -1
-    jne 5f
-    mov eax, [rip + nzomb]
-    cmp eax, MAX_ZOMB
-    jae 5f
-    lea rcx, [rip + zombies]
-    mov edx, [rbx + TS_pid]
-    mov [rcx + rax*4], edx
-    inc dword ptr [rip + nzomb]
-5:  mov rdi, [rbx + TS_term]
+    jne 6f
+    mov edi, [rbx + TS_pid]
+    call reap_later
+    jmp 6f
+5:  mov rdi, rbx
+    call session_gone           # a program's owner hears the tab closed
+6:  mov rdi, [rbx + TS_term]
     call term_free
     lea rdi, [rbx + TS_wbuf]
     call sb_free
+    lea rdi, [rbx + TS_tap]
+    call sb_free
+    mov rdi, [rbx + TS_title]
+    call mem_free
+    mov rdi, [rbx + TS_spec]
+    call mem_free
+    mov rdi, [rbx + TS_task]
+    call mem_free
     mov rdi, rbx
     call mem_free
     mov dword ptr [rip + sel_on], 0
@@ -479,17 +556,6 @@ session_end:
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
 6:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
-
-# reap_later(pid): another child to reap once it exits (term_tick): an editor window app_new_window
-# started
-FN reap_later
-    mov eax, [rip + nzomb]
-    cmp eax, MAX_ZOMB
-    jae 1f
-    lea rcx, [rip + zombies]
-    mov [rcx + rax*4], edi
-    inc dword ptr [rip + nzomb]
-1:  ret
 
 # output_frame(): output asks for a frame, at once after a quiet spell, then at most one each
 #   TERM_FRAME_MS while it keeps coming: a frame for every read drew `cat` of a large file thousands
@@ -512,21 +578,26 @@ output_frame:
     mov [rip + out_due], rax
 9:  ret
 
-# term_timeout() -> ms until the output held back is drawn, or -1
+# term_timeout() -> ms until the output held back is drawn or a program's tab has work, or -1
 FN term_timeout
+    push rbx
+    call programs_timeout
+    mov ebx, eax
     mov rax, [rip + out_due]
     test rax, rax
     jz 1f
-    sub rsp, 8
     call time_ms
-    add rsp, 8
     mov rcx, [rip + out_due]
     sub rcx, rax
     xor eax, eax
     test rcx, rcx
     cmovg eax, ecx
-    ret
-1:  mov eax, -1
+    cmp ebx, -1
+    je 2f
+    cmp eax, ebx
+    jle 2f
+1:  mov eax, ebx
+2:  pop rbx
     ret
 
 # term_frame_now(): the output held back is drawn with the next frame (a control command's)
@@ -537,7 +608,7 @@ FN term_frame_now
     mov dword ptr [rip + g_dirty], 1
 1:  ret
 
-# term_tick(): draw the output held back once its time comes; reap shells that took their time to exit
+# term_tick(): draw the output held back once its time comes; programs' exits, deadlines and news
 FN term_tick
     push rbx
     cmp qword ptr [rip + out_due], 0
@@ -548,27 +619,1477 @@ FN term_tick
     mov [rip + out_frame], rax
     mov qword ptr [rip + out_due], 0
     mov dword ptr [rip + g_dirty], 1
-0:
+0:  call programs_tick
+    pop rbx
+    ret
+
+# ---------------- programs: task and extension terminals ----------------
+# A program other than the user's shell runs in a tab of its own (term_run): a task, a terminal an
+# extension opened, a debugger's runInTerminal. It runs as the user (uproc.s), its whole process tree
+# one session (a job object on Windows). When it ends its tab stays, its output kept and a dim footer
+# saying how, until closed; Restart runs it again in the same tab, cleared.
+
+# sess_by_id(TERM) -> TS* or 0
+sess_by_id:
+    mov rcx, [rip + sessions + VEC_ptr]
+    mov rdx, [rip + sessions + VEC_len]
+1:  test rdx, rdx
+    jz 2f
+    mov rax, [rcx]
+    cmp [rax + TS_id], rdi
+    je 3f
+    add rcx, 8
+    dec rdx
+    jmp 1b
+2:  xor eax, eax
+3:  ret
+
+# room_for_one() -> 1 when another tab fits: with all 32 taken, the oldest tab of a program that has
+#   ended closes; 0 when every one is a shell or a running program
+room_for_one:
+    PROLOGUE
+    cmp qword ptr [rip + sessions + VEC_len], MAX_SESS
+    jb 8f
     xor ebx, ebx
-1:  cmp ebx, [rip + nzomb]
-    jae 9f
-    lea rax, [rip + zombies]
-    mov edi, [rax + rbx*4]
+1:  cmp rbx, [rip + sessions + VEC_len]
+    jae 7f
+    mov rdi, rbx
+    call sess
+    inc rbx
+    cmp dword ptr [rax + TS_kind], TK_SHELL
+    je 1b
+    test dword ptr [rax + TS_flags], TSF_RUNNING
+    jnz 1b
+    mov rdi, rax
+    call session_end
+8:  mov eax, 1
+    EPILOGUE
+7:  xor eax, eax
+    EPILOGUE
+
+# spec_build(program PG) -> rax owned block, rdx its bytes: each list (argv, sets, unsets: PG's first
+#   three fields) as items of a 1 byte, the string and its NUL, then a 0; then cwd and its NUL
+spec_build:
+    PROLOGUE 32
+    mov rbx, rdi
+    xor eax, eax
+    mov [rsp], rax
+    mov [rsp + 8], rax
+    mov [rsp + 16], rax
+    xor r13d, r13d
+1:  mov r12, [rbx + r13*8]
+    test r12, r12
+    jz 3f
+2:  cmp qword ptr [r12], 0
+    je 3f
+    lea rdi, [rsp]
     mov esi, 1
-    call proc_wait
-    cmp eax, -1
-    jne 2f
-    inc ebx
+    call sb_push_byte
+    lea rdi, [rsp]
+    mov rsi, [r12]
+    call sb_push_cstr
+    lea rdi, [rsp]
+    xor esi, esi
+    call sb_push_byte
+    add r12, 8
+    jmp 2b
+3:  lea rdi, [rsp]
+    xor esi, esi
+    call sb_push_byte
+    inc r13d
+    cmp r13d, 3
+    jb 1b
+    mov rsi, [rbx + PG_cwd]
+    test rsi, rsi
+    jz 4f
+    lea rdi, [rsp]
+    call sb_push_cstr
+4:  lea rdi, [rsp]
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rsp]
+    mov rdx, [rsp + 8]
+    EPILOGUE
+
+# spec_lists(spec, out PG): out's lists point into the spec (one array for the three: mem_free out's
+#   PG_argv), its cwd at the spec's, or 0 when it has none
+spec_lists:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    # the items, to size the array
+    mov rdi, rbx
+    xor r13d, r13d
+    xor ecx, ecx
+1:  cmp byte ptr [rdi], 1
+    jne 3f
+    inc r13
+2:  inc rdi
+    cmp byte ptr [rdi], 0
+    jne 2b
+    inc rdi
     jmp 1b
-2:  # gone: last entry into this slot
-    dec dword ptr [rip + nzomb]
-    mov eax, [rip + nzomb]
-    lea rcx, [rip + zombies]
-    mov edx, [rcx + rax*4]
-    mov [rcx + rbx*4], edx
+3:  inc rdi
+    inc ecx
+    cmp ecx, 3
+    jb 1b
+    lea rdi, [r13 + 3]
+    shl rdi, 3
+    call mem_alloc
+    mov r14, rax
+    mov [r12 + PG_argv], rax
+    mov rdi, rbx
+    xor ecx, ecx
+4:  cmp byte ptr [rdi], 1
+    jne 6f
+    inc rdi
+    mov [r14], rdi
+    add r14, 8
+5:  cmp byte ptr [rdi], 0
+    je 51f
+    inc rdi
+    jmp 5b
+51: inc rdi
+    jmp 4b
+6:  inc rdi
+    mov qword ptr [r14], 0
+    add r14, 8
+    inc ecx
+    cmp ecx, 3
+    jae 7f
+    mov [r12 + rcx*8], r14      # PG_sets, then PG_unsets
+    jmp 4b
+7:  xor eax, eax
+    cmp byte ptr [rdi], 0
+    je 8f
+    mov rax, rdi
+8:  mov [r12 + PG_cwd], rax
+    EPILOGUE
+
+# run_folder(cwd or 0) -> owned folder to run in: the project (else home) for none, a relative one
+#   inside it, ~/ the home folder's, an absolute one as it is (term_run_folder for others)
+FN term_run_folder
+run_folder:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rip + g_project]
+    test r12, r12
+    jnz 1f
+    lea rdi, [rip + .Lhome]
+    call getenv
+    mov r12, rax
+    test rax, rax
+    jnz 1f
+    lea r12, [rip + .Lroot]
+1:  test rbx, rbx
+    jz 5f
+    cmp byte ptr [rbx], 0
+    je 5f
+    mov rdi, rbx
+    call path_rootlen
+    test eax, eax
+    jnz 6f
+    cmp byte ptr [rbx], '~'
+    jne 4f
+    cmp byte ptr [rbx + 1], '/'
+    jne 4f
+    lea rdi, [rip + .Lhome]
+    call getenv
+    test rax, rax
+    jz 4f
+    mov rdi, rax
+    lea rsi, [rbx + 2]
+    call path_join
+    EPILOGUE
+4:  mov rdi, r12
+    mov rsi, rbx
+    call path_join
+    EPILOGUE
+5:  mov rbx, r12
+6:  mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call mem_dup
+    EPILOGUE
+
+# msg_feed(): msg into rbx's terminal, as if its program had printed it (nothing answers back)
+msg_feed:
+    sub rsp, 8
+    mov rdi, [rbx + TS_term]
+    mov rsi, [rip + msg + SB_ptr]
+    mov rdx, [rip + msg + SB_len]
+    call term_feed
+    mov rax, [rbx + TS_term]
+    lea rdi, [rax + TM_out]
+    call sb_clear
+    add rsp, 8
+    ret
+
+# msg_line(): msg starts a new line unless rbx's cursor is at the start of one
+msg_line:
+    mov rax, [rbx + TS_term]
+    mov ecx, [rax + TM_cx]
+    or ecx, [rax + TM_wrapnext]
+    jz 1f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lcrlf]
+    jmp sb_push_cstr
+1:  ret
+
+# msg_could_not(name): onto msg, on a line of its own: a red "Could not start "NAME": " (rbx session)
+msg_could_not:
+    push r12
+    mov r12, rdi
+    call msg_line
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lcould_not]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lquote_colon]
+    call sb_push_cstr
+    pop r12
+    ret
+
+# session_spawn(session): start its program in its terminal; when it cannot start, the tab says why in
+#   red and the program has ended as TE_FAILED
+session_spawn:
+    PROLOGUE 64
+    mov rbx, rdi
+    lea rdi, [rip + msg]
+    call sb_clear
+    mov rdi, [rbx + TS_spec]
+    lea rsi, [rsp]
+    call spec_lists             # [rsp]: the program's lists
+    xor eax, eax
+    mov [rsp + 32], rax         # the path to run
+    mov [rsp + 40], rax         # the environment
+    mov [rsp + 48], rax         # the folder
+    # the user's environment, with what a terminal's programs get and the program's own
+    lea rdi, [rip + env_extras]
+    mov rsi, [rsp + PG_sets]
+    mov rdx, [rsp + PG_unsets]
+    call uproc_env_make
+    mov [rsp + 40], rax
+    mov rax, [rsp + PG_argv]
+    mov rdi, [rax]
+    mov rsi, [rsp + 40]
+    call uproc_which
+    mov [rsp + 32], rax
+    test rax, rax
+    jz .Lss_notfound
+    mov rdi, [rsp + PG_cwd]
+    call run_folder
+    mov [rsp + 48], rax
+    mov rdi, rax
+    call file_is_dir
+    test eax, eax
+    jz .Lss_nofolder
+    # the login environment could not be read: the first program's tab says so
+    call uproc_env_failed
+    test eax, eax
+    jz 1f
+    cmp dword ptr [rip + env_noted], 0
+    jne 1f
+    mov dword ptr [rip + env_noted], 1
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lenv_note]
+    call sb_push_cstr
+    call msg_feed
+    lea rdi, [rip + msg]
+    call sb_clear
+1:  mov rax, [rbx + TS_term]
+    mov edi, [rax + TM_cols]
+    mov esi, [rax + TM_rows]
+    call pty_open
+    test eax, eax
+    js .Lss_nopty
+    mov r12d, eax               # master
+    mov r13d, edx               # slave
+    mov rax, [rsp + PG_argv]
+    mov r14, [rax]              # the name, while its path stands in for it
+    mov rcx, [rsp + 32]
+    mov [rax], rcx
+    mov rdi, rax
+    mov rsi, [rsp + 40]
+    mov rdx, [rsp + 48]
+    mov ecx, r13d
+    mov r8d, r13d
+    mov r9d, r13d
+    push 1
+    push 1
+    call uproc_spawn
+    add rsp, 16
+    mov r15, rax
+    mov rax, [rsp + PG_argv]
+    mov [rax], r14
+    mov edi, r13d
+    SYS SYS_close
+    test r15, r15
+    jg 2f
+    mov edi, r12d
+    SYS SYS_close
+    mov rdi, r14
+    call msg_could_not
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lerr_errno]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov rsi, r15
+    neg rsi
+    call sb_push_u64
+    jmp .Lss_fail
+2:  mov [rbx + TS_pid], r15d
+    mov [rbx + TS_fd], r12d
+    mov edi, r12d
+    mov esi, POLLIN
+    lea rdx, [rip + on_pty]
+    mov rcx, rbx
+    call watch_add
+    # an end its owner has not heard of yet is told first
+    mov eax, [rbx + TS_flags]
+    and eax, TSF_NOTIFY
+    or eax, TSF_RUNNING | TSF_NOTIFY_START
+    mov [rbx + TS_flags], eax
+    mov dword ptr [rbx + TS_exit], 0
+    inc dword ptr [rbx + TS_runs]
+    call tap_attach
+    xor eax, eax
+    mov [rbx + TS_kill_at], rax
+    mov [rbx + TS_finish_at], rax
+    call time_ms
+    mov [rbx + TS_t0], rax
+    mov [rbx + TS_t1], rax
+    jmp .Lss_free
+.Lss_notfound:
+    mov rax, [rsp + PG_argv]
+    mov rdi, [rax]
+    call msg_could_not
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lerr_path]
+    call sb_push_cstr
+    jmp .Lss_fail
+.Lss_nofolder:
+    mov rax, [rsp + PG_argv]
+    mov rdi, [rax]
+    call msg_could_not
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lerr_folder]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov rsi, [rsp + 48]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lerr_folder2]
+    call sb_push_cstr
+    jmp .Lss_fail
+.Lss_nopty:
+    mov rax, [rsp + PG_argv]
+    mov rdi, [rax]
+    call msg_could_not
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lerr_pty]
+    call sb_push_cstr
+.Lss_fail:
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lsgr_end]
+    call sb_push_cstr
+    call msg_feed
+    mov dword ptr [rbx + TS_pid], 0
+    mov dword ptr [rbx + TS_fd], -1
+    mov dword ptr [rbx + TS_flags], TSF_NOTIFY      # TE_FAILED, with no TE_STARTED before it
+    mov dword ptr [rbx + TS_reason], TE_FAILED
+    mov dword ptr [rbx + TS_exit], -1
+    xor eax, eax
+    mov [rbx + TS_kill_at], rax
+    mov [rbx + TS_finish_at], rax
+    call time_ms
+    mov [rbx + TS_t0], rax
+    mov [rbx + TS_t1], rax
+.Lss_free:
+    mov rdi, [rsp + 32]
+    call mem_free
+    mov rdi, [rsp + 40]
+    call mem_free
+    mov rdi, [rsp + 48]
+    call mem_free
+    mov rdi, [rsp + PG_argv]
+    call mem_free
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# session_eof(session): its terminal's output ended (every process of its session let go of it); the
+#   program is done once the leader's exit code is known too, now or in programs_tick
+session_eof:
+    PROLOGUE
+    mov rbx, rdi
+    or dword ptr [rbx + TS_flags], TSF_EOF
+    mov edi, [rbx + TS_fd]
+    call watch_remove
+    test dword ptr [rbx + TS_flags], TSF_REAPED
+    jnz 1f
+    mov edi, [rbx + TS_pid]
+    mov esi, 1
+    call uproc_wait
+    cmp rax, -1
+    je 9f
+    mov [rbx + TS_exit], eax
+    or dword ptr [rbx + TS_flags], TSF_REAPED
+1:  mov rdi, rbx
+    call session_done
+9:  EPILOGUE
+
+# session_done(session): the program has ended: its terminal closes, the footer says how, its owner
+#   hears at the next tick
+session_done:
+    PROLOGUE
+    mov rbx, rdi
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz 9f
+    mov edi, [rbx + TS_fd]
+    test edi, edi
+    js 1f
+    call watch_remove
+    mov edi, [rbx + TS_fd]
+    SYS SYS_close
+    mov dword ptr [rbx + TS_fd], -1
+1:  lea rdi, [rbx + TS_wbuf]
+    call sb_clear
+    cmp qword ptr [rbx + TS_tapfn], 0
+    je 11f
+    mov rdi, [rbx + TS_term]
+    call term_tap_flush
+    call tap_drain
+11: call time_ms
+    mov [rbx + TS_t1], rax
+    mov dword ptr [rbx + TS_reason], TE_EXIT
+    test dword ptr [rbx + TS_flags], TSF_STOP
+    jz 2f
+    mov dword ptr [rbx + TS_reason], TE_STOPPED
+2:  mov eax, [rbx + TS_flags]
+    and eax, ~(TSF_RUNNING | TSF_EOF | TSF_REAPED | TSF_STOP)
+    or eax, TSF_NOTIFY
+    mov [rbx + TS_flags], eax
+    xor eax, eax
+    mov [rbx + TS_kill_at], rax
+    mov [rbx + TS_finish_at], rax
+    # ── go build exited with code 2 after 3.4 s ──, or ── stopped ──, dim
+    lea rdi, [rip + msg]
+    call sb_clear
+    call msg_line
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_open]
+    call sb_push_cstr
+    cmp dword ptr [rbx + TS_reason], TE_STOPPED
+    jne 3f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_stopped]
+    call sb_push_cstr
+    jmp 4f
+3:  lea rdi, [rip + msg]
+    mov rsi, [rbx + TS_title]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_code]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov esi, [rbx + TS_exit]
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_after]
+    call sb_push_cstr
+    mov rax, [rbx + TS_t1]
+    sub rax, [rbx + TS_t0]
+    xor edx, edx
+    mov ecx, 1000
+    div rcx
+    mov r12, rdx
+    lea rdi, [rip + msg]
+    mov rsi, rax
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    mov esi, '.'
+    call sb_push_byte
+    mov rax, r12
+    xor edx, edx
+    mov ecx, 100
+    div rcx
+    lea rdi, [rip + msg]
+    mov rsi, rax
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_s]
+    call sb_push_cstr
+    call foot_counts
+4:  lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_close]
+    call sb_push_cstr
+    call msg_feed
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# foot_counts(): onto msg, what rbx's matchers found: ", 2 errors, 1 warning", and lines they could
+#   not check
+foot_counts:
+    push r12
+    mov r12d, [rbx + TS_errors]
+    test r12d, r12d
+    jz 1f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_comma]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_error]
+    call sb_push_cstr
+    cmp r12d, 1
+    je 1f
+    lea rdi, [rip + msg]
+    mov esi, 's'
+    call sb_push_byte
+1:  mov r12d, [rbx + TS_warnings]
+    test r12d, r12d
+    jz 2f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_comma]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_warning]
+    call sb_push_cstr
+    cmp r12d, 1
+    je 2f
+    lea rdi, [rip + msg]
+    mov esi, 's'
+    call sb_push_byte
+2:  mov r12d, [rbx + TS_unchecked]
+    test r12d, r12d
+    jz 3f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_comma]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lfoot_unchecked]
+    call sb_push_cstr
+3:  pop r12
+    ret
+
+# tap_attach(): a (re)start of rbx's program: its counts are new, its tap follows the new terminal and
+#   hears the run begin (len -1)
+tap_attach:
+    sub rsp, 8
+    xor eax, eax
+    mov [rbx + TS_errors], eax
+    mov [rbx + TS_warnings], eax
+    mov [rbx + TS_unchecked], eax
+    mov qword ptr [rbx + TS_tap + SB_len], 0
+    mov rcx, [rbx + TS_term]
+    cmp qword ptr [rbx + TS_tapfn], 0
+    je 1f
+    lea rax, [rbx + TS_tap]
+    mov [rcx + TM_tap], rax
+    mov rdi, [rbx + TS_tapcookie]
+    mov rsi, [rbx + TS_id]
+    xor edx, edx
+    mov rcx, -1
+    call [rbx + TS_tapfn]
+    jmp 9f
+1:  mov [rcx + TM_tap], rax
+9:  add rsp, 8
+    ret
+
+# tap_drain(): rbx's finished lines to its tap fn, 2 ms of them at a time: the rest are counted as
+#   not checked (the footer says so)
+tap_drain:
+    cmp qword ptr [rbx + TS_tapfn], 0
+    je 9f
+    PROLOGUE
+    mov rax, [rbx + TS_term]
+    mov rcx, [rax + TM_tapdrop]
+    add [rbx + TS_unchecked], ecx
+    mov qword ptr [rax + TM_tapdrop], 0
+    cmp qword ptr [rbx + TS_tap + SB_len], 0
+    je 8f
+    call time_us
+    mov r15, rax
+    mov r12, [rbx + TS_tap + SB_ptr]
+    mov r13, r12
+    add r13, [rbx + TS_tap + SB_len]    # the end
+1:  cmp r12, r13
+    jae 7f
+    mov r14, r12
+2:  cmp r14, r13
+    jae 3f
+    cmp byte ptr [r14], 10
+    je 3f
+    inc r14
+    jmp 2b
+3:  call time_us
+    sub rax, r15
+    cmp rax, 2000
+    ja 5f
+    mov rdi, [rbx + TS_tapcookie]
+    mov rsi, [rbx + TS_id]
+    mov rdx, r12
+    mov rcx, r14
+    sub rcx, r12
+    call [rbx + TS_tapfn]
+    lea r12, [r14 + 1]
     jmp 1b
+5:  # out of time: the lines left
+    cmp r12, r13
+    jae 7f
+    cmp byte ptr [r12], 10
+    jne 6f
+    inc dword ptr [rbx + TS_unchecked]
+6:  inc r12
+    jmp 5b
+7:  mov qword ptr [rbx + TS_tap + SB_len], 0
+8:  EPILOGUE
+9:  ret
+
+# term_set_tap(TERM, fn, cookie): each line its program finishes, as the screen shows it, goes to
+#   fn(cookie, TERM, line, len) (no LF; at most 4096 bytes); fn 0 stops it
+FN term_set_tap
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call sess_by_id
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov [rbx + TS_tapfn], r12
+    mov [rbx + TS_tapcookie], r13
+    mov rcx, [rbx + TS_term]
+    xor eax, eax
+    test r12, r12
+    jz 1f
+    lea rax, [rbx + TS_tap]
+1:  mov [rcx + TM_tap], rax
+9:  EPILOGUE
+
+# term_set_problems(TERM, errors, warnings): what its matchers found in this run, for the footer
+FN term_set_problems
+    push rbx
+    mov ebx, esi
+    push rdx
+    call sess_by_id
+    pop rdx
+    test rax, rax
+    jz 9f
+    mov [rax + TS_errors], ebx
+    mov [rax + TS_warnings], edx
 9:  pop rbx
     ret
+
+# session_close_program(session): its tab is closing: a running program and its group are killed
+#   (SIGHUP and SIGTERM now, SIGKILL in 2 s: uproc_end); it ends as stopped (session_end tells the owner)
+session_close_program:
+    PROLOGUE
+    mov rbx, rdi
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz 9f
+    test dword ptr [rbx + TS_flags], TSF_REAPED
+    jnz 1f
+    mov edi, [rbx + TS_pid]
+    mov esi, STOP_MS
+    call uproc_end
+    jmp 2f
+1:
+.ifndef WINDOWS
+    test dword ptr [rbx + TS_flags], TSF_EOF
+    jnz 2f
+    # the leader is gone, others still have its terminal (so the session is still theirs); they had
+    # SIGTERM when it went
+    mov edi, [rbx + TS_pid]
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+.endif
+2:  mov eax, [rbx + TS_flags]
+    and eax, ~(TSF_RUNNING | TSF_EOF | TSF_REAPED | TSF_RESTART)
+    or eax, TSF_NOTIFY | TSF_STOP
+    mov [rbx + TS_flags], eax
+    mov dword ptr [rbx + TS_reason], TE_STOPPED
+    call time_ms
+    mov [rbx + TS_t1], rax
+9:  EPILOGUE
+
+# session_notify(session) -> 1 when the session is still there afterwards: what its owner has not heard
+#   yet, the start before the end (the owner may close tabs meanwhile)
+session_notify:
+    PROLOGUE
+    mov rbx, rdi
+    mov r13, [rbx + TS_id]
+    test dword ptr [rbx + TS_flags], TSF_NOTIFY_START
+    jz 1f
+    and dword ptr [rbx + TS_flags], ~TSF_NOTIFY_START
+    mov rax, [rbx + TS_fn]
+    test rax, rax
+    jz 1f
+    mov rdi, [rbx + TS_cookie]
+    mov rsi, r13
+    mov edx, TE_STARTED
+    mov ecx, [rbx + TS_pid]
+    call rax
+    mov rdi, r13
+    call sess_by_id
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+1:  test dword ptr [rbx + TS_flags], TSF_NOTIFY
+    jz 7f
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jnz 7f                      # a restart began before the end was told: told with the next end
+    and dword ptr [rbx + TS_flags], ~TSF_NOTIFY
+    mov rax, [rbx + TS_fn]
+    test rax, rax
+    jz 7f
+    mov rdi, [rbx + TS_cookie]
+    mov rsi, r13
+    mov edx, [rbx + TS_reason]
+    mov ecx, [rbx + TS_exit]
+    call rax
+    mov rdi, r13
+    call sess_by_id
+    test rax, rax
+    jz 8f
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# session_gone(session): it has left the list and is about to be freed: its owner hears what it has
+#   not yet, then TE_CLOSED
+session_gone:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rbx + TS_fn]
+    test r12, r12
+    jz 9f
+    test dword ptr [rbx + TS_flags], TSF_NOTIFY_START
+    jz 1f
+    mov rdi, [rbx + TS_cookie]
+    mov rsi, [rbx + TS_id]
+    mov edx, TE_STARTED
+    mov ecx, [rbx + TS_pid]
+    call r12
+1:  test dword ptr [rbx + TS_flags], TSF_NOTIFY
+    jz 2f
+    mov rdi, [rbx + TS_cookie]
+    mov rsi, [rbx + TS_id]
+    mov edx, [rbx + TS_reason]
+    mov ecx, [rbx + TS_exit]
+    call r12
+2:  mov rdi, [rbx + TS_cookie]
+    mov rsi, [rbx + TS_id]
+    mov edx, TE_CLOSED
+    xor ecx, ecx
+    call r12
+9:  EPILOGUE
+
+# programs_tick(): running programs' exits (polled each 250 ms: a leader can end while others keep its
+#   terminal open), Stop's deadline, the rest of a pseudoconsole's output, news for owners, restarts
+programs_tick:
+    PROLOGUE
+    call time_ms
+    mov r14, rax                # now
+    xor r15d, r15d              # poll exits this time
+    mov rax, r14
+    sub rax, [rip + tick_poll]
+    cmp rax, 250
+    jb 1f
+    mov [rip + tick_poll], r14
+    mov r15d, 1
+1:  xor r12d, r12d
+.Lpt_next:
+    cmp r12, [rip + sessions + VEC_len]
+    jae .Lpt_news
+    mov rdi, r12
+    call sess
+    mov rbx, rax
+    inc r12
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz .Lpt_next
+    test dword ptr [rbx + TS_flags], TSF_REAPED
+    jnz 3f
+    test dword ptr [rbx + TS_flags], TSF_EOF
+    jnz 21f                     # its output has ended: the exit is near, polled each tick
+    test r15d, r15d
+    jz 3f
+21: mov edi, [rbx + TS_pid]
+    mov esi, 1
+    call uproc_wait
+    cmp rax, -1
+    je 3f
+    mov [rbx + TS_exit], eax
+    or dword ptr [rbx + TS_flags], TSF_REAPED
+    test dword ptr [rbx + TS_flags], TSF_EOF
+    jnz 3f
+.ifdef WINDOWS
+    # a pseudoconsole keeps its output open after the program: what it still shows comes meanwhile
+    lea rax, [r14 + FINISH_MS]
+    mov [rbx + TS_finish_at], rax
+.else
+    # the leader is gone, others of its session still have the terminal (so the session is still
+    # theirs): they go too, SIGKILL in 2 s; the program is done when the output ends
+    mov edi, [rbx + TS_pid]
+    neg edi
+    mov esi, SIGTERM
+    SYS SYS_kill
+    cmp qword ptr [rbx + TS_kill_at], 0
+    jne 2f
+    lea rax, [r14 + STOP_MS]
+    mov [rbx + TS_kill_at], rax
+2:  mov rax, [rbx + TS_kill_at]
+    add rax, 1000
+    mov [rbx + TS_finish_at], rax
+.endif
+3:  # Stop's deadline
+    mov rax, [rbx + TS_kill_at]
+    test rax, rax
+    jz 5f
+    cmp r14, rax
+    jb 5f
+    mov qword ptr [rbx + TS_kill_at], 0
+    test dword ptr [rbx + TS_flags], TSF_REAPED
+    jnz 4f
+    mov edi, [rbx + TS_pid]
+    mov esi, SIGKILL
+    call uproc_signal
+    jmp 5f
+4:
+.ifndef WINDOWS
+    test dword ptr [rbx + TS_flags], TSF_EOF
+    jnz 5f
+    mov edi, [rbx + TS_pid]
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+.endif
+5:  test dword ptr [rbx + TS_flags], TSF_REAPED
+    jz .Lpt_next
+    test dword ptr [rbx + TS_flags], TSF_EOF
+    jnz 6f
+    mov rax, [rbx + TS_finish_at]
+    test rax, rax
+    jz .Lpt_next
+    cmp r14, rax
+    jb .Lpt_next
+    # what there is still to read, then done
+    mov edi, [rbx + TS_fd]
+    mov esi, POLLIN
+    mov rdx, rbx
+    call on_pty
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz .Lpt_next
+6:  mov rdi, rbx
+    call session_done
+    jmp .Lpt_next
+.Lpt_news:
+    # owners hear of starts and ends, then restarts start; an owner may close tabs, so each time the
+    # scan starts over
+    xor r12d, r12d
+7:  cmp r12, [rip + sessions + VEC_len]
+    jae 9f
+    mov rdi, r12
+    call sess
+    inc r12
+    mov ecx, [rax + TS_flags]
+    test ecx, TSF_NOTIFY_START
+    jnz 8f
+    test ecx, TSF_RUNNING
+    jnz 7b
+    test ecx, TSF_NOTIFY
+    jnz 8f
+    test ecx, TSF_RESTART
+    jz 7b
+    mov rdi, rax
+    call session_restart_now
+    jmp .Lpt_news
+8:  mov rdi, rax
+    call session_notify
+    jmp .Lpt_news
+9:  EPILOGUE
+
+# programs_timeout() -> ms until programs_tick has work, or -1
+programs_timeout:
+    xor ecx, ecx
+    mov eax, -1
+1:  cmp rcx, [rip + sessions + VEC_len]
+    jae 9f
+    mov rdx, [rip + sessions + VEC_ptr]
+    mov rdx, [rdx + rcx*8]
+    inc rcx
+    mov r8d, [rdx + TS_flags]
+    test r8d, TSF_NOTIFY_START
+    jnz 8f
+    test r8d, TSF_RUNNING
+    jnz 2f
+    test r8d, TSF_NOTIFY | TSF_RESTART
+    jnz 8f
+    jmp 1b
+2:  mov r9d, 250
+    test r8d, TSF_EOF
+    jz 3f
+    mov r9d, 10                 # the output has ended, the exit is near
+3:  cmp eax, -1
+    je 4f
+    cmp eax, r9d
+    jle 1b
+4:  mov eax, r9d
+    jmp 1b
+8:  xor eax, eax
+9:  ret
+
+# session_restart_now(session): a fresh terminal in the same tab, the program started again
+session_restart_now:
+    PROLOGUE
+    mov rbx, rdi
+    and dword ptr [rbx + TS_flags], ~(TSF_RESTART | TSF_STOP)
+    mov r12, [rbx + TS_term]
+    mov edi, [r12 + TM_cols]
+    mov esi, [r12 + TM_rows]
+    mov edx, [rip + cfg_term_scrollback]
+    call term_new
+    mov [rbx + TS_term], rax
+    mov rdi, r12
+    call term_free
+    mov dword ptr [rip + sel_on], 0
+    mov dword ptr [rip + rep_held], 0
+    mov rdi, rbx
+    call session_spawn
+    EPILOGUE
+
+# session_stop(): rbx's Stop: Ctrl+C into its terminal (SIGINT to its foreground group; CTRL_C_EVENT
+#   through the pseudoconsole on Windows), its group killed 2 s later if anything of it is left
+session_stop:
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz 9f
+    or dword ptr [rbx + TS_flags], TSF_STOP
+    test dword ptr [rbx + TS_flags], TSF_REAPED
+    jnz 9f
+    sub rsp, 8
+    lea rsi, [rip + .Lctrl_c]
+    mov edx, 1
+    call send
+    cmp qword ptr [rbx + TS_kill_at], 0
+    jne 1f
+    call time_ms
+    add rax, STOP_MS
+    mov [rbx + TS_kill_at], rax
+1:  add rsp, 8
+    mov dword ptr [rip + g_dirty], 1
+9:  ret
+
+# term_run(program, title, mode, fn, cookie) -> TERM (> 0), or -EBUSY when all 32 tabs are shells or
+#   running programs. program: PG; title: the tab's label (copied); mode: TK_TERMINAL or TK_TASK, with
+#   TRV_FOCUS or TRV_SILENT. fn(cookie, TERM, event, code), or 0: TE_STARTED (code: the pid), then
+#   TE_EXIT (code), TE_STOPPED or TE_FAILED (no TE_STARTED before it) come from term_tick; TE_CLOSED
+#   comes at once when the tab closes. The tab stays after the program ends; term_restart reuses it
+FN term_run
+    PROLOGUE 16
+    mov r12, rdi
+    mov r13, rsi
+    mov r14d, edx
+    mov r15, rcx
+    mov [rsp], r8
+    call room_for_one
+    test eax, eax
+    jz .Ltr_busy
+    mov edi, TS_SIZE
+    call mem_alloc
+    mov rbx, rax
+    inc qword ptr [rip + session_next_id]
+    mov rax, [rip + session_next_id]
+    mov [rbx + TS_id], rax
+    mov dword ptr [rbx + TS_fd], -1
+    mov eax, r14d
+    and eax, 0xff
+    mov [rbx + TS_kind], eax
+    mov [rbx + TS_fn], r15
+    mov rax, [rsp]
+    mov [rbx + TS_cookie], rax
+    mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call mem_dup
+    mov [rbx + TS_title], rax
+    mov rdi, r12
+    call spec_build
+    mov [rbx + TS_spec], rax
+    # the panel's grid once it has been drawn, else 80x24
+    mov edi, [rip + gcols]
+    mov esi, [rip + grows]
+    test edi, edi
+    jz 1f
+    test esi, esi
+    jnz 2f
+1:  mov edi, 80
+    mov esi, 24
+2:  mov edx, [rip + cfg_term_scrollback]
+    call term_new
+    mov [rbx + TS_term], rax
+    lea rdi, [rip + sessions]
+    mov esi, 8
+    call vec_push
+    mov [rax], rbx
+    test r14d, TRV_SILENT
+    jnz 3f
+    mov rax, [rip + sessions + VEC_len]
+    dec rax
+    mov [rip + cur], rax
+    mov dword ptr [rip + sel_on], 0
+    mov dword ptr [rip + g_term_open], 1
+    test r14d, TRV_FOCUS
+    jz 3f
+    mov dword ptr [rip + g_focus], FOCUS_TERMINAL
+3:  mov rdi, rbx
+    call session_spawn
+    mov dword ptr [rip + g_dirty], 1
+    mov rax, [rbx + TS_id]
+    EPILOGUE
+.Ltr_busy:
+    mov rax, -16                # EBUSY
+    EPILOGUE
+
+# term_stop(TERM) -> 0, or -1 without such a tab: Stop (session_stop); nothing when it is not running
+FN term_stop
+    PROLOGUE
+    call sess_by_id
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 8f
+    call session_stop
+    xor eax, eax
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# term_restart(TERM) -> 0 or -1: stop the program as Stop does, wait for it to end, then run it again
+#   in the same tab, cleared; at once when it is not running
+FN term_restart
+    PROLOGUE
+    call sess_by_id
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 8f
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz 1f
+    or dword ptr [rbx + TS_flags], TSF_RESTART
+    call session_stop
+    xor eax, eax
+    EPILOGUE
+1:  mov rdi, rbx              # an end its owner has not heard of yet is told first
+    call session_notify
+    test eax, eax
+    jz 8f
+    mov rdi, rbx
+    call session_restart_now
+    xor eax, eax
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# term_close(TERM) -> 0 or -1: the tab closes, a running program's whole group killed
+FN term_close
+    PROLOGUE
+    call sess_by_id
+    test rax, rax
+    jz 8f
+    cmp dword ptr [rax + TS_kind], TK_SHELL
+    je 8f
+    mov rdi, rax
+    call session_end
+    xor eax, eax
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# term_reveal(TERM, focus) -> 0 or -1: the panel opens at the tab; focus 1 gives it the keyboard
+FN term_reveal
+    PROLOGUE
+    mov r12d, esi
+    xor ebx, ebx
+1:  cmp rbx, [rip + sessions + VEC_len]
+    jae 8f
+    push rdi
+    push rdi
+    mov rdi, rbx
+    call sess
+    pop rdi
+    pop rdi
+    cmp [rax + TS_id], rdi
+    je 2f
+    inc rbx
+    jmp 1b
+2:  mov [rip + cur], rbx
+    mov dword ptr [rip + sel_on], 0
+    mov dword ptr [rip + g_term_open], 1
+    test r12d, r12d
+    jz 3f
+    mov dword ptr [rip + g_focus], FOCUS_TERMINAL
+3:  mov dword ptr [rip + g_dirty], 1
+    xor eax, eax
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# term_pid(TERM) -> the pid of its running program, or 0
+FN term_pid
+    sub rsp, 8
+    call sess_by_id
+    add rsp, 8
+    test rax, rax
+    jz 1f
+    mov ecx, [rax + TS_flags]
+    and ecx, TSF_RUNNING | TSF_REAPED
+    cmp ecx, TSF_RUNNING
+    jne 1f
+    mov eax, [rax + TS_pid]
+    ret
+1:  xor eax, eax
+    ret
+
+# term_set_owner(TERM, ext, task cstr or 0): who opened it, and the task it runs (copied)
+FN term_set_owner
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call sess_by_id
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov [rbx + TS_owner], r12
+    mov rdi, [rbx + TS_task]
+    call mem_free
+    mov qword ptr [rbx + TS_task], 0
+    test r13, r13
+    jz 9f
+    mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call mem_dup
+    mov [rbx + TS_task], rax
+9:  EPILOGUE
+
+# term_owner_gone(ext): its extension stopped: its running programs are stopped (their tabs stay)
+FN term_owner_gone
+    PROLOGUE
+    mov r12, rdi
+    xor r13d, r13d
+1:  cmp r13, [rip + sessions + VEC_len]
+    jae 9f
+    mov rdi, r13
+    call sess
+    inc r13
+    cmp [rax + TS_owner], r12
+    jne 1b
+    mov rbx, rax
+    call session_stop
+    jmp 1b
+9:  EPILOGUE
+
+# term_state(TERM) -> eax 0 running, 1 exited, 2 stopped, 3 failed, -1 no such tab; edx its runs
+FN term_state
+    sub rsp, 8
+    call sess_by_id
+    add rsp, 8
+    test rax, rax
+    jz 8f
+    mov edx, [rax + TS_runs]
+    test dword ptr [rax + TS_flags], TSF_RUNNING
+    jnz 1f
+    cmp dword ptr [rax + TS_kind], TK_SHELL
+    je 1f
+    mov eax, [rax + TS_reason]
+    inc eax
+    ret
+1:  xor eax, eax
+    ret
+8:  mov eax, -1
+    xor edx, edx
+    ret
+
+# term_select(TERM) -> 1 when that tab is now the current one (term-select)
+FN term_select
+    sub rsp, 8
+    xor esi, esi
+    call term_reveal
+    add rsp, 8
+    xor ecx, ecx
+    test rax, rax
+    sete cl
+    mov eax, ecx
+    ret
+
+# term_programs_dump(sb): a line per tab (print-terminals): "term=ID kind=shell|terminal|task
+#   owner=OWNER/NAME|- task=ID|- state=running|exited|stopped|failed code=N|- pid=P title=T", the
+#   current one with a "*" before it
+FN term_programs_dump
+    PROLOGUE
+    mov r12, rdi
+    xor r13d, r13d
+.Lpd_next:
+    cmp r13, [rip + sessions + VEC_len]
+    jae .Lpd_end
+    mov rdi, r13
+    call sess
+    mov rbx, rax
+    cmp r13, [rip + cur]
+    jne 1f
+    mov rdi, r12
+    mov esi, '*'
+    call sb_push_byte
+1:  inc r13
+    mov rdi, r12
+    lea rsi, [rip + .Ld_term]
+    call sb_push_cstr
+    mov rdi, r12
+    mov rsi, [rbx + TS_id]
+    call sb_push_u64
+    mov rdi, r12
+    lea rsi, [rip + .Ld_kind]
+    call sb_push_cstr
+    mov eax, [rbx + TS_kind]
+    lea rcx, [rip + .Ld_kinds]
+    mov rsi, [rcx + rax*8]
+    mov rdi, r12
+    call sb_push_cstr
+    mov rdi, r12
+    lea rsi, [rip + .Ld_owner]
+    call sb_push_cstr
+    mov rdi, [rbx + TS_owner]
+    test rdi, rdi
+    jz 2f
+    call ext_full_name
+    mov rsi, rax
+    jmp 3f
+2:  lea rsi, [rip + .Ld_dash]
+3:  mov rdi, r12
+    call sb_push_cstr
+    mov rdi, r12
+    lea rsi, [rip + .Ld_task]
+    call sb_push_cstr
+    mov rsi, [rbx + TS_task]
+    test rsi, rsi
+    jnz 4f
+    lea rsi, [rip + .Ld_dash]
+4:  mov rdi, r12
+    call sb_push_cstr
+    # state and code
+    mov rdi, r12
+    lea rsi, [rip + .Ld_state]
+    call sb_push_cstr
+    lea rsi, [rip + .Ld_running]
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 5f
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jnz 5f
+    mov eax, [rbx + TS_reason]
+    lea rcx, [rip + .Ld_ends]
+    mov rsi, [rcx + rax*8]
+5:  mov rdi, r12
+    call sb_push_cstr
+    mov rdi, r12
+    lea rsi, [rip + .Ld_code]
+    call sb_push_cstr
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 6f
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jnz 6f
+    cmp dword ptr [rbx + TS_reason], TE_EXIT
+    jne 6f
+    mov rdi, r12
+    mov esi, [rbx + TS_exit]
+    call sb_push_u64
+    jmp 7f
+6:  mov rdi, r12
+    lea rsi, [rip + .Ld_dash]
+    call sb_push_cstr
+7:  mov rdi, r12
+    lea rsi, [rip + .Ld_pid]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rbx + TS_pid]
+    call sb_push_u64
+    mov rdi, r12
+    lea rsi, [rip + .Ld_runs]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rbx + TS_runs]
+    call sb_push_u64
+    mov rdi, r12
+    lea rsi, [rip + .Ld_title]
+    call sb_push_cstr
+    mov rsi, [rbx + TS_title]
+    test rsi, rsi
+    jnz 8f
+    lea rsi, [rbx + TS_name]
+8:  mov rdi, r12
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    jmp .Lpd_next
+.Lpd_end:
+    EPILOGUE
+
+# state_shape(session, x, y middle): a program's state before its label: a dot while it runs, a check
+#   after exit 0, a cross after another code or a failure to start, a square once stopped
+state_shape:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13d, edx
+    M r14d, MI_8
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz 1f
+    mov eax, r14d
+    shr eax, 1
+    sub r13d, eax
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, r14d
+    mov r8d, eax
+    COLOR r9d, T_ACCENT
+    call gfx_round_rect
+    EPILOGUE
+1:  cmp dword ptr [rbx + TS_reason], TE_STOPPED
+    jne 2f
+    mov eax, r14d
+    shr eax, 1
+    sub r13d, eax
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, r14d
+    COLOR r8d, T_MUTED
+    call gfx_fill
+    EPILOGUE
+2:  mov edi, IC_CLOSE
+    COLOR r9d, T_ERROR
+    cmp dword ptr [rbx + TS_reason], TE_EXIT
+    jne 3f
+    cmp dword ptr [rbx + TS_exit], 0
+    jne 3f
+    mov edi, IC_CHECK
+    COLOR r9d, T_GIT_ADD
+3:  M eax, MI_16
+    mov ecx, eax
+    shr ecx, 1
+    sub r13d, ecx
+    mov ecx, r14d
+    sub ecx, eax
+    sar ecx, 1
+    lea esi, [r12 + rcx]
+    mov edx, r13d
+    mov ecx, eax
+    mov r8d, eax
+    call ui_icon_center
+    EPILOGUE
+
+# program_buttons(x right edge, y, size) -> x left of them: Restart, and Stop while it runs, for the
+#   current tab when it is a program's
+program_buttons:
+    PROLOGUE 16
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    cmp dword ptr [rip + g_panel_cur], -1
+    jne 9f                      # a view tab is shown instead (places.s)
+    call cur_sess
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 9f
+    sub r12d, r14d
+    mov edi, ID_TRESTART
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    mov r8d, r14d
+    mov r9d, IC_REFRESH
+    call ui_icon_btn
+    mov r8d, eax
+    mov edi, ID_TRESTART
+    mov esi, r12d
+    lea edx, [r13 + r14]
+    mov ecx, r14d
+    lea r9, [rip + .Ltip_restart]
+    call tip_note_text
+    test eax, UB_CLICK
+    jz 1f
+    mov rdi, [rbx + TS_id]
+    call term_restart
+    jmp 9f
+1:  test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz 9f
+    sub r12d, r14d
+    sub r12d, [rip + g_mt + 4*MI_4]
+    mov edi, ID_TSTOP
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    mov r8d, r14d
+    call ui_btn
+    mov [rsp], eax
+    test eax, UB_HOVER
+    jz 2f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, r14d
+    M r8d, MI_RADIUS
+    COLOR r9d, T_HOVER
+    test dword ptr [rsp], UB_HELD
+    jz 11f
+    COLOR r9d, T_ACTIVE
+11: call gfx_round_rect
+2:  # a square, as the icons draw: muted, the text color while hovered
+    M eax, MI_10
+    mov ecx, r14d
+    sub ecx, eax
+    sar ecx, 1
+    lea edi, [r12 + rcx]
+    lea esi, [r13 + rcx]
+    mov edx, eax
+    mov ecx, eax
+    COLOR r8d, T_MUTED
+    test dword ptr [rsp], UB_HOVER
+    jz 3f
+    COLOR r8d, T_FG
+3:  call gfx_fill
+    mov edi, ID_TSTOP
+    mov esi, r12d
+    lea edx, [r13 + r14]
+    mov ecx, r14d
+    mov r8d, [rsp]
+    lea r9, [rip + .Ltip_stop]
+    call tip_note_text
+    test eax, UB_CLICK
+    jz 9f
+    call session_stop
+9:  mov eax, r12d
+    EPILOGUE
 
 # ---------------- commands ----------------
 
@@ -730,13 +2251,43 @@ FN term_panel_paste
     test rax, rax
     jz 9f
     mov rbx, rax
-    mov rdi, [rbx + TS_term]
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 1f
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz 9f
+1:  mov rdi, [rbx + TS_term]
     mov rsi, r12
     mov rdx, r13
     call term_paste
     call send_replies
     mov rax, [rbx + TS_term]
     mov dword ptr [rax + TM_view], 0
+9:  EPILOGUE
+
+# shell_sess() -> a user shell's TS*, made the current tab: the current one when it is a shell, else
+#   the newest, else a new one; 0 when none can start
+shell_sess:
+    PROLOGUE
+    call cur_sess
+    test rax, rax
+    jz 1f
+    cmp dword ptr [rax + TS_kind], TK_SHELL
+    je 9f
+1:  mov rbx, [rip + sessions + VEC_len]
+2:  test rbx, rbx
+    jz 3f
+    dec rbx
+    mov rdi, rbx
+    call sess
+    cmp dword ptr [rax + TS_kind], TK_SHELL
+    jne 2b
+    mov [rip + cur], rbx
+    mov dword ptr [rip + sel_on], 0
+    jmp 9f
+3:  call term_spawn
+    test eax, eax
+    jz 9f
+    call cur_sess
 9:  EPILOGUE
 
 .ifdef WINDOWS
@@ -746,12 +2297,14 @@ FN term_panel_paste
 .endif
 # term_panel_write(ptr, len) -> 1 when a terminal took the bytes (as typed, after Ctrl-U clears
 # whatever was on the shell's line; on Windows Ctrl+End and Ctrl+Home, which PowerShell and the
-# console's own line editing take as delete to the end and to the start), 0 without a session
+# console's own line editing take as delete to the end and to the start), 0 without a session.
+# Always a user shell (v1's term), never a program's tab: the current tab when it is a shell, else
+# the newest shell, else a new one
 FN term_panel_write
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
-    call cur_sess
+    call shell_sess
     test rax, rax
     jz 8f
     mov rbx, rax
@@ -893,7 +2446,12 @@ FN term_panel_key
     jmp .Ltk_yes
 5:
 .Ltk_send:
-    mov rdi, [rbx + TS_term]
+    # a program that has ended takes no more typing
+    cmp dword ptr [rbx + TS_kind], TK_SHELL
+    je 6f
+    test dword ptr [rbx + TS_flags], TSF_RUNNING
+    jz .Ltk_yes
+6:  mov rdi, [rbx + TS_term]
     mov esi, r12d
     mov edx, r13d
     mov ecx, r14d
@@ -1110,11 +2668,23 @@ header_draw:
     # Keep tabs and their hit targets clear of the new/hide controls.
     mov eax, [rip + g_block]
     mov [rsp + 20], eax
-    mov edi, [rbp + 16]
+    call cur_sess               # a program's tab has Restart and Stop left of them
+    xor ecx, ecx
+    cmp dword ptr [rip + g_panel_cur], -1
+    jne 10f
+    test rax, rax
+    jz 10f
+    cmp dword ptr [rax + TS_kind], TK_SHELL
+    je 10f
+    mov ecx, [rip + g_mt + 4*MI_24]
+    add ecx, [rip + g_mt + 4*MI_4]
+    add ecx, ecx
+10: mov edi, [rbp + 16]
     mov esi, [rbp + 20]
     mov edx, [rbp + 24]
     sub edx, [rip + g_mt + 4*MI_48]
     sub edx, [rip + g_mt + 4*MI_12]
+    sub edx, ecx
     lea eax, [rdi + rdx]
     mov [rsp + 24], eax         # right edge of the tab strip
     mov ecx, r15d
@@ -1192,13 +2762,21 @@ header_draw:
     mov rdi, rbx
     call sess
     mov r13, rax
-    # title from the program, else the shell's name
-    mov r14, [r13 + TS_term]
+    # a program's label with its state before it; a shell's title from the program, else its name
+    mov dword ptr [rsp + 40], 0
+    cmp dword ptr [r13 + TS_kind], TK_SHELL
+    je 0f
+    M eax, MI_16
+    mov [rsp + 40], eax
+    mov rsi, [r13 + TS_title]
+    jmp 13f
+0:  mov r14, [r13 + TS_term]
     mov rsi, [r14 + TM_title + SB_ptr]
     mov rdx, [r14 + TM_title + SB_len]
     test rdx, rdx
     jnz 1f
     lea rsi, [r13 + TS_name]
+13:
     mov rdi, rsi
     push rsi
     push rsi
@@ -1217,6 +2795,7 @@ header_draw:
     cmovg r14d, eax
     add r14d, [rip + g_mt + 4*MI_20]    # tab width
     add r14d, [rip + g_mt + 4*MI_28]    # close button and right padding
+    add r14d, [rsp + 40]                # a program's state
     mov eax, [rsp + 32]
     cmp r14d, eax
     cmovg r14d, eax
@@ -1285,9 +2864,27 @@ header_draw:
     mov edx, eax
     mov esi, r12d
     add esi, [rip + g_mt + 4*MI_10]
-    mov eax, r14d
+    cmp dword ptr [rsp + 40], 0
+    je 51f
+    # the state, a shape centered on the text's middle
+    push rdx
+    push rsi
+    push r9                     # the label's color
+    push r9
+    mov rdi, r13
+    mov edx, r15d
+    shr edx, 1
+    add edx, [rbp + 20]
+    call state_shape
+    pop r9
+    pop r9
+    pop rsi
+    pop rdx
+    add esi, [rsp + 40]
+51: mov eax, r14d
     sub eax, [rip + g_mt + 4*MI_20]
     sub eax, [rip + g_mt + 4*MI_28]
+    sub eax, [rsp + 40]
     push rax
     push rax
     lea rdi, [rip + g_face_small]
@@ -1361,7 +2958,21 @@ header_draw:
     test eax, UB_CLICK
     jz 3f
     call cmd_new_terminal
-3:  add rsp, 56
+    jmp 4f
+3:  cmp dword ptr [rip + g_panel_cur], -1
+    je 31f
+    mov edi, r12d               # a view tab: its title actions (places.s)
+    sub edi, [rip + g_mt + 4*MI_4]
+    mov esi, [rbp + 20]
+    mov edx, r15d
+    call places_panel_actions
+    jmp 4f
+31: mov edi, r12d
+    sub edi, [rip + g_mt + 4*MI_4]
+    mov esi, r14d
+    mov edx, r13d
+    call program_buttons
+4:  add rsp, 56
     pop r15
     pop r14
     pop r13
@@ -3294,6 +4905,8 @@ rep_cell: .long -1
 .Lsh: .asciz "/bin/sh"
 .endif
 .Lno_shell: .asciz "Could not start a shell"
+.Lsh_name: .asciz "sh"
+.Lempty_arg: .asciz ""
 .Lword_stop: .asciz "()[]{}<>'\"`,;|&"
 .Lurl_stop: .asciz "\"'<>`{}|\\^"
 .Lpath_stop: .asciz "\"'<>`|()[]{},;"
@@ -3313,6 +4926,51 @@ rep_cell: .long -1
 .Ltip_url: .asciz "Follow link (Ctrl+click)"
 .Ltip_file: .asciz "Open file (Ctrl+click)"
 .endif
+# programs' tabs
+.Lroot: .asciz "/"
+.Lcrlf: .asciz "\r\n"
+.Lctrl_c: .byte 3
+.Lcould_not: .asciz "\033[0;31mCould not start \""
+.Lquote_colon: .asciz "\": "
+.Lerr_errno: .asciz "error "
+.Lerr_path: .asciz "not found on PATH"
+.Lerr_folder: .asciz "the folder "
+.Lerr_folder2: .asciz " does not exist"
+.Lerr_pty: .asciz "no terminal"
+.Lsgr_end: .asciz "\033[0m\r\n"
+.Lenv_note: .asciz "\033[0;2mrhun could not read your login shell's environment: programs get rhun's own\033[0m\r\n"
+.Lfoot_open: .asciz "\033[0;2m\342\224\200\342\224\200 "
+.Lfoot_stopped: .asciz "stopped"
+.Lfoot_code: .asciz " exited with code "
+.Lfoot_after: .asciz " after "
+.Lfoot_s: .asciz " s"
+.Lfoot_comma: .asciz ", "
+.Lfoot_error: .asciz " error"
+.Lfoot_warning: .asciz " warning"
+.Lfoot_unchecked: .asciz " lines were not checked for problems"
+.Lfoot_close: .asciz " \342\224\200\342\224\200\033[0m\r\n\033[?25l"
+.Ltip_restart: .asciz "Restart"
+.Ltip_stop: .asciz "Stop"
+.Ld_term: .asciz "term="
+.Ld_kind: .asciz " kind="
+.Ld_shell: .asciz "shell"
+.Ld_terminal: .asciz "terminal"
+.Ld_task_kind: .asciz "task"
+.Ld_owner: .asciz " owner="
+.Ld_task: .asciz " task="
+.Ld_state: .asciz " state="
+.Ld_running: .asciz "running"
+.Ld_exited: .asciz "exited"
+.Ld_stopped: .asciz "stopped"
+.Ld_failed: .asciz "failed"
+.Ld_code: .asciz " code="
+.Ld_pid: .asciz " pid="
+.Ld_runs: .asciz " runs="
+.Ld_title: .asciz " title="
+.Ld_dash: .asciz "-"
+.p2align 3
+.Ld_kinds: .quad .Ld_shell, .Ld_terminal, .Ld_task_kind
+.Ld_ends: .quad .Ld_exited, .Ld_stopped, .Ld_failed
 .Lenv_term: .asciz "TERM=xterm-256color"
 .Lenv_color: .asciz "COLORTERM=truecolor"
 .Lenv_prog: .asciz "TERM_PROGRAM=rhun"

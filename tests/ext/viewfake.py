@@ -8,7 +8,9 @@ Commands: rescan (the same ids again, with a new count), renamed (new ids), vani
 selected node), badpatch (a patch whose third op names a missing node), big (100001 nodes), show
 (vshow items focus), empty (state empty with a text and a key), msg (a message line), busy (busy 1),
 expand (expands f:main.rs), reveal (vreveal t:lib.rs:1 select,focus after collapsing lib.rs),
-multi (items becomes multi-select), delpin (removes the pin action).
+multi (items becomes multi-select), delpin (removes the pin action), log (lines of every severity
+with SGR colors to the logs view), logmany (12000 lines), logclear, tab (a tree in an editor tab
+of its own), untab (unview of that tab). VIEWFAKE_NOLOG: view-log is not asked for.
 
 The items view (panel) has a lazy node "a" (its children come with vkids: VIEWFAKE_LAZY answer,
 error, late (after 1 s), or never) and pages of root children (vmore adds two, three pages).
@@ -109,6 +111,8 @@ def items_tree(view):
 
 
 pages = 0
+pending_tab = []        # vtab requests waiting for their view's number
+tabs = []
 
 
 def answer(rid, body):
@@ -174,10 +178,32 @@ def on_command(name):
         patch(views['items'], [rec('select-mode', 'multi')])
     elif name == 'delpin' and todo:
         patch(todo, [rec('action', 'pin - none', b'')])
+    elif name == 'log' and views.get('logs'):
+        lines = (b'info starting\n'
+                 b'warn \x1b[33myellow\x1b[0m and plain\n'
+                 b'error failed: \x1b[1;31mred\x1b[0m\n'
+                 b'debug details\tafter a tab\n'
+                 b'trace \x07bell\x1b]0;title\x07 gone\n'
+                 b'- no severity\n')
+        patch(views['logs'], [rec('log', '6', lines)])
+    elif name == 'logmany' and views.get('logs'):
+        lines = b''.join(f'info line {i}\n'.encode() for i in range(12000))
+        patch(views['logs'], [rec('log', '12000', lines)])
+    elif name == 'logclear' and views.get('logs'):
+        patch(views['logs'], [rec('clear', '', b'')])
+    elif name == 'tab':
+        def opened_tab(reply):
+            pass
+        rid = request('vtab tree Commit 3fa2c1')
+        pending_tab.append(rid)
+    elif name == 'untab' and tabs:
+        request(f'unview {tabs[-1]}')
 
 
 def main():
     features = '' if MODE == 'nofeature' else ' view-tree'
+    if features and not os.environ.get('VIEWFAKE_NOLOG'):
+        features += ' view-log'
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -195,6 +221,14 @@ def main():
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
+        elif fields[0] == 'ok' and len(fields) >= 3 and int(fields[1]) in pending_tab:
+            pending_tab.remove(int(fields[1]))
+            view = int(fields[2])
+            tabs.append(view)
+            patch(view, [kids('', [node('m', 'main.rs', 'open', rec('icon', 'file:main.rs -')),
+                                  node('r', 'README.md')]),
+                         kids('m', [node('m1', '+12 -3')]), rec('state', 'ready 0')])
+            continue
         elif fields[0].isdigit() and fields[0] != '0' and len(fields) >= 3 and fields[1] in ('vkids', 'vmore'):
             n = int(fields[-1])
             body = inp.read(n)

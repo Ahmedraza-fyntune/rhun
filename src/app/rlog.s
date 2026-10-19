@@ -172,7 +172,18 @@ FN log_append
     lea rcx, [r15 + 1]
     cmp rcx, r14
     jae 6f
-    cmp byte ptr [r13 + rcx], '['
+    cmp byte ptr [r13 + rcx], ']'
+    jne 39f
+35: inc rcx                     # OSC: up to BEL or ESC backslash
+    cmp rcx, r14
+    jae 6f
+    cmp byte ptr [r13 + rcx], 7
+    je 34f
+    cmp byte ptr [r13 + rcx], 27
+    jne 35b
+    inc rcx
+    jmp 34f
+39: cmp byte ptr [r13 + rcx], '['
     jne 4f
     inc rcx
 31: cmp rcx, r14

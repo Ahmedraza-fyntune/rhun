@@ -155,8 +155,25 @@ FN extview_find
 8:  xor eax, eax
 9:  ret
 
-# extview_of_tab(tab flags) -> VW* or 0
+# extview_count(ext) -> eax its open 12a views
+FN extview_count
+    xor eax, eax
+    xor ecx, ecx
+    lea rdx, [rip + g_views]
+1:  cmp ecx, VW_MAX
+    jae 9f
+    cmp [rdx + VW_ext], rdi
+    jne 2f
+    inc eax
+2:  add rdx, VW_SIZE
+    inc ecx
+    jmp 1b
+9:  ret
+
+# extview_of_tab(tab flags) -> VW* or 0 (a retained view's tab is not one: rview.s)
 FN extview_of_tab
+    test rdi, TF_RVIEW
+    jnz 8f
     mov rax, rdi
     shr rax, TF_VIEW_SHIFT
     and eax, 255
@@ -175,6 +192,8 @@ FN extview_of_tab
 
 # extview_title(tab flags) -> cstr for the tab strip
 FN extview_title
+    test rdi, TF_RVIEW
+    jnz rview_tab_title
     call extview_of_tab
     test rax, rax
     jz 1f
@@ -232,6 +251,8 @@ FN extview_close
 # extview_tab_closed(tab flags): a view's tab is closing (app_close_tab_now): its extension hears
 # "closed" unless it closed it itself, and the slot is freed
 FN extview_tab_closed
+    test rdi, TF_RVIEW
+    jnz rview_tab_closed
     PROLOGUE
     call extview_of_tab
     test rax, rax
@@ -841,7 +862,15 @@ FN extview_draw
     mov rdi, [rip + g_tab_cur]
     call tab_at
     mov rdi, [rax + TAB_flags]
-    call extview_of_tab
+    test rdi, TF_RVIEW
+    jz 1f
+    mov esi, [rsp]              # a retained view's tab (rview.s)
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call rview_tab_draw
+    jmp 9f
+1:  call extview_of_tab
     test rax, rax
     jz 9f
     mov rbx, rax

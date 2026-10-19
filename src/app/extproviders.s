@@ -325,8 +325,10 @@ pp_match_for:
     cmp dword ptr [rbx + EXT_status], ES_REMOVED
     je 8f
     lea rax, [rip + pp_patterns]
-    mov rax, [rax + r12*8]
-    mov rdi, [rbx + rax]
+    mov rsi, [rax + r12*8]
+    mov rdi, rbx
+    call ext_pv                 # provider-scope's narrowed values count
+    mov rdi, rax
     mov rsi, r13
     call extproto_matches
     EPILOGUE
@@ -629,8 +631,10 @@ pp_declared:
     je 8f
     mov rcx, [rip + pp_kind]
     lea rax, [rip + pp_patterns]
-    mov rax, [rax + rcx*8]
-    mov rdi, [rbx + rax]
+    mov rsi, [rax + rcx*8]
+    mov rdi, rbx
+    call ext_pv                 # provider-scope's narrowed values count
+    mov rdi, rax
     mov rsi, [rip + pp_doc]
     call extproto_matches
     EPILOGUE

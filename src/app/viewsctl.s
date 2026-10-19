@@ -38,6 +38,9 @@ c_view_focus:
     jmp c_views
 c_places_demo:
     mov eax, 6
+    jmp c_views
+c_print_log:
+    mov eax, 7
 c_views:
     PROLOGUE
     mov rbx, rdi
@@ -185,7 +188,18 @@ FN views_control
     mov edi, eax
     call place_focus
     jmp 9f
-6:  call places_demo
+6:  cmp r12d, 6
+    jne 7f
+    call places_demo
+    jmp 9f
+7:  mov rdi, r13                # print-log NAME|VIEW
+    mov rsi, r14
+    call rview_log_of
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov rsi, rbx
+    call log_dump
     jmp 9f
 8:  mov rdi, rbx
     lea rsi, [rip + .Lnone]
@@ -413,6 +427,7 @@ views_ctl:
     .quad .Lc_print_sidebar, c_print_sidebar, .Lc_print_panel_tabs, c_print_panel_tabs
     .quad .Lc_print_side_tabs, c_print_side_tabs, .Lc_print_view, c_print_view
     .quad .Lc_view_show, c_view_show, .Lc_view_focus, c_view_focus, .Lc_places_demo, c_places_demo
+    .quad .Lc_print_log, c_print_log
     .quad 0, 0
 .Lc_print_sidebar: .asciz "print-sidebar"
 .Lc_print_panel_tabs: .asciz "print-panel-tabs"
@@ -421,6 +436,7 @@ views_ctl:
 .Lc_view_show: .asciz "view-show"
 .Lc_view_focus: .asciz "view-focus"
 .Lc_places_demo: .asciz "places-demo"
+.Lc_print_log: .asciz "print-log"
 .Lterminals: .asciz "terminals="
 .Lchosen: .asciz " chosen"
 .Lopen: .asciz " open="

@@ -9,7 +9,13 @@ F JB_out, SB_SIZE
 F JB_cb, 8              # cb(ctx, ptr, len, status); the job frees ctx afterwards
 F JB_ctx, 8
 F JB_gen, 4             # answers for an older repository are dropped
+F JB_in, 4              # the pipe to its input while rhun feeds it (git_start), else -1
+F JB_cap, 8             # most output bytes wanted (git_start), 0 no limit; more ends the program
+F JB_over, 4            # the output went over JB_cap: cb gets status -1
 F JB_pad, 4
+F JB_inbuf, 8           # the input being fed, owned
+F JB_inlen, 8
+F JB_inoff, 8           # of it, written so far
 ENDSTRUCT JB_SIZE
 
 # status table slot
@@ -24,6 +30,7 @@ ENDSTRUCT GE_SIZE
 .equ DEBOUNCE, 150
 .equ MAXARGS, 24
 .equ BATCH_IN, 32768
+.equ PIPE_IN, 61440             # input up to this fits the pipe: written at once (run_piped_input)
 
 .bss
 .p2align 3
@@ -47,6 +54,9 @@ st_running: .long 0
 st_again: .long 0
 touch_kind: .long 0             # 1 status, 2 HEAD moved
 sudirs: .long 0                 # untracked folders in the table
+run_flags: .long 0              # run_git: run_piped_input's errors flag
+.p2align 3
+run_cap: .quad 0                # run_git: JB_cap
 .p2align 3
 g_git_root: .quad 0             # work tree
 g_git_rootlen: .quad 0
@@ -83,9 +93,25 @@ FN git_common_dir
     mov rax, [rip + commondir]
     ret
 
+# git_gitdir() -> the work tree's own git directory (a linked work tree's under worktrees/), or 0
+FN git_gitdir
+    mov rax, [rip + gitdir]
+    ret
+
+# git_status_records() -> rax ptr, rdx len of the last status's "XY path\0" records (after the branch
+#   line; a rename or copy has the old name after it, NUL-ended too); 0, 0 before the first status
+FN git_status_records
+    mov rax, [rip + stbuf + SB_ptr]
+    mov rdx, [rip + stbuf + SB_len]
+    test rax, rax
+    jnz 1f
+    xor edx, edx
+1:  ret
+
 # git_set_project(): find the repository of g_project and start over
 FN git_set_project
     PROLOGUE
+    call gitdata_reset          # extensions' git requests end here, before their jobs are dropped
     inc dword ptr [rip + gen]
     mov dword ptr [rip + g_git_on], 0
     mov dword ptr [rip + g_git_paused], 0
@@ -147,7 +173,13 @@ FN git_set_project
     mov dword ptr [rip + touch_kind], 3
     call time_ms
     mov [rip + touch_at], rax
-9:  mov dword ptr [rip + g_dirty], 1
+9:  # the when-clause key gitTrusted (source control, wider-parity C)
+    xor esi, esi
+    cmp dword ptr [rip + g_git_paused], 0
+    sete sil
+    mov edi, CTX_GIT_TRUSTED
+    call ctx_set_bool
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # free_path(): mem_free [rbx] and clear it
@@ -590,15 +622,30 @@ FN git_fs_event
 # git_run(args, cb, ctx, input ptr, input len) -> 1 if started
 #   args: 0-terminated list after "git"; it runs in the work tree; ctx is 0 or mem_alloc'd (freed after cb)
 FN git_run
-    xor r9d, r9d
-    jmp run_git
+    mov dword ptr [rip + run_flags], 0
+    jmp 1f
 # git_run_all(args, cb, ctx, input ptr, input len): git_run whose output has git's error messages too, and
 #   that has no terminal to ask on (ssh fails instead of waiting for a password nobody sees)
 FN git_run_all
-    mov r9d, 1
+    mov dword ptr [rip + run_flags], 1
+1:  mov qword ptr [rip + run_cap], 0
+    sub rsp, 8
+    call run_git
+    add rsp, 8
+    test rax, rax
+    setnz al
+    movzx eax, al
+    ret
+# git_start(args, cb, ctx, input ptr, input len, cap) -> rax the job (for git_job_kill), or 0: git_run with
+#   input of any length (copied; written as git reads it), and at most cap output bytes (0: no limit): a
+#   program that writes more is ended, and cb gets status -1 and no output
+FN git_start
+    mov dword ptr [rip + run_flags], 0
+    mov [rip + run_cap], r9
 run_git:
-    PROLOGUE 272                # argv, then the errors flag
-    mov [rsp + 256], r9d
+    PROLOGUE 288                # argv; the errors flag, the input pipe, the input
+    mov eax, [rip + run_flags]
+    mov [rsp + 256], eax
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -633,17 +680,29 @@ run_git:
     cmp rcx, MAXARGS + 7
     jb 1b
     mov qword ptr [rsp + rcx*8], 0
-2:  mov rdi, rsp
+2:  mov [rsp + 264], r14      # the input
+    mov [rsp + 272], r15
+    mov rdi, rsp
     mov rsi, [rip + env]
     mov rdx, [rip + g_git_root]
     mov rcx, r14
     mov r8, r15
     mov r9d, [rsp + 256]
-    call run_piped_input
+    cmp r15, PIPE_IN
+    jbe 3f
+    cmp dword ptr [rip + g_remote], 0
+    jne 3f                      # a remote host takes the input whole (remote.s)
+    or r9d, 4                   # longer than the pipe holds: fed as git reads it
+3:  call vfs_run_piped_input    # on the host in a remote window
+    cmp dword ptr [rip + g_remote], 0
+    je 31f
+    mov ecx, -1
+31:
     test rax, rax
     jle 8f
     mov ebx, eax
     mov r14d, edx
+    mov [rsp + 260], ecx        # the input pipe, or -1
     mov edi, JB_SIZE
     call mem_alloc
     mov r15, rax
@@ -653,6 +712,9 @@ run_git:
     mov [r15 + JB_ctx], r13
     mov eax, [rip + gen]
     mov [r15 + JB_gen], eax
+    mov rax, [rip + run_cap]
+    mov [r15 + JB_cap], rax
+    mov dword ptr [r15 + JB_in], -1
     lea rdi, [rip + jobs]
     mov esi, 8
     call vec_push
@@ -662,12 +724,81 @@ run_git:
     lea rdx, [rip + on_job]
     mov rcx, r15
     call watch_add
-    mov eax, 1
+    cmp qword ptr [rsp + 272], PIPE_IN
+    jbe 4f
+    mov eax, [rsp + 260]
+    test eax, eax
+    js 4f
+    mov [r15 + JB_in], eax
+    mov rdi, [rsp + 272]
+    mov [r15 + JB_inlen], rdi
+    call mem_alloc
+    mov [r15 + JB_inbuf], rax
+    mov rdi, rax
+    mov rsi, [rsp + 264]
+    mov rdx, [rsp + 272]
+    call memcpy
+    mov edi, [r15 + JB_in]
+    mov esi, POLLOUT
+    lea rdx, [rip + on_job_in]
+    mov rcx, r15
+    call watch_add
+4:  mov rax, r15
     EPILOGUE
 8:  mov rdi, r13
     call mem_free
     xor eax, eax
     EPILOGUE
+
+# on_job_in(fd, revents, job): more of the input, as the program takes it; at its end (or when the
+#   program stops reading) the pipe closes
+on_job_in:
+    PROLOGUE
+    mov rbx, rdx
+1:  mov rdx, [rbx + JB_inlen]
+    sub rdx, [rbx + JB_inoff]
+    jz 2f
+    mov edi, [rbx + JB_in]
+    mov rsi, [rbx + JB_inbuf]
+    add rsi, [rbx + JB_inoff]
+    SYS SYS_write
+    cmp rax, -EINTR
+    je 1b
+    cmp rax, -EAGAIN
+    je 9f
+    test rax, rax
+    jle 2f
+    add [rbx + JB_inoff], rax
+    jmp 1b
+2:  call job_input_close
+9:  EPILOGUE
+
+# job_input_close(): rbx's input pipe and buffer go (keeps rbx)
+job_input_close:
+    push rbx
+    mov edi, [rbx + JB_in]
+    test edi, edi
+    js 1f
+    call watch_remove
+    mov edi, [rbx + JB_in]
+    SYS SYS_close
+    mov dword ptr [rbx + JB_in], -1
+1:  mov rdi, [rbx + JB_inbuf]
+    call mem_free
+    mov qword ptr [rbx + JB_inbuf], 0
+    pop rbx
+    ret
+
+# git_job_kill(job): end the program; its callback still comes, with the status of a killed program
+FN git_job_kill
+    test rdi, rdi
+    jz 9f
+    push rbx
+    mov edi, [rdi + JB_pid]
+    mov esi, 9
+    call proc_kill
+    pop rbx
+9:  ret
 
 # on_job(fd, revents, job): collect the output; at its end hand it over
 on_job:
@@ -687,16 +818,33 @@ on_job:
     test rax, rax
     jle 2f
     add [rbx + JB_out + SB_len], rax
+    mov rax, [rbx + JB_cap]
+    test rax, rax
+    jz 1b
+    cmp [rbx + JB_out + SB_len], rax
+    jbe 1b
+    # too much: the program ends, and what it wrote goes
+    cmp dword ptr [rbx + JB_over], 0
+    jne 11f
+    mov dword ptr [rbx + JB_over], 1
+    mov edi, [rbx + JB_pid]
+    mov esi, 9
+    call proc_kill
+11: mov qword ptr [rbx + JB_out + SB_len], 0
     jmp 1b
 2:  mov edi, [rbx + JB_fd]
     call watch_remove
     mov edi, [rbx + JB_fd]
     SYS SYS_close
+    call job_input_close
     mov edi, [rbx + JB_pid]
     xor esi, esi
     call proc_wait
     mov r12d, eax
-    # out of the list
+    cmp dword ptr [rbx + JB_over], 0
+    je 21f
+    mov r12d, -1
+21: # out of the list
     xor ecx, ecx
 3:  cmp rcx, [rip + jobs + VEC_len]
     jae 5f
@@ -777,8 +925,11 @@ FN git_refresh
     pop rbx
 9:  ret
 
-# git_timeout() -> ms until the next refresh, or -1
+# git_timeout() -> ms until the next refresh or extension request deadline, or -1
 FN git_timeout
+    push rbx
+    call gitdata_timeout
+    mov ebx, eax
     mov rax, [rip + touch_at]
     test rax, rax
     jz 1f
@@ -791,12 +942,29 @@ FN git_timeout
     test eax, eax
     jns 2f
     xor eax, eax
-2:  ret
-1:  mov eax, -1
+2:  cmp ebx, -1
+    je 3f
+    cmp ebx, eax
+    cmovb eax, ebx
+3:  pop rbx
     ret
+1:  mov eax, ebx
+    pop rbx
+    ret
+
+# git_status_settled() -> 1 when no status runs or waits: the status in memory is the latest
+FN git_status_settled
+    xor eax, eax
+    cmp dword ptr [rip + st_running], 0
+    jne 1f
+    cmp qword ptr [rip + touch_at], 0
+    jne 1f
+    mov eax, 1
+1:  ret
 
 FN git_tick
     PROLOGUE
+    call gitdata_tick
     cmp qword ptr [rip + touch_at], 0
     je 9f
     call time_ms
@@ -811,6 +979,7 @@ FN git_tick
     jz 1f
     call git_fetch_all
     call gitview_head_moved
+    call gitdata_head_moved
 1:  call status_refresh
 9:  EPILOGUE
 
@@ -938,7 +1107,8 @@ on_status:
     je 9f
     mov dword ptr [rip + st_again], 0
     call git_touch
-9:  mov dword ptr [rip + g_dirty], 1
+9:  call gitdata_status_done      # extensions waiting for it, and "0 git changed"
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # parse_branch(record) -> rax its length: "## main...origin/main [ahead 1, behind 2]", "## main",
@@ -1377,8 +1547,13 @@ drop_base:
     mov dword ptr [rdi + DOC_gstate], GS_NOBASE
     ret
 
-# git_doc_opened(doc): ask for the file at HEAD
+# git_doc_opened(doc): ask for the file at HEAD (and a quick-diff provider for its base, scmext.s)
 FN git_doc_opened
+    push rdi
+    call scmext_qd_want
+    pop rdi
+# git_doc_head(doc): ask for the file at HEAD only
+git_doc_head:
     PROLOGUE
     cmp dword ptr [rip + g_git_on], 0
     je 9f
@@ -1397,7 +1572,9 @@ FN git_doc_opened
 # git_doc_saved(doc)
 FN git_doc_saved
     push rbx
+    push rdi
     call git_doc_opened
+    pop rdi
     call git_touch
     pop rbx
     ret
@@ -1487,6 +1664,8 @@ request_bases:
     call sb_push_byte
     jmp .Lrb_doc
 .Lrb_outside:
+    cmp dword ptr [r12 + DOC_gsrc], 0
+    jne .Lrb_doc                # an extension's quick-diff base stays
     mov rdi, r12
     call drop_base
     jmp .Lrb_doc
@@ -1589,6 +1768,8 @@ on_bases:
     mov eax, [rsp + 8]
     cmp [rdi + DOC_gseq], eax
     jne .Lob_next
+    cmp dword ptr [rdi + DOC_gsrc], 0
+    jne .Lob_next               # an extension's quick-diff base is the one shown
     mov rdx, [rsp + 16]
     test rdx, rdx
     js 8f
@@ -1680,9 +1861,11 @@ set_base:
 # git_doc_marks(doc) -> GM_* per line, or 0
 FN git_doc_marks
     xor eax, eax
+    cmp dword ptr [rdi + DOC_gsrc], 0
+    jne 2f                      # an extension's base: marks without git
     cmp dword ptr [rip + g_git_on], 0
     je 9f
-    cmp dword ptr [rdi + DOC_gstate], GS_BASE
+2:  cmp dword ptr [rdi + DOC_gstate], GS_BASE
     jne 9f
     mov rax, [rdi + DOC_version]
     cmp rax, [rdi + DOC_gver]
@@ -1691,6 +1874,25 @@ FN git_doc_marks
     call diff_marks
     pop rdi
 1:  mov rax, [rdi + DOC_gmarks]
+9:  ret
+
+# git_set_base_ext(doc, ptr, len): an extension's quick-diff base (scmext.s); the gutter marks follow it
+FN git_set_base_ext
+    PROLOGUE
+    mov rbx, rdi
+    mov dword ptr [rbx + DOC_gsrc], 1
+    call set_base
+    EPILOGUE
+
+# git_drop_base_ext(doc): an extension's base goes; git's comes back when git runs there
+FN git_drop_base_ext
+    cmp dword ptr [rdi + DOC_gsrc], 0
+    je 9f
+    mov dword ptr [rdi + DOC_gsrc], 0
+    push rdi
+    call drop_base
+    call git_doc_head
+    pop rdi
 9:  ret
 
 # git_doc_free(doc): its git data; answers still on their way forget it

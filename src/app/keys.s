@@ -648,6 +648,8 @@ g_commands:
     COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
     COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
+    # tasks and terminals
+    COMMAND toggle_problems, "Toggle Problems", cmd_toggle_problems, "ctrl+shift+m"
     COMMAND kill_terminal, "Kill Terminal", cmd_kill_terminal, ""
     COMMAND clear_terminal, "Clear Terminal", cmd_clear_terminal, ""
     COMMAND git_history, "Git: Show History", cmd_git_history, ""
@@ -683,6 +685,12 @@ g_commands:
     COMMAND test_cancel, "Cancel Test Runs", cmd_test_cancel, ""
     COMMAND test_coverage_toggle, "Show Test Coverage", cmd_test_coverage_toggle, ""
     COMMAND test_next_failure, "Go to Next Test Failure", cmd_test_next_failure, ""
+    # remote hosts (remoteui.s)
+    COMMAND connect_to_host, "Remote: Connect to Host", cmd_connect_to_host, ""
+    COMMAND attach_to_container, "Remote: Attach to Container", cmd_attach_to_container, ""
+    COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
+    COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
+    COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
     .quad 0, 0, 0, 0
 
 .bss

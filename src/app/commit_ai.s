@@ -41,6 +41,7 @@ g_ai_local_desc: .asciz "Select Local (Ollama) to manage model files."
 # Called after either settings UI or external config changes.
 FN ai_apply
     PROLOGUE
+    call scmext_ai_chosen       # an extension provider (4 and up) is kept by its name
     mov eax, [rip + cfg_commit_ai]
     cmp eax, [rip + cached_provider]
     jne 1f
@@ -67,15 +68,23 @@ FN ai_apply
     lea rdi, [rip + .Loff]
     cmp dword ptr [rip + cfg_commit_ai], 0
     je 2f
+    cmp dword ptr [rip + cfg_commit_ai], 4
+    jae 3f
     mov dword ptr [rip + pending], 1
     lea rdi, [rip + .Lchecking]
 2:  call describe
 9:  EPILOGUE
+3:  # an extension: nothing to detect
+    lea rdi, [rip + .Lext_desc]
+    call describe
+    EPILOGUE
 
 FN cmd_ai_detect
     PROLOGUE
     cmp dword ptr [rip + cfg_commit_ai], 0
     je 1f
+    cmp dword ptr [rip + cfg_commit_ai], 4
+    jae 9f
     cmp dword ptr [rip + g_ai_kind], 0
     jne 9f
     mov dword ptr [rip + pending], 1
@@ -200,7 +209,13 @@ delete_confirmed:
 # ai_generate(): caller has validated the repository and captured the draft.
 FN ai_generate
     PROLOGUE
-    cmp dword ptr [rip + g_ai_kind], 1
+    cmp dword ptr [rip + cfg_commit_ai], 4
+    jb 2f
+    # an extension: the helper writes the diff, then the extension the message (scmext.s)
+    call scmext_commit_begin
+    test eax, eax
+    jz 8f
+2:  cmp dword ptr [rip + g_ai_kind], 1
     jne 1f
     call ai_cancel
     mov dword ptr [rip + pending], 3
@@ -208,12 +223,27 @@ FN ai_generate
 1:  mov edi, 3
     call start
 9:  EPILOGUE
+8:  lea rdi, [rip + g_ai_desc]
+    call app_toast
+    EPILOGUE
+
+# ai_generating() -> eax 1 while a message is being generated (the button cancels then)
+FN ai_generating
+    xor eax, eax
+    cmp dword ptr [rip + g_ai_kind], 3
+    je 1f
+    jmp scmext_commit_busy
+1:  mov eax, 1
+    ret
 
 FN ai_cancel_generation
     cmp dword ptr [rip + pending], 3
     jne 1f
     mov dword ptr [rip + pending], 0
-1:  cmp dword ptr [rip + g_ai_kind], 3
+1:  call scmext_commit_busy
+    test eax, eax
+    jnz ai_cancel
+    cmp dword ptr [rip + g_ai_kind], 3
     je ai_cancel
     ret
 
@@ -221,7 +251,13 @@ FN cmd_ai_cancel
 FN ai_cancel
     PROLOGUE
     mov dword ptr [rip + pending], 0
-    cmp dword ptr [rip + pid], 0
+    call scmext_commit_busy
+    test eax, eax
+    jz 2f
+    call scmext_commit_cancel
+    lea rdi, [rip + .Lcancelled]
+    call describe
+2:  cmp dword ptr [rip + pid], 0
     je 9f
     mov dword ptr [rip + cancelled], 1
     mov edi, [rip + pid]
@@ -254,11 +290,19 @@ FN ai_timeout
     jne 1f
     cmp dword ptr [rip + pending], 0
     jne 1f
-    mov eax, -1
+    cmp qword ptr [rip + g_ai_ext_name], 0
+    je 2f
+    push rax
+    call scmext_commit_busy
+    test eax, eax
+    pop rax
+    jnz 1f
+2:  mov eax, -1
 1:  ret
 
 FN ai_tick
     PROLOGUE
+    call scmext_tick
     cmp dword ptr [rip + g_ai_kind], 0
     jne 2f
     cmp dword ptr [rip + pending], 0
@@ -339,8 +383,18 @@ start:
     lea rsi, [rip + .Le_provider]
     mov eax, [rip + cfg_commit_ai]
     cmp eax, 3
-    ja 9f
-    lea rcx, [rip + providers]
+    jbe 3f
+    # an extension's message: the helper only writes the diff it is given (scmext.s)
+    cmp r15d, 3
+    jne 9f
+    lea rdi, [rip + env_action]
+    lea rsi, [rip + .Le_action]
+    lea rdx, [rip + .Ldiff]
+    call field
+    lea rdi, [rip + env_provider]
+    lea rsi, [rip + .Le_provider]
+    mov eax, 4
+3:  lea rcx, [rip + providers]
     mov rdx, [rcx + rax*8]
     call field
     lea rdi, [rip + env_model]
@@ -555,7 +609,15 @@ finish:
     jz 8f
     cmp dword ptr [rip + exit_code], 0
     jne 7f
-    cmp dword ptr [rip + cfg_commit_ai], 3
+    cmp dword ptr [rip + cfg_commit_ai], 4
+    jb 10f
+    cmp ebx, 3
+    jne 6f
+    mov rdi, r12                # the diff, for the extension
+    mov rsi, r13
+    call scmext_commit_request
+    jmp 9f
+10: cmp dword ptr [rip + cfg_commit_ai], 3
     jne 4f
     mov eax, [rip + result_model]
     cmp eax, -1
@@ -590,6 +652,7 @@ finish:
     EPILOGUE
 
 # describe(cstr): bounded status, also safe for arbitrary helper errors.
+FN ai_describe
 describe:
     lea rsi, [rip + g_ai_desc]
     mov ecx, 250
@@ -666,6 +729,9 @@ describe:
 .Lclaude: .asciz "claude"
 .Lcodex: .asciz "codex"
 .Lollama: .asciz "ollama"
+.Lext: .asciz "ext"
+.Ldiff: .asciz "diff"
+.Lext_desc: .asciz "An extension writes the messages."
 .ifdef WINDOWS
 .Lshell: .asciz "powershell.exe"
 .Loutputformat: .asciz "-OutputFormat"
@@ -679,5 +745,5 @@ describe:
 .endif
 .p2align 3
 actions: .quad .Lempty, .Lprobe, .Linstall, .Lgenerate, .Ldelete
-providers: .quad .Lnone, .Lclaude, .Lcodex, .Lollama
+providers: .quad .Lnone, .Lclaude, .Lcodex, .Lollama, .Lext
 busy: .quad .Loff, .Lchecking, .Lsetup, .Lgenerating, .Ldeleting
