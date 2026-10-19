@@ -2070,6 +2070,11 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call tools_cancel
+    mov edi, 2                  # or a card of one of its sessions (agentext.s)
+    call field_u64
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call agentext_cancel
 0:  pop rbx
     # of this extension's open prompt: the prompt closes, answered cancelled
     cmp qword ptr [rip + pr_id], 0
@@ -4431,6 +4436,7 @@ verbs:
     .quad .Lv_unpropose, h_unpropose, 0
     .quad .Lv_tools, h_tools, 0
     .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
+    .quad .Lv_agent_ask, h_agent_ask, 8192
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX

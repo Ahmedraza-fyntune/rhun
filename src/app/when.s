@@ -1687,6 +1687,8 @@ ck_text_input_focus:
     je 1f
     cmp ecx, FOCUS_SCM
     je 1f
+    cmp ecx, FOCUS_AGENT_INPUT
+    je 1f
     xor eax, eax
     jmp ck_bool
 1:  mov eax, 1

@@ -1622,6 +1622,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_AGENTS, "agents", 1              # agent-sessions; rhun asks agent-transcript
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
     FEATURE FEAT_TOOLS, "tools", 1                # tools, tool-call; rhun asks owners: tool
+    FEATURE FEAT_AGENT_PROMPTS, "agent-prompts", 1    # agent-ask; rhun asks agent-prompt
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
     # language features (query.s, complete.s, langfeat.s)

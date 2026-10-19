@@ -266,13 +266,23 @@ ai_reply:
     test eax, eax
     jnz 9f
 1:  FEAT_TEST rbx, FEAT_TOOLS
-    jz 8f
+    jz 2f
     mov rdi, rbx
     mov rsi, [rsp]
     mov edx, [rsp + 8]
     mov rcx, [rsp + 16]
     mov r8, [rsp + 24]
     call tools_reply
+    test eax, eax
+    jnz 9f
+2:  FEAT_TEST rbx, FEAT_AGENT_PROMPTS
+    jz 8f
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov edx, [rsp + 8]
+    mov rcx, [rsp + 16]
+    mov r8, [rsp + 24]
+    call agentext_prompt_reply
     test eax, eax
     jnz 9f
 8:  xor eax, eax
@@ -340,6 +350,35 @@ h_tool_call:
     mov r8, [rip + body_ptr]
     mov r9, [rip + body_len]
     call tools_call
+    jmp 9f
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID agent-ask SID LEN + a prompt line and option lines (feature agent-prompts): a card in that
+# session's conversation, answered ok ID N (from 1) when the user picks, or error cancelled
+h_agent_ask:
+    PROLOGUE
+    mov edi, FEAT_AGENT_PROMPTS
+    call ai_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 8f
+    mov edi, 2
+    call field_at
+    mov rcx, rdx
+    mov rdx, rax
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    call agentext_ask
+    test rax, rax
+    jz 9f                       # answered when the user picks
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
     jmp 9f
 8:  mov rdi, [rip + cur_id]
     call reply_syntax
@@ -426,4 +465,5 @@ pr_tool: .quad 0                # the rhun.run call the open term prompt answers
 .Lv_tools: .asciz "tools"
 .Le_no_answer: .asciz "busy the extension did not answer in time"
 .Lv_tool_call: .asciz "tool-call"
+.Lv_agent_ask: .asciz "agent-ask"
 .text
