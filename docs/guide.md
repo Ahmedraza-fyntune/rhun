@@ -756,6 +756,21 @@ updates from fetching that version again. After **Roll back**, automatic updates
 version you went back from alone until a newer one appears. What rhun learned is kept in
 `$XDG_STATE_HOME/rhun/extension-updates`.
 
+#### Browse
+
+**Browse** on the Extensions page lists the extensions of the
+[rhun extensions index](https://github.com/rhun-editor/extensions): each one's version was
+reviewed before rhun offers it, its release pinned by tag and archive digest. Type in the search
+field (ctrl+f on the page) to narrow the list: each word must start a word of an extension's
+title, `owner/name`, description or keywords; featured ones come first. Each card shows what the
+extension can do and one button: **Install** (the reviewed version; its download must match the
+index's digest, then the usual Add dialog), **Installed**, **Update to 0.2.0**, **Not for this
+system** or **Needs rhun 0.19**. rhun fetches the index when Browse opens and its copy is older
+than a day, with every update check, and on **Refresh** (never at startup just for Browse); it
+keeps the copy in `$XDG_STATE_HOME/rhun/extension-index.ini` and shows it offline with its age.
+The website's [catalog](https://rhun.app/extensions/catalog/) lists the same extensions with
+Install links that open rhun.
+
 **Remove** stops the extension and deletes its folder, its previous version, its saved data and
 log, its settings, pin and on/off choice, the provider choices that name it (rhun asks again
 rather than switching silently) and what rhun knew about its updates. Your `[keys]` stay.
