@@ -17,6 +17,8 @@
 #include <sys/random.h>             /* getentropy (wasi-libc has it in unistd.h) */
 #endif
 
+static const char *g_argv0 = "";
+
 static void toastf(rx_ext *ext, const char *fmt, const char *a, long b, long c) {
     char buf[300];
     snprintf(buf, sizeof buf, fmt, a, b, c);
@@ -132,13 +134,30 @@ static void on_command(rx_ext *ext, const char *name, rx_doc doc, void *user) {
         }
     } else if (strcmp(name, "trap") == 0) {
         __builtin_trap();
+    } else if (strcmp(name, "own") == 0) {
+        /* its own folder, read only: the manifest next to bin/, found from the module's path */
+        snprintf(path, sizeof path, "%s", g_argv0);
+        char *slash = strrchr(path, '/');
+        if (slash) *slash = 0;
+        slash = strrchr(path, '/');
+        if (slash) *slash = 0;
+        snprintf(path2, sizeof path2, "%s/extension.ini", path);
+        int r = readable(path2);
+        snprintf(path2, sizeof path2, "%s/x.txt", path);
+        FILE *f = fopen(path2, "w");
+        int w = f != NULL;
+        if (f) fclose(f);
+        char buf[100];
+        snprintf(buf, sizeof buf, "own read=%s write=%s", r ? "true" : "false", w ? "true" : "false");
+        rx_toast(ext, buf);
     } else if (strcmp(name, "exit") == 0) {
         exit(3);
     }
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     rx_handlers h = {0};
+    g_argv0 = argc > 0 ? argv[0] : "";
     h.command = on_command;
     return rx_run("", &h, NULL);
 }

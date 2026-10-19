@@ -95,6 +95,14 @@ impl Handler for Test {
                 let i = std::env::var("NEVER").map(|s| s.len()).unwrap_or(7);
                 toast(ext, &format!("{}", v[i]));
             }
+            "own" => {
+                // its own folder, read only: the manifest next to bin/, found from the module's path
+                let module = std::env::args().next().unwrap_or_default();
+                let dir = std::path::Path::new(&module).parent().and_then(|p| p.parent());
+                let read = dir.map(|d| fs::read_to_string(d.join("extension.ini")).is_ok()).unwrap_or(false);
+                let write = dir.map(|d| fs::write(d.join("x.txt"), b"x").is_ok()).unwrap_or(false);
+                toast(ext, &format!("own read={read} write={write}"));
+            }
             "exit" => std::process::exit(3),
             _ => {}
         }

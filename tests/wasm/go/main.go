@@ -115,6 +115,11 @@ func (t *test) Run(ext *rhunext.Ext, command string, doc rhunext.Doc) {
 		var v []byte
 		i := len(os.Getenv("NEVER")) + 7
 		ext.Toast(fmt.Sprint(v[i]))
+	case "own":
+		dir := filepath.Dir(filepath.Dir(os.Args[0]))
+		_, rerr := os.ReadFile(filepath.Join(dir, "extension.ini"))
+		werr := os.WriteFile(filepath.Join(dir, "x.txt"), []byte("x"), 0o644)
+		ext.Toast(fmt.Sprintf("own read=%v write=%v", rerr == nil, werr == nil))
 	case "exit":
 		os.Exit(3)
 	}

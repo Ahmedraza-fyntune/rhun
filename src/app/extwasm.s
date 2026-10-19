@@ -60,10 +60,15 @@ FN ext_wasm_argv
     call .Lpush
     lea rdi, [rip + .Lo_host]
     call .Lpush
-    # the state folder: read and write, as for every extension
+    # the state folder: read and write, as for every extension; its own folder, read only (a
+    # native program's working folder: the module finds it from its path, its first argument)
     lea rdi, [rip + .Lo_dir]
     call .Lpush
     mov rdi, [rbx + EXT_state]
+    call .Lpush
+    lea rdi, [rip + .Lo_dir_ro]
+    call .Lpush
+    mov rdi, [rbx + EXT_dir]
     call .Lpush
     # the project, as [needs] project says
     mov rax, [rip + g_project]

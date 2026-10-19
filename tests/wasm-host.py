@@ -190,6 +190,9 @@ class Wasm(unittest.TestCase):
         self.assertEqual(self.command('escape', 'escape', needs='documents = write\nhome = read'),
                          'toast=escape absolute=true climb=false')
 
+    def test_its_own_folder_read_only(self):
+        self.assertEqual(self.command('own', 'own'), 'toast=own read=true write=false')
+
     def test_clocks(self):
         self.assertTrue(self.command('time', 'time').startswith('toast=time true slept=true'))
 
@@ -260,6 +263,93 @@ class WasmC(Wasm):
     NAME = 'wasmtest-c'
     BUILDER = staticmethod(build_c)
     MANIFEST = SRC / 'c/extension.ini'
+
+
+class Direct(unittest.TestCase):
+    """The modules driven through `rhun --wasm-host` alone, as rhun drives them over the pipes:
+    where the editor's headless tests cannot run (Windows under Wine: RHUN_WASM_HOST="wine64
+    Z:/path/rhun.com", RHUN_WASM_PATH_PREFIX=Z: for the paths the host sees)."""
+
+    def setUp(self):
+        host = os.environ.get('RHUN_WASM_HOST')
+        self.host = host.split() if host else [str(EXE)]
+        self.prefix = os.environ.get('RHUN_WASM_PATH_PREFIX', '')
+        self.tmp = tempfile.TemporaryDirectory(prefix='rhun-wasm-direct-')
+        self.work = Path(self.tmp.name).resolve()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hp(self, p):
+        return self.prefix + p.as_posix()
+
+    def drive(self, name, builder, commands):
+        wasm = get(name, builder)
+        if wasm is None:
+            self.skipTest('no %s module' % name)
+        ext = self.work / name
+        if ext.exists():
+            shutil.rmtree(ext)
+        (ext / 'bin').mkdir(parents=True)
+        shutil.copy(wasm, ext / 'bin' / (name + '.wasm'))
+        (ext / 'extension.ini').write_text('name = %s\n' % name, encoding='utf-8')
+        state = self.work / ('state-' + name)
+        shutil.rmtree(state, ignore_errors=True)
+        state.mkdir()
+        secret = self.work / 'secret.txt'
+        secret.write_text('secret\n', encoding='utf-8')
+        env = dict(os.environ, RHUN_STATE=self.hp(state), RHUN_EXTENSION='rhun-tests/' + name,
+                   WASMTEST_SECRET=self.hp(secret))
+        p = subprocess.Popen(self.host + ['--wasm-host', '--dir', self.hp(state), '--dir-ro', self.hp(ext),
+                                          self.hp(ext / 'bin' / (name + '.wasm'))],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(self.work / 'err.txt', 'wb'),
+                             env=env)
+        out = p.stdout
+
+        def line():
+            b = out.readline()
+            if not b:
+                raise EOFError('the module ended: ' + (self.work / 'err.txt').read_text(errors='replace')[-500:])
+            return b.decode().rstrip('\n')
+        self.assertEqual(line(), 'hello 1')
+        p.stdin.write(b'0 ready -\n')
+        toasts = []
+        for c in commands:
+            p.stdin.write(('0 run %s.%s 7\n' % (name, c)).encode())
+            p.stdin.flush()
+            while True:
+                rid, verb, *fields = line().split(' ')
+                if verb == 'toast':
+                    toasts.append(out.read(int(fields[-1])).decode())
+                    p.stdin.write(('ok %s\n' % rid).encode())
+                    p.stdin.flush()
+                    break
+                p.stdin.write(('error %s unknown\n' % rid).encode())
+                p.stdin.flush()
+        p.stdin.write(b'0 bye\n')
+        p.stdin.close()
+        p.wait(timeout=30)
+        return toasts
+
+    def check(self, name, builder):
+        commands = ['hello', 'env', 'files', 'escape', 'own', 'time']
+        toasts = self.drive(name, builder, commands)
+        self.assertEqual(toasts[0], 'hello from wasm')
+        self.assertEqual(toasts[1], 'env rhun-tests/%s args 1' % name)
+        self.assertEqual(toasts[2], 'files ok written by wasm 2 16')
+        self.assertEqual(toasts[3], 'escape absolute=false climb=false')
+        self.assertEqual(toasts[4], 'own read=true write=false')
+        self.assertTrue(toasts[5].startswith('time true slept=true'), toasts[5])
+
+    def test_rust(self):
+        self.check('wasmtest', build_rust)
+
+    def test_go(self):
+        self.check('wasmtest-go', build_go)
+        self.assertEqual(self.drive('wasmtest-go', build_go, ['tick'])[0], 'ticks 5')
+
+    def test_c(self):
+        self.check('wasmtest-c', build_c)
 
 
 def alive(pid):
