@@ -190,6 +190,8 @@ python3 tests/ext-fuzz.py 1 4 || fail=1
 for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime; do
     python3 tests/$t.py || fail=1
 done
+# testing: the test explorer (feature "tests")
+python3 tests/testing.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?

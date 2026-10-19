@@ -2359,6 +2359,12 @@ FN app_on_key
     call complete_key           # the completion list, when it shows, takes its keys first
     test eax, eax
     jnz 9f
+    mov edi, r12d               # AI: a Review tab's keys (review.s)
+    mov esi, r13d
+    mov edx, r14d
+    call review_key
+    test eax, eax
+    jnz 9f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
@@ -2695,7 +2701,7 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: call dap_timeout             # debugger: adapters' messages and deadlines
+96: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
     cmp eax, -1
     je 98f
     cmp ebx, -1
@@ -2703,7 +2709,15 @@ FN app_timeout
     cmp eax, ebx
     jge 98f
 99: mov ebx, eax
-98: mov eax, ebx
+98: call dap_timeout             # debugger: adapters' messages and deadlines
+    cmp eax, -1
+    je 100f
+    cmp ebx, -1
+    je 101f
+    cmp eax, ebx
+    jge 100f
+101:mov ebx, eax
+100:mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2733,6 +2747,7 @@ FN app_tick
     call editor_tick
     call ext_tick
     call ext_provider_tick
+    call testing_tick           # testing (testproto.s)
     call app_clip_tick
     call dap_tick               # debugger
     EPILOGUE

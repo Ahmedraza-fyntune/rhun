@@ -966,6 +966,10 @@ FN ext_retire
     call langfeat_ext_gone
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
+    mov rdi, rbx
+    call testmodel_forget       # testing: its tests and results go
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     call ext_cmds_changed
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1584,7 +1588,9 @@ FN ext_load
     jne .Lel_fail
     lea rdi, [rip + .Lr_manifest_large]
     jmp .Lel_fail
-1:  lea rdi, [rip + ini_it]
+1:  mov rdi, rbx                # AI: nothing from an earlier manifest (agentext.s)
+    call ai_ext_reset
+    lea rdi, [rip + ini_it]
     mov rsi, r13
     mov rdx, r14
     call ini_init
@@ -1920,10 +1926,24 @@ manifest_kv:
     call ini_sec_is
     test eax, eax
     jz 5f
+    mov rdi, rbx                # AI: agents, agents.title (agentext.s)
+    mov rsi, r12
+    call agentext_manifest_kv
+    test eax, eax
+    jnz 9f
     lea rdi, [rip + pv_keys]
     call parse_keyed
     jmp 9f
-5:  # debugger: [debugger.TYPE] (debugcfg.s)
+5:  mov rdi, r12                # AI: [tools] (tools.s)
+    lea rsi, [rip + .Ls_tools]
+    call ini_sec_is
+    test eax, eax
+    jz 6f
+    mov rdi, rbx
+    mov rsi, r12
+    call tools_manifest_kv
+    jmp 9f
+6:  # debugger: [debugger.TYPE] (debugcfg.s)
     mov rdi, [r12 + INI_sec]
     mov rsi, [r12 + INI_seclen]
     lea rdx, [rip + .Ls_debugger_dot]
@@ -2228,7 +2248,18 @@ parse_needs:
     call val_dup
     mov [rbx + EXT_runs], rax
     jmp 9f
-6:  mov rdi, r12                # debugger: debug = yes starts debug adapters as the user
+6:  # testing: tests = the programs rhun may start, with the user's access, during test runs
+    mov rdi, r12
+    lea rsi, [rip + .Lpv_tests]
+    call ini_key_is
+    test eax, eax
+    jz 7f
+    mov rdi, [rbx + EXT_tests_progs]
+    call mem_free
+    call val_dup
+    mov [rbx + EXT_tests_progs], rax
+    jmp 9f
+7:  mov rdi, r12                # debugger: debug = yes starts debug adapters as the user
     lea rsi, [rip + .Ln_debug]
     call ini_key_is
     test eax, eax
@@ -3546,6 +3577,10 @@ FN ext_exited
     call complete_ext_gone      # and its completion items and signature help
     mov rdi, rbx
     call langfeat_ext_gone      # and the language queries it was asked
+    mov rdi, rbx
+    call testproto_ext_gone     # testing: its runs end errored and their processes stop
+    mov rdi, rbx
+    call ai_ext_gone            # AI: its sessions, tool calls and cards
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4614,13 +4649,17 @@ cur_start: .quad 0              # the EXT being started (env_add_state)
 .p2align 3
 state_names: .quad .Lst_idle, .Lst_starting, .Lst_running, .Lst_stopping, .Lst_stopped, .Lst_crashed, .Lst_failed, .Lst_disabled, .Lst_removed
 pv_more: .quad EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename
-    .quad EXT_pv_format, EXT_pv_save_actions, 0
+    .quad EXT_pv_format, EXT_pv_save_actions
+    .quad EXT_pv_tests              # testing: a controller hears its test files as a provider does
+    .quad 0
 pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_signature, EXT_pv_signature, .Lpv_strig, EXT_pv_strig
     .quad .Lpv_definition, EXT_pv_definition, .Lpv_references, EXT_pv_references
     .quad .Lpv_symbols, EXT_pv_symbols, .Lpv_actions, EXT_pv_actions
     .quad .Lpv_rename, EXT_pv_rename, .Lpv_format, EXT_pv_format
-    .quad .Lpv_save_actions, EXT_pv_save_actions, 0, 0
+    .quad .Lpv_save_actions, EXT_pv_save_actions
+    .quad .Lpv_tests, EXT_pv_tests, .Lpv_tests_profiles, EXT_tests_profiles     # testing
+    .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover, 0, 0
@@ -4713,6 +4752,7 @@ ext_target: .asciz "linux-x86_64"
 .Ls_commands: .asciz "commands"
 .Ls_subscribe: .asciz "subscribe"
 .Ls_provides: .asciz "provides"
+.Ls_tools: .asciz "tools"           # AI (tools.s)
 .Lpv_complete: .asciz "complete"
 .Lpv_ctrig: .asciz "complete.triggers"
 .Lpv_signature: .asciz "signature"
@@ -4724,6 +4764,8 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_rename: .asciz "rename"
 .Lpv_format: .asciz "format"
 .Lpv_save_actions: .asciz "save_actions"
+.Lpv_tests: .asciz "tests"
+.Lpv_tests_profiles: .asciz "tests.profiles"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"
