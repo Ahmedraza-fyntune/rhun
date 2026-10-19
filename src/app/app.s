@@ -2630,6 +2630,7 @@ FN app_timeout
 timeout_fns:
     .quad agents_timeout
     .quad git_timeout
+    .quad scmext_timeout        # source control: quick-diff requests' time
     .quad update_timeout
     .quad ai_timeout
     .quad watch_timeout

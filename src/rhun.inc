@@ -627,6 +627,7 @@ F DOC_language_pending, 8
 # source control (wider-parity C): quick-diff bases from extensions (scmext.s)
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
+F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
 ENDSTRUCT DOC_SIZE
 .equ DL_AUTO, 0
 .equ DL_PLAIN, 1
