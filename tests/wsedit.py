@@ -368,6 +368,7 @@ class Ws(host.Host):
         self.assertEqual((self.proj / 'c.txt').read_text(), 'third file\n')
         self.assertEqual((self.proj / 'a.txt').read_text(), 'hello world\nsecond line\n')
 
+    @unittest.skipIf(os.name == 'nt' or os.geteuid() == 0, 'a read-only folder does not stop root (or Windows)')
     def test_a_write_the_system_refuses_puts_everything_back(self):
         sub = self.proj / 'locked'
         sub.mkdir()
