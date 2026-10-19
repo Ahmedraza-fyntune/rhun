@@ -2796,6 +2796,7 @@ FN langfeat_tick
     call lf_rs_tick
     call langextra_tick
     call outline_tick
+    call hovercard_tick
     cmp dword ptr [rip + lf_show_due], 0
     je 0f
     mov dword ptr [rip + lf_show_due], 0  # the first parts of a query still out, shown
@@ -3500,6 +3501,8 @@ FN langfeat_ext_gone
     call results_ext_gone       # hierarchy rows waiting on it
     mov rdi, [rsp]
     call outline_ext_gone
+    mov rdi, [rsp]
+    call hovercard_ext_gone
     pop rdi
     pop rdi
     xor ecx, ecx
@@ -3577,7 +3580,7 @@ lf_peek_titles: .quad 0, .Lpk_def, .Lpk_refs, 0, 0, 0, 0, .Lpk_decl, .Lpk_typede
 .Lpk_typedef: .asciz "type definition"
 .Lpk_impl: .asciz "implementation"
 .p2align 3
-lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, 0
+lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, hovercard_reply, 0
 .Lv_definition: .asciz "definition"
 .Lv_references: .asciz "references"
 .Lv_symbols: .asciz "symbols"

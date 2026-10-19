@@ -2415,6 +2415,12 @@ FN app_on_key
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
+    call hovercard_key          # language features: the hover card, when it shows (hovercard.s)
+    test eax, eax
+    jnz 9f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
     call peek_key               # language features: the peek view, when it shows (peek.s)
     test eax, eax
     jnz 9f
@@ -2692,6 +2698,7 @@ timeout_fns:
     .quad complete_timeout
     .quad langfeat_timeout
     .quad outline_timeout       # language features: the Outline's debounce (outline.s)
+    .quad hovercard_timeout     # and the hover card's rest, show time and grace (hovercard.s)
     .quad ext_provider_timeout
     .quad save_timeout
     .quad uproc_timeout
@@ -2992,6 +2999,7 @@ FN app_render
     # overlays (not blocked)
     mov dword ptr [rip + g_block], 0
     call complete_draw
+    call hovercard_draw         # language features: the hover card (hovercard.s)
     call extbar_draw
     call explorer_menu_draw
     call palette_draw

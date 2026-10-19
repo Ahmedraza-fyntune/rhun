@@ -10,6 +10,7 @@ library only. spec.json next to the running program says what it does:
              the document's text first and fill {line1} with its first line),
              "match": {request body: answer} (a bodied request answered by what it carries)}
   run        per command name: requests to send when it runs: [[verb_and_args, body], ...]
+  hover_text a v1 hover subscriber's answer to "0 hover" (sent as a hover request)
 
 Bodies may hold {path} (the asked document's path), {project}, {doc}, {version}, {line1}.
 Every line rhun sends, and every reply to this program's own requests, is logged to
@@ -180,6 +181,10 @@ def main():
             VERSIONS[parts[2]] = int(parts[3])
         elif event in ('changed', 'saved'):
             VERSIONS[fields[2]] = int(fields[3])
+        elif event == 'hover' and SPEC.get('hover_text'):
+            # a v1 hover subscriber's answer: "ID hover DOC LINE COL LEN" + the text
+            b = SPEC['hover_text'].encode()
+            request(f'hover {fields[2]} {fields[3]} {fields[4]} {len(b)}', b)
         elif event == 'run':
             name = fields[2].split('.', 1)[1]
             for verb_and_args, body in SPEC.get('run', {}).get(name, []):

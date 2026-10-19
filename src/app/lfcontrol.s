@@ -30,6 +30,8 @@ lc_rlen: .quad 0
     LCWRAP w_print_results, c_print_results
     LCWRAP w_print_outline, c_print_outline
     LCWRAP w_print_peek, c_print_peek
+    LCWRAP w_print_hover_card, c_print_hover_card
+    LCWRAP w_hover_at, c_hover_at
 
 # lc_arg() -> rax ptr, rdx len of the next word of the rest (rdx 0 at its end)
 lc_arg:
@@ -144,6 +146,32 @@ c_print_peek:
     pop rbx
     ret
 
+# print-hover-card: the hover card (hovercard.s)
+c_print_hover_card:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call hovercard_dump
+    pop rbx
+    ret
+
+# hover-at LINE COL: the pointer over that place of the editor's text
+c_hover_at:
+    push rbx
+    call lc_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    mov rbx, rax
+    call lc_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    mov rsi, rax
+    mov rdi, rbx
+    call hovercard_point
+    pop rbx
+    ret
+
 # print-query: the requests rhun waits on, with their progress
 c_print_query:
     push rbx
@@ -161,6 +189,8 @@ c_print_query:
 .Lc_print_results: .asciz "print-results"
 .Lc_print_outline: .asciz "print-outline"
 .Lc_print_peek: .asciz "print-peek"
+.Lc_print_hover_card: .asciz "print-hover-card"
+.Lc_hover_at: .asciz "hover-at"
 .p2align 3
 .globl langfeat_ctl
 langfeat_ctl:
@@ -171,4 +201,6 @@ langfeat_ctl:
     .quad .Lc_print_results, w_print_results
     .quad .Lc_print_outline, w_print_outline
     .quad .Lc_print_peek, w_print_peek
+    .quad .Lc_print_hover_card, w_print_hover_card
+    .quad .Lc_hover_at, w_hover_at
     .quad 0, 0

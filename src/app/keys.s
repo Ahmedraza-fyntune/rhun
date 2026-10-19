@@ -2074,6 +2074,7 @@ g_commands:
     COMMAND fix_all, "Fix All", cmd_fix_all, ""
     COMMAND refactor, "Refactor...", cmd_refactor, "ctrl+shift+r"
     COMMAND source_action, "Source Action...", cmd_source_action, ""
+    COMMAND show_hover, "Show Hover", cmd_show_hover, "ctrl+i"
     COMMAND peek_definition, "Peek Definition", cmd_peek_definition, "alt+F12"
     COMMAND peek_declaration, "Peek Declaration", cmd_peek_declaration, ""
     COMMAND peek_type_definition, "Peek Type Definition", cmd_peek_type_definition, ""

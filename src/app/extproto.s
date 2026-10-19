@@ -3944,6 +3944,11 @@ FN extproto_send_hover_all
     call sub_matches
     test eax, eax
     jz 1b
+    mov rdi, rbx                # language features: hover-query instead (hovercard.s)
+    mov rsi, r13
+    call hovercard_asks
+    test eax, eax
+    jnz 1b
     mov [rip + cur], rbx
     call out_begin
     lea rdi, [rip + .Lev_hover]
