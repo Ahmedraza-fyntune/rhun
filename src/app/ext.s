@@ -1735,7 +1735,17 @@ FN ext_load
     call provides_merge
     inc r12d
     jmp 82b
-83: # its data files: themes and grammars
+83: # source control (wider-parity C): a quick-diff provider hears opened for its files, so that
+    # rhun can ask about them (scmext.s); it starts by its own `on`
+    mov r12, [rbx + EXT_pv_quickdiff]
+    test r12, r12
+    jz 84f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    lea rdi, [rbx + EXT_sub_opened]
+    call merge_into
+84: # its data files: themes and grammars
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsub_themes]
     call path_join

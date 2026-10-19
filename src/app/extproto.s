@@ -3826,6 +3826,7 @@ verbs:
     .quad .Lv_git_log, gitdata_h_log, 4096
     .quad .Lv_git_show, gitdata_h_show, 4096
     .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
+    .quad .Lv_qd_refresh, scmext_h_qd_refresh, 4096
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -3857,6 +3858,7 @@ verbs:
 .Lv_git_log: .asciz "git-log"
 .Lv_git_show: .asciz "git-show"
 .Lv_git_diff_open: .asciz "git-diff-open"
+.Lv_qd_refresh: .asciz "quickdiff-refresh"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
