@@ -1217,7 +1217,44 @@ F UR_aftercur, 8        # optional group replay caret; -1 for ordinary records
 F UR_afteranchor, 8
 F UR_beforeselections, 8 # owned secondary selection snapshot, or 0
 F UR_afterselections, 8  # owned snapshot, 0 = single, -1 = unspecified
+F UR_tx, 8              # wsedit: the workspace-edit transaction this group belongs to, 0 for none
 ENDSTRUCT UR_SIZE
+
+# ---- workspace-edit transactions (wsedit: wsedit.s, wstx.s, wsdisk.s) ----
+# a transaction: one workspace edit across documents and files, undone and redone as one step
+STRUCT
+F TX_id, 8              # session-unique, never 0 (UR_tx names it)
+F TX_label, 8           # owned cstr: names it in toasts and lists
+F TX_journal, 8         # owned cstr: its journal folder, or 0 when it wrote nothing to disk
+F TX_nparts, 8
+F TX_parts, 8           # owned array of TP
+F TX_flags, 8           # TXF_*
+ENDSTRUCT TX_SIZE
+.equ TX_MAX, 64
+.equ TXF_DISK, 1        # it changed files on disk
+# a participant of a transaction
+STRUCT
+F TP_kind, 8            # TPK_*
+F TP_doc, 8             # TPK_BUF: the document
+F TP_state, 8           # TPS_*
+F TP_wrote, 8           # TPK_BUF: its text was also written to disk
+F TP_path, 8            # owned cstr: the file (TPK_FILE, a written TPK_BUF, the file operations)
+F TP_path2, 8           # owned cstr: a rename's target
+F TP_before, 8          # FNV-1a of the file's bytes before and after (disk participants)
+F TP_after, 8
+F TP_slot, 8            # its journal slot, -1 for none
+F TP_flags, 8           # TPF_*
+ENDSTRUCT TP_SIZE
+.equ TPK_BUF, 1         # an open document's buffer
+.equ TPK_FILE, 2        # a file on disk that was not open
+.equ TPK_CREATE, 3
+.equ TPK_RENAME, 4
+.equ TPK_DELETE, 5
+.equ TPS_APPLIED, 0
+.equ TPS_UNDONE, 1
+.equ TPS_LOST, 2        # closed unsaved, or otherwise out of reach: skipped
+.equ TPF_FOLDER, 1      # a create or delete of a folder
+.equ TPF_PICK, 2        # tx_run: undo or redo this one
 
 .equ EK_OTHER, 0
 .equ EK_TYPE, 1

@@ -14,6 +14,7 @@
 .equ PM_CHOOSE, 9               # an extension's pick list (choose)
 .equ PM_PROVIDERS, 11
 .equ PM_RESULTS, 10             # results from extensions: locations, symbols, code actions (langfeat.s)
+.equ PM_WSLIST, 12              # wsedit: a workspace edit's question (wsconfirm.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -203,6 +204,7 @@ palette_open:
     call pal_save_cancel
     call ext_provider_cancel
     call extproto_prompt_abort  # an extension's prompt that was open is cancelled
+    call wslist_abort           # wsedit: and a workspace edit's question
     # from the theme list to another list (its shortcut): the settings' theme again, as on closing
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
@@ -259,6 +261,7 @@ FN palette_close
     call pal_save_cancel
     call ext_provider_cancel
     call extproto_prompt_abort
+    call wslist_abort           # wsedit
     # themes: the settings' theme again, after a preview or a change of the system's mode
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
@@ -962,6 +965,18 @@ FN palette_choose_add
 
 FN palette_choose_ready
     jmp palette_filter
+
+# wsedit: palette_wslist_open(label cstr): an empty pick list for a workspace edit's question
+# (wsconfirm.s); rows follow with palette_choose_add, then palette_choose_ready; choosing row n
+# calls wslist_chosen(n), closing it otherwise wslist_abort
+FN palette_wslist_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_WSLIST
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
 
 # palette_results_open(label cstr), palette_results_add(ptr, len, detail cstr or 0, n),
 # palette_results_ready(), palette_results_close(): a list of langfeat's results; choosing item n
@@ -1841,6 +1856,8 @@ FN palette_print
     je 10f
     cmp dword ptr [rip + pal_mode], PM_CHOOSE
     je 13f
+    cmp dword ptr [rip + pal_mode], PM_WSLIST
+    je 13f
     cmp dword ptr [rip + pal_mode], PM_PROVIDERS
     je 13f
     cmp dword ptr [rip + pal_mode], PM_RESULTS
@@ -2356,7 +2373,15 @@ palette_accept:
     call ext_provider_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-33: cmp ebx, PM_CHOOSE
+33: cmp ebx, PM_WSLIST           # wsedit
+    jne 34f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call wslist_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+34: cmp ebx, PM_CHOOSE
     jne .Lpa_close
     # the extension's pick: the item's number, with the palette closed first (the reply may
     # open another prompt)

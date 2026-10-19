@@ -575,6 +575,8 @@ g_commands:
     COMMAND quit, "Quit", cmd_quit, "ctrl+q"
     COMMAND undo, "Undo", cmd_undo, "ctrl+z"
     COMMAND redo, "Redo", cmd_redo, "ctrl+shift+z ctrl+y"
+    COMMAND undo_workspace_edit, "Undo Last Multi-File Edit", cmd_undo_workspace_edit, ""
+    COMMAND redo_workspace_edit, "Redo Last Multi-File Edit", cmd_redo_workspace_edit, ""
     COMMAND snippet_choose, "Snippet: Choose Value", cmd_snippet_choose, ""
     COMMAND snippet_next, "Snippet: Next Field", cmd_snippet_next, ""
     COMMAND snippet_previous, "Snippet: Previous Field", cmd_snippet_previous, ""

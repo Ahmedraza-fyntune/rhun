@@ -1231,7 +1231,10 @@ h_apply:
     mov rdi, [rip + body_ptr]
     mov rsi, [rip + body_len]
     mov rdx, [rip + cur]
+    mov rcx, [rip + cur_id]
     call ws_apply_request
+    cmp eax, 2
+    je 9f                       # wsedit: the confirmation list answers when the user does
     test eax, eax
     jz 1f
     mov rdi, [rip + cur_id]
@@ -1241,6 +1244,23 @@ h_apply:
     mov rsi, rdx
     call reply_error
 9:  EPILOGUE
+
+# wsedit: FN extproto_reply_to(ext, id, error "CODE TEXT" or 0): a reply that waited (an apply
+# request the confirmation list held)
+FN extproto_reply_to
+    PROLOGUE
+    mov rbx, [rip + cur]
+    mov [rip + cur], rdi
+    mov r12, rdx
+    mov rdi, rsi
+    test r12, r12
+    jnz 1f
+    call reply_ok
+    jmp 2f
+1:  mov rsi, r12
+    call reply_error
+2:  mov [rip + cur], rbx
+    EPILOGUE
 
 # Additive protocol identity/position fields are decimal int64 values, with overflow rejected.
 save_number:

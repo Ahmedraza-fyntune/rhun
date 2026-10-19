@@ -1607,6 +1607,19 @@ c_print_toast:
     xor eax, eax
     ret
 
+# wsedit: print-tx, the workspace-edit transactions (wstx.s); print-journal, their journals on
+# disk (wsdisk.s)
+c_print_tx:
+    lea rdi, [rip + out]
+    call tx_print
+    xor eax, eax
+    ret
+c_print_journal:
+    lea rdi, [rip + out]
+    call ws_journal_print
+    xor eax, eax
+    ret
+
 # print-term: the screen of the current terminal
 c_print_term:
     lea rdi, [rip + out]
@@ -2261,6 +2274,8 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_print_project: .asciz "print-project"
 .Lc_print_panels: .asciz "print-panels"
 .Lc_print_tabs: .asciz "print-tabs"
+.Lc_print_tx: .asciz "print-tx"            # wsedit
+.Lc_print_journal: .asciz "print-journal"
 .Lc_print_palette: .asciz "print-palette"
 .Lc_print_menu: .asciz "print-menu"
 .Lc_print_tip: .asciz "print-tip"
@@ -2334,6 +2349,7 @@ ctl_table:
     .quad .Lc_ext_setting, c_ext_setting, .Lc_print_ext_page, c_print_ext_page
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
+    .quad .Lc_print_tx, c_print_tx, .Lc_print_journal, c_print_journal  # wsedit
     .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete, 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0
