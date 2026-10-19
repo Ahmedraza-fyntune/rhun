@@ -802,6 +802,13 @@ secrets = system        # or memory (until rhun quits), or file (a file only you
 `file` keeps them in `~/.local/state/rhun/secrets/`, readable only by you, in plain text: as safe
 as a `~/.netrc`.
 
+When an extension wants to open a web page (to sign in, say), rhun asks first: "Auth Demo wants
+to open github.com in your browser", with **Open**, **Copy Link**, **Cancel** and **Always open
+links from Auth Demo**. Always is remembered, and the switch on the extension's page takes it
+back. After you sign in, the browser comes back to the extension through a `rhun://ext/` link
+that works once, for ten minutes, or through a page on your own computer that says "Signed in.
+You can close this tab." A `rhun://ext/` link nobody is waiting for says so and does nothing.
+
 The command palette shows each extension command's qualified name, `owner/name.command`,
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same
