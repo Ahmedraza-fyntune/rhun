@@ -540,6 +540,16 @@ FN ext_action
 .Laction_metadata:
     mov [rip + xb_ext], rbx
     call extbar_close
+    # its [menu.extension] items replace the list of its commands (menu.s)
+    mov rdi, rbx
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    lea rcx, [rip + open_details]
+    call menu_open_extension
+    test eax, eax
+    jz 0f
+    EPILOGUE
+0:
     # its commands: manifest ones and registered ones, labels without " (Extension)"
     mov rax, rbx
     lea rcx, [rip + g_exts]

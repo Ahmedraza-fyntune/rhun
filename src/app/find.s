@@ -90,6 +90,17 @@ open_bar:
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
+# FN find_set_query(ptr, len): the find field holds this text (run-command find with ARGS)
+FN find_set_query
+    PROLOGUE
+    mov rdx, rsi
+    mov rsi, rdi
+    lea rdi, [rip + tf_find]
+    call tf_set
+    call update_matches
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
 FN cmd_find_bar
     call settings_take_find     # the settings page searches its own rows
     test eax, eax
@@ -255,6 +266,7 @@ find_raw_word:
 goto_match:
     PROLOGUE 32
     mov [rsp + 24], edi
+    call ed_single              # one selection (multi-cursor)
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f

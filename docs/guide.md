@@ -323,7 +323,7 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+Shift+O | Open folder |
 | Ctrl+Shift+P, F1 | Command palette |
 | Ctrl+, | Settings |
-| Ctrl+K | Color theme |
+| Ctrl+K Ctrl+T | Color theme |
 | Ctrl+B | Toggle explorer |
 | Ctrl+Shift+A | Toggle agents panel |
 | Ctrl+\` | Toggle terminal |
@@ -372,7 +372,7 @@ holds the path, which can include folders that do not exist yet. Right-click a f
 menu; right-click the empty space below the list for the project folder's: New File, New Folder,
 Copy Path and Show in Finder (Show in Explorer, Open in File Manager).
 
-Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder permanently removes its contents, including hidden files. Links are removed without deleting their targets. The tabs of deleted files close, except those with unsaved changes. Renaming a file or folder keeps its open tabs on the new path.
+Choose **Delete** from the explorer context menu to remove a file or folder. The confirmation has **Cancel** and **Delete** buttons. Deleting a folder removes its contents, including hidden files; links are removed without deleting their targets. The tabs of deleted files close, except those with unsaved changes. Renaming a file or folder keeps its open tabs on the new path. Both can be undone until rhun quits: `ctrl+z` while the explorer has the focus, or **Undo Last Multi-File Edit**, brings the file or folder back (deleted items wait in `~/.local/state/rhun/edits`).
 
 Right-click a file or directory in the explorer and choose **Show in Finder** (macOS), **Show in Explorer** (Windows), or **Open in File Manager** (Linux). Finder and Explorer select the item in its parent folder. Linux opens the containing folder through `xdg-open`, using your desktop's default file manager. The command palette also has **Show File in System File Manager** for the active file.
 
@@ -446,6 +446,28 @@ PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame
 
 The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
+### Multiple cursors
+
+Several selections edit together: typing, Backspace and Delete (by character and by word), Enter, Tab and Shift+Tab, Indent and Outdent, Cut, Copy and Paste act at every one, as one Undo step that also brings the selections back. The newest selection is the primary: the view follows it and the status bar shows its position and how many selections there are.
+
+| Keys | Command |
+| --- | --- |
+| Ctrl+D | Select the word at the cursor, then add the next match (whole words of the same case after a word; else the exact text) |
+| Ctrl+Shift+L | Select All Matches (at most 512, the nearest ones) |
+| Ctrl+Alt+Up / Down, Shift+Alt+Up / Down | Add Cursor Above / Below, at the primary's column |
+| Ctrl+U | Remove Last Selection |
+| Shift+Alt+I | Add Cursors to Line Ends of the selected lines |
+| Ctrl+Shift+Alt+arrows | Column Select: a box that grows from the cursor |
+| Escape | Back to the primary alone |
+
+On macOS Ctrl is Command and Alt is Option. Move Selection to Next Match (Ctrl+D's old behaviour) is in the command palette without a key.
+
+With the mouse, Alt+click adds a caret (on a caret, removes it), Alt+drag adds a selection, Alt+double-click adds a word, and Shift+Alt+drag selects a box: one selection a line between the two columns, tabs expanded, skipping lines that end left of it. A plain click goes back to one cursor. When the window manager takes Alt+drag, `multi_cursor_modifier = ctrl` under `[editor]` (**Multi-cursor modifier** in Settings) uses Ctrl instead.
+
+Arrows, Home, End, word and page moves move every selection, each keeping its own column on short lines; selections that come to overlap become one. Duplicate Line, Delete Line, Move Line Up/Down, Toggle Comment, Insert Line Below/Above and Select Line act on the lines of every selection. Commands about one place (find next, Go to Line, completion, Go to Definition, rename, code actions) keep the primary alone first, and completion does not open by itself while there are several selections.
+
+In Vim mode, `gb` adds a cursor at the next occurrence of the word under the cursor (of the selection in visual mode); Ctrl+D keeps paging. Motions with counts, `i a I A o O`, visual mode, `x X D C s S dd cc yy`, operators with a motion or text object (`ciw`), `p P` and `.` act at every cursor as one undo step; `u` brings the cursors back. Yanks at several cursors are one copy with a piece each, which `p` puts back paired. Esc in insert mode keeps the cursors, each stepping back a character; Esc in normal mode leaves the primary alone. Searches, `:`, `J`, `r`, `~`, `>` and `<` go back to the primary first.
+
 ### Vim mode
 
 The Vim mode switch in Settings (`vim_mode = true` under `[editor]`) or Toggle Vim Mode in the command palette turns it on. The status bar shows the mode and the keys typed so far; outside insert mode the cursor is a block.
@@ -483,11 +505,22 @@ enabled = false
 [keys]
 ctrl+shift+d = duplicate_line
 alt+z = none
+ctrl+k ctrl+c = toggle_comment when editorFocus
+ctrl+alt+g = goto_line
+ctrl+alt+p = owner/ext.command some arguments
 ```
 
-Key names are those of the command palette entries in snake case (see `src/app/keys.s`). `none` removes a binding.
+Command names are those of the command palette entries in snake case (see `src/app/keys.s`);
+an extension's command is `name.command` or `owner/name.command`. `none` removes every binding of
+those keys. A binding is one key or a chord of two (`ctrl+k ctrl+c`): after the first, the status
+bar shows `Ctrl+K — waiting for the next key` until the second, Escape, a click or five seconds.
+Text after the command is passed to an extension command as its arguments, and `when CLAUSE`
+limits the binding to a context (`editorFocus`, `resourceLang == Rust`, `terminalFocus`, ...; the
+clause language and its keys are in the extension protocol's "When clauses"). Your bindings win
+over extensions', which win over rhun's own. **Keyboard Shortcuts** in the command palette lists
+every binding, where it comes from, its clause and what overrides it.
 
-At multiple cursors, copied selections stay paired with their destinations. For other multiline text, `multi_cursor_paste = spread` under `[editor]` pastes one line per cursor when the counts match. Set it to `full` to paste all the text at each cursor. The same choice is available as **Paste at multiple cursors** in Settings.
+At multiple cursors (see [Multiple cursors](#multiple-cursors)), copied selections stay paired with their destinations. For other multiline text, `multi_cursor_paste = spread` under `[editor]` pastes one line per cursor when the counts match. Set it to `full` to paste all the text at each cursor. The same choice is available as **Paste at multiple cursors** in Settings.
 
 Tab uses each cursor’s own column. Indent and Outdent update each shared line once and preserve selection direction. One Undo restores the whole edit.
 
@@ -495,7 +528,7 @@ Paste waits for clipboard data without changing its destination. If the original
 
 ### Themes
 
-The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
+The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K Ctrl+T), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
 
 rhun reads the mode as VS Code does and switches as soon as the system does:
 
@@ -614,17 +647,53 @@ commands:
 | shift+F12 | Find All References | the references in the palette, this file's first; choosing one opens it |
 | ctrl+r | Go to Symbol in File | the file's functions, types and variables, indented by nesting; type to filter |
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
-| F2 | Rename | on a word, asks for the new name; every file it changes opens unsaved for you to review (without a matching rename provider, F2 renames the file) |
+| F2 | Rename | on a word, asks for the new name, then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
 | shift+alt+f | Format Document | with the document's tab width and spaces |
 
 Extensions that declare `git = read` read the project's Git data through rhun: the status, the
 blame of a file as you edit it (unsaved lines show as not committed), the history of a file or of
 some lines, a file at an older commit, and rhun's diff view of two commits. rhun runs git for them,
-so a folder opened from a `rhun://` link stays paused for them too until you trust it.
+so a folder opened from a `rhun://` link stays paused for them too until you trust it. An
+extension can also give the base the gutter marks compare a file with, for files outside git
+(another version control system, or "compare with" modes), and write commit messages (see
+Commit message AI).
 
 An edit across files is checked whole before anything changes: if a document changed meanwhile
 or a range is off, nothing changes and rhun says why. Each document's changes are one undo
 step.
+
+#### Edits across files
+
+A rename, a code action or an extension's edit across files is checked whole before anything
+changes: if a document changed meanwhile or a range is off, nothing changes and rhun says why.
+Then it is made everywhere at once, and one **Undo** (`ctrl+z`, or `u` in vim) in any tab it
+touched takes all of it back: "Undid 'Rename to total' in 5 files". Redo redoes it everywhere.
+If one of its files changed since (you typed in it, or it changed on disk), Undo asks whether to
+undo in that file only, in the files that did not change, or not at all. **Undo Last Multi-File
+Edit** and **Redo Last Multi-File Edit** reach the newest one when none of its files is open.
+
+Extensions that support it (the first-party language server extension does) change files you do
+not have open directly on disk, without opening tabs, and save the open files they change that
+had no unsaved changes; files with unsaved changes are edited and stay unsaved. They can also
+create, rename and delete files: a renamed file's tab follows it, a deleted file's tab closes
+and comes back with Undo. When an extension's edit would change files on disk and its manifest
+does not ask for `project = write`, rhun asks first in the palette:
+
+```
+Language Server: 'Rename to total' changes 3 files that are not open and 1 open file, renames 1
+> Apply
+  Apply, and let Language Server change project files from now on
+  Preview changes
+  M  internal/calc.go    2 edits
+  R  util.go → helpers.go
+```
+
+**Preview changes** (or Enter on a file's row) opens a read-only tab with the changes as a diff,
+then the question again. The second row remembers the permission (`edits = yes` in
+`extensions.ini`); the extension's page shows it with a switch to take it back. Escape changes
+nothing. Every write is first recorded in `~/.local/state/rhun/edits`: a write the system refuses
+puts everything back, and an edit cut short by a crash is put back at the next start ("Restored 3
+files from a workspace edit that was cut short").
 
 Formatting, symbol rename, file symbols and signature help use a saved provider for the document's language.
 With one matching extension, rhun uses it. With several, a chooser shows their `owner/name`
