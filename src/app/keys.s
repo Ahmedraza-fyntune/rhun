@@ -2086,6 +2086,8 @@ g_commands:
     # views group: places
     COMMAND toggle_panel, "Toggle Panel", cmd_toggle_panel, "ctrl+j"
     COMMAND toggle_side, "Toggle Side Views", cmd_toggle_side, ""
+    COMMAND focus_notifications, "Focus Notifications", cmd_focus_notifications, ""
+    COMMAND clear_notifications, "Clear All Notifications", cmd_clear_notifications, ""
     COMMAND extensions, "Extensions", cmd_extensions, ""
     COMMAND extensions_menu, "Extensions Menu", extbar_open_menu, ""
     COMMAND install_extension, "Install Extension from GitHub", cmd_install_extension, ""
@@ -2096,6 +2098,14 @@ g_commands:
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
     # tasks and terminals
     COMMAND toggle_problems, "Toggle Problems", cmd_toggle_problems, "ctrl+shift+m"
+    COMMAND run_task, "Run Task", cmd_run_task, ""
+    COMMAND run_build_task, "Run Build Task", cmd_run_build_task, "ctrl+shift+b"
+    COMMAND run_test_task, "Run Test Task", cmd_run_test_task, ""
+    COMMAND rerun_last_task, "Re-run Last Task", cmd_rerun_last_task, ""
+    COMMAND restart_task, "Restart Task", cmd_restart_task, ""
+    COMMAND stop_task, "Stop Task", cmd_stop_task, ""
+    COMMAND show_task, "Show Task", cmd_show_task, ""
+    COMMAND clear_task_problems, "Clear Task Problems", cmd_clear_task_problems, ""
     COMMAND kill_terminal, "Kill Terminal", cmd_kill_terminal, ""
     COMMAND clear_terminal, "Clear Terminal", cmd_clear_terminal, ""
     COMMAND git_history, "Git: Show History", cmd_git_history, ""

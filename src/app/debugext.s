@@ -90,13 +90,6 @@ window_take:
     pop rbx
     ret
 
-# dbgx_test_window(EXT*) -> eax 1 while that extension has a queued or running debug-profile test
-#   run. A stub until the testing group exports testproto_debug_window (testproto.s): then this
-#   becomes `jmp testproto_debug_window`
-dbgx_test_window:
-    xor eax, eax
-    ret
-
 # dbgx_h_debug_start(): ID debug-start NAME_LEN LEN + NAME + configuration body (extproto.s's verb
 #   table). ok ID SESSION comes from launch_now; errors here: unknown (feature not agreed), needs,
 #   syntax, refused (no recent command of its own, or a type not its own), busy, toobig
@@ -155,7 +148,7 @@ FN dbgx_h_debug_start
     test eax, eax
     jnz 3f
     mov rdi, rbx
-    call dbgx_test_window
+    call testproto_debug_window # a queued or running debug-profile test run (testing group)
     test eax, eax
     jnz 3f
     mov rdi, r12
