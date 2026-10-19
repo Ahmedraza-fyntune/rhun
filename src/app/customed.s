@@ -469,22 +469,50 @@ FN ce_open_tab
     mov rdi, r12
     call dup_cstr
     mov [r14 + CE_path], rax
-    # its view: a tab titled with the file's name
+    # its view: a picture rhun hosts in the tab (not one of the extension's 8 views; a press gives
+    # it the keyboard with view-keys), titled with the file's name
+    call extview_next_id
+    mov [r14 + CE_vid], rax
+    mov rdi, r13
+    mov esi, eax
+    call extview_open_hosted
+    test rax, rax
+    jz .Lcot_noview
+    mov r15, rax
+    mov rdi, [r15 + VW_title]
+    call mem_free
     mov rdi, r12
     call strlen
     mov rsi, rax
     mov rdi, r12
     call path_basename
-    mov rsi, rax
-    mov rdi, r13
-    call extview_open
-    test rax, rax
-    js .Lcot_noview
-    mov [r14 + CE_vid], rax
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov [r15 + VW_title], rax
+    mov rdi, rbx
+    mov esi, TAB_VIEW
+    call app_add_tab
+    mov rdi, rax
+    call tab_at
+    lea rcx, [rip + g_views]    # the view's slot in the tab's flags, as extview_open's tabs have it
+    mov rdx, r15
+    sub rdx, rcx
+    mov rax, rdx
+    push rax
+    push rax
     mov rdi, [rip + g_tab_cur]
     call tab_at
-    mov [rax + TAB_doc], rbx
-    or qword ptr [rax + TAB_flags], TF_CUSTOM
+    mov rcx, rax
+    pop rax
+    pop rdx
+    xor edx, edx
+    mov r8d, VW_SIZE
+    div r8
+    inc rax
+    shl rax, TF_VIEW_SHIFT
+    or rax, TF_CUSTOM
+    or [rcx + TAB_flags], rax
     lea rdi, [rip + g_ces]
     mov esi, 8
     call vec_push
@@ -660,23 +688,31 @@ FN ce_ext_doc_at
 8:  xor eax, eax
 9:  EPILOGUE
 
-# FN ce_ext_gone(ext): its editors' requests fail; their tabs close with its views (extview.s)
+# FN ce_ext_gone(ext): its editors' requests fail and their tabs close (unsaved changes of an owned
+#   model go with its extension)
 FN ce_ext_gone
     PROLOGUE
     mov r12, rdi
-    xor r13d, r13d
-1:  cmp r13, [rip + g_ces + VEC_len]
+1:  xor r13d, r13d
+2:  cmp r13, [rip + g_ces + VEC_len]
     jae 9f
     mov rax, [rip + g_ces + VEC_ptr]
     mov rbx, [rax + r13*8]
     inc r13
     cmp [rbx + CE_ext], r12
-    jne 1b
+    jne 2b
     mov qword ptr [rbx + CE_req], 0
     mov dword ptr [rbx + CE_reqkind], 0
+    mov dword ptr [rbx + CE_want], 0
     mov rdi, rbx
     mov rsi, -32
     call ce_save_done
+    mov rdi, [rbx + CE_doc]
+    call doc_tab
+    test rax, rax
+    js 2b
+    mov rdi, rax
+    call app_close_tab_now      # ce_tab_closed frees the CE: g_ces changed, look again
     jmp 1b
 9:  EPILOGUE
 
