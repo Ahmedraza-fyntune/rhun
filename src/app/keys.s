@@ -683,6 +683,12 @@ g_commands:
     COMMAND test_cancel, "Cancel Test Runs", cmd_test_cancel, ""
     COMMAND test_coverage_toggle, "Show Test Coverage", cmd_test_coverage_toggle, ""
     COMMAND test_next_failure, "Go to Next Test Failure", cmd_test_next_failure, ""
+    # remote hosts (remoteui.s)
+    COMMAND connect_to_host, "Remote: Connect to Host", cmd_connect_to_host, ""
+    COMMAND attach_to_container, "Remote: Attach to Container", cmd_attach_to_container, ""
+    COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
+    COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
+    COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
     .quad 0, 0, 0, 0
 
 .bss
