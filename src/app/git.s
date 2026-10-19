@@ -639,7 +639,7 @@ run_git:
     mov rcx, r14
     mov r8, r15
     mov r9d, [rsp + 256]
-    call run_piped_input
+    call vfs_run_piped_input    # on the host in a remote window
     test rax, rax
     jle 8f
     mov ebx, eax
