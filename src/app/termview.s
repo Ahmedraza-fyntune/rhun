@@ -175,7 +175,10 @@ FN term_spawn
     lea rdi, [rip + env_extras]
     call env_make
     mov [rip + env], rax
-1:  # the shell: the setting, $SHELL, /bin/sh
+1:  # remote hosts: in a remote window the shell is the user's shell on the host (vfs.s)
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lsp_remote
+    # the shell: the setting, $SHELL, /bin/sh
     mov dword ptr [rsp + 24], 0
     mov rdi, [rip + cfg_term_shell]
     cmp byte ptr [rdi], 0
@@ -284,6 +287,28 @@ FN term_spawn
     call app_toast
     xor eax, eax
     EPILOGUE
+.Lsp_remote:
+    # its name for the tab, from the host's $SHELL
+    lea rdi, [rip + g_remote_shell]
+    cmp byte ptr [rdi], 0
+    jne 1f
+    lea rdi, [rip + .Lsh_name]
+1:  call dup_cstr
+    mov r12, rax
+    lea rax, [rip + .Lempty_arg]
+    mov [rsp], rax
+    mov qword ptr [rsp + 8], 0
+    lea rdi, [rsp]
+    mov rsi, [rip + env]
+    mov rdx, [rip + g_project]
+    mov ecx, 80
+    mov r8d, 24
+    call vfs_pty_spawn
+    test rax, rax
+    jle .Lsp_free
+    mov r15, rax
+    mov r13d, edx
+    jmp 3b
 
 # on_pty(fd, revents, session): output of the shell, room to write more
 on_pty:
@@ -447,10 +472,10 @@ session_end:
     mov edi, [rbx + TS_pid]
     neg edi
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + TS_pid]
     mov esi, SIGHUP
-    SYS SYS_kill
+    call proc_kill
     mov edi, [rbx + TS_pid]
     mov esi, 1
     call proc_wait
@@ -3241,6 +3266,8 @@ rep_cell: .long -1
 .Lsh: .asciz "/bin/sh"
 .endif
 .Lno_shell: .asciz "Could not start a shell"
+.Lsh_name: .asciz "sh"
+.Lempty_arg: .asciz ""
 .Lword_stop: .asciz "()[]{}<>'\"`,;|&"
 .Lurl_stop: .asciz "\"'<>`{}|\\^"
 .Lpath_stop: .asciz "\"'<>`|()[]{},;"

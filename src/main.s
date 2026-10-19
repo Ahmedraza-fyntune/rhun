@@ -13,6 +13,7 @@ opt_paths: .long 0              # past a -- argument: the rest are paths
 .p2align 3
 opt_script: .quad 0
 opt_control: .quad 0
+opt_remote: .quad 0             # --remote SPEC: a remote window
 cwd: .zero 4096
 self_path: .zero 4096
 
@@ -36,6 +37,16 @@ FN main
 .Lmain_not_keeper:
     cmp qword ptr [rip + g_argc], 2
     jb .Lmv_regular
+    # remote hosts: the agent a remote window starts on the host (remote.s, ragent.s)
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lremote_agent]
+    call strcmp_eq
+    test eax, eax
+    jz .Lnot_remote_agent
+    call remote_agent_main
+    EPILOGUE
+.Lnot_remote_agent:
     mov rax, [rip + g_argv]
     mov rdi, [rax + 8]
     lea rsi, [rip + .Ltheme_source_worker]
@@ -299,6 +310,17 @@ parse_args:
     mov dword ptr [rip + opt_empty], 1
     jmp 9f
 42: mov rdi, r14
+    lea rsi, [rip + .Lo_remote]
+    call strcmp_eq
+    test eax, eax
+    jz 43f
+    inc rbx
+    cmp rbx, r13
+    jae .Lpa_done
+    mov rax, [r12 + rbx*8]
+    mov [rip + opt_remote], rax
+    jmp 9f
+43: mov rdi, r14
     lea rsi, [rip + .Lo_extensions]
     call strcmp_eq
     test eax, eax
@@ -549,7 +571,18 @@ parse_size:
 
 open_initial:
     PROLOGUE
-    xor r12d, r12d              # got a directory
+    # a remote window opens its folder once connected (remoteui.s)
+    mov rdi, [rip + opt_remote]
+    test rdi, rdi
+    jz 10f
+    xor esi, esi
+    cmp qword ptr [rip + g_start_paths + VEC_len], 0
+    je 11f
+    mov rax, [rip + g_start_paths + VEC_ptr]
+    mov rsi, [rax]
+11: call remote_start
+    jmp 6f
+10: xor r12d, r12d              # got a directory
     xor ebx, ebx
 1:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 2f
@@ -630,6 +663,8 @@ open_initial:
 .Lo_wait: .asciz "--wait"
 .Lo_empty: .asciz "--empty"
 .Lo_extensions: .asciz "--extensions"
+.Lo_remote: .asciz "--remote"
+.Lremote_agent: .asciz "--remote-agent"
 .Lo_dashdash: .asciz "--"
 .Ldevnull: .asciz "/dev/null"
 .Lself_exe: .asciz "/proc/self/exe"
@@ -648,6 +683,7 @@ open_initial:
     .ascii "  --script FILE    run control commands from FILE and exit\n"
     .ascii "  --control PATH   accept control commands on a unix socket\n"
     .ascii "  --extensions DIR load extensions from DIR instead of the config folder\n"
+    .ascii "  --remote HOST    open the folder on a remote host: ssh:HOST, docker:NAME, podman:NAME\n"
     .ascii "  --scale F        display scale where the platform has none\n"
     .ascii "  --               the arguments after it are paths (rhun://file/ links too)\n"
     .asciz "  --version        print the version\n"

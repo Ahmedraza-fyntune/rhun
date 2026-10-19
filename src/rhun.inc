@@ -72,6 +72,10 @@
 .equ SYS_inotify_init1, 294
 .equ SYS_memfd_create, 319
 .equ SYS_close_range, 436
+# remote hosts (src/app/remote.s): channels are socketpairs; remote pids carry REMOTE_PID_TAG
+.equ SYS_shutdown, 48
+.equ SYS_socketpair, 53
+.equ REMOTE_PID_TAG, 0x20000000
 .equ SYS_prctl, 157
 .equ PR_SET_PDEATHSIG, 1
 .equ PR_SET_NO_NEW_PRIVS, 38

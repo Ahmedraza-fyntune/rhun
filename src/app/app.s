@@ -2695,7 +2695,15 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: mov eax, ebx
+96: call remote_timeout         # remote hosts
+    cmp eax, -1
+    je 98f
+    cmp ebx, -1
+    je 99f
+    cmp eax, ebx
+    jge 98f
+99: mov ebx, eax
+98: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2726,6 +2734,7 @@ FN app_tick
     call ext_tick
     call ext_provider_tick
     call app_clip_tick
+    call remote_tick            # remote hosts
     EPILOGUE
 
 # ---------------- rendering ----------------
