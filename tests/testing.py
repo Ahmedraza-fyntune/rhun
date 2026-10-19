@@ -238,6 +238,16 @@ class Testing(unittest.TestCase):
         self.assertTrue(self.logged('coverage ok'), self.fake_log())
         self.assertIn('covered=3 partial=1 missed=0 lines=3:C,5:C,6:P,7:C', out)
 
+    def test_failures_become_problems_and_go_with_their_item(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 100', 'print-marks'])
+        at = out.index('tests=idle')
+        self.assertEqual(out[at + 1:at + 5], ['8 2 8 7 error problems:Fake Tests TestB: Greet mismatch',
+                                              'Expected: Hello, rhun!', 'Actual: Hello, rhun', 'errors=1 warnings=0'])
+        # the controller replaces the file's tests without TestB: its problem goes
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 400', 'print-marks', 'print-problems'],
+                              mode='replaceafter')
+        self.assertIn('errors=0 warnings=0', out)
+
     # --- the Testing section ---
 
     def section(self, out):

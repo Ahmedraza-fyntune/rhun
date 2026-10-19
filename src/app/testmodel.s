@@ -266,6 +266,8 @@ FN testmodel_forget
     mov rdi, rbx
     call testproto_forget_requests
     mov rdi, rbx
+    call testgutter_forget      # its problems
+    mov rdi, rbx
     call testmodel_ctrl
     test rax, rax
     jz 9f
@@ -1626,6 +1628,7 @@ run_free:
     mov edx, TSR_SIZE
     call memset
     mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_ts_marks], 1
     EPILOGUE
 
 # sb_free(sb): its bytes, and it is empty
@@ -1805,6 +1808,7 @@ FN testmodel_run_end
 8:  mov rdi, rbx
     call testexec_run_over      # its processes stop
     call testmodel_budget
+    mov dword ptr [rip + g_ts_marks], 1
     mov dword ptr [rip + g_ts_dirty], 1
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE

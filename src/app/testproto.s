@@ -842,6 +842,7 @@ FN testing_tick
     jb 3b
     call testproto_dispatch
     call testexec_tick
+    call testgutter_tick        # failures as problems
     EPILOGUE
 
 # testing_timeout() -> ms until testing_tick has something to do, -1 when nothing waits
@@ -1183,6 +1184,7 @@ apply_results:
     jmp 1b
 4:  call testmodel_budget
     mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_ts_marks], 1
     mov dword ptr [rip + g_dirty], 1
     xor eax, eax
     EPILOGUE
