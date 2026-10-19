@@ -704,6 +704,12 @@ g_commands:
     COMMAND notebook.edit_cell, "Notebook: Edit Cell", cmd_nb_edit, ""
     COMMAND notebook.command_mode, "Notebook: Command Mode", cmd_nb_command_mode, ""
     COMMAND notebook.reopen_as_text, "Notebook: Reopen as Text", cmd_nb_open_as_text, ""
+    # remote hosts (remoteui.s)
+    COMMAND connect_to_host, "Remote: Connect to Host", cmd_connect_to_host, ""
+    COMMAND attach_to_container, "Remote: Attach to Container", cmd_attach_to_container, ""
+    COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
+    COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
+    COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
     .quad 0, 0, 0, 0
 
 .bss
