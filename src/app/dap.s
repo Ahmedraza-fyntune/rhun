@@ -2158,11 +2158,11 @@ r_threads:
     push rax
     push rax
     lea rdi, [rbx + DS_threads]
-    mov esi, DT_SIZE
+    mov esi, THR_SIZE
     call vec_push
     pop rcx
     pop rcx
-    mov [rax + DT_id], rcx
+    mov [rax + THR_id], rcx
     push rax
     push rax
     mov rdi, r12
@@ -2173,8 +2173,8 @@ r_threads:
     call pool_str
     pop rcx
     pop rcx
-    mov [rcx + DT_name], eax
-    mov [rcx + DT_namelen], edx
+    mov [rcx + THR_name], eax
+    mov [rcx + THR_namelen], edx
 11: inc r15d
     jmp 1b
 2:  # no thread named by the stop: the first one
@@ -2183,7 +2183,7 @@ r_threads:
     cmp qword ptr [rbx + DS_threads + VEC_len], 0
     je 9f
     mov rax, [rbx + DS_threads + VEC_ptr]
-    mov rax, [rax + DT_id]
+    mov rax, [rax + THR_id]
     mov [rbx + DS_thread], rax
     cmp dword ptr [rbx + DS_state], DSS_RUNNING
     jne 3f
@@ -3530,24 +3530,24 @@ FN dap_stack_dump
     xor r12d, r12d
 1:  cmp r12, [rbx + DS_threads + VEC_len]
     jae 4f
-    imul r13, r12, DT_SIZE
+    imul r13, r12, THR_SIZE
     add r13, [rbx + DS_threads + VEC_ptr]
     mov rdi, r15
     lea rsi, [rip + .Ld_th]
     call sb_push_cstr
     mov rdi, r15
-    mov rsi, [r13 + DT_id]
+    mov rsi, [r13 + THR_id]
     call sb_push_u64
     mov rdi, r15
     mov esi, ' '
     call sb_push_byte
-    mov ecx, [r13 + DT_name]
+    mov ecx, [r13 + THR_name]
     mov rsi, [rbx + DS_strs + SB_ptr]
     add rsi, rcx
-    mov edx, [r13 + DT_namelen]
+    mov edx, [r13 + THR_namelen]
     mov rdi, r15
     call sb_push
-    mov rax, [r13 + DT_id]
+    mov rax, [r13 + THR_id]
     cmp rax, [rbx + DS_thread]
     jne 2f
     mov rdi, r15
@@ -3556,7 +3556,7 @@ FN dap_stack_dump
 2:  mov rdi, r15
     mov esi, 10
     call sb_push_byte
-    mov rax, [r13 + DT_id]
+    mov rax, [r13 + THR_id]
     cmp rax, [rbx + DS_thread]
     jne 3f
     mov rdi, r15

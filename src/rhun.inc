@@ -2389,10 +2389,10 @@ ENDSTRUCT PD_SIZE
 
 # a thread of the paused program
 STRUCT
-F DT_id, 8
-F DT_name, 4            # offset into DS_strs
-F DT_namelen, 4
-ENDSTRUCT DT_SIZE
+F THR_id, 8
+F THR_name, 4            # offset into DS_strs
+F THR_namelen, 4
+ENDSTRUCT THR_SIZE
 
 # a stack frame of the focused thread
 STRUCT
