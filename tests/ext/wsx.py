@@ -8,6 +8,7 @@ next to it. A plan's first line is the request after its id; the rest is its bod
 anywhere in a plan (a first line "!write PATH" makes it write the body to PATH instead): {doc:NAME} the id and {ver:NAME} the version of the open document whose path
 ends in /NAME (from the opened/edits/changed events), {fnv:PATH} the FNV-1a hash of that file's
 bytes on disk now; the word LEN in the first line becomes the body's length.
+As a linked-editing provider it answers `ID linked ...` with the body of plans/linked the same way.
 As a rename provider it answers `ID rename ...` with `ok ID LEN` and the body of plans/rename (its
 first line is not sent).
 """
@@ -142,6 +143,13 @@ def main():
             # a request from rhun
             rid = fields[0].decode()
             verb = fields[1]
+            if verb == b'linked':
+                head, body = plan('linked')
+                if head is None:
+                    send(('error %s refused nothing here\n' % rid).encode())
+                else:
+                    send(('ok %s %d\n' % (rid, len(body))).encode() + body)
+                continue
             if verb == b'rename':
                 docs.setdefault(int(fields[2]), ['', 0])[1] = int(fields[3])
                 head, body = plan('rename')

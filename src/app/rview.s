@@ -19,11 +19,15 @@
 .equ RS_EMPTY, 3
 .equ RS_ERROR, 4
 .equ ID_RV_BTN, 0x5e0000         # + vd << 4 + i: the buttons of a view's state
+.equ ID_RV_ACT, 0x5f0000         # + vd << 6 + i: its title actions
+.equ ID_RV_STATE, 0x5b0000       # + slot << 4 + i: the buttons of an instance's empty or error state
+.equ ID_RV_LOGBTN, 0x5a0000      # + slot << 2 + i: a log's Find, Clear, Follow
 .equ LABEL_MAX, 1000
 .equ TITLE_MAX, 80
 .equ TIP_MAX, 4000
 .equ NODES_ALL_MAX, 400000
 .equ BYTES_MAX, 16777216         # node bytes per instance
+.equ BYTES_ALL_MAX, 67108864     # node bytes in all instances
 .equ OVF, 0x80000000             # a patch check's reference to a node it creates (else a live node)
 
 # a declared view
@@ -60,7 +64,36 @@ F RV_state, 4
 F RV_busy, 4
 F RV_vis, 4             # visible last said (0 or 1), -1 before
 F RV_badge, 4
+F RV_actions, VEC_SIZE  # RA: its actions (key, icon, where, title), also the tree's inline table
+F RV_log, 8             # LG* of a log view
+F RV_pl, 4              # its place item (a declared view's, or its own for a tab), -1
+F RV_tabclosing, 4      # its tab is being closed by the extension: no "closed" event
+F RV_prog, 4            # progress shows in it (notify.s: progress view:VIEW)
+F RV_ppct, 4            # its percent, -1 indeterminate
+F RV_vw, 8              # a picture view's 12a picture (extview.s), or 0
 ENDSTRUCT RV_SIZE
+
+# an action of a retained view: TA's layout (the tree looks inline keys up in them), TA_pad its WHERE
+.equ RA_SIZE, TA_SIZE
+.equ RA_where, TA_pad
+.equ RAW_TITLE, 1
+.equ RAW_NODE, 2
+.equ RA_MAX, 32
+
+# a request rhun waits on for an instance: vkids or vmore
+STRUCT
+F PQ_slot, 4            # the instance, -1 when the entry is free
+F PQ_node, 4
+F PQ_kind, 4            # 1 vkids, 2 vmore
+F PQ_pad, 4
+F PQ_req, 8             # its id
+F PQ_sent, 8            # time_ms
+F PQ_id, 8              # the node's id when asked (owned), to see it is still the same node
+F PQ_idlen, 8
+ENDSTRUCT PQ_SIZE
+.equ PQ_MAX, 256
+.equ PQ_PER_VIEW, 4
+.equ PQ_WAIT_MS, 15000
 
 # a node a patch check creates
 STRUCT
@@ -71,6 +104,8 @@ F OV_removed, 4
 F OV_mark, 4
 F OV_first, 4           # first entry created under it, -1
 F OV_next, 4            # the next one under its parent
+F OV_bytes, 4           # its record's bytes (the last given)
+F OV_pad, 4
 ENDSTRUCT OV_SIZE
 
 .bss
@@ -93,9 +128,28 @@ p_rmark: .long 0                # live nodes the patch removes hold this mark
 p_kmark: .long 0                # children listed by the kids op being checked
 p_created: .quad 0              # nodes the patch creates
 p_removed: .quad 0              # live nodes it removes
-p_bytes: .quad 0                # record bytes it brings
+p_bytes: .quad 0                # record bytes it brings to live nodes (created ones: OV_bytes)
+p_freed: .quad 0                # bytes of live nodes it replaces or removes
+p_touched: .zero VEC_SIZE       # live nodes holding NF_PCOUNT (u32 each)
+g_rv_bytes: .quad 0             # node bytes in all instances
 p_op: .quad 0                   # the op being checked, from 1
+p_rv: .quad 0                   # its instance
+p_kind: .long 0                 # and its kind
+.p2align 3
+p_actions: .quad 0              # the actions it would have
 g_rv_nodes: .quad 0             # nodes in all instances
+idsbuf: .zero SB_SIZE           # a select event's ids
+pq_table: .zero PQ_SIZE * PQ_MAX
+menu_items: .zero 16 * 17       # rv_menu's items (label, handler), 0-ended
+menu_keys: .zero 8 * 16
+menu_keyp: .zero 8 * 16
+menu_keyl: .zero 8 * 16
+menu_node_id: .quad 0           # the node it was opened on (owned id) and where
+menu_node_len: .quad 0
+menu_rev: .quad 0
+menu_ext: .quad 0
+menu_slot: .long 0
+keybuf: .zero 64
 nrec: .zero 64                  # a node record: id, idlen, label, lablen, extra, xlen, kids, next
 
 .text
@@ -425,7 +479,18 @@ rv_open:
     pop rcx
     pop rcx
     mov [rcx + RV_opened], rax
+    mov dword ptr [rcx + RV_pl], -1
+    cmp r14d, -1
+    je 3f
     push rcx
+    push rcx
+    mov edi, r14d
+    call vd_at
+    mov eax, [rax + VD_pl]
+    pop rcx
+    pop rcx
+    mov [rcx + RV_pl], eax
+3:  push rcx
     push rcx
     lea rdi, [rip + rv_tree_ops]
     mov esi, r15d
@@ -433,7 +498,27 @@ rv_open:
     pop rcx
     pop rcx
     mov [rcx + RV_tree], rax
-    mov eax, r15d
+    cmp r12d, RK_LOG
+    jne 4f
+    push rcx
+    push rcx
+    mov edi, r15d
+    call log_new
+    pop rcx
+    pop rcx
+    mov [rcx + RV_log], rax
+4:  cmp r12d, RK_PICTURE        # a picture view: a 12a picture of its own, shown at once
+    jne 5f
+    push rcx
+    push rcx
+    mov rdi, rbx
+    mov esi, [rcx + RV_view]
+    call extview_open_place
+    pop rcx
+    pop rcx
+    mov [rcx + RV_vw], rax
+    mov dword ptr [rcx + RV_state], RS_READY
+5:  mov eax, r15d
     EPILOGUE
 8:  mov eax, -1
     EPILOGUE
@@ -446,11 +531,19 @@ rv_close:
     mov r12, rax
     cmp qword ptr [r12 + RV_ext], 0
     je 9f
-    mov rdi, [r12 + RV_tree]
+    mov rdi, [r12 + RV_log]
+    call log_free
+    cmp dword ptr [r12 + RV_place], PLACE_TAB
+    jne 11f
+    mov edi, [r12 + RV_pl]      # a tab's own place item
+    call place_remove
+11: mov rdi, [r12 + RV_tree]
     test rdi, rdi
     jz 1f
     mov rax, [rdi + TR_count]
     sub [rip + g_rv_nodes], rax
+    mov rax, [rdi + TR_bytes]
+    sub [rip + g_rv_bytes], rax
     call tree_free
 1:  mov rdi, [r12 + RV_title]
     call mem_free
@@ -460,6 +553,14 @@ rv_close:
     call mem_free
     mov rdi, [r12 + RV_skeys]
     call mem_free
+    mov rdi, r12
+    call actions_free
+    mov edi, ebx
+    call pq_drop_slot
+    mov edi, ebx
+    call notify_view_closed     # its progress shows nowhere now
+    mov rdi, [r12 + RV_vw]      # a picture view's picture
+    call extview_free_place
     movsxd rdi, dword ptr [r12 + RV_decl]
     cmp rdi, -1
     je 2f
@@ -477,6 +578,9 @@ rv_close:
 FN rview_owner_gone
     PROLOGUE
     mov r12, rdi
+    call notify_owner_gone      # its notifications and progress go too
+    mov rdi, r12
+    call viewimg_owner_gone     # and its images (viewpic.s)
     xor ebx, ebx
 1:  cmp ebx, RV_MAX
     jae 9f
@@ -485,9 +589,42 @@ FN rview_owner_gone
     cmp [rax + RV_ext], r12
     jne 2f
     mov edi, ebx
-    call rv_close
+    cmp dword ptr [rax + RV_place], PLACE_TAB
+    jne 3f
+    call rv_close_tab           # its tab closes too
+    jmp 2f
+3:  call rv_close
 2:  inc ebx
     jmp 1b
+9:  EPILOGUE
+
+# rview_slot_of(ext, view) -> eax the instance's slot, or -1 (notify.s)
+FN rview_slot_of
+    jmp rv_find
+
+# rview_progress(slot, on, percent or -1): progress in the instance (a bar at its top, its section's
+#   spinner); a slot that is gone or -1 is ignored
+FN rview_progress
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    cmp ebx, RV_MAX
+    jae 9f
+    mov edi, ebx
+    call rv_at
+    mov r14, rax
+    cmp qword ptr [r14 + RV_ext], 0
+    je 9f
+    mov [r14 + RV_prog], r12d
+    mov [r14 + RV_ppct], r13d
+    mov dword ptr [rip + g_dirty], 1
+    mov edi, [r14 + RV_pl]
+    cmp edi, -1
+    je 9f
+    mov esi, r12d
+    or esi, [r14 + RV_busy]
+    call place_set_busy
 9:  EPILOGUE
 
 # rv_find(ext, view) -> eax the instance's slot, or -1
@@ -525,8 +662,11 @@ FN rview_ext_ready
     je 8f
     cmp dword ptr [r13 + VD_rv], -1
     jne 8f
-    cmp dword ptr [r13 + VD_kind], RK_TREE
-    jne 8f                      # the other kinds come with their features
+    mov edi, [r13 + VD_kind]    # a kind whose feature it agreed
+    mov rsi, r12
+    call kind_agreed
+    test eax, eax
+    jz 8f
     mov rdi, r12
     mov esi, [r13 + VD_kind]
     mov edx, [r13 + VD_place]
@@ -547,6 +687,16 @@ FN rview_ext_ready
     mov esi, eax
     mov edi, r14d
     call send_visible
+    call place_focused          # its place has the keyboard already (shown before it ran)
+    mov r15d, eax
+    mov rdi, rbx
+    call vd_at
+    cmp r15d, [rax + VD_pl]
+    jne 8f
+    mov edi, r14d
+    mov esi, 1
+    mov rdx, [rax + VD_name]
+    call rv_focus_event
 8:  inc rbx
     jmp 1b
 9:  EPILOGUE
@@ -912,11 +1062,19 @@ FN rview_run_command
 
 # rv_expand(slot, tr, node, on): "expand REV LEN" + id, or collapse
 rv_expand:
-    lea rsi, [rip + .Lev_expand]
     test ecx, ecx
     jnz 1f
+    push rdi
+    push rdx
+    mov esi, edx                # a collapse: a wait for its children is cancelled
+    mov edx, 1
+    call pq_cancel_node
+    pop rdx
+    pop rdi
     lea rsi, [rip + .Lev_collapse]
-1:  jmp send_node
+    jmp send_node
+1:  lea rsi, [rip + .Lev_expand]
+    jmp send_node
 
 # rv_select(slot, tr): "select REV N LEN" + the ids, each ending in LF
 rv_select:
@@ -930,46 +1088,1120 @@ rv_select:
     call ev_cstr
     mov edi, ebx
     call ev_rev
-    call ev_sp
-    mov r13d, [r12 + TR_cursor]
-    xor edi, edi
-    cmp r13d, -1
-    je 1f
-    mov edi, 1
-1:  call ev_u64
-    # the body: the ids, each with a LF, after the header line
-    cmp r13d, -1
-    jne 2f
-    mov edi, ebx
-    xor esi, esi
-    xor edx, edx
-    call ev_send
-    jmp 9f
-2:  mov rdi, r12
+    # the ids into the second buffer
+    lea rdi, [rip + idsbuf]
+    call sb_clear
+    xor r13d, r13d              # count
+1:  mov rdi, r12
     mov esi, r13d
+    call tree_selected
+    cmp eax, -1
+    je 2f
+    mov rdi, r12
+    mov esi, eax
     call tree_node_id
-    mov [rsp], rax
-    mov [rsp + 8], rdx
-    call ev_sp
-    mov rdi, [rsp + 8]
-    inc rdi
-    call ev_u64
-    lea rdi, [rip + evbuf]
+    lea rdi, [rip + idsbuf]
+    mov rsi, rax
+    call sb_push
+    lea rdi, [rip + idsbuf]
     mov esi, 10
     call sb_push_byte
+    inc r13d
+    cmp r13d, 10000
+    jb 1b
+2:  call ev_sp
+    mov edi, r13d
+    call ev_u64
+    mov edi, ebx
+    mov rsi, [rip + idsbuf + SB_ptr]
+    mov rdx, [rip + idsbuf + SB_len]
+    call ev_send
+9:  EPILOGUE
+
+# rv_check(slot, tr, node, state): "check REV STATE LEN" + id
+rv_check:
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rsi
+    mov r13d, edx
+    mov r14d, ecx
+    call ev_head
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lev_check]
+    call ev_cstr
+    mov edi, ebx
+    call ev_rev
+    call ev_sp
+    mov edi, r14d
+    call ev_u64
+    mov rdi, r12
+    mov esi, r13d
+    call tree_node_id
+    mov rsi, rax
+    mov edi, ebx
+    call ev_send
+9:  EPILOGUE
+
+# rv_action(slot, tr, node, key, keylen): an inline button: "action REV KEY LEN" + id
+rv_action:
+    PROLOGUE 16
+    mov ebx, edi
+    mov r12, rsi
+    mov r13d, edx
+    mov [rsp], rcx
+    mov [rsp + 8], r8
+    mov edi, ebx
+    call ev_head
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lev_action]
+    call ev_cstr
+    mov edi, ebx
+    call ev_rev
+    call ev_sp
     lea rdi, [rip + evbuf]
     mov rsi, [rsp]
     mov rdx, [rsp + 8]
     call sb_push
+    mov rdi, r12
+    mov esi, r13d
+    call tree_node_id
+    mov rsi, rax
+    mov edi, ebx
+    call ev_send
+9:  EPILOGUE
+
+# send_action(slot, key, keylen, id, idlen): "action REV KEY LEN" + id (empty: the view's own)
+send_action:
+    PROLOGUE 16
+    mov ebx, edi
+    mov r12, rsi
+    mov r13, rdx
+    mov [rsp], rcx
+    mov [rsp + 8], r8
+    call ev_head
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lev_action]
+    call ev_cstr
+    mov edi, ebx
+    call ev_rev
+    call ev_sp
     lea rdi, [rip + evbuf]
-    mov esi, 10
-    call sb_push_byte
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov edi, ebx
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call ev_send
+9:  EPILOGUE
+
+# ---------------- children asked for: vkids, vmore ----------------
+
+# pq_at(i) -> rax PQ*
+pq_at:
+    imul rax, rdi, PQ_SIZE
+    lea rcx, [rip + pq_table]
+    add rax, rcx
+    ret
+
+# pq_count(slot) -> eax the requests waiting for the instance
+pq_count:
+    xor eax, eax
+    xor ecx, ecx
+    lea rdx, [rip + pq_table]
+1:  cmp ecx, PQ_MAX
+    jae 9f
+    cmp dword ptr [rdx + PQ_slot], edi
+    jne 2f
+    cmp qword ptr [rdx + PQ_req], 0
+    je 2f
+    inc eax
+2:  add rdx, PQ_SIZE
+    inc ecx
+    jmp 1b
+9:  ret
+
+# pq_free(PQ*): the entry is free again
+pq_free:
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rbx + PQ_id]
+    call mem_free
+    mov rdi, rbx
+    xor esi, esi
+    mov edx, PQ_SIZE
+    call memset
+    pop rbx
+    ret
+
+# pq_drop_slot(slot): its waits end without a word (the instance ends)
+pq_drop_slot:
+    PROLOGUE
+    mov ebx, edi
+    xor r12d, r12d
+1:  cmp r12d, PQ_MAX
+    jae 9f
+    mov edi, r12d
+    call pq_at
+    cmp qword ptr [rax + PQ_req], 0
+    je 2f
+    cmp [rax + PQ_slot], ebx
+    jne 2f
+    mov rdi, rax
+    call pq_free
+2:  inc r12d
+    jmp 1b
+9:  EPILOGUE
+
+# pq_cancel_node(slot, node, kind): a wait of that kind for the node is cancelled ("0 cancel ID")
+pq_cancel_node:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    xor r14d, r14d
+1:  cmp r14d, PQ_MAX
+    jae 9f
+    mov edi, r14d
+    call pq_at
+    mov r15, rax
+    cmp qword ptr [r15 + PQ_req], 0
+    je 2f
+    cmp [r15 + PQ_slot], ebx
+    jne 2f
+    cmp [r15 + PQ_node], r12d
+    jne 2f
+    cmp [r15 + PQ_kind], r13d
+    jne 2f
     mov edi, ebx
     call rv_at
     mov rdi, [rax + RV_ext]
+    mov rsi, [r15 + PQ_req]
+    call send_cancel
+    mov rdi, r15
+    call pq_free
+2:  inc r14d
+    jmp 1b
+9:  EPILOGUE
+
+# send_cancel(ext, id): "0 cancel ID" when it runs
+send_cancel:
+    cmp dword ptr [rdi + EXT_status], ES_RUNNING
+    jne 1f
+    jmp extproto_send_cancel
+1:  ret
+
+# rv_ask(slot, node, kind) -> eax 1 when "ID vkids VIEW REV LEN" (kind 1) or "ID vmore VIEW REV HAVE
+#   LEN" (kind 2) and the node's id went out, 0 when 4 already wait (asked again on a later frame)
+rv_ask:
+    PROLOGUE 16
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    call pq_count
+    cmp eax, PQ_PER_VIEW
+    jae 8f
+    mov edi, ebx
+    call rv_at
+    mov r14, rax
+    mov r15, [r14 + RV_ext]
+    cmp dword ptr [r15 + EXT_status], ES_RUNNING
+    jne 8f
+    # a free entry
+    xor ecx, ecx
+1:  cmp ecx, PQ_MAX
+    jae 8f
+    mov edi, ecx
+    push rcx
+    push rcx
+    call pq_at
+    pop rcx
+    pop rcx
+    cmp qword ptr [rax + PQ_req], 0
+    je 2f
+    inc ecx
+    jmp 1b
+2:  mov [rsp], rax
+    cmp qword ptr [r15 + EXT_hreq], 2147483647
+    jae 8f
+    inc qword ptr [r15 + EXT_hreq]
+    mov rcx, [r15 + EXT_hreq]
+    mov [rax + PQ_req], rcx
+    mov [rax + PQ_slot], ebx
+    mov [rax + PQ_node], r12d
+    mov [rax + PQ_kind], r13d
+    call time_ms
+    mov rcx, [rsp]
+    mov [rcx + PQ_sent], rax
+    mov rdi, [r14 + RV_tree]
+    mov esi, r12d
+    call tree_node_id
+    mov [rsp + 8], rdx
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov rcx, [rsp]
+    mov [rcx + PQ_id], rax
+    mov rdx, [rsp + 8]
+    mov [rcx + PQ_idlen], rdx
+    # the request
+    lea rdi, [rip + evbuf]
+    call sb_clear
+    mov rcx, [rsp]
+    lea rdi, [rip + evbuf]
+    mov rsi, [rcx + PQ_req]
+    call sb_push_u64
+    lea rdi, [rip + evbuf]
+    lea rsi, [rip + .Lq_vkids]
+    cmp r13d, 1
+    je 3f
+    lea rsi, [rip + .Lq_vmore]
+3:  call sb_push_cstr
+    lea rdi, [rip + evbuf]
+    mov esi, [r14 + RV_view]
+    call sb_push_u64
+    lea rdi, [rip + evbuf]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + evbuf]
+    mov rsi, [r14 + RV_rev]
+    call sb_push_u64
+    cmp r13d, 2
+    jne 4f
+    lea rdi, [rip + evbuf]      # HAVE: the children it has
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, [r14 + RV_tree]
+    mov esi, r12d
+    call tree_nd
+    mov esi, [rax + ND_nkids]
+    lea rdi, [rip + evbuf]
+    call sb_push_u64
+4:  lea rdi, [rip + evbuf]
+    mov esi, ' '
+    call sb_push_byte
+    mov rcx, [rsp]
+    lea rdi, [rip + evbuf]
+    mov rsi, [rcx + PQ_idlen]
+    call sb_push_u64
+    lea rdi, [rip + evbuf]
+    mov esi, 10
+    call sb_push_byte
+    mov rcx, [rsp]
+    lea rdi, [rip + evbuf]
+    mov rsi, [rcx + PQ_id]
+    mov rdx, [rcx + PQ_idlen]
+    call sb_push
+    mov rdi, r15
     mov rsi, [rip + evbuf + SB_ptr]
     mov rdx, [rip + evbuf + SB_len]
     call ext_send
+    mov rcx, [rsp]              # resources group: the request's kind and time
+    mov rdi, r15
+    mov rsi, [rcx + PQ_req]
+    lea rdx, [rip + .Lq_vkids + 1]
+    mov ecx, 5
+    cmp r13d, 1
+    je 5f
+    lea rdx, [rip + .Lq_vmore + 1]
+5:  call extres_req_sent
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# rv_load(slot, tr, node): its children are wanted: vkids (later when 4 already wait)
+rv_load:
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rsi
+    mov r13d, edx
+    mov esi, edx
+    mov edx, 1
+    call rv_ask
+    test eax, eax
+    jnz 9f
+    mov rdi, r12                # not now: asked again when it is next drawn
+    mov esi, r13d
+    call tree_nd
+    and dword ptr [rax + ND_flags], ~NF_LOADING
+9:  EPILOGUE
+
+# rv_more(slot, tr, parent): its "Load more" row is on screen: vmore
+rv_more:
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rsi
+    mov r13d, edx
+    mov esi, edx
+    mov edx, 2
+    call rv_ask
+    test eax, eax
+    jnz 9f
+    mov rdi, r12
+    mov esi, r13d
+    call tree_nd
+    and dword ptr [rax + ND_flags], ~NF_MOREWAIT
+9:  EPILOGUE
+
+# pq_node_alive(PQ*) -> eax 1 when the node asked about is still there with the same id
+pq_node_alive:
+    PROLOGUE
+    mov rbx, rdi
+    mov edi, [rbx + PQ_slot]
+    call rv_at
+    mov r12, [rax + RV_tree]
+    mov rdi, r12
+    mov rsi, [rbx + PQ_id]
+    mov rdx, [rbx + PQ_idlen]
+    call tree_find
+    cmp eax, [rbx + PQ_node]
+    sete al
+    movzx eax, al
+    EPILOGUE
+
+# rview_reply(ext, id, ok, body, len) -> eax 1 when the reply answers a vkids or vmore: its patch is
+#   applied as vpatch's (REV + 1) unless the node is gone; an error, or a patch that cannot apply,
+#   makes the node's error row
+FN rview_reply
+    PROLOGUE 16
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push r8
+    push r8
+    call viewpic_reply          # a vcopy's answer (viewpic.s)
+    pop r8
+    pop r8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jz 11f
+    EPILOGUE
+11: mov rbx, rdi
+    mov r12, rsi
+    mov r13d, edx
+    mov [rsp], rcx
+    mov [rsp + 8], r8
+    xor r14d, r14d
+1:  cmp r14d, PQ_MAX
+    jae 8f
+    mov edi, r14d
+    call pq_at
+    mov r15, rax
+    cmp [r15 + PQ_req], r12
+    jne 2f
+    mov edi, [r15 + PQ_slot]
+    call rv_at
+    cmp [rax + RV_ext], rbx
+    je 3f
+2:  inc r14d
+    jmp 1b
+3:  mov rdi, r15
+    call pq_node_alive
+    test eax, eax
+    jz 7f                       # the node went: the answer is dropped
+    mov edi, [r15 + PQ_slot]
+    call rv_at
+    mov r14, rax
+    test r13d, r13d
+    jz 5f
+    mov edi, [r15 + PQ_slot]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call patch_check
+    test eax, eax
+    jnz 5f
+    mov edi, [r15 + PQ_slot]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call patch_apply
+    inc qword ptr [r14 + RV_rev]
+    # an answer without the node's children leaves it with none; one without more ends paging
+    mov rdi, [r14 + RV_tree]
+    mov esi, [r15 + PQ_node]
+    call tree_nd
+    test dword ptr [rax + ND_flags], NF_LIVE
+    jz 7f
+    cmp dword ptr [r15 + PQ_kind], 1
+    jne 4f
+    test dword ptr [rax + ND_flags], NF_GIVEN
+    jnz 7f
+    mov rdi, [r14 + RV_tree]
+    mov esi, [r15 + PQ_node]
+    call tree_kids_begin
+    mov rdi, [r14 + RV_tree]
+    xor esi, esi
+    call tree_kids_end
+    jmp 7f
+4:  test dword ptr [rax + ND_flags], NF_MOREWAIT
+    jz 7f
+    and dword ptr [rax + ND_flags], ~(NF_MOREWAIT | NF_MORE)
+    mov rdi, [r14 + RV_tree]
+    or dword ptr [rdi + TR_flags], TRF_DIRTY
+    jmp 7f
+5:  mov rdi, [r14 + RV_tree]
+    mov esi, [r15 + PQ_node]
+    call tree_set_error
+7:  mov rdi, r15
+    call pq_free
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# rview_timeout() -> ms until a wait for children times out, or -1
+FN rview_timeout
+    PROLOGUE
+    mov r12d, -1
+    call time_ms
+    mov r13, rax
+    xor ebx, ebx
+1:  cmp ebx, PQ_MAX
+    jae 9f
+    mov edi, ebx
+    call pq_at
+    cmp qword ptr [rax + PQ_req], 0
+    je 2f
+    mov rcx, [rax + PQ_sent]
+    add rcx, PQ_WAIT_MS
+    sub rcx, r13
+    jns 11f
+    xor ecx, ecx
+11: cmp r12d, -1
+    je 12f
+    cmp ecx, r12d
+    jge 2f
+12: mov r12d, ecx
+2:  inc ebx
+    jmp 1b
+9:  mov eax, r12d
+    EPILOGUE
+
+# rview_tick(): waits past 15 s become error rows ("No answer"), their requests cancelled
+FN rview_tick
+    PROLOGUE
+    call time_ms
+    mov r13, rax
+    xor ebx, ebx
+1:  cmp ebx, PQ_MAX
+    jae 9f
+    mov edi, ebx
+    call pq_at
+    mov r12, rax
+    cmp qword ptr [r12 + PQ_req], 0
+    je 2f
+    mov rcx, [r12 + PQ_sent]
+    add rcx, PQ_WAIT_MS
+    cmp r13, rcx
+    jb 2f
+    mov rdi, r12
+    call pq_node_alive
+    test eax, eax
+    jz 3f
+    mov edi, [r12 + PQ_slot]
+    call rv_at
+    mov r14, rax
+    mov rdi, [r14 + RV_tree]
+    mov esi, [r12 + PQ_node]
+    call tree_set_error
+    mov rdi, [r14 + RV_ext]
+    mov rsi, [r12 + PQ_req]
+    call send_cancel
+3:  mov rdi, r12
+    call pq_free
+2:  inc ebx
+    jmp 1b
+9:  EPILOGUE
+
+# ---------------- actions ----------------
+
+# actions_free(RV*): its actions' bytes
+actions_free:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rbx + RV_actions + VEC_len]
+    jae 2f
+    imul r13, r12, RA_SIZE
+    add r13, [rbx + RV_actions + VEC_ptr]
+    mov rdi, [r13 + TA_key]
+    call mem_free
+    mov rdi, [r13 + TA_title]
+    call mem_free
+    inc r12
+    jmp 1b
+2:  lea rdi, [rbx + RV_actions]
+    call vec_free
+    EPILOGUE
+
+# action_find(RV*, key, len) -> rax RA* or 0
+action_find:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    xor r14d, r14d
+1:  cmp r14, [rbx + RV_actions + VEC_len]
+    jae 8f
+    imul r15, r14, RA_SIZE
+    add r15, [rbx + RV_actions + VEC_ptr]
+    cmp [r15 + TA_keylen], r13
+    jne 2f
+    mov rdi, [r15 + TA_key]
+    mov rsi, r12
+    mov rdx, r13
+    call memeq
+    test eax, eax
+    jnz 3f
+2:  inc r14
+    jmp 1b
+3:  mov rax, r15
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# action_set(RV*, key, keylen, icon spec, speclen, where, title, titlelen [stack]): defines or
+#   replaces the action (where 0 removes it)
+action_set:
+    PROLOGUE 32
+    mov rbx, rdi
+    mov [rsp], rsi
+    mov [rsp + 8], rdx
+    mov [rsp + 16], rcx
+    mov [rsp + 24], r8
+    mov r15d, r9d
+    mov rsi, [rsp]
+    call action_find
+    mov r12, rax
+    test r15d, r15d
+    jnz 2f
+    test r12, r12               # none: removed (the last one takes its place)
+    jz 9f
+    mov rdi, [r12 + TA_key]
+    call mem_free
+    mov rdi, [r12 + TA_title]
+    call mem_free
+    dec qword ptr [rbx + RV_actions + VEC_len]
+    mov rax, [rbx + RV_actions + VEC_len]
+    imul rax, rax, RA_SIZE
+    add rax, [rbx + RV_actions + VEC_ptr]
+    cmp rax, r12
+    je 1f
+    mov rdi, r12
+    mov rsi, rax
+    mov edx, RA_SIZE
+    call memcpy
+1:  jmp 8f
+2:  test r12, r12
+    jnz 3f
+    lea rdi, [rbx + RV_actions]
+    mov esi, RA_SIZE
+    call vec_push
+    mov r12, rax
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call mem_dup
+    mov [r12 + TA_key], rax
+    mov rax, [rsp + 8]
+    mov [r12 + TA_keylen], rax
+3:  mov [r12 + RA_where], r15d
+    mov rdi, [rsp + 16]
+    mov rsi, [rsp + 24]
+    call tree_icon_code
+    cmp eax, -1
+    je 4f
+    test eax, NDI_FILE
+    jz 4f
+    and eax, 0xff               # a file's icon without its color
+4:  mov [r12 + TA_icon], eax
+    mov rdi, [r12 + TA_title]
+    call mem_free
+    mov rdi, [rbp + 16]
+    mov rsi, [rbp + 24]
+    call mem_dup
+    mov [r12 + TA_title], rax
+8:  # the tree looks inline keys up in them
+    mov rdi, [rbx + RV_tree]
+    mov rsi, [rbx + RV_actions + VEC_ptr]
+    mov rdx, [rbx + RV_actions + VEC_len]
+    call tree_set_actions
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# rv_place_actions(vd, right, y, h) -> eax the x left of them: the view's title actions in its
+#   section's header, right to left in reverse definition order; a click is "action REV KEY 0"
+rv_place_actions:
+    PROLOGUE 32
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], edi
+    call rv_of_vd
+    mov ebx, eax
+    mov eax, [rsp]
+    cmp ebx, -1
+    je 9f
+    mov edi, ebx
+    call rv_at
+    mov r12, rax
+    cmp dword ptr [r12 + RV_kind], RK_LOG
+    jne 1f
+    mov rdi, r12                # a log's own: Follow, Clear, Find
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, ebx
+    call log_buttons
+    mov [rsp], eax
+1:  mov r13, [r12 + RV_actions + VEC_len]
+.Lpb_btn:
+    test r13, r13
+    jz .Lpb_done
+    dec r13
+    imul r14, r13, RA_SIZE
+    add r14, [r12 + RV_actions + VEC_ptr]
+    cmp dword ptr [r14 + RA_where], RAW_TITLE
+    jne .Lpb_btn
+    M r15d, MI_24
+    sub [rsp], r15d
+    mov edi, [rsp + 12]         # an id per declared view and action
+    shl edi, 6
+    add edi, r13d
+    add edi, ID_RV_ACT
+    mov [rsp + 16], edi
+    mov esi, [rsp]
+    mov edx, [rsp + 8]
+    sub edx, r15d
+    sar edx, 1
+    add edx, [rsp + 4]
+    mov ecx, r15d
+    mov r8d, r15d
+    mov r9d, [r14 + TA_icon]
+    cmp r9d, -1
+    jne 1f
+    mov r9d, IC_DOT
+1:  call ui_icon_btn
+    mov [rsp + 20], eax
+    mov rax, [r14 + TA_title]
+    test rax, rax
+    jz 2f
+    push rax
+    push rax
+    mov edi, [rsp + 16 + 16]
+    mov esi, [rsp + 16]
+    mov edx, [rsp + 16 + 4]
+    add edx, [rsp + 16 + 8]
+    mov ecx, r15d
+    mov r8d, [rsp + 16 + 20]
+    pop r9
+    pop r9
+    call tip_note_text
+2:  test dword ptr [rsp + 20], UB_CLICK
+    jz .Lpb_btn
+    mov edi, ebx
+    mov rsi, [r14 + TA_key]
+    mov rdx, [r14 + TA_keylen]
+    xor ecx, ecx
+    xor r8d, r8d
+    call send_action
+    jmp .Lpb_done
+.Lpb_done:
+    mov eax, [rsp]
+9:  EPILOGUE
+
+# log_buttons(RV*, right, y, h, slot) -> eax the x left of them: a log's Find, Clear and Follow
+#   (accented while following) in its header
+log_buttons:
+    PROLOGUE 32
+    mov rbx, rdi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    xor r12d, r12d              # the button
+1:  cmp r12d, 3
+    jae 8f
+    M r15d, MI_24
+    sub [rsp], r15d
+    mov edi, [rsp + 12]
+    shl edi, 2
+    add edi, r12d
+    add edi, ID_RV_LOGBTN
+    mov [rsp + 16], edi
+    mov esi, [rsp]
+    mov edx, [rsp + 8]
+    sub edx, r15d
+    sar edx, 1
+    add edx, [rsp + 4]
+    mov ecx, r15d
+    mov r8d, r15d
+    lea rax, [rip + log_icons]
+    mov r9d, [rax + r12*4]
+    call ui_icon_btn
+    mov [rsp + 20], eax
+    cmp r12d, 2                 # Follow: a line under it while following
+    jne 2f
+    mov rdi, [rbx + RV_log]
+    call log_following
+    test eax, eax
+    jz 2f
+    mov edi, [rsp]
+    add edi, [rip + g_mt + 4*MI_4]
+    mov esi, [rsp + 4]
+    add esi, [rsp + 8]
+    sub esi, [rip + g_mt + 4*MI_4]
+    M edx, MI_16
+    M ecx, MI_2
+    COLOR r8d, T_ACCENT
+    call gfx_fill
+2:  lea rax, [rip + log_tips]
+    mov rax, [rax + r12*8]
+    push rax
+    push rax
+    mov edi, [rsp + 16 + 16]
+    mov esi, [rsp + 16]
+    mov edx, [rsp + 16 + 4]
+    add edx, [rsp + 16 + 8]
+    M ecx, MI_24
+    mov r8d, [rsp + 16 + 20]
+    pop r9
+    pop r9
+    call tip_note_text
+    test dword ptr [rsp + 20], UB_CLICK
+    jz 7f
+    mov rdi, [rbx + RV_log]
+    cmp r12d, 0
+    jne 3f
+    call log_open_find
+    mov edi, [rsp + 12]         # and the keyboard to the view
+    call rv_at
+    mov edi, [rax + RV_pl]
+    call place_focus
+    jmp 7f
+3:  cmp r12d, 1
+    jne 4f
+    call log_clear
+    mov edi, [rsp + 12]
+    call send_clear
+    jmp 7f
+4:  call log_toggle_follow
+7:  inc r12d
+    jmp 1b
+8:  mov eax, [rsp]
+    EPILOGUE
+
+# send_clear(slot): "clear": the user cleared the log
+send_clear:
+    push rbx
+    mov ebx, edi
+    call ev_head
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lev_clear]
+    call ev_cstr
+    mov edi, ebx
+    xor esi, esi
+    mov rdx, -1
+    call ev_send
+9:  pop rbx
+    ret
+
+# kind_agreed(kind, ext) -> eax 1 when the extension agreed the kind's features
+kind_agreed:
+    xor eax, eax
+    FEAT_TEST rsi, FEAT_VIEW_TREE
+    jz 9f
+    cmp edi, RK_TREE
+    je 8f
+    cmp edi, RK_PICTURE
+    jne 1f
+    FEAT_TEST rsi, FEAT_VIEWS   # a picture view: section 12a's draw and events
+    jz 9f
+    jmp 8f
+1:  cmp edi, RK_LOG
+    jne 9f
+    FEAT_TEST rsi, FEAT_VIEW_LOG
+    jz 9f
+8:  mov eax, 1
+9:  ret
+
+# rview_picture_of_place(place item) -> rax the picture of the picture view it holds, or 0
+FN rview_picture_of_place
+    PROLOGUE
+    mov r12d, edi
+    xor ebx, ebx
+1:  cmp ebx, RV_MAX
+    jae 8f
+    mov edi, ebx
+    call rv_at
+    cmp qword ptr [rax + RV_ext], 0
+    je 2f
+    cmp [rax + RV_pl], r12d
+    jne 2f
+    cmp dword ptr [rax + RV_kind], RK_PICTURE
+    jne 2f
+    mov rax, [rax + RV_vw]
+    EPILOGUE
+2:  inc ebx
+    jmp 1b
+8:  xor eax, eax
+    EPILOGUE
+
+# rv_menu(slot, tr, node, x, y): the node's menu record's actions as a context menu; a pick sends
+#   "action REV KEY LEN" + id, or "discarded REV action LEN" + id when the node went meanwhile
+rv_menu:
+    PROLOGUE 32
+    mov ebx, edi
+    mov r12, rsi
+    mov r13d, edx
+    mov [rsp], ecx
+    mov [rsp + 4], r8d
+    mov rdi, r12
+    mov esi, r13d
+    lea rdx, [rip + .Lr_menu]
+    lea rcx, [rip + rr]
+    call tree_extra_find
+    test eax, eax
+    jz 9f
+    mov edi, ebx
+    call rv_at
+    mov r14, rax
+    # remember the node by id, and the REV the user acted on
+    mov rdi, [rip + menu_node_id]
+    call mem_free
+    mov rdi, r12
+    mov esi, r13d
+    call tree_node_id
+    mov [rip + menu_node_len], rdx
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov [rip + menu_node_id], rax
+    mov [rip + menu_slot], ebx
+    mov rax, [r14 + RV_rev]
+    mov [rip + menu_rev], rax
+    mov rax, [r14 + RV_ext]
+    mov [rip + menu_ext], rax
+    # the items: up to 16 keys
+    mov r15, [rip + rr + RR_data]
+    mov rax, r15
+    add rax, [rip + rr + RR_len]
+    mov [rsp + 8], rax
+    xor ebx, ebx                # items
+1:  cmp ebx, 16
+    jae 5f
+2:  cmp r15, [rsp + 8]
+    jae 5f
+    cmp byte ptr [r15], ' '
+    jne 3f
+    inc r15
+    jmp 2b
+3:  mov rcx, r15
+4:  cmp rcx, [rsp + 8]
+    jae 41f
+    cmp byte ptr [rcx], ' '
+    je 41f
+    inc rcx
+    jmp 4b
+41: mov [rsp + 16], rcx
+    mov rdi, r14
+    mov rsi, r15
+    mov rdx, rcx
+    sub rdx, r15
+    call action_find
+    mov r15, [rsp + 16]
+    test rax, rax
+    jz 1b
+    lea rcx, [rip + menu_items]
+    mov rdx, rbx
+    shl rdx, 4
+    mov rsi, [rax + TA_title]
+    test rsi, rsi
+    jnz 42f
+    mov rsi, [rax + TA_key]
+42: mov [rcx + rdx], rsi
+    lea rsi, [rip + rv_menu_pick]
+    mov [rcx + rdx + 8], rsi
+    lea rcx, [rip + menu_keys]
+    mov [rcx + rbx*8], rax      # its RA (valid while the menu is open: picked through its key)
+    mov rsi, [rax + TA_key]
+    lea rcx, [rip + menu_keyp]
+    mov [rcx + rbx*8], rsi
+    mov rsi, [rax + TA_keylen]
+    lea rcx, [rip + menu_keyl]
+    mov [rcx + rbx*8], rsi
+    inc ebx
+    jmp 1b
+5:  test ebx, ebx
+    jz 9f
+    lea rcx, [rip + menu_items]
+    mov rdx, rbx
+    shl rdx, 4
+    mov qword ptr [rcx + rdx], 0
+    mov qword ptr [rcx + rdx + 8], 0
+    lea rdi, [rip + menu_items]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    call ctx_menu_open
+9:  EPILOGUE
+
+# rv_menu_pick(): the item g_menu_index of rv_menu's menu
+rv_menu_pick:
+    PROLOGUE 16
+    mov ebx, [rip + menu_slot]
+    mov edi, ebx
+    call rv_at
+    mov r12, rax
+    mov rax, [rip + menu_ext]
+    cmp [r12 + RV_ext], rax
+    jne 9f                      # the instance went
+    mov r13d, [rip + g_menu_index]
+    lea rax, [rip + menu_keyp]
+    mov r14, [rax + r13*8]      # the key (copied below: the action may have been replaced)
+    lea rax, [rip + menu_keyl]
+    mov r15, [rax + r13*8]
+    mov rdi, [r12 + RV_tree]
+    mov rsi, [rip + menu_node_id]
+    mov rdx, [rip + menu_node_len]
+    call tree_find
+    cmp eax, -1
+    jne 2f
+    # the node went while the menu was open: dropped, and said so
+    mov edi, ebx
+    call ev_head
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lev_discarded]
+    call ev_cstr
+    call ev_sp
+    mov rdi, [rip + menu_rev]
+    call ev_u64
+    lea rdi, [rip + .Lev_sp_action]
+    call ev_cstr
+    mov edi, ebx
+    mov rsi, [rip + menu_node_id]
+    mov rdx, [rip + menu_node_len]
+    call ev_send
+    jmp 9f
+2:  mov rdi, r12
+    mov rsi, r14
+    mov rdx, r15
+    call action_find
+    test rax, rax
+    jz 9f
+    mov edi, ebx
+    mov rsi, [rax + TA_key]
+    mov rdx, [rax + TA_keylen]
+    mov rcx, [rip + menu_node_id]
+    mov r8, [rip + menu_node_len]
+    call send_action
+9:  EPILOGUE
+
+# ---------------- vreveal ----------------
+
+# rview_reveal(ext, view, how, howlen, id, idlen) -> eax 0, 1 no such view, 2 no such node: the
+#   node's ancestors expand and it scrolls into view; HOW: "-" or a comma list of select, focus
+#   (the keyboard to the view, the cursor on the node), expand (the node itself)
+FN rview_reveal
+    PROLOGUE 32
+    mov r12, rdx
+    mov r13, rcx
+    mov [rsp], r8
+    mov [rsp + 8], r9
+    call rv_find
+    cmp eax, -1
+    je 7f
+    mov ebx, eax
+    mov edi, eax
+    call rv_at
+    mov r14, rax
+    mov rdi, [r14 + RV_tree]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call tree_find
+    cmp eax, -1
+    je 8f
+    test eax, eax
+    jz 8f
+    mov r15d, eax
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lh_expand]
+    call how_has
+    test eax, eax
+    jz 1f
+    mov rdi, [r14 + RV_tree]
+    mov esi, r15d
+    mov edx, 1
+    call tree_expand
+1:  mov rdi, [r14 + RV_tree]
+    mov esi, r15d
+    call tree_reveal
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lh_select]
+    call how_has
+    mov [rsp + 16], eax
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lh_focus]
+    call how_has
+    mov [rsp + 20], eax
+    or eax, [rsp + 16]
+    jz 2f
+    mov rdi, [r14 + RV_tree]
+    mov esi, r15d
+    call tree_set_cursor
+    mov rdi, [r14 + RV_tree]
+    mov esi, r15d
+    call tree_reveal
+2:  movsxd rdi, dword ptr [r14 + RV_decl]
+    cmp rdi, -1
+    je 3f
+    call vd_at
+    mov edi, [rax + VD_pl]
+    mov esi, [rsp + 20]
+    call place_show
+3:  xor eax, eax
+    EPILOGUE
+7:  mov eax, 1
+    EPILOGUE
+8:  mov eax, 2
+    EPILOGUE
+
+# how_has(ptr, len, word cstr) -> eax 1 when the comma list holds the word
+how_has:
+    PROLOGUE
+    mov r12, rdi
+    lea r13, [rdi + rsi]
+    mov r14, rdx
+1:  cmp r12, r13
+    jae 8f
+    mov rbx, r12
+2:  cmp rbx, r13
+    jae 3f
+    cmp byte ptr [rbx], ','
+    je 3f
+    inc rbx
+    jmp 2b
+3:  mov rdi, r12
+    mov rsi, rbx
+    sub rsi, r12
+    mov rdx, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 9f
+    lea r12, [rbx + 1]
+    jmp 1b
+8:  xor eax, eax
 9:  EPILOGUE
 
 # ---------------- the declared views' places (ctx: the VD index) ----------------
@@ -1057,9 +2289,29 @@ rv_place_draw:
     jmp 9f
 .Lpd_instance:
     mov edi, eax
-    mov r15d, eax
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call rv_instance_draw
+9:  EPILOGUE
+
+# rv_instance_draw(slot, x, y, w, h): an instance's body: its message, busy bar, its state (Loading,
+#   empty or error text with up to 3 action buttons) or its content (tree, log)
+rv_instance_draw:
+    PROLOGUE 48
+    mov ebx, edi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
     call rv_at
     mov r14, rax
+    call place_focused
+    xor ecx, ecx
+    cmp eax, [r14 + RV_pl]
+    sete cl
+    mov [rsp + 16], ecx         # it has the keyboard
     # its message above everything
     mov rax, [r14 + RV_message]
     test rax, rax
@@ -1085,8 +2337,16 @@ rv_place_draw:
     M eax, MI_24
     add [rsp + 4], eax
     sub [rsp + 12], eax
-4:  # busy: a thin bar at the top
-    cmp dword ptr [r14 + RV_busy], 0
+4:  # busy: a thin bar at the top; progress: a bar with its share (or a moving third)
+    cmp dword ptr [r14 + RV_prog], 0
+    je 41f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [r14 + RV_ppct]
+    call notify_bar
+    jmp 5f
+41: cmp dword ptr [r14 + RV_busy], 0
     je 5f
     mov edi, [rsp]
     mov esi, [rsp + 4]
@@ -1096,25 +2356,32 @@ rv_place_draw:
     call gfx_fill
 5:  mov eax, [r14 + RV_state]
     cmp eax, RS_EMPTY
-    je .Lpd_state
+    je .Lid_state
     cmp eax, RS_ERROR
-    je .Lpd_state
+    je .Lid_state
     cmp eax, RS_LOADING
-    je .Lpd_loading
+    je .Lid_loading
     cmp eax, RS_READY
-    je .Lpd_tree
-    call time_ms                # no state yet (nor root children): Loading after 300 ms
-
+    je .Lid_content
+    call time_ms                # no state yet (nor content): Loading after 300 ms
     sub rax, [r14 + RV_opened]
     cmp rax, 300
     jb 9f
-.Lpd_loading:
+.Lid_loading:
+    lea rdi, [rip + g_face_small]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, [rsp + 4]
+    add edx, [rip + g_mt + 4*MI_4]
+    M ecx, MI_24
     lea r8, [rip + .Lloading]
-    jmp .Lpd_text
-.Lpd_state:
+    COLOR r9d, T_MUTED
+    call ui_text_c
+    jmp 9f
+.Lid_state:
     mov r8, [r14 + RV_stext]
     test r8, r8
-    jz 9f
+    jz 6f
     lea rdi, [rip + g_face_small]
     mov esi, [rsp]
     mov edx, [rsp + 4]
@@ -1124,27 +2391,121 @@ rv_place_draw:
     xchg r8, r9
     COLOR eax, T_MUTED
     cmp dword ptr [r14 + RV_state], RS_ERROR
-    jne 6f
+    jne 51f
     COLOR eax, T_ERROR
-6:  push rax
+51: push rax
     push rax
     call ui_text_center
     add rsp, 16
+6:  # its keys as buttons, centered under the text: "action REV KEY 0" each
+    mov r12, [r14 + RV_skeys]
+    test r12, r12
+    jz 9f
+    mov eax, [rsp + 4]
+    add eax, [rip + g_mt + 4*MI_48]
+    mov [rsp + 20], eax         # y
+    mov eax, [rsp]
+    add eax, [rip + g_mt + 4*MI_16]
+    mov [rsp + 24], eax         # x
+    mov dword ptr [rsp + 28], 0 # buttons
+.Lid_key:
+    cmp dword ptr [rsp + 28], 3
+    jae 9f
+71: cmp byte ptr [r12], ' '
+    jne 72f
+    inc r12
+    jmp 71b
+72: cmp byte ptr [r12], 0
+    je 9f
+    mov r13, r12
+73: cmp byte ptr [r13], 0
+    je 74f
+    cmp byte ptr [r13], ' '
+    je 74f
+    inc r13
+    jmp 73b
+74: # its title from the actions, else the key itself
+    mov rdi, r14
+    mov rsi, r12
+    mov rdx, r13
+    sub rdx, r12
+    call action_find
+    lea rdi, [rip + keybuf]
+    mov rsi, r12
+    mov rcx, r13
+    sub rcx, r12
+    cmp rcx, 60
+    jbe 75f
+    mov ecx, 60
+75: rep movsb
+    mov byte ptr [rdi], 0
+    lea rcx, [rip + keybuf]
+    test rax, rax
+    jz 76f
+    mov rdx, [rax + TA_title]
+    test rdx, rdx
+    jz 76f
+    cmp byte ptr [rdx], 0
+    je 76f
+    mov rcx, rdx
+76: mov edi, ebx
+    shl edi, 4
+    add edi, [rsp + 28]
+    add edi, ID_RV_STATE
+    mov esi, [rsp + 24]
+    mov edx, [rsp + 20]
+    call text_button
+    mov [rsp + 32], eax
+    mov [rsp + 36], edx
+    test dword ptr [rsp + 32], UB_CLICK
+    jz 77f
+    mov edi, ebx
+    mov rsi, r12
+    mov rdx, r13
+    sub rdx, r12
+    xor ecx, ecx
+    xor r8d, r8d
+    call send_action
+77: mov eax, [rsp + 36]
+    add eax, [rip + g_mt + 4*MI_8]
+    add [rsp + 24], eax
+    inc dword ptr [rsp + 28]
+    mov r12, r13
+    jmp .Lid_key
+.Lid_content:
+    cmp dword ptr [r14 + RV_kind], RK_LOG
+    je .Lid_log
+    cmp dword ptr [r14 + RV_kind], RK_PICTURE
+    jne 1f
+    mov rdi, [r14 + RV_vw]
+    test rdi, rdi
+    jz 9f
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call extview_draw_vw
     jmp 9f
-.Lpd_tree:
-    call place_focused
-    xor r9d, r9d
-    cmp eax, [r12 + VD_pl]
-    sete r9b
+1:
     mov rdi, [r14 + RV_tree]
     mov esi, [rsp]
     mov edx, [rsp + 4]
     mov ecx, [rsp + 8]
     mov r8d, [rsp + 12]
+    mov r9d, [rsp + 16]
     call tree_draw
+    jmp 9f
+.Lid_log:
+    mov rdi, [r14 + RV_log]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    mov r9d, [rsp + 16]
+    call log_draw
 9:  EPILOGUE
 
-# text_button(id, x, y, label cstr) -> eax UB bits: a small accented button
+# text_button(id, x, y, label cstr) -> eax UB bits, edx its width: a small accented button
 text_button:
     PROLOGUE 32
     mov [rsp], edi
@@ -1185,26 +2546,56 @@ text_button:
     call ui_text_center
     add rsp, 16
     mov eax, [rsp + 16]
+    mov edx, [rsp + 12]
     EPILOGUE
 
 # rv_place_key(vd, keysym, cp, mods) -> eax 1 when its tree took the key
 rv_place_key:
+    push rsi
+    push rdx
+    push rcx
+    call rv_of_vd
+    mov edi, eax
+    pop rcx
+    pop rdx
+    pop rsi
+    cmp edi, -1
+    jne rv_instance_key
+    xor eax, eax
+    ret
+
+# rv_instance_key(slot, keysym, cp, mods) -> eax 1 when its content took the key
+rv_instance_key:
     PROLOGUE
     mov r12d, esi
     mov r13d, edx
     mov r14d, ecx
-    call rv_of_vd
-    cmp eax, -1
-    je 8f
-    mov edi, eax
     call rv_at
+    cmp dword ptr [rax + RV_kind], RK_LOG
+    je 1f
+    cmp dword ptr [rax + RV_kind], RK_PICTURE
+    je 2f
     mov rdi, [rax + RV_tree]
     mov esi, r12d
     mov edx, r13d
     mov ecx, r14d
     call tree_key
     EPILOGUE
-8:  xor eax, eax
+2:  mov rdi, [rax + RV_vw]      # a picture view (viewpic.s: with view-keys)
+    test rdi, rdi
+    jz 3f
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call viewpic_key
+    EPILOGUE
+3:  xor eax, eax
+    EPILOGUE
+1:  mov rdi, [rax + RV_log]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call log_key
     EPILOGUE
 
 # rv_place_focus(vd, on): "focus 0|1"; the context keys viewFocus and view follow it
@@ -1212,12 +2603,26 @@ rv_place_focus:
     PROLOGUE
     mov rbx, rdi
     mov r12d, esi
-    mov edi, CTX_VIEW_FOCUS
-    mov esi, r12d
-    call ctx_set_bool
     mov rdi, rbx
     call vd_at
     mov r13, [rax + VD_name]
+    mov rdi, rbx
+    call rv_of_vd
+    mov edi, eax
+    mov esi, r12d
+    mov rdx, r13
+    call rv_focus_event
+    EPILOGUE
+
+# rv_focus_event(slot or -1, on, name cstr): "focus 0|1" to the instance; viewFocus and view follow
+rv_focus_event:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13, rdx
+    mov edi, CTX_VIEW_FOCUS
+    mov esi, r12d
+    call ctx_set_bool
     xor r14d, r14d
     test r12d, r12d
     jz 1f
@@ -1228,11 +2633,8 @@ rv_place_focus:
     mov rsi, r13
     mov rdx, r14
     call ctx_set
-    mov rdi, rbx
-    call rv_of_vd
-    cmp eax, -1
+    cmp ebx, -1
     je 9f
-    mov ebx, eax
     mov edi, ebx
     call ev_head
     test eax, eax
@@ -1318,6 +2720,20 @@ FN rview_show
 .Lev_expand: .asciz "expand"
 .Lev_collapse: .asciz "collapse"
 .Lev_select: .asciz "select"
+.Lev_clear: .asciz "clear"
+.Llt_find: .asciz "Find"
+.Llt_clear: .asciz "Clear"
+.Llt_follow: .asciz "Follow the end"
+.Lev_check: .asciz "check"
+.Lev_action: .asciz "action"
+.Lev_discarded: .asciz "discarded"
+.Lev_sp_action: .asciz " action"
+.Lq_vkids: .asciz " vkids "
+.Lq_vmore: .asciz " vmore "
+.Lr_menu: .asciz "menu"
+.Lh_select: .asciz "select"
+.Lh_focus: .asciz "focus"
+.Lh_expand: .asciz "expand"
 .Ldash: .asciz "-"
 .Lr_open: .asciz "open"
 .Lr_command: .asciz "command"
@@ -1345,8 +2761,11 @@ FN rview_show
 .p2align 3
 place_words: .quad .Lw_sidebar, .Lw_panel, .Lw_side, .Lw_tab, 0     # PLACE_* - 1
 kind_words: .quad .Lw_tree, .Lw_table, .Lw_log, .Lw_form, .Lw_doc, .Lw_picture, 0  # RK_* - 1
-rv_place_ops: .quad rv_place_draw, rv_place_key, rv_place_focus, 0, 0, rv_place_visible
-rv_tree_ops: .quad rv_activate, rv_expand, rv_select, 0, 0, 0, 0, 0
+log_icons: .long IC_SEARCH, IC_DISCARD, IC_ARROW_DN       # Find, Clear, Follow (right to left)
+.p2align 3
+log_tips: .quad .Llt_find, .Llt_clear, .Llt_follow
+rv_place_ops: .quad rv_place_draw, rv_place_key, rv_place_focus, 0, rv_place_actions, rv_place_visible
+rv_tree_ops: .quad rv_activate, rv_expand, rv_select, rv_check, rv_menu, rv_more, 0, rv_load, rv_action
 
 # ---------------- patches ----------------
 # A patch is checked whole first (every op and record read, every node it names looked up in the
@@ -1816,8 +3235,12 @@ remove_ref:
     imul rax, r12, ND_SIZE
     add rax, [rbx + TR_nodes + VEC_ptr]
     mov [rax + ND_mark], r15d
-    # count it and what under it was not removed before
+    # count it and what under it was not removed before (nodes and bytes)
     inc qword ptr [rip + p_removed]
+    mov edi, r12d
+    call live_free
+    imul rax, r12, ND_SIZE
+    add rax, [rbx + TR_nodes + VEC_ptr]
     movsxd r13, dword ptr [rax + ND_first]
 2:  cmp r13, -1
     je 9f
@@ -1826,6 +3249,10 @@ remove_ref:
     cmp [rax + ND_mark], r15d
     je 3f
     inc qword ptr [rip + p_removed]
+    mov edi, r13d
+    call live_free
+    imul rax, r13, ND_SIZE
+    add rax, [rbx + TR_nodes + VEC_ptr]
     movsxd rcx, dword ptr [rax + ND_first]
     cmp rcx, -1
     je 3f
@@ -2038,6 +3465,70 @@ has_byte:
 
 # patch_check(slot, body, len) -> eax 0 when the patch can be applied whole, else 1 with errbuf
 patch_check:
+    PROLOGUE
+    mov qword ptr [rip + p_touched + VEC_len], 0
+    mov qword ptr [rip + p_freed], 0
+    call patch_check_ops
+    mov ebx, eax
+    # the live nodes it counted out lose the mark
+    mov r12, [rip + p_tree]
+    xor r13d, r13d
+1:  cmp r13, [rip + p_touched + VEC_len]
+    jae 2f
+    mov rax, [rip + p_touched + VEC_ptr]
+    mov eax, [rax + r13*4]
+    imul rax, rax, ND_SIZE
+    add rax, [r12 + TR_nodes + VEC_ptr]
+    and dword ptr [rax + ND_flags], ~NF_PCOUNT
+    inc r13
+    jmp 1b
+2:  mov eax, ebx
+    EPILOGUE
+
+# nrec_bytes() -> rax the bytes the node record in nrec keeps (id, label, extra); edi kept
+nrec_bytes:
+    mov rax, [rip + nrec + 8]
+    add rax, [rip + nrec + 24]
+    add rax, [rip + nrec + 40]
+    ret
+
+# live_free(node): the patch replaces or removes a live node: its bytes count out (once)
+live_free:
+    PROLOGUE
+    mov rbx, [rip + p_tree]
+    mov r12d, edi
+    imul rax, r12, ND_SIZE
+    add rax, [rbx + TR_nodes + VEC_ptr]
+    test dword ptr [rax + ND_flags], NF_PCOUNT
+    jnz 9f
+    or dword ptr [rax + ND_flags], NF_PCOUNT
+    mov ecx, [rax + ND_idlen]
+    add ecx, [rax + ND_lablen]
+    add ecx, [rax + ND_xlen]
+    add [rip + p_freed], rcx
+    lea rdi, [rip + p_touched]
+    mov esi, 4
+    call vec_push
+    mov [rax], r12d
+9:  EPILOGUE
+
+# ref_bytes(ref, bytes): a record lands on a node: a created one keeps its bytes, a live one's
+#   bytes count out and the record's in
+ref_bytes:
+    PROLOGUE
+    mov rbx, rsi
+    test edi, OVF
+    jz 1f
+    and edi, ~OVF
+    call ov_at
+    mov [rax + OV_bytes], ebx
+    EPILOGUE
+1:  call live_free
+    add [rip + p_bytes], rbx
+    EPILOGUE
+
+# patch_check_ops(slot, body, len) -> eax as patch_check (which clears the marks this leaves)
+patch_check_ops:
     PROLOGUE 48
     mov [rsp], edi
     mov r12, rsi                # p
@@ -2049,6 +3540,13 @@ patch_check:
     call tree_mark_new
     mov [rip + p_rmark], eax
     mov dword ptr [rip + p_kmark], 0
+    mov edi, [rsp]
+    call rv_at
+    mov [rip + p_rv], rax
+    mov ecx, [rax + RV_kind]
+    mov [rip + p_kind], ecx
+    mov rax, [rax + RV_actions + VEC_len]
+    mov [rip + p_actions], rax
     xor eax, eax
     mov [rip + p_created], rax
     mov [rip + p_removed], rax
@@ -2170,6 +3668,52 @@ patch_check:
     jmp .Lpc_op
 7:  mov rdi, rbx
     xor esi, esi
+    lea rdx, [rip + .Lo_log]
+    call tree_rec_is
+    test eax, eax
+    jz 701f
+    cmp dword ptr [rip + p_kind], RK_LOG
+    jne .Lpc_kind
+    call check_log_op
+    test eax, eax
+    jz .Lpc_syntax
+    jmp .Lpc_op
+701:mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_clear]
+    call tree_rec_is
+    test eax, eax
+    jz 702f
+    cmp dword ptr [rip + p_kind], RK_LOG
+    jne .Lpc_kind
+    jmp .Lpc_op
+702:mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_action]
+    call tree_rec_is
+    test eax, eax
+    jz 71f
+    call check_action_op
+    test eax, eax
+    jz .Lpc_syntax
+    js .Lpc_toobig_actions
+    jmp .Lpc_op
+71: cmp dword ptr [rip + p_kind], RK_TREE  # the tree's own ops
+    jne .Lpc_tree_ops_other_kind
+    mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_select_mode]
+    call tree_rec_is
+    test eax, eax
+    jz 72f
+    cmp qword ptr [rbx + RR_n], 3
+    jne .Lpc_syntax
+    call select_mode_word
+    test eax, eax
+    jz .Lpc_syntax
+    jmp .Lpc_op
+72: mov rdi, rbx
+    xor esi, esi
     lea rdx, [rip + .Lo_kids]
     call tree_rec_is
     mov r14d, 1                 # kids
@@ -2250,6 +3794,12 @@ patch_check:
     je 72f
     test eax, eax
     jz 72f
+    mov [rsp + 8], eax
+    mov edi, eax
+    call nrec_bytes
+    mov rsi, rax
+    call ref_bytes
+    mov eax, [rsp + 8]
     cmp qword ptr [rip + nrec + 48], KIDS_LEAF
     jne .Lpc_op
     mov edi, eax
@@ -2318,10 +3868,6 @@ patch_check:
     call nrec_check
     test eax, eax
     jz .Lpc_syntax
-    mov rax, [rip + nrec + 8]
-    add rax, [rip + nrec + 24]
-    add rax, [rip + nrec + 40]
-    add [rip + p_bytes], rax
     mov rdi, [rip + nrec]
     mov rsi, [rip + nrec + 8]
     call resolve
@@ -2342,6 +3888,10 @@ patch_check:
     mov edi, [rsp + 8]
     mov esi, [rip + p_kmark]
     call set_mark
+    mov edi, [rsp + 8]
+    call nrec_bytes
+    mov rsi, rax
+    call ref_bytes
     cmp qword ptr [rip + nrec + 48], KIDS_LEAF
     jne .Lpc_rec
     mov edi, [rsp + 8]          # a leaf now: its children go
@@ -2353,6 +3903,11 @@ patch_check:
     mov rsi, [rip + nrec + 8]
     mov edx, [rsp + 40]
     call ov_new
+    or eax, OVF
+    mov edi, eax
+    call nrec_bytes
+    mov rsi, rax
+    call ref_bytes
     jmp .Lpc_rec
 .Lpc_rec_bad:
     lea rdi, [rip + .Lo_kids]
@@ -2394,9 +3949,30 @@ patch_check:
     sub rdx, [rip + p_removed]
     cmp rdx, NODES_ALL_MAX
     jg .Lpc_toobig
-    mov rcx, [rax + TR_bytes]
-    add rcx, [rip + p_bytes]
-    cmp rcx, BYTES_MAX * 2      # bytes kept plus brought: a patch never doubles the cap
+    # the bytes it leaves: kept, less what it replaces or removes, plus what it brings
+    mov r14, [rax + TR_bytes]
+    sub r14, [rip + p_freed]
+    add r14, [rip + p_bytes]
+    xor ebx, ebx
+86: cmp rbx, [rip + ov + VEC_len]
+    jae 87f
+    mov edi, ebx
+    call ov_alive
+    test eax, eax
+    jz 861f
+    mov edi, ebx
+    call ov_at
+    mov eax, [rax + OV_bytes]
+    add r14, rax
+861:inc ebx
+    jmp 86b
+87: cmp r14, BYTES_MAX
+    jg .Lpc_toobig
+    mov rax, [rip + p_tree]
+    mov rcx, [rip + g_rv_bytes]
+    sub rcx, [rax + TR_bytes]
+    add rcx, r14
+    cmp rcx, BYTES_ALL_MAX
     jg .Lpc_toobig
     xor eax, eax
     EPILOGUE
@@ -2406,12 +3982,188 @@ patch_check:
     call err_syntax
     mov eax, 1
     EPILOGUE
+.Lpc_tree_ops_other_kind:
+    # a tree op on another kind of view is noview; anything else unknown is skipped
+    lea r14, [rip + tree_ops]
+1:  mov rdx, [r14]
+    test rdx, rdx
+    jz .Lpc_op
+    mov rdi, rbx
+    xor esi, esi
+    call tree_rec_is
+    test eax, eax
+    jnz .Lpc_kind
+    add r14, 8
+    jmp 1b
+.Lpc_kind:
+    lea rdi, [rip + .Le_noview_kind]
+    call set_err
+    mov eax, 1
+    EPILOGUE
+.Lpc_toobig_actions:
+    lea rdi, [rip + .Le_toobig_actions]
+    call set_err
+    mov eax, 1
+    EPILOGUE
 .Lpc_toobig:
     lea rdi, [rip + .Le_toobig]
     call set_err
 .Lpc_fail:
     mov eax, 1
     EPILOGUE
+
+# check_log_op() -> eax 1 when rr is "log N LEN" with N lines "SEV TEXT" LF, SEV a severity word
+check_log_op:
+    PROLOGUE
+    cmp qword ptr [rip + rr + RR_n], 3
+    jne 8f
+    lea rdi, [rip + rr]
+    mov esi, 1
+    call tree_rec_num
+    test edx, edx
+    jz 8f
+    mov r15, rax                # lines
+    mov r12, [rip + rr + RR_data]
+    mov r13, r12
+    add r13, [rip + rr + RR_len]
+1:  cmp r12, r13
+    jae 7f
+    test r15, r15
+    jz 8f                       # more lines than N
+    dec r15
+    mov rbx, r12                # the severity: up to a space
+2:  cmp rbx, r13
+    jae 8f
+    cmp byte ptr [rbx], ' '
+    je 3f
+    cmp byte ptr [rbx], 10
+    je 8f
+    inc rbx
+    jmp 2b
+3:  mov rdi, r12
+    mov rsi, rbx
+    sub rsi, r12
+    call log_sev_word
+    test eax, eax
+    jz 8f
+4:  cmp rbx, r13                # the text: up to its LF
+    jae 8f
+    cmp byte ptr [rbx], 10
+    je 5f
+    inc rbx
+    jmp 4b
+5:  lea r12, [rbx + 1]
+    jmp 1b
+7:  test r15, r15
+    jnz 8f
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# check_action_op() -> eax 1 when rr is a good "action KEY ICON WHERE LEN" + TITLE, 0 a syntax
+#   error, -1 when it would make more than 32 actions
+check_action_op:
+    PROLOGUE
+    cmp qword ptr [rip + rr + RR_n], 5
+    jne 8f
+    mov rdi, [rip + rr + 16]    # KEY: [a-z0-9_]{1,40}
+    mov rsi, [rip + rr + 24]
+    call key_ok
+    test eax, eax
+    jz 8f
+    call where_word
+    cmp eax, -1
+    je 8f
+    mov ebx, eax
+    cmp qword ptr [rip + rr + RR_len], 200
+    ja 8f
+    call data_one_line
+    test eax, eax
+    jz 8f
+    test ebx, ebx
+    jz 7f
+    mov rdi, [rip + p_rv]
+    mov rsi, [rip + rr + 16]
+    mov rdx, [rip + rr + 24]
+    call action_find
+    test rax, rax
+    jnz 7f
+    inc qword ptr [rip + p_actions]
+    cmp qword ptr [rip + p_actions], RA_MAX
+    jbe 7f
+    mov eax, -1
+    EPILOGUE
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# key_ok(ptr, len) -> eax 1 for 1 to 40 bytes of [a-z0-9_]
+key_ok:
+    xor eax, eax
+    test rsi, rsi
+    jz 9f
+    cmp rsi, 40
+    ja 9f
+    xor ecx, ecx
+1:  cmp rcx, rsi
+    jae 8f
+    movzx edx, byte ptr [rdi + rcx]
+    inc rcx
+    cmp edx, '_'
+    je 1b
+    lea r8d, [rdx - 'a']
+    cmp r8d, 25
+    jbe 1b
+    lea r8d, [rdx - '0']
+    cmp r8d, 9
+    jbe 1b
+    ret
+8:  mov eax, 1
+9:  ret
+
+# where_word() -> eax RAW_TITLE, RAW_NODE, 0 for none (rr's fourth field), -1 for another word
+where_word:
+    lea rdi, [rip + rr]
+    mov esi, 3
+    lea rdx, [rip + .Lw_title]
+    call tree_rec_is
+    mov ecx, RAW_TITLE
+    test eax, eax
+    jnz 1f
+    lea rdi, [rip + rr]
+    mov esi, 3
+    lea rdx, [rip + .Lw_node]
+    call tree_rec_is
+    mov ecx, RAW_NODE
+    test eax, eax
+    jnz 1f
+    lea rdi, [rip + rr]
+    mov esi, 3
+    lea rdx, [rip + .Lw_none]
+    call tree_rec_is
+    xor ecx, ecx
+    test eax, eax
+    jnz 1f
+    mov ecx, -1
+1:  mov eax, ecx
+    ret
+
+# select_mode_word() -> eax 1 single, 2 multi (rr's second field), 0 another word
+select_mode_word:
+    lea rdi, [rip + rr]
+    mov esi, 1
+    lea rdx, [rip + .Lw_single]
+    call tree_rec_is
+    test eax, eax
+    jnz 1f
+    lea rdi, [rip + rr]
+    mov esi, 1
+    lea rdx, [rip + .Lw_multi]
+    call tree_rec_is
+    add eax, eax
+1:  ret
 
 # data_one_line() -> eax 1 when rr's bytes hold no LF and no NUL
 data_one_line:
@@ -2456,6 +4208,42 @@ state_word:
 
 # ---- applying ----
 
+# apply_log_op(RV*): rr's lines appended to the log; a log given lines is ready
+apply_log_op:
+    PROLOGUE
+    mov rbx, rdi
+    mov dword ptr [rbx + RV_state], RS_READY
+    mov r12, [rip + rr + RR_data]
+    mov r13, r12
+    add r13, [rip + rr + RR_len]
+2:  cmp r12, r13
+    jae 9f
+    mov r14, r12
+3:  cmp byte ptr [r14], ' '
+    je 4f
+    inc r14
+    jmp 3b
+4:  mov rdi, r12
+    mov rsi, r14
+    sub rsi, r12
+    call log_sev_word
+    lea r15d, [rax - 1]         # LS_*
+    inc r14
+    mov r12, r14
+5:  cmp byte ptr [r14], 10
+    je 6f
+    inc r14
+    jmp 5b
+6:  mov rdi, [rbx + RV_log]
+    mov esi, r15d
+    mov rdx, r12
+    mov rcx, r14
+    sub rcx, r12
+    call log_append
+    lea r12, [r14 + 1]
+    jmp 2b
+9:  EPILOGUE
+
 # take_text(slot*, ptr, len): the bytes as an owned cstr in the slot (len 0: none)
 take_text:
     push rbx
@@ -2487,8 +4275,10 @@ patch_apply:
     call rv_at
     mov r14, rax                # RV*
     mov rax, [r14 + RV_tree]
-    mov rax, [rax + TR_count]
-    sub [rip + g_rv_nodes], rax
+    mov rcx, [rax + TR_count]
+    sub [rip + g_rv_nodes], rcx
+    mov rcx, [rax + TR_bytes]
+    sub [rip + g_rv_bytes], rcx
     # past the count line
 1:  cmp byte ptr [r12], 10
     je 2f
@@ -2614,6 +4404,56 @@ patch_apply:
     jmp .Lpa_op
 7:  mov rdi, rbx
     xor esi, esi
+    lea rdx, [rip + .Lo_log]
+    call tree_rec_is
+    test eax, eax
+    jz 701f
+    mov rdi, r14
+    call apply_log_op
+    jmp .Lpa_op
+701:mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_clear]
+    call tree_rec_is
+    test eax, eax
+    jz 702f
+    mov rdi, [r14 + RV_log]
+    call log_clear
+    jmp .Lpa_op
+702:mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_action]
+    call tree_rec_is
+    test eax, eax
+    jz 71f
+    call where_word
+    mov r9d, eax
+    mov rax, [rbx + RR_data]
+    push qword ptr [rbx + RR_len]
+    push rax
+    mov rdi, r14
+    mov rsi, [rbx + 16]
+    mov rdx, [rbx + 24]
+    mov rcx, [rbx + 32]
+    mov r8, [rbx + 40]
+    call action_set
+    add rsp, 16
+    jmp .Lpa_op
+71: mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_select_mode]
+    call tree_rec_is
+    test eax, eax
+    jz 72f
+    call select_mode_word
+    xor esi, esi
+    cmp eax, 2
+    sete sil
+    mov rdi, [r14 + RV_tree]
+    call tree_set_multi
+    jmp .Lpa_op
+72: mov rdi, rbx
+    xor esi, esi
     lea rdx, [rip + .Lo_kids]
     call tree_rec_is
     test eax, eax
@@ -2715,9 +4555,7 @@ patch_apply:
     jnz 81f
     test r15d, r15d
     jnz 81f
-    cmp dword ptr [r14 + RV_state], RS_NONE
-    jne 81f
-    mov dword ptr [r14 + RV_state], RS_READY    # the root's children: the tree shows
+    mov dword ptr [r14 + RV_state], RS_READY    # the root's children: the tree shows, whatever the state was
 81: mov rdi, [r14 + RV_tree]
     mov esi, eax
     test r15d, r15d
@@ -2753,8 +4591,10 @@ patch_apply:
     jmp .Lpa_op
 .Lpa_done:
     mov rax, [r14 + RV_tree]
-    mov rax, [rax + TR_count]
-    add [rip + g_rv_nodes], rax
+    mov rcx, [rax + TR_count]
+    add [rip + g_rv_nodes], rcx
+    mov rcx, [rax + TR_bytes]
+    add [rip + g_rv_bytes], rcx
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -2771,8 +4611,10 @@ FN rview_patch
     mov edi, eax
     call rv_at
     cmp dword ptr [rax + RV_kind], RK_TREE
+    je 1f
+    cmp dword ptr [rax + RV_kind], RK_LOG
     jne 7f
-    mov edi, ebx
+1:  mov edi, ebx
     mov rsi, r12
     mov rdx, r13
     call patch_check
@@ -2911,7 +4753,21 @@ FN rview_dump
     mov rdi, rbx
     mov rsi, [r13 + RV_message]
     call sb_push_cstr
-6:  mov rdi, rbx
+6:  cmp dword ptr [r13 + RV_prog], 0     # progress shown in it: " progress=PERCENT|-"
+    je 61f
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_progress]
+    call sb_push_cstr
+    mov esi, [r13 + RV_ppct]
+    cmp esi, -1
+    jne 62f
+    mov rdi, rbx
+    mov esi, '-'
+    call sb_push_byte
+    jmp 61f
+62: mov rdi, rbx
+    call sb_push_u64
+61: mov rdi, rbx
     mov esi, 10
     call sb_push_byte
 8:  inc r12d
@@ -2980,6 +4836,17 @@ FN rview_tree_of
 .Le_syntax_op: .asciz "syntax op "
 .Le_badpos: .asciz "badpos "
 .Le_toobig: .asciz "toobig nodes"
+.Le_toobig_actions: .asciz "toobig actions"
+.Le_noview_kind: .asciz "noview an op for another kind of view"
+.Lo_log: .asciz "log"
+.Lo_clear: .asciz "clear"
+.Lo_action: .asciz "action"
+.Lo_select_mode: .asciz "select-mode"
+.Lw_title: .asciz "title"
+.Lw_node: .asciz "node"
+.Lw_none: .asciz "none"
+.Lw_single: .asciz "single"
+.Lw_multi: .asciz "multi"
 .Le_noview: .asciz "noview"
 .Lo_title: .asciz "title"
 .Lo_message: .asciz "message"
@@ -3010,8 +4877,386 @@ FN rview_tree_of
 .Ld_title: .asciz " title="
 .Ld_badge: .asciz " badge="
 .Ld_visible: .asciz " visible="
+.Ld_progress: .asciz " progress="
 .Ld_nodes: .asciz " nodes="
 .Ld_message: .asciz " message="
 .p2align 3
+tree_ops: .quad .Lo_kids, .Lo_add, .Lo_set, .Lo_del, .Lo_expand, .Lo_collapse, .Lo_select_mode, 0
 state_words: .quad .Ls_ready, .Ls_loading, .Ls_empty, .Ls_error, 0     # RS_* - 1
 nrec_slots: .quad 8, 24, 40     # nrec offsets of ID_LEN, LABEL_LEN, EXTRA_LEN
+
+# ---------------- tab instances: vtab ----------------
+.text
+
+# rview_tab(ext, kind, kindlen, title, titlelen) -> rax the new view's number, -1 for a kind it
+#   did not agree, -2 when it has 8 tabs and 12a views: a retained view in an editor tab of its
+#   own, shown at once (its title at most 80 bytes)
+FN rview_tab
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov [rsp], rcx
+    mov [rsp + 8], r8
+    xor r14d, r14d              # the kind
+1:  lea rax, [rip + kind_words]
+    mov rdx, [rax + r14*8]
+    test rdx, rdx
+    jz 7f
+    mov rdi, r12
+    mov rsi, r13
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    inc r14d
+    jmp 1b
+2:  inc r14d                    # RK_*
+    mov edi, r14d
+    mov rsi, rbx
+    call kind_agreed
+    test eax, eax
+    jz 7f
+    # 8 tabs and 12a views at most
+    mov rdi, rbx
+    call extview_count
+    mov r15d, eax
+    xor ecx, ecx
+3:  cmp ecx, RV_MAX
+    jae 4f
+    mov edi, ecx
+    push rcx
+    push rcx
+    call rv_at
+    pop rcx
+    pop rcx
+    inc ecx
+    cmp [rax + RV_ext], rbx
+    jne 3b
+    cmp dword ptr [rax + RV_place], PLACE_TAB
+    jne 3b
+    inc r15d
+    jmp 3b
+4:  cmp r15d, VIEWS_PER_EXT
+    jae 6f
+    mov rdi, rbx
+    mov esi, r14d
+    mov edx, PLACE_TAB
+    mov ecx, -1
+    call rv_open
+    cmp eax, -1
+    je 6f
+    mov r15d, eax
+    # its title, its place item (for the keyboard), its tab
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    mov edx, TITLE_MAX
+    xchg rdi, rsi
+    call utf8_cut
+    mov rsi, rax
+    mov rdi, [rsp]
+    call mem_dup
+    mov r12, rax
+    mov edi, r15d
+    call rv_at
+    mov [rax + RV_title], r12
+    mov rdi, rbx
+    call ext_full_name
+    lea rdi, [rip + evbuf]
+    mov rsi, rax
+    call rv_tab_name
+    mov edi, PLACE_TAB
+    lea rsi, [rip + evbuf]
+    mov rsi, [rsi + SB_ptr]
+    mov rdx, r12
+    lea rcx, [rip + rv_tab_ops]
+    mov r8d, r15d
+    call place_add
+    mov r12d, eax
+    mov edi, r15d
+    call rv_at
+    mov [rax + RV_pl], r12d
+    xor edi, edi
+    mov esi, TAB_VIEW
+    call app_add_tab
+    mov rdi, rax
+    call tab_at
+    lea rcx, [r15 + 1]
+    shl rcx, TF_VIEW_SHIFT
+    or rcx, TF_RVIEW
+    or [rax + TAB_flags], rcx
+    mov edi, r15d
+    call send_open
+    mov edi, r15d
+    call rv_at
+    mov eax, [rax + RV_view]
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+6:  mov rax, -2
+    EPILOGUE
+7:  mov rax, -1
+    EPILOGUE
+
+# rv_tab_name(sb, full name cstr): "OWNER/NAME.tab" into the buffer, NUL-ended
+rv_tab_name:
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12, rsi
+    call sb_clear
+    mov rdi, rbx
+    mov rsi, r12
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + .Ltab_suffix]
+    call sb_push_cstr
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# rv_of_tab(tab flags) -> eax the tab instance's slot, or -1
+FN rv_of_tab
+    mov eax, -1
+    test rdi, TF_RVIEW
+    jz 9f
+    mov rcx, rdi
+    shr rcx, TF_VIEW_SHIFT
+    and ecx, 255
+    jz 9f
+    dec ecx
+    cmp ecx, RV_MAX
+    jae 9f
+    imul rdx, rcx, RV_SIZE
+    lea r8, [rip + rv_slots]
+    cmp qword ptr [r8 + rdx + RV_ext], 0
+    je 9f
+    mov eax, ecx
+9:  ret
+
+# rview_tab_title(tab flags) -> rax cstr for the tab strip
+FN rview_tab_title
+    call rv_of_tab
+    cmp eax, -1
+    je 1f
+    mov edi, eax
+    call rv_at
+    mov rax, [rax + RV_title]
+    test rax, rax
+    jnz 2f
+1:  lea rax, [rip + .Ltab_title]
+2:  ret
+
+# rview_tab_draw(tab flags, x, y, w, h): its body in the editor's place
+FN rview_tab_draw
+    PROLOGUE 16
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    call rv_of_tab
+    cmp eax, -1
+    je 9f
+    mov edi, eax
+    call rv_at
+    mov edi, [rax + RV_pl]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call place_body
+9:  EPILOGUE
+
+# rview_tab_closed(tab flags): its tab is closing: "closed" unless the extension closed it, and the
+#   instance ends
+FN rview_tab_closed
+    PROLOGUE
+    call rv_of_tab
+    cmp eax, -1
+    je 9f
+    mov ebx, eax
+    mov edi, ebx
+    call rv_at
+    cmp dword ptr [rax + RV_tabclosing], 0
+    jne 1f
+    mov edi, ebx
+    call ev_head
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + .Lev_closed]
+    call ev_cstr
+    mov edi, ebx
+    xor esi, esi
+    mov rdx, -1
+    call ev_send
+1:  mov edi, ebx
+    call rv_close
+9:  EPILOGUE
+
+# rv_close_tab(slot): the extension or its end closes a tab instance (no event)
+rv_close_tab:
+    PROLOGUE
+    mov ebx, edi
+    call rv_at
+    mov dword ptr [rax + RV_tabclosing], 1
+    lea r12, [rbx + 1]
+    shl r12, TF_VIEW_SHIFT
+    or r12, TF_RVIEW
+    xor r13d, r13d
+1:  cmp r13, [rip + g_tabs + VEC_len]
+    jae 8f
+    mov rdi, r13
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_VIEW
+    jne 2f
+    mov rcx, [rax + TAB_flags]
+    and rcx, (255 << TF_VIEW_SHIFT) | TF_RVIEW
+    cmp rcx, r12
+    jne 2f
+    mov rdi, r13
+    call app_close_tab_now      # rview_tab_closed ends the instance
+    EPILOGUE
+2:  inc r13
+    jmp 1b
+8:  mov edi, ebx
+    call rv_close
+    EPILOGUE
+
+# rview_unview(ext, view) -> eax 0 closed, 1 no such view, 2 a declared view (the user hides those)
+FN rview_unview
+    PROLOGUE
+    call rv_find
+    cmp eax, -1
+    je 7f
+    mov ebx, eax
+    mov edi, eax
+    call rv_at
+    cmp dword ptr [rax + RV_place], PLACE_TAB
+    jne 8f
+    mov edi, ebx
+    call rv_close_tab
+    xor eax, eax
+    EPILOGUE
+7:  mov eax, 1
+    EPILOGUE
+8:  mov eax, 2
+    EPILOGUE
+
+# rv_tab_* : a tab instance's place callbacks (ctx: its slot)
+rv_tab_draw_cb:
+    jmp rv_instance_draw
+rv_tab_key_cb:
+    jmp rv_instance_key
+rv_tab_focus_cb:
+    push rbx
+    push r12
+    push r13
+    mov ebx, edi
+    mov r12d, esi
+    call rv_at
+    mov rdi, [rax + RV_ext]
+    call ext_full_name
+    lea rdi, [rip + idsbuf]
+    mov rsi, rax
+    call rv_tab_name
+    mov edi, ebx
+    mov esi, r12d
+    mov rdx, [rip + idsbuf + SB_ptr]
+    call rv_focus_event
+    pop r13
+    pop r12
+    pop rbx
+    ret
+rv_tab_visible_cb:
+    jmp send_visible
+
+# views_field() -> rax the text field of the view that has the keyboard (a log's find field), or 0
+FN views_field
+    push rbx
+    call place_focused
+    mov edi, eax
+    call place_at
+    test rax, rax
+    jz 8f
+    mov rcx, [rax + PL_ops]
+    lea rdx, [rip + rv_place_ops]
+    cmp rcx, rdx
+    je 1f
+    lea rdx, [rip + rv_tab_ops]
+    cmp rcx, rdx
+    jne 8f
+    mov edi, [rax + PL_ctx]     # a tab: its slot
+    jmp 2f
+1:  mov rdi, [rax + PL_ctx]     # a declared view: its instance
+    call rv_of_vd
+    cmp eax, -1
+    je 8f
+    mov edi, eax
+2:  call rv_at
+    cmp qword ptr [rax + RV_ext], 0
+    je 8f
+    cmp dword ptr [rax + RV_kind], RK_LOG
+    jne 8f
+    mov rdi, [rax + RV_log]
+    call log_field
+    pop rbx
+    ret
+8:  xor eax, eax
+    pop rbx
+    ret
+
+# rview_log_of(ptr, len) -> rax the LG* of a log view named so (key, place name or number), or 0
+FN rview_log_of
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    call parse_u64
+    cmp rdx, r13
+    jne 3f
+    test rdx, rdx
+    jz 3f
+    mov r14d, eax
+    xor ebx, ebx
+1:  cmp ebx, RV_MAX
+    jae 8f
+    mov edi, ebx
+    call rv_at
+    cmp qword ptr [rax + RV_ext], 0
+    je 2f
+    cmp [rax + RV_view], r14d
+    jne 2f
+    mov rax, [rax + RV_log]
+    EPILOGUE
+2:  inc ebx
+    jmp 1b
+3:  xor ebx, ebx
+4:  cmp rbx, [rip + vdecls + VEC_len]
+    jae 8f
+    mov rdi, rbx
+    call vd_at
+    mov r14, rax
+    cmp qword ptr [r14 + VD_ext], 0
+    je 5f
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [r14 + VD_key]
+    call str_eq_cstr
+    test eax, eax
+    jnz 6f
+5:  inc rbx
+    jmp 4b
+6:  movsxd rdi, dword ptr [r14 + VD_rv]
+    cmp rdi, -1
+    je 8f
+    call rv_at
+    mov rax, [rax + RV_log]
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Ltab_suffix: .asciz ".tab"
+.Ltab_title: .asciz "View"
+.Lev_closed: .asciz "closed"
+.p2align 3
+rv_tab_ops: .quad rv_tab_draw_cb, rv_tab_key_cb, rv_tab_focus_cb, 0, 0, rv_tab_visible_cb

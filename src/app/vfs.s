@@ -1532,6 +1532,52 @@ FN vfs_pty_spawn
     add rsp, 16
 9:  EPILOGUE
 
+# vfs_uproc_spawn(argv, envp, cwd, cols, rows, flags) -> as uproc_spawn, on the host: rax the pid (or
+#   -errno), edx the descriptor (the pty's master, or the program's input and output), ecx its error
+#   output's (flags 2) or -1. flags: 1 a pty of cols x rows, 2 the error output apart, 4 the program
+#   is uproc's from then on (uproc_signal, uproc_wait, uproc_end); without 4 the caller waits for it
+#   with proc_wait and signals it with proc_kill
+FN vfs_uproc_spawn
+    PROLOGUE 16
+    mov eax, [rbp + 16]
+    mov [rsp], eax              # flags
+    test eax, 1
+    jz 1f
+    and ecx, 0xffff
+    shl ecx, 8
+    and r8d, 0xff
+    shl r8d, 24
+    or ecx, r8d
+    or ecx, 1
+    mov r8d, -1
+    jmp 2f
+1:  xor ecx, ecx
+    mov r8d, -2                 # merged with the output
+    test eax, 2
+    jz 2f
+    mov r8d, -3                 # a socket of its own
+2:  xor r9d, r9d
+    push 0
+    push 0
+    call remote_spawn
+    add rsp, 16
+    mov rbx, rax
+    mov r12d, edx
+    mov r13d, ecx
+    test rax, rax
+    jle 9f
+    test dword ptr [rsp], 4
+    jz 9f
+    mov edi, eax
+    call uproc_adopt
+9:  mov rax, rbx
+    mov edx, r12d
+    mov ecx, r13d
+    test dword ptr [rsp], 2
+    jnz 8f
+    mov ecx, -1
+8:  EPILOGUE
+
 # ---------------- watch events from the host ----------------
 
 # vfs_remote_event(wd, mask, name ptr, len): an inotify event of a remote watch; kept for vfs_tick

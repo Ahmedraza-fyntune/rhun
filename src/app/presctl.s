@@ -2,8 +2,9 @@
 #   print-viewport              "view mode=lines|wrap top=L off=N rows=R content=PX"
 #   print-xy LINE COL           "X Y": the caret's x at that position and its row's middle
 #   print-hit X Y               "text L C" | "left-lane L" | "digits L" | "fold-lane L" | "git L" | "none"
-#   print-present deco|types|glyphs|tape
-#   glyph-test                  a test kind in the left lane (clicks toggle a circle; logged)
+#   print-present deco|types|glyphs|tape|folds|ranges
+#   glyph-test                  a test kind in the left lane (clicks toggle a circle; logged):
+#                               "glyph-kind N", its kind number
 #   glyph LINE SHAPE            the test kind's glyph on a line (0 removes)
 .include "rhun.inc"
 
@@ -81,6 +82,10 @@ c_print_view:
     test rbx, rbx
     jz 9f
     lea rdi, [rip + .Ls_view_lines]
+    call rows_mode
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + .Ls_view_rows]
     cmp dword ptr [rip + cfg_word_wrap], 0
     je 1f
     lea rdi, [rip + .Ls_view_wrap]
@@ -93,8 +98,9 @@ c_print_view:
     call out_cstr
     mov rdi, [rbx + DOC_scrolly]
     and edi, 255
-    cmp dword ptr [rip + cfg_word_wrap], 0
-    je 2f
+    call rows_mode
+    test eax, eax
+    jz 2f
     mov rdi, [rbx + DOC_woff]
 2:  call out_u64
     lea rdi, [rip + .Ls_rows]
@@ -106,8 +112,9 @@ c_print_view:
     call out_u64
     lea rdi, [rip + .Ls_content]
     call out_cstr
-    mov rdi, [rbx + DOC_nlines]
-    inc rdi
+    mov rdi, rbx
+    call fold_scroll_rows
+    lea rdi, [rax + 1]
     movsxd rax, dword ptr [rip + g_lh]
     imul rdi, rax
     call out_u64
@@ -137,6 +144,8 @@ c_print_xy:
     js 8f
     mov r15, rax
     dec r13
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne 5f
     # y: rows from the top line (lines mode)
     mov rax, [rbx + DOC_scrolly]
     mov rcx, rax
@@ -155,15 +164,11 @@ c_print_xy:
     shr eax, 1
     add rdx, rax
     mov r12, rdx
-    # x: the columns before it
+    # x: by the caret's rule over the line's inlays (vtext.s)
     mov rdi, rbx
     mov rsi, r13
-    call doc_line_text
-    mov rdi, rax
-    xor esi, esi
     lea rdx, [r14 - 1]
-    call seg_cols
-    imul eax, [rip + g_cw]
+    call vt_line_x
     add eax, [rip + g_ed_tx]
     sub rax, [rbx + DOC_scrollx]
     mov rdi, rax
@@ -179,6 +184,26 @@ c_print_xy:
 8:  lea rdi, [rip + .Ls_none]
     call out_cstr
     mov rax, -1
+    EPILOGUE
+5:  # wrapped lines
+    mov rdi, rbx
+    mov rsi, r15
+    call wrap_xy
+    add eax, [rip + g_ed_tx]
+    add edx, [rip + g_ed_y]
+    mov ecx, [rip + g_lh]
+    shr ecx, 1
+    add edx, ecx
+    mov r12d, edx
+    mov edi, eax
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov edi, r12d
+    call out_u64
+    mov edi, 10
+    call out_byte
+    xor eax, eax
     EPILOGUE
 
 # ---------------- print-hit ----------------
@@ -223,7 +248,16 @@ c_print_hit:
     call pos_at_point_editor
     mov r15, rax
     lea rdi, [rip + .Ls_text]
+    cmp qword ptr [rip + g_vt_hit], 0
+    je 3f
+    lea rdi, [rip + .Ls_inlay]  # "inlay KIND L C": an inlay at that gap
     call out_cstr
+    call vt_hit_kind
+    lea rcx, [rip + kind_words]
+    mov rdi, [rcx + rax*8]
+    call out_cstr
+    lea rdi, [rip + .Ls_space]
+3:  call out_cstr
     mov rdi, rbx
     mov rsi, r15
     call put_pos
@@ -312,6 +346,18 @@ c_print_present:
     call str_eq_cstr
     test eax, eax
     jnz .Lpp_tape
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_folds]
+    call str_eq_cstr
+    test eax, eax
+    jnz .Lpp_folds
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_ranges]
+    call str_eq_cstr
+    test eax, eax
+    jnz .Lpp_ranges
 9:  xor eax, eax
     EPILOGUE
 .Lpp_types:
@@ -471,6 +517,106 @@ c_print_present:
     call out_byte
     jmp 9b
 
+# "fold H-E" for each fold (1-based header and last hidden line), then "hidden N"
+.Lpp_folds:
+    mov r14, [rbx + DOC_pres]
+    test r14, r14
+    jz 9f
+    xor r12d, r12d
+1:  cmp r12, [r14 + PRS_folds + VEC_len]
+    jae 2f
+    imul r13, r12, FD_SIZE
+    add r13, [r14 + PRS_folds + VEC_ptr]
+    inc r12
+    lea rdi, [rip + .Ls_fold_sp]
+    call out_cstr
+    mov rdi, rbx
+    mov rsi, [r13 + FD_a]
+    call doc_line_of
+    lea rdi, [rax + 1]
+    call out_u64
+    mov edi, '-'
+    call out_byte
+    mov rdi, rbx
+    mov rsi, [r13 + FD_b]
+    call doc_line_of
+    lea rdi, [rax + 1]
+    call out_u64
+    mov rdi, [r13 + FD_text]
+    call text_out
+    mov edi, 10
+    call out_byte
+    jmp 1b
+2:  lea rdi, [rip + .Ls_hidden]
+    call out_cstr
+    mov rdi, rbx
+    mov rsi, [rbx + DOC_nlines]
+    call fold_hidden_before
+    mov rdi, rax
+    call out_u64
+    mov edi, 10
+    call out_byte
+9:  xor eax, eax
+    EPILOGUE
+
+# "ranges indentation", or "ranges EXT" and "range H-E kind=K[ text=T]" for a provider's ranges
+.Lpp_ranges:
+    lea rdi, [rip + .Ls_ranges_sp]
+    call out_cstr
+    mov r14, [rbx + DOC_pres]
+    test r14, r14
+    jz 1f
+    mov rax, [r14 + PRS_frext]
+    test rax, rax
+    jnz 2f
+1:  lea rdi, [rip + .Ls_indentation]
+    call out_cstr
+    jmp 9b
+2:  mov rdi, [rax + EXT_name]
+    call out_cstr
+    mov edi, 10
+    call out_byte
+    xor r12d, r12d
+3:  cmp r12, [r14 + PRS_fr + VEC_len]
+    jae 9b
+    imul r13, r12, FRG_SIZE
+    add r13, [r14 + PRS_fr + VEC_ptr]
+    inc r12
+    lea rdi, [rip + .Ls_range_sp]
+    call out_cstr
+    mov rdi, rbx
+    mov rsi, [r13 + FRG_a]
+    call doc_line_of
+    lea rdi, [rax + 1]
+    call out_u64
+    mov edi, '-'
+    call out_byte
+    mov rdi, rbx
+    mov rsi, [r13 + FRG_b]
+    call doc_line_of
+    lea rdi, [rax + 1]
+    call out_u64
+    lea rdi, [rip + .Ls_kind]
+    call out_cstr
+    mov edi, [r13 + FRG_kind]
+    call out_u64
+    mov rdi, [r13 + FRG_text]
+    call text_out
+    mov edi, 10
+    call out_byte
+    jmp 3b
+
+# text_out(cstr or 0): " text=T"
+text_out:
+    test rdi, rdi
+    jz 9f
+    push rdi
+    lea rdi, [rip + .Ls_text_eq]
+    call out_cstr
+    pop rdi
+    jmp out_cstr
+9:  ret
+
 # put_text(label, len; r15 the text, advanced): " label=TEXT" when there is text
 put_text:
     test esi, esi
@@ -524,7 +670,13 @@ c_glyph_test:
     mov r8d, GS_CIRCLE | T_ERROR << 8
     call gutter_kind
     mov [rip + test_kind], eax
-9:  xor eax, eax
+9:  lea rdi, [rip + .Ls_glyph_kind]
+    call out_cstr
+    mov edi, [rip + test_kind]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    xor eax, eax
     EPILOGUE
 
 c_glyph:
@@ -605,21 +757,31 @@ pres_ctl:                       # (control.s's ctl_tables)
     .quad .Lc_probe_plant, c_probe_plant
     .quad 0, 0
 lane_words: .quad 0, .Ls_left, .Ls_digits, .Ls_fold, .Ls_git
+kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Lc_print_view: .asciz "print-viewport"
 .Lc_print_xy: .asciz "print-xy"
 .Lc_print_hit: .asciz "print-hit"
 .Lc_print_present: .asciz "print-present"
 .Lc_glyph_test: .asciz "glyph-test"
 .Lc_glyph: .asciz "glyph"
+.Ls_glyph_kind: .asciz "glyph-kind "
 .Lc_probe_plant: .asciz "probe-plant"
 .Ls_stale: .asciz "stale"
 .Ls_view_lines: .asciz "view mode=lines top="
 .Ls_view_wrap: .asciz "view mode=wrap top="
+.Ls_view_rows: .asciz "view mode=rows top="
 .Ls_off: .asciz " off="
 .Ls_rows: .asciz " rows="
 .Ls_content: .asciz " content="
 .Ls_none: .asciz "none\n"
 .Ls_text: .asciz "text "
+.Ls_inlay: .asciz "inlay "
+.Ls_space: .asciz " "
+.Lk_ghost: .asciz "ghost"
+.Lk_fold: .asciz "fold"
+.Lk_hint: .asciz "hint"
+.Lk_deco: .asciz "deco"
+.Lk_swatch: .asciz "swatch"
 .Ls_left: .asciz "left-lane "
 .Ls_digits: .asciz "digits "
 .Ls_fold: .asciz "fold-lane "
@@ -628,6 +790,14 @@ lane_words: .quad 0, .Ls_left, .Ls_digits, .Ls_fold, .Ls_git
 .Ls_deco: .asciz "deco"
 .Ls_glyphs: .asciz "glyphs"
 .Ls_tape: .asciz "tape"
+.Ls_folds: .asciz "folds"
+.Ls_ranges: .asciz "ranges"
+.Ls_ranges_sp: .asciz "ranges "
+.Ls_range_sp: .asciz "range "
+.Ls_indentation: .asciz "indentation\n"
+.Ls_text_eq: .asciz " text="
+.Ls_fold_sp: .asciz "fold "
+.Ls_hidden: .asciz "hidden "
 .Ls_type: .asciz "type "
 .Ls_flags: .asciz " flags="
 .Ls_prio: .asciz " prio="

@@ -17,7 +17,7 @@ DOC = ('echo @doc', 'print-doc')
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 # text cells at scale 1 in a 1000x700 window, without the explorer
-X0, Y0, CW, LH = 56, 86, 7, 21
+X0, Y0, CW, LH = 68, 86, 7, 21     # (the gutter's fold lane: 12 more)
 
 
 def cell(line, col):

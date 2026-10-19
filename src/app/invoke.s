@@ -329,6 +329,16 @@ FN cmdopt_find
 8:  xor eax, eax
     EPILOGUE
 
+# FN cmd_icon(cmd*) -> rax the [command-options] icon of an extension command (cstr), or 0
+FN cmd_icon
+    sub rsp, 8
+    call cmd_options
+    test rax, rax
+    jz 1f
+    mov rax, [rax + CO_icon]
+1:  add rsp, 8
+    ret
+
 # FN cmd_options(cmd*) -> rax the CO record of an extension command, or 0
 FN cmd_options
     PROLOGUE
@@ -1158,6 +1168,8 @@ FN invoke_tick
     je 3f
     jmp 4f                      # failed, stopped, disabled, removed, crashed
 21: cmp dword ptr [r14 + EXT_wait_slot], 0
+    jne 3f
+    cmp dword ptr [r14 + EXT_remote_wait], 0   # remote hosts: getting ready on the host
     je 4f
 3:  cmp r13, [rbx + IP_deadline]
     jb 5f
