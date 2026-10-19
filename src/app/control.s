@@ -2324,6 +2324,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 # other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
 ctl_tables:
     .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
     .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap

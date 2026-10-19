@@ -1713,6 +1713,10 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
+# WebAssembly extensions (extwasm.s)
+F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
+F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
+F EXT_wasm_pad, 4
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)

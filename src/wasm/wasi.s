@@ -1595,7 +1595,7 @@ w_poll_oneoff:
 6:  # events: ready reads and writes, clocks that are due (all of them when nothing else is)
     call time_now_ns
     mov [rsp + 32], rax
-    xor ebx, ebx                    # events
+    xor r9d, r9d                    # events (rbx stays the instance, for wmem)
     xor ecx, ecx
 7:  cmp ecx, r13d
     jae 8f
@@ -1629,7 +1629,7 @@ w_poll_oneoff:
 74: call .Lpoll_event
 75: inc ecx
     jmp 7b
-8:  test ebx, ebx
+8:  test r9d, r9d
     jnz 81f
     # nothing due yet (a clock rounded down): report the first clock all the same
     xor ecx, ecx
@@ -1643,18 +1643,20 @@ w_poll_oneoff:
     jmp 81f
 83: inc ecx
     jmp 82b
-81: mov edi, [r12 + 24]
+81: mov [rsp + 40], r9
+    mov edi, [r12 + 24]
     mov esi, 4
     call wmem
     mov ecx, WE_FAULT
     test rax, rax
     jz 9f
-    mov [rax], ebx
+    mov rcx, [rsp + 40]
+    mov [rax], ecx
     xor ecx, ecx
 9:  ANSWER
-# an event for subscription rdx (its index ecx) at events[ebx] -> rdi the event
+# an event for subscription rdx (its index ecx) at events[r9] -> rdi the event
 .Lpoll_event:
-    mov rdi, rbx
+    mov rdi, r9
     shl rdi, 5
     add rdi, r15
     mov rax, [rdx]
@@ -1664,7 +1666,7 @@ w_poll_oneoff:
     mov [rdi + 10], al              # type
     mov qword ptr [rdi + 16], 0
     mov qword ptr [rdi + 24], 0
-    inc ebx
+    inc r9d
     ret
 
 # time_now_ns() -> rax: the monotonic clock

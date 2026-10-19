@@ -1655,6 +1655,14 @@ FN ext_load
 5:  mov dword ptr [rbx + EXT_hello], 0
     cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
+    # no program for this system: a WebAssembly module runs in rhun --wasm-host
+    mov rdi, rbx
+    call ext_wasm_program
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    cmp rax, 1
+    jne .Lel_fail
     lea rdi, [rip + .Lr_no_program]
     jmp .Lel_fail
 6:  # a script needs its runtime on PATH
@@ -1834,12 +1842,23 @@ manifest_kv:
     lea rsi, [rip + .Lk_run_target]
     call ini_key_is
     test eax, eax
-    jz 4f
+    jz .Lel_wasm_key
     cmp qword ptr [rbx + EXT_script], 0
     jne 9f                      # runtime + run already set
     mov rdi, [rbx + EXT_dir]
     call val_join
     mov [rbx + EXT_prog], rax
+    jmp 9f
+.Lel_wasm_key:
+    # run.wasm32-wasip1: the WebAssembly module, used when no program runs here (extwasm.s)
+    mov rdi, r12
+    lea rsi, [rip + .Lk_run_wasm]
+    call ini_key_is
+    test eax, eax
+    jz 4f
+    mov rdi, [rbx + EXT_dir]
+    call val_join
+    mov [rbx + EXT_wasm], rax
     jmp 9f
 4:  mov rdi, r12
     lea rsi, [rip + .Lk_runtime]
@@ -2896,8 +2915,13 @@ ext_spawn:
 .Les_scratch_done:
     EPILOGUE
 
-# build_argv(ext): argv_vec = program [script] args..., 0
+# build_argv(ext): argv_vec = program [script] args..., 0 (a WebAssembly extension's: extwasm.s)
 build_argv:
+    cmp dword ptr [rdi + EXT_wasm_run], 0
+    je 1f
+    lea rsi, [rip + argv_vec]
+    jmp ext_wasm_argv
+1:
     PROLOGUE
     mov rbx, rdi
     mov qword ptr [rip + argv_vec + VEC_len], 0
@@ -4684,6 +4708,7 @@ ext_target: .asciz "linux-x86_64"
 .Lk_version: .asciz "version"
 .Lk_protocol: .asciz "protocol"
 .Lk_runtime: .asciz "runtime"
+.Lk_run_wasm: .asciz "run.wasm32-wasip1"
 .Lk_icon: .asciz "icon"
 .Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
