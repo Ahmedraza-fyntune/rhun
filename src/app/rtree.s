@@ -370,7 +370,10 @@ node_release:
     mov qword ptr [r13 + ND_blob], 0
     mov qword ptr [r13 + ND_desc], 0
     mov qword ptr [r13 + ND_tip], 0
-    mov dword ptr [r13 + ND_flags], 0
+    test dword ptr [r13 + ND_flags], NF_SEL
+    jz 1f
+    or dword ptr [rbx + TR_flags], TRF_SELCHANGED
+1:  mov dword ptr [r13 + ND_flags], 0
     mov dword ptr [r13 + ND_parent], -1
     mov rax, [rbx + TR_free]
     mov [r13 + ND_next], eax
@@ -1557,6 +1560,7 @@ FN tree_row
 # ---------------- acting ----------------
 
 # call_op(tr, offset, a, b, c): the owner's callback at that TRO offset, if any, with (ctx, tr, a, b, c)
+#   (rdx, rcx, r8 pass through)
 call_op:
     mov rax, [rdi + TR_ops]
     test rax, rax
@@ -1668,7 +1672,20 @@ FN tree_key
     mov rdi, rbx
     call row_of
     mov r15d, eax               # the cursor's row, -1
-    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    cmp r12d, ' '               # Ctrl+Space toggles the cursor's node in a multi-select tree
+    jne 191f
+    test r14d, MOD_CTRL
+    jz 191f
+    test dword ptr [rbx + TR_flags], TRF_MULTI
+    jz .Ltk_no
+    mov esi, [rbx + TR_cursor]
+    cmp esi, -1
+    je .Ltk_yes
+    mov rdi, rbx
+    mov edx, MOD_CTRL
+    call select_click
+    jmp .Ltk_yes
+191:test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
     jnz .Ltk_no
     cmp r12d, KEY_DOWN
     jne 1f
@@ -1751,6 +1768,10 @@ FN tree_key
     jae .Ltk_yes
     cmp word ptr [rcx + rsi*8 + RW_kind], RWK_NODE
     jne .Ltk_yes
+    mov eax, [rcx + rsi*8 + RW_node]    # its own child, not the next sibling (no children)
+    NDP rax, rbx, rax
+    cmp [rax + ND_parent], r8d
+    jne .Ltk_yes
     jmp .Ltk_move
 8:  cmp r12d, KEY_RETURN
     je 81f
@@ -1816,6 +1837,15 @@ FN tree_key
 .Ltk_move:
     mov rdi, rbx
     call move_cursor
+    test dword ptr [rbx + TR_flags], TRF_MULTI
+    jz .Ltk_yes
+    mov esi, [rbx + TR_cursor]  # several selected: Shift extends from the anchor, else it alone
+    cmp esi, -1
+    je .Ltk_yes
+    mov rdi, rbx
+    mov edx, r14d
+    and edx, MOD_SHIFT
+    call select_click
 .Ltk_yes:
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
@@ -2036,7 +2066,28 @@ draw_row:
     test eax, UB_HOVER
     jz 1f
     mov [rbx + TR_hover], r12d
-1:  # x after the indent
+1:  # inline buttons on the hovered or cursor row: hit tested now (a press on one is not the row's),
+    # drawn after the background
+    mov dword ptr [rip + inl_n], 0
+    cmp dword ptr [rsp + 8], RWK_NODE
+    jne 11f
+    cmp qword ptr [rbx + TR_nactions], 0
+    je 11f
+    mov eax, [rsp]
+    cmp eax, [rbx + TR_cursor]
+    je 12f
+    test dword ptr [rsp + 16], UB_HOVER
+    jz 11f
+12: mov rdi, rbx
+    mov esi, [rsp]
+    mov edx, r12d
+    sub edx, [rip + tr_first]
+    mov ecx, r13d
+    call inline_hit
+    test eax, eax
+    jz 11f
+    and dword ptr [rsp + 16], ~(UB_PRESS | UB_DOUBLE | UB_RPRESS)
+11: # x after the indent
     mov eax, [rsp + 4]
     imul eax, [rip + g_mt + 4*MI_12]
     add eax, [r15]
@@ -2050,7 +2101,16 @@ draw_row:
     mov eax, [rsp + 16]
     test eax, UB_PRESS
     jz 3f
-    mov ecx, [rsp]
+    test dword ptr [rbx + TR_flags], TRF_MULTI
+    jz 20f
+    mov rdi, rbx                # several selected: Ctrl toggles, Shift extends, else this one alone
+    mov esi, [rsp]
+    mov edx, [rip + g_mods]
+    call select_click
+    test dword ptr [rip + g_mods], MOD_CTRL | MOD_SHIFT
+    jnz 3f                      # a selection gesture does nothing else
+    jmp 2f
+20: mov ecx, [rsp]
     cmp ecx, [rbx + TR_cursor]
     je 2f
     mov [rbx + TR_cursor], ecx
@@ -2059,12 +2119,10 @@ draw_row:
     # (or any node's second click) activates
     test dword ptr [r15 + ND_flags], NF_CHECK
     jz 21f
-    mov eax, r14d
-    cmp dword ptr [r15 + ND_kids], KIDS_LEAF
-    je 22f
+    mov eax, r14d               # after the chevron's place (leaves keep it too)
     add eax, [rip + g_mt + 4*MI_16]
     add eax, [rip + g_mt + 4*MI_2]
-22: mov ecx, [rip + g_mx]
+    mov ecx, [rip + g_mx]
     cmp ecx, eax
     jl 21f
     add eax, [rip + g_mt + 4*MI_16]
@@ -2118,8 +2176,13 @@ draw_row:
     M r8d, MI_RADIUS
     mov eax, [rsp]
     cmp eax, [rbx + TR_cursor]
-    jne 41f
-    COLOR r9d, T_ACTIVE
+    je 40f
+    test dword ptr [r15 + ND_flags], NF_SEL
+    jz 41f
+    COLOR r9d, T_SELECTION      # selected, not the cursor
+    call gfx_round_rect
+    jmp 43f
+40: COLOR r9d, T_ACTIVE
     push rdi
     push rsi
     push rdx
@@ -2242,7 +2305,13 @@ draw_row:
     add eax, [rbx + TR_rect + 8]
     sub eax, [rip + g_mt + 4*MI_16]
     mov [rsp + 20], eax         # the right edge for the label and description
-    cmp dword ptr [r15 + ND_badge], 0
+    cmp dword ptr [rip + inl_n], 0
+    je 471f
+    mov eax, [rip + inl_left]   # inline buttons take the right end, over the badge
+    sub eax, [rip + g_mt + 4*MI_4]
+    mov [rsp + 20], eax
+    jmp 48f
+471:cmp dword ptr [r15 + ND_badge], 0
     je 48f
     mov edi, [rsp + 20]
     sub edi, [rip + g_mt + 4*MI_24]
@@ -2288,7 +2357,25 @@ draw_row:
     mov r8, [r15 + ND_desc]
     call ui_text_v_fit
     add rsp, 16
-49: # tooltip
+49: # inline buttons, and a click on one
+    cmp dword ptr [rip + inl_n], 0
+    je 491f
+    mov rdi, rbx
+    call inline_draw
+    test eax, eax
+    js 491f
+    mov ecx, eax
+    shl ecx, 4
+    lea rax, [rip + inl_keys]
+    mov rdi, rbx
+    mov esi, TRO_action
+    mov edx, [rsp]
+    mov r9, [rax + rcx + 8]
+    mov rcx, [rax + rcx]
+    mov r8, r9
+    call call_op
+    jmp .Ldr_ret
+491:# tooltip
     mov rax, [r15 + ND_tip]
     test rax, rax
     jz .Ldr_ret
@@ -2546,6 +2633,287 @@ collect_hl:
 9:  mov eax, r14d
     EPILOGUE
 
+# tree_set_actions(tr, TA*, n): the actions inline keys name (the owner keeps the records)
+FN tree_set_actions
+    mov [rdi + TR_actions], rsi
+    mov [rdi + TR_nactions], rdx
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+# tree_set_multi(tr, on): several nodes may be selected (Ctrl and Shift with clicks and arrows)
+FN tree_set_multi
+    and dword ptr [rdi + TR_flags], ~TRF_MULTI
+    test esi, esi
+    jz 1f
+    or dword ptr [rdi + TR_flags], TRF_MULTI
+1:  ret
+
+# tree_selected(tr, i) -> eax the i-th selected node (node order), or -1 past the last; in single
+#   mode the cursor is the selection
+FN tree_selected
+    test dword ptr [rdi + TR_flags], TRF_MULTI
+    jnz 1f
+    mov eax, -1
+    test esi, esi
+    jnz 9f
+    mov eax, [rdi + TR_cursor]
+    ret
+1:  mov rcx, [rdi + TR_nodes + VEC_ptr]
+    mov r8, [rdi + TR_nodes + VEC_len]
+    xor eax, eax
+2:  cmp rax, r8
+    jae 8f
+    imul rdx, rax, ND_SIZE
+    test dword ptr [rcx + rdx + ND_flags], NF_SEL
+    jz 3f
+    test esi, esi
+    jz 9f
+    dec esi
+3:  inc rax
+    jmp 2b
+8:  mov eax, -1
+9:  ret
+
+# clear_sel(tr): no node selected
+clear_sel:
+    mov rcx, [rdi + TR_nodes + VEC_ptr]
+    mov r8, [rdi + TR_nodes + VEC_len]
+    xor eax, eax
+1:  cmp rax, r8
+    jae 9f
+    imul rdx, rax, ND_SIZE
+    and dword ptr [rcx + rdx + ND_flags], ~NF_SEL
+    inc rax
+    jmp 1b
+9:  ret
+
+# select_click(tr, node, mods): Ctrl toggles the node, Shift selects the rows from the anchor to it,
+#   neither selects it alone; the cursor goes to it
+select_click:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13d, edx
+    mov [rbx + TR_cursor], r12d
+    or dword ptr [rbx + TR_flags], TRF_SELCHANGED
+    test r13d, MOD_CTRL
+    jz 1f
+    NDP rax, rbx, r12
+    xor dword ptr [rax + ND_flags], NF_SEL
+    mov [rbx + TR_selanchor], r12d
+    jmp 9f
+1:  test r13d, MOD_SHIFT
+    jz 5f
+    mov rdi, rbx
+    call clear_sel
+    mov rdi, rbx
+    mov esi, [rbx + TR_selanchor]
+    call row_of
+    mov r14d, eax
+    mov rdi, rbx
+    mov esi, r12d
+    call row_of
+    mov r15d, eax
+    test r14d, r14d
+    jns 2f
+    mov r14d, r15d
+2:  cmp r14d, r15d
+    jle 3f
+    xchg r14d, r15d
+3:  cmp r14d, r15d
+    jg 9f
+    mov rax, [rbx + TR_rows + VEC_ptr]
+    cmp word ptr [rax + r14*8 + RW_kind], RWK_NODE
+    jne 4f
+    mov eax, [rax + r14*8 + RW_node]
+    NDP rcx, rbx, rax
+    or dword ptr [rcx + ND_flags], NF_SEL
+4:  inc r14d
+    jmp 3b
+5:  mov rdi, rbx
+    call clear_sel
+    NDP rax, rbx, r12
+    or dword ptr [rax + ND_flags], NF_SEL
+    mov [rbx + TR_selanchor], r12d
+9:  EPILOGUE
+
+# inline_hit(tr, node, visible row, y) -> eax 1 when the pointer is over one of the node's inline
+#   buttons: they are laid out (inl_*) from the tree's right end, their presses taken
+inline_hit:
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12d, esi
+    mov [rsp], edx
+    mov [rsp + 4], ecx
+    mov rdi, rbx
+    mov esi, r12d
+    lea rdx, [rip + .Lr_inline]
+    lea rcx, [rip + rr_tmp]
+    call tree_extra_find
+    test eax, eax
+    jz 8f
+    mov r13, [rip + rr_tmp + RR_data]
+    mov r14, r13
+    add r14, [rip + rr_tmp + RR_len]
+    M eax, MI_24
+    mov [rip + inl_size], eax
+    mov eax, [rbx + TR_rect]
+    add eax, [rbx + TR_rect + 8]
+    sub eax, [rip + g_mt + 4*MI_16]
+    mov [rip + inl_left], eax
+    M ecx, MI_ROW
+    sub ecx, [rip + inl_size]
+    sar ecx, 1
+    add ecx, [rsp + 4]
+    mov [rip + inl_y], ecx
+    mov dword ptr [rsp + 8], 0  # over one
+.Lih_word:
+    cmp dword ptr [rip + inl_n], 4
+    jae .Lih_done
+1:  cmp r13, r14                # the next key
+    jae .Lih_done
+    cmp byte ptr [r13], ' '
+    jne 2f
+    inc r13
+    jmp 1b
+2:  mov r15, r13
+3:  cmp r15, r14
+    jae 4f
+    cmp byte ptr [r15], ' '
+    je 4f
+    inc r15
+    jmp 3b
+4:  # its action
+    mov rcx, [rbx + TR_actions]
+    xor edx, edx
+5:  cmp rdx, [rbx + TR_nactions]
+    jae 7f
+    imul r8, rdx, TA_SIZE
+    add r8, rcx
+    mov rax, r15
+    sub rax, r13
+    cmp rax, [r8 + TA_keylen]
+    jne 6f
+    push rcx
+    push rdx
+    push r8
+    push r8
+    mov rdi, r13
+    mov rsi, [r8 + TA_key]
+    mov rdx, rax
+    call memeq
+    pop r8
+    pop r8
+    pop rdx
+    pop rcx
+    test eax, eax
+    jnz 61f
+6:  inc rdx
+    jmp 5b
+61: # a button for it, right to left
+    mov eax, [rip + inl_n]
+    mov ecx, eax
+    shl ecx, 4
+    lea rdx, [rip + inl_keys]
+    mov [rdx + rcx], r13
+    mov rdi, r15
+    sub rdi, r13
+    mov [rdx + rcx + 8], rdi
+    lea rdx, [rip + inl_ta]
+    mov [rdx + rax*8], r8
+    mov ecx, [rip + inl_size]
+    add ecx, [rip + g_mt + 4*MI_2]
+    sub [rip + inl_left], ecx
+    mov ecx, [rip + inl_left]
+    lea rdx, [rip + inl_x]
+    mov [rdx + rax*4], ecx
+    mov edi, [rbx + TR_idbase]
+    add edi, 0x8000
+    mov esi, [rsp]
+    shl esi, 2
+    add edi, esi
+    add edi, eax
+    lea rdx, [rip + inl_id]
+    mov [rdx + rax*4], edi
+    mov esi, ecx
+    mov edx, [rip + inl_y]
+    mov ecx, [rip + inl_size]
+    mov r8d, ecx
+    call ui_btn
+    mov ecx, [rip + inl_n]
+    lea rdx, [rip + inl_bits]
+    mov [rdx + rcx*4], eax
+    inc dword ptr [rip + inl_n]
+    test eax, UB_HOVER
+    jz 7f
+    mov dword ptr [rsp + 8], 1
+7:  mov r13, r15
+    jmp .Lih_word
+.Lih_done:
+    mov eax, [rsp + 8]
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# inline_draw(tr) -> eax the button clicked, or -1: the laid-out inline buttons, their tooltips
+inline_draw:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov dword ptr [rsp], -1
+    xor r12d, r12d
+1:  cmp r12d, [rip + inl_n]
+    jae 9f
+    lea rax, [rip + inl_bits]
+    mov r13d, [rax + r12*4]
+    lea rax, [rip + inl_x]
+    mov r14d, [rax + r12*4]
+    test r13d, UB_HOVER
+    jz 2f
+    mov edi, r14d
+    mov esi, [rip + inl_y]
+    mov edx, [rip + inl_size]
+    mov ecx, edx
+    M r8d, MI_RADIUS
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+2:  lea rax, [rip + inl_ta]
+    mov r15, [rax + r12*8]
+    mov edi, [r15 + TA_icon]
+    cmp edi, -1
+    jne 3f
+    mov edi, IC_DOT
+3:  mov esi, r14d
+    mov edx, [rip + inl_y]
+    mov ecx, [rip + inl_size]
+    mov r8d, ecx
+    COLOR r9d, T_MUTED
+    test r13d, UB_HOVER
+    jz 4f
+    COLOR r9d, T_FG
+4:  call ui_icon_center
+    mov rax, [r15 + TA_title]
+    test rax, rax
+    jz 5f
+    push rax
+    push rax
+    lea rax, [rip + inl_id]
+    mov edi, [rax + r12*4]
+    mov esi, r14d
+    mov edx, [rip + inl_y]
+    add edx, [rip + inl_size]
+    mov ecx, [rip + inl_size]
+    mov r8d, r13d
+    pop r9
+    pop r9
+    call tip_note_text
+5:  test r13d, UB_CLICK
+    jz 6f
+    mov [rsp], r12d
+6:  inc r12d
+    jmp 1b
+9:  mov eax, [rsp]
+    EPILOGUE
+
 # tree_dump(tr, sb): a line per row: "row I d=DEPTH open|closed|leaf|loading|more|error [cur]
 #   [check=0|1] id=ID label=LABEL desc=D badge=N icon=I hl=F-T,..."
 FN tree_dump
@@ -2734,6 +3102,16 @@ FN tree_dump
 .globl tr_focused
 tr_focused: .long 0             # the tree being drawn has the keyboard (tree_draw sets it)
 tr_first: .long 0               # its first row in view: row ids count from it
+inl_n: .long 0                  # the row's inline buttons: how many, where, their keys and state
+inl_left: .long 0
+inl_y: .long 0
+inl_size: .long 0
+inl_x: .zero 16
+inl_id: .zero 16
+inl_bits: .zero 16
+.p2align 3
+inl_keys: .zero 64              # ptr, len each
+inl_ta: .zero 32
 
 .section .rodata
 .Lr_desc: .asciz "desc"
@@ -2743,6 +3121,7 @@ tr_first: .long 0               # its first row in view: row ids count from it
 .Lr_badge: .asciz "badge"
 .Lr_check: .asciz "check"
 .Lr_hl: .asciz "hl"
+.Lr_inline: .asciz "inline"
 .Lloading: .asciz "Loading\342\200\246"
 .Lmore: .asciz "Load more"
 .Lfailed: .asciz "Could not load \342\200\224 Retry"

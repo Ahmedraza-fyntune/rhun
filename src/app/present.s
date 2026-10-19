@@ -569,7 +569,7 @@ reply_folding:
     call ans_num
     test edx, edx
     jz 8f
-    cmp rax, FR_MAX
+    cmp rax, FRG_MAX
     ja 8f
     mov r14, rax                # N
 .Lrf_each:
@@ -594,7 +594,7 @@ reply_folding:
     call ans_num
     test edx, edx
     jz 8f
-    cmp rax, FR_TEXT_MAX
+    cmp rax, FRG_TEXT_MAX
     ja 8f
     mov rcx, r12
     sub rcx, rbx
@@ -635,24 +635,24 @@ reply_folding:
     jbe .Lrf_each               # edits since joined them
     mov [rsp + 56], rax
     lea rdi, [rip + fr_new]
-    mov esi, FR_SIZE
+    mov esi, FRG_SIZE
     call vec_push
     mov r15, rax
     mov rcx, [rsp + 56]
-    mov [r15 + FR_b], rcx
+    mov [r15 + FRG_b], rcx
     mov ecx, [rsp + 24]
-    mov [r15 + FR_kind], ecx
+    mov [r15 + FRG_kind], ecx
     mov rsi, [rsp + 32]
     test rsi, rsi
     jz 3f
     mov rdi, [rsp + 40]
     call mem_dup
-    mov [r15 + FR_text], rax
+    mov [r15 + FRG_text], rax
 3:  mov rdi, r13
     mov rsi, [rsp]
     mov rdx, [rsp + 8]
     call rf_line_end
-    mov [r15 + FR_a], rax
+    mov [r15 + FRG_a], rax
     jmp .Lrf_each
 .Lrf_done:
     cmp rbx, r12
@@ -721,9 +721,9 @@ FN fr_vec_clear
     xor r12d, r12d
 1:  cmp r12, [rbx + VEC_len]
     jae 2f
-    imul rax, r12, FR_SIZE
+    imul rax, r12, FRG_SIZE
     add rax, [rbx + VEC_ptr]
-    mov rdi, [rax + FR_text]
+    mov rdi, [rax + FRG_text]
     call mem_free
     inc r12
     jmp 1b

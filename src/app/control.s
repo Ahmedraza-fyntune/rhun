@@ -2384,6 +2384,7 @@ ctl_tables:
     .quad test_ctl              # testing (testview.s)
     .quad ai_ctl                # AI: agent sessions, the Review tab, tools (aictl.s)
     .quad views_ctl             # views group: places and retained views (viewsctl.s)
+    .quad nb_ctl                # notebooks (nbctl.s)
     .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
     .quad remote_ctl            # remote hosts (remotectl.s)
     .quad pres_ctl              # editor presentation (presctl.s)

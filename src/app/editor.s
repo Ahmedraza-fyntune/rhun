@@ -30,6 +30,8 @@ FN editor_language_changed
 .globl g_doc, g_reveal, g_blink_t0
 g_doc: .quad 0
 g_reveal: .long 0
+.globl g_ed_cell
+g_ed_cell: .long 0              # notebooks: editor_draw draws a cell (1), the one with the keyboard (3)
 g_ed_x: .long 0
 g_ed_y: .long 0
 g_ed_w: .long 0
@@ -1943,6 +1945,8 @@ FN cmd_redo
 editor_gutter:
     cmp qword ptr [rdi + DOC_diff], 0
     jne diffview_gutter
+    cmp dword ptr [rip + g_ed_cell], 0      # a notebook's cell has no line numbers
+    jne 2f
     cmp dword ptr [rip + cfg_line_numbers], 0
     je 2f
     mov rax, [rdi + DOC_nlines]
@@ -1987,6 +1991,8 @@ FN ed_top_inside
 
 # clamp_scroll(doc)
 clamp_scroll:
+    cmp dword ptr [rip + g_ed_cell], 0      # a cell's lines are the notebook's to scroll
+    jne 4f
     mov rax, [rdi + DOC_nlines]
     cmp dword ptr [rip + cfg_scroll_past_end], 0
     jne 1f
@@ -2023,6 +2029,8 @@ clamp_scroll:
 reveal:
     PROLOGUE
     mov rbx, rdi
+    cmp dword ptr [rip + g_ed_cell], 0      # a cell: the notebook keeps the line in view
+    jne 5f
     mov rsi, [rbx + DOC_cur]
     call doc_line_of
     mov r12, rax                # line
@@ -2247,6 +2255,12 @@ draw_wrapped:
     mov ecx, [rip + g_lh]
     imul ecx, r14d
     call deco_line_back
+    mov rdi, rbx                # debugger: the paused line's background (debuggutter.s)
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    imul ecx, r14d
+    call dbg_line_back
     # line number on the first row
     cmp qword ptr [rbx + DOC_diff], 0
     jne .Ldw_diff
@@ -2451,7 +2465,12 @@ FN editor_draw
     call fold_view_sync         # the scroll's form for folds (fold.s)
     mov edi, [rsp]
     call hscroll_measure
-    # ---- input ----
+    cmp dword ptr [rip + g_ed_cell], 0      # a cell: no scrollbars, and input only with the keyboard
+    je 150f
+    mov dword ptr [rip + hs_on], 0
+    cmp dword ptr [rip + g_ed_cell], 1
+    je .Led_noinput
+150: # ---- input ----
     call find_blocks_editor
     test eax, eax
     jnz .Led_noinput
@@ -2497,6 +2516,8 @@ FN editor_draw
     mov rdi, rbx
     call gutter_hover           # the left lane's hover glyph and tips (gutter.s)
 13: mov dword ptr [rip + ed_hovered], 1
+    cmp dword ptr [rip + g_ed_cell], 0      # over a cell the wheel scrolls the notebook
+    jne 3f
     # wheel (sideways with Shift: wheel_xy)
     call wheel_xy
     mov eax, edx
@@ -2688,6 +2709,8 @@ FN editor_draw
     call time_ms
     mov [rip + g_blink_t0], rax
 6:  # autoscroll when dragging outside
+    cmp dword ptr [rip + g_ed_cell], 0
+    jne 4f
     mov eax, [rip + g_my]
     cmp eax, [rip + g_ed_y]
     jge 61f
@@ -2707,6 +2730,8 @@ FN editor_draw
     je 45f
     cmp dword ptr [rip + g_dragging], 0
     jne 45f
+    cmp dword ptr [rip + g_ed_cell], 0
+    jne 45f
     mov rdi, rbx
     call vim_view
 45: test dword ptr [rbx + DOC_flags], DF_REVEAL
@@ -2716,6 +2741,10 @@ FN editor_draw
 46: cmp dword ptr [rip + g_reveal], 0
     je 7f
     mov dword ptr [rip + g_reveal], 0
+    cmp dword ptr [rip + g_ed_cell], 0      # the notebook places a cell's lines
+    je 461f
+    and dword ptr [rbx + DOC_flags], ~DF_CENTER
+461:
     test dword ptr [rbx + DOC_flags], DF_CENTER
     jz 47f
     # its line in the middle of the view, now that the view's height is known (app_goto_line)
@@ -2774,7 +2803,15 @@ FN editor_draw
     # ---- lines ----
     mov qword ptr [rip + cls_doc], 0
     mov rdi, rbx
+    cmp dword ptr [rip + g_ed_cell], 1      # a cell without the keyboard has no cursor to match at
+    jne 152f
+    mov qword ptr [rip + g_br], -1
+    mov qword ptr [rip + g_br + 8], -1
+    mov qword ptr [rip + g_br_doc], 0
+    jmp 153f
+152:
     call match_brackets
+153:
     mov rdi, rbx
     call sel_frame              # the other selections, for draw_line's rows
     mov dword ptr [rip + g_caret_ok], 0
@@ -2822,6 +2859,8 @@ FN editor_draw
     # current line highlight
     cmp dword ptr [rip + cfg_highlight_line], 0
     je 1f
+    cmp dword ptr [rip + g_ed_cell], 1      # not in a cell without the keyboard
+    je 1f
     cmp r12, [rsp + 8]
     jne 14f
     mov rax, [rsp + 16]
@@ -2848,6 +2887,11 @@ FN editor_draw
     mov edx, r13d
     mov ecx, [rip + g_lh]
     call deco_line_back         # whole-line decoration backgrounds
+    mov rdi, rbx                # debugger: the paused line's background (debuggutter.s)
+    mov rsi, r12
+    mov edx, r13d
+    mov ecx, [rip + g_lh]
+    call dbg_line_back
     # line number
     cmp qword ptr [rbx + DOC_diff], 0
     jne .Led_diffline
@@ -2936,11 +2980,14 @@ FN editor_draw
     mov rdx, rsi
 1:  call deco_visible
     # caret
+    cmp dword ptr [rip + g_ed_cell], 1
+    je 151f
     mov rdi, rbx
     call draw_caret
     mov rdi, rbx
     mov esi, [rip + g_ed_tx]
     call sel_carets             # and the other selections' carets
+151:
     # gutter separator shadow when scrolled horizontally
     cmp qword ptr [rbx + DOC_scrollx], 0
     je 8f
@@ -2951,7 +2998,9 @@ FN editor_draw
     mov ecx, [rip + g_ed_h]
     COLOR r8d, T_BORDER
     call gfx_fill
-8:  # scrollbar: px in 64 bits, a million lines' offset overflows 32. ui_scrollbar takes i32, so a
+8:  cmp dword ptr [rip + g_ed_cell], 0      # a cell has no scrollbars
+    jne 93f
+    # scrollbar: px in 64 bits, a million lines' offset overflows 32. ui_scrollbar takes i32, so a
     # document past 2^31 px goes in units of 2^k px, the whole of it still under the thumb.
     # Folded lines are not counted (fold.s: the rows the view scrolls through).
     mov rdi, rbx
@@ -3088,6 +3137,35 @@ FN editor_draw
     call gfx_fill
 92: call gfx_clip_pop
 .Led_ret:
+    EPILOGUE
+
+# editor_draw_cell(doc, x, y, w, h, keyboard): a notebook's cell (nbview.s) as the editor draws a
+#   document, at its full height: no scrollbars, no vertical scrolling of its own (DOC_scrolly says
+#   how much of it is above the view), no wrapping; with keyboard 1 it has the caret and takes the
+#   pointer as the editor does, else it is drawn only
+FN editor_draw_cell
+    PROLOGUE 16
+    mov rax, [rip + g_doc]
+    mov [rsp], rax
+    mov [rip + g_doc], rdi
+    mov eax, [rip + cfg_word_wrap]
+    mov [rsp + 8], eax
+    mov dword ptr [rip + cfg_word_wrap], 0
+    mov eax, 1
+    test r9d, r9d
+    jz 1f
+    mov eax, 3
+1:  mov [rip + g_ed_cell], eax
+    mov edi, esi
+    mov esi, edx
+    mov edx, ecx
+    mov ecx, r8d
+    call editor_draw
+    mov dword ptr [rip + g_ed_cell], 0
+    mov eax, [rsp + 8]
+    mov [rip + cfg_word_wrap], eax
+    mov rax, [rsp]
+    mov [rip + g_doc], rax
     EPILOGUE
 
 # disk_colors(): compute the active file's fade once per frame

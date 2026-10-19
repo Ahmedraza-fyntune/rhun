@@ -686,6 +686,37 @@ FN extmarks_language_changed
     mov r12, [rbx + DOC_xmarks]
     test r12, r12
     jz 9f
+    # the Problems store's marks stay (its sources do not resend them); extensions' marks go
+    xor r13d, r13d              # read
+    xor r14d, r14d              # kept
+1:  cmp r13, [r12 + VEC_len]
+    jae 2f
+    imul r15, r13, MK_SIZE
+    add r15, [r12 + VEC_ptr]
+    inc r13
+    test dword ptr [r15 + MK_pad], MKF_SOURCE
+    jz 11f
+    imul rdi, r14, MK_SIZE
+    add rdi, [r12 + VEC_ptr]
+    inc r14
+    mov rsi, r15
+    mov edx, MK_SIZE
+    call memmove
+    jmp 1b
+11: mov rdi, [r15 + MK_msg]
+    call mem_free
+    jmp 1b
+2:  mov [r12 + VEC_len], r14
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# extmarks_drop_all(doc): every mark goes, the store's too (the document is closing)
+extmarks_drop_all:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rbx + DOC_xmarks]
+    test r12, r12
+    jz 9f
     mov qword ptr [rbx + DOC_xmarks], 0
     xor r13d, r13d
 1:  cmp r13, [r12 + VEC_len]
@@ -708,7 +739,7 @@ FN extmarks_free
     mov rbx, rdi
     call pres_free
     mov rdi, rbx
-    call extmarks_language_changed
+    call extmarks_drop_all
     mov rdi, [rbx + DOC_xedits]
     test rdi, rdi
     jz 9f
@@ -987,6 +1018,9 @@ FN ext_hover_tip
     # hides another
     lea r12, [rip + hover_both]
     mov byte ptr [r12], 0
+    call dg_hover_text          # debugger: while paused, the value under the pointer wins
+    test rax, rax
+    jnz 1f
     mov rdi, rbx
     mov rsi, [rip + g_hover_pos]
     call extmarks_at

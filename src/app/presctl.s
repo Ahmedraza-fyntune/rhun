@@ -579,28 +579,28 @@ c_print_present:
     xor r12d, r12d
 3:  cmp r12, [r14 + PRS_fr + VEC_len]
     jae 9b
-    imul r13, r12, FR_SIZE
+    imul r13, r12, FRG_SIZE
     add r13, [r14 + PRS_fr + VEC_ptr]
     inc r12
     lea rdi, [rip + .Ls_range_sp]
     call out_cstr
     mov rdi, rbx
-    mov rsi, [r13 + FR_a]
+    mov rsi, [r13 + FRG_a]
     call doc_line_of
     lea rdi, [rax + 1]
     call out_u64
     mov edi, '-'
     call out_byte
     mov rdi, rbx
-    mov rsi, [r13 + FR_b]
+    mov rsi, [r13 + FRG_b]
     call doc_line_of
     lea rdi, [rax + 1]
     call out_u64
     lea rdi, [rip + .Ls_kind]
     call out_cstr
-    mov edi, [r13 + FR_kind]
+    mov edi, [r13 + FRG_kind]
     call out_u64
-    mov rdi, [r13 + FR_text]
+    mov rdi, [r13 + FRG_text]
     call text_out
     mov edi, 10
     call out_byte

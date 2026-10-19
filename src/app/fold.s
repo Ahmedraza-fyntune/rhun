@@ -575,7 +575,7 @@ fold_add_at:
     call fr_same
     test rax, rax
     jz 4f
-    mov rdi, [rax + FR_text]
+    mov rdi, [rax + FRG_text]
     test rdi, rdi
     jz 4f
     call dup_cstr
@@ -809,7 +809,7 @@ FN range_end
     test rax, rax
     jz 8f
     mov rdi, rbx
-    mov rsi, [rax + FR_b]
+    mov rsi, [rax + FRG_b]
     call doc_line_of
     EPILOGUE
 0:  mov rdi, rbx
@@ -1419,9 +1419,9 @@ fr_lower:
     jae 9f
     lea rcx, [rax + rdx]
     shr rcx, 1
-    imul r8, rcx, FR_SIZE
+    imul r8, rcx, FRG_SIZE
     add r8, [rdi + PRS_fr + VEC_ptr]
-    cmp [r8 + FR_a], rsi
+    cmp [r8 + FRG_a], rsi
     jae 2f
     lea rax, [rcx + 1]
     jmp 1b
@@ -1451,17 +1451,17 @@ fr_find:
     xor r15d, r15d
 1:  cmp rcx, [r13 + PRS_fr + VEC_len]
     jae 7f
-    imul r8, rcx, FR_SIZE
+    imul r8, rcx, FRG_SIZE
     add r8, [r13 + PRS_fr + VEC_ptr]
-    cmp [r8 + FR_a], r14
+    cmp [r8 + FRG_a], r14
     jne 7f
     inc rcx
-    mov rax, [r8 + FR_b]
+    mov rax, [r8 + FRG_b]
     cmp rax, r14
     jbe 1b                      # edits collapsed it
     test r15, r15
     jz 2f
-    cmp rax, [r15 + FR_b]
+    cmp rax, [r15 + FRG_b]
     jbe 1b
 2:  mov r15, r8
     jmp 1b
@@ -1479,12 +1479,12 @@ fr_same:
     call fr_lower
 1:  cmp rax, [rdi + PRS_fr + VEC_len]
     jae 8f
-    imul rcx, rax, FR_SIZE
+    imul rcx, rax, FRG_SIZE
     add rcx, [rdi + PRS_fr + VEC_ptr]
-    cmp [rcx + FR_a], rsi
+    cmp [rcx + FRG_a], rsi
     jne 8f
     inc rax
-    cmp [rcx + FR_b], rbx
+    cmp [rcx + FRG_b], rbx
     jne 1b
     mov rax, rcx
     pop rbx
@@ -1507,13 +1507,13 @@ fr_shift:
     mov rdx, [r12 + TE_del]
     mov rcx, [r12 + TE_ins]
     mov r8d, GR_RIGHT
-1:  mov rdi, [r15 + FR_a]
+1:  mov rdi, [r15 + FRG_a]
     call tape_shift
-    mov [r15 + FR_a], rax
-    mov rdi, [r15 + FR_b]
+    mov [r15 + FRG_a], rax
+    mov rdi, [r15 + FRG_b]
     call tape_shift
-    mov [r15 + FR_b], rax
-    add r15, FR_SIZE
+    mov [r15 + FRG_b], rax
+    add r15, FRG_SIZE
     dec r14
     jnz 1b
 9:  EPILOGUE
@@ -1548,39 +1548,39 @@ fr_innermost:
     xor ecx, ecx
 1:  cmp rcx, [r12 + PRS_fr + VEC_len]
     jae 5f
-    imul rax, rcx, FR_SIZE
+    imul rax, rcx, FRG_SIZE
     add rax, [r12 + PRS_fr + VEC_ptr]
     inc rcx
-    cmp [rax + FR_a], r13
+    cmp [rax + FRG_a], r13
     ja 5f                       # sorted: the rest start below the line
-    cmp [rax + FR_b], r13
+    cmp [rax + FRG_b], r13
     jb 1b
-    mov rdx, [rax + FR_b]
-    sub rdx, [rax + FR_a]
+    mov rdx, [rax + FRG_b]
+    sub rdx, [rax + FRG_a]
     jz 1b
     cmp rdx, r14
     jae 1b
     mov [rsp], rcx
     mov [rsp + 8], rax
     mov rdi, r12
-    mov rsi, [rax + FR_a]
-    mov rdx, [rax + FR_b]
+    mov rsi, [rax + FRG_a]
+    mov rdx, [rax + FRG_b]
     call fd_has
     mov rcx, [rsp]
     test eax, eax
     jnz 1b
     mov r15, [rsp + 8]
-    mov r14, [r15 + FR_b]
-    sub r14, [r15 + FR_a]
+    mov r14, [r15 + FRG_b]
+    sub r14, [r15 + FRG_a]
     jmp 1b
 5:  test r15, r15
     jz 8f
     mov rdi, rbx
-    mov rsi, [r15 + FR_b]
+    mov rsi, [r15 + FRG_b]
     call doc_line_of
     mov [rsp], rax
     mov rdi, rbx
-    mov rsi, [r15 + FR_a]
+    mov rsi, [r15 + FRG_a]
     call doc_line_of
     mov rdx, [rsp]
     EPILOGUE
@@ -1598,11 +1598,11 @@ fr_levels:
     xor r13d, r13d
 1:  cmp r13, [r12 + PRS_fr + VEC_len]
     jae 9f
-    imul r14, r13, FR_SIZE
+    imul r14, r13, FRG_SIZE
     add r14, [r12 + PRS_fr + VEC_ptr]
     inc r13
-    mov rax, [r14 + FR_b]
-    cmp rax, [r14 + FR_a]
+    mov rax, [r14 + FRG_b]
+    cmp rax, [r14 + FRG_a]
     jbe 1b
     # the ranges ending before this header no longer hold anything
 2:  mov rcx, [rip + fl_stack + VEC_len]
@@ -1610,7 +1610,7 @@ fr_levels:
     jz 3f
     mov rdx, [rip + fl_stack + VEC_ptr]
     mov rax, [rdx + rcx*8 - 8]
-    cmp rax, [r14 + FR_a]
+    cmp rax, [r14 + FRG_a]
     jae 3f
     dec qword ptr [rip + fl_stack + VEC_len]
     jmp 2b
@@ -1619,7 +1619,7 @@ fr_levels:
     lea rdi, [rip + fl_stack]
     mov esi, 8
     call vec_push
-    mov rcx, [r14 + FR_b]
+    mov rcx, [r14 + FRG_b]
     mov [rax], rcx
     mov eax, [rsp]
     test eax, eax
@@ -1627,14 +1627,14 @@ fr_levels:
     cmp r15, rax
     jne 1b
 4:  mov rdi, r12
-    mov rsi, [r14 + FR_a]
-    mov rdx, [r14 + FR_b]
+    mov rsi, [r14 + FRG_a]
+    mov rdx, [r14 + FRG_b]
     call fd_has
     test eax, eax
     jnz 1b
     mov rdi, rbx
-    mov rsi, [r14 + FR_a]
-    mov rdx, [r14 + FR_b]
+    mov rsi, [r14 + FRG_a]
+    mov rdx, [r14 + FRG_b]
     call fold_add_at
     jmp 1b
 9:  EPILOGUE
@@ -1658,9 +1658,9 @@ FN fold_ranges_set
     lea rdi, [rip + fr_keys]
     mov esi, 8
     call vec_push
-    imul rcx, r14, FR_SIZE
+    imul rcx, r14, FRG_SIZE
     add rcx, [rip + fr_new + VEC_ptr]
-    mov rcx, [rcx + FR_a]
+    mov rcx, [rcx + FRG_a]
     shl rcx, 16
     or rcx, r14
     mov [rax], rcx
@@ -1673,15 +1673,15 @@ FN fold_ranges_set
 3:  cmp r14, r13
     jae 4f
     lea rdi, [r12 + PRS_fr]
-    mov esi, FR_SIZE
+    mov esi, FRG_SIZE
     call vec_push
     mov rdi, rax
     mov rsi, [rip + fr_keys + VEC_ptr]
     mov rsi, [rsi + r14*8]
     and esi, 0xffff
-    imul rsi, rsi, FR_SIZE
+    imul rsi, rsi, FRG_SIZE
     add rsi, [rip + fr_new + VEC_ptr]
-    mov edx, FR_SIZE
+    mov edx, FRG_SIZE
     call memcpy
     inc r14
     jmp 3b

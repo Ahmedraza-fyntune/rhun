@@ -446,6 +446,34 @@ PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame
 
 The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
+### Notebooks
+
+A notebook file an extension provides for (the `jupyter` extension reads and writes `.ipynb`)
+opens in a notebook tab: its cells one under the other, each with its language's colors and every
+editor command, and under a code cell its outputs (text with its colors, errors, images). The
+toolbar runs all cells, interrupts or restarts the kernel and clears the outputs; the button at
+its right picks the kernel. Clicking a cell's `[ ]` column runs it.
+
+| Mode | Key | Action |
+| --- | --- | --- |
+| edit | Esc | command mode |
+| edit | Shift+Enter, Ctrl+Enter, Alt+Enter | run and select the next cell, run, run and insert a cell below |
+| edit | Up on the first line, Down on the last | the previous or next cell |
+| command | Enter | edit the selected cell |
+| command | Up / k, Down / j | select the previous or next cell |
+| command | a, b | insert a code cell above, below |
+| command | d d, z | delete the cell, undo the last cell operation |
+| command | m, y | make the cell Markdown, code |
+| command | Alt+Up, Alt+Down | move the cell |
+| command | i i, 0 0 | interrupt, restart the kernel (asks) |
+| command | o | hide or show the cell's outputs |
+
+Kernels run as you, outside the extension's sandbox: the first time a notebook extension starts
+one in a project, rhun shows the command and asks (Allow or Cancel); Forget on the extension's
+page takes the permission back. Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
+and opens whole in a tab of its own. Every action is in the command palette as Notebook: ....
+Notebook: Reopen as Text shows the file itself.
+
 ### Multiple cursors
 
 Several selections edit together: typing, Backspace and Delete (by character and by word), Enter, Tab and Shift+Tab, Indent and Outdent, Cut, Copy and Paste act at every one, as one Undo step that also brings the selections back. The newest selection is the primary: the view follows it and the status bar shows its position and how many selections there are.
@@ -646,6 +674,17 @@ print-state
 
 Commands: `key`, `type`, `click x y [right|middle|shift|ctrl]` (ctrl is Cmd+click on macOS), `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [MODS]` (modifiers as a key combination names them: `ctrl`, `shift+alt`), `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents-runs` (discovery runs started so far), `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-panels` (whether the explorer, the agents panel and the terminal are shown), `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-term-cell ROW COL` (the middle of that terminal cell), `print-link` (the terminal link under the pointer), `print-settings` (the rows the Settings page shows, `section.key` each), `print-scroll` (the editor's horizontal scroll, its vertical one in 1/256 lines, the horizontal limit and the scrollbar's track), `scroll-x dx` (a sideways wheel), `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `appearance dark|light|unknown` (the system's dark mode changes, as a platform reports it), `print-appearance` (that mode, `follow_system`, the three theme settings and the theme shown), `focus out|in` (the window loses or gets the keyboard, as a platform reports it), `echo`, `quit`. A headless run takes the system's mode from `RHUN_APPEARANCE` (`dark` or `light`). `cmd` runs anything from the command palette by its snake case name.
 
+Managing extensions: `ext-install OWNER/NAME[@VERSION]` and `wait-install` (then `print-dialog`,
+`dialog yes|no`), `ext-install-folder PATH [copy|link]`, `ext-install-archive PATH`,
+`ext-rollback NAME`, `print-ext-versions NAME` (`version= source= tag= previous= link= fresh=`),
+`ext-check-updates`, `wait-ext-updates` (until the check and the updates it queued are done, or a
+dialog asks), `print-ext-updates` (a line per extension: `installed= latest=
+state=current|available|asks|skipped|error`), `ext-update NAME`, `ext-update-all`, `ext-browse`,
+`ext-index-refresh`, `wait-index`, `ext-search TEXT`, `print-ext-browse` (the Browse list with
+each card's button) and `ext-browse-install NAME`. `RHUN_EXT_BASE` points installs, checks and the
+index at another place than `https://github.com` (tests use a `file://` tree or a local server);
+`RHUN_EXT_UPDATE_EVERY=MS` turns on automatic checks in a headless run, every MS milliseconds.
+
 ## Extensions
 
 Extensions are separate programs that rhun starts and talks to over their standard input and
@@ -653,6 +692,13 @@ output, one text line per message ([the protocol](https://rhun.app/extensions/v1
 native binaries, written in Rust, Go, C or C++, so they start in milliseconds and need nothing
 else installed. One that crashes or hangs cannot take the editor with it, and on Linux and macOS
 the kernel holds each one to the permissions its manifest declares.
+
+An extension can also be a single **WebAssembly** module (compiled for `wasm32-wasip1` from Rust,
+Go or C), which rhun runs itself: the same file works on Linux, macOS and Windows, and it can
+reach only its own state folder and the project and home folders its permissions name, on every
+system, Windows included (its page says "It runs as WebAssembly"). A system with a native build
+of the extension runs that instead. WebAssembly extensions start as quickly as native ones; heavy
+computation is slower. Writing one: [protocol 1.1](extensions/v1.1.md#webassembly-extensions-runwasm32-wasip1).
 
 They can add commands to the palette with their own keys, read and edit the open documents (each
 edit one undo step), put marks with messages in the gutter, **decorate** text (colors,
@@ -673,6 +719,23 @@ commands:
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
 | F2 | Rename | on a word, asks for the new name, then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
 | shift+alt+f | Format Document | with the document's tab width and spaces |
+
+Extensions can also fill **trees and logs** that rhun draws and keeps: sections in the sidebar
+under the Explorer (click a header to fold it), tabs in the bottom panel after the terminals
+(`ctrl+j` **Toggle Panel** shows or hides the panel without starting a shell), tabs in the right
+column beside the Agents panel (**Toggle Side Views**), or a tab of their own. Trees keep your
+expansion and selection as the extension updates them: arrows move and fold, Enter opens, Space
+ticks a checkbox, typing jumps to a label, Shift+F10 opens the item's menu, and the buttons in the
+header and on the hovered row run the extension's actions. Logs follow their end while it is in
+view; `ctrl+f` finds a line, `ctrl+c` copies the selected lines. Showing a view starts its
+extension if it is not running.
+
+**Notifications** from extensions stack at the bottom right: info goes after 8 seconds, warnings
+after 12 (the pointer over a card keeps it), errors and questions stay until you answer or close
+them. **Focus Notifications** gives them the keyboard (Up/Down between cards, Left/Right between
+buttons, Enter, Delete closes, Escape back); **Clear All Notifications** closes them all.
+**Progress** shows in the status bar (click it for a card with Cancel), in a card, or as a bar at
+the top of the extension's view; nothing shows for work that ends within half a second.
 
 Extensions that declare `git = read` read the project's Git data through rhun: the status, the
 blame of a file as you edit it (unsaved lines show as not committed), the history of a file or of
@@ -804,6 +867,31 @@ Extensions can read a versioned insertion context with the exact range's text, c
 file and project paths, indentation, document settings and grammar comment token. It works
 with inactive and readonly documents and preserves the editor's selection. See the
 [native snippet protocol](extensions/v1.1.md#read-only-insertion-context) for the request and SDKs.
+
+### Agents, reviews and tools
+
+rhun does not drive agents; you talk to them in a terminal. Extensions add to what rhun shows
+of them:
+
+- **More agents in the agents panel.** An extension can list the sessions of another agent
+  (Gemini CLI, Aider, a local model): they appear with the built-in ones, with the extension's
+  badge, the model, the age and whether the agent works or waits for you, and open as the same
+  conversation view. Settings > Agents has a switch for each such source.
+- **The Review tab.** An extension, or an agent through the MCP bridge, can propose a change. rhun
+  shows it in a Review tab: each file with its added and removed lines, each change with a few
+  lines around it. Accept or reject a file, a single change, or everything: the buttons on each
+  line, or `a` and `r` for the file under the cursor, `A` and `R` for the change, `]` `[` and
+  `}` `{` to move between files and changes, Ctrl+Enter to accept everything. What you accept is
+  one undo step per decision and stays unsaved until you save; a file you changed meanwhile is
+  left alone. Closing the tab rejects the rest.
+- **Tools.** Extensions can offer tools that other extensions call through rhun (search an index,
+  read the open files, propose an edit). A tool that changes anything asks you first: Allow once,
+  Allow for this session, or Deny.
+- **MCP for terminal agents.** The `rhun-editor/mcp` extension lets Claude Code, Codex, Grok,
+  OpenCode and other MCP clients use those tools on the project you have open: what is open and
+  selected, unsaved text, the problems shown, open a file, propose changes for the Review tab,
+  and put a command in rhun's terminal prompt (it runs when you press Enter). After installing it,
+  **MCP: Add rhun to Claude Code** (or **to Codex**) puts the setup command in rhun's prompt.
 
 ### Install and manage
 
@@ -973,6 +1061,8 @@ your environment, in your project, only during runs you start. The extension's m
 them (`[needs] tests = go cargo`, shown before you install it), and the first run in a project
 asks once, showing the command (Forget on the extension's page asks again). A folder opened from
 a link runs none until you trust it. Results are kept until rhun quits.
+
+| `rhun-editor/mcp` | lets the agents in your terminal use rhun over MCP: open files, the selection, unsaved text, problems, and changes you review |
 
 ### Write your own
 

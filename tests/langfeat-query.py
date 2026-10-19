@@ -106,6 +106,28 @@ class Query(Lang):
         log = self.lang_log()
         self.assertEqual(sum(1 for l in log if l.startswith('ok ')), 2, log)
 
+    def test_references_show_at_their_first_part(self):
+        root = self.provider({'hello': 'hello 1 references query-stream', 'answers': {
+            'references': {'parts': [['1\n' + loc('{path}', 1, 4, 1, 8, 'fn main() {'), 0.05]],
+                           'delay': 1.2, 'body': '1\n' + loc('{path}', 3, 5, 3, 10, 'total + 1')}}},
+            'references = *.rs\n')
+        out = self.run_lang(root, ['cmd references', 'wait 500', 'echo ---', 'print-palette', 'wait 1200',
+                                   'echo ---', 'print-palette', 'print-langstats fake/lang'])
+        first, second = '\n'.join(out).split('---')[1:3]
+        rows = lambda t: [l for l in t.split('\n') if l.startswith('  ') or l.startswith('> ')]
+        self.assertEqual(len(rows(first)), 1, out)
+        self.assertEqual(len(rows(second)), 2, out)
+
+    def test_a_streamed_query_with_records_is_answered_and_signatures_are_not_counts(self):
+        root = self.provider({'hello': 'hello 1 references signature query-stream', 'answers': {
+            'references': {'parts': [['1\n' + loc('{path}', 1, 4, 1, 8, 'x'), 0.05]], 'delay': 0.05, 'body': '0\n'},
+            'signature': {'body': '0 3\nadd(a)\n'}}},
+            'references = *.rs\nsignature = *.rs\nsignature.triggers = ( ,\n')
+        out = self.run_lang(root, ['cmd references', 'wait 400', 'key Escape', 'cmd signature_help', 'wait 300',
+                                   'print-langstats fake/lang'])
+        self.assertEqual(self.stats(out, 'references')['answered'], '1', out)
+        self.assertEqual(self.stats(out, 'signature')['answered'], '1', out)
+
     def test_parts_need_the_feature_a_pending_request_and_a_kind_that_streams(self):
         root = self.provider({'hello': 'hello 1 references symbols query-stream', 'answers': {
             'symbols': {'parts': [['0\n', 0.05]], 'delay': 0.2, 'body': '0\n'},
@@ -180,6 +202,16 @@ class Scope(Lang):
         self.assertTrue(any(l.startswith('error 3 syntax') for l in log), log)
         self.assertTrue(any(l.startswith('error 4 syntax') for l in log), log)
         self.assertTrue(any(' line=1 col=8' in l for l in out if l.startswith('tabs=')), out)
+
+    def test_editor_providers_follow_the_values_in_force(self):
+        spec = dict(self.SPEC, run={'none': [['provides definition -', '']]})
+        root = self.provider(spec, 'definition = *.rs\nreferences = *.rs\n', extra='[commands]\nnone = None\n')
+        out = self.run_lang(root, ['print-context editorProviders', 'cmd lang.none', 'wait 200',
+                                   'print-context editorProviders'])
+        ctx = [l for l in out if l.startswith('editorProviders=')]
+        self.assertIn('definition', ctx[0])
+        self.assertNotIn('definition', ctx[1])
+        self.assertIn('references', ctx[1])
 
     def test_provides_needs_the_feature_and_ends_with_the_process(self):
         spec = {'hello': 'hello 1 definition', 'ready': [['provides definition *.go', '']]}

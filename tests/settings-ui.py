@@ -39,6 +39,7 @@ BOOLS = {
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
     'testing': 'gutter',
+    'debug': 'show_on_start keys_in_terminal',
 }
 INTS = {
     ('files', 'format_on_save_timeout'): (250, 30000, 250),
@@ -50,6 +51,7 @@ INTS = {
     ('editor', 'tab_width'): (1, 16, 1), ('terminal', 'font_size'): (8, 40, 1),
     ('terminal', 'line_height'): (1., 2.5, .05),
     ('terminal', 'scrollback'): (0, 100000, 1000), ('terminal', 'height'): (80, 2000, 10),
+    ('debug', 'console_lines'): (1000, 100000, 1000),
 }
 STRINGS = {
     ('ui', 'font'): 'missing font café.ttf', ('editor', 'font'): 'missing mono café.ttf',

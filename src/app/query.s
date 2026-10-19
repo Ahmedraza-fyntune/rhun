@@ -66,9 +66,9 @@ ENDSTRUCT QS_SIZE
 
 # a narrowed [provides] value (provider-scope)
 STRUCT
-F SC_off, 8                     # EXT offset of the key's field
-F SC_val, 8                     # owned cstr; "" when the kind is withdrawn
-ENDSTRUCT SC_SIZE
+F QSC_off, 8                     # EXT offset of the key's field
+F QSC_val, 8                     # owned cstr; "" when the kind is withdrawn
+ENDSTRUCT QSC_SIZE
 
 .bss
 .p2align 3
@@ -76,6 +76,8 @@ qr_vec: .zero VEC_SIZE          # QR records
 late_ring: .zero LATE_RING * 24 # ext, id, kind
 late_next: .quad 0
 qp_buf: .zero SB_SIZE           # a value being built
+q_room_items: .quad 0           # query_final_room's answer for the reply being read (query_reply
+q_room_bytes: .quad 0           # sets them before any asker reads)
 
 .text
 
@@ -86,6 +88,14 @@ FN query_kind_row
     imul rax, rdi, PKR_SIZE
     lea rcx, [rip + pk_table]
     add rax, rcx
+    ret
+
+# FN query_kind_first(kind) -> eax 1 for a kind shown at its first part (references, implementation)
+FN query_kind_first
+    call query_kind_row
+    mov eax, [rax + PKR_flags]
+    shr eax, 2                  # PKF_FIRST
+    and eax, 1
     ret
 
 # qs_rec(ext, kind) -> rax its QS record (the extension's records are made on first use)
@@ -258,10 +268,29 @@ late_take:
     xor eax, eax
     ret
 
-# body_empty(body, len) -> eax 1 for an answer that says nothing: no bytes, or a count of 0
+# FN query_final_room() -> rax the records, rdx the bytes a final answer may still bring after its
+# parts (the query's caps less what the parts brought), -1 each without parts; valid while the
+# askers read the answer query_reply just counted
+FN query_final_room
+    mov rax, [rip + q_room_items]
+    mov rdx, [rip + q_room_bytes]
+    ret
+
+# body_empty(body, len, kind) -> eax 1 for an answer that says nothing: no bytes, or (for kinds whose
+# answer starts with a count) a count of 0
 body_empty:
     test rsi, rsi
     jz 1f
+    cmp edx, PK_SIGNATURE       # these start with other numbers: only no bytes says nothing
+    je 8f
+    cmp edx, PK_HOVER
+    je 8f
+    cmp edx, PK_PREPARE_RENAME
+    je 8f
+    cmp edx, PK_RESOLVE
+    je 8f
+    cmp edx, PK_ACTION_RESOLVE
+    je 8f
     cmp byte ptr [rdi], '0'
     jne 8f
     cmp rsi, 1
@@ -280,12 +309,14 @@ body_empty:
 # request or it expired: counted late, and nobody else hears of it. Otherwise it is counted and
 # eax is 0 (the asker reads it). From extproto's pump, before the askers.
 FN query_reply
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
     mov r14, rcx
     mov r15, r8
+    mov qword ptr [rip + q_room_items], -1
+    mov qword ptr [rip + q_room_bytes], -1
     call qr_find
     test rax, rax
     jz .Lqrp_late
@@ -294,15 +325,37 @@ FN query_reply
     mov rcx, [rsp]
     sub rax, [rcx + QR_sent]
     mov [rsp + 8], rax
-    mov eax, [rcx + QR_kind]
+    mov rax, [rcx + QR_items]
+    mov [rsp + 16], rax         # what its parts brought
+    # after parts, the final answer still counts toward the query's caps (query_final_room)
+    test dword ptr [rcx + QR_flags], QF_PART
+    jz 1f
+    mov edi, [rcx + QR_kind]
+    call query_kind_row
+    mov rcx, [rsp]
+    mov edx, [rax + PKR_qitems]
+    sub rdx, [rcx + QR_items]
+    jns 11f
+    xor edx, edx
+11: mov [rip + q_room_items], rdx
+    mov edx, [rax + PKR_qbytes]
+    sub rdx, [rcx + QR_bytes]
+    jns 12f
+    xor edx, edx
+12: mov [rip + q_room_bytes], rdx
+1:  mov eax, [rcx + QR_kind]
     mov [rsp], rax
     mov rdi, rcx
     call qr_remove
     mov edx, QS_failed
     test r13d, r13d
     jz 2f
+    mov edx, QS_answered
+    cmp qword ptr [rsp + 16], 0
+    jne 2f                      # its parts brought records: answered, whatever the rest says
     mov rdi, r14
     mov rsi, r15
+    mov edx, [rsp]
     call body_empty
     mov edx, QS_empty
     test eax, eax
@@ -399,9 +452,9 @@ FN query_ext_gone
     xor r12d, r12d
 4:  cmp r12, [rbx + EXT_scope + VEC_len]
     jae 5f
-    imul rax, r12, SC_SIZE
+    imul rax, r12, QSC_SIZE
     add rax, [rbx + EXT_scope + VEC_ptr]
-    mov rdi, [rax + SC_val]
+    mov rdi, [rax + QSC_val]
     call mem_free
     inc r12
     jmp 4b
@@ -768,14 +821,14 @@ FN ext_pv
     mov rcx, [rdi + EXT_scope + VEC_ptr]
 1:  test rax, rax
     jz 8f
-    cmp [rcx + SC_off], rsi
+    cmp [rcx + QSC_off], rsi
     je 2f
-    add rcx, SC_SIZE
+    add rcx, QSC_SIZE
     dec rax
     jmp 1b
 8:  mov rax, [rdi + rsi]
     ret
-2:  mov rax, [rcx + SC_val]
+2:  mov rax, [rcx + QSC_val]
     cmp byte ptr [rax], 0
     jne 3f
     xor eax, eax
@@ -845,23 +898,23 @@ scope_set:
     xor r14d, r14d
 1:  cmp r14, [rbx + EXT_scope + VEC_len]
     jae 3f
-    imul r15, r14, SC_SIZE
+    imul r15, r14, QSC_SIZE
     add r15, [rbx + EXT_scope + VEC_ptr]
-    cmp [r15 + SC_off], r12
+    cmp [r15 + QSC_off], r12
     je 2f
     inc r14
     jmp 1b
-2:  mov rdi, [r15 + SC_val]
+2:  mov rdi, [r15 + QSC_val]
     call mem_free
     test r13, r13
     jz 21f
-    mov [r15 + SC_val], r13
+    mov [r15 + QSC_val], r13
     jmp 9f
 21: # the last record takes its place
     mov rax, [rbx + EXT_scope + VEC_len]
     dec rax
     mov [rbx + EXT_scope + VEC_len], rax
-    imul rax, rax, SC_SIZE
+    imul rax, rax, QSC_SIZE
     add rax, [rbx + EXT_scope + VEC_ptr]
     mov rcx, [rax]
     mov [r15], rcx
@@ -871,10 +924,10 @@ scope_set:
 3:  test r13, r13
     jz 9f
     lea rdi, [rbx + EXT_scope]
-    mov esi, SC_SIZE
+    mov esi, QSC_SIZE
     call vec_push
-    mov [rax + SC_off], r12
-    mov [rax + SC_val], r13
+    mov [rax + QSC_off], r12
+    mov [rax + QSC_val], r13
 9:  EPILOGUE
 
 # FN query_h_provides(): ID provides KEY VALUES: until the process stops, KEY's values are VALUES
@@ -1370,6 +1423,11 @@ FN query_dump_pending
 .Lk_quickdiff: .asciz "quickdiff"
 .Lk_tests_resolve: .asciz "tests-resolve"
 .Lk_test_run: .asciz "test-run"
+.Lk_transcript: .asciz "agent-transcript"
+.Lk_tool: .asciz "tool"
+.Lk_prompt: .asciz "agent-prompt"
+.Lk_nb_open: .asciz "nb-open"
+.Lk_nb_save: .asciz "nb-save"
 .Lk_folding: .asciz "folding-ranges"
 .Lk_tokens: .asciz "semantic-tokens"
 .Lk_hints: .asciz "inlay-hints"
@@ -1383,9 +1441,10 @@ qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_ex
     .quad .Lq_late, .Lq_dropped, .Lq_cancelled, 0
 # per asker (QO_*): its reply handler (an expired request is an error answer to it), what takes a
 # query-part, and what hears that the Query cap cut a request short
-qo_reply: .quad 0, langfeat_reply, complete_reply, 0, scmext_reply, testproto_expired, present_reply
-qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0, 0
-qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0, 0
+qo_reply: .quad 0, langfeat_reply, complete_reply, 0, scmext_reply, testproto_expired, ai_query_expired, nb_reply
+    .quad present_reply         # QO_PRESENT
+qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0, 0, 0, 0
+qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0, 0, 0, 0
 # the kinds (docs/extensions/v1.1.md, "Language feature queries"): name, [provides] key, show,
 # hard limit and ceiling (ms), flags, an answer's cap (records, bytes), the query's cap
 .macro PK name, pv, show, base, ceil, flags, items, bytes, qitems, qbytes
@@ -1424,6 +1483,14 @@ pk_table:
     # testing: a tests-resolve answer waits 30 s, a test-run's "ok ID 0" 10 s
     PK .Lk_tests_resolve, EXT_pv_tests, 0, 30000, 0, PKF_SILENT, 10000, 4194304, 10000, 4194304
     PK .Lk_test_run, EXT_pv_tests, 0, 10000, 0, PKF_SILENT | PKF_SUB, 1, 65536, 1, 65536
+    # AI (agentext.s, tools.s): a transcript page, a tool call (the caller's patience, no limit here),
+    # a prompt to an agent session
+    PK .Lk_transcript, 0, 0, 30000, 0, PKF_SILENT, 2000, 4194304, 2000, 4194304
+    PK .Lk_tool, 0, 0, 0, 0, PKF_SILENT, 1, 4194304, 1, 4194304
+    PK .Lk_prompt, 0, 0, 30000, 0, PKF_SILENT, 1, 4096, 1, 4096
+    # notebooks: the notebook keeps its own deadline (nbdoc.s)
+    PK .Lk_nb_open, EXT_pv_notebook, 0, 0, 0, PKF_SILENT, 1, 67108864, 1, 67108864
+    PK .Lk_nb_save, EXT_pv_notebook, 0, 0, 0, PKF_SILENT | PKF_SUB, 1, 67108864, 1, 67108864
     # editor presentation (present.s): automatic and silent; an answer that never comes frees its
     # request's slot after the hard limit
     PK .Lk_folding, EXT_pv_folding, 0, 30000, 0, PKF_SILENT, 50000, 4194304, 50000, 4194304
