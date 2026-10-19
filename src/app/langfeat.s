@@ -484,8 +484,10 @@ lf_start:
     cmp dword ptr [r14 + EXT_status], ES_RUNNING
     jne 6b
     lea rax, [rip + lf_feats]
-    mov eax, [rax + r12*4]
-    test [r14 + EXT_features], eax
+    mov esi, [rax + r12*4]
+    mov rdi, r14
+    call ext_feature
+    test eax, eax
     jz 6b
     lea rax, [rip + lf_pvs]
     mov rax, [rax + r12*8]
@@ -2563,7 +2565,7 @@ lf_tmp4: .zero 16
 # per kind (index LF_*): the verb, the feature, where its patterns are, how long it waits (ms), a
 # toast when nobody provides it, a toast when nothing came, the list's placeholder; one provider?
 lf_verbs: .quad 0, .Lv_definition, .Lv_references, .Lv_symbols, .Lv_actions, .Lv_rename, .Lv_format
-lf_feats: .long 0, FEAT_DEFINITION, FEAT_REFERENCES, FEAT_SYMBOLS, FEAT_ACTIONS, FEAT_RENAME, FEAT_FORMAT
+lf_feats: .long -1, FEAT_DEFINITION, FEAT_REFERENCES, FEAT_SYMBOLS, FEAT_ACTIONS, FEAT_RENAME, FEAT_FORMAT
 .p2align 3
 lf_pvs: .quad 0, EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format
 lf_waits: .quad 0, 5000, 10000, 5000, 3000, 15000, 10000

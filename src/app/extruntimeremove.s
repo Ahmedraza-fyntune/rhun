@@ -60,7 +60,7 @@ FN rt_remove
     jb 1b
     imul rax, r13, EXT_SIZE
     add rax, [rbx + RT_stableExtBase]
-    test dword ptr [rax + EXT_features], FEAT_COMMANDS
+    FEAT_TEST rax, FEAT_COMMANDS
     jz .Lrm_unsupported
     cmp qword ptr [rbx + RT_barrierState], RTB_QUIESCING
     ja .Lrm_busy

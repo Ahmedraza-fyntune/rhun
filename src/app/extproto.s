@@ -468,8 +468,8 @@ handle_line:
     jmp 9f
 2:  test r12, r12
     jz 9f
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
+    cmp dword ptr [rbx + EXT_feat_asks], 0
+    je 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -494,8 +494,8 @@ handle_line:
     call langfeat_reply
     jmp 9f
 .Lhl_err:
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
+    cmp dword ptr [rbx + EXT_feat_asks], 0
+    je 9f
     mov edi, 1
     call field_u64
     test edx, edx
@@ -983,7 +983,7 @@ h_snippet_context:
     test eax, eax
     jz 9f
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    FEAT_TEST rax, FEAT_SNIPPETS
     jz .Lhsc_unknown
     cmp qword ptr [rip + nfields], 8
     jne .Lhsc_syntax
@@ -1095,7 +1095,7 @@ h_snippet:
     test eax, eax
     jz 9f
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    FEAT_TEST rax, FEAT_SNIPPETS
     jz .Lhsn_unknown
     cmp qword ptr [rip + nfields], 9
     jne .Lhsn_syntax
@@ -1277,7 +1277,7 @@ save_number:
 h_save_apply:
     PROLOGUE
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_SAVE_ACTIONS
+    FEAT_TEST rax, FEAT_SAVE_ACTIONS
     jz .Lhsa_unknown
     mov edi, NEEDS_DOC_WRITE
     call need
@@ -1922,7 +1922,7 @@ h_register:
 h_unregister:
     PROLOGUE
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_COMMANDS
+    FEAT_TEST rax, FEAT_COMMANDS
     jz .Lhun_unknown
     cmp qword ptr [rip + nfields], 3
     jne .Lhun_syntax
@@ -2314,7 +2314,7 @@ h_term:
 # view_agreed() -> ZF clear when the views feature was agreed; otherwise the reply is sent
 view_agreed:
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_VIEWS
+    FEAT_TEST rax, FEAT_VIEWS
     jnz 1f
     push rax
     mov rdi, [rip + cur_id]
@@ -2896,7 +2896,8 @@ hello_features:
     PROLOGUE
     mov rbx, rdi
     mov [rip + cur], rdi
-    mov dword ptr [rbx + EXT_features], 0
+    mov rdi, rbx
+    call ext_features_clear
     mov edi, 2
     call rest_from
     mov r12, rax
@@ -2919,53 +2920,100 @@ hello_features:
 .Lhf_token_found:
     mov r13, rax
     sub r13, r12
-    xor r14d, r14d              # the feature's bit index
-2:  lea rax, [rip + feature_names]
-    mov rdx, [rax + r14*8]
-    test rdx, rdx
-    jz 3f
     mov rdi, r12
     mov rsi, r13
-    call str_eq_cstr
+    call feature_index
     test eax, eax
-    jz 21f
-    mov ecx, r14d
-    mov eax, 1
-    shl eax, cl
-    or [rbx + EXT_features], eax
-21: inc r14d
-    jmp 2b
+    js 3f
+    bts dword ptr [rbx + EXT_features], eax
+    test edx, edx
+    jz 3f
+    mov dword ptr [rbx + EXT_feat_asks], 1
 3:  add r12, r13
     jmp 1b
-4:  and dword ptr [rbx + EXT_features], FEAT_HOST
-    cmp dword ptr [rbx + EXT_features], 0
-    je 9f
+4:  xor r14d, r14d              # anything agreed?
+    xor ecx, ecx
+41: or r14, [rbx + EXT_features + rcx*8]
+    inc ecx
+    cmp ecx, FEAT_MAX / 64
+    jb 41b
+    test r14, r14
+    jz 9f
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
-    xor r14d, r14d
-5:  lea rax, [rip + feature_names]
-    mov rsi, [rax + r14*8]
-    test rsi, rsi
-    jz 7f
-    mov eax, [rbx + EXT_features]
-    mov ecx, r14d
-    shr eax, cl
-    test eax, 1
-    jz 6f
+    xor r14d, r14d              # the feature's index
+    lea r13, [rip + feature_names]
+5:  cmp byte ptr [r13], 0xff
+    je 7f
+    inc r13                     # past its asks byte
+    bt dword ptr [rbx + EXT_features], r14d
+    jnc 6f
     mov edi, ' '
-    push rsi
-    push rsi
     call out_byte
-    pop rdi
-    pop rsi
+    mov rdi, r13
     call out_cstr
-6:  inc r14d
+6:  mov rdi, r13
+    call strlen
+    lea r13, [r13 + rax + 1]
+    inc r14d
     jmp 5b
 7:  mov edi, 10
     call out_byte
     call out_end
 9:  EPILOGUE
+
+# feature_index(ptr, len) -> eax the feature's index (FEAT_*) or -1, edx its asks flag
+feature_index:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor r14d, r14d
+    lea rbx, [rip + feature_names]
+1:  cmp byte ptr [rbx], 0xff
+    je 8f
+    movzx r15d, byte ptr [rbx]
+    inc rbx
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, rbx
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    mov rdi, rbx
+    call strlen
+    lea rbx, [rbx + rax + 1]
+    inc r14d
+    jmp 1b
+2:  mov eax, r14d
+    mov edx, r15d
+    EPILOGUE
+8:  mov eax, -1
+    xor edx, edx
+    EPILOGUE
+
+# FN ext_feature(ext, index) -> eax 1 when the extension agreed feature FEAT_* index (any
+# register index; a negative one is no feature)
+FN ext_feature
+    xor eax, eax
+    test esi, esi
+    js 9f
+    cmp esi, FEAT_MAX
+    jae 9f
+    bt dword ptr [rdi + EXT_features], esi
+    setc al
+9:  ret
+
+# FN ext_features_clear(ext): nothing agreed (a new run)
+FN ext_features_clear
+    xor eax, eax
+    xor ecx, ecx
+1:  mov [rdi + EXT_features + rcx*8], rax
+    inc ecx
+    cmp ecx, FEAT_MAX / 64
+    jb 1b
+    mov dword ptr [rdi + EXT_feat_asks], 0
+    ret
 
 send_ready:
     PROLOGUE
@@ -3520,25 +3568,14 @@ cmd_allow:
 .Lev_features: .asciz "0 features"
 .Lev_cancel: .asciz "0 cancel "
 .Lev_action: .asciz "0 action "
-.Lf_views: .asciz "views"
-.Lf_complete: .asciz "complete"
-.Lf_signature: .asciz "signature"
-.Lf_definition: .asciz "definition"
-.Lf_references: .asciz "references"
-.Lf_symbols: .asciz "symbols"
-.Lf_actions: .asciz "actions"
-.Lf_rename: .asciz "rename"
-.Lf_format: .asciz "format"
-.Lf_commands: .asciz "commands"
-.Lf_snippet_transforms: .asciz "snippet-transforms"
-.Lf_snippet_variants: .asciz "snippet-variants"
-.Lf_snippets: .asciz "snippets"
-.Lf_save_actions: .asciz "save-actions"
 .Lv_save_apply: .asciz "save-apply"
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
-feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature, 0
+# the features rhun knows, in FEAT_* order: per feature its asks byte and its name; 0xff ends
+.set FEATURE_NAMES, 1
+feature_names:
+    FEATURE_LIST
+    .byte 0xff
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "

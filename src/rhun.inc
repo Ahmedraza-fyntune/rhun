@@ -1471,24 +1471,57 @@ ENDSTRUCT TF_SIZE
 .equ IMF_PNM, 7
 .equ IMF_TGA, 8
 .equ IMG_MAXDIM, 32768
-.equ FEAT_VIEWS, 1               # section 12 of the spec: features agreed after hello
-.equ FEAT_COMPLETE, 2
-.equ FEAT_SIGNATURE, 4
-.equ FEAT_DEFINITION, 8
-.equ FEAT_REFERENCES, 16
-.equ FEAT_SYMBOLS, 32
-.equ FEAT_ACTIONS, 64
-.equ FEAT_RENAME, 128
-.equ FEAT_FORMAT, 256
-.equ FEAT_COMMANDS, 512          # protocol 1.1: remove a runtime command
-.equ FEAT_SAVE_ACTIONS, 1024     # source code actions before saving
-.equ FEAT_SNIPPET_TRANSFORMS, 8192 # compiled field-exit transforms
-.equ FEAT_SNIPPET_VARIANTS, 4096 # declared unequal initial mirrors
-.equ FEAT_SNIPPETS, 2048        # prepared fields and native editable sessions
-# the features whose requests rhun sends (and whose ok ID LEN replies it frames)
-.equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
-.equ FEAT_WORKSPACE_WATCH, 16384
-.equ FEAT_HOST, FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+# ---- protocol features (section 12 of the spec: named in "hello 1 NAME...", agreed by rhun's
+# "0 features" before ready) ----
+# One line per feature: FEATURE SYMBOL, "wire-name", ASKS. SYMBOL becomes the feature's index into
+# EXT_features (a bit set); ASKS is 1 when rhun sends that feature's requests, so the extension's
+# ok/error replies are read. Adding a feature is one line here, at the end (indices are not on the
+# wire; "0 features" lists names in this order). Test one with FEAT_TEST or ext_feature.
+.macro FEATURE_LIST
+    FEATURE FEAT_VIEWS, "views", 0
+    FEATURE FEAT_COMPLETE, "complete", 1
+    FEATURE FEAT_SIGNATURE, "signature", 1
+    FEATURE FEAT_DEFINITION, "definition", 1
+    FEATURE FEAT_REFERENCES, "references", 1
+    FEATURE FEAT_SYMBOLS, "symbols", 1
+    FEATURE FEAT_ACTIONS, "actions", 1
+    FEATURE FEAT_RENAME, "rename", 1
+    FEATURE FEAT_FORMAT, "format", 1
+    FEATURE FEAT_COMMANDS, "commands", 0          # protocol 1.1: remove a runtime command
+    FEATURE FEAT_SAVE_ACTIONS, "save-actions", 1  # source code actions before saving
+    FEATURE FEAT_SNIPPETS, "snippets", 0          # prepared fields and native editable sessions
+    FEATURE FEAT_SNIPPET_VARIANTS, "snippet-variants", 0   # declared unequal initial mirrors
+    FEATURE FEAT_SNIPPET_TRANSFORMS, "snippet-transforms", 0   # compiled field-exit transforms
+    FEATURE FEAT_WORKSPACE_WATCH, "workspace_watch", 0
+    # contributions and commands (invoke.s, when.s, extcontext.s)
+    FEATURE FEAT_COMMAND_ARGS, "command-args", 1  # 0 run ... FROM LEN, run-command, call
+    FEATURE FEAT_CONTEXT_KEYS, "context-keys", 0  # set-context
+.endm
+# extproto.s sets FEATURE_NAMES and expands the list again as its name table
+.macro FEATURE sym, name, asks
+.ifdef FEATURE_NAMES
+    .byte \asks
+    .asciz "\name"
+.else
+    .equ \sym, __feat
+    .set __feat, __feat + 1
+.endif
+.endm
+.set __feat, 0
+FEATURE_LIST
+.equ FEAT_COUNT, __feat
+.equ FEAT_MAX, 256              # EXT_features' bits
+.if FEAT_COUNT > FEAT_MAX
+.error "more features than EXT_features holds"
+.endif
+# The snippet decoders take the first 32 feature bits as one word (EXT_features' first dword).
+.if FEAT_SNIPPET_TRANSFORMS >= 32
+.error "the snippet features must stay in EXT_features' first dword"
+.endif
+# FEAT_TEST base, FEAT_X: ZF clear (jnz) when the extension at base agreed FEAT_X
+.macro FEAT_TEST base, feat
+    test byte ptr [\base + EXT_features + ((\feat) >> 3)], 1 << ((\feat) & 7)
+.endm
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1691,7 +1724,8 @@ F EXT_icon_px, 8*ICON_SLOTS   # copies at the sizes badges ask for, corners roun
 F EXT_icon_sz, 4*ICON_SLOTS
 F EXT_icon_next, 4      # the slot the next new size replaces
 F EXT_icon_pad, 4
-F EXT_features, 4       # FEAT_*: what was agreed after hello (section 12 of the spec)
+F EXT_features, FEAT_MAX / 8    # bit FEAT_*: what was agreed after hello (section 12 of the spec)
+F EXT_feat_asks, 4      # 1 when an agreed feature has rhun send requests (its replies are read)
 F EXT_feat_pad, 4
 F EXT_pv_complete, 8    # [provides] complete: the files it completes in (patterns, cstr) or 0
 F EXT_pv_ctrig, 8       # complete.triggers: characters that ask at once, space separated, or 0

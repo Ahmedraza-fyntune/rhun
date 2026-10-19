@@ -2728,7 +2728,8 @@ FN ext_legacy_start_impl
     mov qword ptr [rbx + EXT_status_text], 0
     mov dword ptr [rbx + EXT_hello], 0
     mov dword ptr [rbx + EXT_syntax_errs], 0
-    mov dword ptr [rbx + EXT_features], 0
+    mov rdi, rbx
+    call ext_features_clear
     mov dword ptr [rbx + EXT_flood], 0
     mov dword ptr [rbx + EXT_throttled], 0
     mov dword ptr [rbx + EXT_global_wait], 0
@@ -3037,7 +3038,8 @@ FN ext_supervised_start_impl
     mov qword ptr [rbx + EXT_status_text], 0
     mov dword ptr [rbx + EXT_hello], 0
     mov dword ptr [rbx + EXT_syntax_errs], 0
-    mov dword ptr [rbx + EXT_features], 0
+    mov rdi, rbx
+    call ext_features_clear
     mov dword ptr [rbx + EXT_flood], 0
     mov dword ptr [rbx + EXT_throttled], 0
     mov dword ptr [rbx + EXT_global_wait], 0

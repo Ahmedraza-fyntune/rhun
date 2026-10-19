@@ -362,7 +362,7 @@ ask:
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 1b
-    test dword ptr [rbx + EXT_features], FEAT_COMPLETE
+    FEAT_TEST rbx, FEAT_COMPLETE
     jz 1b
     mov rdi, [rbx + EXT_pv_complete]
     mov rsi, r15
@@ -1955,7 +1955,7 @@ cp_accept:
     add rax, rcx
     mov [rip + ps_end], rax
     mov rax, [r12 + CI_ext]
-    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    FEAT_TEST rax, FEAT_SNIPPETS
     jz .Lcpa_no_fields
     mov rdi, [rsp + 64]
     mov esi, [r12 + CI_ilen]

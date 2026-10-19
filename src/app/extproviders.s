@@ -344,8 +344,10 @@ FN ext_provider_supports
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 8f
     lea rax, [rip + pp_features]
-    mov eax, [rax + r12*4]
-    test [rbx + EXT_features], eax
+    mov esi, [rax + r12*4]
+    mov rdi, rbx
+    call ext_feature
+    test eax, eax
     jz 8f
     mov eax, 1
     EPILOGUE
@@ -654,8 +656,10 @@ pp_eligible:
     jne 8f
     mov rcx, [rip + pp_kind]
     lea rax, [rip + pp_features]
-    mov eax, [rax + rcx*4]
-    test [rbx + EXT_features], eax
+    mov esi, [rax + rcx*4]
+    mov rdi, rbx
+    call ext_feature
+    test eax, eax
     jz 8f
 7:  mov eax, 1
     pop rbx
@@ -1060,7 +1064,7 @@ FN cmd_select_symbol_provider
 pp_names: .quad 0, 0, 0, .Lsymbols, 0, .Lrename, .Lformat, .Lsignature
 pp_patterns: .quad 0, 0, 0, EXT_pv_symbols, 0, EXT_pv_rename, EXT_pv_format, EXT_pv_signature
 pp_titles: .quad 0, 0, 0, .Lsymbols_title, 0, .Lrename_title, .Lformat_title, .Lsignature_title
-pp_features: .long 0, 0, 0, FEAT_SYMBOLS, 0, FEAT_RENAME, FEAT_FORMAT, FEAT_SIGNATURE
+pp_features: .long -1, -1, -1, FEAT_SYMBOLS, -1, FEAT_RENAME, FEAT_FORMAT, FEAT_SIGNATURE
 
 .text
 # Owned labels/path/preferences survive for ordinary cleanup; action authority does not.

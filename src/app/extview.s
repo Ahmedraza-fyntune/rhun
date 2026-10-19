@@ -300,7 +300,7 @@ event_head:
     mov rax, [rbx + VW_ext]
     cmp dword ptr [rax + EXT_status], ES_RUNNING
     jne 8f
-    test dword ptr [rax + EXT_features], FEAT_VIEWS
+    FEAT_TEST rax, FEAT_VIEWS
     jz 8f
     lea rdi, [rip + evbuf]
     call sb_clear
