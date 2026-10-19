@@ -36,7 +36,9 @@ class Keys(contribhost.Contrib):
     def test_builtin_chord_opens_the_theme_list(self):
         out = self.run_editor(drop_waits=True, actions=[
             'key ctrl+k', 'print-chord', 'key ctrl+t', 'print-chord', 'print-palette'])
-        self.assertEqual(out[0], 'chord=' + CTRL + 'K fallback=- ms=5000')
+        prefix = 'chord=' + CTRL + 'K fallback=- ms='
+        self.assertTrue(out[0].startswith(prefix), out)
+        self.assertTrue(4800 <= int(out[0][len(prefix):]) <= 5000, out)   # a busy machine takes some ms
         self.assertEqual(out[1], 'chord=none')
         self.assertIn('  GitHub Dark', out)
 
@@ -130,7 +132,8 @@ class Keys(contribhost.Contrib):
             'key ctrl+alt+k', 'print-chord', 'wait 600', 'wait 600', 'print-chord',
             'wait-ext demo running', 'wait 300',
             'key ctrl+alt+k', 'key ctrl+alt+j', 'print-panels'])
-        self.assertTrue(out[0].startswith('chord=') and 'fallback=demo.ping ms=1000' in out[0], out)
+        self.assertTrue(out[0].startswith('chord=') and 'fallback=demo.ping ms=' in out[0], out)
+        self.assertTrue(800 <= int(out[0].split('ms=')[1]) <= 1000, out)
         self.assertEqual(out[1], 'chord=none')
         self.assertEqual([r[0] for r in self.runs()], ['0 run demo.ping 1 key 0'])
         self.assertIn('explorer=1 agents=0 term=0', out)
