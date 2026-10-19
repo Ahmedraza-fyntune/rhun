@@ -34,10 +34,10 @@ ew_path: .zero 4096
 FN extwatch_add
     PROLOGUE
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lew_denied
-    test dword ptr [rbx + EXT_features], FEAT_WORKSPACE_WATCH
+    FEAT_TEST rbx, FEAT_WORKSPACE_WATCH
     jz .Lew_denied
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE
     jz .Lew_denied

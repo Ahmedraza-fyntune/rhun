@@ -63,7 +63,7 @@ FN extbar_buttons
     add rbx, [rip + g_exts + VEC_ptr]
     inc r14
     mov rdi, rbx
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz 2b
     cmp dword ptr [rbx + EXT_pinned], 0
@@ -118,7 +118,7 @@ FN extbar_count
     add r13, [rip + g_exts + VEC_ptr]
     inc rbx
     mov rdi, r13
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [r13 + EXT_pinned], 0
@@ -178,7 +178,7 @@ FN extbar_draw
     imul rdi, r15, EXT_SIZE
     add rdi, [rip + g_exts + VEC_ptr]
     inc r15
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz 1b
     inc r13d
@@ -243,7 +243,7 @@ FN extbar_draw
     add r13, [rip + g_exts + VEC_ptr]
     inc r15
     mov rdi, r13
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz 4b
     lea edi, [r15 - 1]
@@ -487,7 +487,7 @@ FN ext_action
     mov rbx, rdi
     mov [rsp], esi
     mov [rsp + 4], edx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jnz .Laction_metadata
     mov rdi, rbx
@@ -711,7 +711,7 @@ remove_item:
 menu_ext:
     mov rdi, [rip + xb_ext]
     push rdi
-    call ext_can_act
+    call ext_is_visible
     pop rdi
     test eax, eax
     ret
@@ -754,7 +754,7 @@ FN extbar_dump
     add rbx, [rip + g_exts + VEC_ptr]
     inc r13
     mov rdi, rbx
-    call ext_has_identity
+    call ext_is_visible
     test eax, eax
     jz 2b
     cmp dword ptr [rbx + EXT_pinned], 0
@@ -789,15 +789,3 @@ FN extbar_dump
 .Ld_open: .asciz "menu=open\n"
 .Ld_closed: .asciz "menu=closed\n"
 .Ld_pinned: .asciz "pinned="
-
-.text
-FN extbar_catalog_invalidate_pure
-    PROLOGUE
-    mov qword ptr [rip + xb_ext], 0
-    mov dword ptr [rip + xb_open], 0
-    call ctx_menu_list
-    lea rcx, [rip + xb_items]
-    cmp rax, rcx
-    jne 1f
-    call ctx_menu_close
-1:  EPILOGUE

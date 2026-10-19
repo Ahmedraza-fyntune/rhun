@@ -1,5 +1,4 @@
-# control commands of tasks and terminals (--script, --control): control.s hands over the ones its
-# own table does not know
+# control commands of tasks and terminals (--script, --control), in control.s's ctl_tables
 #   print-terminals                a line per terminal tab (term_programs_dump)
 #   term-select TERM               that tab becomes the current one
 #   term-run [--cwd DIR] [--env NAME=VALUE]... [--unset NAME]... [--title WORD] [--task] [--silent]
@@ -23,33 +22,28 @@ approve_last: .long 0           # 0 none, 1 yes, 2 no
 
 .text
 
-# tt_control(name, name len, rest, rest len, out sb) -> 0 when it was one of these, else -1
-FN tt_control
+# each command for control.s's ctl_tables: fn(out, rest, rest len) -> 0, wrapping a handler below
+#   that reads the rest from rbx, r12 and writes to r15
+.macro TCTL name, handler
+\name:
     PROLOGUE
-    mov r13, rdi
-    mov r14, rsi
-    mov rbx, rdx
-    mov r12, rcx
-    mov r15, r8
-    lea rax, [rip + commands]
-    mov [rsp], rax
-1:  mov rax, [rsp]
-    mov rdx, [rax]
-    test rdx, rdx
-    jz 8f
-    mov rdi, r13
-    mov rsi, r14
-    call str_eq_cstr
-    test eax, eax
-    jnz 2f
-    add qword ptr [rsp], 16
-    jmp 1b
-2:  mov rax, [rsp]
-    call [rax + 8]              # rbx, r12: the rest; r15: out
+    mov r15, rdi
+    mov rbx, rsi
+    mov r12, rdx
+    call \handler
     xor eax, eax
     EPILOGUE
-8:  mov rax, -1
-    EPILOGUE
+.endm
+TCTL t_print_terminals, c_print_terminals
+TCTL t_term_select, c_term_select
+TCTL t_term_run, c_term_run
+TCTL t_term_stop, c_term_stop
+TCTL t_term_restart, c_term_restart
+TCTL t_term_close, c_term_close
+TCTL t_print_uproc, c_print_uproc
+TCTL t_print_allowed, c_print_allowed
+TCTL t_run_approve, c_run_approve
+TCTL t_print_approve, c_print_approve
 
 # rest_word() -> rax word, rdx its length: the next word of the rest (rbx, r12 move past it)
 rest_word:
@@ -426,12 +420,13 @@ c_print_approve:
 .Ls_no: .asciz "approve=no\n"
 .p2align 3
 approve_words: .quad .Ls_none, .Ls_yes, .Ls_no
-commands:
-    .quad .Lc_print_terminals, c_print_terminals, .Lc_term_select, c_term_select
-    .quad .Lc_term_run, c_term_run, .Lc_term_stop, c_term_stop, .Lc_term_restart, c_term_restart
-    .quad .Lc_term_close, c_term_close, .Lc_print_uproc, c_print_uproc
-    .quad .Lc_print_allowed, c_print_allowed, .Lc_run_approve, c_run_approve
-    .quad .Lc_print_approve, c_print_approve, 0, 0
+.globl tasks_ctl
+tasks_ctl:
+    .quad .Lc_print_terminals, t_print_terminals, .Lc_term_select, t_term_select
+    .quad .Lc_term_run, t_term_run, .Lc_term_stop, t_term_stop, .Lc_term_restart, t_term_restart
+    .quad .Lc_term_close, t_term_close, .Lc_print_uproc, t_print_uproc
+    .quad .Lc_print_allowed, t_print_allowed, .Lc_run_approve, t_run_approve
+    .quad .Lc_print_approve, t_print_approve, 0, 0
 options:
     .quad .Lo_cwd, o_cwd, .Lo_env, o_env, .Lo_unset, o_unset, .Lo_title, o_title
     .quad .Lo_task, o_task, .Lo_silent, o_silent, .Lo_sh, o_sh, 0, 0

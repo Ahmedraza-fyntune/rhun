@@ -2,25 +2,16 @@
 .include "rhun.inc"
 .text
 
-# ext_send_checked(ext, bytes, length) -> 0 accepted, -EPIPE/-EAGAIN/-EINVAL.
+# ext_send_checked(ext, bytes, length) -> 0 accepted, -EPIPE/-EAGAIN/-EINVAL. -EAGAIN: the queue
+# would reach EXT_WQ_HARD, and the program is stopped at the next tick.
 # Acceptance means queued/written without a known pipe failure, not peer receipt.
 # Same readable, disjoint payload and generic allocation policy as ext_send.
 FN ext_send_checked
     test rdi, rdi
     jz .Lesc_invalid
-    push rdi
-    push rsi
-    push rdx
-    call ext_can_act
-    pop rdx
-    pop rsi
-    pop rdi
+    call ext_is_visible
     test eax, eax
     jz .Lesc_closed
-    test dword ptr [rdi + EXT_host_cleanup_mask], (1 << 0) | (1 << 8)
-    jnz .Lesc_closed
-    cmp dword ptr [rdi + EXT_retiring], 0
-    jne .Lesc_closed
     cmp dword ptr [rdi + EXT_status], ES_RUNNING
     jne .Lesc_closed
     cmp dword ptr [rdi + EXT_in], 0
@@ -47,13 +38,9 @@ FN ext_send_checked
     mov rbx, rdi
     call ext_send
     mov rdi, rbx
-    call ext_can_act
+    call ext_is_visible
     test eax, eax
     jz 2f
-    test dword ptr [rbx + EXT_host_cleanup_mask], (1 << 0) | (1 << 8)
-    jnz 2f
-    cmp dword ptr [rbx + EXT_retiring], 0
-    jne 2f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
     jne 2f
     cmp dword ptr [rbx + EXT_in], 0
@@ -68,6 +55,13 @@ FN ext_send_checked
     mov rax, -32
     ret
 .Lesc_full:
+    # a program that lets 8 MB pile up is not reading: the next tick ends it (v1, section 3);
+    # nothing more is queued
+    push rdi
+    call time_ms
+    pop rdi
+    sub rax, 20000
+    mov [rdi + EXT_full_since], rax
     mov rax, -11
     ret
 .Lesc_invalid:

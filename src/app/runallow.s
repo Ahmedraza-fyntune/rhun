@@ -363,10 +363,8 @@ FN run_approve_cancel
     cmp [rip + ask_cookie], rdi
     jne 9f
     call ask_clear
-    xor edi, edi                # closing it must not run its Cancel
-    call app_confirm_cancel
     lea rdi, [rip + on_allow]
-    call app_confirm_revoke_pure
+    call app_confirm_revoke
     mov dword ptr [rip + g_dirty], 1
 9:  add rsp, 8
     ret

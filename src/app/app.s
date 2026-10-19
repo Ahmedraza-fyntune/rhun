@@ -2384,7 +2384,7 @@ FN app_on_key
     test rax, rax
     jz .Lk_editor
     mov rdi, rdx
-    call rax
+    call keys_run
     jmp 9f
 .Lk_editor:
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
@@ -5535,6 +5535,21 @@ FN app_dialog_open
     mov eax, [rip + dlg_kind]
     ret
 
+# app_confirm_revoke(fn): the open app_confirm whose button calls fn goes away unanswered (its Cancel
+#   is not called: the question was withdrawn)
+FN app_confirm_revoke
+    cmp dword ptr [rip + dlg_kind], 4
+    jne 9f
+    cmp [rip + dlg_fn], rdi
+    jne 9f
+    mov dword ptr [rip + dlg_kind], 0
+    mov qword ptr [rip + dlg_cancel], 0
+    cmp dword ptr [rip + g_focus], FOCUS_DIALOG
+    jne 1f
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+1:  mov dword ptr [rip + g_dirty], 1
+9:  ret
+
 # app_dialog_dump(sb): "dialog=none", or "dialog=QUESTION" and its line and button (tests)
 FN app_dialog_dump
     PROLOGUE
@@ -6486,22 +6501,3 @@ FN app_goto_line
 4:  mov dword ptr [rip + g_reveal], 1
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
-
-.text
-# Revoke only this exact borrow-only confirmation, never invoke an owned Cancel callback.
-FN app_confirm_revoke_pure
-    cmp dword ptr [rip + dlg_kind], 4
-    jne 9f
-    cmp [rip + dlg_fn], rdi
-    jne 9f
-    cmp qword ptr [rip + dlg_cancel], 0
-    jne 9f
-    mov dword ptr [rip + dlg_kind], 0
-    mov qword ptr [rip + dlg_title], 0
-    mov qword ptr [rip + dlg_text], 0
-    mov qword ptr [rip + dlg_ok], 0
-    mov qword ptr [rip + dlg_fn], 0
-    cmp dword ptr [rip + g_focus], FOCUS_DIALOG
-    jne 9f
-    mov dword ptr [rip + g_focus], FOCUS_EDITOR
-9:  ret
