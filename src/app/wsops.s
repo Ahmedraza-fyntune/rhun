@@ -249,11 +249,12 @@ wo_dirty_inside:
 
 # wo_is_link(path) -> eax 1 for a symbolic link (not followed: a delete takes the link itself)
 wo_is_link:
-    lea rsi, [rip + wo_stat]
-    SYS SYS_lstat
+    sub rsp, 8
+    call vfs_lstat              # the host's in a remote window (vfs.s)
+    add rsp, 8
     test rax, rax
     js 8f
-    mov eax, [rip + wo_stat + 24]   # st_mode (each platform's layer fills Linux's layout)
+    mov eax, [rip + vfs_statbuf + 24]   # st_mode (each platform's layer fills Linux's layout)
     and eax, 0xf000
     cmp eax, 0xa000
     sete al
@@ -280,13 +281,13 @@ wo_tree_count1:
     cmp qword ptr [rip + wo_count], WO_TREE_MAX
     ja 9f
     mov rdi, rbx
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 9f
     mov rdi, rbx
     lea rsi, [rip + wo_count_tree_cb]
     mov rdx, rbx
-    call dir_each
+    call vfs_dir_each
 9:  EPILOGUE
 # wo_count_tree_cb(folder, name, is_dir): counted, and folders counted inside
 wo_count_tree_cb:
@@ -327,7 +328,7 @@ wo_entries:
     mov qword ptr [rip + wo_count], 0
     lea rsi, [rip + wo_count_cb]
     xor edx, edx
-    call dir_each_names
+    call vfs_dir_each_names
     mov rax, [rip + wo_count]
     pop rbx
     ret
@@ -422,7 +423,7 @@ FN ws_ops_resolve
     je .Lor_rename
     # delete: present, or skipped with ignore-missing
     lea rdi, [rip + wo_a]
-    call file_missing
+    call vfs_missing
     test eax, eax
     jz 2f
     test qword ptr [r12 + WG_flags], WF_IGNORE_MISSING
@@ -441,7 +442,7 @@ FN ws_ops_resolve
     jnz .Lor_refused
 21:
     lea rdi, [rip + wo_a]
-    call file_is_dir
+    call vfs_is_dir
     mov [r12 + WG_folder], rax
     test eax, eax
     jz .Lor_next
@@ -456,11 +457,11 @@ FN ws_ops_resolve
     jmp .Lor_next
 .Lor_create:
     lea rdi, [rip + wo_a]
-    call file_missing
+    call vfs_missing
     test eax, eax
     jnz .Lor_next               # free
     lea rdi, [rip + wo_a]
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 3f
     cmp qword ptr [r12 + WG_folder], 0
@@ -483,7 +484,7 @@ FN ws_ops_resolve
     jmp .Lor_next
 .Lor_rename:
     lea rdi, [rip + wo_a]
-    call file_missing
+    call vfs_missing
     test eax, eax
     jnz .Lor_nofile
     lea rdi, [rip + wo_a]
@@ -491,7 +492,7 @@ FN ws_ops_resolve
     test eax, eax
     jnz .Lor_refused
     lea rdi, [rip + wo_a]
-    call file_is_dir
+    call vfs_is_dir
     mov [r12 + WG_folder], rax
     mov rdi, r12
     mov esi, 1
@@ -527,23 +528,23 @@ FN ws_ops_resolve
     jnz .Lor_refused
     # the same volume: the source's device and the target's nearest existing folder's
     mov rdi, [r12 + WG_real]
-    call file_id
+    call vfs_id
     mov [rsp], rdx
     mov rdi, [r12 + WG_real2]
     call wo_parent_dev
     cmp rax, [rsp]
     jne .Lor_refused
     mov rdi, [r12 + WG_real2]
-    call file_missing
+    call vfs_missing
     test eax, eax
     jnz .Lor_next               # free
     # the target exists: the same file in another letter case, or another file
     mov rdi, [r12 + WG_real]
-    call file_id
+    call vfs_id
     mov [rsp], rax
     mov [rsp + 8], rdx
     mov rdi, [r12 + WG_real2]
-    call file_id
+    call vfs_id
     cmp rax, [rsp]
     jne 5f
     cmp rdx, [rsp + 8]
@@ -562,7 +563,7 @@ FN ws_ops_resolve
     mov qword ptr [r12 + WG_skip], 1
     jmp .Lor_next
 6:  mov rdi, [r12 + WG_real2]
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jnz .Lor_refused            # a folder is never replaced
     mov rdi, [r12 + WG_real2]
@@ -688,7 +689,7 @@ wo_parent_dev:
     jnz 2f
     mov word ptr [rbx], '/'
 2:  mov rdi, rbx
-    call file_id
+    call vfs_id
     test rax, rax
     jz 1b
     mov rax, rdx
@@ -818,7 +819,7 @@ FN ws_ops_recheck
     cmp qword ptr [r12 + WG_skip], 0
     jne 1b
     mov rdi, [r12 + WG_real]
-    call file_missing
+    call vfs_missing
     cmp qword ptr [r12 + WG_kind], WK_CREATE
     jne 2f
     xor eax, 1                  # a create's path: free unless it overwrites
@@ -831,7 +832,7 @@ FN ws_ops_recheck
     cmp qword ptr [r12 + WG_case], 0
     jne 1b
     mov rdi, [r12 + WG_real2]
-    call file_missing
+    call vfs_missing
     xor eax, 1
     xor eax, [r12 + WG_exists]
 3:  test eax, eax
@@ -990,7 +991,8 @@ wo_out:
     mov r14, rax                # where it goes
     mov rdi, r13
     mov rsi, r14
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     jns 8f
     mov rdi, r13
@@ -999,7 +1001,7 @@ wo_out:
     test rax, rax
     js 8f
     mov rdi, r13
-    call file_remove_tree
+    call vfs_remove_tree
 8:  mov r15, rax
     mov rdi, r14
     call mem_free
@@ -1018,14 +1020,15 @@ wo_in:
     call dup_cstr
     mov r14, rax
     mov rdi, r13
-    call mkdir_parent
+    call vfs_mkdir_parent
     mov rdi, r13
-    call file_missing
+    call vfs_missing
     test eax, eax
     jz 7f                       # something is in its way
     mov rdi, r14
     mov rsi, r13
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     jns 8f
     mov rdi, r14
@@ -1034,7 +1037,7 @@ wo_in:
     test rax, rax
     js 8f
     mov rdi, r14
-    call file_remove_tree
+    call vfs_remove_tree
     xor eax, eax
     jmp 8f
 7:  mov rax, -17                # EEXIST
@@ -1054,18 +1057,18 @@ wo_copy:
     test eax, eax
     jnz 8f                      # links are not followed (nor kept: the copy is the fallback)
     mov rdi, rbx
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jnz 2f
     mov rdi, rbx
     mov esi, 67108864
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 7f
     mov r13, rax
     mov rdi, r12
     mov rsi, rax
-    call file_write_all
+    call vfs_write_all
     mov r14, rax
     mov rdi, r13
     call mem_free
@@ -1073,13 +1076,13 @@ wo_copy:
     EPILOGUE
 2:  mov rdi, r12
     mov esi, 0755
-    SYS SYS_mkdir
+    call vfs_mkdir
     mov [rsp], rbx
     mov [rsp + 8], r12
     mov rdi, rbx
     lea rsi, [rip + wo_copy_cb]
     mov rdx, rsp
-    call dir_each_names
+    call vfs_dir_each_names
     test rax, rax
     js 9f
     xor eax, eax
@@ -1130,21 +1133,16 @@ wo_create:
     test rax, rax
     js 9f
 1:  mov rdi, [r12 + TP_path]
-    call mkdir_parent
+    call vfs_mkdir_parent
     test qword ptr [r12 + TP_flags], TPF_FOLDER
     jz 2f
     mov rdi, [r12 + TP_path]
     mov esi, 0755
-    SYS SYS_mkdir
+    call vfs_mkdir
     jmp 3f
 2:  mov rdi, [r12 + TP_path]
-    mov esi, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
-    mov edx, 0644
-    SYS SYS_open
-    test rax, rax
-    js 9f
-    mov edi, eax
-    SYS SYS_close
+    mov esi, 0644
+    call vfs_create_new         # the host's in a remote window (vfs.s)
 3:  test rax, rax
     js 9f
     xor eax, eax
@@ -1158,11 +1156,10 @@ wo_uncreate:
     test qword ptr [r12 + TP_flags], TPF_FOLDER
     jz 1f
     mov rdi, [r12 + TP_path]
-    mov eax, 84                 # rmdir: only an empty folder
-    XSYS
+    call vfs_rmdir              # only an empty folder
     jmp 2f
 1:  mov rdi, [r12 + TP_path]
-    SYS SYS_unlink
+    call vfs_unlink
 2:  test rax, rax
     js 9f
     test qword ptr [r12 + TP_flags], TPF_OVER
@@ -1202,7 +1199,7 @@ wo_move:
 2:  mov rdi, r14
     call wo_follow_collect
     mov rdi, r15
-    call mkdir_parent
+    call vfs_mkdir_parent
     test qword ptr [r12 + TP_flags], TPF_CASE
     jz 3f
     # letter case only: through a name of its own (a case-insensitive volume sees one name)
@@ -1214,27 +1211,31 @@ wo_move:
     call cstr_copy
     mov rdi, r14
     lea rsi, [rip + wo_tmp]
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     js 9f
     lea rdi, [rip + wo_tmp]
     mov rsi, r15
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     jns 4f
     mov [rsp], rax
     lea rdi, [rip + wo_tmp]
     mov rsi, r14
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     mov rax, [rsp]
     jmp 9f
 3:  mov rdi, r15
-    call file_missing
+    call vfs_missing
     test eax, eax
     jz 8f                       # never over something that appeared meanwhile
     mov rdi, r14
     mov rsi, r15
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     js 9f
 4:  mov rdi, r15
@@ -1602,14 +1603,14 @@ FN ws_ops_ready
     je .Loy_rename
     # delete
     mov rdi, [r12 + TP_path]
-    call file_missing
+    call vfs_missing
     test r13d, r13d
     jz 9f                       # undo: free
     xor eax, 1                  # redo: there
     jmp 9f
 .Loy_create:
     mov rdi, [r12 + TP_path]
-    call file_missing
+    call vfs_missing
     test r13d, r13d
     jnz 9f                      # redo: free
     test eax, eax
@@ -1637,13 +1638,13 @@ FN ws_ops_ready
     jnz 1f
     xchg r14, r15
 1:  mov rdi, r14                # what moves: there
-    call file_missing
+    call vfs_missing
     test eax, eax
     jnz 8f
     test qword ptr [r12 + TP_flags], TPF_CASE
     jnz 7b
     mov rdi, r15                # where it goes: free
-    call file_missing
+    call vfs_missing
     jmp 9f
 8:  xor eax, eax
 9:  EPILOGUE
@@ -2105,7 +2106,7 @@ wo_recover_op:
     je .Lro_delete
     # create: made, and empty: it goes (an overwritten file back)
     mov rdi, r14
-    call file_missing
+    call vfs_missing
     test eax, eax
     jnz .Lro_none
     test qword ptr [rsp], TPF_FOLDER
@@ -2124,7 +2125,7 @@ wo_recover_op:
     cmp rax, rcx
     jne .Lro_left
     mov rdi, r14
-    SYS SYS_unlink
+    call vfs_unlink
 2:  test qword ptr [rsp], TPF_OVER
     jz .Lro_done
     lea rdx, [rip + .Lover]
@@ -2134,18 +2135,19 @@ wo_recover_op:
 .Lro_rename:
     # TO there and FROM free: back
     mov rdi, r15
-    call file_missing
+    call vfs_missing
     test eax, eax
     jnz .Lro_none
     test qword ptr [rsp], TPF_CASE
     jnz 3f
     mov rdi, r14
-    call file_missing
+    call vfs_missing
     test eax, eax
     jz .Lro_left
 3:  mov rdi, r15
     mov rsi, r14
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     js .Lro_left
     test qword ptr [rsp], TPF_OVER
@@ -2157,7 +2159,7 @@ wo_recover_op:
 .Lro_delete:
     # the path free: it comes back
     mov rdi, r14
-    call file_missing
+    call vfs_missing
     test eax, eax
     jz .Lro_none
     lea rdx, [rip + .Lgone]
@@ -2200,10 +2202,11 @@ wo_recover_in:
     xor esi, esi
     call sb_push_byte
     mov rdi, r14
-    call mkdir_parent
+    call vfs_mkdir_parent
     mov rdi, [rip + wo_sb + SB_ptr]
     mov rsi, r14
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     jns 9f
     mov rdi, [rip + wo_sb + SB_ptr]

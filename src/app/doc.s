@@ -1246,11 +1246,11 @@ FN doc_load
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     mov rdi, r12
     mov esi, GAP_MIN * 4
-    call file_read_all_extra
+    call vfs_read_all_extra
     test rax, rax
     jz .Ldl_error
     mov r13, rax
@@ -1507,7 +1507,7 @@ FN doc_save
 5:  mov rdi, [rbx + DOC_path]
     mov rsi, [rsp + SB_ptr]
     mov rdx, [rsp + SB_len]
-    call file_write_all
+    call vfs_write_all
     mov r12, rax
     lea rdi, [rsp]
     call sb_free
@@ -1516,7 +1516,7 @@ FN doc_save
     mov rax, [rbx + DOC_undo + VEC_len]
     mov [rbx + DOC_savepoint], rax
     mov rdi, [rbx + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     mov rdi, rbx
     call doc_note_eol

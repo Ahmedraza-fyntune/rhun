@@ -226,6 +226,7 @@ FN time_now
 
 # file_open_read(path) -> fd or -errno
 FN file_open_read
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     mov esi, O_RDONLY | O_CLOEXEC
     xor edx, edx
     SYS SYS_open
@@ -243,6 +244,7 @@ FN file_size
 # file_stamp(path) -> changes whenever the file is written: mtime in nanoseconds and the size
 # (0 if it is missing); follows symlinks. Also returns size in rdx, mtime_ns in rcx.
 FN file_stamp
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     lea rsi, [rip + stat_buf]
     mov eax, 4                  # stat
     XSYS
@@ -265,6 +267,7 @@ FN file_stamp
 # file_missing(path) -> 1 if nothing is there, not even a link (ENOENT, ENOTDIR); 0 if something is or
 #   that cannot be told (EACCES: a folder on the way that cannot be searched)
 FN file_missing
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
 .ifdef WINDOWS
     jmp win_file_missing            # its lstat is stat: it would follow a link to a missing target
 .endif
@@ -281,6 +284,7 @@ FN file_missing
 
 # file_mtime(path) -> unix seconds (0 on error)
 FN file_mtime
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     lea rsi, [rip + stat_buf]
     SYS SYS_lstat
     test rax, rax
@@ -292,6 +296,7 @@ FN file_mtime
 
 # file_mtime_ns(path) -> when it was last written, in nanoseconds since the epoch (0 on error)
 FN file_mtime_ns
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     lea rsi, [rip + stat_buf]
     SYS SYS_lstat
     test rax, rax
@@ -305,6 +310,7 @@ FN file_mtime_ns
 
 # file_is_dir(path) -> 1/0
 FN file_is_dir
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     lea rsi, [rip + stat_buf]
     mov eax, 4          # stat (follows symlinks)
     XSYS
@@ -322,6 +328,7 @@ FN file_is_dir
 # file_type(path) -> the S_IFMT bits of its mode (0x8000 a regular file, 0x4000 a folder...), 0 if
 # missing; follows symlinks
 FN file_type
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     lea rsi, [rip + stat_buf]
     mov eax, 4          # stat (follows symlinks)
     XSYS
@@ -336,6 +343,7 @@ FN file_type
 # file_id(path) -> rax inode, rdx device (both 0 if it is missing); follows symlinks, so every spelling
 # of one folder (through a symlink such as macOS's /tmp, or in another case) has one id
 FN file_id
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     lea rsi, [rip + stat_buf]
     mov eax, 4          # stat
     XSYS
@@ -356,12 +364,14 @@ FN file_read_all
 # file_read_all_extra(path, extra) -> as file_read_all, with room for extra bytes after the text (a
 #   document's gap, which then needs no copy of the whole file to grow into)
 FN file_read_all_extra
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     mov rdx, -1
     jmp .Lfr_begin
 
 # file_read_limited(path, max): snapshot read, refusing an oversized regular file before
 # allocating its contents. max must be in 0..INT64_MAX-1; errors use file_read_all's contract.
 FN file_read_limited
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     mov rax, 0x7ffffffffffffffe
     cmp rsi, rax
     jbe 1f
@@ -446,6 +456,7 @@ FN file_read_limited
 # file_write_all(path, ptr, len) -> 0 or -errno
 # Follow final symlinks, then replace the target through an exclusively created sibling.
 FN file_write_all
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     PROLOGUE 8208              # target path, link text, existing-file flag
     mov r13, rsi
     mov r14, rdx
@@ -611,6 +622,7 @@ FN file_write_all
 
 # file_remove_tree(path) -> 0 or -errno. Remove links themselves, including directory links.
 FN file_remove_tree
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     PROLOGUE 192               # lstat (144), collection context: path, vector, error (48)
     mov rbx, rdi
     SYS SYS_unlink
@@ -719,6 +731,7 @@ remove_collect:
 
 # mkdir_p(path) : creates path and parents (path buffer is modified then restored)
 FN mkdir_p
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     PROLOGUE
     mov r12, rdi
     lea rbx, [rdi + 1]
@@ -744,6 +757,7 @@ FN mkdir_p
 
 # mkdir_parent(path): create the directories a file path lives in (the path is restored)
 FN mkdir_parent
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     push rbx
     push r12
     push r13
@@ -769,11 +783,13 @@ FN mkdir_parent
 # dir_each(path, cb, ctx): cb(ctx, name cstr, is_dir) for every entry except . and ..
 # returns 0 or -errno
 FN dir_each
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     xor ecx, ecx
     jmp .Lde_start
 
 # dir_each_names(path, cb, ctx): cb(ctx, name cstr), without resolving entry types or links
 FN dir_each_names
+    call remote_strict_check    # remote hosts: tests catch workspace paths here (vfs.s)
     mov ecx, 1
 .Lde_start:
     PROLOGUE 48
@@ -1000,8 +1016,7 @@ FN path_tilde
     mov rdi, rsi
     call strlen
     mov r13, rax
-    lea rdi, [rip + .Lhome_env]
-    call getenv
+    call vfs_home               # a remote window's paths are the host's (vfs.s)
     test rax, rax
     jz 8f
     mov r14, rax

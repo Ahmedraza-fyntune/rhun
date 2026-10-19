@@ -168,7 +168,15 @@ save_commit:
     call app_update_title
     xor eax, eax
     EPILOGUE
-4:  lea rdi, [rip + .Lfailed]
+4:  cmp rax, -107               # remote hosts: not connected: saved on the reconnect (remoteui.s)
+    jne 41f
+    cmp dword ptr [rip + g_remote], 0
+    je 41f
+    mov rdi, rbx
+    call remote_save_later
+    mov rax, -1
+    EPILOGUE
+41: lea rdi, [rip + .Lfailed]
     call app_toast
     mov rax, -1
     EPILOGUE

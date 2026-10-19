@@ -10,10 +10,17 @@
 .equ LF_ACTS, 4
 .equ LF_RENAME, 5
 .equ LF_FORMAT, 6
+# language features of protocol 1.1 (navigation, partial-format)
+.equ LF_DECL, 7
+.equ LF_TYPEDEF, 8
+.equ LF_IMPL, 9
+.equ LF_RANGEFMT, 10
 .equ LF_MAX, 10000              # locations or symbols in one answer
 .equ LF_ACTS_MAX, 1000
 .equ LF_BODY_MAX, 1048576
 .equ LR_MAX, 64
+.equ LA_AUTO, 1                 # Auto Fix: the one preferred quick fix, applied
+.equ LA_ONE, 2                  # Organize Imports: one action that comes is applied
 .equ WS_BODY_MAX, 4194304       # a workspace edit (12g)
 
 # a request rhun waits on
@@ -40,8 +47,16 @@ F LS_elen, 8
 F LS_data, 8                    # and the bytes it sends back
 F LS_dlen, 8
 F LS_rank, 4                    # the order: lower first
-F LS_pad, 4
+F LS_flags, 4                   # LSF_*: a 1.1 code action's
+F LS_cmd, 8                     # its command record (offset, length), length 0 for none
+F LS_clen, 8
+F LS_kind, 8                    # its kind's offset (a cstr)
 ENDSTRUCT LS_SIZE
+
+.equ LSF_PREFERRED, 1
+.equ LSF_DISABLED, 2            # LS_detail is the reason
+.equ LSF_RESOLVE, 4             # LS_data is resolve data (code-action-resolve), not v1's action data
+.equ LSF_QUICKFIX, 8
 
 .bss
 .p2align 3
@@ -49,6 +64,23 @@ lf_kind: .long 0                # the query in flight (LF_*), 0 for none
 lf_session: .long 0
 lf_ready: .long 0               # every provider answered: the tick finishes it
 lf_truncated: .long 0           # the query's cap cut it short (query-part)
+lf_partial: .long 0             # its list was shown before every provider answered
+lf_show_due: .long 0            # a part came for a kind shown at its first part
+lf_act_mode: .long 0            # code actions: 0 list, LA_AUTO one preferred quick fix, LA_ONE one action
+lf_act_kinds: .quad 0           # the kinds asked for (cstr), 0 for any
+lf_rs_ext: .quad 0              # a code action's resolve request out: its extension, id, result
+lf_rs_id: .quad 0
+lf_rs_index: .quad 0
+lf_rs_ready: .long 0            # its answer came (1 ok, 2 failed)
+lf_rs_pad: .long 0
+lf_rs_body: .zero SB_SIZE
+lf_pr_ext: .quad 0              # prepare-rename out: its extension and id
+lf_pr_id: .quad 0
+lf_pr_start: .quad 0            # its answer's range in the document
+lf_pr_end: .quad 0
+lf_pr_state: .long 0            # 1 out, 2 answered, 3 refused, 4 failed
+lf_pr_use: .long 0              # the prompt takes the range and the placeholder (in lf_name)
+lf_pr_body: .zero SB_SIZE
 lf_list_kind: .long 0           # what the palette's list shows
 lf_doc: .quad 0                 # the document asked about, and its id
 lf_doc_id: .quad 0
@@ -59,6 +91,16 @@ lf_res: .zero VEC_SIZE          # LS records
 lf_bytes: .zero SB_SIZE         # their strings
 lf_ws: .zero SB_SIZE            # a workspace edit to apply (rename, format)
 lf_line: .zero SB_SIZE          # a request being built
+lf_line2: .zero SB_SIZE         # a provider's own request (code-actions, a resolve)
+lf_dbuf: .zero SB_SIZE          # code-actions' DIAGS
+la_flags: .long 0               # lf_action_extra's findings
+la_pad: .long 0
+la_resolve: .quad 0
+la_rlen: .quad 0
+la_cmd: .quad 0
+la_clen: .quad 0
+la_reason: .quad 0
+la_reasonlen: .quad 0
 lf_name: .zero SB_SIZE          # the new name of a rename
 lf_err: .zero 256               # what the rename provider said instead
 .p2align 3
@@ -275,6 +317,8 @@ lf_reset:
     mov dword ptr [rip + lf_kind], 0
     mov dword ptr [rip + lf_ready], 0
     mov dword ptr [rip + lf_truncated], 0
+    mov dword ptr [rip + lf_partial], 0
+    mov dword ptr [rip + lf_show_due], 0
     mov dword ptr [rip + lf_list_kind], 0
     mov qword ptr [rip + lf_res + VEC_len], 0
     lea rdi, [rip + lf_bytes]
@@ -360,6 +404,8 @@ lf_start:
     je 3f
     cmp r12d, LF_FORMAT
     je 4f
+    cmp r12d, LF_RANGEFMT
+    je 3f
     # LINE COL KIND CHAR: the cursor
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
@@ -417,7 +463,10 @@ lf_start:
     lea rdi, [rip + lf_line]
     mov rsi, [rsp]
     call lf_push_num
-    jmp 5f
+    cmp r12d, LF_RANGEFMT
+    jne 5f
+    lea rdi, [rip + lf_line]
+    call lf_push_sp
 4:  # TAB_WIDTH SPACES: the document's own settings
     call ext_options_apply
     lea rdi, [rip + lf_line]
@@ -431,6 +480,10 @@ lf_start:
     jne 41f
     lea rsi, [rip + .Lno]
 41: call sb_push_cstr
+    cmp r12d, LF_RANGEFMT
+    jne 5f
+    mov rdi, rbx                # partial-format: TRIM FINAL, the document's own
+    call lf_push_trim_final
 5:  # to every provider of it whose patterns match (the first, for one-provider kinds)
     xor r13d, r13d
     mov dword ptr [rsp + 8], 0
@@ -454,7 +507,15 @@ lf_start:
     mov rdi, r14
     call ext_feature
     test eax, eax
+    jnz 64f
+    cmp r12d, LF_ACTS
+    jne 6b
+    mov rdi, r14                # code actions: the 1.1 feature alone will do
+    mov esi, FEAT_CODE_ACTIONS
+    call ext_feature
+    test eax, eax
     jz 6b
+64:
     lea rax, [rip + lf_pvs]
     mov rsi, [rax + r12*8]
     mov rdi, r14
@@ -466,10 +527,27 @@ lf_start:
     jz 6b
     cmp qword ptr [rip + lf_reqs + VEC_len], LR_MAX
     jae 8f
-    mov rdi, r14
-    mov rsi, rbx
     mov rdx, [rip + lf_line + SB_ptr]
     mov rcx, [rip + lf_line + SB_len]
+    cmp r12d, LF_ACTS
+    jne 62f
+    mov rdi, r14                # code-actions: a 1.1 provider's own request
+    mov esi, FEAT_CODE_ACTIONS
+    call ext_feature
+    test eax, eax
+    jz 63f
+    mov rdi, r14
+    mov rsi, rbx
+    call lf_actions_line
+    mov rdx, [rip + lf_line2 + SB_ptr]
+    mov rcx, [rip + lf_line2 + SB_len]
+    jmp 62f
+63: cmp qword ptr [rip + lf_act_kinds], 0
+    jne 6b                      # a kind asked for: v1 providers have no kinds
+    mov rdx, [rip + lf_line + SB_ptr]
+    mov rcx, [rip + lf_line + SB_len]
+62: mov rdi, r14
+    mov rsi, rbx
     call extproto_host_send
     test rax, rax
     jz 6b
@@ -514,9 +592,53 @@ FN cmd_symbols
     xor esi, esi
     jmp ext_provider_begin
 FN cmd_code_actions
+    xor esi, esi
+    xor edx, edx
+lf_actions_cmd:                 # esi kinds cstr or 0, edx LA_* mode
+    mov [rip + lf_act_kinds], rsi
+    mov [rip + lf_act_mode], edx
     mov edi, LF_ACTS
     jmp lf_start_cmd
+# code-actions (protocol 1.1): the actions of a kind
+FN cmd_quick_fix_auto
+    lea rsi, [rip + .Lk_quickfix]
+    mov edx, LA_AUTO
+    jmp lf_actions_cmd
+FN cmd_organize_imports
+    lea rsi, [rip + .Lk_organize]
+    mov edx, LA_ONE
+    jmp lf_actions_cmd
+FN cmd_fix_all
+    lea rsi, [rip + .Lk_fixall]
+    mov edx, LA_ONE
+    jmp lf_actions_cmd
+FN cmd_refactor
+    lea rsi, [rip + .Lk_refactor]
+    xor edx, edx
+    jmp lf_actions_cmd
+FN cmd_source_action
+    lea rsi, [rip + .Lk_source]
+    xor edx, edx
+    jmp lf_actions_cmd
+# navigation (protocol 1.1)
+FN cmd_declaration
+    mov edi, LF_DECL
+    jmp lf_start_cmd
+FN cmd_type_definition
+    mov edi, LF_TYPEDEF
+    jmp lf_start_cmd
+FN cmd_implementation
+    mov edi, LF_IMPL
+    jmp lf_start_cmd
+# partial-format: shift+alt+f with a selection, when a range formatter exists, and the command
+FN cmd_format_selection
+    mov edi, LF_RANGEFMT
+    xor esi, esi
+    jmp ext_provider_begin
 FN cmd_format_document
+    call lf_range_format_first
+    test eax, eax
+    jnz cmd_format_selection
     mov edi, LF_FORMAT
     xor esi, esi
     jmp ext_provider_begin
@@ -543,7 +665,18 @@ FN langfeat_rename_start
 FN langfeat_rename_prompt
     PROLOGUE 16
     mov rbx, [rip + g_doc]
-    # the word under the cursor
+    cmp dword ptr [rip + lf_pr_use], 0
+    je 1f
+    # prepare-rename's answer: its range selected, its placeholder in the prompt
+    mov dword ptr [rip + lf_pr_use], 0
+    mov rax, [rip + lf_pr_start]
+    mov [rbx + DOC_anchor], rax
+    mov rax, [rip + lf_pr_end]
+    mov [rbx + DOC_cur], rax
+    call ed_touch
+    mov r13, [rip + lf_name + SB_len]
+    jmp 7f
+1:  # the word under the cursor
     mov r12, [rbx + DOC_cur]
 2:  test r12, r12
     jz 3f
@@ -586,7 +719,7 @@ FN langfeat_rename_prompt
     mov rcx, rax
     call doc_copy
     mov [rip + lf_name + SB_len], r13
-    lea rdi, [rip + .Lrename_to]
+7:  lea rdi, [rip + .Lrename_to]
     mov esi, PROMPT_RENAME_SYMBOL
     mov rdx, [rip + lf_name + SB_ptr]
     mov rcx, r13
@@ -598,6 +731,198 @@ FN langfeat_rename_prompt
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
+
+# ---------------- prepare-rename (protocol 1.1) ----------------
+
+# FN langfeat_prepare_send(ext) -> eax 1 when "ID prepare-rename DOC VERSION LINE COL invoked -"
+# went out about the focused document
+FN langfeat_prepare_send
+    PROLOGUE
+    mov rbx, rdi
+    mov qword ptr [rip + lf_pr_ext], 0
+    mov dword ptr [rip + lf_pr_state], 0
+    mov dword ptr [rip + lf_pr_use], 0
+    mov r12, [rip + g_doc]
+    test r12, r12
+    jz 8f
+    mov rdi, rbx
+    lea rsi, [rip + .Lv_prepare]
+    mov rdx, r12
+    lea rcx, [rip + .Lk_invoked_word]
+    mov r8d, '-'
+    call extproto_host_request
+    test rax, rax
+    jz 8f
+    mov [rip + lf_pr_id], rax
+    mov [rip + lf_pr_ext], rbx
+    mov dword ptr [rip + lf_pr_state], 1
+    mov rdi, rbx
+    mov rsi, rax
+    mov edx, PK_PREPARE_RENAME
+    mov ecx, QO_LANGFEAT
+    call query_track
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# lf_pr_reply(ext, id, ok, body, len) -> eax 1 when it answered prepare-rename (from the pump):
+# ok with "L1 C1 L2 C2 PLEN" LF placeholder, ok 0 (the word at the cursor), refused TEXT
+lf_pr_reply:
+    cmp rdi, [rip + lf_pr_ext]
+    jne 8f
+    cmp rsi, [rip + lf_pr_id]
+    jne 8f
+    test rdi, rdi
+    jz 8f
+    push rbx
+    push r12
+    push r13
+    mov ebx, edx
+    mov r12, rcx
+    mov r13, r8
+    mov qword ptr [rip + lf_pr_ext], 0
+    lea rdi, [rip + lf_pr_body]
+    call sb_clear
+    lea rdi, [rip + lf_pr_body]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov dword ptr [rip + lf_pr_state], 2
+    test ebx, ebx
+    jnz 1f
+    mov dword ptr [rip + lf_pr_state], 4    # failed: the word at the cursor
+    cmp r13, 8
+    jb 1f
+    cmp dword ptr [r12], 0x75666572         # "refu"
+    jne 1f
+    cmp dword ptr [r12 + 4], 0x20646573     # "sed "
+    jne 1f
+    mov dword ptr [rip + lf_pr_state], 3
+1:  mov dword ptr [rip + g_dirty], 1
+    pop r13
+    pop r12
+    pop rbx
+    mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
+
+# FN langfeat_prepare_state() -> eax 0 while prepare-rename is out, 1 when the prompt opens (with
+# the answer's range selected and its placeholder, when it gave them), 2 when it refused (the
+# reason is shown)
+FN langfeat_prepare_state
+    PROLOGUE
+    mov eax, [rip + lf_pr_state]
+    cmp eax, 1
+    jbe 0f
+    mov dword ptr [rip + lf_pr_state], 0
+    cmp eax, 3
+    je .Lps_refused
+    cmp eax, 2
+    jne 7f
+    # "L1 C1 L2 C2 PLEN" LF placeholder, the range in the document as it is
+    mov rax, [rip + lf_pr_body + SB_ptr]
+    mov [rip + ps_ptr], rax
+    add rax, [rip + lf_pr_body + SB_len]
+    mov [rip + ps_end], rax
+    call ps_line
+    test eax, eax
+    jz 7f
+    call lf_four
+    test eax, eax
+    jz 7f
+    call ps_num
+    test edx, edx
+    jz 7f
+    cmp rax, 200
+    ja 7f
+    mov r12, rax
+    call ps_eol
+    test eax, eax
+    jz 7f
+    mov rax, [rip + ps_end]
+    sub rax, [rip + ps_ptr]
+    cmp rax, r12
+    jne 7f
+    mov rdi, [rip + ps_ptr]
+    mov rsi, r12
+    call lf_one_line
+    test eax, eax
+    jz 7f
+    mov rbx, [rip + g_doc]
+    lea rcx, [rip + lf_tmp4]
+    mov rdi, rbx
+    mov esi, [rcx]
+    mov edx, [rcx + 4]
+    call lf_pos
+    test rax, rax
+    js 7f
+    mov r13, rax
+    lea rcx, [rip + lf_tmp4]
+    mov rdi, rbx
+    mov esi, [rcx + 8]
+    mov edx, [rcx + 12]
+    call lf_pos
+    test rax, rax
+    js 7f
+    cmp rax, r13
+    jb 7f
+    mov [rip + lf_pr_start], r13
+    mov [rip + lf_pr_end], rax
+    lea rdi, [rip + lf_name]
+    call sb_clear
+    lea rdi, [rip + lf_name]
+    mov rsi, [rip + ps_ptr]
+    mov rdx, r12
+    call sb_push
+    mov dword ptr [rip + lf_pr_use], 1
+7:  mov eax, 1
+    EPILOGUE
+0:  xor eax, eax
+    EPILOGUE
+.Lps_refused:
+    # "refused TEXT": TEXT for the user, cut at 200 bytes
+    mov rsi, [rip + lf_pr_body + SB_ptr]
+    mov rcx, [rip + lf_pr_body + SB_len]
+    add rsi, 8
+    sub rcx, 8
+    cmp rcx, 200
+    jbe 1f
+    mov ecx, 200
+1:  lea rdi, [rip + lf_err]
+    mov rdx, rcx
+    push rcx
+    push rcx
+    call memcpy
+    pop rcx
+    pop rcx
+    lea rax, [rip + lf_err]
+    mov byte ptr [rax + rcx], 0
+    lea rdi, [rip + lf_err]
+    cmp byte ptr [rdi], 0
+    jne 2f
+    lea rdi, [rip + .Lnothing_renamed]
+2:  call app_toast
+    mov eax, 2
+    EPILOGUE
+
+# lf_one_line(ptr, len) -> eax 1 when the bytes hold no line break
+lf_one_line:
+    test rsi, rsi
+    jz 9f
+    movzx eax, byte ptr [rdi]
+    cmp eax, 10
+    je 8f
+    cmp eax, 13
+    je 8f
+    inc rdi
+    dec rsi
+    jmp lf_one_line
+8:  xor eax, eax
+    ret
+9:  mov eax, 1
+    ret
 
 # FN langfeat_rename_to(ptr, len): the palette's answer: the new name, then the request
 FN langfeat_rename_to
@@ -637,6 +962,37 @@ FN langfeat_rename_to
 # only; an error's body is its CODE TEXT)
 FN langfeat_reply
     PROLOGUE 16
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push r8
+    push r8
+    call lf_rs_reply            # a code action's resolve
+    test eax, eax
+    jnz 0f
+    mov rdi, [rsp + 40]
+    mov rsi, [rsp + 32]
+    mov rdx, [rsp + 24]
+    mov rcx, [rsp + 16]
+    mov r8, [rsp + 8]
+    call lf_pr_reply            # prepare-rename
+    test eax, eax
+    jnz 0f
+    mov rdi, [rsp + 40]
+    mov rsi, [rsp + 32]
+    mov rdx, [rsp + 24]
+    mov rcx, [rsp + 16]
+    mov r8, [rsp + 8]
+    call langextra_reply        # on-type and paste formatting
+0:  pop r8
+    pop r8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jnz 9f
     mov rbx, rdi
     mov r12, rsi
     mov [rsp], edx
@@ -692,25 +1048,52 @@ FN langfeat_reply
     cmp eax, LF_ACTS
     je 52f
     cmp eax, LF_RENAME
-    jae 53f
+    je 53f
+    cmp eax, LF_FORMAT
+    je 53f
+    cmp eax, LF_RANGEFMT
+    je 53f
+    # after parts, the query's caps count the rest too (query_final_room)
+    call query_final_room
+    mov [rsp + 8], rax
+    test rax, rax
+    js 50f
+    cmp r15, rdx
+    ja 54f
+50: mov r13, [rip + lf_res + VEC_len]
     mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
     call lf_parse_locations
     test rax, rax
-    jns 7f
-    jmp 54f
+    js 54f
+    mov rcx, [rsp + 8]
+    test rcx, rcx
+    js 7f
+    cmp rax, rcx
+    jbe 7f
+    add r13, rcx                # what fits is kept
+    mov [rip + lf_res + VEC_len], r13
+    mov dword ptr [rip + lf_truncated], 1
+    jmp 7f
 51: mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
     mov r13, [rip + lf_res + VEC_len]
     call lf_parse_symbols
     jmp 55f
-52: mov rdi, rbx
+52: mov r13, [rip + lf_res + VEC_len]
+    mov rdi, rbx
+    mov esi, FEAT_CODE_ACTIONS
+    call ext_feature
+    mov rdi, rbx
     mov rsi, r14
     mov rdx, r15
-    mov r13, [rip + lf_res + VEC_len]
-    call lf_parse_actions
+    test eax, eax
+    jz 56f
+    call lf_parse_actions2      # code-actions: the 1.1 grammar
+    jmp 55f
+56: call lf_parse_actions
 55: # a body with records whose answer left none broke the rules (query.s counts it dropped)
     cmp [rip + lf_res + VEC_len], r13
     jne 7f
@@ -821,8 +1204,7 @@ FN langfeat_part
     test eax, eax
     jz 8f
     mov eax, [rip + lf_kind]
-    cmp eax, LF_REFS
-    ja 8f
+    call lf_is_locations
     test eax, eax
     jz 8f
     mov rdi, rbx
@@ -830,7 +1212,19 @@ FN langfeat_part
     mov rdx, r14
     call lf_parse_locations
     mov dword ptr [rip + g_dirty], 1
-    EPILOGUE
+    test rax, rax
+    jle 9f
+    # a kind shown at its first part (references, implementation): the tick shows what came
+    mov r12, rax
+    mov eax, [rip + lf_kind]
+    lea rcx, [rip + lf_pks]
+    mov edi, [rcx + rax*4]
+    call query_kind_first
+    test eax, eax
+    jz 1f
+    mov dword ptr [rip + lf_show_due], 1
+1:  mov rax, r12
+9:  EPILOGUE
 8:  xor eax, eax                # an answer nobody waits for any more: taken, and dropped
     EPILOGUE
 
@@ -1485,15 +1879,874 @@ lf_parse_actions:
     call lf_rollback
 9:  EPILOGUE
 
+# ---------------- protocol 1.1: navigation, partial-format, code-actions ----------------
+
+# lf_is_locations(eax kind) -> eax 1 for a kind whose answer is locations
+lf_is_locations:
+    cmp eax, LF_DEF
+    je 1f
+    cmp eax, LF_REFS
+    je 1f
+    cmp eax, LF_DECL
+    jb 8f
+    cmp eax, LF_IMPL
+    ja 8f
+1:  mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
+
+# lf_push_trim_final(doc): " TRIM FINAL" into lf_line, the document's trim_trailing_whitespace
+# and final_newline in force (yes or no)
+lf_push_trim_final:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + lf_line]
+    call lf_push_sp
+    mov rdi, rbx
+    mov esi, OPT_TRIM
+    call ext_opt_bool
+    lea rsi, [rip + .Lyes]
+    test eax, eax
+    jnz 1f
+    lea rsi, [rip + .Lno]
+1:  lea rdi, [rip + lf_line]
+    call sb_push_cstr
+    lea rdi, [rip + lf_line]
+    call lf_push_sp
+    mov rdi, rbx
+    mov esi, OPT_FINAL
+    call ext_opt_bool
+    lea rsi, [rip + .Lyes]
+    test eax, eax
+    jnz 2f
+    lea rsi, [rip + .Lno]
+2:  lea rdi, [rip + lf_line]
+    call sb_push_cstr
+    EPILOGUE
+
+# lf_range_format_first() -> eax 1 when Format Document should format the selection: the focused
+# document has one and an extension declares range formatting for it
+lf_range_format_first:
+    PROLOGUE
+    call lf_focused_doc
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov rdi, rbx
+    call ed_sel
+    cmp rax, rdx
+    je 8f
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 8f
+    imul r13, r12, EXT_SIZE
+    add r13, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov rdi, r13
+    call ext_is_visible
+    test eax, eax
+    jz 1b
+    cmp dword ptr [r13 + EXT_disabled], 0
+    jne 1b
+    mov rdi, r13
+    mov esi, EXT_pv_range_format
+    call ext_pv
+    test rax, rax
+    jz 1b
+    mov rdi, rax
+    mov rsi, rbx
+    call extproto_matches
+    test eax, eax
+    jz 1b
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# lf_actions_line(ext, doc): lf_line2 = "code-actions DOC VERSION L1 C1 L2 C2 TRIGGER KINDS DIAGS".
+# Without a selection, when the extension has diagnostics on the cursor's line, the range is the
+# one containing the cursor, else the line's first (a server fixes the diagnostic it is given)
+lf_actions_line:
+    PROLOGUE 32
+    mov r14, rdi
+    mov rbx, rsi
+    mov rdi, rbx
+    call ed_sel
+    mov r12, rax
+    mov r13, rdx
+    cmp r12, r13
+    jne 5f
+    mov rcx, [rbx + DOC_xmarks]
+    test rcx, rcx
+    jz 5f
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_of
+    mov [rsp], rax              # the cursor's line
+    mov qword ptr [rsp + 8], -1 # the first mark on it
+    xor r15d, r15d
+1:  mov rcx, [rbx + DOC_xmarks]
+    cmp r15, [rcx + VEC_len]
+    jae 4f
+    imul rax, r15, MK_SIZE
+    add rax, [rcx + VEC_ptr]
+    inc r15
+    mov [rsp + 16], rax
+    mov rdi, r14
+    mov rsi, [rax + MK_owner]
+    call lf_mark_mine
+    test eax, eax
+    jz 1b
+    mov rax, [rsp + 16]
+    mov rdi, rbx
+    mov rsi, [rax + MK_start]
+    call doc_line_of
+    cmp rax, [rsp]
+    jne 1b
+    mov rax, [rsp + 16]
+    cmp qword ptr [rsp + 8], -1
+    jne 2f
+    mov [rsp + 8], rax
+2:  cmp r12, [rax + MK_start]
+    jb 1b
+    cmp r12, [rax + MK_end]
+    ja 1b
+    mov [rsp + 8], rax          # it contains the cursor
+4:  mov rax, [rsp + 8]
+    cmp rax, -1
+    je 5f
+    mov r12, [rax + MK_start]
+    mov r13, [rax + MK_end]
+5:  lea rdi, [rip + lf_line2]
+    call sb_clear
+    lea rdi, [rip + lf_line2]
+    lea rsi, [rip + .Lv_code_actions]
+    call sb_push_cstr
+    lea rdi, [rip + lf_line2]
+    mov rsi, [rbx + DOC_id]
+    call sb_push_u64
+    lea rdi, [rip + lf_line2]
+    call lf_push_sp
+    lea rdi, [rip + lf_line2]
+    mov rsi, [rbx + DOC_version]
+    call sb_push_u64
+    mov rdi, rbx
+    mov rsi, r12
+    call lf_push_pos2
+    mov rdi, rbx
+    mov rsi, r13
+    call lf_push_pos2
+    lea rdi, [rip + lf_line2]
+    lea rsi, [rip + .Linvoked]
+    call sb_push_cstr
+    mov rsi, [rip + lf_act_kinds]
+    test rsi, rsi
+    jnz 6f
+    lea rsi, [rip + .Ldash]
+6:  lea rdi, [rip + lf_line2]
+    call sb_push_cstr
+    # DIAGS: the ids of its file-diagnostics in the range
+    lea rdi, [rip + lf_dbuf]
+    call sb_clear
+    mov rdi, rbx
+    mov rsi, r12
+    call lf_line_col
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    mov rdi, rbx
+    mov rsi, r13
+    call lf_line_col
+    lea rcx, [rip + lf_dbuf]
+    push rcx
+    push rcx
+    mov r8, rax
+    mov r9, rdx
+    mov rdi, r14
+    mov rsi, [rbx + DOC_path]
+    mov rdx, [rsp + 16]
+    mov rcx, [rsp + 24]
+    call filediag_ids
+    add rsp, 16
+    test eax, eax
+    jz 7f
+    lea rdi, [rip + lf_line2]
+    call lf_push_sp
+    lea rdi, [rip + lf_line2]
+    mov rsi, [rip + lf_dbuf + SB_ptr]
+    mov rdx, [rip + lf_dbuf + SB_len]
+    call sb_push
+    EPILOGUE
+7:  lea rdi, [rip + lf_line2]
+    lea rsi, [rip + .Lsp_dash]
+    call sb_push_cstr
+    EPILOGUE
+
+# lf_mark_mine(ext, owner) -> eax 1 when a mark's owner is the extension or one of its
+# file-diagnostics sources
+lf_mark_mine:
+    cmp rdi, rsi
+    je 1f
+    mov rcx, [rdi + EXT_fdsrc + VEC_len]
+    mov rdx, [rdi + EXT_fdsrc + VEC_ptr]
+2:  test rcx, rcx
+    jz 8f
+    cmp [rdx], rsi
+    je 1f
+    add rdx, 8
+    dec rcx
+    jmp 2b
+1:  mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
+
+# lf_push_pos2(doc, pos): " LINE COL" into lf_line2
+lf_push_pos2:
+    PROLOGUE
+    call lf_line_col
+    mov rbx, rax
+    mov r12, rdx
+    lea rdi, [rip + lf_line2]
+    call lf_push_sp
+    lea rdi, [rip + lf_line2]
+    mov rsi, rbx
+    call sb_push_u64
+    lea rdi, [rip + lf_line2]
+    call lf_push_sp
+    lea rdi, [rip + lf_line2]
+    mov rsi, r12
+    call sb_push_u64
+    EPILOGUE
+
+# lf_kind_match(kind ptr, len) -> eax 1 when the action's hierarchical kind equals or descends from
+# one of the asked kinds (lf_act_kinds, comma separated), or none was asked
+lf_kind_match:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov rbx, [rip + lf_act_kinds]
+    test rbx, rbx
+    jz 7f
+1:  cmp byte ptr [rbx], 0
+    je 8f
+    xor r14d, r14d              # this asked kind's length
+2:  movzx eax, byte ptr [rbx + r14]
+    test eax, eax
+    jz 3f
+    cmp eax, ','
+    je 3f
+    inc r14
+    jmp 2b
+3:  cmp r13, r14
+    jb 4f
+    mov rdi, r12
+    mov rsi, rbx
+    mov rdx, r14
+    call memeq
+    test eax, eax
+    jz 4f
+    cmp r13, r14
+    je 7f
+    cmp byte ptr [r12 + r14], '.'
+    je 7f
+4:  add rbx, r14
+    cmp byte ptr [rbx], ','
+    jne 1b
+    inc rbx
+    jmp 1b
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# lf_parse_actions2(ext, body, len): the code-actions grammar: "N", then KIND TITLE_LEN EDIT_LEN
+# EXTRA_LEN and the bytes; EXTRA holds preferred, disabled, resolve, command and fixes records. An
+# action with no edit, resolve or command is left out, as one of a kind not asked for
+lf_parse_actions2:
+    PROLOGUE 96
+    mov [rsp], rdi
+    mov rax, [rip + lf_res + VEC_len]
+    mov [rsp + 8], rax
+    mov rax, [rip + lf_bytes + SB_len]
+    mov [rsp + 16], rax
+    cmp rdx, WS_BODY_MAX
+    ja 8f
+    mov rdi, rsi
+    mov rsi, rdx
+    mov edx, LF_ACTS_MAX
+    call lf_head
+    test rax, rax
+    js 8f
+    mov r15, rax
+1:  test r15, r15
+    jz 7f
+    dec r15
+    call ps_line
+    test eax, eax
+    jz 8f
+    call ps_word                # the kind
+    test rdx, rdx
+    jz 8f
+    cmp rdx, 128
+    ja 8f
+    mov [rsp + 24], rax
+    mov [rsp + 32], rdx
+    call ps_num
+    test edx, edx
+    jz 8f
+    test rax, rax
+    jz 8f
+    cmp rax, 1000
+    ja 8f
+    mov r12, rax                # the title's length
+    call ps_num
+    test edx, edx
+    jz 8f
+    mov r13, rax                # the edit's
+    call ps_num
+    test edx, edx
+    jz 8f
+    mov r14, rax                # the extra records'
+    call ps_eol
+    test eax, eax
+    jz 8f
+    mov rax, [rip + ps_end]
+    sub rax, [rip + ps_ptr]
+    mov rcx, r12
+    add rcx, r13
+    add rcx, r14
+    cmp rcx, rax
+    ja 8f
+    mov rax, [rip + ps_ptr]
+    mov [rsp + 40], rax         # the title's bytes
+    add rax, r12
+    mov [rsp + 48], rax         # the edit's
+    add rax, r13
+    mov [rsp + 56], rax         # the extra's
+    add rax, r14
+    mov [rip + ps_ptr], rax
+    # a kind asked for?
+    mov rdi, [rsp + 24]
+    mov rsi, [rsp + 32]
+    call lf_kind_match
+    test eax, eax
+    jz 1b
+    # the extra records: preferred, disabled, resolve, command (fixes is for the lightbulb)
+    mov rax, [rip + ps_ptr]
+    mov [rsp + 64], rax         # the parser's place, kept
+    mov rax, [rip + ps_end]
+    mov [rsp + 72], rax
+    mov rdi, [rsp + 56]
+    mov rsi, r14
+    call lf_action_extra
+    mov [rsp + 88], eax
+    mov rax, [rsp + 64]
+    mov [rip + ps_ptr], rax
+    mov rax, [rsp + 72]
+    mov [rip + ps_end], rax
+    cmp dword ptr [rsp + 88], 0
+    jl 8f
+    # the record: title, kind, edit, resolve data, command, reason
+    mov rdi, [rsp + 40]
+    mov rsi, r12
+    call lf_str
+    mov [rsp + 40], rax
+    mov rdi, [rsp + 24]
+    mov rsi, [rsp + 32]
+    call lf_str
+    mov [rsp + 24], rax
+    mov rdi, [rsp + 48]
+    mov rsi, r13
+    call lf_str
+    mov [rsp + 48], rax
+    mov rdi, [rip + la_resolve]
+    mov rsi, [rip + la_rlen]
+    call lf_str
+    mov [rsp + 64], rax
+    mov rdi, [rip + la_cmd]
+    mov rsi, [rip + la_clen]
+    call lf_str
+    mov [rsp + 72], rax
+    mov rdi, [rip + la_reason]
+    mov rsi, [rip + la_reasonlen]
+    call lf_str
+    mov [rsp + 80], rax
+    # an action that does nothing is left out
+    mov rax, r13
+    or rax, [rip + la_rlen]
+    or rax, [rip + la_clen]
+    jnz 2f
+    test dword ptr [rip + la_flags], LSF_DISABLED
+    jz 1b
+2:  lea rdi, [rip + lf_res]
+    mov esi, LS_SIZE
+    call vec_push
+    mov rcx, [rsp]
+    mov [rax + LS_ext], rcx
+    mov qword ptr [rax + LS_path], -1
+    mov rcx, [rsp + 40]
+    mov [rax + LS_label], rcx
+    mov rcx, [rsp + 24]
+    mov [rax + LS_kind], rcx
+    mov [rax + LS_detail], rcx
+    mov rcx, [rsp + 48]
+    mov [rax + LS_edit], rcx
+    mov [rax + LS_elen], r13
+    mov rcx, [rsp + 64]
+    mov [rax + LS_data], rcx
+    mov rcx, [rip + la_rlen]
+    mov [rax + LS_dlen], rcx
+    mov rcx, [rsp + 72]
+    mov [rax + LS_cmd], rcx
+    mov rcx, [rip + la_clen]
+    mov [rax + LS_clen], rcx
+    mov ecx, [rip + la_flags]
+    mov [rax + LS_flags], ecx
+    test ecx, LSF_DISABLED
+    jz 21f
+    mov rcx, [rsp + 80]
+    mov [rax + LS_detail], rcx  # a disabled action's reason is its detail
+21: cmp qword ptr [rip + la_rlen], 0
+    je 22f
+    or dword ptr [rax + LS_flags], LSF_RESOLVE
+22: # the order: quick fixes (preferred first), refactors, source actions, others; disabled last
+    mov rdx, [rsp + 24]
+    add rdx, [rip + lf_bytes + SB_ptr]
+    mov ecx, 4
+    cmp dword ptr [rdx], 0x63697571     # "quic"
+    jne 23f
+    or dword ptr [rax + LS_flags], LSF_QUICKFIX
+    mov ecx, 1
+    test dword ptr [rax + LS_flags], LSF_PREFERRED
+    jz 25f
+    xor ecx, ecx
+    jmp 25f
+23: cmp dword ptr [rdx], 0x61666572     # "refa"
+    jne 24f
+    mov ecx, 2
+    jmp 25f
+24: cmp dword ptr [rdx], 0x72756f73     # "sour"
+    jne 25f
+    mov ecx, 3
+25: test dword ptr [rax + LS_flags], LSF_DISABLED
+    jz 26f
+    add ecx, 10
+26: mov [rax + LS_rank], ecx
+    jmp 1b
+7:  mov rax, [rip + ps_ptr]
+    cmp rax, [rip + ps_end]
+    je 9f
+8:  mov rdi, [rsp + 8]
+    mov rsi, [rsp + 16]
+    call lf_rollback
+9:  EPILOGUE
+
+# lf_action_extra(ptr, len) -> eax 0 with la_flags, la_resolve/la_rlen, la_cmd/la_clen and
+# la_reason/la_reasonlen from an action's EXTRA records, -1 when they break the rules
+lf_action_extra:
+    PROLOGUE
+    mov dword ptr [rip + la_flags], 0
+    mov qword ptr [rip + la_rlen], 0
+    mov qword ptr [rip + la_clen], 0
+    mov qword ptr [rip + la_reasonlen], 0
+    mov [rip + ps_ptr], rdi
+    lea rax, [rdi + rsi]
+    mov [rip + ps_end], rax
+1:  mov rax, [rip + ps_ptr]
+    cmp rax, [rip + ps_end]
+    jae 7f
+    mov rbx, rax                # the record's start (a command record is handed over whole)
+    call ps_line
+    test eax, eax
+    jz 8f
+    # its last word is its length
+    mov r12, [rip + ps_lend]
+    mov rcx, r12
+2:  cmp rcx, rbx
+    je 8f
+    cmp byte ptr [rcx - 1], ' '
+    je 3f
+    dec rcx
+    jmp 2b
+3:  mov rdi, rcx
+    mov rsi, r12
+    sub rsi, rcx
+    jz 8f
+    cmp rsi, 10
+    ja 8f
+    mov r13, rsi
+    call parse_u64
+    cmp rdx, r13
+    jne 8f
+    lea r13, [r12 + 1]          # its bytes
+    lea r14, [r13 + rax]
+    cmp r14, [rip + ps_end]
+    ja 8f
+    mov r15, rax
+    call ps_word                # its name
+    mov [rip + ps_ptr], r14     # the next record
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lx_preferred]
+    push rdi
+    push rsi
+    call str_eq_cstr
+    pop rsi
+    pop rdi
+    test eax, eax
+    jz 4f
+    or dword ptr [rip + la_flags], LSF_PREFERRED
+    jmp 1b
+4:  lea rdx, [rip + .Lx_disabled]
+    push rdi
+    push rsi
+    call str_eq_cstr
+    pop rsi
+    pop rdi
+    test eax, eax
+    jz 5f
+    or dword ptr [rip + la_flags], LSF_DISABLED
+    cmp r15, 1000
+    ja 8f
+    mov [rip + la_reason], r13
+    mov [rip + la_reasonlen], r15
+    jmp 1b
+5:  lea rdx, [rip + .Lx_resolve]
+    push rdi
+    push rsi
+    call str_eq_cstr
+    pop rsi
+    pop rdi
+    test eax, eax
+    jz 6f
+    cmp r15, 16384
+    ja 8f
+    mov [rip + la_resolve], r13
+    mov [rip + la_rlen], r15
+    jmp 1b
+6:  lea rdx, [rip + .Lx_command]
+    call str_eq_cstr
+    test eax, eax
+    jz 1b                       # fixes and others: skipped
+    cmp r15, 8192
+    ja 8f
+    mov [rip + la_cmd], rbx
+    mov rax, r14
+    sub rax, rbx
+    mov [rip + la_clen], rax
+    jmp 1b
+7:  xor eax, eax
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
+
+# lf_actions_auto() -> eax 1 when the finished code actions were applied without a list: Auto Fix
+# takes the one enabled preferred quick fix, Organize Imports (and Fix All) the one action that
+# came. Auto Fix otherwise lists the quick fixes only
+lf_actions_auto:
+    PROLOGUE
+    mov eax, [rip + lf_act_mode]
+    test eax, eax
+    jz 8f
+    xor ebx, ebx                # the candidates
+    mov r13, -1
+    xor r12d, r12d
+1:  cmp r12, [rip + lf_res + VEC_len]
+    jae 3f
+    imul rax, r12, LS_SIZE
+    add rax, [rip + lf_res + VEC_ptr]
+    inc r12
+    test dword ptr [rax + LS_flags], LSF_DISABLED
+    jnz 1b
+    cmp dword ptr [rip + lf_act_mode], LA_AUTO
+    jne 2f
+    test dword ptr [rax + LS_flags], LSF_PREFERRED
+    jz 1b
+2:  inc ebx
+    lea r13, [r12 - 1]
+    jmp 1b
+3:  cmp ebx, 1
+    jne 8f
+    mov rdi, r13
+    call lf_action_run
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# lf_action_run(i): action i goes ahead: a disabled one says why; its edit is applied (an action
+# with resolve data and no edit is resolved first), then its command runs (v1's data goes back)
+lf_action_run:
+    PROLOGUE
+    mov rbx, rdi
+    imul r12, rbx, LS_SIZE
+    add r12, [rip + lf_res + VEC_ptr]
+    test dword ptr [r12 + LS_flags], LSF_DISABLED
+    jz 1f
+    mov rdi, [r12 + LS_detail]
+    add rdi, [rip + lf_bytes + SB_ptr]
+    call app_toast
+    jmp 9f
+1:  test dword ptr [r12 + LS_flags], LSF_RESOLVE
+    jz 2f
+    cmp qword ptr [r12 + LS_elen], 0
+    jne 2f
+    mov rdi, rbx
+    call lf_action_resolve
+    jmp 9f
+2:  cmp qword ptr [r12 + LS_elen], 0
+    je 3f
+    # the edit in the extension's grammar (workspace-edits), named by the action's title; v1's
+    # data goes with it when the confirmation list waits (wsedit.s)
+    mov rcx, [r12 + LS_label]
+    add rcx, [rip + lf_bytes + SB_ptr]
+    mov rdi, [r12 + LS_edit]
+    add rdi, [rip + lf_bytes + SB_ptr]
+    mov rsi, [r12 + LS_elen]
+    mov rdx, [r12 + LS_ext]
+    xor r8d, r8d
+    xor r9d, r9d
+    test dword ptr [r12 + LS_flags], LSF_RESOLVE
+    jnz 21f
+    cmp qword ptr [r12 + LS_clen], 0
+    jne 21f
+    mov r8, [r12 + LS_data]     # v1 data
+    add r8, [rip + lf_bytes + SB_ptr]
+    mov r9, [r12 + LS_dlen]
+21: call ws_apply_action
+    cmp eax, 1
+    jne 9f                      # not made (or the confirmation list waits): nothing more now
+3:  mov rdi, rbx
+    call lf_action_command
+9:  EPILOGUE
+
+# lf_action_command(i): action i's command reference runs (command-args: "0 run EXT.NAME DOC ref
+# LEN" + ARGS), or v1's data goes back with "0 action"
+lf_action_command:
+    PROLOGUE
+    imul r12, rdi, LS_SIZE
+    add r12, [rip + lf_res + VEC_ptr]
+    mov rbx, [r12 + LS_ext]
+    test rbx, rbx
+    jz 9f                       # its extension stopped since
+    cmp qword ptr [r12 + LS_clen], 0
+    je 2f
+    mov rdi, rbx
+    mov rsi, [r12 + LS_cmd]
+    add rsi, [rip + lf_bytes + SB_ptr]
+    mov rdx, [r12 + LS_clen]
+    call cmdref_parse
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    mov rdi, rax
+    mov rsi, [rip + lf_doc_id]
+    call cmdref_invoke
+    mov rdi, r13
+    call cmdref_free
+    jmp 9f
+2:  test dword ptr [r12 + LS_flags], LSF_RESOLVE
+    jnz 9f
+    cmp qword ptr [r12 + LS_dlen], 0
+    je 9f
+    mov rdi, rbx
+    mov rsi, [r12 + LS_data]
+    add rsi, [rip + lf_bytes + SB_ptr]
+    mov rdx, [r12 + LS_dlen]
+    call extproto_send_action
+9:  EPILOGUE
+
+# lf_action_resolve(i): "ID code-action-resolve DOC VERSION LEN" + action i's resolve data
+lf_action_resolve:
+    PROLOGUE
+    mov rbx, rdi
+    imul r12, rbx, LS_SIZE
+    add r12, [rip + lf_res + VEC_ptr]
+    mov r13, [r12 + LS_ext]
+    test r13, r13
+    jz 9f
+    call lf_rs_withdraw
+    mov rdi, [rip + lf_doc_id]
+    call extproto_doc
+    test rax, rax
+    jz 9f
+    mov r14, rax
+    lea rdi, [rip + lf_line2]
+    call sb_clear
+    lea rdi, [rip + lf_line2]
+    lea rsi, [rip + .Lv_action_resolve]
+    call sb_push_cstr
+    lea rdi, [rip + lf_line2]
+    mov rsi, [r14 + DOC_id]
+    call sb_push_u64
+    lea rdi, [rip + lf_line2]
+    call lf_push_sp
+    lea rdi, [rip + lf_line2]
+    mov rsi, [r14 + DOC_version]
+    call sb_push_u64
+    lea rdi, [rip + lf_line2]
+    call lf_push_sp
+    lea rdi, [rip + lf_line2]
+    mov rsi, [r12 + LS_dlen]
+    call sb_push_u64
+    mov rdi, r13
+    mov rsi, r14
+    mov rdx, [rip + lf_line2 + SB_ptr]
+    mov rcx, [rip + lf_line2 + SB_len]
+    mov r8, [r12 + LS_data]
+    add r8, [rip + lf_bytes + SB_ptr]
+    mov r9, [r12 + LS_dlen]
+    call extproto_host_send_body
+    test rax, rax
+    jz 9f
+    mov [rip + lf_rs_id], rax
+    mov [rip + lf_rs_ext], r13
+    mov [rip + lf_rs_index], rbx
+    mov dword ptr [rip + lf_rs_ready], 0
+    mov rdi, r13
+    mov rsi, rax
+    mov edx, PK_ACTION_RESOLVE
+    mov ecx, QO_LANGFEAT
+    call query_track
+9:  EPILOGUE
+
+# lf_rs_withdraw(): a code action's resolve still out is not wanted any more
+lf_rs_withdraw:
+    push rbx
+    mov rdi, [rip + lf_rs_ext]
+    test rdi, rdi
+    jz 9f
+    mov rsi, [rip + lf_rs_id]
+    mov qword ptr [rip + lf_rs_ext], 0
+    mov dword ptr [rip + lf_rs_ready], 0
+    call query_withdraw
+9:  pop rbx
+    ret
+
+# lf_rs_reply(ext, id, ok, body, len) -> eax 1 when it answered the code action's resolve (from
+# extproto's pump: state only; the tick applies it)
+lf_rs_reply:
+    cmp rdi, [rip + lf_rs_ext]
+    jne 8f
+    cmp rsi, [rip + lf_rs_id]
+    jne 8f
+    test rdi, rdi
+    jz 8f
+    push rbx
+    push r12
+    push r13
+    mov ebx, edx
+    mov r12, rcx
+    mov r13, r8
+    mov dword ptr [rip + lf_rs_ready], 2
+    test ebx, ebx
+    jz 1f
+    lea rdi, [rip + lf_rs_body]
+    call sb_clear
+    lea rdi, [rip + lf_rs_body]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov dword ptr [rip + lf_rs_ready], 1
+1:  mov dword ptr [rip + g_dirty], 1
+    pop r13
+    pop r12
+    pop rbx
+    mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
+
+# lf_rs_tick(): a resolved code action: "EDIT_LEN EXTRA_LEN", its edit, then its command records
+lf_rs_tick:
+    PROLOGUE
+    mov eax, [rip + lf_rs_ready]
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + lf_rs_ready], 0
+    mov rbx, [rip + lf_rs_ext]
+    mov qword ptr [rip + lf_rs_ext], 0
+    cmp eax, 1
+    jne 9f
+    mov r12, [rip + lf_rs_index]
+    cmp r12, [rip + lf_res + VEC_len]
+    jae 9f
+    mov rax, [rip + lf_rs_body + SB_ptr]
+    mov [rip + ps_ptr], rax
+    add rax, [rip + lf_rs_body + SB_len]
+    mov [rip + ps_end], rax
+    call ps_line
+    test eax, eax
+    jz 8f
+    call ps_num
+    test edx, edx
+    jz 8f
+    mov r13, rax                # EDIT_LEN
+    call ps_num
+    test edx, edx
+    jz 8f
+    mov r14, rax                # EXTRA_LEN
+    call ps_eol
+    test eax, eax
+    jz 8f
+    mov rax, [rip + ps_end]
+    sub rax, [rip + ps_ptr]
+    mov rcx, r13
+    add rcx, r14
+    cmp rcx, rax
+    jne 8f
+    mov r15, [rip + ps_ptr]
+    test r13, r13
+    jz 1f
+    mov rcx, [rip + lf_res + VEC_ptr]   # in the extension's grammar, named by the action
+    imul rax, r12, LS_SIZE
+    mov rcx, [rcx + rax + LS_label]
+    add rcx, [rip + lf_bytes + SB_ptr]
+    mov rdi, r15
+    mov rsi, r13
+    mov rdx, rbx
+    call ws_apply_from
+    cmp eax, 1
+    jne 9f
+1:  # its command: the answer's, else the action's own
+    test r14, r14
+    jz 2f
+    mov rdi, rbx
+    lea rsi, [r15 + r13]
+    mov rdx, r14
+    call cmdref_parse
+    test rax, rax
+    jz 2f
+    mov r13, rax
+    mov rdi, rax
+    mov rsi, [rip + lf_doc_id]
+    call cmdref_invoke
+    mov rdi, r13
+    call cmdref_free
+    jmp 9f
+2:  mov rdi, r12
+    call lf_action_command
+    jmp 9f
+8:  mov rdi, rbx
+    mov esi, PK_ACTION_RESOLVE
+    call query_dropped
+9:  EPILOGUE
+
 # ---------------- finishing ----------------
 
 # FN langfeat_timeout() -> ms until the query in flight is given up, or -1
 FN langfeat_timeout
+    cmp dword ptr [rip + lf_rs_ready], 0
+    jne 7f
+    call langextra_timeout
+    test eax, eax
+    jz 7f
     cmp dword ptr [rip + lf_kind], 0
     je 8f
     cmp dword ptr [rip + lf_ready], 0
     je 8f
-    xor eax, eax
+7:  xor eax, eax
     ret
 8:  mov eax, -1                 # query.s's timeout covers the requests still out
     ret
@@ -1501,6 +2754,25 @@ FN langfeat_timeout
 # FN langfeat_tick(): a query whose answers are in, or whose time is up, is finished
 FN langfeat_tick
     push rbx
+    call lf_rs_tick
+    call langextra_tick
+    cmp dword ptr [rip + lf_show_due], 0
+    je 0f
+    mov dword ptr [rip + lf_show_due], 0  # the first parts of a query still out, shown
+    cmp dword ptr [rip + lf_kind], 0
+    je 0f
+    cmp qword ptr [rip + lf_res + VEC_len], 0
+    je 0f
+    cmp dword ptr [rip + lf_partial], 0
+    je 3f
+    call palette_results_showing
+    test eax, eax
+    jz 0f
+3:  mov dword ptr [rip + lf_partial], 1
+    mov eax, [rip + lf_kind]
+    mov [rip + lf_list_kind], eax
+    call lf_present_list
+0:
     cmp dword ptr [rip + lf_kind], 0
     je 9f
     call lf_language_current
@@ -1529,21 +2801,45 @@ lf_finish:
     je .Lfn_rename
     cmp ebx, LF_FORMAT
     je .Lfn_format
+    cmp ebx, LF_RANGEFMT
+    je .Lfn_format
+    cmp ebx, LF_ACTS
+    jne 0f
+    call lf_actions_auto        # Auto Fix, Organize Imports: applied when one fits
+    test eax, eax
+    jnz 9f
+0:
     test r12, r12
     jnz 1f
     lea rax, [rip + lf_empty]
     mov rdi, [rax + rbx*8]
     call app_toast
     jmp 9f
-1:  cmp ebx, LF_DEF
-    jne 2f
+1:  cmp dword ptr [rip + lf_partial], 0
+    je 11f
+    call palette_results_showing    # shown at its first part: refreshed while still open
+    test eax, eax
+    jz 9f
+    jmp 2f
+11: cmp ebx, LF_REFS
+    je 2f
+    cmp ebx, LF_SYMS
+    je 2f
+    cmp ebx, LF_ACTS
+    je 2f
     cmp r12, 1
     jne 2f
     xor edi, edi
     call lf_goto                # one definition: there at once
     jmp 9f
-2:  call lf_sort
-    mov [rip + lf_list_kind], ebx
+2:  call lf_present_list
+    jmp 9f
+
+# lf_present_list(): the results in the palette, in their order (ebx the kind)
+lf_present_list:
+    PROLOGUE
+    mov ebx, [rip + lf_list_kind]
+    call lf_sort
     lea rax, [rip + lf_lists]
     mov rdi, [rax + rbx*8]
     call palette_results_open
@@ -1570,7 +2866,8 @@ lf_finish:
     inc r13
     jmp 3b
 4:  call palette_results_ready
-    jmp 9f
+    EPILOGUE
+
 .Lfn_rename:
     cmp byte ptr [rip + lf_err], 0
     je 5f
@@ -1726,35 +3023,16 @@ FN langfeat_chosen
     jz 9f
     cmp dword ptr [rip + lf_list_kind], LF_ACTS
     je 1f
-    mov rdi, rbx
+    cmp dword ptr [rip + lf_kind], 0  # chosen from a list shown early: the rest is not wanted
+    je 0f
+    call lf_cancel_all
+    mov dword ptr [rip + lf_kind], 0
+    mov dword ptr [rip + lf_partial], 0
+0:  mov rdi, rbx
     call lf_goto
     jmp 9f
-1:  imul r12, rbx, LS_SIZE
-    add r12, [rip + lf_res + VEC_ptr]
-    cmp qword ptr [r12 + LS_elen], 0
-    je 2f
-    mov rcx, [r12 + LS_label]
-    add rcx, [rip + lf_bytes + SB_ptr]
-    mov rdi, [r12 + LS_edit]
-    add rdi, [rip + lf_bytes + SB_ptr]
-    mov rsi, [r12 + LS_elen]
-    mov rdx, [r12 + LS_ext]
-    mov r8, [r12 + LS_data]
-    add r8, [rip + lf_bytes + SB_ptr]
-    mov r9, [r12 + LS_dlen]
-    call ws_apply_action
-    cmp eax, 1
-    jne 9f                      # an edit that cannot be made: nothing more either (or the
-                                # confirmation list sends the data once the edit is made)
-2:  cmp qword ptr [r12 + LS_dlen], 0
-    je 9f
-    cmp qword ptr [r12 + LS_ext], 0
-    je 9f                       # its extension stopped since
-    mov rdi, [r12 + LS_ext]
-    mov rsi, [r12 + LS_data]
-    add rsi, [rip + lf_bytes + SB_ptr]
-    mov rdx, [r12 + LS_dlen]
-    call extproto_send_action
+1:  mov rdi, rbx                # code actions: disabled, resolve, edit, command (lf_action_run)
+    call lf_action_run
 9:  EPILOGUE
 
 # lf_goto(i): the editor at result i: its file open, its range selected
@@ -2021,6 +3299,10 @@ FN langfeat_ext_gone
     push rdi
     push rdi
     call query_ext_gone
+    mov rdi, [rsp]
+    call langextra_ext_gone
+    mov rdi, [rsp]
+    call filediag_ext_gone      # its diagnostics in the Problems store go
     pop rdi
     pop rdi
     xor ecx, ecx
@@ -2074,21 +3356,56 @@ lf_show_title: .zero 208        # wsedit: show-locations' title
 # per kind (index LF_*): the verb, the feature, where its patterns are, its query.s kind, a
 # toast when nobody provides it, a toast when nothing came, the list's placeholder; one provider?
 lf_verbs: .quad 0, .Lv_definition, .Lv_references, .Lv_symbols, .Lv_actions, .Lv_rename, .Lv_format
+    .quad .Lv_declaration, .Lv_typedef, .Lv_implementation, .Lv_range_format
 lf_feats: .long -1, FEAT_DEFINITION, FEAT_REFERENCES, FEAT_SYMBOLS, FEAT_ACTIONS, FEAT_RENAME, FEAT_FORMAT
+    .long FEAT_NAVIGATION, FEAT_NAVIGATION, FEAT_NAVIGATION, FEAT_PARTIAL_FORMAT
 .p2align 3
 lf_pvs: .quad 0, EXT_pv_definition, EXT_pv_references, EXT_pv_symbols, EXT_pv_actions, EXT_pv_rename, EXT_pv_format
+    .quad EXT_pv_declaration, EXT_pv_type_definition, EXT_pv_implementation, EXT_pv_range_format
 lf_pks: .long 0, PK_DEFINITION, PK_REFERENCES, PK_SYMBOLS, PK_ACTIONS, PK_RENAME, PK_FORMAT
+    .long PK_DECLARATION, PK_TYPEDEF, PK_IMPLEMENTATION, PK_RANGE_FORMAT
 .p2align 3
 lf_none: .quad 0, .Ln_def, .Ln_refs, .Ln_syms, .Ln_acts, .Ln_rename, .Ln_format
+    .quad .Ln_decl, .Ln_typedef, .Ln_impl, .Ln_format
 lf_empty: .quad 0, .Le_def, .Le_refs, .Le_syms, .Le_acts, 0, 0
+    .quad .Le_decl, .Le_typedef, .Le_impl, 0
 lf_lists: .quad 0, .Ll_def, .Ll_refs, .Ll_syms, .Ll_acts, 0, 0
-lf_single: .byte 0, 0, 0, 1, 0, 1, 1
+    .quad .Ll_decl, .Ll_typedef, .Ll_impl, 0
+lf_single: .byte 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1
 .Lv_definition: .asciz "definition"
 .Lv_references: .asciz "references"
 .Lv_symbols: .asciz "symbols"
 .Lv_actions: .asciz "actions"
 .Lv_rename: .asciz "rename"
 .Lv_format: .asciz "format"
+.Lv_declaration: .asciz "declaration"
+.Lv_typedef: .asciz "type-definition"
+.Lv_implementation: .asciz "implementation"
+.Lv_range_format: .asciz "range-format"
+.Lv_code_actions: .asciz "code-actions "
+.Lv_action_resolve: .asciz "code-action-resolve "
+.Lv_prepare: .asciz "prepare-rename"
+.Lk_invoked_word: .asciz "invoked"
+.Ldash: .asciz "-"
+.Lsp_dash: .asciz " -"
+.Lx_preferred: .asciz "preferred"
+.Lx_disabled: .asciz "disabled"
+.Lx_resolve: .asciz "resolve"
+.Lx_command: .asciz "command"
+.Lk_quickfix: .asciz "quickfix"
+.Lk_organize: .asciz "source.organizeImports"
+.Lk_fixall: .asciz "source.fixAll"
+.Lk_refactor: .asciz "refactor"
+.Lk_source: .asciz "source"
+.Ln_decl: .asciz "No extension finds declarations in this file"
+.Ln_typedef: .asciz "No extension finds type definitions in this file"
+.Ln_impl: .asciz "No extension finds implementations in this file"
+.Le_decl: .asciz "No declaration found"
+.Le_typedef: .asciz "No type definition found"
+.Le_impl: .asciz "No implementation found"
+.Ll_decl: .asciz "Go to declaration"
+.Ll_typedef: .asciz "Go to type definition"
+.Ll_impl: .asciz "Go to implementation"
 .Linvoked: .asciz " invoked "
 .Lyes: .asciz "yes"
 .Lno: .asciz "no"

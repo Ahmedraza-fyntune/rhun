@@ -627,6 +627,7 @@ F DOC_language_pending, 8
 # source control (wider-parity C): quick-diff bases from extensions (scmext.s)
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
+F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
 F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
 F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
 F DOC_uri, 8            # resources group: a virtual document's URI (owned; vdoc.s), or 0
@@ -1571,7 +1572,9 @@ ENDSTRUCT TF_SIZE
 .equ IC_LIST, 164
 .equ IC_BEAKER, 165
 .equ IC_CLOUD, 166
-.equ IC_COUNT, 167
+.equ IC_RING, 167
+.equ IC_SLASH, 168
+.equ IC_COUNT, 169
 # end of the icons from SVG files
 
 # explorer header buttons; the title bar's tooltips name them too
@@ -1624,6 +1627,7 @@ ENDSTRUCT TF_SIZE
     # AI (wider-parity D: agentext.s, review.s, tools.s)
     FEATURE FEAT_AGENTS, "agents", 1              # agent-sessions; rhun asks agent-transcript
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
+    FEATURE FEAT_TOOLS, "tools", 1                # tools, tool-call; rhun asks owners: tool
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
     # language features (query.s, complete.s, langfeat.s)
@@ -1631,6 +1635,11 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_PROVIDER_SCOPE, "provider-scope", 0  # provides KEY VALUES
     FEATURE FEAT_COMPLETE_ITEMS, "complete-items", 1  # complete-resolve
     FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
+    FEATURE FEAT_NAVIGATION, "navigation", 1          # declaration, type-definition, implementation
+    FEATURE FEAT_PARTIAL_FORMAT, "partial-format", 1  # range-format, type-format
+    FEATURE FEAT_CODE_ACTIONS, "code-actions", 1      # code-actions, code-action-resolve
+    FEATURE FEAT_PREPARE_RENAME, "prepare-rename", 1  # prepare-rename
+    FEATURE FEAT_FILE_DIAGNOSTICS, "file-diagnostics", 0  # file-diagnostics into the Problems store
     # editor presentation (deco.s ...)
     FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
     # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):
@@ -1705,15 +1714,22 @@ FEATURE_LIST
 .equ PK_SAVE_ACTIONS, 24
 .equ PK_COMMIT_MESSAGE, 25       # source control (scmext.s)
 .equ PK_QUICKDIFF, 26
-.equ PK_NB_OPEN, 27              # notebooks: nb-open, nb-save (nbproto.inc)
-.equ PK_NB_SAVE, 28
-.equ PK_COUNT, 29
+.equ PK_TESTS_RESOLVE, 27        # testing (testproto.s)
+.equ PK_TEST_RUN, 28
+.equ PK_TRANSCRIPT, 29           # AI: agent-transcript (agentext.s)
+.equ PK_TOOL, 30                 # AI: tool, a call routed to its owner (tools.s)
+.equ PK_PROMPT, 31               # AI: agent-prompt (agentext.s, D4)
+.equ PK_NB_OPEN, 32              # notebooks: nb-open, nb-save (nbproto.inc)
+.equ PK_NB_SAVE, 33
+.equ PK_COUNT, 34
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
 .equ QO_SAVE, 3
 .equ QO_SCM, 4                   # source control (scmext.s)
-.equ QO_NOTEBOOK, 5             # nbdoc.s's nb_reply
+.equ QO_TESTS, 5                 # testing (testproto.s)
+.equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
+.equ QO_NOTEBOOK, 7               # nbdoc.s's nb_reply
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -1967,6 +1983,7 @@ F EXT_pv_ttrig, 8       # type_format.triggers
 F EXT_pv_document_links, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
+F EXT_fdsrc, VEC_SIZE   # PS*: its file-diagnostics sources in the Problems store (filediag.s)
 F EXT_pv_notebook, 8    # notebooks: [provides] notebook (patterns), notebook.title, notebook.kernel
 F EXT_pv_nbtitle, 8
 F EXT_pv_nbkernel, 8
@@ -2437,6 +2454,7 @@ F TSI_desc, 8           # owned cstr or 0
 F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed tests-resolve
 F TSI_path, 8           # owned cstr or 0: the file its range is in
 F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
+F TSI_phash, 8          # hash_line of TSI_path (0 without one): the gutter compares this first
 F TSI_idlen, 4
 F TSI_kind, 4           # TSK_*
 F TSI_flags, 4          # TSF_*
@@ -2490,6 +2508,7 @@ F TSE_prev_run, 4
 F TSE_prev_rent, 4
 F TSE_nmsg, 4
 F TSE_cut, 4            # 1 once its output was cut
+F TSE_prev_msg, 8       # owned copy of the item's summary before this run touched it, or 0
 F TSE_msgs, SB_SIZE     # messages: TSM header + text, path, expected, actual
 F TSE_out, SB_SIZE      # its output
 ENDSTRUCT TSE_SIZE
