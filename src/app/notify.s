@@ -2047,14 +2047,14 @@ nt_key:
     jmp 7f
 32: cmp r12d, KEY_DELETE
     jne 33f
-    mov rdi, r13
+34: mov rdi, r13
     call nt_user_close
     jmp 7f
 33: cmp r12d, KEY_RETURN
     jne 6f
     mov esi, [rip + nt_fbtn]
     test esi, esi
-    jz 32b
+    jz 34b                      # no button chosen: Enter closes it
     mov rdi, r13
     call nt_press
     jmp 7f

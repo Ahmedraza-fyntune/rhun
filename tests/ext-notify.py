@@ -81,6 +81,15 @@ class Notes(ViewsBase):
         self.assertNotIn('focus=10', states[1])     # no cards left: back to the editor
         self.assertIn('0 notify 1 pressed 2', self.fake_log())
 
+    def test_enter_without_a_button_closes_and_escape_goes_back(self):
+        out = self.run_editor(['cmd viewfake.notemany', 'wait 300', 'cmd focus_notifications', 'key Return',
+                               'key Up', 'key Delete', 'wait 50', 'print-notes', 'key Escape', 'print-state'])
+        self.assertEqual([n.split(' ')[0] for n in self.notes(out)], ['note=1', 'note=2', 'note=3', 'note=5'])
+        self.assertNotIn('focus=10', [l for l in out if l.startswith('tabs=')][0])
+        log = self.fake_log()
+        self.assertIn('0 notify 6 closed', log)
+        self.assertIn('0 notify 4 closed', log)
+
     def test_clear_closes_every_card(self):
         out = self.run_editor(['cmd viewfake.notemany', 'wait 300', 'cmd clear_notifications', 'print-notes'])
         self.assertEqual(self.notes(out), [])
