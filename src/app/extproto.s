@@ -2667,11 +2667,8 @@ h_cmd:
 
 # ---------------- contributions and commands ----------------
 
-# FN extproto_cur() -> rax the extension being served; FN extproto_set_cur(ext): it again, after
-# sending to another one (events and cancels switch it)
-FN extproto_cur
-    mov rax, [rip + cur]
-    ret
+# FN extproto_set_cur(ext): the extension being served again (extproto_cur), after sending to
+# another one (events and cancels switch it)
 FN extproto_set_cur
     mov [rip + cur], rdi
     ret
