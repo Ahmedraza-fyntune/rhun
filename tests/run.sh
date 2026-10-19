@@ -78,9 +78,6 @@ python3 tests/ext-pending-commands.py || fail=1
 python3 tests/ext-pending-owner.py || fail=1
 python3 tests/file-read-limited.py || fail=1
 python3 tests/dir-scan.py || fail=1
-python3 tests/task-core.py --faults || fail=1
-python3 tests/task-view.py --faults || fail=1
-python3 tests/task-clipboard.py || fail=1
 check config-strings build/config_strings_test
 check keys build/keys_test
 check ui-clip build/ui_clip_test
@@ -127,6 +124,8 @@ python3 tests/terminal-keys.py || fail=1
 python3 tests/terminal-links.py || fail=1
 python3 tests/terminals.py || fail=1       # tasks and terminals: programs' tabs, run-as-user approval
 python3 tests/task-patterns.py || fail=1   # tasks and terminals: patterns, matchers, the Problems store
+python3 tests/terminals-feature.py || fail=1   # tasks and terminals: the terminals feature
+python3 tests/tasks.py || fail=1           # tasks and terminals: the tasks feature and commands
 python3 tests/new-window.py || fail=1
 python3 tests/file-launch.py || fail=1
 python3 tests/readonly-save.py || fail=1
@@ -177,12 +176,15 @@ python3 tests/ext-command-args.py || fail=1
 python3 tests/ext-run-command.py || fail=1
 python3 tests/keys-chords.py || fail=1
 python3 tests/ext-menus.py || fail=1
+python3 tests/ext-status-items.py || fail=1
+python3 tests/ext-sdk-commands.py || fail=1
 # editor presentation
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }
 python3 tests/enum-values.py --negative-control > /dev/null || { python3 tests/enum-values.py --negative-control; fail=1; }
 check edtape build/edtape_test
 python3 tests/presentation.py || fail=1
+python3 tests/folding.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1
@@ -199,19 +201,26 @@ python3 tests/ext-watch-native.py || fail=1
 python3 tests/ext-boundaries.py || fail=1
 python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
+# notebooks and custom editors (wider parity A, B)
+python3 tests/ext-notebooks.py || fail=1
 # extension management: versions, roll back, updates, removal, development installs
 python3 tests/ext-updates.py || fail=1
 python3 tests/ext-remove-clean.py || fail=1
 python3 tests/ext-dev-install.py || fail=1
 python3 tests/ext-browse.py || fail=1
 python3 tests/ext-packs.py || fail=1
+# views group: places, retained trees, logs, tabs
+python3 tests/ext-views-tree.py || fail=1
+python3 tests/ext-views-log.py || fail=1
+python3 tests/ext-notify.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
-for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime; do
+for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter; do
     python3 tests/$t.py || fail=1
 done
 # testing: the test explorer (feature "tests")
 python3 tests/testing.py || fail=1
+python3 tests/testing-real.py || fail=1   # skips without TESTS_DIR (a rhun-editor/tests checkout)
 # WebAssembly extension host (src/wasm): the core spec suite needs wabt's wast2json
 if command -v wast2json >/dev/null; then python3 tests/wasm-spec.py || fail=1; else echo "skip wasm-spec (no wast2json)"; fi
 python3 tests/wasm-host.py || fail=1

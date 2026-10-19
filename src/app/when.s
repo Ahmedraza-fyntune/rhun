@@ -1470,7 +1470,21 @@ FN ctx_get
     mov rdx, [rcx + rax + 8]
     mov rax, [rcx + rax]
     EPILOGUE
-2:  mov rax, rbx
+2:  # a view target names its view and item (view, viewItem)
+    mov rcx, [rip + ctx_target]
+    test rcx, rcx
+    jz 21f
+    mov rdi, [rcx + MTG_view]
+    cmp ebx, CTX_VIEW
+    je 20f
+    mov rdi, [rcx + MTG_item]
+    cmp ebx, CTX_VIEW_ITEM
+    jne 21f
+20: test rdi, rdi
+    jz 21f
+    call ck_cstr
+    jmp 4f
+21: mov rax, rbx
     shl rax, 4
     lea rcx, [rip + ctx_idx]
     mov rax, [rcx + rax + 8]
@@ -1769,6 +1783,9 @@ ck_active_tab:
     jmp ck_cstr
 # FN ctx_tab_kind_name(TAB_*) -> rax "doc" "image" "settings" "git" "extensions" "view", or 0
 FN ctx_tab_kind_name
+    lea rax, [rip + .Lv_notebook]   # notebooks: TAB_NOTEBOOK (from the notebooks' block) is "notebook"
+    cmp rdi, TAB_NOTEBOOK
+    je 9f
     xor eax, eax
     dec rdi
     cmp rdi, 5
@@ -2388,6 +2405,7 @@ prov_names: .quad .Lp_complete, .Lp_signature, .Lp_definition, .Lp_references, .
 .Lv_git: .asciz "git"
 .Lv_extensions: .asciz "extensions"
 .Lv_view: .asciz "view"
+.Lv_notebook: .asciz "notebook"
 .Lv_normal: .asciz "normal"
 .Lv_insert: .asciz "insert"
 .Lv_visual: .asciz "visual"

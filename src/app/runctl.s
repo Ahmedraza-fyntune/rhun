@@ -10,9 +10,12 @@
 #   print-pattern PATTERN<TAB>LINE "match=0", "match=1 file=... line=..." or "error=REASON"
 #   print-problems                 the Problems store, a line per problem
 #   print-problems-tab             the Problems tab's rows
+#   print-tasks                    published tasks: "OWNER/NAME id=ID group=G default=0|1 label=L"
+#   print-terminal-records         extensions' terminals: "TERM ext=OWNER/NAME live=0|1 output=0|1 task=ID"
 #   term-stop TERM | term-restart TERM | term-close TERM
-#   wait-terminal TERM STATE [RUNS] until the tab is running, exited, stopped, failed or ended (not
-#                                  running), having started RUNS times when given; 10 s at most
+#   wait-terminal TERM STATE [RUNS] until the tab is there and running, exited, stopped, failed or
+#                                  ended (not running), having started RUNS times when given; 10 s
+#                                  at most
 #   print-uproc                    programs run as the user, and the login environment's state
 #   print-allowed                  run approvals ("OWNER/NAME PROJECT")
 #   run-approve OWNER/NAME COMMAND ask as an extension's first program in the project would; prints
@@ -53,6 +56,8 @@ TCTL t_print_allowed, c_print_allowed
 TCTL t_run_approve, c_run_approve
 TCTL t_print_approve, c_print_approve
 TCTL t_wait_terminal, c_wait_terminal
+TCTL t_print_tasks, c_print_tasks
+TCTL t_print_records, c_print_records
 TCTL t_print_pattern, c_print_pattern
 TCTL t_print_problems, c_print_problems
 TCTL t_print_problems_tab, c_print_problems_tab
@@ -146,6 +151,20 @@ c_print_problems_tab:
     add rsp, 8
     ret
 
+c_print_tasks:
+    sub rsp, 8
+    mov rdi, r15
+    call tasks_dump
+    add rsp, 8
+    ret
+
+c_print_records:
+    sub rsp, 8
+    mov rdi, r15
+    call termproto_dump
+    add rsp, 8
+    ret
+
 c_print_allowed:
     sub rsp, 8
     mov rdi, r15
@@ -170,17 +189,19 @@ c_wait_terminal:
 1:  mov rdi, r13
     call term_state
     cmp eax, -1
-    je 9f
+    je 4f                       # not there yet (an extension's terminal-open is on its way)
     cmp dword ptr [rsp], 0
     je 2f
     cmp edx, [rsp]
     jb 4f
 2:  cmp r14d, eax
     je 9f
-    cmp r14d, 4                 # ended: anything but running
+    cmp r14d, 4                 # ended: exited, stopped or failed
     jne 4f
     test eax, eax
-    jnz 9f
+    jz 4f
+    cmp eax, 3
+    jbe 9f
 4:  call time_ms
     cmp rax, r15
     jae 9f
@@ -229,7 +250,7 @@ c_term_run:
     mov [rsp + 120], rax
     mov [rsp + 128], rax
     mov [rsp + 136], rax
-    mov [rsp + PG_cwd], rax
+    mov [rsp + PGM_cwd], rax
     mov [rsp + 32], rax
     mov [rsp + 40], rax
     mov qword ptr [rsp + 48], TK_TERMINAL
@@ -237,11 +258,11 @@ c_term_run:
     mov [rsp + 72], rax
     mov [rsp + 80], rax
     lea rax, [rsp + 160]
-    mov [rsp + PG_argv], rax
+    mov [rsp + PGM_argv], rax
     lea rax, [rsp + 704]
-    mov [rsp + PG_sets], rax
+    mov [rsp + PGM_sets], rax
     lea rax, [rsp + 848]
-    mov [rsp + PG_unsets], rax
+    mov [rsp + PGM_unsets], rax
     mov rdi, rbx
     mov rsi, r12
     call mem_dup
@@ -293,7 +314,7 @@ c_term_run:
     mov rax, [rsp + 64]
     cmp rax, RUN_ARGS
     jae .Ltr_word
-    mov rcx, [rsp + PG_argv]
+    mov rcx, [rsp + PGM_argv]
     mov [rcx + rax*8], r12
     inc qword ptr [rsp + 64]
     jmp .Ltr_word
@@ -324,13 +345,13 @@ c_term_run:
 1:  mov rax, [rsp + 64]
     test rax, rax
     jz .Ltr_none
-    mov rcx, [rsp + PG_argv]
+    mov rcx, [rsp + PGM_argv]
     mov qword ptr [rcx + rax*8], 0
     mov rax, [rsp + 72]
-    mov rcx, [rsp + PG_sets]
+    mov rcx, [rsp + PGM_sets]
     mov qword ptr [rcx + rax*8], 0
     mov rax, [rsp + 80]
-    mov rcx, [rsp + PG_unsets]
+    mov rcx, [rsp + PGM_unsets]
     mov qword ptr [rcx + rax*8], 0
     # the title: --title, else the command
     mov rsi, [rsp + 32]
@@ -346,7 +367,7 @@ c_term_run:
     cmp qword ptr [rsp + 136], 0
     je 3f
     xor edi, edi
-    mov rsi, [rsp + PG_cwd]
+    mov rsi, [rsp + PGM_cwd]
     test rsi, rsi
     jnz 21f
     lea rsi, [rip + .Lempty]
@@ -420,14 +441,14 @@ c_term_run:
 # options: each takes the next word (o_value) or none
 o_cwd:
     call o_value
-    mov [rsp + PG_cwd], rax
+    mov [rsp + PGM_cwd], rax
     jmp .Ltr_word
 o_env:
     call o_value
     mov rcx, [rsp + 72]
     cmp rcx, RUN_ENVS
     jae .Ltr_word
-    mov rdx, [rsp + PG_sets]
+    mov rdx, [rsp + PGM_sets]
     mov [rdx + rcx*8], rax
     inc qword ptr [rsp + 72]
     jmp .Ltr_word
@@ -436,7 +457,7 @@ o_unset:
     mov rcx, [rsp + 80]
     cmp rcx, RUN_ENVS
     jae .Ltr_word
-    mov rdx, [rsp + PG_unsets]
+    mov rdx, [rsp + PGM_unsets]
     mov [rdx + rcx*8], rax
     inc qword ptr [rsp + 80]
     jmp .Ltr_word
@@ -592,11 +613,14 @@ c_print_approve:
 .Lc_print_pattern: .asciz "print-pattern"
 .Lc_print_problems: .asciz "print-problems"
 .Lc_print_problems_tab: .asciz "print-problems-tab"
+.Lc_print_tasks: .asciz "print-tasks"
+.Lc_print_records: .asciz "print-terminal-records"
 .Lw_running: .asciz "running"
 .Lw_exited: .asciz "exited"
 .Lw_stopped: .asciz "stopped"
 .Lw_failed: .asciz "failed"
 .Lw_ended: .asciz "ended"
+.Lw_waiting: .asciz "waiting"
 .Lo_end: .asciz "--"
 .Lo_cwd: .asciz "--cwd"
 .Lo_env: .asciz "--env"
@@ -630,7 +654,7 @@ c_print_approve:
 .Ls_no: .asciz "approve=no\n"
 .p2align 3
 approve_words: .quad .Ls_none, .Ls_yes, .Ls_no
-state_words: .quad .Lw_running, .Lw_exited, .Lw_stopped, .Lw_failed, .Lw_ended, 0
+state_words: .quad .Lw_running, .Lw_exited, .Lw_stopped, .Lw_failed, .Lw_ended, .Lw_waiting, 0
 .globl tasks_ctl
 tasks_ctl:
     .quad .Lc_print_terminals, t_print_terminals, .Lc_term_select, t_term_select
@@ -639,7 +663,8 @@ tasks_ctl:
     .quad .Lc_print_allowed, t_print_allowed, .Lc_run_approve, t_run_approve
     .quad .Lc_print_approve, t_print_approve, .Lc_wait_terminal, t_wait_terminal
     .quad .Lc_print_pattern, t_print_pattern, .Lc_print_problems, t_print_problems
-    .quad .Lc_print_problems_tab, t_print_problems_tab, 0, 0
+    .quad .Lc_print_problems_tab, t_print_problems_tab, .Lc_print_tasks, t_print_tasks
+    .quad .Lc_print_records, t_print_records, 0, 0
 options:
     .quad .Lo_cwd, o_cwd, .Lo_env, o_env, .Lo_unset, o_unset, .Lo_title, o_title
     .quad .Lo_task, o_task, .Lo_silent, o_silent, .Lo_sh, o_sh, .Lo_matcher, o_matcher

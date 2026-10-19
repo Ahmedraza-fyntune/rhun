@@ -471,6 +471,17 @@ handle_line:
     jz 2f                       # no body: answered at once
     cmp rax, REPLY_BODY_MAX
     jbe 1f
+    # notebooks: a request may have a cap of its own (nb-open, nb-save: 64 MB)
+    push rax
+    push rax
+    mov rdi, rbx
+    mov rsi, r12
+    call ext_reply_cap
+    mov rcx, rax
+    pop rax
+    pop rdx
+    cmp rax, rcx
+    jbe 1f
     mov rdi, rbx                # a body over the cap ends the program, as for requests
     lea rsi, [rip + .Lr_body]
     call ext_kill
@@ -505,6 +516,14 @@ handle_line:
     call query_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # views group: vkids and vmore answers (rview.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call rview_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # testing: tests-resolve and test-run answers
     mov rsi, r12
     mov edx, 1
@@ -528,6 +547,22 @@ handle_line:
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
     call scmext_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # notebooks: nb-open, nb-save
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call nb_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # editor presentation: folding ranges, tokens, hints ... (present.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call present_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -595,6 +630,14 @@ handle_line:
     call query_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # views group: a failed vkids or vmore (rview.s)
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call rview_reply
+    test eax, eax
+    jnz 9f
     mov edi, 2                  # testing: the code and text go with the answer
     call rest_from
     mov rcx, rax
@@ -626,6 +669,14 @@ handle_line:
     call scmext_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # editor presentation: an error changes nothing (present.s)
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call present_reply
+    test eax, eax
+    jnz 9f
     mov edi, 2                  # a call's error goes to its caller with its code and text
     call rest_from
     mov rcx, rax
@@ -635,6 +686,16 @@ handle_line:
     xor edx, edx
     call invoke_reply           # (invoke.s)
     mov [rip + cur], rbx
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # notebooks: nb-open, nb-save, with the code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call nb_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -694,6 +755,17 @@ handle_line:
 
 # testing (testproto.s): every tests verb goes to testproto_request(ext, id, line, len, body,
 # body length), which parses the line itself and answers through ext_send_checked
+# tasks and terminals (termproto.s, tasks.s): every terminal and task verb goes to
+# termproto_request(ext, id, line, len, body, body length), which answers itself
+h_terminals:
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov rdx, [rip + line + SB_ptr]
+    mov rcx, [rip + line + SB_len]
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    jmp termproto_request
+
 h_tests:
     mov rdi, [rip + cur]
     mov rsi, [rip + cur_id]
@@ -1840,6 +1912,9 @@ h_status:
     call mem_dup
     mov [rbx + EXT_status_text], rax
 1:  mov dword ptr [rip + g_dirty], 1
+    mov rdi, rbx                # the status item _v1 (statusitems.s)
+    mov rsi, [rbx + EXT_status_text]
+    call status_v1_set
     mov rdi, [rip + cur_id]
     call reply_ok
     EPILOGUE
@@ -2120,6 +2195,11 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call tools_cancel
+    mov edi, 2                  # a terminal-open waiting for the approval dialog: answered cancelled (termproto.s)
+    call field_u64
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call termproto_cancel
 0:  pop rbx
     # of this extension's open prompt: the prompt closes, answered cancelled
     cmp qword ptr [rip + pr_id], 0
@@ -2701,7 +2781,30 @@ h_draw:
 # ID unview VIEW -> ok ID: its tab closes
 h_unview:
     PROLOGUE
-    call view_agreed
+    mov rax, [rip + cur]        # a retained view's tab first (views group, rview.s)
+    FEAT_TEST rax, FEAT_VIEW_TREE
+    jz 1f
+    cmp qword ptr [rip + nfields], 3
+    jne 1f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 1f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call rview_unview
+    cmp eax, 1
+    je 1f
+    test eax, eax
+    jnz 2f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+2:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_refused_unview]
+    call reply_error
+    EPILOGUE
+1:  call view_agreed
     jz 9f
     call view_arg
     test rax, rax
@@ -2759,6 +2862,317 @@ h_vpatch:
     EPILOGUE
 8:  mov rdi, [rip + cur_id]
     lea rsi, [rip + .Le_noview]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID vtab KIND TITLE -> ok ID VIEW: a retained view in an editor tab of its own
+h_vtab:
+    PROLOGUE
+    call vtree_agreed
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jb 7f
+    mov edi, 3
+    call rest_from
+    mov r12, rax
+    mov r13, rdx
+    mov edi, 2
+    call field_at
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    mov rcx, r12
+    mov r8, r13
+    call rview_tab
+    cmp rax, -1
+    je 6f
+    cmp rax, -2
+    je 5f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_vtab]
+    call reply_error
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# feat_or_unknown(FEAT index) -> eax 1 when the extension agreed it, else unknown is answered
+feat_or_unknown:
+    push rbx
+    mov rax, [rip + cur]
+    mov esi, edi
+    mov rdi, rax
+    call ext_feature
+    test eax, eax
+    jnz 1f
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_unknown]
+    call reply_error
+    xor eax, eax
+1:  pop rbx
+    ret
+
+# ID notify SEVERITY LEN + body -> ok ID NOTE: a notification card (notify.s)
+h_notify:
+    PROLOGUE
+    mov edi, FEAT_NOTIFY
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    mov edi, 2
+    call field_at
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call notify_request
+    cmp rax, -1
+    je 7f
+    cmp rax, -2
+    je 6f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_notes]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID notify-set NOTE LEN + body -> ok ID: new content (a card that is gone: noview)
+h_notify_set:
+    PROLOGUE
+    mov edi, FEAT_NOTIFY
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    mov rdx, [rip + body_ptr]
+    mov rcx, [rip + body_len]
+    call notify_set_request
+    cmp eax, 2
+    je 7f
+    cmp eax, 1
+    je 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nonote]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID unnotify NOTE -> ok ID: the card closes without an event
+h_unnotify:
+    PROLOGUE
+    mov edi, FEAT_NOTIFY
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call notify_close_request
+    test eax, eax
+    jnz 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nonote]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID progress WHERE CANCEL LEN + title -> ok ID P
+h_progress:
+    PROLOGUE
+    mov edi, FEAT_PROGRESS
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 5
+    jne 7f
+    mov rcx, [rip + body_len]   # a title: one line, not empty
+    test rcx, rcx
+    jz 7f
+    mov rax, [rip + body_ptr]
+1:  cmp byte ptr [rax + rcx - 1], 10
+    je 7f
+    dec rcx
+    jnz 1b
+    mov edi, 3
+    call field_at
+    mov r12, rax
+    mov r13, rdx
+    mov edi, 2
+    call field_at
+    push qword ptr [rip + body_len]
+    push qword ptr [rip + body_len]
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    mov rcx, r12
+    mov r8, r13
+    mov r9, [rip + body_ptr]
+    call progress_request
+    add rsp, 16
+    cmp rax, -1
+    je 7f
+    cmp rax, -2
+    je 6f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_progress]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID progress-set P PERCENT LEN + message -> ok ID (PERCENT 0-100 or -; a progress that is gone: noview)
+h_progress_set:
+    PROLOGUE
+    mov edi, FEAT_PROGRESS
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 5
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov r12, rax
+    mov r13, -1
+    mov edi, 3
+    lea rsi, [rip + .Lw_dash_pct]
+    call field_is
+    test eax, eax
+    jnz 1f
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz 7f
+    cmp rax, 100
+    ja 7f
+    mov r13, rax
+1:  mov rdi, [rip + cur]
+    mov esi, r12d
+    mov edx, r13d
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call progress_set_request
+    test eax, eax
+    jnz 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noprogress]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID progress-end P -> ok ID
+h_progress_end:
+    PROLOGUE
+    mov edi, FEAT_PROGRESS
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call progress_end_request
+    test eax, eax
+    jnz 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noprogress]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID vreveal VIEW HOW LEN + node id -> ok ID: its ancestors expand, it scrolls into view
+h_vreveal:
+    PROLOGUE
+    call vtree_agreed
+    jz 9f
+    cmp qword ptr [rip + nfields], 5
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov r12, rax
+    mov edi, 3
+    call field_at
+    mov rdi, [rip + cur]
+    mov esi, r12d
+    mov rcx, rdx
+    mov rdx, rax
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    call rview_reveal
+    cmp eax, 1
+    je 5f
+    cmp eax, 2
+    je 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noview]
+    call reply_error
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_badpos_vreveal]
     call reply_error
     EPILOGUE
 7:  mov rdi, [rip + cur_id]
@@ -2853,6 +3267,56 @@ FN extproto_set_cur
     mov [rip + cur], rdi
     ret
 
+# ID status-item ITEM LEN + body -> ok ID: adds or replaces a status bar item (feature status-items,
+# statusitems.s)
+h_status_item:
+    PROLOGUE
+    mov rbx, [rip + cur]
+    FEAT_TEST rbx, FEAT_STATUS_ITEMS
+    jz .Lhsi_unknown
+    cmp qword ptr [rip + nfields], 4
+    jne .Lhsi_syntax
+    mov edi, 2
+    call field_at
+    mov rdi, rbx
+    mov rsi, rax
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call status_item_set
+    test eax, eax
+    jz .Lhsi_ok
+    cmp eax, 1
+    jne .Lhsi_syntax
+    lea rsi, [rip + .Le_toobig_status]
+    jmp .Lhsi_error
+# ID status-remove ITEM -> ok ID
+h_status_remove:
+    PROLOGUE
+    mov rbx, [rip + cur]
+    FEAT_TEST rbx, FEAT_STATUS_ITEMS
+    jz .Lhsi_unknown
+    cmp qword ptr [rip + nfields], 3
+    jne .Lhsi_syntax
+    mov edi, 2
+    call field_at
+    mov rdi, rbx
+    mov rsi, rax
+    call status_item_remove
+.Lhsi_ok:
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+.Lhsi_unknown:
+    lea rsi, [rip + .Le_unknown]
+.Lhsi_error:
+    mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+.Lhsi_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
 # ID run-command NAME LEN + ARGS: a built-in, or another extension's callable command (feature
 # command-args; invoke.s answers, now or when the call comes back)
 h_run_command:
@@ -2940,6 +3404,7 @@ h_set_context:
     call reply_syntax
     EPILOGUE
 
+.globl plain_text              # (also taskdef.s: labels and commands of tasks)
 # plain_text(ptr, len) -> 1 when the bytes are one line of valid UTF-8 with no control
 # character (C0, DEL, C1), no bidi control (U+202A-202E, U+2066-2069) and no zero-width
 # character (U+200B-200F, U+2060, U+FEFF): text that shows as it is
@@ -3463,7 +3928,14 @@ hello_features:
     jmp 1b
 4:  mov rdi, rbx                # wsedit: which of its features it may have yet
     call ws_features_agreed
-    xor r14d, r14d              # anything agreed?
+    # tasks only with terminals (a task's terminal is a TERM)
+    FEAT_TEST rbx, FEAT_TASKS
+    jz 40f
+    FEAT_TEST rbx, FEAT_TERMINALS
+    jnz 40f
+    mov eax, FEAT_TASKS
+    btr dword ptr [rbx + EXT_features], eax
+40: xor r14d, r14d              # anything agreed?
     xor ecx, ecx
 41: or r14, [rbx + EXT_features + rcx*8]
     inc ecx
@@ -3473,6 +3945,8 @@ hello_features:
     jz 9f
     call pres_enable            # answers about older versions move through the edit tapes (edtape.s)
     call deco_visible_again     # and the visible event reaches the new extension too (deco.s)
+    mov rdi, rbx
+    call present_hello          # and the active document is asked what it provides (present.s)
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
@@ -4494,6 +4968,14 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_vpatch, h_vpatch, EXT_BODY_MAX     # views group: retained views
     .quad .Lv_vshow, h_vshow, 0
+    .quad .Lv_vreveal, h_vreveal, EXT_BODY_MAX
+    .quad .Lv_vtab, h_vtab, 0
+    .quad .Lv_notify, h_notify, 65536           # notifications and progress (notify.s)
+    .quad .Lv_notify_set, h_notify_set, 65536
+    .quad .Lv_unnotify, h_unnotify, 0
+    .quad .Lv_progress, h_progress, 65536
+    .quad .Lv_progress_set, h_progress_set, 65536
+    .quad .Lv_progress_end, h_progress_end, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # language features (query.s)
@@ -4505,6 +4987,8 @@ verbs:
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
     .quad .Lv_run_command, h_run_command, INV_BODY_MAX
+    .quad .Lv_status_item, h_status_item, 16384
+    .quad .Lv_status_remove, h_status_remove, 0
     # source control (wider-parity C): gitdata.s
     .quad .Lv_git_repo, gitdata_h_repo, 0
     .quad .Lv_git_status, gitdata_h_status, 0
@@ -4534,6 +5018,24 @@ verbs:
     .quad .Lv_unpropose, h_unpropose, 0
     .quad .Lv_tools, h_tools, 0
     .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
+    # notebooks (nbproto.inc)
+    .quad .Lnb_v_state, h_nb_state, 0
+    .quad .Lnb_v_output, h_nb_output, NB_OUTPUT_MAX
+    .quad .Lnb_v_stream, h_nb_stream, NB_STREAM_MAX
+    .quad .Lnb_v_kernel_label, h_nb_kernel_label, 4096
+    .quad .Lnb_v_exec, h_nb_exec, 262144
+    .quad .Lnb_v_exec_signal, h_nb_exec_signal, 0
+    # tasks and terminals (termproto.s)
+    .quad .Lv_terminal_open, h_terminals, 131072
+    .quad .Lv_terminal_stop, h_terminals, 0
+    .quad .Lv_terminal_restart, h_terminals, 0
+    .quad .Lv_terminal_close, h_terminals, 0
+    .quad .Lv_terminal_show, h_terminals, 0
+    .quad .Lv_terminal_input, h_terminals, 65536
+    .quad .Lv_terminal_screen, h_terminals, 0
+    .quad .Lv_tasks_set, h_terminals, 1048576
+    .quad .Lv_task_start, h_terminals, 0
+    .quad .Lv_task_run, h_terminals, 131072
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
@@ -4544,6 +5046,16 @@ verbs:
 .Lv_file_diagnostics: .asciz "file-diagnostics"
 .Lv_file_diagnostics_reset: .asciz "file-diagnostics-reset"
 .Lv_test_items: .asciz "test-items"
+.Lv_terminal_open: .asciz "terminal-open"
+.Lv_terminal_stop: .asciz "terminal-stop"
+.Lv_terminal_restart: .asciz "terminal-restart"
+.Lv_terminal_close: .asciz "terminal-close"
+.Lv_terminal_show: .asciz "terminal-show"
+.Lv_terminal_input: .asciz "terminal-input"
+.Lv_terminal_screen: .asciz "terminal-screen"
+.Lv_tasks_set: .asciz "tasks-set"
+.Lv_task_start: .asciz "task-start"
+.Lv_task_run: .asciz "task-run"
 .Lv_test_remove: .asciz "test-remove"
 .Lv_test_update: .asciz "test-update"
 .Lv_test_end: .asciz "test-end"
@@ -4553,6 +5065,9 @@ verbs:
 .Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
 .Lv_run_command: .asciz "run-command"
+.Lv_status_item: .asciz "status-item"
+.Lv_status_remove: .asciz "status-remove"
+.Le_toobig_status: .asciz "toobig 8 items"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
 .Lv_git_repo: .asciz "git-repo"
@@ -4576,6 +5091,22 @@ verbs:
 .Lv_vpatch: .asciz "vpatch"
 .Lv_vshow: .asciz "vshow"
 .Lvs_focus: .asciz "focus"
+.Lv_vreveal: .asciz "vreveal"
+.Lv_vtab: .asciz "vtab"
+.Lv_notify: .asciz "notify"
+.Lw_dash_pct: .asciz "-"
+.Lv_notify_set: .asciz "notify-set"
+.Lv_unnotify: .asciz "unnotify"
+.Lv_progress: .asciz "progress"
+.Lv_progress_set: .asciz "progress-set"
+.Lv_progress_end: .asciz "progress-end"
+.Le_toobig_notes: .asciz "toobig 16 notifications"
+.Le_toobig_progress: .asciz "toobig 8 progress"
+.Le_nonote: .asciz "noview no such notification"
+.Le_noprogress: .asciz "noview no such progress"
+.Le_refused_unview: .asciz "refused a declared view: the user hides it"
+.Le_toobig_vtab: .asciz "toobig 8 views"
+.Le_badpos_vreveal: .asciz "badpos no such node"
 .Le_refused_vshow: .asciz "refused no such view"
 .Lv_apply: .asciz "apply"
 .Lv_snippet: .asciz "snippet"
@@ -4744,6 +5275,7 @@ FN extproto_answer_syntax
 .include "app/extwatchproto.inc"
 .include "app/extresproto.inc"    # resources group: idle, secrets, urls, uris, files, folders
 .include "app/extaiproto.inc"
+.include "app/nbproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

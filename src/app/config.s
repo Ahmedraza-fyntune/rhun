@@ -30,6 +30,8 @@ cfg_tooltips: .long 1
 cfg_autohide_scrollbars: .long 1
 cfg_match_brackets: .long 1
 cfg_indent_guides: .long 1
+.globl cfg_folding
+cfg_folding: .long 1            # editor presentation: folding (fold.s)
 cfg_cursor_blink: .long 1
 cfg_whitespace: .long 0
 cfg_sidebar: .long 1
@@ -832,6 +834,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Ls_updates: .asciz "updates"
 .Ls_remote: .asciz "remote"
 .Ls_testing: .asciz "testing"
+.Ls_debug: .asciz "debug"
 .Ls_extensions: .asciz "extensions"
 
 .macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0, live_desc=0
@@ -904,6 +907,8 @@ g_settings:
     SETTING .Ls_editor, lightbulb, ST_BOOL, cfg_lightbulb, 0, 1, 1, 0, "Quick fix lightbulb", "Show a lightbulb in the gutter where a quick fix is available."
     SETTING .Ls_editor, format_on_type, ST_BOOL, cfg_format_on_type, 0, 1, 1, 0, "Format as you type", "Ask the formatter after typing one of its trigger characters, such as Enter."
     SETTING .Ls_editor, format_on_paste, ST_BOOL, cfg_format_on_paste, 0, 1, 1, 0, "Format pasted text", "Format the pasted lines with the formatter's range formatting."
+    # editor presentation
+    SETTING .Ls_editor, folding, ST_BOOL, cfg_folding, 0, 1, 1, 0, "Folding", "Fold regions from the gutter's chevrons (ctrl+shift+[ and ctrl+shift+])."
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
     SETTING .Ls_files, format_on_save, ST_BOOL, cfg_format_on_save, 0, 1, 1, 0, "Format before saving", "Use the default formatter before writing a file."
@@ -933,6 +938,10 @@ g_settings:
     # extension management
     SETTING .Ls_updates, extensions, ST_CHOICE, cfg_ext_updates, 0, 2, 1, 0, "Extension updates", "Install reviewed versions by themselves, or only show updates.", .Lextup_opts
     SETTING_ACTION .Ls_updates, check_extensions, cmd_check_extensions, .Lextup_label, g_extup_desc
+    # debugger (debugview.s, debugconsole.s)
+    SETTING .Ls_debug, show_on_start, ST_BOOL, g_debug_show_on_start, 0, 1, 1, 0, "Show the debug view on start", "Open the Variables, Watch, Call Stack and Breakpoints sections and the Debug Console when a session starts."
+    SETTING .Ls_debug, keys_in_terminal, ST_BOOL, g_debug_keys_in_terminal, 0, 1, 1, 0, "Debug keys in the terminal", "While a session runs, F5, F6, F10, F11 and Shift+F5 reach the debugger even when the terminal has focus."
+    SETTING .Ls_debug, console_lines, ST_INT, g_dcon_max, 1000, 100000, 1000, 0, "Debug console lines", "Lines the Debug Console keeps; older ones go."
     SETTING .Ls_remote, agent_binary, ST_STR, cfg_remote_agent_binary, 0, 0, 0, 0, "Remote agent binary", "A Linux rhun to start on remote hosts. Empty uses this release's own."
     # testing (testgutter.s)
     SETTING .Ls_testing, gutter, ST_BOOL, cfg_test_gutter, 0, 1, 1, 0, "Test buttons in the gutter", "A run button and the result at each test's first line."

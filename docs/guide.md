@@ -446,6 +446,34 @@ PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame
 
 The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
+### Notebooks
+
+A notebook file an extension provides for (the `jupyter` extension reads and writes `.ipynb`)
+opens in a notebook tab: its cells one under the other, each with its language's colors and every
+editor command, and under a code cell its outputs (text with its colors, errors, images). The
+toolbar runs all cells, interrupts or restarts the kernel and clears the outputs; the button at
+its right picks the kernel. Clicking a cell's `[ ]` column runs it.
+
+| Mode | Key | Action |
+| --- | --- | --- |
+| edit | Esc | command mode |
+| edit | Shift+Enter, Ctrl+Enter, Alt+Enter | run and select the next cell, run, run and insert a cell below |
+| edit | Up on the first line, Down on the last | the previous or next cell |
+| command | Enter | edit the selected cell |
+| command | Up / k, Down / j | select the previous or next cell |
+| command | a, b | insert a code cell above, below |
+| command | d d, z | delete the cell, undo the last cell operation |
+| command | m, y | make the cell Markdown, code |
+| command | Alt+Up, Alt+Down | move the cell |
+| command | i i, 0 0 | interrupt, restart the kernel (asks) |
+| command | o | hide or show the cell's outputs |
+
+Kernels run as you, outside the extension's sandbox: the first time a notebook extension starts
+one in a project, rhun shows the command and asks (Allow or Cancel); Forget on the extension's
+page takes the permission back. Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
+and opens whole in a tab of its own. Every action is in the command palette as Notebook: ....
+Notebook: Reopen as Text shows the file itself.
+
 ### Multiple cursors
 
 Several selections edit together: typing, Backspace and Delete (by character and by word), Enter, Tab and Shift+Tab, Indent and Outdent, Cut, Copy and Paste act at every one, as one Undo step that also brings the selections back. The newest selection is the primary: the view follows it and the status bar shows its position and how many selections there are.
@@ -467,6 +495,35 @@ With the mouse, Alt+click adds a caret (on a caret, removes it), Alt+drag adds a
 Arrows, Home, End, word and page moves move every selection, each keeping its own column on short lines; selections that come to overlap become one. Duplicate Line, Delete Line, Move Line Up/Down, Toggle Comment, Insert Line Below/Above and Select Line act on the lines of every selection. Commands about one place (find next, Go to Line, completion, Go to Definition, rename, code actions) keep the primary alone first, and completion does not open by itself while there are several selections.
 
 In Vim mode, `gb` adds a cursor at the next occurrence of the word under the cursor (of the selection in visual mode); Ctrl+D keeps paging. Motions with counts, `i a I A o O`, visual mode, `x X D C s S dd cc yy`, operators with a motion or text object (`ciw`), `p P` and `.` act at every cursor as one undo step; `u` brings the cursors back. Yanks at several cursors are one copy with a piece each, which `p` puts back paired. Esc in insert mode keeps the cursors, each stepping back a character; Esc in normal mode leaves the primary alone. Searches, `:`, `J`, `r`, `~`, `>` and `<` go back to the primary first.
+
+### Folding
+
+The fold lane right of the line numbers shows a down chevron on each line that starts a foldable
+region while the pointer is over the gutter, and a right chevron on folded lines; a click folds or
+unfolds. A folded line ends in a ` ⋯ ` pill, which unfolds when clicked. Regions come from
+indentation, as in VS Code: a line starts one when the next non-blank line is indented deeper, and
+the region ends before the next line indented no deeper, so a closing brace stays visible. An
+extension that provides folding ranges for the file's language (a language server's, through the
+lsp extension) gives the regions instead, with their own collapsed text in the pill; until it has
+answered, and after it stops, indentation decides.
+
+| Keys | Command |
+| --- | --- |
+| Ctrl+Shift+[ | Fold: the innermost region at the cursor |
+| Ctrl+Shift+] | Unfold: the folds on the cursor's line |
+| Ctrl+K Ctrl+0 | Fold All, at every depth (unfolding an outer fold shows the inner ones still folded) |
+| Ctrl+K Ctrl+J | Unfold All |
+
+Toggle Fold and Fold Level 1 to 3 are in the command palette. In Vim mode `za` toggles, `zc` folds,
+`zo` opens, `zM` folds all and `zR` opens all. On macOS Ctrl is Command.
+
+Folded lines are skipped by Up, Down, Page Up, Page Down and `j`/`k`, and the caret never stops
+inside a fold: Right at a folded line's end goes to the line after the fold. Anything that puts the
+caret inside hidden text opens the fold (Go to Line, find, Go to Definition, undo). Delete Line,
+Duplicate Line, Move Line and Copy or Cut without a selection take a folded line with its hidden
+lines. An edit inside a fold's hidden lines, or one that joins its first line with the next, removes
+the fold. Folds are kept with the session and in reopened tabs. `folding = false` under `[editor]`
+(**Folding** in Settings) turns the lane and folding off.
 
 ### Vim mode
 
@@ -554,6 +611,12 @@ string = #a6e3a1
 
 Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors. `git_added`, `git_modified` and `git_deleted` color changes in the gutter, tabs, explorer and diffs.
 
+Extensions' text inside the editor has its own colors: `inlay` and `inlay_bg` for inlay hints, a
+fold's pill and other virtual text, `ghost` for inline completion, `codelens` for code lens,
+`highlight` and `highlight_write` for the other occurrences of the symbol under the cursor, and
+`info` and `hint` for those diagnostics. A theme that leaves them out gets them from its other
+colors.
+
 The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
 
 On Omarchy the theme list starts with Follow Omarchy (`omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there, for both modes, until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
@@ -611,6 +674,17 @@ print-state
 
 Commands: `key`, `type`, `click x y [right|middle|shift|ctrl]` (ctrl is Cmd+click on macOS), `move`, `down`, `up`, `up-down` (a release and the next press in one frame), `scroll dy [MODS]` (modifiers as a key combination names them: `ctrl`, `shift+alt`), `open`, `cmd`, `shot`, `wait`, `wait-git`, `wait-agents` (until session discovery finishes), `agents-more`, `print-agents-page`, `print-agents-runs` (discovery runs started so far), `print-agents` (sessions and an optional open session number), `wait-grep` (until find in files has read the project), `wait-term TEXT` (until the terminal shows TEXT), `wait-update`, `resize`, `print-doc`, `print-state`, `print-project`, `print-panels` (whether the explorer, the agents panel and the terminal are shown), `print-palette`, `print-menu`, `print-tip` (the tooltip on screen), `print-term`, `print-term-cell ROW COL` (the middle of that terminal cell), `print-link` (the terminal link under the pointer), `print-settings` (the rows the Settings page shows, `section.key` each), `print-scroll` (the editor's horizontal scroll, its vertical one in 1/256 lines, the horizontal limit and the scrollbar's track), `scroll-x dx` (a sideways wheel), `print-git`, `print-gitlog`, `print-scm`, `print-update`, `print-frames`, `print-shape` (the mouse cursor's CUR_* value), `appearance dark|light|unknown` (the system's dark mode changes, as a platform reports it), `print-appearance` (that mode, `follow_system`, the three theme settings and the theme shown), `focus out|in` (the window loses or gets the keyboard, as a platform reports it), `echo`, `quit`. A headless run takes the system's mode from `RHUN_APPEARANCE` (`dark` or `light`). `cmd` runs anything from the command palette by its snake case name.
 
+Managing extensions: `ext-install OWNER/NAME[@VERSION]` and `wait-install` (then `print-dialog`,
+`dialog yes|no`), `ext-install-folder PATH [copy|link]`, `ext-install-archive PATH`,
+`ext-rollback NAME`, `print-ext-versions NAME` (`version= source= tag= previous= link= fresh=`),
+`ext-check-updates`, `wait-ext-updates` (until the check and the updates it queued are done, or a
+dialog asks), `print-ext-updates` (a line per extension: `installed= latest=
+state=current|available|asks|skipped|error`), `ext-update NAME`, `ext-update-all`, `ext-browse`,
+`ext-index-refresh`, `wait-index`, `ext-search TEXT`, `print-ext-browse` (the Browse list with
+each card's button) and `ext-browse-install NAME`. `RHUN_EXT_BASE` points installs, checks and the
+index at another place than `https://github.com` (tests use a `file://` tree or a local server);
+`RHUN_EXT_UPDATE_EVERY=MS` turns on automatic checks in a headless run, every MS milliseconds.
+
 ## Extensions
 
 Extensions are separate programs that rhun starts and talks to over their standard input and
@@ -666,6 +740,23 @@ active file's symbols, follows the cursor, and Enter goes to one. In the peek bo
 a location, Enter opens it, Escape closes it, and typing goes on in the editor. `[editor]
 lightbulb = no` turns the lightbulb off; `format_on_type` and `format_on_paste` (both off by
 default) let the formatter tidy lines as you type or paste.
+
+Extensions can also fill **trees and logs** that rhun draws and keeps: sections in the sidebar
+under the Explorer (click a header to fold it), tabs in the bottom panel after the terminals
+(`ctrl+j` **Toggle Panel** shows or hides the panel without starting a shell), tabs in the right
+column beside the Agents panel (**Toggle Side Views**), or a tab of their own. Trees keep your
+expansion and selection as the extension updates them: arrows move and fold, Enter opens, Space
+ticks a checkbox, typing jumps to a label, Shift+F10 opens the item's menu, and the buttons in the
+header and on the hovered row run the extension's actions. Logs follow their end while it is in
+view; `ctrl+f` finds a line, `ctrl+c` copies the selected lines. Showing a view starts its
+extension if it is not running.
+
+**Notifications** from extensions stack at the bottom right: info goes after 8 seconds, warnings
+after 12 (the pointer over a card keeps it), errors and questions stay until you answer or close
+them. **Focus Notifications** gives them the keyboard (Up/Down between cards, Left/Right between
+buttons, Enter, Delete closes, Escape back); **Clear All Notifications** closes them all.
+**Progress** shows in the status bar (click it for a card with Cancel), in a card, or as a bar at
+the top of the extension's view; nothing shows for work that ends within half a second.
 
 Extensions that declare `git = read` read the project's Git data through rhun: the status, the
 blame of a file as you edit it (unsaved lines show as not committed), the history of a file or of

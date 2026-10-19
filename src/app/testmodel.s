@@ -2529,7 +2529,16 @@ FN testmodel_dump_runs
     mov rdi, rbx
     lea rsi, [rip + .Lr_errored]
     call sb_push_cstr
-4:  mov rdi, r13
+4:  cmp dword ptr [r13 + TSR_state], TSRS_ENDED
+    je 41f
+    mov rdi, [r13 + TSR_ext]
+    call testproto_debug_window
+    test eax, eax
+    jz 41f
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_debug_window]
+    call sb_push_cstr
+41: mov rdi, r13
     lea rsi, [rip + run_counts]
     call testmodel_counts
     mov rdi, rbx
@@ -2801,6 +2810,7 @@ FN testmodel_result
 .Lr_ext: .asciz " ext="
 .Lr_profile: .asciz " profile="
 .Lr_state: .asciz " state="
+.Lr_debug_window: .asciz " debug-window"
 .Lr_errored: .asciz " errored-run"
 .Lr_dropped: .asciz " dropped="
 .Lr_procs: .asciz " procs="

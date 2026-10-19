@@ -125,7 +125,8 @@ FN remote_connected
     jmp 9f
 8:  call vfs_reconnected        # watches again, documents compared with the host's files
     call ru_save_pending
-9:  mov dword ptr [rip + g_dirty], 1
+9:  call remote_ext_connected   # extensions that waited for the host (remoteext.s)
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # remote_save_later(doc): a save while the connection is down is made once it is back
