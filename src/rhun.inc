@@ -515,7 +515,16 @@ ENDSTRUCT INI_SIZE
 .equ T_GIT_MOD, T_TERM + 17
 .equ T_GIT_DEL, T_TERM + 18
 .equ T_ICON, T_TERM + 19        # file icons: red orange yellow green blue purple pink cyan grey white
-.equ T_COUNT, T_ICON + 10
+# editor presentation's colors (derived when a theme leaves them out)
+.equ T_INLAY, T_ICON + 10       # inlay hints' text, and their pill
+.equ T_INLAY_BG, T_INLAY + 1
+.equ T_GHOST, T_INLAY + 2       # inline completion's text
+.equ T_CODELENS, T_INLAY + 3
+.equ T_HIGHLIGHT, T_INLAY + 4   # document highlights, and the written ones
+.equ T_HIGHLIGHT_WRITE, T_INLAY + 5
+.equ T_INFO, T_INLAY + 6        # info and hint diagnostics
+.equ T_HINT, T_INLAY + 7
+.equ T_COUNT, T_INLAY + 8
 
 .macro COLOR reg, slot
     mov \reg, [rip + g_theme + 4*(\slot)]
@@ -1090,13 +1099,15 @@ F MK_owner, 8           # EXT*
 F MK_start, 8           # byte positions, half-open
 F MK_end, 8
 F MK_sev, 4             # SEV_*
-F MK_pad, 4
+F MK_pad, 4             # MKF_SOURCE, and MKT_* tags (feature diagnostic-tags)
 F MK_msg, 8             # cstr (owned)
 ENDSTRUCT MK_SIZE
 .equ SEV_ERROR, 0
 .equ SEV_WARNING, 1
 .equ SEV_INFO, 2
 .equ SEV_HINT, 3
+.equ MKT_UNNECESSARY, 2         # MK_pad: faded (a hint then draws no underline)
+.equ MKT_DEPRECATED, 4          # MK_pad: struck through
 .equ MARKS_MAX, 2000
 .equ MARK_MSG_MAX, 200
 .equ HOVER_MAX, 4000
@@ -1507,6 +1518,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_SIGNATURE_LIST, "signature-list", 1  # signatures
     # editor presentation (deco.s ...)
     FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
+    FEATURE FEAT_DIAG_TAGS, "diagnostic-tags", 0  # SEVERITY+TAG in diagnostics: faded, struck
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks

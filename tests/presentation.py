@@ -299,6 +299,45 @@ class Presentation(Base):
         self.assertEqual(first[3], '1')
         self.assertGreater(int(last[3]), 1)
 
+    # ---------------- stage 3: diagnostic tags ----------------
+
+    def cell_luma(self, path, line, c1, c2):
+        """The brightest pixel of the cells [c1, c2) of a line, and the color at the row's middle
+        a third of the way along."""
+        out = self.run_p([f'print-xy {line} {c1}', f'print-xy {line} {c2}'])
+        (x1, y), (x2, _) = (tuple(map(int, l.split())) for l in out[:2])
+        lh = 21
+        best = 0
+        for x in range(x1, x2):
+            for yy in range(y - lh // 2 + 2, y + lh // 2 - 2):
+                r, g, b = host.ppm_pixel(path, x, yy)
+                best = max(best, r + g + b)
+        return best, host.ppm_pixel(path, x1 + (x2 - x1) // 3, y)
+
+    def test_diagnostic_tags_fade_and_strike(self):
+        body = '2 5 2 8 hint+unnecessary unused binding\n3 5 3 8 warning+deprecated+future old\n'
+        self.steps({'a': [['diagnostics {DOC} {VER} 2 {LEN}', body]]},
+                   hello='hello 1 decorations diagnostic-tags')
+        tagged = self.shot(self.start(), 'tagged.ppm')
+        self.assertEqual(self.replies(), ['ok 1'])
+        self.steps({'a': [['diagnostics {DOC} {VER} 2 {LEN}', '2 5 2 8 hint unused\n3 5 3 8 warning old\n']]})
+        plain = self.shot(self.start(), 'plain.ppm')
+        faded, _ = self.cell_luma(tagged, 2, 5, 8)
+        normal, _ = self.cell_luma(plain, 2, 5, 8)
+        self.assertLess(faded, normal * 0.8)
+        _, mid = self.cell_luma(tagged, 3, 5, 8)
+        _, mid_plain = self.cell_luma(plain, 3, 5, 8)
+        self.assertNotEqual(mid, mid_plain)
+        out = self.run_p(['print-xy 3 5'])
+        x, y = map(int, out[0].split())
+        fg = host.ppm_pixel(tagged, x + 2, y)
+        self.assertEqual(fg, host.ppm_pixel(tagged, x + 9, y))   # one line through the cells
+
+    def test_tags_need_the_feature(self):
+        self.steps({'a': [['diagnostics {DOC} {VER} 1 {LEN}', '2 5 2 8 hint+unnecessary unused\n']]})
+        self.run_p(self.start())
+        self.assertTrue(self.replies()[0].startswith('error 1 syntax'), self.replies())
+
     # ---------------- stage 2: the glyph lane ----------------
 
     def test_glyph_api_clicks_edits_and_tips(self):

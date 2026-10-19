@@ -3368,7 +3368,7 @@ draw_line:
     movzx ecx, byte ptr [rcx + r13]
     lea rdx, [rip + g_theme]
     mov r9d, [rdx + rcx*4 + 4*T_SYN]
-    cmp dword ptr [rip + g_deco_spans], 0
+    cmp dword ptr [rip + g_row_fx], 0
     je 94f
     mov rdi, r13                # a decoration's text color (deco.s)
     mov esi, r9d

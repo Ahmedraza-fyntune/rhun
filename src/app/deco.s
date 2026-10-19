@@ -13,6 +13,7 @@
 .include "rhun.inc"
 
 .equ SP_MAX, 256                # color spans per row
+.equ MF_MAX, 64                 # faded parts from tagged marks per row
 .equ SP_SIZE, 24                # from, to (offsets in the line), color, flags
 .equ SPF_COLOR, 1
 .equ SPF_FADED, 2
@@ -44,6 +45,12 @@ pieces: .long 0                 # pieces drawn this frame
 .globl g_deco_spans
 g_deco_spans: .long 0
 sp_i: .quad 0
+.globl g_row_fx
+g_row_fx: .long 0               # the row has text-color spans or faded parts (deco_span_color)
+.p2align 3
+mf_n: .quad 0                   # the row's faded parts from tagged marks
+mf_i: .quad 0
+mf_buf: .zero MF_MAX * 16
 sp_buf: .zero SP_MAX * SP_SIZE
 sp_tmp: .zero SP_MAX * SP_SIZE
 # scrollbar ticks, per pixel row of the track
@@ -1551,9 +1558,11 @@ FN deco_row_back
     PROLOGUE 32
     mov dword ptr [rip + g_deco_spans], 0
     mov qword ptr [rip + sp_i], 0
+    mov dword ptr [rip + g_row_fx], 0
+    mov rbx, [rip + g_row_doc]
+    call marks_fx               # diagnostics tagged unnecessary fade their text
     cmp qword ptr [rip + dw_n], 0
     je 9f
-    mov rbx, [rip + g_row_doc]
     cmp [rip + dw_doc], rbx
     jne 9f
     mov r13, [rbx + DOC_pres]
@@ -1600,6 +1609,95 @@ FN deco_row_back
     mov ecx, [rip + g_lh]
     call gfx_fill
     jmp 1b
+9:  mov eax, [rip + g_deco_spans]
+    add eax, [rip + mf_n]
+    mov [rip + g_row_fx], eax
+    EPILOGUE
+
+# marks_fx(rbx doc): the row's parts that marks tagged unnecessary cover, as sorted, merged
+# intervals in mf_buf (offsets in the line)
+marks_fx:
+    PROLOGUE
+    mov qword ptr [rip + mf_n], 0
+    mov qword ptr [rip + mf_i], 0
+    mov r12, [rbx + DOC_xmarks]
+    test r12, r12
+    jz 9f
+    xor r13d, r13d
+1:  cmp r13, [r12 + VEC_len]
+    jae 5f
+    imul r14, r13, MK_SIZE
+    add r14, [r12 + VEC_ptr]
+    inc r13
+    test dword ptr [r14 + MK_pad], MKT_UNNECESSARY
+    jz 1b
+    mov rdi, r14
+    call mark_live
+    test eax, eax
+    jz 1b
+    mov rax, [r14 + MK_start]
+    sub rax, [rip + g_row_lstart]
+    mov rdx, [r14 + MK_end]
+    sub rdx, [rip + g_row_lstart]
+    cmp rax, [rip + g_row_from]
+    jge 2f
+    mov rax, [rip + g_row_from]
+2:  cmp rdx, [rip + g_row_to]
+    jle 3f
+    mov rdx, [rip + g_row_to]
+3:  cmp rax, rdx
+    jge 1b
+    # insert sorted by start
+    mov rcx, [rip + mf_n]
+    cmp rcx, MF_MAX
+    jae 1b
+    lea r8, [rip + mf_buf]
+4:  test rcx, rcx
+    jz 41f
+    mov r10, rcx
+    shl r10, 4
+    mov r9, [r8 + r10 - 16]
+    cmp r9, rax
+    jle 41f
+    mov [r8 + r10], r9
+    mov r9, [r8 + r10 - 8]
+    mov [r8 + r10 + 8], r9
+    dec rcx
+    jmp 4b
+41: mov rdi, rcx
+    shl rdi, 4
+    mov [r8 + rdi], rax
+    mov [r8 + rdi + 8], rdx
+    inc qword ptr [rip + mf_n]
+    jmp 1b
+5:  # overlapping ones merged
+    lea r8, [rip + mf_buf]
+    xor ecx, ecx                # read
+    xor edx, edx                # write
+6:  cmp rcx, [rip + mf_n]
+    jae 8f
+    mov rax, rcx
+    shl rax, 4
+    mov r9, [r8 + rax]
+    mov r10, [r8 + rax + 8]
+    inc rcx
+    test rdx, rdx
+    jz 7f
+    mov rax, rdx
+    shl rax, 4
+    cmp r9, [r8 + rax - 8]
+    jg 7f
+    cmp r10, [r8 + rax - 8]
+    jle 6b
+    mov [r8 + rax - 8], r10
+    jmp 6b
+7:  mov rax, rdx
+    shl rax, 4
+    mov [r8 + rax], r9
+    mov [r8 + rax + 8], r10
+    inc rdx
+    jmp 6b
+8:  mov [rip + mf_n], rdx
 9:  EPILOGUE
 
 # piece_count() -> ZF 1 when the frame's piece budget is spent (keeps rax, rdx)
@@ -1719,9 +1817,10 @@ span_paint:
 # decoration's color, faded halfway to the background; offsets come in ascending order
 FN deco_span_color
     mov eax, esi
+    xor r9d, r9d                # faded
     mov rcx, [rip + sp_i]
 1:  cmp ecx, [rip + g_deco_spans]
-    jae 9f
+    jae 4f
     imul rdx, rcx, SP_SIZE
     lea r8, [rip + sp_buf]
     add rdx, r8
@@ -1730,11 +1829,30 @@ FN deco_span_color
     inc rcx
     jmp 1b
 2:  cmp [rdx], rdi
-    ja 9f
+    ja 4f
     test dword ptr [rdx + 20], SPF_COLOR
     jz 3f
     mov eax, [rdx + 16]
 3:  test dword ptr [rdx + 20], SPF_FADED
+    jz 4f
+    mov r9d, 1
+4:  mov [rip + sp_i], rcx
+    # the marks' faded parts
+    mov rcx, [rip + mf_i]
+    lea r8, [rip + mf_buf]
+5:  cmp rcx, [rip + mf_n]
+    jae 7f
+    mov rdx, rcx
+    shl rdx, 4
+    cmp [r8 + rdx + 8], rdi
+    ja 6f
+    inc rcx
+    jmp 5b
+6:  cmp [r8 + rdx], rdi
+    ja 7f
+    mov r9d, 1
+7:  mov [rip + mf_i], rcx
+    test r9d, r9d
     jz 9f
     COLOR r8d, T_BG
     and eax, 0xfefefe
@@ -1743,12 +1861,12 @@ FN deco_span_color
     shr r8d, 1
     add eax, r8d
     or eax, 0xff000000
-9:  mov [rip + sp_i], rcx
-    ret
+9:  ret
 
 # deco_row_front(): the row's strikethroughs, underlines and borders (over the glyphs)
 FN deco_row_front
     PROLOGUE 48
+    call marks_strike           # diagnostics tagged deprecated
     cmp qword ptr [rip + dw_n], 0
     je 9f
     mov rbx, [rip + g_row_doc]
@@ -1842,6 +1960,56 @@ FN deco_row_front
     mov r8d, [rsp + 16]
     call gfx_fill
     jmp .Lrf_each
+9:  EPILOGUE
+
+# marks_strike(): a line through the row's parts that marks tagged deprecated cover
+marks_strike:
+    PROLOGUE 16
+    mov rbx, [rip + g_row_doc]
+    mov r12, [rbx + DOC_xmarks]
+    test r12, r12
+    jz 9f
+    xor r13d, r13d
+1:  cmp r13, [r12 + VEC_len]
+    jae 9f
+    imul r14, r13, MK_SIZE
+    add r14, [r12 + VEC_ptr]
+    inc r13
+    test dword ptr [r14 + MK_pad], MKT_DEPRECATED
+    jz 1b
+    mov rdi, r14
+    call mark_live
+    test eax, eax
+    jz 1b
+    mov rax, [r14 + MK_start]
+    sub rax, [rip + g_row_lstart]
+    mov rdx, [r14 + MK_end]
+    sub rdx, [rip + g_row_lstart]
+    cmp rax, [rip + g_row_from]
+    jge 2f
+    mov rax, [rip + g_row_from]
+2:  cmp rdx, [rip + g_row_to]
+    jle 3f
+    mov rdx, [rip + g_row_to]
+3:  cmp rax, rdx
+    jge 1b
+    mov [rsp], rdx
+    mov rdi, rax
+    call piece_x
+    mov r15d, eax
+    mov rdi, [rsp]
+    call piece_x
+    sub eax, r15d
+    jle 1b
+    mov edx, eax
+    mov edi, r15d
+    mov esi, [rip + g_lh]
+    shr esi, 1
+    add esi, [rip + g_row_y]
+    M ecx, MI_1
+    COLOR r8d, T_FG
+    call gfx_fill
+    jmp 1b
 9:  EPILOGUE
 
 # underline_draw(style, argb, x, w, row y): a line under [x, x + w) in one of the US_* styles
