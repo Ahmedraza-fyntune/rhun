@@ -786,6 +786,10 @@ of them:
   (Gemini CLI, Aider, a local model): they appear with the built-in ones, with the extension's
   badge, the model, the age and whether the agent works or waits for you, and open as the same
   conversation view. Settings > Agents has a switch for each such source.
+- **Talk to those agents.** When the extension allows it, its sessions get a box under the
+  conversation: Enter sends (Shift+Enter for a new line), Stop interrupts the agent while it
+  works, and the agent's questions show as cards with a button per answer (keys 1 to 9 pick).
+  The `+` button in the panel's header starts a new session of that agent.
 - **The Review tab.** An extension, or an agent through the MCP bridge, can propose a change. rhun
   shows it in a Review tab: each file with its added and removed lines, each change with a few
   lines around it. Accept or reject a file, a single change, or everything: the buttons on each
