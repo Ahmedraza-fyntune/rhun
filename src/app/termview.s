@@ -880,13 +880,7 @@ session_spawn:
     mov rax, [rsp + PGM_argv]
     mov rdi, [rax]
     mov rsi, [rsp + 40]
-    cmp dword ptr [rip + g_remote], 0     # remote hosts: the host finds it in its PATH
-    je .Lss_which
-    call dup_cstr
-    jmp .Lss_which_done
-.Lss_which:
     call uproc_which
-.Lss_which_done:
     mov [rsp + 32], rax
     test rax, rax
     jz .Lss_notfound
@@ -894,7 +888,7 @@ session_spawn:
     call run_folder
     mov [rsp + 48], rax
     mov rdi, rax
-    call vfs_is_dir
+    call file_is_dir
     test eax, eax
     jz .Lss_nofolder
     # the login environment could not be read: the first program's tab says so
@@ -911,8 +905,6 @@ session_spawn:
     lea rdi, [rip + msg]
     call sb_clear
 1:  mov rax, [rbx + TS_term]
-    cmp dword ptr [rip + g_remote], 0
-    jne .Lss_remote
     mov edi, [rax + TM_cols]
     mov esi, [rax + TM_rows]
     call pty_open
@@ -941,7 +933,6 @@ session_spawn:
     SYS SYS_close
     test r15, r15
     jg 2f
-.Lss_spawn_fail:
     mov edi, r12d
     SYS SYS_close
     mov rdi, r14
@@ -1032,29 +1023,6 @@ session_spawn:
     lea rsi, [rip + .Lerr_folder2]
     call sb_push_cstr
     jmp .Lss_fail
-.Lss_remote:
-    # remote hosts: on the host, through uproc so it is signalled and ended as the others (vfs.s)
-    mov ecx, [rax + TM_cols]
-    mov r8d, [rax + TM_rows]
-    mov rax, [rsp + PG_argv]
-    mov r14, [rax]              # the name
-    mov rdx, [rsp + 32]
-    mov [rax], rdx
-    mov rdi, rax
-    mov rsi, [rsp + 40]
-    mov rdx, [rsp + 48]
-    push 5                      # a pty, uproc's
-    push 5
-    call vfs_uproc_spawn
-    add rsp, 16
-    mov r15, rax
-    mov r12d, edx               # master
-    mov rax, [rsp + PG_argv]
-    mov [rax], r14
-    test r15, r15
-    jg 2b
-    mov r12d, -1
-    jmp .Lss_spawn_fail
 .Lss_nopty:
     mov rax, [rsp + PGM_argv]
     mov rdi, [rax]
