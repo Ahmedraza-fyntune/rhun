@@ -1383,6 +1383,15 @@ rv_ask:
     mov rsi, [rip + evbuf + SB_ptr]
     mov rdx, [rip + evbuf + SB_len]
     call ext_send
+    mov rcx, [rsp]              # resources group: the request's kind and time
+    mov rdi, r15
+    mov rsi, [rcx + PQ_req]
+    lea rdx, [rip + .Lq_vkids + 1]
+    mov ecx, 5
+    cmp r13d, 1
+    je 5f
+    lea rdx, [rip + .Lq_vmore + 1]
+5:  call extres_req_sent
     mov eax, 1
     EPILOGUE
 8:  xor eax, eax
