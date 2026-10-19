@@ -991,7 +991,8 @@ arg_value:
     lea rdx, [rip + .Lm_int]
     call err_key
     jmp .Lav_fail
-3:  mov rdi, r12
+3:  call int_normalize           # 007 is 7: JSON numbers have no leading zeros
+    mov rdi, r12
     mov rsi, r13
     mov edx, 1
     mov ecx, 'n'
@@ -1149,6 +1150,40 @@ arg_value:
 .Lav_ok:
     mov eax, 1
     EPILOGUE
+
+# int_normalize(): valb (an int_text) without leading zeros, and -0 as 0, in place
+int_normalize:
+    mov rdi, [rip + valb + SB_ptr]
+    mov rsi, [rip + valb + SB_len]
+    xor ecx, ecx                # the digits' start
+    cmp byte ptr [rdi], '-'
+    jne 1f
+    mov ecx, 1
+1:  mov rdx, rcx                # the first digit kept
+2:  lea rax, [rdx + 1]
+    cmp rax, rsi
+    jae 3f
+    cmp byte ptr [rdi + rdx], '0'
+    jne 3f
+    inc rdx
+    jmp 2b
+3:  # write: the sign (unless the number is 0), then the digits from rdx
+    mov r8, rcx                 # out
+    lea rax, [rdx + 1]
+    cmp rax, rsi
+    jne 4f
+    cmp byte ptr [rdi + rdx], '0'
+    jne 4f
+    xor r8d, r8d                # -0: no sign
+4:  mov al, [rdi + rdx]
+    mov [rdi + r8], al
+    inc r8
+    inc rdx
+    cmp rdx, rsi
+    jb 4b
+    mov [rip + valb + SB_len], r8
+    mov byte ptr [rdi + r8], 0
+    ret
 
 # int_text(ptr, len) -> eax 1 for -?[0-9]+ (at most 18 digits)
 int_text:
@@ -1495,6 +1530,7 @@ subst_one:
     call cn_find
     test eax, eax
     js 35f
+    mov edi, eax
     call cn_node
     cmp dword ptr [rax + CN_kind], 0
     jne 35f

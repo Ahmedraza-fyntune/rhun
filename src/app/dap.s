@@ -95,7 +95,9 @@ ds_alloc:
     cmp dword ptr [rbx + DS_state], DSS_ENDED
     jne 11f
     cmp dword ptr [rbx + DS_pid], 0
-    je 2f
+    jne 11f
+    cmp dword ptr [rbx + DS_pgrp], 0
+    je 2f                       # a group still to be killed keeps the slot
 11: inc r12d
     jmp 1b
 2:  mov rdi, rbx
@@ -143,6 +145,8 @@ ds_free_mem:
     mov dword ptr [rbx + DS_nargs], 0
     mov dword ptr [rbx + DS_reading], 0
     mov qword ptr [rbx + DS_exited_at], 0
+    mov dword ptr [rbx + DS_more], 0
+    mov dword ptr [rbx + DS_pgrp], 0
     mov qword ptr [rbx + DS_dbg_ext], 0
     mov qword ptr [rbx + DS_wq_off], 0
     EPILOGUE
@@ -684,6 +688,7 @@ ds_tick:
     call time_us
     mov r14, rax                # start
     xor r13d, r13d              # messages
+    mov dword ptr [rbx + DS_more], 1    # until a frame turns out incomplete: the budget stops it
 2:  cmp r13d, DAP_MSGS_TICK
     jae 5f
     call time_us
@@ -693,7 +698,10 @@ ds_tick:
     mov rdi, rbx
     call dap_frame
     test rax, rax
-    jz 5f
+    jnz 21f
+    mov dword ptr [rbx + DS_more], 0    # what is left is incomplete: input wakes the loop
+    jmp 5f
+21: test rax, rax
     js .Ltk_bad
     mov r15, rcx                # bytes to drop
     mov [rsp], rdx
@@ -769,10 +777,10 @@ FN dap_timeout
     jz 8f
     cmp eax, DSS_APPROVAL
     je 8f
-    # unparsed bytes from the adapter, or a closed output not yet handled: the next frame
+    # complete messages waiting, or a closed output not yet handled: the next frame
     cmp eax, DSS_ENDED
     je 4f
-    cmp qword ptr [rbx + DS_rbuf + SB_len], 0
+    cmp dword ptr [rbx + DS_more], 0
     jne 5f
     test dword ptr [rbx + DS_flags], DSF_EOF
     jnz 5f
@@ -979,9 +987,27 @@ ds_end:
     inc dword ptr [rip + g_dap_gen]
 9:  EPILOGUE
 
-# reap(ds): nothing to do: uproc_end took the ended adapter over (kept for the tick's shape)
+# reap(ds): an adapter that exited before its session ended left its process group: SIGKILL to it
+#   when SIGTERM's second is up (uproc_end looks after adapters still running)
 reap:
-    ret
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + DS_pgrp], 0
+    je 9f
+    mov rax, [rbx + DS_killat]
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    call time_ms
+    cmp rax, r12
+    jb 9f
+    mov edi, [rbx + DS_pgrp]
+    neg edi
+    mov esi, SIGKILL
+    call proc_kill
+    mov dword ptr [rbx + DS_pgrp], 0
+    mov qword ptr [rbx + DS_killat], 0
+9:  EPILOGUE
 
 # adapter_gone(ds): its output closed. After terminated or disconnect that is the normal end; before,
 #   it crashed: the reason names its exit code and its last error lines
@@ -995,20 +1021,31 @@ adapter_gone:
     call ds_end
     EPILOGUE
 1:  # its exit code, once it has exited (half a second at most after its output closed)
+    mov r13d, -1
     mov edi, [rbx + DS_pid]
     test edi, edi
     jz 11f
     mov esi, 1
     call uproc_wait
-    mov r13d, eax
-    test eax, eax
-    jns 12f
-    call time_ms
+    cmp eax, -1
+    je 10f
+    mov r13d, eax               # its code, or -2: reaped elsewhere; not ours to wait for either way
+    jmp 12f
+10: call time_ms
     sub rax, [rbx + DS_exited_at]
     cmp rax, 500
     jb 9f                       # the next frame looks again
     jmp 11f
-12: mov dword ptr [rbx + DS_pid], 0
+12: # reaped: what it started is still its group's: SIGTERM now, SIGKILL in 1 s (reap)
+    mov edi, [rbx + DS_pid]
+    mov [rbx + DS_pgrp], edi
+    mov dword ptr [rbx + DS_pid], 0
+    neg edi
+    mov esi, SIGTERM
+    call proc_kill
+    call time_ms
+    add rax, 1000
+    mov [rbx + DS_killat], rax
 11: lea rdi, [rip + dlg_text]
     lea rsi, [rip + .Lm_crash]
     call cstr_copy
@@ -1221,6 +1258,13 @@ FN dap_shutdown
     mov rdi, rbx
     xor esi, esi
     call ds_end                 # uproc_end: its quit kills what is left
+    mov edi, [rbx + DS_pgrp]    # and a group an exited adapter left
+    test edi, edi
+    jz 6f
+    neg edi
+    mov esi, SIGKILL
+    call proc_kill
+    mov dword ptr [rbx + DS_pgrp], 0
 6:  inc r12d
     jmp 5b
 9:  EPILOGUE
@@ -1586,6 +1630,41 @@ r_none:
     mov edi, [rbx + DS_id]
     mov esi, DCON_ERROR
     call dcon_line
+9:  EPILOGUE
+
+# r_resume(ds, root, body, success, pd): continue, next, stepIn or stepOut refused: the program is
+#   still paused there; the stack is asked for again (its references were given up)
+r_resume:
+    PROLOGUE
+    mov rbx, rdi
+    test ecx, ecx
+    jnz 9f
+    mov rdi, rsi
+    mov rsi, rdx
+    call resp_message
+    mov rcx, rdx
+    mov rdx, rax
+    mov edi, [rbx + DS_id]
+    mov esi, DCON_ERROR
+    call dcon_line
+    cmp dword ptr [rbx + DS_state], DSS_RUNNING
+    jne 9f
+    mov rdi, rbx
+    call new_epoch
+    mov dword ptr [rbx + DS_state], DSS_PAUSED
+    and dword ptr [rbx + DS_flags], ~DSF_STALE
+    mov rdi, rbx
+    lea rsi, [rip + .Lc_threads]
+    call dap_req_begin
+    mov rdi, rbx
+    mov esi, RQ_THREADS
+    mov edx, 1
+    call dap_req_send
+    cmp qword ptr [rbx + DS_thread], 0
+    je 9f
+    mov rdi, rbx
+    mov esi, 1
+    call send_stack
 9:  EPILOGUE
 
 # r_disconnect(ds, ...): the adapter should exit now; it gets 2 s
@@ -3271,6 +3350,8 @@ FN dap_resume
     mov esi, RQ_RESUME
     xor edx, edx
     call dap_req_send
+    test eax, eax
+    jz 9f                       # it did not go out: still paused
     mov dword ptr [rbx + DS_state], DSS_RUNNING
     inc dword ptr [rbx + DS_epoch]
     or dword ptr [rbx + DS_flags], DSF_STALE
@@ -3978,7 +4059,7 @@ event_table:
     .quad 0, 0
 resp_table:     # by RQ_*
     .quad 0, r_initialize, r_launch, r_none, r_config, r_config, r_config, r_threads, r_stack
-    .quad r_scopes, r_variables, r_none, r_none, r_none, r_none, r_disconnect, r_none, r_excinfo
+    .quad r_scopes, r_variables, r_none, r_resume, r_none, r_none, r_disconnect, r_none, r_excinfo
     .quad r_none, r_repl, r_watch, r_hover, 0
 resume_cmds:
     .quad .Lc_continue, .Lc_next, .Lc_stepIn, .Lc_stepOut

@@ -7,7 +7,8 @@ condition (NAME == VALUE over the step's locals) and hit count hold; logpoints p
 Variables come from locals, with references allocated per stop. FAKEDAP_MODE (comma-separated)
 picks behaviours: orderings (init-early, init-after-launch, launch-after-config, seq0), bad
 framing (split, coalesce, junk-stdout, no-length, bad-json, big=N, flood=N), failures (slow=MS,
-crash-at=STEP, ignore-terminate, ignore-disconnect, launch-fail, no-init-response,
+crash-at=STEP, ignore-terminate, ignore-disconnect, launch-fail, no-init-response, fail-step,
+orphan, partial-pause,
 no-terminate-cap, no-cond-caps, preserve-focus), lifetimes (strict-refs), features (exceptions, stderr). Every message is logged
 to FAKEDAP_LOG. Standard library only; run with -I."""
 import json
@@ -323,6 +324,12 @@ def handle(req):
                 event('output', {'category': 'stdout', 'output': 'flood %d\n' % k})
         if 'bad-json' in MODE:
             write_raw(b'Content-Length: 5\r\n\r\n{bad}')
+        if 'partial-pause' in MODE:
+            body = json.dumps({'seq': 999, 'type': 'event', 'event': 'output',
+                               'body': {'category': 'stdout', 'output': 'after the pause\n'}}).encode()
+            write_raw(b'Content-Length: %d\r\n\r\n' % len(body) + body[:10])
+            time.sleep(2)
+            write_raw(body[10:])
         if 'no-length' in MODE:
             write_raw(b'Content-Length: none\r\n\r\n')
         if 'launch-after-config' in MODE:
@@ -432,6 +439,9 @@ def handle(req):
     if cmd == 'setVariable':
         respond(req, {'value': args.get('value')})
         return
+    if cmd in ('next', 'stepIn', 'stepOut') and 'fail-step' in MODE:
+        respond(req, success=False, message='cannot step here')
+        return
     if cmd in ('continue', 'next', 'stepIn', 'stepOut'):
         respond(req, {'allThreadsContinued': True} if cmd == 'continue' else {})
         prog.run(cmd)
@@ -464,9 +474,25 @@ def handle(req):
     respond(req, success=False, message='unknown request ' + cmd)
 
 
+def orphan():
+    """a child in the adapter's process group that ignores SIGTERM and outlives the adapter"""
+    import signal
+    pid = os.fork()
+    if pid == 0:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        os.close(0)
+        os.close(1)
+        time.sleep(60)
+        os._exit(0)
+    log('orphan %d' % pid)
+
+
 def main():
     log('pid %d' % os.getpid())
     log('session %s cwd %s' % (os.environ.get('RHUN_DEBUG_SESSION'), os.getcwd()))
+    log('argv ' + ' '.join(sys.argv[1:]))
+    if 'orphan' in MODE:
+        orphan()
     if 'junk-stdout' in MODE:
         write_raw(b'hello from the program\nmore junk\n')
     while True:

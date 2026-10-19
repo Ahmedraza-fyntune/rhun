@@ -95,7 +95,11 @@ bp_ensure:
     jmp 1f
 2:  test rsi, rsi
     jz 9f
-1:  call bp_load
+1:  # another project: what belongs to the one before is saved first (under its own name)
+    cmp dword ptr [rip + save_due], 0
+    je 3f
+    call bp_save
+3:  call bp_load
 9:  add rsp, 8
     pop rcx
     pop rdx
@@ -1387,10 +1391,20 @@ FN bp_load
     inc dword ptr [rip + g_bp_gen]
     EPILOGUE
 
-# debug_file() -> rax the state file's path (static), or 0 without a project
+# debug_file() -> rax the state file's path (static) for the project the state was loaded for, or 0
+#   without one
 debug_file:
+    push rbx
+    mov rbx, [rip + g_project]
+    mov rax, [rip + loaded_for]
+    test rax, rax
+    jz 1f
+    mov [rip + g_project], rax
     lea rdi, [rip + .Lsuffix]
-    jmp session_project_file
+    call session_project_file
+    mov [rip + g_project], rbx
+1:  pop rbx
+    ret
 
 # field_next(ptr*, end) -> unescaped next tab-separated field in `field` (NUL-terminated); rax its
 #   length, -1 at the end of the line
@@ -1652,9 +1666,9 @@ FN bp_save
     lea rdi, [rip + line]
     lea rsi, [rip + .Lrec_b]
     call sb_push_cstr
-    # inside the project: relative
+    # inside the project (the one the state belongs to): relative
     mov r13, [rbx + BP_path]
-    mov r14, [rip + g_project]
+    mov r14, [rip + loaded_for]
     test r14, r14
     jz 2f
     mov rdi, r14

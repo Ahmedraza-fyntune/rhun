@@ -2583,6 +2583,8 @@ F DS_args, SB_SIZE      # the adapter's argv, each NUL-terminated (copied from g
 F DS_nargs, 4
 F DS_reading, 4         # 1 while its output is watched (0: the read buffer is full)
 F DS_exited_at, 8       # time_ms the adapter's output closed, 0 before
+F DS_more, 4            # 1: complete messages wait for the next frame (the tick's budget ran out)
+F DS_pgrp, 4            # an exited adapter's process group still to be killed at DS_killat, 0 none
 F DS_dbg_ext, 8         # the debugger's EXT* when the session started
 F DS_pend, PD_SIZE*DS_PEND
 ENDSTRUCT DS_SIZE

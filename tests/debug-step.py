@@ -123,6 +123,27 @@ class Step(debughost.DebugHost):
         self.assertIn("error name 'nope' is not defined", out)
         self.assertIn('repl', ' '.join(self.requests()))
 
+    def test_watch_edits_while_answers_are_on_their_way(self):
+        # review: answers to an earlier round landed under the wrong expressions
+        self.variables_scenario()
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'debug-watch add total', 'debug-watch add p.x',
+                               'debug-watch remove total', 'wait 300', 'print-watch'], mode='slow=50')
+        self.assertEqual(out[out.index('debug=paused') + 1:], ['p.x = 1 : int'])
+
+    def test_refused_step_leaves_the_program_paused(self):
+        # review: a failed next/stepIn/stepOut left the session "running"
+        self.variables_scenario()
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'debug-step over', 'wait-debug paused',
+                               'print-debug', 'print-vars', 'print-console', 'debug-continue', 'wait-debug paused',
+                               'print-debug'], mode='fail-step')
+        sessions = self.debug_lines(out)
+        self.assertEqual(self.field(sessions[0], 'state'), 'paused', out)
+        self.assertTrue(self.field(sessions[0], 'at').endswith(':6'), out)
+        self.assertIn('  total = 0 : int', out)             # its variables were asked for again
+        self.assertIn('error cannot step here', out)
+        self.assertEqual(self.field(sessions[1], 'state'), 'ended', out)    # continue still works: to the end
+        self.assertEqual(self.field(sessions[1], 'exit'), '3', out)
+
 
 if __name__ == '__main__':
     unittest.main()
