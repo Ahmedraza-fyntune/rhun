@@ -1667,6 +1667,9 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_WORKSPACE_FOLDERS, "workspace-folders", 0
     # notebooks (wider-parity A: nbdoc.s, nbproto.inc)
     FEATURE FEAT_NOTEBOOKS, "notebooks", 1        # nb-open, nb-save; runs and outputs
+    FEATURE FEAT_VIEW_LOG, "view-log", 0          # views group: log views (with view-tree)
+    FEATURE FEAT_NOTIFY, "notify", 0              # views group: notify, notify-set, unnotify
+    FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1783,6 +1786,7 @@ F TAB_flags, 8
 ENDSTRUCT TAB_SIZE
 # TAB_flags
 .equ TF_PIN, 1                  # pinned: the pinned tabs are the first ones in the strip
+.equ TF_RVIEW, 2                # TAB_VIEW: a retained view's tab (rview.s); the slot field is its instance
 
 .equ SIDEBAR_W_DEFAULT, 240        # points: the explorer's and the agents panel's widths
 .equ AGENTS_W_DEFAULT, 380
@@ -3148,6 +3152,7 @@ ENDSTRUCT ND_SIZE
 .equ NF_CHECKED, 128
 .equ NF_SEL, 256                # selected (multi-select)
 .equ NF_MOREWAIT, 512           # "Load more" was asked for
+.equ NF_PCOUNT, 1024            # a patch check counted its bytes out (cleared after the check)
 .equ NDI_FILE, 0x40000000
 # the store's callbacks for its owner; a zero entry is not called
 STRUCT
@@ -3162,7 +3167,16 @@ F TRO_more, 8           # more(ctx, tr, parent): its "Load more" row came on scr
 F TRO_retry, 8          # retry(ctx, tr, node): Retry on its error row
 F TRO_load, 8           # load(ctx, tr, node): it is expanded and on screen with its children not
                         #   given: they are wanted (NF_LOADING is set until tree_kids_end)
+F TRO_action, 8         # action(ctx, tr, node, key, keylen): one of its inline buttons was pressed
 ENDSTRUCT TRO_SIZE
+# an action a tree's nodes may show as inline buttons (record "inline LEN" + keys): tree_set_actions
+STRUCT
+F TA_key, 8             # its key's bytes
+F TA_keylen, 8
+F TA_icon, 4            # IC_*, -1: its title as text
+F TA_pad, 4
+F TA_title, 8           # cstr: the tooltip (or the text)
+ENDSTRUCT TA_SIZE
 STRUCT
 F TR_nodes, VEC_SIZE    # ND
 F TR_free, 8            # first free slot, -1 for none
@@ -3190,6 +3204,10 @@ F TR_hover, 4           # the row under the pointer, -1
 F TR_typed_at, 8        # when the last character came
 F TR_loading_at, 8      # when a Loading row first showed (it waits 300 ms)
 F TR_user, 8            # its owner's value
+F TR_actions, 8         # TA records the inline keys are looked up in (tree_set_actions), or 0
+F TR_nactions, 8
+F TR_selanchor, 4       # multi-select: where a Shift range starts
+F TR_pad2, 4
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame

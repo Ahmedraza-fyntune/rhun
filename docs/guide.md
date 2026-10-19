@@ -674,6 +674,23 @@ commands:
 | F2 | Rename | on a word, asks for the new name, then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
 | shift+alt+f | Format Document | with the document's tab width and spaces |
 
+Extensions can also fill **trees and logs** that rhun draws and keeps: sections in the sidebar
+under the Explorer (click a header to fold it), tabs in the bottom panel after the terminals
+(`ctrl+j` **Toggle Panel** shows or hides the panel without starting a shell), tabs in the right
+column beside the Agents panel (**Toggle Side Views**), or a tab of their own. Trees keep your
+expansion and selection as the extension updates them: arrows move and fold, Enter opens, Space
+ticks a checkbox, typing jumps to a label, Shift+F10 opens the item's menu, and the buttons in the
+header and on the hovered row run the extension's actions. Logs follow their end while it is in
+view; `ctrl+f` finds a line, `ctrl+c` copies the selected lines. Showing a view starts its
+extension if it is not running.
+
+**Notifications** from extensions stack at the bottom right: info goes after 8 seconds, warnings
+after 12 (the pointer over a card keeps it), errors and questions stay until you answer or close
+them. **Focus Notifications** gives them the keyboard (Up/Down between cards, Left/Right between
+buttons, Enter, Delete closes, Escape back); **Clear All Notifications** closes them all.
+**Progress** shows in the status bar (click it for a card with Cancel), in a card, or as a bar at
+the top of the extension's view; nothing shows for work that ends within half a second.
+
 Extensions that declare `git = read` read the project's Git data through rhun: the status, the
 blame of a file as you edit it (unsaved lines show as not committed), the history of a file or of
 some lines, a file at an older commit, and rhun's diff view of two commits. rhun runs git for them,
