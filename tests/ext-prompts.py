@@ -222,6 +222,13 @@ class Prompts(unittest.TestCase):
         self.assertTrue(self.logged('agent-prompt - 12 from a click'))
         self.assertIn('ok 3 2', self.agent_log())
 
+    def test_a_click_in_the_box_focuses_it_and_a_click_elsewhere_leaves(self):
+        out = self.editor(['cmd focus_agents', 'print-agents 1', 'wait 300', 'click 760 548', 'wait 50',
+                           'type typed after a click', 'print-agent-input', 'click 300 300', 'wait 50',
+                           'type x', 'print-agent-input'])
+        self.assertEqual(self.inputs(out), ['input=typed after a click focus=1 new=- pending=0',
+                                            'input=typed after a click focus=0 new=- pending=0'])
+
     def test_without_the_feature_there_is_no_box(self):
         out = self.editor(['print-agents 1', 'wait 300', 'cmd acme/gem.ask', 'wait 300',
                            'agent-prompt hello', 'wait 300', 'print-agent-input'], hello='hello 1 agents')
