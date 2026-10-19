@@ -204,8 +204,8 @@ word_is:
     mov rdi, [rax + rdi]
     jmp str_eq_cstr
 
-# word(i) -> rax ptr, rdx len
-word:
+# tk_word(i) -> rax ptr, rdx len
+tk_word:
     lea rax, [rip + words]
     shl rdi, 4
     mov rdx, [rax + rdi + 8]
@@ -693,7 +693,7 @@ FN tasks_request
     call reg_of
     mov r14, rax
     mov edi, 2
-    call word
+    call tk_word
     mov rdi, r14
     mov rsi, rax
     call reg_find

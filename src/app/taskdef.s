@@ -89,8 +89,8 @@ split:
     mov eax, ecx
     ret
 
-# word(i) -> rax ptr, rdx len
-word:
+# def_word(i) -> rax ptr, rdx len
+def_word:
     lea rax, [rip + words]
     shl rdi, 4
     mov rdx, [rax + rdi + 8]
@@ -100,7 +100,7 @@ word:
 # word_num(i) -> rax the decimal number, edx 1 when it is one (1 to 9 digits)
 word_num:
     push rbx
-    call word
+    call def_word
     mov rcx, rdx
     xor edx, edx
     test rcx, rcx
@@ -126,7 +126,7 @@ word_num:
 # word_is(i, cstr) -> eax 1 when word i is that text
 word_is:
     push rsi
-    call word
+    call def_word
     pop rdi
     xchg rdi, rax               # rdi word, rax cstr
     mov rsi, rdx
@@ -295,7 +295,7 @@ FN def_parse
     mov [rsp + 40], rax         # the whole definition
     # the id
     xor edi, edi
-    call word
+    call def_word
     mov r13, rax
     mov r14, rdx
     cmp dword ptr [rsp + 56], 0
@@ -604,7 +604,7 @@ record:
     cmp r13, 3
     jne .Lrc_syntax
     mov edi, 1
-    call word
+    call def_word
     mov r14, rax
     mov r15, rdx
     mov rdi, rax
@@ -659,7 +659,7 @@ record:
     test r12, r12
     jnz .Lrc_syntax
     mov edi, 1
-    call word
+    call def_word
     mov r14, rax
     mov r15, rdx
     mov rdi, rax
@@ -878,7 +878,7 @@ record:
     test r12, r12
     jnz .Lrc_syntax
     mov edi, 1
-    call word
+    call def_word
     mov rdi, rax
     mov rsi, rdx
     call matcher_builtin
