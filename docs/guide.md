@@ -771,6 +771,15 @@ keeps the copy in `$XDG_STATE_HOME/rhun/extension-index.ini` and shows it offlin
 The website's [catalog](https://rhun.app/extensions/catalog/) lists the same extensions with
 Install links that open rhun.
 
+#### Packs
+
+A pack installs several extensions at once: its manifest's `pack = OWNER/NAME …` names them (at
+most 16). Installing it downloads the pack and every member you do not have, then asks once:
+"Add “Essentials” and 3 extensions?", a line per member with what it can do, and a line for any
+that could not be downloaded; **Add** installs everything that downloaded. A pack has no program
+of its own. Its page lists its members, each with **Remove** or **Install**; removing the pack
+keeps them. An update of a pack that names a new member asks before adding it.
+
 **Remove** stops the extension and deletes its folder, its previous version, its saved data and
 log, its settings, pin and on/off choice, the provider choices that name it (rhun asks again
 rather than switching silently) and what rhun knew about its updates. Your `[keys]` stay.

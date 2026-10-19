@@ -560,7 +560,12 @@ draw_detail:
     call section
     mov rdi, rbx
     call draw_permissions
-    # the pin
+    mov rdi, rbx
+    call draw_pack              # extension management: a pack's members
+    test eax, eax
+    jz 52f
+    EPILOGUE                    # a member's button changed the records
+52: # the pin
     lea rsi, [rip + .Ls_toolbar]
     call section
     lea rdi, [rip + g_face_ui]
@@ -2803,6 +2808,138 @@ xp_pv: .zero EXT_SIZE           # an entry's needs, for ext_needs_words
 xp_perm: .zero SB_SIZE          # what an entry can do, in words
 
 .text
+# ---------------- extension management: a pack's members ----------------
+
+# draw_pack(ext) -> eax 1 when a button was clicked: "In this pack": each member's title (or name)
+# and state, with Remove for one installed and Install for one that is not
+draw_pack:
+    PROLOGUE 16
+    mov rbx, rdi
+    xor eax, eax
+    mov r12, [rbx + EXT_pack]
+    test r12, r12
+    jz 9f
+    lea rsi, [rip + .Ls_pack]
+    call section
+    xor r15d, r15d              # members
+1:  mov rdi, r12
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    call next_word
+    add r12, rcx
+    test rdx, rdx
+    jz 8f
+    cmp rdx, 200
+    jae 1b
+    mov r13, rax
+    mov r14, rdx
+    lea rdi, [rip + xp_buf]
+    mov rsi, r13
+    push rdx
+    push rdx
+    call memcpy
+    pop rdx
+    pop rdx
+    lea rax, [rip + xp_buf]
+    mov byte ptr [rax + rdx], 0
+    mov rdi, r13
+    mov rsi, r14
+    call ext_by_name
+    mov [rsp], rax              # the member's record, or 0
+    # its name, then its state on the right with its button
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + xp_buf]
+    COLOR edx, T_FG
+    mov ecx, MI_32
+    mov r8d, [rip + xp_x]
+    call text_at_keep
+    lea rsi, [rip + .Lb_install_one]
+    cmp qword ptr [rsp], 0
+    je 2f
+    lea rsi, [rip + .Lb_remove]
+2:  mov [rsp + 8], rsi
+    mov rdi, rsi
+    call label_width
+    mov esi, [rip + xp_x]
+    add esi, [rip + xp_w]
+    sub esi, eax
+    mov edi, r15d
+    add edi, ID_XM + 0x3000
+    mov edx, [rip + xp_y]
+    mov rcx, [rsp + 8]
+    xor r8d, r8d
+    call button
+    test eax, UB_CLICK
+    jz 4f
+    mov rdi, [rsp]
+    test rdi, rdi
+    jz 3f
+    call ext_remove_ask
+    mov eax, 1
+    jmp 9f
+3:  lea rdi, [rip + xp_buf]
+    call strlen
+    lea rdi, [rip + xp_buf]
+    mov rsi, rax
+    call ext_install_start
+    mov eax, 1
+    jmp 9f
+4:  M eax, MI_40
+    add [rip + xp_y], eax
+    inc r15d
+    jmp 1b
+8:  xor eax, eax
+9:  EPILOGUE
+
+# dump_pack(): rbx's "pack OWNER/NAME=installed|missing …" onto r12, when it is a pack
+dump_pack:
+    PROLOGUE
+    mov r13, [rbx + EXT_pack]
+    test r13, r13
+    jz 9f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_pack]
+    call sb_push_cstr
+1:  mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call next_word
+    add r13, rcx
+    test rdx, rdx
+    jz 8f
+    mov r14, rax
+    mov r15, rdx
+    mov rdi, r12
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, r12
+    mov rsi, r14
+    mov rdx, r15
+    call sb_push
+    mov rdi, r14
+    mov rsi, r15
+    call ext_by_name
+    lea rsi, [rip + .Ld_missing]
+    test rax, rax
+    jz 2f
+    lea rsi, [rip + .Ld_installed]
+2:  mov rdi, r12
+    call sb_push_cstr
+    jmp 1b
+8:  mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+9:  EPILOGUE
+
+.section .rodata
+.Ls_pack: .asciz "In this pack"
+.Ld_pack: .asciz "pack"
+.Ld_installed: .asciz "=installed"
+.Ld_missing: .asciz "=missing"
+
+.text
 # ---------------- for the tests: print-ext-page ----------------
 
 # extpage_dump(sb): the list ("Title version on|off [problem]") or the details of one extension
@@ -2943,7 +3080,8 @@ FN extpage_dump
     mov esi, 10
     call sb_push_byte
     jmp 2b
-7: # extension management: "versions update=0.1.2|- previous=0.1.0|-"
+7: # extension management: a pack's members, "versions update=0.1.2|- previous=0.1.0|-"
+    call dump_pack
     mov rdi, r12
     lea rsi, [rip + .Ld_versions]
     call sb_push_cstr

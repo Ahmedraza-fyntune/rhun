@@ -460,6 +460,7 @@ batch_reset:
     call extrec_pv_free
     jmp 1b
 8:  mov dword ptr [rip + ib_n], 0
+    mov dword ptr [rip + ib_newmembers], 0
     EPILOGUE
 
 # batch_add(owner cstr, name cstr) -> IR*: a request for the latest release, or 0 when the batch is full
@@ -947,16 +948,21 @@ stage:
     mov ecx, 60
     call copy_max
 4:  mov dword ptr [rbx + IR_state], IRS_STAGED
-    # a pack added by hand: its members come along
-    cmp dword ptr [rip + ib_purpose], IP_ADD
-    jne 9f
+    # a pack added (or updated) by hand: its members not installed yet come along; an automatic
+    # update that would add members waits for the user
     cmp dword ptr [rbx + IR_member], 0
     jne 9f
     cmp qword ptr [rbx + IR_pv + EXT_pack], 0
     je 9f
+    cmp dword ptr [rip + ib_purpose], IP_AUTO
+    je 5f
     mov rdi, rbx
     call pack_queue
 9:  EPILOGUE
+5:  mov rdi, rbx
+    call pack_missing
+    mov [rip + ib_newmembers], eax
+    EPILOGUE
 .Lst_bad:
     mov rdi, rbx
     lea rsi, [rip + .Le_manifest]
@@ -1098,6 +1104,29 @@ pack_queue:
     jmp 1b
 9:  EPILOGUE
 
+# pack_missing(pack ir) -> eax 1 when its pack list names an extension that is not installed
+pack_missing:
+    PROLOGUE
+    mov rbx, rdi
+    mov r14, [rbx + IR_pv + EXT_pack]
+1:  mov rdi, r14
+    call strlen
+    mov rdi, r14
+    mov rsi, rax
+    call next_word
+    add r14, rcx
+    test rdx, rdx
+    jz 8f
+    mov rdi, rax
+    mov rsi, rdx
+    call ext_by_name
+    test rax, rax
+    jnz 1b
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # split_full(dst, ptr, len) -> eax 1: "owner/name" into dst (owner) and dst + 112 (name), each a
 # folder name
 split_full:
@@ -1208,6 +1237,8 @@ batch_done:
     call pack_dialog
     EPILOGUE
 .Lbd_update:
+    cmp dword ptr [rip + ib_n], 1
+    ja .Lbd_pack                # a pack's update that adds members asks about them
     mov rdi, rbx
     call update_decide
     EPILOGUE
@@ -1408,7 +1439,26 @@ pack_dialog:
     jne 1b
     inc r12d
     jmp 1b
-2:  lea rdi, [rip + in_title]
+2:  cmp dword ptr [rip + ib_purpose], IP_ADD
+    je 22f
+    # "Update “Essentials” to 0.2.0?"
+    lea rdi, [rip + in_title]
+    lea rsi, [rip + .Lq_update]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, [rbx + IR_pv + EXT_title]
+    call ext_copy_title
+    mov rdi, rax
+    lea rsi, [rip + .Lq_close_to]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, [rbx + IR_pv + EXT_version]
+    mov ecx, 60
+    call copy_max
+    mov byte ptr [rax], '?'
+    mov byte ptr [rax + 1], 0
+    jmp 4f
+22: lea rdi, [rip + in_title]
     lea rsi, [rip + .Lq_add]
     call cstr_copy
     mov rdi, rax
@@ -1487,8 +1537,12 @@ pack_dialog:
     call sb_push_cstr
     jmp 5b
 8:  call text_from_sb
+    mov dword ptr [rip + ib_wider], 1   # Cancel of a pack's update that adds members: it waits
     lea rdx, [rip + .Lb_add]
-    call ask
+    cmp dword ptr [rip + ib_purpose], IP_ADD
+    je 81f
+    lea rdx, [rip + .Lb_update]
+81: call ask
     EPILOGUE
 
 # update_decide(ir): an update is downloaded. One that asks for more, or that nobody reviewed and
@@ -1515,7 +1569,8 @@ update_decide:
     lea rdx, [rip + in_words]
     call ext_needs_wider
     mov r12d, eax
-1:  cmp dword ptr [rip + ib_purpose], IP_AUTO
+1:  or r12d, [rip + ib_newmembers]   # a pack that would add extensions asks too
+    cmp dword ptr [rip + ib_purpose], IP_AUTO
     jne 3f
     test r12d, r12d
     jz 2f
@@ -2380,3 +2435,4 @@ install_script:
 
 .bss
 ib_wider: .long 0               # the update being asked about asks for more
+ib_newmembers: .long 0          # the pack an automatic update fetched names extensions not installed
