@@ -137,6 +137,8 @@ c_print_xy:
     js 8f
     mov r15, rax
     dec r13
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne 5f
     # y: rows from the top line (lines mode)
     mov rax, [rbx + DOC_scrolly]
     mov rcx, rax
@@ -155,15 +157,11 @@ c_print_xy:
     shr eax, 1
     add rdx, rax
     mov r12, rdx
-    # x: the columns before it
+    # x: by the caret's rule over the line's inlays (vtext.s)
     mov rdi, rbx
     mov rsi, r13
-    call doc_line_text
-    mov rdi, rax
-    xor esi, esi
     lea rdx, [r14 - 1]
-    call seg_cols
-    imul eax, [rip + g_cw]
+    call vt_line_x
     add eax, [rip + g_ed_tx]
     sub rax, [rbx + DOC_scrollx]
     mov rdi, rax
@@ -179,6 +177,26 @@ c_print_xy:
 8:  lea rdi, [rip + .Ls_none]
     call out_cstr
     mov rax, -1
+    EPILOGUE
+5:  # wrapped lines
+    mov rdi, rbx
+    mov rsi, r15
+    call wrap_xy
+    add eax, [rip + g_ed_tx]
+    add edx, [rip + g_ed_y]
+    mov ecx, [rip + g_lh]
+    shr ecx, 1
+    add edx, ecx
+    mov r12d, edx
+    mov edi, eax
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov edi, r12d
+    call out_u64
+    mov edi, 10
+    call out_byte
+    xor eax, eax
     EPILOGUE
 
 # ---------------- print-hit ----------------
@@ -223,7 +241,16 @@ c_print_hit:
     call pos_at_point_editor
     mov r15, rax
     lea rdi, [rip + .Ls_text]
+    cmp qword ptr [rip + g_vt_hit], 0
+    je 3f
+    lea rdi, [rip + .Ls_inlay]  # "inlay KIND L C": an inlay at that gap
     call out_cstr
+    call vt_hit_kind
+    lea rcx, [rip + kind_words]
+    mov rdi, [rcx + rax*8]
+    call out_cstr
+    lea rdi, [rip + .Ls_space]
+3:  call out_cstr
     mov rdi, rbx
     mov rsi, r15
     call put_pos
@@ -605,6 +632,7 @@ pres_ctl:                       # (control.s's ctl_tables)
     .quad .Lc_probe_plant, c_probe_plant
     .quad 0, 0
 lane_words: .quad 0, .Ls_left, .Ls_digits, .Ls_fold, .Ls_git
+kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Lc_print_view: .asciz "print-viewport"
 .Lc_print_xy: .asciz "print-xy"
 .Lc_print_hit: .asciz "print-hit"
@@ -620,6 +648,13 @@ lane_words: .quad 0, .Ls_left, .Ls_digits, .Ls_fold, .Ls_git
 .Ls_content: .asciz " content="
 .Ls_none: .asciz "none\n"
 .Ls_text: .asciz "text "
+.Ls_inlay: .asciz "inlay "
+.Ls_space: .asciz " "
+.Lk_ghost: .asciz "ghost"
+.Lk_fold: .asciz "fold"
+.Lk_hint: .asciz "hint"
+.Lk_deco: .asciz "deco"
+.Lk_swatch: .asciz "swatch"
 .Ls_left: .asciz "left-lane "
 .Ls_digits: .asciz "digits "
 .Ls_fold: .asciz "fold-lane "

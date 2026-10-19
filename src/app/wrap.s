@@ -77,8 +77,14 @@ FN break_text
     pop rcx
     jmp 3f
 2:  mov eax, 1
-3:  # eax = width, edx = bytes
-    lea r8d, [r15 + rax]
+3:  # eax = width, edx = bytes; the inlays at its gap are glued to it (vtext.s)
+    cmp qword ptr [rip + bt_n], 0
+    je 31f
+    mov rdi, rcx
+    mov r8d, eax
+    call vt_bt_at
+    add eax, r8d
+31: lea r8d, [r15 + rax]
     cmp r8d, [rsp]
     jle 5f
     cmp rcx, r14
@@ -110,6 +116,11 @@ FN break_text
 # line_breaks(doc, line) -> rows (wb_starts filled)
 FN line_breaks
     push rbx
+    push rdi
+    push rsi
+    call vt_bt_set              # its inlays count (vtext.s)
+    pop rsi
+    pop rdi
     call doc_line_text
     mov rdi, rax
     mov rsi, rdx
@@ -141,6 +152,8 @@ FN pos_in_row
     mov r12, rsi
     mov r13d, edx
     mov [rsp], ecx
+    mov qword ptr [rip + g_vt_hit], 0
+    call vt_bt_set              # the line's inlays (vtext.s)
     mov rdi, rbx
     mov rsi, r12
     call doc_line_start
@@ -191,7 +204,27 @@ FN pos_in_row
     pop rcx
     jmp 4f
 3:  mov eax, 1
-4:  # stop if the target column lies in this character (nearest edge)
+4:  # the inlays at its gap: the target on one of them is the gap
+    cmp qword ptr [rip + bt_n], 0
+    je 41f
+    push rax
+    push rdx
+    push rcx
+    push rcx
+    mov rdi, rcx
+    mov esi, [rsp + 32]
+    sub esi, ebx
+    call vt_bt_hit
+    mov r8d, edx
+    pop rcx
+    pop rcx
+    pop rdx
+    pop r9
+    add ebx, eax
+    test r8d, r8d
+    jnz .Lpr_done
+    mov eax, r9d
+41: # stop if the target column lies in this character (nearest edge)
     lea r8d, [rbx + rax]
     cmp r8d, [rsp]
     jle 5f
@@ -284,11 +317,22 @@ FN cursor_row
     call doc_line_text
     lea rcx, [rip + wb_starts]
     mov esi, [rcx + r15*4]
+    mov r14d, esi
     mov rdi, rax
     mov rdx, r13
     call seg_cols
     mov ecx, eax
-    mov rax, r12
+    cmp qword ptr [rip + bt_n], 0
+    je 1f
+    push rcx
+    push rcx
+    mov edi, r14d               # and the inlays before the caret (vtext.s)
+    mov rsi, r13
+    call vt_bt_before
+    pop rcx
+    pop rcx
+    add ecx, eax
+1:  mov rax, r12
     mov edx, r15d
     EPILOGUE
 
@@ -621,6 +665,60 @@ FN wrap_move
 .Lwm_end:
     mov rdi, rbx
     call doc_len
+    EPILOGUE
+
+# wrap_xy(doc, pos) -> eax the caret's x from the text's left edge, edx the y of its row's top from
+# the view's top (inlays counted; for the headless print-xy)
+FN wrap_xy
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    call doc_line_of
+    mov r13, rax                # line
+    mov rdi, rbx
+    call top_offset
+    neg eax
+    movsxd r14, eax             # y
+    mov r15, [rbx + DOC_scrolly]
+    shr r15, 8
+1:  cmp r15, r13
+    jae 2f
+    mov rdi, rbx
+    mov rsi, r15
+    call line_px
+    add r14, rax
+    inc r15
+    jmp 1b
+2:  mov rdi, rbx
+    mov rsi, r13
+    call doc_line_start
+    sub r12, rax                # offset in the line
+    mov rdi, rbx
+    mov rsi, r13
+    call line_breaks
+    mov edi, r12d
+    mov esi, eax
+    call row_of
+    mov r15d, eax
+    mov eax, r15d
+    imul eax, [rip + g_lh]
+    add r14, rax
+    mov rdi, rbx
+    mov rsi, r13
+    call doc_line_text
+    lea rcx, [rip + wb_starts]
+    mov esi, [rcx + r15*4]
+    mov [rsp], esi
+    mov rdi, rax
+    mov rdx, r12
+    call seg_cols
+    mov [rsp + 4], eax
+    mov edi, [rsp]
+    mov rsi, r12
+    call vt_bt_before
+    add eax, [rsp + 4]
+    imul eax, [rip + g_cw]
+    mov edx, r14d
     EPILOGUE
 
 FN cmd_toggle_word_wrap

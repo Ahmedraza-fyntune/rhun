@@ -328,7 +328,7 @@ FN ed_move
     jne 3f
     mov rdi, rbx
     mov rsi, r14
-    call doc_col_of
+    call vt_doc_col             # visual cells, inlays included (vtext.s)
     mov [rbx + DOC_prefx], rax
 3:  mov rdi, rbx
     mov rsi, r14
@@ -347,7 +347,7 @@ FN ed_move
 5:  mov rdi, rbx
     mov rsi, rax
     mov rdx, [rbx + DOC_prefx]
-    call doc_pos_at_col
+    call vt_doc_pos_at_col
     mov r14, rax
     jmp .Lmv_set_v
 .Lmv_wrap:
@@ -2062,6 +2062,12 @@ pos_at_point:
     call doc_len
     jmp 9f
 2:  # column
+    mov qword ptr [rip + g_vt_hit], 0
+    mov rdi, rbx
+    mov rsi, r14
+    call vt_has
+    test eax, eax
+    jnz 4f
     mov eax, r12d
     sub eax, [rip + g_ed_tx]
     add eax, [rbx + DOC_scrollx]
@@ -2077,6 +2083,17 @@ pos_at_point:
     mov edx, eax
     call doc_pos_at_col
 9:  EPILOGUE
+4:  # a line with inlays: the pixel against its cells (vtext.s)
+    movsxd rdx, r12d
+    movsxd rax, dword ptr [rip + g_ed_tx]
+    sub rdx, rax
+    add rdx, [rbx + DOC_scrollx]
+    jns 5f
+    xor edx, edx
+5:  mov rdi, rbx
+    mov rsi, r14
+    call vt_pos_at
+    EPILOGUE
 
 # drag_scroll(rbx doc, esi px)
 drag_scroll:
@@ -2367,11 +2384,23 @@ FN editor_draw
     mov esi, [rip + g_mx]
     mov edx, [rip + g_my]
     call pos_at_point
+    cmp qword ptr [rip + g_vt_hit], 0
+    jne 14f
     mov rdi, rbx
     mov rsi, rax
     call ext_hover_track
     call ext_hover_tip
     call gutter_unhover
+    jmp 13f
+14: xor edi, edi                # over an inlay: its own tip (vtext.s)
+    xor esi, esi
+    call ext_hover_track
+    mov rdi, rbx
+    call vt_hover
+    call gutter_unhover
+    cmp dword ptr [rip + g_cursor], CUR_TEXT
+    jne 13f
+    mov dword ptr [rip + g_cursor], CUR_DEFAULT
     jmp 13f
 12: xor edi, edi
     xor esi, esi
@@ -2477,6 +2506,16 @@ FN editor_draw
     mov edx, [rip + g_my]
     call pos_at_point
     mov r12, rax
+    cmp qword ptr [rip + g_vt_hit], 0
+    je 313f
+    mov rdi, rbx                # an inlay with a command runs it (vtext.s)
+    call vt_click
+    test eax, eax
+    jz 313f
+    mov dword ptr [rip + g_dragging], 0
+    mov dword ptr [rip + g_active], 0
+    jmp .Led_noinput
+313:
     mov eax, [rip + g_clicks]
     cmp eax, 2
     je .Led_dbl
@@ -3110,6 +3149,7 @@ draw_line:
     mov [rip + g_row_x], eax
     mov eax, [rsp]
     mov [rip + g_row_y], eax
+    call vt_row_set             # its inlays (vtext.s): every x below goes through vt_x
     call deco_row_back
     # ---- selection ----
     mov rax, [rsp + 8]
@@ -3136,25 +3176,22 @@ draw_line:
     jz .Ldl_nosel
 5:  mov [rsp + 48], r8
     mov [rsp + 60], r9d
-    mov rdi, r14
-    mov rsi, [rsp + 96]
-    mov rdx, rax
-    sub rdx, [rsp + 24]
-    mov [rsp + 104], rdx
-    call seg_cols
-    mov [rsp + 56], eax         # start col
-    mov rdi, r14
-    mov rsi, [rsp + 96]
-    mov rdx, [rsp + 48]
-    sub rdx, [rsp + 24]
-    call seg_cols
-    add eax, [rsp + 60]
+    mov rdi, rax
+    sub rdi, [rsp + 24]
+    mov [rsp + 104], rdi
+    mov esi, VTM_RIGHT          # a range covers the inlays after its start, before its end
+    call vt_x
+    mov [rsp + 56], eax         # start x
+    mov rdi, [rsp + 48]
+    sub rdi, [rsp + 24]
+    mov esi, VTM_LEFT
+    call vt_x
+    mov edx, [rsp + 60]
+    imul edx, [rip + g_cw]
+    add eax, edx
     sub eax, [rsp + 56]
-    imul eax, [rip + g_cw]
     mov edx, eax
     mov edi, [rsp + 56]
-    imul edi, [rip + g_cw]
-    add edi, [rsp + 40]
     mov esi, [rsp]
     mov ecx, [rip + g_lh]
     COLOR r8d, T_SELECTION
@@ -3194,6 +3231,8 @@ draw_line:
     jae 63f
     mov [rsp + 48], rdx
     mov [rsp + 104], rax
+    cmp qword ptr [rip + g_row_vt], 0
+    jne 64f
     mov rdi, r14
     mov rsi, [rsp + 112]
     mov rdx, rax
@@ -3227,6 +3266,27 @@ draw_line:
     call gfx_round_rect
 63: add r13, [rip + g_ed_find + SB_len]
     jmp 6b
+64: # a row with inlays: the match's edges by the range rule (vtext.s)
+    mov rdi, [rsp + 104]
+    mov esi, VTM_RIGHT
+    call vt_x
+    mov [rsp + 56], eax
+    cmp eax, [rip + g_cv + CV_cx1]
+    jge .Ldl_nofind
+    mov rdi, [rsp + 48]
+    mov esi, VTM_LEFT
+    call vt_x
+    sub eax, [rsp + 56]
+    mov edx, eax
+    mov edi, [rsp + 56]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_1]
+    mov ecx, [rip + g_lh]
+    sub ecx, [rip + g_mt + 4*MI_2]
+    M r8d, MI_3
+    COLOR r9d, T_MATCH
+    call gfx_round_rect
+    jmp 63b
 .Ldl_nofind:
     # ---- bracket pair ----
     mov qword ptr [rsp + 112], 0
@@ -3243,12 +3303,9 @@ draw_line:
     jb .Ldl_br
     cmp rax, [rsp + 32]
     jae .Ldl_br
-    mov rdi, r14
-    mov rsi, [rsp + 96]
-    mov rdx, rax
-    call seg_cols
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 40]
+    mov rdi, rax
+    mov esi, VTM_RIGHT
+    call vt_x
     mov edi, eax
     mov esi, [rsp]
     add esi, [rip + g_mt + 4*MI_1]
@@ -3270,12 +3327,9 @@ draw_line:
     ja 7f
     cmp dword ptr [rip + dl_last], 0
     je 7f
-71: mov rdi, r14
-    mov rsi, [rsp + 96]
-    mov rdx, rax
-    call seg_cols
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 40]
+71: mov rdi, rax
+    mov esi, VTM_CARET          # the caret touches the text it extends (vtext.s)
+    call vt_x
     mov [rip + g_caret_x], eax
     mov eax, [rsp]
     mov [rip + g_caret_y], eax
@@ -3289,7 +3343,14 @@ draw_line:
     mov eax, [rip + g_cv + CV_cx1]
     mov [rsp + 76], eax
 .Ldl_glyph:
-    cmp r13, [rsp + 32]
+    cmp qword ptr [rip + g_row_vt], 0
+    je 70f
+    mov rdi, r13                # the inlays at this gap (vtext.s)
+    mov esi, [rsp + 64]
+    mov edx, [rsp + 72]
+    call vt_draw_at
+    mov [rsp + 64], eax
+70: cmp r13, [rsp + 32]
     jae .Ldl_guides
     mov eax, [rsp + 64]
     imul eax, [rip + g_cw]
@@ -4136,8 +4197,14 @@ hscroll_measure:
     mov [rip + hs_view], eax
     cmp dword ptr [rip + cfg_word_wrap], 0
     jne 9f
-    mov rdi, rbx
+    cmp rbx, [rip + vt_wide_doc]
+    je 1f
+    mov [rip + vt_wide_doc], rbx    # the widest inlays are measured again per document
+    mov dword ptr [rip + g_vt_widest], 0
+1:  mov rdi, rbx
     call doc_widest
+    mov ecx, [rip + g_vt_widest]
+    add rax, rcx
     call hscroll_extent
 9:  EPILOGUE
 
@@ -4274,6 +4341,8 @@ long_ver: .quad 0
 long_svalid: .quad 0
 long_lang: .quad 0
 long_cls: .zero SB_SIZE
+.p2align 3
+vt_wide_doc: .quad 0            # the document g_vt_widest was measured on
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0

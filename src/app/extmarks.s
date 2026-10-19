@@ -855,24 +855,18 @@ FN extmarks_row
     jne .Lmr_each               # an empty mark at the line's end: one cell wide, below
     inc rdx
 5:  mov [rsp + 40], rdx
-    # x of both ends: columns from the row's start
-    mov rdi, [rsp + 24]
-    mov rsi, [rsp]
-    mov rdx, rax
-    call seg_cols
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 16]
+    # x of both ends, by the range rule over the row's inlays (vtext.s; draw_line set the row)
+    mov rdi, rax
+    mov esi, VTM_RIGHT
+    call vt_x
     mov r8d, eax
-    mov rdi, [rsp + 24]
-    mov rsi, [rsp]
-    mov rdx, [rsp + 40]
+    mov rdi, [rsp + 40]
+    mov esi, VTM_LEFT
     push r8
     push r8
-    call seg_cols
+    call vt_x
     pop r8
     pop r8
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 16]
     sub eax, r8d
     jle .Lmr_each
     mov edi, [r15 + MK_sev]

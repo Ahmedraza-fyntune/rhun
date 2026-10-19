@@ -2982,3 +2982,28 @@ ENDSTRUCT GLE_SIZE
 .equ DECO_EXTRA_MAX, 9000
 .equ DECO_PIECES, 4096          # decoration pieces drawn per frame
 .equ DECO_TICKS, 1024           # scrollbar ticks
+# virtual text (vtext.s): a line's inlays, merged from their sources, in drawing order
+STRUCT
+F VI_off, 8             # the gap it sits at: between bytes off - 1 and off of the line
+F VI_text, 8            # its text (one line, UTF-8)
+F VI_ref, 8             # what it came from (a DR* for a decoration)
+F VI_len, 4
+F VI_cells, 4           # its width in cells
+F VI_side, 1            # VS_AFTER: it belongs to the text before the gap; VS_BEFORE: after it
+F VI_kind, 1            # VK_*
+F VI_flags, 2
+F VI_fg, 4              # text color
+F VI_bg, 4              # its pill's color, 0 for none
+F VI_prio, 4
+ENDSTRUCT VI_SIZE
+.equ VS_AFTER, 0
+.equ VS_BEFORE, 1
+.equ VK_GHOST, 0                # kinds, in their order at one gap among the after ones
+.equ VK_FOLD, 1
+.equ VK_HINT, 2
+.equ VK_DECO, 3
+.equ VK_SWATCH, 4
+.equ VTM_LEFT, 0                # vt_x modes: before every inlay at the gap, after them, the caret's
+.equ VTM_RIGHT, 1
+.equ VTM_CARET, 2
+.equ VT_LINE_MAX, 256           # inlays on one line

@@ -1543,15 +1543,14 @@ row_clip:
     mov rdx, [rip + g_row_to]
 2:  ret
 
-# piece_x(offset) -> eax the x of a byte offset of the row
+# piece_x(offset) -> eax the x where a range starting at the offset starts (after the inlays at
+# its gap); piece_xe(offset): where one ending there ends (before them)
 piece_x:
-    mov rdx, rdi
-    mov rdi, [rip + g_row_text]
-    mov rsi, [rip + g_row_from]
-    call seg_cols
-    imul eax, [rip + g_cw]
-    add eax, [rip + g_row_x]
-    ret
+    mov esi, VTM_RIGHT
+    jmp vt_x
+piece_xe:
+    mov esi, VTM_LEFT
+    jmp vt_x
 
 # deco_row_back(): the row's backgrounds (behind the selection), and its text-color spans
 FN deco_row_back
@@ -1596,7 +1595,7 @@ FN deco_row_back
     call piece_x
     mov [rsp + 8], eax
     mov rdi, [rsp]
-    call piece_x
+    call piece_xe
     sub eax, [rsp + 8]
     jle 1b
     mov [rsp + 12], eax
@@ -1893,7 +1892,7 @@ FN deco_row_front
     call piece_x
     mov [rsp + 8], eax          # x
     mov rdi, [rsp]
-    call piece_x
+    call piece_xe
     sub eax, [rsp + 8]
     jle .Lrf_each
     mov [rsp + 12], eax         # w
@@ -1998,7 +1997,7 @@ marks_strike:
     call piece_x
     mov r15d, eax
     mov rdi, [rsp]
-    call piece_x
+    call piece_xe
     sub eax, r15d
     jle 1b
     mov edx, eax
@@ -2113,6 +2112,237 @@ FN underline_draw
     inc ebx
     jmp 2b
 9:  EPILOGUE
+
+# ---------------- virtual text ----------------
+
+# deco_line_inlays(doc, line): the decorations' before and after texts on the line, to vt_add
+# (from the window when the line is in it, else from all ranges)
+FN deco_line_inlays
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, [rbx + DOC_pres]
+    test r13, r13
+    jz 9f
+    cmp qword ptr [r13 + PRS_deco + VEC_len], 0
+    je 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_start
+    mov [rsp], rax              # the line's start
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_end
+    mov [rsp + 8], rax          # its line feed
+    xor r14d, r14d              # the window's or the ranges' index
+    mov qword ptr [rsp + 16], 0 # 1: through the window
+    cmp [rip + dw_doc], rbx
+    jne 1f
+    cmp r12, [rip + dw_l1]
+    jb 1f
+    cmp r12, [rip + dw_l2]
+    ja 1f
+    mov qword ptr [rsp + 16], 1
+1:  cmp qword ptr [rsp + 16], 0
+    je 2f
+    cmp r14, [rip + dw_n]
+    jae 9f
+    mov rdi, r14
+    call win_at
+    jmp 3f
+2:  cmp r14, [r13 + PRS_deco + VEC_len]
+    jae 9f
+    mov eax, r14d
+    call type_of
+3:  inc r14
+    mov r15, rcx                # DR*
+    cmp qword ptr [rax + DTY_owner], 0
+    je 1b
+    mov [rsp + 24], rax         # DT*
+    # before: at the range's start
+    test dword ptr [rax + DTY_flags], DTYF_BEFORE
+    jz 4f
+    cmp word ptr [r15 + DR_blen], 0
+    je 4f
+    mov rcx, [r15 + DR_start]
+    cmp rcx, [rsp]
+    jb 4f
+    cmp rcx, [rsp + 8]
+    ja 4f
+    sub rcx, [rsp]
+    mov edx, VS_BEFORE
+    xor r8d, r8d                # the texts' offset: before first
+    movzx r9d, word ptr [r15 + DR_blen]
+    lea r10, [rax + DTY_before]
+    call inlay_add
+4:  mov rax, [rsp + 24]
+    test dword ptr [rax + DTY_flags], DTYF_AFTER
+    jz 1b
+    cmp word ptr [r15 + DR_alen], 0
+    je 1b
+    mov rcx, [r15 + DR_end]
+    cmp rcx, [rsp]
+    jb 1b
+    cmp rcx, [rsp + 8]
+    ja 1b
+    sub rcx, [rsp]
+    mov edx, VS_AFTER
+    movzx r8d, word ptr [r15 + DR_blen]
+    movzx r9d, word ptr [r15 + DR_alen]
+    lea r10, [rax + DTY_after]
+    call inlay_add
+    jmp 1b
+9:  EPILOGUE
+
+# inlay_add(rax DT*, rcx gap, edx side, r8 text offset in the range's texts, r9 length,
+# r10 COLOR* (its background follows); r13 ps, r15 DR*): one inlay to vt_add
+inlay_add:
+    push rbx
+    push r12
+    push r14
+    lea rbx, [rip + vi_tmp]
+    mov [rbx + VI_off], rcx
+    mov [rbx + VI_side], dl
+    mov byte ptr [rbx + VI_kind], VK_DECO
+    mov word ptr [rbx + VI_flags], 0
+    mov [rbx + VI_ref], r15
+    mov ecx, [rax + DTY_prio]
+    mov [rbx + VI_prio], ecx
+    mov ecx, [rax + DTY_width]
+    mov [rbx + VI_cells], ecx
+    mov [rbx + VI_len], r9d
+    mov ecx, [r15 + DR_text]
+    add rcx, r8
+    add rcx, [r13 + PRS_dpool + SB_ptr]
+    mov [rbx + VI_text], rcx
+    mov r12, r10
+    mov rdi, r12
+    call deco_color
+    cmp eax, 1
+    jne 1f
+    COLOR eax, T_FG
+1:  mov [rbx + VI_fg], eax
+    lea rdi, [r12 + 2 * DCS_SIZE]
+    call deco_color
+    cmp eax, 1
+    jne 2f
+    xor eax, eax
+2:  mov [rbx + VI_bg], eax
+    mov rdi, rbx
+    call vt_add
+    pop r14
+    pop r12
+    pop rbx
+    ret
+
+# deco_dr_tip(doc, DR*) -> rax the range's tip (tipbuf), or 0
+FN deco_dr_tip
+    push r13
+    mov r13, [rdi + DOC_pres]
+    xor eax, eax
+    test r13, r13
+    jz 1f
+    cmp word ptr [rsi + DR_tlen], 0
+    je 1f
+    mov rdi, rsi
+    call tip_copy
+1:  pop r13
+    ret
+
+# deco_dr_command(doc, DR*) -> rax an owned CRF of the range's command record, or 0
+FN deco_dr_command
+    PROLOGUE
+    mov r13, [rdi + DOC_pres]
+    test r13, r13
+    jz 8f
+    mov rbx, rsi
+    mov ecx, [rbx + DR_xlen]
+    test ecx, ecx
+    jz 8f
+    mov r14d, ecx
+    mov r12d, [rbx + DR_text]   # the extra records follow before, after and tip
+    movzx eax, word ptr [rbx + DR_blen]
+    add r12, rax
+    movzx eax, word ptr [rbx + DR_alen]
+    add r12, rax
+    movzx eax, word ptr [rbx + DR_tlen]
+    add r12, rax
+    add r12, [r13 + PRS_dpool + SB_ptr]
+    mov rdi, r12
+    mov rsi, r14
+    lea rdx, [rip + .Lx_command]
+    call extra_find
+    test rax, rax
+    jz 8f
+    mov r12, rax
+    mov r14, rdx
+    mov eax, [rbx + DR_type]
+    imul rax, rax, DTY_SIZE
+    add rax, [rip + g_dtypes + VEC_ptr]
+    mov rdi, [rax + DTY_owner]
+    mov rsi, r12
+    mov rdx, r14
+    call cmdref_parse
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# extra_find(ptr, len, name) -> rax the first extra record named so ("NAME ... LEN" LF and LEN
+# bytes), rdx the bytes from it to the end; 0 when there is none or the records are broken
+FN extra_find
+    PROLOGUE 16
+    mov rbx, rdi
+    lea r12, [rdi + rsi]        # end
+    mov r13, rdx
+1:  cmp rbx, r12
+    jae 8f
+    mov rax, rbx                # the line
+2:  cmp rax, r12
+    jae 8f
+    cmp byte ptr [rax], 10
+    je 3f
+    inc rax
+    jmp 2b
+3:  mov r14, rax                # its LF
+    # the name: the first word
+    mov rcx, rbx
+4:  cmp rcx, r14
+    jae 5f
+    cmp byte ptr [rcx], ' '
+    je 5f
+    inc rcx
+    jmp 4b
+5:  mov rdi, rbx
+    mov rsi, rcx
+    sub rsi, rbx
+    mov rdx, r13
+    call str_eq_cstr
+    test eax, eax
+    jnz 7f
+    # LEN: the last word
+    mov rcx, r14
+6:  cmp rcx, rbx
+    jbe 8f
+    cmp byte ptr [rcx - 1], ' '
+    je 61f
+    dec rcx
+    jmp 6b
+61: mov rdi, rcx
+    mov rsi, r14
+    sub rsi, rcx
+    mov [rsp], rsi
+    call parse_u64
+    cmp rdx, [rsp]
+    jne 8f
+    lea rbx, [r14 + 1 + rax]
+    jmp 1b
+7:  mov rax, rbx
+    mov rdx, r12
+    sub rdx, rbx
+    EPILOGUE
+8:  xor eax, eax
+    xor edx, edx
+    EPILOGUE
 
 # ---------------- gutter, scrollbar, tips ----------------
 
@@ -2509,6 +2739,7 @@ FN deco_visible_tick
 
 .section .rodata
 .Lev_visible: .asciz "0 visible "
+.Lx_command: .asciz "command"
 .Le_unknown: .asciz "unknown no such request"
 .Le_line: .asciz "syntax line "
 .Le_toobig_types: .asciz "toobig 64 decoration types per extension, 512 in all"
@@ -2567,4 +2798,5 @@ shape_names: .quad .Ls_dot, .Ls_circle, .Ls_ring, .Ls_square, .Ls_diamond, .Ls_t
 .bss
 .p2align 3
 dt_scratch: .zero DTY_SIZE
+vi_tmp: .zero VI_SIZE
 sp_spare: .zero SP_SIZE

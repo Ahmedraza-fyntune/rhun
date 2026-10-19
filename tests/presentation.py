@@ -338,6 +338,89 @@ class Presentation(Base):
         self.run_p(self.start())
         self.assertTrue(self.replies()[0].startswith('error 1 syntax'), self.replies())
 
+    # ---------------- stage 4: virtual text ----------------
+
+    INLAYS = [
+        ['decoration-type ty {LEN}', 'after inlay inlay_bg\n'],
+        ['decoration-type arg {LEN}', 'before inlay inlay_bg\n'],
+        ['decoration-type blame {LEN}', 'after muted -\n'],
+        # ": i32" after "x" (2:10), "count:" before "x" of line 3 (3:13), blame at line 4's end
+        ['decorate {DOC} {VER} ty 0 0 1 {LEN}', '2 10 2 10 0 5 9 0\n: i32type of x'],
+        ['decorate {DOC} {VER} arg 0 0 1 {LEN}', '3 13 3 13 6 0 0 17\ncount:command a 5\n{"x"}'],
+        ['decorate {DOC} {VER} blame 0 0 1 {LEN}', '4 23 4 23 0 15 0 0\n    you, 2h ago'],
+    ]
+
+    def xy(self, out):
+        return tuple(map(int, out.split()))
+
+    def test_caret_rule_and_columns_around_inlays(self):
+        self.steps({'a': self.INLAYS})
+        out = self.run_p(self.start() + ['print-xy 2 10', 'print-xy 2 11', 'print-xy 3 13', 'print-xy 3 12',
+                                         'print-text-cell 1 1', 'print-text-cell 1 2'])
+        x10, x11, x313, x312 = (self.xy(l)[0] for l in out[-6:-2])
+        cw = self.xy(out[-1])[0] - self.xy(out[-2])[0]
+        # the caret touches "x" before ": i32" (an after inlay), and "x" after "count:" (before)
+        self.assertEqual(x11 - x10, 6 * cw)             # ": i32" and " "
+        self.assertEqual(x313 - x312, 7 * cw)           # " " and "count:"
+
+    def test_clicks_on_inlays(self):
+        self.steps({'a': self.INLAYS}, hello='hello 1 decorations command-args')
+        out = self.run_p(self.start() + ['print-xy 2 10', 'print-xy 3 12'])
+        (x2, y2), (x3, y3) = self.xy(out[-2]), self.xy(out[-1])
+        out = self.run_p(self.start() + [f'print-hit {x2 + 15} {y2}', f'click {x2 + 15} {y2}', 'print-state',
+                                         f'print-hit {x3 + 20} {y3}', f'click {x3 + 20} {y3}', 'wait 300',
+                                         'print-state'])
+        self.assertIn('inlay deco 2 10', out)
+        self.assertIn('inlay deco 3 13', out)
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('line=2 col=10 ', states[0])    # no command: the caret goes to the gap
+        self.assertIn('line=2 col=10 ', states[1])    # a command: it runs, the caret stays
+        runs = self.events('run present.a')
+        self.assertTrue(any(' ref ' in r for r in runs), runs)
+        self.assertIn('{"x"}', self.plog.read_text())
+
+    def test_inlay_tip_and_vertical_motion(self):
+        self.steps({'a': self.INLAYS})
+        out = self.run_p(self.start() + ['print-xy 2 10'])
+        x2, y2 = self.xy(out[-1])
+        out = self.run_p(self.start() + [f'move {x2 + 15} {y2}', 'wait 650', 'print-tip',
+                                         'key ctrl+Home', 'key Down', 'key End', 'key Up', 'key Down',
+                                         'print-state', 'key Down', 'print-state'])
+        self.assertIn('type of x', '\n'.join(out))
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('line=2 col=15 ', states[0])
+        # line 2 ends 19 cells in (": i32" counted): on line 3, 19 cells in is after "x" ("count:" counted)
+        self.assertIn('line=3 col=14 ', states[1])
+
+    def test_inlays_on_wrapped_lines_and_the_scroll_extent(self):
+        long = 'let value = compute(' + ', '.join(f'arg{i}' for i in range(30)) + ');\n'
+        (self.proj / 'w.rs').write_text(long * 3, encoding='utf-8')
+        self.steps({'a': [['decoration-type arg {LEN}', 'before inlay inlay_bg\n'],
+                          ['decorate {DOC} {VER} arg 0 0 1 {LEN}', '2 21 2 21 6 0 0 0\nfirst:'],
+                          ['decoration-type blame {LEN}', 'after muted -\n'],
+                          ['decorate {DOC} {VER} blame 0 0 1 {LEN}',
+                           '3 %d 3 %d 0 80 0 0\n%s' % (len(long), len(long), 'x' * 80)]]})
+        out = self.run_p(self.start() + ['print-scroll'], files=('w.rs',))
+        wide = int(out[-1].split('max=')[1].split()[0])
+        self.steps({'a': []})
+        out = self.run_p(self.start() + ['print-scroll'], files=('w.rs',))
+        narrow = int(out[-1].split('max=')[1].split()[0])
+        self.assertGreater(wide, narrow)
+        self.steps({'a': [['decoration-type arg {LEN}', 'before inlay inlay_bg\n'],
+                          ['decorate {DOC} {VER} arg 0 0 1 {LEN}', '2 21 2 21 6 0 0 0\nfirst:']]})
+        # wrapped: the inlay is under the point, the caret goes to its gap, rows hold their cells
+        # (the setting is saved on exit: each run turns it back off)
+        out = self.run_p(self.start() + ['cmd toggle_word_wrap', 'print-xy 2 20', 'print-xy 2 21',
+                                         'cmd toggle_word_wrap'], files=('w.rs',))
+        (x1, y1), (x2, y2) = self.xy(out[-2]), self.xy(out[-1])
+        self.assertEqual(y1, y2)
+        self.assertGreater(x2 - x1, 6 * 5)              # "(" and "first:"
+        out = self.run_p(self.start() + ['cmd toggle_word_wrap', f'print-hit {x2 - 12} {y1}',
+                                         f'click {x2 - 12} {y1}', 'print-state', 'cmd toggle_word_wrap'],
+                         files=('w.rs',))
+        self.assertIn('inlay deco 2 21', out)
+        self.assertIn('line=2 col=21 ', [l for l in out if l.startswith('tabs=')][0])
+
     # ---------------- stage 2: the glyph lane ----------------
 
     def test_glyph_api_clicks_edits_and_tips(self):
