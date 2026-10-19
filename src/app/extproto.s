@@ -105,6 +105,10 @@ FN extproto_pump
 11: mov rdi, [rbx + EXT_body]
     call mem_free
     mov qword ptr [rbx + EXT_body], 0
+    mov rdi, rbx                # resources group: bytes in
+    mov rsi, [rbx + EXT_body_len]
+    xor edx, edx
+    call extres_in
     mov rdi, [rbx + EXT_body_len]
     add [rbx + EXT_fbytes], rdi
     inc qword ptr [rbx + EXT_win_msgs]
@@ -134,6 +138,10 @@ FN extproto_pump
     mov rsi, r12
     mov rdx, [rsp]
     call sb_push
+    mov rdi, rbx                # resources group: a message in
+    lea rsi, [r14 + 1]
+    mov edx, 1
+    call extres_in
     lea rdi, [r14 + 1]
     add [rbx + EXT_fbytes], rdi
     inc qword ptr [rbx + EXT_win_msgs]
@@ -336,6 +344,8 @@ handle_line:
     jne 4f
     mov dword ptr [rbx + EXT_hello], 1
     mov dword ptr [rbx + EXT_status], ES_RUNNING
+    mov rdi, rbx
+    call extres_hello           # resources group: how long the start took
     call ext_hooks_update
     mov rdi, rbx
     call hello_features         # the features it named that rhun knows, said back before ready
@@ -482,8 +492,20 @@ handle_line:
     jmp 9f
 2:  test r12, r12
     jz 9f
+    mov rdi, rbx                # resources group: slow, dropped
+    mov rsi, r12
+    mov edx, 1
+    call extres_req_answer
     cmp dword ptr [rbx + EXT_feat_asks], 0
     je 9f
+    mov rdi, rbx                # resources group: a virtual document's text (vdoc.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call vdoc_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # language features: counted, and a late answer goes no further
     mov rsi, r12
     mov edx, 1
@@ -558,13 +580,30 @@ handle_line:
     call langfeat_reply
     jmp 9f
 .Lhl_err:
-    cmp dword ptr [rbx + EXT_feat_asks], 0
-    je 9f
     mov edi, 1
     call field_u64
     test edx, edx
     jz 9f
     mov r12, rax
+    mov edi, 2                  # resources group: failed, dropped
+    lea rsi, [rip + .Le_cancelled]
+    call field_is
+    lea edx, [rax + rax]        # 2 for cancelled, 0 for any other error
+    mov rdi, rbx
+    mov rsi, r12
+    call extres_req_answer
+    cmp dword ptr [rbx + EXT_feat_asks], 0
+    je 9f
+    mov edi, 2                  # resources group: a virtual document's error (vdoc.s)
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call vdoc_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # language features: counted, and a late answer goes no further
     mov rsi, r12
     xor edx, edx
@@ -1862,6 +1901,13 @@ h_open:
     mov r13, rax                # col
     mov edi, 4
     call rest_from
+    mov rdi, rax                # resources group: a URI (feature uris; extresproto.inc)
+    mov rsi, rdx
+    mov rdx, r12
+    mov rcx, r13
+    call res_open_uri
+    cmp rax, -1
+    je .Lho_done
     mov rdi, rax
     mov rsi, rdx
     cmp byte ptr [rdi], '/'
@@ -1993,6 +2039,7 @@ h_open:
 .Lho_syntax:
     mov rdi, [rip + cur_id]
     call reply_syntax
+.Lho_done:
     EPILOGUE
 
 # ID diagnostics DOC VERSION N + body -> ok ID: the extension's marks on the document
@@ -3235,6 +3282,13 @@ FN extproto_host_request
     call out_end
     test rax, rax
     js 8f
+    mov rdi, [rsp]              # resources group: the request's kind and time
+    call strlen
+    mov rcx, rax
+    mov rdx, [rsp]
+    mov rdi, rbx
+    mov rsi, r13
+    call extres_req_sent
     mov rax, r13
     EPILOGUE
 8:  xor eax, eax
@@ -3277,6 +3331,14 @@ FN extproto_host_send
     call out_end
     test rax, rax
     js 8f
+    mov rdi, r13                # resources group: the request's kind (its first word) and time
+    mov rsi, r14
+    call next_word
+    mov rcx, rdx
+    mov rdx, rax
+    mov rdi, rbx
+    mov rsi, r15
+    call extres_req_sent
     mov rax, r15
     EPILOGUE
 8:  xor eax, eax
@@ -3362,6 +3424,7 @@ FN extproto_send_cancel
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    call extres_req_cancel      # resources group: an answer after this is dropped
     mov [rip + cur], rbx
     call out_begin
     lea rdi, [rip + .Lev_cancel]
@@ -3672,13 +3735,33 @@ sub_matches:
     jz 8f
     mov rbx, rdi
     mov r12, rsi
+    cmp qword ptr [r12 + DOC_uri], 0
+    jne 2f
     cmp byte ptr [rbx], '*'
     jne 1f
     cmp byte ptr [rbx + 1], 0
     je 9f
-1:  mov rdi, [r12 + DOC_path]
+1:
+    mov rdi, [r12 + DOC_path]
     test rdi, rdi
     jz 8f
+    mov rsi, rbx
+    call ext_path_matches
+    EPILOGUE
+2:  # resources group: a virtual document, only for extensions that agreed uris, by its URI's
+    # last segment
+    mov rdi, [rip + cur]
+    mov esi, FEAT_URIS
+    call ext_feature
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx], '*'
+    jne 3f
+    cmp byte ptr [rbx + 1], 0
+    je 9f
+3:  mov rdi, r12
+    call extproto_uri_segment
+    mov rdi, rax
     mov rsi, rbx
     call ext_path_matches
     EPILOGUE
@@ -3719,6 +3802,9 @@ send_opened:
 2:  mov edi, ' '
     call out_byte
     mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jnz 3f
+    mov rdi, [rbx + DOC_uri]    # resources group: a virtual document's URI
     test rdi, rdi
     jnz 3f
     lea rdi, [rip + .Ldash]
@@ -4437,6 +4523,13 @@ verbs:
     .quad .Lv_git_show, gitdata_h_show, 4096
     .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     .quad .Lv_qd_refresh, scmext_h_qd_refresh, 4096
+    # resources group (extresproto.inc)
+    .quad .Lres_v_busy, h_res_busy, 0
+    .quad .Lres_v_secret_get, h_res_secret_get, 0
+    .quad .Lres_v_secret_set, h_res_secret_set, 65536
+    .quad .Lres_v_secret_delete, h_res_secret_delete, 0
+    .quad .Lres_v_secret_keys, h_res_secret_keys, 0
+    .quad .Lres_v_content_changed, h_res_content_changed, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -4662,6 +4755,7 @@ FN extproto_answer_syntax
     jmp reply_syntax
 
 .include "app/extwatchproto.inc"
+.include "app/extresproto.inc"    # resources group: idle, secrets, urls, uris, files, folders
 .include "app/extaiproto.inc"
 .include "app/nbproto.inc"
 .section .rodata
