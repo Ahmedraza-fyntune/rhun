@@ -3160,7 +3160,12 @@ F NB_reveal, 4          # bring the selected cell into view at the next frame
 F NB_layoutw, 4         # the width the cached heights are for
 F NB_vy, 4              # where its cells were drawn last (physical px), for tests and clicks
 F NB_vh, 4
+F NB_sent, VEC_SIZE     # NBS2 records: per extension, the order of the cells it last heard (A3)
 ENDSTRUCT NB_SIZE
+STRUCT
+F NBS2_ext, 8           # EXT*
+F NBS2_hash, 8          # a hash of the DOC ids of the cells it knows, in order
+ENDSTRUCT NBS2_SIZE
 .equ NBS_OPENING, 0
 .equ NBS_READY, 1
 .equ NBS_FAILED, 2

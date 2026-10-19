@@ -46,6 +46,10 @@ def dumps(out):
     return groups
 
 
+def cells_of(out, i):
+    return next(l for l in out if l.startswith('cell=%d ' % i))
+
+
 def field(line, name):
     m = re.search(r'(?:^| )' + name + r'=(\S*)', line)
     return m.group(1) if m else None
@@ -64,10 +68,11 @@ class Notebooks(unittest.TestCase):
         config.parent.mkdir(parents=True)
         config.write_text(CONFIG, encoding='utf-8')
         self.log = self.work / 'state/rhun/extensions/rhun-tests--nbfake/nb.log'
+        self.cells_log = self.work / 'state/rhun/extensions/rhun-tests--cellfake/cells.log'
         self.env = dict(os.environ, HOME=self.work.as_posix(),
                         XDG_CONFIG_HOME=(self.work / 'config').as_posix(),
                         XDG_STATE_HOME=(self.work / 'state').as_posix(),
-                        NBFAKE_LOG=self.log.as_posix())
+                        NBFAKE_LOG=self.log.as_posix(), CELLFAKE_LOG=self.cells_log.as_posix())
         self.env.pop('NBFAKE_MODE', None)
 
     def tearDown(self):
@@ -253,6 +258,31 @@ class Notebooks(unittest.TestCase):
         self.assertIn('choose=Pick a kernel', out)
         self.assertIn('0 nb-kernel 1', self.fake_log())
         self.assertIn('kernel=Other Kernel', [l for l in out if l.startswith('dirty=')][-1])
+
+    # --- cells for language providers (A3) ---
+
+    def test_cells_reach_language_providers(self):
+        out = self.run_editor(['wait 300', 'key Return', 'key End', 'type  + ', 'cmd complete', 'wait 500',
+                               'print-complete', 'key Return', *SETTLE, 'print-notebook', 'key Escape', 'nb-select 2',
+                               'key d', 'key d', *SETTLE, 'wait 300'])
+        log = self.cells_log.read_text(encoding='utf-8').splitlines()
+        opened = [l.split(' ') for l in log if l.startswith('0 opened ')]
+        # the Python cells (not the Markdown one), with no path
+        self.assertEqual([(o[4], o[5]) for o in opened], [('Python', '-'), ('Python', '-')], log)
+        d0, d2 = opened[0][2], opened[1][2]
+        cell = [l for l in log if l.startswith('0 cell ')]
+        self.assertEqual([c.split(' ')[3] for c in cell[:2]], ['1', '1'])          # notebook 1
+        self.assertEqual([(c.split(' ')[2], c.split(' ')[5]) for c in cell[:2]], [(d0, '0'), (d2, '2')])
+        cells = [l for l in log if l.startswith('0 cells ')]
+        self.assertEqual(cells[0], '0 cells 1 %s %s' % (d0, d2))
+        self.assertIn('0 cells 1 %s' % d0, cells)                                   # after the delete
+        self.assertTrue(any(l.startswith('0 edits %s ' % d0) for l in log), log)
+        self.assertIn('0 closed %s' % d2, log)
+        self.assertIn('text print("hi")+|x = 1', log)                              # its text request
+        self.assertTrue(any(l.startswith('1 complete %s ' % d0) for l in log), log)
+        self.assertIn('cell_item', '\n'.join(out))
+        self.assertIn('lines=2 ', cells_of(out, 0))
+        self.assertNotIn('0 opened', '\n'.join(self.fake_log()))                  # nbfake did not agree to cells
 
     # --- kernels that run as the user (nb-exec) ---
 

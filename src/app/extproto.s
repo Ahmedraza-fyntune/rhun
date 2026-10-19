@@ -957,8 +957,7 @@ doc_by_id:
     cmp [rax + DOC_id], rdi
     jne 1b
     ret
-8:  xor eax, eax
-    ret
+8:  jmp nb_cell_doc_by_id          # notebooks (A3): a cell, which has no tab
 
 # arg_doc(i) -> DOC* from field i, or 0 after replying nodoc
 arg_doc:
@@ -3693,7 +3692,7 @@ active_doc_id:
     imul rax, rdi, TAB_SIZE
     add rax, [rip + g_tabs + VEC_ptr]
     cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 8f
+    jne 7f
     mov rax, [rax + TAB_doc]
     test rax, rax
     jz 8f
@@ -3704,6 +3703,13 @@ active_doc_id:
     jnz 8f
 1:  mov rax, [rax + DOC_id]
     ret
+7:  cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    jne 8f
+    mov rax, [rip + cur]        # notebooks (A3): the selected cell, for one that agreed notebooks
+    test rax, rax
+    jz 8f
+    FEAT_TEST rax, FEAT_NOTEBOOKS
+    jnz nb_active_cell_id
 8:  xor eax, eax
     ret
 
@@ -3735,6 +3741,8 @@ sub_matches:
     jz 8f
     mov rbx, rdi
     mov r12, rsi
+    test dword ptr [r12 + DOC_flags], DF_CELL
+    jnz 4f
     cmp qword ptr [r12 + DOC_uri], 0
     jne 2f
     cmp byte ptr [rbx], '*'
@@ -3764,6 +3772,20 @@ sub_matches:
     mov rdi, rax
     mov rsi, rbx
     call ext_path_matches
+    EPILOGUE
+4:  # notebooks (A3): a cell, only for extensions that agreed notebooks, by its language's file name
+    mov rdi, [rip + cur]
+    mov esi, FEAT_NOTEBOOKS
+    call ext_feature
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx], '*'
+    jne 5f
+    cmp byte ptr [rbx + 1], 0
+    je 9f
+5:  mov rdi, rbx
+    mov rsi, r12
+    call nb_cell_match
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
