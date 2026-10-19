@@ -35,6 +35,18 @@ FN main
     js .Lmain_not_keeper
     EPILOGUE
 .Lmain_not_keeper:
+    # remote hosts: run by ssh as its askpass program (RHUN_ASKPASS names the window's socket)
+    lea rdi, [rip + .Lenv_askpass]
+    call getenv
+    test rax, rax
+    jz .Lnot_askpass
+    xor edi, edi
+    cmp qword ptr [rip + g_argc], 2
+    jb 1f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+1:  call remote_askpass_main
+.Lnot_askpass:
     cmp qword ptr [rip + g_argc], 2
     jb .Lmv_regular
     # remote hosts: the agent a remote window starts on the host (remote.s, ragent.s)
@@ -216,6 +228,7 @@ FN main
     jmp .Lm_store_retire
 .Lm_store_retired:
     call ext_shutdown
+    call remote_shutdown        # remote hosts: the askpass socket
     call agents_shutdown
     call ai_shutdown
     call session_remember_project
@@ -665,6 +678,7 @@ open_initial:
 .Lo_extensions: .asciz "--extensions"
 .Lo_remote: .asciz "--remote"
 .Lremote_agent: .asciz "--remote-agent"
+.Lenv_askpass: .asciz "RHUN_ASKPASS"
 .Lo_dashdash: .asciz "--"
 .Ldevnull: .asciz "/dev/null"
 .Lself_exe: .asciz "/proc/self/exe"

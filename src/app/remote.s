@@ -669,6 +669,7 @@ rm_spawn_transport:
     EPILOGUE
 
 # rm_which(name) -> path (mem_free it) or 0: PATH, then /usr/local/bin and /opt/homebrew/bin
+FN remote_which
 rm_which:
     PROLOGUE
     mov rbx, rdi
@@ -1009,6 +1010,9 @@ rm_lost:
     call cstr_copy
     mov rdi, rax
     lea rsi, [rip + rm_host]
+    call cstr_copy
+    mov rdi, rax
+    lea rsi, [rip + .Llost2]
     call cstr_copy
     lea rdi, [rip + .Lrlog_lost]
     lea rsi, [rip + rm_host]
@@ -3013,7 +3017,8 @@ rm_tenv: .quad 0
 .Lboot_failed: .asciz "Starting failed: "
 .Lmismatch: .asciz "The host keeps a damaged copy of rhun in ~/.cache/rhun-remote"
 .Lcould_not: .asciz "Could not connect to "
-.Llost: .asciz "Connection lost to "
+.Llost: .asciz "Connection to "
+.Llost2: .asciz " lost"
 .Lno_download: .asciz "Could not download rhun for Linux (set [remote] agent_binary)"
 .Ldl_failed: .asciz "Could not download rhun for Linux; see the remote log, or set [remote] agent_binary"
 .Ldl_dir: .asciz "/remote/rhun-"

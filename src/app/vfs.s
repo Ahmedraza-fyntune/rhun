@@ -143,3 +143,7 @@ FN vfs_remote_lost
     call sb_clear
     add rsp, 8
     ret
+
+# vfs_reconnected(): connected again after a loss (E2 renews the watches here)
+FN vfs_reconnected
+    ret

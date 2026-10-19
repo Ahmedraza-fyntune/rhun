@@ -1604,6 +1604,8 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_INSTALL, 7      # Install from GitHub: owner/name
 .equ PROMPT_EXT_SETTING, 8      # a text setting of an extension (extpage.s)
 .equ PROMPT_RENAME_SYMBOL, 9    # the new name of a symbol (langfeat.s)
+.equ PROMPT_REMOTE, 40          # remote hosts: a question for ssh, answered in plain text (remoteui.s)
+.equ PROMPT_REMOTE_SECRET, 41   # remote hosts: a password or passphrase, drawn masked
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
