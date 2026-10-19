@@ -4979,6 +4979,7 @@ verbs:
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
+    .quad .Lpv_semantic_legend, h_semantic_legend, SEMT_LEGEND_MAX     # (semtok.s)
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
@@ -5002,6 +5003,7 @@ verbs:
 .Lv_test_coverage: .asciz "test-coverage"
 .Lv_test_exec: .asciz "test-exec"
 .Lpv_decoration_type: .asciz "decoration-type"
+.Lpv_semantic_legend: .asciz "semantic-legend"
 .Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
 .Lv_run_command: .asciz "run-command"

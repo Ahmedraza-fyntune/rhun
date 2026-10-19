@@ -525,6 +525,16 @@ lines. An edit inside a fold's hidden lines, or one that joins its first line wi
 the fold. Folds are kept with the session and in reopened tabs. `folding = false` under `[editor]`
 (**Folding** in Settings) turns the lane and folding off.
 
+### Semantic highlighting
+
+An extension that knows the code (a language server, through the lsp extension) can color it by
+meaning: a name is drawn as the type, function, variable, constant or macro it is, beyond what the
+syntax highlighting sees, deprecated names are struck through, and the extension may underline
+others (rust-analyzer's mutable variables). The colors are the theme's syntax colors. Until the
+extension has answered, and while you type, the syntax colors and the last answer's colors are
+shown. `semantic_highlighting = false` under `[editor]` (**Semantic highlighting** in Settings)
+turns it off.
+
 ### Vim mode
 
 The Vim mode switch in Settings (`vim_mode = true` under `[editor]`) or Toggle Vim Mode in the command palette turns it on. The status bar shows the mode and the keys typed so far; outside insert mode the cursor is a block.

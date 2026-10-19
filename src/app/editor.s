@@ -3352,7 +3352,15 @@ draw_line:
     call syntax_line
 13: mov rax, [rip + classes + SB_ptr]
     mov [rip + cls_ptr], rax
-3:  # x origin
+3:  # semantic tokens over the syntax classes (semtok.s)
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, [rsp + 24]
+    mov rcx, [rip + cls_ptr]
+    mov r8, r15
+    call semtok_line
+    mov [rip + cls_ptr], rax
+    # x origin
     mov eax, [rip + g_ed_tx]
     sub eax, [rbx + DOC_scrollx]
     mov [rsp + 40], eax

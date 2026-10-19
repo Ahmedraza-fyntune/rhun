@@ -32,6 +32,8 @@ cfg_match_brackets: .long 1
 cfg_indent_guides: .long 1
 .globl cfg_folding
 cfg_folding: .long 1            # editor presentation: folding (fold.s)
+.globl cfg_semantic_highlighting
+cfg_semantic_highlighting: .long 1      # editor presentation: semantic tokens (semtok.s)
 cfg_cursor_blink: .long 1
 cfg_whitespace: .long 0
 cfg_sidebar: .long 1
@@ -909,6 +911,7 @@ g_settings:
     SETTING .Ls_editor, format_on_paste, ST_BOOL, cfg_format_on_paste, 0, 1, 1, 0, "Format pasted text", "Format the pasted lines with the formatter's range formatting."
     # editor presentation
     SETTING .Ls_editor, folding, ST_BOOL, cfg_folding, 0, 1, 1, 0, "Folding", "Fold regions from the gutter's chevrons (ctrl+shift+[ and ctrl+shift+])."
+    SETTING .Ls_editor, semantic_highlighting, ST_BOOL, cfg_semantic_highlighting, 0, 1, 1, 0, "Semantic highlighting", "Color code by what a language server knows of it: types, functions, variables."
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
     SETTING .Ls_files, format_on_save, ST_BOOL, cfg_format_on_save, 0, 1, 1, 0, "Format before saving", "Use the default formatter before writing a file."

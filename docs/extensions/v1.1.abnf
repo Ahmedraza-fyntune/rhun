@@ -87,3 +87,29 @@ nb-output-body = ( "stdout" / "stderr" / "result" / "display" / "error" ) SP ( n
 nb-item      = nb-token SP num SP num SP len LF
               ; TYPE W H LEN, then LEN bytes
 nb-meta      = *OCTET                        ; META_LEN opaque bytes
+
+; Editor presentation (v1.1.md, "Feature: decorations" and "Presentation providers").
+feature      =/ "decorations" / "diagnostic-tags" / "folding-ranges" / "semantic-tokens"
+request      =/ id SP "decoration-type" SP deco-name SP len
+              ; KEY ARGS lines (color, background, line-background, border, underline, strike,
+              ; faded, before, after, width, gutter, scrollbar, grow, priority)
+request      =/ id SP "decorate" SP doc SP version SP deco-name SP num SP num SP num SP len
+              ; FROM TO N, then N deco-range records
+deco-range   = num SP num SP num SP num SP len SP len SP len SP len LF
+              ; L1 C1 L2 C2, then BEFORE AFTER TIP EXTRA of those lengths
+deco-name    = 1*40( %x61-7A / DIGIT / "_" / "-" )
+event        =/ "0" SP "visible" SP doc SP num SP num
+tagged-severity = ( "error" / "warning" / "info" / "hint" ) 1*( "+" 1*ALPHA )
+              ; a diagnostics line's SEVERITY with diagnostic-tags agreed: unnecessary, deprecated
+host-request =/ id SP "folding-ranges" SP doc SP version
+              ; answered "ok" SP id SP len LF + num LF *fold-range
+fold-range   = num SP num SP ( "region" / "comment" / "imports" / "-" / 1*VCHAR ) SP len LF
+              ; START END KIND, then TEXT (one line, at most 80 bytes)
+request      =/ id SP "semantic-legend" SP sem-id SP len
+              ; types LF modifiers: sem-entry separated by SP
+sem-entry    = sem-id [ "=" 1*VCHAR ]
+sem-id       = 1*64( ALPHA / DIGIT / "_" / "." / "-" )
+host-request =/ id SP "semantic-tokens" SP doc SP version SP ( sem-id / "-" )
+host-request =/ id SP "semantic-tokens-range" SP doc SP version SP num SP num
+sem-answer   = ( sem-id / "-" ) SP sem-id SP ( "full" / "range" ) SP num LF *( num ( SP / LF ) )
+sem-answer   =/ ( sem-id / "-" ) SP sem-id SP "delta" SP num LF *( num SP num SP num LF *( num ( SP / LF ) ) )

@@ -13,7 +13,7 @@
 .include "rhun.inc"
 
 .equ SP_MAX, 256                # color spans per row
-.equ MF_MAX, 64                 # faded parts from tagged marks per row
+.equ MF_MAX, 128                # faded parts from tagged marks and semantic tokens per row
 .equ SP_SIZE, 24                # from, to (offsets in the line), color, flags
 .equ SPF_COLOR, 1
 .equ SPF_FADED, 2
@@ -1621,7 +1621,7 @@ marks_fx:
     mov qword ptr [rip + mf_i], 0
     mov r12, [rbx + DOC_xmarks]
     test r12, r12
-    jz 9f
+    jz 5f
     xor r13d, r13d
 1:  cmp r13, [r12 + VEC_len]
     jae 5f
@@ -1669,7 +1669,8 @@ marks_fx:
     mov [r8 + rdi + 8], rdx
     inc qword ptr [rip + mf_n]
     jmp 1b
-5:  # overlapping ones merged
+5:  call stk_faded             # and semantic tokens' faded parts (semtok.s)
+    # overlapping ones merged
     lea r8, [rip + mf_buf]
     xor ecx, ecx                # read
     xor edx, edx                # write
@@ -1866,6 +1867,7 @@ FN deco_span_color
 FN deco_row_front
     PROLOGUE 48
     call marks_strike           # diagnostics tagged deprecated
+    call stk_lines              # semantic tokens' strikes and underlines (semtok.s)
     cmp qword ptr [rip + dw_n], 0
     je 9f
     mov rbx, [rip + g_row_doc]
@@ -1959,6 +1961,120 @@ FN deco_row_front
     mov r8d, [rsp + 16]
     call gfx_fill
     jmp .Lrf_each
+9:  EPILOGUE
+
+# stk_row() -> rax the semantic tokens' effects for this row (g_tkfx), rcx their count; 0 when they are
+# another line's
+stk_row:
+    xor eax, eax
+    xor ecx, ecx
+    mov rdx, [rip + g_tkfx_doc]
+    cmp rdx, [rip + g_row_doc]
+    jne 9f
+    mov rdx, [rip + g_tkfx_line]
+    cmp rdx, [rip + g_row_line]
+    jne 9f
+    lea rax, [rip + g_tkfx]
+    mov rcx, [rip + g_tkfx_n]
+9:  ret
+
+# stk_clip(rax start, rdx end) -> rax, rdx clipped to the row; flags from cmp rax, rdx
+stk_clip:
+    cmp rax, [rip + g_row_from]
+    jge 1f
+    mov rax, [rip + g_row_from]
+1:  cmp rdx, [rip + g_row_to]
+    jle 2f
+    mov rdx, [rip + g_row_to]
+2:  cmp rax, rdx
+    ret
+
+# stk_faded(): the tokens' faded parts join mf_buf, kept sorted by start
+stk_faded:
+    PROLOGUE
+    call stk_row
+    mov r12, rax
+    mov r13, rcx
+1:  test r13, r13
+    jz 9f
+    dec r13
+    test dword ptr [r12 + 16], STKF_FADED
+    jz 5f
+    mov rax, [r12]
+    mov rdx, [r12 + 8]
+    call stk_clip
+    jge 5f
+    mov rcx, [rip + mf_n]
+    cmp rcx, MF_MAX
+    jae 9f
+    lea r8, [rip + mf_buf]
+2:  test rcx, rcx
+    jz 3f
+    mov r10, rcx
+    shl r10, 4
+    mov r9, [r8 + r10 - 16]
+    cmp r9, rax
+    jle 3f
+    mov [r8 + r10], r9
+    mov r9, [r8 + r10 - 8]
+    mov [r8 + r10 + 8], r9
+    dec rcx
+    jmp 2b
+3:  shl rcx, 4
+    mov [r8 + rcx], rax
+    mov [r8 + rcx + 8], rdx
+    inc qword ptr [rip + mf_n]
+5:  add r12, 24
+    jmp 1b
+9:  EPILOGUE
+
+# stk_lines(): the tokens' strikes and underlines, in the color of the class drawn there
+stk_lines:
+    PROLOGUE 16
+    call stk_row
+    mov r12, rax
+    mov r13, rcx
+1:  test r13, r13
+    jz 9f
+    dec r13
+    test dword ptr [r12 + 16], STKF_STRIKE | STKF_UNDER
+    jz 5f
+    mov rax, [r12]
+    mov rdx, [r12 + 8]
+    call stk_clip
+    jge 5f
+    mov [rsp], rdx
+    mov rdi, rax
+    call piece_x
+    mov r14d, eax
+    mov rdi, [rsp]
+    call piece_xe
+    sub eax, r14d
+    jle 5f
+    mov r15d, eax
+    mov eax, [r12 + 20]         # the class
+    lea rdx, [rip + g_theme]
+    mov ebx, [rdx + rax*4 + 4*T_SYN]
+    test dword ptr [r12 + 16], STKF_STRIKE
+    jz 2f
+    mov edi, r14d
+    mov esi, [rip + g_lh]
+    shr esi, 1
+    add esi, [rip + g_row_y]
+    mov edx, r15d
+    M ecx, MI_1
+    mov r8d, ebx
+    call gfx_fill
+2:  test dword ptr [r12 + 16], STKF_UNDER
+    jz 5f
+    mov edi, US_SOLID
+    mov esi, ebx
+    mov edx, r14d
+    mov ecx, r15d
+    mov r8d, [rip + g_row_y]
+    call underline_draw
+5:  add r12, 24
+    jmp 1b
 9:  EPILOGUE
 
 # marks_strike(): a line through the row's parts that marks tagged deprecated cover

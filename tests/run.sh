@@ -183,6 +183,7 @@ python3 tests/enum-values.py --negative-control > /dev/null || { python3 tests/e
 check edtape build/edtape_test
 python3 tests/presentation.py || fail=1
 python3 tests/folding.py || fail=1
+python3 tests/semantic.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1
