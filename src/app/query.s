@@ -1428,14 +1428,23 @@ FN query_dump_pending
 .Lk_prompt: .asciz "agent-prompt"
 .Lk_nb_open: .asciz "nb-open"
 .Lk_nb_save: .asciz "nb-save"
+.Lk_folding: .asciz "folding-ranges"
+.Lk_tokens: .asciz "semantic-tokens"
+.Lk_hints: .asciz "inlay-hints"
+.Lk_lens: .asciz "code-lens"
+.Lk_inline: .asciz "inline-complete"
+.Lk_colors: .asciz "colors"
+.Lk_color_edit: .asciz "color-edit"
+.Lk_highlights: .asciz "highlights"
 .p2align 3
 qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_expired
     .quad .Lq_late, .Lq_dropped, .Lq_cancelled, 0
 # per asker (QO_*): its reply handler (an expired request is an error answer to it), what takes a
 # query-part, and what hears that the Query cap cut a request short
 qo_reply: .quad 0, langfeat_reply, complete_reply, 0, scmext_reply, testproto_expired, ai_query_expired, nb_reply
-qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0, 0, 0
-qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0, 0, 0
+    .quad present_reply         # QO_PRESENT
+qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0, 0, 0, 0
+qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0, 0, 0, 0
 # the kinds (docs/extensions/v1.1.md, "Language feature queries"): name, [provides] key, show,
 # hard limit and ceiling (ms), flags, an answer's cap (records, bytes), the query's cap
 .macro PK name, pv, show, base, ceil, flags, items, bytes, qitems, qbytes
@@ -1482,3 +1491,13 @@ pk_table:
     # notebooks: the notebook keeps its own deadline (nbdoc.s)
     PK .Lk_nb_open, EXT_pv_notebook, 0, 0, 0, PKF_SILENT, 1, 67108864, 1, 67108864
     PK .Lk_nb_save, EXT_pv_notebook, 0, 0, 0, PKF_SILENT | PKF_SUB, 1, 67108864, 1, 67108864
+    # editor presentation (present.s): automatic and silent; an answer that never comes frees its
+    # request's slot after the hard limit
+    PK .Lk_folding, EXT_pv_folding, 0, 30000, 0, PKF_SILENT, 50000, 4194304, 50000, 4194304
+    PK .Lk_tokens, EXT_pv_semantic_tokens, 0, 30000, 0, PKF_SILENT, 1000000, 4194304, 1000000, 4194304
+    PK .Lk_hints, EXT_pv_inlay_hints, 0, 10000, 0, PKF_SILENT, 5000, 4194304, 5000, 4194304
+    PK .Lk_lens, EXT_pv_code_lens, 0, 10000, 0, PKF_SILENT, 10000, 4194304, 10000, 4194304
+    PK .Lk_inline, EXT_pv_inline_complete, 0, 0, 0, PKF_SILENT, 8, 4194304, 8, 4194304
+    PK .Lk_colors, EXT_pv_colors, 0, 10000, 0, PKF_SILENT, 10000, 1048576, 10000, 1048576
+    PK .Lk_color_edit, EXT_pv_colors, 0, 5000, 0, PKF_SILENT | PKF_SUB, 100000, 4194304, 100000, 4194304
+    PK .Lk_highlights, EXT_pv_highlights, 0, 5000, 0, PKF_SILENT, 5000, 1048576, 5000, 1048576

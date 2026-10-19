@@ -496,6 +496,35 @@ Arrows, Home, End, word and page moves move every selection, each keeping its ow
 
 In Vim mode, `gb` adds a cursor at the next occurrence of the word under the cursor (of the selection in visual mode); Ctrl+D keeps paging. Motions with counts, `i a I A o O`, visual mode, `x X D C s S dd cc yy`, operators with a motion or text object (`ciw`), `p P` and `.` act at every cursor as one undo step; `u` brings the cursors back. Yanks at several cursors are one copy with a piece each, which `p` puts back paired. Esc in insert mode keeps the cursors, each stepping back a character; Esc in normal mode leaves the primary alone. Searches, `:`, `J`, `r`, `~`, `>` and `<` go back to the primary first.
 
+### Folding
+
+The fold lane right of the line numbers shows a down chevron on each line that starts a foldable
+region while the pointer is over the gutter, and a right chevron on folded lines; a click folds or
+unfolds. A folded line ends in a ` ⋯ ` pill, which unfolds when clicked. Regions come from
+indentation, as in VS Code: a line starts one when the next non-blank line is indented deeper, and
+the region ends before the next line indented no deeper, so a closing brace stays visible. An
+extension that provides folding ranges for the file's language (a language server's, through the
+lsp extension) gives the regions instead, with their own collapsed text in the pill; until it has
+answered, and after it stops, indentation decides.
+
+| Keys | Command |
+| --- | --- |
+| Ctrl+Shift+[ | Fold: the innermost region at the cursor |
+| Ctrl+Shift+] | Unfold: the folds on the cursor's line |
+| Ctrl+K Ctrl+0 | Fold All, at every depth (unfolding an outer fold shows the inner ones still folded) |
+| Ctrl+K Ctrl+J | Unfold All |
+
+Toggle Fold and Fold Level 1 to 3 are in the command palette. In Vim mode `za` toggles, `zc` folds,
+`zo` opens, `zM` folds all and `zR` opens all. On macOS Ctrl is Command.
+
+Folded lines are skipped by Up, Down, Page Up, Page Down and `j`/`k`, and the caret never stops
+inside a fold: Right at a folded line's end goes to the line after the fold. Anything that puts the
+caret inside hidden text opens the fold (Go to Line, find, Go to Definition, undo). Delete Line,
+Duplicate Line, Move Line and Copy or Cut without a selection take a folded line with its hidden
+lines. An edit inside a fold's hidden lines, or one that joins its first line with the next, removes
+the fold. Folds are kept with the session and in reopened tabs. `folding = false` under `[editor]`
+(**Folding** in Settings) turns the lane and folding off.
+
 ### Vim mode
 
 The Vim mode switch in Settings (`vim_mode = true` under `[editor]`) or Toggle Vim Mode in the command palette turns it on. The status bar shows the mode and the keys typed so far; outside insert mode the cursor is a block.
@@ -581,6 +610,12 @@ string = #a6e3a1
 ```
 
 Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors. `git_added`, `git_modified` and `git_deleted` color changes in the gutter, tabs, explorer and diffs.
+
+Extensions' text inside the editor has its own colors: `inlay` and `inlay_bg` for inlay hints, a
+fold's pill and other virtual text, `ghost` for inline completion, `codelens` for code lens,
+`highlight` and `highlight_write` for the other occurrences of the symbol under the cursor, and
+`info` and `hint` for those diagnostics. A theme that leaves them out gets them from its other
+colors.
 
 The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
 

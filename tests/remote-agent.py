@@ -363,6 +363,44 @@ class RemoteAgent(unittest.TestCase):
         else:
             self.fail('sleep outlived the agent')
 
+    def gone_within(self, pid, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            # a zombie of a parent that has not reaped it yet counts as gone
+            try:
+                if Path('/proc/%d/stat' % pid).read_text().split(') ', 1)[1].startswith('Z'):
+                    return True
+            except (OSError, IndexError):
+                return True
+            time.sleep(0.05)
+        return False
+
+    # a child that ignores SIGHUP and SIGTERM, its output elsewhere: only its group's SIGKILL ends it
+    STUBBORN = "(trap '' HUP TERM; exec sleep 300) </dev/null >/dev/null 2>&1 & echo $!"
+
+    def test_what_a_program_leaves_behind_ends_with_it(self):
+        a = self.agent
+        kind, _ = a.call('spawn 15 0 0 0 0', spawn_body(['sh', '-c', self.STUBBORN + '; exit 0']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 15 in a.exits and 15 in a.eof)
+        child = int(a.data[15])
+        os.kill(child, 0)                       # still there right after its leader's exit
+        self.assertTrue(self.gone_within(child, 4), 'the stubborn child outlived its group')
+
+    def test_what_a_program_leaves_behind_ends_with_the_session(self):
+        a = self.agent
+        kind, _ = a.call('spawn 16 0 0 0 0', spawn_body(['sh', '-c', self.STUBBORN + '; exec sleep 300']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(16, b''))
+        child = int(a.data[16])
+        a.p.stdin.close()                       # the window went away
+        a.p.wait(10)
+        self.assertTrue(self.gone_within(child, 4), 'the stubborn child outlived the session')
+
     def test_login_environment(self):
         """The login shell's profile reaches programs (a PATH entry like ~/.cargo/bin)."""
         self.agent.close()

@@ -486,7 +486,7 @@ FN dcfg_read
     test eax, eax
     jz 7f
     mov rdi, [rip + pathb + SB_ptr]
-    call file_stamp
+    call vfs_stamp              # remote hosts: the host's launch.ini in a remote window (vfs.s)
     test rax, rax
     jz 7f
     mov rbx, rax
@@ -497,7 +497,7 @@ FN dcfg_read
 1:  call lini_free
     mov rdi, [rip + pathb + SB_ptr]
     mov esi, LINI_MAX
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 7f
     mov [rip + lini], rax

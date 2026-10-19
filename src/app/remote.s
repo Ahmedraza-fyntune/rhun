@@ -16,7 +16,7 @@
 #   x CH STATUS           the program on CH exited (STATUS as proc_wait reports it)
 #   v WD MASK LEN + name  an inotify event of a watch
 # The verbs are ragent.s's table: spawn kill resize close cwd info quit stat lstat realpath readlink
-# read write list mkdir rename remove watch unwatch.
+# read write list mkdir rename remove watch unwatch access files grep stats.
 .include "rhun.inc"
 
 .equ MUX_MAXCH, 1024
@@ -66,6 +66,7 @@ ENDSTRUCT RQ_SIZE
 .equ CHF_LCLOSED, 4             # the local side closed its end
 .equ CHF_EXITED, 8
 .equ CHF_COLLECTED, 16          # proc_wait has reported the status
+.equ CHF_ERRCH, 32              # a program's error output on a socketpair of its own (freed with it)
 
 STRUCT
 F CH_kind, 4                    # 0 free
@@ -76,6 +77,8 @@ F CH_flags, 4
 F CH_status, 4
 F CH_pid, 4                     # the program's pid on the host
 F CH_events, 4                  # what the loop watches CH_fd for
+F CH_errch, 4                   # its error output's channel (CHF_ERRCH), 0 for none
+F CH_pad, 4
 F CH_credit, 8                  # bytes this side may still send to the agent
 F CH_grant, 8                   # bytes delivered here and not yet credited back
 F CH_off, 8                     # the delivered part of CH_buf
@@ -2212,6 +2215,7 @@ rm_alloc_chan:
     mov dword ptr [rdx + CH_fd], -1
     mov dword ptr [rdx + CH_lfd], -1
     mov dword ptr [rdx + CH_events], 0
+    mov dword ptr [rdx + CH_errch], 0
     mov qword ptr [rdx + CH_credit], MUX_WINDOW
     mov qword ptr [rdx + CH_grant], 0
     mov qword ptr [rdx + CH_off], 0
@@ -2244,12 +2248,15 @@ rm_free_chan:
 # remote_spawn(argv, envp, cwd, flags, errfd, input ptr, input len) -> rax pid (tagged) or -errno,
 #   edx the local descriptor (nonblocking, both ways). flags: bit 0 a pty, bits 8-23 its columns and
 #   bits 24-.. its rows; bit 1 keeps argv[0] as given (else its last part, found in the host's PATH).
-#   errfd: -1 error output to /dev/null, -2 merged with the output, else a descriptor that receives
-#   it (a log; kept open by the channel until the program ends). Only envp's entries that are not the
-#   window's own environment go along: the host has its login environment. input (pipes): bytes
-#   for the program's input (any length), which then ends.
+#   errfd: -1 error output to /dev/null, -2 merged with the output, -3 a socketpair of its own whose
+#   end comes back in ecx, else a descriptor that receives it (a log; kept open by the channel until
+#   the program ends). Only envp's entries that are not the
+#   window's own environment go along: the host has its login environment (flags bit 2: an
+#   extension: exactly envp's entries and the host's PATH, nothing filtered; bit 3 with it: held on
+#   the host by Landlock as remote_confine_blk says, the answer in g_remote_confined and
+#   g_remote_confine_why). input (pipes): bytes for the program's input (any length), which then ends.
 FN remote_spawn
-    PROLOGUE 64
+    PROLOGUE 80
     mov [rsp], rdi              # argv
     mov [rsp + 8], rsi          # envp
     mov [rsp + 16], rdx         # cwd
@@ -2261,6 +2268,8 @@ FN remote_spawn
     mov dword ptr [rsp + 48], 0 # error channel
     mov dword ptr [rsp + 56], -1
     mov dword ptr [rsp + 60], -1
+    mov dword ptr [rsp + 64], -1   # the error socketpair (errfd -3)
+    mov dword ptr [rsp + 68], -1
 .ifdef WINDOWS
     mov rax, -38
     EPILOGUE
@@ -2275,6 +2284,8 @@ FN remote_spawn
     mov dword ptr [r13 + CH_kind], CK_PROC
     # its error output on a channel of its own
     mov eax, [rsp + 28]
+    cmp eax, -3
+    je .Lrs_errpair
     test eax, eax
     js 1f
     call rm_alloc_chan
@@ -2294,6 +2305,27 @@ FN remote_spawn
     mov esi, 2                  # F_SETFD FD_CLOEXEC
     mov edx, 1
     SYS SYS_fcntl
+    jmp 1f
+.Lrs_errpair:
+    call rm_alloc_chan
+    test eax, eax
+    js .Lrs_full_free
+    mov [rsp + 48], eax
+    mov [r13 + CH_errch], eax
+    mov dword ptr [rdx + CH_kind], CK_PROC
+    mov dword ptr [rdx + CH_flags], CHF_ERRCH
+    mov rbx, rdx
+    mov edi, AF_UNIX
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK
+    xor edx, edx
+    lea r10, [rsp + 64]
+    SYS SYS_socketpair
+    test rax, rax
+    js .Lrs_fail_free
+    mov eax, [rsp + 64]
+    mov [rbx + CH_fd], eax
+    mov eax, [rsp + 68]
+    mov [rbx + CH_lfd], eax
 1:  # the socketpair: [rsp+56] ours, [rsp+60] the caller's
     mov edi, AF_UNIX
     mov esi, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK
@@ -2359,9 +2391,12 @@ FN remote_spawn
 5:  mov rsi, [r14]
     test rsi, rsi
     jz 6f
+    test dword ptr [rsp + 24], 4
+    jnz 52f                     # an extension's list is sent whole
     call rm_env_inherited
     test eax, eax
     jnz 51f
+52:
     mov rsi, [r14]
     mov rdi, rbx
     call sb_push_cstr
@@ -2370,7 +2405,18 @@ FN remote_spawn
     call sb_push_byte
 51: add r14, 8
     jmp 5b
-6:  mov r15, [rbx + SB_ptr]
+6:  test dword ptr [rsp + 24], 8
+    jz 61f
+    # an extension held on the host (remoteext.s): an empty entry ends the environment, then
+    # NEEDS DIR SCRIPT STATE PROJECT RUNS
+    mov rdi, rbx
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + remote_confine_blk]
+    mov rdx, [rip + remote_confine_len]
+    call sb_push
+61: mov r15, [rbx + SB_ptr]
     mov r14, [rbx + SB_len]
     lea rdi, [rip + rm_spawn_line]
     call sb_clear
@@ -2385,7 +2431,13 @@ FN remote_spawn
     call sb_push_byte
     mov esi, [rsp + 24]
     and esi, 1
-    lea rdi, [rip + rm_spawn_line]
+    test dword ptr [rsp + 24], 4
+    jz 69f
+    mov esi, 2                  # an extension's: its environment exactly (remoteext.s)
+    test dword ptr [rsp + 24], 8
+    jz 69f
+    mov esi, 3                  # and held there by Landlock
+69: lea rdi, [rip + rm_spawn_line]
     call sb_push_u64
     lea rdi, [rip + rm_spawn_line]
     mov esi, ' '
@@ -2427,7 +2479,12 @@ FN remote_spawn
     mov rsi, [rip + g_remote_reply + SB_len]
     call parse_u64
     mov [r13 + CH_pid], eax
-    # the input, then its end
+    mov dword ptr [rip + g_remote_confined], -1
+    mov byte ptr [rip + g_remote_confine_why], 0
+    test dword ptr [rsp + 24], 8
+    jz 79f
+    call rm_confine_reply
+79: # the input, then its end
     # (all of it at once: the agent keeps what the program has not read; the credit comes back
     # as it reads)
     mov rdx, [rsp + 40]
@@ -2468,12 +2525,26 @@ FN remote_spawn
     mov dword ptr [r13 + CH_events], 0
     mov rdi, r13
     call rm_events
+    cmp dword ptr [rsp + 64], 0
+    jl 81f
+    mov edi, [rsp + 48]
+    call rm_chan
+    mov rbx, rax
+    mov edi, [rbx + CH_fd]
+    xor esi, esi
+    lea rdx, [rip + rm_on_chan]
+    mov rcx, rbx
+    call watch_add
+    mov rdi, rbx
+    call rm_events
+81:
     # the tagged pid: the tag, the generation, the channel
     mov eax, [r13 + CH_gen]
     shl eax, 10
     or eax, r12d
     or eax, REMOTE_PID_TAG
     mov edx, [r13 + CH_lfd]
+    mov ecx, [rsp + 68]
     EPILOGUE
 .Lrs_refused:
     mov edi, [rsp + 60]
@@ -2485,7 +2556,11 @@ FN remote_spawn
     mov rbx, rax
 .Lrs_free:
     mov [rsp + 56], rax
-    mov rdi, r13
+    mov edi, [rsp + 68]         # the caller's end of an error socketpair
+    test edi, edi
+    js 83f
+    SYS SYS_close
+83: mov rdi, r13
     call rm_free_chan
     mov edi, [rsp + 48]
     test edi, edi
@@ -2505,9 +2580,22 @@ FN remote_spawn
     mov rax, -107
     EPILOGUE
 
-# rm_env_inherited(rsi entry) -> 1 when the entry is one of the window's own environment's
+# rm_env_inherited(rsi entry) -> 1 when the entry is the window's own environment's: rhun's own, the
+#   login environment uproc made (uproc_env_owned), or RHUN_EXE= (this machine's rhun)
 rm_env_inherited:
-    mov rcx, [rip + g_envp]
+    push rsi
+    mov rdi, rsi
+    call uproc_env_owned
+    pop rsi
+    test eax, eax
+    jnz 9f
+    cmp dword ptr [rsi], 0x4e554852            # "RHUN"
+    jne 2f
+    cmp dword ptr [rsi + 4], 0x4558455f        # "_EXE"
+    jne 2f
+    cmp byte ptr [rsi + 8], '='
+    je 9f
+2:  mov rcx, [rip + g_envp]
 1:  mov rax, [rcx]
     test rax, rax
     jz 8f
@@ -2543,6 +2631,41 @@ rm_pid_chan:
     ret
 8:  xor eax, eax
     ret
+
+# rm_confine_reply(): "PID LEVEL REASON" (spawn MODE 3) into g_remote_confined and
+#   g_remote_confine_why
+rm_confine_reply:
+    mov rsi, [rip + g_remote_reply + SB_ptr]
+    mov rcx, [rip + g_remote_reply + SB_len]
+    xor edx, edx
+1:  cmp rdx, rcx
+    jae 9f
+    cmp byte ptr [rsi + rdx], ' '
+    je 2f
+    inc rdx
+    jmp 1b
+2:  inc rdx
+    cmp rdx, rcx
+    jae 9f
+    movzx eax, byte ptr [rsi + rdx]
+    sub eax, '0'
+    cmp eax, 9
+    ja 9f
+    mov [rip + g_remote_confined], eax
+    add rdx, 2
+    lea rdi, [rip + g_remote_confine_why]
+    xor r8d, r8d
+3:  cmp rdx, rcx
+    jae 4f
+    cmp r8d, 300
+    jae 4f
+    mov al, [rsi + rdx]
+    mov [rdi + r8], al
+    inc rdx
+    inc r8d
+    jmp 3b
+4:  mov byte ptr [rdi + r8], 0
+9:  ret
 
 # remote_wait(pid, nohang) -> as proc_wait for a tagged pid: the status, -1 still running, -2 unknown
 FN remote_wait
@@ -2735,6 +2858,7 @@ FN remote_tick
     call remote_connected
 1:  call vfs_tick               # watch events from the host
     call rm_rq_dispatch         # answers of requests made with remote_request_cb
+    call remote_ext_tick        # extensions' files on their way to the host (remoteext.s)
     call time_ms
     mov r13, rax
     lea rbx, [rip + rm_ch + CH_SIZE]
@@ -2744,6 +2868,8 @@ FN remote_tick
     jz 4f
     cmp eax, CK_PROC
     jne 3f
+    test dword ptr [rbx + CH_flags], CHF_ERRCH
+    jnz 4f                      # freed with its program's channel
     test dword ptr [rbx + CH_flags], CHF_EXITED
     jz 4f
     cmp dword ptr [rbx + CH_fd], 0
@@ -2754,7 +2880,13 @@ FN remote_tick
     sub rax, [rbx + CH_exited_at]
     cmp rax, MUX_GC_MS
     jb 4f
-31: mov rdi, rbx
+31: mov edi, [rbx + CH_errch]
+    test edi, edi
+    jz 32f
+    call rm_chan
+    mov rdi, rax
+    call rm_free_chan
+32: mov rdi, rbx
     call rm_free_chan
     lea rdi, [rip + rm_kill_line]
     call sb_clear
@@ -2787,7 +2919,7 @@ FN remote_procs
     xor eax, eax
 1:  cmp dword ptr [rcx + CH_kind], CK_PROC
     jne 2f
-    test dword ptr [rcx + CH_flags], CHF_EXITED
+    test dword ptr [rcx + CH_flags], CHF_EXITED | CHF_ERRCH
     jnz 2f
     inc eax
 2:  add rcx, CH_SIZE
@@ -2888,6 +3020,12 @@ FN remote_kind_name
 FN remote_spec
     lea rax, [rip + rm_spec]
     ret
+# remote_is_up() -> eax 1 while the agent answers
+FN remote_is_up
+    xor eax, eax
+    cmp dword ptr [rip + g_remote_state], RS_UP
+    sete al
+    ret
 FN remote_error
     lea rax, [rip + rm_error]
     ret
@@ -2972,6 +3110,8 @@ rm_log_bytes:
     ret
 
 # rm_log2(a, b): "a" "b" LF
+# remote_log2(a cstr, b cstr): a line of the remote log (remoteext.s)
+FN remote_log2
 rm_log2:
     push rbx
     mov rbx, rsi
@@ -3119,6 +3259,12 @@ rm_on_download:
 .p2align 3
 rm_spawn_line: .zero SB_SIZE
 rm_spawn_body: .zero SB_SIZE
+.globl remote_confine_blk, remote_confine_len, g_remote_confined, g_remote_confine_why
+remote_confine_blk: .quad 0     # remote_spawn flags bit 3: NEEDS DIR SCRIPT STATE PROJECT RUNS
+remote_confine_len: .quad 0
+g_remote_confined: .long 0      # the host's answer: CONFINED_*, -1 none
+.p2align 3
+g_remote_confine_why: .zero 320 # why it is not held there (cstr), or empty
 rm_kill_line: .zero SB_SIZE
 rm_reset_gen: .long 0
 rm_tenv: .quad 0

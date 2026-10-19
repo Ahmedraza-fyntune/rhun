@@ -33,6 +33,7 @@ cur_owner_path: .quad 0
 tmp: .zero SB_SIZE
 tmp2: .zero SB_SIZE
 ini_it: .zero INI_SIZE          # the manifest iterator
+.globl argv_vec, env_vec         # remote hosts: remoteext.s rewrites them for the host
 argv_vec: .zero VEC_SIZE
 env_vec: .zero VEC_SIZE
 pipe_in: .zero 8                # the program's input: read end, write end
@@ -1749,7 +1750,14 @@ FN ext_load
     jz 51f
     mov rdi, rax
     jmp .Lel_fail
-51: cmp qword ptr [rbx + EXT_prog], 0
+51: mov rdi, rbx                # remote hosts: where = local may not need the project or home
+    call remote_ext_check
+    test rax, rax
+    jz .Lel_where_ok
+    mov rdi, rax
+    jmp .Lel_fail
+.Lel_where_ok:
+    cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
     # no program for this system: a WebAssembly module runs in rhun --wasm-host
     mov rdi, rbx
@@ -2019,7 +2027,19 @@ manifest_kv:
     call val_dup
     mov [rbx + EXT_args], rax
     jmp 9f
-7:  mov rdi, r12
+7:  mov rdi, r12                # remote hosts: where = local runs it here (remoteext.s)
+    lea rsi, [rip + .Lk_where]
+    call ini_key_is
+    test eax, eax
+    jz .Lmk_not_where
+    mov rdi, [r12 + INI_val]
+    mov rsi, [r12 + INI_vallen]
+    lea rdx, [rip + .Lw_where_local]
+    call str_eq_cstr
+    mov [rbx + EXT_where_local], eax
+    jmp 9f
+.Lmk_not_where:
+    mov rdi, r12
     lea rsi, [rip + .Lk_on]
     call ini_key_is
     test eax, eax
@@ -3001,6 +3021,11 @@ ext_spawn:
     mov edx, 0644
     SYS SYS_open
     mov [rbx + EXT_log], eax
+    # remote hosts: in a remote window it runs on the host (remoteext.s)
+    mov rdi, rbx
+    call remote_ext_remote
+    test eax, eax
+    jnz .Les_remote
     # pipes
     lea rdi, [rip + pipe_in]
     mov esi, O_CLOEXEC
@@ -3105,7 +3130,8 @@ ext_spawn:
     mov [rbx + EXT_in], eax
     mov eax, [rip + pipe_out]
     mov [rbx + EXT_out], eax
-    mov edi, eax
+.Les_watch:
+    mov edi, [rbx + EXT_out]
     mov esi, F_SETFL
     mov edx, O_NONBLOCK
     SYS SYS_fcntl
@@ -3148,6 +3174,23 @@ ext_spawn:
 91: mov dword ptr [rip + g_dirty], 1
     jmp .Les_scratch_return
 
+.Les_remote:
+    # the host's: started there (EXT_pid, EXT_in, EXT_out set), waiting for its Linux build, or failed
+    # with EXT_reason set
+    mov rdi, rbx
+    call remote_ext_spawn
+    test rax, rax
+    jg .Les_watch
+    jz .Les_remote_wait         # it starts by itself once its files are on the host
+    mov dword ptr [rbx + EXT_status], ES_FAILED
+.Les_remote_wait:
+    mov edi, [rbx + EXT_log]
+    test edi, edi
+    js 92f
+    SYS SYS_close
+    mov dword ptr [rbx + EXT_log], -1
+92: mov dword ptr [rip + g_dirty], 1
+    jmp .Les_scratch_return
 .Les_memory:
     lea rax, [rip + .Lr_launch_memory]
     mov [rbx + EXT_reason], rax
@@ -3760,7 +3803,7 @@ FN ext_exited
 1:  mov edi, [rbx + EXT_pid]
     neg edi
     mov esi, SIGKILL
-    SYS SYS_kill
+    call proc_kill              # remote hosts: on the host too (proc.s)
     mov edi, [rbx + EXT_pid]
     xor esi, esi
     call proc_wait
@@ -4176,7 +4219,7 @@ FN ext_tick
     mov esi, -1
     call ext_exited
     jmp .Let_each
-3:  SYS SYS_kill
+3:  call proc_kill            # remote hosts: on the host too (proc.s)
     jmp .Let_common
 .Let_running:
     mov rdi, rbx
@@ -4607,18 +4650,19 @@ FN ext_shutdown
 71: mov edi, [rbx + EXT_pid]
     neg edi
     mov esi, SIGTERM
-    SYS SYS_kill
+    call proc_kill              # remote hosts: on the host too (proc.s)
     jmp 7b
 9:  EPILOGUE
 
-# ext_status_draw(right, y, h) -> eax the right edge left of the texts drawn: each running
-# extension's status text, right-aligned in the small face
+# ext_status_draw(right, y, h, bar w) -> eax the right edge left of what it drew: the problems'
+# counts of the document on screen, then the extensions' right status items (statusitems.s)
 FN ext_status_draw
     PROLOGUE 16
     mov r14d, edi
     mov [rsp], esi
     mov [rsp + 4], edx
     mov [rsp + 8], edi
+    mov [rsp + 12], ecx         # the bar's width
     # "N errors, M warnings" of the document on screen
     mov rdi, [rip + g_doc]
     call extmarks_counts
@@ -4677,38 +4721,13 @@ FN ext_status_draw
     push rax
     call ui_text_v
     add rsp, 16
-11: xor r12d, r12d
-1:  cmp r12, [rip + g_exts + VEC_len]
-    jae 9f
-    imul rbx, r12, EXT_SIZE
-    add rbx, [rip + g_exts + VEC_ptr]
-    inc r12
-    cmp dword ptr [rbx + EXT_status], ES_RUNNING
-    jne 1b
-    mov r13, [rbx + EXT_status_text]
-    test r13, r13
-    jz 1b
-    mov rdi, r13
-    call strlen
-    mov r15, rax
-    lea rdi, [rip + g_face_small]
-    mov rsi, r13
-    mov rdx, r15
-    call text_width
-    sub r14d, [rip + g_mt + 4*MI_12]
-    sub r14d, eax
-    lea rdi, [rip + g_face_small]
-    mov esi, r14d
-    mov edx, [rsp]
-    mov ecx, [rsp + 4]
-    mov r8, r13
-    mov r9, r15
-    COLOR eax, T_MUTED
-    push rax
-    push rax
-    call ui_text_v
-    add rsp, 16
-    jmp 1b
+11: # the status items (statusitems.s), right to left from here
+    mov edi, r14d
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    call status_items_right
+    mov r14d, eax
 9:  mov eax, r14d
     cmp eax, [rsp + 8]
     je 8f
@@ -4941,6 +4960,10 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     # source control (wider-parity C)
     .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
     .quad .Lpv_notebook, EXT_pv_notebook, .Lpv_nbtitle, EXT_pv_nbtitle, .Lpv_nbkernel, EXT_pv_nbkernel  # notebooks
+    # editor presentation (present.s)
+    .quad .Lpv_semantic_tokens, EXT_pv_semantic_tokens, .Lpv_inlay_hints, EXT_pv_inlay_hints
+    .quad .Lpv_code_lens, EXT_pv_code_lens, .Lpv_inline_complete, EXT_pv_inline_complete
+    .quad .Lpv_colors, EXT_pv_colors, .Lpv_highlights, EXT_pv_highlights, .Lpv_folding, EXT_pv_folding
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -5032,6 +5055,8 @@ ext_target: .asciz "linux-x86_64"
 .Lk_pack: .asciz "pack"
 .Lk_color: .asciz "color"
 .Lk_run: .asciz "run"
+.Lk_where: .asciz "where"
+.Lw_where_local: .asciz "local"
 .Lk_args: .asciz "args"
 .Lk_on: .asciz "on"
 .Ls_commands: .asciz "commands"
@@ -5087,6 +5112,13 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_commit: .asciz "commit_message"
 .Lpv_quickdiff: .asciz "quickdiff"
 .Lpv_scm: .asciz "scm"
+.Lpv_semantic_tokens: .asciz "semantic_tokens"
+.Lpv_inlay_hints: .asciz "inlay_hints"
+.Lpv_code_lens: .asciz "code_lens"
+.Lpv_inline_complete: .asciz "inline_complete"
+.Lpv_colors: .asciz "colors"
+.Lpv_highlights: .asciz "highlights"
+.Lpv_folding: .asciz "folding"
 .Ln_debug: .asciz "debug"
 .Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"
