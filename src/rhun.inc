@@ -1638,6 +1638,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_REVEAL, "reveal", 0
     FEATURE FEAT_DIFF, "diff", 0
     FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
+    # contributions and commands: status bar items (statusitems.s)
+    FEATURE FEAT_STATUS_ITEMS, "status-items", 0  # status-item, status-remove
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks

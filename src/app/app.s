@@ -4635,7 +4635,8 @@ FN statusbar_draw
     mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
-    call ext_status_draw        # the extensions' status texts, left of the updater's item
+    mov ecx, [rsp + 8]
+    call ext_status_draw        # the extensions' status items, left of the updater's item
     mov [rsp + 20], eax
     # Keep branch and position glyphs out of the updater's reserved area.
     mov edx, eax
@@ -4671,7 +4672,10 @@ FN statusbar_draw
     add ecx, [rip + g_mt + 4*MI_12]
     call statusbar_branch
     mov [rsp + 24], eax
-3:
+3:  mov eax, [rsp + 24]             # the left status items' room: after this ([rsp + 28]) and
+    mov [rsp + 28], eax             # before the file's items ([rsp + 56])
+    mov eax, [rsp + 20]
+    mov [rsp + 56], eax
     call app_image
     test rax, rax
     jz 1f
@@ -4792,6 +4796,7 @@ FN statusbar_draw
     mov r13, [rax + GR_name]
 4:  mov r14d, r12d
     call .Lsb_item
+    mov [rsp + 56], r12d            # the left status items stop before the file's items
     cmp r12d, r14d
     je 9f                     # no picker hitbox for a label that did not fit
     # the language name opens the language picker
@@ -4810,7 +4815,13 @@ FN statusbar_draw
 5:  test eax, UB_CLICK
     jz 9f
     call cmd_select_language
-9:  call gfx_clip_pop
+9:  # the extensions' left status items, after the position, before the file's items
+    mov edi, [rsp + 28]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    mov ecx, [rsp + 56]
+    call status_items_left
+    call gfx_clip_pop
     EPILOGUE
 # statusbar_branch(x, y, h, right) -> eax the x where the file's items start: the branch and, in a linked
 # work tree, its folder at the left end; a click opens the history

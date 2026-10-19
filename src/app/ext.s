@@ -4505,14 +4505,15 @@ FN ext_shutdown
     jmp 7b
 9:  EPILOGUE
 
-# ext_status_draw(right, y, h) -> eax the right edge left of the texts drawn: each running
-# extension's status text, right-aligned in the small face
+# ext_status_draw(right, y, h, bar w) -> eax the right edge left of what it drew: the problems'
+# counts of the document on screen, then the extensions' right status items (statusitems.s)
 FN ext_status_draw
     PROLOGUE 16
     mov r14d, edi
     mov [rsp], esi
     mov [rsp + 4], edx
     mov [rsp + 8], edi
+    mov [rsp + 12], ecx         # the bar's width
     # "N errors, M warnings" of the document on screen
     mov rdi, [rip + g_doc]
     call extmarks_counts
@@ -4571,38 +4572,13 @@ FN ext_status_draw
     push rax
     call ui_text_v
     add rsp, 16
-11: xor r12d, r12d
-1:  cmp r12, [rip + g_exts + VEC_len]
-    jae 9f
-    imul rbx, r12, EXT_SIZE
-    add rbx, [rip + g_exts + VEC_ptr]
-    inc r12
-    cmp dword ptr [rbx + EXT_status], ES_RUNNING
-    jne 1b
-    mov r13, [rbx + EXT_status_text]
-    test r13, r13
-    jz 1b
-    mov rdi, r13
-    call strlen
-    mov r15, rax
-    lea rdi, [rip + g_face_small]
-    mov rsi, r13
-    mov rdx, r15
-    call text_width
-    sub r14d, [rip + g_mt + 4*MI_12]
-    sub r14d, eax
-    lea rdi, [rip + g_face_small]
-    mov esi, r14d
-    mov edx, [rsp]
-    mov ecx, [rsp + 4]
-    mov r8, r13
-    mov r9, r15
-    COLOR eax, T_MUTED
-    push rax
-    push rax
-    call ui_text_v
-    add rsp, 16
-    jmp 1b
+11: # the status items (statusitems.s), right to left from here
+    mov edi, r14d
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    call status_items_right
+    mov r14d, eax
 9:  mov eax, r14d
     cmp eax, [rsp + 8]
     je 8f

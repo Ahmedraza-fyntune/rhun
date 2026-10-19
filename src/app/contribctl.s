@@ -8,6 +8,7 @@
 #   print-chord               "chord=none" or "chord=STROKE fallback=COMMAND ms=N"
 #   key-latin LATIN COMBO     a key press whose Latin-layout key is LATIN (a layout that is not Latin)
 #   print-contrib-problems EXT  the extension's dropped contribution entries
+#   print-status              the status items: side, priority, owner, text, command, where drawn
 .include "rhun.inc"
 
 .bss
@@ -24,7 +25,7 @@ contrib_ctl:
     .quad .Lc_cmd_args, c_cmd_args, .Lc_cmd_ref, c_cmd_ref
     .quad .Lc_when, c_when, .Lc_print_context, c_print_context, .Lc_ctx_set, c_ctx_set
     .quad .Lc_print_keys, c_print_keys, .Lc_print_chord, c_print_chord, .Lc_key_latin, c_key_latin
-    .quad .Lc_print_problems, c_print_problems
+    .quad .Lc_print_problems, c_print_problems, .Lc_print_status, c_print_status
     .quad 0, 0
 .Lc_cmd_args: .asciz "cmd-args"
 .Lc_cmd_ref: .asciz "cmd-ref"
@@ -35,6 +36,7 @@ contrib_ctl:
 .Lc_print_chord: .asciz "print-chord"
 .Lc_key_latin: .asciz "key-latin"
 .Lc_print_problems: .asciz "print-contrib-problems"
+.Lc_print_status: .asciz "print-status"
 .Lcommand_sp: .asciz "command "
 .Lbad_ref: .asciz "cmdref=bad\n"
 .Lno_ext: .asciz "no such extension\n"
@@ -247,3 +249,14 @@ c_print_problems:
     call sb_push_cstr
     xor eax, eax
     EPILOGUE
+
+# print-status: after a frame, so the items' places are the ones on screen
+c_print_status:
+    push rdi
+    push rdi
+    cmp dword ptr [rip + g_dirty], 0
+    je 1f
+    PCALL P_draw
+1:  pop rdi
+    pop rdi
+    jmp status_dump
