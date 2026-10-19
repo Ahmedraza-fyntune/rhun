@@ -33,6 +33,7 @@ ru_exe: .zero 4200
 ru_ap_dir: .zero 128            # askpass: the private folder and its socket
 ru_ap_path: .zero 128
 ru_ap_in: .zero SB_SIZE         # the question
+ru_ap_out: .zero SB_SIZE        # the answer, as it goes to the askpass program
 ru_ap_label: .zero 512
 ru_ap_env_prog: .zero 4300      # SSH_ASKPASS=...
 ru_ap_env_sock: .zero 160       # RHUN_ASKPASS=...
@@ -1937,12 +1938,13 @@ ru_ap_answer:
     mov ebx, [rip + ru_ap_conn]
     test ebx, ebx
     js 9f
-    lea rdi, [rip + ru_sb]
+    # its own buffer: the answer given may be in ru_sb (the yes/no list's)
+    lea rdi, [rip + ru_ap_out]
     call sb_clear
-    lea rdi, [rip + ru_sb]
+    lea rdi, [rip + ru_ap_out]
     mov esi, 'y'
     call sb_push_byte
-    lea rdi, [rip + ru_sb]
+    lea rdi, [rip + ru_ap_out]
     mov rsi, r12
     mov rdx, r13
     call sb_push
@@ -1952,13 +1954,13 @@ ru_ap_answer:
     xor edx, edx
     SYS SYS_fcntl
     mov edi, ebx
-    mov rsi, [rip + ru_sb + SB_ptr]
-    mov rdx, [rip + ru_sb + SB_len]
+    mov rsi, [rip + ru_ap_out + SB_ptr]
+    mov rdx, [rip + ru_ap_out + SB_len]
     call write_all
     # the answer does not stay in memory
-    mov rdi, [rip + ru_sb + SB_ptr]
+    mov rdi, [rip + ru_ap_out + SB_ptr]
     xor esi, esi
-    mov rdx, [rip + ru_sb + SB_len]
+    mov rdx, [rip + ru_ap_out + SB_len]
     call memset
     call ru_ap_drop
 9:  EPILOGUE

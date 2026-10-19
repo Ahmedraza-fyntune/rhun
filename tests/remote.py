@@ -82,9 +82,14 @@ class Remote(unittest.TestCase):
         conf = base / 'ssh_config'
         common = ('  HostName 127.0.0.1\n  Port %d\n  StrictHostKeyChecking no\n'
                   '  UserKnownHostsFile /dev/null\n  LogLevel ERROR\n' % SSH_PORT)
+        cls.known = base / 'known_hosts'
+        asking = ('  HostName 127.0.0.1\n  Port %d\n  StrictHostKeyChecking ask\n  UserKnownHostsFile %s\n'
+                  '  LogLevel ERROR\n' % (SSH_PORT, cls.known))
         conf.write_text('Host keyhost\n  User root\n  IdentityFile %s\n  IdentitiesOnly yes\n%s'
                         'Host pwhost\n  User pw\n  PubkeyAuthentication no\n'
-                        '  PreferredAuthentications password,keyboard-interactive\n%s' % (key, common, common))
+                        '  PreferredAuthentications password,keyboard-interactive\n%s'
+                        'Host askhost\n  User root\n  IdentityFile %s\n  IdentitiesOnly yes\n%s'
+                        % (key, common, common, key, asking))
         cls.wrapper = base / 'ssh-wrapper'
         cls.wrapper.write_text('#!/bin/sh\nexec ssh -F %s "$@"\n' % conf)
         cls.wrapper.chmod(0o755)
@@ -166,6 +171,17 @@ class Remote(unittest.TestCase):
         # the askpass folder went with the window
         self.assertFalse([p for p in Path('/tmp').glob('rhun-askpass-*') if p.stat().st_uid == os.getuid()
                           and p.stat().st_mtime > time.time() - 60])
+
+    def test_ssh_host_key_question(self):
+        """An unknown host key: ssh asks through askpass, the window offers Yes and No; Yes reaches
+        ssh as "yes", which records the key and connects."""
+        if self.known.exists():
+            self.known.unlink()
+        out = self.run_script('ssh:askhost', '/root/proj', ['wait 4000', 'print-palette', 'key Return',
+                                                           'wait-remote 90', 'print-remote'])
+        self.assertIn('> Yes\n  No', out)
+        self.assertEqual(self.field(out, 'remote=', 'state'), 'connected', out)
+        self.assertIn('127.0.0.1', self.known.read_text())
 
     def test_drop_and_reconnect(self):
         lines = ['wait-remote 90', 'cmd toggle_terminal', 'wait 500', 'remote-drop', 'wait 200',
