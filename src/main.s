@@ -29,7 +29,17 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
-    call keeper_helper_entry
+    # rhun --print-env: the login shell asks for its environment (uproc.s)
+    cmp qword ptr [rip + g_argc], 2
+    jne 1f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lprint_env]
+    call strcmp_eq
+    test eax, eax
+    jz 1f
+    call uproc_print_env
+1:  call keeper_helper_entry
     test rax, rax
     js .Lmain_not_keeper
     EPILOGUE
@@ -204,7 +214,9 @@ FN main
     call ext_store_job_retire_wait
     jmp .Lm_store_retire
 .Lm_store_retired:
+    call uproc_quit_begin       # programs run as the user: SIGTERM now, up to 300 ms with the extensions
     call ext_shutdown
+    call uproc_quit_end
     call agents_shutdown
     call ai_shutdown
     call session_remember_project
@@ -222,6 +234,7 @@ FN main
 
 .section .rodata
 .Lagent_worker: .asciz "--agent-index"
+.Lprint_env: .asciz "--print-env"
 .text
 parse_args:
     PROLOGUE

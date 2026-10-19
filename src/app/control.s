@@ -149,7 +149,7 @@ FN control_exec
     add r15, 16
     jmp 1b
 2:  call [r15 + 8]
-    push rax
+3:  push rax
     push rax
     call term_frame_now         # a command ends with a frame that shows all output so far
     call flush_frame
@@ -160,6 +160,15 @@ FN control_exec
     xor eax, eax
     EPILOGUE
 .Lce_unknown:
+    # tasks and terminals (runctl.s)
+    mov rdi, r13
+    mov rsi, r14
+    mov rdx, rbx
+    mov rcx, r12
+    lea r8, [rip + out]
+    call tt_control
+    test rax, rax
+    jz 3b
     lea rdi, [rip + out]
     lea rsi, [rip + .Lunknown]
     call sb_push_cstr
@@ -905,9 +914,18 @@ c_ext_set:
     lea rdx, [rip + .Lx_restart]
     call str_eq_cstr
     test eax, eax
-    jz 2f
+    jz 11f
     mov rdi, r15
     call ext_restart
+    jmp 9f
+11: mov rdi, r13                # forget: the projects it may run programs in (runallow.s)
+    mov rsi, r14
+    lea rdx, [rip + .Lx_forget]
+    call str_eq_cstr
+    test eax, eax
+    jz 2f
+    mov rdi, r15
+    call run_forget
     jmp 9f
 2:  call next_int
     mov [rsp], eax
@@ -2254,6 +2272,7 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lx_disabled: .asciz "disabled"
 .Lx_stop: .asciz "stop"
 .Lx_restart: .asciz "restart"
+.Lx_forget: .asciz "forget"
 .Ls_opts: .asciz "tab_width="
 .Ls_opt_spaces: .asciz " insert_spaces="
 .Ls_opt_trim: .asciz " trim_trailing_whitespace="

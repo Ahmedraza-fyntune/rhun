@@ -2008,3 +2008,23 @@ F AS_model, 8           # the model the session last used (its row), or 0
 F AS_log_model, 8       # parse: the model the log names for the replies that follow
 F AS_shown_model, 8     # parse: the model on the last reply labeled with one
 ENDSTRUCT AS_SIZE
+
+# ---- tasks and terminals: programs run as the user (uproc.s) in terminal tabs (termview.s) ----
+.equ SIGINT, 2
+.equ TK_SHELL, 0                # a terminal tab's kind: the user's shell
+.equ TK_TERMINAL, 1             # a program an extension opened (terminal-open, a debugger's runInTerminal)
+.equ TK_TASK, 2                 # a task
+.equ TRV_FOCUS, 0x100           # term_run: the new tab also gets the keyboard
+.equ TRV_SILENT, 0x200          # term_run: the tab is added without showing the panel
+.equ TE_EXIT, 0                 # term_run's fn(cookie, TERM, event, code): exited with code
+.equ TE_STOPPED, 1              # stopped (Stop, Restart, its tab closed while it ran)
+.equ TE_FAILED, 2               # could not start (no TE_STARTED before it)
+.equ TE_CLOSED, 3               # its tab closed: the TERM is gone
+.equ TE_STARTED, 4              # started, code its pid; again after each restart
+# a program for term_run (the lists are copied)
+STRUCT
+F PG_argv, 8            # 0-terminated cstr list; argv[0] a name looked up on the login PATH, or a path
+F PG_sets, 8            # "NAME=value" list, or 0
+F PG_unsets, 8          # "NAME" list, or 0
+F PG_cwd, 8             # cstr or 0 (the project, else home); a relative one is inside the project
+ENDSTRUCT PG_SIZE

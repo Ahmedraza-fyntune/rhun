@@ -288,6 +288,7 @@ python3 tests/terminal-tabs.py || fail=1
 python3 tests/terminal-panel.py || fail=1
 python3 tests/terminal-keys.py || fail=1
 python3 tests/terminal-links.py || fail=1
+python3 tests/terminals.py || fail=1       # tasks and terminals: programs' tabs, run-as-user approval
 python3 tests/new-window.py || fail=1
 python3 tests/file-launch.py || fail=1
 python3 tests/readonly-save.py || fail=1
