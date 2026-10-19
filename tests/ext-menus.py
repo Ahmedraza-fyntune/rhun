@@ -153,7 +153,7 @@ class Menus(contribhost.Contrib):
         bad += ''.join('i%d.command = ping\n' % i for i in range(16))
         bad += '[submenu.tools]\ninner.submenu = deeper\nodd = 1\n'
         out = self.run_editor(exts=self.exts(bad), files=(), drop_waits=True,
-                              actions=['print-problems alice/demo'])
+                              actions=['print-contrib-problems alice/demo'])
         self.assertIn('problem=[menu.nowhere] x.command: unknown menu location', out)
         self.assertIn('problem=[menu.editor] w.when: when: expected a value at byte 14', out)
         self.assertTrue(any(l.startswith('problem=[menu.editor] i') and 'more than 16 items' in l for l in out), out)
