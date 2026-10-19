@@ -15,7 +15,6 @@ body_len: .quad 0
 syntax_seen: .quad 0            # a syntax reply went out while handling this message
 toast_buf: .zero 256
 pr_ext: .quad 0                 # the open prompt (choose, ask, term): its extension,
-pr_revoked: .quad 0             # logical cancellation retains owned copied bytes until normal cleanup
 pr_id: .quad 0                  #   request id (0: no prompt is open),
 pr_kind: .quad 0                #   1 choose, 2 ask, 3 term,
 pr_body: .quad 0                #   the items' bytes (choose), owned
@@ -31,7 +30,7 @@ pr_cmd: .zero SB_SIZE           # the command sent to the terminal
 FN extproto_pump
     PROLOGUE 16
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     mov [rip + cur], rbx
@@ -70,7 +69,7 @@ FN extproto_pump
     mov dword ptr [rbx + EXT_win_hit], 0
 .Lpp_next:
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp dword ptr [rbx + EXT_status], ES_STARTING
@@ -347,6 +346,8 @@ handle_line:
     mov rdi, rbx
     call extproto_events        # catch-up: nothing is known yet, so everything open is reported
     mov rdi, rbx
+    call testproto_ready        # testing: a controller is asked for its roots
+    mov rdi, rbx
     call ext_pending_try
     jmp 9f
 3:  mov rdi, rbx
@@ -409,7 +410,7 @@ handle_line:
     call field_u64
 .Lhl_body_parsed:
     test edx, edx
-    jz .Lhl_bad_frame
+    jz .Lhl_syntax_id          # v1: error ID syntax, the line dropped, no body read
     cmp rax, [r12 + 16]
     jbe 61f
     # over the cap: the body cannot be skipped without reading it, and reading megabytes to
@@ -468,8 +469,16 @@ handle_line:
     jmp 9f
 2:  test r12, r12
     jz 9f
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
+    cmp dword ptr [rbx + EXT_feat_asks], 0
+    je 9f
+    mov rdi, rbx                # testing: tests-resolve and test-run answers
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call testproto_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -494,13 +503,23 @@ handle_line:
     call langfeat_reply
     jmp 9f
 .Lhl_err:
-    test dword ptr [rbx + EXT_features], FEAT_PROVIDERS
-    jz 9f
+    cmp dword ptr [rbx + EXT_feat_asks], 0
+    je 9f
     mov edi, 1
     call field_u64
     test edx, edx
     jz 9f
     mov r12, rax
+    mov edi, 2                  # testing: the code and text go with the answer
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call testproto_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     xor edx, edx
@@ -555,6 +574,17 @@ handle_line:
     lea rsi, [rip + .Lr_framing]
     call ext_kill
     jmp 9b
+
+# testing (testproto.s): every tests verb goes to testproto_request(ext, id, line, len, body,
+# body length), which parses the line itself and answers through ext_send_checked
+h_tests:
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    mov rdx, [rip + line + SB_ptr]
+    mov rcx, [rip + line + SB_len]
+    mov r8, [rip + body_ptr]
+    mov r9, [rip + body_len]
+    jmp testproto_request
 
 # reply_syntax(id): "error ID syntax ..."; the third in a row ends the program
 reply_syntax:
@@ -983,7 +1013,7 @@ h_snippet_context:
     test eax, eax
     jz 9f
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    FEAT_TEST rax, FEAT_SNIPPETS
     jz .Lhsc_unknown
     cmp qword ptr [rip + nfields], 8
     jne .Lhsc_syntax
@@ -1095,7 +1125,7 @@ h_snippet:
     test eax, eax
     jz 9f
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_SNIPPETS
+    FEAT_TEST rax, FEAT_SNIPPETS
     jz .Lhsn_unknown
     cmp qword ptr [rip + nfields], 9
     jne .Lhsn_syntax
@@ -1231,7 +1261,10 @@ h_apply:
     mov rdi, [rip + body_ptr]
     mov rsi, [rip + body_len]
     mov rdx, [rip + cur]
+    mov rcx, [rip + cur_id]
     call ws_apply_request
+    cmp eax, 2
+    je 9f                       # wsedit: the confirmation list answers when the user does
     test eax, eax
     jz 1f
     mov rdi, [rip + cur_id]
@@ -1241,6 +1274,23 @@ h_apply:
     mov rsi, rdx
     call reply_error
 9:  EPILOGUE
+
+# wsedit: FN extproto_reply_to(ext, id, error "CODE TEXT" or 0): a reply that waited (an apply
+# request the confirmation list held)
+FN extproto_reply_to
+    PROLOGUE
+    mov rbx, [rip + cur]
+    mov [rip + cur], rdi
+    mov r12, rdx
+    mov rdi, rsi
+    test r12, r12
+    jnz 1f
+    call reply_ok
+    jmp 2f
+1:  mov rsi, r12
+    call reply_error
+2:  mov [rip + cur], rbx
+    EPILOGUE
 
 # Additive protocol identity/position fields are decimal int64 values, with overflow rejected.
 save_number:
@@ -1277,7 +1327,7 @@ save_number:
 h_save_apply:
     PROLOGUE
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_SAVE_ACTIONS
+    FEAT_TEST rax, FEAT_SAVE_ACTIONS
     jz .Lhsa_unknown
     mov edi, NEEDS_DOC_WRITE
     call need
@@ -1922,7 +1972,7 @@ h_register:
 h_unregister:
     PROLOGUE
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_COMMANDS
+    FEAT_TEST rax, FEAT_COMMANDS
     jz .Lhun_unknown
     cmp qword ptr [rip + nfields], 3
     jne .Lhun_syntax
@@ -2050,12 +2100,7 @@ h_option:
 
 # prompt_busy() -> 1 after replying busy when a prompt or the palette is open
 prompt_busy:
-    cmp qword ptr [rip + pr_revoked], 0
-    je 2f
-    push rax
-    call prompt_clear
-    pop rax
-2:  cmp qword ptr [rip + pr_id], 0
+    cmp qword ptr [rip + pr_id], 0
     jne 1f
     push rax
     call palette_is_open
@@ -2073,7 +2118,6 @@ prompt_busy:
 # prompt_begin(kind): the open prompt is cur's current request
 prompt_begin:
     push rbx
-    mov qword ptr [rip + pr_revoked], 0
     mov [rip + pr_kind], rdi
     mov rax, [rip + cur]
     mov [rip + pr_ext], rax
@@ -2088,8 +2132,6 @@ prompt_begin:
 # early was meant for whatever had the focus before the prompt appeared
 FN extproto_prompt_fresh
     xor eax, eax
-    cmp qword ptr [rip + pr_revoked], 0
-    jne 9f
     cmp qword ptr [rip + pr_kind], 3
     jne 9f
     push rbx
@@ -2106,7 +2148,6 @@ FN extproto_prompt_fresh
 # prompt_clear(): no prompt is open
 prompt_clear:
     push rbx
-    mov qword ptr [rip + pr_revoked], 0
     mov rdi, [rip + pr_body]
     call mem_free
     mov qword ptr [rip + pr_body], 0
@@ -2314,7 +2355,7 @@ h_term:
 # view_agreed() -> ZF clear when the views feature was agreed; otherwise the reply is sent
 view_agreed:
     mov rax, [rip + cur]
-    test dword ptr [rax + EXT_features], FEAT_VIEWS
+    FEAT_TEST rax, FEAT_VIEWS
     jnz 1f
     push rax
     mov rdi, [rip + cur_id]
@@ -2458,6 +2499,63 @@ h_cmd:
 .Lhcm_ret:
     EPILOGUE
 
+# ---------------- contributions and commands ----------------
+
+# ID set-context KEY VALUE -> ok ID: the extension's context key KEY (feature context-keys);
+# VALUE is the rest of the line, "-" removes it (extcontext.s)
+h_set_context:
+    PROLOGUE
+    mov rax, [rip + cur]
+    FEAT_TEST rax, FEAT_CONTEXT_KEYS
+    jz .Lhctx_unknown
+    cmp qword ptr [rip + nfields], 4
+    jb .Lhctx_syntax
+    mov edi, 3
+    call rest_from
+    mov r12, rax
+    mov r13, rdx
+    cmp r13, CTX_VAL_MAX
+    ja .Lhctx_long
+    mov rdi, r12
+    mov rsi, r13
+    call plain_text
+    test eax, eax
+    jz .Lhctx_syntax
+    cmp r13, 1
+    jne 1f
+    cmp byte ptr [r12], '-'
+    jne 1f
+    xor r13d, r13d
+1:  mov edi, 2
+    call field_at
+    mov rsi, rax
+    mov rdi, [rip + cur]
+    mov rcx, r12
+    mov r8, r13
+    call xc_set
+    test eax, eax
+    jnz 2f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+2:  cmp eax, 1
+    jne .Lhctx_syntax
+    lea rsi, [rip + .Le_toobig_keys]
+    jmp .Lhctx_error
+.Lhctx_long:
+    lea rsi, [rip + .Le_toobig_value]
+    jmp .Lhctx_error
+.Lhctx_unknown:
+    lea rsi, [rip + .Le_unknown]
+.Lhctx_error:
+    mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+.Lhctx_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
+
 # plain_text(ptr, len) -> 1 when the bytes are one line of valid UTF-8 with no control
 # character (C0, DEL, C1), no bidi control (U+202A-202E, U+2066-2069) and no zero-width
 # character (U+200B-200F, U+2060, U+FEFF): text that shows as it is
@@ -2550,11 +2648,6 @@ plain_text:
 # changed mode under it)
 FN extproto_prompt_abort
     PROLOGUE
-    cmp qword ptr [rip + pr_revoked], 0
-    je 1f
-    call prompt_clear
-    jmp 9f
-1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov rbx, [rip + cur]
@@ -2570,11 +2663,6 @@ FN extproto_prompt_abort
 # extproto_prompt_chose(n): the user picked item n of the choose prompt
 FN extproto_prompt_chose
     PROLOGUE
-    cmp qword ptr [rip + pr_revoked], 0
-    je 1f
-    call prompt_clear
-    jmp 9f
-1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov r12, rdi
@@ -2591,11 +2679,6 @@ FN extproto_prompt_chose
 # extproto_prompt_text(ptr, len, PROMPT_ASK | PROMPT_TERM): the user accepted the field's text
 FN extproto_prompt_text
     PROLOGUE
-    cmp qword ptr [rip + pr_revoked], 0
-    je 1f
-    call prompt_clear
-    jmp 9f
-1:
     cmp qword ptr [rip + pr_id], 0
     je 9f
     mov r12, rdi
@@ -2683,7 +2766,7 @@ FN extproto_prompt_owner_gone
 send_settings:
     PROLOGUE
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     xor r12d, r12d
@@ -2854,7 +2937,7 @@ FN extproto_send_action
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 9f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -2896,7 +2979,8 @@ hello_features:
     PROLOGUE
     mov rbx, rdi
     mov [rip + cur], rdi
-    mov dword ptr [rbx + EXT_features], 0
+    mov rdi, rbx
+    call ext_features_clear
     mov edi, 2
     call rest_from
     mov r12, rax
@@ -2919,57 +3003,102 @@ hello_features:
 .Lhf_token_found:
     mov r13, rax
     sub r13, r12
-    xor r14d, r14d              # the feature's bit index
-2:  lea rax, [rip + feature_names]
-    mov rdx, [rax + r14*8]
-    test rdx, rdx
-    jz 3f
     mov rdi, r12
     mov rsi, r13
-    call str_eq_cstr
+    call feature_index
     test eax, eax
-    jz 21f
-    mov ecx, r14d
-    mov eax, 1
-    shl eax, cl
-    or [rbx + EXT_features], eax
-21: inc r14d
-    jmp 2b
+    js 3f
+    bts dword ptr [rbx + EXT_features], eax
+    test edx, edx
+    jz 3f
+    mov dword ptr [rbx + EXT_feat_asks], 1
 3:  add r12, r13
     jmp 1b
-4:  and dword ptr [rbx + EXT_features], FEAT_HOST
-    # wsedit: file-operations only together with workspace-edits
-    test dword ptr [rbx + EXT_features], FEAT_WORKSPACE_EDITS
-    jnz 41f
-    and dword ptr [rbx + EXT_features], ~FEAT_FILE_OPERATIONS
-41: cmp dword ptr [rbx + EXT_features], 0
-    je 9f
+4:  mov rdi, rbx                # wsedit: which of its features it may have yet
+    call ws_features_agreed
+    xor r14d, r14d              # anything agreed?
+    xor ecx, ecx
+41: or r14, [rbx + EXT_features + rcx*8]
+    inc ecx
+    cmp ecx, FEAT_MAX / 64
+    jb 41b
+    test r14, r14
+    jz 9f
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
-    xor r14d, r14d
-5:  lea rax, [rip + feature_names]
-    mov rsi, [rax + r14*8]
-    test rsi, rsi
-    jz 7f
-    mov eax, [rbx + EXT_features]
-    mov ecx, r14d
-    shr eax, cl
-    test eax, 1
-    jz 6f
+    xor r14d, r14d              # the feature's index
+    lea r13, [rip + feature_names]
+5:  cmp byte ptr [r13], 0xff
+    je 7f
+    inc r13                     # past its asks byte
+    bt dword ptr [rbx + EXT_features], r14d
+    jnc 6f
     mov edi, ' '
-    push rsi
-    push rsi
     call out_byte
-    pop rdi
-    pop rsi
+    mov rdi, r13
     call out_cstr
-6:  inc r14d
+6:  mov rdi, r13
+    call strlen
+    lea r13, [r13 + rax + 1]
+    inc r14d
     jmp 5b
 7:  mov edi, 10
     call out_byte
     call out_end
 9:  EPILOGUE
+
+# feature_index(ptr, len) -> eax the feature's index (FEAT_*) or -1, edx its asks flag
+feature_index:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor r14d, r14d
+    lea rbx, [rip + feature_names]
+1:  cmp byte ptr [rbx], 0xff
+    je 8f
+    movzx r15d, byte ptr [rbx]
+    inc rbx
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, rbx
+    call str_eq_cstr
+    test eax, eax
+    jnz 2f
+    mov rdi, rbx
+    call strlen
+    lea rbx, [rbx + rax + 1]
+    inc r14d
+    jmp 1b
+2:  mov eax, r14d
+    mov edx, r15d
+    EPILOGUE
+8:  mov eax, -1
+    xor edx, edx
+    EPILOGUE
+
+# FN ext_feature(ext, index) -> eax 1 when the extension agreed feature FEAT_* index (any
+# register index; a negative one is no feature)
+FN ext_feature
+    xor eax, eax
+    test esi, esi
+    js 9f
+    cmp esi, FEAT_MAX
+    jae 9f
+    bt dword ptr [rdi + EXT_features], esi
+    setc al
+9:  ret
+
+# FN ext_features_clear(ext): nothing agreed (a new run)
+FN ext_features_clear
+    xor eax, eax
+    xor ecx, ecx
+1:  mov [rdi + EXT_features + rcx*8], rax
+    inc ecx
+    cmp ecx, FEAT_MAX / 64
+    jb 1b
+    mov dword ptr [rdi + EXT_feat_asks], 0
+    ret
 
 send_ready:
     PROLOGUE
@@ -2987,11 +3116,19 @@ send_ready:
     call out_end
     EPILOGUE
 
-# extproto_send_run(ext, command index): "0 run NAME DOC"
+# extproto_send_run(ext, command index): "0 run NAME DOC", from the palette without a body
 FN extproto_send_run
+    xor edx, edx
+    jmp extproto_send_invoke
+
+# extproto_send_invoke(ext, command index, INV* or 0): "0 run NAME DOC", and with command-args
+# " FROM LEN" LF and the body. DOC is the invocation's document while it is open, else the
+# active one.
+FN extproto_send_invoke
     PROLOGUE
     mov r12, rdi
     mov rbx, rsi
+    mov r14, rdx
     cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne .Lpsr_closed
     cmp dword ptr [r12 + EXT_status], ES_RUNNING
@@ -3017,6 +3154,7 @@ FN extproto_send_run
     mov r13, [rax + CMD_name]
     test r13, r13
     jz .Lpsr_missing
+    mov [rip + cur], r12
     call out_begin
     lea rdi, [rip + .Lev_run]
     call out_cstr
@@ -3024,12 +3162,52 @@ FN extproto_send_run
     call out_cstr
     mov edi, ' '
     call out_byte
-    call active_doc_id
+    # the document: the invocation's while it is open, else the active one
+    test r14, r14
+    jz 1f
+    mov rdi, [r14 + INV_doc]
+    test rdi, rdi
+    jz 1f
+    call doc_by_id
+    test rax, rax
+    jz 1f
+    mov rdi, [rax + DOC_id]
+    jmp 2f
+1:  call active_doc_id
     mov rdi, rax
-    call out_u64
+2:  call out_u64
+    FEAT_TEST r12, FEAT_COMMAND_ARGS
+    jz 5f
+    # command-args: " FROM LEN" and the body
+    mov edi, ' '
+    call out_byte
+    xor edi, edi
+    test r14, r14
+    jz 3f
+    mov edi, [r14 + INV_from]
+3:  call invoke_from_name
+    mov rdi, rax
+    call out_cstr
+    mov edi, ' '
+    call out_byte
+    xor edi, edi
+    test r14, r14
+    jz 4f
+    mov rdi, [r14 + INV_len]
+4:  call out_u64
     mov edi, 10
     call out_byte
-    call out_end
+    test r14, r14
+    jz 6f
+    mov rdi, [r14 + INV_body]
+    mov rsi, [r14 + INV_len]
+    test rsi, rsi
+    jz 6f
+    call out_bytes
+    jmp 6f
+5:  mov edi, 10
+    call out_byte
+6:  call out_end
 9:  EPILOGUE
 .Lpsr_closed:
     mov rax, -32
@@ -3167,7 +3345,7 @@ FN extproto_send_project_all
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -3278,7 +3456,7 @@ FN extproto_send_hover_all
     add rbx, [rip + g_exts + VEC_ptr]
     inc r12
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 1b
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -3419,7 +3597,25 @@ verbs:
     .quad .Lv_unview, h_unview, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
+    # contributions and commands
+    .quad .Lv_set_context, h_set_context, 0
+    # testing (testproto.s): feature "tests"
+    .quad .Lv_test_items, h_tests, EXT_BODY_MAX
+    .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
+    .quad .Lv_test_update, h_tests, TS_RESULTS_BODY
+    .quad .Lv_test_end, h_tests, 0
+    .quad .Lv_test_coverage, h_tests, TS_COVER_BODY
+    .quad .Lv_test_exec, h_tests, TS_EXEC_BODY
     .quad 0, 0, 0
+.Lv_test_items: .asciz "test-items"
+.Lv_test_remove: .asciz "test-remove"
+.Lv_test_update: .asciz "test-update"
+.Lv_test_end: .asciz "test-end"
+.Lv_test_coverage: .asciz "test-coverage"
+.Lv_test_exec: .asciz "test-exec"
+.Lv_set_context: .asciz "set-context"
+.Le_toobig_keys: .asciz "toobig 64 keys"
+.Le_toobig_value: .asciz "toobig 256 bytes"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -3524,33 +3720,14 @@ cmd_allow:
 .Lev_features: .asciz "0 features"
 .Lev_cancel: .asciz "0 cancel "
 .Lev_action: .asciz "0 action "
-.Lf_views: .asciz "views"
-.Lf_complete: .asciz "complete"
-.Lf_signature: .asciz "signature"
-.Lf_definition: .asciz "definition"
-.Lf_references: .asciz "references"
-.Lf_symbols: .asciz "symbols"
-.Lf_actions: .asciz "actions"
-.Lf_rename: .asciz "rename"
-.Lf_format: .asciz "format"
-.Lf_commands: .asciz "commands"
-.Lf_snippet_transforms: .asciz "snippet-transforms"
-.Lf_snippet_variants: .asciz "snippet-variants"
-.Lf_snippets: .asciz "snippets"
-.Lf_save_actions: .asciz "save-actions"
 .Lv_save_apply: .asciz "save-apply"
-# wsedit: feature names
-.Lf_workspace_edits: .asciz "workspace-edits"
-.Lf_file_operations: .asciz "file-operations"
-.Lf_selections: .asciz "selections"
-.Lf_reveal: .asciz "reveal"
-.Lf_diff: .asciz "diff"
-.Lf_linked_editing: .asciz "linked-editing"
 .Le_save_apply: .asciz "refused save edit is not valid for the active invocation"
 .p2align 3
-feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf_references   # bit i: FEAT_*
-    .quad .Lf_symbols, .Lf_actions, .Lf_rename, .Lf_format, .Lf_commands, .Lf_save_actions, .Lf_snippets, .Lf_snippet_variants, .Lf_snippet_transforms, .Lewp_feature
-    .quad .Lf_workspace_edits, .Lf_file_operations, .Lf_selections, .Lf_reveal, .Lf_diff, .Lf_linked_editing, 0   # wsedit
+# the features rhun knows, in FEAT_* order: per feature its asks byte and its name; 0xff ends
+.set FEATURE_NAMES, 1
+feature_names:
+    FEATURE_LIST
+    .byte 0xff
 .Lw_ok: .asciz "ok"
 .Lw_error: .asciz "error"
 .Lw_ok_sp: .asciz "ok "
@@ -3593,14 +3770,3 @@ feature_names: .quad .Lf_views, .Lf_complete, .Lf_signature, .Lf_definition, .Lf
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"
 .Lewp_feature: .asciz "workspace_watch"
 
-.text
-# Pure logical cancellation. Retain the copied prompt body/command for ordinary cleanup.
-FN extproto_prompt_catalog_invalidate_pure
-    mov qword ptr [rip + pr_revoked], 1
-    ret
-
-# Outside pure publication, one normal owned body cleanup with no reply or terminal action.
-FN extproto_prompt_collect_revoked
-    cmp qword ptr [rip + pr_revoked], 0
-    jne prompt_clear
-    ret

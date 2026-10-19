@@ -14,6 +14,7 @@
 .globl g_find_word
 g_find_word: .long 0            # * and #: matches are whole words
 .p2align 3
+.globl find_open
 find_open: .long 0
 repl_open: .long 0
 find_sub: .long 0               # 0 find field, 1 replace field

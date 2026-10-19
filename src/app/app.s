@@ -2383,7 +2383,7 @@ FN app_on_key
     test rax, rax
     jz .Lk_editor
     mov rdi, rdx
-    call rax
+    call keys_run
     jmp 9f
 .Lk_editor:
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR
@@ -2700,7 +2700,15 @@ FN app_timeout
     cmp eax, ebx
     jge 96f
 97: mov ebx, eax
-96: mov eax, ebx
+96: call testing_timeout        # testing: tests-resolve waits, Cancel deadlines, test processes
+    cmp eax, -1
+    je 98f
+    cmp ebx, -1
+    je 99f
+    cmp eax, ebx
+    jge 98f
+99: mov ebx, eax
+98: mov eax, ebx
     EPILOGUE
 
 FN app_tick
@@ -2730,6 +2738,7 @@ FN app_tick
     call editor_tick
     call ext_tick
     call ext_provider_tick
+    call testing_tick           # testing (testproto.s)
     call app_clip_tick
     EPILOGUE
 
@@ -6483,22 +6492,3 @@ FN app_goto_line
 4:  mov dword ptr [rip + g_reveal], 1
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
-
-.text
-# Revoke only this exact borrow-only confirmation, never invoke an owned Cancel callback.
-FN app_confirm_revoke_pure
-    cmp dword ptr [rip + dlg_kind], 4
-    jne 9f
-    cmp [rip + dlg_fn], rdi
-    jne 9f
-    cmp qword ptr [rip + dlg_cancel], 0
-    jne 9f
-    mov dword ptr [rip + dlg_kind], 0
-    mov qword ptr [rip + dlg_title], 0
-    mov qword ptr [rip + dlg_text], 0
-    mov qword ptr [rip + dlg_ok], 0
-    mov qword ptr [rip + dlg_fn], 0
-    cmp dword ptr [rip + g_focus], FOCUS_DIALOG
-    jne 9f
-    mov dword ptr [rip + g_focus], FOCUS_EDITOR
-9:  ret

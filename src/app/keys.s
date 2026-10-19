@@ -60,7 +60,6 @@ FN parse_combo
     EPILOGUE
 
 # combo_token(ptr, len) -> edx mod bit if a modifier, else eax keysym
-FN keys_combo_token
 combo_token:
     PROLOGUE
     mov r12, rdi
@@ -347,6 +346,14 @@ FN keys_lookup
 5:  xor eax, eax
     ret
 
+# FN keys_run(cmd*): run the command keys_lookup found, as invoked by a key (FROM key)
+FN keys_run
+    mov esi, INV_KEY
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    jmp cmd_invoke
+
 # keys_for(cmd*) -> first binding formatted into a static buffer ("Ctrl+Shift+P"), or 0
 FN keys_for
     PROLOGUE
@@ -460,11 +467,6 @@ FN keys_for
 8:  xor eax, eax
     EPILOGUE
 
-# Stable process-lifetime target for an explicitly unbound shortcut.
-FN keys_none_command
-    lea rax, [rip + none_cmd]
-    ret
-
 FN cmd_none
     ret
 
@@ -575,6 +577,8 @@ g_commands:
     COMMAND quit, "Quit", cmd_quit, "ctrl+q"
     COMMAND undo, "Undo", cmd_undo, "ctrl+z"
     COMMAND redo, "Redo", cmd_redo, "ctrl+shift+z ctrl+y"
+    COMMAND undo_workspace_edit, "Undo Last Multi-File Edit", cmd_undo_workspace_edit, ""
+    COMMAND redo_workspace_edit, "Redo Last Multi-File Edit", cmd_redo_workspace_edit, ""
     COMMAND snippet_choose, "Snippet: Choose Value", cmd_snippet_choose, ""
     COMMAND snippet_next, "Snippet: Next Field", cmd_snippet_next, ""
     COMMAND snippet_previous, "Snippet: Previous Field", cmd_snippet_previous, ""
@@ -678,6 +682,18 @@ g_commands:
     COMMAND check_for_updates, "Check for Updates", cmd_check_for_updates, ""
     COMMAND install_update, "Install Update", cmd_install_update, ""
     COMMAND restart_to_update, "Restart to Update", cmd_restart_to_update, ""
+    # testing (testview.s)
+    COMMAND testing, "Testing", cmd_testing, ""
+    COMMAND test_run_all, "Run All Tests", cmd_test_run_all, ""
+    COMMAND test_run_file, "Run Tests in Current File", cmd_test_run_file, ""
+    COMMAND test_run_cursor, "Run Test at Cursor", cmd_test_run_cursor, ""
+    COMMAND test_debug_cursor, "Debug Test at Cursor", cmd_test_debug_cursor, ""
+    COMMAND test_coverage_all, "Run All Tests with Coverage", cmd_test_coverage_all, ""
+    COMMAND test_rerun_failed, "Re-run Failed Tests", cmd_test_rerun_failed, ""
+    COMMAND test_rerun_last, "Re-run Last Test Run", cmd_test_rerun_last, ""
+    COMMAND test_cancel, "Cancel Test Runs", cmd_test_cancel, ""
+    COMMAND test_coverage_toggle, "Show Test Coverage", cmd_test_coverage_toggle, ""
+    COMMAND test_next_failure, "Go to Next Test Failure", cmd_test_next_failure, ""
     .quad 0, 0, 0, 0
 
 .bss

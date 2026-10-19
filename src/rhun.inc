@@ -44,7 +44,6 @@
 .equ SYS_kill, 62
 .equ SYS_uname, 63
 .equ SYS_fcntl, 72
-.equ SYS_flock, 73
 .equ SYS_fsync, 74
 .equ SYS_ftruncate, 77
 .equ SYS_getcwd, 79
@@ -84,8 +83,6 @@
 .equ SYS_landlock_restrict_self, 446
 .equ SYS_sandbox_init, 290          # macOS only: a pseudo number the translator maps to sandbox_init
 .equ SYS_realpath, 291              # macOS only: realpath(path, buf) -> buf or 0
-.equ SYS_rename_new, 292            # macOS only: renamex_np(old, new, RENAME_EXCL)
-.equ SYS_renameat2, 316
 .equ CLONE_NEWUSER, 0x10000000
 .equ CLONE_NEWNET, 0x40000000
 .equ O_PATH, 0x200000
@@ -235,27 +232,6 @@
 .endm
 
 # ---- struct layout ----
-# Caller-owned SHA-256 context. Byte input length must fit the standard's 64-bit bit count.
-.equ SH256_state, 0
-.equ SH256_bytes, 32
-.equ SH256_used, 40
-.equ SH256_block, 48
-.equ SH256_finalized, 112
-.equ SH256_SIZE, 128
-.equ SH256_BYTES_MAX, (1 << 61) - 1
-
-# Immutable managed extension selection record, little-endian on supported targets.
-.equ EXI_format, 8
-.equ EXI_flags, 12
-.equ EXI_generation, 16
-.equ EXI_reserved, 24
-.equ EXI_active, 32
-.equ EXI_previous, 96
-.equ EXI_SIZE, 160
-.equ EXI_ACTIVE, 1
-.equ EXI_REMOVED, 2
-.equ EXI_FILENAME_LEN, 20
-
 # Private per-call context for strict directory enumeration.
 .equ DSC_max, 0
 .equ DSC_count, 8
@@ -640,7 +616,6 @@ F DOC_multilastcp, 8    # last scalar inserted by a multiple-selection typing ru
 F DOC_language_mode, 4  # DL_AUTO, DL_PLAIN or DL_NAMED
 F DOC_language_syncing, 4
 F DOC_language_name, 8  # owned explicit language name, retained even while unavailable
-F DOC_language_owner, 8 # owned prepared GP reference for DOC_lang, or 0
 F DOC_language_epoch, 8
 F DOC_language_revision, 8 # independent of text version; 0 permanently exhausts authority
 F DOC_language_pending, 8
@@ -1217,7 +1192,100 @@ F UR_aftercur, 8        # optional group replay caret; -1 for ordinary records
 F UR_afteranchor, 8
 F UR_beforeselections, 8 # owned secondary selection snapshot, or 0
 F UR_afterselections, 8  # owned snapshot, 0 = single, -1 = unspecified
+F UR_tx, 8              # wsedit: the workspace-edit transaction this group belongs to, 0 for none
 ENDSTRUCT UR_SIZE
+
+# ---- workspace-edit transactions (wsedit: wsedit.s, wstx.s, wsdisk.s) ----
+# a transaction: one workspace edit across documents and files, undone and redone as one step
+STRUCT
+F TX_id, 8              # session-unique, never 0 (UR_tx names it)
+F TX_label, 8           # owned cstr: names it in toasts and lists
+F TX_journal, 8         # owned cstr: its journal folder, or 0 when it wrote nothing to disk
+F TX_nparts, 8
+F TX_parts, 8           # owned array of TP
+F TX_flags, 8           # TXF_*
+ENDSTRUCT TX_SIZE
+.equ TX_MAX, 64
+.equ TXF_DISK, 1        # it changed files on disk
+# a participant of a transaction
+STRUCT
+F TP_kind, 8            # TPK_*
+F TP_doc, 8             # TPK_BUF: the document
+F TP_state, 8           # TPS_*
+F TP_wrote, 8           # TPK_BUF: its text was also written to disk
+F TP_path, 8            # owned cstr: the file (TPK_FILE, a written TPK_BUF, the file operations)
+F TP_path2, 8           # owned cstr: a rename's target
+F TP_before, 8          # FNV-1a of the file's bytes before and after (disk participants)
+F TP_after, 8
+F TP_slot, 8            # its journal slot, -1 for none
+F TP_flags, 8           # TPF_*
+ENDSTRUCT TP_SIZE
+.equ TPK_BUF, 1         # an open document's buffer
+.equ TPK_FILE, 2        # a file on disk that was not open
+.equ TPK_CREATE, 3
+.equ TPK_RENAME, 4
+.equ TPK_DELETE, 5
+.equ TPS_APPLIED, 0
+.equ TPS_UNDONE, 1
+.equ TPS_LOST, 2        # closed unsaved, or otherwise out of reach: skipped
+.equ TPF_FOLDER, 1      # a create or delete of a folder
+.equ TPF_PICK, 2        # tx_run: undo or redo this one
+.equ TPF_DONE, 4        # a commit made its disk step (a rollback puts it back)
+# a workspace edit being made (wsedit.s reads it, wsdisk.s writes its files)
+.equ WK_TEXT, 0                 # entry kinds
+.equ WK_CREATE, 1
+.equ WK_RENAME, 2
+.equ WK_DELETE, 3
+
+.equ WP_VERSION, 0              # what a text group was made for (PRE)
+.equ WP_DASH, 1                 # "-": the file on disk as it is
+.equ WP_HASH, 2                 # "fnv1a64:HEX": the file whose bytes hash so
+
+.equ WF_OVERWRITE, 1            # entry flags
+.equ WF_IGNORE_EXISTING, 2
+.equ WF_RECURSIVE, 4
+.equ WF_IGNORE_MISSING, 8
+
+# an entry of a workspace edit: a text group (one file) or a file operation
+STRUCT
+F WG_kind, 8                    # WK_*
+F WG_path, 8                    # its PATH bytes (a rename's FROM)
+F WG_plen, 8
+F WG_path2, 8                   # a rename's TO
+F WG_plen2, 8
+F WG_pre, 8                     # WP_*
+F WG_version, 8                 # WP_VERSION: the version; -1 otherwise
+F WG_hash, 8                    # WP_HASH: the hash
+F WG_flags, 8                   # WF_*
+F WG_doc, 8                     # DOC* once resolved: the open document, or a hidden one (WG_hidden)
+F WG_hidden, 8                  # 1: WG_doc was read for a closed file, never shown, freed after
+F WG_first, 8                   # its edits: we[first .. first + count)
+F WG_count, 8
+F WG_opened, 8                  # 1: this edit opened its tab (v1; closed again if the edit fails)
+F WG_real, 8                    # owned: the file's path as written on disk, or 0
+F WG_stamp, 8                   # the file's stamp when it was read
+F WG_orig, 8                    # owned: a closed file's bytes as read, raw
+F WG_olen, 8
+F WG_clean, 8                   # an open document that had no unsaved changes
+F WG_ver0, 8                    # an open document's version when it was checked
+F WG_new, 8                     # owned: a closed file's bytes to write
+F WG_nlen, 8
+F WG_before, 8                  # FNV-1a of the bytes read, and of the bytes to write
+F WG_after, 8
+ENDSTRUCT WG_SIZE
+
+# an edit of a text group
+STRUCT
+F WE_l1, 4
+F WE_c1, 4
+F WE_l2, 4
+F WE_c2, 4
+F WE_start, 8                   # byte offsets, once resolved
+F WE_end, 8
+F WE_text, 8
+F WE_len, 8
+ENDSTRUCT WE_SIZE
+
 
 .equ EK_OTHER, 0
 .equ EK_TYPE, 1
@@ -1471,34 +1539,71 @@ ENDSTRUCT TF_SIZE
 .equ IMF_PNM, 7
 .equ IMF_TGA, 8
 .equ IMG_MAXDIM, 32768
-.equ FEAT_VIEWS, 1               # section 12 of the spec: features agreed after hello
-.equ FEAT_COMPLETE, 2
-.equ FEAT_SIGNATURE, 4
-.equ FEAT_DEFINITION, 8
-.equ FEAT_REFERENCES, 16
-.equ FEAT_SYMBOLS, 32
-.equ FEAT_ACTIONS, 64
-.equ FEAT_RENAME, 128
-.equ FEAT_FORMAT, 256
-.equ FEAT_COMMANDS, 512          # protocol 1.1: remove a runtime command
-.equ FEAT_SAVE_ACTIONS, 1024     # source code actions before saving
-.equ FEAT_SNIPPET_TRANSFORMS, 8192 # compiled field-exit transforms
-.equ FEAT_SNIPPET_VARIANTS, 4096 # declared unequal initial mirrors
-.equ FEAT_SNIPPETS, 2048        # prepared fields and native editable sessions
-# the features whose requests rhun sends (and whose ok ID LEN replies it frames)
-.equ FEAT_PROVIDERS, FEAT_COMPLETE | FEAT_SIGNATURE | FEAT_DEFINITION | FEAT_REFERENCES | FEAT_SYMBOLS | FEAT_ACTIONS | FEAT_RENAME | FEAT_FORMAT | FEAT_SAVE_ACTIONS
-.equ FEAT_WORKSPACE_WATCH, 16384
-# workspace edits and the editor model (wsedit; docs/extensions/v1.1.md): transactions, file
-# operations, several selections, reveal, diff tabs, linked editing. Each joins FEAT_HOST when
-# its host side is in; file-operations is agreed only together with workspace-edits
-.equ FEAT_WORKSPACE_EDITS, 32768
-.equ FEAT_FILE_OPERATIONS, 65536
-.equ FEAT_SELECTIONS, 131072
-.equ FEAT_REVEAL, 262144
-.equ FEAT_DIFF, 524288
-.equ FEAT_LINKED_EDITING, 1048576
-.equ FEAT_WSEDIT_HOST, 0
-.equ FEAT_HOST, FEAT_WSEDIT_HOST | FEAT_WORKSPACE_WATCH | FEAT_VIEWS | FEAT_PROVIDERS | FEAT_COMMANDS | FEAT_SNIPPETS | FEAT_SNIPPET_VARIANTS | FEAT_SNIPPET_TRANSFORMS
+# ---- protocol features (section 12 of the spec: named in "hello 1 NAME...", agreed by rhun's
+# "0 features" before ready) ----
+# One line per feature: FEATURE SYMBOL, "wire-name", ASKS. SYMBOL becomes the feature's index into
+# EXT_features (a bit set); ASKS is 1 when rhun sends that feature's requests, so the extension's
+# ok/error replies are read. Adding a feature is one line here, at the end (indices are not on the
+# wire; "0 features" lists names in this order). Test one with FEAT_TEST or ext_feature.
+.macro FEATURE_LIST
+    FEATURE FEAT_VIEWS, "views", 0
+    FEATURE FEAT_COMPLETE, "complete", 1
+    FEATURE FEAT_SIGNATURE, "signature", 1
+    FEATURE FEAT_DEFINITION, "definition", 1
+    FEATURE FEAT_REFERENCES, "references", 1
+    FEATURE FEAT_SYMBOLS, "symbols", 1
+    FEATURE FEAT_ACTIONS, "actions", 1
+    FEATURE FEAT_RENAME, "rename", 1
+    FEATURE FEAT_FORMAT, "format", 1
+    FEATURE FEAT_COMMANDS, "commands", 0          # protocol 1.1: remove a runtime command
+    FEATURE FEAT_SAVE_ACTIONS, "save-actions", 1  # source code actions before saving
+    FEATURE FEAT_SNIPPETS, "snippets", 0          # prepared fields and native editable sessions
+    FEATURE FEAT_SNIPPET_VARIANTS, "snippet-variants", 0   # declared unequal initial mirrors
+    FEATURE FEAT_SNIPPET_TRANSFORMS, "snippet-transforms", 0   # compiled field-exit transforms
+    FEATURE FEAT_WORKSPACE_WATCH, "workspace_watch", 0
+    # contributions and commands (invoke.s, when.s, extcontext.s)
+    FEATURE FEAT_COMMAND_ARGS, "command-args", 1  # 0 run ... FROM LEN, run-command, call
+    FEATURE FEAT_CONTEXT_KEYS, "context-keys", 0  # set-context
+    # testing (testproto.s): test items, runs, results, coverage, test-exec
+    FEATURE FEAT_TESTS, "tests", 1
+    # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):
+    # ws_features_agreed withholds the ones whose host side is not in yet
+    FEATURE FEAT_WORKSPACE_EDITS, "workspace-edits", 0
+    FEATURE FEAT_FILE_OPERATIONS, "file-operations", 0   # agreed only with workspace-edits
+    FEATURE FEAT_SELECTIONS, "selections", 0
+    FEATURE FEAT_REVEAL, "reveal", 0
+    FEATURE FEAT_DIFF, "diff", 0
+    FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
+.endm
+# extproto.s sets FEATURE_NAMES and expands the list again as its name table
+.macro FEATURE sym, name, asks
+.ifdef FEATURE_NAMES
+    .byte \asks
+    .asciz "\name"
+.else
+    .equ \sym, __feat
+    .set __feat, __feat + 1
+.endif
+.endm
+.set __feat, 0
+FEATURE_LIST
+.equ FEAT_COUNT, __feat
+.equ FEAT_MAX, 256              # EXT_features' bits
+.if FEAT_COUNT > FEAT_MAX
+.error "more features than EXT_features holds"
+.endif
+# The snippet decoders take the first 32 feature bits as one word (EXT_features' first dword).
+.if FEAT_SNIPPET_TRANSFORMS >= 32
+.error "the snippet features must stay in EXT_features' first dword"
+.endif
+# FEAT_TEST base, FEAT_X: ZF clear (jnz) when the extension at base agreed FEAT_X
+.macro FEAT_TEST base, feat
+    test byte ptr [\base + EXT_features + ((\feat) >> 3)], 1 << ((\feat) & 7)
+.endm
+# FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
+.macro FEAT_CLEAR base, feat
+    and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
+.endm
 .equ CP_MAX_ITEMS, 4096          # section 12b: a completion list's items and body at most
 .equ CP_BODY_MAX, 1048576
 .equ SG_BODY_MAX, 65536          # 12c: signature help's body
@@ -1576,7 +1681,6 @@ F GR_wchar, 256         # 1 for identifier bytes
 F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it), or 0
 F GR_srclen, 8
 F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
-F GR_owner, 8           # prepared GP owner, or 0 for legacy/built-in grammar
 ENDSTRUCT GR_SIZE
 .equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
@@ -1701,7 +1805,8 @@ F EXT_icon_px, 8*ICON_SLOTS   # copies at the sizes badges ask for, corners roun
 F EXT_icon_sz, 4*ICON_SLOTS
 F EXT_icon_next, 4      # the slot the next new size replaces
 F EXT_icon_pad, 4
-F EXT_features, 4       # FEAT_*: what was agreed after hello (section 12 of the spec)
+F EXT_features, FEAT_MAX / 8    # bit FEAT_*: what was agreed after hello (section 12 of the spec)
+F EXT_feat_asks, 4      # 1 when an agreed feature has rhun send requests (its replies are read)
 F EXT_feat_pad, 4
 F EXT_pv_complete, 8    # [provides] complete: the files it completes in (patterns, cstr) or 0
 F EXT_pv_ctrig, 8       # complete.triggers: characters that ask at once, space separated, or 0
@@ -1715,32 +1820,10 @@ F EXT_pv_actions, 8
 F EXT_pv_rename, 8
 F EXT_pv_format, 8
 F EXT_pv_save_actions, 8
-F EXT_activation_plan, 8 # borrowed immutable KE128, catalog retains its captured inputs and lease
-F EXT_keeper, 8         # stable independent process-service handle, 0 without an owned lifetime
-F EXT_retiring, 4       # contributions withdrawn; raw output drains independently of protocol
-F EXT_stdout_eof, 4
-F EXT_finish_code, 4    # final application exit/failure while whole lifetime is collected
-F EXT_startaccepted, 4  # hello timer begins only after exact START frame acceptance
-F EXT_activation_stale, 4 # catalog must supply a fresh owned activation plan before restart
-F EXT_keeper_pad, 4
-F EXT_prepare_at, 8     # bounded closed-gate preparation start time
-F EXT_start_record, 160 # copied fresh selected authorization, zero for legacy
-F EXT_start_armed, 4    # candidates remain closed until root publishes and explicitly arms
-F EXT_start_pad, 4
-F EXT_metadata_owner, 8 # owned ready EP for borrowed slot metadata
-F EXT_activation_owner, 8 # owned activation owner, independent from catalog
-F EXT_activation_required, 4 # permanent prepared activation latch
-F EXT_activation_owner_pad, 4
-F EXT_identity_owner, 8 # owned typed lease-free durable host identity
-F EXT_catalog_state, 4 #0staging,1visible,2hidden historical
-F EXT_catalog_pad, 4
-F EXT_host_child_in, 4 # retained temporary target stdin endpoint
-F EXT_host_child_out, 4 # retained temporary target stdout endpoint
+F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
+F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
+F EXT_tests_progs, 8    # [needs] tests: programs rhun may start for its test runs (cstr) or 0
 ENDSTRUCT EXT_SIZE
-.equ EXT_host_cleanup_mask, EXT_start_pad
-.equ EXT_host_cleanup_error, EXT_activation_owner_pad
-.equ EXT_host_native_result, EXT_keeper_pad
-.equ EXT_host_setup_error, EXT_catalog_pad
 
 # an extension's view (extview.s)
 STRUCT
@@ -1790,6 +1873,114 @@ ENDSTRUCT SD_SIZE
 .equ EXT_RTCMDS_MAX, 64         # register: commands per extension
 .equ EXT_CHOOSE_MAX, 1000       # choose: items
 .equ EXT_TERM_MAX, 4096         # term: the command's bytes
+
+# ---- contributions and commands (invoke.s, when.s, extcontext.s) ----
+# How a command was invoked (feature command-args): cmd_invoke takes these as arguments and
+# ext_cmd_run sends them as "0 run EXT.NAME DOC FROM LEN" + body
+.equ INV_PALETTE, 0             # the palette, headless cmd, a menu of all commands (the default)
+.equ INV_KEY, 1                 # a key binding; body: its ARGS
+.equ INV_MENU, 2                # a menu item or title/item button; body: TARGET LF and its args
+.equ INV_REF, 3                 # a command reference (lens, tree item, status item, notification)
+STRUCT
+F INV_from, 4           # INV_*
+F INV_pad, 4
+F INV_doc, 8            # the DOC id it is about, 0 for the active document
+F INV_body, 8           # ptr, len: the body
+F INV_len, 8
+ENDSTRUCT INV_SIZE
+.equ INV_BODY_MAX, 65536        # a body kept for a command that waits for its extension to start
+# a command reference: "command NAME ARGS_LEN" + ARGS inside any body (cmdref_parse, cmdref_new)
+STRUCT
+F CRF_ext, 8            # EXT* whose command it names
+F CRF_len, 8            # ARGS' length; the bytes follow the record
+F CRF_name, 48          # the local command name, NUL-terminated (at most 40 bytes)
+ENDSTRUCT CRF_SIZE
+.equ CRF_ARGS_MAX, 8192
+.equ CMD_NAME_MAX, 40           # a local command name: [a-z0-9_], 1 to 40 bytes
+# When-clause context keys (when.s), one line each: CTXKEY SYMBOL, "name", FN. FN computes the
+# value from rhun's state when a clause reads it (when.s); 0 marks a key another part publishes
+# with ctx_set(SYMBOL, ptr, len) / ctx_set_bool(SYMBOL, 0|1) (at most CTX_VAL_MAX bytes, copied).
+# Adding a key is one line here, at the end.
+.macro CTXKEY_LIST
+    CTXKEY CTX_EDITOR_FOCUS, "editorFocus", ck_editor_focus
+    CTXKEY CTX_TEXT_INPUT_FOCUS, "textInputFocus", ck_text_input_focus
+    CTXKEY CTX_PALETTE_FOCUS, "paletteFocus", ck_palette_focus
+    CTXKEY CTX_FIND_FOCUS, "findFocus", ck_find_focus
+    CTXKEY CTX_EXPLORER_FOCUS, "explorerFocus", ck_explorer_focus
+    CTXKEY CTX_AGENTS_FOCUS, "agentsFocus", ck_agents_focus
+    CTXKEY CTX_TERMINAL_FOCUS, "terminalFocus", ck_terminal_focus
+    CTXKEY CTX_SCM_INPUT_FOCUS, "scmInputFocus", ck_scm_focus
+    CTXKEY CTX_SETTINGS_FOCUS, "settingsFocus", ck_settings_focus
+    CTXKEY CTX_FIND_VISIBLE, "findVisible", ck_find_visible
+    CTXKEY CTX_COMPLETION_VISIBLE, "completionVisible", ck_completion_visible
+    CTXKEY CTX_SIGNATURE_VISIBLE, "signatureVisible", ck_signature_visible
+    CTXKEY CTX_SNIPPET_ACTIVE, "snippetActive", ck_snippet_active
+    CTXKEY CTX_ACTIVE_TAB, "activeTab", ck_active_tab
+    CTXKEY CTX_ACTIVE_TAB_PINNED, "activeTabPinned", ck_active_tab_pinned
+    CTXKEY CTX_TAB_COUNT, "tabCount", ck_tab_count
+    CTXKEY CTX_RESOURCE_LANG, "resourceLang", ck_resource_lang
+    CTXKEY CTX_RESOURCE_EXT, "resourceExt", ck_resource_ext
+    CTXKEY CTX_RESOURCE_FILENAME, "resourceFilename", ck_resource_filename
+    CTXKEY CTX_RESOURCE_DIRNAME, "resourceDirname", ck_resource_dirname
+    CTXKEY CTX_RESOURCE_PATH, "resourcePath", ck_resource_path
+    CTXKEY CTX_RESOURCE_SCHEME, "resourceScheme", ck_resource_scheme
+    CTXKEY CTX_RESOURCE_IN_PROJECT, "resourceInProject", ck_resource_in_project
+    CTXKEY CTX_EDITOR_READONLY, "editorReadonly", ck_editor_readonly
+    CTXKEY CTX_EDITOR_DIRTY, "editorDirty", ck_editor_dirty
+    CTXKEY CTX_EDITOR_HAS_SELECTION, "editorHasSelection", ck_editor_has_selection
+    CTXKEY CTX_EDITOR_HAS_MULTIPLE_SELECTIONS, "editorHasMultipleSelections", ck_editor_multi
+    CTXKEY CTX_EDITOR_PROVIDERS, "editorProviders", ck_editor_providers
+    CTXKEY CTX_VIM_MODE, "vimMode", ck_vim_mode
+    CTXKEY CTX_SIDEBAR_VISIBLE, "sidebarVisible", ck_sidebar_visible
+    CTXKEY CTX_AGENTS_VISIBLE, "agentsVisible", ck_agents_visible
+    CTXKEY CTX_TERMINAL_VISIBLE, "terminalVisible", ck_terminal_visible
+    CTXKEY CTX_PROJECT_OPEN, "projectOpen", ck_project_open
+    CTXKEY CTX_PROJECT_PATH, "projectPath", ck_project_path
+    CTXKEY CTX_GIT_REPO, "gitRepo", ck_git_repo
+    CTXKEY CTX_GIT_BRANCH, "gitBranch", ck_git_branch
+    CTXKEY CTX_GIT_CHANGES, "gitChanges", ck_git_changes
+    CTXKEY CTX_IS_LINUX, "isLinux", ck_is_linux
+    CTXKEY CTX_IS_MAC, "isMac", ck_is_mac
+    CTXKEY CTX_IS_WINDOWS, "isWindows", ck_is_windows
+    CTXKEY CTX_IS_WAYLAND, "isWayland", ck_is_wayland
+    CTXKEY CTX_TARGET_KIND, "targetKind", ck_target_kind
+    CTXKEY CTX_EXPLORER_RESOURCE_IS_FOLDER, "explorerResourceIsFolder", ck_target_is_folder
+    CTXKEY CTX_EXPLORER_RESOURCE_IS_ROOT, "explorerResourceIsRoot", ck_target_is_root
+    CTXKEY CTX_TAB_KIND, "tabKind", ck_tab_kind
+    # published by other parts (ctx_set): views, debugging
+    CTXKEY CTX_VIEW_FOCUS, "viewFocus", 0
+    CTXKEY CTX_VIEW, "view", 0
+    CTXKEY CTX_VIEW_ITEM, "viewItem", 0
+    CTXKEY CTX_DEBUG_STATE, "debugState", 0        # "inactive" until the debugger sets it
+    CTXKEY CTX_IN_DEBUG_MODE, "inDebugMode", 0     # "false" until the debugger sets it
+    CTXKEY CTX_DEBUG_TYPE, "debugType", 0
+.endm
+# when.s expands the list as records: FN, the name, padding to 8 bytes
+.macro CTXKEY sym, name, fn
+.ifdef CTXKEY_NAMES
+    .quad \fn
+    .asciz "\name"
+    .p2align 3
+.else
+    .equ \sym, __ctxk
+    .set __ctxk, __ctxk + 1
+.endif
+.endm
+.set __ctxk, 0
+CTXKEY_LIST
+.equ CTX_COUNT, __ctxk
+.equ CTX_VAL_MAX, 256           # a context value: published keys, set-context
+.equ WHEN_MAX, 512              # a clause's bytes, operations and nesting
+.equ WHEN_OPS_MAX, 64
+.equ WHEN_DEPTH_MAX, 8
+# a menu target the resource and editor keys describe while a menu evaluates (ctx_push_target)
+STRUCT
+F CT_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal" "extension"
+                        #   "view" "item" (targetKind), or 0 for no target
+F CT_doc, 8             # its DOC*, or 0
+F CT_path, 8            # cstr: its path, or 0
+F CT_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+ENDSTRUCT CT_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
 STRUCT
@@ -1861,6 +2052,158 @@ ENDSTRUCT XK_SIZE
 .equ EXT_PUMP_MS, 2             # one parsing run
 .equ EXT_FLOOD_FRAMES, 30       # windows in a row at a cap
 
+# ---- testing (testmodel.s, testproto.s, testexec.s; feature "tests") ----
+.equ TSK_CTRL, 0                # item kinds; the controller's own row is item 0
+.equ TSK_GROUP, 1
+.equ TSK_FILE, 2
+.equ TSK_SUITE, 3
+.equ TSK_TEST, 4
+.equ TSS_NOTRUN, 0              # states, by precedence: a parent shows the highest of its own and
+.equ TSS_SKIPPED, 1             # its children's
+.equ TSS_PASSED, 2
+.equ TSS_FAILED, 3
+.equ TSS_ERRORED, 4
+.equ TSS_QUEUED, 5
+.equ TSS_RUNNING, 6
+.equ TSS_COUNT, 7
+.equ TSF_LAZY, 1                # item flags
+.equ TSF_NODEBUG, 2
+.equ TSF_EXPANDED, 4
+.equ TSF_RESOLVING, 8           # a tests-resolve for its children is out
+.equ TSF_MARK, 16               # scratch: kept by a replace
+.equ TSP_RUN, 0                 # run profiles (bit i of TSC_profiles)
+.equ TSP_DEBUG, 1
+.equ TSP_COVERAGE, 2
+.equ TSRS_FREE, 0               # run states
+.equ TSRS_QUEUED, 1             # waiting for a run slot: test-run not sent yet
+.equ TSRS_RUNNING, 2
+.equ TSRS_ENDED, 3
+.equ TS_ITEMS_BODY, 10000       # items per test-items body or tests-resolve answer
+.equ TS_ITEMS_EXT, 50000        # per controller
+.equ TS_ITEMS_ALL, 100000       # all controllers
+.equ TS_ID_MAX, 512
+.equ TS_LABEL_MAX, 200
+.equ TS_DESC_MAX, 200
+.equ TS_ERROR_MAX, 1000
+.equ TS_RESULTS_BODY, 1048576   # a test-update body
+.equ TS_RESULTS_MAX, 2000       # records in it
+.equ TS_MSG_MAX, 8000           # a message's text
+.equ TS_MSGS_ITEM, 16           # messages per item per run
+.equ TS_VALUE_MAX, 65536        # expected, actual
+.equ TS_OUT_ITEM, 262144        # an item's output per run
+.equ TS_OUT_RUN, 4194304        # the run's own output
+.equ TS_BUDGET, 33554432        # messages, values and outputs of all runs
+.equ TS_RUNS_KEPT, 10           # finished runs kept
+.equ TS_RUNS_EXT, 4             # active runs per controller
+.equ TS_RUNS_ACTIVE, 8          # active runs in all
+.equ TS_RUNS_MAX, 32            # run slots: active, queued and kept
+.equ TS_RESOLVE_MS, 30000       # a tests-resolve answer waits this long
+.equ TS_CANCEL_KILL_MS, 2000    # after Cancel: processes get SIGTERM, then SIGKILL as long again
+.equ TS_CANCEL_END_MS, 5000     # and rhun ends the run itself
+.equ TS_COVER_BODY, 4194304     # a test-coverage body
+.equ TS_COVER_FILES, 20000      # files per run
+.equ TS_COVER_RANGES, 1000000   # ranges per run
+.equ TS_COVER_LINES, 1048576    # lines per file
+.equ TS_EXEC_BODY, 262144       # a test-exec body
+.equ TS_EXEC_ARGS, 1000
+.equ TS_EXEC_ARG_MAX, 32768
+.equ TS_EXEC_ENVS, 64
+.equ TS_PROCS_RUN, 4
+.equ TS_PROCS_ALL, 8
+.equ TS_OUT_EVENT, 65536        # bytes per test-out event
+.equ TS_QUEUE_PAUSE, 262144     # pipes wait while the extension's queue holds this much
+.equ TS_PROGS_MAX, 16           # [needs] tests: program names
+.equ TS_PROG_NAME, 64
+.equ TS_CTRL_MAX, 64            # controllers (extensions with tests agreed or declared)
+.equ TS_RESOLVE_MAX, 64         # tests-resolve requests out at once, all controllers
+# a controller: an extension's test tree
+STRUCT
+F TSC_ext, 8            # its EXT, 0 for a free slot
+F TSC_items, VEC_SIZE   # TSI records; item 0 is the controller's own row, the parent of its roots
+F TSC_map, 8            # id -> item: u32 slots holding the item's index + 1, 0 empty
+F TSC_mapcap, 8         # slots, a power of two
+F TSC_mapn, 8           # slots in use
+F TSC_free, 4           # first free item slot (TSI_next chains them), -1 none
+F TSC_count, 4          # items besides row 0
+F TSC_ready, 4          # 1 once its program agreed tests (roots asked); 0 again when it stops
+F TSC_pad, 4
+ENDSTRUCT TSC_SIZE
+# a test item
+STRUCT
+F TSI_id, 8             # owned bytes with a NUL after them; 0 marks a free slot
+F TSI_label, 8          # owned cstr
+F TSI_desc, 8           # owned cstr or 0
+F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed tests-resolve
+F TSI_path, 8           # owned cstr or 0: the file its range is in
+F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
+F TSI_idlen, 4
+F TSI_kind, 4           # TSK_*
+F TSI_flags, 4          # TSF_*
+F TSI_l1, 4             # its range, one-based; all 0 for none
+F TSI_c1, 4
+F TSI_l2, 4
+F TSI_c2, 4
+F TSI_parent, 4         # item indices, -1 for none
+F TSI_first, 4
+F TSI_last, 4
+F TSI_next, 4
+F TSI_prev, 4
+F TSI_gen, 4            # bumped when the slot is freed: results name (index, gen)
+F TSI_own, 4            # TSS_* of its own last result
+F TSI_state, 4          # the highest of its own and its children's (derived)
+F TSI_ms, 4             # its last duration, -1 none
+F TSI_run, 4            # the run of its last result, 0 none (or dropped)
+F TSI_rent, 4           # that result's entry in the run
+F TSI_cnt, 4*TSS_COUNT    # its children by derived state
+ENDSTRUCT TSI_SIZE
+# a run
+STRUCT
+F TSR_ext, 8            # its controller's EXT, 0 for a free slot
+F TSR_num, 8            # the run number (unique for the session)
+F TSR_ids, SB_SIZE      # the items asked for, each ending in LF (none: everything)
+F TSR_out, SB_SIZE      # the run's own output
+F TSR_ents, VEC_SIZE    # TSE records
+F TSR_t0, 8             # time_ms it started (was sent), and ended
+F TSR_t1, 8
+F TSR_cancel_at, 8      # time_ms of the user's Cancel, 0 none
+F TSR_req, 8            # the id of its test-run request, 0 before it is sent
+F TSR_bytes, 8          # messages, values and outputs it holds
+F TSR_state, 4          # TSRS_*
+F TSR_profile, 4        # TSP_*
+F TSR_nids, 4
+F TSR_dropped, 4        # records for unknown items
+F TSR_procs, 4          # its live processes
+F TSR_err, 4            # 1 when the run itself errored
+F TSR_cut, 4            # 1 once output was cut for the budget
+F TSR_killed, 4         # 1 once its processes were sent SIGTERM after a Cancel
+ENDSTRUCT TSR_SIZE
+# a result: one item in one run (item -1: the run itself)
+STRUCT
+F TSE_item, 4
+F TSE_gen, 4
+F TSE_state, 4          # TSS_*; NOTRUN when the run ended with it queued or running
+F TSE_ms, 4
+F TSE_prev_own, 4       # the item's result before this run touched it
+F TSE_prev_ms, 4
+F TSE_prev_run, 4
+F TSE_prev_rent, 4
+F TSE_nmsg, 4
+F TSE_cut, 4            # 1 once its output was cut
+F TSE_msgs, SB_SIZE     # messages: TSM header + text, path, expected, actual
+F TSE_out, SB_SIZE      # its output
+ENDSTRUCT TSE_SIZE
+# a message's header in TSE_msgs
+STRUCT
+F TSM_l1, 4
+F TSM_c1, 4
+F TSM_l2, 4
+F TSM_c2, 4
+F TSM_text, 4           # lengths of the bytes after the header
+F TSM_path, 4
+F TSM_exp, 4            # -1: no expected value
+F TSM_act, 4            # -1: no actual value
+ENDSTRUCT TSM_SIZE
+
 # json
 .equ JT_NULL, 0
 .equ JT_FALSE, 1
@@ -1879,7 +2222,6 @@ F TH_pad, 4
 F TH_src, 8             # embedded text or 0
 F TH_len, 8
 F TH_path, 8            # user file path or 0
-F TH_owner, 8           # prepared EP owner, or 0 for legacy/built-in theme
 ENDSTRUCT TH_SIZE
 
 # ---- terminal ----

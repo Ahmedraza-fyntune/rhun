@@ -265,7 +265,7 @@ xe_positions:
 FN extproto_events
     PROLOGUE 16
     mov rbx, rdi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lxe_pipe
     mov [rip + cur], rbx
@@ -484,7 +484,7 @@ FN extproto_doc_ready
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     mov rdi, r12

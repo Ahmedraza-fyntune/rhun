@@ -3,7 +3,7 @@
 #   open path | cmd name | shot file.ppm | wait ms | resize w h | print-doc | print-state | echo text | quit
 #   wait-git | print-git | print-gitlog | print-scm | wait-update | print-update | print-project | print-palette
 #   print-menu | focus out|in
-#   multi-cursor: print-selections | click x y alt|shift+alt | drag x1 y1 x2 y2 [mods]
+#   multi-cursor: click x y alt|shift+alt (print-selections and drag are in wsctl.s)
 .include "rhun.inc"
 
 .bss
@@ -141,7 +141,7 @@ FN control_exec
     lea r15, [rip + ctl_table]
 1:  mov rdx, [r15]
     test rdx, rdx
-    jz .Lce_unknown
+    jz .Lce_more
     mov rdi, r13
     mov rsi, r14
     call str_eq_cstr
@@ -149,6 +149,28 @@ FN control_exec
     jnz 2f
     add r15, 16
     jmp 1b
+.Lce_more:
+    # the other parts' tables (ctl_tables): fn(out, rest, rest len) -> rax as above
+    lea rax, [rip + ctl_tables]
+    mov [rsp], rax
+11: mov rax, [rsp]
+    mov r15, [rax]
+    test r15, r15
+    jz .Lce_unknown
+    add qword ptr [rsp], 8
+12: mov rdx, [r15]
+    test rdx, rdx
+    jz 11b
+    mov rdi, r13
+    mov rsi, r14
+    call str_eq_cstr
+    test eax, eax
+    jnz 13f
+    add r15, 16
+    jmp 12b
+13: lea rdi, [rip + out]
+    mov rsi, rbx
+    mov rdx, r12
 2:  call [r15 + 8]
     push rax
     push rax
@@ -274,73 +296,6 @@ c_click:
     pop rax
     xor eax, eax
     ret
-
-# ---- multi-cursor ----
-
-# print-selections: "sels=N", then "L1 C1 L2 C2" a selection (anchor, cursor), the primary first
-c_print_selections:
-    sub rsp, 8
-    mov rdi, [rip + g_doc]
-    lea rsi, [rip + out]
-    call sel_dump
-    add rsp, 8
-    xor eax, eax
-    ret
-
-# drag x1 y1 x2 y2 [mods]: the left button pressed at x1 y1 with the modifiers, moved to x2 y2
-# over two frames, released there
-c_drag:
-    push r13
-    push r14
-    push r15
-    sub rsp, 16
-    call next_int
-    mov r13d, eax
-    call next_int
-    mov r14d, eax
-    call next_int
-    mov r15d, eax
-    call next_int
-    mov [rsp], eax
-    call next_arg
-    mov dword ptr [rsp + 4], 0
-    test rdx, rdx
-    jz 1f
-    mov rdi, rax
-    mov rsi, rdx
-    call parse_combo
-    mov [rsp + 4], edx
-1:  mov edi, r13d
-    mov esi, r14d
-    call app_on_motion
-    call flush_frame
-    mov edi, BTN_LEFT
-    mov esi, 1
-    mov edx, [rsp + 4]
-    call app_on_button
-    call flush_frame
-    lea edi, [r13 + r15]
-    sar edi, 1
-    mov esi, r14d
-    add esi, [rsp]
-    sar esi, 1
-    call app_on_motion
-    call flush_frame
-    mov edi, r15d
-    mov esi, [rsp]
-    call app_on_motion
-    call flush_frame
-    mov edi, BTN_LEFT
-    mov esi, [rsp + 4]
-    call release
-    add rsp, 16
-    pop r15
-    pop r14
-    pop r13
-    xor eax, eax
-    ret
-
-# ---- end multi-cursor ----
 
 # tap x y: a click posted at x y that leaves the pointer where it was, all before the next frame
 # (a synthetic click, a mouse faster than the frames): no frame sees the pointer over x y
@@ -2324,8 +2279,6 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Lc_ext_menu: .asciz "ext-menu"
 .Lc_print_views: .asciz "print-views"
 .Lc_print_complete: .asciz "print-complete"
-.Lc_print_selections: .asciz "print-selections"   # multi-cursor
-.Lc_drag: .asciz "drag"
 .Lc_menu_pick: .asciz "menu-pick"
 .Lc_ext_remove: .asciz "ext-remove"
 .Lx_yes: .asciz "yes"
@@ -2385,6 +2338,12 @@ sev_words: .quad .Lsw_error, .Lsw_warning, .Lsw_info, .Lsw_hint
 .Ls_shown: .asciz " shown="
 .Ldigits: .ascii "0123456789abcdefghijk"
 .p2align 3
+# other parts' control commands: tables of (name, fn(out, rest, rest len)) pairs, 0-ended
+ctl_tables:
+    .quad contrib_ctl           # contributions and commands (contribctl.s)
+    .quad test_ctl              # testing (testview.s)
+    .quad ws_ctl                # workspace edits and the editor model (wsctl.s)
+    .quad 0
 ctl_table:
     .quad .Lc_key, c_key, .Lc_type, c_type, .Lc_move, c_move, .Lc_click, c_click, .Lc_tap, c_tap
     .quad .Lc_down, c_down, .Lc_up, c_up, .Lc_updown, c_updown, .Lc_scroll, c_scroll, .Lc_open, c_open
@@ -2421,7 +2380,6 @@ ctl_table:
     .quad .Lc_print_extbar, c_print_extbar, .Lc_ext_page, c_ext_page, .Lc_ext_remove, c_ext_remove
     .quad .Lc_ext_menu, c_ext_menu, .Lc_menu_pick, c_menu_pick, .Lc_print_views, c_print_views
     .quad .Lc_focus, c_focus, .Lc_print_complete, c_print_complete
-    .quad .Lc_print_selections, c_print_selections, .Lc_drag, c_drag   # multi-cursor
     .quad 0, 0
 appearance_rows:
     .quad .Ls_theme_eq, cfg_theme, .Ls_dark_eq, cfg_dark_theme, .Ls_light_eq, cfg_light_theme, 0

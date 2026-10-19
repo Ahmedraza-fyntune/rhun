@@ -373,6 +373,13 @@ class Host(unittest.TestCase):
         self.assertIn('state=stopped', out[2])
         self.assertEqual(out[3], 'okhello world')
 
+    def test_a_program_that_lets_8_mb_pile_up_is_stopped_at_once(self):
+        # four replies of 3 MiB that it never reads: the third would take the queue past 8 MB
+        (self.proj / 'big.txt').write_text(('x' * 127 + '\n') * 24576, encoding='utf-8')
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 1500', 'print-extensions'],
+                              mode='bigtext', files=('big.txt',))
+        self.assertIn('state=stopped reason=not reading', out[1])
+
     def test_garbage_without_a_newline(self):
         out = self.run_editor(['cmd echo.toast', 'wait 600', 'print-extensions'], mode='garbage')
         self.assertIn('state=stopped reason=a line over 64 KB without an end', out[0])
@@ -423,9 +430,18 @@ class Host(unittest.TestCase):
         out = self.run_editor(['cmd echo.toast', 'wait 8000', 'print-extensions'], mode='slowhello')
         self.assertIn('state=stopped reason=no hello within 5 s', out[0])
 
-    def test_a_body_request_without_a_valid_length_ends_the_stream(self):
+    def test_three_requests_with_bad_arguments(self):
         out = self.run_editor(['cmd echo.toast', 'wait 600', 'print-extensions'], mode='badargs')
-        self.assertIn('state=stopped reason=invalid body framing', out[0])
+        self.assertIn('state=stopped reason=three unparsable lines in a row', out[0])
+
+    def test_a_body_request_whose_length_is_not_a_number_is_a_syntax_error(self):
+        # v1: error ID syntax and only the line is dropped; the requests after it still work
+        out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 400', 'print-extensions'],
+                              mode='badlen')
+        log = self.echo_log()
+        self.assertTrue(any(line.startswith('error 1 syntax') for line in log), log)
+        self.assertIn('ok 2', log)
+        self.assertIn('state=running', out[1])
 
     def test_the_error_log_is_kept_under_its_cap(self):
         out = self.run_editor(['cmd echo.toast', 'wait-ext echo running', 'wait 2500', 'print-extensions'], mode='noisy')
@@ -839,21 +855,27 @@ class Host(unittest.TestCase):
         self.assertIn('0 action 5', log)
         self.assertEqual(log[log.index('0 action 5') + 1], 'hello')
 
-    def test_rename_edits_open_and_closed_files_as_one_undo_step_each(self):
+    def test_rename_edits_open_and_closed_files_and_undoes_as_one_step(self):
+        # a v1 rename opens the closed file in a tab, unsaved; one undo reverts both documents
+        # (workspace-edit transactions, docs/extensions/v1.1.md)
         self.lang()
         out = self.run_editor(['wait-ext echo running', 'wait 300', 'key ctrl+End', 'key F2', 'print-palette',
                                'type start', 'key Return', 'wait 300', 'wait 300', 'print-tabs', 'print-doc',
-                               'cmd undo', 'print-doc', 'key ctrl+Tab', 'print-state', 'print-doc'],
+                               'key ctrl+Tab', 'print-state', 'print-doc', 'key ctrl+Tab', 'cmd undo',
+                               'print-doc', 'key ctrl+Tab', 'print-state', 'print-doc'],
                               mode='lang', files=('p.rs',))
         self.assertIn('prompt=New name', out)
-        state = [l for l in out if l.startswith('tabs=2 ')][0]
-        self.assertIn(' active=other.rs ', state)
-        self.assertIn(' dirty=1 ', state)
+        states = [l for l in out if l.startswith('tabs=2 ')]
+        self.assertIn(' active=other.rs ', states[0])
+        self.assertIn(' dirty=1 ', states[0])
+        self.assertIn(' active=other.rs ', states[1])
+        self.assertIn(' dirty=0 ', states[1])
         self.assertIn('fn start_ref() {}', out)
         self.assertIn('tabs=*p.rs | other.rs', out)
         docs = [i for i, l in enumerate(out) if l.startswith('fn ')]
         self.assertEqual(out[docs[0]:docs[0] + 2], ['fn  start( ) {', '    let x = start;'])
-        self.assertEqual(out[docs[1]:docs[1] + 2], ['fn  main( ) {', '    let x = main;'])
+        self.assertEqual(out[docs[2]:docs[2] + 2], ['fn  main( ) {', '    let x = main;'])
+        self.assertEqual(out[docs[3]], 'fn main_ref() {}')
         self.assertEqual((self.proj / 'other.rs').read_text(), 'fn main_ref() {}\n', 'nothing saved')
 
     @unittest.skipIf(os.name == 'nt', 'creating symlinks requires Windows developer mode')

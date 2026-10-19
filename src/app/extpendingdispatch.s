@@ -1,5 +1,6 @@
 # Pending manifest command policy. Lifecycle pumping still visits every historical EXT.
 .include "rhun.inc"
+.include "app/extpending.inc"
 .text
 # ext_cmd_index_owned(ext,index)->1/0, no borrowed element escapes this call.
 FN ext_cmd_index_owned
@@ -24,7 +25,7 @@ FN ext_cmd_index_owned
     jae .Lpco_no
     mov r13, rax
     mov rdi, rbx
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lpco_no
     mov rcx, [rip + g_ext_owner + VEC_ptr]
@@ -44,7 +45,7 @@ FN ext_pending_reconcile
     cmp qword ptr [rdi + EXT_pending], 0
     je .Lpr_no
     push rdi
-    call ext_has_metadata
+    call ext_is_visible
     pop rdi
     test eax, eax
     jz .Lpr_clear
@@ -80,10 +81,16 @@ FN ext_pending_reconcile
 
 # Set only from an exact current manifest row. Constructor refusal preserves previous ownership.
 FN ext_pending_set
-    PROLOGUE
+    xor edx, edx
+    jmp ext_pending_set_inv
+# ext_pending_set_inv(ext, index, INV* or 0): the same, keeping how it was invoked (FROM, the
+# document and a copy of the body, at most INV_BODY_MAX bytes)
+FN ext_pending_set_inv
+    PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
-    call ext_has_metadata
+    mov [rsp], rdx
+    call ext_is_visible
     test eax, eax
     jz .Lps_closed
     cmp dword ptr [rbx + EXT_disabled], 0
@@ -112,6 +119,29 @@ FN ext_pending_set
     call ext_pending_new
     test rax, rax
     jz .Lps_constructor
+    mov r13, rax
+    mov rsi, [rsp]
+    test rsi, rsi
+    jz 2f
+    mov rcx, [rsi + INV_len]
+    cmp rcx, INV_BODY_MAX
+    ja .Lps_toobig
+    lea rdi, [rcx + INV_SIZE]
+    call mem_alloc
+    mov [r13 + PN_inv], rax
+    mov rsi, [rsp]
+    mov rcx, [rsi + INV_from]
+    mov [rax + INV_from], rcx
+    mov rcx, [rsi + INV_doc]
+    mov [rax + INV_doc], rcx
+    mov rcx, [rsi + INV_len]
+    mov [rax + INV_len], rcx
+    lea rdi, [rax + INV_SIZE]
+    mov [rax + INV_body], rdi
+    mov rdx, rcx
+    mov rsi, [rsi + INV_body]
+    call memcpy
+2:  mov rax, r13
     mov rdi, [rbx + EXT_pending]
     mov [rbx + EXT_pending], rax
     call ext_pending_release
@@ -119,6 +149,11 @@ FN ext_pending_set
     EPILOGUE
 .Lps_constructor:
     mov rax, rdx
+    EPILOGUE
+.Lps_toobig:
+    mov rdi, r13
+    call ext_pending_release
+    mov rax, -7
     EPILOGUE
 .Lps_missing:
     mov rax, -2
@@ -132,7 +167,7 @@ FN ext_pending_resolve
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz 8f
     call ext_cmd_manifest_count
@@ -170,7 +205,7 @@ FN ext_pending_try
     mov rbx, rdi
     cmp qword ptr [rbx + EXT_pending], 0
     je .Lpt_ok
-    call ext_has_metadata
+    call ext_is_visible
     test eax, eax
     jz .Lpt_closed
     cmp qword ptr [rip + ext_pending_shutting_down], 0
@@ -190,9 +225,18 @@ FN ext_pending_try
     call ext_pending_resolve
     test rax, rax
     js .Lpt_terminal
-    mov rsi, rax
+    mov r14, rax
+    mov r13, [rbx + EXT_pending]   # held while sending: its body is read after the catch-up
+    mov rdi, r13
+    call ext_pending_retain
+    mov rsi, r14
     mov rdi, rbx
-    call extproto_send_run
+    mov rdx, [r13 + PN_inv]
+    call extproto_send_invoke
+    mov r14, rax
+    mov rdi, r13
+    call ext_pending_release
+    mov rax, r14
     test rax, rax
     jns .Lpt_accepted
     cmp rax, -11
