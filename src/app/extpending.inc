@@ -6,5 +6,6 @@
 .equ PN_namelen, 32
 .equ PN_keylen, 40
 .equ PN_size, 48
+.equ PN_inv, 56              # owned copy of how it was invoked (INV + body), or 0
 .equ PN_SIZE, 64
 .equ PN_LIMIT, 65536

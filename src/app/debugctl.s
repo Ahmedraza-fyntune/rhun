@@ -18,30 +18,17 @@ optl: .zero SB_SIZE
 
 .text
 
-# debug_ctl(cmd ptr, len, rest ptr, len, out sb) -> rax the command's result (0), -1 when it is not
-#   one of these
-FN debug_ctl
+# DCTL fn: an entry for control.s's ctl_tables, fn(out, rest, len) -> rax, around a handler that
+#   reads the rest from rbx/r12 and writes to outp
+.macro DCTL fn
+e_\fn:
     PROLOGUE
-    mov r13, rdi
-    mov r14, rsi
-    mov rbx, rdx
-    mov r12, rcx
-    mov [rip + outp], r8
-    lea r15, [rip + dctl_table]
-1:  mov rdx, [r15]
-    test rdx, rdx
-    jz 8f
-    mov rdi, r13
-    mov rsi, r14
-    call str_eq_cstr
-    test eax, eax
-    jnz 2f
-    add r15, 16
-    jmp 1b
-2:  call [r15 + 8]
+    mov [rip + outp], rdi
+    mov rbx, rsi
+    mov r12, rdx
+    call \fn
     EPILOGUE
-8:  mov rax, -1
-    EPILOGUE
+.endm
 
 # next_arg: rbx/r12 (the rest) -> rax word, rdx its length
 next_arg:
@@ -600,6 +587,35 @@ c_print_configs:
 9:  xor eax, eax
     EPILOGUE
 
+.text
+DCTL c_start
+DCTL c_run
+DCTL c_stop
+DCTL c_pause
+DCTL c_continue
+DCTL c_step
+DCTL c_expand
+DCTL c_collapse
+DCTL c_watch
+DCTL c_eval
+DCTL c_forget
+DCTL c_bp
+DCTL c_bp_toggle
+DCTL c_bp_enable
+DCTL c_bp_function
+DCTL c_bp_clear
+DCTL c_exc
+DCTL c_wait_debug
+DCTL c_wait_console
+DCTL c_print_debug
+DCTL c_print_stack
+DCTL c_print_vars
+DCTL c_print_watch
+DCTL c_print_console
+DCTL c_print_bps
+DCTL c_print_dap_log
+DCTL c_print_configs
+
 .section .rodata
 .Ls_into: .asciz "into"
 .Ls_out: .asciz "out"
@@ -640,16 +656,17 @@ c_print_configs:
 .p2align 3
 opt_keys:
     .quad .Lk_cond, optc, .Lk_hits, opth, .Lk_log, optl, 0, 0
-dctl_table:
-    .quad .Lc_debug_start, c_start, .Lc_debug_run, c_run, .Lc_debug_stop, c_stop
-    .quad .Lc_debug_pause, c_pause, .Lc_debug_continue, c_continue, .Lc_debug_step, c_step
-    .quad .Lc_debug_expand, c_expand, .Lc_debug_collapse, c_collapse, .Lc_debug_watch, c_watch
-    .quad .Lc_debug_eval, c_eval, .Lc_debug_forget, c_forget
-    .quad .Lc_bp, c_bp, .Lc_bp_toggle, c_bp_toggle, .Lc_bp_enable, c_bp_enable
-    .quad .Lc_bp_function, c_bp_function, .Lc_bp_clear, c_bp_clear, .Lc_exc_filter, c_exc
-    .quad .Lc_wait_debug, c_wait_debug, .Lc_wait_console, c_wait_console
-    .quad .Lc_print_debug, c_print_debug, .Lc_print_stack, c_print_stack
-    .quad .Lc_print_vars, c_print_vars, .Lc_print_watch, c_print_watch
-    .quad .Lc_print_console, c_print_console, .Lc_print_bps, c_print_bps
-    .quad .Lc_print_dap_log, c_print_dap_log, .Lc_print_configs, c_print_configs
+.globl debug_ctl
+debug_ctl:
+    .quad .Lc_debug_start, e_c_start, .Lc_debug_run, e_c_run, .Lc_debug_stop, e_c_stop
+    .quad .Lc_debug_pause, e_c_pause, .Lc_debug_continue, e_c_continue, .Lc_debug_step, e_c_step
+    .quad .Lc_debug_expand, e_c_expand, .Lc_debug_collapse, e_c_collapse, .Lc_debug_watch, e_c_watch
+    .quad .Lc_debug_eval, e_c_eval, .Lc_debug_forget, e_c_forget
+    .quad .Lc_bp, e_c_bp, .Lc_bp_toggle, e_c_bp_toggle, .Lc_bp_enable, e_c_bp_enable
+    .quad .Lc_bp_function, e_c_bp_function, .Lc_bp_clear, e_c_bp_clear, .Lc_exc_filter, e_c_exc
+    .quad .Lc_wait_debug, e_c_wait_debug, .Lc_wait_console, e_c_wait_console
+    .quad .Lc_print_debug, e_c_print_debug, .Lc_print_stack, e_c_print_stack
+    .quad .Lc_print_vars, e_c_print_vars, .Lc_print_watch, e_c_print_watch
+    .quad .Lc_print_console, e_c_print_console, .Lc_print_bps, e_c_print_bps
+    .quad .Lc_print_dap_log, e_c_print_dap_log, .Lc_print_configs, e_c_print_configs
     .quad 0, 0

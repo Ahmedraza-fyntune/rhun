@@ -1195,8 +1195,9 @@ FN dap_stop_session
     jz 9f
     cmp eax, DSS_APPROVAL
     jne 1f
-    call app_confirm_drop_ours
-    mov dword ptr [rip + approval_slot], -1
+    # its dialog is still the open one (a newer dialog would have cancelled it): Cancel it
+    xor edi, edi
+    call app_dialog_answer
     mov rdi, rbx
     lea rsi, [rip + .Lm_cancelled]
     call ds_end
@@ -1204,11 +1205,6 @@ FN dap_stop_session
 1:  mov rdi, rbx
     call stop_step
 9:  EPILOGUE
-
-# app_confirm_drop_ours(): the approval dialog closes (its Cancel would end the session again)
-app_confirm_drop_ours:
-    lea rdi, [rip + approval_yes]
-    jmp app_confirm_revoke_pure
 
 # stop_step(ds): the next step of Stop. Launch: terminate (when supported, 3 s), disconnect with
 #   terminateDebuggee (2 s), then the adapter's process group is killed. Attach: disconnect leaving

@@ -72,22 +72,6 @@ FN mem_alloc_try
     push rbx
     push r12
     push r13
-    sub rsp, 16
-    mov qword ptr [rsp], 0
-    jmp .Lma_size
-
-# Same allocator/header/free contract as mem_alloc_try, without payload clearing.
-# Caller owns an uninitialized block and must initialize it before following fields.
-FN mem_alloc_uninit_try
-    mov rax, 1 << 40
-    cmp rdi, rax
-    jae .Lma_zero
-    push rbx
-    push r12
-    push r13
-    sub rsp, 16
-    mov qword ptr [rsp], 1
-.Lma_size:
     mov r12, rdi                # requested
     lea rbx, [rdi + 16]
     cmp rbx, MEM_MAXSMALL
@@ -127,8 +111,6 @@ FN mem_alloc_uninit_try
     mov [rax], r13
     mov [rax + 8], r12
     mov r8, rax
-    cmp qword ptr [rsp], 0
-    jne .Lma_small_ready
     lea rdi, [rax + 16]
     mov ecx, r13d
     mov edx, 32
@@ -136,10 +118,8 @@ FN mem_alloc_uninit_try
     lea rcx, [rdx - 16]
     xor eax, eax
     rep stosb
-.Lma_small_ready:
     lea rax, [r8 + 16]
     inc qword ptr [rip + g_mem_live]
-    add rsp, 16
     pop r13
     pop r12
     pop rbx
@@ -155,14 +135,12 @@ FN mem_alloc_uninit_try
     mov [rax + 8], r12
     add rax, 16
     inc qword ptr [rip + g_mem_live]
-    add rsp, 16
     pop r13
     pop r12
     pop rbx
     ret
 
 .Lma_failed:
-    add rsp, 16
     pop r13
     pop r12
     pop rbx

@@ -1,6 +1,5 @@
 # Actual command invocation, retry tick, vector relocation and exact publisher identity.
 .include "rhun.inc"
-.include "app/taskproc.inc"
 .bss
 .p2align 3
 pct_exts: .zero 2 * EXT_SIZE
@@ -19,8 +18,6 @@ pct_fault: .quad 0
 pct_pipes: .quad 0
 pct_closes: .quad 0
 pct_retries: .quad 0
-pct_keeper_polls: .quad 0
-pct_keeper_closes: .quad 0
 .text
 FN ext_pending_fixture_send
     PROLOGUE
@@ -190,25 +187,9 @@ FN main
     test rax, rax
     jnz pct_fail
     mov rdi, rbx
-    call ext_legacy_start
+    call ext_start
     cmp qword ptr [rbx + EXT_pending], 0
     jne pct_fail
-    # A stale verified activation is terminal until a separate fresh preparation.
-    mov qword ptr [rip + pct_stage], 6
-    mov rdi, rbx
-    xor esi, esi
-    call ext_pending_set
-    test rax, rax
-    jnz pct_fail
-    mov qword ptr [rbx + EXT_activation_plan], 1
-    mov dword ptr [rbx + EXT_activation_stale], 1
-    mov rdi, rbx
-    call ext_supervised_start
-    cmp dword ptr [rbx + EXT_status], ES_FAILED
-    jne pct_fail
-    cmp qword ptr [rbx + EXT_pending], 0
-    jne pct_fail
-    mov qword ptr [rbx + EXT_activation_plan], 0
     # Real hello/catch-up cannot consume an owned request while opened output is refused.
     mov qword ptr [rip + pct_stage], 8
     mov dword ptr [rbx + EXT_status], ES_STARTING
@@ -280,7 +261,7 @@ FN main
     test rax, rax
     jnz pct_fail
     mov rdi, rbx
-    call ext_legacy_start
+    call ext_start
     cmp dword ptr [rbx + EXT_status], ES_FAILED
     jne pct_fail
     cmp qword ptr [rbx + EXT_pending], 0
@@ -305,7 +286,7 @@ FN main
     jnz pct_fail
     mov rdi, rbx
     xor esi, esi
-    call ext_legacy_exited
+    call ext_exited
     cmp qword ptr [rip + pct_retries], 1
     jne pct_fail
     cmp dword ptr [rbx + EXT_status], ES_STARTING
@@ -316,41 +297,6 @@ FN main
     call ext_stop_user
     cmp qword ptr [rbx + EXT_pending], 0
     jne pct_fail
-    # Actual keeper retirement retains authorized restart while pending, then cancels stale activation.
-    mov qword ptr [rip + pct_stage], 11
-    mov dword ptr [rbx + EXT_status], ES_RUNNING
-    mov dword ptr [rbx + EXT_retiring], 0
-    mov dword ptr [rbx + EXT_restart], 1
-    mov qword ptr [rbx + EXT_keeper], 1
-    mov qword ptr [rbx + EXT_reason], 0
-    mov rdi, rbx
-    xor esi, esi
-    call ext_pending_set
-    test rax, rax
-    jnz pct_fail
-    mov rdi, rbx
-    xor esi, esi
-    call ext_supervised_exited
-    cmp qword ptr [rbx + EXT_pending], 0
-    je pct_fail
-    cmp qword ptr [rbx + EXT_keeper], 1
-    jne pct_fail
-    cmp qword ptr [rip + pct_keeper_closes], 0
-    jne pct_fail
-    mov rdi, rbx
-    xor esi, esi
-    call ext_supervised_exited
-    cmp qword ptr [rbx + EXT_pending], 0
-    jne pct_fail
-    cmp qword ptr [rbx + EXT_keeper], 0
-    jne pct_fail
-    cmp qword ptr [rip + pct_keeper_closes], 1
-    jne pct_fail
-    cmp dword ptr [rbx + EXT_status], ES_CRASHED
-    jne pct_fail
-    mov rdi, [rbx + EXT_reason]
-    call mem_free
-    mov qword ptr [rbx + EXT_reason], 0
     # Shutdown invalidates every owned request and restart before any polling callback.
     mov qword ptr [rip + pct_stage], 7
     mov dword ptr [rbx + EXT_status], ES_IDLE
@@ -388,7 +334,7 @@ FN main
     jne pct_fail
     mov dword ptr [rbx + EXT_manifest_ok], 1
     mov rdi, rbx
-    call ext_legacy_start
+    call ext_start
     cmp rax, -32
     jne pct_fail
     mov qword ptr [rip + g_exts + VEC_len], 0
@@ -449,24 +395,6 @@ FN pct_retry_start
     jne pct_fail
     mov dword ptr [rdi + EXT_status], ES_STARTING
     inc qword ptr [rip + pct_retries]
-    ret
-FN pct_keeper_stop
-    cmp rdi, 1
-    jne pct_fail
-    xor eax, eax
-    ret
-FN pct_keeper_poll
-    inc qword ptr [rip + pct_keeper_polls]
-    xor eax, eax
-    cmp qword ptr [rip + pct_keeper_polls], 1
-    je 1f
-    mov eax, KP_DONE
-1:  xor edx, edx
-    xor r8d, r8d
-    ret
-FN pct_keeper_close
-    inc qword ptr [rip + pct_keeper_closes]
-    xor eax, eax
     ret
 pct_shutdown_observe:
     cmp qword ptr [rip + ext_pending_shutting_down], 1
