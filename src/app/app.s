@@ -1128,6 +1128,21 @@ FN app_open_file
     lea r15, [rip + .Lopen_failed]
     jmp .Lof_failed
 .Lof_binary:
+    # custom editors: a binary file opens in an editor that edits it, an option one too
+    mov rdi, rbx
+    call doc_free
+    mov rdi, r12
+    call ce_provider_any
+    test rax, rax
+    jz 1f
+    mov rdi, r12
+    mov rsi, rax
+    call ce_open_tab
+    EPILOGUE
+1:  lea rdi, [rip + .Lbinary]
+    call app_toast
+    mov rax, -1
+    EPILOGUE
     lea r15, [rip + .Lbinary]
 .Lof_failed:
     mov rdi, rbx

@@ -170,6 +170,32 @@ FN ce_provider
 8:  xor eax, eax
     EPILOGUE
 
+# FN ce_provider_any(path) -> rax EXT* of the first editor that matches the file, an option one
+#   too, edx its model; rax 0 when none does (a binary file that cannot open as text)
+FN ce_provider_any
+    PROLOGUE
+    mov r12, rdi
+    cmp dword ptr [rip + ce_open_text], 0
+    jne 8f
+    xor r13d, r13d
+1:  cmp r13, [rip + g_exts + VEC_len]
+    jae 8f
+    imul rbx, r13, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r13
+    mov rdi, rbx
+    mov rsi, r12
+    call ce_ext_matches
+    test eax, eax
+    jz 1b
+    mov rdi, rbx
+    call ce_model_of
+    mov edx, eax
+    mov rax, rbx
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # ---------------- the [editors] choices ----------------
 
 # FN ce_config_reset(): the choices go (the config is read again)

@@ -113,7 +113,17 @@ FN ce_send_open
     mov edx, PK_ED_OPEN
     mov ecx, QO_CUSTOM
     call query_track
-    mov rax, r13
+    # its view's size and metrics went out before the extension ran: they go again, after this
+    mov rdi, r12
+    mov esi, [rbx + CE_vid]
+    call extview_find
+    test rax, rax
+    jz 1f
+    mov dword ptr [rax + VW_lw], -1
+    mov dword ptr [rax + VW_lh], -1
+    mov dword ptr [rax + VW_scale], -1
+    mov dword ptr [rip + g_dirty], 1
+1:  mov rax, r13
 9:  EPILOGUE
 
 # FN ce_send_save(ce) -> rax the id of "ID editor-save CDOC KIND PART", or 0; its answer may carry a
