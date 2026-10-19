@@ -869,6 +869,11 @@ back. After you sign in, the browser comes back to the extension through a `rhun
 that works once, for ten minutes, or through a page on your own computer that says "Signed in.
 You can close this tab." A `rhun://ext/` link nobody is waiting for says so and does nothing.
 
+Extensions that read the project (a TODO list, a linter that checks every file) list its files
+and search them through rhun rather than walking the disk themselves: they see the files git sees
+(`.gitignore` applies), not the names in **Hidden in explorer**, and the text you have not saved
+yet. Their searches run a few milliseconds at a time, so typing never waits for them.
+
 The command palette shows each extension command's qualified name, `owner/name.command`,
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same
