@@ -3185,7 +3185,11 @@ header_draw:
     cmp dword ptr [r13 + TS_kind], TK_SHELL
     je 0f
     M eax, MI_16
-    mov [rsp + 40], eax
+    cmp qword ptr [r13 + TS_owner], 0
+    je 19f
+    add eax, [rip + g_mt + 4*MI_14]     # its extension's badge, so a tab never hides whose it is
+    add eax, [rip + g_mt + 4*MI_4]
+19: mov [rsp + 40], eax
     mov rsi, [r13 + TS_title]
     jmp 13f
 0:  mov r14, [r13 + TS_term]
@@ -3284,12 +3288,27 @@ header_draw:
     add esi, [rip + g_mt + 4*MI_10]
     cmp dword ptr [rsp + 40], 0
     je 51f
-    # the state, a shape centered on the text's middle
+    # the owner's badge, then the state, a shape centered on the text's middle
     push rdx
     push rsi
     push r9                     # the label's color
     push r9
-    mov rdi, r13
+    mov rcx, [r13 + TS_owner]
+    test rcx, rcx
+    jz 52f
+    mov edi, esi
+    M edx, MI_14
+    mov esi, r15d
+    sub esi, edx
+    sar esi, 1
+    add esi, [rbp + 20]
+    call badge
+    mov esi, [rsp + 16]
+    add esi, [rip + g_mt + 4*MI_14]
+    add esi, [rip + g_mt + 4*MI_4]
+    jmp 53f
+52: mov esi, [rsp + 16]
+53: mov rdi, r13
     mov edx, r15d
     shr edx, 1
     add edx, [rbp + 20]
