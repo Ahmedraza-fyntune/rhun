@@ -1124,11 +1124,19 @@ section's buttons run all tests, run them with coverage, run the failed ones aga
 `r` runs the selected test, `d` debugs it, and its menu also goes to the test or its failure,
 opens the expected and actual values as a diff tab and shows its output. Under the tree the
 selected test's last result: its message, the expected and actual values as a colored line diff,
-and the end of its output.
+and the end of its output. The field above the tree filters it (ctrl+f): each word starts a word of
+a test's name ("add" finds TestAdd); the button beside it shows only failed tests. After a coverage
+run a **Coverage** section lists the files, the least covered first. The status bar counts a run's
+progress, then the passed and failed tests (a click shows Testing).
+
+Debugging a test starts the extension's own debugger on it in rhun's debugger (`rhun-editor/tests`:
+Delve for Go, lldb-dap for Rust): breakpoints, stepping and the Debug Console work as for any
+session, and when the session ends the program's exit status is the test's result.
 
 In the editor each test has a run button in the gutter at its first line (`[testing] gutter =
 false` hides them): a click runs it, a right click opens its menu, and after a run the button
-shows the result. A failure with a place is a problem (the Problems tab, a mark in the file with
+shows the result. Buttons, failure marks and coverage follow your edits until the extension lists
+the file's tests again. A failure with a place is a problem (the Problems tab, a mark in the file with
 the expected and actual values on hover) until the test passes. After a run with coverage the line
 numbers are tinted: covered green, missed red, partly covered yellow (Show Test Coverage toggles
 them).
