@@ -1826,6 +1826,7 @@ F GR_wchar, 256         # 1 for identifier bytes
 F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it), or 0
 F GR_srclen, 8
 F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
+F GR_lckeys, 8          # language configuration keys the grammar sets (langconf.s), or 0
 ENDSTRUCT GR_SIZE
 .equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
@@ -1836,6 +1837,22 @@ ENDSTRUCT GR_SIZE
 .equ GF_NUMBERS, 32
 .equ GF_OPS, 64
 .equ GF_COLON, 128          # indent after a line ending with ":"
+.equ GF_USER, 256           # from ~/.config/rhun/syntax: its language keys win over extensions'
+
+# lc_type's plan for a typed character (langconf.s)
+STRUCT
+F LTP_kind, 4           # LTK_*
+F LTP_clen, 4
+F LTP_close, 8          # LTK_PAIR: the CLOSE to put after the caret; LTK_WRAP: its byte
+F LTP_from, 8           # LTK_OUTDENT: the line's start
+F LTP_text, 8           # and the text for [LTP_from, end)
+F LTP_tlen, 8
+ENDSTRUCT LTP_SIZE
+.equ LTK_PLAIN, 0
+.equ LTK_PAIR, 1
+.equ LTK_OVER, 2
+.equ LTK_WRAP, 3
+.equ LTK_OUTDENT, 4
 
 STRUCT
 F REG_start, 16

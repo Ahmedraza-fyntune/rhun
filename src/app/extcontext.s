@@ -499,6 +499,8 @@ FN contrib_ext_gone
     call status_ext_gone
     mov rdi, rbx
     call iconspec_ext_gone
+    mov rdi, rbx
+    call langconf_ext_gone
     EPILOGUE
 
 # ---------------- problems: manifest entries that were dropped, shown on its page ----------------
@@ -674,7 +676,13 @@ FN contrib_manifest_kv
     test eax, eax
     jz 02f
     EPILOGUE
-02: mov rdi, r12
+02: mov rdi, rbx
+    mov rsi, r12
+    call langconf_manifest_kv   # [language.NAME] (langconf.s)
+    test eax, eax
+    jz 03f
+    EPILOGUE
+03: mov rdi, r12
     lea rsi, [rip + .Ls_command_options]
     call ini_sec_is
     test eax, eax
