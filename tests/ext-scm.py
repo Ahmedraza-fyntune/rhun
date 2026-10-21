@@ -378,6 +378,19 @@ class QuickDiff(Base):
         self.assertEqual(self.marks(out), ['marks ...+.'])
         self.assertEqual([l for l in self.fake_log('qd') if ' quickdiff ' in l], [])
 
+    def test_refresh_asks_only_about_the_providers_own_files(self):
+        shutil.rmtree(self.proj / '.git')
+        go = str(self.proj / 'b.go')
+        self.ext('qdgo', needs='', hello='hello 1 quickdiff', answers={'quickdiff': {'body': 'package a\n'}},
+                 ini='on = startup\n[provides]\nquickdiff = *.go')
+        exts = self.provider(commands={'all': [['quickdiff-refresh 1', '-']],
+                                       'go': [[f'quickdiff-refresh {len(go)}', go]]})
+        self.run_editor(['wait-ext qd running', 'wait-ext qdgo running', 'wait 500', 'cmd qd.go', 'wait 500',
+                         'cmd qd.all', 'wait 500'], exts=exts, files=('a.txt', 'b.go'))
+        asks = lambda name: [l for l in self.fake_log(name) if ' quickdiff ' in l]
+        self.assertEqual(len(asks('qdgo')), 1, self.fake_log('qdgo'))   # only when b.go opened
+        self.assertEqual(len(asks('qd')), 2, self.fake_log('qd'))       # a.txt: opened, then "-"
+
     def test_refresh_asks_again(self):
         shutil.rmtree(self.proj / '.git')
         exts = self.provider(commands={'refresh': [['quickdiff-refresh 1', '-']],

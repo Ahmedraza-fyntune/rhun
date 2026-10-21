@@ -948,11 +948,12 @@ qd_forget_ext:
 
 # ID quickdiff-refresh LEN + path ("-" for all): fresh bases for the extension's documents
 FN scmext_h_qd_refresh
-    PROLOGUE
+    PROLOGUE 16
     call extproto_cur
-    mov rbx, rax
+    mov [rsp], rax              # the provider asking
     call extproto_req_id
     mov r12, rax
+    mov rbx, [rsp]
     FEAT_TEST rbx, FEAT_QUICKDIFF
     jz 7f
     call extproto_body
@@ -960,13 +961,14 @@ FN scmext_h_qd_refresh
     mov r14, rdx
     test r14, r14
     jz 6f
+    mov qword ptr [rsp + 8], 0  # 1: every open document ("-")
     cmp r14, 1
     jne 1f
     cmp byte ptr [r13], '-'
     jne 1f
-    call qd_want_all
-    jmp 5f
-1:  # the open documents with that path
+    mov qword ptr [rsp + 8], 1
+1:  # the open documents with that path (or all), of which it is the quick-diff provider: another
+    # provider's files are not asked about again
     xor r15d, r15d
 2:  cmp r15, [rip + g_tabs + VEC_len]
     jae 5f
@@ -981,6 +983,8 @@ FN scmext_h_qd_refresh
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
     jz 2b
+    cmp qword ptr [rsp + 8], 0
+    jne 3f
     call strlen
     cmp rax, r14
     jne 2b
@@ -990,6 +994,10 @@ FN scmext_h_qd_refresh
     call memeq
     test eax, eax
     jz 2b
+3:  mov rdi, rbx
+    call qd_provider
+    cmp rax, [rsp]
+    jne 2b
     mov rdi, rbx
     call scmext_qd_want
     jmp 2b
@@ -1011,7 +1019,7 @@ FN scmext_h_qd_refresh
 # menu. The target is one line, as menu targets are for extensions' menu items (the contributions
 # design's menu_open takes it with these location names): history_commit "commit SHA", history_file
 # "commit SHA PATH", scm_resource "resource GROUP PATH", scm_group "group GROUP" (GROUP merge, staged,
-# changes; PATH in the work tree). Until extension menu items exist the menus hold built-in items.
+# changes; PATH in the work tree). menu.s's menu_open_scm adds the extensions' items for the location.
 
 # scm_row_menu(location, sha cstr or 0, path ptr or 0, len, group, code): the menu of a row at the
 #   pointer; the when-clause keys scmProvider, scmResourceGroup and scmResourceStatus describe it
