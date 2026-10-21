@@ -510,7 +510,9 @@ offers Restore Unsaved Changes, and if rhun stops, the file opens with them the 
 
 A notebook file an extension provides for (the `jupyter` extension reads and writes `.ipynb`)
 opens in a notebook tab: its cells one under the other, each with its language's colors and every
-editor command, and under a code cell its outputs (text with its colors, errors, images). The
+editor command, and under a code cell its outputs (text with its colors, errors, images, tables
+and other rich documents, pictures). A Markdown cell shows its text rendered until you edit it
+(Enter or a double click); a link in it opens its file in a tab, or a web address in the browser. The
 toolbar runs all cells, interrupts or restarts the kernel and clears the outputs; the button at
 its right picks the kernel. Clicking a cell's `[ ]` column runs it.
 

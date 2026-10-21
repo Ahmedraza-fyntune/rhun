@@ -1149,7 +1149,11 @@ FN cl_free
     call sb_free
     mov rdi, [rbx + NBC_lang]
     call mem_free
-    mov rdi, rbx
+    mov rdi, [rbx + NBC_md]
+    test rdi, rdi
+    jz 1f
+    call md_free
+1:  mov rdi, rbx
     call mem_free
     EPILOGUE
 
@@ -1239,8 +1243,26 @@ FN ou_free
     mov rdi, [rbx + NBO_img]
     call mem_free
     mov rdi, rbx
+    call ou_shown_free
+    mov rdi, rbx
     call mem_free
 9:  EPILOGUE
+
+# ou_shown_free(ou): the rich document and the picture it showed go
+ou_shown_free:
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rbx + NBO_md]
+    mov qword ptr [rbx + NBO_md], 0
+    test rdi, rdi
+    jz 1f
+    call md_free
+1:  mov rdi, [rbx + NBO_pic]
+    mov qword ptr [rbx + NBO_pic], 0
+    call pic_free
+    mov qword ptr [rbx + NBO_pkey], 0
+    pop rbx
+    ret
 
 # nb_default_lang(nb) -> cstr: the language of its first code cell that names one, or 0
 FN nb_default_lang
@@ -2131,6 +2153,8 @@ FN ou_ready
     mov rdi, [rbx + NBO_img]
     call mem_free
     mov qword ptr [rbx + NBO_img], 0
+    mov rdi, rbx
+    call ou_shown_free
     xor r12d, r12d
 1:  cmp r12, [rbx + NBO_items + VEC_len]
     jae 9f
@@ -2138,11 +2162,48 @@ FN ou_ready
     add r13, [rbx + NBO_items + VEC_ptr]
     inc r12
     mov eax, [r13 + NBI_type]
+    cmp eax, NBIT_RICH          # a rich document or a picture: shown when it can be read (A4)
+    je 2f
+    cmp eax, NBIT_PICTURE
+    je 3f
     cmp eax, NBIT_TEXT
     jb 1b
     cmp eax, NBIT_GIF
     ja 1b
-    lea rax, [r12 - 1]
+    jmp 4f
+2:  mov rsi, [r13 + NBI_data + SB_ptr]
+    mov rdx, [r13 + NBI_data + SB_len]
+    # a patch body's count line ("1" LF, views design 3.6) comes before the records: passed over
+    xor ecx, ecx
+21: cmp rcx, rdx
+    jae 23f
+    movzx eax, byte ptr [rsi + rcx]
+    cmp eax, 10
+    je 22f
+    sub eax, '0'
+    cmp eax, 9
+    ja 23f
+    inc rcx
+    jmp 21b
+22: test rcx, rcx
+    jz 23f
+    lea rsi, [rsi + rcx + 1]
+    sub rdx, rcx
+    dec rdx
+23: xor edi, edi                # img: handles: none drawn yet (markdown.s)
+    call md_from_body
+    test rax, rax
+    jz 1b
+    mov [rbx + NBO_md], rax
+    jmp 4f
+3:  xor edi, edi                # its extension is set where it is drawn (nb_pic_draw)
+    mov rsi, [r13 + NBI_data + SB_ptr]
+    mov rdx, [r13 + NBI_data + SB_len]
+    call pic_new
+    test rax, rax
+    jz 1b
+    mov [rbx + NBO_pic], rax
+4:  lea rax, [r12 - 1]
     mov [rbx + NBO_show], rax
     mov eax, [r13 + NBI_type]
     cmp eax, NBIT_ANSI
