@@ -5,6 +5,7 @@
 
 .equ PP_RANGE_FORMAT_X, 10      # extproviders.s's kinds for range- and type-format (the formatter's
 .equ PP_TYPE_FORMAT, 11         # choice)
+.equ LX_WAIT, 500               # ms automatic formatting waits for its answer
 
 .bss
 .p2align 3
@@ -13,6 +14,8 @@ lx_fmt_ext: .quad 0             # an on-type or paste format request out: its ex
 lx_fmt_id: .quad 0              # document and version
 lx_fmt_doc: .quad 0
 lx_fmt_ver: .quad 0
+lx_fmt_lang: .quad 0            # the document's language revision then
+lx_fmt_sent: .quad 0            # when it went (automatic formatting waits 500 ms at most)
 lx_fmt_ready: .long 0           # its answer came
 lx_fmt_pad: .long 0
 lx_fmt_body: .zero SB_SIZE
@@ -90,7 +93,7 @@ lx_push_options:
 
 # lx_fmt_send(ext, doc, kind PK_*): lx_line to the formatter, the previous request withdrawn
 lx_fmt_send:
-    PROLOGUE
+    PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
@@ -112,6 +115,12 @@ lx_fmt_send:
     mov [rip + lx_fmt_doc], rcx
     mov rcx, [r12 + DOC_version]
     mov [rip + lx_fmt_ver], rcx
+    mov rcx, [r12 + DOC_language_revision]
+    mov [rip + lx_fmt_lang], rcx
+    mov [rsp], rax
+    call time_ms
+    mov [rip + lx_fmt_sent], rax
+    mov rax, [rsp]
     mov dword ptr [rip + lx_fmt_ready], 0
     mov rdi, rbx
     mov rsi, rax
@@ -313,6 +322,14 @@ FN langextra_reply
     mov qword ptr [rip + lx_fmt_ext], 0
     test edx, edx
     jz 1f
+    push rdx
+    push rdx
+    call time_ms
+    pop rdx
+    pop rdx
+    sub rax, [rip + lx_fmt_sent]
+    cmp rax, LX_WAIT
+    ja 1f                       # too late for formatting as you type: dropped
     test r13, r13
     jz 1f
     lea rdi, [rip + lx_fmt_body]
@@ -332,10 +349,18 @@ FN langextra_reply
     ret
 
 # FN langextra_tick(): an on-type or paste format answer is applied as its own undo step, only
-# when the document is still at the version it was asked for (the edit names it); quietly
+# when the document is still at the version (and language) it was asked for (the edit names it);
+# quietly. A request without an answer after 500 ms is withdrawn
 FN langextra_tick
     PROLOGUE
-    cmp dword ptr [rip + lx_fmt_ready], 0
+    cmp qword ptr [rip + lx_fmt_ext], 0
+    je 1f
+    call time_ms
+    sub rax, [rip + lx_fmt_sent]
+    cmp rax, LX_WAIT
+    jbe 1f
+    call lx_fmt_withdraw
+1:  cmp dword ptr [rip + lx_fmt_ready], 0
     je 9f
     mov dword ptr [rip + lx_fmt_ready], 0
     mov rdi, [rip + lx_fmt_doc]
@@ -345,6 +370,9 @@ FN langextra_tick
     mov rcx, [rax + DOC_version]
     cmp rcx, [rip + lx_fmt_ver]
     jne 9f                      # typed on meanwhile: dropped
+    mov rcx, [rax + DOC_language_revision]
+    cmp rcx, [rip + lx_fmt_lang]
+    jne 9f                      # another language since: dropped
     mov rdi, [rip + lx_fmt_body + SB_ptr]
     mov rsi, [rip + lx_fmt_body + SB_len]
     mov rdx, [rip + lx_fmt_doc]
@@ -352,12 +380,32 @@ FN langextra_tick
     call ws_apply_document
 9:  EPILOGUE
 
-# FN langextra_timeout() -> 0 when an answer waits for the tick, else -1
+# FN langextra_timeout() -> 0 when an answer waits for the tick, the ms until a request out is
+# given up, else -1
 FN langextra_timeout
-    mov eax, -1
-    cmp dword ptr [rip + lx_fmt_ready], 0
-    je 1f
     xor eax, eax
+    cmp dword ptr [rip + lx_fmt_ready], 0
+    jne 2f
+    mov eax, -1
+    cmp qword ptr [rip + lx_fmt_ext], 0
+    je 2f
+    push rbx
+    call time_ms
+    mov rcx, [rip + lx_fmt_sent]
+    add rcx, LX_WAIT + 1
+    sub rcx, rax
+    jns 1f
+    xor ecx, ecx
+1:  mov eax, ecx
+    pop rbx
+2:  ret
+
+# FN langextra_language_changed(doc): automatic formatting asked about it goes
+FN langextra_language_changed
+    mov rax, [rdi + DOC_id]
+    cmp rax, [rip + lx_fmt_doc]
+    jne 1f
+    jmp lx_fmt_withdraw
 1:  ret
 
 # FN langextra_ext_gone(ext): its requests go
