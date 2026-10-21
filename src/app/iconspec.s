@@ -290,14 +290,14 @@ FN icon_spec_draw
     mov edx, [rsp + 4]
     mov ecx, [rsp + 8]
     mov r8d, [rsp + 12]
-    call pic_draw
+    call icon_png_draw
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
 
-# FN pic_draw(PIC*, x, y, size, argb) -> eax 1 when it drew the read picture, size x size (at most
+# FN icon_png_draw(PIC*, x, y, size, argb) -> eax 1 when it drew the read picture, size x size (at most
 #   EI_DRAW_MAX), as it is or (PIC_mask) its alpha in argb's color
-FN pic_draw
+FN icon_png_draw
     PROLOGUE 16
     mov r14, rdi
     mov [rsp], esi

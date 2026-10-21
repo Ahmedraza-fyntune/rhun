@@ -814,7 +814,7 @@ FN iconth_draw
     mov ecx, [rsp + 8]
     mov r8d, edx
     mov edx, [rsp + 4]
-    call pic_draw
+    call icon_png_draw
     EPILOGUE
 9:  xor eax, eax
     EPILOGUE

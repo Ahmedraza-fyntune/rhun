@@ -1815,7 +1815,7 @@ F IMG_fmt, 4            # IMF_*
 F IMG_opaque, 4         # 1 when every pixel is opaque
 ENDSTRUCT IMG_SIZE
 
-# a PNG icon read once and kept at the size last drawn (iconspec.s pic_draw)
+# a PNG icon read once and kept at the size last drawn (iconspec.s icon_png_draw)
 STRUCT
 F PIC_state, 4          # 0 not read, 1 read, 2 cannot be shown
 F PIC_mask, 4           # 1: drawn as its alpha in a color
