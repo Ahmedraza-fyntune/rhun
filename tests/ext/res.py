@@ -188,6 +188,8 @@ def main():
                 continue
             lang, _, title = os.environ.get('RES_VDOC', '|').partition('|')
             text = f'content {served[uri]} of {uri}\nsecond line\n'
+            if mode == 'big':           # the most text a document takes: 4 MiB
+                text = text + 'x' * (4194304 - len(text.encode()))
             data = f'{len(lang.encode())} {len(title.encode())} {len(text.encode())}\n'.encode() \
                 + lang.encode() + title.encode() + text.encode()
             if mode == 'bad':

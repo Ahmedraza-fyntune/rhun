@@ -103,6 +103,19 @@ class Vdoc(lifecycle.Base):
         self.assertIn('line=2 col=3', states[1])
         self.assertIn('content 2 of res-gen:/x/hello.txt', '\n'.join(out))
 
+    def test_a_text_of_4_mib_and_a_uri_with_a_space(self):
+        self.ext('gen')
+        uri = 'res-gen:/a b/big.txt'
+        out = self.run_res('gen', [f'open 1 1 {uri}', f'content-changed {uri}'], [
+            'cmd rt/gen.request', 'wait-ext gen running', 'wait 1500', 'print-vdocs', 'cmd rt/gen.request',
+            'wait 1500', 'print-vdocs', 'print-ext-cost rt/gen'], env={'RES_VDOC_MODE': 'big'})
+        v = [l for l in out if l.startswith('vdoc ')]
+        self.assertTrue(v and all('state=loaded' in l for l in v), out)
+        log = self.reslog('gen')
+        self.assertIn('ok 2', log)                      # content-changed took the whole URI
+        self.assertEqual(sum(1 for l in log if l.startswith(('1 content ', '2 content ', '3 content '))), 2, log)
+        self.assertTrue(any('state=running' in l for l in out), out)
+
     def test_errors_and_reload_file(self):
         self.ext('gen')
         out = self.run_res('gen', [f'open 0 0 {URI}'], [
