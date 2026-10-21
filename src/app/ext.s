@@ -3978,6 +3978,8 @@ FN ext_exited
     call ext_hooks_update
 9:  mov rdi, rbx
     call ext_pending_reconcile
+    mov rdi, rbx
+    call invoke_owner_settled   # calls waiting for it, unless it starts again (invoke.s)
     EPILOGUE
 
 # ext_is_visible(ext or 0) -> eax 1 for a record that was not removed. Clobbers rax only.

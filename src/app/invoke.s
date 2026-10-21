@@ -46,7 +46,6 @@ g_invoke: .zero INV_SIZE        # the invocation being run: cmd_invoke sets it, 
 ip_table: .zero IP_MAX * IP_SIZE
 iv_out: .zero SB_SIZE
 co_opts: .zero EXT_CAP * VEC_SIZE
-iv_msg: .zero 256
 
 .text
 
@@ -580,6 +579,37 @@ iv_error:
     call ext_send_checked
     EPILOGUE
 
+# iv_error_bytes(ext, id, ptr, len): "error ID " and those bytes (one line) to the extension
+iv_error_bytes:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    lea rdi, [rip + iv_out]
+    call sb_clear
+    lea rdi, [rip + iv_out]
+    lea rsi, [rip + .Lerror_sp]
+    call sb_push_cstr
+    lea rdi, [rip + iv_out]
+    mov rsi, r12
+    call sb_push_u64
+    lea rdi, [rip + iv_out]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + iv_out]
+    mov rsi, r13
+    mov rdx, r14
+    call sb_push
+    lea rdi, [rip + iv_out]
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + iv_out + SB_ptr]
+    mov rdx, [rip + iv_out + SB_len]
+    call ext_send_checked
+    EPILOGUE
+
 # iv_ok(ext, id, body, len): "ok ID LEN" + body
 iv_ok:
     PROLOGUE
@@ -941,10 +971,14 @@ iv_goto:
     mov rdi, rbx
     mov rsi, r14
     call doc_line_start
-    lea rsi, [rax + r15 - 1]
-    cmp rsi, r12
-    jbe 3f
-    mov rsi, r12
+    # the column clamped to the line before the offset is added (a huge COL must not wrap)
+    mov rcx, r12
+    sub rcx, rax                # the line's length
+    dec r15
+    cmp r15, rcx
+    jbe 21f
+    mov r15, rcx
+21: lea rsi, [rax + r15]
 3:  mov rdi, rbx
     xor edx, edx
     call ed_set_cursor
@@ -1113,23 +1147,17 @@ FN invoke_reply
     lea rdx, [rip + .Le_toobig_result]
     call iv_error
     jmp 7f
-5:  # the error's code and text, at most a line of 200 bytes
-    cmp r15, 200
-    jbe 6f
-    mov r15d, 200
-6:  lea rdi, [rip + iv_msg]
-    mov rsi, r14
-    mov rdx, r15
-    call memcpy
-    lea rax, [rip + iv_msg]
-    mov byte ptr [rax + r15], 0
+5:  # the error's code and text, unchanged (they came on one protocol line)
     mov rdi, [rbx + IP_caller]
     mov rsi, [rbx + IP_cid]
-    lea rdx, [rip + iv_msg]
     test r15, r15
-    jnz 61f
+    jnz 6f
     lea rdx, [rip + .Le_cancelled]
-61: call iv_error
+    call iv_error
+    jmp 7f
+6:  mov rdx, r14
+    mov rcx, r15
+    call iv_error_bytes
 7:  mov rdi, rbx
     call ip_free
     mov eax, 1
@@ -1226,8 +1254,9 @@ FN invoke_timeout
 9:  mov rax, r12
     EPILOGUE
 
-# FN invoke_ext_stopped(ext): its calls end: as owner, its callers get cancelled; as caller, the
-# owner gets 0 cancel
+# FN invoke_ext_stopped(ext): its calls end: as owner, its callers get cancelled (a call not sent
+# yet waits: the program may be starting again, see invoke_owner_settled); as caller, the owner gets
+# 0 cancel
 FN invoke_ext_stopped
     PROLOGUE
     mov r12, rdi
@@ -1239,6 +1268,8 @@ FN invoke_ext_stopped
     je 5f
     cmp [rbx + IP_owner], r12
     jne 2f
+    cmp qword ptr [rbx + IP_hid], 0
+    je 5f                       # not sent: kept for a start that follows
     mov rdi, [rbx + IP_caller]
     mov rsi, [rbx + IP_cid]
     lea rdx, [rip + .Le_cancelled]
@@ -1259,6 +1290,35 @@ FN invoke_ext_stopped
     mov rdi, r14
     call extproto_set_cur
 3:  mov rdi, rbx
+    call ip_free
+5:  add rbx, IP_SIZE
+    inc r13d
+    jmp 1b
+9:  EPILOGUE
+
+# FN invoke_owner_settled(ext): after its program stopped and what follows was decided: unless it is
+# starting again (an unconfined retry, a restart) or running, the calls waiting to be sent to it end
+# as cancelled
+FN invoke_owner_settled
+    PROLOGUE
+    mov r12, rdi
+    cmp dword ptr [r12 + EXT_status], ES_STARTING
+    je 9f
+    cmp dword ptr [r12 + EXT_status], ES_RUNNING
+    je 9f
+    lea rbx, [rip + ip_table]
+    xor r13d, r13d
+1:  cmp r13d, IP_MAX
+    jae 9f
+    cmp [rbx + IP_owner], r12
+    jne 5f
+    cmp qword ptr [rbx + IP_hid], 0
+    jne 5f
+    mov rdi, [rbx + IP_caller]
+    mov rsi, [rbx + IP_cid]
+    lea rdx, [rip + .Le_cancelled]
+    call iv_error
+    mov rdi, rbx
     call ip_free
 5:  add rbx, IP_SIZE
     inc r13d
