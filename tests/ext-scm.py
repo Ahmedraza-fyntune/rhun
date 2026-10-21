@@ -387,9 +387,13 @@ class QuickDiff(Base):
                                        'go': [[f'quickdiff-refresh {len(go)}', go]]})
         self.run_editor(['wait-ext qd running', 'wait-ext qdgo running', 'wait 500', 'cmd qd.go', 'wait 500',
                          'cmd qd.all', 'wait 500'], exts=exts, files=('a.txt', 'b.go'))
-        asks = lambda name: [l for l in self.fake_log(name) if ' quickdiff ' in l]
-        self.assertEqual(len(asks('qdgo')), 1, self.fake_log('qdgo'))   # only when b.go opened
-        self.assertEqual(len(asks('qd')), 2, self.fake_log('qd'))       # a.txt: opened, then "-"
+        # requests answered: those sent minus those withdrawn (a start racing the file's opening may
+        # ask twice and withdraw the first)
+        def asks(name):
+            log = self.fake_log(name)
+            return len([l for l in log if ' quickdiff ' in l]) - len([l for l in log if l.startswith('< 0 cancel ')])
+        self.assertEqual(asks('qdgo'), 1, self.fake_log('qdgo'))    # only when b.go opened
+        self.assertEqual(asks('qd'), 2, self.fake_log('qd'))        # a.txt: opened, then "-"
 
     def test_refresh_asks_again(self):
         shutil.rmtree(self.proj / '.git')
