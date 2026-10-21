@@ -396,6 +396,12 @@ As** writes `NAME.rhun-workspace`, which names the folders (and can hold setting
 opening that file, from the command line or Open File, opens them all. Removing the first folder
 makes the next one the project.
 
+Each folder's git repository is followed: the explorer colors every folder's changes, and source
+control (the history's work tree row) starts with a line for each repository, with its branch and
+number of changes. The repository shown in the history, source control and the status bar is the
+active file's folder's; clicking another repository's line shows that one until you switch to
+another file. A file in a folder without a repository leaves the one shown as it is.
+
 ### Git
 
 In a git repository rhun shows what changed since the last commit. It runs the `git` program in the background, so the editor never waits for it, and follows commits, checkouts and edits made elsewhere, the built-in terminal included.
