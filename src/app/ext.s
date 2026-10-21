@@ -1923,6 +1923,10 @@ FN ext_load
     mov rdi, rax
     jmp .Lel_fail
 .Lel_where_ok:
+    mov rdi, rbx                # remote hosts: the host checks the program it runs (remoteext.s)
+    call remote_ext_load
+    test eax, eax
+    jnz 8f
     cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
     # no program for this system: a WebAssembly module runs in rhun --wasm-host

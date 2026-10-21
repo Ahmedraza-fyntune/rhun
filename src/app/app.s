@@ -6746,7 +6746,11 @@ FN app_open_path
 .Lop_path:
     mov rdi, rbx
 .ifdef WINDOWS
-    call win_fullpath
+    cmp dword ptr [rip + g_remote], 0   # remote hosts: the host's paths stay POSIX (vfs.s)
+    je 90f
+    cmp byte ptr [rbx], '/'
+    je .Lop_posix
+90: call win_fullpath
     test rax, rax
     jnz 91f
     EPILOGUE
@@ -6754,6 +6758,7 @@ FN app_open_path
     mov r13d, 1
     jmp 2f
 .endif
+.Lop_posix:
     mov rbx, rdi
     # absolute path
     PATH_ABSOLUTE rbx, 1f
