@@ -247,15 +247,15 @@ key Escape
 type 0n
 print-state
 type u
-# mouse: a drag is a visual selection, a click ends it
-click 430 108
+# mouse: a drag is a visual selection, a click ends it (x includes the gutter's fold lane)
+click 442 108
 print-state
-move 330 108
+move 342 108
 down
-move 420 129
+move 432 129
 up
 print-state
-click 500 150
+click 512 150
 print-state
 # insert mode keys stay the editor's; turning vim off
 type i

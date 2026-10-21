@@ -2,11 +2,16 @@
 """Features reveal and diff (docs/extensions/v1.1.md), driven headlessly with the wsx fake
 extension (tests/ext/wsx.py): reveal scrolls a document's view without moving its cursor,
 show-locations lists locations in the palette as Find All References does, and diff opens a
-read-only diff tab of two open documents that follows them and closes with them."""
+read-only diff tab of two open documents that follows them and closes with them. With the
+resources group's feature uris (fake extension tests/ext/res.py) a side may be a URI: a virtual
+document the diff opens without a tab and lets go of when it closes, or a file: URI of an open
+file; reveal takes the URI of an open document."""
+import re
 import unittest
 
 ws = __import__('wsedit')
 PD = ws.PD
+vd = __import__('ext-vdoc')
 
 
 class Reveal(ws.Ws):
@@ -88,6 +93,83 @@ class Reveal(ws.Ws):
 for name in dir(ws.Ws):
     if name.startswith('test_'):
         setattr(Reveal, name, None)
+
+A = 'res-gen:/x/a.txt'
+B = 'res-gen:/x/b.txt'
+
+
+class VdocDiff(vd.Vdoc):
+    def test_diff_between_virtual_documents(self):
+        self.ext('gen', features='uris diff')
+        out = self.run_res('gen', [f'diff {A} {B} show {{LEN}}|a against b'], [
+            'cmd rt/gen.request', 'wait-ext gen running', 'wait 600', 'print-tabs', 'print-vdocs',
+            'print-doc', 'cmd close_tab', 'wait 300', 'print-tabs', 'print-vdocs'],
+            features='uris diff')
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertEqual(tabs[0], 'tabs=a.txt | *a against b', out)         # no tabs for the sides
+        v = self.vdocs(out)
+        self.assertEqual(sorted(x['uri'] for x in v), [A, B], out)
+        self.assertTrue(all(x['state'] == 'loaded' for x in v), out)
+        text = '\n'.join(out)
+        self.assertIn(f'@@ -1,2 +1,2 @@ b.txt\ncontent 1 of {A}\ncontent 1 of {B}\nsecond line\n', text)
+        self.assertEqual(tabs[1], 'tabs=*a.txt', out)
+        self.assertEqual(len(self.vdocs(out)), 2, out)                       # gone with the tab
+        log = self.reslog('gen')
+        self.assertTrue(any(re.fullmatch(r'ok 1 \d+', x) for x in log), log)
+        self.assertIn(f'0 content-closed {A}', log)
+        self.assertIn(f'0 content-closed {B}', log)
+        self.assertFalse(any(x.startswith('0 opened') and 'res-gen' in x for x in log), log)
+
+    def test_a_side_opened_meanwhile_stays_and_file_uris(self):
+        self.ext('gen', features='uris diff')
+        path = (self.proj / 'a.txt').as_posix()
+        lines = [f'diff {A} file://{path} background {{LEN}}|gen against a', f'open 2 1 {A}',
+                 f'diff {A} file:///nowhere/x.txt show {{LEN}}|nothing', f'diff 1x {A} show {{LEN}}|bad']
+        out = self.run_res('gen', lines, [
+            'cmd rt/gen.batch', 'wait-ext gen running', 'wait 600', 'print-tabs', 'key ctrl+Tab',
+            'print-doc', 'cmd close_tab', 'wait 300', 'print-tabs', 'print-vdocs'], features='uris diff')
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertEqual(tabs[0], 'tabs=a.txt | *a.txt | gen against a', out)  # the URI's tab opened
+        self.assertIn(f'content 1 of {A}\nhello world', '\n'.join(out))
+        self.assertEqual(tabs[1], 'tabs=a.txt | *a.txt', out)
+        self.assertEqual([x['uri'] for x in self.vdocs(out)][-1:], [A], out)   # still open
+        log = self.reslog('gen')
+        replies = [x for x in log if x.startswith(('ok ', 'error '))]
+        self.assertTrue(re.fullmatch(r'ok 1 \d+', replies[0]), replies)
+        self.assertTrue(re.fullmatch(r'ok 2 \d+', replies[1]), replies)
+        self.assertEqual(replies[2], 'error 3 nodoc no such document')
+        self.assertTrue(replies[3].startswith('error 4 syntax'), replies)
+        self.assertNotIn(f'0 content-closed {A}', log)
+
+    def test_the_provider_removed_closes_the_diff(self):
+        self.ext('gen', features='uris')
+        self.ext('dif', schemes='')
+        self.env['RES_FEATURES_gen'] = 'uris'
+        out = self.run_res('dif', [f'diff {A} {B} show {{LEN}}|a against b'], [
+            'cmd rt/dif.request', 'wait-ext dif running', 'wait 1500', 'print-tabs', 'print-vdocs',
+            'ext-remove gen', 'dialog yes', 'wait 500', 'print-tabs', 'print-vdocs'],
+            features='uris diff')
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertEqual(tabs[0], 'tabs=a.txt | *a against b', out)
+        self.assertEqual(tabs[1], 'tabs=*a.txt', out)
+        vdocs = [l for l in out if l.startswith('vdoc ')]
+        self.assertEqual(len(vdocs), 2, out)                                 # none after
+
+    def test_reveal_a_uri(self):
+        self.ext('gen', features='uris reveal')
+        path = (self.proj / 'a.txt').as_posix()
+        lines = [f'open 1 1 {A}', f'reveal {A} 2 1 top', f'reveal file://{path} 1 1 center',
+                 f'reveal {B} 1 1 top']
+        self.run_res('gen', lines, ['cmd rt/gen.request', 'wait-ext gen running', 'wait 600',
+                                    'cmd rt/gen.batch', 'wait 300'], features='uris reveal')
+        replies = [x for x in self.reslog('gen') if x.startswith(('ok ', 'error '))]
+        self.assertTrue(re.fullmatch(r'ok 1 \d+', replies[0]), replies)
+        self.assertEqual(replies[1:], ['ok 2', 'ok 3', 'error 4 nodoc no such document'])
+
+
+for name in dir(vd.Vdoc):
+    if name.startswith('test_'):
+        setattr(VdocDiff, name, None)
 
 if __name__ == '__main__':
     unittest.main()

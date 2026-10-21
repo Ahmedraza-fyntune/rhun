@@ -730,6 +730,36 @@ FN termproto_ext_gone
     call park_clear
 9:  EPILOGUE
 
+# termproto_holds(ext) -> eax 1 while a program it started runs or waits to (or its start waits for
+#   the dialog): such an extension is never idle (tasks design 4.9; extres.s idle = stop)
+FN termproto_holds
+    PROLOGUE
+    mov r12, rdi
+    cmp [rip + park_ext], r12
+    je 8f
+    xor ebx, ebx
+1:  cmp rbx, [rip + recs + VEC_len]
+    jae 7f
+    mov rax, [rip + recs + VEC_ptr]
+    mov r13, [rax + rbx*8]
+    inc rbx
+    cmp [r13 + TRC_ext], r12
+    jne 1b
+    cmp dword ptr [r13 + TRC_live], 0
+    je 1b
+    mov rdi, [r13 + TRC_term]
+    call term_state
+    test eax, eax
+    jz 8f                       # running
+    cmp eax, 5
+    je 8f                       # waiting for its dependencies
+    jmp 1b
+7:  mov rdi, r12
+    call tasks_holds            # a task-start or task-run waiting for the dialog
+    EPILOGUE
+8:  mov eax, 1
+    EPILOGUE
+
 # park_clear(): no terminal-open waits for the dialog
 park_clear:
     sub rsp, 8

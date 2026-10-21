@@ -1,0 +1,9 @@
+[package]
+name = "sdkcommands"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rhun-ext = { path = "@SDK@" }
+
+[workspace]
