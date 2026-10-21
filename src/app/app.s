@@ -116,7 +116,7 @@ trust_path: .zero 4096           # the repository's folder, as shown (~ for the 
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
-pm_items: .zero 16 * 24         # the project menu: 2 commands, a line, 9 folders, the remote items
+pm_items: .zero 16 * 26         # the project menu: 3 commands, a line, 9 folders, the remote items
                                 # (a line, 2 commands, 8 recent remotes; remoteui.s), the end
 .globl g_shot_path
 g_shot_path: .quad 0
@@ -471,7 +471,11 @@ project_menu_open:
     mov [rbx + 16], rax
     lea rax, [rip + cmd_open_file]
     mov [rbx + 24], rax
-    add rbx, 32
+    lea rax, [rip + .Lpm_add_folder]  # resources group: workspace folders (workspace.s)
+    mov [rbx + 32], rax
+    lea rax, [rip + cmd_add_workspace_folder]
+    mov [rbx + 40], rax
+    add rbx, 48
     call session_recent
     mov r14d, eax
     test r14d, r14d
@@ -822,7 +826,8 @@ FN app_update_title
     lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Ldash]
     call sb_push_cstr
-1:  mov rsi, [rip + g_project_name]
+1:  call wfold_title            # resources group: "app + lib" for two workspace folders or more
+    mov rsi, rax
     test rsi, rsi
     jnz 2f
     lea rsi, [rip + .Lrhun]
@@ -6564,6 +6569,7 @@ tip_table:
 .endif
 .endif
 .Lpm_file: .asciz "Open File\342\200\246"
+.Lpm_add_folder: .asciz "Add Folder to Workspace\342\200\246"
 .Lpm_line: .asciz ""
 .Ld0: .asciz "Cancel"
 .Ld1: .asciz "Don't Save"
@@ -6682,6 +6688,10 @@ FN app_open_path
     mov r13d, 1
 2:  mov rdi, rbx
     call path_normalize
+    mov rdi, rbx                # resources group: a workspace file opens its folders (workspace.s)
+    call workspace_open_file
+    test eax, eax
+    jnz 8f
     mov rdi, rbx
     call vfs_is_dir
     test eax, eax

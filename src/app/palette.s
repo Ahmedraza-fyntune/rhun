@@ -2956,7 +2956,20 @@ palette_accept:
     mov dword ptr [rip + g_reveal], 0
     jmp .Lpa_close
 .Lpa_prompt:
-    # extension management: the folder or archive to install
+    cmp dword ptr [rip + pal_prompt], PROMPT_WS_SAVE  # resources group: Save Workspace As
+    jne 66f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call workspace_save_as
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+66: # extension management: the folder or archive to install
     mov ecx, [rip + pal_prompt]
     cmp ecx, PROMPT_EXT_FOLDER
     jb 67f

@@ -1218,7 +1218,14 @@ FN explorer_body_draw
     lea rax, [rip + menu_items]
     push rax
     push rax
-    cmp dword ptr [r14 + N_dir], 0
+    cmp dword ptr [rip + root_multi], 0  # resources group: a workspace folder's own row
+    je 49f
+    cmp dword ptr [r14 + N_depth], 0
+    jne 49f
+    lea rax, [rip + menu_items_folder]
+    mov [rsp], rax
+    jmp 50f
+49: cmp dword ptr [r14 + N_dir], 0
     jne 50f
     mov rdi, [r14 + N_path]
     call git_status_of
@@ -1844,6 +1851,7 @@ FN menu_print
 9:  EPILOGUE
 
 .section .rodata
+.Lm_remove_folder: .asciz "Remove Folder from Workspace"
 .Lempty_name: .asciz ""
 .Lheader: .asciz "EXPLORER"
 .ifdef MACOS
@@ -1885,3 +1893,6 @@ menu_items_git:
 menu_items_root:
     .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm5, copy_project_path
     .quad .Lm_reveal, reveal_project, 0, 0
+menu_items_folder:              # resources group: a workspace folder's row
+    .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm5, cmd_copy_path
+    .quad .Lm_reveal, cmd_reveal_file, .Lm_remove_folder, cmd_remove_workspace_folder, 0, 0

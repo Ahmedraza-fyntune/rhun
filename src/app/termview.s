@@ -252,9 +252,10 @@ FN term_spawn
     js .Lsp_free
     mov r13d, eax               # master
     mov r14d, edx               # slave
+    call wfold_cwd              # resources group: the active document's workspace folder (workspace.s)
+    mov rdx, rax
     lea rdi, [rsp]
     mov rsi, [rip + env]
-    mov rdx, [rip + g_project]
     mov ecx, r14d
     mov r8d, r14d
     mov r9d, r14d
@@ -336,9 +337,10 @@ FN term_spawn
     lea rax, [rip + .Lempty_arg]
     mov [rsp], rax
     mov qword ptr [rsp + 8], 0
+    call wfold_cwd              # resources group: the active document's workspace folder
+    mov rdx, rax
     lea rdi, [rsp]
     mov rsi, [rip + env]
-    mov rdx, [rip + g_project]
     mov ecx, 80
     mov r8d, 24
     call vfs_pty_spawn

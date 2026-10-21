@@ -779,6 +779,148 @@ res_files:
     call reply_syntax
 9:  EPILOGUE
 
+# ---------------- workspace-folders (workspace.s) ----------------
+
+# FN extproto_send_folders(ext): "0 folders LEN" and N LF, then N records FOLDER LOCATION FLAGS
+# NAME_LEN PATH_LEN LF NAME PATH, for an extension that agreed workspace-folders
+FN extproto_send_folders
+    PROLOGUE
+    mov rbx, rdi
+    FEAT_TEST rbx, FEAT_WORKSPACE_FOLDERS
+    jz 9f
+    lea r13, [rip + res_folders]
+    mov rdi, r13
+    call sb_clear
+    call wfold_count
+    mov rdi, r13
+    mov rsi, rax
+    call sb_push_u64
+    mov rdi, r13
+    mov esi, 10
+    call sb_push_byte
+    xor r12d, r12d
+1:  call wfold_count
+    cmp r12, rax
+    jae 2f
+    mov rdi, r12
+    call wfold_id
+    mov rdi, r13
+    mov rsi, rax
+    call sb_push_u64
+    mov rdi, r13
+    lea rsi, [rip + .Lres_local]
+    call sb_push_cstr
+    mov rdi, r12
+    call wfold_flags
+    mov rdi, r13
+    mov esi, eax
+    call sb_push_u64
+    mov rdi, r13
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, r12
+    call wfold_name
+    mov rdi, rax
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call sb_push_u64
+    mov rdi, r13
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, r12
+    call wfold_path
+    mov rdi, rax
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    call sb_push_u64
+    mov rdi, r13
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, r12
+    call wfold_name
+    mov rdi, r13
+    mov rsi, rax
+    call sb_push_cstr
+    mov rdi, r12
+    call wfold_path
+    mov rdi, r13
+    mov rsi, rax
+    call sb_push_cstr
+    inc r12
+    jmp 1b
+2:  mov r14, [rip + cur]
+    mov [rip + cur], rbx
+    call out_begin
+    lea rdi, [rip + .Lres_ev_folders]
+    call out_cstr
+    mov rdi, [r13 + SB_len]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, [r13 + SB_ptr]
+    mov rsi, [r13 + SB_len]
+    call out_bytes
+    call out_end
+    mov [rip + cur], r14
+9:  EPILOGUE
+
+# ID folder-of PATH -> ok ID FOLDER: the workspace folder the path is in, 0 for none (a file: URI
+# too with uris); links are resolved when the path as written is in none
+h_res_folder_of:
+    PROLOGUE 4096
+    mov edi, FEAT_WORKSPACE_FOLDERS
+    call res_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jb 8f
+    mov edi, 2
+    call rest_from
+    mov rdi, rax
+    mov rsi, rdx
+    call uri_file_path          # a file: URI's path, or 0
+    test rax, rax
+    jz 0f
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    jmp 1f
+0:  mov edi, 2
+    call rest_from
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+1:  mov rbx, rax
+    mov rdi, rax
+    call wfold_of
+    test rax, rax
+    jns 3f
+    mov rdi, rbx
+    mov rsi, rsp
+    call vfs_realpath
+    test rax, rax
+    js 2f
+    mov rdi, rsp
+    call wfold_of
+    test rax, rax
+    jns 3f
+2:  xor r12d, r12d
+    jmp 4f
+3:  mov rdi, rax
+    call wfold_id
+    mov r12, rax
+4:  mov rdi, rbx
+    call mem_free
+    mov rdi, [rip + cur_id]
+    mov rsi, r12
+    call reply_ok_u64
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 # ---------------- scoped-settings: setting-get (extconfig.s) ----------------
 
 # ID setting-get KEY FOLDER LANG -> ok ID LEN + the value in force for that folder (0: the window)
@@ -861,6 +1003,7 @@ h_res_setting_get:
 .bss
 .p2align 3
 res_url_label: .zero SB_SIZE
+res_folders: .zero SB_SIZE
 res_url_host: .zero 208
 .section .rodata
 .Lres_v_open_url: .asciz "open-url"
@@ -886,6 +1029,9 @@ res_url_host: .zero 208
 .Lres_v_search_text: .asciz "search-text"
 .Lres_e_needs_project: .asciz "needs project=read"
 .Lres_v_setting_get: .asciz "setting-get"
+.Lres_v_folder_of: .asciz "folder-of"
+.Lres_ev_folders: .asciz "0 folders "
+.Lres_local: .asciz " local "
 .Lres_e_not_setting: .asciz "refused not a setting of this extension"
 .Lres_e_no_folder: .asciz "nofile no such folder"
 .text

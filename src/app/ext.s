@@ -4097,6 +4097,8 @@ FN ext_tick
     inc dword ptr [rip + ext_ticks]
     call extres_frame           # resources group: start pacing, idle = stop, cost samples
     call ext_project_check
+    mov edi, [rip + ext_startup_done]
+    call workspace_ext_check    # resources group: other workspace folders, on = contains:
     call extwatch_tick
     call invoke_tick            # calls between extensions (invoke.s)
     # on = startup, once; on = project when a project is open

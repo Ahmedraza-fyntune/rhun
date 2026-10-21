@@ -33,7 +33,10 @@ ws_next_id: .quad 0
 ws_carry: .zero VEC_SIZE        # owned paths workspace_reset adds instead of the remembered ones
 ws_buf: .zero SB_SIZE
 ws_name: .zero 280
-.globl g_ws_gen
+ws_it: .zero INI_SIZE
+ws_file_next: .quad 0           # the workspace file workspace_reset takes as the window's
+.globl g_ws_gen, g_ws_file
+g_ws_file: .quad 0              # the workspace file the window opened or saved (owned), or 0
 g_ws_gen: .long 0
 
 .text
@@ -133,6 +136,73 @@ FN wfold_of
 8:  mov rbx, -1
 9:  mov rax, rbx
     EPILOGUE
+
+# FN wfold_cwd() -> rax the folder a new terminal starts in: the active document's workspace folder,
+# else the primary (g_project, which may be 0)
+FN wfold_cwd
+    PROLOGUE
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 8f
+    mov rdi, [rax + DOC_path]
+    test rdi, rdi
+    jz 8f
+    call wfold_of
+    test rax, rax
+    js 8f
+    mov rdi, rax
+    call wfold_path
+    EPILOGUE
+8:  mov rax, [rip + g_project]
+    EPILOGUE
+
+# FN wfold_title() -> rax the window title's project part: the project's name, or the folders'
+# names joined by " + " (a cstr of this module) with two folders or more
+FN wfold_title
+    PROLOGUE
+    mov rdi, [rip + g_ws_file]  # a workspace file: its name
+    test rdi, rdi
+    jz 0f
+    call strlen
+    mov rdi, [rip + g_ws_file]
+    mov rsi, rax
+    call path_basename
+    lea rdi, [rip + ws_name]
+    mov rsi, rax
+    call cstr_copy
+    lea rcx, [rip + ws_name]
+    sub rax, rcx
+    cmp rax, 15
+    jbe 87f
+    lea rcx, [rip + ws_name]
+    mov byte ptr [rcx + rax - 15], 0
+87: lea rax, [rip + ws_name]
+    EPILOGUE
+0:  mov rax, [rip + g_project_name]
+    cmp qword ptr [rip + ws_folders + VEC_len], 2
+    jb 9f
+    lea rdi, [rip + ws_buf]
+    call sb_clear
+    xor ebx, ebx
+1:  cmp rbx, [rip + ws_folders + VEC_len]
+    jae 2f
+    test rbx, rbx
+    jz 11f
+    lea rdi, [rip + ws_buf]
+    lea rsi, [rip + .Lplus]
+    call sb_push_cstr
+11: mov rdi, rbx
+    call wfold_name
+    lea rdi, [rip + ws_buf]
+    mov rsi, rax
+    call sb_push_cstr
+    inc rbx
+    jmp 1b
+2:  lea rdi, [rip + ws_buf]
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rip + ws_buf + SB_ptr]
+9:  EPILOGUE
 
 # FN wfold_join(label) -> rax an owned path: with one folder the label is relative to it, with more
 # its first part names the folder
@@ -501,6 +571,12 @@ FN workspace_reset
     PROLOGUE
     call ws_clear
     inc dword ptr [rip + g_ws_gen]
+    # the workspace file it came from, if one opened it (else none)
+    mov rdi, [rip + g_ws_file]
+    call mem_free
+    mov rax, [rip + ws_file_next]
+    mov [rip + g_ws_file], rax
+    mov qword ptr [rip + ws_file_next], 0
     mov rdi, [rip + g_project]
     test rdi, rdi
     jz 8f
@@ -596,6 +672,502 @@ ws_save:
     mov rsi, [rip + ws_buf + SB_ptr]
     mov rdx, [rip + ws_buf + SB_len]
     call file_write_all
+9:  EPILOGUE
+
+# ---------------- workspace files ----------------
+# NAME.rhun-workspace (INI): [folders] with a path = line for each folder (relative to the file's
+# folder, or absolute), then [owner/name] sections with extensions' workspace settings (extconfig.s).
+
+# ws_is_file(path) -> eax 1 when the path names a .rhun-workspace file
+ws_is_file:
+    PROLOGUE
+    mov rbx, rdi
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    lea rdx, [rip + .Lsuffix]
+    mov ecx, 15
+    call str_ends
+    EPILOGUE
+
+# FN workspace_open_file(path) -> eax 1 when it was a workspace file: its first folder becomes the
+# primary (the window takes it up as Open Folder does), the others join it, and its settings apply
+FN workspace_open_file
+    PROLOGUE 16
+    mov rbx, rdi
+    call ws_is_file
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    call vfs_is_dir
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
+    mov esi, 65536
+    call vfs_read_limited
+    test rax, rax
+    jz 7f
+    mov r12, rax
+    mov r13, rdx
+    call ws_carry_clear
+    # its folder, for relative paths
+    mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call path_dirlen
+    mov rdi, rbx
+    mov rsi, rax
+    call mem_dup
+    mov [rsp], rax
+    lea r14, [rip + ws_it]
+    mov rdi, r14
+    mov rsi, r12
+    mov rdx, r13
+    call ini_init
+    xor r15d, r15d              # the first folder
+1:  mov rdi, r14
+    call ini_next
+    test eax, eax
+    jz 3f
+    mov rdi, r14
+    lea rsi, [rip + .Lsec_folders]
+    call ini_sec_is
+    test eax, eax
+    jz 1b
+    mov rdi, r14
+    lea rsi, [rip + .Lk_path]
+    call ini_key_is
+    test eax, eax
+    jz 1b
+    mov rdi, [r14 + INI_val]
+    mov rsi, [r14 + INI_vallen]
+    call mem_dup
+    mov [rsp + 8], rax
+    mov rdi, rax
+    PATH_ABSOLUTE rdi, 2f
+    mov rdi, [rsp]              # relative: to the file's folder
+    mov rsi, [rsp + 8]
+    call path_join
+    push rax
+    push rax
+    mov rdi, [rsp + 24]
+    call mem_free
+    pop rax
+    pop rax
+    mov [rsp + 8], rax
+2:  mov rdi, [rsp + 8]
+    call ws_path_clean
+    push rax
+    push rax
+    mov rdi, [rsp + 24]
+    call mem_free
+    pop rax
+    pop rax
+    test r15, r15
+    jnz 21f
+    mov r15, rax
+    jmp 1b
+21: mov r13, rax
+    lea rdi, [rip + ws_carry]
+    mov esi, 8
+    call vec_push
+    mov [rax], r13
+    jmp 1b
+3:  mov rdi, r12
+    call mem_free
+    mov rdi, [rsp]
+    call mem_free
+    test r15, r15
+    jz 7f
+    mov dword ptr [rip + ws_carrying], 1
+    mov rdi, rbx
+    call dup_cstr
+    mov rdi, [rip + ws_file_next]
+    mov [rip + ws_file_next], rax
+    call mem_free
+    mov rdi, r15
+    cmp dword ptr [rip + g_started], 0
+    je 4f
+    call app_switch_project
+    jmp 5f
+4:  call app_set_project
+5:  mov rdi, r15
+    call mem_free
+    call app_update_title
+8:  mov eax, 1
+    EPILOGUE
+7:  lea rdi, [rip + .Lt_no_folder]
+    call app_toast
+    mov eax, 1
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
+
+# FN workspace_save_as(ptr, len): the folders (and the extensions' sections of the workspace file
+# in use) written to NAME.rhun-workspace (the suffix added when missing; a relative name is in the
+# primary folder); the window keeps it as its workspace file
+FN workspace_save_as
+    PROLOGUE 16
+    cmp qword ptr [rip + g_project], 0
+    je 9f
+    call trim
+    test rdx, rdx
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov r12, rax
+    PATH_ABSOLUTE r12, 1f
+    mov rdi, [rip + g_project]
+    mov rsi, r12
+    call path_join
+    mov rdi, r12
+    mov r12, rax
+    call mem_free
+1:  mov rdi, r12
+    call ws_is_file
+    test eax, eax
+    jnz 2f
+    lea rdi, [rip + ws_buf]
+    call sb_clear
+    lea rdi, [rip + ws_buf]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + ws_buf]
+    lea rsi, [rip + .Lsuffix]
+    call sb_push_cstr
+    lea rdi, [rip + ws_buf]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, r12
+    call mem_free
+    mov rdi, [rip + ws_buf + SB_ptr]
+    call dup_cstr
+    mov r12, rax
+2:  # its folder: folders inside it are written relative to it
+    mov rdi, r12
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    call path_dirlen
+    mov rdi, r12
+    mov rsi, rax
+    call mem_dup
+    mov r13, rax
+    mov rdi, rax
+    call strlen
+    mov r14, rax
+    lea rdi, [rip + ws_buf]
+    call sb_clear
+    lea rdi, [rip + ws_buf]
+    lea rsi, [rip + .Lws_head]
+    call sb_push_cstr
+    xor ebx, ebx
+3:  cmp rbx, [rip + ws_folders + VEC_len]
+    jae 5f
+    mov rdi, rbx
+    call wfold_path
+    mov r15, rax
+    lea rdi, [rip + ws_buf]
+    lea rsi, [rip + .Lws_path]
+    call sb_push_cstr
+    mov rdi, r15
+    mov rsi, r13
+    call app_path_inside
+    test eax, eax
+    jz 4f
+    mov rdi, r15
+    call strlen
+    cmp rax, r14
+    jbe 31f
+    lea rsi, [r15 + r14 + 1]    # inside: relative
+    jmp 41f
+31: lea rsi, [rip + .Ldot]      # the file's own folder
+    jmp 41f
+4:  mov rsi, r15
+41: lea rdi, [rip + ws_buf]
+    call sb_push_cstr
+    lea rdi, [rip + ws_buf]
+    mov esi, 10
+    call sb_push_byte
+    inc rbx
+    jmp 3b
+5:  # the extensions' sections of the workspace file in use
+    mov rdi, [rip + g_ws_file]
+    test rdi, rdi
+    jz 6f
+    mov esi, 65536
+    call vfs_read_limited
+    test rax, rax
+    jz 6f
+    mov rdi, rax
+    mov rsi, rdx
+    push rax
+    push rax
+    call ws_copy_sections
+    pop rdi
+    pop rdi
+    call mem_free
+6:  mov rdi, r12
+    mov rsi, [rip + ws_buf + SB_ptr]
+    mov rdx, [rip + ws_buf + SB_len]
+    call vfs_write_all
+    test rax, rax
+    js 7f
+    mov rdi, [rip + g_ws_file]
+    call mem_free
+    mov [rip + g_ws_file], r12
+    mov rdi, r13
+    call mem_free
+    call app_update_title
+    EPILOGUE
+7:  lea rdi, [rip + .Lt_write]
+    call app_toast
+    mov rdi, r12
+    call mem_free
+    mov rdi, r13
+    call mem_free
+9:  EPILOGUE
+
+# ws_copy_sections(text, len): its lines of every section but [folders] onto ws_buf
+ws_copy_sections:
+    PROLOGUE
+    mov r12, rdi
+    lea r13, [rdi + rsi]
+    xor r14d, r14d              # 1 inside a section that is copied
+1:  cmp r12, r13
+    jae 9f
+    mov r15, r12
+2:  cmp r15, r13
+    jae 3f
+    cmp byte ptr [r15], 10
+    je 3f
+    inc r15
+    jmp 2b
+3:  # [r12, r15) a line
+    cmp byte ptr [r12], '['
+    jne 4f
+    mov rax, r15
+    sub rax, r12
+    cmp rax, 9
+    jb 31f
+    mov rdi, r12
+    lea rsi, [rip + .Lsec_folders_line]
+    mov rdx, 9
+    call strncmp_eq
+    xor r14d, r14d
+    test eax, eax
+    jnz 5f
+31: mov r14d, 1
+    lea rdi, [rip + ws_buf]
+    mov esi, 10
+    call sb_push_byte
+4:  test r14d, r14d
+    jz 5f
+    lea rdi, [rip + ws_buf]
+    mov rsi, r12
+    mov rdx, r15
+    sub rdx, r12
+    call sb_push
+    lea rdi, [rip + ws_buf]
+    mov esi, 10
+    call sb_push_byte
+5:  lea r12, [r15 + 1]
+    jmp 1b
+9:  EPILOGUE
+
+# FN cmd_save_workspace_as(): the palette asks for the workspace file's name
+FN cmd_save_workspace_as
+    PROLOGUE
+    cmp qword ptr [rip + g_project], 0
+    je 9f
+    lea rdi, [rip + .Lask_save]
+    mov esi, PROMPT_WS_SAVE
+    lea rdx, [rip + .Ldefault_name]
+    mov ecx, 24
+    call palette_ext_prompt_open
+9:  EPILOGUE
+
+# FN c_workspace_save(out, args, len): workspace-save PATH
+FN c_workspace_save
+    PROLOGUE
+    mov rdi, rsi
+    mov rsi, rdx
+    call workspace_save_as
+    xor eax, eax
+    EPILOGUE
+
+# ---------------- extensions ----------------
+
+# FN workspace_ext_check(startup done): every frame (ext_tick): when the folders changed with the
+# same primary folder, running extensions that read the project restart (a sandbox cannot widen
+# after exec), the others that agreed workspace-folders hear "0 folders"; and idle extensions whose
+# on = contains: patterns a folder has now start (once startup activation ran)
+FN workspace_ext_check
+    PROLOGUE
+    mov r15d, edi
+    mov eax, [rip + g_ws_gen]
+    cmp eax, [rip + ws_gen_ext]
+    je 5f
+    mov [rip + ws_gen_ext], eax
+    # the same primary? (a new one restarts everything: ext_project_check)
+    mov rdi, [rip + g_project]
+    mov rsi, [rip + ws_primary_seen]
+    test rdi, rdi
+    jz 1f
+    test rsi, rsi
+    jz 1f
+    call strcmp_eq
+    test eax, eax
+    jnz 2f
+1:  mov rdi, [rip + ws_primary_seen]
+    call mem_free
+    mov qword ptr [rip + ws_primary_seen], 0
+    mov rdi, [rip + g_project]
+    test rdi, rdi
+    jz 5f
+    call dup_cstr
+    mov [rip + ws_primary_seen], rax
+    jmp 5f
+2:  xor r12d, r12d
+3:  cmp r12, [rip + g_exts + VEC_len]
+    jae 5f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    mov eax, [rbx + EXT_status]
+    cmp eax, ES_RUNNING
+    je 4f
+    cmp eax, ES_STARTING
+    jne 3b
+4:  test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE
+    jz 41f
+    mov dword ptr [rbx + EXT_restart], 1
+    mov rdi, rbx
+    lea rsi, [rip + .Lr_folders]
+    call ext_stop
+    jmp 3b
+41: cmp dword ptr [rbx + EXT_status], ES_RUNNING
+    jne 3b
+    mov rdi, rbx
+    call extproto_send_folders
+    jmp 3b
+5:  # on = contains:
+    test r15d, r15d
+    jz 9f
+    mov eax, [rip + g_ws_gen]
+    cmp eax, [rip + ws_gen_contains]
+    je 9f
+    mov [rip + ws_gen_contains], eax
+    xor r12d, r12d
+6:  cmp r12, [rip + g_exts + VEC_len]
+    jae 9f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    test dword ptr [rbx + EXT_on], ON_CONTAINS
+    jz 6b
+    cmp dword ptr [rbx + EXT_status], ES_IDLE
+    jne 6b
+    mov rdi, rbx
+    call ext_is_visible
+    test eax, eax
+    jz 6b
+    mov rdi, rbx
+    call extres_row
+    test rax, rax
+    jz 6b
+    mov rdi, [rax + EL_contains]
+    call ws_contains
+    test eax, eax
+    jz 6b
+    mov rdi, rbx
+    call ext_start
+    jmp 6b
+9:  EPILOGUE
+
+# ws_contains(patterns cstr or 0) -> eax 1 when a folder has one of them: a name or a relative path
+# (three levels at most) under it, or *.EXT at its top level
+ws_contains:
+    PROLOGUE 16
+    mov r12, rdi
+    test r12, r12
+    jz 8f
+1:  mov rdi, r12
+    call strlen
+    mov rdi, r12
+    mov rsi, rax
+    call next_word
+    add r12, rcx
+    test rdx, rdx
+    jz 8f
+    cmp rdx, 250
+    ja 1b
+    lea rdi, [rip + ws_name]
+    mov rsi, rax
+    mov rcx, rdx
+    mov r13, rdx
+    rep movsb
+    mov byte ptr [rdi], 0
+    xor r14d, r14d              # folder
+2:  cmp r14, [rip + ws_folders + VEC_len]
+    jae 1b
+    mov rdi, r14
+    inc r14
+    call wfold_path
+    mov r15, rax
+    cmp word ptr [rip + ws_name], 0x2e2a   # "*."
+    je 3f
+    mov rdi, r15
+    lea rsi, [rip + ws_name]
+    call path_join
+    mov rbx, rax
+    mov rdi, rax
+    call vfs_missing
+    push rax
+    push rax
+    mov rdi, rbx
+    call mem_free
+    pop rax
+    pop rax
+    test eax, eax
+    jz 9f
+    jmp 2b
+3:  # *.EXT: a name at the top level ending with .EXT
+    mov dword ptr [rip + ws_found], 0
+    mov rdi, r15
+    lea rsi, [rip + ws_suffix_cb]
+    xor edx, edx
+    call vfs_dir_each
+    cmp dword ptr [rip + ws_found], 0
+    jne 9f
+    jmp 2b
+8:  xor eax, eax
+    EPILOGUE
+9:  mov eax, 1
+    EPILOGUE
+
+# ws_suffix_cb(ctx, name, is_dir): ws_found = 1 for a file whose name ends with ws_name after its *
+ws_suffix_cb:
+    PROLOGUE
+    test edx, edx
+    jnz 9f
+    mov rbx, rsi
+    mov rdi, rsi
+    call strlen
+    mov r12, rax
+    lea rdi, [rip + ws_name + 1]
+    call strlen
+    cmp r12, rax
+    jb 9f
+    lea rdi, [rbx + r12]
+    sub rdi, rax
+    lea rsi, [rip + ws_name + 1]
+    call strcmp_eq
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + ws_found], 1
 9:  EPILOGUE
 
 # ---------------- commands ----------------
@@ -748,14 +1320,32 @@ FN c_folder_remove
 
 .data
 ws_carrying: .long 0            # workspace_reset adds ws_carry's paths
+ws_gen_ext: .long -1            # g_ws_gen as workspace_ext_check last saw it
+ws_gen_contains: .long -1       # and as contains: activation last saw it
+ws_found: .long 0
+.p2align 3
+ws_primary_seen: .quad 0
 
 .section .rodata
 .Lext_folders: .asciz ".folders"
+.Lsuffix: .asciz ".rhun-workspace"
+.Lsec_folders: .asciz "folders"
+.Lsec_folders_line: .asciz "[folders]"
+.Lk_path: .asciz "path"
+.Ldot: .asciz "."
+.Lws_head: .asciz "# rhun workspace: its folders, and workspace settings for extensions ([owner/name] sections)\n[folders]\n"
+.Lws_path: .asciz "path = "
+.Lask_save: .asciz "Save the workspace as"
+.Ldefault_name: .asciz "workspace.rhun-workspace"
+.Lt_no_folder: .asciz "The workspace file names no folder that is there"
+.Lt_write: .asciz "The workspace file could not be written"
+.Lplus: .asciz " + "
 .Lt_nested: .asciz "A workspace folder cannot be inside another one, or around it"
 .Lt_already: .asciz "That folder is in the workspace already"
 .Lt_full: .asciz "A workspace has 16 folders at most"
 .Lt_not_folder: .asciz "Not a folder"
 .Lt_no_remove: .asciz "Only a workspace of two folders or more has one to remove"
+.Lr_folders: .asciz "restarting after the workspace folders changed"
 .Lp_folder: .asciz "folder="
 .Lp_name: .asciz " name="
 .Lp_path: .asciz " path="

@@ -1900,6 +1900,7 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_FOLDER, 20      # Install from Folder: the folder, copied
 .equ PROMPT_EXT_LINK, 21        # Link a Folder: the folder, linked
 .equ PROMPT_EXT_ARCHIVE, 22     # Install from Archive: the .tar.gz
+.equ PROMPT_WS_SAVE, 100        # resources group (block 100-103): Save Workspace As's file (workspace.s)
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0

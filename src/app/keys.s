@@ -2057,6 +2057,7 @@ g_commands:
     COMMAND open_folder, "Open Folder", cmd_open_folder, "ctrl+shift+o"
     COMMAND add_workspace_folder, "Add Folder to Workspace", cmd_add_workspace_folder, ""   # resources: workspace.s
     COMMAND remove_workspace_folder, "Remove Folder from Workspace", cmd_remove_workspace_folder, ""
+    COMMAND save_workspace_as, "Save Workspace As", cmd_save_workspace_as, ""
     COMMAND new_folder, "New Folder", cmd_new_folder, ""
     COMMAND rename_file, "Rename File", cmd_rename_file, "F2"
     COMMAND delete_file, "Delete File", cmd_delete_file, ""

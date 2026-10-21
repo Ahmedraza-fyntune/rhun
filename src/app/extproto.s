@@ -350,6 +350,8 @@ handle_line:
     mov rdi, rbx
     call hello_features         # the features it named that rhun knows, said back before ready
     mov rdi, rbx
+    call extproto_send_folders  # resources group: workspace-folders, before ready
+    mov rdi, rbx
     call send_ready
     mov rdi, rbx
     call send_settings          # its own settings, before anything else
@@ -5209,6 +5211,7 @@ verbs:
     .quad .Lres_v_find_files, h_res_find_files, 65536
     .quad .Lres_v_search_text, h_res_search_text, 340000
     .quad .Lres_v_setting_get, h_res_setting_get, 0
+    .quad .Lres_v_folder_of, h_res_folder_of, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
