@@ -3389,12 +3389,19 @@ FN center_draw
     EPILOGUE
 12: cmp qword ptr [rax + TAB_kind], TAB_VIEW
     jne 13f
+    mov edi, [rip + g_editor_rect]  # custom editors: a stopped editor's notice instead (customed.s)
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call ce_draw_tab
+    test eax, eax
+    jnz 14f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call extview_draw
-    EPILOGUE
+14: EPILOGUE
 13: cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
     jne 2f
     mov edi, [rip + g_editor_rect]

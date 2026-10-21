@@ -3451,11 +3451,15 @@ F CE_dirty, 4           # owned: the extension said its model differs from the f
 F CE_reqkind, 4         # CER_* of CE_req
 F CE_want, 4            # CER_OPEN: editor-open waits for the extension to run
 F CE_skind, 4           # CEK_* of the save in progress
+F CE_dirtyat, 8         # owned: when it last said dirty (time_ms): its backup follows 30 s later
+F CE_bkdone, 4          # owned: the backup holds what it shows since it last said dirty
+F CE_restore, 4         # owned: its bytes come from its backup (opened with SOURCE backup) until saved
 ENDSTRUCT CE_SIZE
 .equ CEM_TEXT, 0
 .equ CEM_OWNED, 1
 .equ CES_OPENING, 0
 .equ CES_READY, 1
+.equ CES_STOPPED, 2             # its extension stopped while it had unsaved changes in a backup
 .equ CER_OPEN, 1
 .equ CER_SAVE, 2
 .equ CER_CMD, 3
@@ -3466,6 +3470,8 @@ ENDSTRUCT CE_SIZE
 .equ CE_SAVE_MAX, 1073741824    # a save's bytes in all
 .equ CE_READ_MAX, 4194304       # an editor-read answer
 .equ CE_WAIT_MS, 30000          # a request without an answer fails after this
+.equ CE_BACKUP_MS, 30000        # an owned model's backup, after it last said dirty
+.equ ID_CE_RESTORE, 0x7d20      # the stopped editor's Restore Unsaved Changes button
 .equ PM_REOPEN, 120             # the palette's Reopen With list (notebooks' block 120-123)
 # ---- editor presentation (edtape.s, deco.s, gutter.s, presctl.s) ----
 # per-document presentation state, DOC_pres: the edit tape, decorations, glyph-lane entries

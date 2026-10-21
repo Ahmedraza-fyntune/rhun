@@ -5,7 +5,8 @@ pages of 4 bytes and more, flips the first byte on a click (undo and redo step t
 editor-dirty, and answers editor-save in parts of 3 bytes (1 MB for files of 64 bytes or more). "text" lets rhun keep the document and
 upper-cases the first line on a click with replace. Both draw "N bytes: XX XX ..." in their view.
 EDFAKE_LOG names a file (in the state folder) that receives every line rhun sends. EDFAKE_MODE:
-refuse (editor-open fails), badpart (a save part without its MORE line)."""
+refuse (editor-open fails), badpart (a save part without its MORE line), crashclick (the second
+click ends the program)."""
 import os
 import queue
 import sys
@@ -22,6 +23,7 @@ lock = threading.Lock()
 next_id = [1]
 answers = {}
 work = queue.Queue()
+clicks = [0]
 eds = {}                        # cdoc -> {'view', 'path', 'data', 'saved', 'undo', 'redo', 'snap'}
 
 
@@ -91,6 +93,9 @@ def worker():
             send(f'ok {rid} 0')
             draw(cdoc)
         elif kind == 'click':
+            clicks[0] += 1
+            if MODE == 'crashclick' and clicks[0] == 2:
+                os._exit(1)             # a crash, with unsaved changes
             cdoc = next((c for c, e in eds.items() if e['view'] == job[1]), None)
             if cdoc is None:
                 continue

@@ -140,6 +140,39 @@ class Editors(unittest.TestCase):
         self.assertEqual(field(customs(out)[-1], 'dirty'), '1')
         self.assertEqual(self.flip.read_bytes(), DATA)
 
+    # --- backups and restoring them (B3) ---
+
+    def backup_paths(self, path):
+        h = 0xcbf29ce484222325
+        for b in path.as_posix().encode():
+            h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+        d = self.work / 'state/rhun/backups'
+        return d / ('%016x' % h), d / ('%016x.path' % h)
+
+    def test_backup_then_crash_then_restore(self):
+        bak, note = self.backup_paths(self.flip)
+        out = self.run_editor([*self.view_click(), 'custom-backup', *SETTLE, 'print-custom',
+                               *self.view_click(), *SETTLE, 'print-custom', 'custom-restore', *SETTLE,
+                               'print-custom', 'key ctrl+s', *SETTLE, 'print-custom'], mode='crashclick')
+        c = customs(out)
+        self.assertEqual([field(x, 'state') for x in c], ['ready', 'stopped', 'ready', 'ready'], out)
+        self.assertEqual([field(x, 'dirty') for x in c], ['1', '1', '1', '0'])
+        self.assertTrue(any(' editor-save ' in l and ' backup 0' in l for l in self.log_of('edflip')))
+        self.assertTrue(any(' editor-open ' in l and ' owned backup ' in l for l in self.log_of('edflip')))
+        self.assertEqual(self.flip.read_bytes(), bytes([0xFE]) + DATA[1:])
+        self.assertFalse(bak.exists() or note.exists())     # saved: the backup went
+
+    def test_a_backup_left_by_a_crash_opens_again(self):
+        bak, note = self.backup_paths(self.flip)
+        bak.parent.mkdir(parents=True)
+        bak.write_bytes(b'restored')
+        note.write_text(self.flip.as_posix())
+        out = self.run_editor(['print-custom', 'key ctrl+s', *SETTLE, 'print-custom'])
+        c = customs(out)
+        self.assertEqual([field(x, 'dirty') for x in c], ['1', '0'], out)
+        self.assertEqual(self.flip.read_bytes(), b'restored')
+        self.assertFalse(bak.exists())
+
     # --- the text model and Reopen With ---
 
     def test_text_model_through_reopen_with(self):

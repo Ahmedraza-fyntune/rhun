@@ -452,7 +452,9 @@ An extension can show a kind of file its own way: a hex editor for binaries, a t
 a file opens in the extension's editor; **Reopen Editor With...** in the palette opens the active
 file with another editor or as text, and remembers the choice for files with the same extension
 (the config's `[editors]` section). Save, Save As, Undo, Redo, Revert File and the close
-question work in the editor's tab as in a text tab.
+question work in the editor's tab as in a text tab. An editor that keeps the file itself (a hex
+editor) has its unsaved changes backed up every 30 seconds: if its extension stops, the tab
+offers Restore Unsaved Changes, and if rhun stops, the file opens with them the next time.
 
 ### Notebooks
 

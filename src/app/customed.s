@@ -469,7 +469,12 @@ FN ce_open_tab
     mov rdi, r12
     call dup_cstr
     mov [r14 + CE_path], rax
-    # its view: a picture rhun hosts in the tab (not one of the extension's 8 views; a press gives
+    cmp dword ptr [r14 + CE_model], CEM_OWNED
+    jne 4f
+    mov rdi, r14                # B3: unsaved changes a crash left in a backup open again
+    call ce_backup_exists
+    mov [r14 + CE_restore], eax
+4:  # its view: a picture rhun hosts in the tab (not one of the extension's 8 views; a press gives
     # it the keyboard with view-keys), titled with the file's name
     call extview_next_id
     mov [r14 + CE_vid], rax
@@ -564,6 +569,8 @@ FN ce_tab_closed
     mov rdi, rbx
     mov rsi, -5
     call ce_save_done
+    mov rdi, rbx                # closed after the save-or-discard question: its backup goes
+    call ce_backup_drop
     mov rdi, rbx
     call ce_free
 9:  EPILOGUE
@@ -701,13 +708,23 @@ FN ce_ext_gone
     inc r13
     cmp [rbx + CE_ext], r12
     jne 2b
+    cmp dword ptr [rbx + CE_state], CES_STOPPED
+    je 2b
     mov qword ptr [rbx + CE_req], 0
     mov dword ptr [rbx + CE_reqkind], 0
     mov dword ptr [rbx + CE_want], 0
     mov rdi, rbx
     mov rsi, -32
     call ce_save_done
-    mov rdi, [rbx + CE_doc]
+    # unsaved changes in a backup (B3): the tab stays, and offers them back
+    cmp dword ptr [rbx + CE_dirty], 0
+    je 3f
+    cmp dword ptr [rbx + CE_bkdone], 0
+    je 3f
+    mov dword ptr [rbx + CE_state], CES_STOPPED
+    mov dword ptr [rip + g_dirty], 1
+    jmp 2b
+3:  mov rdi, [rbx + CE_doc]
     call doc_tab
     test rax, rax
     js 2b
@@ -787,7 +804,9 @@ ce_pump:
 ce_open_failed:
     PROLOGUE
     mov rbx, rdi
-    mov r12, rsi
+    mov rdi, rsi                # a copy: closing the tab reuses msg
+    call dup_cstr
+    mov r12, rax
     mov rdi, [rbx + CE_path]
     call dup_cstr
     mov r13, rax
@@ -807,6 +826,8 @@ ce_open_failed:
     call mem_free
     mov rdi, r12
     call app_toast
+    mov rdi, r12
+    call mem_free
     EPILOGUE
 
 # FN ce_tick(): editors waiting for their extension are opened; a request without an answer fails
@@ -826,6 +847,8 @@ FN ce_tick
     mov rax, [rip + g_ces + VEC_ptr]
     cmp [rax + r12*8 - 8], rbx
     jne 1b
+    mov rdi, rbx                # B3: a dirty owned model's backup
+    call ce_backup_due
     cmp qword ptr [rbx + CE_req], 0
     jne 2f
     cmp dword ptr [rbx + CE_want], 0
@@ -915,6 +938,12 @@ FN ce_reply
     jmp 7f
 11: mov dword ptr [rbx + CE_state], CES_READY
     mov dword ptr [rip + g_dirty], 1
+    cmp dword ptr [rbx + CE_restore], 0
+    je 7f
+    mov rdi, rbx                # its backup's bytes differ from the file's
+    mov esi, 1
+    call ce_set_dirty
+    mov dword ptr [rbx + CE_bkdone], 1
     jmp 7f
 2:  cmp eax, CER_SAVE
     jne 7f
@@ -1099,12 +1128,28 @@ ce_save_part:
     mov rsi, -32
     call ce_save_done
     EPILOGUE
-3:  # the last part: the file replaced at once (a temporary file renamed over it)
+3:  # the last part: the file replaced at once (a temporary file renamed over it); a backup in
+    # rhun's state folder, with the file's path beside it
+    cmp dword ptr [rbx + CE_skind], CEK_BACKUP
+    jne 31f
     mov rdi, [rbx + CE_target]
     mov rsi, [rbx + CE_buf + SB_ptr]
     mov rdx, [rbx + CE_buf + SB_len]
+    call file_write_all
+    test rax, rax
+    jnz 32f
+    push rax
+    push rax
+    mov rdi, rbx
+    call ce_backup_note
+    pop rax
+    pop rax
+    jmp 32f
+31: mov rdi, [rbx + CE_target]
+    mov rsi, [rbx + CE_buf + SB_ptr]
+    mov rdx, [rbx + CE_buf + SB_len]
     call vfs_write_all
-    mov rsi, rax
+32: mov rsi, rax
     mov rdi, rbx
     call ce_save_done
 9:  EPILOGUE
@@ -1133,8 +1178,17 @@ ce_save_done:
     call sb_free
     cmp qword ptr [rbx + CE_target], 0      # no save in progress
     je 9f
-    test r12, r12
+    cmp dword ptr [rbx + CE_skind], CEK_BACKUP
+    jne 1f
+    test r12, r12               # a backup: it holds what is shown (nothing else changes)
     jnz 2f
+    mov dword ptr [rbx + CE_bkdone], 1
+    jmp 2f
+1:  test r12, r12
+    jnz 2f
+    mov dword ptr [rbx + CE_restore], 0
+    mov rdi, rbx
+    call ce_backup_drop
     mov dword ptr [rbx + CE_dirty], 0
     mov rax, [rbx + CE_doc]
     mov qword ptr [rax + DOC_savepoint], 0
@@ -1154,6 +1208,8 @@ ce_save_done:
 2:  mov rdi, [rbx + CE_target]
     call mem_free
     mov qword ptr [rbx + CE_target], 0
+    cmp dword ptr [rbx + CE_skind], CEK_BACKUP
+    je 9f
     mov rax, [rbx + CE_savefn]
     mov qword ptr [rbx + CE_savefn], 0
     test rax, rax
@@ -1166,17 +1222,347 @@ ce_save_done:
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
-# FN ce_set_dirty(ce, dirty): editor-dirty: the dot and the close question follow it
+# FN ce_set_dirty(ce, dirty): editor-dirty: the dot and the close question follow it; a dirty model
+#   is backed up 30 s later (B3), a clean one's backup goes
 FN ce_set_dirty
-    mov [rdi + CE_dirty], esi
-    mov rax, [rdi + CE_doc]
+    PROLOGUE
+    mov rbx, rdi
+    mov [rbx + CE_dirty], esi
+    mov rax, [rbx + CE_doc]
     xor ecx, ecx
     test esi, esi
     jz 1f
     mov rcx, -1
 1:  mov [rax + DOC_savepoint], rcx
-    mov dword ptr [rip + g_dirty], 1
-    ret
+    mov dword ptr [rbx + CE_bkdone], 0
+    test esi, esi
+    jz 2f
+    call time_ms
+    mov [rbx + CE_dirtyat], rax
+    jmp 3f
+2:  mov rdi, rbx
+    call ce_backup_drop
+3:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# ---------------- backups of owned models (B3) ----------------
+
+# ce_backup_path(ce, suffix cstr) -> rax "STATE/backups/HASH" + suffix (msg), the folder made (0700),
+#   or 0 without a state folder. HASH names the file's path.
+ce_backup_path:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    lea rdi, [rip + msg]
+    call session_state_dir
+    test eax, eax
+    jz 8f
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lbackups]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + msg + SB_ptr]
+    mov esi, 0700
+    call ce_mkdir
+    dec qword ptr [rip + msg + SB_len]
+    lea rdi, [rip + msg]
+    mov esi, '/'
+    call sb_push_byte
+    # FNV-1a of the path, 16 hex digits
+    mov rdi, [rbx + CE_path]
+    mov rax, 0xcbf29ce484222325
+    mov rcx, 0x100000001b3
+1:  movzx edx, byte ptr [rdi]
+    test edx, edx
+    jz 2f
+    xor rax, rdx
+    imul rax, rcx
+    inc rdi
+    jmp 1b
+2:  mov r13, rax
+    mov r14d, 60
+3:  mov rax, r13
+    mov ecx, r14d
+    shr rax, cl
+    and eax, 15
+    lea rcx, [rip + .Lhex]
+    movzx esi, byte ptr [rcx + rax]
+    lea rdi, [rip + msg]
+    call sb_push_byte
+    sub r14d, 4
+    jns 3b
+    lea rdi, [rip + msg]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rip + msg + SB_ptr]
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# ce_mkdir(path, mode): the folder (and its parents), then its mode
+ce_mkdir:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    call mkdir_p
+    mov rdi, rbx
+    mov esi, r12d
+    SYS SYS_chmod
+    EPILOGUE
+
+# ce_backup_due(ce): a dirty owned model whose backup is 30 s due (and rhun waits on nothing of
+#   it) is asked for its bytes: editor-save CDOC backup PART, into the backup
+ce_backup_due:
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + CE_model], CEM_OWNED
+    jne 9f
+    cmp dword ptr [rbx + CE_state], CES_READY
+    jne 9f
+    cmp dword ptr [rbx + CE_dirty], 0
+    je 9f
+    cmp dword ptr [rbx + CE_bkdone], 0
+    jne 9f
+    cmp qword ptr [rbx + CE_req], 0
+    jne 9f
+    cmp qword ptr [rbx + CE_target], 0
+    jne 9f
+    call time_ms
+    sub rax, [rbx + CE_dirtyat]
+    cmp rax, CE_BACKUP_MS
+    jb 9f
+    mov rdi, rbx
+    lea rsi, [rip + .Lempty]
+    call ce_backup_path
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    call dup_cstr
+    mov [rbx + CE_target], rax
+    mov dword ptr [rbx + CE_skind], CEK_BACKUP
+    mov qword ptr [rbx + CE_savefn], 0
+    lea rdi, [rbx + CE_buf]
+    call sb_clear
+    mov qword ptr [rbx + CE_part], 0
+    mov rdi, rbx
+    call ce_ask_part
+    test rax, rax
+    jnz 9f
+    mov rdi, [rbx + CE_target]
+    call mem_free
+    mov qword ptr [rbx + CE_target], 0
+9:  EPILOGUE
+
+# ce_backup_note(ce): HASH.path beside the backup: the file it is for
+ce_backup_note:
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Lpath_suffix]
+    call ce_backup_path
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, [rbx + CE_path]
+    call strlen
+    mov rdx, rax
+    mov rdi, r12
+    mov rsi, [rbx + CE_path]
+    call file_write_all
+9:  EPILOGUE
+
+# ce_backup_exists(ce) -> eax 1 when a backup of its file is there (its .path names the file)
+ce_backup_exists:
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Lpath_suffix]
+    call ce_backup_path
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    call file_read_all
+    test rax, rax
+    jz 8f
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, [rbx + CE_path]
+    call strlen
+    xor r14d, r14d
+    cmp rax, r13
+    jne 1f
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [rbx + CE_path]
+    call str_eq_cstr
+    mov r14d, eax
+1:  mov rdi, r12
+    call mem_free
+    mov eax, r14d
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN ce_backup_drop(ce): an owned model's backup and its .path go
+FN ce_backup_drop
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + CE_model], CEM_OWNED
+    jne 9f
+    lea rsi, [rip + .Lempty]
+    call ce_backup_path
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    SYS SYS_unlink
+    mov rdi, rbx
+    lea rsi, [rip + .Lpath_suffix]
+    call ce_backup_path
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    SYS SYS_unlink
+9:  EPILOGUE
+
+# FN ce_restore(ce): a stopped editor's extension starts again and opens the backup (SOURCE backup)
+FN ce_restore
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + CE_state], CES_STOPPED
+    jne 9f
+    mov dword ptr [rbx + CE_state], CES_OPENING
+    mov dword ptr [rbx + CE_restore], 1
+    mov dword ptr [rbx + CE_want], CER_OPEN
+    call time_ms
+    mov [rbx + CE_reqat], rax
+    mov rdi, [rbx + CE_ext]
+    call ce_ext_wake
+    mov rdi, rbx
+    call ce_pump
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# FN ce_read_path(ce) -> rax the path editor-read reads: its backup while it opened one, else the file
+FN ce_read_path
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + CE_restore], 0
+    je 1f
+    lea rsi, [rip + .Lempty]
+    call ce_backup_path
+    test rax, rax
+    jnz 9f
+1:  mov rax, [rbx + CE_doc]
+    mov rax, [rax + DOC_path]
+9:  EPILOGUE
+
+# FN ce_draw_tab(x, y, w, h) -> eax 1 when it drew the active tab: a stopped editor's notice and
+#   its Restore Unsaved Changes button (else the view draws)
+FN ce_draw_tab
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    call ce_active
+    test rax, rax
+    jz 8f
+    cmp dword ptr [rax + CE_state], CES_STOPPED
+    jne 8f
+    mov rbx, rax
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_BG
+    call gfx_fill
+    # "Hex Editor stopped"
+    lea rdi, [rip + msg]
+    call sb_clear
+    mov rdi, [rbx + CE_ext]
+    mov esi, EXT_pv_edtitle
+    call ext_pv
+    test rax, rax
+    jnz 1f
+    mov rax, [rbx + CE_ext]
+    mov rax, [rax + EXT_title]
+1:  mov rsi, rax
+    lea rdi, [rip + msg]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    lea rsi, [rip + .Lstopped]
+    call sb_push_cstr
+    lea rdi, [rip + msg]
+    xor esi, esi
+    call sb_push_byte
+    mov eax, [rsp + 12]
+    shr eax, 1
+    sub eax, [rip + g_mt + 4*MI_40]
+    add eax, [rsp + 4]
+    mov [rsp + 16], eax
+    COLOR eax, T_MUTED
+    push rax
+    push rax
+    lea rdi, [rip + g_face_ui]
+    mov esi, [rsp + 16]
+    mov edx, [rsp + 16 + 16]
+    mov ecx, [rsp + 16 + 8]
+    M r8d, MI_32
+    mov r9, [rip + msg + SB_ptr]
+    call ui_text_center
+    add rsp, 16
+    # the button
+    lea rdi, [rip + g_face_ui]
+    lea rsi, [rip + .Lrestore_text]
+    mov rdx, 23
+    call text_width
+    add eax, [rip + g_mt + 4*MI_24]
+    mov r12d, eax
+    mov esi, [rsp + 8]
+    sub esi, r12d
+    shr esi, 1
+    add esi, [rsp]
+    mov r13d, esi
+    mov edx, [rsp + 16]
+    add edx, [rip + g_mt + 4*MI_40]
+    mov r14d, edx
+    mov edi, ID_CE_RESTORE
+    mov ecx, r12d
+    M r8d, MI_32
+    call ui_btn
+    mov r15d, eax
+    test eax, UB_CLICK
+    jz 2f
+    mov rdi, rbx
+    call ce_restore
+2:  mov edi, r13d
+    mov esi, r14d
+    mov edx, r12d
+    M ecx, MI_32
+    M r8d, MI_RADIUS
+    COLOR r9d, T_PANEL
+    test r15d, UB_HOVER
+    jz 3f
+    COLOR r9d, T_HOVER
+3:  call gfx_round_rect
+    COLOR eax, T_FG
+    push rax
+    push rax
+    lea rdi, [rip + g_face_ui]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, r12d
+    M r8d, MI_32
+    lea r9, [rip + .Lrestore_text]
+    call ui_text_center
+    add rsp, 16
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # ---------------- commands in a custom editor's tab ----------------
 
@@ -1494,11 +1880,40 @@ c_print_custom:
     call sb_push_u64
     lea rsi, [rip + .Ld_opening]
     cmp dword ptr [rbx + CE_state], CES_READY
-    jne 4f
+    jne 41f
     lea rsi, [rip + .Ld_ready]
+41: cmp dword ptr [rbx + CE_state], CES_STOPPED
+    jne 4f
+    lea rsi, [rip + .Ld_stopped]
 4:  mov rdi, r12
     call sb_push_cstr
     jmp 1b
+9:  xor eax, eax
+    EPILOGUE
+
+# custom-backup: the backups due in 30 s are taken now; custom-restore: the active stopped editor
+#   opens its backup, as its button does
+c_custom_backup:
+    PROLOGUE
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_ces + VEC_len]
+    jae 9f
+    mov rax, [rip + g_ces + VEC_ptr]
+    mov rax, [rax + rcx*8]
+    inc rcx
+    mov qword ptr [rax + CE_dirtyat], 0
+    jmp 1b
+9:  call ce_tick
+    xor eax, eax
+    EPILOGUE
+
+c_custom_restore:
+    PROLOGUE
+    call ce_active
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    call ce_restore
 9:  xor eax, eax
     EPILOGUE
 
@@ -1550,9 +1965,19 @@ c_reopen_with:
 .globl ce_ctl
 ce_ctl:
     .quad .Lc_print_custom, c_print_custom, .Lc_reopen_with, c_reopen_with
+    .quad .Lc_custom_backup, c_custom_backup, .Lc_custom_restore, c_custom_restore
     .quad 0, 0
 .Lc_print_custom: .asciz "print-custom"
 .Lc_reopen_with: .asciz "reopen-with"
+.Lc_custom_backup: .asciz "custom-backup"
+.Lc_custom_restore: .asciz "custom-restore"
+.Lbackups: .asciz "/backups"
+.Lpath_suffix: .asciz ".path"
+.Lempty: .asciz ""
+.Lhex: .ascii "0123456789abcdef"
+.Lstopped: .asciz " stopped. Its unsaved changes are kept."
+.Lrestore_text: .asciz "Restore Unsaved Changes"
+.Ld_stopped: .asciz " state=stopped\n"
 .Lowned: .asciz "owned"
 .Loption: .asciz "option"
 .Ltext: .asciz "text"

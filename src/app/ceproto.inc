@@ -88,8 +88,11 @@ FN ce_send_open
     lea rsi, [rip + .Lce_owned]
 1:  lea rdi, [rip + ceq]
     call sb_push_cstr
-    lea rdi, [rip + ceq]
     lea rsi, [rip + .Lce_file]
+    cmp dword ptr [rbx + CE_restore], 0
+    je 2f
+    lea rsi, [rip + .Lce_backup]
+2:  lea rdi, [rip + ceq]
     call sb_push_cstr
     mov rdi, [rbx + CE_path]
     call strlen
@@ -317,8 +320,9 @@ h_ed_read:
     cmp r13, CE_READ_MAX
     jbe 1f
     mov r13d, CE_READ_MAX
-1:  mov rax, [rbx + CE_doc]
-    mov rdi, [rax + DOC_path]
+1:  mov rdi, rbx                # the file, or the backup a restored editor opened
+    call ce_read_path
+    mov rdi, rax
     test rdi, rdi
     jz .Ler_nofile
     mov rsi, r12
@@ -405,6 +409,7 @@ ce_kind_names: .quad .Lce_k_save, .Lce_k_saveas, .Lce_k_backup
 .Lce_text: .asciz " text"
 .Lce_owned: .asciz " owned"
 .Lce_file: .asciz " file "
+.Lce_backup: .asciz " backup "
 .Lce_zero: .asciz "0 "
 .Lce_e_stale: .asciz "stale no such editor"
 .Lce_e_nofile: .asciz "nofile the file cannot be read"
