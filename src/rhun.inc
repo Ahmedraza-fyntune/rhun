@@ -1705,6 +1705,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_VIEW_FORM, "view-form", 0        # views group: form views (rform.s)
     FEATURE FEAT_VIEW_TABLE, "view-table", 0      # views group: table views (columns, sorted, cell; sort)
     FEATURE FEAT_QUICK_INPUT, "quick-input", 0    # views group: quick, quick-set, quick-close (quick.s)
+    FEATURE FEAT_VIEW_DOC, "view-doc", 0          # views group: doc views (rdoc.s, markdown.s)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks

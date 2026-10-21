@@ -810,6 +810,7 @@ FN views_features_agreed
     FEAT_CLEAR rdi, FEAT_VIEW_LOG
     FEAT_CLEAR rdi, FEAT_VIEW_FORM
     FEAT_CLEAR rdi, FEAT_VIEW_TABLE
+    FEAT_CLEAR rdi, FEAT_VIEW_DOC
 1:  FEAT_TEST rdi, FEAT_VIEWS
     jnz 2f
     FEAT_CLEAR rdi, FEAT_VIEW_KEYS

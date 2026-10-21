@@ -230,6 +230,25 @@ def quick_event(fields, body):
                        qitems([qitem('x', 'Create x'), qitem('y', 'Create y')])])
 
 
+opened_docs = []        # DOC of each document rhun said it opened
+README = '''# Readme
+
+Some text with [a guide](docs/guide%20one.md), [an anchor](#second-part), [custom](custom:thing) and
+[missing](nothing.md).
+
+''' + 'filler paragraph\n\n' * 30 + '''## Second part
+
+The end.
+'''
+
+
+def readme_doc(view, base=True):
+    ops = [rec('doc', '', README.encode())]
+    if base:
+        ops.append(rec('base', '', ROOT.encode()))
+    patch(view, ops)
+
+
 def draw(view, picture):
     request(f'draw {view}', picture.encode())
 
@@ -393,6 +412,16 @@ def on_command(name):
         quick_open([qitems([qitem(f'i{i}', f'item {i}') for i in range(10001)])])
     elif name == 'quickactive' and quick_q:
         quick_set([rec('active', '', b'origin/main')])
+    elif name == 'docfollow' and views.get('readme') and opened_docs:
+        with open(os.path.join(ROOT, 'long.md'), 'rb') as f:
+            text = f.read()
+        patch(views['readme'], [rec('doc', '', text), rec('follow', f'{opened_docs[-1]}', b'')])
+    elif name == 'docbad' and views.get('readme'):
+        patch(views['readme'], [rec('base', '', b'relative/folder')])
+    elif name == 'docbig' and views.get('readme'):
+        patch(views['readme'], [rec('doc', '', b'x' * 1048577)])
+    elif name == 'doctree' and views.get('readme'):
+        patch(views['readme'], [kids('', [node('a', 'A')])])
     elif name == 'note':
         notify('info', note_body('Indexed 12 files', 'workspace'))
     elif name == 'noteask':
@@ -499,6 +528,8 @@ def main():
         features += ' view-table'
     if os.environ.get('VIEWFAKE_QUICK'):
         features += ' quick-input'
+    if os.environ.get('VIEWFAKE_DOC'):
+        features += ' view-doc'
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -513,10 +544,13 @@ def main():
         # a line whose last field is a length carries a body
         if fields[0] == '0' and len(fields) >= 3 and fields[1] == 'view' and \
                 fields[3] in ('select', 'activate', 'expand', 'collapse', 'check', 'action', 'discarded', 'text', 'paste',
-                              'change'):
+                              'change', 'link'):
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
+        elif fields[:2] in (['0', 'opened'], ['0', 'active']) and len(fields) >= 3 and fields[2] != '0':
+            opened_docs.append(int(fields[2]))
+            continue
         elif fields[:2] == ['0', 'quick'] and len(fields) >= 4:
             if fields[3] in ('value', 'active', 'accept', 'button'):
                 n = int(fields[-1])
@@ -560,6 +594,8 @@ def main():
                     setup_form(view)
                 elif key == 'files':
                     files_table(view)
+                elif key == 'readme':
+                    readme_doc(view)
             elif what == 'select':
                 ids = body.split(b'\n')
                 selected[view] = ids[0].decode() if ids and ids[0] else None

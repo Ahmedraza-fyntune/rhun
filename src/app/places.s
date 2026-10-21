@@ -358,6 +358,7 @@ place_call_focus:
 #   for the items that came on or went off screen
 FN places_frame_end
     PROLOGUE
+    call rview_docs_frame_end   # doc views following an editor that scrolled this frame: once more
     call place_focused          # an item whose column went away gives the keyboard back
     mov edi, eax
     call place_at

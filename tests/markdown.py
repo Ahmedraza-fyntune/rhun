@@ -152,6 +152,10 @@ class Markdown(ViewsBase):
         out = self.run_editor([f'print-md-body 400 {path}'], exts=None, start=False)
         self.assertIn('base /some/folder', out)
         self.assertEqual([x.split(' ')[0] for x in self.blocks(out)], ['type=head', 'type=para'])
+        counted = self.work / 'counted.body'                            # a patch body's count line
+        counted.write_bytes(b'2\n' + path.read_bytes())
+        out = self.run_editor([f'print-md-body 400 {counted}'], exts=None, start=False)
+        self.assertIn('base /some/folder', out)
         bad = self.work / 'bad.body'
         for text in (b'base 1\n/', b'doc 99\nshort', b'doc 1\nadoc 1\nb', b'other 1\nx'):
             bad.write_bytes(text)

@@ -78,6 +78,7 @@ F RV_prog, 4            # progress shows in it (notify.s: progress view:VIEW)
 F RV_ppct, 4            # its percent, -1 indeterminate
 F RV_vw, 8              # a picture view's 12a picture (extview.s), or 0
 F RV_form, 8            # a form view's form (rform.s), or 0
+F RV_doc, 8             # a doc view's state (rdoc.s), or 0
 ENDSTRUCT RV_SIZE
 
 # an action of a retained view: TA's layout (the tree looks inline keys up in them), TA_pad its WHERE
@@ -537,7 +538,17 @@ rv_open:
     pop rcx
     pop rcx
     mov [rcx + RV_form], rax
-41: cmp r12d, RK_PICTURE        # a picture view: a 12a picture of its own, shown at once
+41: cmp r12d, RK_DOC            # a doc view: its Markdown (rdoc.s)
+    jne 42f
+    push rcx
+    push rcx
+    mov edi, r15d
+    mov rsi, rbx
+    call mdview_new
+    pop rcx
+    pop rcx
+    mov [rcx + RV_doc], rax
+42: cmp r12d, RK_PICTURE        # a picture view: a 12a picture of its own, shown at once
     jne 5f
     push rcx
     push rcx
@@ -593,6 +604,8 @@ rv_close:
     call extview_free_place
     mov rdi, [r12 + RV_form]    # a form view's form
     call form_free
+    mov rdi, [r12 + RV_doc]     # a doc view's document
+    call mdview_free
     movsxd rdi, dword ptr [r12 + RV_decl]
     cmp rdi, -1
     je 2f
@@ -2083,8 +2096,13 @@ kind_agreed:
     jz 9f
     jmp 8f
 1:  cmp edi, RK_FORM
-    jne 2f
+    jne 4f
     FEAT_TEST rsi, FEAT_VIEW_FORM
+    jz 9f
+    jmp 8f
+4:  cmp edi, RK_DOC
+    jne 2f
+    FEAT_TEST rsi, FEAT_VIEW_DOC
     jz 9f
     jmp 8f
 2:  cmp edi, RK_LOG
@@ -2704,7 +2722,17 @@ rv_instance_draw:
     mov r8d, [rsp + 12]
     call extview_draw_vw
     jmp 9f
-1:  cmp dword ptr [r14 + RV_kind], RK_FORM
+1:  cmp dword ptr [r14 + RV_kind], RK_DOC
+    jne 12f
+    mov rdi, [r14 + RV_doc]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    mov r9d, [rsp + 16]
+    call mdview_draw
+    jmp 9f
+12: cmp dword ptr [r14 + RV_kind], RK_FORM
     jne 11f
     mov rdi, [r14 + RV_form]
     mov esi, [rsp]
@@ -2805,6 +2833,8 @@ rv_instance_key:
     je 2f
     cmp dword ptr [rax + RV_kind], RK_FORM
     je 4f
+    cmp dword ptr [rax + RV_kind], RK_DOC
+    je 5f
     mov rdi, [rax + RV_tree]
     mov esi, r12d
     mov edx, r13d
@@ -2832,6 +2862,12 @@ rv_instance_key:
     mov edx, r13d
     mov ecx, r14d
     call form_key
+    EPILOGUE
+5:  mov rdi, [rax + RV_doc]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call mdview_key
     EPILOGUE
 
 # rv_place_focus(vd, on): "focus 0|1"; the context keys viewFocus and view follow it
@@ -3928,7 +3964,18 @@ patch_check_ops:
     cmp rax, LABEL_MAX
     ja .Lpc_syntax
     jmp .Lpc_op
-7:  mov rdi, rbx
+7:  mov rdi, rbx                # a doc's: doc LEN, base LEN, follow DOC 0 (rdoc.s)
+    call mdview_check_op
+    cmp eax, -1
+    je 704f
+    cmp dword ptr [rip + p_kind], RK_DOC
+    jne .Lpc_kind
+    test eax, eax
+    jz .Lpc_syntax
+    cmp eax, 2
+    je .Lpc_toobig_doc
+    jmp .Lpc_op
+704:mov rdi, rbx
     xor esi, esi
     lea rdx, [rip + .Lo_log]
     call tree_rec_is
@@ -4314,6 +4361,11 @@ patch_check_ops:
     EPILOGUE
 .Lpc_toobig_form:
     lea rdi, [rip + .Le_toobig_form]
+    call set_err
+    mov eax, 1
+    EPILOGUE
+.Lpc_toobig_doc:
+    lea rdi, [rip + .Le_toobig_doc]
     call set_err
     mov eax, 1
     EPILOGUE
@@ -5045,7 +5097,24 @@ patch_apply:
     call take_text
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_op
-7:  mov rdi, rbx
+7:  cmp dword ptr [r14 + RV_kind], RK_DOC     # a doc's ops; given a document it is ready
+    jne 704f
+    mov rdi, rbx
+    call mdview_check_op
+    cmp eax, -1
+    je 704f
+    mov rdi, [r14 + RV_doc]
+    mov rsi, rbx
+    call mdview_apply_op
+    mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_doc]
+    call tree_rec_is
+    test eax, eax
+    jz .Lpa_op
+    mov dword ptr [r14 + RV_state], RS_READY
+    jmp .Lpa_op
+704:mov rdi, rbx
     xor esi, esi
     lea rdx, [rip + .Lo_log]
     call tree_rec_is
@@ -5294,6 +5363,8 @@ FN rview_patch
     cmp dword ptr [rax + RV_kind], RK_TREE
     je 1f
     cmp dword ptr [rax + RV_kind], RK_TABLE
+    je 1f
+    cmp dword ptr [rax + RV_kind], RK_DOC
     je 1f
     cmp dword ptr [rax + RV_kind], RK_PICTURE   # its common ops (title, badge, message, busy...)
     je 1f
@@ -5560,10 +5631,12 @@ FN rview_tree_of
 .Lo_form: .asciz "form"
 .Lo_field: .asciz "field"
 .Le_toobig_form: .asciz "toobig form"
+.Le_toobig_doc: .asciz "toobig doc"
 .Lo_clear: .asciz "clear"
 .Lo_action: .asciz "action"
 .Lo_select_mode: .asciz "select-mode"
 .Lo_columns: .asciz "columns"
+.Lo_doc: .asciz "doc"
 .Lo_sorted: .asciz "sorted"
 .Lw_left: .asciz "left"
 .Lw_right: .asciz "right"
@@ -5571,6 +5644,7 @@ FN rview_tree_of
 .Lw_asc: .asciz "asc"
 .Lw_desc: .asciz "desc"
 .Lev_sort: .asciz "sort"
+.Lev_link: .asciz "link"
 .Lw_title: .asciz "title"
 .Lw_node: .asciz "node"
 .Lw_none: .asciz "none"
@@ -5939,6 +6013,49 @@ FN views_field
 8:  pop rbx
     jmp dview_console_field     # debugger: the Debug Console's input (debugview.s), or 0
 
+# rview_docs_frame_end(): a doc view following the active document whose top line moved after the
+#   view was drawn asks for one more frame
+FN rview_docs_frame_end
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp ebx, RV_MAX
+    jae 9f
+    mov edi, ebx
+    call rv_at
+    cmp qword ptr [rax + RV_ext], 0
+    je 2f
+    cmp dword ptr [rax + RV_kind], RK_DOC
+    jne 2f
+    mov rdi, [rax + RV_doc]
+    test rdi, rdi
+    jz 2f
+    call mdview_follow_due
+    test eax, eax
+    jz 2f
+    mov dword ptr [rip + g_dirty], 1
+2:  inc ebx
+    jmp 1b
+9:  EPILOGUE
+
+# rview_link_event(slot, ptr, len): a doc view's link rhun does not follow: "link REV LEN" + target
+FN rview_link_event
+    PROLOGUE
+    mov ebx, edi
+    mov r12, rsi
+    mov r13, rdx
+    call ev_head
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lev_link]
+    call ev_cstr
+    mov edi, ebx
+    call ev_rev
+    mov edi, ebx
+    mov rsi, r12
+    mov rdx, r13
+    call ev_send
+9:  EPILOGUE
+
 # rview_focused_form() -> rax the form of the form view with the keyboard, or 0
 FN rview_focused_form
     push rbx
@@ -6058,6 +6175,55 @@ FN rview_form_of
     je 8f
     call rv_at
     mov rax, [rax + RV_form]
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# rview_doc_of(ptr, len) -> rax the doc view state named so (key or number), or 0
+FN rview_doc_of
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    call parse_u64
+    cmp rdx, r13
+    jne 3f
+    test rdx, rdx
+    jz 3f
+    mov r14d, eax
+    xor ebx, ebx
+1:  cmp ebx, RV_MAX
+    jae 8f
+    mov edi, ebx
+    call rv_at
+    cmp qword ptr [rax + RV_ext], 0
+    je 2f
+    cmp [rax + RV_view], r14d
+    jne 2f
+    mov rax, [rax + RV_doc]
+    EPILOGUE
+2:  inc ebx
+    jmp 1b
+3:  xor ebx, ebx
+4:  cmp rbx, [rip + vdecls + VEC_len]
+    jae 8f
+    mov rdi, rbx
+    call vd_at
+    mov r14, rax
+    cmp qword ptr [r14 + VD_ext], 0
+    je 5f
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [r14 + VD_key]
+    call str_eq_cstr
+    test eax, eax
+    jnz 6f
+5:  inc rbx
+    jmp 4b
+6:  movsxd rdi, dword ptr [r14 + VD_rv]
+    cmp rdi, -1
+    je 8f
+    call rv_at
+    mov rax, [rax + RV_doc]
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
