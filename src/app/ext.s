@@ -1167,9 +1167,7 @@ FN ext_retire
 2:  mov dword ptr [rbx + EXT_status], ES_REMOVED
     mov dword ptr [rbx + EXT_restart], 0
     mov rdi, rbx
-    call secrets_ext_removed    # resources group: its secrets go with it
-    mov rdi, rbx
-    call vdoc_ext_gone          # and the virtual documents it provides
+    call vdoc_ext_gone          # resources group: the virtual documents it provides
     mov rdi, rbx
     call ext_pending_clear
     mov rdi, rbx
@@ -1923,6 +1921,10 @@ FN ext_load
     mov rdi, rax
     jmp .Lel_fail
 .Lel_where_ok:
+    mov rdi, rbx                # remote hosts: the host checks the program it runs (remoteext.s)
+    call remote_ext_load
+    test eax, eax
+    jnz 8f
     cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
     # no program for this system: a WebAssembly module runs in rhun --wasm-host
@@ -4054,8 +4056,12 @@ FN ext_exited
     # page is the child that could not confine itself (confine.s). The exit status alone proves
     # nothing: the program may exit with the same numbers
     mov rdi, rbx
-    call confine_failed
+    call remote_ext_confine_failed  # remote hosts: its child on the host (remoteext.s)
     test eax, eax
+    jnz 19f
+    mov rdi, rbx
+    call confine_failed
+19: test eax, eax
     jz 20f
     mov edi, eax
     call confine_exit_reason
@@ -4248,6 +4254,8 @@ FN ext_tick
     inc dword ptr [rip + ext_ticks]
     call extres_frame           # resources group: start pacing, idle = stop, cost samples
     call ext_project_check
+    mov edi, [rip + ext_startup_done]
+    call workspace_ext_check    # resources group: other workspace folders, on = contains:
     call extwatch_tick
     call invoke_tick            # calls between extensions (invoke.s)
     # on = startup, once; on = project when a project is open

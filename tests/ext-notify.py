@@ -28,6 +28,15 @@ class Notes(ViewsBase):
         self.assertIn('0 notify 1 closed', self.fake_log())
         self.assertIn('0 features view-tree view-log notify progress', self.fake_log())
 
+    def test_the_pointer_over_a_card_holds_it_without_redraws(self):
+        out = self.run_editor(['cmd viewfake.note', 'wait 200', 'print-notes'])
+        note = self.notes(out)[0]
+        x, y = map(int, note.split(' at=')[1].split(' ')[0].split(','))
+        out = self.run_editor(['cmd viewfake.note', 'wait 200', f'move {x + 20} {y + 20}', 'wait 3000', 'wait 3000',
+                               'wait 3000', 'print-notes'])
+        self.assertEqual(len(self.notes(out)), 1)
+        self.assertNotIn('0 notify 1 closed', self.fake_log())
+
     def test_a_button_runs_its_command_or_says_pressed(self):
         out = self.run_editor(['cmd viewfake.noteask', 'wait 200', 'print-notes', 'note-press 0 2', 'wait 100',
                                'print-notes', 'cmd viewfake.noteask', 'wait 200', 'note-press 0 1', 'wait 300',
@@ -90,6 +99,14 @@ class Notes(ViewsBase):
         self.assertIn('0 notify 6 closed', log)
         self.assertIn('0 notify 4 closed', log)
 
+    def test_a_card_that_comes_later_is_below_the_older_ones(self):
+        out = self.run_editor(['cmd viewfake.notemany', 'wait 300', 'cmd viewfake.noteclose1', 'wait 100',
+                               'cmd viewfake.note', 'wait 300', 'print-notes'])
+        drawn = [n for n in self.notes(out) if ' at=' in n]
+        ys = {n.split(' ')[0]: int(n.split(' at=')[1].split(',')[1].split(' ')[0]) for n in drawn}
+        self.assertIn('note=7', ys)                 # in the first card's slot, yet the newest
+        self.assertEqual(max(ys, key=ys.get), 'note=7')
+
     def test_clear_closes_every_card(self):
         out = self.run_editor(['cmd viewfake.notemany', 'wait 300', 'cmd clear_notifications', 'print-notes'])
         self.assertEqual(self.notes(out), [])
@@ -128,6 +145,15 @@ class Progress(ViewsBase):
                                'print-notes'])
         self.assertIn('progress=1 where=note percent=- cancel=2 shown=1 title=Downloading', out)
         self.assertIn('0 progress 1 cancel', self.fake_log())
+
+    def test_enter_does_not_cancel_progress_without_cancel(self):
+        self.run_editor(['cmd viewfake.prognote2', 'wait 700', 'cmd focus_notifications', 'key Return', 'wait 100'])
+        self.assertFalse(any(l.endswith(' cancel') and l.startswith('0 progress ') for l in self.fake_log()))
+
+    def test_an_id_past_31_bits_is_no_such_thing(self):
+        self.env['VIEWFAKE_PIC'] = '1'
+        self.run_editor(['cmd viewfake.bigunimage', 'wait 200'])
+        self.assertTrue(any(l.endswith('noview no such image') for l in self.fake_log()))
 
     def test_progress_in_a_view(self):
         out = self.run_editor(['cmd viewfake.progview', 'wait 200', 'print-views', 'cmd viewfake.progend', 'wait 200',

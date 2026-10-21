@@ -662,23 +662,15 @@ fsr_next_folder:
     EPILOGUE
 
 # fsr_git_list() with rbx the run -> eax 1 when git ls-files was started for the folder: git is on
-# and not paused, and the folder is in its work tree
+# for the primary folder's repository and not paused
 fsr_git_list:
     PROLOGUE 80
     cmp dword ptr [rip + g_git_on], 0
     je 8f
     cmp dword ptr [rip + g_git_paused], 0
     jne 8f
-    mov rsi, [rip + g_git_root]
-    test rsi, rsi
-    jz 8f
-    cmp byte ptr [rsi], 0
-    je 8f
-    mov rdi, [rbx + FSR_root]
-    call app_path_inside
-    test eax, eax
-    jz 8f
-    lea rax, [rip + .Lg_dash_C]
+    lea rax, [rip + .Lg_dash_C]  # git -C FOLDER: another folder's repository too (a folder in none:
+                                # git fails, and a walk lists it)
     mov [rsp], rax
     mov rax, [rbx + FSR_root]
     mov [rsp + 8], rax

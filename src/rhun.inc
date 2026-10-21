@@ -150,6 +150,9 @@
 .equ MREMAP_MAYMOVE, 1
 
 .equ AF_UNIX, 1
+.equ AF_INET, 2                 # remote hosts: forwarded ports (remotefwd.s, ragent.s)
+.equ AF_INET6, 10
+.equ SHUT_WR, 1
 .equ SOCK_STREAM, 1
 .equ SOCK_NONBLOCK, 0x800
 .equ SOCK_CLOEXEC, 0x80000
@@ -637,6 +640,8 @@ F DOC_language_pending, 8
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
+F DOC_qbase, 8          # a copy of that base's text (mem_alloc'd), for the diff a panel's click opens
+F DOC_qblen, 8
 F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
 F DOC_ce, 8             # custom editors: the CE whose tab shows this document, or 0 (customed.s)
 F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
@@ -1706,6 +1711,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
     FEATURE FEAT_DEBUG, "debug", 1                # debugger: debug-resolve; debug-start, debug-ended
     FEATURE FEAT_CUSTOM_EDITORS, "custom-editors", 1   # custom editors (customed.s, ceproto.inc)
+    FEATURE FEAT_VIEW_FORM, "view-form", 0        # views group: form views (rform.s)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1915,6 +1921,7 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_FOLDER, 20      # Install from Folder: the folder, copied
 .equ PROMPT_EXT_LINK, 21        # Link a Folder: the folder, linked
 .equ PROMPT_EXT_ARCHIVE, 22     # Install from Archive: the .tar.gz
+.equ PROMPT_WS_SAVE, 100        # resources group (block 100-103): Save Workspace As's file (workspace.s)
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -3253,6 +3260,8 @@ F ND_mark, 4            # scratch generation marks (kids diffing, patch checks)
 F ND_desc, 8            # owned cstr or 0
 F ND_tip, 8             # owned cstr or 0
 F ND_user, 8            # its owner's value (built-in code)
+F ND_gen, 4             # TR_gen when it was made: a request about a node is not about a later one
+F ND_pend, 4            # a patch check: the bytes a record it takes brings (rview.s)
 ENDSTRUCT ND_SIZE
 .equ NF_LIVE, 1
 .equ NF_OPEN, 2                 # expanded
@@ -3320,6 +3329,11 @@ F TR_actions, 8         # TA records the inline keys are looked up in (tree_set_
 F TR_nactions, 8
 F TR_selanchor, 4       # multi-select: where a Shift range starts
 F TR_pad2, 4
+F TR_rowfn, 8           # tree_set_rowbuttons: fn(ctx, tr, node, right, y, h) -> width drawn, or 0
+F TR_rowbw, 4           # the width it drew last frame, and for which node
+F TR_rownode, 4
+F TR_gen, 4             # nodes made so far
+F TR_pad3, 4
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame

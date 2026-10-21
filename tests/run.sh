@@ -174,6 +174,14 @@ python3 tests/shift-wheel.py || fail=1
 python3 tests/stress.py || fail=1
 python3 tests/ext-host.py || fail=1
 python3 tests/ext-commands.py || fail=1
+# resources, workspaces, secrets and lifecycle
+python3 tests/ext-lifecycle.py || fail=1
+python3 tests/ext-secrets.py || fail=1
+python3 tests/ext-vdoc.py || fail=1
+python3 tests/ext-urls.py || fail=1
+python3 tests/ext-files.py || fail=1
+python3 tests/ext-settings-scoped.py || fail=1
+python3 tests/workspace-folders.py || fail=1
 # contributions and commands
 python3 tests/when.py || fail=1
 python3 tests/ext-command-args.py || fail=1
@@ -225,6 +233,8 @@ python3 tests/ext-views-tree.py || fail=1
 python3 tests/ext-views-log.py || fail=1
 python3 tests/ext-notify.py || fail=1
 python3 tests/ext-views-picture.py || fail=1
+python3 tests/markdown.py || fail=1
+python3 tests/ext-views-form.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
 for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter debug-transport debug-terminal debug-feature debug-tasks debug-review debug-real; do

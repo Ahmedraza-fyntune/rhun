@@ -350,6 +350,8 @@ handle_line:
     mov rdi, rbx
     call hello_features         # the features it named that rhun knows, said back before ready
     mov rdi, rbx
+    call extproto_send_folders  # resources group: workspace-folders, before ready
+    mov rdi, rbx
     call send_ready
     mov rdi, rbx
     call send_settings          # its own settings, before anything else
@@ -3039,6 +3041,8 @@ h_notify_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     mov rdx, [rip + body_ptr]
@@ -3072,6 +3076,8 @@ h_unnotify:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call notify_close_request
@@ -3149,6 +3155,8 @@ h_progress_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov r12, rax
     mov r13, -1
     mov edi, 3
@@ -3195,6 +3203,8 @@ h_progress_end:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call progress_end_request
@@ -3253,6 +3263,8 @@ h_unimage:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call viewimg_unimage
@@ -3791,6 +3803,7 @@ FN extproto_doc
 
 # FN extproto_matches(patterns, doc) -> eax 1 when the document's name matches the patterns
 FN extproto_matches
+    xor edx, edx                # the recipient is not known here
     jmp sub_matches
 
 # FN extproto_host_request(ext, verb, doc, kind, ch) -> rax the id of "ID VERB DOC VERSION LINE COL
@@ -3975,6 +3988,17 @@ FN extproto_host_send_body
     call out_end
     test rax, rax
     js 8f
+    xor ecx, ecx                # resources group: the request's kind (its verb) and time
+1:  cmp rcx, r14
+    jae 2f
+    cmp byte ptr [r13 + rcx], ' '
+    je 2f
+    inc rcx
+    jmp 1b
+2:  mov rdi, rbx
+    mov rsi, r15
+    mov rdx, r13
+    call extres_req_sent
     mov rax, r15
     EPILOGUE
 8:  xor eax, eax
@@ -4333,14 +4357,15 @@ known_find:
 8:  xor eax, eax
     ret
 
-# sub_matches(patterns cstr or 0, doc) -> 1 when the document's name matches ("*" matches all,
-# untitled documents too)
+# sub_matches(patterns cstr or 0, doc, recipient ext or 0) -> 1 when the document's name matches
+# ("*" matches all, untitled documents too); a virtual document only for a recipient that agreed uris
 sub_matches:
     PROLOGUE
     test rdi, rdi
     jz 8f
     mov rbx, rdi
     mov r12, rsi
+    mov r13, rdx
     test dword ptr [r12 + DOC_flags], DF_CELL
     jnz 4f
     cmp qword ptr [r12 + DOC_uri], 0
@@ -4357,13 +4382,16 @@ sub_matches:
     call ext_path_matches
     EPILOGUE
 2:  # resources group: a virtual document, only for extensions that agreed uris, by its URI's
-    # last segment
-    mov rdi, [rip + cur]
+    # last segment (with the recipient unknown, its request about the document is refused later:
+    # extproto_host_request asks only about documents the extension was told of)
+    test r13, r13
+    jz 21f
+    mov rdi, r13
     mov esi, FEAT_URIS
     call ext_feature
     test eax, eax
     jz 8f
-    cmp byte ptr [rbx], '*'
+21: cmp byte ptr [rbx], '*'
     jne 3f
     cmp byte ptr [rbx + 1], 0
     je 9f
@@ -4374,8 +4402,11 @@ sub_matches:
     call ext_path_matches
     EPILOGUE
 4:  # notebooks (A3): a cell, only for extensions that agreed notebooks, by its language's file name
+    mov rdi, r13                # the recipient when the caller names it (resources group)
+    test rdi, rdi
+    jnz 41f
     mov rdi, [rip + cur]
-    mov esi, FEAT_NOTEBOOKS
+41: mov esi, FEAT_NOTEBOOKS
     call ext_feature
     test eax, eax
     jz 8f
@@ -4580,6 +4611,7 @@ FN extproto_send_hover_all
     jne 1b
     mov rdi, [rbx + EXT_sub_hover]
     mov rsi, r13
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz 1b
@@ -5272,6 +5304,7 @@ verbs:
     .quad .Lres_v_find_files, h_res_find_files, 65536
     .quad .Lres_v_search_text, h_res_search_text, 340000
     .quad .Lres_v_setting_get, h_res_setting_get, 0
+    .quad .Lres_v_folder_of, h_res_folder_of, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX

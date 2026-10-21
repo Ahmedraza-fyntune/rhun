@@ -2055,6 +2055,9 @@ g_commands:
     COMMAND focus_agents, "Focus Agents Panel", cmd_focus_agents, ""
     COMMAND open_file, "Open File", cmd_open_file, "ctrl+o"
     COMMAND open_folder, "Open Folder", cmd_open_folder, "ctrl+shift+o"
+    COMMAND add_workspace_folder, "Add Folder to Workspace", cmd_add_workspace_folder, ""   # resources: workspace.s
+    COMMAND remove_workspace_folder, "Remove Folder from Workspace", cmd_remove_workspace_folder, ""
+    COMMAND save_workspace_as, "Save Workspace As", cmd_save_workspace_as, ""
     COMMAND new_folder, "New Folder", cmd_new_folder, ""
     COMMAND rename_file, "Rename File", cmd_rename_file, "F2"
     COMMAND delete_file, "Delete File", cmd_delete_file, ""
@@ -2218,9 +2221,12 @@ g_commands:
     # remote hosts (remoteui.s)
     COMMAND connect_to_host, "Remote: Connect to Host", cmd_connect_to_host, ""
     COMMAND attach_to_container, "Remote: Attach to Container", cmd_attach_to_container, ""
+    COMMAND connect_to_wsl, "Remote: Connect to WSL", cmd_connect_to_wsl, ""
     COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
     COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
     COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
+    COMMAND remote_forward_port, "Remote: Forward a Port", cmd_remote_forward_port, ""
+    COMMAND remote_stop_forwarding, "Remote: Stop Forwarding Ports", cmd_remote_stop_forwarding, ""
     # editor presentation (fold.s)
     COMMAND fold, "Fold", cmd_fold, "ctrl+shift+[ ctrl+shift+{"
     COMMAND unfold, "Unfold", cmd_unfold, "ctrl+shift+] ctrl+shift+}"

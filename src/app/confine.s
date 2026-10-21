@@ -316,17 +316,25 @@ rules_build:
     jnz 31f
     lea rax, [rip + .Lr_state]
     jmp 9f
-31: # the project
-    mov rdi, [rip + g_project]
-    test rdi, rdi
-    jz 4f
+31: # the project: every workspace folder (resources group, workspace.s)
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE
     jz 4f
+    xor r12d, r12d
+33: call wfold_count
+    cmp r12, rax
+    jae 4f
+    mov rdi, r12
+    call wfold_path
+    inc r12
+    mov rdi, rax
+    test rdi, rdi
+    jz 33b
     mov rsi, LL_RO
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_WRITE
     jz 32f
     mov rsi, LL_RW
 32: call add_rule
+    jmp 33b
 4:  # the user's home
     test dword ptr [rbx + EXT_needs], NEEDS_HOME_READ
     jz 5f
@@ -656,17 +664,25 @@ profile_build:
 1:  mov rdi, [rbx + EXT_state]
     lea rsi, [rip + .Lsb_rw]
     call profile_path
-    # the project and the home
-    mov rdi, [rip + g_project]
-    test rdi, rdi
-    jz 2f
+    # the project (every workspace folder: resources group, workspace.s) and the home
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE
     jz 2f
+    xor r12d, r12d
+22: call wfold_count
+    cmp r12, rax
+    jae 2f
+    mov rdi, r12
+    call wfold_path
+    inc r12
+    mov rdi, rax
+    test rdi, rdi
+    jz 22b
     lea rsi, [rip + .Lsb_ro]
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_WRITE
     jz 21f
     lea rsi, [rip + .Lsb_rw]
 21: call profile_path
+    jmp 22b
 2:  test dword ptr [rbx + EXT_needs], NEEDS_HOME_READ
     jz 3f
     lea rdi, [rip + .Lenv_home]
