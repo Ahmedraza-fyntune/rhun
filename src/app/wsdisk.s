@@ -659,6 +659,11 @@ FN ws_disk_commit
     call wd_journal_new
     test eax, eax
     jz .Lwc_nojournal
+    # the plan lists the steps in the order they are made (recovery undoes them newest first):
+    # the creates, the closed files' bytes, the clean open documents', the renames and deletes
+    mov rdi, r15
+    xor esi, esi
+    call ws_ops_plan            # the creates (wsops.s)
     # the closed files: kept in the journal, planned, then written
     xor ebx, ebx
 2:  cmp rbx, [rip + wg_vec + VEC_len]
@@ -678,10 +683,6 @@ FN ws_disk_commit
     js .Lwc_io
     jmp 2b
 3:  mov rdi, r15
-    call ws_ops_plan            # creates, renames, deletes planned (wsops.s)
-    test rax, rax
-    js .Lwc_io
-    mov rdi, r15
     call wd_plan_write
     test rax, rax
     js .Lwc_io
@@ -723,7 +724,14 @@ FN ws_disk_commit
     call wd_write_clean
     test rax, rax
     js .Lwc_rollback
-    # renames and deletes (wsops.s)
+    # renames and deletes (wsops.s), planned first
+    mov rdi, r15
+    mov esi, 1
+    call ws_ops_plan
+    mov rdi, r15
+    call wd_plan_write
+    test rax, rax
+    js .Lwc_rollback
     mov rdi, r15
     call ws_ops_moves
     test rax, rax
@@ -1111,15 +1119,16 @@ FN ws_disk_ready
 
 # FN ws_disk_step(T, dir) -> eax 1 when the picked file participants were undone (dir 0: their
 # bytes before back) or redone (dir 1: after), or there were none; 0 when the system refused a
-# write (those done are put back, a toast says which, and nothing is picked any more)
+# write or a file operation (everything done is put back, a toast says which, and nothing is picked
+# any more)
 FN ws_disk_step
     PROLOGUE 16
     mov rbx, rdi
     mov r12d, esi
     mov rdi, rbx
     mov esi, r12d
-    call ws_ops_step_first      # renames and deletes back first on undo (wsops.s)
-    test eax, eax
+    call ws_ops_step_first      # renames and deletes back first on undo (wsops.s; a failure there
+    test eax, eax               # puts back what it did itself)
     jz .Lws_none
     xor r13d, r13d
 1:  cmp r13, [rbx + TX_nparts]
@@ -1140,41 +1149,29 @@ FN ws_disk_step
     jmp 3f
 2:  call wd_write_slot
 3:  test rax, rax
-    js .Lws_fail
-    jmp 1b
-.Lws_ok:
-    mov rdi, rbx
-    mov esi, r12d
-    call ws_ops_step_last       # creates (and redone renames and deletes)
-    test eax, eax
-    jz .Lws_none
-    mov eax, 1
-    EPILOGUE
-.Lws_fail:
-    # the ones before it go back as they were
+    jns 1b
+    # this file failed: the ones before it go back as they were, then the first steps
     mov [rsp], r14
     mov r15, r13
     dec r15
-4:  test r15, r15
-    jz 5f
-    dec r15
-    imul r14, r15, TP_SIZE
-    add r14, [rbx + TX_parts]
-    test qword ptr [r14 + TP_flags], TPF_PICK
-    jz 4b
-    cmp qword ptr [r14 + TP_kind], TPK_FILE
-    jne 4b
+    call wd_step_files_back
     mov rdi, rbx
-    mov rsi, [r14 + TP_slot]
-    mov rdx, r14
-    test r12d, r12d
-    jz 41f
-    call wd_restore_slot
-    jmp 4b
-41: call wd_write_slot
-    jmp 4b
-5:  mov rdi, [rsp]
+    mov esi, r12d
+    call ws_ops_unstep_first
+    mov rdi, [rsp]
     call wd_cannot
+    jmp .Lws_none
+.Lws_ok:
+    mov rdi, rbx
+    mov esi, r12d
+    call ws_ops_step_last       # creates (and redone renames and deletes); a failure there puts
+    test eax, eax               # back what it did itself and says so
+    jnz 8f
+    mov r15, [rbx + TX_nparts]  # every file goes back, then the first steps
+    call wd_step_files_back
+    mov rdi, rbx
+    mov esi, r12d
+    call ws_ops_unstep_first
 .Lws_none:
     # nothing moved: the picks are cleared so tx_run changes no buffer either
     xor ecx, ecx
@@ -1187,6 +1184,33 @@ FN ws_disk_step
     jmp 6b
 7:  xor eax, eax
     EPILOGUE
+8:  mov eax, 1
+    EPILOGUE
+
+# wd_step_files_back (rbx T, r12d dir, r15 parts before this index): ws_disk_step's picked files
+# below r15 get the bytes they had before the step (clobbers r14, r15)
+wd_step_files_back:
+    sub rsp, 8
+1:  test r15, r15
+    jz 9f
+    dec r15
+    imul r14, r15, TP_SIZE
+    add r14, [rbx + TX_parts]
+    test qword ptr [r14 + TP_flags], TPF_PICK
+    jz 1b
+    cmp qword ptr [r14 + TP_kind], TPK_FILE
+    jne 1b
+    mov rdi, rbx
+    mov rsi, [r14 + TP_slot]
+    mov rdx, r14
+    test r12d, r12d
+    jz 2f
+    call wd_restore_slot
+    jmp 1b
+2:  call wd_write_slot
+    jmp 1b
+9:  add rsp, 8
+    ret
 
 # FN wd_cannot(TP): "Could not write NAME: nothing changed"
 FN wd_cannot
