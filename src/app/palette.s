@@ -18,6 +18,7 @@
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 .equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
 .equ PM_WSLIST, 16              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_DPICK, 80               # debugger: a launch's ${pick:} or ${process} (debugask.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -1337,6 +1338,18 @@ FN palette_choose_add
 FN palette_choose_ready
     jmp palette_filter
 
+# debugger: palette_dpick_open(label cstr): an empty pick list for a launch's ${pick:} or ${process}
+# (debugask.s); rows follow with palette_choose_add, then palette_choose_ready; choosing row n calls
+# dask_chosen(n)
+FN palette_dpick_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_DPICK
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
 # wsedit: palette_wslist_open(label cstr): an empty pick list for a workspace edit's question
 # (wsconfirm.s); rows follow with palette_choose_add, then palette_choose_ready; choosing row n
 # calls wslist_chosen(n), closing it otherwise wslist_abort
@@ -2336,6 +2349,8 @@ FN palette_print
     je 13f
     cmp dword ptr [rip + pal_mode], PM_WSLIST
     je 13f
+    cmp dword ptr [rip + pal_mode], PM_DPICK      # debugger
+    je 13f
     cmp dword ptr [rip + pal_mode], PM_PROVIDERS
     je 13f
     cmp dword ptr [rip + pal_mode], PM_RESULTS
@@ -2888,7 +2903,15 @@ palette_accept:
     call wslist_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-34: cmp ebx, PM_CHOOSE
+34: cmp ebx, PM_DPICK            # debugger: a launch variable's answer (debugask.s)
+    jne 35f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call dask_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+35: cmp ebx, PM_CHOOSE
     jne .Lpa_close
     # the extension's pick: the item's number, with the palette closed first (the reply may
     # open another prompt)

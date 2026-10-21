@@ -27,6 +27,9 @@ cscroll: .long 0                # console: pixels scrolled up from the end
 g_dsel: .zero SB_SIZE           # the selected configuration's name (NUL-terminated), empty: the first
 prompt_kind: .long 0            # DP_* while the palette asks for the debugger
 prompt_bp: .long 0              # the breakpoint (id) a prompt edits
+prompt_var: .long 0             # Set Value: the variable node
+prompt_var_sid: .long 0         # and its session
+prompt_var_gen: .long 0         # and its variable pool's generation
 .p2align 3
 prompt_path: .zero SB_SIZE
 cfg_first: .zero SB_SIZE        # launch.ini's names, for the status bar
@@ -50,6 +53,8 @@ hist_at: .long -1               # console history: Up/Down position, -1 at the i
 .equ DP_LOG, 3
 .equ DP_WATCH, 4
 .equ DP_FUNCTION, 5
+.equ DP_LAUNCH, 6               # a launch's ${ask:} (debugask.s)
+.equ DP_SETVAR, 7               # a variable's new value
 
 .text
 
@@ -221,7 +226,14 @@ section_key:
     call delete_cursor
     test eax, eax
     jnz 9f
-1:  lea rax, [rip + trees]
+1:  cmp r12d, KEY_F1 + 1        # F2 on a variable: Set Value
+    jne 2f
+    test ebx, ebx
+    jnz 2f
+    call set_value_prompt
+    test eax, eax
+    jnz 9f
+2:  lea rax, [rip + trees]
     mov rdi, [rax + rbx*8]
     mov esi, r12d
     mov edx, r13d
@@ -253,6 +265,57 @@ section_actions:
     call cmd_debug_add_watch
 1:  mov eax, r12d
 9:  EPILOGUE
+
+# set_value_prompt() -> eax 1 when the Variables cursor is on a variable: the prompt for its new
+#   value, its current one filled in
+set_value_prompt:
+    PROLOGUE
+    call dap_focused
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    cmp dword ptr [rbx + DS_state], DSS_PAUSED
+    jne 8f
+    lea rax, [rip + trees]
+    mov r12, [rax]
+    mov rdi, r12
+    call tree_cursor
+    test eax, eax
+    js 8f
+    mov rdi, r12
+    mov esi, eax
+    call tree_user
+    test eax, eax
+    jz 8f
+    dec eax
+    mov r13d, eax
+    mov [rip + prompt_var], eax
+    mov eax, [rbx + DS_id]
+    mov [rip + prompt_var_sid], eax
+    mov eax, [rbx + DS_vgen]
+    mov [rip + prompt_var_gen], eax
+    mov rdi, rbx
+    mov esi, r13d
+    call vn_node
+    mov r14, rax
+    lea rdi, [rip + lab]
+    call sb_clear
+    mov esi, [r14 + VN_value]
+    add rsi, [rbx + DS_strs + SB_ptr]
+    mov edx, [r14 + VN_valuelen]
+    lea rdi, [rip + lab]
+    call sb_push
+    lea rdi, [rip + lab]
+    xor esi, esi
+    call sb_push_byte
+    mov edi, DP_SETVAR
+    lea rsi, [rip + .Lp_setvar]
+    mov rdx, [rip + lab + SB_ptr]
+    call ask
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # delete_cursor(section) -> eax 1 when Delete removed the watch or breakpoint under the cursor
 delete_cursor:
@@ -506,7 +569,10 @@ list_vn:
     mov esi, r15d
     call tree_set_desc
     mov edx, -1
-    test dword ptr [rbx + DS_flags], DSF_STALE
+    test dword ptr [r14 + VN_flags], VNF_CHANGED
+    jz 21f
+    mov edx, T_WARNING          # changed since the last stop
+21: test dword ptr [rbx + DS_flags], DSF_STALE
     jz 3f
     mov edx, T_MUTED
 3:  test dword ptr [r14 + VN_flags], VNF_ERROR
@@ -1532,6 +1598,13 @@ history_move:
 
 # ---------------- prompts ----------------
 
+# dview_ask_launch(label cstr): the text prompt for a launch's ${ask:PROMPT} (debugask.s)
+FN dview_ask_launch
+    mov rsi, rdi
+    mov edi, DP_LAUNCH
+    xor edx, edx
+    jmp ask
+
 # ask(kind, label cstr, initial cstr or 0): the palette's text prompt for the debugger
 ask:
     PROLOGUE
@@ -1547,11 +1620,12 @@ ask:
     mov rdi, rax
     call tf_clear
     jmp 9f
-1:  mov rdi, r13
+1:  call palette_field
+    mov r14, rax
+    mov rdi, r13
     call strlen
     mov rdx, rax
-    call palette_field
-    mov rdi, rax
+    mov rdi, r14
     mov rsi, r13
     call tf_set
 9:  EPILOGUE
@@ -1567,7 +1641,28 @@ FN dview_prompt_done
     call sb_set
     mov eax, [rip + prompt_kind]
     mov dword ptr [rip + prompt_kind], 0
-    cmp eax, DP_WATCH
+    cmp eax, DP_LAUNCH
+    jne 10f
+    mov rdi, r12
+    mov rsi, r13
+    call dask_answer
+    jmp 9f
+10: cmp eax, DP_SETVAR
+    jne 11f
+    mov edi, [rip + prompt_var_sid]
+    call dap_slot_of_id
+    test rax, rax
+    jz 9f
+    mov ecx, [rax + DS_vgen]
+    cmp ecx, [rip + prompt_var_gen]
+    jne 9f                      # it stopped elsewhere meanwhile: that variable is gone
+    mov rdi, rax
+    mov esi, [rip + prompt_var]
+    mov rdx, r12
+    mov rcx, r13
+    call dap_set_variable
+    jmp 9f
+11: cmp eax, DP_WATCH
     jne 1f
     mov rdi, r12
     mov rsi, r13
@@ -2580,6 +2675,7 @@ tbe_into: .quad IC_DBG_INTO, cmd_debug_step_into, .Lt_into
 tbe_out: .quad IC_DBG_OUT, cmd_debug_step_out, .Lt_out
 tbe_restart: .quad IC_REFRESH, cmd_debug_restart, .Lt_restart
 tbe_stop: .quad IC_STOP, cmd_debug_stop, .Lt_stop
+.Lp_setvar: .asciz "New value"
 .Lm_add: .asciz "Add Breakpoint"
 .Lm_cond: .asciz "Add Conditional Breakpoint..."
 .Lm_log: .asciz "Add Logpoint..."

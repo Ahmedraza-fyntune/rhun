@@ -2783,6 +2783,7 @@ ENDSTRUCT AS_SIZE
 .equ DBGX_BODY_MAX, 1048576 + 256     # debug-start's body: NAME and a configuration body
 .equ DCE_SYNTAX, 1                   # dcfg_from_leaves: the configuration body does not parse
 .equ DCE_REFUSED, 2                  # its type is not one of the extension's debuggers
+.equ DCE_ASK, 3                      # dcfg_prepare: a ${ask:} ${pick:} ${process} needs the user's answer
 .equ DTR_STDIO, 0                   # DS_transport: the adapter's standard input and output
 .equ DTR_TCP, 1                     # rhun picks a port, starts the adapter and connects
 .equ DTR_SERVER, 2                  # launch.ini's server = HOST:PORT: no process
@@ -2940,6 +2941,8 @@ F VN_type, 4
 F VN_typelen, 4
 F VN_eval, 4
 F VN_evallen, 4
+F VN_indexed, 4         # indexedVariables (a chunk: its count)
+F VN_start, 4           # a chunk: its first index
 ENDSTRUCT VN_SIZE
 .equ VNF_EXPANDED, 1
 .equ VNF_LOADING, 2
@@ -2947,6 +2950,8 @@ ENDSTRUCT VN_SIZE
 .equ VNF_EXPENSIVE, 8
 .equ VNF_CHANGED, 16
 .equ VNF_WATCH, 32      # a watch expression's result (a root)
+.equ VNF_CHUNK, 64      # a range of its parent's indexed children ([0..99]), asked for by start and count
+.equ DAP_CHUNK, 100     # indexed children per chunk
 
 # a debug session
 STRUCT
@@ -2975,6 +2980,7 @@ F DS_pad2, 4
 F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
 F DS_owner_id, 8        # and its request still owed an answer, 0 none
 F DS_after, 8           # owned cstr: launch.ini's after task, run when the session ends, or 0
+F DS_prevvals, SB_SIZE  # the last stop's values: "PATH" TAB "VALUE" LF (changed values stand out)
 F DS_seq, 4             # the next request number
 F DS_epoch, 4           # bumped on every stop and resume
 F DS_flags, 4           # DSF_*

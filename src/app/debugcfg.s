@@ -643,6 +643,7 @@ FN dcfg_prepare
     mov r12, rdi
     mov r13, rsi
     mov [rsp], edx
+    mov dword ptr [rip + g_dcfg_code], 0
     mov dword ptr [rip + cur_line], 0
     mov dword ptr [rip + g_lc_dbg], -1
     mov dword ptr [rip + g_lc_request], 0
@@ -1482,7 +1483,23 @@ subst_one:
     mov rsi, rax
     call sb_push
     jmp .Lso_ok
-20: # the active file's
+20: # ${ask:PROMPT}, ${pick:PROMPT|A|B}, ${process}: the user's answer (debugask.s), else the
+    # launch stops here and asks
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, rbx
+    call dask_value
+    cmp eax, 1
+    je .Lso_ok
+    test eax, eax
+    jz 23f
+    mov dword ptr [rip + g_dcfg_code], DCE_ASK
+    lea rdi, [rip + g_dcfg_err]
+    lea rsi, [rip + .Lm_asking]
+    call cstr_copy
+    xor eax, eax
+    EPILOGUE
+23: # the active file's
     lea r14, [rip + file_vars]
 21: mov rdi, [r14]
     test rdi, rdi
@@ -3001,6 +3018,7 @@ argw: .zero SB_SIZE
 .Lm_no_config: .asciz "no configuration named "
 .Lm_no_type: .asciz "the configuration has no type: "
 .Lm_body: .asciz "the configuration body does not parse"
+.Lm_asking: .asciz "the configuration asks the user first"
 .Lm_nottype: .asciz "the configuration's type is not one of your debuggers"
 .Lm_no_debugger: .asciz "no installed extension provides a debugger of type "
 .Lm_no_debugger2: .asciz ""

@@ -37,6 +37,7 @@ def log(text):
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
 seq = [1]
+launch_args = {}
 pending_writes = []
 
 
@@ -314,6 +315,8 @@ def handle(req):
                 respond(req, success=False, message='cannot read ' + program)
                 return
         prog.stop_on_entry = bool(args.get('stopOnEntry'))
+        launch_args.clear()
+        launch_args.update(args)
         log('ARGS ' + json.dumps(args, sort_keys=True))
         if 'launch-fail' in MODE:
             respond(req, {'error': {'id': 1, 'format': 'could not launch: no such program'}},
@@ -382,6 +385,13 @@ def handle(req):
     if cmd == 'configurationDone':
         configured[0] = True
         respond(req)
+        if 'child' in MODE and launch_args.get('name') != 'Child':
+            # a child session of the same debugger (startDebugging), its answer logged
+            send({'type': 'request', 'command': 'startDebugging',
+                  'arguments': {'request': 'launch',
+                                'configuration': {'type': launch_args.get('type'), 'name': 'Child',
+                                                  'program': launch_args.get('program'),
+                                                  'stopOnEntry': True}}})
         if held_launch[0]:
             respond(held_launch[0])
             held_launch[0] = None
@@ -435,6 +445,13 @@ def handle(req):
             items = list(value.items())
         else:
             items = [('[%d]' % k, v) for k, v in enumerate(value)]
+            # paging: filter indexed with start and count, filter named (a list has none)
+            log('VARIABLES filter=%s start=%s count=%s' % (args.get('filter'), args.get('start'), args.get('count')))
+            if args.get('filter') == 'named':
+                items = []
+            elif args.get('filter') == 'indexed':
+                start = args.get('start', 0)
+                items = items[start:start + args.get('count', len(items))]
         respond(req, {'variables': [prog.var(n, v) for n, v in items]})
         return
     if cmd == 'evaluate':
@@ -451,7 +468,11 @@ def handle(req):
         respond(req, {'result': v['value'], 'type': v.get('type'), 'variablesReference': v['variablesReference']})
         return
     if cmd == 'setVariable':
-        respond(req, {'value': args.get('value')})
+        log('SETVARIABLE %s %s %s' % (args.get('variablesReference'), args.get('name'), args.get('value')))
+        if args.get('value') == 'bad':
+            respond(req, success=False, message='cannot set %s to bad' % args.get('name'))
+            return
+        respond(req, {'value': args.get('value'), 'type': 'int'})
         return
     if cmd in ('next', 'stepIn', 'stepOut') and 'fail-step' in MODE:
         respond(req, success=False, message='cannot step here')
