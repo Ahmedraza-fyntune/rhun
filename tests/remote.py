@@ -356,6 +356,48 @@ class Remote(unittest.TestCase):
         self.assertIn(' forwards=8765:%d,9:10009' % local, text)
         self.assertEqual(text.count(' forwards='), 1, text)
 
+    def test_a_big_save_keeps_mode_link_and_neighbours(self):
+        """A file over 32 MB goes in parts into a temporary file made exclusively next to the file
+        its link leads to: an unrelated PATH.rhun-save stays, the link stays a link, the mode stays."""
+        docker('exec', HOST, 'sh', '-c', 'cd /root/proj && rm -f big* && head -c 36000000 /dev/zero | tr "\\0" a '
+               '| fold -w 99 > big.txt && chmod 600 big.txt && ln -s big.txt big-link.txt && '
+               'echo keep > big.txt.rhun-save')
+        out = self.run_script('docker:' + HOST, '/root/proj',
+                              ['wait-remote 90', 'open /root/proj/big-link.txt', 'wait 4000', 'key ctrl+Home',
+                               'type Z', 'key ctrl+s', 'wait 8000', 'print-state'], timeout=240)
+        self.assertIn(' dirty=0 ', out)
+        check = docker('exec', HOST, 'sh', '-c', 'cd /root/proj && stat -c %a big.txt && '
+                       '{ [ -L big-link.txt ] && echo link; } && head -c 2 big.txt && echo && cat big.txt.rhun-save && '
+                       'ls | grep -c rhun-save').stdout.decode()
+        self.assertEqual(check.split(), ['600', 'link', 'Za', 'keep', '1'], check)
+        docker('exec', HOST, 'sh', '-c', 'cd /root/proj && rm -f big*')
+
+    def test_changes_made_while_disconnected_reach_open_files(self):
+        """A file of the host changed while the connection was down is compared once it is back (no
+        watch event told of it): the open, unchanged document shows the host's text."""
+        docker('exec', HOST, 'sh', '-c', 'cd /root/proj && git checkout -q -- .')
+        script = self.dir / 't.rsc'
+        script.write_text('wait-remote 90\nopen /root/proj/a.txt\nwait 500\nremote-drop\necho dropped\n'
+                          'wait 3000\nremote-reconnect\nwait-remote 90\nwait 2500\nprint-doc\nquit\n')
+        env = dict(os.environ, HOME=str(self.dir / 'home'), XDG_CONFIG_HOME=str(self.dir / 'config'),
+                   XDG_STATE_HOME=str(self.dir / 'state'), TMPDIR=str(self.dir / 'tmp'))
+        p = subprocess.Popen([str(EXE), '--headless', '1000x700', '--remote', 'docker:' + HOST, '/root/proj',
+                              '--script', str(script)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+        out = b''
+        try:
+            while b'dropped' not in out:
+                chunk = os.read(p.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                out += chunk
+            docker('exec', HOST, 'sh', '-c', 'printf "changed while away\\n" > /root/proj/a.txt')
+            out += p.communicate(timeout=120)[0]
+        finally:
+            if p.poll() is None:
+                p.kill()
+            docker('exec', HOST, 'sh', '-c', 'cd /root/proj && git checkout -q -- .')
+        self.assertIn('changed while away', out.decode(errors='replace'))
+
     def echo_on_host(self, exts, command='echo.swrite'):
         (self.dir / 'config/rhun/config').write_text('[remote]\nagent_binary = %s\n%s' % (LINUX_EXE, ECHO_CONFIG))
         return self.run_script('docker:' + HOST, '/root/proj',
@@ -444,6 +486,40 @@ class Remote(unittest.TestCase):
         self.assertIn("extension's Linux build fetched into ", log)
         self.assertIn('extension copied: ', log)
 
+    def test_extension_links_and_depth(self):
+        """Its folder is copied whole or not at all: a link leading outside it, or folders nested
+        deeper than 16 levels, stop it with the reason; a link inside it is copied as its target."""
+        exts = echo_extension(self.dir / 'inside')
+        os.symlink('echo.py', exts / 'rhun-tests/echo/alias.py')
+        out = self.echo_on_host(exts)
+        self.assertIn('toast=probe ok', out)
+        exts = echo_extension(self.dir / 'outside')
+        os.symlink('/etc/hosts', exts / 'rhun-tests/echo/hosts')
+        out = self.echo_on_host(exts)
+        self.assertIn('state=failed', ext_line(out), out)
+        self.assertIn('a link to a place outside it, which is not copied to the host: hosts', ext_line(out))
+        exts = echo_extension(self.dir / 'deep')
+        deep = exts / 'rhun-tests/echo' / '/'.join(['d'] * 18)
+        deep.mkdir(parents=True)
+        (deep / 'x.txt').write_text('x')
+        out = self.echo_on_host(exts)
+        self.assertIn('state=failed', ext_line(out), out)
+        self.assertIn('deeper than 16 levels', ext_line(out))
+
+    @unittest.skipIf(sys.platform.startswith('linux'), 'a Linux client has the Linux build itself')
+    def test_extension_with_only_a_linux_build(self):
+        """No program for this system, only run.linux-x86_64 in its folder: the host's to run."""
+        docker('exec', HOST, 'rm', '-rf', '/root/.local/state/rhun/extensions')
+        exts = echo_extension(self.dir / 'exts', **{'runtime = python3\nrun = echo.py\n':
+                                                    'run.linux-x86_64 = bin/echo-linux\n'})
+        launcher = exts / 'rhun-tests/echo/bin/echo-linux'
+        launcher.parent.mkdir()
+        launcher.write_text('#!/bin/sh\nexec python3 "$(dirname "$0")/../echo.py"\n')
+        launcher.chmod(0o755)
+        out = self.echo_on_host(exts)
+        self.assertIn('toast=probe ok', out)
+        docker('exec', HOST, 'test', '-f', '/root/.local/state/rhun/extensions/rhun-tests--echo/state.txt')
+
     def test_where_local_runs_here(self):
         docker('exec', HOST, 'rm', '-rf', '/root/.local/state/rhun/extensions')
         needs = 'documents = write\nterminal = yes\nproject = read'
@@ -464,6 +540,26 @@ class Remote(unittest.TestCase):
         out = self.run_script('docker:no-such-container-here', '', ['wait-remote 60', 'print-remote'])
         self.assertEqual(self.field(out, 'remote=', 'state'), 'failed', out)
         self.assertIn('error=Could not connect to no-such-container-here', out)
+
+class LocalWindow(unittest.TestCase):
+    def test_where_local_needs_nothing_special_in_a_local_window(self):
+        """where = local only limits a remote window's extensions: a local window loads it with
+        project = read as any other."""
+        with tempfile.TemporaryDirectory(prefix='rhun-remote-lw-') as tmp:
+            base = Path(tmp)
+            for d in ('home', 'config/rhun', 'state', 'proj'):
+                (base / d).mkdir(parents=True)
+            (base / 'config/rhun/config').write_text(ECHO_CONFIG)
+            exts = echo_extension(base / 'exts', **{'on = command': 'on = command\nwhere = local'})
+            script = base / 't.rsc'
+            script.write_text('print-extensions\nquit\n')
+            env = dict(os.environ, HOME=str(base / 'home'), XDG_CONFIG_HOME=str(base / 'config'),
+                       XDG_STATE_HOME=str(base / 'state'))
+            out = subprocess.run([str(EXE), str(base / 'proj'), '--headless', '800x600', '--extensions', str(exts),
+                                  '--script', str(script)], capture_output=True, timeout=60,
+                                 env=env).stdout.decode(errors='replace')
+            self.assertIn('state=idle', ext_line(out), out)
+
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'local: runs the agent on this machine')
 class LocalTransport(unittest.TestCase):

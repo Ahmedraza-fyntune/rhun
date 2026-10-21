@@ -2746,7 +2746,9 @@ ag_read:
 
 # write FLAGS MODE PLEN LEN + path + data: the file's new contents. FLAGS: 1 replace an existing file
 #   through a temporary one in its folder (its mode kept), 2 create only (EEXIST when it is there),
-#   4 append, 8 create or truncate (a write in parts: 8, then 4s). MODE: a new file's mode (octal)
+#   4 append, 8 create or truncate (a write in parts: 8, then 4s); 16 with 2: the new file gets MODE
+#   exactly (not reduced by the umask: a multipart save keeps the replaced file's mode). MODE: a new
+#   file's mode (octal)
 ag_write:
     PROLOGUE 16
     mov r12, rdi
@@ -2790,6 +2792,15 @@ ag_write:
     mov esi, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
     mov edx, [rsp]
     SYS SYS_open
+    test rax, rax
+    js 7f
+    test ebx, 16
+    jz 5f
+    mov [rsp + 8], rax
+    mov edi, eax
+    mov esi, [rsp]
+    SYS SYS_fchmod
+    mov rax, [rsp + 8]
     jmp 5f
 .Law_trunc:
     lea rdi, [rip + ag_path]

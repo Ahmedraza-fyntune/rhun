@@ -25,6 +25,7 @@
 .equ MUX_WQ_HIGH, 16777216
 .equ MUX_GRANT, 65536
 .equ MUX_READ, 65536
+.equ MUX_FRAME, 4194304          # a program's input goes in frames this big (the agent takes 64 MB)
 .equ MUX_RPC_MS, 10000          # a request waits this long without hearing anything from the host
 .equ MUX_GC_MS, 30000           # an exited program nobody asked about is forgotten after this
 .equ RLOG_MAX, 240
@@ -91,8 +92,9 @@ ENDSTRUCT CH_SIZE
 
 .bss
 .p2align 3
-.globl g_remote, g_remote_state, g_remote_reply, g_remote_home
+.globl g_remote, g_remote_state, g_remote_reply, g_remote_home, g_remote_window
 g_remote: .long 0               # 1: this window is a remote window
+g_remote_window: .long 0        # 1: it is one or will be (--remote, before the connection starts)
 g_remote_state: .long 0         # RS_*
 rm_kind: .long 0                # RT_*
 rm_tpid: .long 0
@@ -290,6 +292,7 @@ FN remote_start
     test eax, eax
     jz 8f
     mov dword ptr [rip + g_remote], 1
+    mov dword ptr [rip + g_remote_window], 1
     call rm_new_sid
     lea rdi, [rip + .Lenv_strict]
     call getenv
@@ -2866,6 +2869,14 @@ FN remote_spawn
     test rdx, rdx
     jz 8f
     sub [r13 + CH_credit], rdx
+    mov qword ptr [rsp + 72], 0 # sent: in frames the agent takes (MUX_FRAME each)
+78: mov rax, [rsp + 40]
+    sub rax, [rsp + 72]
+    jz 79f
+    cmp rax, MUX_FRAME
+    jbe 77f
+    mov eax, MUX_FRAME
+77: mov rbx, rax
     lea rdi, [rip + rm_line]
     call sb_clear
     lea rdi, [rip + rm_line]
@@ -2878,7 +2889,7 @@ FN remote_spawn
     mov esi, ' '
     call sb_push_byte
     lea rdi, [rip + rm_line]
-    mov rsi, [rsp + 40]
+    mov rsi, rbx
     call sb_push_u64
     lea rdi, [rip + rm_line]
     mov esi, 10
@@ -2887,9 +2898,12 @@ FN remote_spawn
     mov rdx, [rip + rm_line + SB_len]
     call rm_send
     mov rsi, [rsp + 32]
-    mov rdx, [rsp + 40]
+    add rsi, [rsp + 72]
+    mov rdx, rbx
     call rm_send
-    mov edi, r12d
+    add [rsp + 72], rbx
+    jmp 78b
+79: mov edi, r12d
     call rm_send_eof
 8:  # the loop watches our end (bytes may have come during the request: rm_events sees them)
     mov edi, [r13 + CH_fd]

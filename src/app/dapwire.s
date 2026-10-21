@@ -149,13 +149,23 @@ FN dap_spawn
     xor r14d, r14d
     jmp .Lsp_done
 .Lsp_remote:
-    mov rdi, [rsp + 24]
+    # an adapter the extension ships runs from its folder on the host (remoteext.s)
+    mov rdi, [rbx + DS_dbg_ext]
+    mov rsi, [rsp + 24]
+    test rdi, rdi
+    jz 1f
+    call remote_ext_argv
+    mov rdi, rax
+    jmp 2f
+1:  mov rdi, rsi
+    xor edx, edx
+2:  lea eax, [rdx*8 + 2]       # its error output apart; 8: argv[0] a path there
     mov rsi, [rsp + 32]
     mov rdx, [rip + g_project]
     xor ecx, ecx
     xor r8d, r8d
-    push 2                      # its error output apart
-    push 2
+    push rax
+    push rax
     call vfs_uproc_spawn
     add rsp, 16
     mov r14, rax

@@ -17,6 +17,8 @@
 .equ RX_TOTAL_MAX, 67108864     # an extension's files at most (an install's limit)
 .equ RX_DEPTH, 16
 .equ RX_PATH_MAX, 4000
+.equ RXB_LINK, 1                # rx_bad: a link leads out of the folder
+.equ RXB_DEEP, 2                # folders nested deeper than RX_DEPTH
 
 .equ RXS_NEW, 0
 .equ RXS_CHECK, 1               # is the host's folder there?
@@ -69,6 +71,10 @@ rx_fp: .quad 0                  # the walk's hash
 rx_total: .quad 0               # and its bytes
 rx_depth: .long 0
 rx_toolong: .long 0
+rx_bad: .long 0                 # RXB_*: the walk cannot give the whole folder
+rx_srcreal: .zero 4200          # the folder, links resolved
+rx_lnkreal: .zero 4200          # what a link inside leads to
+rx_badname: .zero 304           # the link that leads out
 rx_stat: .zero 144
 rx_hstate: .zero 4200
 rx_argv: .zero 8 * 300
@@ -81,23 +87,53 @@ rx_envsb: .zero SB_SIZE         # Windows: the fetch's RHUN_EI_* entries
 # remote_ext_remote(ext) -> eax 1 when it runs on the host: a remote window, and not where = local
 FN remote_ext_remote
     xor eax, eax
-    cmp dword ptr [rip + g_remote], 0
+    cmp dword ptr [rip + g_remote_window], 0
     je 9f
     cmp dword ptr [rdi + EXT_where_local], 0
     jne 9f
     mov eax, 1
 9:  ret
 
-# remote_ext_check(ext) -> rax 0, or why its manifest is refused: where = local may not need the
-# project or the home folder (it sees the host's paths as names only, documents through rhun)
+# remote_ext_check(ext) -> rax 0, or why its manifest is refused: in a remote window where = local
+# may not need the project or the home folder (it sees the host's paths as names only, documents
+# through rhun); a local window runs it as any other
 FN remote_ext_check
     xor eax, eax
+    cmp dword ptr [rip + g_remote_window], 0
+    je 9f
     cmp dword ptr [rdi + EXT_where_local], 0
     je 9f
     test dword ptr [rdi + EXT_needs], NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE | NEEDS_HOME_READ
     jz 9f
     lea rax, [rip + .Lr_where_local]
 9:  ret
+
+# remote_ext_load(ext) -> eax 1 when its program is the host's to check (ext_load then skips this
+#   machine's checks): in a remote window, not where = local. A script's runtime stays a name the
+#   host's PATH finds; without a program for this system its Linux build is the one (EXT_prog names
+#   it in its folder; rx_prepare finds or fetches it)
+FN remote_ext_load
+    PROLOGUE
+    mov rbx, rdi
+    call remote_ext_remote
+    test eax, eax
+    jz 9f
+    mov eax, 1
+    cmp qword ptr [rbx + EXT_prog], 0
+    jne 9f
+    mov rdi, rbx
+    call rx_linux_run
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, [rbx + EXT_dir]
+    mov rsi, rax
+    call path_join
+    mov [rbx + EXT_prog], rax
+    mov rdi, r12
+    call mem_free
+    mov eax, 1
+9:  EPILOGUE
 
 # remote_ext_spawn(ext) -> rax the pid (EXT_pid, EXT_in and EXT_out set, the program running on
 # the host), 0 while it waits (its files on their way, or the host not connected: it starts by
@@ -925,6 +961,13 @@ rx_walk:
     mov qword ptr [rip + rx_total], 0
     mov dword ptr [rip + rx_depth], 0
     mov dword ptr [rip + rx_toolong], 0
+    mov dword ptr [rip + rx_bad], 0
+    # the folder's own path, links resolved: a link inside must stay inside it
+    mov rdi, [rbx + RX_src]
+    lea rsi, [rip + rx_srcreal]
+    call local_realpath
+    test rax, rax
+    jle 7f
     lea rdi, [rip + rx_wrel]
     call sb_clear
     lea rdi, [rip + rx_wpath]
@@ -946,9 +989,27 @@ rx_walk:
     call dir_each
     test rax, rax
     js 7f
+    # nothing left out: a copy without all of it would be cached as complete
+    mov eax, [rip + rx_bad]
+    cmp eax, RXB_LINK
+    je 5f
+    cmp eax, RXB_DEEP
+    je 4f
+    cmp dword ptr [rip + rx_toolong], 0
+    jne 3f
     cmp qword ptr [rip + rx_total], RX_TOTAL_MAX
     ja 6f
     xor eax, eax
+    EPILOGUE
+3:  lea rsi, [rip + .Lr_too_long]
+    jmp 8f
+4:  lea rsi, [rip + .Lr_too_deep]
+    jmp 8f
+5:  mov rdi, rbx
+    lea rsi, [rip + .Lr_link_out]
+    lea rdx, [rip + rx_badname]
+    call rx_why
+    mov eax, -1
     EPILOGUE
 6:  lea rsi, [rip + .Lr_too_big]
     jmp 8f
@@ -1007,6 +1068,8 @@ rx_walk_cb:
     jnz 9f
     cmp qword ptr [rip + rx_total], RX_TOTAL_MAX
     ja 9f
+    cmp dword ptr [rip + rx_bad], 0
+    jne 9f
     mov rax, [rip + rx_wpath + SB_len]
     mov [rsp], rax
     mov rax, [rip + rx_wrel + SB_len]
@@ -1036,7 +1099,33 @@ rx_walk_cb:
     mov rdx, r14
     call sb_push
     call rx_wpath_end
-    # its kind: a folder, a file, or an executable file
+    # a link: what it leads to must be inside the folder (it is copied as what it leads to)
+    mov rdi, [rip + rx_wpath + SB_ptr]
+    lea rsi, [rip + rx_stat]
+    SYS SYS_lstat
+    test rax, rax
+    js 8f
+    mov eax, [rip + rx_stat + 24]
+    and eax, 0xf000
+    cmp eax, 0xa000
+    jne 22f
+    mov rdi, [rip + rx_wpath + SB_ptr]
+    lea rsi, [rip + rx_lnkreal]
+    call local_realpath
+    test rax, rax
+    jle 8f                      # leads nowhere: nothing to copy
+    lea rdi, [rip + rx_lnkreal]
+    lea rsi, [rip + rx_srcreal]
+    call rx_inside
+    test eax, eax
+    jnz 22f
+    mov dword ptr [rip + rx_bad], RXB_LINK
+    lea rdi, [rip + rx_badname]
+    mov rsi, [rip + rx_wrel + SB_ptr]
+    lea rdx, [rip + rx_badname + 300]
+    call rx_cpy
+    jmp 8f
+22: # its kind: a folder, a file, or an executable file
     mov r15d, 'd'
     test r13d, r13d
     jnz 3f
@@ -1078,8 +1167,10 @@ rx_walk_cb:
     cmp r15d, 'd'
     jne 8f
     cmp dword ptr [rip + rx_depth], RX_DEPTH
-    jae 8f
-    inc dword ptr [rip + rx_depth]
+    jb 23f
+    mov dword ptr [rip + rx_bad], RXB_DEEP
+    jmp 8f
+23: inc dword ptr [rip + rx_depth]
     mov rdi, [rip + rx_wpath + SB_ptr]
     lea rsi, [rip + rx_walk_cb]
     mov rdx, rbx
@@ -1091,6 +1182,30 @@ rx_walk_cb:
     mov [rip + rx_wrel + SB_len], rax
     call rx_wpath_end
 9:  EPILOGUE
+
+# rx_inside(path, root) -> eax 1 when path is root or inside it
+rx_inside:
+    xor ecx, ecx
+1:  mov al, [rsi + rcx]
+    test al, al
+    jz 2f
+    cmp al, [rdi + rcx]
+    jne 8f
+    inc rcx
+    jmp 1b
+2:  mov al, [rdi + rcx]
+    test al, al
+    jz 9f
+    cmp al, '/'
+    je 9f
+    cmp rcx, 1                  # the root folder itself
+    jne 8f
+    cmp byte ptr [rsi], '/'
+    je 9f
+8:  xor eax, eax
+    ret
+9:  mov eax, 1
+    ret
 
 # rx_host_dir(rx): RX_hdir = HOME/.cache/rhun-remote/extensions/OWNER/NAME/VERSION-HASH
 rx_host_dir:
@@ -1646,27 +1761,7 @@ rx_spawn:
     PROLOGUE 32
     mov r12, rdi
     mov rbx, [r12 + RX_ext]
-    # the host's state folder: HOME/.local/state/rhun/extensions/OWNER--NAME
-    lea rdi, [rip + rx_hstate]
-    lea rsi, [rip + g_remote_home]
-    lea rdx, [rip + rx_hstate + 4000]
-    call rx_cpy
-    mov rdi, rax
-    lea rsi, [rip + .Lsub_state]
-    lea rdx, [rip + rx_hstate + 4000]
-    call rx_cpy
-    mov rdi, rax
-    mov rsi, [rbx + EXT_owner]
-    lea rdx, [rip + rx_hstate + 4000]
-    call rx_cpy
-    mov rdi, rax
-    lea rsi, [rip + .Ldashes]
-    lea rdx, [rip + rx_hstate + 4000]
-    call rx_cpy
-    mov rdi, rax
-    mov rsi, [rbx + EXT_name]
-    lea rdx, [rip + rx_hstate + 4000]
-    call rx_cpy
+    call rx_set_hstate
     lea rdi, [rip + rx_sbuf]
     call sb_clear
     # argv[0]: rhun itself for a WebAssembly module, a script's runtime by name (the host's PATH
@@ -1892,6 +1987,88 @@ rx_spawn:
     mov rax, -5
 3:  EPILOGUE
 
+# rx_set_hstate() (rbx EXT): rx_hstate, the host's state folder
+#   HOME/.local/state/rhun/extensions/OWNER--NAME
+rx_set_hstate:
+    sub rsp, 8
+    lea rdi, [rip + rx_hstate]
+    lea rsi, [rip + g_remote_home]
+    lea rdx, [rip + rx_hstate + 4000]
+    call rx_cpy
+    mov rdi, rax
+    lea rsi, [rip + .Lsub_state]
+    lea rdx, [rip + rx_hstate + 4000]
+    call rx_cpy
+    mov rdi, rax
+    mov rsi, [rbx + EXT_owner]
+    lea rdx, [rip + rx_hstate + 4000]
+    call rx_cpy
+    mov rdi, rax
+    lea rsi, [rip + .Ldashes]
+    lea rdx, [rip + rx_hstate + 4000]
+    call rx_cpy
+    mov rdi, rax
+    mov rsi, [rbx + EXT_name]
+    lea rdx, [rip + rx_hstate + 4000]
+    call rx_cpy
+    add rsp, 8
+    ret
+
+# remote_ext_argv(ext, argv) -> rax argv for the host, edx 1 when its first entry is a path there:
+#   paths in the extension's folder and state folder become the host's (a debug adapter it ships,
+#   dapwire.s). Unchanged (edx 0) while its files are not on the host.
+FN remote_ext_argv
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r13, rsi
+    mov [rsp], rsi
+    xor esi, esi
+    call rx_find
+    test rax, rax
+    jz 8f
+    cmp dword ptr [rax + RX_state], RXS_READY
+    jne 8f
+    mov r12, rax
+    call rx_set_hstate
+    lea rdi, [rip + rx_sbuf]
+    call sb_clear
+    xor r14d, r14d              # entries
+1:  mov rdi, [r13 + r14*8]
+    test rdi, rdi
+    jz 2f
+    call rx_remap
+    lea rdi, [rip + rx_sbuf]
+    xor esi, esi
+    call sb_push_byte
+    inc r14
+    cmp r14, 290
+    jb 1b
+2:  lea rdi, [rip + rx_argv]
+    mov rsi, [rip + rx_sbuf + SB_ptr]
+    mov rcx, r14
+    call rx_pointers
+    # its first entry: a path in the extension's folders?
+    xor r15d, r15d
+    mov rdi, [r13]
+    test rdi, rdi
+    jz 3f
+    mov rsi, [rbx + EXT_dir]
+    call rx_prefix
+    test rax, rax
+    jnz 21f
+    mov rdi, [r13]
+    mov rsi, [rbx + EXT_state]
+    call rx_prefix
+    test rax, rax
+    jz 3f
+21: mov r15d, 1
+3:  lea rax, [rip + rx_argv]
+    mov edx, r15d
+    EPILOGUE
+8:  mov rax, [rsp]
+    xor edx, edx
+    EPILOGUE
+
 # rx_conf_end(): a NUL onto rx_conf
 rx_conf_end:
     lea rdi, [rip + rx_conf]
@@ -1921,6 +2098,9 @@ rx_pointers:
 .Lr_no_release: .asciz "its Linux build for the host is not in its folder, and it was not installed from a release that has one"
 .Lr_unreadable: .asciz "its folder cannot be read"
 .Lr_too_big: .asciz "its folder is over 64 MB, too big to copy to the host"
+.Lr_too_long: .asciz "its folder holds a path too long to copy to the host"
+.Lr_too_deep: .asciz "its folder nests folders deeper than 16 levels, too deep to copy to the host"
+.Lr_link_out: .asciz "its folder has a link to a place outside it, which is not copied to the host: "
 .Lr_lost: .asciz "the host is not connected"
 .Lr_copy: .asciz "its files could not be copied to the host"
 .Lr_fetch: .asciz "its Linux build could not be fetched: "
