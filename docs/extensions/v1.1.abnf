@@ -135,3 +135,8 @@ feature      =/ "document-highlights"
 host-request =/ id SP "highlights" SP doc SP version SP num SP num
               ; answered "ok" SP id SP len LF + num LF *( num SP num SP num SP num SP
               ; ( "text" / "read" / "write" ) LF )
+feature      =/ "document-colors"
+host-request =/ id SP "colors" SP doc SP version SP num SP num
+              ; answered "ok" SP id SP len LF + num LF *( num SP num SP num SP num SP 8HEXDIG LF )
+host-request =/ id SP "color-edit" SP doc SP version SP num SP num SP num SP num SP 8HEXDIG
+              ; answered "ok" SP id SP len LF + a workspace edit

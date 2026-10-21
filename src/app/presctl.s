@@ -513,9 +513,19 @@ c_print_present:
     lea rdx, [rip + .Ls_highlights]
     call str_eq_cstr
     test eax, eax
-    jz 9f
+    jz 4f
     mov rdi, [rip + outp]       # the caret's highlights (hicolor.s)
     call hl_dump
+    jmp 9f
+4:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_colors]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov rdi, rbx                # colors (hicolor.s)
+    mov rsi, [rip + outp]
+    call color_dump
 9:  xor eax, eax
     EPILOGUE
 .Lpp_types:
@@ -931,6 +941,7 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch, .Lk_lens
 .Ls_hints: .asciz "hints"
 .Ls_lenses: .asciz "lenses"
 .Ls_highlights: .asciz "highlights"
+.Ls_colors: .asciz "colors"
 .Ls_stale: .asciz "stale"
 .Ls_view_lines: .asciz "view mode=lines top="
 .Ls_view_wrap: .asciz "view mode=wrap top="

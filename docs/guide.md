@@ -535,6 +535,13 @@ resting on a hint shows its tooltip; a click on a part that has a command runs i
 definition it names; a double click writes the hint into the text when it offers that (a type, for
 example). `inlay_hints = false` under `[editor]` (**Inlay hints** in Settings) turns them off.
 
+### Colors
+
+When an extension (a language server) finds colors in the code, a small square in each color sits
+before it. A click on the square asks for a new color (`#rrggbb` or `#rrggbbaa`) and the extension
+writes it in the code's own notation. `color_swatches = false` under `[editor]` (**Color
+swatches** in Settings) turns the squares off.
+
 ### Highlights
 
 When the cursor rests on a name, its other places in the file are marked with a soft background,

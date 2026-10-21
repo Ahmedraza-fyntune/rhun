@@ -223,8 +223,12 @@ FN present_tick
     cmp dword ptr [rip + cfg_inlay_hints], 0
     je 2f
 12: cmp r12d, PQ_LENS
-    jne 11f
+    jne 13f
     cmp dword ptr [rip + cfg_code_lens], 0
+    je 2f
+13: cmp r12d, PQ_COLORS
+    jne 11f
+    cmp dword ptr [rip + cfg_color_swatches], 0
     je 2f
 11: mov rdi, rbx
     mov esi, r12d
@@ -481,6 +485,21 @@ pqr_drop:
 # present_reply(ext, id, ok, body, len) -> eax 1 when it answered a presentation request
 FN present_reply
     PROLOGUE 64
+    mov [rsp], rcx
+    mov [rsp + 8], r8
+    push rdi
+    push rsi
+    push rdx
+    push rdx
+    call color_edit_reply       # a swatch's color-edit (hicolor.s)
+    pop rdx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jnz 7f
+    mov rcx, [rsp]
+    mov r8, [rsp + 8]
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
@@ -557,6 +576,8 @@ FN present_ext_gone
     call inlay_ext_gone
     mov rdi, rbx
     call lens_ext_gone
+    mov rdi, rbx
+    call color_ext_gone
     EPILOGUE
 
 # ---------------- answers ----------------
@@ -797,7 +818,7 @@ pq_table:
     .long FEAT_INLAY_HINTS, -1, PK_HINTS, 250, 1, 0
     .quad .Lv_lens, lens_reply, present_args_window, EXT_pv_code_lens
     .long FEAT_CODE_LENS, -1, PK_LENS, 500, 1, 0
-    .quad .Lv_colors, reply_none, present_args_window, EXT_pv_colors
+    .quad .Lv_colors, color_reply, present_args_window, EXT_pv_colors
     .long FEAT_DOC_COLORS, -1, PK_COLORS, 500, 1, 0
     .quad .Lv_highlights, hl_reply, hl_args, EXT_pv_highlights
     .long FEAT_DOC_HIGHLIGHTS, PP_HIGHLIGHTS, PK_HIGHLIGHTS, 250, 0, 0

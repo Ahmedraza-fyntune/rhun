@@ -99,6 +99,9 @@ FN vt_line
     mov rdi, rbx
     mov rsi, r12
     call inlay_line_inlays      # inlay hints (inlay.s)
+    mov rdi, rbx
+    mov rsi, r12
+    call color_line_inlays      # color swatches (hicolor.s)
 .Lvl_have:
     lea rax, [rip + vt_items]
     mov rdx, [rip + vt_n]
@@ -687,7 +690,13 @@ FN vt_click
     mov rdx, [r12 + VI_off]
     call lens_click
     EPILOGUE
-11: cmp byte ptr [r12 + VI_kind], VK_HINT
+11: cmp byte ptr [r12 + VI_kind], VK_SWATCH
+    jne 12f
+    mov rdi, rbx                # a swatch asks for its new color (hicolor.s)
+    mov rsi, [r12 + VI_ref]
+    call color_click
+    EPILOGUE
+12: cmp byte ptr [r12 + VI_kind], VK_HINT
     jne 2f
     mov rdi, rbx                # a hint part's command, place or edits (inlay.s)
     mov rsi, [r12 + VI_ref]

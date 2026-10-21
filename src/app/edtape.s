@@ -93,6 +93,8 @@ FN pres_free
     call inlay_free
     mov rdi, r12                # code lens (lens.s)
     call lens_free
+    lea rdi, [r12 + PRS_colors] # colors (hicolor.s)
+    call vec_free
     mov rdi, r12
     call mem_free
 9:  EPILOGUE
@@ -264,6 +266,9 @@ pres_shift:
     mov rdi, rbx
     mov rsi, r12
     call lens_shift
+    mov rdi, rbx
+    mov rsi, r12
+    call color_shift
     EPILOGUE
 
 # tape_shift(value, pos, del, ins, gravity) -> rax the value after the edit (one of del and ins is
