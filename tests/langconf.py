@@ -156,6 +156,20 @@ class LangConf(contribhost.Contrib):
         self.assertIn('problem=[language.Lua] continue: also set by alice/demo', out)
         self.assertIn('problem=[language.Lua] continue: also set by bob/other', out)
 
+    def test_a_grammar_extension_with_its_language_keys(self):
+        # the Teal workflow: an extension's grammar (syntax/teal.syn) and its [language.Teal] keys
+        root = self.lang_ext('alice', 'teal', '[language.Teal]\nindent_open = then do function {\n'
+                                               'indent_close = end }\nindent_middle = else elseif\n')
+        syn = root / 'alice/teal/syntax'
+        syn.mkdir(parents=True)
+        (syn / 'teal.syn').write_text('name = Teal\nfiles = *.tl\ncomment = --\nstring = " \\\n'
+                                      'keywords = if then else end local function\n', encoding='utf-8')
+        doc, out = self.edit('a.tl', '', ['type if x then', 'key Return', 'type print("a', 'type (', 'key End',
+                                          'key Return', 'type end', 'key Return'], exts=root,
+                             extra=['print-langconf'])
+        self.assertEqual(doc, 'if x then\n    print("a(")\nend\n')
+        self.assertIn('indent_open=then do function { source=ext:alice/teal', out)
+
     def test_a_user_grammar_wins_over_an_extension(self):
         self.user_grammar(TOY)
         root = self.lang_ext('alice', 'demo', '[language.Toy]\ncontinue = %%\nfold = brackets\n')
