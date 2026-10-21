@@ -150,6 +150,9 @@
 .equ MREMAP_MAYMOVE, 1
 
 .equ AF_UNIX, 1
+.equ AF_INET, 2                 # remote hosts: forwarded ports (remotefwd.s, ragent.s)
+.equ AF_INET6, 10
+.equ SHUT_WR, 1
 .equ SOCK_STREAM, 1
 .equ SOCK_NONBLOCK, 0x800
 .equ SOCK_CLOEXEC, 0x80000
@@ -1703,6 +1706,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
     FEATURE FEAT_DEBUG, "debug", 1                # debugger: debug-resolve; debug-start, debug-ended
     FEATURE FEAT_CUSTOM_EDITORS, "custom-editors", 1   # custom editors (customed.s, ceproto.inc)
+    FEATURE FEAT_VIEW_FORM, "view-form", 0        # views group: form views (rform.s)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -3257,6 +3261,8 @@ F ND_mark, 4            # scratch generation marks (kids diffing, patch checks)
 F ND_desc, 8            # owned cstr or 0
 F ND_tip, 8             # owned cstr or 0
 F ND_user, 8            # its owner's value (built-in code)
+F ND_gen, 4             # TR_gen when it was made: a request about a node is not about a later one
+F ND_pend, 4            # a patch check: the bytes a record it takes brings (rview.s)
 ENDSTRUCT ND_SIZE
 .equ NF_LIVE, 1
 .equ NF_OPEN, 2                 # expanded
@@ -3324,6 +3330,11 @@ F TR_actions, 8         # TA records the inline keys are looked up in (tree_set_
 F TR_nactions, 8
 F TR_selanchor, 4       # multi-select: where a Shift range starts
 F TR_pad2, 4
+F TR_rowfn, 8           # tree_set_rowbuttons: fn(ctx, tr, node, right, y, h) -> width drawn, or 0
+F TR_rowbw, 4           # the width it drew last frame, and for which node
+F TR_rownode, 4
+F TR_gen, 4             # nodes made so far
+F TR_pad3, 4
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame

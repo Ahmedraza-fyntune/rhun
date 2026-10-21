@@ -344,5 +344,85 @@ class Corners(ViewsBase):
         self.assertNotIn(' cur ', rows[1])
 
 
+class Review2(ViewsBase):
+    """Cases from the second review: a node's menu outlives its actions, a late answer for a node
+    removed and added again, actions counted as the patch leaves them, a node replaced twice in a
+    patch, select when revealing in a multi-select tree."""
+
+    def test_an_open_menu_keeps_its_labels_when_the_actions_go(self):
+        out = self.run_editor(['print-view todo'])
+        x, y = self.row_xy(self.rows(out), 't:main.rs:1')
+        out = self.run_editor([f'click {x} {y} right', 'wait 100', 'cmd viewfake.delpin', 'wait 300', 'print-menu'])
+        self.assertIn('Pin', out)
+
+    def test_a_late_answer_for_a_node_made_again_is_dropped(self):
+        self.env['VIEWFAKE_LAZY'] = 'late'
+        out = self.run_editor(['view-show items', 'wait 300', 'view-focus items', 'key Down', 'key Right',
+                               'wait 100', 'cmd viewfake.readd', 'wait 1500', 'print-views'])
+        line = [l for l in out if l.startswith('view=2 ')][0]
+        n = int(line.split(' nodes=')[1].split(' ')[0])
+        out2 = self.run_editor(['view-show items', 'wait 300', 'cmd viewfake.readd', 'wait 1500', 'print-views'])
+        n2 = int([l for l in out2 if l.startswith('view=2 ')][0].split(' nodes=')[1].split(' ')[0])
+        self.assertEqual(n, n2)                 # the old a's children never came
+
+    def test_one_key_defined_thirty_times_is_one_action(self):
+        self.run_editor(['cmd viewfake.actswap', 'wait 300'])
+        log = self.fake_log()
+        self.assertFalse(any('toobig actions' in l for l in log), log)
+
+    def test_a_node_replaced_twice_counts_once(self):
+        self.run_editor(['cmd viewfake.fatset', 'wait 1000', 'wait 1000', 'cmd viewfake.fatsame', 'wait 800'])
+        last = [l for l in self.fake_log() if l.startswith('ok ') or l.startswith('error ')][-1]
+        self.assertTrue(last.startswith('ok '), last)
+
+    def test_reveal_with_select_selects_in_a_multi_select_tree(self):
+        self.run_editor(['cmd viewfake.revealmulti', 'wait 400'])
+        log = self.fake_log()
+        i = max(k for k, l in enumerate(log) if l.startswith('0 view 1 select '))
+        self.assertTrue(log[i].endswith(' 1 11'), log[i])     # one id, "t:lib.rs:1" and its LF
+        self.assertEqual(log[i + 1], 't:lib.rs:1')
+
+
+class Menus(ViewsBase):
+    """The extensions' manifest menus in views (menu.s): view_title buttons in the header,
+    view_item_inline buttons on the hovered or cursor row, view_item as a row's context menu."""
+
+    def ran(self, name):
+        return any(l.startswith(f'0 run rhun-tests/viewfake.{name} ') or l == f'0 run rhun-tests/viewfake.{name}'
+                   or l.startswith(f'0 run viewfake.{name} ') for l in self.fake_log())
+
+    def test_a_view_title_button_runs_its_command(self):
+        side = [l for l in self.run_editor(['print-sidebar']) if l.startswith('rhun-tests/viewfake.todo ')][0]
+        y = int(side.split(' at=')[1].split(',')[1].split(' ')[0]) - 14     # the header above the body
+        out = self.run_editor([f'move 60 {y}', 'wait 50', 'print-views'])     # its buttons show on hover
+        line = [l for l in out if l.startswith('titlebuttons rhun-tests/viewfake.todo ')][0]
+        x = int(line.split(' x=')[1].split(' ')[0])
+        w = int(line.split(' w=')[1])
+        self.run_editor([f'move 60 {y}', 'wait 50', f'click {x + w // 2} {y}', 'wait 300'])
+        self.assertTrue(self.ran('rescan'), self.fake_log())
+
+    def test_a_row_without_a_menu_record_opens_the_manifest_menu(self):
+        out = self.run_editor(['print-view todo'])
+        x, y = self.row_xy(self.rows(out), 'f:main.rs')
+        out = self.run_editor([f'click {x} {y} right', 'wait 100', 'print-menu', 'menu-pick Rescan With New Ids',
+                               'wait 300'])
+        self.assertIn('Rescan With New Ids [rhun-tests/viewfake]', out)
+        self.assertTrue(self.ran('renamed'), self.fake_log())
+
+    def test_an_inline_manifest_button_on_the_hovered_row(self):
+        out = self.run_editor(['print-view todo'])
+        at = [l for l in out if l.startswith('at=')][0]
+        vx = int(at.split('=')[1].split(',')[0])
+        vw = int(at.split(' size=')[1].split('x')[0])
+        rowh = int(at.split(' rowh=')[1])
+        rows = self.rows(out)
+        y = int([r for r in rows if ' id=f:lib.rs ' in r][0].split(' y=')[1].split(' ')[0])
+        bx = vx + vw - 16 - rowh // 2
+        out = self.run_editor([f'move {bx} {y + rowh // 2}', 'wait 50', f'click {bx} {y + rowh // 2}', 'wait 300',
+                               'print-view todo'])
+        self.assertTrue(self.ran('show'), self.fake_log())
+        self.assertFalse(any(' cur ' in r for r in self.rows(out)))     # the press was the button's
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -102,6 +102,21 @@ class Pictures(ViewsBase):
         self.assertIn('0 view 5 focus 1', log)
         self.assertIn('0 view 5 key - b', log)
 
+    def test_a_chord_bound_to_cut_asks_the_picture(self):
+        cfg = self.work / 'config/rhun/config'
+        cfg.write_text(cfg.read_text() + '[keys]\nctrl+k ctrl+x = cut\n')
+        (self.proj / 'note.txt').write_text('keep me', encoding='utf-8')
+        x, y = self.shown()
+        out = self.run_editor([f'open {self.proj / "note.txt"}', 'view-show pic', 'wait 300',
+                               f'click {x + 50} {y + 30}', 'key ctrl+k', 'key ctrl+x', 'wait 300', 'print-doc'])
+        self.assertIn('keep me', '\n'.join(out))   # the document under it is untouched
+        self.assertTrue(any(l.endswith(f' vcopy {PIC} cut') for l in self.fake_log()), self.fake_log())
+
+    def test_a_picture_view_takes_title_and_badge_patches(self):
+        out = self.run_editor(['cmd viewfake.pictitle', 'wait 300', 'print-views', 'print-panel-tabs'])
+        self.assertTrue(any(l.startswith(f'view={PIC} kind=picture') and ' title=Drawing badge=3 ' in l for l in out),
+                        out)
+
     def test_without_view_keys_a_picture_hears_no_keys(self):
         self.env['VIEWFAKE_PIC'] = 'nokeys'
         x, y = self.shown()
