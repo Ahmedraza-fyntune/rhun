@@ -15,6 +15,8 @@
 .equ SP_ITEM_ACT_MAX, 8         # actions of a group or a resource (its menu)
 .equ SP_TEXT_MAX, 200           # status, placeholder, labels
 .equ SP_TIP_MAX, 1000           # a resource's tooltip
+.equ SP_TSLOT, 224              # an action's inline key (16 bytes) and title (208) in SP_tblob
+.equ SP_INLINE_MAX, 4           # inline buttons on a row
 .equ SP_INPUT_MAX, 65536        # the message box's text
 .equ ID_SP, 0x5f0000            # + slot * 16 + n: a provider's buttons; + 15 its message box
 
@@ -41,6 +43,9 @@ F SP_handle, 4          # SCM, as the extension knows it
 F SP_place, 4           # its sidebar section
 F SP_inbox, 4           # the message box has the keyboard
 F SP_pad, 4
+F SP_ta, 8              # TA records for the tree's inline buttons, one per action (owned), "aN" keys
+F SP_nta, 8
+F SP_tblob, 8           # their keys and titles (owned)
 F SP_tf, TF_SIZE        # the message box
 ENDSTRUCT SP_SIZE
 
@@ -101,6 +106,16 @@ menu_act: .zero 4 * SP_ITEM_ACT_MAX
 menu_path: .zero SB_SIZE        # its resource's path, absolute, a cstr ("" for a group)
 handle_seq: .long 0
 menu_n: .long 0
+.p2align 3
+xrec: .zero SB_SIZE             # a node's "inline LEN" record
+ikeys: .zero SB_SIZE            # and its keys
+diffsb: .zero SB_SIZE           # the diff a click opens
+dname: .zero 4200               # its file's name, a cstr
+diff_doc: .quad 0               # the document whose base a click waits for, its provider, the
+diff_sp: .quad 0                #   resource and its path's offset in the provider's body
+diff_res: .quad 0
+diff_off: .quad 0
+title_line: .zero SB_SIZE       # "scm OWNER/NAME ROOT": the header buttons' target
 
 .text
 
@@ -265,6 +280,10 @@ FN scmext_h_register
     mov esi, [r15 + SP_handle]
     mov rdi, r12
     call reply_ok_num
+    # the open files under the root: their quick-diff provider may be this one now
+    mov rdi, [r15 + SP_root]
+    mov rsi, [r15 + SP_rootlen]
+    call scmext_qd_root
     mov dword ptr [rip + g_dirty], 1
     jmp 9f
 6:  mov rdi, r15
@@ -1288,8 +1307,135 @@ take_update:
     mov rdi, r15
     call build_table
     mov rdi, r15
+    call build_actions
+    mov rdi, r15
     call build_tree
     EPILOGUE
+
+# build_actions(sp): every action as an inline button the tree can show ("aN" for action N, its icon,
+#   its label as the tooltip); rows name theirs in an "inline" record
+build_actions:
+    PROLOGUE 16
+    mov r15, rdi
+    mov r12, [r15 + SP_act + VEC_len]
+    lea rdi, [r12 + 1]
+    imul rdi, rdi, TA_SIZE
+    call mem_alloc
+    mov r13, rax                # TA
+    lea rdi, [r12 + 1]
+    imul rdi, rdi, SP_TSLOT
+    call mem_alloc
+    mov r14, rax                # keys and titles
+    xor ebx, ebx
+1:  cmp rbx, r12
+    jae 2f
+    imul rdi, rbx, SP_TSLOT
+    add rdi, r14
+    mov [rsp], rdi
+    mov byte ptr [rdi], 'a'
+    inc rdi
+    mov rsi, rbx
+    call fmt_u64
+    lea rcx, [rax + 1]          # the key's length: "a" and the digits
+    imul rax, rbx, TA_SIZE
+    add rax, r13
+    mov rdx, [rsp]
+    mov [rax + TA_key], rdx
+    mov [rax + TA_keylen], rcx
+    add rdx, 16
+    mov [rax + TA_title], rdx
+    imul rsi, rbx, AC_SIZE
+    add rsi, [r15 + SP_act + VEC_ptr]
+    mov ecx, [rsi + AC_icon]
+    mov [rax + TA_icon], ecx
+    mov rdi, r15
+    call action_label           # into tmp, a cstr
+    mov rsi, [rip + tmp + SB_ptr]
+    mov rdi, [rsp]
+    add rdi, 16
+    mov ecx, SP_TSLOT - 17
+3:  mov al, [rsi]
+    test al, al
+    jz 4f
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    dec ecx
+    jnz 3b
+4:  mov byte ptr [rdi], 0
+    inc rbx
+    jmp 1b
+2:  mov rdi, [r15 + SP_tree]
+    mov rsi, r13
+    mov rdx, r12
+    call tree_set_actions
+    mov rdi, [r15 + SP_ta]
+    call mem_free
+    mov rdi, [r15 + SP_tblob]
+    call mem_free
+    mov [r15 + SP_ta], r13
+    mov [r15 + SP_nta], r12
+    mov [r15 + SP_tblob], r14
+    EPILOGUE
+
+# inline_rec(sp, first action, count) -> rax, rdx the "inline LEN" record of the actions among them
+#   that have an icon (at most four), or rdx 0 when none has
+inline_rec:
+    PROLOGUE 16
+    mov r15, rdi
+    mov r12d, esi
+    lea r13d, [rsi + rdx]
+    lea rdi, [rip + ikeys]
+    call sb_clear
+    xor r14d, r14d              # buttons
+1:  cmp r12d, r13d
+    jae 2f
+    cmp r14d, SP_INLINE_MAX
+    jae 2f
+    mov eax, r12d
+    inc r12d
+    imul rcx, rax, AC_SIZE
+    add rcx, [r15 + SP_act + VEC_ptr]
+    cmp dword ptr [rcx + AC_icon], 0
+    jl 1b
+    test r14d, r14d
+    jz 11f
+    push rax
+    push rax
+    lea rdi, [rip + ikeys]
+    mov esi, ' '
+    call sb_push_byte
+    pop rax
+    pop rax
+11: imul rax, rax, TA_SIZE
+    add rax, [r15 + SP_ta]
+    lea rdi, [rip + ikeys]
+    mov rsi, [rax + TA_key]
+    mov rdx, [rax + TA_keylen]
+    call sb_push
+    inc r14d
+    jmp 1b
+2:  xor edx, edx
+    test r14d, r14d
+    jz 9f
+    lea rdi, [rip + xrec]
+    call sb_clear
+    lea rdi, [rip + xrec]
+    lea rsi, [rip + .Linline]
+    call sb_push_cstr
+    lea rdi, [rip + xrec]
+    mov rsi, [rip + ikeys + SB_len]
+    call sb_push_u64
+    lea rdi, [rip + xrec]
+    mov esi, 10
+    call sb_push_byte
+    lea rdi, [rip + xrec]
+    mov rsi, [rip + ikeys + SB_ptr]
+    mov rdx, [rip + ikeys + SB_len]
+    call sb_push
+    mov rax, [rip + xrec + SB_ptr]
+    mov rdx, [rip + xrec + SB_len]
+9:  EPILOGUE
 
 # ---------------- the tree and the path table ----------------
 
@@ -1315,13 +1461,20 @@ build_tree:
     mov rsi, [r13 + GR_id]
     mov rdx, [r13 + GR_idlen]
     call sb_push
+    mov rdi, r15
+    mov esi, [r13 + GR_act0]
+    mov edx, [r13 + GR_nact]
+    call inline_rec
+    push rdx
+    push rax
     mov rdi, rbx
     mov rsi, [rip + tmp + SB_ptr]
     mov rdx, [rip + tmp + SB_len]
     mov rcx, [r13 + GR_label]
     mov r8, [r13 + GR_llen]
     mov r9d, KIDS_OPEN
-    call tree_kid
+    call tree_kid_x
+    add rsp, 16
     mov r14d, eax
     mov rdi, rbx
     mov esi, r14d
@@ -1410,13 +1563,20 @@ res_node:
     call path_basename
     mov [rsp + 8], rax
     mov [rsp + 16], rdx
+    mov rdi, r15
+    mov esi, [r13 + RS_act0]
+    mov edx, [r13 + RS_nact]
+    call inline_rec
+    push rdx
+    push rax
     mov rdi, rbx
     mov rsi, [rip + tmp + SB_ptr]
     mov rdx, [rip + tmp + SB_len]
-    mov rcx, rax
-    mov r8, [rsp + 16]
+    mov rcx, [rsp + 24]         # the file's name (rsp moved by the two pushes)
+    mov r8, [rsp + 32]
     xor r9d, r9d
-    call tree_kid
+    call tree_kid_x
+    add rsp, 16
     mov r14d, eax
     mov rdi, rbx
     mov esi, r14d
@@ -2061,12 +2221,276 @@ activate_res:
     mov rdi, r15
     call run_action
     jmp 9f
-1:  mov rdi, r15
+1:  # no command: the file's changes against the provider's quick-diff base, in a diff tab; the file
+    # opens first when it is not open, and the diff follows when its base arrives
+    mov rdi, r15
     mov rsi, rbx
     call res_abs
+    mov r12, rax
     mov rdi, rax
-    call app_open_path
+    call open_doc_of
+    test rax, rax
+    jz 3f
+    mov r13, rax
+    cmp qword ptr [r13 + DOC_qbase], 0
+    je 2f
+    mov rdi, r15
+    mov rsi, rbx
+    mov rdx, r13
+    call open_base_diff
+    test eax, eax
+    jnz 9f
+    mov rdi, r12                # no changes: the file
+    call app_open_file
+    jmp 9f
+2:  mov rdi, r12                # open, its base not here yet: the file, then the diff
+    call app_open_file
+    mov rax, r13
+    jmp 5f
+3:  mov rdi, r12
+    call app_open_file
+    test eax, eax
+    js 4f
+    mov edi, eax
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 9f
+    mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 9f
+5:  mov rcx, [rax + DOC_id]
+    mov [rip + diff_doc], rcx
+    mov [rip + diff_sp], r15
+    mov [rip + diff_res], rbx
+    mov rcx, [rbx + RS_path]
+    sub rcx, [r15 + SP_body]
+    mov [rip + diff_off], rcx       # the resource, by its path's place in the body (it may change)
+    jmp 9f
+4:  mov rdi, r12
+    call app_open_path          # not a file it can open as text
 9:  EPILOGUE
+
+# open_doc_of(path cstr) -> rax the open text document of that file, or 0
+open_doc_of:
+    PROLOGUE
+    mov r12, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 8f
+    mov rdi, rbx
+    inc rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov r13, [rax + TAB_doc]
+    test r13, r13
+    jz 1b
+    mov rdi, [r13 + DOC_path]
+    test rdi, rdi
+    jz 1b
+    mov rsi, r12
+    call strcmp_eq
+    test eax, eax
+    jz 1b
+    mov rax, r13
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# open_base_diff(sp, RS*, doc) -> eax 1 when a diff tab shows the document's changes against its
+#   quick-diff base ("NAME (LABEL)", read-only, as rhun's git changes look), 0 when they are equal
+open_base_diff:
+    PROLOGUE 32
+    mov r15, rdi
+    mov rbx, rsi
+    mov r12, rdx
+    # the file's path in the repository, a cstr, for the diff's headers
+    mov rcx, [rbx + RS_plen]
+    cmp rcx, 4095
+    ja 8f
+    lea rdi, [rip + dname]
+    mov rsi, [rbx + RS_path]
+    rep movsb
+    mov byte ptr [rdi], 0
+    mov rdi, r12
+    call doc_text_copy
+    mov r13, rax
+    mov r14, rdx
+    lea rdi, [rip + diffsb]
+    call sb_clear
+    lea rdi, [rip + diffsb]
+    lea rsi, [rip + dname]
+    mov rdx, [r12 + DOC_qbase]
+    mov rcx, [r12 + DOC_qblen]
+    mov r8, r13
+    mov r9, r14
+    call diff_unified
+    mov rdi, r13
+    call mem_free
+    cmp qword ptr [rip + diffsb + SB_len], 0
+    je 8f
+    # "NAME (LABEL)": shown again when open
+    mov rdi, [rbx + RS_path]
+    mov rsi, [rbx + RS_plen]
+    call path_basename
+    lea rdi, [rip + tmp]
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    call sb_clear
+    lea rdi, [rip + tmp]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call sb_push
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lparen]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, [r15 + SP_label]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov esi, ')'
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    xor esi, esi
+    call sb_push_byte
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 3f
+    mov rdi, rbx
+    inc rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov r13, [rax + TAB_doc]
+    test r13, r13
+    jz 1b
+    cmp qword ptr [r13 + DOC_diff], 0
+    je 1b
+    mov rdi, [r13 + DOC_name]
+    test rdi, rdi
+    jz 1b
+    mov rsi, [rip + tmp + SB_ptr]
+    call strcmp_eq
+    test eax, eax
+    jz 1b
+    mov rdi, r13
+    mov rsi, [rip + diffsb + SB_ptr]
+    mov rdx, [rip + diffsb + SB_len]
+    call wsdiff_show
+    lea rdi, [rbx - 1]
+    call app_activate_tab
+    jmp 7f
+3:  mov rdi, [rip + tmp + SB_ptr]
+    mov rsi, [rip + diffsb + SB_ptr]
+    mov rdx, [rip + diffsb + SB_len]
+    mov ecx, 1
+    call wsdiff_tab
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN scmpanel_base_ready(doc): a quick-diff base came for the document (or none did, scmext.s): a click
+#   that opened it to show its changes gets them now
+FN scmpanel_base_ready
+    PROLOGUE
+    mov r12, rdi
+    mov rax, [rip + diff_doc]
+    test rax, rax
+    jz 9f
+    cmp rax, [r12 + DOC_id]
+    jne 9f
+    mov qword ptr [rip + diff_doc], 0
+    mov r15, [rip + diff_sp]
+    test r15, r15
+    jz 9f
+    cmp qword ptr [r12 + DOC_qbase], 0
+    je 9f
+    # the resource is found again by its path's place in the body: the panel may have been updated
+    mov rbx, [rip + diff_res]
+    mov rcx, [r15 + SP_res + VEC_ptr]
+    cmp rbx, rcx
+    jb 9f
+    mov rax, [r15 + SP_res + VEC_len]
+    imul rax, rax, RS_SIZE
+    add rax, rcx
+    cmp rbx, rax
+    jae 9f
+    mov rax, [rbx + RS_path]
+    sub rax, [r15 + SP_body]
+    cmp rax, [rip + diff_off]
+    jne 9f
+    mov rdi, r15
+    mov rsi, rbx
+    mov rdx, r12
+    call open_base_diff
+9:  EPILOGUE
+
+# sp_tree_action(sp, tr, node, key, keylen): one of a row's inline buttons ("aN": action N)
+sp_tree_action:
+    PROLOGUE
+    mov r15, rdi
+    cmp r8, 2
+    jb 9f
+    cmp byte ptr [rcx], 'a'
+    jne 9f
+    lea rdi, [rcx + 1]
+    lea rsi, [r8 - 1]
+    mov r12, rsi
+    call parse_u64
+    cmp rdx, r12
+    jne 9f
+    cmp rax, [r15 + SP_act + VEC_len]
+    jae 9f
+    mov rdi, r15
+    mov rsi, rax
+    call run_action
+9:  EPILOGUE
+
+# sp_title(sp, right, y, h) -> eax the x its header buttons start at: the extensions' scm_title items
+#   for "scm OWNER/NAME ROOT" (menu.s)
+sp_title:
+    PROLOGUE 16
+    mov r15, rdi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    lea rdi, [rip + title_line]
+    call sb_clear
+    lea rdi, [rip + title_line]
+    lea rsi, [rip + .Lscm_sp]
+    call sb_push_cstr
+    mov rdi, [r15 + SP_ext]
+    call ext_full_name
+    lea rdi, [rip + title_line]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + title_line]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + title_line]
+    mov rsi, [r15 + SP_root]
+    call sb_push_cstr
+    # its widgets: ID_SP + slot * 16 + 8 .. 12
+    mov rax, r15
+    lea rcx, [rip + sp_slots]
+    sub rax, rcx
+    xor edx, edx
+    mov ecx, SP_SIZE
+    div ecx
+    shl eax, 4
+    lea r9d, [rax + ID_SP + 8]
+    lea rdi, [rip + title_line]
+    mov rsi, [rdi + SB_len]
+    mov rdi, [rdi + SB_ptr]
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    mov r8d, [rsp + 8]
+    call menu_scm_title_buttons
+    mov ecx, [rsp]
+    sub ecx, eax
+    mov eax, ecx
+    EPILOGUE
 
 # res_abs(sp, RS*) -> rax the resource's absolute path, a cstr in menu_path
 res_abs:
@@ -2347,8 +2771,17 @@ sp_free:
     call mem_free
     mov rdi, [r15 + SP_label]
     call mem_free
+    mov rdi, [r15 + SP_ta]
+    call mem_free
+    mov rdi, [r15 + SP_tblob]
+    call mem_free
     lea rdi, [r15 + SP_tf + TF_sb]
     call sb_free
+    cmp [rip + diff_sp], r15
+    jne 3f
+    mov qword ptr [rip + diff_sp], 0
+    mov qword ptr [rip + diff_doc], 0
+3:
     cmp [rip + menu_sp], r15
     jne 2f
     mov qword ptr [rip + menu_sp], 0
@@ -2620,6 +3053,9 @@ FN scmpanel_dump
 .Lfile_pfx: .asciz "file:"
 .Lsep: .asciz "  "
 .Lm_open: .asciz "Open File"
+.Linline: .asciz "inline "
+.Lparen: .asciz " ("
+.Lscm_sp: .asciz "scm "
 .Lt_group: .asciz "group "
 .Lt_resource: .asciz "resource "
 .Le_unknown: .asciz "unknown no such request"
@@ -2641,8 +3077,8 @@ color_names: .quad .Lc_added, T_GIT_ADD, .Lc_modified, T_GIT_MOD, .Lc_deleted, T
     .quad .Lc_conflict, T_ERROR, .Lc_untracked, T_GIT_ADD, .Lc_ignored, T_MUTED, 0, 0
 menu_handlers: .quad menu_act_0, menu_act_1, menu_act_2, menu_act_3, menu_act_4, menu_act_5
     .quad menu_act_6, menu_act_7
-sp_place_ops: .quad sp_draw, sp_key, sp_focus, 0, 0, 0
-sp_tree_ops: .quad sp_activate, 0, 0, 0, sp_menu, 0, 0, 0
+sp_place_ops: .quad sp_draw, sp_key, sp_focus, 0, sp_title, 0
+sp_tree_ops: .quad sp_activate, 0, 0, 0, sp_menu, 0, 0, 0, sp_tree_action
 
 .bss
 .p2align 3

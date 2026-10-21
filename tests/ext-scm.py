@@ -4,6 +4,7 @@ and scm), driven headlessly with the scripted fake extension tests/ext/scmfake.p
 repository: Git data through rhun under [needs] git = read and the trust pause, commit-message
 providers beside the built-in ones, quick-diff bases for the gutter, and a second VCS provider tab."""
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -511,6 +512,50 @@ class ScmPanel(Base):
         tabs = [l for l in out if l.startswith('tabs=')]
         self.assertTrue(tabs[-1].endswith('*gone.txt'), out)     # a resource without a command opens its file
 
+    def test_inline_buttons_run_their_actions(self):
+        # with the sidebar shown at 1000x600: a.txt's row is at y 481; its actions with icons are
+        # buttons at its right end while it is hovered, the first rightmost
+        out = self.start(self.provider(self.body()), 'cmd toggle_sidebar', 'wait 300', 'move 100 481', 'wait 200',
+                         'click 210 481', 'wait 300', 'move 100 481', 'wait 200', 'click 184 481', 'wait 300')
+        log = self.fake_log('hg')
+        runs = [(l.split()[3], log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run hg.') and ' ref ' in l]
+        self.assertEqual(runs, [('hg.stage', "| 'a.txt'"), ('hg.forget', "| 'a.txt'")], out)   # not the row's open
+
+    def test_other_extensions_add_header_buttons(self):
+        self.provider(self.body())
+        exts = self.ext('tools', needs='', hello='hello 1 command-args', commands={'sync': []},
+                        ini='[command-options]\nsync.icon = refresh\n[menu.scm_title]\nsync.group = 1\n')
+        self.start(exts, 'cmd toggle_sidebar', 'wait 300', 'click 222 320', 'wait-ext tools running', 'wait 300')
+        log = self.fake_log('tools')
+        runs = [log[i + 1] for i, l in enumerate(log) if l.startswith('< 0 run tools.sync')]
+        self.assertEqual(runs, ['| ' + repr(f'scm rhun-tests/hg {self.proj.as_posix()}\n')], log)
+
+    def qd_provider(self):
+        body = scm_body('default', '', [], [('changes', 'Changes', [], [('M', 'modified', 'a.txt', [])])])
+        root = str(self.proj)
+        reg = f'{len(root.encode())} 9\n{root}Mercurial'
+        return self.ext('hg', needs='project = read', hello='hello 1 scm quickdiff command-args',
+                        ini='on = startup\n[provides]\nquickdiff = *.txt',
+                        answers={'quickdiff': {'body': 'hello world\nold line\n'}},
+                        events={'0 ready': [[f'scm-register {len(reg.encode())}', reg],
+                                            [f'scm-update $SCM {len(body.encode())}', body]]})
+
+    def test_a_click_without_a_command_opens_the_changes_against_the_base(self):
+        out = self.run_editor(['wait-ext hg running', 'wait-scm 1', 'wait 300', 'wait-quickdiff',
+                               'scm-click 1 changes a.txt', 'wait 300', 'print-tabs', 'print-doc'],
+                              exts=self.qd_provider(), drop_waits=True)
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertEqual(tabs, ['tabs=a.txt | *a.txt (Mercurial)'], out)
+        # the diff document: the hunk, then its lines (the gutter marks which are old and new)
+        self.assertIn('@@ -1,2 +1,3 @@ a.txt', out)
+        self.assertLess(out.index('old line'), out.index('second line'))
+
+    def test_the_file_opens_first_when_it_is_not_open(self):
+        out = self.run_editor(['wait-ext hg running', 'wait-scm 1', 'scm-click 1 changes a.txt', 'wait 300',
+                               'wait-quickdiff', 'wait 200', 'print-tabs'], exts=self.qd_provider(), files=(),
+                              drop_waits=True)
+        self.assertEqual([l for l in out if l.startswith('tabs=')], ['tabs=a.txt | *a.txt (Mercurial)'], out)
+
     def test_the_message_box(self):
         out = self.start(self.provider(self.body()), 'scm-focus 1', 'type fix it', 'cmd hg.input', 'wait 200',
                          'key ctrl+Return', 'wait 200', 'cmd hg.set', 'wait 200')
@@ -555,6 +600,19 @@ class ScmPanel(Base):
         log = self.fake_log('tools')
         runs = [log[i + 1] for i, l in enumerate(log) if l.startswith('< 0 run tools.lint')]
         self.assertEqual(runs, ['| ' + repr('resource changes a.txt\n')], log)
+
+    def test_files_already_open_get_a_newly_registered_roots_base(self):
+        reg = f'{len(str(self.proj).encode())} 2\n{self.proj}hg'
+        exts = self.ext('hg', needs='project = read', hello='hello 1 scm quickdiff',
+                        ini='on = startup\n[provides]\nscm = yes\nquickdiff = *.txt',
+                        answers={'quickdiff': {'body': 'hello world\nold line\nthird line\n'}},
+                        commands={'reg': [[f'scm-register {len(reg.encode())}', reg]]})
+        out = self.run_editor(['wait-ext hg running', 'wait-git', 'wait 300', 'print-git', 'cmd hg.reg', 'wait 300',
+                               'wait-quickdiff', 'print-git'], exts=exts, drop_waits=True)
+        marks = [l for l in out if l.startswith('marks ')]
+        self.assertEqual(marks[-1], 'marks .~..', out)               # the provider's base, not HEAD's
+        asks = [l for l in self.fake_log('hg') if re.match(r'^< \d+ quickdiff ', l)]
+        self.assertEqual(len(asks), 1, self.fake_log('hg'))
 
     def test_stopping_removes_its_panels(self):
         out = self.start(self.provider(self.body()), 'ext-set hg stop', 'wait 400')
