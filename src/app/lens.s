@@ -378,35 +378,57 @@ FN lens_has
     mov eax, edx
     ret
 
-# FN lens_row_add(doc, line, rows) -> eax rows, with a lens row put first in wb_starts when the line
-# has lenses (g_wb_lens 1)
+# FN lens_row_add(doc, line, rows) -> eax rows, with rows put first in wb_starts for the ghost text's
+# lines below the line before (ghost.s) and the line's lenses (g_wb_lens: how many)
 FN lens_row_add
     mov dword ptr [rip + g_wb_lens], 0
     mov eax, edx
     test eax, eax
     jz 9f
-    push rdx
+    push rbx
+    push r12
+    push r13
+    mov ebx, edx                # rows
+    mov r12, rdi
+    mov r13, rsi
+    call ghost_rows_before
+    push rax
+    mov rdi, r12
+    mov rsi, r13
     call lens_has
-    pop rdx
-    test eax, eax
-    mov eax, edx
-    jz 9f
-    lea rcx, [rip + wb_starts]
-    mov r8d, edx                # entries rows + 1, moved up one
-1:  mov r9d, [rcx + r8*4]
-    mov [rcx + r8*4 + 4], r9d
+    pop rcx
+    add eax, ecx                # the rows put first
+    mov r8d, eax
+    mov eax, ebx
+    pop r13
+    pop r12
+    pop rbx
     test r8d, r8d
+    jz 9f
+    cmp r8d, 64                 # (far fewer than MAXROWS)
+    ja 9f
+    lea rcx, [rip + wb_starts]
+    mov r9d, eax                # entries rows + 1, moved up r8
+1:  mov r10d, [rcx + r9*4]
+    lea r11d, [r9 + r8]
+    mov [rcx + r11*4], r10d
+    test r9d, r9d
     jz 2f
-    dec r8d
+    dec r9d
     jmp 1b
-2:  mov dword ptr [rcx], 0
-    inc eax
+2:  xor r9d, r9d
+3:  mov dword ptr [rcx + r9*4], 0
+    inc r9d
+    cmp r9d, r8d
+    jb 3b
+    add eax, r8d
     mov [rip + wb_rows], eax
-    mov dword ptr [rip + g_wb_lens], 1
+    mov [rip + g_wb_lens], r8d
 9:  ret
 
-# FN lens_row_take(doc, line, y) -> eax 1 when wb_starts' first row was the line's lens row: it is
-# drawn at y and taken out of wb_starts (draw_wrapped then draws the text rows from y + a row)
+# FN lens_row_take(doc, line, y) -> eax the rows wb_starts had first (lens_row_add): the ghost
+# text's rows (ghost.s) and the line's lens row are drawn from y and taken out of wb_starts
+# (draw_wrapped then draws the text rows below them)
 FN lens_row_take
     xor eax, eax
     cmp dword ptr [rip + g_wb_lens], 0
@@ -415,18 +437,38 @@ FN lens_row_take
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
-    # the rows that follow move down one entry
+    mov eax, [rip + g_wb_lens]
+    mov [rsp + 8], eax
+    # the rows that follow move down
     lea rcx, [rip + wb_starts]
     mov r8d, [rip + wb_rows]
+    sub r8d, eax
     xor r9d, r9d
 1:  cmp r9d, r8d
-    jae 2f
-    mov eax, [rcx + r9*4 + 4]
-    mov [rcx + r9*4], eax
+    ja 2f
+    lea r10d, [r9 + rax]
+    mov r10d, [rcx + r10*4]
+    mov [rcx + r9*4], r10d
     inc r9d
     jmp 1b
-2:  dec dword ptr [rip + wb_rows]
+2:  mov [rip + wb_rows], r8d
     mov dword ptr [rip + g_wb_lens], 0
+    # the ghost text's rows
+    mov rdi, rbx
+    mov rsi, r12
+    call ghost_rows_before
+    mov r14d, eax
+    xor r15d, r15d
+3:  cmp r15d, r14d
+    jae 4f
+    mov edi, r15d
+    mov esi, r13d
+    call ghost_row_draw
+    add r13d, [rip + g_lh]
+    inc r15d
+    jmp 3b
+4:  cmp r14d, [rsp + 8]
+    jae 8f                      # no lens row
     # visible?
     mov eax, r13d
     add eax, [rip + g_lh]
@@ -466,7 +508,7 @@ FN lens_row_take
     call lens_text
     inc r14
     jmp 3b
-8:  mov eax, 1
+8:  mov eax, [rsp + 8]
     EPILOGUE
 9:  ret
 

@@ -7,7 +7,7 @@
 .bss
 .p2align 3
 .globl wb_starts, wb_rows
-wb_starts: .zero 4 * (MAXROWS + 2)     # byte offset of each row in the line, last = length (and a lens row)
+wb_starts: .zero 4 * (MAXROWS + 66)    # byte offset of each row in the line, last = length (and up to 64 rows before it: lens.s)
 wb_rows: .long 0
 
 .text
@@ -645,10 +645,14 @@ FN wrap_pos_at
     xor edx, edx
     div dword ptr [rip + g_lh]
     mov r15d, eax               # row
-    xor ecx, ecx                # a code lens row (lens.s)?
-    test r15d, r15d
-    jnz 22f
-    mov ecx, [rip + g_wb_lens]
+    xor ecx, ecx                # a row put before the text (ghost text's, a code lens's: lens.s)?
+    mov eax, [rip + g_wb_lens]
+    cmp r15d, eax
+    jae 22f
+    dec eax
+    cmp r15d, eax               # the last of them: the lens row, when there is one
+    jne 22f
+    mov ecx, 1
 22: mov [rsp + 4], ecx
     mov eax, [rsp]
     sub eax, [rip + g_ed_tx]

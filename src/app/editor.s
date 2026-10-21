@@ -2230,11 +2230,12 @@ draw_wrapped:
     mov rdi, rbx                # its code lens row (lens.s): drawn, then the text rows below it
     mov rsi, r12
     mov edx, r13d
-    call lens_row_take
+    call lens_row_take          # -> eax the rows drawn above the text (ghost rows, a lens row)
     test eax, eax
     jz 16f
-    add r13d, [rip + g_lh]
-    dec r14d
+    sub r14d, eax
+    imul eax, [rip + g_lh]
+    add r13d, eax
 16:
     # current line highlight across all its rows
     cmp dword ptr [rip + cfg_highlight_line], 0
@@ -4328,7 +4329,15 @@ FN editor_timeout
     cmp eax, ebx
     jge 8f
 7:  mov ebx, eax
-8:  mov rax, [rip + widest_due]
+8:  call ghost_timeout          # and inline completion's pause (ghost.s)
+    cmp eax, -1
+    je 4f
+    cmp ebx, -1
+    je 3f
+    cmp eax, ebx
+    jge 4f
+3:  mov ebx, eax
+4:  mov rax, [rip + widest_due]
     test rax, rax
     jz 1f
     call time_ms
@@ -4351,6 +4360,7 @@ FN editor_tick
     call deco_visible_tick
     call present_tick           # the providers' requests that are due (present.s)
     call hl_tick                # the caret's highlights (hicolor.s)
+    call ghost_tick             # inline completion (ghost.s)
     add rsp, 8
     cmp qword ptr [rip + widest_due], 0
     je 1f

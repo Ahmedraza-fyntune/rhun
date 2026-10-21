@@ -42,6 +42,9 @@ cfg_code_lens: .long 1          # editor presentation: code lens (lens.s)
 cfg_highlight_occurrences: .long 1      # editor presentation: the caret's word's occurrences (hicolor.s)
 .globl cfg_color_swatches
 cfg_color_swatches: .long 1     # editor presentation: color swatches (hicolor.s)
+.globl cfg_inline_complete, cfg_inline_complete_delay
+cfg_inline_complete: .long 1    # editor presentation: inline completion as you type (ghost.s)
+cfg_inline_complete_delay: .long 300    # its pause after typing, ms
 cfg_cursor_blink: .long 1
 cfg_whitespace: .long 0
 cfg_sidebar: .long 1
@@ -919,6 +922,8 @@ g_settings:
     SETTING .Ls_editor, format_on_paste, ST_BOOL, cfg_format_on_paste, 0, 1, 1, 0, "Format pasted text", "Format the pasted lines with the formatter's range formatting."
     # editor presentation
     SETTING .Ls_editor, folding, ST_BOOL, cfg_folding, 0, 1, 1, 0, "Folding", "Fold regions from the gutter's chevrons (ctrl+shift+[ and ctrl+shift+])."
+    SETTING .Ls_editor, inline_complete, ST_BOOL, cfg_inline_complete, 0, 1, 1, 0, "Inline suggestions", "Show what an extension suggests after the cursor as you type; Tab takes it."
+    SETTING .Ls_editor, inline_complete_delay, ST_INT, cfg_inline_complete_delay, 0, 2000, 50, 0, "Inline suggestion delay (ms)", "The pause after typing before suggestions are asked for."
     SETTING .Ls_editor, color_swatches, ST_BOOL, cfg_color_swatches, 0, 1, 1, 0, "Color swatches", "Show a small square before colors a language server finds; click it to change the color."
     SETTING .Ls_editor, highlight_occurrences, ST_BOOL, cfg_highlight_occurrences, 0, 1, 1, 0, "Highlight occurrences", "Mark the other places of the word or symbol under the cursor."
     SETTING .Ls_editor, code_lens, ST_BOOL, cfg_code_lens, 0, 1, 1, 0, "Code lens", "Show a row of actions and counts above lines a language server marks: references, tests."

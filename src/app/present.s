@@ -500,6 +500,19 @@ FN present_reply
     jnz 7f
     mov rcx, [rsp]
     mov r8, [rsp + 8]
+    push rdi
+    push rsi
+    push rdx
+    push rdx
+    call ghost_reply            # inline completion (ghost.s)
+    pop rdx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jnz 7f
+    mov rcx, [rsp]
+    mov r8, [rsp + 8]
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
@@ -578,6 +591,8 @@ FN present_ext_gone
     call lens_ext_gone
     mov rdi, rbx
     call color_ext_gone
+    mov rdi, rbx
+    call ghost_ext_gone
     EPILOGUE
 
 # ---------------- answers ----------------

@@ -102,6 +102,9 @@ FN vt_line
     mov rdi, rbx
     mov rsi, r12
     call color_line_inlays      # color swatches (hicolor.s)
+    mov rdi, rbx
+    mov rsi, r12
+    call ghost_line_inlays      # inline completion's first line (ghost.s)
 .Lvl_have:
     lea rax, [rip + vt_items]
     mov rdx, [rip + vt_n]

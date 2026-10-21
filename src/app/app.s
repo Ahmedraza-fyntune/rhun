@@ -2497,6 +2497,12 @@ FN app_on_key
     call snippet_key
     test eax, eax
     jnz 9f
+    mov edi, r12d               # editor presentation: ghost text takes Tab after them (ghost.s)
+    mov esi, r13d
+    mov edx, r14d
+    call ghost_key
+    test eax, eax
+    jnz 9f
     cmp r12d, KEY_ESCAPE
     jne 72f
     mov rdi, [rip + g_doc]

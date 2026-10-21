@@ -140,3 +140,7 @@ host-request =/ id SP "colors" SP doc SP version SP num SP num
               ; answered "ok" SP id SP len LF + num LF *( num SP num SP num SP num SP 8HEXDIG LF )
 host-request =/ id SP "color-edit" SP doc SP version SP num SP num SP num SP num SP 8HEXDIG
               ; answered "ok" SP id SP len LF + a workspace edit
+feature      =/ "inline-complete"
+host-request =/ id SP "inline-complete" SP doc SP version SP num SP num SP ( "typed" / "invoked" )
+              ; answered "ok" SP id SP len LF + num LF *8( num SP num SP num SP num SP len SP len LF )
+              ; each followed by TEXT and EXTRA (command, edit records)

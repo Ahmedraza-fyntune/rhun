@@ -429,7 +429,9 @@ FN hl_dump
     jmp 1b
 9:  EPILOGUE
 
-# hl_put_pos(rsi pos; rbx doc, r12 sb): "L:C" (1-based)
+# hl_put_pos(rsi pos; rbx doc, r12 sb): "L:C" (1-based); hl_put_pos_ext for ghost.s
+.globl hl_put_pos_ext
+hl_put_pos_ext:
 hl_put_pos:
     push r15
     push r14

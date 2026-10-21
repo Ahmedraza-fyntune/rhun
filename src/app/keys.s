@@ -2217,6 +2217,7 @@ g_commands:
     COMMAND unfold, "Unfold", cmd_unfold, "ctrl+shift+] ctrl+shift+}"
     COMMAND toggle_fold, "Toggle Fold", cmd_toggle_fold, ""
     COMMAND fold_all, "Fold All", cmd_fold_all, ""
+    COMMAND inline_complete, "Trigger Inline Completion", cmd_inline_complete, "alt+\\"
     COMMAND unfold_all, "Unfold All", cmd_unfold_all, ""
     COMMAND fold_level_1, "Fold Level 1", cmd_fold_level_1, ""
     COMMAND fold_level_2, "Fold Level 2", cmd_fold_level_2, ""

@@ -2852,6 +2852,8 @@ FN deco_visible
     push rdx
     call hl_frame               # the caret's highlights (hicolor.s)
     mov rdi, [rsp + 16]
+    call ghost_frame            # inline completion (ghost.s)
+    mov rdi, [rsp + 16]
     mov rsi, [rsp + 8]
     mov rdx, [rsp]
     call present_frame          # the providers' schedules (present.s)
