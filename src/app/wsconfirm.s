@@ -492,6 +492,8 @@ FN ws_confirm_cancel
     cmp qword ptr [rip + wc_parked], 0
     je 9f
     mov qword ptr [rip + wc_parked], 0
+    xor edi, edi                # language features: an action's command that waited goes
+    call langfeat_ws_resolved
     mov rax, [rip + wc_quiet]
     mov [rip + ws_quiet], eax
     mov rax, [rip + wc_back]
@@ -599,6 +601,8 @@ ws_resume:
     test eax, eax
     jz .Lwm_fail
     call ws_finish
+    mov edi, 1                  # language features: an action's command that waited runs now
+    call langfeat_ws_resolved
     mov rsi, [rip + wc_id]
     test rsi, rsi
     jz 4f
@@ -619,6 +623,8 @@ ws_resume:
     lea rsi, [rip + .Lws_e_stale]
     call ws_err
 .Lwm_fail:
+    xor edi, edi                # language features: an action's command that waited goes
+    call langfeat_ws_resolved
     call ws_unwind
     mov rsi, [rip + wc_id]
     test rsi, rsi

@@ -5201,9 +5201,8 @@ FN views_field
     call log_field
     pop rbx
     ret
-8:  xor eax, eax
-    pop rbx
-    ret
+8:  pop rbx
+    jmp dview_console_field     # debugger: the Debug Console's input (debugview.s), or 0
 
 # rview_log_of(ptr, len) -> rax the LG* of a log view named so (key, place name or number), or 0
 FN rview_log_of

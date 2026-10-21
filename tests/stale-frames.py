@@ -62,7 +62,7 @@ def main():
               f'{len(unpainted)} underpainted')
         for line in missing[:20] + unpainted[:20]:
             print('   ', line)
-        bad += len(missing) + len(unpainted)
+        bad += len(missing) + len(unpainted) + (status != 'ok')   # a failed or stuck run counts
     print(f'logs in {logs}')
     return 1 if bad else 0
 

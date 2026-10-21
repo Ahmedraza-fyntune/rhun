@@ -136,6 +136,10 @@ python3 tests/focused-zoom.py || fail=1
 python3 tests/agents.py || fail=1
 python3 tests/opencode.py || fail=1
 python3 tests/agents-refresh.py || fail=1
+python3 tests/ext-agents.py || fail=1
+python3 tests/ext-review.py || fail=1
+python3 tests/ext-tools.py || fail=1
+python3 tests/ext-prompts.py || fail=1
 sh tests/files.sh || fail=1
 sh tests/update.sh || fail=1
 python3 tests/commit-ai.py || fail=1
@@ -180,6 +184,8 @@ python3 tests/ext-status-items.py || fail=1
 python3 tests/ext-sdk-commands.py || fail=1
 python3 tests/langconf.py || fail=1
 python3 tests/icon-themes.py || fail=1
+# source control: Git data, commit messages, quick diff, version control panels
+python3 tests/ext-scm.py || fail=1
 # editor presentation
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }
@@ -188,6 +194,9 @@ python3 tests/asm-pitfalls.py --negative-control > /dev/null || { python3 tests/
 check edtape build/edtape_test
 python3 tests/presentation.py || fail=1
 python3 tests/folding.py || fail=1
+python3 tests/semantic.py || fail=1
+python3 tests/hints.py || fail=1
+python3 tests/lens.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1
@@ -206,6 +215,7 @@ python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
 # notebooks and custom editors (wider parity A, B)
 python3 tests/ext-notebooks.py || fail=1
+python3 tests/ext-editors.py || fail=1
 # extension management: versions, roll back, updates, removal, development installs
 python3 tests/ext-updates.py || fail=1
 python3 tests/ext-remove-clean.py || fail=1
@@ -219,7 +229,7 @@ python3 tests/ext-notify.py || fail=1
 python3 tests/ext-views-picture.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
-for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter; do
+for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter debug-transport debug-terminal debug-feature debug-tasks debug-review debug-real; do
     python3 tests/$t.py || fail=1
 done
 # testing: the test explorer (feature "tests")
@@ -230,6 +240,12 @@ if command -v wast2json >/dev/null; then python3 tests/wasm-spec.py || fail=1; e
 python3 tests/wasm-host.py || fail=1
 python3 tests/wasm-wasi.py || fail=1
 python3 tests/wasm-fuzz.py 1 2 --count 100 || fail=1
+# language features: the query engine, completion items, code actions, rename and formatting,
+# file diagnostics, the Results panel and hierarchies, the peek view, the hover card
+for t in langfeat-query complete-items code-actions rename-format file-diagnostics results peek hover-query; do
+    python3 tests/$t.py || fail=1
+done
+python3 tests/langfeat-real.py || fail=1
 # workspace edits and the editor model: transactions, disk edits, file operations
 python3 tests/wsedit.py || fail=1
 python3 tests/ext-reveal.py || fail=1

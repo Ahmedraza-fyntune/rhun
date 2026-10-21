@@ -2,7 +2,8 @@
 #   print-viewport              "view mode=lines|wrap top=L off=N rows=R content=PX"
 #   print-xy LINE COL           "X Y": the caret's x at that position and its row's middle
 #   print-hit X Y               "text L C" | "left-lane L" | "digits L" | "fold-lane L" | "git L" | "none"
-#   print-present deco|types|glyphs|tape|folds|ranges
+#   print-present deco|types|glyphs|tape|folds|ranges|tokens
+#   print-classes LINE          "classes L C1-C2=K ...": the classes the line is drawn in; "fx C1-C2=F"
 #   glyph-test                  a test kind in the left lane (clicks toggle a circle; logged):
 #                               "glyph-kind N", its kind number
 #   glyph LINE SHAPE            the test kind's glyph on a line (0 removes)
@@ -10,6 +11,7 @@
 
 .bss
 .p2align 3
+pc_cls: .zero SB_SIZE           # print-classes: the line's syntax classes
 args: .quad 0, 0                # the rest of the command line: ptr, len
 outp: .quad 0                   # what the command prints into
 test_kind: .long 0
@@ -146,7 +148,20 @@ c_print_xy:
     dec r13
     cmp dword ptr [rip + cfg_word_wrap], 0
     jne 5f
-    # y: rows from the top line (lines mode)
+    call rows_mode
+    test eax, eax
+    jz 1f
+    # y in rows (folds, code lens rows): wrap_xy's row, x as for lines
+    mov rdi, rbx
+    mov rsi, r15
+    call wrap_xy
+    add edx, [rip + g_ed_y]
+    mov ecx, [rip + g_lh]
+    shr ecx, 1
+    add edx, ecx
+    movsxd r12, edx
+    jmp 2f
+1:  # y: rows from the top line (lines mode)
     mov rax, [rbx + DOC_scrolly]
     mov rcx, rax
     sar rax, 8
@@ -164,7 +179,7 @@ c_print_xy:
     shr eax, 1
     add rdx, rax
     mov r12, rdx
-    # x: by the caret's rule over the line's inlays (vtext.s)
+2:  # x: by the caret's rule over the line's inlays (vtext.s)
     mov rdi, rbx
     mov rsi, r13
     lea rdx, [r14 - 1]
@@ -310,6 +325,111 @@ put_lc:
     call out_u64
     EPILOGUE
 
+# ---------------- print-classes ----------------
+
+# print-classes LINE: "classes L C1-C2=K ..." the classes the line is drawn in (syntax and semantic
+# tokens; runs, 1-based byte columns), then "fx C1-C2=F" for each token effect
+c_print_classes:
+    call take_args
+    PROLOGUE 16
+    call arg_int
+    mov r12, rax
+    call frame
+    mov rbx, [rip + g_doc]
+    test rbx, rbx
+    jz 9f
+    test r12, r12
+    jz 9f
+    dec r12
+    cmp r12, [rbx + DOC_nlines]
+    jae 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call syntax_prepare
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_text
+    mov r14, rax
+    mov r15, rdx
+    lea rdi, [rip + pc_cls]
+    mov qword ptr [rdi + SB_len], 0
+    lea rsi, [r15 + 16]
+    call sb_reserve
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r14
+    mov rcx, r15
+    mov r8, [rip + pc_cls + SB_ptr]
+    call syntax_line
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_start
+    mov rdx, rax
+    mov rdi, rbx
+    mov rsi, r12
+    mov rcx, [rip + pc_cls + SB_ptr]
+    mov r8, r15
+    call semtok_line
+    mov r13, rax
+    lea rdi, [rip + .Ls_classes]
+    call out_cstr
+    lea rdi, [r12 + 1]
+    call out_u64
+    xor r14d, r14d              # run start
+1:  cmp r14, r15
+    jae 3f
+    movzx eax, byte ptr [r13 + r14]
+    lea rcx, [r14 + 1]
+2:  cmp rcx, r15
+    jae 21f
+    cmp [r13 + rcx], al
+    jne 21f
+    inc rcx
+    jmp 2b
+21: mov [rsp], rcx
+    mov [rsp + 8], rax
+    mov edi, ' '
+    call out_byte
+    lea rdi, [r14 + 1]
+    call out_u64
+    mov edi, '-'
+    call out_byte
+    mov rdi, [rsp]
+    call out_u64
+    mov edi, '='
+    call out_byte
+    mov rdi, [rsp + 8]
+    call out_u64
+    mov r14, [rsp]
+    jmp 1b
+3:  mov edi, 10
+    call out_byte
+    xor r14d, r14d
+4:  cmp r14, [rip + g_tkfx_n]
+    jae 9f
+    imul r13, r14, 24
+    lea rax, [rip + g_tkfx]
+    add r13, rax
+    inc r14
+    lea rdi, [rip + .Ls_fx]
+    call out_cstr
+    mov rdi, [r13]
+    inc rdi
+    call out_u64
+    mov edi, '-'
+    call out_byte
+    mov rdi, [r13 + 8]
+    call out_u64
+    mov edi, '='
+    call out_byte
+    mov edi, [r13 + 16]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    jmp 4b
+9:  xor eax, eax
+    EPILOGUE
+
 # ---------------- print-present ----------------
 
 c_print_present:
@@ -358,6 +478,35 @@ c_print_present:
     call str_eq_cstr
     test eax, eax
     jnz .Lpp_ranges
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_tokens]
+    call str_eq_cstr
+    test eax, eax
+    jz 1f
+    mov rdi, rbx                # semantic tokens (semtok.s)
+    mov rsi, [rip + outp]
+    call semtok_dump
+    jmp 9f
+1:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_hints]
+    call str_eq_cstr
+    test eax, eax
+    jz 2f
+    mov rdi, rbx                # inlay hints (inlay.s)
+    mov rsi, [rip + outp]
+    call inlay_dump
+    jmp 9f
+2:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_lenses]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov rdi, rbx                # code lens (lens.s)
+    mov rsi, [rip + outp]
+    call lens_dump
 9:  xor eax, eax
     EPILOGUE
 .Lpp_types:
@@ -525,24 +674,24 @@ c_print_present:
     xor r12d, r12d
 1:  cmp r12, [r14 + PRS_folds + VEC_len]
     jae 2f
-    imul r13, r12, FD_SIZE
+    imul r13, r12, FLD_SIZE
     add r13, [r14 + PRS_folds + VEC_ptr]
     inc r12
     lea rdi, [rip + .Ls_fold_sp]
     call out_cstr
     mov rdi, rbx
-    mov rsi, [r13 + FD_a]
+    mov rsi, [r13 + FLD_a]
     call doc_line_of
     lea rdi, [rax + 1]
     call out_u64
     mov edi, '-'
     call out_byte
     mov rdi, rbx
-    mov rsi, [r13 + FD_b]
+    mov rsi, [r13 + FLD_b]
     call doc_line_of
     lea rdi, [rax + 1]
     call out_u64
-    mov rdi, [r13 + FD_text]
+    mov rdi, [r13 + FLD_text]
     call text_out
     mov edi, 10
     call out_byte
@@ -754,10 +903,10 @@ test_tip:
 pres_ctl:                       # (control.s's ctl_tables)
     .quad .Lc_print_view, c_print_view, .Lc_print_xy, c_print_xy, .Lc_print_hit, c_print_hit
     .quad .Lc_print_present, c_print_present, .Lc_glyph_test, c_glyph_test, .Lc_glyph, c_glyph
-    .quad .Lc_probe_plant, c_probe_plant
+    .quad .Lc_probe_plant, c_probe_plant, .Lc_print_classes, c_print_classes
     .quad 0, 0
 lane_words: .quad 0, .Ls_left, .Ls_digits, .Ls_fold, .Ls_git
-kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
+kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch, .Lk_lens
 .Lc_print_view: .asciz "print-viewport"
 .Lc_print_xy: .asciz "print-xy"
 .Lc_print_hit: .asciz "print-hit"
@@ -766,6 +915,12 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Lc_glyph: .asciz "glyph"
 .Ls_glyph_kind: .asciz "glyph-kind "
 .Lc_probe_plant: .asciz "probe-plant"
+.Lc_print_classes: .asciz "print-classes"
+.Ls_classes: .asciz "classes "
+.Ls_fx: .asciz "fx "
+.Ls_tokens: .asciz "tokens"
+.Ls_hints: .asciz "hints"
+.Ls_lenses: .asciz "lenses"
 .Ls_stale: .asciz "stale"
 .Ls_view_lines: .asciz "view mode=lines top="
 .Ls_view_wrap: .asciz "view mode=wrap top="
@@ -781,6 +936,7 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Lk_fold: .asciz "fold"
 .Lk_hint: .asciz "hint"
 .Lk_deco: .asciz "deco"
+.Lk_lens: .asciz "lens"
 .Lk_swatch: .asciz "swatch"
 .Ls_left: .asciz "left-lane "
 .Ls_digits: .asciz "digits "

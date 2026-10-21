@@ -508,9 +508,16 @@ holds_cursor:
     mov rsi, r12
     call testmodel_item
     mov r13, rax
-    mov ecx, [r13 + TSI_l1]
-    test ecx, ecx
+    cmp dword ptr [r13 + TSI_l1], 0
+    je 8f
+    # its range moved through the edits since it came
+    mov rdi, [rip + g_doc]
+    mov rsi, r13
+    call testgutter_item_lines
+    test eax, eax
     jz 8f
+    mov ecx, eax
+    mov r14d, edx
     mov rax, [rip + cur_line]
     cmp rax, rcx
     jb 8f
@@ -518,7 +525,7 @@ holds_cursor:
     mov ecx, [r13 + TSI_c1]
     cmp [rip + cur_col], rcx
     jb 8f
-1:  mov ecx, [r13 + TSI_l2]
+1:  mov ecx, r14d
     cmp rax, rcx
     ja 8f
     jb 2f
@@ -553,7 +560,9 @@ test_ctl:
     .quad .Lc_print, testctl_print, .Lc_result, testctl_result
     .quad .Lc_runs, testctl_runs, .Lc_coverage, testctl_coverage
     .quad .Lc_view, testctl_print_view, .Lc_gutter, testctl_gutter
-    .quad .Lc_gutter_click, testctl_gutter_click
+    .quad .Lc_gutter_click, testctl_gutter_click, .Lc_status, testctl_status
+    .quad .Lc_filter, testctl_filter, .Lc_failed, testctl_failed
+    .quad .Lc_cov_view, testctl_cov_view
     .quad 0, 0
 .Lc_select: .asciz "test-select"
 .Lc_expand: .asciz "test-expand"
@@ -568,6 +577,10 @@ test_ctl:
 .Lc_view: .asciz "print-testing"
 .Lc_gutter: .asciz "print-gutter"
 .Lc_gutter_click: .asciz "test-gutter"
+.Lc_status: .asciz "print-test-status"
+.Lc_filter: .asciz "test-filter"
+.Lc_failed: .asciz "test-failed-only"
+.Lc_cov_view: .asciz "print-test-coverage"
 .text
 
 testctl_expand_open:
@@ -807,8 +820,15 @@ FN testview_action
     mov rdi, [rax + TSI_path]
     test rdi, rdi
     jz 9b
-    mov r13d, [rax + TSI_l1]
     mov r14d, [rax + TSI_c1]
+    mov rsi, [rax + TSI_ver]
+    mov edx, [rax + TSI_l1]
+    push rdi
+    push rdi
+    call testgutter_map_path    # its first line moved through the edits since it came
+    mov r13d, eax
+    pop rdi
+    pop rdi
     call app_open_file
     test rax, rax
     js 9b
@@ -864,14 +884,19 @@ FN testview_action
     mov esi, [rax + TSM_path]
     call mem_dup
     mov r14, rax
-    mov rdi, rax
+    mov rdi, rax                # its line moved through the edits since it came
+    mov rsi, [r13 + TSM_ver]
+    mov edx, [r13 + TSM_l1]
+    call testgutter_map_path
+    mov r12d, eax
+    mov rdi, r14
     call app_open_file
     mov r15, rax
     mov rdi, r14
     call mem_free
     test r15, r15
     js 9b
-    mov edi, [r13 + TSM_l1]
+    mov edi, r12d
     mov esi, [r13 + TSM_c1]
     call app_goto_line
     EPILOGUE
@@ -1309,8 +1334,10 @@ tv_kid:
     jge 1f
     test dword ptr [r13 + TSI_flags], TSF_LAZY
     jz 2f
-1:  mov r9d, KIDS_CLOSED
-    test dword ptr [r13 + TSI_flags], TSF_EXPANDED
+1:  mov rdi, r13
+    call tv_is_open
+    mov r9d, KIDS_CLOSED
+    test eax, eax
     jz 2f
     mov r9d, KIDS_OPEN
 2:  mov r14d, r9d
@@ -1354,12 +1381,13 @@ tv_kid:
     cmp eax, -1
     je 9f
 3:  mov r15d, eax
-    mov rdi, [rip + tv_tree]
-    mov esi, r15d
-    mov edx, [r13 + TSI_flags]
-    and edx, TSF_EXPANDED
     cmp r14d, KIDS_LEAF
     je 31f
+    mov rdi, r13
+    call tv_is_open
+    mov edx, eax
+    mov rdi, [rip + tv_tree]
+    mov esi, r15d
     call tree_expand
 31: # the state's icon
     mov eax, [r13 + TSI_state]
@@ -1443,6 +1471,7 @@ FN testview_rebuild
     je 9f
     mov dword ptr [rip + g_ts_dirty], 0
     mov qword ptr [rip + tv_stack + VEC_len], 0
+    call tv_filter_marks
     mov rdi, [rip + tv_tree]
     xor esi, esi
     call tree_kids_begin
@@ -1459,7 +1488,9 @@ FN testview_rebuild
     mov rdi, rbx
     xor esi, esi
     call testmodel_item
-    test dword ptr [rax + TSI_flags], TSF_EXPANDED
+    mov rdi, rax
+    call tv_is_open
+    test eax, eax
     jz 2f
     mov edi, r13d
     mov rsi, rbx
@@ -1506,7 +1537,14 @@ FN testview_rebuild
     movsxd r14, dword ptr [rax + TSI_first]
 5:  test r14, r14
     js 7f
+    cmp dword ptr [rip + tv_fon], 0
+    je 50f
     mov rdi, rbx
+    mov rsi, r14
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_SHOW
+    jz 6f                       # the filter hides it
+50: mov rdi, rbx
     mov rsi, r14
     call tv_kid
     cmp eax, -1
@@ -1515,8 +1553,15 @@ FN testview_rebuild
     mov rdi, rbx
     mov rsi, r14
     call testmodel_item
-    test dword ptr [rax + TSI_flags], TSF_EXPANDED
+    push rax
+    push rax
+    mov rdi, rax
+    call tv_is_open
+    pop rcx
+    pop rcx
+    test eax, eax
     jz 6f
+    mov rax, rcx
     cmp dword ptr [rax + TSI_first], 0
     jge 51f
     test dword ptr [rax + TSI_flags], TSF_LAZY
@@ -1700,7 +1745,46 @@ tv_keys:
     mov r12d, esi
     mov r13d, edx
     mov r14d, ecx
-    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    cmp dword ptr [rip + tv_find], 0
+    je 10f
+    # the filter field: Escape clears it, then leaves it, as Enter and Down do
+    cmp r12d, KEY_ESCAPE
+    jne 11f
+    lea rdi, [rip + tv_ftf]
+    call tf_text
+    test rdx, rdx
+    jz 12f
+    lea rdi, [rip + tv_ftf]
+    call tf_clear
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov eax, 1
+    EPILOGUE
+11: cmp r12d, KEY_RETURN
+    je 12f
+    cmp r12d, KEY_DOWN
+    jne 13f
+12: mov dword ptr [rip + tv_find], 0
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+13: lea rdi, [rip + tv_ftf]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call tf_key
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + g_ts_dirty], 1
+    EPILOGUE
+10: cmp r14d, MOD_CTRL          # ctrl+f: the filter
+    jne 14f
+    cmp r12d, 'f'
+    jne 14f
+    mov dword ptr [rip + tv_find], 1
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+14: test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
     jnz 8f
     cmp r13d, 'r'
     jne 1f
@@ -1717,7 +1801,7 @@ tv_keys:
     mov edx, r13d
     mov ecx, r14d
     call tree_key
-    EPILOGUE
+9:  EPILOGUE
 
 # tv_header(ctx, right, y, h) -> eax the x left of its buttons: Run All, Run with Coverage, Re-run
 #   Failed, Cancel
@@ -1737,6 +1821,14 @@ tv_header:
     lea rax, [rip + header_icons]
     mov r9d, [rax + rbx*4]
     call ui_icon_btn
+    mov r8d, eax
+    lea edi, [rbx + ID_TV_BTN]
+    mov esi, r12d
+    lea edx, [r13 + r14]
+    M ecx, MI_24
+    lea rax, [rip + header_tips]
+    mov r9, [rax + rbx*8]
+    call tip_note_text
     test eax, UB_CLICK
     jz 2f
     lea rax, [rip + header_cmds]
@@ -1801,6 +1893,13 @@ tv_draw:
     push rax
     call ui_text_v
     add rsp, 16
+    # the filter row: the field and Failed only; it is part of the counts' height from here on
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    add esi, [rsp + 16]
+    mov edx, [rsp + 8]
+    call filter_row
+    add [rsp + 16], eax
     # the details' height: a third of the section for an item with something to show
     call details_lines
     mov r15d, eax               # lines
@@ -2288,9 +2387,975 @@ state_icons:
 header_icons: .long IC_PLAY, IC_BEAKER, IC_REFRESH, IC_STOP
 .p2align 3
 header_cmds: .quad cmd_test_run_all, cmd_test_coverage_all, cmd_test_rerun_failed, cmd_test_cancel
+header_tips: .quad .Lht_run, .Lht_coverage, .Lht_rerun, .Lht_cancel
 tv_menu_items:
     .quad .Ltm_run, tv_m_run, .Ltm_debug, tv_m_debug, .Ltm_coverage, tv_m_coverage
     .quad .Ltm_goto, tv_m_goto, .Ltm_failure, tv_m_failure, .Ltm_diff, tv_m_diff
     .quad .Ltm_output, tv_m_output, 0, 0
 tv_place_ops: .quad tv_draw, tv_keys, 0, 0, tv_header, 0
 tv_tree_ops: .quad tv_activate, tv_expand, tv_select, 0, tv_menu, 0, tv_load, tv_load
+
+# ---------------- the status bar item ----------------
+# "Testing N/M" while runs are active (N of their M results finished), then the passed and failed
+# tests of every controller (a check and a cross with their counts); nothing before the session's
+# first run. A click shows Testing.
+
+.equ ID_TV_STATUS, 0x5e8010
+
+.bss
+.p2align 3
+st_lab: .zero SB_SIZE           # the text drawn ("Testing 3/5"), or the counts as text for print
+st_cnt: .zero 4*TSS_COUNT
+st_run: .zero 4*TSS_COUNT
+st_x: .long 0                   # where it was drawn last (print-test-status), w 0 for not drawn
+st_y: .long 0
+st_w: .long 0
+st_h: .long 0
+st_pass: .long 0
+st_fail: .long 0
+.text
+
+# st_text(): st_lab for the state now: eax 1 while runs are active, 0 after, -1 before the first run
+st_text:
+    PROLOGUE
+    lea rdi, [rip + st_lab]
+    call sb_clear
+    cmp dword ptr [rip + g_ts_ran], 0
+    je 8f
+    xor r12d, r12d              # finished
+    xor r13d, r13d              # all
+    xor r14d, r14d              # active runs
+    lea rbx, [rip + g_ts_runs]
+    xor r15d, r15d
+1:  cmp qword ptr [rbx + TSR_ext], 0
+    je 3f
+    cmp dword ptr [rbx + TSR_state], TSRS_QUEUED
+    je 2f
+    cmp dword ptr [rbx + TSR_state], TSRS_RUNNING
+    jne 3f
+2:  inc r14d
+    mov rdi, rbx
+    lea rsi, [rip + st_run]
+    call testmodel_counts
+    lea rcx, [rip + st_run]
+    xor edx, edx
+21: mov eax, [rcx + rdx*4]
+    add r13d, eax
+    cmp edx, TSS_SKIPPED
+    jb 22f
+    cmp edx, TSS_ERRORED
+    ja 22f
+    add r12d, eax
+22: inc edx
+    cmp edx, TSS_COUNT
+    jb 21b
+3:  add rbx, TSR_SIZE
+    inc r15d
+    cmp r15d, TS_RUNS_MAX
+    jb 1b
+    test r14d, r14d
+    jz 5f
+    lea rdi, [rip + st_lab]
+    lea rsi, [rip + .Ls_testing]
+    call sb_push_cstr
+    lea rdi, [rip + st_lab]
+    mov esi, r12d
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + st_lab]
+    mov esi, r13d
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    xor esi, esi
+    call sb_push_byte
+    mov eax, 1
+    EPILOGUE
+5:  lea rdi, [rip + st_cnt]
+    call testmodel_tally
+    lea rcx, [rip + st_cnt]
+    mov eax, [rcx + 4*TSS_PASSED]
+    mov [rip + st_pass], eax
+    mov eax, [rcx + 4*TSS_FAILED]
+    add eax, [rcx + 4*TSS_ERRORED]
+    mov [rip + st_fail], eax
+    xor eax, eax
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
+
+# testview_status_item(x, y, h) -> eax the x after it (the status bar calls it)
+FN testview_status_item
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov dword ptr [rip + st_w], 0
+    call st_text
+    test eax, eax
+    js 9f
+    mov [rsp + 12], eax
+    M ebx, MI_8                 # the padding
+    lea r15d, [rbx + rbx]       # the width
+    test eax, eax
+    jz 1f
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rip + st_lab + SB_ptr]
+    mov rdx, [rip + st_lab + SB_len]
+    dec rdx
+    call text_width
+    add r15d, eax
+    jmp 2f
+1:  # two icons and their counts
+    lea rdi, [rip + st_lab]
+    mov esi, [rip + st_pass]
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    call sb_z_tv
+    lea rdi, [rip + g_face_small]
+    mov rsi, rax
+    mov rdx, [rip + st_lab + SB_len]
+    call text_width
+    add r15d, eax
+    lea rdi, [rip + st_lab]
+    call sb_clear
+    lea rdi, [rip + st_lab]
+    mov esi, [rip + st_fail]
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    call sb_z_tv
+    lea rdi, [rip + g_face_small]
+    mov rsi, rax
+    mov rdx, [rip + st_lab + SB_len]
+    call text_width
+    add r15d, eax
+    M eax, MI_ICON
+    lea r15d, [r15 + rax*2]
+    M eax, MI_4
+    lea r15d, [r15 + rax*2]     # icon to count
+    add r15d, ebx               # between the two
+2:  mov eax, [rsp]
+    mov [rip + st_x], eax
+    mov eax, [rsp + 4]
+    mov [rip + st_y], eax
+    mov [rip + st_w], r15d
+    mov eax, [rsp + 8]
+    mov [rip + st_h], eax
+    mov edi, ID_TV_STATUS
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, r15d
+    mov r8d, [rsp + 8]
+    call ui_btn
+    mov [rsp + 16], eax
+    test eax, UB_HOVER
+    jz 3f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, r15d
+    mov ecx, [rsp + 8]
+    COLOR r8d, T_HOVER
+    call gfx_fill
+3:  mov r12d, [rsp]
+    add r12d, ebx               # the pen
+    cmp dword ptr [rsp + 12], 0
+    je 4f
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8, [rip + st_lab + SB_ptr]
+    COLOR r9d, T_ACCENT
+    call ui_text_c
+    jmp 7f
+4:  mov edi, IC_CHECK
+    mov esi, r12d
+    mov edx, [rip + st_pass]
+    COLOR ecx, T_SUCCESS
+    call st_icon_count
+    lea r12d, [rax + rbx]
+    mov edi, IC_CLOSE
+    mov esi, r12d
+    mov edx, [rip + st_fail]
+    COLOR ecx, T_ERROR
+    call st_icon_count
+7:  test dword ptr [rsp + 16], UB_CLICK
+    jz 8f
+    call cmd_testing
+8:  mov eax, [rsp]
+    add eax, r15d
+    EPILOGUE
+9:  mov eax, [rsp]
+    EPILOGUE
+
+# st_icon_count(icon, x, count, argb) -> eax the x after them: the icon in that color, then the count
+st_icon_count:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    M eax, MI_ICON
+    mov ecx, [rip + st_h]
+    sub ecx, eax
+    sar ecx, 1
+    mov edx, [rip + st_y]
+    add edx, ecx
+    mov edi, ebx
+    mov esi, r12d
+    mov ecx, eax
+    mov r8d, r14d
+    call icon_draw
+    M eax, MI_ICON
+    add r12d, eax
+    M eax, MI_4
+    add r12d, eax
+    lea rdi, [rip + st_lab]
+    call sb_clear
+    lea rdi, [rip + st_lab]
+    mov esi, r13d
+    call sb_push_u64
+    lea rdi, [rip + st_lab]
+    call sb_z_tv
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    mov edx, [rip + st_y]
+    mov ecx, [rip + st_h]
+    mov r8, rax
+    COLOR r9d, T_FG
+    call ui_text_c
+    EPILOGUE
+
+# sb_z_tv(sb) -> rax its bytes with a NUL after them (not counted)
+sb_z_tv:
+    push rbx
+    mov rbx, rdi
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rbx + SB_len]
+    mov rax, [rbx + SB_ptr]
+    pop rbx
+    ret
+
+# testctl_status(sb, rest, len): print-test-status: "test-status none", or "test-status x= y= w= h=
+#   text=Testing N/M" / "text=passed=P failed=F" as the bar drew it last
+testctl_status:
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Ls_status]
+    call sb_push_cstr
+    cmp dword ptr [rip + st_w], 0
+    jne 1f
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_none]
+    call sb_push_cstr
+    jmp 8f
+1:  lea r12, [rip + .Ls_fields]
+    lea r13, [rip + st_x]
+    xor r14d, r14d
+2:  mov rdi, rbx
+    mov rsi, r12
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [r13 + r14*4]
+    call sb_push_u64
+    mov rdi, r12
+    call strlen
+    lea r12, [r12 + rax + 1]
+    inc r14d
+    cmp r14d, 4
+    jb 2b
+    call st_text
+    mov r12d, eax
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_text]
+    call sb_push_cstr
+    test r12d, r12d
+    jz 3f
+    mov rdi, rbx
+    mov rsi, [rip + st_lab + SB_ptr]
+    call sb_push_cstr
+    jmp 8f
+3:  mov rdi, rbx
+    lea rsi, [rip + .Ls_passed]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [rip + st_pass]
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_failed]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, [rip + st_fail]
+    call sb_push_u64
+8:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Ls_testing: .asciz "Testing "
+.Ls_status: .asciz "test-status"
+.Ls_none: .asciz " none"
+.Ls_fields: .asciz " x="
+            .asciz " y="
+            .asciz " w="
+            .asciz " h="
+.Ls_text: .asciz " text="
+.Ls_passed: .asciz "passed="
+.Ls_failed: .asciz " failed="
+.text
+
+# ---------------- the filter ----------------
+# A field above the tree keeps the rows whose label words start with each typed word (a capital
+# after a small letter starts a word: "add" finds TestAdd), with everything under them, plus their
+# ancestors, opened; Failed only keeps the failed and errored tests (and their ancestors).
+
+.equ ID_TV_FILTER, ID_TV_BTN + 12
+.equ ID_TV_FAILED, ID_TV_BTN + 13
+
+.bss
+.p2align 3
+tv_ftf: .zero TF_SIZE           # the filter's text
+tv_find: .long 0                # the field has the keys
+tv_failed: .long 0              # Failed only
+tv_fon: .long 0                 # the last rebuild filtered
+.text
+
+# tv_is_open(TSI*) -> eax nonzero when its children are listed: the filter opens the ancestors of
+#   what it keeps, else the item's own expansion counts
+tv_is_open:
+    mov eax, [rdi + TSI_flags]
+    cmp dword ptr [rip + tv_fon], 0
+    je 1f
+    and eax, TSF_FOPEN
+    ret
+1:  and eax, TSF_EXPANDED
+    ret
+
+# filter_row(x, y, w) -> eax its height: the field, and Failed only at its right
+filter_row:
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    M ebx, MI_24                # the field's height
+    M r12d, MI_8
+    mov dword ptr [rip + tv_ftf + TF_id], ID_TV_FILTER
+    # a press elsewhere takes the keys from the field
+    test dword ptr [rip + g_pressed], 1 << BTN_LEFT
+    jz 1f
+    cmp dword ptr [rip + g_active], ID_TV_FILTER
+    je 1f
+    mov dword ptr [rip + tv_find], 0
+1:  xor r9d, r9d
+    cmp dword ptr [rip + tv_find], 0
+    je 2f
+    call place_focused
+    xor r9d, r9d
+    cmp eax, [rip + g_tv_place]
+    sete r9b
+2:  lea rdi, [rip + tv_ftf]
+    mov esi, [rsp]
+    add esi, r12d
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    sub ecx, r12d
+    sub ecx, r12d
+    sub ecx, ebx
+    M eax, MI_4
+    sub ecx, eax
+    mov r8d, ebx
+    lea rax, [rip + .Ltv_filter]
+    push rax
+    push rax
+    call ui_textfield
+    add rsp, 16
+    test eax, UB_PRESS
+    jz 3f
+    mov dword ptr [rip + tv_find], 1
+    mov edi, [rip + g_tv_place]
+    call place_focus
+3:  # Failed only: a cross, on a selected background while it filters
+    mov r13d, [rsp]
+    add r13d, [rsp + 8]
+    sub r13d, r12d
+    sub r13d, ebx
+    cmp dword ptr [rip + tv_failed], 0
+    je 4f
+    mov edi, r13d
+    mov esi, [rsp + 4]
+    mov edx, ebx
+    mov ecx, ebx
+    COLOR r8d, T_SELECTION
+    call gfx_fill
+4:  mov edi, ID_TV_FAILED
+    mov esi, r13d
+    mov edx, [rsp + 4]
+    mov ecx, ebx
+    mov r8d, ebx
+    mov r9d, IC_ERROR
+    call ui_icon_btn
+    mov r8d, eax
+    mov edi, ID_TV_FAILED
+    mov esi, r13d
+    mov edx, [rsp + 4]
+    add edx, ebx
+    mov ecx, ebx
+    lea r9, [rip + .Ltv_failed_only]
+    call tip_note_text
+    test eax, UB_CLICK
+    jz 5f
+    xor dword ptr [rip + tv_failed], 1
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_dirty], 1
+5:  M eax, MI_4
+    add eax, ebx
+    EPILOGUE
+
+# tv_filter_marks(): tv_fon, and with a filter the items' TSF_SHOW, TSF_FOPEN and TSF_HIT
+tv_filter_marks:
+    PROLOGUE
+    lea rdi, [rip + tv_ftf]
+    call tf_text
+    xor eax, eax
+    test rdx, rdx
+    setnz al
+    or eax, [rip + tv_failed]
+    mov [rip + tv_fon], eax
+    test eax, eax
+    jz 9f
+    lea rbx, [rip + g_ts_ctrls]
+    xor r12d, r12d
+1:  cmp qword ptr [rbx + TSC_ext], 0
+    je 8f
+    mov rdi, rbx
+    xor esi, esi
+    call testmodel_item
+    and dword ptr [rax + TSI_flags], ~(TSF_SHOW | TSF_FOPEN | TSF_HIT)
+    or dword ptr [rax + TSI_flags], TSF_SHOW    # the controller's row stays
+    xor r13d, r13d
+2:  mov rdi, rbx
+    mov rsi, r13
+    mov edx, 1
+    call testmodel_next
+    test rax, rax
+    js 8f
+    mov r13, rax
+    mov rdi, rbx
+    mov rsi, r13
+    call testmodel_item
+    mov r14, rax
+    and dword ptr [r14 + TSI_flags], ~(TSF_SHOW | TSF_FOPEN | TSF_HIT)
+    # the text: its label, or an ancestor's
+    movsxd rsi, dword ptr [r14 + TSI_parent]
+    test rsi, rsi
+    jle 3f
+    mov rdi, rbx
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_HIT
+    jnz 4f
+3:  mov rdi, [r14 + TSI_label]
+    call tv_text_ok
+    test eax, eax
+    jz 2b
+4:  or dword ptr [r14 + TSI_flags], TSF_HIT
+    # Failed only: a test that failed or errored, with no children
+    cmp dword ptr [rip + tv_failed], 0
+    je 5f
+    cmp dword ptr [r14 + TSI_first], 0
+    jge 2b
+    test dword ptr [r14 + TSI_flags], TSF_LAZY
+    jnz 2b
+    mov eax, [r14 + TSI_state]
+    cmp eax, TSS_FAILED
+    je 5f
+    cmp eax, TSS_ERRORED
+    jne 2b
+5:  or dword ptr [r14 + TSI_flags], TSF_SHOW
+    movsxd r15, dword ptr [r14 + TSI_parent]
+6:  test r15, r15
+    js 2b
+    mov rdi, rbx
+    mov rsi, r15
+    call testmodel_item
+    mov ecx, [rax + TSI_flags]
+    and ecx, TSF_SHOW | TSF_FOPEN
+    cmp ecx, TSF_SHOW | TSF_FOPEN
+    je 2b
+    or dword ptr [rax + TSI_flags], TSF_SHOW | TSF_FOPEN
+    movsxd r15, dword ptr [rax + TSI_parent]
+    jmp 6b
+8:  add rbx, TSC_SIZE
+    inc r12d
+    cmp r12d, TS_CTRL_MAX
+    jb 1b
+9:  EPILOGUE
+
+# tv_text_ok(label) -> eax 1 when the filter's text finds the label (no text finds every label)
+tv_text_ok:
+    push rbx
+    mov rbx, rdi
+    lea rdi, [rip + tv_ftf]
+    call tf_text
+    mov rdi, rbx
+    mov rsi, rax
+    pop rbx
+    test rdx, rdx
+    jz 1f
+    test rdi, rdi
+    jz 2f
+    jmp tv_match
+1:  mov eax, 1
+    ret
+2:  xor eax, eax
+    ret
+
+# tv_match(label cstr, text, len) -> eax 1 when each word of the text starts a word of the label,
+#   ignoring case
+FN tv_match
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call strlen
+    mov [rsp], rax
+    xor r14d, r14d              # where the next word of the text starts
+1:  cmp r14, r13
+    jae 8f
+    cmp byte ptr [r12 + r14], ' '
+    jne 2f
+    inc r14
+    jmp 1b
+2:  mov r15, r14                # the word: r15 up to r14
+3:  inc r14
+    cmp r14, r13
+    jae 4f
+    cmp byte ptr [r12 + r14], ' '
+    jne 3b
+4:  xor ecx, ecx                # where it may start in the label
+5:  mov rdx, r14
+    sub rdx, r15
+    add rdx, rcx
+    cmp rdx, [rsp]
+    ja 9f
+    mov [rsp + 8], rcx
+    mov rdi, rbx
+    mov rsi, rcx
+    call tv_wstart
+    mov rcx, [rsp + 8]
+    test eax, eax
+    jz 7f
+    xor edx, edx
+6:  lea r8, [r15 + rdx]
+    cmp r8, r14
+    jae 1b                      # this word is found: the next
+    lea r9, [rcx + rdx]
+    movzx eax, byte ptr [rbx + r9]
+    movzx r9d, byte ptr [r12 + r8]
+    lea r10d, [rax - 'A']
+    cmp r10d, 25
+    ja 61f
+    add eax, 32
+61: lea r10d, [r9 - 'A']
+    cmp r10d, 25
+    ja 62f
+    add r9d, 32
+62: cmp eax, r9d
+    jne 7f
+    inc rdx
+    jmp 6b
+7:  inc rcx
+    jmp 5b
+8:  mov eax, 1
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
+
+# tv_wstart(label, i) -> eax 1 when a word starts at byte i: the first byte, after a byte that is
+#   not a letter or a digit, a capital after a small letter, a digit after a non-digit
+tv_wstart:
+    mov eax, 1
+    test rsi, rsi
+    jz 9f
+    movzx ecx, byte ptr [rdi + rsi - 1]   # the byte before
+    movzx edx, byte ptr [rdi + rsi]       # the byte
+    # before is not a letter or a digit (UTF-8 bytes count as letters)
+    lea r8d, [rcx - '0']
+    cmp r8d, 9
+    jbe 2f
+    lea r8d, [rcx - 'A']
+    cmp r8d, 25
+    jbe 3f
+    lea r8d, [rcx - 'a']
+    cmp r8d, 25
+    jbe 4f
+    cmp ecx, 0x80
+    jb 9f
+    jmp 8f
+2:  # after a digit: never a new word
+    jmp 8f
+3:  # after a capital: a digit starts one
+    lea r8d, [rdx - '0']
+    cmp r8d, 9
+    jbe 9f
+    jmp 8f
+4:  # after a small letter: a capital or a digit starts one
+    lea r8d, [rdx - 'A']
+    cmp r8d, 25
+    jbe 9f
+    lea r8d, [rdx - '0']
+    cmp r8d, 9
+    jbe 9f
+8:  xor eax, eax
+9:  ret
+
+# testctl_filter(sb, rest, len): test-filter TEXT: the filter's text (none clears it)
+testctl_filter:
+    PROLOGUE
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    lea rdi, [rip + tv_ftf]
+    mov rsi, rax
+    call tf_set
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_dirty], 1
+    xor eax, eax
+    EPILOGUE
+
+# testctl_failed(sb, rest, len): test-failed-only on|off
+testctl_failed:
+    PROLOGUE
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    xor ecx, ecx
+    cmp rdx, 2
+    jne 1f
+    cmp byte ptr [rax], 'o'
+    jne 1f
+    cmp byte ptr [rax + 1], 'n'
+    jne 1f
+    mov ecx, 1
+1:  mov [rip + tv_failed], ecx
+    mov dword ptr [rip + g_ts_dirty], 1
+    mov dword ptr [rip + g_dirty], 1
+    xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Ltv_filter: .asciz "Filter tests"
+.Ltv_failed_only: .asciz "Show only failed tests"
+.Lht_run: .asciz "Run All Tests"
+.Lht_coverage: .asciz "Run All Tests with Coverage"
+.Lht_rerun: .asciz "Re-run Failed Tests"
+.Lht_cancel: .asciz "Cancel Test Runs"
+.text
+
+# ---------------- the Coverage section ----------------
+# A sidebar section once coverage exists: a row per file with its covered and total lines and the
+# percentage, the least covered first; a click opens the file. It goes when the coverage does.
+
+.bss
+.p2align 3
+.globl g_tcv_dirty
+tcv_tree: .quad 0
+tcv_keys: .zero VEC_SIZE        # u64 sort keys: per mille << 32 | the file's index
+g_tcv_dirty: .long 0            # the files changed: listed again
+.data
+.p2align 2
+tcv_place: .long -1
+.text
+
+# testview_cov_tick(): the section shows with coverage, hides without; its rows follow the files
+FN testview_cov_tick
+    PROLOGUE
+    cmp qword ptr [rip + g_cov_run], 0
+    jne 1f
+    mov edi, [rip + tcv_place]
+    test edi, edi
+    js 9f
+    mov esi, 1
+    call place_set_hidden
+    EPILOGUE
+1:  cmp dword ptr [rip + tcv_place], 0
+    jge 2f
+    lea rdi, [rip + tcv_tree_ops]
+    xor esi, esi
+    call tree_new
+    mov [rip + tcv_tree], rax
+    mov edi, PLACE_SIDEBAR
+    lea rsi, [rip + .Ltcv_name]
+    lea rdx, [rip + .Ltcv_title]
+    lea rcx, [rip + tcv_place_ops]
+    xor r8d, r8d
+    call place_add
+    mov [rip + tcv_place], eax
+    test eax, eax
+    js 9f
+    mov edi, eax
+    mov esi, IC_BEAKER
+    call place_set_icon
+    mov dword ptr [rip + g_tcv_dirty], 1
+2:  mov edi, [rip + tcv_place]
+    xor esi, esi
+    call place_set_hidden
+    cmp dword ptr [rip + g_tcv_dirty], 0
+    je 9f
+    mov dword ptr [rip + g_tcv_dirty], 0
+    call tcv_rebuild
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# tcv_rebuild(): the rows, least covered first
+tcv_rebuild:
+    PROLOGUE
+    mov qword ptr [rip + tcv_keys + VEC_len], 0
+    call testcover_files
+    mov r12, rax
+    xor ebx, ebx
+1:  cmp rbx, r12
+    jae 2f
+    mov rdi, rbx
+    call testcover_file_at
+    mov rdi, rax
+    call testcover_stats
+    xor ecx, ecx
+    test edx, edx
+    jz 11f
+    imul eax, eax, 1000
+    mov ecx, edx
+    xor edx, edx
+    div ecx
+    mov ecx, eax
+11: shl rcx, 32
+    or rcx, rbx
+    push rcx
+    push rcx
+    lea rdi, [rip + tcv_keys]
+    mov esi, 8
+    call vec_push
+    pop rcx
+    pop rcx
+    mov [rax], rcx
+    inc rbx
+    jmp 1b
+2:  mov rdi, [rip + tcv_keys + VEC_ptr]
+    mov rsi, [rip + tcv_keys + VEC_len]
+    call sort_u64
+    mov rdi, [rip + tcv_tree]
+    xor esi, esi
+    call tree_kids_begin
+    xor r13d, r13d
+3:  cmp r13, [rip + tcv_keys + VEC_len]
+    jae 8f
+    mov rax, [rip + tcv_keys + VEC_ptr]
+    mov eax, [rax + r13*8]      # the file's index (the key's low half)
+    mov rdi, rax
+    call testcover_file_at
+    mov r14, rax
+    mov rdi, r14
+    call testcover_path
+    mov r15, rax
+    # the label: the path inside the project, else the whole path
+    mov rdi, r15
+    call tcv_rel
+    mov rbx, rax
+    mov rdi, rbx
+    call strlen
+    mov r8, rax
+    push r8
+    push r8
+    mov rdi, r15
+    call strlen
+    mov rdx, rax
+    pop r8
+    pop r8
+    mov rdi, [rip + tcv_tree]
+    mov rsi, r15
+    mov rcx, rbx
+    mov r9d, KIDS_LEAF
+    call tree_kid
+    cmp eax, -1
+    je 7f
+    mov ebx, eax
+    # "C/T · N%"
+    lea rdi, [rip + tv_text]
+    call sb_clear
+    mov rdi, r14
+    call testcover_stats
+    push rax
+    push rdx
+    lea rdi, [rip + tv_text]
+    mov esi, eax
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    mov esi, '/'
+    call sb_push_byte
+    mov rsi, [rsp]
+    lea rdi, [rip + tv_text]
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    lea rsi, [rip + .Ltcv_dot]
+    call sb_push_cstr
+    pop rcx
+    pop rax
+    xor esi, esi
+    test ecx, ecx
+    jz 4f
+    imul eax, eax, 100
+    xor edx, edx
+    div ecx
+    mov esi, eax
+4:  lea rdi, [rip + tv_text]
+    call sb_push_u64
+    lea rdi, [rip + tv_text]
+    mov esi, '%'
+    call sb_push_byte
+    mov rdi, [rip + tcv_tree]
+    mov esi, ebx
+    mov rdx, [rip + tv_text + SB_ptr]
+    mov rcx, [rip + tv_text + SB_len]
+    call tree_set_desc
+7:  inc r13
+    jmp 3b
+8:  mov rdi, [rip + tcv_tree]
+    xor esi, esi
+    call tree_kids_end
+    EPILOGUE
+
+# tcv_rel(path) -> rax the part after the project's folder and a slash, else the path
+tcv_rel:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rip + g_project]
+    test r12, r12
+    jz 8f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    mov rdi, rbx
+    call strlen
+    cmp rax, r13
+    jbe 8f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call memeq
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx + r13], '/'
+    jne 8f
+    lea rax, [rbx + r13 + 1]
+    EPILOGUE
+8:  mov rax, rbx
+    EPILOGUE
+
+# tcv_draw(ctx, x, y, w, h): the rows
+tcv_draw:
+    PROLOGUE 16
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov ebx, ecx
+    mov r12d, r8d
+    call place_focused
+    xor r9d, r9d
+    cmp eax, [rip + tcv_place]
+    sete r9b
+    mov rdi, [rip + tcv_tree]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, ebx
+    mov r8d, r12d
+    call tree_draw
+    EPILOGUE
+
+# tcv_key(ctx, keysym, cp, mods) -> eax 1 when taken
+tcv_key:
+    mov rdi, [rip + tcv_tree]
+    jmp tree_key
+
+# tcv_activate(ctx, tr, node): the row's file opens
+tcv_activate:
+    PROLOGUE
+    mov rdi, rsi
+    mov esi, edx
+    call tree_node_id
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov rbx, rax
+    mov rdi, rbx
+    call app_open_file
+    mov rdi, rbx
+    call mem_free
+9:  EPILOGUE
+
+# testctl_cov_view(sb, rest, len): print-test-coverage: the Coverage section's rows, "file=LABEL
+#   desc=C/T · N%" each (the shown order), or "coverage-section none"
+testctl_cov_view:
+    PROLOGUE
+    mov rbx, rdi
+    mov edi, [rip + tcv_place]
+    test edi, edi
+    js 8f
+    call place_at
+    test rax, rax
+    jz 8f
+    mov rdi, [rip + tcv_tree]
+    call tree_rows_count
+    mov r12, rax
+    xor r13d, r13d
+1:  cmp r13, r12
+    jae 9f
+    mov rdi, [rip + tcv_tree]
+    mov rsi, r13
+    call tree_row
+    mov r14d, eax               # the node
+    mov rdi, rbx
+    lea rsi, [rip + .Ltcv_file]
+    call sb_push_cstr
+    mov rdi, [rip + tcv_tree]
+    mov esi, r14d
+    call tree_node_label
+    mov rdi, rbx
+    mov rsi, rax
+    call sb_push
+    mov rdi, rbx
+    lea rsi, [rip + .Ltcv_desc]
+    call sb_push_cstr
+    mov rdi, [rip + tcv_tree]
+    imul rax, r14, ND_SIZE
+    add rax, [rdi + TR_nodes + VEC_ptr]
+    mov rsi, [rax + ND_desc]
+    test rsi, rsi
+    jz 2f
+    mov rdi, rbx
+    call sb_push_cstr
+2:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    inc r13
+    jmp 1b
+8:  mov rdi, rbx
+    lea rsi, [rip + .Ltcv_none]
+    call sb_push_cstr
+9:  xor eax, eax
+    EPILOGUE
+
+.section .rodata
+.Ltcv_name: .asciz "coverage"
+.Ltcv_title: .asciz "Coverage"
+.Ltcv_dot: .asciz " \302\267 "
+.Ltcv_file: .asciz "file="
+.Ltcv_desc: .asciz " desc="
+.Ltcv_none: .asciz "coverage-section none\n"
+.p2align 3
+tcv_place_ops: .quad tcv_draw, tcv_key, 0, 0, 0, 0
+tcv_tree_ops: .quad tcv_activate, 0, 0, 0, 0, 0, 0, 0, 0
+.text

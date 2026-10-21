@@ -17,7 +17,7 @@
 .equ PM_KEYS, 12                # Keyboard Shortcuts: every binding (keys.s keys_list)
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 .equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
-.equ PM_WSLIST, 16              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_WSLIST, 88              # wsedit: a workspace edit's question (wsconfirm.s)
 .equ PM_ICONS, 64               # contributions: Select File Icon Theme (iconth.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
@@ -1364,6 +1364,17 @@ FN palette_choose_add
 FN palette_choose_ready
     jmp palette_filter
 
+# custom editors: palette_reopen_open(label cstr): an empty pick list for Reopen With; rows follow
+# with palette_choose_add, then palette_choose_ready; choosing row n calls ce_reopen_chosen(n)
+FN palette_reopen_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_REOPEN
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
 # wsedit: palette_wslist_open(label cstr): an empty pick list for a workspace edit's question
 # (wsconfirm.s); rows follow with palette_choose_add, then palette_choose_ready; choosing row n
 # calls wslist_chosen(n), closing it otherwise wslist_abort
@@ -1399,6 +1410,42 @@ FN palette_providers_open
 
 FN palette_results_add
     jmp item_add
+
+# language features: a results list refreshed as a query's parts come keeps what the user did:
+# palette_results_refresh() empties it but keeps the field (then _add and _ready as before),
+# palette_results_selected() -> rax the selected item's n, or -1, palette_results_select(n): the
+# row of item n is selected (after _ready)
+FN palette_results_refresh
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    ret
+FN palette_results_selected
+    push rbx
+    call selected_item
+    test rax, rax
+    jz 1f
+    mov rax, [rax + IT_data]
+    pop rbx
+    ret
+1:  mov rax, -1
+    pop rbx
+    ret
+FN palette_results_select
+    xor ecx, ecx
+1:  cmp rcx, [rip + results + VEC_len]
+    jae 9f
+    mov rax, [rip + results + VEC_ptr]
+    mov eax, [rax + rcx*8 + RS_item]
+    imul rax, rax, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    cmp [rax + IT_data], rdi
+    je 2f
+    inc rcx
+    jmp 1b
+2:  mov [rip + pal_sel], ecx
+    mov dword ptr [rip + pal_reveal], 1
+    mov dword ptr [rip + g_dirty], 1
+9:  ret
 
 FN palette_results_ready
     jmp palette_filter
@@ -2327,6 +2374,8 @@ FN palette_print
     je 13f
     cmp dword ptr [rip + pal_mode], PM_WSLIST
     je 13f
+    cmp dword ptr [rip + pal_mode], PM_REOPEN   # custom editors
+    je 13f
     cmp dword ptr [rip + pal_mode], PM_PROVIDERS
     je 13f
     cmp dword ptr [rip + pal_mode], PM_RESULTS
@@ -2876,11 +2925,19 @@ palette_accept:
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 33: cmp ebx, PM_TASKS
-    jne 331f
+    jne 332f
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
     mov rdi, [r12 + IT_data]
     call tasks_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+332: cmp ebx, PM_REOPEN          # custom editors: Reopen With (customed.s)
+    jne 331f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call ce_reopen_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 331: cmp ebx, PM_WSLIST          # wsedit

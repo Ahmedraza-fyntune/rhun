@@ -255,15 +255,105 @@ xi_load:
     EPILOGUE
 
 # xi_finish(entry): the entry ends; without title, version and tag it is dropped (the last one)
+# (the fields hold arena offsets while the file is read): a tag must be [0-9A-Za-z._-]{1,64}; a
+# digest that is not 64 hex digits is dropped (the entry is then not for this system); a version
+# or a minimum rhun that is not MAJOR.MINOR.PATCH drops the entry
 xi_finish:
-    cmp qword ptr [rdi + XI_title], 0
-    je 1f
-    cmp qword ptr [rdi + XI_version], 0
-    je 1f
-    cmp qword ptr [rdi + XI_tag], 0
-    je 1f
+    PROLOGUE
+    mov rbx, rdi
+    cmp qword ptr [rbx + XI_title], 0
+    je 8f
+    cmp qword ptr [rbx + XI_version], 0
+    je 8f
+    mov rdi, [rbx + XI_tag]
+    test rdi, rdi
+    jz 8f
+    add rdi, [rip + xi_arena + SB_ptr]
+    call tag_ok
+    test eax, eax
+    jz 8f
+    mov rdi, [rbx + XI_version]
+    call xi_ver_ok
+    test eax, eax
+    jz 8f
+    mov rdi, [rbx + XI_rhun]
+    test rdi, rdi
+    jz 1f
+    call xi_ver_ok
+    test eax, eax
+    jz 8f
+1:  mov rdi, [rbx + XI_digest]
+    test rdi, rdi
+    jz 9f
+    add rdi, [rip + xi_arena + SB_ptr]
+    call digest_ok
+    test eax, eax
+    jnz 9f
+    mov qword ptr [rbx + XI_digest], 0
+9:  EPILOGUE
+8:  dec dword ptr [rip + xi_n]
+    EPILOGUE
+
+# xi_ver_ok(arena offset) -> eax 1 when the value there is a version (ver_valid)
+xi_ver_ok:
+    PROLOGUE
+    add rdi, [rip + xi_arena + SB_ptr]
+    mov rbx, rdi
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call ver_valid
+    EPILOGUE
+
+# tag_ok(cstr) -> eax 1 for [0-9A-Za-z._-]{1,64}
+tag_ok:
+    xor ecx, ecx
+1:  movzx edx, byte ptr [rdi + rcx]
+    test edx, edx
+    jz 3f
+    inc ecx
+    cmp ecx, 64
+    ja 8f
+    cmp edx, '.'
+    je 1b
+    cmp edx, '_'
+    je 1b
+    cmp edx, '-'
+    je 1b
+    lea eax, [rdx - '0']
+    cmp eax, 9
+    jbe 1b
+    or edx, 0x20
+    sub edx, 'a'
+    cmp edx, 25
+    jbe 1b
+8:  xor eax, eax
     ret
-1:  dec dword ptr [rip + xi_n]
+3:  xor eax, eax
+    test ecx, ecx
+    setnz al
+    ret
+
+# digest_ok(cstr) -> eax 1 for 64 lowercase hex digits
+digest_ok:
+    xor ecx, ecx
+1:  movzx edx, byte ptr [rdi + rcx]
+    test edx, edx
+    jz 3f
+    inc ecx
+    cmp ecx, 64
+    ja 8f
+    lea eax, [rdx - '0']
+    cmp eax, 9
+    jbe 1b
+    lea eax, [rdx - 'a']
+    cmp eax, 5
+    jbe 1b
+8:  xor eax, eax
+    ret
+3:  xor eax, eax
+    cmp ecx, 64
+    sete al
     ret
 
 # xi_keep(ptr, len) -> its offset in the arena (at most XI_VAL_MAX bytes, and a NUL)
@@ -329,6 +419,12 @@ full_name_ok:
     jmp 1b
 3:  test r8, r8
     jle 9f
+    cmp r8, 100
+    ja 9f                       # each part a folder name of at most 100 bytes
+    mov rcx, rsi
+    sub rcx, r8
+    cmp rcx, 101
+    ja 9f
     lea rcx, [r8 + 1]
     cmp rcx, rsi
     jae 9f
@@ -391,15 +487,18 @@ same_ci_names:
 # when the index does not list it for this system (or needs a newer rhun to read)
 FN extindex_pin
     PROLOGUE
-    call extindex_find
+    call extindex_entry
     test rax, rax
     jz 8f
-    cmp dword ptr [rip + xi_format], 1
-    ja 8f
-    mov rdx, [rax + XI_digest]
+    mov rbx, rax
+    mov rdi, rax
+    call extindex_newer
+    test rax, rax
+    jnz 8f
+    mov rdx, [rbx + XI_digest]
     test rdx, rdx
     jz 8f
-    mov rax, [rax + XI_tag]
+    mov rax, [rbx + XI_tag]
     EPILOGUE
 8:  xor eax, eax
     xor edx, edx
@@ -408,6 +507,35 @@ FN extindex_pin
 # extindex_tag(name cstr) -> rax the pinned tag of an extension the index lists for this system, or 0
 FN extindex_tag
     jmp extindex_pin
+
+# extindex_entry(name cstr) -> the index's entry for owner/name, or 0 (also for an index in a
+# format this rhun cannot read)
+FN extindex_entry
+    PROLOGUE
+    call extindex_find
+    test rax, rax
+    jz 9f
+    cmp dword ptr [rip + xi_format], 1
+    jbe 9f
+    xor eax, eax
+9:  EPILOGUE
+
+# extindex_newer(entry) -> rax the rhun version the entry needs when it is newer than this one, or 0
+FN extindex_newer
+    PROLOGUE
+    mov rbx, [rdi + XI_rhun]
+    xor eax, eax
+    test rbx, rbx
+    jz 9f
+    mov rdi, rbx
+    lea rsi, [rip + rhun_version]
+    call ver_cmp
+    mov ecx, eax
+    xor eax, eax
+    cmp ecx, 0
+    jle 9f
+    mov rax, rbx
+9:  EPILOGUE
 
 # extindex_dump_age(sb): "Index updated 2 h ago" (or nothing without an index), for Browse
 FN extindex_fetched

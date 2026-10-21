@@ -22,7 +22,6 @@ dlg_text: .zero 2048
 .globl g_watches, g_nodep
 restart_name: .zero SB_SIZE
 restart_after: .long 0          # a restart waits for this session to end
-watch_gen: .long 0              # send_watches' round
 restart_nodebug: .long 0
 g_watches: .zero SB_SIZE        # watch expressions, one per line
 .data
@@ -105,6 +104,9 @@ ds_alloc:
     mov dword ptr [rbx + DS_in], -1
     mov dword ptr [rbx + DS_out], -1
     mov dword ptr [rbx + DS_err], -1
+    mov dword ptr [rbx + DS_aout], -1
+    mov dword ptr [rbx + DS_ain], -1
+    mov dword ptr [rbx + DS_csock], -1
     mov eax, [rip + dnext_id]
     inc dword ptr [rip + dnext_id]
     mov [rbx + DS_id], eax
@@ -124,6 +126,8 @@ ds_free_mem:
     mov rdi, [rbx + DS_reason]
     call mem_free
     mov rdi, [rbx + DS_desc]
+    call mem_free
+    mov rdi, [rbx + DS_after]
     call mem_free
     mov rdi, rbx
     call pend_clear
@@ -197,12 +201,20 @@ FN dap_start
     mov r12, rdi
     mov r13, rsi
     mov [rsp], edx
+    mov dword ptr [rip + dstart_resolved], 0
+    mov dword ptr [rip + dstart_before], 0
+    call dbgx_resolving
+    test eax, eax
+    jnz .Lst_preparing          # one launch waits for its extension at a time
     mov rdi, r12
     mov rsi, r13
     mov edx, [rsp]
     call dcfg_prepare
     test eax, eax
     jz .Lst_cfgfail
+    mov qword ptr [rip + dstart_owner], 0
+    mov qword ptr [rip + dstart_oid], 0
+.Lst_prepared:
     cmp qword ptr [rip + g_lc_compound + SB_len], 0
     jne .Lst_compound
     mov edi, [rip + g_lc_dbg]
@@ -211,20 +223,67 @@ FN dap_start
     mov r15, [r14 + DBG_ext]
     test dword ptr [r15 + EXT_needs], NEEDS_DEBUG
     jz .Lst_noneeds
+    # resolve = yes: the extension sees the configuration first (debugext.s); the launch goes on
+    # in dap_start_resolved. Not for its own debug-start sessions
+    cmp dword ptr [r14 + DBG_resolve], 0
+    je 1f
+    cmp qword ptr [rip + dstart_owner], 0
+    jne 1f
+    cmp dword ptr [rip + dstart_resolved], 0
+    jne 1f
+    mov rdi, r15
+    mov esi, [rip + g_lc_dbg]
+    call dbgx_resolve_begin
+    test eax, eax
+    jz .Lst_resfail
+    xor eax, eax
+    EPILOGUE
+1:  # before = TASK: the tasks group runs it first; the launch goes on in dap_start_after_before
+    cmp qword ptr [rip + g_lc_before + SB_len], 0
+    je 2f
+    cmp dword ptr [rip + dstart_before], 0
+    jne 2f
+    mov rdi, [rip + g_lc_before + SB_ptr]
+    call dbgx_before_begin
+    test eax, eax
+    jz .Lst_resfail
+    xor eax, eax
+    EPILOGUE
+2:  mov dword ptr [rsp + 4], DTR_STDIO
+    mov dword ptr [rsp + 8], DAP_LOOPBACK
     cmp qword ptr [rip + g_lc_server + SB_len], 0
     jne .Lst_server
     cmp dword ptr [r14 + DBG_transport], 0
     jne .Lst_tcp
+.Lst_cmd:
     call dcfg_adapter
     test eax, eax
     jz .Lst_cfgfail
+.Lst_alloc:
     call ds_alloc
     test rax, rax
     jz .Lst_full
     mov rbx, rax
+    mov eax, [rsp + 4]
+    mov [rbx + DS_transport], eax
+    mov eax, [rip + g_lc_port]
+    mov [rbx + DS_port], eax
+    mov eax, [rsp + 8]
+    mov [rbx + DS_addr], eax
     mov eax, [rip + g_lc_dbg]
     mov [rbx + DS_dbg], eax
     mov [rbx + DS_dbg_ext], r15
+    mov rax, [rip + dstart_owner]
+    mov [rbx + DS_owner], rax
+    mov rax, [rip + dstart_oid]
+    mov [rbx + DS_owner_id], rax
+    lea rdi, [rbx + DS_after]       # after = TASK runs when the session ends
+    mov rsi, [rip + g_lc_after + SB_ptr]
+    mov rdx, [rip + g_lc_after + SB_len]
+    test rdx, rdx
+    jnz 3f
+    xor esi, esi
+3:  call ds_set_str
     mov eax, [rip + g_lc_request]
     mov [rbx + DS_request], eax
     mov eax, [rip + g_lc_nodebug]
@@ -246,6 +305,9 @@ FN dap_start
     mov rdi, rbx
     call slot_index
     mov [rip + g_dfocus], eax
+    # a server runs already: nothing is started, so nothing is asked
+    cmp dword ptr [rbx + DS_transport], DTR_SERVER
+    je 1f
     # one approval per extension and project (runallow.s): asked once, with the exact command
     mov dword ptr [rbx + DS_state], DSS_APPROVAL
     mov rdi, r15
@@ -274,8 +336,35 @@ FN dap_start
     lea rdi, [rip + .Lm_compound]
     jmp .Lst_msg
 .Lst_server:
+    # server = HOST:PORT (or PORT): connect to an adapter that runs already
+    mov rdi, [rip + g_lc_server + SB_ptr]
+    call server_addr
+    test eax, eax
+    jz .Lst_badserver
+    mov [rip + g_lc_port], eax
+    mov [rsp + 8], edx
+    mov dword ptr [rsp + 4], DTR_SERVER
+    mov dword ptr [rip + g_lc_nargs], 0
+    jmp .Lst_alloc
+.Lst_badserver:
+    lea rdi, [rip + .Lm_badserver]
+    jmp .Lst_msg
+.Lst_preparing:
+    lea rdi, [rip + .Lm_preparing]
+    jmp .Lst_msg
+.Lst_resfail:
+    mov rdi, [rip + g_dstart_msg]
+    jmp .Lst_msg
 .Lst_tcp:
-    lea rdi, [rip + .Lm_tcp]
+    # a free loopback port for ${port}; the adapter listens there and rhun connects
+    call dap_pick_port
+    test eax, eax
+    js .Lst_noport
+    mov [rip + g_lc_port], eax
+    mov dword ptr [rsp + 4], DTR_TCP
+    jmp .Lst_cmd
+.Lst_noport:
+    lea rdi, [rip + .Lm_noport]
     jmp .Lst_msg
 .Lst_noneeds:
     lea rdi, [rip + .Lm_noneeds]
@@ -286,9 +375,42 @@ FN dap_start
 .Lst_cfgfail:
     lea rdi, [rip + g_dcfg_err]
 .Lst_msg:
+    mov [rip + g_dstart_msg], rdi
     call dap_error
     xor eax, eax
     EPILOGUE
+
+# dap_start_ext(EXT*, request id) -> eax the new session's id, 0 when it could not start
+#   (g_dstart_msg says why; the console and a toast too): debug-start (debugext.s) after
+#   dcfg_from_leaves filled g_lc_*. The extension hears ok ID SESSION once the adapter starts, or an
+#   error (cancelled, busy, refused) from ds_end; debug-ended when the session is over
+FN dap_start_ext
+    PROLOGUE 16
+    mov [rip + dstart_owner], rdi
+    mov [rip + dstart_oid], rsi
+    mov dword ptr [rip + dstart_resolved], 0
+    mov dword ptr [rip + dstart_before], 1      # its bodies have no before
+    jmp .Lst_prepared
+
+# dap_start_resolved() -> eax the session's id, 0: the debugger's extension answered debug-resolve
+#   (debugext.s) and g_lc_* hold the configuration to launch
+FN dap_start_resolved
+    PROLOGUE 16
+    mov qword ptr [rip + dstart_owner], 0
+    mov qword ptr [rip + dstart_oid], 0
+    mov dword ptr [rip + dstart_resolved], 1
+    mov dword ptr [rip + dstart_before], 0
+    jmp .Lst_prepared
+
+# dap_start_after_before() -> eax the session's id, 0: launch.ini's before task ended well
+#   (debugext.s) and g_lc_* still hold the configuration
+FN dap_start_after_before
+    PROLOGUE 16
+    mov qword ptr [rip + dstart_owner], 0
+    mov qword ptr [rip + dstart_oid], 0
+    mov dword ptr [rip + dstart_resolved], 1
+    mov dword ptr [rip + dstart_before], 1
+    jmp .Lst_prepared
 
 # dap_error(cstr): a failure to start or run, in the console and as a toast
 FN dap_error
@@ -327,7 +449,8 @@ approval_done:
     call ds_end
 9:  EPILOGUE
 
-# slot_of_id(id) -> rax DS* of the session with that id, or 0
+# dap_slot_of_id(id) -> rax DS* of the session with that id, or 0
+FN dap_slot_of_id
 slot_of_id:
     PROLOGUE
     mov r12d, edi
@@ -375,10 +498,13 @@ FN dap_forget_approvals
     jmp 1b
 9:  EPILOGUE
 
-# launch_now(ds): spawn the adapter and send initialize
+# launch_now(ds): spawn the adapter and send initialize. A tcp adapter (or a server) is connected
+#   to first: initialize waits in the queue meanwhile
 launch_now:
     PROLOGUE
     mov rbx, rdi
+    cmp dword ptr [rbx + DS_transport], DTR_SERVER
+    je 2f
     mov rdi, rbx
     call dap_spawn
     test rax, rax
@@ -387,13 +513,34 @@ launch_now:
     lea rsi, [rip + .Lm_spawn]
     call ds_end
     EPILOGUE
-1:  mov dword ptr [rbx + DS_state], DSS_INITIALIZING
+1:  cmp dword ptr [rbx + DS_transport], DTR_STDIO
+    je 3f
+    mov rdi, rbx
+    call dap_tcp_split
+2:  mov dword ptr [rbx + DS_state], DSS_CONNECTING
+    call time_ms
+    mov [rbx + DS_deadline], rax        # while connecting: the next try
+    add rax, DAP_CONNECT_MS
+    mov [rbx + DS_conn_until], rax
+    mov rdi, rbx
+    call send_initialize
+    jmp 4f
+3:  mov dword ptr [rbx + DS_state], DSS_INITIALIZING
     mov rdi, rbx
     call send_initialize
     call time_ms
     add rax, DAP_INIT_MS
     mov [rbx + DS_deadline], rax
-    mov edi, [rbx + DS_id]
+4:  # debug-start: the extension that asked hears the session's id
+    cmp qword ptr [rbx + DS_owner_id], 0
+    je 41f
+    mov rdi, [rbx + DS_owner]
+    mov rsi, [rbx + DS_owner_id]
+    mov edx, [rbx + DS_id]
+    call dbgx_reply_ok
+    mov qword ptr [rbx + DS_owner_id], 0
+    mov dword ptr [rbx + DS_owner_ok], 1
+41: mov edi, [rbx + DS_id]
     mov esi, DCON_INFO
     lea rdx, [rip + .Lm_starting]
     mov ecx, .Lm_starting_end - .Lm_starting
@@ -672,6 +819,7 @@ FN dap_tick
 9:  call bp_tick
     call restart_check
     call dg_hover_tick
+    call dbgx_resolve_tick
     EPILOGUE
 
 # ds_tick(ds)
@@ -685,7 +833,12 @@ ds_tick:
     EPILOGUE
 1:  cmp dword ptr [rbx + DS_state], DSS_APPROVAL
     je 9f
-    call time_us
+    cmp dword ptr [rbx + DS_state], DSS_CONNECTING
+    jne 11f
+    mov rdi, rbx
+    call connect_tick
+    EPILOGUE
+11: call time_us
     mov r14, rax                # start
     xor r13d, r13d              # messages
     mov dword ptr [rbx + DS_more], 1    # until a frame turns out incomplete: the budget stops it
@@ -807,7 +960,11 @@ FN dap_timeout
     cmp eax, -1
     je 91f
     call near_ms
-91: mov rax, r13
+91: call dbgx_resolve_timeout   # debug-resolve's deadlines
+    cmp rax, -1
+    je 92f
+    call near_ms
+92: mov rax, r13
     EPILOGUE
 # near_deadline: r13 = min(r13, [r15] - now) for a set deadline
 near_deadline:
@@ -898,6 +1055,9 @@ on_timeout:
     mov eax, [r12 + PD_epoch]
     cmp eax, [rbx + DS_epoch]
     jne 2f
+    mov eax, [r12 + PD_ctx + 4]
+    cmp eax, [rbx + DS_vgen]
+    jne 2f
     mov rdi, rbx
     mov esi, [r12 + PD_ctx]
     call vn_node
@@ -919,6 +1079,188 @@ on_timeout:
     mov ecx, .Lm_req_timeout_end - .Lm_req_timeout
     call dcon_line
     mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# connect_tick(ds): a tcp adapter or a server is tried every 100 ms for 10 s; a tcp adapter that
+#   exits meanwhile (its output and error output closed) ends the session with its last words
+connect_tick:
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + DS_transport], DTR_TCP
+    jne 1f
+    cmp dword ptr [rbx + DS_aout], 0
+    jge 1f
+    cmp dword ptr [rbx + DS_err], 0
+    jge 1f
+    cmp qword ptr [rbx + DS_exited_at], 0
+    jne 10f
+    call time_ms
+    mov [rbx + DS_exited_at], rax
+10: mov rdi, rbx
+    call adapter_gone
+    EPILOGUE
+1:  call time_ms
+    mov r12, rax
+    cmp r12, [rbx + DS_deadline]
+    jb 9f
+    mov rdi, rbx
+    call dap_connect_try
+    test eax, eax
+    jg 5f
+    js 7f
+    cmp r12, [rbx + DS_conn_until]
+    jae 6f
+    lea rax, [r12 + DAP_CONNECT_EVERY]
+    mov [rbx + DS_deadline], rax
+9:  EPILOGUE
+5:  # connected: initialize went out just now
+    mov dword ptr [rbx + DS_state], DSS_INITIALIZING
+    lea rax, [r12 + DAP_INIT_MS]
+    mov [rbx + DS_deadline], rax
+    xor ecx, ecx
+51: cmp ecx, [rbx + DS_npend]
+    jae 52f
+    mov eax, ecx
+    imul rax, rax, PD_SIZE
+    mov [rbx + DS_pend + rax + PD_sent], r12
+    inc ecx
+    jmp 51b
+52: mov dword ptr [rip + g_dirty], 1
+    inc dword ptr [rip + g_dap_gen]
+    EPILOGUE
+6:  # "the debugger did not accept a connection on 127.0.0.1:PORT in 10 s"
+    lea rdi, [rip + dlg_text]
+    lea rsi, [rip + .Lm_noconn]
+    call cstr_copy
+    mov rdi, rax
+    mov esi, [rbx + DS_addr]
+    mov edx, [rbx + DS_port]
+    call fmt_addr
+    lea rsi, [rip + .Lm_noconn2]
+    mov rdi, rax
+    call cstr_copy
+    mov rdi, rbx
+    lea rsi, [rip + dlg_text]
+    call ds_fail
+    EPILOGUE
+7:  mov rdi, rbx
+    lea rsi, [rip + .Lm_nosocket]
+    call ds_fail
+    EPILOGUE
+
+# fmt_addr(dst, IPv4 address in network order, port) -> rax the end (NUL-terminated): A.B.C.D:PORT
+fmt_addr:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13d, edx
+    xor r14d, r14d
+1:  mov rdi, rbx
+    movzx esi, r12b
+    call fmt_u64
+    add rbx, rax
+    shr r12d, 8
+    inc r14d
+    mov byte ptr [rbx], '.'
+    cmp r14d, 4
+    jb 2f
+    mov byte ptr [rbx], ':'
+2:  inc rbx
+    cmp r14d, 4
+    jb 1b
+    mov rdi, rbx
+    mov esi, r13d
+    call fmt_u64
+    add rbx, rax
+    mov byte ptr [rbx], 0
+    mov rax, rbx
+    EPILOGUE
+
+# server_addr(cstr) -> eax the port (0 when it does not parse), edx the IPv4 address in network
+#   order: "PORT", "HOST:PORT" with HOST localhost or A.B.C.D
+server_addr:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, DAP_LOOPBACK
+    # a colon: the host comes first
+    mov rax, rbx
+10: movzx ecx, byte ptr [rax]
+    test ecx, ecx
+    jz 5f
+    cmp ecx, ':'
+    je 11f
+    inc rax
+    jmp 10b
+11: mov r13, rax                # the colon
+    mov r14, rax
+    sub r14, rbx                # the host's length
+    cmp r14, 9
+    jne 1f
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_localhost]
+    mov rdx, 9
+    call memeq
+    test eax, eax
+    jnz 4f
+1:  # four decimal numbers up to 255 separated by dots
+    xor r12d, r12d
+    xor r15d, r15d              # the part
+2:  xor eax, eax
+    xor ecx, ecx                # digits
+3:  cmp rbx, r13
+    jae 31f
+    movzx edx, byte ptr [rbx]
+    cmp edx, '.'
+    je 31f
+    sub edx, '0'
+    cmp edx, 9
+    ja .Lsa_bad
+    imul eax, eax, 10
+    add eax, edx
+    cmp eax, 255
+    ja .Lsa_bad
+    inc ecx
+    inc rbx
+    jmp 3b
+31: test ecx, ecx
+    jz .Lsa_bad
+    mov ecx, r15d
+    shl ecx, 3
+    shl eax, cl
+    or r12d, eax
+    inc r15d
+    cmp rbx, r13
+    jae 32f
+    inc rbx                     # the dot
+    cmp r15d, 4
+    jb 2b
+    jmp .Lsa_bad
+32: cmp r15d, 4
+    jne .Lsa_bad
+4:  lea rbx, [r13 + 1]
+5:  # the port: 1..65535
+    xor eax, eax
+    xor ecx, ecx
+6:  movzx edx, byte ptr [rbx]
+    test edx, edx
+    jz 7f
+    sub edx, '0'
+    cmp edx, 9
+    ja .Lsa_bad
+    imul eax, eax, 10
+    add eax, edx
+    cmp eax, 65535
+    ja .Lsa_bad
+    inc ecx
+    inc rbx
+    jmp 6b
+7:  test ecx, ecx
+    jz .Lsa_bad
+    mov edx, r12d
+    EPILOGUE
+.Lsa_bad:
+    xor eax, eax
+    xor edx, edx
     EPILOGUE
 
 # ---------------- ending ----------------
@@ -977,7 +1319,38 @@ ds_end:
     mov edi, eax
     call bp_session_gone
     or dword ptr [rbx + DS_flags], DSF_STALE
-    # the console says so
+    # debug-start: an answer still owed is an error; a session it was told of has ended
+    mov rdi, [rbx + DS_owner]
+    test rdi, rdi
+    jz 3f
+    mov rsi, [rbx + DS_owner_id]
+    test rsi, rsi
+    jz 21f
+    mov rdx, r12
+    call dbgx_reply_failed
+    mov qword ptr [rbx + DS_owner_id], 0
+    jmp 3f
+21: cmp dword ptr [rbx + DS_owner_ok], 0
+    je 3f
+    mov esi, [rbx + DS_id]
+    mov edx, [rbx + DS_exit]
+    test dword ptr [rbx + DS_flags], DSF_EXITED
+    jnz 22f
+    mov edx, -1
+22: call dbgx_ended
+3:  # after = TASK, unless rhun quits
+    mov rdi, [rbx + DS_after]
+    test rdi, rdi
+    jz 4f
+    cmp dword ptr [rip + dap_quitting], 0
+    jne 31f
+    xor esi, esi
+    xor edx, edx
+    call tasks_run_named
+31: mov rdi, [rbx + DS_after]
+    call mem_free
+    mov qword ptr [rbx + DS_after], 0
+4:  # the console says so
     mov edi, [rbx + DS_id]
     mov esi, DCON_INFO
     lea rdx, [rip + .Lm_ended]
@@ -1095,6 +1468,11 @@ adapter_gone:
 
 # dap_stop(): Stop on the focused session; a second press goes to the next step at once
 FN dap_stop
+    sub rsp, 8
+    call dbgx_resolve_cancel    # Stop while the extension prepares the launch withdraws it
+    add rsp, 8
+    test eax, eax
+    jnz 1f
     call dap_focused
     test rax, rax
     jz 1f
@@ -1210,6 +1588,7 @@ send_disconnect:
 # dap_shutdown(): rhun quits: disconnect every session (300 ms in all), then their groups are killed
 FN dap_shutdown
     PROLOGUE
+    mov dword ptr [rip + dap_quitting], 1
     xor r12d, r12d
     xor r13d, r13d              # any disconnect sent
 1:  cmp r12d, DS_MAX
@@ -1880,6 +2259,7 @@ new_epoch:
     push rbx
     mov rbx, rdi
     inc dword ptr [rbx + DS_epoch]
+    inc dword ptr [rbx + DS_vgen]
     mov qword ptr [rbx + DS_threads + VEC_len], 0
     mov qword ptr [rbx + DS_frames + VEC_len], 0
     mov qword ptr [rbx + DS_vars + VEC_len], 0
@@ -2380,7 +2760,10 @@ send_scopes:
     call aki
     mov rdi, rbx
     mov esi, RQ_SCOPES
-    mov edx, [rbx + DS_frame]
+    mov edx, [rbx + DS_vgen]            # the pool's generation, and the frame
+    shl rdx, 32
+    mov eax, [rbx + DS_frame]
+    or rdx, rax
     call dap_req_send
 9:  EPILOGUE
 
@@ -2492,6 +2875,9 @@ r_scopes:
     mov eax, [r13 + PD_ctx]
     cmp eax, [rbx + DS_frame]
     jne 9f
+    mov eax, [r13 + PD_ctx + 4]
+    cmp eax, [rbx + DS_vgen]
+    jne 9f
     mov rdi, r12
     lea rsi, [rip + .Lk_scopes]
     call json_get
@@ -2579,7 +2965,10 @@ FN vn_expand
     call aki
     mov rdi, rbx
     mov esi, RQ_VARIABLES
-    mov edx, r12d
+    mov edx, [rbx + DS_vgen]            # the pool's generation, and the node
+    shl rdx, 32
+    mov eax, r12d
+    or rdx, rax
     call dap_req_send
     test eax, eax
     jnz 9f
@@ -2615,6 +3004,9 @@ r_variables:
     mov eax, [r13 + PD_epoch]
     cmp eax, [rbx + DS_epoch]
     jne 9f
+    mov eax, [r13 + PD_ctx + 4]
+    cmp eax, [rbx + DS_vgen]
+    jne 9f                      # asked for another frame's pool
     mov rdi, rbx
     mov esi, [r13 + PD_ctx]
     call vn_node
@@ -2834,8 +3226,8 @@ open_path_remove:
 #   earlier one are dropped)
 send_watches:
     PROLOGUE
-    inc dword ptr [rip + watch_gen]
     mov rbx, rdi
+    inc dword ptr [rbx + DS_wgen]       # this session's round
     cmp dword ptr [rbx + DS_state], DSS_PAUSED
     jne 9f
     mov rdi, rbx
@@ -2873,7 +3265,7 @@ send_watches:
     call akv
     mov rdi, rbx
     mov esi, RQ_WATCH
-    mov edx, [rip + watch_gen]
+    mov edx, [rbx + DS_wgen]
     shl rdx, 32
     or rdx, r14
     call dap_req_send
@@ -2921,7 +3313,7 @@ r_watch:
     cmp eax, [rbx + DS_epoch]
     jne 9f
     mov eax, [r15 + PD_ctx + 4]
-    cmp eax, [rip + watch_gen]
+    cmp eax, [rbx + DS_wgen]
     jne 9f                      # an earlier round's answer
     mov eax, [r15 + PD_ctx]
     mov [rsp + 4], eax          # the watch's index
@@ -3135,9 +3527,13 @@ FN dap_hover_eval
     lea rsi, [rip + .Lv_watch]
 1:  lea rdi, [rip + .Lk_context]
     call akv
+    inc dword ptr [rip + hover_seq]     # an earlier hover's answer no longer counts
     mov rdi, rbx
     mov esi, RQ_HOVER
-    mov edx, [rip + g_dap_gen]
+    mov edx, [rbx + DS_vgen]            # nor one about another frame
+    shl rdx, 32
+    mov eax, [rip + hover_seq]
+    or rdx, rax
     call dap_req_send
 9:  EPILOGUE
 
@@ -3149,6 +3545,12 @@ r_hover:
     jz 9f
     mov eax, [r8 + PD_epoch]
     cmp eax, [rdi + DS_epoch]
+    jne 9f
+    mov eax, [r8 + PD_ctx]
+    cmp eax, [rip + hover_seq]
+    jne 9f                      # the pointer moved on to another expression
+    mov eax, [r8 + PD_ctx + 4]
+    cmp eax, [rdi + DS_vgen]
     jne 9f
     mov rdi, rbx
     lea rsi, [rip + .Lk_result]
@@ -3237,7 +3639,7 @@ r_excinfo:
 
 # ---------------- reverse requests ----------------
 
-# on_reverse(ds, root): runInTerminal and startDebugging come with stage 7; others are refused
+# on_reverse(ds, root): runInTerminal (dapterm.s); others are refused
 on_reverse:
     PROLOGUE
     mov rbx, rdi
@@ -3251,6 +3653,21 @@ on_reverse:
     call jstr
     mov r14, rax
     mov r15, rdx
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Lc_runInTerminal]
+    call str_eq_cstr
+    test eax, eax
+    jz 1f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_arguments]
+    call jkey
+    mov rdx, rax
+    mov rdi, rbx
+    mov rsi, r13
+    call dap_run_in_terminal
+    EPILOGUE
+1:
     lea rdi, [rip + nodep]
     lea rsi, [rip + .Lm_unsupported]
     call sb_set_cstr
@@ -3400,13 +3817,26 @@ send_pause:
 9:  EPILOGUE
 
 # dap_focus_slot(slot): that session is the focused one (the toolbar, the view and stepping act on it)
+# dap_focus_ds(ds): that session is the focused one
+FN dap_focus_ds
+    sub rsp, 8
+    call slot_index
+    add rsp, 8
+    mov edi, eax
 FN dap_focus_slot
+    PROLOGUE
     cmp edi, DS_MAX
-    jae 1f
+    jae 9f
+    cmp edi, [rip + g_dfocus]
+    je 9f
     mov [rip + g_dfocus], edi
     inc dword ptr [rip + g_dap_gen]
     mov dword ptr [rip + g_dirty], 1
-1:  ret
+    # its watches, evaluated again (one added while another session had the focus)
+    call dap_slot
+    mov rdi, rax
+    call send_watches
+9:  EPILOGUE
 
 # dap_focus_frame(ds, index): another frame of the stopped thread: revealed, its scopes and the
 #   watches asked for again (the variables of the old frame go)
@@ -3419,6 +3849,7 @@ FN dap_focus_frame
     cmp r12, [rbx + DS_frames + VEC_len]
     jae 9f
     mov [rbx + DS_frame], r12d
+    inc dword ptr [rbx + DS_vgen]       # answers about the other frame's pool are dropped
     mov qword ptr [rbx + DS_vars + VEC_len], 0
     mov rdi, rbx
     call reveal_frame
@@ -3862,12 +4293,35 @@ FN dap_find_node
 9:  mov eax, r14d
     EPILOGUE
 
+.bss
+.p2align 3
+dstart_owner: .quad 0           # dap_start_ext's caller for the session being made, 0 the user
+hover_seq: .long 0              # the latest hover evaluation's number
+.p2align 3
+dstart_oid: .quad 0
+dstart_resolved: .long 0        # 1: debug-resolve answered for this launch
+dstart_before: .long 0          # 1: the before task ran (or there is none to run)
+dap_quitting: .long 0           # dap_shutdown: no after tasks
+.p2align 3
+.globl g_dstart_msg
+g_dstart_msg: .quad 0           # why the last dap_start* could not make a session
+
 .section .rodata
+.globl dap_m_busy, dap_m_cancelled, dap_m_full
+dap_m_busy:
 .Lm_busy: .asciz "a debug session is waiting for your answer"
 .Lm_compound: .asciz "compound configurations are not supported yet"
-.Lm_tcp: .asciz "this debugger connects over TCP, which is not supported yet"
+.Lm_preparing: .asciz "a launch is being prepared by its debugger's extension"
+.Lm_badserver: .asciz "server must be PORT or HOST:PORT, with HOST localhost or an IPv4 address"
+.Lm_noport: .asciz "no free TCP port on 127.0.0.1 for the debugger (this system has no sockets for rhun yet?)"
+.Lm_nosocket: .asciz "rhun could not create a TCP socket for the debugger"
+.Lm_noconn: .asciz "the debugger did not accept a connection on "
+.Lm_noconn2: .asciz " in 10 s"
+.Ls_localhost: .ascii "localhost"
 .Lm_noneeds: .asciz "the debugger's extension does not declare debug = yes under [needs]"
-.Lm_full: .asciz "8 debug sessions are running already"
+.Lm_full:
+dap_m_full: .asciz "8 debug sessions are running already"
+dap_m_cancelled:
 .Lm_cancelled: .asciz "cancelled"
 .Lm_spawn: .asciz "the debugger could not be started"
 .Lm_starting: .ascii "Starting the debugger"
@@ -3962,6 +4416,8 @@ FN dap_find_node
 .Lk_supportsProgressReporting: .asciz "supportsProgressReporting"
 .Lk_supportsInvalidatedEvent: .asciz "supportsInvalidatedEvent"
 .Lk_supportsMemoryReferences: .asciz "supportsMemoryReferences"
+.Lk_supportsRunInTerminalRequest: .asciz "supportsRunInTerminalRequest"
+.Lc_runInTerminal: .asciz "runInTerminal"
 .Lk_terminateDebuggee: .asciz "terminateDebuggee"
 .Lk_exceptionBreakpointFilters: .asciz "exceptionBreakpointFilters"
 .Lk_filter: .asciz "filter"
@@ -4042,7 +4498,8 @@ FN dap_find_node
 .p2align 3
 init_true:
     .quad .Lk_linesStartAt1, .Lk_columnsStartAt1, .Lk_supportsVariableType
-    .quad .Lk_supportsVariablePaging, .Lk_supportsProgressReporting, .Lk_supportsInvalidatedEvent, 0
+    .quad .Lk_supportsVariablePaging, .Lk_supportsProgressReporting, .Lk_supportsInvalidatedEvent
+    .quad .Lk_supportsRunInTerminalRequest, 0
 cap_names:
     .quad .Lcap_configdone, CAP_CONFIGDONE, .Lcap_cond, CAP_COND, .Lcap_hit, CAP_HIT
     .quad .Lcap_log, CAP_LOG, .Lcap_funcbp, CAP_FUNCBP, .Lcap_terminate, CAP_TERMINATE
