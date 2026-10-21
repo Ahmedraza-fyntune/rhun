@@ -11,6 +11,7 @@
 #   print-status              the status items: side, priority, owner, text, command, where drawn
 #   print-title-buttons       the tab strip's editor_title buttons: command, where drawn; its "…"
 #   view-item-menu VIEW ID [CONTEXT]  a tree row's view_item menu (CONTEXT: its viewItem) at the mouse
+#   print-langconf            the active document's language configuration: KEY=VALUE source=...
 .include "rhun.inc"
 
 .bss
@@ -31,6 +32,7 @@ contrib_ctl:
     .quad .Lc_print_keys, c_print_keys, .Lc_print_chord, c_print_chord, .Lc_key_latin, c_key_latin
     .quad .Lc_print_problems, c_print_problems, .Lc_print_status, c_print_status
     .quad .Lc_print_title_buttons, c_print_title_buttons, .Lc_view_item_menu, c_view_item_menu
+    .quad .Lc_print_langconf, c_print_langconf
     .quad 0, 0
 .Lc_cmd_args: .asciz "cmd-args"
 .Lc_cmd_ref: .asciz "cmd-ref"
@@ -44,6 +46,7 @@ contrib_ctl:
 .Lc_print_status: .asciz "print-status"
 .Lc_print_title_buttons: .asciz "print-title-buttons"
 .Lc_view_item_menu: .asciz "view-item-menu"
+.Lc_print_langconf: .asciz "print-langconf"
 .Lcommand_sp: .asciz "command "
 .Lbad_ref: .asciz "cmdref=bad\n"
 .Lno_ext: .asciz "no such extension\n"
@@ -293,6 +296,11 @@ cc_copy:
     cmova rdx, rcx
     mov byte ptr [rdi + rdx], 0
     jmp memcpy
+
+# print-langconf: the active document's merged language keys (langconf.s)
+c_print_langconf:
+    mov rsi, [rip + g_doc]
+    jmp langconf_dump
 
 # print-title-buttons: after a frame, as print-status
 c_print_title_buttons:

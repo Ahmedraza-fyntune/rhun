@@ -10,3 +10,6 @@ prefix = @a :v
 captypes = yes
 keywords = abstract baremodule begin break catch const continue do else elseif end export finally for function global if import let local macro module mutable primitive quote return struct try type using where while
 constants = true false nothing missing Inf NaN
+indent_open = ^function ^if ^for ^while ^begin ^let ^struct ^module ^try ^macro do ( [ {
+indent_close = end ) ] }
+indent_middle = else elseif catch finally

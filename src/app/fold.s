@@ -4,7 +4,8 @@
 # follow edits; an edit inside the hidden text, or deleting the header's line feed, removes the
 # fold. Ranges come from indentation: line L starts one when the next non-blank line is indented
 # deeper; it ends at the last line before the next non-blank line indented no deeper than L,
-# trailing blank lines excluded, so a closing brace stays visible.
+# trailing blank lines excluded, so a closing brace stays visible. A language's fold_markers (a
+# START line to its END line, nested, langconf.s) are ranges too.
 #
 # A document with folds scrolls by rows (wrap.s's row machinery, a hidden line has no rows). Its
 # queries, fast for a fold hiding ten million lines (a cache of merged hidden intervals with counts):
@@ -773,7 +774,13 @@ FN range_starts
     setnz al
     movzx eax, al
     EPILOGUE
-0:  mov rdi, rbx
+0:  mov rdi, rbx                # a fold_markers START line (the language configuration, langconf.s)
+    mov rsi, r12
+    call lc_fold_marker
+    cmp eax, 1
+    jne 71f
+    EPILOGUE
+71: mov rdi, rbx
     mov rsi, r12
     call indent_of
     test eax, eax
@@ -813,6 +820,31 @@ FN range_end
     call doc_line_of
     EPILOGUE
 0:  mov rdi, rbx
+    mov rsi, r12
+    call lc_fold_marker
+    cmp eax, 1
+    jne 71f
+    # a marker region: to its END line, nested regions counted
+    mov r13d, 1                 # depth
+    lea r14, [r12 + 1]
+4:  cmp r14, [rbx + DOC_nlines]
+    jae 8f
+    mov rdi, rbx
+    mov rsi, r14
+    call lc_fold_marker
+    cmp eax, 1
+    jne 5f
+    inc r13d
+    jmp 6f
+5:  cmp eax, 2
+    jne 6f
+    dec r13d
+    jnz 6f
+    mov rax, r14
+    EPILOGUE
+6:  inc r14
+    jmp 4b
+71: mov rdi, rbx
     mov rsi, r12
     call range_starts
     test eax, eax

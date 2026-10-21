@@ -658,6 +658,29 @@ case = insensitive
 
 `prefix` lists characters that start a colored word, each followed by a letter: `v` variable, `a` attribute, `t` tag, `p` preproc (at the start of a line only). A file gets the grammar whose `files` fit its name best: an exact name first, then the longest `*.suffix`; your grammars win a tie. Only when no pattern fits does rhun look for a `first_line` word in the file's first line; the longest one found wins.
 
+A grammar also says how the language is typed: auto-closing and surrounding pairs, the tokens
+that indent the next line and outdent their own, continued lists and comments, doc comment blocks
+and folding markers. Without these keys the editor behaves as it always did.
+
+```ini
+autoclose = ( ) [ ] { } " " {% %}
+autoclose_code = "
+indent_open = begin ^when ($
+indent_close = end )
+indent_middle = else
+indent_dedent_after = return
+continue = ;;
+doc_block = /** * */
+fold_markers = #region #endregion
+```
+
+`^T` counts T only as a line's first code token and `T$` only as its last; strings and comments
+never count. Enter indents one level after a line with more openers than closers and one level
+less after a dedent word; typing a closing or middle token on a line Enter indented takes it one
+level back. The full list of keys and rules is in the extension spec (docs/extensions/v1.1.md,
+"Language configuration"); an extension can set the same keys for an existing language in
+`[language.NAME]`.
+
 ## Scripting
 
 `rhun --control /path/to/socket` accepts one command per line, and `rhun --headless 1280x800 --script file` runs a file of them without a display. The tests use this.

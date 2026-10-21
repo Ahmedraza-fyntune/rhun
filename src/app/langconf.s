@@ -116,6 +116,8 @@ lcf_save: .zero 256             # a copy of the token being outdented
 lcf_save_len: .quad 0
 lcf_eind: .zero 256             # what Enter gives after a line
 lcf_eind_len: .quad 0
+lcf_eind_nd: .quad 0            # its length before a dedent word took a unit off
+lcf_tgt_len: .quad 0            # an outdented line's indentation: lcf_eind's first bytes
 nl_line: .quad 0                # lc_newline: the caret's line
 nl_c: .quad 0                   # the caret's byte in it
 nl_ind: .quad 0                 # its indentation (up to the caret)
@@ -1622,7 +1624,8 @@ lcf_less:
     ret
 
 # lcf_enter_after(doc, line): lcf_eind = the indentation Enter gives at the end of that line:
-#   its own, one unit more after an opening token, one less after a dedent word
+#   its own, one unit more after an opening token, one less after a dedent word (lcf_eind_nd: the
+#   length without that last rule)
 lcf_enter_after:
     PROLOGUE 16
     mov rbx, rdi
@@ -1664,28 +1667,35 @@ lcf_enter_after:
     inc qword ptr [rip + lcf_eind_len]
     dec ecx
     jmp 11b
-2:  cmp qword ptr [rip + lcf_ntok], 0
-    je 9f
+2:  mov rax, [rip + lcf_eind_len]
+    mov [rip + lcf_eind_nd], rax
+    cmp qword ptr [rip + lcf_ntok], 0
+    je 91f
     lea rax, [rip + lcf_toks]
     cmp dword ptr [rax + 8], 0
-    je 9f
+    je 91f
     mov rdi, [rip + lcf_lc]
     add rdi, LC_dedent
     xor esi, esi
     call lcf_tok_in
     test eax, eax
-    jz 9f
+    jz 91f
     lea rdi, [rip + lcf_eind]
     mov rsi, [rip + lcf_eind_len]
     call lcf_less
     mov [rip + lcf_eind_len], rax
-9:  mov eax, 1
+91: mov eax, 1
+    EPILOGUE
+9:  mov rax, [rip + lcf_eind_len]
+    mov [rip + lcf_eind_nd], rax
+    mov eax, 1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
 
 # lcf_untouched(doc, line) -> eax 1 when the line's indentation (lcf_cind) is what Enter after the
-#   previous non-blank line gives: the user did not align it by hand
+#   previous non-blank line gives (the user did not align it by hand) and the line's block is one
+#   unit less than that line's: lcf_eind's first lcf_tgt_len bytes
 lcf_untouched:
     PROLOGUE
     mov rbx, rdi
@@ -1711,6 +1721,16 @@ lcf_untouched:
     lea rdx, [rip + lcf_cind]
     mov rcx, [rip + lcf_cind_len]
     call str_eq
+    test eax, eax
+    jz 8f
+    # outdented: one unit less than that line's block (not again after a dedent word took it)
+    lea rdi, [rip + lcf_eind]
+    mov rsi, [rip + lcf_eind_nd]
+    call lcf_less
+    mov [rip + lcf_tgt_len], rax
+    cmp rax, [rip + lcf_cind_len]
+    jae 8f
+    mov eax, 1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -2198,14 +2218,15 @@ lcf_scan_cost:
     call lcf_load
     test r12d, r12d
     jz 9f
+    mov rdx, [rip + lcf_tgt_len]
+    mov [rip + lcf_cind_len], rdx
     lea rdi, [rip + lcf_cind]
-    mov rsi, [rip + lcf_cind_len]
-    call lcf_less
-    mov [rip + lcf_cind_len], rax
+    lea rsi, [rip + lcf_eind]
+    call memcpy
     # the replacement: the outdented line up to the caret
     lea rdi, [rip + lcf_text]
     lea rsi, [rip + lcf_cind]
-    mov rdx, rax
+    mov rdx, [rip + lcf_cind_len]
     call sb_push
     lea rdi, [rip + lcf_text]
     lea rsi, [rip + lcf_save]
@@ -2621,12 +2642,9 @@ lcf_outdent_typed:
     test eax, eax
     jz 8f
     call lcf_text_reset
-    lea rdi, [rip + lcf_cind]
-    mov rsi, [rip + lcf_cind_len]
-    call lcf_less
     lea rdi, [rip + lcf_text]
-    lea rsi, [rip + lcf_cind]
-    mov rdx, rax
+    lea rsi, [rip + lcf_eind]
+    mov rdx, [rip + lcf_tgt_len]
     call sb_push
     lea rdi, [rip + lcf_text]
     lea rsi, [rip + lcf_save]
