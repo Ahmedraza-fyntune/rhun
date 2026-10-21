@@ -228,6 +228,12 @@ if command -v wast2json >/dev/null; then python3 tests/wasm-spec.py || fail=1; e
 python3 tests/wasm-host.py || fail=1
 python3 tests/wasm-wasi.py || fail=1
 python3 tests/wasm-fuzz.py 1 2 --count 100 || fail=1
+# language features: the query engine, completion items, code actions, rename and formatting,
+# file diagnostics, the Results panel and hierarchies, the peek view, the hover card
+for t in langfeat-query complete-items code-actions rename-format file-diagnostics results peek hover-query; do
+    python3 tests/$t.py || fail=1
+done
+python3 tests/langfeat-real.py || fail=1
 # workspace edits and the editor model: transactions, disk edits, file operations
 python3 tests/wsedit.py || fail=1
 python3 tests/ext-reveal.py || fail=1

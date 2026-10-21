@@ -818,7 +818,12 @@ find_rect:
 
 # find_blocks_editor() -> 1 when the pointer is over the open find overlay.
 FN find_blocks_editor
-    xor eax, eax
+    call peek_blocks_editor     # language features: the peek view and the hover card over the
+    test eax, eax               # text (peek.s, hovercard.s)
+    jnz 1f
+    call hovercard_blocks_editor
+    test eax, eax
+    jnz 1f
     cmp dword ptr [rip + find_open], 0
     je 1f
     cmp qword ptr [rip + g_doc], 0

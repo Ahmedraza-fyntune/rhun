@@ -823,12 +823,13 @@ class Host(unittest.TestCase):
         self.lang()
         out = self.run_editor(['wait-ext echo running', 'wait 300', 'key Down', 'key Home', 'key ctrl+Right',
                                'key ctrl+Right', 'key ctrl+Right', 'key F12', 'wait 300', 'wait 300', 'print-state',
-                               'key shift+F12', 'wait 300', 'wait 300', 'print-palette', 'key Down', 'key Return',
+                               'key shift+F12', 'wait 300', 'wait 300', 'print-results', 'key F4', 'key F4',
                                'wait 100', 'print-state'], mode='lang', files=('p.rs',))
         self.assertIn(' active=p.rs line=1 col=9 sel=4 ', self.state(out, 0))
-        rows = out[out.index('choose=Go to reference') + 1:]
-        self.assertTrue(rows[1].startswith('> p.rs:2  let x = main;'), rows)
-        self.assertTrue(rows[2].startswith('  other.rs:1  fn main_ref() {}'), rows)
+        # references fill the Results panel (v1.1 "navigation"): a row per file, its locations under it
+        rows = [l.split(' label=', 1)[1] for l in out if l.startswith('row ')]
+        self.assertTrue(rows[0].startswith('p.rs ') and rows[1].startswith('2:13  let x = main;'), rows)
+        self.assertTrue(rows[2].startswith('other.rs ') and rows[3].startswith('1:4  fn main_ref() {}'), rows)
         self.assertIn(' active=other.rs line=1 col=8 sel=4 ', self.state(out, 1))
 
     def test_symbols_filter_and_go(self):
@@ -1042,9 +1043,9 @@ class Host(unittest.TestCase):
         (self.proj / 'z.rs').write_text('z\n', encoding='utf-8')
         self.env['ECHO_LANG'] = 'sorted'
         out = self.run_editor(['wait-ext echo running', 'wait 300', 'key shift+F12', 'wait 300', 'wait 300',
-                               'print-palette'], mode='lang', files=('p.rs',))
-        rows = out[out.index('choose=Go to reference') + 2:][:3]
-        self.assertEqual([r[2:].split(':')[0] for r in rows], ['p.rs', 'other.rs', 'z.rs'], rows)
+                               'print-results'], mode='lang', files=('p.rs',))
+        rows = [l.split(' label=', 1)[1].split()[0] for l in out if l.startswith('row ') and ' d=0 ' in l]
+        self.assertEqual(rows, ['p.rs', 'other.rs', 'z.rs'], out)
 
     def test_a_format_edit_for_another_file_changes_nothing(self):
         self.lang()
