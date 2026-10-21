@@ -8,7 +8,15 @@ STRUCT
 F CF_path, 8            # owned cstr
 F CF_lines, 8           # owned bytes, CF_n of them: line L at index L - 1
 F CF_n, 8
+F CF_ver, 8             # the version of the file's open document when its first range came, -1 none
 ENDSTRUCT CF_SIZE
+# a path of the message being checked, once
+STRUCT
+F CK_path, 8            # in the body
+F CK_len, 8
+F CK_max, 8             # its highest line in the message
+F CK_hash, 8
+ENDSTRUCT CK_SIZE
 .equ COV_HIT, 1
 .equ COV_MISS, 2
 .equ COV_SPAN_MSG, 4194304      # lines one message may mark, all its ranges together
@@ -25,6 +33,10 @@ map: .quad 0                    # path index: u32 slots holding a file's index +
 mapcap: .quad 0
 apply: .long 0                  # 0 checking a body, 1 applying it
 cnt: .zero 16
+.p2align 3
+ck_ents: .zero VEC_SIZE         # CK records of the message being checked
+ck_tab: .quad 0                 # path hash -> u32 index + 1 into ck_ents, 0 empty
+ck_cap: .quad 0
 
 .data
 .p2align 2
@@ -70,7 +82,11 @@ FN testcover_apply
     mov qword ptr [rsp + 64], 0 # files it adds
     mov qword ptr [rsp + 72], 0 # line bytes it adds
     cmp dword ptr [rip + apply], 0
-    je 1f
+    jne 11f
+    mov rdi, r12                # checking: this message's paths, each once (a path may repeat)
+    call ck_begin
+    jmp 1f
+11:
     cmp qword ptr [rsp + 56], 0
     jne 1f
     call testcover_clear        # a new run's data replaces the old
@@ -193,26 +209,46 @@ FN testcover_apply
     mov rcx, rax
     call mark
     jmp 3b
-5:  # checking: what the file adds, a new file or more lines of one held
+5:  # checking: the path's highest line in this message (its records are counted at the end)
     cmp dword ptr [rip + apply], 0
     jne 1b
-    mov rax, [rsp + 48]
-    call line_bytes
-    mov rcx, [rsp + 24]
-    test rcx, rcx
-    jnz 51f
-    inc qword ptr [rsp + 64]
-    add [rsp + 72], rax
-    jmp 1b
-51: sub rax, [rcx + CF_n]
-    jbe 1b
-    add [rsp + 72], rax
+    mov rdi, [rsp + 16]
+    mov rsi, [rsp + 40]
+    mov rdx, [rsp + 48]
+    call ck_note
     jmp 1b
 6:  call tsb_left
     test rax, rax
     jnz .Ltc_syntax
     cmp dword ptr [rip + apply], 0
     jne 7f
+    # what the message's paths add: a new file, or more lines of one held (by the same run)
+    xor r14d, r14d
+62: cmp r14, [rip + ck_ents + VEC_len]
+    jae 64f
+    imul rax, r14, CK_SIZE
+    add rax, [rip + ck_ents + VEC_ptr]
+    mov r13, rax
+    xor eax, eax
+    cmp qword ptr [rsp + 56], 0
+    je 63f
+    mov rdi, [r13 + CK_path]
+    mov rsi, [r13 + CK_len]
+    call file_find
+63: mov rcx, rax
+    mov rax, [r13 + CK_max]
+    call line_bytes
+    inc r14
+    test rcx, rcx
+    jnz 631f
+    inc qword ptr [rsp + 64]
+    add [rsp + 72], rax
+    jmp 62b
+631: sub rax, [rcx + CF_n]
+    jbe 62b
+    add [rsp + 72], rax
+    jmp 62b
+64: call ck_end
     # the caps over what the run would hold
     mov rax, [rsp + 64]
     mov rcx, [rsp + 72]
@@ -236,11 +272,97 @@ FN testcover_apply
     xor eax, eax
     EPILOGUE
 .Ltc_syntax:
+    call ck_end
     lea rax, [rip + .Le_syntax]
     EPILOGUE
 .Ltc_toobig:
+    call ck_end
     lea rax, [rip + .Le_toobig]
     EPILOGUE
+
+# ck_begin(files): an empty table for that many paths of the message being checked
+ck_begin:
+    PROLOGUE
+    mov qword ptr [rip + ck_ents + VEC_len], 0
+    mov eax, 16
+    lea rcx, [rdi + rdi]
+1:  cmp rax, rcx
+    jae 2f
+    shl rax, 1
+    jmp 1b
+2:  mov [rip + ck_cap], rax
+    lea rdi, [rax*4]
+    call mem_alloc
+    mov [rip + ck_tab], rax
+    mov rdi, rax
+    xor esi, esi
+    mov rdx, [rip + ck_cap]
+    shl rdx, 2
+    call memset
+    EPILOGUE
+
+# ck_end(): the table goes (nothing when there is none)
+ck_end:
+    PROLOGUE
+    mov rdi, [rip + ck_tab]
+    call mem_free
+    mov qword ptr [rip + ck_tab], 0
+    EPILOGUE
+
+# ck_note(path, len, line): the path's highest line in the message is at least line
+ck_note:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call hash_line
+    mov r14, rax
+    mov r15, [rip + ck_cap]
+    dec r15                     # the mask
+1:  and rax, r15
+    mov rcx, [rip + ck_tab]
+    mov edx, [rcx + rax*4]
+    test edx, edx
+    jz 3f
+    dec edx
+    imul rdx, rdx, CK_SIZE
+    add rdx, [rip + ck_ents + VEC_ptr]
+    cmp [rdx + CK_hash], r14
+    jne 2f
+    cmp [rdx + CK_len], r12
+    jne 2f
+    push rax
+    push rdx
+    mov rdi, [rdx + CK_path]
+    mov rsi, rbx
+    mov rdx, r12
+    call memeq
+    mov ecx, eax
+    pop rdx
+    pop rax
+    test ecx, ecx
+    jz 2f
+    cmp r13, [rdx + CK_max]     # seen: the higher line
+    jbe 9f
+    mov [rdx + CK_max], r13
+    jmp 9f
+2:  inc rax
+    jmp 1b
+3:  push rax
+    push rax
+    lea rdi, [rip + ck_ents]
+    mov esi, CK_SIZE
+    call vec_push
+    mov [rax + CK_path], rbx
+    mov [rax + CK_len], r12
+    mov [rax + CK_max], r13
+    mov [rax + CK_hash], r14
+    pop rax
+    pop rax
+    mov rdx, [rip + ck_ents + VEC_len]
+    mov rcx, [rip + ck_tab]
+    mov [rcx + rax*4], edx
+9:  EPILOGUE
 
 # line_bytes(rax lines) -> rax the bytes a file holding that many lines takes: whole 4 KiB steps
 line_bytes:
@@ -399,6 +521,9 @@ file_for:
     mov rsi, r13
     call mem_dup
     mov [r14 + CF_path], rax
+    mov rdi, rax
+    call testgutter_doc_ver
+    mov [r14 + CF_ver], rax
     mov rdi, [rip + files + VEC_len]
     dec rdi
     call map_put
@@ -447,6 +572,53 @@ FN testcover_file
     call file_find
     pop rbx
     ret
+
+# testcover_ver(CF*) -> rax the version of the file's open document its coverage refers to, -1 none
+FN testcover_ver
+    mov rax, [rdi + CF_ver]
+    ret
+
+# testcover_count(CF*) -> rax the lines it has a byte for
+FN testcover_count
+    mov rax, [rdi + CF_n]
+    ret
+
+# testcover_files() -> rax the files with coverage
+FN testcover_files
+    mov rax, [rip + files + VEC_len]
+    ret
+
+# testcover_file_at(i) -> rax CF*
+FN testcover_file_at
+    imul rax, rdi, CF_SIZE
+    add rax, [rip + files + VEC_ptr]
+    ret
+
+# testcover_path(CF*) -> rax its path (cstr)
+FN testcover_path
+    mov rax, [rdi + CF_path]
+    ret
+
+# testcover_stats(CF*) -> eax its covered lines (partly covered ones too), edx the lines it has
+#   coverage for
+FN testcover_stats
+    xor eax, eax
+    xor edx, edx
+    mov rsi, [rdi + CF_lines]
+    mov r8, [rdi + CF_n]
+    xor ecx, ecx
+1:  cmp rcx, r8
+    jae 9f
+    movzx r9d, byte ptr [rsi + rcx]
+    inc rcx
+    test r9d, r9d
+    jz 1b
+    inc edx
+    test r9d, COV_HIT
+    jz 1b
+    inc eax
+    jmp 1b
+9:  ret
 
 # testcover_line(CF*, line one-based) -> eax 0 unknown, COV_HIT covered, COV_MISS missed, 3 partly
 FN testcover_line

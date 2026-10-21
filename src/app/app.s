@@ -4813,6 +4813,11 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call dview_status_item
+    # testing: runs going on, then the tests passed and failed (testview.s)
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call testview_status_item
     # the branch; the file's items follow it
     mov edi, eax
     mov esi, [rsp + 4]
