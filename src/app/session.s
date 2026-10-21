@@ -502,6 +502,28 @@ recent_cb:
     jmp 1b
 .endif
 2:  mov byte ptr [rdi + rdx], 0
+.ifdef WINDOWS
+    # remote hosts: a remote window lists its remote's folders (decoded names are SPEC/path)
+    cmp dword ptr [rip + g_remote], 0
+    je 21f
+    call remote_spec
+    mov r14, rax
+    mov rdi, rax
+    call strlen
+    mov r15, rax
+    lea rdi, [rip + rc_path]
+    mov rsi, r14
+    mov rdx, r15
+    call memeq
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + rc_path]
+    cmp byte ptr [rdi + r15], '/'
+    jne 9f
+    lea rsi, [rdi + r15]
+    call cstr_copy
+21: lea rdi, [rip + rc_path]
+.endif
     mov rsi, [rip + g_project]
     test rsi, rsi
     jz 3f

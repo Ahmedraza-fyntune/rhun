@@ -17,6 +17,7 @@ vfs_events: .zero SB_SIZE       # vfs_tick's events while it hands them on
 .globl vfs_statbuf
 vfs_statbuf: .zero 144          # the last vfs_stat / vfs_lstat (Linux struct stat on every system)
 vfs_tmp: .zero 4200
+vfs_real: .zero 4200              # vfs_write_all: the file a path's links lead to
 vfs_cache: .zero SB_SIZE        # vfs_stats_prefetch: "PATH\0" + "o" stat (144) or "e" errno (4), each
 vfs_cache_on: .long 0
 vfs_roots_done: .byte 0
@@ -53,8 +54,12 @@ FN vfs_remote_path
     lea rsi, [rip + vfs_root_state]
     call vfs_under
     test eax, eax
-    jnz 8f
-    lea rsi, [rip + vfs_root_config]
+    jz 7f
+    call vfs_host_snapshot      # the host's agents index writes there too, by the same path
+    test eax, eax
+    jz 8f
+    jmp 9f
+7:  lea rsi, [rip + vfs_root_config]
     call vfs_under
     test eax, eax
     jnz 8f
@@ -85,6 +90,34 @@ vfs_remote_paths2:
     ret                         # both on one side: eax as vfs_remote_path's
 2:  add rsp, 8                  # mixed: the caller returns EXDEV
     mov rax, -18
+    ret
+
+# vfs_host_snapshot(rdi path under the state folder) -> eax 1 for a transcript snapshot the host's
+#   agents index made (STATE/.rhun-opencode-*): when both machines have the same state folder path
+#   it is still the host's file. Keeps rdi
+vfs_host_snapshot:
+    push rdi
+    push rdi
+    lea rdi, [rip + vfs_root_state]
+    call strlen
+    pop rdi
+    pop rdi
+    add rax, rdi
+    cmp byte ptr [rax], '/'
+    jne 8f
+    lea rsi, [rax + 1]
+    lea rdx, [rip + .Lsnap_prefix]
+    xor ecx, ecx
+1:  movzx eax, byte ptr [rdx + rcx]
+    test eax, eax
+    jz 9f
+    cmp al, [rsi + rcx]
+    jne 8f
+    inc ecx
+    jmp 1b
+8:  xor eax, eax
+    ret
+9:  mov eax, 1
     ret
 
 # vfs_under(rdi path, rsi root) -> eax 1 when path is root or inside it (root empty: no)
@@ -466,12 +499,14 @@ FN vfs_read_head
 9:  EPILOGUE
 
 # vfs_write_all(path, ptr, len) -> as file_write_all: 0 or -errno. On the host a file replaced keeps
-#   its mode (the agent writes a temporary file and renames it over); a big one goes in parts
+#   its mode (the agent writes a temporary file and renames it over); a big one goes in parts into a
+#   temporary file created exclusively next to the file its links lead to, with that file's mode,
+#   and then renamed over it
 FN vfs_write_all
     call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
     test eax, eax
     je file_write_all
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -481,37 +516,75 @@ FN vfs_write_all
     cmp r13, VFS_ONE_WRITE
     ja .Lvw_parts
     mov edi, 1
+    mov esi, 0644
     call vfs_write_req
     EPILOGUE
 .Lvw_parts:
-    # PATH.rhun-save: created, appended to, then renamed over the file
+    # the file its links lead to (a new one: the path as given), and its mode
     mov rdi, rbx
-    lea rsi, [rip + .Lsave_suffix]
-    call vfs_cat_tmp
+    lea rsi, [rip + vfs_real]
+    call vfs_realpath
+    test rax, rax
+    jle 1f
+    lea rbx, [rip + vfs_real]
+1:  mov r15, rbx                # the file replaced
+    mov dword ptr [rsp + 16], 0644
+    mov dword ptr [rsp + 20], 2         # create only
+    mov rdi, r15
+    call vfs_stat
+    test rax, rax
+    js 2f
+    mov eax, [rip + vfs_statbuf + 24]
+    and eax, 07777
+    mov [rsp + 16], eax
+    mov dword ptr [rsp + 20], 2 | 16    # and that mode exactly
+2:  # PATH.rhun-save, else PATH.rhun-save-N: made here, never an existing file or link
+    mov qword ptr [rsp + 24], 0
+3:  mov rdi, r15
+    mov rsi, [rsp + 24]
+    call vfs_save_tmp
     test rax, rax
     jz 8f
-    mov r15, rbx                # the real path
     lea rbx, [rip + vfs_tmp]
     mov rdi, rbx
     call strlen
     mov r14, rax
-    xor ecx, ecx                # written
-    mov [rsp], rcx
-1:  mov rax, r13
-    sub rax, [rsp]
-    jz 3f
+    mov rax, r13
     cmp rax, VFS_ONE_WRITE
-    jbe 2f
+    jbe 31f
     mov eax, VFS_ONE_WRITE
-2:  mov [rsp + 8], rax
-    mov edi, 4
-    cmp qword ptr [rsp], 0
-    jne 21f
-    mov edi, 8
-21: push r12
+31: mov [rsp + 8], rax
+    mov edi, [rsp + 20]
+    mov esi, [rsp + 16]
+    push r13
+    push r13
+    mov r13, [rsp + 24]
+    call vfs_write_req
+    pop r13
+    pop r13
+    cmp rax, -17                # EEXIST: the next name
+    jne 32f
+    inc qword ptr [rsp + 24]
+    cmp qword ptr [rsp + 24], 100
+    jb 3b
+    jmp 9f
+32: test rax, rax
+    js 9f
+    mov rax, [rsp + 8]
+    mov [rsp], rax              # written
+4:  mov rax, r13
+    sub rax, [rsp]
+    jz 6f
+    cmp rax, VFS_ONE_WRITE
+    jbe 5f
+    mov eax, VFS_ONE_WRITE
+5:  mov [rsp + 8], rax
+    push r12
     push r13
     add r12, [rsp + 16]
     mov r13, [rsp + 24]
+    mov edi, 4                  # append
+    xor esi, esi
     call vfs_write_req
     pop r13
     pop r12
@@ -519,8 +592,8 @@ FN vfs_write_all
     js 7f
     mov rax, [rsp + 8]
     add [rsp], rax
-    jmp 1b
-3:  mov rdi, rbx
+    jmp 4b
+6:  mov rdi, rbx
     mov rsi, r15
     xor edx, edx
     call vfs_rename
@@ -535,20 +608,57 @@ FN vfs_write_all
     EPILOGUE
 8:  mov rax, -36
     EPILOGUE
+9:  test rax, rax
+    js 91f
+    mov rax, -17
+91: EPILOGUE
 
-# vfs_write_req(flags) with rbx path, r14 its length, r12 data, r13 its length -> as remote_call:
-#   write FLAGS 644 PLEN LEN + path + data
+# vfs_save_tmp(path, n) -> vfs_tmp holding PATH.rhun-save (n 0) or PATH.rhun-save-N, or 0 when too long
+vfs_save_tmp:
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12, rsi
+    lea rsi, [rip + .Lsave_suffix]
+    call vfs_cat_tmp
+    test rax, rax
+    jz 9f
+    test r12, r12
+    jz 9f
+    lea rdi, [rip + vfs_tmp]
+    call strlen
+    cmp rax, 4080
+    jae 8f
+    lea rdi, [rip + vfs_tmp]
+    add rdi, rax
+    mov byte ptr [rdi], '-'
+    inc rdi
+    mov rsi, r12
+    call fmt_u64
+    mov byte ptr [rdi], 0
+    lea rax, [rip + vfs_tmp]
+    jmp 9f
+8:  xor eax, eax
+9:  add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# vfs_write_req(flags, mode) with rbx path, r14 its length, r12 data, r13 its length -> as
+#   remote_call: write FLAGS MODE PLEN LEN + path + data (MODE in octal)
 vfs_write_req:
     push rbx
     push r15
-    sub rsp, 8
+    push rbp
     mov r15d, edi
+    mov ebp, esi
     lea rdi, [rip + vfs_line_write]
     call vfs_line_start
     mov edi, r15d
     call vfs_line_num
-    mov edi, 644
-    call vfs_line_num
+    mov edi, ebp
+    call vfs_line_octal
     mov rdi, r14
     call vfs_line_num
     lea rdi, [rip + vfs_body]
@@ -570,8 +680,31 @@ vfs_write_req:
     call sb_free                # a big file's bytes are not kept around
     pop rax
     pop rax
-    add rsp, 8
+    pop rbp
     pop r15
+    pop rbx
+    ret
+
+# vfs_line_octal(mode): " OOOO" onto vfs_line (the mode's four octal digits)
+vfs_line_octal:
+    push rbx
+    mov ebx, edi
+    lea rdi, [rip + vfs_line]
+    mov esi, ' '
+    call sb_push_byte
+    mov ecx, 9
+1:  mov eax, ebx
+    shr eax, cl
+    and eax, 7
+    lea esi, [rax + '0']
+    push rcx
+    push rcx
+    lea rdi, [rip + vfs_line]
+    call sb_push_byte
+    pop rcx
+    pop rcx
+    sub ecx, 3
+    jns 1b
     pop rbx
     ret
 
@@ -1046,6 +1179,9 @@ FN vfs_realpath
     call vfs_remote_path        # 0: this path is here (not remote, or rhun's own)
     test eax, eax
     jne 1f
+# local_realpath(path, buf 4096) -> as vfs_realpath, always on this machine (remoteext.s: a linked
+#   extension folder may be anywhere)
+FN local_realpath
 .ifdef MACOS
     push rsi
     SYS SYS_realpath
@@ -1536,7 +1672,8 @@ FN vfs_pty_spawn
 #   -errno), edx the descriptor (the pty's master, or the program's input and output), ecx its error
 #   output's (flags 2) or -1. flags: 1 a pty of cols x rows, 2 the error output apart, 4 the program
 #   is uproc's from then on (uproc_signal, uproc_wait, uproc_end); without 4 the caller waits for it
-#   with proc_wait and signals it with proc_kill
+#   with proc_wait and signals it with proc_kill; 8 argv[0] is a path on the host (else its name is
+#   looked up in the host's PATH)
 FN vfs_uproc_spawn
     PROLOGUE 16
     mov eax, [rbp + 16]
@@ -1556,7 +1693,10 @@ FN vfs_uproc_spawn
     test eax, 2
     jz 2f
     mov r8d, -3                 # a socket of its own
-2:  xor r9d, r9d
+2:  test eax, 8
+    jz 3f
+    or ecx, 2                   # argv[0] a path on the host, kept as given
+3:  xor r9d, r9d
     push 0
     push 0
     call remote_spawn
@@ -1712,6 +1852,7 @@ FN vfs_tick
 vfs_line_read: .asciz "read"
 vfs_line_write: .asciz "write"
 .Lsave_suffix: .asciz ".rhun-save"
+.Lsnap_prefix: .asciz ".rhun-opencode-"
 .Lproc_fd: .asciz "/proc/self/fd/"
 .text
 

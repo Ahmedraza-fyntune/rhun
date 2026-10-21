@@ -19,11 +19,12 @@ EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 class Agent:
     """One agent process and a reader for its stream."""
 
-    def __init__(self, home, env_extra=None):
+    def __init__(self, home, env_extra=None, session=None):
         env = {'HOME': str(home), 'PATH': '/usr/local/bin:/usr/bin:/bin', 'SHELL': '/bin/sh',
                'USER': 'tester'}
         env.update(env_extra or {})
-        self.p = subprocess.Popen([str(EXE), '--remote-agent'], stdin=subprocess.PIPE,
+        args = [str(EXE), '--remote-agent'] + (['--session', session] if session else [])
+        self.p = subprocess.Popen(args, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         self.buf = b''
         self.next_id = 1
@@ -380,7 +381,9 @@ class RemoteAgent(unittest.TestCase):
         return False
 
     # a child that ignores SIGHUP and SIGTERM, its output elsewhere: only its group's SIGKILL ends it
-    STUBBORN = "(trap '' HUP TERM; exec sleep 300) </dev/null >/dev/null 2>&1 & echo $!"
+    # (the leader goes on once the child's traps are set)
+    STUBBORN = ("r=$HOME/ready-$$; (trap '' HUP TERM; : > $r; exec sleep 300) </dev/null >/dev/null 2>&1 & "
+                "while [ ! -e $r ]; do sleep 0.02; done; echo $!")
 
     def test_what_a_program_leaves_behind_ends_with_it(self):
         a = self.agent
@@ -400,6 +403,40 @@ class RemoteAgent(unittest.TestCase):
         a.p.stdin.close()                       # the window went away
         a.p.wait(10)
         self.assertTrue(self.gone_within(child, 4), 'the stubborn child outlived the session')
+
+    def test_a_session_outlives_its_connection(self):
+        """--session: the first agent forks the session's daemon and relays to it; when its
+        connection ends the programs keep running, and the next agent of that session attaches to
+        them; quit ends the session and its socket."""
+        sid = '0123456789abcdef'
+        a = Agent(self.home, session=sid)
+        kind, body = a.call('spawn 20 0 0 0 0', spawn_body(['sh', '-c', 'read x; echo got-$x; exit 3']))
+        self.assertEqual(kind, 'ok')
+        pid = int(body)
+        kind, body = a.call('spawn 21 0 0 0 0', spawn_body(['sh', '-c', 'exit 5']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 21 in a.exits)
+        a.close()                               # the connection goes
+        time.sleep(0.5)
+        os.kill(pid, 0)                         # the program did not
+        self.assertTrue((self.home / '.cache/rhun-remote/s' / sid).exists())
+        b = Agent(self.home, session=sid)
+        kind, body = b.call('attach')
+        self.assertEqual(kind, 'ok')
+        rows = {int(l.split()[0]): l.split()[1:] for l in body.decode().splitlines()}
+        self.assertEqual(rows[20][1], '0', body)    # running, its output still open
+        self.assertEqual(rows[21], ['1', '3', '5'], body)  # ended: kept until the window closes it
+        self.assertEqual(b.call('close 21')[0], 'ok')
+        self.assertNotIn(b'\n21 ', b'\n' + b.call('attach')[1])
+        b.send(b'd 20 3\nhi\n')
+        b.wait_for(lambda: 20 in b.exits and b'got-hi' in b.data.get(20, b''))
+        self.assertEqual(b.exits[20], 3)
+        b.send(b'0 quit 0\n')
+        b.p.wait(10)
+        end = time.time() + 5
+        while (self.home / '.cache/rhun-remote/s' / sid).exists() and time.time() < end:
+            time.sleep(0.05)
+        self.assertFalse((self.home / '.cache/rhun-remote/s' / sid).exists())
 
     def test_login_environment(self):
         """The login shell's profile reaches programs (a PATH entry like ~/.cargo/bin)."""
