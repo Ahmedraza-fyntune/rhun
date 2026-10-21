@@ -43,6 +43,27 @@ c_print_log:
     mov eax, 7
     jmp c_views
 
+# print-form NAME|VIEW: a form view's fields (form_dump)
+c_print_form:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call views_flush
+    mov rdi, r12
+    mov rsi, r13
+    call rview_form_of
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov rsi, rbx
+    call form_dump
+    EPILOGUE
+8:  mov rdi, rbx
+    lea rsi, [rip + .Lnone]
+    call sb_push_cstr
+    EPILOGUE
+
 # print-notes: the notification cards and the progress entries (notify_dump)
 c_print_notes:
     PROLOGUE
@@ -489,6 +510,7 @@ views_ctl:
     .quad .Lc_print_side_tabs, c_print_side_tabs, .Lc_print_view, c_print_view
     .quad .Lc_view_show, c_view_show, .Lc_view_focus, c_view_focus, .Lc_places_demo, c_places_demo
     .quad .Lc_print_log, c_print_log, .Lc_print_notes, c_print_notes, .Lc_note_press, c_note_press
+    .quad .Lc_print_form, c_print_form
     .quad 0, 0
 .Lc_print_sidebar: .asciz "print-sidebar"
 .Lc_print_panel_tabs: .asciz "print-panel-tabs"
@@ -499,6 +521,7 @@ views_ctl:
 .Lc_places_demo: .asciz "places-demo"
 .Lc_print_log: .asciz "print-log"
 .Lc_print_notes: .asciz "print-notes"
+.Lc_print_form: .asciz "print-form"
 .Lc_note_press: .asciz "note-press"
 .Lw_close: .asciz "close"
 .Lw_cancel: .asciz "cancel"

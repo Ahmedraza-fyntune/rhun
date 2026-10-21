@@ -77,6 +77,7 @@ F RV_tabclosing, 4      # its tab is being closed by the extension: no "closed" 
 F RV_prog, 4            # progress shows in it (notify.s: progress view:VIEW)
 F RV_ppct, 4            # its percent, -1 indeterminate
 F RV_vw, 8              # a picture view's 12a picture (extview.s), or 0
+F RV_form, 8            # a form view's form (rform.s), or 0
 ENDSTRUCT RV_SIZE
 
 # an action of a retained view: TA's layout (the tree looks inline keys up in them), TA_pad its WHERE
@@ -523,7 +524,16 @@ rv_open:
     pop rcx
     pop rcx
     mov [rcx + RV_log], rax
-4:  cmp r12d, RK_PICTURE        # a picture view: a 12a picture of its own, shown at once
+4:  cmp r12d, RK_FORM           # a form view: its fields
+    jne 41f
+    push rcx
+    push rcx
+    mov edi, r15d
+    call form_new
+    pop rcx
+    pop rcx
+    mov [rcx + RV_form], rax
+41: cmp r12d, RK_PICTURE        # a picture view: a 12a picture of its own, shown at once
     jne 5f
     push rcx
     push rcx
@@ -577,6 +587,8 @@ rv_close:
     call notify_view_closed     # its progress shows nowhere now
     mov rdi, [r12 + RV_vw]      # a picture view's picture
     call extview_free_place
+    mov rdi, [r12 + RV_form]    # a form view's form
+    call form_free
     movsxd rdi, dword ptr [r12 + RV_decl]
     cmp rdi, -1
     je 2f
@@ -2059,7 +2071,12 @@ kind_agreed:
     FEAT_TEST rsi, FEAT_VIEWS   # a picture view: section 12a's draw and events
     jz 9f
     jmp 8f
-1:  cmp edi, RK_LOG
+1:  cmp edi, RK_FORM
+    jne 2f
+    FEAT_TEST rsi, FEAT_VIEW_FORM
+    jz 9f
+    jmp 8f
+2:  cmp edi, RK_LOG
     jne 9f
     FEAT_TEST rsi, FEAT_VIEW_LOG
     jz 9f
@@ -2676,7 +2693,17 @@ rv_instance_draw:
     mov r8d, [rsp + 12]
     call extview_draw_vw
     jmp 9f
-1:
+1:  cmp dword ptr [r14 + RV_kind], RK_FORM
+    jne 11f
+    mov rdi, [r14 + RV_form]
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    mov r9d, [rsp + 16]
+    call form_draw
+    jmp 9f
+11:
     mov rdi, [r14 + RV_tree]
     mov esi, [rsp]
     mov edx, [rsp + 4]
@@ -2765,6 +2792,8 @@ rv_instance_key:
     je 1f
     cmp dword ptr [rax + RV_kind], RK_PICTURE
     je 2f
+    cmp dword ptr [rax + RV_kind], RK_FORM
+    je 4f
     mov rdi, [rax + RV_tree]
     mov esi, r12d
     mov edx, r13d
@@ -2786,6 +2815,12 @@ rv_instance_key:
     mov edx, r13d
     mov ecx, r14d
     call log_key
+    EPILOGUE
+4:  mov rdi, [rax + RV_form]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    call form_key
     EPILOGUE
 
 # rv_place_focus(vd, on): "focus 0|1"; the context keys viewFocus and view follow it
@@ -3899,9 +3934,28 @@ patch_check_ops:
     lea rdx, [rip + .Lo_clear]
     call tree_rec_is
     test eax, eax
-    jz 702f
+    jz 703f
     cmp dword ptr [rip + p_kind], RK_LOG
     jne .Lpc_kind
+    jmp .Lpc_op
+703:mov rdi, rbx                # a form's: form N LEN, field LEN (rform.s checks the records)
+    call form_op_count
+    cmp eax, -2
+    je 702f
+    cmp dword ptr [rip + p_kind], RK_FORM
+    jne .Lpc_kind
+    cmp eax, -3
+    je .Lpc_syntax
+    mov ecx, eax
+    mov rax, [rip + p_rv]
+    mov rdi, [rax + RV_form]
+    mov rsi, [rbx + RR_data]
+    mov rdx, [rbx + RR_len]
+    call form_check
+    cmp eax, 1
+    je .Lpc_syntax
+    cmp eax, 2
+    je .Lpc_toobig_form
     jmp .Lpc_op
 702:mov rdi, rbx
     xor esi, esi
@@ -4221,11 +4275,50 @@ patch_check_ops:
     call set_err
     mov eax, 1
     EPILOGUE
+.Lpc_toobig_form:
+    lea rdi, [rip + .Le_toobig_form]
+    call set_err
+    mov eax, 1
+    EPILOGUE
 .Lpc_toobig:
     lea rdi, [rip + .Le_toobig]
     call set_err
 .Lpc_fail:
     mov eax, 1
+    EPILOGUE
+
+# form_op_count(rr) -> eax N for "form N LEN", -1 for "field LEN", -2 for neither, -3 for a form op
+#   that cannot be read
+form_op_count:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_form]
+    call tree_rec_is
+    test eax, eax
+    jz 2f
+    cmp qword ptr [rbx + RR_n], 3
+    jne 7f
+    mov rdi, rbx
+    mov esi, 1
+    call tree_rec_num
+    test edx, edx
+    jz 7f
+    EPILOGUE
+2:  mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_field]
+    call tree_rec_is
+    test eax, eax
+    jz 8f
+    cmp qword ptr [rbx + RR_n], 2
+    jne 7f
+    mov eax, -1
+    EPILOGUE
+7:  mov eax, -3
+    EPILOGUE
+8:  mov eax, -2
     EPILOGUE
 
 # check_log_op() -> eax 1 when rr is "log N LEN" with N lines "SEV TEXT" LF, SEV a severity word
@@ -4699,9 +4792,20 @@ patch_apply:
     lea rdx, [rip + .Lo_clear]
     call tree_rec_is
     test eax, eax
-    jz 702f
+    jz 703f
     mov rdi, [r14 + RV_log]
     call log_clear
+    jmp .Lpa_op
+703:mov rdi, rbx                # form, field: the records into the form, which is ready then
+    call form_op_count
+    cmp eax, -2
+    je 702f
+    mov ecx, eax
+    mov rdi, [r14 + RV_form]
+    mov rsi, [rbx + RR_data]
+    mov rdx, [rbx + RR_len]
+    call form_apply
+    mov dword ptr [r14 + RV_state], RS_READY
     jmp .Lpa_op
 702:mov rdi, rbx
     xor esi, esi
@@ -4896,6 +5000,8 @@ FN rview_patch
     cmp dword ptr [rax + RV_kind], RK_TREE
     je 1f
     cmp dword ptr [rax + RV_kind], RK_PICTURE   # its common ops (title, badge, message, busy...)
+    je 1f
+    cmp dword ptr [rax + RV_kind], RK_FORM
     je 1f
     cmp dword ptr [rax + RV_kind], RK_LOG
     jne 7f
@@ -5155,6 +5261,9 @@ FN rview_tree_of
 .Le_toobig_actions: .asciz "toobig actions"
 .Le_noview_kind: .asciz "noview an op for another kind of view"
 .Lo_log: .asciz "log"
+.Lo_form: .asciz "form"
+.Lo_field: .asciz "field"
+.Le_toobig_form: .asciz "toobig form"
 .Lo_clear: .asciz "clear"
 .Lo_action: .asciz "action"
 .Lo_select_mode: .asciz "select-mode"
@@ -5511,15 +5620,144 @@ FN views_field
 2:  call rv_at
     cmp qword ptr [rax + RV_ext], 0
     je 8f
+    cmp dword ptr [rax + RV_kind], RK_FORM
+    je 3f
     cmp dword ptr [rax + RV_kind], RK_LOG
     jne 8f
     mov rdi, [rax + RV_log]
     call log_field
     pop rbx
     ret
+3:  mov rdi, [rax + RV_form]
+    call form_field
+    pop rbx
+    ret
 8:  xor eax, eax
     pop rbx
     ret
+
+# rview_focused_form() -> rax the form of the form view with the keyboard, or 0
+FN rview_focused_form
+    push rbx
+    call place_focused
+    mov edi, eax
+    call place_at
+    test rax, rax
+    jz 8f
+    mov rcx, [rax + PL_ops]
+    lea rdx, [rip + rv_place_ops]
+    cmp rcx, rdx
+    je 1f
+    lea rdx, [rip + rv_tab_ops]
+    cmp rcx, rdx
+    jne 8f
+    mov edi, [rax + PL_ctx]
+    jmp 2f
+1:  mov rdi, [rax + PL_ctx]
+    call rv_of_vd
+    cmp eax, -1
+    je 8f
+    mov edi, eax
+2:  call rv_at
+    cmp qword ptr [rax + RV_ext], 0
+    je 8f
+    cmp dword ptr [rax + RV_kind], RK_FORM
+    jne 8f
+    mov rax, [rax + RV_form]
+    pop rbx
+    ret
+8:  xor eax, eax
+    pop rbx
+    ret
+
+# rview_form_event(slot, what cstr, key cstr, seq or -1, body, len): "0 view VIEW WHAT REV KEY",
+#   with a sequence " SEQ LEN" and the body (change); without: nothing more (press, submit)
+FN rview_form_event
+    PROLOGUE 16
+    mov ebx, edi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov [rsp], r8
+    mov [rsp + 8], r9
+    mov edi, ebx
+    call ev_head
+    test eax, eax
+    jz 9f
+    mov rdi, r12
+    call ev_cstr
+    call ev_sp
+    mov edi, ebx
+    call rv_at
+    mov rdi, [rax + RV_rev]
+    call ev_u64
+    call ev_sp
+    mov rdi, r13
+    call ev_cstr
+    cmp r14, -1
+    je 1f
+    call ev_sp
+    mov rdi, r14
+    call ev_u64
+    mov edi, ebx
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call ev_send
+    EPILOGUE
+1:  mov edi, ebx
+    xor esi, esi
+    mov rdx, -1
+    call ev_send
+9:  EPILOGUE
+
+# rview_form_of(ptr, len) -> rax the form of a form view named so (key or number), or 0
+FN rview_form_of
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    call parse_u64
+    cmp rdx, r13
+    jne 3f
+    test rdx, rdx
+    jz 3f
+    mov r14d, eax
+    xor ebx, ebx
+1:  cmp ebx, RV_MAX
+    jae 8f
+    mov edi, ebx
+    call rv_at
+    cmp qword ptr [rax + RV_ext], 0
+    je 2f
+    cmp [rax + RV_view], r14d
+    jne 2f
+    mov rax, [rax + RV_form]
+    EPILOGUE
+2:  inc ebx
+    jmp 1b
+3:  xor ebx, ebx
+4:  cmp rbx, [rip + vdecls + VEC_len]
+    jae 8f
+    mov rdi, rbx
+    call vd_at
+    mov r14, rax
+    cmp qword ptr [r14 + VD_ext], 0
+    je 5f
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, [r14 + VD_key]
+    call str_eq_cstr
+    test eax, eax
+    jnz 6f
+5:  inc rbx
+    jmp 4b
+6:  movsxd rdi, dword ptr [r14 + VD_rv]
+    cmp rdi, -1
+    je 8f
+    call rv_at
+    mov rax, [rax + RV_form]
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # rview_log_of(ptr, len) -> rax the LG* of a log view named so (key, place name or number), or 0
 FN rview_log_of

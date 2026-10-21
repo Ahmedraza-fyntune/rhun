@@ -775,12 +775,22 @@ FN views_clip_command
 8:  xor eax, eax
     EPILOGUE
 
-# views_paste(ptr, len) -> eax 1 when a picture with the keyboard took the paste (app_on_paste)
+# views_paste(ptr, len) -> eax 1 when a picture or a form field with the keyboard took the paste
+#   (app_on_paste)
 FN views_paste
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
-    call views_focused_picture
+    call rview_focused_form
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call form_paste
+    test eax, eax
+    jnz 9f
+1:  call views_focused_picture
     test rax, rax
     jz 9f
     mov rdi, rax
@@ -795,6 +805,7 @@ FN views_features_agreed
     FEAT_TEST rdi, FEAT_VIEW_TREE
     jnz 1f
     FEAT_CLEAR rdi, FEAT_VIEW_LOG
+    FEAT_CLEAR rdi, FEAT_VIEW_FORM
 1:  FEAT_TEST rdi, FEAT_VIEWS
     jnz 2f
     FEAT_CLEAR rdi, FEAT_VIEW_KEYS

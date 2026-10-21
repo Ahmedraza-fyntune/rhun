@@ -1696,6 +1696,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
     FEATURE FEAT_VIEW_KEYS, "view-keys", 1        # views group: keys and focus for pictures; rhun asks vcopy
     FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
+    FEATURE FEAT_VIEW_FORM, "view-form", 0        # views group: form views (rform.s)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
