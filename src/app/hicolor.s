@@ -751,7 +751,7 @@ color_prompt:
     mov byte ptr [rdi], '#'
     inc rdi
     mov esi, [r13 + CLR_rgba]
-    or rsi, 0x100000000         # (eight digits: the leading one is dropped)
+    or rsi, [rip + .Lce_one]    # (eight digits: the leading one is dropped)
     call fmt_hex
     lea rdi, [rip + ce_hex + 1] # "1rrggbbaa" -> "rrggbbaa"
     lea rsi, [rip + ce_hex + 2]
