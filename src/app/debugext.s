@@ -2,7 +2,8 @@
 # extension starts a session of one of its own debuggers with `ID debug-start NAME_LEN LEN` + NAME +
 # a configuration body, within 10 s of one of its commands (a test run's debug profile counts too),
 # after the user's one approval per extension and project; it hears `0 debug-ended SESSION CODE`
-# when that session is over. dap.s makes the session (dap_start_ext) and calls the replies here.
+# when that session is over, and may stop it with `ID debug-stop SESSION`. dap.s makes the session
+# (dap_start_ext) and calls the replies here.
 .include "rhun.inc"
 
 .equ DBGX_WINDOW_MS, 10000      # debug-start must follow one of the extension's commands this soon
@@ -189,6 +190,57 @@ FN dbgx_h_debug_start
     call dbgx_reply_failed
 9:  EPILOGUE
 .Lds_syntax:
+    mov rdi, r12
+    call xp_reply_syntax
+    EPILOGUE
+
+# dbgx_h_debug_stop(): ID debug-stop SESSION: Stop (as the toolbar's) on a session this extension
+#   started. ok ID at once; debug-ended follows when the session is over (one already over is ok
+#   too). Errors: unknown, needs, syntax, refused (not a session it started)
+FN dbgx_h_debug_stop
+    PROLOGUE
+    call xp_cur
+    mov rbx, rax
+    call xp_cur_id
+    mov r12, rax
+    FEAT_TEST rbx, FEAT_DEBUG
+    jnz 1f
+    mov rdi, r12
+    lea rsi, [rip + .Le_unknown_stop]
+    call xp_reply_error
+    EPILOGUE
+1:  mov edi, NEEDS_DEBUG
+    call xp_need
+    test eax, eax
+    jz 9f
+    call xp_nfields
+    cmp rax, 3
+    jne .Lsp_syntax
+    mov edi, 2
+    call xp_field_u64
+    test edx, edx
+    jz .Lsp_syntax
+    mov rcx, rax
+    shr rcx, 31
+    jnz .Lsp_not_yours
+    mov edi, eax
+    call dap_slot_of_id
+    test rax, rax
+    jz .Lsp_not_yours
+    cmp [rax + DS_owner], rbx
+    jne .Lsp_not_yours
+    mov r13, rax
+    mov rdi, r12
+    call xp_reply_ok
+    mov rdi, r13
+    call dap_stop_session
+    EPILOGUE
+.Lsp_not_yours:
+    mov rdi, r12
+    lea rsi, [rip + .Le_not_yours]
+    call xp_reply_error
+9:  EPILOGUE
+.Lsp_syntax:
     mov rdi, r12
     call xp_reply_syntax
     EPILOGUE
@@ -844,10 +896,14 @@ sb_set_cstr_x:
 .Lm_badanswer: .asciz "the debugger's extension answered with a configuration that does not parse, or not of its own type"
 .globl dbgx_v_debug_start
 dbgx_v_debug_start: .asciz "debug-start"
+.globl dbgx_v_debug_stop
+dbgx_v_debug_stop: .asciz "debug-stop"
 .Lw_ok: .asciz "ok "
 .Lw_error: .asciz "error "
 .Lev_ended: .asciz "0 debug-ended "
 .Le_unknown: .asciz "unknown debug-start needs the debug feature"
+.Le_unknown_stop: .asciz "unknown debug-stop needs the debug feature"
+.Le_not_yours: .asciz "refused not a session you started"
 .Le_type: .asciz "refused the configuration's type is not one of your debuggers"
 .Le_window: .asciz "refused not within 10 s of one of your commands"
 .Le_toobig: .asciz "toobig 8 sessions"

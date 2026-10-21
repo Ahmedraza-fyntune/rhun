@@ -100,6 +100,38 @@ class Feature(FeatureHost):
         self.assertIn('error 2 busy', log)
         self.assertIn('ok 1 1', log)
 
+    def test_debug_stop_ends_its_session(self):
+        self.mode(start=[{'leaves': self.leaves(stopOnEntry=('b', 'true'))}])
+        out = self.run_editor(['cmd rhun-tests/debugfake.start', 'wait 500', 'dialog yes', 'wait-debug paused',
+                               'print-debug', 'cmd rhun-tests/debugfake.stop', 'wait-debug ended', 'wait 300',
+                               'print-debug'])
+        sessions = self.debug_lines(out)
+        self.assertEqual([self.field(l, 'state') for l in sessions], ['paused', 'ended'], out)
+        log = self.ext_log()
+        self.assertIn('ok 2', log)
+        ended = [l for l in log if l.startswith('0 debug-ended 1 ')]
+        self.assertTrue(ended, log)
+        self.assertLess(log.index('ok 2'), log.index(ended[0]))
+        self.assertIn('terminate', ' '.join(self.requests()))
+
+    def test_debug_stop_only_for_its_own_sessions(self):
+        self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\nstopOnEntry = yes\n')
+        self.scenario()
+        self.mode(stop=['1', '99', 'x', '1 2'])
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'cmd rhun-tests/debugfake.stop', 'wait 800',
+                               'print-debug'])
+        self.assertEqual(self.field(self.debug_lines(out)[0], 'state'), 'paused', out)
+        log = self.ext_log()
+        self.assertIn('error 1 refused not a session you started', log)
+        self.assertIn('error 2 refused not a session you started', log)
+        self.assertTrue([l for l in log if l.startswith('error 3 syntax')], log)
+        self.assertTrue([l for l in log if l.startswith('error 4 syntax')], log)
+
+    def test_debug_stop_without_the_feature(self):
+        self.mode(features='', stop=['1'])
+        self.run_editor(['cmd rhun-tests/debugfake.stop', 'wait 500'])
+        self.assertIn('error 1 unknown debug-stop needs the debug feature', self.ext_log())
+
     def test_bodies_that_do_not_parse(self):
         bad = ['1\nx 4 4\ntypefake', '2\ns 4 4\ntypefake', '1\ns 4 9\ntypefake', '1\nn 5 2\ncount1x',
                '1\nb 3 3\nyesyes', '1\nz 1 1\naa', 'nope', '3\ns 4 4\ntypefakes 3 1\na.bxs 5 1\na.b.cy',
