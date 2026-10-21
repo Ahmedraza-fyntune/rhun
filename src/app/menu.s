@@ -26,7 +26,8 @@
 .equ MLOC_HISTORY_FILE, 11
 .equ MLOC_SCM_RESOURCE, 12
 .equ MLOC_SCM_GROUP, 13
-.equ MLOC_SUB, 14               # an item of a [submenu.NAME]
+.equ MLOC_SCM_TITLE, 14         # buttons in a version control panel's header (menu_scm_title_buttons)
+.equ MLOC_SUB, 15               # an item of a [submenu.NAME]
 # an extension's menu item (mi_list[extension index])
 .equ MI_loc, 0
 .equ MI_order, 4
@@ -1294,6 +1295,38 @@ FN menu_open_scm
     call mn_show
     EPILOGUE
 
+# FN menu_scm_title_buttons(target line ptr, len, right, y, h, first widget id) -> eax the width drawn:
+#   the extensions' [menu.scm_title] items as buttons in a version control panel's header (scm group),
+#   targetKind scm, TARGET the caller's line ("scm OWNER/NAME ROOT"); at most 3 and "…"
+FN menu_scm_title_buttons
+    PROLOGUE 32
+    mov [rsp], edx
+    mov [rsp + 4], ecx
+    mov [rsp + 8], r8d
+    mov [rsp + 12], r9d
+    mov r12, rdi
+    mov r13, rsi
+    lea rax, [rip + mnt_btn]
+    mov [rip + mnt_cur], rax
+    lea rdi, [rip + .Lks_scm]
+    xor esi, esi
+    xor edx, edx
+    call mt_begin
+    lea rdi, [rip + mnt_btn + MNT_line]
+    call sb_clear
+    lea rdi, [rip + mnt_btn + MNT_line]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov edi, MLOC_SCM_TITLE
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, 3
+    mov r9d, [rsp + 12]
+    call menu_buttons_draw
+    EPILOGUE
+
 # FN menu_open_root(items): the menu of the explorer's empty area: "root PATH" (the project)
 FN menu_open_root
     PROLOGUE
@@ -1982,7 +2015,7 @@ FN menu_title_buttons
 .p2align 3
 loc_names: .quad .Ll_editor, .Ll_explorer, .Ll_tab, .Ll_terminal, .Ll_extension, .Ll_editor_title
     .quad .Ll_view_title, .Ll_view_item, .Ll_view_item_inline
-    .quad .Ll_history_commit, .Ll_history_file, .Ll_scm_resource, .Ll_scm_group, 0
+    .quad .Ll_history_commit, .Ll_history_file, .Ll_scm_resource, .Ll_scm_group, .Ll_scm_title, 0
 # a source control row's location and its targetKind, by SL_* (menu_open_scm)
 scm_locs: .quad 0, MLOC_HISTORY_COMMIT, MLOC_HISTORY_FILE, MLOC_SCM_RESOURCE, MLOC_SCM_GROUP
 scm_kinds: .quad 0, .Lks_commit, .Lks_commit, .Lks_resource, .Lks_group
@@ -1990,6 +2023,8 @@ scm_kinds: .quad 0, .Lks_commit, .Lks_commit, .Lks_resource, .Lks_group
 .Ll_history_file: .asciz "history_file"
 .Ll_scm_resource: .asciz "scm_resource"
 .Ll_scm_group: .asciz "scm_group"
+.Ll_scm_title: .asciz "scm_title"
+.Lks_scm: .asciz "scm"
 .Lks_commit: .asciz "commit"
 .Lks_resource: .asciz "resource"
 .Lks_group: .asciz "group"

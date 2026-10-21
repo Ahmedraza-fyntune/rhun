@@ -82,7 +82,7 @@ F CH_status, 4
 F CH_pid, 4                     # the program's pid on the host
 F CH_events, 4                  # what the loop watches CH_fd for
 F CH_errch, 4                   # its error output's channel (CHF_ERRCH), 0 for none
-F CH_pad, 4
+F CH_cfail, 4                   # x's fourth field: the EXITC_* its confined child failed with, 0
 F CH_credit, 8                  # bytes this side may still send to the agent
 F CH_grant, 8                   # bytes delivered here and not yet credited back
 F CH_off, 8                     # the delivered part of CH_buf
@@ -617,14 +617,6 @@ rm_spawn_transport:
     mov [rbx + 88], rax
     mov ecx, 12
 13:
-.ifdef WINDOWS
-    # no askpass on Windows yet: a question ssh would ask fails at once instead of waiting
-    lea rax, [rip + .Ldash_o]
-    mov [rbx + rcx*8], rax
-    lea rax, [rip + .Lbatch_mode]
-    mov [rbx + rcx*8 + 8], rax
-    add ecx, 2
-.endif
     lea rax, [rip + .Ldashdash]
     mov [rbx + rcx*8], rax
     lea rax, [rip + rm_host]
@@ -1891,7 +1883,13 @@ rm_message:
     mov edi, 2
     call rm_num
     mov [r14 + CH_status], eax
-    or dword ptr [r14 + CH_flags], CHF_EXITED
+    mov dword ptr [r14 + CH_cfail], 0
+    cmp qword ptr [rip + rm_ntok], 4
+    jb 1f
+    mov edi, 3                  # x CH STATUS CODE: its child could not confine itself (ragent.s)
+    call rm_num
+    mov [r14 + CH_cfail], eax
+1:  or dword ptr [r14 + CH_flags], CHF_EXITED
     call time_ms
     mov [r14 + CH_exited_at], rax
     jmp 9f
@@ -3056,6 +3054,19 @@ rm_confine_reply:
 4:  mov byte ptr [rdi + r8], 0
 9:  ret
 
+# remote_confine_code(pid) -> eax the EXITC_* code the host's confined child failed with (read once),
+#   or 0 (remoteext.s: "not confined: REASON" as for a local extension)
+FN remote_confine_code
+    call rm_pid_chan
+    test rax, rax
+    jz 9f
+    mov ecx, [rax + CH_cfail]
+    mov dword ptr [rax + CH_cfail], 0
+    mov eax, ecx
+    ret
+9:  xor eax, eax
+    ret
+
 # remote_wait(pid, nohang) -> as proc_wait for a tagged pid: the status, -1 still running, -2 unknown
 FN remote_wait
     PROLOGUE
@@ -3228,6 +3239,17 @@ FN remote_timeout
     jne 1f
     cmp dword ptr [rip + g_remote], 0
     je 2f
+.ifdef WINDOWS
+    # while connecting ssh may ask through askpass: its pipe is looked at often (remoteui.s)
+    mov eax, [rip + g_remote_state]
+    cmp eax, RS_CONNECT
+    jb 3f
+    cmp eax, RS_START
+    ja 3f
+    mov eax, 100
+    ret
+3:
+.endif
     # forgotten programs are collected every few seconds
     mov eax, 5000
     ret
@@ -3247,6 +3269,9 @@ FN remote_tick
     call remote_connected
 1:  call vfs_tick               # watch events from the host
     call rm_rq_dispatch         # answers of requests made with remote_request_cb
+.ifdef WINDOWS
+    call remote_askpass_poll    # ssh's askpass program on the window's pipe (remoteui.s)
+.endif
     call remote_ext_tick        # extensions' files on their way to the host (remoteext.s)
     call time_ms
     mov r13, rax
@@ -3849,7 +3874,6 @@ rm_rq_ready: .long 0
 .Lv_cwd: .asciz "cwd "
 .Lv_close: .asciz "close "
 .Lv_attach: .asciz "attach"
-.Lbatch_mode: .asciz "BatchMode=yes"
 .Lenv_remote_sh: .asciz "RHUN_REMOTE_SH"
 .Le_rd_version: .asciz "RHUN_RD_VERSION="
 .Le_rd_out: .asciz "RHUN_RD_OUT="

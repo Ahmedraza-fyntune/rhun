@@ -174,6 +174,14 @@ python3 tests/shift-wheel.py || fail=1
 python3 tests/stress.py || fail=1
 python3 tests/ext-host.py || fail=1
 python3 tests/ext-commands.py || fail=1
+# resources, workspaces, secrets and lifecycle
+python3 tests/ext-lifecycle.py || fail=1
+python3 tests/ext-secrets.py || fail=1
+python3 tests/ext-vdoc.py || fail=1
+python3 tests/ext-urls.py || fail=1
+python3 tests/ext-files.py || fail=1
+python3 tests/ext-settings-scoped.py || fail=1
+python3 tests/workspace-folders.py || fail=1
 # contributions and commands
 python3 tests/when.py || fail=1
 python3 tests/ext-command-args.py || fail=1

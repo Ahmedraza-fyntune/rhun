@@ -86,3 +86,6 @@ EXPORTS
     OpenProcess
     K32GetProcessMemoryInfo
     QueryInformationJobObject
+    CreateNamedPipeW
+    ConnectNamedPipe
+    WaitNamedPipeW

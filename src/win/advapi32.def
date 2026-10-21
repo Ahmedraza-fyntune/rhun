@@ -6,3 +6,4 @@ EXPORTS
     CredDeleteW
     CredEnumerateW
     CredFree
+    ConvertStringSecurityDescriptorToSecurityDescriptorW

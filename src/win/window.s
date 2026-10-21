@@ -889,8 +889,8 @@ FN win_messages
 .Lmessages_ret:
     EPILOGUE
 
-# Poll never hands the descriptor set to a 64-handle Windows wait. Pipe/PTY readiness is
-# sampled at 10 ms, directory notifications at 100 ms; messages wake either wait immediately.
+# Poll never hands the descriptor set to a 64-handle Windows wait. Pipe/PTY and socket readiness
+# is sampled at 10 ms, directory notifications at 100 ms; messages wake either wait immediately.
 FN ws_poll
     PROLOGUE 112
     mov r12, rdi
@@ -915,6 +915,8 @@ FN ws_poll
     je .Lpoll_watch
     cmp dword ptr [rax + FD_kind], FD_CHAN
     je .Lpoll_chan
+    cmp dword ptr [rax + FD_kind], WSK_KIND
+    je .Lpoll_sock
     cmp dword ptr [rax + FD_kind], FD_PIPE
     je .Lpoll_pipe_kind
     cmp dword ptr [rax + FD_kind], FD_PTY
@@ -970,6 +972,14 @@ FN ws_poll
     mov rdi, rax
     movzx esi, word ptr [r12 + rbx*8 + 4]
     call win_chan_events
+    mov [r12 + rbx*8 + 6], ax
+    jmp .Lpoll_next
+.Lpoll_sock:
+    # a socket (sock.s): sampled every 10 ms, as pipes are
+    mov qword ptr [rsp + 96], 10
+    mov rdi, rax
+    movzx esi, word ptr [r12 + rbx*8 + 4]
+    call win_sock_events
     mov [r12 + rbx*8 + 6], ax
     jmp .Lpoll_next
 .Lpoll_watch:
