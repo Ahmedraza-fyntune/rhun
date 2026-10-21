@@ -41,7 +41,7 @@ sec_pipe: .long -1, -1          # macOS: the keychain's worker reports here
 # ---------------- the queue ----------------
 
 # secrets_queue(ext, id, op, key cstr or 0, value ptr, value len) -> rax 0, or -16 (busy) when
-# the extension has SECRET_OUTSTANDING requests already
+# the extension has SECRET_OUTSTANDING requests already (id 0, rhun's own, always joins)
 FN secrets_queue
     PROLOGUE 32
     mov rbx, rdi
@@ -50,7 +50,9 @@ FN secrets_queue
     mov r12, rcx
     mov r13, r8
     mov r14, r9
-    # how many it has queued
+    # how many it has queued (rhun's own requests, id 0 (Forget, a removal), are never refused)
+    cmp qword ptr [rsp], 0
+    je 3f
     xor ecx, ecx
     mov rax, [rip + sec_head]
 1:  test rax, rax
