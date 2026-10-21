@@ -93,7 +93,7 @@ def todo_tree(view, prefix='', count=2):
            rec('action', 'pin pin node', b'Pin'), rec('action', 'hide - node', b'Hide')]
     top = []
     for name, folder, n in files:
-        extra = rec('icon', f'file:{name} -') + rec('badge', f'{n}')
+        extra = rec('icon', f'file:{name} -') + rec('badge', f'{n}') + rec('ctx', data=b'file')
         if folder:
             extra = rec('desc', data=folder.encode()) + extra
         top.append(node(f'{prefix}f:{name}', name, 'open', extra))
@@ -139,6 +139,24 @@ def png(w, h, rgba):
     raw = b''.join(b'\0' + bytes(rgba) * w for _ in range(h))
     return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) +
             chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+
+
+seqs = {}               # a form field's last sequence heard
+
+
+def frec(key, typ, row, weight, label, extra=b''):
+    label = label.encode()
+    return f'{key} {typ} {row} {weight} {len(label)} {len(extra)}\n'.encode() + label + extra
+
+
+def setup_form(view):
+    fields = [frec('name', 'text', 1, 2, 'Name', rec('placeholder', data=b'your name') + rec('value', '-', b'Ada')),
+              frec('port', 'number', 1, 1, 'Port', rec('range', '1 65535 1') + rec('value', '-', b'8080')),
+              frec('notes', 'area', 2, 1, 'Notes', rec('lines', '3')),
+              frec('tls', 'check', 3, 1, 'Use TLS', rec('value', '-', b'yes')),
+              frec('mode', 'select', 3, 1, 'Mode', rec('options', data=b'fast\nsafe\nslow') + rec('value', '-', b'safe')),
+              frec('go', 'button', 4, 1, 'Connect', rec('primary', '0'))]
+    patch(view, [rec('form', f'{len(fields)}', b''.join(fields))])
 
 
 def draw(view, picture):
@@ -324,6 +342,37 @@ def on_command(name):
             views['tabpic'] = int(f[2])
             draw(int(f[2]), 'rect 0 0 200 100 accent\n')
         on_reply[rid] = opened
+    elif name == 'readd' and views.get('items'):
+        patch(views['items'], [rec('del', data=b'a')])
+        patch(views['items'], [kids('', [node('a', 'Alpha again', 'closed')], op='add')])
+    elif name == 'actswap' and todo:
+        patch(todo, [rec('action', 'again pin node', b'Again') for _ in range(30)])
+    elif name == 'fatsame' and todo:
+        big = rec('blob', '', b'q' * 900000)
+        patch(todo, [rec('set', '', node('t:lib.rs:1', 'one', 'leaf', big)),
+                     rec('set', '', node('t:lib.rs:1', 'one', 'leaf', big))])
+    elif name == 'revealmulti' and todo:
+        patch(todo, [rec('select-mode', 'multi')])
+        request(f'vreveal {todo} select', b't:lib.rs:1')
+    elif name == 'noteclose1' and notes:
+        request(f'unnotify {notes[0]}')
+    elif name == 'prognote2':
+        progress('note', '-', 'Copying')
+    elif name == 'pictitle' and views.get('pic'):
+        patch(views['pic'], [rec('title', data=b'Drawing'), rec('badge', '3')])
+    elif name == 'bigunimage':
+        request('unimage 4294967297')
+    elif name == 'formmsg' and views.get('setup'):
+        patch(views['setup'], [rec('field', '', frec('name', 'text', 1, 2, 'Name', rec('msg', 'error', b'taken')))])
+    elif name == 'formold' and views.get('setup'):
+        patch(views['setup'], [rec('field', '', frec('name', 'text', 1, 2, 'Name', rec('value', '0', b'Old')))])
+    elif name == 'formnew' and views.get('setup'):
+        seq = seqs.get('name', 0)
+        patch(views['setup'], [rec('field', '', frec('name', 'text', 1, 2, 'Name', rec('value', f'{seq}', b'NORMAL')))])
+    elif name == 'formbad' and views.get('setup'):
+        patch(views['setup'], [rec('field', '', b'bad record\n')])
+    elif name == 'formless' and views.get('setup'):
+        patch(views['setup'], [rec('form', '1', frec('go', 'button', 1, 1, 'Connect'))])
     elif name == 'tab':
         def opened_tab(reply):
             pass
@@ -342,6 +391,8 @@ def main():
         features += ' notify progress'
     if PIC:
         features += ' views view-images' + ('' if PIC == 'nokeys' else ' view-keys')
+    if os.environ.get('VIEWFAKE_FORM'):
+        features += ' view-form'
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -355,7 +406,8 @@ def main():
         body = b''
         # a line whose last field is a length carries a body
         if fields[0] == '0' and len(fields) >= 3 and fields[1] == 'view' and \
-                fields[3] in ('select', 'activate', 'expand', 'collapse', 'check', 'action', 'discarded', 'text', 'paste'):
+                fields[3] in ('select', 'activate', 'expand', 'collapse', 'check', 'action', 'discarded', 'text', 'paste',
+                              'change'):
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
@@ -391,9 +443,13 @@ def main():
                     items_tree(view)
                 elif key == 'pic':
                     draw(view, 'rect 0 0 300 120 accent\n')
+                elif key == 'setup':
+                    setup_form(view)
             elif what == 'select':
                 ids = body.split(b'\n')
                 selected[view] = ids[0].decode() if ids and ids[0] else None
+            elif what == 'change':
+                seqs[fields[5]] = int(fields[6])
         elif fields[0] == '0' and len(fields) >= 3 and fields[1] == 'run':
             name = fields[2].split('.')[-1]
             on_command(name)

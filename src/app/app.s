@@ -3137,11 +3137,11 @@ FN app_render
     call statusbar_draw
     # overlays (not blocked)
     mov dword ptr [rip + g_block], 0
+    call notify_draw            # notification cards (notify.s), under popups, menus and dialogs
     call complete_draw
     call hovercard_draw         # language features: the hover card (hovercard.s)
     call extbar_draw
     call explorer_menu_draw
-    call notify_draw            # notification cards (notify.s), under the palette and dialogs
     call palette_draw
     call dialog_draw
     call toast_draw

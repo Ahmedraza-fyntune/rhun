@@ -188,6 +188,131 @@ FN extview_free_place
     jmp free_slot
 1:  ret
 
+# ---------------- static pictures ----------------
+# A picture other parts of rhun draw without a view (a notebook's output): a picture body compiled
+# once, drawn at any size, sending no events; its image shapes name the extension's handles. A VW
+# outside g_views (VW_inplace 3): VW_scale holds vimg_gen, VW_lw g_s, VW_fgen g_face_gen as last
+# rendered.
+
+# pic_new(ext, ptr, len) -> rax the picture, or 0 with edx the first line (from 1) that cannot be
+#   read
+FN pic_new
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov edi, VW_SIZE
+    call mem_alloc
+    mov rbx, rax
+    mov rdi, rbx
+    xor esi, esi
+    mov edx, VW_SIZE
+    call memset
+    mov [rbx + VW_ext], r12
+    mov dword ptr [rbx + VW_inplace], 3
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r14
+    call extview_set
+    test eax, eax
+    jnz 8f
+    mov rax, rbx
+    xor edx, edx
+    EPILOGUE
+8:  mov r15d, eax
+    mov rdi, rbx
+    call pic_free
+    xor eax, eax
+    mov edx, r15d
+    EPILOGUE
+
+# pic_free(picture or 0)
+FN pic_free
+    PROLOGUE
+    mov rbx, rdi
+    test rbx, rbx
+    jz 9f
+    mov rdi, [rbx + VW_px]
+    call mem_free
+    lea rdi, [rbx + VW_pic]
+    call sb_free
+    mov rdi, rbx
+    call mem_free
+9:  EPILOGUE
+
+# pic_draw(picture, x, y, w, h): drawn there (physical pixels), rendered again first when its size,
+#   the theme, the scale, the faces or an image it may show changed
+FN pic_draw
+    PROLOGUE 32
+    mov rbx, rdi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    test ecx, ecx
+    jle 9f
+    test r8d, r8d
+    jle 9f
+    mov eax, [rip + vimg_gen]
+    cmp eax, [rbx + VW_scale]
+    jne 1f
+    mov eax, [rip + g_s]
+    cmp eax, [rbx + VW_lw]
+    jne 1f
+    mov eax, [rip + g_face_gen]
+    cmp eax, [rbx + VW_fgen]
+    je 2f
+1:  mov eax, [rip + vimg_gen]
+    mov [rbx + VW_scale], eax
+    mov eax, [rip + g_s]
+    mov [rbx + VW_lw], eax
+    mov eax, [rip + g_face_gen]
+    mov [rbx + VW_fgen], eax
+    mov dword ptr [rbx + VW_dirty], 1
+2:  mov eax, [rsp + 8]
+    cmp eax, [rbx + VW_pw]
+    jne 31f
+    mov eax, [rsp + 12]
+    cmp eax, [rbx + VW_ph]
+    jne 31f
+    mov eax, [rip + g_theme_cur]
+    cmp eax, [rbx + VW_theme]
+    jne 32f
+    COLOR eax, T_BG
+    cmp eax, [rbx + VW_bg]
+    jne 32f
+    cmp dword ptr [rbx + VW_dirty], 0
+    je 4f
+    jmp 32f
+31: mov rdi, [rbx + VW_px]
+    call mem_free
+    mov qword ptr [rbx + VW_px], 0
+    mov dword ptr [rbx + VW_pw], 0
+    mov dword ptr [rbx + VW_ph], 0
+    mov eax, [rsp + 8]
+    imul eax, [rsp + 12]
+    shl rax, 2
+    mov rdi, rax
+    call mem_alloc_try
+    test rax, rax
+    jz 9f
+    mov [rbx + VW_px], rax
+    mov eax, [rsp + 8]
+    mov [rbx + VW_pw], eax
+    mov eax, [rsp + 12]
+    mov [rbx + VW_ph], eax
+32: mov rdi, rbx
+    call render
+4:  mov rdx, [rbx + VW_px]
+    test rdx, rdx
+    jz 9f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov ecx, [rbx + VW_pw]
+    mov r8d, [rbx + VW_ph]
+    call gfx_blit
+9:  EPILOGUE
+
 # extview_next_id() -> eax a new view number: 12a views and retained views share the sequence
 FN extview_next_id
     inc dword ptr [rip + view_seq]
