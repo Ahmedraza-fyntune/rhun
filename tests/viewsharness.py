@@ -3,6 +3,8 @@ config, rhun headless with the viewfake extension (tests/ext/viewfake.py, tests/
 fake's log and the rows of print-view."""
 import os
 from pathlib import Path
+import shutil
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -48,11 +50,24 @@ class ViewsBase(unittest.TestCase):
         args = [str(EXE), self.proj.as_posix(), '--headless', '1000x600', '--scale', '1']
         if exts:
             args += ['--extensions', str(exts)]
-        result = subprocess.run(args + ['--script', script.as_posix()], env=env, capture_output=True,
-                                timeout=60)
-        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
-        return [l for l in result.stdout.decode('utf-8', errors='replace').splitlines()
-                if not l.startswith('ext=')]
+        args += ['--script', script.as_posix()]
+        # the editor never outlives its test: an alarm ends it even when this driver is killed, and
+        # a timeout here kills its whole process group (its extensions too)
+        if shutil.which('perl'):
+            args = ['perl', '-e', 'alarm shift; exec @ARGV', '90'] + args
+        proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                start_new_session=True)
+        try:
+            out, err = proc.communicate(timeout=60)
+        finally:
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+        self.assertEqual(proc.returncode, 0, err.decode(errors='replace'))
+        return [l for l in out.decode('utf-8', errors='replace').splitlines() if not l.startswith('ext=')]
 
     def fake_log(self):
         return self.log.read_bytes().decode('utf-8', 'replace').splitlines() if self.log.exists() else []

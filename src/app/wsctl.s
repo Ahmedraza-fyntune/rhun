@@ -2,6 +2,7 @@
 #   print-tx                  the workspace-edit transactions, newest first (wstx.s)
 #   print-journal             their journal folders on disk (wsdisk.s)
 #   ext-edits NAME yes|no     an extension's standing permission to change project files
+#   print-linked              linked editing's session: "linked=N" and its ranges, or "linked=none"
 #   print-selections          multi-cursor: "sels=N", then "L1 C1 L2 C2" a selection (anchor,
 #                             cursor; lines and byte columns from 1), the primary first
 #   drag X1 Y1 X2 Y2 [MODS]   multi-cursor: the left button pressed at X1 Y1 with the modifiers
@@ -19,6 +20,11 @@ c_print_tx:
 
 c_print_journal:
     call ws_journal_print
+    xor eax, eax
+    ret
+
+c_print_linked:
+    call ws_linked_print
     xor eax, eax
     ret
 
@@ -148,6 +154,7 @@ wsc_flush:
 ws_ctl:
     .quad .Lc_print_tx, c_print_tx, .Lc_print_journal, c_print_journal, .Lc_ext_edits, c_ext_edits
     .quad .Lc_print_selections, c_print_selections, .Lc_drag, c_drag   # multi-cursor
+    .quad .Lc_print_linked, c_print_linked
     .quad 0, 0
 .Lc_print_tx: .asciz "print-tx"
 .Lc_print_journal: .asciz "print-journal"
@@ -155,3 +162,4 @@ ws_ctl:
 .Lyes: .asciz "yes"
 .Lc_print_selections: .asciz "print-selections"
 .Lc_drag: .asciz "drag"
+.Lc_print_linked: .asciz "print-linked"
