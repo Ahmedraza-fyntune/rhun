@@ -2718,6 +2718,8 @@ open_session:
     mov [rip + view], rdi
     mov rax, [rip + sessions + VEC_ptr]
     mov rbx, [rax + rdi*8]
+    mov rdi, rbx
+    call agentext_opened        # AI (D4): it replaces a new session being written; the box is its
     mov dword ptr [rbx + AS_loaded], 1
     cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
     jne 1f
@@ -2864,6 +2866,53 @@ FN agents_open
 1:  ret
 
 FN agents_key
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    call agents_ext_open        # AI (D4): 1 to 9 pick an option of the open session's card
+    test rax, rax
+    jz 4f
+    mov rbx, rax
+    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    jnz 4f
+    mov rdi, rbx
+    mov esi, r13d
+    call agentext_card_key
+    test eax, eax
+    jnz 5f
+    cmp r12d, KEY_RETURN        # Enter or Tab goes to its prompt box
+    je 6f
+    cmp r12d, KEY_TAB
+    jne 4f
+6:  mov rdi, rbx
+    call agentext_prompts
+    test eax, eax
+    jz 4f
+    mov dword ptr [rip + g_focus], FOCUS_AGENT_INPUT
+    mov dword ptr [rip + g_dirty], 1
+    jmp 5f
+4:  call agentext_new_active
+    test rax, rax
+    jz 7f
+    cmp r12d, KEY_RETURN        # writing a new session: Enter or Tab goes back to its box
+    je 8f
+    cmp r12d, KEY_TAB
+    je 8f
+    cmp r12d, KEY_ESCAPE
+    jne 7f
+    call agentext_new_leave
+5:  mov eax, 1
+    EPILOGUE
+8:  mov dword ptr [rip + g_focus], FOCUS_AGENT_INPUT
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+7:  mov edi, r12d
+    call key_list
+    EPILOGUE
+
+key_list:
     cmp edi, KEY_ESCAPE
     jne 1f
     cmp qword ptr [rip + view], 0
@@ -2987,6 +3036,35 @@ FN agents_ext_rows
 12: call sort_sessions
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+
+# FN agents_open_as(AS*): open that session when the page lists it (a new extension session)
+FN agents_open_as
+    xor eax, eax
+1:  cmp rax, [rip + sessions + VEC_len]
+    jae 2f
+    mov rcx, [rip + sessions + VEC_ptr]
+    cmp [rcx + rax*8], rdi
+    je 3f
+    inc rax
+    jmp 1b
+3:  mov rdi, rax
+    jmp open_session
+2:  ret
+
+# FN agents_ext_open() -> rax the extension session the panel shows, or 0
+FN agents_ext_open
+    xor eax, eax
+    mov rcx, [rip + view]
+    test rcx, rcx
+    js 1f
+    cmp rcx, [rip + sessions + VEC_len]
+    jae 1f
+    mov rdx, [rip + sessions + VEC_ptr]
+    mov rdx, [rdx + rcx*8]
+    cmp dword ptr [rdx + AS_kind], AS_KIND_EXT
+    jne 1f
+    mov rax, rdx
+1:  ret
 
 # FN agents_ext_is_open(AS*) -> eax 1 when it is the conversation the panel shows
 FN agents_ext_is_open
@@ -3528,7 +3606,16 @@ FN agents_draw
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
     call gfx_clip_push
-    cmp qword ptr [rip + view], 0
+    call agentext_new_active    # AI (D4): a new session of an extension is being written
+    test rax, rax
+    jz 2f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call agentext_new_draw
+    jmp 9f
+2:  cmp qword ptr [rip + view], 0
     jl 1f
     mov edi, [rsp]
     mov esi, [rsp + 4]
@@ -3577,7 +3664,17 @@ list_draw:
     test eax, UB_CLICK
     jz 1f
     call agents_scan
-1:  cmp qword ptr [rip + page_count], 0
+1:  mov edi, [rsp]              # AI (D4): "+ TITLE" for extensions whose sessions take prompts
+    add edi, [rsp + 8]
+    sub edi, r12d
+    sub edi, [rip + g_mt + 4*MI_12]
+    mov esi, r15d
+    sub esi, r12d
+    sar esi, 1
+    add esi, [rsp + 4]
+    mov edx, r12d
+    call agentext_list_buttons
+    cmp qword ptr [rip + page_count], 0
     jne 2f
     lea rdi, [rip + g_face_small]
     mov esi, [rsp]
@@ -3888,6 +3985,7 @@ thread_draw:
     test eax, UB_CLICK
     jz 1f
     mov qword ptr [rip + view], -1
+    call agentext_new_leave     # AI (D4): the prompt box's focus goes back to the panel
     mov dword ptr [rip + g_dirty], 1
     jmp .Ltd_ret
 1:  mov r8, [rbx + AS_title]
@@ -3943,7 +4041,20 @@ thread_draw:
     mov eax, [rsp + 12]
     sub eax, r15d
     mov [rsp + 24], eax         # area h
-    M eax, MI_16
+    mov dword ptr [rsp + 160], 0
+    cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
+    jne 41f
+    mov rdi, rbx                # AI (D4): its card and prompt box go under the messages
+    mov esi, [rsp + 8]
+    call agentext_bottom_h
+    mov ecx, [rsp + 24]
+    shr ecx, 1
+    cmp eax, ecx
+    jbe 42f
+    mov eax, ecx                # at most half the panel
+42: mov [rsp + 160], eax
+    sub [rsp + 24], eax
+41: M eax, MI_16
     mov [rsp + 28], eax         # pad
     mov eax, [rsp + 8]
     sub eax, [rsp + 28]
@@ -4043,6 +4154,18 @@ thread_draw:
     jmp .Ltd_msg
 .Ltd_msgs_done:
     call gfx_clip_pop
+    mov r8d, [rsp + 160]
+    test r8d, r8d
+    jz 43f
+    mov rdi, rbx
+    mov esi, [rsp]
+    mov edx, [rsp + 20]
+    add edx, [rsp + 24]
+    mov ecx, [rsp + 8]
+    call agentext_bottom_draw
+    cmp qword ptr [rip + view], 0
+    jl .Ltd_ret
+43:
     # scrollbar
     mov eax, [rsp + 24]
     push rax

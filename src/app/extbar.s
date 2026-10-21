@@ -666,6 +666,14 @@ more_menu:
     call ctx_menu_open
     EPILOGUE
 
+# extbar_slot_forget(ext): extension management: a record's slot holds another version: the menu
+# opened for it acts on nothing
+FN extbar_slot_forget
+    cmp [rip + xb_ext], rdi
+    jne 1f
+    mov qword ptr [rip + xb_ext], 0
+1:  ret
+
 # copy_title_short(dst, title): up to the last " (", at most 60 bytes
 copy_title_short:
     push rbx

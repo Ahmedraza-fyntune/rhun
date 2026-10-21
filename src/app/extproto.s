@@ -2257,6 +2257,11 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call tools_cancel
+    mov edi, 2                  # or a card of one of its sessions (agentext.s)
+    call field_u64
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call agentext_cancel
     mov edi, 2                  # a terminal-open waiting for the approval dialog: answered cancelled (termproto.s)
     call field_u64
     mov rdi, [rip + cur]
@@ -3036,6 +3041,8 @@ h_notify_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     mov rdx, [rip + body_ptr]
@@ -3069,6 +3076,8 @@ h_unnotify:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call notify_close_request
@@ -3146,6 +3155,8 @@ h_progress_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov r12, rax
     mov r13, -1
     mov edi, 3
@@ -3192,6 +3203,8 @@ h_progress_end:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call progress_end_request
@@ -3250,6 +3263,8 @@ h_unimage:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call viewimg_unimage
@@ -5272,6 +5287,10 @@ verbs:
     .quad .Lv_git_show, gitdata_h_show, 4096
     .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     .quad .Lv_qd_refresh, scmext_h_qd_refresh, 4096
+    .quad .Lv_scm_register, scmext_h_register, 8192
+    .quad .Lv_scm_update, scmext_h_update, EXT_BODY_MAX
+    .quad .Lv_scm_input, scmext_h_input, 0
+    .quad .Lv_scm_input_set, scmext_h_input_set, 65536
     # resources group (extresproto.inc)
     .quad .Lres_v_busy, h_res_busy, 0
     .quad .Lres_v_secret_get, h_res_secret_get, 0
@@ -5300,6 +5319,7 @@ verbs:
     .quad .Lv_unpropose, h_unpropose, 0
     .quad .Lv_tools, h_tools, 0
     .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
+    .quad .Lv_agent_ask, h_agent_ask, 8192
     # debugger (debugext.s): feature "debug"
     .quad dbgx_v_debug_start, dbgx_h_debug_start, DBGX_BODY_MAX
     # notebooks (nbproto.inc)
@@ -5366,6 +5386,10 @@ verbs:
 .Lv_git_show: .asciz "git-show"
 .Lv_git_diff_open: .asciz "git-diff-open"
 .Lv_qd_refresh: .asciz "quickdiff-refresh"
+.Lv_scm_register: .asciz "scm-register"
+.Lv_scm_update: .asciz "scm-update"
+.Lv_scm_input: .asciz "scm-input"
+.Lv_scm_input_set: .asciz "scm-input-set"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"

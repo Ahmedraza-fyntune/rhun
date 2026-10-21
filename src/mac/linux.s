@@ -655,8 +655,8 @@ sockaddr_mac:
     strb w13, [x9, #1]
     mov x1, x9
 9:  ret
-5:  // AF_INET (a debugger's TCP connection): the same 16 bytes, but a length byte and a one-byte
-    // family
+5:  // AF_INET (a debugger's TCP connection, forwarded ports): the same 16 bytes, but a length byte
+    // and a one-byte family
     ldp x10, x11, [x1]
     stp x10, x11, [x9]
     mov w13, #16

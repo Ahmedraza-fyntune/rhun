@@ -136,6 +136,10 @@ python3 tests/focused-zoom.py || fail=1
 python3 tests/agents.py || fail=1
 python3 tests/opencode.py || fail=1
 python3 tests/agents-refresh.py || fail=1
+python3 tests/ext-agents.py || fail=1
+python3 tests/ext-review.py || fail=1
+python3 tests/ext-tools.py || fail=1
+python3 tests/ext-prompts.py || fail=1
 sh tests/files.sh || fail=1
 sh tests/update.sh || fail=1
 python3 tests/commit-ai.py || fail=1
@@ -186,6 +190,8 @@ python3 tests/keys-chords.py || fail=1
 python3 tests/ext-menus.py || fail=1
 python3 tests/ext-status-items.py || fail=1
 python3 tests/ext-sdk-commands.py || fail=1
+# source control: Git data, commit messages, quick diff, version control panels
+python3 tests/ext-scm.py || fail=1
 # editor presentation
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }
@@ -227,6 +233,8 @@ python3 tests/ext-views-tree.py || fail=1
 python3 tests/ext-views-log.py || fail=1
 python3 tests/ext-notify.py || fail=1
 python3 tests/ext-views-picture.py || fail=1
+python3 tests/markdown.py || fail=1
+python3 tests/ext-views-form.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
 for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter debug-transport debug-terminal debug-feature debug-tasks debug-review debug-real; do

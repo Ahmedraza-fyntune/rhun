@@ -53,6 +53,61 @@ class Linked(ws.Ws):
         self.assertIn('linked=none', out)
         self.assertFalse(any(' linked ' in l for l in self.extlines()), self.extlines())
 
+    def test_enter_and_tab_end_linking_before_they_insert(self):
+        for key in ('Return', 'Tab'):
+            with self.subTest(key=key):
+                exts = self.ext({'linked': RANGES, 'x': 'toast LEN\nhi'}, features='linked-editing')
+                out = self.run_html(exts, ['type x', 'key ' + key, 'wait 50', 'print-linked', PD])
+                doc = self.docs(out)[0]
+                self.assertTrue(doc.endswith('\n</divx>\n'), doc)          # not mirrored
+                self.assertEqual(doc.count('</divx>'), 1, doc)
+                self.assertTrue(doc.startswith('<divx'), doc)
+                self.assertNotEqual(doc, '<divx>\n</divx>\n')              # it was inserted
+                self.assertIn('linked=none', out)
+
+    def test_each_document_keeps_its_own_session(self):
+        (self.proj / 'q.html').write_text('<div>\n</div>\n')
+        exts = self.ext({'linked': RANGES, 'x': 'toast LEN\nhi'}, features='linked-editing')
+        rest = ['key ctrl+Home', 'key Right', 'key Right', 'key Right', 'key Right', 'wait 400']
+        out = self.run_html(exts, ['type x', 'open ' + str(self.proj / 'q.html'), *rest, 'type y',
+                                   'key ctrl+Tab', 'print-tabs', 'print-linked', 'key space', 'wait 50', PD,
+                                   'print-linked', 'key ctrl+Tab', 'print-linked', PD])
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('*p.html', tabs[0], out)
+        linked = [l for l in out if l.startswith('linked=')]
+        self.assertEqual(linked[0], 'linked=2', out)                   # p.html's, outlined again
+        self.assertEqual(linked[1], 'linked=none', out)                # the space ended it
+        self.assertEqual(linked[2], 'linked=2', out)                   # q.html's lives on
+        docs = self.docs(out)
+        self.assertEqual(docs[0], '<divx >\n</divx>\n')               # not mirrored into </divx>
+        self.assertEqual(docs[1], '<divy>\n</divy>\n')
+
+
+    def test_outlines_follow_inlays(self):
+        # a 6-cell inlay ("count:") before the opening tag's name: the outline starts after it
+        plans = {'linked': RANGES, 'x': 'toast LEN\nhi',
+                 'dt': 'decoration-type arg LEN\nbefore inlay inlay_bg\n',
+                 'dec': 'decorate {doc:p.html} {ver:p.html} arg 0 0 1 LEN\n1 2 1 2 6 0 0 0\ncount:'}
+        exts = self.ext(plans, features='linked-editing decorations')
+        on, off = self.work / 'on.ppm', self.work / 'off.ppm'
+        out = self.run_ws(exts, ['cmd wsx.x', 'wait-ext wsx running', 'wait 200', 'cmd wsx.dt', 'wait 100',
+                                 'cmd wsx.dec', 'wait 200', 'key ctrl+Home', 'key Right', 'key Right', 'key Right',
+                                 'key Right', 'wait 400', 'print-linked', 'print-xy 1 3', 'print-xy 1 4',
+                                 'shot ' + str(on), 'key Escape', 'wait 50', 'print-linked', 'shot ' + str(off)],
+                          files=('p.html',))
+        self.assertEqual([l for l in out if l.startswith('linked=')], ['linked=2', 'linked=none'], out)
+        (x3, y), (x4, _) = (tuple(map(int, l.split())) for l in out if l[:1].isdigit() and len(l.split()) == 2)
+        cw = x4 - x3
+        start = x3 - cw                                    # where "div" begins, after the inlay
+        a, b = on.read_bytes(), off.read_bytes()
+        head = a.split(b'\n', 3)
+        w = int(head[1].split()[0])
+        body = len(a) - len(head[3])
+        xs = [((i - body) // 3) % w for i in range(body, len(a), 3)
+              if a[i:i + 3] != b[i:i + 3] and abs((i - body) // 3 // w - y) <= 8]   # line 1's row
+        self.assertTrue(xs, 'the outline drew nothing')
+        self.assertLessEqual(abs(min(xs) - start), 1, (min(xs), start, cw))   # not inside the inlay
+
 
 for name in dir(ws.Ws):
     if name.startswith('test_'):

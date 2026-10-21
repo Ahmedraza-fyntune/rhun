@@ -208,6 +208,8 @@ FN extrec_pv_free
     call mem_free
     mov rdi, [rbx + EXT_tests_progs]
     call mem_free
+    mov rdi, [rbx + EXT_nb_kernels]
+    call mem_free
     mov rdi, rbx
     xor esi, esi
     mov edx, EXT_SIZE
@@ -561,6 +563,13 @@ FN ext_rollback_ask
     call app_toast
     EPILOGUE
 
+# extrec_slot_forget(ext): a Roll back dialog for that record is answered by nobody
+FN extrec_slot_forget
+    cmp [rip + rc_ext], rdi
+    jne 1f
+    mov qword ptr [rip + rc_ext], 0
+1:  ret
+
 # rollback_confirmed(): the dialog's Roll back
 rollback_confirmed:
     PROLOGUE
@@ -652,6 +661,8 @@ FN ext_rollback
     SYS SYS_rename
     test rax, rax
     js .Lrb_undo2
+    mov rdi, rbx
+    call ext_slot_reuse         # the restored version takes the retired record's place
     mov rdi, r12
     mov rsi, [rsp]
     mov rdx, [rsp + 8]
@@ -701,6 +712,8 @@ FN ext_rollback
     mov rsi, r12
     SYS SYS_rename
 .Lrb_fail:
+    mov rdi, rbx
+    call ext_slot_reuse
     mov rdi, r12
     mov rsi, [rsp]
     mov rdx, [rsp + 8]
@@ -772,7 +785,9 @@ FN ext_tag_of
 
 # ext_needs_wider(old, new, sb) -> eax 1 when new may do something old may not: what, in words
 # joined by ", ", onto sb. A level above the old one (none < read < write) for documents or the
-# project, home read, network or terminal yes, or a program in run that the old list lacks
+# project, any other [needs] bit the old version lacks (home, network, the terminal ladder, Git,
+# debug adapters, secrets, and any bit a later design adds: those say "use more of your system"),
+# or a program in run, tests or kernels that the old list lacks (names of any length)
 FN ext_needs_wider
     PROLOGUE 16
     mov rbx, rdi
@@ -797,23 +812,27 @@ FN ext_needs_wider
     test r15d, NEEDS_PROJECT_READ
     jz 4f
 3:  call wider_item
-4:  lea rsi, [rip + .Ln_home]
-    test r15d, NEEDS_HOME_READ
-    jz 5f
-    call wider_item
-5:  lea rsi, [rip + .Ln_net]
-    test r15d, NEEDS_NETWORK
+4:  lea rcx, [rip + wider_bits]
+5:  mov eax, [rcx]
+    test eax, eax
     jz 6f
+    test r15d, eax
+    jz 51f
+    push rcx
+    push rcx
+    mov rsi, [rcx + 8]
     call wider_item
-6:  lea rsi, [rip + .Ln_terminal]
-    test r15d, NEEDS_TERMINAL
-    jz 61f
-    call wider_item
-61: lea rsi, [rip + .Ln_secrets]  # resources group: secrets = yes
-    test r15d, NEEDS_SECRETS
+    pop rcx
+    pop rcx
+51: add rcx, 16
+    jmp 5b
+6:  # a bit no phrase names: wider all the same
+    mov eax, r15d
+    and eax, ~(NEEDS_DOC_READ | NEEDS_DOC_WRITE | NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE | NEEDS_HOME_READ | NEEDS_NETWORK | NEEDS_TERMINAL | NEEDS_TERM_RUN | NEEDS_TERM_INPUT | NEEDS_TERM_OUTPUT | NEEDS_GIT_READ | NEEDS_DEBUG | NEEDS_SECRETS)
     jz 7f
+    lea rsi, [rip + .Ln_more]
     call wider_item
-7:  # programs in run, and in tests (testing), that the old lists lack: "run cargo rustfmt"
+7:  # programs in run, tests (testing) and kernels (notebooks) that the old lists lack
     mov rdi, [r12 + EXT_runs]
     mov rsi, [rbx + EXT_runs]
     lea rdx, [rip + .Lempty]
@@ -828,9 +847,9 @@ FN ext_needs_wider
     mov r8d, r14d
     call wider_list
     mov r14d, eax
-    mov rdi, [r12 + EXT_nb_kernels]     # notebooks: kernels run as the user
+    mov rdi, [r12 + EXT_nb_kernels]
     mov rsi, [rbx + EXT_nb_kernels]
-    lea rdx, [rip + .Ln_when_kernels]
+    lea rdx, [rip + .Ln_as_kernels]
     mov rcx, r13
     mov r8d, r14d
     call wider_list
@@ -841,7 +860,8 @@ FN ext_needs_wider
     EPILOGUE
 
 # wider_list(new list, old list, suffix, sb, items) -> eax items: "run A B" + suffix onto sb (after
-# ", " when items) for the names of new that old lacks
+# ", " when items) for the names of new that old lacks; names are compared whole, whatever their
+# length
 wider_list:
     PROLOGUE 16
     mov r12, rdi
@@ -860,22 +880,19 @@ wider_list:
     add r12, rcx
     test rdx, rdx
     jz 7f
-    cmp rdx, 100
-    jae 1b
-    lea rdi, [rip + rc_word]
-    mov rsi, rax
+    mov [rsp + 8], rax          # the name
     push rdx
     push rdx
-    call memcpy
+    mov rdi, rax
+    mov rsi, rdx
+    mov rdx, rbx
+    call span_in_list
     pop rdx
     pop rdx
-    lea rax, [rip + rc_word]
-    mov byte ptr [rax + rdx], 0
-    lea rdi, [rip + rc_word]
-    mov rsi, rbx
-    call list_has_word
     test eax, eax
     jnz 1b
+    push rdx
+    push rdx
     test r15d, r15d
     jnz 2f
     lea rsi, [rip + .Ln_run]
@@ -884,10 +901,12 @@ wider_list:
 2:  mov rdi, r13
     mov esi, ' '
     call sb_push_byte
-3:  inc r15d
+3:  pop rdx
+    pop rdx
+    inc r15d
     mov rdi, r13
-    lea rsi, [rip + rc_word]
-    call sb_push_cstr
+    mov rsi, [rsp + 8]
+    call sb_push
     jmp 1b
 7:  test r15d, r15d
     jz 8f
@@ -895,6 +914,37 @@ wider_list:
     mov rsi, [rsp]
     call sb_push_cstr
 8:  mov eax, r14d
+    EPILOGUE
+
+# span_in_list(ptr, len, list cstr or 0) -> eax 1 when the space separated list has that word
+span_in_list:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov rbx, rdx
+    test rbx, rbx
+    jz 8f
+1:  mov rdi, rbx
+    call strlen
+    mov rdi, rbx
+    mov rsi, rax
+    call next_word
+    add rbx, rcx
+    test rdx, rdx
+    jz 8f
+    cmp rdx, r13
+    jne 1b
+    xor ecx, ecx
+2:  cmp rcx, r13
+    jae 9f
+    mov r8b, [rax + rcx]
+    cmp r8b, [r12 + rcx]
+    jne 1b
+    inc rcx
+    jmp 2b
+8:  xor eax, eax
+    EPILOGUE
+9:  mov eax, 1
     EPILOGUE
 
 # wider_item(cstr in rsi): onto r13, after ", " when not the first (r14 counts)
@@ -1225,9 +1275,22 @@ put_num:
 .Ln_home: .asciz "read the files in your home folder"
 .Ln_net: .asciz "use the internet"
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
-.Ln_secrets: .asciz "store passwords and tokens in your keychain"
 .Ln_run: .asciz "run "
 .Ln_when_tests: .asciz " with your access when you run tests"
+.Ln_as_kernels: .asciz " as you for notebooks"
+.Ln_term_run: .asciz "run programs as you in terminal tabs once you allow it in a project"
+.Ln_term_input: .asciz "type into the terminals it started"
+.Ln_term_output: .asciz "read what they show and what you type there"
+.Ln_git: .asciz "read the project's Git history"
+.Ln_debug: .asciz "start debug adapters that run as you"
+.Ln_secrets: .asciz "store passwords and tokens in your keychain"
+.Ln_more: .asciz "use more of your system"
+.p2align 3
+# the [needs] bits beyond documents and the project, and how each is said
+wider_bits:
+    .quad NEEDS_HOME_READ, .Ln_home, NEEDS_NETWORK, .Ln_net, NEEDS_TERMINAL, .Ln_terminal
+    .quad NEEDS_TERM_RUN, .Ln_term_run, NEEDS_TERM_INPUT, .Ln_term_input, NEEDS_TERM_OUTPUT, .Ln_term_output
+    .quad NEEDS_GIT_READ, .Ln_git, NEEDS_DEBUG, .Ln_debug, NEEDS_SECRETS, .Ln_secrets, 0, 0
 .Ln_when_kernels: .asciz " with your access as notebook kernels"
 .Ln_sep: .asciz ", "
 .Leq: .asciz " = "

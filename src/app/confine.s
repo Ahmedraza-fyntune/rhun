@@ -40,7 +40,9 @@ pathbuf: .zero 4200
 pathbuf2: .zero 4200
 realbuf: .zero 4200             # profile_path's resolved path (never the buffer it reads from)
 devbuf: .zero 4200              # the active Xcode developer folder (xcode_shim)
-elfhdr: .zero 64
+interpbuf: .zero 4200           # a #! interpreter's real path (profile_program)
+treebuf: .zero 4200             # and its install tree
+elfhdr: .zero 256               # an ELF header, or a #! line (macOS reads 512 bytes of it, Linux 256)
 phdr: .zero 56
 
 .text
@@ -507,11 +509,11 @@ interp_of:
     jne .Lio_none
     lea rdi, [rip + elfhdr]
     xor esi, esi
-    mov edx, 64
+    mov edx, 256
     call memset
     mov edi, r13d
     lea rsi, [rip + elfhdr]
-    mov edx, 64
+    mov edx, 255
     SYS SYS_read
     cmp rax, 64
     jb .Lio_shebang
@@ -553,11 +555,12 @@ interp_of:
 .Lio_shebang:
     cmp word ptr [rip + elfhdr], 0x2123             # "#!"
     jne .Lio_none
-    # the first word after "#!" up to a space or line end (the header read has at most 64 bytes)
+    # the first word after "#!" up to a space or line end (the header read has at most 255 bytes:
+    # a virtual environment's interpreter path is often longer than 64)
     lea rsi, [rip + elfhdr + 2]
     mov rdi, r12
     xor ecx, ecx
-2:  cmp ecx, 61
+2:  cmp ecx, 252
     jae 3f
     movzx eax, byte ptr [rsi + rcx]
     cmp al, ' '
@@ -844,6 +847,22 @@ profile_program:
     lea rdi, [rip + pathbuf]
     lea rsi, [rip + .Lsb_exec_lit]
     call profile_path
+    # the interpreter's install tree too: a framework Python (Homebrew's, python.org's) runs
+    # itself again from Resources/Python.app inside it, so a virtual environment's script works
+    lea rdi, [rip + pathbuf]
+    lea rsi, [rip + interpbuf]
+    SYS SYS_realpath
+    test rax, rax
+    jz 12f
+    lea rdi, [rip + interpbuf]
+    lea rsi, [rip + treebuf]
+    call install_tree
+    test eax, eax
+    jz 12f
+    lea rdi, [rip + treebuf]
+    lea rsi, [rip + .Lsb_exec_sub]
+    call profile_path
+12:
     # macOS's /bin/sh runs the shell /var/select/sh names (bash, dash or zsh) in its place
     lea rdi, [rip + pathbuf]
     lea rsi, [rip + .Lbin_sh]

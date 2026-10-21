@@ -16,6 +16,8 @@
 .p2align 3
 ru_opened: .long 0              # the project was opened (a reconnect keeps it)
 ru_pick: .long 0                # RP_* of the open pick list
+ru_fw_prompt: .long 0           # 1 while the prompt asks for a port to forward (remotefwd.s)
+ru_fw_msg: .zero 300
 ru_ps_pid: .long 0              # docker ps / podman ps for Attach to Container
 .globl g_remote_shell
 g_remote_shell: .zero 256       # the user's shell on the host (its name names terminal tabs)
@@ -27,7 +29,7 @@ ru_ps_kind: .zero 16            # "docker:" or "podman:"
 ru_spec: .zero 512
 ru_label: .zero 512             # the project's name in a remote window: "HOST: name"
 ru_mask: .zero TF_SIZE          # a password's field as drawn: one * for each character
-ru_menu: .zero 16 * 8
+ru_menu: .zero 16 * 10
 ru_recent: .zero SB_SIZE        # the recent remotes file
 ru_exe: .zero 4200
 ru_ap_dir: .zero 128            # askpass: the private folder and its socket
@@ -123,7 +125,8 @@ FN remote_connected
     call session_restore
     call app_update_title
     jmp 9f
-8:  call vfs_reconnected        # watches again, documents compared with the host's files
+8:  call remote_attach          # programs that outlived the connection (remote.s)
+    call vfs_reconnected        # watches again, documents compared with the host's files
     call ru_save_pending
 9:  call remote_ext_connected   # extensions that waited for the host (remoteext.s)
     mov dword ptr [rip + g_dirty], 1
@@ -630,19 +633,32 @@ FN remote_menu_open
     mov [rbx], rax
     lea rax, [rip + cmd_remote_show_log]
     mov [rbx + 8], rax
-    lea rax, [rip + .Lm_line]
+    lea rax, [rip + .Lm_forward]
     mov [rbx + 16], rax
-    mov qword ptr [rbx + 24], 0
+    lea rax, [rip + cmd_remote_forward_port]
+    mov [rbx + 24], rax
+    add rbx, 32
+    call remote_forwards_count
+    test eax, eax
+    jz 3f
+    lea rax, [rip + .Lm_unforward]
+    mov [rbx], rax
+    lea rax, [rip + cmd_remote_stop_forwarding]
+    mov [rbx + 8], rax
+    add rbx, 16
+3:  lea rax, [rip + .Lm_line]
+    mov [rbx], rax
+    mov qword ptr [rbx + 8], 0
     lea rax, [rip + .Lm_host]
-    mov [rbx + 32], rax
+    mov [rbx + 16], rax
     lea rax, [rip + cmd_connect_to_host]
-    mov [rbx + 40], rax
+    mov [rbx + 24], rax
     lea rax, [rip + .Lm_container]
-    mov [rbx + 48], rax
+    mov [rbx + 32], rax
     lea rax, [rip + cmd_attach_to_container]
-    mov [rbx + 56], rax
-    mov qword ptr [rbx + 64], 0
-    mov qword ptr [rbx + 72], 0
+    mov [rbx + 40], rax
+    mov qword ptr [rbx + 48], 0
+    mov qword ptr [rbx + 56], 0
     lea rdi, [rip + ru_menu]
     mov esi, r12d
     mov edx, r13d
@@ -654,6 +670,82 @@ FN remote_menu_open
 
 FN cmd_remote_disconnect
     jmp remote_disconnect
+
+# cmd_remote_forward_port(): Forward a Port: its number on the host, asked in the prompt
+FN cmd_remote_forward_port
+    sub rsp, 8
+    call remote_is_up
+    test eax, eax
+    jnz 1f
+    lea rdi, [rip + .Lfw_down]
+    call app_toast
+    add rsp, 8
+    ret
+1:  mov dword ptr [rip + ru_fw_prompt], 1
+    lea rdi, [rip + .Lfw_label]
+    mov esi, PROMPT_REMOTE
+    xor edx, edx
+    xor ecx, ecx
+    call palette_ext_prompt_open
+    add rsp, 8
+    ret
+
+# cmd_remote_stop_forwarding(): every forwarded port stops
+FN cmd_remote_stop_forwarding
+    sub rsp, 8
+    xor edi, edi
+    call remote_unforward
+    lea rdi, [rip + .Lfw_stopped]
+    call app_toast
+    add rsp, 8
+    ret
+
+# ru_fw_answer(text, len): the port typed: forwarded, and the toast says where it is reached
+ru_fw_answer:
+    PROLOGUE
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    mov r12, rdx
+    call parse_u64
+    test rdx, rdx
+    jz 8f
+    cmp rdx, r12
+    jne 8f
+    mov r13, rax
+    mov edi, eax
+    call remote_forward
+    test eax, eax
+    jle 7f
+    mov ebx, eax
+    lea rdi, [rip + ru_fw_msg]
+    lea rsi, [rip + .Lfw_ok1]
+    call cstr_copy
+    mov rdi, rax
+    mov esi, ebx
+    call fmt_u64                # rdi after the digits
+    lea rsi, [rip + .Lfw_ok2]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, r13
+    call fmt_u64
+    lea rsi, [rip + .Lfw_ok3]
+    call cstr_copy
+    mov rbx, rax
+    call remote_host
+    mov rdi, rbx
+    mov rsi, rax
+    call cstr_copy
+    lea rdi, [rip + ru_fw_msg]
+    call app_toast
+    jmp 9f
+7:  lea rdi, [rip + .Lfw_failed]
+    call app_toast
+    jmp 9f
+8:  lea rdi, [rip + .Lfw_bad]
+    call app_toast
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
 FN cmd_remote_reconnect
     jmp remote_reconnect
 
@@ -965,6 +1057,49 @@ FN cmd_attach_to_container
     call app_toast
 9:  EPILOGUE
 
+# cmd_connect_to_wsl(): Connect to WSL: the distributions `wsl.exe -l -q` lists (Windows)
+FN cmd_connect_to_wsl
+    PROLOGUE 48
+    cmp dword ptr [rip + ru_ps_pid], 0
+    jne 9f
+    lea rdi, [rip + .Lwsl]
+    call remote_which
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    lea rdi, [rip + ru_ps_kind]
+    lea rsi, [rip + .Ls_wsl]
+    call cstr_copy
+    mov [rsp], rbx
+    lea rax, [rip + .Ldash_l]
+    mov [rsp + 8], rax
+    lea rax, [rip + .Ldash_q]
+    mov [rsp + 16], rax
+    mov qword ptr [rsp + 24], 0
+    lea rdi, [rsp]
+    mov rsi, [rip + g_envp]
+    xor edx, edx
+    call run_piped
+    mov r12, rax
+    mov r13d, edx
+    mov rdi, rbx
+    call mem_free
+    test r12, r12
+    jle 8f
+    mov [rip + ru_ps_pid], r12d
+    mov [rip + ru_ps_fd], r13d
+    lea rdi, [rip + ru_ps_out]
+    call sb_clear
+    mov edi, r13d
+    mov esi, POLLIN
+    lea rdx, [rip + ru_on_ps]
+    xor ecx, ecx
+    call watch_add
+    jmp 9f
+8:  lea rdi, [rip + .Lno_wsl]
+    call app_toast
+9:  EPILOGUE
+
 # ru_on_ps(fd, revents, ctx): the containers' names; at the end, the pick list
 ru_on_ps:
     PROLOGUE
@@ -995,7 +1130,26 @@ ru_on_ps:
     call proc_wait
     mov dword ptr [rip + ru_ps_pid], 0
     call ru_list_reset
-    mov rbx, [rip + ru_ps_out + SB_ptr]
+    # wsl.exe answers in UTF-16: NULs and byte-order marks go (names are ASCII)
+    mov rsi, [rip + ru_ps_out + SB_ptr]
+    mov rcx, [rip + ru_ps_out + SB_len]
+    test rsi, rsi
+    jz 13f
+    xor edx, edx
+    xor edi, edi
+11: cmp rdx, rcx
+    jae 12f
+    movzx eax, byte ptr [rsi + rdx]
+    inc rdx
+    test eax, eax
+    jz 11b
+    cmp eax, 0xfe
+    jae 11b
+    mov [rsi + rdi], al
+    inc rdi
+    jmp 11b
+12: mov [rip + ru_ps_out + SB_len], rdi
+13: mov rbx, [rip + ru_ps_out + SB_ptr]
     mov r12, [rip + ru_ps_out + SB_len]
     test rbx, rbx
     jz 5f
@@ -1520,6 +1674,13 @@ FN remote_menu_append
     lea rax, [rip + cmd_attach_to_container]
     mov [rbx + 40], rax
     add rbx, 48
+.ifdef WINDOWS
+    lea rax, [rip + .Lm_wsl]
+    mov [rbx], rax
+    lea rax, [rip + cmd_connect_to_wsl]
+    mov [rbx + 8], rax
+    add rbx, 16
+.endif
     mov rax, rbx
     sub rax, r12
     shr rax, 4
@@ -1655,9 +1816,6 @@ FN remote_askpass_env
     PROLOGUE
     lea rax, [rip + ru_ap_env]
     mov qword ptr [rax], 0
-.ifdef WINDOWS
-    EPILOGUE
-.else
     call ru_ap_listen_start
     test eax, eax
     jz 9f
@@ -1684,6 +1842,7 @@ FN remote_askpass_env
     lea rax, [rip + ru_ap_env_sock]
     mov [rbx + 16], rax
     mov qword ptr [rbx + 24], 0
+.ifndef WINDOWS
     # older ssh wants a display before it uses askpass
     lea rdi, [rip + .Le_display]
     call getenv
@@ -1692,9 +1851,9 @@ FN remote_askpass_env
     lea rax, [rip + .Le_display_set]
     mov [rbx + 24], rax
     mov qword ptr [rbx + 32], 0
+.endif
 9:  lea rax, [rip + ru_ap_env]
     EPILOGUE
-.endif
 
 # ru_ap_drop(): the askpass connection ends without an answer
 ru_ap_drop:
@@ -1709,7 +1868,84 @@ ru_ap_drop:
 1:  add rsp, 8
     ret
 
-.ifndef WINDOWS
+.ifdef WINDOWS
+# ru_ap_listen_start() -> 1 when the askpass pipe waits: \\.\pipe\rhun-askpass-PID-RANDOM, made
+#   new by this window with only its user allowed (askpipe.s); remote_tick looks for its client
+ru_ap_listen_start:
+    PROLOGUE
+    cmp dword ptr [rip + ru_ap_listen], 0
+    jge 7f
+    lea rdi, [rip + ru_ap_path]
+    lea rsi, [rip + .Lap_pipe]
+    call cstr_copy
+    mov rbx, rax
+    SYS SYS_getpid
+    mov rdi, rbx
+    mov rsi, rax
+    call fmt_u64
+    mov byte ptr [rdi], '-'
+    inc rdi
+    mov rbx, rdi
+    call time_us
+    mov r12, 0x9e3779b97f4a7c15
+    imul rax, r12
+    mov rdi, rbx
+    mov rsi, rax
+    call fmt_hex
+    mov byte ptr [rbx + rax], 0
+    lea rdi, [rip + ru_ap_path]
+    mov esi, 1                  # a new name
+    call win_pipe_server
+    test rax, rax
+    js 8f
+    mov [rip + ru_ap_listen], eax
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# remote_askpass_poll(): Windows: ssh's askpass program connected to the waiting instance: it is
+#   read as on the other systems, and the next instance waits
+FN remote_askpass_poll
+    PROLOGUE
+    cmp dword ptr [rip + ru_ap_conn], 0
+    jge 9f                      # one question at a time
+    mov edi, [rip + ru_ap_listen]
+    test edi, edi
+    js 9f
+    call win_pipe_accept
+    test rax, rax
+    jz 9f
+    js 7f
+    mov eax, [rip + ru_ap_listen]
+    mov [rip + ru_ap_conn], eax
+    lea rdi, [rip + ru_ap_path]
+    xor esi, esi                # another instance of this window's pipe
+    call win_pipe_server
+    test rax, rax
+    jns 1f
+    mov eax, -1
+1:  mov [rip + ru_ap_listen], eax
+    lea rdi, [rip + ru_ap_in]
+    call sb_clear
+    mov edi, [rip + ru_ap_conn]
+    mov esi, POLLIN
+    lea rdx, [rip + ru_ap_on_conn]
+    xor ecx, ecx
+    call watch_add
+    jmp 9f
+7:  # it came and went: a fresh instance
+    mov edi, [rip + ru_ap_listen]
+    SYS SYS_close
+    lea rdi, [rip + ru_ap_path]
+    xor esi, esi
+    call win_pipe_server
+    test rax, rax
+    jns 8f
+    mov eax, -1
+8:  mov [rip + ru_ap_listen], eax
+9:  EPILOGUE
+.else
 # ru_ap_listen_start() -> 1 when the askpass socket listens: /tmp/rhun-askpass-PID-N/s, a folder
 #   this window just made (0700), so only the user reaches it
 ru_ap_listen_start:
@@ -1814,8 +2050,10 @@ ru_ap_on_listen:
     xor ecx, ecx
     call watch_add
 9:  EPILOGUE
+.endif
 
-# ru_ap_on_conn(fd, revents, ctx): the question, up to the program's end of writing; then it is asked
+# ru_ap_on_conn(fd, revents, ctx): the question, up to the program's end of writing or a NUL (a
+#   named pipe has no half close); then it is asked
 ru_ap_on_conn:
     PROLOGUE
 1:  lea rdi, [rip + ru_ap_in]
@@ -1832,7 +2070,19 @@ ru_ap_on_conn:
     test rax, rax
     js 8f
     jz 2f
-    add [rip + ru_ap_in + SB_len], rax
+    # a NUL ends it too
+    mov rdi, [rip + ru_ap_in + SB_ptr]
+    add rdi, [rip + ru_ap_in + SB_len]
+    xor ecx, ecx
+3:  cmp rcx, rax
+    jae 4f
+    cmp byte ptr [rdi + rcx], 0
+    je 5f
+    inc rcx
+    jmp 3b
+5:  add [rip + ru_ap_in + SB_len], rcx
+    jmp 2f
+4:  add [rip + ru_ap_in + SB_len], rax
     cmp qword ptr [rip + ru_ap_in + SB_len], RU_ASK_MAX
     jb 1b
     jmp 8f
@@ -1925,11 +2175,13 @@ ru_ap_ask:
     call palette_ext_prompt_open
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
-.endif
 
-# remote_ui_prompt_done(text, len, kind): ssh's question answered in a prompt
+# remote_ui_prompt_done(text, len, kind): ssh's question answered in a prompt (or the port to forward)
 FN remote_ui_prompt_done
-    jmp ru_ap_answer
+    cmp dword ptr [rip + ru_fw_prompt], 0
+    je ru_ap_answer
+    mov dword ptr [rip + ru_fw_prompt], 0
+    jmp ru_fw_answer
 
 # ru_ap_answer(text, len): "y" and the answer to the askpass program, which prints it for ssh
 ru_ap_answer:
@@ -1958,6 +2210,10 @@ ru_ap_answer:
     mov rsi, [rip + ru_ap_out + SB_ptr]
     mov rdx, [rip + ru_ap_out + SB_len]
     call write_all
+.ifdef WINDOWS
+    mov edi, ebx                # a pipe's close drops what its client has not read yet
+    SYS SYS_fsync
+.endif
     # the answer does not stay in memory
     mov rdi, [rip + ru_ap_out + SB_ptr]
     xor esi, esi
@@ -1970,6 +2226,7 @@ ru_ap_answer:
 FN remote_ui_cancel
     sub rsp, 8
     mov dword ptr [rip + ru_pick], 0
+    mov dword ptr [rip + ru_fw_prompt], 0
     mov edi, [rip + ru_ap_conn]
     test edi, edi
     js 1f
@@ -1980,6 +2237,10 @@ FN remote_ui_cancel
     lea rsi, [rip + .Ln_answer]
     mov edx, 1
     call write_all
+.ifdef WINDOWS
+    mov edi, [rip + ru_ap_conn]
+    SYS SYS_fsync
+.endif
     call ru_ap_drop
 1:  add rsp, 8
     ret
@@ -1987,16 +2248,19 @@ FN remote_ui_cancel
 # remote_shutdown(): the askpass socket and its folder go
 FN remote_shutdown
     sub rsp, 8
+    call remote_quit            # the session on the host ends with the window (remote.s)
     cmp dword ptr [rip + ru_ap_listen], 0
     jl 1f
     mov edi, [rip + ru_ap_listen]
     SYS SYS_close
     mov dword ptr [rip + ru_ap_listen], -1
+.ifndef WINDOWS
     lea rdi, [rip + ru_ap_path]
     SYS SYS_unlink
     lea rdi, [rip + ru_ap_dir]
     mov eax, 84                 # rmdir
     XSYS
+.endif
 1:  add rsp, 8
     ret
 
@@ -2005,8 +2269,31 @@ FN remote_shutdown
 #   user cancelled or the window is gone
 FN remote_askpass_main
 .ifdef WINDOWS
-    mov edi, 1
-    call sys_exit
+    # the window's pipe (RHUN_ASKPASS): the question and a NUL, then its answer until it closes
+    PROLOGUE 16
+    mov r12, rdi
+    lea rdi, [rip + .Lenv_rhun_askpass]
+    call getenv
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    call win_pipe_open
+    test rax, rax
+    js 8f
+    mov ebx, eax
+    test r12, r12
+    jz 1f
+    mov rdi, r12
+    call strlen
+    mov edi, ebx
+    mov rsi, r12
+    mov rdx, rax
+    call write_all
+1:  mov edi, ebx
+    lea rsi, [rip + .Lnul]
+    mov edx, 1
+    call write_all
+    jmp .Lap_read
 .else
     PROLOGUE 256
     mov r12, rdi
@@ -2051,6 +2338,8 @@ FN remote_askpass_main
 1:  mov edi, ebx
     mov esi, 1                  # SHUT_WR: the question is complete
     SYS SYS_shutdown
+.endif
+.Lap_read:
     lea rdi, [rip + ru_ap_in]
     call sb_clear
 2:  lea rdi, [rip + ru_ap_in]
@@ -2087,7 +2376,6 @@ FN remote_askpass_main
     call sys_exit
 8:  mov edi, 1
     call sys_exit
-.endif
 
 .section .rodata
 .p2align 3
@@ -2126,6 +2414,16 @@ FN remote_askpass_main
 .Lm_disconnect: .asciz "Disconnect"
 .Lm_reconnect: .asciz "Reconnect"
 .Lm_log: .asciz "Show Remote Log"
+.Lm_forward: .asciz "Forward a Port..."
+.Lm_unforward: .asciz "Stop Forwarding Ports"
+.Lfw_label: .asciz "Port on the host to forward"
+.Lfw_down: .asciz "Not connected to the host"
+.Lfw_stopped: .asciz "Forwarded ports stopped"
+.Lfw_bad: .asciz "Not a port number"
+.Lfw_failed: .asciz "That port could not be forwarded"
+.Lfw_ok1: .asciz "localhost:"
+.Lfw_ok2: .asciz " reaches port "
+.Lfw_ok3: .asciz " on "
 .Lm_line: .asciz "-"
 .Lm_host: .asciz "Connect to Host\xe2\x80\xa6"
 .Lm_container: .asciz "Attach to Container\xe2\x80\xa6"
@@ -2135,6 +2433,12 @@ FN remote_askpass_main
 .Lsave_later: .asciz "Not connected: saved when "
 .Lsave_later2: .asciz " is back"
 .Lno_docker: .asciz "Neither docker nor podman was found"
+.Lno_wsl: .asciz "WSL was not found"
+.Lwsl: .asciz "wsl.exe"
+.Ls_wsl: .asciz "wsl:"
+.Ldash_l: .asciz "-l"
+.Ldash_q: .asciz "-q"
+.Lm_wsl: .asciz "Connect to WSL..."
 .Lno_containers: .asciz "No running containers"
 .Lno_window: .asciz "Could not open a new window"
 .Lhome: .asciz "HOME"
@@ -2169,5 +2473,7 @@ FN remote_askpass_main
 .Le_display_set: .asciz "DISPLAY=rhun"
 .Lenv_rhun_askpass: .asciz "RHUN_ASKPASS"
 .Lap_dir: .asciz "/tmp/rhun-askpass-"
+.Lap_pipe: .asciz "\\\\.\\pipe\\rhun-askpass-"
+.Lnul: .byte 0
 .Lap_sock: .asciz "/s"
 .text

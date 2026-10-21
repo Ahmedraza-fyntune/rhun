@@ -868,6 +868,9 @@ FN invoke_run
     lea rdx, [rip + .Le_needs_write]
     test eax, NEEDS_DOC_WRITE
     jnz .Lir_error
+    lea rdx, [rip + .Le_needs_term_run]
+    test eax, NEEDS_TERM_RUN    # the task commands: terminal = run, not v1's yes
+    jnz .Lir_error
     lea rdx, [rip + .Le_needs_terminal]
 .Lir_error:
     mov rdi, rbx
@@ -1306,6 +1309,7 @@ from_names: .quad .Lf_palette, .Lf_key, .Lf_menu, .Lf_ref
 .Le_refused_builtin: .asciz "refused not a command an extension may run"
 .Le_needs_write: .asciz "needs documents=write"
 .Le_needs_terminal: .asciz "needs terminal=yes"
+.Le_needs_term_run: .asciz "needs terminal=run"
 .Le_cancelled: .asciz "cancelled"
 .Le_timeout: .asciz "cancelled timeout"
 .Le_toobig_result: .asciz "toobig the result exceeds 1 MiB"

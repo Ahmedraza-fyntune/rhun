@@ -88,7 +88,10 @@ FN main
     call detach
     call raster_init
     call appearance_init
-    call app_init
+    cmp qword ptr [rip + opt_remote], 0  # remote hosts: extensions are read as the host's (remoteext.s)
+    je 2f
+    mov dword ptr [rip + g_remote_window], 1
+2:  call app_init
     cmp dword ptr [rip + opt_headless], 0
     jne .Lm_headless
 .ifdef WINDOWS
