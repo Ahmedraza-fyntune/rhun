@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT = ['presentation.py']
+DEFAULT = ['presentation.py', 'folding.py', 'semantic.py', 'hints.py', 'lens.py', 'highlights.py', 'colors.py', 'ghost.py']
 
 
 def main():
