@@ -649,7 +649,8 @@ sess_by_id:
 3:  ret
 
 # room_for_one() -> 1 when another tab fits: with all 32 taken, the oldest tab of a program that has
-#   ended closes; 0 when every one is a shell or a running program
+#   ended closes; 0 when every one is a shell, a running program or one waiting to run (a task's
+#   dependency waits in its tab: closing it would start what depends on it without it)
 room_for_one:
     PROLOGUE
     cmp qword ptr [rip + sessions + VEC_len], MAX_SESS
@@ -662,7 +663,7 @@ room_for_one:
     inc rbx
     cmp dword ptr [rax + TS_kind], TK_SHELL
     je 1b
-    test dword ptr [rax + TS_flags], TSF_RUNNING
+    test dword ptr [rax + TS_flags], TSF_RUNNING | TSF_WAITING
     jnz 1b
     mov rdi, rax
     call session_end
