@@ -976,6 +976,38 @@ FN extmarks_at
 8:  xor eax, eax
     EPILOGUE
 
+# FN extmarks_nth_at(doc, pos, n) -> rax the n-th (from 0) live mark covering the position, or 0
+# (the hover card's diagnostics, hovercard.s)
+FN extmarks_nth_at
+    PROLOGUE
+    mov rbx, [rdi + DOC_xmarks]
+    mov r12, rsi
+    mov r15, rdx
+    test rbx, rbx
+    jz 8f
+    xor r13d, r13d
+1:  cmp r13, [rbx + VEC_len]
+    jae 8f
+    imul r14, r13, MK_SIZE
+    add r14, [rbx + VEC_ptr]
+    inc r13
+    cmp [r14 + MK_start], r12
+    ja 1b
+    cmp [r14 + MK_end], r12
+    jbe 1b
+    mov rdi, r14
+    call mark_live
+    test eax, eax
+    jz 1b
+    test r15, r15
+    jz 2f
+    dec r15
+    jmp 1b
+2:  mov rax, r14
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # ---------------- hover ----------------
 
 # ext_hover_track(doc, pos): the pointer is over this position of the document this frame
@@ -1014,6 +1046,9 @@ FN ext_hover_tip
     mov rbx, [rip + g_hover_doc]
     test rbx, rbx
     jz 9f
+    call hovercard_covers       # the hover card shows (or is about to) what the tooltip would
+    test eax, eax
+    jnz 9f
     # a mark's message, a decoration's tip and an extension's answer, as "A · B · C" so none
     # hides another
     lea r12, [rip + hover_both]

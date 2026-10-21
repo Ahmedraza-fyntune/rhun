@@ -2470,6 +2470,18 @@ FN app_on_key
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
+    call hovercard_key          # language features: the hover card, when it shows (hovercard.s)
+    test eax, eax
+    jnz 9f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call peek_key               # language features: the peek view, when it shows (peek.s)
+    test eax, eax
+    jnz 9f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
     call complete_key           # the completion list, when it shows, takes its keys first
     test eax, eax
     jnz 9f
@@ -2746,9 +2758,13 @@ timeout_fns:
     .quad ext_timeout
     .quad complete_timeout
     .quad langfeat_timeout
+    .quad outline_timeout       # language features: the Outline's debounce (outline.s)
+    .quad hovercard_timeout     # and the hover card's rest, show time and grace (hovercard.s)
+    .quad lightbulb_timeout     # and the lightbulb's rest (lightbulb.s)
     .quad ext_provider_timeout
     .quad save_timeout
     .quad uproc_timeout
+    .quad termproto_timeout     # tasks: terminal output waiting for its budget (termproto.s)
     .quad query_timeout
     .quad testing_timeout
     .quad dap_timeout
@@ -3056,6 +3072,7 @@ FN app_render
     # overlays (not blocked)
     mov dword ptr [rip + g_block], 0
     call complete_draw
+    call hovercard_draw         # language features: the hover card (hovercard.s)
     call extbar_draw
     call explorer_menu_draw
     call notify_draw            # notification cards (notify.s), under the palette and dialogs
@@ -3369,6 +3386,7 @@ FN center_draw
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call editor_draw
+    call peek_draw              # language features: the peek view over the text (peek.s)
     call find_draw
     EPILOGUE
 
@@ -4796,6 +4814,11 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call dview_status_item
+    # testing: runs going on, then the tests passed and failed (testview.s)
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call testview_status_item
     # the branch; the file's items follow it
     mov edi, eax
     mov esi, [rsp + 4]

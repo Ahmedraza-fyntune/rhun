@@ -112,6 +112,22 @@ class Wasi(unittest.TestCase):
         self.assertEqual(self.probe('append', 'f.txt', dirs=[('--dir', a)]), '0 1')
         self.assertEqual((a / 'f.txt').read_text(), 'abcX')
 
+    def test_the_right_to_resize_alone(self):
+        # asked for under a writable folder, it holds without the right to write
+        a = self.work / 'A'
+        a.mkdir()
+        (a / 'f.txt').write_text('abcdef')
+        self.assertEqual(self.probe('resize', 'f.txt', dirs=[('--dir', a)]), '0 0')
+        self.assertEqual((a / 'f.txt').read_text(), 'a')
+        # under a read-only folder the file opens, the resizing is refused
+        (a / 'f.txt').write_text('abcdef')
+        self.assertEqual(self.probe('resize', 'f.txt', dirs=[('--dir-ro', a)]), '0 %d' % WE_NOTCAPABLE)
+        self.assertEqual((a / 'f.txt').read_text(), 'abcdef')
+
+    def test_poll_realtime_deadline_long_past(self):
+        code, out, err = self.host('probe.wasm', ['poll-past'], timeout=10)
+        self.assertEqual((code, out.strip()), (0, '0 1 9'), err)
+
     def test_a_start_section_may_call_wasi(self):
         code, out, err = self.host('start.wasm')
         self.assertEqual((code, out), (0, 'start ok\n'), err)

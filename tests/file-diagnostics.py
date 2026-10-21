@@ -53,6 +53,15 @@ class FileDiagnostics(lang.Lang):
         self.assertIn('ok 1', log)
         self.assertIn('ok 2', log)
 
+    def test_related_records_carry_a_path_and_a_message(self):
+        other = str(self.proj / 'other.rs')
+        rel = f'related 1 4 1 9 {len(other.encode())} 9\n{other}first use'
+        d = fdiag('#1', 0, [diag(2, 9, 2, 14, 'warning', 'moved here', rel + rec('tag', '', 'unnecessary'))])
+        root = self.provider(self.spec({'one': [list(d)]}), 'actions = *.rs\n', extra=self.manifest(['one']))
+        out = self.run_lang(root, ['cmd lang.one', 'wait 300', 'print-file-diagnostics'])
+        self.assertIn('ok 1', self.lang_log())
+        self.assertTrue(any('message=moved here' in l for l in self.problems(out)), out)
+
     def test_a_new_set_replaces_and_reset_clears(self):
         a = fdiag('#1', 0, [diag(1, 1, 1, 3, 'error', 'first'), diag(2, 1, 2, 3, 'error', 'second')])
         b = fdiag('#1', 0, [diag(3, 1, 3, 3, 'info', 'third')])
