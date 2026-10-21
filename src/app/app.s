@@ -4754,6 +4754,10 @@ FN statusbar_draw
     mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
+    call term_tasks_status      # tasks: "▸ build" while tasks run (termview.s)
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
     call notify_status_draw     # progress (notify.s), left of the updater's item
     mov edi, eax
     mov esi, [rsp + 4]
@@ -6604,6 +6608,10 @@ url_path: .zero 4096           # the path of a rhun:// link (app_open_path)
 FN app_open_path
     PROLOGUE 16
     mov rbx, rdi
+    call links_open_path        # resources group: a rhun://ext/ link goes to its extension (links.s)
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
     lea rsi, [rip + url_path]
     mov edx, 4096
     call rhun_url
