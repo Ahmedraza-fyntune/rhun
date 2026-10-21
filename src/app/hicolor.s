@@ -9,6 +9,7 @@
 .equ HL_PAUSE, 250
 .equ HL_SCAN, 400               # lines each way the occurrence fallback looks at
 .equ HL_WORD_MAX, 200
+.equ HL_LONG, 65536             # bytes: longer lines are left out of the occurrence fallback
 
 .bss
 .p2align 3
@@ -35,16 +36,25 @@ FN hl_frame
     test rbx, rbx
     jz 9f
     cmp [rip + hl_docp], rbx
-    jne 1f
+    jne 0f
     mov rax, [rbx + DOC_version]
     cmp [rip + hl_ver], rax
     je 2f
-1:  # another document or an edit: the ranges go, the caret's word is due again
+    # an edit: the ranges go, the caret's word is due again
+    mov [rip + hl_ver], rax
+    call hl_clear
+    mov qword ptr [rip + hl_cur], -1
+    jmp 2f
+0:  # another document: its ranges go, and its caret's word waits for the caret to move (a
+    # document just opened or switched to stays as it is)
     mov [rip + hl_docp], rbx
     mov rax, [rbx + DOC_version]
     mov [rip + hl_ver], rax
     call hl_clear
-    mov qword ptr [rip + hl_cur], -1
+    mov qword ptr [rip + hl_due], 0
+    mov rax, [rbx + DOC_cur]
+    mov [rip + hl_cur], rax
+    jmp 9f
 2:  mov rax, [rbx + DOC_cur]
     cmp rax, [rip + hl_cur]
     je 9f
@@ -87,7 +97,8 @@ hl_clear:
 1:  ret
 
 # hl_word_at(doc) -> rax the start, rdx the length of the word the caret is in or at the end of
-# (rdx 0: none)
+# (rdx 0: none, also for one longer than HL_WORD_MAX: the scan stops there, as a minified line's
+# tail is not read per keystroke)
 hl_word_at:
     PROLOGUE
     mov rbx, rdi
@@ -95,6 +106,10 @@ hl_word_at:
     mov r13, r12                # start
 1:  test r13, r13
     jz 2f
+    mov rax, r12
+    sub rax, r13
+    cmp rax, HL_WORD_MAX
+    ja 8f
     mov rdi, rbx
     lea rsi, [r13 - 1]
     call doc_byte
@@ -110,6 +125,10 @@ hl_word_at:
     mov r15, rax
 3:  cmp r14, r15
     jae 4f
+    mov rax, r14
+    sub rax, r13
+    cmp rax, HL_WORD_MAX
+    ja 8f
     mov rdi, rbx
     mov rsi, r14
     call doc_byte
@@ -124,7 +143,7 @@ hl_word_at:
     sub rdx, r13
     cmp rdx, HL_WORD_MAX
     jbe 9f
-    xor edx, edx
+8:  xor edx, edx
 9:  EPILOGUE
 
 # FN hl_timeout() -> eax ms until the caret's word is due, or -1
@@ -329,14 +348,20 @@ hl_occurrences:
     jae .Lho_done
     mov rdi, rbx
     mov rsi, r12
+    call doc_line_start
+    mov [rsp + 8], rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_end
+    sub rax, [rsp + 8]
+    inc r12
+    cmp rax, HL_LONG            # a minified line is not scanned (nor its gap moved)
+    ja .Lho_line
+    mov rdi, rbx
+    lea rsi, [r12 - 1]
     call doc_line_text
     mov r14, rax                # text
     mov r15, rdx                # len
-    mov rdi, rbx
-    mov rsi, r12
-    call doc_line_start
-    mov [rsp + 8], rax
-    inc r12
     xor ecx, ecx                # offset
 2:  mov rax, rcx
     add rax, [rsp]

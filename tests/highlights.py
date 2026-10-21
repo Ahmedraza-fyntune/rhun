@@ -54,6 +54,17 @@ class Highlights(pres.Base):
         self.run_p(self.start() + [self.at(2, 9), 'wait 400', f'shot {path}'])
         self.assertTrue(path.exists())
 
+    def test_a_document_just_opened_waits_and_long_words_are_left(self):
+        # the caret where a file opens lights nothing up until it moves
+        (self.proj / 'o.rs').write_text('let a = 1;\nlet b = a;\n', encoding='utf-8')
+        out = self.run_p(['wait 400', 'print-present highlights', 'key Right', 'key Left', 'wait 400',
+                          'print-present highlights'], files=('o.rs',))
+        self.assertEqual(self.hl(out), ['highlight 1:1-1:4 text', 'highlight 2:1-2:4 text'])
+        # a word past 200 bytes is no word (a minified line's tail is not read per keystroke)
+        (self.proj / 'w.rs').write_text('y' * 300 + ' ' + 'y' * 300 + '\n', encoding='utf-8')
+        out = self.run_p(['key Right', 'wait 400', 'print-present highlights'], files=('w.rs',))
+        self.assertEqual(self.hl(out), [])
+
     def test_setting_off(self):
         config = self.work / 'config/rhun/config'
         config.write_text(config.read_text() + '[editor]\nhighlight_occurrences = false\n')
