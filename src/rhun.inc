@@ -3427,6 +3427,8 @@ F NBC_mdx, 4             # where its rendered Markdown was drawn last (physical 
 F NBC_md, 8              # a markup cell's rendered Markdown (MD*, nbmd.s), or 0
 F NBC_mdver, 8           # DOC_version + 1 of the source it was made from, 0 none
 F NBC_mdy, 4
+F NBC_tx, 4              # x of its text's column 0 and y of its first line as last drawn, for tests
+F NBC_ty, 4
 F NBC_pad2, 4
 ENDSTRUCT NBC_SIZE
 .equ NBCK_CODE, 0

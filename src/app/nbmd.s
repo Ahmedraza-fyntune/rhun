@@ -438,7 +438,54 @@ FN nb_dump_md
     call sb_push_cstr
     EPILOGUE
 
+# nb_dump_xy(sb, i, line, col): "X Y", where cell i's text has that line and column (1-based) as last
+#   drawn (the middle of the line; the text is monospaced, without inlays), or "none"
+FN nb_dump_xy
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    call nb_active
+    test rax, rax
+    jz 8f
+    cmp r12, [rax + NB_cells + VEC_len]
+    jae 8f
+    mov rcx, [rax + NB_cells + VEC_ptr]
+    mov r15, [rcx + r12*8]
+    cmp dword ptr [r15 + NBC_y], 0
+    jl 8f
+    test r13, r13
+    jz 8f
+    test r14, r14
+    jz 8f
+    lea rsi, [r14 - 1]
+    imul esi, [rip + g_cw]
+    add esi, [r15 + NBC_tx]
+    mov rdi, rbx
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    lea rsi, [r13 - 1]
+    imul esi, [rip + g_lh]
+    add esi, [r15 + NBC_ty]
+    mov eax, [rip + g_lh]
+    shr eax, 1
+    add esi, eax
+    mov rdi, rbx
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+8:  mov rdi, rbx
+    lea rsi, [rip + .Ld_xnone]
+    call sb_push_cstr
+    EPILOGUE
+
 .section .rodata
+.Ld_xnone: .asciz "none\n"
 .Lno_link: .asciz "rhun cannot open this link: "
 .Ld_md: .asciz "md cell="
 .Ld_rendered: .asciz " rendered="

@@ -183,10 +183,11 @@ class Notebooks(unittest.TestCase):
         self.assertEqual(len(runs[1]), 4)
 
     def test_mouse_selects_edits_runs_and_scrolls(self):
-        out = self.run_editor(['print-notebook'])
+        out = self.run_editor(['print-notebook', 'print-nb-xy 2 1 3'])
         x, y = map(int, field(cells(out)[2], 'at').split(','))
-        # past "y " in the third cell: the fold lane (12 px) and the margin come before the text
-        out = self.run_editor([f'click {x + 46} {y + 10}', 'type Z', 'print-notebook', 'print-doc',
+        # past "y " in the third cell, where rhun drew it (whatever lanes the gutter has)
+        tx, ty = map(int, out[out.index(next(l for l in out if l.startswith('dirty='))) + 1].split())
+        out = self.run_editor([f'click {tx + 1} {ty}', 'type Z', 'print-notebook', 'print-doc',
                                f'click {x - 26} {y + 10}', *SETTLE, 'print-notebook'])
         runs = dumps(out)
         self.assertEqual((field(runs[0][2], 'sel'), field(runs[0][2], 'editing')), ('1', '1'))

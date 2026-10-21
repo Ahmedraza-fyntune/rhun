@@ -37,6 +37,7 @@ nv_ew: .long 0
 nv_eh: .long 0
 .p2align 3
 nv_edoc: .quad 0
+nv_ecl: .quad 0                 # its cell
 tmp: .zero SB_SIZE
 numbuf: .zero 32
 
@@ -368,6 +369,9 @@ FN nb_draw
     mov r8d, [rip + nv_eh]
     mov r9d, 1
     call editor_draw_cell
+    mov rax, [rip + nv_ecl]
+    mov ecx, [rip + g_ed_tx]
+    mov [rax + NBC_tx], ecx
 72: call gfx_clip_pop
     # the scrollbar
     mov rax, [rbx + NB_scroll]
@@ -1010,6 +1014,9 @@ nb_draw_cell:
     cmp dword ptr [rsp + 20], 2
     jne 33f
     # the keyboard's cell is drawn after the others
+    mov eax, [rsp + 32]
+    mov [r12 + NBC_ty], eax
+    mov [rip + nv_ecl], r12
     mov [rip + nv_edoc], r15
     mov eax, [rsp + 24]
     mov [rip + nv_ex], eax
@@ -1027,6 +1034,10 @@ nb_draw_cell:
     mov r8d, [rsp + 44]
     xor r9d, r9d
     call editor_draw_cell
+    mov eax, [rip + g_ed_tx]    # where its text went, whatever lanes its gutter has (tests)
+    mov [r12 + NBC_tx], eax
+    mov eax, [rsp + 32]
+    mov [r12 + NBC_ty], eax
 4:  # its outputs
     cmp qword ptr [r12 + NBC_outs + VEC_len], 0
     je 9f

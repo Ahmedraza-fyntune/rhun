@@ -7,6 +7,7 @@
 #   nb-output-tab I J         as cell I's output J's Open in Tab
 #   print-nb-exec             the kernels started as the user (nbexec_dump)
 #   print-nb-md I             cell I's rendered Markdown (nb_dump_md: where it was drawn, md_dump)
+#   print-nb-xy I LINE COL    "X Y": where cell I's text has that line and column (1-based) on screen
 .include "rhun.inc"
 
 .section .rodata
@@ -16,7 +17,7 @@ nb_ctl:
     .quad .Lc_print_notebook, c_print_notebook, .Lc_print_nb_output, c_print_nb_output
     .quad .Lc_nb_mode, c_nb_mode, .Lc_nb_select, c_nb_select, .Lc_nb_run, c_nb_run
     .quad .Lc_nb_output_tab, c_nb_output_tab, .Lc_print_nb_exec, c_print_nb_exec
-    .quad .Lc_print_nb_md, c_print_nb_md
+    .quad .Lc_print_nb_md, c_print_nb_md, .Lc_print_nb_xy, c_print_nb_xy
     .quad 0, 0
 .Lc_print_notebook: .asciz "print-notebook"
 .Lc_print_nb_output: .asciz "print-nb-output"
@@ -26,6 +27,7 @@ nb_ctl:
 .Lc_nb_output_tab: .asciz "nb-output-tab"
 .Lc_print_nb_exec: .asciz "print-nb-exec"
 .Lc_print_nb_md: .asciz "print-nb-md"
+.Lc_print_nb_xy: .asciz "print-nb-xy"
 .text
 
 # each fn(out sb, rest, rest len) -> rax 0
@@ -118,5 +120,25 @@ c_print_nb_md:
     mov rsi, rax
     mov rdi, r12
     call nb_dump_md
+    xor eax, eax
+    EPILOGUE
+
+c_print_nb_xy:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    call nc_int
+    mov rbx, rax
+    call nc_int
+    push rax
+    push rax
+    call nc_int
+    mov rcx, rax
+    pop rdx
+    pop rdx
+    mov rsi, rbx
+    mov rdi, r12
+    call nb_dump_xy
     xor eax, eax
     EPILOGUE
