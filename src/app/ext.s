@@ -16,6 +16,7 @@ g_ext_cmds: .zero VEC_SIZE      # CMD records for the palette and [keys] (CMD_fn
 g_ext_owner: .zero VEC_SIZE     # per command: the index of its EXT (u64)
 g_ext_dir: .quad 0              # --extensions DIR, or 0 for the config folder
 ext_manifest_cmds: .quad 0      # g_ext_cmds entries from manifests; runtime commands follow them
+ext_reuse: .quad 0              # extension management: the removed record the next ext_load fills
 ext_root: .zero SB_SIZE         # the folder the extensions are read from
 ext_state_root: .zero SB_SIZE   # ~/.local/state/rhun/extensions
 ext_startup_done: .long 0       # on = startup extensions have been started
@@ -982,6 +983,126 @@ FN ext_install_load
 7:  mov rax, rbx
 9:  EPILOGUE
 
+# ---------------- extension management: record slots used again ----------------
+
+# ext_slot_reuse(ext): a removed record's slot is filled again by the next ext_load (an update, a
+# roll back, or an install while the table is full), so updates never use up the table. Its manifest
+# commands leave the command table (the later records' commands move down), its buffers are freed
+# and the record is cleared; the pending dialogs and menus that named it forget it. The record
+# stays removed until ext_load fills it
+FN ext_slot_reuse
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    jne 9f
+    mov r12d, [rbx + EXT_cmd0]
+    mov r13d, [rbx + EXT_ncmd]
+    test r13d, r13d
+    jz 3f
+    lea rax, [r12 + r13]
+    cmp rax, [rip + ext_manifest_cmds]
+    ja 3f                       # not in the manifests' part (cannot happen): left, inert
+    # g_ext_cmds and g_ext_owner lose [cmd0, cmd0 + ncmd)
+    mov rcx, [rip + g_ext_cmds + VEC_len]
+    sub rcx, rax
+    imul rdx, rcx, CMD_SIZE
+    imul rdi, r12, CMD_SIZE
+    add rdi, [rip + g_ext_cmds + VEC_ptr]
+    imul rsi, r13, CMD_SIZE
+    add rsi, rdi
+    call memmove
+    lea rax, [r12 + r13]
+    mov rcx, [rip + g_ext_owner + VEC_len]
+    sub rcx, rax
+    mov rdx, rcx
+    shl rdx, 3
+    mov rdi, r12
+    shl rdi, 3
+    add rdi, [rip + g_ext_owner + VEC_ptr]
+    lea rsi, [rdi + r13 * 8]
+    call memmove
+    sub [rip + g_ext_cmds + VEC_len], r13
+    sub [rip + g_ext_owner + VEC_len], r13
+    sub [rip + ext_manifest_cmds], r13
+    # the records whose commands came after
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_exts + VEC_len]
+    jae 2f
+    imul rax, rcx, EXT_SIZE
+    add rax, [rip + g_exts + VEC_ptr]
+    inc rcx
+    cmp rax, rbx
+    je 1b
+    cmp [rax + EXT_cmd0], r12d
+    jbe 1b
+    sub [rax + EXT_cmd0], r13d
+    jmp 1b
+2:  call ext_cmds_changed
+3:  lea rdi, [rbx + EXT_rbuf]
+    call sb_free
+    lea rdi, [rbx + EXT_wq]
+    call sb_free
+    lea rdi, [rbx + EXT_known]
+    call vec_free
+    mov rdi, [rbx + EXT_rec]
+    call mem_free
+    mov rdi, [rbx + EXT_prev]
+    call mem_free
+    mov rdi, [rbx + EXT_xset]
+    call mem_free
+    mov rdi, rbx
+    call ext_slot_forget        # Remove and Roll back dialogs, the extensions menu, the page
+    mov rdi, rbx
+    xor esi, esi
+    mov edx, EXT_SIZE
+    call memset
+    mov dword ptr [rbx + EXT_status], ES_REMOVED
+    mov dword ptr [rbx + EXT_in], -1
+    mov dword ptr [rbx + EXT_out], -1
+    mov dword ptr [rbx + EXT_log], -1
+    mov [rip + ext_reuse], rbx
+9:  EPILOGUE
+
+# ext_slot_take() -> eax 1 when a removed record's slot was made ready for the next ext_load
+FN ext_slot_take
+    PROLOGUE
+    xor r12d, r12d
+1:  cmp r12, [rip + g_exts + VEC_len]
+    jae 8f
+    imul rbx, r12, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
+    inc r12
+    cmp dword ptr [rbx + EXT_status], ES_REMOVED
+    jne 1b
+    mov rdi, rbx
+    call ext_slot_reuse
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# ext_slot_free() -> eax 1 when the table has room for another record (an empty or a removed slot)
+FN ext_slot_free
+    mov eax, 1
+    cmp qword ptr [rip + g_exts + VEC_len], EXT_CAP
+    jb 9f
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_exts + VEC_len]
+    jae 8f
+    imul rdx, rcx, EXT_SIZE
+    add rdx, [rip + g_exts + VEC_ptr]
+    inc rcx
+    cmp dword ptr [rdx + EXT_status], ES_REMOVED
+    jne 1b
+    ret
+8:  xor eax, eax
+9:  ret
+
+# ext_slot_count(): the records in the table (print-ext-slots)
+FN ext_slot_count
+    mov rax, [rip + g_exts + VEC_len]
+    ret
+
 # rotate_entries(first, a, b, vec, size): entries [first, first+a) and [first+a, first+a+b) swap
 # places (the b entries come first), in a vector of size-byte entries
 rotate_entries:
@@ -1067,7 +1188,10 @@ FN ext_retire
     call langfeat_ext_gone
     mov rdi, rbx
     call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
-    call nb_ext_gone
+    mov rdi, rbx
+    call nb_ext_gone            # its notebooks' requests, runs and kernels
+    mov rdi, rbx
+    call ce_ext_gone            # its custom editors' requests (customed.s)
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
@@ -1644,14 +1768,20 @@ FN ext_load
     mov [rsp + 8], rsi
     mov [rsp + 16], rdx
     call extpage_prompt_invalidate_pure
-    xor eax, eax
+    # extension management: a removed record's slot, cleared by ext_slot_reuse, is filled again
+    mov rbx, [rip + ext_reuse]
+    test rbx, rbx
+    jz 0f
+    mov qword ptr [rip + ext_reuse], 0
+    jmp 109f
+0:  xor eax, eax
     cmp qword ptr [rip + g_exts + VEC_len], EXT_CAP
     jae .Lel_full                # the table never moves: past its size nothing more is read
     lea rdi, [rip + g_exts]
     mov esi, EXT_SIZE
     call vec_push
     mov rbx, rax
-    mov [rip + cur_ext], rax
+109: mov [rip + cur_ext], rbx
     mov dword ptr [rbx + EXT_in], -1
     mov dword ptr [rbx + EXT_out], -1
     mov dword ptr [rbx + EXT_log], -1
@@ -3840,6 +3970,12 @@ FN ext_exited
     neg edi
     mov esi, SIGKILL
     call proc_kill              # remote hosts: on the host too (proc.s)
+    # and the program itself: a program ended right after it started may not have made its own
+    # group yet (setsid in the child), and the wait below would never end (extension management:
+    # found by many roll backs in a row)
+    mov edi, [rbx + EXT_pid]
+    mov esi, SIGKILL
+    call proc_kill
     mov edi, [rbx + EXT_pid]
     xor esi, esi
     call proc_wait
@@ -3895,6 +4031,8 @@ FN ext_exited
     call ai_ext_gone            # AI: its sessions, tool calls and cards
     mov rdi, rbx
     call nb_ext_gone            # and its notebooks' requests, runs and kernels
+    mov rdi, rbx
+    call ce_ext_gone            # and its custom editors' requests
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -5001,6 +5139,8 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_semantic_tokens, EXT_pv_semantic_tokens, .Lpv_inlay_hints, EXT_pv_inlay_hints
     .quad .Lpv_code_lens, EXT_pv_code_lens, .Lpv_inline_complete, EXT_pv_inline_complete
     .quad .Lpv_colors, EXT_pv_colors, .Lpv_highlights, EXT_pv_highlights, .Lpv_folding, EXT_pv_folding
+    .quad .Lpv_editor, EXT_pv_editor, .Lpv_edtitle, EXT_pv_edtitle  # custom editors
+    .quad .Lpv_edmodel, EXT_pv_edmodel, .Lpv_edprio, EXT_pv_edprio
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -5129,6 +5269,10 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_notebook: .asciz "notebook"
 .Lpv_nbtitle: .asciz "notebook.title"
 .Lpv_nbkernel: .asciz "notebook.kernel"
+.Lpv_editor: .asciz "editor"
+.Lpv_edtitle: .asciz "editor.title"
+.Lpv_edmodel: .asciz "editor.model"
+.Lpv_edprio: .asciz "editor.priority"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"

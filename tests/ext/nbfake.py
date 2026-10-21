@@ -9,13 +9,15 @@ standard library only. It reads and writes .nbt files, a line-based toy format:
 
 and runs cells by what their source says: "sleep" waits until interrupted, "error" fails with a
 traceback, "png" shows an image, "many" prints 1000 lines, "progress" draws over its line with
-carriage returns, "clearwait" replaces its output, "replace" updates a display by its id, "stale"
+carriage returns, "clearwait" replaces its output, "clearfirst" sends clear-wait before any output,
+"pngwide" shows an image at a width of its own, "replace" updates a display by its id, "stale"
 answers for an old run, "toobig" streams past the cap, "exec" starts a kernel as the user (nb-exec:
 python3 printing its folder and a variable, exit 3) and streams its log, "execsleep" starts one that
 sleeps until interrupted (nb-exec-signal kill), "execbad" asks for a program [needs] does not name;
 anything else is echoed. NBFAKE_LOG names a
 file that receives every line rhun sends and every answer to the fake's requests. NBFAKE_MODE:
-openerror, badbody, slowopen, nofeature, saveerror, noread.
+openerror, badbody, wideheader (a 10-field first line), widerheader (20 fields), slowopen, slowsave,
+nofeature, saveerror, noread.
 """
 import base64
 import os
@@ -110,8 +112,9 @@ def body_of(meta, cells):
 
 def output_body(o):
     b = b'%s %s %d %d\n%s' % (o['kind'], o['id'], len(o['keep']), len(o['items']), o['keep'])
-    for typ, data in o['items']:
-        b += b'%s 0 0 %d\n%s' % (typ, len(data), data)
+    for typ, data, *size in o['items']:
+        w, h = size[0] if size else (0, 0)
+        b += b'%s %d %d %d\n%s' % (typ, w, h, len(data), data)
     return b
 
 
@@ -253,7 +256,11 @@ def worker():
                                                               'items': [(b'ansi', tb)]}))
             state(nb, cell, run, 'failed', n)
             continue
-        if b'png' in source:
+        if b'pngwide' in source:
+            image = png(40, 20, (0, 0, 200, 255))
+            output(nb, cell, run, 'append', '-', output_body({'kind': b'display', 'id': b'-', 'keep': b'',
+                                                              'items': [(b'png', image, (80, 0))]}))
+        elif b'png' in source:
             image = png(40, 20, (0, 200, 0, 255))
             output(nb, cell, run, 'append', '-', output_body({'kind': b'display', 'id': b'-', 'keep': b'',
                                                               'items': [(b'png', image), (b'text', b'<Figure>\n')]}))
@@ -263,6 +270,10 @@ def worker():
             stream(nb, cell, run, 'stdout', b'10%')
             stream(nb, cell, run, 'stdout', b'\r20%')
             stream(nb, cell, run, 'stdout', b'\r30%\ndone\n')
+        elif b'clearfirst' in source:
+            output(nb, cell, run, 'clear-wait', '-', b'')
+            stream(nb, cell, run, 'stdout', b'first\n')
+            stream(nb, cell, run, 'stdout', b'second\n')
         elif b'clearwait' in source:
             stream(nb, cell, run, 'stdout', b'first\n')
             output(nb, cell, run, 'clear-wait', '-', b'')
@@ -343,9 +354,13 @@ def main():
                     log(b'open path=' + rest[:pl] + b' bytes=%d' % dl)
                 meta, cells = parse_nbt(data)
                 nbb = b'garbage\n' if MODE == 'badbody' else body_of(meta, cells)
+                if MODE in ('wideheader', 'widerheader'):
+                    nbb = b' '.join([b'1'] * (10 if MODE == 'wideheader' else 20)) + b'\n' + nbb
                 send(f'ok {rid} {len(nbb)}', nbb)
                 request(f'nb-kernel-label {f[2].decode()} idle 11', b'Fake Kernel')
             elif verb == b'nb-save':
+                if MODE == 'slowsave':
+                    time.sleep(2)
                 if MODE == 'saveerror':
                     send(f'error {rid} refused the disk is full')
                     continue

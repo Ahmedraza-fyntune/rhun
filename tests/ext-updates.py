@@ -314,6 +314,56 @@ class Updates(host.Host):
         self.assertIn('demo/hello installed=0.1.0 latest=0.1.1 state=available from=github', out)
         self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=- link=no fresh=0', out)   # never by itself
 
+    # --- review round 2 ---
+
+    def test_long_section_names_in_the_update_state_are_read_safely(self):
+        state = self.work / 'state/rhun/extension-updates'
+        state.parent.mkdir(parents=True, exist_ok=True)
+        owner = 'o' * 40
+        state.write_text('checked = 1\n[%s/%s]\nlatest = v9.9.9\n[%s/%s]\nlatest = v1.0.0\n'
+                         % (owner, 'n' * 59, owner, 'x' * 300), encoding='utf-8')
+        out = self.ui(['print-ext-updates'])
+        self.assertEqual(out[0], 'checked=1 busy=0')
+
+    def test_updating_one_extension_more_than_128_times_reuses_its_record(self):
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0', latest=False)
+        self.rel.publish('demo', 'hello', files('0.1.1'), 'v0.1.1')
+        steps = ['ext-install demo/hello@0.1.0', 'wait-install', 'dialog yes',
+                 'ext-install demo/hello@0.1.1', 'wait-install', 'dialog yes']
+        steps += ['ext-rollback demo/hello'] * 131
+        steps += ['ext-install demo/hello@0.1.0', 'wait-install', 'dialog yes', 'wait-ext hello running',
+                  'print-toast', 'print-ext-slots', 'print-extensions', 'print-ext-versions demo/hello']
+        out = self.ui(steps)
+        self.assertIn('toast=Added Hello. Its commands are in the command palette.', out)
+        self.assertIn('slots=1', out)
+        hellos = [l for l in out if l.startswith('demo/hello ')]
+        self.assertEqual(len(hellos), 1, hellos)
+        self.assertIn('state=running', hellos[0])
+        self.assertIn(' cmds=hello.say ', hellos[0])
+        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=0.1.0 link=no fresh=0', out)
+
+    def test_an_update_found_for_github_is_not_installed_over_a_linked_folder(self):
+        self.serve()
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text(encoding='utf-8').replace(
+            '[updates]\ncheck = false\n', '[updates]\ncheck = false\nextensions = check\n'), encoding='utf-8')
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.publish('demo', 'hello', files('0.1.1'), 'v0.1.1')
+        out = self.ui(['ext-check-updates', 'wait-ext-updates', 'print-ext-updates'])
+        self.assertIn('demo/hello installed=0.1.0 latest=0.1.1 state=available from=github', out)
+        dev = self.work / 'dev'
+        dev.mkdir()
+        for name, text in files('0.2.0').items():
+            (dev / name).write_text(text, encoding='utf-8')
+        config.write_text(config.read_text(encoding='utf-8').replace('extensions = check\n', ''), encoding='utf-8')
+        out = self.ui(['ext-install-folder %s link' % dev.as_posix(), 'wait-install', 'dialog yes',
+                       'wait-ext hello running', 'print-ext-updates', 'ext-check-updates', 'wait-ext-updates',
+                       'wait 300', 'print-ext-versions demo/hello', 'ext-update demo/hello', 'print-toast'])
+        self.assertIn('demo/hello installed=0.2.0 latest=- state=current', out)
+        self.assertIn('version=0.2.0 source=folder tag=- previous=0.1.0 link=yes fresh=0', out)
+        self.assertIn('toast=No update is known for it; check for updates first', out)
+
 
 for _name in dir(host.Host):
     if _name.startswith('test_'):

@@ -136,6 +136,10 @@ python3 tests/focused-zoom.py || fail=1
 python3 tests/agents.py || fail=1
 python3 tests/opencode.py || fail=1
 python3 tests/agents-refresh.py || fail=1
+python3 tests/ext-agents.py || fail=1
+python3 tests/ext-review.py || fail=1
+python3 tests/ext-tools.py || fail=1
+python3 tests/ext-prompts.py || fail=1
 sh tests/files.sh || fail=1
 sh tests/update.sh || fail=1
 python3 tests/commit-ai.py || fail=1
@@ -178,6 +182,8 @@ python3 tests/keys-chords.py || fail=1
 python3 tests/ext-menus.py || fail=1
 python3 tests/ext-status-items.py || fail=1
 python3 tests/ext-sdk-commands.py || fail=1
+# source control: Git data, commit messages, quick diff, version control panels
+python3 tests/ext-scm.py || fail=1
 # editor presentation
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }
@@ -207,6 +213,7 @@ python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
 # notebooks and custom editors (wider parity A, B)
 python3 tests/ext-notebooks.py || fail=1
+python3 tests/ext-editors.py || fail=1
 # extension management: versions, roll back, updates, removal, development installs
 python3 tests/ext-updates.py || fail=1
 python3 tests/ext-remove-clean.py || fail=1
