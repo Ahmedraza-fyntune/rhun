@@ -401,7 +401,8 @@ FN ws_ops_resolve
     movzx edi, byte ptr [rax + rcx - 1]
     call wo_sep
     mov [r12 + WG_folder], rax
-1:  lea rdi, [rip + ws_pathbuf]
+1:  mov qword ptr [rip + wo_leaf], 1    # its folder resolved, the entry itself as written: a
+    lea rdi, [rip + ws_pathbuf]         # link is renamed or deleted, never what it points to
     lea rsi, [rip + wo_a]
     call ws_real_new
     test eax, eax
@@ -910,10 +911,13 @@ wo_plan:
     call sb_push_byte
     EPILOGUE
 
-# FN ws_ops_plan(T) -> rax 0: the file operations' participants, and their steps in the plan
+# FN ws_ops_plan(T, moves) -> rax 0: the file operations' participants, and their steps in the plan:
+# moves 0 the creates (made before the files' bytes), 1 the renames and deletes (made after them),
+# so the plan lists the steps in the order they are made and recovery undoes them newest first
 FN ws_ops_plan
-    PROLOGUE
+    PROLOGUE 16
     mov r15, rdi
+    mov [rsp], rsi
     xor ebx, ebx
 1:  cmp rbx, [rip + wg_vec + VEC_len]
     jae 8f
@@ -925,6 +929,11 @@ FN ws_ops_plan
     je 1b
     cmp qword ptr [r12 + WG_skip], 0
     jne 1b
+    xor ecx, ecx
+    cmp rax, WK_CREATE
+    setne cl
+    cmp rcx, [rsp]
+    jne 1b                      # not this phase
     mov esi, TPK_CREATE
     lea r14, [rip + .Lk_create]
     cmp rax, WK_CREATE
@@ -1047,15 +1056,16 @@ wo_in:
     mov rax, r15
     EPILOGUE
 
-# wo_copy(src, dst) -> rax 0 or -errno: a file's bytes, or a folder and everything in it
+# wo_copy(src, dst) -> rax 0 or -errno: a file's bytes, or a folder and everything in it; a link
+# cannot be copied as one, so a tree with a link in it is refused (EXDEV) rather than kept without it
 wo_copy:
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, rdi
     mov r12, rsi
     mov rdi, rbx
     call wo_is_link
     test eax, eax
-    jnz 8f                      # links are not followed (nor kept: the copy is the fallback)
+    jnz 6f
     mov rdi, rbx
     call vfs_is_dir
     test eax, eax
@@ -1079,22 +1089,23 @@ wo_copy:
     call vfs_mkdir
     mov [rsp], rbx
     mov [rsp + 8], r12
+    mov qword ptr [rsp + 16], 0 # the first entry that could not be copied
     mov rdi, rbx
     lea rsi, [rip + wo_copy_cb]
     mov rdx, rsp
     call vfs_dir_each_names
     test rax, rax
     js 9f
-    xor eax, eax
+    mov rax, [rsp + 16]
     EPILOGUE
 7:  mov rax, rdx
     test rax, rax
     js 9f
     mov rax, -5
 9:  EPILOGUE
-8:  xor eax, eax
+6:  mov rax, -18                # EXDEV
     EPILOGUE
-# wo_copy_cb(ctx [src, dst], name): one entry copied
+# wo_copy_cb(ctx [src, dst, error], name): one entry copied; the first failure is kept in error
 wo_copy_cb:
     PROLOGUE
     mov rbx, rdi
@@ -1110,7 +1121,12 @@ wo_copy_cb:
     mov rdi, r13
     mov rsi, r14
     call wo_copy
-    mov rdi, r13
+    test rax, rax
+    jns 1f
+    cmp qword ptr [rbx + 16], 0
+    jne 1f
+    mov [rbx + 16], rax
+1:  mov rdi, r13
     call mem_free
     mov rdi, r14
     call mem_free
@@ -1123,6 +1139,7 @@ wo_create:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    xor r13d, r13d              # 1 once an overwritten file is in the journal
     test qword ptr [r12 + TP_flags], TPF_OVER
     jz 1f
     mov rdi, rbx
@@ -1132,6 +1149,7 @@ wo_create:
     call wo_out
     test rax, rax
     js 9f
+    mov r13d, 1
 1:  mov rdi, [r12 + TP_path]
     call vfs_mkdir_parent
     test qword ptr [r12 + TP_flags], TPF_FOLDER
@@ -1144,9 +1162,19 @@ wo_create:
     mov esi, 0644
     call vfs_create_new         # the host's in a remote window (vfs.s)
 3:  test rax, rax
-    js 9f
+    js 7f
     xor eax, eax
 9:  EPILOGUE
+7:  test r13d, r13d             # not made: an overwritten file comes back from the journal
+    jz 9b
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, [r12 + TP_slot]
+    mov rdx, [r12 + TP_path]
+    lea rcx, [rip + .Lover]
+    call wo_in
+    mov rax, r14
+    EPILOGUE
 
 # wo_uncreate(T, TP) -> rax 0 or -errno: a create undone (an overwritten file back)
 wo_uncreate:
@@ -1181,6 +1209,7 @@ wo_move:
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
+    mov qword ptr [rsp + 8], 0  # 1 once an overwritten target is in the journal
     mov r14, [r12 + TP_path]    # from
     mov r15, [r12 + TP_path2]   # to
     test r13d, r13d
@@ -1196,6 +1225,7 @@ wo_move:
     call wo_out
     test rax, rax
     js 9f
+    mov qword ptr [rsp + 8], 1
 2:  mov rdi, r14
     call wo_follow_collect
     mov rdi, r15
@@ -1254,7 +1284,19 @@ wo_move:
 7:  xor eax, eax
     jmp 9f
 8:  mov rax, -17
-9:  EPILOGUE
+9:  test rax, rax
+    jns 91f
+    mov qword ptr [rip + wo_follow + VEC_len], 0    # the tabs stay where they are
+    cmp qword ptr [rsp + 8], 0
+    je 91f
+    mov [rsp], rax              # not moved: the overwritten target comes back from the journal
+    mov rdi, rbx
+    mov rsi, [r12 + TP_slot]
+    mov rdx, r15
+    lea rcx, [rip + .Lover]
+    call wo_in
+    mov rax, [rsp]
+91: EPILOGUE
 
 # wo_delete(T, TP) -> rax 0 or -errno: a delete made: clean tabs of it close, it moves into the
 # journal
@@ -1590,7 +1632,8 @@ FN ws_ops_map
 
 # FN ws_ops_ready(T, TP, dir) -> eax 1 when a file operation can be undone (dir 0) or redone (1):
 # a create's path holds what it made (an empty file, or a folder); a rename's target is there and
-# its source free (or the other way round); a deleted path is free (or there again)
+# its source free (or the other way round); a deleted path is free (or there again). An overwrite
+# redone finds the file it replaced back where it was: that one goes into the journal again
 FN ws_ops_ready
     PROLOGUE
     mov rbx, rdi
@@ -1612,8 +1655,10 @@ FN ws_ops_ready
     mov rdi, [r12 + TP_path]
     call vfs_missing
     test r13d, r13d
-    jnz 9f                      # redo: free
-    test eax, eax
+    jz 2f
+    mov r15, [r12 + TP_path]    # redo: free, or the file it replaced
+    jmp .Loy_free
+2:  test eax, eax
     jnz 8f
     test qword ptr [r12 + TP_flags], TPF_FOLDER
     jnz 7f
@@ -1645,6 +1690,16 @@ FN ws_ops_ready
     jnz 7b
     mov rdi, r15                # where it goes: free
     call vfs_missing
+.Loy_free:                      # eax: r15 is free; a redone overwrite takes a file there too
+    test eax, eax
+    jnz 9f
+    test r13d, r13d
+    jz 9f
+    test qword ptr [r12 + TP_flags], TPF_OVER
+    jz 9f
+    mov rdi, r15
+    call vfs_is_dir
+    xor eax, 1                  # (never a folder)
     jmp 9f
 8:  xor eax, eax
 9:  EPILOGUE
@@ -1724,33 +1779,91 @@ wo_step_kinds:
     jz 1b
     mov rdi, rbx
     mov rsi, r15
-    mov rax, [r15 + TP_kind]
-    cmp rax, TPK_CREATE
-    jne 4f
-    test r12d, r12d
-    jnz 31f
-    call wo_uncreate
-    jmp 6f
-31: call wo_create
-    jmp 6f
-4:  cmp rax, TPK_RENAME
-    jne 5f
     mov edx, r12d
-    call wo_move
-    jmp 6f
-5:  test r12d, r12d
-    jnz 51f
-    call wo_undelete
-    jmp 6f
-51: call wo_delete
-6:  test rax, rax
+    call wo_one
+    test rax, rax
     jns 1b
-    mov rdi, r15
+    # this one failed: those this call made go back, newest first
+    mov [rsp + 8], r15
+    test r12d, r12d
+    jnz 71f
+7:  inc r13                     # undo went newest first: the ones above it were undone
+    cmp r13, [rbx + TX_nparts]
+    jae 79f
+    mov r15, r13
+    mov edx, 1
+    call wo_one_back
+    jmp 7b
+71: dec r14                     # redo went oldest first: the ones below it were redone
+72: test r14, r14
+    jz 79f
+    dec r14
+    mov r15, r14
+    xor edx, edx
+    call wo_one_back
+    jmp 72b
+79: mov rdi, [rsp + 8]
     call wd_cannot
     xor eax, eax
     EPILOGUE
 8:  mov eax, 1
     EPILOGUE
+
+# wo_one_back (rbx T, r15 part index, edx dir, [rsp + 8] the kinds mask in the caller's frame):
+# wo_step_kinds' part made again or undone again when it is picked and of those kinds
+wo_one_back:
+    imul r15, r15, TP_SIZE
+    add r15, [rbx + TX_parts]
+    test qword ptr [r15 + TP_flags], TPF_PICK
+    jz 9f
+    mov rcx, [r15 + TP_kind]
+    mov eax, 1
+    shl eax, cl
+    test eax, [rsp + 8]         # (the caller's [rsp], past this call's return address)
+    jz 9f
+    sub rsp, 8
+    mov rdi, rbx
+    mov rsi, r15
+    call wo_one
+    add rsp, 8
+9:  ret
+
+# wo_one(T, TP, dir) -> rax 0 or -errno: a file operation made (dir 1) or undone (dir 0)
+wo_one:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13d, edx
+    mov rax, [r12 + TP_kind]
+    cmp rax, TPK_CREATE
+    jne 4f
+    test r13d, r13d
+    jnz 31f
+    call wo_uncreate
+    EPILOGUE
+31: call wo_create
+    EPILOGUE
+4:  cmp rax, TPK_RENAME
+    jne 5f
+    mov edx, r13d
+    call wo_move
+    EPILOGUE
+5:  test r13d, r13d
+    jnz 51f
+    call wo_undelete
+    EPILOGUE
+51: call wo_delete
+    EPILOGUE
+
+# FN ws_ops_unstep_first(T, dir): what ws_ops_step_first(T, dir) made goes back (a later step of
+# the undo or redo failed)
+FN ws_ops_unstep_first
+    mov edx, (1 << TPK_DELETE) | (1 << TPK_RENAME)
+    test esi, esi
+    jz 1f
+    mov edx, 1 << TPK_CREATE
+1:  xor esi, 1
+    jmp wo_step_kinds
 
 # FN ws_ops_step_first(T, dir) -> eax 1: before the files' bytes: on undo the deletes and renames
 # go back; on redo the creates are made again

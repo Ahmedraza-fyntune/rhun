@@ -593,6 +593,141 @@ class Ws(host.Host):
         self.assertFalse((p / 'renamed.go').exists())
         self.assertEqual((p / 'old.txt').read_text(), 'old\n')
 
+    # --- round 2: failures put everything back, the journal's order, links, a waiting edit ---
+
+    def ops_exts(self, plans):
+        return self.ext({k: 'apply LEN\n' + v for k, v in plans.items()},
+                        features='workspace-edits file-operations', project='write')
+
+    @unittest.skipIf(os.name == 'nt' or os.geteuid() == 0, 'a read-only folder does not stop root (or Windows)')
+    def test_a_failed_overwrite_rename_brings_the_target_back(self):
+        p = self.proj
+        (p / 'locked').mkdir()
+        (p / 'locked/src.txt').write_text('source\n')
+        exts = self.ops_exts({'go': edit(self.op('rename', p / 'locked/src.txt', 'overwrite', to=p / 'b.go'))})
+        os.chmod(p / 'locked', 0o555)
+        try:
+            out = self.run_ws(exts, ['cmd wsx.go', 'wait-ext wsx running', 'wait 300', 'print-tx'],
+                              files=('a.txt',))
+        finally:
+            os.chmod(p / 'locked', 0o755)
+        self.assertTrue(self.replies()[0].startswith('error 1 io '), self.replies())
+        self.assertEqual((p / 'b.go').read_text(), 'package b\n')            # back from the journal
+        self.assertEqual((p / 'locked/src.txt').read_text(), 'source\n')
+        self.assertIn('tx=none', out)
+
+    def test_crash_after_an_overwrite_create_and_its_text_restores_the_original(self):
+        p = self.proj
+        body = edit(self.op('create', p / 'b.go', 'overwrite'), (str(p / 'b.go'), '-', [(1, 1, 1, 1, 'made\n')]))
+        exts = self.ops_exts({'go': body})
+        env = dict(self.env, RHUN_TEST_EDIT_CRASH='2')          # after the create and the write
+        script = self.work / 'crash.rsc'
+        script.write_text('\n'.join(['wait 100', 'cmd wsx.go', 'wait-ext wsx running', 'wait 600', 'quit']) + '\n')
+        import subprocess
+        r = subprocess.run([str(host.EXE), str(p), '--headless', '1000x600', '--scale', '1',
+                            '--extensions', str(exts), '--script', str(script)], env=env,
+                           capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 70, r.stderr)
+        self.assertEqual((p / 'b.go').read_text(), 'made\n')
+        out = self.run_ws(exts, ['print-journal'], files=())
+        self.assertIn('journal=none', out)
+        self.assertEqual((p / 'b.go').read_text(), 'package b\n')
+
+    @unittest.skipIf(os.name == 'nt', 'links need privileges on Windows')
+    def test_rename_and_delete_act_on_a_link_not_its_target(self):
+        p = self.proj
+        os.symlink('c.txt', p / 'link.txt')
+        os.symlink('c.txt', p / 'link2.txt')
+        exts = self.ops_exts({'del': edit(self.op('delete', p / 'link.txt')),
+                              'ren': edit(self.op('rename', p / 'link2.txt', to=p / 'moved.txt'))})
+        self.run_ws(exts, ['cmd wsx.del', 'wait-ext wsx running', 'wait 300', 'cmd wsx.ren', 'wait 300',
+                           'echo ---', 'cmd undo_workspace_edit', 'wait 200', 'cmd undo_workspace_edit',
+                           'wait 200'], files=('a.txt',))
+        self.assertEqual(self.replies(), ['ok 1', 'ok 2'])
+        self.assertEqual((p / 'c.txt').read_text(), 'third file\n')          # the target stays
+        self.assertTrue(os.path.islink(p / 'link.txt'))                       # both back as links
+        self.assertTrue(os.path.islink(p / 'link2.txt'))
+        self.assertFalse(os.path.lexists(p / 'moved.txt'))
+
+    def test_a_link_in_a_tree_copied_across_volumes_refuses_the_delete(self):
+        shm = Path('/dev/shm')
+        if os.name == 'nt' or not shm.is_dir() or os.stat(shm).st_dev == os.stat(self.proj).st_dev:
+            self.skipTest('needs a journal on another volume (/dev/shm)')
+        state = Path(__import__('tempfile').mkdtemp(dir=shm))
+        try:
+            p = self.proj
+            (p / 'dir').mkdir()
+            (p / 'dir/x.txt').write_text('x\n')
+            os.symlink('x.txt', p / 'dir/link')
+            (p / 'plain').mkdir()
+            (p / 'plain/y.txt').write_text('y\n')
+            exts = self.ops_exts({'bad': edit(self.op('delete', p / 'dir', 'recursive')),
+                                  'good': edit(self.op('delete', p / 'plain', 'recursive'))})
+            (state / 'state').mkdir()
+            self.env['XDG_STATE_HOME'] = str(state / 'state')   # the journal: on /dev/shm
+            self.extlog = state / 'state/rhun/extensions/rhun-tests--wsx/wsx.log'
+            self.run_ws(exts, ['cmd wsx.bad', 'wait-ext wsx running', 'wait 300', 'cmd wsx.good', 'wait 300',
+                               'cmd undo_workspace_edit', 'wait 200'], files=('a.txt',))
+            r = self.replies()
+            self.assertTrue(r[0].startswith('error 1 io '), r)               # the link would be lost
+            self.assertEqual(r[1], 'ok 2')
+            self.assertTrue(os.path.islink(p / 'dir/link'))
+            self.assertEqual((p / 'dir/x.txt').read_text(), 'x\n')
+            self.assertEqual((p / 'plain/y.txt').read_text(), 'y\n')        # copied and back
+        finally:
+            shutil.rmtree(state, ignore_errors=True)
+
+    def test_an_edit_arriving_while_one_waits_leaves_the_waiting_one_intact(self):
+        c = self.proj / 'c.txt'
+        other = edit((str(self.proj / 'u.txt'), '-', [(1, 1, 1, 2, 'H')]))
+        exts = self.ext({'go': 'apply LEN\n' + self.disk_edit(), 'other': 'apply LEN\n' + other},
+                        features='workspace-edits')
+        out = self.run_ws(exts, ['cmd wsx.go', 'wait-ext wsx running', 'wait 300', 'print-palette',
+                                 'cmd wsx.other', 'wait 300', 'key Return', 'wait 300', 'print-tx'])
+        self.assertTrue(any(l.startswith('choose=Wsx:') for l in out), out)
+        r = self.replies()
+        self.assertTrue(any(x.startswith('error 2 busy') for x in r), r)
+        self.assertIn('ok 1', r)
+        self.assertEqual(c.read_text(), 'THIRD file\n')                    # the waiting one, applied whole
+        self.assertTrue([l for l in out if l.startswith('tx=')][0].startswith('tx=1 state=applied parts=3'), out)
+
+    def test_overwrite_rename_undo_and_redo(self):
+        p = self.proj
+        exts = self.ops_exts({'go': edit(self.op('rename', p / 'c.txt', 'overwrite', to=p / 'b.go'))})
+        out = self.run_ws(exts, ['cmd wsx.go', 'wait-ext wsx running', 'wait 300', 'cmd undo_workspace_edit',
+                                 'wait 200', 'print-tx', 'cmd redo_workspace_edit', 'wait 200', 'print-palette',
+                                 'print-tx', 'cmd undo_workspace_edit', 'wait 200'], files=('a.txt',))
+        self.assertFalse(any(l.startswith('choose=') for l in out), out)     # no changed-file question
+        tx = [l for l in out if l.startswith('tx=')]
+        self.assertTrue(tx[0].startswith('tx=1 state=undone'), out)
+        self.assertTrue(tx[1].startswith('tx=1 state=applied'), out)
+        self.assertEqual((p / 'b.go').read_text(), 'package b\n')           # undone once more
+        self.assertEqual((p / 'c.txt').read_text(), 'third file\n')
+
+    @unittest.skipIf(os.name == 'nt' or os.geteuid() == 0, 'a read-only folder does not stop root (or Windows)')
+    def test_an_undo_that_fails_halfway_puts_back_what_it_undid(self):
+        p = self.proj
+        (p / 'old.txt').write_text('old\n')
+        body = edit(self.op('rename', p / 'c.txt', to=p / 'x' / 'c2.txt'),
+                    self.op('rename', p / 'old.txt', to=p / 'y' / 'old2.txt'))
+        exts = self.ops_exts({'go': body})
+        for name, mode in (('lock', '555'), ('unlock', '755')):
+            (exts / 'rhun-tests/wsx/plans' / name).write_text('!chmod %s %s\n' % (mode, p / 'x'))
+        man = exts / 'rhun-tests/wsx/extension.ini'
+        man.write_text(man.read_text().replace('go = Wsx go', 'go = Wsx go\nlock = Lock\nunlock = Unlock'))
+        try:
+            # undo goes newest first: y's rename comes back, then x's cannot (x is read-only)
+            out = self.run_ws(exts, ['cmd wsx.go', 'wait-ext wsx running', 'wait 300', 'cmd wsx.lock', 'wait 200',
+                                     'cmd undo_workspace_edit', 'wait 200', 'print-toast', 'print-tx',
+                                     'cmd wsx.unlock', 'wait 200'], files=('a.txt',))
+        finally:
+            os.chmod(p / 'x', 0o755)
+        self.assertIn('toast=Could not write c.txt: nothing changed', out)
+        self.assertTrue([l for l in out if l.startswith('tx=')][0].startswith('tx=1 state=applied'), out)
+        self.assertEqual((p / 'x/c2.txt').read_text(), 'third file\n')
+        self.assertEqual((p / 'y/old2.txt').read_text(), 'old\n')            # redone again
+        self.assertFalse((p / 'c.txt').exists())
+        self.assertFalse((p / 'old.txt').exists())
 
 for name in dir(host.Host):
     if name.startswith('test_'):

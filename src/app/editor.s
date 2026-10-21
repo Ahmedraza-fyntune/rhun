@@ -625,6 +625,9 @@ FN ed_newline
     test rbx, rbx
     jz .Lnl_ret
     mov rdi, rbx
+    mov esi, 10
+    call ws_linked_typed        # wsedit: a newline ends linked editing first (not mirrored)
+    mov rdi, rbx
     call snippet_user_begin
     lea rdi, [rsp]
     xor esi, esi
@@ -1085,6 +1088,9 @@ FN ed_tab
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
+    mov rdi, rbx
+    mov esi, 9
+    call ws_linked_typed        # wsedit: a tab ends linked editing first (not mirrored)
     mov rdi, rbx
     call ed_sel
     cmp rax, rdx

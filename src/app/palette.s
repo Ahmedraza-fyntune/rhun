@@ -17,7 +17,7 @@
 .equ PM_KEYS, 12                # Keyboard Shortcuts: every binding (keys.s keys_list)
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 .equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
-.equ PM_WSLIST, 16              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_WSLIST, 88              # wsedit: a workspace edit's question (wsconfirm.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
