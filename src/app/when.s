@@ -1479,6 +1479,9 @@ FN ctx_get
     je 20f
     mov rdi, [rcx + MTG_item]
     cmp ebx, CTX_VIEW_ITEM
+    je 20f
+    mov rdi, [rcx + MTG_scm]    # a source control target names its provider (scmProvider)
+    cmp ebx, CTX_SCM_PROVIDER
     jne 21f
 20: test rdi, rdi
     jz 21f
