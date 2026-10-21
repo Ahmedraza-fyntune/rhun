@@ -138,7 +138,8 @@ class Secrets(lifecycle.Base):
         out, log = self.requests('secret-get token', backend='system')
         self.assertEqual(self.answers(log), ['error 1 refused no keychain is available'], log)
 
-    @unittest.skipUnless(sys.platform == 'darwin', 'the macOS login keychain')
+    @unittest.skipUnless(sys.platform == 'darwin' and os.environ.get('RHUN_TEST_REAL_KEYCHAIN') == '1',
+                         "the user's real macOS login keychain: RHUN_TEST_REAL_KEYCHAIN=1 (CI)")
     def test_macos_keychain(self):
         # Never read the value with security(1): another program reading rhun's item makes the
         # keychain ask the user in a dialog. Its attributes and its removal ask nothing.

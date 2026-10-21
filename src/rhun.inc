@@ -518,7 +518,16 @@ ENDSTRUCT INI_SIZE
 .equ T_GIT_MOD, T_TERM + 17
 .equ T_GIT_DEL, T_TERM + 18
 .equ T_ICON, T_TERM + 19        # file icons: red orange yellow green blue purple pink cyan grey white
-.equ T_COUNT, T_ICON + 10
+# editor presentation's colors (derived when a theme leaves them out)
+.equ T_INLAY, T_ICON + 10       # inlay hints' text, and their pill
+.equ T_INLAY_BG, T_INLAY + 1
+.equ T_GHOST, T_INLAY + 2       # inline completion's text
+.equ T_CODELENS, T_INLAY + 3
+.equ T_HIGHLIGHT, T_INLAY + 4   # document highlights, and the written ones
+.equ T_HIGHLIGHT_WRITE, T_INLAY + 5
+.equ T_INFO, T_INLAY + 6        # info and hint diagnostics
+.equ T_HINT, T_INLAY + 7
+.equ T_COUNT, T_INLAY + 8
 
 .macro COLOR reg, slot
     mov \reg, [rip + g_theme + 4*(\slot)]
@@ -943,6 +952,7 @@ F SN_lastflags, 8
 F SN_text, 8            # borrowed during validation only
 F SN_tlen, 8
 F SN_ntopo, 8           # surviving groups in propagation order; group indices stay stable
+F SN_linked, 8          # wsedit: a linked-editing session (wslinked.s): Tab passes, no final caret
 F SN_fields, SF_SIZE*SN_FIELDS_MAX
 F SN_groups, SG_SIZE*SN_GROUPS_MAX
 F SN_edges, SN_GROUPS_MAX*SN_GROUPS_MAX
@@ -1096,13 +1106,15 @@ F MK_owner, 8           # EXT*
 F MK_start, 8           # byte positions, half-open
 F MK_end, 8
 F MK_sev, 4             # SEV_*
-F MK_pad, 4
+F MK_pad, 4             # MKF_SOURCE, and MKT_* tags (feature diagnostic-tags)
 F MK_msg, 8             # cstr (owned)
 ENDSTRUCT MK_SIZE
 .equ SEV_ERROR, 0
 .equ SEV_WARNING, 1
 .equ SEV_INFO, 2
 .equ SEV_HINT, 3
+.equ MKT_UNNECESSARY, 2         # MK_pad: faded (a hint then draws no underline)
+.equ MKT_DEPRECATED, 4          # MK_pad: struck through
 .equ MARKS_MAX, 2000
 .equ MARK_MSG_MAX, 200
 .equ HOVER_MAX, 4000
@@ -1121,6 +1133,7 @@ ENDSTRUCT MK_SIZE
 .equ DF_REVEAL, 16               # its cursor was placed while it was not shown: in view when next drawn
 .equ DF_CENTER, 32               # with DF_REVEAL: that reveal puts the cursor's line in the middle
 .equ DF_CELL, 64                 # notebooks: a cell's text (nbdoc.s): no path and no tab of its own
+.equ DF_ROWS, 128                # presentation (fold.s): the view scrolls by rows (folds), not lines
 
 # return 0 at once when the document is read-only: g_doc, or the one in reg
 .macro READONLY_RET reg=0
@@ -1405,6 +1418,7 @@ ENDSTRUCT TF_SIZE
 .equ CPX_DOCUMENT, 1
 .equ CPX_FIELD, 2
 .equ CPX_TERMINAL, 3
+.equ CPX_PICTURE, 68             # views group: a picture with the keyboard (viewpic.s)
 
 # icons
 .equ IC_CHEV_R, 0
@@ -1660,6 +1674,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_REVEAL, "reveal", 0
     FEATURE FEAT_DIFF, "diff", 0
     FEATURE FEAT_LINKED_EDITING, "linked-editing", 1     # rhun asks linked
+    # contributions and commands: status bar items (statusitems.s)
+    FEATURE FEAT_STATUS_ITEMS, "status-items", 0  # status-item, status-remove
     # resources, workspaces, secrets and lifecycle (extres.s, secrets.s and the files they name)
     FEATURE FEAT_IDLE, "idle", 0                  # busy yes|no
     FEATURE FEAT_SECRETS, "secrets", 0
@@ -1668,11 +1684,21 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_FILES, "files", 0                # find-files, search-text
     FEATURE FEAT_SCOPED_SETTINGS, "scoped-settings", 0
     FEATURE FEAT_WORKSPACE_FOLDERS, "workspace-folders", 0
+    FEATURE FEAT_DIAG_TAGS, "diagnostic-tags", 0  # SEVERITY+TAG in diagnostics: faded, struck
+    FEATURE FEAT_FOLDING_RANGES, "folding-ranges", 1  # rhun asks folding-ranges
+    FEATURE FEAT_SEMANTIC_TOKENS, "semantic-tokens", 1    # semantic-legend; rhun asks semantic-tokens
+    FEATURE FEAT_INLAY_HINTS, "inlay-hints", 1    # rhun asks inlay-hints
+    FEATURE FEAT_CODE_LENS, "code-lens", 1        # rhun asks code-lens
+    FEATURE FEAT_INLINE_COMPLETE, "inline-complete", 1    # rhun asks inline-complete
+    FEATURE FEAT_DOC_COLORS, "document-colors", 1 # rhun asks colors, color-edit
+    FEATURE FEAT_DOC_HIGHLIGHTS, "document-highlights", 1 # rhun asks highlights
     # notebooks (wider-parity A: nbdoc.s, nbproto.inc)
     FEATURE FEAT_NOTEBOOKS, "notebooks", 1        # nb-open, nb-save; runs and outputs
     FEATURE FEAT_VIEW_LOG, "view-log", 0          # views group: log views (with view-tree)
     FEATURE FEAT_NOTIFY, "notify", 0              # views group: notify, notify-set, unnotify
     FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
+    FEATURE FEAT_VIEW_KEYS, "view-keys", 1        # views group: keys and focus for pictures; rhun asks vcopy
+    FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1734,7 +1760,16 @@ FEATURE_LIST
 .equ PK_PROMPT, 31               # AI: agent-prompt (agentext.s, D4)
 .equ PK_NB_OPEN, 32              # notebooks: nb-open, nb-save (nbproto.inc)
 .equ PK_NB_SAVE, 33
-.equ PK_COUNT, 34
+.equ PK_FOLDING, 34              # editor presentation (present.s)
+.equ PK_TOKENS, 35
+.equ PK_HINTS, 36
+.equ PK_LENS, 37
+.equ PK_INLINE, 38
+.equ PK_COLORS, 39
+.equ PK_COLOR_EDIT, 40
+.equ PK_HIGHLIGHTS, 41
+.equ PK_LINKED, 42               # wsedit: linked-editing ranges (wslinked.s)
+.equ PK_COUNT, 43
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
@@ -1743,6 +1778,8 @@ FEATURE_LIST
 .equ QO_TESTS, 5                 # testing (testproto.s)
 .equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
 .equ QO_NOTEBOOK, 7               # nbdoc.s's nb_reply
+.equ QO_PRESENT, 8               # editor presentation (present.s)
+.equ QO_LINKED, 9                # wsedit: linked editing (wslinked.s)
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -1977,6 +2014,7 @@ F EXT_pv_save_actions, 8
 # source control (wider-parity C): [provides] commit_message, quickdiff, scm (cstr values or 0)
 F EXT_pv_commit, 8      # "yes": a commit-message provider (scmext.s)
 F EXT_pv_quickdiff, 8   # file patterns it gives quick-diff bases for
+F EXT_pv_linked, 8      # wsedit: [provides] linked: patterns of documents it links ranges in
 F EXT_pv_scm, 8         # "yes": it registers VCS provider tabs
 F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
 F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
@@ -1995,6 +2033,14 @@ F EXT_pv_range_format, 8
 F EXT_pv_type_format, 8
 F EXT_pv_ttrig, 8       # type_format.triggers
 F EXT_pv_document_links, 8
+# editor presentation (present.s): [provides] keys
+F EXT_pv_semantic_tokens, 8
+F EXT_pv_inlay_hints, 8
+F EXT_pv_code_lens, 8
+F EXT_pv_inline_complete, 8
+F EXT_pv_colors, 8
+F EXT_pv_highlights, 8
+F EXT_pv_folding, 8
 F EXT_scope, VEC_SIZE   # SC records: [provides] values narrowed at run time (provider-scope)
 F EXT_qstats, 8         # PK_COUNT QS records (query.s), allocated on first use, or 0
 F EXT_fdsrc, VEC_SIZE   # PS*: its file-diagnostics sources in the Problems store (filediag.s)
@@ -2044,6 +2090,8 @@ F VW_down, 4             # the left button went down over it and is still down
 F VW_fgen, 4             # g_face_gen when the metrics were last sent
 F VW_ax, 4               # where the button went down, logical: a click is a release near it
 F VW_ay, 4
+F VW_pl, 4              # views group: a tab picture's place item for the keyboard, + 1 (0: none)
+F VW_inplace, 4         # views group: 1 a picture view's instance (a place), 2 hosted elsewhere (a custom editor)
 ENDSTRUCT VW_SIZE
 .equ EXT_CAP, 128               # extension records; g_exts never moves (EXT* are held elsewhere)
 .equ EXT_MANIFEST_MAX, 65536    # extension.ini, discovery and install preview
@@ -2097,8 +2145,9 @@ F SD_opts, 8            # cstr: a choice's options, space separated, or 0
 F SD_type, 4            # SDT_*
 F SD_min, 4
 F SD_max, 4
-F SD_pad, 4
+F SD_scope, 4          # resources group (extconfig.s): ECL scope in bits 0-1, SDS_LANGUAGES
 ENDSTRUCT SD_SIZE
+.equ SDS_LANGUAGES, 4   # KEY.languages = yes: KEY@LANG values apply
 .equ SDT_STRING, 0
 .equ SDT_BOOL, 1
 .equ SDT_INT, 2
@@ -2311,6 +2360,8 @@ F MTG_kind, 8            # cstr: "editor" "file" "folder" "root" "tab" "terminal
 F MTG_doc, 8             # its DOC*, or 0
 F MTG_path, 8            # cstr: its path, or 0
 F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
+F MTG_view, 8            # cstr: the view a view_title / view_item target is in (the key view), or 0
+F MTG_item, 8            # cstr: the targeted tree item's context value (the key viewItem), or 0
 ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
@@ -3376,7 +3427,46 @@ F PRS_deco, VEC_SIZE     # DR decoration ranges, unsorted
 F PRS_dpool, SB_SIZE     # their texts (before, after, tip, extra)
 F PRS_dgarbage, 8        # pool bytes no range uses any more
 F PRS_glyphs, VEC_SIZE   # GLE glyph-lane entries, sorted by position then kind
+F PRS_folds, VEC_SIZE    # FD folds (fold.s), sorted by their header's end
+F PRS_hid, VEC_SIZE      # HI the hidden lines, merged (a cache of the folds)
+F PRS_hidver, 8          # DOC_version and PRS_gen the cache was built for
+F PRS_hidgen, 8
+F PRS_hidden, 8          # hidden lines in all
+F PRS_fr, VEC_SIZE       # FRG a folding provider's ranges, sorted by their header's line feed
+F PRS_frext, 8           # the extension they came from; 0 while indentation decides
 ENDSTRUCT PRS_SIZE
+# a fold: the lines after its header up to its last line are hidden; it follows edits as positions
+STRUCT
+F FD_a, 8               # the header line's line feed
+F FD_b, 8               # the last hidden line's line feed (or the text's end)
+F FD_text, 8            # owned cstr: a provider's collapsed text, or 0
+ENDSTRUCT FD_SIZE
+STRUCT
+F HI_first, 8           # hidden lines first..last (0-based)
+F HI_last, 8
+F HI_before, 8          # hidden lines before them
+ENDSTRUCT HI_SIZE
+# a folding provider's range (present.s, fold.s): lines after the header up to the last can fold
+STRUCT
+F FRG_a, 8               # the header line's line feed
+F FRG_b, 8               # the last line's line feed
+F FRG_text, 8            # owned cstr: the collapsed text, or 0
+F FRG_kind, 4            # FRK_*
+F FRG_pad, 4
+ENDSTRUCT FRG_SIZE
+.equ FRK_NONE, 0
+.equ FRK_REGION, 1
+.equ FRK_COMMENT, 2
+.equ FRK_IMPORTS, 3
+.equ FRG_MAX, 50000              # ranges in one answer
+.equ FRG_TEXT_MAX, 80            # a collapsed text's bytes
+.equ FOLD_ALL_MAX, 4000000      # fold_all scans at most this many lines
+# single-provider kinds for automatic use (extproviders.s numbers 0-11 its own)
+.equ PP_TOKENS, 12
+.equ PP_INLINE, 13
+.equ PP_HIGHLIGHTS, 14
+.equ PP_FOLDING, 15
+.equ FOLD_SESSION_MAX, 1000     # folds a session line keeps per file
 STRUCT
 F TE_version, 8         # DOC_version after the edit
 F TE_pos, 8
@@ -3509,3 +3599,28 @@ ENDSTRUCT GLE_SIZE
 .equ DECO_EXTRA_MAX, 9000
 .equ DECO_PIECES, 4096          # decoration pieces drawn per frame
 .equ DECO_TICKS, 1024           # scrollbar ticks
+# virtual text (vtext.s): a line's inlays, merged from their sources, in drawing order
+STRUCT
+F VI_off, 8             # the gap it sits at: between bytes off - 1 and off of the line
+F VI_text, 8            # its text (one line, UTF-8)
+F VI_ref, 8             # what it came from (a DR* for a decoration)
+F VI_len, 4
+F VI_cells, 4           # its width in cells
+F VI_side, 1            # VS_AFTER: it belongs to the text before the gap; VS_BEFORE: after it
+F VI_kind, 1            # VK_*
+F VI_flags, 2
+F VI_fg, 4              # text color
+F VI_bg, 4              # its pill's color, 0 for none
+F VI_prio, 4
+ENDSTRUCT VI_SIZE
+.equ VS_AFTER, 0
+.equ VS_BEFORE, 1
+.equ VK_GHOST, 0                # kinds, in their order at one gap among the after ones
+.equ VK_FOLD, 1
+.equ VK_HINT, 2
+.equ VK_DECO, 3
+.equ VK_SWATCH, 4
+.equ VTM_LEFT, 0                # vt_x modes: before every inlay at the gap, after them, the caret's
+.equ VTM_RIGHT, 1
+.equ VTM_CARET, 2
+.equ VT_LINE_MAX, 256           # inlays on one line

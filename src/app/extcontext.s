@@ -477,6 +477,8 @@ FN contrib_ext_stopped
     mov rdi, rbx
     xor esi, esi
     call xc_clear
+    mov rdi, rbx
+    call status_ext_stopped
     EPILOGUE
 
 # FN contrib_ext_gone(ext): it was removed: everything of it goes
@@ -493,6 +495,10 @@ FN contrib_ext_gone
     call keys_manifest_clear
     mov rdi, rbx
     call menu_ext_gone
+    mov rdi, rbx
+    call status_ext_gone
+    mov rdi, rbx
+    call iconspec_ext_gone
     EPILOGUE
 
 # ---------------- problems: manifest entries that were dropped, shown on its page ----------------
@@ -656,7 +662,19 @@ FN contrib_manifest_kv
     test eax, eax
     jz 0f
     EPILOGUE
-0:  mov rdi, r12
+0:  mov rdi, rbx
+    mov rsi, r12
+    call status_manifest_kv     # [status] (statusitems.s)
+    test eax, eax
+    jz 9711f
+    EPILOGUE
+9711: mov rdi, rbx
+    mov rsi, r12
+    call iconspec_manifest_kv   # [icons] (iconspec.s)
+    test eax, eax
+    jz 9712f
+    EPILOGUE
+9712: mov rdi, r12
     lea rsi, [rip + .Ls_command_options]
     call ini_sec_is
     test eax, eax

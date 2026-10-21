@@ -218,12 +218,12 @@ FN win_clip_set
     # CF_UNICODETEXT ends at NUL; never accept a truncated counted input.
     xor ecx, ecx
 0:  cmp rcx, rsi
-    jae 01f
+    jae 9721f
     cmp byte ptr [rdi + rcx], 0
     je 9f
     inc rcx
     jmp 0b
-01: cmp qword ptr [rip + win_hwnd], 0
+9721: cmp qword ptr [rip + win_hwnd], 0
     je 9f
     inc qword ptr [rip + win_clip_depth]
     mov qword ptr [rsp + 88], 1

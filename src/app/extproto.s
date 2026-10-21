@@ -549,12 +549,28 @@ handle_line:
     call scmext_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # wsedit: linked editing's answer (wslinked.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ws_linked_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # notebooks: nb-open, nb-save
     mov rsi, r12
     mov edx, 1
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
     call nb_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # editor presentation: folding ranges, tokens, hints ... (present.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call present_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -661,6 +677,14 @@ handle_line:
     call scmext_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # editor presentation: an error changes nothing (present.s)
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call present_reply
+    test eax, eax
+    jnz 9f
     mov edi, 2                  # a call's error goes to its caller with its code and text
     call rest_from
     mov rcx, rax
@@ -670,6 +694,14 @@ handle_line:
     xor edx, edx
     call invoke_reply           # (invoke.s)
     mov [rip + cur], rbx
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # wsedit: linked editing's error (wslinked.s)
+    mov rsi, r12
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    call ws_linked_reply
     test eax, eax
     jnz 9f
     mov edi, 2                  # notebooks: nb-open, nb-save, with the code and text
@@ -1078,8 +1110,11 @@ need:
     jne 11f
     lea rsi, [rip + .Le_needs_write]
 11: cmp edi, NEEDS_TERMINAL
-    jne 2f
+    jne 12f
     lea rsi, [rip + .Le_needs_term]
+12: cmp edi, NEEDS_TERM_RUN     # tasks: the task commands of cmd
+    jne 2f
+    lea rsi, [rip + .Le_needs_term_run]
 2:  mov rdi, [rip + cur_id]
     call reply_error
     xor eax, eax
@@ -1896,6 +1931,9 @@ h_status:
     call mem_dup
     mov [rbx + EXT_status_text], rax
 1:  mov dword ptr [rip + g_dirty], 1
+    mov rdi, rbx                # the status item _v1 (statusitems.s)
+    mov rsi, [rbx + EXT_status_text]
+    call status_v1_set
     mov rdi, [rip + cur_id]
     call reply_ok
     EPILOGUE
@@ -2181,6 +2219,13 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call termproto_cancel
+    mov edi, 2                  # resources group: a find or search (filesearch.s)
+    call field_u64
+    test edx, edx
+    jz 0f
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call filesearch_cancel
 0:  pop rbx
     # of this extension's open prompt: the prompt closes, answered cancelled
     cmp qword ptr [rip + pr_id], 0
@@ -3120,6 +3165,64 @@ h_progress_end:
     call reply_syntax
 9:  EPILOGUE
 
+# ID vimage LEN + PNG, JPEG or GIF -> ok ID IMG: decoded once, kept until unimage or the end
+h_vimage:
+    PROLOGUE
+    mov edi, FEAT_VIEW_IMAGES
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov rdi, [rip + cur]
+    mov rsi, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    call viewimg_request
+    cmp rax, -1
+    je 7f
+    cmp rax, -2
+    je 6f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_images]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID unimage IMG -> ok ID
+h_unimage:
+    PROLOGUE
+    mov edi, FEAT_VIEW_IMAGES
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call viewimg_unimage
+    test eax, eax
+    jnz 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noimage]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 # ID vreveal VIEW HOW LEN + node id -> ok ID: its ancestors expand, it scrolls into view
 h_vreveal:
     PROLOGUE
@@ -3247,6 +3350,56 @@ h_cmd:
 FN extproto_set_cur
     mov [rip + cur], rdi
     ret
+
+# ID status-item ITEM LEN + body -> ok ID: adds or replaces a status bar item (feature status-items,
+# statusitems.s)
+h_status_item:
+    PROLOGUE
+    mov rbx, [rip + cur]
+    FEAT_TEST rbx, FEAT_STATUS_ITEMS
+    jz .Lhsi_unknown
+    cmp qword ptr [rip + nfields], 4
+    jne .Lhsi_syntax
+    mov edi, 2
+    call field_at
+    mov rdi, rbx
+    mov rsi, rax
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call status_item_set
+    test eax, eax
+    jz .Lhsi_ok
+    cmp eax, 1
+    jne .Lhsi_syntax
+    lea rsi, [rip + .Le_toobig_status]
+    jmp .Lhsi_error
+# ID status-remove ITEM -> ok ID
+h_status_remove:
+    PROLOGUE
+    mov rbx, [rip + cur]
+    FEAT_TEST rbx, FEAT_STATUS_ITEMS
+    jz .Lhsi_unknown
+    cmp qword ptr [rip + nfields], 3
+    jne .Lhsi_syntax
+    mov edi, 2
+    call field_at
+    mov rdi, rbx
+    mov rsi, rax
+    call status_item_remove
+.Lhsi_ok:
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+.Lhsi_unknown:
+    lea rsi, [rip + .Le_unknown]
+.Lhsi_error:
+    mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+.Lhsi_syntax:
+    mov rdi, [rip + cur_id]
+    call reply_syntax
+    EPILOGUE
 
 # ID run-command NAME LEN + ARGS: a built-in, or another extension's callable command (feature
 # command-args; invoke.s answers, now or when the call comes back)
@@ -3444,6 +3597,11 @@ FN extproto_prompt_chose
     PROLOGUE
     cmp qword ptr [rip + pr_id], 0
     je 9f
+    cmp qword ptr [rip + pr_kind], 4    # resources group: an open-url prompt (extresproto.inc)
+    jne 1f
+    call res_url_chose
+    jmp 9f
+1:
     mov r12, rdi
     mov rbx, [rip + cur]
     mov rax, [rip + pr_ext]
@@ -3570,7 +3728,10 @@ FN extproto_send_setting
     call out_cstr
     mov edi, ' '
     call out_byte
-    mov rdi, [rbx + SD_value]
+    mov rdi, [rip + cur]        # resources group: the window value (a workspace's, extconfig.s)
+    mov rsi, rbx
+    call extconfig_window
+    mov rdi, rax
     call out_cstr
     mov edi, 10
     call out_byte
@@ -3859,6 +4020,8 @@ hello_features:
     jmp 1b
 4:  mov rdi, rbx                # wsedit: which of its features it may have yet
     call ws_features_agreed
+    mov rdi, rbx                # views group: features only with what they need (viewpic.s)
+    call views_features_agreed
     # tasks only with terminals (a task's terminal is a TERM)
     FEAT_TEST rbx, FEAT_TASKS
     jz 40f
@@ -3876,6 +4039,8 @@ hello_features:
     jz 9f
     call pres_enable            # answers about older versions move through the edit tapes (edtape.s)
     call deco_visible_again     # and the visible event reaches the new extension too (deco.s)
+    mov rdi, rbx
+    call present_hello          # and the active document is asked what it provides (present.s)
     call out_begin
     lea rdi, [rip + .Lev_features]
     call out_cstr
@@ -4549,6 +4714,85 @@ h_select_many:
 
 # ---------------- feature reveal (wsedit) ----------------
 
+# ws_arg_doc(i, open) -> DOC* from field i, or 0 after replying: a DOC id, or for an extension that
+# agreed uris a URI without spaces: a file: URI names the open document of that path, any other the
+# open virtual document; with open 1 one that is not open opens without a tab (a diff's side)
+ws_arg_doc:
+    PROLOGUE
+    mov ebx, edi
+    mov r15d, esi
+    call field_at
+    mov r12, rax
+    mov r13, rdx
+    test r13, r13
+    jz 7f
+    movzx eax, byte ptr [r12]
+    sub eax, '0'
+    cmp eax, 9
+    jbe 7f
+    mov rdi, [rip + cur]
+    mov esi, FEAT_URIS
+    call ext_feature
+    test eax, eax
+    jz 7f
+    mov rdi, r12
+    mov rsi, r13
+    call uri_scheme_len
+    test rax, rax
+    jz 7f
+    mov rdi, r12
+    mov rsi, r13
+    call uri_file_path
+    test rax, rax
+    jz 2f
+    mov rdi, rax                # a local file: its tab
+    call app_find_tab
+    test rax, rax
+    js 8f
+    mov rdi, rax
+    call tab_at
+    mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 8f
+    EPILOGUE
+2:  cmp r13, 5
+    jb 3f
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lres_file_colon]
+    mov ecx, 5
+    call str_starts
+    test eax, eax
+    jnz 8f                      # a file: URI that is no local path
+3:  mov rdi, r12
+    mov rsi, r13
+    call ws_doc_by_uri
+    test rax, rax
+    jnz 9f
+    test r15d, r15d
+    jz 8f
+    mov rdi, [rip + cur]
+    mov rsi, r12
+    mov rdx, r13
+    call vdoc_open_hidden
+    test rax, rax
+    jns 9f
+    cmp rax, -27
+    jne 8f
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lres_e_vdocs]
+    call reply_error
+    xor eax, eax
+    EPILOGUE
+7:  mov edi, ebx                # a DOC id (or the syntax error)
+    call arg_doc
+9:  EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_nodoc]
+    call reply_error
+    xor eax, eax
+    EPILOGUE
+
 # ID reveal DOC LINE COL WHERE -> ok ID: the document's view scrolls so the position shows (WHERE
 # top, center, nearest or center-if-outside); the cursor does not move, no tab is activated
 h_reveal:
@@ -4559,7 +4803,8 @@ h_reveal:
     cmp qword ptr [rip + nfields], 6
     jne .Lrv_syntax
     mov edi, 2
-    call arg_doc
+    xor esi, esi
+    call ws_arg_doc
     test rax, rax
     jz 9f
     mov rbx, rax
@@ -4648,17 +4893,7 @@ h_diff:
     jz .Lrv_unknown
     cmp qword ptr [rip + nfields], 6
     jne .Lrv_syntax
-    mov edi, 2
-    call arg_doc
-    test rax, rax
-    jz 9f
-    mov rbx, rax
-    mov edi, 3
-    call arg_doc
-    test rax, rax
-    jz 9f
-    mov r12, rax
-    mov edi, 4
+    mov edi, 4                  # FLAGS first: a side may open a virtual document
     call field_at
     mov r14, rax
     mov r15, rdx
@@ -4675,7 +4910,19 @@ h_diff:
     call str_eq_cstr
     test eax, eax
     jz .Lrv_syntax
-1:  # the title: its first line, at most 200 bytes
+1:  mov edi, 2
+    mov esi, 1
+    call ws_arg_doc
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov edi, 3
+    mov esi, 1
+    call ws_arg_doc
+    test rax, rax
+    jz 91f
+    mov r12, rax
+    # the title: its first line, at most 200 bytes
     mov rsi, [rip + body_ptr]
     xor ecx, ecx
 2:  cmp rcx, [rip + body_len]
@@ -4703,6 +4950,15 @@ h_diff:
 4:  mov rdi, [rip + cur_id]
     lea rsi, [rip + .Le_diff_toobig]
     call reply_error
+    mov rdi, rbx                # sides it opened without a tab go again
+    call ws_diff_unused
+    cmp r12, rbx
+    je 9b
+    mov rdi, r12
+    call ws_diff_unused
+    EPILOGUE
+91: mov rdi, rbx
+    call ws_diff_unused
     EPILOGUE
 
 # ID diff-close DOC -> ok ID: one of the extension's diff tabs closes
@@ -4900,6 +5156,8 @@ verbs:
     .quad .Lv_progress, h_progress, 65536
     .quad .Lv_progress_set, h_progress_set, 65536
     .quad .Lv_progress_end, h_progress_end, 0
+    .quad .Lv_vimage, h_vimage, 8388608         # view-images (viewpic.s)
+    .quad .Lv_unimage, h_unimage, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # language features (query.s)
@@ -4911,6 +5169,8 @@ verbs:
     # contributions and commands
     .quad .Lv_set_context, h_set_context, 0
     .quad .Lv_run_command, h_run_command, INV_BODY_MAX
+    .quad .Lv_status_item, h_status_item, 16384
+    .quad .Lv_status_remove, h_status_remove, 0
     # source control (wider-parity C): gitdata.s
     .quad .Lv_git_repo, gitdata_h_repo, 0
     .quad .Lv_git_status, gitdata_h_status, 0
@@ -4926,6 +5186,12 @@ verbs:
     .quad .Lres_v_secret_delete, h_res_secret_delete, 0
     .quad .Lres_v_secret_keys, h_res_secret_keys, 0
     .quad .Lres_v_content_changed, h_res_content_changed, 0
+    .quad .Lres_v_open_url, h_res_open_url, 65536
+    .quad .Lres_v_external_uri, h_res_external_uri, 65536
+    .quad .Lres_v_link, h_res_link, 0
+    .quad .Lres_v_find_files, h_res_find_files, 65536
+    .quad .Lres_v_search_text, h_res_search_text, 340000
+    .quad .Lres_v_setting_get, h_res_setting_get, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -4987,6 +5253,9 @@ verbs:
 .Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
 .Lv_run_command: .asciz "run-command"
+.Lv_status_item: .asciz "status-item"
+.Lv_status_remove: .asciz "status-remove"
+.Le_toobig_status: .asciz "toobig 8 items"
 .Le_toobig_keys: .asciz "toobig 64 keys"
 .Le_toobig_value: .asciz "toobig 256 bytes"
 .Lv_git_repo: .asciz "git-repo"
@@ -5019,6 +5288,10 @@ verbs:
 .Lv_progress: .asciz "progress"
 .Lv_progress_set: .asciz "progress-set"
 .Lv_progress_end: .asciz "progress-end"
+.Lv_vimage: .asciz "vimage"
+.Lv_unimage: .asciz "unimage"
+.Le_toobig_images: .asciz "toobig 64 images or 128 MB"
+.Le_noimage: .asciz "noview no such image"
 .Le_toobig_notes: .asciz "toobig 16 notifications"
 .Le_toobig_progress: .asciz "toobig 8 progress"
 .Le_nonote: .asciz "noview no such notification"
@@ -5050,6 +5323,7 @@ verbs:
 .Le_toobig_items: .asciz "toobig 1000 items"
 .Le_toobig_term: .asciz "toobig 4096 bytes"
 .Le_needs_term: .asciz "needs terminal=yes"
+.Le_needs_term_run: .asciz "needs terminal=run"
 .Lrun_label: .asciz "Run in the terminal: Enter, or Esc"
 .p2align 3
 opt_names: .quad .Lo_tab, .Lo_spaces, .Lo_trim, .Lo_final
@@ -5068,7 +5342,12 @@ cmd_allow:
     .quad .La_focus_explorer, 0, .La_toggle_sidebar, 0, .La_toggle_agents, 0
     .quad .La_toggle_terminal, NEEDS_TERMINAL, .La_new_terminal, NEEDS_TERMINAL, .La_clear_terminal, NEEDS_TERMINAL
     .quad .La_toggle_word_wrap, 0, .La_toggle_whitespace, 0, .La_toggle_line_numbers, 0
-    .quad .La_zoom_in, 0, .La_zoom_out, 0, .La_zoom_reset, 0, 0, 0
+    .quad .La_zoom_in, 0, .La_zoom_out, 0, .La_zoom_reset, 0
+    # tasks (with terminal = run): rhun's task commands, which run published tasks after the approval
+    .quad .La_run_task, NEEDS_TERM_RUN, .La_run_build_task, NEEDS_TERM_RUN
+    .quad .La_run_test_task, NEEDS_TERM_RUN, .La_rerun_last_task, NEEDS_TERM_RUN
+    .quad .La_restart_task, NEEDS_TERM_RUN, .La_stop_task, NEEDS_TERM_RUN, .La_show_task, NEEDS_TERM_RUN
+    .quad 0, 0
 .La_undo: .asciz "undo"
 .La_redo: .asciz "redo"
 .La_select_all: .asciz "select_all"
@@ -5106,6 +5385,13 @@ cmd_allow:
 .La_zoom_in: .asciz "zoom_in"
 .La_zoom_out: .asciz "zoom_out"
 .La_zoom_reset: .asciz "zoom_reset"
+.La_run_task: .asciz "run_task"
+.La_run_build_task: .asciz "run_build_task"
+.La_run_test_task: .asciz "run_test_task"
+.La_rerun_last_task: .asciz "rerun_last_task"
+.La_restart_task: .asciz "restart_task"
+.La_stop_task: .asciz "stop_task"
+.La_show_task: .asciz "show_task"
 .Lv_text: .asciz "text"
 .Lv_range: .asciz "range"
 .Lv_replace: .asciz "replace"

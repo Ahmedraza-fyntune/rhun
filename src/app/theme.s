@@ -293,6 +293,19 @@ theme_derive_into:
     COPY T_GIT_ADD, T_SUCCESS
     COPY T_GIT_MOD, T_WARNING
     COPY T_GIT_DEL, T_ERROR
+    # editor presentation
+    COPY T_INLAY, T_MUTED
+    test r12d, r12d
+    je 2f
+    DERIVE T_INLAY_BG, T_BG, T_FG, 36
+    jmp 3f
+2:  DERIVE T_INLAY_BG, T_BG, T_FG, 26
+3:  DERIVE T_GHOST, T_FG, T_BG, 140
+    COPY T_CODELENS, T_MUTED
+    DERIVE T_HIGHLIGHT, T_BG, T_FG, 26
+    DERIVE T_HIGHLIGHT_WRITE, T_BG, T_WARNING, 60
+    COPY T_INFO, T_ACCENT
+    COPY T_HINT, T_MUTED
     EPILOGUE
 
 # luma(argb) -> eax: 54 r^2 + 183 g^2 + 18 b^2, relative luminance with squares for the curve
@@ -865,6 +878,7 @@ slot_names:
     .quad .Lt0, .Lt1, .Lt2, .Lt3, .Lt4, .Lt5, .Lt6, .Lt7, .Lt8, .Lt9
     .quad .Lt10, .Lt11, .Lt12, .Lt13, .Lt14, .Lt15, .Lg0, .Lg1, .Lg2
     .quad .Li0, .Li1, .Li2, .Li3, .Li4, .Li5, .Li6, .Li7, .Li8, .Li9
+    .quad .Lp0, .Lp1, .Lp2, .Lp3, .Lp4, .Lp5, .Lp6, .Lp7
 .Ls0: .asciz "bg"
 .Ls1: .asciz "fg"
 .Ls2: .asciz "accent"
@@ -941,3 +955,11 @@ slot_names:
 .Li7: .asciz "icon_cyan"
 .Li8: .asciz "icon_grey"
 .Li9: .asciz "icon_white"
+.Lp0: .asciz "inlay"
+.Lp1: .asciz "inlay_bg"
+.Lp2: .asciz "ghost"
+.Lp3: .asciz "codelens"
+.Lp4: .asciz "highlight"
+.Lp5: .asciz "highlight_write"
+.Lp6: .asciz "info"
+.Lp7: .asciz "hint"
