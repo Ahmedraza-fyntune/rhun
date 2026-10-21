@@ -168,6 +168,27 @@ class Folders(lifecycle.Base):
         self.assertIn('ok 1 3 complete', log)      # b.go of the host tests' project too
         self.assertIn('ok 2 1 complete', log)
 
+    def test_find_files_in_two_repositories(self):
+        import shutil
+        if not shutil.which('git'):
+            self.skipTest('git')
+        (self.work / 'config/rhun/config').write_text(host.CONFIG.replace('enabled = false', 'enabled = true'))
+        for repo, ignored in ((self.app, 'a.txt'), (self.lib, 'pkg/')):
+            (repo / '.gitignore').write_text(ignored + '\n')
+            g = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@t']
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=self.env)
+            subprocess.run(g + ['add', '-A'], check=True, env=self.env)
+            subprocess.run(g + ['commit', '-qm', 'one'], check=True, env=self.env)
+        (self.lib / 'top.go').write_text('package lib\n')
+        state = self.ext('ff', needs='project = read\n', features='files')
+        (state / 'args.txt').write_text('find-files 0 100 0 {LEN}|\n')
+        self.run_ws([self.app, self.lib], ['wait-ext ff running', 'wait 300', 'cmd rt/ff.request', 'wait 1500'])
+        log = '\n'.join(self.reslog('ff'))
+        self.assertNotIn('a.txt', log)                  # app's .gitignore
+        self.assertNotIn('pkg/p.go', log)               # lib's own .gitignore
+        self.assertIn('2 6\ntop.go', log)               # lib's untracked file, through its git
+        self.assertIn('1 11\nsrc/main.rs', log)
+
     def test_a_folders_own_settings(self):
         state = self.ext('st', features='scoped-settings', extra='', on='startup')
         ini = self.root / 'rt/st/extension.ini'

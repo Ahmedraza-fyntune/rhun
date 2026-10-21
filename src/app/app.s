@@ -116,7 +116,7 @@ trust_path: .zero 4096           # the repository's folder, as shown (~ for the 
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
-pm_items: .zero 16 * 26         # the project menu: 3 commands, a line, 9 folders, the remote items
+pm_items: .zero 16 * 27         # the project menu: 2 commands, a line, 9 folders, a line, Add Folder, the remote items
                                 # (a line, 2 commands, 8 recent remotes; remoteui.s), the end
 .globl g_shot_path
 g_shot_path: .quad 0
@@ -471,11 +471,7 @@ project_menu_open:
     mov [rbx + 16], rax
     lea rax, [rip + cmd_open_file]
     mov [rbx + 24], rax
-    lea rax, [rip + .Lpm_add_folder]  # resources group: workspace folders (workspace.s)
-    mov [rbx + 32], rax
-    lea rax, [rip + cmd_add_workspace_folder]
-    mov [rbx + 40], rax
-    add rbx, 48
+    add rbx, 32
     call session_recent
     mov r14d, eax
     test r14d, r14d
@@ -498,7 +494,15 @@ project_menu_open:
     add rbx, 16
     inc r15d
     jmp 1b
-2:  mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
+2:  lea rax, [rip + .Lpm_line]  # resources group: Add Folder to Workspace (workspace.s), after the
+    mov [rbx], rax              # recent folders so that they keep their places
+    mov qword ptr [rbx + 8], 0
+    lea rax, [rip + .Lpm_add_folder]
+    mov [rbx + 16], rax
+    lea rax, [rip + cmd_add_workspace_folder]
+    mov [rbx + 24], rax
+    add rbx, 32
+    mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
     lea rsi, [rip + pm_items]
     call remote_menu_append
     mov rbx, rax

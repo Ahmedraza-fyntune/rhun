@@ -521,6 +521,8 @@ FN workspace_remove
     mov r12, rax
     mov dword ptr [rip + ws_carrying], 1
     mov rdi, r12
+    call ws_carry_for_set
+    mov rdi, r12
     call app_switch_project
     mov rdi, r12
     call mem_free
@@ -548,6 +550,16 @@ FN workspace_remove
     mov eax, 1
     EPILOGUE
 8:  xor eax, eax
+    EPILOGUE
+
+# ws_carry_for_set(path): the carried folders join the project of this path only (a switch the user
+# cancelled carries nothing into a later one)
+ws_carry_for_set:
+    PROLOGUE
+    call dup_cstr
+    mov rdi, [rip + ws_carry_for]
+    mov [rip + ws_carry_for], rax
+    call mem_free
     EPILOGUE
 
 # ws_carry_clear(): the carried paths go
@@ -591,7 +603,19 @@ FN workspace_reset
     call ws_push
     cmp dword ptr [rip + ws_carrying], 0
     je 3f
-    xor ebx, ebx
+    mov rdi, [rip + g_project]  # carried for this project? (else for one the user cancelled)
+    mov rsi, [rip + ws_carry_for]
+    test rsi, rsi
+    jz 0f
+    call strcmp_eq
+    test eax, eax
+    jnz 86f
+0:  call ws_carry_clear
+    mov rdi, [rip + g_ws_file]  # nor its workspace file
+    call mem_free
+    mov qword ptr [rip + g_ws_file], 0
+    jmp 3f
+86: xor ebx, ebx
 1:  cmp rbx, [rip + ws_carry + VEC_len]
     jae 2f
     mov rax, [rip + ws_carry + VEC_ptr]
@@ -789,6 +813,8 @@ FN workspace_open_file
     test r15, r15
     jz 7f
     mov dword ptr [rip + ws_carrying], 1
+    mov rdi, r15
+    call ws_carry_for_set
     mov rdi, rbx
     call dup_cstr
     mov rdi, [rip + ws_file_next]
@@ -1333,6 +1359,7 @@ ws_gen_contains: .long -1       # and as contains: activation last saw it
 ws_found: .long 0
 .p2align 3
 ws_primary_seen: .quad 0
+ws_carry_for: .quad 0           # the project the carried folders are for (owned)
 
 .section .rodata
 .Lext_folders: .asciz ".folders"
