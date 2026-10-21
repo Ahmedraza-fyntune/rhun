@@ -56,6 +56,7 @@ ENDSTRUCT RS_SIZE
 
 .bss
 .p2align 3
+gtr_query: .zero 104            # language features: Find in Files' query for the Results title
 pal_mode: .long 0
 pal_prompt: .long 0             # PROMPT_* when in PM_PROMPT
 pal_sel: .long 0
@@ -2733,7 +2734,15 @@ FN palette_key
     jne 1f
     call palette_close
     jmp .Lpk_yes
-1:  # remote hosts: moving in Find in Files' results waits for the host's answer they belong to
+1:  cmp r12d, KEY_RETURN        # language features: ctrl+Enter in Find in Files moves its results
+    jne 10f                     # to the Results panel (results.s)
+    test r14d, MOD_CTRL
+    jz 10f
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 10f
+    call grep_to_results
+    jmp .Lpk_yes
+10: # remote hosts: moving in Find in Files' results waits for the host's answer they belong to
     cmp dword ptr [rip + pal_mode], PM_GREP
     jne 11f
     cmp dword ptr [rip + g_remote], 0
@@ -2834,6 +2843,75 @@ FN palette_key
 .Lpk_yes:
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
+    EPILOGUE
+
+# grep_to_results(): Find in Files' results (as filtered now) become a Results set, the palette
+# closes (language features, results.s)
+grep_to_results:
+    PROLOGUE 48
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov r15, rdx                # the query's length: each match's
+    cmp rdx, 100
+    jbe 1f
+    mov edx, 100
+1:  mov [rsp + 8], rdx
+    lea rdi, [rip + gtr_query]
+    mov rsi, rax
+    call memcpy
+    lea rax, [rip + gtr_query]
+    mov rcx, [rsp + 8]
+    mov byte ptr [rax + rcx], 0
+    lea rdi, [rip + gtr_query]
+    call results_find_begin
+    mov [rsp], rax
+    xor ebx, ebx
+3:  cmp rbx, [rip + results + VEC_len]
+    jae 8f
+    mov rax, [rip + results + VEC_ptr]
+    mov eax, [rax + rbx*8 + RS_item]
+    imul r12, rax, IT_SIZE
+    add r12, [rip + items + VEC_ptr]
+    inc rbx
+    mov r13, [r12 + IT_data]
+    mov rax, r13
+    shr rax, 44
+    cmp rax, [rip + gfiles + VEC_len]
+    jae 3b
+    imul rax, rax, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdi, [rip + g_project]
+    mov rsi, [rax + GF_label]
+    call path_join
+    mov r14, rax
+    mov rax, r13                # the range: LINE COL to COL + the query's length
+    shr rax, 20
+    and eax, 0xffffff
+    inc eax
+    mov [rsp + 16], eax
+    mov [rsp + 24], eax
+    mov eax, r13d
+    and eax, 0xfffff
+    inc eax
+    mov [rsp + 20], eax
+    add eax, r15d
+    mov [rsp + 28], eax
+    mov rdi, [rsp]
+    mov rsi, r14
+    lea rdx, [rsp + 16]
+    mov rcx, [r12 + IT_label]
+    mov r8, [r12 + IT_len]
+    call results_loc
+    mov rdi, r14
+    call mem_free
+    jmp 3b
+8:  call grep_release
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, [rsp]
+    xor esi, esi
+    call results_refs_end
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # palette_accept(): act on the selection / input

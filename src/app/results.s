@@ -41,6 +41,8 @@ F RST_bytes, SB_SIZE            # their strings
 F RST_cur, 8                    # F4's location, -1 before the first
 F RST_busy, 4                   # providers are still searching
 F RST_shown, 4                  # the tab showed it once (it takes the keyboard only then)
+F RST_find, 4                   # Find in Files' results (their title)
+F RST_pad, 4
 ENDSTRUCT RST_SIZE
 
 # a location
@@ -322,6 +324,21 @@ FN results_refs_begin
     mov rsi, rbx
     call set_word
     mov rax, r13
+    EPILOGUE
+
+# FN results_find_begin(query cstr) -> rax a new set of Find in Files' results (palette.s fills it as
+# references, results_loc then results_refs_end)
+FN results_find_begin
+    PROLOGUE
+    mov rbx, rdi
+    mov edi, RSK_REFS
+    call set_new
+    mov r12, rax
+    mov dword ptr [r12 + RST_find], 1
+    mov rdi, r12
+    mov rsi, rbx
+    call set_word
+    mov rax, r12
     EPILOGUE
 
 # FN results_loc(RST*, path cstr, range ptr, preview ptr, len): one location (the same path as the
@@ -1715,7 +1732,10 @@ title:
     cmp qword ptr [rbx + RST_locs + VEC_len], 1
     jne 1f
     lea rsi, [rip + .Lref_to]
-1:  lea rdi, [rip + lbuf]
+1:  cmp dword ptr [rbx + RST_find], 0
+    je 11f
+    lea rsi, [rip + .Lfound_for]
+11: lea rdi, [rip + lbuf]
     call sb_push_cstr
     jmp 3f
 2:  mov eax, [rbx + RST_mode]
@@ -1736,6 +1756,8 @@ title:
     lea rdi, [rip + lbuf]
     lea rsi, [rip + .Lsearching]
     call sb_push_cstr
+    lea rdi, [rip + lbuf]       # and the slowest provider's last progress report
+    call query_progress_label
 5:  lea rdi, [rip + lbuf]
     xor esi, esi
     call sb_push_byte
@@ -1949,6 +1971,9 @@ FN results_dump
     cmp dword ptr [rbx + RST_kind], RSK_REFS
     jne 3f
     lea rsi, [rip + .Ld_references]
+    cmp dword ptr [rbx + RST_find], 0
+    je 3f
+    lea rsi, [rip + .Ld_find]
 3:  mov rdi, r12
     call sb_push_cstr
     mov rdi, r12
@@ -1992,6 +2017,7 @@ btn_icons: .long IC_CLOSE, IC_CHEV_R, IC_BACK, IC_ARROW_DN
 .Ltab_name: .asciz "results"
 .Ltab_title: .asciz "Results"
 .Lnone: .asciz "No results yet: Find All References (shift+F12) and the hierarchies show theirs here"
+.Lfound_for: .asciz " results for "
 .Lrefs_to: .asciz " references to "
 .Lref_to: .asciz " reference to "
 .Lsearching: .asciz "  (searching...)"
@@ -2016,5 +2042,6 @@ btn_icons: .long IC_CLOSE, IC_CHEV_R, IC_BACK, IC_ARROW_DN
 .Ld_set: .asciz "set="
 .Ld_kind: .asciz " kind="
 .Ld_references: .asciz "references"
+.Ld_find: .asciz "find"
 .Ld_cur: .asciz " cur="
 .Ld_title: .asciz " title="

@@ -2092,6 +2092,7 @@ g_commands:
     COMMAND peek_type_definition, "Peek Type Definition", cmd_peek_type_definition, ""
     COMMAND peek_implementation, "Peek Implementation", cmd_peek_implementation, ""
     COMMAND peek_references, "Peek References", cmd_peek_references, ""
+    COMMAND cancel_query, "Cancel Language Query", cmd_cancel_query, ""
     COMMAND next_result, "Next Result", cmd_next_result, "F4"
     COMMAND prev_result, "Previous Result", cmd_prev_result, "shift+F4"
     COMMAND focus_results, "Focus Results", cmd_focus_results, ""

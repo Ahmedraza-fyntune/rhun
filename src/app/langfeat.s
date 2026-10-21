@@ -650,6 +650,17 @@ FN cmd_declaration
     mov edi, LF_DECL
     jmp lf_start_cmd
 # the peek view (peek.s): the same queries, their locations under the cursor's line
+# FN cmd_cancel_query(): the providers still searching are withdrawn ("0 cancel"); what came is
+# shown as when they all answered
+FN cmd_cancel_query
+    cmp dword ptr [rip + lf_kind], 0
+    je 1f
+    push rbx
+    call lf_cancel_all
+    mov dword ptr [rip + lf_ready], 1
+    mov dword ptr [rip + g_dirty], 1
+    pop rbx
+1:  ret
 FN cmd_peek_definition
     mov edi, LF_DEF
     jmp lf_peek_cmd
