@@ -71,6 +71,19 @@ class Threads(debughost.DebugHost):
         self.assertTrue(any('waiting' in l for l in second), second)
         self.assertEqual([r.get('threadId') for r in self.requests_of('continue')], [1], self.dap_log())
 
+    def test_return_on_a_call_stack_thread_row_focuses_it(self):
+        self.scenario(self.worker_steps())
+        self.launch_ini(RUN)
+        out = self.run_editor(['bp %s 2' % self.src.as_posix(), *self.start(), 'wait-debug paused', 'wait 500',
+                               'print-debug-tree stack', 'view-focus debug.callstack', 'key Down', 'key Down',
+                               'key Return', 'wait 500', 'print-debug', 'print-debug-tree stack'], mode='threads')
+        rows = [l for l in out if l.startswith('row ')]
+        self.assertIn('id=s1/t1 label=main', rows[1])
+        self.assertIn('id=s1/t2 label=worker2', rows[2])
+        self.assertEqual(self.field(self.debug_lines(out)[0], 'thread'), '1', out)
+        after = rows[len(rows) // 2:]
+        self.assertTrue(any('id=s1/f0 label=wait1' in l for l in after), after)
+
     def test_pause_after_the_remembered_thread_exited_names_a_live_one(self):
         a = self.src.as_posix()
         self.scenario([{'file': a, 'line': 2, 'function': 'add', 'thread': 2},
