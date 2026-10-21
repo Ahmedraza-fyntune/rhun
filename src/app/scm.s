@@ -10,6 +10,7 @@
 .equ ID_SCM_SCROLL, ID_SCM + 5
 .equ ID_SCM_AI, ID_SCM + 6
 .equ ID_SCM_RESET, ID_SCM + 7
+.equ ID_SCM_TITLE, ID_SCM + 8           # extensions' header buttons (menu_scm_title_buttons): 8 .. 12
 .equ ID_SCM_GROUP, ID_SCM + 0x10        # + group * 4 + button
 .equ ID_SCM_FILE, ID_SCM + 0x100        # + file * 4 + button
 .equ MAX_LINES, 10                      # of the message shown at once
@@ -66,6 +67,7 @@ u_extra: .long 0                        # rows expand_folders added: a folder's 
 seq: .quad 0                            # the running operation's step
 confirm_seq: .quad 0                    # what a confirmed discard runs
 lbl: .zero SB_SIZE
+title_line: .zero SB_SIZE      # "scm git ROOT": the header buttons' target
 tmp: .zero SB_SIZE
 tips: .zero SB_SIZE                     # the hovered button's tooltip
 argv: .zero 8 * 12
@@ -1646,10 +1648,36 @@ placeholder:
     pop rbx
     ret
 
-# draw_branch(y): the branch icon and name, and where it goes
+# draw_branch(y): the branch icon and name, where it goes, and extensions' header buttons
 draw_branch:
-    PROLOGUE
+    PROLOGUE 16
     mov r13d, edi
+    # extensions' [menu.scm_title] items at the row's right end, for "scm git ROOT" (menu.s)
+    mov dword ptr [rsp], 0
+    mov rsi, [rip + g_git_root]
+    test rsi, rsi
+    jz 3f
+    lea rdi, [rip + title_line]
+    call sb_clear
+    lea rdi, [rip + title_line]
+    lea rsi, [rip + .Ltitle_git]
+    call sb_push_cstr
+    lea rdi, [rip + title_line]
+    mov rsi, [rip + g_git_root]
+    call sb_push_cstr
+    M r8d, MI_24
+    M ecx, MI_32
+    sub ecx, r8d
+    sar ecx, 1
+    add ecx, r13d
+    mov edx, [rip + in_x]
+    add edx, [rip + in_w]
+    mov rdi, [rip + title_line + SB_ptr]
+    mov rsi, [rip + title_line + SB_len]
+    mov r9d, ID_SCM_TITLE
+    call menu_scm_title_buttons
+    mov [rsp], eax              # their width
+3:
     M r15d, MI_32
     mov edi, IC_BRANCH
     mov esi, [rip + in_x]
@@ -1694,6 +1722,7 @@ draw_branch:
     mov eax, [rip + in_x]
     add eax, [rip + in_w]
     sub eax, r12d
+    sub eax, [rsp]
     jle 9f
     push rax
     COLOR eax, T_MUTED
@@ -2748,6 +2777,7 @@ FN scm_dump_files
 .Lh_detached: .asciz "detached"
 .Lh_unpublished: .asciz "not published"
 .Lh_to: .asciz "\342\206\222 "
+.Ltitle_git: .asciz "scm git "
 .Ldown: .asciz "\342\206\223"
 .Lup: .asciz "\342\206\221"
 .Lm_commit: .asciz "Commit"

@@ -1709,6 +1709,10 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_DEBUG, "debug", 1                # debugger: debug-resolve; debug-start, debug-ended
     FEATURE FEAT_CUSTOM_EDITORS, "custom-editors", 1   # custom editors (customed.s, ceproto.inc)
     FEATURE FEAT_VIEW_FORM, "view-form", 0        # views group: form views (rform.s)
+    FEATURE FEAT_VIEW_TABLE, "view-table", 0      # views group: table views (columns, sorted, cell; sort)
+    FEATURE FEAT_QUICK_INPUT, "quick-input", 0    # views group: quick, quick-set, quick-close (quick.s)
+    FEATURE FEAT_VIEW_DOC, "view-doc", 0          # views group: doc views (rdoc.s, markdown.s)
+    FEATURE FEAT_MARKDOWN, "markdown", 0          # views group: Markdown in node tooltips and notification messages
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1782,7 +1786,8 @@ FEATURE_LIST
 .equ PK_ED_OPEN, 43              # custom editors: editor-open, editor-save, undo/redo/revert (ceproto.inc)
 .equ PK_ED_SAVE, 44
 .equ PK_ED_CMD, 45
-.equ PK_COUNT, 46
+.equ PK_DEBUG_RESOLVE, 46        # debugger: debug-resolve (debugext.s)
+.equ PK_COUNT, 47
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
@@ -2382,6 +2387,8 @@ F MTG_path, 8            # cstr: its path, or 0
 F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
 F MTG_view, 8            # cstr: the view a view_title / view_item target is in (the key view), or 0
 F MTG_item, 8            # cstr: the targeted tree item's context value (the key viewItem), or 0
+F MTG_scm, 8             # cstr: a source control target's provider, "git" or OWNER/NAME (the key
+                        #   scmProvider while its menu or header buttons evaluate), or 0
 ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded
@@ -2803,6 +2810,7 @@ ENDSTRUCT AS_SIZE
 .equ DBGX_BODY_MAX, 1048576 + 256     # debug-start's body: NAME and a configuration body
 .equ DCE_SYNTAX, 1                   # dcfg_from_leaves: the configuration body does not parse
 .equ DCE_REFUSED, 2                  # its type is not one of the extension's debuggers
+.equ DCE_ASK, 3                      # dcfg_prepare: a ${ask:} ${pick:} ${process} needs the user's answer
 .equ DTR_STDIO, 0                   # DS_transport: the adapter's standard input and output
 .equ DTR_TCP, 1                     # rhun picks a port, starts the adapter and connects
 .equ DTR_SERVER, 2                  # launch.ini's server = HOST:PORT: no process
@@ -2908,6 +2916,7 @@ ENDSTRUCT PD_SIZE
 .equ DSF_EXITED, 64         # the exited event came
 .equ DSF_STALE, 128         # the variables shown are from an earlier stop
 .equ DSF_THREADS, 256       # the thread list must be fetched again
+.equ DSF_TNAMED, 512        # the stop named the focused thread (kept listed though the list omits it)
 
 # adapter capabilities (initialize answer)
 .equ CAP_CONFIGDONE, 1
@@ -2960,6 +2969,8 @@ F VN_type, 4
 F VN_typelen, 4
 F VN_eval, 4
 F VN_evallen, 4
+F VN_indexed, 4         # indexedVariables (a chunk: its count)
+F VN_start, 4           # a chunk: its first index
 ENDSTRUCT VN_SIZE
 .equ VNF_EXPANDED, 1
 .equ VNF_LOADING, 2
@@ -2967,6 +2978,8 @@ ENDSTRUCT VN_SIZE
 .equ VNF_EXPENSIVE, 8
 .equ VNF_CHANGED, 16
 .equ VNF_WATCH, 32      # a watch expression's result (a root)
+.equ VNF_CHUNK, 64      # a range of its parent's indexed children ([0..99]), asked for by start and count
+.equ DAP_CHUNK, 100     # indexed children per chunk
 
 # a debug session
 STRUCT
@@ -2995,6 +3008,7 @@ F DS_pad2, 4
 F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
 F DS_owner_id, 8        # and its request still owed an answer, 0 none
 F DS_after, 8           # owned cstr: launch.ini's after task, run when the session ends, or 0
+F DS_prevvals, SB_SIZE  # the last stop's values: "PATH" TAB "VALUE" LF (changed values stand out)
 F DS_seq, 4             # the next request number
 F DS_epoch, 4           # bumped on every stop and resume
 F DS_flags, 4           # DSF_*
@@ -3185,6 +3199,7 @@ ENDSTRUCT AX_SIZE
 # ---- views group: places, the shared tree widget, retained extension views ----
 # (places.s, rtree.s, rview.s; docs/extensions/v1.1.md "Retained views")
 .equ FOCUS_VIEW, 10             # a place item has the keyboard (g_place_focus names it)
+.equ FOCUS_QUICK, 69            # views group: an extension's quick input (quick.s)
 
 # a place item: a sidebar section, a bottom panel tab or a side (right column) tab. Built-in code
 # and extension views register the same way (place_add); the slot index is the item's id.
@@ -3295,6 +3310,17 @@ F TA_icon, 4            # IC_*, -1: its title as text
 F TA_pad, 4
 F TA_title, 8           # cstr: the tooltip (or the text)
 ENDSTRUCT TA_SIZE
+# a table's column (views group: tree_set_columns)
+STRUCT
+F TBC_title, 8           # cstr, mem_alloc'd
+F TBC_align, 4           # 0 left, 1 right
+F TBC_min, 4             # its minimum width in characters; 0 takes a share of the rest
+F TBC_sort, 4            # 1 when its header sorts
+F TBC_user, 4            # the width the user dragged it to, physical (0: none)
+F TBC_x, 4               # laid out when last drawn, physical
+F TBC_w, 4
+ENDSTRUCT TBC_SIZE
+.equ TBC_MAX, 16                # columns a table may have
 STRUCT
 F TR_nodes, VEC_SIZE    # ND
 F TR_free, 8            # first free slot, -1 for none
@@ -3331,11 +3357,16 @@ F TR_rowbw, 4           # the width it drew last frame, and for which node
 F TR_rownode, 4
 F TR_gen, 4             # nodes made so far
 F TR_pad3, 4
+F TR_cols, 8            # views group: a table's columns (TBC, tree_set_columns), 0 for a plain tree
+F TR_sortfn, 8          # sortfn(ctx, tr, col, dir): the user sorted while children are paged
+F TR_ncols, 4
+F TR_sort, 4            # the sorted column from 1 (0: none) | 1 << 8 descending | 1 << 16 the owner sorted
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame
 .equ TRF_MULTI, 4               # multi-select
 .equ TRF_CHECKS, 8              # some node has a checkbox
+.equ TRF_MDTIPS, 4096           # views group: node tooltips are Markdown (an extension with markdown agreed)
 # a row: a node, or a marker row under a parent
 STRUCT
 F RW_node, 4            # node index; for a marker row the parent

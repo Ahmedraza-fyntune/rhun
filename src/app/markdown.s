@@ -72,6 +72,8 @@ F MD_hover, 4           # the link under the pointer last frame, -1
 F MD_pad, 4
 F MD_base, 8            # cstr, mem_alloc'd: the folder relative links name (md_set_base), or 0
 F MD_ext, 8             # the extension whose img: handles images name (md_from_body), or 0
+F MD_focus, 4           # the link the keyboard is on (drawn as hovered), -1
+F MD_pad2, 4
 ENDSTRUCT MD_SIZE
 
 # a block
@@ -93,7 +95,7 @@ F MDB_codelen, 4
 F MDB_ncols, 4          # a table header: its columns, and their aligns (2 bits each: 0 left 1 center 2 right)
 F MDB_aligns, 4
 F MDB_hdr, 4            # 1 for a table's header row
-F MDB_pad, 4
+F MDB_y, 4              # its top, laid out
 ENDSTRUCT MDB_SIZE
 
 # a run of text in one style
@@ -138,6 +140,7 @@ ENDSTRUCT MDI_SIZE
 .p2align 3
 pm: .quad 0                     # the document being parsed or laid out
 body_rr: .zero RR_SIZE          # md_from_body's record
+slug_buf: .zero SB_SIZE         # md_anchor: a heading's slug
 rel_buf: .zero 4096             # a relative link's path
 pb: .zero SB_SIZE               # a paragraph's lines, joined with LF (\x01 before a hard break)
 cb: .zero SB_SIZE               # a code block's lines
@@ -215,6 +218,7 @@ FN md_new
     call memset
     mov dword ptr [rbx + MD_width], -1
     mov dword ptr [rbx + MD_hover], -1
+    mov dword ptr [rbx + MD_focus], -1
     # the text: CR LF and CR become LF, a LF at the end
     xor r14d, r14d
 1:  cmp r14, r13
@@ -447,6 +451,187 @@ hex_value:
 8:  mov eax, -1
     ret
 
+# md_links(m) -> eax how many links it has
+FN md_links
+    mov rax, [rdi + MD_links + VEC_len]
+    ret
+
+# md_source(m) -> rax its text, a cstr (LF line ends): what it was made from
+FN md_source
+    push rbx
+    mov rbx, rdi
+    lea rdi, [rbx + MD_src]     # NUL after the text, past its length
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rbx + MD_src + SB_len]
+    mov rax, [rbx + MD_src + SB_ptr]
+    pop rbx
+    ret
+
+# md_focus(m) -> eax the link the keyboard is on, -1
+FN md_focus
+    mov eax, [rdi + MD_focus]
+    ret
+
+# md_set_ext(m, ext): the extension whose img: handles its images name
+FN md_set_ext
+    mov [rdi + MD_ext], rsi
+    ret
+
+# md_set_focus(m, link or -1): the link the keyboard is on, drawn as hovered
+FN md_set_focus
+    mov [rdi + MD_focus], esi
+    mov dword ptr [rip + g_dirty], 1
+    ret
+
+# md_link_y(m, link) -> eax the top of its first item laid out, -1 when it has none
+FN md_link_y
+    mov eax, -1
+    xor ecx, ecx
+1:  cmp rcx, [rdi + MD_items + VEC_len]
+    jae 9f
+    imul rdx, rcx, MDI_SIZE
+    add rdx, [rdi + MD_items + VEC_ptr]
+    cmp [rdx + MDI_link], esi
+    je 2f
+    inc rcx
+    jmp 1b
+2:  mov eax, [rdx + MDI_y]
+9:  ret
+
+# md_line_y(m, line from 0) -> eax the top of the block holding that source line (the last block
+#   starting at or before it), 0 for none
+FN md_line_y
+    xor eax, eax
+    xor ecx, ecx
+1:  cmp rcx, [rdi + MD_blocks + VEC_len]
+    jae 9f
+    imul rdx, rcx, MDB_SIZE
+    add rdx, [rdi + MD_blocks + VEC_ptr]
+    cmp [rdx + MDB_line], esi
+    jg 9f
+    mov eax, [rdx + MDB_y]
+    inc rcx
+    jmp 1b
+9:  ret
+
+# md_y_line(m, y) -> eax the first source line of the block at y (the last one starting at or
+#   above it), -1 for none
+FN md_y_line
+    mov eax, -1
+    xor ecx, ecx
+1:  cmp rcx, [rdi + MD_blocks + VEC_len]
+    jae 9f
+    imul rdx, rcx, MDB_SIZE
+    add rdx, [rdi + MD_blocks + VEC_ptr]
+    cmp [rdx + MDB_y], esi
+    jg 9f
+    mov eax, [rdx + MDB_line]
+    inc rcx
+    jmp 1b
+9:  ret
+
+# md_anchor(m, ptr, len) -> eax the top of the heading whose slug (GitHub's rule: lowercase, letters,
+#   digits, - and _ kept, spaces to -, other ASCII left out) is the text, -1 for none; a leading #
+#   is left out
+FN md_anchor
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    test r13, r13
+    jz 8f
+    cmp byte ptr [r12], '#'
+    jne 1f
+    inc r12
+    dec r13
+1:  xor r14d, r14d              # block
+2:  cmp r14, [rbx + MD_blocks + VEC_len]
+    jae 8f
+    imul r15, r14, MDB_SIZE
+    add r15, [rbx + MD_blocks + VEC_ptr]
+    cmp dword ptr [r15 + MDB_type], MDB_HEAD
+    jne 7f
+    lea rdi, [rip + slug_buf]   # its slug from its runs' text
+    call sb_clear
+    xor ecx, ecx
+3:  cmp ecx, [r15 + MDB_nrun]
+    jae 6f
+    mov [rsp], ecx
+    mov eax, [r15 + MDB_run0]
+    add eax, ecx
+    imul rax, rax, MDR_SIZE
+    add rax, [rbx + MD_runs + VEC_ptr]
+    mov esi, [rax + MDR_off]
+    mov edx, [rax + MDR_len]
+    add rsi, [rbx + MD_text + SB_ptr]
+    xor ecx, ecx
+4:  cmp ecx, edx
+    jae 5f
+    movzx edi, byte ptr [rsi + rcx]
+    push rcx
+    push rdx
+    push rsi
+    push rsi
+    call slug_char
+    pop rsi
+    pop rsi
+    pop rdx
+    pop rcx
+    inc ecx
+    jmp 4b
+5:  mov ecx, [rsp]
+    inc ecx
+    jmp 3b
+6:  mov rdi, [rip + slug_buf + SB_ptr]
+    mov rsi, [rip + slug_buf + SB_len]
+    cmp rsi, r13
+    jne 7f
+    mov rcx, r13
+    mov rsi, r12
+    test rcx, rcx
+    jz 61f
+    repe cmpsb
+    jne 7f
+61: mov eax, [r15 + MDB_y]
+    EPILOGUE
+7:  inc r14
+    jmp 2b
+8:  mov eax, -1
+    EPILOGUE
+
+# slug_char(byte): its part of a slug onto slug_buf
+slug_char:
+    sub rsp, 8
+    cmp edi, 0x80
+    jae 1f                      # beyond ASCII: kept
+    cmp edi, ' '
+    jne 2f
+    mov edi, '-'
+    jmp 1f
+2:  lea eax, [rdi - 'A']
+    cmp eax, 25
+    ja 3f
+    or edi, 0x20
+    jmp 1f
+3:  lea eax, [rdi - 'a']
+    cmp eax, 25
+    jbe 1f
+    lea eax, [rdi - '0']
+    cmp eax, 9
+    jbe 1f
+    cmp edi, '-'
+    je 1f
+    cmp edi, '_'
+    je 1f
+    add rsp, 8
+    ret                         # other ASCII: left out
+1:  mov esi, edi
+    lea rdi, [rip + slug_buf]
+    call sb_push_byte
+    add rsp, 8
+    ret
+
 # md_set_base(m, ptr, len): the absolute folder relative links name (a trailing / left out); an
 #   empty one clears it
 FN md_set_base
@@ -477,8 +662,9 @@ FN md_set_base
 9:  EPILOGUE
 
 # md_from_body(ext, ptr, len) -> rax a document, or 0 when the body is not one "doc LEN" record
-#   (Markdown, at most 1 MB) and at most one "base LEN" record (an absolute folder), in any order:
-#   a rich-document body (views design 3.8.4); img: images name ext's handles
+#   (Markdown, at most 1 MB) and at most one "base LEN" record (an absolute folder), in any order,
+#   after an optional count line ("N" LF, as a patch body has): a rich-document body (views design
+#   3.8.4); img: images name ext's handles
 FN md_from_body
     PROLOGUE 48
     mov [rsp], rdi
@@ -488,6 +674,20 @@ FN md_from_body
     mov qword ptr [rsp + 16], 0
     mov qword ptr [rsp + 24], 0 # the base
     mov qword ptr [rsp + 32], 0
+    mov rcx, r12                # a patch body's count line ("N" LF) first is left out
+11: cmp rcx, r13
+    jae 1f
+    movzx eax, byte ptr [rcx]
+    cmp eax, 10
+    je 12f
+    sub eax, '0'
+    cmp eax, 9
+    ja 1f
+    inc rcx
+    jmp 11b
+12: cmp rcx, r12
+    je 1f
+    lea r12, [rcx + 1]
 1:  cmp r12, r13
     jae 5f
     cmp byte ptr [r12], 10      # blank lines between records
@@ -3118,6 +3318,7 @@ FN md_layout
 12: add [rip + lay_y], eax
 2:  mov eax, [rip + lay_y]
     mov [rsp], eax              # the block's top
+    mov [r13 + MDB_y], eax
     # its left: quotes and lists indent it
     mov eax, [r13 + MDB_quote]
     imul eax, [rip + g_mt + 4*MI_16]
@@ -4207,9 +4408,11 @@ FN md_draw
 4:  mov eax, [r13 + MDI_link]
     test eax, eax
     js .Lmd_next
+    cmp eax, [rbx + MD_focus]
+    je 41f
     cmp eax, [rbx + MD_hover]
     jne .Lmd_next
-    mov edi, r15d               # the link under the pointer: underlined
+41: mov edi, r15d               # the link under the pointer or the keyboard: underlined
     mov esi, r14d
     add esi, [r13 + MDI_base]
     add esi, [rip + g_mt + 4*MI_2]

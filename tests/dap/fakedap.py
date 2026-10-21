@@ -12,7 +12,13 @@ orphan, partial-pause,
 no-terminate-cap, no-cond-caps, preserve-focus), lifetimes (strict-refs), features (exceptions, stderr). Every message is logged
 to FAKEDAP_LOG. With `--listen HOST:PORT` it speaks DAP over one TCP connection instead of its
 standard input and output, as Delve does; tcp-late=MS listens late, tcp-exit exits before listening,
-tcp-never never listens. Standard library only; run with -I."""
+tcp-never never listens. Threads: with `threads` a step's "thread" (default 1) is the thread it
+runs on: entering a step on a new thread sends a thread started event, "threadExit": N an exited
+one, a stop names the step's thread, other threads show one waiting frame, and continue, the steps
+and pause fail for a thread that is not alive. lldb-threads leaves a worker thread out of the
+threads answer at its first stop (as lldb-dap does); single-continue answers continue with
+allThreadsContinued false; a stopped step's "threadStarted": N and "continuedOther": N send those
+events while paused. Standard library only; run with -I."""
 import json
 import os
 import sys
@@ -37,6 +43,7 @@ def log(text):
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
 seq = [1]
+launch_args = {}
 pending_writes = []
 
 
@@ -121,6 +128,13 @@ class Program:
         self.stop_on_entry = False
         self.unblocked = set()
         self.running = False
+        self.threads = {1: 'main'}  # alive threads (mode threads)
+        self.listed = set()     # worker threads already in a threads answer (lldb-threads)
+
+    def thread_of(self, i):
+        if 0 <= i < len(self.steps):
+            return self.steps[i].get('thread', 1)
+        return 1
 
     def load(self, path):
         with open(path, encoding='utf-8') as f:
@@ -167,6 +181,14 @@ class Program:
     def enter(self, i):
         """Arrive at step i: its output, a crash. True when the program goes on."""
         step = self.steps[i]
+        if 'threads' in MODE:
+            tid = step.get('thread', 1)
+            if tid not in self.threads:
+                self.threads[tid] = 'worker%d' % tid
+                event('thread', {'reason': 'started', 'threadId': tid})
+            if step.get('threadExit') in self.threads:
+                del self.threads[step['threadExit']]
+                event('thread', {'reason': 'exited', 'threadId': step['threadExit']})
         if 'crash-at' in MODE and int(MODE['crash-at']) == i:
             log('CRASH')
             sys.stderr.write('fakedap: crashing at step %d\n' % i)
@@ -222,7 +244,8 @@ class Program:
         self.pc = i
         self.epoch += 1
         self.running = False
-        body = {'reason': reason, 'threadId': 1, 'allThreadsStopped': True}
+        body = {'reason': reason, 'threadId': self.thread_of(i) if 'threads' in MODE else 1,
+                'allThreadsStopped': True}
         if 'preserve-focus' in MODE:
             body['preserveFocusHint'] = True
         if bp:
@@ -231,6 +254,12 @@ class Program:
             body['text'] = text
             body['description'] = 'Exception: ' + text
         event('stopped', body)
+        step = self.steps[i] if 0 <= i < len(self.steps) else {}
+        if 'threads' in MODE and step.get('threadStarted'):
+            self.threads[step['threadStarted']] = 'worker%d' % step['threadStarted']
+            event('thread', {'reason': 'started', 'threadId': step['threadStarted']})
+        if step.get('continuedOther'):
+            event('continued', {'threadId': step['continuedOther'], 'allThreadsContinued': False})
 
     def finish(self):
         if self.done:
@@ -314,6 +343,8 @@ def handle(req):
                 respond(req, success=False, message='cannot read ' + program)
                 return
         prog.stop_on_entry = bool(args.get('stopOnEntry'))
+        launch_args.clear()
+        launch_args.update(args)
         log('ARGS ' + json.dumps(args, sort_keys=True))
         if 'launch-fail' in MODE:
             respond(req, {'error': {'id': 1, 'format': 'could not launch: no such program'}},
@@ -382,6 +413,13 @@ def handle(req):
     if cmd == 'configurationDone':
         configured[0] = True
         respond(req)
+        if 'child' in MODE and launch_args.get('name') != 'Child':
+            # a child session of the same debugger (startDebugging), its answer logged
+            send({'type': 'request', 'command': 'startDebugging',
+                  'arguments': {'request': 'launch',
+                                'configuration': {'type': launch_args.get('type'), 'name': 'Child',
+                                                  'program': launch_args.get('program'),
+                                                  'stopOnEntry': True}}})
         if held_launch[0]:
             respond(held_launch[0])
             held_launch[0] = None
@@ -392,7 +430,26 @@ def handle(req):
             prog.run('continue')
         return
     if cmd == 'threads':
-        respond(req, {'threads': [{'id': 1, 'name': 'main'}]})
+        if 'threads' not in MODE:
+            respond(req, {'threads': [{'id': 1, 'name': 'main'}]})
+            return
+        listed = []
+        for tid, name in sorted(prog.threads.items()):
+            if 'lldb-threads' in MODE and tid != 1 and tid not in prog.listed:
+                prog.listed.add(tid)        # left out this once
+                continue
+            listed.append({'id': tid, 'name': 'Thread 1' if 'lldb-threads' in MODE and tid == 1 else name})
+        respond(req, {'threads': listed})
+        return
+    if cmd in ('continue', 'next', 'stepIn', 'stepOut', 'pause') and 'threads' in MODE \
+            and args.get('threadId') not in prog.threads:
+        respond(req, success=False, message='unknown thread %s' % args.get('threadId'))
+        return
+    if cmd == 'stackTrace' and 'threads' in MODE and args.get('threadId') != prog.thread_of(prog.pc):
+        fid = prog.epoch * 100 + 90
+        prog.frames[fid] = (prog.pc, -1)
+        respond(req, {'stackFrames': [{'id': fid, 'name': 'wait%s' % args.get('threadId'), 'line': 0,
+                                       'column': 1}], 'totalFrames': 1})
         return
     if cmd == 'stackTrace':
         frames = []
@@ -421,6 +478,8 @@ def handle(req):
         stack = step.get('stack')
         if stack and k > 0:
             locals_ = stack[k].get('locals', {})
+        if k < 0:
+            locals_ = {'waiting': True}     # another thread's frame
         scopes = [{'name': 'Locals', 'variablesReference': prog.ref(locals_), 'expensive': False},
                   {'name': 'Globals', 'variablesReference': prog.ref(step.get('globals', {'G': 1})),
                    'expensive': True}]
@@ -435,6 +494,13 @@ def handle(req):
             items = list(value.items())
         else:
             items = [('[%d]' % k, v) for k, v in enumerate(value)]
+            # paging: filter indexed with start and count, filter named (a list has none)
+            log('VARIABLES filter=%s start=%s count=%s' % (args.get('filter'), args.get('start'), args.get('count')))
+            if args.get('filter') == 'named':
+                items = []
+            elif args.get('filter') == 'indexed':
+                start = args.get('start', 0)
+                items = items[start:start + args.get('count', len(items))]
         respond(req, {'variables': [prog.var(n, v) for n, v in items]})
         return
     if cmd == 'evaluate':
@@ -451,13 +517,17 @@ def handle(req):
         respond(req, {'result': v['value'], 'type': v.get('type'), 'variablesReference': v['variablesReference']})
         return
     if cmd == 'setVariable':
-        respond(req, {'value': args.get('value')})
+        log('SETVARIABLE %s %s %s' % (args.get('variablesReference'), args.get('name'), args.get('value')))
+        if args.get('value') == 'bad':
+            respond(req, success=False, message='cannot set %s to bad' % args.get('name'))
+            return
+        respond(req, {'value': args.get('value'), 'type': 'int'})
         return
     if cmd in ('next', 'stepIn', 'stepOut') and 'fail-step' in MODE:
         respond(req, success=False, message='cannot step here')
         return
     if cmd in ('continue', 'next', 'stepIn', 'stepOut'):
-        respond(req, {'allThreadsContinued': True} if cmd == 'continue' else {})
+        respond(req, {'allThreadsContinued': 'single-continue' not in MODE} if cmd == 'continue' else {})
         prog.run(cmd)
         return
     if cmd == 'pause':

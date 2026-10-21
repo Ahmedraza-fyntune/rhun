@@ -16,7 +16,9 @@ warning with Reload, which runs rescan, and Later), noteerr, notemany (6 sticky)
 unnote, prog (status, cancellable, then 42% "crates"), prognote, progview (in todo), progbad,
 progend (VIEWFAKE_NOTIFY agrees notify and progress), img (a red PNG drawn in pic), badimg,
 imgs65, unimg (twice), tabpic (a 12a tab picture; VIEWFAKE_PIC agrees views, view-images and,
-unless it is nokeys, view-keys; a vcopy is answered "copied text" or "cut text"), fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
+unless it is nokeys, view-keys; a vcopy is answered "copied text" or "cut text"), tbsorted,
+tbmore, tbadd, tbbad, tbtree (the files table, VIEWFAKE_TABLE: the owner's arrow, paged rows, one
+row added, bad columns, columns on the todo tree), fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
 view-log is not asked for. VIEWFAKE_DELAY: seconds before hello.
 
 The items view (panel) has a lazy node "a" (its children come with vkids: VIEWFAKE_LAZY answer,
@@ -159,6 +161,94 @@ def setup_form(view):
     patch(view, [rec('form', f'{len(fields)}', b''.join(fields))])
 
 
+def col(align, width, sort, title):
+    return f'{align} {width} {sort} {len(title)}\n{title}'.encode()
+
+
+def row(nid, label, *cells, kids='leaf'):
+    return node(nid, label, kids, b''.join(rec('cell', data=c.encode()) for c in cells))
+
+
+def files_table(view, more=0):
+    cols = [col('left', 0, 'sort', 'Name'), col('right', 6, 'sort', 'Size'), col('left', 8, '-', 'Kind')]
+    ops = [rec('columns', '3', b''.join(cols)),
+           kids('', [row('b', 'b.txt', '120', 'file'), row('a', 'a.txt', '9', 'file'), row('d', 'dir', '-', 'folder', kids='open'),
+                     row('w', 'wide.txt', '7', 'a kind of file whose name is long enough to be cut')], more=more),
+           kids('d', [row('d2', 'z.rs', '2', 'file'), row('d1', 'y.rs', '10', 'file')]),
+           rec('state', 'ready 0')]
+    patch(view, ops)
+
+
+quick_q = []            # Q of the quick input rhun took
+
+
+def qitem(iid, label, kind='item', extra=b''):
+    iid, label = iid.encode(), label.encode()
+    return f'{len(iid)} {len(label)} {len(extra)} {kind}\n'.encode() + iid + label + extra
+
+
+def qitems(items):
+    return rec('items', f'{len(items)}', b''.join(items))
+
+
+def qbutton(key, icon, tip):
+    return f'{key} {icon} {len(tip)}\n{tip}'.encode()
+
+
+def quick_step1():
+    del_btn = rec('button', 'del discard', b'Delete')
+    items = [qitem('', 'Local', 'sep'), qitem('main', 'main', extra=rec('desc', data=b'current') + del_btn),
+             qitem('dev', 'dev', extra=rec('detail', data=b'3 commits ahead') + del_btn),
+             qitem('', 'Remote', 'sep'), qitem('origin/main', 'origin/main', extra=rec('icon', 'cloud -'))]
+    return [rec('title', data=b'Branch'), rec('step', '1 3', b''), rec('placeholder', data=b'Pick a branch'),
+            rec('flags', 'back', b''), rec('buttons', '1', qbutton('refresh', 'refresh', 'Refresh')), qitems(items)]
+
+
+def quick_open(ops):
+    body = b''.join(ops)
+    rid = request('quick', body)
+
+    def took(f):
+        quick_q.append(int(f[2]))
+    on_reply[rid] = took
+
+
+def quick_set(ops):
+    if quick_q:
+        request(f'quick-set {quick_q[-1]}', b''.join(ops))
+
+
+def quick_event(fields, body):
+    """0 quick Q accept SEQ N LEN: text "bad" gets an error message for that sequence, else step 2."""
+    if fields[3] == 'accept':
+        lines = body.split(b'\n')
+        text = lines[-1]
+        if text == b'bad':
+            quick_set([rec('msg', f'{fields[4]} error', b'not a branch')])
+        else:
+            quick_set([rec('title', data=b'Step two'), rec('step', '2 3', b''), rec('value', '0', b''),
+                       qitems([qitem('x', 'Create x'), qitem('y', 'Create y')])])
+
+
+opened_docs = []        # DOC of each document rhun said it opened
+README = '''# Readme
+
+Some text with [a guide](docs/guide%20one.md), [an anchor](#second-part), [custom](custom:thing) and
+[missing](nothing.md).
+
+''' + 'filler paragraph\n\n' * 30 + '''## Second part
+
+The end.
+'''
+
+
+def readme_doc(view, base=True):
+    ops = [rec('doc', '', README.encode())]
+    if base:
+        ops.append(rec('base', '', ROOT.encode()))
+    patch(view, ops)
+
+
 def draw(view, picture):
     request(f'draw {view}', picture.encode())
 
@@ -217,6 +307,8 @@ def host_request(rid, verb, fields, body):
             threading.Timer(1.0, answer, (rid, reply)).start()
         else:
             answer(rid, reply)
+    elif verb == 'vmore' and views.get('files') == int(fields[1]):
+        return                  # the files table's next page never comes: it stays paged
     elif verb == 'vmore':
         pages += 1
         have = int(fields[3])
@@ -291,6 +383,47 @@ def on_command(name):
         top = [node(f'f:{n}', n, 'open', rec('blob', '', b'y' * 1200000)) for n in ('main.rs', 'lib.rs', 'README.md')]
         patch(todo, [kids('', top)])
         patch(todo, [rec('set', '', node('t:lib.rs:1', 'one', 'leaf', rec('blob', '', b'z' * 3000000)))])
+    elif name == 'tbsorted' and views.get('files'):
+        patch(views['files'], [rec('sorted', '2 desc', b'')])
+    elif name == 'tbmore' and views.get('files'):
+        files_table(views['files'], more=1)
+    elif name == 'tbadd' and views.get('files'):
+        patch(views['files'], [kids('', [row('c', 'c.txt', '50', 'file')], op='add')])
+    elif name == 'tbbad' and views.get('files'):
+        patch(views['files'], [rec('columns', '2', col('middle', 0, 'sort', 'Name') + col('left', 0, '-', 'X'))])
+    elif name == 'tbtree' and todo:
+        patch(todo, [rec('columns', '1', col('left', 0, 'sort', 'Name'))])
+    elif name == 'quick':
+        quick_open(quick_step1())
+    elif name == 'quickmulti':
+        quick_open([rec('title', data=b'Files'), rec('flags', 'multi', b''),
+                    qitems([qitem('a', 'a.rs', extra=rec('picked', '', b'')), qitem('b', 'b.rs'), qitem('c', 'c.rs')])])
+    elif name == 'quickinput':
+        quick_open([rec('mode', 'input', b''), rec('flags', 'password busy', b''), rec('prompt', data=b'Your token'),
+                    rec('value', '-', b'abc')])
+    elif name == 'quicknofilter':
+        quick_open([rec('flags', 'nofilter', b''),
+                    qitems([qitem('s1', 'symbol one', extra=rec('hl', '0 6', b'')), qitem('s2', 'other')])])
+    elif name == 'quickclose' and quick_q:
+        request(f'quick-close {quick_q[-1]}')
+    elif name == 'quickbad':
+        quick_open([rec('step', 'x 3', b'')])
+    elif name == 'quickbig':
+        quick_open([qitems([qitem(f'i{i}', f'item {i}') for i in range(10001)])])
+    elif name == 'quickactive' and quick_q:
+        quick_set([rec('active', '', b'origin/main')])
+    elif name == 'docfollow' and views.get('readme') and opened_docs:
+        with open(os.path.join(ROOT, 'long.md'), 'rb') as f:
+            text = f.read()
+        patch(views['readme'], [rec('doc', '', text), rec('follow', f'{opened_docs[-1]}', b'')])
+    elif name == 'docbad' and views.get('readme'):
+        patch(views['readme'], [rec('base', '', b'relative/folder')])
+    elif name == 'docbig' and views.get('readme'):
+        patch(views['readme'], [rec('doc', '', b'x' * 1048577)])
+    elif name == 'doctree' and views.get('readme'):
+        patch(views['readme'], [kids('', [node('a', 'A')])])
+    elif name == 'notemd':
+        notify('info', note_body('**Indexed** 12 files: see `todo` and *more*'))
     elif name == 'note':
         notify('info', note_body('Indexed 12 files', 'workspace'))
     elif name == 'noteask':
@@ -393,6 +526,14 @@ def main():
         features += ' views view-images' + ('' if PIC == 'nokeys' else ' view-keys')
     if os.environ.get('VIEWFAKE_FORM'):
         features += ' view-form'
+    if os.environ.get('VIEWFAKE_TABLE'):
+        features += ' view-table'
+    if os.environ.get('VIEWFAKE_QUICK'):
+        features += ' quick-input'
+    if os.environ.get('VIEWFAKE_DOC'):
+        features += ' view-doc'
+    if os.environ.get('VIEWFAKE_MARKDOWN'):
+        features += ' markdown'
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -407,10 +548,20 @@ def main():
         # a line whose last field is a length carries a body
         if fields[0] == '0' and len(fields) >= 3 and fields[1] == 'view' and \
                 fields[3] in ('select', 'activate', 'expand', 'collapse', 'check', 'action', 'discarded', 'text', 'paste',
-                              'change'):
+                              'change', 'link'):
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
+        elif fields[:2] in (['0', 'opened'], ['0', 'active']) and len(fields) >= 3 and fields[2] != '0':
+            opened_docs.append(int(fields[2]))
+            continue
+        elif fields[:2] == ['0', 'quick'] and len(fields) >= 4:
+            if fields[3] in ('value', 'active', 'accept', 'button'):
+                n = int(fields[-1])
+                body = inp.read(n)
+                log(body)
+            quick_event(fields, body)
+            continue
         elif fields[0] == 'ok' and len(fields) >= 3 and int(fields[1]) in on_reply:
             on_reply.pop(int(fields[1]))(fields)
             continue
@@ -445,6 +596,10 @@ def main():
                     draw(view, 'rect 0 0 300 120 accent\n')
                 elif key == 'setup':
                     setup_form(view)
+                elif key == 'files':
+                    files_table(view)
+                elif key == 'readme':
+                    readme_doc(view)
             elif what == 'select':
                 ids = body.split(b'\n')
                 selected[view] = ids[0].decode() if ids and ids[0] else None

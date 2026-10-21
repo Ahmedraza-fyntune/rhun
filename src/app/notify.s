@@ -16,6 +16,7 @@
 .equ NC_MAX, 64
 .equ NC_PER_EXT, 16
 .equ NC_SHOWN, 4
+.equ ID_NOTE_MD, 0x6a0000         # + card index * 4096: a Markdown message's links
 .equ NC_MSG_MAX, 2000
 .equ NP_MAX, 64
 .equ NP_PER_EXT, 8
@@ -49,6 +50,7 @@ F NC_w, 4
 F NC_h, 4
 F NC_pg, 4              # a progress card: its PG slot + 1
 F NC_order, 4           # when it came, among cards and progress (ord_seq)
+F NC_md, 8              # its message as Markdown (an extension with markdown agreed), made when drawn, or 0
 ENDSTRUCT NC_SIZE
 
 # a progress
@@ -132,6 +134,8 @@ nt_by_id:
 nt_free:
     PROLOGUE
     mov rbx, rdi
+    mov rdi, [rbx + NC_md]
+    call md_free
     mov rdi, [rbx + NC_msg]
     call mem_free
     mov rdi, [rbx + NC_detail]
@@ -156,6 +160,9 @@ nt_free:
 nt_clear_content:
     PROLOGUE
     mov rbx, rdi
+    mov rdi, [rbx + NC_md]
+    call md_free
+    mov qword ptr [rbx + NC_md], 0
     mov rdi, [rbx + NC_msg]
     call mem_free
     mov rdi, [rbx + NC_detail]
@@ -1425,6 +1432,30 @@ wrap:
 9:  mov eax, r14d
     EPILOGUE
 
+# nt_md(NT*) -> rax its message as Markdown when its extension agreed markdown (made once), else 0
+nt_md:
+    PROLOGUE
+    mov rbx, rdi
+    mov rax, [rbx + NC_md]
+    test rax, rax
+    jnz 9f
+    mov rcx, [rbx + NC_ext]
+    test rcx, rcx
+    jz 8f
+    FEAT_TEST rcx, FEAT_MARKDOWN
+    jz 8f
+    mov rdi, [rbx + NC_msg]
+    test rdi, rdi
+    jz 8f
+    call strlen
+    mov rsi, rax
+    mov rdi, [rbx + NC_msg]
+    call md_new
+    mov [rbx + NC_md], rax
+9:  EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # draw_card(entry, x, bottom, w, index) -> eax its height: a notification or a progress card
 draw_card:
     PROLOGUE 96
@@ -1452,15 +1483,34 @@ draw_card:
     mov ecx, [rsp + 12]
     sub ecx, [rip + g_mt + 4*MI_48]      # mark, padding and the close button
     sub ecx, [rip + g_mt + 4*MI_20]
+    mov [rsp + 84], ecx         # the text's width
     lea rdi, [rip + g_face_ui]
     mov rsi, r12
     mov rdx, r13
     mov r8d, 6
     call wrap
     mov [rsp + 20], eax         # lines
-    # the height: padding, the lines, the detail line, the bar, the buttons
     mov eax, [rip + g_face_ui + FACE_lineh]
     imul eax, [rsp + 20]
+    mov [rsp + 80], eax         # the text's height
+    mov qword ptr [rsp + 72], 0 # Markdown: an extension's message with markdown agreed
+    test rbx, rbx
+    jz 23f
+    mov rdi, rbx
+    call nt_md
+    mov [rsp + 72], rax
+    test rax, rax
+    jz 23f
+    mov rdi, rax
+    mov esi, [rsp + 84]
+    call md_layout
+    mov ecx, [rip + g_face_ui + FACE_lineh]     # at most six lines' height
+    imul ecx, ecx, 6
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov [rsp + 80], eax
+23: # the height: padding, the text, the detail line, the bar, the buttons
+    mov eax, [rsp + 80]
     add eax, [rip + g_mt + 4*MI_24]
     mov [rsp + 24], eax         # h so far
     mov dword ptr [rsp + 28], 0 # buttons
@@ -1568,8 +1618,30 @@ draw_card:
     mov esi, [rsp + 40]
     mov edx, [rip + g_face_ui + FACE_lineh]
     call spinner
-55: # the message's lines
-    mov dword ptr [rsp + 44], 0
+55: # the message: Markdown, or its lines
+    mov rdi, [rsp + 72]
+    test rdi, rdi
+    jz 551f
+    mov eax, [rsp + 16]         # its links' ids
+    shl eax, 12
+    add eax, ID_NOTE_MD
+    push rax
+    push rax
+    mov esi, [rsp + 16 + 36]
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, [rsp + 16 + 40]
+    mov ecx, [rsp + 16 + 84]
+    mov r8d, [rsp + 16 + 80]
+    xor r9d, r9d
+    call md_draw
+    add rsp, 16
+    test eax, eax
+    js 57f
+    mov rdi, [rsp + 72]         # a link rhun follows (others are ignored in a popup)
+    mov esi, eax
+    call md_open_link
+    jmp 57f
+551:mov dword ptr [rsp + 44], 0
 56: mov eax, [rsp + 44]
     cmp eax, [rsp + 20]
     jae 57f
@@ -1591,8 +1663,7 @@ draw_card:
     add rsp, 16
     inc dword ptr [rsp + 44]
     jmp 56b
-57: mov eax, [rip + g_face_ui + FACE_lineh]
-    imul eax, [rsp + 20]
+57: mov eax, [rsp + 80]
     add eax, [rsp + 40]
     mov [rsp + 48], eax         # y after the message
     test rbx, rbx
@@ -1830,7 +1901,8 @@ draw_card:
     mov eax, [rsp + 24]
     EPILOGUE
 
-# spinner(x, y, h): three dots, one bright, turning every 300 ms
+# spinner(x, y, h): three dots, one bright, turning every 300 ms (notify_spinner for others)
+FN notify_spinner
 spinner:
     PROLOGUE 16
     mov [rsp], edi
@@ -2199,7 +2271,12 @@ FN notify_dump
     call sb_push_cstr
     inc r14d
     jmp 2b
-3:  mov rdi, rbx
+3:  cmp qword ptr [r13 + NC_md], 0    # drawn as Markdown
+    je 32f
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_md]
+    call sb_push_cstr
+32: mov rdi, rbx
     lea rsi, [rip + .Ld_msg]
     call sb_push_cstr
     mov rdi, rbx
@@ -2406,6 +2483,7 @@ FN notify_press_test
 .Ld_note: .asciz "note="
 .Ld_sev: .asciz " sev="
 .Ld_buttons: .asciz " buttons="
+.Ld_md: .asciz " markdown"
 .Ld_msg: .asciz " msg="
 .Ld_detail: .asciz " detail="
 .Ld_stays: .asciz " stays"
