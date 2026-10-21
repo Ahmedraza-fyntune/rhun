@@ -102,6 +102,7 @@ LIBC sys_unlink, _unlink, 32
 LIBC sys_access, _access, 32
 LIBC sys_readlink, _readlink
 LIBC sys_getpid, _getpid, 32
+LIBC sys_getuid, _getuid, 32    // the resources group's link relay folder (links.s)
 LIBC sys_kill, _kill, 32
 LIBC sys_ftruncate, _ftruncate, 32
 LIBC sys_lseek, _lseek
@@ -876,6 +877,7 @@ sys_table:
     SYS 89, sys_readlink
     SYS 91, sys_fchmod
     SYS 97, sys_getrlimit
+    SYS 102, sys_getuid
     SYS 112, sys_setsid
     SYS 160, sys_setrlimit
     SYS 217, sys_getdents64

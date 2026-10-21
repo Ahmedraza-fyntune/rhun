@@ -10,6 +10,7 @@
 #   print-pattern PATTERN<TAB>LINE "match=0", "match=1 file=... line=..." or "error=REASON"
 #   print-problems                 the Problems store, a line per problem
 #   print-problems-tab             the Problems tab's rows
+#   print-task-status              the status bar's running-task item: task-status=TEXT|none
 #   print-tasks                    published tasks: "OWNER/NAME id=ID group=G default=0|1 label=L"
 #   print-terminal-records         extensions' terminals: "TERM ext=OWNER/NAME live=0|1 output=0|1 task=ID"
 #   term-stop TERM | term-restart TERM | term-close TERM
@@ -21,6 +22,9 @@
 #   run-approve OWNER/NAME COMMAND ask as an extension's first program in the project would; prints
 #                                  "approve=allowed|asked|busy|noext"; print-approve: the answer since
 #   print-approve                  "approve=none|yes|no"
+#   task-prelaunch NAME            run a task as the debugger's prelaunch does (tasks_run_named):
+#                                  "prelaunch=started|notfound"; print-prelaunch: "prelaunch=none|
+#                                  waiting|done|failed"
 .include "rhun.inc"
 
 .equ RUN_ARGS, 64
@@ -29,6 +33,7 @@
 .bss
 .p2align 3
 approve_last: .long 0           # 0 none, 1 yes, 2 no
+prelaunch_last: .long 0         # 0 none, 1 waiting, 2 done, 3 failed
 key_buf: .zero 48
 
 .text
@@ -52,6 +57,9 @@ TCTL t_term_stop, c_term_stop
 TCTL t_term_restart, c_term_restart
 TCTL t_term_close, c_term_close
 TCTL t_print_uproc, c_print_uproc
+TCTL t_print_task_status, c_print_task_status
+TCTL t_task_prelaunch, c_task_prelaunch
+TCTL t_print_prelaunch, c_print_prelaunch
 TCTL t_print_allowed, c_print_allowed
 TCTL t_run_approve, c_run_approve
 TCTL t_print_approve, c_print_approve
@@ -124,6 +132,13 @@ c_print_uproc:
     sub rsp, 8
     mov rdi, r15
     call uproc_dump
+    add rsp, 8
+    ret
+
+c_print_task_status:
+    sub rsp, 8
+    mov rdi, r15
+    call term_tasks_status_dump
     add rsp, 8
     ret
 
@@ -579,6 +594,52 @@ c_run_approve:
     call sb_push_cstr
     EPILOGUE
 
+# task-prelaunch NAME
+c_task_prelaunch:
+    PROLOGUE
+    mov rdi, rbx
+    mov rsi, r12
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call mem_dup
+    mov r13, rax
+    mov dword ptr [rip + prelaunch_last], 1
+    mov rdi, r13
+    lea rsi, [rip + prelaunch_done]
+    xor edx, edx
+    call tasks_run_named
+    mov ebx, eax
+    mov rdi, r13
+    call mem_free
+    lea rsi, [rip + .Ls_pre_started]
+    test ebx, ebx
+    jz 1f
+    mov dword ptr [rip + prelaunch_last], 0
+    lea rsi, [rip + .Ls_pre_notfound]
+1:  mov rdi, r15
+    call sb_push_cstr
+    EPILOGUE
+
+# prelaunch_done(cookie, result): TASK_DONE or TASK_FAILED
+prelaunch_done:
+    mov eax, 2
+    cmp esi, TASK_DONE
+    je 1f
+    mov eax, 3
+1:  mov [rip + prelaunch_last], eax
+    ret
+
+c_print_prelaunch:
+    sub rsp, 8
+    mov eax, [rip + prelaunch_last]
+    lea rcx, [rip + prelaunch_words]
+    mov rsi, [rcx + rax*8]
+    mov rdi, r15
+    call sb_push_cstr
+    add rsp, 8
+    ret
+
 # approve_done(cookie, allowed)
 approve_done:
     mov eax, 2
@@ -606,6 +667,15 @@ c_print_approve:
 .Lc_term_restart: .asciz "term-restart"
 .Lc_term_close: .asciz "term-close"
 .Lc_print_uproc: .asciz "print-uproc"
+.Lc_print_task_status: .asciz "print-task-status"
+.Lc_task_prelaunch: .asciz "task-prelaunch"
+.Lc_print_prelaunch: .asciz "print-prelaunch"
+.Ls_pre_started: .asciz "prelaunch=started\n"
+.Ls_pre_notfound: .asciz "prelaunch=notfound\n"
+.Ls_pre_none: .asciz "prelaunch=none\n"
+.Ls_pre_waiting: .asciz "prelaunch=waiting\n"
+.Ls_pre_done: .asciz "prelaunch=done\n"
+.Ls_pre_failed: .asciz "prelaunch=failed\n"
 .Lc_print_allowed: .asciz "print-allowed"
 .Lc_run_approve: .asciz "run-approve"
 .Lc_print_approve: .asciz "print-approve"
@@ -664,7 +734,9 @@ tasks_ctl:
     .quad .Lc_print_approve, t_print_approve, .Lc_wait_terminal, t_wait_terminal
     .quad .Lc_print_pattern, t_print_pattern, .Lc_print_problems, t_print_problems
     .quad .Lc_print_problems_tab, t_print_problems_tab, .Lc_print_tasks, t_print_tasks
-    .quad .Lc_print_records, t_print_records, 0, 0
+    .quad .Lc_print_records, t_print_records, .Lc_print_task_status, t_print_task_status
+    .quad .Lc_task_prelaunch, t_task_prelaunch, .Lc_print_prelaunch, t_print_prelaunch, 0, 0
+prelaunch_words: .quad .Ls_pre_none, .Ls_pre_waiting, .Ls_pre_done, .Ls_pre_failed
 options:
     .quad .Lo_cwd, o_cwd, .Lo_env, o_env, .Lo_unset, o_unset, .Lo_title, o_title
     .quad .Lo_task, o_task, .Lo_silent, o_silent, .Lo_sh, o_sh, .Lo_matcher, o_matcher
