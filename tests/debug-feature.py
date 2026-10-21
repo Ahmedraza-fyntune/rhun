@@ -100,11 +100,45 @@ class Feature(FeatureHost):
         self.assertIn('error 2 busy', log)
         self.assertIn('ok 1 1', log)
 
+    def test_debug_stop_ends_its_session(self):
+        self.mode(start=[{'leaves': self.leaves(stopOnEntry=('b', 'true'))}])
+        out = self.run_editor(['cmd rhun-tests/debugfake.start', 'wait 500', 'dialog yes', 'wait-debug paused',
+                               'print-debug', 'cmd rhun-tests/debugfake.stop', 'wait-debug ended', 'wait 300',
+                               'print-debug'])
+        sessions = self.debug_lines(out)
+        self.assertEqual([self.field(l, 'state') for l in sessions], ['paused', 'ended'], out)
+        log = self.ext_log()
+        self.assertIn('ok 2', log)
+        ended = [l for l in log if l.startswith('0 debug-ended 1 ')]
+        self.assertTrue(ended, log)
+        self.assertLess(log.index('ok 2'), log.index(ended[0]))
+        self.assertIn('terminate', ' '.join(self.requests()))
+
+    def test_debug_stop_only_for_its_own_sessions(self):
+        self.launch_ini('[Run]\ntype = fake\nprogram = scenario.json\nstopOnEntry = yes\n')
+        self.scenario()
+        self.mode(stop=['1', '99', 'x', '1 2'])
+        out = self.run_editor([*self.start(), 'wait-debug paused', 'cmd rhun-tests/debugfake.stop', 'wait 800',
+                               'print-debug'])
+        self.assertEqual(self.field(self.debug_lines(out)[0], 'state'), 'paused', out)
+        log = self.ext_log()
+        self.assertIn('error 1 refused not a session you started', log)
+        self.assertIn('error 2 refused not a session you started', log)
+        self.assertTrue([l for l in log if l.startswith('error 3 syntax')], log)
+        self.assertTrue([l for l in log if l.startswith('error 4 syntax')], log)
+
+    def test_debug_stop_without_the_feature(self):
+        self.mode(features='', stop=['1'])
+        self.run_editor(['cmd rhun-tests/debugfake.stop', 'wait 500'])
+        self.assertIn('error 1 unknown debug-stop needs the debug feature', self.ext_log())
+
     def test_bodies_that_do_not_parse(self):
         bad = ['1\nx 4 4\ntypefake', '2\ns 4 4\ntypefake', '1\ns 4 9\ntypefake', '1\nn 5 2\ncount1x',
-               '1\nb 3 3\nyesyes', '1\nz 1 1\naa', 'nope', '3\ns 4 4\ntypefakes 3 1\na.bxs 5 1\na.b.cy']
+               '1\nb 3 3\nyesyes', '1\nz 1 1\naa', 'nope', '3\ns 4 4\ntypefakes 3 1\na.bxs 5 1\na.b.cy',
+               '2\ns 4 4\ntypefakes 6 1\nargs.1x', '3\ns 4 4\ntypefakes 6 1\nargs.0xs 6 1\nargs.2y']
+        # (the last two: an array that skips an index)
         # two at a time: a third syntax error in a row ends the program (v1)
-        for pair in (bad[0:2], bad[2:4], bad[4:6], bad[6:8]):
+        for pair in (bad[0:2], bad[2:4], bad[4:6], bad[6:8], bad[8:10]):
             with self.subTest(pair=pair):
                 log = self.ext_state() / 'debugfake.log'
                 if log.exists():
@@ -191,6 +225,19 @@ class Resolve(FeatureHost):
         self.assertIn('info Launch cancelled', out)
         rid = self.resolve_lines()[0].split(' ')[0]
         self.assertIn('0 cancel %s' % rid, self.ext_log())
+
+    def test_counted_on_the_extensions_page(self):
+        self.ini()
+        self.mode(resolve='unchanged')
+        out = self.run_editor([*self.start(), 'wait-debug ended', 'print-langstats rhun-tests/debugfake'])
+        row = [l for l in out if ' debug-resolve ' in l][0]
+        self.assertIn(' asked=1 ', row)
+        self.assertIn(' empty=1 ', row)                 # ok ID 0: launched unchanged
+        self.mode(resolve='silent')
+        out = self.run_editor(['debug-start Run', 'wait 500', 'debug-stop', 'wait 200',
+                               'print-langstats rhun-tests/debugfake'])
+        row = [l for l in out if ' debug-resolve ' in l][0]
+        self.assertIn(' cancelled=1', row)
 
     def test_an_extension_that_crashes(self):
         self.ini()

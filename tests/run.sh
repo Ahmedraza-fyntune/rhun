@@ -240,7 +240,7 @@ python3 tests/ext-quick.py || fail=1
 python3 tests/ext-views-doc.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
-for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter debug-transport debug-terminal debug-feature debug-tasks debug-review debug-real; do
+for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter debug-transport debug-terminal debug-feature debug-tasks debug-review debug-sessions debug-questions debug-variables debug-configs debug-threads debug-real; do
     python3 tests/$t.py || fail=1
 done
 # testing: the test explorer (feature "tests")

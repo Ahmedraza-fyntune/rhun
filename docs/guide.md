@@ -1263,7 +1263,8 @@ to them itself. The first time an extension's debugger starts in a project, rhun
 any sandbox. Forget on the extension's page asks again.
 
 **Launch configurations** live in `PROJECT/.rhun/launch.ini`, one section per configuration
-(Open Launch Configurations creates the file):
+(Open Launch Configurations creates the file; **Add Configuration** appends one of the installed
+debuggers' templates; **Select Configuration** picks the one F5 starts):
 
 ```ini
 [Run server]
@@ -1291,9 +1292,14 @@ server = 127.0.0.1:2345
   `KEY.NAME = value` builds objects; a numeric segment such as `args.0` is an array index).
 - Variables: `${project}`, `${projectName}`, `${file}`, `${fileDir}`, `${fileName}`,
   `${fileStem}`, `${fileExt}`, `${relativeFile}`, `${line}`, `${column}`, `${selection}`,
-  `${home}`, `${env:NAME}`, and `$$` for a dollar sign.
-- `before = TASK` runs a task (Run Task's tasks, by label or id) and launches once it succeeds; a
-  failing task stops the launch. `after = TASK` runs one when the session ends.
+  `${home}`, `${env:NAME}`, and `$$` for a dollar sign. Questions asked at each launch:
+  `${ask:Port}` (text), `${pick:Mode|debug|test}` (a list) and `${process}` (the running
+  processes, giving the chosen one's id); the same question in one configuration is asked once,
+  and Escape abandons the launch.
+- `before = TASK` runs a task (Run Task's tasks, by label or id) and launches once it succeeds; if
+  it fails, rhun asks whether to debug anyway. `after = TASK` runs one when the session ends.
+- `compound = A | B` starts those configurations in turn (each one after the previous one's
+  questions are answered).
 - `server = HOST:PORT` connects to an adapter that already listens (HOST `localhost` or an IPv4
   address) and starts nothing.
 - A debugger can prepare the configuration first (Delve's "Test at cursor" finds the test the cursor
@@ -1308,7 +1314,10 @@ also work from the terminal (`[debug] keys_in_terminal`).
 **While debugging**, the title bar holds the toolbar (Continue or Pause, Step Over, Into, Out,
 Restart, Stop); the sidebar shows Variables, Watch, Call Stack and Breakpoints, and the panel the
 Debug Console, where an expression evaluates in the selected frame (Up and Down recall earlier
-ones). The paused line is marked in the gutter, and resting the pointer on a name shows its value.
+ones). Call Stack lists the program's threads with the stopped one open; choosing another thread
+shows its frames, and Continue and the steps then act on it. Long arrays open in ranges of 100 (`[0..99]`, nested for bigger ones), F2 on a variable sets
+its value, and values that changed since the last stop are highlighted. An adapter may start child
+sessions of its own (startDebugging); they end with their parent. The paused line is marked in the gutter, and resting the pointer on a name shows its value.
 Program output, the adapter's messages and rhun's notes ("Program exited with code 3") go to the
 console. A program the adapter starts "in the terminal" (debugpy's `console =
 integratedTerminal`) gets a terminal tab of its own, where you type its input.

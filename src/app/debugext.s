@@ -2,7 +2,8 @@
 # extension starts a session of one of its own debuggers with `ID debug-start NAME_LEN LEN` + NAME +
 # a configuration body, within 10 s of one of its commands (a test run's debug profile counts too),
 # after the user's one approval per extension and project; it hears `0 debug-ended SESSION CODE`
-# when that session is over. dap.s makes the session (dap_start_ext) and calls the replies here.
+# when that session is over, and may stop it with `ID debug-stop SESSION`. dap.s makes the session
+# (dap_start_ext) and calls the replies here.
 .include "rhun.inc"
 
 .equ DBGX_WINDOW_MS, 10000      # debug-start must follow one of the extension's commands this soon
@@ -193,6 +194,57 @@ FN dbgx_h_debug_start
     call xp_reply_syntax
     EPILOGUE
 
+# dbgx_h_debug_stop(): ID debug-stop SESSION: Stop (as the toolbar's) on a session this extension
+#   started. ok ID at once; debug-ended follows when the session is over (one already over is ok
+#   too). Errors: unknown, needs, syntax, refused (not a session it started)
+FN dbgx_h_debug_stop
+    PROLOGUE
+    call xp_cur
+    mov rbx, rax
+    call xp_cur_id
+    mov r12, rax
+    FEAT_TEST rbx, FEAT_DEBUG
+    jnz 1f
+    mov rdi, r12
+    lea rsi, [rip + .Le_unknown_stop]
+    call xp_reply_error
+    EPILOGUE
+1:  mov edi, NEEDS_DEBUG
+    call xp_need
+    test eax, eax
+    jz 9f
+    call xp_nfields
+    cmp rax, 3
+    jne .Lsp_syntax
+    mov edi, 2
+    call xp_field_u64
+    test edx, edx
+    jz .Lsp_syntax
+    mov rcx, rax
+    shr rcx, 31
+    jnz .Lsp_not_yours
+    mov edi, eax
+    call dap_slot_of_id
+    test rax, rax
+    jz .Lsp_not_yours
+    cmp [rax + DS_owner], rbx
+    jne .Lsp_not_yours
+    mov r13, rax
+    mov rdi, r12
+    call xp_reply_ok
+    mov rdi, r13
+    call dap_stop_session
+    EPILOGUE
+.Lsp_not_yours:
+    mov rdi, r12
+    lea rsi, [rip + .Le_not_yours]
+    call xp_reply_error
+9:  EPILOGUE
+.Lsp_syntax:
+    mov rdi, r12
+    call xp_reply_syntax
+    EPILOGUE
+
 # ---------------- debug-resolve ----------------
 
 # dbgx_resolve_begin(EXT*, debugger index) -> eax 1 when the extension is being asked (the launch
@@ -334,6 +386,11 @@ rs_send:
     test rax, rax
     jz .Lrs_unsent
     mov [rip + rs_id], rax
+    mov rdi, rbx                # counted on the Extensions page (query.s)
+    mov rsi, rax
+    mov edx, PK_DEBUG_RESOLVE
+    xor ecx, ecx
+    call query_track
     mov dword ptr [rip + rs_state], 2
     call time_ms
     add rax, RS_ANSWER_MS
@@ -406,19 +463,50 @@ before_done:
     jne 1f
     call dap_start_after_before
     EPILOGUE
-1:  lea rdi, [rip + rs_line]
-    lea rsi, [rip + .Lm_taskfailed]
-    call sb_set_cstr_x
+1:  # it failed: the user decides (Debug Anyway or Cancel), the launch waiting meanwhile
+    mov dword ptr [rip + rs_state], 4
     lea rdi, [rip + rs_line]
     mov rsi, [rip + rs_task + SB_ptr]
     mov rdx, [rip + rs_task + SB_len]
-    call sb_push
+    call sb_set_x
+    lea rdi, [rip + rs_line]
+    lea rsi, [rip + .Lm_anyway_line]
+    call sb_push_cstr
     lea rdi, [rip + rs_line]
     xor esi, esi
     call sb_push_byte
-    mov rdi, [rip + rs_line + SB_ptr]
-    call dap_error
+    lea rdi, [rip + .Lm_taskfailed_q]
+    mov rsi, [rip + rs_line + SB_ptr]
+    lea rdx, [rip + .Lm_anyway]
+    lea rcx, [rip + before_anyway]
+    call app_confirm
+    lea rdi, [rip + before_cancel]
+    call app_confirm_cancel
 9:  EPILOGUE
+
+# before_anyway(): Debug Anyway after a failed before task
+before_anyway:
+    sub rsp, 8
+    cmp dword ptr [rip + rs_state], 4
+    jne 1f
+    mov dword ptr [rip + rs_state], 0
+    call dap_start_after_before
+1:  add rsp, 8
+    ret
+
+# before_cancel(): Cancel: the launch is abandoned
+before_cancel:
+    sub rsp, 8
+    cmp dword ptr [rip + rs_state], 4
+    jne 1f
+    mov dword ptr [rip + rs_state], 0
+    xor edi, edi
+    mov esi, DCON_INFO
+    lea rdx, [rip + .Lm_cancelled]
+    mov ecx, .Lm_cancelled_end - .Lm_cancelled
+    call dcon_line
+1:  add rsp, 8
+    ret
 
 # dbgx_resolving() -> eax 1 while a launch waits for its extension (dap_start refuses another)
 FN dbgx_resolving
@@ -437,7 +525,7 @@ FN dbgx_resolve_tick
     call time_ms
     mov r12, rax
     cmp dword ptr [rip + rs_state], 3
-    je 9f                       # the before task has no deadline of rhun's
+    jae 9f                      # the before task and its question have no deadline of rhun's
     cmp dword ptr [rip + rs_state], 1
     jne 3f
     cmp dword ptr [rbx + EXT_status], ES_RUNNING
@@ -464,7 +552,7 @@ FN dbgx_resolve_tick
     jb 9f
     mov rdi, rbx
     mov rsi, [rip + rs_id]
-    call extproto_send_cancel
+    call query_withdraw         # 0 cancel ID, counted cancelled
     lea rdi, [rip + .Lm_noanswer]
     call rs_fail
 9:  EPILOGUE
@@ -476,7 +564,7 @@ FN dbgx_resolve_timeout
     cmp dword ptr [rip + rs_state], 0
     je 9f
     cmp dword ptr [rip + rs_state], 3
-    je 9f
+    jae 9f
     call time_ms
     mov rcx, [rip + rs_deadline]
     sub rcx, rax
@@ -496,7 +584,7 @@ FN dbgx_resolve_cancel
     jne 1f
     mov rdi, [rip + rs_ext]
     mov rsi, [rip + rs_id]
-    call extproto_send_cancel
+    call query_withdraw
 1:  mov dword ptr [rip + rs_state], 0
     xor edi, edi
     mov esi, DCON_INFO
@@ -802,14 +890,20 @@ sb_set_cstr_x:
 .Lm_before: .asciz "Running the prelaunch task "
 .Lm_notask: .asciz "the configuration's before task is not a task (or more than one task has that name)"
 .Lm_taskbusy: .asciz "the tasks are busy: the before task could not start"
-.Lm_taskfailed: .asciz "the prelaunch task failed: "
+.Lm_taskfailed_q: .asciz "The prelaunch task failed"
+.Lm_anyway_line: .asciz " did not succeed. Debug anyway?"
+.Lm_anyway: .asciz "Debug Anyway"
 .Lm_badanswer: .asciz "the debugger's extension answered with a configuration that does not parse, or not of its own type"
 .globl dbgx_v_debug_start
 dbgx_v_debug_start: .asciz "debug-start"
+.globl dbgx_v_debug_stop
+dbgx_v_debug_stop: .asciz "debug-stop"
 .Lw_ok: .asciz "ok "
 .Lw_error: .asciz "error "
 .Lev_ended: .asciz "0 debug-ended "
 .Le_unknown: .asciz "unknown debug-start needs the debug feature"
+.Le_unknown_stop: .asciz "unknown debug-stop needs the debug feature"
+.Le_not_yours: .asciz "refused not a session you started"
 .Le_type: .asciz "refused the configuration's type is not one of your debuggers"
 .Le_window: .asciz "refused not within 10 s of one of your commands"
 .Le_toobig: .asciz "toobig 8 sessions"

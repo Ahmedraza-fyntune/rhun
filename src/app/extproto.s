@@ -5440,6 +5440,7 @@ verbs:
     .quad .Lv_agent_ask, h_agent_ask, 8192
     # debugger (debugext.s): feature "debug"
     .quad dbgx_v_debug_start, dbgx_h_debug_start, DBGX_BODY_MAX
+    .quad dbgx_v_debug_stop, dbgx_h_debug_stop, 0
     # notebooks (nbproto.inc)
     .quad .Lnb_v_state, h_nb_state, 0
     .quad .Lnb_v_output, h_nb_output, NB_OUTPUT_MAX
