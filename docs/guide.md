@@ -1061,7 +1061,9 @@ version." first. An update that asks for more access than the installed version 
 for your files or project, home, the network, the terminal, or a new program to run) always asks,
 naming what is new, and waits for you; Cancel keeps the installed version and stops automatic
 updates from fetching that version again. After **Roll back**, automatic updates leave the
-version you went back from alone until a newer one appears. What rhun learned is kept in
+version you went back from alone until a newer one appears. A reviewed version that needs a newer
+rhun (the index's `rhun` key) is neither offered nor installed; the Extensions page says which rhun
+it needs. Extensions installed from a folder, a link or an archive are never offered updates. What rhun learned is kept in
 `$XDG_STATE_HOME/rhun/extension-updates`.
 
 #### Browse
