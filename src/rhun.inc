@@ -1698,6 +1698,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
     FEATURE FEAT_VIEW_KEYS, "view-keys", 1        # views group: keys and focus for pictures; rhun asks vcopy
     FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
+    FEATURE FEAT_DEBUG, "debug", 1                # debugger: debug-resolve; debug-start, debug-ended
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -2776,6 +2777,26 @@ ENDSTRUCT AS_SIZE
 .equ DS_MAX, 8                      # sessions, child sessions included
 .equ DS_PEND, 256                   # requests in flight per session
 .equ DAP_BODY_MAX, 8388608          # one message
+.equ DAP_CONNECT_MS, 10000          # tcp: the adapter accepts a connection within this
+.equ DAP_CONNECT_EVERY, 100         # and is tried this often
+.equ DAP_LOOPBACK, 0x0100007f       # 127.0.0.1 in network order
+.equ DBGX_BODY_MAX, 1048576 + 256     # debug-start's body: NAME and a configuration body
+.equ DCE_SYNTAX, 1                   # dcfg_from_leaves: the configuration body does not parse
+.equ DCE_REFUSED, 2                  # its type is not one of the extension's debuggers
+.equ DTR_STDIO, 0                   # DS_transport: the adapter's standard input and output
+.equ DTR_TCP, 1                     # rhun picks a port, starts the adapter and connects
+.equ DTR_SERVER, 2                  # launch.ini's server = HOST:PORT: no process
+.equ DSK_getsockname, 51           # Linux system call numbers (the macOS shim converts them)
+.equ DSK_getpeername, 52
+.equ DSK_AF_INET, 2
+.equ DSK_SOL_SOCKET, 1
+.equ DSK_SO_ERROR, 4
+.equ DSK_F_DUPFD, 0
+.equ DSK_F_SETFD, 2
+.equ DSK_FD_CLOEXEC, 1
+.equ DSK_EINPROGRESS, 115
+.equ DSK_EALREADY, 114
+.equ DSK_EISCONN, 106
 .equ DAP_HEADER_MAX, 1024
 .equ DAP_WQ_MAX, 4194304            # bytes queued for one adapter
 .equ DAP_NODES_MAX, 262144          # JSON values in one message
@@ -2939,6 +2960,21 @@ F DS_pid, 4             # the adapter, 0 when none (or reaped)
 F DS_in, 4              # its input (rhun writes), -1
 F DS_out, 4             # its output (rhun reads), -1
 F DS_err, 4             # its error output, -1
+F DS_aout, 4            # tcp: its standard output (lines to the console), -1
+F DS_ain, 4             # tcp: its standard input (kept open until the end), -1
+F DS_csock, 4           # tcp, server: the socket while it connects, -1
+F DS_transport, 4       # DTR_*
+F DS_port, 4            # tcp, server: the port it listens on
+F DS_addr, 4            # and the IPv4 address (network order)
+F DS_conn_until, 8      # time_ms when connecting gives up
+F DS_rit_seq, 4         # the runInTerminal request still owed an answer, 0 none
+F DS_vgen, 4            # bumped whenever the variable pool starts again (a stop, another frame)
+F DS_wgen, 4            # the last round of watch evaluations sent
+F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
+F DS_pad2, 4
+F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
+F DS_owner_id, 8        # and its request still owed an answer, 0 none
+F DS_after, 8           # owned cstr: launch.ini's after task, run when the session ends, or 0
 F DS_seq, 4             # the next request number
 F DS_epoch, 4           # bumped on every stop and resume
 F DS_flags, 4           # DSF_*

@@ -1171,6 +1171,82 @@ Errors and warnings a task prints (Go, gcc and clang, rustc and cargo, TypeScrip
 task's own patterns) become **problems**: marks in the files (the status bar counts them) and the
 **Problems** tab of the panel (ctrl+shift+m), files first, then each problem. Enter or a click goes
 to it. A task's problems are replaced when it runs again; Clear Task Problems removes them.
+### Debugging
+
+rhun debugs programs through the Debug Adapter Protocol: an extension declares the debuggers
+(`rhun-editor/debug`: Go with Delve, Python with debugpy, C and C++ with lldb-dap) and rhun talks
+to them itself. The first time an extension's debugger starts in a project, rhun asks once
+("Let Debug run programs in proj?", the exact command shown); the adapter then runs as you, outside
+any sandbox. Forget on the extension's page asks again.
+
+**Launch configurations** live in `PROJECT/.rhun/launch.ini`, one section per configuration
+(Open Launch Configurations creates the file):
+
+```ini
+[Run server]
+type = go
+mode = debug
+program = ${project}/cmd/server
+args = --port 8080
+env.LOG_LEVEL = debug
+before = build
+
+[Python file]
+type = python
+program = ${file}
+console = integratedTerminal
+
+[Attach to a running Delve]
+type = go
+request = attach
+mode = remote
+server = 127.0.0.1:2345
+```
+
+- `type` picks the debugger and `request` is `launch` (the default) or `attach`. Every other key is
+  a launch argument, typed as the debugger declares it (`list` keys split into words and repeat;
+  `KEY.NAME = value` builds objects; a numeric segment such as `args.0` is an array index).
+- Variables: `${project}`, `${projectName}`, `${file}`, `${fileDir}`, `${fileName}`,
+  `${fileStem}`, `${fileExt}`, `${relativeFile}`, `${line}`, `${column}`, `${selection}`,
+  `${home}`, `${env:NAME}`, and `$$` for a dollar sign.
+- `before = TASK` runs a task (Run Task's tasks, by label or id) and launches once it succeeds; a
+  failing task stops the launch. `after = TASK` runs one when the session ends.
+- `server = HOST:PORT` connects to an adapter that already listens (HOST `localhost` or an IPv4
+  address) and starts nothing.
+- A debugger can prepare the configuration first (Delve's "Test at cursor" finds the test the cursor
+  is in; debugpy picks the project's `.venv`): the console says "Preparing the launch", and Stop
+  cancels it.
+
+**Keys** (F5 and friends, as in other editors): F5 Start or Continue, Ctrl+F5 Run without
+debugging, Shift+F5 Stop, Ctrl+Shift+F5 Restart, F6 Pause, F10 Step Over, F11 Step Into,
+Shift+F11 Step Out, F9 Toggle Breakpoint, Ctrl+Shift+Y the debug view. While a session runs they
+also work from the terminal (`[debug] keys_in_terminal`).
+
+**While debugging**, the title bar holds the toolbar (Continue or Pause, Step Over, Into, Out,
+Restart, Stop); the sidebar shows Variables, Watch, Call Stack and Breakpoints, and the panel the
+Debug Console, where an expression evaluates in the selected frame (Up and Down recall earlier
+ones). The paused line is marked in the gutter, and resting the pointer on a name shows its value.
+Program output, the adapter's messages and rhun's notes ("Program exited with code 3") go to the
+console. A program the adapter starts "in the terminal" (debugpy's `console =
+integratedTerminal`) gets a terminal tab of its own, where you type its input.
+
+**Breakpoints**: click the gutter's left lane or press F9; a right click adds a conditional
+breakpoint (an expression), a hit count or a logpoint (a message with `{expressions}`), and
+disables or removes one. Breakpoints follow edits, are kept per project, and show hollow until the
+debugger confirms them. The Breakpoints section also lists function breakpoints and exception
+filters (such as Python's "Uncaught Exceptions").
+
+**Settings** (`[debug]`): `show_on_start` opens the debug view when a session starts,
+`keys_in_terminal` as above, `console_lines` the lines the console keeps (10000).
+
+| Debugger | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | needs a native machine (no ptrace in Docker under Rosetta) | not tested |
+| Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | needs TCP, which rhun's Windows build does not have yet |
+| debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
+
+Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves
+(feature `debug`, docs/extensions/v1.1.md "Debuggers").
 
 ### Write your own
 
