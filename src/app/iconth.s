@@ -1005,6 +1005,47 @@ FN iconth_dump
     call sb_push_byte
     EPILOGUE
 
+# FN iconth_page_rows(ext): the extension page's File icon themes rows (contribpage.s): each
+#   theme's title; its setting value, its icons, whether it is the one chosen
+FN iconth_page_rows
+    PROLOGUE
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + ith_list + VEC_len]
+    jae 9f
+    imul r12, rbx, ITH_SIZE
+    add r12, [rip + ith_list + VEC_ptr]
+    inc rbx
+    cmp [r12 + ITH_ext], r15
+    jne 1b
+    mov rdi, [r12 + ITH_title]
+    test rdi, rdi
+    jz 2f
+    cmp byte ptr [rdi], 0
+    jne 3f
+2:  mov rdi, [r12 + ITH_name]
+3:  call contrib_page_text
+    mov rdi, [r12 + ITH_id]
+    call contrib_page_detail
+    call contrib_page_part
+    mov rdi, [r12 + ITH_icons + VEC_len]
+    call contrib_page_detail_int
+    lea rdi, [rip + .Lpg_icons]
+    call contrib_page_detail
+    mov rdi, [rip + cfg_file_icons]
+    test rdi, rdi
+    jz 4f
+    mov rsi, [r12 + ITH_id]
+    call strcmp_eq
+    test eax, eax
+    jz 4f
+    call contrib_page_part
+    lea rdi, [rip + .Lpg_in_use]
+    call contrib_page_detail
+4:  call contrib_page_end
+    jmp 1b
+9:  EPILOGUE
+
 .section .rodata
 .p2align 3
 map_secs: .quad .Ls_files, .Ls_exts, .Ls_langs, .Ls_folders, .Ls_folders_open, 0
@@ -1033,3 +1074,5 @@ map_secs: .quad .Ls_files, .Ls_exts, .Ls_langs, .Ls_folders, .Ls_folders_open, 0
 .Lp_rhun: .asciz "rhun:"
 .Lp_rhun_folder: .asciz "rhun:folder color=accent"
 .Lp_color: .asciz " color="
+.Lpg_icons: .asciz " icons"
+.Lpg_in_use: .asciz "in use"

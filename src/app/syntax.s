@@ -18,6 +18,7 @@ ENDSTRUCT LR_SIZE
 .globl g_user_grammars
 g_user_grammars: .quad 0        # grammars from ~/.config and extensions, at the front of g_grammars
 ext_grammars: .quad 0           # how many of those came from extensions (the last ones of them)
+syn_owner: .quad 0              # the extension whose grammars syntax_add_dir reads
 
 .bss
 .p2align 3
@@ -769,9 +770,10 @@ FN syntax_load_all
     call config_dir_each
     EPILOGUE
 
-# syntax_add_dir(dir): the .syn files of a folder (an extension's); they go after the user's
-# grammars and before the built-in ones
+# syntax_add_dir(dir, ext): the .syn files of a folder (an extension's); they go after the user's
+# grammars and before the built-in ones, GR_ext the extension (the extension page lists them)
 FN syntax_add_dir
+    mov [rip + syn_owner], rsi
     lea rsi, [rip + .Lsyn_ext]
     lea rdx, [rip + load_ext_grammar]
     jmp dir_each_suffix
@@ -785,6 +787,8 @@ load_ext_grammar:
     mov rsi, rdx
     call grammar_parse
     mov r12, rax
+    mov rax, [rip + syn_owner]
+    mov [r12 + GR_ext], rax
     # an extension's grammar of a name another extension's grammar has (the same extension
     # installed again, or updated) takes that one's place; the user's own still win
     mov r13, [rip + g_user_grammars]
@@ -822,6 +826,38 @@ load_ext_grammar:
 2:  mov [rdi + rdx*8], r12
     inc qword ptr [rip + g_user_grammars]
     inc qword ptr [rip + ext_grammars]
+9:  EPILOGUE
+
+# FN syntax_page_rows(ext): the extension page's Languages rows for the grammars it brings
+#   (contribpage.s): the name; its file patterns
+FN syntax_page_rows
+    PROLOGUE
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_grammars + VEC_len]
+    jae 9f
+    mov rax, [rip + g_grammars + VEC_ptr]
+    mov r12, [rax + rbx*8]
+    inc rbx
+    cmp [r12 + GR_ext], r15
+    jne 1b
+    mov rdi, [r12 + GR_name]
+    call contrib_page_text
+    lea rdi, [rip + .Lpg_grammar]
+    call contrib_page_detail
+    mov rdi, [r12 + GR_files]
+    test rdi, rdi
+    jz 2f
+    cmp byte ptr [rdi], 0
+    je 2f
+    mov r13, rdi
+    call contrib_page_part
+    lea rdi, [rip + .Lpg_files]
+    call contrib_page_detail
+    mov rdi, r13
+    call contrib_page_detail
+2:  call contrib_page_end
+    jmp 1b
 9:  EPILOGUE
 
 # user grammar: inserted first so it wins detection
@@ -1691,3 +1727,5 @@ class_names:
 .Lv_eol: .asciz "eol"
 .Lsyntax_dir: .asciz "syntax"
 .Lsyn_ext: .asciz ".syn"
+.Lpg_grammar: .asciz "a grammar"
+.Lpg_files: .asciz "files "

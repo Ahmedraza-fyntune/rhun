@@ -2929,6 +2929,69 @@ FN langconf_dump
     jmp 1b
 9:  EPILOGUE
 
+# FN langconf_page_rows(ext): the extension page's Languages rows for its [language.NAME]
+#   sections (contribpage.s): the language; the keys it sets
+FN langconf_page_rows
+    PROLOGUE 16
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + lo_list + VEC_len]
+    jae 9f
+    imul r12, rbx, LO_SIZE
+    add r12, [rip + lo_list + VEC_ptr]
+    inc rbx
+    cmp [r12 + LO_ext], r15
+    jne 1b
+    # the first of its language
+    xor r13d, r13d
+2:  lea rax, [rbx - 1]
+    cmp r13, rax
+    jae 3f
+    imul r14, r13, LO_SIZE
+    add r14, [rip + lo_list + VEC_ptr]
+    inc r13
+    cmp [r14 + LO_ext], r15
+    jne 2b
+    mov rdi, [r14 + LO_lang]
+    mov rsi, [r12 + LO_lang]
+    call strcmp_eq
+    test eax, eax
+    jnz 1b
+    jmp 2b
+3:  mov rdi, [r12 + LO_lang]
+    call contrib_page_text
+    lea rdi, [rip + .Lpg_keys]
+    call contrib_page_detail
+    lea r13, [rbx - 1]
+    mov qword ptr [rsp], 0      # keys written
+4:  cmp r13, [rip + lo_list + VEC_len]
+    jae 6f
+    imul r14, r13, LO_SIZE
+    add r14, [rip + lo_list + VEC_ptr]
+    inc r13
+    cmp [r14 + LO_ext], r15
+    jne 4b
+    mov rdi, [r14 + LO_lang]
+    mov rsi, [r12 + LO_lang]
+    call strcmp_eq
+    test eax, eax
+    jz 4b
+    cmp qword ptr [rsp], 0
+    je 5f
+    lea rdi, [rip + .Lpg_comma]
+    call contrib_page_detail
+5:  inc qword ptr [rsp]
+    mov rax, [r14 + LO_key]
+    cmp rax, LCK_COUNT
+    jae 4b
+    lea rcx, [rip + lck_names]
+    mov rdi, [rcx + rax*8]
+    call contrib_page_detail
+    jmp 4b
+6:  call contrib_page_end
+    jmp 1b
+9:  EPILOGUE
+
 .section .rodata
 .p2align 3
 lck_names:
@@ -2956,6 +3019,8 @@ src_names: .quad .Ls0, .Ls1, .Ls2, .Ls3
 .Ls2: .asciz "user"
 .Ls3: .asciz "ext:"
 .Ld_source: .asciz " source="
+.Lpg_keys: .asciz "language keys: "
+.Lpg_comma: .asciz ", "
 .Ld_autoclose: .asciz "( ) [ ] { } \" \" ' ' ` `"
 .Ld_code: .asciz "\" ' `"
 .Ld_brackets: .asciz "() [] {}"

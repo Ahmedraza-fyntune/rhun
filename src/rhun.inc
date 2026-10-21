@@ -1898,6 +1898,7 @@ F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it),
 F GR_srclen, 8
 F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
 F GR_lckeys, 8          # language configuration keys the grammar sets (langconf.s), or 0
+F GR_ext, 8             # the extension it came from (syntax_add_dir), or 0
 ENDSTRUCT GR_SIZE
 .equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
