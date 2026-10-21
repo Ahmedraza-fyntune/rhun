@@ -190,6 +190,8 @@ python3 tests/keys-chords.py || fail=1
 python3 tests/ext-menus.py || fail=1
 python3 tests/ext-status-items.py || fail=1
 python3 tests/ext-sdk-commands.py || fail=1
+python3 tests/langconf.py || fail=1
+python3 tests/icon-themes.py || fail=1
 # source control: Git data, commit messages, quick diff, version control panels
 python3 tests/ext-scm.py || fail=1
 # editor presentation

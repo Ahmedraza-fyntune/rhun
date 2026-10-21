@@ -13,3 +13,5 @@ keywords = abstract as asserts async await break case catch class const continue
 types = any boolean never number object string symbol unknown bigint void Array Record Partial Required Readonly Pick Omit Promise
 constants = true false null undefined NaN Infinity
 builtins = console window document globalThis require module process JSON Math Object Array String Number Promise Map Set
+doc_block = /** * */
+fold_markers = #region #endregion

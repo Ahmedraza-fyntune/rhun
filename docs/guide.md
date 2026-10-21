@@ -714,6 +714,10 @@ fold's pill and other virtual text, `ghost` for inline completion, `codelens` fo
 `info` and `hint` for those diagnostics. A theme that leaves them out gets them from its other
 colors.
 
+File icons can come from an extension's icon theme: **Select File Icon Theme** in the command
+palette previews each one in the explorer and saves the choice as `file_icons` in `[ui]` (`rhun`,
+the built-in icons; `none`; or a theme's `OWNER/NAME/THEME`).
+
 The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
 
 On Omarchy the theme list starts with Follow Omarchy (`omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there, for both modes, until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
@@ -754,6 +758,29 @@ case = insensitive
 `icon` gives the explorer's icon for the grammar's files: an icon from `assets/icons/files/` (without `.svg`, such as `rust` or `config`; `code` for a language with none) and a color, one of red orange yellow green blue purple pink cyan grey white (grey if left out). Without it the files get the default icon.
 
 `prefix` lists characters that start a colored word, each followed by a letter: `v` variable, `a` attribute, `t` tag, `p` preproc (at the start of a line only). A file gets the grammar whose `files` fit its name best: an exact name first, then the longest `*.suffix`; your grammars win a tie. Only when no pattern fits does rhun look for a `first_line` word in the file's first line; the longest one found wins.
+
+A grammar also says how the language is typed: auto-closing and surrounding pairs, the tokens
+that indent the next line and outdent their own, continued lists and comments, doc comment blocks
+and folding markers. Without these keys the editor behaves as it always did.
+
+```ini
+autoclose = ( ) [ ] { } " " {% %}
+autoclose_code = "
+indent_open = begin ^when ($
+indent_close = end )
+indent_middle = else
+indent_dedent_after = return
+continue = ;;
+doc_block = /** * */
+fold_markers = #region #endregion
+```
+
+`^T` counts T only as a line's first code token and `T$` only as its last; strings and comments
+never count. Enter indents one level after a line with more openers than closers and one level
+less after a dedent word; typing a closing or middle token on a line Enter indented takes it one
+level back. The full list of keys and rules is in the extension spec (docs/extensions/v1.1.md,
+"Language configuration"); an extension can set the same keys for an existing language in
+`[language.NAME]`.
 
 ## Scripting
 

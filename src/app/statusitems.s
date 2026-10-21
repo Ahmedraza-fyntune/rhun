@@ -593,7 +593,7 @@ FN status_item_set
     test eax, eax
     jnz .Lss_syntax_drop
     mov rax, [rsp + 56]
-    and dword ptr [rax + SI_flags], ~SIF_HIDDEN
+    and dword ptr [rax + SI_flags], ~(SIF_HIDDEN | SIF_BAD)   # its clause is the valid new one now
     mov [rax + SI_align], r14d
     mov [rax + SI_prio], r15d
     mov rdi, rax
@@ -666,12 +666,15 @@ si_extra:
     mov rsi, r14
     sub rsi, r12
     lea rdx, [rsp + 64]
-    call si_words               # up to 5 words at [rsp + 64]
+    call si_words               # the words at [rsp + 64] (from the fifth on, the last one)
     cmp eax, 2
     jb .Lsx_bad
     mov r15d, eax
     # the last word is LEN; the bytes follow the line
-    dec eax
+    cmp eax, 5
+    jbe 21f
+    mov eax, 5
+21: dec eax
     shl eax, 4
     mov rdi, [rsp + 64 + rax]
     mov rsi, [rsp + 72 + rax]
@@ -800,7 +803,8 @@ si_extra:
     mov eax, 1
     EPILOGUE
 
-# si_words(ptr, len, out) -> eax the space-separated words (at most 5), their (ptr, len) in out
+# si_words(ptr, len, out) -> eax how many space-separated words; their (ptr, len) in out: the first
+#   four, then the last one in the fifth slot
 si_words:
     PROLOGUE
     mov r12, rdi
@@ -813,17 +817,18 @@ si_words:
     jne 2f
     inc r12
     jmp 1b
-2:  cmp r14d, 5
-    jae 8f
-    mov rax, r12
+2:  mov rax, r12
 3:  cmp rax, r13
     jae 4f
     cmp byte ptr [rax], ' '
     je 4f
     inc rax
     jmp 3b
-4:  mov rcx, r14
-    shl rcx, 4
+4:  mov rcx, r14                # the slot: the word's, the last one from the fifth word on
+    cmp rcx, 4
+    jbe 5f
+    mov ecx, 4
+5:  shl rcx, 4
     mov [rbx + rcx], r12
     mov rdx, rax
     sub rdx, r12
@@ -831,7 +836,6 @@ si_words:
     inc r14d
     mov r12, rax
     jmp 1b
-8:  mov r14d, 99                # too many
 9:  mov eax, r14d
     EPILOGUE
 

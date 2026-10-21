@@ -4948,6 +4948,9 @@ FN statusbar_draw
     sub ecx, esi
     mov r8d, [rsp + 12]
     call iv_status
+    # the image's fields take the bar: no room for the extensions' left items
+    mov eax, [rsp + 56]
+    mov [rsp + 28], eax
     jmp 9f
 1:  mov rbx, [rip + g_doc]
     test rbx, rbx

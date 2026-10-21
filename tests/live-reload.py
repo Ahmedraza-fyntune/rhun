@@ -2,6 +2,7 @@
 """External writes reload open files, keep local edits, and briefly mark the affected code."""
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -12,6 +13,22 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
+
+
+def settings_row_y(section, key):
+    """The middle of a row on the unscrolled Settings page, laid out as tests/settings-ui.py does."""
+    y, previous = 268, None
+    for line in (ROOT / 'src/app/config.s').read_text(encoding='utf-8').splitlines():
+        match = re.match(r'\s+SETTING(?:_ACTION)? \.Ls_(\w+), (\w+), (\w+)', line)
+        if not match or match.group(2) == 'theme':
+            continue
+        if match.group(1) != previous:
+            y += 48
+            previous = match.group(1)
+        if (match.group(1), match.group(2)) == (section, key):
+            return y + 32
+        y += 72
+    raise KeyError(key)
 
 
 @unittest.skipIf(os.name == 'nt', 'the control socket is Unix only')
@@ -434,7 +451,8 @@ class LiveReload(unittest.TestCase):
         self.command('cmd settings')
         self.command('move 500 350')
         self.command('scroll 1500')
-        self.command('click 827 480')
+        y = settings_row_y('editor', 'animate_disk_changes') - 1500
+        self.command(f'click 827 {y}')
         self.command('quit')
         self.process.wait(timeout=5)
         after = settings()
@@ -442,7 +460,7 @@ class LiveReload(unittest.TestCase):
         moved = sorted(key for key in before if key in after and before[key] != after[key])
         self.assertEqual(after.get('animate_disk_changes'), expected, after)
         self.assertLessEqual(set(moved), {'animate_disk_changes'},
-                             f'the click at 827 296 toggled another setting: {moved}')
+                             f'the click at 827 {y} toggled another setting: {moved}')
 
     def test_settings_switch_persists_and_controls_next_launch(self):
         self.start(self.file)

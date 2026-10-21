@@ -1,5 +1,9 @@
 # Typed input prepares all cursor results before applying any document change.
 .include "rhun.inc"
+.bss
+.p2align 3
+etp_plan: .zero LTP_SIZE        # lc_type's plan for one cursor
+
 .text
 
 # editor_multi_type(active doc, Unicode scalar) -> success, edx input/limit/readonly/busy.
@@ -193,101 +197,66 @@ editor_type_payload:
     mov rax, [rbx + ETP_elen]
     mov [rbx + ETP_cur], rax
     mov [rbx + ETP_anchor], rax
-    cmp dword ptr [rip + cfg_auto_pairs], 0
-    je .Letp_plain
-    cmp r13, r14
-    jne .Letp_open
-    lea rax, [rip + pair_close]
-    xor ecx, ecx
-1:  movzx edx, byte ptr [rax + rcx]
-    test edx, edx
-    jz .Letp_open
-    cmp rdx, [rbx + ETP_scalar]
-    je 2f
-    inc rcx
-    jmp 1b
-2:  mov rdi, [rbx + ETP_doc]
+    # what typing it does here: the language configuration's pairs and outdenting (langconf.s)
+    mov rdi, [rbx + ETP_doc]
     mov rsi, r13
-    call doc_byte
-    cmp rax, [rbx + ETP_scalar]
-    jne .Letp_open
+    mov rdx, r14
+    mov rcx, [rbx + ETP_scalar]
+    lea r8, [rip + etp_plan]
+    call lc_type
+    cmp eax, LTK_OVER
+    je .Letp_over
+    cmp eax, LTK_PAIR
+    je .Letp_pair
+    cmp eax, LTK_OUTDENT
+    je .Letp_outdent
+    cmp eax, LTK_WRAP
+    jne .Letp_plain
+    movzx r15d, byte ptr [rip + etp_plan + LTP_close]
+    jmp .Letp_wrap
+.Letp_over:
     mov qword ptr [rbx + ETP_write], 0
     mov qword ptr [rbx + ETP_tlen], 0
     mov qword ptr [rbx + ETP_cur], 1
     mov qword ptr [rbx + ETP_anchor], 1
     jmp .Letp_ok
-.Letp_open:
-    lea rax, [rip + pair_open]
-    xor ecx, ecx
-1:  movzx edx, byte ptr [rax + rcx]
-    test edx, edx
-    jz .Letp_plain
-    cmp rdx, [rbx + ETP_scalar]
-    je 2f
-    inc rcx
-    jmp 1b
-2:  lea rax, [rip + pair_close]
-    movzx r15d, byte ptr [rax + rcx]
-    cmp r13, r14
-    jne .Letp_wrap
-    cmp qword ptr [rbx + ETP_scalar], '"'
-    je .Letp_quote
-    cmp qword ptr [rbx + ETP_scalar], 0x27
-    je .Letp_quote
-    cmp qword ptr [rbx + ETP_scalar], '`'
-    jne .Letp_context
-.Letp_quote:
-    test r13, r13
-    jz 3f
-    mov rdi, [rbx + ETP_doc]
-    lea rsi, [r13 - 1]
-    call doc_byte
-    cmp rax, [rbx + ETP_scalar]
-    je .Letp_plain
-    mov edi, eax
-    call is_ident
-    test eax, eax
-    jnz .Letp_plain
-3:  mov rdi, [rbx + ETP_doc]
-    mov rsi, r13
-    call doc_byte
-    mov edi, eax
-    call is_ident
-    test eax, eax
-    jnz .Letp_plain
-.Letp_context:
-    mov rdi, [rbx + ETP_doc]
-    mov rsi, r13
-    call doc_byte
-    test eax, eax
-    jz .Letp_pair
-    cmp eax, 10
-    je .Letp_pair
-    cmp eax, ' '
-    je .Letp_pair
-    cmp eax, 9
-    je .Letp_pair
-    cmp eax, ')'
-    je .Letp_pair
-    cmp eax, ']'
-    je .Letp_pair
-    cmp eax, '}'
-    je .Letp_pair
-    cmp eax, ','
-    je .Letp_pair
-    cmp eax, ';'
-    jne .Letp_plain
 .Letp_pair:
+    mov esi, [rip + etp_plan + LTP_clen]
+    add rsi, [rbx + ETP_elen]
     mov rdi, rbx
-    mov esi, 2
     call editor_type_allocate
     test rax, rax
     jz .Letp_limit
-    mov rcx, [rbx + ETP_scalar]
-    mov [rax], cl
-    mov [rax + 1], r15b
-    mov qword ptr [rbx + ETP_cur], 1
-    mov qword ptr [rbx + ETP_anchor], 1
+    mov r15, rax
+    mov rdi, rax
+    lea rsi, [rbx + ETP_encoded]
+    mov rdx, [rbx + ETP_elen]
+    call memcpy
+    mov rdi, r15
+    add rdi, [rbx + ETP_elen]
+    lea rsi, [rip + etp_plan + LTP_close]
+    mov edx, [rip + etp_plan + LTP_clen]
+    call memcpy
+    mov rax, [rbx + ETP_elen]
+    mov [rbx + ETP_cur], rax
+    mov [rbx + ETP_anchor], rax
+    jmp .Letp_ok
+.Letp_outdent:
+    # the edit starts at the line's start: the line one unit less, then the character
+    mov rax, [rip + etp_plan + LTP_from]
+    mov [r12 + DMR_start], rax
+    mov rsi, [rip + etp_plan + LTP_tlen]
+    mov rdi, rbx
+    call editor_type_allocate
+    test rax, rax
+    jz .Letp_limit
+    mov rdi, rax
+    mov rsi, [rip + etp_plan + LTP_text]
+    mov rdx, [rip + etp_plan + LTP_tlen]
+    call memcpy
+    mov rax, [rip + etp_plan + LTP_tlen]
+    mov [rbx + ETP_cur], rax
+    mov [rbx + ETP_anchor], rax
     jmp .Letp_ok
 .Letp_wrap:
     mov rsi, r14

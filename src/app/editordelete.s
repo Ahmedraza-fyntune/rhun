@@ -256,31 +256,18 @@ FN editor_delete_span
     mov r13, rax
     jmp .Leds_done
 .Leds_pair:
+    # an empty auto-closing pair "(|)" goes whole (the language configuration's, langconf.s)
     cmp dword ptr [rip + cfg_auto_pairs], 0
     je .Leds_done
     mov rdi, rbx
-    mov rsi, r13
-    call doc_byte
-    mov r14d, eax
-    mov rdi, rbx
     mov rsi, r12
-    call doc_byte
-    mov r15d, eax
-    lea rax, [rip + pair_open]
-    lea rdx, [rip + pair_close]
-    xor ecx, ecx
-1:  movzx esi, byte ptr [rax + rcx]
-    test esi, esi
+    call lc_pair_around
+    test rax, rax
     jz .Leds_done
-    cmp esi, r14d
-    jne 2f
-    movzx esi, byte ptr [rdx + rcx]
-    cmp esi, r15d
-    jne 2f
-    inc r12
+    mov r13, r12
+    sub r13, rax
+    add r12, rdx
     jmp .Leds_done
-2:  inc ecx
-    jmp 1b
 .Leds_forward:
     call doc_next_char
     mov r13, rax
