@@ -22,7 +22,6 @@ dlg_text: .zero 2048
 .globl g_watches, g_nodep
 restart_name: .zero SB_SIZE
 restart_after: .long 0          # a restart waits for this session to end
-watch_gen: .long 0              # send_watches' round
 restart_nodebug: .long 0
 g_watches: .zero SB_SIZE        # watch expressions, one per line
 .data
@@ -1055,6 +1054,9 @@ on_timeout:
     jne 2f
     mov eax, [r12 + PD_epoch]
     cmp eax, [rbx + DS_epoch]
+    jne 2f
+    mov eax, [r12 + PD_ctx + 4]
+    cmp eax, [rbx + DS_vgen]
     jne 2f
     mov rdi, rbx
     mov esi, [r12 + PD_ctx]
@@ -2257,6 +2259,7 @@ new_epoch:
     push rbx
     mov rbx, rdi
     inc dword ptr [rbx + DS_epoch]
+    inc dword ptr [rbx + DS_vgen]
     mov qword ptr [rbx + DS_threads + VEC_len], 0
     mov qword ptr [rbx + DS_frames + VEC_len], 0
     mov qword ptr [rbx + DS_vars + VEC_len], 0
@@ -2757,7 +2760,10 @@ send_scopes:
     call aki
     mov rdi, rbx
     mov esi, RQ_SCOPES
-    mov edx, [rbx + DS_frame]
+    mov edx, [rbx + DS_vgen]            # the pool's generation, and the frame
+    shl rdx, 32
+    mov eax, [rbx + DS_frame]
+    or rdx, rax
     call dap_req_send
 9:  EPILOGUE
 
@@ -2869,6 +2875,9 @@ r_scopes:
     mov eax, [r13 + PD_ctx]
     cmp eax, [rbx + DS_frame]
     jne 9f
+    mov eax, [r13 + PD_ctx + 4]
+    cmp eax, [rbx + DS_vgen]
+    jne 9f
     mov rdi, r12
     lea rsi, [rip + .Lk_scopes]
     call json_get
@@ -2956,7 +2965,10 @@ FN vn_expand
     call aki
     mov rdi, rbx
     mov esi, RQ_VARIABLES
-    mov edx, r12d
+    mov edx, [rbx + DS_vgen]            # the pool's generation, and the node
+    shl rdx, 32
+    mov eax, r12d
+    or rdx, rax
     call dap_req_send
     test eax, eax
     jnz 9f
@@ -2992,6 +3004,9 @@ r_variables:
     mov eax, [r13 + PD_epoch]
     cmp eax, [rbx + DS_epoch]
     jne 9f
+    mov eax, [r13 + PD_ctx + 4]
+    cmp eax, [rbx + DS_vgen]
+    jne 9f                      # asked for another frame's pool
     mov rdi, rbx
     mov esi, [r13 + PD_ctx]
     call vn_node
@@ -3211,8 +3226,8 @@ open_path_remove:
 #   earlier one are dropped)
 send_watches:
     PROLOGUE
-    inc dword ptr [rip + watch_gen]
     mov rbx, rdi
+    inc dword ptr [rbx + DS_wgen]       # this session's round
     cmp dword ptr [rbx + DS_state], DSS_PAUSED
     jne 9f
     mov rdi, rbx
@@ -3250,7 +3265,7 @@ send_watches:
     call akv
     mov rdi, rbx
     mov esi, RQ_WATCH
-    mov edx, [rip + watch_gen]
+    mov edx, [rbx + DS_wgen]
     shl rdx, 32
     or rdx, r14
     call dap_req_send
@@ -3298,7 +3313,7 @@ r_watch:
     cmp eax, [rbx + DS_epoch]
     jne 9f
     mov eax, [r15 + PD_ctx + 4]
-    cmp eax, [rip + watch_gen]
+    cmp eax, [rbx + DS_wgen]
     jne 9f                      # an earlier round's answer
     mov eax, [r15 + PD_ctx]
     mov [rsp + 4], eax          # the watch's index
@@ -3512,9 +3527,13 @@ FN dap_hover_eval
     lea rsi, [rip + .Lv_watch]
 1:  lea rdi, [rip + .Lk_context]
     call akv
+    inc dword ptr [rip + hover_seq]     # an earlier hover's answer no longer counts
     mov rdi, rbx
     mov esi, RQ_HOVER
-    mov edx, [rip + g_dap_gen]
+    mov edx, [rbx + DS_vgen]            # nor one about another frame
+    shl rdx, 32
+    mov eax, [rip + hover_seq]
+    or rdx, rax
     call dap_req_send
 9:  EPILOGUE
 
@@ -3526,6 +3545,12 @@ r_hover:
     jz 9f
     mov eax, [r8 + PD_epoch]
     cmp eax, [rdi + DS_epoch]
+    jne 9f
+    mov eax, [r8 + PD_ctx]
+    cmp eax, [rip + hover_seq]
+    jne 9f                      # the pointer moved on to another expression
+    mov eax, [r8 + PD_ctx + 4]
+    cmp eax, [rdi + DS_vgen]
     jne 9f
     mov rdi, rbx
     lea rsi, [rip + .Lk_result]
@@ -3792,13 +3817,26 @@ send_pause:
 9:  EPILOGUE
 
 # dap_focus_slot(slot): that session is the focused one (the toolbar, the view and stepping act on it)
+# dap_focus_ds(ds): that session is the focused one
+FN dap_focus_ds
+    sub rsp, 8
+    call slot_index
+    add rsp, 8
+    mov edi, eax
 FN dap_focus_slot
+    PROLOGUE
     cmp edi, DS_MAX
-    jae 1f
+    jae 9f
+    cmp edi, [rip + g_dfocus]
+    je 9f
     mov [rip + g_dfocus], edi
     inc dword ptr [rip + g_dap_gen]
     mov dword ptr [rip + g_dirty], 1
-1:  ret
+    # its watches, evaluated again (one added while another session had the focus)
+    call dap_slot
+    mov rdi, rax
+    call send_watches
+9:  EPILOGUE
 
 # dap_focus_frame(ds, index): another frame of the stopped thread: revealed, its scopes and the
 #   watches asked for again (the variables of the old frame go)
@@ -3811,6 +3849,7 @@ FN dap_focus_frame
     cmp r12, [rbx + DS_frames + VEC_len]
     jae 9f
     mov [rbx + DS_frame], r12d
+    inc dword ptr [rbx + DS_vgen]       # answers about the other frame's pool are dropped
     mov qword ptr [rbx + DS_vars + VEC_len], 0
     mov rdi, rbx
     call reveal_frame
@@ -4257,6 +4296,8 @@ FN dap_find_node
 .bss
 .p2align 3
 dstart_owner: .quad 0           # dap_start_ext's caller for the session being made, 0 the user
+hover_seq: .long 0              # the latest hover evaluation's number
+.p2align 3
 dstart_oid: .quad 0
 dstart_resolved: .long 0        # 1: debug-resolve answered for this launch
 dstart_before: .long 0          # 1: the before task ran (or there is none to run)

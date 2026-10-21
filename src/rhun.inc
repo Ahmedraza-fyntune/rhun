@@ -2959,7 +2959,10 @@ F DS_port, 4            # tcp, server: the port it listens on
 F DS_addr, 4            # and the IPv4 address (network order)
 F DS_conn_until, 8      # time_ms when connecting gives up
 F DS_rit_seq, 4         # the runInTerminal request still owed an answer, 0 none
+F DS_vgen, 4            # bumped whenever the variable pool starts again (a stop, another frame)
+F DS_wgen, 4            # the last round of watch evaluations sent
 F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
+F DS_pad2, 4
 F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
 F DS_owner_id, 8        # and its request still owed an answer, 0 none
 F DS_after, 8           # owned cstr: launch.ini's after task, run when the session ends, or 0
