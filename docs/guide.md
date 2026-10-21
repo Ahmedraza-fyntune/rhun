@@ -24,6 +24,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Wayland with fractional scaling; X11 as a fallback
 - macOS on Apple silicon: Retina displays, input methods and dead keys, full screen, signed with a Developer ID
 - Windows x64: native window, Unicode paths and clipboard, per-monitor scaling, and a ConPTY terminal
+- Remote hosts: a window whose project, terminals, git and extensions are on a Linux machine reached by SSH, in a Docker or Podman container, or in WSL
 - Installs from GitHub releases; updates itself on Windows, Linux and macOS
 
 Open files follow edits made by agents and other tools. Writes arriving within 100 ms are grouped
@@ -431,6 +432,44 @@ An installed extension that writes commit messages is listed after these, by its
 `commit_ai` accepts `off`, `claude`, `codex`, `ollama`, or `ext:OWNER/NAME` for an extension. **Git: Generate Commit Message**, **Git: Check AI Provider**, **Git: Download Local Model**, **Git: Delete Local Model**, and **Git: Cancel AI Operation** are also available in the command palette.
 
 CLI references: [Codex noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [Codex authentication](https://learn.chatgpt.com/docs/auth), [Claude Code CLI](https://code.claude.com/docs/en/cli-reference), and [Ollama](https://docs.ollama.com/quickstart).
+
+### Remote hosts
+
+A remote window works on another machine: its project, files, explorer, Go to File, Find in Files,
+terminals, tasks, test runs, debug adapters, git, the agents panel's sessions and extensions are the
+host's, while the window, settings, themes, keys, installed extensions and updates stay on this
+computer. The host is Linux on x86-64 (a container on Apple silicon must be `linux/amd64`); the
+window can be Linux, macOS or Windows.
+
+- Open one from the project menu: **Connect to Host…** lists the `Host` lines of `~/.ssh/config`
+  and recent remotes, or takes a typed `user@host`; **Attach to Container…** lists `docker ps` (or
+  `podman ps`); on Windows **Connect to WSL…** lists the distributions. Each opens a new window. On
+  the command line: `rhun --remote ssh:HOST /path`, `--remote docker:NAME`, `podman:NAME` or
+  `wsl:DISTRO` (the path is optional: the host's home folder).
+- Connecting runs `ssh HOST sh -s` (or `docker exec -i NAME sh -s`, `wsl.exe -d DISTRO sh -s`) and
+  copies rhun's Linux build into `~/.cache/rhun-remote` on the host once; nothing else is installed
+  and no port is opened. On macOS and Windows that build is downloaded from the release first and
+  checked against its `SHA256SUMS`; `agent_binary = PATH` under `[remote]` names another one (a
+  development build). The title bar shows `HOST: folder` and the status bar `SSH: HOST`, whose menu
+  has Disconnect, Reconnect, Show Remote Log and the forwarded ports.
+- ssh's questions (a password, a passphrase, a new host key) appear in rhun's prompt (OpenSSH 8.4 or
+  later). On Windows rhun runs ssh without a prompt for now: use a key or ssh-agent, and accept a new
+  host's key in a terminal once.
+- When the connection drops, a bar says so and offers **Reconnect**. Documents stay open and
+  editable, and a save waits for the connection. Programs keep running on the host meanwhile:
+  Reconnect brings back the same terminals and extensions, and files changed there in between are
+  compared again. A host nobody reconnects to ends its programs after 3 hours (10 minutes when none
+  run); closing the window or **Disconnect** ends them at once. `RHUN_REMOTE_SESSION=0` makes them
+  end with the connection instead.
+- Extensions run on the host unless their manifest says `where = local`. rhun copies an extension
+  there once (its folder, or its release's Linux build when the installed one is for this computer),
+  keeps its state folder there, and the host's Linux holds it to its permissions with Landlock; its
+  page says when that kernel cannot.
+- **Remote: Forward a Port** makes a port of the host's loopback reachable at `localhost` here, with
+  the same number when it is free (ports below 1024 at 10000 plus the port); **Stop Forwarding Ports**
+  ends them. Pages an extension serves on the host's loopback are forwarded when it opens them.
+- `RHUN_SSH` names the ssh program to run, and `RHUN_RELEASES_URL` another place for the release's
+  Linux build. **Show Remote Log** opens `remote.log` in the state folder.
 
 ### Images
 
@@ -1175,11 +1214,19 @@ section's buttons run all tests, run them with coverage, run the failed ones aga
 `r` runs the selected test, `d` debugs it, and its menu also goes to the test or its failure,
 opens the expected and actual values as a diff tab and shows its output. Under the tree the
 selected test's last result: its message, the expected and actual values as a colored line diff,
-and the end of its output.
+and the end of its output. The field above the tree filters it (ctrl+f): each word starts a word of
+a test's name ("add" finds TestAdd); the button beside it shows only failed tests. After a coverage
+run a **Coverage** section lists the files, the least covered first. The status bar counts a run's
+progress, then the passed and failed tests (a click shows Testing).
+
+Debugging a test starts the extension's own debugger on it in rhun's debugger (`rhun-editor/tests`:
+Delve for Go, lldb-dap for Rust): breakpoints, stepping and the Debug Console work as for any
+session, and when the session ends the program's exit status is the test's result.
 
 In the editor each test has a run button in the gutter at its first line (`[testing] gutter =
 false` hides them): a click runs it, a right click opens its menu, and after a run the button
-shows the result. A failure with a place is a problem (the Problems tab, a mark in the file with
+shows the result. Buttons, failure marks and coverage follow your edits until the extension lists
+the file's tests again. A failure with a place is a problem (the Problems tab, a mark in the file with
 the expected and actual values on hover) until the test passes. After a run with coverage the line
 numbers are tinted: covered green, missed red, partly covered yellow (Show Test Coverage toggles
 them).

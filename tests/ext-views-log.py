@@ -43,6 +43,12 @@ class Logs(ViewsBase):
         self.assertEqual(heads[0], 'lines=6 dropped=0 follow=1 cur=2 anchor=-1 match=2 find=red')
         self.assertEqual(heads[1], 'lines=6 dropped=0 follow=1 cur=0 anchor=1 match=2 find=')
 
+    def test_find_looks_at_the_text_shown_not_its_colors(self):
+        out = self.run_editor([*SHOW, 'cmd viewfake.log', 'wait 300', 'view-focus logs', 'key ctrl+f',
+                               'type yellow and', 'key Return', 'print-log logs'])
+        head = [l for l in out if l.startswith('lines=')][0]
+        self.assertIn(' match=1 ', head)
+
     def test_copy_takes_the_selected_lines_without_colors(self):
         (self.proj / 'note.txt').write_text('', encoding='utf-8')
         out = self.run_editor([*SHOW, 'cmd viewfake.log', 'wait 300', 'view-focus logs', 'key End',

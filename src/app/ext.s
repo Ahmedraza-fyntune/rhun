@@ -1923,6 +1923,10 @@ FN ext_load
     mov rdi, rax
     jmp .Lel_fail
 .Lel_where_ok:
+    mov rdi, rbx                # remote hosts: the host checks the program it runs (remoteext.s)
+    call remote_ext_load
+    test eax, eax
+    jnz 8f
     cmp qword ptr [rbx + EXT_prog], 0
     jne 6f
     # no program for this system: a WebAssembly module runs in rhun --wasm-host
@@ -4056,8 +4060,12 @@ FN ext_exited
     # page is the child that could not confine itself (confine.s). The exit status alone proves
     # nothing: the program may exit with the same numbers
     mov rdi, rbx
-    call confine_failed
+    call remote_ext_confine_failed  # remote hosts: its child on the host (remoteext.s)
     test eax, eax
+    jnz 19f
+    mov rdi, rbx
+    call confine_failed
+19: test eax, eax
     jz 20f
     mov edi, eax
     call confine_exit_reason

@@ -42,6 +42,14 @@ class RunCommand(contribhost.Contrib):
             'ok 1 0', 'ok 2 0', 'error 3 syntax cannot parse the line',
             'error 4 refused not a command an extension may run', 'error 5 needs terminal=yes'])
 
+    def test_task_commands_need_terminal_run(self):
+        # v1's terminal = yes (suggest) lets the terminal built-ins run, not the task commands
+        self.run_editor(exts=self.exts({'rt': ['run-command run_task 0']},
+                                       needs='documents = write\nterminal = yes'),
+                        files=('c.txt',), drop_waits=True,
+                        actions=['cmd demo.rt', 'wait-ext demo running', 'wait 300'])
+        self.assertEqual(self.answers(self.contrib_log()), ['error 1 needs terminal=run'])
+
     def test_needs_documents_write(self):
         self.run_editor(exts=self.exts({'tc': ['run-command toggle_comment 0']}, needs=''),
                         files=('c.txt',), drop_waits=True,

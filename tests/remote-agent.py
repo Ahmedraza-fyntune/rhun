@@ -19,17 +19,19 @@ EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 class Agent:
     """One agent process and a reader for its stream."""
 
-    def __init__(self, home, env_extra=None):
+    def __init__(self, home, env_extra=None, session=None):
         env = {'HOME': str(home), 'PATH': '/usr/local/bin:/usr/bin:/bin', 'SHELL': '/bin/sh',
                'USER': 'tester'}
         env.update(env_extra or {})
-        self.p = subprocess.Popen([str(EXE), '--remote-agent'], stdin=subprocess.PIPE,
+        args = [str(EXE), '--remote-agent'] + (['--session', session] if session else [])
+        self.p = subprocess.Popen(args, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         self.buf = b''
         self.next_id = 1
         self.data = {}          # channel -> bytes received
         self.eof = set()
         self.exits = {}
+        self.cfail = {}         # channel -> the confinement failure its x carried
         self.credit = {}        # channel -> credit the agent gave back
         self.events = []
         self.replies = {}
@@ -103,6 +105,8 @@ class Agent:
             self.eof.add(int(f[1]))
         elif kind == b'x':
             self.exits[int(f[1])] = int(f[2])
+            if len(f) > 3:
+                self.cfail[int(f[1])] = int(f[3])
         elif kind == b'w':
             self.credit[int(f[1])] = self.credit.get(int(f[1]), 0) + int(f[2])
         elif kind == b'v':
@@ -380,7 +384,9 @@ class RemoteAgent(unittest.TestCase):
         return False
 
     # a child that ignores SIGHUP and SIGTERM, its output elsewhere: only its group's SIGKILL ends it
-    STUBBORN = "(trap '' HUP TERM; exec sleep 300) </dev/null >/dev/null 2>&1 & echo $!"
+    # (the leader goes on once the child's traps are set)
+    STUBBORN = ("r=$HOME/ready-$$; (trap '' HUP TERM; : > $r; exec sleep 300) </dev/null >/dev/null 2>&1 & "
+                "while [ ! -e $r ]; do sleep 0.02; done; echo $!")
 
     def test_what_a_program_leaves_behind_ends_with_it(self):
         a = self.agent
@@ -400,6 +406,86 @@ class RemoteAgent(unittest.TestCase):
         a.p.stdin.close()                       # the window went away
         a.p.wait(10)
         self.assertTrue(self.gone_within(child, 4), 'the stubborn child outlived the session')
+
+    def test_a_session_outlives_its_connection(self):
+        """--session: the first agent forks the session's daemon and relays to it; when its
+        connection ends the programs keep running, and the next agent of that session attaches to
+        them; quit ends the session and its socket."""
+        sid = '0123456789abcdef'
+        a = Agent(self.home, session=sid)
+        kind, body = a.call('spawn 20 0 0 0 0', spawn_body(['sh', '-c', 'read x; echo got-$x; exit 3']))
+        self.assertEqual(kind, 'ok')
+        pid = int(body)
+        kind, body = a.call('spawn 21 0 0 0 0', spawn_body(['sh', '-c', 'exit 5']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 21 in a.exits)
+        a.close()                               # the connection goes
+        time.sleep(0.5)
+        os.kill(pid, 0)                         # the program did not
+        self.assertTrue((self.home / '.cache/rhun-remote/s' / sid).exists())
+        b = Agent(self.home, session=sid)
+        kind, body = b.call('attach')
+        self.assertEqual(kind, 'ok')
+        rows = {int(l.split()[0]): l.split()[1:] for l in body.decode().splitlines()}
+        self.assertEqual(rows[20][1], '0', body)    # running, its output still open
+        self.assertEqual(rows[21], ['1', '3', '5'], body)  # ended: kept until the window closes it
+        self.assertEqual(b.call('close 21')[0], 'ok')
+        self.assertNotIn(b'\n21 ', b'\n' + b.call('attach')[1])
+        b.send(b'd 20 3\nhi\n')
+        b.wait_for(lambda: 20 in b.exits and b'got-hi' in b.data.get(20, b''))
+        self.assertEqual(b.exits[20], 3)
+        b.send(b'0 quit 0\n')
+        b.p.wait(10)
+        end = time.time() + 5
+        while (self.home / '.cache/rhun-remote/s' / sid).exists() and time.time() < end:
+            time.sleep(0.05)
+        self.assertFalse((self.home / '.cache/rhun-remote/s' / sid).exists())
+
+    def test_stop_close_and_hangup_end_what_a_program_left(self):
+        """As uproc does locally: a program stopped (kill to its group), its channel closed while it
+        runs, or its terminal hung up, takes what it started with it, SIGKILL for what ignores the rest."""
+        a = self.agent
+        lead = self.STUBBORN + '; exec sleep 300'
+        # stopped: SIGTERM to its group ends the leader, the agent ends the rest
+        self.assertEqual(a.call('spawn 30 0 0 0 0', spawn_body(['sh', '-c', lead]))[0], 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(30, b''))
+        child = int(a.data[30])
+        self.assertEqual(a.call('kill 30 15 1')[0], 'ok')
+        a.wait_for(lambda: 30 in a.exits)
+        self.assertTrue(self.gone_within(child, 4), 'stop left the child')
+        # closed while running: the leader and the child go, the leader is reaped
+        kind, body = a.call('spawn 31 0 0 0 0', spawn_body(['sh', '-c', lead]))
+        leader = int(body)
+        a.wait_for(lambda: b'\n' in a.data.get(31, b''))
+        child = int(a.data[31])
+        self.assertEqual(a.call('close 31')[0], 'ok')
+        self.assertTrue(self.gone_within(child, 4), 'close left the child')
+        self.assertTrue(self.gone_within(leader, 4), 'close left the leader')
+        # a terminal hung up: its shell's leftovers go too
+        self.assertEqual(a.call('spawn 32 1 0 80 24', spawn_body(['sh', '-c', lead], env=['TERM=dumb']))[0], 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(32, b''))
+        child = int(a.data[32].strip().split()[-1])
+        a.send(b'e 32\n')
+        a.wait_for(lambda: 32 in a.exits)
+        self.assertTrue(self.gone_within(child, 4), 'the hangup left the child')
+
+    def test_a_confined_childs_failure_comes_with_its_exit(self):
+        """An extension's child that could not confine itself on the host (MODE 3): x carries the
+        code from confine.s's page (RHUN_REMOTE_TEST_CONFINE stands in for a kernel that refuses)."""
+        a = Agent(self.home, env_extra={'RHUN_REMOTE_TEST_CONFINE': '72'})
+        try:
+            state = self.home / 'st'
+            block = b'4\0' + str(self.home).encode() + b'\0\0' + str(state).encode() + b'\0\0\0'
+            body = spawn_body(['sh', '-c', 'exit 70'], str(self.home)) + b'\0' + block
+            self.assertEqual(a.call('spawn 33 3 0 0 0', body)[0], 'ok')
+            a.wait_for(lambda: 33 in a.exits)
+            self.assertEqual((a.exits[33], a.cfail.get(33)), (70, 72))
+            # a pipe program says nothing of the kind
+            self.assertEqual(a.call('spawn 34 0 0 0 0', spawn_body(['sh', '-c', 'exit 70']))[0], 'ok')
+            a.wait_for(lambda: 34 in a.exits)
+            self.assertNotIn(34, a.cfail)
+        finally:
+            a.close()
 
     def test_login_environment(self):
         """The login shell's profile reaches programs (a PATH entry like ~/.cargo/bin)."""
