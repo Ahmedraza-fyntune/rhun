@@ -25,6 +25,7 @@ ew_scanning: .quad 0
 ew_dirty: .quad 0
 ew_rescan: .quad 0
 ew_rebuild: .quad 0
+ew_ws_gen: .quad 0              # g_ws_gen when the roots were last taken
 ew_emit_at: .quad 0
 ew_poll_at: .quad 0
 ew_path: .zero 4096
@@ -283,7 +284,14 @@ FN extwatch_tick
     mov qword ptr [rip + ew_dirty], 1
     mov qword ptr [rip + ew_rescan], 1
     mov qword ptr [rip + ew_rebuild], 1
-1:  cmp qword ptr [rip + ew_scanning], 0
+1:  mov eax, [rip + g_ws_gen]   # resources group: the workspace folders changed: every root again
+    cmp eax, [rip + ew_ws_gen]
+    je 11f
+    mov [rip + ew_ws_gen], eax
+    mov qword ptr [rip + ew_rebuild], 1
+    mov qword ptr [rip + ew_dirty], 1
+    mov qword ptr [rip + ew_rescan], 1
+11: cmp qword ptr [rip + ew_scanning], 0
     jne 3f
     cmp qword ptr [rip + ew_rebuild], 0
     je 6f
@@ -291,10 +299,20 @@ FN extwatch_tick
     mov qword ptr [rip + ew_stage_len], 0
     mov qword ptr [rip + ew_stage_at], 0
     mov qword ptr [rip + ew_entries], 0
-    mov rdi, [rip + ew_root]
+    xor r13d, r13d              # every workspace folder is a root (workspace.s), budgets shared
+12: call wfold_count
+    cmp r13, rax
+    jae 13f
+    mov rdi, r13
+    inc r13
+    call wfold_path
+    mov rdi, rax
     call .Lew_enroll
     test rax, rax
     js 5f
+    jmp 12b
+13: cmp qword ptr [rip + ew_stage_len], 0
+    je 5f
     mov qword ptr [rip + ew_scanning], 1
 3:  mov rax, [rip + ew_stage_at]
     cmp rax, [rip + ew_stage_len]
