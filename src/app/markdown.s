@@ -49,6 +49,7 @@
 .equ MDF_BIG, 2
 .equ MDF_HUGE, 3
 .equ MDF_CODE, 4
+.equ MDF_EM, 5                  # emphasis: the ui face sheared (em_face)
 
 .equ MD_LISTS, 8                # nesting kept for lists
 .equ MD_COLS, 32                # table columns
@@ -140,6 +141,7 @@ ENDSTRUCT MDI_SIZE
 .p2align 3
 pm: .quad 0                     # the document being parsed or laid out
 body_rr: .zero RR_SIZE          # md_from_body's record
+em_face: .zero FACE_SIZE        # emphasis: the ui face, oblique (em_face_init)
 slug_buf: .zero SB_SIZE         # md_anchor: a heading's slug
 rel_buf: .zero 4096             # a relative link's path
 pb: .zero SB_SIZE               # a paragraph's lines, joined with LF (\x01 before a hard break)
@@ -198,6 +200,8 @@ cls_buf: .zero 4096             # a code line's classes
 tbuf: .zero 64
 
 .data
+.p2align 2
+em_gen: .long -1                # g_face_gen when em_face was made, -1 never
 in_link: .long -1
 
 .text
@@ -3237,10 +3241,36 @@ entity:
 
 # ---------------- layout ----------------
 
-# face_of(MDF_*) -> rax FACE*
+# face_of(MDF_*) -> rax FACE* (the emphasis face made again when the ui face changed)
 face_of:
-    lea rax, [rip + md_faces]
+    cmp edi, MDF_EM
+    jne 1f
+    mov eax, [rip + g_face_gen]
+    cmp eax, [rip + em_gen]
+    je 1f
+    push rdi
+    call em_face_init
+    pop rdi
+1:  lea rax, [rip + md_faces]
     mov rax, [rax + rdi*8]
+    ret
+
+# em_face_init(): em_face is the ui face's font and size, sheared; g_face_gen stays (it is ours)
+em_face_init:
+    push rbx
+    mov ebx, [rip + g_face_gen]
+    lea rdi, [rip + em_face]
+    mov rsi, [rip + g_face_ui + FACE_font]
+    mov edx, [rip + g_face_ui + FACE_px]
+    test rsi, rsi
+    jz 1f
+    call face_init
+    mov dword ptr [rip + em_face + FACE_oblique], 1
+    mov eax, [rip + g_face_ui + FACE_embolden]
+    mov [rip + em_face + FACE_embolden], eax
+1:  mov [rip + g_face_gen], ebx
+    mov [rip + em_gen], ebx
+    pop rbx
     ret
 
 # item_new(kind) -> rax a new layout item (link -1)
@@ -3548,10 +3578,16 @@ flow:
     jz 1f
     call flow_newline
     jmp .Lfl_next
-1:  mov eax, [rip + lay_face]   # its face: code spans in the code face
+1:  mov eax, [rip + lay_face]   # its face: code spans in the code face, emphasis sheared
     test dword ptr [r13 + MDR_style], MS_CODE
-    jz 2f
+    jz 21f
     mov eax, MDF_CODE
+    jmp 2f
+21: test dword ptr [r13 + MDR_style], MS_EM
+    jz 2f
+    cmp eax, MDF_UI
+    jne 2f
+    mov eax, MDF_EM
 2:  mov [rsp + 8], eax
     mov edi, eax
     call face_of
@@ -4456,7 +4492,7 @@ url_trail: .asciz ".,:;!?\"')"
 .p2align 3
 entities: .quad .Le_amp, '&', .Le_lt, '<', .Le_gt, '>', .Le_quot, '"', .Le_apos, 0x27
     .quad .Le_nbsp, 0xa0, .Le_copy, 0xa9, .Le_mdash, 0x2014, .Le_ndash, 0x2013, .Le_hellip, 0x2026, 0, 0
-md_faces: .quad g_face_ui, g_face_small, g_face_big, g_face_huge, g_face_code
+md_faces: .quad g_face_ui, g_face_small, g_face_big, g_face_huge, g_face_code, em_face
 # bytes that end a stretch of plain text in inline parsing
 special:
     .byte 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0     # 0x00: \x01, LF

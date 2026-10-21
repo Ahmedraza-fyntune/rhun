@@ -411,7 +411,7 @@ F FACE_tabcap, 4
 F FACE_tabn, 4
 F FACE_ascii, 1024  # fast path GL* for cp < 128
 F FACE_embolden, 4
-F FACE_pad2, 4
+F FACE_oblique, 4       # views group: glyphs sheared right (Markdown emphasis), 0 upright
 ENDSTRUCT FACE_SIZE
 
 # ---- event loop fd watchers ----
