@@ -179,6 +179,57 @@ def files_table(view, more=0):
     patch(view, ops)
 
 
+quick_q = []            # Q of the quick input rhun took
+
+
+def qitem(iid, label, kind='item', extra=b''):
+    iid, label = iid.encode(), label.encode()
+    return f'{len(iid)} {len(label)} {len(extra)} {kind}\n'.encode() + iid + label + extra
+
+
+def qitems(items):
+    return rec('items', f'{len(items)}', b''.join(items))
+
+
+def qbutton(key, icon, tip):
+    return f'{key} {icon} {len(tip)}\n{tip}'.encode()
+
+
+def quick_step1():
+    del_btn = rec('button', 'del discard', b'Delete')
+    items = [qitem('', 'Local', 'sep'), qitem('main', 'main', extra=rec('desc', data=b'current') + del_btn),
+             qitem('dev', 'dev', extra=rec('detail', data=b'3 commits ahead') + del_btn),
+             qitem('', 'Remote', 'sep'), qitem('origin/main', 'origin/main', extra=rec('icon', 'cloud -'))]
+    return [rec('title', data=b'Branch'), rec('step', '1 3', b''), rec('placeholder', data=b'Pick a branch'),
+            rec('flags', 'back', b''), rec('buttons', '1', qbutton('refresh', 'refresh', 'Refresh')), qitems(items)]
+
+
+def quick_open(ops):
+    body = b''.join(ops)
+    rid = request('quick', body)
+
+    def took(f):
+        quick_q.append(int(f[2]))
+    on_reply[rid] = took
+
+
+def quick_set(ops):
+    if quick_q:
+        request(f'quick-set {quick_q[-1]}', b''.join(ops))
+
+
+def quick_event(fields, body):
+    """0 quick Q accept SEQ N LEN: text "bad" gets an error message for that sequence, else step 2."""
+    if fields[3] == 'accept':
+        lines = body.split(b'\n')
+        text = lines[-1]
+        if text == b'bad':
+            quick_set([rec('msg', f'{fields[4]} error', b'not a branch')])
+        else:
+            quick_set([rec('title', data=b'Step two'), rec('step', '2 3', b''), rec('value', '0', b''),
+                       qitems([qitem('x', 'Create x'), qitem('y', 'Create y')])])
+
+
 def draw(view, picture):
     request(f'draw {view}', picture.encode())
 
@@ -323,6 +374,25 @@ def on_command(name):
         patch(views['files'], [rec('columns', '2', col('middle', 0, 'sort', 'Name') + col('left', 0, '-', 'X'))])
     elif name == 'tbtree' and todo:
         patch(todo, [rec('columns', '1', col('left', 0, 'sort', 'Name'))])
+    elif name == 'quick':
+        quick_open(quick_step1())
+    elif name == 'quickmulti':
+        quick_open([rec('title', data=b'Files'), rec('flags', 'multi', b''),
+                    qitems([qitem('a', 'a.rs', extra=rec('picked', '', b'')), qitem('b', 'b.rs'), qitem('c', 'c.rs')])])
+    elif name == 'quickinput':
+        quick_open([rec('mode', 'input', b''), rec('flags', 'password busy', b''), rec('prompt', data=b'Your token'),
+                    rec('value', '-', b'abc')])
+    elif name == 'quicknofilter':
+        quick_open([rec('flags', 'nofilter', b''),
+                    qitems([qitem('s1', 'symbol one', extra=rec('hl', '0 6', b'')), qitem('s2', 'other')])])
+    elif name == 'quickclose' and quick_q:
+        request(f'quick-close {quick_q[-1]}')
+    elif name == 'quickbad':
+        quick_open([rec('step', 'x 3', b'')])
+    elif name == 'quickbig':
+        quick_open([qitems([qitem(f'i{i}', f'item {i}') for i in range(10001)])])
+    elif name == 'quickactive' and quick_q:
+        quick_set([rec('active', '', b'origin/main')])
     elif name == 'note':
         notify('info', note_body('Indexed 12 files', 'workspace'))
     elif name == 'noteask':
@@ -427,6 +497,8 @@ def main():
         features += ' view-form'
     if os.environ.get('VIEWFAKE_TABLE'):
         features += ' view-table'
+    if os.environ.get('VIEWFAKE_QUICK'):
+        features += ' quick-input'
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -445,6 +517,13 @@ def main():
             n = int(fields[-1])
             body = inp.read(n)
             log(body)
+        elif fields[:2] == ['0', 'quick'] and len(fields) >= 4:
+            if fields[3] in ('value', 'active', 'accept', 'button'):
+                n = int(fields[-1])
+                body = inp.read(n)
+                log(body)
+            quick_event(fields, body)
+            continue
         elif fields[0] == 'ok' and len(fields) >= 3 and int(fields[1]) in on_reply:
             on_reply.pop(int(fields[1]))(fields)
             continue

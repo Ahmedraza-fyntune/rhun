@@ -1830,7 +1830,8 @@ draw_card:
     mov eax, [rsp + 24]
     EPILOGUE
 
-# spinner(x, y, h): three dots, one bright, turning every 300 ms
+# spinner(x, y, h): three dots, one bright, turning every 300 ms (notify_spinner for others)
+FN notify_spinner
 spinner:
     PROLOGUE 16
     mov [rsp], edi

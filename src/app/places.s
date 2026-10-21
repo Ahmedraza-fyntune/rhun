@@ -1581,7 +1581,17 @@ FN views_timeout
     cmp rbx, rax
     jge 1f
 2:  mov rax, rbx
-1:  add rsp, 8
+1:  mov rbx, rax                # a quick input's busy spinner (quick.s)
+    call quick_timeout
+    movsxd rax, eax
+    cmp rbx, -1
+    je 3f
+    cmp rax, -1
+    je 4f
+    cmp rbx, rax
+    jge 3f
+4:  mov rax, rbx
+3:  add rsp, 8
     pop r12
     pop rbx
     ret
@@ -1591,7 +1601,11 @@ FN views_tick
     sub rsp, 8
     call rview_tick
     call notify_tick
-    add rsp, 8
+    call quick_timeout          # a quick input's busy spinner turns
+    cmp eax, -1
+    je 1f
+    mov dword ptr [rip + g_dirty], 1
+1:  add rsp, 8
     ret
 
 # places_init(): the explorer, the sidebar's first section

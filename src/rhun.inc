@@ -1704,6 +1704,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_CUSTOM_EDITORS, "custom-editors", 1   # custom editors (customed.s, ceproto.inc)
     FEATURE FEAT_VIEW_FORM, "view-form", 0        # views group: form views (rform.s)
     FEATURE FEAT_VIEW_TABLE, "view-table", 0      # views group: table views (columns, sorted, cell; sort)
+    FEATURE FEAT_QUICK_INPUT, "quick-input", 0    # views group: quick, quick-set, quick-close (quick.s)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -3179,6 +3180,7 @@ ENDSTRUCT AX_SIZE
 # ---- views group: places, the shared tree widget, retained extension views ----
 # (places.s, rtree.s, rview.s; docs/extensions/v1.1.md "Retained views")
 .equ FOCUS_VIEW, 10             # a place item has the keyboard (g_place_focus names it)
+.equ FOCUS_QUICK, 69            # views group: an extension's quick input (quick.s)
 
 # a place item: a sidebar section, a bottom panel tab or a side (right column) tab. Built-in code
 # and extension views register the same way (place_add); the slot index is the item's id.

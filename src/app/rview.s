@@ -613,6 +613,8 @@ FN rview_owner_gone
     call notify_owner_gone      # its notifications and progress go too
     mov rdi, r12
     call viewimg_owner_gone     # and its images (viewpic.s)
+    mov rdi, r12
+    call quick_owner_gone       # and its quick input (quick.s)
     xor ebx, ebx
 1:  cmp ebx, RV_MAX
     jae 9f

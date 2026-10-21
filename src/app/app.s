@@ -2353,6 +2353,8 @@ FN focused_field
     mov eax, [rip + g_focus]
     cmp eax, FOCUS_VIEW
     je views_field              # a view's own field (views group, rview.s)
+    cmp eax, FOCUS_QUICK
+    je quick_field              # an extension's quick input (quick.s)
     cmp eax, FOCUS_SCM
     je scm_field
     cmp eax, FOCUS_PALETTE
@@ -2373,6 +2375,8 @@ FN focused_field
 # field_changed(): notify the owner of the focused field
 field_changed:
     mov eax, [rip + g_focus]
+    cmp eax, FOCUS_QUICK
+    je quick_changed
     cmp eax, FOCUS_PALETTE
     je palette_changed
     cmp eax, FOCUS_PROMPT
@@ -2429,7 +2433,16 @@ FN app_on_key
     jmp 9f
 10: # focused components get the first chance
     mov eax, [rip + g_focus]
-    cmp eax, FOCUS_PALETTE
+    cmp eax, FOCUS_QUICK        # an extension's quick input (quick.s)
+    jne 12f
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call quick_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+12: cmp eax, FOCUS_PALETTE
     je 2f
     cmp eax, FOCUS_PROMPT
     jne 3f
@@ -3126,6 +3139,7 @@ FN app_render
     call extbar_draw
     call explorer_menu_draw
     call palette_draw
+    call quick_draw             # an extension's quick input (quick.s)
     call dialog_draw
     call toast_draw
     call tip_commit             # after every button with a tooltip has been drawn
@@ -3157,7 +3171,9 @@ FN app_modal_open
     test eax, eax
     jnz 1f
     call palette_is_open
-    ret
+    test eax, eax
+    jnz 1f
+    jmp quick_is_open
 1:  mov eax, 1
     ret
 

@@ -74,6 +74,15 @@ c_print_notes:
     call notify_dump
     EPILOGUE
 
+# print-quick: the quick input shown (quick_dump), or "quick none"
+c_print_quick:
+    PROLOGUE
+    mov rbx, rdi
+    call views_flush
+    mov rdi, rbx
+    call quick_dump
+    EPILOGUE
+
 # note-press N B: card N among those shown (0 the oldest) has button B (1-3), close or cancel pressed
 c_note_press:
     PROLOGUE
@@ -514,7 +523,7 @@ views_ctl:
     .quad .Lc_print_side_tabs, c_print_side_tabs, .Lc_print_view, c_print_view
     .quad .Lc_view_show, c_view_show, .Lc_view_focus, c_view_focus, .Lc_places_demo, c_places_demo
     .quad .Lc_print_log, c_print_log, .Lc_print_notes, c_print_notes, .Lc_note_press, c_note_press
-    .quad .Lc_print_form, c_print_form
+    .quad .Lc_print_form, c_print_form, .Lc_print_quick, c_print_quick
     .quad 0, 0
 .Lc_print_sidebar: .asciz "print-sidebar"
 .Lc_print_panel_tabs: .asciz "print-panel-tabs"
@@ -526,6 +535,7 @@ views_ctl:
 .Lc_print_log: .asciz "print-log"
 .Lc_print_notes: .asciz "print-notes"
 .Lc_print_form: .asciz "print-form"
+.Lc_print_quick: .asciz "print-quick"
 .Lc_note_press: .asciz "note-press"
 .Lw_close: .asciz "close"
 .Lw_cancel: .asciz "cancel"
