@@ -613,7 +613,16 @@ rm_spawn_transport:
     lea rax, [rip + rm_port]
     mov [rbx + 88], rax
     mov ecx, 12
-13: lea rax, [rip + .Ldashdash]
+13:
+.ifdef WINDOWS
+    # no askpass on Windows yet: a question ssh would ask fails at once instead of waiting
+    lea rax, [rip + .Ldash_o]
+    mov [rbx + rcx*8], rax
+    lea rax, [rip + .Lbatch_mode]
+    mov [rbx + rcx*8 + 8], rax
+    add ecx, 2
+.endif
+    lea rax, [rip + .Ldashdash]
     mov [rbx + rcx*8], rax
     lea rax, [rip + rm_host]
     mov [rbx + rcx*8 + 8], rax
@@ -624,6 +633,15 @@ rm_spawn_transport:
 1:  cmp eax, RT_LOCAL
     jne 2f
     lea rax, [rip + .Lbin_sh]
+.ifdef WINDOWS
+    # tests only: a POSIX sh RHUN_REMOTE_SH names (Wine runs Linux's own as Z:/bin/sh)
+    lea rdi, [rip + .Lenv_remote_sh]
+    call getenv
+    test rax, rax
+    jnz 14f
+    lea rax, [rip + .Lsh]
+14:
+.endif
     mov [rbx], rax
     lea rax, [rip + .Ldash_s]
     mov [rbx + 8], rax
@@ -2631,10 +2649,6 @@ FN remote_spawn
     mov dword ptr [rsp + 60], -1
     mov dword ptr [rsp + 64], -1   # the error socketpair (errfd -3)
     mov dword ptr [rsp + 68], -1
-.ifdef WINDOWS
-    mov rax, -38
-    EPILOGUE
-.endif
     cmp dword ptr [rip + g_remote_state], RS_UP
     jne .Lrs_notconn
     call rm_alloc_chan
@@ -3527,8 +3541,90 @@ rm_download_path:
 #   state folder by a short shell script (curl, shasum or sha256sum, tar); rm_dl_done continues
 rm_download:
 .ifdef WINDOWS
-    lea rdi, [rip + .Lno_download]
-    jmp rm_fail
+    # Windows: runtime/windows/remote.ps1 (embedded by tools/build-windows.py), its inputs in
+    # RHUN_RD_VERSION and RHUN_RD_OUT
+    PROLOGUE 80
+    cmp dword ptr [rip + rm_dl_pid], 0
+    jne 9f
+    lea rdi, [rip + rm_dl_env]
+    call sb_clear
+    lea rdi, [rip + rm_dl_env]
+    lea rsi, [rip + .Le_rd_version]
+    call sb_push_cstr
+    lea rdi, [rip + rm_dl_env]
+    lea rsi, [rip + rhun_version]
+    call sb_push_cstr
+    lea rdi, [rip + rm_dl_env]
+    xor esi, esi
+    call sb_push_byte
+    mov rbx, [rip + rm_dl_env + SB_len]     # where the second one starts
+    lea rdi, [rip + rm_dl_env]
+    lea rsi, [rip + .Le_rd_out]
+    call sb_push_cstr
+    call rm_download_path
+    mov rsi, rax
+    lea rdi, [rip + rm_dl_env]
+    call sb_push_cstr
+    lea rdi, [rip + rm_dl_env]
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rip + rm_dl_env + SB_ptr]
+    mov [rsp], rax
+    add rax, rbx
+    mov [rsp + 8], rax
+    mov qword ptr [rsp + 16], 0
+    lea rdi, [rsp]
+    call env_make
+    mov [rsp + 72], rax
+    lea rdi, [rip + .Lps]
+    call proc_which
+    test rax, rax
+    jz 7f
+    mov [rsp + 64], rax
+    mov [rsp + 16], rax
+    lea rax, [rip + .Lps_noprofile]
+    mov [rsp + 24], rax
+    lea rax, [rip + .Lps_nonint]
+    mov [rsp + 32], rax
+    lea rax, [rip + .Lps_encoded]
+    mov [rsp + 40], rax
+    lea rax, [rip + remote_download_script]
+    mov [rsp + 48], rax
+    mov qword ptr [rsp + 56], 0
+    lea rdi, [rsp + 16]
+    mov rsi, [rsp + 72]
+    xor edx, edx
+    call run_piped
+    mov r12, rax
+    mov r13d, edx
+    mov rdi, [rsp + 64]
+    call mem_free
+    mov rdi, [rsp + 72]
+    call mem_free
+    test r12, r12
+    jle 8f
+    jmp .Ldl_started
+7:  mov rdi, [rsp + 72]
+    call mem_free
+8:  lea rdi, [rip + .Lno_download]
+    call rm_fail
+9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+.Ldl_started:
+    mov [rip + rm_dl_pid], r12d
+    mov [rip + rm_dl_fd], r13d
+    lea rdi, [rip + rm_dl_out]
+    call sb_clear
+    mov edi, r13d
+    mov esi, POLLIN
+    lea rdx, [rip + rm_on_download]
+    xor ecx, ecx
+    call watch_add
+    mov dword ptr [rip + g_remote_state], RS_DOWNLOAD
+    lea rdi, [rip + .Lrlog_download]
+    lea rsi, [rip + rhun_version]
+    call rm_log2
+    jmp 9b
 .else
     PROLOGUE 64
     cmp dword ptr [rip + rm_dl_pid], 0
@@ -3646,6 +3742,7 @@ g_remote_confined: .long 0      # the host's answer: CONFINED_*, -1 none
 .p2align 3
 g_remote_confine_why: .zero 320 # why it is not held there (cstr), or empty
 rm_kill_line: .zero SB_SIZE
+rm_dl_env: .zero SB_SIZE         # Windows: the download's RHUN_RD_* entries
 rm_reset_gen: .long 0
 rm_tenv: .quad 0
 rm_rq: .zero RQ_SIZE * RQ_MAX
@@ -3738,6 +3835,14 @@ rm_rq_ready: .long 0
 .Lv_cwd: .asciz "cwd "
 .Lv_close: .asciz "close "
 .Lv_attach: .asciz "attach"
+.Lbatch_mode: .asciz "BatchMode=yes"
+.Lenv_remote_sh: .asciz "RHUN_REMOTE_SH"
+.Le_rd_version: .asciz "RHUN_RD_VERSION="
+.Le_rd_out: .asciz "RHUN_RD_OUT="
+.Lps: .asciz "powershell.exe"
+.Lps_noprofile: .asciz "-NoProfile"
+.Lps_nonint: .asciz "-NonInteractive"
+.Lps_encoded: .asciz "-EncodedCommand"
 .Lv_connect: .asciz "connect "
 .Lrlog_attached: .asciz "attached to session "
 .Lrlog_attach: .asciz "the session has: "

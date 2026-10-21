@@ -1057,6 +1057,49 @@ FN cmd_attach_to_container
     call app_toast
 9:  EPILOGUE
 
+# cmd_connect_to_wsl(): Connect to WSL: the distributions `wsl.exe -l -q` lists (Windows)
+FN cmd_connect_to_wsl
+    PROLOGUE 48
+    cmp dword ptr [rip + ru_ps_pid], 0
+    jne 9f
+    lea rdi, [rip + .Lwsl]
+    call remote_which
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    lea rdi, [rip + ru_ps_kind]
+    lea rsi, [rip + .Ls_wsl]
+    call cstr_copy
+    mov [rsp], rbx
+    lea rax, [rip + .Ldash_l]
+    mov [rsp + 8], rax
+    lea rax, [rip + .Ldash_q]
+    mov [rsp + 16], rax
+    mov qword ptr [rsp + 24], 0
+    lea rdi, [rsp]
+    mov rsi, [rip + g_envp]
+    xor edx, edx
+    call run_piped
+    mov r12, rax
+    mov r13d, edx
+    mov rdi, rbx
+    call mem_free
+    test r12, r12
+    jle 8f
+    mov [rip + ru_ps_pid], r12d
+    mov [rip + ru_ps_fd], r13d
+    lea rdi, [rip + ru_ps_out]
+    call sb_clear
+    mov edi, r13d
+    mov esi, POLLIN
+    lea rdx, [rip + ru_on_ps]
+    xor ecx, ecx
+    call watch_add
+    jmp 9f
+8:  lea rdi, [rip + .Lno_wsl]
+    call app_toast
+9:  EPILOGUE
+
 # ru_on_ps(fd, revents, ctx): the containers' names; at the end, the pick list
 ru_on_ps:
     PROLOGUE
@@ -1087,7 +1130,26 @@ ru_on_ps:
     call proc_wait
     mov dword ptr [rip + ru_ps_pid], 0
     call ru_list_reset
-    mov rbx, [rip + ru_ps_out + SB_ptr]
+    # wsl.exe answers in UTF-16: NULs and byte-order marks go (names are ASCII)
+    mov rsi, [rip + ru_ps_out + SB_ptr]
+    mov rcx, [rip + ru_ps_out + SB_len]
+    test rsi, rsi
+    jz 13f
+    xor edx, edx
+    xor edi, edi
+11: cmp rdx, rcx
+    jae 12f
+    movzx eax, byte ptr [rsi + rdx]
+    inc rdx
+    test eax, eax
+    jz 11b
+    cmp eax, 0xfe
+    jae 11b
+    mov [rsi + rdi], al
+    inc rdi
+    jmp 11b
+12: mov [rip + ru_ps_out + SB_len], rdi
+13: mov rbx, [rip + ru_ps_out + SB_ptr]
     mov r12, [rip + ru_ps_out + SB_len]
     test rbx, rbx
     jz 5f
@@ -1612,6 +1674,13 @@ FN remote_menu_append
     lea rax, [rip + cmd_attach_to_container]
     mov [rbx + 40], rax
     add rbx, 48
+.ifdef WINDOWS
+    lea rax, [rip + .Lm_wsl]
+    mov [rbx], rax
+    lea rax, [rip + cmd_connect_to_wsl]
+    mov [rbx + 8], rax
+    add rbx, 16
+.endif
     mov rax, rbx
     sub rax, r12
     shr rax, 4
@@ -2242,6 +2311,12 @@ FN remote_askpass_main
 .Lsave_later: .asciz "Not connected: saved when "
 .Lsave_later2: .asciz " is back"
 .Lno_docker: .asciz "Neither docker nor podman was found"
+.Lno_wsl: .asciz "WSL was not found"
+.Lwsl: .asciz "wsl.exe"
+.Ls_wsl: .asciz "wsl:"
+.Ldash_l: .asciz "-l"
+.Ldash_q: .asciz "-q"
+.Lm_wsl: .asciz "Connect to WSL..."
 .Lno_containers: .asciz "No running containers"
 .Lno_window: .asciz "Could not open a new window"
 .Lhome: .asciz "HOME"

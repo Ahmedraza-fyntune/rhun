@@ -74,6 +74,7 @@ rx_hstate: .zero 4200
 rx_argv: .zero 8 * 300
 rx_envv: .zero 8 * 400
 rx_dlbuf: .zero 4096
+rx_envsb: .zero SB_SIZE         # Windows: the fetch's RHUN_EI_* entries
 
 .text
 
@@ -633,20 +634,15 @@ rx_fetch_root:
 9:  EPILOGUE
 
 # rx_fetch(rx, dir) -> eax 1 when the download started (rx_on_fetch takes it into dir), else 0
-#   with RX_why
+#   with RX_why. extinstall.s's job with linux-x86_64 for its target: install_script under sh, or
+#   on Windows ext_install_script under PowerShell (its inputs in RHUN_EI_* variables)
 rx_fetch:
-.ifdef WINDOWS
-    PROLOGUE
-    lea rsi, [rip + .Lr_no_fetch_windows]
-    xor edx, edx
-    call rx_why
-    xor eax, eax
-    EPILOGUE
-.else
-    PROLOGUE 112
+    PROLOGUE 160
     mov r12, rdi
     mov r13, rsi
     mov rbx, [r12 + RX_ext]
+    mov qword ptr [rsp + 152], 0    # Windows: the environment made
+    mov qword ptr [rsp + 144], 0    # and PowerShell's path
     mov rdi, [r12 + RX_fdir]
     call mem_free
     mov rdi, r13
@@ -656,6 +652,65 @@ rx_fetch:
     call rx_fetch_root
     test eax, eax
     jz 8f
+.ifdef WINDOWS
+    lea rdi, [rip + rx_envsb]
+    call sb_clear
+    lea rdi, [rip + .Lei_owner]
+    mov rsi, [rbx + EXT_owner]
+    call rx_env_entry
+    lea rdi, [rip + .Lei_name]
+    mov rsi, [rbx + EXT_name]
+    call rx_env_entry
+    lea rdi, [rip + .Lei_target]
+    lea rsi, [rip + .Ltarget]
+    call rx_env_entry
+    lea rdi, [rip + .Lei_root]
+    mov rsi, [rip + rx_tmp + SB_ptr]
+    call rx_env_entry
+    call ext_release_base
+    lea rdi, [rip + .Lei_base]
+    mov rsi, rax
+    call rx_env_entry
+    lea rdi, [rip + .Lei_tag]
+    lea rsi, [r12 + RX_tag]
+    call rx_env_entry
+    lea rdi, [rip + .Lei_want]
+    lea rsi, [rip + .Ldash]
+    call rx_env_entry
+    lea rdi, [rip + .Lei_file]
+    lea rsi, [rip + .Ldash]
+    call rx_env_entry
+    lea rdi, [rip + .Lei_kind]
+    lea rsi, [rip + .Lw_github]
+    call rx_env_entry
+    lea rdi, [rsp]
+    mov rsi, [rip + rx_envsb + SB_ptr]
+    mov ecx, 9
+    call rx_pointers
+    lea rdi, [rsp]
+    call env_make
+    mov [rsp + 152], rax
+    lea rdi, [rip + .Lps]
+    call proc_which
+    test rax, rax
+    jz 8f
+    mov [rsp + 144], rax
+    mov [rsp], rax
+    lea rax, [rip + .Lps_noprofile]
+    mov [rsp + 8], rax
+    lea rax, [rip + .Lps_nonint]
+    mov [rsp + 16], rax
+    lea rax, [rip + .Lps_format]
+    mov [rsp + 24], rax
+    lea rax, [rip + .Lps_text]
+    mov [rsp + 32], rax
+    lea rax, [rip + .Lps_encoded]
+    mov [rsp + 40], rax
+    lea rax, [rip + ext_install_script]
+    mov [rsp + 48], rax
+    mov qword ptr [rsp + 56], 0
+    mov rsi, [rsp + 152]
+.else
     # sh -c SCRIPT rhun-install OWNER NAME linux-x86_64 ROOT BASE TAG - - github
     lea rax, [rip + .Lsh]
     mov [rsp], rax
@@ -683,14 +738,21 @@ rx_fetch:
     lea rax, [rip + .Lw_github]
     mov [rsp + 96], rax
     mov qword ptr [rsp + 104], 0
-    mov rdi, rsp
     mov rsi, [rip + g_envp]
+.endif
+    mov rdi, rsp
     xor edx, edx
     call run_piped
-    test rax, rax
-    jle 8f
-    mov [r12 + RX_pid], eax
-    mov [r12 + RX_fd], edx
+    mov r14, rax
+    mov r15d, edx
+    mov rdi, [rsp + 152]
+    call mem_free
+    mov rdi, [rsp + 144]
+    call mem_free
+    test r14, r14
+    jle 9f
+    mov [r12 + RX_pid], r14d
+    mov [r12 + RX_fd], r15d
     lea rdi, [r12 + RX_dl]
     call sb_clear
     mov edi, [r12 + RX_fd]
@@ -706,12 +768,30 @@ rx_fetch:
     mov [rbx + EXT_reason], rax
     mov eax, 1
     EPILOGUE
-8:  mov rdi, r12
+8:  mov rdi, [rsp + 152]
+    call mem_free
+9:  mov rdi, r12
     lea rsi, [rip + .Lr_fetch_start]
     xor edx, edx
     call rx_why
     xor eax, eax
     EPILOGUE
+
+# rx_env_entry(name "NAME=", value): onto rx_envsb with its NUL (Windows' RHUN_EI_* entries)
+rx_env_entry:
+    push rbx
+    mov rbx, rsi
+    mov rsi, rdi
+    lea rdi, [rip + rx_envsb]
+    call sb_push_cstr
+    lea rdi, [rip + rx_envsb]
+    mov rsi, rbx
+    call sb_push_cstr
+    lea rdi, [rip + rx_envsb]
+    xor esi, esi
+    call sb_push_byte
+    pop rbx
+    ret
 
 # rx_on_fetch(fd, revents, rx): the download's output; at its end the build moves into RX_fdir
 rx_on_fetch:
@@ -754,8 +834,10 @@ rx_on_fetch:
 3:  test rsi, rsi
     jz 4f
     cmp byte ptr [rdi + rsi - 1], 10
+    je 31f
+    cmp byte ptr [rdi + rsi - 1], 13    # PowerShell ends its lines with CR LF
     jne 4f
-    dec rsi
+31: dec rsi
     mov byte ptr [rdi + rsi], 0
     jmp 3b
 4:  mov rcx, rsi
@@ -816,7 +898,6 @@ rx_on_fetch:
     mov rdi, rbx
     call rx_fail
 9:  EPILOGUE
-.endif
 
 # rx_waiting(rx) -> eax 1 while its extension still waits to start
 rx_waiting:
@@ -1849,9 +1930,21 @@ rx_pointers:
 .Lr_start: .asciz "the host could not start it"
 .Lr_no_answer: .asciz "the host did not say how it is held"
 .Lr_on_host: .asciz "on the host: "
-.ifdef WINDOWS
-.Lr_no_fetch_windows: .asciz "its Linux build is not in its folder (fetching one is not done from Windows)"
-.endif
+.Lps: .asciz "powershell.exe"
+.Lps_noprofile: .asciz "-NoProfile"
+.Lps_nonint: .asciz "-NonInteractive"
+.Lps_format: .asciz "-OutputFormat"
+.Lps_text: .asciz "Text"
+.Lps_encoded: .asciz "-EncodedCommand"
+.Lei_owner: .asciz "RHUN_EI_OWNER="
+.Lei_name: .asciz "RHUN_EI_NAME="
+.Lei_target: .asciz "RHUN_EI_TARGET="
+.Lei_root: .asciz "RHUN_EI_ROOT="
+.Lei_base: .asciz "RHUN_EI_BASE="
+.Lei_tag: .asciz "RHUN_EI_TAG="
+.Lei_want: .asciz "RHUN_EI_WANT="
+.Lei_file: .asciz "RHUN_EI_FILE="
+.Lei_kind: .asciz "RHUN_EI_KIND="
 .Ll_found: .asciz "extension on the host: "
 .Ll_copying: .asciz "extension copying to "
 .Ll_copied: .asciz "extension copied: "

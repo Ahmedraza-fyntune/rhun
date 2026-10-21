@@ -913,6 +913,8 @@ FN ws_poll
     jz .Lpoll_next
     cmp dword ptr [rax + FD_kind], FD_WATCH
     je .Lpoll_watch
+    cmp dword ptr [rax + FD_kind], FD_CHAN
+    je .Lpoll_chan
     cmp dword ptr [rax + FD_kind], FD_PIPE
     je .Lpoll_pipe_kind
     cmp dword ptr [rax + FD_kind], FD_PTY
@@ -963,6 +965,12 @@ FN ws_poll
     cmp rax, 10
     jb .Lpoll_next
 1:  or word ptr [r12 + rbx*8 + 6], POLLOUT
+    jmp .Lpoll_next
+.Lpoll_chan:
+    mov rdi, rax
+    movzx esi, word ptr [r12 + rbx*8 + 4]
+    call win_chan_events
+    mov [r12 + rbx*8 + 6], ax
     jmp .Lpoll_next
 .Lpoll_watch:
     call win_watch_ready

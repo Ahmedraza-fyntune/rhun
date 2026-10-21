@@ -2187,6 +2187,7 @@ g_commands:
     # remote hosts (remoteui.s)
     COMMAND connect_to_host, "Remote: Connect to Host", cmd_connect_to_host, ""
     COMMAND attach_to_container, "Remote: Attach to Container", cmd_attach_to_container, ""
+    COMMAND connect_to_wsl, "Remote: Connect to WSL", cmd_connect_to_wsl, ""
     COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
     COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
     COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
