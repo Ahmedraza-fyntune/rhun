@@ -491,16 +491,17 @@ idle_held:
 # (the parts of the group add their checks here as they arrive)
 FN extres_group_holds
     push rdi
-    push rdi
-    call secrets_pending
-    pop rdi
+    call termproto_holds        # tasks: a program it started still runs (tasks design 4.9)
     pop rdi
     test eax, eax
     jnz 9f
     push rdi
+    call secrets_pending
+    pop rdi
+    test eax, eax
+    jnz 9f
     push rdi
     call links_pending
-    pop rdi
     pop rdi
     test eax, eax
     jnz 9f

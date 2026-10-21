@@ -4755,6 +4755,10 @@ FN statusbar_draw
     mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
+    call term_tasks_status      # tasks: "▸ build" while tasks run (termview.s)
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
     call notify_status_draw     # progress (notify.s), left of the updater's item
     mov edi, eax
     mov esi, [rsp + 4]
