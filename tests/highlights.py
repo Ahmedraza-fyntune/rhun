@@ -49,7 +49,7 @@ class Highlights(pres.Base):
         h = self.hl(out)
         self.assertEqual(h, ['highlight 2:9-2:10 write', 'highlight 3:13-3:14 text'])
         asked = self.asked()
-        self.assertTrue(asked and asked[0].endswith(' 2 9'), asked)
+        self.assertTrue(any(a.endswith(' 2 9') for a in asked), asked)   # (the caret's first word may come first)
         path = self.work / 'hl.ppm'
         self.run_p(self.start() + [self.at(2, 9), 'wait 400', f'shot {path}'])
         self.assertTrue(path.exists())
