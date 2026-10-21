@@ -147,7 +147,7 @@ demo_draw:
     test eax, eax
     jz 1f
     mov eax, [rip + g_scroll_y]
-    sub [rip + demo_scroll], eax
+    add [rip + demo_scroll], eax
 1:  mov eax, [rsp + 16]         # within the document
     sub eax, [rsp + 12]
     xor ecx, ecx
