@@ -174,6 +174,8 @@ nb_request:
 FN nb_send_open
     PROLOGUE
     mov rbx, rdi
+    call nb_stamp               # a reload's answer replaces the cells only if nothing changed since
+    mov [rbx + NB_openstamp], rax
     mov r12, [rbx + NB_host]
     mov rdi, [r12 + DOC_path]
     mov esi, NB_BODY_MAX
@@ -246,6 +248,8 @@ FN nb_send_save
     call nb_write
     test eax, eax
     jz 8f
+    mov rdi, rbx                # what the body holds is what a successful save marks saved
+    call nb_snapshot
     mov rdi, rbx
     lea rsi, [rip + .Lnb_v_save]
     call nb_request
@@ -472,6 +476,7 @@ h_nb_state:
     je 2f
     mov [r12 + NBC_count], rax
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
 2:  mov [r12 + NBC_state], r13d
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
@@ -585,6 +590,7 @@ h_nb_output:
     jmp .Lno_done_ok
 .Lno_done:
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
 .Lno_done_ok:
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
@@ -749,6 +755,7 @@ h_nb_stream:
     mov qword ptr [r14 + NBO_show], 0
     inc qword ptr [r12 + NBC_outrev]
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
     call reply_ok

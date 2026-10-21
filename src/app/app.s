@@ -1986,7 +1986,7 @@ FN app_save_as_readonly
 save_as_readonly_confirmed:
     PROLOGUE
     mov rdi, [rip + ro_id]
-    call extproto_doc
+    call app_doc_by_id          # notebooks, custom editors: their tab's document
     test rax, rax
     jz 9f
     mov rbx, rax

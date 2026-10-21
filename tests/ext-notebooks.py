@@ -393,6 +393,9 @@ class Notebooks(unittest.TestCase):
     def test_bad_body_and_no_feature(self):
         out = self.run_editor(['print-notebook'], mode='badbody')
         self.assertEqual(out[0], "notebook=failed error=The extension's notebook cannot be read")
+        for mode in ('wideheader', 'widerheader'):      # more fields than a body line has
+            out = self.run_editor(['print-notebook'], mode=mode)
+            self.assertEqual(out[0], "notebook=failed error=The extension's notebook cannot be read")
         out = self.run_editor(['print-notebook'], mode='nofeature')
         self.assertEqual(out[0], 'notebook=failed error=Fake Notebooks does not read notebooks (the notebooks feature)')
 
@@ -402,6 +405,58 @@ class Notebooks(unittest.TestCase):
         self.assertIn('toast=Fake Notebooks: the disk is full', out)
         self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=1'))
         self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK)
+
+    def test_typing_while_a_save_is_answered_stays_dirty(self):
+        out = self.run_editor(['key Return', 'type x', 'key ctrl+s', 'type y', 'wait 2500', *SETTLE,
+                               'print-notebook', 'key ctrl+s', 'wait 2500', *SETTLE, 'print-notebook'],
+                              mode='slowsave')
+        dirty = [l for l in out if l.startswith('dirty=')]
+        self.assertTrue(dirty[0].startswith('dirty=1'), dirty)  # the file has x, the cell xy
+        self.assertTrue(dirty[1].startswith('dirty=0'), dirty)
+        self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK.replace('print("hi")', 'xyprint("hi")'))
+
+    def test_typing_while_a_reload_is_answered_keeps_it(self):
+        out = self.run_editor(['wait 2500', 'cmd reload_file', 'key Return', 'type q', 'wait 2500', *SETTLE,
+                               'print-notebook', 'print-doc'], mode='slowopen')
+        self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=1'), out)
+        self.assertIn('qprint("hi")', '\n'.join(out))
+        self.assertEqual(sum(1 for l in self.fake_log() if ' nb-open ' in l), 2)
+
+    def test_deleting_the_only_cell_undoes_in_one_z(self):
+        self.nb.write_text('%% code python -\nonly = 1\n', encoding='utf-8')
+        out = self.run_editor(['key d', 'key d', 'print-notebook', 'key z', 'print-notebook', 'print-doc'])
+        runs = dumps(out)
+        self.assertEqual(len(runs[0]), 1)
+        self.assertNotEqual(field(runs[0][0], 'id'), '1')       # a blank one in its place
+        self.assertEqual([field(c, 'id') for c in runs[1]], ['1'])
+        self.assertIn('only = 1', out)
+
+    def test_command_mode_leaves_the_text_alone(self):
+        out = self.run_editor(['key Return', 'key Right', 'key Escape', 'key BackSpace', 'key Delete', 'key Tab',
+                               'print-notebook', 'print-doc'])
+        self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=0 mode=command'), out)
+        self.assertIn('print("hi")', out)
+
+    def test_clear_wait_before_any_output(self):
+        self.nb.write_text('%% code python -\nclearfirst()\n%% code python -\npngwide()\n', encoding='utf-8')
+        out = self.run_editor(['cmd notebook.run_all', *SETTLE, 'wait 500', 'print-nb-output 0 0',
+                               'print-nb-output 1 0'])
+        text = '\n'.join(out)
+        self.assertIn('first\nsecond\n<eoo>', text)
+        self.assertIn('image=80x40', text)                      # a width alone keeps the proportions
+
+    def test_save_as_onto_a_read_only_file(self):
+        target = self.proj / 'b.nbt'
+        target.write_text('old\n', encoding='utf-8')
+        os.chmod(target, 0o444)
+        try:
+            out = self.run_editor(['key Return', 'type q', 'key Escape', 'cmd save_as', 'key ctrl+a',
+                                   'type ' + target.as_posix(), 'key Return', 'key Return', *SETTLE, 'wait 500',
+                                   'print-notebook'])
+            self.assertEqual(target.read_text(encoding='utf-8'), NOTEBOOK.replace('print("hi")', 'qprint("hi")'))
+            self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=0'), out)
+        finally:
+            os.chmod(target, 0o644)
 
     def test_close_with_changes_asks_and_saves(self):
         out = self.run_editor(['key Return', 'type q', 'key ctrl+w', 'print-state', 'dialog yes', *SETTLE,

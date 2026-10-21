@@ -3328,6 +3328,10 @@ F NB_layoutw, 4         # the width the cached heights are for
 F NB_vy, 4              # where its cells were drawn last (physical px), for tests and clicks
 F NB_vh, 4
 F NB_sent, VEC_SIZE     # NBS2 records: per extension, the order of the cells it last heard (A3)
+F NB_rev, 8             # bumped by every cell operation and output change (what NB_dirty records)
+F NB_snap, VEC_SIZE     # nb-save's snapshot: NBC*, its document's undo length and version, 24 bytes each
+F NB_snaprev, 8         # NB_rev when nb-save's body was made
+F NB_openstamp, 8       # nb_stamp when a reload's nb-open went out
 ENDSTRUCT NB_SIZE
 STRUCT
 F NBS2_ext, 8           # EXT*

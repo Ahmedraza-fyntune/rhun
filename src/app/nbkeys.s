@@ -550,7 +550,13 @@ FN nb_key
     jne 59f
     xor dword ptr [r15 + NBC_collapsed], 1
     jmp 7f
-59: # other characters do nothing in command mode
+59: # other characters do nothing in command mode, nor do the keys that edit text
+    cmp r12d, KEY_BACKSPACE
+    je 7f
+    cmp r12d, KEY_DELETE
+    je 7f
+    cmp r12d, KEY_TAB
+    je 7f
     cmp r13d, 32
     jb 8f
     jmp 7f
