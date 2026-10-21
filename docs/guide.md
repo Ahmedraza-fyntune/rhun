@@ -932,6 +932,31 @@ secrets = system        # or memory (until rhun quits), or file (a file only you
 `file` keeps them in `~/.local/state/rhun/secrets/`, readable only by you, in plain text: as safe
 as a `~/.netrc`.
 
+When an extension wants to open a web page (to sign in, say), rhun asks first: "Auth Demo wants
+to open github.com in your browser", with **Open**, **Copy Link**, **Cancel** and **Always open
+links from Auth Demo**. Always is remembered, and the switch on the extension's page takes it
+back. After you sign in, the browser comes back to the extension through a `rhun://ext/` link
+that works once, for ten minutes, or through a page on your own computer that says "Signed in.
+You can close this tab." A `rhun://ext/` link nobody is waiting for says so and does nothing.
+
+Extensions that read the project (a TODO list, a linter that checks every file) list its files
+and search them through rhun rather than walking the disk themselves: they see the files git sees
+(`.gitignore` applies), not the names in **Hidden in explorer**, and the text you have not saved
+yet. Their searches run a few milliseconds at a time, so typing never waits for them.
+
+A project can set some of an extension's settings for everyone who opens it, in
+`.rhun/extensions.ini` at the top of the folder, in the same form as your own file:
+
+```ini
+[rhun-editor/go]
+setting.style = goimports
+setting.style@Go = gofumpt     # for Go files only
+```
+
+Only settings the extension opens to projects take effect (never which program it runs), and only
+in a folder you opened yourself or trusted. The extension's page shows "This workspace sets
+goimports (.rhun/extensions.ini)" under such a setting, with **Open**.
+
 The command palette shows each extension command's qualified name, `owner/name.command`,
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same

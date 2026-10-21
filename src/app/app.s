@@ -6603,6 +6603,10 @@ url_path: .zero 4096           # the path of a rhun:// link (app_open_path)
 FN app_open_path
     PROLOGUE 16
     mov rbx, rdi
+    call links_open_path        # resources group: a rhun://ext/ link goes to its extension (links.s)
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
     lea rsi, [rip + url_path]
     mov edx, 4096
     call rhun_url
