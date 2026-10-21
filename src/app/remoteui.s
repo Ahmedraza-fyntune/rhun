@@ -2438,7 +2438,7 @@ FN remote_askpass_main
 .Ls_wsl: .asciz "wsl:"
 .Ldash_l: .asciz "-l"
 .Ldash_q: .asciz "-q"
-.Lm_wsl: .asciz "Connect to WSL..."
+.Lm_wsl: .asciz "Connect to WSL\xe2\x80\xa6"
 .Lno_containers: .asciz "No running containers"
 .Lno_window: .asciz "Could not open a new window"
 .Lhome: .asciz "HOME"
