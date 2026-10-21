@@ -3192,6 +3192,8 @@ F ND_mark, 4            # scratch generation marks (kids diffing, patch checks)
 F ND_desc, 8            # owned cstr or 0
 F ND_tip, 8             # owned cstr or 0
 F ND_user, 8            # its owner's value (built-in code)
+F ND_gen, 4             # TR_gen when it was made: a request about a node is not about a later one
+F ND_pend, 4            # a patch check: the bytes a record it takes brings (rview.s)
 ENDSTRUCT ND_SIZE
 .equ NF_LIVE, 1
 .equ NF_OPEN, 2                 # expanded
@@ -3262,6 +3264,8 @@ F TR_pad2, 4
 F TR_rowfn, 8           # tree_set_rowbuttons: fn(ctx, tr, node, right, y, h) -> width drawn, or 0
 F TR_rowbw, 4           # the width it drew last frame, and for which node
 F TR_rownode, 4
+F TR_gen, 4             # nodes made so far
+F TR_pad3, 4
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame

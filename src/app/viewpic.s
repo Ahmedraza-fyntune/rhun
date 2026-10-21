@@ -425,40 +425,12 @@ FN viewpic_key
     call keys_on
     test eax, eax
     jz 8f
-    mov edi, r12d
-    mov esi, r14d
+    mov edi, r12d               # a key a binding takes: the binding runs (copy, cut, select_all and
+    mov esi, r14d               # paste reach the picture through their commands, chords too)
     call keys_lookup
     test rax, rax
-    jz 1f
-    lea rcx, [rip + cmd_copy]
-    cmp rax, rcx
-    je 5f
-    lea rcx, [rip + cmd_cut]
-    cmp rax, rcx
-    je 6f
-    lea rcx, [rip + cmd_select_all]
-    cmp rax, rcx
-    jne 8f                      # the binding runs (paste: app_on_paste brings it back here)
-    mov rdi, rbx
-    call extview_event_head
-    test eax, eax
-    jz 7f
-    call extview_evbuf
-    mov rdi, rax
-    lea rsi, [rip + .Le_selectall]
-    call sb_push_cstr
-    mov rdi, rbx
-    call extview_event_send
-    jmp 7f
-5:  mov rdi, rbx
-    xor esi, esi
-    call send_vcopy
-    jmp 7f
-6:  mov rdi, rbx
-    mov esi, 1
-    call send_vcopy
-    jmp 7f
-1:  # "key MODS NAME"
+    jnz 8f
+    # "key MODS NAME"
     mov edi, r12d
     call key_name
     test rax, rax
@@ -767,6 +739,38 @@ FN views_paste_target
     test eax, eax
     jz 8f
     mov rax, rbx
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# views_clip_command(kind) -> eax 1 when a picture with the keyboard took the command: 0 copy and
+#   1 cut ask it (vcopy), 2 select_all says selectall (cmd_copy, cmd_cut, cmd_select_all: keys and
+#   chords alike)
+FN views_clip_command
+    PROLOGUE
+    mov r12d, edi
+    call views_paste_target
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    cmp r12d, 2
+    je 1f
+    mov rdi, rbx
+    mov esi, r12d
+    call send_vcopy
+    jmp 9f
+1:  mov rdi, rbx
+    call extview_event_head
+    test eax, eax
+    jz 9f
+    call extview_evbuf
+    mov rdi, rax
+    lea rsi, [rip + .Le_selectall]
+    call sb_push_cstr
+    mov rdi, rbx
+    call extview_event_send
+9:  mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE

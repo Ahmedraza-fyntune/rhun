@@ -1218,6 +1218,12 @@ copy_to_clip:
     EPILOGUE
 
 FN cmd_copy
+    sub rsp, 8
+    xor edi, edi                # a picture with the keyboard copies itself (views group, viewpic.s)
+    call views_clip_command
+    add rsp, 8
+    test eax, eax
+    jnz 1f
     mov rdi, [rip + g_doc]
     test rdi, rdi
     jz 1f
@@ -1232,7 +1238,14 @@ FN cmd_copy
 1:  ret
 
 FN cmd_cut
-    READONLY_RET
+    sub rsp, 8
+    mov edi, 1                  # a picture with the keyboard cuts itself (views group, viewpic.s)
+    call views_clip_command
+    add rsp, 8
+    test eax, eax
+    jz 0f
+    ret
+0:  READONLY_RET
     push rbx
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1331,7 +1344,14 @@ FN ed_paste
     EPILOGUE
 
 FN cmd_select_all
-    call ed_single              # one selection (multi-cursor)
+    sub rsp, 8
+    mov edi, 2                  # a picture with the keyboard selects all of itself (viewpic.s)
+    call views_clip_command
+    add rsp, 8
+    test eax, eax
+    jz 0f
+    ret
+0:  call ed_single              # one selection (multi-cursor)
     mov rdi, [rip + g_doc]
     test rdi, rdi
     jz 1f

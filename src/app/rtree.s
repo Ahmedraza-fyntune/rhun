@@ -333,6 +333,9 @@ node_alloc:
     call memset
     pop rax
     pop rax
+    inc dword ptr [rbx + TR_gen]
+    mov ecx, [rbx + TR_gen]
+    mov [rax + ND_gen], ecx
     mov dword ptr [rax + ND_parent], -1
     mov dword ptr [rax + ND_first], -1
     mov dword ptr [rax + ND_last], -1
@@ -991,9 +994,13 @@ FN tree_cursor
 
 # tree_set_cursor(tr, node): the keyboard's node (and the selection), -1 for none
 FN tree_set_cursor
-    mov [rdi + TR_cursor], esi
-    or dword ptr [rdi + TR_flags], TRF_SELCHANGED
     mov dword ptr [rip + g_dirty], 1
+    test dword ptr [rdi + TR_flags], TRF_MULTI
+    jz 1f
+    xor edx, edx                # several may be selected: it alone, the anchor on it
+    jmp select_click
+1:  mov [rdi + TR_cursor], esi
+    or dword ptr [rdi + TR_flags], TRF_SELCHANGED
     ret
 
 # tree_reveal(tr, node): its ancestors expanded and its row scrolled into view when next drawn

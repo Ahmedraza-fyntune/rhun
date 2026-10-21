@@ -324,6 +324,26 @@ def on_command(name):
             views['tabpic'] = int(f[2])
             draw(int(f[2]), 'rect 0 0 200 100 accent\n')
         on_reply[rid] = opened
+    elif name == 'readd' and views.get('items'):
+        patch(views['items'], [rec('del', data=b'a')])
+        patch(views['items'], [kids('', [node('a', 'Alpha again', 'closed')], op='add')])
+    elif name == 'actswap' and todo:
+        patch(todo, [rec('action', 'again pin node', b'Again') for _ in range(30)])
+    elif name == 'fatsame' and todo:
+        big = rec('blob', '', b'q' * 900000)
+        patch(todo, [rec('set', '', node('t:lib.rs:1', 'one', 'leaf', big)),
+                     rec('set', '', node('t:lib.rs:1', 'one', 'leaf', big))])
+    elif name == 'revealmulti' and todo:
+        patch(todo, [rec('select-mode', 'multi')])
+        request(f'vreveal {todo} select', b't:lib.rs:1')
+    elif name == 'noteclose1' and notes:
+        request(f'unnotify {notes[0]}')
+    elif name == 'prognote2':
+        progress('note', '-', 'Copying')
+    elif name == 'pictitle' and views.get('pic'):
+        patch(views['pic'], [rec('title', data=b'Drawing'), rec('badge', '3')])
+    elif name == 'bigunimage':
+        request('unimage 4294967297')
     elif name == 'tab':
         def opened_tab(reply):
             pass

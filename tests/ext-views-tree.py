@@ -344,6 +344,45 @@ class Corners(ViewsBase):
         self.assertNotIn(' cur ', rows[1])
 
 
+class Review2(ViewsBase):
+    """Cases from the second review: a node's menu outlives its actions, a late answer for a node
+    removed and added again, actions counted as the patch leaves them, a node replaced twice in a
+    patch, select when revealing in a multi-select tree."""
+
+    def test_an_open_menu_keeps_its_labels_when_the_actions_go(self):
+        out = self.run_editor(['print-view todo'])
+        x, y = self.row_xy(self.rows(out), 't:main.rs:1')
+        out = self.run_editor([f'click {x} {y} right', 'wait 100', 'cmd viewfake.delpin', 'wait 300', 'print-menu'])
+        self.assertIn('Pin', out)
+
+    def test_a_late_answer_for_a_node_made_again_is_dropped(self):
+        self.env['VIEWFAKE_LAZY'] = 'late'
+        out = self.run_editor(['view-show items', 'wait 300', 'view-focus items', 'key Down', 'key Right',
+                               'wait 100', 'cmd viewfake.readd', 'wait 1500', 'print-views'])
+        line = [l for l in out if l.startswith('view=2 ')][0]
+        n = int(line.split(' nodes=')[1].split(' ')[0])
+        out2 = self.run_editor(['view-show items', 'wait 300', 'cmd viewfake.readd', 'wait 1500', 'print-views'])
+        n2 = int([l for l in out2 if l.startswith('view=2 ')][0].split(' nodes=')[1].split(' ')[0])
+        self.assertEqual(n, n2)                 # the old a's children never came
+
+    def test_one_key_defined_thirty_times_is_one_action(self):
+        self.run_editor(['cmd viewfake.actswap', 'wait 300'])
+        log = self.fake_log()
+        self.assertFalse(any('toobig actions' in l for l in log), log)
+
+    def test_a_node_replaced_twice_counts_once(self):
+        self.run_editor(['cmd viewfake.fatset', 'wait 1000', 'wait 1000', 'cmd viewfake.fatsame', 'wait 800'])
+        last = [l for l in self.fake_log() if l.startswith('ok ') or l.startswith('error ')][-1]
+        self.assertTrue(last.startswith('ok '), last)
+
+    def test_reveal_with_select_selects_in_a_multi_select_tree(self):
+        self.run_editor(['cmd viewfake.revealmulti', 'wait 400'])
+        log = self.fake_log()
+        i = max(k for k, l in enumerate(log) if l.startswith('0 view 1 select '))
+        self.assertTrue(log[i].endswith(' 1 11'), log[i])     # one id, "t:lib.rs:1" and its LF
+        self.assertEqual(log[i + 1], 't:lib.rs:1')
+
+
 class Menus(ViewsBase):
     """The extensions' manifest menus in views (menu.s): view_title buttons in the header,
     view_item_inline buttons on the hovered or cursor row, view_item as a row's context menu."""

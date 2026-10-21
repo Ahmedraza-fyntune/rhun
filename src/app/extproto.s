@@ -2993,6 +2993,8 @@ h_notify_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     mov rdx, [rip + body_ptr]
@@ -3026,6 +3028,8 @@ h_unnotify:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call notify_close_request
@@ -3103,6 +3107,8 @@ h_progress_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov r12, rax
     mov r13, -1
     mov edi, 3
@@ -3149,6 +3155,8 @@ h_progress_end:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call progress_end_request
@@ -3207,6 +3215,8 @@ h_unimage:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call viewimg_unimage

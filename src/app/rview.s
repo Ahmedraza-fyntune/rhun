@@ -91,7 +91,7 @@ STRUCT
 F PQ_slot, 4            # the instance, -1 when the entry is free
 F PQ_node, 4
 F PQ_kind, 4            # 1 vkids, 2 vmore
-F PQ_pad, 4
+F PQ_gen, 4             # the node's ND_gen: a node made again with the same id is another one
 F PQ_req, 8             # its id
 F PQ_sent, 8            # time_ms
 F PQ_id, 8              # the node's id when asked (owned), to see it is still the same node
@@ -142,13 +142,15 @@ p_op: .quad 0                   # the op being checked, from 1
 p_rv: .quad 0                   # its instance
 p_kind: .long 0                 # and its kind
 .p2align 3
-p_actions: .quad 0              # the actions it would have
+p_actions: .quad 0              # the actions it would have (their keys in p_akeys)
+p_akeys: .zero 16 * RA_MAX      # ptr, len of each
 g_rv_nodes: .quad 0             # nodes in all instances
 idsbuf: .zero SB_SIZE           # a select event's ids
 ctxbuf: .zero 104               # a node's ctx value as a cstr (menus)
 pq_table: .zero PQ_SIZE * PQ_MAX
 menu_items: .zero 16 * 17       # rv_menu's items (label, handler), 0-ended
 menu_keys: .zero 8 * 16
+menu_arena: .zero SB_SIZE       # rv_menu's labels and keys, kept while the menu is open
 menu_keyp: .zero 8 * 16
 menu_keyl: .zero 8 * 16
 menu_node_id: .quad 0           # the node it was opened on (owned id) and where
@@ -1347,6 +1349,12 @@ rv_ask:
     mov [rax + PQ_slot], ebx
     mov [rax + PQ_node], r12d
     mov [rax + PQ_kind], r13d
+    mov rdi, [r14 + RV_tree]    # the node's generation
+    mov esi, r12d
+    call tree_nd
+    mov ecx, [rax + ND_gen]
+    mov rax, [rsp]
+    mov [rax + PQ_gen], ecx
     call time_ms
     mov rcx, [rsp]
     mov [rcx + PQ_sent], rax
@@ -1473,8 +1481,16 @@ pq_node_alive:
     mov rdx, [rbx + PQ_idlen]
     call tree_find
     cmp eax, [rbx + PQ_node]
+    jne 8f
+    mov rdi, r12
+    mov esi, eax
+    call tree_nd
+    mov ecx, [rax + ND_gen]
+    xor eax, eax
+    cmp ecx, [rbx + PQ_gen]
     sete al
-    movzx eax, al
+    EPILOGUE
+8:  xor eax, eax
     EPILOGUE
 
 # rview_reply(ext, id, ok, body, len) -> eax 1 when the reply answers a vkids or vmore: its patch is
@@ -2107,7 +2123,10 @@ rv_menu:
     mov [rip + menu_rev], rax
     mov rax, [r14 + RV_ext]
     mov [rip + menu_ext], rax
-    # the items: up to 16 keys
+    # the items: up to 16 keys; their labels and keys copied (a patch may replace the actions while
+    # the menu is open)
+    lea rdi, [rip + menu_arena]
+    call sb_clear
     mov r15, [rip + rr + RR_data]
     mov rax, r15
     add rax, [rip + rr + RR_len]
@@ -2137,28 +2156,61 @@ rv_menu:
     mov r15, [rsp + 16]
     test rax, rax
     jz 1b
+    mov [rsp + 24], rax         # its RA: its label and key into the arena (offsets for now)
     lea rcx, [rip + menu_items]
     mov rdx, rbx
     shl rdx, 4
-    mov rsi, [rax + TA_title]
-    test rsi, rsi
-    jnz 42f
-    mov rsi, [rax + TA_key]
-42: mov [rcx + rdx], rsi
+    mov rsi, [rip + menu_arena + SB_len]
+    mov [rcx + rdx], rsi
     lea rsi, [rip + rv_menu_pick]
     mov [rcx + rdx + 8], rsi
-    lea rcx, [rip + menu_keys]
-    mov [rcx + rbx*8], rax      # its RA (valid while the menu is open: picked through its key)
+    mov rax, [rsp + 24]
+    mov rsi, [rax + TA_title]
+    test rsi, rsi
+    jz 42f
+    lea rdi, [rip + menu_arena]
+    call sb_push_cstr
+    jmp 43f
+42: lea rdi, [rip + menu_arena]
+    mov rax, [rsp + 24]
     mov rsi, [rax + TA_key]
+    mov rdx, [rax + TA_keylen]
+    call sb_push
+43: lea rdi, [rip + menu_arena]
+    xor esi, esi
+    call sb_push_byte
+    mov rsi, [rip + menu_arena + SB_len]
     lea rcx, [rip + menu_keyp]
     mov [rcx + rbx*8], rsi
+    mov rax, [rsp + 24]
     mov rsi, [rax + TA_keylen]
     lea rcx, [rip + menu_keyl]
     mov [rcx + rbx*8], rsi
+    lea rdi, [rip + menu_arena]
+    mov rax, [rsp + 24]
+    mov rsi, [rax + TA_key]
+    mov rdx, [rax + TA_keylen]
+    call sb_push
+    lea rdi, [rip + menu_arena]
+    xor esi, esi
+    call sb_push_byte
     inc ebx
     jmp 1b
 5:  test ebx, ebx
     jz 9f
+    xor ecx, ecx                # the offsets become pointers into the arena, now that it is whole
+    mov rdx, [rip + menu_arena + SB_ptr]
+51: cmp ecx, ebx
+    jae 52f
+    mov rax, rcx
+    shl rax, 4
+    lea r8, [rip + menu_items]
+    add [r8 + rax], rdx
+    lea r8, [rip + menu_keyp]
+    add [r8 + rcx*8], rdx
+    inc ecx
+    jmp 51b
+52:
     lea rcx, [rip + menu_items]
     mov rdx, rbx
     shl rdx, 4
@@ -3380,7 +3432,7 @@ remove_ref:
     # count it and what under it was not removed before (nodes and bytes)
     inc qword ptr [rip + p_removed]
     mov edi, r12d
-    call live_free
+    call live_drop
     imul rax, r12, ND_SIZE
     add rax, [rbx + TR_nodes + VEC_ptr]
     movsxd r13, dword ptr [rax + ND_first]
@@ -3392,7 +3444,7 @@ remove_ref:
     je 3f
     inc qword ptr [rip + p_removed]
     mov edi, r13d
-    call live_free
+    call live_drop
     imul rax, r13, ND_SIZE
     add rax, [rbx + TR_nodes + VEC_ptr]
     movsxd rcx, dword ptr [rax + ND_first]
@@ -3622,6 +3674,7 @@ patch_check:
     imul rax, rax, ND_SIZE
     add rax, [r12 + TR_nodes + VEC_ptr]
     and dword ptr [rax + ND_flags], ~NF_PCOUNT
+    mov dword ptr [rax + ND_pend], 0
     inc r13
     jmp 1b
 2:  mov eax, ebx
@@ -3665,9 +3718,30 @@ ref_bytes:
     call ov_at
     mov [rax + OV_bytes], ebx
     EPILOGUE
-1:  call live_free
+1:  mov r12d, edi
+    call live_free
+    mov rax, [rip + p_tree]     # only its last record counts: an earlier one's bytes come off
+    imul rcx, r12, ND_SIZE
+    add rcx, [rax + TR_nodes + VEC_ptr]
+    mov eax, [rcx + ND_pend]
+    sub [rip + p_bytes], rax
+    mov [rcx + ND_pend], ebx
     add [rip + p_bytes], rbx
     EPILOGUE
+
+# live_drop(node): the patch removes a live node: its bytes, and what a record brought it, count out
+live_drop:
+    push rbx
+    mov ebx, edi
+    call live_free
+    mov rax, [rip + p_tree]
+    imul rcx, rbx, ND_SIZE
+    add rcx, [rax + TR_nodes + VEC_ptr]
+    mov eax, [rcx + ND_pend]
+    sub [rip + p_bytes], rax
+    mov dword ptr [rcx + ND_pend], 0
+    pop rbx
+    ret
 
 # patch_check_ops(slot, body, len) -> eax as patch_check (which clears the marks this leaves)
 patch_check_ops:
@@ -3687,8 +3761,8 @@ patch_check_ops:
     mov [rip + p_rv], rax
     mov ecx, [rax + RV_kind]
     mov [rip + p_kind], ecx
-    mov rax, [rax + RV_actions + VEC_len]
-    mov [rip + p_actions], rax
+    mov rdi, rax                # the action keys it would have, staged op by op
+    call akeys_init
     xor eax, eax
     mov [rip + p_created], rax
     mov [rip + p_removed], rax
@@ -4223,22 +4297,89 @@ check_action_op:
     call data_one_line
     test eax, eax
     jz 8f
+    mov rdi, [rip + rr + 16]    # against the keys as the ops before it leave them
+    mov rsi, [rip + rr + 24]
+    call akeys_find
     test ebx, ebx
-    jz 7f
-    mov rdi, [rip + p_rv]
-    mov rsi, [rip + rr + 16]
-    mov rdx, [rip + rr + 24]
-    call action_find
-    test rax, rax
-    jnz 7f
+    jnz 1f
+    cmp eax, -1                 # none: the key goes (when it is there)
+    je 7f
+    mov ecx, [rip + p_actions]
+    dec ecx
+    mov [rip + p_actions], rcx
+    lea rdx, [rip + p_akeys]    # the last one in its place
+    shl rcx, 4
+    mov r8, [rdx + rcx]
+    mov r9, [rdx + rcx + 8]
+    shl rax, 4
+    mov [rdx + rax], r8
+    mov [rdx + rax + 8], r9
+    jmp 7f
+1:  cmp eax, -1
+    jne 7f                      # defined again: no more of them
+    mov rcx, [rip + p_actions]
+    cmp rcx, RA_MAX
+    jae 6f
+    lea rdx, [rip + p_akeys]
+    shl rcx, 4
+    mov rax, [rip + rr + 16]
+    mov [rdx + rcx], rax
+    mov rax, [rip + rr + 24]
+    mov [rdx + rcx + 8], rax
     inc qword ptr [rip + p_actions]
-    cmp qword ptr [rip + p_actions], RA_MAX
-    jbe 7f
-    mov eax, -1
+    jmp 7f
+6:  mov eax, -1
     EPILOGUE
 7:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
+    EPILOGUE
+
+# akeys_init(RV*): the staged keys are its actions' keys
+akeys_init:
+    xor ecx, ecx
+    lea rdx, [rip + p_akeys]
+1:  cmp rcx, [rdi + RV_actions + VEC_len]
+    jae 2f
+    cmp ecx, RA_MAX
+    jae 2f
+    imul rax, rcx, RA_SIZE
+    add rax, [rdi + RV_actions + VEC_ptr]
+    mov r8, [rax + TA_key]
+    mov [rdx], r8
+    mov r8, [rax + TA_keylen]
+    mov [rdx + 8], r8
+    add rdx, 16
+    inc ecx
+    jmp 1b
+2:  mov [rip + p_actions], rcx
+    ret
+
+# akeys_find(ptr, len) -> eax the staged key's index, or -1
+akeys_find:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    xor ebx, ebx
+1:  cmp rbx, [rip + p_actions]
+    jae 8f
+    mov rax, rbx
+    shl rax, 4
+    lea rcx, [rip + p_akeys]
+    add rax, rcx
+    cmp [rax + 8], r13
+    jne 2f
+    mov rdi, [rax]
+    mov rsi, r12
+    mov rdx, r13
+    call memeq
+    test eax, eax
+    jz 2f
+    mov eax, ebx
+    EPILOGUE
+2:  inc ebx
+    jmp 1b
+8:  mov eax, -1
     EPILOGUE
 
 # key_ok(ptr, len) -> eax 1 for 1 to 40 bytes of [a-z0-9_]
@@ -4753,6 +4894,8 @@ FN rview_patch
     mov edi, eax
     call rv_at
     cmp dword ptr [rax + RV_kind], RK_TREE
+    je 1f
+    cmp dword ptr [rax + RV_kind], RK_PICTURE   # its common ops (title, badge, message, busy...)
     je 1f
     cmp dword ptr [rax + RV_kind], RK_LOG
     jne 7f
