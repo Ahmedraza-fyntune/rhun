@@ -2907,6 +2907,7 @@ ENDSTRUCT PD_SIZE
 .equ DSF_EXITED, 64         # the exited event came
 .equ DSF_STALE, 128         # the variables shown are from an earlier stop
 .equ DSF_THREADS, 256       # the thread list must be fetched again
+.equ DSF_TNAMED, 512        # the stop named the focused thread (kept listed though the list omits it)
 
 # adapter capabilities (initialize answer)
 .equ CAP_CONFIGDONE, 1

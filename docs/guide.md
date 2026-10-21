@@ -1294,7 +1294,8 @@ also work from the terminal (`[debug] keys_in_terminal`).
 **While debugging**, the title bar holds the toolbar (Continue or Pause, Step Over, Into, Out,
 Restart, Stop); the sidebar shows Variables, Watch, Call Stack and Breakpoints, and the panel the
 Debug Console, where an expression evaluates in the selected frame (Up and Down recall earlier
-ones). Long arrays open in ranges of 100 (`[0..99]`, nested for bigger ones), F2 on a variable sets
+ones). Call Stack lists the program's threads with the stopped one open; choosing another thread
+shows its frames, and Continue and the steps then act on it. Long arrays open in ranges of 100 (`[0..99]`, nested for bigger ones), F2 on a variable sets
 its value, and values that changed since the last stop are highlighted. An adapter may start child
 sessions of its own (startDebugging); they end with their parent. The paused line is marked in the gutter, and resting the pointer on a name shows its value.
 Program output, the adapter's messages and rhun's notes ("Program exited with code 3") go to the

@@ -822,7 +822,13 @@ list_threads:
     mov rsi, [rip + idb + SB_ptr]
     mov rdx, [rip + idb + SB_len]
     call tree_kid
-    inc r13
+    test eax, eax
+    js 12f
+    mov rdi, r12                # activating it focuses the thread
+    mov esi, eax
+    mov edx, 1
+    call tree_set_user
+12: inc r13
     jmp 1b
 2:  # frames without a thread list yet: directly under the session
     cmp qword ptr [rbx + DS_threads + VEC_len], 0
@@ -970,9 +976,10 @@ list_frames:
     call tree_kids_end
     EPILOGUE
 
-# stack_activate(ctx, tr, node): a session node focuses that session; a frame node focuses the frame
+# stack_activate(ctx, tr, node): a session node focuses that session; a thread node the thread; a
+#   frame node the frame
 stack_activate:
-    PROLOGUE
+    PROLOGUE 16
     mov r12, rsi
     mov r13d, edx
     mov rdi, r12
@@ -998,8 +1005,43 @@ stack_activate:
     call dap_focus_slot
     jmp 9f
 3:  cmp byte ptr [r14 + rcx], 'f'
+    je 31f
+    cmp byte ptr [r14 + rcx], 't'
     jne 9f
-    # the session's id: the digits after the leading s
+    # "s<ID>/t<thread id>": that thread
+    lea rdi, [r14 + rcx + 1]
+    mov rsi, r15
+    sub rsi, rcx
+    dec rsi
+    mov [rsp], rcx
+    call parse_u64
+    test edx, edx
+    jz 9f
+    mov rbx, rax
+    mov rcx, [rsp]
+    xor edi, edi
+    mov rdx, 1
+32: cmp rdx, rcx
+    jae 33f
+    movzx eax, byte ptr [r14 + rdx]
+    sub eax, '0'
+    cmp eax, 9
+    ja 33f
+    imul edi, edi, 10
+    add edi, eax
+    inc rdx
+    jmp 32b
+33: call dap_slot_of_id
+    test rax, rax
+    jz 9f
+    mov r15, rax
+    mov rdi, rax
+    call dap_focus_ds
+    mov rdi, r15
+    mov rsi, rbx
+    call dap_focus_thread
+    jmp 9f
+31: # the session's id: the digits after the leading s
     xor edi, edi
     mov rdx, 1
 4:  cmp rdx, rcx

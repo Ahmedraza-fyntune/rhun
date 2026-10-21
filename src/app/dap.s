@@ -2337,12 +2337,14 @@ e_stopped:
 1:  lea rdi, [rbx + DS_desc]
     mov rsi, rax
     call ds_set_str
+    and dword ptr [rbx + DS_flags], ~DSF_TNAMED
     mov rdi, r12
     lea rsi, [rip + .Lk_threadId]
     call jint
     test edx, edx
     jz 2f
     mov [rbx + DS_thread], rax
+    or dword ptr [rbx + DS_flags], DSF_TNAMED
 2:  mov rdi, r12
     lea rsi, [rip + .Lk_preserveFocusHint]
     call jbool
@@ -2427,19 +2429,39 @@ send_stack:
     call aki
     mov rdi, rbx
     mov esi, RQ_STACK
-    mov edx, r12d
+    mov edx, [rbx + DS_vgen]            # an answer about another thread is dropped
+    shl rdx, 32
+    or rdx, r12
     call dap_req_send
     EPILOGUE
 
-# e_continued(ds, body)
+# e_continued(ds, body): the program runs on, unless the adapter says only another thread did
+#   (allThreadsContinued false for a thread that is not the focused one: its stop stays)
 e_continued:
-    cmp dword ptr [rdi + DS_state], DSS_PAUSED
-    jne 1f
-    mov dword ptr [rdi + DS_state], DSS_RUNNING
-    inc dword ptr [rdi + DS_epoch]
-    or dword ptr [rdi + DS_flags], DSF_STALE
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    cmp dword ptr [rbx + DS_state], DSS_PAUSED
+    jne 9f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_allThreadsContinued]
+    call jbool
+    test edx, edx
+    jz 1f
+    test eax, eax
+    jnz 1f
+    mov rdi, r12
+    lea rsi, [rip + .Lk_threadId]
+    call jint
+    test edx, edx
+    jz 1f
+    cmp rax, [rbx + DS_thread]
+    jne 9f
+1:  mov dword ptr [rbx + DS_state], DSS_RUNNING
+    inc dword ptr [rbx + DS_epoch]
+    or dword ptr [rbx + DS_flags], DSF_STALE
     mov dword ptr [rip + g_dirty], 1
-1:  ret
+9:  EPILOGUE
 
 # e_output(ds, body): to the console by category; telemetry is dropped
 e_output:
@@ -2533,22 +2555,48 @@ e_terminated:
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
-# e_thread(ds, body): the thread list is fetched again at the next stop; a first thread is
-#   remembered for Pause
+# e_thread(ds, body): a thread started or exited. Paused, the list is fetched again at once;
+#   running, at the next stop. A first thread is remembered for Pause; one that exited is
+#   forgotten (Pause then asks for the list first)
 e_thread:
-    or dword ptr [rdi + DS_flags], DSF_THREADS
-    cmp qword ptr [rdi + DS_thread], 0
-    jne 1f
-    push rbx
+    PROLOGUE
     mov rbx, rdi
-    mov rdi, rsi
+    mov r12, rsi
+    or dword ptr [rbx + DS_flags], DSF_THREADS
+    mov rdi, r12
     lea rsi, [rip + .Lk_threadId]
     call jint
     test edx, edx
+    jz 3f
+    mov r13, rax
+    mov rdi, r12
+    lea rsi, [rip + .Lk_reason]
+    call json_get
+    mov rdi, rax
+    lea rsi, [rip + .Lv_exited]
+    call json_is
+    test eax, eax
     jz 2f
-    mov [rbx + DS_thread], rax
-2:  pop rbx
-1:  ret
+    cmp r13, [rbx + DS_thread]
+    jne 3f
+    and dword ptr [rbx + DS_flags], ~DSF_TNAMED
+    cmp dword ptr [rbx + DS_state], DSS_PAUSED
+    je 3f                       # the stop's stack stays as it came
+    mov qword ptr [rbx + DS_thread], 0
+    jmp 3f
+2:  cmp qword ptr [rbx + DS_thread], 0
+    jne 3f
+    mov [rbx + DS_thread], r13
+3:  cmp dword ptr [rbx + DS_state], DSS_PAUSED
+    jne 9f
+    mov rdi, rbx
+    lea rsi, [rip + .Lc_threads]
+    call dap_req_begin
+    mov rdi, rbx
+    mov esi, RQ_THREADS
+    mov edx, 1
+    call dap_req_send
+9:  EPILOGUE
 
 # e_breakpoint(ds, body): a breakpoint the adapter verified, moved or rejected
 e_breakpoint:
@@ -2632,9 +2680,34 @@ r_threads:
     mov [rcx + THR_namelen], edx
 11: inc r15d
     jmp 1b
-2:  # no thread named by the stop: the first one
-    cmp qword ptr [rbx + DS_thread], 0
-    jne 9f
+2:  cmp qword ptr [rbx + DS_thread], 0
+    je 20f
+    cmp dword ptr [rbx + DS_state], DSS_RUNNING
+    jne 23f
+    test dword ptr [r13 + PD_ctx], 2        # Pause asked for the list (a thread came meanwhile)
+    jz 9f
+    mov rdi, rbx
+    call send_pause
+    jmp 9f
+23: mov rax, [rbx + DS_thread]
+    # the thread the stop named stays listed, even when the adapter's list leaves it out
+    #   (lldb-dap does at a worker thread's first stop)
+    test dword ptr [rbx + DS_flags], DSF_TNAMED
+    jz 9f
+    mov rcx, [rbx + DS_threads + VEC_ptr]
+    mov rdx, [rbx + DS_threads + VEC_len]
+21: test rdx, rdx
+    jz 22f
+    cmp rax, [rcx + THR_id]
+    je 9f
+    add rcx, THR_SIZE
+    dec rdx
+    jmp 21b
+22: mov rdi, rbx
+    call thread_add_named
+    mov dword ptr [rip + g_dirty], 1
+    jmp 9f
+20: # no thread named by the stop: the first one
     cmp qword ptr [rbx + DS_threads + VEC_len], 0
     je 9f
     mov rax, [rbx + DS_threads + VEC_ptr]
@@ -2654,6 +2727,33 @@ r_threads:
     and esi, 1
     call send_stack
 9:  EPILOGUE
+
+# thread_add_named(ds): the focused thread appended to the list as "Thread ID"
+thread_add_named:
+    PROLOGUE 48
+    mov rbx, rdi
+    lea rdi, [rsp]
+    lea rsi, [rip + .Lm_thread]
+    call cstr_copy
+    mov r12, rax
+    mov rdi, rax
+    mov rsi, [rbx + DS_thread]
+    call fmt_u64
+    add r12, rax
+    lea rdi, [rbx + DS_threads]
+    mov esi, THR_SIZE
+    call vec_push
+    mov r13, rax
+    mov rax, [rbx + DS_thread]
+    mov [r13 + THR_id], rax
+    mov rdi, rbx
+    lea rsi, [rsp]
+    mov rdx, r12
+    sub rdx, rsi
+    call pool_str
+    mov [r13 + THR_name], eax
+    mov [r13 + THR_namelen], edx
+    EPILOGUE
 
 # pool_str(ds, ptr, len) -> eax offset, edx length of a one-line copy in DS_strs (control bytes as
 #   U+FFFD, a newline as U+21B5, at most 64 KiB); 0, 0 when the pool is full or the text empty
@@ -2723,6 +2823,9 @@ r_stack:
     jz 9f
     mov eax, [r13 + PD_epoch]
     cmp eax, [rbx + DS_epoch]
+    jne 9f
+    mov eax, [r13 + PD_ctx + 4]
+    cmp eax, [rbx + DS_vgen]
     jne 9f
     mov qword ptr [rbx + DS_frames + VEC_len], 0
     mov rdi, r12
@@ -4618,6 +4721,31 @@ FN dap_focus_slot
     call send_watches
 9:  EPILOGUE
 
+# dap_focus_thread(ds, thread id): another thread of the paused program is the focused one: its
+#   stack is asked for (the first frame revealed, its scopes, the watches); Continue and the
+#   steps then name it
+FN dap_focus_thread
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + DS_state], DSS_PAUSED
+    jne 9f
+    cmp rsi, [rbx + DS_thread]
+    je 9f
+    mov [rbx + DS_thread], rsi
+    or dword ptr [rbx + DS_flags], DSF_TNAMED
+    inc dword ptr [rbx + DS_vgen]       # answers about the other thread's frames are dropped
+    mov qword ptr [rbx + DS_frames + VEC_len], 0
+    mov qword ptr [rbx + DS_vars + VEC_len], 0
+    mov dword ptr [rbx + DS_frame], 0
+    mov dword ptr [rbx + DS_total_frames], 0
+    mov dword ptr [rbx + DS_hasvars], 0
+    mov rdi, rbx
+    xor esi, esi
+    call send_stack
+    inc dword ptr [rip + g_dap_gen]
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
 # dap_focus_frame(ds, index): another frame of the stopped thread: revealed, its scopes and the
 #   watches asked for again (the variables of the old frame go)
 FN dap_focus_frame
@@ -5137,6 +5265,9 @@ dap_m_cancelled:
 .Lm_failed_end:
 .Lm_launch_failed: .asciz "the program could not be debugged: "
 .Lm_exited: .asciz "Program exited with code "
+.Lm_thread: .asciz "Thread "
+.Lv_exited: .asciz "exited"
+.Lk_allThreadsContinued: .asciz "allThreadsContinued"
 .Lm_nosession: .asciz "no debug session"
 .Lm_unsupported: .asciz "rhun does not support "
 .Ld_session: .asciz "session="
