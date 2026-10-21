@@ -3137,11 +3137,11 @@ FN app_render
     call statusbar_draw
     # overlays (not blocked)
     mov dword ptr [rip + g_block], 0
+    call notify_draw            # notification cards (notify.s), under popups, menus and dialogs
     call complete_draw
     call hovercard_draw         # language features: the hover card (hovercard.s)
     call extbar_draw
     call explorer_menu_draw
-    call notify_draw            # notification cards (notify.s), under the palette and dialogs
     call palette_draw
     call dialog_draw
     call toast_draw
@@ -6746,7 +6746,11 @@ FN app_open_path
 .Lop_path:
     mov rdi, rbx
 .ifdef WINDOWS
-    call win_fullpath
+    cmp dword ptr [rip + g_remote], 0   # remote hosts: the host's paths stay POSIX (vfs.s)
+    je 90f
+    cmp byte ptr [rbx], '/'
+    je .Lop_posix
+90: call win_fullpath
     test rax, rax
     jnz 91f
     EPILOGUE
@@ -6754,6 +6758,7 @@ FN app_open_path
     mov r13d, 1
     jmp 2f
 .endif
+.Lop_posix:
     mov rbx, rdi
     # absolute path
     PATH_ABSOLUTE rbx, 1f

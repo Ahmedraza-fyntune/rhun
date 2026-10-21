@@ -54,6 +54,7 @@
 .equ FD_PTY, 4
 .equ FD_SLAVE, 5
 .equ FD_WATCH, 6
+.equ FD_CHAN, 7                 # one end of a socketpair (chan.s; remote windows)
 
 # Private deferred window events. Metadata occupies the unused MSG time/point fields.
 .equ WD_hwnd, 0

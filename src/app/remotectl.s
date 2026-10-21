@@ -5,6 +5,9 @@
 #   remote-reconnect          Reconnect
 #   wait-remote [SECONDS]     until the connection is up, failed or lost (60 s unless given)
 #   print-explorer            the explorer's rows as shown (indented by depth, folders end in /)
+#   remote-forward PORT       the host's port forwarded: "forward=PORT local=LOCAL" or "forward-error=ERRNO"
+#   remote-unforward PORT     it stops (0: all of them)
+#   print-forward-url URL     remote_forward_url's answer: "url=URL", or "url=-" for none
 .include "rhun.inc"
 
 .text
@@ -17,6 +20,8 @@ remote_ctl:
     .quad .Lc_print_remote, c_print_remote, .Lc_remote_connect, c_remote_connect
     .quad .Lc_remote_drop, c_remote_drop, .Lc_remote_reconnect, c_remote_reconnect
     .quad .Lc_wait_remote, c_wait_remote, .Lc_print_explorer, c_print_explorer
+    .quad .Lc_remote_forward, c_remote_forward, .Lc_remote_unforward, c_remote_unforward
+    .quad .Lc_print_forward_url, c_print_forward_url
     .quad 0, 0
 .Lc_print_remote: .asciz "print-remote"
 .Lc_remote_connect: .asciz "remote-connect"
@@ -24,6 +29,14 @@ remote_ctl:
 .Lc_remote_reconnect: .asciz "remote-reconnect"
 .Lc_wait_remote: .asciz "wait-remote"
 .Lc_print_explorer: .asciz "print-explorer"
+.Lc_remote_forward: .asciz "remote-forward"
+.Lc_remote_unforward: .asciz "remote-unforward"
+.Lc_print_forward_url: .asciz "print-forward-url"
+.Lk_forward: .asciz "forward="
+.Lk_local: .asciz " local="
+.Lk_forward_error: .asciz "forward-error="
+.Lk_url: .asciz "url="
+.Lk_none: .asciz "-"
 .text
 
 c_print_remote:
@@ -116,3 +129,89 @@ c_print_explorer:
     add rsp, 8
     xor eax, eax
     ret
+
+# rc_port(rest, len) -> rax the number given
+rc_port:
+    sub rsp, 8
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    add rsp, 8
+    ret
+
+c_remote_forward:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rsi
+    mov rsi, rdx
+    call rc_port
+    mov r12, rax
+    mov edi, eax
+    call remote_forward
+    movsxd r13, eax
+    test r13, r13
+    jle 1f
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_forward]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, r12
+    call sb_push_u64
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_local]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, r13
+    call sb_push_u64
+    jmp 2f
+1:  mov rdi, rbx
+    lea rsi, [rip + .Lk_forward_error]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, r13
+    neg rsi
+    call sb_push_u64
+2:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+
+c_remote_unforward:
+    sub rsp, 8
+    mov rdi, rsi
+    mov rsi, rdx
+    call rc_port
+    mov edi, eax
+    call remote_unforward
+    add rsp, 8
+    xor eax, eax
+    ret
+
+c_print_forward_url:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rsi
+    mov rsi, rdx
+    call trim
+    mov rdi, rax
+    mov rsi, rdx
+    call remote_forward_url
+    mov r12, rax
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_url]
+    call sb_push_cstr
+    mov rdi, rbx
+    lea rsi, [rip + .Lk_none]
+    test r12, r12
+    jz 1f
+    mov rsi, r12
+1:  call sb_push_cstr
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, r12
+    call mem_free
+    xor eax, eax
+    EPILOGUE

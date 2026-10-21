@@ -63,6 +63,10 @@ FN clip_context_capture
     test rax, rax
     jz 0f
     mov [rbx + CPX_identity], rax
+    mov ecx, [rax + VW_id]      # and which view of whose: a slot taken again is another one
+    mov [rbx + CPX_revision], rcx
+    mov rcx, [rax + VW_ext]
+    mov [rbx + CPX_owner], rcx
     mov qword ptr [rbx + CPX_kind], CPX_PICTURE
     jmp .Lcc_good
 0:  call focused_field

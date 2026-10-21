@@ -44,6 +44,7 @@ ENDSTRUCT LG_SIZE
 .bss
 .p2align 3
 lg_tmp: .zero SB_SIZE           # a line being cleaned, the copied lines
+lg_find_tmp: .zero SB_SIZE      # a line without its SGR sequences, for find
 
 .text
 
@@ -854,8 +855,12 @@ FN log_find_next
 4:  mov rdi, rbx
     mov rsi, r13
     call line_at
-    mov rdi, [rax + LL_ptr]
+    mov rdi, [rax + LL_ptr]     # the text shown: its SGR sequences left out
     mov esi, [rax + LL_len]
+    lea rdx, [rip + lg_find_tmp]
+    call strip_sgr
+    mov rdi, [rip + lg_find_tmp + SB_ptr]
+    mov rsi, [rip + lg_find_tmp + SB_len]
     mov rdx, [rbx + LG_find + TF_sb + SB_ptr]
     mov rcx, [rbx + LG_find + TF_sb + SB_len]
     call str_ifind
@@ -868,6 +873,46 @@ FN log_find_next
     mov rsi, r13
     call scroll_to
     mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# strip_sgr(ptr, len, sb): the text without its SGR sequences into the buffer (cleared first)
+strip_sgr:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov rdi, r14
+    call sb_clear
+    xor ebx, ebx
+1:  cmp rbx, r13
+    jae 9f
+    movzx eax, byte ptr [r12 + rbx]
+    cmp eax, 27
+    jne 3f
+2:  inc rbx                     # up to its m
+    cmp rbx, r13
+    jae 9f
+    cmp byte ptr [r12 + rbx], 'm'
+    jne 2b
+    inc rbx
+    jmp 1b
+3:  mov rcx, rbx                # a stretch without ESC
+4:  inc rcx
+    cmp rcx, r13
+    jae 5f
+    cmp byte ptr [r12 + rcx], 27
+    jne 4b
+5:  push rcx
+    push rcx
+    mov rdi, r14
+    lea rsi, [r12 + rbx]
+    mov rdx, rcx
+    sub rdx, rbx
+    call sb_push
+    pop rcx
+    pop rcx
+    mov rbx, rcx
+    jmp 1b
 9:  EPILOGUE
 
 # log_copy(LG*): the selected lines (or the cursor's), without SGR sequences, to the clipboard
