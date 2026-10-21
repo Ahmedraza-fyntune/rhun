@@ -251,6 +251,7 @@ set_project:
     mov eax, [rip + g_link_open]
     mov [rip + g_project_link], eax
     mov dword ptr [rip + trust_closed], 0
+    call workspace_reset        # resources group: the folders remembered with it (workspace.s)
     call git_set_project
     call explorer_set_root
     call agents_set_project

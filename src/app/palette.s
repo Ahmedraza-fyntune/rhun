@@ -454,9 +454,8 @@ FN palette_tick
     inc qword ptr [rip + gload_i]
     imul r12, rbx, IT_SIZE
     add r12, [rip + gload + VEC_ptr]
-    mov rdi, [rip + g_project]
-    mov rsi, [r12 + IT_label]
-    call path_join
+    mov rdi, [r12 + IT_label]   # workspace folders: wfold_join
+    call wfold_join
     mov r13, rax
     mov rdi, rax
     call grep_read
@@ -1708,8 +1707,12 @@ load_files:
     jz 9f
     cmp dword ptr [rip + g_remote], 0
     jne .Llf_remote
+    call wfold_count
+    cmp eax, 2
+    jae .Llf_folders
     mov dword ptr [rip + scan_plen], 0
     mov dword ptr [rip + scan_depth], 0
+    mov rdi, [rip + g_project]
     call scan_dir
 .Llf_fix:
     # labels point into strings (stable after the scan): offsets -> pointers
@@ -1724,6 +1727,29 @@ load_files:
     jmp 1b
 9:  EPILOGUE
 
+.Llf_folders:
+    # workspace folders: each one's files, their labels starting with its name (workspace.s)
+    xor ebx, ebx
+1:  call wfold_count
+    cmp rbx, rax
+    jae .Llf_fix
+    mov rdi, rbx
+    call wfold_name
+    lea rdi, [rip + scan_prefix]
+    mov rsi, rax
+    call cstr_copy
+    mov byte ptr [rax], '/'
+    lea rcx, [rip + scan_prefix]
+    sub rax, rcx
+    inc eax
+    mov [rip + scan_plen], eax
+    mov dword ptr [rip + scan_depth], 0
+    mov rdi, rbx
+    call wfold_path
+    mov rdi, rax
+    call scan_dir
+    inc rbx
+    jmp 1b
 .Llf_remote:
     # remote hosts: the host walks the project in one request (vfs.s)
     mov esi, MAXFILES
@@ -1829,7 +1855,9 @@ scan_cb:
 
 # ---- path browser ----
 
-# browse_open(folder): Open File (0) or Open Folder (1), starting in the project folder
+# browse_open(folder): Open File (0) or Open Folder (1), starting in the project folder; 2 is Add
+#   Folder to Workspace (workspace.s), which adds the folder picked instead of opening it
+FN browse_open_kind
 browse_open:
     PROLOGUE
     mov ebx, edi
@@ -1841,6 +1869,9 @@ browse_open:
     test ebx, ebx
     jz 1f
     lea rax, [rip + .Lph_open_folder]
+    cmp ebx, 2
+    jne 1f
+    lea rax, [rip + .Lph_add_folder]
 1:  mov [rip + pal_label], rax
     # the field: the project folder, the home folder as ~, and a '/'
     mov rsi, [rip + g_project]
@@ -2060,7 +2091,10 @@ browse_load:
     je 1f
     lea rdi, [rip + strings]
     lea rsi, [rip + .Lopen_here]
-    call sb_push_cstr
+    cmp dword ptr [rip + brw_kind], 2
+    jne 01f
+    lea rsi, [rip + .Ladd_here]
+01: call sb_push_cstr
     lea rdi, [rip + brw_label]
     lea rsi, [rip + brw_dir]
     call path_tilde
@@ -2076,6 +2110,9 @@ browse_load:
     xor edx, edx
     mov ecx, BRW_HERE
     call item_add
+    mov ebx, 1
+    cmp dword ptr [rip + brw_kind], 2  # adding: no new window
+    je 1f
     lea r13, [r12 + 1]
     lea rdi, [rip + strings]
     lea rsi, [rip + .Lopen_here]
@@ -2775,9 +2812,8 @@ palette_accept:
     je .Lpa_grep
     cmp ebx, PM_FILES
     jne 1f
-    mov rdi, [rip + g_project]
-    mov rsi, [r12 + IT_label]
-    call path_join
+    mov rdi, [r12 + IT_label]   # with two folders or more a label starts with its folder's name
+    call wfold_join
     mov r13, rax
     mov dword ptr [rip + pal_mode], PM_NONE
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
@@ -3088,9 +3124,8 @@ palette_accept:
     shr rax, 44
     imul rax, rax, GF_SIZE
     add rax, [rip + gfiles + VEC_ptr]
-    mov rdi, [rip + g_project]
-    mov rsi, [rax + GF_label]
-    call path_join
+    mov rdi, [rax + GF_label]   # workspace folders: wfold_join
+    call wfold_join
     mov r14, rax
     call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
@@ -3181,7 +3216,11 @@ palette_accept:
 .Lpa_switch:
     call palette_close
     lea rdi, [rip + brw_next]
-    call app_switch_project
+    cmp dword ptr [rip + brw_kind], 2
+    jne 1f
+    call workspace_add_ui       # Add Folder to Workspace (workspace.s)
+    jmp .Lpa_ret
+1:  call app_switch_project
     jmp .Lpa_ret
 .Lpa_new:
     # another rhun opens it; this window keeps its project
@@ -3873,6 +3912,8 @@ hint_text:
 .Lph_open_file: .asciz "Open a file"
 .Lph_open_folder: .asciz "Open a folder"
 .Lopen_here: .asciz "Open "
+.Ladd_here: .asciz "Add "
+.Lph_add_folder: .asciz "Add a folder to the workspace"
 .Lopen_new: .asciz " in a new window"
 .Lroot: .asciz "/"
 .Lpp_none: .asciz "none\n"

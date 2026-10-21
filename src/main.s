@@ -563,12 +563,26 @@ open_initial:
     call app_set_project
 3:  call ws_recover             # wsedit: workspace edits a crash cut short are put back first
     xor ebx, ebx
+    xor r13d, r13d              # a folder opened: later ones join the workspace (workspace.s)
 4:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 5f
     mov rax, [rip + g_start_paths + VEC_ptr]
     mov rdi, [rax + rbx*8]
+    mov r14, rdi
+    call app_path_is_dir
+    test eax, eax
+    jz 41f
+    test r13d, r13d
+    jz 40f
+    cmp dword ptr [r14], 0x6e756872     # "rhun": a link opens as it always did
+    je 41f
+    mov rdi, r14
+    call workspace_add_ui
+    jmp 42f
+40: mov r13d, 1
+41: mov rdi, r14
     call app_open_path
-    inc rbx
+42: inc rbx
     jmp 4b
 5:  # nothing opened: bring back the last session
     cmp dword ptr [rip + opt_empty], 0
