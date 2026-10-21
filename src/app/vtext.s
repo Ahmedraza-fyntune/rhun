@@ -619,6 +619,9 @@ FN vt_hit_kind
 FN vt_hover
     PROLOGUE
     mov rbx, rdi
+    call hovercard_covers       # the hover card shows (or is about to): no tooltip beside it
+    test eax, eax
+    jnz 9f
     lea r12, [rip + vt_hit_item]
     cmp byte ptr [r12 + VI_kind], VK_LENS
     jne 0f
