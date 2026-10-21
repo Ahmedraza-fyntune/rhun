@@ -134,9 +134,11 @@ lf_active_doc:
     js 8f
     call tab_at
     cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 8f
+    jne 7f
     mov rax, [rip + g_doc]
     ret
+7:  cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK  # notebooks (A3): the cell being edited
+    je nb_focus_cell
 8:  xor eax, eax
     ret
 

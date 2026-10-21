@@ -1233,17 +1233,18 @@ FN explorer_body_draw
     call icon_draw
     add r15d, [rip + g_mt + 4*MI_20]
     add r15d, [rip + g_mt + 4*MI_2]
-    # git: name in the status color, the letter at the right for files
+    # git (or another version control system's provider, scmpanel.s): name in the status color,
+    # the letter at the right for files
     mov rdi, [r14 + N_path]
-    call git_status_of
+    call vcs_status_of
     mov [rsp + 32], eax
     mov [rsp + 36], edx
+    mov [rsp + 40], ecx
+    test eax, eax
+    jnz 58f
     COLOR eax, T_PANEL_FG
-    mov edi, [rsp + 32]
-    test edi, edi
-    jz 58f
-    call git_code_color
-58: mov [rsp + 40], eax
+    mov [rsp + 40], eax
+58:
     mov rdi, [r14 + N_name]
     call strlen
     mov r9, rax

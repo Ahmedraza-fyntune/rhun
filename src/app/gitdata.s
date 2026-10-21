@@ -1601,6 +1601,8 @@ FN scm_ext_gone
     call end_all
     mov rdi, r15
     call scmext_ext_gone
+    mov rdi, r15
+    call scmpanel_ext_gone
     EPILOGUE
 
 # end_all(): every request of extension r15 (0: of all) ends; answered "error ID r14" when r14 is not 0

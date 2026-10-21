@@ -98,7 +98,7 @@ class Config(debughost.DebugHost):
         self.assertIn('attach', [r.split(' ')[0] for r in self.requests()])
 
     def test_kept_keys_are_not_arguments(self):
-        args, out = self.args_for('before = build\nafter = clean\n')
+        args, out = self.args_for('after = clean\n')     # before = TASK: tests/debug-tasks.py
         for key in ('before', 'after', 'hidden', 'server', 'compound'):
             self.assertNotIn(key, args)
 

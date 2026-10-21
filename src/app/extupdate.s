@@ -69,7 +69,7 @@ xu_fd: .long -1
 
 # extupdate_init(): what earlier checks found; install folders a crashed install left go
 FN extupdate_init
-    PROLOGUE INI_SIZE + 16
+    PROLOGUE INI_SIZE + 112     # the iterator, then a section's name (at most 100 bytes and a NUL)
     call install_leftovers
     call xu_state_path
     test rax, rax
@@ -613,7 +613,9 @@ xu_index_done:
     call xu_github_start
 9:  EPILOGUE
 
-# xu_from_index(): each installed GitHub extension the index lists: its pinned tag is the latest
+# xu_from_index(): each installed GitHub extension the index lists: its pinned tag is the latest,
+# unless that version needs a newer rhun or has no archive for this system (then nothing is offered
+# and the entry says why)
 xu_from_index:
     PROLOGUE 16
     xor r12d, r12d
@@ -630,7 +632,7 @@ xu_from_index:
     call ext_full_name
     mov r13, rax
     mov rdi, rax
-    call extindex_tag
+    call extindex_entry
     test rax, rax
     jz 1b
     mov r14, rax
@@ -639,12 +641,34 @@ xu_from_index:
     test rax, rax
     jz 1b
     mov r15, rax
-    lea rdi, [r15 + XE_latest]
-    mov rsi, r14
-    mov ecx, 70
-    call copy_upto
     mov dword ptr [r15 + XE_from], XF_INDEX
     mov byte ptr [r15 + XE_error], 0
+    mov byte ptr [r15 + XE_latest], 0
+    mov rdi, r14
+    call extindex_newer
+    test rax, rax
+    jz 2f
+    # "the reviewed version needs rhun 0.19.0"
+    mov [rsp], rax
+    lea rdi, [r15 + XE_error]
+    lea rsi, [rip + .Le_newer]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, [rsp]
+    mov ecx, 60
+    call copy_upto
+    jmp 1b
+2:  cmp qword ptr [r14 + XI_digest], 0
+    jne 3f
+    lea rdi, [r15 + XE_error]
+    lea rsi, [rip + .Le_no_target]
+    mov ecx, 150
+    call copy_upto
+    jmp 1b
+3:  lea rdi, [r15 + XE_latest]
+    mov rsi, [r14 + XI_tag]
+    mov ecx, 70
+    call copy_upto
     jmp 1b
 9:  EPILOGUE
 
@@ -696,7 +720,7 @@ xu_github_start:
     call ext_full_name
     mov r14, rax
     mov rdi, rax
-    call extindex_tag
+    call extindex_entry
     test rax, rax
     jnz 1b                      # the index answers for it
     lea rdi, [rip + xu_args]
@@ -1079,6 +1103,10 @@ xu_queue_auto:
 FN extupdate_state
     PROLOGUE 64
     mov rbx, rdi
+    xor r12d, r12d
+    call xu_checkable           # a link, a folder or an archive install is never offered updates
+    test eax, eax
+    jz 9f
     mov rdi, rbx
     call ext_full_name
     mov rdi, rax
@@ -1555,6 +1583,8 @@ FN extupdate_dump
 .Le_check: .asciz "the check failed"
 .Le_tag: .asciz "its latest release has an unusable tag"
 .Le_no_update: .asciz "No update is known for it; check for updates first"
+.Le_newer: .asciz "the reviewed version needs rhun "
+.Le_no_target: .asciz "the index has no version of it for this system"
 .Lt_couldnt: .asciz "Couldn't check: "
 .Lt_up_to_date: .asciz "Your extensions are up to date"
 .Lt_update: .asciz " extension update available"

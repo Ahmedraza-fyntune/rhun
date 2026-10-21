@@ -46,6 +46,10 @@ def dumps(out):
     return groups
 
 
+def cells_of(out, i):
+    return next(l for l in out if l.startswith('cell=%d ' % i))
+
+
 def field(line, name):
     m = re.search(r'(?:^| )' + name + r'=(\S*)', line)
     return m.group(1) if m else None
@@ -64,10 +68,11 @@ class Notebooks(unittest.TestCase):
         config.parent.mkdir(parents=True)
         config.write_text(CONFIG, encoding='utf-8')
         self.log = self.work / 'state/rhun/extensions/rhun-tests--nbfake/nb.log'
+        self.cells_log = self.work / 'state/rhun/extensions/rhun-tests--cellfake/cells.log'
         self.env = dict(os.environ, HOME=self.work.as_posix(),
                         XDG_CONFIG_HOME=(self.work / 'config').as_posix(),
                         XDG_STATE_HOME=(self.work / 'state').as_posix(),
-                        NBFAKE_LOG=self.log.as_posix())
+                        NBFAKE_LOG=self.log.as_posix(), CELLFAKE_LOG=self.cells_log.as_posix())
         self.env.pop('NBFAKE_MODE', None)
 
     def tearDown(self):
@@ -180,7 +185,8 @@ class Notebooks(unittest.TestCase):
     def test_mouse_selects_edits_runs_and_scrolls(self):
         out = self.run_editor(['print-notebook'])
         x, y = map(int, field(cells(out)[2], 'at').split(','))
-        out = self.run_editor([f'click {x + 34} {y + 10}', 'type Z', 'print-notebook', 'print-doc',
+        # past "y " in the third cell: the fold lane (12 px) and the margin come before the text
+        out = self.run_editor([f'click {x + 46} {y + 10}', 'type Z', 'print-notebook', 'print-doc',
                                f'click {x - 26} {y + 10}', *SETTLE, 'print-notebook'])
         runs = dumps(out)
         self.assertEqual((field(runs[0][2], 'sel'), field(runs[0][2], 'editing')), ('1', '1'))
@@ -253,6 +259,47 @@ class Notebooks(unittest.TestCase):
         self.assertIn('choose=Pick a kernel', out)
         self.assertIn('0 nb-kernel 1', self.fake_log())
         self.assertIn('kernel=Other Kernel', [l for l in out if l.startswith('dirty=')][-1])
+
+    # --- find across the cells (A4) ---
+
+    def test_find_next_and_previous_cross_cells(self):
+        # typing in the find bar selects the first match; Find Next goes on to the next cell's
+        out = self.run_editor(['key Return', 'cmd find', 'type =', 'print-notebook', 'print-state',
+                               'cmd find_next', 'print-notebook', 'print-state', 'cmd find_next', 'print-notebook',
+                               'cmd find_prev', 'print-notebook'])
+        runs = dumps(out)
+        sel = [[field(c, 'sel') for c in r] for r in runs]
+        self.assertEqual(sel, [['1', '0', '0'], ['0', '0', '1'], ['1', '0', '0'], ['0', '0', '1']], out)
+        self.assertEqual(field(runs[1][2], 'editing'), '1')
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('line=2 col=4 sel=1 ', states[0])       # x =| in the first cell
+        self.assertIn('line=1 col=4 sel=1 ', states[1])       # y =| in the third
+        self.assertIn('focus=2', states[1])                   # the find bar keeps the keys
+
+    # --- cells for language providers (A3) ---
+
+    def test_cells_reach_language_providers(self):
+        out = self.run_editor(['wait 300', 'key Return', 'key End', 'type  + ', 'cmd complete', 'wait 500',
+                               'print-complete', 'key Return', *SETTLE, 'print-notebook', 'key Escape', 'nb-select 2',
+                               'key d', 'key d', *SETTLE, 'wait 300'])
+        log = self.cells_log.read_text(encoding='utf-8').splitlines()
+        opened = [l.split(' ') for l in log if l.startswith('0 opened ')]
+        # the Python cells (not the Markdown one), with no path
+        self.assertEqual([(o[4], o[5]) for o in opened], [('Python', '-'), ('Python', '-')], log)
+        d0, d2 = opened[0][2], opened[1][2]
+        cell = [l for l in log if l.startswith('0 cell ')]
+        self.assertEqual([c.split(' ')[3] for c in cell[:2]], ['1', '1'])          # notebook 1
+        self.assertEqual([(c.split(' ')[2], c.split(' ')[5]) for c in cell[:2]], [(d0, '0'), (d2, '2')])
+        cells = [l for l in log if l.startswith('0 cells ')]
+        self.assertEqual(cells[0], '0 cells 1 %s %s' % (d0, d2))
+        self.assertIn('0 cells 1 %s' % d0, cells)                                   # after the delete
+        self.assertTrue(any(l.startswith('0 edits %s ' % d0) for l in log), log)
+        self.assertIn('0 closed %s' % d2, log)
+        self.assertIn('text print("hi")+|x = 1', log)                              # its text request
+        self.assertTrue(any(l.startswith('1 complete %s ' % d0) for l in log), log)
+        self.assertIn('cell_item', '\n'.join(out))
+        self.assertIn('lines=2 ', cells_of(out, 0))
+        self.assertNotIn('0 opened', '\n'.join(self.fake_log()))                  # nbfake did not agree to cells
 
     # --- kernels that run as the user (nb-exec) ---
 
@@ -346,6 +393,9 @@ class Notebooks(unittest.TestCase):
     def test_bad_body_and_no_feature(self):
         out = self.run_editor(['print-notebook'], mode='badbody')
         self.assertEqual(out[0], "notebook=failed error=The extension's notebook cannot be read")
+        for mode in ('wideheader', 'widerheader'):      # more fields than a body line has
+            out = self.run_editor(['print-notebook'], mode=mode)
+            self.assertEqual(out[0], "notebook=failed error=The extension's notebook cannot be read")
         out = self.run_editor(['print-notebook'], mode='nofeature')
         self.assertEqual(out[0], 'notebook=failed error=Fake Notebooks does not read notebooks (the notebooks feature)')
 
@@ -355,6 +405,58 @@ class Notebooks(unittest.TestCase):
         self.assertIn('toast=Fake Notebooks: the disk is full', out)
         self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=1'))
         self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK)
+
+    def test_typing_while_a_save_is_answered_stays_dirty(self):
+        out = self.run_editor(['key Return', 'type x', 'key ctrl+s', 'type y', 'wait 2500', *SETTLE,
+                               'print-notebook', 'key ctrl+s', 'wait 2500', *SETTLE, 'print-notebook'],
+                              mode='slowsave')
+        dirty = [l for l in out if l.startswith('dirty=')]
+        self.assertTrue(dirty[0].startswith('dirty=1'), dirty)  # the file has x, the cell xy
+        self.assertTrue(dirty[1].startswith('dirty=0'), dirty)
+        self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK.replace('print("hi")', 'xyprint("hi")'))
+
+    def test_typing_while_a_reload_is_answered_keeps_it(self):
+        out = self.run_editor(['wait 2500', 'cmd reload_file', 'key Return', 'type q', 'wait 2500', *SETTLE,
+                               'print-notebook', 'print-doc'], mode='slowopen')
+        self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=1'), out)
+        self.assertIn('qprint("hi")', '\n'.join(out))
+        self.assertEqual(sum(1 for l in self.fake_log() if ' nb-open ' in l), 2)
+
+    def test_deleting_the_only_cell_undoes_in_one_z(self):
+        self.nb.write_text('%% code python -\nonly = 1\n', encoding='utf-8')
+        out = self.run_editor(['key d', 'key d', 'print-notebook', 'key z', 'print-notebook', 'print-doc'])
+        runs = dumps(out)
+        self.assertEqual(len(runs[0]), 1)
+        self.assertNotEqual(field(runs[0][0], 'id'), '1')       # a blank one in its place
+        self.assertEqual([field(c, 'id') for c in runs[1]], ['1'])
+        self.assertIn('only = 1', out)
+
+    def test_command_mode_leaves_the_text_alone(self):
+        out = self.run_editor(['key Return', 'key Right', 'key Escape', 'key BackSpace', 'key Delete', 'key Tab',
+                               'print-notebook', 'print-doc'])
+        self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=0 mode=command'), out)
+        self.assertIn('print("hi")', out)
+
+    def test_clear_wait_before_any_output(self):
+        self.nb.write_text('%% code python -\nclearfirst()\n%% code python -\npngwide()\n', encoding='utf-8')
+        out = self.run_editor(['cmd notebook.run_all', *SETTLE, 'wait 500', 'print-nb-output 0 0',
+                               'print-nb-output 1 0'])
+        text = '\n'.join(out)
+        self.assertIn('first\nsecond\n<eoo>', text)
+        self.assertIn('image=80x40', text)                      # a width alone keeps the proportions
+
+    def test_save_as_onto_a_read_only_file(self):
+        target = self.proj / 'b.nbt'
+        target.write_text('old\n', encoding='utf-8')
+        os.chmod(target, 0o444)
+        try:
+            out = self.run_editor(['key Return', 'type q', 'key Escape', 'cmd save_as', 'key ctrl+a',
+                                   'type ' + target.as_posix(), 'key Return', 'key Return', *SETTLE, 'wait 500',
+                                   'print-notebook'])
+            self.assertEqual(target.read_text(encoding='utf-8'), NOTEBOOK.replace('print("hi")', 'qprint("hi")'))
+            self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=0'), out)
+        finally:
+            os.chmod(target, 0o644)
 
     def test_close_with_changes_asks_and_saves(self):
         out = self.run_editor(['key Return', 'type q', 'key ctrl+w', 'print-state', 'dialog yes', *SETTLE,

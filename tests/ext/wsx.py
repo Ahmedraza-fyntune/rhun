@@ -5,7 +5,8 @@ It says `hello 1` with the features in the file `features` next to it (one line,
 logs every line rhun sends to $RHUN_STATE/wsx.log (bodies as `body N` lines with their bytes
 escaped), and acts on its commands: `0 run wsx.NAME DOC` sends the request in the file `plans/NAME`
 next to it. A plan's first line is the request after its id; the rest is its body. Placeholders
-anywhere in a plan (a first line "!write PATH" makes it write the body to PATH instead): {doc:NAME} the id and {ver:NAME} the version of the open document whose path
+anywhere in a plan (a first line "!write PATH" makes it write the body to PATH instead, "!chmod MODE
+PATH" changes a path's mode): {doc:NAME} the id and {ver:NAME} the version of the open document whose path
 ends in /NAME (from the opened/edits/changed events), {fnv:PATH} the FNV-1a hash of that file's
 bytes on disk now; the word LEN in the first line becomes the body's length.
 As a linked-editing provider it answers `ID linked ...` with the body of plans/linked the same way.
@@ -132,6 +133,11 @@ def main():
                     with open(head[7:], 'wb') as f:
                         f.write(body)
                     log(('wrote ' + head[7:]).encode())
+                elif head is not None and head.startswith('!chmod '):
+                    # "!chmod MODE PATH": a folder made read-only (or writable) on disk
+                    mode, path = head[7:].split(' ', 1)
+                    os.chmod(path, int(mode, 8))
+                    log(('chmod %s %s' % (mode, path)).encode())
                 elif head is not None:
                     rid = next_id
                     next_id += 1

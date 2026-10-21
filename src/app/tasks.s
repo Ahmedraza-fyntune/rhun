@@ -390,7 +390,24 @@ tasks_set:
     jmp 4b
 5:  cmp r15, r12
     jne .Lts_trailing
-    # ids unique, depends known, no cycle
+    # an output record needs terminal = output, as in terminal-open
+    xor ebx, ebx
+51: cmp rbx, r14
+    jae 52f
+    mov rax, [rip + tmp + SB_ptr]
+    mov rax, [rax + rbx*8]
+    inc rbx
+    cmp dword ptr [rax + DF_output], 0
+    je 51b
+    mov rax, [rip + req_ext]
+    test dword ptr [rax + EXT_needs], NEEDS_TERM_OUTPUT
+    jnz 51b
+    call free_tmp_list
+    lea rdi, [rip + .Le_needs_output]
+    call reply_error
+    mov eax, 1
+    EPILOGUE
+52: # ids unique, depends known, no cycle
     call list_check
     test rax, rax
     jnz .Lts_bad_list
@@ -718,7 +735,11 @@ FN tasks_request
     cmp rcx, r13
     jne .Lrq_trailing
     mov r14, rax
-    # its depends are published tasks
+    cmp dword ptr [r14 + DF_output], 0
+    je 0f
+    test dword ptr [rbx + EXT_needs], NEEDS_TERM_OUTPUT
+    jz .Lrq_run_output
+0:  # its depends are published tasks
     mov rdi, rbx
     xor esi, esi
     call reg_of
@@ -757,6 +778,12 @@ FN tasks_request
     EPILOGUE
 .Lrq_run_nodep:
     lea rdi, [rip + .Le_run_nodep]
+    call reply_error
+    mov rdi, r14
+    call def_free
+    EPILOGUE
+.Lrq_run_output:
+    lea rdi, [rip + .Le_needs_output]
     call reply_error
     mov rdi, r14
     call def_free
@@ -1048,6 +1075,20 @@ count_deps:
 9:  mov eax, r12d
     EPILOGUE
 
+# free_nodes() -> eax a bit per node that is free
+free_nodes:
+    xor eax, eax
+    xor ecx, ecx
+    lea rdx, [rip + nodes]
+1:  cmp dword ptr [rdx + RN_state], RS_FREE
+    jne 2f
+    bts eax, ecx
+2:  add rdx, RN_SIZE
+    inc ecx
+    cmp ecx, RN_MAX
+    jb 1b
+    ret
+
 # node_alloc() -> a free RN*, zeroed, or 0 with all 32 in use
 node_alloc:
     lea rax, [rip + nodes]
@@ -1105,6 +1146,8 @@ run_begin:
     mov [rsp], r8
     mov [rsp + 8], r9
     mov dword ptr [rip + build_err], 0
+    call free_nodes
+    mov [rsp + 24], eax         # the nodes free before: the ones this run makes are the others
     mov rdi, rbx
     mov rsi, r12
     mov edx, -1
@@ -1112,7 +1155,7 @@ run_begin:
     call build
     movsxd r15, eax
     test r15, r15
-    js .Lrb_fail                # -1 past the limits; -2 (ready already) does not come for the root
+    js .Lrb_undo                # -1 past the limits; -2 (ready already) does not come for the root
     mov rdi, r15
     call node_ptr
     mov rcx, [rsp]
@@ -1139,6 +1182,35 @@ run_begin:
 3:  mov edi, r15d
     call node_go
     EPILOGUE
+.Lrb_undo:
+    # the nodes made so far go; their tabs, made or reused waiting, say they did not run
+    xor r15d, r15d
+6:  cmp r15d, RN_MAX
+    jae .Lrb_fail
+    mov eax, [rsp + 24]
+    bt eax, r15d
+    jnc 7f
+    mov edi, r15d
+    call node_ptr
+    cmp dword ptr [rax + RN_state], RS_FREE
+    je 7f
+    mov [rsp + 16], rax
+    mov rax, [rax + RN_tr]
+    test rax, rax
+    jz 61f
+    mov rdi, [rax + TRC_term]
+    call term_state
+    cmp eax, 5
+    jne 61f
+    mov rax, [rsp + 16]
+    mov rax, [rax + RN_tr]
+    mov rdi, [rax + TRC_term]
+    lea rsi, [rip + .Lw_too_many]
+    call term_note
+61: mov rdi, [rsp + 16]
+    call node_free
+7:  inc r15d
+    jmp 6b
 .Lrb_fail:
     cmp r13d, PK_START
     je 4f
@@ -1192,7 +1264,12 @@ build:
     mov [rax + RN_ext], rbx
     mov rcx, [rsp]
     mov [rax + RN_tr], rcx
-    mov rdi, rax
+    mov rdi, [rcx + TRC_df]     # its label, for what fails because of it
+    mov [rax + RN_df], rdi
+    test rdi, rdi
+    jz 12f
+    call df_hold
+12: mov rdi, rax
     call node_index
     EPILOGUE
 1:  call node_alloc
@@ -1285,6 +1362,15 @@ task_tab:
     mov rdi, [rsp + PGM_argv]
     call mem_free
     mov dword ptr [r13 + TRC_live], 1
+    mov rdi, r13
+    mov rsi, r12
+    call tr_set_output
+    # shown as when it was new: show, focus (the keyboard too) or silent
+    mov esi, [r12 + DF_reveal]
+    cmp esi, 2
+    je 2f
+    mov rdi, [r13 + TRC_term]
+    call term_reveal
     jmp 2f
 1:  mov rdi, rbx
     mov rsi, r12
@@ -1381,7 +1467,9 @@ task_source:
 3:  mov rax, rbx
     EPILOGUE
 
-# node_go(index): its dependencies start, in sequence or 8 at a time; with none left, its program
+# node_go(index): its dependencies start, in sequence or 8 at a time; with none left, its program: a
+#   tab already running (another node of the run started it, or the user) is waited for, one that
+#   ran already runs again (design 1.5: a finished dependency runs again), a closed one fails it
 node_go:
     PROLOGUE
     mov ebx, edi
@@ -1392,10 +1480,29 @@ node_go:
     cmp dword ptr [r12 + RN_left], 0
     jne 1f
     # its turn
-    mov dword ptr [r12 + RN_state], RS_RUN
     mov rax, [r12 + RN_tr]
+    test rax, rax
+    jz 7f
+    mov rdi, [rax + TRC_term]
+    call term_state
+    cmp eax, -1
+    je 7f
+    mov dword ptr [r12 + RN_state], RS_RUN
+    test eax, eax
+    jz 9f                       # running: waited for
+    cmp eax, 5
+    je 5f
+    mov rdi, r12                # ended: the same tab, waiting again
+    call node_rearm
+5:  mov rax, [r12 + RN_tr]
     mov rdi, [rax + TRC_term]
     call term_start
+    EPILOGUE
+7:  mov rdi, r12
+    call node_label
+    mov edi, ebx
+    mov rsi, rax
+    call node_fail
     EPILOGUE
 1:  # the dependencies it may start now
     mov rax, [r12 + RN_df]
@@ -1403,26 +1510,79 @@ node_go:
     cmp dword ptr [rax + DF_order], 2
     jne 2f
     mov r13d, PARALLEL_MAX
-2:  mov eax, [r12 + RN_next]
+2:  cmp dword ptr [r12 + RN_state], RS_WAIT
+    jne 9f                      # one that could not start failed it
+    mov eax, [r12 + RN_next]
     cmp eax, [r12 + RN_nkids]
     jae 9f
     cmp [r12 + RN_running], r13d
     jae 9f
     inc dword ptr [r12 + RN_next]
-    inc dword ptr [r12 + RN_running]
     mov edi, [r12 + rax*4 + RN_kids]
+    cmp edi, -1
+    je 2b                       # done before its turn (it was running when the run began)
+    inc dword ptr [r12 + RN_running]
     call node_go
     jmp 2b
 9:  EPILOGUE
 
-# node_done(index, ok): a node's program ended (ok: exit 0) or became ready, or it could not run:
-#   its parent goes on, or fails with the tabs above it saying why; the root's callback hears it
+# node_rearm(RN*): its tab, whose program ended, waits to run it again
+node_rearm:
+    PROLOGUE 48
+    mov rbx, rdi
+    mov rdi, [rbx + RN_df]
+    lea rsi, [rsp]
+    call def_program
+    mov rax, [rbx + RN_tr]
+    mov rdi, [rax + TRC_term]
+    lea rsi, [rsp]
+    mov rdx, [rbx + RN_df]
+    mov rdx, [rdx + DF_label]
+    call term_set_program
+    mov rdi, [rsp + PGM_argv]
+    call mem_free
+    EPILOGUE
+
+# node_label(RN*) -> its task's label ("a dependency" without a definition)
+node_label:
+    lea rax, [rip + .Lw_dependency]
+    mov rcx, [rdi + RN_df]
+    test rcx, rcx
+    jz 1f
+    mov rax, [rcx + DF_label]
+1:  ret
+
+# kid_release(parent RN*, kid index) -> eax 1 when the parent had started it: the kid is out of the
+#   parent's counts (one done before its turn is marked done in the parent's list)
+kid_release:
+    xor ecx, ecx
+1:  cmp ecx, [rdi + RN_nkids]
+    jae 8f
+    cmp [rdi + rcx*4 + RN_kids], esi
+    je 2f
+    inc ecx
+    jmp 1b
+2:  dec dword ptr [rdi + RN_left]
+    cmp ecx, [rdi + RN_next]
+    jae 3f
+    dec dword ptr [rdi + RN_running]
+    mov eax, 1
+    ret
+3:  mov dword ptr [rdi + rcx*4 + RN_kids], -1
+8:  xor eax, eax
+    ret
+
+# node_done(index, ok): a node's program ended (ok: exit 0) or became ready: its parent goes on, or
+#   fails with the tabs above it saying why; the root's callback hears it; the node goes
 node_done:
     PROLOGUE 16
     mov ebx, edi
     mov r14d, esi
     call node_ptr
     mov r12, rax
+    mov rdi, r12
+    call node_label
+    mov [rsp], rax
     mov r13d, [r12 + RN_parent]
     cmp r13d, -1
     jne 1f
@@ -1440,43 +1600,50 @@ node_done:
 1:  mov edi, r13d
     call node_ptr
     mov r15, rax
+    cmp dword ptr [r15 + RN_state], RS_FREE
+    je 8f
+    mov rdi, r15
+    mov esi, ebx
+    call kid_release
     cmp dword ptr [r15 + RN_state], RS_WAIT
-    jne 8f                      # the parent failed already
-    dec dword ptr [r15 + RN_running]
-    dec dword ptr [r15 + RN_left]
-    test r14d, r14d
-    jz 2f
+    je 3f
+    # a parent that failed already goes once its last running dependency ends
+    cmp dword ptr [r15 + RN_running], 0
+    jne 8f
+    cmp dword ptr [r15 + RN_state], RS_FAILED
+    jne 8f
+    mov rdi, r15
+    call node_free
+    jmp 8f
+3:  test r14d, r14d
+    jz 4f
+    test eax, eax
+    jz 8f                       # done before its parent's turn: counted, nothing starts yet
     mov edi, r13d
     call node_go
     jmp 8f
-2:  # it fails, and the ones above it: "── not run: LABEL failed ──"
-    mov rax, [r12 + RN_df]
-    mov rsi, [rax + DF_label]
-    test rax, rax
-    jnz 3f
-    lea rsi, [rip + .Lw_dependency]
-3:  mov edi, r13d
+4:  # it fails, and the ones above it: "── not run: LABEL failed ──"
+    mov edi, r13d
+    mov rsi, [rsp]
     call node_fail
 8:  mov rdi, r12
     call node_free
     EPILOGUE
 
-# node_fail(index, label of what failed): it will not run: its tab says so, its parent fails too
-node_fail:
+# node_note(RN*, label of what failed): its tab, still waiting, says it did not run
+node_note:
     PROLOGUE
-    mov ebx, edi
-    mov r13, rsi
-1:  mov edi, ebx
-    call node_ptr
-    mov r12, rax
-    mov dword ptr [r12 + RN_state], RS_FAILED
+    mov rbx, rdi
+    mov r12, rsi
+    cmp qword ptr [rbx + RN_tr], 0
+    je 9f
     lea rdi, [rip + tmp]
     call sb_clear
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lw_not_run]
     call sb_push_cstr
     lea rdi, [rip + tmp]
-    mov rsi, r13
+    mov rsi, r12
     call sb_push_cstr
     lea rdi, [rip + tmp]
     lea rsi, [rip + .Lw_failed]
@@ -1484,39 +1651,105 @@ node_fail:
     lea rdi, [rip + tmp]
     xor esi, esi
     call sb_push_byte
-    mov rax, [r12 + RN_tr]
+    mov rax, [rbx + RN_tr]
     mov rdi, [rax + TRC_term]
     mov rsi, [rip + tmp + SB_ptr]
     call term_note
+9:  EPILOGUE
+
+# cancel_tree(index, label): a node its parent had not started yet will not run: nor will its
+#   dependencies (none of them started either); a waiter on a running task only goes
+cancel_tree:
+    PROLOGUE
+    mov ebx, edi
+    mov r13, rsi
+    call node_ptr
+    mov r12, rax
+    cmp dword ptr [r12 + RN_state], RS_WAIT
+    jne 5f
+    xor r14d, r14d
+1:  cmp r14d, [r12 + RN_nkids]
+    jae 2f
+    mov edi, [r12 + r14*4 + RN_kids]
+    inc r14d
+    cmp edi, -1
+    je 1b
+    mov rsi, r13
+    call cancel_tree
+    jmp 1b
+2:  mov rdi, r12
+    mov rsi, r13
+    call node_note
+5:  mov rdi, r12
+    call node_free
+    EPILOGUE
+
+# node_fail(index, label of what failed): it will not run: its tab says so, what it had not started
+#   will not run either, its parent fails too (naming it); it goes once none of its dependencies runs
+node_fail:
+    PROLOGUE 16
+    mov ebx, edi
+    mov r13, rsi
+    call node_ptr
+    mov r12, rax
+    mov dword ptr [r12 + RN_state], RS_FAILED
+    mov rdi, r12
+    mov rsi, r13
+    call node_note
+    # the dependencies it had not started
+    mov r14d, [r12 + RN_next]
+1:  cmp r14d, [r12 + RN_nkids]
+    jae 2f
+    mov edi, [r12 + r14*4 + RN_kids]
+    mov dword ptr [r12 + r14*4 + RN_kids], -1
+    inc r14d
+    cmp edi, -1
+    je 1b
+    mov rsi, r13
+    call cancel_tree
+    jmp 1b
+2:  mov [r12 + RN_next], r14d
+    mov rdi, r12
+    call node_label
+    mov [rsp], rax
     mov r14d, [r12 + RN_parent]
     cmp r14d, -1
-    jne 2f
+    jne 3f
     # the root: its callback hears it failed
     mov rax, [r12 + RN_cb]
     test rax, rax
-    jz 3f
+    jz 5f
     mov rdi, [r12 + RN_cookie]
     mov esi, TASK_FAILED
     call rax
-3:  # a failed node with no dependency still running goes
-    cmp dword ptr [r12 + RN_running], 0
-    jne 9f
-    mov rdi, r12
-    call node_free
-    EPILOGUE
-2:  mov rax, [r12 + RN_df]
-    mov r13, [rax + DF_label]
-    cmp dword ptr [r12 + RN_running], 0
-    jne 4f
-    mov rdi, r12
-    call node_free
-4:  mov edi, r14d
+    jmp 5f
+3:  mov edi, r14d
     call node_ptr
-    cmp dword ptr [rax + RN_state], RS_WAIT
+    mov r15, rax
+    cmp dword ptr [r15 + RN_state], RS_FREE
+    je 5f
+    mov rdi, r15
+    mov esi, ebx
+    call kid_release
+    cmp dword ptr [r15 + RN_state], RS_WAIT
+    jne 4f
+    mov edi, r14d
+    mov rsi, [rsp]
+    call node_fail
+    jmp 5f
+4:  cmp dword ptr [r15 + RN_running], 0
+    jne 5f
+    cmp dword ptr [r15 + RN_state], RS_FAILED
+    jne 5f
+    mov rdi, r15
+    call node_free
+5:  # it goes once no dependency of it still runs
+    cmp dword ptr [r12 + RN_state], RS_FAILED
     jne 9f
-    dec dword ptr [rax + RN_running]
-    mov ebx, r14d
-    jmp 1b
+    cmp dword ptr [r12 + RN_running], 0
+    jne 9f
+    mov rdi, r12
+    call node_free
 9:  EPILOGUE
 
 # task_event(TR*, TR*, event, code): a task tab's program started or ended: the nodes that wait on it
@@ -1544,7 +1777,45 @@ task_event:
     test r13d, r13d
     jnz 3f
     mov r14d, 1
-3:  xor r15d, r15d
+3:  cmp r12d, TE_CLOSED
+    jne 30f
+    # the nodes still waiting for their turn in this tab will not run; any node forgets the tab
+    xor r15d, r15d
+    mov dword ptr [rsp], 0      # those waiting (a bit each)
+31: cmp r15d, RN_MAX
+    jae 33f
+    mov edi, r15d
+    call node_ptr
+    cmp [rax + RN_tr], rbx
+    jne 32f
+    cmp dword ptr [rax + RN_state], RS_RUN
+    je 32f                      # its program ended with the tab: below
+    mov qword ptr [rax + RN_tr], 0
+    cmp dword ptr [rax + RN_state], RS_WAIT
+    jne 32f
+    mov ecx, [rsp]
+    bts ecx, r15d
+    mov [rsp], ecx
+32: inc r15d
+    jmp 31b
+33: xor r15d, r15d
+34: cmp r15d, RN_MAX
+    jae 30f
+    mov eax, [rsp]
+    bt eax, r15d
+    jnc 35f
+    mov edi, r15d
+    call node_ptr
+    cmp dword ptr [rax + RN_state], RS_WAIT
+    jne 35f
+    mov rdi, rax
+    call node_label
+    mov edi, r15d
+    mov rsi, rax
+    call node_fail
+35: inc r15d
+    jmp 34b
+30: xor r15d, r15d
 4:  cmp r15d, RN_MAX
     jae 9f
     mov edi, r15d
@@ -1734,7 +2005,13 @@ picks_clear:
     imul rax, rbx, 24
     add rax, [rip + picks + VEC_ptr]
     mov rdi, [rax + 8]
+    push rax
+    push rax
     call mem_free
+    pop rax
+    pop rax
+    mov rdi, [rax + 16]         # its DF, held while the palette may show its strings
+    call df_release
     inc rbx
     jmp 1b
 2:  mov qword ptr [rip + picks + VEC_len], 0
@@ -1758,6 +2035,8 @@ picks_add:
     mov [rax], rbx
     mov [rax + 8], r13
     mov [rax + 16], r12
+    mov rdi, r12
+    call df_hold
     EPILOGUE
 
 # collect(mode, group): the tasks a command lists, into picks: Run Task: every published task, the
@@ -1849,7 +2128,7 @@ open_picks:
     jae 9f
     imul r13, r12, 24
     add r13, [rip + picks + VEC_ptr]
-    mov r14, [r13 + 16]         # its DF (held by the registry while the palette is open)
+    mov r14, [r13 + 16]         # its DF (held while it is in picks)
     mov rdi, [r14 + DF_label]
     call strlen
     mov rdi, [r14 + DF_label]
@@ -2073,6 +2352,30 @@ FN cmd_clear_task_problems
     jmp 1b
 9:  EPILOGUE
 
+# tasks_nodes_dump(sb): "nodes=N" the run nodes in use (print-task-nodes: none is left behind)
+FN tasks_nodes_dump
+    PROLOGUE
+    mov rbx, rdi
+    call free_nodes
+    xor r12d, r12d              # the ones not free
+    mov ecx, RN_MAX
+1:  test eax, 1
+    jnz 2f
+    inc r12d
+2:  shr eax, 1
+    dec ecx
+    jnz 1b
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_nodes]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, r12d
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
 # ---------------- the debugger's prelaunch ----------------
 
 # tasks_run_named(name, cb, cookie) -> 0 started, -1 not found or ambiguous, -2 busy (see the top)
@@ -2233,6 +2536,9 @@ FN tasks_dump
 .Lv_run: .asciz "task-run"
 .Le_unknown: .asciz "unknown no such request"
 .Le_needs: .asciz "needs terminal=run"
+.Le_needs_output: .asciz "needs terminal=output"
+.Ld_nodes: .asciz "nodes="
+.Lw_too_many: .asciz "not run: too many tasks at once"
 .Le_syntax: .asciz "syntax"
 .Le_syntax_sp: .asciz "syntax "
 .Le_syntax_def: .asciz "syntax definition: "

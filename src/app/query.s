@@ -1478,6 +1478,9 @@ FN query_dump_pending
 .Lk_color_edit: .asciz "color-edit"
 .Lk_highlights: .asciz "highlights"
 .Lk_linked: .asciz "linked"
+.Lk_ed_open: .asciz "editor-open"
+.Lk_ed_save: .asciz "editor-save"
+.Lk_ed_cmd: .asciz "editor-undo"
 .p2align 3
 qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_expired
     .quad .Lq_late, .Lq_dropped, .Lq_cancelled, 0
@@ -1486,8 +1489,9 @@ qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_ex
 qo_reply: .quad 0, langfeat_reply, complete_reply, 0, scmext_reply, testproto_expired, ai_query_expired, nb_reply
     .quad present_reply         # QO_PRESENT
     .quad ws_linked_reply       # QO_LINKED
-qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0, 0, 0, 0, 0
-qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0, 0, 0, 0, 0
+    .quad ce_reply              # QO_CUSTOM
+qo_part: .quad 0, langfeat_part, complete_part, 0, 0, 0, 0, 0, 0, 0, 0
+qo_trunc: .quad 0, langfeat_truncated, 0, 0, 0, 0, 0, 0, 0, 0, 0
 # the kinds (docs/extensions/v1.1.md, "Language feature queries"): name, [provides] key, show,
 # hard limit and ceiling (ms), flags, an answer's cap (records, bytes), the query's cap
 .macro PK name, pv, show, base, ceil, flags, items, bytes, qitems, qbytes
@@ -1546,3 +1550,7 @@ pk_table:
     PK .Lk_highlights, EXT_pv_highlights, 0, 5000, 0, PKF_SILENT, 5000, 1048576, 5000, 1048576
     # wsedit: linked editing (wslinked.s): an answer within a second, at most 64 ranges
     PK .Lk_linked, EXT_pv_linked, 0, 1000, 0, PKF_SILENT, 64, 65536, 64, 65536
+    # custom editors: the editor keeps its own deadline (customed.s)
+    PK .Lk_ed_open, EXT_pv_editor, 0, 0, 0, PKF_SILENT, 1, 65536, 1, 65536
+    PK .Lk_ed_save, EXT_pv_editor, 0, 0, 0, PKF_SILENT | PKF_SUB, 1, 4194368, 1, 4194368
+    PK .Lk_ed_cmd, EXT_pv_editor, 0, 0, 0, PKF_SILENT | PKF_SUB, 1, 65536, 1, 65536

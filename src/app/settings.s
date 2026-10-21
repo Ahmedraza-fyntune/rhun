@@ -427,6 +427,9 @@ section_title:
     lea rax, [rip + .Lt_files]
     cmp byte ptr [rdi], 'f'
     je 1f
+    lea rax, [rip + .Lt_testing]        # testing (before terminal: both start with t)
+    cmp dword ptr [rdi], 0x74736574     # "test"
+    je 1f
     lea rax, [rip + .Lt_terminal]
     cmp byte ptr [rdi], 't'
     je 1f
@@ -1576,6 +1579,7 @@ FN ui_text_v_fit
 .Lt_files: .asciz "Files"
 .Lt_agents: .asciz "Agents"
 .Lt_terminal: .asciz "Terminal"
+.Lt_testing: .asciz "Testing"
 .Lt_git: .asciz "Git"
 .Lt_updates: .asciz "Updates"
 .Lt_debug: .asciz "Debugger"
