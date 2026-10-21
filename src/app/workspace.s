@@ -405,6 +405,14 @@ ws_check:
 ws_path_clean:
     PROLOGUE
     mov rbx, rdi
+.ifdef WINDOWS
+    call win_fullpath           # absolute, the system's way
+    test rax, rax
+    jnz 2f
+    mov rdi, rbx
+    call dup_cstr
+    jmp 2f
+.endif
     PATH_ABSOLUTE rbx, 1f
     sub rsp, 4096
     mov rdi, rsp
