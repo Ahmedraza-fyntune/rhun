@@ -303,7 +303,7 @@ h_res_content_changed:
     test eax, eax
     jz 9f
     cmp qword ptr [rip + nfields], 3
-    jne 8f
+    jb 8f                       # the URI is the rest of the line (its REST may hold spaces)
     mov edi, 2
     call rest_from
     mov rbx, rax

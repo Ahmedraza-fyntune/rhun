@@ -2092,9 +2092,9 @@ browse_load:
     lea rdi, [rip + strings]
     lea rsi, [rip + .Lopen_here]
     cmp dword ptr [rip + brw_kind], 2
-    jne 01f
+    jne 88f
     lea rsi, [rip + .Ladd_here]
-01: call sb_push_cstr
+88: call sb_push_cstr
     lea rdi, [rip + brw_label]
     lea rsi, [rip + brw_dir]
     call path_tilde

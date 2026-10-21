@@ -2220,6 +2220,8 @@ remove_commit:
     jz 9f
     mov rdi, rbx
     call ext_retire
+    mov rdi, rbx                # resources group: removed, not replaced: its secrets go with it
+    call secrets_ext_removed
     mov rdi, rbx
     call ext_home
     mov rdi, rax

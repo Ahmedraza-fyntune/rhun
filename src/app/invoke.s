@@ -989,6 +989,11 @@ ip_send:
     js .Lips_cancelled
     inc qword ptr [r12 + EXT_hreq]
     mov r13, [r12 + EXT_hreq]
+    mov rdi, r12                # resources group: its time, for the cost counters and idle = stop
+    mov rsi, r13
+    lea rdx, [rip + .Liv_kind]
+    mov ecx, 4
+    call extres_req_sent
     lea rdi, [rip + iv_out]
     call sb_clear
     lea rdi, [rip + iv_out]
@@ -1273,6 +1278,7 @@ FN invoke_from_name
     ret
 
 .section .rodata
+.Liv_kind: .asciz "call"
 .p2align 3
 from_names: .quad .Lf_palette, .Lf_key, .Lf_menu, .Lf_ref
 .Lf_palette: .asciz "palette"

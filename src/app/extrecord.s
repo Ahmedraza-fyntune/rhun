@@ -807,6 +807,10 @@ FN ext_needs_wider
     call wider_item
 6:  lea rsi, [rip + .Ln_terminal]
     test r15d, NEEDS_TERMINAL
+    jz 61f
+    call wider_item
+61: lea rsi, [rip + .Ln_secrets]  # resources group: secrets = yes
+    test r15d, NEEDS_SECRETS
     jz 7f
     call wider_item
 7:  # programs in run, and in tests (testing), that the old lists lack: "run cargo rustfmt"
@@ -1221,6 +1225,7 @@ put_num:
 .Ln_home: .asciz "read the files in your home folder"
 .Ln_net: .asciz "use the internet"
 .Ln_terminal: .asciz "suggest terminal commands for you to run"
+.Ln_secrets: .asciz "store passwords and tokens in your keychain"
 .Ln_run: .asciz "run "
 .Ln_when_tests: .asciz " with your access when you run tests"
 .Ln_when_kernels: .asciz " with your access as notebook kernels"

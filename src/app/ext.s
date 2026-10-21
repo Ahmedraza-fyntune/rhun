@@ -1046,9 +1046,7 @@ FN ext_retire
 2:  mov dword ptr [rbx + EXT_status], ES_REMOVED
     mov dword ptr [rbx + EXT_restart], 0
     mov rdi, rbx
-    call secrets_ext_removed    # resources group: its secrets go with it
-    mov rdi, rbx
-    call vdoc_ext_gone          # and the virtual documents it provides
+    call vdoc_ext_gone          # resources group: the virtual documents it provides
     mov rdi, rbx
     call ext_pending_clear
     mov rdi, rbx

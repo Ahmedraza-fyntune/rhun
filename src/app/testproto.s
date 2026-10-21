@@ -157,7 +157,14 @@ next_id:
     cmp qword ptr [rdi + EXT_hreq], 2147483647
     jae 8f
     inc qword ptr [rdi + EXT_hreq]
-    mov rax, [rdi + EXT_hreq]
+    push qword ptr [rdi + EXT_hreq]
+    push rdi
+    mov rsi, [rdi + EXT_hreq]   # resources group: its time, for the cost counters and idle = stop
+    lea rdx, [rip + .Ltp_kind]
+    mov ecx, 5
+    call extres_req_sent
+    pop rdi
+    pop rax
     ret
 8:  xor eax, eax
     ret
@@ -1659,6 +1666,7 @@ output_append:
 9:  EPILOGUE
 
 .section .rodata
+.Ltp_kind: .asciz "tests"
 .Lw_ok: .asciz "ok "
 .Lw_error: .asciz "error "
 .Lw_replace: .asciz "replace"

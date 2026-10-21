@@ -211,7 +211,7 @@ FN extres_req_answer
     mov rsi, r12
     call req_find
     test rax, rax
-    js .Lra_dropped
+    js 9f                       # not one this module saw go out: not counted
     mov r15, rax
     imul rax, rax, ELQ_SIZE
     lea r14, [rbx + EL_req + rax]
@@ -240,11 +240,10 @@ FN extres_req_answer
     mov rsi, r15
     call req_remove
     EPILOGUE
-.Lra_dropped:
-    inc dword ptr [rbx + EL_dropped]
 9:  EPILOGUE
 
-# expire(row, now): requests nobody answered for 10 s are dropped (their modules gave up)
+# expire(row, now): requests nobody answered for 120 s are dropped: every module rhun has gave up on
+# them by then (rename waits 15 s, tests-resolve 30 s), and until then they hold an idle extension
 expire:
     PROLOGUE
     mov rbx, rdi
@@ -255,7 +254,7 @@ expire:
     imul rax, r13, ELQ_SIZE
     mov rcx, r12
     sub rcx, [rbx + EL_req + rax + ELQ_t]
-    cmp rcx, 10000
+    cmp rcx, 120000
     jb 2f
     inc dword ptr [rbx + EL_dropped]
     mov rdi, rbx

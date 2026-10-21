@@ -3745,6 +3745,7 @@ FN extproto_doc
 
 # FN extproto_matches(patterns, doc) -> eax 1 when the document's name matches the patterns
 FN extproto_matches
+    xor edx, edx                # the recipient is not known here
     jmp sub_matches
 
 # FN extproto_host_request(ext, verb, doc, kind, ch) -> rax the id of "ID VERB DOC VERSION LINE COL
@@ -3929,6 +3930,17 @@ FN extproto_host_send_body
     call out_end
     test rax, rax
     js 8f
+    xor ecx, ecx                # resources group: the request's kind (its verb) and time
+1:  cmp rcx, r14
+    jae 2f
+    cmp byte ptr [r13 + rcx], ' '
+    je 2f
+    inc rcx
+    jmp 1b
+2:  mov rdi, rbx
+    mov rsi, r15
+    mov rdx, r13
+    call extres_req_sent
     mov rax, r15
     EPILOGUE
 8:  xor eax, eax
@@ -4278,14 +4290,15 @@ known_find:
 8:  xor eax, eax
     ret
 
-# sub_matches(patterns cstr or 0, doc) -> 1 when the document's name matches ("*" matches all,
-# untitled documents too)
+# sub_matches(patterns cstr or 0, doc, recipient ext or 0) -> 1 when the document's name matches
+# ("*" matches all, untitled documents too); a virtual document only for a recipient that agreed uris
 sub_matches:
     PROLOGUE
     test rdi, rdi
     jz 8f
     mov rbx, rdi
     mov r12, rsi
+    mov r13, rdx
     cmp qword ptr [r12 + DOC_uri], 0
     jne 2f
     cmp byte ptr [rbx], '*'
@@ -4300,13 +4313,16 @@ sub_matches:
     call ext_path_matches
     EPILOGUE
 2:  # resources group: a virtual document, only for extensions that agreed uris, by its URI's
-    # last segment
-    mov rdi, [rip + cur]
+    # last segment (with the recipient unknown, its request about the document is refused later:
+    # extproto_host_request asks only about documents the extension was told of)
+    test r13, r13
+    jz 21f
+    mov rdi, r13
     mov esi, FEAT_URIS
     call ext_feature
     test eax, eax
     jz 8f
-    cmp byte ptr [rbx], '*'
+21: cmp byte ptr [rbx], '*'
     jne 3f
     cmp byte ptr [rbx + 1], 0
     je 9f
@@ -4509,6 +4525,7 @@ FN extproto_send_hover_all
     jne 1b
     mov rdi, [rbx + EXT_sub_hover]
     mov rsi, r13
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz 1b

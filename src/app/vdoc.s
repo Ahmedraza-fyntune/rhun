@@ -420,7 +420,13 @@ FN vdoc_open
 97: mov rdi, [r15 + VD_doc]     # wsedit: open without a tab so far (a diff side): it gets one
     mov esi, TAB_DOC
     call app_add_tab
-0:  mov rdi, [r15 + VD_doc]
+0:  cmp dword ptr [r15 + VD_loaded], 0
+    jne 88f
+    mov eax, [rsp + 8]          # still loading: the text puts the cursor where the last open asked
+    mov [r15 + VD_line], eax
+    mov eax, [rsp + 12]
+    mov [r15 + VD_col], eax
+88: mov rdi, [r15 + VD_doc]
     mov esi, [rsp + 8]
     mov edx, [rsp + 12]
     call vd_place_cursor
@@ -581,6 +587,10 @@ vd_ask:
     test rax, rax
     jz .Lva_failed
     mov [rbx + VD_req], rax
+    mov rdi, r12                # its answer carries 4 MiB of text and the lengths, language, title
+    mov rsi, rax
+    mov edx, VD_TEXT_MAX + 1024
+    call ext_reply_cap_set
     mov dword ptr [rbx + VD_state], VS_ASKED
     call time_ms
     mov [rbx + VD_since], rax
@@ -592,12 +602,22 @@ vd_ask:
     call vd_error
     EPILOGUE
 
+# vd_cap_drop() with rbx the VD: the reply cap of its outstanding request goes
+vd_cap_drop:
+    mov rsi, [rbx + VD_req]
+    test rsi, rsi
+    jz 1f
+    mov rdi, [rbx + VD_ext]
+    jmp ext_reply_cap_drop
+1:  ret
+
 # vd_error(vd, reason cstr): the document says why it has no text; Reload File asks again
 vd_error:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
     mov dword ptr [rbx + VD_state], VS_ERROR
+    call vd_cap_drop
     mov qword ptr [rbx + VD_req], 0
     lea rdi, [rip + vd_line]
     call sb_clear
@@ -682,7 +702,11 @@ FN vdoc_reply
     jnz 1b
 8:  xor eax, eax
     EPILOGUE
-3:  mov qword ptr [r15 + VD_req], 0
+3:  push rbx
+    mov rbx, r15
+    call vd_cap_drop
+    pop rbx
+    mov qword ptr [r15 + VD_req], 0
     cmp dword ptr [rsp], 0
     jne 4f
     # error ID CODE TEXT: the code and text (r13, r14)
@@ -890,6 +914,10 @@ FN vdoc_doc_freed
     jz 8f
     mov r12, rax
     mov r13, [r12 + VD_ext]
+    push rbx
+    mov rbx, r12
+    call vd_cap_drop
+    pop rbx
     mov rsi, [r12 + VD_req]
     test rsi, rsi
     jz 1f
