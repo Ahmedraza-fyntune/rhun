@@ -525,6 +525,34 @@ lines. An edit inside a fold's hidden lines, or one that joins its first line wi
 the fold. Folds are kept with the session and in reopened tabs. `folding = false` under `[editor]`
 (**Folding** in Settings) turns the lane and folding off.
 
+### Inlay hints
+
+An extension that knows the code (a language server, through the lsp extension) can show what is
+not written: inferred types after names, parameter names before arguments, the ends of long
+blocks. Hints are drawn in a muted pill inside the line but are not part of the text: the cursor
+steps over them, and copying, searching and the status bar's column never see them. The pointer
+resting on a hint shows its tooltip; a click on a part that has a command runs it, or goes to the
+definition it names; a double click writes the hint into the text when it offers that (a type, for
+example). `inlay_hints = false` under `[editor]` (**Inlay hints** in Settings) turns them off.
+
+### Code lens
+
+An extension that knows the code can put a row of small titles above a line: how many references a
+function has, a Run or Debug action over a test or a `main`. A click on a title runs it; the
+pointer resting on one shows its tip. The rows are not part of the text: the cursor steps over
+them, and the text you are looking at does not jump when they appear. `code_lens = false` under
+`[editor]` (**Code lens** in Settings) turns them off.
+
+### Semantic highlighting
+
+An extension that knows the code (a language server, through the lsp extension) can color it by
+meaning: a name is drawn as the type, function, variable, constant or macro it is, beyond what the
+syntax highlighting sees, deprecated names are struck through, and the extension may underline
+others (rust-analyzer's mutable variables). The colors are the theme's syntax colors. Until the
+extension has answered, and while you type, the syntax colors and the last answer's colors are
+shown. `semantic_highlighting = false` under `[editor]` (**Semantic highlighting** in Settings)
+turns it off.
+
 ### Vim mode
 
 The Vim mode switch in Settings (`vim_mode = true` under `[editor]`) or Toggle Vim Mode in the command palette turns it on. The status bar shows the mode and the keys typed so far; outside insert mode the cursor is a block.

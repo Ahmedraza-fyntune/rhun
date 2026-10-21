@@ -3426,20 +3426,23 @@ F PRS_deco, VEC_SIZE     # DR decoration ranges, unsorted
 F PRS_dpool, SB_SIZE     # their texts (before, after, tip, extra)
 F PRS_dgarbage, 8        # pool bytes no range uses any more
 F PRS_glyphs, VEC_SIZE   # GLE glyph-lane entries, sorted by position then kind
-F PRS_folds, VEC_SIZE    # FD folds (fold.s), sorted by their header's end
+F PRS_folds, VEC_SIZE    # FLD folds (fold.s), sorted by their header's end
 F PRS_hid, VEC_SIZE      # HI the hidden lines, merged (a cache of the folds)
 F PRS_hidver, 8          # DOC_version and PRS_gen the cache was built for
 F PRS_hidgen, 8
 F PRS_hidden, 8          # hidden lines in all
 F PRS_fr, VEC_SIZE       # FRG a folding provider's ranges, sorted by their header's line feed
 F PRS_frext, 8           # the extension they came from; 0 while indentation decides
+F PRS_tks, 8             # semantic tokens (semtok.s), owned, or 0
+F PRS_hints, VEC_SIZE    # IH inlay hints (inlay.s), sorted by position
+F PRS_lens, VEC_SIZE     # LNS code lenses (lens.s), sorted by position
 ENDSTRUCT PRS_SIZE
 # a fold: the lines after its header up to its last line are hidden; it follows edits as positions
 STRUCT
-F FD_a, 8               # the header line's line feed
-F FD_b, 8               # the last hidden line's line feed (or the text's end)
-F FD_text, 8            # owned cstr: a provider's collapsed text, or 0
-ENDSTRUCT FD_SIZE
+F FLD_a, 8               # the header line's line feed
+F FLD_b, 8               # the last hidden line's line feed (or the text's end)
+F FLD_text, 8            # owned cstr: a provider's collapsed text, or 0
+ENDSTRUCT FLD_SIZE
 STRUCT
 F HI_first, 8           # hidden lines first..last (0-based)
 F HI_last, 8
@@ -3460,6 +3463,91 @@ ENDSTRUCT FRG_SIZE
 .equ FRG_MAX, 50000              # ranges in one answer
 .equ FRG_TEXT_MAX, 80            # a collapsed text's bytes
 .equ FOLD_ALL_MAX, 4000000      # fold_all scans at most this many lines
+# semantic tokens (semtok.s): a token's place, the class it draws in and its effects
+STRUCT
+F STK_start, 8
+F STK_len, 4
+F STK_cls, 1            # C_*, or STK_KEEP: the syntax class stays
+F STK_fx, 1             # STKF_*
+F STK_pad, 2
+ENDSTRUCT STK_SIZE
+.equ STK_KEEP, 255
+.equ STKF_STRIKE, 1
+.equ STKF_UNDER, 2
+.equ STKF_FADED, 4
+.equ SEMT_LEGENDS, 8            # legends per extension
+.equ SEMT_TYPES, 256            # token types, modifiers per legend
+.equ SEMT_MODS, 64
+.equ SEMT_LEGEND_MAX, 16384     # a legend's body
+.equ SEMT_TOKENS, 200000        # tokens per document
+.equ SEMT_DELTA, 10000          # a delta's edits
+.equ SEMT_HUGE_LINES, 200000    # a document past these is asked about in ranges
+.equ SEMT_HUGE_BYTES, 8388608
+.equ SEMT_FX_MAX, 256           # effects drawn per line
+# a presentation request out (present.s; its answer's handler gets it)
+STRUCT
+F PQR_ext, 8
+F PQR_id, 8
+F PQR_doc, 8            # DOC_id
+F PQR_kind, 8
+F PQR_ver, 8            # the version it asked about
+F PQR_l1, 8             # the lines it asked about (0-based, inclusive)
+F PQR_l2, 8
+ENDSTRUCT PQR_SIZE
+# inlay hints (inlay.s)
+STRUCT
+F IH_pos, 8
+F IH_owner, 8           # EXT*
+F IH_blob, 8            # owned: IHP parts, IHE edits, then their bytes
+F IH_ver, 8             # the version its edits are about
+F IH_side, 1            # VS_*
+F IH_nparts, 1
+F IH_nedits, 1
+F IH_pad, 5
+ENDSTRUCT IH_SIZE
+STRUCT
+F IHP_loff, 4           # offsets into the blob: label, tip, extra records
+F IHP_llen, 4
+F IHP_toff, 4
+F IHP_tlen, 4
+F IHP_xoff, 4
+F IHP_xlen, 4
+ENDSTRUCT IHP_SIZE
+STRUCT
+F IHE_l1, 4             # 0-based, in the hint's version
+F IHE_c1, 4
+F IHE_l2, 4
+F IHE_c2, 4
+F IHE_toff, 4
+F IHE_tlen, 4
+ENDSTRUCT IHE_SIZE
+.equ IH_MAX, 5000               # hints per answer
+.equ IH_DOC_MAX, 50000          # per document
+.equ IH_LABEL_MAX, 120          # a hint's label, all parts
+.equ IH_PARTS, 8
+.equ IH_TIP_MAX, 4000
+.equ IH_PEXTRA_MAX, 9000
+.equ IH_EDITS, 16
+.equ IH_EXTRA_MAX, 65536
+# code lens (lens.s)
+STRUCT
+F LNS_pos, 8            # its line's start (moves with the text)
+F LNS_owner, 8          # EXT*
+F LNS_blob, 8           # owned: TITLE then EXTRA
+F LNS_tlen, 4
+F LNS_xlen, 4
+ENDSTRUCT LNS_SIZE
+.equ LENS_MAX, 10000            # lenses per answer
+.equ LENS_TITLE_MAX, 200
+.equ LENS_EXTRA_MAX, 9000
+# the kinds present.s asks for
+.equ PQ_FOLDING, 0
+.equ PQ_TOKENS, 1
+.equ PQ_HINTS, 2
+.equ PQ_LENS, 3
+.equ PQ_COLORS, 4
+.equ PQ_HIGHLIGHTS, 5
+.equ PQ_COUNT, 6
 # single-provider kinds for automatic use (extproviders.s numbers 0-11 its own)
 .equ PP_TOKENS, 12
 .equ PP_INLINE, 13
@@ -3619,6 +3707,7 @@ ENDSTRUCT VI_SIZE
 .equ VK_HINT, 2
 .equ VK_DECO, 3
 .equ VK_SWATCH, 4
+.equ VK_LENS, 5                 # (not an inlay: a code lens item under the pointer, lens.s)
 .equ VTM_LEFT, 0                # vt_x modes: before every inlay at the gap, after them, the caret's
 .equ VTM_RIGHT, 1
 .equ VTM_CARET, 2
