@@ -3419,6 +3419,12 @@ F NBC_collapsed, 4       # its outputs are hidden (o)
 F NBC_clearwait, 4       # clear-wait: the outputs clear when the next one arrives
 F NBC_y, 4               # where it was drawn last (physical px; -1 not on screen)
 F NBC_unsent, 4           # its run waits for the extension to run before nb-run goes out
+F NBC_edit, 4            # it is the cell in edit mode (nb_mark_edit): a markup cell shows its source
+F NBC_mdx, 4             # where its rendered Markdown was drawn last (physical px), for tests
+F NBC_md, 8              # a markup cell's rendered Markdown (MD*, nbmd.s), or 0
+F NBC_mdver, 8           # DOC_version + 1 of the source it was made from, 0 none
+F NBC_mdy, 4
+F NBC_pad2, 4
 ENDSTRUCT NBC_SIZE
 .equ NBCK_CODE, 0
 .equ NBCK_MARKUP, 1
@@ -3442,6 +3448,9 @@ F NBO_iw, 4              # their size, physical px
 F NBO_ih, 4
 F NBO_ikey, 4            # the width they were made for
 F NBO_pad, 4
+F NBO_md, 8              # a rich item shown: its document (MD*), or 0
+F NBO_pic, 8             # a picture item shown: the picture (pic_new), or 0
+F NBO_pkey, 8            # what NBO_img holds a picture scaled for (nbmd.s), 0 nothing
 ENDSTRUCT NBO_SIZE
 .equ NBOK_STDOUT, 1
 .equ NBOK_STDERR, 2

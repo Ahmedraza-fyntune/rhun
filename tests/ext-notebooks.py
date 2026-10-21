@@ -458,6 +458,65 @@ class Notebooks(unittest.TestCase):
         finally:
             os.chmod(target, 0o644)
 
+    # --- rendered Markdown, rich and picture outputs (A4) ---
+
+    def md_at(self, out):
+        line = next(l for l in out if l.startswith('md cell='))
+        return line, tuple(map(int, line.split(' at=')[1].split(',')))
+
+    def test_markdown_cells_render_until_edited(self):
+        out = self.run_editor(['print-nb-md 1', 'key j', 'key Return', 'print-nb-md 1', 'key Escape',
+                               'print-nb-md 1', 'print-nb-md 0'])
+        mds = [l for l in out if l.startswith('md')]
+        self.assertTrue(mds[0].startswith('md cell=1 rendered=1'), mds)
+        self.assertIn('block 0 type=head level=1', '\n'.join(out))
+        self.assertTrue(any(l.startswith('item text') and l.endswith('text=Title') for l in out), out)
+        self.assertTrue(mds[1].startswith('md cell=1 rendered=0'), mds)   # edit mode: the source
+        self.assertTrue(mds[2].startswith('md cell=1 rendered=1'), mds)
+        self.assertEqual(mds[3], 'md=none')                              # a code cell
+        # a click selects a rendered cell, a double click edits it; its new text renders after Esc
+        line, (x, y) = self.md_at(out)
+        out = self.run_editor([f'click {x + 4} {y + 4}', 'print-notebook', f'click {x + 4} {y + 4}',
+                               'print-notebook', 'key ctrl+End', 'key Return', 'type ## Added', 'key Escape', 'print-nb-md 1'])
+        runs = dumps(out)
+        self.assertEqual((field(runs[0][1], 'sel'), field(runs[0][1], 'editing')), ('1', '0'))
+        self.assertEqual((field(runs[1][1], 'sel'), field(runs[1][1], 'editing')), ('1', '1'))
+        self.assertTrue(any(l.endswith('text=Added') for l in out), out)
+
+    def test_markdown_link_opens_the_file(self):
+        self.nb.write_text('%% markup\nOpen [the file](b.txt).\n', encoding='utf-8')
+        (self.proj / 'b.txt').write_text('hello\n', encoding='utf-8')
+        out = self.run_editor(['print-nb-md 0'])
+        _, (x, y) = self.md_at(out)
+        item = next(l for l in out if l.startswith('item text') and ' link=0 ' in l)
+        f = dict(kv.split('=', 1) for kv in item.split(' ')[2:7])
+        cx, cy = x + int(f['x']) + int(f['w']) // 2, y + int(f['y']) + int(f['h']) // 2
+        out = self.run_editor([f'click {cx} {cy}', *SETTLE, 'print-state'])
+        self.assertTrue(next(l for l in out if l.startswith('tabs=')).startswith('tabs=2 active=b.txt'), out)
+
+    def test_rich_and_picture_outputs(self):
+        self.nb.write_text('%% code python -\nrich()\n%% code python -\npicture()\n'
+                           '%% code python -\nwidepic()\n%% code python -\nbadpic()\n', encoding='utf-8')
+        out = self.run_editor(['cmd notebook.run_all', *SETTLE, 'wait 500', 'print-nb-output 0 0',
+                               'print-nb-output 1 0', 'shot ' + (self.work / 'top.ppm').as_posix(),
+                               'nb-select 3', 'wait 300', 'print-nb-output 2 0', 'print-nb-output 3 0',
+                               'shot ' + (self.work / 'bottom.ppm').as_posix()])
+        text = '\n'.join(out)
+        self.assertIn('output kind=display id=- items=rich,text show=0', text)
+        self.assertIn('block 0 type=row', text)                 # the table, laid out
+        self.assertIn('link 0 b.txt', text)
+        self.assertIn('items=picture,text show=0 lines=0 bytes=58 keep=0 picture=120x60', text)
+        wide = next(l for l in out if 'items=picture show=0' in l)
+        w, h = map(int, wide.split('picture=')[1].split('x'))
+        self.assertLess(w, 3000)                                # down to the column, proportions kept
+        self.assertEqual(h, 100 * w // 3000)
+        self.assertIn('items=picture,text show=1', text)        # a picture that cannot be read: its text
+        self.assertIn('no picture', text)
+        top, bottom = ppm_colors(self.work / 'top.ppm'), ppm_colors(self.work / 'bottom.ppm')
+        self.assertIn((200, 0, 0), top)
+        self.assertIn((0, 0, 200), top)
+        self.assertIn((0, 200, 200), bottom)
+
     def test_close_with_changes_asks_and_saves(self):
         out = self.run_editor(['key Return', 'type q', 'key ctrl+w', 'print-state', 'dialog yes', *SETTLE,
                                'print-state'])
