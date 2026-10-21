@@ -5255,6 +5255,10 @@ verbs:
     .quad .Lv_git_show, gitdata_h_show, 4096
     .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     .quad .Lv_qd_refresh, scmext_h_qd_refresh, 4096
+    .quad .Lv_scm_register, scmext_h_register, 8192
+    .quad .Lv_scm_update, scmext_h_update, EXT_BODY_MAX
+    .quad .Lv_scm_input, scmext_h_input, 0
+    .quad .Lv_scm_input_set, scmext_h_input_set, 65536
     # resources group (extresproto.inc)
     .quad .Lres_v_busy, h_res_busy, 0
     .quad .Lres_v_secret_get, h_res_secret_get, 0
@@ -5349,6 +5353,10 @@ verbs:
 .Lv_git_show: .asciz "git-show"
 .Lv_git_diff_open: .asciz "git-diff-open"
 .Lv_qd_refresh: .asciz "quickdiff-refresh"
+.Lv_scm_register: .asciz "scm-register"
+.Lv_scm_update: .asciz "scm-update"
+.Lv_scm_input: .asciz "scm-input"
+.Lv_scm_input_set: .asciz "scm-input-set"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"

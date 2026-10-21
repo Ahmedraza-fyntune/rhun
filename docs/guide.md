@@ -805,6 +805,13 @@ extension can also give the base the gutter marks compare a file with, for files
 (another version control system, or "compare with" modes), and write commit messages (see
 Commit message AI).
 
+An extension for another version control system (the first-party Mercurial extension, for
+example) adds its own section to the sidebar: a status line such as the branch, a message box
+with its buttons (Ctrl+Enter in the box runs the first, usually Commit), and its changed files in
+groups. Click a file to open its changes, right-click it or a group for the extension's actions
+and Open File. Its files and their folders are colored in the explorer and the tab titles as
+git's are, and the gutter marks of its files compare with what it says they were.
+
 An edit across files is checked whole before anything changes: if a document changed meanwhile
 or a range is off, nothing changes and rhun says why. Each document's changes are one undo
 step.

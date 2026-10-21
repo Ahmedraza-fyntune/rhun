@@ -6,7 +6,8 @@
 # For other parts of rhun:
 #   menu_open_editor(), menu_open_explorer(items, node), menu_open_root(items),
 #   menu_open_tab(items, tab), menu_open_terminal(items, n): open a built-in menu with the
-#   extensions' items (each sets the target first)
+#   extensions' items (each sets the target first); menu_open_scm(SL_*, items, target line, len,
+#   path) for source control rows (scm group)
 #   menu_contrib(loc, CT*, target line, len, add fn(label, len, icon cstr, row)) and
 #   menu_contrib_run(row): the items of a location for buttons the views part draws
 .include "rhun.inc"
@@ -20,7 +21,12 @@
 .equ MLOC_VIEW_TITLE, 7
 .equ MLOC_VIEW_ITEM, 8
 .equ MLOC_VIEW_ITEM_INLINE, 9
-.equ MLOC_SUB, 10               # an item of a [submenu.NAME]
+# source control rows (scm group: scmext.s, scmpanel.s; menu_open_scm), in SL_* order
+.equ MLOC_HISTORY_COMMIT, 10
+.equ MLOC_HISTORY_FILE, 11
+.equ MLOC_SCM_RESOURCE, 12
+.equ MLOC_SCM_GROUP, 13
+.equ MLOC_SUB, 14               # an item of a [submenu.NAME]
 # an extension's menu item (mi_list[extension index])
 .equ MI_loc, 0
 .equ MI_order, 4
@@ -1252,6 +1258,42 @@ FN menu_open_explorer
     call mn_show
     EPILOGUE
 
+# FN menu_open_scm(SL_*, items, target line ptr, len, absolute path cstr or 0): the menu of a source
+#   control row (scm group: the history's commits and files, Source Control's and extensions'
+#   panels' resources and groups) with the extensions' [menu.history_commit], [menu.history_file],
+#   [menu.scm_resource] and [menu.scm_group] items; TARGET is the caller's line ("commit SHA",
+#   "commit SHA PATH", "resource GROUP PATH", "group GROUP"), targetKind its first word
+FN menu_open_scm
+    PROLOGUE 16
+    mov [rsp], edi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov r15, r8
+    call mt_menu
+    mov eax, [rsp]
+    lea rcx, [rip + scm_kinds]
+    mov rdi, [rcx + rax*8]
+    xor esi, esi
+    mov rdx, r15
+    call mt_begin
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
+    call sb_clear
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
+    mov rsi, r13
+    mov rdx, r14
+    call sb_push
+    mov eax, [rsp]
+    lea rcx, [rip + scm_locs]
+    mov edi, [rcx + rax*8]
+    mov rsi, r12
+    mov edx, [rip + g_mx]
+    mov ecx, [rip + g_my]
+    call mn_show
+    EPILOGUE
+
 # FN menu_open_root(items): the menu of the explorer's empty area: "root PATH" (the project)
 FN menu_open_root
     PROLOGUE
@@ -1939,7 +1981,18 @@ FN menu_title_buttons
 .section .rodata
 .p2align 3
 loc_names: .quad .Ll_editor, .Ll_explorer, .Ll_tab, .Ll_terminal, .Ll_extension, .Ll_editor_title
-    .quad .Ll_view_title, .Ll_view_item, .Ll_view_item_inline, 0
+    .quad .Ll_view_title, .Ll_view_item, .Ll_view_item_inline
+    .quad .Ll_history_commit, .Ll_history_file, .Ll_scm_resource, .Ll_scm_group, 0
+# a source control row's location and its targetKind, by SL_* (menu_open_scm)
+scm_locs: .quad 0, MLOC_HISTORY_COMMIT, MLOC_HISTORY_FILE, MLOC_SCM_RESOURCE, MLOC_SCM_GROUP
+scm_kinds: .quad 0, .Lks_commit, .Lks_commit, .Lks_resource, .Lks_group
+.Ll_history_commit: .asciz "history_commit"
+.Ll_history_file: .asciz "history_file"
+.Ll_scm_resource: .asciz "scm_resource"
+.Ll_scm_group: .asciz "scm_group"
+.Lks_commit: .asciz "commit"
+.Lks_resource: .asciz "resource"
+.Lks_group: .asciz "group"
 # ITEM.FIELD: the field's offset in MI, -1 order (a number), -2 when (a clause)
 mi_fields: .quad .Lf_command, MI_cmd, .Lf_group, MI_group, .Lf_order, -1, .Lf_when, -2
     .quad .Lf_args, MI_args, .Lf_submenu, MI_sub, 0, 0
