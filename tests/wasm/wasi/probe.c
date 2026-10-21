@@ -2,7 +2,7 @@
  * build.sh (clang --target=wasm32-wasip1); the module is kept beside the source so the tests run
  * where no WASI toolchain is.
  *   probe open PATH | create PATH | mkdir PATH | unlink PATH | stat PATH | lstat PATH
- *   probe append PATH | poll-ready | poll-clocks | poll-abs
+ *   probe append PATH | resize PATH | poll-ready | poll-clocks | poll-abs | poll-past
  * Paths are relative to descriptor 3, the first preopened directory. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +43,24 @@ int main(int argc, char **argv) {
         __wasi_size_t n = 0;
         if (!e) e = __wasi_fd_write(fd, &iov, 1, &n);
         printf("%d %lu\n", e, (unsigned long)n);
+    } else if (!strcmp(t, "resize")) {
+        /* the right to resize alone, no right to write: then cut the file to one byte */
+        e = __wasi_path_open(3, __WASI_LOOKUPFLAGS_SYMLINK_FOLLOW, p, 0, __WASI_RIGHTS_FD_FILESTAT_SET_SIZE, 0, 0, &fd);
+        __wasi_errno_t e2 = e ? e : __wasi_fd_filestat_set_size(fd, 1);
+        printf("%d %d\n", e, e2);
+    } else if (!strcmp(t, "poll-past")) {
+        /* an absolute realtime deadline long past (the epoch): due at once */
+        __wasi_subscription_t s;
+        memset(&s, 0, sizeof s);
+        s.userdata = 9;
+        s.u.tag = __WASI_EVENTTYPE_CLOCK;
+        s.u.u.clock.id = __WASI_CLOCKID_REALTIME;
+        s.u.u.clock.timeout = 0;
+        s.u.u.clock.flags = __WASI_SUBCLOCKFLAGS_SUBSCRIPTION_CLOCK_ABSTIME;
+        __wasi_event_t ev;
+        __wasi_size_t n = 0;
+        e = __wasi_poll_oneoff(&s, &ev, 1, &n);
+        printf("%d %lu %llu\n", e, (unsigned long)n, (unsigned long long)ev.userdata);
     } else if (!strcmp(t, "poll-ready")) {
         /* a read of an empty standard input and a write: the write is ready now */
         __wasi_subscription_t s[2];
