@@ -775,6 +775,42 @@ FN scmext_timeout
     xor eax, eax
 9:  EPILOGUE
 
+# FN scmext_qd_root(root ptr, len): a provider registered a root (scmpanel.s): the open documents
+#   under it are asked about again (their provider may be the new root's now)
+FN scmext_qd_root
+    PROLOGUE
+    mov r13, rdi
+    mov r14, rsi
+    xor r12d, r12d
+1:  cmp r12, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, r12
+    inc r12
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov rbx, [rax + TAB_doc]
+    test rbx, rbx
+    jz 1b
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jz 1b
+    call strlen
+    cmp rax, r14
+    jbe 1b
+    mov rdi, [rbx + DOC_path]
+    cmp byte ptr [rdi + r14], '/'
+    jne 1b
+    mov rsi, r13
+    mov rdx, r14
+    call memeq
+    test eax, eax
+    jz 1b
+    mov rdi, rbx
+    call scmext_qd_want
+    jmp 1b
+9:  EPILOGUE
+
 # qd_want_all(): every open document is to be asked about
 qd_want_all:
     push rbx

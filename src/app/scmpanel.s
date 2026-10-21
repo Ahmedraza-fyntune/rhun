@@ -280,6 +280,10 @@ FN scmext_h_register
     mov esi, [r15 + SP_handle]
     mov rdi, r12
     call reply_ok_num
+    # the open files under the root: their quick-diff provider may be this one now
+    mov rdi, [r15 + SP_root]
+    mov rsi, [r15 + SP_rootlen]
+    call scmext_qd_root
     mov dword ptr [rip + g_dirty], 1
     jmp 9f
 6:  mov rdi, r15
