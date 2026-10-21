@@ -116,7 +116,7 @@ trust_path: .zero 4096           # the repository's folder, as shown (~ for the 
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
-pm_items: .zero 16 * 24         # the project menu: 2 commands, a line, 9 folders, the remote items
+pm_items: .zero 16 * 27         # the project menu: 2 commands, a line, 9 folders, a line, Add Folder, the remote items
                                 # (a line, 2 commands, 8 recent remotes; remoteui.s), the end
 .globl g_shot_path
 g_shot_path: .quad 0
@@ -251,6 +251,7 @@ set_project:
     mov eax, [rip + g_link_open]
     mov [rip + g_project_link], eax
     mov dword ptr [rip + trust_closed], 0
+    call workspace_reset        # resources group: the folders remembered with it (workspace.s)
     call git_set_project
     call explorer_set_root
     call agents_set_project
@@ -493,7 +494,15 @@ project_menu_open:
     add rbx, 16
     inc r15d
     jmp 1b
-2:  mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
+2:  lea rax, [rip + .Lpm_line]  # resources group: Add Folder to Workspace (workspace.s), after the
+    mov [rbx], rax              # recent folders so that they keep their places
+    mov qword ptr [rbx + 8], 0
+    lea rax, [rip + .Lpm_add_folder]
+    mov [rbx + 16], rax
+    lea rax, [rip + cmd_add_workspace_folder]
+    mov [rbx + 24], rax
+    add rbx, 32
+    mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
     lea rsi, [rip + pm_items]
     call remote_menu_append
     mov rbx, rax
@@ -821,7 +830,8 @@ FN app_update_title
     lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Ldash]
     call sb_push_cstr
-1:  mov rsi, [rip + g_project_name]
+1:  call wfold_title            # resources group: "app + lib" for two workspace folders or more
+    mov rsi, rax
     test rsi, rsi
     jnz 2f
     lea rsi, [rip + .Lrhun]
@@ -6659,6 +6669,7 @@ tip_table:
 .endif
 .endif
 .Lpm_file: .asciz "Open File\342\200\246"
+.Lpm_add_folder: .asciz "Add Folder to Workspace\342\200\246"
 .Lpm_line: .asciz ""
 .Ld0: .asciz "Cancel"
 .Ld1: .asciz "Don't Save"
@@ -6782,6 +6793,10 @@ FN app_open_path
     mov r13d, 1
 2:  mov rdi, rbx
     call path_normalize
+    mov rdi, rbx                # resources group: a workspace file opens its folders (workspace.s)
+    call workspace_open_file
+    test eax, eax
+    jnz 8f
     mov rdi, rbx
     call vfs_is_dir
     test eax, eax

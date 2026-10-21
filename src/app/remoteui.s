@@ -1816,9 +1816,6 @@ FN remote_askpass_env
     PROLOGUE
     lea rax, [rip + ru_ap_env]
     mov qword ptr [rax], 0
-.ifdef WINDOWS
-    EPILOGUE
-.else
     call ru_ap_listen_start
     test eax, eax
     jz 9f
@@ -1845,6 +1842,7 @@ FN remote_askpass_env
     lea rax, [rip + ru_ap_env_sock]
     mov [rbx + 16], rax
     mov qword ptr [rbx + 24], 0
+.ifndef WINDOWS
     # older ssh wants a display before it uses askpass
     lea rdi, [rip + .Le_display]
     call getenv
@@ -1853,9 +1851,9 @@ FN remote_askpass_env
     lea rax, [rip + .Le_display_set]
     mov [rbx + 24], rax
     mov qword ptr [rbx + 32], 0
+.endif
 9:  lea rax, [rip + ru_ap_env]
     EPILOGUE
-.endif
 
 # ru_ap_drop(): the askpass connection ends without an answer
 ru_ap_drop:
@@ -1870,7 +1868,84 @@ ru_ap_drop:
 1:  add rsp, 8
     ret
 
-.ifndef WINDOWS
+.ifdef WINDOWS
+# ru_ap_listen_start() -> 1 when the askpass pipe waits: \\.\pipe\rhun-askpass-PID-RANDOM, made
+#   new by this window with only its user allowed (askpipe.s); remote_tick looks for its client
+ru_ap_listen_start:
+    PROLOGUE
+    cmp dword ptr [rip + ru_ap_listen], 0
+    jge 7f
+    lea rdi, [rip + ru_ap_path]
+    lea rsi, [rip + .Lap_pipe]
+    call cstr_copy
+    mov rbx, rax
+    SYS SYS_getpid
+    mov rdi, rbx
+    mov rsi, rax
+    call fmt_u64
+    mov byte ptr [rdi], '-'
+    inc rdi
+    mov rbx, rdi
+    call time_us
+    mov r12, 0x9e3779b97f4a7c15
+    imul rax, r12
+    mov rdi, rbx
+    mov rsi, rax
+    call fmt_hex
+    mov byte ptr [rbx + rax], 0
+    lea rdi, [rip + ru_ap_path]
+    mov esi, 1                  # a new name
+    call win_pipe_server
+    test rax, rax
+    js 8f
+    mov [rip + ru_ap_listen], eax
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# remote_askpass_poll(): Windows: ssh's askpass program connected to the waiting instance: it is
+#   read as on the other systems, and the next instance waits
+FN remote_askpass_poll
+    PROLOGUE
+    cmp dword ptr [rip + ru_ap_conn], 0
+    jge 9f                      # one question at a time
+    mov edi, [rip + ru_ap_listen]
+    test edi, edi
+    js 9f
+    call win_pipe_accept
+    test rax, rax
+    jz 9f
+    js 7f
+    mov eax, [rip + ru_ap_listen]
+    mov [rip + ru_ap_conn], eax
+    lea rdi, [rip + ru_ap_path]
+    xor esi, esi                # another instance of this window's pipe
+    call win_pipe_server
+    test rax, rax
+    jns 1f
+    mov eax, -1
+1:  mov [rip + ru_ap_listen], eax
+    lea rdi, [rip + ru_ap_in]
+    call sb_clear
+    mov edi, [rip + ru_ap_conn]
+    mov esi, POLLIN
+    lea rdx, [rip + ru_ap_on_conn]
+    xor ecx, ecx
+    call watch_add
+    jmp 9f
+7:  # it came and went: a fresh instance
+    mov edi, [rip + ru_ap_listen]
+    SYS SYS_close
+    lea rdi, [rip + ru_ap_path]
+    xor esi, esi
+    call win_pipe_server
+    test rax, rax
+    jns 8f
+    mov eax, -1
+8:  mov [rip + ru_ap_listen], eax
+9:  EPILOGUE
+.else
 # ru_ap_listen_start() -> 1 when the askpass socket listens: /tmp/rhun-askpass-PID-N/s, a folder
 #   this window just made (0700), so only the user reaches it
 ru_ap_listen_start:
@@ -1975,8 +2050,10 @@ ru_ap_on_listen:
     xor ecx, ecx
     call watch_add
 9:  EPILOGUE
+.endif
 
-# ru_ap_on_conn(fd, revents, ctx): the question, up to the program's end of writing; then it is asked
+# ru_ap_on_conn(fd, revents, ctx): the question, up to the program's end of writing or a NUL (a
+#   named pipe has no half close); then it is asked
 ru_ap_on_conn:
     PROLOGUE
 1:  lea rdi, [rip + ru_ap_in]
@@ -1993,7 +2070,19 @@ ru_ap_on_conn:
     test rax, rax
     js 8f
     jz 2f
-    add [rip + ru_ap_in + SB_len], rax
+    # a NUL ends it too
+    mov rdi, [rip + ru_ap_in + SB_ptr]
+    add rdi, [rip + ru_ap_in + SB_len]
+    xor ecx, ecx
+3:  cmp rcx, rax
+    jae 4f
+    cmp byte ptr [rdi + rcx], 0
+    je 5f
+    inc rcx
+    jmp 3b
+5:  add [rip + ru_ap_in + SB_len], rcx
+    jmp 2f
+4:  add [rip + ru_ap_in + SB_len], rax
     cmp qword ptr [rip + ru_ap_in + SB_len], RU_ASK_MAX
     jb 1b
     jmp 8f
@@ -2086,7 +2175,6 @@ ru_ap_ask:
     call palette_ext_prompt_open
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
-.endif
 
 # remote_ui_prompt_done(text, len, kind): ssh's question answered in a prompt (or the port to forward)
 FN remote_ui_prompt_done
@@ -2122,6 +2210,10 @@ ru_ap_answer:
     mov rsi, [rip + ru_ap_out + SB_ptr]
     mov rdx, [rip + ru_ap_out + SB_len]
     call write_all
+.ifdef WINDOWS
+    mov edi, ebx                # a pipe's close drops what its client has not read yet
+    SYS SYS_fsync
+.endif
     # the answer does not stay in memory
     mov rdi, [rip + ru_ap_out + SB_ptr]
     xor esi, esi
@@ -2145,6 +2237,10 @@ FN remote_ui_cancel
     lea rsi, [rip + .Ln_answer]
     mov edx, 1
     call write_all
+.ifdef WINDOWS
+    mov edi, [rip + ru_ap_conn]
+    SYS SYS_fsync
+.endif
     call ru_ap_drop
 1:  add rsp, 8
     ret
@@ -2158,11 +2254,13 @@ FN remote_shutdown
     mov edi, [rip + ru_ap_listen]
     SYS SYS_close
     mov dword ptr [rip + ru_ap_listen], -1
+.ifndef WINDOWS
     lea rdi, [rip + ru_ap_path]
     SYS SYS_unlink
     lea rdi, [rip + ru_ap_dir]
     mov eax, 84                 # rmdir
     XSYS
+.endif
 1:  add rsp, 8
     ret
 
@@ -2171,8 +2269,31 @@ FN remote_shutdown
 #   user cancelled or the window is gone
 FN remote_askpass_main
 .ifdef WINDOWS
-    mov edi, 1
-    call sys_exit
+    # the window's pipe (RHUN_ASKPASS): the question and a NUL, then its answer until it closes
+    PROLOGUE 16
+    mov r12, rdi
+    lea rdi, [rip + .Lenv_rhun_askpass]
+    call getenv
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    call win_pipe_open
+    test rax, rax
+    js 8f
+    mov ebx, eax
+    test r12, r12
+    jz 1f
+    mov rdi, r12
+    call strlen
+    mov edi, ebx
+    mov rsi, r12
+    mov rdx, rax
+    call write_all
+1:  mov edi, ebx
+    lea rsi, [rip + .Lnul]
+    mov edx, 1
+    call write_all
+    jmp .Lap_read
 .else
     PROLOGUE 256
     mov r12, rdi
@@ -2217,6 +2338,8 @@ FN remote_askpass_main
 1:  mov edi, ebx
     mov esi, 1                  # SHUT_WR: the question is complete
     SYS SYS_shutdown
+.endif
+.Lap_read:
     lea rdi, [rip + ru_ap_in]
     call sb_clear
 2:  lea rdi, [rip + ru_ap_in]
@@ -2253,7 +2376,6 @@ FN remote_askpass_main
     call sys_exit
 8:  mov edi, 1
     call sys_exit
-.endif
 
 .section .rodata
 .p2align 3
@@ -2351,5 +2473,7 @@ FN remote_askpass_main
 .Le_display_set: .asciz "DISPLAY=rhun"
 .Lenv_rhun_askpass: .asciz "RHUN_ASKPASS"
 .Lap_dir: .asciz "/tmp/rhun-askpass-"
+.Lap_pipe: .asciz "\\\\.\\pipe\\rhun-askpass-"
+.Lnul: .byte 0
 .Lap_sock: .asciz "/s"
 .text

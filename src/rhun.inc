@@ -640,6 +640,8 @@ F DOC_language_pending, 8
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
+F DOC_qbase, 8          # a copy of that base's text (mem_alloc'd), for the diff a panel's click opens
+F DOC_qblen, 8
 F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
 F DOC_ce, 8             # custom editors: the CE whose tab shows this document, or 0 (customed.s)
 F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
@@ -1917,6 +1919,7 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_FOLDER, 20      # Install from Folder: the folder, copied
 .equ PROMPT_EXT_LINK, 21        # Link a Folder: the folder, linked
 .equ PROMPT_EXT_ARCHIVE, 22     # Install from Archive: the .tar.gz
+.equ PROMPT_WS_SAVE, 100        # resources group (block 100-103): Save Workspace As's file (workspace.s)
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0

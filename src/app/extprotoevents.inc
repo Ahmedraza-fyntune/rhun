@@ -47,6 +47,7 @@ xe_text:
     mov r13, rdx
     mov rdi, [rbx + EXT_sub_edits]
     mov rsi, r12
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz .Lxt_no_edits
@@ -96,6 +97,7 @@ xe_text:
     je .Lxt_saved
     mov rdi, [rbx + EXT_sub_changed]
     mov rsi, r12
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz 2f
@@ -111,6 +113,7 @@ xe_text:
     je .Lxt_ok
     mov rdi, [rbx + EXT_sub_saved]
     mov rsi, r12
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz 3f
@@ -151,6 +154,7 @@ xe_document:
 .Lxd_open:
     mov rdi, [rbx + EXT_sub_opened]
     mov rsi, r12
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jnz .Lxd_send_opened
@@ -217,6 +221,7 @@ xe_positions:
     mov r14, [r12 + DOC_cur]
     mov rdi, [rbx + EXT_sub_cursor]
     mov rsi, r12
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz 2f
@@ -242,6 +247,7 @@ xe_positions:
     mov r15, [r12 + DOC_anchor]
     mov rdi, [rbx + EXT_sub_selection]
     mov rsi, r12
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz 3f
@@ -273,6 +279,7 @@ xe_positions:
     je 6f
 5:  mov rdi, [rbx + EXT_sub_selection]
     mov rsi, r12
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz 6f
@@ -345,6 +352,7 @@ FN extproto_events
     jnz .Lxe_known
     mov rdi, [rbx + EXT_sub_opened]
     mov rsi, r13
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz .Lxe_tabs

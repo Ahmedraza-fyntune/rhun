@@ -775,6 +775,42 @@ FN scmext_timeout
     xor eax, eax
 9:  EPILOGUE
 
+# FN scmext_qd_root(root ptr, len): a provider registered a root (scmpanel.s): the open documents
+#   under it are asked about again (their provider may be the new root's now)
+FN scmext_qd_root
+    PROLOGUE
+    mov r13, rdi
+    mov r14, rsi
+    xor r12d, r12d
+1:  cmp r12, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, r12
+    inc r12
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov rbx, [rax + TAB_doc]
+    test rbx, rbx
+    jz 1b
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jz 1b
+    call strlen
+    cmp rax, r14
+    jbe 1b
+    mov rdi, [rbx + DOC_path]
+    cmp byte ptr [rdi + r14], '/'
+    jne 1b
+    mov rsi, r13
+    mov rdx, r14
+    call memeq
+    test eax, eax
+    jz 1b
+    mov rdi, rbx
+    call scmext_qd_want
+    jmp 1b
+9:  EPILOGUE
+
 # qd_want_all(): every open document is to be asked about
 qd_want_all:
     push rbx
@@ -878,12 +914,29 @@ qd_reply:
     mov rdi, rax
     test r15, r15
     jz 2f
-    mov [rdi + DOC_gext], rbx
+    mov r12, rdi
+    mov [r12 + DOC_gext], rbx
+    # a copy of the text: a click on the file in the provider's panel opens its diff
+    mov rdi, [r12 + DOC_qbase]
+    call mem_free
+    mov rdi, r14
+    mov rsi, r15
+    call mem_dup
+    mov [r12 + DOC_qbase], rax
+    mov [r12 + DOC_qblen], r15
+    mov rdi, r12
     mov rsi, r14
     mov rdx, r15
     call git_set_base_ext
+    mov rdi, r12
+    call scmpanel_base_ready
     jmp 9f
-2:  call git_drop_base_ext      # "ok ID 0": no base, git's marks stay
+2:  push rdi
+    push rdi
+    call git_drop_base_ext      # "ok ID 0": no base, git's marks stay
+    pop rdi
+    pop rdi
+    call scmpanel_base_ready    # a click waiting for it gets the file
 9:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
