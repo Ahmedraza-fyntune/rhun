@@ -3956,6 +3956,12 @@ FN ext_exited
     neg edi
     mov esi, SIGKILL
     call proc_kill              # remote hosts: on the host too (proc.s)
+    # and the program itself: a program ended right after it started may not have made its own
+    # group yet (setsid in the child), and the wait below would never end (extension management:
+    # found by many roll backs in a row)
+    mov edi, [rbx + EXT_pid]
+    mov esi, SIGKILL
+    call proc_kill
     mov edi, [rbx + EXT_pid]
     xor esi, esi
     call proc_wait
