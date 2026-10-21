@@ -29,6 +29,7 @@ ib_parent: .quad 0              # the parent's index
 ib_tsc: .quad 0
 ib_mode: .quad 0                # 1 replace, 0 add
 ib_new: .quad 0                 # items the body adds (its ids not known yet), counted in pass 1
+ib_moved: .zero VEC_SIZE         # replace: items pass 1 marked TSF_MOVE
 stack: .zero VEC_SIZE           # item indices still to visit (subtree walks)
 
 .text
@@ -890,6 +891,7 @@ FN testmodel_items
     call tsb_left
     mov [rsp + 40], rax         # where the items start, as bytes left
     mov qword ptr [rip + ib_new], 0
+    mov qword ptr [rip + ib_moved + VEC_len], 0
     mov qword ptr [rsp + 48], 0 # replace: the items its removals take away
     cmp qword ptr [rip + ib_mode], 0
     je 21f
@@ -901,12 +903,15 @@ FN testmodel_items
     jae 4f
     call item_parse
     test rax, rax
-    jnz .Lti_fail
+    jnz .Lti_fail_moved
     inc r15
     jmp 3b
 4:  call tsb_left
     test rax, rax
-    jnz .Lti_syntax_trailing
+    jz 40f
+    lea rax, [rip + .Le_syntax_items]
+    jmp .Lti_fail_moved
+40:
     cmp qword ptr [rip + ib_mode], 0
     je 42f
     # replace: what goes with the children not kept counts against what comes
@@ -928,7 +933,9 @@ FN testmodel_items
     add [rsp + 48], rax
 43: mov r14, r15
     jmp 41b
-42: mov eax, [rbx + TSC_count]
+42: mov rdi, rbx
+    call clear_moved
+    mov eax, [rbx + TSC_count]
     add rax, [rip + ib_new]
     sub rax, [rsp + 48]
     cmp rax, TS_ITEMS_EXT
@@ -991,6 +998,11 @@ FN testmodel_items
     mov dword ptr [rip + g_dirty], 1
     xor eax, eax
     EPILOGUE
+.Lti_fail_moved:
+    mov r14, rax                # pass 1 failed: the items it marked as moving lose the mark
+    mov rdi, rbx
+    call clear_moved
+    mov rax, r14
 .Lti_fail:
     EPILOGUE
 .Lti_syntax_trailing:
@@ -1367,8 +1379,19 @@ item_parse:
     call testmodel_item
     movsxd rcx, dword ptr [rax + TSI_parent]
     cmp rcx, [rip + ib_parent]
-    jne 2f
+    jne 12f
     or dword ptr [rax + TSI_flags], TSF_MARK
+    jmp 2f
+12: # one a replace moves here from elsewhere keeps its subtree: not counted as removed
+    cmp qword ptr [rip + ib_mode], 0
+    je 2f
+    test dword ptr [rax + TSI_flags], TSF_MOVE
+    jnz 2f
+    or dword ptr [rax + TSI_flags], TSF_MOVE
+    lea rdi, [rip + ib_moved]
+    mov esi, 8
+    call vec_push
+    mov [rax], r12
     jmp 2f
 11:
     lea rax, [rip + .Le_cycle]
@@ -1520,7 +1543,25 @@ clear_marks:
     jmp 1b
 9:  EPILOGUE
 
-# subtree_size(tsc, index) -> rax the item and its descendants
+# clear_moved(tsc): the items pass 1 marked TSF_MOVE lose the mark
+clear_moved:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rip + ib_moved + VEC_len]
+    jae 9f
+    mov rax, [rip + ib_moved + VEC_ptr]
+    mov rsi, [rax + r12*8]
+    mov rdi, rbx
+    call testmodel_item
+    and dword ptr [rax + TSI_flags], ~TSF_MOVE
+    inc r12
+    jmp 1b
+9:  mov qword ptr [rip + ib_moved + VEC_len], 0
+    EPILOGUE
+
+# subtree_size(tsc, index) -> rax the item and its descendants, leaving out the subtrees a replace
+#   moves elsewhere (TSF_MOVE)
 subtree_size:
     PROLOGUE
     mov rbx, rdi
@@ -1545,11 +1586,16 @@ subtree_size:
     movsxd r14, dword ptr [rax + TSI_first]
 2:  test r14, r14
     js 1b
+    mov rdi, rbx
+    mov rsi, r14
+    call testmodel_item
+    test dword ptr [rax + TSI_flags], TSF_MOVE
+    jnz 3f
     lea rdi, [rip + stack]
     mov esi, 8
     call vec_push
     mov [rax], r14
-    mov rdi, rbx
+3:  mov rdi, rbx
     mov rsi, r14
     call testmodel_item
     movsxd r14, dword ptr [rax + TSI_next]

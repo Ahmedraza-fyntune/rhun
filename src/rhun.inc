@@ -2457,6 +2457,7 @@ ENDSTRUCT XK_SIZE
 .equ TSF_SHOW, 32               # the Testing filter: shown (it or a descendant matches)
 .equ TSF_FOPEN, 64              # the Testing filter: opened (a descendant matches)
 .equ TSF_HIT, 128               # the Testing filter: its label or an ancestor's matches the text
+.equ TSF_MOVE, 256              # scratch: a replace moves it (and its subtree) from elsewhere
 .equ TSP_RUN, 0                 # run profiles (bit i of TSC_profiles)
 .equ TSP_DEBUG, 1
 .equ TSP_COVERAGE, 2

@@ -261,7 +261,14 @@ FN testdiff_open
     xor esi, esi
     mov edx, DV_SIZE
     call memset
+    # not git's (not fetched again, not reopened, no document for extensions), and an empty path
+    # for whatever looks at a diff tab's file
+    mov dword ptr [r12 + DV_flags], DVF_OWN
     mov [rbx + DOC_diff], r12
+    lea rdi, [rip + .Ltd_empty]
+    xor esi, esi
+    call mem_dup
+    mov [r12 + DV_path], rax
     mov rdi, r15
     call strlen
     mov rdi, r15
@@ -316,3 +323,7 @@ FN testdiff_output
 .Lh1: .asciz "@@ -1,"
 .Lh2: .asciz " +1,"
 .Lh3: .asciz " @@\n"
+
+.section .rodata
+.Ltd_empty: .asciz ""
+.text

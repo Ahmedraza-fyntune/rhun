@@ -76,6 +76,19 @@ def items_body(parent, items):
     return f'{len(p)} {len(items)}\n'.encode() + p + b''.join(items)
 
 
+def move_cap():
+    # outer > inner > 40,001 tests; a replace of the roots that moves inner up keeps its 40,001
+    request('test-items', 'add', items_body('', [item('group', 'outer', 'outer')]))
+    request('test-items', 'add', items_body('outer', [item('group', 'inner', 'inner')]))
+    for start in range(0, 40001, 10000):
+        n = min(10000, 40001 - start)
+        request('test-items', 'add', items_body('inner', [item('test', f't{start + i}', 't') for i in range(n)]))
+    def roots(extra):
+        return items_body('', [item('group', 'inner', 'inner')] + [item('test', f'n{i}', 'n') for i in range(extra)])
+    log('movecap-over ' + request('test-items', 'replace', roots(9999)))
+    log('movecap-ok ' + request('test-items', 'replace', roots(9998)))
+
+
 def tests_file():
     return os.path.join(project[0], 'a_test.go')
 
@@ -230,6 +243,11 @@ def run(run_no, profile, ids):
         f = tests_file().encode()
         body = b'1\n' + f'{len(f)} 3\n'.encode() + f + b'3 3 1\n5 7 2\n6 6 0\n'
         log('coverage ' + request('test-coverage', str(run_no), body))
+        if 'covrepeat' in MODE:
+            # one path 70 times at the last line: 1 MiB once merged, not 70
+            rep = b'/cov/rep.go'
+            body = b'70\n' + (f'{len(rep)} 1\n'.encode() + rep + b'1048576 1048576 1\n') * 70
+            log('covrepeat ' + request('test-coverage', str(run_no), body))
         if 'cov2' in MODE:
             low = b'/cov/low.go'
             body = b'1\n' + f'{len(low)} 2\n'.encode() + low + b'1 1 1\n2 4 0\n'
@@ -337,11 +355,16 @@ def main():
                                      daemon=True).start()
                 if 'remove' in MODE:
                     threading.Thread(target=removal, daemon=True).start()
+                if 'movecap' in MODE:
+                    threading.Thread(target=move_cap, daemon=True).start()
             elif parent == 'go:example/pkg':
                 send_reply(rid, items_body(parent, pkg_children()))
                 threading.Thread(target=lambda: log('file-items ' + request(
                     'test-items', 'replace', items_body('go:example/pkg#a_test.go', file_children()))),
                     daemon=True).start()
+                if 'removeb' in MODE:
+                    threading.Thread(target=lambda: (time.sleep(1.0), log('removeb ' + request(
+                        'test-remove', '1', b'go:example/pkg.TestB\n'))), daemon=True).start()
             elif parent == 'go:example/other':
                 send(f'error {rid} refused cannot list other\n')
             else:

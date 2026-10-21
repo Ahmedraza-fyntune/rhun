@@ -20,10 +20,12 @@ path: .zero 4096
 # testgutter_item_gone(ext, index): an item went: its problems with it (at the next rebuild)
 FN testgutter_item_gone
     mov dword ptr [rip + g_ts_marks], 1
+    mov dword ptr [rip + g_ts_glyphs], 1    # and its glyph
     ret
 
 # testgutter_item_changed(ext, index): an item's range or file changed
 FN testgutter_item_changed
+    mov dword ptr [rip + g_ts_glyphs], 1
     ret
 
 # source_of(TSC*) -> PS*: the controller's problems source
@@ -253,6 +255,7 @@ first_line:
 # testgutter_forget(ext): its problems go (the extension is removed)
 FN testgutter_forget
     PROLOGUE
+    mov dword ptr [rip + g_ts_glyphs], 1    # its glyphs go too
     call testmodel_ctrl
     test rax, rax
     jz 9f
@@ -282,6 +285,7 @@ FN testgutter_forget
 g_ts_glyphs: .long 0            # items or states changed: the glyphs are set again
 tg_kind: .long 0                # the gutter kind, 0 before the first tick
 tg_force: .long 0               # set again now, not waiting for the 100 ms (print-gutter)
+tg_cfg_seen: .long 0            # [testing] gutter as the glyphs were last set for
 .p2align 3
 tg_last: .quad 0                # time_ms of the last setting
 tg_doc_max: .quad 0             # the newest DOC_id that has its glyphs
@@ -289,6 +293,7 @@ tg_cov_doc: .quad 0             # the tint's cache: the document, its coverage f
 tg_cov_cf: .quad 0
 tg_cov_run: .quad 0
 tg_cov_ver: .quad 0             # the document's version it was made for
+tg_cov_docid: .quad 0           # and its DOC_id (an address is used again after a tab closes)
 tg_cov_map: .quad 0             # owned: a byte per line of the document now (COV_* bits), when
 tg_cov_mapn: .quad 0            #   the coverage came at another version of it; 0 none
 tg_tip: .zero 512
@@ -431,7 +436,13 @@ FN testgutter_glyphs
 3:  cmp r12, [rip + tg_doc_max]
     jbe 4f
     mov dword ptr [rip + g_ts_glyphs], 1
-4:  cmp dword ptr [rip + g_ts_glyphs], 0
+4:  mov eax, [rip + cfg_test_gutter]     # [testing] gutter changed: set again (or cleared)
+    cmp eax, [rip + tg_cfg_seen]
+    je 40f
+    mov [rip + tg_cfg_seen], eax
+    mov dword ptr [rip + g_ts_glyphs], 1
+    mov dword ptr [rip + tg_force], 1
+40: cmp dword ptr [rip + g_ts_glyphs], 0
     je 9f
     call time_ms
     cmp dword ptr [rip + tg_force], 0
@@ -706,6 +717,9 @@ cov_state:
     jne 1f
     mov rax, [rbx + DOC_version]
     cmp rax, [rip + tg_cov_ver]
+    jne 1f
+    mov rax, [rbx + DOC_id]
+    cmp rax, [rip + tg_cov_docid]
     je 2f
 1:  call cov_cache
 2:  xor eax, eax
@@ -733,6 +747,8 @@ cov_cache:
     mov [rip + tg_cov_run], rax
     mov rax, [rbx + DOC_version]
     mov [rip + tg_cov_ver], rax
+    mov rax, [rbx + DOC_id]
+    mov [rip + tg_cov_docid], rax
     mov qword ptr [rip + tg_cov_cf], 0
     mov rdi, [rip + tg_cov_map]
     call mem_free
