@@ -3416,6 +3416,7 @@ F PRS_fr, VEC_SIZE       # FRG a folding provider's ranges, sorted by their head
 F PRS_frext, 8           # the extension they came from; 0 while indentation decides
 F PRS_tks, 8             # semantic tokens (semtok.s), owned, or 0
 F PRS_hints, VEC_SIZE    # IH inlay hints (inlay.s), sorted by position
+F PRS_lens, VEC_SIZE     # LNS code lenses (lens.s), sorted by position
 ENDSTRUCT PRS_SIZE
 # a fold: the lines after its header up to its last line are hidden; it follows edits as positions
 STRUCT
@@ -3509,6 +3510,17 @@ ENDSTRUCT IHE_SIZE
 .equ IH_PEXTRA_MAX, 9000
 .equ IH_EDITS, 16
 .equ IH_EXTRA_MAX, 65536
+# code lens (lens.s)
+STRUCT
+F LNS_pos, 8            # its line's start (moves with the text)
+F LNS_owner, 8          # EXT*
+F LNS_blob, 8           # owned: TITLE then EXTRA
+F LNS_tlen, 4
+F LNS_xlen, 4
+ENDSTRUCT LNS_SIZE
+.equ LENS_MAX, 10000            # lenses per answer
+.equ LENS_TITLE_MAX, 200
+.equ LENS_EXTRA_MAX, 9000
 # the kinds present.s asks for
 .equ PQ_FOLDING, 0
 .equ PQ_TOKENS, 1
@@ -3676,6 +3688,7 @@ ENDSTRUCT VI_SIZE
 .equ VK_HINT, 2
 .equ VK_DECO, 3
 .equ VK_SWATCH, 4
+.equ VK_LENS, 5                 # (not an inlay: a code lens item under the pointer, lens.s)
 .equ VTM_LEFT, 0                # vt_x modes: before every inlay at the gap, after them, the caret's
 .equ VTM_RIGHT, 1
 .equ VTM_CARET, 2

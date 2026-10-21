@@ -267,6 +267,11 @@ FN rows_mode
     jz 8f
     cmp qword ptr [rcx + PRS_folds + VEC_len], 0
     setne al
+    cmp qword ptr [rcx + PRS_lens + VEC_len], 0     # or code lens rows (lens.s)
+    je 8f
+    cmp dword ptr [rip + cfg_code_lens], 0
+    je 8f
+    mov eax, 1
 8:  pop rcx
 9:  ret
 

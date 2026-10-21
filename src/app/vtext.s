@@ -611,7 +611,16 @@ FN vt_hover
     PROLOGUE
     mov rbx, rdi
     lea r12, [rip + vt_hit_item]
-    cmp byte ptr [r12 + VI_kind], VK_HINT
+    cmp byte ptr [r12 + VI_kind], VK_LENS
+    jne 0f
+    mov rdi, rbx                # a code lens item's tip (lens.s)
+    mov rsi, [r12 + VI_ref]
+    mov rdx, [r12 + VI_off]
+    call lens_tip
+    test rax, rax
+    jz 9f
+    jmp 2f
+0:  cmp byte ptr [r12 + VI_kind], VK_HINT
     jne 1f
     mov rdi, rbx                # a hint part's tooltip (inlay.s)
     mov rsi, [r12 + VI_ref]
@@ -637,6 +646,16 @@ FN vt_hover
     call tip_note_text
 9:  EPILOGUE
 
+# FN vt_hit_set(kind, ref, off): the pointer is on something drawn in a line that is not an inlay
+# (a code lens item, lens.s): it becomes the hit vt_hover and vt_click look at
+FN vt_hit_set
+    lea rax, [rip + vt_hit_item]
+    mov [rax + VI_kind], dil
+    mov [rax + VI_ref], rsi
+    mov [rax + VI_off], rdx
+    mov qword ptr [rip + g_vt_hit], 1
+    ret
+
 # vt_click(doc) -> eax 1 when a press on the inlay vt_pos_at found ran its command
 FN vt_click
     PROLOGUE
@@ -649,7 +668,14 @@ FN vt_click
     call fold_unfold_line
     mov eax, 1
     EPILOGUE
-1:  cmp byte ptr [r12 + VI_kind], VK_HINT
+1:  cmp byte ptr [r12 + VI_kind], VK_LENS
+    jne 11f
+    mov rdi, rbx                # a code lens item's command (lens.s)
+    mov rsi, [r12 + VI_ref]
+    mov rdx, [r12 + VI_off]
+    call lens_click
+    EPILOGUE
+11: cmp byte ptr [r12 + VI_kind], VK_HINT
     jne 2f
     mov rdi, rbx                # a hint part's command, place or edits (inlay.s)
     mov rsi, [r12 + VI_ref]

@@ -209,8 +209,12 @@ FN present_tick
     cmp dword ptr [rip + cfg_semantic_highlighting], 0
     je 2f
 10: cmp r12d, PQ_HINTS
-    jne 11f
+    jne 12f
     cmp dword ptr [rip + cfg_inlay_hints], 0
+    je 2f
+12: cmp r12d, PQ_LENS
+    jne 11f
+    cmp dword ptr [rip + cfg_code_lens], 0
     je 2f
 11: mov rdi, rbx
     mov esi, r12d
@@ -523,6 +527,8 @@ FN present_ext_gone
     call semtok_ext_gone
     mov rdi, rbx
     call inlay_ext_gone
+    mov rdi, rbx
+    call lens_ext_gone
     EPILOGUE
 
 # ---------------- answers ----------------
@@ -761,7 +767,7 @@ pq_table:
     .long FEAT_SEMANTIC_TOKENS, PP_TOKENS, PK_TOKENS, 150, 0, 0
     .quad .Lv_hints, inlay_reply, present_args_window, EXT_pv_inlay_hints
     .long FEAT_INLAY_HINTS, -1, PK_HINTS, 250, 1, 0
-    .quad .Lv_lens, reply_none, present_args_window, EXT_pv_code_lens
+    .quad .Lv_lens, lens_reply, present_args_window, EXT_pv_code_lens
     .long FEAT_CODE_LENS, -1, PK_LENS, 500, 1, 0
     .quad .Lv_colors, reply_none, present_args_window, EXT_pv_colors
     .long FEAT_DOC_COLORS, -1, PK_COLORS, 500, 1, 0

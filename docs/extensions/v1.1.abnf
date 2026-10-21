@@ -120,3 +120,8 @@ hint         = num SP num SP ( "after" / "before" ) SP num SP len LF 1*8hint-par
               ; LINE COL SIDE NPARTS EXTRA_LEN; the parts, then EXTRA (edit records)
 hint-part    = len SP len SP len LF
               ; LABEL TIP PEXTRA (command, goto records) of those lengths
+feature      =/ "code-lens"
+host-request =/ id SP "code-lens" SP doc SP version SP num SP num
+              ; answered "ok" SP id SP len LF + num LF *lens
+lens         = num SP len SP len LF
+              ; LINE, then TITLE (empty: unresolved) and EXTRA (command, tip records)

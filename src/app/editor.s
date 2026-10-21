@@ -2223,6 +2223,15 @@ draw_wrapped:
     mov r14d, eax               # rows
     test eax, eax
     jz .Ldw_hidden              # a folded line has none (fold.s)
+    mov rdi, rbx                # its code lens row (lens.s): drawn, then the text rows below it
+    mov rsi, r12
+    mov edx, r13d
+    call lens_row_take
+    test eax, eax
+    jz 16f
+    add r13d, [rip + g_lh]
+    dec r14d
+16:
     # current line highlight across all its rows
     cmp dword ptr [rip + cfg_highlight_line], 0
     je 12f

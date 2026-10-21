@@ -535,6 +535,14 @@ resting on a hint shows its tooltip; a click on a part that has a command runs i
 definition it names; a double click writes the hint into the text when it offers that (a type, for
 example). `inlay_hints = false` under `[editor]` (**Inlay hints** in Settings) turns them off.
 
+### Code lens
+
+An extension that knows the code can put a row of small titles above a line: how many references a
+function has, a Run or Debug action over a test or a `main`. A click on a title runs it; the
+pointer resting on one shows its tip. The rows are not part of the text: the cursor steps over
+them, and the text you are looking at does not jump when they appear. `code_lens = false` under
+`[editor]` (**Code lens** in Settings) turns them off.
+
 ### Semantic highlighting
 
 An extension that knows the code (a language server, through the lsp extension) can color it by

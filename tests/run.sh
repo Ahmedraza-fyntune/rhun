@@ -185,6 +185,7 @@ python3 tests/presentation.py || fail=1
 python3 tests/folding.py || fail=1
 python3 tests/semantic.py || fail=1
 python3 tests/hints.py || fail=1
+python3 tests/lens.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1

@@ -148,7 +148,20 @@ c_print_xy:
     dec r13
     cmp dword ptr [rip + cfg_word_wrap], 0
     jne 5f
-    # y: rows from the top line (lines mode)
+    call rows_mode
+    test eax, eax
+    jz 1f
+    # y in rows (folds, code lens rows): wrap_xy's row, x as for lines
+    mov rdi, rbx
+    mov rsi, r15
+    call wrap_xy
+    add edx, [rip + g_ed_y]
+    mov ecx, [rip + g_lh]
+    shr ecx, 1
+    add edx, ecx
+    movsxd r12, edx
+    jmp 2f
+1:  # y: rows from the top line (lines mode)
     mov rax, [rbx + DOC_scrolly]
     mov rcx, rax
     sar rax, 8
@@ -166,7 +179,7 @@ c_print_xy:
     shr eax, 1
     add rdx, rax
     mov r12, rdx
-    # x: by the caret's rule over the line's inlays (vtext.s)
+2:  # x: by the caret's rule over the line's inlays (vtext.s)
     mov rdi, rbx
     mov rsi, r13
     lea rdx, [r14 - 1]
@@ -480,10 +493,20 @@ c_print_present:
     lea rdx, [rip + .Ls_hints]
     call str_eq_cstr
     test eax, eax
-    jz 9f
+    jz 2f
     mov rdi, rbx                # inlay hints (inlay.s)
     mov rsi, [rip + outp]
     call inlay_dump
+    jmp 9f
+2:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_lenses]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov rdi, rbx                # code lens (lens.s)
+    mov rsi, [rip + outp]
+    call lens_dump
 9:  xor eax, eax
     EPILOGUE
 .Lpp_types:
@@ -883,7 +906,7 @@ pres_ctl:                       # (control.s's ctl_tables)
     .quad .Lc_probe_plant, c_probe_plant, .Lc_print_classes, c_print_classes
     .quad 0, 0
 lane_words: .quad 0, .Ls_left, .Ls_digits, .Ls_fold, .Ls_git
-kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
+kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch, .Lk_lens
 .Lc_print_view: .asciz "print-viewport"
 .Lc_print_xy: .asciz "print-xy"
 .Lc_print_hit: .asciz "print-hit"
@@ -897,6 +920,7 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Ls_fx: .asciz "fx "
 .Ls_tokens: .asciz "tokens"
 .Ls_hints: .asciz "hints"
+.Ls_lenses: .asciz "lenses"
 .Ls_stale: .asciz "stale"
 .Ls_view_lines: .asciz "view mode=lines top="
 .Ls_view_wrap: .asciz "view mode=wrap top="
@@ -912,6 +936,7 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch
 .Lk_fold: .asciz "fold"
 .Lk_hint: .asciz "hint"
 .Lk_deco: .asciz "deco"
+.Lk_lens: .asciz "lens"
 .Lk_swatch: .asciz "swatch"
 .Ls_left: .asciz "left-lane "
 .Ls_digits: .asciz "digits "
