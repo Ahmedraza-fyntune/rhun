@@ -1325,7 +1325,7 @@ filters (such as Python's "Uncaught Exceptions").
 | Debugger | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | needs a native machine (no ptrace in Docker under Rosetta) | not tested |
-| Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | needs TCP, which rhun's Windows build does not have yet |
+| Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | not tested (its TCP connection, and `server =`, tested with a fake adapter under Wine) |
 | debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
 
 Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves
