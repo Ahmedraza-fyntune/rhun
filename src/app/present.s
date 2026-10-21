@@ -71,7 +71,8 @@ FN present_hello
     mov qword ptr [rax + r12*8], 1      # due at once
 2:  inc r12d
     jmp 1b
-9:  EPILOGUE
+9:  mov qword ptr [rip + pq_due + 8*PQ_HIGHLIGHTS], 0
+    EPILOGUE
 
 # present_frame(doc, first, last): the frame shows these lines of the active document: schedule
 FN present_frame
@@ -152,7 +153,8 @@ FN present_frame
 6:  inc r12d
     cmp r12d, PQ_COUNT
     jb 5b
-9:  EPILOGUE
+9:  mov qword ptr [rip + pq_due + 8*PQ_HIGHLIGHTS], 0     # (the caret decides those: hicolor.s)
+    EPILOGUE
 
 # present_timeout() -> eax ms until a kind is due, or -1
 FN present_timeout
@@ -245,6 +247,10 @@ FN present_tick
     xor edi, edi
     call present_withdraw_others
     jmp 9b
+
+# FN present_ask_now(doc, kind): that kind's providers are asked at once (hicolor.s's highlights)
+FN present_ask_now
+    jmp present_ask
 
 # present_ask(doc, kind): its providers are asked (the window: the lines on screen and one screen
 # more each way)
@@ -793,7 +799,7 @@ pq_table:
     .long FEAT_CODE_LENS, -1, PK_LENS, 500, 1, 0
     .quad .Lv_colors, reply_none, present_args_window, EXT_pv_colors
     .long FEAT_DOC_COLORS, -1, PK_COLORS, 500, 1, 0
-    .quad .Lv_highlights, reply_none, 0, EXT_pv_highlights
+    .quad .Lv_highlights, hl_reply, hl_args, EXT_pv_highlights
     .long FEAT_DOC_HIGHLIGHTS, PP_HIGHLIGHTS, PK_HIGHLIGHTS, 250, 0, 0
 .Lv_folding: .asciz "folding-ranges"
 .Lv_tokens: .asciz "semantic-tokens"

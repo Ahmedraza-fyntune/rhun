@@ -535,6 +535,14 @@ resting on a hint shows its tooltip; a click on a part that has a command runs i
 definition it names; a double click writes the hint into the text when it offers that (a type, for
 example). `inlay_hints = false` under `[editor]` (**Inlay hints** in Settings) turns them off.
 
+### Highlights
+
+When the cursor rests on a name, its other places in the file are marked with a soft background,
+places that write it a little stronger, when an extension (a language server) knows them;
+otherwise rhun marks the same word's other occurrences nearby. The marks go when the cursor moves
+away or the text changes. `highlight_occurrences = false` under `[editor]` (**Highlight
+occurrences** in Settings) turns off the word marks; a language server's highlights stay.
+
 ### Code lens
 
 An extension that knows the code can put a row of small titles above a line: how many references a

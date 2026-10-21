@@ -4320,7 +4320,15 @@ FN editor_timeout
     cmp eax, ebx
     jge 6f
 5:  mov ebx, eax
-6:  mov rax, [rip + widest_due]
+6:  call hl_timeout             # and the caret's highlights (hicolor.s)
+    cmp eax, -1
+    je 8f
+    cmp ebx, -1
+    je 7f
+    cmp eax, ebx
+    jge 8f
+7:  mov ebx, eax
+8:  mov rax, [rip + widest_due]
     test rax, rax
     jz 1f
     call time_ms
@@ -4342,6 +4350,7 @@ FN editor_tick
     sub rsp, 8
     call deco_visible_tick
     call present_tick           # the providers' requests that are due (present.s)
+    call hl_tick                # the caret's highlights (hicolor.s)
     add rsp, 8
     cmp qword ptr [rip + widest_due], 0
     je 1f

@@ -1618,6 +1618,7 @@ FN deco_row_back
     mov qword ptr [rip + sp_i], 0
     mov dword ptr [rip + g_row_fx], 0
     mov rbx, [rip + g_row_doc]
+    call hl_row_back            # document highlights behind the text (hicolor.s)
     call marks_fx               # diagnostics tagged unnecessary fade their text
     cmp qword ptr [rip + dw_n], 0
     je 9f
@@ -1671,6 +1672,45 @@ FN deco_row_back
     add eax, [rip + mf_n]
     mov [rip + g_row_fx], eax
     EPILOGUE
+
+# hl_row_back(rbx doc): the caret's highlights on this row, behind the text
+hl_row_back:
+    PROLOGUE 16
+    cmp rbx, [rip + g_hl_doc]
+    jne 9f
+    cmp qword ptr [rip + g_hl + VEC_len], 0
+    je 9f
+    xor r12d, r12d
+1:  cmp r12, [rip + g_hl + VEC_len]
+    jae 9f
+    imul r13, r12, 24
+    add r13, [rip + g_hl + VEC_ptr]
+    inc r12
+    mov rax, [r13]
+    sub rax, [rip + g_row_lstart]
+    mov rdx, [r13 + 8]
+    sub rdx, [rip + g_row_lstart]
+    call stk_clip
+    jge 1b
+    mov [rsp], rdx
+    mov rdi, rax
+    call piece_x
+    mov r14d, eax
+    mov rdi, [rsp]
+    call piece_xe
+    sub eax, r14d
+    jle 1b
+    mov edx, eax
+    COLOR r8d, T_HIGHLIGHT
+    cmp qword ptr [r13 + 16], 0
+    je 2f
+    COLOR r8d, T_HIGHLIGHT_WRITE
+2:  mov edi, r14d
+    mov esi, [rip + g_row_y]
+    mov ecx, [rip + g_lh]
+    call gfx_fill
+    jmp 1b
+9:  EPILOGUE
 
 # marks_fx(rbx doc): the row's parts that marks tagged unnecessary cover, as sorted, merged
 # intervals in mf_buf (offsets in the line)
@@ -2810,6 +2850,10 @@ FN deco_visible
     push rdi
     push rsi
     push rdx
+    call hl_frame               # the caret's highlights (hicolor.s)
+    mov rdi, [rsp + 16]
+    mov rsi, [rsp + 8]
+    mov rdx, [rsp]
     call present_frame          # the providers' schedules (present.s)
     pop rdx
     pop rsi

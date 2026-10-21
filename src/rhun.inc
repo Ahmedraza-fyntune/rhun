@@ -3538,6 +3538,7 @@ ENDSTRUCT LNS_SIZE
 .equ LENS_MAX, 10000            # lenses per answer
 .equ LENS_TITLE_MAX, 200
 .equ LENS_EXTRA_MAX, 9000
+.equ HL_MAX, 5000               # document highlights per answer (hicolor.s)
 # the kinds present.s asks for
 .equ PQ_FOLDING, 0
 .equ PQ_TOKENS, 1
