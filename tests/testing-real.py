@@ -24,6 +24,14 @@ GO = 'go:example.com/demo'
 CARGO = 'cargo:demo'
 
 
+def lldb_dap():
+    """lldb-dap as rhun-editor/tests starts it: xcrun's on macOS, else on PATH"""
+    if sys.platform == 'darwin' and shutil.which('xcrun'):
+        r = subprocess.run(['xcrun', '-f', 'lldb-dap'], capture_output=True, text=True)
+        return r.returncode == 0
+    return any(shutil.which(n) for n in ('lldb-dap', 'lldb-dap-20', 'lldb-dap-19', 'lldb-dap-18'))
+
+
 def tool_env(name, default):
     """a tool's own folder from the real environment (go env, rustup's default)"""
     if os.environ.get(name):
@@ -154,6 +162,45 @@ class RealTools(unittest.TestCase):
         self.assertIn('line=10 glyph=passed item=%s:lib:tests::adds' % CARGO, out)
         runs = [l for l in out if l.startswith('run=')]
         self.assertTrue(runs and 'passed=2 failed=2 errored=0 skipped=1' in runs[-1], out)
+
+
+    @unittest.skipUnless(shutil.which('cargo') and lldb_dap(), 'no cargo, or no lldb-dap')
+    def test_cargo_debug(self):
+        # Debug on a test: cargo builds the test binary, the extension starts a session of its
+        # rust-test debugger (lldb-dap) through rhun's debugger, and the exit status is the result
+        self.fixture('rsdemo')
+        out = self.run_editor([
+            'open ' + (self.proj / 'src/lib.rs').as_posix(), 'cmd testing', 'wait-test-items 2',
+            'test-expand tests ' + CARGO, 'wait-test-items 4', 'test-expand tests %s:lib' % CARGO,
+            'wait-test-items 8', 'wait 300', 'test-select tests %s:lib:tests::adds' % CARGO, 'test-action debug',
+            'wait 1500', 'print-dialog', 'dialog yes', 'wait-tests', 'print-debug', 'print-console',
+            'print-test-result tests %s:lib:tests::adds' % CARGO,
+            'test-select tests %s:lib:tests::adds_wrong' % CARGO, 'test-action debug', 'wait-tests',
+            'print-test-result tests %s:lib:tests::adds_wrong' % CARGO, 'print-test-runs'])
+        self.assertIn('text=cargo test --no-run --message-format=json -p demo --lib   in ~/proj', out)
+        sessions = [l for l in out if l.startswith('session=')]
+        self.assertTrue(sessions and ' name=Debug adds type=rust-test state=ended ' in sessions[0]
+                        and ' exit=0 ' in sessions[0], out)
+        self.assertIn('stdout test tests::adds ... ok', out)
+        self.assertIn('state=passed ms=- run=1', out)
+        self.assertTrue([l for l in out if l.startswith('state=failed ms=- run=2 first=The tests exited with code 101')],
+                        out)
+        runs = [l for l in out if l.startswith('run=')]
+        self.assertTrue(runs and all(' profile=debug state=ended ' in r for r in runs), runs)
+
+    @unittest.skipUnless(shutil.which('dlv'), 'no dlv on PATH')
+    def test_go_debug(self):
+        # Debug on a Go test: Delve in test mode on its package, -test.run for the test
+        self.fixture('godemo')
+        out = self.run_editor([
+            'open ' + (self.proj / 'calc/calc_test.go').as_posix(), 'cmd testing', 'wait-test-items 2',
+            'test-expand tests gomod:example.com/demo', 'wait-test-items 3', 'test-expand tests %s/calc' % GO,
+            'wait-test-items 6', 'wait 300', 'test-select tests %s/calc.TestSkip' % GO, 'test-action debug',
+            'wait 1500', 'dialog yes', 'wait-tests', 'print-debug', 'print-test-result tests %s/calc.TestSkip' % GO],
+            timeout=600)
+        sessions = [l for l in out if l.startswith('session=')]
+        self.assertTrue(sessions and ' type=go-test state=ended ' in sessions[0] and ' exit=0 ' in sessions[0], out)
+        self.assertIn('state=passed ms=- run=1', out)
 
 
 if __name__ == '__main__':
