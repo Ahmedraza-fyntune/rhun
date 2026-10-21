@@ -313,7 +313,7 @@ FN extproto_events
     xor r12d, r12d
 .Lxe_tabs:
     cmp r12, [rip + g_tabs + VEC_len]
-    jae .Lxe_start_closed
+    jae .Lxe_cells
     imul rax, r12, TAB_SIZE
     add rax, [rip + g_tabs + VEC_ptr]
     inc r12
@@ -322,6 +322,7 @@ FN extproto_events
     mov r13, [rax + TAB_doc]
     test r13, r13
     jz .Lxe_tabs
+.Lxe_tab_doc:
     mov rdi, r13                # wsedit: a workspace edit's preview, an extension's diff tab
     call ws_doc_hidden
     test eax, eax
@@ -377,6 +378,24 @@ FN extproto_events
 .Lxe_exhausted:
     mov qword ptr [rsp], -75
     jmp .Lxe_tabs
+.Lxe_cells:                     # notebooks (A3): then the cells, for one that agreed notebooks, and
+    mov rdi, rbx                # the custom editors' text documents (customed.s)
+    mov rsi, r12
+    sub rsi, [rip + g_tabs + VEC_len]
+    call ce_ext_doc_at
+    test rax, rax
+    jz .Lxe_cells_done
+    inc r12
+    mov r13, rax
+    jmp .Lxe_tab_doc
+.Lxe_cells_done:
+    mov rdi, rbx                # and their order (nbproto.inc)
+    call nb_order_events
+    test rax, rax
+    jns .Lxe_start_closed
+    cmp rax, -32
+    je .Lxe_return
+    mov [rsp], rax
 .Lxe_start_closed:
     # Every initial opened event precedes position replay, including another document.
     cmp qword ptr [rsp], 0
@@ -384,7 +403,7 @@ FN extproto_events
     xor r12d, r12d
 .Lxe_positions:
     cmp r12, [rip + g_tabs + VEC_len]
-    jae .Lxe_closed_begin
+    jae .Lxe_cell_positions
     imul rax, r12, TAB_SIZE
     add rax, [rip + g_tabs + VEC_ptr]
     inc r12
@@ -393,6 +412,7 @@ FN extproto_events
     mov r13, [rax + TAB_doc]
     test r13, r13
     jz .Lxe_positions
+.Lxe_pos_doc:
     mov rdi, r13                # wsedit
     call ws_doc_hidden
     test eax, eax
@@ -442,6 +462,16 @@ FN extproto_events
 .Lxe_positions_pending:
     mov qword ptr [rsp], -11
     jmp .Lxe_positions
+.Lxe_cell_positions:            # notebooks (A3): the cells' positions too (and custom editors')
+    mov rdi, rbx
+    mov rsi, r12
+    sub rsi, [rip + g_tabs + VEC_len]
+    call ce_ext_doc_at
+    test rax, rax
+    jz .Lxe_closed_begin
+    inc r12
+    mov r13, rax
+    jmp .Lxe_pos_doc
 .Lxe_closed_begin:
     xor r12d, r12d
 .Lxe_closed:

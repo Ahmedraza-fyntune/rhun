@@ -10,7 +10,9 @@ framing (split, coalesce, junk-stdout, no-length, bad-json, big=N, flood=N), fai
 crash-at=STEP, ignore-terminate, ignore-disconnect, launch-fail, no-init-response, fail-step,
 orphan, partial-pause,
 no-terminate-cap, no-cond-caps, preserve-focus), lifetimes (strict-refs), features (exceptions, stderr). Every message is logged
-to FAKEDAP_LOG. Standard library only; run with -I."""
+to FAKEDAP_LOG. With `--listen HOST:PORT` it speaks DAP over one TCP connection instead of its
+standard input and output, as Delve does; tcp-late=MS listens late, tcp-exit exits before listening,
+tcp-never never listens. Standard library only; run with -I."""
 import json
 import os
 import sys
@@ -317,6 +319,18 @@ def handle(req):
             respond(req, {'error': {'id': 1, 'format': 'could not launch: no such program'}},
                     success=False, message='launch failed')
             return
+        if args.get('console') == 'integratedTerminal':
+            # the program runs in rhun's terminal: the answer (its pid) is logged when it comes
+            env = {'FAKEDAP_TERM': 'yes', 'FAKEDAP_GONE': None}
+            env.update(args.get('termEnv') or {})
+            send({'type': 'request', 'command': 'runInTerminal',
+                  'arguments': {'kind': 'integrated', 'title': args.get('termTitle', 'Fake program'),
+                                'cwd': args.get('cwd') or os.getcwd(),
+                                'args': [1, 2] if args.get('termArgs') == 'numbers' else args.get('termArgs') or
+                                [sys.executable, '-c', 'import os,sys; print("in the terminal", '
+                                 'os.environ.get("FAKEDAP_TERM"), os.environ.get("FAKEDAP_GONE")); '
+                                 'print("typed", sys.stdin.readline().strip())'],
+                                'env': env}})
         if 'big' in MODE:
             event('output', {'category': 'stdout', 'output': 'B' * int(MODE['big']) + '\n'})
         if 'flood' in MODE:
@@ -487,10 +501,40 @@ def orphan():
     log('orphan %d' % pid)
 
 
+def listen(where):
+    """--listen HOST:PORT: one connection replaces standard input and output"""
+    global out, inp
+    import socket
+    if 'tcp-exit' in MODE:
+        sys.stderr.write('could not listen: address already in use\n')
+        sys.stderr.flush()
+        log('tcp-exit')
+        sys.exit(3)
+    if 'tcp-never' in MODE:
+        time.sleep(60)
+        sys.exit(0)
+    if 'tcp-late' in MODE:
+        time.sleep(int(MODE['tcp-late']) / 1000)
+    host, _, port = where.rpartition(':')
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((host, int(port)))
+    server.listen(1)
+    sys.stdout.write('DAP server listening at: %s\n' % where)
+    sys.stdout.flush()
+    log('listening %s' % where)
+    conn, _ = server.accept()
+    server.close()
+    log('accepted')
+    inp = conn.makefile('rb')
+    out = conn.makefile('wb')
+
+
 def main():
     log('pid %d' % os.getpid())
     log('session %s cwd %s' % (os.environ.get('RHUN_DEBUG_SESSION'), os.getcwd()))
     log('argv ' + ' '.join(sys.argv[1:]))
+    if '--listen' in sys.argv:
+        listen(sys.argv[sys.argv.index('--listen') + 1])
     if 'orphan' in MODE:
         orphan()
     if 'junk-stdout' in MODE:
@@ -502,6 +546,9 @@ def main():
             break
         if msg.get('type') == 'request':
             handle(msg)
+        elif msg.get('type') == 'response':
+            log('RESPONSE %s %s %s %s' % (msg.get('command'), msg.get('success'),
+                                          json.dumps(msg.get('body'), sort_keys=True), msg.get('message')))
         flush_coalesced()
 
 

@@ -186,6 +186,9 @@ python3 tests/asm-pitfalls.py --negative-control > /dev/null || { python3 tests/
 check edtape build/edtape_test
 python3 tests/presentation.py || fail=1
 python3 tests/folding.py || fail=1
+python3 tests/semantic.py || fail=1
+python3 tests/hints.py || fail=1
+python3 tests/lens.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1
@@ -204,6 +207,7 @@ python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
 # notebooks and custom editors (wider parity A, B)
 python3 tests/ext-notebooks.py || fail=1
+python3 tests/ext-editors.py || fail=1
 # extension management: versions, roll back, updates, removal, development installs
 python3 tests/ext-updates.py || fail=1
 python3 tests/ext-remove-clean.py || fail=1
@@ -217,7 +221,7 @@ python3 tests/ext-notify.py || fail=1
 python3 tests/ext-views-picture.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
-for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter; do
+for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter debug-transport debug-terminal debug-feature debug-tasks debug-review debug-real; do
     python3 tests/$t.py || fail=1
 done
 # testing: the test explorer (feature "tests")

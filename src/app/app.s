@@ -843,8 +843,12 @@ FN tab_dirty
     pop rbx
     ret
 1:  cmp rax, TAB_DOC
+    je 2f
+    cmp rax, TAB_VIEW           # custom editors: the document either model keeps dirty
     jne 8f
-    mov rdi, [rdi + TAB_doc]
+    test dword ptr [rdi + TAB_flags], TF_CUSTOM
+    jz 8f
+2:  mov rdi, [rdi + TAB_doc]
     jmp doc_dirty
 8:  xor eax, eax
     ret
@@ -1073,7 +1077,18 @@ FN app_open_file
     call app_toast
     mov rax, -1
     EPILOGUE
-12: # notebooks: a file an extension reads as a notebook opens in a notebook tab
+12: # custom editors: a file an extension edits opens in its editor (customed.s)
+    cmp dword ptr [rip + ce_open_text], 0
+    jne 14f
+    mov rdi, r12
+    call ce_provider
+    test rax, rax
+    jz 14f
+    mov rdi, r12
+    mov rsi, rax
+    call ce_open_tab
+    EPILOGUE
+14: # notebooks: a file an extension reads as a notebook opens in a notebook tab
     cmp dword ptr [rip + g_nb_open_text], 0
     jne 13f
     mov rdi, r12
@@ -1114,6 +1129,21 @@ FN app_open_file
     lea r15, [rip + .Lopen_failed]
     jmp .Lof_failed
 .Lof_binary:
+    # custom editors: a binary file opens in an editor that edits it, an option one too
+    mov rdi, rbx
+    call doc_free
+    mov rdi, r12
+    call ce_provider_any
+    test rax, rax
+    jz 1f
+    mov rdi, r12
+    mov rsi, rax
+    call ce_open_tab
+    EPILOGUE
+1:  lea rdi, [rip + .Lbinary]
+    call app_toast
+    mov rax, -1
+    EPILOGUE
     lea r15, [rip + .Lbinary]
 .Lof_failed:
     mov rdi, rbx
@@ -1420,6 +1450,14 @@ FN app_close_tab_now
     call extview_tab_closed     # its extension hears it, the view's slot is freed
     pop rax
     pop rax
+    test dword ptr [rax + TAB_flags], TF_CUSTOM
+    jz 0f
+    push rax
+    push rax
+    mov rdi, [rax + TAB_doc]
+    call ce_tab_closed          # custom editors: editor-closed, the CE goes
+    pop rax
+    pop rax
 0:  cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
     jne 70f
     push rax
@@ -1637,7 +1675,11 @@ save_doc:
     test rax, rax
     jz 0f
     mov rbx, [rax + NB_host]
-0:  test rbx, rbx
+0:  call ce_active              # custom editors: the editor's document
+    test rax, rax
+    jz 10f
+    mov rbx, [rax + CE_doc]
+10: test rbx, rbx
     jz 9f
     cmp qword ptr [rbx + DOC_path], 0
     jne 1f
@@ -1944,7 +1986,7 @@ FN app_save_as_readonly
 save_as_readonly_confirmed:
     PROLOGUE
     mov rdi, [rip + ro_id]
-    call extproto_doc
+    call app_doc_by_id          # notebooks, custom editors: their tab's document
     test rax, rax
     jz 9f
     mov rbx, rax
@@ -2026,10 +2068,15 @@ FN app_after_save
 FN cmd_save_as
     READONLY_RET
     call nb_active              # notebooks: the notebook's document
+    test rax, rax
+    jz 3f
+    mov rdi, [rax + NB_host]
+    jmp 2f
+3:  call ce_active              # custom editors: the editor's document
     mov rdi, [rip + g_doc]
     test rax, rax
     jz 2f
-    mov rdi, [rax + NB_host]
+    mov rdi, [rax + CE_doc]
 2:  test rdi, rdi
     jz 1f
     xor esi, esi
@@ -2764,6 +2811,7 @@ timeout_fns:
     .quad ext_provider_timeout
     .quad save_timeout
     .quad uproc_timeout
+    .quad termproto_timeout     # tasks: terminal output waiting for its budget (termproto.s)
     .quad query_timeout
     .quad testing_timeout
     .quad dap_timeout
@@ -2774,6 +2822,7 @@ timeout_fns:
     .quad ws_difftab_timeout    # wsedit: diff tabs whose sides changed
     .quad ws_linked_timeout     # wsedit: a cursor resting for linked editing
     .quad nb_timeout              # notebooks: requests waiting for their program
+    .quad ce_timeout              # custom editors: requests waiting for their program
     .quad 0
 .text
 
@@ -2816,6 +2865,7 @@ FN app_tick
     call testing_tick           # testing (testproto.s)
     call views_tick             # views group (places.s)
     call nb_tick
+    call ce_tick                # custom editors (customed.s)
     call app_clip_tick
     call dap_tick               # debugger
     call dview_context
@@ -3356,12 +3406,19 @@ FN center_draw
     EPILOGUE
 12: cmp qword ptr [rax + TAB_kind], TAB_VIEW
     jne 13f
+    mov edi, [rip + g_editor_rect]  # custom editors: a stopped editor's notice instead (customed.s)
+    mov esi, [rip + g_editor_rect + 4]
+    mov edx, [rip + g_editor_rect + 8]
+    mov ecx, [rip + g_editor_rect + 12]
+    call ce_draw_tab
+    test eax, eax
+    jnz 14f
     mov edi, [rip + g_editor_rect]
     mov esi, [rip + g_editor_rect + 4]
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call extview_draw
-    EPILOGUE
+14: EPILOGUE
 13: cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
     jne 2f
     mov edi, [rip + g_editor_rect]
@@ -4813,6 +4870,11 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call dview_status_item
+    # testing: runs going on, then the tests passed and failed (testview.s)
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call testview_status_item
     # the branch; the file's items follow it
     mov edi, eax
     mov esi, [rsp + 4]

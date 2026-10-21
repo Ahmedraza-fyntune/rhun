@@ -91,6 +91,10 @@ while True:
         send('terminal-open ' + str(len(d := definition('-', 'shell', 'l', 'true', extra=rec('group', 'build')))), d)
         send('terminal-open ' + str(len(d := definition('-', 'shell', 'l', 'true', extra=rec('location', 'remote')))), d)
         send('terminal-open 5', b'abcde')
+    elif name == 'burst':
+        last_term[0] = 0
+        prog = b"python3\0-c\0import sys\nfor i in range(5000): sys.stdout.write('x' * 127 + '\\n')\0"
+        send('terminal-open ' + str(len(d := definition('-', 'argv', 'burst', prog, extra=rec('output', '')))), d)
     elif name == 'quote':
         send('terminal-open ' + str(len(d := definition('-', 'argv', 'q', b"sh\0-c\0echo 'it is'\0"))), d)
     elif name == 'outneed':
@@ -98,7 +102,7 @@ while True:
 '''
 
 COMMANDS = ('open', 'argv', 'cat', 'sleep', 'env', 'input', 'screen', 'stop', 'restart', 'close', 'show',
-            'other', 'bad', 'outneed', 'quote')
+            'other', 'bad', 'outneed', 'quote', 'burst')
 
 
 class Feature(unittest.TestCase):
@@ -146,6 +150,24 @@ class Feature(unittest.TestCase):
         self.assertIn('hi', out)
         self.assertIn('ok 2 2\n', log)          # the second one does not ask
         self.assertEqual(out[-1], 'dialog=none')
+
+    def test_every_line_is_sent_or_counted_as_dropped(self):
+        # 5000 lines of 128 bytes are more than a second's budget: what is not sent is counted, also
+        # after the program ended and nothing waits (reviews: tasks2)
+        self.go(['cmd t/driver.burst', 'wait-ext driver running', 'wait 200', 'dialog yes', 'wait-terminal 1 ended',
+                 'wait 2600'], self.driver())
+        data = (self.work / 'state/rhun/extensions/t--driver/driver.log').read_bytes()
+        sent = dropped = 0
+        at = 0
+        while (i := data.find(b'0 terminal-output ', at)) >= 0:
+            end = data.index(b'\n', i)
+            words = data[i:end].split()
+            dropped += int(words[3])
+            body = data[end + 1:end + 1 + int(words[4])]
+            sent += body.count(b'\n')
+            at = end + 1 + int(words[4])
+        self.assertGreater(dropped, 0)
+        self.assertEqual(sent + dropped, 5000)
 
     def test_the_question_quotes_arguments_as_a_shell_would(self):
         out = self.go(['cmd t/driver.quote', 'wait-ext driver running', 'wait 200', 'print-dialog'], self.driver())

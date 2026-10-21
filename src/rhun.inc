@@ -638,6 +638,7 @@ F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HE
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
 F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
+F DOC_ce, 8             # custom editors: the CE whose tab shows this document, or 0 (customed.s)
 F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
 F DOC_uri, 8            # resources group: a virtual document's URI (owned; vdoc.s), or 0
 ENDSTRUCT DOC_SIZE
@@ -950,6 +951,7 @@ F SN_text, 8            # borrowed during validation only
 F SN_tlen, 8
 F SN_ntopo, 8           # surviving groups in propagation order; group indices stay stable
 F SN_linked, 8          # wsedit: a linked-editing session (wslinked.s): Tab passes, no final caret
+F SN_lwords, 16         # wsedit: its word characters besides letters and digits (ASCII bits)
 F SN_fields, SF_SIZE*SN_FIELDS_MAX
 F SN_groups, SG_SIZE*SN_GROUPS_MAX
 F SN_edges, SN_GROUPS_MAX*SN_GROUPS_MAX
@@ -1698,6 +1700,8 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_PROGRESS, "progress", 0          # views group: progress, progress-set, progress-end
     FEATURE FEAT_VIEW_KEYS, "view-keys", 1        # views group: keys and focus for pictures; rhun asks vcopy
     FEATURE FEAT_VIEW_IMAGES, "view-images", 0    # views group: vimage, unimage, the image shape
+    FEATURE FEAT_DEBUG, "debug", 1                # debugger: debug-resolve; debug-start, debug-ended
+    FEATURE FEAT_CUSTOM_EDITORS, "custom-editors", 1   # custom editors (customed.s, ceproto.inc)
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -1768,7 +1772,10 @@ FEATURE_LIST
 .equ PK_COLOR_EDIT, 40
 .equ PK_HIGHLIGHTS, 41
 .equ PK_LINKED, 42               # wsedit: linked-editing ranges (wslinked.s)
-.equ PK_COUNT, 43
+.equ PK_ED_OPEN, 43              # custom editors: editor-open, editor-save, undo/redo/revert (ceproto.inc)
+.equ PK_ED_SAVE, 44
+.equ PK_ED_CMD, 45
+.equ PK_COUNT, 46
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
@@ -1779,6 +1786,7 @@ FEATURE_LIST
 .equ QO_NOTEBOOK, 7               # nbdoc.s's nb_reply
 .equ QO_PRESENT, 8               # editor presentation (present.s)
 .equ QO_LINKED, 9                # wsedit: linked editing (wslinked.s)
+.equ QO_CUSTOM, 10               # customed.s's ce_reply
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -1826,6 +1834,7 @@ ENDSTRUCT TAB_SIZE
 # TAB_flags
 .equ TF_PIN, 1                  # pinned: the pinned tabs are the first ones in the strip
 .equ TF_RVIEW, 2                # TAB_VIEW: a retained view's tab (rview.s); the slot field is its instance
+.equ TF_CUSTOM, 4               # custom editors: a TAB_VIEW tab that is an extension's editor of TAB_doc
 
 .equ SIDEBAR_W_DEFAULT, 240        # points: the explorer's and the agents panel's widths
 .equ AGENTS_W_DEFAULT, 380
@@ -2047,6 +2056,10 @@ F EXT_pv_notebook, 8    # notebooks: [provides] notebook (patterns), notebook.ti
 F EXT_pv_nbtitle, 8
 F EXT_pv_nbkernel, 8
 F EXT_nb_kernels, 8     # [needs] kernels: programs rhun may start as the user for its notebooks (cstr) or 0
+F EXT_pv_editor, 8      # custom editors: [provides] editor (patterns), editor.title, editor.model, editor.priority
+F EXT_pv_edtitle, 8
+F EXT_pv_edmodel, 8
+F EXT_pv_edprio, 8
 # WebAssembly extensions (extwasm.s)
 F EXT_wasm, 8           # cstr: run.wasm32-wasip1's module (in the extension's folder), or 0
 F EXT_wasm_run, 4       # 1: EXT_prog is rhun itself, running EXT_wasm in its --wasm-host mode
@@ -2456,6 +2469,10 @@ ENDSTRUCT XK_SIZE
 .equ TSF_EXPANDED, 4
 .equ TSF_RESOLVING, 8           # a tests-resolve for its children is out
 .equ TSF_MARK, 16               # scratch: kept by a replace
+.equ TSF_SHOW, 32               # the Testing filter: shown (it or a descendant matches)
+.equ TSF_FOPEN, 64              # the Testing filter: opened (a descendant matches)
+.equ TSF_HIT, 128               # the Testing filter: its label or an ancestor's matches the text
+.equ TSF_MOVE, 256              # scratch: a replace moves it (and its subtree) from elsewhere
 .equ TSP_RUN, 0                 # run profiles (bit i of TSC_profiles)
 .equ TSP_DEBUG, 1
 .equ TSP_COVERAGE, 2
@@ -2522,6 +2539,8 @@ F TSI_error, 8          # owned cstr or 0: a discovery problem, or a failed test
 F TSI_path, 8           # owned cstr or 0: the file its range is in
 F TSI_msg, 8            # owned cstr or 0: the first line of its last result's first message
 F TSI_phash, 8          # hash_line of TSI_path (0 without one): the gutter compares this first
+F TSI_ver, 8            # the version of TSI_path's open document when the range came, -1 none:
+                        #   the gutter moves the range through later edits (edtape.s)
 F TSI_idlen, 4
 F TSI_kind, 4           # TSK_*
 F TSI_flags, 4          # TSF_*
@@ -2589,6 +2608,7 @@ F TSM_text, 4           # lengths of the bytes after the header
 F TSM_path, 4
 F TSM_exp, 4            # -1: no expected value
 F TSM_act, 4            # -1: no actual value
+F TSM_ver, 8            # the version of the path's open document when it came, -1 none
 ENDSTRUCT TSM_SIZE
 
 # json
@@ -2769,6 +2789,26 @@ ENDSTRUCT AS_SIZE
 .equ DS_MAX, 8                      # sessions, child sessions included
 .equ DS_PEND, 256                   # requests in flight per session
 .equ DAP_BODY_MAX, 8388608          # one message
+.equ DAP_CONNECT_MS, 10000          # tcp: the adapter accepts a connection within this
+.equ DAP_CONNECT_EVERY, 100         # and is tried this often
+.equ DAP_LOOPBACK, 0x0100007f       # 127.0.0.1 in network order
+.equ DBGX_BODY_MAX, 1048576 + 256     # debug-start's body: NAME and a configuration body
+.equ DCE_SYNTAX, 1                   # dcfg_from_leaves: the configuration body does not parse
+.equ DCE_REFUSED, 2                  # its type is not one of the extension's debuggers
+.equ DTR_STDIO, 0                   # DS_transport: the adapter's standard input and output
+.equ DTR_TCP, 1                     # rhun picks a port, starts the adapter and connects
+.equ DTR_SERVER, 2                  # launch.ini's server = HOST:PORT: no process
+.equ DSK_getsockname, 51           # Linux system call numbers (the macOS shim converts them)
+.equ DSK_getpeername, 52
+.equ DSK_AF_INET, 2
+.equ DSK_SOL_SOCKET, 1
+.equ DSK_SO_ERROR, 4
+.equ DSK_F_DUPFD, 0
+.equ DSK_F_SETFD, 2
+.equ DSK_FD_CLOEXEC, 1
+.equ DSK_EINPROGRESS, 115
+.equ DSK_EALREADY, 114
+.equ DSK_EISCONN, 106
 .equ DAP_HEADER_MAX, 1024
 .equ DAP_WQ_MAX, 4194304            # bytes queued for one adapter
 .equ DAP_NODES_MAX, 262144          # JSON values in one message
@@ -2932,6 +2972,21 @@ F DS_pid, 4             # the adapter, 0 when none (or reaped)
 F DS_in, 4              # its input (rhun writes), -1
 F DS_out, 4             # its output (rhun reads), -1
 F DS_err, 4             # its error output, -1
+F DS_aout, 4            # tcp: its standard output (lines to the console), -1
+F DS_ain, 4             # tcp: its standard input (kept open until the end), -1
+F DS_csock, 4           # tcp, server: the socket while it connects, -1
+F DS_transport, 4       # DTR_*
+F DS_port, 4            # tcp, server: the port it listens on
+F DS_addr, 4            # and the IPv4 address (network order)
+F DS_conn_until, 8      # time_ms when connecting gives up
+F DS_rit_seq, 4         # the runInTerminal request still owed an answer, 0 none
+F DS_vgen, 4            # bumped whenever the variable pool starts again (a stop, another frame)
+F DS_wgen, 4            # the last round of watch evaluations sent
+F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
+F DS_pad2, 4
+F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
+F DS_owner_id, 8        # and its request still owed an answer, 0 none
+F DS_after, 8           # owned cstr: launch.ini's after task, run when the session ends, or 0
 F DS_seq, 4             # the next request number
 F DS_epoch, 4           # bumped on every stop and resume
 F DS_flags, 4           # DSF_*
@@ -3318,7 +3373,16 @@ F NB_reveal, 4          # bring the selected cell into view at the next frame
 F NB_layoutw, 4         # the width the cached heights are for
 F NB_vy, 4              # where its cells were drawn last (physical px), for tests and clicks
 F NB_vh, 4
+F NB_sent, VEC_SIZE     # NBS2 records: per extension, the order of the cells it last heard (A3)
+F NB_rev, 8             # bumped by every cell operation and output change (what NB_dirty records)
+F NB_snap, VEC_SIZE     # nb-save's snapshot: NBC*, its document's undo length and version, 24 bytes each
+F NB_snaprev, 8         # NB_rev when nb-save's body was made
+F NB_openstamp, 8       # nb_stamp when a reload's nb-open went out
 ENDSTRUCT NB_SIZE
+STRUCT
+F NBS2_ext, 8           # EXT*
+F NBS2_hash, 8          # a hash of the DOC ids of the cells it knows, in order
+ENDSTRUCT NBS2_SIZE
 .equ NBS_OPENING, 0
 .equ NBS_READY, 1
 .equ NBS_FAILED, 2
@@ -3414,6 +3478,52 @@ ENDSTRUCT NBU_SIZE
 .equ NB_TEXT_LINES, 400         # lines of a text output shown before "N more lines"
 .equ NB_LABEL_MAX, 200          # the kernel button's text
 .equ NB_OPEN_MS, 30000          # an nb-open or nb-save without an answer fails after this
+
+# ---- custom editors (wider-parity design, part B: customed.s, ceproto.inc) ----
+# A file an extension's [provides] editor matches opens in a TAB_VIEW tab with TF_CUSTOM: a 12a view
+# the extension draws, bound to a CE. Text model: TAB_doc is the file's DOC (rhun's undo, dirty and
+# save). Owned model: TAB_doc is a stand-in with the path and no text; the extension keeps the model
+# and rhun asks it for the bytes in parts.
+STRUCT
+F CE_doc, 8             # DOC* (DOC_ce points back); its DOC_id is the CDOC extensions know
+F CE_ext, 8             # EXT*: the extension
+F CE_vid, 8             # its view's id (VW_id)
+F CE_req, 8             # the request rhun waits on, 0 none
+F CE_reqat, 8           # when it went out (time_ms)
+F CE_savefn, 8          # app_save_start's callback(doc id, arg, result) and its argument, or 0
+F CE_savearg, 8
+F CE_buf, SB_SIZE       # owned saves: the parts so far
+F CE_target, 8          # owned cstr: the path the save in progress writes
+F CE_path, 8            # owned cstr: the path the extension was last told
+F CE_part, 8            # the part asked for
+F CE_model, 4           # CEM_*
+F CE_state, 4           # CES_*
+F CE_dirty, 4           # owned: the extension said its model differs from the file
+F CE_reqkind, 4         # CER_* of CE_req
+F CE_want, 4            # CER_OPEN: editor-open waits for the extension to run
+F CE_skind, 4           # CEK_* of the save in progress
+F CE_dirtyat, 8         # owned: when it last said dirty (time_ms): its backup follows 30 s later
+F CE_bkdone, 4          # owned: the backup holds what it shows since it last said dirty
+F CE_restore, 4         # owned: its bytes come from its backup (opened with SOURCE backup) until saved
+ENDSTRUCT CE_SIZE
+.equ CEM_TEXT, 0
+.equ CEM_OWNED, 1
+.equ CES_OPENING, 0
+.equ CES_READY, 1
+.equ CES_STOPPED, 2             # its extension stopped while it had unsaved changes in a backup
+.equ CER_OPEN, 1
+.equ CER_SAVE, 2
+.equ CER_CMD, 3
+.equ CEK_SAVE, 0
+.equ CEK_SAVEAS, 1
+.equ CEK_BACKUP, 2
+.equ CE_PART_MAX, 4194304       # an editor-save part's bytes
+.equ CE_SAVE_MAX, 1073741824    # a save's bytes in all
+.equ CE_READ_MAX, 4194304       # an editor-read answer
+.equ CE_WAIT_MS, 30000          # a request without an answer fails after this
+.equ CE_BACKUP_MS, 30000        # an owned model's backup, after it last said dirty
+.equ ID_CE_RESTORE, 0x7d20      # the stopped editor's Restore Unsaved Changes button
+.equ PM_REOPEN, 120             # the palette's Reopen With list (notebooks' block 120-123)
 # ---- editor presentation (edtape.s, deco.s, gutter.s, presctl.s) ----
 # per-document presentation state, DOC_pres: the edit tape, decorations, glyph-lane entries
 .equ TAPE_N, 256                # edits the tape keeps
@@ -3426,20 +3536,23 @@ F PRS_deco, VEC_SIZE     # DR decoration ranges, unsorted
 F PRS_dpool, SB_SIZE     # their texts (before, after, tip, extra)
 F PRS_dgarbage, 8        # pool bytes no range uses any more
 F PRS_glyphs, VEC_SIZE   # GLE glyph-lane entries, sorted by position then kind
-F PRS_folds, VEC_SIZE    # FD folds (fold.s), sorted by their header's end
+F PRS_folds, VEC_SIZE    # FLD folds (fold.s), sorted by their header's end
 F PRS_hid, VEC_SIZE      # HI the hidden lines, merged (a cache of the folds)
 F PRS_hidver, 8          # DOC_version and PRS_gen the cache was built for
 F PRS_hidgen, 8
 F PRS_hidden, 8          # hidden lines in all
 F PRS_fr, VEC_SIZE       # FRG a folding provider's ranges, sorted by their header's line feed
 F PRS_frext, 8           # the extension they came from; 0 while indentation decides
+F PRS_tks, 8             # semantic tokens (semtok.s), owned, or 0
+F PRS_hints, VEC_SIZE    # IH inlay hints (inlay.s), sorted by position
+F PRS_lens, VEC_SIZE     # LNS code lenses (lens.s), sorted by position
 ENDSTRUCT PRS_SIZE
 # a fold: the lines after its header up to its last line are hidden; it follows edits as positions
 STRUCT
-F FD_a, 8               # the header line's line feed
-F FD_b, 8               # the last hidden line's line feed (or the text's end)
-F FD_text, 8            # owned cstr: a provider's collapsed text, or 0
-ENDSTRUCT FD_SIZE
+F FLD_a, 8               # the header line's line feed
+F FLD_b, 8               # the last hidden line's line feed (or the text's end)
+F FLD_text, 8            # owned cstr: a provider's collapsed text, or 0
+ENDSTRUCT FLD_SIZE
 STRUCT
 F HI_first, 8           # hidden lines first..last (0-based)
 F HI_last, 8
@@ -3460,6 +3573,91 @@ ENDSTRUCT FRG_SIZE
 .equ FRG_MAX, 50000              # ranges in one answer
 .equ FRG_TEXT_MAX, 80            # a collapsed text's bytes
 .equ FOLD_ALL_MAX, 4000000      # fold_all scans at most this many lines
+# semantic tokens (semtok.s): a token's place, the class it draws in and its effects
+STRUCT
+F STK_start, 8
+F STK_len, 4
+F STK_cls, 1            # C_*, or STK_KEEP: the syntax class stays
+F STK_fx, 1             # STKF_*
+F STK_pad, 2
+ENDSTRUCT STK_SIZE
+.equ STK_KEEP, 255
+.equ STKF_STRIKE, 1
+.equ STKF_UNDER, 2
+.equ STKF_FADED, 4
+.equ SEMT_LEGENDS, 8            # legends per extension
+.equ SEMT_TYPES, 256            # token types, modifiers per legend
+.equ SEMT_MODS, 64
+.equ SEMT_LEGEND_MAX, 16384     # a legend's body
+.equ SEMT_TOKENS, 200000        # tokens per document
+.equ SEMT_DELTA, 10000          # a delta's edits
+.equ SEMT_HUGE_LINES, 200000    # a document past these is asked about in ranges
+.equ SEMT_HUGE_BYTES, 8388608
+.equ SEMT_FX_MAX, 256           # effects drawn per line
+# a presentation request out (present.s; its answer's handler gets it)
+STRUCT
+F PQR_ext, 8
+F PQR_id, 8
+F PQR_doc, 8            # DOC_id
+F PQR_kind, 8
+F PQR_ver, 8            # the version it asked about
+F PQR_l1, 8             # the lines it asked about (0-based, inclusive)
+F PQR_l2, 8
+ENDSTRUCT PQR_SIZE
+# inlay hints (inlay.s)
+STRUCT
+F IH_pos, 8
+F IH_owner, 8           # EXT*
+F IH_blob, 8            # owned: IHP parts, IHE edits, then their bytes
+F IH_ver, 8             # the version its edits are about
+F IH_side, 1            # VS_*
+F IH_nparts, 1
+F IH_nedits, 1
+F IH_pad, 5
+ENDSTRUCT IH_SIZE
+STRUCT
+F IHP_loff, 4           # offsets into the blob: label, tip, extra records
+F IHP_llen, 4
+F IHP_toff, 4
+F IHP_tlen, 4
+F IHP_xoff, 4
+F IHP_xlen, 4
+ENDSTRUCT IHP_SIZE
+STRUCT
+F IHE_l1, 4             # 0-based, in the hint's version
+F IHE_c1, 4
+F IHE_l2, 4
+F IHE_c2, 4
+F IHE_toff, 4
+F IHE_tlen, 4
+ENDSTRUCT IHE_SIZE
+.equ IH_MAX, 5000               # hints per answer
+.equ IH_DOC_MAX, 50000          # per document
+.equ IH_LABEL_MAX, 120          # a hint's label, all parts
+.equ IH_PARTS, 8
+.equ IH_TIP_MAX, 4000
+.equ IH_PEXTRA_MAX, 9000
+.equ IH_EDITS, 16
+.equ IH_EXTRA_MAX, 65536
+# code lens (lens.s)
+STRUCT
+F LNS_pos, 8            # its line's start (moves with the text)
+F LNS_owner, 8          # EXT*
+F LNS_blob, 8           # owned: TITLE then EXTRA
+F LNS_tlen, 4
+F LNS_xlen, 4
+ENDSTRUCT LNS_SIZE
+.equ LENS_MAX, 10000            # lenses per answer
+.equ LENS_TITLE_MAX, 200
+.equ LENS_EXTRA_MAX, 9000
+# the kinds present.s asks for
+.equ PQ_FOLDING, 0
+.equ PQ_TOKENS, 1
+.equ PQ_HINTS, 2
+.equ PQ_LENS, 3
+.equ PQ_COLORS, 4
+.equ PQ_HIGHLIGHTS, 5
+.equ PQ_COUNT, 6
 # single-provider kinds for automatic use (extproviders.s numbers 0-11 its own)
 .equ PP_TOKENS, 12
 .equ PP_INLINE, 13
@@ -3619,6 +3817,7 @@ ENDSTRUCT VI_SIZE
 .equ VK_HINT, 2
 .equ VK_DECO, 3
 .equ VK_SWATCH, 4
+.equ VK_LENS, 5                 # (not an inlay: a code lens item under the pointer, lens.s)
 .equ VTM_LEFT, 0                # vt_x modes: before every inlay at the gap, after them, the caret's
 .equ VTM_RIGHT, 1
 .equ VTM_CARET, 2
