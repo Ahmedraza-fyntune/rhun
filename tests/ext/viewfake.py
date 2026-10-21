@@ -16,7 +16,9 @@ warning with Reload, which runs rescan, and Later), noteerr, notemany (6 sticky)
 unnote, prog (status, cancellable, then 42% "crates"), prognote, progview (in todo), progbad,
 progend (VIEWFAKE_NOTIFY agrees notify and progress), img (a red PNG drawn in pic), badimg,
 imgs65, unimg (twice), tabpic (a 12a tab picture; VIEWFAKE_PIC agrees views, view-images and,
-unless it is nokeys, view-keys; a vcopy is answered "copied text" or "cut text"), fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
+unless it is nokeys, view-keys; a vcopy is answered "copied text" or "cut text"), tbsorted,
+tbmore, tbadd, tbbad, tbtree (the files table, VIEWFAKE_TABLE: the owner's arrow, paged rows, one
+row added, bad columns, columns on the todo tree), fatset (seven 3 MB set patches), fatrelist (the root's children again, smaller, then 3 MB more). VIEWFAKE_NOLOG:
 view-log is not asked for. VIEWFAKE_DELAY: seconds before hello.
 
 The items view (panel) has a lazy node "a" (its children come with vkids: VIEWFAKE_LAZY answer,
@@ -159,6 +161,24 @@ def setup_form(view):
     patch(view, [rec('form', f'{len(fields)}', b''.join(fields))])
 
 
+def col(align, width, sort, title):
+    return f'{align} {width} {sort} {len(title)}\n{title}'.encode()
+
+
+def row(nid, label, *cells, kids='leaf'):
+    return node(nid, label, kids, b''.join(rec('cell', data=c.encode()) for c in cells))
+
+
+def files_table(view, more=0):
+    cols = [col('left', 0, 'sort', 'Name'), col('right', 6, 'sort', 'Size'), col('left', 8, '-', 'Kind')]
+    ops = [rec('columns', '3', b''.join(cols)),
+           kids('', [row('b', 'b.txt', '120', 'file'), row('a', 'a.txt', '9', 'file'), row('d', 'dir', '-', 'folder', kids='open'),
+                     row('w', 'wide.txt', '7', 'a kind of file whose name is long enough to be cut')], more=more),
+           kids('d', [row('d2', 'z.rs', '2', 'file'), row('d1', 'y.rs', '10', 'file')]),
+           rec('state', 'ready 0')]
+    patch(view, ops)
+
+
 def draw(view, picture):
     request(f'draw {view}', picture.encode())
 
@@ -217,6 +237,8 @@ def host_request(rid, verb, fields, body):
             threading.Timer(1.0, answer, (rid, reply)).start()
         else:
             answer(rid, reply)
+    elif verb == 'vmore' and views.get('files') == int(fields[1]):
+        return                  # the files table's next page never comes: it stays paged
     elif verb == 'vmore':
         pages += 1
         have = int(fields[3])
@@ -291,6 +313,16 @@ def on_command(name):
         top = [node(f'f:{n}', n, 'open', rec('blob', '', b'y' * 1200000)) for n in ('main.rs', 'lib.rs', 'README.md')]
         patch(todo, [kids('', top)])
         patch(todo, [rec('set', '', node('t:lib.rs:1', 'one', 'leaf', rec('blob', '', b'z' * 3000000)))])
+    elif name == 'tbsorted' and views.get('files'):
+        patch(views['files'], [rec('sorted', '2 desc', b'')])
+    elif name == 'tbmore' and views.get('files'):
+        files_table(views['files'], more=1)
+    elif name == 'tbadd' and views.get('files'):
+        patch(views['files'], [kids('', [row('c', 'c.txt', '50', 'file')], op='add')])
+    elif name == 'tbbad' and views.get('files'):
+        patch(views['files'], [rec('columns', '2', col('middle', 0, 'sort', 'Name') + col('left', 0, '-', 'X'))])
+    elif name == 'tbtree' and todo:
+        patch(todo, [rec('columns', '1', col('left', 0, 'sort', 'Name'))])
     elif name == 'note':
         notify('info', note_body('Indexed 12 files', 'workspace'))
     elif name == 'noteask':
@@ -393,6 +425,8 @@ def main():
         features += ' views view-images' + ('' if PIC == 'nokeys' else ' view-keys')
     if os.environ.get('VIEWFAKE_FORM'):
         features += ' view-form'
+    if os.environ.get('VIEWFAKE_TABLE'):
+        features += ' view-table'
     send('hello 1' + features)
     while True:
         line = inp.readline()
@@ -445,6 +479,8 @@ def main():
                     draw(view, 'rect 0 0 300 120 accent\n')
                 elif key == 'setup':
                     setup_form(view)
+                elif key == 'files':
+                    files_table(view)
             elif what == 'select':
                 ids = body.split(b'\n')
                 selected[view] = ids[0].decode() if ids and ids[0] else None

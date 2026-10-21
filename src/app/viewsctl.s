@@ -1,7 +1,8 @@
 # the views group's --script / --control commands (control.s dispatches here), and a built-in demo
 # of the place and tree APIs that the tests drive:
 #   print-sidebar | print-panel-tabs | print-side-tabs   the places' items (place_dump)
-#   print-view NAME|VIEW      a retained view's tree rows (or a built-in item's tree: places-demo)
+#   print-view NAME|VIEW      a retained view's tree rows (or a built-in item's tree: places-demo);
+#                             a table's columns line first
 #   view-show NAME            a place item (its name, or a declared view's key) shown, with the keyboard
 #   view-focus NAME           the keyboard to it
 #   places-demo               a built-in sidebar section and panel tab filled with tree_kid
@@ -245,6 +246,9 @@ FN views_control
     mov rdi, rbx
     mov esi, 10
     call sb_push_byte
+    mov rdi, r15                # a table's columns
+    mov rsi, rbx
+    call table_dump
     mov rdi, r15
     mov rsi, rbx
     call tree_dump

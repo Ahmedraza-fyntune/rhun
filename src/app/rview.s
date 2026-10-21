@@ -123,6 +123,10 @@ evbuf: .zero SB_SIZE            # an event being written
 errbuf: .zero 256               # the error text of the last patch that failed
 rr: .zero RR_SIZE
 rr2: .zero RR_SIZE
+col_align: .long 0              # column_rec's column
+col_min: .long 0
+col_sort: .long 0
+col_pad: .long 0
 ov: .zero VEC_SIZE              # OV: nodes the patch being checked creates
 ovh: .quad 0                    # id -> entry + 1 (u32 slots)
 ovh_cap: .quad 0
@@ -2066,7 +2070,12 @@ kind_agreed:
     jz 9f
     cmp edi, RK_TREE
     je 8f
-    cmp edi, RK_PICTURE
+    cmp edi, RK_TABLE
+    jne 3f
+    FEAT_TEST rsi, FEAT_VIEW_TABLE
+    jz 9f
+    jmp 8f
+3:  cmp edi, RK_PICTURE
     jne 1f
     FEAT_TEST rsi, FEAT_VIEWS   # a picture view: section 12a's draw and events
     jz 9f
@@ -3968,9 +3977,35 @@ patch_check_ops:
     jz .Lpc_syntax
     js .Lpc_toobig_actions
     jmp .Lpc_op
-71: cmp dword ptr [rip + p_kind], RK_TREE  # the tree's own ops
+71: mov rdi, rbx                # a table's: columns N LEN, sorted COL DIR 0
+    xor esi, esi
+    lea rdx, [rip + .Lo_columns]
+    call tree_rec_is
+    test eax, eax
+    jz 711f
+    cmp dword ptr [rip + p_kind], RK_TABLE
+    jne .Lpc_kind
+    call check_columns_op
+    test eax, eax
+    jz .Lpc_syntax
+    jmp .Lpc_op
+711:mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_sorted]
+    call tree_rec_is
+    test eax, eax
+    jz 712f
+    cmp dword ptr [rip + p_kind], RK_TABLE
+    jne .Lpc_kind
+    call sorted_args
+    test eax, eax
+    js .Lpc_syntax
+    jmp .Lpc_op
+712:cmp dword ptr [rip + p_kind], RK_TREE  # the tree's own ops (a table's too)
+    je 713f
+    cmp dword ptr [rip + p_kind], RK_TABLE
     jne .Lpc_tree_ops_other_kind
-    mov rdi, rbx
+713:mov rdi, rbx
     xor esi, esi
     lea rdx, [rip + .Lo_select_mode]
     call tree_rec_is
@@ -4642,6 +4677,236 @@ take_text:
     pop rbx
     ret
 
+# check_columns_op() -> eax 1 when rr is "columns N LEN" with N (1-16) records "ALIGN WIDTH SORT
+#   TITLE_LEN" LF + TITLE: ALIGN left or right, WIDTH 0-200, SORT sort or -, a one-line title of at
+#   most 200 bytes
+check_columns_op:
+    PROLOGUE
+    cmp qword ptr [rip + rr + RR_n], 3
+    jne 8f
+    lea rdi, [rip + rr]
+    mov esi, 1
+    call tree_rec_num
+    test edx, edx
+    jz 8f
+    test rax, rax
+    jz 8f
+    cmp rax, TBC_MAX
+    ja 8f
+    mov r14d, eax               # records still to read
+    mov r12, [rip + rr + RR_data]
+    mov r13, r12
+    add r13, [rip + rr + RR_len]
+1:  test r14d, r14d
+    jz 7f
+    mov rdi, r12
+    mov rsi, r13
+    call column_rec
+    test rax, rax
+    jz 8f
+    mov r12, rax
+    dec r14d
+    jmp 1b
+7:  cmp r12, r13
+    jne 8f
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# column_rec(p, end) -> rax past the column record there, 0 when it is not one: its parts in col_*
+column_rec:
+    PROLOGUE
+    lea rdx, [rip + rr2]
+    call tree_rec_read
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    cmp qword ptr [rip + rr2 + RR_n], 4
+    jne 8f
+    mov dword ptr [rip + col_align], 0
+    lea rdi, [rip + rr2]
+    xor esi, esi
+    lea rdx, [rip + .Lw_left]
+    call tree_rec_is
+    test eax, eax
+    jnz 1f
+    mov dword ptr [rip + col_align], 1
+    lea rdi, [rip + rr2]
+    xor esi, esi
+    lea rdx, [rip + .Lw_right]
+    call tree_rec_is
+    test eax, eax
+    jz 8f
+1:  lea rdi, [rip + rr2]
+    mov esi, 1
+    call tree_rec_num
+    test edx, edx
+    jz 8f
+    cmp rax, 200
+    ja 8f
+    mov [rip + col_min], eax
+    mov dword ptr [rip + col_sort], 1
+    lea rdi, [rip + rr2]
+    mov esi, 2
+    lea rdx, [rip + .Lw_sort]
+    call tree_rec_is
+    test eax, eax
+    jnz 2f
+    mov dword ptr [rip + col_sort], 0
+    lea rdi, [rip + rr2]
+    mov esi, 2
+    lea rdx, [rip + .Ldash]
+    call tree_rec_is
+    test eax, eax
+    jz 8f
+2:  mov rcx, [rip + rr2 + RR_len]
+    cmp rcx, 200
+    ja 8f
+    mov rdi, [rip + rr2 + RR_data]
+    mov esi, 10
+    call has_byte
+    test eax, eax
+    jnz 8f
+    mov rdi, [rip + rr2 + RR_data]
+    mov rcx, [rip + rr2 + RR_len]
+    xor esi, esi
+    call has_byte
+    test eax, eax
+    jnz 8f
+    mov rax, rbx
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# apply_columns_op(tr): rr's columns (check_columns_op passed) become the table's
+apply_columns_op:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + rr]
+    mov esi, 1
+    call tree_rec_num
+    mov r15d, eax               # columns
+    imul edi, eax, TBC_SIZE
+    call mem_alloc
+    mov r14, rax
+    mov rdi, r14
+    xor esi, esi
+    imul edx, r15d, TBC_SIZE
+    call memset
+    mov r12, [rip + rr + RR_data]
+    mov r13, r12
+    add r13, [rip + rr + RR_len]
+    xor ecx, ecx
+1:  cmp ecx, r15d
+    jae 2f
+    push rcx
+    push rcx
+    mov rdi, r12
+    mov rsi, r13
+    call column_rec
+    mov r12, rax
+    mov rdi, [rip + rr2 + RR_data]
+    mov rsi, [rip + rr2 + RR_len]
+    call mem_dup
+    pop rcx
+    pop rcx
+    imul edx, ecx, TBC_SIZE
+    mov [r14 + rdx + TBC_title], rax
+    mov eax, [rip + col_align]
+    mov [r14 + rdx + TBC_align], eax
+    mov eax, [rip + col_min]
+    mov [r14 + rdx + TBC_min], eax
+    mov eax, [rip + col_sort]
+    mov [r14 + rdx + TBC_sort], eax
+    inc ecx
+    jmp 1b
+2:  mov rdi, rbx
+    mov rsi, r14
+    mov edx, r15d
+    lea rcx, [rip + rv_sort]
+    call tree_set_columns
+    EPILOGUE
+
+# sorted_args() -> eax COL | DESC << 8 for rr "sorted COL DIR 0" (COL 1-16 or - for none, DIR asc,
+#   desc or -), -1 when it is not one
+sorted_args:
+    PROLOGUE
+    cmp qword ptr [rip + rr + RR_n], 4
+    jne 8f
+    cmp qword ptr [rip + rr + RR_len], 0
+    jne 8f
+    xor r12d, r12d              # the column
+    lea rdi, [rip + rr]
+    mov esi, 1
+    lea rdx, [rip + .Ldash]
+    call tree_rec_is
+    test eax, eax
+    jnz 1f
+    lea rdi, [rip + rr]
+    mov esi, 1
+    call tree_rec_num
+    test edx, edx
+    jz 8f
+    test rax, rax
+    jz 8f
+    cmp rax, TBC_MAX
+    ja 8f
+    mov r12d, eax
+1:  lea rdi, [rip + rr]
+    mov esi, 2
+    lea rdx, [rip + .Lw_desc]
+    call tree_rec_is
+    test eax, eax
+    jz 2f
+    or r12d, 1 << 8
+    jmp 3f
+2:  lea rdi, [rip + rr]
+    mov esi, 2
+    lea rdx, [rip + .Lw_asc]
+    call tree_rec_is
+    test eax, eax
+    jnz 3f
+    lea rdi, [rip + rr]
+    mov esi, 2
+    lea rdx, [rip + .Ldash]
+    call tree_rec_is
+    test eax, eax
+    jz 8f
+3:  mov eax, r12d
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
+
+# rv_sort(slot, tr, col, desc): a table's header was sorted while its children are paged: "sort REV
+#   COL asc|desc"
+rv_sort:
+    PROLOGUE
+    mov ebx, edi
+    mov r12d, edx
+    mov r13d, ecx
+    call ev_head
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + .Lev_sort]
+    call ev_cstr
+    mov edi, ebx
+    call ev_rev
+    call ev_sp
+    mov edi, r12d
+    call ev_u64
+    call ev_sp
+    lea rdi, [rip + .Lw_asc]
+    test r13d, r13d
+    jz 1f
+    lea rdi, [rip + .Lw_desc]
+1:  call ev_cstr
+    mov edi, ebx
+    xor esi, esi
+    mov rdx, -1
+    call ev_send
+9:  EPILOGUE
+
 # patch_apply(slot, body, len): every op, in order (patch_check passed)
 patch_apply:
     PROLOGUE 48
@@ -4828,6 +5093,29 @@ patch_apply:
     jmp .Lpa_op
 71: mov rdi, rbx
     xor esi, esi
+    lea rdx, [rip + .Lo_columns]
+    call tree_rec_is
+    test eax, eax
+    jz 711f
+    mov rdi, [r14 + RV_tree]
+    call apply_columns_op
+    jmp .Lpa_op
+711:mov rdi, rbx
+    xor esi, esi
+    lea rdx, [rip + .Lo_sorted]
+    call tree_rec_is
+    test eax, eax
+    jz 712f
+    call sorted_args
+    mov rdi, [r14 + RV_tree]
+    mov esi, eax
+    mov edx, eax
+    shr edx, 8
+    mov ecx, 1
+    call tree_set_sorted
+    jmp .Lpa_op
+712:mov rdi, rbx
+    xor esi, esi
     lea rdx, [rip + .Lo_select_mode]
     call tree_rec_is
     test eax, eax
@@ -4977,7 +5265,11 @@ patch_apply:
     call tree_kids_end
     jmp .Lpa_op
 .Lpa_done:
-    mov rax, [r14 + RV_tree]
+    cmp dword ptr [r14 + RV_kind], RK_TABLE     # a table rhun sorts keeps its order
+    jne 1f
+    mov rdi, [r14 + RV_tree]
+    call tree_sort
+1:  mov rax, [r14 + RV_tree]
     mov rcx, [rax + TR_count]
     add [rip + g_rv_nodes], rcx
     mov rcx, [rax + TR_bytes]
@@ -4998,6 +5290,8 @@ FN rview_patch
     mov edi, eax
     call rv_at
     cmp dword ptr [rax + RV_kind], RK_TREE
+    je 1f
+    cmp dword ptr [rax + RV_kind], RK_TABLE
     je 1f
     cmp dword ptr [rax + RV_kind], RK_PICTURE   # its common ops (title, badge, message, busy...)
     je 1f
@@ -5267,6 +5561,14 @@ FN rview_tree_of
 .Lo_clear: .asciz "clear"
 .Lo_action: .asciz "action"
 .Lo_select_mode: .asciz "select-mode"
+.Lo_columns: .asciz "columns"
+.Lo_sorted: .asciz "sorted"
+.Lw_left: .asciz "left"
+.Lw_right: .asciz "right"
+.Lw_sort: .asciz "sort"
+.Lw_asc: .asciz "asc"
+.Lw_desc: .asciz "desc"
+.Lev_sort: .asciz "sort"
 .Lw_title: .asciz "title"
 .Lw_node: .asciz "node"
 .Lw_none: .asciz "none"
@@ -5306,7 +5608,7 @@ FN rview_tree_of
 .Ld_nodes: .asciz " nodes="
 .Ld_message: .asciz " message="
 .p2align 3
-tree_ops: .quad .Lo_kids, .Lo_add, .Lo_set, .Lo_del, .Lo_expand, .Lo_collapse, .Lo_select_mode, 0
+tree_ops: .quad .Lo_kids, .Lo_add, .Lo_set, .Lo_del, .Lo_expand, .Lo_collapse, .Lo_select_mode, .Lo_columns, .Lo_sorted, 0
 state_words: .quad .Ls_ready, .Ls_loading, .Ls_empty, .Ls_error, 0     # RS_* - 1
 nrec_slots: .quad 8, 24, 40     # nrec offsets of ID_LEN, LABEL_LEN, EXTRA_LEN
 
