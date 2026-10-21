@@ -2318,7 +2318,13 @@ FN app_on_paste
     mov rsi, r12
     call scm_paste
     jmp 9f
-0:  mov rdi, rbx                # a picture with the keyboard (views group, viewpic.s)
+0:  cmp dword ptr [rip + g_focus], FOCUS_AGENT_INPUT
+    jne 5f
+    mov rdi, rbx                # and an agent's prompt box
+    mov rsi, r12
+    call agentext_paste
+    jmp 9f
+5:  mov rdi, rbx                # a picture with the keyboard (views group, viewpic.s)
     mov rsi, r12
     call views_paste
     test eax, eax
@@ -2367,6 +2373,8 @@ FN focused_field
     je extpage_field
     cmp eax, FOCUS_EDITOR
     je vim_field
+    cmp eax, FOCUS_AGENT_INPUT
+    je agentext_field
     xor eax, eax
     ret
 
@@ -2504,11 +2512,20 @@ FN app_on_key
     jnz 9f
     jmp .Lk_bind
 73: cmp eax, FOCUS_SCM
-    jne .Lk_bind
+    jne 74f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call scm_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+74: cmp eax, FOCUS_AGENT_INPUT  # AI (D4): an agent session's prompt box
+    jne .Lk_bind
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call agentext_input_key
     test eax, eax
     jnz 9f
 .Lk_bind:

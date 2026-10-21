@@ -2255,6 +2255,11 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call tools_cancel
+    mov edi, 2                  # or a card of one of its sessions (agentext.s)
+    call field_u64
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call agentext_cancel
     mov edi, 2                  # a terminal-open waiting for the approval dialog: answered cancelled (termproto.s)
     call field_u64
     mov rdi, [rip + cur]
@@ -5277,6 +5282,7 @@ verbs:
     .quad .Lv_unpropose, h_unpropose, 0
     .quad .Lv_tools, h_tools, 0
     .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
+    .quad .Lv_agent_ask, h_agent_ask, 8192
     # debugger (debugext.s): feature "debug"
     .quad dbgx_v_debug_start, dbgx_h_debug_start, DBGX_BODY_MAX
     # notebooks (nbproto.inc)

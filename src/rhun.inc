@@ -1648,6 +1648,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_AGENTS, "agents", 1              # agent-sessions; rhun asks agent-transcript
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
     FEATURE FEAT_TOOLS, "tools", 1                # tools, tool-call; rhun asks owners: tool
+    FEATURE FEAT_AGENT_PROMPTS, "agent-prompts", 1    # agent-ask; rhun asks agent-prompt
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
     # tasks and terminals (termproto.s, tasks.s)
@@ -3159,8 +3160,8 @@ ENDSTRUCT TRC_SIZE
 .equ AXF_MATCH, 1               # its CWD is the project or one of its worktrees
 .equ AXF_FETCHED, 2             # a transcript answer came at least once
 .equ ID_AI_SOURCE, 0x7a00       # + extension index: its switch in Settings > Agents
-.equ ID_AI_REVIEW, 0x7b00       # review.s: the Review tab's buttons
-.equ ID_AI_CARD, 0x7c00         # D4: the prompt box, Stop and card buttons
+.equ ID_AI_REVIEW, 0x8100       # review.s: the Review tab's buttons
+.equ ID_AI_CARD, 0x8200         # D4: the prompt box, Stop and card buttons
 
 # AI (wider-parity D): what one extension contributes, indexed like g_exts (ai_ext)
 STRUCT
