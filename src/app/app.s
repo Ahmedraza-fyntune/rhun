@@ -2271,7 +2271,12 @@ FN app_on_paste
     mov rsi, r12
     call scm_paste
     jmp 9f
-0:  mov rdi, rbx
+0:  mov rdi, rbx                # a picture with the keyboard (views group, viewpic.s)
+    mov rsi, r12
+    call views_paste
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
     mov rsi, r12
     call focused_field
     test rax, rax
@@ -2752,6 +2757,7 @@ timeout_fns:
     .quad extupdate_timeout      # extension management
     .quad keys_timeout           # a chord's pause (keys.s)
     .quad ws_difftab_timeout    # wsedit: diff tabs whose sides changed
+    .quad ws_linked_timeout     # wsedit: a cursor resting for linked editing
     .quad nb_timeout              # notebooks: requests waiting for their program
     .quad 0
 .text
@@ -2762,6 +2768,7 @@ FN app_tick
     call complete_tick
     call langfeat_tick
     call ws_difftab_tick        # wsedit: diff tabs follow their sides
+    call ws_linked_tick         # wsedit: linked editing asks where the cursor rests
     call save_tick
     call ext_options_apply
     call watch_tick
@@ -4053,9 +4060,9 @@ FN tabs_draw
     sub [rsp + 8], eax
     mov eax, [rsp + 8]
     sub eax, [rsp + 12]
-    jns 01f
+    jns 9701f
     xor eax, eax
-01: mov [rsp + 36], eax
+9701: mov [rsp + 36], eax
 0:  mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 8]
@@ -4744,6 +4751,10 @@ FN statusbar_draw
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
     call statusbar_update
+    mov edi, eax
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 12]
+    call term_tasks_status      # tasks: "▸ build" while tasks run (termview.s)
     mov edi, eax
     mov esi, [rsp + 4]
     mov edx, [rsp + 12]
@@ -6592,6 +6603,10 @@ url_path: .zero 4096           # the path of a rhun:// link (app_open_path)
 FN app_open_path
     PROLOGUE 16
     mov rbx, rdi
+    call links_open_path        # resources group: a rhun://ext/ link goes to its extension (links.s)
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx
     lea rsi, [rip + url_path]
     mov edx, 4096
     call rhun_url

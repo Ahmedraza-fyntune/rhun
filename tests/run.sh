@@ -184,8 +184,10 @@ python3 tests/ext-scm.py || fail=1
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }
 python3 tests/enum-values.py --negative-control > /dev/null || { python3 tests/enum-values.py --negative-control; fail=1; }
+python3 tests/asm-pitfalls.py --negative-control > /dev/null || { python3 tests/asm-pitfalls.py --negative-control; fail=1; }
 check edtape build/edtape_test
 python3 tests/presentation.py || fail=1
+python3 tests/folding.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1
@@ -214,6 +216,7 @@ python3 tests/ext-packs.py || fail=1
 python3 tests/ext-views-tree.py || fail=1
 python3 tests/ext-views-log.py || fail=1
 python3 tests/ext-notify.py || fail=1
+python3 tests/ext-views-picture.py || fail=1
 python3 tests/ext-fuzz.py 1 4 || fail=1
 # debugger (DAP client) with the fake adapter tests/dap/fakedap.py
 for t in debug-launch debug-framing debug-config debug-breakpoints debug-step debug-lifetime debug-view debug-gutter; do
@@ -230,6 +233,7 @@ python3 tests/wasm-fuzz.py 1 2 --count 100 || fail=1
 # workspace edits and the editor model: transactions, disk edits, file operations
 python3 tests/wsedit.py || fail=1
 python3 tests/ext-reveal.py || fail=1
+python3 tests/ext-linked.py || fail=1
 if [ "$(uname -s)" = Darwin ] || command -v strace >/dev/null; then
     status=0
     sh tests/file-faults.sh || status=$?

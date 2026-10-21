@@ -1170,10 +1170,25 @@ FN def_command
     mov rdi, r12
     mov esi, 0x27
     call sb_push_byte
-7:  mov rdi, r12
-    mov rsi, r13
-    call sb_push_cstr
+7:  # its bytes; in quotes a quote is '\'' (shell quoting the user can paste)
+    mov qword ptr [rsp + 8], 0
+71: mov rax, [rsp + 8]
+    movzx esi, byte ptr [r13 + rax]
+    test esi, esi
+    jz 74f
+    inc qword ptr [rsp + 8]
+    cmp esi, 0x27
+    jne 73f
     cmp dword ptr [rsp], 0
+    je 73f
+    mov rdi, r12
+    lea rsi, [rip + .Lq_escape]
+    call sb_push_cstr
+    jmp 71b
+73: mov rdi, r12
+    call sb_push_byte
+    jmp 71b
+74: cmp dword ptr [rsp], 0
     je 8f
     mov rdi, r12
     mov esi, 0x27
@@ -1200,6 +1215,7 @@ char_in_cstr:
 
 .section .rodata
 .Lempty: .asciz ""
+.Lq_escape: .asciz "'\\''"
 .Lw_shell: .asciz "shell"
 .Lw_argv: .asciz "argv"
 .Lr_detail: .asciz "detail"

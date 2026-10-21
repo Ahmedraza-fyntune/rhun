@@ -214,8 +214,8 @@ class SidebarSplit(unittest.TestCase):
     # queues both before the frame, while the first press's owner is still the active widget
 
     def test_batched_double_click_selects_word(self):
-        out = self.run_editor(['wait 200', 'move 420 300', 'down', 'wait 60', 'up-down', 'wait 60',
-                               'up', 'wait 60', 'print-state'])
+        out = self.run_editor(['wait 200', 'move 432 300', 'down', 'wait 60', 'up-down', 'wait 60',
+                               'up', 'wait 60', 'print-state'])     # "to" (past the fold lane)
         self.assertIn('sel=2', out)
 
     def test_batched_press_moves_focus_to_terminal(self):

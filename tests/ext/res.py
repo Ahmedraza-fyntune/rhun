@@ -35,7 +35,13 @@ def log(line):
             f.write(line + b'\n')
 
 
+held = None             # batch: messages kept for one write
+
+
 def send(line, body=b''):
+    if held is not None:
+        held.append(line.encode() + b'\n' + body)
+        return
     out.write(line.encode() + b'\n' + body)
     out.flush()
 
@@ -106,15 +112,32 @@ def command(name):
     elif name == 'unstatus':
         request('status 0')
     elif name == 'batch':
-        # every line of RES_ARGS as a request, at once
+        # every line of RES_ARGS as a request, in one write
+        global held
+        held = []
         while True:
             line = arg()
             if not line:
                 break
             send_line(line)
+        data, held = b''.join(held), None
+        out.write(data)
+        out.flush()
     elif name == 'request':
         # any request with its arguments from RES_ARGS: "verb args" or "verb args|body"
         send_line(arg())
+    elif name == 'raw':
+        # RES_RAW: requests as they go on the wire without their ids ("verb args LEN" LF and LEN
+        # bytes), for bodies that are not text
+        path = os.environ.get('RES_RAW', '').replace('{state}', STATE)
+        data = open(path, 'rb').read() if path else b''
+        i = 0
+        while i < len(data):
+            j = data.index(b'\n', i)
+            line = data[i:j].decode()
+            n = int(line.rsplit(' ', 1)[1])
+            request(line, data[j + 1:j + 1 + n])
+            i = j + 1 + n
     elif name == 'quiet':
         pass
 
