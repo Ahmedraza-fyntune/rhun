@@ -1420,6 +1420,12 @@ FN scm_draw
     mov r13d, [rip + pan + 4]
     add r13d, [rip + g_mt + 4*MI_8]
     sub r13d, [rip + scroll]
+    # the workspace folders' repositories, a line each (resources group, gitrepos.s)
+    mov edi, [rip + pan]
+    mov esi, r13d
+    mov edx, [rip + pan + 8]
+    call gitrepos_draw_row
+    add r13d, eax
     # the branch
     mov edi, r13d
     call draw_branch
