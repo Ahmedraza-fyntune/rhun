@@ -175,6 +175,7 @@ FN dask_begin
     lea rdi, [rip + items]
     call sb_clear
     mov rdi, [rip + label + SB_ptr]
+    mov dword ptr [rip + g_dpick_kind], 1
     call palette_dpick_open
     xor r13d, r13d              # rows
 5:  cmp rbx, r15
@@ -431,6 +432,7 @@ ps_list:
     lea rsi, [rip + .Lm_process]
     call sb_set_cstr_dq
     mov rdi, [rip + label + SB_ptr]
+    mov dword ptr [rip + g_dpick_kind], 1
     call palette_dpick_open
     mov r12, [rip + psout + SB_ptr]
     mov r15, r12

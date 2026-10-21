@@ -1769,7 +1769,8 @@ FEATURE_LIST
 .equ PK_COLOR_EDIT, 40
 .equ PK_HIGHLIGHTS, 41
 .equ PK_LINKED, 42               # wsedit: linked-editing ranges (wslinked.s)
-.equ PK_COUNT, 43
+.equ PK_DEBUG_RESOLVE, 43        # debugger: debug-resolve (debugext.s)
+.equ PK_COUNT, 44
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2

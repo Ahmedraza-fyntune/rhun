@@ -2454,7 +2454,14 @@ FN dcfg_from_leaves
 4:  mov r12, [rsp + 56]
     dec r15
     jmp 1b
-5:  # the debugger: one of this extension's types
+5:  # arrays as the body gives them: indices 0, 1, 2 ... without gaps
+    cmp qword ptr [rip + cn + VEC_len], 0
+    je 50f
+    xor edi, edi
+    call cn_dense
+    test eax, eax
+    jz .Lfl_syntax
+50: # the debugger: one of this extension's types
     mov rsi, [rsp + 16]
     test rsi, rsi
     jz .Lfl_notype
@@ -2613,6 +2620,39 @@ cl_walk:
     mov r14d, [rax + CN_next]
     jmp 4b
 9:  mov [rip + lpb + SB_len], rbx
+    EPILOGUE
+
+# cn_dense(node) -> eax 1 when every array at or under the node holds the indices 0..n-1 (a
+#   configuration body's rule; launch.ini may skip indices)
+cn_dense:
+    PROLOGUE
+    mov r12d, edi
+    call cn_node
+    mov r13d, [rax + CN_kind]
+    test r13d, r13d
+    jz 8f                       # a leaf
+    mov r14d, [rax + CN_kid]
+    xor r15d, r15d              # the index expected next
+1:  test r14d, r14d
+    js 8f
+    mov edi, r14d
+    call cn_node
+    cmp r13d, 2
+    jne 2f
+    cmp [rax + CN_index], r15
+    jne 9f
+    inc r15
+2:  mov edi, r14d
+    call cn_dense
+    test eax, eax
+    jz 9f
+    mov edi, r14d
+    call cn_node
+    mov r14d, [rax + CN_next]
+    jmp 1b
+8:  mov eax, 1
+    EPILOGUE
+9:  xor eax, eax
     EPILOGUE
 
 # dec_at(ptr, end) -> rax a decimal number there, rdx the byte after its digits (0 without a digit

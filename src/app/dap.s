@@ -5105,7 +5105,11 @@ dap_m_busy:
 .Lm_compound: .asciz "a compound configuration starts while another one is still starting"
 .Lm_preparing: .asciz "a launch is being prepared by its debugger's extension"
 .Lm_badserver: .asciz "server must be PORT or HOST:PORT, with HOST localhost or an IPv4 address"
-.Lm_noport: .asciz "no free TCP port on 127.0.0.1 for the debugger (this system has no sockets for rhun yet?)"
+.ifdef WINDOWS
+.Lm_noport: .asciz "this debugger connects over TCP (as Delve does), which rhun's Windows build does not do yet"
+.else
+.Lm_noport: .asciz "no free TCP port on 127.0.0.1 for the debugger"
+.endif
 .Lm_nosocket: .asciz "rhun could not create a TCP socket for the debugger"
 .Lm_noconn: .asciz "the debugger did not accept a connection on "
 .Lm_noconn2: .asciz " in 10 s"

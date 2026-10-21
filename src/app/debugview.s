@@ -30,6 +30,14 @@ prompt_bp: .long 0              # the breakpoint (id) a prompt edits
 prompt_var: .long 0             # Set Value: the variable node
 prompt_var_sid: .long 0         # and its session
 prompt_var_gen: .long 0         # and its variable pool's generation
+.globl g_dpick_kind
+g_dpick_kind: .long 0           # the debugger's pick list: 1 a launch's question, 2 a configuration, 3 a template
+.p2align 3
+pickb: .zero SB_SIZE            # Select Configuration's names; Add Configuration's launch.ini text
+tplb: .zero SB_SIZE             # Add Configuration: the templates' sections
+tplidx: .zero SB_SIZE           # and each one's start and end in tplb (two qwords)
+tpllab: .zero SB_SIZE           # and each one's row, LF separated
+pathb_dv: .zero SB_SIZE
 .p2align 3
 prompt_path: .zero SB_SIZE
 cfg_first: .zero SB_SIZE        # launch.ini's names, for the status bar
@@ -2073,6 +2081,359 @@ FN cmd_debug_open_configurations
 9:  EPILOGUE
 
 
+# ---------------- the configuration picker and Add Configuration ----------------
+
+# dview_dpick_chosen(row): the debugger's pick list chose a row: a launch's question (debugask.s), a
+#   configuration (Select Configuration) or a template (Add Configuration)
+FN dview_dpick_chosen
+    mov eax, [rip + g_dpick_kind]
+    mov dword ptr [rip + g_dpick_kind], 0
+    cmp eax, 1
+    je dask_chosen
+    cmp eax, 2
+    je select_chosen
+    cmp eax, 3
+    je addcfg_chosen
+    ret
+
+# cmd_debug_select_configuration: launch.ini's configurations; the one chosen is what F5 starts
+FN cmd_debug_select_configuration
+    PROLOGUE
+    lea rdi, [rip + pickb]
+    call sb_clear
+    lea rdi, [rip + pickb]
+    call dcfg_names
+    mov dword ptr [rip + g_dpick_kind], 2
+    lea rdi, [rip + .Lp_select]
+    call palette_dpick_open
+    mov r12, [rip + pickb + SB_ptr]
+    mov r14, r12
+    add r14, [rip + pickb + SB_len]
+    xor ebx, ebx
+1:  cmp r12, r14
+    jae 3f
+    mov r13, r12
+2:  cmp byte ptr [r13], 10
+    je 21f
+    inc r13
+    jmp 2b
+21: mov rdi, r12
+    mov rsi, r13
+    sub rsi, r12
+    mov edx, ebx
+    call palette_choose_add
+    inc ebx
+    lea r12, [r13 + 1]
+    jmp 1b
+3:  call palette_choose_ready
+    EPILOGUE
+
+# select_chosen(row): that configuration is the selected one
+select_chosen:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, [rip + pickb + SB_ptr]
+    mov r14, r12
+    add r14, [rip + pickb + SB_len]
+1:  cmp r12, r14
+    jae 9f
+    mov r13, r12
+2:  cmp byte ptr [r13], 10
+    je 3f
+    inc r13
+    jmp 2b
+3:  test rbx, rbx
+    jz 4f
+    dec rbx
+    lea r12, [r13 + 1]
+    jmp 1b
+4:  lea rdi, [rip + g_dsel]
+    mov rsi, r12
+    mov rdx, r13
+    sub rdx, r12
+    call sb_set
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# cmd_debug_add_configuration: every installed debugger's templates (launch.ini sections in its
+#   extension's folder); the one chosen is appended to PROJECT/.rhun/launch.ini, which opens
+FN cmd_debug_add_configuration
+    PROLOGUE 16
+    cmp qword ptr [rip + g_project], 0
+    je 9f
+    lea rdi, [rip + tplb]
+    call sb_clear
+    lea rdi, [rip + tplidx]
+    call sb_clear
+    lea rdi, [rip + tpllab]
+    call sb_clear
+    mov dword ptr [rip + g_dpick_kind], 3
+    lea rdi, [rip + .Lp_add]
+    call palette_dpick_open
+    xor ebx, ebx                # debugger
+    xor r15d, r15d              # rows
+1:  cmp ebx, [rip + g_ndebuggers]
+    jae 8f
+    mov edi, ebx
+    call dbg_live
+    test eax, eax
+    jz 7f
+    mov edi, ebx
+    call dbg_row
+    mov r12, rax
+    mov r13, [r12 + DBG_templates]
+    test r13, r13
+    jz 7f
+2:  # each file named
+    movzx eax, byte ptr [r13]
+    test eax, eax
+    jz 7f
+    cmp eax, ' '
+    jne 3f
+    inc r13
+    jmp 2b
+3:  mov r14, r13
+31: movzx eax, byte ptr [r13]
+    test eax, eax
+    jz 32f
+    cmp eax, ' '
+    je 32f
+    inc r13
+    jmp 31b
+32: lea rdi, [rip + pathb_dv]
+    mov rax, [r12 + DBG_ext]
+    mov rdi, [rax + EXT_dir]
+    lea rsi, [rip + pathb_dv]
+    xchg rdi, rsi
+    call sb_setc
+    lea rdi, [rip + pathb_dv]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + pathb_dv]
+    mov rsi, r14
+    mov rdx, r13
+    sub rdx, r14
+    call sb_push
+    lea rdi, [rip + pathb_dv]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + pathb_dv + SB_ptr]
+    mov esi, 65536
+    call file_read_limited
+    test rax, rax
+    jz 2b
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    mov rdi, r12
+    mov rsi, rax
+    mov rdx, [rsp + 8]
+    mov ecx, r15d
+    call tpl_sections
+    add r15d, eax
+    mov rdi, [rsp]
+    call mem_free
+    jmp 2b
+7:  inc ebx
+    jmp 1b
+8:  # the rows, one per label line
+    mov r12, [rip + tpllab + SB_ptr]
+    mov r14, r12
+    add r14, [rip + tpllab + SB_len]
+    xor ebx, ebx
+81: cmp r12, r14
+    jae 83f
+    mov r13, r12
+82: cmp byte ptr [r13], 10
+    je 84f
+    inc r13
+    jmp 82b
+84: mov rdi, r12
+    mov rsi, r13
+    sub rsi, r12
+    mov edx, ebx
+    call palette_choose_add
+    inc ebx
+    lea r12, [r13 + 1]
+    jmp 81b
+83: call palette_choose_ready
+9:  EPILOGUE
+
+# tpl_sections(DBG*, text, len, first row) -> eax the rows added: each [Section] of a template, its
+#   text kept in tplb and (start, end) in tplidx, offered as "TITLE: Section"
+tpl_sections:
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12, rsi
+    lea r13, [rsi + rdx]
+    mov [rsp], ecx              # the next row
+    xor r15d, r15d              # added
+    mov qword ptr [rsp + 8], -1 # the open section's start in tplb
+1:  cmp r12, r13
+    jae 8f
+    mov r14, r12                # this line
+2:  cmp r12, r13
+    jae 3f
+    cmp byte ptr [r12], 10
+    je 3f
+    inc r12
+    jmp 2b
+3:  # a section header starts the next entry
+    cmp byte ptr [r14], '['
+    jne 5f
+    call tpl_close
+    mov rax, [rip + tplb + SB_len]
+    mov [rsp + 8], rax
+    # its row: TITLE: NAME
+    lea rdi, [rip + lab]
+    mov rsi, [rbx + DBG_title]
+    test rsi, rsi
+    jnz 4f
+    mov rsi, [rbx + DBG_type]
+4:  call sb_setc
+    lea rdi, [rip + lab]
+    lea rsi, [rip + .Lcolon_sp]
+    call sb_push_cstr
+    lea rsi, [r14 + 1]
+    mov rdx, r12
+    sub rdx, rsi
+    jz 41f
+    cmp byte ptr [rsi + rdx - 1], ']'
+    jne 41f
+    dec rdx
+41: lea rdi, [rip + lab]
+    call sb_push
+    # its label kept (the list's rows point into tpllab, so they are added once it is complete)
+    lea rdi, [rip + tpllab]
+    mov rsi, [rip + lab + SB_ptr]
+    mov rdx, [rip + lab + SB_len]
+    call sb_push
+    lea rdi, [rip + tpllab]
+    mov esi, 10
+    call sb_push_byte
+    inc r15d
+5:  cmp qword ptr [rsp + 8], 0
+    jl 6f                       # before the first section: comments
+    lea rdi, [rip + tplb]
+    mov rsi, r14
+    mov rdx, r12
+    sub rdx, r14
+    call sb_push
+    lea rdi, [rip + tplb]
+    mov esi, 10
+    call sb_push_byte
+6:  inc r12
+    jmp 1b
+8:  call tpl_close
+    mov eax, r15d
+    EPILOGUE
+# tpl_close: the open section (start at [rsp + 8] of tpl_sections' frame) ends: its range kept
+tpl_close:
+    mov rax, [rsp + 8 + 8]
+    test rax, rax
+    js 1f
+    push rax
+    push rax
+    lea rdi, [rip + tplidx]
+    lea rsi, [rsp]
+    mov edx, 8
+    call sb_push
+    pop rax
+    pop rax
+    mov rax, [rip + tplb + SB_len]
+    push rax
+    push rax
+    lea rdi, [rip + tplidx]
+    lea rsi, [rsp]
+    mov edx, 8
+    call sb_push
+    pop rax
+    pop rax
+1:  ret
+
+# addcfg_chosen(row): that template's section appended to launch.ini (made when missing), the file
+#   open, the section the selected configuration
+addcfg_chosen:
+    PROLOGUE 32
+    mov rax, rdi
+    shl rax, 4
+    cmp rax, [rip + tplidx + SB_len]
+    jae 9f
+    add rax, [rip + tplidx + SB_ptr]
+    mov rcx, [rax]
+    mov rdx, [rax + 8]
+    mov [rsp], rcx
+    mov [rsp + 8], rdx
+    # the file's text so far, or the header
+    mov rsi, [rip + g_project]
+    lea rdi, [rip + lab]
+    call sb_setc
+    lea rdi, [rip + lab]
+    lea rsi, [rip + .Lf_launch]
+    call sb_push_cstr
+    lea rdi, [rip + lab]
+    xor esi, esi
+    call sb_push_byte
+    lea rdi, [rip + pickb]
+    call sb_clear
+    mov rdi, [rip + lab + SB_ptr]
+    mov esi, 1048576
+    call file_read_limited
+    test rax, rax
+    jz 1f
+    mov r12, rax
+    lea rdi, [rip + pickb]
+    mov rsi, rax
+    call sb_push
+    mov rdi, r12
+    call mem_free
+    jmp 2f
+1:  mov rdi, [rip + lab + SB_ptr]
+    call mkdir_parent
+    lea rdi, [rip + pickb]
+    lea rsi, [rip + .Ltemplate]
+    mov edx, .Ltemplate_end - .Ltemplate
+    call sb_push
+2:  # a blank line, then the section
+    mov rax, [rip + pickb + SB_len]
+    test rax, rax
+    jz 3f
+    mov rcx, [rip + pickb + SB_ptr]
+    cmp byte ptr [rcx + rax - 1], 10
+    je 21f
+    lea rdi, [rip + pickb]
+    mov esi, 10
+    call sb_push_byte
+21: lea rdi, [rip + pickb]
+    mov esi, 10
+    call sb_push_byte
+3:  mov rsi, [rip + tplb + SB_ptr]
+    add rsi, [rsp]
+    mov rdx, [rsp + 8]
+    sub rdx, [rsp]
+    lea rdi, [rip + pickb]
+    call sb_push
+    mov rdi, [rip + lab + SB_ptr]
+    mov rsi, [rip + pickb + SB_ptr]
+    mov rdx, [rip + pickb + SB_len]
+    call file_write_all
+    # the section's name becomes the selection
+    mov rsi, [rip + tplb + SB_ptr]
+    add rsi, [rsp]
+    inc rsi                     # after [
+    mov rdx, rsi
+4:  cmp byte ptr [rdx], ']'
+    je 5f
+    cmp byte ptr [rdx], 10
+    je 5f
+    inc rdx
+    jmp 4b
+5:  sub rdx, rsi
+    lea rdi, [rip + g_dsel]
+    call sb_set
+    mov rdi, [rip + lab + SB_ptr]
+    call app_open_file
+9:  EPILOGUE
+
 # ---------------- the title bar's toolbar and the status bar's item ----------------
 
 .equ ID_DBG_TB, 0x5e0100        # + button
@@ -2676,6 +3037,8 @@ tbe_out: .quad IC_DBG_OUT, cmd_debug_step_out, .Lt_out
 tbe_restart: .quad IC_REFRESH, cmd_debug_restart, .Lt_restart
 tbe_stop: .quad IC_STOP, cmd_debug_stop, .Lt_stop
 .Lp_setvar: .asciz "New value"
+.Lp_select: .asciz "Debug configuration"
+.Lp_add: .asciz "Add a configuration"
 .Lm_add: .asciz "Add Breakpoint"
 .Lm_cond: .asciz "Add Conditional Breakpoint..."
 .Lm_log: .asciz "Add Logpoint..."

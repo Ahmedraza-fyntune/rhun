@@ -1339,8 +1339,8 @@ FN palette_choose_ready
     jmp palette_filter
 
 # debugger: palette_dpick_open(label cstr): an empty pick list for a launch's ${pick:} or ${process}
-# (debugask.s); rows follow with palette_choose_add, then palette_choose_ready; choosing row n calls
-# dask_chosen(n)
+# (debugask.s), a configuration or a template; rows follow with palette_choose_add, then
+# palette_choose_ready; choosing row n calls dview_dpick_chosen(n)
 FN palette_dpick_open
     push rbx
     mov rbx, rdi
@@ -2908,7 +2908,7 @@ palette_accept:
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
     mov rdi, [r12 + IT_data]
-    call dask_chosen
+    call dview_dpick_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 35: cmp ebx, PM_CHOOSE

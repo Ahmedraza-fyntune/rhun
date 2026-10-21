@@ -1437,6 +1437,7 @@ FN query_dump_pending
 .Lk_color_edit: .asciz "color-edit"
 .Lk_highlights: .asciz "highlights"
 .Lk_linked: .asciz "linked"
+.Lk_debug_resolve: .asciz "debug-resolve"
 .p2align 3
 qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_expired
     .quad .Lq_late, .Lq_dropped, .Lq_cancelled, 0
@@ -1505,3 +1506,5 @@ pk_table:
     PK .Lk_highlights, EXT_pv_highlights, 0, 5000, 0, PKF_SILENT, 5000, 1048576, 5000, 1048576
     # wsedit: linked editing (wslinked.s): an answer within a second, at most 64 ranges
     PK .Lk_linked, EXT_pv_linked, 0, 1000, 0, PKF_SILENT, 64, 65536, 64, 65536
+    # debugger (debugext.s): debug-resolve keeps its own 60 s; a configuration body of 1 MB at most
+    PK .Lk_debug_resolve, 0, 0, 0, 0, PKF_SILENT, 1, 1048576, 1, 1048576
