@@ -663,8 +663,8 @@ class Ws(host.Host):
             (p / 'plain/y.txt').write_text('y\n')
             exts = self.ops_exts({'bad': edit(self.op('delete', p / 'dir', 'recursive')),
                                   'good': edit(self.op('delete', p / 'plain', 'recursive'))})
-            shutil.copytree(self.work / 'state', state / 'state')
-            self.env['XDG_STATE_HOME'] = str(state / 'state')
+            (state / 'state').mkdir()
+            self.env['XDG_STATE_HOME'] = str(state / 'state')   # the journal: on /dev/shm
             self.extlog = state / 'state/rhun/extensions/rhun-tests--wsx/wsx.log'
             self.run_ws(exts, ['cmd wsx.bad', 'wait-ext wsx running', 'wait 300', 'cmd wsx.good', 'wait 300',
                                'cmd undo_workspace_edit', 'wait 200'], files=('a.txt',))
