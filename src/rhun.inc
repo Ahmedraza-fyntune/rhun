@@ -2153,8 +2153,9 @@ F SD_opts, 8            # cstr: a choice's options, space separated, or 0
 F SD_type, 4            # SDT_*
 F SD_min, 4
 F SD_max, 4
-F SD_pad, 4
+F SD_scope, 4          # resources group (extconfig.s): ECL scope in bits 0-1, SDS_LANGUAGES
 ENDSTRUCT SD_SIZE
+.equ SDS_LANGUAGES, 4   # KEY.languages = yes: KEY@LANG values apply
 .equ SDT_STRING, 0
 .equ SDT_BOOL, 1
 .equ SDT_INT, 2

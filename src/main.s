@@ -84,6 +84,7 @@ FN main
 1:
     call sys_file_capacity
     call parse_args
+    call links_relay_args       # resources group: a link for another rhun goes there (links.s)
     call detach
     call raster_init
     call appearance_init

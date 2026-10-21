@@ -91,12 +91,14 @@ while True:
         send('terminal-open ' + str(len(d := definition('-', 'shell', 'l', 'true', extra=rec('group', 'build')))), d)
         send('terminal-open ' + str(len(d := definition('-', 'shell', 'l', 'true', extra=rec('location', 'remote')))), d)
         send('terminal-open 5', b'abcde')
+    elif name == 'quote':
+        send('terminal-open ' + str(len(d := definition('-', 'argv', 'q', b"sh\0-c\0echo 'it is'\0"))), d)
     elif name == 'outneed':
         send('terminal-open ' + str(len(d := definition('-', 'shell', 'l', 'true', extra=rec('output', '')))), d)
 '''
 
 COMMANDS = ('open', 'argv', 'cat', 'sleep', 'env', 'input', 'screen', 'stop', 'restart', 'close', 'show',
-            'other', 'bad', 'outneed')
+            'other', 'bad', 'outneed', 'quote')
 
 
 class Feature(unittest.TestCase):
@@ -104,13 +106,13 @@ class Feature(unittest.TestCase):
     tearDown = host.Host.tearDown
     run_editor = host.Host.run_editor
 
-    def driver(self, level='output', features='terminals', name='driver'):
+    def driver(self, level='output', features='terminals', name='driver', more=''):
         root = self.work / 'exts'
         folder = root / 't' / name
         folder.mkdir(parents=True, exist_ok=True)
         (folder / 'extension.ini').write_text(
             f'name = {name}\nowner = t\ntitle = Driver\nversion = 1\nprotocol = 1\nruntime = python3\n'
-            'run = main.py\non = command\n[commands]\n' + ''.join(f'{c} = {c}\n' for c in COMMANDS) +
+            'run = main.py\non = command\n' + more + '[commands]\n' + ''.join(f'{c} = {c}\n' for c in COMMANDS) +
             f'[needs]\nterminal = {level}\n', encoding='utf-8')
         (folder / 'main.py').write_text('HELLO = ' + json.dumps('hello 1 ' + features) + '\n' + DRIVER,
                                         encoding='utf-8')
@@ -144,6 +146,11 @@ class Feature(unittest.TestCase):
         self.assertIn('hi', out)
         self.assertIn('ok 2 2\n', log)          # the second one does not ask
         self.assertEqual(out[-1], 'dialog=none')
+
+    def test_the_question_quotes_arguments_as_a_shell_would(self):
+        out = self.go(['cmd t/driver.quote', 'wait-ext driver running', 'wait 200', 'print-dialog'], self.driver())
+        q = "'" + chr(92) + "''"            # a quote inside quotes
+        self.assertIn("text=sh -c 'echo " + q + "it is" + q + "'   in ~/proj", out)
 
     def test_cancel_and_busy(self):
         exts = self.driver()
@@ -231,6 +238,19 @@ class Feature(unittest.TestCase):
         out = self.go(['cmd t/driver.sleep', *self.allow(), 'wait-term up', 'ext-set t/driver stop', 'wait 2500',
                        'print-terminals'], exts)
         self.assertIn('term=1 kind=terminal owner=t/driver task=- state=stopped', '\n'.join(out))
+
+    def test_a_running_program_keeps_its_extension_from_idling(self):
+        # idle = stop does not stop an extension whose program runs (tasks design 4.9); once it
+        # ended, the extension goes idle
+        exts = self.driver(more='idle = stop\nidle.after = 10\n')
+        self.env['RHUN_IDLE_SCALE'] = '10'                  # 10 s become 1 s
+        out = self.go(['cmd t/driver.sleep', *self.allow(), 'wait-term up', 'wait 2500', 'print-extensions',
+                       'print-terminals', 'term-stop 1', 'wait-terminal 1 ended', 'wait 2500',
+                       'print-extensions'], exts)
+        states = [line for line in out if line.startswith('t/driver ')]
+        self.assertIn('state=running', states[0])
+        self.assertIn('state=running', '\n'.join(line for line in out if ' kind=' in line))
+        self.assertIn('state=idle reason=idle', states[1])
 
 
 if __name__ == '__main__':

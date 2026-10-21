@@ -1133,8 +1133,11 @@ need:
     jne 11f
     lea rsi, [rip + .Le_needs_write]
 11: cmp edi, NEEDS_TERMINAL
-    jne 2f
+    jne 12f
     lea rsi, [rip + .Le_needs_term]
+12: cmp edi, NEEDS_TERM_RUN     # tasks: the task commands of cmd
+    jne 2f
+    lea rsi, [rip + .Le_needs_term_run]
 2:  mov rdi, [rip + cur_id]
     call reply_error
     xor eax, eax
@@ -2239,6 +2242,13 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call termproto_cancel
+    mov edi, 2                  # resources group: a find or search (filesearch.s)
+    call field_u64
+    test edx, edx
+    jz 0f
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call filesearch_cancel
 0:  pop rbx
     # of this extension's open prompt: the prompt closes, answered cancelled
     cmp qword ptr [rip + pr_id], 0
@@ -3610,6 +3620,11 @@ FN extproto_prompt_chose
     PROLOGUE
     cmp qword ptr [rip + pr_id], 0
     je 9f
+    cmp qword ptr [rip + pr_kind], 4    # resources group: an open-url prompt (extresproto.inc)
+    jne 1f
+    call res_url_chose
+    jmp 9f
+1:
     mov r12, rdi
     mov rbx, [rip + cur]
     mov rax, [rip + pr_ext]
@@ -3736,7 +3751,10 @@ FN extproto_send_setting
     call out_cstr
     mov edi, ' '
     call out_byte
-    mov rdi, [rbx + SD_value]
+    mov rdi, [rip + cur]        # resources group: the window value (a workspace's, extconfig.s)
+    mov rsi, rbx
+    call extconfig_window
+    mov rdi, rax
     call out_cstr
     mov edi, 10
     call out_byte
@@ -5214,6 +5232,12 @@ verbs:
     .quad .Lres_v_secret_delete, h_res_secret_delete, 0
     .quad .Lres_v_secret_keys, h_res_secret_keys, 0
     .quad .Lres_v_content_changed, h_res_content_changed, 0
+    .quad .Lres_v_open_url, h_res_open_url, 65536
+    .quad .Lres_v_external_uri, h_res_external_uri, 65536
+    .quad .Lres_v_link, h_res_link, 0
+    .quad .Lres_v_find_files, h_res_find_files, 65536
+    .quad .Lres_v_search_text, h_res_search_text, 340000
+    .quad .Lres_v_setting_get, h_res_setting_get, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -5348,6 +5372,7 @@ verbs:
 .Le_toobig_items: .asciz "toobig 1000 items"
 .Le_toobig_term: .asciz "toobig 4096 bytes"
 .Le_needs_term: .asciz "needs terminal=yes"
+.Le_needs_term_run: .asciz "needs terminal=run"
 .Lrun_label: .asciz "Run in the terminal: Enter, or Esc"
 .p2align 3
 opt_names: .quad .Lo_tab, .Lo_spaces, .Lo_trim, .Lo_final
@@ -5366,7 +5391,12 @@ cmd_allow:
     .quad .La_focus_explorer, 0, .La_toggle_sidebar, 0, .La_toggle_agents, 0
     .quad .La_toggle_terminal, NEEDS_TERMINAL, .La_new_terminal, NEEDS_TERMINAL, .La_clear_terminal, NEEDS_TERMINAL
     .quad .La_toggle_word_wrap, 0, .La_toggle_whitespace, 0, .La_toggle_line_numbers, 0
-    .quad .La_zoom_in, 0, .La_zoom_out, 0, .La_zoom_reset, 0, 0, 0
+    .quad .La_zoom_in, 0, .La_zoom_out, 0, .La_zoom_reset, 0
+    # tasks (with terminal = run): rhun's task commands, which run published tasks after the approval
+    .quad .La_run_task, NEEDS_TERM_RUN, .La_run_build_task, NEEDS_TERM_RUN
+    .quad .La_run_test_task, NEEDS_TERM_RUN, .La_rerun_last_task, NEEDS_TERM_RUN
+    .quad .La_restart_task, NEEDS_TERM_RUN, .La_stop_task, NEEDS_TERM_RUN, .La_show_task, NEEDS_TERM_RUN
+    .quad 0, 0
 .La_undo: .asciz "undo"
 .La_redo: .asciz "redo"
 .La_select_all: .asciz "select_all"
@@ -5404,6 +5434,13 @@ cmd_allow:
 .La_zoom_in: .asciz "zoom_in"
 .La_zoom_out: .asciz "zoom_out"
 .La_zoom_reset: .asciz "zoom_reset"
+.La_run_task: .asciz "run_task"
+.La_run_build_task: .asciz "run_build_task"
+.La_run_test_task: .asciz "run_test_task"
+.La_rerun_last_task: .asciz "rerun_last_task"
+.La_restart_task: .asciz "restart_task"
+.La_stop_task: .asciz "stop_task"
+.La_show_task: .asciz "show_task"
 .Lv_text: .asciz "text"
 .Lv_range: .asciz "range"
 .Lv_replace: .asciz "replace"
