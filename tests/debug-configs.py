@@ -37,6 +37,15 @@ class Configs(debughost.DebugHost):
         self.assertTrue(ini.startswith('[Mine]\ntype = fake\nprogram = scenario.json\n\n[Fake launch]\n'), ini)
         self.assertEqual([l for l in out if l.startswith('config=')], ['config=Mine', 'config=Fake launch'])
 
+    def test_the_status_bar_follows_a_save_not_the_clock(self):
+        self.scenario()
+        ini = self.launch_ini('[First]\ntype = fake\nprogram = scenario.json\n')
+        out = self.run_editor(['wait 200', 'print-configs', 'open %s' % ini, 'key ctrl+Home', 'type [Zero]',
+                               'key Return', 'type type = fake', 'key Return', 'key Return', 'key ctrl+s',
+                               'wait 200', 'print-configs'])
+        status = [l for l in out if l.startswith('status=')]
+        self.assertEqual(status, ['status=\u25b6 First', 'status=\u25b6 Zero'], out)
+
 
 if __name__ == '__main__':
     unittest.main()

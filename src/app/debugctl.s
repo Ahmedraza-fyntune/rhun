@@ -702,7 +702,9 @@ c_print_configs:
     call sb_push
     lea r13, [r15 + 1]
     jmp 1b
-9:  xor eax, eax
+9:  mov rdi, [rip + outp]     # the status bar's configuration label
+    call dview_status_config_dump
+    xor eax, eax
     EPILOGUE
 
 .text

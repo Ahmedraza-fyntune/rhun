@@ -42,6 +42,8 @@ pathb_dv: .zero SB_SIZE
 prompt_path: .zero SB_SIZE
 cfg_first: .zero SB_SIZE        # launch.ini's names, for the status bar
 cfg_prev: .zero SB_SIZE         # the names before the last read
+cfg_proj: .quad 0               # the project and the open files' saves at the last read
+cfg_saves: .quad 0
 tb_rects: .zero 16 * 8          # the toolbar's buttons as last drawn: icon, x, y, size
 tb_n: .long 0
 cfg_checked: .quad 0
@@ -2819,19 +2821,54 @@ status_config:
 8:  xor eax, eax
     EPILOGUE
 
-# cfg_refresh(): launch.ini's names for the status bar, read again at most every 2 s from the tick
-#   (never from drawing: in a remote window reading the file is a round trip)
+# dview_status_config_dump(sb): "status=LABEL" LF: the configuration the status bar offers (print-configs)
+FN dview_status_config_dump
+    PROLOGUE
+    mov rbx, rdi
+    call cfg_refresh
+    lea rdi, [rip + lab]
+    call sb_clear
+    call status_config
+    mov rdi, rbx
+    lea rsi, [rip + .Ls_status_eq]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, [rip + lab + SB_ptr]
+    mov rdx, [rip + lab + SB_len]
+    call sb_push
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
+
+# cfg_refresh(): launch.ini's names for the status bar, read again only when the project changed or a
+#   file was saved in rhun (never from drawing, nor on a timer: in a remote window a read is a round
+#   trip to the host)
 cfg_refresh:
     PROLOGUE
-    call time_ms
-    mov rbx, rax
-    mov rcx, [rip + cfg_checked]
-    test rcx, rcx
-    jz 1f
-    sub rax, rcx
-    cmp rax, 2000
-    jb 9f
-1:  mov [rip + cfg_checked], rbx
+    # the saves of the open files, summed: no file system access
+    xor r12d, r12d
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 2f
+    imul rax, rbx, TAB_SIZE
+    add rax, [rip + g_tabs + VEC_ptr]
+    mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 11f
+    add r12, [rax + DOC_saves]
+11: inc rbx
+    jmp 1b
+2:  mov rax, [rip + g_project]
+    cmp dword ptr [rip + cfg_checked], 0
+    je 3f
+    cmp rax, [rip + cfg_proj]
+    jne 3f
+    cmp r12, [rip + cfg_saves]
+    je 9f
+3:  mov dword ptr [rip + cfg_checked], 1
+    mov [rip + cfg_proj], rax
+    mov [rip + cfg_saves], r12
     lea rdi, [rip + cfg_prev]
     lea rsi, [rip + cfg_first]
     call sb_copy_dv
@@ -2841,7 +2878,7 @@ cfg_refresh:
     call dcfg_names
     mov rdx, [rip + cfg_first + SB_len]
     cmp rdx, [rip + cfg_prev + SB_len]
-    jne 2f
+    jne 4f
     mov rdi, [rip + cfg_first + SB_ptr]
     mov rsi, [rip + cfg_prev + SB_ptr]
     test rdx, rdx
@@ -2849,7 +2886,7 @@ cfg_refresh:
     call memeq
     test eax, eax
     jnz 9f
-2:  mov dword ptr [rip + g_dirty], 1
+4:  mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
 
 # sb_copy_dv(dst, src)
@@ -3037,6 +3074,7 @@ tbe_out: .quad IC_DBG_OUT, cmd_debug_step_out, .Lt_out
 tbe_restart: .quad IC_REFRESH, cmd_debug_restart, .Lt_restart
 tbe_stop: .quad IC_STOP, cmd_debug_stop, .Lt_stop
 .Lp_setvar: .asciz "New value"
+.Ls_status_eq: .asciz "status="
 .Lp_select: .asciz "Debug configuration"
 .Lp_add: .asciz "Add a configuration"
 .Lm_add: .asciz "Add Breakpoint"
