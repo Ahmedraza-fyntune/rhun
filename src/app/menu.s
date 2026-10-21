@@ -53,6 +53,21 @@
 .equ MC_group, 24               # cstr
 .equ MC_index, 32               # the extension's index
 .equ MC_SIZE, 40
+# a target: what clauses see, the TARGET line, the document, the path
+.equ MNT_target, 0
+.equ MNT_line, MTG_SIZE
+.equ MNT_doc, MTG_SIZE + SB_SIZE
+.equ MNT_path, MTG_SIZE + SB_SIZE + 8
+.equ MNT_view, MTG_SIZE + SB_SIZE + 8 + 4096       # copies of the view's name and item value
+.equ MNT_item, MTG_SIZE + SB_SIZE + 8 + 4096 + 128
+.equ MNT_SIZE, MTG_SIZE + SB_SIZE + 8 + 4096 + 128 + 256
+# a button (mb_rows)
+.equ MB_ext, 0
+.equ MB_mi, 8
+.equ MB_cmd, 16
+.equ MB_SIZE, 24
+.equ MB_MAX, 32
+.equ ID_MENU_BUTTON, 0x7d80     # + 0..3: the tab strip's editor_title buttons and "…"
 
 .bss
 .p2align 3
@@ -66,10 +81,17 @@ mn_nlabels: .quad 0
 mn_cands: .zero MN_EXT_ROWS * MC_SIZE
 mn_ncands: .quad 0
 mn_cand_tmp: .zero MC_SIZE
-mn_target: .zero MTG_SIZE        # the menu's target, for clauses and the body
-mn_line: .zero SB_SIZE          # its TARGET line
-mn_path: .zero 4096
-mn_doc: .quad 0                 # the DOC id the invocation is about, 0: the active one
+mnt_menu: .zero MNT_SIZE        # the open menu's target
+mnt_btn: .zero MNT_SIZE         # the target of the buttons being drawn
+mnt_cur: .quad 0                # the one being set up
+mb_rows: .zero MB_MAX * MB_SIZE # the buttons of a title bar or a tree row (menu_buttons_draw)
+mb_count: .quad 0
+mb_tip: .zero 128
+mtb_rows: .zero 4 * 16          # print-title-buttons: the tab strip's buttons drawn (CMD*, x, y)
+mtb_count: .long 0
+mtb_more: .long 0               # 1 + x of its "…", or 0
+mtb_y: .long 0
+mtb_size: .long 0
 mn_x: .long 0
 mn_y: .long 0
 mn_body: .zero SB_SIZE
@@ -676,14 +698,14 @@ strcmp_order:
 9:  ret
 
 # mn_collect(loc, parent cstr or 0, only ext or 0): the candidates of a location whose command
-#   exists and is enabled and whose clause holds for mn_target, sorted
+#   exists and is enabled and whose clause holds for the current target (mnt_cur), sorted
 mn_collect:
     PROLOGUE 16
     mov [rsp], edi
     mov r12, rsi
     mov [rsp + 8], rdx
     mov qword ptr [rip + mn_ncands], 0
-    lea rdi, [rip + mn_target]
+    mov rdi, [rip + mnt_cur]    # (MNT_target is at 0)
     call ctx_push_target
     xor r13d, r13d              # the extension's index
 1:  cmp r13, [rip + g_exts + VEC_len]
@@ -924,11 +946,13 @@ mn_show:
     xor edx, edx
     xor ecx, ecx
     call mn_build
+    cmp qword ptr [rip + mn_count], 0
+    je 9f                       # nothing to show (a tree row no extension has items for)
     lea rdi, [rip + mn_items]
     mov esi, [rip + mn_x]
     mov edx, [rip + mn_y]
     call ctx_menu_open
-    EPILOGUE
+9:  EPILOGUE
 
 # ---------------------------------------------------------------- running a row
 
@@ -957,8 +981,8 @@ menu_run_row:
     lea rdi, [rip + mn_body]
     call sb_clear
     lea rdi, [rip + mn_body]
-    mov rsi, [rip + mn_line + SB_ptr]
-    mov rdx, [rip + mn_line + SB_len]
+    mov rsi, [rip + mnt_menu + MNT_line + SB_ptr]
+    mov rdx, [rip + mnt_menu + MNT_line + SB_len]
     call sb_push
     lea rdi, [rip + mn_body]
     mov esi, 10
@@ -972,7 +996,7 @@ menu_run_row:
     mov esi, INV_MENU
     mov rdx, [rip + mn_body + SB_ptr]
     mov rcx, [rip + mn_body + SB_len]
-    mov r8, [rip + mn_doc]
+    mov r8, [rip + mnt_menu + MNT_doc]
     call cmd_invoke
 9:  EPILOGUE
 8:  lea rdi, [rip + .Lgone]
@@ -990,6 +1014,8 @@ menu_sub_row:
     add rax, rcx
     mov rbx, [rax + MR_ext]
     mov r12, [rax + MR_mi]
+    lea rax, [rip + mnt_menu]
+    mov [rip + mnt_cur], rax
     mov edi, MLOC_SUB
     xor esi, esi
     mov rdx, [r12 + MI_sub]
@@ -1070,55 +1096,86 @@ FN menu_row_cmd
 
 # ---------------------------------------------------------------- targets
 
-# mt_begin(kind cstr, doc, path cstr or 0): mn_target and the TARGET line "KIND"
+# mt_begin(kind cstr, doc, path cstr or 0): the current target (mnt_cur) and its TARGET line "KIND"
 mt_begin:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
-    lea rax, [rip + mn_target]
-    mov [rax + MTG_kind], rbx
-    mov [rax + MTG_doc], r12
-    mov qword ptr [rax + MTG_tabkind], 0
-    mov qword ptr [rax + MTG_path], 0
+    mov r14, [rip + mnt_cur]
+    mov rdi, r14
+    xor esi, esi
+    mov edx, MTG_SIZE
+    call memset
+    mov [r14 + MTG_kind], rbx
+    mov [r14 + MTG_doc], r12
     test r13, r13
     jz 1f
-    lea rdi, [rip + mn_path]
+    lea rdi, [r14 + MNT_path]
     mov rsi, r13
     call cstr_copy
-    lea rax, [rip + mn_target]
-    lea rcx, [rip + mn_path]
-    mov [rax + MTG_path], rcx
-1:  mov qword ptr [rip + mn_doc], 0
+    lea rcx, [r14 + MNT_path]
+    mov [r14 + MTG_path], rcx
+1:  mov qword ptr [r14 + MNT_doc], 0
     test r12, r12
     jz 2f
     mov rax, [r12 + DOC_id]
-    mov [rip + mn_doc], rax
-2:  lea rdi, [rip + mn_line]
+    mov [r14 + MNT_doc], rax
+2:  lea rdi, [r14 + MNT_line]
     call sb_clear
-    lea rdi, [rip + mn_line]
+    lea rdi, [r14 + MNT_line]
     mov rsi, rbx
     call sb_push_cstr
     EPILOGUE
 
-# mt_word(cstr): " WORD" on the TARGET line
+# mt_word(cstr): " WORD" on the current TARGET line
 mt_word:
-    push rdi
-    lea rdi, [rip + mn_line]
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
     mov esi, ' '
     call sb_push_byte
-    pop rsi
-    lea rdi, [rip + mn_line]
-    jmp sb_push_cstr
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
+    mov rsi, rbx
+    call sb_push_cstr
+    pop rbx
+    ret
+# mt_bytes(ptr, len): " BYTES"
+mt_bytes:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
+    mov rsi, rbx
+    mov rdx, r12
+    call sb_push
+    pop r13
+    pop r12
+    pop rbx
+    ret
 # mt_num(value): " N"
 mt_num:
-    push rdi
-    lea rdi, [rip + mn_line]
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
     mov esi, ' '
     call sb_push_byte
-    pop rsi
-    lea rdi, [rip + mn_line]
-    jmp sb_push_u64
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
+    mov rsi, rbx
+    call sb_push_u64
+    pop rbx
+    ret
 # mt_pos(doc, pos): " LINE COL" (one-based)
 mt_pos:
     PROLOGUE
@@ -1136,10 +1193,16 @@ mt_pos:
     inc rdi
     call mt_num
     EPILOGUE
+# mt_menu(): targets from here on are the context menu's
+mt_menu:
+    lea rax, [rip + mnt_menu]
+    mov [rip + mnt_cur], rax
+    ret
 
 # FN menu_open_editor(): the editor's menu for the active document, its selection the target
 FN menu_open_editor
     PROLOGUE
+    call mt_menu
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -1169,6 +1232,7 @@ FN menu_open_editor
 # FN menu_open_explorer(items, path, folder?): an explorer row's menu: "file PATH" or "folder PATH"
 FN menu_open_explorer
     PROLOGUE
+    call mt_menu
     mov r12, rdi
     mov rbx, rsi
     lea rdi, [rip + .Lk_file]
@@ -1178,7 +1242,8 @@ FN menu_open_explorer
 1:  xor esi, esi
     mov rdx, rbx
     call mt_begin
-    lea rdi, [rip + mn_path]
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_path
     call mt_word
     mov edi, MLOC_EXPLORER
     mov rsi, r12
@@ -1190,12 +1255,14 @@ FN menu_open_explorer
 # FN menu_open_root(items): the menu of the explorer's empty area: "root PATH" (the project)
 FN menu_open_root
     PROLOGUE
+    call mt_menu
     mov r12, rdi
     lea rdi, [rip + .Lk_root]
     xor esi, esi
     mov rdx, [rip + g_project]
     call mt_begin
-    lea rdi, [rip + mn_path]
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_path
     call mt_word
     mov edi, MLOC_EXPLORER
     mov rsi, r12
@@ -1208,8 +1275,21 @@ FN menu_open_root
 #   "tab view VIEW", "tab settings", "tab git", "tab extensions"
 FN menu_open_tab
     PROLOGUE
+    call mt_menu
     mov r12, rdi
-    mov rax, rsi
+    mov rdi, rsi
+    call mt_tab
+    mov edi, MLOC_TAB
+    mov rsi, r12
+    mov edx, [rip + g_mx]
+    mov ecx, [rip + g_my]
+    call mn_show
+    EPILOGUE
+
+# mt_tab(tab index): the current target is that tab
+mt_tab:
+    PROLOGUE
+    mov rax, rdi
     imul rax, rax, TAB_SIZE
     add rax, [rip + g_tabs + VEC_ptr]
     mov rbx, rax
@@ -1229,10 +1309,10 @@ FN menu_open_tab
     call mt_begin
     mov rdi, [rbx + TAB_kind]
     call ctx_tab_kind_name
-    lea rcx, [rip + mn_target]
+    mov rcx, [rip + mnt_cur]
     mov [rcx + MTG_tabkind], rax
     test rax, rax
-    jz 7f
+    jz 9f
     mov rdi, rax
     call mt_word
     mov rax, [rbx + TAB_kind]
@@ -1243,32 +1323,30 @@ FN menu_open_tab
     lea rdi, [rip + .Ldash]
     cmp qword ptr [r13 + DOC_path], 0
     je 31f
-    lea rdi, [rip + mn_path]
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_path
 31: call mt_word
-    jmp 7f
+    jmp 9f
 4:  cmp rax, TAB_IMAGE
     jne 5f
-    lea rdi, [rip + mn_path]
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_path
     call mt_word
-    jmp 7f
+    jmp 9f
 5:  cmp rax, TAB_VIEW
-    jne 7f
+    jne 9f
     mov rdi, [rbx + TAB_flags]
     call extview_of_tab
     test rax, rax
-    jz 7f
+    jz 9f
     mov edi, [rax + VW_id]
     call mt_num
-7:  mov edi, MLOC_TAB
-    mov rsi, r12
-    mov edx, [rip + g_mx]
-    mov ecx, [rip + g_my]
-    call mn_show
-    EPILOGUE
+9:  EPILOGUE
 
 # FN menu_open_terminal(items, n): the terminal's menu: "terminal N" (one-based)
 FN menu_open_terminal
     PROLOGUE
+    call mt_menu
     mov r12, rdi
     mov rbx, rsi
     lea rdi, [rip + .Lk_terminal]
@@ -1288,6 +1366,7 @@ FN menu_open_terminal
 #   [menu.extension]: its items, a line and Settings and details open as its menu
 FN menu_open_extension
     PROLOGUE 16
+    call mt_menu
     mov rbx, rdi
     mov [rsp], esi
     mov [rsp + 4], edx
@@ -1337,6 +1416,526 @@ FN menu_open_extension
 9:  xor eax, eax
     EPILOGUE
 
+# ---------------------------------------------------------------- views and title bars
+
+# mt_view(view cstr, item id, len, item value cstr or 0): the current target "view VIEW" (id 0) or
+#   "item VIEW ID", the keys view and viewItem naming them
+mt_view:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    lea rdi, [rip + .Lk_view]
+    test r12, r12
+    jz 1f
+    lea rdi, [rip + .Lk_item]
+1:  xor esi, esi
+    xor edx, edx
+    call mt_begin
+    mov r15, [rip + mnt_cur]
+    lea rdi, [r15 + MNT_view]
+    mov rsi, rbx
+    mov edx, 127
+    call mt_copy
+    lea rax, [r15 + MNT_view]
+    mov [r15 + MTG_view], rax
+    test r14, r14
+    jz 2f
+    lea rdi, [r15 + MNT_item]
+    mov rsi, r14
+    mov edx, 255
+    call mt_copy
+    lea rax, [r15 + MNT_item]
+    mov [r15 + MTG_item], rax
+2:  lea rdi, [r15 + MNT_view]
+    call mt_word
+    test r12, r12
+    jz 9f
+    mov rdi, r12
+    mov rsi, r13
+    call mt_bytes
+9:  EPILOGUE
+
+# mt_copy(dst, cstr, max): at most max bytes of it, NUL-ended
+mt_copy:
+    xor ecx, ecx
+1:  cmp rcx, rdx
+    jae 2f
+    mov al, [rsi + rcx]
+    test al, al
+    jz 2f
+    mov [rdi + rcx], al
+    inc rcx
+    jmp 1b
+2:  mov byte ptr [rdi + rcx], 0
+    ret
+
+# FN menu_btn_target_view(view cstr): the buttons drawn next are a view's title actions (view_title)
+FN menu_btn_target_view
+    lea rax, [rip + mnt_btn]
+    mov [rip + mnt_cur], rax
+    xor esi, esi
+    xor edx, edx
+    xor ecx, ecx
+    jmp mt_view
+
+# FN menu_btn_target_item(view cstr, id, len, item value cstr or 0): the buttons drawn next are a tree
+#   row's inline actions (view_item_inline)
+FN menu_btn_target_item
+    lea rax, [rip + mnt_btn]
+    mov [rip + mnt_cur], rax
+    jmp mt_view
+
+# FN menu_open_view_item(view cstr, id, len, item value cstr or 0, x, y): a tree row's context menu
+#   (view_item: "item VIEW ID"); nothing opens when the extensions have no items for it
+FN menu_open_view_item
+    PROLOGUE 16
+    mov [rsp], r8d
+    mov [rsp + 4], r9d
+    call mt_menu
+    call mt_view
+    mov edi, MLOC_VIEW_ITEM
+    xor esi, esi
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    call mn_show
+    EPILOGUE
+
+# FN menu_buttons_draw(loc, right, y, h, max, id) -> eax the width drawn: the extensions' items of
+#   the location (view_title, view_item_inline, editor_title) for the button target set before, as
+#   square icon buttons ending at right ([command-options] icon, else a dot), at most max of them,
+#   then "…" opening the others as a menu; hovering shows the command's title, a click runs it now
+#   (FROM menu, "TARGET" LF args). The buttons are widgets id .. id + max (the last one is "…").
+FN menu_buttons_draw
+    PROLOGUE 48
+    mov [rsp], edi              # loc
+    mov [rsp + 4], esi          # right
+    mov [rsp + 8], edx          # y
+    mov [rsp + 12], ecx         # h: each button is h x h
+    mov [rsp + 16], r8d         # max
+    mov [rsp + 36], r9d         # the first widget id
+    lea rax, [rip + mnt_btn]
+    mov [rip + mnt_cur], rax
+    xor esi, esi
+    xor edx, edx
+    call mn_collect
+    # the buttons: the candidates that are items (submenus have no button)
+    mov qword ptr [rip + mb_count], 0
+    xor ebx, ebx
+1:  cmp rbx, [rip + mn_ncands]
+    jae 2f
+    imul rax, rbx, MC_SIZE
+    lea rcx, [rip + mn_cands]
+    add rax, rcx
+    inc rbx
+    mov rcx, [rax + MC_cmd]
+    test rcx, rcx
+    jz 1b
+    cmp qword ptr [rip + mb_count], MB_MAX
+    jae 2f
+    mov rdx, [rip + mb_count]
+    imul rdx, rdx, MB_SIZE
+    lea rsi, [rip + mb_rows]
+    add rdx, rsi
+    mov [rdx + MB_cmd], rcx
+    mov rcx, [rax + MC_ext]
+    mov [rdx + MB_ext], rcx
+    mov rcx, [rax + MC_mi]
+    mov [rdx + MB_mi], rcx
+    inc qword ptr [rip + mb_count]
+    jmp 1b
+2:  mov rax, [rip + mb_count]
+    test rax, rax
+    jz .Lmb_none
+    # how many show, and "…" for the rest
+    mov ecx, [rsp + 16]
+    mov dword ptr [rsp + 20], 0     # 1: "…"
+    cmp eax, ecx
+    jbe 3f
+    mov eax, ecx
+    mov dword ptr [rsp + 20], 1
+3:  mov [rsp + 24], eax         # shown
+    add eax, [rsp + 20]
+    imul eax, [rsp + 12]
+    mov [rsp + 28], eax         # the width
+    mov ecx, [rsp + 4]
+    sub ecx, eax
+    mov [rsp + 32], ecx         # x
+    xor r12d, r12d
+4:  cmp r12d, [rsp + 24]
+    jae 6f
+    mov rax, r12
+    imul rax, rax, MB_SIZE
+    lea rbx, [rip + mb_rows]
+    add rbx, rax
+    # the tab strip's buttons are remembered for print-title-buttons
+    cmp dword ptr [rsp], MLOC_EDITOR_TITLE
+    jne 40f
+    mov rax, [rbx + MB_cmd]
+    mov rcx, r12
+    shl rcx, 4
+    lea rdx, [rip + mtb_rows]
+    mov [rdx + rcx], rax
+    mov eax, [rsp + 32]
+    mov [rdx + rcx + 8], eax
+    mov eax, [rsp + 8]
+    mov [rdx + rcx + 12], eax
+    inc dword ptr [rip + mtb_count]
+    mov eax, [rsp + 12]
+    mov [rip + mtb_size], eax
+40:
+    mov edi, [rsp + 36]
+    add edi, r12d
+    mov esi, [rsp + 32]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    mov r8d, ecx
+    call ui_btn
+    mov r13d, eax
+    test r13d, UB_HOVER
+    jz 41f
+    mov edi, [rsp + 32]
+    mov esi, [rsp + 8]
+    mov edx, [rsp + 12]
+    mov ecx, edx
+    M r8d, MI_RADIUS
+    COLOR r9d, T_HOVER
+    call gfx_round_rect
+41: # the icon: [command-options] icon, else a dot
+    mov rdi, [rbx + MB_cmd]
+    call cmd_icon
+    lea r14, [rip + .Ln_dot]
+    test rax, rax
+    jz 42f
+    mov r14, rax
+42: M r15d, MI_16
+    mov rdi, r14
+    call strlen
+    mov rsi, rax
+    mov rdi, r14
+    mov rdx, [rbx + MB_ext]
+    mov ecx, [rsp + 12]
+    sub ecx, r15d
+    sar ecx, 1
+    mov r8d, ecx
+    add ecx, [rsp + 32]
+    add r8d, [rsp + 8]
+    mov r9d, r15d
+    COLOR eax, T_MUTED
+    test r13d, UB_HOVER
+    jz 43f
+    COLOR eax, T_FG
+43: push rax
+    push rax
+    call icon_spec_draw
+    add rsp, 16
+    # the tooltip: the command's title
+    test r13d, UB_HOVER
+    jz 44f
+    mov rax, [rbx + MB_cmd]
+    lea rdi, [rip + mb_tip]
+    mov rsi, [rax + CMD_title]
+    call mb_title
+    mov edi, [rsp + 36]
+    add edi, r12d
+    mov esi, [rsp + 32]
+    mov edx, [rsp + 8]
+    add edx, [rsp + 12]
+    mov ecx, [rsp + 12]
+    mov r8d, r13d
+    lea r9, [rip + mb_tip]
+    call tip_note_text
+44: test r13d, UB_CLICK
+    jz 45f
+    mov rdi, rbx
+    call mb_run
+45:
+    inc r12d
+    mov eax, [rsp + 12]
+    add [rsp + 32], eax
+    jmp 4b
+6:  cmp dword ptr [rsp + 20], 0
+    je 7f
+    cmp dword ptr [rsp], MLOC_EDITOR_TITLE
+    jne 60f
+    mov eax, [rsp + 32]
+    inc eax
+    mov [rip + mtb_more], eax
+60:
+    mov edi, [rsp + 36]
+    add edi, [rsp + 16]
+    mov esi, [rsp + 32]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    mov r8d, ecx
+    mov r9d, IC_MORE
+    call ui_icon_btn
+    test eax, UB_CLICK
+    jz 7f
+    mov edi, [rsp + 24]
+    mov esi, [rsp + 32]
+    mov edx, [rsp + 8]
+    add edx, [rsp + 12]
+    call mb_overflow
+7:  mov eax, [rsp + 28]
+    EPILOGUE
+.Lmb_none:
+    xor eax, eax
+    EPILOGUE
+# mb_title(dst, title): the title without its " (Extension)", at most 120 bytes
+mb_title:
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12, rsi
+    mov rdi, rsi
+    call strlen
+    mov rcx, rax
+    mov rsi, rax
+1:  cmp rsi, 2
+    jb 3f
+    cmp byte ptr [r12 + rsi - 2], ' '
+    jne 2f
+    cmp byte ptr [r12 + rsi - 1], '('
+    jne 2f
+    lea rcx, [rsi - 2]
+    jmp 3f
+2:  dec rsi
+    jmp 1b
+3:  cmp rcx, 120
+    jbe 4f
+    mov ecx, 120
+4:  mov rdi, rbx
+    mov rsi, r12
+    mov rdx, rcx
+    push rcx
+    push rcx
+    call memcpy
+    pop rcx
+    pop rcx
+    mov byte ptr [rbx + rcx], 0
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# mb_run(button): its command, FROM menu, the body "TARGET" LF args, about the target's document
+mb_run:
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, [rbx + MB_ext]
+    mov rsi, [rbx + MB_mi]
+    call mi_command
+    test rax, rax
+    jz 8f
+    mov r13, rax
+    lea rdi, [rip + mn_body]
+    call sb_clear
+    lea rdi, [rip + mn_body]
+    mov rsi, [rip + mnt_btn + MNT_line + SB_ptr]
+    mov rdx, [rip + mnt_btn + MNT_line + SB_len]
+    call sb_push
+    lea rdi, [rip + mn_body]
+    mov esi, 10
+    call sb_push_byte
+    mov rax, [rbx + MB_mi]
+    mov rsi, [rax + MI_args]
+    test rsi, rsi
+    jz 1f
+    lea rdi, [rip + mn_body]
+    call sb_push_cstr
+1:  mov rdi, r13
+    mov esi, INV_MENU
+    mov rdx, [rip + mn_body + SB_ptr]
+    mov rcx, [rip + mn_body + SB_len]
+    mov r8, [rip + mnt_btn + MNT_doc]
+    call cmd_invoke
+    EPILOGUE
+8:  lea rdi, [rip + .Lgone]
+    call app_toast
+    EPILOGUE
+
+# mb_overflow(first, x, y): the buttons from first on as a menu at x, y, for the same target
+mb_overflow:
+    PROLOGUE
+    mov r12d, edi
+    mov [rip + mn_x], esi
+    mov [rip + mn_y], edx
+    # the menu's target: a copy of the buttons' (its strings point into it)
+    lea rdi, [rip + mnt_menu]
+    lea rsi, [rip + mnt_btn]
+    mov edx, MTG_SIZE
+    call memcpy
+    lea rdi, [rip + mnt_menu + MNT_doc]
+    lea rsi, [rip + mnt_btn + MNT_doc]
+    mov edx, MNT_SIZE - MNT_doc
+    call memcpy
+    lea rdx, [rip + mnt_btn]
+    lea rcx, [rip + mnt_menu]
+    sub rcx, rdx                # mnt_menu - mnt_btn
+    mov eax, MTG_path
+    call mb_rebase
+    mov eax, MTG_view
+    call mb_rebase
+    mov eax, MTG_item
+    call mb_rebase
+    lea rdi, [rip + mnt_menu + MNT_line]
+    call sb_clear
+    lea rdi, [rip + mnt_menu + MNT_line]
+    mov rsi, [rip + mnt_btn + MNT_line + SB_ptr]
+    mov rdx, [rip + mnt_btn + MNT_line + SB_len]
+    call sb_push
+    # rows: its remaining buttons
+    mov qword ptr [rip + mn_count], 0
+    mov qword ptr [rip + mn_nlabels], 0
+1:  cmp r12, [rip + mb_count]
+    jae 2f
+    mov rax, r12
+    imul rax, rax, MB_SIZE
+    lea rbx, [rip + mb_rows]
+    add rbx, rax
+    inc r12
+    mov rax, [rbx + MB_cmd]
+    mov rdi, [rax + CMD_title]
+    mov esi, 1
+    xor edx, edx
+    call mn_label
+    mov rdi, rax
+    lea rsi, [rip + menu_run_row]
+    mov edx, 1
+    mov rcx, [rbx + MB_ext]
+    mov r8, [rbx + MB_mi]
+    call mn_push
+    jmp 1b
+2:  mov rax, [rip + mn_count]
+    shl rax, 4
+    lea rcx, [rip + mn_items]
+    xor edx, edx
+    mov [rcx + rax], rdx
+    mov [rcx + rax + 8], rdx
+    lea rdi, [rip + mn_items]
+    mov esi, [rip + mn_x]
+    mov edx, [rip + mn_y]
+    call ctx_menu_open
+    EPILOGUE
+
+# mb_rebase(eax the field, rdx mnt_btn, rcx the distance to mnt_menu): mnt_menu's pointer field moved
+#   along when it points into mnt_btn
+mb_rebase:
+    lea r8, [rip + mnt_menu]
+    mov r9, [r8 + rax]
+    cmp r9, rdx
+    jb 1f
+    lea r10, [rdx + MNT_SIZE]
+    cmp r9, r10
+    jae 1f
+    add r9, rcx
+    mov [r8 + rax], r9
+1:  ret
+
+# FN menu_title_dump(out sb): the tab strip's editor_title buttons of the last frame, a line each:
+#   "button CMD at=X,Y,S,S" then "more at=X,Y,S,S" when "…" was drawn
+FN menu_title_dump
+    PROLOGUE
+    mov r12, rdi
+    xor ebx, ebx
+1:  cmp ebx, [rip + mtb_count]
+    jae 3f
+    mov rcx, rbx
+    shl rcx, 4
+    lea r13, [rip + mtb_rows]
+    add r13, rcx
+    inc ebx
+    mov rdi, r12
+    lea rsi, [rip + .Ld_button]
+    call sb_push_cstr
+    mov rax, [r13]
+    mov rdi, r12
+    mov rsi, [rax + CMD_name]
+    call sb_push_cstr
+    mov edi, [r13 + 8]
+    mov esi, [r13 + 12]
+    call mtb_at
+    jmp 1b
+3:  cmp dword ptr [rip + mtb_more], 0
+    je 9f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_more]
+    call sb_push_cstr
+    mov edi, [rip + mtb_more]
+    dec edi
+    mov esi, [rip + mtb_y]
+    call mtb_at
+9:  xor eax, eax
+    EPILOGUE
+# mtb_at(x, y) with r12 the output: " at=X,Y,S,S" LF
+mtb_at:
+    push rbx
+    push r14
+    push r15
+    mov r14d, edi
+    mov r15d, esi
+    mov rdi, r12
+    lea rsi, [rip + .Ld_at]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, r14d
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, ','
+    call sb_push_byte
+    mov rdi, r12
+    mov esi, r15d
+    call sb_push_u64
+    mov ebx, 2
+1:  mov rdi, r12
+    mov esi, ','
+    call sb_push_byte
+    mov rdi, r12
+    mov esi, [rip + mtb_size]
+    call sb_push_u64
+    dec ebx
+    jnz 1b
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    pop r15
+    pop r14
+    pop rbx
+    ret
+
+# FN menu_title_buttons(right, y, h) -> eax the width of the active tab's editor_title buttons, drawn
+#   ending at right (at most 3 and "…")
+FN menu_title_buttons
+    PROLOGUE 16
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov dword ptr [rip + mtb_count], 0
+    mov dword ptr [rip + mtb_more], 0
+    mov rdi, [rip + g_tab_cur]
+    test rdi, rdi
+    js 8f
+    cmp rdi, [rip + g_tabs + VEC_len]
+    jae 8f
+    lea rax, [rip + mnt_btn]
+    mov [rip + mnt_cur], rax
+    call mt_tab
+    mov edi, MLOC_EDITOR_TITLE
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov eax, [rsp + 4]
+    mov [rip + mtb_y], eax
+    mov r8d, 3
+    mov r9d, ID_MENU_BUTTON
+    call menu_buttons_draw
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 .section .rodata
 .p2align 3
 loc_names: .quad .Ll_editor, .Ll_explorer, .Ll_tab, .Ll_terminal, .Ll_extension, .Ll_editor_title
@@ -1379,6 +1978,12 @@ mi_fields: .quad .Lf_command, MI_cmd, .Lf_group, MI_group, .Lf_order, -1, .Lf_wh
 .Lk_tab: .asciz "tab"
 .Lk_terminal: .asciz "terminal"
 .Lk_extension: .asciz "extension"
+.Lk_view: .asciz "view"
+.Lk_item: .asciz "item"
+.Ln_dot: .asciz "dot"
+.Ld_button: .asciz "button "
+.Ld_more: .asciz "more"
+.Ld_at: .asciz " at="
 .Lp_location: .asciz "unknown menu location"
 .Lp_full: .asciz "more than 16 items for this location: dropped"
 .Lp_nested: .asciz "a submenu inside a submenu"

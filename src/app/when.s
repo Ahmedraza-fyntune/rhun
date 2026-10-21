@@ -1470,7 +1470,21 @@ FN ctx_get
     mov rdx, [rcx + rax + 8]
     mov rax, [rcx + rax]
     EPILOGUE
-2:  mov rax, rbx
+2:  # a view target names its view and item (view, viewItem)
+    mov rcx, [rip + ctx_target]
+    test rcx, rcx
+    jz 21f
+    mov rdi, [rcx + MTG_view]
+    cmp ebx, CTX_VIEW
+    je 20f
+    mov rdi, [rcx + MTG_item]
+    cmp ebx, CTX_VIEW_ITEM
+    jne 21f
+20: test rdi, rdi
+    jz 21f
+    call ck_cstr
+    jmp 4f
+21: mov rax, rbx
     shl rax, 4
     lea rcx, [rip + ctx_idx]
     mov rax, [rcx + rax + 8]

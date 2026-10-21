@@ -2370,6 +2370,7 @@ remove_commit:
 # the job: fixed text; its arguments come as $1..$9 (github: OWNER NAME, a TAG or "latest", the
 # index's digest or "-"; archive and folder: the FILE). Base https: redirects stay https. The last
 # line is "ok SHA256 TAG DIR", or why it failed
+.globl install_script          # remote hosts: an extension's Linux build fetched for a host (remoteext.s)
 install_script:
     .ascii "set -u\n"
     .ascii "owner=$1 name=$2 target=$3 root=$4 base=$5 tag=$6 want=$7 file=$8 kind=$9\n"

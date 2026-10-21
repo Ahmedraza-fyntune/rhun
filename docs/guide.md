@@ -810,6 +810,13 @@ nothing. Every write is first recorded in `~/.local/state/rhun/edits`: a write t
 puts everything back, and an edit cut short by a crash is put back at the next start ("Restored 3
 files from a workspace edit that was cut short").
 
+Extensions can also show a read-only **diff tab** of two documents (it follows both as they
+change and closes with them; a side may be a document an extension provides, such as a file at a
+git revision, which needs no tab of its own), scroll a document to a place without moving its cursor, list
+locations in the palette as Find All References does, and offer **linked editing**: in an HTML
+tag, renaming the opening tag's name renames the closing one as you type; the linked names are
+outlined, and a space, Escape, Undo or moving away ends it.
+
 Formatting, symbol rename, file symbols and signature help use a saved provider for the document's language.
 With one matching extension, rhun uses it. With several, a chooser shows their `owner/name`
 identities and remembers your choice. **Select Default Formatter**, **Select Rename Provider**,
@@ -953,6 +960,31 @@ secrets = system        # or memory (until rhun quits), or file (a file only you
 `file` keeps them in `~/.local/state/rhun/secrets/`, readable only by you, in plain text: as safe
 as a `~/.netrc`.
 
+When an extension wants to open a web page (to sign in, say), rhun asks first: "Auth Demo wants
+to open github.com in your browser", with **Open**, **Copy Link**, **Cancel** and **Always open
+links from Auth Demo**. Always is remembered, and the switch on the extension's page takes it
+back. After you sign in, the browser comes back to the extension through a `rhun://ext/` link
+that works once, for ten minutes, or through a page on your own computer that says "Signed in.
+You can close this tab." A `rhun://ext/` link nobody is waiting for says so and does nothing.
+
+Extensions that read the project (a TODO list, a linter that checks every file) list its files
+and search them through rhun rather than walking the disk themselves: they see the files git sees
+(`.gitignore` applies), not the names in **Hidden in explorer**, and the text you have not saved
+yet. Their searches run a few milliseconds at a time, so typing never waits for them.
+
+A project can set some of an extension's settings for everyone who opens it, in
+`.rhun/extensions.ini` at the top of the folder, in the same form as your own file:
+
+```ini
+[rhun-editor/go]
+setting.style = goimports
+setting.style@Go = gofumpt     # for Go files only
+```
+
+Only settings the extension opens to projects take effect (never which program it runs), and only
+in a folder you opened yourself or trusted. The extension's page shows "This workspace sets
+goimports (.rhun/extensions.ini)" under such a setting, with **Open**.
+
 The command palette shows each extension command's qualified name, `owner/name.command`,
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same
@@ -1091,6 +1123,33 @@ asks once, showing the command (Forget on the extension's page asks again). A fo
 a link runs none until you trust it. Results are kept until rhun quits.
 
 | `rhun-editor/mcp` | lets the agents in your terminal use rhun over MCP: open files, the selection, unsaved text, problems, and changes you review |
+
+### Tasks and problems
+
+Extensions publish tasks: the first-party `rhun-editor/tasks` finds them in your project (Makefile
+targets, `justfile` recipes, `package.json` scripts, Cargo and Go builds and tests, and your own in
+`.rhun/tasks.ini`). **Run Task** lists them all, recently run first. **Run Build Task**
+(ctrl+shift+B) runs the build group's default, **Run Test Task** the test group's, and **Re-run
+Last Task**, **Restart Task**, **Stop Task** and **Show Task** do what they say.
+
+A task runs in a tab of the terminal panel, labelled with the task, and the tab is reused when it
+runs again. The dot before the label is filled while it runs, then becomes a check (exit 0), a
+cross (another code) or a square (stopped). When it ends a footer line says how and how long it
+took. The panel's Restart and Stop buttons act on the current task tab. Stop types Ctrl+C and kills
+whatever is left 2 seconds later. Closing the tab kills the program and everything it started. While
+tasks run, the status bar shows the newest one (a click shows it).
+
+A task can depend on others, which run first, in order or together. A background task, such as a
+dev server or a watcher, counts as done when it prints its ready line, and it keeps running.
+
+The first time an extension runs a program in a project, rhun asks, showing the command: Allow
+remembers it for that extension and project (Forget on the extension's page asks again). The
+programs run as you, with your login shell's environment, outside the extension's sandbox.
+
+Errors and warnings a task prints (Go, gcc and clang, rustc and cargo, TypeScript, MSBuild, or the
+task's own patterns) become **problems**: marks in the files (the status bar counts them) and the
+**Problems** tab of the panel (ctrl+shift+m), files first, then each problem. Enter or a click goes
+to it. A task's problems are replaced when it runs again; Clear Task Problems removes them.
 
 ### Write your own
 

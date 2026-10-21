@@ -1,6 +1,9 @@
 # The resources group's messages (docs/extensions/v1.1.md: idle, secrets, urls, uris, files,
 # scoped-settings, workspace-folders), part of extproto.s: it uses the line's fields, the replies
 # and `cur`.
+.equ LK_URL_MAX_WIRE, 8192      # links.s's LK_URL_MAX
+.equ FSK_FIND_WIRE, 1           # filesearch.s's kinds
+.equ FSK_SEARCH_WIRE, 2
 .text
 
 # res_agreed(feature) -> eax 1 when cur agreed the feature (FEAT_*), else 0 after "error ID unknown"
@@ -401,6 +404,488 @@ FN extproto_uri_segment
 .Lres_e_vdocs: .asciz "toobig too many virtual documents are open"
 .text
 
+# ---------------- urls: open-url, external-uri, link (links.s) ----------------
+
+# res_url_body() -> rax the URL as an owned cstr when the body is an http(s) URL, else 0
+res_url_body:
+    PROLOGUE
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call links_url_ok
+    test eax, eax
+    jz 8f
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call mem_dup
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# ID open-url LEN + URL -> ok ID opened | ok ID copied | error ID cancelled: the user is asked
+# (Open, Copy Link, Cancel, Always open links from it) unless it may open links without asking
+h_res_open_url:
+    PROLOGUE 16
+    mov edi, FEAT_URLS
+    call res_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 8f
+    call res_url_body
+    test rax, rax
+    jz 8f
+    mov r12, rax
+    mov rbx, [rip + cur]
+    mov rdi, rbx
+    call extres_row
+    test rax, rax
+    jz 1f
+    test dword ptr [rax + EL_flags], ELF_OPEN_URLS
+    jz 1f
+    mov rdi, r12
+    call links_open
+    mov rdi, r12
+    call mem_free
+    mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lres_opened]
+    call res_reply_word
+    EPILOGUE
+1:  call prompt_busy
+    test eax, eax
+    jz 2f
+    mov rdi, r12
+    call mem_free
+    EPILOGUE
+2:  mov [rip + pr_body], r12
+    # "Title wants to open host in your browser: URL"
+    lea rdi, [rip + res_url_label]
+    call sb_clear
+    mov rdi, rbx
+    call ext_title
+    lea rdi, [rip + res_url_label]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + res_url_label]
+    lea rsi, [rip + .Lres_wants]
+    call sb_push_cstr
+    mov rdi, r12
+    lea rsi, [rip + res_url_host]
+    mov edx, 200
+    call links_host
+    lea rdi, [rip + res_url_label]
+    lea rsi, [rip + res_url_host]
+    call sb_push_cstr
+    lea rdi, [rip + res_url_label]
+    lea rsi, [rip + .Lres_in_browser]
+    call sb_push_cstr
+    lea rdi, [rip + res_url_label]
+    mov rsi, r12
+    call sb_push_cstr
+    mov rdi, [rip + res_url_label + SB_ptr]
+    mov rsi, [rip + res_url_label + SB_len]
+    call set_label
+    lea rdi, [rip + pr_label]
+    call palette_choose_open
+    lea rdi, [rip + .Lres_i_open]
+    mov esi, 1
+    call res_choose_item
+    lea rdi, [rip + .Lres_i_copy]
+    mov esi, 2
+    call res_choose_item
+    lea rdi, [rip + .Lres_i_cancel]
+    mov esi, 3
+    call res_choose_item
+    # "Always open links from Title"
+    lea rdi, [rip + res_url_label]
+    call sb_clear
+    lea rdi, [rip + res_url_label]
+    lea rsi, [rip + .Lres_i_always]
+    call sb_push_cstr
+    mov rdi, rbx
+    call ext_title
+    lea rdi, [rip + res_url_label]
+    mov rsi, rax
+    call sb_push_cstr
+    lea rdi, [rip + res_url_label]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + res_url_label + SB_ptr]
+    mov esi, 4
+    call res_choose_item
+    call palette_choose_ready
+    mov edi, 4                  # pr_kind 4: open-url (res_url_chose answers it)
+    call prompt_begin
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# res_choose_item(cstr, n): a pick-list item
+res_choose_item:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    call strlen
+    mov rsi, rax
+    mov rdi, rsi
+    mov rsi, rbx
+    mov edx, 200
+    call utf8_cut
+    mov rdi, rbx
+    mov rsi, rax
+    mov edx, r12d
+    call palette_choose_add
+    EPILOGUE
+
+# res_reply_word(id, word cstr): "ok ID WORD"
+res_reply_word:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, rbx
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r12
+    call out_cstr
+    mov edi, 10
+    call out_byte
+    call out_end
+    EPILOGUE
+
+# res_url_chose(n): the user's answer to an open-url prompt (pr_kind 4): 1 Open, 2 Copy Link,
+# 3 Cancel, 4 Always open links from this extension
+res_url_chose:
+    PROLOGUE
+    mov r12, rdi
+    mov rbx, [rip + cur]
+    mov rax, [rip + pr_ext]
+    mov [rip + cur], rax
+    cmp r12, 2
+    je 2f
+    cmp r12, 3
+    je 3f
+    cmp r12, 4
+    jne 1f
+    mov rdi, [rip + pr_ext]     # always: remembered in extensions.ini
+    call extres_row
+    test rax, rax
+    jz 1f
+    or dword ptr [rax + EL_flags], ELF_OPEN_URLS
+    call ext_settings_save
+1:  mov rdi, [rip + pr_body]
+    call links_open
+    mov rdi, [rip + pr_id]
+    lea rsi, [rip + .Lres_opened]
+    call res_reply_word
+    jmp 9f
+2:  mov rdi, [rip + pr_body]
+    call strlen
+    mov rsi, rax
+    mov rdi, [rip + pr_body]
+    xor edx, edx
+    call ed_clip_set
+    mov rdi, [rip + pr_id]
+    lea rsi, [rip + .Lres_copied]
+    call res_reply_word
+    jmp 9f
+3:  mov rdi, [rip + pr_id]
+    lea rsi, [rip + .Le_cancelled]
+    call reply_error
+9:  mov [rip + cur], rbx
+    call prompt_clear
+    EPILOGUE
+
+# ID external-uri LEN + URI -> ok ID LEN + the URI the user's browser can use: loopback and other
+# http(s) URLs and rhun: links come back unchanged on this computer (a remote host's ports would be
+# forwarded here)
+h_res_external_uri:
+    PROLOGUE
+    mov edi, FEAT_URLS
+    call res_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 8f
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call links_url_ok
+    test eax, eax
+    jnz 1f
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    lea rdx, [rip + .Lres_rhun_colon]
+    mov ecx, 5
+    call str_starts
+    test eax, eax
+    jz 8f
+    cmp qword ptr [rip + body_len], LK_URL_MAX_WIRE
+    ja 8f
+1:  call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, [rip + cur_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [rip + body_len]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call out_bytes
+    call out_end
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID link -> ok ID LEN + rhun://ext/OWNER/NAME/TOKEN: one-shot, ten minutes, four pending at most
+h_res_link:
+    PROLOGUE
+    mov edi, FEAT_URLS
+    call res_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 2
+    jne 8f
+    mov rdi, [rip + cur]
+    mov rsi, [rip + cur_id]
+    call links_new
+    test rax, rax
+    js 7f
+    mov rbx, rax
+    mov rdi, rax
+    call strlen
+    mov r12, rax
+    call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, [rip + cur_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r12
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, rbx
+    mov rsi, r12
+    call out_bytes
+    call out_end
+    EPILOGUE
+7:  lea rsi, [rip + .Lres_e_links]
+    cmp rax, -27
+    je 71f
+    lea rsi, [rip + .Lres_e_random]
+71: mov rdi, [rip + cur_id]
+    call reply_error
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# FN extproto_send_link(ext, id, ptr, len): "0 link ID LEN" and the link
+FN extproto_send_link
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov r15, [rip + cur]
+    mov [rip + cur], rbx
+    call out_begin
+    lea rdi, [rip + .Lres_ev_link]
+    call out_cstr
+    mov rdi, r12
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r14
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, r13
+    mov rsi, r14
+    call out_bytes
+    call out_end
+    mov [rip + cur], r15
+    EPILOGUE
+
+# ---------------- files: find-files, search-text (filesearch.s) ----------------
+
+# ID find-files FOLDER MAX FLAGS LEN + globs -> "0 found ID LEN" batches, then ok ID COUNT STATUS
+h_res_find_files:
+    mov edi, FSK_FIND_WIRE
+    jmp res_files
+# ID search-text FOLDER MAX FLAGS LEN + PATTERN_LEN GLOBS_LEN LF pattern globs -> batches, then
+# ok ID MATCHES FILES SKIPPED STATUS
+h_res_search_text:
+    mov edi, FSK_SEARCH_WIRE
+res_files:
+    PROLOGUE 16
+    mov [rsp], rdi
+    mov edi, FEAT_FILES
+    call res_agreed
+    test eax, eax
+    jz 9f
+    mov rbx, [rip + cur]
+    test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ
+    jz 7f
+    cmp qword ptr [rip + nfields], 6
+    jne 8f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 8f
+    mov r12, rax                # FOLDER
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz 8f
+    mov r13, rax                # MAX
+    mov edi, 4
+    call field_u64
+    test edx, edx
+    jz 8f
+    cmp rax, 0xffff
+    ja 8f
+    mov r14, rax                # FLAGS
+    mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call filesearch_body
+    mov rdi, rbx
+    mov rsi, [rip + cur_id]
+    mov edx, [rsp]
+    mov rcx, r12
+    mov r8, r13
+    mov r9, r14
+    call filesearch_start
+    test rax, rax
+    jz 9f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lres_e_needs_project]
+    call reply_error
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ---------------- scoped-settings: setting-get (extconfig.s) ----------------
+
+# ID setting-get KEY FOLDER LANG -> ok ID LEN + the value in force for that folder (0: the window)
+# and language (- for none)
+h_res_setting_get:
+    PROLOGUE
+    mov edi, FEAT_SCOPED_SETTINGS
+    call res_agreed
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 5
+    jne 8f
+    mov edi, 2
+    call field_at
+    mov rdi, rax
+    mov rsi, rdx
+    mov rdx, [rip + cur]
+    call sdef_find
+    test rax, rax
+    jz 7f
+    mov rbx, rax
+    mov edi, 3
+    call field_u64
+    test edx, edx
+    jz 8f
+    mov r12, rax
+    test r12, r12
+    jz 1f
+    mov rdi, r12
+    call wfold_index
+    test rax, rax
+    js 6f
+1:  mov edi, 4
+    call field_at
+    mov r13, rax
+    mov r14, rdx
+    cmp r14, 1
+    jne 2f
+    cmp byte ptr [r13], '-'
+    jne 2f
+    xor r14d, r14d
+2:  mov rdi, [rip + cur]
+    mov rsi, rbx
+    mov rdx, r12
+    mov rcx, r13
+    mov r8, r14
+    call extconfig_get
+    mov r15, rax
+    mov rdi, rax
+    call strlen
+    mov r14, rax
+    call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, [rip + cur_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r14
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, r15
+    mov rsi, r14
+    call out_bytes
+    call out_end
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lres_e_no_folder]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Lres_e_not_setting]
+    call reply_error
+    EPILOGUE
+8:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+.bss
+.p2align 3
+res_url_label: .zero SB_SIZE
+res_url_host: .zero 208
+.section .rodata
+.Lres_v_open_url: .asciz "open-url"
+.Lres_v_external_uri: .asciz "external-uri"
+.Lres_v_link: .asciz "link"
+.Lres_ev_link: .asciz "0 link "
+.Lres_opened: .asciz "opened"
+.Lres_copied: .asciz "copied"
+.Lres_wants: .asciz " wants to open "
+.Lres_in_browser: .asciz " in your browser: "
+.Lres_i_open: .asciz "Open"
+.Lres_i_copy: .asciz "Copy Link"
+.Lres_i_cancel: .asciz "Cancel"
+.Lres_i_always: .asciz "Always open links from "
+.Lres_rhun_colon: .asciz "rhun:"
+.Lres_e_links: .asciz "toobig 4 links are pending"
+.Lres_e_random: .asciz "refused no random source"
+.text
+
 .section .rodata
 .Lres_v_busy: .asciz "busy"
+.Lres_v_find_files: .asciz "find-files"
+.Lres_v_search_text: .asciz "search-text"
+.Lres_e_needs_project: .asciz "needs project=read"
+.Lres_v_setting_get: .asciz "setting-get"
+.Lres_e_not_setting: .asciz "refused not a setting of this extension"
+.Lres_e_no_folder: .asciz "nofile no such folder"
 .text

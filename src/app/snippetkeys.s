@@ -30,6 +30,10 @@ FN snippet_key
     jz .Lsk_none
     cmp r12d, KEY_ESCAPE
     je .Lsk_cancel
+    mov rdi, rbx                # wsedit: a linked-editing session lets Tab reach the editor
+    call ws_linked_passes
+    test eax, eax
+    jnz .Lsk_none
     mov esi, 1
     cmp r12d, KEY_ISO_LEFT_TAB
     je 2f
