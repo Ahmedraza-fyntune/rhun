@@ -43,6 +43,9 @@ for line in sys.stdin:
             request('unwatch-workspace ' + str(handle))
         elif name == 'steal':
             request('unwatch-workspace ' + ('1' if handle != 1 else '2'))
+        elif name == 'mutate2':
+            record('MARK mutate2')
+            (Path(os.environ['WATCH_OTHER']) / 'deep' / 'x.txt').write_text('y')
         elif name == 'mutate':
             record('MARK mutate')
             target = project / '.hidden' / 'nested' / 'changed.go'
@@ -59,7 +62,7 @@ class Watches(host.Host):
             folder.mkdir(parents=True, exist_ok=True)
             manifest = (f'name = watcher\nowner = {owner}\ntitle = Watcher\nversion = 1\n'
                         'protocol = 1\nruntime = python3\nrun = main.py\non = startup\n'
-                        '[commands]\nwatch = Watch\nunwatch = Unwatch\nsteal = Steal\nmutate = Mutate\n')
+                        '[commands]\nwatch = Watch\nunwatch = Unwatch\nsteal = Steal\nmutate = Mutate\nmutate2 = Mutate2\n')
             if permission:
                 manifest += '[needs]\nproject = write\n'
             (self.work / f'state/rhun/extensions/{owner}--watcher/watch.log').unlink(missing_ok=True)
@@ -119,6 +122,16 @@ class Watches(host.Host):
         self.run_editor(['wait 2300'], exts=self.extensions(), drop_waits=True)
         rescans = [line for line in self.watch_log() if line == '0 watch 1 rescan']
         self.assertGreaterEqual(len(rescans), 2, self.watch_log())
+
+    def test_every_workspace_folder_is_watched(self):
+        other = self.work / 'other'
+        (other / 'deep').mkdir(parents=True)
+        self.env['WATCH_OTHER'] = other.as_posix()
+        self.run_editor(['wait 400', 'folder-add ' + other.as_posix(), 'wait 1200', 'cmd a/watcher.mutate2',
+                         'wait 600'], exts=self.extensions(), drop_waits=True)
+        log = self.watch_log()
+        marker = log.index('MARK mutate2')
+        self.assertTrue(any(line.startswith('0 watch ') and line.endswith(' changed') for line in log[marker + 1:]), log)
 
     def test_project_switch_retires_every_old_handle(self):
         other = self.work / 'next'

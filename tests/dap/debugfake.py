@@ -2,8 +2,9 @@
 """The fake debugger extension's own program (tests/dap/exts/rhun-tests/debugfake). What it does
 comes from $RHUN_STATE/mode.json, which the test writes: {"features": "debug", "start": [requests],
 "resolve": answer}. A request is {"name": N, "leaves": [[KIND, PATH, VALUE], ...]} or {"raw": BODY}.
-Running its `start` command sends the next debug-start (all of them with "burst": true); every line
-rhun sends is logged to $RHUN_STATE/debugfake.log."""
+Running its `start` command sends the next debug-start (all of them with "burst": true); its `stop`
+command sends debug-stop for each of "stop": [SESSION...] (default: the last session rhun reported
+for a debug-start). Every line rhun sends is logged to $RHUN_STATE/debugfake.log."""
 import json
 import os
 import sys
@@ -19,6 +20,8 @@ out = sys.stdout.buffer
 inp = sys.stdin.buffer
 next_id = [1]
 starts = list(MODE.get('start', []))
+start_ids = set()
+sessions = []
 
 
 def log(text):
@@ -42,7 +45,17 @@ def debug_start(req):
     next_id[0] += 1
     out.write(b'%d debug-start %d %d\n' % (rid, len(name), len(name) + len(body)) + name + body)
     out.flush()
+    start_ids.add(rid)
     log('sent debug-start %d' % rid)
+
+
+def debug_stop():
+    for session in MODE.get('stop', sessions[-1:]):
+        rid = next_id[0]
+        next_id[0] += 1
+        out.write(b'%d debug-stop %s\n' % (rid, str(session).encode()))
+        out.flush()
+        log('sent debug-stop %d' % rid)
 
 
 def parse_body(body):
@@ -100,6 +113,12 @@ def main():
             body = inp.read(int(fields[5]))
             log('BODY ' + json.dumps(body.decode('utf-8', 'replace')))
             resolve(int(fields[0]), body)
+            continue
+        if len(fields) == 3 and fields[0] == 'ok' and fields[1].isdigit() and int(fields[1]) in start_ids:
+            sessions.append(fields[2])
+            continue
+        if fields[:2] == ['0', 'run'] and len(fields) > 2 and fields[2].split('.')[-1] == 'stop':
+            debug_stop()
             continue
         if fields[:2] == ['0', 'run'] and len(fields) > 2 and fields[2].split('.')[-1] == 'start':
             if MODE.get('burst'):

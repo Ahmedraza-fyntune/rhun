@@ -10,7 +10,9 @@ standard library only. It reads and writes .nbt files, a line-based toy format:
 and runs cells by what their source says: "sleep" waits until interrupted, "error" fails with a
 traceback, "png" shows an image, "many" prints 1000 lines, "progress" draws over its line with
 carriage returns, "clearwait" replaces its output, "clearfirst" sends clear-wait before any output,
-"pngwide" shows an image at a width of its own, "replace" updates a display by its id, "stale"
+"pngwide" shows an image at a width of its own, "rich" a rich document (a table and a link),
+"picture" a 12a picture 120x60, "widepic" one 3000x100, "badpic" one that cannot be read (its text
+shows), "replace" updates a display by its id, "stale"
 answers for an old run, "toobig" streams past the cap, "exec" starts a kernel as the user (nb-exec:
 python3 printing its folder and a variable, exit 3) and streams its log, "execsleep" starts one that
 sleeps until interrupted (nb-exec-signal kill), "execbad" asks for a program [needs] does not name;
@@ -256,7 +258,25 @@ def worker():
                                                               'items': [(b'ansi', tb)]}))
             state(nb, cell, run, 'failed', n)
             continue
-        if b'pngwide' in source:
+        if b'rich' in source:
+            md = b'| a | b |\n| --- | --- |\n| 1 | 2 |\n\nSee [the file](b.txt).\n'
+            body = b'1\ndoc %d\n%s' % (len(md), md)
+            output(nb, cell, run, 'append', '-', output_body({'kind': b'display', 'id': b'-', 'keep': b'',
+                                                              'items': [(b'rich', body), (b'text', b'a b\n1 2\n')]}))
+        elif b'widepic' in source:
+            pic = b'rect 0 0 3000 100 #00c8c8\n'
+            output(nb, cell, run, 'append', '-', output_body({'kind': b'display', 'id': b'-', 'keep': b'',
+                                                              'items': [(b'picture', pic, (3000, 100))]}))
+        elif b'badpic' in source:
+            output(nb, cell, run, 'append', '-', output_body({'kind': b'display', 'id': b'-', 'keep': b'',
+                                                              'items': [(b'picture', b'rect 1 2\n', (10, 10)),
+                                                                        (b'text', b'no picture\n')]}))
+        elif b'picture' in source:
+            pic = b'rect 0 0 120 60 #c80000\ncircle 60 30 20 #0000c8\n'
+            output(nb, cell, run, 'append', '-', output_body({'kind': b'display', 'id': b'-', 'keep': b'',
+                                                              'items': [(b'picture', pic, (120, 60)),
+                                                                        (b'text', b'<picture>\n')]}))
+        elif b'pngwide' in source:
             image = png(40, 20, (0, 0, 200, 255))
             output(nb, cell, run, 'append', '-', output_body({'kind': b'display', 'id': b'-', 'keep': b'',
                                                               'items': [(b'png', image, (80, 0))]}))

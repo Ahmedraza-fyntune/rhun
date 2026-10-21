@@ -599,9 +599,9 @@ res_url_chose:
     call prompt_clear
     EPILOGUE
 
-# ID external-uri LEN + URI -> ok ID LEN + the URI the user's browser can use: loopback and other
-# http(s) URLs and rhun: links come back unchanged on this computer (a remote host's ports would be
-# forwarded here)
+# ID external-uri LEN + URI -> ok ID LEN + the URI the user's browser can use: in a remote window a
+# loopback URL of the host comes back as the forwarded port's here (remote_forward_url); other
+# http(s) URLs and rhun: links come back unchanged
 h_res_external_uri:
     PROLOGUE
     mov edi, FEAT_URLS
@@ -614,8 +614,36 @@ h_res_external_uri:
     mov rsi, [rip + body_len]
     call links_url_ok
     test eax, eax
-    jnz 1f
+    jz 0f
+    # a remote window: a loopback URL of the host becomes the forwarded one here (remotefwd.s)
     mov rdi, [rip + body_ptr]
+    mov rsi, [rip + body_len]
+    call remote_forward_url
+    test rax, rax
+    jz 1f
+    mov rbx, rax
+    mov rdi, rax
+    call strlen
+    mov r12, rax
+    call out_begin
+    lea rdi, [rip + .Lw_ok_sp]
+    call out_cstr
+    mov rdi, [rip + cur_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, r12
+    call out_u64
+    mov edi, 10
+    call out_byte
+    mov rdi, rbx
+    mov rsi, r12
+    call out_bytes
+    call out_end
+    mov rdi, rbx
+    call mem_free
+    EPILOGUE
+0:  mov rdi, [rip + body_ptr]
     mov rsi, [rip + body_len]
     lea rdx, [rip + .Lres_rhun_colon]
     mov ecx, 5

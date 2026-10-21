@@ -683,7 +683,23 @@ kb_guard_term:
     jae 8f
     cmp word ptr [rax], 0x3d3d  # "=="
     jne 8f
-    mov eax, 1
+    # and a view's identity: not empty (the text editor's view is ''), not '' or ""
+    lea rdi, [rax + 2]
+    mov rsi, rcx
+    sub rsi, rdi
+    call trim
+    test rdx, rdx
+    jz 8f
+    cmp rdx, 2
+    jne 3f
+    movzx ecx, byte ptr [rax]
+    cmp cl, [rax + 1]
+    jne 3f
+    cmp ecx, 0x27
+    je 8f
+    cmp ecx, '"'
+    je 8f
+3:  mov eax, 1
 9:  EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -1310,7 +1326,7 @@ FN keys_chord_draw
     mov rdi, rax
     mov rcx, [rbx + KB_cmd]
     mov rsi, [rcx + CMD_title]
-    call cstr_copy
+    call kb_copy_tail           # a long title is cut to what keybuf2 holds
 1:  lea rdi, [rip + g_face_small]
     mov esi, [rsp]
     mov edx, [rsp + 4]
@@ -1320,6 +1336,37 @@ FN keys_chord_draw
     call ui_text_c
     EPILOGUE
 9:  ret
+
+# kb_copy_tail(dst in keybuf2, cstr): as much of it as keybuf2 still holds, cut at a character's
+#   start, NUL-ended
+kb_copy_tail:
+    lea rcx, [rip + keybuf2 + 255]
+    xor edx, edx
+    sub rcx, rdi                # room before the NUL
+    jbe 3f
+1:  cmp rdx, rcx
+    jae 2f
+    mov al, [rsi + rdx]
+    test al, al
+    jz 3f
+    mov [rdi + rdx], al
+    inc rdx
+    jmp 1b
+2:  # cut inside a character (the next byte continues it): that character goes
+    mov al, [rsi + rdx]
+    and al, 0xc0
+    cmp al, 0x80
+    jne 3f
+21: test rdx, rdx
+    jz 3f
+    dec rdx
+    mov al, [rdi + rdx]
+    and al, 0xc0
+    cmp al, 0x80
+    je 21b
+3:  mov byte ptr [rdi + rdx], 0
+    lea rax, [rdi + rdx]
+    ret
 
 # ---------------------------------------------------------------- showing bindings
 
@@ -1984,6 +2031,7 @@ g_commands:
     COMMAND quick_open, "Go to File", cmd_quick_open, "ctrl+p ctrl+e"
     COMMAND command_palette, "Command Palette", cmd_command_palette, "ctrl+shift+p F1"
     COMMAND keyboard_shortcuts, "Keyboard Shortcuts", cmd_keyboard_shortcuts, ""
+    COMMAND select_file_icon_theme, "Select File Icon Theme", cmd_select_file_icon_theme, ""
     COMMAND new_file, "New File", cmd_new_file, "ctrl+n"
     COMMAND save, "Save", cmd_save, "ctrl+s"
     COMMAND save_without_formatting, "Save Without Formatting", cmd_save_without_formatting, ""
@@ -2183,6 +2231,8 @@ g_commands:
     COMMAND debug_evaluate_selection, "Debug: Evaluate Selection in Console", cmd_debug_evaluate_selection, ""
     COMMAND debug_focus_console, "Debug: Focus Debug Console", cmd_debug_focus_console, ""
     COMMAND debug_open_configurations, "Debug: Open Launch Configurations", cmd_debug_open_configurations, ""
+    COMMAND debug_select_configuration, "Debug: Select Configuration", cmd_debug_select_configuration, ""
+    COMMAND debug_add_configuration, "Debug: Add Configuration", cmd_debug_add_configuration, ""
     # testing (testview.s)
     COMMAND testing, "Testing", cmd_testing, ""
     COMMAND test_run_all, "Run All Tests", cmd_test_run_all, ""

@@ -124,6 +124,37 @@ class Notes(ViewsBase):
         self.assertTrue(any(l.startswith('error ') and l.endswith(' noview no such notification') for l in log), log)
 
 
+class MarkdownPopups(ViewsBase):
+    """Feature markdown: notification messages and node tooltips drawn as Markdown."""
+    def setUp(self):
+        super().setUp()
+        self.env['VIEWFAKE_NOTIFY'] = '1'
+
+    def card(self, out):
+        return [l for l in out if l.startswith('note=')][0]
+
+    def test_a_message_is_markdown_with_the_feature(self):
+        self.env['VIEWFAKE_MARKDOWN'] = '1'
+        out = self.run_editor(['cmd viewfake.notemd', 'wait 200', 'print-notes'])
+        card = self.card(out)
+        self.assertIn(' markdown msg=**Indexed** 12 files', card)
+        h_md = int(card.split(' size=')[1].split('x')[1].split(' ')[0]) if ' size=' in card else None
+        del self.env['VIEWFAKE_MARKDOWN']
+        out = self.run_editor(['cmd viewfake.notemd', 'wait 200', 'print-notes'])
+        self.assertNotIn(' markdown ', self.card(out))
+        self.assertTrue(h_md is None or h_md > 0)
+
+    def test_a_node_tooltip_is_markdown_with_the_feature(self):
+        self.env['VIEWFAKE_MARKDOWN'] = '1'
+        out = self.run_editor(['print-view todo'])
+        row = [l for l in out if 'label=TODO: item 1 of main.rs' in l][0]
+        y = int(row.split(' y=')[1].split(' ')[0])
+        at = [l for l in out if l.startswith('at=')][0]
+        x = int(at[3:].split(',')[0])
+        out = self.run_editor([f'move {x + 60} {y + 8}', 'wait 700', 'wait 300', 'print-tip'])
+        self.assertIn('tip=tip of 1', out)
+
+
 class Progress(ViewsBase):
     def setUp(self):
         super().setUp()

@@ -535,15 +535,11 @@ FN lines_comment
     PROLOGUE 48
     mov rbx, [rip + g_doc]
     mov rdi, rbx
-    call doc_language
-    test rax, rax
+    call lc_line_comment        # the language configuration's (langconf.s)
+    test rdx, rdx
     jz .Lco_ret
-    mov rcx, [rax + GR_commentlen]
-    test rcx, rcx
-    jz .Lco_ret
-    mov rdx, [rax + GR_comment]
-    mov [rsp], rdx              # token
-    mov [rsp + 8], rcx
+    mov [rsp], rax              # token
+    mov [rsp + 8], rdx
     mov rdi, rbx
     xor esi, esi
     call ln_gather

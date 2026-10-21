@@ -55,8 +55,14 @@ st_again: .long 0
 touch_kind: .long 0             # 1 status, 2 HEAD moved
 sudirs: .long 0                 # untracked folders in the table
 run_flags: .long 0              # run_git: run_piped_input's errors flag
+run_any: .long 0                # run_git: git_start_in: no repository of this module needed
 .p2align 3
 run_cap: .quad 0                # run_git: JB_cap
+run_cwd: .quad 0                # run_git: where git runs (git_start_in), 0: the work tree
+git_track: .quad 0              # the path whose repository this module follows (owned), or 0
+prim_root: .quad 0              # the project's repository (git_set_project): work tree, owned
+prim_common: .quad 0            # and its common .git directory
+prim_wt: .long 0                # its work tree is a linked one
 .p2align 3
 g_git_root: .quad 0             # work tree
 g_git_rootlen: .quad 0
@@ -82,7 +88,7 @@ docs: .zero VEC_SIZE
 
 # Shared identity for all checkouts of a repository, or the standalone project.
 FN git_repository_id
-    mov rax, [rip + commondir]
+    mov rax, [rip + prim_common]
     test rax, rax
     jnz 1f
     mov rax, [rip + g_project]
@@ -90,7 +96,7 @@ FN git_repository_id
 
 # git_common_dir() -> the repository's common .git directory, or 0 outside a repository
 FN git_common_dir
-    mov rax, [rip + commondir]
+    mov rax, [rip + prim_common]
     ret
 
 # git_gitdir() -> the work tree's own git directory (a linked work tree's under worktrees/), or 0
@@ -110,7 +116,24 @@ FN git_status_records
 
 # git_set_project(): find the repository of g_project and start over
 FN git_set_project
-    PROLOGUE
+    mov rdi, [rip + g_project]
+    mov esi, 1
+    jmp set_root
+# git_set_root(path or 0): find the repository of path and start over. The repository rhun shows
+#   (status, Source Control, history, the branch) follows the active document's workspace folder
+#   (resources group, gitrepos.s); agents keep the project's (git_each_agent_worktree)
+FN git_set_root
+    xor esi, esi
+set_root:
+    PROLOGUE 16
+    mov [rsp], esi
+    xor eax, eax
+    test rdi, rdi               # an own copy: the path may be one of those freed below
+    jz 0f
+    call dup_cstr
+0:  mov rdi, [rip + git_track]
+    mov [rip + git_track], rax
+    call mem_free
     call gitdata_reset          # extensions' git requests end here, before their jobs are dropped
     inc dword ptr [rip + gen]
     mov dword ptr [rip + g_git_on], 0
@@ -138,7 +161,7 @@ FN git_set_project
     call docs_reset
     call gitview_reset
     call scm_reset
-    cmp qword ptr [rip + g_project], 0
+    cmp qword ptr [rip + git_track], 0
     je 9f
     call find_repo
     cmp qword ptr [rip + gitdir], 0
@@ -177,13 +200,37 @@ FN git_set_project
     mov dword ptr [rip + touch_kind], 3
     call time_ms
     mov [rip + touch_at], rax
-9:  # the when-clause key gitTrusted (source control, wider-parity C)
+9:  cmp dword ptr [rsp], 0
+    je 91f
+    call prim_record
+91: # the when-clause key gitTrusted (source control, wider-parity C)
     xor esi, esi
     cmp dword ptr [rip + g_git_paused], 0
     sete sil
     mov edi, CTX_GIT_TRUSTED
     call ctx_set_bool
     mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# prim_record(): the project's repository, for agents whatever repository the UI shows
+prim_record:
+    PROLOGUE
+    lea rbx, [rip + prim_root]
+    call free_path
+    lea rbx, [rip + prim_common]
+    call free_path
+    mov rdi, [rip + g_git_root]
+    test rdi, rdi
+    jz 1f
+    call dup_cstr
+    mov [rip + prim_root], rax
+1:  mov rdi, [rip + commondir]
+    test rdi, rdi
+    jz 2f
+    call dup_cstr
+    mov [rip + prim_common], rax
+2:  movzx eax, byte ptr [rip + g_worktree]
+    mov [rip + prim_wt], eax
     EPILOGUE
 
 # free_path(): mem_free [rbx] and clear it
@@ -219,13 +266,26 @@ FN git_trust
     jmp git_set_project
 1:  ret
 
-# find_repo(): walk up from g_project to the directory holding .git
+# find_repo(): the repository of git_track (the project, or another workspace folder)
 find_repo:
+    PROLOGUE
+    mov rdi, [rip + git_track]
+    call git_find_repo
+    test rax, rax
+    jz 9f
+    mov [rip + gitdir], rax
+    mov [rip + g_git_root], rdx
+    mov [rip + g_git_rootlen], rcx
+9:  EPILOGUE
+
+# git_find_repo(path) -> rax its repository's git directory (owned) or 0, rdx the work tree (owned),
+#   rcx its length: walks up from path to the directory holding .git
+FN git_find_repo
     PROLOGUE 16
-    mov rdi, [rip + g_project]
+    mov [rsp], rdi
     call strlen
     mov r13, rax
-    mov rdi, [rip + g_project]
+    mov rdi, [rsp]
     mov rsi, rax
     call mem_dup
     mov r12, rax                # directory, cut in place
@@ -298,9 +358,9 @@ find_repo:
     mov rdi, r14
     call mem_free
 .Lfr_found:
-    mov [rip + gitdir], rbx
-    mov [rip + g_git_root], r12
-    mov [rip + g_git_rootlen], r13
+    mov rax, rbx
+    mov rdx, r12
+    mov rcx, r13
     EPILOGUE
 .Lfr_bad:
     mov rdi, r14
@@ -308,6 +368,7 @@ find_repo:
 .Lfr_none:
     mov rdi, r12
     call mem_free
+    xor eax, eax
     EPILOGUE
 
 # watch_repo(): HEAD and the index (gitdir), the reflog, branches
@@ -383,15 +444,15 @@ FN git_each_agent_worktree
     PROLOGUE 32
     mov [rsp], rdi
     mov [rsp + 8], rsi
-    mov rsi, [rip + g_git_root]
+    mov rsi, [rip + prim_root]
     test rsi, rsi
     jz 9f
     xor edx, edx
-    cmp byte ptr [rip + g_worktree], 0
+    cmp dword ptr [rip + prim_wt], 0
     setne dl
     mov rdi, [rsp + 8]
     call qword ptr [rsp]
-    mov rbx, [rip + commondir]
+    mov rbx, [rip + prim_common]
     test rbx, rbx
     jz 9f
     # In a normal repository the common .git directory sits inside the main checkout.
@@ -506,8 +567,18 @@ read_worktree:
 # git_read_branch(): g_branch from HEAD, the short commit id when detached
 FN git_read_branch
     PROLOGUE
-    mov byte ptr [rip + g_branch], 0
     mov rdi, [rip + gitdir]
+    lea rsi, [rip + g_branch]
+    call git_head_name
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# git_head_name(gitdir or 0, out 64 bytes): the branch HEAD names, the short commit id when detached,
+#   "" when unknown
+FN git_head_name
+    PROLOGUE
+    mov r14, rsi
+    mov byte ptr [r14], 0
     test rdi, rdi
     jz 9f
     lea rsi, [rip + .Lhead]
@@ -545,7 +616,7 @@ FN git_read_branch
     mov rsi, r12
     lea rdx, [r12 + 7]
     mov ecx, 7
-4:  lea rdi, [rip + g_branch]
+4:  mov rdi, r14
 5:  cmp rsi, rdx
     jae 6f
     mov al, [rsi]
@@ -559,8 +630,7 @@ FN git_read_branch
 6:  mov byte ptr [rdi], 0
 8:  mov rdi, r12
     call mem_free
-9:  mov dword ptr [rip + g_dirty], 1
-    EPILOGUE
+9:  EPILOGUE
 
 # git_fs_event(dir, name): something changed in a watched git directory
 FN git_fs_event
@@ -640,6 +710,53 @@ FN git_run_all
     setnz al
     movzx eax, al
     ret
+# git_start_in(root, args, cb, ctx, cap) -> rax the job, or 0: git_start in another folder (another
+#   workspace folder's repository, gitrepos.s), whatever repository this module follows; ctx owned
+FN git_start_in
+    PROLOGUE 16
+    mov [rsp], rdi
+    mov rbx, rsi
+    mov r12, rdx
+    mov r13, rcx
+    mov r14, r8
+    cmp dword ptr [rip + cfg_git], 0
+    je 8f
+    cmp qword ptr [rip + git_bin], 0
+    jne 1f
+    cmp dword ptr [rip + bin_tried], 0
+    jne 8f
+    mov dword ptr [rip + bin_tried], 1
+    lea rdi, [rip + .Lgit]
+    cmp dword ptr [rip + g_remote], 0
+    jne 2f
+    call proc_which
+    jmp 3f
+2:  call dup_cstr
+3:  mov [rip + git_bin], rax
+    lea rdi, [rip + env_extras]
+    call env_make
+    mov [rip + env], rax
+    cmp qword ptr [rip + git_bin], 0
+    je 8f
+1:  mov rax, [rsp]
+    mov [rip + run_cwd], rax
+    mov dword ptr [rip + run_any], 1
+    mov dword ptr [rip + run_flags], 0
+    mov [rip + run_cap], r14
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    xor r8d, r8d
+    call run_git
+    mov qword ptr [rip + run_cwd], 0
+    mov dword ptr [rip + run_any], 0
+    EPILOGUE
+8:  mov rdi, r13
+    call mem_free
+    xor eax, eax
+    EPILOGUE
+
 # git_start(args, cb, ctx, input ptr, input len, cap) -> rax the job (for git_job_kill), or 0: git_run with
 #   input of any length (copied; written as git reads it), and at most cap output bytes (0: no limit): a
 #   program that writes more is ended, and cb gets status -1 and no output
@@ -655,9 +772,11 @@ run_git:
     mov r13, rdx
     mov r14, rcx
     mov r15, r8
+    cmp dword ptr [rip + run_any], 0
+    jne 0f
     cmp dword ptr [rip + g_git_on], 0
     je 8f
-    mov rax, [rip + git_bin]
+0:  mov rax, [rip + git_bin]
     mov [rsp], rax
     lea rax, [rip + .Lno_locks]
     mov [rsp + 8], rax
@@ -688,8 +807,11 @@ run_git:
     mov [rsp + 272], r15
     mov rdi, rsp
     mov rsi, [rip + env]
+    mov rdx, [rip + run_cwd]
+    test rdx, rdx
+    jnz 21f
     mov rdx, [rip + g_git_root]
-    mov rcx, r14
+21: mov rcx, r14
     mov r8, r15
     mov r9d, [rsp + 256]
     cmp r15, PIPE_IN
@@ -715,7 +837,10 @@ run_git:
     mov [r15 + JB_cb], r12
     mov [r15 + JB_ctx], r13
     mov eax, [rip + gen]
-    mov [r15 + JB_gen], eax
+    cmp dword ptr [rip + run_any], 0
+    je 22f
+    mov eax, -1                 # git_start_in: answered whatever this module follows meanwhile
+22: mov [r15 + JB_gen], eax
     mov rax, [rip + run_cap]
     mov [r15 + JB_cap], rax
     mov dword ptr [r15 + JB_in], -1
@@ -869,9 +994,11 @@ on_job:
     add rax, [rbx + JB_out + SB_len]
     mov byte ptr [rax], 0
     mov eax, [rbx + JB_gen]
+    cmp eax, -1
+    je 51f
     cmp eax, [rip + gen]
     jne 6f
-    mov rdi, [rbx + JB_ctx]
+51: mov rdi, [rbx + JB_ctx]
     mov rsi, [rbx + JB_out + SB_ptr]
     mov rdx, [rbx + JB_out + SB_len]
     mov ecx, r12d
@@ -892,6 +1019,9 @@ FN git_busy
     jne 1f
     cmp qword ptr [rip + touch_at], 0
     jne 1f
+    push rbx
+    call gitrepos_busy
+    pop rbx
     ret
 1:  mov eax, 1
     ret
@@ -900,6 +1030,9 @@ FN git_busy
 
 # git_touch(): files changed; the status is asked again shortly
 FN git_touch
+    push rbx
+    call gitrepos_touch         # other workspace folders' repositories (gitrepos.s)
+    pop rbx
     mov eax, 1
     jmp touch
 # git_touch_head(): HEAD moved; the open files' bases too
@@ -1007,6 +1140,17 @@ status_refresh:
 
 # status_clear(): forget the status
 status_clear:
+    call table_clear
+    mov dword ptr [rip + g_git_changes], 0
+    mov dword ptr [rip + g_git_head], HD_BRANCH
+    mov dword ptr [rip + g_git_ahead], 0
+    mov dword ptr [rip + g_git_behind], 0
+    mov byte ptr [rip + g_git_upstream], 0
+    inc dword ptr [rip + g_git_ver]
+    ret
+
+# table_clear(): the status table empties
+table_clear:
     lea rdi, [rip + stbuf]
     call sb_clear
     mov rdi, [rip + stab]
@@ -1018,12 +1162,73 @@ status_clear:
     rep stosb
 1:  mov qword ptr [rip + sused], 0
     mov dword ptr [rip + sudirs], 0
-    mov dword ptr [rip + g_git_changes], 0
-    mov dword ptr [rip + g_git_head], HD_BRANCH
-    mov dword ptr [rip + g_git_ahead], 0
-    mov dword ptr [rip + g_git_behind], 0
-    mov byte ptr [rip + g_git_upstream], 0
-    inc dword ptr [rip + g_git_ver]
+    ret
+
+# git_table_swap(block): exchange the status table (its records, slots and counts) with a GT_SIZE
+#   block: gitrepos.s keeps other repositories' tables so and swaps one in to load or ask it
+FN git_table_swap
+    lea rsi, [rip + stbuf]
+    mov ecx, SB_SIZE/8
+    call swap_q
+    lea rsi, [rip + stab]
+    mov ecx, 3
+    call swap_q
+    mov eax, [rip + sudirs]
+    mov edx, [rdi]
+    mov [rdi], eax
+    mov [rip + sudirs], edx
+    ret
+# swap_q(a, b, n): exchange n qwords; leaves rdi after a's
+swap_q:
+1:  mov rax, [rdi]
+    mov rdx, [rsi]
+    mov [rdi], rdx
+    mov [rsi], rax
+    add rdi, 8
+    add rsi, 8
+    dec ecx
+    jnz 1b
+    ret
+
+# git_table_load(ptr, len) -> eax changes: the swapped-in table holds these status --porcelain -z records
+FN git_table_load
+    push rbx
+    push rdi
+    push rsi
+    call table_clear
+    pop rsi
+    pop rdi
+    call status_fill
+    pop rbx
+    ret
+
+# git_table_status(path ptr, len) -> git_status_rel in the swapped-in table, whether git is on or not
+FN git_table_status
+    push rbx
+    push r12
+    push r13
+    xor eax, eax
+    xor edx, edx
+    cmp qword ptr [rip + sused], 0
+    je 9f
+    call status_rel
+9:  pop r13
+    pop r12
+    pop rbx
+    ret
+
+# git_table_free(): the swapped-in table's memory goes
+FN git_table_free
+    push rbx
+    lea rdi, [rip + stbuf]
+    call sb_free
+    mov rdi, [rip + stab]
+    call mem_free
+    mov qword ptr [rip + stab], 0
+    mov qword ptr [rip + scap], 0
+    mov qword ptr [rip + sused], 0
+    mov dword ptr [rip + sudirs], 0
+    pop rbx
     ret
 
 # on_status(ctx, ptr, len, status): the branch ("## ..."), then "XY path\0" records of status --porcelain -z
@@ -1046,18 +1251,38 @@ on_status:
     cmova rax, r12
     add rbx, rax
     sub r12, rax
-1:  lea rdi, [rip + stbuf]
+1:  mov rdi, rbx
+    mov rsi, r12
+    call status_fill
+    add [rip + g_git_changes], eax
+.Los_again:
+    inc dword ptr [rip + g_git_ver]
+    cmp dword ptr [rip + st_again], 0
+    je 9f
+    mov dword ptr [rip + st_again], 0
+    call git_touch
+9:  call gitdata_status_done      # extensions waiting for it, and "0 git changed"
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# status_fill(ptr, len) -> eax changes: the "XY path\0" records into the (cleared) table
+status_fill:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    mov dword ptr [rsp + 8], 0
+    lea rdi, [rip + stbuf]
     mov rsi, rbx
     mov rdx, r12
     call sb_push
     mov rbx, [rip + stbuf + SB_ptr]
     test rbx, rbx
-    jz .Los_again
+    jz .Lsf_done
     add r12, rbx                # end
 .Los_rec:
     lea rax, [rbx + 3]
     cmp rax, r12
-    ja .Los_again
+    ja .Lsf_done
     movzx r13d, byte ptr [rbx]
     movzx r14d, byte ptr [rbx + 1]
     lea r15, [rbx + 3]
@@ -1080,7 +1305,7 @@ on_status:
     test eax, eax
     jz .Los_rec
     mov r13d, eax
-    inc dword ptr [rip + g_git_changes]
+    inc dword ptr [rsp + 8]
     mov rsi, [rsp]
     test rsi, rsi
     jz .Los_rec
@@ -1105,14 +1330,8 @@ on_status:
     mov ecx, 1
     call st_add
     jmp 4b
-.Los_again:
-    inc dword ptr [rip + g_git_ver]
-    cmp dword ptr [rip + st_again], 0
-    je 9f
-    mov dword ptr [rip + st_again], 0
-    call git_touch
-9:  call gitdata_status_done      # extensions waiting for it, and "0 git changed"
-    mov dword ptr [rip + g_dirty], 1
+.Lsf_done:
+    mov eax, [rsp + 8]
     EPILOGUE
 
 # parse_branch(record) -> rax its length: "## main...origin/main [ahead 1, behind 2]", "## main",
@@ -1417,25 +1636,27 @@ FN git_rel
     ret
 
 # git_status_of(path cstr) -> eax code letter or 0, edx 1 or 2 for folders
+#   (the other workspace folders' repositories: gitrepos.s)
 FN git_status_of
     push rbx
     push r12
     push r13
-    xor eax, eax
-    xor edx, edx
+    mov rbx, rdi
     cmp dword ptr [rip + g_git_on], 0
-    je 9f
-    cmp qword ptr [rip + sused], 0
-    je 9f
+    je 8f
     call git_rel
     test rax, rax
     jz 8f
     mov rdi, rax
     mov rsi, rdx
+    xor eax, eax
+    xor edx, edx
+    cmp qword ptr [rip + sused], 0
+    je 9f
     call status_rel
     jmp 9f
-8:  xor eax, eax
-    xor edx, edx
+8:  mov rdi, rbx
+    call gitrepos_status_of
 9:  pop r13
     pop r12
     pop rbx

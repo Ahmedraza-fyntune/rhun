@@ -1053,12 +1053,18 @@ FN nb_dump_output
     mov rdi, r12
     lea rsi, [rip + .Ld_ierr]
     call sb_push_cstr
-33: cmp qword ptr [rbx + NBO_img], 0
+33: cmp qword ptr [rbx + NBO_pic], 0  # a picture: the size it was drawn at
+    je 331f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_picture]
+    call sb_push_cstr
+    jmp 332f
+331: cmp qword ptr [rbx + NBO_img], 0
     je 34f
     mov rdi, r12
     lea rsi, [rip + .Ld_image]
     call sb_push_cstr
-    mov rdi, r12
+332: mov rdi, r12
     mov esi, [rbx + NBO_iw]
     call sb_push_u64
     mov rdi, r12
@@ -1076,7 +1082,13 @@ FN nb_dump_output
     js 7f
     imul rax, rax, NBI_SIZE
     add rax, [rbx + NBO_items + VEC_ptr]
-    cmp dword ptr [rax + NBI_type], NBIT_ANSI
+    cmp qword ptr [rbx + NBO_md], 0
+    je 31f
+    mov rdi, [rbx + NBO_md]     # a rich document: how it is laid out
+    mov rsi, r12
+    call md_dump
+    jmp 7f
+31: cmp dword ptr [rax + NBI_type], NBIT_ANSI
     ja 7f
     mov r13, [rax + NBI_data + SB_ptr]
     mov r14, [rax + NBI_data + SB_len]
@@ -1240,6 +1252,7 @@ kernel_names: .quad .Lr_none, .Lk_idle, .Lk_busy, .Lk_starting, .Lk_dead
 .Ld_keep: .asciz " keep="
 .Ld_ierr: .asciz " image=error"
 .Ld_image: .asciz " image="
+.Ld_picture: .asciz " picture="
 .Ld_esc: .asciz "\\e"
 .Ld_eoo: .asciz "<eoo>\n"
 .Ld_nooutput: .asciz "output=none\n<eoo>\n"

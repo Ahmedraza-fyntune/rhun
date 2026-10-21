@@ -137,6 +137,29 @@ class StatusItems(contribhost.Contrib):
         final = out[-4:]
         self.assertEqual(sorted(l.split(' item=')[1].split(' ')[0] for l in final), ['high', 'low', 'rust', 'tasks'])
 
+    def test_long_extra_records_and_a_bad_clause_replaced(self):
+        # an unknown record with many words is skipped by its last word (LEN); a manifest item whose
+        # clause did not compile shows once a valid runtime body replaces it
+        actions = {'add': [('status-item many #', body('left', 1, 'Many', '', b'future a b c d e f g 3\nabcwhen 4\ntrue')),
+                           ('status-item bad #', body('left', 2, 'Fixed'))]}
+        manifest = '[status]\nbad.text = Broken\nbad.when = editorFocus ==\n'
+        out = self.run_editor(exts=self.exts(manifest=manifest, actions=actions), files=('main.rs',),
+                              drop_waits=True, actions=['print-status', 'cmd demo.add', 'wait-ext demo running',
+                                                        'wait 300', 'print-status'])
+        items = self.items(out[1:])
+        self.assertEqual(self.items(out[:1])['bad']['shown'], '0', out)
+        self.assertIn('ok 1', self.contrib_log())
+        self.assertIn('ok 2', self.contrib_log())
+        self.assertEqual(items['many']['shown'], '1', out)
+        self.assertEqual(items['bad']['shown'], '1', out)
+        self.assertEqual(items['bad']['text'], 'Fixed')
+
+    def test_left_items_leave_an_image_alone(self):
+        png(self.proj / 'pic.png', (10, 20, 30, 255))
+        out = self.run_editor(exts=self.exts(), files=('main.rs', 'pic.png'), drop_waits=True,
+                              actions=['print-status'])
+        self.assertEqual(self.items(out)['tasks']['shown'], '0', out)
+
     def test_click_on_runtime_item(self):
         actions = {'add': [('status-item go #', body('left', 99, 'Go', '', b'command run_task 3\nnow'))]}
         out = self.run_editor(exts=self.exts(manifest='', actions=actions), files=('main.rs',), drop_waits=True,

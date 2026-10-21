@@ -444,7 +444,7 @@ FN ed_type
 .Lty_multi_done:
     ret
 .Lty_single:
-    PROLOGUE 32
+    PROLOGUE 96                 # 0 the character, 8/16 the selection, 32 a pair, 48 the plan (LTP)
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz .Lty_ret
@@ -458,85 +458,26 @@ FN ed_type
     lea rsi, [rsp]
     call utf8_encode
     mov r13, rax
-    cmp dword ptr [rip + cfg_auto_pairs], 0
-    je .Lty_plain
-    # overtype a closing char that is already there
-    cmp r12d, ')'
-    je 1f
-    cmp r12d, ']'
-    je 1f
-    cmp r12d, '}'
-    je 1f
-    cmp r12d, '"'
-    je 1f
-    cmp r12d, 0x27
-    je 1f
-    cmp r12d, '`'
-    jne 2f
-1:  mov rdi, rbx
-    call ed_sel
-    cmp rax, rdx
-    jne 2f
-    mov rdi, rbx
-    mov rsi, [rbx + DOC_cur]
-    call doc_byte
-    cmp eax, r12d
-    jne 2f
-    mov rsi, [rbx + DOC_cur]
-    inc rsi
-    mov rdi, rbx
-    xor edx, edx
-    call ed_set_cursor
-    jmp .Lty_ret
-2:  # opening char -> insert pair
-    lea r14, [rip + pair_open]
-    xor ecx, ecx
-3:  movzx eax, byte ptr [r14 + rcx]
-    test eax, eax
-    jz .Lty_plain
-    cmp eax, r12d
-    je 4f
-    inc ecx
-    jmp 3b
-4:  lea rax, [rip + pair_close]
-    movzx r15d, byte ptr [rax + rcx]
-    # quotes only pair when the next char is not a word char and the previous isn't either
-    cmp r12d, '"'
-    je 41f
-    cmp r12d, 0x27
-    je 41f
-    cmp r12d, '`'
-    jne 5f
-41: mov rdi, rbx
-    call ed_sel
-    cmp rax, rdx
-    jne 5f
-    mov rsi, [rbx + DOC_cur]
-    test rsi, rsi
-    jz 42f
-    dec rsi
-    mov rdi, rbx
-    call doc_byte
-    cmp eax, r12d
-    je .Lty_plain
-    mov edi, eax
-    call is_ident
-    test eax, eax
-    jnz .Lty_plain
-42: mov rdi, rbx
-    mov rsi, [rbx + DOC_cur]
-    call doc_byte
-    mov edi, eax
-    call is_ident
-    test eax, eax
-    jnz .Lty_plain
-5:  # with a selection: wrap it
+    # what typing it does: the language configuration's pairs and outdenting (langconf.s)
     mov rdi, rbx
     call ed_sel
-    cmp rax, rdx
-    je 6f
     mov [rsp + 8], rax
     mov [rsp + 16], rdx
+    mov rdi, rbx
+    mov rsi, rax
+    mov ecx, r12d
+    lea r8, [rsp + 48]
+    call lc_type
+    cmp eax, LTK_OVER
+    je .Lty_over
+    cmp eax, LTK_PAIR
+    je .Lty_pair
+    cmp eax, LTK_OUTDENT
+    je .Lty_outdent
+    cmp eax, LTK_WRAP
+    jne .Lty_plain
+    # with a selection: wrap it
+    movzx r15d, byte ptr [rsp + 48 + LTP_close]
     mov rdi, rbx
     call doc_begin_group
     mov rdi, rbx
@@ -562,36 +503,45 @@ FN ed_type
     mov [rbx + DOC_cur], rax
     call ed_touch
     jmp .Lty_ret
-6:  # only pair before whitespace / closing chars / end
-    mov rdi, rbx
+.Lty_over:
+    # a closer already there: over it
     mov rsi, [rbx + DOC_cur]
-    call doc_byte
-    test eax, eax
-    jz 7f
-    cmp eax, 10
-    je 7f
-    cmp eax, ' '
-    je 7f
-    cmp eax, 9
-    je 7f
-    cmp eax, ')'
-    je 7f
-    cmp eax, ']'
-    je 7f
-    cmp eax, '}'
-    je 7f
-    cmp eax, ','
-    je 7f
-    cmp eax, ';'
-    jne .Lty_plain
-7:  mov [rsp + 1], r15b
+    inc rsi
     mov rdi, rbx
+    xor edx, edx
+    call ed_set_cursor
+    jmp .Lty_ret
+.Lty_pair:
+    # the character and its CLOSE, the caret between
+    lea rdi, [rsp + 32]
     lea rsi, [rsp]
-    mov edx, 2
+    mov rdx, r13
+    call memcpy
+    lea rdi, [rsp + 32 + r13]
+    lea rsi, [rsp + 48 + LTP_close]
+    mov edx, [rsp + 48 + LTP_clen]
+    call memcpy
+    mov rdi, rbx
+    lea rsi, [rsp + 32]
+    mov edx, [rsp + 48 + LTP_clen]
+    add rdx, r13
     mov ecx, EK_TYPE
     call ed_insert
-    dec qword ptr [rbx + DOC_cur]
-    dec qword ptr [rbx + DOC_anchor]
+    mov eax, [rsp + 48 + LTP_clen]
+    sub [rbx + DOC_cur], rax
+    sub [rbx + DOC_anchor], rax
+    jmp .Lty_ret
+.Lty_outdent:
+    # the line one unit less, then the character, as one step
+    mov rax, [rsp + 48 + LTP_from]
+    mov [rbx + DOC_anchor], rax
+    mov rax, [rsp + 16]
+    mov [rbx + DOC_cur], rax
+    mov rdi, rbx
+    mov rsi, [rsp + 48 + LTP_text]
+    mov rdx, [rsp + 48 + LTP_tlen]
+    xor ecx, ecx
+    call ed_insert
     jmp .Lty_ret
 .Lty_plain:
     mov rdi, rbx
@@ -629,115 +579,33 @@ FN ed_newline
     call ws_linked_typed        # wsedit: a newline ends linked editing first (not mirrored)
     mov rdi, rbx
     call snippet_user_begin
-    lea rdi, [rsp]
-    xor esi, esi
-    mov edx, SB_SIZE
-    call memset
+    # the text from the language configuration's rules (langconf.s): indentation, a continued
+    # list or comment, a closer on a line of its own, an outdented closing word
     mov rdi, rbx
-    mov rsi, [rbx + DOC_cur]
-    call doc_line_of
+    call ed_sel
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    mov rdi, rbx
+    mov rsi, rax
+    call lc_newline
+    mov [rsp + 16], rcx
     mov r12, rax
+    mov r13, rdx
+    mov rax, [rsp]
+    sub rax, r8
+    mov [rsp + 24], rax
+    mov [rbx + DOC_anchor], rax
+    mov rax, [rsp + 8]
+    mov [rbx + DOC_cur], rax
     mov rdi, rbx
     mov rsi, r12
-    call line_indent
-    mov r13, rax                # indent bytes
-    lea rdi, [rsp]
-    mov esi, 10
-    call sb_push_byte
-    mov rdi, rbx
-    mov rsi, r12
-    call doc_line_start
-    mov r14, rax
-    mov rdi, rbx
-    mov rsi, rax
     mov rdx, r13
-    call doc_range
-    lea rdi, [rsp]
-    mov rsi, rax
-    mov rdx, r13
-    call sb_push
-    # char before the cursor (skipping blanks)
-    mov rdi, rbx
-    call ed_sel
-    mov r15, rax
-1:  cmp r15, r14
-    jbe 3f
-    mov rdi, rbx
-    lea rsi, [r15 - 1]
-    call doc_byte
-    cmp al, ' '
-    je 2f
-    cmp al, 9
-    jne 4f
-2:  dec r15
-    jmp 1b
-4:  cmp al, '{'
-    je 5f
-    cmp al, '('
-    je 5f
-    cmp al, '['
-    je 5f
-    cmp al, ':'
-    jne 3f
-    mov [rsp + 24], eax
-    mov rdi, rbx
-    call doc_language
-    mov rcx, rax
-    mov eax, [rsp + 24]
-    test rcx, rcx
-    jz 3f
-    test qword ptr [rcx + GR_flags], GF_COLON
-    jz 3f
-5:  mov [rsp + 24], eax
-    call push_indent_unit
-    # between a pair "{|}": put the closer on its own line
-    mov rdi, rbx
-    call ed_sel
-    mov rsi, rdx
-    mov rdi, rbx
-    call doc_byte
-    mov ecx, [rsp + 24]
-    cmp ecx, '{'
-    jne 51f
-    cmp eax, '}'
-    je 52f
-51: cmp ecx, '('
-    jne 53f
-    cmp eax, ')'
-    je 52f
-53: cmp ecx, '['
-    jne 3f
-    cmp eax, ']'
-    jne 3f
-52: mov r15, [rsp + SB_len]     # cursor goes here
-    lea rdi, [rsp]
-    mov esi, 10
-    call sb_push_byte
-    mov rdi, rbx
-    mov rsi, r14
-    mov rdx, r13
-    call doc_range
-    lea rdi, [rsp]
-    mov rsi, rax
-    mov rdx, r13
-    call sb_push
-    mov rdi, rbx
-    mov rsi, [rsp + SB_ptr]
-    mov rdx, [rsp + SB_len]
     xor ecx, ecx
     call ed_insert
-    mov rax, [rsp + SB_len]
-    sub rax, r15
-    sub [rbx + DOC_cur], rax
-    sub [rbx + DOC_anchor], rax
-    jmp 9f
-3:  mov rdi, rbx
-    mov rsi, [rsp + SB_ptr]
-    mov rdx, [rsp + SB_len]
-    xor ecx, ecx
-    call ed_insert
-9:  lea rdi, [rsp]
-    call sb_free
+    mov rax, [rsp + 24]
+    add rax, [rsp + 16]
+    mov [rbx + DOC_cur], rax
+    mov [rbx + DOC_anchor], rax
 .Lnl_ret:
     mov rdi, rbx
     call snippet_user_end
@@ -845,39 +713,28 @@ FN ed_backspace
     sub rax, rcx
     jmp 5f
 4:  mov rax, r14
-    # delete an empty auto pair "(|)"
+    # delete an empty auto-closing pair "(|)" (the language configuration's pairs, langconf.s)
     cmp dword ptr [rip + cfg_auto_pairs], 0
     je 5f
     push rax
-    mov rdi, rbx
-    mov rsi, r14
-    call doc_byte
-    mov r15d, eax
+    push rax
     mov rdi, rbx
     mov rsi, r13
-    call doc_byte
-    lea rdi, [rip + pair_open]
-    xor ecx, ecx
-6:  movzx edx, byte ptr [rdi + rcx]
-    test edx, edx
+    call lc_pair_around
+    test rax, rax
     jz 7f
-    cmp edx, r15d
-    jne 61f
-    lea rdx, [rip + pair_close]
-    movzx edx, byte ptr [rdx + rcx]
-    cmp edx, eax
-    jne 61f
-    pop rax
+    pop rcx
+    pop rcx
+    mov rsi, r13
+    sub rsi, rax
+    add rdx, rax
+    mov r13, rsi
     mov rdi, rbx
-    mov rsi, rax
-    mov edx, 2
     mov ecx, EK_BACK
-    mov r13, rax
     call doc_delete
     jmp 71f
-61: inc ecx
-    jmp 6b
 7:  pop rax
+    pop rax
 5:  mov rdx, r13
     sub rdx, rax
     mov r13, rax
@@ -1840,15 +1697,11 @@ FN cmd_toggle_comment
     mov rdi, rbx
     call snippet_user_begin
     mov rdi, rbx
-    call doc_language
-    test rax, rax
-    jz .Ltc_ret
-    mov rcx, [rax + GR_commentlen]
-    test rcx, rcx
-    jz .Ltc_ret
-    mov rdx, [rax + GR_comment]
-    mov [rsp], rdx
-    mov [rsp + 8], rcx
+    call lc_line_comment        # the language configuration's (langconf.s)
+    test rdx, rdx
+    jz .Ltc_block
+    mov [rsp], rax
+    mov [rsp + 8], rdx
     mov rdi, rbx
     call sel_lines
     mov r12, rax
@@ -1946,6 +1799,167 @@ FN cmd_toggle_comment
 .Ltc_ret:
     mov rdi, rbx
     call snippet_user_end
+    EPILOGUE
+.Ltc_block:
+    mov rdi, rbx
+    call block_comment
+    jmp .Ltc_ret
+
+# block_comment(doc): without a line comment, Toggle Comment puts the block comment's START before
+#   the selected lines (at the first one's indentation) and END after them, or takes them off
+block_comment:
+    PROLOGUE 64
+    mov rbx, rdi
+    call lc_block_comment
+    test rdx, rdx
+    jz 9f
+    mov [rsp], rax              # START
+    mov [rsp + 8], rdx
+    mov [rsp + 16], rcx         # END
+    mov [rsp + 24], r8
+    mov rdi, rbx
+    call sel_lines
+    mov r12, rax
+    mov r13, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    call line_indent
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_start
+    add r14, rax                # a: the first line's text
+    mov rdi, rbx
+    mov rsi, r13
+    call doc_line_end
+    mov r15, rax                # b: the last line's end, before its trailing blanks
+1:  cmp r15, r14
+    jbe 9f
+    mov rdi, rbx
+    lea rsi, [r15 - 1]
+    call doc_byte
+    cmp eax, ' '
+    je 2f
+    cmp eax, 9
+    jne 3f
+2:  dec r15
+    jmp 1b
+3:  mov rdi, rbx
+    call doc_begin_group
+    # commented already: START at a and END at b
+    mov rax, [rsp + 8]
+    add rax, [rsp + 24]
+    mov rcx, r15
+    sub rcx, r14
+    cmp rcx, rax
+    jb .Lbc_add
+    mov rdi, rbx
+    mov rsi, r14
+    mov rdx, [rsp]
+    mov rcx, [rsp + 8]
+    call doc_has
+    test eax, eax
+    jz .Lbc_add
+    mov rdi, rbx
+    mov rsi, r15
+    sub rsi, [rsp + 24]
+    mov rdx, [rsp + 16]
+    mov rcx, [rsp + 24]
+    call doc_has
+    test eax, eax
+    jz .Lbc_add
+    # off: END (and a blank before it), then START (and a blank after it)
+    mov rsi, r15
+    sub rsi, [rsp + 24]
+    mov rdx, [rsp + 24]
+    mov rax, rsi
+    sub rax, r14
+    cmp rax, [rsp + 8]
+    jbe 4f
+    mov [rsp + 32], rsi
+    mov [rsp + 40], rdx
+    mov rdi, rbx
+    lea rsi, [rsi - 1]
+    call doc_byte
+    mov rsi, [rsp + 32]
+    mov rdx, [rsp + 40]
+    cmp eax, ' '
+    jne 4f
+    dec rsi
+    inc rdx
+4:  mov rdi, rbx
+    xor ecx, ecx
+    call doc_delete
+    mov rdx, [rsp + 8]
+    mov [rsp + 40], rdx
+    mov rdi, rbx
+    mov rsi, r14
+    add rsi, rdx
+    call doc_byte
+    mov rdx, [rsp + 40]
+    cmp eax, ' '
+    jne 5f
+    inc rdx
+5:  mov rdi, rbx
+    mov rsi, r14
+    xor ecx, ecx
+    call doc_delete
+    jmp 8f
+.Lbc_add:
+    # on: " END" after the text, "START " before it
+    mov rdi, rbx
+    mov rsi, r15
+    lea rdx, [rip + .Lbc_space]
+    mov ecx, 1
+    xor r8d, r8d
+    call doc_insert
+    mov rdi, rbx
+    lea rsi, [r15 + 1]
+    mov rdx, [rsp + 16]
+    mov rcx, [rsp + 24]
+    xor r8d, r8d
+    call doc_insert
+    mov rdi, rbx
+    mov rsi, r14
+    lea rdx, [rip + .Lbc_space]
+    mov ecx, 1
+    xor r8d, r8d
+    call doc_insert
+    mov rdi, rbx
+    mov rsi, r14
+    mov rdx, [rsp]
+    mov rcx, [rsp + 8]
+    xor r8d, r8d
+    call doc_insert
+8:  mov rdi, rbx
+    call doc_end_group
+    mov rdi, rbx
+    mov rsi, r14
+    xor edx, edx
+    call ed_set_cursor
+    call ed_touch
+9:  EPILOGUE
+
+# doc_has(doc, pos, ptr, len) -> eax 1 when the document has those bytes at pos
+doc_has:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    xor r15d, r15d
+1:  cmp r15, r14
+    jae 2f
+    mov rdi, rbx
+    lea rsi, [r12 + r15]
+    call doc_byte
+    cmp al, [r13 + r15]
+    jne 8f
+    inc r15
+    jmp 1b
+2:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
     EPILOGUE
 
 FN cmd_undo
@@ -3858,6 +3872,9 @@ match_brackets:
     mov qword ptr [rip + g_br + 8], -1
     cmp dword ptr [rip + cfg_match_brackets], 0
     je 9f
+    mov rdi, rbx
+    call lc_bracket_str         # the language configuration's brackets (langconf.s)
+    mov [rip + br_set], rax
     mov r12, [rbx + DOC_cur]
     cmp r12, [rbx + DOC_anchor]
     jne 9f
@@ -3906,7 +3923,11 @@ match_brackets:
 
 # bracket_kind(eax byte) -> eax byte, ecx partner, edx +1 opening / -1 closing / 0 none
 bracket_kind:
+    mov r8, [rip + br_set]
+    test r8, r8
+    jnz 0f
     lea r8, [rip + .Lbrackets]
+0:
     xor edx, edx
 1:  movzx ecx, byte ptr [r8 + rdx]
     test ecx, ecx
@@ -4273,6 +4294,7 @@ pair_close: .asciz ")]}\"'`"
 .Ltab_arrow: .ascii "\342\206\222"
 .Lmiddot: .ascii "\302\267"
 .Lbrackets: .asciz "()[]{}"
+.Lbc_space: .asciz " "
 
 .text
 # ---------------- the widest line (horizontal scrollbar) ----------------
@@ -4622,6 +4644,7 @@ g_br: .quad -1, -1
 .globl g_br_doc
 g_br_doc: .quad 0               # what g_br was found for: doc (0: nothing), version, caret, anchor, setting
 br_ver: .quad 0
+br_set: .quad 0                 # the bracket pairs of the document matched (lc_bracket_str)
 br_cur: .quad 0
 br_anchor: .quad 0
 br_on: .long 0

@@ -33,6 +33,24 @@ int main(void) {
 }
 '''
 
+THREAD_C = '''#include <pthread.h>
+#include <stdio.h>
+static int work(int n) {
+    int r = n * 2;
+    return r;
+}
+static void *worker(void *arg) {
+    printf("worker %d\\n", work(21));
+    return 0;
+}
+int main(void) {
+    pthread_t t;
+    pthread_create(&t, 0, worker, 0);
+    pthread_join(t, 0);
+    return 7;
+}
+'''
+
 SPIN_C = '''#include <unistd.h>
 int main(void) {
     for (;;)
@@ -193,6 +211,28 @@ class LldbDap(Real):
         self.assertEqual(len(sessions), 2, out)            # one stop only
         logs = [l for l in out if 'adding_' in l]
         self.assertEqual([l.split()[-1] for l in logs], ['adding_0', 'adding_1', 'adding_2'], out)
+
+    def test_a_worker_thread_stop_and_continue(self):
+        # lldb-dap's first thread list leaves the worker out: it is listed anyway, with its frames,
+        #   and Continue names it
+        src = self.proj / 'thread.c'
+        src.write_text(THREAD_C, encoding='utf-8')
+        subprocess.run(['cc', '-g', '-O0', '-pthread', '-o', str(self.proj / 'thread'), str(src)], check=True)
+        self.launch_ini('[Thread]\ntype = c\nprogram = thread\n')
+        out = self.run_real(['bp %s 4' % src, *self.start('Thread'), 'wait-debug paused 60000', 'wait 500',
+                             'print-debug', 'print-stack', 'print-vars', 'echo --', 'debug-continue',
+                             'wait-debug ended 30000', 'print-debug'], files=('thread.c',))
+        first, second = out[:out.index('--')], out[out.index('--') + 1:]
+        session = self.debug_lines(first)[0]
+        self.assertEqual(self.field(session, 'state'), 'paused', out)
+        thread = self.field(session, 'thread')
+        focused = [l for l in first if l.startswith('thread %s ' % thread)]
+        self.assertTrue(focused and focused[0].endswith(' *'), first)
+        frames = [l.split()[2] for l in first if l.startswith('  frame ')]
+        self.assertEqual(frames[:2], ['work', 'worker'], first)
+        self.assertIn('n', [v.split(' = ')[0] for v in self.vars(first)], first)
+        ended = self.debug_lines(second)[0]
+        self.assertEqual((self.field(ended, 'state'), self.field(ended, 'exit')), ('ended', '7'), second)
 
     def test_stop_kills_the_program(self):
         spin = self.proj / ('spin-%d' % os.getpid())

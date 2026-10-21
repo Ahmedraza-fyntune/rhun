@@ -1481,6 +1481,7 @@ FN query_dump_pending
 .Lk_ed_open: .asciz "editor-open"
 .Lk_ed_save: .asciz "editor-save"
 .Lk_ed_cmd: .asciz "editor-undo"
+.Lk_debug_resolve: .asciz "debug-resolve"
 .p2align 3
 qs_names: .quad .Lq_asked, .Lq_cold, .Lq_answered, .Lq_empty, .Lq_failed, .Lq_expired
     .quad .Lq_late, .Lq_dropped, .Lq_cancelled, 0
@@ -1554,3 +1555,5 @@ pk_table:
     PK .Lk_ed_open, EXT_pv_editor, 0, 0, 0, PKF_SILENT, 1, 65536, 1, 65536
     PK .Lk_ed_save, EXT_pv_editor, 0, 0, 0, PKF_SILENT | PKF_SUB, 1, 4194368, 1, 4194368
     PK .Lk_ed_cmd, EXT_pv_editor, 0, 0, 0, PKF_SILENT | PKF_SUB, 1, 65536, 1, 65536
+    # debugger (debugext.s): debug-resolve keeps its own 60 s; a configuration body of 1 MB at most
+    PK .Lk_debug_resolve, 0, 0, 0, 0, PKF_SILENT, 1, 1048576, 1, 1048576

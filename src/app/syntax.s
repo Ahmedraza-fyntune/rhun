@@ -388,6 +388,15 @@ FN grammar_fill
     call .Lgp_flag
     test eax, eax
     jnz .Lgp_next
+    # language configuration: brackets, autoclose, indent_open, continue, fold_markers ... (langconf.s)
+    mov rdi, rbx
+    mov rsi, [rsp + 112 + INI_key]
+    mov rdx, [rsp + 112 + INI_keylen]
+    mov rcx, r14
+    mov r8, r15
+    call lc_grammar_key
+    test eax, eax
+    jnz .Lgp_next
     # word lists: "<class>s = words" e.g. keywords, types, constants, builtins, attributes, variables, tags, preprocs
     mov rdi, [rsp + 112 + INI_key]
     mov rsi, [rsp + 112 + INI_keylen]
@@ -485,7 +494,18 @@ FN grammar_fill
     jmp 3f
 32: inc dword ptr [rip + g_grammar_warnings]
     mov r9d, C_COMMENT
-3:  mov rdi, rbx
+3:  mov [rsp + 48], r9d
+    cmp r9d, C_COMMENT
+    jne 33f
+    # the first block comment: what Toggle Comment uses without a line comment (langconf.s)
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    mov rcx, [rsp + 16]
+    mov r8, [rsp + 24]
+    call lc_grammar_block
+33: mov r9d, [rsp + 48]
+    mov rdi, rbx
     mov rsi, [rsp]
     mov rdx, [rsp + 8]
     mov rcx, [rsp + 16]
@@ -815,6 +835,7 @@ load_user_grammar:
     mov rsi, rdx
     call grammar_parse
     mov r12, rax
+    or qword ptr [r12 + GR_flags], GF_USER
     lea rdi, [rip + g_grammars]
     mov esi, 8
     call vec_push

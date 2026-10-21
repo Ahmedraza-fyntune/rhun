@@ -285,25 +285,49 @@ FN icon_spec_draw
     call ei_check_grey
 3:  cmp dword ptr [r14 + EI_state], 1
     jne 8f
+    lea rdi, [r14 + EI_state]   # (an EI holds a PIC there)
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    call icon_png_draw
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN icon_png_draw(PIC*, x, y, size, argb) -> eax 1 when it drew the read picture, size x size (at most
+#   EI_DRAW_MAX), as it is or (PIC_mask) its alpha in argb's color
+FN icon_png_draw
+    PROLOGUE 16
+    mov r14, rdi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    cmp dword ptr [r14 + PIC_state], 1
+    jne 8f
+    lea eax, [rcx - 1]
+    cmp eax, EI_DRAW_MAX - 1
+    ja 8f
     # the kept copy at this size
     mov eax, [rsp + 8]
-    cmp [r14 + EI_size], eax
+    cmp [r14 + PIC_size], eax
     jne 4f
-    cmp qword ptr [r14 + EI_px], 0
+    cmp qword ptr [r14 + PIC_px], 0
     jne 5f
-4:  mov rdi, [r14 + EI_px]
+4:  mov rdi, [r14 + PIC_px]
     call mem_free
-    mov qword ptr [r14 + EI_px], 0
-    lea rdi, [r14 + EI_img]
+    mov qword ptr [r14 + PIC_px], 0
+    lea rdi, [r14 + PIC_img]
     mov esi, [rsp + 8]
     call icon_fit
     test rax, rax
     jz 8f
-    mov [r14 + EI_px], rax
+    mov [r14 + PIC_px], rax
     mov eax, [rsp + 8]
-    mov [r14 + EI_size], eax
-5:  mov rsi, [r14 + EI_px]
-    cmp dword ptr [r14 + EI_grey], 0
+    mov [r14 + PIC_size], rax
+5:  mov rsi, [r14 + PIC_px]
+    cmp dword ptr [r14 + PIC_mask], 0
     je 7f
     # a mask: its alpha in argb's color
     mov ecx, [rsp + 8]
