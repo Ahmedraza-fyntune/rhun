@@ -305,7 +305,13 @@ goto_match:
     js 1f
     add rax, rcx
     jmp .Lgm_sel
-1:  # wrap
+1:  mov edi, 1                  # notebooks (A4): the next cell with a match, before wrapping
+    mov rsi, r12
+    mov rdx, r13
+    call nb_find_step
+    test eax, eax
+    jnz 9f
+    # wrap
     mov rdi, r14
     mov rsi, r15
     mov rdx, r12
@@ -343,7 +349,14 @@ goto_match:
 4:  mov rax, [rsp + 16]
     test rax, rax
     jns .Lgm_sel
-    mov rax, r8
+    mov [rsp + 16], r8          # notebooks (A4): the previous cell with a match, before wrapping
+    mov edi, -1
+    mov rsi, r12
+    mov rdx, r13
+    call nb_find_step
+    test eax, eax
+    jnz 9f
+    mov rax, [rsp + 16]
     test rax, rax
     js 9f
 .Lgm_sel:
@@ -818,7 +831,12 @@ find_rect:
 
 # find_blocks_editor() -> 1 when the pointer is over the open find overlay.
 FN find_blocks_editor
-    xor eax, eax
+    call peek_blocks_editor     # language features: the peek view and the hover card over the
+    test eax, eax               # text (peek.s, hovercard.s)
+    jnz 1f
+    call hovercard_blocks_editor
+    test eax, eax
+    jnz 1f
     cmp dword ptr [rip + find_open], 0
     je 1f
     cmp qword ptr [rip + g_doc], 0

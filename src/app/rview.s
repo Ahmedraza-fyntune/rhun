@@ -5632,9 +5632,8 @@ FN views_field
     call form_field
     pop rbx
     ret
-8:  xor eax, eax
-    pop rbx
-    ret
+8:  pop rbx
+    jmp dview_console_field     # debugger: the Debug Console's input (debugview.s), or 0
 
 # rview_focused_form() -> rax the form of the form view with the keyboard, or 0
 FN rview_focused_form

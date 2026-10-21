@@ -8,26 +8,26 @@
 
 # a test process
 STRUCT
-F TX_ext, 8             # its controller, 0 for a free slot
-F TX_run, 8             # its run (TSR*, slots never move) and that run's number
-F TX_runnum, 8
-F TX_exec, 8            # the number the extension knows it by
-F TX_pid, 4
-F TX_out, 4             # the read ends of its output and error pipes, -1 once closed
-F TX_err, 4
-F TX_status, 4          # its wait status once reaped, -1 before
-F TX_killed, 4          # 1: rhun stopped it (Cancel, the run ending, the extension stopping)
-F TX_paused, 4          # 1: its pipes wait for the extension's queue
-F TX_orphan, 4          # 1: its extension stopped; nothing more is sent
-F TX_handed, 4          # 1: stopped through uproc_end, which kills and reaps its whole group
-F TX_term_at, 8         # time_ms of the SIGTERM to its group, 0 none: SIGKILL 2 s later
-F TX_exit_at, 8         # time_ms it was reaped with a pipe still open (a child keeps it)
-ENDSTRUCT TX_SIZE
-.equ TX_LINGER_MS, 2000         # a pipe kept open after the program ended is closed this long after
+F TSX_ext, 8             # its controller, 0 for a free slot
+F TSX_run, 8             # its run (TSR*, slots never move) and that run's number
+F TSX_runnum, 8
+F TSX_exec, 8            # the number the extension knows it by
+F TSX_pid, 4
+F TSX_out, 4             # the read ends of its output and error pipes, -1 once closed
+F TSX_err, 4
+F TSX_status, 4          # its wait status once reaped, -1 before
+F TSX_killed, 4          # 1: rhun stopped it (Cancel, the run ending, the extension stopping)
+F TSX_paused, 4          # 1: its pipes wait for the extension's queue
+F TSX_orphan, 4          # 1: its extension stopped; nothing more is sent
+F TSX_handed, 4          # 1: stopped through uproc_end, which kills and reaps its whole group
+F TSX_term_at, 8         # time_ms of the SIGTERM to its group, 0 none: SIGKILL 2 s later
+F TSX_exit_at, 8         # time_ms it was reaped with a pipe still open (a child keeps it)
+ENDSTRUCT TSX_SIZE
+.equ TSX_LINGER_MS, 2000         # a pipe kept open after the program ended is closed this long after
 
 .bss
 .p2align 3
-procs: .zero TX_SIZE * TS_PROCS_ALL
+procs: .zero TSX_SIZE * TS_PROCS_ALL
 exec_next: .quad 0              # the last EXEC number given
 rbuf: .zero TS_OUT_EVENT
 eb: .zero SB_SIZE               # an event being built
@@ -62,7 +62,7 @@ FN testexec_request
     mov [rsp + 8], rcx
     mov [rsp + 16], r8
     cmp qword ptr [rip + parked_ext], 0
-    jne .Lxr_busy_open          # one approval question at a time (its lists are in use)
+    jne .Lxr_parked             # one approval question at a time (its lists are in use)
     call free_lists
     # a folder a link opened runs nothing of its own until it is trusted
     cmp dword ptr [rip + g_git_paused], 0
@@ -82,13 +82,13 @@ FN testexec_request
     xor edx, edx
     lea rax, [rip + procs]
     xor r8d, r8d
-1:  cmp qword ptr [rax + TX_ext], 0
+1:  cmp qword ptr [rax + TSX_ext], 0
     je 2f
     inc ecx
-    cmp [rax + TX_run], r12
+    cmp [rax + TSX_run], r12
     jne 2f
     inc edx
-2:  add rax, TX_SIZE
+2:  add rax, TSX_SIZE
     inc r8d
     cmp r8d, TS_PROCS_ALL
     jb 1b
@@ -135,6 +135,12 @@ FN testexec_request
     mov rdi, [rsp]
     call testproto_reply_error
     call free_lists
+    EPILOGUE
+.Lxr_parked:
+    # the parked request keeps its command: answered without touching the lists
+    mov rdi, [rsp]
+    lea rsi, [rip + .Le_busy_open]
+    call testproto_reply_error
     EPILOGUE
 .Lxr_needs:
     # "needs tests=NAME"
@@ -367,7 +373,10 @@ exec_start:
 .Lxs_spawn:
     mov rdi, [rip + args + VEC_ptr]
     mov rsi, [rsp + 8]
-    lea rdx, [rip + realcwd]
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    mov rsi, [rip + envs + VEC_ptr]  # a remote window: only the request's variables (the host
+1:  lea rdx, [rip + realcwd]         #   has its own environment)
     call testexec_spawn
     mov r15, rax
     test r15, r15
@@ -375,37 +384,37 @@ exec_start:
     # the slot
     lea rax, [rip + procs]
     xor ecx, ecx
-4:  cmp qword ptr [rax + TX_ext], 0
+4:  cmp qword ptr [rax + TSX_ext], 0
     je 5f
-    add rax, TX_SIZE
+    add rax, TSX_SIZE
     inc ecx
     cmp ecx, TS_PROCS_ALL
     jb 4b
 5:  mov r14, rax
     mov rdi, r14
     xor esi, esi
-    mov edx, TX_SIZE
+    mov edx, TSX_SIZE
     call memset
-    mov [r14 + TX_ext], rbx
-    mov [r14 + TX_run], r12
+    mov [r14 + TSX_ext], rbx
+    mov [r14 + TSX_run], r12
     mov rax, [r12 + TSR_num]
-    mov [r14 + TX_runnum], rax
+    mov [r14 + TSX_runnum], rax
     inc qword ptr [rip + exec_next]
     mov rax, [rip + exec_next]
-    mov [r14 + TX_exec], rax
-    mov [r14 + TX_pid], r15d
-    mov dword ptr [r14 + TX_status], -1
+    mov [r14 + TSX_exec], rax
+    mov [r14 + TSX_pid], r15d
+    mov dword ptr [r14 + TSX_status], -1
     mov eax, [rip + pipe_out]
-    mov [r14 + TX_out], eax
+    mov [r14 + TSX_out], eax
     mov eax, [rip + pipe_err]
-    mov [r14 + TX_err], eax
+    mov [r14 + TSX_err], eax
     inc dword ptr [r12 + TSR_procs]
-    mov edi, [r14 + TX_out]
+    mov edi, [r14 + TSX_out]
     mov esi, POLLIN
     lea rdx, [rip + on_pipe]
     mov rcx, r14
     call watch_add
-    mov edi, [r14 + TX_err]
+    mov edi, [r14 + TSX_err]
     test edi, edi
     js 6f                       # a remote window's program: its errors come with its output
     mov esi, POLLIN
@@ -413,7 +422,7 @@ exec_start:
     mov rcx, r14
     call watch_add
 6:  mov rdi, [rsp]
-    mov rsi, [r14 + TX_exec]
+    mov rsi, [r14 + TSX_exec]
     call testproto_reply_ok_u64
     mov dword ptr [rip + g_ts_dirty], 1
     mov dword ptr [rip + g_dirty], 1
@@ -884,17 +893,17 @@ FN testexec_spawn
 71: mov rax, r15
 9:  EPILOGUE
 
-# on_pipe(fd, events, TX*): what the process wrote, as a test-out event; end of file closes the pipe
+# on_pipe(fd, events, TSX*): what the process wrote, as a test-out event; end of file closes the pipe
 on_pipe:
     PROLOGUE
     mov r12d, edi
     mov rbx, rdx
-    cmp qword ptr [rbx + TX_ext], 0
+    cmp qword ptr [rbx + TSX_ext], 0
     je 9f
     # back-pressure: the extension's queue first
-    cmp dword ptr [rbx + TX_orphan], 0
+    cmp dword ptr [rbx + TSX_orphan], 0
     jne 1f
-    mov rdi, [rbx + TX_ext]
+    mov rdi, [rbx + TSX_ext]
     call queue_full
     test eax, eax
     jz 1f
@@ -912,7 +921,7 @@ on_pipe:
     test rax, rax
     jle 5f
     mov r13, rax
-    cmp dword ptr [rbx + TX_orphan], 0
+    cmp dword ptr [rbx + TSX_orphan], 0
     jne 9f
     # "0 test-out EXEC STREAM LEN" + the bytes
     lea rdi, [rip + eb]
@@ -921,10 +930,10 @@ on_pipe:
     lea rsi, [rip + .Lev_out]
     call sb_push_cstr
     lea rdi, [rip + eb]
-    mov rsi, [rbx + TX_exec]
+    mov rsi, [rbx + TSX_exec]
     call sb_push_u64
     lea rsi, [rip + .Ls_out]
-    cmp r12d, [rbx + TX_out]
+    cmp r12d, [rbx + TSX_out]
     je 2f
     lea rsi, [rip + .Ls_err]
 2:  lea rdi, [rip + eb]
@@ -939,7 +948,7 @@ on_pipe:
     lea rsi, [rip + rbuf]
     mov rdx, r13
     call sb_push
-    mov rdi, [rbx + TX_ext]
+    mov rdi, [rbx + TSX_ext]
     mov rsi, [rip + eb + SB_ptr]
     mov rdx, [rip + eb + SB_len]
     call testproto_event
@@ -949,11 +958,11 @@ on_pipe:
     call watch_remove
     mov edi, r12d
     SYS SYS_close
-    cmp r12d, [rbx + TX_out]
+    cmp r12d, [rbx + TSX_out]
     jne 6f
-    mov dword ptr [rbx + TX_out], -1
+    mov dword ptr [rbx + TSX_out], -1
     jmp 7f
-6:  mov dword ptr [rbx + TX_err], -1
+6:  mov dword ptr [rbx + TSX_err], -1
 7:  mov rdi, rbx
     call try_finish
 9:  EPILOGUE
@@ -967,25 +976,25 @@ queue_full:
     movzx eax, al
     ret
 
-# pause_pipes(TX*), resume_pipes(TX*): its open pipes stop (start) being watched for input
+# pause_pipes(TSX*), resume_pipes(TSX*): its open pipes stop (start) being watched for input
 pause_pipes:
     xor esi, esi
-    mov dword ptr [rdi + TX_paused], 1
+    mov dword ptr [rdi + TSX_paused], 1
     jmp set_pipes
 resume_pipes:
     mov esi, POLLIN
-    mov dword ptr [rdi + TX_paused], 0
+    mov dword ptr [rdi + TSX_paused], 0
 set_pipes:
     push rbx
     push r12
     push r12
     mov rbx, rdi
     mov r12d, esi
-    mov edi, [rbx + TX_out]
+    mov edi, [rbx + TSX_out]
     test edi, edi
     js 1f
     call watch_set_events
-1:  mov edi, [rbx + TX_err]
+1:  mov edi, [rbx + TSX_err]
     test edi, edi
     js 2f
     mov esi, r12d
@@ -995,40 +1004,40 @@ set_pipes:
     pop rbx
     ret
 
-# try_finish(TX*): once both pipes are closed and the program is reaped, test-exit goes out and the
+# try_finish(TSX*): once both pipes are closed and the program is reaped, test-exit goes out and the
 #   slot is free
 try_finish:
     PROLOGUE
     mov rbx, rdi
-    cmp dword ptr [rbx + TX_handed], 0
+    cmp dword ptr [rbx + TSX_handed], 0
     je 0f
-    cmp dword ptr [rbx + TX_out], 0
+    cmp dword ptr [rbx + TSX_out], 0
     jge 9f
-    cmp dword ptr [rbx + TX_err], 0
+    cmp dword ptr [rbx + TSX_err], 0
     jge 9f
     mov rdi, rbx
     call report_exit            # "killed"; uproc reaps it
     jmp 9f
-0:  cmp dword ptr [rbx + TX_status], -1
+0:  cmp dword ptr [rbx + TSX_status], -1
     jne 1f
     mov rdi, rbx
     call reap
-1:  cmp dword ptr [rbx + TX_status], -1
+1:  cmp dword ptr [rbx + TSX_status], -1
     je 9f
-    cmp dword ptr [rbx + TX_out], 0
+    cmp dword ptr [rbx + TSX_out], 0
     jge 9f
-    cmp dword ptr [rbx + TX_err], 0
+    cmp dword ptr [rbx + TSX_err], 0
     jge 9f
     mov rdi, rbx
     call report_exit
 9:  EPILOGUE
 
-# reap(TX*): its wait status once it has ended, as uproc_wait (proc_wait for a remote window's
+# reap(TSX*): its wait status once it has ended, as uproc_wait (proc_wait for a remote window's
 #   program) tells it without waiting: exit code N becomes N << 8, 128 + N signal N, as wait4 has them
 reap:
     push rbx
     mov rbx, rdi
-    mov edi, [rbx + TX_pid]
+    mov edi, [rbx + TSX_pid]
     mov esi, 1
     test edi, REMOTE_PID_TAG
     jnz 1f
@@ -1039,31 +1048,31 @@ reap:
     je 9f                       # still running
     cmp eax, -2
     jne 3f
-    mov dword ptr [rbx + TX_status], 9    # not ours any more: as if killed
-    mov dword ptr [rbx + TX_killed], 1
+    mov dword ptr [rbx + TSX_status], 9    # not ours any more: as if killed
+    mov dword ptr [rbx + TSX_killed], 1
     jmp 5f
 3:  cmp eax, 129
     jb 4f
     cmp eax, 192
     jae 4f
     sub eax, 128
-    mov [rbx + TX_status], eax
+    mov [rbx + TSX_status], eax
     jmp 5f
 4:  shl eax, 8
-    mov [rbx + TX_status], eax
+    mov [rbx + TSX_status], eax
 5:  call time_ms
-    mov [rbx + TX_exit_at], rax
+    mov [rbx + TSX_exit_at], rax
 9:  pop rbx
     ret
 
-# report_exit(TX*): "0 test-exit EXEC CODE" (CODE the exit status, "signal N", "killed"); pipes still
+# report_exit(TSX*): "0 test-exit EXEC CODE" (CODE the exit status, "signal N", "killed"); pipes still
 #   open are closed; the slot is free
 report_exit:
     PROLOGUE
     mov rbx, rdi
     mov rdi, rbx
     call close_pipes
-    cmp dword ptr [rbx + TX_orphan], 0
+    cmp dword ptr [rbx + TSX_orphan], 0
     jne 8f
     lea rdi, [rip + eb]
     call sb_clear
@@ -1071,18 +1080,18 @@ report_exit:
     lea rsi, [rip + .Lev_exit]
     call sb_push_cstr
     lea rdi, [rip + eb]
-    mov rsi, [rbx + TX_exec]
+    mov rsi, [rbx + TSX_exec]
     call sb_push_u64
     lea rdi, [rip + eb]
     mov esi, ' '
     call sb_push_byte
-    cmp dword ptr [rbx + TX_killed], 0
+    cmp dword ptr [rbx + TSX_killed], 0
     je 1f
     lea rdi, [rip + eb]
     lea rsi, [rip + .Ls_killed]
     call sb_push_cstr
     jmp 3f
-1:  mov eax, [rbx + TX_status]
+1:  mov eax, [rbx + TSX_status]
     mov ecx, eax
     and ecx, 0x7f
     jz 2f
@@ -1104,13 +1113,13 @@ report_exit:
 3:  lea rdi, [rip + eb]
     mov esi, 10
     call sb_push_byte
-    mov rdi, [rbx + TX_ext]
+    mov rdi, [rbx + TSX_ext]
     mov rsi, [rip + eb + SB_ptr]
     mov rdx, [rip + eb + SB_len]
     call testproto_event
 8:  # its run counts one process less (when it is still that run)
-    mov rax, [rbx + TX_run]
-    mov rcx, [rbx + TX_runnum]
+    mov rax, [rbx + TSX_run]
+    mov rcx, [rbx + TSX_runnum]
     cmp [rax + TSR_num], rcx
     jne 81f
     cmp dword ptr [rax + TSR_procs], 0
@@ -1118,47 +1127,47 @@ report_exit:
     dec dword ptr [rax + TSR_procs]
 81: mov rdi, rbx
     xor esi, esi
-    mov edx, TX_SIZE
+    mov edx, TSX_SIZE
     call memset
     mov dword ptr [rip + g_ts_dirty], 1
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
-# close_pipes(TX*): the pipes still open, unwatched and closed
+# close_pipes(TSX*): the pipes still open, unwatched and closed
 close_pipes:
     push rbx
     mov rbx, rdi
-    mov edi, [rbx + TX_out]
+    mov edi, [rbx + TSX_out]
     test edi, edi
     js 1f
     call watch_remove
-    mov edi, [rbx + TX_out]
+    mov edi, [rbx + TSX_out]
     SYS SYS_close
-    mov dword ptr [rbx + TX_out], -1
-1:  mov edi, [rbx + TX_err]
+    mov dword ptr [rbx + TSX_out], -1
+1:  mov edi, [rbx + TSX_err]
     test edi, edi
     js 2f
     call watch_remove
-    mov edi, [rbx + TX_err]
+    mov edi, [rbx + TSX_err]
     SYS SYS_close
-    mov dword ptr [rbx + TX_err], -1
+    mov dword ptr [rbx + TSX_err], -1
 2:  pop rbx
     ret
 
-# stop(TX*, signal): the signal to its process group, while the group's number is still held (its
+# stop(TSX*, signal): the signal to its process group, while the group's number is still held (its
 #   leader not reaped, or a pipe still open, which a member of the group keeps)
 stop:
-    mov dword ptr [rdi + TX_killed], 1
-    cmp dword ptr [rdi + TX_status], -1
+    mov dword ptr [rdi + TSX_killed], 1
+    cmp dword ptr [rdi + TSX_status], -1
     je 1f
-    cmp dword ptr [rdi + TX_out], 0
+    cmp dword ptr [rdi + TSX_out], 0
     jge 1f
-    cmp dword ptr [rdi + TX_err], 0
+    cmp dword ptr [rdi + TSX_err], 0
     jge 1f
     ret
 1:  push rbx
     mov rbx, rdi
-    mov edi, [rbx + TX_pid]
+    mov edi, [rbx + TSX_pid]
     test edi, REMOTE_PID_TAG
     jnz 2f
     call uproc_signal           # its whole group, while it is ours
@@ -1169,23 +1178,23 @@ stop:
     pop rbx
     ret
 
-# term(TX*): SIGTERM now, SIGKILL in 2 s
+# term(TSX*): SIGTERM now, SIGKILL in 2 s
 term:
     push rbx
     mov rbx, rdi
-    cmp qword ptr [rbx + TX_term_at], 0
+    cmp qword ptr [rbx + TSX_term_at], 0
     jne 9f
-    mov dword ptr [rbx + TX_killed], 1
+    mov dword ptr [rbx + TSX_killed], 1
     call time_ms
-    mov [rbx + TX_term_at], rax
-    cmp dword ptr [rbx + TX_status], -1
+    mov [rbx + TSX_term_at], rax
+    cmp dword ptr [rbx + TSX_status], -1
     jne 9f                      # reaped: its group is no longer ours to signal
-    test dword ptr [rbx + TX_pid], REMOTE_PID_TAG
+    test dword ptr [rbx + TSX_pid], REMOTE_PID_TAG
     jnz 1f
     # uproc keeps the group to the end: SIGTERM now, SIGKILL in 2 s even when the leader is gone
     # by then (a child that ignores SIGTERM dies too), reaped there
-    mov dword ptr [rbx + TX_handed], 1
-    mov edi, [rbx + TX_pid]
+    mov dword ptr [rbx + TSX_handed], 1
+    mov edi, [rbx + TSX_pid]
     mov esi, TS_CANCEL_KILL_MS
     call uproc_end
     jmp 9f
@@ -1204,13 +1213,13 @@ FN testexec_run_over
     call unpark
     lea rbx, [rip + procs]
     xor r13d, r13d
-1:  cmp qword ptr [rbx + TX_ext], 0
+1:  cmp qword ptr [rbx + TSX_ext], 0
     je 2f
-    cmp [rbx + TX_run], r12
+    cmp [rbx + TSX_run], r12
     jne 2f
     mov rdi, rbx
     call term
-2:  add rbx, TX_SIZE
+2:  add rbx, TSX_SIZE
     inc r13d
     cmp r13d, TS_PROCS_ALL
     jb 1b
@@ -1228,16 +1237,16 @@ FN testexec_ext_gone
     call unpark
     lea rbx, [rip + procs]
     xor r13d, r13d
-1:  cmp [rbx + TX_ext], r12
+1:  cmp [rbx + TSX_ext], r12
     jne 2f
-    mov dword ptr [rbx + TX_orphan], 1
-    cmp dword ptr [rbx + TX_paused], 0
+    mov dword ptr [rbx + TSX_orphan], 1
+    cmp dword ptr [rbx + TSX_paused], 0
     je 11f
     mov rdi, rbx
     call resume_pipes           # drained and dropped from now on
 11: mov rdi, rbx
     call term
-2:  add rbx, TX_SIZE
+2:  add rbx, TSX_SIZE
     inc r13d
     cmp r13d, TS_PROCS_ALL
     jb 1b
@@ -1248,20 +1257,20 @@ FN testexec_quit
     PROLOGUE
     lea rbx, [rip + procs]
     xor r13d, r13d
-1:  cmp qword ptr [rbx + TX_ext], 0
+1:  cmp qword ptr [rbx + TSX_ext], 0
     je 2f
-    mov dword ptr [rbx + TX_orphan], 1
+    mov dword ptr [rbx + TSX_orphan], 1
     mov rdi, rbx
     mov esi, SIGKILL
     call stop
-    cmp dword ptr [rbx + TX_status], -1
+    cmp dword ptr [rbx + TSX_status], -1
     jne 11f
-    mov edi, [rbx + TX_pid]
+    mov edi, [rbx + TSX_pid]
     xor esi, esi
     call proc_wait
 11: mov rdi, rbx
     call close_pipes
-2:  add rbx, TX_SIZE
+2:  add rbx, TSX_SIZE
     inc r13d
     cmp r13d, TS_PROCS_ALL
     jb 1b
@@ -1275,32 +1284,32 @@ FN testexec_tick
     mov r14, rax
     lea rbx, [rip + procs]
     xor r13d, r13d
-1:  cmp qword ptr [rbx + TX_ext], 0
+1:  cmp qword ptr [rbx + TSX_ext], 0
     je 6f
-    cmp dword ptr [rbx + TX_paused], 0
+    cmp dword ptr [rbx + TSX_paused], 0
     je 2f
-    cmp dword ptr [rbx + TX_orphan], 0
+    cmp dword ptr [rbx + TSX_orphan], 0
     jne 11f
-    mov rdi, [rbx + TX_ext]
+    mov rdi, [rbx + TSX_ext]
     call queue_full
     test eax, eax
     jnz 2f
 11: mov rdi, rbx
     call resume_pipes
-2:  cmp dword ptr [rbx + TX_handed], 0
+2:  cmp dword ptr [rbx + TSX_handed], 0
     je 21f
     mov rcx, r14                # handed to uproc: done once its pipes close, or a while after
-    sub rcx, [rbx + TX_term_at] #   the SIGKILL with pipes a stray process keeps
-    cmp rcx, TS_CANCEL_KILL_MS + TX_LINGER_MS
+    sub rcx, [rbx + TSX_term_at] #   the SIGKILL with pipes a stray process keeps
+    cmp rcx, TS_CANCEL_KILL_MS + TSX_LINGER_MS
     jb 6f
     mov rdi, rbx
     call report_exit
     jmp 6f
-21: cmp dword ptr [rbx + TX_status], -1
+21: cmp dword ptr [rbx + TSX_status], -1
     jne 3f
     mov rdi, rbx
     call reap
-3:  mov rax, [rbx + TX_term_at]
+3:  mov rax, [rbx + TSX_term_at]
     test rax, rax
     jz 4f
     mov rcx, r14
@@ -1310,23 +1319,23 @@ FN testexec_tick
     mov rdi, rbx
     mov esi, SIGKILL
     call stop                   # a remote window's program (local ones are handed)
-4:  cmp dword ptr [rbx + TX_status], -1
+4:  cmp dword ptr [rbx + TSX_status], -1
     je 6f
     # ended: done when its pipes are, or a while after with pipes a child keeps
-    cmp dword ptr [rbx + TX_out], 0
+    cmp dword ptr [rbx + TSX_out], 0
     jge 5f
-    cmp dword ptr [rbx + TX_err], 0
+    cmp dword ptr [rbx + TSX_err], 0
     jge 5f
     mov rdi, rbx
     call report_exit
     jmp 6f
 5:  mov rcx, r14
-    sub rcx, [rbx + TX_exit_at]
-    cmp rcx, TX_LINGER_MS
+    sub rcx, [rbx + TSX_exit_at]
+    cmp rcx, TSX_LINGER_MS
     jb 6f
     mov rdi, rbx
     call report_exit
-6:  add rbx, TX_SIZE
+6:  add rbx, TSX_SIZE
     inc r13d
     cmp r13d, TS_PROCS_ALL
     jb 1b
@@ -1337,14 +1346,14 @@ FN testexec_timeout
     mov rax, -1
     lea rcx, [rip + procs]
     xor edx, edx
-1:  cmp qword ptr [rcx + TX_ext], 0
+1:  cmp qword ptr [rcx + TSX_ext], 0
     je 2f
     mov eax, 50                 # a running program is polled for its end; pipes wake rhun anyway
-    cmp dword ptr [rcx + TX_paused], 0
+    cmp dword ptr [rcx + TSX_paused], 0
     je 2f
     mov eax, 10
     ret
-2:  add rcx, TX_SIZE
+2:  add rcx, TSX_SIZE
     inc edx
     cmp edx, TS_PROCS_ALL
     jb 1b
@@ -1357,36 +1366,36 @@ FN testexec_dump
     mov r12, rdi
     lea rbx, [rip + procs]
     xor r13d, r13d
-1:  cmp qword ptr [rbx + TX_ext], 0
+1:  cmp qword ptr [rbx + TSX_ext], 0
     je 2f
     mov rdi, r12
     lea rsi, [rip + .Lp_exec]
     call sb_push_cstr
     mov rdi, r12
-    mov rsi, [rbx + TX_exec]
+    mov rsi, [rbx + TSX_exec]
     call sb_push_u64
     mov rdi, r12
     lea rsi, [rip + .Lp_run]
     call sb_push_cstr
     mov rdi, r12
-    mov rsi, [rbx + TX_runnum]
+    mov rsi, [rbx + TSX_runnum]
     call sb_push_u64
     mov rdi, r12
     lea rsi, [rip + .Lp_killed]
     call sb_push_cstr
     mov rdi, r12
-    mov esi, [rbx + TX_killed]
+    mov esi, [rbx + TSX_killed]
     call sb_push_u64
     mov rdi, r12
     lea rsi, [rip + .Lp_paused]
     call sb_push_cstr
     mov rdi, r12
-    mov esi, [rbx + TX_paused]
+    mov esi, [rbx + TSX_paused]
     call sb_push_u64
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
-2:  add rbx, TX_SIZE
+2:  add rbx, TSX_SIZE
     inc r13d
     cmp r13d, TS_PROCS_ALL
     jb 1b

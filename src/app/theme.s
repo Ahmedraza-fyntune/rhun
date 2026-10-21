@@ -14,6 +14,8 @@ pending_dark: .quad 0           # and the dark mode's setting before the unknown
 defined: .zero 16                # bit per slot given by the theme
 g_themes: .zero VEC_SIZE
 g_theme_cur: .quad 0            # index into g_themes
+.globl g_theme_gen
+g_theme_gen: .quad 0            # bumped whenever the palette is loaded (caches of resolved colors)
 
 .data
 .globl g_sys_dark
@@ -23,6 +25,7 @@ g_sys_dark: .long -1            # the system's dark mode as the platform reports
 
 # theme_load(text, len): the theme in text, as the active palette
 FN theme_load
+    inc qword ptr [rip + g_theme_gen]   # editor presentation: colors resolved before are stale
     mov r8, rsi
     mov rcx, rdi
     lea rdi, [rip + g_theme]

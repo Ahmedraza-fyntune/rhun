@@ -615,7 +615,11 @@ FN app_doc_tab
     cmp qword ptr [rax + TAB_kind], TAB_DOC
     je 2f
     cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    je 2f
+    cmp qword ptr [rax + TAB_kind], TAB_VIEW    # custom editors
     jne 1b
+    test dword ptr [rax + TAB_flags], TF_CUSTOM
+    jz 1b
 2:  mov rax, [rax + TAB_doc]
     cmp [rax + DOC_id], rdi
     jne 1b
@@ -654,7 +658,17 @@ FN app_save_all
     mov rdi, [r14 + DOC_nb]
     call nb_sync_dirty
     jmp 12f
-11: cmp qword ptr [rax + TAB_kind], TAB_DOC
+11: cmp qword ptr [rax + TAB_kind], TAB_VIEW     # custom editors save too
+    jne 13f
+    test dword ptr [rax + TAB_flags], TF_CUSTOM
+    jz 1b
+    mov r14, [rax + TAB_doc]
+    cmp qword ptr [r14 + DOC_path], 0
+    je 1b
+    mov rdi, r14
+    call doc_dirty
+    jmp 12f
+13: cmp qword ptr [rax + TAB_kind], TAB_DOC
     jne 1b
     mov r14, [rax + TAB_doc]
     test dword ptr [r14 + DOC_flags], DF_READONLY

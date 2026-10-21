@@ -6,6 +6,7 @@ waits for a background task's ready line, leaves dependents unstarted when one f
 task-start and task-run with the task's TERM. Every line the driver gets goes to a log."""
 import json
 import os
+import re
 from pathlib import Path
 import unittest
 
@@ -31,7 +32,7 @@ def rec(name, args, data=b''):
     return (name + (' ' + args if args else '') + f' {len(data)}\n').encode() + data
 
 def task(task_id, label, cmd, extra=b'', form='shell'):
-    cmd = cmd.encode()
+    cmd = cmd.encode() if isinstance(cmd, str) else cmd
     head = f'{task_id} {form} {len(label.encode())} {len(cmd)} 0 {len(extra)}\n'
     return head.encode() + label.encode() + cmd + extra
 
@@ -47,6 +48,22 @@ TASKS = [
     task('par', 'Par', 'echo par-done', rec('depends', 'parallel', b'lint build')),
     task('unit', 'Unit', 'echo testing', rec('group', 'test')),
 ]
+
+# more tasks for the scheduler's tests (pub2): a failing dependency that is still running when its
+# dependent starts, a failed sequence, a shared dependency, a slow one to wait on, a chain past
+# the depth limit
+EXTRA = [
+    task('slowfail', 'SlowFail', 'sleep 1; exit 3'),
+    task('after2', 'After2', 'echo after2-ran', rec('depends', 'sequence', b'slowfail')),
+    task('fs', 'Fs', 'echo fs-ran', rec('depends', 'sequence', b'fail lint')),
+    task('common', 'Common', 'echo common-run'),
+    task('ca', 'Ca', 'echo ca-run', rec('depends', 'sequence', b'common')),
+    task('cb', 'Cb', 'echo cb-run', rec('depends', 'sequence', b'common')),
+    task('croot', 'Croot', 'echo croot-run', rec('depends', 'sequence', b'ca cb')),
+    task('slowdep', 'SlowDep', 'sleep 2'),
+    task('waiter', 'Waiter', 'echo waiter-ran', rec('depends', 'sequence', b'slowdep')),
+] + [task('t0', 'T0', 'true')] + [task(f't{i}', f'T{i}', 'true', rec('depends', 'sequence', f't{i - 1}'.encode()))
+                                  for i in range(1, 10)]
 
 def tasks_set(items):
     body = (str(len(items)) + '\n').encode() + b''.join(items)
@@ -87,10 +104,27 @@ while True:
         send('task-start nothing-here')
     elif name == 'cmdbuild':
         send('cmd run_build_task')
+    elif name == 'pub2':
+        tasks_set(TASKS + EXTRA)
+    elif name.startswith('start_'):
+        send('task-start ' + name[6:])
+    elif name == 'outtask':
+        tasks_set([task('o', 'O', 'echo o', rec('output', ''))])
+    elif name == 'outrun':
+        d = task('o', 'O', 'echo o', rec('output', ''))
+        send('task-run ' + str(len(d)), d)
+    elif name == 'pubout':
+        tasks_set([task('build', 'Build', 'echo building; exit 0', rec('output', ''))])
+    elif name == 'bigtask':
+        big = 'x' * 30000
+        tasks_set([task('big', 'Big', b'echo\0' + big.encode() + b'\0', rec('env', 'BIG', big.encode()), form='argv')])
+    elif name == 'empty':
+        tasks_set([])
 '''
 
 COMMANDS = ('chain', 'smoke', 'after', 'par', 'serve', 'build', 'adhoc', 'dup', 'nodep', 'cycle', 'badpat',
-            'missing', 'cmdbuild')
+            'missing', 'cmdbuild', 'pub2', 'start_slowfail', 'start_after2', 'start_fs', 'start_croot',
+            'start_waiter', 'start_t9', 'outtask', 'outrun', 'pubout', 'bigtask', 'empty')
 
 
 @unittest.skipIf(WINDOWS, 'POSIX shell tasks')
@@ -176,6 +210,94 @@ class Tasks(unittest.TestCase):
         self.assertEqual([line for line in out if line.startswith('prelaunch=')],
                          ['prelaunch=started', 'prelaunch=done', 'prelaunch=started', 'prelaunch=failed',
                           'prelaunch=started', 'prelaunch=done', 'prelaunch=notfound'])
+
+    # --- the scheduler's lifecycles (reviews: tasks2) ---
+
+    def nodes(self, out):
+        return [line for line in out if line.startswith('nodes=')]
+
+    def test_an_output_record_needs_terminal_output(self):
+        self.go(['cmd t/driver.outtask', 'wait 300', 'cmd t/driver.outrun', 'wait 300'])
+        log = self.dlog()
+        self.assertEqual(len(re.findall(r'error \d+ needs terminal=output\n', log)), 2, log)
+        self.assertNotIn('0 terminal-output', log)
+
+    def test_the_palette_keeps_the_definitions_it_shows(self):
+        # the list is replaced while Run Task shows a task whose strings are large
+        out = self.go(['cmd t/driver.bigtask', 'wait 300', 'cmd run_task', 'wait 300', 'cmd t/driver.empty',
+                       'wait 600', 'print-palette', 'key Escape', 'wait 300', 'print-tasks'])
+        self.assertIn('> Big', out)
+        self.assertFalse(any(line.startswith('t/driver id=') for line in out), out)
+
+    def test_a_waiter_on_a_running_task_that_fails(self):
+        out = self.go(['cmd t/driver.pub2', 'wait 300', 'cmd t/driver.start_slowfail', *self.allow(),
+                       'wait-terminal 1 running', 'cmd t/driver.start_after2', 'wait 300', 'wait-terminal 1 ended',
+                       'wait 300', 'print-terminals', 'term-select 2', 'print-term', 'print-task-nodes'])
+        terms = self.terms(out)
+        self.assertIn('task=slowfail state=exited code=3', terms[0])
+        self.assertIn('task=after2 state=failed', terms[1])
+        self.assertIn('── not run: SlowFail failed ──', out)
+        self.assertEqual(self.nodes(out), ['nodes=0'])
+
+    def test_waiting_tabs_are_not_closed_to_make_room(self):
+        # 30 running programs: chain's two dependencies and chain itself need 3 more tabs than fit
+        sleeps = ['term-run --title s -- sleep 30'] * 30
+        out = self.go([*sleeps, 'wait 300', 'cmd t/driver.chain', *self.allow(), 'wait 500', 'print-terminals',
+                       'print-task-nodes'])
+        log = self.dlog()
+        self.assertRegex(log, r'error \d+ busy 32 tasks waiting or running, 8 deep\n')
+        self.assertEqual(self.started_order(log), [])
+        terms = self.terms(out)
+        self.assertEqual(len(terms), 32)
+        self.assertTrue(all('state=failed' in t for t in terms[30:]), terms[30:])
+        self.assertEqual(self.nodes(out), ['nodes=0'])
+
+    def test_closing_a_waiting_tab_fails_its_task(self):
+        out = self.go(['cmd t/driver.pub2', 'wait 300', 'cmd t/driver.start_waiter', *self.allow(),
+                       'wait-terminal 1 running', 'term-close 2', 'wait-terminal 1 ended', 'wait 300',
+                       'print-task-nodes', 'cmd t/driver.start_waiter', 'wait-terminal 3 ended', 'wait 300',
+                       'print-terminals', 'print-task-nodes'])
+        self.assertEqual(self.nodes(out), ['nodes=0', 'nodes=0'])
+        self.assertIn('task=waiter state=exited code=0', '\n'.join(self.terms(out)))
+        self.assertEqual(self.started_order(self.dlog()), ['slowdep', 'slowdep', 'waiter'])
+
+    def test_a_run_past_the_limits_leaves_nothing_behind(self):
+        # t9's chain is 10 deep, past the 8 rhun runs: refused each time, its nodes and tabs let go
+        out = self.go(['cmd t/driver.pub2', 'wait 300', 'cmd t/driver.start_t9', *self.allow(),
+                       *['cmd t/driver.start_t9', 'wait 200'] * 4, 'print-task-nodes', 'cmd t/driver.build',
+                       'wait-terminal 1 ended', 'wait 300', 'print-terminals'])
+        log = self.dlog()
+        self.assertEqual(len(re.findall(r'busy 32 tasks waiting or running, 8 deep', log)), 5, log)
+        self.assertEqual(self.nodes(out), ['nodes=0'])
+        self.assertIn('task=build state=exited code=0', '\n'.join(self.terms(out)))
+
+    def test_a_failed_sequence_lets_go_of_what_did_not_start(self):
+        out = self.go(['cmd t/driver.pub2', 'wait 300', 'cmd t/driver.start_fs', *self.allow(),
+                       'wait-terminal 1 ended', 'wait 300', 'print-terminals', 'print-task-nodes'])
+        terms = self.terms(out)
+        self.assertIn('task=fail state=exited code=2', terms[0])
+        self.assertIn('task=lint state=failed', terms[1])
+        self.assertIn('task=fs state=failed', terms[2])
+        self.assertEqual(self.started_order(self.dlog()), ['fail'])
+        self.assertEqual(self.nodes(out), ['nodes=0'])
+
+    def test_a_shared_dependency_runs_again_for_the_second(self):
+        out = self.go(['cmd t/driver.pub2', 'wait 300', 'cmd t/driver.start_croot', *self.allow(),
+                       'wait-terminal 4 ended', 'wait 300', 'print-terminals', 'print-task-nodes'])
+        self.assertEqual(self.started_order(self.dlog()), ['common', 'ca', 'common', 'cb', 'croot'])
+        self.assertIn('task=croot state=exited code=0', '\n'.join(self.terms(out)))
+        self.assertEqual(self.nodes(out), ['nodes=0'])
+
+    def test_a_reused_tab_follows_the_definition_published_now(self):
+        # output and reveal as the task says when it runs again in its tab
+        out = self.go(['cmd t/driver.build', *self.allow(), 'wait-terminal 1 ended', 'cmd toggle_terminal',
+                       'cmd toggle_terminal',  # the first gives it the keyboard, the second hides it
+                       'print-panel-tabs', 'cmd t/driver.pubout', 'wait 300', 'cmd t/driver.build',
+                       'wait-terminal 1 ended 2', 'wait 600', 'print-panel-tabs'], exts=self.driver(level='output'))
+        heads = [line for line in out if line.startswith('terminals=')]
+        self.assertIn('open=0', heads[0])
+        self.assertIn('open=1', heads[1])
+        self.assertRegex(self.dlog(), r'0 terminal-output 1 0 \d+\nbuilding\n')
 
     def test_sequence_runs_dependencies_in_order(self):
         out = self.go(['cmd t/driver.chain', *self.allow(), 'wait-terminal 3 ended', 'wait 300',

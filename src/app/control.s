@@ -2386,6 +2386,7 @@ ctl_tables:
     .quad md_ctl                # Markdown rendering (views group: mdctl.s)
     .quad views_ctl             # views group: places and retained views (viewsctl.s)
     .quad nb_ctl                # notebooks (nbctl.s)
+    .quad ce_ctl                # custom editors (customed.s)
     .quad wasm_ctl              # WebAssembly extensions (extwasm.s)
     .quad remote_ctl            # remote hosts (remotectl.s)
     .quad pres_ctl              # editor presentation (presctl.s)

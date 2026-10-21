@@ -23,7 +23,7 @@ ENDSTRUCT CN_SIZE
 
 .bss
 .p2align 3
-.globl g_debuggers, g_ndebuggers, g_dcfg_err
+.globl g_debuggers, g_ndebuggers, g_dcfg_err, g_dcfg_code
 g_debuggers: .zero DBG_SIZE * DBG_MAX
 g_ndebuggers: .long 0
 .p2align 3
@@ -35,6 +35,11 @@ cstrs: .zero SB_SIZE               # its names and values
 cn_leaves: .long 0
 cur_line: .long 0               # launch.ini line of the value being read (for messages), 0 none
 g_dcfg_err: .zero 1024          # why the last step failed
+g_dcfg_code: .long 0            # dcfg_from_leaves: DCE_*
+lvn: .long 0                    # dcfg_leaves: the leaves so far
+.p2align 3
+lvb: .zero SB_SIZE              # and their records
+lpb: .zero SB_SIZE              # the path of the node being walked
 it: .zero INI_SIZE
 pathb: .zero SB_SIZE            # scratch for paths
 valb: .zero SB_SIZE             # a value with its variables replaced
@@ -337,6 +342,23 @@ FN dbg_row
     imul rax, rdi, DBG_SIZE
     lea rcx, [rip + g_debuggers]
     add rax, rcx
+    ret
+
+# dbg_ext_declares(EXT*) -> eax 1 when the extension declares a debugger (ext.s: such an extension
+#   needs no program of its own); clobbers rax, rcx, rdx only
+FN dbg_ext_declares
+    xor ecx, ecx
+    lea rdx, [rip + g_debuggers]
+1:  cmp ecx, [rip + g_ndebuggers]
+    jae 2f
+    cmp [rdx + DBG_ext], rdi
+    je 3f
+    add rdx, DBG_SIZE
+    inc ecx
+    jmp 1b
+2:  xor eax, eax
+    ret
+3:  mov eax, 1
     ret
 
 # dbg_live(index) -> eax 1 when the debugger's extension is installed and usable
@@ -2223,6 +2245,414 @@ FN cn_write
     call jw_end_arr
     EPILOGUE
 
+# ---------------- configuration bodies (feature debug) ----------------
+
+# dcfg_from_leaves(name ptr, len, body ptr, len, EXT*) -> eax 1 with g_lc_* filled as dcfg_prepare
+#   fills them, 0 with g_dcfg_err and g_dcfg_code (DCE_SYNTAX: the body does not parse; DCE_REFUSED:
+#   its type is not one of this extension's debuggers). The body is a configuration body ("N" LF,
+#   then N leaves "KIND PATH_LEN VALUE_LEN" LF + PATH + VALUE; extra records after them are not
+#   read): `type` picks the extension's own debugger, `request` is launch (the default) or attach,
+#   `noDebug` true runs without debugging, every other leaf is an argument as it is
+FN dcfg_from_leaves
+    PROLOGUE 64
+    mov [rsp], rdi
+    mov [rsp + 8], rsi
+    mov r12, rdx                # the body
+    lea r13, [rdx + rcx]        # its end
+    mov r14, r8                 # EXT*
+    mov qword ptr [rsp + 16], 0 # type ptr
+    mov qword ptr [rsp + 24], 0 # type len
+    mov dword ptr [rip + g_dcfg_code], DCE_SYNTAX
+    mov dword ptr [rip + cur_line], 0
+    mov dword ptr [rip + g_lc_dbg], -1
+    mov dword ptr [rip + g_lc_request], 0
+    mov dword ptr [rip + g_lc_nodebug], 0
+    lea rdi, [rip + g_lc_name]
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call sb_set
+    lea rdi, [rip + g_lc_section]
+    call sb_clear
+    lea rdi, [rip + g_lc_before]
+    call sb_clear
+    lea rdi, [rip + g_lc_after]
+    call sb_clear
+    lea rdi, [rip + g_lc_server]
+    call sb_clear
+    lea rdi, [rip + g_lc_compound]
+    call sb_clear
+    call cn_reset
+    # N LF
+    mov rdi, r12
+    mov rsi, r13
+    call dec_at
+    test rdx, rdx
+    jz .Lfl_syntax
+    cmp rax, CN_LEAVES_MAX
+    ja .Lfl_syntax
+    mov r15, rax                # leaves left
+    cmp rdx, r13
+    jae .Lfl_syntax
+    cmp byte ptr [rdx], 10
+    jne .Lfl_syntax
+    lea r12, [rdx + 1]
+1:  test r15, r15
+    jz 5f
+    # KIND PATH_LEN VALUE_LEN LF
+    lea rax, [r12 + 2]
+    cmp rax, r13
+    jae .Lfl_syntax
+    movzx ebx, byte ptr [r12]
+    cmp byte ptr [r12 + 1], ' '
+    jne .Lfl_syntax
+    lea rdi, [r12 + 2]
+    mov rsi, r13
+    call dec_at
+    test rdx, rdx
+    jz .Lfl_syntax
+    test rax, rax
+    jz .Lfl_syntax              # an empty path
+    cmp rax, CN_PATH_MAX
+    ja .Lfl_syntax
+    mov [rsp + 32], rax         # PATH_LEN
+    cmp rdx, r13
+    jae .Lfl_syntax
+    cmp byte ptr [rdx], ' '
+    jne .Lfl_syntax
+    lea rdi, [rdx + 1]
+    mov rsi, r13
+    call dec_at
+    test rdx, rdx
+    jz .Lfl_syntax
+    cmp rax, 65536
+    ja .Lfl_syntax
+    mov [rsp + 40], rax         # VALUE_LEN
+    cmp rdx, r13
+    jae .Lfl_syntax
+    cmp byte ptr [rdx], 10
+    jne .Lfl_syntax
+    lea r12, [rdx + 1]          # the path
+    mov rax, r12
+    add rax, [rsp + 32]
+    mov [rsp + 48], rax         # the value
+    add rax, [rsp + 40]
+    cmp rax, r13
+    ja .Lfl_syntax
+    mov [rsp + 56], rax         # the next record
+    # the kind and its value
+    cmp ebx, 's'
+    je 3f
+    cmp ebx, 'n'
+    jne 21f
+    mov rdi, [rsp + 48]
+    mov rsi, [rsp + 40]
+    cmp rsi, 16                 # |v| < 2^53
+    ja .Lfl_syntax
+    call int_text
+    test eax, eax
+    jz .Lfl_syntax
+    jmp 3f
+21: cmp ebx, 'b'
+    jne 22f
+    mov rdi, [rsp + 48]
+    mov rsi, [rsp + 40]
+    lea rdx, [rip + .Lv_true]
+    call str_eq_cstr
+    test eax, eax
+    jnz 3f
+    mov rdi, [rsp + 48]
+    mov rsi, [rsp + 40]
+    lea rdx, [rip + .Lv_false]
+    call str_eq_cstr
+    test eax, eax
+    jnz 3f
+    jmp .Lfl_syntax
+22: cmp ebx, 'z'
+    jne .Lfl_syntax
+    cmp qword ptr [rsp + 40], 0
+    jne .Lfl_syntax
+3:  # type, request and noDebug are rhun's; name comes from NAME
+    mov rdi, r12
+    mov rsi, [rsp + 32]
+    lea rdx, [rip + .Lk_type]
+    call str_eq_cstr
+    test eax, eax
+    jz 31f
+    cmp ebx, 's'
+    jne .Lfl_syntax
+    mov rax, [rsp + 48]
+    mov [rsp + 16], rax
+    mov rax, [rsp + 40]
+    mov [rsp + 24], rax
+    jmp 4f
+31: mov rdi, r12
+    mov rsi, [rsp + 32]
+    lea rdx, [rip + .Lk_request]
+    call str_eq_cstr
+    test eax, eax
+    jz 33f
+    mov rdi, [rsp + 48]
+    mov rsi, [rsp + 40]
+    lea rdx, [rip + .Lv_launch]
+    call str_eq_cstr
+    test eax, eax
+    jnz 4f
+    mov rdi, [rsp + 48]
+    mov rsi, [rsp + 40]
+    lea rdx, [rip + .Lv_attach]
+    call str_eq_cstr
+    test eax, eax
+    jz .Lfl_syntax
+    mov dword ptr [rip + g_lc_request], 1
+    jmp 4f
+33: mov rdi, r12
+    mov rsi, [rsp + 32]
+    lea rdx, [rip + .Lk_name]
+    call str_eq_cstr
+    test eax, eax
+    jnz 4f
+    mov rdi, r12
+    mov rsi, [rsp + 32]
+    lea rdx, [rip + .Lk_nodebug]
+    call str_eq_cstr
+    test eax, eax
+    jz 34f
+    cmp ebx, 'b'
+    jne .Lfl_syntax
+    mov rdi, [rsp + 48]
+    mov rsi, [rsp + 40]
+    lea rdx, [rip + .Lv_true]
+    call str_eq_cstr
+    mov [rip + g_lc_nodebug], eax
+    jmp 4f
+34: mov rdi, r12
+    mov rsi, [rsp + 32]
+    mov edx, CN_SEGS_MAX
+    mov ecx, ebx
+    mov r8, [rsp + 48]
+    mov r9, [rsp + 40]
+    call cn_set
+    test eax, eax
+    jz .Lfl_syntax              # a path used two ways, or too many leaves
+4:  mov r12, [rsp + 56]
+    dec r15
+    jmp 1b
+5:  # the debugger: one of this extension's types
+    mov rsi, [rsp + 16]
+    test rsi, rsi
+    jz .Lfl_notype
+    mov rdi, r14
+    mov rdx, [rsp + 24]
+    call dbg_by_type_ext
+    mov [rip + g_lc_dbg], eax
+    test eax, eax
+    js .Lfl_notype
+    lea rdi, [rip + .Lk_type]
+    mov esi, 4
+    mov edx, 's'
+    mov rcx, [rsp + 16]
+    mov r8, [rsp + 24]
+    call cn_put
+    lea rcx, [rip + .Lv_launch]
+    mov r8d, 6
+    cmp dword ptr [rip + g_lc_request], 0
+    je 51f
+    lea rcx, [rip + .Lv_attach]
+51: lea rdi, [rip + .Lk_request]
+    mov esi, 7
+    mov edx, 's'
+    call cn_put
+    lea rdi, [rip + .Lk_name]
+    mov esi, 4
+    mov edx, 's'
+    mov rcx, [rsp]
+    mov r8, [rsp + 8]
+    call cn_put
+    cmp dword ptr [rip + g_lc_nodebug], 0
+    je 52f
+    lea rdi, [rip + .Lk_nodebug]
+    mov esi, 7
+    mov edx, 'b'
+    lea rcx, [rip + .Lv_true]
+    mov r8d, 4
+    call cn_put
+52: lea rdi, [rip + g_lc_json]
+    call jw_begin
+    lea rdi, [rip + g_lc_json]
+    xor esi, esi
+    call cn_write
+    mov eax, 1
+    EPILOGUE
+.Lfl_syntax:
+    lea rdi, [rip + .Lm_body]
+    call err_set
+    xor eax, eax
+    EPILOGUE
+.Lfl_notype:
+    mov dword ptr [rip + g_dcfg_code], DCE_REFUSED
+    lea rdi, [rip + .Lm_nottype]
+    call err_set
+    xor eax, eax
+    EPILOGUE
+
+# dcfg_leaves(sb): the prepared configuration (the tree dcfg_prepare built) as a configuration
+#   body: "N" LF and its leaves, appended to sb
+FN dcfg_leaves
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + lvb]
+    call sb_clear
+    lea rdi, [rip + lpb]
+    call sb_clear
+    mov dword ptr [rip + lvn], 0
+    cmp qword ptr [rip + cn + VEC_len], 0
+    je 1f
+    xor edi, edi
+    call cl_walk
+1:  mov rdi, rbx
+    mov esi, [rip + lvn]
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + lvb + SB_ptr]
+    mov rdx, [rip + lvb + SB_len]
+    call sb_push
+    EPILOGUE
+
+# cl_walk(node): its leaves into lvb with lpb as the path so far
+cl_walk:
+    PROLOGUE
+    mov r12d, edi
+    mov edi, r12d
+    call cn_node
+    mov r13, rax
+    mov eax, [r13 + CN_kind]
+    test eax, eax
+    jnz 3f
+    # a leaf: KIND PATH_LEN VALUE_LEN LF PATH VALUE
+    lea rdi, [rip + lvb]
+    mov esi, [r13 + CN_lkind]
+    call sb_push_byte
+    lea rdi, [rip + lvb]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + lvb]
+    mov rsi, [rip + lpb + SB_len]
+    call sb_push_u64
+    lea rdi, [rip + lvb]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + lvb]
+    mov esi, [r13 + CN_vallen]
+    call sb_push_u64
+    lea rdi, [rip + lvb]
+    mov esi, 10
+    call sb_push_byte
+    lea rdi, [rip + lvb]
+    mov rsi, [rip + lpb + SB_ptr]
+    mov rdx, [rip + lpb + SB_len]
+    call sb_push
+    mov edi, r12d
+    call cn_node
+    mov ecx, [rax + CN_val]
+    mov rsi, [rip + cstrs + SB_ptr]
+    add rsi, rcx
+    mov edx, [rax + CN_vallen]
+    lea rdi, [rip + lvb]
+    call sb_push
+    inc dword ptr [rip + lvn]
+    EPILOGUE
+3:  mov r15d, eax               # 1 object, 2 array
+    mov r14d, [r13 + CN_kid]
+    mov rbx, [rip + lpb + SB_len]   # this node's path length
+4:  test r14d, r14d
+    js 9f
+    mov [rip + lpb + SB_len], rbx
+    test rbx, rbx
+    jz 41f
+    lea rdi, [rip + lpb]
+    mov esi, '.'
+    call sb_push_byte
+41: mov edi, r14d
+    call cn_node
+    cmp r15d, 2
+    je 42f
+    mov ecx, [rax + CN_name]
+    mov rsi, [rip + cstrs + SB_ptr]
+    add rsi, rcx
+    mov edx, [rax + CN_namelen]
+    lea rdi, [rip + lpb]
+    call sb_push
+    jmp 43f
+42: mov rsi, [rax + CN_index]
+    lea rdi, [rip + lpb]
+    call sb_push_u64
+43: mov edi, r14d
+    call cl_walk
+    mov edi, r14d
+    call cn_node
+    mov r14d, [rax + CN_next]
+    jmp 4b
+9:  mov [rip + lpb + SB_len], rbx
+    EPILOGUE
+
+# dec_at(ptr, end) -> rax a decimal number there, rdx the byte after its digits (0 without a digit
+#   or past 15 digits)
+dec_at:
+    xor eax, eax
+    xor ecx, ecx
+1:  cmp rdi, rsi
+    jae 2f
+    movzx edx, byte ptr [rdi]
+    sub edx, '0'
+    cmp edx, 9
+    ja 2f
+    imul rax, rax, 10
+    add rax, rdx
+    inc rdi
+    inc ecx
+    cmp ecx, 15
+    ja 3f
+    jmp 1b
+2:  test ecx, ecx
+    jz 3f
+    mov rdx, rdi
+    ret
+3:  xor edx, edx
+    ret
+
+# dbg_by_type_ext(EXT*, ptr, len) -> eax index of that extension's debugger of that type, or -1
+FN dbg_by_type_ext
+    PROLOGUE
+    mov r14, rdi
+    mov r12, rsi
+    mov r13, rdx
+    xor ebx, ebx
+1:  cmp ebx, [rip + g_ndebuggers]
+    jae 8f
+    mov edi, ebx
+    call dbg_row
+    cmp [rax + DBG_ext], r14
+    jne 2f
+    mov rdi, [rax + DBG_type]
+    mov rsi, r12
+    mov rdx, r13
+    call cstr_eq_n
+    test eax, eax
+    jz 2f
+    mov edi, ebx
+    call dbg_live
+    test eax, eax
+    jz 2f
+    mov eax, ebx
+    EPILOGUE
+2:  inc ebx
+    jmp 1b
+8:  mov eax, -1
+    EPILOGUE
+
 # ---------------- the adapter's command ----------------
 
 # dcfg_adapter() -> eax 1 with g_lc_args (argv words, the program found) and g_lc_cmd, 0 with
@@ -2570,6 +3000,8 @@ argw: .zero SB_SIZE
 .Lm_no_file: .asciz "no launch configurations: add .rhun/launch.ini to the project"
 .Lm_no_config: .asciz "no configuration named "
 .Lm_no_type: .asciz "the configuration has no type: "
+.Lm_body: .asciz "the configuration body does not parse"
+.Lm_nottype: .asciz "the configuration's type is not one of your debuggers"
 .Lm_no_debugger: .asciz "no installed extension provides a debugger of type "
 .Lm_no_debugger2: .asciz ""
 .Lm_request: .asciz " must be launch or attach"

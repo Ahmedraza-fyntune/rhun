@@ -11,20 +11,13 @@
 # through the edit tape (edtape.s).
 .include "rhun.inc"
 
-.equ PQ_FOLDING, 0
-.equ PQ_TOKENS, 1
-.equ PQ_HINTS, 2
-.equ PQ_LENS, 3
-.equ PQ_COLORS, 4
-.equ PQ_HIGHLIGHTS, 5
-.equ PQ_COUNT, 6
 .equ PQR_MAX, 64                 # presentation requests out at once
 
 # a kind
 STRUCT
 F PQK_verb, 8                   # the request's verb
-F PQK_reply, 8                  # fn(doc, ext, body, len, PQR*) -> eax 1 applied, 0 dropped
-F PQK_args, 8                   # fn(sb, doc, l1l2*): the line's fields after DOC VERSION, or 0
+F PQK_reply, 8                  # fn(doc, ext, body, len, version asked about, PQR*) -> eax 1 applied, 0 dropped
+F PQK_args, 8                   # fn(sb, doc, l1l2*, ext): the line's fields after DOC VERSION, or 0
 F PQK_pv, 8                     # EXT offset of its [provides] key
 F PQK_feat, 4
 F PQK_pp, 4                     # PP_* kind for one provider per language, -1: every provider
@@ -34,16 +27,6 @@ F PQK_scroll, 4                 # 1: a scroll out of the asked lines asks again
 F PQK_pad, 4
 ENDSTRUCT PQK_SIZE
 
-# a request out
-STRUCT
-F PQR_ext, 8
-F PQR_id, 8
-F PQR_doc, 8                     # DOC_id
-F PQR_kind, 8
-F PQR_ver, 8                     # the version it asked about
-F PQR_l1, 8                      # the lines it asked about (0-based, inclusive)
-F PQR_l2, 8
-ENDSTRUCT PQR_SIZE
 
 .bss
 .p2align 3
@@ -143,7 +126,14 @@ FN present_frame
 5:  mov edi, r12d
     call present_kind_row
     cmp dword ptr [rax + PQK_scroll], 0
-    je 6f
+    jne 50f
+    cmp r12d, PQ_TOKENS         # a document asked about in ranges
+    jne 6f
+    mov rdi, rbx
+    call semtok_huge
+    test eax, eax
+    jz 6f
+50:
     lea rax, [rip + pq_l1]
     mov rcx, [rax + r12*8]
     cmp rcx, -1
@@ -172,6 +162,12 @@ FN present_timeout
     je 9f
     cmp qword ptr [rip + pq_doc], 0
     je 9f
+    mov rax, [rip + g_doc]      # no longer active: present_tick forgets it at once
+    test rax, rax
+    jz 8f
+    mov rax, [rax + DOC_id]
+    cmp rax, [rip + pq_doc]
+    jne 8f
     call time_ms
     mov r12, rax
     xor ecx, ecx
@@ -192,6 +188,8 @@ FN present_timeout
     jb 1b
 9:  mov eax, ebx
     EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # present_tick(): the kinds that are due ask their providers
 FN present_tick
@@ -200,10 +198,10 @@ FN present_tick
     je 9f
     mov rbx, [rip + g_doc]      # only the active document is asked about
     test rbx, rbx
-    jz 9f
+    jz 7f
     mov rax, [rbx + DOC_id]
     cmp rax, [rip + pq_doc]
-    jne 9f
+    jne 7f
     call time_ms
     mov r13, rax
     xor r12d, r12d
@@ -214,13 +212,39 @@ FN present_tick
     cmp rcx, r13
     ja 2f
     mov qword ptr [rax + r12*8], 0
-    mov rdi, rbx
+    cmp r12d, PQ_TOKENS         # kinds turned off in Settings are not asked for
+    jne 10f
+    cmp dword ptr [rip + cfg_semantic_highlighting], 0
+    je 2f
+10: cmp r12d, PQ_HINTS
+    jne 12f
+    cmp dword ptr [rip + cfg_inlay_hints], 0
+    je 2f
+12: cmp r12d, PQ_LENS
+    jne 11f
+    cmp dword ptr [rip + cfg_code_lens], 0
+    je 2f
+11: mov rdi, rbx
     mov esi, r12d
     call present_ask
 2:  inc r12d
     cmp r12d, PQ_COUNT
     jb 1b
 9:  EPILOGUE
+7:  # the scheduled document is no longer shown: its schedules and requests go (the next frame of a
+    # document schedules that one)
+    cmp qword ptr [rip + pq_doc], 0
+    je 9b
+    mov qword ptr [rip + pq_doc], 0
+    xor ecx, ecx
+71: lea rax, [rip + pq_due]
+    mov qword ptr [rax + rcx*8], 0
+    inc ecx
+    cmp ecx, PQ_COUNT
+    jb 71b
+    xor edi, edi
+    call present_withdraw_others
+    jmp 9b
 
 # present_ask(doc, kind): its providers are asked (the window: the lines on screen and one screen
 # more each way)
@@ -345,8 +369,16 @@ present_send:
     mov r14, rax
     lea rdi, [rip + pq_line]
     call sb_clear
-    lea rdi, [rip + pq_line]
     mov rsi, [r14 + PQK_verb]
+    cmp r13d, PQ_TOKENS
+    jne 31f
+    mov rdi, r12
+    call semtok_huge
+    lea rsi, [rip + .Lv_tokens_range]
+    test eax, eax
+    jnz 31f
+    mov rsi, [r14 + PQK_verb]
+31: lea rdi, [rip + pq_line]
     call sb_push_cstr
     lea rdi, [rip + pq_line]
     mov esi, ' '
@@ -366,6 +398,7 @@ present_send:
     lea rdi, [rip + pq_line]
     mov rsi, r12
     lea rdx, [rsp]              # (l1, l2)
+    mov rcx, rbx
     call rax
 4:  mov rdi, rbx
     mov rsi, r12
@@ -395,6 +428,13 @@ present_send:
     mov rcx, [rsp + 8]
     mov [rax + PQR_l2], rcx
 9:  EPILOGUE
+
+# FN present_due_now(kind): that kind is asked for again at once (an answer that cannot be used)
+FN present_due_now
+    lea rax, [rip + pq_due]
+    mov qword ptr [rax + rdi*8], 1
+    mov dword ptr [rip + g_dirty], 1
+    ret
 
 # present_withdraw_others(doc id): requests about other documents are withdrawn
 present_withdraw_others:
@@ -470,7 +510,8 @@ FN present_reply
     mov rsi, rbx
     mov rdx, [rsp]
     mov rcx, [rsp + 8]
-    lea r8, [rsp + 16]
+    mov r8, [rsp + 16 + PQR_ver]
+    lea r9, [rsp + 16]
     call [rax + PQK_reply]
     test eax, eax
     jnz 6f
@@ -504,12 +545,20 @@ FN present_ext_gone
     jmp 1b
 9:  mov rdi, rbx
     call fold_ext_gone
+    mov rdi, rbx
+    call semtok_ext_gone
+    mov rdi, rbx
+    call inlay_ext_gone
+    mov rdi, rbx
+    call lens_ext_gone
     EPILOGUE
 
 # ---------------- answers ----------------
 
 # ans_num(rbx cursor, r12 end) -> rax the decimal number at the cursor, edx 1 (0: none); the cursor
-# moves past it and one separator (space or line feed)
+# moves past it and one separator (space or line feed). present_num for semtok.s: the same.
+.globl present_num, present_word
+present_num:
 ans_num:
     xor eax, eax
     xor edx, edx
@@ -535,6 +584,7 @@ ans_num:
 3:  ret
 
 # ans_word(rbx cursor, r12 end) -> rax, rdx a word up to the next space or line feed (passed)
+present_word:
 ans_word:
     mov rax, rbx
 1:  cmp rbx, r12
@@ -553,7 +603,7 @@ ans_word:
     inc rbx
 3:  ret
 
-# reply_folding(doc, ext, body, len, PQR*) -> eax 1: "N" LF, then N lines "START END KIND TEXT_LEN"
+# reply_folding(doc, ext, body, len, version) -> eax 1: "N" LF, then N lines "START END KIND TEXT_LEN"
 # LF TEXT (lines 1-based; START+1..END can hide). The document's ranges replace the indentation's.
 # A range START >= END is left out; a broken answer is dropped whole.
 reply_folding:
@@ -562,8 +612,7 @@ reply_folding:
     mov [rsp + 48], rsi         # ext
     mov rbx, rdx
     lea r12, [rdx + rcx]        # end
-    mov rax, [r8 + PQR_ver]
-    mov [rsp], rax              # the version asked about
+    mov [rsp], r8               # the version asked about
     lea rdi, [rip + fr_new]
     call fr_vec_clear
     call ans_num
@@ -736,18 +785,19 @@ FN fr_vec_clear
 pq_table:
     .quad .Lv_folding, reply_folding, 0, EXT_pv_folding
     .long FEAT_FOLDING_RANGES, PP_FOLDING, PK_FOLDING, 500, 0, 0
-    .quad .Lv_tokens, reply_none, 0, EXT_pv_semantic_tokens
+    .quad .Lv_tokens, semtok_reply, semtok_args, EXT_pv_semantic_tokens
     .long FEAT_SEMANTIC_TOKENS, PP_TOKENS, PK_TOKENS, 150, 0, 0
-    .quad .Lv_hints, reply_none, args_window, EXT_pv_inlay_hints
+    .quad .Lv_hints, inlay_reply, present_args_window, EXT_pv_inlay_hints
     .long FEAT_INLAY_HINTS, -1, PK_HINTS, 250, 1, 0
-    .quad .Lv_lens, reply_none, args_window, EXT_pv_code_lens
+    .quad .Lv_lens, lens_reply, present_args_window, EXT_pv_code_lens
     .long FEAT_CODE_LENS, -1, PK_LENS, 500, 1, 0
-    .quad .Lv_colors, reply_none, args_window, EXT_pv_colors
+    .quad .Lv_colors, reply_none, present_args_window, EXT_pv_colors
     .long FEAT_DOC_COLORS, -1, PK_COLORS, 500, 1, 0
     .quad .Lv_highlights, reply_none, 0, EXT_pv_highlights
     .long FEAT_DOC_HIGHLIGHTS, PP_HIGHLIGHTS, PK_HIGHLIGHTS, 250, 0, 0
 .Lv_folding: .asciz "folding-ranges"
 .Lv_tokens: .asciz "semantic-tokens"
+.Lv_tokens_range: .asciz "semantic-tokens-range"
 .Lv_hints: .asciz "inlay-hints"
 .Lv_lens: .asciz "code-lens"
 .Lv_colors: .asciz "colors"
@@ -762,8 +812,8 @@ reply_none:
     xor eax, eax
     ret
 
-# args_window(sb, doc, l1l2*): " L1 L2" (1-based)
-args_window:
+# present_args_window(sb, doc, l1l2*): " L1 L2" (1-based)
+FN present_args_window
     PROLOGUE
     mov rbx, rdi
     mov r12, rdx

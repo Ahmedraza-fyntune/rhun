@@ -30,6 +30,7 @@ prompt_bp: .long 0              # the breakpoint (id) a prompt edits
 .p2align 3
 prompt_path: .zero SB_SIZE
 cfg_first: .zero SB_SIZE        # launch.ini's names, for the status bar
+cfg_prev: .zero SB_SIZE         # the names before the last read
 tb_rects: .zero 16 * 8          # the toolbar's buttons as last drawn: icon, x, y, size
 tb_n: .long 0
 cfg_checked: .quad 0
@@ -92,7 +93,16 @@ FN dview_ensure
     mov esi, IC_TERMINAL
     call place_set_icon
     mov dword ptr [rip + cin + TF_id], ID_DCON_INPUT
-    mov dword ptr [rip + dv_shown], 1
+    # they start hidden; dview_show shows them (on start, or Ctrl+Shift+Y)
+    xor ebx, ebx
+3:  lea rax, [rip + g_dv_places]
+    mov edi, [rax + rbx*4]
+    mov esi, 1
+    call place_set_hidden
+    inc ebx
+    cmp ebx, 5
+    jb 3b
+    mov dword ptr [rip + dv_shown], 0
 9:  EPILOGUE
 
 # dview_session_started(): a session began: the view shows ([debug] show_on_start)
@@ -125,8 +135,22 @@ FN dview_show
     inc ebx
     jmp 1b
 2:  test r12d, r12d
-    jz 9f
-    mov edi, [rip + g_dv_places]
+    jnz 3f
+    # hidden: a section or the console with the keyboard gives it back to the editor
+    cmp dword ptr [rip + g_focus], FOCUS_VIEW
+    jne 9f
+    call place_focused
+    xor ebx, ebx
+21: lea rcx, [rip + g_dv_places]
+    cmp eax, [rcx + rbx*4]
+    je 22f
+    inc ebx
+    cmp ebx, 5
+    jb 21b
+    jmp 9f
+22: mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    jmp 9f
+3:  mov edi, [rip + g_dv_places]
     xor esi, esi
     call place_show
     mov edi, [rip + g_dv_places + 16]
@@ -886,7 +910,7 @@ stack_activate:
     test eax, eax
     jz 9f
     mov ebx, eax
-    # "s<ID>" alone: a session; ".../f<I>": a frame of the focused session
+    # "s<ID>" alone: a session; "s<ID>/f<I>": a frame of that session (focused first)
     mov rcx, r15
 1:  test rcx, rcx
     jz 2f
@@ -899,10 +923,26 @@ stack_activate:
     jmp 9f
 3:  cmp byte ptr [r14 + rcx], 'f'
     jne 9f
-    call dap_focused
+    # the session's id: the digits after the leading s
+    xor edi, edi
+    mov rdx, 1
+4:  cmp rdx, rcx
+    jae 5f
+    movzx eax, byte ptr [r14 + rdx]
+    sub eax, '0'
+    cmp eax, 9
+    ja 5f
+    imul edi, edi, 10
+    add edi, eax
+    inc rdx
+    jmp 4b
+5:  call dap_slot_of_id
     test rax, rax
     jz 9f
+    mov r15, rax
     mov rdi, rax
+    call dap_focus_ds
+    mov rdi, r15
     lea esi, [rbx - 1]
     call dap_focus_frame
 9:  EPILOGUE
@@ -1238,8 +1278,19 @@ console_draw:
     # the lines, from the last up
     mov eax, [rip + g_face_code + FACE_lineh]
     mov [rsp + 24], eax         # line height
+    # scrolled up into history: the newest lines move down, below the view (clipped)
+    call dcon_count
+    imul eax, [rsp + 24]
     mov ecx, [rsp + 20]
-    sub ecx, [rip + cscroll]
+    sub ecx, [rsp + 4]          # the lines' room
+    sub eax, ecx
+    jns 61f
+    xor eax, eax
+61: cmp [rip + cscroll], eax
+    jle 62f
+    mov [rip + cscroll], eax    # no further than the oldest line
+62: mov ecx, [rsp + 20]
+    add ecx, [rip + cscroll]
     mov [rsp + 28], ecx         # bottom of the next line up
     mov esi, [rsp + 4]
     mov ecx, [rsp + 20]
@@ -1325,6 +1376,21 @@ cat_color:
     mov eax, [rax + rcx*4]
     ret
 
+# dview_console_field() -> rax the Debug Console's input field when the console has the keyboard,
+#   else 0 (focused_field: paste and the clipboard reach it)
+FN dview_console_field
+    sub rsp, 8
+    call place_focused
+    add rsp, 8
+    cmp dword ptr [rip + g_dv_places + 16], 0
+    jl 1f                       # the console was never made
+    cmp eax, [rip + g_dv_places + 16]
+    jne 1f
+    lea rax, [rip + cin]
+    ret
+1:  xor eax, eax
+    ret
+
 # console_key(ctx, keysym, cp, mods) -> eax: the input line; Enter evaluates, Up/Down history
 console_key:
     PROLOGUE
@@ -1345,8 +1411,7 @@ console_key:
     mov ecx, r14d
     call tf_key
     mov dword ptr [rip + g_dirty], 1
-    mov eax, 1
-    EPILOGUE
+    EPILOGUE                    # what the field did not take (F5, F10, Escape) goes on to the keys
 1:  lea rdi, [rip + cin]
     call tf_text
     test rdx, rdx
@@ -1709,13 +1774,37 @@ FN cmd_debug_run
 start_selected:
     PROLOGUE
     mov ebx, edi
-    cmp qword ptr [rip + g_dsel + SB_len], 0
-    jne 2f
-    # the first configuration
+    # the selection stands while launch.ini (this project's) still has it
     lea rdi, [rip + lab]
     call sb_clear
     lea rdi, [rip + lab]
     call dcfg_names
+    mov r12, [rip + g_dsel + SB_len]
+    test r12, r12
+    jz 4f
+    mov r13, [rip + lab + SB_ptr]
+    mov r14, r13
+    add r14, [rip + lab + SB_len]
+5:  cmp r13, r14
+    jae 4f                      # gone: the first one instead
+    mov rcx, r13
+51: cmp byte ptr [rcx], 10
+    je 52f
+    inc rcx
+    jmp 51b
+52: mov r15, rcx
+    sub rcx, r13
+    cmp rcx, r12
+    jne 53f
+    mov rdi, r13
+    mov rsi, [rip + g_dsel + SB_ptr]
+    mov rdx, r12
+    call memeq
+    test eax, eax
+    jnz 2f
+53: lea r13, [r15 + 1]
+    jmp 5b
+4:  # the first configuration
     mov rsi, [rip + lab + SB_ptr]
     mov rcx, [rip + lab + SB_len]
     test rcx, rcx
@@ -2247,17 +2336,7 @@ status_word:
 #   first (read again at most every 2 s)
 status_config:
     PROLOGUE
-    call time_ms
-    mov rbx, rax
-    sub rax, [rip + cfg_checked]
-    cmp rax, 2000
-    jb 1f
-    mov [rip + cfg_checked], rbx
-    lea rdi, [rip + cfg_first]
-    call sb_clear
-    lea rdi, [rip + cfg_first]
-    call dcfg_names
-1:  mov rsi, [rip + g_dsel + SB_ptr]
+    mov rsi, [rip + g_dsel + SB_ptr]
     mov rdx, [rip + g_dsel + SB_len]
     test rdx, rdx
     jnz 2f
@@ -2284,6 +2363,56 @@ status_config:
 8:  xor eax, eax
     EPILOGUE
 
+# cfg_refresh(): launch.ini's names for the status bar, read again at most every 2 s from the tick
+#   (never from drawing: in a remote window reading the file is a round trip)
+cfg_refresh:
+    PROLOGUE
+    call time_ms
+    mov rbx, rax
+    mov rcx, [rip + cfg_checked]
+    test rcx, rcx
+    jz 1f
+    sub rax, rcx
+    cmp rax, 2000
+    jb 9f
+1:  mov [rip + cfg_checked], rbx
+    lea rdi, [rip + cfg_prev]
+    lea rsi, [rip + cfg_first]
+    call sb_copy_dv
+    lea rdi, [rip + cfg_first]
+    call sb_clear
+    lea rdi, [rip + cfg_first]
+    call dcfg_names
+    mov rdx, [rip + cfg_first + SB_len]
+    cmp rdx, [rip + cfg_prev + SB_len]
+    jne 2f
+    mov rdi, [rip + cfg_first + SB_ptr]
+    mov rsi, [rip + cfg_prev + SB_ptr]
+    test rdx, rdx
+    jz 9f
+    call memeq
+    test eax, eax
+    jnz 9f
+2:  mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# sb_copy_dv(dst, src)
+sb_copy_dv:
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12, rsi
+    call sb_clear
+    mov rdi, rbx
+    mov rsi, [r12 + SB_ptr]
+    mov rdx, [r12 + SB_len]
+    call sb_push
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
 # sb_z_dv(sb) -> its bytes NUL-terminated
 sb_z_dv:
     push rbx
@@ -2308,6 +2437,7 @@ FN dview_show_on
 # dview_context(): debugState, inDebugMode and debugType for when clauses, from the focused session
 FN dview_context
     PROLOGUE
+    call cfg_refresh
     mov eax, [rip + g_dap_gen]
     cmp eax, [rip + ctx_gen]
     je 9f

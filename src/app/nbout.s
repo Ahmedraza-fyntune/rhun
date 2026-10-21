@@ -662,9 +662,10 @@ FN nb_ou_image
     jnz 32f
     mov ecx, [rsp + IMG_h]      # a width alone keeps the image's proportions
     imul ecx, eax
+    mov eax, ecx
     xor edx, edx
     div dword ptr [rsp + IMG_w]
-    xchg eax, ecx
+    mov ecx, eax
     mov eax, [r13 + NBI_w]
 32: mov [rsp + 24], ecx
     mov edi, eax
