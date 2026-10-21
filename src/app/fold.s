@@ -25,6 +25,8 @@ fold_cache:
     jz 9f
     cmp qword ptr [rax + PRS_folds + VEC_len], 0
     je 8f
+    cmp dword ptr [rip + cfg_folding], 0
+    je 8f                       # folding turned off: folds hide nothing
     mov rcx, [rdi + DOC_version]
     cmp [rax + PRS_hidver], rcx
     jne 1f
@@ -36,6 +38,7 @@ fold_cache:
 1:  jmp fold_rebuild
 8:  mov qword ptr [rax + PRS_hidden], 0
     mov qword ptr [rax + PRS_hid + VEC_len], 0
+    mov qword ptr [rax + PRS_hidgen], 0     # built again when folds hide lines again
     xor eax, eax
 9:  ret
 
@@ -267,6 +270,7 @@ FN rows_mode
     jz 8f
     cmp qword ptr [rcx + PRS_folds + VEC_len], 0
     setne al
+    and eax, [rip + cfg_folding]
     cmp qword ptr [rcx + PRS_lens + VEC_len], 0     # or code lens rows (lens.s)
     je 8f
     cmp dword ptr [rip + cfg_code_lens], 0
@@ -433,6 +437,8 @@ FN fold_line_inlays
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    cmp dword ptr [rip + cfg_folding], 0
+    je 9f
     call fold_at
     test rax, rax
     jz 9f
@@ -1219,6 +1225,8 @@ FN fold_session_in
     mov r12, rsi
     test r12, r12
     jz 9f
+    cmp dword ptr [rip + cfg_folding], 0
+    je 9f                       # folding is off: nothing is restored
     # after "folds=" when there is one, else the string itself is the list
     mov r13, r12
 1:  cmp byte ptr [r13], 0
@@ -1599,7 +1607,7 @@ fr_levels:
     mov [rsp], edi
     mov rbx, rsi
     mov r12, [rbx + DOC_pres]
-    mov qword ptr [rip + fl_stack + VEC_len], 0
+    mov qword ptr [rip + fr_stack + VEC_len], 0
     xor r13d, r13d
 1:  cmp r13, [r12 + PRS_fr + VEC_len]
     jae 9f
@@ -1610,18 +1618,18 @@ fr_levels:
     cmp rax, [r14 + FRG_a]
     jbe 1b
     # the ranges ending before this header no longer hold anything
-2:  mov rcx, [rip + fl_stack + VEC_len]
+2:  mov rcx, [rip + fr_stack + VEC_len]
     test rcx, rcx
     jz 3f
-    mov rdx, [rip + fl_stack + VEC_ptr]
+    mov rdx, [rip + fr_stack + VEC_ptr]
     mov rax, [rdx + rcx*8 - 8]
     cmp rax, [r14 + FRG_a]
     jae 3f
-    dec qword ptr [rip + fl_stack + VEC_len]
+    dec qword ptr [rip + fr_stack + VEC_len]
     jmp 2b
-3:  mov r15, [rip + fl_stack + VEC_len]
+3:  mov r15, [rip + fr_stack + VEC_len]
     inc r15                     # its depth
-    lea rdi, [rip + fl_stack]
+    lea rdi, [rip + fr_stack]
     mov esi, 8
     call vec_push
     mov rcx, [r14 + FRG_b]
@@ -1733,7 +1741,8 @@ FN fold_ext_gone
 
 .bss
 .p2align 3
-fl_stack: .zero VEC_SIZE        # fold_levels: open headers (line, indentation)
+fl_stack: .zero VEC_SIZE        # fold_levels: open headers (line, indentation, deeper seen: 24 bytes)
+fr_stack: .zero VEC_SIZE        # fr_levels: the ends of the provider ranges holding the next (8 bytes)
 vi_fold: .zero VI_SIZE
 fs_tmp: .zero SB_SIZE
 fr_keys: .zero VEC_SIZE         # fold_ranges_set's sort keys

@@ -58,6 +58,7 @@ tk_doc: .quad 0
 tk_ver: .quad 0
 tk_gen: .quad 0
 tk_tgen: .quad 0
+tk_theme: .quad 0               # g_theme_gen: the colors resolved for that palette
 tk_h: .quad 0
 tk_lines: .quad 0
 tk_rows: .quad 0                # u32 argb per row
@@ -845,21 +846,29 @@ FN h_decorate
     jb .Lhd_syntax
     inc rdx
     jmp 4b
-5:  # the positions
+5:  # the positions, from an older version with the edges' gravity as deco_shift moves them
+    mov edi, [rsp + 8]
+    xor esi, esi
+    call rng_empty
+    call deco_grav
+    mov r8d, eax
     mov rdi, r12
     mov rsi, [rsp + 40]
     mov rdx, [rsp + 48]
     mov rcx, [rsp]
-    mov r8d, GR_RIGHT
     call rec_pos
     test rax, rax
     js .Lhd_badpos
     mov r15, rax
+    mov edi, [rsp + 8]
+    mov esi, 1
+    call rng_empty
+    call deco_grav
+    mov r8d, eax
     mov rdi, r12
     mov rsi, [rsp + 56]
     mov rdx, [rsp + 64]
     mov rcx, [rsp]
-    mov r8d, GR_LEFT
     call rec_pos
     test rax, rax
     js .Lhd_badpos
@@ -1037,6 +1046,8 @@ FN h_decorate
     jmp 12b
 13: mov rdi, r12
     call pres_touch
+    mov rdi, [r12 + DOC_pres]   # the replaced ranges' texts are reclaimed (the new ones are in use)
+    call pool_compact
     call xp_cur_id
     mov rdi, rax
     call xp_reply_ok
@@ -1125,6 +1136,62 @@ rec_num:
     mov edx, 1
     jmp 1b
 8:  xor edx, edx
+9:  ret
+
+# type_key(rax DT*) -> r9 its drawing order: priority, the extension's order, the type's registration
+# (the low 32 bits free for the range's index). Keeps every other register.
+type_key:
+    push r10
+    movzx r9d, byte ptr [rax + DTY_prio]
+    shl r9, 56
+    mov r10, [rax + DTY_owner]
+    sub r10, [rip + g_exts + VEC_ptr]
+    shr r10, 6                  # (EXT_SIZE is larger than 64: monotone in the index)
+    and r10d, 0xfff
+    shl r10, 44
+    or r9, r10
+    mov r10d, [rax + DTY_seq]
+    and r10d, 0xfff
+    shl r10, 32
+    or r9, r10
+    pop r10
+    ret
+
+# rng_empty() -> edx 1 when the record h_decorate reads is empty (L1 C1 = L2 C2; its frame's slots,
+# past this call's return address). Keeps rdi, rsi.
+rng_empty:
+    xor edx, edx
+    mov rax, [rsp + 8 + 40]
+    cmp rax, [rsp + 8 + 56]
+    jne 1f
+    mov rax, [rsp + 8 + 48]
+    cmp rax, [rsp + 8 + 64]
+    sete dl
+1:  ret
+
+# deco_grav(type index, edge 0 start 1 end, edx empty) -> eax the edge's gravity, as deco_shift's: a
+# growing edge takes an insert at it, an empty range that does not grow moves whole
+deco_grav:
+    imul rax, rdi, DTY_SIZE
+    add rax, [rip + g_dtypes + VEC_ptr]
+    mov ecx, [rax + DTY_grow]
+    test edx, edx
+    jz 1f
+    test ecx, ecx
+    jnz 1f
+    mov eax, GR_RIGHT
+    ret
+1:  test esi, esi
+    jnz 2f
+    mov eax, GR_RIGHT
+    test ecx, DG_START
+    jz 9f
+    mov eax, GR_LEFT
+    ret
+2:  mov eax, GR_LEFT
+    test ecx, DG_END
+    jz 9f
+    mov eax, GR_RIGHT
 9:  ret
 
 # rec_pos(doc, line, col, version, gravity) -> rax the byte position of a 1-based LINE COL in that
@@ -1439,18 +1506,8 @@ FN deco_frame
     cmp rdx, DECO_PIECES
     jae .Ldf_over
     # key: priority, the extension's order, the type's registration
-    movzx r8d, byte ptr [rax + DTY_prio]
-    shl r8, 56
-    mov r9, [rax + DTY_owner]
-    sub r9, [rip + g_exts + VEC_ptr]
-    shr r9, 6                   # (EXT_SIZE is larger than 64: monotone in the index)
-    and r9d, 0xfff
-    shl r9, 44
-    or r8, r9
-    mov r9d, [rax + DTY_seq]
-    and r9d, 0xfff
-    shl r9, 32
-    or r8, r9
+    call type_key
+    mov r8, r9
     lea r9, [r12 - 1]
     or r8, r9
     mov rax, [rip + dw_keys]
@@ -1514,7 +1571,9 @@ FN deco_line_back
     jne 2f
     cmp rdx, [rcx + DR_start]   # ending at the line's start: only an empty range is on it
     jne 1b
-2:  lea rdi, [rax + DTY_linebg]
+2:  call piece_count           # a whole-line fill counts against the frame's pieces
+    jz 1b
+    lea rdi, [rax + DTY_linebg]
     call deco_color
     mov r8d, eax
     mov edi, [rip + g_ed_tx]
@@ -2571,7 +2630,7 @@ FN deco_tip_at
     test r13, r13
     jz 9f
     xor r15d, r15d
-    mov r8, -1                  # the best priority so far
+    xor r8d, r8d                # the best key so far (+1: 0 for none)
 1:  cmp r15, [r13 + PRS_deco + VEC_len]
     jae 8f
     mov eax, r15d
@@ -2589,10 +2648,11 @@ FN deco_tip_at
     jb 1b
     cmp rdx, [rcx + DR_start]   # an empty range at the position holds it
     jne 1b
-2:  movzx edx, byte ptr [rax + DTY_prio]
-    cmp rdx, r8
-    jl 1b
-    mov r8, rdx
+2:  call type_key            # the one drawn on top: the rendering order's key
+    or r9, r15                  # (r15: its index + 1)
+    cmp r9, r8
+    jb 1b
+    mov r8, r9
     mov r14, rcx
     jmp 1b
 8:  test r14, r14
@@ -2631,6 +2691,9 @@ FN deco_scroll_ticks
     mov rax, [rip + g_deco_gen]
     cmp [rip + tk_tgen], rax
     jne 1f
+    mov rax, [rip + g_theme_gen]
+    cmp [rip + tk_theme], rax
+    jne 1f
     cmp [rip + tk_h], r12
     jne 1f
     mov rax, [rbx + DOC_nlines]
@@ -2643,6 +2706,8 @@ FN deco_scroll_ticks
     mov [rip + tk_gen], rax
     mov rax, [rip + g_deco_gen]
     mov [rip + tk_tgen], rax
+    mov rax, [rip + g_theme_gen]
+    mov [rip + tk_theme], rax
     mov [rip + tk_h], r12
     mov rax, [rbx + DOC_nlines]
     mov [rip + tk_lines], rax
@@ -2655,7 +2720,7 @@ FN deco_scroll_ticks
     lea rdi, [r12*4]
     call mem_alloc
     mov [rip + tk_rows], rax
-    mov rdi, r12
+    lea rdi, [r12*8]
     call mem_alloc
     mov [rip + tk_prio], rax
     mov [rip + tk_cap], r12
@@ -2665,7 +2730,7 @@ FN deco_scroll_ticks
     call memset
     mov rdi, [rip + tk_prio]
     xor esi, esi
-    mov rdx, r12
+    lea rdx, [r12*8]
     call memset
     xor r14d, r14d
     xor r15d, r15d              # rows with a tick
@@ -2692,18 +2757,24 @@ FN deco_scroll_ticks
     jb 4f
     lea rax, [r12 - 1]
 4:  mov rdx, [rsp + 16]
-    movzx ecx, byte ptr [rdx + DTY_prio]
-    inc ecx                     # 1..101: 0 is empty
+    push rax
+    push rax
+    mov rax, rdx
+    call type_key               # the rendering order's key, the range's index + 1 (0 is empty)
+    mov rcx, r9
+    or rcx, r14
+    pop rax
+    pop rax
     mov rdi, [rip + tk_prio]
-    movzx r8d, byte ptr [rdi + rax]
-    test r8d, r8d
+    mov r8, [rdi + rax*8]
+    test r8, r8
     jnz 5f
     cmp r15d, DECO_TICKS
     jae 3b
     inc r15d
-5:  cmp ecx, r8d
+5:  cmp rcx, r8
     jb 3b
-    mov [rdi + rax], cl
+    mov [rdi + rax*8], rcx
     mov [rsp + 20], rax
     lea rdi, [rdx + DTY_scroll]
     call deco_color
@@ -2794,7 +2865,13 @@ FN deco_visible_due
 # document, when the lines changed and the last event is VIS_EVERY_MS old
 FN deco_visible_tick
     PROLOGUE
-    call deco_visible_due
+    cmp qword ptr [rip + g_doc], 0
+    jne 1f
+    xor edi, edi                # no document shown (none left, or another kind of tab): "0 0 0"
+    xor esi, esi
+    xor edx, edx
+    call deco_visible
+1:  call deco_visible_due
     test eax, eax
     jnz 9f
     call time_ms

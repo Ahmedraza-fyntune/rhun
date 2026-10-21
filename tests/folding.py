@@ -148,6 +148,25 @@ class Folding(FoldBase):
         self.assertEqual(self.folds(out), [])
         self.assertFalse(any(l.startswith('fold-lane') for l in out))
 
+    def test_scroll_without_scroll_past_end(self):
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text() + '[editor]\nscroll_past_end = false\n')
+        (self.proj / 'big.rs').write_text(''.join(f'x{i}();\n' for i in range(300)), encoding='utf-8')
+        out = self.run_p(['move 500 300', 'scroll 40', 'print-viewport', 'cmd goto_line', 'type 250',
+                          'key Return', 'print-viewport'], files=('big.rs',))
+        tops = [int(l.split('top=')[1].split()[0]) for l in out if l.startswith('view ')]
+        self.assertGreater(tops[0], 1)
+        self.assertGreater(tops[1], 200)
+
+    def test_folding_off_restores_and_hides_nothing(self):
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text().replace('restore_session = false', 'restore_session = true'))
+        self.run_f(['key ctrl+Home', 'cmd fold'])
+        config.write_text(config.read_text() + '[editor]\nfolding = false\n')
+        out = self.run_p(['wait 200', 'print-present folds', 'key ctrl+Home', 'key Down', 'print-state'], files=())
+        self.assertEqual(self.folds(out), [])
+        self.assertIn('line=2 ', self.state(out))
+
     def test_scroll_by_rows_over_folds(self):
         (self.proj / 'big.rs').write_text(''.join(
             f'fn f{i}() {{\n' + ''.join(f'    x{j}();\n' for j in range(20)) + '}\n' for i in range(50)),
@@ -220,6 +239,13 @@ class ProviderFolding(FoldBase):
         self.assertEqual(self.ranges(out)[0], 'ranges present')
         self.assertIn('ranges indentation', out)
         self.assertEqual(self.folds(out), ['fold 1-7'])
+
+    def test_fold_all_by_provider_then_by_indentation(self):
+        out = self.run_f(self.start() + ['cmd fold_all', 'print-present folds', 'cmd unfold_all',
+                                         'ext-set present stop', 'wait 300', 'cmd fold_all', 'print-present folds'])
+        f = self.folds(out)
+        self.assertEqual(f[:3], ['fold 1-8', 'fold 2-5', 'fold 10-12 text=body'])
+        self.assertEqual(f[3:], ['fold 1-7', 'fold 2-4', 'fold 10-11'])
 
     def test_broken_answers_are_dropped(self):
         for body in ('2\n1 8 - 0\n', '1\n1 8 - 5\nab\ncd', '1\n1 8 - 81\n' + 'x' * 81, 'x'):

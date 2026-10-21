@@ -250,14 +250,7 @@ FN vt_x
     PROLOGUE
     mov r12, rdi
     mov r13d, esi
-    mov rdi, [rip + g_row_text]
-    mov rsi, [rip + g_row_from]
-    mov rdx, r12
-    call seg_cols
-    mov ebx, eax
     mov rcx, [rip + vr_i0]
-    cmp rcx, [rip + vr_i1]
-    jae 8f
     # VTM_CARET: an `after` inlay at the gap puts the caret before them all
     cmp r13d, VTM_CARET
     jne 2f
@@ -275,21 +268,37 @@ FN vt_x
     cmp byte ptr [rax + VI_side], VS_AFTER
     jne 1b
     mov r13d, VTM_LEFT
-2:  cmp rcx, [rip + vr_i1]
+2:  # text and inlays in one pass, as drawn: a tab's stop counts the inlays before it
+    xor ebx, ebx                # column
+    mov r14, [rip + g_row_from] # text measured up to here
+    mov r15, rcx
+3:  cmp r15, [rip + vr_i1]
     jae 8f
-    imul rax, rcx, VI_SIZE
+    imul rax, r15, VI_SIZE
     lea r8, [rip + vt_items]
     add rax, r8
-    inc rcx
     mov rdx, [rax + VI_off]
     cmp rdx, r12
-    jb 3f
+    jb 4f
     ja 8f
     cmp r13d, VTM_RIGHT
     jne 8f
-3:  add ebx, [rax + VI_cells]
-    jmp 2b
-8:  mov eax, ebx
+4:  mov rdi, [rip + g_row_text]
+    mov rsi, r14
+    mov ecx, ebx
+    mov r14, rdx
+    call seg_cols_from
+    mov ebx, eax
+    imul rax, r15, VI_SIZE
+    lea r8, [rip + vt_items]
+    add ebx, [r8 + rax + VI_cells]
+    inc r15
+    jmp 3b
+8:  mov rdi, [rip + g_row_text]
+    mov rsi, r14
+    mov rdx, r12
+    mov ecx, ebx
+    call seg_cols_from
     imul eax, [rip + g_cw]
     add eax, [rip + g_row_x]
     EPILOGUE

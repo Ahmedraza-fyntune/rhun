@@ -2002,6 +2002,7 @@ clamp_scroll:
     call rows_mode
     test eax, eax
     jnz wrap_clamp
+    mov rax, [rdi + DOC_nlines]  # (rows_mode returned in rax)
     # last line at the bottom
     mov ecx, [rip + g_ed_h]
     xor edx, edx
@@ -2072,7 +2073,7 @@ reveal_h:
     mov rbx, rdi
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
-    call doc_col_of
+    call vt_doc_col             # the caret's visual column, the line's inlays counted (vtext.s)
     mov r14d, eax
     # A long line's width may be deferred while typing. The caret's column is already known:
     # keep the scrollbar's extent wide enough for it without another scan of that line.
@@ -4463,9 +4464,17 @@ hscroll_measure:
     mov [rip + hs_view], eax
     cmp dword ptr [rip + cfg_word_wrap], 0
     jne 9f
-    cmp rbx, [rip + vt_wide_doc]
+    mov rax, [rip + g_deco_gen]     # the widest inlays are measured again per document and when
+    mov rcx, [rbx + DOC_pres]       # what it shows changes (presentation)
+    test rcx, rcx
+    jz 0f
+    add rax, [rcx + PRS_gen]
+0:  cmp rbx, [rip + vt_wide_doc]
+    jne 2f
+    cmp rax, [rip + vt_wide_gen]
     je 1f
-    mov [rip + vt_wide_doc], rbx    # the widest inlays are measured again per document
+2:  mov [rip + vt_wide_doc], rbx
+    mov [rip + vt_wide_gen], rax
     mov dword ptr [rip + g_vt_widest], 0
 1:  mov rdi, rbx
     call doc_widest
@@ -4610,6 +4619,7 @@ long_lang: .quad 0
 long_cls: .zero SB_SIZE
 .p2align 3
 vt_wide_doc: .quad 0            # the document g_vt_widest was measured on
+vt_wide_gen: .quad 0            # and what it showed (g_deco_gen + PRS_gen)
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0

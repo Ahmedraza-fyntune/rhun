@@ -162,6 +162,12 @@ FN present_timeout
     je 9f
     cmp qword ptr [rip + pq_doc], 0
     je 9f
+    mov rax, [rip + g_doc]      # no longer active: present_tick forgets it at once
+    test rax, rax
+    jz 8f
+    mov rax, [rax + DOC_id]
+    cmp rax, [rip + pq_doc]
+    jne 8f
     call time_ms
     mov r12, rax
     xor ecx, ecx
@@ -182,6 +188,8 @@ FN present_timeout
     jb 1b
 9:  mov eax, ebx
     EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # present_tick(): the kinds that are due ask their providers
 FN present_tick
@@ -190,10 +198,10 @@ FN present_tick
     je 9f
     mov rbx, [rip + g_doc]      # only the active document is asked about
     test rbx, rbx
-    jz 9f
+    jz 7f
     mov rax, [rbx + DOC_id]
     cmp rax, [rip + pq_doc]
-    jne 9f
+    jne 7f
     call time_ms
     mov r13, rax
     xor r12d, r12d
@@ -223,6 +231,20 @@ FN present_tick
     cmp r12d, PQ_COUNT
     jb 1b
 9:  EPILOGUE
+7:  # the scheduled document is no longer shown: its schedules and requests go (the next frame of a
+    # document schedules that one)
+    cmp qword ptr [rip + pq_doc], 0
+    je 9b
+    mov qword ptr [rip + pq_doc], 0
+    xor ecx, ecx
+71: lea rax, [rip + pq_due]
+    mov qword ptr [rax + rcx*8], 0
+    inc ecx
+    cmp ecx, PQ_COUNT
+    jb 71b
+    xor edi, edi
+    call present_withdraw_others
+    jmp 9b
 
 # present_ask(doc, kind): its providers are asked (the window: the lines on screen and one screen
 # more each way)
