@@ -2176,6 +2176,8 @@ g_commands:
     COMMAND debug_evaluate_selection, "Debug: Evaluate Selection in Console", cmd_debug_evaluate_selection, ""
     COMMAND debug_focus_console, "Debug: Focus Debug Console", cmd_debug_focus_console, ""
     COMMAND debug_open_configurations, "Debug: Open Launch Configurations", cmd_debug_open_configurations, ""
+    COMMAND debug_select_configuration, "Debug: Select Configuration", cmd_debug_select_configuration, ""
+    COMMAND debug_add_configuration, "Debug: Add Configuration", cmd_debug_add_configuration, ""
     # testing (testview.s)
     COMMAND testing, "Testing", cmd_testing, ""
     COMMAND test_run_all, "Run All Tests", cmd_test_run_all, ""
