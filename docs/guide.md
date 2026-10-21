@@ -808,8 +808,9 @@ Commit message AI).
 An extension for another version control system (the first-party Mercurial extension, for
 example) adds its own section to the sidebar: a status line such as the branch, a message box
 with its buttons (Ctrl+Enter in the box runs the first, usually Commit), and its changed files in
-groups. Click a file to open its changes, right-click it or a group for the extension's actions
-and Open File. Its files and their folders are colored in the explorer and the tab titles as
+groups. Click a file to see its changes in a diff tab (against what the extension says the file
+was); hover a file or a group for its action buttons, or right-click it for all its actions and
+Open File. Other extensions may add buttons to the section's header. Its files and their folders are colored in the explorer and the tab titles as
 git's are, and the gutter marks of its files compare with what it says they were.
 
 An edit across files is checked whole before anything changes: if a document changed meanwhile

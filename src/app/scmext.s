@@ -878,12 +878,29 @@ qd_reply:
     mov rdi, rax
     test r15, r15
     jz 2f
-    mov [rdi + DOC_gext], rbx
+    mov r12, rdi
+    mov [r12 + DOC_gext], rbx
+    # a copy of the text: a click on the file in the provider's panel opens its diff
+    mov rdi, [r12 + DOC_qbase]
+    call mem_free
+    mov rdi, r14
+    mov rsi, r15
+    call mem_dup
+    mov [r12 + DOC_qbase], rax
+    mov [r12 + DOC_qblen], r15
+    mov rdi, r12
     mov rsi, r14
     mov rdx, r15
     call git_set_base_ext
+    mov rdi, r12
+    call scmpanel_base_ready
     jmp 9f
-2:  call git_drop_base_ext      # "ok ID 0": no base, git's marks stay
+2:  push rdi
+    push rdi
+    call git_drop_base_ext      # "ok ID 0": no base, git's marks stay
+    pop rdi
+    pop rdi
+    call scmpanel_base_ready    # a click waiting for it gets the file
 9:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
