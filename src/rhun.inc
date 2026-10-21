@@ -2381,6 +2381,8 @@ F MTG_path, 8            # cstr: its path, or 0
 F MTG_tabkind, 8         # cstr: tabKind ("doc" "image" "settings" "git" "extensions" "view"), or 0
 F MTG_view, 8            # cstr: the view a view_title / view_item target is in (the key view), or 0
 F MTG_item, 8            # cstr: the targeted tree item's context value (the key viewItem), or 0
+F MTG_scm, 8             # cstr: a source control target's provider, "git" or OWNER/NAME (the key
+                        #   scmProvider while its menu or header buttons evaluate), or 0
 ENDSTRUCT MTG_SIZE
 
 # a prepared rule: struct landlock_path_beneath_attr (u64 allowed_access, s32 parent_fd), padded

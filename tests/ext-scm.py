@@ -339,6 +339,20 @@ class Menus(Base):
         self.assertRegex(runs[0][0], r'^< 0 run tools\.show_commit \d+ menu \d+$')
         self.assertEqual(runs[0][1], '| ' + repr(f'commit {sha}\n'))
 
+    def tools(self):
+        return self.ext('tools', needs='', hello='hello 1 command-args', commands={'sync': [], 'other': []},
+                        ini="[command-options]\nsync.icon = refresh\nother.icon = plus\n[menu.scm_title]\n"
+                            "sync.when = scmProvider == git\nother.when = scmProvider == 'rhun-tests/hg'\n")
+
+    def test_header_buttons_on_gits_source_control(self):
+        # at 1000x600 the work tree's branch row is at y 100, its buttons end at the right edge; only
+        # the item whose clause names git shows (one button, at x 971)
+        self.run_editor(['wait-git', 'cmd git_history', 'wait-git', 'wait 300', 'click 947 100', 'wait 300',
+                         'click 971 100', 'wait-ext tools running', 'wait 300'], exts=self.tools(), drop_waits=True)
+        log = self.fake_log('tools')
+        runs = [(l.split()[3], log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run tools.')]
+        self.assertEqual(runs, [('tools.sync', '| ' + repr(f'scm git {self.proj.as_posix()}\n'))], log)
+
     def test_git_trusted_key(self):
         out = self.run_editor(['wait-git', 'print-context gitTrusted'], drop_waits=True)
         self.assertIn('gitTrusted=true', out)
@@ -522,13 +536,14 @@ class ScmPanel(Base):
         self.assertEqual(runs, [('hg.stage', "| 'a.txt'"), ('hg.forget', "| 'a.txt'")], out)   # not the row's open
 
     def test_other_extensions_add_header_buttons(self):
+        # scmProvider is the panel's provider while the items' clauses evaluate: the git-only item
+        # does not show, the hg one is the only button (x 222 in the header at y 320)
         self.provider(self.body())
-        exts = self.ext('tools', needs='', hello='hello 1 command-args', commands={'sync': []},
-                        ini='[command-options]\nsync.icon = refresh\n[menu.scm_title]\nsync.group = 1\n')
+        exts = Menus.tools(self)
         self.start(exts, 'cmd toggle_sidebar', 'wait 300', 'click 222 320', 'wait-ext tools running', 'wait 300')
         log = self.fake_log('tools')
-        runs = [log[i + 1] for i, l in enumerate(log) if l.startswith('< 0 run tools.sync')]
-        self.assertEqual(runs, ['| ' + repr(f'scm rhun-tests/hg {self.proj.as_posix()}\n')], log)
+        runs = [(l.split()[3], log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run tools.')]
+        self.assertEqual(runs, [('tools.other', '| ' + repr(f'scm rhun-tests/hg {self.proj.as_posix()}\n'))], log)
 
     def qd_provider(self):
         body = scm_body('default', '', [], [('changes', 'Changes', [], [('M', 'modified', 'a.txt', [])])])

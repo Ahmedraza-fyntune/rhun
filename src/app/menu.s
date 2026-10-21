@@ -90,6 +90,7 @@ mn_ncands: .quad 0
 mn_cand_tmp: .zero MC_SIZE
 mnt_menu: .zero MNT_SIZE        # the open menu's target
 mnt_btn: .zero MNT_SIZE         # the target of the buttons being drawn
+scm_prov: .zero 256             # its scmProvider while scm_title buttons evaluate (menu_scm_title_buttons)
 mnt_cur: .quad 0                # the one being set up
 mb_rows: .zero MB_MAX * MB_SIZE # the buttons of a title bar or a tree row (menu_buttons_draw)
 mb_count: .quad 0
@@ -1318,6 +1319,24 @@ FN menu_scm_title_buttons
     mov rsi, r12
     mov rdx, r13
     call sb_push
+    # scmProvider is the line's second word while the items' clauses evaluate (no key is set)
+    lea rdi, [rip + scm_prov]
+    lea rsi, [r12 + 4]          # after "scm "
+    lea rdx, [r12 + r13]
+    xor ecx, ecx
+1:  cmp rsi, rdx
+    jae 2f
+    cmp ecx, 255
+    jae 2f
+    mov al, [rsi]
+    cmp al, ' '
+    je 2f
+    mov [rdi + rcx], al
+    inc rsi
+    inc ecx
+    jmp 1b
+2:  mov byte ptr [rdi + rcx], 0
+    mov [rip + mnt_btn + MTG_scm], rdi
     mov edi, MLOC_SCM_TITLE
     mov esi, [rsp]
     mov edx, [rsp + 4]
