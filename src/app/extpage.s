@@ -640,6 +640,8 @@ draw_detail:
 51:
     mov rdi, rbx                # resources group: its passwords and tokens (extpageres.inc)
     call draw_res_secrets
+    mov rdi, rbx                # and its links
+    call draw_res_links
     # the pin
     lea rsi, [rip + .Ls_toolbar]
     call section
@@ -1191,6 +1193,10 @@ draw_settings:
     add eax, [rip + g_mt + 4*MI_28]
     add eax, [rip + g_mt + 4*MI_8]
     mov [rip + xp_y], eax
+    mov rdi, rbx                # resources group: a workspace's value in force, with Open
+    mov rsi, r13
+    lea edx, [r12 - 1]
+    call draw_res_override
     jmp 1b
 9:  EPILOGUE
 
@@ -3240,8 +3246,22 @@ FN extpage_dump
     mov rdi, r12
     mov esi, '='
     call sb_push_byte
+    mov rdi, rbx                # resources group: the window value (a workspace's, extconfig.s)
+    mov rsi, r14
+    call extconfig_window
     mov rdi, r12
-    mov rsi, [r14 + SD_value]
+    mov rsi, rax
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+    mov rdi, rbx                # and the override line under it
+    mov rsi, r14
+    call extconfig_override
+    test rax, rax
+    jz 2b
+    mov rdi, r12
+    mov rsi, rax
     call sb_push_cstr
     mov rdi, r12
     mov esi, 10

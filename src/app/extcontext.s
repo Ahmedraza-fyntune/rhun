@@ -668,21 +668,21 @@ FN contrib_manifest_kv
     mov rsi, r12
     call status_manifest_kv     # [status] (statusitems.s)
     test eax, eax
-    jz 01f
+    jz 9711f
     EPILOGUE
-01: mov rdi, rbx
+9711: mov rdi, rbx
     mov rsi, r12
     call iconspec_manifest_kv   # [icons] (iconspec.s)
     test eax, eax
-    jz 02f
+    jz 9712f
     EPILOGUE
-02: mov rdi, rbx
+9712: mov rdi, rbx
     mov rsi, r12
     call langconf_manifest_kv   # [language.NAME] (langconf.s)
     test eax, eax
-    jz 03f
+    jz 9713f
     EPILOGUE
-03: mov rdi, r12
+9713: mov rdi, r12
     lea rsi, [rip + .Ls_command_options]
     call ini_sec_is
     test eax, eax

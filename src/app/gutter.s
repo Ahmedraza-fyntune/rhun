@@ -41,6 +41,7 @@ gk_click: .zero 8 * GK_MAX
 gk_tip: .zero 8 * GK_MAX
 gt_fns: .zero 8 * 8             # tint functions
 gt_n: .long 0
+gl_gutter_hot: .long 0          # the pointer is over the gutter (the fold lane's chevrons show)
 # the last frame's layout, x in pixels
 .globl g_gl_lane_x, g_gl_lane_w, g_gl_digits_r, g_gl_fold_x, g_gl_fold_w
 g_gl_lane_x: .long 0
@@ -386,21 +387,29 @@ FN gutter_shift
 
 # ---------------- layout ----------------
 
-# gutter_extra(doc) -> eax pixels the lanes add to the gutter: the left lane with line numbers off
-# while a kind reserves it. Keeps rdi.
+# gutter_extra(doc) -> eax pixels the lanes add to the gutter: the fold lane while folding is on,
+# the left lane with line numbers off while a kind reserves it. Keeps rdi and rcx.
 FN gutter_extra
     xor eax, eax
-    cmp dword ptr [rip + cfg_line_numbers], 0
+    cmp dword ptr [rip + cfg_folding], 0
+    je 0f
+    M eax, MI_12
+0:  cmp dword ptr [rip + cfg_line_numbers], 0
     jne 9f
+    push rcx
     mov ecx, 1
 1:  cmp ecx, [rip + gk_n]
-    jae 9f
+    jae 8f
     lea rdx, [rip + gk_flags]
     test dword ptr [rdx + rcx*4], GK_RESERVE
     jnz 2f
     inc ecx
     jmp 1b
-2:  M eax, MI_16
+8:  pop rcx
+    ret
+2:  add eax, [rip + g_mt + 4*MI_16]
+    pop rcx
+    ret
 9:  ret
 
 # gutter_frame(doc): the frame's lane positions, once g_ed_x and g_ed_tx are known
@@ -410,7 +419,11 @@ FN gutter_frame
     M eax, MI_16
     mov [rip + g_gl_lane_w], eax
     mov dword ptr [rip + g_gl_fold_w], 0
-    mov eax, [rip + g_ed_tx]
+    cmp dword ptr [rip + cfg_folding], 0
+    je 1f
+    M eax, MI_12
+    mov [rip + g_gl_fold_w], eax
+1:  mov eax, [rip + g_ed_tx]
     sub eax, [rip + g_mt + 4*MI_16]
     sub eax, [rip + g_gl_fold_w]
     mov [rip + g_gl_fold_x], eax
@@ -640,6 +653,53 @@ FN gutter_line
     sar edx, 1
     add edx, [rsp]
     call gutter_shape_draw
+9:  mov rdi, rbx
+    mov rsi, r13
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    call fold_chevron
+    EPILOGUE
+
+# fold_chevron(doc, line, y, h): the fold lane: a right chevron on a folded header, a down one on a
+# line that starts a range while the pointer is over the gutter
+fold_chevron:
+    PROLOGUE 16
+    cmp dword ptr [rip + g_gl_fold_w], 0
+    je 9f
+    cmp qword ptr [rdi + DOC_diff], 0
+    jne 9f
+    mov rbx, rdi
+    mov r12, rsi
+    mov [rsp], edx
+    mov [rsp + 4], ecx
+    call fold_at
+    mov r14d, IC_CHEV_R
+    COLOR r15d, T_LINENO_ACTIVE
+    test rax, rax
+    jnz 1f
+    cmp dword ptr [rip + gl_gutter_hot], 0
+    je 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call range_starts
+    test eax, eax
+    jz 9f
+    mov r14d, IC_CHEV_D
+    COLOR r15d, T_LINENO
+1:  M ecx, MI_10                # the icon's box, at the lane's right, in the row's middle
+    mov esi, [rip + g_gl_fold_w]
+    sub esi, ecx
+    add esi, [rip + g_gl_fold_x]
+    mov edx, [rip + g_lh]
+    cmp edx, [rsp + 4]
+    jle 2f
+    mov edx, [rsp + 4]
+2:  sub edx, ecx
+    sar edx, 1
+    add edx, [rsp]
+    mov edi, r14d
+    mov r8d, r15d
+    call icon_draw
 9:  EPILOGUE
 
 # faint(r8d argb) -> r8d the color at a third of its alpha
@@ -658,7 +718,11 @@ faint:
 FN gutter_hover
     PROLOGUE
     mov rbx, rdi
-    mov rax, [rip + g_gl_hover_line]
+    cmp dword ptr [rip + gl_gutter_hot], 0
+    jne 0f
+    mov dword ptr [rip + gl_gutter_hot], 1  # the fold lane's chevrons show
+    mov dword ptr [rip + g_dirty], 1
+0:  mov rax, [rip + g_gl_hover_line]
     mov r14, rax
     mov edi, [rip + g_mx]
     mov esi, [rip + g_my]
@@ -752,6 +816,8 @@ FN gutter_press
     mov edi, [rip + g_mx]
     mov esi, [rip + g_my]
     call gutter_hit
+    cmp eax, LANE_FOLD
+    je 7f
     cmp eax, LANE_LEFT
     jne 8f
     mov r13, rdx
@@ -773,6 +839,14 @@ FN gutter_press
     mov edx, r14d
     mov ecx, r15d
     call rax
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+7:  cmp r14d, BTN_LEFT          # the fold lane: a click toggles the line's fold (fold.s)
+    jne 8f
+    mov rdi, rbx
+    mov rsi, rdx
+    call fold_toggle_line
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
     EPILOGUE
@@ -936,7 +1010,11 @@ sh_bulb: .byte 1, 50, 38, 30, 1, 2, 4, 36, 60, 64, 60, 64, 90, 36, 90, 0
 .text
 # gutter_unhover(): the pointer left the left lane
 FN gutter_unhover
-    cmp qword ptr [rip + g_gl_hover_line], -1
+    cmp dword ptr [rip + gl_gutter_hot], 0
+    je 0f
+    mov dword ptr [rip + gl_gutter_hot], 0
+    mov dword ptr [rip + g_dirty], 1
+0:  cmp qword ptr [rip + g_gl_hover_line], -1
     je 1f
     mov qword ptr [rip + g_gl_hover_line], -1
     mov dword ptr [rip + g_dirty], 1

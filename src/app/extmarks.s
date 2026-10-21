@@ -455,10 +455,12 @@ mark_parse:
     sub [rsp + 8], rcx
     mov rdi, rax
     mov rsi, rdx
+    mov rdx, r12
     call severity_of
     test eax, eax
     js 8f
     mov r15d, eax
+    mov [rsp + 56], edx         # its tags
     # the message: the rest, trimmed, cut at MARK_MSG_MAX
     mov rdi, [rsp]
     mov rsi, [rsp + 8]
@@ -485,6 +487,8 @@ mark_parse:
     mov [rax + MK_start], r13
     mov [rax + MK_end], r14
     mov [rax + MK_sev], r15d
+    mov ecx, [rsp + 56]
+    mov [rax + MK_pad], ecx
     mov eax, 1
     EPILOGUE
 7:  mov dword ptr [rip + badpos_seen], 1
@@ -531,12 +535,30 @@ FN mark_pos
 8:  mov rax, -1
     EPILOGUE
 
-# severity_of(ptr, len) -> SEV_* or -1
+# severity_of(ptr, len, owner) -> eax SEV_* or -1, edx MKT_* tags: an owner that agreed
+# diagnostic-tags may write SEVERITY+TAG[+TAG] (unknown tags are left out)
 severity_of:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    xor r13d, r13d
+    xor r14d, r14d              # tags
+    FEAT_TEST rdx, FEAT_DIAG_TAGS
+    jz 0f
+    xor ecx, ecx                # the severity ends at the first '+'
+5:  cmp rcx, r12
+    jae 0f
+    cmp byte ptr [rbx + rcx], '+'
+    je 6f
+    inc rcx
+    jmp 5b
+6:  lea r15, [rbx + rcx + 1]    # the tags
+    mov r13, r12
+    sub r13, rcx
+    dec r13
+    mov r12, rcx
+    call tags_of
+    mov r14d, eax
+0:  xor r13d, r13d
 1:  lea rax, [rip + sev_names]
     mov rdx, [rax + r13*8]
     test rdx, rdx
@@ -551,7 +573,51 @@ severity_of:
 8:  mov eax, -1
     EPILOGUE
 9:  mov eax, r13d
+    mov edx, r14d
     EPILOGUE
+
+# tags_of(r15 ptr, r13 len) -> eax MKT_* of "TAG+TAG..." (unknown ones ignored)
+tags_of:
+    push rbx
+    push r12
+    push r14
+    xor r14d, r14d
+1:  test r13, r13
+    jz 9f
+    xor ecx, ecx
+2:  cmp rcx, r13
+    jae 3f
+    cmp byte ptr [r15 + rcx], '+'
+    je 3f
+    inc rcx
+    jmp 2b
+3:  mov rbx, rcx
+    mov rdi, r15
+    mov rsi, rcx
+    lea rdx, [rip + .Ltag_unnecessary]
+    call str_eq_cstr
+    test eax, eax
+    jz 4f
+    or r14d, MKT_UNNECESSARY
+4:  mov rdi, r15
+    mov rsi, rbx
+    lea rdx, [rip + .Ltag_deprecated]
+    call str_eq_cstr
+    test eax, eax
+    jz 5f
+    or r14d, MKT_DEPRECATED
+5:  add r15, rbx
+    sub r13, rbx
+    test r13, r13
+    jz 9f
+    inc r15                     # the '+'
+    dec r13
+    jmp 1b
+9:  mov eax, r14d
+    pop r14
+    pop r12
+    pop rbx
+    ret
 
 # marks_drop_owner(doc, owner): remove the owner's marks from one document
 marks_drop_owner:
@@ -594,6 +660,8 @@ FN extmarks_clear_owner
     PROLOGUE
     mov r12, rdi
     call deco_clear_owner       # and its decorations (deco.s)
+    mov rdi, r12
+    call present_ext_gone       # and its presentation requests and folding ranges (present.s)
     xor r13d, r13d
 1:  cmp r13, [rip + g_tabs + VEC_len]
     jae 9f
@@ -744,8 +812,11 @@ extmarks_color:
     jne 2f
     COLOR eax, T_WARNING
     ret
-2:  COLOR eax, T_MUTED
-    ret
+2:  COLOR eax, T_INFO
+    cmp edi, SEV_INFO
+    je 3f
+    COLOR eax, T_HINT
+3:  ret
 
 # extmarks_row(doc, line, from, to, basex, y): underlines under the marks of one visual row
 # (bytes [from, to) of the line, drawn from basex)
@@ -783,7 +854,11 @@ FN extmarks_row
     call mark_live
     test eax, eax
     jz .Lmr_each
-    # the mark's byte range on this line, as offsets within the line, clipped to the row
+    cmp dword ptr [r15 + MK_sev], SEV_HINT  # a hint tagged unnecessary is only faded (deco.s)
+    jne 0f
+    test dword ptr [r15 + MK_pad], MKT_UNNECESSARY
+    jnz .Lmr_each
+0:  # the mark's byte range on this line, as offsets within the line, clipped to the row
     mov rax, [r15 + MK_start]
     sub rax, r13
     mov rdx, [r15 + MK_end]
@@ -813,24 +888,18 @@ FN extmarks_row
     jne .Lmr_each               # an empty mark at the line's end: one cell wide, below
     inc rdx
 5:  mov [rsp + 40], rdx
-    # x of both ends: columns from the row's start
-    mov rdi, [rsp + 24]
-    mov rsi, [rsp]
-    mov rdx, rax
-    call seg_cols
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 16]
+    # x of both ends, by the range rule over the row's inlays (vtext.s; draw_line set the row)
+    mov rdi, rax
+    mov esi, VTM_RIGHT
+    call vt_x
     mov r8d, eax
-    mov rdi, [rsp + 24]
-    mov rsi, [rsp]
-    mov rdx, [rsp + 40]
+    mov rdi, [rsp + 40]
+    mov esi, VTM_LEFT
     push r8
     push r8
-    call seg_cols
+    call vt_x
     pop r8
     pop r8
-    imul eax, [rip + g_cw]
-    add eax, [rsp + 16]
     sub eax, r8d
     jle .Lmr_each
     mov edi, [r15 + MK_sev]
@@ -1091,6 +1160,7 @@ FN ext_hooks_update
 
 # mark_live(MK*) -> eax 1 when it is shown: a problems source's always (problems.s), an extension's
 #   while the extension is
+.globl mark_live
 mark_live:
     test dword ptr [rdi + MK_pad], MKF_SOURCE
     jnz 1f
@@ -1175,6 +1245,8 @@ sev_names: .quad .Lsv_error, .Lsv_warning, .Lsv_info, .Lsv_hint, 0
 .Lsv_warning: .asciz "warning"
 .Lsv_info: .asciz "info"
 .Lsv_hint: .asciz "hint"
+.Ltag_unnecessary: .asciz "unnecessary"
+.Ltag_deprecated: .asciz "deprecated"
 .Le_badmark: .asciz "syntax a diagnostics line is not L1 C1 L2 C2 SEVERITY MESSAGE"
 .Le_badpos_mark: .asciz "badpos a diagnostics range is outside the document or inside a character"
 .Le_count: .asciz "syntax the body does not have N lines"

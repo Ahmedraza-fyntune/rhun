@@ -1502,8 +1502,7 @@ FN ws_features_agreed
     FEAT_TEST rdi, FEAT_WORKSPACE_EDITS
     jnz 1f
     FEAT_CLEAR rdi, FEAT_FILE_OPERATIONS
-1:  FEAT_CLEAR rdi, FEAT_LINKED_EDITING         # not yet
-    ret
+1:  ret
 
 # FN ws_ext_gone(ext): an extension stopped: an edit of its that waits for the user is cancelled
 FN ws_ext_gone

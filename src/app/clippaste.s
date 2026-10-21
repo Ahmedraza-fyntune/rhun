@@ -57,7 +57,15 @@ FN clip_context_capture
     mov [rbx + CPX_focus], rax
     cmp eax, FOCUS_TERMINAL
     je .Lcc_terminal
-    call focused_field
+    cmp eax, FOCUS_VIEW         # a picture with the keyboard (views group, viewpic.s)
+    jne 0f
+    call views_paste_target
+    test rax, rax
+    jz 0f
+    mov [rbx + CPX_identity], rax
+    mov qword ptr [rbx + CPX_kind], CPX_PICTURE
+    jmp .Lcc_good
+0:  call focused_field
     test rax, rax
     jnz .Lcc_field
     cmp dword ptr [rip + g_focus], FOCUS_EDITOR

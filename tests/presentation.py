@@ -6,6 +6,7 @@ API through the glyph-test kind). Driven headlessly with the fake extension test
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -89,7 +90,18 @@ class Base(unittest.TestCase):
         self.env['PRESENT_HELLO'] = hello
 
     def run_p(self, actions, files=('m.rs',), **kw):
-        return self.run_editor(actions, exts=self.exts, files=files, **kw)
+        out = self.run_editor(actions, exts=self.exts, files=files, **kw)
+        # glyph kinds are numbered as built-in code registers them: "glyph-kind N" (glyph-test)
+        # names the test's, and its glyphs print without the number when they have it
+        kind = next((l.split()[1] for l in out if l.startswith('glyph-kind ')), None)
+        res = []
+        for l in out:
+            if l.startswith('glyph-kind '):
+                continue
+            if l.startswith('glyph ') and kind is not None:
+                l = l.replace(f' kind={kind} ', ' ')
+            res.append(l)
+        return res
 
     def replies(self):
         if not self.plog.exists():
@@ -299,11 +311,133 @@ class Presentation(Base):
         self.assertEqual(first[3], '1')
         self.assertGreater(int(last[3]), 1)
 
+    # ---------------- stage 3: diagnostic tags ----------------
+
+    def cell_luma(self, path, line, c1, c2):
+        """The brightest pixel of the cells [c1, c2) of a line, and the color at the row's middle
+        a third of the way along."""
+        out = self.run_p([f'print-xy {line} {c1}', f'print-xy {line} {c2}'])
+        (x1, y), (x2, _) = (tuple(map(int, l.split())) for l in out[:2])
+        lh = 21
+        best = 0
+        for x in range(x1, x2):
+            for yy in range(y - lh // 2 + 2, y + lh // 2 - 2):
+                r, g, b = host.ppm_pixel(path, x, yy)
+                best = max(best, r + g + b)
+        return best, host.ppm_pixel(path, x1 + (x2 - x1) // 3, y)
+
+    def test_diagnostic_tags_fade_and_strike(self):
+        body = '2 5 2 8 hint+unnecessary unused binding\n3 5 3 8 warning+deprecated+future old\n'
+        self.steps({'a': [['diagnostics {DOC} {VER} 2 {LEN}', body]]},
+                   hello='hello 1 decorations diagnostic-tags')
+        tagged = self.shot(self.start(), 'tagged.ppm')
+        self.assertEqual(self.replies(), ['ok 1'])
+        self.steps({'a': [['diagnostics {DOC} {VER} 2 {LEN}', '2 5 2 8 hint unused\n3 5 3 8 warning old\n']]})
+        plain = self.shot(self.start(), 'plain.ppm')
+        faded, _ = self.cell_luma(tagged, 2, 5, 8)
+        normal, _ = self.cell_luma(plain, 2, 5, 8)
+        self.assertLess(faded, normal * 0.8)
+        _, mid = self.cell_luma(tagged, 3, 5, 8)
+        _, mid_plain = self.cell_luma(plain, 3, 5, 8)
+        self.assertNotEqual(mid, mid_plain)
+        out = self.run_p(['print-xy 3 5'])
+        x, y = map(int, out[0].split())
+        fg = host.ppm_pixel(tagged, x + 2, y)
+        self.assertEqual(fg, host.ppm_pixel(tagged, x + 9, y))   # one line through the cells
+
+    def test_tags_need_the_feature(self):
+        self.steps({'a': [['diagnostics {DOC} {VER} 1 {LEN}', '2 5 2 8 hint+unnecessary unused\n']]})
+        self.run_p(self.start())
+        self.assertTrue(self.replies()[0].startswith('error 1 syntax'), self.replies())
+
+    # ---------------- stage 4: virtual text ----------------
+
+    INLAYS = [
+        ['decoration-type ty {LEN}', 'after inlay inlay_bg\n'],
+        ['decoration-type arg {LEN}', 'before inlay inlay_bg\n'],
+        ['decoration-type blame {LEN}', 'after muted -\n'],
+        # ": i32" after "x" (2:10), "count:" before "x" of line 3 (3:13), blame at line 4's end
+        ['decorate {DOC} {VER} ty 0 0 1 {LEN}', '2 10 2 10 0 5 9 0\n: i32type of x'],
+        ['decorate {DOC} {VER} arg 0 0 1 {LEN}', '3 13 3 13 6 0 0 17\ncount:command a 5\n{"x"}'],
+        ['decorate {DOC} {VER} blame 0 0 1 {LEN}', '4 23 4 23 0 15 0 0\n    you, 2h ago'],
+    ]
+
+    def xy(self, out):
+        return tuple(map(int, out.split()))
+
+    def test_caret_rule_and_columns_around_inlays(self):
+        self.steps({'a': self.INLAYS})
+        out = self.run_p(self.start() + ['print-xy 2 10', 'print-xy 2 11', 'print-xy 3 13', 'print-xy 3 12',
+                                         'print-text-cell 1 1', 'print-text-cell 1 2'])
+        x10, x11, x313, x312 = (self.xy(l)[0] for l in out[-6:-2])
+        cw = self.xy(out[-1])[0] - self.xy(out[-2])[0]
+        # the caret touches "x" before ": i32" (an after inlay), and "x" after "count:" (before)
+        self.assertEqual(x11 - x10, 6 * cw)             # ": i32" and " "
+        self.assertEqual(x313 - x312, 7 * cw)           # " " and "count:"
+
+    def test_clicks_on_inlays(self):
+        self.steps({'a': self.INLAYS}, hello='hello 1 decorations command-args')
+        out = self.run_p(self.start() + ['print-xy 2 10', 'print-xy 3 12'])
+        (x2, y2), (x3, y3) = self.xy(out[-2]), self.xy(out[-1])
+        out = self.run_p(self.start() + [f'print-hit {x2 + 15} {y2}', f'click {x2 + 15} {y2}', 'print-state',
+                                         f'print-hit {x3 + 20} {y3}', f'click {x3 + 20} {y3}', 'wait 300',
+                                         'print-state'])
+        self.assertIn('inlay deco 2 10', out)
+        self.assertIn('inlay deco 3 13', out)
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('line=2 col=10 ', states[0])    # no command: the caret goes to the gap
+        self.assertIn('line=2 col=10 ', states[1])    # a command: it runs, the caret stays
+        runs = self.events('run present.a')
+        self.assertTrue(any(' ref ' in r for r in runs), runs)
+        self.assertIn('{"x"}', self.plog.read_text())
+
+    def test_inlay_tip_and_vertical_motion(self):
+        self.steps({'a': self.INLAYS})
+        out = self.run_p(self.start() + ['print-xy 2 10'])
+        x2, y2 = self.xy(out[-1])
+        out = self.run_p(self.start() + [f'move {x2 + 15} {y2}', 'wait 650', 'print-tip',
+                                         'key ctrl+Home', 'key Down', 'key End', 'key Up', 'key Down',
+                                         'print-state', 'key Down', 'print-state'])
+        self.assertIn('type of x', '\n'.join(out))
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('line=2 col=15 ', states[0])
+        # line 2 ends 19 cells in (": i32" counted): on line 3, 19 cells in is after "x" ("count:" counted)
+        self.assertIn('line=3 col=14 ', states[1])
+
+    def test_inlays_on_wrapped_lines_and_the_scroll_extent(self):
+        long = 'let value = compute(' + ', '.join(f'arg{i}' for i in range(30)) + ');\n'
+        (self.proj / 'w.rs').write_text(long * 3, encoding='utf-8')
+        self.steps({'a': [['decoration-type arg {LEN}', 'before inlay inlay_bg\n'],
+                          ['decorate {DOC} {VER} arg 0 0 1 {LEN}', '2 21 2 21 6 0 0 0\nfirst:'],
+                          ['decoration-type blame {LEN}', 'after muted -\n'],
+                          ['decorate {DOC} {VER} blame 0 0 1 {LEN}',
+                           '3 %d 3 %d 0 80 0 0\n%s' % (len(long), len(long), 'x' * 80)]]})
+        out = self.run_p(self.start() + ['print-scroll'], files=('w.rs',))
+        wide = int(out[-1].split('max=')[1].split()[0])
+        self.steps({'a': []})
+        out = self.run_p(self.start() + ['print-scroll'], files=('w.rs',))
+        narrow = int(out[-1].split('max=')[1].split()[0])
+        self.assertGreater(wide, narrow)
+        self.steps({'a': [['decoration-type arg {LEN}', 'before inlay inlay_bg\n'],
+                          ['decorate {DOC} {VER} arg 0 0 1 {LEN}', '2 21 2 21 6 0 0 0\nfirst:']]})
+        # wrapped: the inlay is under the point, the caret goes to its gap, rows hold their cells
+        # (the setting is saved on exit: each run turns it back off)
+        out = self.run_p(self.start() + ['cmd toggle_word_wrap', 'print-xy 2 20', 'print-xy 2 21',
+                                         'cmd toggle_word_wrap'], files=('w.rs',))
+        (x1, y1), (x2, y2) = self.xy(out[-2]), self.xy(out[-1])
+        self.assertEqual(y1, y2)
+        self.assertGreater(x2 - x1, 6 * 5)              # "(" and "first:"
+        out = self.run_p(self.start() + ['cmd toggle_word_wrap', f'print-hit {x2 - 12} {y1}',
+                                         f'click {x2 - 12} {y1}', 'print-state', 'cmd toggle_word_wrap'],
+                         files=('w.rs',))
+        self.assertIn('inlay deco 2 21', out)
+        self.assertIn('line=2 col=21 ', [l for l in out if l.startswith('tabs=')][0])
+
     # ---------------- stage 2: the glyph lane ----------------
 
     def test_glyph_api_clicks_edits_and_tips(self):
         out = self.run_p(['glyph-test', 'glyph 3 6', 'print-present glyphs', 'print-xy 3 1'])
-        self.assertIn('glyph 3 kind=1 shape=6', out)
+        self.assertIn('glyph 3 shape=6', out)
         _, y3 = map(int, out[-1].split())
         # (x 10: the window's resize edge takes the first pixels)
         out = self.run_p(['glyph-test', 'glyph 3 6', f'print-hit 10 {y3}', f'click 10 {y3}',
@@ -314,14 +448,14 @@ class Presentation(Base):
         self.assertIn('click 2 1 0', out)       # an empty line: the GK_EMPTY kind, glyph 0
         self.assertIn('click 2 1 2', out)       # its circle, the second time
         self.assertIn('click 3 3 0', out)       # right button (the first click removed the glyph)
-        self.assertNotIn('glyph 2 kind=1 shape=2', out)
+        self.assertNotIn('glyph 2 shape=2', out)
         # two lines inserted above move it down; deleting its line gives it to the next one
         out = self.run_p(['glyph-test', 'glyph 3 6', 'glyph 4 7', 'key ctrl+Home', 'key Return', 'key Return',
                           'print-present glyphs', 'key Down', 'key Down', 'key Home',
                           'key shift+Down', 'key BackSpace', 'print-present glyphs'])
         self.assertEqual([l for l in out if l.startswith('glyph')][:2],
-                         ['glyph 5 kind=1 shape=6', 'glyph 6 kind=1 shape=7'])
-        self.assertEqual([l for l in out if l.startswith('glyph')][2:], ['glyph 5 kind=1 shape=6'])
+                         ['glyph 5 shape=6', 'glyph 6 shape=7'])
+        self.assertEqual([l for l in out if l.startswith('glyph')][2:], ['glyph 5 shape=6'])
         out = self.run_p(['glyph-test', 'glyph 3 6', f'move 10 {y3}', 'wait 650', 'print-tip'])
         self.assertIn('Test glyph', '\n'.join(out))
 
@@ -332,11 +466,12 @@ class Presentation(Base):
         accent = host.ppm_pixel(path, 8, y2)
         self.assertNotEqual(accent, host.ppm_pixel(path, 8, y2 + 21))
         out = self.run_p(['cmd toggle_line_numbers', 'print-xy 2 1', 'glyph-test', 'print-xy 2 1',
-                          'print-hit 10 ' + str(y2), 'print-hit 20 ' + str(y2), 'cmd toggle_line_numbers'])
+                          'print-hit 10 ' + str(y2), 'print-hit 20 ' + str(y2), 'print-hit 32 ' + str(y2),
+                          'cmd toggle_line_numbers'])
         x_before, x_after = int(out[0].split()[0]), int(out[1].split()[0])
         self.assertEqual(x_after - x_before, 16)
-        self.assertEqual(out[2], 'left-lane 2')
-        self.assertEqual(out[3], 'git 2')
+        # the left lane, the fold lane, the git bar
+        self.assertEqual(out[2:5], ['left-lane 2', 'fold-lane 2', 'git 2'])
 
 
 if __name__ == '__main__':

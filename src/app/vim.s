@@ -1219,7 +1219,25 @@ vcmd:
     jmp .Lc_op
 
 .Lc_z:
-    mov rdi, [rbx + DOC_cur]
+    # folds (fold.s): za toggles, zc folds, zo opens, zR opens all, zM folds all
+    lea rax, [rip + cmd_toggle_fold]
+    cmp r15d, 'a'
+    je 5f
+    lea rax, [rip + cmd_fold]
+    cmp r15d, 'c'
+    je 5f
+    lea rax, [rip + cmd_unfold]
+    cmp r15d, 'o'
+    je 5f
+    lea rax, [rip + cmd_unfold_all]
+    cmp r15d, 'R'
+    je 5f
+    lea rax, [rip + cmd_fold_all]
+    cmp r15d, 'M'
+    jne 6f
+5:  call rax
+    jmp .Lc_done
+6:  mov rdi, [rbx + DOC_cur]
     call vline
     mov ecx, [rip + g_ed_h_lines]
     cmp r15d, 't'
@@ -2992,16 +3010,21 @@ vmotion:
     mov rdi, r12
     call vline
     mov [rsp + 8], rax
-    add rax, r14
+    mov rdi, rbx                # folded lines are stepped over (fold.s)
+    mov rsi, rax
+    mov rdx, r14
+    call fold_step
     call .Lm_clampline
     jmp .Lm_vert
 .Lm_k:
     mov rdi, r12
     call vline
     mov [rsp + 8], rax
-    sub rax, r14
-    jns .Lm_vert
-    xor eax, eax
+    mov rdi, rbx
+    mov rsi, rax
+    mov rdx, r14
+    neg rdx
+    call fold_step
 .Lm_vert:
     cmp rax, [rsp + 8]
     je .Lm_fail
@@ -3010,12 +3033,12 @@ vmotion:
     jne 1f
     mov rdi, rbx
     mov rsi, r12
-    call doc_col_of
+    call vt_doc_col             # visual cells, inlays included (vtext.s)
     mov [rbx + DOC_prefx], rax
 1:  mov rdi, rbx
     mov rsi, [rsp]
     mov rdx, [rbx + DOC_prefx]
-    call doc_pos_at_col
+    call vt_doc_pos_at_col
     mov r12, rax
     mov r15d, MF_LINE | MF_KEEPX
     jmp .Lm_ret

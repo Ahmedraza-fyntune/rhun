@@ -496,6 +496,35 @@ Arrows, Home, End, word and page moves move every selection, each keeping its ow
 
 In Vim mode, `gb` adds a cursor at the next occurrence of the word under the cursor (of the selection in visual mode); Ctrl+D keeps paging. Motions with counts, `i a I A o O`, visual mode, `x X D C s S dd cc yy`, operators with a motion or text object (`ciw`), `p P` and `.` act at every cursor as one undo step; `u` brings the cursors back. Yanks at several cursors are one copy with a piece each, which `p` puts back paired. Esc in insert mode keeps the cursors, each stepping back a character; Esc in normal mode leaves the primary alone. Searches, `:`, `J`, `r`, `~`, `>` and `<` go back to the primary first.
 
+### Folding
+
+The fold lane right of the line numbers shows a down chevron on each line that starts a foldable
+region while the pointer is over the gutter, and a right chevron on folded lines; a click folds or
+unfolds. A folded line ends in a ` ⋯ ` pill, which unfolds when clicked. Regions come from
+indentation, as in VS Code: a line starts one when the next non-blank line is indented deeper, and
+the region ends before the next line indented no deeper, so a closing brace stays visible. An
+extension that provides folding ranges for the file's language (a language server's, through the
+lsp extension) gives the regions instead, with their own collapsed text in the pill; until it has
+answered, and after it stops, indentation decides.
+
+| Keys | Command |
+| --- | --- |
+| Ctrl+Shift+[ | Fold: the innermost region at the cursor |
+| Ctrl+Shift+] | Unfold: the folds on the cursor's line |
+| Ctrl+K Ctrl+0 | Fold All, at every depth (unfolding an outer fold shows the inner ones still folded) |
+| Ctrl+K Ctrl+J | Unfold All |
+
+Toggle Fold and Fold Level 1 to 3 are in the command palette. In Vim mode `za` toggles, `zc` folds,
+`zo` opens, `zM` folds all and `zR` opens all. On macOS Ctrl is Command.
+
+Folded lines are skipped by Up, Down, Page Up, Page Down and `j`/`k`, and the caret never stops
+inside a fold: Right at a folded line's end goes to the line after the fold. Anything that puts the
+caret inside hidden text opens the fold (Go to Line, find, Go to Definition, undo). Delete Line,
+Duplicate Line, Move Line and Copy or Cut without a selection take a folded line with its hidden
+lines. An edit inside a fold's hidden lines, or one that joins its first line with the next, removes
+the fold. Folds are kept with the session and in reopened tabs. `folding = false` under `[editor]`
+(**Folding** in Settings) turns the lane and folding off.
+
 ### Vim mode
 
 The Vim mode switch in Settings (`vim_mode = true` under `[editor]`) or Toggle Vim Mode in the command palette turns it on. The status bar shows the mode and the keys typed so far; outside insert mode the cursor is a block.
@@ -581,6 +610,12 @@ string = #a6e3a1
 ```
 
 Under `[terminal]` a theme can set the 16 terminal colors, `black` to `bright_white`; the ones not given come from the theme's other colors. `git_added`, `git_modified` and `git_deleted` color changes in the gutter, tabs, explorer and diffs.
+
+Extensions' text inside the editor has its own colors: `inlay` and `inlay_bg` for inlay hints, a
+fold's pill and other virtual text, `ghost` for inline completion, `codelens` for code lens,
+`highlight` and `highlight_write` for the other occurrences of the symbol under the cursor, and
+`info` and `hint` for those diagnostics. A theme that leaves them out gets them from its other
+colors.
 
 The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
 
@@ -747,6 +782,13 @@ nothing. Every write is first recorded in `~/.local/state/rhun/edits`: a write t
 puts everything back, and an edit cut short by a crash is put back at the next start ("Restored 3
 files from a workspace edit that was cut short").
 
+Extensions can also show a read-only **diff tab** of two documents (it follows both as they
+change and closes with them; a side may be a document an extension provides, such as a file at a
+git revision, which needs no tab of its own), scroll a document to a place without moving its cursor, list
+locations in the palette as Find All References does, and offer **linked editing**: in an HTML
+tag, renaming the opening tag's name renames the closing one as you type; the linked names are
+outlined, and a space, Escape, Undo or moving away ends it.
+
 Formatting, symbol rename, file symbols and signature help use a saved provider for the document's language.
 With one matching extension, rhun uses it. With several, a chooser shows their `owner/name`
 identities and remembers your choice. **Select Default Formatter**, **Select Rename Provider**,
@@ -890,6 +932,31 @@ secrets = system        # or memory (until rhun quits), or file (a file only you
 `file` keeps them in `~/.local/state/rhun/secrets/`, readable only by you, in plain text: as safe
 as a `~/.netrc`.
 
+When an extension wants to open a web page (to sign in, say), rhun asks first: "Auth Demo wants
+to open github.com in your browser", with **Open**, **Copy Link**, **Cancel** and **Always open
+links from Auth Demo**. Always is remembered, and the switch on the extension's page takes it
+back. After you sign in, the browser comes back to the extension through a `rhun://ext/` link
+that works once, for ten minutes, or through a page on your own computer that says "Signed in.
+You can close this tab." A `rhun://ext/` link nobody is waiting for says so and does nothing.
+
+Extensions that read the project (a TODO list, a linter that checks every file) list its files
+and search them through rhun rather than walking the disk themselves: they see the files git sees
+(`.gitignore` applies), not the names in **Hidden in explorer**, and the text you have not saved
+yet. Their searches run a few milliseconds at a time, so typing never waits for them.
+
+A project can set some of an extension's settings for everyone who opens it, in
+`.rhun/extensions.ini` at the top of the folder, in the same form as your own file:
+
+```ini
+[rhun-editor/go]
+setting.style = goimports
+setting.style@Go = gofumpt     # for Go files only
+```
+
+Only settings the extension opens to projects take effect (never which program it runs), and only
+in a folder you opened yourself or trusted. The extension's page shows "This workspace sets
+goimports (.rhun/extensions.ini)" under such a setting, with **Open**.
+
 The command palette shows each extension command's qualified name, `owner/name.command`,
 beside its title. You can search that name or use it in `[keys]`. The shorter `name.command`
 works when only one installed extension has that name. With two publishers using the same
@@ -1028,6 +1095,33 @@ asks once, showing the command (Forget on the extension's page asks again). A fo
 a link runs none until you trust it. Results are kept until rhun quits.
 
 | `rhun-editor/mcp` | lets the agents in your terminal use rhun over MCP: open files, the selection, unsaved text, problems, and changes you review |
+
+### Tasks and problems
+
+Extensions publish tasks: the first-party `rhun-editor/tasks` finds them in your project (Makefile
+targets, `justfile` recipes, `package.json` scripts, Cargo and Go builds and tests, and your own in
+`.rhun/tasks.ini`). **Run Task** lists them all, recently run first. **Run Build Task**
+(ctrl+shift+B) runs the build group's default, **Run Test Task** the test group's, and **Re-run
+Last Task**, **Restart Task**, **Stop Task** and **Show Task** do what they say.
+
+A task runs in a tab of the terminal panel, labelled with the task, and the tab is reused when it
+runs again. The dot before the label is filled while it runs, then becomes a check (exit 0), a
+cross (another code) or a square (stopped). When it ends a footer line says how and how long it
+took. The panel's Restart and Stop buttons act on the current task tab. Stop types Ctrl+C and kills
+whatever is left 2 seconds later. Closing the tab kills the program and everything it started. While
+tasks run, the status bar shows the newest one (a click shows it).
+
+A task can depend on others, which run first, in order or together. A background task, such as a
+dev server or a watcher, counts as done when it prints its ready line, and it keeps running.
+
+The first time an extension runs a program in a project, rhun asks, showing the command: Allow
+remembers it for that extension and project (Forget on the extension's page asks again). The
+programs run as you, with your login shell's environment, outside the extension's sandbox.
+
+Errors and warnings a task prints (Go, gcc and clang, rustc and cargo, TypeScript, MSBuild, or the
+task's own patterns) become **problems**: marks in the files (the status bar counts them) and the
+**Problems** tab of the panel (ctrl+shift+m), files first, then each problem. Enter or a click goes
+to it. A task's problems are replaced when it runs again; Clear Task Problems removes them.
 
 ### Write your own
 
