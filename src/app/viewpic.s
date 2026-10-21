@@ -792,13 +792,26 @@ FN views_paste_target
 8:  xor eax, eax
     EPILOGUE
 
-# views_clip_command(kind) -> eax 1 when a picture with the keyboard took the command: 0 copy and
-#   1 cut ask it (vcopy), 2 select_all says selectall (cmd_copy, cmd_cut, cmd_select_all: keys and
-#   chords alike)
+# views_clip_command(kind) -> eax 1 when a view took the command (cmd_copy, cmd_cut, cmd_select_all:
+#   keys and chords alike): a doc view with the keyboard copies its selected text or selects it
+#   all; Copy with the pointer over a notification's selected Markdown copies that; a picture with
+#   the keyboard is asked (0 copy and 1 cut: vcopy; 2 select_all: selectall)
 FN views_clip_command
     PROLOGUE
     mov r12d, edi
-    call views_paste_target
+    call rview_focused_doc      # a doc view: its selected text, or all of it selected
+    test rax, rax
+    jz 2f
+    mov rdi, rax
+    mov esi, r12d
+    call mdview_clip
+    jmp 9f
+2:  test r12d, r12d             # Copy with the pointer over a notification's selected text
+    jnz 3f
+    call notify_copy_selection
+    test eax, eax
+    jnz 9f
+3:  call views_paste_target
     test rax, rax
     jz 8f
     mov rbx, rax

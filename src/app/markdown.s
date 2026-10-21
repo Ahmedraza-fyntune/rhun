@@ -79,6 +79,12 @@ F MD_base, 8            # cstr, mem_alloc'd: the folder relative links name (md_
 F MD_ext, 8             # the extension whose img: handles images name (md_from_body), or 0
 F MD_focus, 4           # the link the keyboard is on (drawn as hovered), -1
 F MD_imgbytes, 4        # its decoded images' bytes
+F MD_sa, 4              # the selection: its anchor (a text item, a byte in it) and its end
+F MD_sao, 4
+F MD_sb, 4
+F MD_sbo, 4
+F MD_sel, 4             # 1 while there is a selection (it may be empty)
+F MD_drag, 4            # the left button selects
 F MD_imgs, VEC_SIZE     # MDM: images, resolved when first laid out
 ENDSTRUCT MD_SIZE
 
@@ -865,6 +871,350 @@ slug_char:
     call sb_push_byte
     add rsp, 8
     ret
+
+# ---------------- selection ----------------
+# Text is selected by text items (words) and bytes in them, in layout order; md_select_mouse gives
+# the owner's pointer to it, md_sel_text says what is selected (spaces between words, LF between
+# lines).
+
+# md_select_mouse(m, x, y, scroll, ub): the pointer over a document drawn at x, y (md_draw's)
+#   with the owner's area button's UB bits: a press anchors, a drag extends, a double click takes
+#   the word
+FN md_select_mouse
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    mov r15d, r8d
+    cmp qword ptr [rbx + MD_items + VEC_len], 0
+    je 9f
+    mov esi, [rip + g_mx]
+    sub esi, r12d
+    mov edx, [rip + g_my]
+    sub edx, r13d
+    add edx, r14d
+    mov rdi, rbx
+    call md_hit
+    test eax, eax
+    js 9f
+    test r15d, UB_PRESS
+    jz 2f
+    mov [rbx + MD_sa], eax
+    mov [rbx + MD_sao], edx
+    mov [rbx + MD_sb], eax
+    mov [rbx + MD_sbo], edx
+    mov dword ptr [rbx + MD_sel], 1
+    mov dword ptr [rbx + MD_drag], 1
+    test r15d, UB_DOUBLE
+    jz 1f
+    mov dword ptr [rbx + MD_sao], 0     # the word
+    imul rcx, rax, MDI_SIZE
+    add rcx, [rbx + MD_items + VEC_ptr]
+    mov ecx, [rcx + MDI_len]
+    mov [rbx + MD_sbo], ecx
+    mov dword ptr [rbx + MD_drag], 0
+1:  mov dword ptr [rip + g_dirty], 1
+    jmp 9f
+2:  cmp dword ptr [rbx + MD_drag], 0
+    je 9f
+    test dword ptr [rip + g_mdown], 1 << BTN_LEFT
+    jz 3f
+    cmp eax, [rbx + MD_sb]
+    jne 21f
+    cmp edx, [rbx + MD_sbo]
+    je 9f
+21: mov [rbx + MD_sb], eax
+    mov [rbx + MD_sbo], edx
+    mov dword ptr [rip + g_dirty], 1
+    jmp 9f
+3:  mov dword ptr [rbx + MD_drag], 0
+9:  EPILOGUE
+
+# md_hit(m, x, y) -> eax the text item nearest the point (document coordinates), edx the byte in it
+#   there; eax -1 without text
+md_hit:
+    PROLOGUE 48
+    mov rbx, rdi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov dword ptr [rsp + 8], -1     # the best item
+    mov dword ptr [rsp + 12], 0x7fffffff   # its vertical distance
+    mov dword ptr [rsp + 16], 0x7fffffff   # and horizontal
+    xor r12d, r12d
+1:  cmp r12, [rbx + MD_items + VEC_len]
+    jae 5f
+    imul r13, r12, MDI_SIZE
+    add r13, [rbx + MD_items + VEC_ptr]
+    cmp dword ptr [r13 + MDI_kind], MDK_TEXT
+    jne 4f
+    xor ecx, ecx                # vertical distance
+    mov eax, [r13 + MDI_y]
+    sub eax, [rsp + 4]
+    jle 2f
+    mov ecx, eax                # below the point
+    jmp 3f
+2:  mov eax, [rsp + 4]
+    sub eax, [r13 + MDI_y]
+    sub eax, [r13 + MDI_h]
+    jl 3f
+    lea ecx, [rax + 1]          # above it
+3:  xor edx, edx                # horizontal distance
+    mov eax, [r13 + MDI_x]
+    sub eax, [rsp]
+    jle 31f
+    mov edx, eax
+    jmp 32f
+31: mov eax, [rsp]
+    sub eax, [r13 + MDI_x]
+    sub eax, [r13 + MDI_w]
+    jle 32f
+    mov edx, eax
+32: cmp ecx, [rsp + 12]
+    jg 4f
+    jl 33f
+    cmp edx, [rsp + 16]
+    jge 4f
+33: mov [rsp + 8], r12d
+    mov [rsp + 12], ecx
+    mov [rsp + 16], edx
+4:  inc r12
+    jmp 1b
+5:  mov eax, [rsp + 8]
+    test eax, eax
+    js 9f
+    imul r13, rax, MDI_SIZE
+    add r13, [rbx + MD_items + VEC_ptr]
+    xor edx, edx
+    mov eax, [rsp]
+    sub eax, [r13 + MDI_x]
+    jle 8f
+    mov edx, [r13 + MDI_len]
+    cmp eax, [r13 + MDI_w]
+    jge 8f
+    mov edi, [r13 + MDI_face]   # the bytes left of the point
+    call face_of
+    mov rdi, rax
+    mov rsi, [rbx + MD_text + SB_ptr]
+    mov ecx, [r13 + MDI_off]
+    add rsi, rcx
+    mov edx, [r13 + MDI_len]
+    mov ecx, [rsp]
+    sub ecx, [r13 + MDI_x]
+    call text_fit
+    mov edx, eax
+8:  mov eax, [rsp + 8]
+9:  EPILOGUE
+
+# sel_range(m) -> eax the first selected item, edx its byte, ecx the last item, r8d its end byte
+#   (in order); eax -1 when nothing is selected
+sel_range:
+    mov eax, -1
+    cmp dword ptr [rdi + MD_sel], 0
+    je 9f
+    mov eax, [rdi + MD_sa]
+    mov edx, [rdi + MD_sao]
+    mov ecx, [rdi + MD_sb]
+    mov r8d, [rdi + MD_sbo]
+    cmp eax, ecx
+    jl 2f
+    jg 1f
+    cmp edx, r8d
+    jl 2f
+    je 8f
+1:  xchg eax, ecx
+    xchg edx, r8d
+2:  ret
+8:  mov eax, -1                 # empty
+9:  ret
+
+# sel_draw(m, x, y, h, scroll): the selected parts of text items, drawn behind them
+sel_draw:
+    PROLOGUE 64
+    mov rbx, rdi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    mov rdi, rbx
+    call sel_range
+    test eax, eax
+    js 9f
+    mov [rsp + 16], eax
+    mov [rsp + 20], edx
+    mov [rsp + 24], ecx
+    mov [rsp + 28], r8d
+    mov r12d, eax
+1:  cmp r12d, [rsp + 24]
+    jg 9f
+    imul r13, r12, MDI_SIZE
+    add r13, [rbx + MD_items + VEC_ptr]
+    cmp dword ptr [r13 + MDI_kind], MDK_TEXT
+    jne 8f
+    mov r14d, [r13 + MDI_y]     # on screen
+    sub r14d, [rsp + 12]
+    add r14d, [rsp + 4]
+    mov eax, r14d
+    add eax, [r13 + MDI_h]
+    cmp eax, [rsp + 4]
+    jl 8f
+    mov eax, [rsp + 4]
+    add eax, [rsp + 8]
+    cmp r14d, eax
+    jge 8f
+    xor ecx, ecx                # from
+    cmp r12d, [rsp + 16]
+    jne 2f
+    mov ecx, [rsp + 20]
+2:  mov r8d, [r13 + MDI_len]    # to
+    cmp r12d, [rsp + 24]
+    jne 3f
+    mov r8d, [rsp + 28]
+3:  mov [rsp + 32], ecx
+    mov [rsp + 36], r8d
+    mov edi, ecx
+    call item_x                 # x of a byte in r13's item
+    mov [rsp + 40], eax
+    mov edi, [rsp + 36]
+    call item_x
+    sub eax, [rsp + 40]
+    jle 8f
+    mov edx, eax
+    mov edi, [rsp + 40]
+    add edi, [r13 + MDI_x]
+    add edi, [rsp]
+    mov esi, r14d
+    mov ecx, [r13 + MDI_h]
+    COLOR r8d, T_SELECTION
+    call gfx_fill
+8:  inc r12d
+    jmp 1b
+9:  EPILOGUE
+
+# item_x(byte) -> eax its x within r13's text item (rbx the document)
+item_x:
+    test edi, edi
+    jz 8f
+    cmp edi, [r13 + MDI_len]
+    jae 7f
+    push r12
+    mov r12d, edi
+    mov edi, [r13 + MDI_face]
+    call face_of
+    mov rdi, rax
+    mov rsi, [rbx + MD_text + SB_ptr]
+    mov ecx, [r13 + MDI_off]
+    add rsi, rcx
+    mov edx, r12d
+    call text_width
+    pop r12
+    ret
+7:  mov eax, [r13 + MDI_w]
+    ret
+8:  xor eax, eax
+    ret
+
+# md_select_all(m): every text item selected
+FN md_select_all
+    mov ecx, -1                 # the first and the last text item
+    mov edx, -1
+    xor r8d, r8d
+1:  cmp r8, [rdi + MD_items + VEC_len]
+    jae 3f
+    imul rax, r8, MDI_SIZE
+    add rax, [rdi + MD_items + VEC_ptr]
+    cmp dword ptr [rax + MDI_kind], MDK_TEXT
+    jne 2f
+    cmp ecx, -1
+    jne 11f
+    mov ecx, r8d
+11: mov edx, r8d
+2:  inc r8
+    jmp 1b
+3:  cmp ecx, -1
+    je 9f
+    mov [rdi + MD_sa], ecx
+    mov dword ptr [rdi + MD_sao], 0
+    mov [rdi + MD_sb], edx
+    imul rax, rdx, MDI_SIZE
+    add rax, [rdi + MD_items + VEC_ptr]
+    mov eax, [rax + MDI_len]
+    mov [rdi + MD_sbo], eax
+    mov dword ptr [rdi + MD_sel], 1
+    mov dword ptr [rdi + MD_drag], 0
+    mov dword ptr [rip + g_dirty], 1
+9:  ret
+
+# md_sel_clear(m)
+FN md_sel_clear
+    mov dword ptr [rdi + MD_sel], 0
+    mov dword ptr [rdi + MD_drag], 0
+    ret
+
+# md_sel_text(m, sb) -> eax 1 with the selected text appended (words joined by a space where the
+#   layout leaves room, lines by LF), 0 when nothing is selected
+FN md_sel_text
+    PROLOGUE 48
+    mov rbx, rdi
+    mov [rsp + 40], rsi
+    mov rdi, rbx
+    call sel_range
+    test eax, eax
+    js 8f
+    mov [rsp], eax
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    mov dword ptr [rsp + 16], -1    # the last item taken
+    mov r12d, eax
+1:  cmp r12d, [rsp + 8]
+    jg 7f
+    imul r13, r12, MDI_SIZE
+    add r13, [rbx + MD_items + VEC_ptr]
+    cmp dword ptr [r13 + MDI_kind], MDK_TEXT
+    jne 6f
+    movsxd rax, dword ptr [rsp + 16]    # between it and the one before: LF or a space
+    test rax, rax
+    js 3f
+    imul rax, rax, MDI_SIZE
+    add rax, [rbx + MD_items + VEC_ptr]
+    mov ecx, [rax + MDI_y]
+    cmp ecx, [r13 + MDI_y]
+    je 2f
+    mov rdi, [rsp + 40]
+    mov esi, 10
+    call sb_push_byte
+    jmp 3f
+2:  mov ecx, [rax + MDI_x]
+    add ecx, [rax + MDI_w]
+    cmp ecx, [r13 + MDI_x]
+    jge 3f
+    mov rdi, [rsp + 40]
+    mov esi, ' '
+    call sb_push_byte
+3:  xor ecx, ecx                # its bytes in the selection
+    cmp r12d, [rsp]
+    jne 4f
+    mov ecx, [rsp + 4]
+4:  mov edx, [r13 + MDI_len]
+    cmp r12d, [rsp + 8]
+    jne 5f
+    mov edx, [rsp + 12]
+5:  sub edx, ecx
+    jle 51f
+    mov rsi, [rbx + MD_text + SB_ptr]
+    mov eax, [r13 + MDI_off]
+    add rsi, rax
+    add rsi, rcx
+    mov rdi, [rsp + 40]
+    call sb_push
+51: mov [rsp + 16], r12d
+6:  inc r12d
+    jmp 1b
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # md_set_base(m, ptr, len): the absolute folder relative links name (a trailing / left out); an
 #   empty one clears it
@@ -3548,6 +3898,8 @@ FN md_layout
 1:  mov [rbx + MD_width], esi
     mov eax, [rip + g_face_gen]
     mov [rbx + MD_gen], eax
+    mov dword ptr [rbx + MD_sel], 0     # the items change: no selection
+    mov dword ptr [rbx + MD_drag], 0
     mov qword ptr [rbx + MD_items + VEC_len], 0
     mov dword ptr [rbx + MD_maxw], 0
     mov dword ptr [rip + lay_y], 0
@@ -4535,6 +4887,12 @@ FN md_draw
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
     call gfx_clip_push
+    mov rdi, rbx                # the selection behind the text
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 12]
+    mov r8d, [rsp + 16]
+    call sel_draw
     xor r12d, r12d
 .Lmd_item:
     cmp r12, [rbx + MD_items + VEC_len]
@@ -4737,6 +5095,9 @@ FN md_draw
 .Lp_rhun: .asciz "rhun://"
 .Lb_doc: .asciz "doc"
 .Ld_base: .asciz "base "
+.Ld_sel: .asciz "sel"
+.p2align 2
+sel_fields: .long MD_sa, MD_sao, MD_sb, MD_sbo, -1
 .Lb_base: .asciz "base"
 .Lsp: .asciz " "
 url_before: .asciz " \t\n(*_~"
@@ -4798,7 +5159,28 @@ FN md_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
-    cmp qword ptr [rbx + MD_base], 0
+    cmp dword ptr [rbx + MD_sel], 0     # the selection: "sel A AO B BO"
+    je 10f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_sel]
+    call sb_push_cstr
+    lea r13, [rip + sel_fields]
+101:mov eax, [r13]
+    cmp eax, -1
+    je 102f
+    mov rdi, r12
+    mov esi, ' '
+    call sb_push_byte
+    mov eax, [r13]
+    mov esi, [rbx + rax]
+    mov rdi, r12
+    call sb_push_u64
+    add r13, 4
+    jmp 101b
+102:mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+10: cmp qword ptr [rbx + MD_base], 0
     je 11f
     mov rdi, r12
     lea rsi, [rip + .Ld_base]

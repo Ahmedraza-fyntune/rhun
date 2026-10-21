@@ -85,6 +85,28 @@ class Docs(ViewsBase):
         self.assertEqual(len(imgs), 1, out)
         self.assertIn(' w=30 h=10 ', imgs[0])
 
+    def item(self, out, text):
+        line = [l for l in out if l.startswith('item text ') and l.endswith(' text=' + text)][0]
+        f = dict(kv.split('=', 1) for kv in line.split(' ')[2:] if '=' in kv)
+        return int(f['x']), int(f['y']), int(f['w']), int(f['h'])
+
+    def test_dragging_selects_and_copy_takes_the_text(self):
+        (self.proj / 'note.txt').write_text('', encoding='utf-8')
+        out = self.shown()
+        head = [l for l in out if l.startswith('doc scroll=')][0]
+        ox, oy = map(int, head.split(' at=')[1].split(' ')[0].split(','))
+        x0, y0, w0, h0 = self.item(out, 'Some')
+        x1, y1, w1, h1 = self.item(out, 'with')
+        out = self.shown(f'move {ox + x0 + 1} {oy + y0 + h0 // 2}', 'down',
+                         f'move {ox + x1 + w1 + 2} {oy + y1 + h1 // 2}', 'up', 'wait 50', 'key ctrl+c',
+                         f'open {self.proj / "note.txt"}', 'key ctrl+v', 'wait 100', 'print-doc')
+        self.assertIn('Some text with', out)
+        # Ctrl+A in the view selects it all
+        out = self.shown('view-focus readme', 'key ctrl+a', 'key ctrl+c', f'open {self.proj / "note.txt"}',
+                         'key ctrl+v', 'wait 100', 'print-doc')
+        self.assertTrue(any('The end.' in l for l in out), out)
+        self.assertTrue(any(l.startswith('Readme') or 'Readme' in l for l in out))
+
     def test_ops_rhun_refuses(self):
         self.shown('cmd viewfake.docbad', 'cmd viewfake.docbig', 'cmd viewfake.doctree', 'wait 400')
         errs = [l for l in self.fake_log() if l.startswith('error ')]
