@@ -305,7 +305,13 @@ goto_match:
     js 1f
     add rax, rcx
     jmp .Lgm_sel
-1:  # wrap
+1:  mov edi, 1                  # notebooks (A4): the next cell with a match, before wrapping
+    mov rsi, r12
+    mov rdx, r13
+    call nb_find_step
+    test eax, eax
+    jnz 9f
+    # wrap
     mov rdi, r14
     mov rsi, r15
     mov rdx, r12
@@ -343,7 +349,14 @@ goto_match:
 4:  mov rax, [rsp + 16]
     test rax, rax
     jns .Lgm_sel
-    mov rax, r8
+    mov [rsp + 16], r8          # notebooks (A4): the previous cell with a match, before wrapping
+    mov edi, -1
+    mov rsi, r12
+    mov rdx, r13
+    call nb_find_step
+    test eax, eax
+    jnz 9f
+    mov rax, [rsp + 16]
     test rax, rax
     js 9f
 .Lgm_sel:

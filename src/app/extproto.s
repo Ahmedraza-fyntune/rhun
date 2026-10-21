@@ -581,6 +581,14 @@ handle_line:
     call present_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # custom editors (ceproto.inc)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ce_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -730,6 +738,16 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call dbgx_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # custom editors, with the code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call ce_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -1039,8 +1057,13 @@ doc_by_id:
     cmp [rax + DOC_id], rdi
     jne 1b
     ret
-8:  xor eax, eax
-    ret
+8:  push rdi                    # notebooks (A3): a cell, which has no tab
+    call nb_cell_doc_by_id
+    pop rdi
+    test rax, rax
+    jnz 9f
+    jmp ce_doc_by_id            # custom editors: a text model's document, in a view's tab
+9:  ret
 
 # arg_doc(i) -> DOC* from field i, or 0 after replying nodoc
 arg_doc:
@@ -2232,6 +2255,11 @@ h_cancel:
     mov rdi, [rip + cur]
     mov rsi, rax
     call tools_cancel
+    mov edi, 2                  # or a card of one of its sessions (agentext.s)
+    call field_u64
+    mov rdi, [rip + cur]
+    mov rsi, rax
+    call agentext_cancel
     mov edi, 2                  # a terminal-open waiting for the approval dialog: answered cancelled (termproto.s)
     call field_u64
     mov rdi, [rip + cur]
@@ -3011,6 +3039,8 @@ h_notify_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     mov rdx, [rip + body_ptr]
@@ -3044,6 +3074,8 @@ h_unnotify:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call notify_close_request
@@ -3121,6 +3153,8 @@ h_progress_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov r12, rax
     mov r13, -1
     mov edi, 3
@@ -3167,6 +3201,8 @@ h_progress_end:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call progress_end_request
@@ -3225,6 +3261,8 @@ h_unimage:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call viewimg_unimage
@@ -4264,7 +4302,7 @@ active_doc_id:
     imul rax, rdi, TAB_SIZE
     add rax, [rip + g_tabs + VEC_ptr]
     cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 8f
+    jne 7f
     mov rax, [rax + TAB_doc]
     test rax, rax
     jz 8f
@@ -4275,6 +4313,13 @@ active_doc_id:
     jnz 8f
 1:  mov rax, [rax + DOC_id]
     ret
+7:  cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    jne 8f
+    mov rax, [rip + cur]        # notebooks (A3): the selected cell, for one that agreed notebooks
+    test rax, rax
+    jz 8f
+    FEAT_TEST rax, FEAT_NOTEBOOKS
+    jnz nb_active_cell_id
 8:  xor eax, eax
     ret
 
@@ -4306,6 +4351,8 @@ sub_matches:
     jz 8f
     mov rbx, rdi
     mov r12, rsi
+    test dword ptr [r12 + DOC_flags], DF_CELL
+    jnz 4f
     cmp qword ptr [r12 + DOC_uri], 0
     jne 2f
     cmp byte ptr [rbx], '*'
@@ -4335,6 +4382,20 @@ sub_matches:
     mov rdi, rax
     mov rsi, rbx
     call ext_path_matches
+    EPILOGUE
+4:  # notebooks (A3): a cell, only for extensions that agreed notebooks, by its language's file name
+    mov rdi, [rip + cur]
+    mov esi, FEAT_NOTEBOOKS
+    call ext_feature
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx], '*'
+    jne 5f
+    cmp byte ptr [rbx + 1], 0
+    je 9f
+5:  mov rdi, rbx
+    mov rsi, r12
+    call nb_cell_match
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -5204,6 +5265,10 @@ verbs:
     .quad .Lv_git_show, gitdata_h_show, 4096
     .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     .quad .Lv_qd_refresh, scmext_h_qd_refresh, 4096
+    .quad .Lv_scm_register, scmext_h_register, 8192
+    .quad .Lv_scm_update, scmext_h_update, EXT_BODY_MAX
+    .quad .Lv_scm_input, scmext_h_input, 0
+    .quad .Lv_scm_input_set, scmext_h_input_set, 65536
     # resources group (extresproto.inc)
     .quad .Lres_v_busy, h_res_busy, 0
     .quad .Lres_v_secret_get, h_res_secret_get, 0
@@ -5231,6 +5296,7 @@ verbs:
     .quad .Lv_unpropose, h_unpropose, 0
     .quad .Lv_tools, h_tools, 0
     .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
+    .quad .Lv_agent_ask, h_agent_ask, 8192
     # debugger (debugext.s): feature "debug"
     .quad dbgx_v_debug_start, dbgx_h_debug_start, DBGX_BODY_MAX
     # notebooks (nbproto.inc)
@@ -5251,6 +5317,9 @@ verbs:
     .quad .Lv_tasks_set, h_terminals, 1048576
     .quad .Lv_task_start, h_terminals, 0
     .quad .Lv_task_run, h_terminals, 131072
+    # custom editors (ceproto.inc)
+    .quad .Lce_v_read, h_ed_read, 0
+    .quad .Lce_v_dirty, h_ed_dirty, 0
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
@@ -5294,6 +5363,10 @@ verbs:
 .Lv_git_show: .asciz "git-show"
 .Lv_git_diff_open: .asciz "git-diff-open"
 .Lv_qd_refresh: .asciz "quickdiff-refresh"
+.Lv_scm_register: .asciz "scm-register"
+.Lv_scm_update: .asciz "scm-update"
+.Lv_scm_input: .asciz "scm-input"
+.Lv_scm_input_set: .asciz "scm-input-set"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -5510,6 +5583,7 @@ FN extproto_answer_syntax
 .include "app/extresproto.inc"    # resources group: idle, secrets, urls, uris, files, folders
 .include "app/extaiproto.inc"
 .include "app/nbproto.inc"
+.include "app/ceproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

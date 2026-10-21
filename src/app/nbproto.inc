@@ -174,10 +174,12 @@ nb_request:
 FN nb_send_open
     PROLOGUE
     mov rbx, rdi
+    call nb_stamp               # a reload's answer replaces the cells only if nothing changed since
+    mov [rbx + NB_openstamp], rax
     mov r12, [rbx + NB_host]
     mov rdi, [r12 + DOC_path]
     mov esi, NB_BODY_MAX
-    call file_read_limited
+    call vfs_read_limited
     mov r13, rax
     mov r14, rdx
     test rax, rax
@@ -246,6 +248,8 @@ FN nb_send_save
     call nb_write
     test eax, eax
     jz 8f
+    mov rdi, rbx                # what the body holds is what a successful save marks saved
+    call nb_snapshot
     mov rdi, rbx
     lea rsi, [rip + .Lnb_v_save]
     call nb_request
@@ -472,6 +476,7 @@ h_nb_state:
     je 2f
     mov [r12 + NBC_count], rax
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
 2:  mov [r12 + NBC_state], r13d
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
@@ -585,6 +590,7 @@ h_nb_output:
     jmp .Lno_done_ok
 .Lno_done:
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
 .Lno_done_ok:
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
@@ -749,6 +755,7 @@ h_nb_stream:
     mov qword ptr [r14 + NBO_show], 0
     inc qword ptr [r12 + NBC_outrev]
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
     mov dword ptr [rip + g_dirty], 1
     mov rdi, [rip + cur_id]
     call reply_ok
@@ -957,6 +964,155 @@ h_nb_exec_signal:
     call reply_error
     EPILOGUE
 
+# ---------------- cells for language providers (A3) ----------------
+
+# nb_order_events(ext) -> rax 0, or the -errno of an event its queue refused. For an extension that
+#   agreed notebooks and knows cells of a notebook (extproto_events sent them as documents): when
+#   their order is new to it, "0 cell DOC NB CELL INDEX" for each (INDEX among all the notebook's
+#   cells, from 0), then "0 cells NB DOC..." with them in order.
+nb_order_events:
+    PROLOGUE 16
+    mov rbx, rdi
+    FEAT_TEST rbx, FEAT_NOTEBOOKS
+    jz 8f
+    xor r12d, r12d
+1:  cmp r12, [rip + g_nbs + VEC_len]
+    jae 8f
+    mov rax, [rip + g_nbs + VEC_ptr]
+    mov r13, [rax + r12*8]
+    inc r12
+    cmp dword ptr [r13 + NB_state], NBS_READY
+    jne 1b
+    # the order it knows: a hash of the DOC ids of the cells it knows
+    mov r14, 0xcbf29ce484222325
+    xor r15d, r15d
+    mov qword ptr [rsp], 0
+2:  cmp r15, [r13 + NB_cells + VEC_len]
+    jae 3f
+    mov rdi, r13
+    mov rsi, r15
+    inc r15
+    call nb_known_cell
+    test rax, rax
+    jz 2b
+    xor r14, rax
+    mov rcx, 0x100000001b3
+    imul r14, rcx
+    inc qword ptr [rsp]
+    jmp 2b
+3:  cmp qword ptr [rsp], 0
+    je 1b
+    mov rdi, r13
+    mov rsi, rbx
+    mov rdx, r14
+    call nb_sent_hash
+    test eax, eax
+    jnz 1b
+    # 0 cell DOC NB CELL INDEX, for each
+    xor r15d, r15d
+4:  cmp r15, [r13 + NB_cells + VEC_len]
+    jae 5f
+    mov rdi, r13
+    mov rsi, r15
+    call nb_known_cell
+    mov r14, rax
+    inc r15
+    test rax, rax
+    jz 4b
+    call out_begin
+    lea rdi, [rip + .Lnb_ev_cell]
+    call out_cstr
+    mov rdi, r14
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rdi, [r13 + NB_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    mov rax, [r13 + NB_cells + VEC_ptr]
+    mov rax, [rax + r15*8 - 8]
+    mov rdi, [rax + NBC_id]
+    call out_u64
+    mov edi, ' '
+    call out_byte
+    lea rdi, [r15 - 1]
+    call out_u64
+    mov edi, 10
+    call out_byte
+    call out_end
+    test rax, rax
+    js 7f
+    jmp 4b
+5:  # 0 cells NB DOC...
+    call out_begin
+    lea rdi, [rip + .Lnb_ev_cells]
+    call out_cstr
+    mov rdi, [r13 + NB_id]
+    call out_u64
+    xor r15d, r15d
+6:  cmp r15, [r13 + NB_cells + VEC_len]
+    jae 61f
+    mov rdi, r13
+    mov rsi, r15
+    inc r15
+    call nb_known_cell
+    test rax, rax
+    jz 6b
+    push rax
+    push rax
+    mov edi, ' '
+    call out_byte
+    pop rdi
+    pop rdi
+    call out_u64
+    jmp 6b
+61: mov edi, 10
+    call out_byte
+    call out_end
+    test rax, rax
+    js 7f
+    jmp 1b
+7:  # refused: heard nothing, so the order goes again next time
+    push rax
+    push rax
+    mov rdi, r13
+    mov rsi, rbx
+    xor edx, edx
+    call nb_sent_hash
+    pop rax
+    pop rax
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# nb_known_cell(nb, i) -> rax the DOC id of cell i when the extension being served (cur) knows it as
+#   an open document, else 0
+nb_known_cell:
+    push rbx
+    mov rax, [rdi + NB_cells + VEC_ptr]
+    mov rax, [rax + rsi*8]
+    mov rax, [rax + NBC_doc]
+    mov rbx, [rax + DOC_id]
+    mov rdi, [rip + cur]
+    mov rsi, rbx
+    call known_find
+    test rax, rax
+    jz 8f
+    mov rcx, [rax + XK_phase]
+    cmp rcx, XP_NEED_OPEN
+    je 8f
+    cmp rcx, XP_NEED_CLOSE
+    je 8f
+    cmp rcx, XP_DORMANT
+    je 8f
+    mov rax, rbx
+    pop rbx
+    ret
+8:  xor eax, eax
+    pop rbx
+    ret
+
 # nb_push_line(sb, ptr, len): the bytes, control characters as spaces (a label is one line)
 nb_push_line:
     PROLOGUE
@@ -1006,6 +1162,8 @@ nb_signal_names: .quad .Lnb_x_interrupt, .Lnb_x_terminate, .Lnb_x_kill, 0
 .Lnb_v_stream: .asciz "nb-stream"
 .Lnb_v_kernel_label: .asciz "nb-kernel-label"
 .Lnb_v_exec: .asciz "nb-exec"
+.Lnb_ev_cell: .asciz "0 cell "
+.Lnb_ev_cells: .asciz "0 cells "
 .Lnb_v_exec_signal: .asciz "nb-exec-signal"
 .Lnb_x_interrupt: .asciz "interrupt"
 .Lnb_x_terminate: .asciz "terminate"

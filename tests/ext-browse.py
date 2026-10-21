@@ -162,6 +162,67 @@ class Browse(updates.Updates):
         self.assertIn('demo/hello installed=0.1.0 latest=0.2.0 state=skipped from=index', out)
         self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=0.2.0 link=no fresh=0', out)
 
+    # --- review round 2 ---
+
+    def reviewed_update_asks(self, needs):
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.publish('demo', 'hello', files('0.2.0', needs=needs), 'v0.2.0')
+        self.rel.index({'demo/hello': self.rel.entry('demo', 'hello', 'v0.2.0', 'Hello')})
+        out = self.ui(['wait-ext hello running', 'ext-check-updates', 'wait-ext-updates', 'print-ext-updates',
+                       'print-ext-versions demo/hello', 'ext-update demo/hello', 'wait-ext-updates', 'print-dialog',
+                       'dialog no'])
+        self.assertIn('demo/hello installed=0.1.0 latest=0.2.0 state=asks from=index', out)
+        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=- link=no fresh=0', out)
+        self.assertIn('dialog=Update “Hello” to 0.2.0?', out)
+        return [l for l in out if l.startswith('text=')]
+
+    def test_a_reviewed_update_that_adds_git_access_asks(self):
+        self.assertEqual(self.reviewed_update_asks('git = read'),
+                         ["text=It now also asks to: read the project's Git history."])
+
+    def test_a_reviewed_update_that_adds_debug_adapters_asks(self):
+        self.assertEqual(self.reviewed_update_asks('debug = yes'),
+                         ['text=It now also asks to: start debug adapters that run as you.'])
+
+    def test_a_reviewed_update_that_adds_a_long_program_path_asks(self):
+        tool = '/opt/' + 'very-long-folder-name/' * 8 + 'tool'
+        self.assertEqual(self.reviewed_update_asks('run = gofmt ' + tool),
+                         ['text=It now also asks to: run gofmt ' + tool + '.'])
+
+    def test_a_reviewed_version_that_needs_a_newer_rhun_is_not_installed(self):
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.publish('demo', 'hello', files('0.2.0'), 'v0.2.0')
+        self.rel.index({'demo/hello': self.rel.entry('demo', 'hello', 'v0.2.0', 'Hello', rhun='99.0.0')})
+        out = self.ui(['wait-ext hello running', 'ext-check-updates', 'wait-ext-updates', 'wait 300',
+                       'print-ext-updates', 'print-ext-versions demo/hello', 'ext-install demo/hello', 'wait-install',
+                       'print-toast', 'ext-browse', 'print-ext-browse'])
+        self.assertIn('demo/hello installed=0.1.0 latest=- state=error the reviewed version needs rhun 99.0.0 '
+                      'from=index', out)
+        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=- link=no fresh=0', out)
+        self.assertIn('toast=Could not install demo/hello: the reviewed version needs rhun 99.0.0', out)
+        self.assertIn('demo/hello 0.2.0 button=newer', out)
+
+    def test_oversized_or_malformed_index_values_are_left_out(self):
+        self.rel.publish('demo', 'hello', files('0.2.0'), 'v0.2.0')
+        out = self.rel.index({
+            'demo/hello': self.rel.entry('demo', 'hello', 'v0.2.0', 'Hello'),
+            'demo/longtag': {'title': 'Long tag', 'version': '1.0.0', 'tag': 'v' + '1' * 500,
+                             'sha256.' + extrel.TARGET: '0' * 64},
+            'demo/baddigest': {'title': 'Bad digest', 'version': '1.0.0', 'tag': 'v1.0.0',
+                               'sha256.' + extrel.TARGET: 'not-a-digest'},
+            'demo/badversion': {'title': 'Bad version', 'version': 'one', 'tag': 'v1.0.0',
+                                'sha256.' + extrel.TARGET: '0' * 64},
+            ('o' * 150) + '/longowner': {'title': 'Long owner', 'version': '1.0.0', 'tag': 'v1.0.0'},
+        })
+        out = self.ui(['ext-browse', 'wait-index', 'print-ext-browse', 'ext-install demo/longtag', 'wait-install',
+                       'print-toast'])
+        self.assertEqual(out[0], 'index=2 format=1 fetching=0')
+        self.assertIn('demo/baddigest 1.0.0 button=unavailable', out)
+        self.assertIn('demo/hello 0.2.0 button=install', out)
+        self.assertIn('install=failed', out)        # not pinned: no release of it, and no crash
+
 
 for _name in dir(host.Host):
     if _name.startswith('test_'):

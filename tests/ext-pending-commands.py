@@ -28,7 +28,7 @@ def build(folder,windows=False):
         ('call build_argv','call pct_native_noop'),('call build_env','call pct_native_noop'),
         ('call proc_spawn','call pct_native_spawn')])
     ext=replace_region(ext,'FN ext_exited\n','# ext_is_visible(ext',[
-        ('SYS SYS_kill','call pct_native_noop'),('SYS SYS_close','call pct_native_noop'),
+        ('call proc_kill','call pct_native_noop'),('SYS SYS_close','call pct_native_noop'),
         ('call proc_wait','call pct_native_noop'),('call confine_failed','call pct_confine_failed'),
         ('call confine_exit_reason','call pct_confine_reason'),('call ext_start','call pct_retry_start')])
     ext=replace_region(ext,'FN ext_shutdown\n','FN ext_status_draw\n',[

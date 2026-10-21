@@ -185,7 +185,9 @@ FN watch_evbuf
     ret
 
 # watch_remote_renew(): connected again: every remote watch is made again on the host (the paths
-#   are kept); one whose folder went is dropped, its users seeing it as removed
+#   are kept); one whose folder went keeps its slot with a descriptor no host event names (the next
+#   reconnect tries again), its users seeing it as removed. Every open file of the host's is then
+#   compared with its file there: a change made while the connection was down sent no event
 FN watch_remote_renew
     PROLOGUE
     xor ebx, ebx
@@ -207,13 +209,40 @@ FN watch_remote_renew
     lea rcx, [rip + wd_native]
     mov [rcx + rbx*8], rax
     jmp 3f
-2:  mov edi, ebx
+2:  lea rcx, [rip + wd_native]
+    mov rax, WD_REMOTE | (WD_REMOTE - 1)
+    inc rax
+    mov [rcx + rbx*8], rax      # the host's old descriptor may name another folder now
+    mov edi, ebx
     call docs_lost
 3:  inc ebx
     cmp ebx, MAXWD
     jb 1b
     call docs_wake
-    EPILOGUE
+    # the host's open files are compared with their files there
+    xor ebx, ebx
+4:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call tab_at
+    mov r12, [rax + TAB_doc]
+    test r12, r12
+    jz 5f
+    mov rdi, [r12 + DOC_path]
+    test rdi, rdi
+    jz 5f
+    call vfs_remote_path
+    test eax, eax
+    jz 5f
+    cmp qword ptr [r12 + DOC_reload_at], 0
+    jne 5f
+    call time_ms
+    add rax, RELOAD_DELAY_MS
+    mov [r12 + DOC_reload_at], rax
+    call tick_at
+5:  inc rbx
+    jmp 4b
+9:  EPILOGUE
 
 # Broker references share the existing native descriptors and owned paths.
 # Ordinary editor kind bits and broker references must both be zero to remove.
@@ -1119,7 +1148,12 @@ FN app_reload_doc
     mov rdi, rbx
     call nb_disk_reload
     EPILOGUE
-1:  cmp qword ptr [rbx + DOC_img], 0
+1:  mov rdi, rbx                # custom editors: an owned model's extension hears the change
+    call ce_disk_changed
+    test eax, eax
+    jnz 9f
+    mov rdi, [rbx + DOC_path]
+    cmp qword ptr [rbx + DOC_img], 0
     jne .Lrd_image
     call vfs_stamp
     mov [rsp + 24], rax        # stamp belongs to the bytes read, not a later replacement
@@ -1242,7 +1276,12 @@ FN cmd_reload_file
     jz 2f
     mov rdi, rax
     jmp nb_reload
-2:  jmp app_reload_doc
+2:  push rdi
+    call ce_revert              # custom editors: an owned model's extension reverts
+    pop rdi
+    test eax, eax
+    jnz 1f
+    jmp app_reload_doc
 1:  ret
 
 .section .rodata

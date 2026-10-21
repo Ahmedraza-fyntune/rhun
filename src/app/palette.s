@@ -17,7 +17,7 @@
 .equ PM_KEYS, 12                # Keyboard Shortcuts: every binding (keys.s keys_list)
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 .equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
-.equ PM_WSLIST, 16              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_WSLIST, 88              # wsedit: a workspace edit's question (wsconfirm.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -261,7 +261,9 @@ pal_remote_cancel:
     cmp dword ptr [rip + pal_mode], PM_PROMPT
     jne 2f
     cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
-    jb 2f
+    je 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE_SECRET
+    jne 2f
 1:  mov dword ptr [rip + pal_mode], PM_NONE
     jmp remote_ui_cancel
 2:  ret
@@ -1337,6 +1339,17 @@ FN palette_choose_add
 FN palette_choose_ready
     jmp palette_filter
 
+# custom editors: palette_reopen_open(label cstr): an empty pick list for Reopen With; rows follow
+# with palette_choose_add, then palette_choose_ready; choosing row n calls ce_reopen_chosen(n)
+FN palette_reopen_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_REOPEN
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
 # wsedit: palette_wslist_open(label cstr): an empty pick list for a workspace edit's question
 # (wsconfirm.s); rows follow with palette_choose_add, then palette_choose_ready; choosing row n
 # calls wslist_chosen(n), closing it otherwise wslist_abort
@@ -2336,6 +2349,8 @@ FN palette_print
     je 13f
     cmp dword ptr [rip + pal_mode], PM_WSLIST
     je 13f
+    cmp dword ptr [rip + pal_mode], PM_REOPEN   # custom editors
+    je 13f
     cmp dword ptr [rip + pal_mode], PM_PROVIDERS
     je 13f
     cmp dword ptr [rip + pal_mode], PM_RESULTS
@@ -2873,11 +2888,19 @@ palette_accept:
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 33: cmp ebx, PM_TASKS
-    jne 331f
+    jne 332f
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
     mov rdi, [r12 + IT_data]
     call tasks_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+332: cmp ebx, PM_REOPEN          # custom editors: Reopen With (customed.s)
+    jne 331f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call ce_reopen_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 331: cmp ebx, PM_WSLIST          # wsedit
@@ -3044,8 +3067,10 @@ palette_accept:
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 690: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
-    jb 692f
-    # remote hosts: ssh's question answered
+    je 693f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE_SECRET
+    jne 692f
+693: # remote hosts: ssh's question answered (or the port to forward)
     lea rdi, [rip + pal_tf]
     call tf_text
     mov ebx, [rip + pal_prompt]

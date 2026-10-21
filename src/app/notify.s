@@ -48,7 +48,7 @@ F NC_y, 4
 F NC_w, 4
 F NC_h, 4
 F NC_pg, 4              # a progress card: its PG slot + 1
-F NC_pad, 4
+F NC_order, 4           # when it came, among cards and progress (ord_seq)
 ENDSTRUCT NC_SIZE
 
 # a progress
@@ -66,6 +66,8 @@ F NP_slot, 4            # NPW_VIEW: the view's instance slot
 F NP_percent, 4         # 0-100, -1 indeterminate
 F NP_cancel, 4          # 1: it can be cancelled
 F NP_open, 4            # its status entry's card is open
+F NP_order, 4           # when it came, among cards and progress (ord_seq)
+F NP_pad, 4
 ENDSTRUCT NP_SIZE
 
 .bss
@@ -74,6 +76,7 @@ nts: .zero NC_SIZE * NC_MAX
 pgs: .zero NP_SIZE * NP_MAX
 nt_seq: .long 0
 pg_seq: .long 0
+ord_seq: .long 0
 nt_stack: .zero 16              # last frame's cards: x, y, w, h (the pointer's hole this frame)
 nt_fbtn: .long 0                # its button (0 none)
 nt_order: .zero 4 * (NC_MAX + NP_MAX)   # the cards shown, oldest first: NT slot, or PG slot | 0x100
@@ -215,6 +218,9 @@ nt_alloc:
     inc dword ptr [rip + nt_seq]
     mov eax, [rip + nt_seq]
     mov [r13 + NC_id], eax
+    inc dword ptr [rip + ord_seq]
+    mov eax, [rip + ord_seq]
+    mov [r13 + NC_order], eax
     call time_ms
     mov [r13 + NC_created], rax
     mov dword ptr [rip + g_dirty], 1
@@ -709,6 +715,9 @@ pg_alloc:
     inc dword ptr [rip + pg_seq]
     mov eax, [rip + pg_seq]
     mov [r13 + NP_id], eax
+    inc dword ptr [rip + ord_seq]
+    mov eax, [rip + ord_seq]
+    mov [r13 + NP_order], eax
     mov dword ptr [r13 + NP_percent], -1
     mov dword ptr [r13 + NP_slot], -1
     call time_ms
@@ -921,6 +930,8 @@ FN progress_end
 pg_cancel:
     PROLOGUE
     mov rbx, rdi
+    cmp dword ptr [rbx + NP_cancel], 0  # without Cancel: never
+    je 9f
     cmp qword ptr [rbx + NP_cancel_at], 0
     jne 9f
     call time_ms
@@ -1093,7 +1104,20 @@ FN notify_tick
     jz 11f
     cmp r13, rcx
     jb 11f
-    mov rdi, rax
+    cmp dword ptr [rax + NC_w], 0   # the pointer over it holds it, frames or not
+    je 12f
+    mov ecx, [rip + g_mx]
+    sub ecx, [rax + NC_x]
+    cmp ecx, [rax + NC_w]
+    jae 12f
+    mov ecx, [rip + g_my]
+    sub ecx, [rax + NC_y]
+    cmp ecx, [rax + NC_h]
+    jae 12f
+    lea rcx, [r13 + 2000]
+    mov [rax + NC_deadline], rcx
+    jmp 11f
+12: mov rdi, rax
     call nt_user_close
 11: inc ebx
     jmp 1b
@@ -1175,7 +1199,47 @@ collect:
 31: inc r13d
     jmp 3b
 4:  mov [rip + nt_count], r12d
-    EPILOGUE
+    # oldest first: by when each came (a slot freed and taken again is no older for it)
+    mov ebx, 1
+5:  cmp ebx, r12d
+    jae 9f
+    lea rax, [rip + nt_order]
+    mov r13d, [rax + rbx*4]     # the entry being placed, its order
+    mov edi, r13d
+    call entry_order
+    mov r14d, eax
+    mov r15d, ebx
+6:  test r15d, r15d
+    jz 7f
+    lea rax, [rip + nt_order]
+    mov edi, [rax + r15*4 - 4]
+    call entry_order
+    cmp eax, r14d
+    jbe 7f
+    lea rax, [rip + nt_order]
+    mov ecx, [rax + r15*4 - 4]
+    mov [rax + r15*4], ecx
+    dec r15d
+    jmp 6b
+7:  lea rax, [rip + nt_order]
+    mov [rax + r15*4], r13d
+    inc ebx
+    jmp 5b
+9:  EPILOGUE
+
+# entry_order(entry: a card's slot, or a progress' | 0x100) -> eax when it came
+entry_order:
+    test edi, 0x100
+    jnz 1f
+    imul rax, rdi, NC_SIZE
+    lea rcx, [rip + nts]
+    mov eax, [rcx + rax + NC_order]
+    ret
+1:  and edi, 0xff
+    imul rax, rdi, NP_SIZE
+    lea rcx, [rip + pgs]
+    mov eax, [rcx + rax + NP_order]
+    ret
 
 # notify_draw(): the cards over the window (in the overlay phase, under menus and the palette)
 FN notify_draw
@@ -2063,6 +2127,8 @@ nt_key:
     mov edi, ebx
     and edi, 0xff
     call pg_at
+    cmp dword ptr [rax + NP_cancel], 0  # one without Cancel cannot be cancelled from the keyboard
+    je 7f
     mov rdi, rax
     call pg_cancel
     jmp 7f

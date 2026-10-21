@@ -3,6 +3,13 @@
 # the mux protocol (remote.s, top) on its standard input and output and runs what the window asks
 # for: programs on pipes or pseudo-terminals, file system requests, watches, file lists and search.
 # It opens no port and runs everything as the user it was started as.
+#
+# With --session SID it outlives the connection: the first agent of a session forks a daemon that
+# listens on ~/.cache/rhun-remote/s/SID (a 0700 folder) and becomes a relay between the transport
+# and that socket; a later agent with the same SID only relays. When the relay's connection ends
+# the daemon keeps its programs (their output waits: it is not read while no window listens) and a
+# reconnecting window sends attach to learn which of its channels are still there. A session left
+# alone ends after AG_DETACH_MS (AG_IDLE_MS without programs); quit ends it at once.
 .include "rhun.inc"
 
 .ifndef WINDOWS
@@ -19,6 +26,8 @@
 .equ AG_GROUPS, 256             # process groups whose leader is gone, watched until they are empty
 .equ AG_LINGER_MS, 2000         # SIGHUP and SIGTERM, then SIGKILL this much later
 .equ AG_GIVEUP_MS, 5000         # a group still there this long after SIGKILL is given up
+.equ AG_DETACH_MS, 10800000     # a session with programs waits this long for its window
+.equ AG_IDLE_MS, 600000         # one without
 
 # channel modes
 .equ AM_FREE, 0
@@ -26,6 +35,7 @@
 .equ AM_PTY, 2                  # a program on a pseudo-terminal
 .equ AM_ERR, 3                  # a program's error output, on a channel of its own
 .equ AM_STREAM, 4               # a file list or search sent as data, then e
+.equ AM_SOCK, 5                 # a TCP connection to one of the host's loopback ports (forwarding)
 
 # channel flags
 .equ ACF_IEOF, 1                # the client ended the input: close it once written
@@ -39,6 +49,7 @@
 .equ PR_OUT, 2
 .equ PR_IN, 3
 .equ PR_INOTIFY, 4
+.equ PR_LISTEN, 5               # a session's socket: a window (re)attaches
 
 STRUCT
 F AC_mode, 4
@@ -79,6 +90,15 @@ ag_groups: .zero 16 * AG_GROUPS # pgid (4), 1 once SIGKILLed (4), the deadline i
 
 .data
 ag_inotify: .long -1
+ag_cin: .long 0                 # the window's stream: read here (a session's connection)
+ag_cout: .long 1                # and written here; both -1 while a session waits for its window
+ag_listen: .long -1             # a session's listening socket
+.bss
+.p2align 3
+ag_session: .long 0             # 1: a session daemon (--session)
+ag_detached_at: .quad 0
+ag_sockaddr: .zero 112          # the session's sockaddr_un
+ag_relaybuf: .zero 65536
 .bss
 .p2align 3
 ag_exclude: .quad 0
@@ -105,14 +125,30 @@ FN remote_agent_main
     xor edx, edx
     SYS SYS_close_range
     call sys_file_capacity
-    mov edi, 0
+    # --session SID: relays to the session's daemon, or becomes it (returns only in the daemon, or
+    # without a session)
+    cmp qword ptr [rip + g_argc], 4
+    jb 3f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 16]
+    lea rsi, [rip + .Lopt_session]
+    call strcmp_eq
+    test eax, eax
+    jz 3f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 24]
+    call ag_session_start
+3:  mov edi, [rip + ag_cin]
+    test edi, edi
+    js 4f
     mov esi, F_SETFL
     mov edx, O_NONBLOCK
     SYS SYS_fcntl
-    mov edi, 1
+    mov edi, [rip + ag_cout]
     mov esi, F_SETFL
     mov edx, O_NONBLOCK
     SYS SYS_fcntl
+4:
     # every channel starts closed
     lea rbx, [rip + ag_ch]
     xor ecx, ecx
@@ -134,32 +170,26 @@ FN remote_agent_main
     call parse_u64
     mov [rip + ag_delay], rax
 2:  call ag_capture_env
-    # hello rhun-remote VERSION HASH: the client checks that it is the binary it sent
     lea rdi, [rip + .Lself]
     call fnv_file
     mov [rip + ag_hash], rax
-    lea rdi, [rip + ag_wq]
-    lea rsi, [rip + .Lhello]
-    call sb_push_cstr
-    lea rdi, [rip + ag_wq]
-    lea rsi, [rip + rhun_version]
-    call sb_push_cstr
-    lea rdi, [rip + ag_wq]
-    mov esi, ' '
-    call sb_push_byte
-    mov rsi, [rip + ag_hash]
-    call ag_push_hex
-    lea rdi, [rip + ag_wq]
-    mov esi, 10
-    call sb_push_byte
+    cmp dword ptr [rip + ag_cin], 0
+    jl .Lag_loop                # a session daemon: hello when the relay connects
+    call ag_push_hello
 .Lag_loop:
     cmp dword ptr [rip + ag_quit], 0
     jne .Lag_end
     call ag_poll
     call ag_reap
     call ag_groups_tick
+    call ag_session_tick
     jmp .Lag_loop
 .Lag_end:
+    cmp dword ptr [rip + ag_session], 0
+    je 2f
+    lea rdi, [rip + ag_sockaddr + 2]
+    SYS SYS_unlink
+2:
     # the window went away: its programs end with it, and what they started: their groups get
     # SIGHUP and SIGTERM, SIGKILL AG_LINGER_MS later if they are not empty by then
     lea rbx, [rip + ag_ch]
@@ -203,6 +233,408 @@ FN remote_agent_main
 7:  call ag_groups_kill
 8:  xor edi, edi
     call sys_exit
+
+# ag_push_hello(): hello rhun-remote VERSION HASH: the client checks that it is the binary it sent
+ag_push_hello:
+    sub rsp, 8
+    lea rdi, [rip + ag_wq]
+    lea rsi, [rip + .Lhello]
+    call sb_push_cstr
+    lea rdi, [rip + ag_wq]
+    lea rsi, [rip + rhun_version]
+    call sb_push_cstr
+    lea rdi, [rip + ag_wq]
+    mov esi, ' '
+    call sb_push_byte
+    mov rsi, [rip + ag_hash]
+    call ag_push_hex
+    lea rdi, [rip + ag_wq]
+    mov esi, 10
+    call sb_push_byte
+    add rsp, 8
+    ret
+
+# ---------------- sessions ----------------
+
+# ag_session_start(sid): a session's daemon on ~/.cache/rhun-remote/s/SID: this process relays to
+#   one that runs (and never returns), or forks one and relays to it; the daemon returns with the
+#   socket in ag_listen. Returns without a session when SID or the folder is unusable.
+ag_session_start:
+    PROLOGUE 16
+    mov rbx, rdi
+    call strlen
+    mov r12, rax
+    test rax, rax
+    jz 9f
+    cmp rax, 32
+    ja 9f
+    xor ecx, ecx
+1:  movzx eax, byte ptr [rbx + rcx]
+    mov edx, eax
+    sub edx, '0'
+    cmp edx, 10
+    jb 2f
+    sub eax, 'a'
+    cmp eax, 6
+    jae 9f
+2:  inc rcx
+    cmp rcx, r12
+    jb 1b
+    lea rdi, [rip + .Lk_home_env]
+    call getenv
+    test rax, rax
+    jz 9f
+    mov r13, rax
+    lea rdi, [rip + ag_tmp]
+    call sb_clear
+    lea rdi, [rip + ag_tmp]
+    mov rsi, r13
+    call sb_push_cstr
+    lea rdi, [rip + ag_tmp]
+    lea rsi, [rip + .Lsession_dir]
+    call sb_push_cstr
+    lea rdi, [rip + ag_tmp]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + ag_tmp + SB_ptr]
+    call mkdir_p
+    mov rdi, [rip + ag_tmp + SB_ptr]
+    mov esi, 0700
+    SYS SYS_chmod
+    dec qword ptr [rip + ag_tmp + SB_len]
+    lea rdi, [rip + ag_tmp]
+    mov esi, '/'
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    mov rsi, rbx
+    call sb_push_cstr
+    mov rdx, [rip + ag_tmp + SB_len]
+    cmp rdx, 107
+    jae 9f                      # too long for a socket's address
+    mov word ptr [rip + ag_sockaddr], AF_UNIX
+    lea rdi, [rip + ag_sockaddr + 2]
+    mov rsi, [rip + ag_tmp + SB_ptr]
+    push rdx
+    push rdx
+    call memcpy
+    pop rdx
+    pop rdx
+    lea rax, [rip + ag_sockaddr + 2]
+    mov byte ptr [rax + rdx], 0
+    # one runs: relay to it
+    call ag_sock_connect
+    test eax, eax
+    js 3f
+    mov edi, eax
+    call ag_relay
+3:  lea rdi, [rip + ag_sockaddr + 2]
+    SYS SYS_unlink
+    mov edi, AF_UNIX
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js 9f
+    mov r14d, eax
+    mov edi, eax
+    lea rsi, [rip + ag_sockaddr]
+    mov edx, 110
+    SYS SYS_bind
+    test rax, rax
+    js 8f
+    mov edi, r14d
+    mov esi, 8
+    SYS SYS_listen
+    test rax, rax
+    js 8f
+    SYS SYS_fork
+    test rax, rax
+    js 8f
+    jz 5f
+    # the relay to the daemon just made (it listens already)
+    mov edi, r14d
+    SYS SYS_close
+    call ag_sock_connect
+    test eax, eax
+    js 7f
+    mov edi, eax
+    call ag_relay
+5:  # the daemon: a session of its own, nothing of the transport's kept open
+    SYS SYS_setsid
+    lea rdi, [rip + .Ldevnull]
+    mov esi, O_RDWR | O_CLOEXEC
+    xor edx, edx
+    SYS SYS_open
+    test rax, rax
+    js 6f
+    mov r15d, eax
+    xor ecx, ecx
+4:  mov edi, r15d
+    mov esi, ecx
+    push rcx
+    push rcx
+    SYS SYS_dup2
+    pop rcx
+    pop rcx
+    inc ecx
+    cmp ecx, 3
+    jb 4b
+    cmp r15d, 2
+    jbe 6f
+    mov edi, r15d
+    SYS SYS_close
+6:  mov [rip + ag_listen], r14d
+    mov dword ptr [rip + ag_cin], -1
+    mov dword ptr [rip + ag_cout], -1
+    mov dword ptr [rip + ag_session], 1
+    call time_ms
+    mov [rip + ag_detached_at], rax
+    EPILOGUE
+7:  mov edi, 1
+    call sys_exit
+8:  mov edi, r14d
+    SYS SYS_close
+9:  EPILOGUE
+
+# ag_sock_connect() -> eax a socket connected to the session's daemon, or -errno
+ag_sock_connect:
+    push rbx
+    mov edi, AF_UNIX
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js 9f
+    mov ebx, eax
+    mov edi, eax
+    lea rsi, [rip + ag_sockaddr]
+    mov edx, 110
+    SYS SYS_connect
+    test rax, rax
+    js 8f
+    mov eax, ebx
+    jmp 9f
+8:  push rax
+    mov edi, ebx
+    SYS SYS_close
+    pop rax
+9:  pop rbx
+    ret
+
+# ag_relay(fd): the transport's standard input to the daemon and its answers to standard output,
+#   until either ends; then this process exits
+ag_relay:
+    PROLOGUE 32
+    mov ebx, edi
+1:  mov dword ptr [rsp], 0
+    mov dword ptr [rsp + 4], POLLIN
+    mov [rsp + 8], ebx
+    mov dword ptr [rsp + 12], POLLIN
+    lea rdi, [rsp]
+    mov esi, 2
+    mov rdx, -1
+    SYS SYS_poll
+    cmp rax, -EINTR
+    je 1b
+    test rax, rax
+    js 9f
+    movzx eax, word ptr [rsp + 14]
+    test eax, eax
+    jz 2f
+    mov edi, ebx
+    lea rsi, [rip + ag_relaybuf]
+    mov edx, 65536
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 2f
+    cmp rax, -EAGAIN
+    je 2f
+    test rax, rax
+    jle 9f
+    mov edi, 1
+    mov rsi, rax
+    call ag_write_all
+    test rax, rax
+    js 9f
+2:  movzx eax, word ptr [rsp + 6]
+    test eax, eax
+    jz 1b
+    xor edi, edi
+    lea rsi, [rip + ag_relaybuf]
+    mov edx, 65536
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 1b
+    cmp rax, -EAGAIN
+    je 1b
+    test rax, rax
+    jle 9f
+    mov edi, ebx
+    mov rsi, rax
+    call ag_write_all
+    test rax, rax
+    js 9f
+    jmp 1b
+9:  xor edi, edi
+    call sys_exit
+
+# ag_write_all(fd, len) -> 0 or -errno: ag_relaybuf's first len bytes, waiting for room as needed
+ag_write_all:
+    PROLOGUE 16
+    mov ebx, edi
+    mov r12, rsi
+    xor r13d, r13d
+1:  cmp r13, r12
+    jae 8f
+    mov edi, ebx
+    lea rsi, [rip + ag_relaybuf]
+    add rsi, r13
+    mov rdx, r12
+    sub rdx, r13
+    SYS SYS_write
+    cmp rax, -EINTR
+    je 1b
+    cmp rax, -EAGAIN
+    jne 2f
+    mov [rsp], ebx
+    mov dword ptr [rsp + 4], POLLOUT
+    lea rdi, [rsp]
+    mov esi, 1
+    mov edx, 1000
+    SYS SYS_poll
+    jmp 1b
+2:  test rax, rax
+    jle 9f
+    add r13, rax
+    jmp 1b
+8:  xor eax, eax
+    EPILOGUE
+9:  mov rax, -32
+    EPILOGUE
+
+# ag_lost_client(): the window's stream ended or broke: a session waits for it, else the agent ends
+ag_lost_client:
+    cmp dword ptr [rip + ag_session], 0
+    jne ag_detach
+    mov dword ptr [rip + ag_quit], 1
+    ret
+
+# ag_detach(): a session without its window: the connection closes, what was queued for it goes
+ag_detach:
+    push rbx
+    mov edi, [rip + ag_cin]
+    test edi, edi
+    js 1f
+    SYS SYS_close
+1:  mov dword ptr [rip + ag_cin], -1
+    mov dword ptr [rip + ag_cout], -1
+    mov qword ptr [rip + ag_rbuf + SB_len], 0
+    mov qword ptr [rip + ag_wq + SB_len], 0
+    mov qword ptr [rip + ag_wq_off], 0
+    call time_ms
+    mov [rip + ag_detached_at], rax
+    pop rbx
+    ret
+
+# ag_accept(): a window's relay connects to the session: it takes the stream over and gets a hello
+ag_accept:
+    PROLOGUE
+    mov edi, [rip + ag_listen]
+    xor esi, esi
+    xor edx, edx
+    mov r10d, SOCK_CLOEXEC | SOCK_NONBLOCK
+    SYS SYS_accept4
+    test rax, rax
+    js 9f
+    mov ebx, eax
+    cmp dword ptr [rip + ag_cin], 0
+    jl 1f
+    call ag_detach              # a newer connection of its window wins
+1:  mov [rip + ag_cin], ebx
+    mov [rip + ag_cout], ebx
+    call ag_push_hello
+9:  EPILOGUE
+
+# ag_session_tick(): a session nobody reattached to in time ends
+ag_session_tick:
+    cmp dword ptr [rip + ag_session], 0
+    je 9f
+    cmp dword ptr [rip + ag_cin], 0
+    jge 9f
+    push rbx
+    call time_ms
+    sub rax, [rip + ag_detached_at]
+    mov rbx, rax
+    mov ecx, AG_IDLE_MS
+    lea rdx, [rip + ag_ch]
+    xor esi, esi
+1:  cmp dword ptr [rdx + AC_mode], AM_FREE
+    jne 2f
+    add rdx, AC_SIZE
+    inc esi
+    cmp esi, AG_MAXCH
+    jb 1b
+    jmp 3f
+2:  mov ecx, AG_DETACH_MS
+3:  cmp rbx, rcx
+    jb 4f
+    mov dword ptr [rip + ag_quit], 1
+4:  pop rbx
+9:  ret
+
+# attach 0: a window reconnected to its session: a line per channel in use, "CH MODE FLAGS STATUS"
+#   (FLAGS: 1 the program exited, 2 its output ended); the credits start again on both sides. A
+#   session's programs stay listed until the window closes their channels, so an exit sent while the
+#   connection was already gone is not lost.
+ag_attach:
+    PROLOGUE
+    mov r12, rdi
+    lea rdi, [rip + ag_tmp]
+    call sb_clear
+    lea rbx, [rip + ag_ch]
+    xor r13d, r13d
+1:  cmp dword ptr [rbx + AC_mode], AM_FREE
+    je 3f
+    lea rdi, [rip + ag_tmp]
+    mov esi, r13d
+    call sb_push_u64
+    lea rdi, [rip + ag_tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    mov esi, [rbx + AC_mode]
+    call sb_push_u64
+    lea rdi, [rip + ag_tmp]
+    mov esi, ' '
+    call sb_push_byte
+    xor esi, esi
+    test dword ptr [rbx + AC_flags], ACF_EXITED
+    jz 2f
+    or esi, 1
+2:  test dword ptr [rbx + AC_flags], ACF_OEOF
+    jz 21f
+    or esi, 2
+21: lea rdi, [rip + ag_tmp]
+    call sb_push_u64
+    lea rdi, [rip + ag_tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    mov esi, [rbx + AC_status]
+    call sb_push_u64
+    lea rdi, [rip + ag_tmp]
+    mov esi, 10
+    call sb_push_byte
+    mov qword ptr [rbx + AC_credit], AG_WINDOW
+    mov qword ptr [rbx + AC_grant], 0
+3:  add rbx, AC_SIZE
+    inc r13d
+    cmp r13d, AG_MAXCH
+    jb 1b
+    mov rdi, r12
+    xor esi, esi
+    call ag_reply
+    EPILOGUE
 
 # ag_group_add(pgid): a program's process group: SIGHUP and SIGTERM now, then watched until it is
 #   empty (SIGKILL at its deadline); nothing when it is empty already
@@ -499,22 +931,32 @@ ag_poll:
     sub rax, [rip + ag_wq_off]
     cmp rax, AG_WQ_HIGH
     jae 1f
-    xor edi, edi
+    mov edi, [rip + ag_cin]
+    test edi, edi
+    js 1f
     mov esi, POLLIN
     mov edx, PR_MUXIN
     call ag_padd
 1:  mov rax, [rip + ag_wq + SB_len]
     cmp rax, [rip + ag_wq_off]
     je 2f
-    mov edi, 1
+    mov edi, [rip + ag_cout]
+    test edi, edi
+    js 2f
     mov esi, POLLOUT
     mov edx, PR_MUXOUT
     call ag_padd
 2:  mov edi, [rip + ag_inotify]
     test edi, edi
-    js 3f
+    js 21f
     mov esi, POLLIN
     mov edx, PR_INOTIFY
+    call ag_padd
+21: mov edi, [rip + ag_listen]
+    test edi, edi
+    js 3f
+    mov esi, POLLIN
+    mov edx, PR_LISTEN
     call ag_padd
 3:  # the channels
     lea r12, [rip + ag_ch]
@@ -524,6 +966,8 @@ ag_poll:
     mov edi, [r12 + AC_out]
     test edi, edi
     js 5f
+    cmp dword ptr [rip + ag_cin], 0
+    jl 5f                       # no window: what a program writes waits in its pipe
     test dword ptr [r12 + AC_flags], ACF_OEOF
     jnz 5f
     cmp qword ptr [r12 + AC_credit], 0
@@ -556,7 +1000,14 @@ ag_poll:
     jb 4b
     # programs that run are checked for their exit now and then
     mov edx, -1
+    cmp dword ptr [rip + ag_cin], 0
+    jge 71f
+    cmp dword ptr [rip + ag_session], 0
+    je 71f
+    mov edx, 1000               # a session without its window looks at its deadline
+71: mov r14, rdx
     call ag_any_running
+    mov rdx, r14
     test eax, eax
     jz 7f
     mov edx, 100
@@ -595,7 +1046,11 @@ ag_poll:
     jne 13f
     call ag_write_program
     jmp .Lap_next
-13: call ag_read_inotify
+13: cmp eax, PR_LISTEN
+    jne 14f
+    call ag_accept
+    jmp .Lap_next
+14: call ag_read_inotify
 .Lap_next:
     inc r12d
     jmp .Lap_disp
@@ -669,6 +1124,8 @@ ag_reap:
     or dword ptr [rbx + AC_flags], ACF_EXITED
     mov edi, [rbx + AC_pid]     # what it started and left behind goes too (its session's group)
     call ag_group_add
+    cmp dword ptr [rip + ag_cin], 0
+    jl 3f                       # no window: attach tells it
     lea rdi, [rip + ag_wq]
     lea rsi, [rip + .Lx]
     call sb_push_cstr
@@ -716,7 +1173,9 @@ ag_maybe_free:
     test dword ptr [rbx + AC_flags], ACF_OEOF
     jz 9f
     jmp 2f
-1:  mov eax, [rbx + AC_flags]
+1:  cmp dword ptr [rip + ag_session], 0
+    jne 9f                      # a session keeps it for attach until the window closes it
+    mov eax, [rbx + AC_flags]
     and eax, ACF_EXITED | ACF_OEOF
     cmp eax, ACF_EXITED | ACF_OEOF
     jne 9f
@@ -759,12 +1218,14 @@ ag_free:
 # ag_flush(): write what is queued; a full pipe waits for the next POLLOUT
 ag_flush:
     PROLOGUE
+    cmp dword ptr [rip + ag_cout], 0
+    jl 91f
 1:  mov rdx, [rip + ag_wq + SB_len]
     mov rsi, [rip + ag_wq_off]
     sub rdx, rsi
     jz 8f
     add rsi, [rip + ag_wq + SB_ptr]
-    mov edi, 1
+    mov edi, [rip + ag_cout]
     SYS SYS_write
     cmp rax, -EINTR
     je 1b
@@ -774,7 +1235,7 @@ ag_flush:
     jle 7f
     add [rip + ag_wq_off], rax
     jmp 1b
-7:  mov dword ptr [rip + ag_quit], 1     # the client is gone
+7:  call ag_lost_client               # the client is gone
 8:  mov qword ptr [rip + ag_wq_off], 0
     mov qword ptr [rip + ag_wq + SB_len], 0
     EPILOGUE
@@ -909,11 +1370,13 @@ ag_delay_reply:
 # ag_read_client(): read what came and handle every complete message
 ag_read_client:
     PROLOGUE
+    cmp dword ptr [rip + ag_cin], 0
+    jl 9f
 1:  lea rdi, [rip + ag_rbuf]
     mov esi, 262144
     call sb_reserve
     mov rsi, rax
-    xor edi, edi
+    mov edi, [rip + ag_cin]
     mov edx, 262144
     SYS SYS_read
     cmp rax, -EINTR
@@ -975,7 +1438,7 @@ ag_read_client:
     mov [rip + ag_rbuf + SB_len], rdx
     call memmove
     jmp 9f
-8:  mov dword ptr [rip + ag_quit], 1
+8:  call ag_lost_client
 9:  EPILOGUE
 
 # ag_tok(i) -> rax ptr, rdx len of token i
@@ -1065,6 +1528,8 @@ ag_message:
     # input for the program: queued, written as it takes it
     mov eax, [r15 + AC_mode]
     cmp eax, AM_PIPE
+    je 1f
+    cmp eax, AM_SOCK
     je 1f
     cmp eax, AM_PTY
     jne 9f
@@ -1164,7 +1629,12 @@ ag_close_input:
     mov edi, [rbx + AC_in]
     test edi, edi
     js 1f
-    SYS SYS_close
+    cmp dword ptr [rbx + AC_mode], AM_SOCK
+    jne 2f
+    mov esi, SHUT_WR            # a connection: the server sees the end, its answer still comes
+    SYS SYS_shutdown
+    ret
+2:  SYS SYS_close
     cmp dword ptr [rbx + AC_mode], AM_PTY
     jne 1f
     mov dword ptr [rbx + AC_in], -1
@@ -1226,7 +1696,16 @@ ag_read_program:
 5:  or dword ptr [rbx + AC_flags], ACF_OEOF
     mov edi, r12d
     call ag_push_eof
-    mov edi, r12d
+    cmp dword ptr [rbx + AC_mode], AM_SOCK
+    jne 6f
+    # a connection the server ended: its exit, so the window can forget it
+    or dword ptr [rbx + AC_flags], ACF_EXITED
+    mov dword ptr [rbx + AC_status], 0
+    lea rdi, [rip + .Lx]
+    mov esi, r12d
+    xor edx, edx
+    call ag_push_head
+6:  mov edi, r12d
     call ag_maybe_free
 9:  EPILOGUE
 
@@ -1722,6 +2201,118 @@ ag_confine:
     mov eax, CONFINED_NO
     EPILOGUE
 
+# connect CH PORT 0: a TCP connection to the host's PORT on 127.0.0.1, else on ::1, on channel CH
+#   (a forwarded port: remotefwd.s); its bytes flow as a program's
+ag_connect:
+    PROLOGUE 48
+    mov r12, rdi
+    mov edi, 2
+    call ag_num
+    mov r13, rax
+    mov rax, -22
+    test r13, r13
+    jz .Lcn_err
+    cmp r13, AG_MAXCH
+    jae .Lcn_err
+    mov edi, 3
+    call ag_num
+    mov r14, rax
+    mov rax, -22
+    test r14, r14
+    jz .Lcn_err
+    cmp r14, 65535
+    ja .Lcn_err
+    mov edi, r13d
+    call ag_chan
+    mov rbx, rax
+    mov rax, -16
+    cmp dword ptr [rbx + AC_mode], AM_FREE
+    jne .Lcn_err
+    # 127.0.0.1:PORT
+    mov edi, AF_INET
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js .Lcn_err
+    mov r15d, eax
+    xor eax, eax
+    mov [rsp], rax
+    mov [rsp + 8], rax
+    mov [rsp + 16], rax
+    mov [rsp + 24], rax
+    mov word ptr [rsp], AF_INET
+    mov eax, r14d               # the port, big-endian
+    shr eax, 8
+    mov ecx, r14d
+    shl ecx, 8
+    or eax, ecx
+    mov [rsp + 2], ax
+    mov dword ptr [rsp + 4], 0x0100007f
+    mov edi, r15d
+    lea rsi, [rsp]
+    mov edx, 16
+    SYS SYS_connect
+    test rax, rax
+    jns .Lcn_ok
+    mov [rsp + 40], rax
+    mov edi, r15d
+    SYS SYS_close
+    # [::1]:PORT
+    mov edi, AF_INET6
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js 1f
+    mov r15d, eax
+    xor eax, eax
+    mov [rsp], rax
+    mov [rsp + 8], rax
+    mov [rsp + 16], rax
+    mov [rsp + 24], rax
+    mov word ptr [rsp], AF_INET6
+    mov eax, r14d               # the port, big-endian
+    shr eax, 8
+    mov ecx, r14d
+    shl ecx, 8
+    or eax, ecx
+    mov [rsp + 2], ax
+    mov byte ptr [rsp + 23], 1  # ::1
+    mov edi, r15d
+    lea rsi, [rsp]
+    mov edx, 28
+    SYS SYS_connect
+    test rax, rax
+    jns .Lcn_ok
+    mov edi, r15d
+    SYS SYS_close
+1:  mov rax, [rsp + 40]         # the first one's error (ECONNREFUSED, usually)
+    jmp .Lcn_err
+.Lcn_ok:
+    mov edi, r15d
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    mov dword ptr [rbx + AC_mode], AM_SOCK
+    mov [rbx + AC_in], r15d
+    mov [rbx + AC_out], r15d
+    mov dword ptr [rbx + AC_pid], 0
+    mov dword ptr [rbx + AC_flags], 0
+    mov dword ptr [rbx + AC_status], 0
+    mov qword ptr [rbx + AC_credit], AG_WINDOW
+    mov qword ptr [rbx + AC_ioff], 0
+    mov qword ptr [rbx + AC_grant], 0
+    mov rdi, r12
+    xor esi, esi
+    call ag_reply
+    EPILOGUE
+.Lcn_err:
+    mov rdi, r12
+    mov rsi, rax
+    call ag_error
+    EPILOGUE
+
 # ag_env_exact(list) -> envp (mem_free it): the 0-terminated list, and PATH= from the login
 #   environment when the list has none
 ag_env_exact:
@@ -2155,7 +2746,9 @@ ag_read:
 
 # write FLAGS MODE PLEN LEN + path + data: the file's new contents. FLAGS: 1 replace an existing file
 #   through a temporary one in its folder (its mode kept), 2 create only (EEXIST when it is there),
-#   4 append, 8 create or truncate (a write in parts: 8, then 4s). MODE: a new file's mode (octal)
+#   4 append, 8 create or truncate (a write in parts: 8, then 4s); 16 with 2: the new file gets MODE
+#   exactly (not reduced by the umask: a multipart save keeps the replaced file's mode). MODE: a new
+#   file's mode (octal)
 ag_write:
     PROLOGUE 16
     mov r12, rdi
@@ -2199,6 +2792,15 @@ ag_write:
     mov esi, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
     mov edx, [rsp]
     SYS SYS_open
+    test rax, rax
+    js 7f
+    test ebx, 16
+    jz 5f
+    mov [rsp + 8], rax
+    mov edi, eax
+    mov esi, [rsp]
+    SYS SYS_fchmod
+    mov rax, [rsp + 8]
     jmp 5f
 .Law_trunc:
     lea rdi, [rip + ag_path]
@@ -2597,7 +3199,9 @@ ag_read_inotify:
     je 4f
     inc r15
     jmp 3b
-4:  lea rdi, [rip + ag_wq]
+4:  cmp dword ptr [rip + ag_cin], 0
+    jl 2b                       # no window to tell (it compares its files when it is back)
+    lea rdi, [rip + ag_wq]
     lea rsi, [rip + .Lv]
     call sb_push_cstr
     lea rdi, [rip + ag_wq]
@@ -3103,7 +3707,7 @@ ag_verbs:
     .quad .Lv_mkdir, ag_mkdir, .Lv_rename, ag_rename, .Lv_remove, ag_remove
     .quad .Lv_watch, ag_watch, .Lv_unwatch, ag_unwatch
     .quad .Lv_access, ag_access, .Lv_files, ag_files, .Lv_grep, ag_grep
-    .quad .Lv_stats, ag_stats
+    .quad .Lv_stats, ag_stats, .Lv_attach, ag_attach, .Lv_connect, ag_connect
     .quad 0, 0
 .Linfo_keys:
     .quad .Lk_home_env, .Lk_home, .Lk_shell_env, .Lk_shell, .Lk_user_env, .Lk_user, 0, 0
@@ -3130,6 +3734,10 @@ ag_verbs:
 .Lv_files: .asciz "files"
 .Lv_grep: .asciz "grep"
 .Lv_stats: .asciz "stats"
+.Lv_attach: .asciz "attach"
+.Lv_connect: .asciz "connect"
+.Lopt_session: .asciz "--session"
+.Lsession_dir: .asciz "/.cache/rhun-remote/s"
 .Lk_home_env: .asciz "HOME"
 .Lk_shell_env: .asciz "SHELL"
 .Lk_user_env: .asciz "USER"

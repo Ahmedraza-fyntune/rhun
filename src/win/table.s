@@ -51,12 +51,12 @@ win_systable:
     .quad ws_nosys # 45
     .quad ws_nosys # 46
     .quad ws_nosys # 47
-    .quad ws_nosys # 48
+    .quad ws_shutdown # 48
     .quad ws_nosys # 49
     .quad ws_nosys # 50
     .quad ws_nosys # 51
     .quad ws_nosys # 52
-    .quad ws_nosys # 53
+    .quad ws_socketpair # 53
     .quad ws_nosys # 54
     .quad ws_nosys # 55
     .quad ws_nosys # 56

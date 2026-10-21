@@ -210,6 +210,18 @@ class Tools(unittest.TestCase):
         self.assertIn('ok 2', self.caller_log())
         self.assertFalse(any(l.startswith('call ') for l in out), out)
 
+    def test_calls_for_a_tool_whose_extension_stops_fail(self):
+        # Codex review: a call waiting for the user's answer when its tool's extension stops is
+        # answered cancelled and its dialog closes; one queued behind it too
+        out = self.go(['cmd acme/agent.search', 'wait 500', 'wait 500', 'cmd acme/agent.write', 'wait 300',
+                       'cmd acme/agent.write', 'wait 300', 'print-dialog', 'ext-set acme/docs stop',
+                       'wait 1000', 'print-dialog', 'print-tools'])
+        self.assertEqual(out[0], 'dialog=Allow Agent to use acme/docs.write?')
+        self.assertIn('dialog=none', out)
+        self.assertIn('error 2 cancelled the tool\'s extension stopped', self.answers())
+        self.assertIn('error 3 cancelled the tool\'s extension stopped', self.answers())
+        self.assertFalse(any(l.startswith('call ') for l in out), out)
+
     def test_unknown_tools(self):
         self.go(['cmd acme/agent.nosuch', 'wait 300'])
         self.assertEqual(self.answers(), ['error 1 refused no such tool', 'error 2 refused no such tool'])

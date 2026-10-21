@@ -170,6 +170,9 @@ ws_run:
     PROLOGUE 16
     mov r12, rdi
     mov r13, rsi
+    call ws_parked              # another edit waits for the user: this one is busy, and the
+    test eax, eax               # waiting one's plan (groups, edits, body, label) stays untouched
+    jnz .Lwr_busy
     mov qword ptr [rip + wg_vec + VEC_len], 0
     mov qword ptr [rip + we_vec + VEC_len], 0
     mov qword ptr [rip + ws_confirm], 0
@@ -180,9 +183,6 @@ ws_run:
     call sb_clear
     mov rax, [rip + g_doc]
     mov [rip + ws_back], rax
-    call ws_parked              # another edit waits for the user: this one is busy
-    test eax, eax
-    jnz .Lwr_busy
     # the grammar: the features the extension agreed (a restricted edit keeps v1's)
     xor eax, eax
     mov rcx, [rip + ws_ext]
