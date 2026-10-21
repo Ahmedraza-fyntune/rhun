@@ -118,6 +118,20 @@ class Query(Lang):
         self.assertEqual(len(rows(first)), 1, out)
         self.assertEqual(len(rows(second)), 2, out)
 
+    def test_a_list_shown_early_keeps_its_filter_as_parts_come(self):
+        root = self.provider({'hello': 'hello 1 implementation navigation query-stream', 'answers': {
+            'implementation': {'parts': [['2\n' + loc('{path}', 1, 4, 1, 8, 'main one') + loc('{path}', 2, 9, 2, 14, 'total'),
+                                          0.05]],
+                               'delay': 1.2, 'body': '1\n' + loc('{path}', 3, 5, 3, 10, 'main two')}}},
+            'implementation = *.rs\n')
+        out = self.run_lang(root, ['cmd implementation', 'wait 500', 'type main', 'key Down', 'wait 1200',
+                                   'print-palette'])
+        self.assertIn('field=main', out)
+        rows = [l for l in out if l.startswith('  ') or l.startswith('> ')]
+        self.assertEqual(len(rows), 2, out)     # "total" stays filtered out
+        self.assertTrue(any(l.startswith('> ') and 'main two' in l for l in rows) or
+                        any(l.startswith('> ') and 'main one' in l for l in rows), out)
+
     def test_a_streamed_query_with_records_is_answered_and_signatures_are_not_counts(self):
         root = self.provider({'hello': 'hello 1 references signature query-stream', 'answers': {
             'references': {'parts': [['1\n' + loc('{path}', 1, 4, 1, 8, 'x'), 0.05]], 'delay': 0.05, 'body': '0\n'},

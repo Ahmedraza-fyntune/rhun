@@ -110,6 +110,9 @@ la_reason: .quad 0
 la_reasonlen: .quad 0
 lf_name: .zero SB_SIZE          # the new name of a rename
 lf_err: .zero 256               # what the rename provider said instead
+lf_wcmd: .zero SB_SIZE          # an action's command waiting for its edit's confirmation (wsedit's
+lf_wcmd_ext: .quad 0            # list): the record, its extension and document
+lf_wcmd_doc: .quad 0
 .p2align 3
 .p2align 3
 lf_path: .zero 4100             # a path as a cstr
@@ -321,6 +324,7 @@ FN langfeat_provider_cancel
 lf_reset:
     push rbx
     call lf_cancel_all
+    call lf_rs_withdraw         # a code action's resolve belongs to the results that go
     call palette_results_close
     mov dword ptr [rip + lf_kind], 0
     mov dword ptr [rip + lf_ready], 0
@@ -355,6 +359,9 @@ lf_language_current:
 
 # Normal tick only; keep queries created under the new language.
 FN langfeat_language_changed
+    push rdi
+    call langextra_language_changed
+    pop rdi
     mov rax, [rdi + DOC_id]
     cmp [rip + lf_doc_id], rax
     jne 1f
@@ -2125,7 +2132,7 @@ lf_actions_line:
     mov r8, rax
     mov r9, rdx
     mov rdi, r14
-    mov rsi, [rbx + DOC_path]
+    mov rsi, rbx
     mov rdx, [rsp + 16]
     mov rcx, [rsp + 24]
     call filediag_ids
@@ -2578,8 +2585,16 @@ lf_action_run:
     add r8, [rip + lf_bytes + SB_ptr]
     mov r9, [r12 + LS_dlen]
 21: call ws_apply_action
-    cmp eax, 1
-    jne 9f                      # not made (or the confirmation list waits): nothing more now
+    cmp eax, 2
+    jne 22f
+    mov rdi, [r12 + LS_ext]     # the confirmation list waits: the command runs once it is made
+    mov rsi, [r12 + LS_cmd]
+    add rsi, [rip + lf_bytes + SB_ptr]
+    mov rdx, [r12 + LS_clen]
+    call lf_park_cmd
+    jmp 9f
+22: cmp eax, 1
+    jne 9f                      # not made: nothing more
 3:  mov rdi, rbx
     call lf_action_command
 9:  EPILOGUE
@@ -2672,6 +2687,55 @@ lf_action_resolve:
     mov edx, PK_ACTION_RESOLVE
     mov ecx, QO_LANGFEAT
     call query_track
+9:  EPILOGUE
+
+# lf_park_cmd(ext, record, len): an action's command record waits for wsedit's confirmation list
+# (len 0: nothing waits)
+lf_park_cmd:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov qword ptr [rip + lf_wcmd_ext], 0
+    test r13, r13
+    jz 9f
+    lea rdi, [rip + lf_wcmd]
+    call sb_clear
+    lea rdi, [rip + lf_wcmd]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov [rip + lf_wcmd_ext], rbx
+    mov rax, [rip + lf_doc_id]
+    mov [rip + lf_wcmd_doc], rax
+9:  EPILOGUE
+
+# FN langfeat_ws_resolved(made): wsedit's confirmation list was answered: with the edit made, the
+# action's command that waited runs; otherwise it goes
+FN langfeat_ws_resolved
+    PROLOGUE
+    mov rbx, [rip + lf_wcmd_ext]
+    test rbx, rbx
+    jz 9f
+    mov qword ptr [rip + lf_wcmd_ext], 0
+    test edi, edi
+    jz 9f
+    mov rdi, rbx
+    call ext_is_visible
+    test eax, eax
+    jz 9f
+    mov rdi, rbx
+    mov rsi, [rip + lf_wcmd + SB_ptr]
+    mov rdx, [rip + lf_wcmd + SB_len]
+    call cmdref_parse
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, rax
+    mov rsi, [rip + lf_wcmd_doc]
+    call cmdref_invoke
+    mov rdi, r12
+    call cmdref_free
 9:  EPILOGUE
 
 # lf_rs_withdraw(): a code action's resolve still out is not wanted any more
@@ -2770,7 +2834,21 @@ lf_rs_tick:
     mov rsi, r13
     mov rdx, rbx
     call ws_apply_from
-    cmp eax, 1
+    cmp eax, 2
+    jne 11f
+    mov rdi, rbx                # the confirmation list waits: the answer's command, else the action's
+    lea rsi, [r15 + r13]
+    mov rdx, r14
+    test r14, r14
+    jnz 12f
+    imul rax, r12, LS_SIZE
+    add rax, [rip + lf_res + VEC_ptr]
+    mov rsi, [rax + LS_cmd]
+    add rsi, [rip + lf_bytes + SB_ptr]
+    mov rdx, [rax + LS_clen]
+12: call lf_park_cmd
+    jmp 9f
+11: cmp eax, 1
     jne 9f
 1:  # its command: the answer's, else the action's own
     test r14, r14
@@ -2802,16 +2880,12 @@ lf_rs_tick:
 FN langfeat_timeout
     cmp dword ptr [rip + lf_rs_ready], 0
     jne 7f
-    call langextra_timeout
-    test eax, eax
-    jz 7f
     cmp dword ptr [rip + lf_kind], 0
     je 8f
     cmp dword ptr [rip + lf_ready], 0
-    je 8f
+    jne 7f
+8:  jmp langextra_timeout        # query.s's timeout covers the requests still out
 7:  xor eax, eax
-    ret
-8:  mov eax, -1                 # query.s's timeout covers the requests still out
     ret
 
 # FN langfeat_tick(): a query whose answers are in, or whose time is up, is finished
@@ -2921,15 +2995,41 @@ lf_finish:
 2:  call lf_present_list
     jmp 9f
 
-# lf_present_list(): the results in the palette, in their order (ebx the kind)
+# lf_present_list(): the results in the palette, in their order (ebx the kind); a list already
+# showing (more parts came) keeps its field and its selected result
 lf_present_list:
-    PROLOGUE
+    PROLOGUE 32
     mov ebx, [rip + lf_list_kind]
-    call lf_sort
-    lea rax, [rip + lf_lists]
+    mov qword ptr [rsp], -1     # the selected result before: its place and position
+    mov dword ptr [rsp + 24], 0 # 1: refreshing
+    cmp dword ptr [rip + lf_partial], 0
+    je 1f
+    call palette_results_showing
+    test eax, eax
+    jz 1f
+    mov dword ptr [rsp + 24], 1
+    call palette_results_selected
+    cmp rax, [rip + lf_res + VEC_len]
+    jae 1f
+    imul rcx, rax, LS_SIZE
+    add rcx, [rip + lf_res + VEC_ptr]
+    mov rax, [rcx + LS_path]
+    mov [rsp], rax
+    mov eax, [rcx + LS_l1]
+    mov [rsp + 8], eax
+    mov eax, [rcx + LS_c1]
+    mov [rsp + 12], eax
+    mov rax, [rcx + LS_ext]
+    mov [rsp + 16], rax
+1:  call lf_sort
+    cmp dword ptr [rsp + 24], 0
+    je 2f
+    call palette_results_refresh
+    jmp 21f
+2:  lea rax, [rip + lf_lists]
     mov rdi, [rax + rbx*8]
     call palette_results_open
-    xor r13d, r13d
+21: xor r13d, r13d
 3:  cmp r13, [rip + lf_res + VEC_len]
     jae 4f
     imul rax, r13, LS_SIZE
@@ -2952,7 +3052,29 @@ lf_present_list:
     inc r13
     jmp 3b
 4:  call palette_results_ready
-    EPILOGUE
+    cmp qword ptr [rsp], -1     # the result selected before, where the sort put it
+    je 9f
+    xor ecx, ecx
+5:  cmp rcx, [rip + lf_res + VEC_len]
+    jae 9f
+    imul rax, rcx, LS_SIZE
+    add rax, [rip + lf_res + VEC_ptr]
+    inc rcx
+    mov rdx, [rax + LS_path]
+    cmp rdx, [rsp]
+    jne 5b
+    mov edx, [rax + LS_l1]
+    cmp edx, [rsp + 8]
+    jne 5b
+    mov edx, [rax + LS_c1]
+    cmp edx, [rsp + 12]
+    jne 5b
+    mov rdx, [rax + LS_ext]
+    cmp rdx, [rsp + 16]
+    jne 5b
+    lea rdi, [rcx - 1]
+    call palette_results_select
+9:  EPILOGUE
 
 .Lfn_rename:
     cmp byte ptr [rip + lf_err], 0
@@ -3523,6 +3645,16 @@ FN langfeat_ext_gone
     mov rdi, [rsp]
     call filediag_ext_gone      # its diagnostics in the Problems store go
     mov rdi, [rsp]
+    cmp rdi, [rip + lf_pr_ext]  # prepare-rename waiting on it: failed (the prompt opens as without)
+    jne 83f
+    mov qword ptr [rip + lf_pr_ext], 0
+    cmp dword ptr [rip + lf_pr_state], 1
+    jne 83f
+    mov dword ptr [rip + lf_pr_state], 4
+83: cmp rdi, [rip + lf_wcmd_ext]
+    jne 84f
+    mov qword ptr [rip + lf_wcmd_ext], 0
+84: mov rdi, [rsp]
     call results_ext_gone       # hierarchy rows waiting on it
     mov rdi, [rsp]
     call outline_ext_gone

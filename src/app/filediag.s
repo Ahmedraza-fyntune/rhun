@@ -12,11 +12,12 @@
 # a diagnostic's id, for code-actions' DIAGS
 STRUCT
 F FDG_ps, 8                      # its source (PS*)
-F FD_l1, 4
-F FD_c1, 4
-F FD_l2, 4
-F FD_c2, 4
+F FDG_l1, 4
+F FDG_c1, 4
+F FDG_l2, 4
+F FDG_c2, 4
 F FDG_id, 8                      # owned cstr
+F FDG_ver, 8                     # the version its range is in (0: the file's text when it opened)
 ENDSTRUCT FDG_SIZE
 
 .bss
@@ -559,15 +560,22 @@ fd_add:
     call vec_push
     mov [rax + FDG_ps], r15
     mov [rax + FDG_id], rbx
+    mov qword ptr [rax + FDG_ver], 0
+    mov rcx, [rip + fd_target]
+    test rcx, rcx
+    jz 1f
+    mov rcx, [rcx + DOC_version]
+    mov [rax + FDG_ver], rcx
+1:
     lea rcx, [rip + fd_tmp]
     mov edx, [rcx]
-    mov [rax + FD_l1], edx
+    mov [rax + FDG_l1], edx
     mov edx, [rcx + 4]
-    mov [rax + FD_c1], edx
+    mov [rax + FDG_c1], edx
     mov edx, [rcx + 8]
-    mov [rax + FD_l2], edx
+    mov [rax + FDG_l2], edx
     mov edx, [rcx + 12]
-    mov [rax + FD_c2], edx
+    mov [rax + FDG_c2], edx
 9:  EPILOGUE
 
 # fd_extra(ptr, len) -> eax 0 when the bytes are whole records ("NAME ARGS... LEN" LF + bytes)
@@ -775,12 +783,15 @@ FN filediag_ext_gone
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
-# FN filediag_ids(ext, path, l1, c1, l2, c2, sb) -> eax how many: the comma-separated ids of the
-# extension's diagnostics in that file that intersect the range (at most 64), into sb
+# FN filediag_ids(ext, doc, l1, c1, l2, c2, sb) -> eax how many: the comma-separated ids of the
+# extension's diagnostics in the document's file that intersect the range (at most 64), into sb.
+# A diagnostic given at an older version of the text is moved through the edit tape (edtape.s) to
+# where its mark is now; one the tape no longer reaches is left out
 FN filediag_ids
-    PROLOGUE 32
+    PROLOGUE 64
+    mov [rsp + 32], rsi         # the document
     mov rbx, rdi
-    mov r12, rsi
+    mov r12, [rsi + DOC_path]
     mov [rsp], edx
     mov [rsp + 4], ecx
     mov [rsp + 8], r8d
@@ -811,19 +822,61 @@ FN filediag_ids
 3:  call fd_source_path_is      # r15 the source, r12 the path
     test eax, eax
     jz 1b
-    # intersects: its start not after the range's end, its end not before the range's start
-    mov eax, [r14 + FD_l1]
+    # its range now
+    mov eax, [r14 + FDG_l1]
+    mov [rsp + 40], eax
+    mov eax, [r14 + FDG_c1]
+    mov [rsp + 44], eax
+    mov eax, [r14 + FDG_l2]
+    mov [rsp + 48], eax
+    mov eax, [r14 + FDG_c2]
+    mov [rsp + 52], eax
+    mov rdi, [rsp + 32]
+    mov rax, [r14 + FDG_ver]
+    cmp rax, [rdi + DOC_version]
+    je 31f
+    mov rsi, rax
+    mov edx, [rsp + 40]
+    dec edx
+    mov ecx, [rsp + 44]
+    dec ecx
+    mov r8d, GR_RIGHT
+    call tape_map_lc
+    test rax, rax
+    js 1b
+    mov rdi, [rsp + 32]
+    mov rsi, rax
+    call lf_line_col
+    mov [rsp + 40], eax
+    mov [rsp + 44], edx
+    mov rdi, [rsp + 32]
+    mov rsi, [r14 + FDG_ver]
+    mov edx, [rsp + 48]
+    dec edx
+    mov ecx, [rsp + 52]
+    dec ecx
+    mov r8d, GR_LEFT
+    call tape_map_lc
+    test rax, rax
+    js 1b
+    mov rdi, [rsp + 32]
+    mov rsi, rax
+    call lf_line_col
+    mov [rsp + 48], eax
+    mov [rsp + 52], edx
+31: # intersects: its start not after the range's end, its end not before the range's start
+    mov eax, [rsp + 40]
     cmp eax, [rsp + 8]
     ja 1b
     jb 4f
-    mov eax, [r14 + FD_c1]
+    mov eax, [rsp + 44]
     cmp eax, [rsp + 12]
     ja 1b
-4:  mov eax, [r14 + FD_l2]
+4:  mov eax, [rsp + 48]
     cmp eax, [rsp]
     jb 1b
     ja 5f
-    mov eax, [r14 + FD_c2]
+    mov eax, [rsp + 52]
     cmp eax, [rsp + 4]
     jb 1b
 5:  cmp dword ptr [rsp + 24], 0

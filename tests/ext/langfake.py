@@ -188,6 +188,8 @@ def main():
         elif event == 'run':
             name = fields[2].split('.', 1)[1]
             for verb_and_args, body in SPEC.get('run', {}).get(name, []):
+                if verb_and_args == 'EXIT':     # the program ends (a provider that stops)
+                    os._exit(0)
                 request(verb_and_args, body.encode())
         elif event == 'bye':
             return

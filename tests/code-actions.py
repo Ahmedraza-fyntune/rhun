@@ -118,6 +118,43 @@ class Actions(lang.Lang):
         self.assertEqual(len([r for r in req if ' auto ' in r]), 1, req)      # lines without diagnostics: nothing
         self.assertTrue(any(l.endswith('Fix it') or 'Fix it' in l for l in out if l.startswith('> ')), out)
 
+    def test_a_resolve_out_goes_when_another_query_starts(self):
+        body = '1\n' + action('quickfix', 'Resolve me', '', rec('resolve', 'R-DATA'))
+        resolved = '0 ' + str(len(rec('command', 'ARGS', 'fix'))) + '\n' + rec('command', 'ARGS', 'fix')
+        spec = self.spec({'code-actions': {'body': body}, 'code-action-resolve': {'body': resolved, 'delay': 0.8},
+                          'references': {'body': '0\n'}}, hello='hello 1 code-actions command-args references')
+        self.run_actions(spec, ['cmd code_actions', 'wait 400', 'key Return', 'wait 100', 'cmd references',
+                                'wait 1300'], provides='actions = *.rs\nreferences = *.rs\n',
+                         extra='[commands]\nfix = Fix\n')
+        log = self.lang_log()
+        rid = [l.split()[0] for l in log if ' code-action-resolve ' in l][0]
+        self.assertIn('0 cancel ' + rid, log)
+        self.assertFalse(any(l.startswith('0 run lang.fix') for l in log), log)
+
+    def test_an_action_command_runs_after_its_edit_is_confirmed(self):
+        (self.proj / 'b.rs').write_text('fn helper() {}\n', encoding='utf-8')
+        other = edit('{project}/b.rs', '-', [(1, 1, 1, 1, '// fixed\n')])
+        body = '1\n' + action('quickfix', 'Elsewhere', other, rec('command', 'XY', 'fix'))
+        spec = self.spec({'code-actions': {'body': body}}, hello='hello 1 code-actions command-args workspace-edits')
+        out = self.run_actions(spec, ['cmd code_actions', 'wait 400', 'key Return', 'wait 300', 'print-palette',
+                                      'key Return', 'wait 400', 'print-toast'], extra='[commands]\nfix = Fix\n')
+        self.assertTrue(any(l.startswith('choose=') for l in out), (out, self.lang_log(), (self.proj / 'b.rs').read_text()))
+        self.assertTrue((self.proj / 'b.rs').read_text().startswith('// fixed'))
+        self.assertTrue(any(l.startswith('0 run lang.fix 1 ref 2') for l in self.lang_log()), self.lang_log())
+
+    def test_diagnostic_ids_follow_the_text(self):
+        fd = 'file-diagnostics 0 1 2 {}'
+        rec_ = '2 9 2 14 error unused 0'
+        d = f'2 9 2 14 error 6 {len(rec("id", "d1"))}\nunused' + rec('id', 'd1')
+        body = '#1' + d
+        spec = self.spec({'code-actions': {'body': '0\n'}}, hello='hello 1 code-actions file-diagnostics',
+                         run={'diag': [[f'file-diagnostics 0 1 2 {len(body)}', body]]})
+        self.run_actions(spec, ['cmd lang.diag', 'wait 200', 'key ctrl+Home', 'key Return', 'key Down',
+                                'key End', 'cmd code_actions', 'wait 300'], extra='[commands]\ndiag = Diagnose\n')
+        req = [r for r in self.requests('code-actions') if ' invoked ' in r]
+        self.assertEqual(req[0].split()[4:8], ['3', '9', '3', '14'], req)
+        self.assertEqual(req[0].split()[-1], 'd1', req)
+
     def test_v1_providers_keep_actions_and_get_no_kinds(self):
         spec = self.spec({'actions': {'body': '0\n'}}, hello='hello 1 actions')
         self.run_actions(spec, ['cmd code_actions', 'wait 300', 'cmd organize_imports', 'wait 300'])
