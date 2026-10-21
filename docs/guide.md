@@ -714,11 +714,32 @@ commands:
 | Key | Command | What happens |
 | --- | --- | --- |
 | F12 | Go to Definition | one definition opens at once; several are listed in the palette |
-| shift+F12 | Find All References | the references in the palette, this file's first; choosing one opens it |
+| ctrl+F12 | Go to Implementation | the same for implementations (Go to Declaration and Go to Type Definition are in the palette) |
+| alt+F12 | Peek Definition | the definitions in a box under the cursor's line, without leaving it (also Peek References, Implementation, Declaration, Type Definition) |
+| shift+F12 | Find All References | the references in the **Results** panel tab, grouped by file |
+| F4, shift+F4 | Next/Previous Result | open the next or previous location of the Results tab |
+| shift+alt+h | Show Call Hierarchy | the callers of the function at the cursor in the Results tab (Show Type Hierarchy alike) |
+| ctrl+i | Show Hover | the hover card at the cursor; again, to scroll it with the keyboard |
 | ctrl+r | Go to Symbol in File | the file's functions, types and variables, indented by nesting; type to filter |
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
-| F2 | Rename | on a word, asks for the new name, then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
-| shift+alt+f | Format Document | with the document's tab width and spaces |
+| shift+alt+. | Auto Fix | applies the preferred quick fix at the cursor, else lists the quick fixes |
+| shift+alt+o | Organize Imports | applied at once when the extension offers exactly one |
+| ctrl+shift+r | Refactor... | the refactorings at the cursor (Source Action... and Fix All are in the palette) |
+| F2 | Rename | on a word, asks for the new name (filled with what the extension says can be renamed there), then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
+| shift+alt+f | Format Document | with the document's tab width and spaces; with a selection, Format Selection when the extension can |
+
+When the pointer rests on a word, extensions that support it show a **hover card**: the problems
+there first, then what each extension says, wrapped to the card's width; move the pointer onto
+the card to scroll it. A **lightbulb** in the gutter marks a line with a problem that has a quick
+fix: click it, or press `shift+alt+.`, to fix it. The **Results** tab keeps the last 8 sets of
+references and hierarchies (the arrows on its title go back and forth, the cross drops one);
+Enter opens a location, Space opens it and stays in the tab, Escape goes back to the editor. In a
+call hierarchy, expanding a row asks for that function's callers; the arrow button switches to
+the functions it calls. The **Outline** section of the sidebar (**Focus Outline**) lists the
+active file's symbols, follows the cursor, and Enter goes to one. In the peek box, Up/Down choose
+a location, Enter opens it, Escape closes it, and typing goes on in the editor. `[editor]
+lightbulb = no` turns the lightbulb off; `format_on_type` and `format_on_paste` (both off by
+default) let the formatter tidy lines as you type or paste.
 
 Extensions can also fill **trees and logs** that rhun draws and keeps: sections in the sidebar
 under the Explorer (click a header to fold it), tabs in the bottom panel after the terminals
