@@ -1276,6 +1276,13 @@ FN langfeat_part
     call results_part
     cmp rax, -2
     jne 9b
+    mov rdi, rbx                # or a symbol query's (wsym.s)
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, r14
+    call wsym_part
+    cmp rax, -2
+    jne 9b
     xor eax, eax                # an answer nobody waits for any more: taken, and dropped
     EPILOGUE
 
@@ -2896,6 +2903,8 @@ FN langfeat_tick
     call outline_tick
     call hovercard_tick
     call lightbulb_tick
+    call wsym_tick
+    call doclinks_tick
     cmp dword ptr [rip + lf_show_due], 0
     je 0f
     mov dword ptr [rip + lf_show_due], 0  # the first parts of a query still out, shown
@@ -3662,6 +3671,12 @@ FN langfeat_ext_gone
     call hovercard_ext_gone
     mov rdi, [rsp]
     call lightbulb_ext_gone
+    mov rdi, [rsp]
+    call selrange_ext_gone
+    mov rdi, [rsp]
+    call wsym_ext_gone
+    mov rdi, [rsp]
+    call doclinks_ext_gone
     pop rdi
     pop rdi
     xor ecx, ecx
@@ -3741,7 +3756,7 @@ lf_peek_titles: .quad 0, .Lpk_def, .Lpk_refs, 0, 0, 0, 0, .Lpk_decl, .Lpk_typede
 .Lpk_typedef: .asciz "type definition"
 .Lpk_impl: .asciz "implementation"
 .p2align 3
-lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, hovercard_reply, lightbulb_reply, 0
+lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, hovercard_reply, lightbulb_reply, selrange_reply, wsym_reply, doclinks_reply, 0
 .Lv_definition: .asciz "definition"
 .Lv_references: .asciz "references"
 .Lv_symbols: .asciz "symbols"

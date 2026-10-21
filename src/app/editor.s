@@ -2634,6 +2634,15 @@ FN editor_draw
     mov dword ptr [rip + g_active], 0
     jmp .Led_noinput
 313:
+    mov rdi, rbx                # language features: ctrl+click on a link or a word (doclinks.s)
+    mov rsi, r12
+    call doclinks_click
+    test eax, eax
+    jz 314f
+    mov dword ptr [rip + g_dragging], 0
+    mov dword ptr [rip + g_active], 0
+    jmp .Led_noinput
+314:
     # multi-cursor: the modifier's clicks add carets, words or a box; a plain click collapses
     mov rdi, rbx
     mov rsi, r12

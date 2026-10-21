@@ -18,6 +18,7 @@
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 .equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
 .equ PM_WSLIST, 16              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_WSYM, 92                # language features: Go to Symbol in Project (wsym.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -1377,6 +1378,39 @@ FN palette_results_add
 # palette_results_refresh() empties it but keeps the field (then _add and _ready as before),
 # palette_results_selected() -> rax the selected item's n, or -1, palette_results_select(n): the
 # row of item n is selected (after _ready)
+# language features: the symbol mode (wsym.s): palette_wsym_open(label cstr), _showing() -> eax 1
+# while it is open, _clear() (its items go, the query stays), _add(ptr, len, detail cstr, n),
+# _ready(); choosing item n calls wsym_chosen(n). The strings stay wsym.s's until the next _clear
+FN palette_wsym_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_WSYM
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+FN palette_wsym_showing
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_WSYM
+    sete al
+    ret
+FN palette_wsym_clear
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    ret
+FN palette_wsym_add
+    jmp item_add
+FN palette_wsym_ready
+    push rbx
+    mov ebx, [rip + pal_sel]    # the choice stays where it was as answers come
+    call palette_filter
+    mov eax, [rip + results + VEC_len]
+    cmp ebx, eax
+    jae 1f
+    mov [rip + pal_sel], ebx
+1:  pop rbx
+    ret
+
 FN palette_results_refresh
     mov qword ptr [rip + items + VEC_len], 0
     mov qword ptr [rip + results + VEC_len], 0
@@ -2338,6 +2372,8 @@ FN palette_print
     je 13f
     cmp dword ptr [rip + pal_mode], PM_PROVIDERS
     je 13f
+    cmp dword ptr [rip + pal_mode], PM_WSYM
+    je 13f
     cmp dword ptr [rip + pal_mode], PM_RESULTS
     jne 11f
 13: lea rsi, [rip + .Lpp_choose]
@@ -2634,7 +2670,7 @@ FN palette_changed
     pop rbx
     ret
 3:  cmp byte ptr [rax], ':'
-    jne 2f
+    jne 4f
     cmp qword ptr [rip + g_doc], 0
     je 2f
     mov dword ptr [rip + pal_mode], PM_GOTO
@@ -2643,7 +2679,22 @@ FN palette_changed
     mov rdx, [rip + pal_tf + TF_sb + SB_len]
     dec rdx
     call tf_set
-2:  jmp palette_filter
+    jmp 2f
+4:  cmp byte ptr [rax], '#'     # language features: '#' switches files -> symbols in the project
+    jne 2f
+    push rbx
+    call cmd_workspace_symbols
+    pop rbx
+2:  cmp dword ptr [rip + pal_mode], PM_WSYM
+    jne 5f
+    push rbx
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    call wsym_changed
+    pop rbx
+5:  jmp palette_filter
 
 # selected item -> IT* or 0
 selected_item:
@@ -2880,7 +2931,15 @@ palette_accept:
     call tasks_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-331: cmp ebx, PM_WSLIST          # wsedit
+331: cmp ebx, PM_WSYM            # language features: a symbol in the project
+    jne 332f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call wsym_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+332: cmp ebx, PM_WSLIST          # wsedit
     jne 34f
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus

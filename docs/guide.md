@@ -721,6 +721,10 @@ commands:
 | shift+alt+h | Show Call Hierarchy | the callers of the function at the cursor in the Results tab (Show Type Hierarchy alike) |
 | ctrl+i | Show Hover | the hover card at the cursor; again, to scroll it with the keyboard |
 | ctrl+r | Go to Symbol in File | the file's functions, types and variables, indented by nesting; type to filter |
+| ctrl+t | Go to Symbol in Project | symbols of the whole project as you type (also `#` first in Go to File) |
+| shift+alt+Right, shift+alt+Left | Expand/Shrink Selection | each selection grows to the enclosing expression, statement, block…; shrink goes back |
+| F8, shift+F8 | Next/Previous Problem | the next problem in the file, with its message in the hover card |
+| ctrl+click | | on a link (an `#include`, a URL in a comment) opens it; on other text goes to the definition (cmd+click on macOS; alt+click when ctrl adds carets) |
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
 | shift+alt+. | Auto Fix | applies the preferred quick fix at the cursor, else lists the quick fixes |
 | shift+alt+o | Organize Imports | applied at once when the extension offers exactly one |
