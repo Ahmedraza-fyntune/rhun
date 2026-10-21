@@ -20,8 +20,8 @@ lk_since: .quad 0
 lk_asked: .quad 0               # 1: that place was asked about already
 lk_ext: .quad 0                 # the request out, or 0
 lk_id: .quad 0
-lk_session: .quad 0             # SN_identity of the linked session, 0 for none
-lk_words: .zero 256             # the session's characters that may be typed (ASCII), 1 each
+lk_words: .zero 256             # an answer's characters that may be typed (ASCII), 1 each: its
+                                # session keeps them as bits (SN_lwords)
 lk_ranges: .zero 16 * LK_RANGES_MAX     # an answer's ranges: start, end
 lk_text: .zero SB_SIZE          # the document's text while a session is made
 
@@ -100,16 +100,14 @@ lk_in_word:
 9:  mov eax, 1
     EPILOGUE
 
-# lk_live(doc) -> rax the document's linked session, or 0
+# lk_live(doc) -> rax the document's linked session, or 0 (each document keeps its own: the
+# session and its word characters live in its snippet node)
 lk_live:
     mov rax, [rdi + DOC_snippet]
     test rax, rax
     jz 8f
     cmp qword ptr [rax + SN_linked], 0
-    je 8f
-    mov rcx, [rax + SN_identity]
-    cmp rcx, [rip + lk_session]
-    je 9f
+    jne 9f
 8:  xor eax, eax
 9:  ret
 
@@ -467,8 +465,23 @@ lk_start:
     test eax, eax
     jz 8f
     mov qword ptr [r15 + SN_linked], 1
-    mov rax, [r15 + SN_identity]
-    mov [rip + lk_session], rax
+    # its word characters, as bits in the node (lk_words is the answer's, shared)
+    mov qword ptr [r15 + SN_lwords], 0
+    mov qword ptr [r15 + SN_lwords + 8], 0
+    xor r14d, r14d
+21: lea rax, [rip + lk_words]
+    cmp byte ptr [rax + r14], 0
+    je 22f
+    mov rdx, r14
+    shr rdx, 6                  # its quad
+    mov ecx, r14d
+    and ecx, 63
+    mov eax, 1
+    shl rax, cl
+    or [r15 + SN_lwords + rdx*8], rax
+22: inc r14d
+    cmp r14d, 128
+    jb 21b
     mov rax, [rbx + DOC_cur]
     mov [rsp], rax
     mov rax, [rbx + DOC_anchor]
@@ -506,9 +519,15 @@ FN ws_linked_typed
     pop rsi
     test eax, eax
     jnz 9f
-    lea rax, [rip + lk_words]
-    cmp byte ptr [rax + rsi], 0
-    jne 9f
+    mov rax, [rbx + DOC_snippet]
+    mov ecx, esi
+    mov edx, esi
+    shr edx, 6
+    mov rax, [rax + SN_lwords + rdx*8]
+    and ecx, 63
+    shr rax, cl
+    test eax, 1
+    jnz 9f                      # one of its word characters
     mov rdi, rbx
     call snippet_forget
 9:  pop rbx
@@ -525,6 +544,7 @@ FN ws_linked_passes
 
 # FN ws_linked_row(line text, line start, row from, row to, x of column 0, y): draw_line's row of
 # the active document: a thin outline around each live range of its linked session on the row
+# (its ends placed through the row's inlays, vt_x)
 FN ws_linked_row
     PROLOGUE 48
     mov [rsp], rdi
@@ -564,22 +584,17 @@ FN ws_linked_row
     jle 3f
     mov rcx, [rsp + 24]
 3:  mov [rsp + 40], rcx
-    mov rdi, [rsp]
-    mov rsi, [rsp + 16]
-    mov rdx, rax
-    call seg_cols
-    mov r14d, eax               # first column
-    mov rdi, [rsp]
-    mov rsi, [rsp + 16]
-    mov rdx, [rsp + 40]
-    call seg_cols
+    # x of both ends through the row's inlays (vtext.s: draw_line set the row up), as a selection's
+    mov rdi, rax
+    mov esi, VTM_RIGHT          # after the inlays at its start
+    call vt_x
+    mov r14d, eax               # x
+    mov rdi, [rsp + 40]
+    mov esi, VTM_LEFT           # before those at its end
+    call vt_x
     mov r15d, eax
-    sub r15d, r14d              # columns
-    imul r14d, [rip + g_cw]
-    add r14d, [rsp + 32]        # x
-    imul r15d, [rip + g_cw]
-    test r15d, r15d
-    jnz 4f
+    sub r15d, r14d              # width
+    jg 4f
     mov r15d, 1                 # an empty range still shows where it is
 4:  # top, bottom, left, right
     mov edi, r14d

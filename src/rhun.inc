@@ -951,6 +951,7 @@ F SN_text, 8            # borrowed during validation only
 F SN_tlen, 8
 F SN_ntopo, 8           # surviving groups in propagation order; group indices stay stable
 F SN_linked, 8          # wsedit: a linked-editing session (wslinked.s): Tab passes, no final caret
+F SN_lwords, 16         # wsedit: its word characters besides letters and digits (ASCII bits)
 F SN_fields, SF_SIZE*SN_FIELDS_MAX
 F SN_groups, SG_SIZE*SN_GROUPS_MAX
 F SN_edges, SN_GROUPS_MAX*SN_GROUPS_MAX
