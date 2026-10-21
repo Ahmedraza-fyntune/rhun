@@ -608,6 +608,30 @@ class LocalTransport(unittest.TestCase):
             self.assertFalse(list((base / 'state').rglob('state.txt')))
             self.assertEqual(len(list((base / 'home/.cache/rhun-remote/extensions/rhun-tests/echo').iterdir())), 1)
 
+    def test_extension_whose_child_cannot_confine_itself(self):
+        """Its child on the host could not confine itself (RHUN_REMOTE_TEST_CONFINE): as locally, it
+        starts again unconfined and its page says why."""
+        with tempfile.TemporaryDirectory(prefix='rhun-remote-cf-') as tmp:
+            base = Path(tmp)
+            for d in ('home', 'config/rhun', 'state', 'proj'):
+                (base / d).mkdir(parents=True)
+            (base / 'config/rhun/config').write_text(ECHO_CONFIG)
+            exts = echo_extension(base / 'exts')
+            script = base / 't.rsc'
+            script.write_text('wait-remote 60\ncmd echo.swrite\nwait-ext echo running\nwait 1500\nprint-toast\n'
+                              'print-extensions\nquit\n')
+            env = dict(os.environ, HOME=str(base / 'home'), XDG_CONFIG_HOME=str(base / 'config'),
+                       XDG_STATE_HOME=str(base / 'state'), SHELL='/bin/sh', ECHO_MODE='exit70once',
+                       RHUN_REMOTE_TEST_CONFINE='72')
+            out = subprocess.run([str(EXE), '--headless', '1000x700', '--remote', 'local:', str(base / 'proj'),
+                                  '--extensions', str(exts), '--script', str(script)], capture_output=True,
+                                 timeout=120, env=env).stdout.decode(errors='replace')
+            line = ext_line(out)
+            self.assertIn('state=running', line, out)
+            self.assertIn('confined=0', line)
+            self.assertIn('why=the Landlock ruleset could not be made', line)
+            self.assertIn('toast=probe ok', out)
+
     def test_typing_never_waits_for_the_host(self):
         """With every agent reply 300 ms late, 40 typed characters cost no more than a few replies."""
         with tempfile.TemporaryDirectory(prefix='rhun-remote-slow-') as tmp:

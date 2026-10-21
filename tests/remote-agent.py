@@ -31,6 +31,7 @@ class Agent:
         self.data = {}          # channel -> bytes received
         self.eof = set()
         self.exits = {}
+        self.cfail = {}         # channel -> the confinement failure its x carried
         self.credit = {}        # channel -> credit the agent gave back
         self.events = []
         self.replies = {}
@@ -104,6 +105,8 @@ class Agent:
             self.eof.add(int(f[1]))
         elif kind == b'x':
             self.exits[int(f[1])] = int(f[2])
+            if len(f) > 3:
+                self.cfail[int(f[1])] = int(f[3])
         elif kind == b'w':
             self.credit[int(f[1])] = self.credit.get(int(f[1]), 0) + int(f[2])
         elif kind == b'v':
@@ -437,6 +440,52 @@ class RemoteAgent(unittest.TestCase):
         while (self.home / '.cache/rhun-remote/s' / sid).exists() and time.time() < end:
             time.sleep(0.05)
         self.assertFalse((self.home / '.cache/rhun-remote/s' / sid).exists())
+
+    def test_stop_close_and_hangup_end_what_a_program_left(self):
+        """As uproc does locally: a program stopped (kill to its group), its channel closed while it
+        runs, or its terminal hung up, takes what it started with it, SIGKILL for what ignores the rest."""
+        a = self.agent
+        lead = self.STUBBORN + '; exec sleep 300'
+        # stopped: SIGTERM to its group ends the leader, the agent ends the rest
+        self.assertEqual(a.call('spawn 30 0 0 0 0', spawn_body(['sh', '-c', lead]))[0], 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(30, b''))
+        child = int(a.data[30])
+        self.assertEqual(a.call('kill 30 15 1')[0], 'ok')
+        a.wait_for(lambda: 30 in a.exits)
+        self.assertTrue(self.gone_within(child, 4), 'stop left the child')
+        # closed while running: the leader and the child go, the leader is reaped
+        kind, body = a.call('spawn 31 0 0 0 0', spawn_body(['sh', '-c', lead]))
+        leader = int(body)
+        a.wait_for(lambda: b'\n' in a.data.get(31, b''))
+        child = int(a.data[31])
+        self.assertEqual(a.call('close 31')[0], 'ok')
+        self.assertTrue(self.gone_within(child, 4), 'close left the child')
+        self.assertTrue(self.gone_within(leader, 4), 'close left the leader')
+        # a terminal hung up: its shell's leftovers go too
+        self.assertEqual(a.call('spawn 32 1 0 80 24', spawn_body(['sh', '-c', lead], env=['TERM=dumb']))[0], 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(32, b''))
+        child = int(a.data[32].strip().split()[-1])
+        a.send(b'e 32\n')
+        a.wait_for(lambda: 32 in a.exits)
+        self.assertTrue(self.gone_within(child, 4), 'the hangup left the child')
+
+    def test_a_confined_childs_failure_comes_with_its_exit(self):
+        """An extension's child that could not confine itself on the host (MODE 3): x carries the
+        code from confine.s's page (RHUN_REMOTE_TEST_CONFINE stands in for a kernel that refuses)."""
+        a = Agent(self.home, env_extra={'RHUN_REMOTE_TEST_CONFINE': '72'})
+        try:
+            state = self.home / 'st'
+            block = b'4\0' + str(self.home).encode() + b'\0\0' + str(state).encode() + b'\0\0\0'
+            body = spawn_body(['sh', '-c', 'exit 70'], str(self.home)) + b'\0' + block
+            self.assertEqual(a.call('spawn 33 3 0 0 0', body)[0], 'ok')
+            a.wait_for(lambda: 33 in a.exits)
+            self.assertEqual((a.exits[33], a.cfail.get(33)), (70, 72))
+            # a pipe program says nothing of the kind
+            self.assertEqual(a.call('spawn 34 0 0 0 0', spawn_body(['sh', '-c', 'exit 70']))[0], 'ok')
+            a.wait_for(lambda: 34 in a.exits)
+            self.assertNotIn(34, a.cfail)
+        finally:
+            a.close()
 
     def test_login_environment(self):
         """The login shell's profile reaches programs (a PATH entry like ~/.cargo/bin)."""

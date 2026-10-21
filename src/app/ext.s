@@ -4058,8 +4058,12 @@ FN ext_exited
     # page is the child that could not confine itself (confine.s). The exit status alone proves
     # nothing: the program may exit with the same numbers
     mov rdi, rbx
-    call confine_failed
+    call remote_ext_confine_failed  # remote hosts: its child on the host (remoteext.s)
     test eax, eax
+    jnz 19f
+    mov rdi, rbx
+    call confine_failed
+19: test eax, eax
     jz 20f
     mov edi, eax
     call confine_exit_reason
