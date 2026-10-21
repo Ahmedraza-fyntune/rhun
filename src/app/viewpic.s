@@ -34,6 +34,8 @@ ENDSTRUCT VI_SIZE
 .bss
 .p2align 3
 vis: .zero VI_SIZE * VI_MAX
+.globl vimg_gen
+vimg_gen: .long 0               # an image went: static pictures render again
 vi_seq: .long 0
 .p2align 3
 vc_ext: .quad 0                 # the vcopy waiting for its answer: its extension, id, when, cut
@@ -199,6 +201,7 @@ FN viewimg_owner_gone
 
 # views_redraw(): every picture renders again (an image went)
 views_redraw:
+    inc dword ptr [rip + vimg_gen]  # static pictures (extview.s pic_draw)
     xor ecx, ecx
     lea rax, [rip + g_views]
 1:  cmp ecx, VW_MAX

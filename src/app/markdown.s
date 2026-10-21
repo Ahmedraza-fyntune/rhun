@@ -8,7 +8,11 @@
 #   i = md_draw(m, x, y, w, h, scroll, id)  draw its part in view; the link clicked, or -1 (links
 #                                           are buttons id .. id + 4095)
 #   md_link(m, i) -> ptr, len               a link's target; md_open_link(m, i) -> 1 when rhun
-#                                           followed it (http, https: the browser; rhun://: a tab)
+#                                           followed it (http, https: the browser; rhun://: a tab;
+#                                           a file relative to the base: a tab)
+#   md_set_base(m, ptr, len)                the absolute folder relative links name
+#   m = md_from_body(ext, ptr, len)         a rich-document body ("doc LEN" + Markdown, "base
+#                                           LEN" + folder: views design 3.8.4), or 0
 #   md_free(m)
 #
 # Blocks: ATX and setext headings, paragraphs (soft wrap, hard breaks), bullet and ordered lists
@@ -49,6 +53,7 @@
 .equ MD_LISTS, 8                # nesting kept for lists
 .equ MD_COLS, 32                # table columns
 .equ MD_LINKS_MAX, 4096
+.equ MD_DOC_MAX, 1048576         # a rich-document body's Markdown
 
 # a document
 STRUCT
@@ -65,6 +70,8 @@ F MD_maxw, 4            # the widest line laid out
 F MD_gen, 4             # g_face_gen when laid out
 F MD_hover, 4           # the link under the pointer last frame, -1
 F MD_pad, 4
+F MD_base, 8            # cstr, mem_alloc'd: the folder relative links name (md_set_base), or 0
+F MD_ext, 8             # the extension whose img: handles images name (md_from_body), or 0
 ENDSTRUCT MD_SIZE
 
 # a block
@@ -130,6 +137,8 @@ ENDSTRUCT MDI_SIZE
 .bss
 .p2align 3
 pm: .quad 0                     # the document being parsed or laid out
+body_rr: .zero RR_SIZE          # md_from_body's record
+rel_buf: .zero 4096             # a relative link's path
 pb: .zero SB_SIZE               # a paragraph's lines, joined with LF (\x01 before a hard break)
 cb: .zero SB_SIZE               # a code block's lines
 line_no: .long 0
@@ -257,6 +266,8 @@ FN md_free
     call vec_free
     lea rdi, [rbx + MD_items]
     call vec_free
+    mov rdi, [rbx + MD_base]
+    call mem_free
     mov rdi, rbx
     call mem_free
 9:  EPILOGUE
@@ -277,6 +288,7 @@ FN md_link
 # md_open_link(m, i) -> eax 1 when rhun followed it: http and https in the browser, rhun:// in rhun
 FN md_open_link
     PROLOGUE
+    mov r14, rdi
     call md_link
     test rdx, rdx
     jz 8f
@@ -312,8 +324,231 @@ FN md_open_link
     call mem_free
     mov eax, 1
     EPILOGUE
-7:  mov rdi, rbx
+7:  mov rdi, r14                # a file relative to the base
+    mov rsi, rbx
+    call open_relative
+    mov r15d, eax
+    mov rdi, rbx
     call mem_free
+    mov eax, r15d
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# open_relative(m, target cstr) -> eax 1 when the target is a path relative to the document's base
+#   naming a file, opened in a tab (#fragment and ?query left out, %XX decoded); 0 otherwise
+#   (no base, a scheme, a drive, an absolute path, an anchor, a folder, nothing there)
+open_relative:
+    PROLOGUE
+    mov rbx, rsi
+    mov r12, [rdi + MD_base]
+    test r12, r12
+    jz 8f
+    movzx eax, byte ptr [rbx]
+    test eax, eax
+    jz 8f
+    cmp eax, '#'
+    je 8f
+    cmp eax, '/'
+    je 8f
+    cmp eax, '\\'
+    je 8f
+    mov rcx, rbx                # a ':' before the first '/': a scheme or a drive
+1:  movzx eax, byte ptr [rcx]
+    test eax, eax
+    jz 3f
+    cmp eax, ':'
+    je 8f
+    cmp eax, '/'
+    je 3f
+    cmp eax, '#'
+    je 3f
+    cmp eax, '?'
+    je 3f
+    inc rcx
+    jmp 1b
+3:  lea rdi, [rip + rel_buf]    # BASE / TARGET
+    lea r13, [rdi + 4000]
+    mov rsi, r12
+4:  movzx eax, byte ptr [rsi]
+    test eax, eax
+    jz 5f
+    cmp rdi, r13
+    jae 8f
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    jmp 4b
+5:  mov byte ptr [rdi], '/'
+    inc rdi
+    mov rsi, rbx
+6:  movzx eax, byte ptr [rsi]
+    test eax, eax
+    jz 7f
+    cmp eax, '#'
+    je 7f
+    cmp eax, '?'
+    je 7f
+    cmp rdi, r13
+    jae 8f
+    cmp eax, '%'
+    jne 61f
+    movzx eax, byte ptr [rsi + 1]
+    call hex_value
+    mov r14d, eax
+    test eax, eax
+    js 62f
+    movzx eax, byte ptr [rsi + 2]
+    call hex_value
+    test eax, eax
+    js 62f
+    shl r14d, 4
+    or eax, r14d
+    test eax, eax
+    jz 8f                       # %00
+    add rsi, 2
+    jmp 61f
+62: mov eax, '%'
+61: mov [rdi], al
+    inc rdi
+    inc rsi
+    jmp 6b
+7:  mov byte ptr [rdi], 0
+    lea rdi, [rip + rel_buf]
+    call vfs_stat
+    test eax, eax
+    jnz 8f
+    lea rdi, [rip + rel_buf]
+    call vfs_is_dir
+    test eax, eax
+    jnz 8f
+    lea rdi, [rip + rel_buf]
+    call app_open_path
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# hex_value(eax a byte) -> eax 0-15, or -1 when it is not a hex digit
+hex_value:
+    cmp eax, '0'
+    jb 8f
+    cmp eax, '9'
+    jbe 1f
+    or eax, 0x20
+    cmp eax, 'a'
+    jb 8f
+    cmp eax, 'f'
+    ja 8f
+    sub eax, 'a' - 10
+    ret
+1:  sub eax, '0'
+    ret
+8:  mov eax, -1
+    ret
+
+# md_set_base(m, ptr, len): the absolute folder relative links name (a trailing / left out); an
+#   empty one clears it
+FN md_set_base
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov rdi, [rbx + MD_base]
+    call mem_free
+    mov qword ptr [rbx + MD_base], 0
+1:  cmp r13, 1
+    jbe 2f
+    movzx eax, byte ptr [r12 + r13 - 1]
+    cmp eax, '/'
+    je 11f
+    cmp eax, '\\'
+    jne 2f
+11: dec r13
+    jmp 1b
+2:  test r13, r13
+    jz 9f
+    cmp r13, 3000
+    ja 9f
+    mov rdi, r12
+    mov rsi, r13
+    call mem_dup
+    mov [rbx + MD_base], rax
+9:  EPILOGUE
+
+# md_from_body(ext, ptr, len) -> rax a document, or 0 when the body is not one "doc LEN" record
+#   (Markdown, at most 1 MB) and at most one "base LEN" record (an absolute folder), in any order:
+#   a rich-document body (views design 3.8.4); img: images name ext's handles
+FN md_from_body
+    PROLOGUE 48
+    mov [rsp], rdi
+    mov r12, rsi
+    lea r13, [rsi + rdx]
+    mov qword ptr [rsp + 8], 0  # the doc
+    mov qword ptr [rsp + 16], 0
+    mov qword ptr [rsp + 24], 0 # the base
+    mov qword ptr [rsp + 32], 0
+1:  cmp r12, r13
+    jae 5f
+    cmp byte ptr [r12], 10      # blank lines between records
+    jne 2f
+    inc r12
+    jmp 1b
+2:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + body_rr]
+    call tree_rec_read
+    test rax, rax
+    jz 8f
+    mov r12, rax
+    cmp qword ptr [rip + body_rr + RR_n], 2
+    jne 8f
+    lea rdi, [rip + body_rr]
+    xor esi, esi
+    lea rdx, [rip + .Lb_doc]
+    call tree_rec_is
+    test eax, eax
+    jz 3f
+    cmp qword ptr [rsp + 8], 0
+    jne 8f
+    mov rax, [rip + body_rr + RR_len]
+    cmp rax, MD_DOC_MAX
+    ja 8f
+    mov [rsp + 16], rax
+    mov rax, [rip + body_rr + RR_data]
+    mov [rsp + 8], rax
+    jmp 1b
+3:  lea rdi, [rip + body_rr]
+    xor esi, esi
+    lea rdx, [rip + .Lb_base]
+    call tree_rec_is
+    test eax, eax
+    jz 8f
+    cmp qword ptr [rsp + 24], 0
+    jne 8f
+    mov rax, [rip + body_rr + RR_data]
+    mov [rsp + 24], rax
+    mov rax, [rip + body_rr + RR_len]
+    mov [rsp + 32], rax
+    test rax, rax
+    jz 8f
+    jmp 1b
+5:  mov rdi, [rsp + 8]
+    test rdi, rdi
+    jz 8f
+    mov rsi, [rsp + 16]
+    call md_new
+    mov rbx, rax
+    mov rax, [rsp]
+    mov [rbx + MD_ext], rax
+    cmp qword ptr [rsp + 24], 0
+    je 6f
+    mov rdi, rbx
+    mov rsi, [rsp + 24]
+    mov rdx, [rsp + 32]
+    call md_set_base
+6:  mov rax, rbx
+    EPILOGUE
 8:  xor eax, eax
     EPILOGUE
 
@@ -3999,6 +4234,9 @@ FN md_draw
 .Lp_http: .asciz "http://"
 .Lp_https: .asciz "https://"
 .Lp_rhun: .asciz "rhun://"
+.Lb_doc: .asciz "doc"
+.Ld_base: .asciz "base "
+.Lb_base: .asciz "base"
 .Lsp: .asciz " "
 url_before: .asciz " \t\n(*_~"
 url_trail: .asciz ".,:;!?\"')"
@@ -4059,7 +4297,18 @@ FN md_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
-    xor r13d, r13d
+    cmp qword ptr [rbx + MD_base], 0
+    je 11f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_base]
+    call sb_push_cstr
+    mov rdi, r12
+    mov rsi, [rbx + MD_base]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+11: xor r13d, r13d
 1:  cmp r13, [rbx + MD_blocks + VEC_len]
     jae 2f
     imul r14, r13, MDB_SIZE
