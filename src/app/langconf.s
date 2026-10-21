@@ -2532,7 +2532,23 @@ lcf_outdent_typed:
     mov r12, rsi
     mov r13d, edx
     mov [rsp], rcx
-    mov rdi, rbx
+    # a word byte can only complete punctuation: without a closing or middle token ending in it,
+    # nothing to do (most typing), and the line is not read
+    mov rax, [rip + lcf_lc]
+    cmp byte ptr [rax + LC_wchar + r13], 0
+    je 1f
+    lea rdi, [rax + LC_close]
+    mov esi, r13d
+    call lcf_list_ends_punct
+    test eax, eax
+    jnz 1f
+    mov rax, [rip + lcf_lc]
+    lea rdi, [rax + LC_middle]
+    mov esi, r13d
+    call lcf_list_ends_punct
+    test eax, eax
+    jz 8f
+1:  mov rdi, rbx
     mov rsi, r12
     call doc_line_of
     mov r14, rax                # the line
@@ -2663,6 +2679,29 @@ lcf_outdent_typed:
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
+# lcf_list_ends_punct(LCL, byte) -> eax 1 when a token of the list that is not a word ends with
+#   that byte
+lcf_list_ends_punct:
+    mov r8, [rip + lcf_lc]
+    xor ecx, ecx
+1:  cmp rcx, [rdi + LCL_n]
+    jae 8f
+    mov rax, rcx
+    shl rax, 4
+    lea rax, [rdi + LCL_items + rax]
+    inc rcx
+    movzx edx, byte ptr [rax]
+    cmp byte ptr [r8 + LC_wchar + rdx], 0
+    jne 1b
+    movzx edx, byte ptr [rax + LCT_len]
+    movzx edx, byte ptr [rax + rdx - 1]
+    cmp edx, esi
+    jne 1b
+    mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
+
 # .Lot_listed -> eax 1 when the one token is a closing or middle one
 .Lot_listed:
     push rbx
