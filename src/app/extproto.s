@@ -581,6 +581,14 @@ handle_line:
     call present_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # custom editors (ceproto.inc)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ce_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     mov rsi, r12
     mov edx, 1
@@ -730,6 +738,16 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call dbgx_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # custom editors, with the code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call ce_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -1039,8 +1057,13 @@ doc_by_id:
     cmp [rax + DOC_id], rdi
     jne 1b
     ret
-8:  xor eax, eax
-    ret
+8:  push rdi                    # notebooks (A3): a cell, which has no tab
+    call nb_cell_doc_by_id
+    pop rdi
+    test rax, rax
+    jnz 9f
+    jmp ce_doc_by_id            # custom editors: a text model's document, in a view's tab
+9:  ret
 
 # arg_doc(i) -> DOC* from field i, or 0 after replying nodoc
 arg_doc:
@@ -4264,7 +4287,7 @@ active_doc_id:
     imul rax, rdi, TAB_SIZE
     add rax, [rip + g_tabs + VEC_ptr]
     cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 8f
+    jne 7f
     mov rax, [rax + TAB_doc]
     test rax, rax
     jz 8f
@@ -4275,6 +4298,13 @@ active_doc_id:
     jnz 8f
 1:  mov rax, [rax + DOC_id]
     ret
+7:  cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    jne 8f
+    mov rax, [rip + cur]        # notebooks (A3): the selected cell, for one that agreed notebooks
+    test rax, rax
+    jz 8f
+    FEAT_TEST rax, FEAT_NOTEBOOKS
+    jnz nb_active_cell_id
 8:  xor eax, eax
     ret
 
@@ -4306,6 +4336,8 @@ sub_matches:
     jz 8f
     mov rbx, rdi
     mov r12, rsi
+    test dword ptr [r12 + DOC_flags], DF_CELL
+    jnz 4f
     cmp qword ptr [r12 + DOC_uri], 0
     jne 2f
     cmp byte ptr [rbx], '*'
@@ -4335,6 +4367,20 @@ sub_matches:
     mov rdi, rax
     mov rsi, rbx
     call ext_path_matches
+    EPILOGUE
+4:  # notebooks (A3): a cell, only for extensions that agreed notebooks, by its language's file name
+    mov rdi, [rip + cur]
+    mov esi, FEAT_NOTEBOOKS
+    call ext_feature
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx], '*'
+    jne 5f
+    cmp byte ptr [rbx + 1], 0
+    je 9f
+5:  mov rdi, rbx
+    mov rsi, r12
+    call nb_cell_match
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -5251,6 +5297,9 @@ verbs:
     .quad .Lv_tasks_set, h_terminals, 1048576
     .quad .Lv_task_start, h_terminals, 0
     .quad .Lv_task_run, h_terminals, 131072
+    # custom editors (ceproto.inc)
+    .quad .Lce_v_read, h_ed_read, 0
+    .quad .Lce_v_dirty, h_ed_dirty, 0
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
@@ -5510,6 +5559,7 @@ FN extproto_answer_syntax
 .include "app/extresproto.inc"    # resources group: idle, secrets, urls, uris, files, folders
 .include "app/extaiproto.inc"
 .include "app/nbproto.inc"
+.include "app/ceproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

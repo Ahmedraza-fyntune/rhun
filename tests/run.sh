@@ -207,6 +207,7 @@ python3 tests/ext-confine.py || fail=1
 python3 tests/ext-ui.py || fail=1
 # notebooks and custom editors (wider parity A, B)
 python3 tests/ext-notebooks.py || fail=1
+python3 tests/ext-editors.py || fail=1
 # extension management: versions, roll back, updates, removal, development installs
 python3 tests/ext-updates.py || fail=1
 python3 tests/ext-remove-clean.py || fail=1

@@ -1931,7 +1931,7 @@ FN cmd_undo
     jz 1f
     call doc_undo
     jmp ed_touch
-1:  ret
+1:  jmp ce_undo                 # custom editors: a view's tab (customed.s)
 
 FN cmd_redo
     READONLY_RET
@@ -1940,7 +1940,7 @@ FN cmd_redo
     jz 1f
     call doc_redo
     jmp ed_touch
-1:  ret
+1:  jmp ce_redo                 # custom editors: a view's tab (customed.s)
 
 # ---- drawing ----
 
