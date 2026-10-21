@@ -2819,6 +2819,7 @@ FN app_timeout
 timeout_fns:
     .quad agents_timeout
     .quad git_timeout
+    .quad gitrepos_timeout      # and the other workspace folders' repositories (gitrepos.s)
     .quad scmext_timeout        # source control: quick-diff requests' time
     .quad update_timeout
     .quad ai_timeout
@@ -2880,6 +2881,7 @@ FN app_tick
     call problems_tick          # documents opened since get their problems' marks
     call termproto_tick         # extensions' terminal output
     call git_tick
+    call gitrepos_tick          # resources group: the other workspace folders' repositories
     call update_tick
     call ai_tick
     call tools_tick             # AI: tool calls waiting for the user's answer (tools.s)
