@@ -13,3 +13,5 @@ keywords = and as assert async await break class continue def del elif else exce
 constants = True False None self cls Ellipsis NotImplemented __name__ __file__
 builtins = print len range enumerate zip map filter sorted reversed sum min max abs any all open input int float str bool list dict set tuple bytes bytearray object type isinstance issubclass getattr setattr hasattr super iter next repr hash id format round divmod pow vars dir help exit
 colon_indent = yes
+indent_middle = else elif except finally
+indent_dedent_after = return pass break continue raise

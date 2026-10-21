@@ -396,6 +396,12 @@ As** writes `NAME.rhun-workspace`, which names the folders (and can hold setting
 opening that file, from the command line or Open File, opens them all. Removing the first folder
 makes the next one the project.
 
+Each folder's git repository is followed: the explorer colors every folder's changes, and source
+control (the history's work tree row) starts with a line for each repository, with its branch and
+number of changes. The repository shown in the history, source control and the status bar is the
+active file's folder's; clicking another repository's line shows that one until you switch to
+another file. A file in a folder without a repository leaves the one shown as it is.
+
 ### Git
 
 In a git repository rhun shows what changed since the last commit. It runs the `git` program in the background, so the editor never waits for it, and follows commits, checkouts and edits made elsewhere, the built-in terminal included.
@@ -510,7 +516,9 @@ offers Restore Unsaved Changes, and if rhun stops, the file opens with them the 
 
 A notebook file an extension provides for (the `jupyter` extension reads and writes `.ipynb`)
 opens in a notebook tab: its cells one under the other, each with its language's colors and every
-editor command, and under a code cell its outputs (text with its colors, errors, images). The
+editor command, and under a code cell its outputs (text with its colors, errors, images, tables
+and other rich documents, pictures). A Markdown cell shows its text rendered until you edit it
+(Enter or a double click); a link in it opens its file in a tab, or a web address in the browser. The
 toolbar runs all cells, interrupts or restarts the kernel and clears the outputs; the button at
 its right picks the kernel. Clicking a cell's `[ ]` column runs it.
 
@@ -706,6 +714,10 @@ fold's pill and other virtual text, `ghost` for inline completion, `codelens` fo
 `info` and `hint` for those diagnostics. A theme that leaves them out gets them from its other
 colors.
 
+File icons can come from an extension's icon theme: **Select File Icon Theme** in the command
+palette previews each one in the explorer and saves the choice as `file_icons` in `[ui]` (`rhun`,
+the built-in icons; `none`; or a theme's `OWNER/NAME/THEME`).
+
 The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
 
 On Omarchy the theme list starts with Follow Omarchy (`omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there, for both modes, until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
@@ -746,6 +758,29 @@ case = insensitive
 `icon` gives the explorer's icon for the grammar's files: an icon from `assets/icons/files/` (without `.svg`, such as `rust` or `config`; `code` for a language with none) and a color, one of red orange yellow green blue purple pink cyan grey white (grey if left out). Without it the files get the default icon.
 
 `prefix` lists characters that start a colored word, each followed by a letter: `v` variable, `a` attribute, `t` tag, `p` preproc (at the start of a line only). A file gets the grammar whose `files` fit its name best: an exact name first, then the longest `*.suffix`; your grammars win a tie. Only when no pattern fits does rhun look for a `first_line` word in the file's first line; the longest one found wins.
+
+A grammar also says how the language is typed: auto-closing and surrounding pairs, the tokens
+that indent the next line and outdent their own, continued lists and comments, doc comment blocks
+and folding markers. Without these keys the editor behaves as it always did.
+
+```ini
+autoclose = ( ) [ ] { } " " {% %}
+autoclose_code = "
+indent_open = begin ^when ($
+indent_close = end )
+indent_middle = else
+indent_dedent_after = return
+continue = ;;
+doc_block = /** * */
+fold_markers = #region #endregion
+```
+
+`^T` counts T only as a line's first code token and `T$` only as its last; strings and comments
+never count. Enter indents one level after a line with more openers than closers and one level
+less after a dedent word; typing a closing or middle token on a line Enter indented takes it one
+level back. The full list of keys and rules is in the extension spec (docs/extensions/v1.1.md,
+"Language configuration"); an extension can set the same keys for an existing language in
+`[language.NAME]`.
 
 ## Scripting
 
@@ -1263,7 +1298,8 @@ to them itself. The first time an extension's debugger starts in a project, rhun
 any sandbox. Forget on the extension's page asks again.
 
 **Launch configurations** live in `PROJECT/.rhun/launch.ini`, one section per configuration
-(Open Launch Configurations creates the file):
+(Open Launch Configurations creates the file; **Add Configuration** appends one of the installed
+debuggers' templates; **Select Configuration** picks the one F5 starts):
 
 ```ini
 [Run server]
@@ -1291,9 +1327,14 @@ server = 127.0.0.1:2345
   `KEY.NAME = value` builds objects; a numeric segment such as `args.0` is an array index).
 - Variables: `${project}`, `${projectName}`, `${file}`, `${fileDir}`, `${fileName}`,
   `${fileStem}`, `${fileExt}`, `${relativeFile}`, `${line}`, `${column}`, `${selection}`,
-  `${home}`, `${env:NAME}`, and `$$` for a dollar sign.
-- `before = TASK` runs a task (Run Task's tasks, by label or id) and launches once it succeeds; a
-  failing task stops the launch. `after = TASK` runs one when the session ends.
+  `${home}`, `${env:NAME}`, and `$$` for a dollar sign. Questions asked at each launch:
+  `${ask:Port}` (text), `${pick:Mode|debug|test}` (a list) and `${process}` (the running
+  processes, giving the chosen one's id); the same question in one configuration is asked once,
+  and Escape abandons the launch.
+- `before = TASK` runs a task (Run Task's tasks, by label or id) and launches once it succeeds; if
+  it fails, rhun asks whether to debug anyway. `after = TASK` runs one when the session ends.
+- `compound = A | B` starts those configurations in turn (each one after the previous one's
+  questions are answered).
 - `server = HOST:PORT` connects to an adapter that already listens (HOST `localhost` or an IPv4
   address) and starts nothing.
 - A debugger can prepare the configuration first (Delve's "Test at cursor" finds the test the cursor
@@ -1308,7 +1349,10 @@ also work from the terminal (`[debug] keys_in_terminal`).
 **While debugging**, the title bar holds the toolbar (Continue or Pause, Step Over, Into, Out,
 Restart, Stop); the sidebar shows Variables, Watch, Call Stack and Breakpoints, and the panel the
 Debug Console, where an expression evaluates in the selected frame (Up and Down recall earlier
-ones). The paused line is marked in the gutter, and resting the pointer on a name shows its value.
+ones). Call Stack lists the program's threads with the stopped one open; choosing another thread
+shows its frames, and Continue and the steps then act on it. Long arrays open in ranges of 100 (`[0..99]`, nested for bigger ones), F2 on a variable sets
+its value, and values that changed since the last stop are highlighted. An adapter may start child
+sessions of its own (startDebugging); they end with their parent. The paused line is marked in the gutter, and resting the pointer on a name shows its value.
 Program output, the adapter's messages and rhun's notes ("Program exited with code 3") go to the
 console. A program the adapter starts "in the terminal" (debugpy's `console =
 integratedTerminal`) gets a terminal tab of its own, where you type its input.
@@ -1325,7 +1369,7 @@ filters (such as Python's "Uncaught Exceptions").
 | Debugger | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | needs a native machine (no ptrace in Docker under Rosetta) | not tested |
-| Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | needs TCP, which rhun's Windows build does not have yet |
+| Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | not tested (its TCP connection, and `server =`, tested with a fake adapter under Wine) |
 | debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
 
 Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves

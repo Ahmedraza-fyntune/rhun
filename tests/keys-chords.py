@@ -84,6 +84,8 @@ class Keys(contribhost.Contrib):
                 'ctrl+k ctrl+u = rhun.toggle_sidebar\n'
                 'x = ping\n'
                 'Delete = pong when viewFocus\n'
+                'y = pong when view == \'\'\n'
+                'z = pong when view == \'alice/demo.files\'\n'
                 'ctrl+Tab = pong when !textInputFocus && editorFocus\n'
                 'Return = pong when editorFocus || !textInputFocus\n'
                 'k ctrl+c = ping\n'
@@ -97,6 +99,8 @@ class Keys(contribhost.Contrib):
         self.assertIn('xhello world', out)
         self.assertIn('x ping source=ext:alice/demo rank=3 state=refused:typing', out)
         self.assertIn('Delete pong source=ext:alice/demo rank=3 when=viewFocus state=active', out)
+        self.assertIn("y pong source=ext:alice/demo rank=3 when=view == '' state=refused:typing", out)
+        self.assertIn("z pong source=ext:alice/demo rank=3 when=view == 'alice/demo.files' state=active", out)
         self.assertIn('ctrl+Tab pong source=ext:alice/demo rank=3 when=!textInputFocus && editorFocus '
                       'state=active', out)
         self.assertIn('Return pong source=ext:alice/demo rank=3 when=editorFocus || !textInputFocus '
@@ -125,6 +129,19 @@ class Keys(contribhost.Contrib):
         self.assertIn('explorer=1 agents=0 term=0', out)
         self.assertIn('ctrl+g demo.def source=default:alice/demo rank=1 state=shadowed:builtin', out)
         self.assertIn('ctrl+e pong source=ext:alice/demo rank=3 state=shadowed:user', out)
+
+    def test_long_fallback_title_is_cut_in_the_status_bar(self):
+        # the "or pause for TITLE" text has a fixed buffer: a 600-byte title (with a multibyte
+        # character at the cut) must not overrun it
+        keys = 'ctrl+alt+k = ping\nctrl+alt+k ctrl+alt+j = rhun.toggle_sidebar\n'
+        title = 'é' * 300
+        shot = self.work / 'chord.ppm'
+        out = self.run_editor(exts=self.exts(keys, commands=('ping = ' + title, 'pong = Pong')), drop_waits=True,
+                              actions=['key ctrl+alt+k', 'shot ' + shot.as_posix(), 'print-chord', 'key Escape',
+                                       'print-chord'])
+        self.assertTrue(out[0].startswith('chord=') and 'fallback=demo.ping' in out[0], out)
+        self.assertEqual(out[-1], 'chord=none')
+        self.assertTrue(shot.exists())
 
     def test_pause_runs_the_single_stroke(self):
         keys = 'ctrl+alt+k = ping\nctrl+alt+k ctrl+alt+j = rhun.toggle_sidebar\n'

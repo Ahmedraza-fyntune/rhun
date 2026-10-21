@@ -144,6 +144,14 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     check('input/wheel-and-touchpad-steps', lambda: run('wheel_test.exe'))
     # resources group: secrets in the Credential Manager, what an extension's job costs
     check('extensions/secrets-and-cost', lambda: run('resources_test.exe'))
+    # remote hosts: socketpair's channels and ssh's askpass through the window's pipe
+    check('remote/channels', lambda: run('chan_test.exe'))
+    check('remote/askpass', lambda: run('askpass_test.exe'))
+    # Winsock (src/win/sock.s): sockets on loopback, a debug adapter reached over TCP
+    check('sockets/tcp-loopback', lambda: run('sock_test.exe'))
+    check('debugger/tcp-server', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/windows-debug-tcp.py'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
     check('clipboard/bounded-read', lambda: golden('windows-clipboard-read', 'clipboard_read_test'))
     if not args.wine or os.environ.get('DISPLAY'):
         check('clipboard/native-metadata', lambda: golden('windows-clipboard-metadata', 'clipboard_native_metadata_test'))
@@ -203,7 +211,11 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
     def ui(name):
         result = run('rhun.com', winpath(ROOT), '--headless', '1400x860', '--script',
                      'tests/scripts/' + name + '.rsc', env=environment('ui-' + name))
-        equal(result.stdout, (ROOT / 'tests/data' / (name + '.ui.expected')).read_bytes())
+        # a Windows golden where the project menu differs (Connect to WSL…)
+        expected = ROOT / 'tests/data' / (name + '.windows.ui.expected')
+        if not expected.exists():
+            expected = ROOT / 'tests/data' / (name + '.ui.expected')
+        equal(result.stdout, expected.read_bytes())
 
     for name in ['editing', 'clipboard', 'movelines', 'find', 'findcase', 'replace', 'tabs', 'reopen', 'vim', 'wrap', 'togglecomment',
                  'highlight', 'image', 'mouse', 'cursor', 'compose', 'contextmenu',

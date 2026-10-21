@@ -189,6 +189,60 @@ class Folders(lifecycle.Base):
         self.assertIn('2 6\ntop.go', log)               # lib's untracked file, through its git
         self.assertIn('1 11\nsrc/main.rs', log)
 
+    def git_repos(self, branches=('main', 'feature')):
+        import shutil
+        if not shutil.which('git'):
+            self.skipTest('git')
+        (self.work / 'config/rhun/config').write_text(host.CONFIG.replace('enabled = false', 'enabled = true'))
+        for repo, branch in zip((self.app, self.lib), branches):
+            g = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@t']
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=self.env)
+            subprocess.run(g + ['checkout', '-qb', branch], check=True, env=self.env)
+            subprocess.run(g + ['add', '-A'], check=True, env=self.env)
+            subprocess.run(g + ['commit', '-qm', 'one'], check=True, env=self.env)
+
+    def repos(self, out):
+        return [dict(x.split('=', 1) for x in l.split(' ') if '=' in x) for l in out if l.startswith('repo=')]
+
+    def test_every_folders_repository(self):
+        """Each folder's repository: its own status colours the explorer, the active document's folder's
+        repository is the one shown (branch, Source Control), a repository line picks another, and the
+        one shown goes back to the project's when its folder is removed."""
+        self.git_repos()
+        (self.lib / 'pkg/p.go').write_text('package pkg // changed\n')
+        (self.lib / 'new.go').write_text('package lib\n')
+        (self.app / 'src/main.rs').write_text('fn main() { }\n')
+        shot = Path(os.environ.get('RHUN_GR_SHOT', self.work / 'scm.ppm'))
+        lib, app = self.lib.as_posix(), self.app.as_posix()
+        out = self.run_ws([self.app, self.lib], [
+            'wait-git', 'print-repos', f'print-vcs {lib}/pkg/p.go', f'print-vcs {lib}/new.go',
+            f'print-vcs {lib}/pkg', f'print-vcs {lib}/top.go', f'print-vcs {app}/src/main.rs', 'print-git',
+            f'open {lib}/pkg/p.go', 'wait 100', 'wait-git', 'print-repos', 'print-git',
+            f'print-vcs {app}/src/main.rs', f'print-vcs {lib}/pkg/p.go',
+            'cmd git_history', 'wait-git', f'shot {shot}',
+            'click 650 98', 'wait 100', 'wait-git', 'print-repos', 'print-git',  # proj's line
+            'repo-show 1', 'wait 100', 'wait-git', 'print-folders', 'folder-remove 2', 'wait 100', 'wait-git',
+            'print-repos', 'print-git'])
+        marks = [l for l in out if l.startswith(('repo=', 'vcs=', 'git ')) or l.startswith('folder=')]
+        r = [self.repos(out[:i]) for i, l in enumerate(out) if l.startswith('git ')]
+        self.assertEqual([(x['repo'], x['branch'], x['shown']) for x in r[0]],
+                         [('proj', 'main', '1'), ('lib', 'feature', '0')], marks)
+        self.assertEqual(r[0][1]['changes'], '2', marks)
+        vcs = [l.split(' ')[0] for l in out if l.startswith('vcs=')]
+        self.assertEqual(vcs[:5], ['vcs=M', 'vcs=U', 'vcs=M', 'vcs=-', 'vcs=M'], marks)
+        git = [l for l in out if l.startswith('git ')]
+        self.assertIn('branch=main', git[0])
+        # the active document is lib's: its repository is shown, the project's keeps its colours
+        self.assertEqual([x['shown'] for x in self.repos(out[:out.index(git[1])])[-2:]], ['0', '1'], marks)
+        self.assertIn('branch=feature', git[1])
+        self.assertEqual(vcs[5:7], ['vcs=M', 'vcs=M'], marks)
+        self.assertTrue(shot.exists() and shot.stat().st_size > 1000)
+        # proj's line clicked: the project's again
+        self.assertIn('branch=main', git[2])
+        # lib's folder removed while shown: the project's
+        self.assertEqual([x['repo'] for x in self.repos(out[out.index(git[2]):])][-1:], ['proj'], marks)
+        self.assertIn('branch=main', git[3], marks)
+
     def test_a_folders_own_settings(self):
         state = self.ext('st', features='scoped-settings', extra='', on='startup')
         ini = self.root / 'rt/st/extension.ini'

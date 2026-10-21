@@ -37,6 +37,7 @@ nv_ew: .long 0
 nv_eh: .long 0
 .p2align 3
 nv_edoc: .quad 0
+nv_ecl: .quad 0                 # its cell
 tmp: .zero SB_SIZE
 numbuf: .zero 32
 
@@ -71,14 +72,36 @@ nb_metrics:
     mov [rip + nv_top], eax
     ret
 
-# cell_box_h(cl) -> eax px of the cell's frame: its lines and the padding
+# cell_box_h(cl) -> eax px of the cell's frame: its lines (or its rendered Markdown, nbmd.s) and
+#   the padding
 cell_box_h:
-    mov rax, [rdi + NBC_doc]
+    push rbx
+    mov rbx, rdi
+    call nb_cell_rendered
+    test eax, eax
+    jz 1f
+    mov rdi, [rbx + NBC_md]
+    call nv_md_w
+    mov esi, eax
+    call md_layout
+    jmp 2f
+1:  mov rax, [rbx + NBC_doc]
     mov rax, [rax + DOC_nlines]
     imul eax, [rip + g_lh]
+2:  add eax, [rip + nv_pady]
     add eax, [rip + nv_pady]
-    add eax, [rip + nv_pady]
+    pop rbx
     ret
+
+# nv_md_w() -> eax px a rendered Markdown cell's text is wide (rdi kept)
+nv_md_w:
+    mov eax, [rip + nv_boxw]
+    sub eax, [rip + g_mt + 4*MI_12]
+    sub eax, [rip + g_mt + 4*MI_12]
+    cmp eax, 1
+    jge 1f
+    mov eax, 1
+1:  ret
 
 # nb_cell_height(cl) -> rax px the cell takes, the gap under it included (kept in NBC_h)
 FN nb_cell_height
@@ -98,6 +121,12 @@ FN nb_cell_height
     xor rax, rcx
     mov ecx, [rbx + NBC_collapsed]
     shl rcx, 62
+    xor rax, rcx
+    mov ecx, [rbx + NBC_edit]   # a markup cell shows its source in edit mode, else rendered
+    shl rcx, 61
+    xor rax, rcx
+    mov ecx, [rip + g_face_gen]
+    shl rcx, 48
     xor rax, rcx
     mov ecx, [rip + g_cw]
     shl rcx, 32
@@ -139,6 +168,7 @@ FN nb_cell_top
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    call nb_mark_edit
     mov r13d, [rip + nv_top]
     xor r14d, r14d
 1:  cmp r14, r12
@@ -175,6 +205,8 @@ FN nb_draw
     jz .Lnd_ret
     mov rdi, rbx
     call nb_sync_dirty
+    mov rdi, rbx                # which markup cell shows its source (nbmd.s)
+    call nb_mark_edit
     # the toolbar
     M eax, MI_40
     mov [rsp + 16], eax         # its height
@@ -285,6 +317,7 @@ FN nb_draw
     call gfx_clip_push
     mov dword ptr [rip + nv_slot], 0
     mov dword ptr [rip + nv_oslot], 0
+    call nb_md_frame
     mov qword ptr [rip + nv_edoc], 0
     movsxd r14, dword ptr [rsp + 20]
     mov eax, [rip + nv_top]
@@ -336,6 +369,9 @@ FN nb_draw
     mov r8d, [rip + nv_eh]
     mov r9d, 1
     call editor_draw_cell
+    mov rax, [rip + nv_ecl]
+    mov ecx, [rip + g_ed_tx]
+    mov [rax + NBC_tx], ecx
 72: call gfx_clip_pop
     # the scrollbar
     mov rax, [rbx + NB_scroll]
@@ -502,8 +538,17 @@ nb_press:
     mov rdi, r13
     call cell_box_h
     add rax, r14
+    xor ecx, ecx
     cmp r15, rax
     jge 3f
+    mov rdi, r13                # rendered Markdown: a click selects the cell, a double click edits
+    call nb_cell_rendered
+    mov ecx, 1
+    test eax, eax
+    jz 3f
+    xor ecx, ecx
+    cmp dword ptr [rip + g_clicks], 2
+    jb 3f
     mov ecx, 1
 3:  test dword ptr [rip + g_pressed], 1 << BTN_RIGHT
     jz 31f
@@ -908,7 +953,27 @@ nb_draw_cell:
     mov ecx, [rsp + 4]
     mov r8d, [rsp + 8]
     call nb_draw_prompt
-3:  # its text: the part on screen, by the editor
+3:  # rendered Markdown (nbmd.s)
+    mov rdi, r12
+    call nb_cell_rendered
+    test eax, eax
+    jz 30f
+    mov eax, [rsp + 16]
+    add eax, [rip + g_mt + 4*MI_12]
+    mov [r12 + NBC_mdx], eax
+    mov esi, eax
+    mov edx, [rsp + 4]
+    add edx, [rip + nv_pady]
+    mov [r12 + NBC_mdy], edx
+    call nv_md_w
+    mov ecx, eax
+    mov r8d, [rsp + 8]
+    sub r8d, [rip + nv_pady]
+    sub r8d, [rip + nv_pady]
+    mov rdi, [r12 + NBC_md]
+    call nb_md_draw
+    jmp 4f
+30: # its text: the part on screen, by the editor
     mov eax, [rsp + 16]
     add eax, [rip + g_border]
     mov [rsp + 24], eax         # editor x
@@ -949,6 +1014,9 @@ nb_draw_cell:
     cmp dword ptr [rsp + 20], 2
     jne 33f
     # the keyboard's cell is drawn after the others
+    mov eax, [rsp + 32]
+    mov [r12 + NBC_ty], eax
+    mov [rip + nv_ecl], r12
     mov [rip + nv_edoc], r15
     mov eax, [rsp + 24]
     mov [rip + nv_ex], eax
@@ -966,6 +1034,10 @@ nb_draw_cell:
     mov r8d, [rsp + 44]
     xor r9d, r9d
     call editor_draw_cell
+    mov eax, [rip + g_ed_tx]    # where its text went, whatever lanes its gutter has (tests)
+    mov [r12 + NBC_tx], eax
+    mov eax, [rsp + 32]
+    mov [r12 + NBC_ty], eax
 4:  # its outputs
     cmp qword ptr [r12 + NBC_outs + VEC_len], 0
     je 9f

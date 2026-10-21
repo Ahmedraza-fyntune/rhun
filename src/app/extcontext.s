@@ -499,6 +499,12 @@ FN contrib_ext_gone
     call status_ext_gone
     mov rdi, rbx
     call iconspec_ext_gone
+    mov rdi, rbx
+    call langconf_ext_gone
+    mov rdi, rbx
+    call iconth_ext_gone
+    mov rdi, rbx
+    call invoke_owner_settled   # calls that waited for it to start
     EPILOGUE
 
 # ---------------- problems: manifest entries that were dropped, shown on its page ----------------
@@ -674,7 +680,13 @@ FN contrib_manifest_kv
     test eax, eax
     jz 9712f
     EPILOGUE
-9712: mov rdi, r12
+9712: mov rdi, rbx
+    mov rsi, r12
+    call langconf_manifest_kv   # [language.NAME] (langconf.s)
+    test eax, eax
+    jz 9713f
+    EPILOGUE
+9713: mov rdi, r12
     lea rsi, [rip + .Ls_command_options]
     call ini_sec_is
     test eax, eax

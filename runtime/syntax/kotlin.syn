@@ -12,3 +12,4 @@ keywords = as break class continue do else for fun if in interface is object pac
 types = Int Long Short Byte Double Float Boolean Char String Unit Any Nothing Array List MutableList Map MutableMap Set
 constants = true false null
 builtins = println print listOf mutableListOf mapOf setOf arrayOf require check error
+doc_block = /** * */

@@ -9,3 +9,6 @@ prefix = :v @a
 captypes = yes
 keywords = def defp defmodule defmacro defmacrop defstruct defprotocol defimpl defdelegate defexception defguard do end if else unless case cond when fn with for receive try catch rescue after raise quote unquote import require alias use in and or not
 constants = true false nil
+indent_open = do$ ->$ ( [ {
+indent_close = end ) ] }
+indent_middle = else rescue catch after

@@ -3,6 +3,7 @@
 # local command name to the requests it sends when run ("{args}" in a request is replaced by the
 # invocation's body; a (text, payload) pair sends a body, its LEN filled in where the text ends
 # with " #"), and CALL, how it answers "ID call" requests: reverse (ok + the ARGS reversed), error,
+# long-error (400 bytes of error text),
 # silent, big (a 1 MiB + 1 result) or echo-doc), and DELAY, seconds to wait before hello. Every
 # line rhun sends, every body and every run-command result goes to contrib.log in the state folder.
 import os
@@ -63,6 +64,8 @@ while True:
             out.write(b'ok ' + fields[0].encode() + b' ' + str(len(result)).encode() + b'\n' + result)
         elif CALL == 'error':
             out.write(b'error ' + fields[0].encode() + b' refused nope\n')
+        elif CALL == 'long-error':
+            out.write(b'error ' + fields[0].encode() + b' refused ' + ('é' * 150 + 'x' * 100).encode() + b' end\n')
         elif CALL == 'big':
             out.write(b'ok ' + fields[0].encode() + b' 1048577\n' + b'x' * 1048577)
         elif CALL == 'echo-doc':

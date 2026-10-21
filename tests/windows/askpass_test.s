@@ -1,5 +1,5 @@
 # ssh's askpass on Windows (src/win/askpipe.s, remoteui.s): this test is the window. It makes the
-# pipe, starts build/windows/rhun.com as ssh would (RHUN_ASKPASS naming the pipe, the question as
+# pipe, starts the rhun.com beside it as ssh would (RHUN_ASKPASS naming the pipe, the question as
 # its argument), reads the question up to its NUL, answers, and rhun.com prints the answer on its
 # standard output and exits 0. (A second pipe of the same name cannot be made first on Windows,
 # which stops squatting; Wine does not check that, so it is not asserted.)
@@ -8,6 +8,7 @@
 .bss
 .p2align 3
 buf: .zero 4096
+exe: .zero 4200
 argv: .zero 32
 envx: .zero 16
 tsp: .zero 16
@@ -30,9 +31,24 @@ FN main
     mov edi, eax
     SYS SYS_close
 11:
-    # rhun.com as ssh's askpass program
+    # rhun.com (beside this test) as ssh's askpass program
     inc ebx
-    lea rax, [rip + .Lexe]
+    lea rdi, [rip + exe]
+    mov esi, 4000
+    call proc_self_path
+    test rax, rax
+    jle .Lfail
+    lea rdi, [rip + exe]
+1:  dec rax                     # after the last slash
+    js .Lfail
+    cmp byte ptr [rdi + rax], '/'
+    je 2f
+    cmp byte ptr [rdi + rax], 92
+    jne 1b
+2:  lea rdi, [rdi + rax + 1]
+    lea rsi, [rip + .Lexe]
+    call cstr_copy
+    lea rax, [rip + exe]
     mov [rip + argv], rax
     lea rax, [rip + .Lquestion]
     mov [rip + argv + 8], rax
@@ -158,7 +174,7 @@ nap:
 .section .rodata
 .Lname: .asciz "\\\\.\\pipe\\rhun-askpass-test-5b1e"
 .Lenv: .asciz "RHUN_ASKPASS=\\\\.\\pipe\\rhun-askpass-test-5b1e"
-.Lexe: .asciz "build/windows/rhun.com"
+.Lexe: .asciz "rhun.com"
 .Lquestion: .asciz "pw@host's password: "
 .Lanswer: .ascii "ys3cret"
 .Lprinted: .asciz "s3cret\n"

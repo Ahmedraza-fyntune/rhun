@@ -54,7 +54,7 @@ func (sample) Invoke(e *rhunext.Ext, inv rhunext.Invocation) {
 	}
 }
 
-func (sample) Call(_ *rhunext.Ext, c rhunext.Call) ([]byte, error) {
+func (sample) Call(_ *rhunext.Ext, c rhunext.CallRequest) ([]byte, error) {
 	logf("call %s from %s args=%s", c.Name(), c.Caller, c.Args)
 	return append([]byte("answer to "), c.Args...), nil
 }

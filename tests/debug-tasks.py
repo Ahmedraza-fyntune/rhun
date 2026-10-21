@@ -61,13 +61,22 @@ class Tasks(debughost.DebugHost):
         self.assertEqual(self.field(self.debug_lines(out)[0], 'exit'), '3', out)
         self.assertLess(out.index('info Running the prelaunch task build'), out.index('info Starting the debugger'))
 
-    def test_a_failing_before_task_stops_the_launch(self):
+    def test_a_failing_before_task_asks(self):
         out = self.run_tasks('before = fail\n', ['wait 300', 'debug-start Run', 'wait 500', 'dialog yes',
-                                                  'wait 1500', 'print-debug', 'print-dialog', 'print-console'])
-        self.assertIn('error the prelaunch task failed: fail', out)
+                                                  'wait 1500', 'print-dialog', 'dialog no', 'wait 200', 'print-debug',
+                                                  'print-console'])
+        dialog = [l for l in out if l.startswith('dialog=')][0]
+        self.assertEqual(dialog, 'dialog=The prelaunch task failed', out)
+        self.assertIn('text=fail did not succeed. Debug anyway?', out)
+        self.assertIn('info Launch cancelled', out)
         self.assertEqual(self.debug_lines(out), [], out)
-        self.assertIn('dialog=none', out)
         self.assertFalse(self.log.exists(), 'the adapter never started')
+
+    def test_debug_anyway_after_a_failing_before_task(self):
+        out = self.run_tasks('before = fail\n', ['wait 300', 'debug-start Run', 'wait 500', 'dialog yes',
+                                                  'wait 1500', 'dialog yes', 'wait 500', 'print-dialog', 'dialog yes',
+                                                  'wait-debug ended', 'print-debug'])
+        self.assertEqual(self.field(self.debug_lines(out)[-1], 'exit'), '3', out)
 
     def test_an_unknown_before_task(self):
         out = self.run_tasks('before = nosuch\n', ['wait 300', 'debug-start Run', 'wait 300', 'print-console'])

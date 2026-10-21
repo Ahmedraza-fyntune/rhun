@@ -87,6 +87,18 @@ class RunCommand(contribhost.Contrib):
                         drop_waits=True, actions=['cmd demo.ask', 'wait-ext demo running', 'wait 800'])
         self.assertEqual(self.answers(self.contrib_log()), ['error 1 refused nope'])
 
+    def test_goto_line_clamps_a_huge_column(self):
+        out = self.run_editor(exts=self.exts({'go': [('run-command goto_line #', '2 18446744073709551615')]}),
+                              files=('c.txt',), drop_waits=True,
+                              actions=['cmd demo.go', 'wait-ext demo running', 'wait 300', 'print-state'])
+        line2 = (self.proj / 'c.txt').read_text(encoding='utf-8').split('\n')[1]
+        self.assertIn('line=2 col=%d' % (len(line2.encode()) + 1), out[0])
+
+    def test_long_error_text_is_relayed_whole(self):
+        self.run_editor(exts=self.exts({'ask': ['run-command peer.echo 0']}, call='long-error'),
+                        drop_waits=True, actions=['cmd demo.ask', 'wait-ext demo running', 'wait 800'])
+        self.assertEqual(self.answers(self.contrib_log()), ['error 1 refused ' + 'é' * 150 + 'x' * 100 + ' end'])
+
     def test_result_over_one_mib(self):
         self.run_editor(exts=self.exts({'ask': ['run-command peer.echo 0']}, call='big'),
                         drop_waits=True, actions=['cmd demo.ask', 'wait-ext demo running', 'wait 1500'])
