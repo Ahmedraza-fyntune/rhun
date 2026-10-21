@@ -2764,6 +2764,7 @@ timeout_fns:
     .quad ext_provider_timeout
     .quad save_timeout
     .quad uproc_timeout
+    .quad termproto_timeout     # tasks: terminal output waiting for its budget (termproto.s)
     .quad query_timeout
     .quad testing_timeout
     .quad dap_timeout
