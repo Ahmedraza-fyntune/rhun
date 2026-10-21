@@ -1894,7 +1894,14 @@ FN git_drop_base_ext
     je 9f
     mov dword ptr [rdi + DOC_gsrc], 0
     push rdi
+    push rdi
+    mov rdi, [rdi + DOC_qbase]
+    call mem_free
+    pop rdi
+    mov qword ptr [rdi + DOC_qbase], 0
+    mov qword ptr [rdi + DOC_qblen], 0
     call drop_base
+    mov rdi, [rsp]
     call git_doc_head
     pop rdi
 9:  ret
@@ -1904,6 +1911,9 @@ FN git_drop_base_ext
 FN git_doc_free
     PROLOGUE
     mov rbx, rdi
+    mov rdi, [rbx + DOC_qbase]
+    call mem_free
+    mov qword ptr [rbx + DOC_qbase], 0
     mov rdi, [rbx + DOC_ghash]
     call mem_free
     mov rdi, [rbx + DOC_gmarks]

@@ -385,6 +385,17 @@ Open Folder and Open File show a browser in the palette. It starts in the projec
 - A path can be typed or pasted, as in `/etc/` or `~/code/`. Hidden entries show once the name typed starts with a dot.
 - Open Folder lists only folders, led by **Open** and the folder shown, then **Open … in a new window**, which leaves this window as it is (on macOS the new window has a Dock icon of its own). Ctrl+Enter opens the selected folder without going into it.
 
+A window can hold several folders, a workspace. `rhun app lib` opens both; **Add Folder to
+Workspace…** (the project menu, or the palette) adds another, and **Remove Folder from Workspace**
+(a folder's menu in the explorer) takes one out. The first folder is the project: the window is named
+after the folders (`app + lib`), the explorer shows each folder as a root of its own, quick open and
+find in files list every folder's files with the folder's name first (`lib/pkg/p.go`), and a new
+terminal starts in the active file's folder. Folders cannot be inside one another, and a window has
+16 at most. The folders added to a project come back the next time it is opened. **Save Workspace
+As** writes `NAME.rhun-workspace`, which names the folders (and can hold settings for extensions);
+opening that file, from the command line or Open File, opens them all. Removing the first folder
+makes the next one the project.
+
 ### Git
 
 In a git repository rhun shows what changed since the last commit. It runs the `git` program in the background, so the editor never waits for it, and follows commits, checkouts and edits made elsewhere, the built-in terminal included.
@@ -847,8 +858,9 @@ Commit message AI).
 An extension for another version control system (the first-party Mercurial extension, for
 example) adds its own section to the sidebar: a status line such as the branch, a message box
 with its buttons (Ctrl+Enter in the box runs the first, usually Commit), and its changed files in
-groups. Click a file to open its changes, right-click it or a group for the extension's actions
-and Open File. Its files and their folders are colored in the explorer and the tab titles as
+groups. Click a file to see its changes in a diff tab (against what the extension says the file
+was); hover a file or a group for its action buttons, or right-click it for all its actions and
+Open File. Other extensions may add buttons to the section's header. Its files and their folders are colored in the explorer and the tab titles as
 git's are, and the gutter marks of its files compare with what it says they were.
 
 An edit across files is checked whole before anything changes: if a document changed meanwhile
