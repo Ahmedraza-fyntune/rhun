@@ -21,7 +21,7 @@ hv_expr: .zero 260
 hv_text: .zero 1040             # its answer, empty while none
 hv_expr_sb: .zero SB_SIZE
 .p2align 3
-dg_docs: .zero 16 * DG_DOCS     # documents synced: DOC*, the generation they were filled at
+dg_docs: .zero 16 * DG_DOCS     # documents synced: DOC_id, the generation they were filled at
 dg_gen: .long 0                 # the generation of what was last asked for
 dg_line_gen: .long 0
 tipb: .zero 512
@@ -86,8 +86,10 @@ FN dg_tick
 5:  call dg_current
 9:  EPILOGUE
 
-# doc_synced(doc) -> eax 1 when its glyphs are of the current generation; else it is marked so
+# doc_synced(doc) -> eax 1 when its glyphs are of the current generation; else it is marked so.
+#   Documents are known by their id, never reused in a run (an address is, after a close)
 doc_synced:
+    mov rdi, [rdi + DOC_id]
     lea rcx, [rip + dg_docs]
     xor edx, edx
     mov r8d, -1                 # a free slot

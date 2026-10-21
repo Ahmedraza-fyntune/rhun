@@ -311,6 +311,54 @@ class Presentation(Base):
         self.assertEqual(first[3], '1')
         self.assertGreater(int(last[3]), 1)
 
+    # ---------------- review fixes ----------------
+
+    def test_older_ranges_keep_their_types_gravity(self):
+        self.steps({'a': [['decoration-type both {LEN}', 'faded\ngrow both\n'],
+                          ['decoration-type none {LEN}', 'faded\n']],
+                    'b': [['decorate {DOC} {VER-1} both 0 0 1 {LEN}', '1 1 1 3 0 0 0 0\n'],
+                          ['decorate {DOC} {VER-1} none 0 0 1 {LEN}', '1 1 1 1 0 0 0 0\n']]})
+        # "z" typed at 1:1 after the version the ranges are about
+        out = self.run_p(self.start() + ['key ctrl+Home', 'type z', 'wait 200', 'cmd present.b', 'wait 200',
+                                         'print-present deco'])
+        self.assertEqual(sorted(l for l in out if l.startswith('deco ')), ['deco both 1:1-1:4', 'deco none 1:2-1:2'])
+        self.assertEqual(self.replies()[-2:], ['ok 3', 'ok 4'])
+
+    def test_tooltip_follows_the_drawing_order(self):
+        # equal priorities: the later registered type is drawn on top, whatever the ranges' order
+        self.steps({'a': [['decoration-type a {LEN}', 'faded\n'], ['decoration-type b {LEN}', 'faded\n'],
+                          ['decorate {DOC} {VER} b 0 0 1 {LEN}', '2 5 2 8 0 0 6 0\nfrom b'],
+                          ['decorate {DOC} {VER} a 0 0 1 {LEN}', '2 5 2 8 0 0 6 0\nfrom a']]})
+        cell = self.run_p(['print-text-cell 2 6'])[0]
+        out = self.run_p(self.start() + [f'move {cell}', 'wait 650', 'print-tip'])
+        self.assertIn('from b', '\n'.join(out))
+
+    def test_visible_event_resets_without_a_document(self):
+        self.steps({})
+        self.run_p(self.start() + ['cmd close_tab', 'wait 300'])
+        self.assertEqual(self.events('visible')[-1], '0 visible 0 0 0', self.events('visible'))
+
+    def test_a_tab_after_an_inlay_counts_it(self):
+        (self.proj / 't.rs').write_text('a\tbc\n', encoding='utf-8')
+        self.steps({'a': [['decoration-type v {LEN}', 'before #ff0000 -\n'],
+                          ['decorate {DOC} {VER} v 0 0 1 {LEN}', '1 1 1 2 1 0 0 0\nx']]})
+        out = self.run_p(self.start() + ['print-xy 1 1', 'print-xy 1 3'], files=('t.rs',))
+        (x1, y), (x3, _) = (tuple(map(int, l.split())) for l in out if len(l.split()) == 2 and l[0].isdigit())
+        self.assertEqual(x3 - x1, 3 * 7)         # "a" and the tab to the stop at 4, the inlay counted
+        out = self.run_p(self.start() + [f'print-hit {x3 + 3} {y}'], files=('t.rs',))
+        self.assertIn('text 1 3', out)
+
+    def test_end_reveals_the_caret_past_inlays_and_the_extent_shrinks(self):
+        (self.proj / 'w.rs').write_text('y' * 100 + '\n', encoding='utf-8')
+        self.steps({'a': [['decoration-type v {LEN}', 'before #ff0000 -\n'],
+                          ['decorate {DOC} {VER} v 0 0 1 {LEN}', '1 1 1 2 80 0 0 0\n' + 'x' * 80]],
+                    'b': [['decorate {DOC} {VER} v 0 0 0 0', '']]})
+        out = self.run_p(self.start() + ['key End', 'print-scroll', 'key Home', 'print-scroll', 'cmd present.b',
+                                         'wait 200', 'print-scroll'], files=('w.rs',))
+        scrolls = [dict(kv.split('=', 1) for kv in l.split()) for l in out if l.startswith('x=')]
+        self.assertGreater(int(scrolls[0]['x']), 0)
+        self.assertLess(int(scrolls[2]['max']), int(scrolls[1]['max']))
+
     # ---------------- stage 3: diagnostic tags ----------------
 
     def cell_luma(self, path, line, c1, c2):

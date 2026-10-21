@@ -1065,7 +1065,10 @@ FN ext_retire
     call langfeat_ext_gone
     mov rdi, rbx
     call scm_ext_gone           # its source control requests and providers (gitdata.s, scmext.s)
-    call nb_ext_gone
+    mov rdi, rbx
+    call nb_ext_gone            # its notebooks' requests, runs and kernels
+    mov rdi, rbx
+    call ce_ext_gone            # its custom editors' requests (customed.s)
     mov rdi, rbx
     call contrib_ext_gone       # its context keys and contributions (extcontext.s)
     mov rdi, rbx
@@ -1805,7 +1808,14 @@ FN ext_load
     je 52f
     mov dword ptr [rbx + EXT_manifest_ok], 1    # a pack without a program never starts
     jmp 83f
-52: lea rdi, [rip + .Lr_no_program]
+52: # debugger: an extension that only declares debuggers needs no program of its own
+    mov rdi, rbx
+    call dbg_ext_declares
+    test eax, eax
+    jz 53f
+    mov dword ptr [rbx + EXT_manifest_ok], 1
+    jmp 83f
+53: lea rdi, [rip + .Lr_no_program]
     jmp .Lel_fail
 6:  # a script needs its runtime on PATH
     cmp qword ptr [rbx + EXT_script], 0
@@ -2935,6 +2945,10 @@ FN ext_start
     jne 6f
     cmp qword ptr [rbx + EXT_pack], 0
     jne 7f                      # extension management: a pack without a program never starts
+    mov rdi, rbx                # debugger: nor does one that only declares debuggers
+    call dbg_ext_declares
+    test eax, eax
+    jnz 7f
 6:  cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 7f
     mov rdi, rbx
@@ -3882,6 +3896,8 @@ FN ext_exited
     call ai_ext_gone            # AI: its sessions, tool calls and cards
     mov rdi, rbx
     call nb_ext_gone            # and its notebooks' requests, runs and kernels
+    mov rdi, rbx
+    call ce_ext_gone            # and its custom editors' requests
     xor edi, edi
     call ext_hover_forget       # its hover text, if the tooltip shows one
     mov rdi, [rbx + EXT_body]
@@ -4990,6 +5006,8 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_semantic_tokens, EXT_pv_semantic_tokens, .Lpv_inlay_hints, EXT_pv_inlay_hints
     .quad .Lpv_code_lens, EXT_pv_code_lens, .Lpv_inline_complete, EXT_pv_inline_complete
     .quad .Lpv_colors, EXT_pv_colors, .Lpv_highlights, EXT_pv_highlights, .Lpv_folding, EXT_pv_folding
+    .quad .Lpv_editor, EXT_pv_editor, .Lpv_edtitle, EXT_pv_edtitle  # custom editors
+    .quad .Lpv_edmodel, EXT_pv_edmodel, .Lpv_edprio, EXT_pv_edprio
     .quad 0, 0
 sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_changed, EXT_sub_changed
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
@@ -5118,6 +5136,10 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_notebook: .asciz "notebook"
 .Lpv_nbtitle: .asciz "notebook.title"
 .Lpv_nbkernel: .asciz "notebook.kernel"
+.Lpv_editor: .asciz "editor"
+.Lpv_edtitle: .asciz "editor.title"
+.Lpv_edmodel: .asciz "editor.model"
+.Lpv_edprio: .asciz "editor.priority"
 .Ls_needs: .asciz "needs"
 .Lsk_opened: .asciz "opened"
 .Lsk_saved: .asciz "saved"

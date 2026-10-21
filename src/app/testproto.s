@@ -16,6 +16,8 @@ ENDSTRUCT RQ_SIZE
 
 .bss
 .p2align 3
+mf_path: .zero 4096          # message_flush: a location's path as a cstr
+.p2align 3
 rq: .zero RQ_SIZE * TS_RESOLVE_MAX
 ob: .zero SB_SIZE               # the message being built
 req_ext: .quad 0                # the request being handled: its extension, id, verb fields
@@ -872,6 +874,7 @@ FN testing_tick
     call testproto_dispatch
     call testexec_tick
     call testgutter_tick        # failures as problems
+    call testview_cov_tick      # the Coverage section
     EPILOGUE
 
 # testing_timeout() -> ms until testing_tick has something to do, -1 when nothing waits
@@ -1544,7 +1547,20 @@ message_flush:
     mov [rip + hdr + TSM_exp], eax
     mov rax, [rip + cm_actlen]
     mov [rip + hdr + TSM_act], eax
-    lea rdi, [rbx + TSE_msgs]
+    # the version of its file's open document: the problem's place follows later edits
+    mov qword ptr [rip + hdr + TSM_ver], -1
+    mov rdx, [rip + cm_pathlen]
+    test rdx, rdx
+    jz 11f
+    lea rdi, [rip + mf_path]
+    mov rsi, [rip + cm_path]
+    call memcpy
+    mov rcx, [rip + cm_pathlen]
+    lea rdi, [rip + mf_path]
+    mov byte ptr [rdi + rcx], 0
+    call testgutter_doc_ver
+    mov [rip + hdr + TSM_ver], rax
+11: lea rdi, [rbx + TSE_msgs]
     lea rsi, [rip + hdr]
     mov edx, TSM_SIZE
     call sb_push

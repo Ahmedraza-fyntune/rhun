@@ -30,6 +30,13 @@ class Rename(lang.Lang):
         self.assertIn('none', out)
         self.assertFalse(any(l.split()[1:2] == ['rename'] and l[:2] != '0 ' for l in self.lang_log()), self.lang_log())
 
+    def test_a_provider_stopping_during_prepare_opens_the_prompt(self):
+        spec = dict(self.spec({'silent': True}), run={'die': [['EXIT', '']]})
+        root = self.provider(spec, 'rename = *.rs\n', extra='[commands]\ndie = Die\n')
+        out = self.run_lang(root, ['key ctrl+Home', 'key Right', 'key F2', 'wait 200', 'cmd lang.die', 'wait 500',
+                                   'print-palette'])
+        self.assertIn('field=fn', out)          # as with no answer: the word at the cursor
+
     def test_an_empty_answer_uses_the_word_at_the_cursor(self):
         root = self.provider(self.spec({'body': ''}), 'rename = *.rs\n')
         out = self.run_lang(root, ['key ctrl+Home', 'key Right', 'key F2', 'wait 400', 'print-palette'])
@@ -78,6 +85,14 @@ class OnType(lang.Lang):
         self.assertIn('    total + 1', out)
         self.assertEqual(len([l for l in self.lang_log() if ' type-format ' in l]), 1)
 
+    def test_an_edit_for_another_language_is_dropped(self):
+        self.config('format_on_type = yes\n')
+        root = self.provider(self.spec(delay=0.3), self.MANIFEST)
+        out = self.run_lang(root, ['key ctrl+Home', 'key Down', 'key End', 'type ;', 'cmd select_language',
+                                   'type Python', 'key Return', 'wait 600', 'print-state', 'print-doc'])
+        self.assertTrue(any(' lang=Python ' in l for l in out if l.startswith('tabs=')), out)
+        self.assertIn('    total + 1', out)       # not indented by the Rust formatter's late edit
+
     def test_pasted_lines_are_range_formatted(self):
         self.config('format_on_paste = yes\n')
         root = self.provider(self.spec(), self.MANIFEST)
@@ -86,6 +101,17 @@ class OnType(lang.Lang):
         req = [l for l in self.lang_log() if ' range-format ' in l]
         self.assertEqual(req[0].split()[4:8], ['2', '1', '2', '16'], req)
         self.assertIn('// fn main() {', out)
+
+    def test_a_late_paste_format_answer_is_dropped(self):
+        self.config('format_on_paste = yes\n')
+        spec = self.spec()
+        spec['answers']['range-format']['delay'] = 0.8
+        root = self.provider(spec, self.MANIFEST)
+        out = self.run_lang(root, ['key ctrl+Home', 'key shift+End', 'cmd copy', 'key End', 'key Return',
+                                   'cmd paste', 'wait 1200', 'print-doc'])
+        self.assertNotIn('// fn main() {', out)
+        rid = [l.split()[0] for l in self.lang_log() if ' range-format ' in l][0]
+        self.assertIn('0 cancel ' + rid, self.lang_log())
 
 
 if __name__ == '__main__':

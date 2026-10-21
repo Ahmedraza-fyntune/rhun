@@ -8,7 +8,7 @@ request id in front and BODY after it. In LINE and BODY, {DOC} is the active doc
 version, {VER-N} N versions before, and in LINE {LEN} is BODY's length in bytes. A step named
 "ready" runs once after the ready event, one named "opened" after every opened event. Requests
 from rhun get "error ID unknown" unless PRESENT_ANSWERS (JSON {"VERB": [LINE, BODY]}) answers
-them, with {ID} for the request's id.
+them, with {ID} for the request's id; a list of such pairs answers in turn (the last repeated).
 """
 import json
 import os
@@ -21,6 +21,7 @@ HELLO = os.environ.get('PRESENT_HELLO', 'hello 1 decorations')
 STEPS = json.load(open(os.environ['PRESENT_STEPS'])) if os.environ.get('PRESENT_STEPS') else {}
 ANSWERS = json.load(open(os.environ['PRESENT_ANSWERS'])) if os.environ.get('PRESENT_ANSWERS') else {}
 versions = {}
+asked = {}
 active = 0
 next_id = 1
 
@@ -79,7 +80,12 @@ while True:
         if words[-1].isdigit() and verb in ('color-edit',):
             read_body(int(words[-1]))
         if verb in ANSWERS:
-            reply, body = ANSWERS[verb]
+            answer = ANSWERS[verb]
+            if isinstance(answer[0], list):         # answers in turn, the last one repeated
+                n = asked.get(verb, 0)
+                asked[verb] = n + 1
+                answer = answer[min(n, len(answer) - 1)]
+            reply, body = answer
             doc = int(words[2]) if len(words) > 2 and words[2].isdigit() else active
             body = fill(body, doc).encode()
             reply = fill(reply, doc).replace('{ID}', rid).replace('{LEN}', str(len(body)))

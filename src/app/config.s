@@ -32,6 +32,12 @@ cfg_match_brackets: .long 1
 cfg_indent_guides: .long 1
 .globl cfg_folding
 cfg_folding: .long 1            # editor presentation: folding (fold.s)
+.globl cfg_semantic_highlighting
+cfg_semantic_highlighting: .long 1      # editor presentation: semantic tokens (semtok.s)
+.globl cfg_inlay_hints
+cfg_inlay_hints: .long 1        # editor presentation: inlay hints (inlay.s)
+.globl cfg_code_lens
+cfg_code_lens: .long 1          # editor presentation: code lens (lens.s)
 cfg_cursor_blink: .long 1
 cfg_whitespace: .long 0
 cfg_sidebar: .long 1
@@ -400,6 +406,7 @@ FN config_load
 2:  mov qword ptr [rip + g_keylines + VEC_len], 0
     mov dword ptr [rip + old_sources], 0
     call agentext_config_reset  # AI: the extension sources switched off come from this read
+    call ce_config_reset        # custom editors: the [editors] choices too (customed.s)
     # taken before the read: a write that lands during it still counts as a change
     call config_path
     mov rdi, rax
@@ -442,7 +449,18 @@ FN config_load
     mov rax, [rip + it + INI_vallen]
     mov [rbx + 24], rax
     jmp .Lcl_next
-1:  mov rdi, [rip + it + INI_sec]
+1:  lea rdi, [rip + it]         # custom editors: [editors] PATTERN = OWNER/NAME | text
+    lea rsi, [rip + .Leditors]
+    call ini_sec_is
+    test eax, eax
+    jz 11f
+    mov rdi, [rip + it + INI_key]
+    mov rsi, [rip + it + INI_keylen]
+    mov rdx, [rip + it + INI_val]
+    mov rcx, [rip + it + INI_vallen]
+    call ce_config_kv
+    jmp .Lcl_next
+11: mov rdi, [rip + it + INI_sec]
     mov rsi, [rip + it + INI_seclen]
     mov rdx, [rip + it + INI_key]
     mov rcx, [rip + it + INI_keylen]
@@ -701,7 +719,9 @@ FN config_save
     call sb_push_byte
     inc rbx
     jmp 6b
-7:  call config_dir
+7:  lea rdi, [rsp]              # custom editors: [editors] (customed.s)
+    call ce_config_write
+    call config_dir
     lea rdi, [rip + cfg_dir_buf]
     call mkdir_p
     call config_path
@@ -815,6 +835,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Lrhun: .asciz "/rhun"
 .Lslash_config: .asciz "/config"
 .Lkeys: .asciz "keys"
+.Leditors: .asciz "editors"
 .Lheader: .ascii "# rhun configuration. Also editable from Settings (ctrl+,).\n"
           .asciz "# Changes are picked up while rhun is running.\n"
 .Lnl_bracket: .asciz "\n["
@@ -909,6 +930,9 @@ g_settings:
     SETTING .Ls_editor, format_on_paste, ST_BOOL, cfg_format_on_paste, 0, 1, 1, 0, "Format pasted text", "Format the pasted lines with the formatter's range formatting."
     # editor presentation
     SETTING .Ls_editor, folding, ST_BOOL, cfg_folding, 0, 1, 1, 0, "Folding", "Fold regions from the gutter's chevrons (ctrl+shift+[ and ctrl+shift+])."
+    SETTING .Ls_editor, code_lens, ST_BOOL, cfg_code_lens, 0, 1, 1, 0, "Code lens", "Show a row of actions and counts above lines a language server marks: references, tests."
+    SETTING .Ls_editor, inlay_hints, ST_BOOL, cfg_inlay_hints, 0, 1, 1, 0, "Inlay hints", "Show what a language server adds inside the code: types, parameter names."
+    SETTING .Ls_editor, semantic_highlighting, ST_BOOL, cfg_semantic_highlighting, 0, 1, 1, 0, "Semantic highlighting", "Color code by what a language server knows of it: types, functions, variables."
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
     SETTING .Ls_files, format_on_save, ST_BOOL, cfg_format_on_save, 0, 1, 1, 0, "Format before saving", "Use the default formatter before writing a file."

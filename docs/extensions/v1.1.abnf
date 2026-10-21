@@ -72,6 +72,8 @@ request      =/ id SP "nb-exec" SP id SP len
               ; NB, then a command body as test-exec's; answered "ok" SP id SP num (EXEC)
 request      =/ id SP "nb-exec-signal" SP num SP ( "interrupt" / "terminate" / "kill" )
 event        =/ "0" SP "nb-exec-exit" SP num SP ( num / "killed" )
+event        =/ "0" SP "cell" SP doc SP id SP id SP num     ; DOC NB CELL INDEX (A3)
+event        =/ "0" SP "cells" SP id *( SP doc )             ; NB, then the DOCs of the cells it knows, in order
 nb-state     = "queued" / "running" / "done" / "failed" / "cancelled"
 nb-kstate    = "idle" / "busy" / "starting" / "dead" / "none"
 nb-op        = "append" / "replace" / "clear" / "clear-wait"
@@ -87,3 +89,58 @@ nb-output-body = ( "stdout" / "stderr" / "result" / "display" / "error" ) SP ( n
 nb-item      = nb-token SP num SP num SP len LF
               ; TYPE W H LEN, then LEN bytes
 nb-meta      = *OCTET                        ; META_LEN opaque bytes
+
+; Editor presentation (v1.1.md, "Feature: decorations" and "Presentation providers").
+feature      =/ "decorations" / "diagnostic-tags" / "folding-ranges" / "semantic-tokens"
+request      =/ id SP "decoration-type" SP deco-name SP len
+              ; KEY ARGS lines (color, background, line-background, border, underline, strike,
+              ; faded, before, after, width, gutter, scrollbar, grow, priority)
+request      =/ id SP "decorate" SP doc SP version SP deco-name SP num SP num SP num SP len
+              ; FROM TO N, then N deco-range records
+deco-range   = num SP num SP num SP num SP len SP len SP len SP len LF
+              ; L1 C1 L2 C2, then BEFORE AFTER TIP EXTRA of those lengths
+deco-name    = 1*40( %x61-7A / DIGIT / "_" / "-" )
+event        =/ "0" SP "visible" SP doc SP num SP num
+tagged-severity = ( "error" / "warning" / "info" / "hint" ) 1*( "+" 1*ALPHA )
+              ; a diagnostics line's SEVERITY with diagnostic-tags agreed: unnecessary, deprecated
+host-request =/ id SP "folding-ranges" SP doc SP version
+              ; answered "ok" SP id SP len LF + num LF *fold-range
+fold-range   = num SP num SP ( "region" / "comment" / "imports" / "-" / 1*VCHAR ) SP len LF
+              ; START END KIND, then TEXT (one line, at most 80 bytes)
+request      =/ id SP "semantic-legend" SP sem-id SP len
+              ; types LF modifiers: sem-entry separated by SP
+sem-entry    = sem-id [ "=" 1*VCHAR ]
+sem-id       = 1*64( ALPHA / DIGIT / "_" / "." / "-" )
+host-request =/ id SP "semantic-tokens" SP doc SP version SP ( sem-id / "-" )
+host-request =/ id SP "semantic-tokens-range" SP doc SP version SP num SP num
+sem-answer   = ( sem-id / "-" ) SP sem-id SP ( "full" / "range" ) SP num LF *( num ( SP / LF ) )
+sem-answer   =/ ( sem-id / "-" ) SP sem-id SP "delta" SP num LF *( num SP num SP num LF *( num ( SP / LF ) ) )
+feature      =/ "inlay-hints"
+host-request =/ id SP "inlay-hints" SP doc SP version SP num SP num
+              ; answered "ok" SP id SP len LF + num LF *hint
+hint         = num SP num SP ( "after" / "before" ) SP num SP len LF 1*8hint-part
+              ; LINE COL SIDE NPARTS EXTRA_LEN; the parts, then EXTRA (edit records)
+hint-part    = len SP len SP len LF
+              ; LABEL TIP PEXTRA (command, goto records) of those lengths
+feature      =/ "code-lens"
+host-request =/ id SP "code-lens" SP doc SP version SP num SP num
+              ; answered "ok" SP id SP len LF + num LF *lens
+lens         = num SP len SP len LF
+              ; LINE, then TITLE (empty: unresolved) and EXTRA (command, tip records)
+; debug: debuggers ([debugger.TYPE], [needs] debug = yes); a configuration body is
+; N LF, then N leaves KIND SP PATH_LEN SP VALUE_LEN LF PATH VALUE, then extra records
+feature      =/ "debug"
+request      =/ id SP "debug-start" SP len SP len           ; NAME_LEN LEN: NAME + a configuration body
+host-request =/ id SP "debug-resolve" SP 1*32( %x61-7A / DIGIT / "-" ) SP ( "launch" / "attach" ) SP ( "0" / "1" ) SP len
+event        =/ "0" SP "debug-ended" SP 1*DIGIT SP ( 1*DIGIT / "-" )
+; Custom editors (v1.1.md, "Feature: custom-editors"). Answers carry "ok" SP id SP len (LEN 0 for none).
+feature      =/ "custom-editors"
+host-request =/ id SP "editor-open" SP doc SP num SP ( "text" / "owned" ) SP "file" SP len
+              ; CDOC VIEW MODEL SOURCE, then the path
+host-request =/ id SP "editor-save" SP doc SP ( "save" / "saveas" ) SP num
+              ; answered with a body: ( "0" / "1" ) LF, then the part's bytes
+host-request =/ id SP ( "editor-undo" / "editor-redo" / "editor-revert" ) SP doc
+request      =/ id SP "editor-read" SP doc SP num SP num   ; CDOC OFFSET MAX
+request      =/ id SP "editor-dirty" SP doc SP ( "0" / "1" )
+event        =/ "0" SP ( "editor-changed" / "editor-closed" ) SP doc
+event        =/ "0" SP "editor-path" SP doc SP len            ; then the new path

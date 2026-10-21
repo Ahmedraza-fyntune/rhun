@@ -634,6 +634,8 @@ sys_socket:
 // sockaddr_mac(x1 Linux sockaddr, x9 buffer of 112) -> x1 Darwin sockaddr, w2 length
 sockaddr_mac:
     ldrh w10, [x1]
+    cmp w10, #2
+    b.eq 5f
     cmp w10, #1
     b.ne 9f
     mov w10, #0
@@ -653,6 +655,17 @@ sockaddr_mac:
     strb w13, [x9, #1]
     mov x1, x9
 9:  ret
+5:  // AF_INET (a debugger's TCP connection): the same 16 bytes, but a length byte and a one-byte
+    // family
+    ldp x10, x11, [x1]
+    stp x10, x11, [x9]
+    mov w13, #16
+    strb w13, [x9]
+    mov w13, #2
+    strb w13, [x9, #1]
+    mov x1, x9
+    mov w2, #16
+    ret
 
 .macro SOCKADDR name, fn
 \name:
@@ -672,6 +685,29 @@ sockaddr_mac:
 .endm
 SOCKADDR sys_bind, _bind
 SOCKADDR sys_connect, _connect
+
+// getsockname(fd, addr, addrlen) and getpeername: the family back to Linux's 16 bits (AF_INET's
+// layout is otherwise the same)
+sys_getpeername:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x1, [sp, #16]
+    bl _getpeername
+    b 1f
+sys_getsockname:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x1, [sp, #16]
+    bl _getsockname
+1:
+    sxtw x0, w0
+    bl linux_ret
+    tbnz x0, #63, 9f
+    ldr x1, [sp, #16]
+    ldrb w9, [x1, #1]
+    strh w9, [x1]
+9:  ldp x29, x30, [sp], #32
+    ret
 
 // accept4(fd, addr, addrlen, flags): addresses are not reported
 sys_accept4:
@@ -858,6 +894,8 @@ sys_table:
     SYS 48, sys_shutdown
     SYS 49, sys_bind
     SYS 50, sys_listen
+    SYS 51, sys_getsockname
+    SYS 52, sys_getpeername
     SYS 53, sys_socketpair
     SYS 57, sys_fork
     SYS 58, sys_vfork
