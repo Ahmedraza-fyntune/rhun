@@ -52,6 +52,7 @@ ENDSTRUCT TS_SIZE
 .equ ID_TTABX, 0x6200           # + index
 .equ ID_TRESTART, 0x6006      # the current program's Restart and Stop buttons
 .equ ID_TSTOP, 0x6007
+.equ ID_TSTATUS, 0x6008         # the status bar's running-task item
 .equ MAX_SESS, 32
 .equ RBUF, 65536
 .equ LMAX, 4096                 # cells of a line searched for a link
@@ -69,6 +70,8 @@ g_term_open: .long 0
 last_px: .long 0
 last_lh: .long 0                # cfg_term_line_height the metrics were made for
 tab_scroll: .long 0             # first session tab shown when they do not all fit
+.p2align 3
+status_sb: .zero SB_SIZE        # the status bar's running-task text
 .p2align 3
 last_font: .quad 0
 tcw: .long 0                    # cell size
@@ -2085,6 +2088,151 @@ FN term_select
     sete cl
     mov eax, ecx
     ret
+
+# tasks_status_text(sb) -> rax the newest running task's session, 0 when none runs: its label and
+#   " +N" for the others go on sb
+tasks_status_text:
+    PROLOGUE
+    mov r15, rdi
+    xor r13d, r13d              # running
+    xor r14d, r14d              # the newest
+    xor ebx, ebx
+1:  cmp rbx, [rip + sessions + VEC_len]
+    jae 2f
+    mov rdi, rbx
+    call sess
+    inc rbx
+    cmp dword ptr [rax + TS_kind], TK_TASK
+    jne 1b
+    test dword ptr [rax + TS_flags], TSF_RUNNING
+    jz 1b
+    inc r13d
+    test r14, r14
+    jz 11f
+    mov rcx, [rax + TS_t0]
+    cmp rcx, [r14 + TS_t0]
+    jb 1b
+11: mov r14, rax
+    jmp 1b
+2:  test r13d, r13d
+    jz 9f
+    mov rdi, r15
+    mov rsi, [r14 + TS_title]
+    call sb_push_cstr
+    cmp r13d, 1
+    je 9f
+    mov rdi, r15
+    lea rsi, [rip + .Lst_more]
+    call sb_push_cstr
+    lea esi, [r13 - 1]
+    mov rdi, r15
+    call sb_push_u64
+9:  mov rax, r14
+    EPILOGUE
+
+# term_tasks_status(right, y, h) -> eax the right edge left of it: while tasks run, the status bar's
+#   item for them: the running dot, then tasks_status_text (at most 160 px); a click is Show Task
+FN term_tasks_status
+    PROLOGUE 32
+    mov r12d, edi
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    lea rdi, [rip + status_sb]
+    call sb_clear
+    lea rdi, [rip + status_sb]
+    call tasks_status_text
+    test rax, rax
+    jz .Lts_none
+    mov r13, rax
+    lea rdi, [rip + g_face_small]
+    mov rsi, [rip + status_sb + SB_ptr]
+    mov rdx, [rip + status_sb + SB_len]
+    call text_width
+    mov r14d, eax
+    mov edi, 160
+    call sc
+    cmp r14d, eax
+    cmovg r14d, eax
+    add r14d, [rip + g_mt + 4*MI_16]
+    add r14d, [rip + g_mt + 4*MI_14]    # w: the dot and its gap too
+    sub r12d, r14d                      # x
+    mov eax, [rsp]
+    add eax, [rip + g_mt + 4*MI_3]
+    mov [rsp + 8], eax                  # box y
+    mov eax, [rsp + 4]
+    sub eax, [rip + g_mt + 4*MI_6]
+    mov [rsp + 12], eax                 # box h
+    mov edi, ID_TSTATUS
+    mov esi, r12d
+    mov edx, [rsp + 8]
+    mov ecx, r14d
+    mov r8d, [rsp + 12]
+    call ui_btn
+    mov r15d, eax
+    test eax, UB_HOVER
+    jz 1f
+    mov dword ptr [rip + g_cursor], CUR_POINTER
+    mov edi, r12d
+    mov esi, [rsp + 8]
+    mov edx, r14d
+    mov ecx, [rsp + 12]
+    COLOR r8d, T_HOVER
+    call gfx_fill
+1:  mov edi, r12d
+    mov esi, [rsp + 8]
+    mov edx, r14d
+    mov ecx, [rsp + 12]
+    call gfx_clip_push
+    mov rdi, r13
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_8]
+    mov edx, [rsp + 4]
+    shr edx, 1
+    add edx, [rsp]
+    call state_shape
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_8]
+    add esi, [rip + g_mt + 4*MI_14]
+    lea rdi, [rip + g_face_small]
+    mov edx, [rsp]
+    mov ecx, [rsp + 4]
+    mov r8, [rip + status_sb + SB_ptr]
+    mov r9, [rip + status_sb + SB_len]
+    COLOR eax, T_FG
+    push rax
+    push rax
+    call ui_text_v
+    add rsp, 16
+    call gfx_clip_pop
+    test r15d, UB_CLICK
+    jz 2f
+    call cmd_show_task
+    mov dword ptr [rip + g_dirty], 1
+2:  mov eax, r12d
+    sub eax, [rip + g_mt + 4*MI_8]
+    EPILOGUE
+.Lts_none:
+    mov eax, r12d
+    EPILOGUE
+
+# term_tasks_status_dump(sb): "task-status=TEXT", or "task-status=none" (print-task-status)
+FN term_tasks_status_dump
+    PROLOGUE
+    mov rbx, rdi
+    lea rsi, [rip + .Lst_dump]
+    call sb_push_cstr
+    mov r12, [rbx + SB_len]
+    mov rdi, rbx
+    call tasks_status_text
+    test rax, rax
+    jnz 1f
+    mov rdi, rbx
+    lea rsi, [rip + .Lst_none]
+    call sb_push_cstr
+1:  mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    EPILOGUE
 
 # term_programs_dump(sb): a line per tab (print-terminals): "term=ID kind=shell|terminal|task
 #   owner=OWNER/NAME|- task=ID|- state=running|exited|stopped|failed code=N|- pid=P title=T", the
@@ -5167,6 +5315,9 @@ FN term_count
 rep_cell: .long -1
 
 .section .rodata
+.Lst_more: .asciz " +"
+.Lst_dump: .asciz "task-status="
+.Lst_none: .asciz "none"
 .Lshell_env: .asciz "SHELL"
 .Llogin: .asciz "-l"
 .ifdef WINDOWS

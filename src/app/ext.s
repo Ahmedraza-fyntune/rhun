@@ -414,6 +414,8 @@ ext_ini_file:
 # ext_settings_load(): the choices for every extension record
 ext_settings_load:
     PROLOGUE
+    xor edi, edi                # resources group: the user's KEY@LANG values are read again
+    call extconfig_user_reset
     call ext_ini_file
     mov rdi, rax
     call file_read_all
@@ -451,6 +453,7 @@ ext_settings_load:
 FN ext_settings_load_one
     PROLOGUE
     mov r13, rdi
+    call extconfig_user_reset   # resources group: its KEY@LANG values are read again
     call ext_ini_file
     mov rdi, rax
     call file_read_all
@@ -482,6 +485,11 @@ FN ext_settings_load_one
 apply_choice:
     PROLOGUE
     mov rbx, rdi
+    lea rdi, [rip + ini_it]     # resources group: open_urls = yes (extres.s)
+    mov rsi, rbx
+    call extres_choice
+    test eax, eax
+    jnz 9f
     lea rdi, [rip + ini_it]
     lea rsi, [rip + .Lk_disabled]
     call ini_key_is
@@ -510,7 +518,16 @@ apply_choice:
     call ini_val_yes
     mov [rbx + EXT_edits], eax
     jmp 9f
-3:  # setting.KEY
+3:  mov rdi, rbx                # resources group: setting.KEY@LANG (extconfig.s), written back as is
+    lea rsi, [rip + ini_it]
+    call extconfig_user_line
+    test eax, eax
+    jz 30f
+    mov rdi, rbx
+    lea rsi, [rip + ini_it]
+    call xset_keep
+    jmp 9f
+30: # setting.KEY
     mov rdi, [rip + ini_it + INI_key]
     mov rsi, [rip + ini_it + INI_keylen]
     cmp rsi, 8
@@ -608,6 +625,12 @@ FN ext_settings_save
     or eax, [rbx + EXT_disabled]
     or eax, [rbx + EXT_edits]
     jnz 2f
+    mov rdi, rbx                # resources group: open_urls
+    lea rsi, [rip + tmp2]
+    xor edx, edx
+    call extres_choices_write
+    test eax, eax
+    jnz 2f
     cmp qword ptr [rbx + EXT_xset], 0
     jne 2f
     mov rdi, rbx
@@ -629,6 +652,10 @@ FN ext_settings_save
     lea rdi, [rip + tmp2]
     lea rsi, [rip + .Lw_close_sec]
     call sb_push_cstr
+    mov rdi, rbx                # resources group: open_urls = yes
+    lea rsi, [rip + tmp2]
+    mov edx, 1
+    call extres_choices_write
     cmp dword ptr [rbx + EXT_disabled], 0
     je 3f
     lea rdi, [rip + tmp2]
@@ -1222,6 +1249,9 @@ FN ext_setting_set
     mov rdi, rbx
     mov rsi, r12
     call extproto_send_setting
+    mov rdi, rbx                # resources group: 0 setting-changed (scoped-settings)
+    mov rsi, r12
+    call extconfig_user_changed
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -1328,9 +1358,15 @@ parse_setting:
     lea rdx, [rip + .Lsf_max]
     call str_eq_cstr
     test eax, eax
-    jz 9f
+    jz 5f
     call val_int
     mov [r13 + SD_max], eax
+    jmp 9f
+5:  mov rdi, r13                # resources group: scope, languages (extconfig.s)
+    mov rsi, r14
+    mov rdx, r15
+    mov rcx, r12
+    call extconfig_field
 9:  EPILOGUE
 
 # field_cstr(field name in rdx, slot in r8) -> 1 when r14/r15 (the field) is that name: the value
@@ -1359,7 +1395,7 @@ val_int:
 
 # parse_int31(ptr, len) -> rax the number, at most 2147483647 (settings compare as 32-bit signed);
 # rdx as parse_u64 leaves it
-parse_int31:
+FN parse_int31
     xor eax, eax
     xor edx, edx
 1:  cmp rdx, rsi
@@ -4948,6 +4984,7 @@ pv_keys: .quad .Lpv_complete, EXT_pv_complete, .Lpv_ctrig, EXT_pv_ctrig
     .quad .Lpv_ttrig, EXT_pv_ttrig, .Lpv_document_links, EXT_pv_document_links
     # source control (wider-parity C)
     .quad .Lpv_commit, EXT_pv_commit, .Lpv_quickdiff, EXT_pv_quickdiff, .Lpv_scm, EXT_pv_scm
+    .quad .Lpv_linked, EXT_pv_linked          # wsedit: linked editing
     .quad .Lpv_notebook, EXT_pv_notebook, .Lpv_nbtitle, EXT_pv_nbtitle, .Lpv_nbkernel, EXT_pv_nbkernel  # notebooks
     # editor presentation (present.s)
     .quad .Lpv_semantic_tokens, EXT_pv_semantic_tokens, .Lpv_inlay_hints, EXT_pv_inlay_hints
@@ -5108,6 +5145,7 @@ ext_target: .asciz "linux-x86_64"
 .Lpv_colors: .asciz "colors"
 .Lpv_highlights: .asciz "highlights"
 .Lpv_folding: .asciz "folding"
+.Lpv_linked: .asciz "linked"       # wsedit
 .Ln_debug: .asciz "debug"
 .Ls_debugger_dot: .ascii "debugger."
 .Lo_startup: .asciz "startup"

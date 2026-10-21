@@ -949,6 +949,7 @@ F SN_lastflags, 8
 F SN_text, 8            # borrowed during validation only
 F SN_tlen, 8
 F SN_ntopo, 8           # surviving groups in propagation order; group indices stay stable
+F SN_linked, 8          # wsedit: a linked-editing session (wslinked.s): Tab passes, no final caret
 F SN_fields, SF_SIZE*SN_FIELDS_MAX
 F SN_groups, SG_SIZE*SN_GROUPS_MAX
 F SN_edges, SN_GROUPS_MAX*SN_GROUPS_MAX
@@ -1764,7 +1765,8 @@ FEATURE_LIST
 .equ PK_COLORS, 39
 .equ PK_COLOR_EDIT, 40
 .equ PK_HIGHLIGHTS, 41
-.equ PK_COUNT, 42
+.equ PK_LINKED, 42               # wsedit: linked-editing ranges (wslinked.s)
+.equ PK_COUNT, 43
 # who asked (query.s routes parts and expiries to them)
 .equ QO_LANGFEAT, 1
 .equ QO_COMPLETE, 2
@@ -1774,6 +1776,7 @@ FEATURE_LIST
 .equ QO_AI, 6                    # AI: agentext.s and tools.s (ai_query_expired)
 .equ QO_NOTEBOOK, 7               # nbdoc.s's nb_reply
 .equ QO_PRESENT, 8               # editor presentation (present.s)
+.equ QO_LINKED, 9                # wsedit: linked editing (wslinked.s)
 # FEAT_CLEAR base, FEAT_X: the feature is not agreed (wsedit: features withheld after hello)
 .macro FEAT_CLEAR base, feat
     and byte ptr [\base + EXT_features + ((\feat) >> 3)], ~(1 << ((\feat) & 7)) & 0xff
@@ -2008,6 +2011,7 @@ F EXT_pv_save_actions, 8
 # source control (wider-parity C): [provides] commit_message, quickdiff, scm (cstr values or 0)
 F EXT_pv_commit, 8      # "yes": a commit-message provider (scmext.s)
 F EXT_pv_quickdiff, 8   # file patterns it gives quick-diff bases for
+F EXT_pv_linked, 8      # wsedit: [provides] linked: patterns of documents it links ranges in
 F EXT_pv_scm, 8         # "yes": it registers VCS provider tabs
 F EXT_pv_tests, 8       # testing: [provides] tests, the files it has tests in (patterns, cstr) or 0
 F EXT_tests_profiles, 8 # tests.profiles: run kinds it offers besides run (cstr) or 0
@@ -2138,8 +2142,9 @@ F SD_opts, 8            # cstr: a choice's options, space separated, or 0
 F SD_type, 4            # SDT_*
 F SD_min, 4
 F SD_max, 4
-F SD_pad, 4
+F SD_scope, 4          # resources group (extconfig.s): ECL scope in bits 0-1, SDS_LANGUAGES
 ENDSTRUCT SD_SIZE
+.equ SDS_LANGUAGES, 4   # KEY.languages = yes: KEY@LANG values apply
 .equ SDT_STRING, 0
 .equ SDT_BOOL, 1
 .equ SDT_INT, 2
