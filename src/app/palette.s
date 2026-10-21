@@ -18,6 +18,7 @@
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 .equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
 .equ PM_WSLIST, 16              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_ICONS, 64               # contributions: Select File Icon Theme (iconth.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -127,6 +128,8 @@ FN palette_close_extensions_pure
     je .Lpal_detach_borrowers_pure
     cmp eax, PM_THEMES
     je .Lpal_detach_borrowers_pure
+    cmp eax, PM_ICONS
+    je .Lpal_detach_icons_pure
     cmp eax, PM_LANGS
     je .Lpal_detach_borrowers_pure
     cmp eax, PM_PROVIDERS
@@ -147,6 +150,11 @@ FN palette_close_extensions_pure
     cmp eax, PROMPT_RENAME_SYMBOL
     je .Lpal_detach_borrowers_pure
 9:  ret
+.Lpal_detach_icons_pure:
+    push rax
+    mov rdi, -1
+    call iconth_preview         # the setting's icons again
+    pop rax
 .Lpal_detach_borrowers_pure:
     push rax
     call extpage_prompt_invalidate_pure
@@ -166,6 +174,11 @@ FN palette_close_extensions_pure
     je pal_return_focus
     ret
 
+# FN palette_icon_themes(): Select File Icon Theme, previewing the row under the selection
+FN palette_icon_themes
+    mov edi, PM_ICONS
+    jmp palette_open
+
 # palette_open(mode)
 palette_open:
     PROLOGUE
@@ -182,6 +195,10 @@ palette_open:
     cmp ebx, PM_THEMES
     je 1f
     call theme_apply_config
+1:  cmp dword ptr [rip + pal_mode], PM_ICONS    # the file icons the setting chooses again
+    jne 1f
+    mov rdi, -1
+    call iconth_preview
 1:  call grep_release
     mov [rip + pal_mode], ebx
     mov dword ptr [rip + pal_sel], 0
@@ -213,9 +230,15 @@ palette_open:
     call load_langs
     jmp 8f
 4:  cmp ebx, PM_KEYS
-    jne 8f
+    jne 5f
     lea rdi, [rip + item_add]
     call keys_list
+    jmp 8f
+5:  cmp ebx, PM_ICONS
+    jne 8f
+    lea rdi, [rip + item_add]
+    call iconth_list
+    mov [rip + pal_sel], eax    # the setting's row
 8:  call palette_filter
     # the theme list shows its setting's theme, which need not be the one shown (the light mode's
     # theme from Settings while the system is dark)
@@ -237,6 +260,10 @@ FN palette_close
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
     call theme_apply_config
+1:  cmp dword ptr [rip + pal_mode], PM_ICONS
+    jne 1f
+    mov rdi, -1
+    call iconth_preview
 1:  call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
@@ -2624,7 +2651,14 @@ selected_item:
 
 # preview selection (themes)
 preview:
-    cmp dword ptr [rip + pal_mode], PM_THEMES
+    cmp dword ptr [rip + pal_mode], PM_ICONS
+    jne 0f
+    call selected_item
+    test rax, rax
+    jz 1f
+    mov rdi, [rax + IT_data]
+    jmp iconth_preview
+0:  cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
     call selected_item
     test rax, rax
@@ -2796,7 +2830,12 @@ palette_accept:
     mov rdi, rax
     call [rax + CMD_fn]
     jmp .Lpa_ret
-2:  cmp ebx, PM_THEMES
+2:  cmp ebx, PM_ICONS
+    jne 21f
+    mov rdi, [r12 + IT_data]
+    call iconth_choose
+    jmp .Lpa_close
+21: cmp ebx, PM_THEMES
     jne 3f
     # saved in the list's setting; closing shows the theme the settings now choose
     mov rdi, [rip + pal_theme_slot]
@@ -3779,6 +3818,9 @@ placeholder_text:
     lea rcx, [rip + .Lph_keys]
     cmp eax, PM_KEYS
     je 1f
+    lea rcx, [rip + .Lph_icons]
+    cmp eax, PM_ICONS
+    je 1f
     cmp eax, PM_THEMES
     jne 2f
     lea rcx, [rip + .Lph_dark]
@@ -3854,6 +3896,7 @@ hint_text:
 .Lph_files: .asciz "Search files by name  (> commands, : line)"
 .Lph_cmds: .asciz "Type a command"
 .Lph_keys: .asciz "Search keyboard shortcuts"
+.Lph_icons: .asciz "Select a file icon theme"
 .Lph_themes: .asciz "Select a color theme"
 .Lph_dark: .asciz "Select a theme for dark mode"
 .Lph_light: .asciz "Select a theme for light mode"

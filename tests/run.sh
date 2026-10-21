@@ -179,6 +179,7 @@ python3 tests/ext-menus.py || fail=1
 python3 tests/ext-status-items.py || fail=1
 python3 tests/ext-sdk-commands.py || fail=1
 python3 tests/langconf.py || fail=1
+python3 tests/icon-themes.py || fail=1
 # editor presentation
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }

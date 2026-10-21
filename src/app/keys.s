@@ -2031,6 +2031,7 @@ g_commands:
     COMMAND quick_open, "Go to File", cmd_quick_open, "ctrl+p ctrl+e"
     COMMAND command_palette, "Command Palette", cmd_command_palette, "ctrl+shift+p F1"
     COMMAND keyboard_shortcuts, "Keyboard Shortcuts", cmd_keyboard_shortcuts, ""
+    COMMAND select_file_icon_theme, "Select File Icon Theme", cmd_select_file_icon_theme, ""
     COMMAND new_file, "New File", cmd_new_file, "ctrl+n"
     COMMAND save, "Save", cmd_save, "ctrl+s"
     COMMAND save_without_formatting, "Save Without Formatting", cmd_save_without_formatting, ""

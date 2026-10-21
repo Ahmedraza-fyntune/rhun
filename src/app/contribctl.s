@@ -12,6 +12,8 @@
 #   print-title-buttons       the tab strip's editor_title buttons: command, where drawn; its "…"
 #   view-item-menu VIEW ID [CONTEXT]  a tree row's view_item menu (CONTEXT: its viewItem) at the mouse
 #   print-langconf            the active document's language configuration: KEY=VALUE source=...
+#   print-icon NAME [folder|folder-open]  the explorer's icon for that name: icon=rhun:ICON color=C,
+#                             icon=theme:OWNER/NAME/THEME:ICON or icon=none
 .include "rhun.inc"
 
 .bss
@@ -32,7 +34,7 @@ contrib_ctl:
     .quad .Lc_print_keys, c_print_keys, .Lc_print_chord, c_print_chord, .Lc_key_latin, c_key_latin
     .quad .Lc_print_problems, c_print_problems, .Lc_print_status, c_print_status
     .quad .Lc_print_title_buttons, c_print_title_buttons, .Lc_view_item_menu, c_view_item_menu
-    .quad .Lc_print_langconf, c_print_langconf
+    .quad .Lc_print_langconf, c_print_langconf, .Lc_print_icon, c_print_icon
     .quad 0, 0
 .Lc_cmd_args: .asciz "cmd-args"
 .Lc_cmd_ref: .asciz "cmd-ref"
@@ -47,6 +49,9 @@ contrib_ctl:
 .Lc_print_title_buttons: .asciz "print-title-buttons"
 .Lc_view_item_menu: .asciz "view-item-menu"
 .Lc_print_langconf: .asciz "print-langconf"
+.Lc_print_icon: .asciz "print-icon"
+.Lk_folder: .asciz "folder"
+.Lk_folder_open: .asciz "folder-open"
 .Lcommand_sp: .asciz "command "
 .Lbad_ref: .asciz "cmdref=bad\n"
 .Lno_ext: .asciz "no such extension\n"
@@ -296,6 +301,45 @@ cc_copy:
     cmova rdx, rcx
     mov byte ptr [rdi + rdx], 0
     jmp memcpy
+
+# print-icon NAME [folder|folder-open]
+c_print_icon:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    call cc_word
+    lea rdi, [rip + cc_view]
+    mov rsi, rax
+    mov ecx, 127
+    call cc_copy
+    call cc_word
+    xor r15d, r15d
+    test rdx, rdx
+    jz 1f
+    mov rbx, rax
+    mov [rip + cc_item], rdx            # (its length, kept)
+    mov rdi, rbx
+    mov rsi, rdx
+    lea rdx, [rip + .Lk_folder]
+    call str_eq_cstr
+    mov r15d, 1
+    test eax, eax
+    jnz 1f
+    mov rdi, rbx
+    mov rsi, [rip + cc_item]
+    lea rdx, [rip + .Lk_folder_open]
+    call str_eq_cstr
+    mov r15d, 2
+    test eax, eax
+    jnz 1f
+    xor r15d, r15d
+1:  mov rdi, r12
+    lea rsi, [rip + cc_view]
+    mov edx, r15d
+    call iconth_dump
+    xor eax, eax
+    EPILOGUE
 
 # print-langconf: the active document's merged language keys (langconf.s)
 c_print_langconf:

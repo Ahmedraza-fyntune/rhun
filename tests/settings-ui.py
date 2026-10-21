@@ -55,6 +55,7 @@ INTS = {
 }
 STRINGS = {
     ('ui', 'font'): 'missing font café.ttf', ('editor', 'font'): 'missing mono café.ttf',
+    ('ui', 'file_icons'): 'someone/icons/missing',
     ('files', 'exclude'): '.git hidden café',
     ('files', 'code_actions_on_save'): 'source.organizeImports source.fixAll',
     ('terminal', 'shell'): 'missing shell café', ('terminal', 'font'): 'missing term café.ttf',

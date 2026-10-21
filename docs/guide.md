@@ -617,6 +617,10 @@ fold's pill and other virtual text, `ghost` for inline completion, `codelens` fo
 `info` and `hint` for those diagnostics. A theme that leaves them out gets them from its other
 colors.
 
+File icons can come from an extension's icon theme: **Select File Icon Theme** in the command
+palette previews each one in the explorer and saves the choice as `file_icons` in `[ui]` (`rhun`,
+the built-in icons; `none`; or a theme's `OWNER/NAME/THEME`).
+
 The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
 
 On Omarchy the theme list starts with Follow Omarchy (`omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there, for both modes, until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.

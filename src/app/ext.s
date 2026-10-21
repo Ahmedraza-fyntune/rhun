@@ -1893,6 +1893,8 @@ FN ext_load
     call syntax_add_dir
     mov rdi, r12
     call mem_free
+    mov rdi, rbx
+    call iconth_add_dir         # and its file icon themes (iconth.s)
 9:  mov qword ptr [rip + cur_ext], 0
     mov rax, rbx
     EPILOGUE

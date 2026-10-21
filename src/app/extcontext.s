@@ -502,6 +502,8 @@ FN contrib_ext_gone
     mov rdi, rbx
     call langconf_ext_gone
     mov rdi, rbx
+    call iconth_ext_gone
+    mov rdi, rbx
     call invoke_owner_settled   # calls that waited for it to start
     EPILOGUE
 

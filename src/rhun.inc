@@ -1800,6 +1800,19 @@ F IMG_fmt, 4            # IMF_*
 F IMG_opaque, 4         # 1 when every pixel is opaque
 ENDSTRUCT IMG_SIZE
 
+# a PNG icon read once and kept at the size last drawn (iconspec.s pic_draw)
+STRUCT
+F PIC_state, 4          # 0 not read, 1 read, 2 cannot be shown
+F PIC_mask, 4           # 1: drawn as its alpha in a color
+F PIC_img, IMG_SIZE
+F PIC_size, 8           # the kept copy's size
+F PIC_px, 8             # the kept copy, or 0
+ENDSTRUCT PIC_SIZE
+# an explorer icon from a file icon theme (iconth.s)
+.equ ITV_RHUN, -1               # rhun's own icon
+.equ ITV_NONE, 0x20000000       # no icon
+.equ ITV_IMAGE, 0x40000000      # | slot << 16 | the theme's icon
+
 # ---- app ----
 .equ TAB_DOC, 1
 .equ TAB_SETTINGS, 2

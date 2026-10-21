@@ -93,6 +93,8 @@ cfg_dark_theme: .quad cfg_def_theme
 cfg_light_theme: .quad cfg_def_light_theme
 cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
+.globl cfg_file_icons
+cfg_file_icons: .quad .Lempty   # [ui] file_icons: rhun (empty), none or OWNER/NAME/THEME (iconth.s)
 cfg_exclude: .quad .Ldef_exclude
 cfg_term_shell: .quad .Lempty
 cfg_term_font: .quad .Lempty
@@ -873,6 +875,7 @@ g_settings:
     SETTING .Ls_ui, scale, ST_INT, cfg_ui_scale, 50, 300, 10, 1, "Interface zoom", "Scales everything on top of the display scale."
     SETTING .Ls_ui, font_size, ST_INT, cfg_ui_font_size, 9, 24, 1, 0, "Interface font size", "Font size of panels, tabs and menus."
     SETTING .Ls_ui, font, ST_STR, cfg_ui_font, 0, 0, 0, 0, "Interface font", "Path to a .ttf file. Empty uses the built-in Iosevka."
+    SETTING .Ls_ui, file_icons, ST_STR, cfg_file_icons, 0, 0, 0, 0, "File icons", "rhun, none, or an extension's icon theme as OWNER/NAME/THEME (Select File Icon Theme)."
     SETTING .Ls_ui, sidebar, ST_BOOL, cfg_sidebar, 0, 1, 1, 0, "Show file explorer", "Project tree on the left (ctrl+b)."
     SETTING .Ls_ui, sidebar_width, ST_INT, cfg_sidebar_w, 140, 600, 10, 0, "Explorer width", "Width of the file explorer in points."
     SETTING .Ls_ui, agents_panel, ST_BOOL, cfg_agents, 0, 1, 1, 0, "Show agents panel", "Agent sessions on the right (ctrl+shift+a)."
