@@ -86,7 +86,9 @@ FN tree_free
     call mem_free
 11: inc r12
     jmp 1b
-2:  lea rdi, [rbx + TR_nodes]
+2:  mov rdi, rbx                # a table's columns
+    call tree_free_columns
+    lea rdi, [rbx + TR_nodes]
     call vec_free
     lea rdi, [rbx + TR_rows]
     call vec_free
@@ -1945,6 +1947,32 @@ FN tree_toggle_check
 FN tree_draw
     PROLOGUE 96
     mov rbx, rdi
+    cmp dword ptr [rbx + TR_ncols], 0
+    je .Ltd_plain
+    # a table: its columns laid out, the header row, the rows below it
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    mov [rsp + 16], r9d
+    mov rdi, rbx
+    mov edx, ecx
+    call table_layout
+    mov rdi, rbx
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    M r8d, MI_ROW
+    call table_header
+    M eax, MI_ROW
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    add edx, eax
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    sub r8d, eax
+    mov r9d, [rsp + 16]
+.Ltd_plain:
     mov [rsp], esi
     mov [rsp + 4], edx
     mov [rsp + 8], ecx
@@ -2345,15 +2373,23 @@ draw_row:
     mov eax, [rip + g_mt + 4*MI_20]
     add eax, [rip + g_mt + 4*MI_2]
     add r14d, eax
-47: # badge at the right
+47: # badge at the right (a table's: of its first column)
     mov eax, [rbx + TR_rect]
     add eax, [rbx + TR_rect + 8]
     sub eax, [rip + g_mt + 4*MI_16]
-    mov [rsp + 20], eax         # the right edge for the label and description
+    cmp dword ptr [rbx + TR_ncols], 0
+    je 470f
+    mov rcx, [rbx + TR_cols]
+    mov eax, [rcx + TBC_x]
+    add eax, [rcx + TBC_w]
+    sub eax, [rip + g_mt + 4*MI_4]
+470:mov [rsp + 20], eax         # the right edge for the label and description
     cmp dword ptr [rip + inl_n], 0
     je 471f
     mov eax, [rip + inl_left]   # inline buttons take the right end, over the badge
     sub eax, [rip + g_mt + 4*MI_4]
+    cmp eax, [rsp + 20]
+    jge 48f
     mov [rsp + 20], eax
     jmp 48f
 471:cmp dword ptr [r15 + ND_badge], 0
@@ -2413,7 +2449,39 @@ draw_row:
     mov r8, [r15 + ND_desc]
     call ui_text_v_fit
     add rsp, 16
-49: # inline buttons, and a click on one
+49: # a table's other columns, cut where the row's buttons start
+    mov qword ptr [rsp + 24], 0
+    mov qword ptr [rsp + 32], 0
+    cmp dword ptr [rbx + TR_ncols], 1
+    jbe 490f
+    mov r8d, [rbx + TR_rect]
+    add r8d, [rbx + TR_rect + 8]
+    sub r8d, [rip + g_mt + 4*MI_12]
+    cmp dword ptr [rip + inl_n], 0
+    je 4901f
+    mov r8d, [rip + inl_left]
+    sub r8d, [rip + g_mt + 4*MI_4]
+4901:cmp dword ptr [rip + rb_want], 0
+    je 4902f
+    mov eax, [rsp]
+    cmp eax, [rbx + TR_rownode]
+    jne 4902f
+    mov eax, [rip + rb_edge]
+    sub eax, [rbx + TR_rowbw]
+    sub eax, [rip + g_mt + 4*MI_4]
+    cmp eax, r8d
+    jge 4902f
+    mov r8d, eax
+4902:mov rdi, rbx
+    mov esi, [rsp]
+    mov edx, r13d
+    mov ecx, [rsp + 12]
+    call table_cells
+    mov [rsp + 24], rax
+    mov [rsp + 32], rdx
+    mov eax, [rsp]
+    NDP r15, rbx, rax
+490:# inline buttons, and a click on one
     cmp dword ptr [rip + inl_n], 0
     je 491f
     mov rdi, rbx
@@ -2447,11 +2515,35 @@ draw_row:
     mov [rbx + TR_rownode], eax
     mov eax, [rsp]
     NDP r15, rbx, rax
-492:# tooltip
-    mov rax, [r15 + ND_tip]
+492:# tooltip: a cut cell's under the pointer, else the node's
+    mov rsi, [rsp + 32]
+    test rsi, rsi
+    jz 4921f
+    mov rdi, [rsp + 24]
+    call table_tip
+    jmp 4922f
+4921:mov rax, [r15 + ND_tip]
     test rax, rax
     jz .Ldr_ret
-    push rax
+    test dword ptr [rbx + TR_flags], TRF_MDTIPS
+    jz 4922f
+    mov rdi, rax                # Markdown: a document made once for the hovered row's text
+    call tree_md_tip
+    test rax, rax
+    jz 4923f
+    mov r9, rax
+    mov edi, [rbx + TR_idbase]
+    add edi, r12d
+    sub edi, [rip + tr_first]
+    mov esi, [rbx + TR_rect]
+    mov edx, r13d
+    add edx, [rsp + 12]
+    mov ecx, [rbx + TR_rect + 8]
+    mov r8d, [rsp + 16]
+    call tip_note_md
+    jmp .Ldr_ret
+4923:mov rax, [r15 + ND_tip]
+4922:push rax
     push rax
     mov edi, [rbx + TR_idbase]
     add edi, r12d
@@ -3170,7 +3262,15 @@ FN tree_dump
     inc dword ptr [rsp + 8]
     jmp 7b
 .Ltdu_next:
-    mov rdi, r12
+    cmp r15d, RWK_NODE          # a table row's other columns
+    jne 8f
+    cmp dword ptr [rbx + TR_ncols], 1
+    jbe 8f
+    mov rdi, rbx
+    mov esi, r14d
+    mov rdx, r12
+    call table_dump_cells
+8:  mov rdi, r12
     mov esi, 10
     call sb_push_byte
     inc r13

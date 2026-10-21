@@ -2513,6 +2513,11 @@ prompt_busy:
     pop rcx
     test eax, eax
     jnz 1f
+    push rax
+    call quick_is_open          # an extension's quick input (quick.s)
+    pop rcx
+    test eax, eax
+    jnz 1f
     xor eax, eax
     ret
 1:  mov rdi, [rip + cur_id]
@@ -3251,6 +3256,116 @@ h_vimage:
 9:  EPILOGUE
 
 # ID unimage IMG -> ok ID
+# ID quick LEN + step body -> ok ID Q: an extension's quick input (quick.s); busy while one, the
+#   palette or a prompt shows
+h_quick:
+    PROLOGUE
+    mov edi, FEAT_QUICK_INPUT
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    cmp qword ptr [rip + pr_id], 0
+    jne 5f
+    mov rdi, [rip + cur]
+    mov rsi, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    call quick_open
+    cmp rax, -1
+    je 7f
+    cmp rax, -2
+    je 6f
+    cmp rax, -3
+    je 5f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_busy]
+    call reply_error
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_quick]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID quick-set Q LEN + step body -> ok ID: what the records name changes (no such session: noview)
+h_quick_set:
+    PROLOGUE
+    mov edi, FEAT_QUICK_INPUT
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    cmp rax, 0x7fffffff
+    ja 5f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    mov rdx, [rip + body_ptr]
+    mov rcx, [rip + body_len]
+    call quick_set
+    cmp eax, 1
+    je 5f
+    cmp eax, 2
+    je 7f
+    cmp eax, 3
+    je 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noquick]
+    call reply_error
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_quick]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID quick-close Q -> ok ID: it closes without a hide event
+h_quick_close:
+    PROLOGUE
+    mov edi, FEAT_QUICK_INPUT
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    cmp rax, 0x7fffffff
+    ja 5f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call quick_close
+    test eax, eax
+    jnz 5f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noquick]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 h_unimage:
     PROLOGUE
     mov edi, FEAT_VIEW_IMAGES
@@ -5266,6 +5381,9 @@ verbs:
     .quad .Lv_progress_end, h_progress_end, 0
     .quad .Lv_vimage, h_vimage, 8388608         # view-images (viewpic.s)
     .quad .Lv_unimage, h_unimage, 0
+    .quad .Lv_quick, h_quick, 2097152           # quick input (quick.s)
+    .quad .Lv_quick_set, h_quick_set, 2097152
+    .quad .Lv_quick_close, h_quick_close, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # language features (query.s)
@@ -5441,6 +5559,11 @@ verbs:
 .Lo_no: .asciz "no"
 .Lo_dash: .asciz "-"
 .Le_busy: .asciz "busy a prompt is open"
+.Le_toobig_quick: .asciz "toobig 10000 items, 2 MB, 8 buttons, 4 item buttons"
+.Le_noquick: .asciz "noview no such quick input"
+.Lv_quick: .asciz "quick"
+.Lv_quick_set: .asciz "quick-set"
+.Lv_quick_close: .asciz "quick-close"
 .Le_cancelled: .asciz "cancelled"
 .Le_refused_cmd: .asciz "refused not a command an extension may run"
 .Le_refused_name: .asciz "refused the name is in use"

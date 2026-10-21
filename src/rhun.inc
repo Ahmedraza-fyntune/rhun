@@ -1709,6 +1709,10 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_DEBUG, "debug", 1                # debugger: debug-resolve; debug-start, debug-ended
     FEATURE FEAT_CUSTOM_EDITORS, "custom-editors", 1   # custom editors (customed.s, ceproto.inc)
     FEATURE FEAT_VIEW_FORM, "view-form", 0        # views group: form views (rform.s)
+    FEATURE FEAT_VIEW_TABLE, "view-table", 0      # views group: table views (columns, sorted, cell; sort)
+    FEATURE FEAT_QUICK_INPUT, "quick-input", 0    # views group: quick, quick-set, quick-close (quick.s)
+    FEATURE FEAT_VIEW_DOC, "view-doc", 0          # views group: doc views (rdoc.s, markdown.s)
+    FEATURE FEAT_MARKDOWN, "markdown", 0          # views group: Markdown in node tooltips and notification messages
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -3187,6 +3191,7 @@ ENDSTRUCT AX_SIZE
 # ---- views group: places, the shared tree widget, retained extension views ----
 # (places.s, rtree.s, rview.s; docs/extensions/v1.1.md "Retained views")
 .equ FOCUS_VIEW, 10             # a place item has the keyboard (g_place_focus names it)
+.equ FOCUS_QUICK, 69            # views group: an extension's quick input (quick.s)
 
 # a place item: a sidebar section, a bottom panel tab or a side (right column) tab. Built-in code
 # and extension views register the same way (place_add); the slot index is the item's id.
@@ -3297,6 +3302,17 @@ F TA_icon, 4            # IC_*, -1: its title as text
 F TA_pad, 4
 F TA_title, 8           # cstr: the tooltip (or the text)
 ENDSTRUCT TA_SIZE
+# a table's column (views group: tree_set_columns)
+STRUCT
+F TBC_title, 8           # cstr, mem_alloc'd
+F TBC_align, 4           # 0 left, 1 right
+F TBC_min, 4             # its minimum width in characters; 0 takes a share of the rest
+F TBC_sort, 4            # 1 when its header sorts
+F TBC_user, 4            # the width the user dragged it to, physical (0: none)
+F TBC_x, 4               # laid out when last drawn, physical
+F TBC_w, 4
+ENDSTRUCT TBC_SIZE
+.equ TBC_MAX, 16                # columns a table may have
 STRUCT
 F TR_nodes, VEC_SIZE    # ND
 F TR_free, 8            # first free slot, -1 for none
@@ -3333,11 +3349,16 @@ F TR_rowbw, 4           # the width it drew last frame, and for which node
 F TR_rownode, 4
 F TR_gen, 4             # nodes made so far
 F TR_pad3, 4
+F TR_cols, 8            # views group: a table's columns (TBC, tree_set_columns), 0 for a plain tree
+F TR_sortfn, 8          # sortfn(ctx, tr, col, dir): the user sorted while children are paged
+F TR_ncols, 4
+F TR_sort, 4            # the sorted column from 1 (0: none) | 1 << 8 descending | 1 << 16 the owner sorted
 ENDSTRUCT TR_SIZE
 .equ TRF_DIRTY, 1               # the rows are rebuilt before they are next used
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame
 .equ TRF_MULTI, 4               # multi-select
 .equ TRF_CHECKS, 8              # some node has a checkbox
+.equ TRF_MDTIPS, 4096           # views group: node tooltips are Markdown (an extension with markdown agreed)
 # a row: a node, or a marker row under a parent
 STRUCT
 F RW_node, 4            # node index; for a marker row the parent
