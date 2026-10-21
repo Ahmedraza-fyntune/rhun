@@ -56,6 +56,8 @@ FN nbexec_request
     mov r13, rdx
     mov [rsp], rcx
     mov [rsp + 8], r8
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lnr_remote             # a remote window's kernels would belong on its host
     mov rdi, rbx
     call live_of
     cmp eax, NX_PER_EXT
@@ -117,7 +119,7 @@ FN nbexec_request
     call mem_dup
     mov [r14 + NX_cwd], rax
 1:  mov rdi, [r14 + NX_cwd]
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz .Lnr_nofolder
     mov rdi, r14
@@ -140,6 +142,9 @@ FN nbexec_request
     EPILOGUE
 .Lnr_busy:
     lea rax, [rip + .Le_busy]
+    EPILOGUE
+.Lnr_remote:
+    lea rax, [rip + .Le_remote]
     EPILOGUE
 .Lnr_asking:
     lea rax, [rip + .Le_asking]
@@ -913,6 +918,7 @@ make_cmd:
 .Lexit: .asciz "0 nb-exec-exit "
 .Lkilled: .asciz "killed"
 .Le_busy: .asciz "busy at most 4 kernels an extension"
+.Le_remote: .asciz "refused kernels do not run as the user in a remote window yet"
 .Le_asking: .asciz "busy another question is open"
 .Le_needs: .asciz "needs kernels="
 .Le_nofile: .asciz "nofile the program was not found"

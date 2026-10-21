@@ -1119,7 +1119,12 @@ FN app_reload_doc
     mov rdi, rbx
     call nb_disk_reload
     EPILOGUE
-1:  cmp qword ptr [rbx + DOC_img], 0
+1:  mov rdi, rbx                # custom editors: an owned model's extension hears the change
+    call ce_disk_changed
+    test eax, eax
+    jnz 9f
+    mov rdi, [rbx + DOC_path]
+    cmp qword ptr [rbx + DOC_img], 0
     jne .Lrd_image
     call vfs_stamp
     mov [rsp + 24], rax        # stamp belongs to the bytes read, not a later replacement
@@ -1242,7 +1247,12 @@ FN cmd_reload_file
     jz 2f
     mov rdi, rax
     jmp nb_reload
-2:  jmp app_reload_doc
+2:  push rdi
+    call ce_revert              # custom editors: an owned model's extension reverts
+    pop rdi
+    test eax, eax
+    jnz 1f
+    jmp app_reload_doc
 1:  ret
 
 .section .rodata

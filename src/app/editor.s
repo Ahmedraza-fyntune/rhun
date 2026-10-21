@@ -625,6 +625,9 @@ FN ed_newline
     test rbx, rbx
     jz .Lnl_ret
     mov rdi, rbx
+    mov esi, 10
+    call ws_linked_typed        # wsedit: a newline ends linked editing first (not mirrored)
+    mov rdi, rbx
     call snippet_user_begin
     lea rdi, [rsp]
     xor esi, esi
@@ -1085,6 +1088,9 @@ FN ed_tab
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
+    mov rdi, rbx
+    mov esi, 9
+    call ws_linked_typed        # wsedit: a tab ends linked editing first (not mirrored)
     mov rdi, rbx
     call ed_sel
     cmp rax, rdx
@@ -1931,7 +1937,7 @@ FN cmd_undo
     jz 1f
     call doc_undo
     jmp ed_touch
-1:  ret
+1:  jmp ce_undo                 # custom editors: a view's tab (customed.s)
 
 FN cmd_redo
     READONLY_RET
@@ -1940,7 +1946,7 @@ FN cmd_redo
     jz 1f
     call doc_redo
     jmp ed_touch
-1:  ret
+1:  jmp ce_redo                 # custom editors: a view's tab (customed.s)
 
 # ---- drawing ----
 
@@ -2002,6 +2008,7 @@ clamp_scroll:
     call rows_mode
     test eax, eax
     jnz wrap_clamp
+    mov rax, [rdi + DOC_nlines]  # (rows_mode returned in rax)
     # last line at the bottom
     mov ecx, [rip + g_ed_h]
     xor edx, edx
@@ -2072,7 +2079,7 @@ reveal_h:
     mov rbx, rdi
     mov rdi, rbx
     mov rsi, [rbx + DOC_cur]
-    call doc_col_of
+    call vt_doc_col             # the caret's visual column, the line's inlays counted (vtext.s)
     mov r14d, eax
     # A long line's width may be deferred while typing. The caret's column is already known:
     # keep the scrollbar's extent wide enough for it without another scan of that line.
@@ -2226,6 +2233,15 @@ draw_wrapped:
     mov r14d, eax               # rows
     test eax, eax
     jz .Ldw_hidden              # a folded line has none (fold.s)
+    mov rdi, rbx                # its code lens row (lens.s): drawn, then the text rows below it
+    mov rsi, r12
+    mov edx, r13d
+    call lens_row_take
+    test eax, eax
+    jz 16f
+    add r13d, [rip + g_lh]
+    dec r14d
+16:
     # current line highlight across all its rows
     cmp dword ptr [rip + cfg_highlight_line], 0
     je 12f
@@ -3355,7 +3371,15 @@ draw_line:
     call syntax_line
 13: mov rax, [rip + classes + SB_ptr]
     mov [rip + cls_ptr], rax
-3:  # x origin
+3:  # semantic tokens over the syntax classes (semtok.s)
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, [rsp + 24]
+    mov rcx, [rip + cls_ptr]
+    mov r8, r15
+    call semtok_line
+    mov [rip + cls_ptr], rax
+    # x origin
     mov eax, [rip + g_ed_tx]
     sub eax, [rbx + DOC_scrollx]
     mov [rsp + 40], eax
@@ -4446,9 +4470,17 @@ hscroll_measure:
     mov [rip + hs_view], eax
     cmp dword ptr [rip + cfg_word_wrap], 0
     jne 9f
-    cmp rbx, [rip + vt_wide_doc]
+    mov rax, [rip + g_deco_gen]     # the widest inlays are measured again per document and when
+    mov rcx, [rbx + DOC_pres]       # what it shows changes (presentation)
+    test rcx, rcx
+    jz 0f
+    add rax, [rcx + PRS_gen]
+0:  cmp rbx, [rip + vt_wide_doc]
+    jne 2f
+    cmp rax, [rip + vt_wide_gen]
     je 1f
-    mov [rip + vt_wide_doc], rbx    # the widest inlays are measured again per document
+2:  mov [rip + vt_wide_doc], rbx
+    mov [rip + vt_wide_gen], rax
     mov dword ptr [rip + g_vt_widest], 0
 1:  mov rdi, rbx
     call doc_widest
@@ -4593,6 +4625,7 @@ long_lang: .quad 0
 long_cls: .zero SB_SIZE
 .p2align 3
 vt_wide_doc: .quad 0            # the document g_vt_widest was measured on
+vt_wide_gen: .quad 0            # and what it showed (g_deco_gen + PRS_gen)
 .globl g_clip_line, g_mods
 g_clip_line: .long 0
 g_mods: .long 0

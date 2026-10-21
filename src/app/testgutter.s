@@ -20,10 +20,12 @@ path: .zero 4096
 # testgutter_item_gone(ext, index): an item went: its problems with it (at the next rebuild)
 FN testgutter_item_gone
     mov dword ptr [rip + g_ts_marks], 1
+    mov dword ptr [rip + g_ts_glyphs], 1    # and its glyph
     ret
 
 # testgutter_item_changed(ext, index): an item's range or file changed
 FN testgutter_item_changed
+    mov dword ptr [rip + g_ts_glyphs], 1
     ret
 
 # source_of(TSC*) -> PS*: the controller's problems source
@@ -193,7 +195,10 @@ add_messages:
     call memset
     lea rax, [rip + path]
     mov [rip + pr + PR_path], rax
-    mov eax, [r14 + TSM_l1]
+    lea rdi, [rip + path]
+    mov rsi, [r14 + TSM_ver]
+    mov edx, [r14 + TSM_l1]
+    call tg_map_path
     mov [rip + pr + PR_line], eax
     mov eax, [r14 + TSM_c1]
     mov [rip + pr + PR_col], eax
@@ -203,7 +208,10 @@ add_messages:
     mov eax, [r14 + TSM_c1]
     cmp eax, [r14 + TSM_c2]
     je 5f
-4:  mov eax, [r14 + TSM_l2]
+4:  lea rdi, [rip + path]
+    mov rsi, [r14 + TSM_ver]
+    mov edx, [r14 + TSM_l2]
+    call tg_map_path
     mov [rip + pr + PR_endline], eax
     mov eax, [r14 + TSM_c2]
     mov [rip + pr + PR_endcol], eax
@@ -247,6 +255,7 @@ first_line:
 # testgutter_forget(ext): its problems go (the extension is removed)
 FN testgutter_forget
     PROLOGUE
+    mov dword ptr [rip + g_ts_glyphs], 1    # its glyphs go too
     call testmodel_ctrl
     test rax, rax
     jz 9f
@@ -276,15 +285,119 @@ FN testgutter_forget
 g_ts_glyphs: .long 0            # items or states changed: the glyphs are set again
 tg_kind: .long 0                # the gutter kind, 0 before the first tick
 tg_force: .long 0               # set again now, not waiting for the 100 ms (print-gutter)
+tg_cfg_seen: .long 0            # [testing] gutter as the glyphs were last set for
 .p2align 3
 tg_last: .quad 0                # time_ms of the last setting
 tg_doc_max: .quad 0             # the newest DOC_id that has its glyphs
 tg_cov_doc: .quad 0             # the tint's cache: the document, its coverage file, for which run
 tg_cov_cf: .quad 0
 tg_cov_run: .quad 0
+tg_cov_ver: .quad 0             # the document's version it was made for
+tg_cov_docid: .quad 0           # and its DOC_id (an address is used again after a tab closes)
+tg_cov_map: .quad 0             # owned: a byte per line of the document now (COV_* bits), when
+tg_cov_mapn: .quad 0            #   the coverage came at another version of it; 0 none
 tg_tip: .zero 512
 
 .text
+
+# testgutter_doc_ver(path cstr or 0) -> rax the version of the file's open document, -1 when it is
+#   not open: ranges, message places and coverage that came then move through the edits since
+FN testgutter_doc_ver
+    PROLOGUE
+    test rdi, rdi
+    jz 8f
+    call app_find_tab
+    test rax, rax
+    js 8f
+    mov rdi, rax
+    call tab_at
+    mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 8f
+    mov rax, [rax + DOC_version]
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
+# tg_map(doc, version, line) -> eax the one-based line in the document's text now of a one-based
+#   line of its text at that version (-1: now), 0 when the edit tape no longer reaches back
+tg_map:
+    PROLOGUE
+    mov eax, edx
+    test rsi, rsi
+    js 9f
+    cmp rsi, [rdi + DOC_version]
+    je 9f
+    test edx, edx
+    jz 9f
+    mov rbx, rdi
+    lea edx, [rdx - 1]
+    xor ecx, ecx
+    mov r8d, GR_RIGHT
+    call tape_map_lc
+    test rax, rax
+    js 8f
+    mov rdi, rbx
+    mov rsi, rax
+    call doc_line_of
+    inc eax
+    EPILOGUE
+8:  xor eax, eax
+9:  EPILOGUE
+
+# testgutter_map_path / tg_map_path(path cstr, version, line) -> eax the line moved through the edits of the file's open
+#   document since that version; the line as it is when the file is not open or the tape does not
+#   reach back
+FN testgutter_map_path
+tg_map_path:
+    PROLOGUE
+    mov r12, rsi
+    mov r13d, edx
+    test rsi, rsi
+    js 8f
+    call app_find_tab
+    test rax, rax
+    js 8f
+    mov rdi, rax
+    call tab_at
+    mov rdi, [rax + TAB_doc]
+    test rdi, rdi
+    jz 8f
+    mov rsi, r12
+    mov edx, r13d
+    call tg_map
+    test eax, eax
+    jz 8f
+    EPILOGUE
+8:  mov eax, r13d
+    EPILOGUE
+
+# testgutter_item_lines / item_lines(doc, TSI*) -> eax first line, edx last line (one-based) in the document now: the
+#   item's range moved through the edits since it came (an item that came before the document
+#   opened takes the document's version now); eax 0 when the tape does not reach back
+FN testgutter_item_lines
+item_lines:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    cmp qword ptr [r12 + TSI_ver], 0
+    jge 1f
+    mov rax, [rbx + DOC_version]
+    mov [r12 + TSI_ver], rax
+1:  mov rdi, rbx
+    mov rsi, [r12 + TSI_ver]
+    mov edx, [r12 + TSI_l2]
+    call tg_map
+    mov r13d, eax
+    mov rdi, rbx
+    mov rsi, [r12 + TSI_ver]
+    mov edx, [r12 + TSI_l1]
+    call tg_map
+    test r13d, r13d
+    jnz 2f
+    mov r13d, eax
+2:  mov edx, r13d
+    EPILOGUE
 
 # testgutter_glyphs(): kind and tint at the first call; glyphs set again when due
 FN testgutter_glyphs
@@ -323,7 +436,13 @@ FN testgutter_glyphs
 3:  cmp r12, [rip + tg_doc_max]
     jbe 4f
     mov dword ptr [rip + g_ts_glyphs], 1
-4:  cmp dword ptr [rip + g_ts_glyphs], 0
+4:  mov eax, [rip + cfg_test_gutter]     # [testing] gutter changed: set again (or cleared)
+    cmp eax, [rip + tg_cfg_seen]
+    je 40f
+    mov [rip + tg_cfg_seen], eax
+    mov dword ptr [rip + g_ts_glyphs], 1
+    mov dword ptr [rip + tg_force], 1
+40: cmp dword ptr [rip + g_ts_glyphs], 0
     je 9f
     call time_ms
     cmp dword ptr [rip + tg_force], 0
@@ -396,13 +515,17 @@ doc_glyphs:
     call strcmp_eq
     test eax, eax
     jz 3f
+    mov rdi, rbx
+    mov rsi, r15
+    call item_lines
+    test eax, eax
+    jz 3f
+    lea edx, [rax - 1]
     mov eax, [r15 + TSI_state]
     lea rcx, [rip + state_glyphs]
     mov ecx, [rcx + rax*4]
     mov rdi, rbx
     mov esi, [rip + tg_kind]
-    mov edx, [r15 + TSI_l1]
-    dec edx
     call gutter_glyph_set
 3:  inc r14
     jmp 2b
@@ -415,7 +538,7 @@ doc_glyphs:
 # at_line(doc, line) -> rax TSC*, rdx index of the test or suite whose glyph is on the line (its
 #   range's first line, else the deepest range holding the line), rax 0 for none
 at_line:
-    PROLOGUE 32
+    PROLOGUE 48
     mov rbx, rdi
     lea rax, [rsi + 1]
     mov [rsp], rax              # one-based
@@ -444,14 +567,20 @@ at_line:
     call strcmp_eq
     test eax, eax
     jz 3f
+    mov rdi, rbx
+    mov rsi, r15
+    call item_lines
+    test eax, eax
+    jz 3f
+    mov ecx, eax
+    mov [rsp + 32], rdx
     mov rax, [rsp]
-    mov ecx, [r15 + TSI_l1]
     cmp rax, rcx
     jne 31f
     mov edx, 2
     jmp 32f
 31: jb 3f
-    mov ecx, [r15 + TSI_l2]
+    mov ecx, [rsp + 32]
     cmp rax, rcx
     ja 3f
     mov edx, 1
@@ -561,30 +690,7 @@ tg_tint:
     xor eax, eax
     cmp dword ptr [rip + g_cov_on], 0
     je 9f
-    cmp qword ptr [rip + g_cov_run], 0
-    je 9f
-    mov rbx, rdi
-    mov r12, rsi
-    cmp rbx, [rip + tg_cov_doc]
-    jne 1f
-    mov rax, [rip + g_cov_run]
-    cmp rax, [rip + tg_cov_run]
-    je 2f
-1:  mov [rip + tg_cov_doc], rbx
-    mov rax, [rip + g_cov_run]
-    mov [rip + tg_cov_run], rax
-    mov qword ptr [rip + tg_cov_cf], 0
-    mov rdi, [rbx + DOC_path]
-    test rdi, rdi
-    jz 2f
-    call testcover_file
-    mov [rip + tg_cov_cf], rax
-2:  xor eax, eax
-    mov rdi, [rip + tg_cov_cf]
-    test rdi, rdi
-    jz 9f
-    lea rsi, [r12 + 1]
-    call testcover_line
+    call cov_state
     test eax, eax
     jz 9f
     lea rcx, [rip + cov_slots]
@@ -595,9 +701,125 @@ tg_tint:
     or eax, 0x38000000          # 22 %
 9:  EPILOGUE
 
+# cov_state(doc, line) -> eax the zero-based line's coverage in the document now: 0 none, COV_*
+#   bits (3 partly covered)
+cov_state:
+    PROLOGUE
+    xor eax, eax
+    cmp qword ptr [rip + g_cov_run], 0
+    je 9f
+    mov rbx, rdi
+    mov r12, rsi
+    cmp rbx, [rip + tg_cov_doc]
+    jne 1f
+    mov rax, [rip + g_cov_run]
+    cmp rax, [rip + tg_cov_run]
+    jne 1f
+    mov rax, [rbx + DOC_version]
+    cmp rax, [rip + tg_cov_ver]
+    jne 1f
+    mov rax, [rbx + DOC_id]
+    cmp rax, [rip + tg_cov_docid]
+    je 2f
+1:  call cov_cache
+2:  xor eax, eax
+    mov rdi, [rip + tg_cov_cf]
+    test rdi, rdi
+    jz 9f
+    mov rcx, [rip + tg_cov_map]
+    test rcx, rcx
+    jz 21f
+    cmp r12, [rip + tg_cov_mapn]
+    jae 9f
+    movzx eax, byte ptr [rcx + r12]
+    jmp 9f
+21: lea rsi, [r12 + 1]
+    call testcover_line
+9:  EPILOGUE
+
+# cov_cache(): the tint's cache for document rbx (tg_tint's): its coverage file, and when that
+#   came at another version of the document, its lines moved through the edits since (a line the
+#   tape no longer reaches is not tinted)
+cov_cache:
+    PROLOGUE
+    mov [rip + tg_cov_doc], rbx
+    mov rax, [rip + g_cov_run]
+    mov [rip + tg_cov_run], rax
+    mov rax, [rbx + DOC_version]
+    mov [rip + tg_cov_ver], rax
+    mov rax, [rbx + DOC_id]
+    mov [rip + tg_cov_docid], rax
+    mov qword ptr [rip + tg_cov_cf], 0
+    mov rdi, [rip + tg_cov_map]
+    call mem_free
+    mov qword ptr [rip + tg_cov_map], 0
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jz 9f
+    call testcover_file
+    mov [rip + tg_cov_cf], rax
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, rax
+    call testcover_ver
+    mov r13, rax
+    test rax, rax
+    js 9f
+    cmp rax, [rbx + DOC_version]
+    je 9f
+    mov rdi, [rbx + DOC_nlines]
+    mov [rip + tg_cov_mapn], rdi
+    inc rdi
+    call mem_alloc
+    mov [rip + tg_cov_map], rax
+    mov rdi, rax
+    xor esi, esi
+    mov rdx, [rip + tg_cov_mapn]
+    inc rdx
+    call memset
+    mov rdi, r12
+    call testcover_count
+    mov r14, rax                # lines of the coverage
+    xor r15d, r15d              # the line, zero-based
+1:  cmp r15, r14
+    jae 9f
+    mov rdi, r12
+    lea rsi, [r15 + 1]
+    call testcover_line
+    test eax, eax
+    jz 3f
+    push rax
+    push rax
+    mov rdi, rbx
+    mov rsi, r13
+    mov rdx, r15
+    xor ecx, ecx
+    mov r8d, GR_RIGHT
+    call tape_map_lc
+    mov rsi, rax
+    pop rcx
+    pop rcx
+    test rsi, rsi
+    js 3f
+    push rcx
+    push rcx
+    mov rdi, rbx
+    call doc_line_of
+    pop rcx
+    pop rcx
+    cmp rax, [rip + tg_cov_mapn]
+    jae 3f
+    mov rdx, [rip + tg_cov_map]
+    or [rdx + rax], cl
+3:  inc r15
+    jmp 1b
+9:  EPILOGUE
+
 # testgutter_cov_changed(): the tint cache forgets (coverage replaced or cleared)
 FN testgutter_cov_changed
     mov qword ptr [rip + tg_cov_doc], 0
+    mov dword ptr [rip + g_tcv_dirty], 1      # the Coverage section lists the files again
     ret
 
 .section .rodata
@@ -704,9 +926,9 @@ FN testctl_gutter
     call tg_tint
     test eax, eax
     jz 71f
-    mov rdi, [rip + tg_cov_cf]
-    lea rsi, [r13 + 1]
-    call testcover_line
+    mov rdi, r12
+    mov rsi, r13
+    call cov_state
     mov r14d, eax
     test r15d, r15d
     jz 72f

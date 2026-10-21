@@ -8,6 +8,7 @@
 #
 #   termproto_request(ext, id, line, len, body, blen)  every terminal verb (extproto.s)
 #   termproto_tick()                 output batches go out, within the rates of tasks design 3.6
+#   termproto_timeout()              -> ms until it has output to send, or -1
 #   termproto_ext_gone(ext)          its runtime stopped: its programs stop, their tabs stay
 #   termproto_cancel(ext, id) -> 1 when that request's approval question was withdrawn (cancel ID)
 #   tr_open(ext, DF*, kind) -> TR*, or 0 when every tab is taken: a program's tab of its own (tasks.s
@@ -268,6 +269,18 @@ tr_of:
 9:  pop rbx
     ret
 
+# tr_set_output(TR*, DF*): terminal-output for it as the definition asks, only when its extension
+#   may read terminals (terminal = output): a task's definition is checked as terminal-open's is
+FN tr_set_output
+    and dword ptr [rdi + TRC_flags], ~TRCF_OUTPUT
+    cmp dword ptr [rsi + DF_output], 0
+    je 9f
+    mov rax, [rdi + TRC_ext]
+    test dword ptr [rax + EXT_needs], NEEDS_TERM_OUTPUT
+    jz 9f
+    or dword ptr [rdi + TRC_flags], TRCF_OUTPUT
+9:  ret
+
 # tr_open(ext, DF*, kind) -> TR*, or 0 when every tab is taken
 FN tr_open
     PROLOGUE 48
@@ -279,10 +292,10 @@ FN tr_open
     mov r14, rax
     mov [r14 + TRC_ext], rbx
     mov dword ptr [r14 + TRC_live], 1
-    cmp dword ptr [r12 + DF_output], 0
-    je 1f
-    or dword ptr [r14 + TRC_flags], TRCF_OUTPUT
-1:  mov rax, [r12 + DF_id]
+    mov rdi, r14
+    mov rsi, r12
+    call tr_set_output
+    mov rax, [r12 + DF_id]
     cmp word ptr [rax], 0x002d  # "-": a terminal, no task
     je 2f
     mov rdi, rax
@@ -588,11 +601,11 @@ out_flush:
     cmp qword ptr [rbx + TRC_dropped], 0
     je 9f
 1:  test dword ptr [rbx + TRC_flags], TRCF_OUTPUT
-    jz 8f
+    jz 10f
     mov rdi, rbx
     call tr_live_for
     test eax, eax
-    jz 8f
+    jz 10f
     # the extension reads what it got: none while its queue is long
     mov rax, [rbx + TRC_ext]
     mov rcx, [rax + EXT_wq + SB_len]
@@ -685,8 +698,12 @@ out_flush:
 8:  lea rdi, [rbx + TRC_out]
     call sb_clear
 9:  EPILOGUE
+10: # nobody to tell: nothing waits, nothing is counted
+    mov qword ptr [rbx + TRC_dropped], 0
+    jmp 8b
 
-# termproto_tick(): each terminal's waiting lines out, once a frame
+# termproto_tick(): each terminal's waiting lines out, once a frame; lines dropped with nothing
+#   waiting are told too (an event of no lines with their count) once the budgets allow
 FN termproto_tick
     PROLOGUE
     xor ebx, ebx
@@ -696,10 +713,30 @@ FN termproto_tick
     mov rdi, [rax + rbx*8]
     inc rbx
     cmp qword ptr [rdi + TRC_out + SB_len], 0
+    jne 2f
+    cmp qword ptr [rdi + TRC_dropped], 0
     je 1b
-    call out_flush
+2:  call out_flush
     jmp 1b
 9:  EPILOGUE
+
+# termproto_timeout() -> ms until termproto_tick has output to send (lines or a drop count waiting
+#   for the next second's budget), or -1
+FN termproto_timeout
+    xor ecx, ecx
+1:  cmp rcx, [rip + recs + VEC_len]
+    jae 8f
+    mov rax, [rip + recs + VEC_ptr]
+    mov rdx, [rax + rcx*8]
+    inc rcx
+    cmp qword ptr [rdx + TRC_out + SB_len], 0
+    jne 2f
+    cmp qword ptr [rdx + TRC_dropped], 0
+    je 1b
+2:  mov eax, 50
+    ret
+8:  mov eax, -1
+    ret
 
 # ---------------- the extension's runtime ----------------
 

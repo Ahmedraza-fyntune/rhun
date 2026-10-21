@@ -37,6 +37,8 @@ def tool_env(name, default):
 class RealTools(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not shutil.which('go'):              # the extension is built with go (both tests need it)
+            raise unittest.SkipTest('no go on PATH')
         cls.tmp = tempfile.TemporaryDirectory(prefix='rhun-tests-real-')
         cls.work = Path(cls.tmp.name).resolve()
         ext = cls.work / 'exts/rhun-editor/tests'
