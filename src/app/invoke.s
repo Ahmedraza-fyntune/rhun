@@ -868,6 +868,9 @@ FN invoke_run
     lea rdx, [rip + .Le_needs_write]
     test eax, NEEDS_DOC_WRITE
     jnz .Lir_error
+    lea rdx, [rip + .Le_needs_term_run]
+    test eax, NEEDS_TERM_RUN    # the task commands: terminal = run, not v1's yes
+    jnz .Lir_error
     lea rdx, [rip + .Le_needs_terminal]
 .Lir_error:
     mov rdi, rbx
@@ -989,6 +992,11 @@ ip_send:
     js .Lips_cancelled
     inc qword ptr [r12 + EXT_hreq]
     mov r13, [r12 + EXT_hreq]
+    mov rdi, r12                # resources group: its time, for the cost counters and idle = stop
+    mov rsi, r13
+    lea rdx, [rip + .Liv_kind]
+    mov ecx, 4
+    call extres_req_sent
     lea rdi, [rip + iv_out]
     call sb_clear
     lea rdi, [rip + iv_out]
@@ -1273,6 +1281,7 @@ FN invoke_from_name
     ret
 
 .section .rodata
+.Liv_kind: .asciz "call"
 .p2align 3
 from_names: .quad .Lf_palette, .Lf_key, .Lf_menu, .Lf_ref
 .Lf_palette: .asciz "palette"
@@ -1300,6 +1309,7 @@ from_names: .quad .Lf_palette, .Lf_key, .Lf_menu, .Lf_ref
 .Le_refused_builtin: .asciz "refused not a command an extension may run"
 .Le_needs_write: .asciz "needs documents=write"
 .Le_needs_terminal: .asciz "needs terminal=yes"
+.Le_needs_term_run: .asciz "needs terminal=run"
 .Le_cancelled: .asciz "cancelled"
 .Le_timeout: .asciz "cancelled timeout"
 .Le_toobig_result: .asciz "toobig the result exceeds 1 MiB"

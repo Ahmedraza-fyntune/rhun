@@ -2489,7 +2489,7 @@ entry_click:
     jz 9f
     cmp al, '/'
     je 2f
-    cmp ecx, 110
+    cmp ecx, 100
     jae 9f
     mov [rsp + rcx], al
     inc ecx
@@ -2497,7 +2497,7 @@ entry_click:
 2:  mov byte ptr [rsp + rcx], 0
     lea rsi, [rsi + rcx + 1]
     lea rdi, [rsp + 120]
-    mov ecx, 110
+    mov ecx, 100
     call copy_cap
     lea rdi, [rsp]
     lea rsi, [rsp + 120]

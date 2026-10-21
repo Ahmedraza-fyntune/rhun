@@ -136,6 +136,10 @@ python3 tests/focused-zoom.py || fail=1
 python3 tests/agents.py || fail=1
 python3 tests/opencode.py || fail=1
 python3 tests/agents-refresh.py || fail=1
+python3 tests/ext-agents.py || fail=1
+python3 tests/ext-review.py || fail=1
+python3 tests/ext-tools.py || fail=1
+python3 tests/ext-prompts.py || fail=1
 sh tests/files.sh || fail=1
 sh tests/update.sh || fail=1
 python3 tests/commit-ai.py || fail=1
@@ -170,6 +174,14 @@ python3 tests/shift-wheel.py || fail=1
 python3 tests/stress.py || fail=1
 python3 tests/ext-host.py || fail=1
 python3 tests/ext-commands.py || fail=1
+# resources, workspaces, secrets and lifecycle
+python3 tests/ext-lifecycle.py || fail=1
+python3 tests/ext-secrets.py || fail=1
+python3 tests/ext-vdoc.py || fail=1
+python3 tests/ext-urls.py || fail=1
+python3 tests/ext-files.py || fail=1
+python3 tests/ext-settings-scoped.py || fail=1
+python3 tests/workspace-folders.py || fail=1
 # contributions and commands
 python3 tests/when.py || fail=1
 python3 tests/ext-command-args.py || fail=1
@@ -178,6 +190,8 @@ python3 tests/keys-chords.py || fail=1
 python3 tests/ext-menus.py || fail=1
 python3 tests/ext-status-items.py || fail=1
 python3 tests/ext-sdk-commands.py || fail=1
+# source control: Git data, commit messages, quick diff, version control panels
+python3 tests/ext-scm.py || fail=1
 # editor presentation
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }

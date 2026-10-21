@@ -150,6 +150,9 @@
 .equ MREMAP_MAYMOVE, 1
 
 .equ AF_UNIX, 1
+.equ AF_INET, 2                 # remote hosts: forwarded ports (remotefwd.s, ragent.s)
+.equ AF_INET6, 10
+.equ SHUT_WR, 1
 .equ SOCK_STREAM, 1
 .equ SOCK_NONBLOCK, 0x800
 .equ SOCK_CLOEXEC, 0x80000
@@ -637,6 +640,8 @@ F DOC_language_pending, 8
 F DOC_gsrc, 4           # 1: DOC_ghash is an extension's quick-diff base, not HEAD's
 F DOC_qdwant, 4         # 1: a quick-diff provider is to be asked for the base
 F DOC_gext, 8           # the EXT that gave that base (its bases go when it stops)
+F DOC_qbase, 8          # a copy of that base's text (mem_alloc'd), for the diff a panel's click opens
+F DOC_qblen, 8
 F DOC_nb, 8             # notebooks: the NB a TAB_NOTEBOOK tab's document stands for, or 0 (nbdoc.s)
 F DOC_ce, 8             # custom editors: the CE whose tab shows this document, or 0 (customed.s)
 F DOC_pres, 8           # editor presentation: PRS* (edtape.s), owned, or 0
@@ -1648,6 +1653,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_AGENTS, "agents", 1              # agent-sessions; rhun asks agent-transcript
     FEATURE FEAT_EDIT_REVIEW, "edit-review", 0    # propose, unpropose
     FEATURE FEAT_TOOLS, "tools", 1                # tools, tool-call; rhun asks owners: tool
+    FEATURE FEAT_AGENT_PROMPTS, "agent-prompts", 1    # agent-ask; rhun asks agent-prompt
     # views group (places.s, rtree.s, rview.s)
     FEATURE FEAT_VIEW_TREE, "view-tree", 1        # retained views: vpatch, vshow; vkids, vmore
     # tasks and terminals (termproto.s, tasks.s)
@@ -1916,6 +1922,7 @@ ENDSTRUCT REG_SIZE
 .equ PROMPT_EXT_FOLDER, 20      # Install from Folder: the folder, copied
 .equ PROMPT_EXT_LINK, 21        # Link a Folder: the folder, linked
 .equ PROMPT_EXT_ARCHIVE, 22     # Install from Archive: the .tar.gz
+.equ PROMPT_WS_SAVE, 100        # resources group (block 100-103): Save Workspace As's file (workspace.s)
 
 # vim modes (g_vim_mode)
 .equ VM_NORMAL, 0
@@ -3164,8 +3171,8 @@ ENDSTRUCT TRC_SIZE
 .equ AXF_MATCH, 1               # its CWD is the project or one of its worktrees
 .equ AXF_FETCHED, 2             # a transcript answer came at least once
 .equ ID_AI_SOURCE, 0x7a00       # + extension index: its switch in Settings > Agents
-.equ ID_AI_REVIEW, 0x7b00       # review.s: the Review tab's buttons
-.equ ID_AI_CARD, 0x7c00         # D4: the prompt box, Stop and card buttons
+.equ ID_AI_REVIEW, 0x8100       # review.s: the Review tab's buttons
+.equ ID_AI_CARD, 0x8200         # D4: the prompt box, Stop and card buttons
 
 # AI (wider-parity D): what one extension contributes, indexed like g_exts (ai_ext)
 STRUCT

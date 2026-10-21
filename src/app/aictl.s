@@ -117,6 +117,79 @@ c_review:
 9:  xor eax, eax
     EPILOGUE
 
+# agent-new OWNER/NAME: the agents panel writes a new session of that extension (D4)
+c_agent_new:
+    PROLOGUE
+    call ai_set
+    call ai_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call agentext_named
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    call cmd_focus_agents
+    mov rdi, rbx
+    call agentext_new
+9:  xor eax, eax
+    EPILOGUE
+
+# agent-prompt TEXT: TEXT in the prompt box, sent as Enter sends it
+c_agent_prompt:
+    PROLOGUE
+    call ai_set
+    call ai_arg_rest
+    mov rbx, rax
+    mov r12, rdx
+    call agentext_field
+    mov rdi, rax
+    mov rsi, rbx
+    mov rdx, r12
+    call tf_set
+    call agentext_send
+    xor eax, eax
+    EPILOGUE
+
+# agent-stop: Stop in the open extension session
+c_agent_stop:
+    PROLOGUE
+    call ai_set
+    call agents_ext_open
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    call agentext_stop
+9:  xor eax, eax
+    EPILOGUE
+
+# agent-card N: option N (from 1) of the open session's card
+c_agent_card:
+    PROLOGUE
+    call ai_set
+    call ai_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    lea rbx, [rax - 1]
+    call agents_ext_open
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, rbx
+    call agentext_pick
+9:  xor eax, eax
+    EPILOGUE
+
+# print-agent-input: the prompt box, the new session, the prompt in flight and the open card
+c_print_agent_input:
+    PROLOGUE
+    call ai_set
+    call ai_out
+    mov rdi, rax
+    call agentext_input_dump
+    xor eax, eax
+    EPILOGUE
+
 # print-tools: the tools a tools request lists, then the calls in flight
 c_print_tools:
     PROLOGUE
@@ -162,6 +235,11 @@ c_tool_confirm:
 
 .section .rodata
 .Lc_agents_source: .asciz "agents-source"
+.Lc_agent_new: .asciz "agent-new"
+.Lc_agent_prompt: .asciz "agent-prompt"
+.Lc_agent_stop: .asciz "agent-stop"
+.Lc_agent_card: .asciz "agent-card"
+.Lc_print_agent_input: .asciz "print-agent-input"
 .Lc_print_tools: .asciz "print-tools"
 .Lc_tool_confirm: .asciz "tool-confirm"
 .Lw_once: .asciz "once"
@@ -177,4 +255,7 @@ ai_ctl:
     .quad .Lc_agents_source, c_agents_source
     .quad .Lc_print_review, c_print_review, .Lc_review, c_review
     .quad .Lc_print_tools, c_print_tools, .Lc_tool_confirm, c_tool_confirm
+    .quad .Lc_agent_new, c_agent_new, .Lc_agent_prompt, c_agent_prompt
+    .quad .Lc_agent_stop, c_agent_stop, .Lc_agent_card, c_agent_card
+    .quad .Lc_print_agent_input, c_print_agent_input
     .quad 0, 0

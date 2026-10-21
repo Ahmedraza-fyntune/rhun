@@ -30,6 +30,7 @@ lock = threading.Lock()
 next_id = 1
 pending = {}            # id -> verb
 queue = []              # requests waiting for the one before to be answered
+scm = '0'               # the last scm-register's handle: $SCM in requests
 BODY_VERBS = {'git-repo', 'git-status', 'git-blame', 'git-log', 'git-show', 'scm-input'}
 
 
@@ -58,7 +59,7 @@ def request(line, body):
 def pump():
     if queue and not pending:
         line, body = queue.pop(0)
-        request(line, body)
+        request(line.replace('$SCM', scm), body)
 
 
 def run_list(items, doc):
@@ -104,6 +105,10 @@ while True:
         rid = int(fields[1])
         if pending.get(rid) in BODY_VERBS:
             body = read_exact(int(fields[2]))
+        elif pending.get(rid) == 'scm-register':
+            scm = fields[2]
+    elif fields[:2] == ['0', 'run'] and len(fields) == 6:
+        body = read_exact(int(fields[5]))          # command-args: FROM and LEN
     elif fields[0] not in ('ok', 'error', '0') and len(fields) >= 3 and fields[1] == 'commit-message':
         body = read_exact(int(fields[-1]))
     if body is not None:

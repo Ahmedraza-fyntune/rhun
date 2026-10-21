@@ -501,7 +501,23 @@ ecf_reload:
     call ecf_trusted
     test eax, eax
     jz 9f
-    xor r12d, r12d
+    # a workspace file's sections are the workspace's values (workspace.s)
+    mov rdi, [rip + g_ws_file]
+    test rdi, rdi
+    jz 0f
+    mov esi, ECF_FILE_MAX
+    call vfs_read_limited
+    test rax, rax
+    jz 0f
+    mov r14, rax
+    mov rdi, rax
+    mov rsi, rdx
+    mov edx, ECL_WORKSPACE
+    xor ecx, ecx
+    call ecf_parse
+    mov rdi, r14
+    call mem_free
+0:  xor r12d, r12d
 1:  call wfold_count
     cmp r12, rax
     jae 9f
@@ -521,10 +537,15 @@ ecf_reload:
     jz 2f
     mov rdi, r12
     call wfold_id
-    mov rdi, r14
-    mov rsi, r15
-    mov rdx, r12
     mov rcx, rax
+    mov edx, ECL_FOLDER         # the primary folder's file is the workspace's without a workspace file
+    test r12, r12
+    jnz 11f
+    cmp qword ptr [rip + g_ws_file], 0
+    jne 11f
+    mov edx, ECL_WORKSPACE
+11: mov rdi, r14
+    mov rsi, r15
     call ecf_parse
     mov rdi, r14
     call mem_free
@@ -532,8 +553,8 @@ ecf_reload:
     jmp 1b
 9:  EPILOGUE
 
-# ecf_parse(text, len, folder index, folder id): one project file; the primary folder's sets the
-# workspace's values, another folder's its own
+# ecf_parse(text, len, level, folder id): one project file's values at that level (ECL_WORKSPACE:
+# a workspace file or the primary folder's; ECL_FOLDER: a folder's own, with its id)
 ecf_parse:
     PROLOGUE 32
     mov [rsp], rdx
@@ -580,11 +601,8 @@ ecf_parse:
     # how far down it may be set
     mov eax, [r12 + SD_scope]
     and eax, 3
-    mov ecx, ECL_WORKSPACE
-    cmp qword ptr [rsp], 0
-    je 2f
-    mov ecx, ECL_FOLDER
-2:  cmp eax, ecx
+    mov rcx, [rsp]
+    cmp eax, ecx
     jb .Lep_bad
     cmp qword ptr [rsp + 24], 0
     je 3f
@@ -599,8 +617,8 @@ ecf_parse:
     mov r9, rax
     mov eax, ECL_WORKSPACE
     xor ecx, ecx
-    cmp qword ptr [rsp], 0
-    je 4f
+    cmp qword ptr [rsp], ECL_FOLDER
+    jne 4f
     mov eax, ECL_FOLDER
     mov rcx, [rsp + 8]
 4:  push rcx
@@ -765,9 +783,28 @@ FN extconfig_override
     lea rdi, [rip + ecf_text]
     mov rsi, r13
     call sb_push_cstr
+    mov rdi, [rip + g_ws_file]  # where: the workspace file, or the primary folder's
+    test rdi, rdi
+    jz 1f
+    call strlen
+    mov rdi, [rip + g_ws_file]
+    mov rsi, rax
+    call path_basename
+    mov r13, rax
     lea rdi, [rip + ecf_text]
+    lea rsi, [rip + .Lt_open]
+    call sb_push_cstr
+    lea rdi, [rip + ecf_text]
+    mov rsi, r13
+    call sb_push_cstr
+    lea rdi, [rip + ecf_text]
+    lea rsi, [rip + .Lt_close]
+    call sb_push_cstr
+    jmp 2f
+1:  lea rdi, [rip + ecf_text]
     lea rsi, [rip + .Lt_file]
     call sb_push_cstr
+2:
     lea rdi, [rip + ecf_text]
     xor esi, esi
     call sb_push_byte
@@ -777,7 +814,12 @@ FN extconfig_override
 # FN extconfig_open(): the workspace's .rhun/extensions.ini in a tab (the page's Open)
 FN extconfig_open
     PROLOGUE
-    call wfold_count
+    mov rdi, [rip + g_ws_file]
+    test rdi, rdi
+    jz 1f
+    call app_open_file
+    EPILOGUE
+1:  call wfold_count
     test eax, eax
     jz 9f
     xor edi, edi
@@ -1021,7 +1063,17 @@ FN extconfig_poll
     mov r14d, 1
 3:  inc r12
     jmp 2b
-4:  lea rcx, [rip + ecf_stamps]
+4:  mov rdi, [rip + g_ws_file]  # a workspace file's stamp
+    xor eax, eax
+    test rdi, rdi
+    jz 41f
+    call vfs_stamp
+41: lea rcx, [rip + ecf_stamps]
+    cmp [rcx + ECF_FOLDERS*8 + 8], rax
+    je 42f
+    mov [rcx + ECF_FOLDERS*8 + 8], rax
+    mov r14d, 1
+42: lea rcx, [rip + ecf_stamps]
     mov rax, r15
     shl rax, 1
     or rax, r13
@@ -1135,6 +1187,8 @@ FN c_print_ext_setting
 .Lf_file: .asciz ".rhun/extensions.ini"
 .Lt_sets: .asciz "This workspace sets "
 .Lt_file: .asciz " (.rhun/extensions.ini)"
+.Lt_open: .asciz " ("
+.Lt_close: .asciz ")"
 .Lev_changed: .asciz "0 setting-changed "
 .Lp_value: .asciz "value="
 .Lp_window: .asciz " window="

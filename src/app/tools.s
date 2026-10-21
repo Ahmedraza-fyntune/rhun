@@ -1071,11 +1071,16 @@ FN tools_ext_gone
     mov rdi, r13
     call withdraw
     jmp 1b
-3:  cmp [r13 + TCL_owner], rbx
-    jne 2b
+3:  cmp [r13 + TCL_owner], rbx    # a call for one of its tools fails: queued, asking the user,
+    jne 2b                          # waiting for the start, or sent to it
     cmp dword ptr [r13 + TCL_state], TCS_OWNER
-    jne 2b
-    mov rdi, r13
+    ja 2b
+    cmp dword ptr [r13 + TCL_state], TCS_ASKING
+    jne 4f
+    mov qword ptr [rip + asking], 0     # its dialog closes
+    xor edi, edi
+    call app_dialog_answer
+4:  mov rdi, r13
     lea rsi, [rip + .Le_owner_gone]
     call answer_error
     jmp 1b
@@ -1523,7 +1528,7 @@ target:
     mov rax, r13
     EPILOGUE
 3:  mov rdi, r12
-    call file_type
+    call vfs_type
     cmp eax, 0x8000
     jne .Ltg_nofile_free
     mov rdi, [rbx + TCL_caller]
@@ -1827,7 +1832,7 @@ bt_open:
     jz 9f
     mov r12, rax
     mov rdi, r12
-    call file_type
+    call vfs_type
     cmp eax, 0x8000
     jne .Lbo_nofile
     mov rdi, [rbx + TCL_caller]

@@ -580,10 +580,6 @@ FN scmext_ext_gone
     call ai_describe
 9:  EPILOGUE
 
-# FN scm_root_ext(path) -> rax the provider whose registered root holds the path, or 0 (C4: scm-register)
-FN scm_root_ext
-    xor eax, eax
-    ret
 
 # ---------------- quick diff (feature quickdiff) ----------------
 # A provider gives a file's base text; rhun hashes it and draws the gutter marks as it does for
@@ -779,6 +775,42 @@ FN scmext_timeout
     xor eax, eax
 9:  EPILOGUE
 
+# FN scmext_qd_root(root ptr, len): a provider registered a root (scmpanel.s): the open documents
+#   under it are asked about again (their provider may be the new root's now)
+FN scmext_qd_root
+    PROLOGUE
+    mov r13, rdi
+    mov r14, rsi
+    xor r12d, r12d
+1:  cmp r12, [rip + g_tabs + VEC_len]
+    jae 9f
+    mov rdi, r12
+    inc r12
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov rbx, [rax + TAB_doc]
+    test rbx, rbx
+    jz 1b
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jz 1b
+    call strlen
+    cmp rax, r14
+    jbe 1b
+    mov rdi, [rbx + DOC_path]
+    cmp byte ptr [rdi + r14], '/'
+    jne 1b
+    mov rsi, r13
+    mov rdx, r14
+    call memeq
+    test eax, eax
+    jz 1b
+    mov rdi, rbx
+    call scmext_qd_want
+    jmp 1b
+9:  EPILOGUE
+
 # qd_want_all(): every open document is to be asked about
 qd_want_all:
     push rbx
@@ -882,12 +914,29 @@ qd_reply:
     mov rdi, rax
     test r15, r15
     jz 2f
-    mov [rdi + DOC_gext], rbx
+    mov r12, rdi
+    mov [r12 + DOC_gext], rbx
+    # a copy of the text: a click on the file in the provider's panel opens its diff
+    mov rdi, [r12 + DOC_qbase]
+    call mem_free
+    mov rdi, r14
+    mov rsi, r15
+    call mem_dup
+    mov [r12 + DOC_qbase], rax
+    mov [r12 + DOC_qblen], r15
+    mov rdi, r12
     mov rsi, r14
     mov rdx, r15
     call git_set_base_ext
+    mov rdi, r12
+    call scmpanel_base_ready
     jmp 9f
-2:  call git_drop_base_ext      # "ok ID 0": no base, git's marks stay
+2:  push rdi
+    push rdi
+    call git_drop_base_ext      # "ok ID 0": no base, git's marks stay
+    pop rdi
+    pop rdi
+    call scmpanel_base_ready    # a click waiting for it gets the file
 9:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
@@ -952,11 +1001,12 @@ qd_forget_ext:
 
 # ID quickdiff-refresh LEN + path ("-" for all): fresh bases for the extension's documents
 FN scmext_h_qd_refresh
-    PROLOGUE
+    PROLOGUE 16
     call extproto_cur
-    mov rbx, rax
+    mov [rsp], rax              # the provider asking
     call extproto_req_id
     mov r12, rax
+    mov rbx, [rsp]
     FEAT_TEST rbx, FEAT_QUICKDIFF
     jz 7f
     call extproto_body
@@ -964,13 +1014,14 @@ FN scmext_h_qd_refresh
     mov r14, rdx
     test r14, r14
     jz 6f
+    mov qword ptr [rsp + 8], 0  # 1: every open document ("-")
     cmp r14, 1
     jne 1f
     cmp byte ptr [r13], '-'
     jne 1f
-    call qd_want_all
-    jmp 5f
-1:  # the open documents with that path
+    mov qword ptr [rsp + 8], 1
+1:  # the open documents with that path (or all), of which it is the quick-diff provider: another
+    # provider's files are not asked about again
     xor r15d, r15d
 2:  cmp r15, [rip + g_tabs + VEC_len]
     jae 5f
@@ -985,6 +1036,8 @@ FN scmext_h_qd_refresh
     mov rdi, [rbx + DOC_path]
     test rdi, rdi
     jz 2b
+    cmp qword ptr [rsp + 8], 0
+    jne 3f
     call strlen
     cmp rax, r14
     jne 2b
@@ -994,6 +1047,10 @@ FN scmext_h_qd_refresh
     call memeq
     test eax, eax
     jz 2b
+3:  mov rdi, rbx
+    call qd_provider
+    cmp rax, [rsp]
+    jne 2b
     mov rdi, rbx
     call scmext_qd_want
     jmp 2b
@@ -1015,7 +1072,7 @@ FN scmext_h_qd_refresh
 # menu. The target is one line, as menu targets are for extensions' menu items (the contributions
 # design's menu_open takes it with these location names): history_commit "commit SHA", history_file
 # "commit SHA PATH", scm_resource "resource GROUP PATH", scm_group "group GROUP" (GROUP merge, staged,
-# changes; PATH in the work tree). Until extension menu items exist the menus hold built-in items.
+# changes; PATH in the work tree). menu.s's menu_open_scm adds the extensions' items for the location.
 
 # scm_row_menu(location, sha cstr or 0, path ptr or 0, len, group, code): the menu of a row at the
 #   pointer; the when-clause keys scmProvider, scmResourceGroup and scmResourceStatus describe it
@@ -1099,14 +1156,19 @@ FN scm_row_menu
     xor esi, esi
     call sb_push_byte
     dec qword ptr [rip + g_scm_menu_target + SB_len]
-    mov eax, [rsp]
+    # rhun's items, then the extensions' for the location (menu.s)
+    xor r8d, r8d
+    test r13, r13
+    jz 4f
+    call menu_abs
+    mov r8, rax
+4:  mov eax, [rsp]
     lea rcx, [rip + menu_tables]
-    mov rdi, [rcx + rax*8]
-    test rdi, rdi
-    jz 9f
-    mov esi, [rip + g_mx]
-    mov edx, [rip + g_my]
-    call ctx_menu_open
+    mov rsi, [rcx + rax*8]
+    mov edi, eax
+    mov rdx, [rip + g_scm_menu_target + SB_ptr]
+    mov rcx, [rip + g_scm_menu_target + SB_len]
+    call menu_open_scm
 9:  EPILOGUE
 
 # cstr_copy_72(dest, src): at most 71 bytes and a NUL
@@ -1189,6 +1251,17 @@ menu_abs:
     call mem_free
     mov rax, [rip + menu_abs_path + SB_ptr]
 9:  EPILOGUE
+
+# FN scmext_qd_busy() -> eax 1 while documents wait for a quick-diff base or requests are out
+#   (headless wait-quickdiff)
+FN scmext_qd_busy
+    mov eax, 1
+    cmp dword ptr [rip + qd_dirty], 0
+    jne 1f
+    cmp qword ptr [rip + qd_pend + VEC_len], 0
+    jne 1f
+    xor eax, eax
+1:  ret
 
 # scmext_dump(sb): "commit-provider=OWNER/NAME|- asked=0|1" (print-scm-ext)
 FN scmext_dump

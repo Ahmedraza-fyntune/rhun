@@ -131,10 +131,18 @@ FN ext_open_path
     jnz 7f
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE
     jz 2f
-    mov rdi, [rip + g_project]
+    xor r13d, r13d              # every workspace folder (resources group, workspace.s)
+1:  call wfold_count
+    cmp r13, rax
+    jae 2f
+    mov rdi, r13
+    inc r13
+    call wfold_path
+    mov rdi, rax
     call .Lroot
     test eax, eax
     jnz 7f
+    jmp 1b
 2:  test dword ptr [rbx + EXT_needs], NEEDS_HOME_READ
     jz 8f
     lea rdi, [rip + .Lhome]

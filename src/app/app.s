@@ -120,7 +120,7 @@ trust_path: .zero 4096           # the repository's folder, as shown (~ for the 
 switch_path: .zero 4096
 nw_exe: .zero 4096               # app_new_window: this program
 .p2align 3
-pm_items: .zero 16 * 24         # the project menu: 2 commands, a line, 9 folders, the remote items
+pm_items: .zero 16 * 27         # the project menu: 2 commands, a line, 9 folders, a line, Add Folder, the remote items
                                 # (a line, 2 commands, 8 recent remotes; remoteui.s), the end
 .globl g_shot_path
 g_shot_path: .quad 0
@@ -255,6 +255,7 @@ set_project:
     mov eax, [rip + g_link_open]
     mov [rip + g_project_link], eax
     mov dword ptr [rip + trust_closed], 0
+    call workspace_reset        # resources group: the folders remembered with it (workspace.s)
     call git_set_project
     call explorer_set_root
     call agents_set_project
@@ -497,7 +498,15 @@ project_menu_open:
     add rbx, 16
     inc r15d
     jmp 1b
-2:  mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
+2:  lea rax, [rip + .Lpm_line]  # resources group: Add Folder to Workspace (workspace.s), after the
+    mov [rbx], rax              # recent folders so that they keep their places
+    mov qword ptr [rbx + 8], 0
+    lea rax, [rip + .Lpm_add_folder]
+    mov [rbx + 16], rax
+    lea rax, [rip + cmd_add_workspace_folder]
+    mov [rbx + 24], rax
+    add rbx, 32
+    mov rdi, rbx               # remote hosts: Connect to Host, Attach to Container, recent remotes
     lea rsi, [rip + pm_items]
     call remote_menu_append
     mov rbx, rax
@@ -825,7 +834,8 @@ FN app_update_title
     lea rdi, [rip + tmp_sb]
     lea rsi, [rip + .Ldash]
     call sb_push_cstr
-1:  mov rsi, [rip + g_project_name]
+1:  call wfold_title            # resources group: "app + lib" for two workspace folders or more
+    mov rsi, rax
     test rsi, rsi
     jnz 2f
     lea rsi, [rip + .Lrhun]
@@ -2322,7 +2332,13 @@ FN app_on_paste
     mov rsi, r12
     call scm_paste
     jmp 9f
-0:  mov rdi, rbx                # a picture with the keyboard (views group, viewpic.s)
+0:  cmp dword ptr [rip + g_focus], FOCUS_AGENT_INPUT
+    jne 5f
+    mov rdi, rbx                # and an agent's prompt box
+    mov rsi, r12
+    call agentext_paste
+    jmp 9f
+5:  mov rdi, rbx                # a picture with the keyboard (views group, viewpic.s)
     mov rsi, r12
     call views_paste
     test eax, eax
@@ -2373,6 +2389,8 @@ FN focused_field
     je extpage_field
     cmp eax, FOCUS_EDITOR
     je vim_field
+    cmp eax, FOCUS_AGENT_INPUT
+    je agentext_field
     xor eax, eax
     ret
 
@@ -2521,11 +2539,20 @@ FN app_on_key
     jnz 9f
     jmp .Lk_bind
 73: cmp eax, FOCUS_SCM
-    jne .Lk_bind
+    jne 74f
     mov edi, r12d
     mov esi, r13d
     mov edx, r14d
     call scm_key
+    test eax, eax
+    jnz 9f
+    jmp .Lk_bind
+74: cmp eax, FOCUS_AGENT_INPUT  # AI (D4): an agent session's prompt box
+    jne .Lk_bind
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call agentext_input_key
     test eax, eax
     jnz 9f
 .Lk_bind:
@@ -4459,7 +4486,7 @@ tab_draw:
     xor eax, eax
     test rdi, rdi
     jz 87f
-    call git_path_color
+    call vcs_path_color         # git's, or a version control provider's (scmpanel.s)
 87: mov r9d, eax
     test eax, eax
     jnz 88f
@@ -6793,6 +6820,7 @@ tip_table:
 .endif
 .endif
 .Lpm_file: .asciz "Open File\342\200\246"
+.Lpm_add_folder: .asciz "Add Folder to Workspace\342\200\246"
 .Lpm_line: .asciz ""
 .Ld0: .asciz "Cancel"
 .Ld1: .asciz "Don't Save"
@@ -6880,7 +6908,11 @@ FN app_open_path
 .Lop_path:
     mov rdi, rbx
 .ifdef WINDOWS
-    call win_fullpath
+    cmp dword ptr [rip + g_remote], 0   # remote hosts: the host's paths stay POSIX (vfs.s)
+    je 90f
+    cmp byte ptr [rbx], '/'
+    je .Lop_posix
+90: call win_fullpath
     test rax, rax
     jnz 91f
     EPILOGUE
@@ -6888,6 +6920,7 @@ FN app_open_path
     mov r13d, 1
     jmp 2f
 .endif
+.Lop_posix:
     mov rbx, rdi
     # absolute path
     PATH_ABSOLUTE rbx, 1f
@@ -6911,6 +6944,10 @@ FN app_open_path
     mov r13d, 1
 2:  mov rdi, rbx
     call path_normalize
+    mov rdi, rbx                # resources group: a workspace file opens its folders (workspace.s)
+    call workspace_open_file
+    test eax, eax
+    jnz 8f
     mov rdi, rbx
     call vfs_is_dir
     test eax, eax

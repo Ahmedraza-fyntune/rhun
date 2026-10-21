@@ -4,10 +4,12 @@ and scm), driven headlessly with the scripted fake extension tests/ext/scmfake.p
 repository: Git data through rhun under [needs] git = read and the trust pause, commit-message
 providers beside the built-in ones, quick-diff bases for the gutter, and a second VCS provider tab."""
 import json
+import re
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import unittest
 import urllib.parse
 
@@ -322,6 +324,21 @@ class Menus(Base):
         self.assertIn('Open File', out)
         self.assertTrue(out[-1].startswith('tabs=*a.txt'), out)     # it was open: shown again
 
+    def test_extensions_add_items_to_history_rows(self):
+        sha = self.git('rev-parse', 'HEAD').strip()
+        exts = self.ext('tools', needs='', hello='hello 1 command-args', commands={'show_commit': []},
+                        ini="[menu.history_commit]\nshow_commit.group = 5_tools\n"
+                            "[menu.scm_resource]\nshow_commit.when = scmProvider == 'nobody'\n")
+        out = self.run_editor(['wait-git', 'cmd git_history', 'wait-git', 'wait 200', 'click 200 118 right',
+                               'wait 100', 'print-menu', 'menu-pick Show_Commit', 'wait-ext tools running', 'wait 300'],
+                              exts=exts, drop_waits=True)
+        self.assertEqual(out[:3], ['Copy Commit ID', '-', 'Show_Commit [rhun-tests/tools]'], out)
+        log = self.fake_log('tools')
+        runs = [(l, log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run tools.show_commit')]
+        self.assertEqual(len(runs), 1, log)
+        self.assertRegex(runs[0][0], r'^< 0 run tools\.show_commit \d+ menu \d+$')
+        self.assertEqual(runs[0][1], '| ' + repr(f'commit {sha}\n'))
+
     def test_git_trusted_key(self):
         out = self.run_editor(['wait-git', 'print-context gitTrusted'], drop_waits=True)
         self.assertIn('gitTrusted=true', out)
@@ -362,6 +379,23 @@ class QuickDiff(Base):
         self.assertEqual(self.marks(out), ['marks ...+.'])
         self.assertEqual([l for l in self.fake_log('qd') if ' quickdiff ' in l], [])
 
+    def test_refresh_asks_only_about_the_providers_own_files(self):
+        shutil.rmtree(self.proj / '.git')
+        go = str(self.proj / 'b.go')
+        self.ext('qdgo', needs='', hello='hello 1 quickdiff', answers={'quickdiff': {'body': 'package a\n'}},
+                 ini='on = startup\n[provides]\nquickdiff = *.go')
+        exts = self.provider(commands={'all': [['quickdiff-refresh 1', '-']],
+                                       'go': [[f'quickdiff-refresh {len(go)}', go]]})
+        self.run_editor(['wait-ext qd running', 'wait-ext qdgo running', 'wait 500', 'cmd qd.go', 'wait 500',
+                         'cmd qd.all', 'wait 500'], exts=exts, files=('a.txt', 'b.go'))
+        # requests answered: those sent minus those withdrawn (a start racing the file's opening may
+        # ask twice and withdraw the first)
+        def asks(name):
+            log = self.fake_log(name)
+            return len([l for l in log if ' quickdiff ' in l]) - len([l for l in log if l.startswith('< 0 cancel ')])
+        self.assertEqual(asks('qdgo'), 1, self.fake_log('qdgo'))    # only when b.go opened
+        self.assertEqual(asks('qd'), 2, self.fake_log('qd'))        # a.txt: opened, then "-"
+
     def test_refresh_asks_again(self):
         shutil.rmtree(self.proj / '.git')
         exts = self.provider(commands={'refresh': [['quickdiff-refresh 1', '-']],
@@ -397,6 +431,240 @@ class QuickDiff(Base):
         exts = self.ext('qd', needs='', hello='hello 1', commands={'refresh': [['quickdiff-refresh 1', '-']]})
         self.run_editor(['cmd qd.refresh', 'wait-ext qd running', 'wait 500'], exts=exts, drop_waits=True)
         self.assertEqual(self.replies('qd'), [('error 1 unknown no such request', None)])
+
+
+def act(icon, name, args='', label=''):
+    return f'action {icon} {name} {len(args.encode())} {len(label.encode())}\n{args}{label}'
+
+
+def scm_body(status, placeholder, actions, groups):
+    """an scm-update body: groups are (id, label, actions, resources), a resource (code, color, path,
+    records)"""
+    out = f'{len(status)} {len(placeholder)} {len(actions)} {len(groups)}\n{status}{placeholder}'
+    out += ''.join(actions)
+    for gid, label, gacts, res in groups:
+        out += f'group {gid} {len(label)} {len(gacts)} {len(res)}\n{label}' + ''.join(gacts)
+        for code, color, path, recs in res:
+            out += f'res {code} {color} {len(path.encode())} {len(recs)}\n{path}' + ''.join(recs)
+    return out
+
+
+class ScmPanel(Base):
+    """C4: a second version control system's panel, its colors and its quick-diff root"""
+
+    def provider(self, body, root=None, extra=(), hello='hello 1 scm command-args'):
+        root = str(root or self.proj)
+        reg = f'{len(root.encode())} 9\n{root}Mercurial'
+        cmds = {'start': [[f'scm-register {len(reg.encode())}', reg],
+                          [f'scm-update $SCM {len(body.encode())}', body], *extra],
+                'commit': [], 'open': [], 'stage': [], 'forget': [], 'input': [['scm-input $SCM', None]],
+                'set': [['scm-input-set $SCM 5', 'hello']]}
+        return self.ext('hg', needs='project = read', hello=hello, commands=cmds,
+                        ini='[provides]\nscm = yes')
+
+    def body(self):
+        return scm_body('3 changes on default', 'Message (Ctrl+Enter to commit)',
+                        [act('check', 'commit', 'go', 'Commit'), act('refresh', 'stage')],
+                        [('changes', 'Changes', [act('plus', 'stage', 'all', 'Add All')],
+                          [('M', 'modified', 'a.txt', ['command open 5\na.txt', act('plus', 'stage', 'a.txt', 'Add'),
+                                                        act('minus', 'forget', 'a.txt', 'Forget')]),
+                           ('?', 'untracked', 'src/new.txt', ['strike 0\n', 'tip 3\nnew']),
+                           ('!', 'deleted', 'gone.txt', [])])])
+
+    def start(self, exts, *actions):
+        return self.run_editor(['cmd hg.start', 'wait-ext hg running', 'wait 400', *actions, 'print-scm-ext'],
+                               exts=exts, drop_waits=True)
+
+    def test_the_panel_shows_status_buttons_and_groups(self):
+        out = self.start(self.provider(self.body()), 'cmd toggle_sidebar', 'wait 300', 'move 80 509', 'wait 700',
+                         'print-tip')
+        self.assertIn('tip=new', out)                               # src/new.txt's tip record
+        line = [l for l in out if l.startswith('scm 1 rhun-tests/hg ')]
+        self.assertEqual(line, [f'scm 1 rhun-tests/hg {self.proj.as_posix()} label=Mercurial '
+                                'status=3 changes on default input= actions=Commit,Stage'], out)
+        rows = [l for l in out if l.startswith('row ')]
+        self.assertEqual(len(rows), 4, out)
+        self.assertIn('label=Changes', rows[0])
+        self.assertIn('badge=3', rows[0])
+        self.assertIn('label=a.txt desc=M', rows[1])
+        self.assertIn('label=new.txt desc=?  src', rows[2])
+        self.assertEqual([r for r, _ in self.replies('hg')], ['ok 1 1', 'ok 2'])
+
+    def test_clicks_buttons_and_menus_run_its_commands(self):
+        out = self.start(self.provider(self.body()), 'scm-click 1 changes a.txt', 'wait 200', 'scm-action 1 0',
+                         'wait 200', 'scm-menu 1 changes a.txt', 'print-menu', 'print-scm-ext',
+                         'print-context scmProvider', 'print-context scmResourceStatus', 'menu-pick Forget', 'wait 200',
+                         'scm-menu 1 changes', 'print-menu', 'menu-pick Add All', 'wait 200',
+                         'scm-click 1 changes gone.txt', 'wait 200', 'print-tabs')
+        self.assertIn('Add', out)
+        self.assertIn('Forget', out)
+        self.assertIn('Open File', out)
+        self.assertIn('Add All', out)
+        self.assertIn('menu=scm_resource resource changes a.txt', out)
+        self.assertIn('scmProvider=rhun-tests/hg', out)
+        self.assertIn('scmResourceStatus=M', out)
+        self.assertIn('menu=scm_group group changes', out)
+        log = self.fake_log('hg')
+        # "< 0 run hg.NAME DOC ref LEN", then "| BODY"
+        runs = [(l.split()[3], log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run hg.') and ' ref ' in l]
+        self.assertEqual(runs, [('hg.open', "| 'a.txt'"), ('hg.commit', "| 'go'"), ('hg.forget', "| 'a.txt'"),
+                                ('hg.stage', "| 'all'")])
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertTrue(tabs[-1].endswith('*gone.txt'), out)     # a resource without a command opens its file
+
+    def test_inline_buttons_run_their_actions(self):
+        # with the sidebar shown at 1000x600: a.txt's row is at y 481; its actions with icons are
+        # buttons at its right end while it is hovered, the first rightmost
+        out = self.start(self.provider(self.body()), 'cmd toggle_sidebar', 'wait 300', 'move 100 481', 'wait 200',
+                         'click 210 481', 'wait 300', 'move 100 481', 'wait 200', 'click 184 481', 'wait 300')
+        log = self.fake_log('hg')
+        runs = [(l.split()[3], log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run hg.') and ' ref ' in l]
+        self.assertEqual(runs, [('hg.stage', "| 'a.txt'"), ('hg.forget', "| 'a.txt'")], out)   # not the row's open
+
+    def test_other_extensions_add_header_buttons(self):
+        self.provider(self.body())
+        exts = self.ext('tools', needs='', hello='hello 1 command-args', commands={'sync': []},
+                        ini='[command-options]\nsync.icon = refresh\n[menu.scm_title]\nsync.group = 1\n')
+        self.start(exts, 'cmd toggle_sidebar', 'wait 300', 'click 222 320', 'wait-ext tools running', 'wait 300')
+        log = self.fake_log('tools')
+        runs = [log[i + 1] for i, l in enumerate(log) if l.startswith('< 0 run tools.sync')]
+        self.assertEqual(runs, ['| ' + repr(f'scm rhun-tests/hg {self.proj.as_posix()}\n')], log)
+
+    def qd_provider(self):
+        body = scm_body('default', '', [], [('changes', 'Changes', [], [('M', 'modified', 'a.txt', [])])])
+        root = str(self.proj)
+        reg = f'{len(root.encode())} 9\n{root}Mercurial'
+        return self.ext('hg', needs='project = read', hello='hello 1 scm quickdiff command-args',
+                        ini='on = startup\n[provides]\nquickdiff = *.txt',
+                        answers={'quickdiff': {'body': 'hello world\nold line\n'}},
+                        events={'0 ready': [[f'scm-register {len(reg.encode())}', reg],
+                                            [f'scm-update $SCM {len(body.encode())}', body]]})
+
+    def test_a_click_without_a_command_opens_the_changes_against_the_base(self):
+        out = self.run_editor(['wait-ext hg running', 'wait-scm 1', 'wait 300', 'wait-quickdiff',
+                               'scm-click 1 changes a.txt', 'wait 300', 'print-tabs', 'print-doc'],
+                              exts=self.qd_provider(), drop_waits=True)
+        tabs = [l for l in out if l.startswith('tabs=')]
+        self.assertEqual(tabs, ['tabs=a.txt | *a.txt (Mercurial)'], out)
+        # the diff document: the hunk, then its lines (the gutter marks which are old and new)
+        self.assertIn('@@ -1,2 +1,3 @@ a.txt', out)
+        self.assertLess(out.index('old line'), out.index('second line'))
+
+    def test_the_file_opens_first_when_it_is_not_open(self):
+        out = self.run_editor(['wait-ext hg running', 'wait-scm 1', 'scm-click 1 changes a.txt', 'wait 300',
+                               'wait-quickdiff', 'wait 200', 'print-tabs'], exts=self.qd_provider(), files=(),
+                              drop_waits=True)
+        self.assertEqual([l for l in out if l.startswith('tabs=')], ['tabs=a.txt | *a.txt (Mercurial)'], out)
+
+    def test_the_message_box(self):
+        out = self.start(self.provider(self.body()), 'scm-focus 1', 'type fix it', 'cmd hg.input', 'wait 200',
+                         'key ctrl+Return', 'wait 200', 'cmd hg.set', 'wait 200')
+        self.assertIn(('ok 3 6', 'fix it'), self.replies('hg'))
+        self.assertIn('input=hello', [l for l in out if l.startswith('scm 1 ')][0])
+        log = self.fake_log('hg')
+        # Ctrl+Enter in the message box runs the first button: Commit, its ARGS "go"
+        self.assertIn(("< 0 run hg.commit 1 ref 2", "| 'go'"),
+                      [(l, log[i + 1]) for i, l in enumerate(log) if l.startswith('< 0 run hg.commit')])
+
+    def test_explorer_colors_and_letters(self):
+        shutil.rmtree(self.proj / '.git')
+        out = self.start(self.provider(self.body()), f'print-vcs {self.proj / "a.txt"}',
+                         f'print-vcs {self.proj / "src/new.txt"}', f'print-vcs {self.proj / "src"}',
+                         f'print-vcs {self.proj / "b.go"}')
+        vcs = [l for l in out if l.startswith('vcs=')]
+        self.assertTrue(vcs[0].startswith('vcs=M dir=0 color='), vcs)
+        self.assertTrue(vcs[1].startswith('vcs=? dir=0 color='), vcs)
+        self.assertTrue(vcs[2].startswith('vcs=? dir=1 color='), vcs)
+        self.assertEqual(vcs[3], 'vcs=- dir=0 color=000000')
+        self.assertNotEqual(vcs[0].split('color=')[1], vcs[1].split('color=')[1])
+
+    def test_a_registered_root_takes_quick_diff_inside_git(self):
+        reg = f'{len(str(self.proj).encode())} 2\n{self.proj}hg'
+        exts = self.ext('hg', needs='project = read', hello='hello 1 scm quickdiff',
+                        ini='on = startup\n[provides]\nscm = yes\nquickdiff = *.txt',
+                        answers={'quickdiff': {'body': 'hello world\nold line\nthird line\n'}},
+                        events={'0 ready': [[f'scm-register {len(reg.encode())}', reg]]})
+        out = self.run_editor(['wait-ext hg running', 'wait 500', 'cmd save', 'wait 500', 'print-git'],
+                              exts=exts, drop_waits=True)
+        self.assertIn('marks .~..', out)
+
+    def test_other_extensions_add_items_to_its_rows(self):
+        self.provider(self.body())
+        exts = self.ext('tools', needs='', hello='hello 1 command-args', commands={'lint': [], 'other': []},
+                        ini="[menu.scm_resource]\nlint.when = scmProvider == 'rhun-tests/hg' && scmResourceStatus == M\n"
+                            "other.when = scmProvider == 'git'\n")
+        out = self.start(exts, 'scm-menu 1 changes a.txt', 'print-menu', 'menu-pick Lint', 'wait 500')
+        rows = out[:out.index('Open File') + 4]
+        self.assertIn('Lint [rhun-tests/tools]', rows)
+        self.assertNotIn('Other [rhun-tests/tools]', rows)
+        log = self.fake_log('tools')
+        runs = [log[i + 1] for i, l in enumerate(log) if l.startswith('< 0 run tools.lint')]
+        self.assertEqual(runs, ['| ' + repr('resource changes a.txt\n')], log)
+
+    def test_files_already_open_get_a_newly_registered_roots_base(self):
+        reg = f'{len(str(self.proj).encode())} 2\n{self.proj}hg'
+        exts = self.ext('hg', needs='project = read', hello='hello 1 scm quickdiff',
+                        ini='on = startup\n[provides]\nscm = yes\nquickdiff = *.txt',
+                        answers={'quickdiff': {'body': 'hello world\nold line\nthird line\n'}},
+                        commands={'reg': [[f'scm-register {len(reg.encode())}', reg]]})
+        out = self.run_editor(['wait-ext hg running', 'wait-git', 'wait 300', 'print-git', 'cmd hg.reg', 'wait 300',
+                               'wait-quickdiff', 'print-git'], exts=exts, drop_waits=True)
+        marks = [l for l in out if l.startswith('marks ')]
+        self.assertEqual(marks[-1], 'marks .~..', out)               # the provider's base, not HEAD's
+        asks = [l for l in self.fake_log('hg') if re.match(r'^< \d+ quickdiff ', l)]
+        self.assertEqual(len(asks), 1, self.fake_log('hg'))
+
+    def test_stopping_removes_its_panels(self):
+        out = self.start(self.provider(self.body()), 'ext-set hg stop', 'wait 400')
+        self.assertFalse([l for l in out if l.startswith('scm 1 ')], out)
+
+    def test_bad_updates_and_handles(self):
+        bad = '1 0 0 1\nxgroup g 1 0 1\nGres M nocolor 1 0\na'
+        exts = self.provider(self.body(), extra=[[f'scm-update $SCM {len(bad)}', bad], ['scm-input 99', None]])
+        out = self.start(exts)
+        got = [r for r, _ in self.replies('hg')]
+        self.assertTrue(got[2].startswith('error 3 syntax'), got)
+        self.assertEqual(got[3], 'error 4 refused no such provider')
+        self.assertIn('label=a.txt desc=M', ' '.join(out))       # the bad update changed nothing
+        n = len(got)                                                # the log goes on in the same folder
+        exts = self.provider(self.body(), hello='hello 1')
+        self.start(exts)
+        self.assertTrue(self.replies('hg')[n][0].startswith('error 1 unknown'), self.replies('hg'))
+
+
+class ToolInVenv(Base):
+    """A version control extension runs its tool, a script whose #! names a virtual environment's
+    Python: under the kernel sandbox, the #! line past 64 bytes and the interpreter's install tree
+    (a framework Python runs itself again from inside it) are allowed with run = TOOL"""
+
+    def test_a_script_with_a_long_interpreter_path_runs(self):
+        venv = self.work / ('a-virtual-environment-with-a-rather-long-name-' + 'x' * 40)
+        subprocess.run([sys.executable, '-m', 'venv', '--without-pip', str(venv)], check=True, capture_output=True)
+        tool = venv / 'bin' / 'vcstool'
+        tool.write_text(f'#!{venv}/bin/python3\nimport sys\nprint("tool ran", sys.version_info[0])\n')
+        tool.chmod(0o755)
+        self.assertGreater(len(f'{venv}/bin/python3'), 64)
+        self.env['PATH'] = f'{venv}/bin:' + self.env.get('PATH', '/usr/bin:/bin')
+        # the extension is a shell script, as a compiled one would be: nothing else lets Python run
+        dst = self.work / 'exts/rhun-tests/hg'
+        dst.mkdir(parents=True)
+        (dst / 'extension.ini').write_text('name = hg\nowner = rhun-tests\ntitle = Hg\nversion = 1\nprotocol = 1\n'
+                                           'runtime = sh\nrun = fake.sh\non = command\n[commands]\ntool = Tool\n'
+                                           '[needs]\nproject = read\nrun = vcstool\n')
+        (dst / 'fake.sh').write_text('printf "hello 1\\n"\n'
+                                     'while IFS= read -r line; do\n'
+                                     '  case "$line" in\n'
+                                     '    "0 run "*) if out=$(vcstool 2>&1); then r="exec ok"; else r="exec failed"; fi\n'
+                                     '      printf "%s %s\\n" "$r" "$out" >> "$RHUN_STATE/log.txt" ;;\n'
+                                     '    "0 bye"*) exit 0 ;;\n'
+                                     '  esac\n'
+                                     'done\n')
+        out = self.run_editor(['cmd hg.tool', 'wait-ext hg running', 'wait 2000', 'print-extensions'],
+                              exts=self.work / 'exts', drop_waits=True)
+        log = [l.strip() for l in self.fake_log('hg') if l.startswith('exec ')]
+        if 'confined=0' in ' '.join(out):
+            self.skipTest('the kernel cannot confine here')
+        self.assertEqual(log, ['exec ok tool ran 3'], out)
 
 
 class CommitMessage(Base):
