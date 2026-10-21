@@ -38,6 +38,8 @@ F RX_fd, 4                      # its output, -1
 F RX_ran, 4                     # 1: it ran on the host (it starts again after a reconnect)
 F RX_waitconn, 4                # 1: it waits for the host to connect
 F RX_fresh, 4                   # 1: just made ready (the next start need not look again)
+F RX_rpid, 4                    # the pid it runs as on the host (remote_confine_code)
+F RX_pad2, 4
 F RX_hdir, 8                    # cstr: the host's folder
 F RX_part, 8                    # cstr: the host's folder being written
 F RX_src, 8                     # cstr: the local folder copied
@@ -134,6 +136,22 @@ FN remote_ext_load
     call mem_free
     mov eax, 1
 9:  EPILOGUE
+
+# remote_ext_confine_failed(ext) -> eax the EXITC_* code its child on the host failed to confine
+#   itself with, or 0 (ext_exited then restarts it unconfined, "not confined: REASON")
+FN remote_ext_confine_failed
+    PROLOGUE
+    xor esi, esi
+    call rx_find
+    test rax, rax
+    jz 9f
+    mov edi, [rax + RX_rpid]
+    test edi, edi
+    jz 9f
+    call remote_confine_code
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
 
 # remote_ext_spawn(ext) -> rax the pid (EXT_pid, EXT_in and EXT_out set, the program running on
 # the host), 0 while it waits (its files on their way, or the host not connected: it starts by
@@ -1775,6 +1793,10 @@ rx_spawn:
 1:  cmp qword ptr [rbx + EXT_script], 0
     je 2f
     mov dword ptr [rsp], 4 | 8
+    cmp dword ptr [rbx + EXT_noconfine], 0
+    je 11f
+    mov dword ptr [rsp], 4              # its child could not confine itself there: unconfined
+11:
     mov rdi, [rbx + EXT_prog]
     call strlen
     mov rsi, rax
@@ -1791,7 +1813,12 @@ rx_spawn:
     call sb_push_byte
     mov rdi, [r12 + RX_run]
     call rx_push
-3:  # the rest of argv, its paths the host's
+3:  # an extension whose child could not confine itself on the host runs unconfined there, the
+    # reason kept on its page (ext.s, as for a local one)
+    cmp dword ptr [rbx + EXT_noconfine], 0
+    je 31f
+    and dword ptr [rsp], ~8
+31: # the rest of argv, its paths the host's
     mov r13d, 1
     mov r14, [rip + argv_vec + VEC_ptr]
 4:  mov rdi, [r14 + r13*8]
@@ -1944,8 +1971,13 @@ rx_spawn:
     mov edx, 1
     SYS SYS_fcntl
     mov dword ptr [r12 + RX_ran], 1
+    mov [r12 + RX_rpid], r14d
     # how the host holds it
-    mov eax, [rip + g_remote_confined]
+    cmp dword ptr [rbx + EXT_noconfine], 0
+    je 13f
+    mov dword ptr [rbx + EXT_confined], CONFINED_NO     # EXT_confine_why says why
+    jmp 12f
+13: mov eax, [rip + g_remote_confined]
     test eax, eax
     jns 10f
     mov eax, CONFINED_NO

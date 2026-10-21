@@ -42,6 +42,8 @@
 .equ ACF_OEOF, 2                # the output ended and e was sent
 .equ ACF_EXITED, 4              # x was sent
 .equ ACF_ICLOSED, 8             # the program's input is closed
+.equ ACF_CONFINED, 16           # its child confines itself before the exec (MODE 3): a failure is
+                                #   in confine.s's page, slot CH (g_exts[CH])
 
 # poll roles (low 3 bits of a pmap entry; the channel above them)
 .equ PR_MUXIN, 0
@@ -62,6 +64,8 @@ F AC_credit, 8                  # bytes the client lets this side send on the ch
 F AC_grant, 8                   # input written to the program and not yet credited back
 F AC_ioff, 8                    # the written part of AC_ibuf
 F AC_ibuf, SB_SIZE              # input the program has not taken yet
+F AC_cfail, 4                   # RHUN_REMOTE_TEST_CONFINE: the failure its child reads as having (tests)
+F AC_pad, 4
 ENDSTRUCT AC_SIZE
 
 .bss
@@ -696,6 +700,13 @@ ag_groups_tick:
 1:  mov edi, [rbx]
     test edi, edi
     jz 5f
+    # its leader, when it is a child whose channel went (close): reaped, else it stays a zombie
+    mov edi, [rbx]
+    xor esi, esi
+    mov edx, WNOHANG
+    xor r10d, r10d
+    SYS SYS_wait4
+    mov edi, [rbx]
     neg edi
     xor esi, esi
     SYS SYS_kill
@@ -1124,7 +1135,19 @@ ag_reap:
     or dword ptr [rbx + AC_flags], ACF_EXITED
     mov edi, [rbx + AC_pid]     # what it started and left behind goes too (its session's group)
     call ag_group_add
-    cmp dword ptr [rip + ag_cin], 0
+    # a child that could not confine itself: its code in confine.s's page (EXITC_*), which the
+    # exit status alone cannot prove
+    test dword ptr [rbx + AC_flags], ACF_CONFINED
+    jz 41f
+    mov eax, r12d
+    imul rdi, rax, EXT_SIZE
+    add rdi, [rip + g_exts + VEC_ptr]
+    call confine_failed
+    test eax, eax
+    jnz 42f
+    mov eax, [rbx + AC_cfail]
+42: mov [rbx + AC_cfail], eax
+41: cmp dword ptr [rip + ag_cin], 0
     jl 3f                       # no window: attach tells it
     lea rdi, [rip + ag_wq]
     lea rsi, [rip + .Lx]
@@ -1138,6 +1161,17 @@ ag_reap:
     lea rdi, [rip + ag_wq]
     mov esi, [rbx + AC_status]
     call sb_push_u64
+    test dword ptr [rbx + AC_flags], ACF_CONFINED
+    jz 43f
+    cmp dword ptr [rbx + AC_cfail], 0
+    je 43f
+    lea rdi, [rip + ag_wq]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + ag_wq]
+    mov esi, [rbx + AC_cfail]
+    call sb_push_u64
+43:
     lea rdi, [rip + ag_wq]
     mov esi, 10
     call sb_push_byte
@@ -1952,6 +1986,7 @@ ag_spawn:
     mov rdi, [rsp + 96]
     mov rsi, [rsp + 8]
     mov rdx, [rsp + 56]
+    mov ecx, r13d
     call ag_confine
     mov [rsp + 104], eax
     mov [rsp + 112], rdx
@@ -2048,7 +2083,22 @@ ag_spawn:
     mov dword ptr [rbx + AC_mode], AM_PTY
 .Las_ok:
     mov dword ptr [rbx + AC_flags], 0
-    mov qword ptr [rbx + AC_credit], AG_WINDOW
+    mov dword ptr [rbx + AC_cfail], 0
+    cmp dword ptr [rsp + 104], 0
+    jl 92f                      # not an extension held here (MODE 3)
+    cmp qword ptr [rsp + 112], 0
+    jne 93f
+    or dword ptr [rbx + AC_flags], ACF_CONFINED  # prepared: the child confined itself, or failed to
+93: lea rdi, [rip + .Lenv_test_confine]
+    call getenv
+    test rax, rax
+    jz 92f
+    mov rdi, rax
+    mov esi, 3
+    call parse_u64
+    mov [rbx + AC_cfail], eax
+    or dword ptr [rbx + AC_flags], ACF_CONFINED  # tests: as if its child had failed
+92: mov qword ptr [rbx + AC_credit], AG_WINDOW
     mov qword ptr [rbx + AC_ioff], 0
     mov qword ptr [rbx + AC_grant], 0
     lea rdi, [rip + ag_tmp]
@@ -2127,6 +2177,7 @@ ag_confine:
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
+    mov [rsp + 48], ecx         # the channel
     xor ecx, ecx
 1:  cmp ecx, 6
     jae 3f
@@ -2140,12 +2191,17 @@ ag_confine:
     jne 2b
     inc ecx
     jmp 1b
-3:  cmp qword ptr [rip + g_exts + VEC_len], 0
-    jne 4f
+3:  # g_exts[CH]: a record of its own, so its slot in confine.s's page says how its child fared
+    mov eax, [rsp + 48]
+    cmp rax, [rip + g_exts + VEC_len]
+    jb 4f
     lea rdi, [rip + g_exts]
     mov esi, EXT_SIZE
     call vec_push
-4:  mov rbx, [rip + g_exts + VEC_ptr]
+    jmp 3b
+4:  mov eax, [rsp + 48]
+    imul rbx, rax, EXT_SIZE
+    add rbx, [rip + g_exts + VEC_ptr]
     mov rdi, [rsp]
     call strlen
     mov rsi, rax
@@ -2442,7 +2498,21 @@ ag_close:
     jz 8f
     mov edi, eax
     call ag_chan
-    mov rdi, rax
+    mov rbx, rax
+    # a program still running ends with its channel, and what it started with it (its group gets
+    # SIGHUP and SIGTERM, SIGKILL 2 s later; ag_groups_tick reaps the leader)
+    mov eax, [rbx + AC_mode]
+    cmp eax, AM_PIPE
+    je 1f
+    cmp eax, AM_PTY
+    jne 2f
+1:  mov edi, [rbx + AC_pid]
+    test edi, edi
+    jle 2f
+    test dword ptr [rbx + AC_flags], ACF_EXITED
+    jnz 2f
+    call ag_group_add
+2:  mov rdi, rbx
     call ag_free
 8:  mov rdi, r12
     xor esi, esi
@@ -3759,6 +3829,7 @@ ag_verbs:
 .Lenv_cmd: .asciz "printf '\\n@rhun-env\\n'; exec cat /proc/self/environ"
 .Lenv_mark: .ascii "\n@rhun-env\n"
 .Lenv_delay: .asciz "RHUN_REMOTE_DELAY_MS"
+.Lenv_test_confine: .asciz "RHUN_REMOTE_TEST_CONFINE"
 .Ldevnull: .asciz "/dev/null"
 .Lok: .asciz "ok "
 .Lerror: .asciz "error "
