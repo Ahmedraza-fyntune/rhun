@@ -28,6 +28,15 @@ class Notes(ViewsBase):
         self.assertIn('0 notify 1 closed', self.fake_log())
         self.assertIn('0 features view-tree view-log notify progress', self.fake_log())
 
+    def test_the_pointer_over_a_card_holds_it_without_redraws(self):
+        out = self.run_editor(['cmd viewfake.note', 'wait 200', 'print-notes'])
+        note = self.notes(out)[0]
+        x, y = map(int, note.split(' at=')[1].split(' ')[0].split(','))
+        out = self.run_editor(['cmd viewfake.note', 'wait 200', f'move {x + 20} {y + 20}', 'wait 3000', 'wait 3000',
+                               'wait 3000', 'print-notes'])
+        self.assertEqual(len(self.notes(out)), 1)
+        self.assertNotIn('0 notify 1 closed', self.fake_log())
+
     def test_a_button_runs_its_command_or_says_pressed(self):
         out = self.run_editor(['cmd viewfake.noteask', 'wait 200', 'print-notes', 'note-press 0 2', 'wait 100',
                                'print-notes', 'cmd viewfake.noteask', 'wait 200', 'note-press 0 1', 'wait 300',
