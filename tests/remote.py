@@ -161,6 +161,7 @@ class Remote(unittest.TestCase):
         return None
 
     def test_docker_bootstrap_cache_and_terminal(self):
+        docker('exec', HOST, 'rm', '-rf', '/root/.cache/rhun-remote')    # other tests ran first
         lines = ['wait-remote 90', 'print-remote', 'print-project', 'cmd toggle_terminal', 'wait 500',
                  'type echo hi-$((40+2))', 'key Return', 'wait-term hi-42', 'print-term']
         out = self.run_script('docker:' + HOST, '/root/proj', lines)
