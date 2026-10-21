@@ -78,6 +78,13 @@ class Docs(ViewsBase):
         self.assertEqual(heads[0]['scroll'], '0')
         self.assertGreater(int(heads[1]['scroll']), 1000)
 
+    def test_an_image_by_handle(self):
+        self.env['VIEWFAKE_PIC'] = 'nokeys'                             # views, view-images
+        out = self.shown('cmd viewfake.docimg', 'wait 400')
+        imgs = [l for l in out if l.startswith('item image ')]
+        self.assertEqual(len(imgs), 1, out)
+        self.assertIn(' w=30 h=10 ', imgs[0])
+
     def test_ops_rhun_refuses(self):
         self.shown('cmd viewfake.docbad', 'cmd viewfake.docbig', 'cmd viewfake.doctree', 'wait 400')
         errs = [l for l in self.fake_log() if l.startswith('error ')]

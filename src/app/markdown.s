@@ -43,6 +43,10 @@
 .equ MDK_DOT, 3
 .equ MDK_BOX, 4                 # a task item's box; MDI_style 1 when checked
 .equ MDK_LINE, 5                # a 1 px line (strikethrough, underline, rules)
+.equ MDK_IMAGE, 6               # an image; MDI_style its MD_imgs entry
+.equ MD_IMG_FILE_MAX, 8388608   # an image file's bytes
+.equ MD_IMG_SIDE_MAX, 4096
+.equ MD_IMG_BYTES, 33554432     # decoded images per document
 
 .equ MDF_UI, 0
 .equ MDF_SMALL, 1
@@ -74,8 +78,20 @@ F MD_pad, 4
 F MD_base, 8            # cstr, mem_alloc'd: the folder relative links name (md_set_base), or 0
 F MD_ext, 8             # the extension whose img: handles images name (md_from_body), or 0
 F MD_focus, 4           # the link the keyboard is on (drawn as hovered), -1
-F MD_pad2, 4
+F MD_imgbytes, 4        # its decoded images' bytes
+F MD_imgs, VEC_SIZE     # MDM: images, resolved when first laid out
 ENDSTRUCT MD_SIZE
+
+# an image (MD_imgs)
+STRUCT
+F MDM_link, 4           # its link (the source)
+F MDM_kind, 4           # 0 none (its alt text shows), 1 an img: handle, 2 a file decoded
+F MDM_id, 4             # the handle
+F MDM_w, 4              # its size, pixels
+F MDM_h, 4
+F MDM_pad, 4
+F MDM_img, IMG_SIZE     # a file's pixels
+ENDSTRUCT MDM_SIZE
 
 # a block
 STRUCT
@@ -274,6 +290,19 @@ FN md_free
     call vec_free
     lea rdi, [rbx + MD_items]
     call vec_free
+    xor r12d, r12d              # decoded files
+1:  cmp r12, [rbx + MD_imgs + VEC_len]
+    jae 2f
+    imul rdi, r12, MDM_SIZE
+    add rdi, [rbx + MD_imgs + VEC_ptr]
+    cmp dword ptr [rdi + MDM_kind], 2
+    jne 11f
+    add rdi, MDM_img
+    call image_free
+11: inc r12
+    jmp 1b
+2:  lea rdi, [rbx + MD_imgs]
+    call vec_free
     mov rdi, [rbx + MD_base]
     call mem_free
     mov rdi, rbx
@@ -347,6 +376,29 @@ FN md_open_link
 #   naming a file, opened in a tab (#fragment and ?query left out, %XX decoded); 0 otherwise
 #   (no base, a scheme, a drive, an absolute path, an anchor, a folder, nothing there)
 open_relative:
+    PROLOGUE
+    call build_rel
+    test eax, eax
+    jz 8f
+    lea rdi, [rip + rel_buf]
+    call vfs_stat
+    test eax, eax
+    jnz 8f
+    lea rdi, [rip + rel_buf]
+    call vfs_is_dir
+    test eax, eax
+    jnz 8f
+    lea rdi, [rip + rel_buf]
+    call app_open_path
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# build_rel(m, target cstr) -> eax 1 with rel_buf the base and the target (a path relative to it:
+#   #fragment and ?query left out, %XX decoded), 0 when it is not one (no base, a scheme, a drive,
+#   an absolute path, an anchor)
+build_rel:
     PROLOGUE
     mov rbx, rsi
     mov r12, [rdi + MD_base]
@@ -422,6 +474,77 @@ open_relative:
     inc rsi
     jmp 6b
 7:  mov byte ptr [rdi], 0
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# md_image(m, link) -> rax its MD_imgs entry, resolved the first time: an img:N handle of the
+#   document's extension, or a file under the base (at most 8 MB and 4096 px a side, 32 MB decoded
+#   per document); its kind 0 when it is neither (never fetched from the network)
+md_image:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12d, esi
+    xor ecx, ecx                # resolved before
+1:  cmp rcx, [rbx + MD_imgs + VEC_len]
+    jae 2f
+    imul rax, rcx, MDM_SIZE
+    add rax, [rbx + MD_imgs + VEC_ptr]
+    cmp [rax + MDM_link], r12d
+    je 9f
+    inc rcx
+    jmp 1b
+2:  lea rdi, [rbx + MD_imgs]
+    mov esi, MDM_SIZE
+    call vec_push
+    mov r13, rax
+    mov [r13 + MDM_link], r12d
+    mov rdi, rbx
+    mov esi, r12d
+    call md_link
+    test rdx, rdx
+    jz 8f
+    cmp rdx, 1000
+    ja 8f
+    mov r14, rax
+    mov r15, rdx
+    cmp r15, 4                  # img:N
+    jbe 3f
+    cmp dword ptr [r14], 0x3a676d69     # "img:"
+    jne 3f
+    lea rdi, [r14 + 4]
+    lea rsi, [r15 - 4]
+    call parse_u64
+    lea rcx, [r15 - 4]
+    cmp rdx, rcx
+    jne 8f
+    cmp rax, 0x7fffffff
+    ja 8f
+    mov [r13 + MDM_id], eax
+    mov rdi, [rbx + MD_ext]
+    test rdi, rdi
+    jz 8f
+    mov esi, eax
+    call viewimg_size
+    test eax, eax
+    jz 8f
+    mov [r13 + MDM_w], eax
+    mov [r13 + MDM_h], edx
+    mov dword ptr [r13 + MDM_kind], 1
+    jmp 8f
+3:  mov rdi, r14                # a file under the base
+    mov rsi, r15
+    call mem_dup
+    mov [rsp], rax
+    mov rdi, rbx
+    mov rsi, rax
+    call build_rel
+    mov [rsp + 8], eax
+    mov rdi, [rsp]
+    call mem_free
+    cmp dword ptr [rsp + 8], 0
+    je 8f
     lea rdi, [rip + rel_buf]
     call vfs_stat
     test eax, eax
@@ -430,9 +553,116 @@ open_relative:
     call vfs_is_dir
     test eax, eax
     jnz 8f
+    cmp qword ptr [rip + vfs_statbuf + 48], MD_IMG_FILE_MAX     # st_size
+    ja 8f
     lea rdi, [rip + rel_buf]
-    call app_open_path
-    mov eax, 1
+    call vfs_read_all
+    test rax, rax
+    jz 8f
+    mov r14, rax
+    mov r15, rdx
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + rel_buf]
+    call image_sniff
+    test eax, eax
+    jz 7f
+    mov rdi, r14
+    mov rsi, r15
+    mov edx, eax
+    lea rcx, [r13 + MDM_img]
+    call image_decode
+    test eax, eax
+    jnz 7f
+    mov eax, [r13 + MDM_img + IMG_w]
+    mov ecx, [r13 + MDM_img + IMG_h]
+    cmp eax, MD_IMG_SIDE_MAX
+    ja 6f
+    cmp ecx, MD_IMG_SIDE_MAX
+    ja 6f
+    imul eax, ecx
+    shl eax, 2
+    add eax, [rbx + MD_imgbytes]
+    cmp eax, MD_IMG_BYTES
+    ja 6f
+    mov [rbx + MD_imgbytes], eax
+    mov eax, [r13 + MDM_img + IMG_w]
+    mov [r13 + MDM_w], eax
+    mov eax, [r13 + MDM_img + IMG_h]
+    mov [r13 + MDM_h], eax
+    mov dword ptr [r13 + MDM_kind], 2
+    jmp 7f
+6:  lea rdi, [r13 + MDM_img]
+    call image_free
+7:  mov rdi, r14
+    call mem_free
+8:  mov rax, r13
+9:  EPILOGUE
+
+# image_run(run): an image's first run lays the image out on lines of its own, scaled to the
+#   width (never up past the window's scale) -> eax 1; 0 when it cannot be shown (its alt text
+#   shows instead)
+image_run:
+    PROLOGUE 16
+    mov r12, rdi
+    mov rbx, [rip + pm]
+    mov rdi, rbx
+    mov esi, [r12 + MDR_link]
+    call md_image
+    cmp dword ptr [rax + MDM_kind], 0
+    je 8f
+    mov r13, rax
+    sub rax, [rbx + MD_imgs + VEC_ptr]
+    xor edx, edx
+    mov ecx, MDM_SIZE
+    div rcx
+    mov [rsp], eax              # its entry
+    mov edi, [r13 + MDM_w]      # its size on screen
+    call sc
+    mov r14d, eax
+    mov edi, [r13 + MDM_h]
+    call sc
+    mov r15d, eax
+    mov ecx, [rip + lay_right]
+    sub ecx, [rip + lay_x0]
+    test ecx, ecx
+    jle 8f
+    cmp r14d, ecx
+    jle 1f
+    mov eax, r15d               # narrower: the height in proportion
+    imul eax, ecx
+    xor edx, edx
+    div r14d
+    mov r15d, eax
+    mov r14d, ecx
+1:  test r14d, r14d
+    jz 8f
+    test r15d, r15d
+    jnz 2f
+    mov r15d, 1
+2:  mov eax, [rip + lay_x]
+    cmp eax, [rip + lay_x0]
+    je 3f
+    call flow_newline
+3:  mov edi, MDK_IMAGE
+    call item_new
+    mov ecx, [rip + lay_x0]
+    mov [rax + MDI_x], ecx
+    mov ecx, [rip + lay_y]
+    mov [rax + MDI_y], ecx
+    mov [rax + MDI_w], r14d
+    mov [rax + MDI_h], r15d
+    mov ecx, [rsp]
+    mov [rax + MDI_style], ecx
+    add r15d, [rip + g_mt + 4*MI_4]
+    add [rip + lay_y], r15d
+    mov eax, [rip + lay_x0]
+    mov [rip + lay_x], eax
+    add eax, r14d
+    cmp eax, [rbx + MD_maxw]
+    jle 4f
+    mov [rbx + MD_maxw], eax
+4:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -3566,6 +3796,7 @@ flow:
     mov rbx, [rip + pm]
     mov eax, [rip + lay_x0]
     mov [rip + lay_x], eax
+    mov dword ptr [rsp + 40], -1    # the image last laid out (its link): its other runs go
     xor r12d, r12d              # the run
 .Lfl_run:
     cmp r12d, [rsp + 4]
@@ -3578,7 +3809,19 @@ flow:
     jz 1f
     call flow_newline
     jmp .Lfl_next
-1:  mov eax, [rip + lay_face]   # its face: code spans in the code face, emphasis sheared
+1:  test dword ptr [r13 + MDR_style], MS_IMAGE  # an image shown in place of its alt text
+    jz 11f
+    mov eax, [r13 + MDR_link]
+    cmp eax, [rsp + 40]
+    je .Lfl_next
+    mov rdi, r13
+    call image_run
+    test eax, eax
+    jz 11f
+    mov eax, [r13 + MDR_link]
+    mov [rsp + 40], eax
+    jmp .Lfl_next
+11: mov eax, [rip + lay_face]   # its face: code spans in the code face, emphasis sheared
     test dword ptr [r13 + MDR_style], MS_CODE
     jz 21f
     mov eax, MDF_CODE
@@ -4324,6 +4567,25 @@ FN md_draw
     je .Lmd_dot
     cmp eax, MDK_BOX
     je .Lmd_box
+    cmp eax, MDK_IMAGE
+    je .Lmd_image
+    jmp .Lmd_next
+.Lmd_image:
+    mov eax, [r13 + MDI_style]
+    imul r8, rax, MDM_SIZE
+    add r8, [rbx + MD_imgs + VEC_ptr]
+    mov edi, r15d
+    mov esi, r14d
+    mov edx, [r13 + MDI_w]
+    mov ecx, [r13 + MDI_h]
+    cmp dword ptr [r8 + MDM_kind], 1
+    jne 1f
+    mov r9d, [r8 + MDM_id]
+    mov r8, [rbx + MD_ext]
+    call viewimg_blit_id
+    jmp .Lmd_next
+1:  add r8, MDM_img
+    call viewimg_blit_img
     jmp .Lmd_next
 .Lmd_fill:
     mov edi, r15d
@@ -4676,6 +4938,7 @@ FN md_dump
 .Lk_dot: .asciz "dot"
 .Lk_box: .asciz "box"
 .Lk_line: .asciz "line"
+.Lk_image: .asciz "image"
 .Lf_level: .asciz " level="
 .Lf_quote: .asciz " quote="
 .Lf_list: .asciz " list="
@@ -4693,7 +4956,7 @@ FN md_dump
 .Lf_link: .asciz " link="
 .p2align 3
 type_names: .quad .Lt_para, .Lt_head, .Lt_code, .Lt_rule, .Lt_row
-kind_names: .quad .Lk_text, .Lk_fill, .Lk_dot, .Lk_box, .Lk_line
+kind_names: .quad .Lk_text, .Lk_fill, .Lk_dot, .Lk_box, .Lk_line, .Lk_image
 block_fields: .quad .Lf_level, MDB_level, .Lf_quote, MDB_quote, .Lf_list, MDB_list, .Lf_marker, MDB_marker
     .quad .Lf_num, MDB_num, .Lf_line, MDB_line, .Lf_runs, MDB_nrun, 0, 0
 item_fields: .quad .Lf_x, MDI_x, .Lf_y, MDI_y, .Lf_w, MDI_w, .Lf_h, MDI_h, .Lf_face, MDI_face

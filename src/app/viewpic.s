@@ -34,6 +34,7 @@ ENDSTRUCT VI_SIZE
 .bss
 .p2align 3
 vis: .zero VI_SIZE * VI_MAX
+vb_tmp: .zero VI_SIZE           # viewimg_blit_img's image as a VI
 .globl vimg_gen
 vimg_gen: .long 0               # an image went: static pictures render again
 vi_seq: .long 0
@@ -212,6 +213,51 @@ views_redraw:
     jmp 1b
 9:  mov dword ptr [rip + g_dirty], 1
     ret
+
+# viewimg_size(ext, id) -> eax its width, edx its height; 0, 0 when the extension has no such image
+FN viewimg_size
+    sub rsp, 8
+    call viewimg_find
+    add rsp, 8
+    test rax, rax
+    jz 8f
+    mov edx, [rax + VI_h]
+    mov eax, [rax + VI_w]
+    ret
+8:  xor eax, eax
+    xor edx, edx
+    ret
+
+# viewimg_blit_id(x, y, w, h, ext, id): that extension's image drawn so, when it has it
+FN viewimg_blit_id
+    PROLOGUE 16
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    mov rdi, r8
+    mov esi, r9d
+    call viewimg_find
+    test rax, rax
+    jz 9f
+    mov r8, rax
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call viewimg_blit
+9:  EPILOGUE
+
+# viewimg_blit_img(x, y, w, h, IMG*): a decoded image (image.s) drawn so
+FN viewimg_blit_img
+    mov rax, [r8 + IMG_px]
+    mov [rip + vb_tmp + VI_px], rax
+    mov eax, [r8 + IMG_w]
+    mov [rip + vb_tmp + VI_w], eax
+    mov eax, [r8 + IMG_h]
+    mov [rip + vb_tmp + VI_h], eax
+    lea r8, [rip + vb_tmp]
+    jmp viewimg_blit
 
 # viewimg_blit(x, y, w, h, VI*): the image scaled into the box (nearest pixel) over the canvas,
 #   within its clip
