@@ -35,6 +35,9 @@ drag_x0: .long 0
 drag_w0: .long 0
 sort_desc: .long 0              # tree_sort: descending
 cell_tip: .zero 1024            # a cut cell's text for its tooltip
+.p2align 3
+mdtip_text: .quad 0             # tree_md_tip: the text and its document
+mdtip_md: .quad 0
 
 .text
 
@@ -936,6 +939,52 @@ FN table_cells
 9:  mov rax, [rsp + 16]
     mov rdx, [rsp + 24]
     EPILOGUE
+
+# tree_md_tip(cstr) -> rax a Markdown document of the text (the last one made, kept while the text
+#   stays the same), 0 when it cannot be made
+FN tree_md_tip
+    PROLOGUE
+    mov rbx, rdi
+    mov rdi, rbx
+    call strlen
+    mov r12, rax
+    mov rdi, [rip + mdtip_text]
+    test rdi, rdi
+    jz 1f
+    mov rsi, rbx
+    call str_eq_cstrs
+    test eax, eax
+    jz 1f
+    mov rax, [rip + mdtip_md]
+    EPILOGUE
+1:  mov rdi, [rip + mdtip_md]
+    call md_free
+    mov rdi, [rip + mdtip_text]
+    call mem_free
+    mov rdi, rbx
+    mov rsi, r12
+    call mem_dup
+    mov [rip + mdtip_text], rax
+    mov rdi, rbx
+    mov rsi, r12
+    call md_new
+    mov [rip + mdtip_md], rax
+    EPILOGUE
+
+# str_eq_cstrs(a, b) -> eax 1 when the two cstrs are equal
+str_eq_cstrs:
+1:  movzx eax, byte ptr [rdi]
+    cmp al, [rsi]
+    jne 8f
+    test eax, eax
+    jz 9f
+    inc rdi
+    inc rsi
+    jmp 1b
+8:  xor eax, eax
+    ret
+9:  mov eax, 1
+    ret
 
 # table_tip(ptr, len) -> rax a cstr of the cell (cut to 1000 bytes) for tip_note_text
 FN table_tip

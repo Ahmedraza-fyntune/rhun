@@ -456,6 +456,18 @@ FN md_links
     mov rax, [rdi + MD_links + VEC_len]
     ret
 
+# md_source(m) -> rax its text, a cstr (LF line ends): what it was made from
+FN md_source
+    push rbx
+    mov rbx, rdi
+    lea rdi, [rbx + MD_src]     # NUL after the text, past its length
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rbx + MD_src + SB_len]
+    mov rax, [rbx + MD_src + SB_ptr]
+    pop rbx
+    ret
+
 # md_focus(m) -> eax the link the keyboard is on, -1
 FN md_focus
     mov eax, [rdi + MD_focus]

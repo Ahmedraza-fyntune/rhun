@@ -31,6 +31,7 @@
 .equ TT_text, 8
 .equ TT_fn, 16
 .equ TT_SIZE, 24
+.equ ID_TIP_MD, 0x6b0000         # a Markdown tooltip's links (views group)
 .equ TIP_TEXT_MAX, 4400          # bytes of a tip_note_text tooltip (a git command with a file's path)
 .equ RHUN_LEN, 5                # bytes of "rhûn", the name on the welcome screen
 .equ ID_WELCOME, 0x2a00          # + item
@@ -67,6 +68,9 @@ scroll_rem: .long 0, 0           # what scroll sensitivity left of a pixel, x an
 tip_since: .quad 0               # time_ms when the pointer reached tip_id
 tip_left: .quad 0                # time_ms when the pointer left a shown tooltip
 tip_text_id: .long 0             # the button whose tooltip is in tip_text (tip_note_text)
+tip_md_id: .long 0              # views group: the button whose tooltip is Markdown (tip_note_md) this frame
+.p2align 3
+tip_md: .quad 0                 # its MD* (markdown.s), noted again each frame it shows
 tip_text: .zero TIP_TEXT_MAX
 g_tabscroll: .long 0
 tab_end_press: .long 0           # the last left press was on the tab strip's empty end
@@ -5985,6 +5989,35 @@ FN tip_note_text
 9:  mov eax, r8d
     ret
 
+# tip_note_md(id, x, y_bottom, w, flags, MD*) -> flags: tip_note_text for a tooltip drawn as Markdown
+#   (views group: node tooltips with markdown agreed); its source is the plain text print-tip shows.
+#   The owner keeps the document and notes it each frame the button shows.
+FN tip_note_md
+    test r8d, UB_HOVER
+    jz 9f
+    mov [rip + tip_md], r9
+    mov [rip + tip_md_id], edi
+    push r8
+    push r8
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    sub rsp, 8
+    mov rdi, r9
+    call md_source              # rax its text (a cstr)
+    mov r9, rax
+    add rsp, 8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    pop r8
+    pop r8
+    jmp tip_note_text
+9:  mov eax, r8d
+    ret
+
 # tip_commit(): a new button restarts the delay, the same button keeps it, none hides at once;
 # so do a press, a drag, and the setting being off
 FN tip_commit
@@ -6130,6 +6163,15 @@ FN tip_draw
     call tip_current
     test rax, rax
     jz 9f
+    mov rcx, [rip + tip_md]        # a Markdown tooltip noted this frame (views group)
+    test rcx, rcx
+    jz 1f
+    mov ecx, [rip + tip_id]
+    cmp ecx, [rip + tip_md_id]
+    jne 1f
+    call tip_draw_md
+    jmp 9f
+1:
     mov [rsp], rax
     mov qword ptr [rsp + 24], 0    # "(shortcut)", or 0
     test rdx, rdx
@@ -6246,7 +6288,100 @@ FN tip_draw
     mov r8, [rsp + 24]
     COLOR r9d, T_MUTED
     call ui_text_c
-9:  EPILOGUE
+9:  mov qword ptr [rip + tip_md], 0
+    EPILOGUE
+
+# tip_draw_md(): the Markdown tooltip (tip_md): at most 70 columns wide and half the window high,
+#   placed as a text tooltip is
+tip_draw_md:
+    PROLOGUE 32
+    mov rbx, [rip + tip_md]
+    mov eax, [rip + g_face_ui + FACE_cellw]
+    imul eax, eax, 70
+    mov ecx, [rip + g_cv + CV_w]
+    sub ecx, [rip + g_mt + 4*MI_24]
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov r12d, eax               # the most it may take
+    mov rdi, rbx
+    mov esi, eax
+    call md_measure
+    add eax, [rip + g_mt + 4*MI_4]  # laid out again at its widest line, nothing wraps anew
+    cmp eax, r12d
+    cmovg eax, r12d
+    mov ecx, 1
+    cmp eax, ecx
+    cmovl eax, ecx
+    mov r12d, eax               # the text's width
+    mov rdi, rbx
+    mov esi, eax
+    call md_layout
+    mov ecx, [rip + g_cv + CV_h]
+    sar ecx, 1
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov r13d, eax               # its height
+    mov r14d, r12d              # the card: padding around
+    add r14d, [rip + g_mt + 4*MI_16]
+    mov r15d, r13d
+    add r15d, [rip + g_mt + 4*MI_12]
+    mov esi, [rip + tip_cx]     # centered under the button, inside the window
+    mov eax, [rip + tip_cw]
+    shr eax, 1
+    add esi, eax
+    mov eax, r14d
+    shr eax, 1
+    sub esi, eax
+    mov eax, [rip + g_cv + CV_w]
+    sub eax, r14d
+    sub eax, [rip + g_mt + 4*MI_4]
+    cmp esi, eax
+    cmovg esi, eax
+    M eax, MI_4
+    cmp esi, eax
+    cmovl esi, eax
+    mov [rsp], esi
+    mov eax, [rip + tip_cy]
+    add eax, [rip + g_mt + 4*MI_4]
+    lea ecx, [rax + r15]
+    cmp ecx, [rip + g_cv + CV_h]
+    jle 1f
+    mov eax, [rip + tip_cy]     # no room below: above the button
+    sub eax, [rip + g_mt + 4*MI_STATUS]
+    sub eax, [rip + g_mt + 4*MI_4]
+    sub eax, r15d
+    xor ecx, ecx
+    cmp eax, ecx
+    cmovl eax, ecx
+1:  mov [rsp + 4], eax
+    mov edi, [rsp]
+    mov esi, eax
+    mov edx, r14d
+    mov ecx, r15d
+    M r8d, MI_4
+    M r9d, MI_1
+    M eax, MI_RADIUS
+    push rax
+    push rax
+    call ui_card_shadow
+    add rsp, 16
+    mov eax, ID_TIP_MD
+    push rax
+    push rax
+    mov rdi, rbx
+    mov esi, [rsp + 16]
+    add esi, [rip + g_mt + 4*MI_8]
+    mov edx, [rsp + 16 + 4]
+    add edx, [rip + g_mt + 4*MI_6]
+    mov ecx, r12d
+    mov r8d, r13d
+    xor r9d, r9d
+    call md_draw
+    add rsp, 16
+    EPILOGUE
 
 # ---------------- toast ----------------
 

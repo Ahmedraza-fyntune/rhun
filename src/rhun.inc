@@ -1706,6 +1706,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_VIEW_TABLE, "view-table", 0      # views group: table views (columns, sorted, cell; sort)
     FEATURE FEAT_QUICK_INPUT, "quick-input", 0    # views group: quick, quick-set, quick-close (quick.s)
     FEATURE FEAT_VIEW_DOC, "view-doc", 0          # views group: doc views (rdoc.s, markdown.s)
+    FEATURE FEAT_MARKDOWN, "markdown", 0          # views group: Markdown in node tooltips and notification messages
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -3348,6 +3349,7 @@ ENDSTRUCT TR_SIZE
 .equ TRF_SELCHANGED, 2          # the select callback is due at the end of the frame
 .equ TRF_MULTI, 4               # multi-select
 .equ TRF_CHECKS, 8              # some node has a checkbox
+.equ TRF_MDTIPS, 4096           # views group: node tooltips are Markdown (an extension with markdown agreed)
 # a row: a node, or a marker row under a parent
 STRUCT
 F RW_node, 4            # node index; for a marker row the parent

@@ -422,6 +422,8 @@ def on_command(name):
         patch(views['readme'], [rec('doc', '', b'x' * 1048577)])
     elif name == 'doctree' and views.get('readme'):
         patch(views['readme'], [kids('', [node('a', 'A')])])
+    elif name == 'notemd':
+        notify('info', note_body('**Indexed** 12 files: see `todo` and *more*'))
     elif name == 'note':
         notify('info', note_body('Indexed 12 files', 'workspace'))
     elif name == 'noteask':
@@ -530,6 +532,8 @@ def main():
         features += ' quick-input'
     if os.environ.get('VIEWFAKE_DOC'):
         features += ' view-doc'
+    if os.environ.get('VIEWFAKE_MARKDOWN'):
+        features += ' markdown'
     send('hello 1' + features)
     while True:
         line = inp.readline()

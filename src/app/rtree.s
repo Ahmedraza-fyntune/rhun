@@ -2525,6 +2525,24 @@ draw_row:
 4921:mov rax, [r15 + ND_tip]
     test rax, rax
     jz .Ldr_ret
+    test dword ptr [rbx + TR_flags], TRF_MDTIPS
+    jz 4922f
+    mov rdi, rax                # Markdown: a document made once for the hovered row's text
+    call tree_md_tip
+    test rax, rax
+    jz 4923f
+    mov r9, rax
+    mov edi, [rbx + TR_idbase]
+    add edi, r12d
+    sub edi, [rip + tr_first]
+    mov esi, [rbx + TR_rect]
+    mov edx, r13d
+    add edx, [rsp + 12]
+    mov ecx, [rbx + TR_rect + 8]
+    mov r8d, [rsp + 16]
+    call tip_note_md
+    jmp .Ldr_ret
+4923:mov rax, [r15 + ND_tip]
 4922:push rax
     push rax
     mov edi, [rbx + TR_idbase]

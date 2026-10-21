@@ -513,7 +513,10 @@ rv_open:
     pop rcx
     pop rcx
     mov [rcx + RV_tree], rax
-    push rcx
+    FEAT_TEST rbx, FEAT_MARKDOWN    # its nodes' tooltips are Markdown
+    jz 31f
+    or dword ptr [rax + TR_flags], TRF_MDTIPS
+31: push rcx
     push rcx
     mov rdi, rax                # the extensions' manifest inline items on rows (menu.s)
     lea rsi, [rip + rv_rowbuttons]
