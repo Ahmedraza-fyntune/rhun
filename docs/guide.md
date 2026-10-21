@@ -736,7 +736,10 @@ When the pointer rests on a word, extensions that support it show a **hover card
 there first, then what each extension says, wrapped to the card's width; move the pointer onto
 the card to scroll it. A **lightbulb** in the gutter marks a line with a problem that has a quick
 fix: click it, or press `shift+alt+.`, to fix it. The **Results** tab keeps the last 8 sets of
-references and hierarchies (the arrows on its title go back and forth, the cross drops one);
+references, hierarchies and Find in Files results (`ctrl+Enter` in Find in Files moves its list
+there; the arrows on its title go back and forth, the cross drops one). While extensions are
+still searching its title shows their progress, and **Cancel Language Query** stops them and
+keeps what came;
 Enter opens a location, Space opens it and stays in the tab, Escape goes back to the editor. In a
 call hierarchy, expanding a row asks for that function's callers; the arrow button switches to
 the functions it calls. The **Outline** section of the sidebar (**Focus Outline**) lists the
