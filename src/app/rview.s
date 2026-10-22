@@ -3846,6 +3846,12 @@ patch_check_ops:
     mov [rip + p_rv], rax
     mov ecx, [rax + RV_kind]
     mov [rip + p_kind], ecx
+    push rax
+    push rax
+    mov rdi, [rax + RV_form]    # a form counts its fields across the patch's ops
+    call form_check_begin
+    pop rax
+    pop rax
     mov rdi, rax                # the action keys it would have, staged op by op
     call akeys_init
     xor eax, eax
@@ -6028,6 +6034,8 @@ FN rview_docs_frame_end
     cmp qword ptr [rax + RV_ext], 0
     je 2f
     cmp dword ptr [rax + RV_kind], RK_DOC
+    jne 2f
+    cmp dword ptr [rax + RV_vis], 1     # shown: a hidden view catches up when shown
     jne 2f
     mov rdi, [rax + RV_doc]
     test rdi, rdi

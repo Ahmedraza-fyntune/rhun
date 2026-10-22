@@ -164,7 +164,10 @@ ENDSTRUCT MDI_SIZE
 pm: .quad 0                     # the document being parsed or laid out
 body_rr: .zero RR_SIZE          # md_from_body's record
 em_face: .zero FACE_SIZE        # emphasis: the ui face, oblique (em_face_init)
-slug_buf: .zero SB_SIZE         # md_anchor: a heading's slug
+slug_buf: .zero SB_SIZE         # md_anchor: a heading's slug, and an earlier one's
+slug_buf2: .zero SB_SIZE
+hc_mem: .zero 96                # has_closer's failures: ptr, len, from, n for * _ ~
+hc_from: .quad 0
 rel_buf: .zero 4096             # a relative link's path
 pb: .zero SB_SIZE               # a paragraph's lines, joined with LF (\x01 before a hard break)
 cb: .zero SB_SIZE               # a code block's lines
@@ -772,8 +775,8 @@ FN md_y_line
 9:  ret
 
 # md_anchor(m, ptr, len) -> eax the top of the heading whose slug (GitHub's rule: lowercase, letters,
-#   digits, - and _ kept, spaces to -, other ASCII left out) is the text, -1 for none; a leading #
-#   is left out
+#   digits, - and _ kept, spaces to -, other ASCII left out; a slug used before gets -1, -2, ... in
+#   document order) is the text, -1 for none; a leading # is left out
 FN md_anchor
     PROLOGUE 16
     mov rbx, rdi
@@ -788,41 +791,46 @@ FN md_anchor
 1:  xor r14d, r14d              # block
 2:  cmp r14, [rbx + MD_blocks + VEC_len]
     jae 8f
-    imul r15, r14, MDB_SIZE
-    add r15, [rbx + MD_blocks + VEC_ptr]
-    cmp dword ptr [r15 + MDB_type], MDB_HEAD
+    imul rax, r14, MDB_SIZE
+    add rax, [rbx + MD_blocks + VEC_ptr]
+    cmp dword ptr [rax + MDB_type], MDB_HEAD
     jne 7f
-    lea rdi, [rip + slug_buf]   # its slug from its runs' text
-    call sb_clear
-    xor ecx, ecx
-3:  cmp ecx, [r15 + MDB_nrun]
-    jae 6f
-    mov [rsp], ecx
-    mov eax, [r15 + MDB_run0]
-    add eax, ecx
-    imul rax, rax, MDR_SIZE
-    add rax, [rbx + MD_runs + VEC_ptr]
-    mov esi, [rax + MDR_off]
-    mov edx, [rax + MDR_len]
-    add rsi, [rbx + MD_text + SB_ptr]
-    xor ecx, ecx
-4:  cmp ecx, edx
+    mov rdi, rbx                # its slug
+    mov esi, r14d
+    lea rdx, [rip + slug_buf]
+    call heading_slug
+    xor r15d, r15d              # the headings before it with the same slug
+    mov dword ptr [rsp], 0
+3:  cmp r15d, r14d
     jae 5f
-    movzx edi, byte ptr [rsi + rcx]
-    push rcx
-    push rdx
-    push rsi
-    push rsi
-    call slug_char
-    pop rsi
-    pop rsi
-    pop rdx
-    pop rcx
-    inc ecx
-    jmp 4b
-5:  mov ecx, [rsp]
-    inc ecx
+    imul rax, r15, MDB_SIZE
+    add rax, [rbx + MD_blocks + VEC_ptr]
+    cmp dword ptr [rax + MDB_type], MDB_HEAD
+    jne 4f
+    mov rdi, rbx
+    mov esi, r15d
+    lea rdx, [rip + slug_buf2]
+    call heading_slug
+    mov rcx, [rip + slug_buf + SB_len]
+    cmp rcx, [rip + slug_buf2 + SB_len]
+    jne 4f
+    mov rdi, [rip + slug_buf + SB_ptr]
+    mov rsi, [rip + slug_buf2 + SB_ptr]
+    test rcx, rcx
+    jz 31f
+    repe cmpsb
+    jne 4f
+31: inc dword ptr [rsp]
+4:  inc r15d
     jmp 3b
+5:  cmp dword ptr [rsp], 0
+    je 6f
+    lea rdi, [rip + slug_buf]
+    mov esi, '-'
+    call sb_push_byte
+    lea rdi, [rip + slug_buf]
+    mov esi, [rsp]
+    call sb_push_u64
 6:  mov rdi, [rip + slug_buf + SB_ptr]
     mov rsi, [rip + slug_buf + SB_len]
     cmp rsi, r13
@@ -833,16 +841,55 @@ FN md_anchor
     jz 61f
     repe cmpsb
     jne 7f
-61: mov eax, [r15 + MDB_y]
+61: imul rax, r14, MDB_SIZE
+    add rax, [rbx + MD_blocks + VEC_ptr]
+    mov eax, [rax + MDB_y]
     EPILOGUE
 7:  inc r14
     jmp 2b
 8:  mov eax, -1
     EPILOGUE
 
-# slug_char(byte): its part of a slug onto slug_buf
+# heading_slug(m, block, sb): the heading's slug in sb (before any -N)
+heading_slug:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13, rdx
+    mov rdi, r13
+    call sb_clear
+    imul r14, r12, MDB_SIZE
+    add r14, [rbx + MD_blocks + VEC_ptr]
+    xor r15d, r15d
+1:  cmp r15d, [r14 + MDB_nrun]
+    jae 9f
+    mov eax, [r14 + MDB_run0]
+    add eax, r15d
+    imul rax, rax, MDR_SIZE
+    add rax, [rbx + MD_runs + VEC_ptr]
+    mov esi, [rax + MDR_off]
+    mov edx, [rax + MDR_len]
+    add rsi, [rbx + MD_text + SB_ptr]
+    mov [rsp], rsi
+    mov [rsp + 8], edx
+    xor ecx, ecx
+2:  cmp ecx, [rsp + 8]
+    jae 3f
+    mov rsi, [rsp]
+    movzx edi, byte ptr [rsi + rcx]
+    mov [rsp + 12], ecx
+    mov rsi, r13
+    call slug_char
+    mov ecx, [rsp + 12]
+    inc ecx
+    jmp 2b
+3:  inc r15d
+    jmp 1b
+9:  EPILOGUE
+
+# slug_char(byte, sb): its part of a slug onto sb
 slug_char:
-    sub rsp, 8
+    push rsi
     cmp edi, 0x80
     jae 1f                      # beyond ASCII: kept
     cmp edi, ' '
@@ -864,13 +911,11 @@ slug_char:
     je 1f
     cmp edi, '_'
     je 1f
-    add rsp, 8
+    pop rsi
     ret                         # other ASCII: left out
 1:  mov esi, edi
-    lea rdi, [rip + slug_buf]
-    call sb_push_byte
-    add rsp, 8
-    ret
+    pop rdi
+    jmp sb_push_byte
 
 # ---------------- selection ----------------
 # Text is selected by text items (words) and bytes in them, in layout order; md_select_mouse gives
@@ -2709,6 +2754,9 @@ inline_runs:
     mov dword ptr [rip + in_style], 0
     mov dword ptr [rip + in_link], -1
     mov dword ptr [rip + in_depth], 0
+    mov qword ptr [rip + hc_mem], 0         # has_closer's memory is for one text
+    mov qword ptr [rip + hc_mem + 32], 0
+    mov qword ptr [rip + hc_mem + 64], 0
     mov rdi, r12
     mov rsi, r13
     call inline_parse
@@ -3208,7 +3256,9 @@ delim:
 8:  xor eax, eax
     EPILOGUE
 
-# has_closer(ptr, len, from, c, n) -> eax 1 when a run of at least n of c that can close follows
+# has_closer(ptr, len, from, c, n) -> eax 1 when a run of at least n of c that can close follows.
+#   A search that failed is remembered (per delimiter, for the same text): a later one from further
+#   on needing as long a run fails at once, so unmatched openers cost linear time, not quadratic
 has_closer:
     PROLOGUE
     mov r12, rdi
@@ -3216,6 +3266,18 @@ has_closer:
     mov r14, rdx
     mov r15d, ecx
     mov rbx, r8
+    mov [rip + hc_from], rdx
+    call hc_slot                # rax the delimiter's memory, or 0
+    test rax, rax
+    jz 1f
+    cmp [rax], r12              # the same text, from at or past a failure, a run as long
+    jne 1f
+    cmp [rax + 8], r13
+    jne 1f
+    cmp r14, [rax + 16]
+    jb 1f
+    cmp rbx, [rax + 24]
+    jae 8f
 1:  cmp r14, r13
     jae 8f
     movzx eax, byte ptr [r12 + r14]
@@ -3263,10 +3325,32 @@ has_closer:
     jmp 1b
 7:  inc r14
     jmp 1b
-8:  xor eax, eax
+8:  call hc_slot                # remember the failure: from the search's start
+    test rax, rax
+    jz 81f
+    mov [rax], r12
+    mov [rax + 8], r13
+    mov rcx, [rip + hc_from]
+    mov [rax + 16], rcx
+    mov [rax + 24], rbx
+81: xor eax, eax
     EPILOGUE
 9:  mov eax, 1
     EPILOGUE
+
+# hc_slot() -> rax has_closer's memory for the delimiter r15d ('*', '_', '~'), else 0
+hc_slot:
+    lea rax, [rip + hc_mem]
+    cmp r15d, '*'
+    je 9f
+    add rax, 32
+    cmp r15d, '_'
+    je 9f
+    add rax, 32
+    cmp r15d, '~'
+    je 9f
+    xor eax, eax
+9:  ret
 
 # link_at(ptr, len, i at '[', image) -> rax past the link (its text emitted as a link; an image's
 #   alt text), or 0 when it is not one

@@ -120,5 +120,21 @@ class Docs(ViewsBase):
         self.assertFalse(any(' kind=doc ' in l for l in out), out)
 
 
+    def long_md(self):
+        text = ''.join(f'## Section {i}\n\nText of section {i}.\n\n' for i in range(60))
+        (self.proj / 'long.md').write_text(text, encoding='utf-8')
+        (self.proj / 'other.txt').write_text('one\ntwo\nthree\n' * 20, encoding='utf-8')
+
+    def test_a_double_click_moves_only_the_followed_document(self):
+        self.long_md()
+        out = self.shown(f'open {self.proj / "long.md"}', 'wait 200', 'cmd viewfake.docfollow', 'wait 300')
+        head = [l for l in out if l.startswith('doc scroll=')][-1]
+        ox, oy = map(int, head.split(' at=')[1].split(' ')[0].split(','))
+        out = self.shown(f'open {self.proj / "long.md"}', 'wait 200', 'cmd viewfake.docfollow', 'wait 300',
+                         f'open {self.proj / "other.txt"}', 'wait 200', f'click {ox + 20} {oy + 200}',
+                         f'click {ox + 20} {oy + 200}', 'wait 200', 'print-state')
+        state = [l for l in out if l.startswith('tabs=')][-1]
+        self.assertIn(' active=other.txt line=1 ', state)
+
 if __name__ == '__main__':
     unittest.main()
