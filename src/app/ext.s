@@ -2674,7 +2674,7 @@ parse_needs:
     mov edi, NEEDS_SECRETS
     call needs_yes
     jmp 9f
-10: mov rdi, r12                # audio output, without microphone access
+10: mov rdi, r12                # local audio services; platform access is documented in v1.1
     lea rsi, [rip + .Ln_audio]
     call ini_key_is
     test eax, eax

@@ -790,7 +790,7 @@ win_wndproc_deferred:
     mov r15d, eax
     mov edi, eax
     call viewpic_modifiers
-    test eax, MOD_ALT
+    test r15d, MOD_ALT
     jz 9f
     cmp r13d, 115              # Alt+F4 belongs to Windows
     je .Lwm_default
