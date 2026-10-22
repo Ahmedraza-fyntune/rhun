@@ -18,7 +18,9 @@ args = sys.argv[1:]
 with open("events.jsonl", "a") as log:
     log.write(json.dumps([tool, *args]) + "\n")
 failure = os.environ.get("FAILURE", "")
-if tool == "xcrun" and args[:2] == ["notarytool", "submit"]:
+if tool == "codesign":
+    assert Path("build/rhun.app/Contents/Resources/LICENSE-Unicode.txt").read_text() == "Unicode license fixture\n"
+elif tool == "xcrun" and args[:2] == ["notarytool", "submit"]:
     if failure == "notary-exit":
         print('{"status": "Accepted"}')
         sys.exit(1)
@@ -36,7 +38,7 @@ elif tool == "xcrun" and args[:2] == ["stapler", "validate"]:
 elif tool == "spctl" and (failure == "gatekeeper" or (failure == "dmg-gatekeeper" and args[-1].endswith(".dmg"))):
     sys.exit(1)
 elif tool == "build-mac.sh":
-    Path("build/rhun.app").mkdir(parents=True, exist_ok=True)
+    Path("build/rhun.app/Contents/Resources").mkdir(parents=True, exist_ok=True)
 elif tool == "ditto":
     Path(args[-1]).touch()
 elif tool == "hdiutil":
@@ -48,6 +50,8 @@ def run_case(name, *, failure="", notarize="1", omit="", expected=1):
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         (work / "tools").mkdir()
+        (work / "assets/licenses").mkdir(parents=True)
+        (work / "assets/licenses/LICENSE-Unicode.txt").write_text("Unicode license fixture\n")
         (work / "bin").mkdir()
         (work / "build").mkdir()
         (work / "VERSION").write_text("0.17.1\n")
@@ -82,6 +86,7 @@ def run_case(name, *, failure="", notarize="1", omit="", expected=1):
             ticket_index = events.index(["xcrun", "stapler", "validate", "build/rhun.app"])
             assert ticket_index < zip_index, events
             assert ["spctl", "--assess", "--type", "execute", "--verbose=2", "build/rhun.app"] in events[:zip_index], events
+            assert (work / "build/rhun.app/Contents/Resources/LICENSE-Unicode.txt").read_text() == "Unicode license fixture\n"
             assert (work / "build/rhun-0.17.1-macos-arm64.zip").exists()
             assert (work / "build/rhun-0.17.1-macos-arm64.dmg").exists()
         print(f"ok   mac-package/{name}")

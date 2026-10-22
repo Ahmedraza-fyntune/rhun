@@ -1,0 +1,16 @@
+# example.com/app/sub
+sub/s.go:3:13: cannot use "s" (untyped string constant) as int value in variable declaration
+# example.com/app
+./main.go:4:2: declared and not used: x
+./main.go:4:7: undefined: undefinedThing
+./main.go:5:6: declared and not used: n
+./main.go:5:14: cannot use "s" (untyped string constant) as int value in variable declaration
+# example.com/app/sub
+vet: sub/s.go:3:13: cannot use "s" (untyped string constant) as int value in variable declaration
+# example.com/app
+# [example.com/app]
+vet: ./main.go:4:7: undefined: undefinedThing
+--- FAIL: TestSum (0.00s)
+    sum_test.go:8: got 1, want 2
+FAIL
+FAIL	example.com/app	0.003s

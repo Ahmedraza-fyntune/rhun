@@ -12,3 +12,6 @@ keywords = if then else elif fi case esac for select while until do done in func
 builtins = echo printf read cd pwd test true false kill wait jobs bg fg command type which grep sed awk find xargs cat head tail sort uniq cut tr wc ls cp mv rm mkdir rmdir touch chmod chown ln tar curl wget git sudo
 functions = no
 operators = no
+indent_open = then do in$ { ( [
+indent_close = fi done esac } ) ]
+indent_middle = else elif

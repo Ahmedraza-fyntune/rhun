@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""The remote agent (`rhun --remote-agent`, src/app/ragent.s) spoken to directly over its standard
+input and output with the mux protocol (src/app/remote.s, top): the hello, programs on pipes and
+pseudo-terminals with flow control, exits and kills, and the file system requests a remote window
+makes. Linux only (the agent is a Linux program); each run gets its own HOME."""
+import os
+from pathlib import Path
+import select
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
+
+
+class Agent:
+    """One agent process and a reader for its stream."""
+
+    def __init__(self, home, env_extra=None, session=None, preexec=None):
+        env = {'HOME': str(home), 'PATH': '/usr/local/bin:/usr/bin:/bin', 'SHELL': '/bin/sh',
+               'USER': 'tester'}
+        env.update(env_extra or {})
+        args = [str(EXE), '--remote-agent'] + (['--session', session] if session else [])
+        self.p = subprocess.Popen(args, preexec_fn=preexec, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        self.buf = b''
+        self.next_id = 1
+        self.data = {}          # channel -> bytes received
+        self.eof = set()
+        self.exits = {}
+        self.cfail = {}         # channel -> the confinement failure its x carried
+        self.credit = {}        # channel -> credit the agent gave back
+        self.events = []
+        self.replies = {}
+        line = self.line(10)
+        assert line.startswith(b'hello rhun-remote '), line
+        self.hello = line
+
+    def close(self):
+        try:
+            self.p.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.p.wait(5)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            self.p.wait()
+
+    def send(self, data):
+        self.p.stdin.write(data)
+        self.p.stdin.flush()
+
+    def fill(self, timeout):
+        r, _, _ = select.select([self.p.stdout], [], [], timeout)
+        if not r:
+            return False
+        chunk = os.read(self.p.stdout.fileno(), 1 << 20)
+        if not chunk:
+            raise EOFError('the agent closed its output')
+        self.buf += chunk
+        return True
+
+    def line(self, timeout):
+        end = time.time() + timeout
+        while b'\n' not in self.buf:
+            if not self.fill(max(0, end - time.time())) and time.time() >= end:
+                raise TimeoutError(self.buf)
+        line, self.buf = self.buf.split(b'\n', 1)
+        return line
+
+    def pump(self, timeout=0.2):
+        """Handle every complete message that arrives within timeout."""
+        end = time.time() + timeout
+        while True:
+            while self.one():
+                pass
+            left = end - time.time()
+            if left <= 0:
+                return
+            self.fill(left)
+
+    def one(self):
+        if b'\n' not in self.buf:
+            return False
+        head, rest = self.buf.split(b'\n', 1)
+        f = head.split(b' ')
+        kind = f[0]
+        need = 0
+        if kind == b'd':
+            need = int(f[2])
+        elif kind == b'ok':
+            need = int(f[2])
+        elif kind == b'v':
+            need = int(f[3])
+        if len(rest) < need:
+            return False
+        body, self.buf = rest[:need], rest[need:]
+        if kind == b'd':
+            self.data[int(f[1])] = self.data.get(int(f[1]), b'') + body
+        elif kind == b'e':
+            self.eof.add(int(f[1]))
+        elif kind == b'x':
+            self.exits[int(f[1])] = int(f[2])
+            if len(f) > 3:
+                self.cfail[int(f[1])] = int(f[3])
+        elif kind == b'w':
+            self.credit[int(f[1])] = self.credit.get(int(f[1]), 0) + int(f[2])
+        elif kind == b'v':
+            self.events.append((int(f[1]), int(f[2]), body))
+        elif kind == b'ok':
+            self.replies[int(f[1])] = ('ok', body)
+        elif kind == b'error':
+            self.replies[int(f[1])] = ('error', int(f[2]))
+        return True
+
+    def call(self, line, body=b'', timeout=10):
+        rid = self.next_id
+        self.next_id += 1
+        self.send(b'%d %s %d\n' % (rid, line.encode(), len(body)) + body)
+        end = time.time() + timeout
+        while rid not in self.replies:
+            if time.time() > end:
+                raise TimeoutError(line)
+            self.pump(0.05)
+        return self.replies.pop(rid)
+
+    def wait_for(self, cond, timeout=10):
+        end = time.time() + timeout
+        while not cond():
+            if time.time() > end:
+                raise TimeoutError
+            self.pump(0.05)
+
+
+def spawn_body(argv, cwd='', env=()):
+    out = cwd.encode() + b'\0'
+    for a in argv:
+        out += a.encode() + b'\0'
+    out += b'\0'
+    for e in env:
+        out += e.encode() + b'\0'
+    return out
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'the agent is a Linux program')
+class RemoteAgent(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name) / 'home'
+        self.home.mkdir()
+        self.agent = Agent(self.home)
+
+    def tearDown(self):
+        self.agent.close()
+        self.tmp.cleanup()
+
+    def test_hello_and_info(self):
+        f = self.agent.hello.split(b' ')
+        self.assertEqual(len(f), 4)
+        self.assertEqual(len(f[3]), 16)
+        kind, body = self.agent.call('info')
+        self.assertEqual(kind, 'ok')
+        self.assertIn(b'home=%s\n' % str(self.home).encode(), body)
+        self.assertIn(b'shell=/bin/sh\n', body)
+
+    def test_pipe_program(self):
+        a = self.agent
+        kind, body = a.call('spawn 3 0 3 0 0', spawn_body(['sh', '-c', 'echo out; echo err >&2; exit 7'],
+                                                        str(self.home)))
+        self.assertEqual(kind, 'ok', body)
+        self.assertGreater(int(body), 0)
+        a.wait_for(lambda: 3 in a.exits and 3 in a.eof)
+        self.assertEqual(a.exits[3], 7)
+        self.assertEqual(sorted(a.data[3].split()), [b'err', b'out'])
+
+    def test_input_and_credit(self):
+        a = self.agent
+        kind, _ = a.call('spawn 5 0 0 0 0', spawn_body(['cat']))
+        self.assertEqual(kind, 'ok')
+        payload = b'x' * 300000
+        a.send(b'd 5 %d\n' % len(payload) + payload + b'e 5\n')
+        a.wait_for(lambda: 5 in a.eof and len(a.data.get(5, b'')) == len(payload))
+        self.assertEqual(a.data[5], payload)
+        a.wait_for(lambda: a.credit.get(5, 0) == len(payload))
+        a.wait_for(lambda: a.exits.get(5) == 0)
+
+    def test_flow_control_stops_reading(self):
+        a = self.agent
+        kind, _ = a.call('spawn 6 0 0 0 0', spawn_body(['head', '-c', '3000000', '/dev/zero']))
+        self.assertEqual(kind, 'ok')
+        # the window is 1 MB: without credit no more comes
+        a.pump(1.0)
+        self.assertEqual(len(a.data.get(6, b'')), 1048576)
+        a.send(b'w 6 4000000\n')
+        a.wait_for(lambda: 6 in a.eof)
+        self.assertEqual(len(a.data[6]), 3000000)
+
+    def test_error_channel(self):
+        a = self.agent
+        kind, _ = a.call('spawn 7 0 8 0 0', spawn_body(['sh', '-c', 'echo o; echo e >&2']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 7 in a.eof and 8 in a.eof)
+        self.assertEqual(a.data[7], b'o\n')
+        self.assertEqual(a.data[8], b'e\n')
+
+    def test_env_and_path_lookup(self):
+        a = self.agent
+        kind, _ = a.call('spawn 9 0 0 0 0', spawn_body(['/bin/sh', '-c', 'echo "$RHUN_X:$HOME"'],
+                                                     env=['RHUN_X=yes']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 9 in a.eof)
+        self.assertEqual(a.data[9], b'yes:%s\n' % str(self.home).encode())
+        kind, err = a.call('spawn 10 0 0 0 0', spawn_body(['no-such-program-here']))
+        self.assertEqual((kind, err), ('error', 2))
+
+    def test_pty_shell_kill_resize(self):
+        a = self.agent
+        kind, body = a.call('spawn 11 1 0 100 30', spawn_body([], str(self.home), ['TERM=dumb']))
+        self.assertEqual(kind, 'ok', body)
+        a.send(b'd 11 22\nstty size; echo hi-$$\n')
+        a.wait_for(lambda: b'30 100' in a.data.get(11, b'') and b'hi-' in a.data.get(11, b''))
+        self.assertEqual(a.call('resize 11 120 40')[0], 'ok')
+        a.send(b'd 11 10\nstty size\n')
+        a.wait_for(lambda: b'40 120' in a.data.get(11, b''))
+        self.assertEqual(a.call('kill 11 9 1')[0], 'ok')
+        a.wait_for(lambda: 11 in a.exits)
+        self.assertEqual(a.exits[11], 128 + 9)
+
+    def test_terminal_close_hangs_up(self):
+        a = self.agent
+        kind, _ = a.call('spawn 12 1 0 80 24', spawn_body(['sh']))
+        self.assertEqual(kind, 'ok')
+        a.send(b'e 12\n')
+        a.wait_for(lambda: 12 in a.exits)
+        self.assertEqual(a.exits[12], 128 + 1)
+
+    def test_busy_channel(self):
+        a = self.agent
+        self.assertEqual(a.call('spawn 13 0 0 0 0', spawn_body(['sleep', '5']))[0], 'ok')
+        self.assertEqual(a.call('spawn 13 0 0 0 0', spawn_body(['true'])), ('error', 16))
+        self.assertEqual(a.call('kill 13 15 0')[0], 'ok')
+        a.wait_for(lambda: 13 in a.exits)
+
+    def test_files(self):
+        a = self.agent
+        d = self.home / 'proj'
+        p = str(d).encode()
+        self.assertEqual(a.call('mkdir 1', p + b'/sub/deep')[0], 'ok')
+        self.assertTrue((d / 'sub/deep').is_dir())
+        f = p + b'/a.txt'
+        self.assertEqual(a.call('write 2 644 %d' % len(f), f + b'hello\n')[0], 'ok')
+        self.assertEqual((d / 'a.txt').read_bytes(), b'hello\n')
+        self.assertEqual(a.call('write 2 644 %d' % len(f), f + b'again'), ('error', 17))
+        self.assertEqual(a.call('write 1 644 %d' % len(f), f + b'replaced\n')[0], 'ok')
+        self.assertEqual(a.call('write 4 644 %d' % len(f), f + b'more\n')[0], 'ok')
+        self.assertEqual((d / 'a.txt').read_bytes(), b'replaced\nmore\n')
+        self.assertEqual(a.call('read 0 100', f), ('ok', b'replaced\nmore\n'))
+        self.assertEqual(a.call('read 3 4', f), ('ok', b'lace'))
+        kind, st = a.call('stat', f)
+        self.assertEqual(kind, 'ok')
+        self.assertEqual(len(st), 144)
+        self.assertEqual(int.from_bytes(st[48:56], 'little'), 14)
+        self.assertEqual(a.call('stat', p + b'/missing'), ('error', 2))
+        os.symlink('a.txt', d / 'link')
+        self.assertEqual(a.call('readlink', p + b'/link'), ('ok', b'a.txt'))
+        self.assertEqual(a.call('realpath', p + b'/sub/../link'), ('ok', f))
+        kind, listing = a.call('list', p)
+        self.assertEqual(kind, 'ok')
+        entries = sorted(e for e in listing.split(b'\0') if e)
+        self.assertEqual(entries, [b'd sub', b'f a.txt', b'l link'])
+        b2 = p + b'/b.txt'
+        self.assertEqual(a.call('rename 0 %d' % len(f), f + b2)[0], 'ok')
+        self.assertTrue((d / 'b.txt').exists())
+        (d / 'c.txt').write_text('c')
+        self.assertEqual(a.call('rename 1 %d' % len(b2), b2 + p + b'/c.txt'), ('error', 17))
+        self.assertEqual(a.call('remove 0', p + b'/sub'), ('error', 39))
+        self.assertEqual(a.call('remove 1', p + b'/sub')[0], 'ok')
+        self.assertFalse((d / 'sub').exists())
+        self.assertEqual(a.call('remove 0', b2)[0], 'ok')
+        self.assertFalse((d / 'b.txt').exists())
+
+    def test_links_access_and_parts(self):
+        a = self.agent
+        d = self.home / 'p'
+        (d / 'sub').mkdir(parents=True)
+        (d / 'f').write_text('x')
+        os.symlink('sub', d / 'tosub')
+        os.symlink('f', d / 'tof')
+        os.symlink('missing', d / 'dangling')
+        p = str(d).encode()
+        kind, listing = a.call('list', p)
+        self.assertEqual(sorted(e for e in listing.split(b'\0') if e),
+                         [b'L tosub', b'd sub', b'f f', b'l dangling', b'l tof'])
+        self.assertEqual(a.call('access 2', p + b'/f')[0], 'ok')
+        self.assertEqual(a.call('access 2', p + b'/none'), ('error', 2))
+        big = p + b'/big'
+        self.assertEqual(a.call('write 8 600 %d' % len(big), big + b'one,')[0], 'ok')
+        self.assertEqual(a.call('write 4 600 %d' % len(big), big + b'two')[0], 'ok')
+        self.assertEqual((d / 'big').read_bytes(), b'one,two')
+        self.assertEqual(oct((d / 'big').stat().st_mode & 0o777), '0o600')
+
+    def test_files_and_grep(self):
+        a = self.agent
+        d = self.home / 'proj'
+        (d / 'src/deep').mkdir(parents=True)
+        (d / '.git').mkdir()
+        (d / 'node_modules').mkdir()
+        (d / 'src/a.rs').write_text('fn main() {\n    let Needle = 1;\n}\n')
+        (d / 'src/deep/b.txt').write_text('needle here\nnothing\n\t\tneedle again\n')
+        (d / 'node_modules/x.js').write_text('needle')
+        (d / '.git/config').write_text('needle')
+        (d / 'bin.dat').write_bytes(b'needle\0\1\2')
+        body = str(d).encode() + b'\0.git node_modules'
+        kind, files = a.call('files 1000', body)
+        self.assertEqual(kind, 'ok')
+        self.assertEqual(sorted(f for f in files.split(b'\0') if f), [b'bin.dat', b'src/a.rs', b'src/deep/b.txt'])
+        kind, out = a.call('files 1', body)
+        self.assertEqual(len([f for f in out.split(b'\0') if f]), 1)
+        kind, out = a.call('grep 100 0', body + b'\0needle')
+        self.assertEqual(kind, 'ok')
+        f = out.split(b'\0')
+        recs = [tuple(f[i:i + 4]) for i in range(0, len(f) - 1, 4)]
+        self.assertEqual(sorted(recs), [(b'src/a.rs', b'1', b'8', b'let Needle = 1;'),
+                                        (b'src/deep/b.txt', b'0', b'0', b'needle here'),
+                                        (b'src/deep/b.txt', b'2', b'2', b'needle again')])
+        kind, out = a.call('grep 100 1', body + b'\0Needle')
+        self.assertEqual(out.split(b'\0')[:2], [b'src/a.rs', b'1'])
+        self.assertEqual(len(out.split(b'\0')), 5)
+
+    def test_watch(self):
+        a = self.agent
+        d = self.home / 'w'
+        d.mkdir()
+        p = str(d).encode()
+        kind, wd = a.call('watch %d' % (0x2 | 0x8 | 0x100 | 0x200 | 0x40 | 0x80), p)
+        self.assertEqual(kind, 'ok')
+        (d / 'new.txt').write_text('x')
+        a.wait_for(lambda: any(e[2] == b'new.txt' and e[1] & 0x100 for e in a.events))
+        self.assertTrue(all(e[0] == int(wd) for e in a.events))
+        self.assertEqual(a.call('unwatch %d' % int(wd))[0], 'ok')
+
+    def test_unknown_verb_and_garbage(self):
+        a = self.agent
+        self.assertEqual(a.call('frobnicate'), ('error', 38))
+        # data for a channel that is not there is dropped
+        a.send(b'd 900 3\nabc')
+        self.assertEqual(a.call('info')[0], 'ok')
+
+    def test_quit_ends_programs(self):
+        a = self.agent
+        kind, body = a.call('spawn 14 0 0 0 0', spawn_body(['sleep', '30']))
+        self.assertEqual(kind, 'ok')
+        pid = int(body)
+        a.send(b'0 quit 0\n')
+        a.p.wait(5)
+        end = time.time() + 5
+        while time.time() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail('sleep outlived the agent')
+
+    def gone_within(self, pid, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            # a zombie of a parent that has not reaped it yet counts as gone
+            try:
+                if Path('/proc/%d/stat' % pid).read_text().split(') ', 1)[1].startswith('Z'):
+                    return True
+            except (OSError, IndexError):
+                return True
+            time.sleep(0.05)
+        return False
+
+    # a child that ignores SIGHUP and SIGTERM, its output elsewhere: only its group's SIGKILL ends it
+    # (the leader goes on once the child's traps are set)
+    STUBBORN = ("r=$HOME/ready-$$; (trap '' HUP TERM; : > $r; exec sleep 300) </dev/null >/dev/null 2>&1 & "
+                "while [ ! -e $r ]; do sleep 0.02; done; echo $!")
+
+    def test_what_a_program_leaves_behind_ends_with_it(self):
+        a = self.agent
+        kind, _ = a.call('spawn 15 0 0 0 0', spawn_body(['sh', '-c', self.STUBBORN + '; exit 0']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 15 in a.exits and 15 in a.eof)
+        child = int(a.data[15])
+        os.kill(child, 0)                       # still there right after its leader's exit
+        self.assertTrue(self.gone_within(child, 4), 'the stubborn child outlived its group')
+
+    def test_what_a_program_leaves_behind_ends_with_the_session(self):
+        a = self.agent
+        kind, _ = a.call('spawn 16 0 0 0 0', spawn_body(['sh', '-c', self.STUBBORN + '; exec sleep 300']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(16, b''))
+        child = int(a.data[16])
+        a.p.stdin.close()                       # the window went away
+        a.p.wait(10)
+        self.assertTrue(self.gone_within(child, 4), 'the stubborn child outlived the session')
+
+    def test_a_session_outlives_its_connection(self):
+        """--session: the first agent forks the session's daemon and relays to it; when its
+        connection ends the programs keep running, and the next agent of that session attaches to
+        them; quit ends the session and its socket."""
+        sid = '0123456789abcdef'
+        a = Agent(self.home, session=sid)
+        kind, body = a.call('spawn 20 0 0 0 0', spawn_body(['sh', '-c', 'read x; echo got-$x; exit 3']))
+        self.assertEqual(kind, 'ok')
+        pid = int(body)
+        kind, body = a.call('spawn 21 0 0 0 0', spawn_body(['sh', '-c', 'exit 5']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 21 in a.exits)
+        a.close()                               # the connection goes
+        time.sleep(0.5)
+        os.kill(pid, 0)                         # the program did not
+        self.assertTrue((self.home / '.cache/rhun-remote/s' / sid).exists())
+        b = Agent(self.home, session=sid)
+        kind, body = b.call('attach')
+        self.assertEqual(kind, 'ok')
+        rows = {int(l.split()[0]): l.split()[1:] for l in body.decode().splitlines()}
+        self.assertEqual(rows[20][1], '0', body)    # running, its output still open
+        self.assertEqual(rows[21], ['1', '3', '5'], body)  # ended: kept until the window closes it
+        self.assertEqual(b.call('close 21')[0], 'ok')
+        self.assertNotIn(b'\n21 ', b'\n' + b.call('attach')[1])
+        b.send(b'd 20 3\nhi\n')
+        b.wait_for(lambda: 20 in b.exits and b'got-hi' in b.data.get(20, b''))
+        self.assertEqual(b.exits[20], 3)
+        b.send(b'0 quit 0\n')
+        b.p.wait(10)
+        end = time.time() + 5
+        while (self.home / '.cache/rhun-remote/s' / sid).exists() and time.time() < end:
+            time.sleep(0.05)
+        self.assertFalse((self.home / '.cache/rhun-remote/s' / sid).exists())
+
+    def test_a_create_that_cannot_be_filled_leaves_nothing(self):
+        """write 2 (create only, a multipart save's first part) that runs out of room removes the file
+        it made; one that finds a file there leaves it alone (EEXIST). The room: RLIMIT_FSIZE."""
+        import resource
+        import signal
+
+        def small_files():
+            resource.setrlimit(resource.RLIMIT_FSIZE, (1 << 20, 1 << 20))
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+        a = Agent(self.home, preexec=small_files)
+        try:
+            path = str(self.home / 'big.rhun-save').encode()
+            data = b'x' * (2 << 20)
+            kind, err = a.call('write 2 0644 %d' % len(path), path + data)
+            self.assertEqual(kind, 'error')
+            self.assertFalse((self.home / 'big.rhun-save').exists())
+            (self.home / 'big.rhun-save').write_text('keep')
+            kind, err = a.call('write 2 0644 %d' % len(path), path + b'y')
+            self.assertEqual((kind, err), ('error', 17))
+            self.assertEqual((self.home / 'big.rhun-save').read_text(), 'keep')
+        finally:
+            a.close()
+
+    def test_a_confinement_failure_survives_a_reattach(self):
+        """The child failed to confine itself while no window was attached: attach lists the code
+        with the exit, so the window still restarts it unconfined."""
+        sid = '00000000000000c7'
+        a = Agent(self.home, session=sid, env_extra={'RHUN_REMOTE_TEST_CONFINE': '72'})
+        state = self.home / 'st'
+        block = b'4\0' + str(self.home).encode() + b'\0\0' + str(state).encode() + b'\0\0\0'
+        body = spawn_body(['sh', '-c', 'sleep 1; exit 70'], str(self.home)) + b'\0' + block
+        self.assertEqual(a.call('spawn 35 3 0 0 0', body)[0], 'ok')
+        a.close()                               # gone before the exit
+        time.sleep(2)
+        b = Agent(self.home, session=sid)
+        try:
+            kind, body = b.call('attach')
+            rows = {int(l.split()[0]): l.split()[1:] for l in body.decode().splitlines()}
+            self.assertTrue(int(rows[35][1]) & 1, body)          # exited
+            self.assertEqual(rows[35][2:], ['70', '72'], body)
+        finally:
+            b.send(b'0 quit 0\n')
+            b.p.wait(10)
+
+    def test_stop_close_and_hangup_end_what_a_program_left(self):
+        """As uproc does locally: a program stopped (kill to its group), its channel closed while it
+        runs, or its terminal hung up, takes what it started with it, SIGKILL for what ignores the rest."""
+        a = self.agent
+        lead = self.STUBBORN + '; exec sleep 300'
+        # stopped: SIGTERM to its group ends the leader, the agent ends the rest
+        self.assertEqual(a.call('spawn 30 0 0 0 0', spawn_body(['sh', '-c', lead]))[0], 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(30, b''))
+        child = int(a.data[30])
+        self.assertEqual(a.call('kill 30 15 1')[0], 'ok')
+        a.wait_for(lambda: 30 in a.exits)
+        self.assertTrue(self.gone_within(child, 4), 'stop left the child')
+        # closed while running: the leader and the child go, the leader is reaped
+        kind, body = a.call('spawn 31 0 0 0 0', spawn_body(['sh', '-c', lead]))
+        leader = int(body)
+        a.wait_for(lambda: b'\n' in a.data.get(31, b''))
+        child = int(a.data[31])
+        self.assertEqual(a.call('close 31')[0], 'ok')
+        self.assertTrue(self.gone_within(child, 4), 'close left the child')
+        self.assertTrue(self.gone_within(leader, 4), 'close left the leader')
+        # a terminal hung up: its shell's leftovers go too
+        self.assertEqual(a.call('spawn 32 1 0 80 24', spawn_body(['sh', '-c', lead], env=['TERM=dumb']))[0], 'ok')
+        a.wait_for(lambda: b'\n' in a.data.get(32, b''))
+        child = int(a.data[32].strip().split()[-1])
+        a.send(b'e 32\n')
+        a.wait_for(lambda: 32 in a.exits)
+        self.assertTrue(self.gone_within(child, 4), 'the hangup left the child')
+
+    def test_a_confined_childs_failure_comes_with_its_exit(self):
+        """An extension's child that could not confine itself on the host (MODE 3): x carries the
+        code from confine.s's page (RHUN_REMOTE_TEST_CONFINE stands in for a kernel that refuses)."""
+        a = Agent(self.home, env_extra={'RHUN_REMOTE_TEST_CONFINE': '72'})
+        try:
+            state = self.home / 'st'
+            block = b'4\0' + str(self.home).encode() + b'\0\0' + str(state).encode() + b'\0\0\0'
+            body = spawn_body(['sh', '-c', 'exit 70'], str(self.home)) + b'\0' + block
+            self.assertEqual(a.call('spawn 33 3 0 0 0', body)[0], 'ok')
+            a.wait_for(lambda: 33 in a.exits)
+            self.assertEqual((a.exits[33], a.cfail.get(33)), (70, 72))
+            # a pipe program says nothing of the kind
+            self.assertEqual(a.call('spawn 34 0 0 0 0', spawn_body(['sh', '-c', 'exit 70']))[0], 'ok')
+            a.wait_for(lambda: 34 in a.exits)
+            self.assertNotIn(34, a.cfail)
+        finally:
+            a.close()
+
+    def test_login_environment(self):
+        """The login shell's profile reaches programs (a PATH entry like ~/.cargo/bin)."""
+        self.agent.close()
+        (self.home / '.profile').write_text('export RHUN_FROM_PROFILE=1\necho noise\n')
+        a = self.agent = Agent(self.home)
+        kind, _ = a.call('spawn 15 0 0 0 0', spawn_body(['sh', '-c', 'echo "$RHUN_FROM_PROFILE"']))
+        self.assertEqual(kind, 'ok')
+        a.wait_for(lambda: 15 in a.eof)
+        self.assertEqual(a.data[15], b'1\n')
+
+
+if __name__ == '__main__':
+    unittest.main()

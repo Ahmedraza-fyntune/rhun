@@ -1,0 +1,24 @@
+# Bounded immutable clipboard sources and nonblocking outgoing transfers.
+.equ WCS_COUNT, 32
+.equ WCS_SIZE, 64
+.equ WCS_id, 0
+.equ WCS_state, 4
+.equ WCS_refs, 8
+.equ WCS_ptr, 16
+.equ WCS_len, 24
+.equ WCS_wire, 32
+.equ WCS_wirelen, 40
+.equ WCS_charge, 48
+.equ WCS_BUDGET, 134217728
+.equ WCJ_COUNT, 16
+.equ WCJ_SIZE, 64
+.equ WCJ_active, 0
+.equ WCJ_fd, 4
+.equ WCJ_source, 8
+.equ WCJ_offset, 16
+.equ WCJ_deadline, 24
+.equ WCJ_generation, 32
+.equ WCJ_ptr, 40
+.equ WCJ_len, 48
+.equ WCK_COUNT, 32
+.equ WCF_COUNT, 256

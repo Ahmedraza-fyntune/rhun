@@ -201,6 +201,8 @@ FN session_remember_project
     mov rbx, [rip + g_project]
     test rbx, rbx
     jz 9f
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: a remote folder is a recent remote instead
+    jne 9f
     cmp dword ptr [rip + g_project_adopted], 0
     jne 9f
     # nor one a link opened, while git is paused there: a launch without arguments would reopen it
@@ -277,7 +279,12 @@ FN session_last_project
 # every / as % and every % as %%25: never %% otherwise, as a path has no //, so no two folders share
 # a name, and a path without % keeps the name it always had
 session_file:
+    lea rdi, [rip + .Lext]
+# session_project_file(suffix cstr) -> the state file for the current project with that suffix (a
+#   static buffer), or 0: the debugger keeps PROJECT.debug next to PROJECT.session
+FN session_project_file
     PROLOGUE
+    mov r13, rdi
     lea rdi, [rip + path_sb]
     call sb_clear
     mov rbx, [rip + g_project]
@@ -290,6 +297,12 @@ session_file:
     lea rdi, [rip + path_sb]
     mov esi, '/'
     call sb_push_byte
+    # remote hosts: a remote window's files are named by the remote and the folder (ssh:HOST/path)
+    cmp dword ptr [rip + g_remote], 0
+    je 3f
+    mov rdi, rbx
+    call remote_session_key
+    mov rbx, rax
 3:  movzx esi, byte ptr [rbx]
 .ifdef WINDOWS
     test esi, esi
@@ -360,8 +373,12 @@ session_file:
 41:
 .endif
     lea rdi, [rip + path_sb]
-    lea rsi, [rip + .Lext]
+    mov rsi, r13
     call sb_push_cstr
+    lea rdi, [rip + path_sb]
+    xor esi, esi
+    call sb_push_byte
+    dec qword ptr [rip + path_sb + SB_len]
     mov rax, [rip + path_sb + SB_ptr]
     EPILOGUE
 8:  xor eax, eax
@@ -448,7 +465,18 @@ recent_cb:
     inc rdx
     jmp 1b
 .else
-    cmp byte ptr [r12], '%'
+    mov rbx, r12                # the whole name
+    # remote hosts: a remote window lists its remote's folders (session files named SPEC%path)
+    cmp dword ptr [rip + g_remote], 0
+    je 12f
+    mov rdi, r12
+    mov rsi, r13
+    call remote_session_prefix
+    test rax, rax
+    jz 9f
+    add r12, rax
+    sub r13, rax
+12: cmp byte ptr [r12], '%'
     jne 9f
     # the folder: %%25 was a %, any other % a / (see session_file); ".session" ends a match
     lea rdi, [rip + rc_path]
@@ -474,6 +502,28 @@ recent_cb:
     jmp 1b
 .endif
 2:  mov byte ptr [rdi + rdx], 0
+.ifdef WINDOWS
+    # remote hosts: a remote window lists its remote's folders (decoded names are SPEC/path)
+    cmp dword ptr [rip + g_remote], 0
+    je 21f
+    call remote_spec
+    mov r14, rax
+    mov rdi, rax
+    call strlen
+    mov r15, rax
+    lea rdi, [rip + rc_path]
+    mov rsi, r14
+    mov rdx, r15
+    call memeq
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + rc_path]
+    cmp byte ptr [rdi + r15], '/'
+    jne 9f
+    lea rsi, [rdi + r15]
+    call cstr_copy
+21: lea rdi, [rip + rc_path]
+.endif
     mov rsi, [rip + g_project]
     test rsi, rsi
     jz 3f
@@ -481,11 +531,15 @@ recent_cb:
     test eax, eax
     jnz 9f
 3:  lea rdi, [rip + rc_path]
-    call file_is_dir
+    call vfs_is_dir             # the host's folder in a remote window
     test eax, eax
     jz 9f
     mov rdi, [rip + rc_dir + SB_ptr]
+.ifdef WINDOWS
     mov rsi, r12
+.else
+    mov rsi, rbx
+.endif
     call path_join_tmp
     mov rdi, rax
     call file_mtime_ns
@@ -584,7 +638,10 @@ FN session_save
     lea rdi, [rip + out]
     lea rsi, [rip + .Lpin]
     call sb_push_cstr
-12: lea rdi, [rip + out]
+12: mov rdi, r12                # "<TAB>folds=H-E,..." (fold.s)
+    lea rsi, [rip + out]
+    call fold_session_out
+    lea rdi, [rip + out]
     mov esi, 10
     call sb_push_byte
 2:  inc rbx
@@ -697,6 +754,9 @@ FN session_restore
     mov [rax + DOC_cur], rcx
     mov [rax + DOC_anchor], rcx
     or dword ptr [rax + DOC_flags], DF_REVEAL
+    mov rdi, rax                # its folds (fold.s)
+    mov rsi, [rsp + 24]
+    call fold_session_in
 7:  lea r14, [r15 + 1]
     jmp 1b
 8:  mov rdi, r12

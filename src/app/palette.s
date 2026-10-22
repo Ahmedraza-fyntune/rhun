@@ -11,6 +11,16 @@
 .equ PM_PROMPT, 6
 .equ PM_GREP, 7
 .equ PM_BROWSE, 8
+.equ PM_CHOOSE, 9               # an extension's pick list (choose)
+.equ PM_PROVIDERS, 11
+.equ PM_RESULTS, 10             # results from extensions: locations, symbols, code actions (langfeat.s)
+.equ PM_KEYS, 12                # Keyboard Shortcuts: every binding (keys.s keys_list)
+.equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
+.equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
+.equ PM_WSLIST, 88              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_WSYM, 92                # language features: Go to Symbol in Project (wsym.s)
+.equ PM_DPICK, 80               # debugger: a launch's ${pick:} or ${process} (debugask.s)
+.equ PM_ICONS, 64               # contributions: Select File Icon Theme (iconth.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -48,6 +58,7 @@ ENDSTRUCT RS_SIZE
 
 .bss
 .p2align 3
+gtr_query: .zero 104            # language features: Find in Files' query for the Results title
 pal_mode: .long 0
 pal_prompt: .long 0             # PROMPT_* when in PM_PROMPT
 pal_sel: .long 0
@@ -62,6 +73,7 @@ results: .zero VEC_SIZE
 strings: .zero SB_SIZE          # label storage for file items
 pal_label: .quad 0              # prompt label
 pal_theme_slot: .quad 0         # the theme setting the theme list picks for (theme_slot)
+pal_keys_cached: .quad 0        # 1 while keys_cache holds the built-in commands' shortcuts
 pal_path: .zero 4096
 scan_depth: .long 0
 scan_prefix: .zero 4096         # relative dir during scan
@@ -87,6 +99,14 @@ brw_kind: .long 0               # the path browser picks: 0 a file, 1 a folder
 brw_dir: .zero 4096             # the folder it lists
 brw_next: .zero 4096
 brw_label: .zero 4096
+rg_reply: .zero SB_SIZE         # remote hosts: the host's answer to rg_query (find in files)
+rg_paths: .zero SB_SIZE         # its files' paths, which gfiles' labels point into
+rg_query: .zero 256
+rg_query_len: .quad 0
+rg_asked: .zero 256             # the query out to the host
+rg_asked_len: .quad 0
+rg_out: .long 0                 # 1 while a query is out
+rg_groups: .zero VEC_SIZE       # rg_items: each file's first record, by path
 
 .text
 
@@ -100,16 +120,88 @@ FN palette_field
     lea rax, [rip + pal_tf]
     ret
 
+# palette_close_extensions_pure(): an extension's prompt or results close (their owner went
+# away), ordinary user prompts stay. No allocation or release.
+FN palette_close_extensions_pure
+    mov qword ptr [rip + pal_keys_cached], 0
+    mov eax, [rip + pal_mode]
+    cmp eax, PM_COMMANDS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_KEYS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_THEMES
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_ICONS
+    je .Lpal_detach_icons_pure
+    cmp eax, PM_LANGS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_PROVIDERS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_RESULTS
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_CHOOSE
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PM_PROMPT
+    jne 9f
+    mov eax, [rip + pal_prompt]
+    cmp eax, PROMPT_ASK
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PROMPT_TERM
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PROMPT_EXT_SETTING
+    je .Lpal_detach_borrowers_pure
+    cmp eax, PROMPT_RENAME_SYMBOL
+    je .Lpal_detach_borrowers_pure
+9:  ret
+.Lpal_detach_icons_pure:
+    push rax
+    mov rdi, -1
+    call iconth_preview         # the setting's icons again
+    pop rax
+.Lpal_detach_borrowers_pure:
+    push rax
+    call extpage_prompt_invalidate_pure
+    pop rax
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + pal_prompt], 0
+    mov qword ptr [rip + pal_label], 0
+    mov dword ptr [rip + pal_sel], 0
+    mov dword ptr [rip + pal_scroll], 0
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, [rip + g_focus]
+    cmp eax, FOCUS_PALETTE
+    je pal_return_focus
+    cmp eax, FOCUS_PROMPT
+    je pal_return_focus
+    ret
+
+# FN palette_icon_themes(): Select File Icon Theme, previewing the row under the selection
+FN palette_icon_themes
+    mov edi, PM_ICONS
+    jmp palette_open
+
 # palette_open(mode)
 palette_open:
     PROLOGUE
     mov ebx, edi
+    call extpage_prompt_invalidate_pure
+    call pal_save_cancel
+    call pal_remote_cancel
+    call ext_provider_cancel
+    call extproto_prompt_abort  # an extension's prompt that was open is cancelled
+    call wslist_abort           # wsedit: and a workspace edit's question
     # from the theme list to another list (its shortcut): the settings' theme again, as on closing
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
     cmp ebx, PM_THEMES
     je 1f
     call theme_apply_config
+1:  cmp dword ptr [rip + pal_mode], PM_ICONS    # the file icons the setting chooses again
+    jne 1f
+    mov rdi, -1
+    call iconth_preview
 1:  call grep_release
     mov [rip + pal_mode], ebx
     mov dword ptr [rip + pal_sel], 0
@@ -137,8 +229,19 @@ palette_open:
     call load_themes
     jmp 8f
 3:  cmp ebx, PM_LANGS
-    jne 8f
+    jne 4f
     call load_langs
+    jmp 8f
+4:  cmp ebx, PM_KEYS
+    jne 5f
+    lea rdi, [rip + item_add]
+    call keys_list
+    jmp 8f
+5:  cmp ebx, PM_ICONS
+    jne 8f
+    lea rdi, [rip + item_add]
+    call iconth_list
+    mov [rip + pal_sel], eax    # the setting's row
 8:  call palette_filter
     # the theme list shows its setting's theme, which need not be the one shown (the light mode's
     # theme from Settings while the system is dark)
@@ -150,15 +253,67 @@ palette_open:
 
 FN palette_close
     push rbx
+    call extpage_prompt_invalidate_pure
+    call pal_save_cancel
+    call pal_remote_cancel
+    call ext_provider_cancel
+    call extproto_prompt_abort
+    call wslist_abort           # wsedit
     # themes: the settings' theme again, after a preview or a change of the system's mode
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
     call theme_apply_config
+1:  cmp dword ptr [rip + pal_mode], PM_ICONS
+    jne 1f
+    mov rdi, -1
+    call iconth_preview
 1:  call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
     mov dword ptr [rip + g_dirty], 1
     pop rbx
+    ret
+
+# Accepting a prompt clears pal_mode before invoking its completion, so this handles only
+# Escape, outside clicks and replacement by another palette.
+pal_save_cancel:
+    cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_SAVE_AS
+    jne 1f
+    jmp app_save_prompt_cancel
+1:  ret
+
+# pal_remote_cancel(): remote hosts: a remote list or question closed without an answer
+pal_remote_cancel:
+    cmp dword ptr [rip + pal_mode], PM_REMOTE
+    je 1f
+    cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 2f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
+    je 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE_SECRET
+    jne 2f
+1:  mov dword ptr [rip + pal_mode], PM_NONE
+    jmp remote_ui_cancel
+2:  ret
+
+# palette_remote_open(label cstr): remote hosts: a pick list (palette_choose_add, then
+# palette_choose_ready); Enter gives remote_ui_accept the item or the typed text
+FN palette_remote_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_REMOTE
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+# palette_remote_field() -> the field (remote_field_for_draw draws a password masked)
+FN palette_remote_field
+    lea rax, [rip + pal_tf]
+    mov edx, [rip + pal_mode]
+    mov ecx, [rip + pal_prompt]
     ret
 
 # pal_return_focus(): back to the terminal the palette was opened from, otherwise to the editor,
@@ -178,6 +333,10 @@ FN cmd_quick_open
     jmp palette_open
 FN cmd_command_palette
     mov edi, PM_COMMANDS
+    jmp palette_open
+# Keyboard Shortcuts: every binding with its source and clause; Enter runs its command
+FN cmd_keyboard_shortcuts
+    mov edi, PM_KEYS
     jmp palette_open
 # Select Color Theme picks for the setting in use: theme, or the dark or light mode's theme
 # while the theme follows the system (VS Code saves it in the same place)
@@ -204,6 +363,7 @@ FN cmd_select_language
     jmp palette_open
 1:  ret
 FN cmd_goto_line
+    call ed_single              # one selection (multi-cursor)
     cmp qword ptr [rip + g_doc], 0
     je 1f
     mov edi, PM_GOTO
@@ -260,6 +420,18 @@ FN cmd_find_in_files
 8:  call palette_filter
 9:  EPILOGUE
 
+# FN palette_set_query(ptr, len): the open palette's field holds this text, filtered (run-command
+# quick_open, command_palette, find_in_files with ARGS)
+FN palette_set_query
+    PROLOGUE
+    mov rdx, rsi
+    mov rsi, rdi
+    lea rdi, [rip + pal_tf]
+    call tf_set
+    call palette_filter
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
 # palette_timeout() -> 0 while find in files has files to read and has been drawn, else -1
 FN palette_timeout
     mov eax, -1
@@ -285,6 +457,9 @@ FN palette_tick
     mov [rsp], rax
     cmp dword ptr [rip + gload_state], GL_SCAN
     jne 1f
+    # remote hosts: the host searches (grep_run): nothing is read here
+    cmp dword ptr [rip + g_remote], 0
+    jne 8f
     # the list goes to gload, as the search keeps its results in items
     mov qword ptr [rip + items + VEC_len], 0
     mov qword ptr [rip + results + VEC_len], 0
@@ -311,9 +486,8 @@ FN palette_tick
     inc qword ptr [rip + gload_i]
     imul r12, rbx, IT_SIZE
     add r12, [rip + gload + VEC_ptr]
-    mov rdi, [rip + g_project]
-    mov rsi, [r12 + IT_label]
-    call path_join
+    mov rdi, [r12 + IT_label]   # workspace folders: wfold_join
+    call wfold_join
     mov r13, rax
     mov rdi, rax
     call grep_read
@@ -352,7 +526,48 @@ FN palette_read_all
     mov dword ptr [rip + gload_drawn], 1
     call palette_tick
     jmp 1b
-9:  pop rbx
+9:  call rg_wait_answer        # remote hosts: and the host's answer to the query
+    pop rbx
+    ret
+
+# rg_wait_answer(): remote hosts: until the host has answered the field's query (10 s at most)
+rg_wait_answer:
+    push rbx
+    cmp dword ptr [rip + g_remote], 0
+    je 8f
+    call time_ms
+    lea rbx, [rax + 10000]
+2:  cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 8f
+    cmp dword ptr [rip + rg_out], 0
+    jne 3f
+    call rg_answered
+    test eax, eax
+    jnz 8f
+    call palette_filter         # not asked yet (a short query): asks now
+    cmp dword ptr [rip + rg_out], 0
+    je 8f
+3:  call time_ms
+    cmp rax, rbx
+    jae 8f
+    mov edi, 20
+    call loop_poll
+    call app_tick
+    jmp 2b
+8:  pop rbx
+    ret
+
+# rg_answered() -> eax 1 when the host's answer is for the field's query
+rg_answered:
+    sub rsp, 8
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + rg_query]
+    mov rcx, [rip + rg_query_len]
+    call str_eq
+    add rsp, 8
     ret
 
 # sort_gfiles(): by path, byte order (shell sort)
@@ -507,6 +722,7 @@ grep_release:
     call mem_free
     mov qword ptr [rip + ghit], 0
     mov dword ptr [rip + gprev_len], 0
+    mov qword ptr [rip + rg_query_len], 0     # remote hosts: a new search asks the host again
     pop rbx
     ret
 
@@ -565,6 +781,8 @@ grep_run:
     mov qword ptr [rip + items + VEC_len], 0
     lea rdi, [rip + gstr]
     call sb_clear
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lgr_remote
     lea rdi, [rip + pal_tf]
     call tf_text
     mov [rsp], rax              # query
@@ -755,6 +973,313 @@ grep_run:
     jmp 1b
 9:  EPILOGUE
 
+# ---- find in files on a remote host ----
+# The query goes to the host (vfs_grep); its answer comes later (rg_answer) and runs the filter again,
+# which then shows it. Typing never waits; while a query is out, a newer one waits for its answer.
+
+.Lgr_remote:
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    cmp rdx, 2
+    jb .Lgr_fix
+    cmp rdx, 255
+    ja .Lgr_fix
+    # the answer for this query is here: its lines become the items
+    cmp [rip + rg_query_len], rdx
+    jne 1f
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + rg_query]
+    mov rcx, [rip + rg_query_len]
+    call str_eq
+    test eax, eax
+    jz 1f
+    call rg_items
+    jmp .Lgr_fix
+1:  # ask, unless a query is out: its answer asks again
+    cmp dword ptr [rip + rg_out], 0
+    jne .Lgr_fix
+    call rg_ask
+    jmp .Lgr_fix
+
+# rg_ask(): the field's query to the host (case-sensitive with a capital letter, as here)
+rg_ask:
+    PROLOGUE
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rbx, rax
+    mov r12, rdx
+    lea rdi, [rip + rg_asked]
+    mov rsi, rbx
+    mov rdx, r12
+    call memcpy
+    mov [rip + rg_asked_len], r12
+    xor r8d, r8d
+    xor ecx, ecx
+1:  cmp rcx, r12
+    jae 2f
+    movzx eax, byte ptr [rbx + rcx]
+    sub eax, 'A'
+    cmp eax, 25
+    ja 11f
+    mov r8d, 1
+11: inc rcx
+    jmp 1b
+2:  mov rdi, [rip + g_project]
+    mov rsi, rbx
+    mov rdx, r12
+    mov ecx, GREP_MAX
+    lea r9, [rip + rg_answer]
+    push 0
+    push 0
+    call vfs_grep
+    add rsp, 16
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + rg_out], 1
+9:  EPILOGUE
+
+# rg_answer(ctx, status, records, len): the host's lines for rg_asked; kept, then the filter again
+rg_answer:
+    PROLOGUE
+    mov dword ptr [rip + rg_out], 0
+    mov rbx, rdx
+    mov r12, rcx
+    test rsi, rsi
+    js 9f
+    lea rdi, [rip + rg_reply]
+    call sb_clear
+    test r12, r12
+    jz 1f
+    lea rdi, [rip + rg_reply]
+    mov rsi, rbx
+    mov rdx, r12
+    call sb_push
+1:  lea rdi, [rip + rg_query]
+    lea rsi, [rip + rg_asked]
+    mov rdx, [rip + rg_asked_len]
+    call memcpy
+    mov rax, [rip + rg_asked_len]
+    mov [rip + rg_query_len], rax
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 9f
+    call palette_filter
+    mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
+
+# rg_items(): items from rg_reply ("REL\0LINE\0COL\0LABEL\0" records), one gfiles entry per file
+#   (its label only: accepting opens it as for a local search)
+rg_items:
+    PROLOGUE 64
+    mov qword ptr [rip + gfiles + VEC_len], 0
+    lea rdi, [rip + rg_paths]
+    call sb_clear
+    mov rbx, [rip + rg_reply + SB_ptr]
+    test rbx, rbx
+    jz 8f
+    mov r15, [rip + rg_reply + SB_len]
+    add r15, rbx                # end
+    # the files' groups in path order, as the local search sorts its files
+    call rg_groups_sort
+    mov qword ptr [rsp + 48], 0 # the next group
+    mov qword ptr [rsp + 40], -1  # the file index
+0:  mov rax, [rsp + 48]
+    cmp rax, [rip + rg_groups + VEC_len]
+    jae 7f
+    inc qword ptr [rsp + 48]
+    mov rcx, [rip + rg_groups + VEC_ptr]
+    mov rbx, [rcx + rax*8]
+    mov [rsp + 56], rbx         # the group's path
+1:  cmp rbx, r15
+    jae 0b
+    cmp qword ptr [rip + items + VEC_len], GREP_MAX
+    jae 7f
+    mov rdi, rbx
+    mov rsi, [rsp + 56]
+    call strcmp_eq
+    test eax, eax
+    jz 0b                       # the group's records end
+    mov r12, rbx                # REL
+    mov rdi, rbx
+    call strlen
+    lea r13, [rbx + rax + 1]    # LINE
+    mov [rsp], rax
+    cmp r13, r15
+    jae 0b
+    # a file other than the last: a new gfiles entry (its path in rg_paths, fixed up after)
+    cmp qword ptr [rsp + 40], 0
+    jl 2f
+    mov rdi, [rip + gfiles + VEC_ptr]
+    mov rax, [rsp + 40]
+    imul rax, rax, GF_SIZE
+    mov rdi, [rdi + rax + GF_label]
+    add rdi, [rip + rg_paths + SB_ptr]
+    mov rsi, r12
+    call strcmp_eq
+    test eax, eax
+    jnz 3f
+2:  lea rdi, [rip + gfiles]
+    mov esi, GF_SIZE
+    call vec_push
+    mov rcx, [rip + rg_paths + SB_len]
+    mov [rax + GF_label], rcx
+    mov qword ptr [rax + GF_text], 0
+    mov qword ptr [rax + GF_len], 0
+    lea rdi, [rip + rg_paths]
+    mov rsi, r12
+    mov rdx, [rsp]
+    call sb_push
+    lea rdi, [rip + rg_paths]
+    xor esi, esi
+    call sb_push_byte
+    mov rax, [rip + gfiles + VEC_len]
+    dec rax
+    mov [rsp + 40], rax
+3:  mov rdi, r13
+    call strlen
+    mov rdi, r13
+    mov rsi, rax
+    lea r14, [r13 + rax + 1]    # COL
+    call parse_u64
+    mov [rsp + 8], rax          # line
+    mov rdi, r14
+    call strlen
+    mov rdi, r14
+    mov rsi, rax
+    lea r13, [r14 + rax + 1]    # LABEL
+    call parse_u64
+    cmp rax, 0xfffff
+    jbe 4f
+    mov eax, 0xfffff
+4:  mov [rsp + 16], rax         # col
+    cmp r13, r15
+    jae 7f
+    mov rdi, r13
+    call strlen
+    mov [rsp + 24], rax
+    lea rbx, [r13 + rax + 1]    # the next record
+    # label, then detail "REL:LINE"
+    mov rax, [rip + gstr + SB_len]
+    mov [rsp + 32], rax
+    lea rdi, [rip + gstr]
+    mov rsi, r13
+    mov rdx, [rsp + 24]
+    call sb_push
+    mov r14, [rip + gstr + SB_len]
+    lea rdi, [rip + gstr]
+    mov rsi, r12
+    call sb_push_cstr
+    lea rdi, [rip + gstr]
+    mov esi, ':'
+    call sb_push_byte
+    lea rdi, [rip + gstr]
+    mov rsi, [rsp + 8]
+    inc rsi
+    call sb_push_u64
+    lea rdi, [rip + gstr]
+    xor esi, esi
+    call sb_push_byte
+    mov rcx, [rsp + 8]
+    shl rcx, 20
+    or rcx, [rsp + 16]
+    mov rax, [rsp + 40]
+    shl rax, 44
+    or rcx, rax
+    mov rdi, [rsp + 32]
+    mov rsi, [rsp + 24]
+    mov rdx, r14
+    call item_add
+    jmp 1b
+7:  # the paths' offsets -> pointers
+    xor ecx, ecx
+71: cmp rcx, [rip + gfiles + VEC_len]
+    jae 8f
+    imul rax, rcx, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdx, [rip + rg_paths + SB_ptr]
+    add [rax + GF_label], rdx
+    inc rcx
+    jmp 71b
+8:  EPILOGUE
+
+# rg_groups_sort(): rg_groups = the first record of each file's run in rg_reply, by path (byte order)
+rg_groups_sort:
+    PROLOGUE 16
+    mov qword ptr [rip + rg_groups + VEC_len], 0
+    mov rbx, [rip + rg_reply + SB_ptr]
+    mov r15, [rip + rg_reply + SB_len]
+    add r15, rbx
+    xor r14d, r14d              # the last group's path
+1:  cmp rbx, r15
+    jae 5f
+    test r14, r14
+    jz 2f
+    mov rdi, rbx
+    mov rsi, r14
+    call strcmp_eq
+    test eax, eax
+    jnz 3f
+2:  lea rdi, [rip + rg_groups]
+    mov esi, 8
+    call vec_push
+    mov [rax], rbx
+    mov r14, rbx
+3:  # past the record's four fields
+    mov r12d, 4
+4:  mov rdi, rbx
+    call strlen
+    lea rbx, [rbx + rax + 1]
+    dec r12d
+    jz 1b
+    cmp rbx, r15
+    jb 4b
+5:  # shell sort by path
+    mov r15, [rip + rg_groups + VEC_len]
+    mov r12, r15
+.Lrgs_gap:
+    shr r12, 1
+    jz 9f
+    mov r13, r12                # i
+.Lrgs_i:
+    cmp r13, r15
+    jae .Lrgs_gap
+    mov rax, [rip + rg_groups + VEC_ptr]
+    mov rbx, [rax + r13*8]      # the one placed
+    mov r14, r13                # j
+.Lrgs_j:
+    cmp r14, r12
+    jb .Lrgs_put
+    mov rax, [rip + rg_groups + VEC_ptr]
+    mov rcx, r14
+    sub rcx, r12
+    mov rdi, [rax + rcx*8]
+    mov rsi, rbx
+6:  movzx eax, byte ptr [rdi]
+    movzx edx, byte ptr [rsi]
+    cmp eax, edx
+    jne 7f
+    test eax, eax
+    jz .Lrgs_put
+    inc rdi
+    inc rsi
+    jmp 6b
+7:  jb .Lrgs_put
+    mov rax, [rip + rg_groups + VEC_ptr]
+    mov rcx, r14
+    sub rcx, r12
+    mov rdx, [rax + rcx*8]
+    mov [rax + r14*8], rdx
+    mov r14, rcx
+    jmp .Lrgs_j
+.Lrgs_put:
+    mov rax, [rip + rg_groups + VEC_ptr]
+    mov [rax + r14*8], rbx
+    inc r13
+    jmp .Lrgs_i
+9:  EPILOGUE
+
 # prompt_open(label cstr, kind, [initial text in pal_path])
 FN prompt_open
     push rbx
@@ -810,8 +1335,7 @@ prompt_initial:
     mov rsi, [rip + g_project]
     test rsi, rsi
     jnz 4f
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rsi, rax
     test rsi, rsi
     jz 9f
@@ -821,6 +1345,259 @@ prompt_initial:
     mov esi, '/'
     call sb_push_byte
 9:  EPILOGUE
+
+# ---- an extension's prompts (extproto.s owns the request; the palette shows it) ----
+
+# palette_choose_open(label cstr): an empty pick list with the label as its placeholder; items
+# follow with palette_choose_add, then palette_choose_ready
+FN palette_choose_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_CHOOSE
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+# palette_choose_add(ptr, len, n): item number n (its IT_data)
+FN palette_choose_add
+    xor ecx, ecx
+    xchg rcx, rdx
+    jmp item_add
+
+FN palette_choose_ready
+    jmp palette_filter
+
+# custom editors: palette_reopen_open(label cstr): an empty pick list for Reopen With; rows follow
+# with palette_choose_add, then palette_choose_ready; choosing row n calls ce_reopen_chosen(n)
+FN palette_reopen_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_REOPEN
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+# debugger: palette_dpick_open(label cstr): an empty pick list for a launch's ${pick:} or ${process}
+# (debugask.s), a configuration or a template; rows follow with palette_choose_add, then
+# palette_choose_ready; choosing row n calls dview_dpick_chosen(n)
+FN palette_dpick_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_DPICK
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+# wsedit: palette_wslist_open(label cstr): an empty pick list for a workspace edit's question
+# (wsconfirm.s); rows follow with palette_choose_add, then palette_choose_ready; choosing row n
+# calls wslist_chosen(n), closing it otherwise wslist_abort
+FN palette_wslist_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_WSLIST
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+# palette_results_open(label cstr), palette_results_add(ptr, len, detail cstr or 0, n),
+# palette_results_ready(), palette_results_close(): a list of langfeat's results; choosing item n
+# calls langfeat_chosen(n). The strings stay langfeat's until it closes the list
+FN palette_results_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_RESULTS
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+FN palette_providers_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_PROVIDERS
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+FN palette_results_add
+    jmp item_add
+
+# language features: a results list refreshed as a query's parts come keeps what the user did:
+# palette_results_refresh() empties it but keeps the field (then _add and _ready as before),
+# palette_results_selected() -> rax the selected item's n, or -1, palette_results_select(n): the
+# row of item n is selected (after _ready)
+# language features: the symbol mode (wsym.s): palette_wsym_open(label cstr), _showing() -> eax 1
+# while it is open, _clear() (its items go, the query stays), _add(ptr, len, detail cstr, n),
+# _ready(); choosing item n calls wsym_chosen(n). The strings stay wsym.s's until the next _clear
+FN palette_wsym_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_WSYM
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+FN palette_wsym_showing
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_WSYM
+    sete al
+    ret
+FN palette_wsym_clear
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    ret
+FN palette_wsym_add
+    jmp item_add
+FN palette_wsym_ready
+    push rbx
+    mov ebx, [rip + pal_sel]    # the choice stays where it was as answers come
+    call palette_filter
+    mov eax, [rip + results + VEC_len]
+    cmp ebx, eax
+    jae 1f
+    mov [rip + pal_sel], ebx
+1:  pop rbx
+    ret
+
+FN palette_results_refresh
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    ret
+FN palette_results_selected
+    push rbx
+    call selected_item
+    test rax, rax
+    jz 1f
+    mov rax, [rax + IT_data]
+    pop rbx
+    ret
+1:  mov rax, -1
+    pop rbx
+    ret
+FN palette_results_select
+    xor ecx, ecx
+1:  cmp rcx, [rip + results + VEC_len]
+    jae 9f
+    mov rax, [rip + results + VEC_ptr]
+    mov eax, [rax + rcx*8 + RS_item]
+    imul rax, rax, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    cmp [rax + IT_data], rdi
+    je 2f
+    inc rcx
+    jmp 1b
+2:  mov [rip + pal_sel], ecx
+    mov dword ptr [rip + pal_reveal], 1
+    mov dword ptr [rip + g_dirty], 1
+9:  ret
+
+FN palette_results_ready
+    jmp palette_filter
+
+# FN palette_results_showing() -> eax 1 while the palette shows a results list (language features:
+# a list shown at a query's first part is refreshed only while it is still open)
+FN palette_results_showing
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_RESULTS
+    sete al
+    ret
+
+FN palette_results_close
+    cmp dword ptr [rip + pal_mode], PM_RESULTS
+    jne 1f
+    jmp palette_close
+1:  ret
+
+# palette_tasks_open(label cstr), palette_tasks_add(ptr, len, detail cstr, n), palette_tasks_ready():
+#   a list of tasks (tasks.s); choosing item n calls tasks_chosen(n). The strings stay the tasks'
+FN palette_tasks_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_TASKS
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+FN palette_tasks_add
+    jmp item_add
+
+FN palette_tasks_ready
+    jmp palette_filter
+
+# Close only a palette owned by the provider operation that is being abandoned.
+FN palette_provider_close
+    cmp dword ptr [rip + pal_mode], PM_PROVIDERS
+    je 1f
+    cmp dword ptr [rip + pal_mode], PM_PROMPT
+    jne 2f
+    cmp dword ptr [rip + pal_prompt], PROMPT_RENAME_SYMBOL
+    jne 2f
+1:  push rbx
+    mov ebx, [rip + g_focus]
+    call palette_close
+    cmp ebx, FOCUS_PALETTE
+    je 3f
+    cmp ebx, FOCUS_PROMPT
+    je 3f
+    mov [rip + g_focus], ebx     # cancellation must not undo a focus change to another component
+3:  pop rbx
+2:  ret
+
+# palette_ext_prompt_open(label cstr, PROMPT_ASK | PROMPT_TERM, text, len): a text prompt with
+# the field preset
+FN palette_ext_prompt_open
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13, rdx
+    mov r14, rcx
+    mov edi, PM_PROMPT
+    call palette_open
+    mov [rip + pal_label], rbx
+    mov [rip + pal_prompt], r12d
+    mov dword ptr [rip + g_focus], FOCUS_PROMPT
+    lea rdi, [rip + pal_tf]
+    mov rsi, r13
+    mov rdx, r14
+    call tf_set
+    EPILOGUE
+
+# palette_close_commands(): the command list holds CMD* and titles of extension commands that
+# just moved or went: a palette showing it closes
+FN palette_close_commands
+    cmp dword ptr [rip + pal_mode], PM_COMMANDS
+    je 2f
+    cmp dword ptr [rip + pal_mode], PM_KEYS
+    jne 1f
+2:  jmp palette_close
+1:  ret
+
+# FN palette_close_keys(): the bindings were made again: the Keyboard Shortcuts list closes
+FN palette_close_keys
+    cmp dword ptr [rip + pal_mode], PM_KEYS
+    jne 1f
+    jmp palette_close
+1:  ret
+
+# palette_ext_keys_reset(): the extensions' commands changed: their shortcut labels are stale
+FN palette_ext_keys_reset
+    PROLOGUE
+    xor ebx, ebx
+1:  cmp rbx, [rip + ext_keys_cache + VEC_len]
+    jae 2f
+    mov rax, [rip + ext_keys_cache + VEC_ptr]
+    mov rdi, [rax + rbx*8]
+    call mem_free
+    inc rbx
+    jmp 1b
+2:  mov qword ptr [rip + ext_keys_cache + VEC_len], 0
+    EPILOGUE
 
 # ---- item sources ----
 
@@ -850,6 +1627,22 @@ item_add:   # (label, len, detail, data)
 
 load_commands:
     PROLOGUE
+    cmp qword ptr [rip + pal_keys_cached], 0
+    jne .Llc_cached
+    call palette_ext_keys_reset
+    xor ebx, ebx
+.Llc_reset:
+    cmp ebx, 256
+    jae .Llc_reset_done
+    lea rax, [rip + keys_cache]
+    mov rdi, [rax + rbx*8]
+    mov qword ptr [rax + rbx*8], 0
+    call mem_free
+    inc ebx
+    jmp .Llc_reset
+.Llc_reset_done:
+    mov qword ptr [rip + pal_keys_cached], 1
+.Llc_cached:
     lea rbx, [rip + g_commands]
 1:  mov r12, [rbx + CMD_title]
     test r12, r12
@@ -890,6 +1683,80 @@ load_commands:
     call item_add
 2:  add rbx, CMD_SIZE
     jmp 1b
+9:  # extension details carry the qualified identity and shortcut; both are cached per command
+    mov edi, [rip + pal_focus_before]
+    call ctx_focus_as           # [command-options] when clauses see the focus before the palette
+    xor r14d, r14d
+5:  cmp r14, [rip + g_ext_cmds + VEC_len]
+    jae 8f
+    mov rdi, r14
+    call ext_cmd_live
+    imul rbx, r14, CMD_SIZE
+    add rbx, [rip + g_ext_cmds + VEC_ptr]
+    inc r14
+    test eax, eax
+    jz 5b                       # an extension removed this session
+    mov rdi, rbx
+    call cmd_in_palette         # [command-options] palette = no, or its when is false
+    test eax, eax
+    jz 5b
+    mov r12, [rbx + CMD_title]
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+    lea rdi, [rip + ext_keys_cache]
+    mov esi, 8
+    call vec_ensure             # one slot per extension command
+    mov rax, [rip + ext_keys_cache + VEC_ptr]
+    mov rax, [rax + r14*8 - 8]
+    test rax, rax
+    jnz 6f
+    lea rdi, [rip + tmp]
+    call sb_clear
+    mov rdi, rbx
+    lea rsi, [rip + tmp]
+    call ext_cmd_identity
+    mov rdi, rbx
+    call keys_for
+    mov r15, rax
+    test rax, rax
+    jz 61f
+    lea rdi, [rip + tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + tmp]
+    mov rsi, r15
+    call sb_push_cstr
+61: mov rdi, [rip + tmp + SB_ptr]
+    mov rsi, [rip + tmp + SB_len]
+    call mem_dup
+    mov rcx, [rip + ext_keys_cache + VEC_ptr]
+    mov [rcx + r14*8 - 8], rax
+6:  mov rdi, r12
+    mov rsi, r13
+    mov rdx, rax
+    mov rcx, rbx
+    call item_add
+    jmp 5b
+8:  mov edi, -1
+    call ctx_focus_as
+    EPILOGUE
+
+# vec_ensure(vec, item size): grow vec to g_ext_cmds' length (zeroed slots)
+vec_ensure:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+1:  mov rax, [rbx + VEC_len]
+    cmp rax, [rip + g_ext_cmds + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    mov rsi, r12
+    call vec_push
+    jmp 1b
 9:  EPILOGUE
 
 load_themes:
@@ -928,6 +1795,11 @@ load_themes:
 
 load_langs:
     PROLOGUE
+    lea rdi, [rip + .Lautomatic]
+    mov esi, 9
+    xor edx, edx
+    mov rcx, -1
+    call item_add
     lea rdi, [rip + .Lplain]
     mov esi, 10
     xor edx, edx
@@ -957,9 +1829,16 @@ load_files:
     mov rdi, [rip + g_project]
     test rdi, rdi
     jz 9f
+    cmp dword ptr [rip + g_remote], 0
+    jne .Llf_remote
+    call wfold_count
+    cmp eax, 2
+    jae .Llf_folders
     mov dword ptr [rip + scan_plen], 0
     mov dword ptr [rip + scan_depth], 0
+    mov rdi, [rip + g_project]
     call scan_dir
+.Llf_fix:
     # labels point into strings (stable after the scan): offsets -> pointers
     xor ebx, ebx
 1:  cmp rbx, [rip + items + VEC_len]
@@ -969,6 +1848,61 @@ load_files:
     mov rcx, [rip + strings + SB_ptr]
     add [rax + IT_label], rcx
     inc rbx
+    jmp 1b
+9:  EPILOGUE
+
+.Llf_folders:
+    # workspace folders: each one's files, their labels starting with its name (workspace.s)
+    xor ebx, ebx
+1:  call wfold_count
+    cmp rbx, rax
+    jae .Llf_fix
+    mov rdi, rbx
+    call wfold_name
+    lea rdi, [rip + scan_prefix]
+    mov rsi, rax
+    call cstr_copy
+    mov byte ptr [rax], '/'
+    lea rcx, [rip + scan_prefix]
+    sub rax, rcx
+    inc eax
+    mov [rip + scan_plen], eax
+    mov dword ptr [rip + scan_depth], 0
+    mov rdi, rbx
+    call wfold_path
+    mov rdi, rax
+    call scan_dir
+    inc rbx
+    jmp 1b
+.Llf_remote:
+    # remote hosts: the host walks the project in one request (vfs.s)
+    mov esi, MAXFILES
+    call vfs_files
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    lea r13, [rax + rdx]
+1:  cmp r12, r13
+    jae .Llf_fix
+    mov rdi, r12
+    call strlen
+    mov r14, rax
+    test rax, rax
+    jz 2f
+    mov r15, [rip + strings + SB_len]
+    lea rdi, [rip + strings]
+    mov rsi, r12
+    mov rdx, r14
+    call sb_push
+    lea rdi, [rip + strings]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, r15
+    mov rsi, r14
+    xor edx, edx
+    xor ecx, ecx
+    call item_add
+2:  lea r12, [r12 + r14 + 1]
     jmp 1b
 9:  EPILOGUE
 
@@ -1045,7 +1979,9 @@ scan_cb:
 
 # ---- path browser ----
 
-# browse_open(folder): Open File (0) or Open Folder (1), starting in the project folder
+# browse_open(folder): Open File (0) or Open Folder (1), starting in the project folder; 2 is Add
+#   Folder to Workspace (workspace.s), which adds the folder picked instead of opening it
+FN browse_open_kind
 browse_open:
     PROLOGUE
     mov ebx, edi
@@ -1057,13 +1993,15 @@ browse_open:
     test ebx, ebx
     jz 1f
     lea rax, [rip + .Lph_open_folder]
+    cmp ebx, 2
+    jne 1f
+    lea rax, [rip + .Lph_add_folder]
 1:  mov [rip + pal_label], rax
     # the field: the project folder, the home folder as ~, and a '/'
     mov rsi, [rip + g_project]
     test rsi, rsi
     jnz 2f
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rsi, rax
     test rsi, rsi
     jnz 2f
@@ -1129,8 +2067,7 @@ browse_expand:
 2:  # ~: the home folder
     inc r12
     dec r13
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rdi, rbx
     test rax, rax
     jz 5f
@@ -1142,8 +2079,7 @@ browse_expand:
     mov rsi, [rip + g_project]
     test rsi, rsi
     jnz 4f
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rsi, rax
     test rsi, rsi
     jnz 4f
@@ -1271,7 +2207,7 @@ browse_load:
     lea rdi, [rip + strings]
     call sb_clear
     lea rdi, [rip + brw_dir]
-    call file_is_dir
+    call vfs_is_dir
     test eax, eax
     jz 9f
     xor ebx, ebx                # items before the sorted ones
@@ -1279,7 +2215,10 @@ browse_load:
     je 1f
     lea rdi, [rip + strings]
     lea rsi, [rip + .Lopen_here]
-    call sb_push_cstr
+    cmp dword ptr [rip + brw_kind], 2
+    jne 88f
+    lea rsi, [rip + .Ladd_here]
+88: call sb_push_cstr
     lea rdi, [rip + brw_label]
     lea rsi, [rip + brw_dir]
     call path_tilde
@@ -1295,6 +2234,9 @@ browse_load:
     xor edx, edx
     mov ecx, BRW_HERE
     call item_add
+    mov ebx, 1
+    cmp dword ptr [rip + brw_kind], 2  # adding: no new window
+    je 1f
     lea r13, [r12 + 1]
     lea rdi, [rip + strings]
     lea rsi, [rip + .Lopen_here]
@@ -1322,7 +2264,7 @@ browse_load:
 1:  lea rdi, [rip + brw_dir]
     lea rsi, [rip + browse_cb]
     xor edx, edx
-    call dir_each
+    call vfs_dir_each
     # labels point into strings (stable now): offsets -> pointers
     xor ecx, ecx
 2:  cmp rcx, [rip + items + VEC_len]
@@ -1514,9 +2456,25 @@ FN palette_print
     call sb_push_cstr
     EPILOGUE
 1:  cmp dword ptr [rip + pal_mode], PM_PROMPT
+    je 10f
+    cmp dword ptr [rip + pal_mode], PM_CHOOSE
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_WSLIST
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_REOPEN   # custom editors
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_DPICK      # debugger
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_PROVIDERS
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_WSYM
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_RESULTS
     jne 11f
-    lea rsi, [rip + .Lpp_prompt]
-    call sb_push_cstr
+13: lea rsi, [rip + .Lpp_choose]
+    jmp 12f
+10: lea rsi, [rip + .Lpp_prompt]
+12: call sb_push_cstr
     mov rdi, rbx
     mov rsi, [rip + pal_label]
     call sb_push_cstr
@@ -1697,18 +2655,57 @@ FN palette_filter
     call tf_text
     mov r14, rax
     mov r15, rdx
+    mov qword ptr [rsp], 0     # an exact qualified command takes precedence over fuzzy matches
+    cmp dword ptr [rip + pal_mode], PM_COMMANDS
+    jne .Lpf_command_query_ready
+    mov rdi, r14
+    mov rsi, r15
+    lea rdx, [rip + .Lcommand_slash]
+    mov ecx, 1
+    call str_find
+    test rax, rax
+    js .Lpf_command_query_ready
+    mov rdi, r14
+    mov rsi, r15
+    call ext_cmd_find
+    mov [rsp], rax
+.Lpf_command_query_ready:
     xor ebx, ebx
 1:  cmp rbx, [rip + items + VEC_len]
     jae 45f
     imul r12, rbx, IT_SIZE
     add r12, [rip + items + VEC_ptr]
+    mov rax, [rsp]
+    test rax, rax
+    jz 11f
+    cmp [r12 + IT_data], rax
+    jne 4f
+    xor eax, eax
+    jmp 12f
+11:
     mov rdi, [r12 + IT_label]
     mov rsi, [r12 + IT_len]
     mov rdx, r14
     mov rcx, r15
     call fuzzy
     test eax, eax
+    jns 12f
+    cmp dword ptr [rip + pal_mode], PM_COMMANDS
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_KEYS
+    jne 4f
+13: mov rdi, [r12 + IT_detail]
+    test rdi, rdi
+    jz 4f
+    call strlen
+    mov rsi, rax
+    mov rdi, [r12 + IT_detail]
+    mov rdx, r14
+    mov rcx, r15
+    call fuzzy
+    test eax, eax
     js 4f
+12:
     mov r13d, eax
     lea rdi, [rip + results]
     mov esi, RS_SIZE
@@ -1768,7 +2765,7 @@ FN palette_changed
     pop rbx
     ret
 3:  cmp byte ptr [rax], ':'
-    jne 2f
+    jne 4f
     cmp qword ptr [rip + g_doc], 0
     je 2f
     mov dword ptr [rip + pal_mode], PM_GOTO
@@ -1777,7 +2774,22 @@ FN palette_changed
     mov rdx, [rip + pal_tf + TF_sb + SB_len]
     dec rdx
     call tf_set
-2:  jmp palette_filter
+    jmp 2f
+4:  cmp byte ptr [rax], '#'     # language features: '#' switches files -> symbols in the project
+    jne 2f
+    push rbx
+    call cmd_workspace_symbols
+    pop rbx
+2:  cmp dword ptr [rip + pal_mode], PM_WSYM
+    jne 5f
+    push rbx
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    call wsym_changed
+    pop rbx
+5:  jmp palette_filter
 
 # selected item -> IT* or 0
 selected_item:
@@ -1794,7 +2806,14 @@ selected_item:
 
 # preview selection (themes)
 preview:
-    cmp dword ptr [rip + pal_mode], PM_THEMES
+    cmp dword ptr [rip + pal_mode], PM_ICONS
+    jne 0f
+    call selected_item
+    test rax, rax
+    jz 1f
+    mov rdi, [rax + IT_data]
+    jmp iconth_preview
+0:  cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
     call selected_item
     test rax, rax
@@ -1816,7 +2835,30 @@ FN palette_key
     jne 1f
     call palette_close
     jmp .Lpk_yes
-1:  cmp r12d, KEY_UP
+1:  cmp r12d, KEY_RETURN        # language features: ctrl+Enter in Find in Files moves its results
+    jne 10f                     # to the Results panel (results.s)
+    test r14d, MOD_CTRL
+    jz 10f
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 10f
+    call grep_to_results
+    jmp .Lpk_yes
+10: # remote hosts: moving in Find in Files' results waits for the host's answer they belong to
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 11f
+    cmp dword ptr [rip + g_remote], 0
+    je 11f
+    mov eax, r12d
+    cmp eax, KEY_UP
+    je 12f
+    cmp eax, KEY_DOWN
+    je 12f
+    cmp eax, KEY_PAGEUP
+    je 12f
+    cmp eax, KEY_PAGEDOWN
+    jne 11f
+12: call rg_wait_answer
+11: cmp r12d, KEY_UP
     jne 2f
     mov dword ptr [rip + pal_reveal], 1
     mov dword ptr [rip + pal_wheel], 0
@@ -1904,10 +2946,87 @@ FN palette_key
     mov eax, 1
     EPILOGUE
 
+# grep_to_results(): Find in Files' results (as filtered now) become a Results set, the palette
+# closes (language features, results.s)
+grep_to_results:
+    PROLOGUE 48
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov r15, rdx                # the query's length: each match's
+    cmp rdx, 100
+    jbe 1f
+    mov edx, 100
+1:  mov [rsp + 8], rdx
+    lea rdi, [rip + gtr_query]
+    mov rsi, rax
+    call memcpy
+    lea rax, [rip + gtr_query]
+    mov rcx, [rsp + 8]
+    mov byte ptr [rax + rcx], 0
+    lea rdi, [rip + gtr_query]
+    call results_find_begin
+    mov [rsp], rax
+    xor ebx, ebx
+3:  cmp rbx, [rip + results + VEC_len]
+    jae 8f
+    mov rax, [rip + results + VEC_ptr]
+    mov eax, [rax + rbx*8 + RS_item]
+    imul r12, rax, IT_SIZE
+    add r12, [rip + items + VEC_ptr]
+    inc rbx
+    mov r13, [r12 + IT_data]
+    mov rax, r13
+    shr rax, 44
+    cmp rax, [rip + gfiles + VEC_len]
+    jae 3b
+    imul rax, rax, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdi, [rip + g_project]
+    mov rsi, [rax + GF_label]
+    call path_join
+    mov r14, rax
+    mov rax, r13                # the range: LINE COL to COL + the query's length
+    shr rax, 20
+    and eax, 0xffffff
+    inc eax
+    mov [rsp + 16], eax
+    mov [rsp + 24], eax
+    mov eax, r13d
+    and eax, 0xfffff
+    inc eax
+    mov [rsp + 20], eax
+    add eax, r15d
+    mov [rsp + 28], eax
+    mov rdi, [rsp]
+    mov rsi, r14
+    lea rdx, [rsp + 16]
+    mov rcx, [r12 + IT_label]
+    mov r8, [r12 + IT_len]
+    call results_loc
+    mov rdi, r14
+    call mem_free
+    jmp 3b
+8:  call grep_release
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, [rsp]
+    xor esi, esi
+    call results_refs_end
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
 # palette_accept(): act on the selection / input
 palette_accept:
     PROLOGUE 16
     mov ebx, [rip + pal_mode]
+    cmp ebx, PM_REMOTE
+    je .Lpa_remote
+    cmp ebx, PM_GREP            # remote hosts: Enter right after typing waits for the host's answer
+    jne 1f
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    call rg_wait_answer
+1:
     cmp ebx, PM_GOTO
     je .Lpa_goto
     cmp ebx, PM_PROMPT
@@ -1922,9 +3041,8 @@ palette_accept:
     je .Lpa_grep
     cmp ebx, PM_FILES
     jne 1f
-    mov rdi, [rip + g_project]
-    mov rsi, [r12 + IT_label]
-    call path_join
+    mov rdi, [r12 + IT_label]   # with two folders or more a label starts with its folder's name
+    call wfold_join
     mov r13, rax
     mov dword ptr [rip + pal_mode], PM_NONE
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
@@ -1934,13 +3052,21 @@ palette_accept:
     call mem_free
     jmp .Lpa_ret
 1:  cmp ebx, PM_COMMANDS
+    je 11f
+    cmp ebx, PM_KEYS
     jne 2f
-    mov dword ptr [rip + pal_mode], PM_NONE
+11: mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
     mov rax, [r12 + IT_data]
+    mov rdi, rax
     call [rax + CMD_fn]
     jmp .Lpa_ret
-2:  cmp ebx, PM_THEMES
+2:  cmp ebx, PM_ICONS
+    jne 21f
+    mov rdi, [r12 + IT_data]
+    call iconth_choose
+    jmp .Lpa_close
+21: cmp ebx, PM_THEMES
     jne 3f
     # saved in the list's setting; closing shows the theme the settings now choose
     mov rdi, [rip + pal_theme_slot]
@@ -1948,15 +3074,107 @@ palette_accept:
     call theme_set
     jmp .Lpa_close
 3:  cmp ebx, PM_LANGS
-    jne .Lpa_close
+    jne 31f
     cmp qword ptr [rip + g_doc], 0
     je .Lpa_close
-    mov rdi, [r12 + IT_data]
-    call syntax_ready
-    mov rcx, [rip + g_doc]
-    mov [rcx + DOC_lang], rax
-    mov qword ptr [rcx + DOC_svalid], 0
+    mov rdi, [rip + g_doc]
+    mov rdx, [r12 + IT_data]
+    mov esi, DL_AUTO
+    cmp rdx, -1
+    je .Lpa_language_set
+    mov esi, DL_PLAIN
+    test rdx, rdx
+    jz .Lpa_language_set
+    mov esi, DL_NAMED
+    mov rdx, [rdx + GR_name]
+.Lpa_language_set:
+    call doc_language_set
     jmp .Lpa_close
+31: cmp ebx, PM_RESULTS
+    jne 32f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call langfeat_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+32: cmp ebx, PM_PROVIDERS
+    jne 33f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call ext_provider_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+33: cmp ebx, PM_TASKS
+    jne 332f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call tasks_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+332: cmp ebx, PM_REOPEN          # custom editors: Reopen With (customed.s)
+    jne 331f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call ce_reopen_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+331: cmp ebx, PM_WSYM            # language features: a symbol in the project
+    jne 335f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call wsym_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+335: cmp ebx, PM_WSLIST          # wsedit
+    jne 34f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call wslist_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+34: cmp ebx, PM_DPICK            # debugger: a launch variable's answer (debugask.s)
+    jne 35f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call dview_dpick_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+35: cmp ebx, PM_CHOOSE
+    jne .Lpa_close
+    # the extension's pick: the item's number, with the palette closed first (the reply may
+    # open another prompt)
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call extproto_prompt_chose
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+.Lpa_remote:
+    # remote hosts: the item picked, or the text typed when it matches none
+    call selected_item
+    mov rbx, -1
+    test rax, rax
+    jz 1f
+    mov rbx, [rax + IT_data]
+1:  lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rdx
+    pop rsi
+    mov rdi, rbx
+    call remote_ui_accept
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
 .Lpa_goto:
     lea rdi, [rip + pal_tf]
     call tf_text
@@ -1996,7 +3214,143 @@ palette_accept:
     mov dword ptr [rip + g_reveal], 0
     jmp .Lpa_close
 .Lpa_prompt:
+    cmp dword ptr [rip + pal_prompt], PROMPT_WS_SAVE  # resources group: Save Workspace As
+    jne 66f
     lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call workspace_save_as
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+66: # extension management: the folder or archive to install
+    mov ecx, [rip + pal_prompt]
+    cmp ecx, PROMPT_EXT_FOLDER
+    jb 67f
+    cmp ecx, PROMPT_EXT_ARCHIVE
+    ja 67f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov ecx, [rip + pal_prompt]
+    push rax
+    push rdx
+    push rcx
+    push rcx
+    call pal_return_focus
+    pop rdx
+    pop rdx
+    pop rsi
+    pop rdi
+    call ext_install_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+67: cmp dword ptr [rip + pal_prompt], PROMPT_EXT_INSTALL
+    jne 68f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call ext_install_start
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+68: cmp dword ptr [rip + pal_prompt], PROMPT_EXT_SETTING
+    jne 69f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call extpage_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+69: cmp dword ptr [rip + pal_prompt], PROMPT_RENAME_SYMBOL
+    jne 691f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call langfeat_rename_to
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+691: cmp dword ptr [rip + pal_prompt], PROMPT_DEBUG    # debugger (debugview.s)
+    jne 693f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call dview_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+693: cmp dword ptr [rip + pal_prompt], PROMPT_COLOR    # editor presentation: a swatch's color (hicolor.s)
+    jne 690f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call color_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+690: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
+    je 693f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE_SECRET
+    jne 692f
+693: # remote hosts: ssh's question answered (or the port to forward)
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov ebx, [rip + pal_prompt]
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    mov edx, ebx
+    call remote_ui_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+692: cmp dword ptr [rip + pal_prompt], PROMPT_ASK
+    jb 70f
+    # an extension's prompt: the field's text goes back to it. A terminal command's prompt that
+    # just appeared ignores Enter: a keystroke meant for the editor must not run it
+    call extproto_prompt_fresh
+    test eax, eax
+    jnz .Lpa_ret
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov ebx, [rip + pal_prompt]
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, rax
+    mov rsi, rdx
+    mov edx, ebx
+    call extproto_prompt_text
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+70: lea rdi, [rip + pal_tf]
     call tf_text
     test rdx, rdx
     jz .Lpa_close
@@ -2011,8 +3365,7 @@ palette_accept:
     jne 71f
     push rax
     push rdx
-    lea rdi, [rip + .Lhome]
-    call getenv
+    call vfs_home               # the host's in a remote window
     mov rsi, rax
     lea rdi, [rip + pal_path]
     call cstr_copy
@@ -2057,9 +3410,8 @@ palette_accept:
     shr rax, 44
     imul rax, rax, GF_SIZE
     add rax, [rip + gfiles + VEC_ptr]
-    mov rdi, [rip + g_project]
-    mov rsi, [rax + GF_label]
-    call path_join
+    mov rdi, [rax + GF_label]   # workspace folders: wfold_join
+    call wfold_join
     mov r14, rax
     call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
@@ -2150,7 +3502,11 @@ palette_accept:
 .Lpa_switch:
     call palette_close
     lea rdi, [rip + brw_next]
-    call app_switch_project
+    cmp dword ptr [rip + brw_kind], 2
+    jne 1f
+    call workspace_add_ui       # Add Folder to Workspace (workspace.s)
+    jmp .Lpa_ret
+1:  call app_switch_project
     jmp .Lpa_ret
 .Lpa_new:
     # another rhun opens it; this window keeps its project
@@ -2185,45 +3541,22 @@ prompt_done:
     mov r12d, esi
     cmp r12d, PROMPT_SAVE_AS
     jne 1f
-    mov r13, [rip + g_doc]
-    test r13, r13
-    jz 9f
-    # onto a read-only file (or a symlink to one): ask first
     mov rdi, rbx
-    call file_readonly
-    test eax, eax
-    jz 0f
-    mov rdi, rbx
-    call app_save_as_readonly
-    jmp 9f
-0:  mov rdi, r13
-    mov rsi, rbx
-    call doc_set_path
-    mov rdi, rbx
-    call mkdir_parent
-    mov rdi, r13
-    call doc_save
-    test rax, rax
-    js 8f
-    mov rdi, r13
-    call app_detect_lang
-    mov rdi, r13
-    call app_after_save
-    call app_update_title
+    call app_save_as_finish
     jmp 9f
 1:  cmp r12d, PROMPT_NEW_FILE
     jne 2f
     # create the file (and its folders) if missing, then open it
     mov rdi, rbx
-    call file_mtime
+    call vfs_mtime
     test rax, rax
     jnz 11f
     mov rdi, rbx
-    call mkdir_parent
+    call vfs_mkdir_parent
     mov rdi, rbx
     lea rsi, [rip + .Lempty]
     xor edx, edx
-    call file_write_all
+    call vfs_write_all
 11: mov rdi, rbx
     call app_open_file
     call explorer_refresh
@@ -2231,14 +3564,21 @@ prompt_done:
 2:  cmp r12d, PROMPT_NEW_FOLDER
     jne 3f
     mov rdi, rbx
-    call mkdir_p
+    call vfs_mkdir_p
     call explorer_refresh
     jmp 9f
 3:  cmp r12d, PROMPT_RENAME
     jne 9f
+    mov edi, WK_RENAME          # wsedit: a workspace edit of its own, undoable
+    lea rsi, [rip + g_explorer_target]
+    mov rdx, rbx
+    call ws_user_op
+    test eax, eax
+    jns 9f                      # made, or refused with a toast
     lea rdi, [rip + g_explorer_target]
     mov rsi, rbx
-    SYS SYS_rename
+    xor edx, edx
+    call vfs_rename
     test rax, rax
     js 8f
     # open tabs follow it: the file's, or those of the files inside a folder
@@ -2387,6 +3727,7 @@ FN palette_draw
 .Lpd_field:
     push r10
     push r10
+    call remote_field_for_draw  # remote hosts: a password's field is drawn masked
     call ui_textfield
     add rsp, 16
     # hint under the field for prompts / goto
@@ -2545,7 +3886,20 @@ FN palette_draw
     mov rdx, rax
     call text_width
     add eax, [rip + g_mt + 4*MI_16]
-    mov [rsp + 56], eax
+    mov [rsp + 60], eax
+    # at most 2/5 of the row: a longer one (a deep folder) shows its end
+    lea ecx, [r12 + r12]
+    push rax
+    mov eax, ecx
+    xor edx, edx
+    mov ecx, 5
+    div ecx
+    mov ecx, eax
+    pop rax
+    cmp eax, ecx
+    jbe 103f
+    mov eax, ecx
+103:mov [rsp + 56], eax
 101: # label with matched characters highlighted, clipped before the detail; not the path
     # browser's "Open <folder>" rows
     mov rax, [rsp + 24]
@@ -2576,9 +3930,16 @@ FN palette_draw
     # detail on the right
     cmp dword ptr [rsp + 56], 0
     je 11f
+    mov edi, r13d
+    add edi, r12d
+    sub edi, [rsp + 56]
+    mov esi, [rsp + 20]
+    mov edx, [rsp + 56]
+    mov ecx, ebx
+    call gfx_clip_push
     mov esi, r13d
     add esi, r12d
-    sub esi, [rsp + 56]
+    sub esi, [rsp + 60]
     lea rdi, [rip + g_face_small]
     mov edx, [rsp + 20]
     mov ecx, ebx
@@ -2589,6 +3950,7 @@ FN palette_draw
     push rax
     call ui_text_v
     add rsp, 16
+    call gfx_clip_pop
 11: test dword ptr [rsp + 32], UB_CLICK
     jz 12f
     mov eax, [rsp + 16]
@@ -2615,8 +3977,11 @@ prompt_title:
     jne 1f
     mov edi, IC_FILE_PLUS
 1:  cmp eax, PROMPT_NEW_FOLDER
-    jne 2f
+    jne 21f
     mov edi, IC_FOLDER_PLUS
+21: cmp eax, PROMPT_RENAME_SYMBOL
+    jne 2f
+    mov edi, IC_F_CODE
 2:  M ecx, MI_16
     mov esi, r12d
     add esi, ecx
@@ -2736,6 +4101,12 @@ placeholder_text:
     lea rcx, [rip + .Lph_cmds]
     cmp eax, PM_COMMANDS
     je 1f
+    lea rcx, [rip + .Lph_keys]
+    cmp eax, PM_KEYS
+    je 1f
+    lea rcx, [rip + .Lph_icons]
+    cmp eax, PM_ICONS
+    je 1f
     cmp eax, PM_THEMES
     jne 2f
     lea rcx, [rip + .Lph_dark]
@@ -2789,18 +4160,29 @@ hint_text:
     lea rax, [rip + .Lhint_rename]
     cmp dword ptr [rip + pal_prompt], PROMPT_RENAME
     je 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_RENAME_SYMBOL
+    je 1f
+    lea rax, [rip + .Lhint_ext_install]
+    cmp dword ptr [rip + pal_prompt], PROMPT_EXT_INSTALL
+    je 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE     # remote hosts: ssh's questions
+    jae 1f
     lea rax, [rip + .Lhint_path]
 1:  ret
 
 .section .rodata
+.Lcommand_slash: .asciz "/"
 .Lhome: .asciz "HOME"
 .Ldark: .asciz "dark"
 .Llight: .asciz "light"
 .Lplain: .asciz "Plain Text"
+.Lautomatic: .asciz "Automatic"
 .Lempty: .asciz ""
 .Lfailed: .asciz "That didn't work"
 .Lph_files: .asciz "Search files by name  (> commands, : line)"
 .Lph_cmds: .asciz "Type a command"
+.Lph_keys: .asciz "Search keyboard shortcuts"
+.Lph_icons: .asciz "Select a file icon theme"
 .Lph_themes: .asciz "Select a color theme"
 .Lph_dark: .asciz "Select a theme for dark mode"
 .Lph_light: .asciz "Select a theme for light mode"
@@ -2813,22 +4195,27 @@ hint_text:
 .Lnl: .ascii "\n"
 .Lhint_goto: .asciz "Enter a line number and press Enter"
 .Lhint_path: .asciz "Enter a path and press Enter, Esc to cancel"
+.Lhint_ext_install: .asciz "Enter continues, Esc cancels"
 .Lhint_new_file: .asciz "Enter creates the file, Esc cancels"
 .Lhint_new_folder: .asciz "Enter creates the folder, Esc cancels"
 .Lhint_rename: .asciz "Enter renames, Esc cancels"
 .Lph_open_file: .asciz "Open a file"
 .Lph_open_folder: .asciz "Open a folder"
 .Lopen_here: .asciz "Open "
+.Ladd_here: .asciz "Add "
+.Lph_add_folder: .asciz "Add a folder to the workspace"
 .Lopen_new: .asciz " in a new window"
 .Lroot: .asciz "/"
 .Lpp_none: .asciz "none\n"
 .Lpp_field: .asciz "field="
 .Lpp_reading: .asciz "reading\n"
 .Lpp_prompt: .asciz "prompt="
+.Lpp_choose: .asciz "choose="
 .Lpp_row: .asciz "  "
 .Lpp_sel: .asciz "> "
 .bss
 .p2align 3
 keys_cache: .zero 8 * 256
+ext_keys_cache: .zero VEC_SIZE  # the extensions' shortcut labels, one slot per command
 .globl g_ed_h_lines
 g_ed_h_lines: .long 0

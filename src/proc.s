@@ -8,7 +8,6 @@
 .equ TCGETS, 0x5401
 .equ TCSETS, 0x5402
 .equ IUTF8, 0x4000
-.equ F_SETFL, 4
 
 .bss
 .p2align 3
@@ -51,6 +50,8 @@ FN proc_self_path
 # proc_cwd(pid, buf, capacity) -> length of the process's current folder, written to buf with a NUL, or
 #   negative (a terminal's shell: relative paths in its output start there)
 FN proc_cwd
+    test edi, REMOTE_PID_TAG    # a program on the remote host (remote.s)
+    jnz remote_pid_cwd
 .ifdef MACOS
     jmp mac_pid_cwd
 .else
@@ -154,10 +155,19 @@ env_overridden:
 # proc_which(name) -> path to run (mem_free it), or 0; names with a slash are taken as they are
 .ifndef WINDOWS
 FN proc_which
+    xor esi, esi
+    jmp proc_which_in
+
+# proc_which_in(name, PATH value or 0 for rhun's own) -> the same, searching that PATH (uproc.s: the
+#   user's login environment)
+FN proc_which_in
     PROLOGUE
     mov rbx, rdi
+    mov r15, rsi
     call strlen
     mov r12, rax
+    cmp r12, 4096
+    jae 8f
     mov rdi, rbx
     mov rsi, rax
     lea rdx, [rip + .Lslash]
@@ -169,7 +179,10 @@ FN proc_which
     mov rsi, r12
     call mem_dup
     EPILOGUE
-1:  lea rdi, [rip + .Lpath]
+1:  mov r13, r15
+    test r13, r13
+    jnz 2f
+    lea rdi, [rip + .Lpath]
     call getenv
     mov r13, rax
     test rax, rax
@@ -187,7 +200,8 @@ FN proc_which
     inc rcx
     jmp 3b
 4:  mov r14, rcx
-    cmp rcx, 3000
+    lea rax, [rcx + r12 + 1]    # directory, slash, name and its terminating NUL
+    cmp rax, 4096
     jae 6f
     lea rdi, [rip + tmp_path]
     mov rsi, r13
@@ -220,7 +234,9 @@ FN proc_which
 .endif
 
 # proc_spawn(argv, envp, cwd, fd_in, fd_out, fd_err, ctty) -> pid or -errno
-#   argv[0] is the path to run; cwd may be 0; ctty makes fd_in the controlling terminal of a new session
+#   argv[0] is the path to run; cwd may be 0; ctty 1 makes fd_in the controlling terminal of a new
+#   session; ctty 2 makes a new session without one that dies with rhun (extensions); ctty 3 the same
+#   without the extension's confinement (programs run as the user, uproc.s)
 .ifndef WINDOWS
 FN proc_spawn
     PROLOGUE 32
@@ -232,17 +248,50 @@ FN proc_spawn
     mov [rsp + 8], r9d
     mov eax, [rbp + 16]
     mov [rsp + 12], eax
-    # vfork: the child borrows this stack until exec, so below it only reads memory
+    # vfork: the child borrows this stack until exec, so below it only reads memory. An
+    # extension (ctty 2) is a real fork: its confinement makes a user namespace, which a process
+    # sharing its address space may not, and it may use the stack
+    cmp dword ptr [rsp + 12], 2
+    je 10f
     SYS SYS_vfork
-    test rax, rax
+    jmp 12f
+10: SYS SYS_fork
+12: test rax, rax
     jnz 9f
     cmp dword ptr [rsp + 12], 0
     je 1f
     SYS SYS_setsid
+    cmp dword ptr [rsp + 12], 2
+    je 11f
+    cmp dword ptr [rsp + 12], 3
+    je 13f
     mov edi, [rsp]
     mov esi, TIOCSCTTY
     xor edx, edx
     SYS SYS_ioctl
+    jmp 1f
+11:
+.ifndef MACOS
+    # ctty 2: an extension; it dies with rhun
+    mov edi, PR_SET_PDEATHSIG
+    mov esi, SIGKILL
+    xor edx, edx
+    xor r10d, r10d
+    xor r8d, r8d
+    SYS SYS_prctl
+.endif
+    call confine_child          # what confine_prepare set up, if anything; exits on failure
+    jmp 1f
+13:
+.ifndef MACOS
+    # ctty 3: a program run as the user; it dies with rhun too
+    mov edi, PR_SET_PDEATHSIG
+    mov esi, SIGKILL
+    xor edx, edx
+    xor r10d, r10d
+    xor r8d, r8d
+    SYS SYS_prctl
+.endif
 1:  mov edi, [rsp]
     xor esi, esi
     SYS SYS_dup2
@@ -284,8 +333,22 @@ FN proc_spawn
 
 .endif
 
+# proc_kill(pid, sig) -> 0 or -errno: kill(2), also for the programs of a remote window (remote.s);
+#   a negative pid is the process group
+FN proc_kill
+    mov eax, edi
+    test eax, eax
+    jns 1f
+    neg eax
+1:  test eax, REMOTE_PID_TAG
+    jnz remote_kill
+    SYS SYS_kill
+    ret
+
 # proc_wait(pid, nohang) -> exit status (128 + signal when killed), -1 still running, -2 unknown pid
 FN proc_wait
+    test edi, REMOTE_PID_TAG    # a program on the remote host (remote.s)
+    jnz remote_wait
     sub rsp, 24
     mov dword ptr [rsp], 0
     xor edx, edx
@@ -326,6 +389,8 @@ FN run_piped
 #   program's input; errors 1 sends its error output down the same pipe (else it goes to /dev/null) and
 #   runs it in a session of its own, without a terminal to ask for passwords on.
 #   errors 2 creates that session without merging stderr, for binary-output workers.
+#   errors | 4: the caller feeds the input itself, of any length (ptr is not read; len only says there
+#   is one): ecx is the pipe to the program's input, nonblocking, the caller's to close (-1 on failure)
 FN run_piped_input
     PROLOGUE 48
     mov r12, rdi
@@ -367,6 +432,7 @@ FN run_piped_input
     jz 11f
     mov r9d, r8d
 11: mov eax, [rsp + 32]
+    and eax, 3
     push rax
     push rax
     call proc_spawn
@@ -383,7 +449,14 @@ FN run_piped_input
     # the input fits the pipe, so this does not wait for the program
     test r15, r15
     js 21f
-    mov r12, [rsp + 16]
+    test dword ptr [rsp + 32], 4
+    jz 22f
+    mov edi, [rsp + 12]         # the caller writes it as the program reads
+    mov esi, F_SETFL
+    mov edx, O_NONBLOCK
+    SYS SYS_fcntl
+    jmp 3f
+22: mov r12, [rsp + 16]
     mov r13, [rsp + 24]
 2:  test r13, r13
     jz 21f
@@ -400,6 +473,7 @@ FN run_piped_input
     jmp 2b
 21: mov edi, [rsp + 12]
     SYS SYS_close
+    mov dword ptr [rsp + 12], -1
 3:  test r15, r15
     js 7f
     mov edi, [rsp]
@@ -408,10 +482,12 @@ FN run_piped_input
     SYS SYS_fcntl
     mov rax, r15
     mov edx, [rsp]
+    mov ecx, [rsp + 12]
     EPILOGUE
 7:  mov edi, [rsp]
     SYS SYS_close
     mov rax, r15
+    mov ecx, -1
     EPILOGUE
 6:  mov r15, rax
     mov edi, [rsp + 8]
@@ -423,12 +499,14 @@ FN run_piped_input
 61: mov edi, ebx
     SYS SYS_close
     mov rax, r15
+    mov ecx, -1
     EPILOGUE
 8:  mov r15, rax
     mov edi, ebx
     SYS SYS_close
     mov rax, r15
-9:  EPILOGUE
+9:  mov ecx, -1
+    EPILOGUE
 
 # pty_open(cols, rows) -> eax master (nonblocking), edx slave; eax < 0 on failure
 .ifndef WINDOWS
@@ -499,7 +577,24 @@ FN pty_open
 # pty_resize(master, cols, rows, width px, height px)
 .ifndef WINDOWS
 FN pty_resize
-    sub rsp, 24
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    # a remote terminal's master is a channel: the host resizes its pty
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push r8
+    call remote_pty_resize
+    pop r8
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jz 1f
+    ret
+1:  sub rsp, 24
     mov [rsp], dx               # rows
     mov [rsp + 2], si           # cols
     mov [rsp + 4], cx
@@ -512,11 +607,220 @@ FN pty_resize
 
 .endif
 
+
+# ---- resources group: what an extension's processes cost (extres.s) ----
+.ifndef WINDOWS
+# proc_usage(pid, out) -> rax 0 or -errno: out[0] CPU nanoseconds of the process, its reaped
+# children and its live descendants, out[8] resident bytes of the live ones, out[16] how many (at
+# most 64, eight levels deep). Linux reads /proc (clock ticks of 10 ms, pages of 4 KiB); macOS
+# asks proc_pid_rusage (mac_proc_usage); Windows asks the extension's job (src/win/proc.s).
+FN proc_usage
+.ifdef MACOS
+    jmp mac_proc_usage
+.else
+    PROLOGUE
+    mov rbx, rsi
+    mov qword ptr [rbx], 0
+    mov qword ptr [rbx + 8], 0
+    mov qword ptr [rbx + 16], 0
+    xor esi, esi
+    mov rdx, rbx
+    call pu_add
+    cmp qword ptr [rbx + 16], 0
+    je 8f
+    xor eax, eax
+    EPILOGUE
+8:  mov rax, -3                 # ESRCH
+    EPILOGUE
+
+# pu_path(dst, pid, suffix) -> rax the NUL's address: "/proc/PID" + suffix
+pu_path:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13, rdx
+    lea rsi, [rip + .Lpu_proc]
+    call cstr_copy
+    mov rbx, rax
+    mov rdi, rax
+    mov esi, r12d
+    call fmt_u64
+    lea rdi, [rbx + rax]
+    mov rsi, r13
+    call cstr_copy
+    EPILOGUE
+
+# pu_read(path, buf, cap) -> rax bytes read (NUL after them), or -errno
+pu_read:
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    xor esi, esi                # O_RDONLY
+    SYS SYS_open
+    test rax, rax
+    js 9f
+    mov ebx, eax
+    xor r14d, r14d
+1:  mov edi, ebx
+    lea rsi, [r12 + r14]
+    mov rdx, r13
+    sub rdx, r14
+    jz 2f
+    SYS SYS_read
+    test rax, rax
+    jle 2f
+    add r14, rax
+    jmp 1b
+2:  mov edi, ebx
+    SYS SYS_close
+    mov byte ptr [r12 + r14], 0
+    mov rax, r14
+9:  EPILOGUE
+
+# pu_skip(p) -> rax past the spaces at p
+pu_skip:
+    mov rax, rdi
+1:  cmp byte ptr [rax], ' '
+    jne 9f
+    inc rax
+    jmp 1b
+9:  ret
+
+# pu_num(p) -> rax the decimal number at p, rdx past it
+pu_num:
+    xor eax, eax
+    mov rdx, rdi
+1:  movzx ecx, byte ptr [rdx]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja 9f
+    imul rax, rax, 10
+    add rax, rcx
+    inc rdx
+    jmp 1b
+9:  ret
+
+# pu_add(pid, depth, out): one process, then its children
+pu_add:
+    PROLOGUE 4224
+    mov r12d, edi
+    mov r13d, esi
+    mov r14, rdx
+    cmp qword ptr [r14 + 16], 64
+    jae 9f
+    lea rdi, [rsp]
+    mov esi, r12d
+    lea rdx, [rip + .Lpu_stat]
+    call pu_path
+    lea rdi, [rsp]
+    lea rsi, [rsp + 128]
+    mov edx, 4000
+    call pu_read
+    test rax, rax
+    jle 9f
+    # the fields after the last ')': state is field 3, utime 14, stime 15, cutime 16, cstime 17
+    lea rcx, [rsp + 128 + rax]
+1:  dec rcx
+    lea rdx, [rsp + 128]
+    cmp rcx, rdx
+    jb 9f
+    cmp byte ptr [rcx], ')'
+    jne 1b
+    lea rdi, [rcx + 1]
+    mov ebx, 3                  # the field being looked at
+    xor r15d, r15d              # ticks
+2:  call pu_skip
+    mov rdi, rax
+    cmp byte ptr [rdi], 0
+    je 4f
+    cmp ebx, 14
+    jb 3f
+    call pu_num
+    add r15, rax
+    mov rdi, rdx
+    inc ebx
+    cmp ebx, 18
+    jae 4f
+    jmp 2b
+3:  cmp byte ptr [rdi], ' '     # skip a field
+    je 31f
+    cmp byte ptr [rdi], 0
+    je 4f
+    inc rdi
+    jmp 3b
+31: inc ebx
+    jmp 2b
+4:  imul r15, r15, 10000000
+    add [r14], r15
+    inc qword ptr [r14 + 16]
+    # statm: resident pages are its second number
+    lea rdi, [rsp]
+    mov esi, r12d
+    lea rdx, [rip + .Lpu_statm]
+    call pu_path
+    lea rdi, [rsp]
+    lea rsi, [rsp + 128]
+    mov edx, 4000
+    call pu_read
+    test rax, rax
+    jle 5f
+    lea rdi, [rsp + 128]
+    call pu_num
+    mov rdi, rdx
+    call pu_skip
+    mov rdi, rax
+    call pu_num
+    shl rax, 12
+    add [r14 + 8], rax
+5:  # its children: /proc/PID/task/PID/children
+    cmp r13d, 8
+    jae 9f
+    lea rdi, [rsp]
+    mov esi, r12d
+    lea rdx, [rip + .Lpu_task]
+    call pu_path
+    mov rbx, rax
+    mov rdi, rax
+    mov esi, r12d
+    call fmt_u64
+    lea rdi, [rbx + rax]
+    lea rsi, [rip + .Lpu_children]
+    call cstr_copy
+    lea rdi, [rsp]
+    lea rsi, [rsp + 128]
+    mov edx, 4000
+    call pu_read
+    test rax, rax
+    jle 9f
+    lea r15, [rsp + 128]
+6:  mov rdi, r15
+    call pu_skip
+    mov rdi, rax
+    cmp byte ptr [rdi], '0'
+    jb 9f
+    cmp byte ptr [rdi], '9'
+    ja 9f
+    call pu_num
+    mov r15, rdx
+    mov edi, eax
+    lea esi, [r13 + 1]
+    mov rdx, r14
+    call pu_add
+    jmp 6b
+9:  EPILOGUE
+.endif
+.endif
+
 .section .rodata
 .Lslash: .ascii "/"
 .Lpath: .asciz "PATH"
 .Ldef_path: .asciz "/usr/local/bin:/usr/bin:/bin"
 .Ldevnull: .asciz "/dev/null"
+.Lpu_proc: .asciz "/proc/"
+.Lpu_stat: .asciz "/stat"
+.Lpu_statm: .asciz "/statm"
+.Lpu_task: .asciz "/task/"
+.Lpu_children: .asciz "/children"
 .Lptmx: .asciz "/dev/ptmx"
 .Lpts: .asciz "/dev/pts/"
 .p2align 3

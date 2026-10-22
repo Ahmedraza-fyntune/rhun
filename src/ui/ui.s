@@ -5,7 +5,7 @@
 .p2align 3
 .globl g_mt, g_s, g_mx, g_my, g_mdown, g_pressed, g_released, g_scroll_x, g_scroll_y
 .globl g_hot, g_active, g_cursor, g_block, g_clicks, g_press_x, g_face_ui, g_face_small, g_face_big, g_face_code
-.globl g_hole
+.globl g_hole, g_hole2, g_hole3
 g_mt: .zero 4 * MI_COUNT
 g_s: .long 0                    # float scale
 g_mdown: .long 0                # buttons held (bit per button)
@@ -18,7 +18,9 @@ g_active: .long 0
 g_cursor: .long 0
 g_block: .long 0                # 1 while drawing layers under a modal
 g_hole: .zero 16                # x, y, w, h: a handle drawn later owns this strip, nothing drawn
+g_hole2: .zero 16               # the same for a popup drawn over the editor later in the frame
                                 # before it takes the pointer there (h 0: none)
+g_hole3: .zero 16               # the same for notification cards (notify.s)
 g_clicks: .long 0               # click count of the last press (1..3)
 last_press_t: .quad 0
 last_press_x: .long 0
@@ -248,6 +250,8 @@ FN ui_begin
     mov dword ptr [rip + g_cursor], CUR_DEFAULT
     mov dword ptr [rip + g_block], 0
     mov dword ptr [rip + g_hole + 12], 0
+    mov dword ptr [rip + g_hole2 + 12], 0
+    mov dword ptr [rip + g_hole3 + 12], 0
     ret
 
 FN ui_end
@@ -321,7 +325,41 @@ FN ui_in
     jge 2f
     xor eax, eax
     ret
-2:  mov eax, 1
+2:  mov eax, [rip + g_hole2 + 12]
+    test eax, eax
+    jz 3f
+    mov esi, [rip + g_hole2 + 4]
+    cmp r9d, esi
+    jl 3f
+    add esi, eax
+    cmp r9d, esi
+    jge 3f
+    mov edi, [rip + g_hole2]
+    cmp r8d, edi
+    jl 3f
+    add edi, [rip + g_hole2 + 8]
+    cmp r8d, edi
+    jge 3f
+    xor eax, eax
+    ret
+3:  mov eax, [rip + g_hole3 + 12]
+    test eax, eax
+    jz 4f
+    mov esi, [rip + g_hole3 + 4]
+    cmp r9d, esi
+    jl 4f
+    add esi, eax
+    cmp r9d, esi
+    jge 4f
+    mov edi, [rip + g_hole3]
+    cmp r8d, edi
+    jl 4f
+    add edi, [rip + g_hole3 + 8]
+    cmp r8d, edi
+    jge 4f
+    xor eax, eax
+    ret
+4:  mov eax, 1
 1:  ret
 
 # ui_btn(id, x, y, w, h) -> UB_* bits
@@ -979,6 +1017,10 @@ FN tf_text
 1:  ret
 
 # tf_set(tf, ptr, len): replace contents, cursor at end
+FN tf_revision_touch
+    inc qword ptr [rdi + TF_revision]
+    ret
+
 FN tf_set
     push rbx
     push r12
@@ -986,6 +1028,7 @@ FN tf_set
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
+    inc qword ptr [rbx + TF_revision]
     lea rdi, [rbx + TF_sb]
     call sb_clear
     lea rdi, [rbx + TF_sb]
@@ -1045,6 +1088,7 @@ tf_delete_sel:
 tf_remove:
     push rbx
     mov rbx, rdi
+    inc qword ptr [rbx + TF_revision]
     mov r8, [rbx + TF_sb + SB_ptr]
     lea rdi, [r8 + rsi]
     lea r9, [rsi + rdx]
@@ -1079,6 +1123,7 @@ tf_insert_as:
     push r15
     mov r15d, ecx
     mov rbx, rdi
+    inc qword ptr [rbx + TF_revision]
     mov r12, rsi
     mov r13, rdx
     call tf_delete_sel
@@ -1209,7 +1254,7 @@ FN tf_key
     je .Ltk_copy
     cmp r12d, 'v'
     jne 2f
-    PCALL P_clip_get
+    call app_clip_request
     jmp .Ltk_yes
 2:  cmp r12d, KEY_BACKSPACE
     jne .Ltk_nav
@@ -1235,12 +1280,19 @@ FN tf_key
     sub rsi, rax
     mov rdi, [rbx + TF_sb + SB_ptr]
     add rdi, rax
-    PCALL P_clip_set
+    xor edx, edx
+    call ed_clip_set
+    call editor_clip_result
+    test eax, eax
+    jz .Ltk_copy_failed
     cmp r12d, 'x'
     jne .Ltk_yes
     mov rdi, rbx
     call tf_delete_sel
     jmp .Ltk_yes
+.Ltk_copy_failed:
+    mov eax, 1
+    EPILOGUE
 .Ltk_nav:
     mov r15, [rbx + TF_cur]
     cmp r12d, KEY_LEFT

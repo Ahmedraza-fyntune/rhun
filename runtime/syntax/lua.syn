@@ -10,3 +10,7 @@ string = ' \
 keywords = and break do else elseif end for function goto if in local not or repeat return then until while
 constants = true false nil self _G _ENV _VERSION
 builtins = print pairs ipairs next type tostring tonumber require pcall xpcall error assert select setmetatable getmetatable rawget rawset rawequal rawlen unpack string table math io os coroutine utf8
+indent_open = then do function repeat { ( [
+indent_close = end until } ) ]
+indent_middle = else elseif
+continue = ---

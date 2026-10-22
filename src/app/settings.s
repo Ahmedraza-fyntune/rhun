@@ -39,6 +39,8 @@ FN settings_field
 FN settings_focus
     push rax
     call commit_edit
+    lea rdi, [rip + set_search]
+    call tf_revision_touch
     pop rax
     mov dword ptr [rip + set_find], 1
     ret
@@ -99,6 +101,11 @@ FN settings_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
+    lea rax, [rip + cfg_agents_opencode]
+    cmp [rbx + SET_ptr], rax
+    jne 2f
+    mov rdi, r12                # AI: the extension sources (agentext.s)
+    call agentext_settings_dump
 2:  add rbx, SET_SIZE
     jmp 1b
 9:  EPILOGUE
@@ -420,11 +427,17 @@ section_title:
     lea rax, [rip + .Lt_files]
     cmp byte ptr [rdi], 'f'
     je 1f
+    lea rax, [rip + .Lt_testing]        # testing (before terminal: both start with t)
+    cmp dword ptr [rdi], 0x74736574     # "test"
+    je 1f
     lea rax, [rip + .Lt_terminal]
     cmp byte ptr [rdi], 't'
     je 1f
     lea rax, [rip + .Lt_git]
     cmp byte ptr [rdi], 'g'
+    je 1f
+    lea rax, [rip + .Lt_debug]          # debugger
+    cmp byte ptr [rdi], 'd'
     je 1f
     lea rax, [rip + .Lt_agents]
 1:  ret
@@ -518,6 +531,7 @@ FN settings_draw
     jge 13f
     mov dword ptr [rip + set_scroll], 0
 13: call update_desc_refresh
+    call extupdate_desc_refresh # extension management
     # a changed query scrolls back to the first match
     lea rdi, [rip + set_search]
     call tf_text
@@ -1303,6 +1317,14 @@ FN settings_draw
     call gfx_clip_pop
     add r12d, r13d
     add r12d, [rip + g_mt + 4*MI_8]
+    lea rax, [rip + cfg_agents_opencode]
+    cmp [rbx + SET_ptr], rax
+    jne .Lsd_skip
+    mov edi, [rsp + 20]         # AI: a switch per extension source (agentext.s)
+    mov esi, r12d
+    mov edx, [rsp + 16]
+    call agentext_settings_rows
+    add r12d, eax
 .Lsd_skip:
     add rbx, SET_SIZE
     inc r15d
@@ -1324,7 +1346,12 @@ FN settings_draw
     COLOR r9d, T_MUTED
     call ui_text_c
     add r12d, [rip + g_mt + 4*MI_32]
-59: add r12d, [rip + g_mt + 4*MI_48]
+59: # the extensions, after the table (not under a search query)
+    lea rdi, [rip + set_search]
+    call tf_text
+    test rdx, rdx
+    jnz 58f
+58: add r12d, [rip + g_mt + 4*MI_48]
     sub r12d, [rsp + 24]
     mov [rip + set_content_h], r12d
     # clicking elsewhere ends string editing; clicking elsewhere on the page leaves the search field
@@ -1552,8 +1579,10 @@ FN ui_text_v_fit
 .Lt_files: .asciz "Files"
 .Lt_agents: .asciz "Agents"
 .Lt_terminal: .asciz "Terminal"
+.Lt_testing: .asciz "Testing"
 .Lt_git: .asciz "Git"
 .Lt_updates: .asciz "Updates"
+.Lt_debug: .asciz "Debugger"
 .Lwebsite: .asciz "https://rhun.app"
 .Lemail: .asciz "hi@rhun.app"
 .Lfeedback: .asciz "Feedback and issues: GitHub"

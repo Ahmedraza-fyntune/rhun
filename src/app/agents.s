@@ -15,6 +15,8 @@ ENDSTRUCT AM_SIZE
 .equ R_ASSIST, 2
 .equ R_TOOL, 3
 .equ R_RESULT, 4
+.equ R_ERROR, 5                 # extension sessions (agentext.s): an error and a notice, drawn as results
+.equ R_INFO, 6
 
 .equ ID_AG_ROW, 0x400000          # + session: a range of its own, as the list has no end
 .equ ID_AG_BACK, 0x5f00
@@ -59,6 +61,10 @@ index_loud: .long 0            # the next run was asked for (agents_scan): shown
 index_shown: .long 0           # the running worker shows as loading; routine runs are silent
 last_visible: .long 0
 .p2align 3
+ext_listed: .quad 0             # rows of extensions' sessions in the page (agents_ext_rows)
+keep_empty: .long 0             # add_msg keeps an empty message (an extension's indices count it)
+.p2align 3
+ext_pinned: .zero VEC_SIZE      # agents_ext_rows: the rows after the page while extension rows go in
 index_debounce: .quad 0
 index_started: .quad 0
 index_runs: .quad 0             # workers started (print-agents-runs)
@@ -117,6 +123,10 @@ FN agents_set_project
     mov dword ptr [rip + common_wd], -1
     mov dword ptr [rip + registry_wd], -1
     call agents_watch_repo
+    # AI: the sessions extensions list, as this project shows them
+    mov qword ptr [rip + ext_listed], 0
+    call agentext_rematch
+    call agents_ext_rows
     call agents_scan
     call index_dirty
     EPILOGUE
@@ -137,11 +147,11 @@ FN agents_shutdown
 .ifndef WINDOWS
     neg edi                    # the worker's process group includes its database CLI children
     mov esi, 9
-    SYS SYS_kill
+    call proc_kill             # (on the host in a remote window)
     mov edi, [rip + index_pid] # and the worker, also before its first instruction makes that group
 .endif
     mov esi, 9
-    SYS SYS_kill
+    call proc_kill
     lea rdi, [rip + reapers]
     mov esi, 8
     call vec_push
@@ -241,7 +251,10 @@ index_start:
     lea rcx, [rip + index_number]
     mov byte ptr [rcx + rax], 0
     lea rax, [rip + index_exe]
-    mov [rsp], rax
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the host's sessions, by the agent's binary
+    je 2f
+    lea rax, [rip + .Lat_self]
+2:  mov [rsp], rax
     lea rax, [rip + .Lindex_arg]
     mov [rsp + 8], rax
     mov rax, [rip + g_project]
@@ -267,7 +280,7 @@ index_start:
     xor ecx, ecx
     xor r8d, r8d
     mov r9d, 2
-    call run_piped_input
+    call vfs_run_piped_input
     test rax, rax
     jle .Lindex_start_fail
     mov [rip + index_pid], eax
@@ -671,6 +684,8 @@ apply_page:
     jae 18f
     mov rax, [rip + sessions + VEC_ptr]
     mov rax, [rax + rbx*8]
+    cmp dword ptr [rax + AS_kind], AS_KIND_EXT
+    je 17f                      # an extension's session has no folder to watch
     mov r13, [rax + AS_path]
     mov rdi, r13
     call strlen
@@ -685,9 +700,12 @@ apply_page:
     call watch_agents_dir
     mov rdi, r13
     call mem_free
-    inc rbx
+17: inc rbx
     jmp 16b
-18: call index_dirty
+18: # AI: the extensions' rows go in again
+    mov qword ptr [rip + ext_listed], 0
+    call agents_ext_rows
+    call index_dirty
     EPILOGUE
 
 index_dirty:
@@ -752,6 +770,8 @@ FN agent_read_head
 
 # agent_read_window(path, max, offset): bounded read used by metadata discovery.
 FN agent_read_window
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the host's file
+    jne 20f
     PROLOGUE
     mov r12, rsi
     mov r15, rdx
@@ -801,6 +821,12 @@ FN agent_read_window
 8:  xor eax, eax
     xor edx, edx
     EPILOGUE
+20: xchg rsi, rdx
+    call vfs_read_at
+    test rax, rax
+    jnz 21f
+    xor edx, edx
+21: ret
 
 # agent_read_first_line(path, max) -> rax buf (NUL-terminated, mem_alloc), rdx len
 # Failure returns rax=0, rdx=-errno for I/O errors or 0 for an oversized line.
@@ -1139,7 +1165,9 @@ add_msg:
     test rdx, rdx
     jnz 1f
     test r15, r15
-    jz 9f
+    jnz 1f
+    cmp dword ptr [rip + keep_empty], 0
+    je 9f                       # an extension's messages keep their places (agents_ext_msg)
 1:  mov r13, rax
     mov r14, rdx
     # results are shown as a short excerpt
@@ -2211,21 +2239,53 @@ FN agent_grok_title
 FN session_update
     PROLOGUE 16
     mov rbx, rdi
+    cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
+    je 9f                       # its extension sends its messages (agentext.s)
+    mov r12d, -1
+    cmp dword ptr [rip + g_remote], 0     # remote hosts: the size from the host, no descriptor
+    je 11f
     mov rdi, [rbx + AS_path]
+    call vfs_stat
+    test rax, rax
+    js 9f
+    mov rax, [rip + vfs_statbuf + 48]
+    jmp 12f
+11: mov rdi, [rbx + AS_path]
     call file_open_read
     test rax, rax
     js 9f
     mov r12d, eax
     mov edi, eax
     call file_size
-    mov r13, rax
+12: mov r13, rax
     cmp rax, [rbx + AS_off]
     jb 10f                      # truncated: reload
     je 8f
     # read the new bytes into the partial-line buffer
     mov r14, r13
     sub r14, [rbx + AS_off]
+    test r12d, r12d
+    jns 13f
+    mov rdi, [rbx + AS_path]
+    mov rsi, [rbx + AS_off]
+    mov rdx, r14
+    call vfs_read_at
+    test rax, rax
+    jz 8f
+    mov [rsp], rax
+    mov [rsp + 8], rdx
     lea rdi, [rbx + AS_part]
+    mov rsi, rdx
+    call sb_reserve
+    mov rdi, rax
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    call memcpy
+    mov rdi, [rsp]
+    call mem_free
+    mov rax, [rsp + 8]
+    jmp 14f
+13: lea rdi, [rbx + AS_part]
     mov rsi, r14
     call sb_reserve
     mov rsi, rax
@@ -2234,7 +2294,7 @@ FN session_update
     mov r10, [rbx + AS_off]
     mov eax, 17                 # pread64
     XSYS
-    test rax, rax
+14: test rax, rax
     jle 8f
     add [rbx + AS_off], rax
     add [rbx + AS_part + SB_len], rax
@@ -2277,6 +2337,8 @@ FN session_update
     mov [rbx + AS_changed], rax
     mov dword ptr [rip + g_dirty], 1
 8:  mov edi, r12d
+    test edi, edi
+    js 9f
     SYS SYS_close
 9:  EPILOGUE
 10: mov qword ptr [rbx + AS_off], 0
@@ -2284,7 +2346,10 @@ FN session_update
     mov rdi, rbx
     call session_clear_msgs
     mov edi, r12d
+    test edi, edi
+    js 15f
     SYS SYS_close
+15:
     mov rdi, rbx
     call session_update
     EPILOGUE
@@ -2296,6 +2361,7 @@ FN agents_poll
     PROLOGUE
     call time_ms
     mov [rip + last_poll], rax
+    call agents_poll_prefetch   # remote hosts: their stats in one request
     xor ebx, ebx
     xor r13d, r13d
 1:  cmp rbx, [rip + page_count]
@@ -2317,23 +2383,66 @@ FN agents_poll
 31: mov rax, [rip + sessions + VEC_ptr]
     mov r12, [rax + rbx*8]
     call poll_session
-4:  test r13d, r13d
+4:  call vfs_stats_clear
+    test r13d, r13d
     jz 5f
     call sort_sessions
     mov dword ptr [rip + g_dirty], 1
 5:  EPILOGUE
 
+# agents_poll_prefetch(): remote hosts: the files agents_poll stats, asked for in one request
+agents_poll_prefetch:
+    cmp dword ptr [rip + g_remote], 0
+    je 9f
+    PROLOGUE 432
+    xor ebx, ebx                # rows
+    xor r12d, r12d              # paths
+1:  cmp rbx, [rip + page_count]
+    jae 2f
+    cmp ebx, 50
+    jae 2f
+    mov rax, [rip + sessions + VEC_ptr]
+    mov rax, [rax + rbx*8]
+    mov rcx, [rax + AS_path]
+    test rcx, rcx
+    jz 11f
+    mov [rsp + r12*8], rcx
+    inc r12
+11: inc rbx
+    jmp 1b
+2:  mov rbx, [rip + view]
+    test rbx, rbx
+    js 3f
+    cmp rbx, [rip + sessions + VEC_len]
+    jae 3f
+    mov rax, [rip + sessions + VEC_ptr]
+    mov rax, [rax + rbx*8]
+    mov rcx, [rax + AS_path]
+    test rcx, rcx
+    jz 3f
+    mov [rsp + r12*8], rcx
+    inc r12
+3:  test r12, r12
+    jz 8f
+    mov rdi, rsp
+    mov rsi, r12
+    call vfs_stats_prefetch
+8:  EPILOGUE
+9:  ret
+
 poll_session:
     cmp dword ptr [r12 + AS_kind], 4
-    je 9f                      # the worker owns OpenCode snapshot replacement and database recency
+    je 9f
+    cmp dword ptr [r12 + AS_kind], AS_KIND_EXT
+    je 9f                      # an extension says when its sessions change                      # the worker owns OpenCode snapshot replacement and database recency
     mov rdi, [r12 + AS_path]
-    call file_stamp
+    call vfs_stamp
     cmp rax, [r12 + AS_stamp]
     je 9f
     mov [r12 + AS_stamp], rax
     mov dword ptr [rip + index_pending], 1
     mov rdi, [r12 + AS_path]
-    call file_mtime_ns
+    call vfs_mtime_ns
     mov [r12 + AS_recency], rax
     xor edx, edx
     mov ecx, 1000000000
@@ -2360,7 +2469,7 @@ FN agents_on_change
 # registration's folder (its gitdir names a moved worktree). A folder without a repository has none.
 agents_watch_repo:
     PROLOGUE
-    call git_common_dir
+    call git_project_common_dir
     test rax, rax
     jz 9f
     mov rbx, rax
@@ -2377,7 +2486,7 @@ agents_watch_repo:
     mov rdi, r12
     lea rsi, [rip + registration_cb]
     mov rdx, r12
-    call dir_each
+    call vfs_dir_each
     mov rdi, r12
     call mem_free
 9:  EPILOGUE
@@ -2609,8 +2718,14 @@ open_session:
     mov [rip + view], rdi
     mov rax, [rip + sessions + VEC_ptr]
     mov rbx, [rax + rdi*8]
-    mov dword ptr [rbx + AS_loaded], 1
     mov rdi, rbx
+    call agentext_opened        # AI (D4): it replaces a new session being written; the box is its
+    mov dword ptr [rbx + AS_loaded], 1
+    cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
+    jne 1f
+    mov rdi, rbx
+    call agentext_open          # its extension is asked for the messages
+1:  mov rdi, rbx
     call observe_session
     mov rdi, rbx
     call session_update
@@ -2643,7 +2758,12 @@ FN agents_dump
 2:  cmp dword ptr [r12 + AS_kind], 4
     jne 24f
     lea rsi, [rip + .Lopencode_name]
-24: mov rdi, r15
+24: cmp dword ptr [r12 + AS_kind], AS_KIND_EXT
+    jne 26f
+    mov rdi, [r12 + AS_ext]
+    call agentext_title
+    mov rsi, rax
+26: mov rdi, r15
     call sb_push_cstr
     mov rsi, [r12 + AS_worktree]
     test rsi, rsi
@@ -2746,6 +2866,61 @@ FN agents_open
 1:  ret
 
 FN agents_key
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    call agentext_new_active    # AI (D4): a new session's draft hides the conversation and its card
+    test rax, rax
+    jnz 4f
+    call agents_ext_open        # 1 to 9 pick an option of the open session's card
+    test rax, rax
+    jz 4f
+    mov rbx, rax
+    test r14d, MOD_CTRL | MOD_ALT | MOD_SUPER
+    jnz 4f
+    mov rdi, rbx
+    mov esi, r13d
+    call agentext_card_key
+    test eax, eax
+    jnz 5f
+    mov rdi, rbx
+    mov esi, r12d
+    call agentext_card_nav      # arrows among its options, Enter on the chosen one
+    test eax, eax
+    jnz 5f
+    cmp r12d, KEY_RETURN        # Enter or Tab goes to its prompt box
+    je 6f
+    cmp r12d, KEY_TAB
+    jne 4f
+6:  mov rdi, rbx
+    call agentext_prompts
+    test eax, eax
+    jz 4f
+    mov dword ptr [rip + g_focus], FOCUS_AGENT_INPUT
+    mov dword ptr [rip + g_dirty], 1
+    jmp 5f
+4:  call agentext_new_active
+    test rax, rax
+    jz 7f
+    cmp r12d, KEY_RETURN        # writing a new session: Enter or Tab goes back to its box
+    je 8f
+    cmp r12d, KEY_TAB
+    je 8f
+    cmp r12d, KEY_ESCAPE
+    jne 7f
+    call agentext_new_leave
+5:  mov eax, 1
+    EPILOGUE
+8:  mov dword ptr [rip + g_focus], FOCUS_AGENT_INPUT
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+7:  mov edi, r12d
+    call key_list
+    EPILOGUE
+
+key_list:
     cmp edi, KEY_ESCAPE
     jne 1f
     cmp qword ptr [rip + view], 0
@@ -2758,6 +2933,278 @@ FN agents_key
     ret
 1:  xor eax, eax
     ret
+
+# ---------- sessions extensions list (AI, agentext.s) ----------
+
+# FN agents_ext_rows(): the rows extensions list are in the page again: those the project shows, of
+#   extensions whose sessions are switched on, sorted in with the others by recency. The open
+#   conversation stays open by its object; one whose row went closes.
+FN agents_ext_rows
+    PROLOGUE 16
+    xor ebx, ebx
+    mov rax, [rip + view]
+    test rax, rax
+    js 1f
+    cmp rax, [rip + sessions + VEC_len]
+    jae 1f
+    mov rcx, [rip + sessions + VEC_ptr]
+    mov rbx, [rcx + rax*8]
+1:  mov [rsp], rbx
+    # the extension rows out, the pinned rows after the page aside
+    mov qword ptr [rip + ext_pinned + VEC_len], 0
+    xor r12d, r12d              # read
+    xor r13d, r13d              # write
+    xor r14d, r14d              # page rows dropped
+2:  cmp r12, [rip + sessions + VEC_len]
+    jae 4f
+    mov rax, [rip + sessions + VEC_ptr]
+    mov r15, [rax + r12*8]
+    cmp dword ptr [r15 + AS_kind], AS_KIND_EXT
+    jne 3f
+    cmp r12, [rip + page_count]
+    jae 21f
+    inc r14
+21: inc r12
+    jmp 2b
+3:  cmp r12, [rip + page_count]
+    jb 31f
+    lea rdi, [rip + ext_pinned]
+    mov esi, 8
+    call vec_push
+    mov [rax], r15
+    inc r12
+    jmp 2b
+31: mov rax, [rip + sessions + VEC_ptr]
+    mov [rax + r13*8], r15
+    inc r12
+    inc r13
+    jmp 2b
+4:  mov [rip + sessions + VEC_len], r13
+    sub [rip + page_count], r14
+    mov rax, [rip + ext_listed]
+    sub [rip + total_count], rax
+    mov qword ptr [rip + ext_listed], 0
+    # the rows each extension lists, when shown
+    xor r12d, r12d
+5:  cmp r12, [rip + g_exts + VEC_len]
+    jae 7f
+    imul rdi, r12, EXT_SIZE
+    add rdi, [rip + g_exts + VEC_ptr]
+    inc r12
+    call ai_ext
+    mov r13, rax
+    cmp dword ptr [r13 + AX_agents], 0
+    je 5b
+    cmp dword ptr [r13 + AX_hidden], 0
+    jne 5b
+    xor r14d, r14d
+6:  cmp r14, [r13 + AX_rows + VEC_len]
+    jae 5b
+    mov rax, [r13 + AX_rows + VEC_ptr]
+    mov r15, [rax + r14*8]
+    inc r14
+    test dword ptr [r15 + AS_xflags], AXF_MATCH
+    jz 6b
+    lea rdi, [rip + sessions]
+    mov esi, 8
+    call vec_push
+    mov [rax], r15
+    inc qword ptr [rip + page_count]
+    inc qword ptr [rip + ext_listed]
+    jmp 6b
+7:  mov rax, [rip + ext_listed]
+    add [rip + total_count], rax
+    xor r12d, r12d
+8:  cmp r12, [rip + ext_pinned + VEC_len]
+    jae 9f
+    mov rax, [rip + ext_pinned + VEC_ptr]
+    mov r15, [rax + r12*8]
+    inc r12
+    cmp r15, [rsp]
+    jne 8b                      # a pinned row stays only while it is the open conversation
+    lea rdi, [rip + sessions]
+    mov esi, 8
+    call vec_push
+    mov [rax], r15
+    jmp 8b
+9:  # the open conversation again, by its object
+    mov qword ptr [rip + view], -1
+    mov rbx, [rsp]
+    test rbx, rbx
+    jz 12f
+    xor ecx, ecx
+10: cmp rcx, [rip + sessions + VEC_len]
+    jae 12f
+    mov rax, [rip + sessions + VEC_ptr]
+    cmp [rax + rcx*8], rbx
+    je 11f
+    inc rcx
+    jmp 10b
+11: mov [rip + view], rcx
+12: call sort_sessions
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# FN agents_open_as(AS*): open that session when the page lists it (a new extension session)
+FN agents_open_as
+    xor eax, eax
+1:  cmp rax, [rip + sessions + VEC_len]
+    jae 2f
+    mov rcx, [rip + sessions + VEC_ptr]
+    cmp [rcx + rax*8], rdi
+    je 3f
+    inc rax
+    jmp 1b
+3:  mov rdi, rax
+    jmp open_session
+2:  ret
+
+# FN agents_ext_open() -> rax the extension session the panel shows, or 0
+FN agents_ext_open
+    xor eax, eax
+    mov rcx, [rip + view]
+    test rcx, rcx
+    js 1f
+    cmp rcx, [rip + sessions + VEC_len]
+    jae 1f
+    mov rdx, [rip + sessions + VEC_ptr]
+    mov rdx, [rdx + rcx*8]
+    cmp dword ptr [rdx + AS_kind], AS_KIND_EXT
+    jne 1f
+    mov rax, rdx
+1:  ret
+
+# FN agents_ext_is_open(AS*) -> eax 1 when it is the conversation the panel shows
+FN agents_ext_is_open
+    xor eax, eax
+    mov rcx, [rip + view]
+    test rcx, rcx
+    js 1f
+    cmp rcx, [rip + sessions + VEC_len]
+    jae 1f
+    mov rdx, [rip + sessions + VEC_ptr]
+    cmp [rdx + rcx*8], rdi
+    jne 1f
+    inc eax
+1:  ret
+
+# FN agents_ext_truncate(AS*, n): the messages from n on go
+FN agents_ext_truncate
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    cmp r12, [rbx + AS_msgs + VEC_len]
+    jae 9f
+    test r12, r12
+    jnz 1f
+    mov rdi, rbx
+    call session_clear_msgs
+    jmp 9f
+1:  mov r13, r12
+2:  cmp r13, [rbx + AS_msgs + VEC_len]
+    jae 3f
+    imul r14, r13, AM_SIZE
+    add r14, [rbx + AS_msgs + VEC_ptr]
+    mov rdi, [r14 + AM_text]
+    call mem_free
+    mov rdi, [r14 + AM_name]
+    call mem_free
+    inc r13
+    jmp 2b
+3:  mov [rbx + AS_msgs + VEC_len], r12
+9:  EPILOGUE
+
+# FN agents_ext_msg(AS*, role, ptr, len, label cstr or 0): one message of an extension's session
+FN agents_ext_msg
+    PROLOGUE
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13, rdx
+    mov r14, rcx
+    mov r15, r8
+    # a reply names its model only where it changed, as the built-in sessions do
+    cmp r12d, R_ASSIST
+    jne 1f
+    test r15, r15
+    jz 1f
+    mov rdi, r15
+    mov rsi, [rbx + AS_shown_model]
+    test rsi, rsi
+    jz 2f
+    call strcmp_eq
+    test eax, eax
+    jz 2f
+    xor r15d, r15d
+    jmp 1f
+2:  mov rdi, r15
+    call strlen
+    lea rdi, [rbx + AS_shown_model]
+    mov rsi, r15
+    mov rdx, rax
+    call set_str
+1:  mov rdi, rbx
+    mov esi, r12d
+    mov rdx, r13
+    mov rcx, r14
+    mov r8, r15
+    mov dword ptr [rip + keep_empty], 1
+    call add_msg
+    mov dword ptr [rip + keep_empty], 0
+    call time_ms
+    mov [rbx + AS_changed], rax
+    EPILOGUE
+
+# ext_badge(AS*, x, y) -> right edge: the badge of an extension's session: its icon and the source's
+#   name, as agent_badge draws the built-in ones
+ext_badge:
+    PROLOGUE 16
+    mov r12d, esi
+    mov r13d, edx
+    mov rbx, [rdi + AS_ext]
+    mov rdi, rbx
+    call agentext_title
+    mov r15, rax
+    COLOR edi, T_PANEL
+    COLOR esi, T_MUTED
+    mov edx, 48
+    call color_mix
+    mov [rsp + 4], eax
+    mov rdi, r15
+    call strlen
+    lea rdi, [rip + g_face_small]
+    mov rsi, r15
+    mov rdx, rax
+    call text_width
+    mov r14d, eax
+    add r14d, [rip + g_mt + 4*MI_14]
+    add r14d, [rip + g_mt + 4*MI_4]
+    add r14d, [rip + g_mt + 4*MI_12]
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    M ecx, MI_20
+    M r8d, MI_4
+    mov r9d, [rsp + 4]
+    call gfx_round_rect
+    mov edi, r12d
+    add edi, [rip + g_mt + 4*MI_3]
+    mov esi, r13d
+    add esi, [rip + g_mt + 4*MI_3]
+    M edx, MI_14
+    mov rcx, rbx
+    call badge
+    lea rdi, [rip + g_face_small]
+    mov esi, r12d
+    add esi, [rip + g_mt + 4*MI_6]
+    add esi, [rip + g_mt + 4*MI_14]
+    add esi, [rip + g_mt + 4*MI_4]
+    mov edx, r13d
+    M ecx, MI_20
+    mov r8, r15
+    COLOR r9d, T_FG
+    call ui_text_c
+    lea eax, [r12 + r14]
+    EPILOGUE
 
 # ---------- drawing ----------
 
@@ -2964,7 +3411,14 @@ rel_time:
 is_live:
     push rbx
     mov rbx, rdi
-    call time_now
+    cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
+    jne 3f
+    mov eax, [rbx + AS_state]   # an extension's session is live while it works or waits
+    cmp eax, AGS_WORKING
+    je 2f
+    cmp eax, AGS_WAITING
+    je 2f
+3:  call time_now
     sub rax, [rbx + AS_mtime]
     cmp rax, 20
     ja 1f
@@ -3116,7 +3570,7 @@ msg_height:
     imul eax, [rsp + WR_lh]
     mov ecx, [rbx + AM_role]
     cmp ecx, R_RESULT
-    jne 3f
+    jb 3f                       # results, errors and notices are boxed
     add eax, [rip + g_mt + 4*MI_20]
     jmp 9f
 3:  add eax, [rip + g_mt + 4*MI_40]
@@ -3134,7 +3588,7 @@ wr_setup:
     lea rax, [rip + g_face_ui]
     mov ecx, [rip + g_face_ui + FACE_lineh]
     cmp dword ptr [rbx + AM_role], R_RESULT
-    jne 1f
+    jb 1f                       # results, errors and notices are boxed
     lea rax, [rip + g_face_small]
     mov ecx, [rip + g_face_small + FACE_lineh]
     mov edx, r12d               # a result's box insets its text
@@ -3160,7 +3614,16 @@ FN agents_draw
     mov edx, [rsp + 8]
     mov ecx, [rsp + 12]
     call gfx_clip_push
-    cmp qword ptr [rip + view], 0
+    call agentext_new_active    # AI (D4): a new session of an extension is being written
+    test rax, rax
+    jz 2f
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call agentext_new_draw
+    jmp 9f
+2:  cmp qword ptr [rip + view], 0
     jl 1f
     mov edi, [rsp]
     mov esi, [rsp + 4]
@@ -3209,7 +3672,17 @@ list_draw:
     test eax, UB_CLICK
     jz 1f
     call agents_scan
-1:  cmp qword ptr [rip + page_count], 0
+1:  mov edi, [rsp]              # AI (D4): "+ TITLE" for extensions whose sessions take prompts
+    add edi, [rsp + 8]
+    sub edi, r12d
+    sub edi, [rip + g_mt + 4*MI_12]
+    mov esi, r15d
+    sub esi, r12d
+    sar esi, 1
+    add esi, [rsp + 4]
+    mov edx, r12d
+    call agentext_list_buttons
+    cmp qword ptr [rip + page_count], 0
     jne 2f
     lea rdi, [rip + g_face_small]
     mov esi, [rsp]
@@ -3360,8 +3833,13 @@ list_draw:
     add esi, [rip + g_mt + 4*MI_32]
     mov edx, r13d
     add edx, [rip + g_mt + 4*MI_28]
-    call agent_badge
-    mov [rsp + 40], eax
+    cmp edi, AS_KIND_EXT
+    jne 61f
+    mov rdi, r14                # an extension's session: its badge (AI, agentext.s)
+    call ext_badge
+    jmp 62f
+61: call agent_badge
+62: mov [rsp + 40], eax
     mov rdi, [r14 + AS_worktree]
     test rdi, rdi
     jz 7f
@@ -3417,7 +3895,17 @@ list_draw:
     lea rdi, [rip + tmp]
     lea rsi, [rip + buf]
     call sb_push_cstr
-    mov rdi, r14
+    cmp dword ptr [r14 + AS_kind], AS_KIND_EXT
+    jne 73f
+    mov eax, [r14 + AS_state]   # an extension's session says what it does
+    test eax, eax
+    jz 8f
+    lea rcx, [rip + ext_state_labels]
+    lea rdi, [rip + tmp]
+    mov rsi, [rcx + rax*8]
+    call sb_push_cstr
+    jmp 8f
+73: mov rdi, r14
     call is_live
     test eax, eax
     jz 8f
@@ -3505,6 +3993,7 @@ thread_draw:
     test eax, UB_CLICK
     jz 1f
     mov qword ptr [rip + view], -1
+    call agentext_new_leave     # AI (D4): the prompt box's focus goes back to the panel
     mov dword ptr [rip + g_dirty], 1
     jmp .Ltd_ret
 1:  mov r8, [rbx + AS_title]
@@ -3560,7 +4049,20 @@ thread_draw:
     mov eax, [rsp + 12]
     sub eax, r15d
     mov [rsp + 24], eax         # area h
-    M eax, MI_16
+    mov dword ptr [rsp + 160], 0
+    cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
+    jne 41f
+    mov rdi, rbx                # AI (D4): its card and prompt box go under the messages
+    mov esi, [rsp + 8]
+    call agentext_bottom_h
+    mov ecx, [rsp + 24]
+    shr ecx, 1
+    cmp eax, ecx
+    jbe 42f
+    mov eax, ecx                # at most half the panel
+42: mov [rsp + 160], eax
+    sub [rsp + 24], eax
+41: M eax, MI_16
     mov [rsp + 28], eax         # pad
     mov eax, [rsp + 8]
     sub eax, [rsp + 28]
@@ -3660,6 +4162,18 @@ thread_draw:
     jmp .Ltd_msg
 .Ltd_msgs_done:
     call gfx_clip_pop
+    mov r8d, [rsp + 160]
+    test r8d, r8d
+    jz 43f
+    mov rdi, rbx
+    mov esi, [rsp]
+    mov edx, [rsp + 20]
+    add edx, [rsp + 24]
+    mov ecx, [rsp + 8]
+    call agentext_bottom_draw
+    cmp qword ptr [rip + view], 0
+    jl .Ltd_ret
+43:
     # scrollbar
     mov eax, [rsp + 24]
     push rax
@@ -3729,7 +4243,7 @@ draw_msg:
     cmp eax, R_TOOL
     je .Ldm_tool
     cmp eax, R_RESULT
-    je .Ldm_result
+    jae .Ldm_result
     # user / assistant: label line + wrapped text
     cmp eax, R_USER
     jne 1f
@@ -3876,7 +4390,13 @@ draw_msg:
     mov ecx, r13d
     sub ecx, [rip + g_mt + 4*MI_8]
     COLOR r8d, T_BORDER
-    call gfx_fill
+    cmp dword ptr [rbx + AM_role], R_ERROR
+    jne 1f
+    COLOR r8d, T_ERROR          # an extension session's error and notice (AI)
+1:  cmp dword ptr [rbx + AM_role], R_INFO
+    jne 2f
+    COLOR r8d, T_ACCENT
+2:  call gfx_fill
     lea rdi, [rsp]
     push r12
     push r12
@@ -3907,8 +4427,14 @@ draw_msg:
 .Lr2: .asciz "agent"
 .Lr3: .asciz "tool"
 .Lr4: .asciz "result"
+.Lr5: .asciz "error"
+.Lr6: .asciz "info"
+.Lst_working: .asciz "  \302\267  working"
+.Lst_waiting: .asciz "  \302\267  waiting for you"
+.Lst_error: .asciz "  \302\267  error"
 .p2align 3
-role_names: .quad .Lr0, .Lr1, .Lr2, .Lr3, .Lr4
+role_names: .quad .Lr0, .Lr1, .Lr2, .Lr3, .Lr4, .Lr5, .Lr6
+ext_state_labels: .quad .Lr0, .Lst_working, .Lst_waiting, .Lst_error
 .Lheader: .asciz "AGENTS"
 .Lnone: .asciz "No agent sessions for this project yet"
 .Loc_missing: .asciz "OpenCode: install the CLI, then refresh"
@@ -3920,6 +4446,7 @@ role_names: .quad .Lr0, .Lr1, .Lr2, .Lr3, .Lr4
 .Lcodex_name: .asciz "Codex"
 .Lgrok_name: .asciz "Grok"
 .Lopencode_name: .asciz "OpenCode"
+.Lat_self: .asciz "@self"
 .Lworktree_dump: .asciz " [worktree: "
 .Lmodel_dump: .asciz " [model: "
 .Lmsg_obj: .ascii "\"message\":{"
@@ -4594,8 +5121,10 @@ line_model:
 observe_session:
     PROLOGUE
     mov rbx, rdi
+    cmp dword ptr [rbx + AS_kind], AS_KIND_EXT
+    je 1f
     mov rdi, [rbx + AS_path]
-    call file_stamp
+    call vfs_stamp
     cmp rax, [rbx + AS_stamp]
     je 1f
     mov [rbx + AS_stamp], rax
@@ -4609,7 +5138,7 @@ observe_session:
 2:
     mov dword ptr [rip + index_pending], 1
     mov rdi, [rbx + AS_path]
-    call file_mtime_ns
+    call vfs_mtime_ns
     mov [rbx + AS_recency], rax
     xor edx, edx
     mov ecx, 1000000000

@@ -6,6 +6,9 @@
 .equ FI_GREY, 8                 # color_names index
 .equ COLOR_NAMES, 11            # color_names entries
 
+.bss
+fi_name: .zero 40
+
 .text
 
 # file_icon(name cstr) -> eax icon, edx theme color slot. The name is a file's, not a path. A whole
@@ -134,6 +137,82 @@ grammar_icon:
 8:  mov eax, -1
     EPILOGUE
 
+# FN file_icon_named(ptr, len) -> eax the explorer icon of that name ("rust", "config"), or -1
+FN file_icon_named
+    jmp icon_by_name
+
+# FN file_color_named(ptr, len) -> eax the theme slot of an icon color (red ... white, grey or
+#   gray, accent, muted), or -1
+FN file_color_named
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, rdi
+    mov r12, rsi
+    lea rdx, [rip + .Laccent]
+    call str_ieq_cstr
+    test eax, eax
+    jz 1f
+    mov eax, T_ACCENT
+    jmp 9f
+1:  mov rdi, rbx
+    mov rsi, r12
+    lea rdx, [rip + .Lmuted]
+    call str_ieq_cstr
+    test eax, eax
+    jz 2f
+    mov eax, T_MUTED
+    jmp 9f
+2:  mov rdi, rbx
+    mov rsi, r12
+    call color_by_name
+    test eax, eax
+    js 9f
+    add eax, T_ICON
+9:  add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+# FN file_icon_name(icon) -> rax its name in file_icon_names (a static copy), or "file"
+FN file_icon_name
+    lea r8, [rip + file_icon_names]
+1:  movzx ecx, byte ptr [r8]
+    test ecx, ecx
+    jz 8f
+    movzx eax, byte ptr [r8 + 1]
+    cmp eax, edi
+    je 2f
+    lea r8, [r8 + rcx + 2]
+    jmp 1b
+2:  cmp ecx, 39
+    jbe 3f
+    mov ecx, 39
+3:  lea rdi, [rip + fi_name]
+    lea rsi, [r8 + 2]
+    rep movsb
+    mov byte ptr [rdi], 0
+    lea rax, [rip + fi_name]
+    ret
+8:  lea rax, [rip + .Lfile]
+    ret
+
+# FN file_color_name(theme slot) -> rax the color's name (accent, muted, red ... white), or "grey"
+FN file_color_name
+    lea rax, [rip + .Laccent]
+    cmp edi, T_ACCENT
+    je 9f
+    lea rax, [rip + .Lmuted]
+    cmp edi, T_MUTED
+    je 9f
+    sub edi, T_ICON
+    cmp edi, COLOR_NAMES - 1
+    jb 1f
+    mov edi, FI_GREY
+1:  lea rax, [rip + color_names]
+    mov rax, [rax + rdi*8]
+9:  ret
+
 # icon_by_name(ptr, len) -> eax icon from file_icon_names (ignoring case), or -1
 icon_by_name:
     PROLOGUE
@@ -188,6 +267,9 @@ color_by_name:
 # in the order of the theme's icon slots from T_ICON (theme.s, tools/icons.py), then gray for grey
 color_names:
     .quad .Lred, .Lorange, .Lyellow, .Lgreen, .Lblue, .Lpurple, .Lpink, .Lcyan, .Lgrey, .Lwhite, .Lgray
+.Lfile: .asciz "file"
+.Laccent: .asciz "accent"
+.Lmuted: .asciz "muted"
 .Lred: .asciz "red"
 .Lorange: .asciz "orange"
 .Lyellow: .asciz "yellow"

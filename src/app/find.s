@@ -14,6 +14,7 @@
 .globl g_find_word
 g_find_word: .long 0            # * and #: matches are whole words
 .p2align 3
+.globl find_open
 find_open: .long 0
 repl_open: .long 0
 find_sub: .long 0               # 0 find field, 1 replace field
@@ -41,9 +42,16 @@ open_bar:
     call settings_take_find
     test eax, eax
     jnz 9f
+    call extpage_take_find      # extension management: Browse searches the index
+    test eax, eax
+    jnz 9f
     mov dword ptr [rip + g_find_word], 0
     mov dword ptr [rip + find_open], 1
     mov dword ptr [rip + find_sub], 0
+    lea rdi, [rip + tf_find]
+    call tf_revision_touch
+    lea rdi, [rip + tf_repl]
+    call tf_revision_touch
     mov dword ptr [rip + tf_find + TF_id], ID_FIND_TF
     mov dword ptr [rip + tf_repl + TF_id], ID_REPL_TF
     mov dword ptr [rip + g_focus], FOCUS_FIND
@@ -80,6 +88,17 @@ open_bar:
     call tf_select_all
     call update_matches
 9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# FN find_set_query(ptr, len): the find field holds this text (run-command find with ARGS)
+FN find_set_query
+    PROLOGUE
+    mov rdx, rsi
+    mov rsi, rdi
+    lea rdi, [rip + tf_find]
+    call tf_set
+    call update_matches
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 FN cmd_find_bar
@@ -247,6 +266,7 @@ find_raw_word:
 goto_match:
     PROLOGUE 32
     mov [rsp + 24], edi
+    call ed_single              # one selection (multi-cursor)
     mov rbx, [rip + g_doc]
     test rbx, rbx
     jz 9f
@@ -285,7 +305,13 @@ goto_match:
     js 1f
     add rax, rcx
     jmp .Lgm_sel
-1:  # wrap
+1:  mov edi, 1                  # notebooks (A4): the next cell with a match, before wrapping
+    mov rsi, r12
+    mov rdx, r13
+    call nb_find_step
+    test eax, eax
+    jnz 9f
+    # wrap
     mov rdi, r14
     mov rsi, r15
     mov rdx, r12
@@ -323,7 +349,14 @@ goto_match:
 4:  mov rax, [rsp + 16]
     test rax, rax
     jns .Lgm_sel
-    mov rax, r8
+    mov [rsp + 16], r8          # notebooks (A4): the previous cell with a match, before wrapping
+    mov edi, -1
+    mov rsi, r12
+    mov rdx, r13
+    call nb_find_step
+    test eax, eax
+    jnz 9f
+    mov rax, [rsp + 16]
     test rax, rax
     js 9f
 .Lgm_sel:
@@ -798,7 +831,12 @@ find_rect:
 
 # find_blocks_editor() -> 1 when the pointer is over the open find overlay.
 FN find_blocks_editor
-    xor eax, eax
+    call peek_blocks_editor     # language features: the peek view and the hover card over the
+    test eax, eax               # text (peek.s, hovercard.s)
+    jnz 1f
+    call hovercard_blocks_editor
+    test eax, eax
+    jnz 1f
     cmp dword ptr [rip + find_open], 0
     je 1f
     cmp qword ptr [rip + g_doc], 0

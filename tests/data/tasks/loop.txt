@@ -1,0 +1,5 @@
+In ü.txt:
+ line 1, col 3: first
+ line 2, col 2: second
+done
+ line 3, col 1: not after a match

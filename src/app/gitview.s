@@ -1029,10 +1029,27 @@ draw_list:
     call ui_btn
 3:  mov [rsp + 24], eax
     test eax, UB_PRESS
-    jz 4f
+    jz 31f
     mov edi, ebx
     call select_row
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
+31: # a right press on a commit: its menu (source control, wider-parity C)
+    test dword ptr [rsp + 24], UB_RPRESS
+    jz 4f
+    mov rax, [r14 + CM_hash]
+    test rax, rax
+    jz 4f
+    cmp byte ptr [rax], 0
+    je 4f
+    mov edi, ebx
+    call select_row
+    mov edi, SL_HISTORY_COMMIT
+    mov rsi, [r14 + CM_hash]
+    xor edx, edx
+    xor ecx, ecx
+    xor r8d, r8d
+    xor r9d, r9d
+    call scm_row_menu
 4:  # background
     COLOR r8d, T_ACTIVE
     cmp ebx, [rip + sel]
@@ -1859,7 +1876,19 @@ draw_details:
     M r8d, MI_RADIUS
     COLOR r9d, T_HOVER
     call gfx_round_rect
-5:  test dword ptr [rsp + 24], UB_CLICK
+5:  test dword ptr [rsp + 24], UB_RPRESS
+    jz 51f
+    # its menu (source control, wider-parity C)
+    mov rdi, [r15 + GF_path]
+    call strlen
+    mov rcx, rax
+    mov rdx, [r15 + GF_path]
+    mov rsi, [r14 + CM_hash]
+    mov edi, SL_HISTORY_FILE
+    xor r8d, r8d
+    mov r9d, [r15 + GF_code]
+    call scm_row_menu
+51: test dword ptr [rsp + 24], UB_CLICK
     jz 6f
     # the file's diff in this commit
     mov rdi, [r15 + GF_path]

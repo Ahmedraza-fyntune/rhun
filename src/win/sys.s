@@ -1,6 +1,10 @@
 # Windows implementations of the small Linux syscall surface used by the editor.
 .include "win.inc"
 
+.bss
+.p2align 3
+clock_frequency: .quad 0
+
 .text
 FN ws_nosys
     mov rax, -38
@@ -47,6 +51,32 @@ FN ws_clock
     mov rbx, rsi
     test edi, edi
     jz 1f
+    mov r12, [rip + clock_frequency]
+    test r12, r12
+    jnz 2f
+    lea rcx, [rsp + 96]
+    API QueryPerformanceFrequency
+    test eax, eax
+    jz 3f
+    mov r12, [rsp + 96]
+    test r12, r12
+    jz 3f
+    mov [rip + clock_frequency], r12
+2:  lea rcx, [rsp + 96]
+    API QueryPerformanceCounter
+    test eax, eax
+    jz 3f
+    mov rax, [rsp + 96]
+    xor edx, edx
+    div r12
+    mov [rbx], rax
+    mov rax, rdx
+    mov ecx, 1000000000
+    mul rcx
+    div r12
+    mov [rbx + 8], rax
+    jmp 9f
+3:  # Counter APIs are available on supported Windows versions; keep a monotonic fallback.
     API GetTickCount64
     xor edx, edx
     mov ecx, 1000
@@ -199,6 +229,10 @@ FN ws_close
     test rax, rax
     jz .Lclose_bad
     mov rbx, rax
+    cmp dword ptr [rbx + FD_kind], FD_CHAN
+    je .Lclose_chan
+    cmp dword ptr [rbx + FD_kind], WSK_KIND
+    je .Lclose_sock
     cmp dword ptr [rbx + FD_kind], FD_PTY
     je .Lclose_pty
     cmp dword ptr [rbx + FD_kind], FD_SLAVE
@@ -225,6 +259,15 @@ FN ws_close
     mov rdi, rbx
     call win_pty_close
     jmp .Lclose_clear
+.Lclose_chan:
+    mov rdi, rbx
+    call win_chan_close
+    xor eax, eax
+    EPILOGUE
+.Lclose_sock:
+    mov rdi, rbx
+    call win_sock_close
+    EPILOGUE
 .Lclose_bad:
     mov rax, -9
     EPILOGUE
@@ -237,7 +280,21 @@ FN ws_read
     test rax, rax
     jz .Lread_bad
     mov rbx, rax
-    cmp dword ptr [rbx + FD_kind], FD_WATCH
+    cmp dword ptr [rbx + FD_kind], FD_CHAN
+    jne 10f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call win_chan_read
+    EPILOGUE
+10: cmp dword ptr [rbx + FD_kind], WSK_KIND
+    jne 11f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call win_sock_read
+    EPILOGUE
+11: cmp dword ptr [rbx + FD_kind], FD_WATCH
     jne 1f
     mov rdi, r12
     mov rsi, r13
@@ -316,14 +373,29 @@ FN ws_write
     call win_fd
     test rax, rax
     jz 8f
-    cmp dword ptr [rax + FD_kind], FD_PTY
+    cmp dword ptr [rax + FD_kind], FD_CHAN
+    jne 10f
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call win_chan_write
+    EPILOGUE
+10: cmp dword ptr [rax + FD_kind], WSK_KIND
+    jne 11f
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call win_sock_write
+    EPILOGUE
+11: cmp dword ptr [rax + FD_kind], FD_PTY
     jne 1f
     mov rdi, rax
     mov rsi, r12
     mov rdx, r13
     call win_pty_write
     EPILOGUE
-1:  mov rcx, [rax + FD_write]
+1:  mov rbx, rax
+    mov rcx, [rax + FD_write]
     mov rdx, r12
     mov r8d, 0x7fffffff
     cmp r13, r8
@@ -334,6 +406,51 @@ FN ws_write
     test eax, eax
     jz 7f
     mov eax, [rsp + 96]
+    cmp dword ptr [rbx + FD_wend], 0
+    je 2f
+    mov qword ptr [rbx + FD_full], 0
+    test eax, eax
+    jnz 2f
+    test r13, r13
+    jz 2f
+    # a non-blocking pipe with no room: EAGAIN, and poll waits 10 ms before saying POLLOUT again
+    API GetTickCount64
+    mov [rbx + FD_full], rax
+    mov rax, -11
+2:  EPILOGUE
+7:  API GetLastError
+    cmp eax, 232                # ERROR_NO_DATA: the pipe is being closed
+    je 71f
+    cmp eax, 109                # ERROR_BROKEN_PIPE
+    je 71f
+    call win_error
+    EPILOGUE
+71: mov rax, -32                # EPIPE
+    EPILOGUE
+8:  mov rax, -9
+    EPILOGUE
+
+# ws_ftruncate(fd, length): the file cut (or grown) to length, its position there; a program that
+# shares the handle (an extension's log) goes on writing at that position
+FN ws_ftruncate
+    PROLOGUE 112
+    mov r12, rsi
+    call win_fd
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov rcx, [rbx + FD_handle]
+    mov rdx, r12
+    xor r8d, r8d
+    xor r9d, r9d                # FILE_BEGIN
+    API SetFilePointerEx
+    test eax, eax
+    jz 7f
+    mov rcx, [rbx + FD_handle]
+    API SetEndOfFile
+    test eax, eax
+    jz 7f
+    xor eax, eax
     EPILOGUE
 7:  call win_error
     EPILOGUE
@@ -840,6 +957,13 @@ win_backup:
 
 # readlink resolves a final reparse point to its final opened target. An unresolved/dangling
 # reparse point is an error, never permission to replace the link itself.
+FN win_realpath
+    PROLOGUE 8320
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    jmp .Lrl_resolve
+
 FN ws_readlink
     PROLOGUE 8320
     mov rbx, rdi
@@ -872,6 +996,7 @@ FN ws_readlink
     je 7f
     test r15d, 0x400
     jz 81f
+.Lrl_resolve:
     mov rdi, rbx
     xor esi, esi
     xor edx, edx
@@ -1046,53 +1171,147 @@ FN ws_pipe
     PROLOGUE 128
     mov rbx, rdi
     mov r12d, esi
+    # Reserve both virtual owners before acquiring any native handle.
+    xor edi, edi
+    mov esi, FD_PIPE
+    mov edx, r12d
+    call win_fd_alloc
+    test rax, rax
+    js .Lpipe_return
+    mov r13d, eax
+    mov r14, r8
+    xor edi, edi
+    mov esi, FD_PIPE
+    mov edx, r12d
+    call win_fd_alloc
+    test rax, rax
+    js .Lpipe_first
+    mov r15d, eax
+    mov [rsp + 112], r8
     lea rcx, [rsp + 96]
     lea rdx, [rsp + 104]
     xor r8d, r8d
     mov r9d, 65536
     API CreatePipe
     test eax, eax
-    jz 7f
-    mov rdi, [rsp + 96]
-    mov esi, FD_PIPE
-    mov edx, r12d
-    call win_fd_alloc
-    test rax, rax
-    js 6f
-    mov r13d, eax
-    mov [rbx], eax
-    mov rdi, [rsp + 104]
-    mov esi, FD_PIPE
-    mov edx, r12d
-    call win_fd_alloc
-    test rax, rax
-    js 5f
-    mov [rbx + 4], eax
+    jz .Lpipe_native_fail
+    # No allocation or other fallible operation follows native acquisition.
+    mov rax, [rsp + 96]
+    mov [r14 + FD_handle], rax
+    mov [r14 + FD_write], rax
+    mov r8, [rsp + 112]
+    mov rax, [rsp + 104]
+    mov [r8 + FD_handle], rax
+    mov [r8 + FD_write], rax
+    mov dword ptr [r8 + FD_wend], 1
+    mov [rbx], r13d
+    mov [rbx + 4], r15d
     xor eax, eax
     EPILOGUE
-5:  mov edi, r13d
-    call ws_close
-    jmp 61f
-6:  mov rcx, [rsp + 96]
-    API CloseHandle
-61: mov rcx, [rsp + 104]
-    API CloseHandle
-    mov rax, -24
-    EPILOGUE
-7:  call win_error
+.Lpipe_native_fail:
+    # Failed CreatePipe outputs are indeterminate. Only empty reservations are released.
+    call win_error
+    mov r12, rax
+    mov rdi, [rsp + 112]
+    xor esi, esi
+    mov edx, FD_SIZE
+    call memset
+    mov rax, r12
+.Lpipe_first:
+    mov r12, rax
+    mov rdi, r14
+    xor esi, esi
+    mov edx, FD_SIZE
+    call memset
+    mov rax, r12
+.Lpipe_return:
     EPILOGUE
 
 FN ws_fcntl
+    PROLOGUE 112
+    mov r12d, edx
+    mov r13d, esi
     call win_fd
     test rax, rax
     jz 8f
-    cmp esi, 4
+    mov rbx, rax
+    cmp r13d, 3                # F_GETFL: report only the last committed native/software state.
+    je 2f
+    test r13d, r13d             # F_DUPFD (remote windows: a channel's second descriptor, a log's copy)
+    je .Lfcntl_dup
+    cmp r13d, 1030              # F_DUPFD_CLOEXEC
+    je .Lfcntl_dup
+    cmp r13d, F_SETFL
     jne 1f
-    mov [rax + FD_flags], edx
+    cmp dword ptr [rbx + FD_kind], WSK_KIND
+    je .Lfcntl_sock
+    cmp dword ptr [rbx + FD_kind], FD_PIPE
+    jne 3f
+    cmp dword ptr [rbx + FD_wend], 0
+    je 3f
+    # Commit software flags only after Windows accepts the write-end pipe mode.
+    xor eax, eax
+    test r12d, O_NONBLOCK
+    setnz al
+    mov [rsp + 96], eax
+    mov rcx, [rbx + FD_handle]
+    lea rdx, [rsp + 96]
+    xor r8d, r8d
+    xor r9d, r9d
+    API SetNamedPipeHandleState
+    test eax, eax
+    jz 7f
+3:  mov [rbx + FD_flags], r12d
 1:  xor eax, eax
-    ret
+    EPILOGUE
+2:  mov eax, [rbx + FD_flags]
+    EPILOGUE
+7:  call win_error
+    EPILOGUE
 8:  mov rax, -9
-    ret
+    EPILOGUE
+.Lfcntl_sock:
+    # a socket: O_NONBLOCK switches its mode (FIONBIO)
+    mov rdi, rbx
+    mov esi, r12d
+    call win_sock_setfl
+    EPILOGUE
+.Lfcntl_dup:
+    cmp dword ptr [rbx + FD_kind], FD_CHAN
+    jne 1f
+    mov rdi, rbx
+    call win_chan_dup
+    EPILOGUE
+1:  cmp dword ptr [rbx + FD_kind], WSK_KIND
+    jne 11f
+    mov rdi, rbx
+    call win_sock_dup
+    EPILOGUE
+11: mov rax, -22
+    cmp dword ptr [rbx + FD_kind], FD_FILE
+    jne 9f
+    # a file: its handle duplicated, the copy a descriptor of its own
+    mov rcx, -1                 # GetCurrentProcess()
+    mov rdx, [rbx + FD_handle]
+    mov r8, -1
+    lea r9, [rsp + 104]
+    mov qword ptr [rsp + 32], 0
+    mov qword ptr [rsp + 40], 0
+    mov qword ptr [rsp + 48], 2 # DUPLICATE_SAME_ACCESS
+    API DuplicateHandle
+    test eax, eax
+    jz 7b
+    mov rdi, [rsp + 104]
+    mov esi, FD_FILE
+    mov edx, [rbx + FD_flags]
+    call win_fd_alloc
+    test rax, rax
+    jns 9f
+    mov [rsp + 96], rax
+    mov rcx, [rsp + 104]
+    API CloseHandle
+    mov rax, [rsp + 96]
+9:  EPILOGUE
 
 FN ws_getdents
     PROLOGUE 9120

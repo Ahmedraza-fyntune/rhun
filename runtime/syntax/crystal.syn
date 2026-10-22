@@ -10,3 +10,6 @@ captypes = yes
 keywords = abstract alias annotation as begin break case class def do else elsif end ensure enum extend for fun if in include lib macro module next of out private protected require rescue return select self struct super then union unless until when while with yield
 constants = true false nil
 builtins = puts print pp raise loop typeof sizeof
+indent_open = ^if ^unless ^while ^until ^case ^begin ^def ^class ^module ^struct ^macro do { ( [
+indent_close = end } ) ]
+indent_middle = else elsif when rescue ensure

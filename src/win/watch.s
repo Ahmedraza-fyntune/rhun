@@ -30,13 +30,21 @@ FN ws_watch_add
     PROLOGUE 96
     mov r12, rsi
     xor ebx, ebx
+    mov r14, -1
 1:  cmp ebx, [rip + ww_count]
     jae 2f
     imul eax, ebx, WW_SIZE
     lea r13, [rip + ww_entries]
     add r13, rax
     mov rdi, [r13]
-    mov rsi, r12
+    test rdi, rdi
+    jnz 11f
+    cmp r14, -1
+    jne 12f
+    mov r14d, ebx
+12: inc ebx
+    jmp 1b
+11: mov rsi, r12
     call strcmp_eq
     test eax, eax
     jnz 7f
@@ -51,7 +59,10 @@ FN ws_watch_add
     jz 9f
     mov [r13 + 8], rax
     jmp 8f
-2:  cmp ebx, WW_MAX
+2:  cmp r14, -1
+    je 21f
+    mov ebx, r14d
+21: cmp ebx, WW_MAX
     jae 9f
     mov rdi, r12
     call ww_open
@@ -68,10 +79,46 @@ FN ws_watch_add
     add rcx, rdx
     mov [rcx], rax
     mov [rcx + 8], r15
+    cmp ebx, [rip + ww_count]
+    jb 8f
     inc dword ptr [rip + ww_count]
 8:  mov eax, ebx
     EPILOGUE
 9:  mov rax, -2
+    EPILOGUE
+
+# ws_watch_remove(fd, wd): release extension-only subscriptions and reuse slots.
+FN ws_watch_remove
+    PROLOGUE 96
+    mov ebx, esi
+    cmp ebx, [rip + ww_count]
+    jae 8f
+    imul eax, ebx, WW_SIZE
+    lea r12, [rip + ww_entries]
+    add r12, rax
+    cmp qword ptr [r12], 0
+    je 8f
+    cmp ebx, [rip + ww_active]
+    jne 1f
+    mov edi, [rip + ww_fd]
+    test edi, edi
+    js 11f
+    call ws_close
+11: mov dword ptr [rip + ww_active], -1
+    mov dword ptr [rip + ww_fd], -1
+    mov dword ptr [rip + ww_bytes], 0
+    mov dword ptr [rip + ww_cursor], 0
+1:  mov rcx, [r12 + 8]
+    test rcx, rcx
+    jz 2f
+    API FindCloseChangeNotification
+2:  mov rdi, [r12]
+    call mem_free
+    mov qword ptr [r12], 0
+    mov qword ptr [r12 + 8], 0
+    xor eax, eax
+    EPILOGUE
+8:  mov rax, -22
     EPILOGUE
 
 # ww_open(path) -> change notification handle of that directory, or 0

@@ -13,6 +13,13 @@ F LR_len, 4
 F LR_class, 4
 ENDSTRUCT LR_SIZE
 
+.data
+.p2align 3
+.globl g_user_grammars
+g_user_grammars: .quad 0        # grammars from ~/.config and extensions, at the front of g_grammars
+ext_grammars: .quad 0           # how many of those came from extensions (the last ones of them)
+syn_owner: .quad 0              # the extension whose grammars syntax_add_dir reads
+
 .bss
 .p2align 3
 tk_i: .quad 0
@@ -25,7 +32,6 @@ tk_c: .long 0
 .p2align 3
 .globl g_grammars
 g_grammars: .zero VEC_SIZE      # GR* items
-it: .zero INI_SIZE
 .globl g_grammars_parsed, g_grammar_warnings
 g_grammars_parsed: .long 0      # built-in grammars parsed so far (they are parsed when first used)
 g_grammar_warnings: .long 0     # unknown keys and class names the parser met
@@ -275,7 +281,7 @@ FN grammar_parse
 
 # grammar_fill(gr, text, len) -> gr: the grammar in text, into gr
 FN grammar_fill
-    PROLOGUE 96
+    PROLOGUE 176                # 0..95 locals, 112 the iterator (the helpers below find it there)
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -286,17 +292,17 @@ FN grammar_fill
     mov [rbx + GR_first], rax
     mov [rbx + GR_icon], rax
     mov qword ptr [rbx + GR_ficon], 0
-    lea rdi, [rip + it]
+    lea rdi, [rsp + 112]
     mov rsi, r12
     mov rdx, r13
     call ini_init
 .Lgp_next:
-    lea rdi, [rip + it]
+    lea rdi, [rsp + 112]
     call ini_next
     test eax, eax
     jz .Lgp_done
-    mov r14, [rip + it + INI_val]
-    mov r15, [rip + it + INI_vallen]
+    mov r14, [rsp + 112 + INI_val]
+    mov r15, [rsp + 112 + INI_vallen]
     lea rsi, [rip + .Lk_name]
     call .Lgp_key
     jnz .Lgp_name
@@ -382,10 +388,22 @@ FN grammar_fill
     mov r8d, GF_COLON
     call .Lgp_flag
     test eax, eax
+    jz 12f
+    or qword ptr [rbx + GR_flags], GF_COLON_SET    # its no counts too (langconf.s)
+    jmp .Lgp_next
+12:
+    # language configuration: brackets, autoclose, indent_open, continue, fold_markers ... (langconf.s)
+    mov rdi, rbx
+    mov rsi, [rsp + 112 + INI_key]
+    mov rdx, [rsp + 112 + INI_keylen]
+    mov rcx, r14
+    mov r8, r15
+    call lc_grammar_key
+    test eax, eax
     jnz .Lgp_next
     # word lists: "<class>s = words" e.g. keywords, types, constants, builtins, attributes, variables, tags, preprocs
-    mov rdi, [rip + it + INI_key]
-    mov rsi, [rip + it + INI_keylen]
+    mov rdi, [rsp + 112 + INI_key]
+    mov rsi, [rsp + 112 + INI_keylen]
     cmp rsi, 2
     jb .Lgp_warn
     cmp byte ptr [rdi + rsi - 1], 's'
@@ -480,7 +498,18 @@ FN grammar_fill
     jmp 3f
 32: inc dword ptr [rip + g_grammar_warnings]
     mov r9d, C_COMMENT
-3:  mov rdi, rbx
+3:  mov [rsp + 48], r9d
+    cmp r9d, C_COMMENT
+    jne 33f
+    # the first block comment: what Toggle Comment uses without a line comment (langconf.s)
+    mov rdi, rbx
+    mov rsi, [rsp]
+    mov rdx, [rsp + 8]
+    mov rcx, [rsp + 16]
+    mov r8, [rsp + 24]
+    call lc_grammar_block
+33: mov r9d, [rsp + 48]
+    mov rdi, rbx
     mov rsi, [rsp]
     mov rdx, [rsp + 8]
     mov rcx, [rsp + 16]
@@ -557,7 +586,10 @@ FN grammar_fill
     pop rcx
     test rax, rax
     js 8f
-    movzx eax, byte ptr [r14 + rax + 7]
+    add rax, 7
+    cmp rax, r15
+    jae 8f
+    movzx eax, byte ptr [r14 + rax]
     or ecx, eax
 8:  mov [rsp + 56], ecx
     # "eol" as end means end of line
@@ -603,6 +635,7 @@ FN grammar_fill
     mov [rcx + LR_class], eax
     jmp .Lgp_next
 .Lgp_ident:
+    or qword ptr [rbx + GR_flags], GF_IDENT_SET
     lea rdi, [rbx + GR_identx]
     jmp 10f
 .Lgp_prefix:
@@ -641,14 +674,14 @@ FN grammar_fill
 # helpers for grammar_parse (use caller frame: [rsp+8..] after return address)
 # .Lgp_key: ZF clear (jnz) if the current key equals cstr rsi
 .Lgp_key:
-    lea rdi, [rip + it]
+    lea rdi, [rsp + 120]
     call ini_key_is
     test eax, eax
     ret
 # .Lgp_flag: key rsi -> set/clear flag r8 by boolean value
 .Lgp_flag:
     push r8
-    lea rdi, [rip + it]
+    lea rdi, [rsp + 128]
     call ini_key_is
     pop r8
     test eax, eax
@@ -741,8 +774,15 @@ FN syntax_load_all
     call config_dir_each
     EPILOGUE
 
-# user grammar: inserted first so it wins detection
-load_user_grammar:
+# syntax_add_dir(dir, ext): the .syn files of a folder (an extension's); they go after the user's
+# grammars and before the built-in ones, GR_ext the extension (the extension page lists them)
+FN syntax_add_dir
+    mov [rip + syn_owner], rsi
+    lea rsi, [rip + .Lsyn_ext]
+    lea rdx, [rip + load_ext_grammar]
+    jmp dir_each_suffix
+
+load_ext_grammar:
     PROLOGUE
     call file_read_all
     test rax, rax
@@ -751,6 +791,91 @@ load_user_grammar:
     mov rsi, rdx
     call grammar_parse
     mov r12, rax
+    mov rax, [rip + syn_owner]
+    mov [r12 + GR_ext], rax
+    # an extension's grammar of a name another extension's grammar has (the same extension
+    # installed again, or updated) takes that one's place; the user's own still win
+    mov r13, [rip + g_user_grammars]
+    sub r13, [rip + ext_grammars]
+3:  cmp r13, [rip + g_user_grammars]
+    jae 4f
+    mov rax, [rip + g_grammars + VEC_ptr]
+    mov rax, [rax + r13*8]
+    mov rdi, [rax + GR_name]
+    mov rsi, [r12 + GR_name]
+    inc r13
+    test rdi, rdi
+    jz 3b
+    test rsi, rsi
+    jz 3b
+    call strcmp_eq
+    test eax, eax
+    jz 3b
+    mov rax, [rip + g_grammars + VEC_ptr]
+    mov [rax + r13*8 - 8], r12
+    jmp 9f
+4:  lea rdi, [rip + g_grammars]
+    mov esi, 8
+    call vec_push
+    # shift the entries from the insertion point right, put the new one there
+    mov rcx, [rip + g_grammars + VEC_len]
+    mov rdi, [rip + g_grammars + VEC_ptr]
+    mov rdx, [rip + g_user_grammars]
+1:  dec rcx
+    cmp rcx, rdx
+    jbe 2f
+    mov rax, [rdi + rcx*8 - 8]
+    mov [rdi + rcx*8], rax
+    jmp 1b
+2:  mov [rdi + rdx*8], r12
+    inc qword ptr [rip + g_user_grammars]
+    inc qword ptr [rip + ext_grammars]
+9:  EPILOGUE
+
+# FN syntax_page_rows(ext): the extension page's Languages rows for the grammars it brings
+#   (contribpage.s): the name; its file patterns
+FN syntax_page_rows
+    PROLOGUE
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_grammars + VEC_len]
+    jae 9f
+    mov rax, [rip + g_grammars + VEC_ptr]
+    mov r12, [rax + rbx*8]
+    inc rbx
+    cmp [r12 + GR_ext], r15
+    jne 1b
+    mov rdi, [r12 + GR_name]
+    call contrib_page_text
+    lea rdi, [rip + .Lpg_grammar]
+    call contrib_page_detail
+    mov rdi, [r12 + GR_files]
+    test rdi, rdi
+    jz 2f
+    cmp byte ptr [rdi], 0
+    je 2f
+    mov r13, rdi
+    call contrib_page_part
+    lea rdi, [rip + .Lpg_files]
+    call contrib_page_detail
+    mov rdi, r13
+    call contrib_page_detail
+2:  call contrib_page_end
+    jmp 1b
+9:  EPILOGUE
+
+# user grammar: inserted first so it wins detection
+load_user_grammar:
+    PROLOGUE
+    call file_read_all
+    test rax, rax
+    jz 9f
+    inc qword ptr [rip + g_user_grammars]
+    mov rdi, rax
+    mov rsi, rdx
+    call grammar_parse
+    mov r12, rax
+    or qword ptr [r12 + GR_flags], GF_USER
     lea rdi, [rip + g_grammars]
     mov esi, 8
     call vec_push
@@ -783,7 +908,7 @@ FN syntax_ready
     EPILOGUE
 
 # pattern_match(name, nlen, pat, plen) -> 1 if "*.ext" suffix or exact name matches
-pattern_match:
+FN pattern_match
     test rcx, rcx
     jz 3f
     cmp byte ptr [rdx], '*'
@@ -1477,7 +1602,9 @@ FN syntax_prepare
     PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
-    mov r13, [rbx + DOC_lang]
+    mov rdi, rbx
+    call doc_language
+    mov r13, rax
     test r13, r13
     jz 9f
     cmp r12, [rbx + DOC_nlines]
@@ -1523,27 +1650,31 @@ FN syntax_prepare
 
 # syntax_line(doc, line, text, len, out): classes for one line (states must be prepared)
 FN syntax_line
-    push rbx
-    mov rbx, [rdi + DOC_lang]
-    test rbx, rbx
+    PROLOGUE 48
+    mov rbx, rdi
+    mov [rsp], rsi
+    mov [rsp + 8], rdx
+    mov [rsp + 16], rcx
+    mov [rsp + 24], r8
+    call doc_language
+    test rax, rax
     jz 2f
-    cmp rsi, [rdi + DOC_svalid]
+    mov rsi, [rsp]
+    cmp rsi, [rbx + DOC_svalid]
     jae 2f
-    mov rax, [rdi + DOC_states]
-    mov eax, [rax + rsi*4]
-    mov rdi, rbx
-    mov rsi, rdx
-    mov rdx, rcx
-    mov ecx, eax
+    mov rdx, [rbx + DOC_states]
+    mov ecx, [rdx + rsi*4]
+    mov rdi, rax
+    mov rsi, [rsp + 8]
+    mov rdx, [rsp + 16]
+    mov r8, [rsp + 24]
     call tokenize
-    pop rbx
-    ret
-2:  # plain text
-    mov rdi, r8
+    EPILOGUE
+2:  mov rdi, [rsp + 24]
+    mov rcx, [rsp + 16]
     xor eax, eax
     rep stosb
-    pop rbx
-    ret
+    EPILOGUE
 
 .section .rodata
 op_chars: .ascii "+-*/%=<>!&|^~?:"
@@ -1600,3 +1731,5 @@ class_names:
 .Lv_eol: .asciz "eol"
 .Lsyntax_dir: .asciz "syntax"
 .Lsyn_ext: .asciz ".syn"
+.Lpg_grammar: .asciz "a grammar"
+.Lpg_files: .asciz "files "

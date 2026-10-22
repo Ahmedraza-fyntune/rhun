@@ -16,6 +16,8 @@
 .globl cfg_restore_project
 .globl cfg_follow_system, cfg_dark_theme, cfg_light_theme, cfg_theme_keys
 cfg_restore_project: .long 1
+.globl cfg_test_gutter
+cfg_test_gutter: .long 1        # testing: [testing] gutter, the tests' glyphs in the gutter
 cfg_font_size: .long 14
 cfg_ui_font_size: .long 13
 cfg_line_height: .long 150
@@ -28,6 +30,21 @@ cfg_tooltips: .long 1
 cfg_autohide_scrollbars: .long 1
 cfg_match_brackets: .long 1
 cfg_indent_guides: .long 1
+.globl cfg_folding
+cfg_folding: .long 1            # editor presentation: folding (fold.s)
+.globl cfg_semantic_highlighting
+cfg_semantic_highlighting: .long 1      # editor presentation: semantic tokens (semtok.s)
+.globl cfg_inlay_hints
+cfg_inlay_hints: .long 1        # editor presentation: inlay hints (inlay.s)
+.globl cfg_code_lens
+cfg_code_lens: .long 1          # editor presentation: code lens (lens.s)
+.globl cfg_highlight_occurrences
+cfg_highlight_occurrences: .long 1      # editor presentation: the caret's word's occurrences (hicolor.s)
+.globl cfg_color_swatches
+cfg_color_swatches: .long 1     # editor presentation: color swatches (hicolor.s)
+.globl cfg_inline_complete, cfg_inline_complete_delay
+cfg_inline_complete: .long 1    # editor presentation: inline completion as you type (ghost.s)
+cfg_inline_complete_delay: .long 300    # its pause after typing, ms
 cfg_cursor_blink: .long 1
 cfg_whitespace: .long 0
 cfg_sidebar: .long 1
@@ -37,11 +54,27 @@ cfg_agents_w: .long AGENTS_W_DEFAULT
 cfg_ui_scale: .long 100
 cfg_final_newline: .long 1
 cfg_trim_trailing: .long 0
+.globl cfg_format_on_save, cfg_format_save_timeout
+cfg_format_on_save: .long 0
+cfg_format_save_timeout: .long 2000
+.globl cfg_save_actions_timeout
+cfg_save_actions_timeout: .long 2000
 cfg_scroll_past_end: .long 1
 cfg_smooth_caret: .long 1
 cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
+.globl cfg_multi_cursor_paste
+cfg_multi_cursor_paste: .long 0
+.globl cfg_multi_cursor_modifier
+cfg_multi_cursor_modifier: .long 0  # 0 alt, 1 ctrl (Command on macOS): adds carets with the mouse
 cfg_word_wrap: .long 0
+# language features (query.s, complete.s, langfeat.s)
+.globl cfg_complete_replace, cfg_complete_commit, cfg_lightbulb, cfg_format_on_type, cfg_format_on_paste
+cfg_complete_replace: .long 0    # accepting replaces the rest of the word (the item's replace range)
+cfg_complete_commit: .long 1     # an item's commit characters accept it
+cfg_lightbulb: .long 1
+cfg_format_on_type: .long 0
+cfg_format_on_paste: .long 0
 cfg_vim: .long 0
 cfg_decorations: .long 0         # 0 auto, 1 rhun draws the title bar, 2 the desktop does
 cfg_follow_system: .long 1       # dark_theme or light_theme as the system's dark mode is on or off
@@ -63,16 +96,26 @@ cfg_git: .long 1
 cfg_commit_ai: .long 0
 .globl cfg_update_check
 cfg_update_check: .long 1
+.globl cfg_secrets               # resources group: where extensions keep secrets (SB_*)
+cfg_secrets: .long 0
+.globl cfg_ext_updates
+cfg_ext_updates: .long 0         # [updates] extensions: XM_INSTALL, XM_CHECK or XM_OFF (extension management)
 .p2align 3
 cfg_theme: .quad cfg_def_theme
 cfg_dark_theme: .quad cfg_def_theme
 cfg_light_theme: .quad cfg_def_light_theme
 cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
+.globl cfg_file_icons
+cfg_file_icons: .quad .Lempty   # [ui] file_icons: rhun (empty), none or OWNER/NAME/THEME (iconth.s)
 cfg_exclude: .quad .Ldef_exclude
 cfg_term_shell: .quad .Lempty
 cfg_term_font: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
+.globl cfg_save_actions
+cfg_save_actions: .quad .Lempty
+.globl cfg_remote_agent_binary
+cfg_remote_agent_binary: .quad .Lempty  # remote hosts: the Linux rhun to start on hosts (remote.s)
 .Lcfg_strings_end:
 cfg_agent_sources: .quad .Ldef_sources  # the switched-on providers' names, for the discovery worker
 
@@ -157,7 +200,7 @@ FN config_path
     ret
 
 # setting_find(sec, seclen, key, keylen) -> SET* or 0
-setting_find:
+FN setting_find
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
@@ -232,7 +275,16 @@ FN setting_assign
     jmp 9f
 2:  cmp eax, ST_CHOICE
     jne 3f
-    xor r15d, r15d
+    # source control (wider-parity C): commit_ai = ext:OWNER/NAME names an extension (scmext.s)
+    lea rax, [rip + cfg_commit_ai]
+    cmp r14, rax
+    jne 20f
+    mov rdi, r12
+    mov rsi, r13
+    call scmext_ai_config
+    test eax, eax
+    jnz 9f
+20: xor r15d, r15d
 21: mov rdi, [rbx + SET_opts]
     mov esi, r15d
     call choice_entry
@@ -249,9 +301,20 @@ FN setting_assign
 22: mov [r14], r15d
     jmp 9f
 3:  # Copy first: the input may be the current setting's own allocation.
+    lea rax, [rip + cfg_save_actions]
+    cmp r14, rax
+    jne 31f
+    mov rdi, r12
+    mov rsi, r13
+    call save_actions_config
+    test rax, rax
+    jz 9f                       # invalid candidate preserves the last valid setting
+    jmp 32f
+31:
     mov rdi, r12
     mov rsi, r13
     call mem_dup
+32:
     mov r15, rax
     lea rax, [rip + cfg_theme]
     mov rcx, r14
@@ -351,6 +414,8 @@ FN config_load
     jmp 1b
 2:  mov qword ptr [rip + g_keylines + VEC_len], 0
     mov dword ptr [rip + old_sources], 0
+    call agentext_config_reset  # AI: the extension sources switched off come from this read
+    call ce_config_reset        # custom editors: the [editors] choices too (customed.s)
     # taken before the read: a write that lands during it still counts as a change
     call config_path
     mov rdi, rax
@@ -393,13 +458,31 @@ FN config_load
     mov rax, [rip + it + INI_vallen]
     mov [rbx + 24], rax
     jmp .Lcl_next
-1:  mov rdi, [rip + it + INI_sec]
+1:  lea rdi, [rip + it]         # custom editors: [editors] PATTERN = OWNER/NAME | text
+    lea rsi, [rip + .Leditors]
+    call ini_sec_is
+    test eax, eax
+    jz 11f
+    mov rdi, [rip + it + INI_key]
+    mov rsi, [rip + it + INI_keylen]
+    mov rdx, [rip + it + INI_val]
+    mov rcx, [rip + it + INI_vallen]
+    call ce_config_kv
+    jmp .Lcl_next
+11: mov rdi, [rip + it + INI_sec]
     mov rsi, [rip + it + INI_seclen]
     mov rdx, [rip + it + INI_key]
     mov rcx, [rip + it + INI_keylen]
     call setting_find
     test rax, rax
     jnz 3f
+    mov rdi, [rip + it + INI_sec]   # AI: [agents] OWNER/NAME = false (agentext.s)
+    mov rsi, [rip + it + INI_seclen]
+    mov rdx, [rip + it + INI_key]
+    mov rcx, [rip + it + INI_keylen]
+    mov r8, [rip + it + INI_val]
+    mov r9, [rip + it + INI_vallen]
+    call agentext_config_key
     call legacy_sources
     jmp .Lcl_next
 3:  # which theme keys the file has: a file from before dark_theme and light_theme has theme only
@@ -426,6 +509,7 @@ FN config_load
     je 1f
     mov dword ptr [rip + cfg_agents_grok], 1
 1:  call config_agent_sources
+    call agentext_config_done   # AI: the extension sources' switches from this read
     mov rdi, r15
     call mem_free
     EPILOGUE
@@ -610,6 +694,11 @@ FN config_save
 5:  lea rdi, [rsp]
     mov esi, 10
     call sb_push_byte
+    lea rax, [rip + cfg_agents_opencode]
+    cmp [rbx + SET_ptr], rax
+    jne .Lcs_skip
+    lea rdi, [rsp]              # AI: the extension sources switched off (agentext.s)
+    call agentext_config_save
 .Lcs_skip:
     add rbx, SET_SIZE
     jmp .Lcs_next
@@ -639,7 +728,9 @@ FN config_save
     call sb_push_byte
     inc rbx
     jmp 6b
-7:  call config_dir
+7:  lea rdi, [rsp]              # custom editors: [editors] (customed.s)
+    call ce_config_write
+    call config_dir
     lea rdi, [rip + cfg_dir_buf]
     call mkdir_p
     call config_path
@@ -674,20 +765,31 @@ FN config_changed
 # config_dir_each(subdir, ext, cb): cb(path, name) for ~/.config/rhun/<subdir>/*<ext>
 FN config_dir_each
     PROLOGUE 16
-    mov [rip + dir_ext], rsi
-    mov [rip + dir_cb], rdx
+    mov r12, rsi
+    mov r13, rdx
     mov rbx, rdi
     call config_dir
     mov rdi, rax
     mov rsi, rbx
     call path_join
-    mov [rip + dir_path], rax
+    mov rbx, rax
     mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call dir_each_suffix
+    mov rdi, rbx
+    call mem_free
+    EPILOGUE
+
+# dir_each_suffix(path, ext, cb): cb(path, name) for every entry of the folder ending in ext
+FN dir_each_suffix
+    PROLOGUE
+    mov [rip + dir_ext], rsi
+    mov [rip + dir_cb], rdx
+    mov [rip + dir_path], rdi
     lea rsi, [rip + dir_each_cb]
     xor edx, edx
     call dir_each
-    mov rdi, [rip + dir_path]
-    call mem_free
     EPILOGUE
 
 dir_each_cb:
@@ -742,6 +844,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Lrhun: .asciz "/rhun"
 .Lslash_config: .asciz "/config"
 .Lkeys: .asciz "keys"
+.Leditors: .asciz "editors"
 .Lheader: .ascii "# rhun configuration. Also editable from Settings (ctrl+,).\n"
           .asciz "# Changes are picked up while rhun is running.\n"
 .Lnl_bracket: .asciz "\n["
@@ -759,6 +862,10 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Ls_terminal: .asciz "terminal"
 .Ls_git: .asciz "git"
 .Ls_updates: .asciz "updates"
+.Ls_remote: .asciz "remote"
+.Ls_testing: .asciz "testing"
+.Ls_debug: .asciz "debug"
+.Ls_extensions: .asciz "extensions"
 
 .macro SETTING sec, key, type, ptr, min, max, step, dec, label, desc, opts=0, live_desc=0
     .quad \sec, 1f, \ptr, 2f
@@ -796,6 +903,7 @@ g_settings:
     SETTING .Ls_ui, scale, ST_INT, cfg_ui_scale, 50, 300, 10, 1, "Interface zoom", "Scales everything on top of the display scale."
     SETTING .Ls_ui, font_size, ST_INT, cfg_ui_font_size, 9, 24, 1, 0, "Interface font size", "Font size of panels, tabs and menus."
     SETTING .Ls_ui, font, ST_STR, cfg_ui_font, 0, 0, 0, 0, "Interface font", "Path to a .ttf file. Empty uses the built-in Iosevka."
+    SETTING .Ls_ui, file_icons, ST_STR, cfg_file_icons, 0, 0, 0, 0, "File icons", "rhun, none, or an extension's icon theme as OWNER/NAME/THEME (Select File Icon Theme)."
     SETTING .Ls_ui, sidebar, ST_BOOL, cfg_sidebar, 0, 1, 1, 0, "Show file explorer", "Project tree on the left (ctrl+b)."
     SETTING .Ls_ui, sidebar_width, ST_INT, cfg_sidebar_w, 140, 600, 10, 0, "Explorer width", "Width of the file explorer in points."
     SETTING .Ls_ui, agents_panel, ST_BOOL, cfg_agents, 0, 1, 1, 0, "Show agents panel", "Agent sessions on the right (ctrl+shift+a)."
@@ -820,10 +928,31 @@ g_settings:
     SETTING .Ls_editor, cursor_blink, ST_BOOL, cfg_cursor_blink, 0, 1, 1, 0, "Blinking cursor", "Blink the text cursor while idle."
     SETTING .Ls_editor, smooth_caret, ST_BOOL, cfg_smooth_caret, 0, 1, 1, 0, "Wide caret", "Draw a 2 point caret instead of a hairline."
     SETTING .Ls_editor, auto_pairs, ST_BOOL, cfg_auto_pairs, 0, 1, 1, 0, "Auto-close brackets", "Insert the closing bracket or quote."
+    SETTING .Ls_editor, multi_cursor_paste, ST_CHOICE, cfg_multi_cursor_paste, 0, 1, 1, 0, "Paste at multiple cursors", "Keep copied selections paired. Choose how other multiline text is pasted.", .Lpaste_opts
+    SETTING .Ls_editor, multi_cursor_modifier, ST_CHOICE, cfg_multi_cursor_modifier, 0, 1, 1, 0, "Multi-cursor modifier", "Held with a click to add a caret, with a drag to add a selection.", .Lmodifier_opts
     SETTING .Ls_editor, scroll_past_end, ST_BOOL, cfg_scroll_past_end, 0, 1, 1, 0, "Scroll past end", "Allow scrolling the last line to the top."
     SETTING .Ls_editor, vim_mode, ST_BOOL, cfg_vim, 0, 1, 1, 0, "Vim mode", "Normal, insert and visual modes with vim keys."
+    # language features
+    SETTING .Ls_editor, complete_replace, ST_BOOL, cfg_complete_replace, 0, 1, 1, 0, "Completion replaces the word", "Accepting a completion replaces the rest of the word after the cursor (shift+Enter does the other)."
+    SETTING .Ls_editor, complete_commit_characters, ST_BOOL, cfg_complete_commit, 0, 1, 1, 0, "Commit characters", "Typing a character the selected completion lists, such as a dot, accepts it first."
+    SETTING .Ls_editor, lightbulb, ST_BOOL, cfg_lightbulb, 0, 1, 1, 0, "Quick fix lightbulb", "Show a lightbulb in the gutter where a quick fix is available."
+    SETTING .Ls_editor, format_on_type, ST_BOOL, cfg_format_on_type, 0, 1, 1, 0, "Format as you type", "Ask the formatter after typing one of its trigger characters, such as Enter."
+    SETTING .Ls_editor, format_on_paste, ST_BOOL, cfg_format_on_paste, 0, 1, 1, 0, "Format pasted text", "Format the pasted lines with the formatter's range formatting."
+    # editor presentation
+    SETTING .Ls_editor, folding, ST_BOOL, cfg_folding, 0, 1, 1, 0, "Folding", "Fold regions from the gutter's chevrons (ctrl+shift+[ and ctrl+shift+])."
+    SETTING .Ls_editor, inline_complete, ST_BOOL, cfg_inline_complete, 0, 1, 1, 0, "Inline suggestions", "Show what an extension suggests after the cursor as you type; Tab takes it."
+    SETTING .Ls_editor, inline_complete_delay, ST_INT, cfg_inline_complete_delay, 0, 2000, 50, 0, "Inline suggestion delay (ms)", "The pause after typing before suggestions are asked for."
+    SETTING .Ls_editor, color_swatches, ST_BOOL, cfg_color_swatches, 0, 1, 1, 0, "Color swatches", "Show a small square before colors a language server finds; click it to change the color."
+    SETTING .Ls_editor, highlight_occurrences, ST_BOOL, cfg_highlight_occurrences, 0, 1, 1, 0, "Highlight occurrences", "Mark the other places of the word or symbol under the cursor."
+    SETTING .Ls_editor, code_lens, ST_BOOL, cfg_code_lens, 0, 1, 1, 0, "Code lens", "Show a row of actions and counts above lines a language server marks: references, tests."
+    SETTING .Ls_editor, inlay_hints, ST_BOOL, cfg_inlay_hints, 0, 1, 1, 0, "Inlay hints", "Show what a language server adds inside the code: types, parameter names."
+    SETTING .Ls_editor, semantic_highlighting, ST_BOOL, cfg_semantic_highlighting, 0, 1, 1, 0, "Semantic highlighting", "Color code by what a language server knows of it: types, functions, variables."
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
+    SETTING .Ls_files, format_on_save, ST_BOOL, cfg_format_on_save, 0, 1, 1, 0, "Format before saving", "Use the default formatter before writing a file."
+    SETTING .Ls_files, format_on_save_timeout, ST_INT, cfg_format_save_timeout, 250, 30000, 250, 0, "Formatting wait (ms)", "Save without formatting when this wait expires."
+    SETTING .Ls_files, code_actions_on_save, ST_STR, cfg_save_actions, 0, 0, 0, 0, "Code actions before saving", "Source kinds, such as source.organizeImports source.fixAll. Empty disables them."
+    SETTING .Ls_files, code_actions_on_save_timeout, ST_INT, cfg_save_actions_timeout, 250, 30000, 250, 0, "Code actions wait (ms)", "Total wait for source actions before continuing to formatting and saving."
     SETTING .Ls_files, restore_session, ST_BOOL, cfg_restore_session, 0, 1, 1, 0, "Restore open files", "Reopen the files from the last session of a project."
     SETTING .Ls_files, restore_project, ST_BOOL, cfg_restore_project, 0, 1, 1, 0, "Reopen last project", "Reopen the project you closed with when no file or folder is given."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
@@ -838,15 +967,31 @@ g_settings:
     SETTING .Ls_terminal, scrollback, ST_INT, cfg_term_scrollback, 0, 100000, 1000, 0, "Scrollback", "Lines each terminal keeps above its screen."
     SETTING .Ls_terminal, height, ST_INT, cfg_term_h, 80, 2000, 10, 0, "Terminal height", "Height of the terminal panel in points."
     SETTING .Ls_git, enabled, ST_BOOL, cfg_git, 0, 1, 1, 0, "Git", "Changes in the gutter, tabs and explorer, and the history view."
-    SETTING .Ls_git, commit_ai, ST_CHOICE, cfg_commit_ai, 0, 3, 1, 0, "Commit message AI", "Optional. Cloud providers use your subscription.", .Lai_opts, g_ai_provider_desc
+    SETTING .Ls_git, commit_ai, ST_CHOICE, cfg_commit_ai, 0, 3, 1, 0, "Commit message AI", "Optional. Cloud providers use your subscription.", g_ai_opts, g_ai_provider_desc
     SETTING .Ls_git, commit_model, ST_STR, cfg_commit_model, 0, 0, 0, 0, "Local model", "Ollama model name. Default download: about 1 GB."
     SETTING_ACTION .Ls_git, ai_setup, cmd_ai_model_files, .Lai_setup, g_ai_local_desc
+    SETTING .Ls_extensions, secrets, ST_CHOICE, cfg_secrets, 0, 2, 1, 0, "Extension secrets", "Where extensions keep passwords and tokens. A file is as safe as any file only you can read.", .Lsecrets_opts
     SETTING .Ls_updates, check, ST_BOOL, cfg_update_check, 0, 1, 1, 0, "Check for updates", "Look for a new version at startup and once a day."
     SETTING_ACTION .Ls_updates, check_now, cmd_check_for_updates, g_version_text, g_update_desc
+    # extension management
+    SETTING .Ls_updates, extensions, ST_CHOICE, cfg_ext_updates, 0, 2, 1, 0, "Extension updates", "Install reviewed versions by themselves, or only show updates.", .Lextup_opts
+    SETTING_ACTION .Ls_updates, check_extensions, cmd_check_extensions, .Lextup_label, g_extup_desc
+    # debugger (debugview.s, debugconsole.s)
+    SETTING .Ls_debug, show_on_start, ST_BOOL, g_debug_show_on_start, 0, 1, 1, 0, "Show the debug view on start", "Open the Variables, Watch, Call Stack and Breakpoints sections and the Debug Console when a session starts."
+    SETTING .Ls_debug, keys_in_terminal, ST_BOOL, g_debug_keys_in_terminal, 0, 1, 1, 0, "Debug keys in the terminal", "While a session runs, F5, F6, F10, F11 and Shift+F5 reach the debugger even when the terminal has focus."
+    SETTING .Ls_debug, console_lines, ST_INT, g_dcon_max, 1000, 100000, 1000, 0, "Debug console lines", "Lines the Debug Console keeps; older ones go."
+    SETTING .Ls_remote, agent_binary, ST_STR, cfg_remote_agent_binary, 0, 0, 0, 0, "Remote agent binary", "A Linux rhun to start on remote hosts. Empty uses this release's own."
+    # testing (testgutter.s)
+    SETTING .Ls_testing, gutter, ST_BOOL, cfg_test_gutter, 0, 1, 1, 0, "Test buttons in the gutter", "A run button and the result at each test's first line."
     .quad 0, 0, 0, 0, 0
     .long 0, 0, 0, 0, 0, 0
+.Lextup_opts: .asciz "install", "Install", "check", "Show only", "off", "Off", ""
+.Lextup_label: .asciz "Check extensions now"
+.Lpaste_opts: .asciz "spread", "Spread lines", "full", "Full text", ""
+.Lmodifier_opts: .asciz "alt", "Alt", "ctrl", "Ctrl", ""
 .Ldeco_opts: .asciz "auto", "Auto", "client", "rhun", "server", "Desktop", ""
 
 .Ldefault_model: .asciz "qwen2.5-coder:1.5b"
-.Lai_opts: .asciz "off", "Off", "claude", "Claude Code", "codex", "Codex", "ollama", "Local (Ollama)", ""
+.Lsecrets_opts: .asciz "system", "Keychain", "memory", "Memory", "file", "File", ""
+
 .Lai_setup: .asciz "Local model files"

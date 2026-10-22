@@ -1,7 +1,7 @@
 # Native child processes and Windows pseudoconsoles.
 .include "win.inc"
 .equ CHILD_SIZE, 24
-.equ CHILD_MAX, 128
+.equ CHILD_MAX, 256
 .equ PT_pc, 0
 .equ PT_in, 8
 .equ PT_out, 16
@@ -23,12 +23,27 @@ children: .zero CHILD_SIZE * CHILD_MAX
 # SearchPathW's default order puts the application folder and the current directory first, where a
 # project could plant powershell.exe or git.exe.
 FN proc_which
+    xor esi, esi
+    jmp proc_which_in
+
+# proc_which_in(name, PATH value or 0 for rhun's own) -> the same, searching that PATH (uproc.s: a
+#   program's own environment)
+FN proc_which_in
     PROLOGUE 8320
+    mov r15, rsi
     call win_wide
     mov rbx, rax
     test rax, rax
     jz 8f
-    lea rcx, [rip + .Lpath_var]
+    test r15, r15
+    jz 2f
+    mov rdi, r15
+    call win_wide
+    mov r14, rax
+    test rax, rax
+    jz 7f
+    jmp 1f
+2:  lea rcx, [rip + .Lpath_var]
     xor edx, edx
     xor r8d, r8d
     API GetEnvironmentVariableW # the size PATH needs, with its NUL
@@ -495,8 +510,51 @@ FN ws_wait
 8:  xor eax, eax
     EPILOGUE
 
+# win_wait_code(pid, nohang) -> the child's whole 32-bit exit code once it has exited (its handles
+#   close, as ws_wait's do), -1 still running, -2 not a child (uproc_wait: wait4's status keeps 8 bits)
+FN win_wait_code
+    PROLOGUE 112
+    mov r13d, esi
+    lea rbx, [rip + children]
+    mov ecx, CHILD_MAX
+1:  cmp [rbx], rdi
+    je 2f
+    add rbx, CHILD_SIZE
+    dec ecx
+    jnz 1b
+    mov rax, -2
+    EPILOGUE
+2:  mov rcx, [rbx + 8]
+    mov edx, -1
+    test r13d, 1
+    jz 3f
+    xor edx, edx
+3:  API WaitForSingleObject
+    cmp eax, 258
+    je 8f
+    test eax, eax
+    jnz 7f
+    mov rcx, [rbx + 8]
+    lea rdx, [rsp + 96]
+    API GetExitCodeProcess
+    test eax, eax
+    jz 7f
+    mov rcx, [rbx + 8]
+    API CloseHandle
+    mov rcx, [rbx + 16]
+    API CloseHandle
+    mov qword ptr [rbx], 0
+    mov qword ptr [rbx + 16], 0
+    mov eax, [rsp + 96]         # zero-extended: a code like 0xC0000005 is not -1 or -2
+    EPILOGUE
+7:  mov rax, -2
+    EPILOGUE
+8:  mov rax, -1
+    EPILOGUE
+
 FN ws_kill
     PROLOGUE 96
+    mov r12d, esi
     test edi, edi
     jns 1f
     neg edi
@@ -509,10 +567,13 @@ FN ws_kill
     jnz 2b
     mov rax, -3
     EPILOGUE
-3:  mov rcx, [rbx + 16]
-    mov edx, 1
+3:  test r12d, r12d
+    jz 4f                       # signal 0: only whether it is there
+    # the job ends with 128 + the signal as its exit code, as a shell reports a signalled program
+    mov rcx, [rbx + 16]
+    lea edx, [r12 + 128]
     API TerminateJobObject
-    xor eax, eax
+4:  xor eax, eax
     EPILOGUE
 
 FN pty_open
@@ -953,3 +1014,78 @@ FN win_detach
     xor edi, edi
     call sys_exit
 9:  EPILOGUE
+
+# ---- resources group: what an extension's processes cost (extres.s) ----
+
+# proc_usage(pid, out) -> rax 0 or -errno: from the job proc_spawn gave the child: out[0] CPU
+# nanoseconds of every process ever in it (JobObjectBasicAccountingInformation, 100 ns units),
+# out[8] the working sets of the live ones (JobObjectBasicProcessIdList, K32GetProcessMemoryInfo),
+# out[16] how many are live
+FN proc_usage
+    PROLOGUE 704
+    mov r12, rsi
+    mov qword ptr [r12], 0
+    mov qword ptr [r12 + 8], 0
+    mov qword ptr [r12 + 16], 0
+    mov edi, edi
+    lea rbx, [rip + children]
+    mov ecx, CHILD_MAX
+1:  cmp [rbx], rdi
+    je 2f
+    add rbx, CHILD_SIZE
+    dec ecx
+    jnz 1b
+    mov rax, -3
+    EPILOGUE
+2:  mov rcx, [rbx + 16]
+    test rcx, rcx
+    jz 8f
+    mov edx, 1                  # JobObjectBasicAccountingInformation
+    lea r8, [rsp + 96]
+    mov r9d, 48
+    mov qword ptr [rsp + 32], 0
+    API QueryInformationJobObject
+    test eax, eax
+    jz 8f
+    mov rax, [rsp + 96]         # TotalUserTime
+    add rax, [rsp + 104]        # TotalKernelTime
+    imul rax, rax, 100
+    mov [r12], rax
+    mov eax, [rsp + 136]        # ActiveProcesses
+    mov [r12 + 16], rax
+    mov rcx, [rbx + 16]
+    mov edx, 3                  # JobObjectBasicProcessIdList, 64 ids at most
+    lea r8, [rsp + 160]
+    mov r9d, 8 + 8 * 64
+    mov qword ptr [rsp + 32], 0
+    API QueryInformationJobObject
+    test eax, eax
+    jz 9f
+    mov r13d, [rsp + 164]       # NumberOfProcessIdsInList
+    xor r14d, r14d
+3:  cmp r14d, r13d
+    jae 9f
+    mov r8, [rsp + 168 + r14*8]
+    inc r14d
+    mov ecx, 0x1000             # PROCESS_QUERY_LIMITED_INFORMATION
+    xor edx, edx
+    API OpenProcess
+    test rax, rax
+    jz 3b
+    mov r15, rax
+    mov rcx, rax
+    lea rdx, [rsp + 96]
+    mov dword ptr [rsp + 96], 72    # PROCESS_MEMORY_COUNTERS
+    mov r8d, 72
+    API K32GetProcessMemoryInfo
+    test eax, eax
+    jz 4f
+    mov rax, [rsp + 112]        # WorkingSetSize
+    add [r12 + 8], rax
+4:  mov rcx, r15
+    API CloseHandle
+    jmp 3b
+8:  mov rax, -3
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE

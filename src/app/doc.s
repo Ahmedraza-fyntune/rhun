@@ -1,6 +1,13 @@
 # document: gap buffer, line index, undo/redo, file io
 .include "rhun.inc"
 
+.data
+.p2align 3
+doc_next_id: .quad 0            # DOC_id of the last document made (extensions name documents by it)
+.globl g_edit_lo, g_edit_hi
+g_edit_lo: .quad -1             # the lowest and highest offset an edit started at since the completion
+g_edit_hi: .quad 0              # list last looked (complete.s): typing in its word is all it allows
+
 .equ GAP_MIN, 4096
 
 .bss
@@ -15,6 +22,31 @@ FN doc_new
     mov edi, DOC_SIZE
     call mem_alloc
     mov rbx, rax
+    inc qword ptr [rip + doc_next_id]
+    mov rax, [rip + doc_next_id]
+    mov [rbx + DOC_id], rax
+    # the extension fields start clear (mem_alloc reuses blocks)
+    xor eax, eax
+    mov [rbx + DOC_xedits], rax
+    mov [rbx + DOC_xmarks], rax
+    mov [rbx + DOC_xresync], eax
+    mov [rbx + DOC_oval], rax
+    mov [rbx + DOC_oval + 8], rax
+    mov [rbx + DOC_oown], rax
+    mov [rbx + DOC_oown + 8], rax
+    mov [rbx + DOC_oown + 16], rax
+    mov [rbx + DOC_oown + 24], rax
+    mov [rbx + DOC_snippet], rax
+    mov [rbx + DOC_selections], rax
+    mov [rbx + DOC_selectionbatch], rax
+    mov [rbx + DOC_multilastcp], rax
+    mov [rbx + DOC_language_mode], eax
+    mov [rbx + DOC_language_syncing], eax
+    mov [rbx + DOC_language_name], rax
+    mov [rbx + DOC_language_epoch], rax
+    mov [rbx + DOC_language_pending], rax
+    mov [rbx + DOC_uri], rax    # resources group: not a virtual document
+    mov qword ptr [rbx + DOC_language_revision], 1
     mov edi, GAP_MIN
     call mem_alloc
     mov [rbx + DOC_buf], rax
@@ -34,10 +66,32 @@ FN doc_new
     pop rbx
     ret
 
+# FN doc_renew_id(doc): a new DOC_id (wsedit: a renamed file is a reopened one for extensions, which
+# see it closed and opened again, v1 section 6)
+FN doc_renew_id
+    inc qword ptr [rip + doc_next_id]
+    mov rax, [rip + doc_next_id]
+    mov [rdi + DOC_id], rax
+    ret
+
 # doc_free(doc)
 FN doc_free
     push rbx
     mov rbx, rdi
+    call tx_doc_closed          # wsedit: its part of a workspace edit stays undoable on disk, or is lost
+    mov rdi, rbx
+    call save_forget
+    mov rdi, rbx
+    call snippet_forget
+    mov rdi, rbx
+    call doc_selections_clear
+    mov rdi, rbx
+    call extmarks_free
+    mov rdi, rbx
+    call ext_hover_forget
+    mov rdi, rbx
+    call doc_language_dispose
+    mov rdi, rbx
     cmp rdi, [rip + g_long_doc]   # its long line's classes and matched brackets go too (another doc
     jne 1f                        # may get its address)
     mov qword ptr [rip + g_long_doc], 0
@@ -72,6 +126,8 @@ FN doc_free
     mov rdi, [rbx + DOC_img]
     call iv_free
     mov rdi, rbx
+    call vdoc_doc_freed         # resources group: a virtual document's provider hears it closed
+    mov rdi, rbx
     call mem_free
     pop rbx
     ret
@@ -89,7 +145,15 @@ urec_clear:
     add rax, [r12 + VEC_ptr]
     mov rdi, [rax + UR_text]
     call mem_free
-    inc rbx
+    imul r13, rbx, UR_SIZE
+    add r13, [r12 + VEC_ptr]
+    mov rdi, [r13 + UR_beforeselections]
+    call mem_free
+    mov rdi, [r13 + UR_afterselections]
+    cmp rdi, -1
+    je 3f
+    call mem_free
+3:  inc rbx
     jmp 1b
 2:  mov qword ptr [r12 + VEC_len], 0
     pop r13
@@ -376,7 +440,13 @@ gb_reserve:
 
 # raw_insert(doc, pos, ptr, len)
 FN raw_insert
-    PROLOGUE 16
+    cmp rsi, [rip + g_edit_lo]
+    jae 1f
+    mov [rip + g_edit_lo], rsi
+1:  cmp rsi, [rip + g_edit_hi]
+    jbe 2f
+    mov [rip + g_edit_hi], rsi
+2:  PROLOGUE 16
     mov qword ptr [rsp], 0
     mov rbx, rdi
     mov r12, rsi
@@ -487,20 +557,50 @@ FN raw_insert
 8:  cmp [rbx + DOC_anchor], r12
     jbe 81f
     add [rbx + DOC_anchor], r14
-81: inc qword ptr [rbx + DOC_version]
+81: mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r14
+    call doc_selections_insert
+    inc qword ptr [rbx + DOC_version]
+    # debugger: breakpoints below move with new lines (until the presentation group's edit tape)
+    cmp dword ptr [rip + g_bp_hooks], 0
+    je 87f
+    cmp qword ptr [rsp], 0
+    je 87f
+    mov rdi, rbx
+    mov rsi, r15
+    mov rdx, [rsp]
+    mov rcx, r12
+    call bp_note_insert
+87: cmp dword ptr [rip + g_ext_hooks], 0
+    je .Lri_ret
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, r14
+    call ext_note_insert
 .Lri_ret:
     EPILOGUE
 
 # raw_delete(doc, pos, len)
 FN raw_delete
-    PROLOGUE 16
+    cmp rsi, [rip + g_edit_lo]
+    jae 1f
+    mov [rip + g_edit_lo], rsi
+1:  cmp rsi, [rip + g_edit_hi]
+    jbe 2f
+    mov [rip + g_edit_hi], rsi
+2:  PROLOGUE 16
     mov qword ptr [rsp], 0
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
     test r13, r13
     jz .Lrd_ret
-    mov rdi, rbx
+    cmp dword ptr [rip + g_pres_ever], 0
+    je 0f
+    call pres_pre_delete        # the edit tape notes what goes before it goes (edtape.s)
+0:  mov rdi, rbx
     mov rsi, r12
     call doc_line_of
     mov r15, rax                # L
@@ -571,7 +671,26 @@ FN raw_delete
     call .Lrd_marker
     lea rdi, [rbx + DOC_anchor]
     call .Lrd_marker
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call doc_selections_delete
     inc qword ptr [rbx + DOC_version]
+    # debugger: breakpoints on joined lines move up (until the presentation group's edit tape)
+    cmp dword ptr [rip + g_bp_hooks], 0
+    je 67f
+    cmp qword ptr [rsp], 0
+    je 67f
+    mov rdi, rbx
+    mov rsi, r15
+    mov rdx, [rsp]
+    call bp_note_delete
+67: cmp dword ptr [rip + g_ext_hooks], 0
+    je .Lrd_ret
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call ext_note_delete
 .Lrd_ret:
     EPILOGUE
 .Lrd_marker:
@@ -677,17 +796,24 @@ new_record:
     sub rax, [rbx + DOC_lastedit]
     cmp rax, 1500
     ja .Lnr_new
+    mov rdi, rbx
+    call snippet_previous_record
+    test rax, rax
+    jnz .Lnr_previous
     mov rax, [rbx + DOC_undo + VEC_len]
     test rax, rax
     jz .Lnr_new
     dec rax
     imul rax, rax, UR_SIZE
     add rax, [rbx + DOC_undo + VEC_ptr]
+    mov rdx, [rax + UR_pos]
+.Lnr_previous:
+    mov [rsp + 24], rdx
     mov rcx, [rsp + 8]
     cmp r13d, EK_TYPE
     jne 2f
     # contiguous typing, break after whitespace/newline
-    mov rdx, [rax + UR_pos]
+    mov rdx, [rsp + 24]
     add rdx, [rax + UR_len]
     cmp rcx, rdx
     jne .Lnr_new
@@ -703,10 +829,10 @@ new_record:
 2:  cmp r13d, EK_BACK
     jne 3f
     add rcx, [rsp + 16]
-    cmp rcx, [rax + UR_pos]
+    cmp rcx, [rsp + 24]
     je .Lnr_same
     jmp .Lnr_new
-3:  cmp rcx, [rax + UR_pos]
+3:  cmp rcx, [rsp + 24]
     je .Lnr_same
 .Lnr_new:
     inc qword ptr [rbx + DOC_group]
@@ -729,6 +855,23 @@ new_record:
     mov [rax + UR_cur], rcx
     mov rcx, [rbx + DOC_anchor]
     mov [rax + UR_anchor], rcx
+    mov qword ptr [rax + UR_aftercur], -1
+    mov qword ptr [rax + UR_afteranchor], -1
+    mov qword ptr [rax + UR_afterselections], -1
+    mov qword ptr [rax + UR_tx], 0
+    mov [rsp + 24], rax
+    xor eax, eax
+    cmp qword ptr [rbx + DOC_selectionbatch], 0
+    jne .Lnr_snapshot_ready
+    mov rdi, rbx
+    call doc_selections_snapshot
+.Lnr_snapshot_ready:
+    mov rcx, [rsp + 24]
+    mov [rcx + UR_beforeselections], rax
+    mov rdi, rbx
+    mov rsi, rcx
+    call snippet_note_record
+    mov rax, [rsp + 24]
     EPILOGUE
 
 # doc_insert(doc, pos, ptr, len, editkind)
@@ -741,6 +884,11 @@ FN doc_insert
     mov r15d, r8d
     test r14, r14
     jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    mov rcx, r14
+    call snippet_before_change
     mov rdi, r13
     mov rsi, r14
     call mem_dup
@@ -756,6 +904,11 @@ FN doc_insert
     mov rdx, r13
     mov rcx, r14
     call raw_insert
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    mov rcx, r14
+    call snippet_after_change
 9:  EPILOGUE
 
 # doc_delete(doc, pos, len, editkind)
@@ -767,6 +920,11 @@ FN doc_delete
     mov r15d, ecx
     test r13, r13
     jz 9f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    call snippet_before_change
     lea rdi, [r13 + 1]
     call mem_alloc
     mov r14, rax
@@ -786,6 +944,11 @@ FN doc_delete
     mov rsi, r12
     mov rdx, r13
     call raw_delete
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    call snippet_after_change
 9:  EPILOGUE
 
 # doc_begin_group(doc) / doc_end_group(doc): edits in between undo as one step
@@ -800,8 +963,13 @@ FN doc_end_group
 
 # doc_undo(doc) -> 1 if something was undone
 FN doc_undo
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, rdi
+    call tx_undo_hook           # wsedit: a step of a workspace edit undoes all of it
+    test eax, eax
+    jns .Lu_ret
+    mov rdi, rbx
+    call snippet_forget
     mov rax, [rbx + DOC_undo + VEC_len]
     test rax, rax
     jz .Lu_none
@@ -819,6 +987,8 @@ FN doc_undo
     cmp [r13 + UR_group], r12
     jne .Lu_done
     dec qword ptr [rbx + DOC_undo + VEC_len]
+    mov rax, [r13 + UR_beforeselections]
+    mov [rsp + 16], rax
     mov rax, [r13 + UR_cur]
     mov [rsp], rax
     mov rax, [r13 + UR_anchor]
@@ -845,6 +1015,9 @@ FN doc_undo
     rep movsb
     jmp .Lu_loop
 .Lu_done:
+    mov rdi, rbx
+    mov rsi, [rsp + 16]
+    call doc_selections_restore
     mov rax, [rsp]
     mov [rbx + DOC_cur], rax
     mov rax, [rsp + 8]
@@ -857,12 +1030,18 @@ FN doc_undo
     EPILOGUE
 .Lu_none:
     xor eax, eax
+.Lu_ret:
     EPILOGUE
 
 # doc_redo(doc) -> 1 if something was redone
 FN doc_redo
-    PROLOGUE 16
+    PROLOGUE 32
     mov rbx, rdi
+    call tx_redo_hook           # wsedit: and redoes all of it
+    test eax, eax
+    jns .Lr_ret
+    mov rdi, rbx
+    call snippet_forget
     mov rax, [rbx + DOC_redo + VEC_len]
     test rax, rax
     jz .Lr_none
@@ -880,6 +1059,11 @@ FN doc_redo
     cmp [r13 + UR_group], r12
     jne .Lr_done
     dec qword ptr [rbx + DOC_redo + VEC_len]
+    mov rax, [r13 + UR_afterselections]
+    cmp rax, -1
+    jne 4f
+    xor eax, eax
+4:  mov [rsp + 16], rax
     cmp qword ptr [r13 + UR_kind], 1
     jne 1f
     mov rdi, rbx
@@ -896,6 +1080,14 @@ FN doc_redo
     call raw_delete
     mov rax, [r13 + UR_pos]
 2:  mov [rsp], rax
+    mov [rsp + 8], rax
+    cmp qword ptr [r13 + UR_aftercur], 0
+    jl 3f
+    mov rax, [r13 + UR_aftercur]
+    mov [rsp], rax
+    mov rax, [r13 + UR_afteranchor]
+    mov [rsp + 8], rax
+3:
     lea rdi, [rbx + DOC_undo]
     mov esi, UR_SIZE
     call vec_push
@@ -905,8 +1097,12 @@ FN doc_redo
     rep movsb
     jmp .Lr_loop
 .Lr_done:
+    mov rdi, rbx
+    mov rsi, [rsp + 16]
+    call doc_selections_restore
     mov rax, [rsp]
     mov [rbx + DOC_cur], rax
+    mov rax, [rsp + 8]
     mov [rbx + DOC_anchor], rax
     mov qword ptr [rbx + DOC_lastkind], EK_OTHER
     mov qword ptr [rbx + DOC_prefx], -1
@@ -916,6 +1112,7 @@ FN doc_redo
     EPILOGUE
 .Lr_none:
     xor eax, eax
+.Lr_ret:
     EPILOGUE
 
 # doc_dirty(doc) -> 1 if modified since load/save
@@ -930,6 +1127,9 @@ FN doc_dirty
 FN doc_set_path
     push rbx
     mov rbx, rdi
+    push rsi
+    call save_forget
+    pop rsi
     mov rdi, [rbx + DOC_path]
     call mem_free
     mov rdi, rsi
@@ -1039,15 +1239,18 @@ FN doc_load
     PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
+    call snippet_forget
+    mov rdi, rbx
+    call ext_note_resync
     mov rdi, rbx
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     mov rdi, r12
     mov esi, GAP_MIN * 4
-    call file_read_all_extra
+    call vfs_read_all_extra
     test rax, rax
     jz .Ldl_error
     mov r13, rax
@@ -1062,6 +1265,9 @@ FN doc_load
     mov rdx, r14
     call doc_normalize_eol
     mov r14, rax
+    # A successful load replaces the text outside normal edit mapping.
+    mov rdi, rbx
+    call doc_selections_clear
     # install as buffer with the gap at the end
     mov rdi, [rbx + DOC_buf]
     call mem_free
@@ -1177,8 +1383,11 @@ FN doc_save
     je .Lds_nopath
     mov rdi, rbx
     call doc_begin_group
-    cmp dword ptr [rip + cfg_trim_trailing], 0
-    je .Lds_final
+    mov rdi, rbx
+    mov esi, OPT_TRIM
+    call ext_opt_bool
+    test eax, eax
+    jz .Lds_final
     # trim trailing blanks on every line (last to first)
     mov r12, [rbx + DOC_nlines]
 .Lds_trim:
@@ -1215,8 +1424,11 @@ FN doc_save
     call doc_delete
     jmp .Lds_trim
 .Lds_final:
-    cmp dword ptr [rip + cfg_final_newline], 0
-    je .Lds_write
+    mov rdi, rbx
+    mov esi, OPT_FINAL
+    call ext_opt_bool
+    test eax, eax
+    jz .Lds_write
     mov rdi, rbx
     call doc_len
     test rax, rax
@@ -1295,7 +1507,7 @@ FN doc_save
 5:  mov rdi, [rbx + DOC_path]
     mov rsi, [rsp + SB_ptr]
     mov rdx, [rsp + SB_len]
-    call file_write_all
+    call vfs_write_all
     mov r12, rax
     lea rdi, [rsp]
     call sb_free
@@ -1304,7 +1516,7 @@ FN doc_save
     mov rax, [rbx + DOC_undo + VEC_len]
     mov [rbx + DOC_savepoint], rax
     mov rdi, [rbx + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     mov rdi, rbx
     call doc_note_eol
@@ -1364,6 +1576,8 @@ FN doc_replace_all
     mov rsi, r12
     mov rdx, r13
     call doc_set_text
+    mov rdi, rbx
+    call doc_selections_clear
     pop rax
     pop rax
     mov [rbx + DOC_flags], eax
@@ -1448,7 +1662,7 @@ FN doc_prev_char
     ret
 
 # char_class(byte) -> 0 blank, 1 newline, 2 word, 3 punctuation
-char_class:
+FN char_class
     cmp dil, 10
     je 1f
     cmp dil, ' '
@@ -1596,8 +1810,8 @@ FN doc_col_of
     jne 2f
     mov eax, ebx
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     add ebx, eax
     inc r13
@@ -1666,8 +1880,8 @@ FN doc_pos_at_col
     jne 2f
     mov eax, r12d
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     mov ecx, 1
     jmp 3f
