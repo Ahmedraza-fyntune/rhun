@@ -1413,8 +1413,8 @@ filters (such as Python's "Uncaught Exceptions").
 In a remote window the adapter runs on the host and launch.ini is the host's file. A debugger
 reached over TCP (`transport = tcp`, as Delve is) listens on the host's loopback, and the host makes
 the connection there, again until the adapter listens (10 s at most); `server = PORT` (or
-`localhost:PORT`) also means a port on the host. An adapter its extension ships runs from the
-extension's copy on the host, made when the extension first runs there.
+`localhost:PORT`) also means a port on the host. An adapter its extension ships is copied to the
+host with the extension's folder before it starts.
 
 Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves
 (feature `debug`, docs/extensions/v1.1.md "Debuggers").

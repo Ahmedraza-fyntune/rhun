@@ -8,7 +8,8 @@ then does initialize go out.
 Remote (Linux only): the `local:` transport is a remote window to this machine, and
 RHUN_REMOTE_STRICT=1 stops rhun when a local file function is given a path of the project.
 DockerHost: a Linux container reached with `docker exec` (the host remote.py sets up, with python3
-for the fake adapter); a macOS client needs a Linux build to send (RHUN_TEST_LINUX_EXE)."""
+for the fake adapter); a macOS client needs a Linux build to send (RHUN_TEST_LINUX_EXE). The fake
+debugger's extension never runs there: its folder, with the adapter, is copied before the launch."""
 import json
 import os
 from pathlib import Path
@@ -108,6 +109,8 @@ class DockerHost(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    cache_blocked = False
+
     def extension(self, mode):
         """the fake debugger with its adapter inside its folder (the folder is what reaches the host);
         its tcp adapter gets the mode as an argument (the host's adapter has the host's environment)"""
@@ -127,10 +130,12 @@ class DockerHost(unittest.TestCase):
         docker('exec', '-i', HOST, 'sh', '-c', 'mkdir -p /root/proj/.rhun && cat > /root/proj/.rhun/launch.ini',
                input=b'[Run]\ntype = faketcp\nprogram = scenario.json\nstopOnEntry = yes\n')
         script = self.base / 't.rsc'
-        # its files reach the host when it first runs there (remoteext.s); its adapter is then the
-        #   host's copy
-        script.write_text('\n'.join(['wait-remote 90', 'cmd rhun-tests/debugfake.start',
-                                      'wait-ext debugfake running', 'wait 500', 'debug-start Run', 'wait 500', 'dialog yes', *lines,
+        # the extension never ran on the host: its folder (and so its adapter) is copied there first
+        docker('exec', HOST, 'rm', '-rf', '/root/.cache/rhun-remote/extensions')
+        if self.cache_blocked:
+            docker('exec', HOST, 'sh', '-c', 'mkdir -p /root/.cache/rhun-remote && '
+                   'touch /root/.cache/rhun-remote/extensions')
+        script.write_text('\n'.join(['wait-remote 90', 'debug-start Run', 'wait 500', 'dialog yes', *lines,
                                       'quit']) + '\n')
         env = dict(os.environ, HOME=str(self.base / 'home'), XDG_CONFIG_HOME=str(self.base / 'config'),
                    XDG_STATE_HOME=str(self.base / 'state'), TMPDIR=str(self.base / 'tmp'))
@@ -165,6 +170,18 @@ class DockerHost(unittest.TestCase):
         sessions = self.sessions(out)
         self.assertEqual(self.field(sessions[0], 'state'), 'paused', out)
         self.assertEqual(self.field(sessions[-1], 'state'), 'ended', out)
+
+    def test_an_extension_that_cannot_be_copied(self):
+        self.cache_blocked = True
+        try:
+            out = self.run_tcp(['wait-debug ended 30000', 'print-debug', 'print-console'])
+        finally:
+            docker('exec', HOST, 'rm', '-rf', '/root/.cache/rhun-remote/extensions')
+        sessions = self.sessions(out)
+        self.assertEqual(self.field(sessions[-1], 'state'), 'ended', out)
+        self.assertTrue([l for l in out if "the debugger's extension could not be copied to the host: " in l], out)
+        ps = docker('exec', HOST, 'ps', '-eo', 'args').stdout.decode()
+        self.assertNotIn('fakedap.py', ps)
 
     def test_nobody_listening(self):
         out = self.run_tcp(['wait 2000', 'print-debug', 'wait-debug ended 20000', 'print-debug', 'print-console'],
