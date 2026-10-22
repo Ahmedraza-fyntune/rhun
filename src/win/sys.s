@@ -1408,3 +1408,19 @@ backup_serial: .quad 0
 CSTR .Lbackup, ".rhun-backup-"
 CSTR .Loriginal, "/original"
 CSTR .Lrecovery, "Save failed. The original is in the .rhun-backup folder beside the file"
+
+# win_console_is(fd) -> eax 1 when the fd is a console (rhun new-extension asks only there)
+FN win_console_is
+    PROLOGUE 112
+    call win_fd
+    test rax, rax
+    jz 8f
+    mov rcx, [rax + FD_handle]
+    lea rdx, [rsp + 96]
+    API GetConsoleMode
+    test eax, eax
+    jz 8f
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE

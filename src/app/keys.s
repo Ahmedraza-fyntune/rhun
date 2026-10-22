@@ -2350,6 +2350,7 @@ g_commands:
     COMMAND install_extension_folder, "Install Extension from Folder", cmd_install_extension_folder, ""
     COMMAND link_extension_folder, "Link Extension Folder (development)", cmd_link_extension_folder, ""
     COMMAND install_extension_archive, "Install Extension from Archive", cmd_install_extension_archive, ""
+    COMMAND new_extension, "Extensions: New Extension\342\200\246", cmd_new_extension, ""
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
     # tasks and terminals
     COMMAND toggle_problems, "Toggle Problems", cmd_toggle_problems, "ctrl+shift+m"

@@ -2086,11 +2086,13 @@ draw_versions:
 .p2align 3
 install_items:
     .quad .Lm_github, cmd_install_extension, .Lm_folder, cmd_install_extension_folder
-    .quad .Lm_link, cmd_link_extension_folder, .Lm_archive, cmd_install_extension_archive, 0, 0
+    .quad .Lm_link, cmd_link_extension_folder, .Lm_archive, cmd_install_extension_archive
+    .quad .Lm_new, cmd_new_extension, 0, 0
 .Lm_github: .asciz "From GitHub\342\200\246"
 .Lm_folder: .asciz "From a Folder\342\200\246"
 .Lm_link: .asciz "Link a Folder (development)\342\200\246"
 .Lm_archive: .asciz "From an Archive\342\200\246"
+.Lm_new: .asciz "New Extension\342\200\246"
 .Lb_check: .asciz "Check for updates"
 .Lb_update_all: .asciz "Update all"
 .Lb_update_to: .asciz "Update to "

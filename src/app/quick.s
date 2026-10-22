@@ -8,6 +8,9 @@
 #     quick_set(ext, Q, body, len) -> eax 0, 1 no such session, 2 syntax, 3 toobig
 #     quick_close(ext, Q) -> eax 0, 1 no such session
 # Events "0 quick Q ...": value, active, accept, back, button, hide.
+# rhun's own flows (New Extension, newext.s) use the same card: quick_open_native(fn, body, len),
+# quick_set_native(Q, body, len), quick_close_native(Q); the events go to fn(ptr, len) instead of
+# an extension, called while the card is mid-change, so fn only keeps them for later.
 .include "rhun.inc"
 
 .equ QF_MULTI, 1
@@ -62,6 +65,8 @@ q_hover: .long -1
 .bss
 .p2align 3
 q_ext: .quad 0                  # the session's extension (0: none open)
+q_native: .quad 0               # rhun's own session: fn(event ptr, len) its events go to, else 0
+q_native_owner: .quad 0         # q_ext of rhun's own session (no extension's)
 q_tf: .zero TF_SIZE
 q_items: .quad 0                # QI array
 q_nitems: .quad 0
@@ -172,6 +177,37 @@ FN quick_open
 7:  mov rax, -3
     EPILOGUE
 
+# quick_open_native(fn(ptr, len), body, len) -> rax Q, -1 syntax, -2 toobig, -3 busy: rhun's own
+#   session, its events to fn
+FN quick_open_native
+    PROLOGUE
+    mov rax, -3
+    cmp qword ptr [rip + q_ext], 0
+    jne 9f
+    mov [rip + q_native], rdi
+    mov r12, rsi
+    mov r13, rdx
+    lea rdi, [rip + q_native_owner]
+    mov rsi, r12
+    mov rdx, r13
+    call quick_open
+    test rax, rax
+    jg 9f
+    mov qword ptr [rip + q_native], 0
+9:  EPILOGUE
+
+# quick_set_native(Q, body, len), quick_close_native(Q): quick_set and quick_close for rhun's own
+FN quick_set_native
+    mov rcx, rdx
+    mov rdx, rsi
+    mov esi, edi
+    lea rdi, [rip + q_native_owner]
+    jmp quick_set
+FN quick_close_native
+    mov esi, edi
+    lea rdi, [rip + q_native_owner]
+    jmp quick_close
+
 # quick_set(ext, Q, body, len) -> eax 0, 1 no such session, 2 syntax, 3 toobig: what the records
 #   name changes, atomically; Enter works again
 FN quick_set
@@ -253,6 +289,7 @@ qk_end:
     sub rsp, 8
     call qk_reset
     mov qword ptr [rip + q_ext], 0
+    mov qword ptr [rip + q_native], 0
     mov dword ptr [rip + q_id], 0
     cmp dword ptr [rip + g_focus], FOCUS_QUICK
     jne 1f
@@ -1407,9 +1444,11 @@ ev_begin:
     mov rax, [rip + q_ext]
     test rax, rax
     jz 8f
+    cmp qword ptr [rip + q_native], 0
+    jne 1f                      # rhun's own: always there
     cmp dword ptr [rax + EXT_status], ES_RUNNING
     jne 8f
-    lea rdi, [rip + q_ev]
+1:  lea rdi, [rip + q_ev]
     call sb_clear
     lea rdi, [rip + q_ev]
     lea rsi, [rip + .Le_quick]
@@ -1476,7 +1515,13 @@ ev_body:
     EPILOGUE
 
 ev_send:
-    mov rdi, [rip + q_ext]
+    mov rax, [rip + q_native]
+    test rax, rax
+    jz 1f
+    mov rdi, [rip + q_ev + SB_ptr]
+    mov rsi, [rip + q_ev + SB_len]
+    jmp rax
+1:  mov rdi, [rip + q_ext]
     mov rsi, [rip + q_ev + SB_ptr]
     mov rdx, [rip + q_ev + SB_len]
     jmp ext_send

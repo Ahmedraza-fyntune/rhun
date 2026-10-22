@@ -249,7 +249,7 @@ version may use the old embedded installer, so run this step once after upgradin
 handlers. Later updates refresh registration for installed copies without changing defaults or
 opening Settings. Portable copies stay unregistered unless you explicitly configure them.
 
-Use `rhun` or `rhun.com` from a terminal. Normal launches return the prompt immediately. Use `rhun --wait` when another program needs to wait for the editor. `rhun.com --version`, `--headless`, and `--script` preserve console output. The Unix `--control` socket is not available on Windows; use a script file instead.
+Use `rhun` or `rhun.com` from a terminal. Normal launches return the prompt immediately. Use `rhun --wait` when another program needs to wait for the editor. `rhun.com --version`, `--headless`, and `--script` preserve console output. The Unix `--control` socket is not available on Windows; use a script file instead. `rhun new-extension` asks its questions as plain lines there (a number or the first letter for a choice) and runs its steps in PowerShell with `curl.exe` and `tar.exe`.
 
 Settings, themes and grammars live under `%APPDATA%\rhun`; saved sessions live under `%LOCALAPPDATA%\rhun`. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` override those parent directories. `HOME` defaults to `%USERPROFILE%`. Session filenames encode drive letters, separators and Windows filename restrictions. A project path whose encoded session filename exceeds 240 bytes opens normally but shows a warning and does not persist a session.
 
@@ -1245,6 +1245,39 @@ Extension Folder (development)** and **Install Extension from Archive**) install
   checked when there is one.
 
 Archive and folder installs are never checked for updates.
+
+#### New extensions
+
+`rhun new-extension [DIR]` starts an extension of your own from a template. In a terminal it asks
+four things: the name (a manifest name: lowercase letters, digits and dashes; DIR's name by
+default), the owner (your GitHub user or organization; `git config github.user` by default), the
+language (Rust or Go, with the arrow keys or 1 and 2) and whether to add the agent skills (yes by
+default). Ctrl+C stops it and leaves the terminal as it was. Then it downloads the current
+`main` of [template-rust](https://github.com/rhun-editor/template-rust) or
+[template-go](https://github.com/rhun-editor/template-go), checks the archive as an install does
+(no links, nothing outside itself, at most 64 MB) and puts it in DIR, a new or empty folder
+(`./NAME` without one), renamed: `name`, `owner`, `title` and the programs in `extension.ini`,
+the Go module (`github.com/OWNER/NAME`) or the Cargo package, the headless test's script and
+expected output, and the README's title. With the skills, the `rhun-extension` skill from
+[rhun-editor/skills](https://github.com/rhun-editor/skills) goes into `.claude/skills/` (Claude
+Code) and `.agents/skills/` (Codex); without them the template keeps its own copy in
+`.claude/skills/`. Last it runs `git init` there (no commit) and prints the next steps: build the
+program into `bin/`, `sh tests/run.sh`, then **Link Extension Folder (development)** on the
+folder.
+
+For scripts and agents the answers come as flags, and without a terminal they are needed:
+
+```sh
+rhun new-extension ~/code/word-count --owner octocat --lang go --no-skills
+rhun new-extension --name word-count --owner octocat --lang rust --skills
+rhun new-extension word-count --yes      # owner from git config github.user, Rust, the skills
+```
+
+In rhun, **Extensions: New Extension…** (also **New Extension…** in the Extensions page's Install
+menu) asks the same in five steps, the last one the folder (`~/code/NAME` by default), with Back
+(alt+left) between them. The download runs in the background with a progress card and Cancel;
+when it is done a notification offers **Open Folder** (this window), **New Window** and **Dev
+Install** (Link a Folder on it).
 
 `rhun://extension/OWNER/NAME` and `rhun://extension/OWNER/NAME@VERSION` links open the same Add
 dialog (the site's catalog uses them for its Install buttons).

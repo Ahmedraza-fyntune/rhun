@@ -195,6 +195,7 @@ python3 tests/icon-themes.py || fail=1
 python3 tests/ext-contrib-page.py || fail=1
 # source control: Git data, commit messages, quick diff, version control panels
 python3 tests/ext-scm.py || fail=1
+python3 tests/new-extension.py || fail=1   # rhun new-extension and Extensions: New Extension…
 # editor presentation
 python3 tests/inc-names.py > /dev/null || { python3 tests/inc-names.py; fail=1; }
 python3 tests/ctl-names.py > /dev/null || { python3 tests/ctl-names.py; fail=1; }
