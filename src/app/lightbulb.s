@@ -24,6 +24,7 @@ lb_version: .quad 0
 lb_cur: .quad 0
 lb_since: .quad 0
 lb_asked: .quad 0               # 1: asked for this rest (lb_line)
+lb_sig: .quad 0                 # the line's diagnostics then (line_sig)
 lb_line: .quad 0
 lb_reqs: .zero 16 * LB_REQS     # ext, id
 lb_nreqs: .quad 0
@@ -110,12 +111,23 @@ FN lightbulb_tick
     mov [rip + lb_since], rax
     jmp 9f
 3:  cmp qword ptr [rip + lb_asked], 0
-    jne 9f
-    call time_ms
+    je 31f
+    mov rdi, rbx                # the line's diagnostics changed since (published later, cleared):
+    call line_sig               # asked again
+    cmp rax, [rip + lb_sig]
+    je 9f
+    call clear
+    mov qword ptr [rip + lb_asked], 0
+    mov dword ptr [rip + g_dirty], 1
+    jmp 9f
+31: call time_ms
     sub rax, [rip + lb_since]
     cmp rax, LB_REST
     jl 9f
     mov qword ptr [rip + lb_asked], 1
+    mov rdi, rbx
+    call line_sig
+    mov [rip + lb_sig], rax
     mov rdi, rbx
     call ask
     jmp 9f
@@ -214,6 +226,39 @@ has_marks:
     mov eax, 1
     EPILOGUE
 8:  xor eax, eax
+    EPILOGUE
+
+# line_sig(doc) -> rax a hash of the diagnostics on lb_line (their places, severities and owners;
+# 0 for none): a change asks again
+line_sig:
+    PROLOGUE
+    mov rbx, rdi
+    xor r14d, r14d
+    xor r12d, r12d
+1:  mov rcx, [rbx + DOC_xmarks]
+    test rcx, rcx
+    jz 9f
+    cmp r12, [rcx + VEC_len]
+    jae 9f
+    imul r13, r12, MK_SIZE
+    add r13, [rcx + VEC_ptr]
+    inc r12
+    mov rdi, rbx
+    mov rsi, [r13 + MK_start]
+    call doc_line_of
+    cmp rax, [rip + lb_line]
+    jne 1b
+    imul r14, r14, 1000003
+    add r14, [r13 + MK_start]
+    imul r14, r14, 1000003
+    add r14, [r13 + MK_end]
+    imul r14, r14, 1000003
+    mov eax, [r13 + MK_sev]
+    add r14, rax
+    add r14, [r13 + MK_owner]
+    inc r14
+    jmp 1b
+9:  mov rax, r14
     EPILOGUE
 
 # FN lightbulb_reply(ext, id, ok, body, len) -> eax 1 when it answered one of the lightbulb's
