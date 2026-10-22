@@ -840,6 +840,23 @@ FN tools_tick
     mov rbx, [rax + r12*8]
     inc r12
     cmp dword ptr [rbx + TCL_state], TCS_START
+    ja 1b
+    mov rax, [rbx + TCL_owner]      # queued, asking or starting: its tool's extension stopped for
+    test rax, rax                   # good (not a retry, which is starting again)
+    jz 11f
+    cmp dword ptr [rax + EXT_status], ES_STOPPED
+    jb 11f
+    cmp dword ptr [rbx + TCL_state], TCS_ASKING
+    jne 12f
+    mov qword ptr [rip + asking], 0     # its dialog closes
+    xor edi, edi
+    call app_dialog_answer
+12: mov rdi, rbx
+    lea rsi, [rip + .Le_owner_gone]
+    call answer_error
+    xor r12d, r12d
+    jmp 1b
+11: cmp dword ptr [rbx + TCL_state], TCS_START
     jne 1b
     mov rax, r13
     sub rax, [rbx + TCL_since]
@@ -1071,16 +1088,11 @@ FN tools_ext_gone
     mov rdi, r13
     call withdraw
     jmp 1b
-3:  cmp [r13 + TCL_owner], rbx    # a call for one of its tools fails: queued, asking the user,
-    jne 2b                          # waiting for the start, or sent to it
-    cmp dword ptr [r13 + TCL_state], TCS_OWNER
-    ja 2b
-    cmp dword ptr [r13 + TCL_state], TCS_ASKING
-    jne 4f
-    mov qword ptr [rip + asking], 0     # its dialog closes
-    xor edi, edi
-    call app_dialog_answer
-4:  mov rdi, r13
+3:  cmp [r13 + TCL_owner], rbx    # a call sent to it fails; calls still queued or waiting for
+    jne 2b                          # its start wait: an exit may be a retry (confinement falls
+    cmp dword ptr [r13 + TCL_state], TCS_OWNER  # back to unconfined); tools_tick fails them when
+    jne 2b                          # the extension stays stopped
+    mov rdi, r13
     lea rsi, [rip + .Le_owner_gone]
     call answer_error
     jmp 1b
