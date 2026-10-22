@@ -2,6 +2,7 @@
 """Several sessions at once (docs/guide.md "Debugging"): the adapter's startDebugging starts a child
 session of the same debugger that ends with its parent, and a launch.ini compound starts its
 configurations in turn, the next once nothing waits for an answer."""
+import json
 import unittest
 import debughost
 
@@ -87,7 +88,8 @@ class Sessions(debughost.DebugHost):
         first, second = out[:out.index('--')], out[out.index('--') + 1:]
         self.assertEqual(self.debug_lines(first), [], first)
         self.assertEqual([self.field(l, 'name') for l in self.debug_lines(second)], ['A', 'B'], second)
-        self.assertEqual(self.args_sent()['count'], 7)
+        args = [json.loads(l[5:]) for l in self.dap_log() if l.startswith('ARGS ')]
+        self.assertEqual([a.get('count') for a in args if a['name'] == 'A'], [7], args)
 
 
 if __name__ == '__main__':

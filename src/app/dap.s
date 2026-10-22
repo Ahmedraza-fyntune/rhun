@@ -3995,6 +3995,8 @@ send_watches:
     PROLOGUE
     mov rbx, rdi
     inc dword ptr [rbx + DS_wgen]       # this session's round
+    mov eax, [rip + g_dwlist]
+    mov [rbx + DS_wlist], eax
     cmp dword ptr [rbx + DS_state], DSS_PAUSED
     jne 9f
     mov rdi, rbx
@@ -4195,6 +4197,7 @@ FN dap_watch_remove
 # refresh_watches(): the focused session's watch roots are dropped and asked for again
 refresh_watches:
     sub rsp, 8
+    inc dword ptr [rip + g_dwlist]      # the list changed
     call dap_focused
     add rsp, 8
     test rax, rax
@@ -4767,8 +4770,12 @@ FN dap_focus_slot
     mov [rip + g_dfocus], edi
     inc dword ptr [rip + g_dap_gen]
     mov dword ptr [rip + g_dirty], 1
-    # its watches, evaluated again (one added or removed while another session had the focus)
+    # its watches, evaluated again when one was added or removed while another session had the
+    #   focus (its old roots dropped); else they stay as they are
     call dap_slot
+    mov ecx, [rip + g_dwlist]
+    cmp ecx, [rax + DS_wlist]
+    je 9f
     mov rdi, rax
     call watches_again
 9:  EPILOGUE
@@ -5270,7 +5277,7 @@ cqname: .zero SB_SIZE           # the one starting
 cq_nodebug: .long 0
 hover_seq: .long 0              # the latest hover evaluation's number
 cq_starting: .long 0            # 1 while compound_next starts one of a compound's configurations
-.long 0
+g_dwlist: .long 0               # the watch list's version: bumped by each add and remove
 .p2align 3
 dstart_oid: .quad 0
 dstart_resolved: .long 0        # 1: debug-resolve answered for this launch
