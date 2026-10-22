@@ -124,7 +124,7 @@ class Showcase(unittest.TestCase):
             'ext-setting showcase greeting Bonjour', *W, 'key ctrl+End', 'cmd showcase.greet', *W,
             'echo @setting', 'print-doc',
             # the extension's page
-            'ext-page showcase', *W, 'echo @page', 'print-ext-page',
+            'ext-page showcase', *W, 'echo @page', 'print-ext-page-more',
             # pin it: its button joins the title bar
             'ext-set showcase pinned 1', 'echo @pinned', 'print-extbar',
             # open: the project's README

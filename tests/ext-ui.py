@@ -237,7 +237,7 @@ class UI(host.Host):
         icon = png(64, 64, lambda x, y: red if 8 <= x < 56 and 8 <= y < 56 else (0, 0, 0, 0))
         exts = self.icon_ext('icon', 'icon = icon.png\ncolor = #112233\n', {'icon.png': icon})
         shot = self.work / 'badge.ppm'
-        out = self.ui(['ext-set pic pinned 1', 'ext-page pic', 'print-ext-page', 'shot ' + shot.as_posix()],
+        out = self.ui(['ext-set pic pinned 1', 'ext-page pic', 'print-ext-page-more', 'shot ' + shot.as_posix()],
                       exts=exts)
         self.assertIn('badge=icon color=#112233', out)
         colors = ppm_colors(shot)
@@ -247,7 +247,7 @@ class UI(host.Host):
     def test_a_color_alone_colors_the_letter_badge(self):
         exts = self.icon_ext('color', 'color = #2f9e8f\n', {})
         shot = self.work / 'badge.ppm'
-        out = self.ui(['ext-page pic', 'print-ext-page', 'shot ' + shot.as_posix()], exts=exts)
+        out = self.ui(['ext-page pic', 'print-ext-page-more', 'shot ' + shot.as_posix()], exts=exts)
         self.assertIn('badge=letter color=#2f9e8f', out)
         self.assertIn((0x2f, 0x9e, 0x8f), ppm_colors(shot))
 
@@ -261,7 +261,7 @@ class UI(host.Host):
         for folder, (keys, files) in cases.items():
             with self.subTest(folder):
                 exts = self.icon_ext(folder, keys, files)
-                out = self.ui(['ext-page pic', 'print-ext-page'], exts=exts)
+                out = self.ui(['ext-page pic', 'print-ext-page-more'], exts=exts)
                 self.assertIn('badge=unreadable color=-', out)
 
     def test_a_pin_is_remembered(self):
@@ -276,13 +276,25 @@ class UI(host.Host):
         self.assertEqual(out[0], 'Echo 0.0.1 on')
         self.assertEqual(out[1], 'Echo 0.0.1 on')
         self.assertEqual(out[2], 'pinned=0')
-        self.assertEqual(out[3], 'badge=letter color=-')
-        self.assertEqual(out[4], 'can: read and change the files you have open, read the files in your project, suggest terminal commands for you to run')
+        self.assertEqual(out[3], 'can: read and change the files you have open, read the files in your project, suggest terminal commands for you to run')
         self.assertIn('setting greeting=Hello', out)
         self.assertIn('setting loud=no', out)
         self.assertIn('setting width=4', out)
         self.assertIn('setting style=plain', out)
         self.assertTrue(any('Extensions' in l for l in out), out)
+
+    def test_print_ext_page_keeps_the_v1_form(self):
+        # v1.md section 10: published extensions' goldens read these lines byte for byte; protocol
+        # 1.1's lines (updates=, badge=, a pack's members, versions) come from print-ext-page-more
+        can = ('can: read and change the files you have open, read the files in your project, '
+               'suggest terminal commands for you to run')
+        out = self.ui(['print-ext-page', 'ext-page echo', 'print-ext-page'])
+        self.assertEqual(out[:4], ['Echo 0.0.1 on', 'Echo 0.0.1 on', 'pinned=0', can])
+        self.assertEqual(out[4], 'held=1')
+        self.assertTrue(out[5:] and all(l.startswith('setting ') for l in out[5:]), out)
+        more = self.ui(['print-ext-page-more', 'ext-page echo', 'print-ext-page-more'])
+        self.assertEqual(more, ['Echo 0.0.1 on', 'Echo 0.0.1 on', 'pinned=0', 'badge=letter color=-', can, 'held=1',
+                                *out[5:], 'versions update=- previous=-'])
 
     # --- its own settings ---
 
@@ -457,7 +469,7 @@ class UI(host.Host):
         exts = self.manifest_variant('reinstall')
         out = self.ui(['ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
                        'ext-page hello', 'ext-install demo/hello', 'wait-install', 'dialog yes', 'wait-ext hello running',
-                       'ext-set hello disabled 1', 'print-ext-page'], exts=exts)
+                       'ext-set hello disabled 1', 'print-ext-page-more'], exts=exts)
         self.assertIn('Hello 1.2.0 off', out)          # the details of the record that is installed now
         self.assertIn('versions update=- previous=1.2.0', out)
 
