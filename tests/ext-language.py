@@ -24,9 +24,11 @@ class Languages(host.Host):
             self.assertIn('lang='+language+' ',state,out)
         self.assertEqual(target.read_text(),'package b\n')
 
+    # the formatter starts with the editor: started by the request itself, a slow start under load sent
+    # the request after the language change, which then had nothing to drop
     def test_language_change_during_save_keeps_latest_text_and_drops_format(self):
-        root=saves.Saves.formatter(self,delay=.5)
-        out=self.run_editor(['type y','cmd save','wait 150',*self.choose('Python'),
+        root=saves.Saves.formatter(self,delay=.5,on='startup')
+        out=self.run_editor(['wait 1500','type y','cmd save','wait 150',*self.choose('Python'),
             'wait 800','print-state','print-doc'],exts=root)
         self.assertIn(' format ',saves.Saves.requests(self))
         self.assertEqual((self.proj/'a.txt').read_text(),'yhello world\nsecond line\n')
@@ -35,8 +37,8 @@ class Languages(host.Host):
         self.assertTrue(any(' dirty=0 ' in line for line in out if line.startswith('tabs=')),out)
 
     def test_language_change_drops_delayed_explicit_format(self):
-        root=saves.Saves.formatter(self,delay=.5)
-        out=self.run_editor(['cmd format_document','wait 150',*self.choose('Python'),
+        root=saves.Saves.formatter(self,delay=.5,on='startup')
+        out=self.run_editor(['wait 1500','cmd format_document','wait 150',*self.choose('Python'),
             'wait 800','print-doc'],exts=root)
         self.assertIn(' format ',saves.Saves.requests(self))
         self.assertIn('hello world',out)
