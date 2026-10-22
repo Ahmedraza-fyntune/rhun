@@ -296,20 +296,24 @@ show_set:
 
 # ---------------- references ----------------
 
-# FN results_refs_begin(word, serial) -> rax the set the query fills
+# FN results_refs_begin(word, serial) -> rax the set the query fills (found anywhere in the history,
+# which keeps showing the set the user chose)
 FN results_refs_begin
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    call cur_set
-    test rax, rax
-    jz 1f
     test r12, r12
     jz 1f
+    xor ecx, ecx                # the query's set, wherever the user went in the history since
+0:  cmp rcx, [rip + nhist]
+    jae 1f
+    lea rax, [rip + hist]
+    mov rax, [rax + rcx*8]
+    inc rcx
     cmp [rax + RST_serial], r12
-    jne 1f
+    jne 0b
     cmp dword ptr [rax + RST_kind], RSK_REFS
-    jne 1f
+    jne 0b
     mov r13, rax                # filled again (a part came): the rows keep their state
     mov qword ptr [r13 + RST_locs + VEC_len], 0
     lea rdi, [r13 + RST_bytes]
@@ -854,6 +858,21 @@ FN cmd_focus_results
 9:  EPILOGUE
 
 # ---------------- hierarchies ----------------
+
+# FN results_cancel_roots() -> eax 1 when a hierarchy's roots were still asked for: withdrawn
+FN results_cancel_roots
+    mov rsi, [rip + rh_id]
+    test rsi, rsi
+    jz 8f
+    push rbx
+    mov rdi, [rip + rh_ext]
+    mov qword ptr [rip + rh_id], 0
+    call query_withdraw
+    pop rbx
+    mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
 
 # FN cmd_call_hierarchy(), cmd_type_hierarchy(): the roots at the cursor, asked of the first running
 # provider whose patterns match the document

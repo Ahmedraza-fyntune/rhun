@@ -3068,6 +3068,7 @@ g_tcv_dirty: .long 0            # the files changed: listed again
 .data
 .p2align 2
 tcv_place: .long -1
+tcv_hidden: .long -1            # what tcv_hide last set (-1: nothing yet)
 .text
 
 # testview_cov_tick(): the section shows with coverage, hides without; its rows follow the files
@@ -3075,11 +3076,8 @@ FN testview_cov_tick
     PROLOGUE
     cmp qword ptr [rip + g_cov_run], 0
     jne 1f
-    mov edi, [rip + tcv_place]
-    test edi, edi
-    js 9f
-    mov esi, 1
-    call place_set_hidden
+    mov edi, 1
+    call tcv_hide
     EPILOGUE
 1:  cmp dword ptr [rip + tcv_place], 0
     jge 2f
@@ -3100,15 +3098,26 @@ FN testview_cov_tick
     mov esi, IC_BEAKER
     call place_set_icon
     mov dword ptr [rip + g_tcv_dirty], 1
-2:  mov edi, [rip + tcv_place]
-    xor esi, esi
-    call place_set_hidden
+2:  xor edi, edi
+    call tcv_hide
     cmp dword ptr [rip + g_tcv_dirty], 0
     je 9f
     mov dword ptr [rip + g_tcv_dirty], 0
     call tcv_rebuild
     mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
+
+# tcv_hide(on): the section hidden or shown, only when that changes (setting it repaints)
+tcv_hide:
+    mov esi, edi
+    mov edi, [rip + tcv_place]
+    test edi, edi
+    js 9f
+    cmp esi, [rip + tcv_hidden]
+    je 9f
+    mov [rip + tcv_hidden], esi
+    jmp place_set_hidden
+9:  ret
 
 # tcv_rebuild(): the rows, least covered first
 tcv_rebuild:

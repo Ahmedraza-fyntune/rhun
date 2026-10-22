@@ -663,6 +663,19 @@ FN cmd_cancel_query
     mov dword ptr [rip + g_dirty], 1
     pop rbx
 1:  ret
+# FN langfeat_escape() -> eax 1 when Escape in the editor cancelled a language query still out (the
+# query in flight, or a hierarchy's roots); 0 leaves Escape to the editor
+FN langfeat_escape
+    cmp dword ptr [rip + lf_kind], 0
+    je 1f
+    cmp dword ptr [rip + lf_ready], 0
+    jne 1f
+    push rbx
+    call cmd_cancel_query
+    pop rbx
+    mov eax, 1
+    ret
+1:  jmp results_cancel_roots
 FN cmd_peek_definition
     mov edi, LF_DEF
     jmp lf_peek_cmd

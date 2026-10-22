@@ -37,6 +37,16 @@ class Configs(debughost.DebugHost):
         self.assertTrue(ini.startswith('[Mine]\ntype = fake\nprogram = scenario.json\n\n[Fake launch]\n'), ini)
         self.assertEqual([l for l in out if l.startswith('config=')], ['config=Mine', 'config=Fake launch'])
 
+    def test_add_configuration_leaves_an_unreadable_file_alone(self):
+        # review: a launch.ini over 1 MiB was replaced by the header and the new section
+        self.scenario()
+        text = '[Mine]\ntype = fake\nprogram = scenario.json\n' + '# padding\n' * 120000
+        ini = self.launch_ini(text)
+        out = self.run_editor(['cmd debug_add_configuration', 'type launch', 'key Return', 'wait 200',
+                               'print-console'])
+        self.assertEqual(ini.read_text(), text)
+        self.assertTrue([l for l in out if 'could not be read' in l], out)
+
     def test_the_status_bar_follows_a_save_not_the_clock(self):
         self.scenario()
         ini = self.launch_ini('[First]\ntype = fake\nprogram = scenario.json\n')

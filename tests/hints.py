@@ -54,6 +54,17 @@ class Hints(pres.Base):
     def xy(self, out):
         return [tuple(map(int, l.split())) for l in out if len(l.split()) == 2 and l.split()[0].isdigit()]
 
+    def test_a_line_break_between_hints_at_one_gap_keeps_them_in_order(self):
+        # an after hint, then a before hint, at "x|": Return there takes the first to the next line
+        self.answer(body(hint(2, 10, 'after', [part(': a')]), hint(2, 10, 'before', [part('b:')])))
+        out = self.run_p(self.start() + ['key ctrl+Home', 'key Down', 'key End'] + ['key Left'] * 5 +
+                         ['key Return', 'print-present hints', 'print-xy 2 9', 'print-xy 2 10'])
+        h = self.hints(out)
+        self.assertEqual(h[0], 'hint 2 10 before label=b:', h)
+        self.assertTrue(h[1].startswith('hint 3 ') and h[1].endswith(' after label=: a'), h)
+        (x9, _), (x10, _) = self.xy(out)
+        self.assertEqual(x10 - x9, 3 * 7)          # x, then "b:" still drawn before the caret
+
     def test_hints_drawn_as_virtual_text(self):
         out = self.run_p(self.start() + ['print-present hints', 'print-xy 2 10', 'print-xy 2 11',
                                          'print-xy 4 14', 'print-xy 4 15'])

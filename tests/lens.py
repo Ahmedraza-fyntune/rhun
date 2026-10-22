@@ -106,6 +106,20 @@ class Lens(pres.Base):
         a, b = self.xy(out)
         self.assertEqual(a, b)
 
+    def test_the_view_stays_when_the_last_lenses_go(self):
+        # every line has a lens; the answer after the scroll has none: back to lines, the text stays
+        (self.proj / 'big.rs').write_text(''.join(f'let v{i} = {i};\n' for i in range(300)), encoding='utf-8')
+        self.answer(body(*[lens(i, 'r') for i in range(1, 301)]), body())
+        go = ['cmd goto_line', 'type 120', 'key Return', 'cmd center_line']
+        out = self.run_p(self.start() + go + ['print-viewport'], files=('big.rs',))
+        top = int([l for l in out if l.startswith('view ')][-1].split('top=')[1].split()[0])
+        out = self.run_p(self.start() + go + [f'print-xy {top} 1', 'wait 400', 'print-present lenses',
+                                              'print-viewport', f'print-xy {top} 1'], files=('big.rs',))
+        self.assertEqual(self.lenses(out), ['lens none'] if 'lens none' in out else [])
+        self.assertTrue(any(l.startswith('view mode=lines') for l in out), out)
+        a, b = self.xy(out)
+        self.assertEqual(a, b)
+
     def test_broken_answers_are_dropped(self):
         for b in (body(lens(0, 'x')), body(lens(1, 'a\nb')), body(lens(1, 'x' * 201)), '2\n' + lens(1, 'x')):
             self.answer(b)

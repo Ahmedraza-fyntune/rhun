@@ -838,6 +838,7 @@ hint_apply:
 # hint before its text
 FN inlay_shift
     PROLOGUE
+    mov rbx, rdi
     mov rax, [rdi + DOC_pres]
     mov r14, [rax + PRS_hints + VEC_len]
     test r14, r14
@@ -857,6 +858,43 @@ FN inlay_shift
     add r15, IH_SIZE
     dec r14
     jnz 1b
+    # an after hint and a before hint at one gap part at a line break typed there: the order by
+    # position comes back (inlay_line_inlays searches it), one stable insertion pass
+    mov rax, [rbx + DOC_pres]
+    mov r14, [rax + PRS_hints + VEC_len]
+    mov r15, [rax + PRS_hints + VEC_ptr]
+    mov r12d, 1
+3:  cmp r12, r14
+    jae 9f
+    imul r13, r12, IH_SIZE
+    add r13, r15
+    inc r12
+    mov rax, [r13 + IH_pos]
+    cmp rax, [r13 - IH_SIZE + IH_pos]
+    jae 3b
+    # r13 goes back to its place: kept on the stack while the ones before it move up
+    sub rsp, IH_SIZE + 8
+    mov rdi, rsp
+    mov rsi, r13
+    mov edx, IH_SIZE
+    call memcpy
+4:  cmp r13, r15
+    jbe 5f
+    mov rax, [rsp + IH_pos]
+    cmp rax, [r13 - IH_SIZE + IH_pos]
+    jae 5f
+    mov rdi, r13
+    lea rsi, [r13 - IH_SIZE]
+    mov edx, IH_SIZE
+    call memcpy
+    sub r13, IH_SIZE
+    jmp 4b
+5:  mov rdi, r13
+    mov rsi, rsp
+    mov edx, IH_SIZE
+    call memcpy
+    add rsp, IH_SIZE + 8
+    jmp 3b
 9:  EPILOGUE
 
 # ---------------- lifetime ----------------

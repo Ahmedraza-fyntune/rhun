@@ -252,11 +252,30 @@ lens_merge:
     # the top line after: its text row stays where it was
     cmp rbx, [rip + g_doc]
     jne 10f
-    mov rdi, rbx
+    test dword ptr [rbx + DOC_flags], DF_ROWS
+    jz 93f
+    call top_row                # in rows, before the mode may change
+    mov [rsp + 16], rax
+    mov [rsp + 24], rdx
+93: mov rdi, rbx
     call fold_view_sync
     call rows_mode
     test eax, eax
-    jz 10f
+    jnz 94f
+    # back to lines (the last lenses gone, unwrapped): the top line's lens row goes from above it
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne 10f
+    cmp qword ptr [rsp + 8], 0
+    jle 10f                     # none, or the document's top (-1)
+    mov rax, [rsp + 16]
+    shl rax, 8
+    add rax, [rsp + 24]
+    sub rax, 256
+    jns 95f
+    xor eax, eax
+95: mov [rbx + DOC_scrolly], rax
+    jmp 10f
+94:
     cmp qword ptr [rsp + 8], -1
     je 10f
     call top_row

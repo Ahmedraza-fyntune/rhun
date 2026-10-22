@@ -2527,6 +2527,8 @@ draw_row:
     jz .Ldr_ret
     test dword ptr [rbx + TR_flags], TRF_MDTIPS
     jz 4922f
+    test dword ptr [rsp + 16], UB_HOVER     # only the hovered row's: the one document stays drawn
+    jz .Ldr_ret
     mov rdi, rax                # Markdown: a document made once for the hovered row's text
     call tree_md_tip
     test rax, rax

@@ -120,6 +120,18 @@ FN dask_starting
     mov qword ptr [rip + answers + SB_len], 0
 1:  ret
 
+# dask_waiting() -> eax 1 while a launch's question is on screen (or ps runs for ${process}): a
+#   compound's next configuration waits for its answer
+FN dask_waiting
+    xor eax, eax
+    cmp dword ptr [rip + need_kind], 0
+    je 9f
+    mov eax, 1
+    cmp dword ptr [rip + ps_fd], 0
+    jge 9f
+    jmp palette_is_open
+9:  ret
+
 # dask_done(): the configuration was prepared: its answers are spent
 FN dask_done
     mov qword ptr [rip + answers + SB_len], 0

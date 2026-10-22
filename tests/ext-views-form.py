@@ -117,5 +117,40 @@ class Forms(ViewsBase):
         self.assertTrue(f['name'].endswith(' value=Adapasted'), f['name'])
 
 
+    # round 3: limits across a patch, lengths, duplicate keys, a select's field, disabled fields
+    def errors(self):
+        return [l for l in self.fake_log() if l.startswith('error ')]
+
+    def test_a_form_replaced_by_200_others_and_growth_across_ops(self):
+        out = self.shown('cmd viewfake.formmany', 'wait 400')
+        f = self.fields(out)
+        self.assertEqual(len(f), 200)
+        self.assertIn('j199', f)
+        self.assertFalse(self.errors())
+        self.shown('cmd viewfake.formgrow', 'wait 400')
+        self.assertTrue(any(l.endswith(' toobig form') for l in self.errors()), self.errors())
+
+    def test_wrapping_lengths_and_keys_listed_twice_are_refused(self):
+        out = self.shown('cmd viewfake.formwrap', 'cmd viewfake.formdup', 'wait 400')
+        errs = self.errors()
+        self.assertEqual(sum(1 for l in errs if ' syntax ' in l), 2, errs)
+        self.assertEqual(list(self.fields(out)), ['name', 'port', 'notes', 'tls', 'mode', 'go'])
+
+    def test_a_select_picks_into_its_own_field_after_a_reorder(self):
+        f = self.fields(self.shown())
+        mx, my = self.xy(f['mode'])
+        out = self.shown(f'click {mx} {my}', 'wait 50', 'cmd viewfake.formrev', 'wait 300', 'menu-pick slow', 'wait 50')
+        f = self.fields(out)
+        self.assertTrue(f['mode'].endswith(' value=slow'), f['mode'])
+        self.assertFalse(f['port'].endswith(' value=slow'), f['port'])
+
+    def test_a_disabled_field_takes_no_input(self):
+        f = self.fields(self.shown())
+        x, y = self.xy(f['name'])
+        out = self.shown(f'click {x} {y}', 'key End', 'cmd viewfake.formdisable', 'wait 300', 'type zz', 'wait 50')
+        f = self.fields(out)
+        self.assertTrue(f['name'].endswith(' value=Ada'), f['name'])
+        self.assertFalse([l for l in self.fake_log() if ' change ' in l and ' name ' in l])
+
 if __name__ == '__main__':
     unittest.main()

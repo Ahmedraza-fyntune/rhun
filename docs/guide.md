@@ -881,13 +881,14 @@ commands:
 | shift+alt+f | Format Document | with the document's tab width and spaces; with a selection, Format Selection when the extension can |
 
 When the pointer rests on a word, extensions that support it show a **hover card**: the problems
-there first, then what each extension says, wrapped to the card's width; move the pointer onto
-the card to scroll it. A **lightbulb** in the gutter marks a line with a problem that has a quick
+there first, then what each extension says, formatted and wrapped to the card's width; move the
+pointer onto the card to scroll it, drag to select text, and click a link to follow it (with the
+card focused by `ctrl+i`, `ctrl+a` selects all and `ctrl+c` copies). A **lightbulb** in the gutter marks a line with a problem that has a quick
 fix: click it, or press `shift+alt+.`, to fix it. The **Results** tab keeps the last 8 sets of
 references, hierarchies and Find in Files results (`ctrl+Enter` in Find in Files moves its list
 there; the arrows on its title go back and forth, the cross drops one). While extensions are
-still searching its title shows their progress, and **Cancel Language Query** stops them and
-keeps what came;
+still searching its title shows their progress, and **Cancel Language Query** (or Escape in the
+editor) stops them and keeps what came;
 Enter opens a location, Space opens it and stays in the tab, Escape goes back to the editor. In a
 call hierarchy, expanding a row asks for that function's callers; the arrow button switches to
 the functions it calls. The **Outline** section of the sidebar (**Focus Outline**) lists the
@@ -1070,7 +1071,7 @@ of them:
   conversation view. Settings > Agents has a switch for each such source.
 - **Talk to those agents.** When the extension allows it, its sessions get a box under the
   conversation: Enter sends (Shift+Enter for a new line), Stop interrupts the agent while it
-  works, and the agent's questions show as cards with a button per answer (keys 1 to 9 pick).
+  works, and the agent's questions show as cards with a button per answer (keys 1 to 9 pick, or the arrow keys and Enter).
   The `+` button in the panel's header starts a new session of that agent.
 - **The Review tab.** An extension, or an agent through the MCP bridge, can propose a change. rhun
   shows it in a Review tab: each file with its added and removed lines, each change with a few
@@ -1408,6 +1409,12 @@ filters (such as Python's "Uncaught Exceptions").
 | lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | needs a native machine (no ptrace in Docker under Rosetta) | not tested |
 | Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | not tested (its TCP connection, and `server =`, tested with a fake adapter under Wine) |
 | debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
+
+In a remote window the adapter runs on the host and launch.ini is the host's file. A debugger
+reached over TCP (`transport = tcp`, as Delve is) listens on the host's loopback, and the host makes
+the connection there, again until the adapter listens (10 s at most); `server = PORT` (or
+`localhost:PORT`) also means a port on the host. An adapter its extension ships runs from the
+extension's copy on the host, made when the extension first runs there.
 
 Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves
 (feature `debug`, docs/extensions/v1.1.md "Debuggers").

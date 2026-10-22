@@ -18,6 +18,7 @@ wl_kind: .quad 0                # WLK_* of the list on show, 0 for none
 wl_label: .zero SB_SIZE         # its placeholder (the question)
 wl_bytes: .zero SB_SIZE         # the rows' texts
 wl_rows: .zero VEC_SIZE         # WR records
+wc_root: .zero 4100             # the project resolved (ws_rel)
 
 .text
 
@@ -263,15 +264,41 @@ wc_push_count:
     pop rbx
     ret
 
-# FN ws_rel(path cstr) -> rax the path as shown: inside the project, from it
+# FN ws_rel(path cstr) -> rax the path as shown: inside the project, from it. Files carry their
+#   resolved paths, so a project opened through a link (macOS's /var, /tmp) is tried resolved too
 FN ws_rel
     push rbx
-    push r12
-    sub rsp, 8
+    sub rsp, 16
     mov rbx, rdi
-    mov rdi, [rip + g_project]
-    test rdi, rdi
+    mov rsi, [rip + g_project]
+    test rsi, rsi
     jz 8f
+    call rel_from
+    test rax, rax
+    jnz 9f
+    mov rdi, [rip + g_project]
+    lea rsi, [rip + wc_root]
+    call ext_realpath
+    test eax, eax
+    jz 8f
+    mov rdi, rbx
+    lea rsi, [rip + wc_root]
+    call rel_from
+    test rax, rax
+    jnz 9f
+8:  mov rax, rbx
+9:  add rsp, 16
+    pop rbx
+    ret
+
+# rel_from(path, root cstr) -> rax path past "root/", or 0 when it does not lie in root
+rel_from:
+    push rbx
+    push r12
+    push r13
+    mov rbx, rdi
+    mov r13, rsi
+    mov rdi, rsi
     call strlen
     mov r12, rax
     mov rdi, rbx
@@ -280,7 +307,7 @@ FN ws_rel
     jbe 8f
     mov rdi, rbx
     mov rsi, rax
-    mov rdx, [rip + g_project]
+    mov rdx, r13
     mov rcx, r12
     call str_starts
     test eax, eax
@@ -294,8 +321,8 @@ FN ws_rel
     jne 8f
 1:  inc rax
     jmp 9f
-8:  mov rax, rbx
-9:  add rsp, 8
+8:  xor eax, eax
+9:  pop r13
     pop r12
     pop rbx
     ret

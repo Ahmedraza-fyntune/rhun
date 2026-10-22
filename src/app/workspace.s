@@ -798,7 +798,20 @@ FN workspace_open_file
     pop rax
     test r15, r15
     jnz 21f
+    # the primary must be a folder (a later one is checked when it joins): else the next one
+    push rax
+    push rax
+    mov rdi, rax
+    call vfs_is_dir
+    mov ecx, eax
+    pop rax
+    pop rax
+    test ecx, ecx
+    jz 22f
     mov r15, rax
+    jmp 1b
+22: mov rdi, rax
+    call mem_free
     jmp 1b
 21: mov r13, rax
     lea rdi, [rip + ws_carry]
@@ -820,7 +833,25 @@ FN workspace_open_file
     mov rdi, [rip + ws_file_next]
     mov [rip + ws_file_next], rax
     call mem_free
+    # the project already: its folders and workspace file change in place (app_switch_project
+    # keeps an unchanged project as it is)
+    mov rsi, [rip + g_project]
+    test rsi, rsi
+    jz 41f
     mov rdi, r15
+.ifdef WINDOWS
+    call win_path_equal
+.else
+    call strcmp_eq
+.endif
+    test eax, eax
+    jz 41f
+    mov rdi, [rip + g_project]
+    call ws_carry_for_set
+    call workspace_reset
+    call ws_changed
+    jmp 5f
+41: mov rdi, r15
     cmp dword ptr [rip + g_started], 0
     je 4f
     call app_switch_project
@@ -979,14 +1010,23 @@ ws_copy_sections:
     je 3f
     inc r15
     jmp 2b
-3:  # [r12, r15) a line
-    cmp byte ptr [r12], '['
+3:  # [r12, r15) a line; a section's header may be indented (ini_next)
+    mov rbx, r12
+30: cmp rbx, r15
+    jae 4f
+    cmp byte ptr [rbx], ' '
+    je 32f
+    cmp byte ptr [rbx], 9
+    jne 33f
+32: inc rbx
+    jmp 30b
+33: cmp byte ptr [rbx], '['
     jne 4f
     mov rax, r15
-    sub rax, r12
+    sub rax, rbx
     cmp rax, 9
     jb 31f
-    mov rdi, r12
+    mov rdi, rbx
     lea rsi, [rip + .Lsec_folders_line]
     mov rdx, 9
     call strncmp_eq
@@ -1237,9 +1277,10 @@ FN cmd_remove_workspace_folder
     PROLOGUE
     cmp qword ptr [rip + ws_folders + VEC_len], 2
     jb 8f
-    lea rdi, [rip + g_explorer_target]
-    cmp byte ptr [rdi], 0
-    jne 1f
+    call explorer_context_target    # the explorer's selection only from its menu or with its focus
+    mov rdi, rax
+    test rax, rax
+    jnz 1f
     mov rax, [rip + g_doc]
     test rax, rax
     jz 8f

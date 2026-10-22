@@ -441,6 +441,27 @@ class RemoteAgent(unittest.TestCase):
             time.sleep(0.05)
         self.assertFalse((self.home / '.cache/rhun-remote/s' / sid).exists())
 
+    def test_a_confinement_failure_survives_a_reattach(self):
+        """The child failed to confine itself while no window was attached: attach lists the code
+        with the exit, so the window still restarts it unconfined."""
+        sid = '00000000000000c7'
+        a = Agent(self.home, session=sid, env_extra={'RHUN_REMOTE_TEST_CONFINE': '72'})
+        state = self.home / 'st'
+        block = b'4\0' + str(self.home).encode() + b'\0\0' + str(state).encode() + b'\0\0\0'
+        body = spawn_body(['sh', '-c', 'sleep 1; exit 70'], str(self.home)) + b'\0' + block
+        self.assertEqual(a.call('spawn 35 3 0 0 0', body)[0], 'ok')
+        a.close()                               # gone before the exit
+        time.sleep(2)
+        b = Agent(self.home, session=sid)
+        try:
+            kind, body = b.call('attach')
+            rows = {int(l.split()[0]): l.split()[1:] for l in body.decode().splitlines()}
+            self.assertTrue(int(rows[35][1]) & 1, body)          # exited
+            self.assertEqual(rows[35][2:], ['70', '72'], body)
+        finally:
+            b.send(b'0 quit 0\n')
+            b.p.wait(10)
+
     def test_stop_close_and_hangup_end_what_a_program_left(self):
         """As uproc does locally: a program stopped (kill to its group), its channel closed while it
         runs, or its terminal hung up, takes what it started with it, SIGKILL for what ignores the rest."""
