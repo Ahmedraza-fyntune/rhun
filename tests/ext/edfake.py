@@ -6,12 +6,14 @@ editor-dirty, and answers editor-save in parts of 3 bytes (1 MB for files of 64 
 upper-cases the first line on a click with replace. Both draw "N bytes: XX XX ..." in their view.
 EDFAKE_LOG names a file (in the state folder) that receives every line rhun sends. EDFAKE_MODE:
 refuse (editor-open fails), badpart (a save part without its MORE line), crashclick (the second
-click ends the program), dirtysave (the model changes again just before a save's last part).
+click ends the program), dirtysave (the model changes again just before a save's last part), slowopen (editor-open
+is answered 2 s late).
 """
 import os
 import queue
 import sys
 import threading
+import time
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else 'owned'
 MODE = os.environ.get('EDFAKE_MODE', '')
@@ -85,6 +87,8 @@ def worker():
         kind = job[0]
         if kind == 'open':
             _, rid, cdoc, view, path = job
+            if MODE == 'slowopen':
+                time.sleep(2)
             eds[cdoc] = {'view': view, 'path': path, 'data': b'', 'saved': b'', 'undo': [], 'redo': [], 'snap': b''}
             if MODEL == 'owned':
                 eds[cdoc]['data'] = eds[cdoc]['saved'] = read_all(cdoc)

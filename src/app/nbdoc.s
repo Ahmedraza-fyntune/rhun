@@ -923,10 +923,8 @@ nb_mark_snapshot:
     mov rdx, [r14 + DOC_version]
     cmp rdx, [r13 + 16]
     je 31f                      # unchanged since
-    # changed since: the saved text is reachable by z only while the history up to it is the one
-    # the body was made from (undone and typed over, it is not: dirty)
-    cmp r15, [r14 + DOC_undo + VEC_len]
-    ja 32f
+    # changed since: the saved text is reachable by z (or by y, undone) only while the history up
+    # to it is the one the body was made from (undone and typed over, it is not: dirty)
     mov rdi, r14
     mov rsi, r15
     call nb_undo_hash
@@ -944,8 +942,9 @@ nb_mark_snapshot:
     mov qword ptr [rax + DOC_savepoint], 0
 9:  EPILOGUE
 
-# nb_undo_hash(doc, n) -> rax a hash of its first n undo records (kind, place, length, text): the
-#   same only for the same history
+# nb_undo_hash(doc, n) -> rax a hash of the first n records of its history (kind, place, length,
+#   text): the undo records, then the undone ones redo would bring back, newest undone first; the
+#   same only for the same history, 0 when it is shorter than n
 nb_undo_hash:
     PROLOGUE
     mov rbx, rdi
@@ -954,11 +953,19 @@ nb_undo_hash:
     xor r14d, r14d
 1:  cmp r14, r12
     jae 9f
-    cmp r14, [rbx + DOC_undo + VEC_len]
-    jae 9f
+    mov rax, r14
+    sub rax, [rbx + DOC_undo + VEC_len]
+    jae 3f
     imul r15, r14, UR_SIZE
     add r15, [rbx + DOC_undo + VEC_ptr]
-    inc r14
+    jmp 4f
+3:  mov rcx, [rbx + DOC_redo + VEC_len]   # past the undo records: redo's, from its top
+    sub rcx, rax
+    jbe 8f
+    dec rcx
+    imul r15, rcx, UR_SIZE
+    add r15, [rbx + DOC_redo + VEC_ptr]
+4:  inc r14
     mov rdi, r13
     mov rsi, [r15 + UR_kind]
     call nbu_mix
@@ -980,6 +987,9 @@ nb_undo_hash:
     inc rdx
     jmp 2b
 9:  mov rax, r13
+    or rax, 1                   # never 0
+    EPILOGUE
+8:  xor eax, eax
     EPILOGUE
 
 # nbu_mix(hash rdi, value rsi) -> rax (and rdi) the hash with the value mixed in

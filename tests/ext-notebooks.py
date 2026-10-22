@@ -446,6 +446,15 @@ class Notebooks(unittest.TestCase):
         self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=1'), out)
         self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK.replace('print("hi")', 'aprint("hi")'))
 
+    def test_undone_while_a_save_is_answered_then_redone_is_clean(self):
+        # redo still reaches what the file holds
+        out = self.run_editor(['key Return', 'type a', 'key ctrl+s', 'key ctrl+z', 'wait 2500', *SETTLE,
+                               'print-notebook', 'key ctrl+y', 'print-notebook', 'print-doc'], mode='slowsave')
+        dirty = [l for l in out if l.startswith('dirty=')]
+        self.assertTrue(dirty[0].startswith('dirty=1'), dirty)
+        self.assertTrue(dirty[1].startswith('dirty=0'), (dirty, out))
+        self.assertIn('aprint("hi")', out)
+
     def test_typing_while_a_reload_is_answered_keeps_it(self):
         out = self.run_editor(['wait 2500', 'cmd reload_file', 'key Return', 'type q', 'wait 2500', *SETTLE,
                                'print-notebook', 'print-doc'], mode='slowopen')
