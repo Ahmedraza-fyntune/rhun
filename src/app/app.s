@@ -2891,6 +2891,8 @@ timeout_fns:
     .quad ws_linked_timeout     # wsedit: a cursor resting for linked editing
     .quad nb_timeout              # notebooks: requests waiting for their program
     .quad ce_timeout              # custom editors: requests waiting for their program
+    .quad newext_timeout          # New Extension: quick input events to take (newext.s)
+    .quad submitext_timeout       # and Submit to Index's (submitext.s)
     .quad 0
 .text
 
@@ -2941,6 +2943,8 @@ FN app_tick
     call dg_tick
     call remote_tick            # remote hosts
     call keys_tick              # a chord's pause (keys.s)
+    call newext_tick            # New Extension's steps (newext.s)
+    call submitext_tick         # Submit to Index's steps (submitext.s)
     EPILOGUE
 
 # ---------------- rendering ----------------

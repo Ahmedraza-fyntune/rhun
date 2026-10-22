@@ -81,7 +81,27 @@ FN main
     jz 1f
     call agent_index_main
     EPILOGUE
-1:
+1:  # rhun new-extension [DIR]: a new extension from a template, in the terminal (newext.s)
+    cmp qword ptr [rip + g_argc], 2
+    jb 3f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lnew_extension]
+    call strcmp_eq
+    test eax, eax
+    jz 3f
+    call newext_main
+3:  # rhun submit-extension [DIR]: a release into the rhun extensions index (submitext.s)
+    cmp qword ptr [rip + g_argc], 2
+    jb 4f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lsubmit_extension]
+    call strcmp_eq
+    test eax, eax
+    jz 4f
+    call submitext_main
+4:
     call sys_file_capacity
     call parse_args
     call links_relay_args       # resources group: a link for another rhun goes there (links.s)
@@ -177,6 +197,8 @@ FN main
 .section .rodata
 .Lagent_worker: .asciz "--agent-index"
 .Lprint_env: .asciz "--print-env"
+.Lnew_extension: .asciz "new-extension"
+.Lsubmit_extension: .asciz "submit-extension"
 .text
 parse_args:
     PROLOGUE
@@ -644,6 +666,8 @@ open_initial:
 .Lversion: .asciz "rhun "
 .Lnl: .asciz "\n"
 .Lusage: .ascii "usage: rhun [folder] [files...]\n"
+    .ascii "       rhun new-extension [DIR]   a new extension from a template (--help for its flags)\n"
+    .ascii "       rhun submit-extension [DIR] its release into the rhun extensions index (--help)\n"
     .ascii "  --wait           stay in the terminal until rhun is closed (for EDITOR)\n"
     .ascii "  --empty          start without restoring a project or tabs\n"
     .ascii "  --headless WxH   no display; use with --script or --control\n"

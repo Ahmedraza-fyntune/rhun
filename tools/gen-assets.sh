@@ -4,8 +4,20 @@ cd "$(dirname "$0")/.."
 emit() { # label file
     printf '.globl %s, %s_end\n.p2align 4\n%s: .incbin "%s"\n%s_end: .byte 0\n' "$1" "$1" "$1" "$PWD/$2" "$1"
 }
+# job label files...: the files one after another, then a NUL (a script for sh -c)
+job() {
+    printf '.globl %s\n%s:\n' "$1" "$1"
+    shift
+    for f in "$@"; do printf '.incbin "%s"\n' "$PWD/$f"; done
+    printf '.byte 0\n'
+}
 echo '.section .rodata'
 emit commit_ai_script runtime/ai/commit.sh
+# background jobs on Linux and macOS (Windows has runtime/windows/*.ps1): downloads and archives
+# (runtime/jobs/archive.sh) shared by Install from GitHub, New Extension and Submit to Index
+job install_script runtime/jobs/archive.sh runtime/jobs/extinstall.sh
+job newext_script runtime/jobs/archive.sh runtime/jobs/newext.sh
+job submitext_script runtime/jobs/archive.sh runtime/jobs/submitext.sh
 # one font for the interface and the code
 emit font_mono assets/fonts/IosevkaFixed-Regular.ttf
 printf '.globl font_ui, font_ui_end\n.set font_ui, font_mono\n.set font_ui_end, font_mono_end\n' 
