@@ -161,8 +161,12 @@ class Scheduling(host.Host):
         # every burst finishing is the end state checked below; Windows pipes and process
         # switches move the same messages more slowly, so it gets longer to get there
         settle = 4000 if os.name == 'nt' else 1600
-        actions += ['cmd scheduling/p019.ping', 'type ok', f'wait {settle}',
-                    'print-toast', 'print-doc', 'print-ext-budget', 'print-extensions']
+        # the ping's toast lasts 2.2 s, less than Windows' settle: it is looked for along the way
+        actions += ['cmd scheduling/p019.ping', 'type ok']
+        step = settle // 3
+        for _ in range(3):
+            actions += [f'wait {step}', 'print-toast']
+        actions += [f'wait {settle - 3 * step}', 'print-doc', 'print-ext-budget', 'print-extensions']
         out = self.run_editor(exts=root, actions=actions)
         self.assertIn('toast=ready', out)
         self.assertIn('okhello world', out)
