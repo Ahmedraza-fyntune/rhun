@@ -1901,6 +1901,7 @@ F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it),
 F GR_srclen, 8
 F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
 F GR_lckeys, 8          # language configuration keys the grammar sets (langconf.s), or 0
+F GR_ext, 8             # the extension it came from (syntax_add_dir), or 0
 ENDSTRUCT GR_SIZE
 .equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
@@ -1912,6 +1913,8 @@ ENDSTRUCT GR_SIZE
 .equ GF_OPS, 64
 .equ GF_COLON, 128          # indent after a line ending with ":"
 .equ GF_USER, 256           # from ~/.config/rhun/syntax: its language keys win over extensions'
+.equ GF_COLON_SET, 512      # colon_indent is in the file (yes or no)
+.equ GF_IDENT_SET, 1024     # ident is in the file
 
 # lc_type's plan for a typed character (langconf.s)
 STRUCT

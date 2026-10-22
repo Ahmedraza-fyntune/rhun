@@ -1106,6 +1106,12 @@ with an error. The cards show memory and CPU while an extension runs. An extensi
 says `idle = stop` is stopped after five minutes without work (its page says so) and starts again
 by itself the next time it is needed.
 
+Its **Contributions** block lists everything it adds: its commands with the key each runs from,
+its key bindings and how each stands (active, overriding a built-in key, shadowed by your own
+`[keys]`, or refused, say a bare letter without a `when` guard), its menu items, status bar
+items, settings, grammars and language keys, file icon themes and views, and, in red, any lines
+of its manifest that were dropped and why.
+
 An extension that signs in to a service keeps its tokens in your system's keychain: the macOS
 Keychain, the Windows Credential Manager, or on Linux the Secret Service (GNOME Keyring, KWallet,
 KeePassXC); its install dialog says "store passwords and tokens in your keychain". Its page lists
