@@ -40,6 +40,16 @@ pathbuf: .zero 4200
 pathbuf2: .zero 4200
 realbuf: .zero 4200             # profile_path's resolved path (never the buffer it reads from)
 devbuf: .zero 4200              # the active Xcode developer folder (xcode_shim)
+# macOS: xcrun's cache filled before the sandbox (xcode_shim, prime_note, prime_xcrun)
+.p2align 3
+conf_prime: .long 0             # 0 undecided, 1 the child fills the cache first, 2 it does not
+conf_prime_n: .long 0           # tools in conf_prime_tools
+conf_prime_used: .quad 0        # bytes of conf_prime_names in use
+conf_prime_tools: .zero 8 * 8   # the shim tools' names, in conf_prime_names
+conf_prime_argv: .zero 4 * 8    # xcrun --find TOOL
+conf_prime_env: .zero 5 * 8
+conf_prime_names: .zero 1024
+conf_prime_xdb: .zero 4200      # "xcrun_db=" and the extension's cache
 interpbuf: .zero 4200           # a #! interpreter's real path (profile_program)
 treebuf: .zero 4200             # and its install tree
 elfhdr: .zero 256               # an ELF header, or a #! line (macOS reads 512 bytes of it, Linux 256)
@@ -649,6 +659,9 @@ profile_build:
     PROLOGUE
     lea rdi, [rip + conf_profile]
     call sb_clear
+    mov dword ptr [rip + conf_prime], 0
+    mov dword ptr [rip + conf_prime_n], 0
+    mov qword ptr [rip + conf_prime_used], 0
     lea rdi, [rip + conf_profile]
     lea rsi, [rip + .Lsb_head]
     call sb_push_cstr
@@ -1022,9 +1035,179 @@ xcode_shim:
     lea rdi, [rip + .Lselect_sh]
     lea rsi, [rip + .Lsb_exec_lit]
     call profile_path
+    mov rdi, r12
+    call prime_note
     mov rdi, r13
     call mem_free
 9:  EPILOGUE
+
+# prime_note(tool cstr): the child looks the shim tool up before its sandbox (prime_xcrun) when the
+# extension has no xcrun cache yet. Inside the sandbox that first lookup runs xcodebuild twice,
+# which cannot read its plug-in cache or the Xcode preferences there: seconds of work each time,
+# long enough for an extension's own timeout to kill git first, and then the cache is never
+# written. Outside it is a second or so, once; the cache then answers every later lookup. Only a
+# missing cache is filled, so xcrun never reads one the extension wrote; HOME is /var/empty, so
+# nothing in the extension's state folder steers xcodebuild.
+prime_note:
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rip + conf_prime], 0
+    jne 5f
+    mov dword ptr [rip + conf_prime], 2
+    mov rax, [rip + conf_ext]
+    mov rdi, [rax + EXT_state]
+    lea rsi, [rip + .Lpx_db]
+    call path_join
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, rax
+    call strlen
+    cmp rax, 4096
+    jae 4f
+    mov rdi, r12
+    xor esi, esi                # F_OK
+    SYS SYS_access
+    test rax, rax
+    jz 4f                       # there is one
+    mov rdi, r12
+    lea rsi, [rip + conf_prime_xdb]
+    mov edx, 16
+    SYS SYS_readlink
+    test rax, rax
+    jns 4f                      # a link, even one that leads nowhere
+    lea rdi, [rip + conf_prime_xdb]
+    lea rsi, [rip + .Lpx_db_eq]
+    call cstr_copy
+    mov rdi, rax
+    mov rsi, r12
+    call cstr_copy
+    lea rax, [rip + .Lpx_arg0]
+    mov [rip + conf_prime_argv], rax
+    lea rax, [rip + .Lpx_find]
+    mov [rip + conf_prime_argv + 8], rax
+    mov qword ptr [rip + conf_prime_argv + 24], 0
+    lea rax, [rip + .Lpx_home]
+    mov [rip + conf_prime_env], rax
+    lea rax, [rip + .Lpx_path]
+    mov [rip + conf_prime_env + 8], rax
+    lea rax, [rip + conf_prime_xdb]
+    mov [rip + conf_prime_env + 16], rax
+    # the developer folder the extension's xcrun uses (build_env passes DEVELOPER_DIR on)
+    lea rdi, [rip + .Lenv_devdir]
+    call getenv
+    test rax, rax
+    jz 3f
+    sub rax, 14                 # back to the whole entry: "DEVELOPER_DIR=" is 14 bytes
+3:  mov [rip + conf_prime_env + 24], rax
+    mov qword ptr [rip + conf_prime_env + 32], 0
+    mov dword ptr [rip + conf_prime], 1
+4:  mov rdi, r12
+    call mem_free
+5:  cmp dword ptr [rip + conf_prime], 1
+    jne 9f
+    cmp dword ptr [rip + conf_prime_n], 8
+    jae 9f
+    mov rdi, rbx
+    call strlen
+    mov r13, rax
+    mov rcx, [rip + conf_prime_used]
+    lea rdx, [rcx + r13 + 1]
+    cmp rdx, 1024
+    ja 9f
+    mov [rip + conf_prime_used], rdx
+    lea rdi, [rip + conf_prime_names]
+    add rdi, rcx
+    mov eax, [rip + conf_prime_n]
+    lea rdx, [rip + conf_prime_tools]
+    mov [rdx + rax*8], rdi
+    inc dword ptr [rip + conf_prime_n]
+    mov rsi, rbx
+    lea rcx, [r13 + 1]
+    rep movsb
+9:  EPILOGUE
+
+# prime_xcrun(): in the forked child, before sandbox_init: xcrun --find for each tool prime_note
+# kept, with output to /dev/null, 3 s at most in all (the extension's hello waits meanwhile). A
+# lookup still running then is killed with its session (the shell and xcodebuild it started).
+prime_xcrun:
+    PROLOGUE 16
+    cmp dword ptr [rip + conf_prime], 1
+    jne 9f
+    call time_ms
+    lea r15, [rax + 3000]
+    xor r14d, r14d
+1:  cmp r14d, [rip + conf_prime_n]
+    jae 9f
+    lea rax, [rip + conf_prime_tools]
+    mov rax, [rax + r14*8]
+    mov [rip + conf_prime_argv + 16], rax
+    inc r14d
+    SYS SYS_fork
+    test rax, rax
+    js 9f
+    jz .Lpx_child
+    mov r12, rax
+2:  mov rdi, r12
+    mov rsi, rsp
+    mov edx, WNOHANG
+    xor r10d, r10d
+    SYS SYS_wait4
+    cmp rax, -EINTR
+    je 2b
+    test rax, rax
+    jnz 1b                      # it ended (or is gone)
+    call time_ms
+    cmp rax, r15
+    jge 3f
+    lea rdi, [rip + .Lpx_tick]
+    xor esi, esi
+    SYS 35                      # nanosleep
+    jmp 2b
+3:  mov edi, r12d
+    neg edi
+    mov esi, SIGKILL
+    SYS SYS_kill
+    mov edi, r12d
+    mov esi, SIGKILL
+    SYS SYS_kill
+4:  mov rdi, r12
+    mov rsi, rsp
+    xor edx, edx
+    xor r10d, r10d
+    SYS SYS_wait4
+    cmp rax, -EINTR
+    je 4b
+9:  EPILOGUE
+.Lpx_child:
+    SYS SYS_setsid
+    lea rdi, [rip + .Lp_devnull]
+    mov esi, O_RDWR
+    xor edx, edx
+    SYS SYS_open
+    test rax, rax
+    js 6f
+    mov ebx, eax
+    xor r12d, r12d
+5:  mov edi, ebx
+    mov esi, r12d
+    SYS SYS_dup2
+    inc r12d
+    cmp r12d, 3
+    jb 5b
+    # none of rhun's descriptors reach it
+    mov ebx, 3
+51: mov edi, ebx
+    SYS SYS_close
+    inc ebx
+    cmp ebx, 1024
+    jb 51b
+    lea rdi, [rip + .Lpx_xcrun]
+    lea rsi, [rip + conf_prime_argv]
+    lea rdx, [rip + conf_prime_env]
+    SYS SYS_execve
+6:  mov edi, 127
+    SYS SYS_exit
 .endif
 
 # ---------------- the child ----------------
@@ -1038,6 +1221,7 @@ FN confine_child
 .ifdef MACOS
     test dword ptr [rip + conf_flags], CF_SANDBOX
     jz 9f
+    call prime_xcrun            # Xcode's shims: their cache, while nothing holds this child yet
     lea rdi, [rip + conf_profile]
     mov rdi, [rdi + SB_ptr]
     xor esi, esi
@@ -1305,5 +1489,14 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lshim_dirs: .quad .Ltc_bin, .Ldev_bin
 .Ldev_dirs: .quad .Lxcode_link, .Lxcode_app, .Lclt, 0
 .Lsb_xcrun: .asciz "(allow file-read* (literal \"/private/var/db/xcode_select_link\"))\n"
+.Lpx_xcrun: .asciz "/usr/bin/xcrun"
+.Lpx_arg0: .asciz "xcrun"
+.Lpx_find: .asciz "--find"
+.Lpx_db: .asciz "xcrun_db"
+.Lpx_db_eq: .asciz "xcrun_db="
+.Lpx_home: .asciz "HOME=/var/empty"
+.Lpx_path: .asciz "PATH=/usr/bin:/bin:/usr/sbin:/sbin"
+.p2align 3
+.Lpx_tick: .quad 0, 10000000    # 10 ms
 .Lsb_net_allow: .asciz "(allow network*)\n"
 .Lsb_sock: .asciz "(allow network-bind network-inbound (local unix-socket (subpath \"%s\")))\n"
