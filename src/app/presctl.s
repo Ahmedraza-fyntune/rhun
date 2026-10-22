@@ -503,10 +503,38 @@ c_print_present:
     lea rdx, [rip + .Ls_lenses]
     call str_eq_cstr
     test eax, eax
-    jz 9f
+    jz 3f
     mov rdi, rbx                # code lens (lens.s)
     mov rsi, [rip + outp]
     call lens_dump
+    jmp 9f
+3:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_highlights]
+    call str_eq_cstr
+    test eax, eax
+    jz 4f
+    mov rdi, [rip + outp]       # the caret's highlights (hicolor.s)
+    call hl_dump
+    jmp 9f
+4:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_colors]
+    call str_eq_cstr
+    test eax, eax
+    jz 5f
+    mov rdi, rbx                # colors (hicolor.s)
+    mov rsi, [rip + outp]
+    call color_dump
+    jmp 9f
+5:  mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Ls_ghost]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov rdi, [rip + outp]       # inline completion (ghost.s)
+    call ghost_dump
 9:  xor eax, eax
     EPILOGUE
 .Lpp_types:
@@ -921,6 +949,9 @@ kind_words: .quad .Lk_ghost, .Lk_fold, .Lk_hint, .Lk_deco, .Lk_swatch, .Lk_lens
 .Ls_tokens: .asciz "tokens"
 .Ls_hints: .asciz "hints"
 .Ls_lenses: .asciz "lenses"
+.Ls_highlights: .asciz "highlights"
+.Ls_colors: .asciz "colors"
+.Ls_ghost: .asciz "ghost"
 .Ls_stale: .asciz "stale"
 .Ls_view_lines: .asciz "view mode=lines top="
 .Ls_view_wrap: .asciz "view mode=wrap top="

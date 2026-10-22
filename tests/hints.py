@@ -92,6 +92,24 @@ class Hints(pres.Base):
         self.assertIn('let x: i32 = 1;', doc)
         self.assertEqual(doc.count('let x = 1;'), 1)
 
+    def test_a_tip_and_the_hover_card_never_show_together(self):
+        ini = self.exts / 'rhun-tests/present/extension.ini'
+        ini.write_text(ini.read_text() + 'hover = *.rs\n', encoding='utf-8')
+        self.steps({}, hello='hello 1 inlay-hints hover-query')
+        path = self.exts / 'rhun-tests/present/answers.json'
+        path.write_text(json.dumps({'inlay-hints': ['ok {ID} {LEN}', HINTS],
+                                    'hover-query': ['ok {ID} {LEN}', '2 5 2 8\nlet binding']}), encoding='utf-8')
+        out = self.run_p(self.start() + ['print-xy 2 6', 'print-xy 2 10'])
+        (x6, y), (x10, _) = self.xy(out)
+        for wait in (100, 300, 500, 900):
+            out = self.run_p(self.start() + [f'move {x6 + 3} {y}', 'wait 1300', 'print-hover-card',
+                                             f'move {x10 + 14} {y}', f'wait {wait}', 'print-hover-card', 'print-tip'])
+            cards = [l for l in out if l.startswith('card=')]
+            tip = [l for l in out if l.startswith('tip=')][-1]
+            self.assertTrue(cards[0].startswith('card=shown'), out)
+            if cards[-1].startswith('card=shown'):
+                self.assertEqual(tip, 'tip=', out)
+
     def test_hints_move_with_edits_and_answers_replace_them(self):
         self.answer(HINTS, body(hint(2, 11, 'after', [part(': u8')])))
         out = self.run_p(self.start() + ['key ctrl+Home', 'key Down', 'key Home', 'type z',

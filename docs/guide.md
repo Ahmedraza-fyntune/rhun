@@ -604,6 +604,30 @@ resting on a hint shows its tooltip; a click on a part that has a command runs i
 definition it names; a double click writes the hint into the text when it offers that (a type, for
 example). `inlay_hints = false` under `[editor]` (**Inlay hints** in Settings) turns them off.
 
+### Inline suggestions
+
+An extension (an AI assistant or a language server) can suggest what comes next as you type: the
+suggestion appears after the cursor in a muted color, its further lines below. Tab takes it,
+Ctrl+Right takes its next word, Escape or moving the cursor dismisses it, and typing what it shows
+keeps the rest. Alt+\ (Trigger Inline Completion) asks for one now. `inline_complete = false`
+under `[editor]` (**Inline suggestions** in Settings) stops asking as you type;
+`inline_complete_delay` is the pause after typing, in milliseconds.
+
+### Colors
+
+When an extension (a language server) finds colors in the code, a small square in each color sits
+before it. A click on the square asks for a new color (`#rrggbb` or `#rrggbbaa`) and the extension
+writes it in the code's own notation. `color_swatches = false` under `[editor]` (**Color
+swatches** in Settings) turns the squares off.
+
+### Highlights
+
+When the cursor rests on a name, its other places in the file are marked with a soft background,
+places that write it a little stronger, when an extension (a language server) knows them;
+otherwise rhun marks the same word's other occurrences nearby. The marks go when the cursor moves
+away or the text changes. `highlight_occurrences = false` under `[editor]` (**Highlight
+occurrences** in Settings) turns off the word marks; a language server's highlights stay.
+
 ### Code lens
 
 An extension that knows the code can put a row of small titles above a line: how many references a
