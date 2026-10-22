@@ -7,6 +7,7 @@ extension with replace; rhun's undo and save), Reopen With and its [editors] cho
 that refuses a file, which then opens as text."""
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 import time
@@ -172,6 +173,90 @@ class Editors(unittest.TestCase):
         self.assertEqual([field(x, 'dirty') for x in c], ['1', '0'], out)
         self.assertEqual(self.flip.read_bytes(), b'restored')
         self.assertFalse(bak.exists())
+
+    # --- round 3: snapshots, wakeups, restarts, reverts, disk changes ---
+
+    def test_a_change_during_the_last_part_keeps_it_dirty(self):
+        # the file holds the model as it was when the save began; the newer change stays unsaved
+        out = self.run_editor([*self.view_click(), 'key ctrl+s', *SETTLE, 'print-custom'], mode='dirtysave')
+        self.assertEqual(field(customs(out)[-1], 'dirty'), '1', out)
+        self.assertEqual(self.flip.read_bytes(), bytes([0xFE]) + DATA[1:])
+
+    def test_a_dirty_idle_model_wakes_rhun_for_its_backup(self):
+        out = self.run_editor(['custom-timeout', *self.view_click(), 'custom-timeout'])
+        t = [int(l.split('=')[1]) for l in out if l.startswith('timeout=')]
+        self.assertEqual(t[0], -1, out)
+        self.assertTrue(28000 < t[1] <= 30001, out)
+
+    def test_a_restarted_program_opens_its_editor_again(self):
+        # turned off and on again before the stop completed: the program ends and starts again
+        out = self.run_editor(['print-custom', 'ext-set rhun-tests/edflip disabled 1',
+                               'ext-set rhun-tests/edflip disabled 0', *SETTLE, 'wait 500', 'print-custom',
+                               'print-tabs'])
+        c = customs(out)
+        self.assertEqual([field(x, 'state') for x in c], ['ready', 'ready'], out)
+        opened = [l for l in self.log_of('edflip') if ' editor-open ' in l]
+        self.assertEqual(len(opened), 2, (out, self.log_of('edflip')))
+
+    def test_revert_of_a_restored_model_reads_the_file(self):
+        bak, note = self.backup_paths(self.flip)
+        bak.parent.mkdir(parents=True)
+        bak.write_bytes(b'restored')
+        note.write_text(self.flip.as_posix())
+        out = self.run_editor(['print-custom', 'cmd reload_file', *SETTLE, 'print-custom', *self.view_click(),
+                               'key ctrl+s', *SETTLE, 'print-custom'])
+        self.assertEqual([field(x, 'dirty') for x in customs(out)], ['1', '0', '0'], out)
+        self.assertEqual(self.flip.read_bytes(), bytes([DATA[0] ^ 0xFF]) + DATA[1:])
+
+    def test_a_dirty_model_hears_of_a_disk_change(self):
+        tmp = tempfile.TemporaryDirectory(prefix='rhun-edc-', dir='/tmp')     # a short socket path
+        control = Path(tmp.name) / 'c'
+        env = dict(self.env, EDFAKE_LOG='ed.log')
+        proc = subprocess.Popen([str(EXE), self.proj.as_posix(), '--headless', '1000x600', '--scale', '1',
+                                 '--extensions', str(EXTS), '--control', str(control)], env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(15)
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    client.connect(str(control))
+                    break
+                except (FileNotFoundError, ConnectionRefusedError):
+                    self.assertIsNone(proc.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.01)
+            reader = client.makefile('r', encoding='utf-8')
+
+            def command(line):
+                client.sendall((line + '\n').encode('utf-8'))
+                got = []
+                while True:
+                    reply = reader.readline()
+                    if reply == 'ok\n':
+                        return ''.join(got)
+                    self.assertNotIn(reply, ('', 'error\n'), line)
+                    got.append(reply)
+            command('open ' + self.flip.as_posix())
+            for a in [*SETTLE, *self.view_click()]:
+                command(a)
+            self.assertIn('dirty=1', command('print-custom'))
+            self.flip.write_bytes(b'changed outside')
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                if any(l.startswith('0 editor-changed ') for l in self.log_of('edflip')):
+                    break
+                command('wait 200')
+            self.assertTrue(any(l.startswith('0 editor-changed ') for l in self.log_of('edflip')),
+                            self.log_of('edflip'))
+            reader.close()
+        finally:
+            client.close()
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(timeout=10)
+            tmp.cleanup()
 
     # --- the text model and Reopen With ---
 

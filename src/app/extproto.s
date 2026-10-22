@@ -4516,16 +4516,17 @@ sub_matches:
     mov rsi, rbx
     call ext_path_matches
     EPILOGUE
-4:  # notebooks (A3): a cell, only for extensions that agreed notebooks, by its language's file name
-    mov rdi, r13                # the recipient when the caller names it (resources group)
+4:  # notebooks (A3): a cell, only for extensions that agreed notebooks, by its language's file name.
+    # With the recipient unknown (extproto_matches) the name decides: a request about the cell goes
+    # only to an extension that was told of it (extproto_host_request)
+    mov rdi, r13
     test rdi, rdi
-    jnz 41f
-    mov rdi, [rip + cur]
-41: mov esi, FEAT_NOTEBOOKS
+    jz 41f
+    mov esi, FEAT_NOTEBOOKS
     call ext_feature
     test eax, eax
     jz 8f
-    cmp byte ptr [rbx], '*'
+41: cmp byte ptr [rbx], '*'
     jne 5f
     cmp byte ptr [rbx + 1], 0
     je 9f
