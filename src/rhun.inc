@@ -3036,6 +3036,8 @@ F DS_conn_until, 8      # time_ms when connecting gives up
 F DS_rit_seq, 4         # the runInTerminal request still owed an answer, 0 none
 F DS_vgen, 4            # bumped whenever the variable pool starts again (a stop, another frame)
 F DS_wgen, 4            # the last round of watch evaluations sent
+F DS_rconn, 4           # remote window, tcp: 0 no attempt, 1 the host connects, 2 connected, 3 refused
+F DS_rtry, 4            # and the attempt's number (an older attempt's answer is ignored)
 F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
 F DS_wlist, 4           # the watch list's version its last round evaluated (g_dwlist)
 F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
