@@ -259,8 +259,14 @@ FN mdview_draw
     call clamp
     test dword ptr [rsp + 20], UB_DOUBLE
     jz 3f
-    cmp dword ptr [rbx + DC_follow], 0
-    je 3f
+    mov eax, [rbx + DC_follow]  # only while the followed document is the active one
+    test eax, eax
+    jz 3f
+    mov rcx, [rip + g_doc]
+    test rcx, rcx
+    jz 3f
+    cmp [rcx + DOC_id], rax
+    jne 3f
     mov esi, [rip + g_my]       # the block there: the editor goes to its line
     sub esi, [rsp + 4]
     sub esi, [rip + g_mt + 4*MI_8]

@@ -161,5 +161,17 @@ class Quick(ViewsBase):
         self.assertTrue(any(l.startswith('error ') and ' unknown' in l for l in self.fake_log()))
 
 
+    def test_a_small_wheel_step_scrolls_the_right_way(self):
+        out = self.quick(cmd='quickmany')
+        head = self.head(out)
+        x, y = map(int, head.split(' at=')[1].split(' ')[0].split(','))
+        def first(out):
+            return [self.label(r) + r.split(' id=')[1].split(' ')[0] for r in self.rows(out) if ' at=' in r][0]
+        out = self.quick(f'move {x + 100} {y + 200}', 'scroll 1', 'wait 50', 'print-quick', 'scroll -1', 'wait 50',
+                         cmd='quickmany')
+        heads = [i for i, l in enumerate(out) if l.startswith('quick ')]
+        self.assertEqual(first(out[heads[0]:heads[1]]), 'itemi1')
+        self.assertEqual(first(out[heads[1]:]), 'itemi0')
+
 if __name__ == '__main__':
     unittest.main()
