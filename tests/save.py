@@ -82,7 +82,8 @@ for raw in sys.stdin.buffer:
 
     def edit(self, groups=None):
         path=self.work/'edit.txt'
-        path.write_text(workspace(groups or [('#1',0,[(1,1,1,1,'X')])]))
+        # byte counts: no CRLF translation or ANSI code page on Windows
+        path.write_bytes(workspace(groups or [('#1',0,[(1,1,1,1,'X')])]).encode())
         return path.as_posix()
 
     def states(self,out):
@@ -312,6 +313,8 @@ for raw in sys.stdin.buffer:
         self.assertEqual((self.proj/'b.go').read_text(),'package b\n')
         self.assertEqual(self.requests().count(' format '),1)
 
+    @unittest.skipIf(os.name == 'nt' or (hasattr(os, 'geteuid') and os.geteuid() == 0),
+                     'a read-only folder does not stop Windows or root from writing')
     def test_write_failure_keeps_document_open_after_close_save(self):
         root=self.formatter()
         os.chmod(self.proj,0o555)
