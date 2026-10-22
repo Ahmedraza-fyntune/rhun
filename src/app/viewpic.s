@@ -463,6 +463,96 @@ keys_on:
     movzx eax, al
 9:  ret
 
+# Paired key releases for a focused picture. No global keyboard access.
+FN viewpic_key_up
+    PROLOGUE
+    mov r12d, edi
+    mov r13d, esi
+    call views_focused_picture
+    mov rbx, rax
+    mov rdi, rax
+    call keys_on
+    test eax, eax
+    jz 9f
+    mov rcx, [rbx + VW_ext]
+    FEAT_TEST rcx, FEAT_VIEW_KEY_STATE
+    jz 9f
+    mov edi, r12d
+    call key_name
+    test rax, rax
+    jz 9f
+    mov r14, rax
+    mov rdi, rbx
+    call extview_event_head
+    test eax, eax
+    jz 9f
+    call extview_evbuf
+    mov rdi, rax
+    lea rsi, [rip + .Le_key_up]
+    call sb_push_cstr
+    call extview_evbuf
+    mov rdi, rax
+    mov esi, r13d
+    call viewpic_push_mods
+    call extview_evbuf
+    mov rdi, rax
+    mov esi, ' '
+    call sb_push_byte
+    call extview_evbuf
+    mov rdi, rax
+    mov rsi, r14
+    call sb_push_cstr
+    mov rdi, rbx
+    call extview_event_send
+9:  EPILOGUE
+
+FN viewpic_modifiers
+    PROLOGUE
+    mov r12d, edi
+    call views_focused_picture
+    mov rbx, rax
+    mov rdi, rax
+    call keys_on
+    test eax, eax
+    jz 9f
+    mov rcx, [rbx + VW_ext]
+    FEAT_TEST rcx, FEAT_VIEW_KEY_STATE
+    jz 9f
+    mov rdi, rbx
+    call extview_event_head
+    test eax, eax
+    jz 9f
+    call extview_evbuf
+    mov rdi, rax
+    lea rsi, [rip + .Le_modifiers]
+    call sb_push_cstr
+    call extview_evbuf
+    mov rdi, rax
+    mov esi, r12d
+    call viewpic_push_mods
+    mov rdi, rbx
+    call extview_event_send
+9:  EPILOGUE
+
+FN viewpic_window_focus
+    PROLOGUE
+    mov r12d, edi
+    call views_focused_picture
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    mov rdi, rbx
+    call keys_on
+    test eax, eax
+    jz 9f
+    mov rcx, [rbx + VW_ext]
+    FEAT_TEST rcx, FEAT_VIEW_KEY_STATE
+    jz 9f
+    mov rdi, rbx
+    mov esi, r12d
+    call viewpic_focus_event
+9:  EPILOGUE
+
 # viewpic_key(VW*, keysym, cp, mods) -> eax 1 when the picture took the key: keys a binding takes
 #   are left to it, except copy, cut and select_all, which reach the picture
 FN viewpic_key
@@ -874,9 +964,21 @@ FN views_features_agreed
     jnz 2f
     FEAT_CLEAR rdi, FEAT_VIEW_KEYS
     FEAT_CLEAR rdi, FEAT_VIEW_IMAGES
-2:  ret
+2:  FEAT_TEST rdi, FEAT_VIEW_KEYS
+    jnz 3f
+    FEAT_CLEAR rdi, FEAT_VIEW_KEY_STATE
+3:  cmp dword ptr [rip + g_view_key_state_available], 0
+    jne 4f
+    FEAT_CLEAR rdi, FEAT_VIEW_KEY_STATE
+4:  ret
+
+.data
+.globl g_view_key_state_available
+g_view_key_state_available: .long 1  # headless, macOS, Wayland and Windows have paired releases
 
 .section .rodata
+.Le_key_up: .asciz "key-up "
+.Le_modifiers: .asciz "mods "
 .Le_key: .asciz "key "
 .Le_text: .asciz "text "
 .Le_paste: .asciz "paste "

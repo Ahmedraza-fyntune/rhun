@@ -1523,7 +1523,17 @@ on_keyboard:
     add rax, rcx
     mov [rip + rep_next], rax
     jmp .Lk_ret
-2:  cmp edi, [rip + rep_key]
+2:  mov [rsp], edi
+    mov esi, [rip + kb_group]
+    mov edx, [rip + kb_mods]
+    and edx, -4
+    call xkb_keysym
+    mov edi, eax
+    mov esi, [rip + kb_mods]
+    and esi, MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER
+    call viewpic_key_up
+    mov edi, [rsp]
+    cmp edi, [rip + rep_key]
     jne .Lk_ret
     mov dword ptr [rip + rep_key], 0
     jmp .Lk_ret
@@ -1534,6 +1544,9 @@ on_keyboard:
     mov [rip + kb_mods], eax
     mov eax, [r12 + 16]
     mov [rip + kb_group], eax
+    mov edi, [rip + kb_mods]
+    and edi, MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER
+    call viewpic_modifiers
     jmp .Lk_ret
 .Lk_repeat:
     mov eax, [r12]

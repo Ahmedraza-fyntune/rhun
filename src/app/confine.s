@@ -301,6 +301,25 @@ rules_release:
 
 .ifndef MACOS
 # rules_build() -> 0, or a reason cstr: the Landlock rules for rbx (the EXT)
+# audio_rule(environment name, relative path, rights): only the named audio resource.
+audio_rule:
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call getenv
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, r12
+    call path_join
+    mov r12, rax
+    mov rdi, rax
+    mov rsi, r13
+    call add_rule
+    mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
 rules_build:
     PROLOGUE
     # the system, read-only, where present
@@ -315,6 +334,20 @@ rules_build:
 2:  lea rdi, [rip + .Lp_devnull]
     mov rsi, LL_READ_FILE | LL_WRITE_FILE
     call add_rule
+    test dword ptr [rbx + EXT_needs], NEEDS_AUDIO
+    jz 21f
+    lea rdi, [rip + .Lp_sound]
+    mov rsi, LL_RO | LL_WRITE_FILE | LL_IOCTL_DEV
+    call add_rule
+    lea rdi, [rip + .Lenv_runtime]
+    lea rsi, [rip + .La_pulse]
+    mov rdx, LL_RO | LL_WRITE_FILE
+    call audio_rule
+    lea rdi, [rip + .Lenv_home]
+    lea rsi, [rip + .La_cookie]
+    mov rdx, LL_READ_FILE
+    call audio_rule
+21:
     # the extension folder, its script, its state folder
     mov rdi, [rbx + EXT_dir]
     mov rsi, LL_RO
@@ -670,6 +703,12 @@ profile_build:
     lea rdi, [rip + conf_profile]
     lea rsi, [rip + .Lsb_head]
     call sb_push_cstr
+    test dword ptr [rbx + EXT_needs], NEEDS_AUDIO
+    jz 90f
+    lea rdi, [rip + conf_profile]
+    lea rsi, [rip + .Lsb_audio]
+    call sb_push_cstr
+90:
     # the extension folder, its script and its state folder
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsb_ro]
@@ -1534,6 +1573,10 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lp_nix: .asciz "/nix"
 .Lp_snap: .asciz "/snap"
 .Lp_devnull: .asciz "/dev/null"
+.Lp_sound: .asciz "/dev/snd"
+.Lenv_runtime: .asciz "XDG_RUNTIME_DIR"
+.La_pulse: .asciz "pulse"
+.La_cookie: .asciz ".config/pulse/cookie"
 .Lt_lib: .asciz "lib"
 .Lt_libexec: .asciz "libexec"
 .Lt_pkg: .asciz "pkg"
@@ -1569,6 +1612,7 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
     .ascii "(allow file-read* (subpath \"/usr\") (subpath \"/System\") (subpath \"/Library\") (subpath \"/private/etc\") (subpath \"/dev\") (literal \"/\") (subpath \"/opt\") (subpath \"/nix\"))\n"
     .ascii "(allow file-write* (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\"))\n"
     .asciz "(allow file-read* (literal \"/dev/null\") (literal \"/dev/urandom\") (literal \"/dev/random\") (literal \"/dev/tty\"))\n"
+.Lsb_audio: .asciz "(allow mach-lookup (global-name \"com.apple.audio.AudioComponentPrefs\") (global-name \"com.apple.audio.AudioComponentRegistrar\") (global-name \"com.apple.audio.AudioSession\") (global-name \"com.apple.audio.audiohald\") (global-name \"com.apple.audio.coreaudiod\") (global-name \"com.apple.mediaexperience.endpoint.xpc\"))\n(allow ipc-posix-shm-read* ipc-posix-shm-write-data (ipc-posix-name-prefix \"AudioIO\"))\n(allow iokit-open-user-client (require-all (iokit-connection \"AppleHDAEngineOutput\") (iokit-user-client-class \"IOAudioControlUserClient\" \"IOAudioEngineUserClient\")))\n"
 .Lsb_ro: .asciz "(allow file-read* (subpath \"%s\"))\n"
 .Lsb_ro_lit: .asciz "(allow file-read* (literal \"%s\"))\n"
 .Lsb_rw: .asciz "(allow file-read* file-write* (subpath \"%s\"))\n"

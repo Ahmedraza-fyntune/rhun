@@ -291,6 +291,8 @@ x_message:
     je .Lxm_reply
     cmp eax, 2
     je .Lxm_key
+    cmp eax, 3
+    je .Lxm_keyrelease
     cmp eax, 4
     je .Lxm_bpress
     cmp eax, 5
@@ -388,6 +390,28 @@ x_message:
     mov [rdx + rcx*8], edi
     mov [rdx + rcx*8 + 4], eax
     inc dword ptr [rip + pend_n]
+    jmp .Lxm_ret
+.Lxm_keyrelease:
+    movzx eax, word ptr [rbx + 28]
+    mov [rip + xmods], eax
+    movzx edi, byte ptr [rbx + 1]
+    mov rax, [rip + kmap]
+    test rax, rax
+    jz .Lxm_ret
+    cmp edi, [rip + max_kc]
+    ja .Lxm_ret
+    sub edi, [rip + min_kc]
+    jb .Lxm_ret
+    imul edi, [rip + kpk]
+    mov r12d, [rax + rdi*4]
+    mov edx, [rip + xmods]
+    call x_mods
+    mov edi, r12d
+    xor esi, esi
+    call x_picture_mods
+    mov esi, eax
+    mov edi, r12d
+    call viewpic_key_up
     jmp .Lxm_ret
 .Lxm_bpress:
     movzx eax, word ptr [rbx + 28]
@@ -564,6 +588,45 @@ x_mods:
     or edx, MOD_SUPER
 4:  ret
 
+# x_picture_mods(keysym, down, mods in edx) -> eax: apply this modifier transition.
+x_picture_mods:
+    PROLOGUE
+    mov ebx, edx
+    xor ecx, ecx
+    cmp edi, KEY_SHIFT_L
+    je 1f
+    cmp edi, KEY_SHIFT_R
+    je 1f
+    cmp edi, KEY_CTRL_L
+    je 2f
+    cmp edi, KEY_CTRL_R
+    je 2f
+    cmp edi, KEY_ALT_L
+    je 3f
+    cmp edi, KEY_ALT_R
+    je 3f
+    cmp edi, KEY_SUPER_L
+    je 4f
+    cmp edi, KEY_SUPER_R
+    jne 6f
+4:  mov ecx, MOD_SUPER
+    jmp 5f
+3:  mov ecx, MOD_ALT
+    jmp 5f
+2:  mov ecx, MOD_CTRL
+    jmp 5f
+1:  mov ecx, MOD_SHIFT
+5:  test esi, esi
+    jz 7f
+    or ebx, ecx
+    jmp 6f
+7:  not ecx
+    and ebx, ecx
+6:  mov edi, ebx
+    call viewpic_modifiers
+    mov eax, ebx
+    EPILOGUE
+
 # x_key(keycode)
 x_key:
     PROLOGUE
@@ -648,6 +711,10 @@ x_key:
     mov [rip + g_key_base], eax
     mov edx, [rip + xmods]
     call x_mods
+    mov edi, r14d
+    mov esi, 1
+    call x_picture_mods
+    mov edx, eax
     mov edi, r14d
     mov esi, r15d
     call app_on_key
@@ -1203,6 +1270,7 @@ x_big_requests:
 # XKB on: key events then carry the layout group in state bits 13-14
 x_xkb_use:
     PROLOGUE 32
+    mov dword ptr [rip + g_view_key_state_available], 0
     lea rdi, [rsp]
     xor esi, esi
     mov edx, 32
@@ -1252,6 +1320,25 @@ x_xkb_use:
     lea rdi, [rsp]
     mov esi, 16
     call x_req
+    mov byte ptr [rsp + 1], 21  # XkbPerClientFlags
+    mov word ptr [rsp + 2], 7
+    mov word ptr [rsp + 6], 0
+    mov dword ptr [rsp + 8], 1  # DetectableAutorepeat, this client only
+    mov dword ptr [rsp + 12], 1
+    mov qword ptr [rsp + 16], 0
+    mov dword ptr [rsp + 24], 0
+    lea rdi, [rsp]
+    mov esi, 28
+    call x_req
+    mov eax, [rip + seq]
+    and eax, 0xffff
+    mov [rip + want_seq], eax
+    call x_wait_reply
+    test dword ptr [rip + reply_buf + 8], 1
+    jz 9f
+    test dword ptr [rip + reply_buf + 12], 1
+    jz 9f
+    mov dword ptr [rip + g_view_key_state_available], 1
 9:  EPILOGUE
 
 # keyboard mapping (synchronous)

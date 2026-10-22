@@ -48,6 +48,23 @@ class Pictures(ViewsBase):
         self.assertIn(f'0 view {PIC} key - Insert', log)    # F-keys have bindings
         self.assertIn(f'0 view {PIC} selectall', log)
 
+    def test_paired_releases_and_window_focus_are_opt_in(self):
+        self.env['VIEWFAKE_KEY_STATE'] = '1'
+        x, y = self.shown()
+        self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}',
+                         'key w', 'key-up w', 'focus out', 'focus in', 'wait 100'])
+        log = self.fake_log()
+        self.assertIn(f'0 view {PIC} key - w', log)
+        self.assertIn(f'0 view {PIC} key-up - w', log)
+        self.assertIn(f'0 view {PIC} focus 0', log)
+        self.assertIn(f'0 view {PIC} focus 1', log)
+
+    def test_legacy_picture_does_not_receive_key_releases(self):
+        x, y = self.shown()
+        self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}',
+                         'key w', 'key-up w', 'wait 100'])
+        self.assertFalse(any(' key-up ' in line for line in self.fake_log()))
+
     def test_copy_asks_the_picture_and_paste_brings_text_to_it(self):
         (self.proj / 'note.txt').write_text('pasted words', encoding='utf-8')
         x, y = self.shown()

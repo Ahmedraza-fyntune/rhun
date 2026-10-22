@@ -2674,7 +2674,15 @@ parse_needs:
     mov edi, NEEDS_SECRETS
     call needs_yes
     jmp 9f
-10: # notebooks: kernels = the programs rhun may start as the user for its notebooks (nbexec.s)
+10: mov rdi, r12                # audio output, without microphone access
+    lea rsi, [rip + .Ln_audio]
+    call ini_key_is
+    test eax, eax
+    jz 11f
+    mov edi, NEEDS_AUDIO
+    call needs_yes
+    jmp 9f
+11: # notebooks: kernels = the programs rhun may start as the user for its notebooks (nbexec.s)
     mov rdi, r12
     lea rsi, [rip + .Ln_kernels]
     call ini_key_is
@@ -5360,6 +5368,7 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_audio: .asciz "audio"
 .Ln_secrets: .asciz "secrets"
 .Ln_git: .asciz "git"
 .Ln_kernels: .asciz "kernels"           # notebooks
