@@ -829,7 +829,8 @@ Managing extensions: `ext-install OWNER/NAME[@VERSION]` and `wait-install` (then
 dialog asks), `print-ext-updates` (a line per extension: `installed= latest=
 state=current|available|asks|skipped|error`), `ext-update NAME`, `ext-update-all`, `ext-browse`,
 `ext-index-refresh`, `wait-index`, `ext-search TEXT`, `print-ext-browse` (the Browse list with
-each card's button) and `ext-browse-install NAME`. `RHUN_EXT_BASE` points installs, checks and the
+each card's button), `ext-browse-install NAME` and `print-ext-page-more` (`print-ext-page` with
+the newer lines: `updates=N`, `badge= color=`, a pack's members, `versions update= previous=`). `RHUN_EXT_BASE` points installs, checks and the
 index at another place than `https://github.com` (tests use a `file://` tree or a local server);
 `RHUN_EXT_UPDATE_EVERY=MS` turns on automatic checks in a headless run, every MS milliseconds.
 

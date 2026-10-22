@@ -227,11 +227,15 @@ class Updates(host.Host):
         self.install('demo/hello')
         self.rel.publish('demo', 'hello', files('0.1.1'), 'v0.1.1')
         out = self.ui(['wait-ext hello running', 'ext-check-updates', 'wait-ext-updates', 'print-ext-updates',
-                       'print-toast', 'ext-page hello', 'print-ext-page', 'ext-page list', 'print-ext-page'])
+                       'print-toast', 'ext-page hello', 'print-ext-page-more', 'ext-page list', 'print-ext-page-more',
+                       'print-ext-page', 'ext-page hello', 'print-ext-page'])
         self.assertIn('demo/hello installed=0.1.0 latest=0.1.1 state=available from=github', out)
         self.assertIn('toast=1 extension update available', out)
         self.assertIn('versions update=0.1.1 previous=-', out)
         self.assertIn('updates=1', out)
+        plain = out[out.index('updates=1') + 2:]       # print-ext-page: v1's form, without them
+        self.assertNotIn('updates=1', plain)
+        self.assertFalse(any(l.startswith(('versions ', 'badge=')) for l in plain), plain)
         self.assertIn('latest = v0.1.1', self.updates_state())
         out = self.ui(['wait-ext hello running', 'ext-update demo/hello', 'wait-ext-updates', 'print-dialog',
                        'dialog yes', 'wait-ext-updates', 'wait-ext hello running', 'print-toast',
@@ -282,7 +286,7 @@ class Updates(host.Host):
         self.rel.publish('demo', 'hello', files('0.1.1'), 'v0.1.1')
         other = {k: v.replace('1.0.0', '1.1.0') for k, v in other.items()}
         self.rel.publish('demo', 'other', other, 'v1.1.0')
-        out = self.ui(['ext-check-updates', 'wait-ext-updates', 'print-ext-page', 'ext-update-all', 'wait-ext-updates',
+        out = self.ui(['ext-check-updates', 'wait-ext-updates', 'print-ext-page-more', 'ext-update-all', 'wait-ext-updates',
                        'print-dialog', 'dialog yes', 'wait-ext-updates', 'print-dialog', 'dialog yes',
                        'wait-ext-updates', 'wait 300', 'print-ext-updates'])
         self.assertIn('updates=2', out)
