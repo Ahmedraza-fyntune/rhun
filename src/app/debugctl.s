@@ -1,6 +1,6 @@
 # debugger commands for the headless driver (--script, --control): control.s hands over the commands
 # it does not know. debug-start NAME | debug-run NAME | debug-stop | debug-pause | debug-continue |
-# debug-step over|into|out | debug-frame N | debug-thread ID | debug-set PATH VALUE | debug-expand PATH | debug-collapse PATH | debug-watch add|remove EXPR |
+# debug-step over|into|out | debug-frame N | debug-thread ID | debug-session ID | debug-set PATH VALUE | debug-expand PATH | debug-collapse PATH | debug-watch add|remove EXPR |
 # debug-eval EXPR | debug-forget | bp PATH LINE [cond=C] [hits=H] [log=L] | bp-toggle PATH LINE |
 # bp-enable PATH LINE 0|1 | bp-function NAME [cond=C] | bp-clear | exc-filter TYPE FILTER 0|1 |
 # wait-debug STATE [MS] | wait-console TEXT | print-debug | print-stack | print-vars | print-watch |
@@ -182,6 +182,27 @@ c_thread:
     mov rdi, rax
     mov rsi, rbx
     call dap_focus_thread
+1:  xor eax, eax
+    pop rbx
+    pop rbx
+    ret
+
+# debug-session ID: session ID is the focused one (as a click on its Call Stack row)
+c_session:
+    push rbx
+    push rbx
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    test edx, edx
+    jz 1f
+    mov edi, eax
+    call dap_slot_of_id
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    call dap_focus_ds
 1:  xor eax, eax
     pop rbx
     pop rbx
@@ -737,6 +758,7 @@ DCTL c_pause
 DCTL c_continue
 DCTL c_frame
 DCTL c_thread
+DCTL c_session
 DCTL c_set
 DCTL c_print_changed
 DCTL c_step
@@ -782,6 +804,7 @@ DCTL c_print_debug_hover
 .Lc_debug_continue: .asciz "debug-continue"
 .Lc_debug_frame: .asciz "debug-frame"
 .Lc_debug_thread: .asciz "debug-thread"
+.Lc_debug_session: .asciz "debug-session"
 .Lc_debug_set: .asciz "debug-set"
 .Lc_print_vars_changed: .asciz "print-vars-changed"
 .Lc_debug_step: .asciz "debug-step"
@@ -825,7 +848,7 @@ debug_ctl:
     .quad .Lc_debug_expand, e_c_expand, .Lc_debug_collapse, e_c_collapse, .Lc_debug_watch, e_c_watch
     .quad .Lc_debug_eval, e_c_eval, .Lc_debug_forget, e_c_forget, .Lc_debug_frame, e_c_frame
     .quad .Lc_debug_set, e_c_set, .Lc_print_vars_changed, e_c_print_changed
-    .quad .Lc_debug_thread, e_c_thread
+    .quad .Lc_debug_thread, e_c_thread, .Lc_debug_session, e_c_session
     .quad .Lc_bp, e_c_bp, .Lc_bp_toggle, e_c_bp_toggle, .Lc_bp_enable, e_c_bp_enable
     .quad .Lc_bp_function, e_c_bp_function, .Lc_bp_clear, e_c_bp_clear, .Lc_exc_filter, e_c_exc
     .quad .Lc_wait_debug, e_c_wait_debug, .Lc_wait_console, e_c_wait_console

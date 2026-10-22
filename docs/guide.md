@@ -1403,6 +1403,9 @@ filters (such as Python's "Uncaught Exceptions").
 | Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | not tested (its TCP connection, and `server =`, tested with a fake adapter under Wine) |
 | debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
 
+In a remote window the adapter runs on the host and launch.ini is the host's file. A debugger
+reached over TCP (`transport = tcp`, as Delve is) does not run in a remote window yet.
+
 Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves
 (feature `debug`, docs/extensions/v1.1.md "Debuggers").
 
