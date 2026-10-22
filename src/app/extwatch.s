@@ -300,6 +300,14 @@ FN extwatch_tick
     mov qword ptr [rip + ew_stage_at], 0
     mov qword ptr [rip + ew_entries], 0
     xor r13d, r13d              # every workspace folder is a root (workspace.s), budgets shared
+    call wfold_count
+    test rax, rax
+    jnz 12f
+    mov rdi, [rip + ew_root]    # no workspace folders (a project set without them): the project's
+    call .Lew_enroll
+    test rax, rax
+    js 5f
+    jmp 13f
 12: call wfold_count
     cmp r13, rax
     jae 13f
