@@ -1432,6 +1432,55 @@ wrap:
 9:  mov eax, r14d
     EPILOGUE
 
+# notify_copy_selection() -> eax 1 when the pointer is over a card whose Markdown message has text
+#   selected: it goes to the clipboard (Copy)
+FN notify_copy_selection
+    PROLOGUE 32
+    xor ebx, ebx
+1:  cmp ebx, NC_MAX
+    jae 8f
+    imul r12, rbx, NC_SIZE
+    lea rax, [rip + nts]
+    add r12, rax
+    cmp dword ptr [r12 + NC_id], 0
+    je 2f
+    cmp qword ptr [r12 + NC_md], 0
+    je 2f
+    mov eax, [rip + g_mx]
+    sub eax, [r12 + NC_x]
+    js 2f
+    cmp eax, [r12 + NC_w]
+    jge 2f
+    mov eax, [rip + g_my]
+    sub eax, [r12 + NC_y]
+    js 2f
+    cmp eax, [r12 + NC_h]
+    jge 2f
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset
+    mov rdi, [r12 + NC_md]
+    lea rsi, [rsp]
+    call md_sel_text
+    mov r13d, eax
+    test eax, eax
+    jz 3f
+    mov rdi, [rsp + SB_ptr]
+    mov rsi, [rsp + SB_len]
+    xor edx, edx
+    call ed_clip_set
+3:  lea rdi, [rsp]
+    call sb_free
+    test r13d, r13d
+    jnz 9f
+2:  inc ebx
+    jmp 1b
+8:  xor eax, eax
+    EPILOGUE
+9:  mov eax, 1
+    EPILOGUE
+
 # nt_md(NT*) -> rax its message as Markdown when its extension agreed markdown (made once), else 0
 nt_md:
     PROLOGUE
@@ -1618,10 +1667,26 @@ draw_card:
     mov esi, [rsp + 40]
     mov edx, [rip + g_face_ui + FACE_lineh]
     call spinner
-55: # the message: Markdown, or its lines
+55: # the message: Markdown (dragging selects its text), or its lines
     mov rdi, [rsp + 72]
     test rdi, rdi
     jz 551f
+    mov edi, [rsp + 16]
+    shl edi, 12
+    add edi, ID_NOTE_MD + 0xfff
+    mov esi, [rsp + 36]
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, [rsp + 40]
+    mov ecx, [rsp + 84]
+    mov r8d, [rsp + 80]
+    call ui_btn
+    mov r8d, eax
+    mov rdi, [rsp + 72]
+    mov esi, [rsp + 36]
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, [rsp + 40]
+    xor ecx, ecx
+    call md_select_mouse
     mov eax, [rsp + 16]         # its links' ids
     shl eax, 12
     add eax, ID_NOTE_MD

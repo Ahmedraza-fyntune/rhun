@@ -416,6 +416,9 @@ def on_command(name):
         with open(os.path.join(ROOT, 'long.md'), 'rb') as f:
             text = f.read()
         patch(views['readme'], [rec('doc', '', text), rec('follow', f'{opened_docs[-1]}', b'')])
+    elif name == 'docimg' and views.get('readme'):
+        vimage(png(30, 10, (0, 255, 0, 255)),
+               lambda img: patch(views['readme'], [rec('doc', '', f'# Pic\n\n![green](img:{img})\n'.encode())]))
     elif name == 'docbad' and views.get('readme'):
         patch(views['readme'], [rec('base', '', b'relative/folder')])
     elif name == 'docbig' and views.get('readme'):

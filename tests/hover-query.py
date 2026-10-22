@@ -93,6 +93,19 @@ class Hover(lang.Lang):
         self.assertTrue(card[0].startswith('card=shown'), out)
         self.assertEqual(card[1], 'card=none')
 
+    def test_next_problem_moves_and_shows_the_card(self):
+        diag = '2 9 2 14 warning unused\n3 5 3 10 error bad\n'
+        root = self.provider({'hello': 'hello 1', 'run': {'diag': [[f'diagnostics 1 0 2 {len(diag)}', diag]]}},
+                             'definition = *.rs\n', extra='[commands]\ndiag = Diagnose\n')
+        out = self.run_lang(root, ['cmd lang.diag', 'wait 200', 'key F8', 'wait 100', 'print-state', 'print-hover-card',
+                                   'key Escape', 'key F8', 'print-state', 'key Escape', 'key F8', 'print-state',
+                                   'key Escape', 'key shift+F8', 'print-state'])
+        states = [l for l in out if l.startswith('tabs=')]
+        self.assertIn('line=2 col=9', states[0])
+        self.assertIn('section diag: warning: unused', out)
+        self.assertIn('line=3 col=5', states[1])
+        self.assertIn('line=2 col=9', states[2])       # around
+        self.assertIn('line=3 col=5', states[3])
 
 if __name__ == '__main__':
     unittest.main()

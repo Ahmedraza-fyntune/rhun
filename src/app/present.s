@@ -71,7 +71,8 @@ FN present_hello
     mov qword ptr [rax + r12*8], 1      # due at once
 2:  inc r12d
     jmp 1b
-9:  EPILOGUE
+9:  mov qword ptr [rip + pq_due + 8*PQ_HIGHLIGHTS], 0
+    EPILOGUE
 
 # present_frame(doc, first, last): the frame shows these lines of the active document: schedule
 FN present_frame
@@ -152,7 +153,8 @@ FN present_frame
 6:  inc r12d
     cmp r12d, PQ_COUNT
     jb 5b
-9:  EPILOGUE
+9:  mov qword ptr [rip + pq_due + 8*PQ_HIGHLIGHTS], 0     # (the caret decides those: hicolor.s)
+    EPILOGUE
 
 # present_timeout() -> eax ms until a kind is due, or -1
 FN present_timeout
@@ -221,8 +223,12 @@ FN present_tick
     cmp dword ptr [rip + cfg_inlay_hints], 0
     je 2f
 12: cmp r12d, PQ_LENS
-    jne 11f
+    jne 13f
     cmp dword ptr [rip + cfg_code_lens], 0
+    je 2f
+13: cmp r12d, PQ_COLORS
+    jne 11f
+    cmp dword ptr [rip + cfg_color_swatches], 0
     je 2f
 11: mov rdi, rbx
     mov esi, r12d
@@ -245,6 +251,10 @@ FN present_tick
     xor edi, edi
     call present_withdraw_others
     jmp 9b
+
+# FN present_ask_now(doc, kind): that kind's providers are asked at once (hicolor.s's highlights)
+FN present_ask_now
+    jmp present_ask
 
 # present_ask(doc, kind): its providers are asked (the window: the lines on screen and one screen
 # more each way)
@@ -475,6 +485,34 @@ pqr_drop:
 # present_reply(ext, id, ok, body, len) -> eax 1 when it answered a presentation request
 FN present_reply
     PROLOGUE 64
+    mov [rsp], rcx
+    mov [rsp + 8], r8
+    push rdi
+    push rsi
+    push rdx
+    push rdx
+    call color_edit_reply       # a swatch's color-edit (hicolor.s)
+    pop rdx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jnz 7f
+    mov rcx, [rsp]
+    mov r8, [rsp + 8]
+    push rdi
+    push rsi
+    push rdx
+    push rdx
+    call ghost_reply            # inline completion (ghost.s)
+    pop rdx
+    pop rdx
+    pop rsi
+    pop rdi
+    test eax, eax
+    jnz 7f
+    mov rcx, [rsp]
+    mov r8, [rsp + 8]
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
@@ -551,6 +589,10 @@ FN present_ext_gone
     call inlay_ext_gone
     mov rdi, rbx
     call lens_ext_gone
+    mov rdi, rbx
+    call color_ext_gone
+    mov rdi, rbx
+    call ghost_ext_gone
     EPILOGUE
 
 # ---------------- answers ----------------
@@ -791,9 +833,9 @@ pq_table:
     .long FEAT_INLAY_HINTS, -1, PK_HINTS, 250, 1, 0
     .quad .Lv_lens, lens_reply, present_args_window, EXT_pv_code_lens
     .long FEAT_CODE_LENS, -1, PK_LENS, 500, 1, 0
-    .quad .Lv_colors, reply_none, present_args_window, EXT_pv_colors
+    .quad .Lv_colors, color_reply, present_args_window, EXT_pv_colors
     .long FEAT_DOC_COLORS, -1, PK_COLORS, 500, 1, 0
-    .quad .Lv_highlights, reply_none, 0, EXT_pv_highlights
+    .quad .Lv_highlights, hl_reply, hl_args, EXT_pv_highlights
     .long FEAT_DOC_HIGHLIGHTS, PP_HIGHLIGHTS, PK_HIGHLIGHTS, 250, 0, 0
 .Lv_folding: .asciz "folding-ranges"
 .Lv_tokens: .asciz "semantic-tokens"

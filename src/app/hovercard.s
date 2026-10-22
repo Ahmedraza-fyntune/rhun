@@ -334,6 +334,19 @@ FN cmd_show_hover
     call settle                 # nobody to ask: what there is shows at once
 9:  EPILOGUE
 
+# FN hovercard_at_cursor(): an invoked card at the cursor, whatever showed (Next Problem)
+FN hovercard_at_cursor
+    PROLOGUE
+    call lf_focused_doc
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, [rax + DOC_cur]
+    mov edx, 1
+    call start
+    call settle
+9:  EPILOGUE
+
 # ---------------- answers ----------------
 
 # FN hovercard_reply(ext, id, ok, body, len) -> eax 1 when it answered one of the card's requests
@@ -1223,7 +1236,10 @@ FN hovercard_draw
     je 0f
     call close                  # the completion list hides it
     jmp .Lhd_ret
-0:  mov rax, [rip + hc_gen]
+0:  cmp dword ptr [rip + hc_kind], 0
+    je 91f
+    call anchor                 # an invoked card follows the caret (it may have moved there)
+91: mov rax, [rip + hc_gen]
     cmp rax, [rip + hc_lgen]
     jne 1f
     cmp dword ptr [rip + hc_kind], 0
@@ -1473,8 +1489,18 @@ FN hovercard_key
     EPILOGUE
 
 # FN hovercard_point(line, col): the pointer moves over that place of the editor's text (hover-at;
-# columns as bytes on a line without tabs)
+# columns as bytes on a line without tabs); hovercard_xy(line, col) -> eax x, edx y of it
 FN hovercard_point
+    PROLOGUE
+    call hovercard_xy
+    test eax, eax
+    js 9f
+    mov edi, eax
+    mov esi, edx
+    call app_on_motion
+9:  EPILOGUE
+
+FN hovercard_xy
     PROLOGUE
     mov rbx, [rip + g_doc]
     test rbx, rbx
@@ -1503,10 +1529,10 @@ FN hovercard_point
     mov ecx, [rip + g_cw]
     shr ecx, 1
     add eax, ecx
-    mov edi, eax
-    mov esi, r14d
-    call app_on_motion
-9:  EPILOGUE
+    mov edx, r14d
+    EPILOGUE
+9:  mov eax, -1
+    EPILOGUE
 
 # FN hovercard_dump(sb): print-hover-card: "card=none", "card=asking ..." or "card=shown ..." and
 # a line per text: "section diag|ext OWNER/NAME|deco|v1: TEXT" (line feeds as \n)

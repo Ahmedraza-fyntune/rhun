@@ -82,6 +82,9 @@ def fixtures(work):
     lines.write_text(''.join('line %d needle text\n' % i for i in range(1000000)), encoding='utf-8')
     matches = work / 'matches.txt'
     matches.write_text('needle xyz\n' * 80000, encoding='utf-8')
+    nested = work / 'nested.rs'           # editor presentation: 20,000 foldable blocks
+    nested.write_text(''.join('fn f%d() {\n    let a = %d;\n    if a > 1 {\n        a + 1;\n    }\n}\n' % (i, i)
+                              for i in range(20000)), encoding='utf-8')
     output = work / 'output.txt'
     output.write_text(''.join('line %d of the output, some text to fill it\n' % i for i in range(400000)),
                       encoding='utf-8')
@@ -114,6 +117,11 @@ def measure(exe, work):
                                   'type replacement', 'key ctrl+Return'])
         - b.median([f['matches']], ['key ctrl+h', 'key ctrl+a', 'type needle', 'key Tab', 'key ctrl+a',
                                     'type replacement'])) * 1000
+    # editor presentation: Fold All over 120,000 lines, then frames that scroll by rows over the folds
+    results['fold all, 20,000 blocks (ms)'] = (b.median([f['nested']], ['cmd fold_all'])
+                                               - b.median([f['nested']], [])) * 1000
+    results['frame scrolled by rows over 40,000 folds (ms)'] = b.per_step(
+        [f['nested']], ['cmd fold_all', 'move 500 400'], ['scroll 3', 'scroll -3'], 30) / 2
     if os.name != 'nt':
         results['terminal: cat 18 MB (ms)'] = (
             b.median([f['empty']], ['cmd toggle_terminal', 'wait-term $', 'type cat %s; echo DO""NE'

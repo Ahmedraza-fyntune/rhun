@@ -18,6 +18,7 @@
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 .equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
 .equ PM_WSLIST, 88              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_WSYM, 92                # language features: Go to Symbol in Project (wsym.s)
 .equ PM_DPICK, 80               # debugger: a launch's ${pick:} or ${process} (debugask.s)
 .equ PM_ICONS, 64               # contributions: Select File Icon Theme (iconth.s)
 
@@ -57,6 +58,7 @@ ENDSTRUCT RS_SIZE
 
 .bss
 .p2align 3
+gtr_query: .zero 104            # language features: Find in Files' query for the Results title
 pal_mode: .long 0
 pal_prompt: .long 0             # PROMPT_* when in PM_PROMPT
 pal_sel: .long 0
@@ -1429,6 +1431,39 @@ FN palette_results_add
 # palette_results_refresh() empties it but keeps the field (then _add and _ready as before),
 # palette_results_selected() -> rax the selected item's n, or -1, palette_results_select(n): the
 # row of item n is selected (after _ready)
+# language features: the symbol mode (wsym.s): palette_wsym_open(label cstr), _showing() -> eax 1
+# while it is open, _clear() (its items go, the query stays), _add(ptr, len, detail cstr, n),
+# _ready(); choosing item n calls wsym_chosen(n). The strings stay wsym.s's until the next _clear
+FN palette_wsym_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_WSYM
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+FN palette_wsym_showing
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_WSYM
+    sete al
+    ret
+FN palette_wsym_clear
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    ret
+FN palette_wsym_add
+    jmp item_add
+FN palette_wsym_ready
+    push rbx
+    mov ebx, [rip + pal_sel]    # the choice stays where it was as answers come
+    call palette_filter
+    mov eax, [rip + results + VEC_len]
+    cmp ebx, eax
+    jae 1f
+    mov [rip + pal_sel], ebx
+1:  pop rbx
+    ret
+
 FN palette_results_refresh
     mov qword ptr [rip + items + VEC_len], 0
     mov qword ptr [rip + results + VEC_len], 0
@@ -2432,6 +2467,8 @@ FN palette_print
     je 13f
     cmp dword ptr [rip + pal_mode], PM_PROVIDERS
     je 13f
+    cmp dword ptr [rip + pal_mode], PM_WSYM
+    je 13f
     cmp dword ptr [rip + pal_mode], PM_RESULTS
     jne 11f
 13: lea rsi, [rip + .Lpp_choose]
@@ -2728,7 +2765,7 @@ FN palette_changed
     pop rbx
     ret
 3:  cmp byte ptr [rax], ':'
-    jne 2f
+    jne 4f
     cmp qword ptr [rip + g_doc], 0
     je 2f
     mov dword ptr [rip + pal_mode], PM_GOTO
@@ -2737,7 +2774,22 @@ FN palette_changed
     mov rdx, [rip + pal_tf + TF_sb + SB_len]
     dec rdx
     call tf_set
-2:  jmp palette_filter
+    jmp 2f
+4:  cmp byte ptr [rax], '#'     # language features: '#' switches files -> symbols in the project
+    jne 2f
+    push rbx
+    call cmd_workspace_symbols
+    pop rbx
+2:  cmp dword ptr [rip + pal_mode], PM_WSYM
+    jne 5f
+    push rbx
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    call wsym_changed
+    pop rbx
+5:  jmp palette_filter
 
 # selected item -> IT* or 0
 selected_item:
@@ -2783,7 +2835,15 @@ FN palette_key
     jne 1f
     call palette_close
     jmp .Lpk_yes
-1:  # remote hosts: moving in Find in Files' results waits for the host's answer they belong to
+1:  cmp r12d, KEY_RETURN        # language features: ctrl+Enter in Find in Files moves its results
+    jne 10f                     # to the Results panel (results.s)
+    test r14d, MOD_CTRL
+    jz 10f
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 10f
+    call grep_to_results
+    jmp .Lpk_yes
+10: # remote hosts: moving in Find in Files' results waits for the host's answer they belong to
     cmp dword ptr [rip + pal_mode], PM_GREP
     jne 11f
     cmp dword ptr [rip + g_remote], 0
@@ -2884,6 +2944,75 @@ FN palette_key
 .Lpk_yes:
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
+    EPILOGUE
+
+# grep_to_results(): Find in Files' results (as filtered now) become a Results set, the palette
+# closes (language features, results.s)
+grep_to_results:
+    PROLOGUE 48
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov r15, rdx                # the query's length: each match's
+    cmp rdx, 100
+    jbe 1f
+    mov edx, 100
+1:  mov [rsp + 8], rdx
+    lea rdi, [rip + gtr_query]
+    mov rsi, rax
+    call memcpy
+    lea rax, [rip + gtr_query]
+    mov rcx, [rsp + 8]
+    mov byte ptr [rax + rcx], 0
+    lea rdi, [rip + gtr_query]
+    call results_find_begin
+    mov [rsp], rax
+    xor ebx, ebx
+3:  cmp rbx, [rip + results + VEC_len]
+    jae 8f
+    mov rax, [rip + results + VEC_ptr]
+    mov eax, [rax + rbx*8 + RS_item]
+    imul r12, rax, IT_SIZE
+    add r12, [rip + items + VEC_ptr]
+    inc rbx
+    mov r13, [r12 + IT_data]
+    mov rax, r13
+    shr rax, 44
+    cmp rax, [rip + gfiles + VEC_len]
+    jae 3b
+    imul rax, rax, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdi, [rip + g_project]
+    mov rsi, [rax + GF_label]
+    call path_join
+    mov r14, rax
+    mov rax, r13                # the range: LINE COL to COL + the query's length
+    shr rax, 20
+    and eax, 0xffffff
+    inc eax
+    mov [rsp + 16], eax
+    mov [rsp + 24], eax
+    mov eax, r13d
+    and eax, 0xfffff
+    inc eax
+    mov [rsp + 20], eax
+    add eax, r15d
+    mov [rsp + 28], eax
+    mov rdi, [rsp]
+    mov rsi, r14
+    lea rdx, [rsp + 16]
+    mov rcx, [r12 + IT_label]
+    mov r8, [r12 + IT_len]
+    call results_loc
+    mov rdi, r14
+    call mem_free
+    jmp 3b
+8:  call grep_release
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, [rsp]
+    xor esi, esi
+    call results_refs_end
+    mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # palette_accept(): act on the selection / input
@@ -2993,7 +3122,15 @@ palette_accept:
     call ce_reopen_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-331: cmp ebx, PM_WSLIST          # wsedit
+331: cmp ebx, PM_WSYM            # language features: a symbol in the project
+    jne 335f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call wsym_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+335: cmp ebx, PM_WSLIST          # wsedit
     jne 34f
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
@@ -3152,7 +3289,7 @@ palette_accept:
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 691: cmp dword ptr [rip + pal_prompt], PROMPT_DEBUG    # debugger (debugview.s)
-    jne 690f
+    jne 693f
     lea rdi, [rip + pal_tf]
     call tf_text
     mov dword ptr [rip + pal_mode], PM_NONE
@@ -3162,6 +3299,19 @@ palette_accept:
     pop rsi
     pop rdi
     call dview_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+693: cmp dword ptr [rip + pal_prompt], PROMPT_COLOR    # editor presentation: a swatch's color (hicolor.s)
+    jne 690f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call color_prompt_done
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 690: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE

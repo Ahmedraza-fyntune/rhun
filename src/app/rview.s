@@ -6121,8 +6121,8 @@ FN rview_link_event
     call ev_send
 9:  EPILOGUE
 
-# rview_focused_form() -> rax the form of the form view with the keyboard, or 0
-FN rview_focused_form
+# focused_rv() -> rax the instance (RV*) whose place item or tab has the keyboard, or 0
+focused_rv:
     push rbx
     call place_focused
     mov edi, eax
@@ -6136,9 +6136,9 @@ FN rview_focused_form
     lea rdx, [rip + rv_tab_ops]
     cmp rcx, rdx
     jne 8f
-    mov edi, [rax + PL_ctx]
+    mov edi, [rax + PL_ctx]     # a tab: its slot
     jmp 2f
-1:  mov rdi, [rax + PL_ctx]
+1:  mov rdi, [rax + PL_ctx]     # a declared view: its instance
     call rv_of_vd
     cmp eax, -1
     je 8f
@@ -6146,14 +6146,39 @@ FN rview_focused_form
 2:  call rv_at
     cmp qword ptr [rax + RV_ext], 0
     je 8f
-    cmp dword ptr [rax + RV_kind], RK_FORM
-    jne 8f
-    mov rax, [rax + RV_form]
     pop rbx
     ret
 8:  xor eax, eax
     pop rbx
     ret
+
+# rview_focused_doc() -> rax the state of the doc view with the keyboard, or 0
+FN rview_focused_doc
+    sub rsp, 8
+    call focused_rv
+    add rsp, 8
+    test rax, rax
+    jz 9f
+    cmp dword ptr [rax + RV_kind], RK_DOC
+    jne 8f
+    mov rax, [rax + RV_doc]
+    ret
+8:  xor eax, eax
+9:  ret
+
+# rview_focused_form() -> rax the form of the form view with the keyboard, or 0
+FN rview_focused_form
+    sub rsp, 8
+    call focused_rv
+    add rsp, 8
+    test rax, rax
+    jz 9f
+    cmp dword ptr [rax + RV_kind], RK_FORM
+    jne 8f
+    mov rax, [rax + RV_form]
+    ret
+8:  xor eax, eax
+9:  ret
 
 # rview_form_event(slot, what cstr, key cstr, seq or -1, body, len): "0 view VIEW WHAT REV KEY",
 #   with a sequence " SEQ LEN" and the body (change); without: nothing more (press, submit)

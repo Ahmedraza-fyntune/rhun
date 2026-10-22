@@ -16,6 +16,7 @@ ih_keys: .zero VEC_SIZE         # sort keys
 ih_tmp: .zero VEC_SIZE          # the merged vector being built
 # the hint being read: its parts (label, tip, extra: ptr, len each) and edits
 pv_ptr: .zero 8 * 6 * IH_PARTS
+.globl ev_rec
 ev_rec: .zero 8 * 6 * IH_EDITS  # l1, c1, l2, c2, text ptr, len
 vi_hint: .zero VI_SIZE
 hdoc: .zero 32                  # "#DOC": the hint's own document for goto
@@ -304,6 +305,7 @@ hint_make:
 # edits_read(ptr, len) -> rax the "edit L1 C1 L2 C2 LEN" records found (into ev_rec, positions
 # 0-based), rdx their texts' bytes; other records are skipped; rax -1 when the records are broken
 # or there are more than 16 edits
+.globl edits_read
 edits_read:
     PROLOGUE 16
     mov rbx, rdi

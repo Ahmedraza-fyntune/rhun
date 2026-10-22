@@ -92,5 +92,49 @@ class Real(unittest.TestCase):
         self.assertNotIn('import "strings"', text.split('===')[2], text)
 
 
+    @unittest.skipUnless(have('gopls'), 'gopls is not on PATH')
+    def test_gopls_references_hover_and_rename_with_prepare(self):
+        (self.proj / 'go.mod').write_text('module example.com/demo\n\ngo 1.22\n')
+        (self.proj / 'main.go').write_text('package main\n\nfunc total() int { return 1 }\n\n'
+                                           'func main() { _ = total() }\n')
+        (self.proj / 'other.go').write_text('package main\n\nfunc use() int { return total() }\n')
+        out = self.run_editor(['main.go'], [
+            *self.warm(), 'key ctrl+Home', 'key Down', 'key Down', 'key Home', 'key ctrl+Right', 'key Right',
+            'key shift+F12', 'wait 3000', 'print-results', 'key Escape', 'hover-at 3 7', 'wait 3000',
+            'print-hover-card', 'key F2', 'wait 2000', 'print-palette', 'key ctrl+a', 'type sum', 'key Return',
+            'wait 3000', 'print-palette', 'print-tabs', 'echo ===', 'print-doc'])
+        text = '\n'.join(out)
+        refs = [l for l in out if l.startswith('row ') and ' leaf ' in l]
+        self.assertGreaterEqual(len(refs), 2, text + self.log())
+        self.assertTrue(any('label=other.go' in l for l in out if l.startswith('row ')), text)
+        self.assertIn('section ext rhun-editor/lsp: ', text)
+        self.assertIn('func total() int', text)
+        self.assertIn('field=total', text)                   # prepare-rename's placeholder
+        self.assertIn('func sum() int', self.doc(out), text)
+        # the closed file: written on disk (or opened in a tab when the extension may not write)
+        on_disk = 'sum()' in (self.proj / 'other.go').read_text()
+        self.assertTrue(on_disk or any('other.go' in l for l in out if l.startswith('tabs=')), text)
+
+    @unittest.skipUnless(have('clangd'), 'clangd is not on PATH')
+    def test_clangd_auto_fix_inserts_the_missing_semicolon(self):
+        (self.proj / 'a.c').write_text('int main(void) {\n    int x = 1\n    return x;\n}\n')
+        out = self.run_editor(['a.c'], [
+            'wait-ext rhun-editor/lsp running', 'wait 4000', 'print-marks', 'key ctrl+Home', 'key Down', 'key Down',
+            'key End', 'wait 1500', 'print-lightbulb', 'key shift+alt+.', 'wait 2000', 'echo ===', 'print-doc'])
+        text = '\n'.join(out)
+        # clangd's diagnostic is on the line after the declaration and its fix is on the line before:
+        # it comes only when the diagnostic goes back in the request (DIAGS ids)
+        self.assertTrue(any(l.startswith('lightbulb line=3 count=') for l in out), text + self.log())
+        self.assertIn('int x = 1;', self.doc(out), text + self.log())
+
+    @unittest.skipUnless(have('clangd'), 'clangd is not on PATH')
+    def test_clangd_formats_the_selection(self):
+        (self.proj / 'b.c').write_text('int f(void) {\n    int   y   =   2 ;\n    return y;\n}\n')
+        out = self.run_editor(['b.c'], [
+            'wait-ext rhun-editor/lsp running', 'wait 3000', 'key ctrl+Home', 'key Down', 'key Home',
+            'key shift+End', 'cmd format_selection', 'wait 2000', 'echo ===', 'print-doc'])
+        self.assertIn('int y = 2;', self.doc(out), '\n'.join(out) + self.log())
+
+
 if __name__ == '__main__':
     unittest.main()

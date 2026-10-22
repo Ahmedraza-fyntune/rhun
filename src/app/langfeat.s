@@ -652,6 +652,17 @@ FN cmd_declaration
     mov edi, LF_DECL
     jmp lf_start_cmd
 # the peek view (peek.s): the same queries, their locations under the cursor's line
+# FN cmd_cancel_query(): the providers still searching are withdrawn ("0 cancel"); what came is
+# shown as when they all answered
+FN cmd_cancel_query
+    cmp dword ptr [rip + lf_kind], 0
+    je 1f
+    push rbx
+    call lf_cancel_all
+    mov dword ptr [rip + lf_ready], 1
+    mov dword ptr [rip + g_dirty], 1
+    pop rbx
+1:  ret
 FN cmd_peek_definition
     mov edi, LF_DEF
     jmp lf_peek_cmd
@@ -1276,6 +1287,13 @@ FN langfeat_part
     mov rdx, r13
     mov rcx, r14
     call results_part
+    cmp rax, -2
+    jne 9b
+    mov rdi, rbx                # or a symbol query's (wsym.s)
+    mov rsi, r12
+    mov rdx, r13
+    mov rcx, r14
+    call wsym_part
     cmp rax, -2
     jne 9b
     xor eax, eax                # an answer nobody waits for any more: taken, and dropped
@@ -2898,6 +2916,8 @@ FN langfeat_tick
     call outline_tick
     call hovercard_tick
     call lightbulb_tick
+    call wsym_tick
+    call doclinks_tick
     cmp dword ptr [rip + lf_show_due], 0
     je 0f
     mov dword ptr [rip + lf_show_due], 0  # the first parts of a query still out, shown
@@ -3664,6 +3684,12 @@ FN langfeat_ext_gone
     call hovercard_ext_gone
     mov rdi, [rsp]
     call lightbulb_ext_gone
+    mov rdi, [rsp]
+    call selrange_ext_gone
+    mov rdi, [rsp]
+    call wsym_ext_gone
+    mov rdi, [rsp]
+    call doclinks_ext_gone
     pop rdi
     pop rdi
     xor ecx, ecx
@@ -3743,7 +3769,7 @@ lf_peek_titles: .quad 0, .Lpk_def, .Lpk_refs, 0, 0, 0, 0, .Lpk_decl, .Lpk_typede
 .Lpk_typedef: .asciz "type definition"
 .Lpk_impl: .asciz "implementation"
 .p2align 3
-lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, hovercard_reply, lightbulb_reply, 0
+lf_chain: .quad lf_rs_reply, lf_pr_reply, langextra_reply, results_reply, outline_reply, hovercard_reply, lightbulb_reply, selrange_reply, wsym_reply, doclinks_reply, 0
 .Lv_definition: .asciz "definition"
 .Lv_references: .asciz "references"
 .Lv_symbols: .asciz "symbols"

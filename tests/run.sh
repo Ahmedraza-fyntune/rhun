@@ -206,6 +206,9 @@ python3 tests/folding.py || fail=1
 python3 tests/semantic.py || fail=1
 python3 tests/hints.py || fail=1
 python3 tests/lens.py || fail=1
+python3 tests/highlights.py || fail=1
+python3 tests/colors.py || fail=1
+python3 tests/ghost.py || fail=1
 python3 tests/ext-snapshots.py || fail=1
 python3 tests/snippets.py || fail=1
 python3 tests/snippet-variants.py || fail=1
@@ -255,8 +258,10 @@ python3 tests/wasm-host.py || fail=1
 python3 tests/wasm-wasi.py || fail=1
 python3 tests/wasm-fuzz.py 1 2 --count 100 || fail=1
 # language features: the query engine, completion items, code actions, rename and formatting,
-# file diagnostics, the Results panel and hierarchies, the peek view, the hover card
-for t in langfeat-query complete-items code-actions rename-format file-diagnostics results peek hover-query; do
+# file diagnostics, the Results panel and hierarchies, the peek view, the hover card, selection
+# ranges, workspace symbols, document links
+for t in langfeat-query complete-items code-actions rename-format file-diagnostics results peek hover-query \
+         selection-ranges workspace-symbols document-links; do
     python3 tests/$t.py || fail=1
 done
 python3 tests/langfeat-real.py || fail=1

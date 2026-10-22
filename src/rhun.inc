@@ -411,7 +411,7 @@ F FACE_tabcap, 4
 F FACE_tabn, 4
 F FACE_ascii, 1024  # fast path GL* for cp < 128
 F FACE_embolden, 4
-F FACE_pad2, 4
+F FACE_oblique, 4       # views group: glyphs sheared right (Markdown emphasis), 0 upright
 ENDSTRUCT FACE_SIZE
 
 # ---- event loop fd watchers ----
@@ -1671,6 +1671,9 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_FILE_DIAGNOSTICS, "file-diagnostics", 0  # file-diagnostics into the Problems store
     FEATURE FEAT_HIERARCHY, "hierarchy", 1            # call/type hierarchies in the Results panel
     FEATURE FEAT_HOVER_QUERY, "hover-query", 1        # the hover card (hovercard.s)
+    FEATURE FEAT_SELECTION_RANGES, "selection-ranges", 1  # Expand/Shrink Selection (selrange.s)
+    FEATURE FEAT_WORKSPACE_SYMBOLS, "workspace-symbols", 1  # Go to Symbol in Project (wsym.s)
+    FEATURE FEAT_DOCUMENT_LINKS, "document-links", 1  # links under ctrl+click (doclinks.s)
     # editor presentation (deco.s ...)
     FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
     # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):
@@ -3634,6 +3637,7 @@ F PRS_frext, 8           # the extension they came from; 0 while indentation dec
 F PRS_tks, 8             # semantic tokens (semtok.s), owned, or 0
 F PRS_hints, VEC_SIZE    # IH inlay hints (inlay.s), sorted by position
 F PRS_lens, VEC_SIZE     # LNS code lenses (lens.s), sorted by position
+F PRS_colors, VEC_SIZE   # CLR colors (hicolor.s)
 ENDSTRUCT PRS_SIZE
 # a fold: the lines after its header up to its last line are hidden; it follows edits as positions
 STRUCT
@@ -3738,6 +3742,17 @@ ENDSTRUCT LNS_SIZE
 .equ LENS_MAX, 10000            # lenses per answer
 .equ LENS_TITLE_MAX, 200
 .equ LENS_EXTRA_MAX, 9000
+.equ HL_MAX, 5000               # document highlights per answer (hicolor.s)
+# a color in a document (hicolor.s)
+STRUCT
+F CLR_start, 8
+F CLR_end, 8
+F CLR_owner, 8          # EXT*
+F CLR_rgba, 4           # RRGGBBAA
+F CLR_pad, 4
+ENDSTRUCT CLR_SIZE
+.equ CLR_MAX, 10000             # colors per answer
+.equ PROMPT_COLOR, 72           # a swatch's new color (hicolor.s; presentation's block 72-75)
 # the kinds present.s asks for
 .equ PQ_FOLDING, 0
 .equ PQ_TOKENS, 1

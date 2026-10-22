@@ -8,6 +8,7 @@
 #     dc = mdview_new(slot, ext); mdview_free(dc)
 #     mdview_check_op(rr) -> 1 good, 0 not, 2 too big, -1 not a doc op; mdview_apply_op(dc, rr)
 #     mdview_draw(dc, x, y, w, h, focused); mdview_key(dc, keysym, cp, mods) -> taken; mdview_dump(dc, sb)
+#     mdview_clip(dc, kind): Ctrl+C copies the text selected by dragging, Ctrl+A selects it all
 .include "rhun.inc"
 
 .equ DOC_MD_MAX, 1048576
@@ -22,7 +23,9 @@
 .equ DC_h, 36                   # the content's height, laid out
 .equ DC_vh, 40                  # the view's height, last drawn
 .equ DC_line, 44                # the editor's top line last followed, -1
-.equ DC_SIZE, 48
+.equ DC_tx, 48                  # where its text was last drawn (headless)
+.equ DC_ty, 52
+.equ DC_SIZE, 56
 
 .text
 
@@ -239,7 +242,17 @@ FN mdview_draw
     jz 2f
     mov eax, [rip + g_scroll_y]
     add [rbx + DC_scroll], eax
-2:  # following the editor's top line
+2:  mov rdi, r12                # dragging selects text
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_16]
+    mov edx, [rsp + 4]
+    add edx, [rip + g_mt + 4*MI_8]
+    mov [rbx + DC_tx], esi
+    mov [rbx + DC_ty], edx
+    mov ecx, [rbx + DC_scroll]
+    mov r8d, [rsp + 20]
+    call md_select_mouse
+    # following the editor's top line
     mov rdi, rbx
     call follow_editor
     mov rdi, rbx
@@ -505,7 +518,37 @@ FN mdview_key
     mov eax, 1
     EPILOGUE
 
-# mdview_dump(dc, sb): "doc scroll=S height=H follow=N line=E focus=L" LF (E the editor line followed), then md_dump's lines
+# mdview_clip(dc, kind 0 copy, 1 cut, 2 select all): the selected text to the clipboard, or all of
+#   it selected
+FN mdview_clip
+    PROLOGUE 32
+    mov rbx, rdi
+    mov r12d, esi
+    mov rdi, [rbx + DC_md]
+    test rdi, rdi
+    jz 9f
+    cmp r12d, 2
+    jne 1f
+    call md_select_all
+    jmp 9f
+1:  lea rdi, [rsp]
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset
+    mov rdi, [rbx + DC_md]
+    lea rsi, [rsp]
+    call md_sel_text
+    test eax, eax
+    jz 8f
+    mov rdi, [rsp + SB_ptr]
+    mov rsi, [rsp + SB_len]
+    xor edx, edx
+    call ed_clip_set
+8:  lea rdi, [rsp]
+    call sb_free
+9:  EPILOGUE
+
+# mdview_dump(dc, sb): "doc scroll=S height=H follow=N line=E at=X,Y focus=L" LF (E the editor line followed), then md_dump's lines
 FN mdview_dump
     PROLOGUE
     mov rbx, rdi
@@ -541,6 +584,18 @@ FN mdview_dump
 11: mov rdi, r12
     call sb_push_u64
 12: mov rdi, r12
+    lea rsi, [rip + .Ld_at]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rbx + DC_tx]
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, ','
+    call sb_push_byte
+    mov rdi, r12
+    mov esi, [rbx + DC_ty]
+    call sb_push_u64
+    mov rdi, r12
     lea rsi, [rip + .Ld_focus]
     call sb_push_cstr
     mov esi, -1
@@ -576,3 +631,4 @@ FN mdview_dump
 .Ld_follow: .asciz " follow="
 .Ld_focus: .asciz " focus="
 .Ld_line: .asciz " line="
+.Ld_at: .asciz " at="

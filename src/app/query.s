@@ -565,6 +565,47 @@ FN query_progress_of
     jmp 1b
 9:  ret
 
+# FN query_progress_label(sb): " NAME PCT% TEXT" of the language features' slowest request with a
+# progress report (the Results tab's title while it searches), nothing without one
+FN query_progress_label
+    PROLOGUE
+    mov rbx, rdi
+    mov edi, QO_LANGFEAT
+    call query_progress_of
+    test rax, rax
+    jz 9f
+    mov r12, rax
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, [r12 + QR_ext]
+    call ext_full_name
+    mov rdi, rbx
+    mov rsi, rax
+    call sb_push_cstr
+    mov eax, [r12 + QR_pct]
+    cmp eax, -1
+    je 1f
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, rbx
+    mov esi, [r12 + QR_pct]
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, '%'
+    call sb_push_byte
+1:  mov rsi, [r12 + QR_text]
+    test rsi, rsi
+    jz 9f
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [r12 + QR_text]
+    call sb_push_cstr
+9:  EPILOGUE
+
 # ---------------- query-stream (extension requests) ----------------
 
 # qp_agreed(FEAT_*) -> eax 1 when cur agreed that feature; otherwise "unknown" is answered
