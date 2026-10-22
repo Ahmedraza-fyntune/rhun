@@ -2881,6 +2881,11 @@ FN agents_key
     call agentext_card_key
     test eax, eax
     jnz 5f
+    mov rdi, rbx
+    mov esi, r12d
+    call agentext_card_nav      # arrows among its options, Enter on the chosen one
+    test eax, eax
+    jnz 5f
     cmp r12d, KEY_RETURN        # Enter or Tab goes to its prompt box
     je 6f
     cmp r12d, KEY_TAB
