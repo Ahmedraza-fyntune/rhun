@@ -64,6 +64,17 @@ class Base(unittest.TestCase):
         return subprocess.run(['git', '-C', str(cwd or self.proj), *args], env=self.env, check=True,
                               capture_output=True).stdout.decode()
 
+    def lib_repo(self):
+        """a second workspace folder with a repository of its own (resources group)"""
+        lib = self.work / 'lib'
+        lib.mkdir()
+        (lib / 'x.txt').write_text('x\n', encoding='utf-8')
+        (lib / 'x.go').write_text('package x\n', encoding='utf-8')
+        self.git('init', '-q', '-b', 'main', cwd=lib)
+        self.git('add', '-A', cwd=lib)
+        self.git('-c', 'user.name=Ada', '-c', 'user.email=ada@example.invalid', 'commit', '-qm', 'One', cwd=lib)
+        return lib
+
     def ext(self, name='fake', needs='git = read\ndocuments = read', hello='hello 1 git-data',
             commands=None, answers=None, events=None, ini='', folder='exts'):
         root = self.work / folder
@@ -289,6 +300,18 @@ class GitData(Base):
         self.assertEqual([r for r, _ in self.replies()], ['error 1 refused git is paused in this folder',
                                                           'error 2 refused git is paused in this folder'])
 
+    def test_another_folders_repository_answers(self):
+        """the project's folder has no repository; the shown one is another workspace folder's"""
+        shutil.rmtree(self.proj / '.git')
+        lib = self.lib_repo()
+        exts = self.ext(commands={'go': [['git-repo', None]]})
+        self.run_editor([f'folder-add {lib.as_posix()}', f'open {lib.as_posix()}/x.txt', 'wait 100', 'wait-git',
+                         'cmd fake.go', 'wait-ext fake running', 'wait 300', 'wait-git', 'wait 300'],
+                        exts=exts, drop_waits=True)
+        [(reply, body)] = self.replies()
+        self.assertTrue(reply.startswith('ok 1 '), reply)
+        self.assertIn(lib.as_posix() + 'main', body)
+
 
 class Menus(Base):
     """C2: menus on history and Source Control rows, with their targets and when-clause keys"""
@@ -385,6 +408,16 @@ class QuickDiff(Base):
                                'print-git'], exts=self.provider(body=''), drop_waits=True)
         self.assertEqual(self.marks(out), [])
         self.assertEqual(len([l for l in self.fake_log('qd') if ' quickdiff ' in l]), 2)
+
+    def test_a_providers_marks_stay_when_another_repository_is_shown(self):
+        shutil.rmtree(self.proj / '.git')
+        lib = self.lib_repo()
+        out = self.run_editor(['wait-ext qd running', 'wait 500', f'folder-add {lib.as_posix()}',
+                               f'open {lib.as_posix()}/x.go', 'wait 100', 'wait-git', 'print-git',
+                               f'open {(self.proj / "a.txt").as_posix()}', 'wait 300', 'print-git'],
+                              exts=self.provider(), drop_waits=True)
+        self.assertIn('git on branch=main', out)
+        self.assertEqual(self.marks(out)[-1:], ['marks .~..'], out)
 
     def test_rhuns_git_keeps_its_files(self):
         (self.proj / 'a.txt').write_text('hello world\nsecond line\nthird line\nfourth\n', encoding='utf-8')

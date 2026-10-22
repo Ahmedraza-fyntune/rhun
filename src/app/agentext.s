@@ -1616,6 +1616,8 @@ F AXK_ext, 8
 F AXK_id, 8             # the agent-ask request it answers
 F AXK_prompt, 8         # cstr
 F AXK_opts, VEC_SIZE    # cstr*
+F AXK_sel, 8            # the option the arrow keys moved to
+F AXK_kb, 8             # 1 once the arrow keys moved: Enter picks AXK_sel
 ENDSTRUCT AXK_SIZE
 
 .bss
@@ -1628,6 +1630,7 @@ pend_ext: .quad 0
 pend_new: .quad 0               # 1 when it starts a new session
 pend_gen: .quad 0               # in_gen when it was sent: a refused text goes back to that box only
 in_gen: .quad 0                 # changes whenever the box changes owner
+keep_box: .quad 0               # open_wanted: the box moves to the new session with its text
 pend_text: .zero SB_SIZE        # and its text, back in the box when it fails
 want_ext: .quad 0               # open this extension's session when it is listed
 want_sid: .quad 0               # cstr
@@ -1954,6 +1957,9 @@ FN agentext_prompt_reply
     je 4f
     cmp [rip + new_ext], rbx
     jne 4f
+    mov rax, [rip + in_gen]     # the box is still the one that sent it (not a later draft)
+    cmp rax, [rip + pend_gen]
+    jne 4f
     mov rdi, r12
     mov rsi, r13
     mov edx, AGENT_SID_MAX
@@ -2039,7 +2045,9 @@ open_wanted:
     test rax, rax
     jz 9f
     mov rdi, rax
+    mov qword ptr [rip + keep_box], 1   # what the user typed meanwhile goes on in its box
     call agents_open_as         # opening it ends the wish (agentext_opened)
+    mov qword ptr [rip + keep_box], 0
     jmp 9f
 8:  call want_clear
 9:  EPILOGUE
@@ -2126,6 +2134,8 @@ FN agentext_opened
     je 9f
     mov [rip + in_as], rbx
     inc qword ptr [rip + in_gen]
+    cmp qword ptr [rip + keep_box], 0
+    jne 9f                      # the session its own first prompt started: the text stays
     lea rdi, [rip + in_tf]
     call tf_clear
 9:  EPILOGUE
@@ -2201,6 +2211,50 @@ FN agentext_input_key
 9:  xor eax, eax
     EPILOGUE
 
+# FN agentext_card_nav(AS*, keysym) -> eax 1 when the arrow keys moved among the card's options, or
+#   Enter picked the one they chose (every option is reachable, also past 9 and in a cut card)
+FN agentext_card_nav
+    xor eax, eax
+    test rdi, rdi
+    jz 9f
+    mov rcx, [rdi + AS_ask]
+    test rcx, rcx
+    jz 9f
+    mov rdx, [rcx + AXK_sel]
+    cmp esi, KEY_RETURN
+    je 5f
+    cmp esi, KEY_KP_ENTER
+    je 5f
+    cmp esi, KEY_LEFT
+    je 1f
+    cmp esi, KEY_UP
+    je 1f
+    cmp esi, KEY_RIGHT
+    je 2f
+    cmp esi, KEY_DOWN
+    jne 9f
+2:  inc rdx
+    cmp rdx, [rcx + AXK_opts + VEC_len]
+    jb 3f
+    dec rdx
+    jmp 3f
+1:  test rdx, rdx
+    jz 3f
+    dec rdx
+3:  mov [rcx + AXK_sel], rdx
+    mov qword ptr [rcx + AXK_kb], 1
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+9:  ret
+5:  cmp qword ptr [rcx + AXK_kb], 0
+    je 9b
+    mov rsi, rdx
+    push rbx
+    call agentext_pick
+    pop rbx
+    mov eax, 1
+    ret
+
 # FN agentext_card_key(AS*, cp) -> eax 1 when 1 to 9 picked an option of the session's card
 FN agentext_card_key
     xor eax, eax
@@ -2230,16 +2284,36 @@ card_h:
     mov rbx, [rdi + AS_ask]
     test rbx, rbx
     jz 9f
+    mov rdi, rbx
+    mov rdx, [rbx + AXK_opts + VEC_len]
+    dec rdx
+    call opt_row
+    inc eax                     # rows
+    mov ecx, [rip + g_mt + 4*MI_32]
+    add ecx, [rip + g_mt + 4*MI_6]
+    imul eax, ecx
+    add eax, [rip + g_mt + 4*MI_40]
+    add eax, [rip + g_mt + 4*MI_12]
+9:  EPILOGUE
+
+# opt_row(AXK*, w, i) -> eax the row (from 0) option i wraps to in a card w wide
+opt_row:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov [rsp], rdx
     mov r12d, esi
     sub r12d, [rip + g_mt + 4*MI_24]
     sub r12d, [rip + g_mt + 4*MI_24]
-    mov r13d, 1                 # rows
+    xor r13d, r13d              # row
     xor r14d, r14d              # x in the row
     xor r15d, r15d
 1:  cmp r15, [rbx + AXK_opts + VEC_len]
     jae 3f
+    cmp r15, [rsp]
+    ja 3f
     mov rdi, rbx
     mov rsi, r15
+    mov edx, r12d
     call opt_w
     inc r15
     test r14d, r14d
@@ -2252,16 +2326,13 @@ card_h:
 2:  add r14d, eax
     add r14d, [rip + g_mt + 4*MI_6]
     jmp 1b
-3:  M eax, MI_32
-    add eax, [rip + g_mt + 4*MI_6]
-    imul eax, r13d
-    add eax, [rip + g_mt + 4*MI_40]
-    add eax, [rip + g_mt + 4*MI_12]
-9:  EPILOGUE
+3:  mov eax, r13d
+    EPILOGUE
 
-# opt_w(AXK*, i) -> eax the width of option i's button ("N  text")
+# opt_w(AXK*, i, max) -> eax the width of option i's button ("N  text"), at most max
 opt_w:
     PROLOGUE
+    mov r12d, edx
     mov rax, [rdi + AXK_opts + VEC_ptr]
     mov rbx, [rax + rsi*8]
     mov rdi, rbx
@@ -2272,8 +2343,10 @@ opt_w:
     call text_width
     add eax, [rip + g_mt + 4*MI_32]
     add eax, [rip + g_mt + 4*MI_8]
-    mov ecx, [rip + g_mt + 4*MI_64]   # long options are cut
+    mov ecx, [rip + g_mt + 4*MI_64]   # long options are cut, also to the card's width
     imul ecx, ecx, 6
+    cmp ecx, r12d
+    cmovg ecx, r12d
     cmp eax, ecx
     cmovg eax, ecx
     EPILOGUE
@@ -2526,11 +2599,39 @@ card_draw:
     push r10
     call ui_text_v_fit
     add rsp, 16
-    # the options, wrapping
-    mov r12d, [rsp]
-    add r12d, [rip + g_mt + 4*MI_24]   # x
+    # the options, wrapping; scrolled by rows so the selected one shows in a card that is cut
+    mov eax, [rsp + 12]
+    sub eax, [rip + g_mt + 4*MI_40]
+    sub eax, [rip + g_mt + 4*MI_12]
+    mov ecx, [rip + g_mt + 4*MI_32]
+    add ecx, [rip + g_mt + 4*MI_6]
+    mov [rsp + 32], ecx                # a row's height
+    cdq
+    idiv ecx
+    cmp eax, 1
+    jge 5f
+    mov eax, 1
+5:  mov [rsp + 28], eax                # rows that fit
+    mov rdi, rbx
+    mov esi, [rsp + 8]
+    mov rdx, [rbx + AXK_sel]
+    call opt_row
+    sub eax, [rsp + 28]
+    inc eax                            # the first row shown
+    jge 6f
+    xor eax, eax
+6:  imul eax, [rsp + 32]
     mov r13d, [rsp + 4]
     add r13d, [rip + g_mt + 4*MI_40]   # y
+    mov ecx, r13d
+    mov [rsp + 36], ecx                # the options' top
+    sub r13d, eax
+    mov eax, [rsp + 4]
+    add eax, [rsp + 12]
+    sub eax, [rip + g_mt + 4*MI_8]
+    mov [rsp + 40], eax                # their bottom
+    mov r12d, [rsp]
+    add r12d, [rip + g_mt + 4*MI_24]   # x
     mov eax, [rsp]
     add eax, [rsp + 8]
     sub eax, [rip + g_mt + 4*MI_24]
@@ -2541,6 +2642,9 @@ card_draw:
     jae 9f
     mov rdi, rbx
     mov rsi, r14
+    mov edx, [rsp + 16]
+    sub edx, [rsp]
+    sub edx, [rip + g_mt + 4*MI_24]
     call opt_w
     mov [rsp + 20], eax
     mov ecx, [rsp]
@@ -2554,7 +2658,13 @@ card_draw:
     add r12d, [rip + g_mt + 4*MI_24]
     add r13d, [rip + g_mt + 4*MI_32]
     add r13d, [rip + g_mt + 4*MI_6]
-1:  lea edi, [r14 + ID_AI_CARD]
+1:  cmp r13d, [rsp + 36]
+    jl 4f                              # scrolled away
+    mov eax, r13d
+    add eax, [rip + g_mt + 4*MI_32]
+    cmp eax, [rsp + 40]
+    jg 4f                              # past the cut
+    lea edi, [r14 + ID_AI_CARD]
     mov esi, r12d
     mov edx, r13d
     mov ecx, [rsp + 20]
@@ -2567,7 +2677,12 @@ card_draw:
     M ecx, MI_32
     M r8d, MI_RADIUS
     COLOR r9d, T_BORDER
-    COLOR eax, T_INPUT
+    cmp qword ptr [rbx + AXK_kb], 0
+    je 21f
+    cmp r14, [rbx + AXK_sel]
+    jne 21f
+    COLOR r9d, T_ACCENT                # the option the arrow keys chose
+21: COLOR eax, T_INPUT
     test dword ptr [rsp + 24], UB_HOVER
     jz 2f
     COLOR eax, T_HOVER

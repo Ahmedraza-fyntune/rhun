@@ -4,6 +4,8 @@ calls routed to a tool's extension (started when idle) and answered back, the us
 for tools that change anything (Allow once, Allow for this session, Deny), and the rhun.* tools.
 Both extensions are Python programs; nothing talks to a real agent."""
 import json
+import os
+import sys
 import unittest
 
 host = __import__('ext-host')
@@ -221,6 +223,21 @@ class Tools(unittest.TestCase):
         self.assertIn('error 2 cancelled the tool\'s extension stopped', self.answers())
         self.assertIn('error 3 cancelled the tool\'s extension stopped', self.answers())
         self.assertFalse(any(l.startswith('call ') for l in out), out)
+
+    @unittest.skipUnless(sys.platform == 'darwin' and os.path.exists('/usr/bin/sandbox-exec'), 'macOS sandbox')
+    def test_a_call_survives_the_unconfined_retry(self):
+        # Codex review: inside a sandbox, sandbox_init refuses the extension's profile and rhun starts
+        # it again unconfined; the call waiting for that start must still be sent and answered
+        wrapper = self.work / 'sandboxed-rhun'
+        wrapper.write_text("#!/bin/sh\nexec /usr/bin/sandbox-exec -p '(version 1)(allow default)' "
+                           f"{host.EXE} \"$@\"\n")
+        wrapper.chmod(0o755)
+        exe, host.EXE = host.EXE, wrapper
+        try:
+            self.go(['cmd acme/agent.search', 'wait 500', 'wait 500', 'wait 500'])
+        finally:
+            host.EXE = exe
+        self.assertIn('ok 1 search for acme/agent: how to fold', self.answers())
 
     def test_unknown_tools(self):
         self.go(['cmd acme/agent.nosuch', 'wait 300'])
