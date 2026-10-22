@@ -2844,6 +2844,7 @@ ag_write:
     mov rsi, rdx
     call parse_octal
     mov [rsp], eax              # mode
+    mov dword ptr [rsp + 4], 0  # made by this request (create only)
     mov edi, 4
     call ag_num
     mov r15, rax                # path length
@@ -2869,6 +2870,7 @@ ag_write:
     call file_write_all
     jmp 7f
 .Law_new:
+    mov dword ptr [rsp + 4], 1  # made here: a failed write removes it
     lea rdi, [rip + ag_path]
     mov esi, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
     mov edx, [rsp]
@@ -2904,7 +2906,13 @@ ag_write:
     mov r13, rax
     mov edi, ebx
     SYS SYS_close
-    mov rax, r13
+    test r13, r13
+    jns 6f
+    cmp dword ptr [rsp + 4], 0
+    je 6f
+    lea rdi, [rip + ag_path]    # the file it made and could not fill (no room): not left behind
+    SYS SYS_unlink
+6:  mov rax, r13
 7:  mov rdi, r12
     mov rsi, rax
     call ag_reply

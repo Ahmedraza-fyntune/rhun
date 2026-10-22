@@ -1202,10 +1202,12 @@ FN remote_disconnect
     sub rsp, 8
     cmp dword ptr [rip + g_remote_state], RS_UP
     jne 1f
+    mov dword ptr [rip + rm_ending], 1  # the loss the wait may see is this one: programs end
     call rm_quit_call
-    mov dword ptr [rip + rm_ending], 1
+    cmp dword ptr [rip + g_remote_state], RS_UP
+    jne 2f                      # the transport ended while it waited: handled as this ending
     call rm_lost
-    mov dword ptr [rip + rm_ending], 0
+2:  mov dword ptr [rip + rm_ending], 0
 1:  add rsp, 8
     ret
 
