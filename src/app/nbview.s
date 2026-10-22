@@ -125,6 +125,9 @@ FN nb_cell_height
     mov ecx, [rbx + NBC_edit]   # a markup cell shows its source in edit mode, else rendered
     shl rcx, 61
     xor rax, rcx
+    mov ecx, [rbx + NBC_kind]   # and code or markup (m, y)
+    shl rcx, 59
+    xor rax, rcx
     mov ecx, [rip + g_face_gen]
     shl rcx, 48
     xor rax, rcx
@@ -407,7 +410,7 @@ FN nb_draw
     jz 8f
     mov qword ptr [rip + g_nb_more_ou], 0
     call nb_output_tab
-8:
+8:  call nb_md_link_after       # a link clicked: last, it may close the notebook (nbmd.s)
 .Lnd_ret:
     mov rdi, [rip + nv_text]
     test rdi, rdi

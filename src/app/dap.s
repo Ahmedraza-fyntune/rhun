@@ -346,6 +346,8 @@ FN dap_start
 .Lst_compound:
     # compound = A | B: each configuration starts in turn, the next once nothing waits for the
     # user or an extension (compound_next, from the tick)
+    cmp dword ptr [rip + cq_starting], 0
+    jne .Lst_inner              # a compound naming a compound (itself, say)
     cmp qword ptr [rip + cq + SB_len], 0
     jne .Lst_nested
     lea rdi, [rip + cq]
@@ -359,6 +361,9 @@ FN dap_start
     EPILOGUE
 .Lst_nested:
     lea rdi, [rip + .Lm_compound]
+    jmp .Lst_msg
+.Lst_inner:
+    lea rdi, [rip + .Lm_compound_in]
     jmp .Lst_msg
 .Lst_server:
     # server = HOST:PORT (or PORT): connect to an adapter that runs already
@@ -381,7 +386,10 @@ FN dap_start
     mov rdi, [rip + g_dstart_msg]
     jmp .Lst_msg
 .Lst_tcp:
-    # a free loopback port for ${port}; the adapter listens there and rhun connects
+    # a free loopback port for ${port}; the adapter listens there and rhun connects. In a remote
+    #   window the adapter would listen on the host, which this connection does not reach yet
+    cmp dword ptr [rip + g_remote], 0
+    jne .Lst_tcpremote
     call dap_pick_port
     test eax, eax
     js .Lst_noport
@@ -390,6 +398,9 @@ FN dap_start
     jmp .Lst_cmd
 .Lst_noport:
     lea rdi, [rip + .Lm_noport]
+    jmp .Lst_msg
+.Lst_tcpremote:
+    lea rdi, [rip + .Lm_tcpremote]
     jmp .Lst_msg
 .Lst_noneeds:
     lea rdi, [rip + .Lm_noneeds]
@@ -446,6 +457,9 @@ compound_next:
     call dbgx_resolving
     test eax, eax
     jnz 9f
+    call dask_waiting           # a launch's question on screen: its answer starts it first
+    test eax, eax
+    jnz 9f
     xor ebx, ebx
 1:  cmp ebx, DS_MAX
     jae 2f
@@ -497,10 +511,12 @@ compound_next:
     call memmove
     cmp qword ptr [rip + cqname + SB_len], 0
     je 9f
+    mov dword ptr [rip + cq_starting], 1
     mov rdi, [rip + cqname + SB_ptr]
     mov rsi, [rip + cqname + SB_len]
     mov edx, [rip + cq_nodebug]
     call dap_start
+    mov dword ptr [rip + cq_starting], 0
 9:  EPILOGUE
 
 # sb_set_cq(sb, ptr, len)
@@ -3384,7 +3400,21 @@ make_chunks:
     call vn_node
     mov [rax + VN_kid0], r13d
     mov [rax + VN_nkids], r14d
-    mov dword ptr [rip + g_dirty], 1
+    # the ones open at the last stop open again (as r_variables does for an adapter's children)
+    xor r15d, r15d
+1:  cmp r15d, r14d
+    jae 9f
+    lea esi, [r13 + r15]
+    mov rdi, rbx
+    call node_was_open
+    test eax, eax
+    jz 2f
+    lea esi, [r13 + r15]
+    mov rdi, rbx
+    call vn_expand
+2:  inc r15d
+    jmp 1b
+9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
 # add_chunks(ds, parent, start, count) -> eax the chunk nodes added: [start..start+count) in ranges
@@ -3613,18 +3643,31 @@ r_setvar:
     pop rcx
     mov [rax + VN_type], ecx
     mov [rax + VN_typelen], edx
-3:  mov rdi, r13
+3:  # its children: the answer's reference (none when it has no variablesReference: a list set to
+    #   42 loses its elements), asked for again when opened
+    mov rdi, r13
     lea rsi, [rip + .Lk_variablesReference]
     call jint
     test edx, edx
-    jz 4f
-    mov [rsp], rax
+    jnz 31f
+    xor eax, eax
+31: mov [rsp], rax
+    mov rdi, r13
+    lea rsi, [rip + .Lk_indexedVariables]
+    call jint
+    test edx, edx
+    jnz 32f
+    xor eax, eax
+32: mov [rsp + 8], eax
     mov rdi, rbx
     mov esi, r14d
     call vn_node
     mov rcx, [rsp]
     mov [rax + VN_ref], rcx
-    mov dword ptr [rax + VN_kid0], -1     # its children are asked for again
+    mov ecx, [rsp + 8]
+    mov [rax + VN_indexed], ecx
+    mov dword ptr [rax + VN_kid0], -1
+    mov dword ptr [rax + VN_nkids], 0
     and dword ptr [rax + VN_flags], ~VNF_EXPANDED
 4:  # watches may show it too
     mov rdi, rbx
@@ -3952,6 +3995,8 @@ send_watches:
     PROLOGUE
     mov rbx, rdi
     inc dword ptr [rbx + DS_wgen]       # this session's round
+    mov eax, [rip + g_dwlist]
+    mov [rbx + DS_wlist], eax
     cmp dword ptr [rbx + DS_state], DSS_PAUSED
     jne 9f
     mov rdi, rbx
@@ -4151,11 +4196,21 @@ FN dap_watch_remove
 
 # refresh_watches(): the focused session's watch roots are dropped and asked for again
 refresh_watches:
-    PROLOGUE
+    sub rsp, 8
+    inc dword ptr [rip + g_dwlist]      # the list changed
     call dap_focused
+    add rsp, 8
     test rax, rax
-    jz 9f
-    mov rbx, rax
+    jz 1f
+    mov rdi, rax
+    jmp watches_again
+1:  ret
+
+# watches_again(ds): that session's watch roots are dropped and asked for again (the list may have
+#   changed while another session had the focus)
+watches_again:
+    PROLOGUE
+    mov rbx, rdi
     cmp dword ptr [rbx + DS_state], DSS_PAUSED
     jne 9f
     # watch roots are only hidden (the pool keeps indices stable): mark them stale-free by flag
@@ -4715,10 +4770,14 @@ FN dap_focus_slot
     mov [rip + g_dfocus], edi
     inc dword ptr [rip + g_dap_gen]
     mov dword ptr [rip + g_dirty], 1
-    # its watches, evaluated again (one added while another session had the focus)
+    # its watches, evaluated again when one was added or removed while another session had the
+    #   focus (its old roots dropped); else they stay as they are
     call dap_slot
+    mov ecx, [rip + g_dwlist]
+    cmp ecx, [rax + DS_wlist]
+    je 9f
     mov rdi, rax
-    call send_watches
+    call watches_again
 9:  EPILOGUE
 
 # dap_focus_thread(ds, thread id): another thread of the paused program is the focused one: its
@@ -5217,6 +5276,8 @@ chunkb: .zero SB_SIZE           # a chunk's name
 cqname: .zero SB_SIZE           # the one starting
 cq_nodebug: .long 0
 hover_seq: .long 0              # the latest hover evaluation's number
+cq_starting: .long 0            # 1 while compound_next starts one of a compound's configurations
+g_dwlist: .long 0               # the watch list's version: bumped by each add and remove
 .p2align 3
 dstart_oid: .quad 0
 dstart_resolved: .long 0        # 1: debug-resolve answered for this launch
@@ -5231,9 +5292,11 @@ g_dstart_msg: .quad 0           # why the last dap_start* could not make a sessi
 dap_m_busy:
 .Lm_busy: .asciz "a debug session is waiting for your answer"
 .Lm_compound: .asciz "a compound configuration starts while another one is still starting"
+.Lm_compound_in: .asciz "a compound's configurations cannot be compounds themselves"
 .Lm_preparing: .asciz "a launch is being prepared by its debugger's extension"
 .Lm_badserver: .asciz "server must be PORT or HOST:PORT, with HOST localhost or an IPv4 address"
 .Lm_noport: .asciz "no free TCP port on 127.0.0.1 for the debugger"
+.Lm_tcpremote: .asciz "this debugger is reached over TCP (transport = tcp), which rhun does not do in a remote window yet"
 .Lm_nosocket: .asciz "rhun could not create a TCP socket for the debugger"
 .Lm_noconn: .asciz "the debugger did not accept a connection on "
 .Lm_noconn2: .asciz " in 10 s"
@@ -5464,4 +5527,4 @@ state_names:
     .quad .Ls_ended, .Ls_connecting, .Ls_approval
 ds_buffers:
     .quad DS_launch, DS_rbuf, DS_wq, DS_ebuf, DS_etail, DS_filters, DS_threads, DS_frames
-    .quad DS_vars, DS_strs, DS_args, DS_expanded, DS_prevvals, -1
+    .quad DS_vars, DS_strs, DS_args, DS_expanded, DS_prevvals, DS_obuf, -1

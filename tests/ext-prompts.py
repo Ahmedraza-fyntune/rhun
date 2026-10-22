@@ -65,7 +65,7 @@ while True:
         elif text.startswith('slow'):
             pass                                # never answered: rhun gives up after a while
         elif text.startswith('deferred'):
-            deferred.append(f[0])               # refused when the refuse command runs
+            deferred.append((f[0], f[2], text))  # answered when the refuse or accept command runs
         elif text.startswith('unlisted'):
             send(f'ok {f[0]} 2', b'zz')         # a session it never lists
         elif f[2] == '-':
@@ -96,7 +96,16 @@ while True:
             request('agent-ask nosuch', b'Q\nA')
             request('agent-ask s1', b'Too many\n' + b'\n'.join(b'o%d' % i for i in range(17)))
         elif name == 'refuse':
-            send(f'error {deferred.pop()} refused not now')
+            send(f'error {deferred.pop()[0]} refused not now')
+        elif name == 'accept':
+            i, sid, text = deferred.pop()
+            sid = f's{len(sessions) + 1}'
+            sessions[sid] = ['working', text, [msg('user', text)]]
+            listing()
+            send(f'ok {i} {len(sid)}', sid.encode())
+        elif name == 'bigask':
+            opts = b'\n'.join(b'Option %d with a fairly long label so that the card wraps' % i for i in range(1, 17))
+            asks.append(request('agent-ask s1', b'Pick one of many\n' + opts))
         elif name == 'drop':
             del sessions['s1']
             listing()
@@ -121,7 +130,7 @@ class Prompts(unittest.TestCase):
         (folder / 'extension.ini').write_text(
             'name = gem\nowner = acme\ntitle = Gem Bridge\nversion = 1\nprotocol = 1\n'
             'runtime = python3\nrun = main.py\n[commands]\nask = Ask\nreask = Ask again\nwithdraw = Withdraw\n'
-            'bad = Bad\ndrop = Drop\nrefuse = Refuse\n[provides]\nagents = yes\nagents.title = Gemini CLI\n')
+            'bad = Bad\ndrop = Drop\nrefuse = Refuse\naccept = Accept\nbigask = Big ask\n[provides]\nagents = yes\nagents.title = Gemini CLI\n')
         (folder / 'main.py').write_text(f'HELLO = {json.dumps(hello)}\n' + PROGRAM)
         return root
 
@@ -268,6 +277,24 @@ class Prompts(unittest.TestCase):
                            'print-agent-input'])
         self.assertEqual(self.inputs(out), ['input= focus=0 new=acme/gem pending=0',
                                             'input= focus=1 new=acme/gem pending=0'])
+
+    def test_every_option_of_a_cut_card_is_reachable_by_keys(self):
+        # Codex review: 16 long options do not fit and 1 to 9 stop at 9; the arrow keys reach them
+        out = self.editor(['cmd focus_agents', 'print-agents 1', 'wait 300', 'cmd acme/gem.bigask', 'wait 300',
+                           *['key Down'] * 15, 'key Return', 'wait 300', 'print-agent-input'])
+        self.assertIn('ok 2 16', self.agent_log())
+        self.assertEqual(out[-1], 'input= focus=0 new=- pending=0')
+
+    def test_text_typed_while_a_new_session_starts_stays_in_its_box(self):
+        out = self.editor(['agent-new acme/gem', 'agent-prompt deferred first', 'wait 100', 'type more',
+                           'cmd acme/gem.accept', 'wait 300', 'wait 300', 'print-agents', 'print-agent-input'])
+        self.assertEqual(out[-2:], ['user deferred first', 'input=more focus=1 new=- pending=0'])
+
+    def test_a_late_answer_does_not_open_over_a_new_draft(self):
+        out = self.editor(['agent-new acme/gem', 'agent-prompt deferred first', 'wait 100', 'key Escape',
+                           'key Escape', 'agent-new acme/gem', 'type another', 'cmd acme/gem.accept', 'wait 300',
+                           'wait 300', 'print-agent-input'])
+        self.assertEqual(out[-1], 'input=another focus=1 new=acme/gem pending=0')
 
     def test_without_the_feature_there_is_no_box(self):
         out = self.editor(['print-agents 1', 'wait 300', 'cmd acme/gem.ask', 'wait 300',

@@ -46,6 +46,7 @@ F SP_pad, 4
 F SP_ta, 8              # TA records for the tree's inline buttons, one per action (owned), "aN" keys
 F SP_nta, 8
 F SP_tblob, 8           # their keys and titles (owned)
+F SP_gen, 8             # updates taken: a menu opened before the latest one runs nothing
 F SP_tf, TF_SIZE        # the message box
 ENDSTRUCT SP_SIZE
 
@@ -102,6 +103,8 @@ tmp: .zero SB_SIZE
 rb: .zero SB_SIZE
 menu_items: .zero 16 * (SP_ITEM_ACT_MAX + 2)
 menu_sp: .quad 0                # the provider and the actions of the open menu
+menu_gen: .quad 0               # its SP_gen then
+parse_rootlen: .quad 0          # the root's length of the provider an update is parsed for
 menu_act: .zero 4 * SP_ITEM_ACT_MAX
 menu_path: .zero SB_SIZE        # its resource's path, absolute, a cstr ("" for a group)
 handle_seq: .long 0
@@ -111,10 +114,12 @@ xrec: .zero SB_SIZE             # a node's "inline LEN" record
 ikeys: .zero SB_SIZE            # and its keys
 diffsb: .zero SB_SIZE           # the diff a click opens
 dname: .zero 4200               # its file's name, a cstr
-diff_doc: .quad 0               # the document whose base a click waits for, its provider, the
-diff_sp: .quad 0                #   resource and its path's offset in the provider's body
-diff_res: .quad 0
-diff_off: .quad 0
+diff_doc: .quad 0               # the document whose base a click waits for, its provider, and
+diff_sp: .quad 0                #   the resource's path
+diff_plen: .quad 0
+diff_path: .zero 4096
+dtabs: .zero 32 * 24            # diff tabs a click opened: doc id, provider (SP*), its handle and
+dtab_n: .quad 0                 #   the file's absolute path (owned) packed: id, sp, path ptr
 title_line: .zero SB_SIZE       # "scm OWNER/NAME ROOT": the header buttons' target
 
 .text
@@ -310,6 +315,8 @@ FN scmext_h_update
     test rax, rax
     jz 9f
     mov r15, rax
+    mov rax, [r15 + SP_rootlen]
+    mov [rip + parse_rootlen], rax
     call extproto_body
     mov rdi, rax
     mov rsi, rdx
@@ -723,6 +730,40 @@ parse_update:
     jmp 4b
 5:  cmp rdi, r14
     jne 8f
+    call dup_groups
+    test eax, eax
+    jnz 8f
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# dup_groups() -> eax 1 when two of parse's groups have the same id (their rows would collide)
+dup_groups:
+    PROLOGUE
+    mov r12, [rip + parse + SP_grp + VEC_ptr]
+    mov r13, [rip + parse + SP_grp + VEC_len]
+    xor ebx, ebx
+1:  inc rbx
+    cmp rbx, r13
+    jae 8f
+    xor r14d, r14d
+2:  cmp r14, rbx
+    jae 1b
+    imul rdi, rbx, GR_SIZE
+    add rdi, r12
+    imul rcx, r14, GR_SIZE
+    add rcx, r12
+    inc r14
+    mov rsi, [rdi + GR_idlen]
+    cmp rsi, [rcx + GR_idlen]
+    jne 2b
+    mov rdx, rsi
+    mov rsi, [rcx + GR_id]
+    mov rdi, [rdi + GR_id]
+    call memeq
+    test eax, eax
+    jz 2b
     mov eax, 1
     EPILOGUE
 8:  xor eax, eax
@@ -959,7 +1000,9 @@ parse_resource:
     jc 8f
     test rax, rax
     jz 8f
-    cmp rax, 4095
+    mov rcx, [rip + parse_rootlen]
+    lea rcx, [rcx + rax + 1]
+    cmp rcx, 4095               # ROOT/PATH is a path rhun can open and name in a menu
     ja 8f
     mov [rsp + 8], rax
     call num_eol                # NREC
@@ -1304,6 +1347,7 @@ take_update:
 51: inc rcx
     jmp 5b
 6:  call parse_drop
+    inc qword ptr [r15 + SP_gen]
     mov rdi, r15
     call build_table
     mov rdi, r15
@@ -1476,6 +1520,8 @@ build_tree:
     call tree_kid_x
     add rsp, 16
     mov r14d, eax
+    test eax, eax
+    js 11f                      # (ids are checked unique: never)
     mov rdi, rbx
     mov esi, r14d
     mov edx, [r13 + GR_nres]
@@ -1485,7 +1531,7 @@ build_tree:
     mov rdx, r12
     bts rdx, 32                 # a group: its index with bit 32
     call tree_set_user
-    inc r12
+11: inc r12
     jmp 1b
 2:  mov rdi, rbx
     xor esi, esi
@@ -1509,6 +1555,8 @@ build_tree:
     mov rsi, [rip + tmp + SB_ptr]
     mov rdx, [rip + tmp + SB_len]
     call tree_find
+    test eax, eax
+    jle 81f
     mov rdi, rbx
     mov esi, eax
     call tree_kids_begin
@@ -1527,7 +1575,7 @@ build_tree:
 8:  mov rdi, rbx
     xor esi, esi
     call tree_kids_end
-    inc r12
+81: inc r12
     jmp 3b
 9:  EPILOGUE
 
@@ -1578,6 +1626,8 @@ res_node:
     call tree_kid_x
     add rsp, 16
     mov r14d, eax
+    test eax, eax
+    js 9f                       # the path is listed twice in the group: the first one shows
     mov rdi, rbx
     mov esi, r14d
     mov edx, [rsp]
@@ -1632,7 +1682,7 @@ res_node:
     mov rdx, [rip + tmp + SB_ptr]
     mov rcx, [rip + tmp + SB_len]
     call tree_set_desc
-    EPILOGUE
+9:  EPILOGUE
 
 # build_table(sp): the resources' paths and their folders, for the explorer's letters and colors
 build_table:
@@ -1860,9 +1910,10 @@ FN scm_root_ext
     lea rax, [rdx + 1]
     cmp r13, rax
     jb 1b
-    je 2f
+    cmp rdx, 1
+    je 2f                       # the root "/" holds every path
     cmp byte ptr [r12 + rdx], '/'
-    jne 1b
+    jne 1b                      # /repo/sub does not hold /repo/subX
 2:  push rcx
     push rdx
     mov rdi, r12
@@ -1993,7 +2044,25 @@ sp_draw:
     cmp dword ptr [r15 + SP_inbox], 0
     jne 41f
     mov r9d, 1
-41: mov rdi, [r15 + SP_tree]
+41: # a press in the tree takes the keyboard from the message box
+    test dword ptr [rip + g_pressed], 1 << BTN_LEFT | 1 << BTN_RIGHT
+    jz 42f
+    cmp dword ptr [r15 + SP_inbox], 0
+    je 42f
+    mov [rsp + 40], edx
+    mov [rsp + 44], r8d
+    mov edi, [rsp]
+    mov esi, edx
+    mov edx, [rsp + 8]
+    mov ecx, r8d
+    call ui_in
+    mov edx, [rsp + 40]
+    mov r8d, [rsp + 44]
+    test eax, eax
+    jz 42f
+    mov dword ptr [r15 + SP_inbox], 0
+    mov r9d, 1
+42: mov rdi, [r15 + SP_tree]
     mov esi, [rsp]
     mov ecx, [rsp + 8]
     call tree_draw
@@ -2261,10 +2330,12 @@ activate_res:
 5:  mov rcx, [rax + DOC_id]
     mov [rip + diff_doc], rcx
     mov [rip + diff_sp], r15
-    mov [rip + diff_res], rbx
-    mov rcx, [rbx + RS_path]
-    sub rcx, [r15 + SP_body]
-    mov [rip + diff_off], rcx       # the resource, by its path's place in the body (it may change)
+    # the resource by its path: an update may replace the records before the base comes
+    lea rdi, [rip + diff_path]
+    mov rsi, [rbx + RS_path]
+    mov rcx, [rbx + RS_plen]
+    mov [rip + diff_plen], rcx
+    rep movsb
     jmp 9f
 4:  mov rdi, r12
     call app_open_path          # not a file it can open as text
@@ -2353,31 +2424,36 @@ open_base_diff:
     lea rdi, [rip + tmp]
     xor esi, esi
     call sb_push_byte
-    xor ebx, ebx
-1:  cmp rbx, [rip + g_tabs + VEC_len]
+    # the tab this provider's click opened for this file, by that identity (titles may repeat)
+    mov rdi, r15
+    mov rsi, rbx
+    call res_abs
+    mov r14, rax
+    xor r12d, r12d
+1:  cmp r12, [rip + dtab_n]
     jae 3f
-    mov rdi, rbx
-    inc rbx
-    call tab_at
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    imul r13, r12, 24
+    lea rax, [rip + dtabs]
+    add r13, rax
+    inc r12
+    cmp [r13 + 8], r15
     jne 1b
-    mov r13, [rax + TAB_doc]
-    test r13, r13
-    jz 1b
-    cmp qword ptr [r13 + DOC_diff], 0
-    je 1b
-    mov rdi, [r13 + DOC_name]
-    test rdi, rdi
-    jz 1b
-    mov rsi, [rip + tmp + SB_ptr]
+    mov rdi, [r13 + 16]
+    mov rsi, r14
     call strcmp_eq
     test eax, eax
     jz 1b
-    mov rdi, r13
+    mov rdi, [r13]
+    call tab_of_doc_id
+    test eax, eax
+    js 1b                       # closed since
+    mov [rsp + 16], eax
+    call tab_at
+    mov rdi, [rax + TAB_doc]
     mov rsi, [rip + diffsb + SB_ptr]
     mov rdx, [rip + diffsb + SB_len]
     call wsdiff_show
-    lea rdi, [rbx - 1]
+    mov edi, [rsp + 16]
     call app_activate_tab
     jmp 7f
 3:  mov rdi, [rip + tmp + SB_ptr]
@@ -2385,7 +2461,66 @@ open_base_diff:
     mov rdx, [rip + diffsb + SB_len]
     mov ecx, 1
     call wsdiff_tab
+    mov rdi, rax
+    mov rsi, r15
+    mov rdx, r14
+    call dtab_note
 7:  mov eax, 1
+    EPILOGUE
+
+# tab_of_doc_id(id) -> eax the tab showing that document, or -1
+tab_of_doc_id:
+    PROLOGUE
+    mov r12, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + g_tabs + VEC_len]
+    jae 8f
+    mov rdi, rbx
+    inc rbx
+    call tab_at
+    cmp qword ptr [rax + TAB_kind], TAB_DOC
+    jne 1b
+    mov rax, [rax + TAB_doc]
+    test rax, rax
+    jz 1b
+    cmp [rax + DOC_id], r12
+    jne 1b
+    lea eax, [rbx - 1]
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
+
+# dtab_note(doc, sp, path cstr): remember which provider's file a new diff tab shows (32 kept: the
+#   oldest goes)
+dtab_note:
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov rdi, r14
+    call strlen
+    mov rdi, r14
+    mov rsi, rax
+    call mem_dup
+    mov r15, rax
+    cmp qword ptr [rip + dtab_n], 32
+    jb 1f
+    mov rdi, [rip + dtabs + 16]
+    call mem_free
+    lea rdi, [rip + dtabs]
+    lea rsi, [rip + dtabs + 24]
+    mov ecx, 31 * 24
+    rep movsb
+    dec qword ptr [rip + dtab_n]
+1:  mov rax, [rip + dtab_n]
+    imul rax, rax, 24
+    lea rcx, [rip + dtabs]
+    add rax, rcx
+    mov rdx, [r12 + DOC_id]
+    mov [rax], rdx
+    mov [rax + 8], r13
+    mov [rax + 16], r15
+    inc qword ptr [rip + dtab_n]
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -2406,25 +2541,70 @@ FN scmpanel_base_ready
     jz 9f
     cmp qword ptr [r12 + DOC_qbase], 0
     je 9f
-    # the resource is found again by its path's place in the body: the panel may have been updated
-    mov rbx, [rip + diff_res]
-    mov rcx, [r15 + SP_res + VEC_ptr]
-    cmp rbx, rcx
-    jb 9f
-    mov rax, [r15 + SP_res + VEC_len]
-    imul rax, rax, RS_SIZE
-    add rax, rcx
-    cmp rbx, rax
+    # the resource is found again by its path: the panel may have been updated meanwhile
+    xor r13d, r13d
+1:  cmp r13, [r15 + SP_res + VEC_len]
     jae 9f
-    mov rax, [rbx + RS_path]
-    sub rax, [r15 + SP_body]
-    cmp rax, [rip + diff_off]
-    jne 9f
+    imul rbx, r13, RS_SIZE
+    add rbx, [r15 + SP_res + VEC_ptr]
+    inc r13
+    mov rdx, [rbx + RS_plen]
+    cmp rdx, [rip + diff_plen]
+    jne 1b
+    mov rdi, [rbx + RS_path]
+    lea rsi, [rip + diff_path]
+    call memeq
+    test eax, eax
+    jz 1b
     mov rdi, r15
     mov rsi, rbx
     mov rdx, r12
     call open_base_diff
 9:  EPILOGUE
+
+# FN scmpanel_field() -> rax the message box of the focused provider section while it has the
+#   keyboard (clipboard routing, app.s), or 0
+FN scmpanel_field
+    PROLOGUE
+    call place_focused
+    mov edi, eax
+    call place_at
+    test rax, rax
+    jz 8f
+    mov rcx, [rax + PL_ops]
+    lea rdx, [rip + sp_place_ops]
+    cmp rcx, rdx
+    jne 8f
+    mov rax, [rax + PL_ctx]
+    cmp qword ptr [rax + SP_ext], 0
+    je 8f
+    cmp dword ptr [rax + SP_inbox], 0
+    je 8f
+    add rax, SP_tf
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# FN scmpanel_paste(ptr, len) -> eax 1 when the text went into a provider's message box, line breaks
+#   kept
+FN scmpanel_paste
+    PROLOGUE
+    mov r12, rdi
+    mov r13, rsi
+    cmp dword ptr [rip + g_focus], FOCUS_VIEW
+    jne 8f
+    call scmpanel_field
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call ta_insert
+    mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # sp_tree_action(sp, tr, node, key, keylen): one of a row's inline buttons ("aN": action N)
 sp_tree_action:
@@ -2526,6 +2706,8 @@ sp_menu:
     mov r12, rsi
     mov r13d, edx
     mov [rip + menu_sp], r15
+    mov rax, [r15 + SP_gen]
+    mov [rip + menu_gen], rax
     mov dword ptr [rip + menu_n], 0
     lea rdi, [rip + menu_path]
     call sb_clear
@@ -2730,6 +2912,9 @@ menu_run:
     jz 9f
     cmp qword ptr [rdi + SP_ext], 0
     je 9f
+    mov rax, [rdi + SP_gen]
+    cmp rax, [rip + menu_gen]
+    jne 9f                      # an update replaced the actions the menu showed
     cmp rsi, [rdi + SP_act + VEC_len]
     jae 9f
     jmp run_action
@@ -2782,6 +2967,19 @@ sp_free:
     mov qword ptr [rip + diff_sp], 0
     mov qword ptr [rip + diff_doc], 0
 3:
+    # its diff tabs are no one's now (the slot may hold another provider later)
+    xor ecx, ecx
+4:  cmp rcx, [rip + dtab_n]
+    jae 5f
+    imul rax, rcx, 24
+    lea rdx, [rip + dtabs]
+    add rax, rdx
+    inc rcx
+    cmp [rax + 8], r15
+    jne 4b
+    mov qword ptr [rax + 8], 0
+    jmp 4b
+5:
     cmp [rip + menu_sp], r15
     jne 2f
     mov qword ptr [rip + menu_sp], 0

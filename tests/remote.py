@@ -83,7 +83,8 @@ class Remote(unittest.TestCase):
         base = Path(cls.tmp.name)
         # the host for docker exec, with a project
         docker('rm', '-f', HOST, check=False)
-        docker('run', '-d', '--platform', 'linux/amd64', '--name', HOST, IMAGE, 'sleep', 'infinity')
+        docker('run', '-d', '--platform', 'linux/amd64', '--name', HOST, '--tmpfs', '/root/small:size=50m', IMAGE,
+               'sleep', 'infinity')
         docker('exec', HOST, 'sh', '-c',
                'mkdir -p /root/proj/src/deep /root/proj/node_modules && cd /root/proj && '
                'printf "hello\\nworld\\n" > a.txt && printf "fn main() {\\n    let needle = 1;\\n}\\n" > src/main.rs && '
@@ -372,6 +373,19 @@ class Remote(unittest.TestCase):
                        'ls | grep -c rhun-save').stdout.decode()
         self.assertEqual(check.split(), ['600', 'link', 'Za', 'keep', '1'], check)
         docker('exec', HOST, 'sh', '-c', 'cd /root/proj && rm -f big*')
+
+    def test_a_big_save_that_fills_the_disk_leaves_nothing(self):
+        """The first part of a save over 32 MB fails for want of room (a 50 MB tmpfs holding a 36 MB
+        file): the temporary file it made goes, the file stays as it was."""
+        docker('exec', HOST, 'sh', '-c', 'cd /root/small && rm -f big* && head -c 36000000 /dev/zero | tr "\\0" a '
+               '| fold -w 99 > big.txt')
+        out = self.run_script('docker:' + HOST, '/root/small',
+                              ['wait-remote 90', 'open /root/small/big.txt', 'wait 4000', 'key ctrl+Home',
+                               'type Z', 'key ctrl+s', 'wait 6000', 'print-state'], timeout=240)
+        self.assertIn(' dirty=1 ', out)
+        check = docker('exec', HOST, 'sh', '-c', 'cd /root/small && ls && head -c 2 big.txt').stdout.decode()
+        self.assertEqual(check.split(), ['big.txt', 'aa'], check)
+        docker('exec', HOST, 'sh', '-c', 'rm -f /root/small/big*')
 
     def test_changes_made_while_disconnected_reach_open_files(self):
         """A file of the host changed while the connection was down is compared once it is back (no
