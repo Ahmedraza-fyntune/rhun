@@ -196,7 +196,7 @@ add_messages:
     lea rax, [rip + path]
     mov [rip + pr + PR_path], rax
     lea rdi, [rip + path]
-    mov rsi, [r14 + TSM_ver]
+    lea rsi, [r14 + TSM_ver]
     mov edx, [r14 + TSM_l1]
     call tg_map_path
     mov [rip + pr + PR_line], eax
@@ -209,7 +209,7 @@ add_messages:
     cmp eax, [r14 + TSM_c2]
     je 5f
 4:  lea rdi, [rip + path]
-    mov rsi, [r14 + TSM_ver]
+    lea rsi, [r14 + TSM_ver]
     mov edx, [r14 + TSM_l2]
     call tg_map_path
     mov [rip + pr + PR_endline], eax
@@ -378,25 +378,34 @@ tg_map:
 8:  xor eax, eax
 9:  EPILOGUE
 
-# testgutter_map_path / tg_map_path(path cstr, version, line) -> eax the line moved through the edits of the file's open
-#   document since that version; the line as it is when the file is not open or the tape does not
-#   reach back
+# testgutter_map_path / tg_map_path(path cstr, key*, line) -> eax the line moved through the edits of
+#   the file's open document since the version the key names; the line as it is when the file is
+#   not open or the tape does not reach back. A key of no document or of one closed since (the file
+#   was reopened) becomes this document's version now, so later edits move the line
 FN testgutter_map_path
 tg_map_path:
     PROLOGUE
     mov r12, rsi
     mov r13d, edx
-    test rsi, rsi
-    js 8f
     call app_find_tab
     test rax, rax
     js 8f
     mov rdi, rax
     call tab_at
-    mov rdi, [rax + TAB_doc]
-    test rdi, rdi
+    mov rbx, [rax + TAB_doc]
+    test rbx, rbx
     jz 8f
-    mov rsi, r12
+    mov rdi, rbx
+    mov rsi, [r12]
+    call key_ver
+    test rax, rax
+    jns 1f
+    mov rdi, rbx
+    call doc_key
+    mov [r12], rax
+    jmp 8f
+1:  mov rdi, rbx
+    mov rsi, [r12]
     mov edx, r13d
     call tg_map
     test eax, eax
@@ -473,6 +482,7 @@ FN testgutter_glyphs
 3:  cmp r12, [rip + tg_doc_max]
     jbe 4f
     mov dword ptr [rip + g_ts_glyphs], 1
+    mov dword ptr [rip + g_ts_marks], 1     # its failures' places take its version now
 4:  mov eax, [rip + cfg_test_gutter]     # [testing] gutter changed: set again (or cleared)
     cmp eax, [rip + tg_cfg_seen]
     je 40f
@@ -805,7 +815,14 @@ cov_cache:
     call key_ver
     mov r13, rax
     test rax, rax
-    js 9f
+    jns 21f
+    mov rdi, rbx                # first seen in this document (or the file was reopened): its
+    call doc_key                #   lines are the document's now, and later edits move them
+    mov rsi, rax
+    mov rdi, r12
+    call testcover_set_ver
+    jmp 9f
+21:
     cmp rax, [rbx + DOC_version]
     je 9f
     mov rdi, [rbx + DOC_nlines]

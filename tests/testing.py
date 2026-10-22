@@ -446,6 +446,19 @@ class Testing(unittest.TestCase):
         self.assertIn('line=7 glyph=failed item=go:example/pkg.TestB', after)
         self.assertIn('cov=3:C,5:C,6:P,7:C', after)
 
+    def test_a_reopened_file_moves_coverage_and_failures_with_edits(self):
+        # covered and failed, closed, opened again unchanged, a line typed at the top: the tints, the
+        # failure's mark and Go to Failure all move down a line
+        p = self.proj / 'a_test.go'
+        out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'wait 100', 'cmd close_tab',
+                               'open ' + p.as_posix(), 'wait 200', 'cmd goto_line', 'type 1', 'key Return',
+                               'type //top', 'key Return', 'wait 100', 'echo @edited', 'print-gutter', 'print-marks',
+                               'test-select testsfake go:example/pkg.TestB', 'test-action failure', 'print-state'])
+        after = out[out.index('@edited'):]
+        self.assertIn('cov=4:C,6:C,7:P,8:C', after)
+        self.assertIn('9 2 9 7 error problems:Fake Tests TestB: Greet mismatch', after)
+        self.assertIn(' line=9 col=5 ', [l for l in after if l.startswith('tabs=')][-1])
+
     def test_idle_after_coverage_draws_nothing(self):
         out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'wait 500', 'print-frames',
                                'wait 1500', 'print-frames'])
