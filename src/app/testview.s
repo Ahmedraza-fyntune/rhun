@@ -821,7 +821,7 @@ FN testview_action
     test rdi, rdi
     jz 9b
     mov r14d, [rax + TSI_c1]
-    mov rsi, [rax + TSI_ver]
+    lea rsi, [rax + TSI_ver]
     mov edx, [rax + TSI_l1]
     push rdi
     push rdi
@@ -885,7 +885,7 @@ FN testview_action
     call mem_dup
     mov r14, rax
     mov rdi, rax                # its line moved through the edits since it came
-    mov rsi, [r13 + TSM_ver]
+    lea rsi, [r13 + TSM_ver]
     mov edx, [r13 + TSM_l1]
     call testgutter_map_path
     mov r12d, eax
