@@ -1913,6 +1913,8 @@ ENDSTRUCT GR_SIZE
 .equ GF_OPS, 64
 .equ GF_COLON, 128          # indent after a line ending with ":"
 .equ GF_USER, 256           # from ~/.config/rhun/syntax: its language keys win over extensions'
+.equ GF_COLON_SET, 512      # colon_indent is in the file (yes or no)
+.equ GF_IDENT_SET, 1024     # ident is in the file
 
 # lc_type's plan for a typed character (langconf.s)
 STRUCT

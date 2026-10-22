@@ -388,7 +388,10 @@ FN grammar_fill
     mov r8d, GF_COLON
     call .Lgp_flag
     test eax, eax
-    jnz .Lgp_next
+    jz 12f
+    or qword ptr [rbx + GR_flags], GF_COLON_SET    # its no counts too (langconf.s)
+    jmp .Lgp_next
+12:
     # language configuration: brackets, autoclose, indent_open, continue, fold_markers ... (langconf.s)
     mov rdi, rbx
     mov rsi, [rsp + 112 + INI_key]
@@ -632,6 +635,7 @@ FN grammar_fill
     mov [rcx + LR_class], eax
     jmp .Lgp_next
 .Lgp_ident:
+    or qword ptr [rbx + GR_flags], GF_IDENT_SET
     lea rdi, [rbx + GR_identx]
     jmp 10f
 .Lgp_prefix:

@@ -100,13 +100,12 @@ ith_load:
     cmp qword ptr [rip + ith_list + VEC_len], ITH_THEMES_MAX
     jae 9f
     mov rdi, r12
-    call file_read_all
+    mov esi, ITH_FILE_MAX       # a larger file is refused before its bytes are read
+    call file_read_limited
     test rax, rax
     jz 9f
     mov r14, rax
     mov r15, rdx
-    cmp r15, ITH_FILE_MAX
-    ja 8f
     lea rdi, [rip + ith_list]
     mov esi, ITH_SIZE
     call vec_push
