@@ -19,12 +19,12 @@ EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 class Agent:
     """One agent process and a reader for its stream."""
 
-    def __init__(self, home, env_extra=None, session=None):
+    def __init__(self, home, env_extra=None, session=None, preexec=None):
         env = {'HOME': str(home), 'PATH': '/usr/local/bin:/usr/bin:/bin', 'SHELL': '/bin/sh',
                'USER': 'tester'}
         env.update(env_extra or {})
         args = [str(EXE), '--remote-agent'] + (['--session', session] if session else [])
-        self.p = subprocess.Popen(args, stdin=subprocess.PIPE,
+        self.p = subprocess.Popen(args, preexec_fn=preexec, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         self.buf = b''
         self.next_id = 1
@@ -440,6 +440,29 @@ class RemoteAgent(unittest.TestCase):
         while (self.home / '.cache/rhun-remote/s' / sid).exists() and time.time() < end:
             time.sleep(0.05)
         self.assertFalse((self.home / '.cache/rhun-remote/s' / sid).exists())
+
+    def test_a_create_that_cannot_be_filled_leaves_nothing(self):
+        """write 2 (create only, a multipart save's first part) that runs out of room removes the file
+        it made; one that finds a file there leaves it alone (EEXIST). The room: RLIMIT_FSIZE."""
+        import resource
+        import signal
+
+        def small_files():
+            resource.setrlimit(resource.RLIMIT_FSIZE, (1 << 20, 1 << 20))
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+        a = Agent(self.home, preexec=small_files)
+        try:
+            path = str(self.home / 'big.rhun-save').encode()
+            data = b'x' * (2 << 20)
+            kind, err = a.call('write 2 0644 %d' % len(path), path + data)
+            self.assertEqual(kind, 'error')
+            self.assertFalse((self.home / 'big.rhun-save').exists())
+            (self.home / 'big.rhun-save').write_text('keep')
+            kind, err = a.call('write 2 0644 %d' % len(path), path + b'y')
+            self.assertEqual((kind, err), ('error', 17))
+            self.assertEqual((self.home / 'big.rhun-save').read_text(), 'keep')
+        finally:
+            a.close()
 
     def test_a_confinement_failure_survives_a_reattach(self):
         """The child failed to confine itself while no window was attached: attach lists the code

@@ -514,6 +514,8 @@ def on_command(name):
         patch(views['setup'], [rec('form', '200', b''.join(frec(f'j{i}', 'text', 1 + i, 1, 'J') for i in range(200)))])
     elif name == 'formgrow' and views.get('setup'):           # 195 new keys in one patch: 201
         patch(views['setup'], [rec('field', '', frec(f'g{i}', 'text', 5, 1, 'G')) for i in range(195)])
+    elif name == 'formsame' and views.get('setup'):           # 195 ops on one new key: 7 fields
+        patch(views['setup'], [rec('field', '', frec('g', 'text', 5, 1, f'G{i}')) for i in range(195)])
     elif name == 'formdup' and views.get('setup'):
         patch(views['setup'], [rec('form', '2', frec('a', 'text', 1, 1, 'A') + frec('a', 'text', 2, 1, 'A'))])
     elif name == 'formwrap' and views.get('setup'):

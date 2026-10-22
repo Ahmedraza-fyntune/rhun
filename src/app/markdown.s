@@ -85,6 +85,11 @@ F MD_sb, 4
 F MD_sbo, 4
 F MD_sel, 4             # 1 while there is a selection (it may be empty)
 F MD_drag, 4            # the left button selects
+F MD_slugs, SB_SIZE     # its headings' slugs, made once (build_slugs): the bytes
+F MD_slugv, VEC_SIZE    # and per heading: offset, length, block (u32 each, 16 bytes)
+F MD_slugh, 8           # an open-addressing table of MD_slugv index + 1
+F MD_slughcap, 4
+F MD_slugdone, 4
 F MD_imgs, VEC_SIZE     # MDM: images, resolved when first laid out
 ENDSTRUCT MD_SIZE
 
@@ -312,6 +317,12 @@ FN md_free
     jmp 1b
 2:  lea rdi, [rbx + MD_imgs]
     call vec_free
+    lea rdi, [rbx + MD_slugs]
+    call sb_free
+    lea rdi, [rbx + MD_slugv]
+    call vec_free
+    mov rdi, [rbx + MD_slugh]
+    call mem_free
     mov rdi, [rbx + MD_base]
     call mem_free
     mov rdi, rbx
@@ -774,11 +785,12 @@ FN md_y_line
     jmp 1b
 9:  ret
 
-# md_anchor(m, ptr, len) -> eax the top of the heading whose slug (GitHub's rule: lowercase, letters,
-#   digits, - and _ kept, spaces to -, other ASCII left out; a slug used before gets -1, -2, ... in
-#   document order) is the text, -1 for none; a leading # is left out
+# md_anchor(m, ptr, len) -> eax the top of the heading whose slug is the text (a leading # left
+#   out), -1 for none. Slugs follow GitHub: lowercase, letters, digits, - and _ kept, spaces to -,
+#   other ASCII left out; a slug already given (a suffixed one too) gets -1, -2, ... until it is
+#   new, in document order. They are made once per document and found by hash.
 FN md_anchor
-    PROLOGUE 16
+    PROLOGUE
     mov rbx, rdi
     mov r12, rsi
     mov r13, rdx
@@ -788,65 +800,163 @@ FN md_anchor
     jne 1f
     inc r12
     dec r13
-1:  xor r14d, r14d              # block
-2:  cmp r14, [rbx + MD_blocks + VEC_len]
-    jae 8f
-    imul rax, r14, MDB_SIZE
-    add rax, [rbx + MD_blocks + VEC_ptr]
-    cmp dword ptr [rax + MDB_type], MDB_HEAD
-    jne 7f
-    mov rdi, rbx                # its slug
-    mov esi, r14d
-    lea rdx, [rip + slug_buf]
-    call heading_slug
-    xor r15d, r15d              # the headings before it with the same slug
-    mov dword ptr [rsp], 0
-3:  cmp r15d, r14d
-    jae 5f
-    imul rax, r15, MDB_SIZE
-    add rax, [rbx + MD_blocks + VEC_ptr]
-    cmp dword ptr [rax + MDB_type], MDB_HEAD
-    jne 4f
+1:  cmp dword ptr [rbx + MD_slugdone], 0
+    jne 2f
     mov rdi, rbx
-    mov esi, r15d
-    lea rdx, [rip + slug_buf2]
-    call heading_slug
-    mov rcx, [rip + slug_buf + SB_len]
-    cmp rcx, [rip + slug_buf2 + SB_len]
-    jne 4f
-    mov rdi, [rip + slug_buf + SB_ptr]
-    mov rsi, [rip + slug_buf2 + SB_ptr]
-    test rcx, rcx
-    jz 31f
-    repe cmpsb
-    jne 4f
-31: inc dword ptr [rsp]
-4:  inc r15d
-    jmp 3b
-5:  cmp dword ptr [rsp], 0
-    je 6f
-    lea rdi, [rip + slug_buf]
-    mov esi, '-'
-    call sb_push_byte
-    lea rdi, [rip + slug_buf]
-    mov esi, [rsp]
-    call sb_push_u64
-6:  mov rdi, [rip + slug_buf + SB_ptr]
-    mov rsi, [rip + slug_buf + SB_len]
-    cmp rsi, r13
-    jne 7f
-    mov rcx, r13
+    call build_slugs
+2:  mov rdi, rbx
     mov rsi, r12
-    test rcx, rcx
-    jz 61f
-    repe cmpsb
-    jne 7f
-61: imul rax, r14, MDB_SIZE
+    mov rdx, r13
+    call slug_find
+    test eax, eax
+    js 8f
+    shl rax, 4
+    add rax, [rbx + MD_slugv + VEC_ptr]
+    mov eax, [rax + 8]          # its block
+    imul rax, rax, MDB_SIZE
     add rax, [rbx + MD_blocks + VEC_ptr]
     mov eax, [rax + MDB_y]
     EPILOGUE
-7:  inc r14
-    jmp 2b
+8:  mov eax, -1
+    EPILOGUE
+
+# build_slugs(m): every heading's slug, unique in document order, into MD_slugs/slugv/slugh
+build_slugs:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov dword ptr [rbx + MD_slugdone], 1
+    xor ecx, ecx                # headings: the table twice as big, a power of two
+    xor edx, edx
+1:  cmp rdx, [rbx + MD_blocks + VEC_len]
+    jae 2f
+    imul rax, rdx, MDB_SIZE
+    add rax, [rbx + MD_blocks + VEC_ptr]
+    cmp dword ptr [rax + MDB_type], MDB_HEAD
+    jne 11f
+    inc ecx
+11: inc rdx
+    jmp 1b
+2:  lea ecx, [rcx + rcx + 2]
+    mov eax, 16
+3:  cmp eax, ecx
+    jae 4f
+    shl eax, 1
+    jmp 3b
+4:  mov [rbx + MD_slughcap], eax
+    mov rdi, rax
+    shl rdi, 2
+    call mem_alloc
+    mov [rbx + MD_slugh], rax
+    mov rdi, rax
+    xor esi, esi
+    mov edx, [rbx + MD_slughcap]
+    shl edx, 2
+    call memset
+    xor r14d, r14d              # block
+5:  cmp r14, [rbx + MD_blocks + VEC_len]
+    jae 9f
+    imul rax, r14, MDB_SIZE
+    add rax, [rbx + MD_blocks + VEC_ptr]
+    cmp dword ptr [rax + MDB_type], MDB_HEAD
+    jne 8f
+    mov rdi, rbx                # its base slug
+    mov esi, r14d
+    lea rdx, [rip + slug_buf]
+    call heading_slug
+    xor r15d, r15d              # the suffix tried: none, then 1, 2, ...
+6:  lea rdi, [rip + slug_buf2]
+    call sb_clear
+    lea rdi, [rip + slug_buf2]
+    mov rsi, [rip + slug_buf + SB_ptr]
+    mov rdx, [rip + slug_buf + SB_len]
+    call sb_push
+    test r15d, r15d
+    jz 61f
+    lea rdi, [rip + slug_buf2]
+    mov esi, '-'
+    call sb_push_byte
+    lea rdi, [rip + slug_buf2]
+    mov esi, r15d
+    call sb_push_u64
+61: mov rdi, rbx
+    mov rsi, [rip + slug_buf2 + SB_ptr]
+    mov rdx, [rip + slug_buf2 + SB_len]
+    call slug_find
+    test eax, eax
+    js 7f
+    inc r15d
+    jmp 6b
+7:  lea rdi, [rbx + MD_slugv]   # given: its entry, its bytes, its place in the table
+    mov esi, 16
+    call vec_push
+    mov r12, rax
+    mov rcx, [rbx + MD_slugs + SB_len]
+    mov [r12], ecx
+    mov rcx, [rip + slug_buf2 + SB_len]
+    mov [r12 + 4], ecx
+    mov [r12 + 8], r14d
+    lea rdi, [rbx + MD_slugs]
+    mov rsi, [rip + slug_buf2 + SB_ptr]
+    mov rdx, [rip + slug_buf2 + SB_len]
+    call sb_push
+    mov rdi, [rip + slug_buf2 + SB_ptr]
+    mov rsi, [rip + slug_buf2 + SB_len]
+    call tree_id_hash
+    mov ecx, [rbx + MD_slughcap]
+    dec ecx
+    and eax, ecx
+    mov rdx, [rbx + MD_slugh]
+71: cmp dword ptr [rdx + rax*4], 0
+    je 72f
+    inc eax
+    and eax, ecx
+    jmp 71b
+72: mov rsi, [rbx + MD_slugv + VEC_len]   # its index + 1
+    mov [rdx + rax*4], esi
+8:  inc r14
+    jmp 5b
+9:  EPILOGUE
+
+# slug_find(m, ptr, len) -> eax the MD_slugv index of that slug, or -1
+slug_find:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    cmp qword ptr [rbx + MD_slugh], 0
+    je 8f
+    mov rdi, r12
+    mov rsi, r13
+    call tree_id_hash
+    mov r14d, [rbx + MD_slughcap]
+    dec r14d
+    and eax, r14d
+    mov r15d, eax
+1:  mov rax, [rbx + MD_slugh]
+    mov eax, [rax + r15*4]
+    test eax, eax
+    jz 8f
+    dec eax
+    mov ecx, eax
+    shl rax, 4
+    add rax, [rbx + MD_slugv + VEC_ptr]
+    mov edx, [rax + 4]
+    cmp rdx, r13
+    jne 2f
+    mov esi, [rax]
+    add rsi, [rbx + MD_slugs + SB_ptr]
+    mov rdi, r12
+    push rcx
+    mov rcx, r13
+    cmp rcx, rcx                # equal when empty
+    repe cmpsb
+    pop rcx
+    jne 2f
+    mov eax, ecx
+    EPILOGUE
+2:  inc r15d
+    and r15d, r14d
+    jmp 1b
 8:  mov eax, -1
     EPILOGUE
 
@@ -2773,6 +2883,9 @@ inline_runs_more:
     mov dword ptr [rip + in_style], 0
     mov dword ptr [rip + in_link], -1
     mov dword ptr [rip + in_depth], 0
+    mov qword ptr [rip + hc_mem], 0         # has_closer's memory is for one text
+    mov qword ptr [rip + hc_mem + 32], 0
+    mov qword ptr [rip + hc_mem + 64], 0
     jmp inline_parse
 
 # run_mark(style): a run without text (a hard break, a cell's end)

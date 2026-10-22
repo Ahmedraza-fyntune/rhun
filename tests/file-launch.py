@@ -119,6 +119,17 @@ class FileLaunch(unittest.TestCase):
         self.assertEqual(self.run_editor([self.a], ['cmd toggle_whitespace', 'print-panels']), [HIDDEN])
         self.assertEqual((self.setting('sidebar'), self.setting('agents_panel')), ('true', 'true'))
 
+    def test_a_workspace_file_on_the_files_folder_makes_a_project(self):
+        """resources group: a workspace whose first folder is the launched file's folder promotes it as
+        Open Folder does (panels back), then its folders join"""
+        ws = self.home / 'work/team.rhun-workspace'
+        ws.write_text(f'[folders]\npath = {self.alpha.as_posix()}\npath = {self.beta.as_posix()}\n',
+                      encoding='utf-8')
+        out = self.run_editor([self.a], ['print-panels', f'open {ws.as_posix()}', 'wait 200', 'print-panels',
+                                         'print-folders'])
+        self.assertEqual(out[:2], [HIDDEN, SHOWN], out)
+        self.assertEqual([l.split(' ')[1] for l in out if l.startswith('folder=')], ['name=alpha', 'name=beta'])
+
     def test_toggles_bring_the_panels_back(self):
         before = self.config.read_bytes()
         out = self.run_editor([self.a], ['cmd toggle_sidebar', 'print-panels',

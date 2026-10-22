@@ -239,6 +239,21 @@ class Tools(unittest.TestCase):
             host.EXE = exe
         self.assertIn('ok 1 search for acme/agent: how to fold', self.answers())
 
+    def test_more_calls_after_the_owner_stopped_with_its_dialog_open(self):
+        # Codex review (round 4): closing the dialog re-entered the tick, which freed the call twice;
+        # later calls crashed rhun
+        self.go(['cmd acme/agent.search', 'wait 500', 'wait 500', 'cmd acme/agent.write', 'wait 300',
+                 'ext-set acme/docs stop', 'wait 1000', 'ext-set acme/docs restart', 'wait 1000',
+                 'cmd acme/agent.search', 'wait 500', 'cmd acme/agent.write', 'wait 300', 'tool-confirm deny',
+                 'cmd acme/agent.search', 'wait 500', 'cmd acme/agent.search', 'wait 500', 'wait 300'])
+        answers = self.answers()
+        self.assertIn("error 2 cancelled the tool's extension stopped", answers)
+        self.assertEqual([a for a in answers if a.startswith('ok 3 ') or a.startswith('ok 5 ')
+                          or a.startswith('ok 6 ')], ['ok 3 search for acme/agent: how to fold',
+                                                      'ok 5 search for acme/agent: how to fold',
+                                                      'ok 6 search for acme/agent: how to fold'])
+        self.assertIn('error 4 refused denied by the user', answers)
+
     def test_unknown_tools(self):
         self.go(['cmd acme/agent.nosuch', 'wait 300'])
         self.assertEqual(self.answers(), ['error 1 refused no such tool', 'error 2 refused no such tool'])

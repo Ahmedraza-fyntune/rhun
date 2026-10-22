@@ -327,9 +327,15 @@ FN contrib_page_build
     test rax, rax
     jz 9f
     mov qword ptr [rip + cp_head], 0
-    sub qword ptr [rip + cp_n], 1   # the last row's place
-    jae 1f
-    mov qword ptr [rip + cp_n], 0
+    mov rax, [rip + cp_n]       # the last row's place and its text's room
+    test rax, rax
+    jz 1f
+    dec rax
+    mov [rip + cp_n], rax
+    imul rax, rax, CPR_SIZE
+    lea rcx, [rip + cp_rows]
+    mov eax, [rcx + rax + CPR_text]
+    mov [rip + cp_len], rax
 1:  inc qword ptr [rip + cp_more]
     lea rdi, [rip + .Lmore]
     call contrib_page_text

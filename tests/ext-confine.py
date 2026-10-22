@@ -5,10 +5,12 @@ Where the kernel cannot confine (no Landlock, as in Docker Desktop's VM or under
 --extensions session runs the program unconfined and says so: those cases are skipped, not
 passed. Run on a native x86-64 Linux or on macOS for the real thing."""
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 import sys
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -133,6 +135,65 @@ class Confine(host.Host):
         out = self.run_editor(drop_waits=True, actions=['cmd echo.toast', 'wait 1500', 'print-extensions'], exts=exts)
         self.skip_unless_confined(out[-1])
         self.assertIn('state=running', out[-1])
+
+    def wait_for_primers(self, cache, seconds=60):
+        """the cache once every primer is done: a primer outlives the rhun that started it"""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            staging = list(cache.parent.parent.glob(cache.parent.name + '.xcrun_db*'))
+            if cache.is_file() and not staging:
+                return cache.read_bytes()
+            time.sleep(0.2)
+        self.fail('no xcrun cache, or a primer still running: %s' % sorted(os.listdir(cache.parent.parent)))
+
+    def test_xcode_shim_caches_are_filled_at_rhuns_start(self):
+        # an extension that is on but not started yet: its cache is filled anyway, ahead of its
+        # first use of a shim
+        shims = self.xcode_shims(['git', 'clang', 'clangd', 'swift', 'sourcekit-lsp', 'lldb'])
+        if not shims:
+            self.skipTest('no Xcode shims here')
+        exts = self.manifest_variant('xcstart', **{'documents = write\nterminal = yes\nproject = read':
+                                                  'documents = read\nrun = ' + ' '.join(shims)})
+        out = self.run_editor(drop_waits=True, actions=['wait 500', 'print-extensions'], exts=exts)
+        self.assertNotIn('state=running', out[-1])
+        self.assertNotIn('state=starting', out[-1])
+        cache = self.wait_for_primers(self.work / 'state/rhun/extensions/rhun-tests--echo/xcrun_db')
+        for name in shims:
+            self.assertRegex(cache, rb'(^|[^a-z-])' + re.escape(name.encode()) + rb'\|/', name)
+
+    def test_two_windows_primers_stage_apart_and_leave_a_whole_cache(self):
+        # two rhun processes start together and each fills the same cache. A shared staging file
+        # let one primer move it away while the other was between tools, and the other then put a
+        # cache that lacked the earlier tools in its place: each stages STATE.xcrun_db.PID now
+        shims = self.xcode_shims(['git', 'clang', 'clangd', 'swift', 'sourcekit-lsp', 'lldb'])
+        if len(shims) < 2:
+            self.skipTest('fewer than two Xcode shims here')
+        exts = self.manifest_variant('xctwo', **{'documents = write\nterminal = yes\nproject = read':
+                                                'documents = read\nrun = ' + ' '.join(shims)})
+        script = self.work / 'two.rsc'
+        script.write_text('wait 2000\nquit\n', encoding='utf-8')
+        root = self.work / 'state/rhun/extensions'
+        runs, seen = [], set()
+        for _ in range(2):
+            runs.append(subprocess.Popen([str(host.EXE), self.proj.as_posix(), '--headless', '640x400', '--scale',
+                                          '1', '--extensions', str(exts), '--script', script.as_posix()],
+                                         env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            time.sleep(0.3)
+        end = time.monotonic() + 60
+        while time.monotonic() < end and (any(r.poll() is None for r in runs) or
+                                           list(root.glob('rhun-tests--echo.xcrun_db*'))):
+            for staged in root.glob('rhun-tests--echo.xcrun_db*'):
+                if not re.search(r'-[A-Za-z0-9]{8}$', staged.name):    # not xcrun's own temporary file
+                    seen.add(staged.name)
+            time.sleep(0.05)
+        for run in runs:
+            self.assertEqual(run.wait(timeout=60), 0)
+        self.assertEqual(len(seen), 2, seen)
+        for name in seen:
+            self.assertRegex(name, r'^rhun-tests--echo\.xcrun_db\.[0-9]+$')
+        cache = self.wait_for_primers(root / 'rhun-tests--echo/xcrun_db')
+        for name in shims:
+            self.assertRegex(cache, rb'(^|[^a-z-])' + re.escape(name.encode()) + rb'\|/', name)
 
     def test_disable_stops_and_keeps_it_stopped(self):
         out = self.run_editor(drop_waits=True, actions=['cmd echo.toast', 'wait-ext echo running', 'wait 300',

@@ -105,6 +105,20 @@ class Ghost(pres.Base):
         yy = y + 3 * 21                 # nothing past them
         self.assertFalse(self.differ(plain, ghost, yy))
 
+    def test_rows_below_the_last_line_scroll_into_view(self):
+        # without scroll_past_end the view stops at the end, which now ends with the ghost's rows
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text() + '[editor]\nscroll_past_end = false\n')
+        (self.proj / 'long.rs').write_text(''.join(f'let v{i} = {i};\n' for i in range(100)) + 'x', encoding='utf-8')
+        self.answer(body(item(101, 2, 101, 2, '1\nbbbb\ncccc')))
+        out = self.run_p(self.start() + ['key ctrl+End', 'wait 100', 'print-xy 101 1', 'cmd inline_complete', 'wait 200',
+                                         'print-present ghost', 'move 500 300', 'scroll 3000', 'wait 100',
+                                         'print-xy 101 1'], files=('long.rs',))
+        self.assertEqual(self.ghost(out), ['ghost 101:2 1\\nbbbb\\ncccc'])
+        (_, before), (_, after) = [tuple(map(int, l.split())) for l in out if len(l.split()) == 2 and l[0].isdigit()]
+        # up by the two rows below it, less the gap lines mode left under the last line
+        self.assertTrue(21 < before - after <= 2 * 21, (before, after))
+
     def differ(self, a, b, y):
         return any(pres.host.ppm_pixel(a, x, yy) != pres.host.ppm_pixel(b, x, yy)
                    for yy in range(y, y + 21, 2) for x in range(40, 140, 2))

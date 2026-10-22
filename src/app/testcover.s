@@ -578,6 +578,11 @@ FN testcover_ver
     mov rax, [rdi + CF_ver]
     ret
 
+# testcover_set_ver(CF*, key): the document version its lines refer to (testgutter.s's key)
+FN testcover_set_ver
+    mov [rdi + CF_ver], rsi
+    ret
+
 # testcover_count(CF*) -> rax the lines it has a byte for
 FN testcover_count
     mov rax, [rdi + CF_n]

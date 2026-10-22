@@ -80,6 +80,10 @@ ENDSTRUCT FM_SIZE
 rr_f: .zero RR_SIZE
 seen_p: .zero 8 * FM_FIELDS     # form_check: the keys a form op lists
 seen_l: .zero 8 * FM_FIELDS
+st_p: .zero 8 * FM_FIELDS       # form_check: the keys the patch adds so far (or a form op's keys)
+st_l: .zero 8 * FM_FIELDS
+st_n: .long 0
+st_live: .long 0                # 1: the form's live fields stay (no form op yet)
 evb: .zero SB_SIZE
 tsb: .zero SB_SIZE
 rec_key: .quad 0                # a field record being read: its parts
@@ -378,6 +382,8 @@ extra_check:
 
 # form_check_begin(FM*): a patch's checking starts (its ops are counted together)
 FN form_check_begin
+    mov dword ptr [rip + st_n], 0   # no key staged; the live fields count
+    mov dword ptr [rip + st_live], 1
     test rdi, rdi
     jz 9f
     mov dword ptr [rdi + FM_pend], -1
@@ -443,28 +449,73 @@ FN form_check
     jne 8f
     cmp r15d, FM_FIELDS
     ja 7f
-    mov [rbx + FM_pend], r15d   # what the patch leaves after it
-    xor eax, eax
+    mov [rbx + FM_pend], r15d   # what the patch leaves after it: exactly its keys
+    mov [rip + st_n], r15d
+    mov dword ptr [rip + st_live], 0
+    xor ecx, ecx
+31: cmp ecx, r15d
+    jae 32f
+    lea rax, [rip + seen_p]
+    mov rdx, [rax + rcx*8]
+    lea rax, [rip + st_p]
+    mov [rax + rcx*8], rdx
+    lea rax, [rip + seen_l]
+    mov rdx, [rax + rcx*8]
+    lea rax, [rip + st_l]
+    mov [rax + rcx*8], rdx
+    inc ecx
+    jmp 31b
+32: xor eax, eax
     EPILOGUE
 4:  cmp r15d, 1
     jne 8f
-    # a new key: too many when the patch's ops so far leave 200
-    mov eax, [rbx + FM_pend]
-    test eax, eax
-    jns 41f
-    mov eax, [rbx + FM_n]
-41: mov [rsp], eax
+    # its key: already there (live, or staged by an earlier op), else one more of at most 200
+    cmp dword ptr [rip + st_live], 0
+    je 42f
     mov rdi, rbx
     mov rsi, [rip + rec_key]
     mov rdx, [rip + rec_keylen]
     call field_find
     cmp eax, -1
     jne 5f
-    cmp dword ptr [rsp], FM_FIELDS
+42: xor ecx, ecx
+43: cmp ecx, [rip + st_n]
+    jae 44f
+    lea rax, [rip + st_l]
+    mov rdx, [rax + rcx*8]
+    cmp rdx, [rip + rec_keylen]
+    jne 45f
+    lea rax, [rip + st_p]
+    mov rdi, [rax + rcx*8]
+    mov rsi, [rip + rec_key]
+    push rcx
+    push rcx
+    mov rcx, rdx
+    repe cmpsb
+    pop rcx
+    pop rcx
+    je 5f
+45: inc ecx
+    jmp 43b
+44: mov eax, [rip + st_n]       # new: the fields it leaves
+    cmp dword ptr [rip + st_live], 0
+    je 46f
+    add eax, [rbx + FM_n]
+46: cmp eax, FM_FIELDS
     jae 7f
-    inc dword ptr [rsp]
-5:  mov eax, [rsp]
-    mov [rbx + FM_pend], eax
+    mov ecx, [rip + st_n]
+    lea rax, [rip + st_p]
+    mov rdx, [rip + rec_key]
+    mov [rax + rcx*8], rdx
+    lea rax, [rip + st_l]
+    mov rdx, [rip + rec_keylen]
+    mov [rax + rcx*8], rdx
+    inc dword ptr [rip + st_n]
+5:  mov eax, [rip + st_n]
+    cmp dword ptr [rip + st_live], 0
+    je 51f
+    add eax, [rbx + FM_n]
+51: mov [rbx + FM_pend], eax
     xor eax, eax
     EPILOGUE
 7:  mov eax, 2

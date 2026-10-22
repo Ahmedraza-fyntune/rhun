@@ -198,6 +198,21 @@ class Editors(unittest.TestCase):
         opened = [l for l in self.log_of('edflip') if ' editor-open ' in l]
         self.assertEqual(len(opened), 2, (out, self.log_of('edflip')))
 
+    def test_a_restore_survives_a_restart_before_it_opened(self):
+        bak, note = self.backup_paths(self.flip)
+        bak.parent.mkdir(parents=True)
+        bak.write_bytes(b'restored')
+        note.write_text(self.flip.as_posix())
+        # the program ends and starts again while editor-open (from the backup) waits for its answer
+        out = self.run_editor(['ext-set rhun-tests/edflip disabled 1', 'ext-set rhun-tests/edflip disabled 0',
+                               *SETTLE, 'wait 3000', 'print-custom', 'key ctrl+s', *SETTLE, 'print-custom'],
+                              mode='slowopen')
+        opened = [l for l in self.log_of('edflip') if ' editor-open ' in l]
+        self.assertEqual(len(opened), 2, (out, opened))
+        self.assertTrue(all(' owned backup ' in l for l in opened), opened)
+        self.assertEqual([field(x, 'dirty') for x in customs(out)], ['1', '0'], out)
+        self.assertEqual(self.flip.read_bytes(), b'restored')
+
     def test_revert_of_a_restored_model_reads_the_file(self):
         bak, note = self.backup_paths(self.flip)
         bak.parent.mkdir(parents=True)

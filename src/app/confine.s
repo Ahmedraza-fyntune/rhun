@@ -51,6 +51,7 @@ conf_prime_env: .zero 5 * 8
 conf_prime_names: .zero 1024
 conf_prime_xdb: .zero 4200      # "xcrun_db=" and the primer's own cache, beside the state folder
 conf_prime_dst: .zero 4200      # the extension's cache, where the primer's goes when it is done
+conf_primed: .zero 64 * 8       # the caches a primer was started for in this session (copies)
 interpbuf: .zero 4200           # a #! interpreter's real path (profile_program)
 treebuf: .zero 4200             # and its install tree
 elfhdr: .zero 256               # an ELF header, or a #! line (macOS reads 512 bytes of it, Linux 256)
@@ -1050,9 +1051,12 @@ xcode_shim:
 # which cannot read its plug-in cache or the Xcode preferences there: seconds of work each time,
 # long enough for an extension's own timeout to kill git first, and then the cache is never
 # written. Outside it is a second or so, once; the cache then answers every later lookup. The
-# primer writes its cache beside the state folder, where the extension cannot reach, and renames
-# it into the state folder when done, so xcrun outside never reads what the extension wrote; HOME
-# is /var/empty, so nothing in the state folder steers xcodebuild.
+# primer writes its cache beside the state folder (STATE.xcrun_db.PID: two windows' primers never
+# share one), where the extension cannot reach, and renames it into the state folder when done, so
+# xcrun outside never reads what the extension wrote; HOME is /var/empty, so nothing in the state
+# folder steers xcodebuild. Priming starts at rhun's start for every extension that is on
+# (confine_prime), so the cache is there before an extension that starts later uses a shim, and
+# beside the spawn (prime_start) for one that has none yet when it starts.
 prime_note:
     PROLOGUE
     mov rbx, rdi
@@ -1140,15 +1144,31 @@ prime_note:
     rep movsb
 9:  EPILOGUE
 
-# prime_start(): after the extension's spawn, which it does not delay: a primer process that runs
-# xcrun --find for each tool prime_note kept, one after another, 30 s at most in all (a lookup
-# still running then is killed with its session: the shell and xcodebuild it started), moves its
-# cache into the state folder and ends. rhun reaps it (reap_later).
+# prime_start(): a primer process, which delays nothing: it runs xcrun --find for each tool
+# prime_note kept, one after another, 30 s at most in all (a lookup still running then is killed
+# with its session: the shell and xcodebuild it started), moves its cache into the state folder
+# and ends. rhun reaps it (reap_later). One per cache in a session.
 prime_start:
     PROLOGUE
     cmp dword ptr [rip + conf_prime], 1
     jne 9f
     mov dword ptr [rip + conf_prime], 2
+    lea rbx, [rip + conf_primed]
+    xor r12d, r12d
+2:  cmp r12d, 64
+    jae 9f                      # the list is full: no more primers this session
+    mov rdi, [rbx + r12*8]
+    test rdi, rdi
+    jz 3f
+    lea rsi, [rip + conf_prime_dst]
+    call strcmp_eq
+    test eax, eax
+    jnz 9f                      # one was started for this cache already
+    inc r12d
+    jmp 2b
+3:  lea rdi, [rip + conf_prime_dst]
+    call dup_cstr
+    mov [rbx + r12*8], rax
     SYS SYS_fork
     test rax, rax
     js 9f
@@ -1159,10 +1179,23 @@ prime_start:
 1:  # the primer: no terminal, none of rhun's descriptors (the extension's pipes among them)
     SYS SYS_setsid
     call prime_quiet
+    # its own cache: STATE.xcrun_db.PID
+    lea rdi, [rip + conf_prime_xdb]
+    call strlen
+    lea rbx, [rip + conf_prime_xdb]
+    add rbx, rax
+    mov byte ptr [rbx], '.'
+    SYS SYS_getpid
+    lea rdi, [rbx + 1]
+    mov esi, eax
+    call fmt_u64
+    mov byte ptr [rdi], 0
     call prime_xcrun
     lea rdi, [rip + conf_prime_xdb + 9]     # past "xcrun_db="
     lea rsi, [rip + conf_prime_dst]
     SYS SYS_rename              # rename never follows a link the extension may have put there
+    lea rdi, [rip + conf_prime_xdb + 9]
+    SYS SYS_unlink              # when the rename failed
     # the end, without the exit handlers of the program it was forked from
     SYS SYS_getpid
     mov edi, eax
@@ -1170,6 +1203,32 @@ prime_start:
     SYS SYS_kill
     mov edi, 127
     SYS SYS_exit
+
+# confine_prime(ext): at rhun's start, for an extension that is on: a primer for the Xcode shims
+# its run list names, when its xcrun cache is missing (prime_note), so the cache is there by its
+# first use. Its state folder is made for the primer's cache to go in.
+FN confine_prime
+    PROLOGUE
+    mov rbx, rdi
+    cmp dword ptr [rbx + EXT_manifest_ok], 0
+    je 9f
+    cmp dword ptr [rbx + EXT_disabled], 0
+    jne 9f
+    cmp qword ptr [rbx + EXT_prog], 0
+    je 9f
+    cmp qword ptr [rbx + EXT_state], 0
+    je 9f
+    mov [rip + conf_ext], rbx
+    call profile_build          # finds the shims as for a start (the profile is not used)
+    cmp dword ptr [rip + conf_prime], 1
+    jne 8f
+    mov rdi, [rbx + EXT_state]
+    call mkdir_p
+    call prime_start
+8:  mov dword ptr [rip + conf_prime], 2
+    lea rdi, [rip + conf_profile]
+    call sb_clear
+9:  EPILOGUE
 
 # prime_quiet(): standard input, output and error on /dev/null, every other descriptor closed
 prime_quiet:

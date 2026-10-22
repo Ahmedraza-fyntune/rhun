@@ -13,6 +13,8 @@
 #   print-ext-browse                      extpage_browse_dump
 #   ext-browse-install NAME               the entry's Install or Update button
 #   print-ext-slots                       "slots=N": the records in the extension table
+#   print-ext-page-more                   print-ext-page and protocol 1.1's lines (updates=, badge=,
+#                                         pack, versions): print-ext-page itself keeps v1's form
 .include "rhun.inc"
 
 .bss
@@ -321,6 +323,15 @@ c_print_slots:
     call sb_push_byte
     XM_DONE
 
+# print-ext-page-more
+c_print_page_more:
+    XM_ARGS
+    PROLOGUE
+    call xm_flush
+    mov rdi, [rip + xm_out]
+    call extpage_dump_more
+    XM_DONE
+
 # xm_rec_pair(" key=", record key): " key=VALUE" (or "-") for rbx's record
 xm_rec_pair:
     PROLOGUE
@@ -371,6 +382,7 @@ xm_rec_pair:
 .Lc_browse_install: .asciz "ext-browse-install"
 .Lno_button: .asciz "no such button\n"
 .Lc_print_slots: .asciz "print-ext-slots"
+.Lc_print_page_more: .asciz "print-ext-page-more"
 .Lp_slots: .asciz "slots="
 .Lsp_link: .asciz " link"
 .Lsp_copy: .asciz " copy"
@@ -395,5 +407,5 @@ extmgr_ctl:
     .quad .Lc_print_updates, c_print_updates, .Lc_update, c_update, .Lc_update_all, c_update_all
     .quad .Lc_browse, c_browse, .Lc_index_refresh, c_index_refresh, .Lc_wait_index, c_wait_index
     .quad .Lc_search, c_search, .Lc_print_browse, c_print_browse, .Lc_browse_install, c_browse_install
-    .quad .Lc_print_slots, c_print_slots
+    .quad .Lc_print_slots, c_print_slots, .Lc_print_page_more, c_print_page_more
     .quad 0, 0

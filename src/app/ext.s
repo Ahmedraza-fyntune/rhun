@@ -1710,6 +1710,18 @@ FN ext_init
     mov [rip + ext_manifest_cmds], rax
     call ext_settings_load
     call scmext_providers_changed   # source control (wider-parity C): commit-message providers
+.ifdef MACOS
+    # confinement: the xcrun caches of the extensions that are on, filled ahead of their first use
+    xor r12d, r12d
+4:  cmp r12, [rip + g_exts + VEC_len]
+    jae 5f
+    imul rdi, r12, EXT_SIZE
+    add rdi, [rip + g_exts + VEC_ptr]
+    inc r12
+    call confine_prime
+    jmp 4b
+5:
+.endif
     EPILOGUE
 
 # owner_cb(ctx, name, is_dir): one owner folder

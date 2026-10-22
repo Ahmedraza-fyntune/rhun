@@ -731,10 +731,13 @@ ce_lost_tick:
     PROLOGUE
     mov rbx, rdi
     mov dword ptr [rbx + CE_lost], 0
-    xor r12d, r12d              # its changes are in a backup
+    mov r12d, 1                 # its changes are in a backup: it was opening one (a restore)...
+    cmp dword ptr [rbx + CE_restore], 0
+    jne 1f
+    xor r12d, r12d
     cmp dword ptr [rbx + CE_dirty], 0
     je 1f
-    cmp dword ptr [rbx + CE_bkdone], 0
+    cmp dword ptr [rbx + CE_bkdone], 0      # ...or it said dirty and was backed up since
     je 1f
     mov r12d, 1
 1:  mov rax, [rbx + CE_ext]

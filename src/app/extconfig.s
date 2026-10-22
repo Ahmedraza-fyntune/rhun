@@ -46,6 +46,7 @@ ecf_name: .zero 160             # an extension's "owner/name"
 ecf_num: .zero 32               # a number written out
 ecf_stamps: .zero 8 * (ECF_FOLDERS + 2)
 ecf_project: .quad 0            # g_project when last read
+ecf_ws_gen: .quad 0             # g_ws_gen when last read
 ecf_poll_t: .quad 0
 ecf_ignored: .quad 0            # lines of the project files ignored
 ecf_old: .zero VEC_SIZE         # notify: (signature, window value) per extension setting
@@ -1027,6 +1028,9 @@ FN extconfig_poll
     mov rax, [rip + g_project]
     cmp rax, [rip + ecf_project]
     jne 1f
+    mov eax, [rip + g_ws_gen]   # the folders were made again (their ids are new): read at once
+    cmp eax, [rip + ecf_ws_gen]
+    jne 1f
     call time_ms
     mov rcx, rax
     sub rcx, [rip + ecf_poll_t]
@@ -1081,7 +1085,12 @@ FN extconfig_poll
     je 5f
     mov [rcx + ECF_FOLDERS*8], rax
     mov r14d, 1
-5:  mov rax, [rip + g_project]
+5:  mov eax, [rip + g_ws_gen]
+    cmp eax, [rip + ecf_ws_gen]
+    je 51f
+    mov [rip + ecf_ws_gen], eax
+    mov r14d, 1
+51: mov rax, [rip + g_project]
     cmp rax, [rip + ecf_project]
     je 6f
     mov [rip + ecf_project], rax
