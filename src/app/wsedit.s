@@ -1341,8 +1341,12 @@ FN ws_buf_group
     mov [rax + TP_doc], r13
 9:  EPILOGUE
 
-# FN ws_apply_group(WG*): its edits made, as one undo step (the cursor and the selection move with
-# the text around them: doc_insert and doc_delete move them)
+# FN ws_apply_group(WG*): its edits made, as one undo step. Carets and selection ends move as
+# VS Code moves them for a formatter's edits: before a range they stay, at its start they stay
+# before the new text, inside it or at its end they go after the new text, after it they shift by
+# the length change; where text is only put in, a caret right there stays before it (as v1 did). So the new text goes in
+# first, at the range's start (doc_insert moves what is after that point), then the old text,
+# now after it, goes (doc_delete gathers what was inside or at its end at the new text's end)
 FN ws_apply_group
     PROLOGUE 16
     mov r12, rdi
@@ -1359,21 +1363,23 @@ FN ws_apply_group
     add rax, r13
     imul r14, rax, WE_SIZE
     add r14, [rip + we_vec + VEC_ptr]
-    mov rdx, [r14 + WE_end]
-    sub rdx, [r14 + WE_start]
-    jz 2f
-    mov rdi, rbx
-    mov rsi, [r14 + WE_start]
-    mov ecx, EK_OTHER
-    call doc_delete
-2:  cmp qword ptr [r14 + WE_len], 0
-    je 1b
+    mov r15, [r14 + WE_start]   # where the old text begins once the new text is in
+    cmp qword ptr [r14 + WE_len], 0
+    je 2f
     mov rdi, rbx
     mov rsi, [r14 + WE_start]
     mov rdx, [r14 + WE_text]
     mov rcx, [r14 + WE_len]
     mov r8d, EK_OTHER
     call doc_insert
+    add r15, [r14 + WE_len]
+2:  mov rdx, [r14 + WE_end]
+    sub rdx, [r14 + WE_start]
+    jz 1b
+    mov rdi, rbx
+    mov rsi, r15
+    mov ecx, EK_OTHER
+    call doc_delete
     jmp 1b
 8:  mov rdi, rbx
     call doc_end_group
