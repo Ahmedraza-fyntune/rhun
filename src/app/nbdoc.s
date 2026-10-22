@@ -881,16 +881,19 @@ FN nb_snapshot
 1:  cmp r12, [rbx + NB_cells + VEC_len]
     jae 9f
     lea rdi, [rbx + NB_snap]
-    mov esi, 24
+    mov esi, 32
     call vec_push
+    mov r13, rax
     mov rcx, [rbx + NB_cells + VEC_ptr]
     mov rcx, [rcx + r12*8]
-    mov [rax], rcx
-    mov rcx, [rcx + NBC_doc]
-    mov rdx, [rcx + DOC_undo + VEC_len]
-    mov [rax + 8], rdx
-    mov rdx, [rcx + DOC_version]
-    mov [rax + 16], rdx
+    mov [r13], rcx
+    mov rdi, [rcx + NBC_doc]
+    mov rsi, [rdi + DOC_undo + VEC_len]
+    mov [r13 + 8], rsi
+    mov rdx, [rdi + DOC_version]
+    mov [r13 + 16], rdx
+    call nb_undo_hash           # the history that leads to it
+    mov [r13 + 24], rax
     inc r12
     jmp 1b
 9:  EPILOGUE
@@ -903,10 +906,10 @@ nb_mark_snapshot:
     xor r12d, r12d
 1:  cmp r12, [rbx + NB_snap + VEC_len]
     jae 4f
-    imul rax, r12, 24
-    add rax, [rbx + NB_snap + VEC_ptr]
+    imul r13, r12, 32
+    add r13, [rbx + NB_snap + VEC_ptr]
     inc r12
-    mov rcx, [rax]
+    mov rcx, [r13]
     xor edx, edx
 2:  cmp rdx, [rbx + NB_cells + VEC_len]
     jae 1b                      # deleted since: nothing to mark
@@ -915,15 +918,22 @@ nb_mark_snapshot:
     je 3f
     inc rdx
     jmp 2b
-3:  mov rcx, [rcx + NBC_doc]
-    mov r8, [rax + 8]           # the undo length the body was made at
-    mov rdx, [rcx + DOC_version]
-    cmp rdx, [rax + 16]
+3:  mov r14, [rcx + NBC_doc]
+    mov r15, [r13 + 8]          # the undo length the body was made at
+    mov rdx, [r14 + DOC_version]
+    cmp rdx, [r13 + 16]
     je 31f                      # unchanged since
-    cmp r8, [rcx + DOC_undo + VEC_len]
-    jne 31f                     # typed on since (z reaches the saved text) or undone (y does)
-    mov r8, -1                  # undone and retyped to the same length: dirty
-31: mov [rcx + DOC_savepoint], r8
+    # changed since: the saved text is reachable by z only while the history up to it is the one
+    # the body was made from (undone and typed over, it is not: dirty)
+    cmp r15, [r14 + DOC_undo + VEC_len]
+    ja 32f
+    mov rdi, r14
+    mov rsi, r15
+    call nb_undo_hash
+    cmp rax, [r13 + 24]
+    je 31f
+32: mov r15, -1
+31: mov [r14 + DOC_savepoint], r15
     jmp 1b
 4:  mov qword ptr [rbx + NB_snap + VEC_len], 0
     mov rax, [rbx + NB_rev]
@@ -933,6 +943,52 @@ nb_mark_snapshot:
     mov rax, [rbx + NB_host]
     mov qword ptr [rax + DOC_savepoint], 0
 9:  EPILOGUE
+
+# nb_undo_hash(doc, n) -> rax a hash of its first n undo records (kind, place, length, text): the
+#   same only for the same history
+nb_undo_hash:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, 0xcbf29ce484222325
+    xor r14d, r14d
+1:  cmp r14, r12
+    jae 9f
+    cmp r14, [rbx + DOC_undo + VEC_len]
+    jae 9f
+    imul r15, r14, UR_SIZE
+    add r15, [rbx + DOC_undo + VEC_ptr]
+    inc r14
+    mov rdi, r13
+    mov rsi, [r15 + UR_kind]
+    call nbu_mix
+    mov rsi, [r15 + UR_pos]
+    call nbu_mix
+    mov rsi, [r15 + UR_len]
+    call nbu_mix
+    mov r13, rax
+    mov rcx, [r15 + UR_text]
+    test rcx, rcx
+    jz 1b
+    xor edx, edx
+2:  cmp rdx, [r15 + UR_len]
+    jae 1b
+    movzx eax, byte ptr [rcx + rdx]
+    xor r13, rax
+    mov rax, 0x100000001b3
+    imul r13, rax
+    inc rdx
+    jmp 2b
+9:  mov rax, r13
+    EPILOGUE
+
+# nbu_mix(hash rdi, value rsi) -> rax (and rdi) the hash with the value mixed in
+nbu_mix:
+    xor rdi, rsi
+    mov rax, 0x100000001b3
+    imul rdi, rax
+    mov rax, rdi
+    ret
 
 # FN nb_stamp(nb) -> rax a number that changes with every edit of the notebook: its revision and
 #   its cells' versions
@@ -2635,6 +2691,21 @@ FN nb_sent_hash
     EPILOGUE
 8:  mov eax, 1
     EPILOGUE
+
+# nb_sent_has(nb, ext) -> eax 1 when the extension heard an order of the notebook's cells
+FN nb_sent_has
+    xor ecx, ecx
+1:  cmp rcx, [rdi + NB_sent + VEC_len]
+    jae 8f
+    imul rax, rcx, NBS2_SIZE
+    add rax, [rdi + NB_sent + VEC_ptr]
+    inc rcx
+    cmp [rax + NBS2_ext], rsi
+    jne 1b
+    mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
 
 # nb_sent_forget(ext): what the extension heard of every notebook goes (it stopped)
 FN nb_sent_forget

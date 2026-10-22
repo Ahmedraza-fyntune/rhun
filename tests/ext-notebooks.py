@@ -302,6 +302,27 @@ class Notebooks(unittest.TestCase):
         self.assertIn('lines=2 ', cells_of(out, 0))
         self.assertNotIn('0 opened', '\n'.join(self.fake_log()))                  # nbfake did not agree to cells
 
+    def test_cell_indices_and_an_empty_list_reach_providers(self):
+        # the Markdown cell moved above the first Python cell: both Python cells' INDEX change
+        self.run_editor(['wait 300', 'key j', 'key alt+Up', *SETTLE, 'wait 300',
+                         'nb-select 1', 'key m', 'nb-select 2', 'key m', *SETTLE, 'wait 300'])
+        log = self.cells_log.read_text(encoding='utf-8').splitlines()
+        opened = [l.split(' ') for l in log if l.startswith('0 opened ')]
+        d0, d2 = opened[0][2], opened[1][2]
+        cell = [l.split(' ') for l in log if l.startswith('0 cell ')]
+        self.assertIn((d0, '1'), [(c[2], c[5]) for c in cell], log)         # after the move
+        self.assertIn((d2, '2'), [(c[2], c[5]) for c in cell], log)
+        # both made Markdown: the provider hears that it knows none of the notebook's cells
+        self.assertEqual([l for l in log if l.startswith('0 cells ')][-1], '0 cells 1', log)
+
+    def test_cell_completion_beside_a_busy_extension_without_notebooks(self):
+        # whichever extension rhun read from last does not decide whether a cell matches a provider
+        exts = ROOT / 'tests/ext/nbplain'
+        for _ in range(3):
+            out = self.run_editor(['wait 300', 'key Return', 'key End', 'type  + ', 'cmd complete', 'wait 500',
+                                   'print-complete'], exts=exts)
+            self.assertIn('cell_item', '\n'.join(out))
+
     # --- kernels that run as the user (nb-exec) ---
 
     def test_kernel_runs_as_the_user_after_approval(self):
@@ -416,6 +437,15 @@ class Notebooks(unittest.TestCase):
         self.assertTrue(dirty[1].startswith('dirty=0'), dirty)
         self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK.replace('print("hi")', 'xyprint("hi")'))
 
+    def test_undone_and_retyped_while_a_save_is_answered_stays_dirty(self):
+        # the saved "a" was undone and typed over: undoing back to that length is not the saved text
+        out = self.run_editor(['key Return', 'type a', 'key ctrl+s', 'key ctrl+z', 'type x', 'key Return',
+                               'type y', 'wait 2500', *SETTLE, 'key ctrl+z', 'key ctrl+z', 'print-notebook',
+                               'print-doc'], mode='slowsave')
+        self.assertIn('xprint("hi")', out)
+        self.assertTrue([l for l in out if l.startswith('dirty=')][-1].startswith('dirty=1'), out)
+        self.assertEqual(self.nb.read_text(encoding='utf-8'), NOTEBOOK.replace('print("hi")', 'aprint("hi")'))
+
     def test_typing_while_a_reload_is_answered_keeps_it(self):
         out = self.run_editor(['wait 2500', 'cmd reload_file', 'key Return', 'type q', 'wait 2500', *SETTLE,
                                'print-notebook', 'print-doc'], mode='slowopen')
@@ -494,6 +524,36 @@ class Notebooks(unittest.TestCase):
         cx, cy = x + int(f['x']) + int(f['w']) // 2, y + int(f['y']) + int(f['h']) // 2
         out = self.run_editor([f'click {cx} {cy}', *SETTLE, 'print-state'])
         self.assertTrue(next(l for l in out if l.startswith('tabs=')).startswith('tabs=2 active=b.txt'), out)
+
+    def test_a_link_to_another_folder_is_followed_after_drawing(self):
+        other = self.work / 'other'
+        other.mkdir()
+        (other / 'c.txt').write_text('elsewhere\n', encoding='utf-8')
+        self.nb.write_text('%%%% markup\nOpen [it](rhun://file%s).\n' % (other / 'c.txt').as_posix(), encoding='utf-8')
+        out = self.run_editor(['print-nb-md 0'])
+        _, (x, y) = self.md_at(out)
+        item = next(l for l in out if l.startswith('item text') and ' link=0 ' in l)
+        f = dict(kv.split('=', 1) for kv in item.split(' ')[2:7])
+        out = self.run_editor([f'click {x + int(f["x"]) + 2} {y + int(f["y"]) + int(f["h"]) // 2}', *SETTLE,
+                               'print-state', 'print-doc'])
+        self.assertIn('elsewhere', out)
+
+    def test_a_kind_change_lays_the_cells_out_again(self):
+        self.nb.write_text('%% code python -\n# Heading\n%% code python -\nx = 1\n', encoding='utf-8')
+        out = self.run_editor(['print-notebook', 'key m', 'print-notebook', 'key Return', 'key Escape',
+                               'print-notebook'])
+        runs = dumps(out)
+        self.assertNotEqual(field(runs[1][1], 'at'), field(runs[0][1], 'at'))   # the heading renders taller
+        self.assertEqual(field(runs[1][1], 'at'), field(runs[2][1], 'at'))
+
+    def test_save_as_moves_the_markdown_base(self):
+        self.nb.write_text('%% markup\nSee [b](b.txt).\n', encoding='utf-8')
+        (self.proj / 'sub').mkdir()
+        target = self.proj / 'sub/a.nbt'
+        out = self.run_editor(['print-nb-md 0', 'cmd save_as', 'key ctrl+a', 'type ' + target.as_posix(),
+                               'key Return', *SETTLE, 'wait 300', 'print-nb-md 0'])
+        bases = [l for l in out if l.startswith('base ')]
+        self.assertEqual(bases, ['base ' + self.proj.as_posix(), 'base ' + (self.proj / 'sub').as_posix()], out)
 
     def test_rich_and_picture_outputs(self):
         self.nb.write_text('%% code python -\nrich()\n%% code python -\npicture()\n'

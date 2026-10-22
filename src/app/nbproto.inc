@@ -983,7 +983,7 @@ nb_order_events:
     inc r12
     cmp dword ptr [r13 + NB_state], NBS_READY
     jne 1b
-    # the order it knows: a hash of the DOC ids of the cells it knows
+    # the order it knows: a hash of the DOC ids of the cells it knows and their INDEX
     mov r14, 0xcbf29ce484222325
     xor r15d, r15d
     mov qword ptr [rsp], 0
@@ -995,14 +995,23 @@ nb_order_events:
     call nb_known_cell
     test rax, rax
     jz 2b
-    xor r14, rax
     mov rcx, 0x100000001b3
+    xor r14, rax
+    imul r14, rcx
+    lea rax, [r15 - 1]          # a cell it does not know, moved before one it knows, moves INDEX
+    xor r14, rax
     imul r14, rcx
     inc qword ptr [rsp]
     jmp 2b
 3:  cmp qword ptr [rsp], 0
-    je 1b
+    jne 31f
+    # none it knows: "0 cells NB" once, when it knew some before
     mov rdi, r13
+    mov rsi, rbx
+    call nb_sent_has
+    test eax, eax
+    jz 1b
+31: mov rdi, r13
     mov rsi, rbx
     mov rdx, r14
     call nb_sent_hash

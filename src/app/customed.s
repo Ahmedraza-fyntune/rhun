@@ -716,22 +716,62 @@ FN ce_ext_gone
     mov rdi, rbx
     mov rsi, -32
     call ce_save_done
-    # unsaved changes in a backup (B3): the tab stays, and offers them back
-    cmp dword ptr [rbx + CE_dirty], 0
-    je 3f
-    cmp dword ptr [rbx + CE_bkdone], 0
-    je 3f
+    # what becomes of it is decided at the next tick (ce_lost_tick): the program may start again at
+    # once (a confinement retry, a restart), and the editor opens again with it
     mov dword ptr [rbx + CE_state], CES_STOPPED
+    mov dword ptr [rbx + CE_lost], 1
     mov dword ptr [rip + g_dirty], 1
     jmp 2b
-3:  mov rdi, [rbx + CE_doc]
+9:  EPILOGUE
+
+# ce_lost_tick(ce) -> eax 1 when the tab closed (g_ces changed): an editor whose program ended opens
+#   again when the program is to run again (idle, starting, running); otherwise it closes, unless
+#   its unsaved changes are in a backup (B3: the tab stays and offers them back)
+ce_lost_tick:
+    PROLOGUE
+    mov rbx, rdi
+    mov dword ptr [rbx + CE_lost], 0
+    xor r12d, r12d              # its changes are in a backup
+    cmp dword ptr [rbx + CE_dirty], 0
+    je 1f
+    cmp dword ptr [rbx + CE_bkdone], 0
+    je 1f
+    mov r12d, 1
+1:  mov rax, [rbx + CE_ext]
+    mov eax, [rax + EXT_status]
+    cmp eax, ES_IDLE
+    je 2f
+    cmp eax, ES_STARTING
+    je 2f
+    cmp eax, ES_RUNNING
+    je 2f
+    test r12d, r12d
+    jnz 8f
+    mov rdi, [rbx + CE_doc]
     call doc_tab
     test rax, rax
-    js 2b
+    js 8f
     mov rdi, rax
-    call app_close_tab_now      # ce_tab_closed frees the CE: g_ces changed, look again
-    jmp 1b
-9:  EPILOGUE
+    call app_close_tab_now      # ce_tab_closed frees the CE
+    mov eax, 1
+    EPILOGUE
+2:  # open again: from its backup when the changes are there, else from the file
+    test r12d, r12d
+    jnz 3f
+    mov dword ptr [rbx + CE_dirty], 0
+    mov rax, [rbx + CE_doc]
+    mov qword ptr [rax + DOC_savepoint], 0
+3:  mov dword ptr [rbx + CE_state], CES_OPENING
+    mov [rbx + CE_restore], r12d
+    mov dword ptr [rbx + CE_want], CER_OPEN
+    call time_ms
+    mov [rbx + CE_reqat], rax
+    mov rdi, [rbx + CE_ext]
+    call ce_ext_wake
+    mov rdi, rbx
+    call ce_pump
+8:  xor eax, eax
+    EPILOGUE
 
 # ---------------- requests rhun waits on ----------------
 
@@ -839,7 +879,13 @@ FN ce_tick
     mov rax, [rip + g_ces + VEC_ptr]
     mov rbx, [rax + r12*8]
     inc r12
+    cmp dword ptr [rbx + CE_lost], 0
+    je 11f
     mov rdi, rbx
+    call ce_lost_tick
+    test eax, eax
+    jnz 9f                      # g_ces changed: the rest next tick
+11: mov rdi, rbx
     call ce_pump
     # the caller may have closed it: g_ces then shrank
     cmp r12, [rip + g_ces + VEC_len]
@@ -876,24 +922,60 @@ FN ce_tick
     jmp 1b
 9:  EPILOGUE
 
-# FN ce_timeout() -> ms until ce_tick should look again: soon while a request waits
+# FN ce_timeout() -> ms until ce_tick should look again: soon while a request waits, and when an
+#   owned model's backup falls due (an idle editor gets no other wakeup)
 FN ce_timeout
-    xor ecx, ecx
-1:  cmp rcx, [rip + g_ces + VEC_len]
+    PROLOGUE
+    mov r14, -1                 # the answer so far: none
+    xor r12d, r12d
+    call time_ms
+    mov r15, rax
+1:  cmp r12, [rip + g_ces + VEC_len]
     jae 8f
     mov rax, [rip + g_ces + VEC_ptr]
-    mov rax, [rax + rcx*8]
-    inc rcx
-    cmp dword ptr [rax + CE_want], 0
+    mov rbx, [rax + r12*8]
+    inc r12
+    cmp dword ptr [rbx + CE_lost], 0
     jne 2f
-    cmp qword ptr [rax + CE_req], 0
+    cmp dword ptr [rbx + CE_want], 0
+    jne 2f
+    cmp qword ptr [rbx + CE_req], 0
+    jne 3f
+    # a backup to come (ce_backup_due's conditions, less the time)
+    cmp dword ptr [rbx + CE_model], CEM_OWNED
+    jne 1b
+    cmp dword ptr [rbx + CE_state], CES_READY
+    jne 1b
+    cmp dword ptr [rbx + CE_dirty], 0
     je 1b
-    mov eax, 500
-    ret
+    cmp dword ptr [rbx + CE_bkdone], 0
+    jne 1b
+    cmp qword ptr [rbx + CE_target], 0
+    jne 1b
+    mov rax, [rbx + CE_dirtyat]
+    add rax, CE_BACKUP_MS
+    sub rax, r15
+    jg 4f
+    xor eax, eax
+4:  inc rax                     # a millisecond after it falls due
+    cmp r14, 0
+    jl 5f
+    cmp rax, r14
+    jge 1b
+5:  mov r14, rax
+    jmp 1b
 2:  mov eax, 50
-    ret
-8:  mov rax, -1
-    ret
+    EPILOGUE
+3:  mov eax, 500
+    cmp r14, 0
+    jl 31f
+    cmp r14, rax
+    jge 31f
+    mov rax, r14
+31: mov r14, rax
+    jmp 1b
+8:  mov rax, r14
+    EPILOGUE
 
 # ---------------- the extension's answers ----------------
 
@@ -1050,6 +1132,8 @@ FN ce_save_start
 1:  lea rdi, [rbx + CE_buf]
     call sb_clear
     mov qword ptr [rbx + CE_part], 0
+    mov rax, [rbx + CE_gen]     # the model the extension serializes
+    mov [rbx + CE_savegen], rax
     mov rdi, rbx
     call ce_ask_part
     test rax, rax
@@ -1180,18 +1264,26 @@ ce_save_done:
     je 9f
     cmp dword ptr [rbx + CE_skind], CEK_BACKUP
     jne 1f
-    test r12, r12               # a backup: it holds what is shown (nothing else changes)
+    test r12, r12               # a backup: it holds what is shown, unless the model changed since
     jnz 2f
+    mov rax, [rbx + CE_gen]
+    cmp rax, [rbx + CE_savegen]
+    jne 2f
     mov dword ptr [rbx + CE_bkdone], 1
     jmp 2f
 1:  test r12, r12
     jnz 2f
     mov dword ptr [rbx + CE_restore], 0
+    # the file holds the model as it was when the save began: clean only when it did not change since
+    mov rax, [rbx + CE_gen]
+    cmp rax, [rbx + CE_savegen]
+    jne 11f
     mov rdi, rbx
     call ce_backup_drop
     mov dword ptr [rbx + CE_dirty], 0
     mov rax, [rbx + CE_doc]
     mov qword ptr [rax + DOC_savepoint], 0
+11: mov rax, [rbx + CE_doc]
     mov rdi, [rax + DOC_path]
     call vfs_stamp
     mov rcx, [rbx + CE_doc]
@@ -1227,6 +1319,7 @@ ce_save_done:
 FN ce_set_dirty
     PROLOGUE
     mov rbx, rdi
+    inc qword ptr [rbx + CE_gen]
     mov [rbx + CE_dirty], esi
     mov rax, [rbx + CE_doc]
     xor ecx, ecx
@@ -1349,6 +1442,8 @@ ce_backup_due:
     lea rdi, [rbx + CE_buf]
     call sb_clear
     mov qword ptr [rbx + CE_part], 0
+    mov rax, [rbx + CE_gen]
+    mov [rbx + CE_savegen], rax
     mov rdi, rbx
     call ce_ask_part
     test rax, rax
@@ -1479,6 +1574,8 @@ FN ce_draw_tab
     mov ecx, [rsp + 12]
     COLOR r8d, T_BG
     call gfx_fill
+    cmp dword ptr [rbx + CE_lost], 0
+    jne 7f                      # until the next tick decides: nothing
     # "Hex Editor stopped"
     lea rdi, [rip + msg]
     call sb_clear
@@ -1559,7 +1656,7 @@ FN ce_draw_tab
     lea r9, [rip + .Lrestore_text]
     call ui_text_center
     add rsp, 16
-    mov eax, 1
+7:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -1602,6 +1699,7 @@ FN ce_revert
     jz 8f
     cmp dword ptr [rbx + CE_model], CEM_OWNED
     jne 8f
+    mov dword ptr [rbx + CE_restore], 0     # a revert reads the file, not a backup it opened from
     mov rdi, rbx
     lea rsi, [rip + .Lv_revert]
     call ce_send_cmd
@@ -1893,6 +1991,30 @@ c_print_custom:
 
 # custom-backup: the backups due in 30 s are taken now; custom-restore: the active stopped editor
 #   opens its backup, as its button does
+# custom-timeout: "timeout=MS", ce_timeout's answer (-1 none)
+c_custom_timeout:
+    PROLOGUE
+    mov rbx, rdi
+    call ce_timeout
+    mov r12, rax
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_timeout]
+    call sb_push_cstr
+    test r12, r12
+    jns 1f
+    mov rdi, rbx
+    mov esi, '-'
+    call sb_push_byte
+    neg r12
+1:  mov rdi, rbx
+    mov rsi, r12
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+
 c_custom_backup:
     PROLOGUE
     xor ecx, ecx
@@ -1966,11 +2088,13 @@ c_reopen_with:
 ce_ctl:
     .quad .Lc_print_custom, c_print_custom, .Lc_reopen_with, c_reopen_with
     .quad .Lc_custom_backup, c_custom_backup, .Lc_custom_restore, c_custom_restore
+    .quad .Lc_custom_timeout, c_custom_timeout
     .quad 0, 0
 .Lc_print_custom: .asciz "print-custom"
 .Lc_reopen_with: .asciz "reopen-with"
 .Lc_custom_backup: .asciz "custom-backup"
 .Lc_custom_restore: .asciz "custom-restore"
+.Lc_custom_timeout: .asciz "custom-timeout"
 .Lbackups: .asciz "/backups"
 .Lpath_suffix: .asciz ".path"
 .Lempty: .asciz ""
@@ -2001,6 +2125,7 @@ ce_ctl:
 .Lbad_part: .asciz "The editor's extension sent a part rhun cannot read: the file was not saved"
 .Lsave_first: .asciz "Save the file first"
 .Ld_cdoc: .asciz "cdoc="
+.Ld_timeout: .asciz "timeout="
 .Ld_ext: .asciz " ext="
 .Ld_text: .asciz " model=text"
 .Ld_owned: .asciz " model=owned"
