@@ -55,8 +55,9 @@ class Remote(unittest.TestCase):
         (self.proj / '.rhun').mkdir()
         (self.proj / '.rhun/launch.ini').write_text('[Run]\ntype = faketcp\nprogram = x.json\n')
         out = self.run_remote(['debug-start Run', 'wait 500', 'print-debug', 'print-console'])
-        self.assertTrue([l for l in out if 'does not do in a remote window yet' in l], out)
-        self.assertFalse([l for l in out if l.startswith('session=')], out)
+        lines = out.splitlines()
+        self.assertTrue([l for l in lines if 'does not do in a remote window yet' in l], out)
+        self.assertFalse([l for l in lines if l.startswith('session=')], out)
 
 
 if __name__ == '__main__':
