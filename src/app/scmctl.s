@@ -9,6 +9,7 @@
 #   print-vcs PATH            "vcs=LETTER dir=0|1 color=RRGGBB" as the explorer colors the path
 #   wait-scm SCM [TEXT]       until panel SCM has an update whose status line holds TEXT (15 s at most)
 #   wait-quickdiff            until no document waits for a quick-diff base (15 s at most)
+#   print-scm-box SCM         "box=N": the widget id of panel SCM's message box
 .include "rhun.inc"
 
 .bss
@@ -22,7 +23,7 @@ scm_ctl:
     .quad .Lc_print_git_data, c_print_git_data, .Lc_print_scm_ext, c_print_scm_ext
     .quad .Lc_scm_click, c_scm_click, .Lc_scm_action, c_scm_action, .Lc_scm_menu, c_scm_menu
     .quad .Lc_scm_focus, c_scm_focus, .Lc_print_vcs, c_print_vcs, .Lc_wait_scm, c_wait_scm
-    .quad .Lc_wait_qd, c_wait_qd
+    .quad .Lc_wait_qd, c_wait_qd, .Lc_print_box, c_print_box
     .quad 0, 0
 .Lc_print_git_data: .asciz "print-git-data"
 .Lc_print_scm_ext: .asciz "print-scm-ext"
@@ -33,6 +34,8 @@ scm_ctl:
 .Lc_print_vcs: .asciz "print-vcs"
 .Lc_wait_scm: .asciz "wait-scm"
 .Lc_wait_qd: .asciz "wait-quickdiff"
+.Lc_print_box: .asciz "print-scm-box"
+.Lbox: .asciz "box="
 .Lno: .asciz "scm: no such provider or row\n"
 .Lvcs: .asciz "vcs="
 .Ldir: .asciz " dir="
@@ -205,6 +208,28 @@ c_wait_scm:
     call app_tick
     jmp 1b
 9:  xor eax, eax
+    EPILOGUE
+
+# print-scm-box SCM
+c_print_box:
+    PROLOGUE
+    mov rbx, rdi
+    mov r13, rsi
+    mov r14, rdx
+    call arg_num
+    mov edi, eax
+    call scmpanel_box_id
+    mov r12d, eax
+    mov rdi, rbx
+    lea rsi, [rip + .Lbox]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov esi, r12d
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
     EPILOGUE
 
 # wait-quickdiff

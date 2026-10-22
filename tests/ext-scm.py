@@ -700,6 +700,16 @@ class ScmPanel(Base):
         got = [r for r, _ in self.replies('hg')]
         self.assertTrue(got[1].startswith('error 2 syntax'), got)
 
+    def test_message_boxes_have_an_id_per_registration(self):
+        # a provider gone and another in its slot: their message boxes differ (a paste captured for
+        # the first never lands in the second)
+        exts = self.provider(self.body())
+        out = self.start(exts, 'print-scm-box 1', 'ext-set hg restart', 'wait-ext hg running', 'cmd hg.start',
+                         'wait 400', 'print-scm-box 2')
+        boxes = [l for l in out if l.startswith('box=')]
+        self.assertEqual(len(boxes), 2, out)
+        self.assertNotEqual(boxes[0], boxes[1])
+
     def test_paste_into_the_message_box_keeps_lines(self):
         out = self.start(self.provider(self.body()), 'key ctrl+a', 'cmd copy', 'scm-focus 1', 'cmd paste',
                          'cmd hg.input', 'wait 300')
@@ -730,9 +740,11 @@ class ScmPanel(Base):
         script = json.loads((self.work / 'exts/rhun-tests/hg/script.json').read_text())
         script['answers']['quickdiff']['body'] = 'hello world\r\nsecond line\r\nthird line\r\n'
         (self.work / 'exts/rhun-tests/hg/script.json').write_text(json.dumps(script))
+        # another tab is active: the click shows the file
         out = self.run_editor(['wait-ext hg running', 'wait-scm 1', 'wait 300', 'wait-quickdiff',
-                               'scm-click 1 changes a.txt', 'wait 300', 'print-tabs'], exts=exts, drop_waits=True)
-        self.assertEqual([l for l in out if l.startswith('tabs=')], ['tabs=*a.txt'], out)
+                               'scm-click 1 changes a.txt', 'wait 300', 'print-tabs'], exts=exts,
+                              files=('a.txt', 'b.go'), drop_waits=True)
+        self.assertEqual([l for l in out if l.startswith('tabs=')], ['tabs=*a.txt | b.go'], out)
 
     def test_files_with_the_same_name_get_their_own_diff_tabs(self):
         (self.proj / 'sub').mkdir()
