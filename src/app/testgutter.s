@@ -311,18 +311,51 @@ FN testgutter_doc_ver
     js 8f
     mov rdi, rax
     call tab_at
-    mov rax, [rax + TAB_doc]
-    test rax, rax
+    mov rdi, [rax + TAB_doc]
+    test rdi, rdi
     jz 8f
-    mov rax, [rax + DOC_version]
+    call doc_key
     EPILOGUE
 8:  mov rax, -1
     EPILOGUE
+
+# doc_key(doc) -> rax its version now with its identity: DOC_id << 40 | the version's low 40 bits
+#   (a reopened file is another document, whose versions start again)
+doc_key:
+    mov rax, [rdi + DOC_version]
+    shl rax, 24
+    shr rax, 24
+    mov rcx, [rdi + DOC_id]
+    shl rcx, 40
+    or rax, rcx
+    ret
+
+# key_ver(doc, key) -> rax the version a key names in this document, -1 for none (no key, or a key
+#   of another document of the file: lines as they are)
+key_ver:
+    mov rax, -1
+    test rsi, rsi
+    js 9f
+    mov rcx, rsi
+    shr rcx, 40
+    mov rdx, [rdi + DOC_id]
+    shl rdx, 40
+    shr rdx, 40
+    cmp rcx, rdx
+    jne 9f
+    mov rax, rsi
+    shl rax, 24
+    shr rax, 24
+9:  ret
 
 # tg_map(doc, version, line) -> eax the one-based line in the document's text now of a one-based
 #   line of its text at that version (-1: now), 0 when the edit tape no longer reaches back
 tg_map:
     PROLOGUE
+    mov r12d, edx
+    call key_ver
+    mov rsi, rax
+    mov edx, r12d
     mov eax, edx
     test rsi, rsi
     js 9f
@@ -380,9 +413,13 @@ item_lines:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    cmp qword ptr [r12 + TSI_ver], 0
-    jge 1f
-    mov rax, [rbx + DOC_version]
+    mov rdi, rbx                # no key, or another document's (the file was reopened): its
+    mov rsi, [r12 + TSI_ver]    #   lines are this document's as it is now
+    call key_ver
+    test rax, rax
+    jns 1f
+    mov rdi, rbx
+    call doc_key
     mov [r12 + TSI_ver], rax
 1:  mov rdi, rbx
     mov rsi, [r12 + TSI_ver]
@@ -763,6 +800,9 @@ cov_cache:
     mov r12, rax
     mov rdi, rax
     call testcover_ver
+    mov rdi, rbx
+    mov rsi, rax
+    call key_ver
     mov r13, rax
     test rax, rax
     js 9f
