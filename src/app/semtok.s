@@ -761,9 +761,10 @@ toks_build:
     mov rdx, 0xffffffff
     cmp rax, rdx
     ja 9f                       # past any text
-    cmp rcx, rdx
-    ja .Ltb_tok
-    test rax, rax
+    cmp rcx, rdx                # past any line's end: kept there, so the tokens after it stay
+    jbe 0f                      # relative to it (and are past the end too on its line)
+    mov rcx, rdx
+0:  test rax, rax
     jz 1f
     add r14, rax
     mov r15, rcx
