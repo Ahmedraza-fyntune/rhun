@@ -158,7 +158,10 @@ class Scheduling(host.Host):
     def test_shared_budget_yields_and_quiet_peer_and_input_progress(self):
         root = self.extensions(20)
         actions = ['wait 900'] + [f'cmd scheduling/p{i:03}.burst' for i in range(16)]
-        actions += ['cmd scheduling/p019.ping', 'type ok', 'wait 1600',
+        # every burst finishing is the end state checked below; Windows pipes and process
+        # switches move the same messages more slowly, so it gets longer to get there
+        settle = 4000 if os.name == 'nt' else 1600
+        actions += ['cmd scheduling/p019.ping', 'type ok', f'wait {settle}',
                     'print-toast', 'print-doc', 'print-ext-budget', 'print-extensions']
         out = self.run_editor(exts=root, actions=actions)
         self.assertIn('toast=ready', out)

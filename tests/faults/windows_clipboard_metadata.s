@@ -483,8 +483,9 @@ FN main
     jb .Lwf_read
     mov rcx, [rip + wm_window]
     API DestroyWindow
-    lea rdi, [rip + wf_ok]
-    mov esi, 30
-    call log_write
+    mov edi, 1                  # standard output, which the test reads (log_write is stderr)
+    lea rsi, [rip + wf_ok]
+    mov edx, 30
+    SYS SYS_write
     xor eax, eax
     EPILOGUE
