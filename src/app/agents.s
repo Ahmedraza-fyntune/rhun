@@ -2469,7 +2469,7 @@ FN agents_on_change
 # registration's folder (its gitdir names a moved worktree). A folder without a repository has none.
 agents_watch_repo:
     PROLOGUE
-    call git_common_dir
+    call git_project_common_dir
     test rax, rax
     jz 9f
     mov rbx, rax
